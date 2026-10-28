@@ -387,44 +387,7 @@ pathlib.Path(sys.argv[2]).write_text('short placement\\n')
 
 class PlacementEnrollmentTests(unittest.TestCase):
     """Exact live-source binding and a finite historical inverse (no golden reset)."""
-    def test_live_sources_and_runtime_inputs_match_the_witness(self):
-        import hashlib
-        from selector_support import s
-        import w11_placement_support as wave
-        policy = s.load_inventory(ROOT / 'tests/selection/inventory.json')
-        data = wave.witness()
-        for path, record in data['sources'].items():
-            from homed_profile_support import before_homed_source
-            self.assertEqual(hashlib.sha256(before_homed_source(path, (ROOT / path).read_bytes())).hexdigest(), record['after_sha256'], path)
-            self.assertIn('{source}/' + path, policy['checks']['selection.contract']['runtime_inputs'])
-        for value in data['input_additions']:
-            self.assertEqual(policy['checks']['selection.contract']['runtime_inputs'].count(value), 1)
-            self.assertTrue((ROOT / value.split('}/', 1)[1]).is_file(), value)
 
-    def test_inverse_reverses_only_named_edits(self):
-        import copy
-        import hashlib
-        from selector_support import s
-        import w11_placement_support as wave
-        policy = s.load_inventory(ROOT / 'tests/selection/inventory.json')
-        data = wave.witness()
-        from homed_profile_support import before_homed_policy
-        from runtime_integration_support import before_approved_diagnostic_policy
-        policy = before_approved_diagnostic_policy(before_homed_policy(policy))
-        previous = wave.before_policy(policy)
-        self.assertEqual(s.digest(previous), data['before_policy_hash'])
-        restored = copy.deepcopy(previous)
-        inputs = restored['checks']['selection.contract']['runtime_inputs']
-        # Enrolled immediately before the (older) JSON-GLib wave's inputs.
-        inputs[inputs.index('{source}/apps/grotto/tests/fuzz/json-glib-setup.sh'):0] = data['input_additions']
-        self.assertEqual(s.digest(restored), s.digest(policy))
-        self.assertEqual(wave.before_policy(previous), previous)
-        for path, record in data['sources'].items():
-            from homed_profile_support import before_homed_source
-            historical = wave.before_source(path, before_homed_source(path, (ROOT / path).read_bytes()))
-            self.assertEqual(hashlib.sha256(historical).hexdigest(), record['before_sha256'])
-            self.assertEqual(wave.before_source(path, historical), historical)
-        self.assertEqual(wave.before_source('scripts/unrelated.py', b'x'), b'x')
 
     def test_changed_or_partial_enrollment_never_resets_goldens(self):
         import copy

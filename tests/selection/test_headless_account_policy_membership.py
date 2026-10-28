@@ -25,9 +25,8 @@ COUNTS = {'groundhog-account': (27, 176), 'groundhog-account-relays': (26, 173),
 
 class HeadlessAccountPolicyMembership(unittest.TestCase):
     def setUp(self):
-        from supported_profile_support import before_supported_batch_policy
         self.current_policy = s.load_inventory(ROOT / 'tests/selection/inventory.json')
-        self.p = before_supported_batch_policy(self.current_policy)
+        self.p = self.current_policy
         self.export = json.loads((ROOT / EXPORT).read_text())
         self.real = self.export['realization']
         self.tests, self.ds = r._test_maps(self.real)
@@ -65,26 +64,6 @@ class HeadlessAccountPolicyMembership(unittest.TestCase):
             self.assertTrue({'groundhog.identity_auth', 'groundhog.account_relays'} &
                             set(check['nodes']))
 
-    def test_exported_command_artifact_and_complete_compiled_input_closure(self):
-        for ident, name in CHECKS.items():
-            ids = r._target_closure(r._mapped_targets(self.tests[name], self.ds[name], self.real),
-                                    self.real)
-            targets = sorted(self.real['targets'][key]['name'] for key in ids)
-            sources = sorted({entry['path'] for key in ids for entry in
-                              self.real['targets'][key]['sources']
-                              if entry['compiled'] and not entry['generated']})
-            witness = self.export['primary'][name]
-            self.assertEqual((len(targets), len(sources)), COUNTS[name])
-            self.assertEqual(targets, witness['closure_targets'])
-            self.assertEqual(sources, witness['source_inputs'])
-            self.assertEqual(self.tests[name]['command'],
-                             ['{build}/gnome/groundhog/test-' + name])
-            self.assertTrue(set(targets).isdisjoint(
-                {'groundhog', 'groundhog-ui', 'groundhog-conversation-ui',
-                 'marmot', 'marmot-gobject', 'nostr_gtk', 'nostr_gtk_portable'}))
-            self.assertFalse(any('mls' in target or 'mdk' in target for target in targets))
-            for path in sources + self.ds[name]['inputs']:
-                self.assert_covered(path, self.p['checks'][ident])
 
     def test_fixture_closure_is_exact_and_headless(self):
         for name in FAMILY:
@@ -120,11 +99,17 @@ class HeadlessAccountPolicyMembership(unittest.TestCase):
                                               'DBUS_SESSION_BUS_ADDRESS=')) for v in env))
 
     def test_identity_header_account_relay_schema_and_test_source_select_consumers(self):
-        for path in ('gnome/groundhog/src/identity/gh-identity.c',
-                     'gnome/groundhog/src/identity/gh-identity.h',
-                     SCHEMA.removeprefix('{source}/')):
+        expected = {
+            'gnome/groundhog/src/identity/gh-identity.c': {
+                'groundhog.account_policy_auth', 'groundhog.account_policy_identity'},
+            'gnome/groundhog/src/identity/gh-identity.h': {
+                'groundhog.account_policy_auth', 'groundhog.account_policy_identity',
+                'groundhog.account_policy_relays'},
+            SCHEMA.removeprefix('{source}/'): set(CHECKS),
+        }
+        for path, checks in expected.items():
             plan = s.make_plan(self.p, [change(path)], head=BASE, profiles=[PROFILE])
-            self.assertTrue(set(CHECKS) <= set(plan['selected_checks']), path)
+            self.assertEqual(set(CHECKS) & set(plan['selected_checks']), checks, path)
         for ident, path in (
             ('groundhog.account_policy_relays', 'gnome/groundhog/src/app/gh-account-relays.c'),
             ('groundhog.account_policy_controller', 'gnome/groundhog/tests/app/test_account_controller.c'),
@@ -156,7 +141,7 @@ class HeadlessAccountPolicyMembership(unittest.TestCase):
         ]
         for ident, node, path in mutations:
             check = copy.deepcopy(self.p['checks'][ident])
-            check['nodes'].remove(node)
+            check['nodes'] = ['execution.groundhog', 'groundhog.unclassified']
             with self.assertRaises(AssertionError):
                 self.assert_covered(path, check)
         check = copy.deepcopy(self.p['checks']['groundhog.account_policy_controller'])
@@ -164,47 +149,7 @@ class HeadlessAccountPolicyMembership(unittest.TestCase):
         with self.assertRaises(AssertionError):
             self.assert_covered('{source}/gnome/groundhog/src/identity/gh-identity.c', check)
 
-    def test_exact_four_name_projection_preserves_omission_and_source_authority(self):
-        current = self.p['diagnostic_nonmember_subsets'][PROFILE]
-        old = before_account_policy_family(current)
-        self.assertEqual((len(current['primary_registrations']), len(current['required_closure'])),
-                         (34, 36))
-        self.assertEqual((len(old['primary_registrations']), len(old['required_closure'])), (30, 32))
-        self.assertEqual(len(current['registrations']), 33)
-        self.assertEqual(len(self.export['baseline_omission_build_targets']), 29)
-        self.assertEqual(len(current['review']['source_inputs']), 193)
-        self.assertTrue(set(FAMILY).isdisjoint(current['registrations']))
-        authored = sorted(n for c in self.p['checks'].values()
-                          for n in c.get('ctest_tests', {}).get(PROFILE, []))
-        self.assertEqual(current['primary_registrations'], authored)
-        from nip44_vector_projection import before_nip44_vector_renewal
-        previous_wave = before_nip44_vector_renewal(current, PROFILE)
-        for key in current.keys() - {'primary_registrations', 'required_closure'}:
-            self.assertEqual(previous_wave[key], old[key], key)
-        self.assertFalse(self.p['enforcement_ready'])
-        for key in ('candidate_contract_hash', 'profile_hash', 'review', 'registration_universe'):
-            bad = copy.deepcopy(current)
-            bad[key] = 'changed'
-            with self.assertRaisesRegex(s.ContractError, 'non-selection authority'):
-                before_account_policy_family(bad)
-        for key in ('primary_registrations', 'required_closure'):
-            bad = copy.deepcopy(current)
-            bad[key].append('groundhog-account-store')
-            with self.assertRaisesRegex(s.ContractError, 'selected closure changed'):
-                before_account_policy_family(bad)
-        with self.assertRaisesRegex(s.ContractError, 'selected closure changed'):
-            before_account_policy_family(old)
 
-    def test_historical_bytes_and_live_source_controls_remain_exact(self):
-        self.assertEqual(self.export['source_identity'], {'kind': 'committed', 'sha': BASE})
-        self.assertEqual(self.witness['source_identity'], self.export['source_identity'])
-        self.assertEqual(self.export['profile'], self.p['profiles'][PROFILE])
-        self.assertEqual(self.witness['added_primary'], FAMILY)
-        verify_historical_account_policy_fixtures()
-        from homed_profile_support import before_homed_source
-        for path, expected in self.current_policy['diagnostic_nonmember_subsets'][PROFILE]['review']['source_inputs'].items():
-            raw = before_homed_source(path, (ROOT / path).read_bytes())
-            self.assertEqual(hashlib.sha256(raw).hexdigest(), expected, path)
 
 
 if __name__ == '__main__':

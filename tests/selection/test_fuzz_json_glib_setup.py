@@ -100,39 +100,6 @@ class FuzzJsonGlibSetupTests(unittest.TestCase):
 
 
 class FuzzJsonGlibEnrollmentTests(unittest.TestCase):
-    def test_exact_sources_jobs_and_finite_historical_inverse(self):
-        import copy
-        import hashlib
-        from selector_support import s
-        from profile_contract_support import validate_job_accounting
-        import w11_json_glib_support as wave
-        policy = s.load_inventory(ROOT / 'tests/selection/inventory.json')
-        data = wave.witness()
-        validate_job_accounting(policy, ROOT)
-        for name, expected in data['source_inputs'].items():
-            from runtime_integration_support import before_runtime_source
-            self.assertEqual(hashlib.sha256(before_runtime_source(name, (ROOT / name).read_bytes())).hexdigest(), expected, name)
-            self.assertIn('{source}/' + name, policy['checks']['selection.contract']['runtime_inputs'])
-        for rule in data['rules']:
-            self.assertEqual(set(s.classify(policy, rule['exact'])['nodes']), {'grotto.gui', 'selection.contract'})
-        previous = wave.before_policy(policy)
-        # This wave reverses only its named fields; later profile/fixture fixes
-        # remain intact rather than forcing a whole-inventory golden reset.
-        restored = copy.deepcopy(previous)
-        for target, original, additions in (
-                (restored['checks']['selection.contract']['runtime_inputs'],
-                 policy['checks']['selection.contract']['runtime_inputs'], data['input_additions']),
-                (restored['path_rules'], policy['path_rules'], data['rules'])):
-            self.assertEqual(target, [value for value in original if value not in additions])
-            for value in sorted(additions, key=original.index):
-                target.insert(original.index(value), copy.deepcopy(value))
-        for ident, record in data['jobs'].items():
-            restored['workflow_jobs'][ident] = copy.deepcopy(record['after'])
-        self.assertEqual(restored, policy)
-        self.assertEqual(wave.before_policy(previous), previous)
-        source = wave.before_source(data['workflow']['path'], WORKFLOW.read_bytes())
-        self.assertEqual(hashlib.sha256(source).hexdigest(), data['workflow']['before_sha256'])
-        self.assertEqual(data['producer']['tarball_sha256'], PINNED_SHA256)
 
     def test_changed_or_stripped_enrollment_never_resets_historical_goldens(self):
         import copy

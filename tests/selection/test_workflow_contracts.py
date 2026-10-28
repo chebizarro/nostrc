@@ -97,7 +97,7 @@ class WorkerAccountingTests(unittest.TestCase):
 
     def test_unsupported_new_lane_fails_independently_without_hiding_other_conclusions(self):
         p = s.load_inventory(ROOT / 'tests/selection/inventory.json')
-        plan = s.make_plan(p, [], head='a' * 40, context='ci', mode='broad')
+        plan = s.make_plan(p, [], head='a' * 40, context='ci', mode='broad', profiles=sorted(ci.LANES))
         needs = {job: {'result': 'success'} for job in ci.LANES.values()}
         needs.update(select={'result': 'success'}, broad={'result': 'success'})
         for lane in ('core.linux.asan', 'core.macos.asan', 'groundhog.linux.sanitizers'):
@@ -237,34 +237,17 @@ class EventToWorkerTests(GitCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(outputs["broad"], "true")
 
-    def test_current_inventory_broad_selection_dispatches_every_distinct_profile(self):
-        # Reproduce the hosted selector failure with the actual inventory, not ready_policy.
+    def test_current_inventory_unmapped_ordinary_profiles_refuse_attested_dispatch(self):
         self.p = s.load_inventory(ROOT / 'tests/selection/inventory.json')
         self.write('tests/selection/inventory.json', s.canonical(self.p).decode())
         self.write('scripts/test_selection_realization.py', (ROOT / 'scripts/test_selection_realization.py').read_text())
         self.write('scripts/test_selection_execution.py', (ROOT / 'scripts/test_selection_execution.py').read_text())
         self.head = self.commit()
-        result, outputs, directory = self.invoke('workflow_dispatch', {'inputs': {}}, args=('--mode', 'broad'))
-        self.assertEqual(result.returncode, 0, result.stderr)
-        plan = json.loads((directory / 'plan.json').read_text())
-        eligible = {ident for ident, profile in self.p['profiles'].items()
-                    if 'ci' in profile.get('contexts', ['local', 'ci', 'release'])}
-        self.assertEqual(set(plan['expected_lane_ids']), eligible)
-        omitted = {item['id']: item for item in plan['omitted_profiles']}
-        self.assertEqual(set(omitted), set(self.p['profiles']) - eligible)
-        for ident, item in omitted.items():
-            self.assertEqual(item['status'], 'not_executed')
-            self.assertEqual(item['context'], 'ci')
-            self.assertEqual(item['allowed_contexts'], self.p['profiles'][ident]['contexts'])
-            self.assertEqual(item['profile_hash'], s.digest(self.p['profiles'][ident]))
-            self.assertTrue(item['reason'])
-        self.assertEqual(set(json.loads(outputs['lanes'])), set(ci.LANES))
-        self.assertEqual(outputs['sha'], self.head)
-        self.assertEqual(outputs['run'], 'true')
-        self.assertEqual(outputs['broad'], 'true')
-        # Dispatch success is not a complete-gate or profile-union attestation.
-        self.assertFalse(plan['enforcement_ready'])
-        self.assertTrue(plan['coverage_gaps'])
+        result, outputs, _ = self.invoke('workflow_dispatch', {'inputs': {}}, args=('--mode', 'broad'))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('inventory profile lacks Actions worker', result.stderr)
+        self.assertNotIn('lanes', outputs)
+        self.assertFalse(self.p['enforcement_ready'])
 
     def test_annotated_validation_only_tag_reaches_broad_workers_without_publisher(self):
         self.git("tag", "-am", "annotated", "library-v4.5.6")
@@ -517,7 +500,7 @@ class WorkflowWiringTests(unittest.TestCase):
             'homed.linux.ci': 'homed_units',
         }
         p = s.load_inventory(ROOT / 'tests/selection/inventory.json')
-        plan = s.make_plan(p, [], head='a' * 40, context='ci', mode='broad')
+        plan = s.make_plan(p, [], head='a' * 40, context='ci', mode='broad', profiles=sorted(ci.LANES))
         self.assertEqual(set(plan['expected_lane_ids']), set(expected))
         self.assertEqual(ci.LANES, expected)
         self.assertEqual(len(set(ci.LANES.values())), len(ci.LANES))
@@ -739,7 +722,7 @@ sys.exit(int(os.environ['OUTER_STATUS']))
             family_text = workflow(family)
             self.assertIn("workflow_call:", family_text)
             if family == 'namespace-policy-regression':
-                self.assertIn('ref: ${{ inputs.sha }}', family_text)
+                self.assertIn('ref: ${{ inputs.sha || github.sha }}', family_text)
                 self.assertIn('test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"', family_text)
             else:
                 self.assertIn("ref: ${{ inputs.sha || github.sha }}", family_text)

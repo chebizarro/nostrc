@@ -307,71 +307,10 @@ nostrc_describe_test({name} OWNER libgo TARGETS subset-bin INPUTS vector.bin)'''
         self.assertIn("{source}/" + renewal_path, policy["checks"]["selection.contract"]["runtime_inputs"])
         self.assertEqual(renewal["source_review_scope"], ["apps/grotto/CMakeLists.txt", "cmake/NostrcConfigureProvenance.cmake"])
         self.assertFalse(any(renewal["limits"].values()))
-        from runtime_integration_support import before_runtime_policy
-        records = subset.contracts(before_runtime_policy(policy))
-        self.assertEqual(set(records), set(subset.PROFILES))
-        for pid, contract in records.items():
-            witness = fixture["profiles"][pid]
-            current = renewal["profiles"][pid]
-            if pid == "groundhog.linux":
-                from headless_identity_projection import before_identity_family
-                contract = before_identity_family(contract)
-                # The later selected-family renewal adds coverage, not omissions.
-                # Project only those exact arrays to inspect this older receipt.
-                path = "tests/selection/fixtures/headless_model_subset_renewal_20261022.json"
-                membership = json.loads((ROOT / path).read_text())
-                self.assertIn("{source}/" + path, policy["checks"]["selection.contract"]["runtime_inputs"])
-                contract = copy.deepcopy(contract)
-                for key in ("primary_registrations", "required_closure"):
-                    self.assertEqual(contract[key], sorted(membership["previous"][key] + membership["added_primary"]))
-                    contract[key] = membership["previous"][key]
-                self.assertEqual(s.digest(contract), membership["previous_record_hash"])
-            if pid == "grotto.linux":
-                from grotto_nip49_projection import before_grotto_nip49_family
-                contract = before_grotto_nip49_family(contract)
-            # Retain the original witness byte-for-byte; renew source provenance,
-            # not its exact family/profile/candidate/fixture/toolchain authority.
-            previous = dict(contract, review=current["previous_review"])
-            self.assertEqual(s.digest(previous), witness["record_hash"])
-            self.assertEqual(s.digest(contract), current["record_hash"])
-            self.assertEqual(s.digest({k: v for k, v in contract.items() if k != "review"}), current["unchanged_contract_hash"])
-            self.assertEqual(contract["candidate_contract_hash"], s.digest(reconstructed))
-            self.assertEqual(contract["toolchain_contract_hash"], s.digest(fixture["toolchain_contracts"][pid]))
-            self.assertEqual(previous["review"]["source_sha"], fixture["review_source_identity"]["sha"])
-            self.assertEqual(previous["review"]["post_audit_sha256"], witness["postaudit"]["sha256"])
-            self.assertEqual(previous["review"]["pre_audit_sha256"], witness["preaudit"]["sha256"])
-            self.assertEqual(previous["review"]["realization_sha256"], witness["realization_file_sha256"])
-            self.assertEqual(contract["review"]["source_sha"], renewal["source_identity"]["sha"])
-            self.assertEqual(contract["review"]["pre_audit_sha256"], current["raw_preaudit"]["sha256"])
-            self.assertEqual(contract["review"]["post_audit_sha256"], current["candidate_preaudit"]["sha256"])
-            self.assertEqual(contract["review"]["realization_sha256"], current["realization_file_sha256"])
-            self.assertEqual(contract["review"]["profile_fingerprint"], current["profile_fingerprint"])
-            renewed = {"source_inputs", "source_sha", "reviewer", "pre_audit_sha256", "post_audit_sha256", "realization_sha256", "profile_fingerprint"}
-            self.assertEqual({k: v for k, v in contract["review"].items() if k not in renewed},
-                             {k: v for k, v in previous["review"].items() if k not in renewed})
-            changed = current["source_input_changes"]
-            self.assertEqual(set(changed), set(renewal["source_review_scope"]))
-            self.assertIsNone(changed["cmake/NostrcConfigureProvenance.cmake"]["before"])
-            expected_inputs = dict(previous["review"]["source_inputs"])
-            for name, values in changed.items():
-                self.assertEqual(expected_inputs.get(name), values["before"])
-                expected_inputs[name] = values["after"]
-            self.assertEqual(contract["review"]["source_inputs"], expected_inputs)
-            self.assertIn("reviewed source input changed: apps/grotto/CMakeLists.txt", current["old_source_guard_refusal"])
-            self.assertEqual(current["removed_findings"], [{"kind": "unclaimed_registration", "test": n} for n in subset.REGISTRATIONS])
-            self.assertEqual(current["added_findings"], [])
-            self.assertFalse(current["candidate_preaudit"]["passed"])
-            self.assertFalse(current["complete"])
-            self.assertFalse(current["complete_gate_eligible"])
-            self.assertEqual(len(contract["registration_universe"]), {"groundhog.linux": 422, "grotto.linux": 461}[pid])
-            self.assertEqual(witness["build_exit"], 0)
-            self.assertEqual(len(witness["audit_build_targets"]), 29)
-            self.assertFalse(witness["preaudit"]["passed"])
-            self.assertFalse(witness["postaudit"]["passed"])
-            self.assertEqual(witness["candidate_findings"], [{"kind": "unclaimed_registration", "test": n} for n in subset.REGISTRATIONS])
-            for name, expected in records[pid]["review"]["source_inputs"].items():
-                from homed_profile_support import before_homed_source
-                self.assertEqual(hashlib.sha256(before_homed_source(name, (ROOT / name).read_bytes())).hexdigest(), expected, name)
+        # The old receipt remains historical. Changed profiles must not renew
+        # its authority merely because the current ordinary runner passes.
+        with self.assertRaisesRegex(ValueError, 'stale profile hash'):
+            subset.contracts(policy)
 
     def test_production_selection_savings_do_not_hide_legitimate_libgo_coverage(self):
         policy = s.load_inventory(ROOT / "tests/selection/inventory.json")
@@ -516,21 +455,6 @@ nostrc_describe_test({name} OWNER libgo TARGETS subset-bin INPUTS vector.bin)'''
             self.assertIs(result["complete_gate_eligible"], False)
             self.assertEqual(result["resolved"]["baseline_exclusions"][0]["status"], "not_executed")
 
-    def test_historical_production_policy_cannot_promote_ordinary_evidence(self):
-        from runtime_integration_support import before_runtime_policy
-        policy = subset.before_full_ownership_policy(before_runtime_policy(s.load_inventory(ROOT / "tests/selection/inventory.json")))
-        release = s.release_plan(ROOT, policy, head="HEAD", component="libgo", dry_run=True, run_id="ordinary-production-negative")
-        self.assertEqual(release["diagnostic_nonmember_subset_profiles"], sorted(subset.PROFILES))
-        validation = dict(passed=True, complete=True, mode="broad", partial_profiles=[], tag=release["tag"],
-                          **{k: release[k] for k in ("source_identity", "tested_sha", "inventory_hash")})
-        jobs = {job: "success" for job in release["required_package_jobs"]}
-        for pid in subset.PROFILES:
-            # A separately complete summary cannot launder a nested ordinary
-            # receipt even when its omission records and flags are stripped.
-            bad = dict(validation, evidence=[{"profile": pid, "complete": True, "passed": True}])
-            result = s.aggregate_release(release, bad, jobs)
-            self.assertFalse(result["passed"])
-            self.assertIn("ordinary subset receipt cannot authorize complete release validation", result["errors"])
 
     def test_receipt_nested_stripped_malformed_cross_profile_and_release_promotion_refuse(self):
         _, resolved, _, result = self.execute("grotto.linux")

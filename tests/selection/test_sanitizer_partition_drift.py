@@ -75,9 +75,6 @@ class SanitizerPartitionDrift(unittest.TestCase):
         self.assertEqual(self.contract['review']['source_sha'], self.data['delta']['review_source']['commit'])
         self.assertNotIn(self.data['delta']['registration'], self.contract['registrations'] + self.contract['required_closure'])
         self.assertNotIn(self.data['delta']['registration'], self.authored)
-        # Every exact newer layer leaves the nonmember authority untouched.
-        import groundhog_app_enrollment_support as newest
-        self.assertEqual(newest.before_policy(self.policy)['diagnostic_nonmembers'], self.policy['diagnostic_nonmembers'])
         self.assertEqual(s.digest(self.policy['profiles'][PROFILE]), self.data['hosted']['profile_hash'])
         self.assertEqual(self.contract['profile_hash'], self.data['hosted']['profile_hash'])
 

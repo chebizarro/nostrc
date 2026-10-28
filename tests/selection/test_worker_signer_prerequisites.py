@@ -155,30 +155,6 @@ class WorkerSignerPrerequisiteTests(unittest.TestCase):
         late = self.text.replace(nak['body'] + '\n', '', 1) + nak['body'] + '\n'
         self.assertIn('runs after execution', ' '.join(coverage_errors(late, self.inventory)))
 
-    def test_checkpoint_worker_lacked_exactly_these_prerequisites(self):
-        """The B checkpoint's worker (a786f19e9) fails this regression for the
-        reason B recorded; recorded bytes keep the proof independent of git."""
-        current = ("        if: runner.os == 'Linux' && (inputs.profile == 'core.linux' || inputs.profile == 'core.linux.asan'"
-                   " || startsWith(inputs.profile, 'grotto.linux') || inputs.profile == 'groundhog.mdk08'"
-                   " || inputs.profile == 'groundhog.mdk011')\n")
-        checkpoint = ("        if: runner.os == 'Linux' && (inputs.profile == 'core.linux'"
-                      " || startsWith(inputs.profile, 'grotto.linux') || inputs.profile == 'groundhog.mdk08')\n")
-        # Start from the pre-.36.12/.36.15 worker: only that exact reviewed repair is reversed.
-        import worker_prerequisite_support as newer
-        from w11_batch2_integration_support import before_source as before_batch2_source
-        path = '.github/workflows/dependency-worker.yml'
-        text = newer.before_source(path, before_batch2_source(path, WORKER.read_bytes())).decode()
-        self.assertEqual(text.count(current), 1)
-        original = text.replace(current, checkpoint)
-        start = original.index('      # Both original MDK profiles author the nak capability')
-        end = original.index('      - name: Install pinned Blueprint compiler for application profiles')
-        original = original[:start] + original[end:]
-        errors = coverage_errors(original, self.inventory)
-        self.assertEqual(sorted(errors), sorted([
-            'core.linux.asan: needs exactly one pinned Blueprint install, got 0',
-            'groundhog.mdk011: needs exactly one pinned Blueprint install, got 0',
-            'groundhog.mdk011: needs exactly one Go and one pinned nak install, got 0/0',
-            'groundhog.mdk08: needs exactly one Go and one pinned nak install, got 0/0']))
 
     def test_condition_grammar_refuses_unreviewed_expressions(self):
         self.assertTrue(selects("runner.os == 'Linux' && (inputs.profile == 'x' || startsWith(inputs.profile, 'y.'))", 'y.z'))

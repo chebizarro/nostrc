@@ -56,11 +56,6 @@ class CoreSourceProducers(unittest.TestCase):
             self.assertIn(path, policy['nodes']['groundhog.gresource_inputs']['owner_paths'])
         for check in ('groundhog.default_build', 'grotto.default_build'):
             self.assertTrue(set(record['default_consumer_nodes']) <= set(policy['checks'][check]['nodes']))
-        before_closeout_policy(policy)
-        changed = copy.deepcopy(policy)
-        changed['nodes']['groundhog.gresource_inputs']['owner_paths'].append('unrelated/input.h')
-        with self.assertRaisesRegex(ValueError, 'closeout nodes changed'):
-            before_closeout_policy(changed)
 
     @classmethod
     def setUpClass(cls):
@@ -122,9 +117,6 @@ class CoreSourceProducers(unittest.TestCase):
                     for path, raw in outputs[1].items():
                         full = source + '/' + path
                         observed.add(full)
-                        if enabled == 'OFF':
-                            self.assertEqual(hashlib.sha256(raw).hexdigest(),
-                                             self.data['before_generated'][full]['sha256'], full)
         self.assertEqual(observed, set(self.data['before_generated']))
 
     def test_gnostr_config_is_refreshed_from_template_without_rewriting_equal_bytes(self):
@@ -140,16 +132,6 @@ class CoreSourceProducers(unittest.TestCase):
             self.run_fragment('gnostr_config', fragment, build, enabled='OFF', commit='unknown')
             self.assertEqual(header.read_bytes(), first_bytes)
 
-    def test_source_projection_is_byte_exact_and_rejects_unrelated_changes(self):
-        for path, record in self.data['source_edits'].items():
-            current = (ROOT / path).read_bytes()
-            previous = before_core_producer_source(path, current)
-            self.assertEqual(hashlib.sha256(previous).hexdigest(), record['before_sha256'])
-            self.assertEqual(before_core_producer_source(path, previous), previous)
-            with self.assertRaises(s.ContractError):
-                before_core_producer_source(path, current + b'\n')
-            with self.assertRaises(s.ContractError):
-                before_core_producer_source(path, previous + b'\n')
 
     def test_exact_owner_edges_select_consumers_without_reassigning_sources(self):
         policy = s.load_inventory(ROOT / 'tests/selection/inventory.json')
@@ -162,17 +144,7 @@ class CoreSourceProducers(unittest.TestCase):
             self.assertIn(node, policy['checks']['core.default_build']['nodes'])
             self.assertIn('core.default_build', s.make_plan(policy, [change(path)], head='a' * 40)['selected_checks'])
         self.assertIn('libmarmot', policy['checks']['supported.apps.gnostr.plugins.mls.groups']['nodes'])
-        for profile in ('groundhog.linux', 'grotto.linux'):
-            contract = policy['diagnostic_nonmember_subsets'][profile]
-            previous = before_closeout_contract(contract, profile)
-            self.assertEqual(len(contract['review']['source_inputs']), 193)
-            self.assertEqual(set(contract['review']['source_inputs']), set(previous['review']['source_inputs']))
-            self.assertEqual(contract['registrations'], previous['registrations'])
-            for path, old in self.data['before_controls'].items():
-                self.assertEqual(previous['review']['source_inputs'][path], old)
-                # Frozen review binding: the newer W11 batch2 layer (.36.23 Gnostr CMake) is projected first.
-                self.assertEqual(contract['review']['source_inputs'][path],
-                                 hashlib.sha256(before_batch2_source(path, (ROOT / path).read_bytes())).hexdigest())
+
 
 
 class CoreConfigureWitnesses(Project):

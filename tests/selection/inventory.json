@@ -50,13 +50,21 @@
       "runtime_inputs": []
     },
     "bindings.rust.consumer": {
-      "nodes": ["bindings.rust"],
-      "profiles": ["selection.operational.linux", "selection.operational.macos"],
+      "nodes": [
+        "bindings.rust"
+      ],
+      "profiles": [
+        "selection.operational.linux",
+        "selection.operational.macos"
+      ],
       "kind": "command",
       "cost": "ordinary",
       "requirement": "blocking",
       "expected_outcome": "pass",
-      "command": ["bash", "{source}/bindings/rust/test-installed.sh"],
+      "command": [
+        "bash",
+        "{source}/bindings/rust/test-installed.sh"
+      ],
       "working_directory": "{source}",
       "environment": {},
       "runtime_inputs": [
@@ -84,11 +92,50 @@
       "cost": "ordinary",
       "requirement": "blocking",
       "expected_outcome": "pass",
-      "nodes": ["execution.vault_syncd", "gnome.nostr_homed.vault", "gnome.nostr_homed.vault.test_inputs", "gnome.nostr_homed.porthome.test_inputs"],
-      "profiles": ["homed.vault.linux"],
-      "ctest_tests": {"homed.vault.linux": ["homed_porthome_blossom_guards", "homed_syncd_vault_protocol", "homed_syncd_vault_runtime", "homed_syncd_vault_fuse", "homed_syncd_vault_fs", "homed_syncd_vault_config", "homed_syncd_push_e2e", "homed_syncd_pusher_multi_server", "homed_syncd_off_closure", "homed_vault_pam_nostr_closure", "homed_vault_nss_nostr_closure", "json_glib_off_closure"]},
-      "build_targets": ["test_porthome_blossom_guards", "test_syncd_vault_runtime", "nostr-home-fuse", "test_syncd_vault_fs", "nostr-home-syncd", "test_syncd_push_e2e", "test_syncd_pusher_multi_server", "nostr-authd", "pam_nostr", "nss_nostr"],
-      "runtime_inputs": ["gnome/nostr-homed/tests/integration/test_syncd_vault_protocol.py", "tools/vaultctl/tests/fixtures.py", "gnome/nostr-homed/tests/integration/test_syncd_off_closure.sh", "libjson/tests/check_glib_off_closure.sh", "gnome/nostr-homed/tests/integration/test_syncd_vault_config.py"]
+      "nodes": [
+        "execution.vault_syncd",
+        "gnome.nostr_homed.vault",
+        "gnome.nostr_homed.vault.test_inputs",
+        "gnome.nostr_homed.porthome.test_inputs"
+      ],
+      "profiles": [
+        "homed.vault.linux"
+      ],
+      "ctest_tests": {
+        "homed.vault.linux": [
+          "homed_porthome_blossom_guards",
+          "homed_syncd_vault_protocol",
+          "homed_syncd_vault_runtime",
+          "homed_syncd_vault_fuse",
+          "homed_syncd_vault_fs",
+          "homed_syncd_vault_config",
+          "homed_syncd_push_e2e",
+          "homed_syncd_pusher_multi_server",
+          "homed_syncd_off_closure",
+          "homed_vault_pam_nostr_closure",
+          "homed_vault_nss_nostr_closure",
+          "json_glib_off_closure"
+        ]
+      },
+      "build_targets": [
+        "test_porthome_blossom_guards",
+        "test_syncd_vault_runtime",
+        "nostr-home-fuse",
+        "test_syncd_vault_fs",
+        "nostr-home-syncd",
+        "test_syncd_push_e2e",
+        "test_syncd_pusher_multi_server",
+        "nostr-authd",
+        "pam_nostr",
+        "nss_nostr"
+      ],
+      "runtime_inputs": [
+        "gnome/nostr-homed/tests/integration/test_syncd_vault_protocol.py",
+        "tools/vaultctl/tests/fixtures.py",
+        "gnome/nostr-homed/tests/integration/test_syncd_off_closure.sh",
+        "libjson/tests/check_glib_off_closure.sh",
+        "gnome/nostr-homed/tests/integration/test_syncd_vault_config.py"
+      ]
     },
     "homed.units": {
       "kind": "ctest",
@@ -1998,42 +2045,106 @@
       "runtime_inputs": []
     },
     "supported.nostr.gobject.blossom": {
-      "build_targets": ["test_nostr_gobject_blossom"],
+      "build_targets": [
+        "test_nostr_gobject_blossom"
+      ],
       "cost": "ordinary",
       "ctest_tests": {
-        "core.macos.asan": ["test_nostr_gobject_blossom"],
-        "core.linux.asan": ["test_nostr_gobject_blossom"],
-        "groundhog.linux": ["test_nostr_gobject_blossom"],
-        "grotto.linux": ["test_nostr_gobject_blossom"],
-        "core.linux": ["test_nostr_gobject_blossom"],
-        "grotto.linux.asan_ubsan": ["test_nostr_gobject_blossom"],
-        "groundhog.mdk08": ["test_nostr_gobject_blossom"],
-        "groundhog.mdk011": ["test_nostr_gobject_blossom"]
+        "core.macos.asan": [
+          "test_nostr_gobject_blossom"
+        ],
+        "core.linux.asan": [
+          "test_nostr_gobject_blossom"
+        ],
+        "groundhog.linux": [
+          "test_nostr_gobject_blossom"
+        ],
+        "grotto.linux": [
+          "test_nostr_gobject_blossom"
+        ],
+        "core.linux": [
+          "test_nostr_gobject_blossom"
+        ],
+        "grotto.linux.asan_ubsan": [
+          "test_nostr_gobject_blossom"
+        ],
+        "groundhog.mdk08": [
+          "test_nostr_gobject_blossom"
+        ],
+        "groundhog.mdk011": [
+          "test_nostr_gobject_blossom"
+        ]
       },
       "expected_outcome": "pass",
       "kind": "ctest",
-      "nodes": ["nostr.gobject", "libblossom", "bud02"],
-      "profiles": ["core.macos.asan", "core.linux.asan", "groundhog.linux", "grotto.linux", "core.linux", "grotto.linux.asan_ubsan", "groundhog.mdk08", "groundhog.mdk011"],
+      "nodes": [
+        "nostr.gobject",
+        "libblossom",
+        "bud02"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan",
+        "groundhog.linux",
+        "grotto.linux",
+        "core.linux",
+        "grotto.linux.asan_ubsan",
+        "groundhog.mdk08",
+        "groundhog.mdk011"
+      ],
       "requirement": "blocking",
       "runtime_inputs": []
     },
     "supported.nostr.gobject.vault": {
-      "build_targets": ["test_nostr_gobject_vault"],
+      "build_targets": [
+        "test_nostr_gobject_vault"
+      ],
       "cost": "ordinary",
       "ctest_tests": {
-        "core.macos.asan": ["test_nostr_gobject_vault"],
-        "core.linux.asan": ["test_nostr_gobject_vault"],
-        "groundhog.linux": ["test_nostr_gobject_vault"],
-        "grotto.linux": ["test_nostr_gobject_vault"],
-        "core.linux": ["test_nostr_gobject_vault"],
-        "grotto.linux.asan_ubsan": ["test_nostr_gobject_vault"],
-        "groundhog.mdk08": ["test_nostr_gobject_vault"],
-        "groundhog.mdk011": ["test_nostr_gobject_vault"]
+        "core.macos.asan": [
+          "test_nostr_gobject_vault"
+        ],
+        "core.linux.asan": [
+          "test_nostr_gobject_vault"
+        ],
+        "groundhog.linux": [
+          "test_nostr_gobject_vault"
+        ],
+        "grotto.linux": [
+          "test_nostr_gobject_vault"
+        ],
+        "core.linux": [
+          "test_nostr_gobject_vault"
+        ],
+        "grotto.linux.asan_ubsan": [
+          "test_nostr_gobject_vault"
+        ],
+        "groundhog.mdk08": [
+          "test_nostr_gobject_vault"
+        ],
+        "groundhog.mdk011": [
+          "test_nostr_gobject_vault"
+        ]
       },
       "expected_outcome": "pass",
       "kind": "ctest",
-      "nodes": ["nostr.gobject", "libvault", "libporthome", "libblossom", "nip59"],
-      "profiles": ["core.macos.asan", "core.linux.asan", "groundhog.linux", "grotto.linux", "core.linux", "grotto.linux.asan_ubsan", "groundhog.mdk08", "groundhog.mdk011"],
+      "nodes": [
+        "nostr.gobject",
+        "libvault",
+        "libporthome",
+        "libblossom",
+        "nip59"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan",
+        "groundhog.linux",
+        "grotto.linux",
+        "core.linux",
+        "grotto.linux.asan_ubsan",
+        "groundhog.mdk08",
+        "groundhog.mdk011"
+      ],
       "requirement": "blocking",
       "runtime_inputs": []
     },
@@ -8441,11 +8552,9 @@
         "{source}/tests/selection/fixtures/grotto_crypto_exports.json",
         "{source}/tests/selection/fixtures/grotto_crypto_subset_renewal_20261022.json",
         "{source}/tests/selection/test_grotto_crypto_membership.py",
-        "{source}/tests/selection/test_media_crypto_integration.py",
         "{source}/tests/selection/fixtures/nip44_canonical_vectors_20261022.json",
         "{source}/tests/selection/fixtures/nip44_vector_renewal_20261022.json",
         "{source}/tests/selection/nip44_vector_projection.py",
-        "{source}/tests/selection/test_vector_family_integration.py",
         "{source}/tests/selection/fixtures/headless_account_policy_exports.json",
         "{source}/tests/selection/fixtures/headless_account_policy_subset_renewal_20261022.json",
         "{source}/tests/selection/headless_account_policy_projection.py",
@@ -8481,7 +8590,6 @@
         "{source}/tests/selection/test_execution_parallelism.py",
         "{source}/tests/selection/test_failure_receipts.py",
         "{source}/tests/selection/test_git_ranges.py",
-        "{source}/tests/selection/test_grotto_profiles.py",
         "{source}/tests/selection/test_gtk_ownership.py",
         "{source}/tests/selection/test_local_command_adapter.py",
         "{source}/tests/selection/test_mdk_cleanup.py",
@@ -8530,7 +8638,6 @@
         "{source}/scripts/test_selection_keyring.py",
         "{source}/tests/custody/test_keyring_runtime.py",
         "{source}/tests/selection/closeout_support.py",
-        "{source}/tests/selection/test_closeout_interfaces.py",
         "{source}/tests/selection/fixtures/closeout_interfaces.json",
         "{source}/scripts/test_selection_producers.py",
         "{source}/tests/selection/test_default_producers.py",
@@ -8620,7 +8727,6 @@
         "{source}/tests/selection/test_namespace_apparmor_provisioning.py",
         "{source}/tests/selection/test_w11_measurement.py",
         "{source}/tests/selection/test_normal_execution_contract.py",
-        "{source}/tests/selection/test_runtime_integration_contract.py",
         "{source}/tests/selection/runtime_integration_support.py",
         "{source}/tests/selection/fixtures/runtime_integration_20261023.json",
         "{source}/scripts/adapter_darwin_custody.py",
@@ -8634,29 +8740,23 @@
         "{source}/tests/selection/test_normal_transport.py",
         "{source}/tests/selection/post608c_integration_support.py",
         "{source}/tests/selection/fixtures/post608c_integration_20261024.json",
-        "{source}/tests/selection/test_post608c_integration.py",
         "{source}/tests/selection/namespace_policy_controller.sh",
         "{source}/tests/selection/fixtures/hosted_cause_integration_20261024.json",
         "{source}/tests/selection/test_homed_ci_worker.py",
         "{source}/tests/selection/post1640_integration_support.py",
         "{source}/tests/selection/fixtures/post1640_integration_20261024.json",
-        "{source}/tests/selection/test_post1640_integration.py",
         "{source}/tests/selection/mdk011_app_enrollment_support.py",
         "{source}/tests/selection/fixtures/mdk011_app_enrollment_20261024.json",
-        "{source}/tests/selection/test_mdk011_app_enrollment.py",
         "{source}/tests/selection/coreasan_app_enrollment_support.py",
         "{source}/tests/selection/fixtures/coreasan_app_enrollment_20261024.json",
-        "{source}/tests/selection/test_coreasan_app_enrollment.py",
         "{source}/tests/selection/worker_prerequisite_support.py",
         "{source}/tests/selection/fixtures/worker_prerequisite_20261024.json",
         "{source}/tests/selection/test_worker_prerequisites.py",
         "{source}/tests/selection/test_w11_matrix.py",
         "{source}/tests/selection/w11_matrix_integration_support.py",
         "{source}/tests/selection/fixtures/w11_matrix_integration_20261024.json",
-        "{source}/tests/selection/test_w11_matrix_integration.py",
         "{source}/tests/selection/groundhog_app_enrollment_support.py",
         "{source}/tests/selection/fixtures/groundhog_app_enrollment_20261024.json",
-        "{source}/tests/selection/test_groundhog_app_enrollment.py",
         "{source}/tests/selection/fixtures/sanitizer_partition_drift_20261024.json",
         "{source}/tests/selection/test_sanitizer_partition_drift.py",
         "{source}/scripts/signer-scope-proof.py",
@@ -8664,17 +8764,44 @@
         "{source}/tests/selection/test_signer_scope_proof.py",
         "{source}/tests/selection/w11_batch2_integration_support.py",
         "{source}/tests/selection/fixtures/w11_batch2_integration_20261024.json",
-        "{source}/tests/selection/test_w11_batch2_integration.py",
         "{source}/tests/selection/w11_post_h_integration_support.py",
         "{source}/tests/selection/fixtures/w11_post_h_integration_20261024.json",
-        "{source}/tests/selection/test_w11_post_h_integration.py",
         "{source}/tests/selection/static_frontend_host.py",
         "{source}/tests/selection/w11_post_1f7_integration_support.py",
         "{source}/tests/selection/fixtures/w11_post_1f7_integration_20261024.json",
-        "{source}/tests/selection/test_w11_post_1f7_integration.py",
         "{source}/tests/selection/w11_post_419_integration_support.py",
         "{source}/tests/selection/fixtures/w11_post_419_integration_20261024.json",
-        "{source}/tests/selection/test_w11_post_419_integration.py"
+        "{source}/bindings/rust/porthome-sys/Cargo.toml",
+        "{source}/bindings/rust/vault-sys/Cargo.toml",
+        "{source}/nips/nip59/CMakeLists.txt",
+        "{source}/libvault-marmot/CMakeLists.txt",
+        "{source}/tools/vaultctl/CMakeLists.txt",
+        "{source}/libvault/CMakeLists.txt",
+        "{source}/libporthome/CMakeLists.txt",
+        "{source}/.github/workflows/ci-selective.yml",
+        "{source}/.github/workflows/rust-bindings-ci.yml",
+        "{source}/.github/workflows/vault-syncd-ci.yml",
+        "{source}/libjson/TestInventory.cmake",
+        "{source}/nips/nip5f/CMakeLists.txt",
+        "{source}/nips/nip5f/tests/test_nip5f_tcp.c",
+        "{source}/tests/selection/bud02_registration_rename_support.py",
+        "{source}/tests/selection/fixtures/bud02_registration_rename_20261027.json",
+        "{source}/tests/selection/fixtures/groundhog_cmake_source_edits_20261027.json",
+        "{source}/tests/selection/fixtures/inventory_option_drift_20261027.json",
+        "{source}/tests/selection/fixtures/nip55l_affected.json",
+        "{source}/tests/selection/fixtures/resource_profile_exports_20261027.json",
+        "{source}/tests/selection/groundhog_cmake_support.py",
+        "{source}/tests/selection/inventory_option_drift_support.py",
+        "{source}/tests/selection/test_bud02_registration_rename.py",
+        "{source}/tests/selection/test_ci_selected_execution.py",
+        "{source}/tests/selection/test_current_app_membership.py",
+        "{source}/tests/selection/test_inventory_option_drift.py",
+        "{source}/tests/selection/test_local_selective_delivery.py",
+        "{source}/tests/selection/test_nip55l_selection.py",
+        "{source}/tests/selection/test_ordinary_gate_wiring.py",
+        "{source}/tests/selection/test_package_boundary_selection.py",
+        "{source}/tests/selection/test_workflow_defaults.py",
+        "{source}/tests/selection/README.md"
       ],
       "working_directory": "{source}",
       "requires": [
@@ -20917,98 +21044,274 @@
       "runtime_inputs": []
     },
     "root.asan.libvault.marmot": {
-      "build_targets": ["test_vault_grant_marmot"],
+      "build_targets": [
+        "test_vault_grant_marmot"
+      ],
       "cost": "ordinary",
       "ctest_tests": {
-        "core.macos.asan": ["test_vault_grant_marmot"],
-        "core.linux.asan": ["test_vault_grant_marmot"]
+        "core.macos.asan": [
+          "test_vault_grant_marmot"
+        ],
+        "core.linux.asan": [
+          "test_vault_grant_marmot"
+        ]
       },
       "expected_outcome": "pass",
       "kind": "ctest",
-      "nodes": ["execution.core", "libvault.marmot", "libvault.marmot.test_inputs"],
-      "profiles": ["core.macos.asan", "core.linux.asan"],
+      "nodes": [
+        "execution.core",
+        "libvault.marmot",
+        "libvault.marmot.test_inputs"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan"
+      ],
       "requirement": "blocking",
       "runtime_inputs": []
     },
     "supported.libvault.marmot": {
-      "build_targets": ["test_vault_grant_marmot"],
+      "build_targets": [
+        "test_vault_grant_marmot"
+      ],
       "cost": "ordinary",
       "ctest_tests": {
-        "core.linux": ["test_vault_grant_marmot"],
-        "grotto.linux": ["test_vault_grant_marmot"],
-        "grotto.linux.asan_ubsan": ["test_vault_grant_marmot"],
-        "groundhog.linux": ["test_vault_grant_marmot"],
-        "groundhog.mdk011": ["test_vault_grant_marmot"],
-        "groundhog.mdk08": ["test_vault_grant_marmot"]
+        "core.linux": [
+          "test_vault_grant_marmot"
+        ],
+        "grotto.linux": [
+          "test_vault_grant_marmot"
+        ],
+        "grotto.linux.asan_ubsan": [
+          "test_vault_grant_marmot"
+        ],
+        "groundhog.linux": [
+          "test_vault_grant_marmot"
+        ],
+        "groundhog.mdk011": [
+          "test_vault_grant_marmot"
+        ],
+        "groundhog.mdk08": [
+          "test_vault_grant_marmot"
+        ]
       },
       "expected_outcome": "pass",
       "kind": "ctest",
-      "nodes": ["execution.core", "execution.grotto", "execution.groundhog", "libvault.marmot", "libvault.marmot.test_inputs"],
-      "profiles": ["core.linux", "grotto.linux", "grotto.linux.asan_ubsan", "groundhog.linux", "groundhog.mdk011", "groundhog.mdk08"],
+      "nodes": [
+        "execution.core",
+        "execution.grotto",
+        "execution.groundhog",
+        "libvault.marmot",
+        "libvault.marmot.test_inputs"
+      ],
+      "profiles": [
+        "core.linux",
+        "grotto.linux",
+        "grotto.linux.asan_ubsan",
+        "groundhog.linux",
+        "groundhog.mdk011",
+        "groundhog.mdk08"
+      ],
       "requirement": "blocking",
       "runtime_inputs": []
     },
     "root.asan.vaultctl": {
-      "build_targets": ["vaultctl", "vaultctl_fixture_helper"],
+      "build_targets": [
+        "vaultctl",
+        "vaultctl_fixture_helper"
+      ],
       "cost": "ordinary",
       "ctest_tests": {
-        "core.macos.asan": ["test_vaultctl_fixtures"],
-        "core.linux.asan": ["test_vaultctl_fixtures"]
+        "core.macos.asan": [
+          "test_vaultctl_fixtures"
+        ],
+        "core.linux.asan": [
+          "test_vaultctl_fixtures"
+        ]
       },
       "expected_outcome": "pass",
       "kind": "ctest",
-      "nodes": ["execution.core", "vaultctl", "vaultctl.test_inputs"],
-      "profiles": ["core.macos.asan", "core.linux.asan"],
+      "nodes": [
+        "execution.core",
+        "vaultctl",
+        "vaultctl.test_inputs"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan"
+      ],
       "requirement": "blocking",
-      "runtime_inputs": ["tools/vaultctl/tests/fixtures.py"]
+      "runtime_inputs": [
+        "tools/vaultctl/tests/fixtures.py"
+      ]
     },
     "supported.vaultctl": {
-      "build_targets": ["vaultctl", "vaultctl_fixture_helper"],
+      "build_targets": [
+        "vaultctl",
+        "vaultctl_fixture_helper"
+      ],
       "cost": "ordinary",
       "ctest_tests": {
-        "core.linux": ["test_vaultctl_fixtures"],
-        "grotto.linux": ["test_vaultctl_fixtures"],
-        "grotto.linux.asan_ubsan": ["test_vaultctl_fixtures"],
-        "groundhog.linux": ["test_vaultctl_fixtures"],
-        "groundhog.mdk011": ["test_vaultctl_fixtures"],
-        "groundhog.mdk08": ["test_vaultctl_fixtures"]
+        "core.linux": [
+          "test_vaultctl_fixtures"
+        ],
+        "grotto.linux": [
+          "test_vaultctl_fixtures"
+        ],
+        "grotto.linux.asan_ubsan": [
+          "test_vaultctl_fixtures"
+        ],
+        "groundhog.linux": [
+          "test_vaultctl_fixtures"
+        ],
+        "groundhog.mdk011": [
+          "test_vaultctl_fixtures"
+        ],
+        "groundhog.mdk08": [
+          "test_vaultctl_fixtures"
+        ]
       },
       "expected_outcome": "pass",
       "kind": "ctest",
-      "nodes": ["execution.core", "execution.grotto", "execution.groundhog", "vaultctl", "vaultctl.test_inputs"],
-      "profiles": ["core.linux", "grotto.linux", "grotto.linux.asan_ubsan", "groundhog.linux", "groundhog.mdk011", "groundhog.mdk08"],
+      "nodes": [
+        "execution.core",
+        "execution.grotto",
+        "execution.groundhog",
+        "vaultctl",
+        "vaultctl.test_inputs"
+      ],
+      "profiles": [
+        "core.linux",
+        "grotto.linux",
+        "grotto.linux.asan_ubsan",
+        "groundhog.linux",
+        "groundhog.mdk011",
+        "groundhog.mdk08"
+      ],
       "requirement": "blocking",
-      "runtime_inputs": ["tools/vaultctl/tests/fixtures.py"]
+      "runtime_inputs": [
+        "tools/vaultctl/tests/fixtures.py"
+      ]
     },
     "root.asan.libvault": {
-      "build_targets": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs", "test_vault_grant_nip59", "test_vault_tree_ops"],
+      "build_targets": [
+        "test_vault_ring_derivation",
+        "test_vault_revoke_lazy",
+        "test_vault_fold_frontier",
+        "test_vault_codecs",
+        "test_vault_grant_nip59",
+        "test_vault_tree_ops"
+      ],
       "cost": "ordinary",
       "ctest_tests": {
-        "core.macos.asan": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs", "test_vault_grant_nip59", "test_vault_tree_ops"],
-        "core.linux.asan": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs", "test_vault_grant_nip59", "test_vault_tree_ops"]
+        "core.macos.asan": [
+          "test_vault_ring_derivation",
+          "test_vault_revoke_lazy",
+          "test_vault_fold_frontier",
+          "test_vault_codecs",
+          "test_vault_grant_nip59",
+          "test_vault_tree_ops"
+        ],
+        "core.linux.asan": [
+          "test_vault_ring_derivation",
+          "test_vault_revoke_lazy",
+          "test_vault_fold_frontier",
+          "test_vault_codecs",
+          "test_vault_grant_nip59",
+          "test_vault_tree_ops"
+        ]
       },
       "expected_outcome": "pass",
       "kind": "ctest",
-      "nodes": ["execution.core", "libvault", "libvault.test_inputs"],
-      "profiles": ["core.macos.asan", "core.linux.asan"],
+      "nodes": [
+        "execution.core",
+        "libvault",
+        "libvault.test_inputs"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan"
+      ],
       "requirement": "blocking",
       "runtime_inputs": []
     },
     "supported.libvault": {
-      "build_targets": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs", "test_vault_grant_nip59", "test_vault_tree_ops"],
+      "build_targets": [
+        "test_vault_ring_derivation",
+        "test_vault_revoke_lazy",
+        "test_vault_fold_frontier",
+        "test_vault_codecs",
+        "test_vault_grant_nip59",
+        "test_vault_tree_ops"
+      ],
       "cost": "ordinary",
       "ctest_tests": {
-        "core.linux": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs", "test_vault_grant_nip59", "test_vault_tree_ops"],
-        "grotto.linux": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs", "test_vault_grant_nip59", "test_vault_tree_ops"],
-        "grotto.linux.asan_ubsan": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs", "test_vault_grant_nip59", "test_vault_tree_ops"],
-        "groundhog.linux": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs", "test_vault_grant_nip59", "test_vault_tree_ops"],
-        "groundhog.mdk011": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs", "test_vault_grant_nip59", "test_vault_tree_ops"],
-        "groundhog.mdk08": ["test_vault_ring_derivation", "test_vault_revoke_lazy", "test_vault_fold_frontier", "test_vault_codecs", "test_vault_grant_nip59", "test_vault_tree_ops"]
+        "core.linux": [
+          "test_vault_ring_derivation",
+          "test_vault_revoke_lazy",
+          "test_vault_fold_frontier",
+          "test_vault_codecs",
+          "test_vault_grant_nip59",
+          "test_vault_tree_ops"
+        ],
+        "grotto.linux": [
+          "test_vault_ring_derivation",
+          "test_vault_revoke_lazy",
+          "test_vault_fold_frontier",
+          "test_vault_codecs",
+          "test_vault_grant_nip59",
+          "test_vault_tree_ops"
+        ],
+        "grotto.linux.asan_ubsan": [
+          "test_vault_ring_derivation",
+          "test_vault_revoke_lazy",
+          "test_vault_fold_frontier",
+          "test_vault_codecs",
+          "test_vault_grant_nip59",
+          "test_vault_tree_ops"
+        ],
+        "groundhog.linux": [
+          "test_vault_ring_derivation",
+          "test_vault_revoke_lazy",
+          "test_vault_fold_frontier",
+          "test_vault_codecs",
+          "test_vault_grant_nip59",
+          "test_vault_tree_ops"
+        ],
+        "groundhog.mdk011": [
+          "test_vault_ring_derivation",
+          "test_vault_revoke_lazy",
+          "test_vault_fold_frontier",
+          "test_vault_codecs",
+          "test_vault_grant_nip59",
+          "test_vault_tree_ops"
+        ],
+        "groundhog.mdk08": [
+          "test_vault_ring_derivation",
+          "test_vault_revoke_lazy",
+          "test_vault_fold_frontier",
+          "test_vault_codecs",
+          "test_vault_grant_nip59",
+          "test_vault_tree_ops"
+        ]
       },
       "expected_outcome": "pass",
       "kind": "ctest",
-      "nodes": ["execution.core", "execution.grotto", "execution.groundhog", "libvault", "libvault.test_inputs"],
-      "profiles": ["core.linux", "grotto.linux", "grotto.linux.asan_ubsan", "groundhog.linux", "groundhog.mdk011", "groundhog.mdk08"],
+      "nodes": [
+        "execution.core",
+        "execution.grotto",
+        "execution.groundhog",
+        "libvault",
+        "libvault.test_inputs"
+      ],
+      "profiles": [
+        "core.linux",
+        "grotto.linux",
+        "grotto.linux.asan_ubsan",
+        "groundhog.linux",
+        "groundhog.mdk011",
+        "groundhog.mdk08"
+      ],
       "requirement": "blocking",
       "runtime_inputs": []
     },
@@ -21621,10 +21924,10 @@
       "tracking": "nostrc-0cfsg.36.9",
       "binding": {
         "source_sha256": "0686a0c8b1e424f146b08f1a5d5a0588156098067571bd4bd3e545198515242e",
-        "registration_sha256": "d85dfaa2b4a907b02a2f16bdef81e051dbf00ffb8684ce3bbdf2c92d03e6228e",
+        "registration_sha256": "8369f312e8c5bc1741e97f9cce3887329c051f2f0190d1a7999878420151e0d4",
         "selection_metadata_sha256": "8a54cc3454613a5450717c1c193f99dbb98ba0b6ce10154d74c160805236b0af",
-        "legacy_job_source_sha256": "35ecf5ab6debc5277f69556b6e106e7b9191638ebbb08bddf1e6ff45590e158c",
-        "legacy_workflow_sha256": "10a675396b64c928f3d5bb79025ab2f6be0acbacaa3410155090e186ecdcdcbc"
+        "legacy_job_source_sha256": "6e87f66cb2998ef3ed24234a42560252f4a9cda8c7ea198ff9e78a7e4f67a15d",
+        "legacy_workflow_sha256": "bbb3eed4ff6e47769ffb9510ae0fdf1e926a6b716777f2e7cf3bd8f74616fe1e"
       }
     }
   ],
@@ -21802,19 +22105,52 @@
     "execution.vault_syncd": {
       "id": "execution.vault_syncd",
       "depends_on": [],
-      "owner_paths": [".github/workflows/vault-syncd-ci.yml"],
+      "owner_paths": [
+        ".github/workflows/vault-syncd-ci.yml"
+      ],
       "rationale": "Dedicated ordinary runner for the exact selected vault assembly profile."
     },
     "gnome.nostr_homed.vault": {
       "id": "gnome.nostr_homed.vault",
-      "depends_on": ["gnome.nostr_homed", "libvault", "libporthome", "libblossom", "libnostr"],
-      "owner_paths": ["gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_engine.c", "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_engine.h", "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_session.c", "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_session.h", "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_net.c", "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_net.h", "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_manager.c", "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_manager.h", "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_reader.c", "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_reader.h", "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_fs.c", "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_apply.c", "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_fs.h", "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_config.c", "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_config.h"],
+      "depends_on": [
+        "gnome.nostr_homed",
+        "libvault",
+        "libporthome",
+        "libblossom",
+        "libnostr"
+      ],
+      "owner_paths": [
+        "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_engine.c",
+        "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_engine.h",
+        "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_session.c",
+        "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_session.h",
+        "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_net.c",
+        "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_net.h",
+        "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_manager.c",
+        "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_manager.h",
+        "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_reader.c",
+        "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_reader.h",
+        "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_fs.c",
+        "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_apply.c",
+        "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_fs.h",
+        "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_config.c",
+        "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_config.h"
+      ],
       "rationale": "Vault assembly uses SDK tree/fetch/fold and sealed chunk primitives; base auth targets do not link it."
     },
     "gnome.nostr_homed.vault.test_inputs": {
       "id": "gnome.nostr_homed.vault.test_inputs",
       "depends_on": [],
-      "owner_paths": ["gnome/nostr-homed/tests/integration/test_syncd_vault_protocol.py", "tools/vaultctl/tests/fixtures.py", "gnome/nostr-homed/tests/integration/vault_lab_http_receipts.py", "gnome/nostr-homed/tests/integration/porthome_jmx0_two_npub.py", "gnome/nostr-homed/tests/unit/test_syncd_vault_runtime.c", "gnome/nostr-homed/tests/unit/test_syncd_vault_fs.c", "gnome/nostr-homed/tests/integration/test_syncd_off_closure.sh", "gnome/nostr-homed/tests/integration/test_syncd_vault_config.py"],
+      "owner_paths": [
+        "gnome/nostr-homed/tests/integration/test_syncd_vault_protocol.py",
+        "tools/vaultctl/tests/fixtures.py",
+        "gnome/nostr-homed/tests/integration/vault_lab_http_receipts.py",
+        "gnome/nostr-homed/tests/integration/porthome_jmx0_two_npub.py",
+        "gnome/nostr-homed/tests/unit/test_syncd_vault_runtime.c",
+        "gnome/nostr-homed/tests/unit/test_syncd_vault_fs.c",
+        "gnome/nostr-homed/tests/integration/test_syncd_off_closure.sh",
+        "gnome/nostr-homed/tests/integration/test_syncd_vault_config.py"
+      ],
       "rationale": "Vault filesystem fixtures select their own check, not unrelated authentication or SDK prerequisite suites."
     },
     "gnome.nostr_homed": {
@@ -22238,7 +22574,9 @@
     "libhanami.test_inputs": {
       "id": "libhanami.test_inputs",
       "depends_on": [],
-      "owner_paths": ["libhanami/tests"],
+      "owner_paths": [
+        "libhanami/tests"
+      ],
       "rationale": "Hanami test and wire-fixture inputs select package checks, not production consumers."
     },
     "libhanami": {
@@ -23558,7 +23896,9 @@
     "gnome.nostr_homed.porthome.test_inputs": {
       "id": "gnome.nostr_homed.porthome.test_inputs",
       "depends_on": [],
-      "owner_paths": ["gnome/nostr-homed/tests/unit/test_porthome_blossom_guards.c"],
+      "owner_paths": [
+        "gnome/nostr-homed/tests/unit/test_porthome_blossom_guards.c"
+      ],
       "rationale": "The homed pool guard consumer is built directly against libblossom in the Linux porthome profile; test-only edits do not select upstream SDK suites."
     },
     "gnome.nostr_homed.test_inputs": {
@@ -23863,44 +24203,79 @@
     },
     "bindings.rust": {
       "id": "bindings.rust",
-      "depends_on": ["libporthome", "libvault"],
-      "owner_paths": ["bindings/rust", ".github/workflows/rust-bindings-ci.yml"],
+      "depends_on": [
+        "libporthome",
+        "libvault"
+      ],
+      "owner_paths": [
+        "bindings/rust",
+        ".github/workflows/rust-bindings-ci.yml"
+      ],
       "rationale": "Installed-header Rust consumer; C runtime/API changes select compatibility without selecting prerequisite suites for Rust-only edits."
     },
     "libvault.marmot": {
       "id": "libvault.marmot",
-      "depends_on": ["libvault", "libmarmot"],
-      "owner_paths": ["libvault-marmot"],
+      "depends_on": [
+        "libvault",
+        "libmarmot"
+      ],
+      "owner_paths": [
+        "libvault-marmot"
+      ],
       "rationale": "Layer-5 optional MLS grant adapter; vault itself has no MLS dependency."
     },
     "libvault.marmot.test_inputs": {
       "id": "libvault.marmot.test_inputs",
       "depends_on": [],
-      "owner_paths": ["libvault-marmot/tests"],
+      "owner_paths": [
+        "libvault-marmot/tests"
+      ],
       "rationale": "Adapter test inputs select only adapter checks, not prerequisite suites."
     },
     "vaultctl": {
       "id": "vaultctl",
-      "depends_on": ["libvault", "libporthome", "libblossom", "libnostr", "libgo", "nip42", "nip11"],
-      "owner_paths": ["tools/vaultctl"],
+      "depends_on": [
+        "libvault",
+        "libporthome",
+        "libblossom",
+        "libnostr",
+        "libgo",
+        "nip42",
+        "nip11"
+      ],
+      "owner_paths": [
+        "tools/vaultctl"
+      ],
       "rationale": "Layer-7 CLI assembly; actual pool and Blossom fixture tests exercise the five commands."
     },
     "vaultctl.test_inputs": {
       "id": "vaultctl.test_inputs",
       "depends_on": [],
-      "owner_paths": ["tools/vaultctl/tests"],
+      "owner_paths": [
+        "tools/vaultctl/tests"
+      ],
       "rationale": "Vault CLI fixtures select CLI checks, not production consumers."
     },
     "libvault": {
       "id": "libvault",
-      "depends_on": ["libporthome", "libblossom", "libnostr", "nip44", "nip59"],
-      "owner_paths": ["libvault"],
+      "depends_on": [
+        "libporthome",
+        "libblossom",
+        "libnostr",
+        "nip44",
+        "nip59"
+      ],
+      "owner_paths": [
+        "libvault"
+      ],
       "rationale": "Layer-5 shared-vault policy/codecs; no GLib, Git or MLS dependency."
     },
     "libvault.test_inputs": {
       "id": "libvault.test_inputs",
       "depends_on": [],
-      "owner_paths": ["libvault/tests"],
+      "owner_paths": [
+        "libvault/tests"
+      ],
       "rationale": "Vault test inputs select their own package checks, not prerequisites."
     },
     "libporthome": {
@@ -23924,7 +24299,7 @@
       "rationale": "Public API test inputs select package checks, not production consumers."
     }
   },
-      "path_rules": [
+  "path_rules": [
     {
       "exact": "apps/gnostr/src/util/blossom.c",
       "nodes": [
@@ -23957,52 +24332,231 @@
       "effect": "impact",
       "reason": "Scoped GnBlossomClient app transport/auth consumer and executable entrypoint checks (nostrc-er4fz.9)."
     },
-      {"exact": "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_engine.c", "effect": "impact", "nodes": ["gnome.nostr_homed.vault"], "reason": "Private vault reconciler."},
-      {"exact": "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_engine.h", "effect": "impact", "nodes": ["gnome.nostr_homed.vault"], "reason": "Private vault reconciler contract."},
-      {"exact": "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_manager.c", "effect": "impact", "nodes": ["gnome.nostr_homed.vault"], "reason": "Vault scheduling and namespace commit."},
-      {"exact": "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_manager.h", "effect": "impact", "nodes": ["gnome.nostr_homed.vault"], "reason": "Private vault manager contract."},
-      {"exact": "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_net.c", "effect": "impact", "nodes": ["gnome.nostr_homed.vault"], "reason": "Pool and Blossom vault transport."},
-      {"exact": "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_net.h", "effect": "impact", "nodes": ["gnome.nostr_homed.vault"], "reason": "Private vault transport contract."},
-      {"exact": "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_session.c", "effect": "impact", "nodes": ["gnome.nostr_homed.vault"], "reason": "Encrypted vault session persistence."},
-      {"exact": "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_session.h", "effect": "impact", "nodes": ["gnome.nostr_homed.vault"], "reason": "Private session contract."},
-      {"exact": "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_reader.c", "effect": "impact", "nodes": ["gnome.nostr_homed.vault"], "reason": "Generation-bound FUSE reader."},
-      {"exact": "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_reader.h", "effect": "impact", "nodes": ["gnome.nostr_homed.vault"], "reason": "Private FUSE reader contract."},
-      {"exact": "tools/vaultctl/tests/fixtures.py", "effect": "impact", "nodes": ["vaultctl.test_inputs", "gnome.nostr_homed.vault.test_inputs"], "reason": "Shared signed WebSocket/HTTP fixture also verifies syncd reauthentication during publication."},
-      {"exact": "gnome/nostr-homed/tests/integration/test_syncd_vault_protocol.py", "effect": "impact", "nodes": ["gnome.nostr_homed.vault.test_inputs"], "reason": "Actual pool publication/AUTH regression."},
-      {"exact": "gnome/nostr-homed/tests/integration/vault_lab_http_receipts.py", "effect": "impact", "nodes": ["gnome.nostr_homed.vault.test_inputs"], "reason": "Transparent payload receipt fixture for the manual VSP migration check."},
-      {"exact": "gnome/nostr-homed/tests/integration/porthome_jmx0_two_npub.py", "effect": "impact", "nodes": ["gnome.nostr_homed.vault.test_inputs"], "reason": "Manual two-UID VSP scenario uses the runtime fixture helper; ordinary selection stays hermetic."},
-      {"exact": "gnome/nostr-homed/tests/unit/test_syncd_vault_runtime.c", "effect": "impact", "nodes": ["gnome.nostr_homed.vault.test_inputs"], "reason": "Vault runtime and actual headless FUSE callback regressions."},
-      {"exact": "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_config.c", "effect": "impact", "nodes": ["gnome.nostr_homed.vault"], "reason": "Vault config selects the separate generation source and legacy exclusion."},
-      {"exact": "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_config.h", "effect": "impact", "nodes": ["gnome.nostr_homed.vault"], "reason": "Private vault config contract affects daemon and source filtering."},
-      {"exact": "gnome/nostr-homed/tests/integration/test_syncd_vault_config.py", "effect": "impact", "nodes": ["gnome.nostr_homed.vault.test_inputs"], "reason": "Real offline daemon config regression, not unrelated auth tests."},
-    {"exact": ".github/workflows/vault-syncd-ci.yml", "effect": "impact", "nodes": ["execution.vault_syncd"], "reason": "Vault selected-profile runner changes exercise the owned checks."},
-    {"exact": "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_fs.c", "effect": "impact", "nodes": ["gnome.nostr_homed.vault"], "reason": "Vault filesystem assembly."},
-    {"exact": "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_apply.c", "effect": "impact", "nodes": ["gnome.nostr_homed.vault"], "reason": "Vault folded-view materialisation."},
-    {"exact": "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_fs.h", "effect": "impact", "nodes": ["gnome.nostr_homed.vault"], "reason": "Private syncd/FUSE vault assembly seam."},
-    {"exact": "gnome/nostr-homed/tests/integration/test_syncd_off_closure.sh", "effect": "impact", "nodes": ["gnome.nostr_homed.vault.test_inputs"], "reason": "Session-only SDK linkage must remain outside authd/PAM/NSS."},
-    {"exact": "gnome/nostr-homed/tests/unit/test_syncd_vault_fs.c", "effect": "impact", "nodes": ["gnome.nostr_homed.vault.test_inputs"], "reason": "Vault filesystem check source."},
+    {
+      "exact": "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_engine.c",
+      "effect": "impact",
+      "nodes": [
+        "gnome.nostr_homed.vault"
+      ],
+      "reason": "Private vault reconciler."
+    },
+    {
+      "exact": "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_engine.h",
+      "effect": "impact",
+      "nodes": [
+        "gnome.nostr_homed.vault"
+      ],
+      "reason": "Private vault reconciler contract."
+    },
+    {
+      "exact": "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_manager.c",
+      "effect": "impact",
+      "nodes": [
+        "gnome.nostr_homed.vault"
+      ],
+      "reason": "Vault scheduling and namespace commit."
+    },
+    {
+      "exact": "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_manager.h",
+      "effect": "impact",
+      "nodes": [
+        "gnome.nostr_homed.vault"
+      ],
+      "reason": "Private vault manager contract."
+    },
+    {
+      "exact": "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_net.c",
+      "effect": "impact",
+      "nodes": [
+        "gnome.nostr_homed.vault"
+      ],
+      "reason": "Pool and Blossom vault transport."
+    },
+    {
+      "exact": "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_net.h",
+      "effect": "impact",
+      "nodes": [
+        "gnome.nostr_homed.vault"
+      ],
+      "reason": "Private vault transport contract."
+    },
+    {
+      "exact": "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_session.c",
+      "effect": "impact",
+      "nodes": [
+        "gnome.nostr_homed.vault"
+      ],
+      "reason": "Encrypted vault session persistence."
+    },
+    {
+      "exact": "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_session.h",
+      "effect": "impact",
+      "nodes": [
+        "gnome.nostr_homed.vault"
+      ],
+      "reason": "Private session contract."
+    },
+    {
+      "exact": "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_reader.c",
+      "effect": "impact",
+      "nodes": [
+        "gnome.nostr_homed.vault"
+      ],
+      "reason": "Generation-bound FUSE reader."
+    },
+    {
+      "exact": "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_reader.h",
+      "effect": "impact",
+      "nodes": [
+        "gnome.nostr_homed.vault"
+      ],
+      "reason": "Private FUSE reader contract."
+    },
+    {
+      "exact": "tools/vaultctl/tests/fixtures.py",
+      "effect": "impact",
+      "nodes": [
+        "vaultctl.test_inputs",
+        "gnome.nostr_homed.vault.test_inputs"
+      ],
+      "reason": "Shared signed WebSocket/HTTP fixture also verifies syncd reauthentication during publication."
+    },
+    {
+      "exact": "gnome/nostr-homed/tests/integration/test_syncd_vault_protocol.py",
+      "effect": "impact",
+      "nodes": [
+        "gnome.nostr_homed.vault.test_inputs"
+      ],
+      "reason": "Actual pool publication/AUTH regression."
+    },
+    {
+      "exact": "gnome/nostr-homed/tests/integration/vault_lab_http_receipts.py",
+      "effect": "impact",
+      "nodes": [
+        "gnome.nostr_homed.vault.test_inputs"
+      ],
+      "reason": "Transparent payload receipt fixture for the manual VSP migration check."
+    },
+    {
+      "exact": "gnome/nostr-homed/tests/integration/porthome_jmx0_two_npub.py",
+      "effect": "impact",
+      "nodes": [
+        "gnome.nostr_homed.vault.test_inputs"
+      ],
+      "reason": "Manual two-UID VSP scenario uses the runtime fixture helper; ordinary selection stays hermetic."
+    },
+    {
+      "exact": "gnome/nostr-homed/tests/unit/test_syncd_vault_runtime.c",
+      "effect": "impact",
+      "nodes": [
+        "gnome.nostr_homed.vault.test_inputs"
+      ],
+      "reason": "Vault runtime and actual headless FUSE callback regressions."
+    },
+    {
+      "exact": "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_config.c",
+      "effect": "impact",
+      "nodes": [
+        "gnome.nostr_homed.vault"
+      ],
+      "reason": "Vault config selects the separate generation source and legacy exclusion."
+    },
+    {
+      "exact": "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_config.h",
+      "effect": "impact",
+      "nodes": [
+        "gnome.nostr_homed.vault"
+      ],
+      "reason": "Private vault config contract affects daemon and source filtering."
+    },
+    {
+      "exact": "gnome/nostr-homed/tests/integration/test_syncd_vault_config.py",
+      "effect": "impact",
+      "nodes": [
+        "gnome.nostr_homed.vault.test_inputs"
+      ],
+      "reason": "Real offline daemon config regression, not unrelated auth tests."
+    },
+    {
+      "exact": ".github/workflows/vault-syncd-ci.yml",
+      "effect": "impact",
+      "nodes": [
+        "execution.vault_syncd"
+      ],
+      "reason": "Vault selected-profile runner changes exercise the owned checks."
+    },
+    {
+      "exact": "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_fs.c",
+      "effect": "impact",
+      "nodes": [
+        "gnome.nostr_homed.vault"
+      ],
+      "reason": "Vault filesystem assembly."
+    },
+    {
+      "exact": "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_apply.c",
+      "effect": "impact",
+      "nodes": [
+        "gnome.nostr_homed.vault"
+      ],
+      "reason": "Vault folded-view materialisation."
+    },
+    {
+      "exact": "gnome/nostr-homed/src/porthome-syncd/nh_syncd_vault_fs.h",
+      "effect": "impact",
+      "nodes": [
+        "gnome.nostr_homed.vault"
+      ],
+      "reason": "Private syncd/FUSE vault assembly seam."
+    },
+    {
+      "exact": "gnome/nostr-homed/tests/integration/test_syncd_off_closure.sh",
+      "effect": "impact",
+      "nodes": [
+        "gnome.nostr_homed.vault.test_inputs"
+      ],
+      "reason": "Session-only SDK linkage must remain outside authd/PAM/NSS."
+    },
+    {
+      "exact": "gnome/nostr-homed/tests/unit/test_syncd_vault_fs.c",
+      "effect": "impact",
+      "nodes": [
+        "gnome.nostr_homed.vault.test_inputs"
+      ],
+      "reason": "Vault filesystem check source."
+    },
     {
       "prefix": "bindings/rust",
       "effect": "impact",
-      "nodes": ["bindings.rust"],
+      "nodes": [
+        "bindings.rust"
+      ],
       "reason": "Rust crates, consumer, lockfile and installed-prefix runner share a bounded compatibility check."
     },
     {
       "exact": ".github/workflows/rust-bindings-ci.yml",
       "effect": "impact",
-      "nodes": ["bindings.rust"],
+      "nodes": [
+        "bindings.rust"
+      ],
       "reason": "Rust consumer workflow edits exercise the installed C/Rust boundary."
     },
     {
       "exact": "libporthome/tests/test_helpers.h",
       "effect": "impact",
-      "nodes": ["libporthome.test_inputs", "bindings.rust"],
+      "nodes": [
+        "libporthome.test_inputs",
+        "bindings.rust"
+      ],
       "reason": "The installed C reference runner uses this fixture helper."
     },
     {
       "exact": "libporthome/tests/test_seal_v2.c",
       "effect": "impact",
-      "nodes": ["libporthome.test_inputs", "bindings.rust"],
+      "nodes": [
+        "libporthome.test_inputs",
+        "bindings.rust"
+      ],
       "reason": "Rust CLI vectors are explicitly checked against this C reference fixture."
     },
     {
@@ -24966,7 +25520,9 @@
     {
       "effect": "impact",
       "prefix": "libhanami/tests",
-      "nodes": ["libhanami.test_inputs"],
+      "nodes": [
+        "libhanami.test_inputs"
+      ],
       "reason": "Hanami test and fixture changes do not affect production consumers."
     },
     {
@@ -26961,7 +27517,9 @@
     },
     {
       "prefix": "gnome/nostr-homed/tests/unit/test_porthome_blossom_guards.c",
-      "nodes": ["gnome.nostr_homed.porthome.test_inputs"],
+      "nodes": [
+        "gnome.nostr_homed.porthome.test_inputs"
+      ],
       "effect": "impact",
       "reason": "Direct libblossom pool consumer guard test runs in the Linux porthome profile."
     },
@@ -28562,37 +29120,49 @@
     {
       "effect": "impact",
       "prefix": "libvault-marmot",
-      "nodes": ["libvault.marmot"],
+      "nodes": [
+        "libvault.marmot"
+      ],
       "reason": "Optional MLS adapter production ownership."
     },
     {
       "effect": "impact",
       "prefix": "libvault-marmot/tests",
-      "nodes": ["libvault.marmot.test_inputs"],
+      "nodes": [
+        "libvault.marmot.test_inputs"
+      ],
       "reason": "Adapter test inputs stay local to the adapter checks."
     },
     {
       "effect": "impact",
-          "prefix": "tools/vaultctl",
-        "nodes": ["vaultctl"],
-        "reason": "Shared-vault CLI ownership."
-      },
-      {
-        "effect": "impact",
-        "prefix": "tools/vaultctl/tests",
-        "nodes": ["vaultctl.test_inputs"],
-        "reason": "CLI fixture inputs remain local."
-      },
-      {
-        "effect": "impact",
-        "prefix": "libvault",
-        "nodes": ["libvault"],
+      "prefix": "tools/vaultctl",
+      "nodes": [
+        "vaultctl"
+      ],
+      "reason": "Shared-vault CLI ownership."
+    },
+    {
+      "effect": "impact",
+      "prefix": "tools/vaultctl/tests",
+      "nodes": [
+        "vaultctl.test_inputs"
+      ],
+      "reason": "CLI fixture inputs remain local."
+    },
+    {
+      "effect": "impact",
+      "prefix": "libvault",
+      "nodes": [
+        "libvault"
+      ],
       "reason": "Vault package ownership; reverse impact selects consumers, not prerequisite suites."
     },
     {
       "effect": "impact",
       "prefix": "libvault/tests",
-      "nodes": ["libvault.test_inputs"],
+      "nodes": [
+        "libvault.test_inputs"
+      ],
       "reason": "Vault test inputs remain local to the package checks."
     },
     {
@@ -28630,8 +29200,42 @@
       "build_type": "Debug",
       "instrumentation": "asan_ubsan",
       "source_dir": ".",
-      "configure_args": ["-G", "Ninja", "-DCMAKE_BUILD_TYPE=Debug", "-DBUILD_TESTING=ON", "-DGNOSTR_ENABLE_ASAN=ON", "-DGNOSTR_ENABLE_UBSAN=ON", "-DWITH_NOSTRDB=OFF", "-DLIBNOSTR_WITH_NOSTRDB=OFF", "-DBUILD_NOSTR_GOBJECT=OFF", "-DBUILD_LIBHANAMI=OFF", "-DBUILD_LIBMARMOT=OFF", "-DBUILD_LIBVAULT_MARMOT=OFF", "-DBUILD_APPS=OFF", "-DBUILD_RELAYD=OFF", "-DNOSTR_WITH_GLIB=OFF", "-DENABLE_NIP44=ON", "-DENABLE_NIP59=ON", "-DENABLE_NIP42=ON", "-DENABLE_NIP11=ON", "-DENABLE_NOSTR_HOMED=ON", "-DNOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL=ON", "-DNOSTR_HOMED_ENABLE_SYNCD_EXPERIMENTAL=ON", "-DNOSTR_HOMED_ENABLE_VAULT_EXPERIMENTAL=ON", "-DNOSTR_HOMED_ENABLE_PORTHOME_FUSE_EXPERIMENTAL=ON", "-DNOSTR_HOMED_ENABLE_AUTH_CORE=ON", "-DNOSTR_HOMED_ENABLE_IDENTITY_CORE=ON", "-DNOSTR_HOMED_ENABLE_AUTH_RUNTIME=ON", "-DNOSTR_HOMED_ENABLE_PAM=ON", "-DNOSTR_HOMED_ENABLE_NSS=ON", "-DNIP55L_SECRET_BACKEND=libsecret"],
-      "environment": {"ASAN_OPTIONS": "detect_leaks=1:abort_on_error=1", "UBSAN_OPTIONS": "halt_on_error=1"},
+      "configure_args": [
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Debug",
+        "-DBUILD_TESTING=ON",
+        "-DGNOSTR_ENABLE_ASAN=ON",
+        "-DGNOSTR_ENABLE_UBSAN=ON",
+        "-DWITH_NOSTRDB=OFF",
+        "-DLIBNOSTR_WITH_NOSTRDB=OFF",
+        "-DBUILD_NOSTR_GOBJECT=OFF",
+        "-DBUILD_LIBHANAMI=OFF",
+        "-DBUILD_LIBMARMOT=OFF",
+        "-DBUILD_LIBVAULT_MARMOT=OFF",
+        "-DBUILD_APPS=OFF",
+        "-DBUILD_RELAYD=OFF",
+        "-DNOSTR_WITH_GLIB=OFF",
+        "-DENABLE_NIP44=ON",
+        "-DENABLE_NIP59=ON",
+        "-DENABLE_NIP42=ON",
+        "-DENABLE_NIP11=ON",
+        "-DENABLE_NOSTR_HOMED=ON",
+        "-DNOSTR_HOMED_ENABLE_PORTHOME_EXPERIMENTAL=ON",
+        "-DNOSTR_HOMED_ENABLE_SYNCD_EXPERIMENTAL=ON",
+        "-DNOSTR_HOMED_ENABLE_VAULT_EXPERIMENTAL=ON",
+        "-DNOSTR_HOMED_ENABLE_PORTHOME_FUSE_EXPERIMENTAL=ON",
+        "-DNOSTR_HOMED_ENABLE_AUTH_CORE=ON",
+        "-DNOSTR_HOMED_ENABLE_IDENTITY_CORE=ON",
+        "-DNOSTR_HOMED_ENABLE_AUTH_RUNTIME=ON",
+        "-DNOSTR_HOMED_ENABLE_PAM=ON",
+        "-DNOSTR_HOMED_ENABLE_NSS=ON",
+        "-DNIP55L_SECRET_BACKEND=libsecret"
+      ],
+      "environment": {
+        "ASAN_OPTIONS": "detect_leaks=1:abort_on_error=1",
+        "UBSAN_OPTIONS": "halt_on_error=1"
+      },
       "capabilities": [],
       "setup": "docs/TESTING.md#dependency-aware-commands",
       "local_availability": "host_or_container",
@@ -29974,13 +30578,23 @@
       "manifest_name": "porthome-sys",
       "package_jobs": [],
       "publisher": "none",
-      "version_sources": [{"path": "bindings/rust/porthome-sys/Cargo.toml", "pattern": "(?m)^version = \"([0-9]+\\.[0-9]+\\.[0-9]+)\""}]
+      "version_sources": [
+        {
+          "path": "bindings/rust/porthome-sys/Cargo.toml",
+          "pattern": "(?m)^version = \"([0-9]+\\.[0-9]+\\.[0-9]+)\""
+        }
+      ]
     },
     "vault-sys": {
       "manifest_name": "vault-sys",
       "package_jobs": [],
       "publisher": "none",
-      "version_sources": [{"path": "bindings/rust/vault-sys/Cargo.toml", "pattern": "(?m)^version = \"([0-9]+\\.[0-9]+\\.[0-9]+)\""}]
+      "version_sources": [
+        {
+          "path": "bindings/rust/vault-sys/Cargo.toml",
+          "pattern": "(?m)^version = \"([0-9]+\\.[0-9]+\\.[0-9]+)\""
+        }
+      ]
     },
     "gnostr": {
       "manifest_name": "gnostr",
@@ -30276,25 +30890,49 @@
       "manifest_name": "nip59 (NIP-59 gift-wrap core)",
       "package_jobs": [],
       "publisher": "none",
-      "version_sources": [{"join": ".", "path": "nips/nip59/CMakeLists.txt", "pattern": "project\\(nip59\\s+VERSION\\s+(\\d+)\\.(\\d+)\\.(\\d+)\\s+LANGUAGES\\s+C\\)"}]
+      "version_sources": [
+        {
+          "join": ".",
+          "path": "nips/nip59/CMakeLists.txt",
+          "pattern": "project\\(nip59\\s+VERSION\\s+(\\d+)\\.(\\d+)\\.(\\d+)\\s+LANGUAGES\\s+C\\)"
+        }
+      ]
     },
     "libvault-marmot": {
       "manifest_name": "libvault-marmot",
       "package_jobs": [],
       "publisher": "none",
-      "version_sources": [{"join": ".", "path": "libvault-marmot/CMakeLists.txt", "pattern": "declare_component_version\\(vault_marmot\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)\\)"}]
+      "version_sources": [
+        {
+          "join": ".",
+          "path": "libvault-marmot/CMakeLists.txt",
+          "pattern": "declare_component_version\\(vault_marmot\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)\\)"
+        }
+      ]
     },
     "vaultctl": {
       "manifest_name": "vaultctl",
       "package_jobs": [],
       "publisher": "none",
-      "version_sources": [{"join": ".", "path": "tools/vaultctl/CMakeLists.txt", "pattern": "declare_component_version\\(vaultctl\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)\\)"}]
+      "version_sources": [
+        {
+          "join": ".",
+          "path": "tools/vaultctl/CMakeLists.txt",
+          "pattern": "declare_component_version\\(vaultctl\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)\\)"
+        }
+      ]
     },
     "libvault": {
       "manifest_name": "libvault",
       "package_jobs": [],
       "publisher": "none",
-      "version_sources": [{"join": ".", "path": "libvault/CMakeLists.txt", "pattern": "declare_component_version\\(vault\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)\\)"}]
+      "version_sources": [
+        {
+          "join": ".",
+          "path": "libvault/CMakeLists.txt",
+          "pattern": "declare_component_version\\(vault\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)\\)"
+        }
+      ]
     },
     "libporthome": {
       "manifest_name": "libporthome",
@@ -30313,7 +30951,7 @@
     ".github/workflows/dependency-tests.yml:grotto_asan": {
       "matrix_source": "",
       "source_sha256": "72accdb4b893ca94b7da22fd618cd40b59d84b84895c87afff93530e204cb0f5",
-      "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce",
+      "workflow_sha256": "254e0d9afc6f954f69b7e1b734bf4acb3e2a8012d0465b7d0f533a276bf4a535",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
       "unsupported_reason": "Additive diagnostic dispatch only, not original job parity."
@@ -30321,7 +30959,7 @@
     ".github/workflows/dependency-tests.yml:mdk011": {
       "matrix_source": "",
       "source_sha256": "ad71eab0cee880879de16593d8b375fb4cb8fc645bb18dad6b96b8022b7d5448",
-      "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce",
+      "workflow_sha256": "254e0d9afc6f954f69b7e1b734bf4acb3e2a8012d0465b7d0f533a276bf4a535",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
       "unsupported_reason": "Additive diagnostic dispatch only; not original workflow or live lifecycle acceptance."
@@ -30330,17 +30968,17 @@
       "matrix_source": "",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "56ccbdff050565f42394b6610c23c7f8195e4f06fdc9a06b48d22504b17eeb99",
+      "source_sha256": "944092c38de83d60e5c50483c7117b21de36e2c1a73a4406db2408f178bde91a",
       "unsupported_reason": "BP Python driver command, parameter sweep, generated report and artifact contracts have no exact logical command memberships; current hosted configure failure remains unresolved.",
-      "workflow_sha256": "67258f5e623a5a9d83c5b0a2111669c959c6a05389fd5c12483a330124c594db"
+      "workflow_sha256": "fdd3dc2e3d79646f40cf202e7b24f4c214cf32639c63709a8899d6c249644517"
     },
     ".github/workflows/bp-matrix.yml:bp-matrix": {
       "matrix_source": "",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "946ebd2ce93c6e3c82455419a0a8699f41cf254e7021b649912cfe663fca4ae1",
+      "source_sha256": "4ab9f904d25e2130a03b1036435fffbd1d3dc8de14422ba7ae97743509ee4d29",
       "unsupported_reason": "BP Python driver command, parameter sweep, generated report and artifact contracts have no exact logical command memberships; current hosted configure failure remains unresolved.",
-      "workflow_sha256": "281feeff71c35392e460a7e57918f3b3e5be13ce5611fbb170c9a9f0c11e487e"
+      "workflow_sha256": "ea8b8f128c87c27514bbdaea09b50eb1984b423b6e7fd92db6fd5b35e9d4d088"
     },
     ".github/workflows/dependency-broad.yml:core": {
       "matrix_source": "",
@@ -30492,7 +31130,7 @@
       "profiles": [],
       "source_sha256": "ed7ca94eb6cdec8ea310eab65950c950f97ea7ed12aec3dbcf4092fbc6c507f8",
       "unsupported_reason": "Shadow core_asan routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce"
+      "workflow_sha256": "254e0d9afc6f954f69b7e1b734bf4acb3e2a8012d0465b7d0f533a276bf4a535"
     },
     ".github/workflows/dependency-tests.yml:core_native": {
       "coverage_gap": "workflow_profile_union",
@@ -30500,7 +31138,7 @@
       "profiles": [],
       "source_sha256": "f2fe34a8ee75f27d330dcb9b307c082a05d8cebfb96cf9ac6aec665234a33fd4",
       "unsupported_reason": "Shadow core_native routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce"
+      "workflow_sha256": "254e0d9afc6f954f69b7e1b734bf4acb3e2a8012d0465b7d0f533a276bf4a535"
     },
     ".github/workflows/dependency-tests.yml:groundhog_sanitizers": {
       "coverage_gap": "workflow_profile_union",
@@ -30508,7 +31146,7 @@
       "profiles": [],
       "source_sha256": "c4b57a17a39a0288bf597d2eafb758b9807368c235bc6d44bd8f7e13dd3f6065",
       "unsupported_reason": "Shadow groundhog_sanitizers routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce"
+      "workflow_sha256": "254e0d9afc6f954f69b7e1b734bf4acb3e2a8012d0465b7d0f533a276bf4a535"
     },
     ".github/workflows/dependency-tests.yml:select": {
       "matrix_source": "",
@@ -30516,7 +31154,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "bdb7c27ff7a41a864000e3985c9bdb944c77382720e4c2f8a3cbbd64ec19b0ed",
       "unsupported_reason": "Shadow select routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce"
+      "workflow_sha256": "254e0d9afc6f954f69b7e1b734bf4acb3e2a8012d0465b7d0f533a276bf4a535"
     },
     ".github/workflows/dependency-tests.yml:core": {
       "matrix_source": "",
@@ -30524,7 +31162,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "e0f225b7c1d9cd1aff129bd137f695af685a2f7951ca0bd87d6fce6e389789e9",
       "unsupported_reason": "Shadow core routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce"
+      "workflow_sha256": "254e0d9afc6f954f69b7e1b734bf4acb3e2a8012d0465b7d0f533a276bf4a535"
     },
     ".github/workflows/dependency-tests.yml:grotto": {
       "matrix_source": "",
@@ -30532,7 +31170,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "6192e436dfe289562e6fd024ab08a1c609b93d221f1215f2a873e9ed19c385f6",
       "unsupported_reason": "Shadow grotto routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce"
+      "workflow_sha256": "254e0d9afc6f954f69b7e1b734bf4acb3e2a8012d0465b7d0f533a276bf4a535"
     },
     ".github/workflows/dependency-tests.yml:groundhog": {
       "matrix_source": "",
@@ -30540,7 +31178,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "699b5d12057ac24c459f5a374b77f548d970dca9c55a02c315bc97594d5a44af",
       "unsupported_reason": "Shadow groundhog routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce"
+      "workflow_sha256": "254e0d9afc6f954f69b7e1b734bf4acb3e2a8012d0465b7d0f533a276bf4a535"
     },
     ".github/workflows/dependency-tests.yml:mdk08": {
       "matrix_source": "",
@@ -30548,7 +31186,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "655465cf7dad5f5b3ccf5c33fdd39b9e34aa59f7d6e8f747fab24c55bd2478d8",
       "unsupported_reason": "Shadow mdk08 routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce"
+      "workflow_sha256": "254e0d9afc6f954f69b7e1b734bf4acb3e2a8012d0465b7d0f533a276bf4a535"
     },
     ".github/workflows/dependency-tests.yml:libgo": {
       "matrix_source": "",
@@ -30556,7 +31194,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "8abf6660c48dff9eb5953f20a5ba06172207807d964625546c440f988aed7980",
       "unsupported_reason": "Shadow libgo routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce"
+      "workflow_sha256": "254e0d9afc6f954f69b7e1b734bf4acb3e2a8012d0465b7d0f533a276bf4a535"
     },
     ".github/workflows/dependency-tests.yml:libgo_native": {
       "matrix_source": "",
@@ -30564,7 +31202,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "e10da16c50218b75cb78e7105011fcb4c7d8aaf101629b6592cb20498fea751d",
       "unsupported_reason": "Shadow libgo_native routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce"
+      "workflow_sha256": "254e0d9afc6f954f69b7e1b734bf4acb3e2a8012d0465b7d0f533a276bf4a535"
     },
     ".github/workflows/dependency-tests.yml:policy": {
       "matrix_source": "",
@@ -30572,7 +31210,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "153290c198665866c64548abf6c7146091266779edab194eefd5db04bd4b2783",
       "unsupported_reason": "Shadow policy routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce"
+      "workflow_sha256": "254e0d9afc6f954f69b7e1b734bf4acb3e2a8012d0465b7d0f533a276bf4a535"
     },
     ".github/workflows/dependency-tests.yml:broad": {
       "matrix_source": "",
@@ -30580,15 +31218,15 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "1c4ca529d36e4d9530514b1dda2faa4727062cbcbdda5bfb45665a97cecfb249",
       "unsupported_reason": "Shadow broad routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce"
+      "workflow_sha256": "254e0d9afc6f954f69b7e1b734bf4acb3e2a8012d0465b7d0f533a276bf4a535"
     },
     ".github/workflows/dependency-tests.yml:gate": {
       "matrix_source": "",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "a0b23c92cae5090d7cd485ca7359791a8fbe53133596879bfac011ba31198f0d",
+      "source_sha256": "e349b1c72eb092f84599b4c523d272ec94a81cdc97b41381a47cadf3d1fb7e47",
       "unsupported_reason": "Shadow gate routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
-      "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce"
+      "workflow_sha256": "254e0d9afc6f954f69b7e1b734bf4acb3e2a8012d0465b7d0f533a276bf4a535"
     },
     ".github/workflows/dependency-worker.yml:execute": {
       "matrix_source": "",
@@ -30596,17 +31234,17 @@
         "static.policy"
       ],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "a3de764aaaa0d002282555d386f7b92102cda398f4a8d4df6fd5b9f7256fb3d8",
+      "source_sha256": "14b2e256526d43b74f440d9de2d847a332770abf5c918b540956613a0ee997c5",
       "unsupported_reason": "Only the explicit provisioned static.policy controller route is authored here. Other dynamic native/toolchain/selected-worker variants and complete source/runtime/hosted union remain independently unaccepted.",
-      "workflow_sha256": "be06df3608b0e5a6eb1372650daba2403a205c981c5ace28af1f3f6379621b1f"
+      "workflow_sha256": "1eb0e2d8713d1086af85112074bb6ef23f8ea83947de8f3114023a56bed8a403"
     },
     ".github/workflows/gnostr-appimage.yml:build-appimage": {
       "matrix_source": "matrix:\n        include:\n          - { arch: x86_64,  runner: ubuntu-24.04 }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "bcaccf9d109601684b8465e8bb3fea4f3b85409656e3f5c06209db4c6c6ac28e",
+      "source_sha256": "bdcee669f63a000a6450b2609b17cadcd4224522ed08697ad52a6e0671616f74",
       "unsupported_reason": "AppImage x86_64/aarch64 build, bundle and smoke artifacts are not modeled as executable package contracts; generic core/Groundhog profiles do not cover them.",
-      "workflow_sha256": "be7e886ee7ab68b1a7701a813674f4f9e27f591477a66a35b5d96e124e1e5d3a"
+      "workflow_sha256": "fee6eda253756cb0004ef5f3df2317d3ca1e96c66555b257d5d2d0360b8ba85e"
     },
     ".github/workflows/grotto-ci.yml:signer": {
       "matrix_source": "matrix:\n        include:\n          - {runner: ubuntu-24.04, mode: native}\n          - {runner: ubuntu-latest, mode: native}\n          - {runner: ubuntu-24.04, mode: asan-ubsan}\n          - {runner: ubuntu-24.04, mode: tsan}",
@@ -30615,9 +31253,9 @@
         "grotto.linux.asan_ubsan"
       ],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "2a7f620283dbce0fba38ccabc998f09289fb60dcb52b1901f5ac7824bc4fa4fa",
+      "source_sha256": "11995a2f615e820606d9b813b83190e1d7681ef95a761662afb13b44feb6a962",
       "unsupported_reason": "Only fixed ubuntu-24.04 native/ASan configure and signer CTest selection projections are authored, with fresh Linux/aarch64 name-surface evidence (not x86_64 acceptance). Native uses the complete regex, including aliases and registered conditionals. Authored build2/test1 is supported. Default-all selector build attestation/coverage (.34), full audits/nonmember admission, native Go/nak baseline/quarantine, Meson/deb/shell extension steps, ubuntu-latest and TSan instrumented-GLib/nsync/linkage/advisory execution remain unsupported. No whole-job parity or nonmember approval is implied.",
-      "workflow_sha256": "3c5623e6bad173fed567bf977f236be6d1e5672bb5c351075e63486e8f5d8f10",
+      "workflow_sha256": "031b2f0d8244b7a3b6302ed0588c4d2e03e9b422b0ad9b62ba5687eab0c09db3",
       "unimplemented_variants": [
         {
           "runner": "ubuntu-latest",
@@ -30693,23 +31331,23 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "bbd6a332b9f292902fabd35f58bf8a8674b70e350434118f8b77a316d8dc6718",
       "unsupported_reason": "Dynamic fuzz target selection, target-specific seed corpus, libFuzzer execution and coverage artifact union are not modeled as exact command contracts; hosted configure failures remain visible.",
-      "workflow_sha256": "57eccf31b1ae020d7ee9b7d31c50ce0499a5c3a174e8cc9c2bf9cd4df37ade12"
+      "workflow_sha256": "0e51fb6cced824225544f24732fcf42d521cd26a586eb051169918a99e7a550a"
     },
     ".github/workflows/grotto-fuzz.yml:fuzz-test": {
       "matrix_source": "matrix:\n        target: ${{ fromJSON(needs.select-fuzz.outputs.targets) }}",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "e1907153b3dd6067e9610cde2860257695edbd50808aff56bcb01186ffc193f4",
+      "source_sha256": "89e53d3db953a2a41459f16410d3689cc549488b5b1d5a00455ab7b6a7b95eca",
       "unsupported_reason": "Dynamic fuzz target selection, target-specific seed corpus, libFuzzer execution and coverage artifact union are not modeled as exact command contracts; hosted configure failures remain visible.",
-      "workflow_sha256": "57eccf31b1ae020d7ee9b7d31c50ce0499a5c3a174e8cc9c2bf9cd4df37ade12"
+      "workflow_sha256": "0e51fb6cced824225544f24732fcf42d521cd26a586eb051169918a99e7a550a"
     },
     ".github/workflows/grotto-fuzz.yml:coverage-report": {
       "matrix_source": "",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "8edafa24a77fdaa7921a72012f4650d9506f284a982c1c58d0c96858e988622c",
+      "source_sha256": "97985d792a3b92dabdc9698202ae64de683e627a70ad14255d9f262c42af6df1",
       "unsupported_reason": "Dynamic fuzz target selection, target-specific seed corpus, libFuzzer execution and coverage artifact union are not modeled as exact command contracts; hosted configure failures remain visible.",
-      "workflow_sha256": "57eccf31b1ae020d7ee9b7d31c50ce0499a5c3a174e8cc9c2bf9cd4df37ade12"
+      "workflow_sha256": "0e51fb6cced824225544f24732fcf42d521cd26a586eb051169918a99e7a550a"
     },
     ".github/workflows/groundhog-ci.yml:groundhog": {
       "matrix_source": "",
@@ -30718,9 +31356,9 @@
         "groundhog.mdk011"
       ],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "0a51bb0bfd467c571dda1d2987cb2f2a6600e5dfa708be41d3d5b767f2fb39ef",
+      "source_sha256": "4ce9a17341fc8df0bd604444cf9338e19e86a94d063e7deb7c7be56bf3daca6b",
       "unsupported_reason": "Ordinary and live MDK011 registrations are separate diagnostic profiles. Ordinary selection does not claim live Docker lifecycle coverage; the dedicated live lane preserves docker/display/private_bus and visibly refuses without guarded custody. Full legacy job union, runtime/header audits and original image custody remain unaccepted.",
-      "workflow_sha256": "5333dff7e6ec84e03bbf7d3926788d77592c1317ab297d9636581c684ad99d6c"
+      "workflow_sha256": "6da62f8650b78978b1edfeb7423f83b7dc4956a97032de14d82bc58940afb573"
     },
     ".github/workflows/groundhog-ci.yml:groundhog-sanitizers": {
       "matrix_source": "",
@@ -30728,9 +31366,9 @@
         "groundhog.linux.sanitizers"
       ],
       "coverage_gap": "groundhog_sanitizer_execution_contract",
-      "source_sha256": "f5b51e4d638bd966ad9c0e44a5fd738c89d03af59dfc8092137ba1e5051cc97c",
+      "source_sha256": "1e2efc6779360d069a5d52e0689c086ce36997f5ebc9a3db5a552f0da36c4bb5",
       "unsupported_reason": "Ordinary Groundhog suite/MDK011 application configuration is authored but full registration/runtime/header closure and Docker image custody remain unaccepted.",
-      "workflow_sha256": "5333dff7e6ec84e03bbf7d3926788d77592c1317ab297d9636581c684ad99d6c"
+      "workflow_sha256": "6da62f8650b78978b1edfeb7423f83b7dc4956a97032de14d82bc58940afb573"
     },
     ".github/workflows/groundhog-release.yml:identity": {
       "matrix_source": "",
@@ -30738,7 +31376,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "da2e52a73062792e1ddbaba9a917cf2083e67855170d1af62044450e58c44719",
       "unsupported_reason": "groundhog-release:identity identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
-      "workflow_sha256": "67196c15df96471b0b016b700ebe168a5bf269313e079e9870bd078bb7ffaec1"
+      "workflow_sha256": "797efa48e0e22136d7e7aa937687db44f769f2388b950213a978df11dc6e6f8e"
     },
     ".github/workflows/groundhog-release.yml:validation": {
       "matrix_source": "",
@@ -30746,7 +31384,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "722572b7cdb010c34b64e43d62e9e87acec11be6e48ab6cb76da17d290ecf5e6",
       "unsupported_reason": "groundhog-release:validation identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
-      "workflow_sha256": "67196c15df96471b0b016b700ebe168a5bf269313e079e9870bd078bb7ffaec1"
+      "workflow_sha256": "797efa48e0e22136d7e7aa937687db44f769f2388b950213a978df11dc6e6f8e"
     },
     ".github/workflows/groundhog-release.yml:source": {
       "matrix_source": "",
@@ -30754,23 +31392,23 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "fa364540320a32d45836f8c29d0b6816126695b6079cf4bcb89cfe6dd915b052",
       "unsupported_reason": "groundhog-release:source identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
-      "workflow_sha256": "67196c15df96471b0b016b700ebe168a5bf269313e079e9870bd078bb7ffaec1"
+      "workflow_sha256": "797efa48e0e22136d7e7aa937687db44f769f2388b950213a978df11dc6e6f8e"
     },
     ".github/workflows/groundhog-release.yml:deb": {
       "matrix_source": "matrix:\n        # One deb per release: library names differ (libsecp256k1-1 on\n        # 24.04, -2 on Debian 13, newer on 26.04), so a 24.04 build does\n        # not install elsewhere. The version carries the distribution;\n        # dpkg names the file _amd64 or _arm64.\n        distro:\n          - { image: 'ubuntu:24.04', name: 'Ubuntu 24.04', tag: ubuntu24.04 }\n          - { image: 'ubuntu:26.04', name: 'Ubuntu 26.04', tag: ubuntu26.04 }\n          - { image: 'debian:13',    name: 'Debian 13',    tag: debian13 }\n        arch: [x86_64, aarch64]\n        include:\n          - { arch: x86_64,  runner: ubuntu-24.04 }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "f43faf10163b0d9b272d544dd6e4c814cbe02be4b324b708ced9d00ae11fa714",
+      "source_sha256": "f2d995462254873c0e28cc45ebdbc3ca3e8df813390177621f32b2c2e2a0b684",
       "unsupported_reason": "groundhog-release:deb identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
-      "workflow_sha256": "67196c15df96471b0b016b700ebe168a5bf269313e079e9870bd078bb7ffaec1"
+      "workflow_sha256": "797efa48e0e22136d7e7aa937687db44f769f2388b950213a978df11dc6e6f8e"
     },
     ".github/workflows/groundhog-release.yml:rpm": {
       "matrix_source": "matrix:\n        include:\n          - { arch: x86_64,  runner: ubuntu-24.04 }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "13e7a7f4fcec8e64a85244fc9adad814c5d27ed408376744abb3d0a38235c4b3",
+      "source_sha256": "64948c6ac67e9ffe50d4a506878f1de49ddc21f6c66f6eb9681fdc8e8e9dbe4c",
       "unsupported_reason": "groundhog-release:rpm identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
-      "workflow_sha256": "67196c15df96471b0b016b700ebe168a5bf269313e079e9870bd078bb7ffaec1"
+      "workflow_sha256": "797efa48e0e22136d7e7aa937687db44f769f2388b950213a978df11dc6e6f8e"
     },
     ".github/workflows/groundhog-release.yml:arch": {
       "matrix_source": "matrix:\n        include:\n          - { arch: x86_64, runner: ubuntu-24.04, image: 'archlinux:latest' }\n          # The official archlinux image is x86_64 only. Arch Linux ARM is\n          # what Linux-on-Android setups run (Termux proot-distro archlinux,\n          # chroots), so the aarch64 package is built on an Arch Linux ARM\n          # root: menci/archlinuxarm is rebuilt daily from the official\n          # ArchLinuxARM-aarch64 rootfs with the archlinuxarm keyring\n          # initialised. Pinned by digest; bump it deliberately.\n          - arch: aarch64\n            runner: ubuntu-24.04-arm\n            image: 'menci/archlinuxarm@sha256:57ed42430d3d3f22beb2983de1aa23396b27fcf33ebf5dd781947cdc1038a640'",
@@ -30778,15 +31416,15 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "3c5dc4e05eca2bd8af8e07e759201d5f4fda46955567f7cd5438d230fb042c71",
       "unsupported_reason": "groundhog-release:arch identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
-      "workflow_sha256": "67196c15df96471b0b016b700ebe168a5bf269313e079e9870bd078bb7ffaec1"
+      "workflow_sha256": "797efa48e0e22136d7e7aa937687db44f769f2388b950213a978df11dc6e6f8e"
     },
     ".github/workflows/groundhog-release.yml:flatpak": {
       "matrix_source": "matrix:\n        include:\n          - { arch: x86_64,  runner: ubuntu-24.04 }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "0e896fb3f7ca2340fbefcab4993c9cb3705424c4f82c75253ec6e010fdae7d90",
+      "source_sha256": "8421c3efce07286ebfc7e88284e3563babd3d24e4ee001191b4ade423c6516fa",
       "unsupported_reason": "groundhog-release:flatpak identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
-      "workflow_sha256": "67196c15df96471b0b016b700ebe168a5bf269313e079e9870bd078bb7ffaec1"
+      "workflow_sha256": "797efa48e0e22136d7e7aa937687db44f769f2388b950213a978df11dc6e6f8e"
     },
     ".github/workflows/groundhog-release.yml:nix": {
       "matrix_source": "matrix:\n        include:\n          - { system: x86_64-linux,  runner: ubuntu-24.04 }\n          - { system: aarch64-linux, runner: ubuntu-24.04-arm }",
@@ -30794,15 +31432,15 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "dc3ec6503c329aacaee1f864e6dc22e2ca8e00ca27608ff3e735ff39d638cb3f",
       "unsupported_reason": "groundhog-release:nix identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
-      "workflow_sha256": "67196c15df96471b0b016b700ebe168a5bf269313e079e9870bd078bb7ffaec1"
+      "workflow_sha256": "797efa48e0e22136d7e7aa937687db44f769f2388b950213a978df11dc6e6f8e"
     },
     ".github/workflows/groundhog-release.yml:release-aggregate": {
       "matrix_source": "",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "eadae5a01b86b2f2aba03686e911a22c6fa0dbd21f4bb78067dce0312471d8ca",
+      "source_sha256": "36e2b8e04e82122e7b69cadb662d2376089297d38f762398897543d197e62e98",
       "unsupported_reason": "groundhog-release:release-aggregate identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
-      "workflow_sha256": "67196c15df96471b0b016b700ebe168a5bf269313e079e9870bd078bb7ffaec1"
+      "workflow_sha256": "797efa48e0e22136d7e7aa937687db44f769f2388b950213a978df11dc6e6f8e"
     },
     ".github/workflows/groundhog-release.yml:release": {
       "matrix_source": "",
@@ -30810,7 +31448,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "c9dbe4fcb59118f40a909bce63a1f68b13df322940d88905da052ca4e5edf87b",
       "unsupported_reason": "groundhog-release:release identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
-      "workflow_sha256": "67196c15df96471b0b016b700ebe168a5bf269313e079e9870bd078bb7ffaec1"
+      "workflow_sha256": "797efa48e0e22136d7e7aa937687db44f769f2388b950213a978df11dc6e6f8e"
     },
     ".github/workflows/libgo-ci.yml:build-and-test": {
       "matrix_source": "matrix:\n        os: [ubuntu-latest, macos-latest]\n        # tsan keeps the default TSAN configuration (single-lock ring);\n        # tsan_mpmc keeps the MPMC slot protocol every other build ships, so\n        # the lock-free channel paths get ThreadSanitizer coverage too\n        # (nostrc-75rv review F8).\n        sanitizer: [asan_ubsan, tsan, tsan_mpmc]",
@@ -30819,57 +31457,57 @@
         "libgo.macos.asan"
       ],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "b455adbda277286b85ceb4b751b183c19d1115ed008fe1fcefa698cbc090706d",
+      "source_sha256": "8d360a701d27745a7582533376c42b89e132d0647d5ada98702bb798eb0b2edc",
       "unsupported_reason": "Only Linux/macOS asan_ubsan entries are authored; tsan, tsan_mpmc, W4 exclusion semantics, separate Linux gofiber and root fuzz-driver variants remain unsupported. macOS ASan stress exclusion remains not_executed.",
-      "workflow_sha256": "d7c25a01f516a924001c37e2d9dfc1907f8502f69d82698ed9ceaa1d5c578bc0"
+      "workflow_sha256": "24cb04488abe1df01671e99c6d4fa60fbfc1444a3511ecaf0240bf0303eb53fe"
     },
     ".github/workflows/libgo-ci.yml:gofiber-linux-sanitizers": {
       "matrix_source": "matrix:\n        sanitizer: [asan_ubsan, tsan]",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "79b268fe1b1fd762ca58dabc8a2d5c88a6d42c191cbcee3b6b1ede3256d6d2e5",
+      "source_sha256": "fcf573d90fb2841f25422e84431ed02907e8cd2fb6e6353059d6530d295e9e67",
       "unsupported_reason": "Only Linux/macOS asan_ubsan entries are authored; tsan, tsan_mpmc, W4 exclusion semantics, separate Linux gofiber and root fuzz-driver variants remain unsupported. macOS ASan stress exclusion remains not_executed.",
-      "workflow_sha256": "d7c25a01f516a924001c37e2d9dfc1907f8502f69d82698ed9ceaa1d5c578bc0"
+      "workflow_sha256": "24cb04488abe1df01671e99c6d4fa60fbfc1444a3511ecaf0240bf0303eb53fe"
     },
     ".github/workflows/libgo-ci.yml:fuzz-driver": {
       "matrix_source": "matrix:\n        os: [ubuntu-latest, macos-latest]",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "ae0824e7efc7b4e4c71b3c24a6af0429a246230e8314dd04781afc49952fbb83",
+      "source_sha256": "f8f83c95336f654a95e418a47460d5579b627ba5e68835a38f389a82c807f7c0",
       "unsupported_reason": "Only Linux/macOS asan_ubsan entries are authored; tsan, tsan_mpmc, W4 exclusion semantics, separate Linux gofiber and root fuzz-driver variants remain unsupported. macOS ASan stress exclusion remains not_executed.",
-      "workflow_sha256": "d7c25a01f516a924001c37e2d9dfc1907f8502f69d82698ed9ceaa1d5c578bc0"
+      "workflow_sha256": "24cb04488abe1df01671e99c6d4fa60fbfc1444a3511ecaf0240bf0303eb53fe"
     },
     ".github/workflows/libhanami-ci.yml:build-and-test": {
       "matrix_source": "matrix:\n        os: [ubuntu-latest, macos-latest]",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "f5645e4279fd1ba302d589d80b21f9949ca52affa22e524d7f07587bf417f81c",
+      "source_sha256": "dc8119be0bcee319ee99f2340bce3c5ee73d0098cbae50d8a8146793e21175bc",
       "unsupported_reason": "Ubuntu/macOS standalone libhanami configure, compiler/setup and exact standalone registrations have not been realized as profiles; root check linkage is not standalone parity.",
-      "workflow_sha256": "32f744499c33fe562d5cbca75499d950b2f1494e23ef35e3d9f0cfb36e1c2971"
+      "workflow_sha256": "bdd8752f05c600b9098266003e722134b76367ea258bb517026e69c417dd7c1a"
     },
     ".github/workflows/libnostr-gi.yml:generate-gir": {
       "matrix_source": "matrix:\n        os: [ubuntu-latest, macos-latest]",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "682e56341bc4270e392925d265162a0b21fd921502b2f698b756fb3a943eb15d",
+      "source_sha256": "71e9ba0c448a71d5f03391948c0ee9c25ac8a36c3cb925c209555eb7663e3b0f",
       "unsupported_reason": "Linux/macOS GIR scanner/typelib generation and installed binding smoke contracts lack exact build/runtime input and artifact admission.",
-      "workflow_sha256": "3406c1488d5cb2e0a41ee8ed6206c54417bf3663603b709e3bd7645e045ea121"
+      "workflow_sha256": "cd02b83a90128d573b9190ee65ee1c80992f08a972b868608e57e842bcf31cd7"
     },
     ".github/workflows/marmot-mdk-interop.yml:mdk-interop": {
       "matrix_source": "",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "38c1626b0c23364a08615d0ddc767790edebe8d30b7989dbf8ffdca1d23e2359",
+      "source_sha256": "cb0edf952b34a799ce95a339dd0d445f5b9c3f1edaa0882b9e632cb1ca0adb1b",
       "unsupported_reason": "MDK 0.8 image/driver/container lifecycle and complete live matrix custody remain unsupported; historical command/CTest smoke is not successful arbitrary-tree cleanup.",
-      "workflow_sha256": "bf4a316d80b8a96af6c0a28b8fd9029032d5f8c19fc698b67a5ba74fe2d36a5c"
+      "workflow_sha256": "4f2e4a07a08eb3dca33f8312707fbbc107f90eeaf2e272ad956291e544fd4537"
     },
     ".github/workflows/marmot-mdk011-interop.yml:mdk011-adopted-matrix": {
       "matrix_source": "",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "782007abad5e1c166746bcdee279fbda4831d0dbdd06c69c59113606b8f7ed37",
+      "source_sha256": "378997c30fedb5807e6f763a38a51bdcffbf1b7d3b9993669680ffc5170492e7",
       "unsupported_reason": "MDK 0.11 adopted case matrix, 0.9 incompatibility probe and image/reset custody remain unsupported; ordinary Groundhog memberships are not full live matrix admission.",
-      "workflow_sha256": "ffa6142b3f663098943519171c4e4f16f32b1695beed9f78e569eb90bd824cac"
+      "workflow_sha256": "b33bd9114585f6a596f0e4904956cb1dc7c091f89fa8ff4dc046cd3b3888dfdc"
     },
     ".github/workflows/nip55l-libsecret-ci.yml:refusing-session": {
       "matrix_source": "",
@@ -30877,23 +31515,23 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "cde531cc85793bb625c2f6f6b51e2ac826812333ac4bddb6b00d6119a385fb4d",
       "unsupported_reason": "Refusing Secret Service private-bus image setup/teardown and exact standalone NIP55L registration contracts are not modeled by generic profiles.",
-      "workflow_sha256": "e3d76999d3f03394575070b68b8f055b95af654e27e17502e786a5f3f15a0627"
+      "workflow_sha256": "6bf1929a941e63e8524778e9ca023bc27409bd7ec15274ee73eba0289be3bdcd"
     },
     ".github/workflows/nostr-homed-ci.yml:build-and-test": {
-      "matrix_source": "matrix:\n        include:\n          - distro: ubuntu-24.04\n            image: ubuntu:24.04\n            update: apt-get update\n            install: >-\n              apt-get install -y build-essential cmake pkg-config ninja-build\n              libjansson-dev libglib2.0-dev libgirepository1.0-dev\n              libsqlite3-dev libcurl4-openssl-dev\n              libfuse3-dev fuse3\n              libssl-dev libsecp256k1-dev\n              libwebsockets-dev libnsync-dev libsodium-dev libsoup-3.0-dev\n          - distro: debian-bookworm\n            image: debian:bookworm\n            update: apt-get update\n            install: >-\n              apt-get install -y build-essential cmake pkg-config ninja-build\n              libjansson-dev libglib2.0-dev gir1.2-glib-2.0\n              libsqlite3-dev libcurl4-openssl-dev\n              libfuse3-dev fuse3\n              libssl-dev libsecp256k1-dev\n              libwebsockets-dev libnsync-dev libsodium-dev libsoup-3.0-dev\n          - distro: fedora-40\n            image: fedora:40\n            update: dnf -y update\n            install: >-\n              dnf -y install @development-tools cmake ninja-build pkgconf-pkg-config gcc-c++\n              jansson-devel glib2-devel gobject-introspection-devel\n              sqlite-devel libcurl-devel\n              fuse3-devel\n              openssl-devel libsecp256k1-devel\n              libwebsockets-devel libsodium-devel libsoup3-devel\n          - distro: archlinux\n            image: archlinux:latest\n            update: pacman -Syu --noconfirm\n            install: >-\n              pacman -S --noconfirm base-devel cmake ninja pkgconf\n              jansson glib2 gobject-introspection sqlite curl\n              fuse3\n              openssl libsecp256k1 libwebsockets libsodium libsoup3",
+      "matrix_source": "matrix:\n        include:\n          - distro: ubuntu-24.04\n            image: ubuntu:24.04\n            update: apt-get update\n            install: >-\n              apt-get install -y build-essential cmake pkg-config ninja-build\n              libjansson-dev libglib2.0-dev libgirepository1.0-dev\n              libsqlite3-dev libcurl4-openssl-dev\n              libfuse3-dev fuse3\n              libssl-dev libsecp256k1-dev\n              libwebsockets-dev libnsync-dev libsodium-dev libsoup-3.0-dev\n          - distro: debian-bookworm\n            image: debian:bookworm\n            update: apt-get update\n            install: >-\n              apt-get install -y build-essential cmake pkg-config ninja-build\n              libjansson-dev libglib2.0-dev gir1.2-glib-2.0\n              libsqlite3-dev libcurl4-openssl-dev\n              libfuse3-dev fuse3\n              libssl-dev libsecp256k1-dev\n              libwebsockets-dev libnsync-dev libsodium-dev libsoup-3.0-dev\n          - distro: fedora-40\n            image: fedora:40\n            update: dnf -y update\n            install: >-\n              dnf -y install @development-tools cmake ninja-build pkgconf-pkg-config gcc-c++ patch\n              jansson-devel glib2-devel gobject-introspection-devel\n              sqlite-devel libcurl-devel\n              fuse3-devel\n              openssl-devel libsecp256k1-devel\n              libwebsockets-devel libsodium-devel libsoup3-devel\n          - distro: archlinux\n            image: archlinux:latest\n            update: pacman -Syu --noconfirm\n            install: >-\n              pacman -S --noconfirm base-devel cmake ninja pkgconf\n              jansson glib2 gobject-introspection sqlite curl\n              fuse3\n              openssl libsecp256k1 libwebsockets libsodium libsoup3",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "02522d7a8300f5163015a50801ed9d17fb017524ce31cba8133501a4f1e1692d",
+      "source_sha256": "1ced4ce5970c7ba55351644f144241243a95c883ea4b9a82dc243ad0908fcfea",
       "unsupported_reason": "Standalone Ubuntu five-unit headless profile is independently enrolled, not an alias for this legacy root configure (140 registrations including signer/runtime consumers). Four distro root setup/toolchain and advisory FUSE/secrets contracts remain separate; no privileged systemd session coverage is inferred.",
-      "workflow_sha256": "8c8b106d724f80cb3f342d5ea21877d19ea7005bb2d33a512dc7e704b52a491c"
+      "workflow_sha256": "a47f37f363837ff8f72e0ca60679d02497cd78ba64b8bd6f70b7a8156d280715"
     },
     ".github/workflows/nostr-homed-ci.yml:systemd-opensession": {
       "matrix_source": "",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "748c9202eba36b36e2468a6f773380b8928d0b24dba4db9a7360e289f9f9bada",
+      "source_sha256": "bb97a198b976900312019344de2dcd0dc8234a2cc0d310ce30fc0e500386a757",
       "unsupported_reason": "Debian/Fedora/Ubuntu/Arch distro setup/toolchains and privileged systemd session/runtime contracts are unsupported; no-tests and requested-checkout hosted failures are not passing test acceptance.",
-      "workflow_sha256": "8c8b106d724f80cb3f342d5ea21877d19ea7005bb2d33a512dc7e704b52a491c"
+      "workflow_sha256": "a47f37f363837ff8f72e0ca60679d02497cd78ba64b8bd6f70b7a8156d280715"
     },
     ".github/workflows/nostrc-ci.yml:build-and-test": {
       "matrix_source": "matrix:\n        os: [ubuntu-latest, macos-latest]\n        sanitizer: [asan_ubsan]",
@@ -30902,9 +31540,9 @@
         "core.macos.asan"
       ],
       "coverage_gap": "root_asan_execution_contract",
-      "source_sha256": "35ecf5ab6debc5277f69556b6e106e7b9191638ebbb08bddf1e6ff45590e158c",
+      "source_sha256": "6e87f66cb2998ef3ed24234a42560252f4a9cda8c7ea198ff9e78a7e4f67a15d",
       "unsupported_reason": "Root Linux/macOS ASan profiles exist; three original exclusions, separate audit/fuzz invocations, ambient setup suffixes and complete postbuild/runtime union remain gaps.",
-      "workflow_sha256": "10a675396b64c928f3d5bb79025ab2f6be0acbacaa3410155090e186ecdcdcbc"
+      "workflow_sha256": "bbb3eed4ff6e47769ffb9510ae0fdf1e926a6b716777f2e7cf3bd8f74616fe1e"
     },
     ".github/workflows/release-validation.yml:identity": {
       "matrix_source": "",
@@ -30928,7 +31566,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "dfe878a6e2a92306f2f3f13a35de5a59a40a1344b1bde277a33d1abc4c8dddbd",
       "unsupported_reason": "release:detect-component identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
-      "workflow_sha256": "ae5b7a47dc011dfb9134ae39d9e3db8ad869cb10ffc37dae0e6d453146cbedb7"
+      "workflow_sha256": "0cd1ca2ede668c7ff44d320da8d434ab2e262c0bc25a4ccd5be0dada5ea7b11f"
     },
     ".github/workflows/release.yml:validation": {
       "matrix_source": "",
@@ -30936,15 +31574,15 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "d8bc53d229992a4f4100ac571998c80d08710f3aa671996342ae2d3425ddbcc2",
       "unsupported_reason": "release:validation identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
-      "workflow_sha256": "ae5b7a47dc011dfb9134ae39d9e3db8ad869cb10ffc37dae0e6d453146cbedb7"
+      "workflow_sha256": "0cd1ca2ede668c7ff44d320da8d434ab2e262c0bc25a4ccd5be0dada5ea7b11f"
     },
     ".github/workflows/release.yml:release-aggregate": {
       "matrix_source": "",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "467d840b5956a3974ff69cfad6adaba37918e470380a864872894657f28481cd",
+      "source_sha256": "820eeb3b3f75bb0af9c853f7d03b7fd10991a8af10fee670f696cbf552cbb76f",
       "unsupported_reason": "release:release-aggregate identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
-      "workflow_sha256": "ae5b7a47dc011dfb9134ae39d9e3db8ad869cb10ffc37dae0e6d453146cbedb7"
+      "workflow_sha256": "0cd1ca2ede668c7ff44d320da8d434ab2e262c0bc25a4ccd5be0dada5ea7b11f"
     },
     ".github/workflows/release.yml:build-source": {
       "matrix_source": "",
@@ -30952,23 +31590,23 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "d017b4f9e45c13ddfd6435fbdb11c8c26e09f36fe2d38f12d877e5addc401ef6",
       "unsupported_reason": "release:build-source identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
-      "workflow_sha256": "ae5b7a47dc011dfb9134ae39d9e3db8ad869cb10ffc37dae0e6d453146cbedb7"
+      "workflow_sha256": "0cd1ca2ede668c7ff44d320da8d434ab2e262c0bc25a4ccd5be0dada5ea7b11f"
     },
     ".github/workflows/release.yml:build-linux": {
       "matrix_source": "matrix:\n        include:\n          - { arch: x86_64,  runner: ubuntu-24.04 }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "894e786832f2c44fc2106ad9cac03018768a84d622ddcea978d2da9861f80ab8",
+      "source_sha256": "b9d036d0b4e107e9b633a734ee497eb7b081e822a3983d6f8d6a2aa966f5a97d",
       "unsupported_reason": "release:build-linux identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
-      "workflow_sha256": "ae5b7a47dc011dfb9134ae39d9e3db8ad869cb10ffc37dae0e6d453146cbedb7"
+      "workflow_sha256": "0cd1ca2ede668c7ff44d320da8d434ab2e262c0bc25a4ccd5be0dada5ea7b11f"
     },
     ".github/workflows/release.yml:build-linux-daemon-tcp": {
       "matrix_source": "matrix:\n        include:\n          - { arch: x86_64,  runner: ubuntu-24.04 }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "5fca21e4b5b215c9e53771afdbfc85075d1ac7bb3fa6d88719d4fad3894d85cf",
+      "source_sha256": "415a80de7966ee33c528803b0ff329bb42bd5e9dda8ae9c48df49a88b06f5217",
       "unsupported_reason": "release:build-linux-daemon-tcp identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
-      "workflow_sha256": "ae5b7a47dc011dfb9134ae39d9e3db8ad869cb10ffc37dae0e6d453146cbedb7"
+      "workflow_sha256": "0cd1ca2ede668c7ff44d320da8d434ab2e262c0bc25a4ccd5be0dada5ea7b11f"
     },
     ".github/workflows/release.yml:build-appimage-gnostr": {
       "matrix_source": "",
@@ -30976,7 +31614,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "2ec8423c678ae81601f5e0837fac15fb5a660a8d2d13bff25a0edb32103f4b0f",
       "unsupported_reason": "release:build-appimage-gnostr identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
-      "workflow_sha256": "ae5b7a47dc011dfb9134ae39d9e3db8ad869cb10ffc37dae0e6d453146cbedb7"
+      "workflow_sha256": "0cd1ca2ede668c7ff44d320da8d434ab2e262c0bc25a4ccd5be0dada5ea7b11f"
     },
     ".github/workflows/release.yml:build-snap-gnostr": {
       "matrix_source": "matrix:\n        include:\n          - { arch: x86_64,  runner: ubuntu-latest }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
@@ -30984,7 +31622,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "04a8458e438830df4a0e5d18196bbd5ed4294431190b7177eeeed13cfbc778a2",
       "unsupported_reason": "release:build-snap-gnostr identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
-      "workflow_sha256": "ae5b7a47dc011dfb9134ae39d9e3db8ad869cb10ffc37dae0e6d453146cbedb7"
+      "workflow_sha256": "0cd1ca2ede668c7ff44d320da8d434ab2e262c0bc25a4ccd5be0dada5ea7b11f"
     },
     ".github/workflows/release.yml:build-snap-signer": {
       "matrix_source": "matrix:\n        include:\n          - { arch: x86_64,  runner: ubuntu-latest }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
@@ -30992,7 +31630,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "136cea0c7d27c819fa521b478d4d2d59132e16e51fd501ee13bda614c686e9b3",
       "unsupported_reason": "release:build-snap-signer identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
-      "workflow_sha256": "ae5b7a47dc011dfb9134ae39d9e3db8ad869cb10ffc37dae0e6d453146cbedb7"
+      "workflow_sha256": "0cd1ca2ede668c7ff44d320da8d434ab2e262c0bc25a4ccd5be0dada5ea7b11f"
     },
     ".github/workflows/release.yml:build-snap-daemon": {
       "matrix_source": "matrix:\n        include:\n          - { arch: x86_64,  runner: ubuntu-latest }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
@@ -31000,7 +31638,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "b5298108193e3f492f584d831fd675aa18e4a435cd18f608b0999b46c4ee72b0",
       "unsupported_reason": "release:build-snap-daemon identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
-      "workflow_sha256": "ae5b7a47dc011dfb9134ae39d9e3db8ad869cb10ffc37dae0e6d453146cbedb7"
+      "workflow_sha256": "0cd1ca2ede668c7ff44d320da8d434ab2e262c0bc25a4ccd5be0dada5ea7b11f"
     },
     ".github/workflows/release.yml:create-release": {
       "matrix_source": "",
@@ -31008,23 +31646,23 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "20b27d29797b5a752b50c147ef757644c5c8754e418adeb2776a32ebb2283d0f",
       "unsupported_reason": "release:create-release identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
-      "workflow_sha256": "ae5b7a47dc011dfb9134ae39d9e3db8ad869cb10ffc37dae0e6d453146cbedb7"
+      "workflow_sha256": "0cd1ca2ede668c7ff44d320da8d434ab2e262c0bc25a4ccd5be0dada5ea7b11f"
     },
     ".github/workflows/release.yml:build-flatpak": {
       "matrix_source": "matrix:\n        include:\n          - { arch: x86_64,  runner: ubuntu-latest }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "d83e9b96a0631f256dc842efa1b430c9c1a0d4a20de6d738c682b1e703fd8612",
+      "source_sha256": "94f1de1dc72a89a40fd94082104a6c73039e5d22129ed51ed838ecbb5a97dd23",
       "unsupported_reason": "release:build-flatpak identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
-      "workflow_sha256": "ae5b7a47dc011dfb9134ae39d9e3db8ad869cb10ffc37dae0e6d453146cbedb7"
+      "workflow_sha256": "0cd1ca2ede668c7ff44d320da8d434ab2e262c0bc25a4ccd5be0dada5ea7b11f"
     },
     ".github/workflows/release.yml:build-flatpak-gnostr": {
       "matrix_source": "matrix:\n        include:\n          - { arch: x86_64,  runner: ubuntu-latest }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "fdbdab5cb8b6cea326e79f6a800ddbd5c65b0e77913be45fcde1eac44f2c5dff",
+      "source_sha256": "623023a77f8ebc1c33936d68c51d99e35bd53e865e524ab10043278a39d4149a",
       "unsupported_reason": "release:build-flatpak-gnostr identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
-      "workflow_sha256": "ae5b7a47dc011dfb9134ae39d9e3db8ad869cb10ffc37dae0e6d453146cbedb7"
+      "workflow_sha256": "0cd1ca2ede668c7ff44d320da8d434ab2e262c0bc25a4ccd5be0dada5ea7b11f"
     },
     ".github/workflows/release.yml:build-macos-signer-dmg": {
       "matrix_source": "",
@@ -31032,7 +31670,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "f9d67b8b5c0b015d5e739329deec95acbbb9dfe2cc319c75de4f91d4052d7afd",
       "unsupported_reason": "release:build-macos-signer-dmg identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
-      "workflow_sha256": "ae5b7a47dc011dfb9134ae39d9e3db8ad869cb10ffc37dae0e6d453146cbedb7"
+      "workflow_sha256": "0cd1ca2ede668c7ff44d320da8d434ab2e262c0bc25a4ccd5be0dada5ea7b11f"
     },
     ".github/workflows/release.yml:build-macos-tarball": {
       "matrix_source": "",
@@ -31040,23 +31678,23 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "ea18df39988cae1ab16dfa548a4bc756e7e14db26ca712575656d7b965c6b67b",
       "unsupported_reason": "release:build-macos-tarball identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
-      "workflow_sha256": "ae5b7a47dc011dfb9134ae39d9e3db8ad869cb10ffc37dae0e6d453146cbedb7"
+      "workflow_sha256": "0cd1ca2ede668c7ff44d320da8d434ab2e262c0bc25a4ccd5be0dada5ea7b11f"
     },
     ".github/workflows/signet-ci.yml:build-and-test": {
       "matrix_source": "matrix:\n        passkeys: [ 'OFF', 'ON' ]\n        sqlcipher: [ 'OFF', 'ON' ]\n        build_type: [ 'Debug' ]\n        include:\n          # Exercise binding-race and forced-secret regressions in one test\n          # build; the Release configuration below keeps hooks disabled.\n          - passkeys: 'ON'\n            sqlcipher: 'OFF'\n            build_type: 'Debug'\n            test_hooks: 'ON'\n          # fp-52iq: assurance comes from running tests the way the project is\n          # shipped. Release optimizes signet_core and defines NDEBUG, so cover\n          # the shipped configuration too instead of testing Debug only.\n          - passkeys: 'ON'\n            sqlcipher: 'ON'\n            build_type: 'Release'",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "19ddd1257b4cce4523c3d05b237fa88df808812a2ababa9bbe8ed9545fb4a88a",
+      "source_sha256": "62922660c8a9d2392d547027f0052f94ec97a0a10792fde821ce221cd05bede8",
       "unsupported_reason": "Five passkeys/sqlcipher/hooks/build-type Meson variants and daemon/control smoke lack distinct exact profile/membership/runtime contracts.",
-      "workflow_sha256": "8ce7a7d50c35a32ac5fc9813205322bbe920241629fe301761289912b2fef00a"
+      "workflow_sha256": "f1cf30c5cf7aa7ccba6f28673c18f04274adc121046a068e4cb40c116b8c01f5"
     },
     ".github/workflows/static-checks.yml:static-checks": {
       "matrix_source": "",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "69601f9d1064d215ad53f70bf6c608131629f5f19abce27ed7277d1d3e8f65d0",
+      "source_sha256": "6e6250a07a031639f130665332862ff0cf831de206900a7368f9f25a0a5681d7",
       "unsupported_reason": "selection.contract is only one production command; remaining shell/static/privacy/version/package check commands and their explicit input union are not all authored.",
-      "workflow_sha256": "0455626887da0517405a2f11a854d02fefd1c4f58fc1199041dcdeced2f3a7b2"
+      "workflow_sha256": "301fd2cbd51742819ac39af883b8064f3b7f911f2e1c7180911205d1b4dc2cb1"
     },
     ".github/workflows/windows-build.yml:identity": {
       "matrix_source": "",
@@ -31064,7 +31702,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "f6eeabb51f4d89cec31c67f9406aacaeec9ad722e1128fc732ded1c14b291506",
       "unsupported_reason": "Windows toolchain/installer/package execution is not supported by the current Linux/macOS realization profiles; publisher identity/artifact contracts remain legacy.",
-      "workflow_sha256": "cad83d92eb414a7f126c3c453b07fe232ad89291da3710b39659765b0d59fcfd"
+      "workflow_sha256": "d369f3dd62b30968161cbb4a81f728e5c7e4ef676d2adbac86c173fdf7f8e796"
     },
     ".github/workflows/windows-build.yml:validation": {
       "matrix_source": "",
@@ -31072,7 +31710,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "fa11c431170fcc48672657b53bd593ea3a1d2edc0a61ba7aebc560600e12f49e",
       "unsupported_reason": "Windows toolchain/installer/package execution is not supported by the current Linux/macOS realization profiles; publisher identity/artifact contracts remain legacy.",
-      "workflow_sha256": "cad83d92eb414a7f126c3c453b07fe232ad89291da3710b39659765b0d59fcfd"
+      "workflow_sha256": "d369f3dd62b30968161cbb4a81f728e5c7e4ef676d2adbac86c173fdf7f8e796"
     },
     ".github/workflows/windows-build.yml:build": {
       "matrix_source": "",
@@ -31080,7 +31718,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "135b3479d1f1e00856ddcf1b689cd387bd17b70c296c0845f0f7aa55be32edf8",
       "unsupported_reason": "Windows toolchain/installer/package execution is not supported by the current Linux/macOS realization profiles; publisher identity/artifact contracts remain legacy.",
-      "workflow_sha256": "cad83d92eb414a7f126c3c453b07fe232ad89291da3710b39659765b0d59fcfd"
+      "workflow_sha256": "d369f3dd62b30968161cbb4a81f728e5c7e4ef676d2adbac86c173fdf7f8e796"
     },
     ".github/workflows/windows-build.yml:release-aggregate": {
       "matrix_source": "",
@@ -31088,7 +31726,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "2fdff2030e691ec6bc489faa66af56732978195339dea4db2e9851a9fd38e380",
       "unsupported_reason": "Windows toolchain/installer/package execution is not supported by the current Linux/macOS realization profiles; publisher identity/artifact contracts remain legacy.",
-      "workflow_sha256": "cad83d92eb414a7f126c3c453b07fe232ad89291da3710b39659765b0d59fcfd"
+      "workflow_sha256": "d369f3dd62b30968161cbb4a81f728e5c7e4ef676d2adbac86c173fdf7f8e796"
     },
     ".github/workflows/windows-build.yml:release": {
       "matrix_source": "",
@@ -31096,15 +31734,15 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "24b31f4e57e7bb4d9a4cfd04999f477caa170c25400d949778116224be2bf896",
       "unsupported_reason": "Windows toolchain/installer/package execution is not supported by the current Linux/macOS realization profiles; publisher identity/artifact contracts remain legacy.",
-      "workflow_sha256": "cad83d92eb414a7f126c3c453b07fe232ad89291da3710b39659765b0d59fcfd"
+      "workflow_sha256": "d369f3dd62b30968161cbb4a81f728e5c7e4ef676d2adbac86c173fdf7f8e796"
     },
     ".github/workflows/windows-validation.yml:build": {
       "matrix_source": "",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "1572639c86d781f7b3edbee41bc0dd2563558a00ceedf95bd775417999bb74dd",
+      "source_sha256": "4d8a97bad71d2f2ff8c8a8bcf85ee0862002b54ee361321381d3fa5edfea31ed",
       "unsupported_reason": "Windows toolchain/installer/package execution is not supported by the current Linux/macOS realization profiles; publisher identity/artifact contracts remain legacy.",
-      "workflow_sha256": "e84e5a3cc65956f6e9293e676f4bece47f9ce9a2cb97048583bb419f5dcf82d6"
+      "workflow_sha256": "8ef47bdca7d051e689d7a1442fe22dfff77f90423869a11c99f5ab3fe70161ba"
     },
     ".github/workflows/dependency-tests.yml:policy_regressions": {
       "profiles": [],
@@ -31112,15 +31750,15 @@
       "unsupported_reason": "Provisioned container regression workflow is source-accounted separately; raw diagnostics do not establish selector/native profile or complete union acceptance.",
       "matrix_source": "",
       "source_sha256": "59695e88a3d29f082dd3047f5c2a1c63bf9c228c13972fd640bd517d66051ed9",
-      "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce"
+      "workflow_sha256": "254e0d9afc6f954f69b7e1b734bf4acb3e2a8012d0465b7d0f533a276bf4a535"
     },
     ".github/workflows/namespace-policy-regression.yml:regressions": {
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
       "unsupported_reason": "Provisioned container regression workflow is source-accounted separately; raw diagnostics do not establish selector/native profile or complete union acceptance.",
       "matrix_source": "",
-      "source_sha256": "c712a814165514da86ef9e7399d0c78d4310ce6615536cf930d9b5e4d457a46c",
-      "workflow_sha256": "4ce40f1e0ea0b66dfd7580f8fc5344872c13672cf889a2dd5bcf098c3293f5aa"
+      "source_sha256": "401af41046839b0d55f3e079c0bca8788f4314619f0aaff7602bc4fd324fe5e5",
+      "workflow_sha256": "167a02dd89080824282a60899da1934ecf9d1d7fc09b6826c3946636e52c8e5e"
     },
     ".github/workflows/dependency-tests.yml:homed_units": {
       "matrix_source": "",
@@ -31128,7 +31766,239 @@
       "coverage_gap": "workflow_profile_union",
       "unsupported_reason": "Standalone five-unit homed CI dispatch is source-accounted only; no physical CI receipt, original four-distro root/systemd/FUSE validation or complete profile-union acceptance is inferred.",
       "source_sha256": "5e470ea449945b085873bc31a1e21bfd5868154ea2625e0c9a403c943d42082b",
-      "workflow_sha256": "b9706b78ac7fac90717af55abb0cf8cf4dc77ed298c421b9410c7297839483ce"
+      "workflow_sha256": "254e0d9afc6f954f69b7e1b734bf4acb3e2a8012d0465b7d0f533a276bf4a535"
+    },
+    ".github/workflows/ci-selective.yml:select": {
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union",
+      "unsupported_reason": "Ordinary affected-family orchestration and conclusions are not attested profile execution; explicit diagnostic profiles and incomplete coverage remain separate.",
+      "matrix_source": "",
+      "source_sha256": "9b9f33bd659654d33babd7027be13797e0999bce5b2a12c305b4cef2e43ca1fd",
+      "workflow_sha256": "15df6fc07da5e7af7733d998b39b562170a5241eda422cdedbe1dbce9d4a7845"
+    },
+    ".github/workflows/ci-selective.yml:cheap": {
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union",
+      "unsupported_reason": "Ordinary affected-family orchestration and conclusions are not attested profile execution; explicit diagnostic profiles and incomplete coverage remain separate.",
+      "matrix_source": "",
+      "source_sha256": "bda219efcf1fc4908398f10b7aef2218a12de2445fb49f0f4d56a1ccb56bbd94",
+      "workflow_sha256": "15df6fc07da5e7af7733d998b39b562170a5241eda422cdedbe1dbce9d4a7845"
+    },
+    ".github/workflows/ci-selective.yml:core": {
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union",
+      "unsupported_reason": "Ordinary affected-family orchestration and conclusions are not attested profile execution; explicit diagnostic profiles and incomplete coverage remain separate.",
+      "matrix_source": "",
+      "source_sha256": "60be54bd12ae0f2a4cb7479c73c5c0e7ba9c0d071f7a8ff4aa5b0b83f00f6db1",
+      "workflow_sha256": "15df6fc07da5e7af7733d998b39b562170a5241eda422cdedbe1dbce9d4a7845"
+    },
+    ".github/workflows/ci-selective.yml:vault_syncd": {
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union",
+      "unsupported_reason": "Ordinary affected-family orchestration and conclusions are not attested profile execution; explicit diagnostic profiles and incomplete coverage remain separate.",
+      "matrix_source": "",
+      "source_sha256": "ccbd1a17f50eef4e4cb907a74d2c0eece9569eef8be28b35215e9306f5efeaf1",
+      "workflow_sha256": "15df6fc07da5e7af7733d998b39b562170a5241eda422cdedbe1dbce9d4a7845"
+    },
+    ".github/workflows/ci-selective.yml:libgo": {
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union",
+      "unsupported_reason": "Ordinary affected-family orchestration and conclusions are not attested profile execution; explicit diagnostic profiles and incomplete coverage remain separate.",
+      "matrix_source": "",
+      "source_sha256": "344ae0f73d1c303f24e6ab2b1ec3ece5b81d7554c3085c0ff62f3e1d6c59f23f",
+      "workflow_sha256": "15df6fc07da5e7af7733d998b39b562170a5241eda422cdedbe1dbce9d4a7845"
+    },
+    ".github/workflows/ci-selective.yml:hanami": {
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union",
+      "unsupported_reason": "Ordinary affected-family orchestration and conclusions are not attested profile execution; explicit diagnostic profiles and incomplete coverage remain separate.",
+      "matrix_source": "",
+      "source_sha256": "e7e4af540a92cdd26e0e531ca780f56ea49b6b955c3f44b86f78a25ec7211cf0",
+      "workflow_sha256": "15df6fc07da5e7af7733d998b39b562170a5241eda422cdedbe1dbce9d4a7845"
+    },
+    ".github/workflows/ci-selective.yml:rust": {
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union",
+      "unsupported_reason": "Ordinary affected-family orchestration and conclusions are not attested profile execution; explicit diagnostic profiles and incomplete coverage remain separate.",
+      "matrix_source": "",
+      "source_sha256": "a19ed7ef86ff1766bc33da59bb7a5e77ebcf32bbabcc45d6be57b192ea5d4bc0",
+      "workflow_sha256": "15df6fc07da5e7af7733d998b39b562170a5241eda422cdedbe1dbce9d4a7845"
+    },
+    ".github/workflows/ci-selective.yml:gi": {
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union",
+      "unsupported_reason": "Ordinary affected-family orchestration and conclusions are not attested profile execution; explicit diagnostic profiles and incomplete coverage remain separate.",
+      "matrix_source": "",
+      "source_sha256": "8e2cb206ef3319be948ddfe6de5b593dde44a0ab922f7ee58e80f71fb5a0c973",
+      "workflow_sha256": "15df6fc07da5e7af7733d998b39b562170a5241eda422cdedbe1dbce9d4a7845"
+    },
+    ".github/workflows/ci-selective.yml:groundhog": {
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union",
+      "unsupported_reason": "Ordinary affected-family orchestration and conclusions are not attested profile execution; explicit diagnostic profiles and incomplete coverage remain separate.",
+      "matrix_source": "",
+      "source_sha256": "f16b07991e380a1d6685e789e313c93cdae4fe6e98900bca07f0cce3a5b0a1cb",
+      "workflow_sha256": "15df6fc07da5e7af7733d998b39b562170a5241eda422cdedbe1dbce9d4a7845"
+    },
+    ".github/workflows/ci-selective.yml:grotto": {
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union",
+      "unsupported_reason": "Ordinary affected-family orchestration and conclusions are not attested profile execution; explicit diagnostic profiles and incomplete coverage remain separate.",
+      "matrix_source": "",
+      "source_sha256": "bd7c0eb4d96242a254fa4dfc794d6f9504dc2d8934d0ab37e19cb3c3bba91871",
+      "workflow_sha256": "15df6fc07da5e7af7733d998b39b562170a5241eda422cdedbe1dbce9d4a7845"
+    },
+    ".github/workflows/ci-selective.yml:nip55l": {
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union",
+      "unsupported_reason": "Ordinary affected-family orchestration and conclusions are not attested profile execution; explicit diagnostic profiles and incomplete coverage remain separate.",
+      "matrix_source": "",
+      "source_sha256": "b097c97473c59045259caf49cb9053a4dd93367ca861585c5df75918f63c6296",
+      "workflow_sha256": "15df6fc07da5e7af7733d998b39b562170a5241eda422cdedbe1dbce9d4a7845"
+    },
+    ".github/workflows/ci-selective.yml:homed": {
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union",
+      "unsupported_reason": "Ordinary affected-family orchestration and conclusions are not attested profile execution; explicit diagnostic profiles and incomplete coverage remain separate.",
+      "matrix_source": "",
+      "source_sha256": "36f81faa4bdf553a967c954e3db3d771f23c6d97bc79034f82fabfe50e922727",
+      "workflow_sha256": "15df6fc07da5e7af7733d998b39b562170a5241eda422cdedbe1dbce9d4a7845"
+    },
+    ".github/workflows/ci-selective.yml:signet": {
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union",
+      "unsupported_reason": "Ordinary affected-family orchestration and conclusions are not attested profile execution; explicit diagnostic profiles and incomplete coverage remain separate.",
+      "matrix_source": "",
+      "source_sha256": "705ba95923df7a11960a560c2fcf07751da738d331aae8ac9f442c193b126496",
+      "workflow_sha256": "15df6fc07da5e7af7733d998b39b562170a5241eda422cdedbe1dbce9d4a7845"
+    },
+    ".github/workflows/ci-selective.yml:static": {
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union",
+      "unsupported_reason": "Ordinary affected-family orchestration and conclusions are not attested profile execution; explicit diagnostic profiles and incomplete coverage remain separate.",
+      "matrix_source": "",
+      "source_sha256": "207ef530c8701739989313373c6737500037d57b74284506e1fe696a06955744",
+      "workflow_sha256": "15df6fc07da5e7af7733d998b39b562170a5241eda422cdedbe1dbce9d4a7845"
+    },
+    ".github/workflows/ci-selective.yml:appimage": {
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union",
+      "unsupported_reason": "Ordinary affected-family orchestration and conclusions are not attested profile execution; explicit diagnostic profiles and incomplete coverage remain separate.",
+      "matrix_source": "",
+      "source_sha256": "724bcdb17d137d33086e7c12af46943164e5741ece87032648f322cfc53d33aa",
+      "workflow_sha256": "15df6fc07da5e7af7733d998b39b562170a5241eda422cdedbe1dbce9d4a7845"
+    },
+    ".github/workflows/ci-selective.yml:windows": {
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union",
+      "unsupported_reason": "Ordinary affected-family orchestration and conclusions are not attested profile execution; explicit diagnostic profiles and incomplete coverage remain separate.",
+      "matrix_source": "",
+      "source_sha256": "2fda7772c2f19e7d0ef5bb9b49a421012ac98402847631b7a83ec858ec17620e",
+      "workflow_sha256": "15df6fc07da5e7af7733d998b39b562170a5241eda422cdedbe1dbce9d4a7845"
+    },
+    ".github/workflows/ci-selective.yml:bp": {
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union",
+      "unsupported_reason": "Ordinary affected-family orchestration and conclusions are not attested profile execution; explicit diagnostic profiles and incomplete coverage remain separate.",
+      "matrix_source": "",
+      "source_sha256": "9b01d83ce90b7bd1fe0d9487881e1c8ee5398b1bb02b4de0377caec2e5bfcbe4",
+      "workflow_sha256": "15df6fc07da5e7af7733d998b39b562170a5241eda422cdedbe1dbce9d4a7845"
+    },
+    ".github/workflows/ci-selective.yml:bp_extended": {
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union",
+      "unsupported_reason": "Ordinary affected-family orchestration and conclusions are not attested profile execution; explicit diagnostic profiles and incomplete coverage remain separate.",
+      "matrix_source": "",
+      "source_sha256": "0616381c9d5322bf6c2f5a5aba74afec4439c6fb2d7a37f9332169c9b330d0d6",
+      "workflow_sha256": "15df6fc07da5e7af7733d998b39b562170a5241eda422cdedbe1dbce9d4a7845"
+    },
+    ".github/workflows/ci-selective.yml:fuzz": {
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union",
+      "unsupported_reason": "Ordinary affected-family orchestration and conclusions are not attested profile execution; explicit diagnostic profiles and incomplete coverage remain separate.",
+      "matrix_source": "",
+      "source_sha256": "e5f620685cfbc333e6a80e09a484a2dd4072fc1c0b3e135897de1bd97391dd90",
+      "workflow_sha256": "15df6fc07da5e7af7733d998b39b562170a5241eda422cdedbe1dbce9d4a7845"
+    },
+    ".github/workflows/ci-selective.yml:mdk08": {
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union",
+      "unsupported_reason": "Ordinary affected-family orchestration and conclusions are not attested profile execution; explicit diagnostic profiles and incomplete coverage remain separate.",
+      "matrix_source": "",
+      "source_sha256": "8239fb16e52ccc8e9c895e308a09bc07a7fb00a3667d649a1cfeb8d15fcfcfcf",
+      "workflow_sha256": "15df6fc07da5e7af7733d998b39b562170a5241eda422cdedbe1dbce9d4a7845"
+    },
+    ".github/workflows/ci-selective.yml:mdk011": {
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union",
+      "unsupported_reason": "Ordinary affected-family orchestration and conclusions are not attested profile execution; explicit diagnostic profiles and incomplete coverage remain separate.",
+      "matrix_source": "",
+      "source_sha256": "50ad4d2714d2cd63dc93a7d79514aee984957e4b9cd8fc50548a4b4c76163480",
+      "workflow_sha256": "15df6fc07da5e7af7733d998b39b562170a5241eda422cdedbe1dbce9d4a7845"
+    },
+    ".github/workflows/ci-selective.yml:gate": {
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union",
+      "unsupported_reason": "Ordinary affected-family orchestration and conclusions are not attested profile execution; explicit diagnostic profiles and incomplete coverage remain separate.",
+      "matrix_source": "",
+      "source_sha256": "9f0eed9bb8a2baae6e46f9b64e9923e3b0c0ce4aa7e27fbc886555431b084fe3",
+      "workflow_sha256": "15df6fc07da5e7af7733d998b39b562170a5241eda422cdedbe1dbce9d4a7845"
+    },
+    ".github/workflows/groundhog-ci.yml:groundhog-selected-sanitizers": {
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union",
+      "unsupported_reason": "The selected sanitizer runner executes affected checks; it is not unrestricted legacy sanitizer union or native attested profile acceptance.",
+      "matrix_source": "",
+      "source_sha256": "69623fd15c6aa32c259dd933a2e9a3d160bbb30f040e45bffc8436d1bed2f896",
+      "workflow_sha256": "6da62f8650b78978b1edfeb7423f83b7dc4956a97032de14d82bc58940afb573"
+    },
+    ".github/workflows/groundhog-release.yml:manual-broad": {
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union",
+      "unsupported_reason": "Manual broad validation routes to reusable families and is not an independent execution profile or publisher attestation.",
+      "matrix_source": "",
+      "source_sha256": "eac4bdb9262da2fb5159ed8729f8ca69dfa3fea3b80ed9bfcd13ba21167c1e72",
+      "workflow_sha256": "797efa48e0e22136d7e7aa937687db44f769f2388b950213a978df11dc6e6f8e"
+    },
+    ".github/workflows/nip55l-libsecret-ci.yml:signer-consumers": {
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union",
+      "unsupported_reason": "Signer consumer/private Secret Service assembly is an ordinary runner, not a generic attested profile or contained service proof.",
+      "matrix_source": "matrix:\n        profile: [nostr_seal.linux, desktop.signer.linux, groundhog.identity_compat.linux]",
+      "source_sha256": "35538656852246198e3fd9f09af02edcc196d2a121d417ce7f58af8d26b847e7",
+      "workflow_sha256": "6bf1929a941e63e8524778e9ca023bc27409bd7ec15274ee73eba0289be3bdcd"
+    },
+    ".github/workflows/release.yml:manual-broad": {
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union",
+      "unsupported_reason": "Manual broad validation routes to reusable families and is not an independent execution profile or publisher attestation.",
+      "matrix_source": "",
+      "source_sha256": "51687237ccce7e6b3b4bee1a8d2e330127edbd1f0e45722ec7d660fe3f6edc71",
+      "workflow_sha256": "0cd1ca2ede668c7ff44d320da8d434ab2e262c0bc25a4ccd5be0dada5ea7b11f"
+    },
+    ".github/workflows/rust-bindings-ci.yml:installed-consumer": {
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union",
+      "unsupported_reason": "Installed Rust ABI consumer is ordinary package coverage, not generic CMake/native attested profile execution.",
+      "matrix_source": "",
+      "source_sha256": "34219ec35df8607791c7d181c9149d2724d6e0630518089deca8ead6f8bc82fa",
+      "workflow_sha256": "5a8dff118eea5dec677a0c90e790cbf7326e78f2d9b4bafac60738611b54043c"
+    },
+    ".github/workflows/vault-syncd-ci.yml:selected": {
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union",
+      "unsupported_reason": "Selected vault syncd assembly is ordinary runner coverage, not attested generic-profile acceptance.",
+      "matrix_source": "",
+      "source_sha256": "3b7bdcffb51b03a35b92a7a304de7e47dd1fb106ee0f357c49cb2ae23e88f362",
+      "workflow_sha256": "0266777b0d641caa41c7de1db93b7b861fa550f55515c1d720fec792771dfd3a"
+    },
+    ".github/workflows/windows-build.yml:manual-broad": {
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union",
+      "unsupported_reason": "Manual broad validation routes to reusable families and is not an independent execution profile or publisher attestation.",
+      "matrix_source": "",
+      "source_sha256": "98b7d0ce52a6cb88c1438764aafa3373c3aa9c3531779a56509fda0cdd94d19e",
+      "workflow_sha256": "d369f3dd62b30968161cbb4a81f728e5c7e4ef676d2adbac86c173fdf7f8e796"
     }
   },
   "schema_version": 1,

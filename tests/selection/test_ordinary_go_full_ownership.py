@@ -48,7 +48,7 @@ class FullDeclarationTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     subset.active_contracts(policy)
 
-    def test_full_marker_removed_refuses_current_profile_but_retains_exact_old_route(self):
+    def test_full_marker_removed_refuses_current_profile_and_retains_nested_refusal(self):
         check = self.policy["checks"]["supported.libgo"]
         check.pop(subset.FULL_FIELD)
         for pid in subset.PROFILES:
@@ -56,9 +56,6 @@ class FullDeclarationTests(unittest.TestCase):
             del check["ctest_tests"][pid]
         with self.assertRaisesRegex(ValueError, 'stale profile hash'):
             subset.active_contracts(self.policy)
-        from runtime_integration_support import before_runtime_policy
-        historical = before_runtime_policy(self.policy)
-        self.assertEqual(set(subset.active_contracts(historical)), set(subset.PROFILES))
         self.assertTrue(subset.nested({"diagnostic_nonmember_subset_profiles": list(subset.PROFILES)}))
 
     def test_finite_reverse_projection_preserves_all_other_sections(self):
@@ -68,8 +65,8 @@ class FullDeclarationTests(unittest.TestCase):
         restored = copy.deepcopy(before)
         restored["checks"]["supported.libgo"] = self.policy["checks"]["supported.libgo"]
         self.assertEqual(restored, self.policy)
-        from runtime_integration_support import before_runtime_policy
-        self.assertEqual(set(subset.contracts(before_runtime_policy(before))), set(subset.PROFILES))
+        with self.assertRaisesRegex(ValueError, 'stale profile hash'):
+            subset.contracts(before)
         bad = copy.deepcopy(self.policy)
         bad["checks"]["supported.libgo"][subset.FULL_FIELD]["authority"] = "forged"
         with self.assertRaises(ValueError):

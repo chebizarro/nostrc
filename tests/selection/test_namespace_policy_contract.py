@@ -100,40 +100,23 @@ class NamespacePolicyContractTests(unittest.TestCase):
     def test_broad_setup_preserves_legacy_and_all_static_commands(self):
         broad = job(read('.github/workflows/dependency-broad.yml'), 'static')
         self.assertIn('uses: ./.github/workflows/namespace-policy-regression.yml', broad)
-        legacy = read('.github/workflows/static-checks.yml')
+        ordinary = read('.github/workflows/static-checks.yml')
         entry = read('tests/selection/namespace_policy_entry.sh')
-        # The legacy suite step executes the testhost entry, whose policy-suite is
-        # the literal full default discovery (no subset, no host-side copy).
         self.assertIn('run policy-suite python3 -m unittest discover -s tests/selection -v', entry)
-        self.assertNotIn('unittest discover', legacy)
-        # Scheduling only: the nine original host commands run, with their exact
-        # argv and host environment, in one owned supervisor beside the image
-        # build; each original named step replays exactly its own command.
-        helper = read(HELPER)
+        self.assertIn('python3 scripts/test-selection-operational.py', ordinary)
+        self.assertNotIn(CONTROLLER, ordinary)
         commands = host_commands()
-        names = [name for name, _ in commands]
-        self.assertEqual(names, ['unsequenced', 'gui-frame', 'linux-packages', 'pre-push', 'full-gate',
-                                 'linux-smoke', 'sanitizer', 'signer-names', 'keychain-guard'])
+        self.assertEqual([name for name, _ in commands],
+                         ['unsequenced', 'gui-frame', 'linux-packages', 'pre-push', 'full-gate',
+                          'linux-smoke', 'sanitizer', 'signer-names', 'keychain-guard'])
         for _, argv in commands:
-            self.assertIn(' '.join(argv), entry)  # the testhost runs the same commands too
-        replays = [command for command in re.findall(r'^        run: (.+)$', legacy, re.M)
-                   if command.startswith('python3 ' + HELPER + ' replay ')]
-        self.assertEqual(replays, ['python3 ' + HELPER + ' replay ' + n for n in names])
-        order = [(step['name'], step['condition'], step['run']) for step in steps(legacy)]
-        build = order.index(('Build dedicated nonroot regression image', None, 'bash ' + CONTROLLER + ' build'))
-        self.assertEqual(order[build - 1], ('Start the original host self-tests beside the image build', None,
-                                            'python3 ' + HELPER + ' start'))
-        self.assertEqual(order[build + 1], ("Join this job's host self-test group before the testhost", 'always()',
-                                            'python3 ' + HELPER + ' join'))
-        self.assertEqual(order[build + 2][0], 'Selection and workflow contract tests')
-        self.assertIn('          JOB_STATUS: ${{ job.status }}\n', legacy)
-        upload = next(i for i, step in enumerate(order) if step[0] == 'Retain testhost control and evidence')
-        self.assertEqual(order[upload - 1], ("End this job's host self-test group before retaining evidence",
-                                             'always()', 'python3 ' + HELPER + ' ensure-ended'))
-        self.assertLess(order.index(("Remove only this job's recorded immutable container", 'always()',
-                                     'bash ' + CONTROLLER + ' remove')), upload)
+            command = ' '.join(argv)
+            self.assertIn(command, entry)
+            self.assertIn('run: ' + command, ordinary)
+        self.assertNotIn('python3 ' + HELPER + ' replay ', ordinary)
+        helper = read(HELPER)
         for token in ('timeout=', 'pgrep', 'killpg(-', 'os.kill(-'):
-            self.assertNotIn(token, helper)  # no command deadline, no tool or bare-number group signal
+            self.assertNotIn(token, helper)
 
     def test_only_scoped_disposable_container_policy_is_relaxed(self):
         workflow = read('.github/workflows/namespace-policy-regression.yml')
@@ -147,7 +130,7 @@ class NamespacePolicyContractTests(unittest.TestCase):
                       'target=/evidence', '--cidfile', 'docker inspect', 'docker wait',
                       'namespace_testhost_lifecycle.py cleanup'):
             self.assertIn(token, controller)
-        for text in (workflow, legacy):
+        for text in (workflow,):
             for token in ('bash tests/selection/namespace_apparmor_setup.sh',
                           'bash tests/selection/namespace_apparmor_teardown.sh', 'if: always()'):
                 self.assertIn(token, text)
@@ -159,56 +142,39 @@ class NamespacePolicyContractTests(unittest.TestCase):
         self.assertIn('--name "$(cat "$control/container.name")"', controller)
         self.assertIn('native-host-probe.exit', controller)
         self.assertIn('tests/selection/namespace_policy_entry.sh\n', controller)
-        for text in (workflow, legacy):
+        for text in (workflow,):
             # Teardown runs unconditionally, only after the container was removed.
             removal = text.index("name: Remove only this job's recorded immutable container")
             teardown = text.index("name: Remove only this job's AppArmor profile after its consumers exited")
             self.assertLess(removal, teardown)
             self.assertIn('if: always()', text[teardown:teardown + 200])
 
-    def test_stable_static_job_reuses_the_one_controller_with_bounded_walltime(self):
+    def test_static_and_manual_diagnostic_routes_stay_separate(self):
         regression = job(read('.github/workflows/namespace-policy-regression.yml'), 'regressions')
         text = read('.github/workflows/static-checks.yml')
         self.assertEqual(re.findall(r'^  ([A-Za-z_-]+):$', text.split('\njobs:\n', 1)[1], re.M), ['static-checks'])
-        legacy = job(text, 'static-checks')
-        # Identity, triggers and every original finite check are unchanged; no
-        # reusable-workflow call renames the check and no second controller exists.
+        ordinary = job(text, 'static-checks')
         self.assertIn('name: Static checks\n', text)
-        for trigger in ('  workflow_call:', '  push:', '  pull_request:', '  workflow_dispatch:'):
-            self.assertIn('\n' + trigger + '\n', text)
-        self.assertNotIn('schedule:', text)
-        self.assertNotIn('uses: ./.github/workflows/', legacy)
-        self.assertNotIn('docker ', legacy)
-        self.assertIn('    timeout-minutes: 20\n', legacy)
+        for trigger in ('workflow_call', 'workflow_dispatch'):
+            self.assertIn('\n  ' + trigger + ':\n', text)
+        for trigger in ('push', 'pull_request', 'schedule'):
+            self.assertNotIn('\n  ' + trigger + ':', text)
+        self.assertIn('    timeout-minutes: 20\n', ordinary)
         self.assertIn('    timeout-minutes: 45\n', regression)
-        self.assertIn('REQUESTED_SHA: ${{ inputs.sha || github.sha }}', legacy)
-        self.assertIn('ref: ${{ inputs.sha || github.sha }}', legacy)
-        # Same full history as the controller's own checkout: the suite reads
-        # pinned ancestor commits (test_vector_family_integration witnesses).
-        checkout = legacy.split('- name: Checkout\n', 1)[1].split('- name: Verify requested checkout', 1)[0]
-        self.assertIn('          fetch-depth: 0\n', checkout)
-        self.assertIn('          fetch-depth: 0\n', regression)
-        for found, expected, observed in (controller_steps(regression, 'Execute unchanged kernel matrix and full policy suite'),
-                                          controller_steps(legacy, 'Selection and workflow contract tests')):
-            self.assertEqual(observed, expected)
-            for step in found:
-                self.assertEqual(step['condition'], 'always()' if step['name'] in ALWAYS else None, step['name'])
-            self.assertIn('test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"', found[0]['run'])
-        names = [step['name'] for step in steps(legacy)]
-        original = ['Checkout', 'Verify requested checkout', 'Selection and workflow contract tests',
-                    'No call modifies a variable another argument uses',
-                    'Every GUI test installs narrow GDK frame tolerance',
-                    'Local Linux image mirrors the CI package lists', 'Pre-push hook behaviour',
-                    'Opt-in full gate behaviour', 'Linux gate smoke run keeps and counts reruns',
-                    'Sanitizer gate reads the CI job and filters pushes', 'Old signer names stay gone (W31)',
-                    'Keychain guard self-test (nostrc-2hmd)']
-        self.assertEqual([name for name in names if name in original], original)
-        upload = next(step for step in steps(legacy) if step['uses'] == 'actions/upload-artifact@v4')
+        for route in (ordinary, regression):
+            self.assertIn('ref: ${{ inputs.sha || github.sha }}', route)
+            self.assertIn('          fetch-depth: 0\n', route)
+            self.assertNotIn('continue-on-error', route)
+        self.assertNotIn(CONTROLLER, ordinary)
+        self.assertNotIn('docker ', ordinary)
+        found, expected, observed = controller_steps(regression, 'Execute unchanged kernel matrix and full policy suite')
+        self.assertEqual(observed, expected)
+        for step in found:
+            self.assertEqual(step['condition'], 'always()' if step['name'] in ALWAYS else None, step['name'])
+        self.assertIn('test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"', found[0]['run'])
+        upload = next(step for step in steps(regression) if step['uses'] == 'actions/upload-artifact@v4')
         self.assertEqual(upload['condition'], 'always()')
-        self.assertIn('name: ${{ inputs.artifact_prefix }}static-checks-testhost-${{ inputs.sha || github.sha }}-'
-                      '${{ github.run_attempt }}', legacy)
-        self.assertNotIn('continue-on-error', legacy)
-        # Unknown operations refuse rather than fall through.
+        self.assertIn('namespace-policy-regressions-${{ inputs.sha || github.sha }}-${{ github.run_attempt }}', regression)
         self.assertIn("  *)\n    echo 'usage: namespace_policy_controller.sh", read(CONTROLLER))
 
     def test_only_privileged_actions_are_owned_profile_add_scan_and_exact_removal(self):
