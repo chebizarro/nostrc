@@ -1,7 +1,7 @@
 # benchmark/CMakeLists.txt — Performance and memory benchmarks
 #
-# These are NOT run during normal `ctest` runs. They're gated behind
-# BUILD_BENCHMARKS and intended for nightly CI or manual profiling.
+# Gated behind BUILD_BENCHMARKS for explicitly requested profiling.
+# The relay regression test uses only a local wire fixture.
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -103,11 +103,14 @@ if(BUILD_BENCHMARKS)
       ${CMAKE_SOURCE_DIR}/libnostr/include
       ${CMAKE_SOURCE_DIR}/libgo/include)
 
-    add_test(NAME bench_relay_perf_baseline
-             COMMAND relay_perf_baseline)
-    set_tests_properties(bench_relay_perf_baseline PROPERTIES
-      TIMEOUT 60
-      LABELS "benchmark;relay;network;nightly"
-    )
+    if(BUILD_TESTING)
+      find_package(Python3 REQUIRED COMPONENTS Interpreter)
+      add_test(NAME bench_relay_perf_baseline
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/relay_perf_fixture.py
+                $<TARGET_FILE:relay_perf_baseline>)
+      set_tests_properties(bench_relay_perf_baseline PROPERTIES
+        TIMEOUT 60
+        LABELS "benchmark;relay;local")
+    endif()
   endif()
 endif()

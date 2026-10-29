@@ -1,302 +1,285 @@
 /*
- * Relay Performance Baseline Measurement Tool
- * 
- * Establishes baseline metrics for relay subscription performance:
- * - Time to connect + handshake per relay
- * - Time-to-EOSE under real subscriptions
- * - Messages/sec throughput
- * - Latency percentiles (avg, p50, p95, p99)
- *
- * Usage: relay_perf_baseline [relay_url ...]
- * Default relays: wss://nos.lol wss://relay.primal.net wss://relay.sharegap.net
- *
+ * Relay performance baseline: handshake, first EVENT and real EOSE timings.
+ * Usage: relay_perf_baseline [--timeout-ms N] relay_url [relay_url ...]
+ * Exit 0 only when every requested relay completes; 1 on any measurement
+ * failure (including no completed relays), 2 on invalid arguments.
+ * No default relays: callers must explicitly choose their measurement targets.
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include "../libnostr/include/nostr-relay.h"
-#include "../libnostr/include/nostr-event.h"
-#include "../libnostr/include/nostr-filter.h"
+#include "nostr-relay.h"
+#include "nostr-event.h"
+#include "nostr-filter.h"
+#include "nostr-subscription.h"
+#include "select.h"
 
-/* Tunable parameters */
-#define MAX_RELAYS          8
-#define MAX_EVENTS_PER_SUB  200     /* limit per subscription */
-#define CONNECT_TIMEOUT_MS  5000
-#define EOSE_TIMEOUT_MS     10000
+#define MAX_RELAYS 8
+#define MAX_EVENTS_PER_SUB 200
+#define DEFAULT_TIMEOUT_MS 10000
+
+typedef enum {
+    CONNECT_FAILURE, COMPLETED, CLOSED, TRANSPORT_LOSS, TIMEOUT, SETUP_FAILURE
+} Outcome;
+
+static const char *outcome_names[] = {
+    "connect_failure", "completed", "closed", "transport_loss", "timeout", "setup_failure"
+};
 
 typedef struct {
     const char *relay_url;
-    uint64_t    connect_start_ns;
-    uint64_t    connect_done_ns;
-    uint64_t    sub_start_ns;
-    uint64_t    first_event_ns;
-    uint64_t    eose_ns;
-    int         events_received;
-    int         connected;
-    int         got_eose;
+    uint64_t connect_start_ns, connect_done_ns, sub_start_ns;
+    uint64_t first_event_ns, eose_ns;
+    int events_received;
+    int connected;
+    Outcome outcome;
+    char reason[512];
 } RelayMetrics;
 
-typedef struct {
-    double   messages_per_sec;
-    double   avg_latency_ms;
-    double   p50_latency_ms;
-    double   p95_latency_ms;
-    double   p99_latency_ms;
-    double   avg_connect_ms;
-    double   avg_eose_ms;
-    int      total_events;
-    int      relays_connected;
-    int      relays_attempted;
-} BaselineMetrics;
-
-static uint64_t
-get_time_ns(void)
+static uint64_t get_time_ns(void)
 {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
 }
 
-static int
-compare_uint64(const void *a, const void *b)
+/* The reader reports transport loss after routing preceding frames. The
+ * buffered channel retains loss even if it happens before select starts. */
+static void relay_state_changed(NostrRelay *relay, NostrRelayConnectionState old_state,
+                                NostrRelayConnectionState new_state, void *data)
 {
-    uint64_t va = *(const uint64_t *)a;
-    uint64_t vb = *(const uint64_t *)b;
-    return (va > vb) - (va < vb);
+    (void)relay;
+    (void)old_state;
+    if (new_state == NOSTR_RELAY_STATE_DISCONNECTED)
+        go_channel_try_send(data, (void *)1);
 }
 
-/*
- * Connect to a relay, subscribe for recent kind:1 notes, collect events
- * until EOSE, and record timing metrics.
- */
-static void
-benchmark_relay(RelayMetrics *rm)
+static void release_notice(void *data)
 {
-    printf("\n--- %s ---\n", rm->relay_url);
+    go_channel_unref(data);
+}
 
-    /* Connect */
-    rm->connect_start_ns = get_time_ns();
+static void record_event(RelayMetrics *rm, void *event)
+{
+    if (!event) return;
+    if (!rm->first_event_ns) rm->first_event_ns = get_time_ns();
+    rm->events_received++;
+    nostr_event_free(event);
+}
 
+static void set_failure(RelayMetrics *rm, Outcome outcome, const Error *err)
+{
+    rm->outcome = outcome;
+    snprintf(rm->reason, sizeof(rm->reason), "%s", err ? err->message : "unknown error");
+}
+
+static void benchmark_relay(RelayMetrics *rm, uint32_t timeout_ms)
+{
     Error *err = NULL;
+    NostrSubscription *sub = NULL;
+    GoChannel *loss = go_channel_create(1);
+    rm->connect_start_ns = get_time_ns();
     NostrRelay *relay = nostr_relay_new(NULL, rm->relay_url, &err);
-    if (!relay) {
-        fprintf(stderr, "  SKIP: failed to create relay: %s\n",
-                err ? err->message : "unknown");
-        if (err) free(err);
-        return;
+    if (!relay || !loss) {
+        set_failure(rm, SETUP_FAILURE, err);
+        goto cleanup;
     }
-
     nostr_relay_set_auto_reconnect(relay, false);
-
-    Error *conn_err = NULL;
-    if (!nostr_relay_connect(relay, &conn_err)) {
-        fprintf(stderr, "  SKIP: connect failed: %s\n",
-                conn_err ? conn_err->message : "unknown");
-        if (conn_err) free(conn_err);
-        nostr_relay_free(relay);
-        return;
+    /* Callback ownership keeps its channel alive through in-flight calls. */
+    nostr_relay_set_state_callback_full(relay, relay_state_changed,
+                                      go_channel_ref(loss), release_notice);
+    if (!nostr_relay_connect(relay, &err) ||
+        !nostr_relay_wait_established(relay, timeout_ms, &err)) {
+        set_failure(rm, CONNECT_FAILURE, err);
+        goto cleanup;
     }
-
-    /* Wait for handshake with polling (up to CONNECT_TIMEOUT_MS) */
-    uint64_t deadline = get_time_ns() + (uint64_t)CONNECT_TIMEOUT_MS * 1000000ULL;
-    while (!nostr_relay_is_established(relay) && get_time_ns() < deadline) {
-        struct timespec ts = { .tv_sec = 0, .tv_nsec = 10000000 }; /* 10ms */
-        nanosleep(&ts, NULL);
-    }
-
-    if (!nostr_relay_is_established(relay)) {
-        fprintf(stderr, "  SKIP: handshake timeout\n");
-        nostr_relay_disconnect(relay);
-        nostr_relay_free(relay);
-        return;
-    }
-
     rm->connect_done_ns = get_time_ns();
     rm->connected = 1;
-    double connect_ms = (rm->connect_done_ns - rm->connect_start_ns) / 1e6;
-    printf("  Connected in %.1f ms\n", connect_ms);
 
-    /* Build filter: recent kind:1 notes, limited batch */
     NostrFilter *filter = nostr_filter_new();
+    NostrFilters *filters = nostr_filters_new();
+    if (!filter || !filters) {
+        nostr_filter_free(filter);
+        nostr_filters_free(filters);
+        set_failure(rm, SETUP_FAILURE, NULL);
+        goto cleanup;
+    }
     int kinds[] = { 1 };
     nostr_filter_set_kinds(filter, kinds, 1);
     nostr_filter_set_limit(filter, MAX_EVENTS_PER_SUB);
-
-    NostrFilters *filters = nostr_filters_new();
-    if (!nostr_filters_add(filters, filter)) {
-        fprintf(stderr, "  SKIP: failed to add subscription filter\n");
-        nostr_filter_free(filter);
+    bool added = nostr_filters_add(filters, filter);
+    nostr_filter_free(filter); /* add moves the contents */
+    if (!added) {
         nostr_filters_free(filters);
-        nostr_relay_disconnect(relay);
-        nostr_relay_free(relay);
-        return;
+        set_failure(rm, SETUP_FAILURE, NULL);
+        goto cleanup;
     }
-
-    /* Subscribe */
+    sub = nostr_relay_prepare_subscription(relay, NULL, filters);
+    if (!sub) {
+        nostr_filters_free(filters);
+        set_failure(rm, SETUP_FAILURE, NULL);
+        goto cleanup;
+    }
+    nostr_subscription_set_filters(sub, filters); /* transfer full */
     rm->sub_start_ns = get_time_ns();
+    uint64_t deadline = rm->sub_start_ns + (uint64_t)timeout_ms * 1000000ULL;
+    if (!nostr_subscription_fire(sub, &err)) {
+        set_failure(rm, TRANSPORT_LOSS, err);
+        goto cleanup;
+    }
 
-    Error *sub_err = NULL;
-    if (!nostr_relay_subscribe(relay, NULL, filters, &sub_err)) {
-        fprintf(stderr, "  SKIP: subscribe failed: %s\n",
-                sub_err ? sub_err->message : "unknown");
-        if (sub_err) free(sub_err);
+    GoChannel *events = nostr_subscription_get_events_channel(sub);
+    GoChannel *eose = nostr_subscription_get_eose_channel(sub);
+    GoChannel *closed = nostr_subscription_get_closed_channel(sub);
+    bool lost = false;
+    for (;;) {
+        void *message = NULL;
+        /* Check protocol boundaries before loss/deadline. A reader may enqueue
+         * EOSE and immediately lose the transport; that is still a real sample. */
+        if (go_channel_try_receive(closed, &message) == 0) {
+            rm->outcome = CLOSED;
+            snprintf(rm->reason, sizeof(rm->reason), "%s", message ? (char *)message : "");
+            free(message);
+            break;
+        }
+        if (go_channel_try_receive(eose, NULL) == 0) {
+            rm->outcome = COMPLETED;
+            rm->eose_ns = get_time_ns();
+            break;
+        }
+        if (lost || go_channel_try_receive(loss, NULL) == 0) {
+            rm->outcome = TRANSPORT_LOSS;
+            break;
+        }
+        uint64_t now = get_time_ns();
+        if (now >= deadline) {
+            rm->outcome = TIMEOUT;
+            break;
+        }
+        GoSelectCase cases[] = {
+            { .op = GO_SELECT_RECEIVE, .chan = events, .recv_buf = &message },
+            { .op = GO_SELECT_RECEIVE, .chan = eose, .recv_buf = &message },
+            { .op = GO_SELECT_RECEIVE, .chan = closed, .recv_buf = &message },
+            { .op = GO_SELECT_RECEIVE, .chan = loss, .recv_buf = &message },
+        };
+        GoSelectResult result = go_select_timeout(cases, 4, (deadline - now + 999999) / 1000000);
+        if (result.selected_case < 0) continue; /* recheck boundaries, never completion */
+        if (!result.ok) { lost = true; continue; }
+        if (result.selected_case == 0) record_event(rm, message);
+        else if (result.selected_case == 1) {
+            rm->outcome = COMPLETED;
+            rm->eose_ns = get_time_ns();
+            break;
+        } else if (result.selected_case == 2) {
+            rm->outcome = CLOSED;
+            snprintf(rm->reason, sizeof(rm->reason), "%s", message ? (char *)message : "");
+            free(message);
+            break;
+        } else lost = true;
+    }
+
+cleanup:
+    free_error(err);
+    if (sub) {
+        nostr_subscription_unsubscribe(sub);
+        nostr_subscription_close(sub, NULL);
+        nostr_subscription_wait(sub);
+        /* EOSE and EVENT use separate channels. Drain the preceding buffered
+         * events too, even when select observed the boundary first. */
+        void *event = NULL;
+        while (go_channel_try_receive(nostr_subscription_get_events_channel(sub), &event) == 0)
+            record_event(rm, event);
+        nostr_subscription_free(sub);
+    }
+    if (relay) {
         nostr_relay_disconnect(relay);
         nostr_relay_free(relay);
-        nostr_filter_free(filter);
-        nostr_filters_free(filters);
-        return;
     }
-
-    printf("  Subscribed, waiting for EOSE...\n");
-
-    /* Collect events until EOSE or timeout.
-     * The relay's internal loop receives events and fires EOSE.
-     * We poll is_connected and check event count. The subscription
-     * callback runs on the relay's worker thread and increments
-     * events_received via the subscription's event channel.
-     *
-     * For this benchmark, we simply wait for the subscription to
-     * complete (EOSE) by polling with a timeout.
-     */
-    deadline = get_time_ns() + (uint64_t)EOSE_TIMEOUT_MS * 1000000ULL;
-    while (get_time_ns() < deadline && nostr_relay_is_connected(relay)) {
-        struct timespec ts = { .tv_sec = 0, .tv_nsec = 50000000 }; /* 50ms */
-        nanosleep(&ts, NULL);
-        /* The relay subscription processes events internally.
-         * We can't easily count from C without the Go channel bridge,
-         * so we rely on the EOSE timeout as the measurement window. */
-    }
-
-    rm->eose_ns = get_time_ns();
-    rm->got_eose = 1;
-
-    double eose_ms = (rm->eose_ns - rm->sub_start_ns) / 1e6;
-    printf("  EOSE window: %.1f ms\n", eose_ms);
-
-    /* Clean up */
-    nostr_relay_disconnect(relay);
-    nostr_relay_free(relay);
-    nostr_filter_free(filter);
-    nostr_filters_free(filters);
+    go_channel_unref(loss);
+    printf("relay=%s outcome=%s events_received=%d eose_samples=%d",
+           rm->relay_url, outcome_names[rm->outcome], rm->events_received, rm->eose_ns != 0);
+    if (rm->connected)
+        printf(" connect_ms=%.2f", (rm->connect_done_ns - rm->connect_start_ns) / 1e6);
+    if (rm->first_event_ns)
+        printf(" first_event_ms=%.2f", (rm->first_event_ns - rm->sub_start_ns) / 1e6);
+    if (rm->eose_ns)
+        printf(" eose_ms=%.2f", (rm->eose_ns - rm->sub_start_ns) / 1e6);
+    if (*rm->reason) printf(" reason=%s", rm->reason);
+    putchar('\n');
 }
 
-static void
-compute_metrics(RelayMetrics *relays, int count, BaselineMetrics *out)
+static int compare_uint64(const void *a, const void *b)
 {
-    memset(out, 0, sizeof(*out));
-    out->relays_attempted = count;
+    uint64_t va = *(const uint64_t *)a, vb = *(const uint64_t *)b;
+    return (va > vb) - (va < vb);
+}
 
-    double total_connect_ms = 0;
-    double total_eose_ms = 0;
-    int connected = 0;
-    int eose_count = 0;
-
-    for (int i = 0; i < count; i++) {
-        if (!relays[i].connected) continue;
-        connected++;
-
-        double connect_ms = (relays[i].connect_done_ns - relays[i].connect_start_ns) / 1e6;
-        total_connect_ms += connect_ms;
-
-        if (relays[i].got_eose) {
-            double eose_ms = (relays[i].eose_ns - relays[i].sub_start_ns) / 1e6;
-            total_eose_ms += eose_ms;
-            eose_count++;
-        }
-    }
-
-    out->relays_connected = connected;
-    out->avg_connect_ms = connected > 0 ? total_connect_ms / connected : 0;
-    out->avg_eose_ms = eose_count > 0 ? total_eose_ms / eose_count : 0;
-
-    /* Collect all EOSE timings as latency samples for percentile calc */
+static void print_report(FILE *out, RelayMetrics *relays, int count)
+{
+    int connected = 0, samples = 0;
+    double connect_ms = 0, eose_ms = 0;
     uint64_t latencies[MAX_RELAYS];
-    int n = 0;
     for (int i = 0; i < count; i++) {
-        if (relays[i].got_eose) {
-            latencies[n++] = relays[i].eose_ns - relays[i].sub_start_ns;
+        if (relays[i].connected) {
+            connected++;
+            connect_ms += (relays[i].connect_done_ns - relays[i].connect_start_ns) / 1e6;
+        }
+        if (relays[i].eose_ns) {
+            latencies[samples++] = relays[i].eose_ns - relays[i].sub_start_ns;
+            eose_ms += latencies[samples - 1] / 1e6;
         }
     }
+    fprintf(out, "relays_attempted=%d\nrelays_connected=%d\nrelays_failed=%d\neose_samples=%d\n",
+            count, connected, count - samples, samples);
+    if (connected) fprintf(out, "avg_connect_ms=%.2f\n", connect_ms / connected);
+    /* Absence is not a zero-duration sample. Omit timings when no EOSE arrived. */
+    if (!samples) return;
+    qsort(latencies, (size_t)samples, sizeof(*latencies), compare_uint64);
+    fprintf(out, "avg_eose_ms=%.2f\np50_eose_ms=%.2f\np95_eose_ms=%.2f\np99_eose_ms=%.2f\n",
+            eose_ms / samples, latencies[samples * 50 / 100] / 1e6,
+            latencies[samples * 95 / 100] / 1e6, latencies[samples * 99 / 100] / 1e6);
+}
 
-    if (n > 0) {
-        qsort(latencies, (size_t)n, sizeof(uint64_t), compare_uint64);
-
-        uint64_t sum = 0;
-        for (int i = 0; i < n; i++) sum += latencies[i];
-
-        out->avg_latency_ms = (sum / (uint64_t)n) / 1e6;
-        out->p50_latency_ms = latencies[n * 50 / 100] / 1e6;
-        out->p95_latency_ms = latencies[n > 1 ? n * 95 / 100 : n - 1] / 1e6;
-        out->p99_latency_ms = latencies[n > 1 ? n * 99 / 100 : n - 1] / 1e6;
+int main(int argc, char *argv[])
+{
+    uint32_t timeout_ms = DEFAULT_TIMEOUT_MS;
+    RelayMetrics relays[MAX_RELAYS] = {0};
+    int count = 0;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--timeout-ms") == 0) {
+            if (++i == argc) goto usage;
+            char *end = NULL;
+            errno = 0;
+            unsigned long value = strtoul(argv[i], &end, 10);
+            if (errno || !*argv[i] || *end || !value || value > UINT32_MAX || argv[i][0] == '-') goto usage;
+            timeout_ms = (uint32_t)value;
+        } else {
+            if (argv[i][0] == '-' || count == MAX_RELAYS) goto usage;
+            relays[count++].relay_url = argv[i];
+        }
     }
-}
-
-static void
-print_report(BaselineMetrics *m)
-{
-    printf("\n========================================\n");
-    printf("    RELAY PERFORMANCE BASELINE\n");
-    printf("========================================\n");
-
-    printf("\nConnectivity:\n");
-    printf("  Relays attempted:    %d\n", m->relays_attempted);
-    printf("  Relays connected:    %d\n", m->relays_connected);
-    printf("  Avg connect time:    %.1f ms\n", m->avg_connect_ms);
-
-    printf("\nSubscription (time to EOSE):\n");
-    printf("  Average:             %.1f ms\n", m->avg_eose_ms);
-    printf("  P50:                 %.1f ms\n", m->p50_latency_ms);
-    printf("  P95:                 %.1f ms\n", m->p95_latency_ms);
-    printf("  P99:                 %.1f ms\n", m->p99_latency_ms);
-
-    printf("========================================\n");
-}
-
-int
-main(int argc, char *argv[])
-{
-    printf("Relay Performance Baseline Tool\n");
-    printf("================================\n");
-
-    /* Use CLI args as relay URLs, or defaults */
-    const char *default_relays[] = {
-        "wss://nos.lol",
-        "wss://relay.primal.net",
-        "wss://nos.lol",
-    };
-    int default_count = 3;
-
-    const char **urls = (argc > 1) ? (const char **)&argv[1] : default_relays;
-    int count = (argc > 1) ? argc - 1 : default_count;
-    if (count > MAX_RELAYS) count = MAX_RELAYS;
-
-    RelayMetrics relays[MAX_RELAYS];
-    memset(relays, 0, sizeof(relays));
-
+    if (!count) goto usage;
+    int completed = 0;
     for (int i = 0; i < count; i++) {
-        relays[i].relay_url = urls[i];
-        benchmark_relay(&relays[i]);
+        benchmark_relay(&relays[i], timeout_ms);
+        completed += relays[i].outcome == COMPLETED;
     }
+    print_report(stdout, relays, count);
+    FILE *file = fopen("baseline_metrics.txt", "w");
+    if (file) {
+        print_report(file, relays, count);
+        fclose(file);
+    } else perror("baseline_metrics.txt");
+    return completed == count ? 0 : 1;
 
-    BaselineMetrics metrics;
-    compute_metrics(relays, count, &metrics);
-    print_report(&metrics);
-
-    /* Save to file for CI comparison */
-    FILE *f = fopen("baseline_metrics.txt", "w");
-    if (f) {
-        fprintf(f, "relays_connected=%d\n", metrics.relays_connected);
-        fprintf(f, "avg_connect_ms=%.2f\n", metrics.avg_connect_ms);
-        fprintf(f, "avg_eose_ms=%.2f\n", metrics.avg_eose_ms);
-        fprintf(f, "p50_eose_ms=%.2f\n", metrics.p50_latency_ms);
-        fprintf(f, "p95_eose_ms=%.2f\n", metrics.p95_latency_ms);
-        fprintf(f, "p99_eose_ms=%.2f\n", metrics.p99_latency_ms);
-        fclose(f);
-        printf("\nMetrics saved to baseline_metrics.txt\n");
-    }
-
-    return 0;
+usage:
+    fprintf(stderr, "Usage: %s [--timeout-ms N] relay_url [relay_url ...] (max %d)\n"
+                    "Timeout bounds each handshake and subscription; expiry is failure.\n"
+                    "Exit: 0 all relays completed, 1 any relay failed, 2 invalid arguments.\n",
+            argv[0], MAX_RELAYS);
+    return 2;
 }
