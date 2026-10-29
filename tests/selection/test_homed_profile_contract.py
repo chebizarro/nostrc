@@ -2,6 +2,7 @@
 import copy
 from pathlib import Path
 import shutil
+import subprocess
 import unittest
 from unittest import mock
 
@@ -103,8 +104,20 @@ class HostSystemBinding(Project):
                 r._validate_phase_context(realized)
 
 
+def _homed_unit_toolchain_missing():
+    """Name what the real homed unit configure needs and this host lacks."""
+    missing = [tool for tool in ("cmake", "ninja", "pkg-config") if not shutil.which(tool)]
+    if "pkg-config" not in missing:
+        missing += [m for m in ("jansson", "sqlite3", "openssl")
+                    if subprocess.run(["pkg-config", "--exists", m]).returncode != 0]
+    return missing
+
+
 class ActualHomedUnitGraph(Project):
     def test_real_units_full_default_and_source_header_runtime_audits(self):
+        missing = _homed_unit_toolchain_missing()
+        if missing:
+            self.skipTest("homed unit configure requires " + ", ".join(missing))
         homed = "gnome/nostr-homed"
         paths = [homed + "/TestInventory.cmake", homed + "/tests/nh_test.h", homed + "/tests/unit/CMakeLists.txt",
                  homed + "/tests/unit/ManifestCacheTests.cmake",
