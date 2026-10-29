@@ -19,7 +19,7 @@ files already declare a version.
 
 | Component | Path | Declared version | Latest release | Release tag | Authoritative version source(s) |
 | --- | --- | --- | --- | --- | --- |
-| libnostr | `libnostr/` | 2.1.1 | Unreleased | — | `libnostr/CMakeLists.txt` |
+| libnostr | `libnostr/` | 2.1.2 | Unreleased | — | `libnostr/CMakeLists.txt` |
 | libjson (libnostr-json) | `libjson/` | 2.0.0 | Unreleased | — | `libjson/CMakeLists.txt` (`declare_component_version`) |
 | libgo | `libgo/` | 0.2.0 | Unreleased | — | `libgo/CMakeLists.txt` |
 | nostr-gobject | `nostr-gobject/` | 3.0.1 | Unreleased | — | `nostr-gobject/CMakeLists.txt`, `nostr-gobject/meson.build` |
@@ -52,6 +52,16 @@ files already declare a version.
 | nostr-seal | `gnome/nostr-seal/` | 0.1.3 (format nsealed v1) | Unreleased | — | `gnome/nostr-seal/src/main.c` (`NOSTR_SEAL_VERSION`), `gnome/nostr-seal/include/nostr-seal.h` (`NSEAL_FORMAT_VERSION`) |
 | signet | `signet/` | 0.7.0 | Unreleased | — | `signet/meson.build`, `signet/src/signetd_main.c` (`SIGNET_VERSION`), `signet/src/signetctl_main.c` (`SIGNETCTL_VERSION`); `signet/CMakeLists.txt` declares none |
 
+
+### SimplePool boundary drain correction (nostrc-chqxa)
+
+- **libnostr 2.1.1 → 2.1.2 (PATCH):** preserve buffered EVENTs across
+  EOSE/CLOSED and the per-subscription fairness budget; deliver middleware before
+  boundary observers and pruning. Preserve already-received and buffered events
+  during worker shutdown and selected boundaries in one-shot queries. No public
+  API, ABI or wire-format change.
+- **Other components: no bump.** Consumers are tested but unchanged; libhanami
+  remains untouched. Release columns are unchanged; no tag is published.
 
 ### Relay query completion and handshake correction (nostrc-jgl8o)
 

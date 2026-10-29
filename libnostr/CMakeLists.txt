@@ -5,7 +5,7 @@ if(NOT COMMAND declare_component_version)
   include("${CMAKE_CURRENT_LIST_DIR}/../cmake/VersionHelpers.cmake")
 endif()
 option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" ON)
-declare_component_version(NOSTR 2 1 1)
+declare_component_version(NOSTR 2 1 2)
 
 # Core Nostr library. Provides event types, relays, subscriptions, filters, and utils.
 find_library(NSYNC_LIB nsync REQUIRED)
@@ -413,6 +413,22 @@ if(LIBNOSTR_BUILD_TESTS)
   target_include_directories(test_subscription_dispatch PRIVATE include src)
   add_test(NAME libnostr_subscription_dispatch COMMAND test_subscription_dispatch)
   set_tests_properties(libnostr_subscription_dispatch PROPERTIES TIMEOUT 60)
+
+  # White-box channel interleavings plus the real pool worker; no sleeps/network.
+  add_executable(test_simplepool_drain tests/test_simplepool_drain.c)
+  target_link_libraries(test_simplepool_drain PRIVATE ${_nostr_internal_test_lib} Threads::Threads)
+  target_include_directories(test_simplepool_drain PRIVATE include src)
+  if(COMMAND apply_sanitizers)
+    apply_sanitizers(test_simplepool_drain)
+  endif()
+  foreach(_case budget eose-race closed-race eose-backlog closed-backlog worker-eose worker-closed
+      batch stop-selected query-event query-eose query-closed live-eose)
+    add_test(NAME libnostr_simplepool_drain_${_case} COMMAND test_simplepool_drain ${_case})
+    set_tests_properties(libnostr_simplepool_drain_${_case} PROPERTIES TIMEOUT 30)
+    if(COMMAND nostrc_describe_test)
+      nostrc_describe_test(libnostr_simplepool_drain_${_case} OWNER libnostr TARGETS test_simplepool_drain)
+    endif()
+  endforeach()
 
   add_executable(test_reconnect_same_second tests/test_reconnect_same_second.c)
   target_link_libraries(test_reconnect_same_second PRIVATE ${_nostr_internal_test_lib} Threads::Threads)

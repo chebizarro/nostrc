@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- libnostr 2.1.2: SimplePool drains buffered EVENTs before EOSE/CLOSED
+  notifications and subscription pruning, and no longer discards the event just
+  beyond its per-subscription drain budget. Shutdown delivers accepted events;
+  one-shot queries retain the event received by select and drain stored events
+  before reporting a selected boundary (nostrc-chqxa).
 - nostr-gtk's Meson build links against a shared or static CMake tree with
   `--no-undefined`: it takes nostr-gobject's closure from the build-tree link
   contract and NIP-34 by explicit artifact path, gives executables the
