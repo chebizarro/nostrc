@@ -219,6 +219,28 @@ a key does not create subscriptions. Wrong-key/envelope failures return the same
 `VAULT_ERR_AUTH` with no matched-key diagnostic; the authenticated sender remains
 the seal's identity. Configured secret copies are wiped on replacement/free.
 
+## Single-file NIP-94 / kind-15 export
+
+`vault_file_export_nip94` sends ONE file to someone who will never hold the
+vault (alignment note §2 A2). It reads the file through `vault_chunk_read`
+(exact per-chunk epochs, hash before AEAD, no key trials), re-seals the whole
+file as one AES-256-GCM blob — random 96-bit nonce, 128-bit tag appended, no
+AAD, the construction NIP-17 kind-15 clients implement — under a fresh CSPRNG
+key, uploads it through `blossom_client_put` with the ciphertext hash pinned,
+and returns `vault_nip94_tags`: `x` (ciphertext SHA-256), `ox` (plaintext
+SHA-256), `decryption-key`, `decryption-nonce` (lowercase hex, as Quartz emits
+and Ditto accepts), `encryption-algorithm` = `aes-gcm`, `file-type`, `size`
+and the descriptor URL. The caller wraps them in a kind-15 rumor or an `imeta`.
+No ring key or derived chunk key is ever exported; the export key is
+independent of every ring. Nothing about the vault format, grants or rings
+changes, and libporthome's sealed-blob layout stays a future algorithm value.
+The export is not streamed: plaintext and ciphertext are resident together, so
+files above `VAULT_NIP94_MAX_EXPORT_BYTES` (64 MiB) are refused before any I/O
+with `PORTHOME_ERR_TOO_LARGE`; libblossom's `max_blob_bytes` also applies.
+Upload failures are classified (`PORTHOME_ERR_HASH_MISMATCH`, `VAULT_ERR_AUTH`,
+`PORTHOME_ERR_TOO_LARGE`, `VAULT_ERR_IO`). Specs followed: NIP-17 kind 15 and
+NIPs PR #2437 (NIP-94 file encryption).
+
 ## Focused tests
 
 `test_vault_ring_derivation`, `test_vault_revoke_lazy`, and
@@ -229,9 +251,17 @@ actual libblossom private-capability probe. That fixture is not live VSP-01 or
 Marmot acceptance. `test_vault_grant_nip59` uses the actual NIP-59/NIP-44 and
 signing/parsing APIs through recording transport callbacks: both read/write
 multi-epoch bodies round-trip exactly, hostile envelopes fail closed, and callback
-errors are not retried. It is not live relay or delivery acceptance. The
-implementation remains experimental. `test_vault_grant_nip4e` covers default-off
+errors are not retried. It is not live relay or delivery acceptance.
+`test_vault_grant_nip4e` covers default-off
 and opt-in delivery, actual device-key opening and identity receive fallback,
 all-relay EOSE requirements, query failures, forged announcements, replaceable
 ordering/ties/duplicates, malformed latest keys, and unchanged grant bodies using
 local recording callbacks only (no relay connections).
+`test_vault_nip94_export` runs the export against a bounded local Blossom stub
+(BUD-02 PUT, BUD-01 GET) through the real libblossom client and signer: the
+blob is fetched by `x` and decrypted with only the returned tags; the key
+differs from every ring key and every HKDF-derived chunk key; empty and
+multi-chunk/multi-epoch files round-trip; missing epochs, oversize files,
+descriptor hash mismatches, 500/401 uploads and signer-less clients fail
+closed with classified errors. It is not live Blossom acceptance. The
+implementation remains experimental.
