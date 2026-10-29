@@ -58,6 +58,9 @@ typedef struct {
  *        6=name_plain (required safe single-component UTF-8 basename).
  * Dir payload: 0=node_id, 1=child_epoch, 2=manifest_sha256, 3=override(optional).
  * File payload: array of {0=sha256, 1=size_sealed, 2=chunk_key_id, 3=size_plain}.
+ * chunk_key_id is the nonzero epoch of the node key that sealed that chunk;
+ * it need not equal the node's current epoch. The zero-only restriction in
+ * manifest.h applies only to the PCS v1 manifest codec, not to these payloads.
  * Chunk plaintext lengths sum exactly to the file length without overflow.
  * This completes the unreleased v2 format in place; incomplete v2 maps fail.
  * Symlink payload: safe relative target text. Entry order is preserved; duplicate

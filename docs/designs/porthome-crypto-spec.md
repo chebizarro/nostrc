@@ -125,7 +125,7 @@ Total sealed size = `plaintext_len + 29` bytes. There is no length prefix inside
 
 The Blossom address of a chunk is `sha256(sealed_blob)`, i.e. `SHA256(version || nonce || ct || tag)`. Because both `nonce` and `ct` are deterministic functions of `plaintext` under a fixed `home_key`, the address is deterministic per (plaintext, home_key). A different `home_key` produces a different `chunk_key` **and** a different `chunk_nonce`, so a different address — no Blossom server can confirm "this home stores the same file as that home". This is the per-home convergence property from D4.
 
-`chunk_key_id` in the manifest schema (`nh_porthome_chunk.chunk_key_id`) is reserved for **future** key-rotation (`key_epoch` in the pointer, design §4.1); Phase 1 always writes `0`. Decoders MUST refuse any non-zero value they do not have keying material for.
+`chunk_key_id` in the PCS v1 flat manifest schema (`porthome_chunk.chunk_key_id`) MUST be `0`; that codec has no epoch key ring and refuses non-zero values with `PORTHOME_ERR_EPOCH`. This restriction applies only to the v1 codec (including its flat sealed-name schema v2). PCS v2 dir-node payloads carry the nonzero per-chunk node-key epoch in `chunk_key_id`; see `<porthome/dir-node.h>` and shared-vault-composition §3.3–§3.4. The v1 manifest decoder also refuses v2 nodes with `PORTHOME_ERR_EPOCH`, leaving its output NULL.
 
 ---
 
@@ -209,7 +209,7 @@ All success paths return `0`. On failure the return is `< 0`, output pointers ar
 
 - The **relay pointer body** (kind 30078, self-encrypted NIP-44 v2 wrap of the pointer JSON — design §2.2). Phase 1 exposes convergent AEAD only; the NIP-44 wrap on the pointer lands with the Phase-2 provisioner, which is where the identity keypair actually enters the picture.
 - The **wrap-key → home-key indirection at the pointer level** (design §4.1). Phase 1's `nh_porthome_key_derive` takes an already-materialised 32-byte seed; Phase 2 will source that seed from `wrapped_home_key` via NIP-46 `nip44_decrypt`, which is *not* implemented here.
-- **Key rotation.** `chunk_key_id` is reserved and always zero in Phase 1. Rotating to a new `key_epoch` requires re-encrypting every chunk under a new `home_key`; that is a Phase-5 workflow.
+- **Key rotation (PCS v1 only).** `chunk_key_id` is always zero in the v1 manifest codec. Rotating to a new `key_epoch` requires re-encrypting every chunk under a new `home_key`; that is a Phase-5 workflow. PCS v2 instead records per-chunk epochs in dir-node payloads (`<porthome/dir-node.h>`).
 - **Padding and metadata-hiding beyond AEAD** (design §8.3 buckets). The sealed-blob layout above is 29 bytes of overhead over the plaintext; padding to power-of-two buckets is a caller responsibility left to Phase 2.
 - **fscrypt / plaintext-at-rest** (D16). Out of scope for this spec.
 

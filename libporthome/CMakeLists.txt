@@ -37,7 +37,7 @@ target_include_directories(porthome
 target_link_libraries(porthome PRIVATE nostrc::blossom nostr nostr_nip44_core OpenSSL::Crypto)
 nostrc_generate_export_header(porthome PORTHOME_API porthome/export.h)
 set_target_properties(porthome PROPERTIES C_VISIBILITY_PRESET hidden)
-declare_component_version(porthome 0 7 0)
+declare_component_version(porthome 0 7 1)
 set_target_properties(porthome PROPERTIES
   COMPONENT_VERSION_HEADER_INSTALL_DIR "${CMAKE_INSTALL_INCLUDEDIR}/porthome")
 apply_versioning(porthome)

@@ -36,7 +36,7 @@ files already declare a version.
 | NIP-46 client/provider | `nips/nip46/` | 0.2.0 | Unreleased | — | `nips/nip46/CMakeLists.txt` (`declare_component_version(nip46 ...)`; owns core and optional GLib client/bunker layer) |
 | nip19 (NIP-19 codec) | `nips/nip19/` | 0.2.0 | Unreleased | — | `nips/nip19/CMakeLists.txt` (`declare_component_version`; SONAME `libnip19.so.0`) |
 | libhanami | `libhanami/` | 0.8.0 | Unreleased | — | `libhanami/CMakeLists.txt` (`HANAMI_VERSION_*`) |
-| libporthome | `libporthome/` | 0.7.0 | Unreleased | — | `libporthome/CMakeLists.txt` (`declare_component_version`) |
+| libporthome | `libporthome/` | 0.7.1 | Unreleased | — | `libporthome/CMakeLists.txt` (`declare_component_version`); SV-A7 (nostrc-v04jd.5): PATCH for specific fail-closed `PORTHOME_ERR_EPOCH` from the PCS v1 manifest decoder for v2 nodes/nonzero chunk epochs; no wire change. libvault, libhanami and nostr-homed: no bump (unchanged callers/artifacts). |
 | porthome-sys | `bindings/rust/porthome-sys/` | 0.1.0 | Unreleased | — | `bindings/rust/porthome-sys/Cargo.toml` (`package.version`) |
 | vault-sys | `bindings/rust/vault-sys/` | 0.1.0 | Unreleased | — | `bindings/rust/vault-sys/Cargo.toml` (`package.version`) |
 | libvault-marmot | `libvault-marmot/` | 0.1.1 | Unreleased | — | `libvault-marmot/CMakeLists.txt` (`declare_component_version`) |
