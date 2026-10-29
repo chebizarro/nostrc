@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Fixed
+- libporthome 0.7.1: the PCS v1 manifest decoder now reports
+  `PORTHOME_ERR_EPOCH` for nonzero chunk key IDs and PCS v2 dir-nodes,
+  including through sealed decode, with NULL output. The zero-only rule
+  applies to the v1 codec, not v2 dir-node per-chunk epochs. Other malformed
+  input errors and all wire formats are unchanged (SV-A7, nostrc-v04jd.5).
 - libnostr 2.1.2: SimplePool drains buffered EVENTs before EOSE/CLOSED
   notifications and subscription pruning, and no longer discards the event just
   beyond its per-subscription drain budget. Shutdown delivers accepted events;

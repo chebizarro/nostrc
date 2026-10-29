@@ -6,6 +6,7 @@
 #include <porthome/manifest.h>
 #include <porthome/crypto.h>
 #include <porthome/cbor.h>
+#include <porthome/dir-node.h>
 
 #include <stdlib.h>
 #include <string.h>
@@ -455,7 +456,7 @@ static int decode_chunk(porthome_cbor_dec *d, porthome_chunk *out) {
         case K_C_KEY_ID: {
             uint64_t v;
             if (porthome_cbor_read_uint(d, &v) || v > UINT32_MAX) return -1;
-            if (v != 0) return -1; /* Phase 1: reserved, must be zero. */
+            if (v != 0) return PORTHOME_ERR_EPOCH; /* PCS v1 has no epoch key ring. */
             out->chunk_key_id = (uint32_t)v;
             break;
         }
@@ -536,7 +537,8 @@ static int decode_entry(porthome_cbor_dec *d, porthome_entry *out) {
             porthome_chunk *arr = (porthome_chunk *)calloc(ac, sizeof(*arr));
             if (!arr) return -1;
             for (uint64_t j = 0; j < ac; j++) {
-                if (decode_chunk(d, &arr[j])) { free(arr); return -1; }
+                int rc = decode_chunk(d, &arr[j]);
+                if (rc) { free(arr); return rc; }
             }
             out->chunks = arr; out->chunks_len = (size_t)ac;
             break;
@@ -630,11 +632,21 @@ int porthome_manifest_decode(const uint8_t *cbor, size_t cbor_len,
     porthome_cbor_dec d; porthome_cbor_dec_init(&d, cbor, cbor_len);
     uint64_t n;
     if (porthome_cbor_read_map_hdr(&d, &n)) return PORTHOME_ERR_ARG;
-    if (n != 3) return PORTHOME_ERR_ARG;
+    if (n != 3) {
+        /* Classify valid v2 nodes without accepting them on the v1 path.
+         * Malformed CBOR retains the legacy argument error. */
+        porthome_dir_node *node = NULL;
+        if (porthome_dir_node_decode(cbor, cbor_len, &node) != PORTHOME_OK)
+            return PORTHOME_ERR_ARG;
+        porthome_dir_node_dispose(node);
+        free(node);
+        return PORTHOME_ERR_EPOCH;
+    }
 
     porthome_manifest *m = (porthome_manifest *)calloc(1, sizeof(*m));
     if (!m) return PORTHOME_ERR_OOM;
 
+    int error = PORTHOME_ERR_ARG;
     int seen[4] = {0}; uint64_t last_key = 0; int have_prev = 0;
     for (uint64_t i = 0; i < 3; i++) {
         uint64_t k;
@@ -672,7 +684,11 @@ int porthome_manifest_decode(const uint8_t *cbor, size_t cbor_len,
                 /* Include the current entry in cleanup even if decoding fails
                  * after allocating only some of its fields. */
                 m->entries_len = (size_t)(j + 1);
-                if (decode_entry(&d, &m->entries[j])) goto bad;
+                int rc = decode_entry(&d, &m->entries[j]);
+                if (rc) {
+                    if (rc == PORTHOME_ERR_EPOCH) error = rc;
+                    goto bad;
+                }
             }
             break;
         }
@@ -710,7 +726,7 @@ int porthome_manifest_decode(const uint8_t *cbor, size_t cbor_len,
 bad:
     porthome_manifest_dispose(m);
     free(m);
-    return PORTHOME_ERR_ARG;
+    return error;
 }
 
 /* ────────────── convenience: sealed round-trip ────────────── */
@@ -741,6 +757,9 @@ int porthome_manifest_decode_sealed(const uint8_t *sealed, size_t sealed_len,
                                        porthome_manifest **out) {
     if (!sealed || !home_key || !out) return PORTHOME_ERR_ARG;
     *out = NULL;
+    /* PCS v2 needs an explicit epoch and ring, never a v1 home key. */
+    if (sealed_len >= PORTHOME_SEAL_OVERHEAD && sealed[0] == PORTHOME_WIRE_VERSION_V2)
+        return PORTHOME_ERR_EPOCH;
     uint8_t *pt = NULL; size_t pt_len = 0;
     int rc = porthome_decrypt_manifest(home_key, sealed, sealed_len, &pt, &pt_len);
     if (rc != PORTHOME_OK) return rc;

@@ -62,7 +62,9 @@ typedef enum {
 typedef struct {
     uint8_t  sha256[PORTHOME_SHA256_LEN];  /* Blossom address of the sealed chunk */
     uint32_t size;                            /* Sealed size on Blossom (plaintext_len + 29) */
-    uint32_t chunk_key_id;                    /* Reserved; MUST be 0 in Phase 1. */
+    uint32_t chunk_key_id;                    /* MUST be 0 for the PCS v1 manifest codec only.
+                                              * PCS v2 dir-node payloads carry the per-chunk
+                                              * epoch here; see <porthome/dir-node.h>. */
 } porthome_chunk;
 
 typedef struct {
@@ -211,14 +213,18 @@ PORTHOME_API int porthome_manifest_encode(const porthome_manifest *m,
  *   - refuses non-canonical (indefinite-length, non-ascending keys),
  *   - enforces every cap listed in this header,
  *   - refuses unknown schema versions,
- *   - refuses non-zero `chunk_key_id` (Phase 1 has no other keys),
+ *   - the PCS v1 manifest codec alone refuses non-zero `chunk_key_id`
+ *     with PORTHOME_ERR_EPOCH; PCS v2 dir-node payloads carry the per-chunk
+ *     epoch in that field (see <porthome/dir-node.h>),
  *   - refuses paths that are absolute, ".", "..", contain "/./", "/../",
  *     start with "/", end with "/", or contain NUL / '\\',
  *   - refuses a lazy marker on non-directory entries or any marker value
  *     other than the canonical unsigned integer 1,
  *   - refuses non-file entries carrying `chunks`,
  *   - refuses non-symlink entries carrying `symlink_target`,
- *   - refuses file entries without `chunks` when size > 0. */
+ *   - refuses file entries without `chunks` when size > 0.
+ * A valid PCS v2 dir-node also returns PORTHOME_ERR_EPOCH, never a flat
+ * manifest with zeroed epochs. Epoch refusals leave `*out` NULL. */
 PORTHOME_API int porthome_manifest_decode(const uint8_t *cbor, size_t cbor_len,
                                 porthome_manifest **out);
 
@@ -228,7 +234,10 @@ PORTHOME_API int porthome_manifest_decode(const uint8_t *cbor, size_t cbor_len,
  * canonical CBOR under the manifest key. `decode_sealed` reverses:
  * strict CBOR parse THEN `porthome_manifest_open_names` on the
  * result so downstream code sees `name_plain` / `symlink_target`
- * populated for v2 pointers (and NULL for v1). */
+ * populated for v2 pointers (and NULL for v1). Both flat name schemas
+ * use PCS v1 sealing, not the PCS v2 dir-node codec in <porthome/dir-node.h>.
+ * PCS v2 sealed envelopes return PORTHOME_ERR_EPOCH; CBOR epoch errors
+ * propagate unchanged. Epoch refusals leave `*out` NULL. */
 PORTHOME_API int porthome_manifest_encode_sealed(const porthome_manifest *m,
                                        const uint8_t home_key[PORTHOME_KEY_LEN],
                                        uint8_t **out, size_t *out_len);

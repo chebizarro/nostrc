@@ -4,6 +4,12 @@ GNOME-free PCS v1/v2 crypto, canonical CBOR, manifest v1/v2 and sealed name
 codecs, wrap-seed derivation, and a storage-independent OID/sealed-object index.
 The legacy flat manifest schema v2 (sealed names) is distinct from the
 shared-vault `dir_node` v2 in `<porthome/dir-node.h>`; both have explicit codecs.
+In dir-node v2 payloads, `chunk_key_id` is the nonzero per-chunk node-key epoch.
+Only the PCS v1 flat manifest codec (including its sealed-name schema v2)
+requires zero: nonzero chunk IDs and valid v2 dir-nodes return
+`PORTHOME_ERR_EPOCH` from `porthome_manifest_decode`. Its sealed wrapper
+propagates that error and rejects PCS v2 envelopes with the same error.
+These refusals leave the output NULL; no epoch is silently zeroed.
 
 In-tree consumers link `nostrc::porthome` (`BUILD_LIBPORTHOME=ON`,
 `ENABLE_NIP44=ON`, `BUILD_LIBBLOSSOM=ON`). Installed consumers use
