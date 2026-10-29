@@ -30,11 +30,31 @@ function(nostrc_generate_export_header target macro header)
 #endif
 ")
   endif()
+  # Attribute support is a compile-time property. Linking these probes against
+  # sanitizer runtimes can cache a false negative and erase every shared API.
+  set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
+  foreach(_probe IN ITEMS COMPILER_HAS_HIDDEN_VISIBILITY
+      COMPILER_HAS_HIDDEN_INLINE_VISIBILITY)
+    if(NOT ${_probe})
+      unset(${_probe} CACHE)
+      unset(${_probe})
+    endif()
+  endforeach()
   generate_export_header(${target}
     EXPORT_MACRO_NAME ${macro}
     STATIC_DEFINE ${_static_define}
     EXPORT_FILE_NAME "${_include}/${header}"
     CUSTOM_CONTENT_FROM_VARIABLE _extra)
+  if(NOT WIN32 AND NOT CYGWIN
+      AND (CMAKE_C_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$"
+        OR CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+      AND NOT COMPILER_HAS_HIDDEN_VISIBILITY)
+    message(FATAL_ERROR
+      "COMPILER_HAS_HIDDEN_VISIBILITY failed for ${target}: refusing empty "
+      "${macro} with hidden visibility on GCC/Clang. Check compiler flags and "
+      "the toolchain (including missing sanitizer runtimes); see CMake's "
+      "configure log.")
+  endif()
 endfunction()
 
 # Internal archives and modules have no public headers, but still need hidden

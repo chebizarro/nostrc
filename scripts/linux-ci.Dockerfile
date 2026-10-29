@@ -10,7 +10,7 @@ FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     # toolchain (all workflows; clang for nostrc-ci, signet-ci, libgo-ci)
-    build-essential cmake ninja-build meson pkg-config clang patch \
+    build-essential cmake ninja-build meson pkg-config clang libclang-rt-18-dev patch \
     # groundhog-ci.yml "Install build and display dependencies"
     libxml2-dev libgtk-4-dev libadwaita-1-dev libglib2.0-dev libsecret-1-dev \
     libjansson-dev libsecp256k1-dev libwebsockets-dev libsodium-dev \

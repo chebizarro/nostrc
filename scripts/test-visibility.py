@@ -16,6 +16,66 @@ def run(*args, **kwargs):
 
 
 class VisibilityTests(unittest.TestCase):
+    def test_compile_only_probes_recover_cached_failure(self):
+        for language, extension in (("C", "c"), ("CXX", "cpp")):
+            with self.subTest(language=language), tempfile.TemporaryDirectory(prefix="nostrc-visibility-probe-") as tmp:
+                src = pathlib.Path(tmp)
+                (src / "CMakeLists.txt").write_text(f'''
+cmake_minimum_required(VERSION 3.22)
+project(visibility_probe {language})
+include("{ROOT}/cmake/NostrcVisibility.cmake")
+# Simulate a configure retried after a missing sanitizer runtime was installed.
+set(COMPILER_HAS_HIDDEN_VISIBILITY "" CACHE INTERNAL "" FORCE)
+set(COMPILER_HAS_HIDDEN_INLINE_VISIBILITY "" CACHE INTERNAL "" FORCE)
+# Compiler attributes must remain detectable even when executables cannot link.
+set(CMAKE_EXE_LINKER_FLAGS "-lmissing_nostrc_sanitizer_runtime")
+set(CMAKE_TRY_COMPILE_TARGET_TYPE EXECUTABLE)
+add_library(fixture SHARED core.{extension})
+nostrc_library_visibility(fixture FIXTURE_API fixture/export.h "include/fixture")
+if(NOT CMAKE_TRY_COMPILE_TARGET_TYPE STREQUAL "EXECUTABLE")
+  message(FATAL_ERROR "visibility helper leaked its compile-only setting")
+endif()
+file(READ "${{CMAKE_CURRENT_BINARY_DIR}}/include/fixture/export.h" exports)
+if(NOT exports MATCHES "define FIXTURE_API __attribute__")
+  message(FATAL_ERROR "empty FIXTURE_API after cached probe failure")
+endif()
+set(CMAKE_EXE_LINKER_FLAGS "")
+add_executable(consumer main.{extension})
+target_link_libraries(consumer PRIVATE fixture)
+''')
+                (src / f"core.{extension}").write_text(
+                    '#include "fixture/export.h"\n'
+                    'FIXTURE_API extern int public_data;\nint public_data = 42;\n')
+                (src / f"main.{extension}").write_text(
+                    'extern int public_data;\nint main(void) { return public_data != 42; }\n')
+                build = src / "build"
+                try:
+                    run("cmake", "-S", str(src), "-B", str(build))
+                    run("cmake", "--build", str(build))
+                    run(str(build / "consumer"))
+                except subprocess.CalledProcessError as exc:
+                    self.fail(exc.stdout)
+
+    def test_broken_visibility_probe_fails_configure(self):
+        with tempfile.TemporaryDirectory(prefix="nostrc-visibility-probe-") as tmp:
+            src = pathlib.Path(tmp)
+            (src / "CMakeLists.txt").write_text(f'''
+cmake_minimum_required(VERSION 3.22)
+project(broken_visibility_probe C)
+include("{ROOT}/cmake/NostrcVisibility.cmake")
+set(CMAKE_REQUIRED_FLAGS "-fnostrc-invalid-compiler-flag")
+add_library(fixture SHARED core.c)
+nostrc_library_visibility(fixture FIXTURE_API fixture/export.h "include/fixture")
+''')
+            (src / "core.c").write_text('int public_data = 42;\n')
+            result = subprocess.run(
+                ["cmake", "-S", str(src), "-B", str(src / "build")],
+                text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            self.assertNotEqual(result.returncode, 0, result.stdout)
+            self.assertIn("COMPILER_HAS_HIDDEN_VISIBILITY failed for fixture", result.stdout)
+            self.assertIn("refusing empty", result.stdout)
+            self.assertIn("toolchain", result.stdout)
+
     def test_disabled_glib_nip77_header(self):
         # This installed header is intentionally harmless without GLib enabled,
         # even when no optional GLib library/export header was generated.
