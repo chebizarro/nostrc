@@ -2,7 +2,7 @@
 
 Two post-17f67593e edits changed policy fields that the older W11, groundhog
 and post-1640 layers compare exactly: nip65 nodes on groundhog.default_build
-(73e8bc7fc) and the vaultctl-prerequisite configure options prepended to seven
+and its TestInventory.cmake runtime input (73e8bc7fc), and the vaultctl-prerequisite configure options prepended to seven
 profiles (8d5c8d9b5). This layer lists those items by exact index and value and
 removes only them; any other difference still reaches the older layers and
 refuses there. It is the newest layer, projected first.
@@ -13,7 +13,7 @@ import json
 from selector_support import ROOT, s
 
 WITNESS = 'tests/selection/fixtures/inventory_option_drift_20261027.json'
-SHA256 = '0545c0bbce0484d2f1270cd9f6a6ee6bf99e7a3f33ae2d72261b16b1eab403d0'
+SHA256 = 'afbdc75c280f078ef70d2407cefe74032be6277177cae1b27dc4b59285049ccc'
 RECORD_FIELDS = {'section', 'ident', 'field', 'origin', 'items'}
 
 

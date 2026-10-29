@@ -13,6 +13,7 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / 'scripts'))
 
 
 class LocalCommandAdapterTests(unittest.TestCase):
@@ -80,7 +81,7 @@ print('actual command: ' + content, end='', flush=True)
     def gate(self, *args, success=True):
         evidence = self.work / ("evidence-" + str(len(list(self.work.glob("evidence-*")))))
         result = subprocess.run(["bash", str(self.repo / "scripts/test-gate.sh"), "--repo", str(self.repo),
-            "--evidence-dir", str(evidence), "--broad", *args], capture_output=True, text=True,
+            "--evidence-dir", str(evidence), "--broad", "--execution", "attested", *args], capture_output=True, text=True,
             env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"), timeout=60)
         receipts = list(evidence.glob("*/adapter-receipt.json"))
         self.assertEqual(len(receipts), 1, result.stdout + result.stderr)
@@ -268,7 +269,7 @@ signal.pause()
         server.settimeout(30)
         evidence = self.work / "cancel-evidence"
         process = subprocess.Popen(["bash", str(self.repo / "scripts/test-gate.sh"), "--repo", str(self.repo),
-            "--head", head, "--broad", "--evidence-dir", str(evidence)],
+            "--head", head, "--broad", "--execution", "attested", "--evidence-dir", str(evidence)],
             env=dict(os.environ, ADAPTER_READY_SOCKET=endpoint, PYTHONDONTWRITEBYTECODE="1"),
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         pid = None

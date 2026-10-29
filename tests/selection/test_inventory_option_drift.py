@@ -19,7 +19,7 @@ class InventoryOptionDrift(unittest.TestCase):
         data = layer.witness()
         self.assertEqual(hashlib.sha256((ROOT / layer.WITNESS).read_bytes()).hexdigest(), layer.SHA256)
         self.assertEqual([(r['section'], r['ident']) for r in data['records']],
-                         [('checks', 'groundhog.default_build')] + [('profiles', p) for p in PROFILES])
+                         [('checks', 'selection.contract'), ('checks', 'groundhog.default_build')] + [('profiles', p) for p in PROFILES])
 
     def test_projection_removes_exactly_the_recorded_items(self):
         previous = layer.before_policy(self.policy)
@@ -30,7 +30,11 @@ class InventoryOptionDrift(unittest.TestCase):
             current = self.policy['profiles'][name]['configure_args']
             self.assertEqual(current[:3], OPTIONS)
             self.assertEqual(previous['profiles'][name]['configure_args'], current[3:])
+        runtime = self.policy['checks']['selection.contract']['runtime_inputs']
+        self.assertEqual([p for p in runtime if p not in previous['checks']['selection.contract']['runtime_inputs']],
+                         ['{source}/nips/nip65/TestInventory.cmake'])
         restored = copy.deepcopy(previous)
+        restored['checks']['selection.contract']['runtime_inputs'] = runtime
         restored['checks']['groundhog.default_build']['nodes'] = build
         for name in PROFILES:
             restored['profiles'][name]['configure_args'] = self.policy['profiles'][name]['configure_args']

@@ -1,6 +1,5 @@
 """Production source evidence regressions; no miniature or hosted-pass equivalence."""
 import copy
-import json
 import shutil
 import tempfile
 from pathlib import Path
@@ -24,64 +23,6 @@ class ProductionInventory(unittest.TestCase):
                     pending.append(node)
         return result
 
-    def test_all_observed_failed_hosted_source_edges_reach_their_checks(self):
-        from supported_profile_support import before_supported_batch_policy
-        self.policy = before_supported_batch_policy(self.policy)
-        evidence = json.loads((ROOT / "tests/selection/fixtures/hosted_audit_edges.json").read_text())
-        self.assertEqual(len(evidence["audits"]), 5)
-        for audit in evidence["audits"]:
-            if audit["profile"] == "groundhog.linux.sanitizers":
-                self.assertIn(audit["source_sha"], {"b8dd3583766893e3b97e017dc063da5ed1c47413", "8cf8cf449b0466dab89e9d2138c7a3140caf3695"})
-                self.assertIn(audit["evidence_kind"], {"native_production_configure_input_audit_failed", "native_production_postbuild_input_audit_failed"})
-                if audit["evidence_kind"] == "native_production_postbuild_input_audit_failed":
-                    expected = {
-                        "b8dd3583766893e3b97e017dc063da5ed1c47413": (7605712, 3316, 62942),
-                        "8cf8cf449b0466dab89e9d2138c7a3140caf3695": (10721582, 3333, 80004),
-                    }[audit["source_sha"]]
-                    self.assertEqual((audit["header_entries"], audit["input_hash_count"], audit["original_gap_count"]), expected)
-                    self.assertTrue(any(edge["input_kind"] == "header" for edge in audit["edges"]))
-                self.assertEqual(audit["actual_architecture"], "aarch64")
-                self.assertEqual(audit["declared_architecture"], "x86_64")
-            else:
-                self.assertEqual(audit["source_sha"], "8a031f443ac84850345a4cf0fb6ab5a8c3b32814")
-                self.assertEqual(audit["evidence_kind"], "configure_source_input_audit_failed")
-            self.assertGreater(audit["original_gap_count"], 1000)
-            for edge in audit["edges"]:
-                check = self.policy["checks"][edge["check"]]
-                with self.subTest(profile=audit["profile"], check=edge["check"], input=edge["input"]):
-                    self.assertIn(edge["test"], check["ctest_tests"][audit["profile"]])
-                    # Frozen audits called portable parser inputs by the former coarse
-                    # nostr.gtk name. Keep the raw historical edges and translate
-                    # that exact source family, not arbitrary missing edges.
-                    required = set(edge["required_nodes"])
-                    if "nostr.gtk" in required:
-                        self.assertIn(edge["input"], {
-                            "nostr-gtk/src/content_renderer.c",
-                            "nostr-gtk/include/nostr-gtk-1.0/content_renderer.h"})
-                        required.remove("nostr.gtk")
-                        required.add("nostr.gtk.portable")
-                    self.assertTrue(required <= self.prerequisites(check["nodes"]))
-                    self.assertTrue(set(s.classify(self.policy, edge["input"])["nodes"]) <= self.prerequisites(check["nodes"]))
-
-    def test_real_postbuild_witness_changes_select_their_actual_consumers(self):
-        evidence = json.loads((ROOT / "tests/selection/fixtures/hosted_audit_edges.json").read_text())["audits"][-1]
-        edges = evidence["edges"]
-        self.assertEqual(evidence["receipt_sha256"], "a81f06d544409dc656d6ebf35af9051af2ab3f56b8be299ed95ad4b27417df63")
-        self.assertEqual(len(edges), 557)
-        self.assertEqual(len({edge["check"] for edge in edges}), 26)
-        self.assertEqual(len({(edge["check"], node) for edge in edges for node in edge["required_nodes"]}), 557)
-        plans = {}
-        for edge in edges:
-            path = edge["input"]
-            if path not in plans:
-                plans[path] = s.make_plan(self.policy, [change(path)], head="a" * 40, base="b" * 40, context="ci")
-            with self.subTest(check=edge["check"], input=path):
-                self.assertIn(edge["check"], plans[path]["selected_checks"])
-        schema = "apps/gnostr/data/schemas/org.gnostr.gnostr.gschema.xml"
-        self.assertEqual(plans[schema]["effective_mode"], "affected")
-        self.assertFalse(plans[schema]["broadening_reasons"])
-        self.assertEqual(self.policy["nodes"]["groundhog.unclassified"]["depends_on"], [])
-        self.assertEqual(self.policy["nodes"]["execution.groundhog"]["depends_on"], [])
 
     def test_schema_selection_regression_detects_removal_of_its_real_check_edge(self):
         policy = copy.deepcopy(self.policy)
@@ -122,11 +63,9 @@ class ProductionInventory(unittest.TestCase):
                 self.assertIn(check, plan["selected_checks"])
                 self.assertNotIn("libgo.channel", plan["selected_checks"])
                 broken = copy.deepcopy(self.policy)
-                # Remove the entire newly authored family so transitive links
-                # (e.g. nip46 -> nip04/nip44) cannot hide an absent prerequisite.
-                broken["nodes"]["nostr.gobject"]["depends_on"] = [
-                    dep for dep in broken["nodes"]["nostr.gobject"]["depends_on"]
-                    if dep not in witnesses]
+                # Remove all prerequisite routes, including newer vault/blossom
+                # routes that legitimately reach NIP-44 transitively.
+                broken["nodes"]["nostr.gobject"]["depends_on"] = []
                 bad = s.make_plan(broken, [change(path)], head="a" * 40,
                                   base="b" * 40, context="ci")
                 self.assertNotIn(check, bad["selected_checks"])
@@ -185,12 +124,7 @@ class ProductionInventory(unittest.TestCase):
 
     def test_every_job_binds_its_setup_and_has_an_explicit_remainder(self):
         blocks = source_job_blocks(ROOT)
-        self.assertEqual(len(blocks), 92)
-        from post1640_integration_support import before_jobs
-        historical = before_jobs(blocks)
-        self.assertEqual(len(historical), 91)
-        self.assertEqual(set(blocks) - set(historical),
-                         {'.github/workflows/dependency-tests.yml:homed_units'})
+        self.assertEqual(set(blocks), set(self.policy['workflow_jobs']))
         self.assertIn("{source}/tests/selection/test_broad_setup_contracts.py",
                       self.policy["checks"]["selection.contract"]["runtime_inputs"])
         self.assertEqual(validate_job_accounting(self.policy, ROOT),

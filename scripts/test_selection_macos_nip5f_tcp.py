@@ -76,10 +76,10 @@ AUTHORED_RECORD = {
     "tracking": TRACKING,
     "binding": {
         "source_sha256": "0686a0c8b1e424f146b08f1a5d5a0588156098067571bd4bd3e545198515242e",
-        "registration_sha256": "d85dfaa2b4a907b02a2f16bdef81e051dbf00ffb8684ce3bbdf2c92d03e6228e",
+        "registration_sha256": "8369f312e8c5bc1741e97f9cce3887329c051f2f0190d1a7999878420151e0d4",
         "selection_metadata_sha256": "8a54cc3454613a5450717c1c193f99dbb98ba0b6ce10154d74c160805236b0af",
-        "legacy_job_source_sha256": "35ecf5ab6debc5277f69556b6e106e7b9191638ebbb08bddf1e6ff45590e158c",
-        "legacy_workflow_sha256": "10a675396b64c928f3d5bb79025ab2f6be0acbacaa3410155090e186ecdcdcbc",
+        "legacy_job_source_sha256": "6e87f66cb2998ef3ed24234a42560252f4a9cda8c7ea198ff9e78a7e4f67a15d",
+        "legacy_workflow_sha256": "bbb3eed4ff6e47769ffb9510ae0fdf1e926a6b716777f2e7cf3bd8f74616fe1e",
     },
 }
 

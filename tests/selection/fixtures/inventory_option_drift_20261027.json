@@ -2,6 +2,18 @@
   "base": "17f67593e324064b0b891b5f2398d7251ce56824",
   "records": [
     {
+      "field": "runtime_inputs",
+      "ident": "selection.contract",
+      "items": [
+        {
+          "index": 105,
+          "value": "{source}/nips/nip65/TestInventory.cmake"
+        }
+      ],
+      "origin": "73e8bc7fc",
+      "section": "checks"
+    },
+    {
       "field": "nodes",
       "ident": "groundhog.default_build",
       "items": [
@@ -159,5 +171,5 @@
     }
   ],
   "schema_version": 1,
-  "scope": "Exact inverse of two post-17f67593e inventory edits that the older W11/groundhog/post-1640 projection layers cannot see: nip65 nodes on groundhog.default_build and the three vaultctl-prerequisite configure options prepended to seven profiles. Historical views only, never admission; no source bytes, qualifier, runtime or review binding is changed."
+  "scope": "Exact inverse of two post-17f67593e inventory edits that the older W11/groundhog/post-1640 projection layers cannot see: nip65 nodes on groundhog.default_build and its TestInventory.cmake source-input enrollment, and the three vaultctl-prerequisite configure options prepended to seven profiles. Historical views only, never admission; no source bytes, runtime behavior, qualifier or review binding is changed."
 }

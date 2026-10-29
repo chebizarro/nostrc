@@ -108,7 +108,6 @@ class TransportFixture(NormalFixture):
             (lane / 'receipt.json').write_text(json.dumps(receipt))
 
 
-
 class TransportTests(TransportFixture):
     def test_worker_publishes_one_portable_receipt_and_aggregate_never_reopens_worker_paths(self):
         raw = self.public_path.read_bytes()
@@ -786,7 +785,7 @@ class WorkflowWiring(unittest.TestCase):
         self.assertIn('scripts/test_selection_execution.py worker-qualify', step)
         self.assertIn('--receipts-dir "$RUNNER_TEMP/dependency/receipts/$PROFILE"', step)
         gate = (ROOT / '.github/workflows/dependency-tests.yml').read_text()
-        checkout = gate[gate.index('name: Dependency gate'):]
+        checkout = gate[gate.index('name: Diagnostic receipt accounting'):]
         self.assertIn('submodules: recursive', checkout[:checkout.index('dependency_contract.py aggregate')])
         contract = (ROOT / '.github/workflows/dependency_contract.py').read_text()
         self.assertIn('with transported_receipts(paths, repo=ROOT, plan=plan) as receipts:', contract)

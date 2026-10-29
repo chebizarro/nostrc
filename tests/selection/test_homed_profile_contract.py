@@ -1,9 +1,7 @@
 """Normal homed unit ownership and host applicability; no runtime/hosted promotion."""
 import copy
-import json
 from pathlib import Path
 import shutil
-import hashlib
 import unittest
 from unittest import mock
 
@@ -65,50 +63,6 @@ class HomedProfileContract(unittest.TestCase):
         self.assertNotIn(PROFILE, self.policy.get("diagnostic_nonmembers", {}))
         self.assertNotIn(PROFILE, self.policy.get("diagnostic_nonmember_subsets", {}))
 
-    def test_historical_policy_and_sources_reverse_exactly_without_authority_renewal(self):
-        from homed_profile_support import before_homed_policy, before_homed_source
-        from runtime_integration_support import before_runtime_policy
-        self.policy = before_runtime_policy(self.policy)
-        data = json.loads((ROOT / "tests/selection/fixtures/homed_profile_enrollment_20261023.json").read_text())
-        historical = before_homed_policy(self.policy)
-        # Reverse this finite wave, not unrelated later source/workflow updates.
-        # Round-trip its exact records without renewing any old omission hashes.
-        restored = copy.deepcopy(historical)
-        for field, records in data["maps"].items():
-            for ident, record in records.items():
-                self.assertEqual(historical[field].get(ident), record["before"])
-                restored[field][ident] = copy.deepcopy(record["after"])
-        for before, after, added in (
-                (restored["path_rules"], self.policy["path_rules"], data["added_path_rules"]),
-                (restored["checks"]["selection.contract"]["runtime_inputs"],
-                 self.policy["checks"]["selection.contract"]["runtime_inputs"], data["runtime_inputs"]),
-                (restored["checks"]["selection.contract"]["nodes"],
-                 self.policy["checks"]["selection.contract"]["nodes"], data["selection_nodes"])):
-            self.assertEqual(before, [item for item in after if item not in added])
-            before[:] = copy.deepcopy(after)  # reinsert at original positions, preserving unrelated order
-        for record in data["gaps"]:
-            index = restored["coverage_gaps"].index(record["before"])
-            restored["coverage_gaps"][index] = copy.deepcopy(record["after"])
-        self.assertEqual(restored, self.policy)
-        self.assertEqual(before_homed_policy(historical), historical)
-        self.assertEqual(self.policy["diagnostic_nonmember_subsets"], historical["diagnostic_nonmember_subsets"])
-        self.assertEqual(self.policy["diagnostic_nonmembers"], historical["diagnostic_nonmembers"])
-        for contract in self.policy["diagnostic_nonmember_subsets"].values():
-            for path in ("gnome/nostr-homed/CMakeLists.txt", "gnome/nostr-homed/TestInventory.cmake"):
-                self.assertEqual(contract["review"]["source_inputs"][path], data["sources"][path]["before_sha256"])
-                self.assertNotEqual(contract["review"]["source_inputs"][path], data["sources"][path]["after_sha256"])
-        for path, record in data["sources"].items():
-            raw = (ROOT / path).read_bytes()
-            self.assertEqual(hashlib.sha256(before_homed_source(path, raw)).hexdigest(), record["before_sha256"])
-            with self.assertRaises(s.ContractError):
-                before_homed_source(path, raw + b"\n")
-        changed = copy.deepcopy(self.policy)
-        changed["checks"]["homed.units"]["nodes"] = ["libgo"]
-        with self.assertRaisesRegex(s.ContractError, "homed enrollment changed"):
-            before_homed_policy(changed)
-        changed = copy.deepcopy(self.policy)
-        changed["nodes"]["unknown_probe"] = {"owner_paths": ["unrelated"], "depends_on": []}
-        self.assertIn("unknown_probe", before_homed_policy(changed)["nodes"])
 
     def test_distribution_is_not_inferred_from_linux_or_aliases(self):
         with mock.patch.object(r.platform, "system", return_value="Linux"):

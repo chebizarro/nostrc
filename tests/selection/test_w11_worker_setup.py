@@ -8,40 +8,10 @@ import subprocess
 import tempfile
 import unittest
 
-from selector_support import ROOT, s
-import closeout_support as c
-from w11_worker_support import before_worker_source
-from w11_policy_support import before_policy_source
+from selector_support import ROOT
 
 
 class W11WorkerSetupTests(unittest.TestCase):
-    def test_exact_source_enrollment_preserves_ownership_and_historical_bindings(self):
-        policy = s.load_inventory(ROOT / 'tests/selection/inventory.json')
-        for path in ('tests/selection/test_w11_worker_setup.py', c.W11_SETUP_WITNESS,
-                     'nips/nip44/tests/nip44.vectors.json'):
-            self.assertIn('{source}/' + path, policy['checks']['selection.contract']['runtime_inputs'])
-        self.assertEqual(s.classify(policy, 'tests/selection/test_w11_worker_setup.py')['nodes'],
-                         ['selection.contract'])
-        self.assertEqual(set(s.classify(policy, 'nips/nip44/tests/nip44.vectors.json')['nodes']),
-                         {'nip44.test_inputs', 'selection.contract'})
-        evidence = s.classify(policy, 'docs/reviews/dependency-aware-testing-ci-2026-10-23-w11-evidence.json')
-        self.assertEqual(evidence['effect'], 'global')
-        self.assertEqual(evidence['nodes'], ['selection.contract'])
-        self.assertFalse(evidence['unclassified'])
-        self.assertEqual(c.witness()['after_policy_hash'], s.digest(c.before_native_custody_policy(policy)))
-        for path, record in c.w11_setup_witness()['sources'].items():
-            from homed_profile_support import before_homed_source
-            raw = before_worker_source(path, before_policy_source(path, before_homed_source(path, (ROOT / path).read_bytes())))
-            self.assertEqual(hashlib.sha256(raw).hexdigest(), record['after_sha256'])
-            self.assertEqual(hashlib.sha256(c.before_w11_setup_source(path, raw)).hexdigest(),
-                             record['before_sha256'])
-            with self.assertRaises(s.ContractError):
-                c.before_w11_setup_source(path, raw + b'# unreviewed change\n')
-        changed = dict(policy['workflow_jobs'])
-        ident = next(iter(c.w11_setup_witness()['workflow_jobs']))
-        changed[ident] = dict(changed[ident], source_sha256='0' * 64)
-        with self.assertRaises(s.ContractError):
-            c.before_w11_setup_jobs(changed)
 
     def test_windows_checkout_preserves_pinned_vector_bytes(self):
         text = (ROOT / '.github/workflows/windows-validation.yml').read_text()

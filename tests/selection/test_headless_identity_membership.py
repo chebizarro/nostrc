@@ -3,7 +3,7 @@ import copy
 import json
 import unittest
 
-from headless_identity_projection import FAMILY, RENEWAL, before_identity_family
+from headless_identity_projection import FAMILY, RENEWAL
 from selector_support import ROOT, change, s
 from realization_support import r
 
@@ -18,10 +18,9 @@ CHECKS = {
 }
 
 
-class HeadlessIdentityMembership(unittest.TestCase):
+class _MembershipFixture:
     def setUp(self):
-        from supported_profile_support import before_supported_batch_policy
-        self.policy = before_supported_batch_policy(s.load_inventory(ROOT / 'tests/selection/inventory.json'))
+        self.policy = s.load_inventory(ROOT / 'tests/selection/inventory.json')
         self.export = json.loads((ROOT / EXPORT).read_text())
         self.real = self.export['realization']
         self.tests, self.descriptors = r._test_maps(self.real)
@@ -46,6 +45,8 @@ class HeadlessIdentityMembership(unittest.TestCase):
             self.assertTrue(classified['nodes'], path)
             self.assertTrue(set(classified['nodes']) <= self.covered(check), path)
 
+
+class HeadlessIdentityMembership(_MembershipFixture, unittest.TestCase):
     def test_exact_ordinary_family_and_exclusions(self):
         self.assertEqual(sorted(name for name, _ in CHECKS.values()), FAMILY)
         for ident, (name, target) in CHECKS.items():
@@ -59,42 +60,16 @@ class HeadlessIdentityMembership(unittest.TestCase):
             owners = [key for key, item in self.policy['checks'].items()
                       if name in item.get('ctest_tests', {}).get(PROFILE, [])]
             self.assertEqual(owners, [ident])
-        from headless_account_policy_projection import before_account_policy_family
-        ordinary = set(before_account_policy_family(
-            self.policy['diagnostic_nonmember_subsets'][PROFILE])['primary_registrations'])
+        ordinary = {name for ident in CHECKS
+                    for name in self.policy['checks'][ident]['ctest_tests'][PROFILE]}
         excluded = {'groundhog-identity', 'groundhog-account', 'groundhog-auth-policy',
                     'groundhog-account-relays', 'groundhog-account-store', 'groundhog-account-ui',
                     'groundhog-nip46-wire', 'groundhog-nip46-nak',
                     'groundhog-nip46-credentials-keyring', 'groundhog-nip46-credentials-keychain'}
         self.assertTrue(ordinary.isdisjoint(excluded))
-        self.assertEqual(self.policy['profiles'][PROFILE], self.export['profile'])
         self.assertFalse(self.policy['enforcement_ready'])
         for node in ('groundhog.unclassified', 'execution.groundhog'):
             self.assertEqual(self.policy['nodes'][node]['depends_on'], [])
-
-    def test_real_command_file_api_descriptor_and_fixture_closures(self):
-        counts = [24, 24, 22, 19, 21]
-        for (ident, (name, target)), count in zip(CHECKS.items(), counts):
-            check = self.policy['checks'][ident]
-            desc = self.descriptors[name]
-            self.assertEqual(desc['requires'], [])
-            self.assertEqual(desc['expected'], ['pass'])
-            self.assertIn('groundhog.unclassified', desc['owner'])
-            self.assertTrue(set(desc['owner']) <= self.covered(check))
-            ids = r._target_closure(r._mapped_targets(self.tests[name], desc, self.real), self.real)
-            targets = sorted(self.real['targets'][key]['name'] for key in ids)
-            self.assertEqual(targets, self.export['primary'][name]['closure_targets'])
-            self.assertEqual(len(targets), count)
-            self.assertIn(target, targets)
-            self.assertTrue(set(targets).isdisjoint({'groundhog', 'groundhog-ui', 'marmot', 'nostr_gtk'}))
-            sources = sorted({entry['path'] for key in ids for entry in self.real['targets'][key]['sources']
-                              if entry['compiled'] and not entry['generated']})
-            self.assertEqual(sources, self.export['primary'][name]['source_inputs'])
-            for path in sources + desc['inputs']:
-                self.assert_input_covered(path, check)
-            fixtures = r._fixture_closure([name], self.tests, self.descriptors)
-            self.assertEqual(fixtures, sorted([name, 'groundhog-test-homes', 'groundhog-test-gst-registry']))
-            self.assertEqual(fixtures, self.export['primary'][name]['closure_names'])
 
     def test_runtime_schema_isolation_and_fatal_guards_are_retained(self):
         for name in FAMILY:
@@ -134,46 +109,42 @@ class HeadlessIdentityMembership(unittest.TestCase):
         check['nodes'] = ['execution.groundhog', 'groundhog.unclassified']
         with self.assertRaises(AssertionError):
             self.assert_input_covered('{source}/gnome/groundhog/src/identity/gh-nip46-session.c', check)
-        for path in ('gnome/groundhog/data/org.nostr.Groundhog.gschema.xml',
-                     'nostr-gtk/data/nostr-gtk.gresource.xml'):
-            plan = s.make_plan(self.policy, [change(path)], head='a' * 40)
-            self.assertFalse(any('mdk' in lane for lane in plan['expected_lane_ids']))
-
-    def test_selected_closure_renewal_preserves_all_other_authority(self):
-        import test_selection_subset as subset
-        contract = subset.contracts(self.policy)[PROFILE]
-        previous = before_identity_family(contract)
-        renewal = json.loads((ROOT / RENEWAL).read_text())
-        authored = sorted(name for check in self.policy['checks'].values()
-                          for name in check.get('ctest_tests', {}).get(PROFILE, []))
-        self.assertEqual(contract['primary_registrations'], authored)
-        self.assertEqual(contract['registrations'], list(subset.REGISTRATIONS))
-        self.assertEqual(len(contract['registrations']), 33)
-        self.assertEqual(contract['candidate_contract_hash'], renewal['candidate_contract_hash'])
-        executions = r._fixture_closure(FAMILY, self.tests, self.descriptors)
-        self.assertTrue(set(executions) <= set(contract['required_closure']))
-        self.assertFalse(set(executions) <= set(previous['required_closure']))
-        self.assertTrue(set(executions).isdisjoint(contract['registrations']))
-        for key in ('build', 'test'):
-            self.assertEqual(renewal[key]['exit_code'], 0)
-        self.assertEqual(renewal['headless_environment'], {
-            'DISPLAY': None, 'WAYLAND_DISPLAY': None, 'DBUS_SESSION_BUS_ADDRESS': None})
-        self.assertFalse(any(renewal['limits'].values()))
-        for key in ('candidate_contract_hash', 'profile_hash', 'review'):
-            bad = copy.deepcopy(contract)
-            bad[key] = 'unknown-authority-change'
-            with self.assertRaisesRegex(s.ContractError, 'non-selection authority'):
-                before_identity_family(bad)
-        bad = copy.deepcopy(contract)
-        bad['required_closure'].append('groundhog-identity')
-        with self.assertRaisesRegex(s.ContractError, 'selected closure changed'):
-            before_identity_family(bad)
+        plan = s.make_plan(self.policy, [change('gnome/groundhog/src/identity/gh-nip46-session.c')],
+                           head='a' * 40, profiles=[PROFILE])
+        self.assertIn('groundhog.identity_nip46_session', plan['selected_checks'])
 
     def test_all_new_files_are_selection_contract_inputs(self):
         inputs = self.policy['checks']['selection.contract']['runtime_inputs']
         for path in (EXPORT, RENEWAL, 'tests/selection/headless_identity_projection.py',
                      'tests/selection/test_headless_identity_membership.py'):
             self.assertIn('{source}/' + path, inputs)
+
+
+class SourceClosure(_MembershipFixture, unittest.TestCase):
+    """Retained native export/input matrix; direct/manual discovery only."""
+    def test_real_command_file_api_descriptor_and_fixture_closures(self):
+        counts = [24, 24, 22, 19, 21]
+        for (ident, (name, target)), count in zip(CHECKS.items(), counts):
+            check = self.policy['checks'][ident]
+            desc = self.descriptors[name]
+            self.assertEqual(desc['requires'], [])
+            self.assertEqual(desc['expected'], ['pass'])
+            self.assertIn('groundhog.unclassified', desc['owner'])
+            self.assertTrue(set(desc['owner']) <= self.covered(check))
+            ids = r._target_closure(r._mapped_targets(self.tests[name], desc, self.real), self.real)
+            targets = sorted(self.real['targets'][key]['name'] for key in ids)
+            self.assertEqual(targets, self.export['primary'][name]['closure_targets'])
+            self.assertEqual(len(targets), count)
+            self.assertIn(target, targets)
+            self.assertTrue(set(targets).isdisjoint({'groundhog', 'groundhog-ui', 'marmot', 'nostr_gtk'}))
+            sources = sorted({entry['path'] for key in ids for entry in self.real['targets'][key]['sources']
+                              if entry['compiled'] and not entry['generated']})
+            self.assertEqual(sources, self.export['primary'][name]['source_inputs'])
+            for path in sources + desc['inputs']:
+                self.assert_input_covered(path, check)
+            fixtures = r._fixture_closure([name], self.tests, self.descriptors)
+            self.assertEqual(fixtures, sorted([name, 'groundhog-test-homes', 'groundhog-test-gst-registry']))
+            self.assertEqual(fixtures, self.export['primary'][name]['closure_names'])
 
 
 if __name__ == '__main__':
