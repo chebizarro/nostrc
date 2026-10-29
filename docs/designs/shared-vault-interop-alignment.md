@@ -1,6 +1,6 @@
 # Shared vaults — interoperability alignment note
 
-**Status:** Proposal (follow-up to `docs/designs/shared-vault-composition.md`). **Pre-release.** Every change here is intended to land before the first tagged release of `libvault`/`libporthome`, while the wire format can still move without a migration.
+**Status:** Proposal (follow-up to `docs/designs/shared-vault-composition.md`). **Pre-release.** Every change here is intended to land before the first tagged release of `libvault`/`libporthome`, while the wire format can still move without a migration. **A4, A5, A6 and A8 applied to SVC on 2026-10-29** (`nostrc-v04jd.4`, which also added A3's SVC §6.3 paragraph); the other items' status is tracked in their own beads.
 **Beads:** follow-ups to `nostrc-er4fz`, `nostrc-hl30i`; one new bead per §2 item is proposed in §4.
 **Reads:** `docs/designs/shared-vault-composition.md` (SVC §3.4 manifest, §5.1 head `d`, §6.2 grant, §6.3 carriers, §8 threat model, §14 open items), `libvault/include/vault/vault.h`, `libporthome/include/porthome/{dir-node,head,manifest}.h`.
 **Date:** 2026-10-28
