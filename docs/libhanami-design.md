@@ -374,6 +374,32 @@ output free it internally. Absent `curation` means no extra curation advertised,
 not an invented policy. GRASP-05 is informational only: announcement-listing
 behavior is unchanged.
 
+**GRASP-05 decision (nostrc-klrqc):** no client-side archive or mirror path uses
+the GRASP-05 exception, by design. [GRASP-01](https://ngit.dev/protocol/grasp/specification/01)
+requires a server to reject kind-30617 repository announcements that do not list
+it in both `clone` and `relays` "unless implementing GRASP-05";
+[GRASP-05](https://ngit.dev/protocol/grasp/specification/05) lets such a server
+accept those announcements and requires it to implement
+[GRASP-02](https://ngit.dev/protocol/grasp/specification/02) proactive sync.
+All three are server acceptance and sync obligations; none places a requirement
+on clients. In this library the GRASP entrypoints never construct, validate or
+publish a kind-30617 announcement: `hanami_push_to_grasp[_with_result]` signs and
+publishes kind-30618 state only, and `hanami_grasp_fetch*` reads the owner's
+announcement solely to learn the maintainer set (`fetch_signed_grasp_state`),
+without checking whether `clone`/`relays` name the server. The only kind-30617
+construction is `hanami_announce_repo` → `hanami_nostr_publish_repo` →
+`nip34_create_repo_announcement`, an ordinary NIP-34 publish to the caller's
+relay list with no GRASP probe or listing policy, and it stays that way. No
+in-tree caller (gnome apps, CLI tools) invokes the GRASP push/fetch API or
+creates archive/mirror announcements. There is therefore no client-side listing
+gate to relax: a GRASP-05 server's acceptance of an unlisted announcement is its
+own policy, and GRASP-02 sync cannot be "honoured" from the client. The
+`supports_grasp05` flag remains informational so callers can display server
+policy. A future archive/mirror workflow that publishes announcements to a
+GRASP-05 server is tracked separately and would need to require both `GRASP-05`
+and `GRASP-02` in `supported_grasps` before omitting a listing; it must not
+widen ordinary NIP-34 relay publication.
+
 Push authorization follows [GRASP-01](https://ngit.dev/protocol/grasp/specification/01):
 fetch the signer's previous state through EOSE from the clone authority's root
 WebSocket relay, merge the requested destination ref updates into that complete
