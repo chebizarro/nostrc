@@ -42,7 +42,7 @@ files already declare a version.
 | libvault-marmot | `libvault-marmot/` | 0.1.1 | Unreleased | — | `libvault-marmot/CMakeLists.txt` (`declare_component_version`) |
 
 | vaultctl | `tools/vaultctl/` | 0.3.1 | Unreleased | — | `tools/vaultctl/CMakeLists.txt` (`declare_component_version`), `tools/vaultctl/main.c` (`--version`) |
-| libvault | `libvault/` | 0.5.1 | Unreleased | — | `libvault/CMakeLists.txt` (`declare_component_version`) |
+| libvault | `libvault/` | 0.6.0 | Unreleased | — | `libvault/CMakeLists.txt` (`declare_component_version`) |
 | libblossom | `libblossom/` | 0.3.2 | Unreleased | — | `libblossom/CMakeLists.txt` (`declare_component_version`) |
 | nip59 (NIP-59 gift-wrap core) | `nips/nip59/` | 0.2.0 | Unreleased | — | `nips/nip59/CMakeLists.txt` (`project(nip59 VERSION ...)`, mirrored into `declare_component_version`; installed static archive and .pc, existing OBJECT target retained) |
 | bud02 (Blossom authorization codec) | `nips/bud02/` | 0.1.1 | Unreleased | — | `nips/bud02/CMakeLists.txt` (`declare_component_version`) |
@@ -557,6 +557,13 @@ release columns or tags are changed. NIP-47/49 GLib implementations include
   test executables compile the Blossom adapter directly and must declare its
   bud02 dependency. Test-only usage requirements; no shipped artifact, public
   contract or application behavior changes. No tags or release-column changes.
+
+- nostrc-v04jd.3 (SV-A3): libvault MINOR 0.5.1 -> 0.6.0 for additive,
+  default-off NIP-4E recipient resolution and local encryption-key receive
+  configuration on the NIP-59 carrier. Kind-30804 grant bodies and default
+  identity delivery are unchanged; kind-1059's standard p tag records the
+  selected encryption key. Existing nip44/nip59 cores and nostr-homed consumers
+  have no independent surface changes: no bumps. No published release/tag change.
 
 - nostrc-hlw04: PATCH build/link correction for bud02 0.1.0 -> 0.1.1,
   libblossom 0.3.0 -> 0.3.1, libporthome 0.5.1 -> 0.5.2, libvault
