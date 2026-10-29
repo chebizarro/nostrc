@@ -205,6 +205,10 @@ typedef struct vault_grant_carrier {
      * authority: implementations must verify the carrier, e.g. NIP-59 in SV-4. */
     int (*receive)(void *, struct _NostrEvent **rumor, uint8_t authenticated_sender[32]);
 } vault_grant_carrier;
+/* NIP-59 delivery uses the explicit carrier in <vault/nip59.h>. Its optional
+ * vault_nip59_carrier_set_nip4e resolver is off by default; its local device-key
+ * setter enables receive-first/device, then identity fallback. Neither changes
+ * the grant rumor schema or the default identity-key delivery behavior. */
 VAULT_API int vault_grant_send(const vault_grant_carrier *, const uint8_t recipient[32],
                                const vault_grant *);
 VAULT_API int vault_grant_receive(const vault_grant_carrier *, vault_grant **);

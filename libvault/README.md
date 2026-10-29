@@ -172,12 +172,52 @@ AUTH/OK/CLOSED/EOSE handling, subscriptions, persistence and event-id deduplicat
 The adapter does not publish anything except through that explicit callback.
 Each nested NIP-44 plaintext must fit 65535 bytes; the outer seal serialization
 makes the fallback's maximum grant smaller than the raw grant codec limit.
-This fallback has no forward secrecy against identity-key compromise.
+This fallback has no forward secrecy against compromise of its delivery key.
 
 The installed nip59 static archive/pc reuses its existing OBJECT implementation,
 which remains available to existing in-tree consumers. This provides an installed
 private dependency for libvault without source/build-tree path references.
 Protocol: [NIP-59](https://github.com/nostr-protocol/nips/blob/master/59.md).
+
+### Experimental NIP-4E recipient resolution
+
+Resolution is **off by default**. Set `vault_nip59_carrier_set_nip4e(carrier,
+&resolver)` before `vault_grant_send(vault_nip59_carrier_interface(carrier),
+recipient_identity, grant)` to enable it; pass NULL to disable it. There is no
+separate `vault_grant_send_nip59` entrypoint. The resolver's borrowed relay list
+and query callback integrate with the caller's event-driven relay transport.
+Libvault supplies an author-scoped kind-10044, limit-1 filter for each relay.
+Query must deliver borrowed events via `emit` and explicitly report subscription
+EOSE. It owns NIP-11 probing, AUTH/re-REQ, CLOSED/error handling and CLOSE cleanup;
+it must not poll, sleep or treat elapsed time as completed history.
+
+Libvault verifies the identity author and event id/signature, selects the latest
+replaceable event across all queried relays (lowest id on timestamp ties), then
+requires exactly one valid x-only encryption pubkey in its `n` tag. A malformed
+latest event or forged author/signature is an authentication error, not permission
+to resurrect an older key. An EOSE-complete empty result on **every** configured
+relay uses the identity key, exactly as when the option is disabled. Any unreachable,
+refusing, interrupted or otherwise failed lookup propagates its error; a callback
+returning without EOSE gives `VAULT_ERR_INCOMPLETE`. **No grant is published and
+there is no silent identity-key fallback on incomplete lookup.**
+
+Both the seal and wrap encrypt to the resolved key using the existing NIP-44 and
+NIP-59 implementations. The signed wrapper's standard `p` tag contains the actual
+encryption recipient (`["p", "<selected pubkey>"]`), so no custom tag is needed.
+[NIP-59](https://github.com/nostr-protocol/nips/blob/master/59.md#3-gift-wrap-event-kind)
+allows routing metadata on the wrap; the seal's tags remain empty and the grant
+rumor (kind 30804) is unchanged. No public identity-to-encryption-key mapping is
+added to the wrapper. This follows **unmerged** [NIPs PR #1647, revision
+`b22711d050df662bfba5f813a35d801daf067dc8`](https://github.com/nostr-protocol/nips/blob/b22711d050df662bfba5f813a35d801daf067dc8/4e.md).
+That draft calls this the user-level encryption key, distinct from its per-client
+4454/4455 key-distribution flow; libvault does not implement that flow.
+
+`vault_nip59_carrier_set_device_key(carrier, device_sk)` copies a local encryption
+key (NULL clears it). Receive tries that key first, then the identity key. The
+receive transport must supply wraps addressed to either inbox p key; configuring
+a key does not create subscriptions. Wrong-key/envelope failures return the same
+`VAULT_ERR_AUTH` with no matched-key diagnostic; the authenticated sender remains
+the seal's identity. Configured secret copies are wiped on replacement/free.
 
 ## Focused tests
 
@@ -190,4 +230,8 @@ Marmot acceptance. `test_vault_grant_nip59` uses the actual NIP-59/NIP-44 and
 signing/parsing APIs through recording transport callbacks: both read/write
 multi-epoch bodies round-trip exactly, hostile envelopes fail closed, and callback
 errors are not retried. It is not live relay or delivery acceptance. The
-implementation remains experimental.
+implementation remains experimental. `test_vault_grant_nip4e` covers default-off
+and opt-in delivery, actual device-key opening and identity receive fallback,
+all-relay EOSE requirements, query failures, forged announcements, replaceable
+ordering/ties/duplicates, malformed latest keys, and unchanged grant bodies using
+local recording callbacks only (no relay connections).
