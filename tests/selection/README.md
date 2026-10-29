@@ -240,3 +240,9 @@ modules. No test case is deleted merely to hide an import-path error.
 | `test_selection_realization` | zero cases; implementation import checked separately |
 | `test_selection_services` | zero cases; implementation import checked separately |
 | `test_selection_subset` | zero cases; implementation import checked separately |
+
+`test_homed_profile_contract.ActualHomedUnitGraph` configures and runs the real
+nostr-homed unit tests. It skips with a named reason when cmake, ninja, pkg-config
+or the jansson, sqlite3 and openssl development packages are absent (as on the
+hosted static-checks runner), following the capability-skip convention of
+`test_default_producers`.
