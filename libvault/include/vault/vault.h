@@ -237,6 +237,52 @@ VAULT_API int vault_vsp_relay_classify(const char *nip11, blossom_capability_sta
 VAULT_API blossom_capability_state_t
 vault_vsp_blossom_classify(const blossom_server_capabilities_t *);
 VAULT_API blossom_error_t vault_vsp_probe_blossom(blossom_client_t *, blossom_capability_state_t *);
+
+/* NIP-94 / NIP-17 kind-15 projection of ONE file for a recipient who never
+ * holds the vault (interop alignment note §2 A2). The file's plaintext is read
+ * through the vault's authenticated chunk reader (vault_chunk_read: exact
+ * per-chunk epochs from `ring`, hash before AEAD, no key trials), then
+ * re-sealed as ONE blob under a fresh CSPRNG key. Never exports a ring key or a
+ * derived chunk key: the export key is independent of every ring.
+ * Cipher: AES-256-GCM, random 96-bit nonce, 128-bit tag appended to the
+ * ciphertext, no AAD, no nonce prefix — the construction kind-15 clients
+ * implement today (NIP-17 kind 15; NIPs PR #2437 lifts the same properties
+ * into NIP-94/imeta). encryption-algorithm is "aes-gcm". NIP-17 leaves the
+ * key/nonce text encoding open; this emits lowercase hex, which Amethyst/Quartz
+ * emit and Ditto accepts. x = SHA-256 of the uploaded ciphertext, ox = SHA-256
+ * of the plaintext, size = ciphertext bytes, url from the Blossom descriptor.
+ * libporthome's sealed-blob layout is NOT used; it remains a future algorithm
+ * value. The caller wraps the tags in a kind-15 rumor or an imeta tag; nothing
+ * is published here. No change to the vault format, grants or rings.
+ * Upload goes through blossom_client_put with the client's signer and the
+ * exact ciphertext hash, so a server that would rewrite the wire bytes (PNG
+ * shim) fails closed. The descriptor's hash and size are checked against the
+ * local SHA-256. Failures are classified: descriptor/hash mismatch ->
+ * PORTHOME_ERR_HASH_MISMATCH, refused auth -> VAULT_ERR_AUTH, server or client
+ * size limit -> PORTHOME_ERR_TOO_LARGE, other transport/server failures ->
+ * VAULT_ERR_IO (blossom_client_http_status/reason hold the detail).
+ * Not streamed: plaintext and ciphertext are resident together, about 2x the
+ * file plus one chunk. Files above VAULT_NIP94_MAX_EXPORT_BYTES are refused
+ * with PORTHOME_ERR_TOO_LARGE before any I/O; the client's max_blob_bytes also
+ * applies. file_type is an optional MIME type copied verbatim (printable
+ * ASCII, no spaces/quotes, <= 255 bytes). Plaintext, key and nonce buffers are
+ * wiped after use; vault_nip94_tags_free wipes the key material. */
+#define VAULT_NIP94_ALGORITHM "aes-gcm"
+#define VAULT_NIP94_MAX_EXPORT_BYTES (64u * 1024u * 1024u)
+#define VAULT_NIP94_TAG_LEN 16u
+typedef struct {
+    char x[65], ox[65];               /* SHA-256 hex of ciphertext / plaintext. */
+    char decryption_key[65];          /* 32-byte AES-256 key, lowercase hex. */
+    char decryption_nonce[25];        /* 12-byte GCM nonce, lowercase hex. */
+    const char *encryption_algorithm; /* VAULT_NIP94_ALGORITHM; static, not freed. */
+    char *file_type;                  /* Owned MIME copy, or NULL. */
+    uint64_t size;                    /* Ciphertext bytes (plaintext + tag). */
+    char *url;                        /* Owned, from the descriptor; may be NULL. */
+} vault_nip94_tags;
+VAULT_API int vault_file_export_nip94(const porthome_node_entry *file, const porthome_ring_t *ring,
+                                      const vault_blob_io *io, blossom_client_t *,
+                                      const char *file_type, vault_nip94_tags **out);
+VAULT_API void vault_nip94_tags_free(vault_nip94_tags *);
 #ifdef __cplusplus
 }
 #endif

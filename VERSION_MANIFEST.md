@@ -42,7 +42,7 @@ files already declare a version.
 | libvault-marmot | `libvault-marmot/` | 0.1.1 | Unreleased | — | `libvault-marmot/CMakeLists.txt` (`declare_component_version`) |
 
 | vaultctl | `tools/vaultctl/` | 0.3.1 | Unreleased | — | `tools/vaultctl/CMakeLists.txt` (`declare_component_version`), `tools/vaultctl/main.c` (`--version`) |
-| libvault | `libvault/` | 0.6.0 | Unreleased | — | `libvault/CMakeLists.txt` (`declare_component_version`) |
+| libvault | `libvault/` | 0.7.0 | Unreleased | — | `libvault/CMakeLists.txt` (`declare_component_version`) |
 | libblossom | `libblossom/` | 0.3.2 | Unreleased | — | `libblossom/CMakeLists.txt` (`declare_component_version`) |
 | nip59 (NIP-59 gift-wrap core) | `nips/nip59/` | 0.2.0 | Unreleased | — | `nips/nip59/CMakeLists.txt` (`project(nip59 VERSION ...)`, mirrored into `declare_component_version`; installed static archive and .pc, existing OBJECT target retained) |
 | bud02 (Blossom authorization codec) | `nips/bud02/` | 0.1.1 | Unreleased | — | `nips/bud02/CMakeLists.txt` (`declare_component_version`) |
@@ -52,6 +52,19 @@ files already declare a version.
 | nostr-seal | `gnome/nostr-seal/` | 0.1.3 (format nsealed v1) | Unreleased | — | `gnome/nostr-seal/src/main.c` (`NOSTR_SEAL_VERSION`), `gnome/nostr-seal/include/nostr-seal.h` (`NSEAL_FORMAT_VERSION`) |
 | signet | `signet/` | 0.7.0 | Unreleased | — | `signet/meson.build`, `signet/src/signetd_main.c` (`SIGNET_VERSION`), `signet/src/signetctl_main.c` (`SIGNETCTL_VERSION`); `signet/CMakeLists.txt` declares none |
 
+
+### Single-file NIP-94 / kind-15 export (nostrc-v04jd.2, SV-A2)
+
+- **libvault 0.6.0 → 0.7.0 (MINOR):** adds `vault_file_export_nip94`,
+  `vault_nip94_tags_free`, the `vault_nip94_tags` struct and the
+  `VAULT_NIP94_*` constants to `<vault/vault.h>`, on top of SV-A3's unreleased
+  0.6.0 (NIP-4E carrier option). Backward-compatible additive public API;
+  existing functions, the vault format, grants and rings are unchanged. No
+  release tag is published.
+- **Other components: no bump.** libblossom and libporthome are consumed through
+  their existing public APIs (`blossom_client_put`, `vault_chunk_read`'s
+  porthome primitives); vaultctl, libvault-marmot and the Rust bindings do not
+  yet expose the new call. Release columns are unchanged.
 
 ### SimplePool boundary drain correction (nostrc-chqxa)
 

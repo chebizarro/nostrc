@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- libvault 0.7.0: `vault_file_export_nip94` / `vault_nip94_tags_free` project
+  ONE vault file for a recipient who never holds the vault (interop alignment
+  §2 A2). The file is read through the authenticated chunk reader with exact
+  per-chunk epochs, re-sealed as one AES-256-GCM blob (random 96-bit nonce,
+  128-bit tag appended, no AAD) under a fresh CSPRNG key that is independent of
+  every ring and derived chunk key, uploaded through libblossom's signed PUT with
+  the exact ciphertext hash pinned, and returned as NIP-17 kind-15 / NIP-94
+  (PR #2437) tags: `x`, `ox`, `decryption-key`, `decryption-nonce` (lowercase
+  hex, as Amethyst/Quartz emit), `encryption-algorithm` = `aes-gcm`, `file-type`,
+  `size` and the descriptor URL. Not streamed: files above
+  `VAULT_NIP94_MAX_EXPORT_BYTES` (64 MiB) are refused before any I/O, and upload
+  failures are classified (hash mismatch, auth, size, I/O). No change to the
+  vault format, grants or rings; libporthome's sealed-blob layout remains a
+  future algorithm value (nostrc-v04jd.2).
+
 ### Fixed
 - libporthome 0.7.1: the PCS v1 manifest decoder now reports
   `PORTHOME_ERR_EPOCH` for nonzero chunk key IDs and PCS v2 dir-nodes,

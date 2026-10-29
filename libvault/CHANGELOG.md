@@ -1,5 +1,28 @@
 # libvault changelog
 
+## 0.7.0 — Unreleased
+
+- Add `vault_file_export_nip94` and `vault_nip94_tags_free` (interop alignment
+  §2 A2, nostrc-v04jd.2): project ONE vault file for a recipient who never
+  holds the vault. The file is read through the authenticated chunk reader
+  with exact per-chunk epochs gated before any I/O, re-sealed as one
+  AES-256-GCM blob (random 96-bit nonce, 128-bit tag appended, no AAD) under a
+  fresh CSPRNG key independent of every ring and derived chunk key, uploaded
+  through libblossom's signed PUT with the exact ciphertext hash pinned, and
+  returned as NIP-17 kind-15 / NIP-94 (NIPs PR #2437) tags: `x`, `ox`,
+  `decryption-key`, `decryption-nonce` (lowercase hex, as Quartz/Amethyst
+  emit and Ditto accepts), `encryption-algorithm` = `aes-gcm`, `file-type`,
+  `size` and the descriptor URL. The caller wraps them in a kind-15 rumor or
+  an `imeta`; nothing is published.
+- Not streamed: plaintext and ciphertext are resident together, so files above
+  `VAULT_NIP94_MAX_EXPORT_BYTES` (64 MiB) are refused with
+  `PORTHOME_ERR_TOO_LARGE` before any I/O. Upload failures are classified
+  (`PORTHOME_ERR_HASH_MISMATCH`, `VAULT_ERR_AUTH`, `PORTHOME_ERR_TOO_LARGE`,
+  `VAULT_ERR_IO`). Plaintext, key and nonce are wiped; the free wipes the tags.
+- No change to the vault format, grants or rings. libporthome's sealed-blob
+  layout is not used and remains a future `encryption-algorithm` value.
+- MINOR: backward-compatible additive public API on top of 0.6.0.
+
 ## 0.6.0 — Unreleased
 
 - Add explicit, default-off NIP-4E resolution to the NIP-59 grant carrier via
