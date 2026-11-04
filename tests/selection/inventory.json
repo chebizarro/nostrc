@@ -20,6 +20,21 @@
     ]
   },
   "checks": {
+    "grotto.panels": {
+      "nodes": ["grotto.panels", "testing.common_inputs"],
+      "profiles": ["grotto.panels.linux", "grotto.linux"],
+      "kind": "ctest",
+      "cost": "ordinary",
+      "requirement": "blocking",
+      "expected_outcome": "pass",
+      "ctest_tests": {
+        "grotto.panels.linux": ["grotto-panels/smoke-host", "grotto-panels/no-secrets", "grotto-panels/control1-service"],
+        "grotto.linux": ["grotto-panels/smoke-host", "grotto-panels/no-secrets", "grotto-panels/control1-service"]
+      },
+      "build_targets": ["test-grotto-panels-smoke", "test-grotto-panels-control1"],
+      "runtime_inputs": ["{source}/apps/grotto/data/org.nostr.Grotto.Control1.xml"],
+      "requires": []
+    },
     "supported.apps.gnostr.blossom": {
       "nodes": [
         "gnostr.blossom"
@@ -21960,6 +21975,11 @@
     ]
   },
   "nodes": {
+    "grotto.panels": {
+      "id": "grotto.panels",
+      "depends_on": [],
+      "owner_paths": ["gnome/grotto-panels", "apps/grotto/src/grotto-panels-control1-service.c", "apps/grotto/src/grotto-panels-control1-service.h"]
+    },
     "gnostr.blossom": {
       "id": "gnostr.blossom",
       "depends_on": [
@@ -22205,6 +22225,7 @@
     "gnome.nostr_settings": {
       "coverage_gap": "No fully audited dedicated execution profile yet; broad recovery cannot prove this component validated.",
       "depends_on": [
+        "grotto.panels",
         "nostr.gobject"
       ],
       "id": "gnome.nostr_settings",
@@ -22297,6 +22318,7 @@
     },
     "grotto.gui": {
       "depends_on": [
+        "grotto.panels",
         "nostr.gobject",
         "nip55l",
         "nip04",
@@ -24300,6 +24322,24 @@
     }
   },
   "path_rules": [
+    {
+      "prefix": "gnome/grotto-panels",
+      "effect": "impact",
+      "nodes": ["grotto.panels"],
+      "reason": "New isolated panel component: boundary, private-bus adapter and level-1 smoke host."
+    },
+    {
+      "exact": "apps/grotto/src/grotto-panels-control1-service.c",
+      "effect": "impact",
+      "nodes": ["grotto.panels", "grotto.gui"],
+      "reason": "Host-owned injected adapter; test the production source on a private bus."
+    },
+    {
+      "exact": "apps/grotto/src/grotto-panels-control1-service.h",
+      "effect": "impact",
+      "nodes": ["grotto.panels", "grotto.gui"],
+      "reason": "Host-owned injected adapter contract."
+    },
     {
       "exact": "apps/gnostr/src/util/blossom.c",
       "nodes": [
@@ -28793,6 +28833,7 @@
     {
       "exact": "apps/grotto/data/org.nostr.Grotto.Control1.xml",
       "nodes": [
+        "grotto.panels",
         "grotto.gui",
         "selection.contract"
       ],
@@ -29193,6 +29234,22 @@
     }
   ],
   "profiles": {
+    "grotto.panels.linux": {
+      "platform": "linux",
+      "architecture": "any",
+      "compiler": "gcc",
+      "build_type": "Debug",
+      "instrumentation": "none",
+      "source_dir": "gnome/grotto-panels",
+      "configure_args": ["-G", "Ninja", "-DCMAKE_BUILD_TYPE=Debug", "-DBUILD_TESTING=ON"],
+      "environment": {},
+      "capabilities": [],
+      "setup": "gnome/grotto-panels/README.md",
+      "local_availability": "host_or_container",
+      "parallelism": 1,
+      "build_parallelism": 2,
+      "timeout_seconds": 60
+    },
     "homed.vault.linux": {
       "platform": "linux",
       "architecture": "x86_64",
@@ -30574,6 +30631,15 @@
     }
   },
   "release_components": {
+    "grotto-panels": {
+      "manifest_name": "grotto-panels",
+      "package_jobs": [],
+      "publisher": "none",
+      "version_sources": [
+        {"path": "gnome/grotto-panels/CMakeLists.txt", "pattern": "project\\(grotto-panels VERSION ([0-9.]+)"},
+        {"path": "gnome/grotto-panels/meson.build", "pattern": "version: '([0-9.]+)'"}
+      ]
+    },
     "porthome-sys": {
       "manifest_name": "porthome-sys",
       "package_jobs": [],

@@ -11,6 +11,10 @@
 
 cmake_minimum_required(VERSION 3.16)
 include(GNUInstallDirs)
+if(NOT TARGET grotto-panels)
+  add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/../grotto-panels"
+    "${CMAKE_CURRENT_BINARY_DIR}/grotto-panels")
+endif()
 find_package(PkgConfig REQUIRED)
 
 set(NOSTR_SETTINGS_VERSION 0.1.0)
@@ -77,7 +81,7 @@ add_executable(nostr-settings
   src/ui/nss-page-files.c)
 target_include_directories(nostr-settings PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/ui)
 target_compile_options(nostr-settings PRIVATE ${NSS_WARNINGS})
-target_link_libraries(nostr-settings PRIVATE nostr-settings-core PkgConfig::NSS_ADW)
+target_link_libraries(nostr-settings PRIVATE nostr-settings-core PkgConfig::NSS_ADW GrottoPanels::Panels)
 install(TARGETS nostr-settings RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
 # ---- Data ----

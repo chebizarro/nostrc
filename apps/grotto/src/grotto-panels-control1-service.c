@@ -1,0 +1,260 @@
+/* SPDX-License-Identifier: MIT */
+#include "grotto-panels-control1-service.h"
+#include <string.h>
+
+#define CONTROL "org.nostr.Grotto.Control1"
+#define CONTROL_PATH "/org/nostr/signer/grotto"
+struct _GrottoPanelsControl1Service {
+  GObject parent_instance;
+  GDBusProxy *proxy;
+  char *owner;
+  guint64 generation, serial[GROTTO_PANELS_N_MODELS + 1];
+  GListStore *models[GROTTO_PANELS_N_MODELS];
+  GHashTable *tombstones;
+  GCancellable *cancel;
+  gboolean available, caps[GROTTO_PANEL_N_COMMANDS];
+  gulong signal_id, owner_id;
+};
+static void service_iface_init(GrottoPanelsServiceInterface *iface);
+G_DEFINE_TYPE_WITH_CODE(GrottoPanelsControl1Service, grotto_panels_control1_service, G_TYPE_OBJECT,
+  G_IMPLEMENT_INTERFACE(GROTTO_TYPE_PANELS_SERVICE, service_iface_init))
+/* This closed table is the ONLY RPC dispatch route for panel commands. */
+static const char *const methods[] = {
+  "SetClientLabel", "SetDefaultIdentityForLegacy", "SetClientTrust", "SetPermissions",
+  "RevokeClient", "SetPaused", "SetPaused", "ClearActivity", "ConfigureBunker", "ResetBunkerEndpoint"
+};
+static const char *const capability_names[] = {
+  "set-client-label", "set-default-identity", "set-client-trust", "set-permissions",
+  "revoke-client", "pause", "resume", "clear-activity", "configure-remote", "reset-remote"
+};
+/* Internal slot 4 holds coarse availability/caller capabilities, not a model. */
+#define STATUS_SLOT GROTTO_PANELS_N_MODELS
+
+typedef struct {
+  GrottoPanelsControl1Service *self;
+  guint slot;
+  guint64 generation, serial;
+  gint64 started;
+} Snapshot;
+static void refresh(GrottoPanelsControl1Service *self, guint slot);
+static const char *text(GVariant *row, const char *key) {
+  const char *value = "";
+  g_variant_lookup(row, key, "&s", &value);
+  return value;
+}
+static void changed(GrottoPanelsControl1Service *self, const char *signal) {
+  g_signal_emit_by_name(self, signal);
+}
+static void apply_rows(Snapshot *snapshot, GVariant *rows) {
+  GrottoPanelsControl1Service *self = snapshot->self;
+  GListStore *model = self->models[snapshot->slot];
+  g_autoptr(GPtrArray) items = g_ptr_array_new_with_free_func(g_object_unref);
+  g_autoptr(GHashTable) seen = g_hash_table_new(g_str_hash, g_str_equal);
+  for (gsize i = 0; i < g_variant_n_children(rows); i++) {
+    g_autoptr(GVariant) row = g_variant_get_child_value(rows, i);
+    const char *id = text(row, snapshot->slot == GROTTO_PANELS_REQUESTS ? "request_id" : "principal");
+    guint64 sequence = 0;
+    g_variant_lookup(row, "sequence", "t", &sequence);
+    g_autofree char *sequence_id = g_strdup_printf("%" G_GUINT64_FORMAT, sequence);
+    if (snapshot->slot == GROTTO_PANELS_ACTIVITY) id = sequence_id;
+    if (!*id || g_hash_table_contains(seen, id)) continue;
+    if (snapshot->slot == GROTTO_PANELS_REQUESTS && g_hash_table_contains(self->tombstones, id)) continue;
+    GrottoPanelsMetadata m = {
+      .id = id, .label = text(row, "label"), .public_key = text(row, "identity"),
+      .state = text(row, "state"), .reason = text(row, "reason"),
+      .access_policy = text(row, "access-policy"), .sequence = sequence
+    };
+    g_variant_lookup(row, "needs-review", "b", &m.needs_review);
+    g_variant_lookup(row, "blocked", "b", &m.blocked);
+    if (snapshot->slot == GROTTO_PANELS_REQUESTS) {
+      guint32 remaining = 0;
+      g_variant_lookup(row, "remaining_seconds", "u", &remaining);
+      m.deadline_usec = snapshot->started + (gint64)remaining * G_USEC_PER_SEC;
+      for (guint j = 0; j < g_list_model_get_n_items(G_LIST_MODEL(model)); j++) {
+        g_autoptr(GrottoPanelsItem) old = g_list_model_get_item(G_LIST_MODEL(model), j);
+        const GrottoPanelsMetadata *previous = grotto_panels_item_get_metadata(old);
+        if (!strcmp(previous->id, id)) m.deadline_usec = MIN(m.deadline_usec, previous->deadline_usec);
+      }
+    }
+    GrottoPanelsItem *item = grotto_panels_item_new(&m);
+    g_ptr_array_add(items, item);
+    g_hash_table_add(seen, (gpointer)grotto_panels_item_get_metadata(item)->id);
+  }
+  if (snapshot->slot == GROTTO_PANELS_REQUESTS) {
+    for (guint i = 0; i < g_list_model_get_n_items(G_LIST_MODEL(model)); i++) {
+      g_autoptr(GrottoPanelsItem) old = g_list_model_get_item(G_LIST_MODEL(model), i);
+      const char *id = grotto_panels_item_get_metadata(old)->id;
+      if (!g_hash_table_contains(seen, id)) g_hash_table_add(self->tombstones, g_strdup(id));
+    }
+  }
+  g_list_store_splice(model, 0, g_list_model_get_n_items(G_LIST_MODEL(model)), items->pdata, items->len);
+}
+static void snapshot_done(GObject *source, GAsyncResult *result, gpointer data) {
+  Snapshot *snapshot = data;
+  GrottoPanelsControl1Service *self = snapshot->self;
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GVariant) reply = g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), result, &error);
+  if (snapshot->generation == self->generation && snapshot->serial == self->serial[snapshot->slot]) {
+    if (snapshot->slot == STATUS_SLOT) {
+      gboolean available = reply != NULL;
+      gboolean caps[GROTTO_PANEL_N_COMMANDS] = {0};
+      if (reply) {
+        g_autoptr(GVariant) status = g_variant_get_child_value(reply, 0);
+        /* A separate caller-specific map: never use today's coarse capabilities. */
+        g_autoptr(GVariant) allowed = g_variant_lookup_value(status, "management-capabilities", G_VARIANT_TYPE("a{sb}"));
+        if (allowed) for (guint i = 0; i < GROTTO_PANEL_N_COMMANDS; i++)
+          g_variant_lookup(allowed, capability_names[i], "b", &caps[i]);
+      }
+      gboolean availability_changed = self->available != available;
+      self->available = available;
+      memcpy(self->caps, caps, sizeof caps);
+      changed(self, "capabilities-changed");
+      if (availability_changed) changed(self, "availability-changed");
+    } else if (reply) {
+      g_autoptr(GVariant) rows = g_variant_get_child_value(reply, 0);
+      apply_rows(snapshot, rows);
+    } else {
+      /* Read authorization/availability failure is not stale successful data. */
+      g_list_store_remove_all(self->models[snapshot->slot]);
+    }
+  }
+  g_object_unref(self);
+  g_free(snapshot);
+}
+static void refresh(GrottoPanelsControl1Service *self, guint slot) {
+  self->serial[slot]++;
+  if (!self->owner) return;
+  static const char *const reads[] = {NULL, "ListClients", "ListRequests", "ListActivity", "GetStatus"};
+  if (!reads[slot]) return; /* Identity metadata is W3/W6, never private inventory. */
+  Snapshot *snapshot = g_new0(Snapshot, 1);
+  *snapshot = (Snapshot){g_object_ref(self), slot, self->generation, self->serial[slot], g_get_monotonic_time()};
+  GVariant *args = slot == GROTTO_PANELS_ACTIVITY ? g_variant_new("(tu)", (guint64)0, 100u) : NULL;
+  g_dbus_connection_call(g_dbus_proxy_get_connection(self->proxy), self->owner, CONTROL_PATH, CONTROL,
+    reads[slot], args, G_VARIANT_TYPE(slot == STATUS_SLOT ? "(a{sv})" : "(aa{sv})"),
+    G_DBUS_CALL_FLAGS_NO_AUTO_START, 5000, self->cancel, snapshot_done, snapshot);
+}
+static void owner_changed(GObject *proxy, GParamSpec *pspec, gpointer data) {
+  (void)pspec;
+  GrottoPanelsControl1Service *self = data;
+  g_autofree char *owner = g_dbus_proxy_get_name_owner(G_DBUS_PROXY(proxy));
+  if (!g_strcmp0(owner, self->owner)) return;
+  self->generation++;
+  g_cancellable_cancel(self->cancel);
+  g_clear_object(&self->cancel);
+  self->cancel = g_cancellable_new();
+  g_free(self->owner);
+  self->owner = g_steal_pointer(&owner);
+  self->available = FALSE;
+  memset(self->caps, 0, sizeof self->caps);
+  g_hash_table_remove_all(self->tombstones);
+  for (guint i = 0; i < GROTTO_PANELS_N_MODELS; i++) g_list_store_remove_all(self->models[i]);
+  changed(self, "capabilities-changed");
+  changed(self, "availability-changed");
+  for (guint i = GROTTO_PANELS_APPS; i <= STATUS_SLOT; i++) refresh(self, i);
+}
+static void daemon_signal(GDBusProxy *proxy, const char *sender, const char *name,
+                           GVariant *parameters, gpointer data) {
+  (void)proxy; (void)parameters;
+  GrottoPanelsControl1Service *self = data;
+  if (g_strcmp0(sender, self->owner)) return;
+  if (!strcmp(name, "ClientsChanged")) refresh(self, GROTTO_PANELS_APPS);
+  else if (!strcmp(name, "RequestsChanged")) refresh(self, GROTTO_PANELS_REQUESTS);
+  else if (!strcmp(name, "ActivityChanged")) refresh(self, GROTTO_PANELS_ACTIVITY);
+  else if (!strcmp(name, "StatusChanged")) refresh(self, STATUS_SLOT);
+}
+static GListModel *get_model(GrottoPanelsService *service, GrottoPanelsModel model) {
+  return G_LIST_MODEL(GROTTO_PANELS_CONTROL1_SERVICE(service)->models[model]);
+}
+static gboolean is_available(GrottoPanelsService *service) {
+  return GROTTO_PANELS_CONTROL1_SERVICE(service)->available;
+}
+static gboolean can(GrottoPanelsService *service, GrottoPanelCommand command) {
+  return GROTTO_PANELS_CONTROL1_SERVICE(service)->caps[command];
+}
+typedef struct { guint64 generation; } Invocation;
+static void invocation_done(GObject *source, GAsyncResult *result, gpointer data) {
+  GTask *task = data;
+  GrottoPanelsControl1Service *self = g_task_get_source_object(task);
+  Invocation *invocation = g_task_get_task_data(task);
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GVariant) reply = g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), result, &error);
+  if (invocation->generation != self->generation)
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_CANCELLED, "Signer owner changed");
+  else if (!reply) g_task_return_error(task, g_steal_pointer(&error));
+  else g_task_return_boolean(task, TRUE); /* Never pass arbitrary RPC payloads to a panel. */
+  g_object_unref(task);
+}
+static void invoke_async(GrottoPanelsService *service, GrottoPanelCommand command, GVariant *args,
+  GCancellable *cancel, GAsyncReadyCallback callback, gpointer data) {
+  GrottoPanelsControl1Service *self = GROTTO_PANELS_CONTROL1_SERVICE(service);
+  GTask *task = g_task_new(self, cancel, callback, data);
+  Invocation *invocation = g_new0(Invocation, 1);
+  invocation->generation = self->generation;
+  g_task_set_task_data(task, invocation, g_free);
+  g_autoptr(GVariant) wire = NULL;
+  if (command == GROTTO_PANEL_PAUSE || command == GROTTO_PANEL_RESUME)
+    wire = g_variant_ref_sink(g_variant_new("(b)", command == GROTTO_PANEL_PAUSE));
+  else if (command == GROTTO_PANEL_CONFIGURE_REMOTE) {
+    gboolean enabled;
+    g_autoptr(GVariant) relays = NULL, methods_arg = NULL;
+    g_variant_get(args, "(b@as@as)", &enabled, &relays, &methods_arg);
+    GVariantBuilder config;
+    g_variant_builder_init(&config, G_VARIANT_TYPE_VARDICT);
+    g_variant_builder_add(&config, "{sv}", "enabled", g_variant_new_boolean(enabled));
+    g_variant_builder_add(&config, "{sv}", "relays", relays);
+    g_variant_builder_add(&config, "{sv}", "allowed-methods", methods_arg);
+    wire = g_variant_ref_sink(g_variant_new("(a{sv})", &config));
+  } else wire = g_variant_ref(args);
+  g_dbus_connection_call(g_dbus_proxy_get_connection(self->proxy), self->owner, CONTROL_PATH, CONTROL,
+    methods[command], wire, NULL, G_DBUS_CALL_FLAGS_NO_AUTO_START, 5000, cancel, invocation_done, task);
+}
+static gboolean invoke_finish(GrottoPanelsService *self, GAsyncResult *result, GError **error) {
+  g_return_val_if_fail(g_task_is_valid(result, self), FALSE);
+  return g_task_propagate_boolean(G_TASK(result), error);
+}
+static void service_iface_init(GrottoPanelsServiceInterface *iface) {
+  iface->get_model = get_model;
+  iface->is_available = is_available;
+  iface->can = can;
+  iface->invoke_async = invoke_async;
+  iface->invoke_finish = invoke_finish;
+}
+static void dispose(GObject *object) {
+  GrottoPanelsControl1Service *self = GROTTO_PANELS_CONTROL1_SERVICE(object);
+  if (self->cancel) g_cancellable_cancel(self->cancel);
+  if (self->proxy) {
+    g_signal_handler_disconnect(self->proxy, self->signal_id);
+    g_signal_handler_disconnect(self->proxy, self->owner_id);
+  }
+  g_clear_object(&self->proxy);
+  g_clear_object(&self->cancel);
+  for (guint i = 0; i < GROTTO_PANELS_N_MODELS; i++) g_clear_object(&self->models[i]);
+  G_OBJECT_CLASS(grotto_panels_control1_service_parent_class)->dispose(object);
+}
+static void finalize(GObject *object) {
+  GrottoPanelsControl1Service *self = GROTTO_PANELS_CONTROL1_SERVICE(object);
+  g_free(self->owner);
+  g_hash_table_unref(self->tombstones);
+  G_OBJECT_CLASS(grotto_panels_control1_service_parent_class)->finalize(object);
+}
+static void grotto_panels_control1_service_class_init(GrottoPanelsControl1ServiceClass *klass) {
+  G_OBJECT_CLASS(klass)->dispose = dispose;
+  G_OBJECT_CLASS(klass)->finalize = finalize;
+}
+static void grotto_panels_control1_service_init(GrottoPanelsControl1Service *self) {
+  self->cancel = g_cancellable_new();
+  self->tombstones = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  for (guint i = 0; i < GROTTO_PANELS_N_MODELS; i++) self->models[i] = g_list_store_new(GROTTO_TYPE_PANELS_ITEM);
+}
+GrottoPanelsService *grotto_panels_control1_service_new(GDBusProxy *proxy) {
+  g_return_val_if_fail(G_IS_DBUS_PROXY(proxy), NULL);
+  g_return_val_if_fail(!strcmp(g_dbus_proxy_get_name(proxy), "org.nostr.Signer"), NULL);
+  g_return_val_if_fail(!strcmp(g_dbus_proxy_get_interface_name(proxy), CONTROL), NULL);
+  g_return_val_if_fail(!strcmp(g_dbus_proxy_get_object_path(proxy), CONTROL_PATH), NULL);
+  GrottoPanelsControl1Service *self = g_object_new(GROTTO_TYPE_PANELS_CONTROL1_SERVICE, NULL);
+  self->proxy = g_object_ref(proxy);
+  self->signal_id = g_signal_connect(proxy, "g-signal", G_CALLBACK(daemon_signal), self);
+  self->owner_id = g_signal_connect(proxy, "notify::g-name-owner", G_CALLBACK(owner_changed), self);
+  owner_changed(G_OBJECT(proxy), NULL, self);
+  return GROTTO_PANELS_SERVICE(self);
+}

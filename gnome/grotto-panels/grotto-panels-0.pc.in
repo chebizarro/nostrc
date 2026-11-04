@@ -1,0 +1,11 @@
+prefix=@CMAKE_INSTALL_PREFIX@
+exec_prefix=${prefix}
+libdir=${prefix}/@CMAKE_INSTALL_LIBDIR@
+includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@
+
+Name: Grotto Panels
+Description: Injected public-metadata management panel scaffold
+Version: @PROJECT_VERSION@
+Requires: gtk4 >= 4.14, libadwaita-1 >= 1.5
+Libs: -L${libdir} -lgrotto-panels-0
+Cflags: -I${includedir}/grotto-panels-0

@@ -1,0 +1,2 @@
+# SPDX-License-Identifier: MIT
+option('tests', type: 'boolean', value: true, description: 'Build boundary, Control1 and smoke-host tests')
