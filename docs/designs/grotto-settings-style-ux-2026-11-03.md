@@ -884,7 +884,10 @@ Performed for this draft: read the amended plan/investigation, all 14 Blueprint 
 
 The exact implementation test names in §f and smoke-host commands in §c describe future checks. They are not passing receipts. Acceptance still belongs to the owner: review this first draft and its provisional manager boundary, approve the three priority surfaces, then authorize child work. The parent bead stays in progress, not closed.
 
-## Owner decisions needed
+## Owner decisions — resolved 2026-11-04
+Q1 manager role (approval authority stays separate) — **accepted**; Q2 remove in-app appearance/language, follow the system — **accepted**; Q3 keep the existing management lock, no redesign; Settings-hosted panels show capability or hand off — **accepted**; Q4 header-case buttons around the unchanged vocabulary — **accepted**. Priority surfaces §d.1/§e, §d.2, §d.3 approved; W1 ∥ W2 started.
+
+## Owner decisions needed (as asked)
 
 | # | Question | Recommendation |
 |---|---|---|
