@@ -366,7 +366,9 @@ static void layout_activate(GApplication *application, gpointer data) {
     wait_frames(GTK_WIDGET(window)); g_assert_true(gtk_root_get_focus(GTK_ROOT(window)) == identity_qr); assert_focus_bounds(window);
     g_assert_true(gtk_widget_grab_focus(identity_copy));
     gtk_window_set_default_size(GTK_WINDOW(window), 920, 640); wait_frames(GTK_WIDGET(window));
-    GtkWidget *identity_scroll = find_editor_control(identity_panel, GTK_TYPE_SCROLLED_WINDOW);
+    g_assert_true(gtk_widget_child_focus(find_banner(identity_panel), GTK_DIR_TAB_FORWARD));
+    GtkWidget *identity_preferences = gtk_widget_get_ancestor(identity_copy, ADW_TYPE_PREFERENCES_PAGE);
+    GtkWidget *identity_scroll = find_editor_control(identity_preferences, GTK_TYPE_SCROLLED_WINDOW);
     g_assert_nonnull(identity_scroll);
     gtk_adjustment_set_value(gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(identity_scroll)), 0);
     snapshot(GTK_WIDGET(window), dark ? "identity-dark" : "identity-light");
