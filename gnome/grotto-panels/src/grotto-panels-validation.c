@@ -18,7 +18,7 @@ gboolean grotto_panels_public_text_validate(const char *value, GError **error) {
    * or a claim to recognize every possible secret hidden in human text. */
   guint words = 0;
   gboolean in_word = FALSE, phrase = TRUE;
-  for (const char *p = value; *p; p++) {
+  for (const char *p = lower; *p; p++) {
     if (g_ascii_islower(*p)) { if (!in_word) words++; in_word = TRUE; }
     else if (*p == ' ') in_word = FALSE;
     else phrase = FALSE;

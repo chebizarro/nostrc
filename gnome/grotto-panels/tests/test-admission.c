@@ -38,7 +38,8 @@ static GrottoPanelCommandArgs valid(GrottoPanelCommand command) {
 static const char *const credentials[] = {
   "nsec1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
   "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-  "token=private-pairing-value"
+  "token=private-pairing-value",
+  "ABANDON ABANDON ABANDON ABANDON ABANDON ABANDON ABANDON ABANDON ABANDON ABANDON ABANDON ABOUT"
 };
 static void command_admission(void) {
   g_autoptr(GrottoPanelsFakeService) fake = grotto_panels_fake_service_new();
