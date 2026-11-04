@@ -19,6 +19,7 @@
 #include "secure-mem.h"
 #include <string.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -260,7 +261,15 @@ void *gnostr_secure_alloc(size_t size) {
     guard_size = CANARY_SIZE * 2;  /* Head and tail */
 #endif
 
-    size_t actual_size = header_size + guard_size + size;
+    /* sodium_malloc places the allocation immediately before a guard page.
+     * Round its size so the returned base (and header) stays aligned for every
+     * payload size. Keep the tail canary immediately after the requested data. */
+    size_t alignment = _Alignof(SecureAllocHeader);
+    if (size > SIZE_MAX - header_size - guard_size - (alignment - 1)) {
+        return NULL;
+    }
+    size_t actual_size = (header_size + guard_size + size + alignment - 1)
+                         & ~(alignment - 1);
 
     /* Allocate using sodium if available, otherwise malloc */
     void *raw = NULL;
@@ -297,9 +306,8 @@ void *gnostr_secure_alloc(size_t size) {
     head_guard[1] = CANARY_HEAD_MAGIC;
 
     /* Set tail guard after user data */
-    guint64 *tail_guard = (guint64 *)((char *)raw + header_size + CANARY_SIZE + size);
-    tail_guard[0] = CANARY_TAIL_MAGIC;
-    tail_guard[1] = CANARY_TAIL_MAGIC;
+    const guint64 tail_guard[2] = {CANARY_TAIL_MAGIC, CANARY_TAIL_MAGIC};
+    memcpy((char *)raw + header_size + CANARY_SIZE + size, tail_guard, sizeof(tail_guard));
 #endif
 
     /* Try to lock memory */
@@ -366,7 +374,8 @@ void gnostr_secure_free(void *ptr, size_t size) {
 #if USE_CANARIES
     /* Check canaries */
     guint64 *head_guard = (guint64 *)((char *)header + header_size);
-    guint64 *tail_guard = (guint64 *)((char *)ptr + size);
+    guint64 tail_guard[2];
+    memcpy(tail_guard, (char *)ptr + size, sizeof(tail_guard));
 
     if (head_guard[0] != CANARY_HEAD_MAGIC || head_guard[1] != CANARY_HEAD_MAGIC) {
         g_critical("gnostr_secure_free: HEAD CANARY CORRUPTED - buffer underflow detected!");
@@ -864,7 +873,9 @@ gboolean gnostr_secure_check_guards(void) {
             /* Check guard canaries */
             size_t header_size = sizeof(SecureAllocHeader);
             guint64 *head_guard = (guint64 *)((char *)header + header_size);
-            guint64 *tail_guard = (guint64 *)((char *)header + header_size + CANARY_SIZE + header->size);
+            void *tail_ptr = (char *)header + header_size + CANARY_SIZE + header->size;
+            guint64 tail_guard[2];
+            memcpy(tail_guard, tail_ptr, sizeof(tail_guard));
 
             if (head_guard[0] != CANARY_HEAD_MAGIC || head_guard[1] != CANARY_HEAD_MAGIC) {
                 g_critical("gnostr-secure-mem: Head guard corrupted at %p", (void *)head_guard);
@@ -873,7 +884,7 @@ gboolean gnostr_secure_check_guards(void) {
             }
 
             if (tail_guard[0] != CANARY_TAIL_MAGIC || tail_guard[1] != CANARY_TAIL_MAGIC) {
-                g_critical("gnostr-secure-mem: Tail guard corrupted at %p", (void *)tail_guard);
+                g_critical("gnostr-secure-mem: Tail guard corrupted at %p", tail_ptr);
                 all_valid = FALSE;
                 state.stats.guard_violations++;
             }

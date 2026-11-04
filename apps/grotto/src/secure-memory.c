@@ -189,7 +189,15 @@ void *gn_secure_alloc(size_t size) {
   }
 #endif
 
-  size_t actual_size = header_size + guard_size + size;
+  /* sodium_malloc places the allocation immediately before a guard page.
+   * Round its size so the returned base (and header) stays aligned for every
+   * payload size. Keep the tail canary immediately after the requested data. */
+  size_t alignment = _Alignof(SecureAllocHeader);
+  if (size > SIZE_MAX - header_size - guard_size - (alignment - 1)) {
+    return NULL;
+  }
+  size_t actual_size = (header_size + guard_size + size + alignment - 1)
+                       & ~(alignment - 1);
 
   /* Allocate using sodium if available, otherwise malloc */
   void *raw = NULL;
@@ -227,9 +235,8 @@ void *gn_secure_alloc(size_t size) {
     head_guard[1] = CANARY_HEAD_MAGIC;
 
     /* Set tail guard after user data */
-    uint64_t *tail_guard = (uint64_t*)((char*)raw + header_size + CANARY_SIZE + size);
-    tail_guard[0] = CANARY_TAIL_MAGIC;
-    tail_guard[1] = CANARY_TAIL_MAGIC;
+    const uint64_t tail_guard[2] = {CANARY_TAIL_MAGIC, CANARY_TAIL_MAGIC};
+    memcpy((char*)raw + header_size + CANARY_SIZE + size, tail_guard, sizeof(tail_guard));
   }
 #endif
 
@@ -323,7 +330,8 @@ void gn_secure_free(void *ptr, size_t size) {
   /* Check canaries */
   if (secure_state.guard_mode == GN_GUARD_CANARY) {
     uint64_t *head_guard = (uint64_t*)((char*)header + header_size);
-    uint64_t *tail_guard = (uint64_t*)((char*)ptr + size);
+    uint64_t tail_guard[2];
+    memcpy(tail_guard, (char*)ptr + size, sizeof(tail_guard));
 
     if (head_guard[0] != CANARY_HEAD_MAGIC || head_guard[1] != CANARY_HEAD_MAGIC) {
       g_critical("secure-memory: HEAD CANARY CORRUPTED - buffer underflow detected!");

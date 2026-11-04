@@ -13,9 +13,11 @@
 #include <glib.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdint.h>
 
 /* Include the secure memory header */
 #include "../src/secure-mem.h"
+#include "../src/secure-memory.h"
 
 /* ============================================================
  * Test Fixtures
@@ -66,6 +68,122 @@ test_secure_alloc_basic(void)
 
     test_fixture_teardown();
 }
+
+static void
+check_allocation_size(gboolean modern, gboolean canaries, size_t size)
+{
+    guint8 *ptr = modern ? gn_secure_alloc(size) : gnostr_secure_alloc(size);
+    g_assert_nonnull(ptr);
+    /* Both private headers have uint64_t alignment; their payload offsets
+     * are multiples of that alignment. UBSan also checks the header accesses. */
+    g_assert_cmpuint((uintptr_t)ptr % _Alignof(uint64_t), ==, 0);
+    for (size_t i = 0; i < size; i++) {
+        g_assert_cmpuint(ptr[i], ==, 0);
+    }
+
+    memset(ptr, 0xA5, size);
+    if (modern) {
+        gn_secure_zero(ptr, size);
+    } else {
+        gnostr_secure_clear(ptr, size);
+        g_assert_true(gnostr_secure_check_guards());
+    }
+    for (size_t i = 0; i < size; i++) {
+        g_assert_cmpuint(ptr[i], ==, 0);
+    }
+
+#ifndef NDEBUG
+    if (canaries) {
+        const uint64_t head[2] = {UINT64_C(0xDEADBEEFCAFEBABE), UINT64_C(0xDEADBEEFCAFEBABE)};
+        const uint64_t tail[2] = {UINT64_C(0xFEEDFACE12345678), UINT64_C(0xFEEDFACE12345678)};
+        g_assert_cmpmem(ptr - sizeof(head), sizeof(head), head, sizeof(head));
+        g_assert_cmpmem(ptr + size, sizeof(tail), tail, sizeof(tail));
+    }
+#else
+    (void)canaries;
+#endif
+
+    if (modern) {
+        gn_secure_free(ptr, size);
+    } else {
+        gnostr_secure_free(ptr, size);
+    }
+}
+
+static void
+test_secure_alloc_alignment(gconstpointer data)
+{
+    int mode = GPOINTER_TO_INT(data);
+    gboolean modern = mode != 0;
+    gboolean canaries = mode != 1;
+    if (modern) {
+        g_assert_cmpint(gn_secure_init(canaries ? GN_GUARD_CANARY : GN_GUARD_NONE), ==, GN_SECURE_OK);
+#ifdef GNOSTR_HAVE_SODIUM
+        g_assert_true(gn_secure_get_stats().sodium_available);
+#endif
+    } else {
+        g_assert_true(gnostr_secure_mem_init());
+#ifdef GNOSTR_HAVE_SODIUM
+        g_assert_true(gnostr_secure_mem_get_stats().sodium_available);
+#endif
+    }
+
+    for (size_t size = 1; size <= 257; size++) {
+        check_allocation_size(modern, canaries, size);
+    }
+    const size_t large_odd_sizes[] = {4095, 4097, 65537, 1048579};
+    for (size_t i = 0; i < G_N_ELEMENTS(large_odd_sizes); i++) {
+        check_allocation_size(modern, canaries, large_odd_sizes[i]);
+    }
+
+    if (modern) {
+        g_assert_null(gn_secure_alloc(SIZE_MAX));
+        g_assert_null(gn_secure_alloc(SIZE_MAX - 1));
+        g_assert_cmpuint(gn_secure_get_stats().allocation_count, ==, 0);
+        g_assert_cmpuint(gn_secure_get_stats().total_allocated, ==, 0);
+        gn_secure_shutdown();
+    } else {
+        g_assert_null(gnostr_secure_alloc(SIZE_MAX));
+        g_assert_null(gnostr_secure_alloc(SIZE_MAX - 1));
+        g_assert_cmpuint(gnostr_secure_mem_get_stats().allocation_count, ==, 0);
+        g_assert_cmpuint(gnostr_secure_mem_get_stats().total_allocated, ==, 0);
+        gnostr_secure_mem_shutdown();
+    }
+}
+
+#ifndef NDEBUG
+static void
+test_secure_alloc_canary_detection(gconstpointer data)
+{
+    gboolean modern = GPOINTER_TO_INT(data);
+    if (modern) {
+        gn_secure_init(GN_GUARD_CANARY);
+    } else {
+        gnostr_secure_mem_init();
+    }
+
+    for (size_t word = 0; word < 2; word++) {
+        guint8 *ptr = modern ? gn_secure_alloc(29) : gnostr_secure_alloc(29);
+        g_assert_nonnull(ptr);
+        ptr[-16 + (ptrdiff_t)(word * sizeof(uint64_t))] ^= 1;
+        ptr[29 + word * sizeof(uint64_t)] ^= 1;
+        g_test_expect_message(NULL, G_LOG_LEVEL_CRITICAL, "*HEAD CANARY CORRUPTED*");
+        g_test_expect_message(NULL, G_LOG_LEVEL_CRITICAL, "*TAIL CANARY CORRUPTED*");
+        if (modern) {
+            gn_secure_free(ptr, 29);
+        } else {
+            gnostr_secure_free(ptr, 29);
+        }
+        g_test_assert_expected_messages();
+    }
+
+    if (modern) {
+        gn_secure_shutdown();
+    } else {
+        gnostr_secure_mem_shutdown();
+    }
+}
+#endif
 
 static void
 test_secure_alloc_zero_size(void)
@@ -523,6 +641,13 @@ main(int argc, char *argv[])
     g_test_add_func("/secure-mem/alloc/zero-size", test_secure_alloc_zero_size);
     g_test_add_func("/secure-mem/alloc/large", test_secure_alloc_large);
     g_test_add_func("/secure-mem/alloc/multiple", test_secure_alloc_multiple);
+    g_test_add_data_func("/secure-mem/alignment/gnostr", GINT_TO_POINTER(0), test_secure_alloc_alignment);
+    g_test_add_data_func("/secure-mem/alignment/gn-none", GINT_TO_POINTER(1), test_secure_alloc_alignment);
+    g_test_add_data_func("/secure-mem/alignment/gn-canary", GINT_TO_POINTER(2), test_secure_alloc_alignment);
+#ifndef NDEBUG
+    g_test_add_data_func("/secure-mem/canary/gnostr", GINT_TO_POINTER(0), test_secure_alloc_canary_detection);
+    g_test_add_data_func("/secure-mem/canary/gn", GINT_TO_POINTER(1), test_secure_alloc_canary_detection);
+#endif
 
     /* Secure clear tests */
     g_test_add_func("/secure-mem/clear/basic", test_secure_clear);
