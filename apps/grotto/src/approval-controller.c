@@ -59,6 +59,7 @@ struct _GrottoApprovalController {
   gboolean stopped, compatible, checking_owner, listing, list_again, locked, notifications,
       bootstrap_held;
   GnostrApprovalDialog *dialog;
+  GrottoApprovalIdentityLabelFunc identity_label;
 };
 G_DEFINE_FINAL_TYPE(GrottoApprovalController, grotto_approval_controller, G_TYPE_OBJECT)
 enum { MESSAGE, AVAILABILITY_CHANGED, NOTIFICATIONS_CHANGED, RECONCILED, N_SIGNALS };
@@ -240,6 +241,7 @@ static void resolve(GrottoApprovalController *s, const char *id, GrottoApprovalS
 typedef struct {
   GrottoApprovalController *self;
   GrottoApprovalRequest *request;
+  GnostrApprovalDialog *dialog;
   guint64 generation, revision, clients_serial;
   gint64 started;
   gboolean held;
@@ -262,6 +264,7 @@ static void fetch_free(Fetch *f) {
   if (f->held)
     release(f->self);
   g_clear_object(&f->request);
+  g_clear_object(&f->dialog);
   g_object_unref(f->self);
   g_free(f);
 }
@@ -351,6 +354,7 @@ static GrottoApprovalRequest *insert(GrottoApprovalController *s, const char *id
   g_list_store_append(s->pending, r);
   return r;
 }
+static void show_review_info(GrottoApprovalController *s, GrottoApprovalRequest *r);
 static void info_done(GObject *source, GAsyncResult *result, gpointer data) {
   Fetch *f = data;
   g_autoptr(GError) error = NULL;
@@ -360,6 +364,12 @@ static void info_done(GObject *source, GAsyncResult *result, gpointer data) {
     if (reply) {
       g_autoptr(GVariant) row = g_variant_get_child_value(reply, 0);
       apply_info(f->self, f->request, row, f->started);
+      if (f->self->dialog && !g_strcmp0(f->self->review_id, f->request->id) &&
+          g_object_get_data(G_OBJECT(f->self->dialog), "discard-refresh") &&
+          f->request->state == GROTTO_APPROVAL_READY) {
+        g_object_set_data(G_OBJECT(f->self->dialog), "discard-refresh", NULL);
+        show_review_info(f->self, f->request);
+      }
     } else if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
       g_autofree gchar *remote = g_dbus_error_get_remote_error(error);
       if (g_str_has_suffix(remote ? remote : "", ".NotFound"))
@@ -707,7 +717,10 @@ static void decision_done(GObject *source, GAsyncResult *result, gpointer data) 
   if (reply) {
     if (fetch_current(f) && g_strcmp0(d->mode, "discard-saved"))
       resolve(f->self, f->request->id, GROTTO_APPROVAL_RESOLVED);
-    else if (fetch_current(f)) { f->request->state = GROTTO_APPROVAL_READY; grotto_approval_controller_reconcile(f->self); }
+    else if (fetch_current(f)) {
+      f->request->state = GROTTO_APPROVAL_READY;
+      fetch_info(f->self, f->request);
+    }
     if (ok)
       g_task_return_boolean(task, TRUE);
     else
@@ -877,13 +890,26 @@ static void review_decision(gboolean allow, gboolean remember, const char *ident
   /* Never destroy the dialog from inside its decision callback. */
   grotto_approval_controller_decide_async(s, id, allow, remember, ttl, NULL, review_decided, info);
 }
+static void review_discarded(GObject *source, GAsyncResult *result, gpointer data) {
+  (void)data;
+  GrottoApprovalController *s = GROTTO_APPROVAL_CONTROLLER(source);
+  g_autoptr(GError) error = NULL;
+  if (!grotto_approval_controller_decide_finish(s, result, &error) && !s->stopped)
+    message(s, "The signer could not discard this permission. Reopen the pending request to retry.");
+  /* Success refetches this same pending request in decision_done. It must not
+   * advance to another request or replace the dialog via next_group_id(). */
+}
 static void review_mode(GnostrApprovalDialog *dialog, const gchar *mode, gpointer data) {
   (void)dialog;
   GrottoApprovalController *s = data;
   GrottoApprovalRequest *r = s->review_id ? g_hash_table_lookup(s->requests, s->review_id) : NULL;
   if (!r) return;
+  if (!strcmp(mode, "discard-saved"))
+    g_object_set_data(G_OBJECT(dialog), "discard-refresh", GINT_TO_POINTER(1));
   gboolean allow = strcmp(mode, "block-operation") && strcmp(mode, "block-app") && strcmp(mode, "discard-saved");
-  decide_async(s, r->id, allow, TRUE, 0, FALSE, FALSE, FALSE, mode, NULL, review_decided, g_variant_ref(r->info));
+  gboolean discard = !strcmp(mode, "discard-saved");
+  decide_async(s, r->id, allow, TRUE, 0, FALSE, FALSE, FALSE, mode, NULL,
+      discard ? review_discarded : review_decided, discard ? NULL : g_variant_ref(r->info));
 }
 static void review_flow(GnostrApprovalDialog *dialog, gboolean encrypt, gboolean seals, gpointer data) {
   (void)dialog;
@@ -975,6 +1001,50 @@ static void review_step(GnostrApprovalDialog *dialog, int delta, gpointer data) 
   if (next >= 0 && next < (gint)ids->len)
     grotto_approval_controller_review(s, ids->pdata[next]);
 }
+/* Presentation metadata comes from the existing read API, on the same pinned
+ * owner/generation. It never changes the request's authorization snapshot. */
+static GVariant *review_display_info(GrottoApprovalController *s, GVariant *info, GVariant *rows) {
+  GVariantDict display;
+  g_variant_dict_init(&display, info);
+  g_autofree gchar *label = s->identity_label ? s->identity_label(text_field(info, "identity")) : NULL;
+  if (label) g_variant_dict_insert(&display, "identity_label", "s", label);
+  if (rows) g_variant_dict_insert_value(&display, "permission_rows", rows);
+  return g_variant_ref_sink(g_variant_dict_end(&display));
+}
+void grotto_approval_controller_set_identity_label_func(GrottoApprovalController *s,
+    GrottoApprovalIdentityLabelFunc lookup) {
+  s->identity_label = lookup;
+}
+static void review_permissions_done(GObject *source, GAsyncResult *result, gpointer data) {
+  Fetch *f = data;
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GVariant) reply = g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), result, &error);
+  GrottoApprovalController *s = f->self;
+  if (fetch_current(f) && s->dialog == f->dialog &&
+      f->request->state == GROTTO_APPROVAL_READY && !g_strcmp0(s->review_id, f->request->id)) {
+    if (reply) {
+      g_autoptr(GVariant) rows = g_variant_get_child_value(reply, 0);
+      g_autoptr(GVariant) info = review_display_info(s, f->request->info, rows);
+      gnostr_approval_dialog_set_info(s->dialog, info, client_name(s, f->request->info));
+    } else if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+      message(s, "Saved permission details unavailable. Reopen this request to retry.");
+  }
+  fetch_free(f);
+}
+static void show_review_info(GrottoApprovalController *s, GrottoApprovalRequest *r) {
+  g_autoptr(GVariant) display = review_display_info(s, r->info, NULL);
+  gnostr_approval_dialog_set_info(s->dialog, display, client_name(s, r->info));
+  gboolean review = FALSE, drift = FALSE;
+  g_variant_lookup(r->info, "policy_review", "b", &review);
+  g_variant_lookup(r->info, "identity_drift", "b", &drift);
+  if (review || drift) {
+    Fetch *f = fetch_new(s, r);
+    f->dialog = g_object_ref(s->dialog);
+    g_dbus_connection_call(s->bus, s->owner, CONTROL_PATH, CONTROL, "ListPermissions",
+        g_variant_new("(s)", text_field(r->info, "principal")), G_VARIANT_TYPE("(aa{sv})"),
+        G_DBUS_CALL_FLAGS_NONE, 5000, r->cancel, review_permissions_done, f);
+  }
+}
 void grotto_approval_controller_review(GrottoApprovalController *s, const char *id) {
   if (s->stopped)
     return;
@@ -1025,7 +1095,7 @@ void grotto_approval_controller_review(GrottoApprovalController *s, const char *
   s->review_id = g_strdup(id);
   s->dialog = gnostr_approval_dialog_new();
   g_object_ref_sink(s->dialog);
-  gnostr_approval_dialog_set_info(s->dialog, r->info, client_name(s, r->info));
+  show_review_info(s, r);
   gnostr_approval_dialog_set_trust_level(
       s->dialog, g_hash_table_lookup(s->tiers, text_field(r->info, "principal")));
   guint count = 0, position = 1;

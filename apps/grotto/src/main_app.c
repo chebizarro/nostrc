@@ -438,6 +438,23 @@ static void on_shutdown(GApplication *app, gpointer data) {
   g_clear_object(&deferred_dbus_conn);
 }
 
+static gchar *review_identity_label(const gchar *npub) {
+  AccountsStore *store = accounts_store_new();
+  gchar *label = NULL;
+  if (accounts_store_load(store, NULL)) {
+    g_autoptr(GPtrArray) entries = accounts_store_list(store);
+    for (guint i = 0; i < entries->len; i++) {
+      AccountEntry *entry = entries->pdata[i];
+      if (!g_strcmp0(entry->id, npub) && entry->label && *entry->label) {
+        label = g_strdup(entry->label);
+        break;
+      }
+    }
+  }
+  accounts_store_free(store);
+  return label;
+}
+
 /* Callback when async D-Bus connection completes */
 static void start_desktop_observation(void);
 static void on_dbus_connected(GObject *source, GAsyncResult *res, gpointer user_data) {
@@ -456,6 +473,7 @@ static void on_dbus_connected(GObject *source, GAsyncResult *res, gpointer user_
   deferred_dbus_conn = g_steal_pointer(&bus);
   g_debug("D-Bus connection established in deferred init");
   approval_controller = grotto_approval_controller_new(G_APPLICATION(global_app), deferred_dbus_conn);
+  grotto_approval_controller_set_identity_label_func(approval_controller, review_identity_label);
   g_object_set_data_full(G_OBJECT(global_app), "grotto-approval-controller", approval_controller, g_object_unref);
   g_signal_connect(approval_controller, "message", G_CALLBACK(on_approval_message), global_app);
   g_signal_connect(approval_controller, "reconciled", G_CALLBACK(on_reconciled), global_app);

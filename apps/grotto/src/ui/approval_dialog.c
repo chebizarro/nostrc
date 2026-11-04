@@ -5,21 +5,25 @@
 
 struct _GnostrApprovalDialog {
   AdwDialog parent_instance;
-  GtkImage *header_icon;
-  GtkLabel *header_title, *subtitle_label, *label_from, *label_event_kind;
-  GtkLabel *label_identity, *label_reason, *label_expiry, *label_scope, *label_details,
-      *label_timestamp, *label_trust_explanation;
-  GtkLabel *content_preview, *label_position;
-  GtkFrame *content_frame;
-  GtkExpander *details_expander, *batch_expander;
-  GtkBox *batch_box, *flow_box;
-  GtkLabel *label_flow;
+  AdwAvatar *app_avatar;
+  GtkLabel *header_title, *label_verified, *label_details, *label_timestamp, *content_preview;
+  AdwActionRow *row_action, *row_identity, *row_reason, *row_relay, *row_impact, *row_expiry;
+  AdwActionRow *scope_summary, *saved_status, *stepper;
+  AdwExpanderRow *details_expander, *batch_expander;
+  AdwPreferencesGroup *group_scope, *group_saved, *group_flow;
+  GtkBox *batch_box;
+  AdwComboRow *permission_choice;
+  GtkMenuButton *more_menu;
+  GtkSpinner *loading;
+  GSimpleActionGroup *actions;
+  GSimpleAction *block_operation, *block_app;
+  GVariant *info;
+  gchar *app_name, *action_text, *reusable_text, *relay, *saved_expiry, *flow_scope;
+  const gchar *choices[6];
+  guint n_choices;
   GtkCheckButton *chk_flow_encrypt, *chk_flow_seals;
   GtkButton *btn_approve_selected;
-  GtkBox *stepper;
-  GtkCheckButton *chk_remember, *chk_24h;
-  GtkButton *btn_block_operation, *btn_block_app, *btn_activate_saved, *btn_discard_saved;
-  GtkButton *btn_deny, *btn_approve, *btn_not_now, *btn_previous, *btn_next, *btn_change_trust;
+  GtkButton *btn_deny, *btn_approve, *btn_not_now, *btn_previous, *btn_next;
   GnostrApprovalCallback callback;
   gpointer user_data;
   gchar *identity, *client_pubkey;
@@ -96,11 +100,17 @@ static void finish_now(GnostrApprovalDialog *self, gboolean allow, gboolean reme
     cb(allow, remember, self->identity, ttl, self->user_data);
   adw_dialog_close(ADW_DIALOG(self));
 }
+static void mode_finish(GnostrApprovalDialog *self, const gchar *mode);
+static const gchar *selected_mode(GnostrApprovalDialog *self) {
+  guint selected = adw_combo_row_get_selected(self->permission_choice);
+  return selected < self->n_choices ? self->choices[selected] : "allow-once";
+}
 static void do_finish(GnostrApprovalDialog *self, gboolean allow) {
   if (self->finished || self->confirming || (allow && !self->ready) ||
       !gtk_widget_get_sensitive(GTK_WIDGET(allow ? self->btn_approve : self->btn_deny)))
     return;
-  if (allow && gtk_widget_get_visible(GTK_WIDGET(self->flow_box))) {
+  const gchar *mode = selected_mode(self);
+  if (allow && !strcmp(mode, "flow")) {
     gboolean encrypt = gtk_check_button_get_active(self->chk_flow_encrypt);
     gboolean seals = gtk_check_button_get_active(self->chk_flow_seals);
     if (encrypt || seals) {
@@ -110,10 +120,13 @@ static void do_finish(GnostrApprovalDialog *self, gboolean allow) {
       return;
     }
   }
-  gboolean remember = allow && gtk_check_button_get_active(self->chk_remember) &&
-                      gtk_widget_get_sensitive(GTK_WIDGET(self->chk_remember));
-  guint64 ttl = remember && gtk_check_button_get_active(self->chk_24h) ? 86400 : 0;
-  finish_now(self, allow, remember, ttl);
+  if (allow && (!strcmp(mode, "trust-routine") || !strcmp(mode, "activate-saved") ||
+                !strcmp(mode, "discard-saved"))) {
+    mode_finish(self, mode);
+    return;
+  }
+  gboolean remember = allow && (!strcmp(mode, "allow") || !strcmp(mode, "allow-24h"));
+  finish_now(self, allow, remember, remember && !strcmp(mode, "allow-24h") ? 86400 : 0);
 }
 static void approve_clicked(GtkButton *button, gpointer data) {
   (void)button;
@@ -169,16 +182,90 @@ static void next_clicked(GtkButton *button, gpointer data) {
   (void)button;
   g_signal_emit(data, signals[STEP], 0, 1);
 }
-static void remember_toggled(GtkCheckButton *button, gpointer data) {
+static void permission_changed(GObject *object, GParamSpec *pspec, gpointer data) {
+  (void)object; (void)pspec;
   GnostrApprovalDialog *self = data;
-  gboolean reusable = gtk_check_button_get_active(button);
-  gtk_widget_set_visible(GTK_WIDGET(self->chk_24h), reusable);
-  gtk_button_set_label(self->btn_approve, reusable ? "Allow this app" : "Allow once");
-  gtk_widget_set_tooltip_text(GTK_WIDGET(self->btn_approve), reusable
-      ? "Save this exact operation and identity permission" : "Allow once (Ctrl+A)");
+  const gchar *mode = selected_mode(self);
+  gboolean flow = !strcmp(mode, "flow");
+  gtk_widget_set_visible(GTK_WIDGET(self->group_flow), flow);
+  if (!flow) {
+    gtk_check_button_set_active(self->chk_flow_encrypt, FALSE);
+    gtk_check_button_set_active(self->chk_flow_seals, FALSE);
+  }
+  const gchar *commit = _("_Allow Once");
+  g_autofree gchar *scope = NULL;
+  g_autofree gchar *at_relay = self->relay && *self->relay
+      ? g_strdup_printf(_(" at %s"), self->relay) : g_strdup("");
+  g_autofree gchar *identity = *field(self->info, "identity_label")
+      ? g_strdup_printf("%s (%s)", field(self->info, "identity_label"), self->identity)
+      : g_strdup(self->identity && *self->identity ? self->identity : _("No signing identity"));
+  if (!strcmp(mode, "allow-24h")) {
+    commit = _("_Allow for 24 Hours");
+    scope = g_strdup_printf(_("%s may %s as %s%s for 24 hours"),
+        self->app_name, self->reusable_text, identity, at_relay);
+  } else if (!strcmp(mode, "allow")) {
+    commit = _("_Always Allow");
+    scope = g_strdup_printf(_("Always allow this app to %s as %s%s, until revoked. App: %s"),
+        self->reusable_text, identity, at_relay, self->app_name);
+  } else if (!strcmp(mode, "trust-routine")) {
+    commit = _("Trust _App");
+    scope = g_strdup(_("Trust this app for routine operations. Changes this app's access preset, not only this request or identity. Includes publishing, messaging, relay sign-in, profile/contact changes, deletion and zap requests. Custom kinds and other ask-by-default kinds still need their own grant. Blocks remain in effect"));
+  } else if (!strcmp(mode, "activate-saved")) {
+    commit = _("_Activate Permission");
+    scope = g_strdup_printf(_("Activate the saved permission for %s%s. Original expiry: %s"),
+        identity, at_relay, self->saved_expiry ? self->saved_expiry : _("Loading…"));
+  } else if (!strcmp(mode, "discard-saved")) {
+    commit = _("Discard _Permission");
+    scope = g_strdup(_("Delete the inactive saved permission. This request stays waiting; no operation is approved"));
+  } else if (flow) {
+    commit = _("_Allow for This Message");
+    scope = g_strdup(self->flow_scope);
+  } else {
+    scope = g_strdup_printf(_("Only this request from %s, to %s as %s%s. No permission is saved"),
+        self->app_name ? self->app_name : _("this app"),
+        self->action_text ? self->action_text : _("perform this operation"), identity, at_relay);
+  }
+  if (!strcmp(field(self->info, "operation"), "connect")) {
+    commit = _("Pair _Application");
+    g_free(scope);
+    scope = g_strdup(_("Pair this application with the identity and relays shown above. Pairing is saved; no signing permission is granted"));
+  }
+  if (!strcmp(field(self->info, "operation"), "self_test")) {
+    g_free(scope);
+    scope = g_strdup(_("This identity test only. Nothing is published and no app permission is stored"));
+  }
+  gtk_button_set_label(self->btn_approve, commit);
+  if (!strcmp(mode, "discard-saved"))
+    gtk_widget_remove_css_class(GTK_WIDGET(self->btn_approve), "suggested-action");
+  else gtk_widget_add_css_class(GTK_WIDGET(self->btn_approve), "suggested-action");
+  adw_action_row_set_subtitle(self->scope_summary, scope);
+}
+/* Both the closed selection and every item in the popup must wrap. */
+static void choice_setup(GtkSignalListItemFactory *factory, GtkListItem *item, gpointer data) {
+  (void)factory; (void)data;
+  GtkWidget *label = gtk_label_new(NULL);
+  gtk_label_set_wrap(GTK_LABEL(label), TRUE);
+  gtk_label_set_wrap_mode(GTK_LABEL(label), PANGO_WRAP_WORD_CHAR);
+  gtk_label_set_xalign(GTK_LABEL(label), 0);
+  gtk_label_set_max_width_chars(GTK_LABEL(label), 28);
+  gtk_list_item_set_child(item, label);
+}
+static void choice_bind(GtkSignalListItemFactory *factory, GtkListItem *item, gpointer data) {
+  (void)factory; (void)data;
+  gtk_label_set_text(GTK_LABEL(gtk_list_item_get_child(item)),
+      gtk_string_object_get_string(GTK_STRING_OBJECT(gtk_list_item_get_item(item))));
 }
 static void mode_finish(GnostrApprovalDialog *self, const gchar *mode) {
   if (self->finished || self->confirming || !self->ready) return;
+  if (!strcmp(mode, "discard-saved")) {
+    /* The daemon deletes authority, not the pending request. Keep this view
+     * read-only until the controller refetches its authoritative snapshot. */
+    self->ready = FALSE;
+    gtk_widget_set_sensitive(GTK_WIDGET(self->btn_approve), FALSE);
+    gtk_widget_set_sensitive(GTK_WIDGET(self->permission_choice), FALSE);
+    g_signal_emit(self, signals[DECISION_MODE], 0, mode);
+    return;
+  }
   self->finished = TRUE; self->callback = NULL;
   g_signal_emit(self, signals[DECISION_MODE], 0, mode);
   adw_dialog_close(ADW_DIALOG(self));
@@ -190,22 +277,21 @@ static void block_confirmed(GObject *source, GAsyncResult *result, gpointer data
   if (!strcmp(response, "block")) mode_finish(self, "block-app");
   g_object_unref(self);
 }
-static void mode_clicked(GtkButton *button, gpointer data) {
+static void block_activated(GSimpleAction *action, GVariant *parameter, gpointer data) {
+  (void)parameter;
   GnostrApprovalDialog *self = data;
-  if (!gtk_widget_get_sensitive(GTK_WIDGET(button))) return;
-  const gchar *mode = g_object_get_data(G_OBJECT(button), "decision-mode");
+  if (!g_action_get_enabled(G_ACTION(action))) return;
+  const gchar *mode = g_action_get_name(G_ACTION(action));
   if (!strcmp(mode, "block-app")) {
     if (self->finished || self->confirming || !self->ready) return;
     self->confirming = TRUE;
-    AdwDialog *alert = adw_alert_dialog_new("Block app?", "Deny all operations from this app until you remove the block in its Permissions page.");
-    adw_alert_dialog_add_responses(ADW_ALERT_DIALOG(alert), "cancel", "Cancel", "block", "Block app", NULL);
+    AdwDialog *alert = adw_alert_dialog_new(_("Block App?"), _("Deny all operations from this app until you remove the block in its Permissions page."));
+    adw_alert_dialog_add_responses(ADW_ALERT_DIALOG(alert), "cancel", _("Cancel"), "block", _("Block App"), NULL);
+    adw_alert_dialog_set_response_appearance(ADW_ALERT_DIALOG(alert), "block", ADW_RESPONSE_DESTRUCTIVE);
     adw_alert_dialog_set_default_response(ADW_ALERT_DIALOG(alert), "cancel");
     adw_alert_dialog_set_close_response(ADW_ALERT_DIALOG(alert), "cancel");
     adw_alert_dialog_choose(ADW_ALERT_DIALOG(alert), GTK_WIDGET(self), NULL, block_confirmed, g_object_ref(self));
   } else mode_finish(self, mode);
-}
-static void change_trust_clicked(GtkButton *button, gpointer data) {
-  if (gtk_widget_get_sensitive(GTK_WIDGET(button))) mode_finish(data, "trust-routine");
 }
 static void closed(AdwDialog *dialog) {
   GnostrApprovalDialog *self = GNOSTR_APPROVAL_DIALOG(dialog);
@@ -221,6 +307,11 @@ static void finalize(GObject *object) {
   GnostrApprovalDialog *self = GNOSTR_APPROVAL_DIALOG(object);
   g_free(self->identity);
   g_free(self->client_pubkey);
+  g_clear_pointer(&self->info, g_variant_unref);
+  g_free(self->app_name); g_free(self->action_text); g_free(self->reusable_text); g_free(self->relay);
+  g_free(self->saved_expiry); g_free(self->flow_scope);
+  g_clear_object(&self->block_operation); g_clear_object(&self->block_app);
+  g_clear_object(&self->actions);
   G_OBJECT_CLASS(gnostr_approval_dialog_parent_class)->finalize(object);
 }
 static void gnostr_approval_dialog_class_init(GnostrApprovalDialogClass *klass) {
@@ -229,35 +320,21 @@ static void gnostr_approval_dialog_class_init(GnostrApprovalDialogClass *klass) 
   GtkWidgetClass *w = GTK_WIDGET_CLASS(klass);
   gtk_widget_class_set_template_from_resource(w, "/org/gnostr/signer/ui/approval-dialog.ui");
 #define BIND(name) gtk_widget_class_bind_template_child(w, GnostrApprovalDialog, name)
-  BIND(header_icon);
-  BIND(header_title);
-  BIND(subtitle_label);
-  BIND(label_from);
-  BIND(label_event_kind);
-  BIND(label_identity);
-  BIND(label_reason);
-  BIND(label_expiry);
-  BIND(label_scope);
-  BIND(label_details);
-  BIND(label_timestamp); BIND(label_trust_explanation);
-  BIND(batch_expander);
-  BIND(batch_box);
-  BIND(flow_box); BIND(label_flow); BIND(chk_flow_encrypt); BIND(chk_flow_seals);
-  BIND(btn_approve_selected);
-  BIND(content_preview);
-  BIND(label_position);
-  BIND(content_frame);
-  BIND(details_expander);
-  BIND(stepper);
-  BIND(chk_remember);
-  BIND(chk_24h);
-  BIND(btn_block_operation); BIND(btn_block_app); BIND(btn_activate_saved); BIND(btn_discard_saved);
+  BIND(app_avatar); BIND(header_title); BIND(label_verified);
+  BIND(row_action); BIND(row_identity); BIND(row_reason); BIND(row_relay);
+  BIND(row_impact); BIND(row_expiry); BIND(scope_summary); BIND(saved_status);
+  BIND(label_details); BIND(label_timestamp);
+  BIND(batch_expander); BIND(batch_box);
+  BIND(group_scope); BIND(group_saved); BIND(group_flow);
+  BIND(chk_flow_encrypt); BIND(chk_flow_seals);
+  BIND(btn_approve_selected); BIND(content_preview);
+  BIND(details_expander); BIND(stepper);
+  BIND(permission_choice); BIND(more_menu); BIND(loading);
   BIND(btn_deny);
   BIND(btn_approve);
   BIND(btn_not_now);
   BIND(btn_previous);
   BIND(btn_next);
-  BIND(btn_change_trust);
 #undef BIND
   signals[DECISION_MODE] = g_signal_new("decision-mode", G_TYPE_FROM_CLASS(klass),
       G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL, G_TYPE_NONE, 1, G_TYPE_STRING);
@@ -274,17 +351,27 @@ static void gnostr_approval_dialog_class_init(GnostrApprovalDialogClass *klass) 
       g_signal_new("change-trust-level", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL,
                    NULL, G_TYPE_NONE, 1, G_TYPE_STRING);
 }
-static gboolean shortcut(GtkWidget *widget, GVariant *args, gpointer data) {
-  (void)args;
-  do_finish(GNOSTR_APPROVAL_DIALOG(widget), GPOINTER_TO_INT(data));
-  return TRUE;
-}
 static void gnostr_approval_dialog_init(GnostrApprovalDialog *self) {
   gtk_widget_init_template(GTK_WIDGET(self));
   self->ready = TRUE;
-  gtk_check_button_set_active(self->chk_24h, FALSE);
-  GtkWidget *temporary_label = gtk_check_button_get_child(self->chk_24h);
-  if (GTK_IS_LABEL(temporary_label)) gtk_label_set_wrap(GTK_LABEL(temporary_label), TRUE);
+  self->actions = g_simple_action_group_new();
+  self->block_operation = g_simple_action_new("block-operation", NULL);
+  self->block_app = g_simple_action_new("block-app", NULL);
+  g_signal_connect(self->block_operation, "activate", G_CALLBACK(block_activated), self);
+  g_signal_connect(self->block_app, "activate", G_CALLBACK(block_activated), self);
+  g_action_map_add_action(G_ACTION_MAP(self->actions), G_ACTION(self->block_operation));
+  g_action_map_add_action(G_ACTION_MAP(self->actions), G_ACTION(self->block_app));
+  gtk_widget_insert_action_group(GTK_WIDGET(self), "review", G_ACTION_GROUP(self->actions));
+  g_autoptr(GtkListItemFactory) factory = gtk_signal_list_item_factory_new();
+  g_signal_connect(factory, "setup", G_CALLBACK(choice_setup), NULL);
+  g_signal_connect(factory, "bind", G_CALLBACK(choice_bind), NULL);
+  adw_combo_row_set_factory(self->permission_choice, factory);
+  adw_combo_row_set_list_factory(self->permission_choice, factory);
+  g_signal_connect(self->permission_choice, "notify::selected", G_CALLBACK(permission_changed), self);
+  self->choices[0] = "allow-once"; self->n_choices = 1;
+  const gchar *initial[] = {_("Allow once"), NULL};
+  g_autoptr(GtkStringList) model = gtk_string_list_new(initial);
+  adw_combo_row_set_model(self->permission_choice, G_LIST_MODEL(model));
 #define CONNECT(widget, fn) g_signal_connect(self->widget, "clicked", G_CALLBACK(fn), self)
   CONNECT(btn_approve_selected, selected_clicked);
   CONNECT(btn_approve, approve_clicked);
@@ -292,24 +379,8 @@ static void gnostr_approval_dialog_init(GnostrApprovalDialog *self) {
   CONNECT(btn_not_now, not_now_clicked);
   CONNECT(btn_previous, previous_clicked);
   CONNECT(btn_next, next_clicked);
-  CONNECT(btn_change_trust, change_trust_clicked);
-  CONNECT(btn_block_operation, mode_clicked); CONNECT(btn_block_app, mode_clicked);
-  CONNECT(btn_activate_saved, mode_clicked); CONNECT(btn_discard_saved, mode_clicked);
-  g_object_set_data(G_OBJECT(self->btn_block_operation), "decision-mode", "block-operation");
-  g_object_set_data(G_OBJECT(self->btn_block_app), "decision-mode", "block-app");
-  g_object_set_data(G_OBJECT(self->btn_activate_saved), "decision-mode", "activate-saved");
-  g_object_set_data(G_OBJECT(self->btn_discard_saved), "decision-mode", "discard-saved");
+
 #undef CONNECT
-  g_signal_connect(self->chk_remember, "toggled", G_CALLBACK(remember_toggled), self);
-  GtkEventController *controller = gtk_shortcut_controller_new();
-  gtk_shortcut_controller_set_scope(GTK_SHORTCUT_CONTROLLER(controller), GTK_SHORTCUT_SCOPE_LOCAL);
-  const char *triggers[] = {"<Primary>d", "<Primary>a"};
-  for (guint i = 0; i < G_N_ELEMENTS(triggers); i++)
-    gtk_shortcut_controller_add_shortcut(
-        GTK_SHORTCUT_CONTROLLER(controller),
-        gtk_shortcut_new(gtk_shortcut_trigger_parse_string(triggers[i]),
-                         gtk_callback_action_new(shortcut, GUINT_TO_POINTER(i), NULL)));
-  gtk_widget_add_controller(GTK_WIDGET(self), controller);
   adw_dialog_set_focus(ADW_DIALOG(self), GTK_WIDGET(self->btn_deny));
   /* No default approve widget: Enter on a dropdown or Details is not consent. */
 }
@@ -324,26 +395,26 @@ void gnostr_approval_dialog_set_callback(GnostrApprovalDialog *self,
 void gnostr_approval_dialog_set_identity(GnostrApprovalDialog *self, const char *identity) {
   g_free(self->identity);
   self->identity = g_strdup(identity);
-  g_autofree gchar *label = g_strdup_printf(
-      "Signing as: %s",
-      identity && *identity ? identity : "No identity (identity-independent operation)");
-  gtk_label_set_text(self->label_identity, label);
+  adw_action_row_set_subtitle(self->row_identity,
+      identity && *identity ? identity : _("No identity (identity-independent operation)"));
 }
 void gnostr_approval_dialog_set_app_name(GnostrApprovalDialog *self, const char *name) {
-  gtk_label_set_text(self->label_from, name ? name : "Unverified app");
+  g_free(self->app_name);
+  self->app_name = g_strdup(name ? name : _("Unverified app"));
+  adw_avatar_set_text(self->app_avatar, self->app_name);
 }
 void gnostr_approval_dialog_set_event_type(GnostrApprovalDialog *self, int kind) {
   g_autofree gchar *label =
       g_strdup_printf("%s (kind %d)", gnostr_approval_kind_name((guint32)kind), kind);
-  gtk_label_set_text(self->label_event_kind, label);
+  adw_action_row_set_subtitle(self->row_action, label);
 }
 void gnostr_approval_dialog_set_timestamp(GnostrApprovalDialog *self, guint64 timestamp) {
-  g_autofree gchar *text = g_strdup_printf("Request time: %" G_GUINT64_FORMAT, timestamp);
+  g_autofree gchar *text = g_strdup_printf(_("Request time: %" G_GUINT64_FORMAT), timestamp);
   gtk_label_set_text(self->label_timestamp, text);
 }
 void gnostr_approval_dialog_set_content(GnostrApprovalDialog *self, const char *content) {
   g_autofree gchar *preview = bounded(content, 280);
-  gtk_label_set_text(self->content_preview, *preview ? preview : "No content");
+  gtk_label_set_text(self->content_preview, *preview ? preview : _("No content"));
 }
 /* Compatibility callers cannot change the identity pinned by the daemon.
  * Account metadata is never an authorization source or a first-key fallback. */
@@ -360,14 +431,16 @@ void gnostr_approval_dialog_set_request(GnostrApprovalDialog *self, const char *
                                         const char *app, const char *claimed, gboolean verified,
                                         const char *preview) {
   gnostr_approval_dialog_set_app_name(self, app);
-  gtk_label_set_text(self->label_event_kind, kind && !strcmp(kind, "self_test") ? "Identity self-test" : kind ? kind : "Unknown request");
+  gtk_label_set_text(self->header_title, self->app_name);
+  gtk_label_set_text(self->label_verified, verified ? _("Verified local app") : _("Unverified app"));
+  adw_action_row_set_subtitle(self->row_action, kind && !strcmp(kind, "self_test") ? _("Identity self-test") : kind ? kind : _("Unknown request"));
   g_autofree gchar *details =
       g_strdup_printf("%s%s%s", verified ? "Verified caller" : "Unverified app",
                       claimed && *claimed ? "\nClaimed name (unverified): " : "",
                       claimed && *claimed ? claimed : "");
   gtk_label_set_text(self->label_details, details);
   gnostr_approval_dialog_set_content(self, preview);
-  gtk_button_set_label(self->btn_approve, "Allow once");
+  gtk_button_set_label(self->btn_approve, _("_Allow Once"));
 }
 void gnostr_approval_dialog_set_batch(GnostrApprovalDialog *self, GVariant *rows) {
   while (gtk_widget_get_first_child(GTK_WIDGET(self->batch_box)))
@@ -386,11 +459,15 @@ void gnostr_approval_dialog_set_batch(GnostrApprovalDialog *self, GVariant *rows
                               gnostr_approval_kind_name(kind), kind)
             : g_strdup(field(row, "operation"));
     g_autofree gchar *label =
-        g_strdup_printf("%s\nPeer: %s", operation,
+        g_strdup_printf(_("%s\nIdentity: %s\nPeer: %s"), operation, field(row, "identity"),
                         *field(summary, "peer")             ? field(summary, "peer")
                         : *field(summary, "recipient_peer") ? field(summary, "recipient_peer")
                                                             : "None");
-    GtkWidget *check = gtk_check_button_new_with_label(label);
+    GtkWidget *check = gtk_check_button_new();
+    GtkWidget *text = gtk_label_new(label);
+    gtk_check_button_set_child(GTK_CHECK_BUTTON(check), text);
+    gtk_label_set_wrap(GTK_LABEL(text), TRUE);
+    gtk_label_set_wrap_mode(GTK_LABEL(text), PANGO_WRAP_WORD_CHAR);
     g_object_set_data_full(G_OBJECT(check), "request-id", g_strdup(field(row, "request_id")),
                            g_free);
     g_signal_connect(check, "toggled", G_CALLBACK(selection_toggled), self);
@@ -405,15 +482,13 @@ gboolean gnostr_approval_dialog_has_batch_request(GnostrApprovalDialog *self, co
   return FALSE;
 }
 void gnostr_approval_dialog_set_trust_level(GnostrApprovalDialog *self, const char *tier) {
-  (void)tier; /* The atomic decision also admits a newly consenting client. */
-  gtk_widget_set_tooltip_text(GTK_WIDGET(self->btn_change_trust),
-      "Save routine access and allow this request in one decision. First grants for ask-by-default kinds remain scoped.");
+  (void)self; (void)tier; /* Eligibility is supplied by the daemon, not the preset label. */
 }
 void gnostr_approval_dialog_set_position(GnostrApprovalDialog *self, guint position, guint count) {
   self->position = position;
   self->count = count;
   g_autofree gchar *label = g_strdup_printf("%u of %u", position, count);
-  gtk_label_set_text(self->label_position, label);
+  adw_preferences_row_set_title(ADW_PREFERENCES_ROW(self->stepper), label);
   gtk_widget_set_visible(GTK_WIDGET(self->stepper), count > 1);
   gtk_widget_set_sensitive(GTK_WIDGET(self->btn_previous), position > 1);
   gtk_widget_set_sensitive(GTK_WIDGET(self->btn_next), position < count);
@@ -456,6 +531,8 @@ gboolean gnostr_approval_info_can_approve(GVariant *info) {
   return TRUE;
 }
 void gnostr_approval_dialog_set_info(GnostrApprovalDialog *self, GVariant *info, const char *name) {
+  g_clear_pointer(&self->info, g_variant_unref);
+  self->info = g_variant_ref(info);
   const char *op = field(info, "operation");
   gboolean self_test = !strcmp(op, "self_test") &&
       !strcmp(field(info, "transport"), "MANAGEMENT");
@@ -467,38 +544,35 @@ void gnostr_approval_dialog_set_info(GnostrApprovalDialog *self, GVariant *info,
   gnostr_approval_dialog_set_request(self, op, name, field(info, "claimed_app_id"), verified,
                                      field(info, "preview"));
   gnostr_approval_dialog_set_identity(self, field(info, "identity"));
-  g_autofree gchar *caller =
-      g_strdup_printf("From: %s\n%s%s", name, self_test ? "Identity self-test" : verified ? "Verified caller: " : "Unverified app",
-                      !self_test && verified ? field(info, "principal") : "");
-  gtk_label_set_text(self->label_from, caller);
+  const gchar *identity_label = *field(info, "identity_label") ? field(info, "identity_label") : _("Identity");
+  g_autofree gchar *short_key = strlen(self->identity) > 24
+      ? g_strdup_printf("%.12s…%s", self->identity, self->identity + strlen(self->identity) - 8)
+      : g_strdup(self->identity);
+  g_autofree gchar *identity_display = g_strdup_printf("%s\n%s", identity_label, short_key);
+  if (*self->identity) adw_action_row_set_subtitle(self->row_identity, identity_display);
+  g_autofree gchar *caller = self_test ? g_strdup(_("Grotto identity test"))
+      : !verified ? g_strdup_printf(_("Unverified: claims to be “%s”"),
+          *field(info, "claimed_app_id") ? field(info, "claimed_app_id") : name)
+      : *field(info, "via") ? g_strdup_printf(_("Via browser bridge · %s"), field(info, "via"))
+      : g_strdup(_("Verified local app"));
+  gtk_label_set_text(self->label_verified, caller);
   guint32 remaining = 0;
   g_variant_lookup(info, "remaining_seconds", "u", &remaining);
-  g_autofree gchar *expiry = g_strdup_printf("Expires in at most %u seconds", remaining);
-  gtk_label_set_text(self->label_expiry, expiry);
+  g_autofree gchar *expiry = g_strdup_printf(_("Expires in at most %u seconds"), remaining);
+  adw_action_row_set_subtitle(self->row_expiry, expiry);
   self->ready = remaining > 0 && !strcmp(field(info, "state"), "PENDING");
   gtk_widget_set_sensitive(GTK_WIDGET(self->btn_approve), self->ready);
   gtk_widget_set_sensitive(GTK_WIDGET(self->btn_deny), self->ready);
   gboolean routine_trust = FALSE;
   g_variant_lookup(info, "routine_trust_available", "b", &routine_trust);
-  gtk_widget_set_sensitive(GTK_WIDGET(self->chk_remember), rememberable);
-  gtk_widget_set_visible(GTK_WIDGET(self->chk_remember), strcmp(op, "self_test") != 0);
-  gtk_widget_set_visible(GTK_WIDGET(self->btn_change_trust), strcmp(op, "self_test") != 0);
-  gtk_widget_set_visible(GTK_WIDGET(self->chk_24h), FALSE);
-  gtk_check_button_set_active(self->chk_24h, FALSE);
-  gtk_widget_set_sensitive(GTK_WIDGET(self->btn_change_trust), rememberable && routine_trust && self->ready);
-  gtk_widget_set_visible(GTK_WIDGET(self->btn_block_operation), rememberable);
-  gtk_widget_set_visible(GTK_WIDGET(self->btn_block_app), rememberable);
-  gtk_widget_set_sensitive(GTK_WIDGET(self->btn_block_operation), self->ready);
-  gtk_widget_set_sensitive(GTK_WIDGET(self->btn_block_app), self->ready);
+  /* Do not offer persistence to the empty UID-only claim, even on an old daemon. */
+  rememberable = rememberable && strcmp(field(info, "principal"), "claimed:") &&
+      strcmp(op, "connect") && !self_test;
+  gtk_widget_set_visible(GTK_WIDGET(self->more_menu), rememberable);
   gboolean review = FALSE, drift = FALSE;
   g_variant_lookup(info, "policy_review", "b", &review);
   g_variant_lookup(info, "identity_drift", "b", &drift);
-  gtk_widget_set_visible(GTK_WIDGET(self->btn_activate_saved), review && rememberable);
-  gtk_widget_set_visible(GTK_WIDGET(self->btn_discard_saved), review);
-  gtk_widget_set_sensitive(GTK_WIDGET(self->btn_activate_saved), self->ready);
-  gtk_widget_set_sensitive(GTK_WIDGET(self->btn_discard_saved), self->ready);
-  gtk_widget_set_visible(GTK_WIDGET(self->label_trust_explanation), strcmp(op, "self_test") != 0);
-  gtk_check_button_set_active(self->chk_remember, FALSE);
+  gtk_widget_set_visible(GTK_WIDGET(self->group_saved), review || drift);
   guint size = 0;
   g_variant_lookup(info, "flow_size", "u", &size);
   guint flow_kind = 0;
@@ -508,19 +582,16 @@ void gnostr_approval_dialog_set_info(GnostrApprovalDialog *self, GVariant *info,
       (!strcmp(op, "nip44_encrypt") || (!strcmp(op, "sign_event") && flow_kind == NOSTR_KIND_SEAL));
   guint flow_left = 0; g_variant_lookup(info, "flow_remaining_seconds", "u", &flow_left);
   flow = flow && flow_left > 0;
-  gtk_widget_set_visible(GTK_WIDGET(self->flow_box), flow);
+  flow = flow && !review;
+  gtk_widget_set_visible(GTK_WIDGET(self->group_flow), FALSE);
   gtk_check_button_set_active(self->chk_flow_encrypt, FALSE);
   gtk_check_button_set_active(self->chk_flow_seals, FALSE);
-  gtk_check_button_set_label(self->chk_flow_seals, "Allow encrypted-message seals in this flow only");
   const char *reason = field(info, "reason");
   g_autofree gchar *reason_text = bounded(reason, 160);
-  g_autofree gchar *reason_label = g_strdup_printf("%s: %s",
-                                                   !strcmp(field(info, "reason_source"), "caller")
-                                                       ? "Reason supplied by the application"
-                                                       : "Signer explanation",
-                                                   reason_text);
-  gtk_label_set_text(self->label_reason, reason_label);
-  gtk_widget_set_visible(GTK_WIDGET(self->label_reason), *reason != '\0');
+  adw_preferences_row_set_title(ADW_PREFERENCES_ROW(self->row_reason),
+      !strcmp(field(info, "reason_source"), "caller") ? _("Reason Given by App") : _("Signer Explanation"));
+  adw_action_row_set_subtitle(self->row_reason, reason_text);
+  gtk_widget_set_visible(GTK_WIDGET(self->row_reason), *reason != '\0');
   guint32 kind = 0;
   gboolean has_kind = g_variant_lookup(info, "event_kind", "u", &kind);
   if (has_kind && kind <= G_MAXUINT16)
@@ -528,42 +599,112 @@ void gnostr_approval_dialog_set_info(GnostrApprovalDialog *self, GVariant *info,
   else if (!strcmp(op, "sign_event")) {
     self->ready = FALSE;
     gtk_widget_set_sensitive(GTK_WIDGET(self->btn_approve), FALSE);
-    gtk_label_set_text(self->label_event_kind, "Invalid or missing event kind");
+    adw_action_row_set_subtitle(self->row_action, _("Invalid or missing event kind"));
   }
-  g_autofree gchar *scope =
-      has_kind ? g_strdup_printf("%s · %s · %s · kind %u", name, field(info, "identity"), op, kind)
-               : g_strdup_printf("%s · %s · %s", name, field(info, "identity"), op);
-  if (g_str_has_suffix(op, "encrypt") || g_str_has_suffix(op, "decrypt")) {
-    gchar *specific = scope;
-    scope = g_strconcat(specific, " · all peers", NULL);
-    g_free(specific);
-  }
-  gtk_label_set_text(self->label_scope, scope);
+
   g_autoptr(GVariant) summary =
       g_variant_lookup_value(info, "event_summary", G_VARIANT_TYPE_VARDICT);
   const char *peer = field(summary, "peer");
-  g_autofree gchar *action = has_kind ? g_strdup_printf("sign %s (kind %u)", gnostr_approval_kind_name(kind), kind) : g_strdup(op);
-  g_autofree gchar *permission = g_strdup_printf("Always allow this app to %s as %s%s%s",
-      action, field(info, "identity"),
-      kind == NOSTR_KIND_CLIENT_AUTHENTICATION ? " at " : "",
-      kind == NOSTR_KIND_CLIENT_AUTHENTICATION ? field(summary, "auth_relay") : "");
-  gtk_check_button_set_label(self->chk_remember, permission);
-  GtkWidget *permission_label = gtk_check_button_get_child(self->chk_remember);
-  if (GTK_IS_LABEL(permission_label)) {
-    gtk_label_set_wrap(GTK_LABEL(permission_label), TRUE);
-    gtk_label_set_wrap_mode(GTK_LABEL(permission_label), PANGO_WRAP_WORD_CHAR);
+  g_free(self->relay);
+  self->relay = g_strdup(kind == NOSTR_KIND_CLIENT_AUTHENTICATION ? field(summary, "auth_relay") : "");
+  adw_action_row_set_subtitle(self->row_relay, self->relay);
+  gtk_widget_set_visible(GTK_WIDGET(self->row_relay), *self->relay != '\0');
+  g_free(self->action_text);
+  self->action_text = has_kind && !strcmp(op, "sign_event")
+      ? kind == NOSTR_KIND_TEXT_NOTE ? g_strdup(_("sign a note (kind 1)"))
+      : kind == NOSTR_KIND_FOLLOW_LIST ? g_strdup(_("sign a contact list (kind 3)"))
+      : kind == NOSTR_KIND_CLIENT_AUTHENTICATION ? g_strdup(_("sign in to a relay"))
+      : g_strdup_printf(_("sign an event: %s (kind %u)"), gnostr_approval_kind_name(kind), kind)
+      : g_str_has_suffix(op, "encrypt") ? g_strdup(_("encrypt a message"))
+      : g_str_has_suffix(op, "decrypt") ? g_strdup(_("decrypt a message"))
+      : g_strdup(!strcmp(op, "connect") ? _("connect") : self_test ? _("test this identity")
+          : !strcmp(op, "get_public_key") ? _("read the public key")
+          : !strcmp(op, "get_relays") ? _("read relay settings")
+          : !strcmp(op, "ping") ? _("check the signer connection") : op);
+  g_free(self->reusable_text);
+  self->reusable_text = !strcmp(op, "sign_event") && kind == NOSTR_KIND_TEXT_NOTE
+      ? g_strdup(_("sign notes (kind 1)"))
+      : !strcmp(op, "sign_event") && kind == NOSTR_KIND_FOLLOW_LIST ? g_strdup(_("sign contact lists (kind 3)"))
+      : g_str_has_suffix(op, "encrypt") ? g_strdup(_("encrypt messages (all peers)"))
+      : g_str_has_suffix(op, "decrypt") ? g_strdup(_("decrypt messages (all peers)"))
+      : g_strdup(self->action_text);
+  g_autofree gchar *headline = NULL;
+  if (self_test) headline = g_strdup_printf(_("Test %s's identity"), *field(info, "identity_label") ? field(info, "identity_label") : field(info, "identity"));
+  else if (flow) headline = g_strdup_printf(_("%s wants to prepare encrypted messages"), name);
+  else if (!strcmp(op, "connect")) headline = g_strdup_printf(_("%s wants to connect"), name);
+  else if (g_str_has_suffix(op, "encrypt")) headline = g_strdup_printf(_("%s wants to encrypt a message"), name);
+  else if (g_str_has_suffix(op, "decrypt")) headline = g_strdup_printf(_("%s wants to decrypt a message"), name);
+  else if (kind == NOSTR_KIND_TEXT_NOTE) headline = g_strdup_printf(_("%s wants to sign a note"), name);
+  else if (kind == NOSTR_KIND_FOLLOW_LIST) headline = g_strdup_printf(_("%s wants to update your contact list"), name);
+  else if (kind == NOSTR_KIND_CLIENT_AUTHENTICATION) headline = g_strdup_printf(_("%s wants to sign in to a relay"), name);
+  else if (!strcmp(gnostr_approval_kind_name(kind), _("Encrypted message")) ||
+           !strcmp(gnostr_approval_kind_name(kind), _("Private message")))
+    headline = g_strdup_printf(_("%s wants to sign an encrypted message"), name);
+  else if (!strcmp(gnostr_approval_kind_name(kind), _("Custom event")))
+    headline = g_strdup_printf(_("%s wants to sign a custom event (kind %u)"), name, kind);
+  else headline = g_strdup_printf(_("%s wants to %s"), name, self->action_text);
+  gtk_label_set_text(self->header_title, headline);
+  adw_action_row_set_subtitle(self->row_action, self->action_text);
+  g_free(self->flow_scope);
+  self->flow_scope = g_strdup_printf(_("%u encrypted copies, including your copy, as %s; at most %u seconds left from first arrival. Count is supplied by the app, not proof of recipients. No permission is saved to disk"), size, field(info, "identity"), flow_left);
+  g_autoptr(GtkStringList) choices = gtk_string_list_new(NULL);
+  self->n_choices = 0;
+#define CHOICE(mode, label) do { self->choices[self->n_choices++] = mode; gtk_string_list_append(choices, label); } while (0)
+  CHOICE("allow-once", _("Allow once"));
+  if (review) {
+    if (rememberable) CHOICE("activate-saved", _("Activate saved permission"));
+    CHOICE("discard-saved", _("Discard saved permission"));
+  } else if (rememberable) {
+    CHOICE("allow-24h", _("Allow for 24 hours"));
+    g_autofree gchar *permission = g_strdup_printf(_("Always allow this app to %s as %s%s%s"),
+        self->reusable_text, field(info, "identity"), *self->relay ? _(" at ") : "", self->relay);
+    CHOICE("allow", permission);
+    if (routine_trust) CHOICE("trust-routine", _("Trust this app for routine operations"));
+    if (flow) CHOICE("flow", _("This message only…"));
   }
-  if (!strcmp(op, "connect")) gtk_button_set_label(self->btn_approve, "Pair application");
-  gtk_widget_set_visible(GTK_WIDGET(self->chk_remember), rememberable);
-  gtk_widget_set_visible(GTK_WIDGET(self->btn_change_trust), rememberable && routine_trust);
-  gtk_label_set_text(self->label_trust_explanation, drift
-      ? "A saved permission belongs to a different identity. This request uses the identity shown above; permissions do not follow a change of default identity."
-      : review ? "A saved permission is inactive under the previous access policy. Activate it explicitly for this identity and, for AUTH, this relay."
-      : "Saved permissions take precedence over access presets. Routine access does not grant custom kinds. Ask-by-default kinds need a scoped first grant.");
-  g_autofree gchar *flow_remaining = g_strdup_printf("This flow only: up to %u encrypted messages (including your copy). At review, at most %u seconds remain from first arrival. The app supplies the count; this is not proof of content or recipients. No permission is saved to disk.", size, flow_left);
-  if (flow) gtk_label_set_text(self->label_flow, flow_remaining);
+#undef CHOICE
+  /* Reset on every authoritative request snapshot; never carry consent between steps. */
+  adw_combo_row_set_model(self->permission_choice, G_LIST_MODEL(choices));
+  adw_combo_row_set_selected(self->permission_choice, 0);
+  gtk_widget_set_visible(GTK_WIDGET(self->permission_choice), strcmp(op, "connect") && !self_test);
+  gtk_widget_set_sensitive(GTK_WIDGET(self->permission_choice), self->ready);
+  g_free(self->saved_expiry);
+  self->saved_expiry = NULL;
+  g_autoptr(GVariant) permissions = g_variant_lookup_value(info, "permission_rows", G_VARIANT_TYPE("aa{sv}"));
+  g_autoptr(GString) other_identities = g_string_new(NULL);
+  const gchar *saved_reason = _("Inactive under the previous access policy");
+  for (gsize i = 0; permissions && i < g_variant_n_children(permissions); i++) {
+    g_autoptr(GVariant) row = g_variant_get_child_value(permissions, i);
+    gint saved_kind = -1;
+    g_variant_lookup(row, "event-kind", "i", &saved_kind);
+    if (strcmp(field(row, "operation"), !strcmp(op, "sign_event") ? "event" : op) ||
+        saved_kind != (has_kind ? (gint)kind : -1) ||
+        (*field(row, "relay") && strcmp(field(row, "relay"), self->relay))) continue;
+    if (strcmp(field(row, "identity"), field(info, "identity"))) {
+      if (strcmp(field(row, "identity"), "*"))
+        g_string_append_printf(other_identities, _("Saved permission is for %s. "), field(row, "identity"));
+    } else if (!strcmp(field(row, "decision"), "policy-review")) {
+      guint64 expires = 0;
+      if (g_variant_lookup(row, "expires-at", "t", &expires)) {
+        g_clear_pointer(&self->saved_expiry, g_free);
+        if (expires) {
+          g_autoptr(GDateTime) time = g_date_time_new_from_unix_local((gint64)expires);
+          self->saved_expiry = time ? g_date_time_format(time, "%c %Z") : g_strdup(_("Invalid expiry"));
+        } else self->saved_expiry = g_strdup(_("Until revoked"));
+      }
+      if (*field(row, "reason")) saved_reason = field(row, "reason");
+    }
+  }
+  /* Keep the row variant's strings alive through construction below. */
+  if ((review && !self->saved_expiry) || (drift && !permissions)) self->ready = FALSE;
+  if (!self->saved_expiry) self->saved_expiry = g_strdup(_("Loading…"));
+  g_autofree gchar *saved = review
+      ? g_strdup_printf(_("%s. Identity: %s%s%s. Original expiry: %s"),
+          saved_reason, field(info, "identity"), *self->relay ? _(" at ") : "", self->relay, self->saved_expiry)
+      : g_strdup_printf(_("%sPermissions do not follow a change of default identity"), other_identities->str);
+  adw_action_row_set_subtitle(self->saved_status, saved);
   g_autofree gchar *preview = NULL;
-  const char *impact = "Approving authorizes this operation only; it does not publish anything.";
+  const char *impact = _("Grotto returns the result to the app. It does not publish anything.");
   if (!strcmp(op, "sign_event")) {
     guint32 tags = 0, targets = 0;
     if (summary) {
@@ -577,19 +718,19 @@ void gnostr_approval_dialog_set_info(GnostrApprovalDialog *self, GVariant *info,
     case NOSTR_KIND_DIRECT_MESSAGE:
     case NOSTR_KIND_FILE_MESSAGE:
     case NOSTR_KIND_NOSTR_CONNECT:
-      preview = g_strdup_printf("Encrypted message — private content is not shown.\nRecipient: %s",
+      preview = g_strdup_printf(_("Encrypted message — private content is not shown.\nRecipient: %s"),
                                 *field(summary, "recipient_peer") ? field(summary, "recipient_peer")
-                                                                  : "Not visible in this event");
+                                                                  : _("Not visible in this event"));
       break;
     case NOSTR_KIND_DELETION:
       preview = g_strdup_printf(
-          "Delete %u target(s). Deletion is a permanent request; copies may remain elsewhere.",
+          _("Delete %u target(s). Deletion is a permanent request; copies may remain elsewhere."),
           targets);
       break;
     case NOSTR_KIND_CLIENT_AUTHENTICATION:
       preview = g_strdup_printf(
-          "Relay claimed by app: %s\nAllows signing AUTH for this relay claim. Grotto cannot verify the caller's relay connection.",
-          *field(summary, "auth_relay") ? field(summary, "auth_relay") : "Not supplied by daemon");
+          _("Relay claimed by app: %s\nAllows signing AUTH for this relay claim. Grotto cannot verify the caller's relay connection."),
+          *field(summary, "auth_relay") ? field(summary, "auth_relay") : _("Not supplied by daemon"));
       break;
     case NOSTR_KIND_REPOST:
     case NOSTR_KIND_GENERIC_REPOST:
@@ -631,13 +772,13 @@ void gnostr_approval_dialog_set_info(GnostrApprovalDialog *self, GVariant *info,
     }
     }
   } else if (g_str_has_suffix(op, "encrypt") || g_str_has_suffix(op, "decrypt")) {
-    preview = g_strdup_printf("%s\nPeer fingerprint: %s\nPrivate message bodies are not shown.", op,
+    preview = g_strdup_printf(_("%s\nPeer fingerprint: %s\nPrivate message bodies are not shown."), op,
                               peer);
   } else if (!strcmp(op, "self_test")) {
-    preview = g_strdup("1. Sign an unpublished event and verify its ID, signature and public key.\n"
-                       "2. NIP-44 encrypt a random challenge to an ephemeral peer.\n"
-                       "3. NIP-44 decrypt the peer's reply and compare the challenge.");
-    impact = "One-time management self-test. Nothing is published and no client permissions are saved.";
+    preview = g_strdup(_("1. Sign and verify an unpublished test event.\n"
+                         "2. Encrypt a random challenge to a temporary peer.\n"
+                         "3. Decrypt the peer's reply and compare the challenge."));
+    impact = _("One-time identity test. Nothing is published and no app permissions are saved.");
   } else if (!strcmp(op, "connect")) {
     g_auto(GStrv) urls = NULL, hints = NULL;
     if (summary) {
@@ -646,30 +787,39 @@ void gnostr_approval_dialog_set_info(GnostrApprovalDialog *self, GVariant *info,
     }
     g_autofree gchar *relays = urls ? g_strjoinv("\n", urls) : g_strdup("");
     g_autofree gchar *permissions = hints ? g_strjoinv(", ", hints) : g_strdup("");
+    adw_action_row_set_subtitle(self->row_relay, relays);
+    gtk_widget_set_visible(GTK_WIDGET(self->row_relay), *relays != '\0');
     preview = g_strdup_printf("Client transport-key fingerprint: %s\nClaimed name (unverified): "
                               "%s\nRequested permissions (hints only): %s\nRelays: %s",
                               field(info, "principal"), field(info, "claimed_app_id"),
                               permissions, relays);
-    impact = "Pairing admits this application. It grants no signing permissions.";
+    impact = _("Pairing admits this application. It grants no signing permissions.");
   }
   if (preview)
     gtk_label_set_text(self->content_preview, preview);
   if (!gnostr_approval_info_can_approve(info)) {
     self->ready = FALSE;
     gtk_widget_set_sensitive(GTK_WIDGET(self->btn_approve), FALSE);
-    impact = "The daemon did not supply the required preview details. Update Grotto before "
-             "approving; you can still deny this request.";
+    impact = _("The daemon did not supply the required preview details. Update Grotto before "
+               "approving; you can still deny this request.");
   }
-  gtk_label_set_text(self->subtitle_label, impact);
+  g_autofree gchar *effect = !strcmp(op, "sign_event") && kind == NOSTR_KIND_TEXT_NOTE
+      ? g_strdup_printf(_("%s can publish this signed note. Grotto does not publish it"), name)
+      : !strcmp(op, "sign_event") && kind == NOSTR_KIND_FOLLOW_LIST
+      ? g_strdup_printf(_("%s can publish this signed contact list. Grotto does not publish it"), name)
+      : NULL;
+  adw_action_row_set_subtitle(self->row_impact, effect ? effect : impact);
   g_autofree gchar *details =
-      g_strdup_printf("%s\nPrincipal: %s\nTransport: %s\nClaimed name (unverified): %s",
-                      self_test ? "Grotto identity self-test" : verified ? "Verified caller" : "Unverified app", field(info, "principal"),
-                      field(info, "transport"), field(info, "claimed_app_id"));
+      g_strdup_printf(_("%s\nPrincipal: %s\nTransport: %s\nClaimed name (unverified): %s\nSigning identity: %s\nPeer fingerprint: %s"),
+                      self_test ? _("Grotto identity self-test") : verified ? _("Verified caller") : _("Unverified app"), field(info, "principal"),
+                      field(info, "transport"), field(info, "claimed_app_id"), self->identity, peer);
   gtk_label_set_text(self->label_details, details);
-  gtk_widget_set_sensitive(GTK_WIDGET(self->btn_change_trust), rememberable && routine_trust && self->ready);
-  gtk_widget_set_sensitive(GTK_WIDGET(self->btn_activate_saved), rememberable && self->ready);
-  gtk_widget_set_sensitive(GTK_WIDGET(self->btn_block_operation), rememberable && self->ready);
-  gtk_widget_set_sensitive(GTK_WIDGET(self->btn_block_app), rememberable && self->ready);
+  gtk_widget_set_visible(GTK_WIDGET(self->loading), (review || drift) && !permissions);
+  gtk_widget_set_sensitive(GTK_WIDGET(self->btn_approve), self->ready);
+  gtk_widget_set_sensitive(GTK_WIDGET(self->permission_choice), self->ready);
+  g_simple_action_set_enabled(self->block_operation, rememberable && self->ready);
+  g_simple_action_set_enabled(self->block_app, rememberable && self->ready);
+  permission_changed(NULL, NULL, self);
 }
 GnostrApprovalDialog *gnostr_show_approval_request_dialog(GtkWidget *parent, const char *identity,
                                                           const char *kind, const char *name,

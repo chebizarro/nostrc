@@ -26,6 +26,11 @@ G_DECLARE_FINAL_TYPE(GrottoApprovalController, grotto_approval_controller, GROTT
  * reconciled(boolean success), including terminal unavailable/error results;
  * screen-lock-changed(boolean), only positively observed desktop lock state. */
 GrottoApprovalController *grotto_approval_controller_new(GApplication *app, GDBusConnection *bus);
+/* Optional host metadata lookup; returns an allocated local label for this exact
+ * daemon-pinned npub. It never selects an identity or authorizes a request. */
+typedef gchar *(*GrottoApprovalIdentityLabelFunc)(const gchar *npub);
+void grotto_approval_controller_set_identity_label_func(GrottoApprovalController *self,
+    GrottoApprovalIdentityLabelFunc lookup);
 GListModel *grotto_approval_controller_get_pending(GrottoApprovalController *self); /* borrowed */
 void grotto_approval_controller_reconcile(GrottoApprovalController *self);
 void grotto_approval_controller_stop(GrottoApprovalController *self);

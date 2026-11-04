@@ -137,6 +137,18 @@ static GtkWidget *dialog_child(AdwDialog *dialog, const char *name) {
   return GTK_WIDGET(
       gtk_widget_get_template_child(GTK_WIDGET(dialog), GNOSTR_TYPE_APPROVAL_DIALOG, name));
 }
+static void choose_permission(AdwDialog *dialog, const gchar *prefix) {
+  AdwComboRow *choice = ADW_COMBO_ROW(dialog_child(dialog, "permission_choice"));
+  GListModel *model = adw_combo_row_get_model(choice);
+  for (guint i = 0; i < g_list_model_get_n_items(model); i++) {
+    g_autoptr(GtkStringObject) item = g_list_model_get_item(model, i);
+    if (g_str_has_prefix(gtk_string_object_get_string(item), prefix)) {
+      adw_combo_row_set_selected(choice, i);
+      return;
+    }
+  }
+  g_error("Missing permission choice: %s", prefix);
+}
 static void wait_frames(GtkWidget *widget) {
   WAIT(gtk_widget_get_mapped(widget));
   guint ticks = 0;
@@ -153,7 +165,7 @@ static void bus_name(GDBusConnection *bus, const char *name, gboolean claim) {
 }
 typedef struct {
   guint notifications, version, lists, decisions, infos, model_changes;
-  gboolean fail_list, valid_request;
+  gboolean fail_list, valid_request, policy_review_test, saved_inactive;
   gchar notification_title[256];
 } Desktop;
 static GVariant *other_request(void) {
@@ -166,6 +178,14 @@ static GVariant *other_request(void) {
     g_variant_builder_add(&b, "{sv}", keys[i], g_variant_new_string(values[i]));
   g_variant_builder_add(&b, "{sv}", "remaining_seconds", g_variant_new_uint32(120));
   return g_variant_builder_end(&b);
+}
+static GVariant *desktop_request(Desktop *d) {
+  g_autoptr(GVariant) base = g_variant_ref_sink(other_request());
+  if (!d->policy_review_test) return g_variant_ref(base);
+  GVariantDict row; g_variant_dict_init(&row, base);
+  g_variant_dict_insert(&row, "rememberable", "b", TRUE);
+  g_variant_dict_insert(&row, "policy_review", "b", d->saved_inactive);
+  return g_variant_ref_sink(g_variant_dict_end(&row));
 }
 static void desktop_call(GDBusConnection *bus, const char *sender, const char *path,
                          const char *iface, const char *name, GVariant *args,
@@ -204,14 +224,40 @@ static void desktop_call(GDBusConnection *bus, const char *sender, const char *p
     else {
       GVariantBuilder rows;
       g_variant_builder_init(&rows, G_VARIANT_TYPE("aa{sv}"));
-      if (d->valid_request)
-        g_variant_builder_add_value(&rows, other_request());
+      if (d->valid_request) {
+        g_autoptr(GVariant) request = desktop_request(d);
+        g_variant_builder_add_value(&rows, request);
+      }
       g_dbus_method_invocation_return_value(inv, g_variant_new("(aa{sv})", &rows));
     }
   } else if (!strcmp(name, "ListClients"))
     g_dbus_method_invocation_return_value(inv, g_variant_new("(aa{sv})", NULL));
-  else if (!strcmp(name, "GetApprovalInfo")) {
+  else if (!strcmp(name, "ListPermissions")) {
+    GVariantBuilder rows; g_variant_builder_init(&rows, G_VARIANT_TYPE("aa{sv}"));
+    if (d->saved_inactive) {
+      GVariantBuilder row; g_variant_builder_init(&row, G_VARIANT_TYPE_VARDICT);
+      g_variant_builder_add(&row, "{sv}", "identity", g_variant_new_string("npub-other"));
+      g_variant_builder_add(&row, "{sv}", "operation", g_variant_new_string("get_public_key"));
+      g_variant_builder_add(&row, "{sv}", "event-kind", g_variant_new_int32(-1));
+      g_variant_builder_add(&row, "{sv}", "decision", g_variant_new_string("policy-review"));
+      g_variant_builder_add(&row, "{sv}", "expires-at", g_variant_new_uint64(0));
+      g_variant_builder_add_value(&rows, g_variant_builder_end(&row));
+    }
+    g_dbus_method_invocation_return_value(inv, g_variant_new("(aa{sv})", &rows));
+  } else if (!strcmp(name, "DecideRequest")) {
+    const gchar *id, *mode; g_variant_get(args, "(&s&s)", &id, &mode);
+    g_assert_cmpstr(id, ==, "other-request");
+    d->decisions++;
+    if (!strcmp(mode, "discard-saved")) d->saved_inactive = FALSE;
+    else { g_assert_cmpstr(mode, ==, "deny-once"); d->valid_request = FALSE; }
+    g_dbus_method_invocation_return_value(inv, g_variant_new("(b)", TRUE));
+  } else if (!strcmp(name, "GetApprovalInfo")) {
     d->infos++;
+    if (d->policy_review_test && d->valid_request) {
+      g_autoptr(GVariant) row = desktop_request(d);
+      g_dbus_method_invocation_return_value(inv, g_variant_new("(@a{sv})", g_variant_ref(row)));
+      return;
+    }
     g_dbus_method_invocation_return_dbus_error(inv, "org.nostr.Signer.Error.NotFound",
                                                "No such request");
   } else if (!strcmp(name, "ApproveRequest")) {
@@ -232,7 +278,9 @@ static const char desktop_xml[] =
     "<interface name='org.nostr.Grotto.Control1'><method name='GetStatus'><arg type='a{sv}' "
     "direction='out'/></method>"
     "<method name='ListRequests'><arg type='aa{sv}' direction='out'/></method>"
-    "<method name='ListClients'><arg type='aa{sv}' direction='out'/></method></interface>"
+    "<method name='ListClients'><arg type='aa{sv}' direction='out'/></method>"
+    "<method name='ListPermissions'><arg type='s' direction='in'/><arg type='aa{sv}' direction='out'/></method>"
+    "<method name='DecideRequest'><arg type='s' direction='in'/><arg type='s' direction='in'/><arg type='b' direction='out'/></method></interface>"
     "<interface name='org.nostr.Signer'><method name='GetApprovalInfo'><arg type='s' "
     "direction='in'/>"
     "<arg type='a{sv}' direction='out'/></method><method name='ApproveRequest'><arg type='s' "
@@ -283,11 +331,11 @@ static void onboarding_review(GrottoApprovalController *controller, GApplication
   g_assert_true(GNOSTR_IS_APPROVAL_DIALOG(dialog));
   wait_frames(GTK_WIDGET(dialog));
   g_assert_null(management(app));
-  const char *from = gtk_label_get_text(GTK_LABEL(dialog_child(dialog, "label_from")));
+  const char *from = gtk_label_get_text(GTK_LABEL(dialog_child(dialog, "label_verified")));
   g_assert_nonnull(strstr(from, "Grotto"));
   g_assert_null(strstr(from, "Unverified app"));
   g_assert_null(strstr(gtk_label_get_text(GTK_LABEL(dialog_child(dialog, "label_details"))), "Unverified app"));
-  g_assert_false(gtk_widget_get_visible(dialog_child(dialog, "chk_remember")));
+  g_assert_false(gtk_widget_get_visible(dialog_child(dialog, "permission_choice")));
   g_signal_emit_by_name(dialog_child(dialog, "btn_not_now"), "clicked");
   WAIT(adw_window_get_visible_dialog(ADW_WINDOW(assistant)) == NULL);
 
@@ -348,8 +396,9 @@ static void pending_reachability(GrottoApprovalController *controller, GApplicat
   AdwDialog *dialog = review_dialog(app);
   g_assert_nonnull(dialog);
   wait_frames(GTK_WIDGET(dialog));
-  const char *from = gtk_label_get_text(GTK_LABEL(dialog_child(dialog, "label_from")));
-  g_assert_nonnull(strstr(from, "Verified caller:"));
+  const char *from = gtk_label_get_text(GTK_LABEL(dialog_child(dialog, "label_verified")));
+  g_assert_cmpstr(from, ==, "Verified local app");
+  g_assert_nonnull(strstr(gtk_label_get_text(GTK_LABEL(dialog_child(dialog, "label_details"))), "Principal:"));
   g_assert_null(strstr(from, "Unverified app"));
   g_signal_emit_by_name(dialog_child(dialog, "btn_not_now"), "clicked");
   WAIT(review_dialog(app) == NULL);
@@ -441,7 +490,7 @@ static void live_navigation(GrottoApprovalController *controller, GApplication *
       AdwDialog *dialog = review_dialog(app);
       g_assert_nonnull(dialog);
       wait_frames(GTK_WIDGET(dialog));
-      g_assert_cmpstr(gtk_label_get_text(GTK_LABEL(dialog_child(dialog, "label_position"))), ==,
+      g_assert_cmpstr(adw_preferences_row_get_title(ADW_PREFERENCES_ROW(dialog_child(dialog, "stepper"))), ==,
                       "2 of 2");
       g_assert_false(gtk_widget_get_sensitive(dialog_child(dialog, "btn_next")));
       GtkWidget *first = gtk_widget_get_first_child(dialog_child(dialog, "batch_box"));
@@ -451,7 +500,7 @@ static void live_navigation(GrottoApprovalController *controller, GApplication *
   }
   AdwDialog *dialog = review_dialog(app);
   g_assert_nonnull(dialog);
-  g_assert_cmpstr(gtk_label_get_text(GTK_LABEL(dialog_child(dialog, "label_position"))), ==,
+  g_assert_cmpstr(adw_preferences_row_get_title(ADW_PREFERENCES_ROW(dialog_child(dialog, "stepper"))), ==,
                   "2 of 3");
   g_assert_true(gtk_widget_get_sensitive(dialog_child(dialog, "btn_next")));
   GtkWidget *batch = dialog_child(dialog, "batch_box"), *first = gtk_widget_get_first_child(batch);
@@ -466,7 +515,7 @@ static void live_navigation(GrottoApprovalController *controller, GApplication *
   g_assert_nonnull(results[0].error);
   clear_reply(&decision);
   clear_reply(&results[0]);
-  g_assert_cmpstr(gtk_label_get_text(GTK_LABEL(dialog_child(dialog, "label_position"))), ==,
+  g_assert_cmpstr(adw_preferences_row_get_title(ADW_PREFERENCES_ROW(dialog_child(dialog, "stepper"))), ==,
                   "1 of 2");
   g_assert_false(gtk_widget_get_sensitive(dialog_child(dialog, "btn_previous")));
   g_assert_true(gtk_widget_get_sensitive(dialog_child(dialog, "btn_next")));
@@ -481,6 +530,16 @@ static void live_navigation(GrottoApprovalController *controller, GApplication *
   WAIT(review_dialog(app) == NULL);
   g_assert_cmpuint(g_list_model_get_n_items(model), ==, 2);
   g_assert_cmpuint(results[1].done + results[2].done, ==, 0);
+  g_action_group_activate_action(G_ACTION_GROUP(app), "review-request", g_variant_new_string(ids[1]));
+  dialog = review_dialog(app); g_assert_nonnull(dialog); wait_frames(GTK_WIDGET(dialog));
+  choose_permission(dialog, "Always allow");
+  g_signal_emit_by_name(dialog_child(dialog, "btn_next"), "clicked");
+  dialog = review_dialog(app); g_assert_nonnull(dialog); wait_frames(GTK_WIDGET(dialog));
+  g_assert_cmpuint(adw_combo_row_get_selected(ADW_COMBO_ROW(dialog_child(dialog, "permission_choice"))), ==, 0);
+  g_assert_true(adw_dialog_get_focus(dialog) == dialog_child(dialog, "btn_deny"));
+  g_assert_cmpuint(results[1].done + results[2].done, ==, 0);
+  g_signal_emit_by_name(dialog_child(dialog, "btn_not_now"), "clicked");
+  WAIT(review_dialog(app) == NULL);
   for (guint i = 1; i < 3; i++) {
     grotto_approval_controller_decide_async(controller, ids[i], FALSE, FALSE, 0, NULL,
                                             decision_done, &decision);
@@ -576,6 +635,27 @@ static void stale_app_actions(GrottoApprovalController *controller, GApplication
   g_assert_cmpuint(d.decisions, ==, 0);
   g_assert_cmpuint(d.infos, ==, 0);
   g_assert_null(review_dialog(app));
+  /* UI/controller wiring on a deterministic bus fixture. The real-daemon
+   * repeat matrix above separately proves reusable modes' gate effects. */
+  d.policy_review_test = d.saved_inactive = TRUE;
+  grotto_approval_controller_reconcile(controller);
+  GListModel *pending = grotto_approval_controller_get_pending(controller);
+  g_autoptr(GrottoApprovalRequest) policy_request = g_list_model_get_item(pending, 0);
+  gboolean inactive = FALSE;
+  WAIT(g_variant_lookup(grotto_approval_request_get_info(policy_request), "policy_review", "b", &inactive) && inactive);
+  g_action_group_activate_action(G_ACTION_GROUP(app), "review-request", g_variant_new_string("other-request"));
+  AdwDialog *dialog = review_dialog(app); g_assert_nonnull(dialog);
+  WAIT(gtk_widget_get_sensitive(dialog_child(dialog, "permission_choice")));
+  g_assert_nonnull(strstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(dialog_child(dialog, "saved_status"))), "Until revoked"));
+  choose_permission(dialog, "Discard saved");
+  g_signal_emit_by_name(dialog_child(dialog, "btn_approve"), "clicked");
+  WAIT(d.decisions == 1 && gtk_widget_get_sensitive(dialog_child(dialog, "btn_approve")));
+  g_assert_true(review_dialog(app) == dialog);
+  g_assert_cmpuint(g_list_model_get_n_items(pending), ==, 1);
+  g_assert_cmpuint(adw_combo_row_get_selected(ADW_COMBO_ROW(dialog_child(dialog, "permission_choice"))), ==, 0);
+  g_assert_false(gtk_widget_get_visible(dialog_child(dialog, "group_saved")));
+  g_signal_emit_by_name(dialog_child(dialog, "btn_deny"), "clicked");
+  WAIT(d.decisions == 2 && g_list_model_get_n_items(pending) == 0);
   bus_name(bus, "org.nostr.Signer", FALSE);
   WAIT(grotto_approval_controller_get_holds(controller) == 0);
   g_signal_handlers_disconnect_by_data(controller, &availability);
@@ -598,24 +678,21 @@ static void click_review(GrottoApprovalController *controller, GApplication *app
     g_assert_nonnull(strstr(gtk_label_get_text(preview), expected_preview));
   g_assert_null(strstr(gtk_label_get_text(preview), "PRIVATE-CIPHERTEXT"));
   g_assert_null(strstr(gtk_label_get_text(preview), "PAIRING-TOKEN"));
-  GtkCheckButton *check = GTK_CHECK_BUTTON(gtk_widget_get_template_child(
-      GTK_WIDGET(dialog), GNOSTR_TYPE_APPROVAL_DIALOG, "chk_remember"));
-  gtk_check_button_set_active(check, remember);
-  gtk_check_button_set_active(GTK_CHECK_BUTTON(dialog_child(dialog, "chk_24h")), temporary);
+  AdwComboRow *check = ADW_COMBO_ROW(dialog_child(dialog, "permission_choice"));
+  choose_permission(dialog, remember ? temporary ? "Allow for 24 hours" : "Always allow" : "Allow once");
   GListModel *pending = grotto_approval_controller_get_pending(controller);
   for (guint i = 0; i < g_list_model_get_n_items(pending); i++) {
     g_autoptr(GrottoApprovalRequest) request = g_list_model_get_item(pending, i);
     if (strcmp(grotto_approval_request_get_id(request), id)) continue;
     guint kind = 0; g_variant_lookup(grotto_approval_request_get_info(request), "event_kind", "u", &kind);
     if (kind == 65534) {
-      g_assert_false(gtk_widget_get_visible(dialog_child(dialog, "btn_change_trust")));
-      g_assert_false(gtk_widget_get_sensitive(dialog_child(dialog, "btn_change_trust")));
+      g_assert_cmpuint(g_list_model_get_n_items(adw_combo_row_get_model(check)), ==, 3);
       g_assert_true(gtk_widget_get_visible(GTK_WIDGET(check)));
     }
   }
   /* Deny always means once, regardless of reusable-allow selection. */
   if (!allow) g_assert_cmpstr(gtk_widget_get_tooltip_text(dialog_child(dialog, "btn_deny")), ==,
-      "Deny once (Ctrl+D, Escape)");
+      "Deny Once (Alt+D, Escape)");
   GtkWidget *button = GTK_WIDGET(gtk_widget_get_template_child(
       GTK_WIDGET(dialog), GNOSTR_TYPE_APPROVAL_DIALOG, allow ? "btn_approve" : "btn_deny"));
   g_assert_true(gtk_widget_get_sensitive(button));
@@ -646,9 +723,10 @@ static void trust_failure(GrottoApprovalController *controller, GDBusConnection 
   if (gui) {
     g_action_group_activate_action(G_ACTION_GROUP(app), "review-request", g_variant_new_string(grotto_approval_request_get_id(pending)));
     AdwDialog *dialog = review_dialog(app); g_assert_nonnull(dialog); wait_frames(GTK_WIDGET(dialog));
-    GtkWidget *trust = dialog_child(dialog, "btn_change_trust");
-    g_assert_true(gtk_widget_get_visible(trust)); g_assert_true(gtk_widget_get_sensitive(trust));
-    g_signal_emit_by_name(trust, "clicked");
+    choose_permission(dialog, "Trust this app");
+    GtkWidget *approve = dialog_child(dialog, "btn_approve");
+    g_assert_true(gtk_widget_get_sensitive(approve));
+    g_signal_emit_by_name(approve, "clicked");
     WAIT(result.done && feedback);
     g_assert_cmpstr(feedback, ==, "Routine access was saved, but this request failed. It is no longer pending. Review this app's permissions before sending a new request.");
   } else
@@ -844,10 +922,10 @@ static void run_flow(GDBusConnection *connection, GDBusConnection *consumer, GAp
     g_clear_object(&request); request = g_list_model_get_item(pending, 0);
     g_action_group_activate_action(G_ACTION_GROUP(app), "review-request", g_variant_new_string(grotto_approval_request_get_id(request)));
     AdwDialog *dialog = review_dialog(app); g_assert_nonnull(dialog); wait_frames(GTK_WIDGET(dialog));
-    gtk_expander_set_expanded(GTK_EXPANDER(dialog_child(dialog, "details_expander")), TRUE);
-    GtkWidget *trust = dialog_child(dialog, "btn_change_trust");
-    WAIT(gtk_widget_get_mapped(trust) && gtk_widget_get_sensitive(trust));
-    g_signal_emit_by_name(trust, "clicked");
+    choose_permission(dialog, "Trust this app");
+    GtkWidget *approve = dialog_child(dialog, "btn_approve");
+    WAIT(gtk_widget_get_mapped(approve) && gtk_widget_get_sensitive(approve));
+    g_signal_emit_by_name(approve, "clicked");
     WAIT(result.done); verify(&result, NOSTR_KIND_ZAP_REQUEST); clear_reply(&result);
     WAIT(g_list_model_get_n_items(pending) == 0);
     sign_tags(routine_consumer, NOSTR_KIND_ZAP_REQUEST, "[]", "", &result);

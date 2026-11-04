@@ -3,92 +3,113 @@ using Adw 1;
 
 template $GnostrApprovalDialog: Adw.Dialog {
   title: _("Review Request");
-  content-width: 440;
+  content-width: 420;
+  content-height: 660;
   width-request: 300;
-  follows-content-size: true;
   Adw.ToolbarView {
-    [top]
-    Adw.HeaderBar { show-title: false; }
-    ScrolledWindow {
-      hscrollbar-policy: never;
-      propagate-natural-height: true;
-      Box {
-        orientation: vertical;
-        spacing: 12;
-        margin-start: 20;
-        margin-end: 20;
-        margin-bottom: 20;
-        Image header_icon { icon-name: "dialog-question-symbolic"; pixel-size: 24; }
-        Label header_title { label: _("Review Request"); wrap: true; styles ["title-3"] }
-        Label subtitle_label { wrap: true; xalign: 0; }
-        Label label_from { wrap: true; wrap-mode: word_char; xalign: 0; selectable: true; }
-        Label label_event_kind { wrap: true; xalign: 0; }
-        Label label_identity { wrap: true; wrap-mode: word_char; xalign: 0; selectable: true; styles ["monospace"] }
-        Label label_reason { wrap: true; wrap-mode: word_char; xalign: 0; visible: false; }
-        Label label_expiry { wrap: true; xalign: 0; styles ["dim-label"] }
-        Frame content_frame {
-          Label content_preview {
-            wrap: true;
-            wrap-mode: word_char;
-            xalign: 0;
-            selectable: true;
-            margin-start: 8;
-            margin-end: 8;
-            margin-top: 8;
-            margin-bottom: 8;
-          }
-        }
-        Box stepper {
-          homogeneous: true;
-          visible: false;
-          Button btn_previous { label: _("Previous"); }
-          Label label_position { label: _("1 of 1"); }
-          Button btn_next { label: _("Next"); }
-        }
-        Expander batch_expander {
-          label: _("Requests in this flow");
-          visible: false;
-          Box {
-            orientation: vertical;
-            spacing: 8;
-            Box batch_box { orientation: vertical; spacing: 8; }
-            Button btn_approve_selected { label: _("Allow selected once"); sensitive: false; }
-          }
-        }
-        Label label_scope { wrap: true; wrap-mode: word_char; xalign: 0; styles ["dim-label"] }
-        Box flow_box {
-          visible: false;
-          orientation: vertical;
-          spacing: 8;
-          Label label_flow { wrap: true; xalign: 0; }
-          CheckButton chk_flow_encrypt { label: _("Allow NIP-44 encryption in this flow only"); }
-          CheckButton chk_flow_seals { label: _("Allow encrypted-message seals within this flow's limit (up to 10 minutes)"); }
-        }
-        CheckButton chk_remember { label: _("Always allow this app for this operation and identity"); }
-        CheckButton chk_24h { label: _("For 24 hours instead of until revoked"); visible: false; }
-        Button btn_activate_saved { label: _("Activate saved permission"); visible: false; }
-        Button btn_discard_saved { label: _("Discard saved permission"); visible: false; }
+    [top] Adw.HeaderBar {
+      show-end-title-buttons: false;
+      [start] Button btn_not_now {
+        label: _("_Not Now"); use-underline: true;
+        tooltip-text: _("Keep This Request Waiting");
+      }
+      [end] MenuButton more_menu {
+        icon-name: "view-more-symbolic";
+        tooltip-text: _("More Options");
+        menu-model: block_menu;
+      }
+    }
+    content: Adw.PreferencesPage {
+      Adw.PreferencesGroup {
         Box {
-          homogeneous: true;
-          spacing: 8;
-          Button btn_deny { label: _("Deny once"); tooltip-text: _("Deny once (Ctrl+D, Escape)"); }
-          Button btn_approve { label: _("Allow once"); receives-default: false; tooltip-text: _("Allow once (Ctrl+A)"); styles ["suggested-action"] }
-          Button btn_not_now { label: _("Not Now"); tooltip-text: _("Keep this request waiting"); }
+          orientation: vertical; spacing: 6; halign: center;
+          Adw.Avatar app_avatar { size: 64; show-initials: true; }
+          Label header_title { label: _("Review Request"); wrap: true; justify: center; styles ["title-2"] }
+          Label label_verified { wrap: true; wrap-mode: word_char; justify: center; use-markup: false; styles ["dim-label"] }
         }
-        Expander details_expander {
-          label: _("Details");
+      }
+      Adw.PreferencesGroup {
+        Adw.ActionRow row_action { title: _("Action"); subtitle-lines: 0; use-markup: false; }
+        Adw.ActionRow row_identity { title: _("Signing As"); subtitle-lines: 0; subtitle-selectable: true; use-markup: false; }
+        Adw.ActionRow row_relay { title: _("Relay"); visible: false; subtitle-lines: 0; subtitle-selectable: true; use-markup: false; }
+        Adw.ActionRow row_reason { title: _("Reason Given by App"); visible: false; subtitle-lines: 0; use-markup: false; }
+        Adw.ActionRow row_impact {
+          title: _("Effect"); subtitle-lines: 0; use-markup: false;
+          [suffix] Spinner loading { spinning: true; visible: false; valign: center; tooltip-text: _("Loading Permission Details"); }
+        }
+        Adw.ActionRow row_expiry { title: _("Expires"); subtitle-lines: 0; use-markup: false; }
+      }
+      Adw.PreferencesGroup group_preview {
+        title: _("Content");
+        Label content_preview {
+          wrap: true; wrap-mode: word_char; xalign: 0; selectable: true; use-markup: false;
+          margin-start: 12; margin-end: 12; margin-top: 12; margin-bottom: 12;
+          styles ["card"]
+        }
+      }
+      Adw.PreferencesGroup group_scope {
+        Adw.ComboRow permission_choice { title: _("Permission"); use-markup: false; }
+        Adw.ActionRow scope_summary { title: _("Scope"); subtitle-lines: 0; use-markup: false; }
+      }
+      Adw.PreferencesGroup group_saved {
+        visible: false;
+        Adw.ActionRow saved_status { title: _("Saved Permission Is Inactive"); subtitle-lines: 0; use-markup: false; }
+      }
+      Adw.PreferencesGroup group_flow {
+        title: _("This Message Only"); visible: false;
+        Adw.ActionRow row_flow_encrypt {
+          title: _("Allow encryption for this message only"); use-markup: false;
+          activatable-widget: chk_flow_encrypt;
+          [prefix] CheckButton chk_flow_encrypt {}
+        }
+        Adw.ActionRow row_flow_seals {
+          title: _("Allow signing its encrypted copies"); use-markup: false;
+          activatable-widget: chk_flow_seals;
+          [prefix] CheckButton chk_flow_seals {}
+        }
+      }
+      Adw.PreferencesGroup {
+        Adw.ActionRow stepper {
+          visible: false;
+          title: _("1 of 1");
+          [suffix] Box {
+            valign: center; styles ["linked"]
+            Button btn_previous { icon-name: "go-previous-symbolic"; tooltip-text: _("Previous Request"); }
+            Button btn_next { icon-name: "go-next-symbolic"; tooltip-text: _("Next Request"); }
+          }
+        }
+        Adw.ExpanderRow batch_expander {
+          title: _("Requests in This Flow"); visible: false;
           Box {
-            orientation: vertical;
-            spacing: 8;
-            Label label_details { wrap: true; wrap-mode: word_char; xalign: 0; selectable: true; }
+            orientation: vertical; spacing: 12;
+            margin-start: 12; margin-end: 12; margin-top: 12; margin-bottom: 12;
+            Box batch_box { orientation: vertical; spacing: 12; }
+            Button btn_approve_selected { label: _("Allow Selected Once"); sensitive: false; }
+          }
+        }
+        Adw.ExpanderRow details_expander {
+          title: _("Details");
+          Box {
+            orientation: vertical; spacing: 12;
+            margin-start: 12; margin-end: 12; margin-top: 12; margin-bottom: 12;
+            Label label_details { wrap: true; wrap-mode: word_char; xalign: 0; selectable: true; use-markup: false; }
             Label label_timestamp { wrap: true; xalign: 0; }
-            Label label_trust_explanation { wrap: true; xalign: 0; }
-            Button btn_change_trust { label: _("Trust this app for routine operations"); sensitive: false; }
-            Button btn_block_operation { label: _("Block this operation for this app"); }
-            Button btn_block_app { label: _("Block app…"); }
           }
         }
       }
+    };
+    [bottom] Box {
+      homogeneous: true; spacing: 12;
+      margin-start: 12; margin-end: 12; margin-top: 12; margin-bottom: 12;
+      Button btn_deny { label: _("_Deny Once"); use-underline: true; tooltip-text: _("Deny Once (Alt+D, Escape)"); }
+      Button btn_approve { label: _("_Allow Once"); use-underline: true; receives-default: false; styles ["suggested-action"] }
     }
+  }
+}
+
+menu block_menu {
+  section {
+    item { label: _("Block This Operation for This App"); action: "review.block-operation"; }
+    item { label: _("Block App…"); action: "review.block-app"; }
   }
 }
