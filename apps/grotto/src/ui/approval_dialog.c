@@ -8,7 +8,8 @@ struct _GnostrApprovalDialog {
   AdwAvatar *app_avatar;
   GtkLabel *header_title, *label_verified, *label_details, *label_timestamp, *content_preview;
   AdwActionRow *row_action, *row_identity, *row_reason, *row_relay, *row_impact, *row_expiry;
-  AdwActionRow *scope_summary, *saved_status, *stepper;
+  GtkLabel *scope_summary;
+  AdwActionRow *saved_status, *stepper;
   AdwExpanderRow *details_expander, *batch_expander;
   AdwPreferencesGroup *group_scope, *group_saved, *group_flow;
   GtkBox *batch_box;
@@ -238,7 +239,7 @@ static void permission_changed(GObject *object, GParamSpec *pspec, gpointer data
   if (!strcmp(mode, "discard-saved"))
     gtk_widget_remove_css_class(GTK_WIDGET(self->btn_approve), "suggested-action");
   else gtk_widget_add_css_class(GTK_WIDGET(self->btn_approve), "suggested-action");
-  adw_action_row_set_subtitle(self->scope_summary, scope);
+  gtk_label_set_text(self->scope_summary, scope);
 }
 /* Both the closed selection and every item in the popup must wrap. */
 static void choice_setup(GtkSignalListItemFactory *factory, GtkListItem *item, gpointer data) {
@@ -353,6 +354,15 @@ static void gnostr_approval_dialog_class_init(GnostrApprovalDialogClass *klass) 
 }
 static void gnostr_approval_dialog_init(GnostrApprovalDialog *self) {
   gtk_widget_init_template(GTK_WIDGET(self));
+  /* Scope-specific commit labels must fit the 360 px dialog, not raise its
+   * minimum width (notably “Allow for 24 Hours” and “Allow for This Message”). */
+  GtkButton *commits[] = {self->btn_deny, self->btn_approve};
+  for (guint i = 0; i < G_N_ELEMENTS(commits); i++) {
+    GtkLabel *label = GTK_LABEL(gtk_button_get_child(commits[i]));
+    gtk_label_set_wrap(label, TRUE);
+    gtk_label_set_wrap_mode(label, PANGO_WRAP_WORD_CHAR);
+    gtk_label_set_justify(label, GTK_JUSTIFY_CENTER);
+  }
   self->ready = TRUE;
   self->actions = g_simple_action_group_new();
   self->block_operation = g_simple_action_new("block-operation", NULL);
@@ -432,11 +442,12 @@ void gnostr_approval_dialog_set_request(GnostrApprovalDialog *self, const char *
                                         const char *preview) {
   gnostr_approval_dialog_set_app_name(self, app);
   gtk_label_set_text(self->header_title, self->app_name);
-  gtk_label_set_text(self->label_verified, verified ? _("Verified local app") : _("Unverified app"));
+  /* This compatibility entrypoint has no transport evidence. */
+  gtk_label_set_text(self->label_verified, verified ? _("Verified caller") : _("Unverified app"));
   adw_action_row_set_subtitle(self->row_action, kind && !strcmp(kind, "self_test") ? _("Identity self-test") : kind ? kind : _("Unknown request"));
   g_autofree gchar *details =
-      g_strdup_printf("%s%s%s", verified ? "Verified caller" : "Unverified app",
-                      claimed && *claimed ? "\nClaimed name (unverified): " : "",
+      g_strdup_printf(_("%s%s%s"), verified ? _("Verified caller") : _("Unverified app"),
+                      claimed && *claimed ? _("\nClaimed name (unverified): ") : "",
                       claimed && *claimed ? claimed : "");
   gtk_label_set_text(self->label_details, details);
   gnostr_approval_dialog_set_content(self, preview);
@@ -455,17 +466,18 @@ void gnostr_approval_dialog_set_batch(GnostrApprovalDialog *self, GVariant *rows
     guint32 kind;
     g_autofree gchar *operation =
         g_variant_lookup(row, "event_kind", "u", &kind)
-            ? g_strdup_printf("%s · %s (kind %u)", field(row, "operation"),
+            ? g_strdup_printf(_("%s · %s (kind %u)"), field(row, "operation"),
                               gnostr_approval_kind_name(kind), kind)
             : g_strdup(field(row, "operation"));
     g_autofree gchar *label =
         g_strdup_printf(_("%s\nIdentity: %s\nPeer: %s"), operation, field(row, "identity"),
                         *field(summary, "peer")             ? field(summary, "peer")
                         : *field(summary, "recipient_peer") ? field(summary, "recipient_peer")
-                                                            : "None");
+                                                            : _("None"));
     GtkWidget *check = gtk_check_button_new();
     GtkWidget *text = gtk_label_new(label);
     gtk_check_button_set_child(GTK_CHECK_BUTTON(check), text);
+    gtk_accessible_update_property(GTK_ACCESSIBLE(check), GTK_ACCESSIBLE_PROPERTY_LABEL, label, -1);
     gtk_label_set_wrap(GTK_LABEL(text), TRUE);
     gtk_label_set_wrap_mode(GTK_LABEL(text), PANGO_WRAP_WORD_CHAR);
     g_object_set_data_full(G_OBJECT(check), "request-id", g_strdup(field(row, "request_id")),
@@ -530,6 +542,30 @@ gboolean gnostr_approval_info_can_approve(GVariant *info) {
   }
   return TRUE;
 }
+static gchar *caller_description(GVariant *info, const gchar *name) {
+  const gchar *transport = field(info, "transport");
+  const gchar *kind = field(info, "principal_kind");
+  gboolean verified = FALSE;
+  g_variant_lookup(info, "verified", "b", &verified);
+  /* Transport-key authentication is not local-executable or app-name proof.
+   * The principal guard also handles contradictory/version-skewed metadata. */
+  if (!strcmp(transport, "NIP46") || !strcmp(kind, "nip46") ||
+      g_str_has_prefix(field(info, "principal"), "nip46:"))
+    return g_strdup(verified
+        ? _("Remote NIP-46 client · verified transport key; app name unverified")
+        : _("Remote NIP-46 client · unverified"));
+  if (!strcmp(transport, "MANAGEMENT") && !strcmp(field(info, "operation"), "self_test"))
+    return g_strdup(_("Grotto identity test"));
+  if (!verified || !strcmp(kind, "claimed") ||
+      g_str_has_prefix(field(info, "principal"), "claimed:"))
+    return g_strdup_printf(_("Unverified: claims to be “%s”"),
+        *field(info, "claimed_app_id") ? field(info, "claimed_app_id") : name);
+  gboolean local = !strcmp(transport, "DBUS") || !strcmp(transport, "NIP5F");
+  if (local && (!strcmp(kind, "website") || *field(info, "via")))
+    return g_strdup_printf(_("Browser origin via bridge · %s"),
+        *field(info, "app_id") ? field(info, "app_id") : _("Origin not supplied"));
+  return g_strdup(local ? _("Verified local app") : _("Verified caller · transport not identified"));
+}
 void gnostr_approval_dialog_set_info(GnostrApprovalDialog *self, GVariant *info, const char *name) {
   g_clear_pointer(&self->info, g_variant_unref);
   self->info = g_variant_ref(info);
@@ -550,11 +586,7 @@ void gnostr_approval_dialog_set_info(GnostrApprovalDialog *self, GVariant *info,
       : g_strdup(self->identity);
   g_autofree gchar *identity_display = g_strdup_printf("%s\n%s", identity_label, short_key);
   if (*self->identity) adw_action_row_set_subtitle(self->row_identity, identity_display);
-  g_autofree gchar *caller = self_test ? g_strdup(_("Grotto identity test"))
-      : !verified ? g_strdup_printf(_("Unverified: claims to be “%s”"),
-          *field(info, "claimed_app_id") ? field(info, "claimed_app_id") : name)
-      : *field(info, "via") ? g_strdup_printf(_("Via browser bridge · %s"), field(info, "via"))
-      : g_strdup(_("Verified local app"));
+  g_autofree gchar *caller = caller_description(info, name);
   gtk_label_set_text(self->label_verified, caller);
   guint32 remaining = 0;
   g_variant_lookup(info, "remaining_seconds", "u", &remaining);
@@ -729,7 +761,7 @@ void gnostr_approval_dialog_set_info(GnostrApprovalDialog *self, GVariant *info,
       break;
     case NOSTR_KIND_CLIENT_AUTHENTICATION:
       preview = g_strdup_printf(
-          _("Relay claimed by app: %s\nAllows signing AUTH for this relay claim. Grotto cannot verify the caller's relay connection."),
+          _("Relay claimed by app: %s\nAllows signing in to this relay. Grotto cannot verify the app's relay connection."),
           *field(summary, "auth_relay") ? field(summary, "auth_relay") : _("Not supplied by daemon"));
       break;
     case NOSTR_KIND_REPOST:
@@ -738,14 +770,14 @@ void gnostr_approval_dialog_set_info(GnostrApprovalDialog *self, GVariant *info,
       guint32 target_kind = 0;
       g_autofree gchar *type = NULL;
       if (summary && g_variant_lookup(summary, "target_kind", "u", &target_kind))
-        type = g_strdup_printf("\nTarget type: %s (kind %u)",
+        type = g_strdup_printf(_("\nTarget type: %s (kind %u)"),
                                gnostr_approval_kind_name(target_kind), target_kind);
-      preview =
-          g_strdup_printf("Target: %s%s%s%s",
-                          *field(summary, "target_event_id") ? field(summary, "target_event_id")
-                                                             : "Not supplied by daemon",
-                          type ? type : "", kind == NOSTR_KIND_REACTION ? "\nReaction: " : "",
-                          kind == NOSTR_KIND_REACTION ? field(summary, "reaction_value") : "");
+      const gchar *target = *field(summary, "target_event_id")
+          ? field(summary, "target_event_id") : _("Not supplied by daemon");
+      preview = kind == NOSTR_KIND_REACTION
+          ? g_strdup_printf(_("Target: %s%s\nReaction: %s"), target,
+              type ? type : "", field(summary, "reaction_value"))
+          : g_strdup_printf(_("Target: %s%s"), target, type ? type : "");
       break;
     }
     case NOSTR_KIND_TEXT_NOTE:
@@ -756,7 +788,7 @@ void gnostr_approval_dialog_set_info(GnostrApprovalDialog *self, GVariant *info,
       break;
     default: {
       GString *text = g_string_new(NULL);
-      g_string_append_printf(text, "Kind %u · %u structured tags", kind, tags);
+      g_string_append_printf(text, _("Kind %u · %u structured tags"), kind, tags);
       g_autoptr(GVariant) counts =
           summary ? g_variant_lookup_value(summary, "tag_counts", G_VARIANT_TYPE("a{su}")) : NULL;
       if (counts) {
@@ -765,15 +797,14 @@ void gnostr_approval_dialog_set_info(GnostrApprovalDialog *self, GVariant *info,
         guint32 count;
         g_variant_iter_init(&iter, counts);
         while (g_variant_iter_next(&iter, "{&su}", &name, &count))
-          g_string_append_printf(text, "\n%s: %u", name, count);
+          g_string_append_printf(text, _("\n%s: %u"), name, count);
       }
       preview = g_string_free(text, FALSE);
       break;
     }
     }
   } else if (g_str_has_suffix(op, "encrypt") || g_str_has_suffix(op, "decrypt")) {
-    preview = g_strdup_printf(_("%s\nPeer fingerprint: %s\nPrivate message bodies are not shown."), op,
-                              peer);
+    preview = g_strdup(_("Encrypted message. Private message bodies are not shown."));
   } else if (!strcmp(op, "self_test")) {
     preview = g_strdup(_("1. Sign and verify an unpublished test event.\n"
                          "2. Encrypt a random challenge to a temporary peer.\n"
@@ -789,8 +820,8 @@ void gnostr_approval_dialog_set_info(GnostrApprovalDialog *self, GVariant *info,
     g_autofree gchar *permissions = hints ? g_strjoinv(", ", hints) : g_strdup("");
     adw_action_row_set_subtitle(self->row_relay, relays);
     gtk_widget_set_visible(GTK_WIDGET(self->row_relay), *relays != '\0');
-    preview = g_strdup_printf("Client transport-key fingerprint: %s\nClaimed name (unverified): "
-                              "%s\nRequested permissions (hints only): %s\nRelays: %s",
+    preview = g_strdup_printf(_("App fingerprint: %s\nClaimed name (unverified): "
+                               "%s\nRequested permissions (hints only): %s\nRelays: %s"),
                               field(info, "principal"), field(info, "claimed_app_id"),
                               permissions, relays);
     impact = _("Pairing admits this application. It grants no signing permissions.");

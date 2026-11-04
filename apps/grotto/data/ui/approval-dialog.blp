@@ -6,7 +6,10 @@ template $GnostrApprovalDialog: Adw.Dialog {
   content-width: 420;
   content-height: 660;
   width-request: 300;
-  Adw.ToolbarView {
+  Box {
+    orientation: vertical;
+    Adw.ToolbarView {
+      vexpand: true;
     [top] Adw.HeaderBar {
       show-end-title-buttons: false;
       [start] Button btn_not_now {
@@ -49,7 +52,6 @@ template $GnostrApprovalDialog: Adw.Dialog {
       }
       Adw.PreferencesGroup group_scope {
         Adw.ComboRow permission_choice { title: _("Permission"); use-markup: false; }
-        Adw.ActionRow scope_summary { title: _("Scope"); subtitle-lines: 0; use-markup: false; }
       }
       Adw.PreferencesGroup group_saved {
         visible: false;
@@ -98,11 +100,21 @@ template $GnostrApprovalDialog: Adw.Dialog {
         }
       }
     };
-    [bottom] Box {
-      homogeneous: true; spacing: 12;
+    }
+    Separator {}
+    Box consent_footer {
+      orientation: vertical; spacing: 12;
       margin-start: 12; margin-end: 12; margin-top: 12; margin-bottom: 12;
-      Button btn_deny { label: _("_Deny Once"); use-underline: true; tooltip-text: _("Deny Once (Alt+D, Escape)"); }
-      Button btn_approve { label: _("_Allow Once"); use-underline: true; receives-default: false; styles ["suggested-action"] }
+      Label { label: _("Scope"); xalign: 0; styles ["heading"] }
+      Label scope_summary {
+        wrap: true; wrap-mode: word_char; xalign: 0;
+        selectable: true; use-markup: false;
+      }
+      Box {
+        homogeneous: true; spacing: 12;
+        Button btn_deny { label: _("_Deny Once"); use-underline: true; tooltip-text: _("Deny Once (Alt+D, Escape)"); }
+        Button btn_approve { label: _("_Allow Once"); use-underline: true; receives-default: false; styles ["suggested-action"] }
+      }
     }
   }
 }

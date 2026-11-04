@@ -97,6 +97,9 @@ static GtkWidget *child(Fixture *f, const char *name) {
 static const gchar *subtitle(Fixture *f, const gchar *name) {
   return adw_action_row_get_subtitle(ADW_ACTION_ROW(child(f, name)));
 }
+static const gchar *scope_text(Fixture *f) {
+  return gtk_label_get_text(GTK_LABEL(child(f, "scope_summary")));
+}
 static void choose(Fixture *f, const gchar *prefix) {
   AdwComboRow *row = ADW_COMBO_ROW(child(f, "permission_choice"));
   GListModel *model = adw_combo_row_get_model(row);
@@ -128,6 +131,7 @@ static GVariant *info(guint32 kind, const char *operation, guint remaining) {
   S("identity", "npub-pinned-by-daemon");
   S("principal", "org.example.Client");
   S("transport", "DBUS");
+  S("principal_kind", "executable");
   S("operation", operation);
   S("state", "PENDING");
   S("reason", "Send my note");
@@ -201,10 +205,10 @@ static void fixed_identity_remember(Fixture *f, gconstpointer data) {
   gnostr_approval_dialog_set_info(f->dialog, row, "Verified client");
   g_assert_nonnull(
       strstr(subtitle(f, "row_identity"), "npub-pinned-by-daemon"));
-  g_assert_nonnull(strstr(subtitle(f, "scope_summary"), "kind 1"));
+  g_assert_nonnull(strstr(scope_text(f), "kind 1"));
   g_assert_nonnull(strstr(subtitle(f, "row_reason"), "Send my note"));
   choose(f, "Allow for 24 hours");
-  g_assert_nonnull(strstr(subtitle(f, "scope_summary"), "24 hours"));
+  g_assert_nonnull(strstr(scope_text(f), "24 hours"));
   click(f, "btn_approve");
   wait_closed(f);
   g_assert_cmpstr(f->identity, ==, "npub-pinned-by-daemon");
@@ -217,7 +221,7 @@ static void until_revoked(Fixture *f, gconstpointer data) {
   gnostr_approval_dialog_set_info(f->dialog, row, "Verified client");
   g_assert_cmpuint(adw_combo_row_get_selected(ADW_COMBO_ROW(child(f, "permission_choice"))), ==, 0);
   g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(child(f, "btn_approve"))), ==, "_Allow Once");
-  g_assert_nonnull(strstr(subtitle(f, "scope_summary"), "No permission is saved"));
+  g_assert_nonnull(strstr(scope_text(f), "No permission is saved"));
   choose(f, "Always allow");
   click(f, "btn_approve"); wait_closed(f);
   g_assert_true(f->decision); g_assert_true(f->remember); g_assert_cmpuint(f->ttl, ==, 0);
@@ -257,8 +261,8 @@ static void explicit_mode(Fixture *f, gconstpointer data) {
     choose(f, !strcmp(mode, "trust-routine") ? "Trust this app" :
         !strcmp(mode, "activate-saved") ? "Activate saved" : "Discard saved");
     if (!strcmp(mode, "trust-routine")) {
-      g_assert_nonnull(strstr(subtitle(f, "scope_summary"), "not only this request or identity"));
-      g_assert_nonnull(strstr(subtitle(f, "scope_summary"), "Blocks remain in effect"));
+      g_assert_nonnull(strstr(scope_text(f), "not only this request or identity"));
+      g_assert_nonnull(strstr(scope_text(f), "Blocks remain in effect"));
     }
     click(f, "btn_approve");
   }
@@ -346,12 +350,17 @@ static void previews(Fixture *f, gconstpointer data) {
   g_autoptr(GVariant) exact = g_variant_ref_sink(g_variant_dict_end(&outer));
   gnostr_approval_dialog_set_info(f->dialog, exact, "Client");
   g_assert_nonnull(strstr(gtk_label_get_text(GTK_LABEL(child(f, "content_preview"))), relay));
-  g_autoptr(GVariant) row = info(NOSTR_KIND_TEXT_NOTE, "nip44_decrypt", 120);
-  gnostr_approval_dialog_set_info(f->dialog, row, "Client");
-  g_assert_nonnull(
-      strstr(gtk_label_get_text(GTK_LABEL(child(f, "content_preview"))), "Private message bodies are not shown"));
-  g_assert_nonnull(
-      strstr(gtk_label_get_text(GTK_LABEL(child(f, "content_preview"))), "peer-fingerprint"));
+  const gchar *operations[] = {"nip04_encrypt", "nip04_decrypt", "nip44_encrypt", "nip44_decrypt"};
+  for (guint i = 0; i < G_N_ELEMENTS(operations); i++) {
+    g_autoptr(GVariant) row = info(NOSTR_KIND_TEXT_NOTE, operations[i], 120);
+    gnostr_approval_dialog_set_info(f->dialog, row, "Client");
+    const gchar *preview = gtk_label_get_text(GTK_LABEL(child(f, "content_preview")));
+    g_assert_cmpstr(preview, ==, "Encrypted message. Private message bodies are not shown.");
+    g_assert_null(strstr(preview, operations[i]));
+    g_assert_null(strstr(preview, "peer-fingerprint"));
+    g_assert_null(strstr(preview, "ciphertext"));
+    g_assert_nonnull(strstr(gtk_label_get_text(GTK_LABEL(child(f, "label_details"))), "peer-fingerprint"));
+  }
 }
 static void stepper_focus(Fixture *f, gconstpointer data) {
   (void)data;
@@ -363,7 +372,9 @@ static void stepper_focus(Fixture *f, gconstpointer data) {
   g_assert_null(adw_dialog_get_default_widget(ADW_DIALOG(f->dialog)));
   g_assert_null(gtk_widget_get_ancestor(child(f, "btn_approve"), GTK_TYPE_SCROLLED_WINDOW));
   g_assert_false(gtk_widget_is_ancestor(child(f, "scope_summary"), child(f, "details_expander")));
-  g_assert_cmpint(adw_action_row_get_subtitle_lines(ADW_ACTION_ROW(child(f, "scope_summary"))), ==, 0);
+  g_assert_null(gtk_widget_get_ancestor(child(f, "scope_summary"), GTK_TYPE_SCROLLED_WINDOW));
+  g_assert_true(gtk_label_get_wrap(GTK_LABEL(child(f, "scope_summary"))));
+  g_assert_cmpint(gtk_label_get_lines(GTK_LABEL(child(f, "scope_summary"))), ==, -1);
 }
 static void batch_selection(Fixture *f, gconstpointer data) {
   (void)data;
@@ -375,6 +386,10 @@ static void batch_selection(Fixture *f, gconstpointer data) {
     g_variant_builder_add(&row, "{sv}", "request_id", g_variant_new_string(i ? "second" : "first"));
     g_variant_builder_add(&row, "{sv}", "operation", g_variant_new_string("sign_event"));
     g_variant_builder_add(&row, "{sv}", "event_kind", g_variant_new_uint32(NOSTR_KIND_TEXT_NOTE));
+    g_variant_builder_add(&row, "{sv}", "identity", g_variant_new_string(i ? "npub-second" : "npub-first"));
+    GVariantBuilder summary; g_variant_builder_init(&summary, G_VARIANT_TYPE_VARDICT);
+    g_variant_builder_add(&summary, "{sv}", "peer", g_variant_new_string(i ? "peer-second" : "peer-first"));
+    g_variant_builder_add(&row, "{sv}", "event_summary", g_variant_builder_end(&summary));
     g_variant_builder_add_value(&rows, g_variant_builder_end(&row));
   }
   g_autoptr(GVariant) list = g_variant_ref_sink(g_variant_builder_end(&rows));
@@ -385,6 +400,14 @@ static void batch_selection(Fixture *f, gconstpointer data) {
   g_assert_false(gnostr_approval_dialog_has_batch_request(f->dialog, "future-unseen"));
   g_assert_false(gtk_widget_get_sensitive(child(f, "btn_approve_selected")));
   GtkWidget *first = gtk_widget_get_first_child(child(f, "batch_box"));
+  guint i = 0;
+  for (GtkWidget *check = first; check; check = gtk_widget_get_next_sibling(check), i++) {
+    g_autofree gchar *label = g_strdup_printf("sign_event · Text note (kind 1)\nIdentity: %s\nPeer: %s",
+        i ? "npub-second" : "npub-first", i ? "peer-second" : "peer-first");
+    gtk_test_accessible_assert_property(GTK_ACCESSIBLE(check), GTK_ACCESSIBLE_PROPERTY_LABEL, label);
+    g_assert_cmpstr(gtk_label_get_text(GTK_LABEL(gtk_check_button_get_child(GTK_CHECK_BUTTON(check)))), ==, label);
+  }
+  g_assert_cmpuint(i, ==, 2);
   g_assert_false(gtk_check_button_get_active(GTK_CHECK_BUTTON(first)));
   gtk_check_button_set_active(GTK_CHECK_BUTTON(first), TRUE);
   click(f, "btn_approve_selected");
@@ -417,10 +440,10 @@ static void set_room_flow_remaining(Fixture *f, guint remaining) {
   if (remaining) {
     choose(f, "This message only");
     g_assert_true(gtk_widget_get_visible(child(f, "group_flow")));
-    g_assert_nonnull(strstr(subtitle(f, "scope_summary"), "4 encrypted copies"));
-    g_assert_nonnull(strstr(subtitle(f, "scope_summary"), "30 seconds left"));
-    g_assert_null(strstr(subtitle(f, "scope_summary"), "600 seconds"));
-    g_assert_nonnull(strstr(subtitle(f, "scope_summary"), "npub-pinned"));
+    g_assert_nonnull(strstr(scope_text(f), "4 encrypted copies"));
+    g_assert_nonnull(strstr(scope_text(f), "30 seconds left"));
+    g_assert_null(strstr(scope_text(f), "600 seconds"));
+    g_assert_nonnull(strstr(scope_text(f), "npub-pinned"));
   }
   g_assert_false(gtk_check_button_get_active(GTK_CHECK_BUTTON(child(f, "chk_flow_encrypt"))));
   g_assert_false(gtk_check_button_get_active(GTK_CHECK_BUTTON(child(f, "chk_flow_seals"))));
@@ -440,7 +463,7 @@ static void custom_trust_unavailable(Fixture *f, gconstpointer data) {
   GListModel *model = adw_combo_row_get_model(ADW_COMBO_ROW(child(f, "permission_choice")));
   g_assert_cmpuint(g_list_model_get_n_items(model), ==, 3);
   choose(f, "Always allow");
-  g_assert_nonnull(strstr(subtitle(f, "scope_summary"), "until revoked"));
+  g_assert_nonnull(strstr(scope_text(f), "until revoked"));
 }
 static void flow_unchecked(Fixture *f, gconstpointer data) {
   (void)data; set_room_flow(f); click(f, "btn_approve"); wait_closed(f);
@@ -491,6 +514,9 @@ static void pairing_preview(Fixture *f, gconstpointer data) {
   for (guint complete = 0; complete < 2; complete++) {
     GVariantBuilder info, summary; g_variant_builder_init(&info, G_VARIANT_TYPE_VARDICT); g_variant_builder_init(&summary, G_VARIANT_TYPE_VARDICT);
     g_variant_builder_add(&info, "{sv}", "operation", g_variant_new_string("connect"));
+    g_variant_builder_add(&info, "{sv}", "transport", g_variant_new_string("NIP46"));
+    g_variant_builder_add(&info, "{sv}", "verified", g_variant_new_boolean(TRUE));
+    g_variant_builder_add(&info, "{sv}", "principal_kind", g_variant_new_string("nip46"));
     g_variant_builder_add(&info, "{sv}", "principal", g_variant_new_string("nip46:79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"));
     g_variant_builder_add(&info, "{sv}", "identity", g_variant_new_string("npub-pinned-by-daemon"));
     g_variant_builder_add(&info, "{sv}", "claimed_app_id", g_variant_new_string("Unverified client"));
@@ -503,6 +529,9 @@ static void pairing_preview(Fixture *f, gconstpointer data) {
     g_autoptr(GVariant) row = g_variant_ref_sink(g_variant_builder_end(&info));
     g_assert_cmpint(gnostr_approval_info_can_approve(row), ==, complete);
     gnostr_approval_dialog_set_info(f->dialog, row, "Remote application");
+    const gchar *caller = gtk_label_get_text(GTK_LABEL(child(f, "label_verified")));
+    g_assert_nonnull(strstr(caller, "Remote NIP-46 client"));
+    g_assert_null(strstr(caller, "local app"));
     const gchar *preview = gtk_label_get_text(GTK_LABEL(child(f, "content_preview")));
     g_assert_nonnull(strstr(preview, "Unverified client"));
     g_assert_nonnull(strstr(preview, "sign_event:1"));
@@ -522,7 +551,7 @@ static void scope_and_reset(Fixture *f, gconstpointer data) {
   const gchar *commits[] = {"_Allow Once", "_Allow for 24 Hours", "_Always Allow"};
   for (guint i = 0; i < G_N_ELEMENTS(choices); i++) {
     choose(f, choices[i]);
-    const gchar *scope = subtitle(f, "scope_summary");
+    const gchar *scope = scope_text(f);
     g_assert_nonnull(strstr(scope, "Alice"));
     g_assert_nonnull(strstr(scope, "npub-pinned-by-daemon"));
     g_assert_nonnull(strstr(scope, "wss://nos.lol"));
@@ -535,8 +564,8 @@ static void scope_and_reset(Fixture *f, gconstpointer data) {
   g_autoptr(GVariant) crypto = info(0, "nip44_decrypt", 120);
   gnostr_approval_dialog_set_info(f->dialog, crypto, "Jank");
   choose(f, "Always allow");
-  g_assert_nonnull(strstr(subtitle(f, "scope_summary"), "all peers"));
-  g_assert_nonnull(strstr(subtitle(f, "scope_summary"), "decrypt"));
+  g_assert_nonnull(strstr(scope_text(f), "all peers"));
+  g_assert_nonnull(strstr(scope_text(f), "decrypt"));
 }
 static void flow_exclusive(Fixture *f, gconstpointer data) {
   (void)data; set_room_flow(f);
@@ -596,12 +625,148 @@ static void no_primary_consent(Fixture *f, gconstpointer data) {
   g_assert_cmpint(end - start, ==, 23);
   g_assert_cmpuint(f->calls, ==, 0);
 }
+static const gchar *public_npub = "npub10xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqpkge6d";
+static void caller_labels(Fixture *f, gconstpointer data) {
+  (void)data;
+  const struct {
+    const gchar *transport, *kind, *principal, *via, *app_id, *operation, *expected;
+    gboolean verified;
+  } cases[] = {
+    {"DBUS", "executable", "exe:/usr/bin/jank", "", "", "sign_event", "Verified local app", TRUE},
+    {"NIP5F", "flatpak", "flatpak:org.example.Jank", "", "", "sign_event", "Verified local app", TRUE},
+    {"DBUS", "website", "origin:https://example.org", "exe:/usr/bin/browser-bridge", "https://example.org", "sign_event", "Browser origin via bridge · https://example.org", TRUE},
+    {"NIP46", "nip46", "nip46:remote-key", "", "", "sign_event", "Remote NIP-46 client · verified transport key; app name unverified", TRUE},
+    {"NIP46", "nip46", "nip46:remote-key", "", "", "sign_event", "Remote NIP-46 client · unverified", FALSE},
+    {"DBUS", "executable", "nip46:remote-key", "", "", "sign_event", "Remote NIP-46 client · verified transport key; app name unverified", TRUE},
+    {"DBUS", "nip46", "remote-key", "exe:/usr/bin/bridge", "https://example.org", "sign_event", "Remote NIP-46 client · verified transport key; app name unverified", TRUE},
+    {"MANAGEMENT", "executable", "exe:/usr/bin/grotto", "", "", "self_test", "Grotto identity test", TRUE},
+    {"DBUS", "claimed", "claimed:Jank", "", "", "sign_event", "Unverified: claims to be “Bogus name”", FALSE},
+    {"", "executable", "exe:/usr/bin/jank", "", "", "sign_event", "Verified caller · transport not identified", TRUE},
+  };
+  for (guint i = 0; i < G_N_ELEMENTS(cases); i++) {
+    g_autoptr(GVariant) original = info(NOSTR_KIND_TEXT_NOTE, cases[i].operation, 120);
+    GVariantDict d; g_variant_dict_init(&d, original);
+    g_variant_dict_insert(&d, "transport", "s", cases[i].transport);
+    g_variant_dict_insert(&d, "principal_kind", "s", cases[i].kind);
+    g_variant_dict_insert(&d, "principal", "s", cases[i].principal);
+    g_variant_dict_insert(&d, "via", "s", cases[i].via);
+    g_variant_dict_insert(&d, "app_id", "s", cases[i].app_id);
+    g_variant_dict_insert(&d, "verified", "b", cases[i].verified);
+    g_autoptr(GVariant) row = g_variant_ref_sink(g_variant_dict_end(&d));
+    gnostr_approval_dialog_set_info(f->dialog, row, "Jank");
+    g_assert_cmpstr(gtk_label_get_text(GTK_LABEL(child(f, "label_verified"))), ==, cases[i].expected);
+  }
+  gnostr_approval_dialog_set_request(f->dialog, "sign_event", "Legacy caller", NULL, TRUE, "Public text");
+  g_assert_cmpstr(gtk_label_get_text(GTK_LABEL(child(f, "label_verified"))), ==, "Verified caller");
+}
+static void wait_frames(GtkWidget *widget) {
+  guint frames = 0, timeout = g_timeout_add_seconds(10, failure_bound, NULL);
+  gtk_widget_add_tick_callback(widget, frame, &frames, NULL);
+  while (frames < 2) g_main_context_iteration(NULL, TRUE);
+  g_source_remove(timeout);
+}
+static void assert_decision_visible(Fixture *f) {
+  const gchar *names[] = {"scope_summary", "btn_deny", "btn_approve"};
+  graphene_rect_t scope_bounds, button_bounds;
+  for (guint i = 0; i < G_N_ELEMENTS(names); i++) {
+    GtkWidget *widget = child(f, names[i]);
+    graphene_rect_t bounds;
+    g_assert_null(gtk_widget_get_ancestor(widget, GTK_TYPE_SCROLLED_WINDOW));
+    g_assert_true(gtk_widget_get_mapped(widget));
+    g_assert_true(gtk_widget_compute_bounds(widget, f->window, &bounds));
+    g_test_message("%s: bounds %.1f,%.1f %.1fx%.1f; window content %dx%d, dialog %dx%d", names[i],
+        bounds.origin.x, bounds.origin.y, bounds.size.width, bounds.size.height,
+        gtk_widget_get_width(f->window), gtk_widget_get_height(f->window),
+        gtk_widget_get_width(GTK_WIDGET(f->dialog)), gtk_widget_get_height(GTK_WIDGET(f->dialog)));
+    g_assert_cmpfloat(bounds.origin.x, >=, 0);
+    g_assert_cmpfloat(bounds.origin.y, >=, 0);
+    g_assert_cmpfloat(bounds.origin.x + bounds.size.width, <=, gtk_widget_get_width(f->window));
+    g_assert_cmpfloat(bounds.origin.y + bounds.size.height, <=, gtk_widget_get_height(f->window));
+  }
+  g_assert_true(gtk_widget_compute_bounds(child(f, "scope_summary"), f->window, &scope_bounds));
+  g_assert_true(gtk_widget_compute_bounds(child(f, "btn_approve"), f->window, &button_bounds));
+  g_assert_cmpfloat(scope_bounds.origin.y + scope_bounds.size.height, <=, button_bounds.origin.y);
+}
+static void scope_viewport(Fixture *f, gconstpointer data) {
+  (void)data;
+  g_autoptr(GVariant) original = info(NOSTR_KIND_CLIENT_AUTHENTICATION, "sign_event", 120);
+  GVariantDict d; g_variant_dict_init(&d, original);
+  g_variant_dict_insert(&d, "identity", "s", public_npub);
+  g_variant_dict_insert(&d, "identity_label", "s", "Alice");
+  g_autoptr(GVariant) row = g_variant_ref_sink(g_variant_dict_end(&d));
+  gnostr_approval_dialog_set_info(f->dialog, row, "Jank");
+  gtk_window_set_default_size(GTK_WINDOW(f->window), 360, 700);
+  const gchar *modes[] = {"Allow once", "Allow for 24 hours", "Always allow", "Trust this app"};
+  GtkWidget *scroller = gtk_widget_get_ancestor(child(f, "permission_choice"), GTK_TYPE_SCROLLED_WINDOW);
+  g_assert_nonnull(scroller);
+  GtkAdjustment *adjustment = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroller));
+  for (guint i = 0; i < G_N_ELEMENTS(modes); i++) {
+    choose(f, modes[i]);
+    wait_frames(f->window);
+    g_assert_cmpint(gtk_widget_get_width(f->window), <=, 360);
+    for (guint bottom = 0; bottom < 2; bottom++) {
+      gtk_adjustment_set_value(adjustment, bottom
+          ? gtk_adjustment_get_upper(adjustment) - gtk_adjustment_get_page_size(adjustment)
+          : gtk_adjustment_get_lower(adjustment));
+      wait_frames(f->window);
+      assert_decision_visible(f);
+      if (i < 3) {
+        g_assert_nonnull(strstr(scope_text(f), public_npub));
+        g_assert_nonnull(strstr(scope_text(f), "Alice"));
+        g_assert_nonnull(strstr(scope_text(f), "wss://nos.lol"));
+      }
+    }
+  }
+}
+static void queue_scene(GtkWidget *widget) {
+  gtk_widget_queue_draw(widget);
+  for (GtkWidget *child = gtk_widget_get_first_child(widget); child; child = gtk_widget_get_next_sibling(child))
+    queue_scene(child);
+}
+/* Check the saved scene contains each actual commit button, not just a mapped
+ * widget. Compare its interior colour to a fresh same-theme composite. */
+static void assert_button_painted(Fixture *f, GdkTexture *scene, GskRenderer *renderer, const gchar *name) {
+  GtkWidget *button = child(f, name);
+  g_autoptr(GdkPaintable) paintable = gtk_widget_paintable_new(button);
+  int w = gdk_paintable_get_intrinsic_width(paintable), h = gdk_paintable_get_intrinsic_height(paintable);
+  GtkSnapshot *snapshot = gtk_snapshot_new();
+  gdk_paintable_snapshot(paintable, GDK_SNAPSHOT(snapshot), w, h);
+  g_autoptr(GskRenderNode) node = gtk_snapshot_free_to_node(snapshot);
+  g_assert_nonnull(node);
+  gsize scene_stride = gdk_texture_get_width(scene) * 4, reference_stride = w * 4;
+  g_autofree guchar *actual = g_malloc0(scene_stride * gdk_texture_get_height(scene));
+  g_autofree guchar *expected = g_malloc0(reference_stride * h);
+  gdk_texture_download(scene, actual, scene_stride);
+  graphene_rect_t bounds, bar_bounds;
+  g_assert_true(gtk_widget_compute_bounds(button, GTK_WIDGET(f->dialog), &bounds));
+  g_assert_true(gtk_widget_compute_bounds(gtk_widget_get_parent(button), GTK_WIDGET(f->dialog), &bar_bounds));
+  guint x = w / 2, y = h - 8;
+  guint sx = (guint)(bounds.origin.x + 0.5f) + x, sy = (guint)(bounds.origin.y + 0.5f) + y;
+  guint gap_x = (guint)(bar_bounds.origin.x + bar_bounds.size.width / 2 + 0.5f);
+  g_assert_cmpuint(sx, <, gdk_texture_get_width(scene));
+  g_assert_cmpuint(gap_x, <, gdk_texture_get_width(scene));
+  g_assert_cmpuint(sy, <, gdk_texture_get_height(scene));
+  /* Normal buttons use a translucent fill. Composite the reference over the
+   * actual empty gap between the two buttons, using the same GSK renderer. */
+  g_autoptr(GBytes) pixel = g_bytes_new(actual + sy * scene_stride + gap_x * 4, 4);
+  g_autoptr(GdkTexture) background = gdk_memory_texture_new(1, 1, GDK_MEMORY_DEFAULT, pixel, 4);
+  g_autoptr(GskRenderNode) fill = gsk_texture_node_new(background, &GRAPHENE_RECT_INIT(0, 0, w, h));
+  GskRenderNode *layers[] = {fill, node};
+  g_autoptr(GskRenderNode) composite = gsk_container_node_new(layers, G_N_ELEMENTS(layers));
+  g_autoptr(GdkTexture) reference = gsk_renderer_render_texture(renderer, composite, &GRAPHENE_RECT_INIT(0, 0, w, h));
+  gdk_texture_download(reference, expected, reference_stride);
+  guchar *a = actual + sy * scene_stride + sx * 4, *b = expected + y * reference_stride + x * 4;
+  g_test_message("%s sample (%u,%u) actual %u,%u,%u,%u reference %u,%u,%u,%u", name, sx, sy,
+      a[0], a[1], a[2], a[3], b[0], b[1], b[2], b[3]);
+  g_assert_cmpmem(a, 4, b, 4);
+}
 static void snapshots(Fixture *f, gconstpointer data) {
   (void)data;
   const gchar *directory = g_getenv("GROTTO_APPROVAL_SCREENSHOT_DIR");
   g_autoptr(GVariant) request = info(NOSTR_KIND_FOLLOW_LIST, "sign_event", 120);
   GVariantDict d; g_variant_dict_init(&d, request);
   g_variant_dict_insert(&d, "identity_label", "s", "Alice");
+  g_variant_dict_insert(&d, "identity", "s", public_npub);
   g_autoptr(GVariant) display = g_variant_ref_sink(g_variant_dict_end(&d));
   gnostr_approval_dialog_set_info(f->dialog, display, "Jank");
   choose(f, "Always allow");
@@ -612,37 +777,44 @@ static void snapshots(Fixture *f, gconstpointer data) {
     for (guint narrow = 0; narrow < 2; narrow++) {
       guint width = narrow ? 360 : 420;
       gtk_window_set_default_size(GTK_WINDOW(f->window), width, 700);
-      guint frames = 0;
-      gtk_widget_add_tick_callback(f->window, frame, &frames, NULL);
-      while (frames < 2) g_main_context_iteration(NULL, TRUE);
+      wait_frames(f->window);
       gint minimum;
       gtk_widget_measure(GTK_WIDGET(f->dialog), GTK_ORIENTATION_HORIZONTAL, -1, &minimum, NULL, NULL, NULL);
       g_assert_cmpint(minimum, <=, 360);
-      g_assert_true(gtk_widget_get_mapped(child(f, "btn_approve")));
-      if (!directory) continue;
       for (guint scrolled = 0; scrolled < 2; scrolled++) {
-      GtkWidget *scroller = gtk_widget_get_ancestor(child(f, "permission_choice"), GTK_TYPE_SCROLLED_WINDOW);
-      g_assert_nonnull(scroller);
-      GtkAdjustment *adjustment = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroller));
-      gtk_adjustment_set_value(adjustment, scrolled
-          ? gtk_adjustment_get_upper(adjustment) - gtk_adjustment_get_page_size(adjustment)
-          : gtk_adjustment_get_lower(adjustment));
-      frames = 0;
-      gtk_widget_add_tick_callback(f->window, frame, &frames, NULL);
-      while (frames < 2) g_main_context_iteration(NULL, TRUE);
-      g_assert_cmpint(g_mkdir_with_parents(directory, 0700), ==, 0);
-      GtkWidget *widget = f->window;
-      int w = gtk_widget_get_width(widget), h = gtk_widget_get_height(widget);
-      g_autoptr(GdkPaintable) paintable = gtk_widget_paintable_new(widget);
-      GtkSnapshot *snapshot = gtk_snapshot_new();
-      gdk_paintable_snapshot(paintable, GDK_SNAPSHOT(snapshot), w, h);
-      g_autoptr(GskRenderNode) node = gtk_snapshot_free_to_node(snapshot);
-      g_assert_nonnull(node);
-      GskRenderer *renderer = gtk_native_get_renderer(GTK_NATIVE(widget));
-      g_autoptr(GdkTexture) texture = gsk_renderer_render_texture(renderer, node, &GRAPHENE_RECT_INIT(0, 0, w, h));
-      g_autofree gchar *path = g_strdup_printf("%s/approval-%u-%s%s.png", directory, width, dark ? "dark" : "light", scrolled ? "-scope" : "");
-      g_assert_true(gdk_texture_save_to_png(texture, path));
-      g_test_message("saved %s (%dx%d)", path, w, h);
+        GtkWidget *scroller = gtk_widget_get_ancestor(child(f, "permission_choice"), GTK_TYPE_SCROLLED_WINDOW);
+        g_assert_nonnull(scroller);
+        GtkAdjustment *adjustment = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroller));
+        gtk_adjustment_set_value(adjustment, scrolled
+            ? gtk_adjustment_get_upper(adjustment) - gtk_adjustment_get_page_size(adjustment)
+            : gtk_adjustment_get_lower(adjustment));
+        /* Invalidate the complete scene, not only the scrolled dirty region. */
+        queue_scene(f->window);
+        wait_frames(f->window);
+        assert_decision_visible(f);
+        /* Capture the dialog itself: window paintables include CSS shadows
+         * and scaling their content size distorts the sample coordinates. */
+        GtkWidget *widget = GTK_WIDGET(f->dialog);
+        g_autoptr(GdkPaintable) paintable = gtk_widget_paintable_new(widget);
+        int w = gdk_paintable_get_intrinsic_width(paintable), h = gdk_paintable_get_intrinsic_height(paintable);
+        GtkSnapshot *snapshot = gtk_snapshot_new();
+        gdk_paintable_snapshot(paintable, GDK_SNAPSHOT(snapshot), w, h);
+        g_autoptr(GskRenderNode) node = gtk_snapshot_free_to_node(snapshot);
+        g_assert_nonnull(node);
+        GskRenderer *renderer = gtk_native_get_renderer(GTK_NATIVE(f->window));
+        g_autoptr(GdkTexture) texture = gsk_renderer_render_texture(renderer, node, &GRAPHENE_RECT_INIT(0, 0, w, h));
+        assert_button_painted(f, texture, renderer, "btn_approve");
+        assert_button_painted(f, texture, renderer, "btn_deny");
+        if (directory) {
+          g_assert_cmpint(g_mkdir_with_parents(directory, 0700), ==, 0);
+          g_autofree gchar *path = g_strdup_printf("%s/approval-%u-%s%s.png", directory, width, dark ? "dark" : "light", scrolled ? "-scope" : "");
+          g_assert_true(gdk_texture_save_to_png(texture, path));
+          g_autofree gchar *bytes = NULL;
+          gsize length;
+          g_assert_true(g_file_get_contents(path, &bytes, &length, NULL));
+          g_autofree gchar *hash = g_compute_checksum_for_data(G_CHECKSUM_SHA256, (const guchar *)bytes, length);
+          g_test_message("saved %s (%dx%d) sha256=%s", path, w, h, hash);
+        }
       }
     }
   }
@@ -697,6 +869,8 @@ int main(int argc, char **argv) {
   ADD("flow-exclusive", flow_exclusive);
   ADD("expired-and-empty-claim", expired_and_empty_claim);
   ADD("no-primary-consent", no_primary_consent);
+  ADD("caller-labels", caller_labels);
+  ADD("scope-viewport", scope_viewport);
   ADD("snapshots", snapshots);
 #undef ADD
   return g_test_run();
