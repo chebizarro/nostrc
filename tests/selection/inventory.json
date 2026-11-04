@@ -31321,9 +31321,9 @@
         "grotto.linux.asan_ubsan"
       ],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "50de08157b769dd5d60f81423fa97effc513fc3d9791134024f5e9e95ccfb7ff",
+      "source_sha256": "4f426d830d81b306628e601bde476422de19d2032236eb50e8db1b7dc46cf4c7",
       "unsupported_reason": "Only fixed ubuntu-24.04 native/ASan configure and signer CTest selection projections are authored, with fresh Linux/aarch64 name-surface evidence (not x86_64 acceptance). Native uses the complete regex, including aliases and registered conditionals. Authored build2/test1 is supported. Default-all selector build attestation/coverage (.34), full audits/nonmember admission, native Go/nak baseline/quarantine, Meson/deb/shell extension steps, ubuntu-latest and TSan instrumented-GLib/nsync/linkage/advisory execution remain unsupported. No whole-job parity or nonmember approval is implied.",
-      "workflow_sha256": "d17a08178e6763512e45d36416eaea5b3bbbbc20ba2d8ee3ee5a008a2715810e",
+      "workflow_sha256": "6a005ad0523603ac1b9b2f3c9a4402a4cae0f36d81c3651618ec23f8755cab05",
       "unimplemented_variants": [
         {
           "runner": "ubuntu-latest",

@@ -60,7 +60,7 @@ RUN for element in appsrc appsink decodebin audioconvert audioresample \
     scaletempo autoaudiosrc autoaudiosink level opusenc opusdec oggmux \
     oggdemux qtdemux avdec_aac; do gst-inspect-1.0 "$element" >/dev/null; done
 # Native Grotto package verification uses the same debhelper toolchain as CI.
-RUN apt-get update && apt-get install -y --no-install-recommends debhelper dpkg-dev fakeroot \
+RUN apt-get update && apt-get install -y --no-install-recommends debhelper dpkg-dev fakeroot lintian \
  && rm -rf /var/lib/apt/lists/*
 # Grotto's GUI-only LSan exceptions name static third-party functions, not modules
 # (nostrc-ydtdf, nostrc-ojtu3). Keep in sync with grotto-ci.yml's symbol step.

@@ -1,6 +1,10 @@
 grotto (0.1.1-1) UNRELEASED; urgency=medium
 
   * Fix the alternate Meson frontend's Groundhog executable-side link closure.
+  * Let system desktop-cache triggers and debhelper own schema/icon/desktop
+    updates; remove redundant cache maintainer scripts and trigger interests
+    that rejected dpkg's triggered callback (nostrc-x5gaf).
+    Packaging-only PATCH correction folds into unreleased Grotto 0.1.1.
 
  -- Biz <chebizarro@protonmail.com>  Tue, 27 Oct 2026 12:00:00 +0000
 
