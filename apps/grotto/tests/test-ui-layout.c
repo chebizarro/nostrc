@@ -113,6 +113,7 @@ static void call(GDBusConnection *bus, const gchar *sender, const gchar *path, c
     revision++; permission_writes++;
     g_dbus_method_invocation_return_value(inv, NULL); g_dbus_connection_emit_signal(bus, NULL, path, interface, "ClientsChanged", g_variant_new("(t)", revision), NULL); return;
   }
+  if (!strcmp(method, "GetIdentityMigration")) { g_dbus_method_invocation_return_dbus_error(inv, "org.nostr.Grotto.Control1.Error.NotFound", "No saved migration"); return; }
   if (!strcmp(method, "ExportIdentity")) {
     const char *identity, *format, *pass; g_variant_get(args, "(&s&s&s)", &identity, &format, &pass);
     g_assert_cmpstr(identity, ==, npub); g_assert_cmpstr(format, ==, "mnemonic"); g_assert_cmpstr(pass, ==, ""); seed_exports++;

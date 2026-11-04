@@ -21,7 +21,7 @@ typedef struct {
   GDBusMethodInvocation *store, *test, *seed, *encrypted;
   guint finished, cancel_calls, remove_calls;
   const gchar *expected_format, *expected_pass;
-  gboolean remove_failure;
+  gboolean remove_failure, migration_available;
   gboolean verified;
   gchar *npub, *phrase;
 } Fixture;
@@ -66,6 +66,11 @@ static void mocked_io(GDBusConnection *bus, const gchar *sender, const gchar *pa
   if (!strcmp(method, "ListClients") || !strcmp(method, "ListRequests") || !strcmp(method, "ListActivity")) {
     GVariantBuilder rows; g_variant_builder_init(&rows, G_VARIANT_TYPE("aa{sv}"));
     g_dbus_method_invocation_return_value(inv, g_variant_new("(@aa{sv})", g_variant_builder_end(&rows))); return;
+  }
+  if (!strcmp(method, "GetIdentityMigration")) {
+    if (active && active->migration_available) g_dbus_method_invocation_return_value(inv, g_variant_new("(s)", "{\"public-migration-fixture\":true}"));
+    else g_dbus_method_invocation_return_dbus_error(inv, "org.nostr.Grotto.Control1.Error.NotFound", "No saved migration");
+    return;
   }
   if (!strcmp(method, "ListIdentities")) {
     const gchar *ids[] = {inventory_first ? inventory_first : stored_identity, inventory_first ? stored_identity : NULL, NULL};
@@ -368,7 +373,11 @@ static void backup_deliberate_actions(Fixture *f, gconstpointer data) {
   stored_identity = g_strdup(f->npub);
   AdwWindow *window = ADW_WINDOW(adw_window_new()); g_object_ref(window);
   GtkWidget *page = page_identity_detail_new(f->npub); adw_window_set_content(window, page); gtk_window_present(GTK_WINDOW(window));
+  f->migration_available = TRUE; /* saved public announcement survives page recreation */
   GtkWidget *raw = detail_child(page, "raw_row"); wait_sensitive(raw, TRUE);
+  guint timeout = g_timeout_add_seconds(10, bound, NULL);
+  while (!gtk_widget_get_visible(detail_child(page, "announcement_row"))) g_main_context_iteration(NULL, TRUE);
+  g_source_remove(timeout);
   g_assert_null(f->seed); g_assert_null(f->encrypted); /* mounting never exports */
   g_signal_emit_by_name(raw, "activated");
   AdwAlertDialog *dialog = ADW_ALERT_DIALOG(adw_window_get_visible_dialog(window)); g_assert_nonnull(dialog);
@@ -547,7 +556,7 @@ int main(int argc, char **argv) {
   g_setenv("GDK_DEBUG", "no-portals", TRUE); /* native chooser; portal acceptance is G08/G12 */
   g_setenv("GIO_USE_VOLUME_MONITOR", "unix", TRUE); /* no desktop/global remote-volume proxies in this private-bus fixture */
   NostrcTestBus *bus = nostrc_test_bus_new(NOSTRC_TEST_BUS_FLAGS_NONE); nostrc_test_bus_up(bus); server = nostrc_test_bus_connect(bus);
-  GDBusNodeInfo *info = g_dbus_node_info_new_for_xml("<node><interface name='org.nostr.Signer'><method name='ListIdentities'><arg type='as' direction='out'/></method></interface><interface name='org.nostr.Grotto.Control1'><method name='GetStatus'><arg type='a{sv}' direction='out'/></method><method name='StoreKeyWithMnemonic'><arg type='s' direction='in'/><arg type='s' direction='in'/><arg type='s' direction='in'/><arg type='s' direction='out'/></method><method name='ImportIdentity'><arg type='s' direction='in'/><arg type='s' direction='in'/><arg type='s' direction='in'/><arg type='s' direction='in'/><arg type='s' direction='out'/></method><method name='SelfTestIdentity'><arg type='s' direction='in'/><arg type='s' direction='out'/></method><method name='CancelIdentitySelfTest'><arg type='s' direction='in'/></method><method name='ExportIdentity'><arg type='s' direction='in'/><arg type='s' direction='in'/><arg type='s' direction='in'/><arg type='s' direction='out'/></method><method name='RemoveIdentity'><arg type='s' direction='in'/><arg type='s' direction='in'/><arg type='b' direction='out'/></method><signal name='IdentitySelfTestTesting'><arg type='s'/></signal></interface></node>", NULL);
+  GDBusNodeInfo *info = g_dbus_node_info_new_for_xml("<node><interface name='org.nostr.Signer'><method name='ListIdentities'><arg type='as' direction='out'/></method></interface><interface name='org.nostr.Grotto.Control1'><method name='GetStatus'><arg type='a{sv}' direction='out'/></method><method name='GetIdentityMigration'><arg type='s' direction='in'/><arg type='s' direction='out'/></method><method name='ListClients'><arg type='aa{sv}' direction='out'/></method><method name='ListRequests'><arg type='aa{sv}' direction='out'/></method><method name='ListActivity'><arg type='t' direction='in'/><arg type='u' direction='in'/><arg type='aa{sv}' direction='out'/></method><method name='StoreKeyWithMnemonic'><arg type='s' direction='in'/><arg type='s' direction='in'/><arg type='s' direction='in'/><arg type='s' direction='out'/></method><method name='ImportIdentity'><arg type='s' direction='in'/><arg type='s' direction='in'/><arg type='s' direction='in'/><arg type='s' direction='in'/><arg type='s' direction='out'/></method><method name='SelfTestIdentity'><arg type='s' direction='in'/><arg type='s' direction='out'/></method><method name='CancelIdentitySelfTest'><arg type='s' direction='in'/></method><method name='ExportIdentity'><arg type='s' direction='in'/><arg type='s' direction='in'/><arg type='s' direction='in'/><arg type='s' direction='out'/></method><method name='RemoveIdentity'><arg type='s' direction='in'/><arg type='s' direction='in'/><arg type='b' direction='out'/></method><signal name='IdentitySelfTestTesting'><arg type='s'/></signal></interface></node>", NULL);
   guint legacy = g_dbus_connection_register_object(server, "/org/nostr/signer", info->interfaces[0], &vtable, NULL, NULL, NULL);
   guint control = g_dbus_connection_register_object(server, "/org/nostr/signer/grotto", info->interfaces[1], &vtable, NULL, NULL, NULL);
   g_autoptr(GVariant) name = g_dbus_connection_call_sync(server, "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "RequestName", g_variant_new("(su)", "org.nostr.Signer", 0), NULL, 0, 5000, NULL, NULL);

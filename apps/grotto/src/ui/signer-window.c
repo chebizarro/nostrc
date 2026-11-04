@@ -780,8 +780,9 @@ static void identity_available(GrottoPanelsService *service, SignerWindow *self)
     if (!selected || metadata->is_default) g_set_object(&selected, item);
   }
   if (!selected) return; /* Inventory notifications complete the navigation. */
-  self->pending_backup = FALSE;
   const GrottoPanelsMetadata *metadata = grotto_panels_item_get_metadata(selected);
+  if (!metadata->can_sign && !metadata->watch_only) return; /* Wait for daemon inventory. */
+  self->pending_backup = FALSE;
   if (metadata->can_sign && !metadata->watch_only)
     grotto_panel_host_invoke(panel, GROTTO_PANEL_HOST_BACKUP, metadata->public_key, NULL);
 }

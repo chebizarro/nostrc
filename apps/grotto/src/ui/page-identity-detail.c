@@ -106,6 +106,15 @@ static void write_destination(GrottoIdentityDetail *self, DetailOperation operat
   g_file_replace_contents_bytes_async(self->destination, job->bytes, NULL, FALSE,
       G_FILE_CREATE_PRIVATE, self->cancel, file_done, job);
 }
+static void migration_available(GObject *source, GAsyncResult *result, gpointer data) {
+  DetailCtx *ctx = data;
+  g_autoptr(GVariant) value = g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), result, NULL);
+  if (current(ctx) && value) {
+    const char *announcement; g_variant_get(value, "(&s)", &announcement);
+    if (*announcement) gtk_widget_set_visible(GTK_WIDGET(ctx->self->announcement_row), TRUE);
+  }
+  context_free(ctx);
+}
 static void reply(GObject *source, GAsyncResult *result, gpointer data) {
   DetailCtx *ctx = data; GrottoIdentityDetail *self = ctx->self; g_autoptr(GError) error = NULL;
   GVariant *value = g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), result, &error);
@@ -142,6 +151,9 @@ static void reply(GObject *source, GAsyncResult *result, gpointer data) {
     gtk_widget_set_visible(GTK_WIDGET(self->test_row), test);
     gtk_widget_set_visible(GTK_WIDGET(self->replace_row), rotate);
     if (!self->ready) update(self, _("Identity actions are unavailable with this signer"));
+    else g_dbus_connection_call(self->bus, self->owner, CONTROL_PATH, CONTROL_IFACE, "GetIdentityMigration",
+      g_variant_new("(s)", self->identity), G_VARIANT_TYPE("(s)"), G_DBUS_CALL_FLAGS_NO_AUTO_START,
+      10000, self->cancel, migration_available, context(self, MIGRATION));
   } else {
     const gchar *text; g_variant_get(value, "(&s)", &text);
     if (ctx->operation == SEED && self->seed_words) {
@@ -201,6 +213,11 @@ static void save_chosen(GObject *source, GAsyncResult *result, gpointer data) {
 }
 static void choose_destination(GrottoIdentityDetail *self, DetailOperation operation) {
   if (!self->ready || !self->identity || self->busy) return;
+  if (operation == ENCRYPTED_FILE && self->backup_written_down) {
+    self->backup_available = FALSE; gtk_check_button_set_active(self->backup_written_down, FALSE);
+    gtk_widget_set_visible(GTK_WIDGET(self->backup_written_down), FALSE);
+    gtk_widget_set_visible(GTK_WIDGET(self->btn_backup_done), FALSE);
+  }
   self->busy = TRUE; update(self, NULL);
   GtkFileDialog *dialog = gtk_file_dialog_new();
   gtk_file_dialog_set_initial_name(dialog, operation == MIGRATION ? "migration.json" : "identity.ncryptsec");
@@ -344,6 +361,7 @@ static void owner_vanished(GDBusConnection *bus, const char *name, gpointer data
   self->generation++; g_cancellable_cancel(self->cancel); close_dialog(self);
   g_clear_object(&self->cancel); self->cancel = g_cancellable_new();
   self->busy = self->ready = FALSE; g_clear_pointer(&self->owner, g_free);
+  gtk_widget_set_visible(GTK_WIDGET(self->announcement_row), FALSE);
   update(self, _("Signer unavailable. Open Grotto and retry"));
 }
 static void unmap(GtkWidget *widget) {
