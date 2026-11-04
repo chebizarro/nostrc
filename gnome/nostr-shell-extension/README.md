@@ -158,6 +158,7 @@ node tests/run-tests.js
 gjs -m tests/run-tests.js
 sh tests/run-monitors.sh gjs
 sh tests/run-signer.sh gjs
+sh tests/run-installed.sh gjs
 glib-compile-schemas --strict --dry-run schemas
 ```
 
@@ -256,6 +257,33 @@ gnome-extensions enable nostr@nostr.org
 Extension Manager (`com.mattjakeman.ExtensionManager`) installs the same zip
 via *Install from file*.
 
+## Diagnosing `State: INACTIVE`
+
+Check from an **unlocked desktop**. The extension intentionally supports only
+GNOME's default `user` session mode (including Ubuntu's `user` parent mode), not
+`unlock-dialog`. While locked, GNOME disables it: `INACTIVE`, even with
+`enabled=true` and no error, is expected. Ubuntu Dock and other session-only
+extensions also become inactive. Unlock normally; do not enable lock-screen
+support, restart Shell, or reinstall the package to work around this state.
+
+Read-only diagnostics on the logged-in user's session bus:
+
+```sh
+gdbus call --session --dest org.gnome.ScreenSaver \
+    --object-path /org/gnome/ScreenSaver --method org.gnome.ScreenSaver.GetActive
+gdbus call --session --dest org.gnome.Shell.Extensions \
+    --object-path /org/gnome/Shell/Extensions \
+    --method org.gnome.Shell.Extensions.GetExtensionInfo nostr@nostr.org
+```
+
+`GetActive` must be `false` for the desktop check. On GNOME 46, extension state
+`1` is ACTIVE, `2` is INACTIVE and `3` is ERROR; inspect `error` as well as
+`enabled`. An import/enable error is not the same as normal lock-screen
+inactivity. If the extension stays inactive after unlocking, inspect the Shell
+journal and installed module/schema tree before changing the session. Replacing
+an already imported extension still requires one owner-performed logout/login;
+check for `Version: 0.5.0` and `State: ACTIVE` **after unlocking** that session.
+
 ## Files
 
 | File | |
@@ -275,6 +303,21 @@ node tests/run-tests.js          # lib/state.js (also: gjs -m tests/run-tests.js
 tests/run-monitors.sh            # lib/relay.js, lib/wallet.js, lib/dm.js on a private bus (Linux)
 ctest -R nostr-shell-extension   # all of the above + schema --strict
 ```
+
+`sh tests/run-installed.sh gjs` stages the production CMake install rules in a
+temporary prefix, compiles and loads only that prefix's schema, parses the
+installed entrypoints and their relative module graph, and dynamically imports
+the real Gio-only monitors (including `lib/signer.js`). It catches missing
+installed modules, syntax failures and monitor import/evaluation errors. It does
+not import the Shell-only UI modules or prove live enable/disable behavior.
+`nostr-shell-extension-installed` registers in CTest with gjs and the schema
+compiler. With Debian's `dh_install` available, a second test,
+`nostr-shell-extension-debian-installed`, applies the real Debian `.install`
+manifest before checking the tree; run it directly with
+`sh tests/run-installed.sh gjs cmake glib-compile-schemas dh_install`.
+This catches omissions that CMake staging alone cannot detect. The Debian
+module/icon completeness fix folds into unreleased 0.5.0; no new public
+functionality or packaging contract is introduced (nostrc-u6v55.24).
 
 `test-monitors.js` runs the real monitors on a private `dbus-run-session`
 bus. It uses

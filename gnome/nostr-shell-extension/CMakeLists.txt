@@ -58,6 +58,21 @@ if (BUILD_TESTING)
   endif()
   find_program(NSE_GJS gjs)
   if (NSE_GJS)
+    if (NSE_GLIB_COMPILE_SCHEMAS)
+      add_test(NAME nostr-shell-extension-installed
+               COMMAND sh tests/run-installed.sh ${NSE_GJS} ${CMAKE_COMMAND}
+                       ${NSE_GLIB_COMPILE_SCHEMAS}
+               WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+      set_tests_properties(nostr-shell-extension-installed PROPERTIES TIMEOUT 60)
+      find_program(NSE_DH_INSTALL dh_install)
+      if (NSE_DH_INSTALL)
+        add_test(NAME nostr-shell-extension-debian-installed
+                 COMMAND sh tests/run-installed.sh ${NSE_GJS} ${CMAKE_COMMAND}
+                         ${NSE_GLIB_COMPILE_SCHEMAS} ${NSE_DH_INSTALL}
+                 WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+        set_tests_properties(nostr-shell-extension-debian-installed PROPERTIES TIMEOUT 60)
+      endif()
+    endif()
     add_test(NAME nostr-shell-extension-state-gjs
              COMMAND ${NSE_GJS} -m tests/run-tests.js
              WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
