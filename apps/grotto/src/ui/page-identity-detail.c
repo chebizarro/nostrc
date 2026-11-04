@@ -1,4 +1,4 @@
-#include "../i18n.h"
+#include "i18n.h"
 #include "page-identity-detail.h"
 #include "signer-window.h"
 #include "app-resources.h"
@@ -9,7 +9,7 @@
 #include "../secure-mem.h"
 #include "../secret-variant.h"
 #include "../secret-clipboard.h"
-#include "../session-manager.h"
+#include "session-manager.h"
 #include <string.h>
 #define CONTROL_PATH "/org/nostr/signer/grotto"
 #define CONTROL_IFACE "org.nostr.Grotto.Control1"

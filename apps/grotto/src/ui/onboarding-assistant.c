@@ -9,7 +9,7 @@
 #include "../secret_store.h"
 #include "../secure-mem.h"
 #include "../secret-clipboard.h"
-#include "../session-manager.h"
+#include "session-manager.h"
 #include "widgets/gn-secure-entry.h"
 #include <gio/gio.h>
 #include <string.h>

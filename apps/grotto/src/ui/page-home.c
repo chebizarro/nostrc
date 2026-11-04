@@ -5,7 +5,7 @@
 #include "onboarding-assistant.h"
 #include "sheets/sheet-qr-display.h"
 #include "../accounts_store.h"
-#include "../settings_manager.h"
+#include "settings_manager.h"
 
 struct _GrottoPageHome {
   AdwPreferencesPage parent_instance;
