@@ -1,0 +1,48 @@
+using Gtk 4.0;
+using Adw 1;
+template $GrottoIdentityPanel: $GrottoPanel {
+  title: _("Identity");
+  tag: "identity";
+  Adw.NavigationView navigation {
+    Adw.NavigationPage {
+      title: _("Identity");
+      Adw.ToolbarView {
+        [top] Adw.HeaderBar {}
+        [top] Adw.Banner banner { title: _("This identity isn't backed up"); button-label: _("Back Up…"); }
+        content: Stack content {
+          StackPage { name: "empty"; child: Adw.StatusPage empty {
+            title: _("No Identity Yet");
+            description: _("Create or import an identity to start signing");
+            icon-name: "avatar-default-symbolic";
+            Button empty_add { label: _("_Add Identity…"); use-underline: true; halign: center; styles ["pill"] }
+          }; }
+          StackPage { name: "identity"; child: Adw.PreferencesPage preferences {
+            Adw.PreferencesGroup { Adw.Avatar avatar { size: 96; show-initials: true; halign: center; } }
+            Adw.PreferencesGroup {
+              description: _("The name is a local label, not a public profile");
+              Adw.EntryRow name_row { title: _("_Name"); use-underline: true; show-apply-button: true; }
+              Adw.ActionRow key_row {
+                title: _("Public Key"); subtitle-selectable: true; subtitle-lines: 0;
+                [suffix] Button copy_key { icon-name: "edit-copy-symbolic"; valign: center; tooltip-text: _("Copy Public Key"); accessibility { label: _("Copy Public Key"); } styles ["flat"] }
+                [suffix] Button show_qr { icon-name: "grotto-qr-code-symbolic"; valign: center; tooltip-text: _("Show QR Code"); accessibility { label: _("Show QR Code"); } styles ["flat"] }
+              }
+            }
+            Adw.PreferencesGroup {
+              Adw.ActionRow backup_row { title: _("_Backup"); use-underline: true; activatable: true; [suffix] Image { icon-name: "go-next-symbolic"; } }
+              Adw.ActionRow apps_row { title: _("Connected Apps"); activatable: true; [suffix] Image { icon-name: "go-next-symbolic"; } }
+              Adw.ActionRow default_row {
+                title: _("Default for Older Apps"); subtitle-lines: 0;
+                [suffix] Button set_default { label: _("Set as Default"); valign: center; }
+                [suffix] Image default_check { icon-name: "object-select-symbolic"; }
+              }
+              Adw.ActionRow details_row { title: _("Identity Details"); activatable: true; [suffix] Image { icon-name: "go-next-symbolic"; } }
+            }
+            Adw.PreferencesGroup other_group { title: _("Other Identities"); ListBox other_list { selection-mode: none; styles ["boxed-list"] } }
+            Adw.PreferencesGroup add_group { Button add_identity { label: _("_Add Identity…"); use-underline: true; halign: center; styles ["flat"] } }
+            Adw.PreferencesGroup advanced_group { title: _("Advanced"); Button remove_identity { label: _("_Remove Identity…"); use-underline: true; halign: center; styles ["destructive-action", "pill"] } }
+          }; }
+        };
+      }
+    }
+  }
+}

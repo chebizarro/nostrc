@@ -21,11 +21,11 @@ G_DEFINE_TYPE_WITH_CODE(GrottoPanelsControl1Service, grotto_panels_control1_serv
 /* This closed table is the ONLY RPC dispatch route for panel commands. */
 static const char *const methods[] = {
   "SetClientLabel", "SetDefaultIdentityForLegacy", "SetClientTrust", "SetPermissions",
-  "RevokeClient", "SetPaused", "SetPaused", "ClearActivity", "ConfigureBunker", "ResetBunkerEndpoint"
+  "RevokeClient", "SetPaused", "SetPaused", "ClearActivity", "ConfigureBunker", "ResetBunkerEndpoint", NULL /* Local metadata, not a daemon RPC. */
 };
 static const char *const capability_names[] = {
   "set-client-label", "set-default-identity", "set-client-trust", "set-permissions",
-  "revoke-client", "pause", "resume", "clear-activity", "configure-remote", "reset-remote"
+  "revoke-client", "pause", "resume", "clear-activity", "configure-remote", "reset-remote", NULL
 };
 G_STATIC_ASSERT(G_N_ELEMENTS(methods) == GROTTO_PANEL_N_COMMANDS);
 G_STATIC_ASSERT(G_N_ELEMENTS(capability_names) == GROTTO_PANEL_N_COMMANDS);
@@ -115,7 +115,7 @@ static void snapshot_done(GObject *source, GAsyncResult *result, gpointer data) 
         /* A separate caller-specific map: never use today's coarse capabilities. */
         g_autoptr(GVariant) allowed = g_variant_lookup_value(status, "management-capabilities", G_VARIANT_TYPE("a{sb}"));
         if (allowed) for (guint i = 0; i < GROTTO_PANEL_N_COMMANDS; i++)
-          g_variant_lookup(allowed, capability_names[i], "b", &caps[i]);
+          if (capability_names[i]) g_variant_lookup(allowed, capability_names[i], "b", &caps[i]);
       }
       gboolean availability_changed = self->available != available;
       self->available = available;

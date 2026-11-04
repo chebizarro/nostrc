@@ -27,6 +27,7 @@ static GrottoPanelCommandArgs valid(GrottoPanelCommand command) {
     case GROTTO_PANEL_SET_CLIENT_TRUST: args.principal = "app"; args.trust = "ask"; break;
     case GROTTO_PANEL_REVOKE_CLIENT: args.principal = "app"; break;
     case GROTTO_PANEL_SET_DEFAULT_IDENTITY: args.public_key = "npub-public"; break;
+    case GROTTO_PANEL_SET_IDENTITY_LABEL: args.public_key = "npub-public"; args.label = "Local name"; break;
     case GROTTO_PANEL_SET_PERMISSIONS:
       args.principal = "app"; args.public_key = "npub-public"; args.permissions = permissions;
       args.n_permissions = 1; args.expected_revision = 4; break;

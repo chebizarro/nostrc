@@ -8,6 +8,7 @@ typedef struct {
   gpointer host_data;
   GDestroyNotify host_destroy;
   gulong capabilities_id, availability_id;
+  gboolean disposing;
 } GrottoPanelPrivate;
 G_DEFINE_ABSTRACT_TYPE_WITH_PRIVATE(GrottoPanel, grotto_panel, ADW_TYPE_NAVIGATION_PAGE)
 enum { PROP_0, PROP_SERVICE, N_PROPS };
@@ -56,6 +57,7 @@ void grotto_panel_set_host(GrottoPanel *self, const GrottoPanelsHost *host,
   p->host = host ? *host : (GrottoPanelsHost){0};
   p->host_data = data;
   p->host_destroy = destroy;
+  if (!p->disposing) g_signal_emit(self, changed_signal, 0);
 }
 gboolean grotto_panel_host_can(GrottoPanel *self, GrottoPanelHostAction action) {
   g_return_val_if_fail(GROTTO_IS_PANEL(self), FALSE);
@@ -110,6 +112,7 @@ static void get_property(GObject *object, guint id, GValue *value, GParamSpec *p
 static void dispose(GObject *object) {
   GrottoPanel *self = GROTTO_PANEL(object);
   GrottoPanelPrivate *p = grotto_panel_get_instance_private(self);
+  p->disposing = TRUE;
   if (p->service) {
     g_signal_handler_disconnect(p->service, p->capabilities_id);
     g_signal_handler_disconnect(p->service, p->availability_id);

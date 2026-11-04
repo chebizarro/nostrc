@@ -5,6 +5,7 @@
 #include "onboarding-assistant.h"
 #include "sheets/sheet-qr-display.h"
 #include "../accounts_store.h"
+#include "../settings_manager.h"
 
 struct _GrottoPageHome {
   AdwPreferencesPage parent_instance;
@@ -26,8 +27,7 @@ static void accounts_changed(AccountsStore *store, AccountsChangeType change, co
 static void identity_clicked(GtkButton *button, gpointer data) {
   GrottoPageHome *self = data;
   g_autofree gchar *id = g_strdup(g_object_get_data(G_OBJECT(button), "identity"));
-  accounts_store_set_selected(accounts_store_get_default(), id);
-  identities(self); page_identity_detail_present_identity(GTK_WIDGET(self), id);
+  page_identity_detail_present_identity(GTK_WIDGET(self), id);
 }
 static void add_identity(GtkButton *button, gpointer data) {
   (void)button; GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(data));
@@ -36,43 +36,40 @@ static void add_identity(GtkButton *button, gpointer data) {
 static void identities(GrottoPageHome *self) {
   AccountsStore *store = accounts_store_get_default();
   g_autoptr(GPtrArray) rows = accounts_store_list(store);
-  const gchar *selected = accounts_store_get_selected(store);
-  if (!selected && rows && rows->len) {
-    /* Management-only selection; never writes the daemon default. */
-    AccountEntry *first = rows->pdata[0]; accounts_store_set_selected(store, first->id);
-    selected = accounts_store_get_selected(store);
-  }
+  g_autofree gchar *default_id = g_strdup(settings_manager_get_default_identity(settings_manager_get_default()));
+  const gchar *selected = default_id;
+  if ((!selected || !*selected) && rows && rows->len) selected = ((AccountEntry *)rows->pdata[0])->id;
   GtkWidget *child;
   while ((child = gtk_widget_get_first_child(GTK_WIDGET(self->avatars)))) gtk_box_remove(self->avatars, child);
   g_clear_pointer(&self->identity, g_free);
   for (guint i = 0; rows && i < rows->len; i++) {
     AccountEntry *entry = rows->pdata[i];
     const gchar *name = entry->label && *entry->label ? entry->label : _("Identity");
+    if (g_strcmp0(selected, entry->id)) continue;
     GtkWidget *button = gtk_button_new(); gtk_widget_add_css_class(button, "flat");
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
     GtkWidget *avatar = adw_avatar_new(40, name, TRUE); gtk_box_append(GTK_BOX(box), avatar);
     GtkWidget *label = gtk_label_new(entry->watch_only ? _("Watch only") : name);
     gtk_label_set_max_width_chars(GTK_LABEL(label), 10); gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
     gtk_box_append(GTK_BOX(box), label); gtk_button_set_child(GTK_BUTTON(button), box);
-    g_autofree gchar *accessible = g_strdup_printf(_("%s · %s · %s"), name,
-        entry->watch_only ? _("Watch only") : _("Signing identity"), !g_strcmp0(selected, entry->id) ? _("Selected") : _("Not selected"));
+    g_autofree gchar *accessible = g_strdup_printf(_("Manage %s"), name);
     gtk_accessible_update_property(GTK_ACCESSIBLE(button), GTK_ACCESSIBLE_PROPERTY_LABEL, accessible, -1);
     g_object_set_data_full(G_OBJECT(button), "identity", g_strdup(entry->id), g_free);
     g_signal_connect(button, "clicked", G_CALLBACK(identity_clicked), self); gtk_box_append(self->avatars, button);
     if (!g_strcmp0(selected, entry->id)) {
       self->identity = g_strdup(entry->id);
-      gtk_widget_remove_css_class(button, "flat"); gtk_widget_add_css_class(button, "suggested-action");
+
       adw_preferences_row_set_title(ADW_PREFERENCES_ROW(self->identity_card), name);
       g_autofree gchar *text = g_strdup_printf("%.16s…%.8s%s", entry->id, entry->id + MAX(0, (gint)strlen(entry->id) - 8),
           entry->watch_only ? _(" · Watch only") : "");
       adw_action_row_set_subtitle(self->identity_card, text);
     }
   }
-  GtkWidget *add = gtk_button_new_with_label(_("+ Add")); gtk_widget_set_valign(add, GTK_ALIGN_CENTER);
+  GtkWidget *add = gtk_button_new_with_label(_("Add Identity…")); gtk_widget_set_valign(add, GTK_ALIGN_CENTER);
   g_signal_connect(add, "clicked", G_CALLBACK(add_identity), self); gtk_box_append(self->avatars, add);
   if (!self->identity) {
     adw_preferences_row_set_title(ADW_PREFERENCES_ROW(self->identity_card), _("Choose an identity"));
-    adw_action_row_set_subtitle(self->identity_card, _("Management selection only — apps keep their own identity."));
+    adw_action_row_set_subtitle(self->identity_card, _("Create or import an identity to start signing"));
   }
   gtk_widget_set_sensitive(GTK_WIDGET(self->copy_key), self->identity != NULL);
   gtk_widget_set_sensitive(GTK_WIDGET(self->show_qr), self->identity != NULL);

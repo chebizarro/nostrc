@@ -11,12 +11,18 @@ pkg_check_modules(GROTTO_PANELS_DEPS REQUIRED IMPORTED_TARGET gtk4>=4.14 libadwa
 set(_pins GDK_VERSION_MIN_REQUIRED=GDK_VERSION_4_14 GDK_VERSION_MAX_ALLOWED=GDK_VERSION_4_14
   GTK_VERSION_MIN_REQUIRED=GDK_VERSION_4_14 GTK_VERSION_MAX_ALLOWED=GDK_VERSION_4_14
   ADW_VERSION_MIN_REQUIRED=ADW_VERSION_1_5 ADW_VERSION_MAX_ALLOWED=ADW_VERSION_1_5)
-add_library(grotto-panels SHARED src/grotto-panel.c src/grotto-panels-service.c src/grotto-panels-validation.c)
+find_program(GLIB_COMPILE_RESOURCES glib-compile-resources REQUIRED)
+add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/grotto-panels-resources.c"
+  COMMAND ${GLIB_COMPILE_RESOURCES} --generate-source --internal --target=${CMAKE_CURRENT_BINARY_DIR}/grotto-panels-resources.c
+    --sourcedir=${CMAKE_CURRENT_SOURCE_DIR}/data ${CMAKE_CURRENT_SOURCE_DIR}/data/grotto-panels.gresource.xml
+  DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/data/grotto-panels.gresource.xml ${CMAKE_CURRENT_SOURCE_DIR}/data/identity-panel.ui ${CMAKE_CURRENT_SOURCE_DIR}/data/icons/scalable/actions/grotto-qr-code-symbolic.svg)
+add_library(grotto-panels SHARED src/grotto-panel.c src/grotto-identity-panel.c
+  src/grotto-panels-service.c src/grotto-panels-validation.c "${CMAKE_CURRENT_BINARY_DIR}/grotto-panels-resources.c")
 add_library(GrottoPanels::Panels ALIAS grotto-panels)
 set_target_properties(grotto-panels PROPERTIES OUTPUT_NAME grotto-panels-0
   VERSION ${PROJECT_VERSION} SOVERSION 0 EXPORT_NAME Panels C_VISIBILITY_PRESET hidden)
 target_compile_features(grotto-panels PUBLIC c_std_11)
-target_compile_definitions(grotto-panels PRIVATE GROTTO_PANELS_COMPILATION ${_pins})
+target_compile_definitions(grotto-panels PRIVATE GROTTO_PANELS_COMPILATION GETTEXT_PACKAGE="grotto-panels" ${_pins})
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
   target_compile_options(grotto-panels PRIVATE -Wall -Wextra -Werror=deprecated-declarations)
 endif()

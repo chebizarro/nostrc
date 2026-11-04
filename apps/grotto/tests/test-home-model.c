@@ -63,26 +63,10 @@ static void transactional_reload(void) {
   g_unlink(path); g_assert_true(accounts_store_load(as, NULL)); g_assert_cmpuint(accounts_store_count(as), ==, 0);
   accounts_store_free(as);
 }
-static void selection_not_default(void) {
-  g_unlink(path); AccountsStore *as = accounts_store_new();
-  g_assert_true(accounts_store_add(as, identity_a, "A", NULL)); g_assert_true(accounts_store_add(as, identity_b, "B", NULL));
-  g_assert_true(accounts_store_set_active(as, identity_a, NULL));
-  gchar *before = NULL, *after = NULL; g_file_get_contents(path, &before, NULL, NULL);
-  g_assert_true(accounts_store_set_selected(as, identity_b)); g_file_get_contents(path, &after, NULL, NULL);
-  g_assert_cmpstr(before, ==, after); g_free(before); g_free(after);
-  g_autoptr(GSettings) settings = g_settings_new("org.nostr.Grotto");
-  g_autofree gchar *default_id = g_settings_get_string(settings, "default-identity"); g_assert_cmpstr(default_id, ==, identity_a);
-  g_assert_true(accounts_store_remove(as, identity_a, NULL));
-  g_free(default_id); default_id = g_settings_get_string(settings, "default-identity"); g_assert_cmpstr(default_id, ==, "");
-  g_assert_cmpstr(accounts_store_get_selected(as), ==, identity_b);
-  gchar *active = NULL; g_assert_false(accounts_store_get_active(as, &active, NULL));
-  accounts_store_free(as);
-}
 static void authoritative_inventory(void) {
   g_unlink(path); AccountsStore *as = accounts_store_new();
   g_assert_true(accounts_store_import_pubkey(as, identity_b, "Watch", NULL, NULL));
   inventory = identity_a; sync_inventory(as);
-  g_assert_true(accounts_store_set_selected(as, identity_a));
   g_assert_true(accounts_store_set_setup_state(as, identity_a, "backup-pending", NULL));
   g_autoptr(GPtrArray) entries = accounts_store_list(as); g_assert_cmpuint(entries->len, ==, 2);
   for (guint i = 0; i < entries->len; i++) {
@@ -91,7 +75,6 @@ static void authoritative_inventory(void) {
     else { g_assert_false(e->has_secret); g_assert_true(e->watch_only); }
   }
   inventory = identity_b; sync_inventory(as);
-  g_assert_cmpstr(accounts_store_get_selected(as), ==, identity_a);
   AccountEntry *missing = accounts_store_find(as, identity_a); g_assert_false(missing->has_secret); accounts_store_entry_free(missing);
   AccountEntry *signable = accounts_store_find(as, identity_b); g_assert_true(signable->has_secret); g_assert_false(signable->watch_only); accounts_store_entry_free(signable);
   accounts_store_free(as);
@@ -121,7 +104,7 @@ static void stored_key_survives_metadata_failure(void) {
   g_assert_false(accounts_store_exists(as, identity_a));
   g_autoptr(GPtrArray) entries = accounts_store_list(as); g_assert_cmpuint(entries->len, ==, 1);
   AccountEntry *entry = entries->pdata[0]; g_assert_cmpstr(entry->id, ==, identity_a); g_assert_true(entry->has_secret);
-  g_assert_true(accounts_store_set_selected(as, identity_a)); accounts_store_free(as); g_rmdir(path);
+  accounts_store_free(as); g_rmdir(path);
 }
 static void monitor_notice(AccountsStore *as, AccountsChangeType change, const gchar *id, gpointer data) {
   (void)change; (void)id;
@@ -165,7 +148,6 @@ int main(int argc, char **argv) {
   path = g_build_filename(dir, "accounts.ini", NULL);
   g_test_add_func("/home/identities/persist-before-notify", persist_before_notify);
   g_test_add_func("/home/identities/transactional-reload", transactional_reload);
-  g_test_add_func("/home/identities/selection-not-default", selection_not_default);
   g_test_add_func("/home/identities/authoritative-inventory", authoritative_inventory);
   g_test_add_func("/home/identities/default-authoritative-reconciliation", authoritative_default_reconciliation);
   g_test_add_func("/home/identities/stored-key-metadata-failure", stored_key_survives_metadata_failure);

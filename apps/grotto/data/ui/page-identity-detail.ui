@@ -7,180 +7,94 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
 <interface>
   <requires lib="gtk" version="4.0"/>
   <template class="GrottoIdentityDetail" parent="AdwNavigationPage">
-    <property name="title" translatable="yes">Identity and Backup</property>
-    <property name="tag">identity-detail</property>
+    <property name="title" translatable="yes">Back Up Identity</property>
+    <property name="tag">backup</property>
     <child>
       <object class="AdwToolbarView">
         <child type="top">
           <object class="AdwHeaderBar"></object>
         </child>
+        <child type="top">
+          <object class="AdwBanner" id="setup_banner">
+            <property name="title" translatable="yes">Backup incomplete</property>
+            <property name="revealed">false</property>
+          </object>
+        </child>
+        <child type="top">
+          <object class="AdwBanner" id="error_banner">
+            <property name="title" translatable="yes">The backup action couldn't be completed</property>
+            <property name="button-label" translatable="yes">Retry</property>
+            <property name="revealed">false</property>
+          </object>
+        </child>
         <property name="content">
-          <object class="GtkScrolledWindow">
-            <property name="hscrollbar-policy">2</property>
+          <object class="AdwPreferencesPage">
+            <property name="description" translatable="yes">Anyone with this backup controls your identity. Grotto developers will never ask for it</property>
             <child>
-              <object class="AdwClamp">
-                <property name="maximum-size">560</property>
-                <property name="margin-start">20</property>
-                <property name="margin-end">20</property>
-                <property name="margin-top">16</property>
-                <property name="margin-bottom">20</property>
+              <object class="AdwPreferencesGroup">
                 <child>
-                  <object class="GtkBox">
-                    <property name="orientation">1</property>
-                    <property name="spacing">18</property>
-                    <child>
-                      <object class="GtkDropDown" id="identities">
-                        <accessibility>
-                          <property name="label" translatable="yes">Identity to manage</property>
-                        </accessibility>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="GtkLabel" id="setup_warning">
-                        <property name="wrap">true</property>
-                        <property name="xalign">0</property>
-                        <style>
-                          <class name="warning"/>
-                        </style>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="GtkLabel" id="public_key">
-                        <property name="wrap">true</property>
-                        <property name="selectable">true</property>
-                        <property name="xalign">0</property>
-                        <style>
-                          <class name="monospace"/>
-                        </style>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="GtkEntry" id="label_entry">
-                        <property name="placeholder-text" translatable="yes">Local identity label</property>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="GtkButton" id="btn_label">
-                        <property name="label" translatable="yes">Save Local Label</property>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="AdwPreferencesGroup">
-                        <property name="title" translatable="yes">Key Backup and Safety Tips</property>
-                        <property name="description" translatable="yes">Your secret key gives full control. Never paste it into software you do not trust. Grotto developers never ask for it. Keep a private backup. Clipboard managers can retain anything you copy.</property>
-                        <child>
-                          <object class="AdwActionRow">
-                            <property name="title" translatable="yes">Show seed words</property>
-                            <property name="subtitle" translatable="yes">Primary backup for identities created in Grotto</property>
-                            <property name="activatable-widget">btn_seed</property>
-                            <child type="suffix">
-                              <object class="GtkButton" id="btn_seed">
-                                <property name="label" translatable="yes">Show</property>
-                                <property name="valign">3</property>
-                                <style>
-                                  <class name="suggested-action"/>
-                                </style>
-                              </object>
-                            </child>
-                          </object>
-                        </child>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="GtkBox" id="seed_words">
-                        <property name="orientation">1</property>
-                        <style>
-                          <class name="monospace"/>
-                        </style>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="GtkCheckButton" id="backup_written_down">
-                        <property name="label" translatable="yes">I have safely backed up this identity</property>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="GtkButton" id="btn_backup_done">
-                        <property name="label" translatable="yes">Confirm Backup</property>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="GtkLabel">
-                        <property name="label" translatable="yes">Encrypted export passphrase (NIP-49 only)</property>
-                        <property name="wrap">true</property>
-                        <property name="xalign">0</property>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="GtkBox" id="export_passphrase_box">
-                        <property name="orientation">1</property>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="GtkButton" id="btn_export">
-                        <property name="label" translatable="yes">Export Encrypted Key (NIP-49)</property>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="GtkButton" id="btn_qr">
-                        <property name="label" translatable="yes">Show Encrypted Key QR Code…</property>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="GtkButton" id="btn_raw">
-                        <property name="label" translatable="yes">Copy Secret Key…</property>
-                        <style>
-                          <class name="destructive-action"/>
-                        </style>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="AdwPreferencesGroup">
-                        <property name="title" translatable="yes">Identity Management</property>
-                        <property name="description" translatable="yes">Managing this identity never switches identities for another application.</property>
-                        <child>
-                          <object class="AdwActionRow">
-                            <property name="title" translatable="yes">Default for older apps</property>
-                            <property name="subtitle" translatable="yes">Only applications that do not specify an identity use this default</property>
-                            <child type="suffix">
-                              <object class="GtkButton" id="btn_default">
-                                <property name="label" translatable="yes">Set Default</property>
-                                <property name="valign">3</property>
-                              </object>
-                            </child>
-                          </object>
-                        </child>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="GtkButton" id="btn_test">
-                        <property name="label" translatable="yes">Retry Identity Self-Test</property>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="GtkButton" id="btn_rotate">
-                        <property name="label" translatable="yes">Create Successor Identity…</property>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="GtkButton" id="btn_migration">
-                        <property name="label" translatable="yes">Export Saved Migration Announcement</property>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="GtkButton" id="btn_remove">
-                        <property name="label" translatable="yes">Remove This Identity…</property>
-                        <style>
-                          <class name="destructive-action"/>
-                        </style>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="GtkLabel" id="status_label">
-                        <property name="wrap">true</property>
-                        <property name="xalign">0</property>
-                      </object>
-                    </child>
+                  <object class="AdwActionRow" id="public_key">
+                    <property name="title" translatable="yes">Identity</property>
+                    <property name="subtitle-selectable">true</property>
+                    <property name="subtitle-lines">0</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="AdwActionRow" id="phrase_row">
+                    <property name="title" translatable="yes">Show Recovery Phrase…</property>
+                    <property name="subtitle" translatable="yes">Words to write down and keep offline</property>
+                    <property name="activatable">true</property>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <child>
+              <object class="AdwPreferencesGroup" id="encrypted_group">
+                <property name="title" translatable="yes">Encrypted Backup</property>
+                <property name="description" translatable="yes">Protected by a passphrase you choose</property>
+                <child>
+                  <object class="AdwActionRow" id="save_row">
+                    <property name="title" translatable="yes">Save to File…</property>
+                    <property name="activatable">true</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="AdwActionRow" id="qr_row">
+                    <property name="title" translatable="yes">Show QR Code…</property>
+                    <property name="activatable">true</property>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <child>
+              <object class="AdwPreferencesGroup" id="advanced_group">
+                <property name="title" translatable="yes">Advanced</property>
+                <child>
+                  <object class="AdwActionRow" id="raw_row">
+                    <property name="title" translatable="yes">Copy Secret Key…</property>
+                    <property name="subtitle" translatable="yes">Clipboard managers may keep a copy</property>
+                    <property name="activatable">true</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="AdwActionRow" id="test_row">
+                    <property name="title" translatable="yes">Test This Identity</property>
+                    <property name="subtitle" translatable="yes">Signs and encrypts a test message on this device</property>
+                    <property name="activatable">true</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="AdwActionRow" id="replace_row">
+                    <property name="title" translatable="yes">Create Replacement Identity…</property>
+                    <property name="subtitle" translatable="yes">Apps aren't moved and permissions aren't copied</property>
+                    <property name="activatable">true</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="AdwActionRow" id="announcement_row">
+                    <property name="title" translatable="yes">Save Migration Announcement…</property>
+                    <property name="activatable">true</property>
+                    <property name="visible">false</property>
                   </object>
                 </child>
               </object>

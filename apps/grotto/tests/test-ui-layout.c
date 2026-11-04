@@ -1,4 +1,5 @@
 #include "ui/signer-window.h"
+#include <grotto-panels.h>
 #include "ui/page-home.h"
 #include "ui/lock-screen.h"
 #include "ui/page-client-detail.h"
@@ -23,7 +24,7 @@ static const gchar *tier = "medium";
 static guint64 revision = 12, expires_at;
 static GVariant *permission_rows;
 static gboolean force_conflict, scoped_saved_before_cleanup, fail_permission_read, conflict_cleanup;
-static guint permission_attempts;
+static guint permission_attempts, seed_exports;
 static const gchar *row_text(GVariant *row, const gchar *key) { const gchar *value = ""; g_variant_lookup(row, key, "&s", &value); return value; }
 static gboolean contains_permission(const gchar *identity, const gchar *decision) {
   for (gsize i = 0; permission_rows && i < g_variant_n_children(permission_rows); i++) {
@@ -112,10 +113,19 @@ static void call(GDBusConnection *bus, const gchar *sender, const gchar *path, c
     revision++; permission_writes++;
     g_dbus_method_invocation_return_value(inv, NULL); g_dbus_connection_emit_signal(bus, NULL, path, interface, "ClientsChanged", g_variant_new("(t)", revision), NULL); return;
   }
+  if (!strcmp(method, "ExportIdentity")) {
+    const char *identity, *format, *pass; g_variant_get(args, "(&s&s&s)", &identity, &format, &pass);
+    g_assert_cmpstr(identity, ==, npub); g_assert_cmpstr(format, ==, "mnemonic"); g_assert_cmpstr(pass, ==, ""); seed_exports++;
+    g_dbus_method_invocation_return_value(inv, g_variant_new("(s)", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about")); return;
+  }
   if (!strcmp(method, "ListIdentities")) { const gchar *ids[] = {npub, NULL}; g_dbus_method_invocation_return_value(inv, g_variant_new("(^as)", ids)); return; }
   if (!strcmp(method, "GetStatus")) {
     GVariantBuilder b; g_variant_builder_init(&b, G_VARIANT_TYPE_VARDICT);
 #define ADD(k,v) g_variant_builder_add(&b, "{sv}", k, v)
+    GVariantBuilder caps; g_variant_builder_init(&caps, G_VARIANT_TYPE("a{sb}"));
+    const char *capabilities[] = {"mnemonic-export", "export-identity", "raw-nsec-export", "identity-self-test", "rotate-identity"};
+    for (guint i = 0; i < G_N_ELEMENTS(capabilities); i++) g_variant_builder_add(&caps, "{sb}", capabilities[i], TRUE);
+    ADD("capabilities", g_variant_builder_end(&caps));
     ADD("control_version", g_variant_new_uint32(1)); ADD("permission_policy_version", g_variant_new_uint32(3)); ADD("control_epoch", g_variant_new_string("fixture")); ADD("permissions_revision", g_variant_new_uint64(revision));
     ADD("signed_today", g_variant_new_uint32(117)); ADD("client_count", g_variant_new_uint32(1)); ADD("pending_count", g_variant_new_uint32(0)); ADD("bunker_state", g_variant_new_string("DISABLED"));
     g_dbus_method_invocation_return_value(inv, g_variant_new("(@a{sv})", g_variant_builder_end(&b))); return;
@@ -206,9 +216,10 @@ static void finalised(gpointer data, GObject *object) { (void)object; (*(guint *
 static void layout_activate(GApplication *application, gpointer data) {
   (void)data; AdwApplication *app = ADW_APPLICATION(application);
   guint windows_gone = 0, pages_gone = 0, editors_gone = 0;
-  AccountsStore *store = accounts_store_get_default(); g_assert_true(accounts_store_add(store, npub, "My identity", NULL)); accounts_store_set_selected(store, npub);
+  AccountsStore *store = accounts_store_get_default(); g_assert_true(accounts_store_add(store, npub, "My identity", NULL));
   g_autofree gchar *watch_npub = NULL; gn_backup_get_npub("0000000000000000000000000000000000000000000000000000000000000002", &watch_npub, NULL);
   g_assert_true(accounts_store_import_pubkey(store, watch_npub, "Observer", NULL, NULL));
+  g_settings_set_string(settings_manager_get_gsettings(settings_manager_get_default()), "default-identity", npub);
   SignerWindow *window = signer_window_new(app); g_object_ref(window); g_object_weak_ref(G_OBJECT(window), finalised, &windows_gone); gtk_window_present(GTK_WINDOW(window)); wait_frames(GTK_WIDGET(window));
   AdwViewStack *stack = ADW_VIEW_STACK(gtk_widget_get_template_child(GTK_WIDGET(window), TYPE_SIGNER_WINDOW, "stack"));
   GtkWidget *home = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(window), TYPE_SIGNER_WINDOW, "page_home"));
@@ -235,15 +246,14 @@ static void layout_activate(GApplication *application, gpointer data) {
     if (!g_strcmp0(g_object_get_data(G_OBJECT(avatar), "identity"), npub)) selected_avatar = avatar;
     if (!g_strcmp0(g_object_get_data(G_OBJECT(avatar), "identity"), watch_npub)) watch_avatar = avatar;
   }
-  g_assert_nonnull(selected_avatar); g_assert_nonnull(watch_avatar);
-  g_autofree gchar *watch_name = g_strdup_printf(_("%s · %s · %s"), "Observer", _("Watch only"), _("Not selected"));
-  if (accessibility) gtk_test_accessible_assert_property(GTK_ACCESSIBLE(watch_avatar), GTK_ACCESSIBLE_PROPERTY_LABEL, watch_name);
-  g_autofree gchar *identity_name = g_strdup_printf(_("%s · %s · %s"), "My identity", _("Signing identity"), _("Selected"));
+  g_assert_nonnull(selected_avatar); g_assert_null(watch_avatar);
+  g_autofree gchar *identity_name = g_strdup_printf(_("Manage %s"), "My identity");
   if (accessibility) gtk_test_accessible_assert_property(GTK_ACCESSIBLE(selected_avatar), GTK_ACCESSIBLE_PROPERTY_LABEL, identity_name);
   g_signal_emit_by_name(selected_avatar, "clicked");
-  AdwDialog *identity_detail = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)); g_assert_nonnull(identity_detail);
-  wait_frames(GTK_WIDGET(identity_detail)); adw_dialog_close(identity_detail);
-  WAIT(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)) == NULL);
+  AdwNavigationView *identity_navigation = ADW_NAVIGATION_VIEW(gtk_widget_get_template_child(GTK_WIDGET(window), TYPE_SIGNER_WINDOW, "detail_navigation"));
+  g_assert_true(GROTTO_IS_IDENTITY_PANEL(adw_navigation_view_get_visible_page(identity_navigation)));
+  g_assert_null(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)));
+  adw_navigation_view_pop(identity_navigation); wait_frames(GTK_WIDGET(window));
   g_assert_true(accounts_store_exists(store, npub)); /* live avatar route cannot delete implicitly */
   g_assert_cmpstr(adw_view_stack_get_visible_child_name(stack), ==, "home");
   g_autoptr(GtkSelectionModel) pages = adw_view_stack_get_pages(stack);
@@ -280,6 +290,38 @@ static void layout_activate(GApplication *application, gpointer data) {
   g_assert_cmpstr(gtk_widget_get_tooltip_text(copy), ==, _("Copy public key"));
   g_assert_cmpstr(gtk_widget_get_tooltip_text(qr), ==, _("Show public-key QR code"));
   for (guint dark = 0; dark < 2; dark++) {
+    /* W3's real routes; Home stays the default until W4. */
+    adw_style_manager_set_color_scheme(adw_style_manager_get_default(), dark ? ADW_COLOR_SCHEME_FORCE_DARK : ADW_COLOR_SCHEME_FORCE_LIGHT);
+    signer_window_show_page(window, "identity"); wait_frames(GTK_WIDGET(window));
+    GtkWidget *identity_panel = GTK_WIDGET(adw_navigation_view_get_visible_page(identity_navigation));
+    g_assert_true(GROTTO_IS_IDENTITY_PANEL(identity_panel));
+    GtkWidget *identity_copy = GTK_WIDGET(gtk_widget_get_template_child(identity_panel, GROTTO_TYPE_IDENTITY_PANEL, "copy_key"));
+    g_assert_cmpstr(gtk_widget_get_tooltip_text(identity_copy), ==, "Copy Public Key");
+    if (accessibility) gtk_test_accessible_assert_property(GTK_ACCESSIBLE(identity_copy), GTK_ACCESSIBLE_PROPERTY_LABEL, "Copy Public Key");
+    GtkWidget *identity_qr = GTK_WIDGET(gtk_widget_get_template_child(identity_panel, GROTTO_TYPE_IDENTITY_PANEL, "show_qr"));
+    if (accessibility) gtk_test_accessible_assert_property(GTK_ACCESSIBLE(identity_qr), GTK_ACCESSIBLE_PROPERTY_LABEL, "Show QR Code");
+    g_signal_emit_by_name(identity_qr, "clicked");
+    AdwDialog *public_qr = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)); g_assert_nonnull(public_qr);
+    wait_frames(GTK_WIDGET(public_qr)); adw_dialog_close(public_qr); WAIT(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)) == NULL);
+    g_assert_true(gtk_widget_grab_focus(identity_copy));
+    gtk_window_set_default_size(GTK_WINDOW(window), 920, 640); snapshot(GTK_WIDGET(window), dark ? "identity-dark" : "identity-light");
+    gtk_window_set_default_size(GTK_WINDOW(window), 360, 640); wait_frames(GTK_WIDGET(window)); assert_visible_focus(window);
+    snapshot(GTK_WIDGET(window), dark ? "identity-360-dark" : "identity-360-light");
+    GtkWidget *backup_row = GTK_WIDGET(gtk_widget_get_template_child(identity_panel, GROTTO_TYPE_IDENTITY_PANEL, "backup_row"));
+    WAIT(gtk_widget_get_visible(backup_row)); g_assert_cmpuint(seed_exports, ==, 0);
+    g_signal_emit_by_name(backup_row, "activated"); wait_frames(GTK_WIDGET(window));
+    AdwNavigationView *panel_navigation = grotto_identity_panel_get_navigation(GROTTO_IDENTITY_PANEL(identity_panel));
+    GtkWidget *backup = GTK_WIDGET(adw_navigation_view_get_visible_page(panel_navigation)); g_assert_true(GROTTO_IS_IDENTITY_DETAIL(backup));
+    GtkWidget *phrase_row = GTK_WIDGET(gtk_widget_get_template_child(backup, GROTTO_TYPE_IDENTITY_DETAIL, "phrase_row"));
+    WAIT(gtk_widget_is_sensitive(phrase_row));
+    g_assert_cmpstr(adw_preferences_row_get_title(ADW_PREFERENCES_ROW(phrase_row)), ==, _("Show Recovery Phrase…"));
+    g_assert_true(gtk_widget_grab_focus(phrase_row)); assert_visible_focus(window); g_assert_cmpuint(seed_exports, ==, 0);
+    snapshot(GTK_WIDGET(window), dark ? "backup-360-dark" : "backup-360-light");
+    gtk_window_set_default_size(GTK_WINDOW(window), 920, 640); snapshot(GTK_WIDGET(window), dark ? "backup-dark" : "backup-light");
+    g_assert_true(gtk_widget_activate_action(backup, "navigation.pop", NULL)); wait_frames(GTK_WIDGET(window));
+    g_assert_false(GROTTO_IS_IDENTITY_DETAIL(adw_navigation_view_get_visible_page(panel_navigation)));
+    g_assert_true(adw_navigation_view_pop(identity_navigation)); wait_frames(GTK_WIDGET(window));
+    signer_window_show_page(window, "home");
     adw_style_manager_set_color_scheme(adw_style_manager_get_default(), dark ? ADW_COLOR_SCHEME_FORCE_DARK : ADW_COLOR_SCHEME_FORCE_LIGHT);
     gtk_window_set_default_size(GTK_WINDOW(window), 920, 640); snapshot(GTK_WIDGET(window), dark ? "home-dark" : "home-light");
     g_assert_true(gtk_widget_grab_focus(copy));
@@ -416,6 +458,20 @@ static void layout_activate(GApplication *application, gpointer data) {
     signer_window_show_page(window, "settings"); wait_frames(GTK_WIDGET(window)); assert_visible_focus(window); snapshot(GTK_WIDGET(window), dark ? "settings-dark" : "settings-light");
     signer_window_show_page(window, "home"); wait_frames(GTK_WIDGET(window)); assert_visible_focus(window);
   }
+  /* Test the production metadata writer after captures, without a transient
+   * success toast covering the screenshots. */
+  signer_window_show_identity(window, NULL); wait_frames(GTK_WIDGET(window));
+  GtkWidget *identity_panel = GTK_WIDGET(adw_navigation_view_get_visible_page(identity_navigation));
+  GtkWidget *name_row = GTK_WIDGET(gtk_widget_get_template_child(identity_panel, GROTTO_TYPE_IDENTITY_PANEL, "name_row"));
+  WAIT(gtk_widget_is_sensitive(name_row));
+  gtk_editable_set_text(GTK_EDITABLE(name_row), "Everyday identity"); g_signal_emit_by_name(name_row, "apply");
+  WAIT(gtk_widget_is_sensitive(name_row));
+  AccountEntry *renamed = accounts_store_find(store, npub); g_assert_cmpstr(renamed->label, ==, "Everyday identity"); accounts_store_entry_free(renamed);
+  signer_window_show_page(window, "backup"); wait_frames(GTK_WIDGET(window));
+  identity_panel = GTK_WIDGET(adw_navigation_view_get_visible_page(identity_navigation));
+  g_assert_true(GROTTO_IS_IDENTITY_PANEL(identity_panel));
+  g_assert_true(GROTTO_IS_IDENTITY_DETAIL(adw_navigation_view_get_visible_page(grotto_identity_panel_get_navigation(GROTTO_IDENTITY_PANEL(identity_panel)))));
+  g_assert_cmpuint(seed_exports, ==, 0); /* backup route still never reveals */
   GtkBuilder *shortcuts = gtk_builder_new_from_resource("/org/gnostr/signer/ui/shortcuts-window.ui");
   g_assert_true(GTK_IS_SHORTCUTS_WINDOW(gtk_builder_get_object(shortcuts, "shortcuts_window"))); gtk_window_destroy(GTK_WINDOW(gtk_builder_get_object(shortcuts, "shortcuts_window"))); g_object_unref(shortcuts);
   g_clear_object(&pages);

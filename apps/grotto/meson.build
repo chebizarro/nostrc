@@ -156,6 +156,7 @@ app_sources = files(
   'src/main_app.c',
   'src/legacy_dirs.c',
   'src/home-model.c',
+  'src/grotto-identity-service.c',
   'src/gn-signer-error.c',
   'src/approval-controller.c',
   'src/background.c',

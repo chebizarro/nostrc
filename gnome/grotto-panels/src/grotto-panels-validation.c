@@ -68,17 +68,17 @@ gboolean grotto_panel_command_args_validate(GrottoPanelCommand command,
    * or a cosmetic label smuggled into a tier/default/pause command. */
   gboolean principal = command == GROTTO_PANEL_SET_CLIENT_LABEL || command == GROTTO_PANEL_SET_CLIENT_TRUST ||
     command == GROTTO_PANEL_SET_PERMISSIONS || command == GROTTO_PANEL_REVOKE_CLIENT;
-  gboolean identity = command == GROTTO_PANEL_SET_DEFAULT_IDENTITY || command == GROTTO_PANEL_SET_PERMISSIONS;
+  gboolean identity = command == GROTTO_PANEL_SET_DEFAULT_IDENTITY || command == GROTTO_PANEL_SET_PERMISSIONS || command == GROTTO_PANEL_SET_IDENTITY_LABEL;
   gboolean permissions = command == GROTTO_PANEL_SET_PERMISSIONS;
   gboolean remote = command == GROTTO_PANEL_CONFIGURE_REMOTE;
   if ((!principal && a->principal) || (!identity && a->public_key) ||
-      (command != GROTTO_PANEL_SET_CLIENT_LABEL && a->label) ||
+      (command != GROTTO_PANEL_SET_CLIENT_LABEL && command != GROTTO_PANEL_SET_IDENTITY_LABEL && a->label) ||
       (command != GROTTO_PANEL_SET_CLIENT_TRUST && a->trust) ||
       (!permissions && (a->permissions || a->n_permissions || a->expected_revision)) ||
       (!remote && (a->remote_enabled || a->relays || a->methods))) return invalid(error);
   if (!identifier(a->principal, principal, error) || !identifier(a->public_key, identity, error) ||
       !identifier(a->label, FALSE, error) || !identifier(a->trust, command == GROTTO_PANEL_SET_CLIENT_TRUST, error)) return FALSE;
-  if (command == GROTTO_PANEL_SET_CLIENT_LABEL && !a->label) return invalid(error);
+  if ((command == GROTTO_PANEL_SET_CLIENT_LABEL || command == GROTTO_PANEL_SET_IDENTITY_LABEL) && !a->label) return invalid(error);
   if (a->n_permissions > 256 || (a->n_permissions && !a->permissions)) return invalid(error);
   for (gsize i = 0; i < a->n_permissions; i++) {
     const GrottoPanelPermission *p = &a->permissions[i];

@@ -16,9 +16,10 @@ version_data.set_quoted('GROTTO_PANELS_VERSION', meson.project_version())
 configure_file(output: 'grotto-panels-version.h', configuration: version_data,
   install_dir: get_option('includedir') / 'grotto-panels-0')
 inc = include_directories('include/grotto-panels-0', '.')
-panels = shared_library('grotto-panels-0', 'src/grotto-panel.c', 'src/grotto-panels-service.c', 'src/grotto-panels-validation.c',
+resources = import('gnome').compile_resources('grotto-panels-resources', 'data/grotto-panels.gresource.xml', source_dir: 'data', export: false)
+panels = shared_library('grotto-panels-0', resources, 'src/grotto-identity-panel.c', 'src/grotto-panel.c', 'src/grotto-panels-service.c', 'src/grotto-panels-validation.c',
   include_directories: inc, dependencies: [gtk_dep, adw_dep],
-  c_args: ['-DGROTTO_PANELS_COMPILATION'], gnu_symbol_visibility: 'hidden',
+  c_args: ['-DGROTTO_PANELS_COMPILATION', '-DGETTEXT_PACKAGE="grotto-panels"'], gnu_symbol_visibility: 'hidden',
   version: meson.project_version(), soversion: '0', install: true)
 install_headers('include/grotto-panels-0/grotto-panels.h', subdir: 'grotto-panels-0')
 import('pkgconfig').generate(panels, filebase: 'grotto-panels-0', name: 'Grotto Panels',

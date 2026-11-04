@@ -29,6 +29,11 @@ typedef struct _GrottoPanelsMetadata {
   gboolean blocked;
   gint64 deadline_usec; /* Absolute monotonic deadline, never renewed on mount. */
   guint64 sequence;    /* Activity cursor, NOT a snapshot revision. */
+  gboolean is_default;
+  gboolean watch_only;
+  gboolean can_sign;
+  gboolean backup_acknowledged; /* Owner acknowledgement, not recovery proof. */
+  guint app_count;
 } GrottoPanelsMetadata;
 
 #define GROTTO_TYPE_PANELS_ITEM (grotto_panels_item_get_type())
@@ -62,6 +67,7 @@ typedef enum _GrottoPanelCommand {
   GROTTO_PANEL_CLEAR_ACTIVITY,
   GROTTO_PANEL_CONFIGURE_REMOTE,
   GROTTO_PANEL_RESET_REMOTE,
+  GROTTO_PANEL_SET_IDENTITY_LABEL,     /* Grotto-local metadata until W6. */
   GROTTO_PANEL_N_COMMANDS
 } GrottoPanelCommand;
 
@@ -164,5 +170,12 @@ GROTTO_PANELS_API gboolean grotto_panel_host_invoke(GrottoPanel *self, GrottoPan
   const char *public_value, GError **error);
 /* Standard plain-text row helper, deliberately no permission interpretation. */
 GROTTO_PANELS_API GtkWidget *grotto_panel_create_metadata_row(GrottoPanelsItem *item);
+
+#define GROTTO_TYPE_IDENTITY_PANEL (grotto_identity_panel_get_type())
+GROTTO_PANELS_API
+G_DECLARE_FINAL_TYPE(GrottoIdentityPanel, grotto_identity_panel, GROTTO, IDENTITY_PANEL, GrottoPanel)
+/* NULL public_key displays the default identity; otherwise pin this page. */
+GROTTO_PANELS_API GtkWidget *grotto_identity_panel_new(GrottoPanelsService *service, const char *public_key);
+GROTTO_PANELS_API AdwNavigationView *grotto_identity_panel_get_navigation(GrottoIdentityPanel *self);
 
 G_END_DECLS

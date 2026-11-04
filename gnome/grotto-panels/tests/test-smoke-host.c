@@ -203,9 +203,88 @@ static void negative_paths(void) {
   g_clear_object(&fake);
   g_assert_null(weak_fake);
 }
+static GtkWidget *identity_child(GtkWidget *panel, const char *name) {
+  GtkWidget *child = GTK_WIDGET(gtk_widget_get_template_child(panel, GROTTO_TYPE_IDENTITY_PANEL, name));
+  g_assert_nonnull(child); return child;
+}
+static void identity_mounted(void) {
+  g_autoptr(GrottoPanelsFakeService) fake = grotto_panels_fake_service_new();
+  grotto_panels_fake_service_set_available(fake, TRUE);
+  grotto_panels_fake_service_set_can(fake, GROTTO_PANEL_SET_IDENTITY_LABEL, TRUE);
+  grotto_panels_fake_service_set_can(fake, GROTTO_PANEL_SET_DEFAULT_IDENTITY, TRUE);
+  GrottoPanelsMetadata a = {.id="npub1first", .public_key="npub1first", .label="<b>A & B</b>", .can_sign=TRUE};
+  GrottoPanelsMetadata b = {.id="npub1default", .public_key="npub1default", .label="Default", .is_default=TRUE, .can_sign=TRUE};
+  g_assert_true(grotto_panels_fake_service_replace(fake, GROTTO_PANELS_IDENTITIES, &a, NULL));
+  g_autoptr(GrottoPanelsItem) second = grotto_panels_item_new(&b, NULL);
+  GListStore *store = G_LIST_STORE(grotto_panels_service_get_model(GROTTO_PANELS_SERVICE(fake), GROTTO_PANELS_IDENTITIES));
+  g_list_store_append(store, second);
+  for (guint narrow = 0; narrow < 2; narrow++) {
+    GtkWidget *window = adw_window_new(); g_object_ref_sink(window);
+    gtk_window_set_default_size(GTK_WINDOW(window), narrow ? 360 : 920, 640);
+    GtkWidget *panel = grotto_identity_panel_new(GROTTO_PANELS_SERVICE(fake), NULL);
+    guint callbacks = 0; GrottoPanelsHost host = {.add_identity=without_text, .open_backup=with_text, .remove_identity=with_text, .open_in_signer=with_text};
+    grotto_panel_set_host(GROTTO_PANEL(panel), &host, &callbacks, NULL);
+    adw_window_set_content(ADW_WINDOW(window), panel); gtk_window_present(GTK_WINDOW(window));
+    g_assert_cmpstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(identity_child(panel, "key_row"))), ==, b.public_key);
+    g_assert_true(gtk_widget_has_css_class(identity_child(panel, "add_identity"), "flat"));
+    g_assert_false(gtk_widget_get_visible(identity_child(panel, "advanced_group")));
+    g_assert_false(gtk_widget_get_visible(identity_child(panel, "set_default")));
+    g_signal_emit_by_name(identity_child(panel, "backup_row"), "activated");
+    g_assert_cmpuint(callbacks, ==, 1); g_assert_cmpuint(grotto_panels_fake_service_get_invocations(fake), ==, narrow * 2);
+    GtkListBox *others = GTK_LIST_BOX(identity_child(panel, "other_list"));
+    GtkWidget *row = gtk_widget_get_first_child(GTK_WIDGET(others));
+    g_assert_cmpstr(adw_preferences_row_get_title(ADW_PREFERENCES_ROW(row)), ==, a.label);
+    g_assert_false(adw_preferences_row_get_use_markup(ADW_PREFERENCES_ROW(row)));
+    g_signal_emit_by_name(others, "row-activated", row);
+    AdwNavigationView *nav = grotto_identity_panel_get_navigation(GROTTO_IDENTITY_PANEL(panel));
+    GtkWidget *pinned = GTK_WIDGET(adw_navigation_view_get_visible_page(nav));
+    g_assert_true(GROTTO_IS_IDENTITY_PANEL(pinned));
+    g_assert_cmpstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(identity_child(pinned, "key_row"))), ==, a.public_key);
+    g_assert_true(gtk_widget_get_visible(identity_child(pinned, "advanced_group")));
+    g_assert_false(gtk_widget_get_visible(identity_child(pinned, "add_group")));
+    g_signal_emit_by_name(identity_child(pinned, "set_default"), "clicked");
+    while (g_main_context_pending(NULL)) g_main_context_iteration(NULL, FALSE);
+    g_assert_cmpint(grotto_panels_fake_service_get_last_command(fake), ==, GROTTO_PANEL_SET_DEFAULT_IDENTITY);
+    g_assert_cmpstr(grotto_panels_fake_service_get_last_args(fake)->public_key, ==, a.public_key);
+    GtkEditable *name = GTK_EDITABLE(identity_child(pinned, "name_row")); gtk_editable_set_text(name, "New local label");
+    g_signal_emit_by_name(name, "apply"); while (g_main_context_pending(NULL)) g_main_context_iteration(NULL, FALSE);
+    g_assert_cmpint(grotto_panels_fake_service_get_last_command(fake), ==, GROTTO_PANEL_SET_IDENTITY_LABEL);
+    g_assert_cmpstr(grotto_panels_fake_service_get_last_args(fake)->label, ==, "New local label");
+    grotto_panels_fake_service_set_can(fake, GROTTO_PANEL_SET_IDENTITY_LABEL, FALSE);
+    g_assert_false(gtk_widget_get_sensitive(GTK_WIDGET(name)));
+    grotto_panels_fake_service_set_can(fake, GROTTO_PANEL_SET_IDENTITY_LABEL, TRUE);
+    g_assert_true(adw_navigation_view_pop(nav));
+    g_assert_cmpstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(identity_child(panel, "key_row"))), ==, b.public_key);
+    gtk_window_destroy(GTK_WINDOW(window)); g_object_unref(window);
+  }
+  a.watch_only=TRUE; a.can_sign=FALSE;
+  g_assert_true(grotto_panels_fake_service_replace(fake, GROTTO_PANELS_IDENTITIES, &a, NULL));
+  GtkWidget *watch = grotto_identity_panel_new(GROTTO_PANELS_SERVICE(fake), a.public_key); g_object_ref_sink(watch);
+  g_assert_false(gtk_widget_get_visible(identity_child(watch, "backup_row")));
+  g_assert_false(gtk_widget_get_visible(identity_child(watch, "default_row")));
+  g_object_unref(watch);
+  a.watch_only = FALSE; a.can_sign = TRUE;
+  g_assert_true(grotto_panels_fake_service_replace(fake, GROTTO_PANELS_IDENTITIES, &a, NULL));
+  grotto_panels_fake_service_set_deferred(fake, TRUE);
+  GtkWidget *inflight_window = adw_window_new(); g_object_ref_sink(inflight_window);
+  GtkWidget *inflight = grotto_identity_panel_new(GROTTO_PANELS_SERVICE(fake), a.public_key);
+  gpointer weak_panel = inflight; g_object_add_weak_pointer(G_OBJECT(inflight), &weak_panel);
+  adw_window_set_content(ADW_WINDOW(inflight_window), inflight);
+  gtk_editable_set_text(GTK_EDITABLE(identity_child(inflight, "name_row")), "Pending edit");
+  g_signal_emit_by_name(identity_child(inflight, "name_row"), "apply");
+  g_assert_cmpuint(grotto_panels_fake_service_get_pending(fake), ==, 1);
+  gtk_window_destroy(GTK_WINDOW(inflight_window)); g_object_unref(inflight_window);
+  g_assert_null(weak_panel); g_assert_cmpuint(grotto_panels_fake_service_get_pending(fake), ==, 0);
+  while (g_main_context_pending(NULL)) g_main_context_iteration(NULL, FALSE);
+  grotto_panels_fake_service_set_available(fake, FALSE);
+  GtkWidget *unavailable = grotto_identity_panel_new(GROTTO_PANELS_SERVICE(fake), NULL); g_object_ref_sink(unavailable);
+  g_assert_false(gtk_widget_get_visible(identity_child(unavailable, "backup_row"))); g_object_unref(unavailable);
+}
 int main(int argc, char **argv) {
   g_test_init(&argc, &argv, NULL);
   adw_init(); /* Missing display is a failure, not a successful skip. */
+  g_object_set(gtk_settings_get_default(), "gtk-enable-animations", FALSE, NULL);
+  g_test_add_func("/grotto-panels/identity", identity_mounted);
   g_test_add_func("/grotto-panels/mount", mounted);
   g_test_add_func("/grotto-panels/commands", commands);
   g_test_add_func("/grotto-panels/negative-paths", negative_paths);

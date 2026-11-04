@@ -5,6 +5,8 @@
 #include <gio/gio.h>
 
 G_BEGIN_DECLS
+/* Public navigation only; never imports, exports or authorizes on activation. */
+
 
 #define TYPE_SIGNER_WINDOW (signer_window_get_type())
 G_DECLARE_FINAL_TYPE(SignerWindow, signer_window, SIGNER, WINDOW, AdwApplicationWindow)
@@ -86,5 +88,7 @@ GSettings *signer_window_get_gsettings(SignerWindow *self);
  */
 GSettings *signer_get_app_settings(void);
 
+void signer_window_show_identity(SignerWindow *self, const gchar *npub);
+void signer_window_toast(SignerWindow *self, const gchar *message);
 G_END_DECLS
 #endif /* APPS_GNOSTR_SIGNER_UI_SIGNER_WINDOW_H */

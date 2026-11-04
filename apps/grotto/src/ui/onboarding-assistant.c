@@ -200,7 +200,6 @@ static void call_done(GObject *source, GAsyncResult *result, gpointer data) {
           gtk_editable_get_text(GTK_EDITABLE(ctx->operation == STORE ? self->entry_profile_name : self->entry_import_label)), NULL))
         status(self, "Identity is stored, but its local label could not be saved.");
       accounts_store_set_setup_state(as, self->identity, "verification-pending", NULL);
-      accounts_store_set_selected(as, self->identity);
       accounts_store_sync_with_secrets_async(as, NULL, NULL);
       start_test(self);
     } else { clear_input(self); status(self, "Identity was not stored. Check the input and retry."); }

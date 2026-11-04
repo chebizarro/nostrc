@@ -236,7 +236,7 @@ target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/nips/ni
 # libnostr core for keys.h and crypto/bip39.h
 target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/libnostr/include)
 # Link against core to resolve owner APIs
-target_sources(${APP_SIGNER_BIN} PRIVATE src/grotto-panels-control1-service.c)
+target_sources(${APP_SIGNER_BIN} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/grotto-panels-control1-service.c")
 target_link_libraries(${APP_SIGNER_BIN} PRIVATE GrottoPanels::Panels)
 target_link_libraries(${APP_SIGNER_BIN} PRIVATE PkgConfig::GTK4 PkgConfig::GLIB PkgConfig::ADWAITA PkgConfig::JSON_GLIB nostr_nip55l_core nip04)
 # Ensure library directories are passed to linker (macOS fix)

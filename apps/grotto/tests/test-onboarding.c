@@ -1,5 +1,8 @@
 #include "ui/onboarding-assistant.h"
 #include "ui/page-identity-detail.h"
+#include "ui/signer-window.h"
+#include <grotto-panels.h>
+#include "session-manager.h"
 #include "ui/widgets/gn-secure-entry.h"
 #include "secret-variant.h"
 #include "backup-recovery.h"
@@ -52,10 +55,17 @@ static void mocked_io(GDBusConnection *bus, const gchar *sender, const gchar *pa
     g_variant_builder_add(&caps, "{sb}", "identity-self-test", supports_management);
     g_variant_builder_add(&caps, "{sb}", "mnemonic-export", supports_management);
     g_variant_builder_add(&caps, "{sb}", "typed-identity-removal", supports_management);
+    g_variant_builder_add(&caps, "{sb}", "export-identity", supports_management);
+    g_variant_builder_add(&caps, "{sb}", "raw-nsec-export", supports_management);
     g_variant_builder_init(&row, G_VARIANT_TYPE_VARDICT);
     g_variant_builder_add(&row, "{sv}", "control_version", g_variant_new_uint32(1));
+    g_variant_builder_add(&row, "{sv}", "permission_policy_version", g_variant_new_uint32(3));
     g_variant_builder_add(&row, "{sv}", "capabilities", g_variant_builder_end(&caps));
     g_dbus_method_invocation_return_value(inv, g_variant_new("(@a{sv})", g_variant_builder_end(&row))); return;
+  }
+  if (!strcmp(method, "ListClients") || !strcmp(method, "ListRequests") || !strcmp(method, "ListActivity")) {
+    GVariantBuilder rows; g_variant_builder_init(&rows, G_VARIANT_TYPE("aa{sv}"));
+    g_dbus_method_invocation_return_value(inv, g_variant_new("(@aa{sv})", g_variant_builder_end(&rows))); return;
   }
   if (!strcmp(method, "ListIdentities")) {
     const gchar *ids[] = {inventory_first ? inventory_first : stored_identity, inventory_first ? stored_identity : NULL, NULL};
@@ -232,28 +242,36 @@ static void destroy_detail_window(GtkWindow *window, GtkWidget *page) {
   guint gone = 0; g_object_weak_ref(G_OBJECT(page), weak_gone, &gone);
   gtk_window_destroy(window); g_object_unref(window); await_gone(&gone);
 }
+static GtkWidget *find_flow(GtkWidget *widget) {
+  if (GTK_IS_FLOW_BOX(widget)) return widget;
+  for (GtkWidget *child = gtk_widget_get_first_child(widget); child; child = gtk_widget_get_next_sibling(child)) {
+    GtkWidget *found = find_flow(child); if (found) return found;
+  }
+  return NULL;
+}
 static void pinned_backup_cleanup(Fixture *f, gconstpointer data) {
   (void)data;
   g_assert_true(gn_backup_get_npub("0000000000000000000000000000000000000000000000000000000000000001", &f->npub, NULL));
   g_assert_true(gn_backup_get_npub("0000000000000000000000000000000000000000000000000000000000000002", &inventory_first, NULL));
   stored_identity = g_strdup(f->npub);
   GtkWidget *page = page_identity_detail_new(f->npub);
-  GtkWindow *window = GTK_WINDOW(gtk_window_new()); g_object_ref(window);
-  gtk_window_set_child(window, page); gtk_window_present(window);
-  GtkWidget *seed = GTK_WIDGET(gtk_widget_get_template_child(page, GROTTO_TYPE_IDENTITY_DETAIL, "btn_seed"));
+  GtkWindow *window = GTK_WINDOW(adw_window_new()); g_object_ref(window);
+  adw_window_set_content(ADW_WINDOW(window), page); gtk_window_present(window);
+  GtkWidget *seed = GTK_WIDGET(gtk_widget_get_template_child(page, GROTTO_TYPE_IDENTITY_DETAIL, "phrase_row"));
   GtkWidget *public_key = GTK_WIDGET(gtk_widget_get_template_child(page, GROTTO_TYPE_IDENTITY_DETAIL, "public_key"));
-  GtkWidget *words = GTK_WIDGET(gtk_widget_get_template_child(page, GROTTO_TYPE_IDENTITY_DETAIL, "seed_words"));
+  GtkWidget *words = NULL;
   guint timeout = g_timeout_add_seconds(10, bound, NULL);
   while (!gtk_widget_get_sensitive(seed)) g_main_context_iteration(NULL, TRUE);
   g_source_remove(timeout);
-  g_assert_cmpstr(gtk_label_get_text(GTK_LABEL(public_key)), ==, f->npub);
-  g_signal_emit_by_name(seed, "clicked"); wait_invocation(&f->seed);
+  g_assert_cmpstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(public_key)), ==, f->npub);
+  g_signal_emit_by_name(seed, "activated"); wait_invocation(&f->seed);
   g_dbus_method_invocation_return_value(f->seed, g_variant_new("(s)", "disposable seed words")); g_clear_object(&f->seed);
   timeout = g_timeout_add_seconds(10, bound, NULL);
-  while (!gtk_widget_get_first_child(words)) g_main_context_iteration(NULL, TRUE);
+  while (!find_flow(GTK_WIDGET(adw_window_get_visible_dialog(ADW_WINDOW(window))))) g_main_context_iteration(NULL, TRUE);
+  words = gtk_widget_get_parent(find_flow(GTK_WIDGET(adw_window_get_visible_dialog(ADW_WINDOW(window))))); g_object_ref(words);
   g_source_remove(timeout);
   gtk_widget_set_visible(GTK_WIDGET(window), FALSE);
-  g_assert_null(gtk_widget_get_first_child(words));
+  g_assert_null(gtk_widget_get_first_child(words)); g_object_unref(words);
   destroy_detail_window(window, page);
   g_clear_pointer(&inventory_first, g_free);
 }
@@ -299,10 +317,10 @@ static void management_warning_handoff(Fixture *f, gconstpointer data) {
   g_assert_false(f->verified); g_assert_cmpuint(f->finished, ==, 1);
   AdwDialog *dialog = adw_window_get_visible_dialog(window); g_assert_nonnull(dialog); g_object_ref(dialog);
   GtkWidget *page = GTK_WIDGET(adw_navigation_view_get_visible_page(ADW_NAVIGATION_VIEW(adw_dialog_get_child(dialog))));
-  wait_sensitive(detail_child(page, "btn_test"), TRUE);
-  g_assert_cmpstr(gtk_label_get_text(GTK_LABEL(detail_child(page, "public_key"))), ==, f->npub);
-  g_assert_nonnull(strstr(gtk_label_get_text(GTK_LABEL(detail_child(page, "setup_warning"))), backup ? "Backup incomplete" : "Identity not verified"));
-  g_assert_true(gtk_widget_get_sensitive(detail_child(page, "btn_export"))); /* maintenance still available */
+  wait_sensitive(detail_child(page, "test_row"), TRUE);
+  g_assert_cmpstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(detail_child(page, "public_key"))), ==, f->npub);
+  g_assert_nonnull(strstr(adw_banner_get_title(ADW_BANNER(detail_child(page, "setup_banner"))), backup ? "Backup incomplete" : "Identity not verified"));
+  g_assert_true(gtk_widget_get_sensitive(detail_child(page, "save_row"))); /* maintenance still available */
   guint gone = 0; g_object_weak_ref(G_OBJECT(page), weak_gone, &gone);
   adw_dialog_force_close(dialog); g_object_unref(dialog); gtk_window_destroy(GTK_WINDOW(window)); g_object_unref(window); await_gone(&gone);
 }
@@ -320,23 +338,45 @@ static void alert_response(AdwAlertDialog *dialog, const gchar *response) {
 static void typed_deletion_cancel_failure(Fixture *f, gconstpointer data) {
   (void)data; g_assert_true(gn_backup_get_npub("0000000000000000000000000000000000000000000000000000000000000002", &f->npub, NULL));
   stored_identity = g_strdup(f->npub);
-  AdwWindow *window = ADW_WINDOW(adw_window_new()); g_object_ref(window); gtk_window_set_default_size(GTK_WINDOW(window), 560, 640);
-  GtkWidget *page = page_identity_detail_new(f->npub); adw_window_set_content(window, page); gtk_window_present(GTK_WINDOW(window));
-  GtkWidget *remove = detail_child(page, "btn_remove"); wait_sensitive(remove, TRUE);
+  SignerWindow *window = g_object_new(TYPE_SIGNER_WINDOW, NULL); g_object_ref_sink(window);
+  gtk_window_present(GTK_WINDOW(window)); signer_window_show_identity(window, f->npub);
+  AdwNavigationView *navigation = ADW_NAVIGATION_VIEW(gtk_widget_get_template_child(GTK_WIDGET(window), TYPE_SIGNER_WINDOW, "detail_navigation"));
+  GtkWidget *page = GTK_WIDGET(adw_navigation_view_get_visible_page(navigation));
+  g_assert_true(GROTTO_IS_IDENTITY_PANEL(page));
+  GtkWidget *remove = GTK_WIDGET(gtk_widget_get_template_child(page, GROTTO_TYPE_IDENTITY_PANEL, "remove_identity")); wait_sensitive(remove, TRUE);
   g_signal_emit_by_name(remove, "clicked");
-  AdwAlertDialog *dialog = ADW_ALERT_DIALOG(adw_window_get_visible_dialog(window)); g_assert_nonnull(dialog); g_object_ref(dialog);
-  g_assert_false(adw_alert_dialog_get_response_enabled(dialog, "proceed"));
-  gtk_editable_set_text(GTK_EDITABLE(adw_alert_dialog_get_extra_child(dialog)), "wrong identity");
-  g_assert_false(adw_alert_dialog_get_response_enabled(dialog, "proceed"));
+  AdwAlertDialog *dialog = ADW_ALERT_DIALOG(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window))); g_assert_nonnull(dialog); g_object_ref(dialog);
+  g_assert_false(adw_alert_dialog_get_response_enabled(dialog, "remove"));
+  gtk_editable_set_text(GTK_EDITABLE(gtk_widget_get_last_child(adw_alert_dialog_get_extra_child(dialog))), "wrong identity");
+  g_assert_false(adw_alert_dialog_get_response_enabled(dialog, "remove"));
   alert_response(dialog, "cancel"); g_object_unref(dialog);
   g_assert_cmpuint(f->remove_calls, ==, 0); g_assert_true(accounts_store_exists(accounts_store_get_default(), f->npub));
-  g_signal_emit_by_name(remove, "clicked"); dialog = ADW_ALERT_DIALOG(adw_window_get_visible_dialog(window)); g_object_ref(dialog);
-  gtk_editable_set_text(GTK_EDITABLE(adw_alert_dialog_get_extra_child(dialog)), f->npub);
-  g_assert_true(adw_alert_dialog_get_response_enabled(dialog, "proceed")); f->remove_failure = TRUE;
-  alert_response(dialog, "proceed"); g_object_unref(dialog); wait_sensitive(remove, TRUE);
+  g_signal_emit_by_name(remove, "clicked"); dialog = ADW_ALERT_DIALOG(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window))); g_object_ref(dialog);
+  gtk_editable_set_text(GTK_EDITABLE(gtk_widget_get_last_child(adw_alert_dialog_get_extra_child(dialog))), f->npub);
+  g_assert_true(adw_alert_dialog_get_response_enabled(dialog, "remove")); f->remove_failure = TRUE;
+  alert_response(dialog, "remove"); g_object_unref(dialog);
+  guint timeout = g_timeout_add_seconds(10, bound, NULL);
+  while (!f->remove_calls) g_main_context_iteration(NULL, TRUE); g_source_remove(timeout);
   g_assert_cmpuint(f->remove_calls, ==, 1); g_assert_true(accounts_store_exists(accounts_store_get_default(), f->npub));
-  g_assert_nonnull(strstr(gtk_label_get_text(GTK_LABEL(detail_child(page, "status_label"))), "Finish or cancel requests"));
-  g_assert_cmpstr(gtk_label_get_text(GTK_LABEL(detail_child(page, "public_key"))), ==, f->npub);
+  GtkWidget *key = GTK_WIDGET(gtk_widget_get_template_child(page, GROTTO_TYPE_IDENTITY_PANEL, "key_row"));
+  g_assert_cmpstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(key)), ==, f->npub);
+  destroy_detail_window(GTK_WINDOW(window), page);
+}
+static void backup_deliberate_actions(Fixture *f, gconstpointer data) {
+  (void)data;
+  g_assert_true(gn_backup_get_npub("0000000000000000000000000000000000000000000000000000000000000002", &f->npub, NULL));
+  stored_identity = g_strdup(f->npub);
+  AdwWindow *window = ADW_WINDOW(adw_window_new()); g_object_ref(window);
+  GtkWidget *page = page_identity_detail_new(f->npub); adw_window_set_content(window, page); gtk_window_present(GTK_WINDOW(window));
+  GtkWidget *raw = detail_child(page, "raw_row"); wait_sensitive(raw, TRUE);
+  g_assert_null(f->seed); g_assert_null(f->encrypted); /* mounting never exports */
+  g_signal_emit_by_name(raw, "activated");
+  AdwAlertDialog *dialog = ADW_ALERT_DIALOG(adw_window_get_visible_dialog(window)); g_assert_nonnull(dialog);
+  g_assert_cmpstr(adw_alert_dialog_get_heading(dialog), ==, "Copy Secret Key?");
+  g_assert_cmpstr(adw_alert_dialog_get_default_response(dialog), ==, "cancel");
+  g_assert_cmpstr(adw_alert_dialog_get_response_label(dialog, "proceed"), ==, "Copy Key");
+  g_assert_cmpint(adw_alert_dialog_get_response_appearance(dialog, "proceed"), ==, ADW_RESPONSE_DESTRUCTIVE);
+  alert_response(dialog, "cancel"); /* an accidental raw-export RPC fails mocked_io */
   destroy_detail_window(GTK_WINDOW(window), page);
 }
 static void distinct_import_passphrase(Fixture *f, gconstpointer data) {
@@ -380,6 +420,13 @@ static GtkFileChooser *wait_chooser(GtkWindow *parent) {
   }
   g_source_remove(timeout); return chooser;
 }
+static GtkWidget *find_named(GtkWidget *widget, const char *name) {
+  if (!strcmp(gtk_widget_get_name(widget), name)) return widget;
+  for (GtkWidget *child = gtk_widget_get_first_child(widget); child; child = gtk_widget_get_next_sibling(child)) {
+    GtkWidget *found = find_named(child, name); if (found) return found;
+  }
+  return NULL;
+}
 static void encrypted_file_cancel_failure(Fixture *f, gconstpointer data) {
   gboolean cancel = !g_strcmp0(data, "cancel"), success = !g_strcmp0(data, "success");
   g_assert_true(gn_backup_get_npub("0000000000000000000000000000000000000000000000000000000000000002", &f->npub, NULL));
@@ -388,9 +435,13 @@ static void encrypted_file_cancel_failure(Fixture *f, gconstpointer data) {
   accounts_store_set_setup_state(as, f->npub, "backup-pending", NULL);
   AdwWindow *window = ADW_WINDOW(adw_window_new()); g_object_ref(window); gtk_window_set_default_size(GTK_WINDOW(window), 560, 640);
   GtkWidget *page = page_identity_detail_new(f->npub); adw_window_set_content(window, page); gtk_window_present(GTK_WINDOW(window));
-  GtkWidget *export = detail_child(page, "btn_export"); wait_sensitive(export, TRUE);
-  GtkWidget *box = detail_child(page, "export_passphrase_box"); gn_secure_entry_set_text(GN_SECURE_ENTRY(gtk_widget_get_first_child(box)), f->expected_pass);
-  g_signal_emit_by_name(export, "clicked"); GtkFileChooser *chooser = wait_chooser(GTK_WINDOW(window));
+  GtkWidget *export = detail_child(page, "save_row"); wait_sensitive(export, TRUE);
+  g_signal_emit_by_name(export, "activated");
+  AdwDialog *dialog = adw_window_get_visible_dialog(window); g_assert_nonnull(dialog);
+  GtkWidget *passphrase = find_named(GTK_WIDGET(dialog), "backup-passphrase"); g_assert_nonnull(passphrase);
+  gn_secure_entry_set_text(GN_SECURE_ENTRY(passphrase), f->expected_pass);
+  GtkWidget *commit = button_named(GTK_WIDGET(dialog), "Save…"); g_assert_nonnull(commit);
+  g_signal_emit_by_name(commit, "clicked"); GtkFileChooser *chooser = wait_chooser(GTK_WINDOW(window));
   g_autofree gchar *destination = NULL;
   if (cancel) { gtk_dialog_response(GTK_DIALOG(chooser), GTK_RESPONSE_CANCEL); }
   else {
@@ -411,15 +462,16 @@ static void encrypted_file_cancel_failure(Fixture *f, gconstpointer data) {
     g_dbus_method_invocation_return_value(f->encrypted, g_variant_new("(s)", "ncryptsec1fixture")); g_clear_object(&f->encrypted);
   }
   g_object_unref(chooser); wait_sensitive(export, TRUE);
-  g_test_message("File completion status: %s", gtk_label_get_text(GTK_LABEL(detail_child(page, "status_label"))));
-  g_assert_nonnull(strstr(gtk_label_get_text(GTK_LABEL(detail_child(page, "status_label"))), cancel ? "cancelled" : success ? "Export saved" : "not saved"));
+  GtkWidget *feedback = find_named(GTK_WIDGET(dialog), "backup-feedback"); g_assert_nonnull(feedback);
+  g_test_message("File completion status: %s", gtk_label_get_text(GTK_LABEL(feedback)));
+  g_assert_nonnull(strstr(gtk_label_get_text(GTK_LABEL(feedback)), cancel ? "cancelled" : success ? "Backup saved" : "wasn't saved"));
   if (success) {
     g_autofree gchar *contents = NULL; g_assert_true(g_file_get_contents(destination, &contents, NULL, NULL));
     g_assert_cmpstr(contents, ==, "ncryptsec1fixture"); GStatBuf statbuf;
     g_assert_cmpint(g_stat(destination, &statbuf), ==, 0); g_assert_cmpuint(statbuf.st_mode & 0777, ==, 0600);
   }
-  gtk_check_button_set_active(GTK_CHECK_BUTTON(detail_child(page, "backup_written_down")), TRUE);
-  g_signal_emit_by_name(detail_child(page, "btn_backup_done"), "clicked");
+  gtk_check_button_set_active(GTK_CHECK_BUTTON(find_named(GTK_WIDGET(dialog), "backup-acknowledgement")), TRUE);
+  g_signal_emit_by_name(find_named(GTK_WIDGET(dialog), "record-backup"), "clicked");
   AccountEntry *entry = accounts_store_find(as, f->npub); g_assert_cmpstr(entry->setup_state, ==, success ? "ready" : "backup-pending"); accounts_store_entry_free(entry);
   g_assert_null(f->encrypted); destroy_detail_window(GTK_WINDOW(window), page);
   if (destination) { if (success) g_unlink(destination); else g_rmdir(destination); }
@@ -512,6 +564,7 @@ int main(int argc, char **argv) {
   ADD("backup-failure-blocks-ready", NULL, backup_failure_blocks_ready);
   ADD("verification-warning-handoff", NULL, management_warning_handoff);
   ADD("backup-warning-handoff", "backup", management_warning_handoff);
+  ADD("backup-deliberate-actions", NULL, backup_deliberate_actions);
   ADD("typed-deletion-cancel-failure", NULL, typed_deletion_cancel_failure);
   ADD("mnemonic-passphrase", "mnemonic", distinct_import_passphrase);
   ADD("nip49-passphrase", "ncryptsec", distinct_import_passphrase);

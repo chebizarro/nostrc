@@ -1,55 +1,29 @@
 using Gtk 4.0;
 using Adw 1;
 template $GrottoIdentityDetail: Adw.NavigationPage {
-  title: _("Identity and Backup");
-  tag: "identity-detail";
+  title: _("Back Up Identity");
+  tag: "backup";
   Adw.ToolbarView {
     [top] Adw.HeaderBar {}
-    content: ScrolledWindow {
-      hscrollbar-policy: never;
-      Adw.Clamp {
-        maximum-size: 560;
-        margin-start: 20; margin-end: 20; margin-top: 16; margin-bottom: 20;
-        Box {
-          orientation: vertical; spacing: 18;
-          DropDown identities { accessibility { label: _("Identity to manage"); } }
-          Label setup_warning { wrap: true; xalign: 0; styles ["warning"] }
-          Label public_key { wrap: true; selectable: true; xalign: 0; styles ["monospace"] }
-          Entry label_entry { placeholder-text: _("Local identity label"); }
-          Button btn_label { label: _("Save Local Label"); }
-          Adw.PreferencesGroup {
-            title: _("Key Backup and Safety Tips");
-            description: _("Your secret key gives full control. Never paste it into software you do not trust. Grotto developers never ask for it. Keep a private backup. Clipboard managers can retain anything you copy.");
-            Adw.ActionRow {
-              title: _("Show seed words");
-              subtitle: _("Primary backup for identities created in Grotto");
-              activatable-widget: btn_seed;
-              [suffix] Button btn_seed { label: _("Show"); valign: center; styles ["suggested-action"] }
-            }
-          }
-          Box seed_words { orientation: vertical; styles ["monospace"] }
-          CheckButton backup_written_down { label: _("I have safely backed up this identity"); }
-          Button btn_backup_done { label: _("Confirm Backup"); }
-          Label { label: _("Encrypted export passphrase (NIP-49 only)"); wrap: true; xalign: 0; }
-          Box export_passphrase_box { orientation: vertical; }
-          Button btn_export { label: _("Export Encrypted Key (NIP-49)"); }
-          Button btn_qr { label: _("Show Encrypted Key QR Code…"); }
-          Button btn_raw { label: _("Copy Secret Key…"); styles ["destructive-action"] }
-          Adw.PreferencesGroup {
-            title: _("Identity Management");
-            description: _("Managing this identity never switches identities for another application.");
-            Adw.ActionRow {
-              title: _("Default for older apps");
-              subtitle: _("Only applications that do not specify an identity use this default");
-              [suffix] Button btn_default { label: _("Set Default"); valign: center; }
-            }
-          }
-          Button btn_test { label: _("Retry Identity Self-Test"); }
-          Button btn_rotate { label: _("Create Successor Identity…"); }
-          Button btn_migration { label: _("Export Saved Migration Announcement"); }
-          Button btn_remove { label: _("Remove This Identity…"); styles ["destructive-action"] }
-          Label status_label { wrap: true; xalign: 0; }
-        }
+    [top] Adw.Banner setup_banner { title: _("Backup incomplete"); revealed: false; }
+    [top] Adw.Banner error_banner { title: _("The backup action couldn't be completed"); button-label: _("Retry"); revealed: false; }
+    content: Adw.PreferencesPage {
+      description: _("Anyone with this backup controls your identity. Grotto developers will never ask for it");
+      Adw.PreferencesGroup {
+        Adw.ActionRow public_key { title: _("Identity"); subtitle-selectable: true; subtitle-lines: 0; }
+        Adw.ActionRow phrase_row { title: _("Show Recovery Phrase…"); subtitle: _("Words to write down and keep offline"); activatable: true; }
+      }
+      Adw.PreferencesGroup encrypted_group {
+        title: _("Encrypted Backup"); description: _("Protected by a passphrase you choose");
+        Adw.ActionRow save_row { title: _("Save to File…"); activatable: true; }
+        Adw.ActionRow qr_row { title: _("Show QR Code…"); activatable: true; }
+      }
+      Adw.PreferencesGroup advanced_group {
+        title: _("Advanced");
+        Adw.ActionRow raw_row { title: _("Copy Secret Key…"); subtitle: _("Clipboard managers may keep a copy"); activatable: true; }
+        Adw.ActionRow test_row { title: _("Test This Identity"); subtitle: _("Signs and encrypts a test message on this device"); activatable: true; }
+        Adw.ActionRow replace_row { title: _("Create Replacement Identity…"); subtitle: _("Apps aren't moved and permissions aren't copied"); activatable: true; }
+        Adw.ActionRow announcement_row { title: _("Save Migration Announcement…"); activatable: true; visible: false; }
       }
     };
   }

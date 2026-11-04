@@ -4,10 +4,13 @@ MIT, GTK **4.14** / libadwaita **1.5**. Version **0.1.0**; public include
 `<grotto-panels.h>`, pkg-config `grotto-panels-0`, SONAME
 `libgrotto-panels-0.so.0`, CMake target `GrottoPanels::Panels`.
 
-This is the G17 W2 **scaffold**, not an Identity/Apps/Activity/Remote Signing
-implementation. There are no production panel descriptors or templates yet.
-Future resources belong under `/org/nostr/GrottoPanels`; add committed Blueprint
-and UI files with their drift check when a real panel is introduced.
+G17's shared **Identity panel** is implemented; Apps/Activity/Remote Signing
+remain later slices. `grotto_identity_panel_new(service, NULL)` shows the daemon
+default (or first listed identity); a public key pins a detail page. Other
+Identities pushes pinned pages without changing the default. Add Identity is a
+flat action; Backup, removal and public-key QR stay host callbacks.
+Resources use `/org/nostr/GrottoPanels`; committed Blueprint/UI pairs are checked
+by `signer/blueprint-drift`.
 
 ## Ownership and injection
 
@@ -73,11 +76,20 @@ The test fake records typed calls and provides configured errors and explicitly
 held completion (deterministic latency), including cancellation and owner loss;
 it does not evaluate signer policy or invent a successful mutation.
 
-Identity models remain empty pending W3's Grotto-owned **public** metadata
-composite and W6's daemon snapshot. No private keyring enumeration, shared
-accounts file or inferred policy is a substitute. Review, onboarding, Add App,
-backup, removal and replacement remain trusted host callbacks. Settings must
-hand them off to Grotto; it gains no approval or custody authority.
+The common Control1 service's Identity model stays empty until W6's daemon
+snapshot. Grotto supplies `GrottoIdentityService`, joining its existing
+signal-driven Control1/home model with public AccountsStore metadata. It exports
+only public identifiers, local labels, setup state, watch/signable flags, the
+legacy default and app counts. Label writes stay in Grotto; default changes use
+`SetDefaultIdentityForLegacy`, pinned to the daemon owner. No panel enumerates
+keyring items or reads accounts.ini. Settings must not reuse Grotto's local store.
+`SET_IDENTITY_LABEL` is Grotto-local until W6; the common adapter refuses it.
+The `open_in_signer` callback receives the public-only navigation targets
+`public-key:<npub>` (public QR) and `apps:<npub>` (app list). It never receives a
+QR payload, credential or proposed mutation. Grotto's trusted Backup page owns
+recovery, encrypted export and raw-key dialogs; these are not library resources.
+Review, onboarding, Add App, backup, removal and replacement remain trusted host
+callbacks. Settings must hand them off to Grotto; it gains no custody authority.
 
 ## Build and focused checks
 
@@ -94,8 +106,8 @@ meson test -C /tmp/grotto-panels-meson --print-errorlogs
 ```
 
 Linux smoke tests require `dbus-run-session` and `xvfb-run`, fail visibly when
-missing, and mount a test-only trivial panel in a bare `AdwWindow` with a split
-view. They exercise wide/360px mounting, subpage push/pop, live fake-model
+missing, and mount the real Identity panel against the fake service, plus the scaffold
+panel in a bare `AdwWindow` with a split view. They exercise wide/360px mounting, subpage push/pop, live fake-model
 updates, capability loss, plain untrusted text, every host callback, cancellation
 and destruction. `GTK_A11Y=test` preserves accessibility processing. Under
 ASan/UBSan, keep `detect_leaks=1`; the smoke host alone uses the three

@@ -1,6 +1,9 @@
 #include "../i18n.h"
 #include "signer-window.h"
 #include "page-identity-detail.h"
+#include "../grotto-identity-service.h"
+#include "../accounts_store.h"
+#include "sheets/sheet-qr-display.h"
 #include "onboarding-assistant.h"
 #include "pairing-flow.h"
 #include "app-resources.h"
@@ -40,6 +43,8 @@ struct _SignerWindow {
   AdwToastOverlay *toast_overlay;
   AdwNavigationView *detail_navigation;
   GrottoHomeModel *model;
+  GrottoPanelsService *identity_service;
+  gboolean pending_backup;
   GtkWidget *page_history;
   GtkWidget *page_settings;
   /* GSettings for persistence */
@@ -59,6 +64,7 @@ struct _SignerWindow {
 };
 
 G_DEFINE_TYPE(SignerWindow, signer_window, ADW_TYPE_APPLICATION_WINDOW)
+static void identity_available(GrottoPanelsService *service, SignerWindow *self);
 
 static gboolean restore_transition_focus(GtkWidget *widget, GdkFrameClock *clock, gpointer data) {
   (void)clock; (void)data; SignerWindow *self = SIGNER_WINDOW(widget);
@@ -205,6 +211,7 @@ static void signer_window_dispose(GObject *object) {
   }
 
   if (self->model) grotto_home_model_stop(self->model);
+  g_clear_object(&self->identity_service);
   g_clear_object(&self->model);
   /* Save state on dispose as a backup */
   signer_window_save_state(self);
@@ -448,7 +455,10 @@ static void on_session_locked(GnSessionManager *sm, GnLockReason reason, gpointe
   gn_lock_screen_clear_password(self->lock_screen);
 
   /* Switch to lock screen */
+  self->pending_backup = FALSE;
   gtk_stack_set_visible_child_name(self->main_stack, "locked");
+  AdwDialog *dialog = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(self));
+  if (dialog) adw_dialog_force_close(dialog);
   gn_lock_screen_focus_password(self->lock_screen);
 
   g_debug(_("Window: session locked (reason=%d)"), reason);
@@ -546,6 +556,8 @@ static void signer_window_init(SignerWindow *self) {
 
   gtk_widget_init_template(GTK_WIDGET(self));
   self->model = grotto_home_model_new();
+  self->identity_service = grotto_identity_service_new(self->model);
+  g_signal_connect_object(self->identity_service, "availability-changed", G_CALLBACK(identity_available), self, 0);
   grotto_page_home_set_model(GROTTO_PAGE_HOME(self->page_home), self->model);
   grotto_page_connect_set_model(GROTTO_PAGE_CONNECT(self->page_connect), self->model);
   page_settings_set_model(PAGE_SETTINGS(self->page_settings), self->model);
@@ -662,8 +674,136 @@ SignerWindow *signer_window_new(AdwApplication *app) {
   return g_object_new(TYPE_SIGNER_WINDOW, "application", app, NULL);
 }
 
+void signer_window_toast(SignerWindow *self, const gchar *message) {
+  if (self->toast_overlay) adw_toast_overlay_add_toast(self->toast_overlay, adw_toast_new(message));
+}
+static void identity_host_free(gpointer data) { g_weak_ref_clear(data); g_free(data); }
+static void identity_toast(gpointer data, const char *message) {
+  g_autoptr(SignerWindow) self = g_weak_ref_get(data); if (self) signer_window_toast(self, message);
+}
+static void identity_add(gpointer data) {
+  g_autoptr(SignerWindow) self = g_weak_ref_get(data); if (self) signer_window_show_new_profile(self);
+}
+static AdwNavigationView *identity_navigation(SignerWindow *self) {
+  AdwNavigationView *navigation = self->detail_navigation;
+  AdwNavigationPage *page = adw_navigation_view_get_visible_page(navigation);
+  while (GROTTO_IS_IDENTITY_PANEL(page)) {
+    navigation = grotto_identity_panel_get_navigation(GROTTO_IDENTITY_PANEL(page));
+    page = adw_navigation_view_get_visible_page(navigation);
+  }
+  return navigation;
+}
+static void identity_backup(gpointer data, const char *npub) {
+  g_autoptr(SignerWindow) self = g_weak_ref_get(data);
+  if (!self || gn_session_manager_is_locked(gn_session_manager_get_default())) return;
+  adw_navigation_view_push(identity_navigation(self), ADW_NAVIGATION_PAGE(page_identity_detail_new(npub)));
+}
+static void identity_open(gpointer data, const char *target) {
+  g_autoptr(SignerWindow) self = g_weak_ref_get(data);
+  if (!self || gn_session_manager_is_locked(gn_session_manager_get_default())) return;
+  if (g_str_has_prefix(target, "public-key:npub1")) {
+    SheetQrDisplay *qr = sheet_qr_display_new(); sheet_qr_display_set_npub(qr, target + strlen("public-key:"));
+    adw_dialog_present(ADW_DIALOG(qr), GTK_WIDGET(self));
+  } else if (g_str_has_prefix(target, "apps:npub1")) {
+    /* Transitional W3 route: W4 replaces this existing app list with its panel. */
+    signer_window_show_page(self, "home");
+  }
+}
+static void removal_done(GObject *source, GAsyncResult *result, gpointer data) {
+  GTask *task = data; SignerWindow *self = g_task_get_source_object(task);
+  g_autoptr(GVariant) reply = g_dbus_proxy_call_finish(G_DBUS_PROXY(source), result, NULL);
+  gboolean removed = FALSE;
+  if (reply) g_variant_get(reply, "(b)", &removed);
+  if (g_strcmp0(g_object_get_data(G_OBJECT(task), "owner"), g_dbus_proxy_get_name_owner(G_DBUS_PROXY(source)))) removed = FALSE;
+  if (removed) accounts_store_remove(accounts_store_get_default(), g_task_get_task_data(task), NULL);
+  signer_window_toast(self, removed ? _("Identity removed from this device") : _("Identity wasn't removed. Check pending requests and retry"));
+  g_task_return_boolean(task, removed); g_object_unref(task);
+}
+static void removal_proxy(GObject *source, GAsyncResult *result, gpointer data) {
+  (void)source; GTask *task = data; SignerWindow *self = g_task_get_source_object(task);
+  g_autoptr(GDBusProxy) proxy = g_dbus_proxy_new_for_bus_finish(result, NULL);
+  if (!proxy || !g_dbus_proxy_get_name_owner(proxy) || gn_session_manager_is_locked(gn_session_manager_get_default())) {
+    signer_window_toast(self, _("Identity wasn't removed. Unlock management and retry")); g_task_return_boolean(task, FALSE); g_object_unref(task); return;
+  }
+  /* GDBusProxy pins this call to its current unique owner, not a later daemon. */
+  const char *npub = g_task_get_task_data(task);
+  g_object_set_data_full(G_OBJECT(task), "owner", g_strdup(g_dbus_proxy_get_name_owner(proxy)), g_free);
+  g_dbus_proxy_call(proxy, "RemoveIdentity", g_variant_new("(ss)", npub, npub), G_DBUS_CALL_FLAGS_NO_AUTO_START, 10000, NULL, removal_done, task);
+}
+static void removal_response(AdwAlertDialog *dialog, const char *response, gpointer data) {
+  SignerWindow *self = data;
+  if (strcmp(response, "remove") || gn_session_manager_is_locked(gn_session_manager_get_default())) return;
+  GTask *task = g_task_new(self, NULL, NULL, NULL);
+  g_task_set_task_data(task, g_strdup(g_object_get_data(G_OBJECT(dialog), "identity")), g_free);
+  g_dbus_proxy_new_for_bus(G_BUS_TYPE_SESSION, G_DBUS_PROXY_FLAGS_DO_NOT_LOAD_PROPERTIES, NULL,
+    "org.nostr.Signer", "/org/nostr/signer/grotto", "org.nostr.Grotto.Control1", NULL, removal_proxy, task);
+}
+static void removal_typed(GtkEditable *entry, gpointer data) {
+  AdwAlertDialog *dialog = data;
+  adw_alert_dialog_set_response_enabled(dialog, "remove", !g_strcmp0(gtk_editable_get_text(entry), g_object_get_data(G_OBJECT(dialog), "identity")));
+}
+static void removal_copy(GtkButton *button, gpointer data) {
+  AdwAlertDialog *dialog = data;
+  gdk_clipboard_set_text(gtk_widget_get_clipboard(GTK_WIDGET(button)), g_object_get_data(G_OBJECT(dialog), "identity"));
+}
+static void identity_remove(gpointer data, const char *npub) {
+  g_autoptr(SignerWindow) self = g_weak_ref_get(data);
+  if (!self || gn_session_manager_is_locked(gn_session_manager_get_default())) return;
+  AdwDialog *dialog = adw_alert_dialog_new(_("Remove Identity?"), _("This identity is deleted from this device. Without a backup it can't be recovered."));
+  GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+  GtkWidget *key = gtk_label_new(npub); gtk_label_set_wrap(GTK_LABEL(key), TRUE); gtk_label_set_selectable(GTK_LABEL(key), TRUE);
+  GtkWidget *copy = gtk_button_new_with_label(_("Copy Public Key"));
+  GtkWidget *entry = gtk_entry_new(); gtk_entry_set_placeholder_text(GTK_ENTRY(entry), _("Type the full npub to confirm removal"));
+  gtk_accessible_update_property(GTK_ACCESSIBLE(entry), GTK_ACCESSIBLE_PROPERTY_LABEL, _("Public Key Confirmation"), -1);
+  gtk_box_append(GTK_BOX(box), key); gtk_box_append(GTK_BOX(box), copy); gtk_box_append(GTK_BOX(box), entry);
+  adw_alert_dialog_set_extra_child(ADW_ALERT_DIALOG(dialog), box);
+  g_object_set_data_full(G_OBJECT(dialog), "identity", g_strdup(npub), g_free);
+  adw_alert_dialog_add_responses(ADW_ALERT_DIALOG(dialog), "cancel", _("Cancel"), "remove", _("Remove"), NULL);
+  adw_alert_dialog_set_response_appearance(ADW_ALERT_DIALOG(dialog), "remove", ADW_RESPONSE_DESTRUCTIVE);
+  adw_alert_dialog_set_default_response(ADW_ALERT_DIALOG(dialog), "cancel"); adw_alert_dialog_set_close_response(ADW_ALERT_DIALOG(dialog), "cancel");
+  adw_alert_dialog_set_response_enabled(ADW_ALERT_DIALOG(dialog), "remove", FALSE);
+  g_signal_connect(copy, "clicked", G_CALLBACK(removal_copy), dialog);
+  g_signal_connect(entry, "changed", G_CALLBACK(removal_typed), dialog);
+  g_signal_connect_object(dialog, "response", G_CALLBACK(removal_response), self, 0);
+  adw_dialog_present(dialog, GTK_WIDGET(self));
+}
+static void identity_available(GrottoPanelsService *service, SignerWindow *self) {
+  if (!self->pending_backup || !grotto_panels_service_is_available(service)) return;
+  AdwNavigationPage *page = adw_navigation_view_get_visible_page(self->detail_navigation);
+  if (!GROTTO_IS_IDENTITY_PANEL(page)) { self->pending_backup = FALSE; return; }
+  GrottoPanel *panel = GROTTO_PANEL(page);
+  GListModel *identities = grotto_panels_service_get_model(service, GROTTO_PANELS_IDENTITIES);
+  g_autoptr(GrottoPanelsItem) selected = NULL;
+  for (guint i = 0; identities && i < g_list_model_get_n_items(identities); i++) {
+    g_autoptr(GrottoPanelsItem) item = g_list_model_get_item(identities, i);
+    const GrottoPanelsMetadata *metadata = grotto_panels_item_get_metadata(item);
+    if (!selected || metadata->is_default) g_set_object(&selected, item);
+  }
+  if (!selected) return; /* Inventory notifications complete the navigation. */
+  self->pending_backup = FALSE;
+  const GrottoPanelsMetadata *metadata = grotto_panels_item_get_metadata(selected);
+  if (metadata->can_sign && !metadata->watch_only)
+    grotto_panel_host_invoke(panel, GROTTO_PANEL_HOST_BACKUP, metadata->public_key, NULL);
+}
+void signer_window_show_identity(SignerWindow *self, const gchar *npub) {
+  g_return_if_fail(SIGNER_IS_WINDOW(self));
+  self->pending_backup = FALSE;
+  if (gn_session_manager_is_locked(gn_session_manager_get_default())) return;
+  clear_transition_focus(self);
+  adw_navigation_view_pop_to_tag(self->detail_navigation, "root");
+  GrottoPanel *panel = GROTTO_PANEL(grotto_identity_panel_new(self->identity_service, npub));
+  const GrottoPanelsHost host = {.show_toast = identity_toast, .add_identity = identity_add,
+    .open_backup = identity_backup, .remove_identity = identity_remove, .open_in_signer = identity_open};
+  GWeakRef *host_window = g_new0(GWeakRef, 1); g_weak_ref_init(host_window, self);
+  grotto_panel_set_host(panel, &host, host_window, identity_host_free);
+  adw_navigation_view_push(self->detail_navigation, ADW_NAVIGATION_PAGE(panel));
+  adw_navigation_split_view_set_show_content(self->split_view, TRUE);
+}
 void signer_window_show_page(SignerWindow *self, const char *name) {
   g_return_if_fail(self != NULL && name != NULL);
+  if (!strcmp(name, "identity")) { signer_window_show_identity(self, NULL); return; }
+  if (!strcmp(name, "backup")) { signer_window_show_backup(self); return; }
+  self->pending_backup = FALSE;
   const gchar *names[] = {"home", "activity", "connect", "settings"};
   for (guint i = 0; i < G_N_ELEMENTS(names); i++) {
     if (strcmp(name, names[i])) continue;
@@ -750,7 +890,9 @@ void signer_window_show_create_account(SignerWindow *self) {
 void signer_window_show_backup(SignerWindow *self) {
   g_return_if_fail(SIGNER_IS_WINDOW(self));
 
-  page_identity_detail_present(GTK_WIDGET(self));
+  signer_window_show_identity(self, NULL);
+  self->pending_backup = TRUE;
+  identity_available(self->identity_service, self);
 }
 
 /**

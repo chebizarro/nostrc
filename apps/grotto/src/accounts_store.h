@@ -98,11 +98,6 @@ gboolean accounts_store_set_active(AccountsStore *as, const gchar *id,
 gboolean accounts_store_set_setup_state(AccountsStore *as, const gchar *id,
     const gchar *state, GError **error);
 
-/* GUI management selection only: never changes the daemon's legacy default
- * or any consumer's identity. NULL clears the selection. */
-gboolean accounts_store_set_selected(AccountsStore *as, const gchar *id);
-const gchar *accounts_store_get_selected(AccountsStore *as);
-
 /* Get the active identity.
  * @as: The accounts store
  * @out_id: (out) (optional): Newly allocated active ID, caller frees

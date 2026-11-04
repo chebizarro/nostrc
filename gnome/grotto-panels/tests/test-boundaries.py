@@ -20,7 +20,9 @@ include = ['-I' + str(root / 'include/grotto-panels-0'), '-I' + generated]
 schemas = {
     '_GrottoPanelsMetadata': {'id': 'const char *', 'label': 'const char *', 'public_key': 'const char *',
         'state': 'const char *', 'reason': 'const char *', 'access_policy': 'const char *',
-        'needs_review': 'gboolean', 'blocked': 'gboolean', 'deadline_usec': 'gint64', 'sequence': 'guint64'},
+        'needs_review': 'gboolean', 'blocked': 'gboolean', 'deadline_usec': 'gint64', 'sequence': 'guint64',
+        'is_default': 'gboolean', 'watch_only': 'gboolean', 'can_sign': 'gboolean',
+        'backup_acknowledged': 'gboolean', 'app_count': 'guint'},
     '_GrottoPanelPermission': {'operation': 'const char *', 'decision': 'const char *', 'event_kind': 'gint',
         'expires_at': 'guint64', 'relay': 'const char *'},
     '_GrottoPanelCommandArgs': {'principal': 'const char *', 'label': 'const char *', 'public_key': 'const char *',
@@ -49,7 +51,7 @@ def check_schema(header):
              for o in declarations if o.get('kind') == 'EnumDecl'}
     assert enums['_GrottoPanelCommand'] == ['GROTTO_PANEL_' + name for name in (
         'SET_CLIENT_LABEL', 'SET_DEFAULT_IDENTITY', 'SET_CLIENT_TRUST', 'SET_PERMISSIONS', 'REVOKE_CLIENT',
-        'PAUSE', 'RESUME', 'CLEAR_ACTIVITY', 'CONFIGURE_REMOTE', 'RESET_REMOTE', 'N_COMMANDS')], 'closed command enum changed'
+        'PAUSE', 'RESUME', 'CLEAR_ACTIVITY', 'CONFIGURE_REMOTE', 'RESET_REMOTE', 'SET_IDENTITY_LABEL', 'N_COMMANDS')], 'closed command enum changed'
     assert enums['_GrottoPanelsModel'] == ['GROTTO_PANELS_' + name for name in ('IDENTITIES', 'APPS', 'REQUESTS', 'ACTIVITY', 'N_MODELS')]
     assert enums['_GrottoPanelsAccess'] == ['GROTTO_PANELS_ACCESS_' + name for name in ('SESSION', 'MANAGER', 'APPROVER')]
     assert enums['_GrottoPanelHostAction'] == ['GROTTO_PANEL_HOST_' + name for name in (
@@ -74,7 +76,8 @@ exports = {
     'grotto_panels_service_is_available', 'grotto_panels_service_can', 'grotto_panels_service_invoke_async',
     'grotto_panels_service_invoke_finish', 'grotto_panel_get_type', 'grotto_panel_set_service', 'grotto_panel_get_service',
     'grotto_panel_get_cancellable', 'grotto_panel_set_host', 'grotto_panel_host_can', 'grotto_panel_host_invoke',
-    'grotto_panel_create_metadata_row',
+    'grotto_panel_create_metadata_row', 'grotto_identity_panel_get_type', 'grotto_identity_panel_new',
+    'grotto_identity_panel_get_navigation',
 }
 # Exact production imports, not a spelling blacklist of individual secret RPCs.
 # No D-Bus, sockets, dynamic loading or file I/O dispatch exists in this DSO.
@@ -95,6 +98,22 @@ imports = set('''g_free g_strdup g_ascii_strdown g_utf8_validate g_set_error_lit
  _ITM_registerTMCloneTable _ITM_deregisterTMCloneTable adw_navigation_page_get_type adw_action_row_new
  adw_preferences_row_get_type adw_preferences_row_set_use_markup adw_preferences_row_set_title
  adw_action_row_get_type adw_action_row_set_subtitle'''.split())
+
+# W3 Identity widget/template/model/clipboard and translation imports only.
+# Still no bus, network, filesystem, generic dispatch or secret-store imports.
+imports.update('''__cxa_atexit adw_action_row_add_prefix adw_action_row_add_suffix adw_action_row_set_subtitle_lines
+ adw_navigation_page_set_child adw_avatar_new adw_avatar_set_text adw_banner_set_button_label adw_navigation_view_get_visible_page adw_navigation_view_push
+ adw_status_page_set_description adw_status_page_set_title adw_banner_set_revealed adw_banner_set_title
+ g_list_model_get_item g_list_model_get_n_items g_malloc0_n g_object_get_data g_object_set_data_full
+ g_static_resource_fini g_static_resource_get_resource g_static_resource_init g_strconcat g_strdup_printf
+ g_weak_ref_clear g_weak_ref_get g_weak_ref_init gdk_clipboard_set_text
+ gtk_editable_get_text gtk_editable_get_type gtk_editable_set_text gtk_image_new_from_icon_name
+ gtk_list_box_append gtk_list_box_remove gtk_list_box_row_get_type gtk_list_box_row_set_activatable
+ gtk_stack_set_visible_child_name gtk_widget_class_bind_template_child_full gtk_widget_class_set_template_from_resource
+ gtk_widget_dispose_template gtk_widget_get_clipboard gtk_widget_get_first_child gtk_widget_get_type gtk_widget_has_focus
+ gdk_display_get_default gtk_icon_theme_add_resource_path gtk_icon_theme_get_for_display
+ gtk_widget_init_template gtk_widget_set_sensitive gtk_widget_set_visible gtk_widget_get_state_flags gtk_widget_grab_focus
+ libintl_gettext libintl_ngettext gettext ngettext'''.split())
 
 def check_symbols(path):
     output = subprocess.check_output(['nm', '-g', str(path)] if sys.platform == 'darwin' else ['nm', '-D', str(path)], text=True)

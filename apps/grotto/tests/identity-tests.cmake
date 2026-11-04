@@ -23,29 +23,11 @@ if (TARGET grotto_control_core AND "NIP55L_TEST_TRUST_ENV=1" IN_LIST _nip55l_def
       ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR}/..;GSETTINGS_BACKEND=memory")
   add_dependencies(signer-tests test-identity-management)
 endif()
-add_library(grotto_identity_ui_test_core STATIC
-    ../src/accounts_store.c ../src/settings_manager.c ../src/secret_store.c
-    ../src/secure-mem.c ../src/secure-memory.c ../src/secure-delete.c
-    ../src/key_provider.c ../src/key_provider_secp256k1.c ../src/key_provider_ed25519.c
-    ../src/gn-signer-error.c ../src/backup-recovery.c
-    ../src/secret-clipboard.c ../src/ui/onboarding-assistant.c
-    ../src/ui/widgets/gn-secure-entry.c ../src/ui/page-identity-detail.c
-    ../src/ui/sheets/sheet-qr-display.c ../src/qr-code.c)
-apply_test_sanitizers(grotto_identity_ui_test_core)
-target_include_directories(grotto_identity_ui_test_core PUBLIC ${SIGNER_INCLUDE_DIRS} ${CMAKE_SOURCE_DIR}
-    ${CMAKE_SOURCE_DIR}/tests/common)
-target_link_libraries(grotto_identity_ui_test_core PUBLIC ${SIGNER_TEST_LIBS} nostr_gobject
-    PkgConfig::GTK4 PkgConfig::ADWAITA)
-if(APPLE)
-  target_link_libraries(grotto_identity_ui_test_core PRIVATE ${SECURITY_FRAMEWORK} ${COREFOUNDATION_FRAMEWORK})
-endif()
-if(QRENCODE_FOUND)
-  target_link_libraries(grotto_identity_ui_test_core PRIVATE PkgConfig::QRENCODE)
-  target_compile_definitions(grotto_identity_ui_test_core PRIVATE HAVE_QRENCODE=1)
-endif()
+# Exercise the same host routes and linked panel library as the application.
 foreach(suite onboarding home-model)
   add_executable(test-${suite} test-${suite}.c ${APP_GRESOURCE_C})
-  target_link_libraries(test-${suite} PRIVATE grotto_identity_ui_test_core nostrc-test-bus)
+  target_link_libraries(test-${suite} PRIVATE grotto_app_test_core nostrc-test-bus)
+  target_include_directories(test-${suite} PRIVATE ${SIGNER_INCLUDE_DIRS} ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/tests/common)
   apply_test_sanitizers(test-${suite})
   set(_identity_suite ${suite})
   if(suite STREQUAL "home-model")

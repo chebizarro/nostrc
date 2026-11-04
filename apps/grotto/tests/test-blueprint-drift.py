@@ -76,6 +76,16 @@ with tempfile.TemporaryDirectory(prefix='grotto-blueprint-') as tmp:
     shortcuts = ET.parse(app / 'data/ui/shortcuts-window.ui').find('object')
     if shortcuts.get('class') != 'GtkShortcutsWindow':
         failed.append('shortcuts-window: must be GtkShortcutsWindow')
+# W3's reusable panel follows the same authoritative Blueprint convention.
+panels = app / '../../gnome/grotto-panels'
+with tempfile.TemporaryDirectory(prefix='grotto-panels-blueprint-') as tmp:
+    panel_ui = {r.text for r in ET.parse(panels / 'data/grotto-panels.gresource.xml').findall('.//file') if r.text.endswith('.ui')}
+    assert panel_ui == {p.name for p in (panels / 'data').glob('*.ui')}
+    for name in sorted(panel_ui):
+        output = pathlib.Path(tmp) / name
+        subprocess.run([compiler, 'compile', '--output', str(output), str((panels / 'data' / name).with_suffix('.blp'))], check=True)
+        if output.read_bytes().rstrip(b'\n') != (panels / 'data' / name).read_bytes().rstrip(b'\n'):
+            failed.append(f'grotto-panels/{name}: regenerate with blueprint-compiler 0.22.2')
 if failed:
     sys.exit('\n'.join(failed))
 subprocess.run([sys.executable, str(app / '../../scripts/generate-grotto-kind-catalog.py'), '--check'], check=True)

@@ -42,7 +42,6 @@ struct _AccountsStore {
   GHashTable *signable;        /* last successful daemon ListIdentities snapshot */
   GHashTable *setup;           /* id -> non-secret setup state */
   gchar *active;
-  gchar *selected; /* GUI-only, never serialized or used as a signer default */
   gchar *path;
   SettingsManager *settings;  /* GSettings integration */
   GPtrArray *handlers;        /* Change notification handlers */
@@ -175,7 +174,7 @@ void accounts_store_free(AccountsStore *as) {
   if (as->signable) g_hash_table_destroy(as->signable);
   if (as->setup) g_hash_table_destroy(as->setup);
   if (as->handlers) g_ptr_array_unref(as->handlers);
-  g_free(as->active); g_free(as->selected);
+  g_free(as->active);
   g_free(as->path);
   /* settings is singleton, don't free */
   if (as == default_instance) default_instance = NULL;
@@ -194,7 +193,6 @@ gboolean accounts_store_load(AccountsStore *as, GError **error) {
     GHashTable *setup = as->setup; as->setup = parsed->setup; parsed->setup = setup;
     g_free(as->active); as->active = g_steal_pointer(&parsed->active);
     if (as->active && !g_hash_table_contains(as->map, as->active)) g_clear_pointer(&as->active, g_free);
-    if (as->selected && !g_hash_table_contains(as->map, as->selected)) g_clear_pointer(&as->selected, g_free);
   }
   accounts_store_free(parsed); return ok;
 }
@@ -454,7 +452,6 @@ gboolean accounts_store_remove(AccountsStore *as, const gchar *id, GError **erro
   }
 
   g_hash_table_remove(as->setup, id);
-  if (!g_strcmp0(as->selected, id)) g_clear_pointer(&as->selected, g_free);
   emit_change(as, ACCOUNTS_CHANGE_REMOVED, id);
 
   if (g_strcmp0(old_active, as->active)) emit_change(as, ACCOUNTS_CHANGE_ACTIVE, as->active);
@@ -541,13 +538,6 @@ gboolean accounts_store_set_setup_state(AccountsStore *as, const gchar *id, cons
   }
   emit_change(as, ACCOUNTS_CHANGE_LABEL, id); return TRUE;
 }
-gboolean accounts_store_set_selected(AccountsStore *as, const gchar *id) {
-  if (!as || (id && *id && !accounts_store_exists(as, id) && !g_hash_table_contains(as->signable, id))) return FALSE;
-  if (!g_strcmp0(as->selected, id)) return TRUE;
-  g_free(as->selected); as->selected = id && *id ? g_strdup(id) : NULL;
-  emit_change(as, ACCOUNTS_CHANGE_ACTIVE, as->selected); return TRUE;
-}
-const gchar *accounts_store_get_selected(AccountsStore *as) { return as ? as->selected : NULL; }
 
 gboolean accounts_store_get_active(AccountsStore *as, gchar **out_id, GError **error) {
   if (!as) {
