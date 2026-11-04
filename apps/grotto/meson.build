@@ -286,6 +286,7 @@ grotto_exe = executable(app_bin,
   app_ui_sources,
   app_resources,
   include_directories: [
+    include_directories('src'),
     include_directories(cmake_build_dir / 'libnostr/generated'),
     root_inc,
     libnostr_inc,

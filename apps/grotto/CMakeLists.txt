@@ -217,7 +217,8 @@ add_executable(${APP_SIGNER_BIN} ${APP_SRC} ${APP_GRESOURCE_C})
 add_dependencies(${APP_SIGNER_BIN} grotto_resources)
 # nostrc-py0hg: the session-bus probe shared with Groundhog.
 target_sources(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/gnome/common/gn-session-bus-probe.c)
-target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/gnome/common)
+target_include_directories(${APP_SIGNER_BIN} PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/gnome/common)
 target_compile_features(${APP_SIGNER_BIN} PRIVATE c_std_11)
 target_compile_definitions(${APP_SIGNER_BIN} PRIVATE 
   APP_ID="${APP_SIGNER_FLATPAK_ID}" APP_NAME="${APP_SIGNER_NAME}" APP_RESOURCE_PATH="/org/gnostr/signer"
