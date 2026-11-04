@@ -7,7 +7,10 @@ add_compile_definitions(GROTTO_VERSION="${GROTTO_VERSION}")
 
 include(GNUInstallDirs)
 
-if(NOT TARGET grotto-panels)
+option(GROTTO_USE_SYSTEM_PANELS "Use the installed grotto-panels runtime/SDK (native packages)" OFF)
+if(GROTTO_USE_SYSTEM_PANELS)
+  find_package(GrottoPanels 0.1 REQUIRED CONFIG)
+elseif(NOT TARGET GrottoPanels::Panels)
   add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/../../gnome/grotto-panels"
     "${CMAKE_CURRENT_BINARY_DIR}/grotto-panels")
 endif()

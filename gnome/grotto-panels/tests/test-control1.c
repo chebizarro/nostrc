@@ -8,6 +8,9 @@ static GDBusConnection *server;
 static const char *label = "First";
 static gboolean authorized, have_request = TRUE, hold_clients;
 static guint clients_calls, request_calls, mutations;
+static const char *remote_error, *credential_field;
+static gboolean hold_command;
+static GDBusMethodInvocation *pending_command;
 static GDBusMethodInvocation *held;
 static GVariant *rows(gboolean request) {
   GVariantBuilder array, row;
@@ -23,6 +26,8 @@ static GVariant *rows(gboolean request) {
     g_variant_builder_add(&row, "{sv}", "remaining_seconds", g_variant_new_uint32(100));
     /* Deliberately hostile unrecognized payload. The adapter must discard it. */
     g_variant_builder_add(&row, "{sv}", "private_payload", g_variant_new_string("must-not-cross"));
+    g_variant_builder_add(&row, "{sv}", "sequence", g_variant_new_uint64(9));
+    if (credential_field) g_variant_builder_add(&row, "{sv}", credential_field, g_variant_new_string("must-not-cross"));
     g_variant_builder_add_value(&array, g_variant_builder_end(&row));
   }
   return g_variant_new("(aa{sv})", &array);
@@ -51,12 +56,12 @@ static void method(GDBusConnection *connection, const char *sender, const char *
     request_calls++;
     g_dbus_method_invocation_return_value(invocation, rows(TRUE));
   } else if (!strcmp(name, "ListActivity")) {
-    GVariantBuilder array;
-    g_variant_builder_init(&array, G_VARIANT_TYPE("aa{sv}"));
-    g_dbus_method_invocation_return_value(invocation, g_variant_new("(aa{sv})", &array));
+    g_dbus_method_invocation_return_value(invocation, rows(FALSE));
   } else if (!strcmp(name, "SetClientLabel") || !strcmp(name, "SetPaused")) {
     mutations++;
-    g_dbus_method_invocation_return_value(invocation, g_variant_new("()"));
+    if (hold_command) pending_command = g_object_ref(invocation);
+    else if (remote_error) g_dbus_method_invocation_return_dbus_error(invocation, remote_error, "token=must-not-appear-in-public-error");
+    else g_dbus_method_invocation_return_value(invocation, g_variant_new("()"));
   } else g_dbus_method_invocation_return_dbus_error(invocation, "org.nostr.Test.Unexpected", name);
 }
 static const GDBusInterfaceVTable vtable = {.method_call = method};
@@ -91,6 +96,12 @@ static void done(GObject *source, GAsyncResult *result, gpointer data) {
   g_assert_true(grotto_panels_service_invoke_finish(GROTTO_PANELS_SERVICE(source), result, &error));
   g_assert_no_error(error);
   *(gboolean *)data = TRUE;
+}
+typedef struct { gboolean done, ok; GError *error; } CommandResult;
+static void command_done(GObject *source, GAsyncResult *result, gpointer data) {
+  CommandResult *r = data;
+  r->ok = grotto_panels_service_invoke_finish(GROTTO_PANELS_SERVICE(source), result, &r->error);
+  r->done = TRUE;
 }
 static void exercise(void) {
   server = nostrc_test_bus_connect(bus);
@@ -130,9 +141,28 @@ static void exercise(void) {
   g_clear_object(&request); request = g_list_model_get_item(requests, 0);
   g_assert_cmpint(grotto_panels_item_get_metadata(request)->deadline_usec, <=, deadline);
   gboolean completed = FALSE;
-  g_autoptr(GVariant) args = g_variant_ref_sink(g_variant_new("(ss)", "app-1", "Renamed"));
-  grotto_panels_service_invoke_async(service, GROTTO_PANEL_SET_CLIENT_LABEL, args, NULL, done, &completed);
+  const GrottoPanelCommandArgs args = {.principal = "app-1", .label = "Renamed"};
+  grotto_panels_service_invoke_async(service, GROTTO_PANEL_SET_CLIENT_LABEL, &args, NULL, done, &completed);
   WAIT(completed); g_assert_cmpuint(mutations, ==, 1);
+  const char *names[] = {"org.nostr.Grotto.Error.Conflict", "org.nostr.Grotto.Error.NotAuthorized",
+    "org.nostr.Grotto.Error.NotSupported", "org.nostr.Grotto.Error.InvalidInput", "org.nostr.Grotto.Error.Internal"};
+  const GIOErrorEnum codes[] = {G_IO_ERROR_BUSY, G_IO_ERROR_PERMISSION_DENIED,
+    G_IO_ERROR_NOT_SUPPORTED, G_IO_ERROR_INVALID_ARGUMENT, G_IO_ERROR_FAILED};
+  for (guint i = 0; i < G_N_ELEMENTS(names); i++) {
+    remote_error = names[i];
+    CommandResult r = {0};
+    grotto_panels_service_invoke_async(service, GROTTO_PANEL_SET_CLIENT_LABEL, &args, NULL, command_done, &r);
+    WAIT(r.done); g_assert_false(r.ok); g_assert_error(r.error, G_IO_ERROR, (gint)codes[i]);
+    g_assert_null(strstr(r.error->message, "token=")); g_clear_error(&r.error);
+  }
+  remote_error = NULL; hold_command = TRUE;
+  CommandResult cancelled_command = {0};
+  g_autoptr(GCancellable) cancel = g_cancellable_new();
+  grotto_panels_service_invoke_async(service, GROTTO_PANEL_SET_CLIENT_LABEL, &args, cancel, command_done, &cancelled_command);
+  WAIT(pending_command != NULL); g_cancellable_cancel(cancel); WAIT(cancelled_command.done);
+  g_assert_error(cancelled_command.error, G_IO_ERROR, G_IO_ERROR_CANCELLED); g_clear_error(&cancelled_command.error);
+  g_dbus_method_invocation_return_value(pending_command, g_variant_new("()")); g_clear_object(&pending_command);
+  hold_command = FALSE;
   hold_clients = TRUE; emit("ClientsChanged"); WAIT(held != NULL);
   label = "New snapshot"; emit("ClientsChanged"); WAIT(!strcmp(model_label(apps), label));
   /* Returning the earlier reply cannot overwrite the newer signal snapshot. */
@@ -144,14 +174,38 @@ static void exercise(void) {
   authorized = TRUE; emit("StatusChanged"); WAIT(grotto_panels_service_can(service, GROTTO_PANEL_SET_CLIENT_LABEL));
   g_assert_cmpuint(g_list_model_get_n_items(requests), ==, 0); /* tombstoned */
   hold_clients = TRUE; emit("ClientsChanged"); WAIT(held != NULL);
+  hold_command = TRUE; CommandResult old_owner = {0};
+  grotto_panels_service_invoke_async(service, GROTTO_PANEL_SET_CLIENT_LABEL, &args, NULL, command_done, &old_owner);
+  WAIT(pending_command != NULL);
   name_call("ReleaseName"); WAIT(!grotto_panels_service_is_available(service));
   g_assert_cmpuint(g_list_model_get_n_items(apps), ==, 0);
+  g_dbus_method_invocation_return_value(pending_command, g_variant_new("()")); g_clear_object(&pending_command);
+  WAIT(old_owner.done); g_assert_error(old_owner.error, G_IO_ERROR, G_IO_ERROR_CANCELLED); g_clear_error(&old_owner.error);
+  hold_command = FALSE;
   label = "Restarted"; name_call("RequestName");
   WAIT(grotto_panels_service_is_available(service) && !strcmp(model_label(apps), label));
   label = "Old owner"; g_dbus_method_invocation_return_value(held, rows(FALSE)); g_clear_object(&held);
   authorized = FALSE; emit("StatusChanged"); WAIT(!grotto_panels_service_can(service, GROTTO_PANEL_SET_CLIENT_LABEL));
   g_assert_cmpstr(model_label(apps), ==, "Restarted");
   g_assert_cmpuint(g_list_model_get_n_items(grotto_panels_service_get_model(service, GROTTO_PANELS_IDENTITIES)), ==, 0);
+  GListModel *activity = grotto_panels_service_get_model(service, GROTTO_PANELS_ACTIVITY);
+  WAIT(g_list_model_get_n_items(activity) == 1);
+  g_autoptr(GrottoPanelsItem) record = g_list_model_get_item(activity, 0);
+  g_assert_cmpuint(grotto_panels_item_get_metadata(record)->sequence, ==, 9);
+  const char *credential_fields[] = {"nsec", "mnemonic", "token", "pairing_token"};
+  for (guint i = 0; i < G_N_ELEMENTS(credential_fields); i++) {
+    credential_field = credential_fields[i];
+    emit("ClientsChanged"); emit("RequestsChanged"); emit("ActivityChanged");
+    WAIT(g_list_model_get_n_items(apps) == 0 && g_list_model_get_n_items(activity) == 0 && g_list_model_get_n_items(requests) == 0);
+    credential_field = NULL;
+    emit("ClientsChanged"); emit("ActivityChanged");
+    WAIT(g_list_model_get_n_items(apps) == 1 && g_list_model_get_n_items(activity) == 1);
+  }
+  gpointer weak_service = service, weak_proxy = proxy;
+  g_object_add_weak_pointer(G_OBJECT(service), &weak_service);
+  g_object_add_weak_pointer(G_OBJECT(proxy), &weak_proxy);
+  g_clear_object(&service); WAIT(weak_service == NULL);
+  g_clear_object(&proxy); WAIT(weak_proxy == NULL);
   g_dbus_connection_unregister_object(server, registration);
 }
 int main(int argc, char **argv) {

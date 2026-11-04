@@ -25,7 +25,8 @@ class disconnects availability/capability listeners and cancels the old view
 cancellable on detachment. Subclasses must also disconnect their own model
 listeners and reject cancelled/stale async results. Host callbacks are copied;
 the supplied destroy notifier runs once on replacement or panel disposal.
-Absent callbacks hide the corresponding action. No service means unavailable,
+The callback table stays private: use `grotto_panel_host_can()` and the guarded
+`grotto_panel_host_invoke()`. Absent callbacks hide the corresponding action. No service means unavailable,
 not a local permission fallback.
 
 Grotto owns the Control1 adapter in
@@ -45,8 +46,32 @@ caller-specific `management-capabilities` (`a{sb}`), the adapter's commands are
 read-only/unavailable. The closed command names in the adapter define the
 future map; no manager role is implemented or assumed here. Cosmetic manager
 commands, session pause and approver-only changes are distinct now; every RPC
-still requires daemon authorization. Unknown commands/argument shapes fail.
-RPC result bodies never cross back to a panel.
+still requires daemon authorization. **Manager means reads and cosmetic labels,
+not tiers.** `SET_CLIENT_TRUST` (tier/preset), permission replacements, defaults,
+resume and remote configuration remain approver-only. A label command rejects
+trust/permission fields; the adapter maps it only to `SetClientLabel`. W6 adds
+manager authorization to the daemon; it does not expand this authority split.
+
+Commands accept `GrottoPanelCommandArgs` and typed permission records, not
+`GVariant`, dictionaries, arbitrary object payloads or RPC method names. Every
+unused member must be zero. Metadata construction, model replacement, commands
+and host actions reject known credential encodings/markers, including recovery
+phrases, before any model publication or backend dispatch. Model getters reject
+generic-object carriers; only the final immutable metadata item type is allowed.
+The compiler-schema test checks **all** fields/types (including typedef aliases),
+and the closed compiled import/export surface forbids D-Bus/network/dynamic-I/O
+code in the library regardless of source layout or split string literals.
+These are API admission/regression boundaries, not a sandbox for malicious
+native code or a universal detector of arbitrary tokens disguised as normal
+public text. RPC result bodies and remote error text never enter a panel.
+
+Both services use `G_IO_ERROR`: unauthorized/locked → `PERMISSION_DENIED`,
+revision conflict → `BUSY`, unsupported → `NOT_SUPPORTED`, invalid arguments →
+`INVALID_ARGUMENT`, owner loss/cancellation → `CANCELLED`, unavailable →
+`NOT_INITIALIZED`, other backend failure → `FAILED`. Error text is generic.
+The test fake records typed calls and provides configured errors and explicitly
+held completion (deterministic latency), including cancellation and owner loss;
+it does not evaluate signer policy or invent a successful mutation.
 
 Identity models remain empty pending W3's Grotto-owned **public** metadata
 composite and W6's daemon snapshot. No private keyring enumeration, shared
@@ -76,9 +101,11 @@ and destruction. `GTK_A11Y=test` preserves accessibility processing. Under
 ASan/UBSan, keep `detect_leaks=1`; the smoke host alone uses the three
 source-proven Pango/fontconfig cache exceptions tracked by `nostrc-ydtdf` in
 `tests/lsan.supp`. The private-bus adapter has no suppressions. The library links
-without either app. `no-secrets` checks the
-public schema, source boundaries, exported/imported symbols and direct ELF
-library dependencies. `control1-service` uses the production adapter against a
+without either app. `no-secrets` executes metadata/model/command smuggling attempts for credential
+payloads, checks the compiler's complete schema and compiled import/export/ELF
+closure, and builds counterfactuals for both independent-review bypasses. Host
+action smuggling, deferred failures and in-flight detach run in `smoke-host`.
+Tests require Clang for structural C declarations; a missing tool fails visibly. `control1-service` uses the production adapter against a
 fixture implementing the canonical Control1 XML on `nostrc-test-bus`; it is not
 proof of the future manager gate or real Nostr Settings hosting (W6).
 
@@ -96,3 +123,7 @@ consumers. A standalone profile is not full host/CI/release acceptance. Meson
 consumers install this library first and resolve `dependency('grotto-panels-0',
 version: '>=0.1.0')`; Grotto does so without linking its implementation into the
 shared library. CMake consumers resolve `find_package(GrottoPanels 0.1 CONFIG)`.
+Native host recipes set `GROTTO_USE_SYSTEM_PANELS=ON`: the runtime/SDK are supplied
+by the separate Debian/RPM provider, rather than stranded in Grotto's private
+install subtree. See [packaging](packaging/README.md) for the explicit installed
+consumer smoke and its native-Debian versus RPM-diagnostic boundary.

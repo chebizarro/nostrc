@@ -1,0 +1,4 @@
+usr/include/grotto-panels-0/*
+usr/lib/*/libgrotto-panels-0.so
+usr/lib/*/pkgconfig/grotto-panels-0.pc
+usr/lib/*/cmake/GrottoPanels/*

@@ -5,7 +5,7 @@ struct _GrottoPanelsItem {
   GObject parent_instance;
   GrottoPanelsMetadata metadata;
 };
-G_DEFINE_TYPE(GrottoPanelsItem, grotto_panels_item, G_TYPE_OBJECT)
+G_DEFINE_FINAL_TYPE(GrottoPanelsItem, grotto_panels_item, G_TYPE_OBJECT)
 
 static void item_finalize(GObject *object) {
   GrottoPanelsMetadata *m = &GROTTO_PANELS_ITEM(object)->metadata;
@@ -21,8 +21,8 @@ static void grotto_panels_item_class_init(GrottoPanelsItemClass *klass) {
   G_OBJECT_CLASS(klass)->finalize = item_finalize;
 }
 static void grotto_panels_item_init(GrottoPanelsItem *self) { (void)self; }
-GrottoPanelsItem *grotto_panels_item_new(const GrottoPanelsMetadata *metadata) {
-  g_return_val_if_fail(metadata != NULL, NULL);
+GrottoPanelsItem *grotto_panels_item_new(const GrottoPanelsMetadata *metadata, GError **error) {
+  if (!grotto_panels_metadata_validate(metadata, error)) return NULL;
   GrottoPanelsItem *self = g_object_new(GROTTO_TYPE_PANELS_ITEM, NULL);
   self->metadata = *metadata;
 #define COPY(field) self->metadata.field = g_strdup(metadata->field ? metadata->field : "")
@@ -35,12 +35,6 @@ const GrottoPanelsMetadata *grotto_panels_item_get_metadata(GrottoPanelsItem *se
   return &self->metadata;
 }
 
-const GVariantType *grotto_panel_command_get_args_type(GrottoPanelCommand command) {
-  static const char *const types[] = {
-    "(ss)", "(s)", "(ss)", "(ssaa{sv}t)", "(s)", "()", "()", "()", "(basas)", "()"
-  };
-  return command >= 0 && command < GROTTO_PANEL_N_COMMANDS ? G_VARIANT_TYPE(types[command]) : NULL;
-}
 GrottoPanelsAccess grotto_panel_command_get_access(GrottoPanelCommand command) {
   if (command == GROTTO_PANEL_PAUSE) return GROTTO_PANELS_ACCESS_SESSION;
   if (command == GROTTO_PANEL_SET_CLIENT_LABEL) return GROTTO_PANELS_ACCESS_MANAGER;
@@ -58,7 +52,10 @@ GListModel *grotto_panels_service_get_model(GrottoPanelsService *self, GrottoPan
   g_return_val_if_fail(GROTTO_PANELS_IS_SERVICE(self), NULL);
   g_return_val_if_fail(model >= 0 && model < GROTTO_PANELS_N_MODELS, NULL);
   GrottoPanelsServiceInterface *iface = GROTTO_PANELS_SERVICE_GET_IFACE(self);
-  return iface->get_model ? iface->get_model(self, model) : NULL;
+  GListModel *result = iface->get_model ? iface->get_model(self, model) : NULL;
+  /* Reject generic GObject/GVariant wrapper models, not just suspicious fields. */
+  if (result && g_list_model_get_item_type(result) != GROTTO_TYPE_PANELS_ITEM) return NULL;
+  return result;
 }
 gboolean grotto_panels_service_is_available(GrottoPanelsService *self) {
   if (!self) return FALSE;
@@ -67,35 +64,30 @@ gboolean grotto_panels_service_is_available(GrottoPanelsService *self) {
   return iface->is_available && iface->is_available(self);
 }
 gboolean grotto_panels_service_can(GrottoPanelsService *self, GrottoPanelCommand command) {
-  if (!grotto_panel_command_get_args_type(command) || !grotto_panels_service_is_available(self)) return FALSE;
+  if (command < 0 || command >= GROTTO_PANEL_N_COMMANDS || !grotto_panels_service_is_available(self)) return FALSE;
   GrottoPanelsServiceInterface *iface = GROTTO_PANELS_SERVICE_GET_IFACE(self);
   return iface->can && iface->can(self, command);
 }
 void grotto_panels_service_invoke_async(GrottoPanelsService *self, GrottoPanelCommand command,
-  GVariant *args, GCancellable *cancellable, GAsyncReadyCallback callback, gpointer user_data) {
+  const GrottoPanelCommandArgs *args, GCancellable *cancellable, GAsyncReadyCallback callback, gpointer user_data) {
   g_return_if_fail(self == NULL || GROTTO_PANELS_IS_SERVICE(self));
   GrottoPanelsServiceInterface *iface = self ? GROTTO_PANELS_SERVICE_GET_IFACE(self) : NULL;
-  const GVariantType *type = grotto_panel_command_get_args_type(command);
-  GIOErrorEnum code = G_IO_ERROR_NOT_SUPPORTED;
-  const char *message = "Unsupported panel command";
-  if (type) {
-    if (!args || !g_variant_is_of_type(args, type)) {
-      code = G_IO_ERROR_INVALID_ARGUMENT;
-      message = "Invalid panel command arguments";
-    } else if (!grotto_panels_service_is_available(self)) {
-      code = G_IO_ERROR_NOT_INITIALIZED;
-      message = "Signer unavailable";
-    } else if (!grotto_panels_service_can(self, command)) {
-      code = G_IO_ERROR_PERMISSION_DENIED;
-      message = "Open in Grotto";
-    } else if (iface->invoke_async && iface->invoke_finish) {
+  g_autoptr(GError) error = NULL;
+  const GrottoPanelCommandArgs empty = {0};
+  if (!args) args = &empty;
+  if (grotto_panel_command_args_validate(command, args, &error)) {
+    if (!grotto_panels_service_is_available(self))
+      g_set_error_literal(&error, G_IO_ERROR, G_IO_ERROR_NOT_INITIALIZED, "Signer unavailable");
+    else if (!grotto_panels_service_can(self, command))
+      g_set_error_literal(&error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED, "Open in Grotto");
+    else if (iface->invoke_async && iface->invoke_finish) {
       iface->invoke_async(self, command, args, cancellable, callback, user_data);
       return;
-    }
+    } else g_set_error_literal(&error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED, "Unsupported panel command");
   }
   GTask *task = g_task_new(self, cancellable, callback, user_data);
   g_task_set_source_tag(task, grotto_panels_service_invoke_async);
-  g_task_return_new_error(task, G_IO_ERROR, code, "%s", message);
+  g_task_return_error(task, g_steal_pointer(&error));
   g_object_unref(task);
 }
 gboolean grotto_panels_service_invoke_finish(GrottoPanelsService *self, GAsyncResult *result, GError **error) {

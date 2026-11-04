@@ -57,11 +57,47 @@ void grotto_panel_set_host(GrottoPanel *self, const GrottoPanelsHost *host,
   p->host_data = data;
   p->host_destroy = destroy;
 }
-const GrottoPanelsHost *grotto_panel_get_host(GrottoPanel *self, gpointer *data) {
-  g_return_val_if_fail(GROTTO_IS_PANEL(self), NULL);
+gboolean grotto_panel_host_can(GrottoPanel *self, GrottoPanelHostAction action) {
+  g_return_val_if_fail(GROTTO_IS_PANEL(self), FALSE);
   GrottoPanelPrivate *p = grotto_panel_get_instance_private(self);
-  if (data) *data = p->host_data;
-  return &p->host;
+  switch (action) {
+    case GROTTO_PANEL_HOST_TOAST: return p->host.show_toast != NULL;
+    case GROTTO_PANEL_HOST_REVIEW: return p->host.review_request != NULL;
+    case GROTTO_PANEL_HOST_ADD_IDENTITY: return p->host.add_identity != NULL;
+    case GROTTO_PANEL_HOST_ADD_APP: return p->host.add_app != NULL;
+    case GROTTO_PANEL_HOST_BACKUP: return p->host.open_backup != NULL;
+    case GROTTO_PANEL_HOST_REMOVE: return p->host.remove_identity != NULL;
+    case GROTTO_PANEL_HOST_REPLACE: return p->host.replace_identity != NULL;
+    case GROTTO_PANEL_HOST_OPEN_SIGNER: return p->host.open_in_signer != NULL;
+    default: return FALSE;
+  }
+}
+gboolean grotto_panel_host_invoke(GrottoPanel *self, GrottoPanelHostAction action,
+  const char *value, GError **error) {
+  g_return_val_if_fail(GROTTO_IS_PANEL(self), FALSE);
+  if (!grotto_panels_public_text_validate(value, error)) return FALSE;
+  gboolean empty = action == GROTTO_PANEL_HOST_ADD_IDENTITY || action == GROTTO_PANEL_HOST_ADD_APP;
+  if ((empty && value) || (!empty && (!value || !*value))) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "Invalid public host target");
+    return FALSE;
+  }
+  if (!grotto_panel_host_can(self, action)) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED, "Host action unavailable");
+    return FALSE;
+  }
+  GrottoPanelPrivate *p = grotto_panel_get_instance_private(self);
+  switch (action) {
+    case GROTTO_PANEL_HOST_TOAST: p->host.show_toast(p->host_data, value); break;
+    case GROTTO_PANEL_HOST_REVIEW: p->host.review_request(p->host_data, value); break;
+    case GROTTO_PANEL_HOST_ADD_IDENTITY: p->host.add_identity(p->host_data); break;
+    case GROTTO_PANEL_HOST_ADD_APP: p->host.add_app(p->host_data); break;
+    case GROTTO_PANEL_HOST_BACKUP: p->host.open_backup(p->host_data, value); break;
+    case GROTTO_PANEL_HOST_REMOVE: p->host.remove_identity(p->host_data, value); break;
+    case GROTTO_PANEL_HOST_REPLACE: p->host.replace_identity(p->host_data, value); break;
+    case GROTTO_PANEL_HOST_OPEN_SIGNER: p->host.open_in_signer(p->host_data, value); break;
+    default: g_assert_not_reached();
+  }
+  return TRUE;
 }
 static void set_property(GObject *object, guint id, const GValue *value, GParamSpec *pspec) {
   if (id == PROP_SERVICE) grotto_panel_set_service(GROTTO_PANEL(object), g_value_get_object(value));

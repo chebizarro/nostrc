@@ -31,7 +31,7 @@
         "grotto.panels.linux": ["grotto-panels/smoke-host", "grotto-panels/no-secrets", "grotto-panels/control1-service"],
         "grotto.linux": ["grotto-panels/smoke-host", "grotto-panels/no-secrets", "grotto-panels/control1-service"]
       },
-      "build_targets": ["test-grotto-panels-smoke", "test-grotto-panels-control1"],
+      "build_targets": ["test-grotto-panels-smoke", "test-grotto-panels-control1", "test-grotto-panels-admission"],
       "runtime_inputs": ["{source}/apps/grotto/data/org.nostr.Grotto.Control1.xml"],
       "requires": []
     },
@@ -30637,7 +30637,9 @@
       "publisher": "none",
       "version_sources": [
         {"path": "gnome/grotto-panels/CMakeLists.txt", "pattern": "project\\(grotto-panels VERSION ([0-9.]+)"},
-        {"path": "gnome/grotto-panels/meson.build", "pattern": "(?m)^project\\('grotto-panels', 'c', version: '([0-9.]+)'"}
+        {"path": "gnome/grotto-panels/meson.build", "pattern": "(?m)^project\\('grotto-panels', 'c', version: '([0-9.]+)'"},
+        {"path": "gnome/grotto-panels/packaging/debian/changelog", "pattern": "(?m)^grotto-panels \\(([0-9.]+)-1\\)"},
+        {"path": "gnome/grotto-panels/packaging/rpm/grotto-panels.spec", "pattern": "(?m)^Version:\\s+([0-9.]+)"}
       ]
     },
     "porthome-sys": {

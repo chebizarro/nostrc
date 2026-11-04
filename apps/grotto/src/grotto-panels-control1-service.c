@@ -27,6 +27,8 @@ static const char *const capability_names[] = {
   "set-client-label", "set-default-identity", "set-client-trust", "set-permissions",
   "revoke-client", "pause", "resume", "clear-activity", "configure-remote", "reset-remote"
 };
+G_STATIC_ASSERT(G_N_ELEMENTS(methods) == GROTTO_PANEL_N_COMMANDS);
+G_STATIC_ASSERT(G_N_ELEMENTS(capability_names) == GROTTO_PANEL_N_COMMANDS);
 /* Internal slot 4 holds coarse availability/caller capabilities, not a model. */
 #define STATUS_SLOT GROTTO_PANELS_N_MODELS
 
@@ -76,7 +78,17 @@ static void apply_rows(Snapshot *snapshot, GVariant *rows) {
         if (!strcmp(previous->id, id)) m.deadline_usec = MIN(m.deadline_usec, previous->deadline_usec);
       }
     }
-    GrottoPanelsItem *item = grotto_panels_item_new(&m);
+    /* Reject explicitly credential-bearing rows; unknown public daemon fields
+     * are otherwise projected away, never passed as a dictionary to a panel. */
+    static const char *const forbidden_fields[] = {"nsec", "mnemonic", "token", "pairing_token", "secret", "passphrase", "private_key"};
+    gboolean rejected = FALSE;
+    for (guint key = 0; key < G_N_ELEMENTS(forbidden_fields); key++) {
+      g_autoptr(GVariant) field = g_variant_lookup_value(row, forbidden_fields[key], NULL);
+      rejected |= field != NULL;
+    }
+    if (rejected) continue;
+    GrottoPanelsItem *item = grotto_panels_item_new(&m, NULL);
+    if (!item) continue;
     g_ptr_array_add(items, item);
     g_hash_table_add(seen, (gpointer)grotto_panels_item_get_metadata(item)->id);
   }
@@ -180,11 +192,24 @@ static void invocation_done(GObject *source, GAsyncResult *result, gpointer data
   g_autoptr(GVariant) reply = g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), result, &error);
   if (invocation->generation != self->generation)
     g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_CANCELLED, "Signer owner changed");
-  else if (!reply) g_task_return_error(task, g_steal_pointer(&error));
+  else if (!reply) {
+    /* One public error contract for real and fake services; never return remote
+     * error text, which is outside the panel's public-metadata schema. */
+    GIOErrorEnum code = G_IO_ERROR_FAILED;
+    g_autofree char *name = g_dbus_error_get_remote_error(error);
+    if (g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) code = G_IO_ERROR_CANCELLED;
+    else if (name && (g_str_has_suffix(name, ".NotAuthorized") || g_str_has_suffix(name, ".AccessDenied") ||
+                      g_str_has_suffix(name, ".SessionLocked"))) code = G_IO_ERROR_PERMISSION_DENIED;
+    else if (name && g_str_has_suffix(name, ".Conflict")) code = G_IO_ERROR_BUSY;
+    else if (name && (g_str_has_suffix(name, ".NotSupported") || g_str_has_suffix(name, ".UnknownMethod"))) code = G_IO_ERROR_NOT_SUPPORTED;
+    else if (name && (g_str_has_suffix(name, ".InvalidInput") || g_str_has_suffix(name, ".InvalidArgs"))) code = G_IO_ERROR_INVALID_ARGUMENT;
+    else if (name && (g_str_has_suffix(name, ".ServiceUnknown") || g_str_has_suffix(name, ".NameHasNoOwner"))) code = G_IO_ERROR_NOT_INITIALIZED;
+    g_task_return_new_error(task, G_IO_ERROR, code, "Panel command failed");
+  }
   else g_task_return_boolean(task, TRUE); /* Never pass arbitrary RPC payloads to a panel. */
   g_object_unref(task);
 }
-static void invoke_async(GrottoPanelsService *service, GrottoPanelCommand command, GVariant *args,
+static void invoke_async(GrottoPanelsService *service, GrottoPanelCommand command, const GrottoPanelCommandArgs *args,
   GCancellable *cancel, GAsyncReadyCallback callback, gpointer data) {
   GrottoPanelsControl1Service *self = GROTTO_PANELS_CONTROL1_SERVICE(service);
   GTask *task = g_task_new(self, cancel, callback, data);
@@ -195,16 +220,38 @@ static void invoke_async(GrottoPanelsService *service, GrottoPanelCommand comman
   if (command == GROTTO_PANEL_PAUSE || command == GROTTO_PANEL_RESUME)
     wire = g_variant_ref_sink(g_variant_new("(b)", command == GROTTO_PANEL_PAUSE));
   else if (command == GROTTO_PANEL_CONFIGURE_REMOTE) {
-    gboolean enabled;
-    g_autoptr(GVariant) relays = NULL, methods_arg = NULL;
-    g_variant_get(args, "(b@as@as)", &enabled, &relays, &methods_arg);
     GVariantBuilder config;
     g_variant_builder_init(&config, G_VARIANT_TYPE_VARDICT);
-    g_variant_builder_add(&config, "{sv}", "enabled", g_variant_new_boolean(enabled));
-    g_variant_builder_add(&config, "{sv}", "relays", relays);
-    g_variant_builder_add(&config, "{sv}", "allowed-methods", methods_arg);
+    g_variant_builder_add(&config, "{sv}", "enabled", g_variant_new_boolean(args->remote_enabled));
+    g_variant_builder_add(&config, "{sv}", "relays", g_variant_new_strv(args->relays, args->relays ? -1 : 0));
+    g_variant_builder_add(&config, "{sv}", "allowed-methods", g_variant_new_strv(args->methods, args->methods ? -1 : 0));
     wire = g_variant_ref_sink(g_variant_new("(a{sv})", &config));
-  } else wire = g_variant_ref(args);
+  } else if (command == GROTTO_PANEL_SET_CLIENT_LABEL)
+    wire = g_variant_ref_sink(g_variant_new("(ss)", args->principal, args->label));
+  else if (command == GROTTO_PANEL_SET_CLIENT_TRUST)
+    wire = g_variant_ref_sink(g_variant_new("(ss)", args->principal, args->trust));
+  else if (command == GROTTO_PANEL_SET_DEFAULT_IDENTITY)
+    wire = g_variant_ref_sink(g_variant_new("(s)", args->public_key));
+  else if (command == GROTTO_PANEL_REVOKE_CLIENT)
+    wire = g_variant_ref_sink(g_variant_new("(s)", args->principal));
+  else if (command == GROTTO_PANEL_SET_PERMISSIONS) {
+    GVariantBuilder rows;
+    g_variant_builder_init(&rows, G_VARIANT_TYPE("aa{sv}"));
+    for (gsize i = 0; i < args->n_permissions; i++) {
+      const GrottoPanelPermission *p = &args->permissions[i];
+      GVariantBuilder row;
+      g_variant_builder_init(&row, G_VARIANT_TYPE_VARDICT);
+      g_variant_builder_add(&row, "{sv}", "principal", g_variant_new_string(args->principal));
+      g_variant_builder_add(&row, "{sv}", "identity", g_variant_new_string(args->public_key));
+      g_variant_builder_add(&row, "{sv}", "operation", g_variant_new_string(p->operation));
+      g_variant_builder_add(&row, "{sv}", "decision", g_variant_new_string(p->decision));
+      g_variant_builder_add(&row, "{sv}", "event-kind", g_variant_new_int32(p->event_kind));
+      g_variant_builder_add(&row, "{sv}", "expires-at", g_variant_new_uint64(p->expires_at));
+      if (p->relay) g_variant_builder_add(&row, "{sv}", "relay", g_variant_new_string(p->relay));
+      g_variant_builder_add_value(&rows, g_variant_builder_end(&row));
+    }
+    wire = g_variant_ref_sink(g_variant_new("(ssaa{sv}t)", args->principal, args->public_key, &rows, args->expected_revision));
+  } else wire = g_variant_ref_sink(g_variant_new("()"));
   g_dbus_connection_call(g_dbus_proxy_get_connection(self->proxy), self->owner, CONTROL_PATH, CONTROL,
     methods[command], wire, NULL, G_DBUS_CALL_FLAGS_NO_AUTO_START, 5000, cancel, invocation_done, task);
 }

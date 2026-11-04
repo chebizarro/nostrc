@@ -16,7 +16,7 @@ version_data.set_quoted('GROTTO_PANELS_VERSION', meson.project_version())
 configure_file(output: 'grotto-panels-version.h', configuration: version_data,
   install_dir: get_option('includedir') / 'grotto-panels-0')
 inc = include_directories('include/grotto-panels-0', '.')
-panels = shared_library('grotto-panels-0', 'src/grotto-panel.c', 'src/grotto-panels-service.c',
+panels = shared_library('grotto-panels-0', 'src/grotto-panel.c', 'src/grotto-panels-service.c', 'src/grotto-panels-validation.c',
   include_directories: inc, dependencies: [gtk_dep, adw_dep],
   c_args: ['-DGROTTO_PANELS_COMPILATION'], gnu_symbol_visibility: 'hidden',
   version: meson.project_version(), soversion: '0', install: true)
@@ -28,6 +28,8 @@ panels_dep = declare_dependency(link_with: panels, include_directories: inc, dep
 meson.override_dependency('grotto-panels-0', panels_dep)
 if get_option('tests')
   python = import('python').find_installation('python3')
+  clang = find_program('clang')
+  admission = executable('test-grotto-panels-admission', 'tests/test-admission.c', 'tests/fake-service.c', dependencies: panels_dep)
   smoke = executable('test-grotto-panels-smoke', 'tests/test-smoke-host.c', 'tests/fake-service.c', dependencies: panels_dep)
   if host_machine.system() == 'linux'
     runner = find_program('dbus-run-session')
@@ -39,8 +41,9 @@ if get_option('tests')
     test('smoke-host', smoke, suite: 'grotto-panels', timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GTK_A11Y=test',
         'LSAN_OPTIONS=suppressions=' + meson.current_source_dir() / 'tests/lsan.supp' + ':print_suppressions=1'])
   endif
-  test('no-secrets', python, args: [files('tests/test-boundaries.py'), meson.current_source_dir(), panels.full_path()],
-    depends: panels, suite: 'grotto-panels')
+  test('no-secrets', python, args: [files('tests/test-boundaries.py'), meson.current_source_dir(), panels.full_path(),
+      admission.full_path(), meson.current_build_dir(), clang.full_path()],
+    depends: [panels, admission], suite: 'grotto-panels')
   control = executable('test-grotto-panels-control1', 'tests/test-control1.c',
     '../../apps/grotto/src/grotto-panels-control1-service.c',
     '../../tests/common/nostrc-test-bus.c',

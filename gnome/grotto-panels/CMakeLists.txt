@@ -11,7 +11,7 @@ pkg_check_modules(GROTTO_PANELS_DEPS REQUIRED IMPORTED_TARGET gtk4>=4.14 libadwa
 set(_pins GDK_VERSION_MIN_REQUIRED=GDK_VERSION_4_14 GDK_VERSION_MAX_ALLOWED=GDK_VERSION_4_14
   GTK_VERSION_MIN_REQUIRED=GDK_VERSION_4_14 GTK_VERSION_MAX_ALLOWED=GDK_VERSION_4_14
   ADW_VERSION_MIN_REQUIRED=ADW_VERSION_1_5 ADW_VERSION_MAX_ALLOWED=ADW_VERSION_1_5)
-add_library(grotto-panels SHARED src/grotto-panel.c src/grotto-panels-service.c)
+add_library(grotto-panels SHARED src/grotto-panel.c src/grotto-panels-service.c src/grotto-panels-validation.c)
 add_library(GrottoPanels::Panels ALIAS grotto-panels)
 set_target_properties(grotto-panels PROPERTIES OUTPUT_NAME grotto-panels-0
   VERSION ${PROJECT_VERSION} SOVERSION 0 EXPORT_NAME Panels C_VISIBILITY_PRESET hidden)
@@ -47,6 +47,13 @@ install(FILES "${CMAKE_CURRENT_BINARY_DIR}/grotto-panels-0.pc" DESTINATION ${CMA
 include(CTest)
 if(BUILD_TESTING)
   find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  find_program(GROTTO_PANELS_CLANG clang REQUIRED)
+  add_executable(test-grotto-panels-admission tests/test-admission.c tests/fake-service.c)
+  target_link_libraries(test-grotto-panels-admission PRIVATE grotto-panels)
+  target_compile_definitions(test-grotto-panels-admission PRIVATE ${_pins})
+  if(COMMAND apply_sanitizers)
+    apply_sanitizers(test-grotto-panels-admission)
+  endif()
   add_executable(test-grotto-panels-smoke tests/test-smoke-host.c tests/fake-service.c)
   target_link_libraries(test-grotto-panels-smoke PRIVATE grotto-panels)
   target_compile_definitions(test-grotto-panels-smoke PRIVATE ${_pins})
@@ -66,7 +73,9 @@ if(BUILD_TESTING)
   set_tests_properties(grotto-panels/smoke-host PROPERTIES TIMEOUT 30
     ENVIRONMENT "G_DEBUG=fatal-warnings;GTK_A11Y=test;LSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/tests/lsan.supp:print_suppressions=1")
   add_test(NAME grotto-panels/no-secrets COMMAND ${Python3_EXECUTABLE}
-    "${CMAKE_CURRENT_SOURCE_DIR}/tests/test-boundaries.py" "${CMAKE_CURRENT_SOURCE_DIR}" $<TARGET_FILE:grotto-panels>)
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/test-boundaries.py" "${CMAKE_CURRENT_SOURCE_DIR}" $<TARGET_FILE:grotto-panels>
+    $<TARGET_FILE:test-grotto-panels-admission> "${CMAKE_CURRENT_BINARY_DIR}/generated" "${GROTTO_PANELS_CLANG}")
+  set_tests_properties(grotto-panels/no-secrets PROPERTIES TIMEOUT 60 ENVIRONMENT "G_DEBUG=fatal-warnings")
   include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcTestBus.cmake")
   add_executable(test-grotto-panels-control1 tests/test-control1.c
     ../../apps/grotto/src/grotto-panels-control1-service.c)
@@ -83,7 +92,7 @@ if(BUILD_TESTING)
   if(COMMAND nostrc_describe_test)
     nostrc_describe_test(grotto-panels/smoke-host OWNER grotto.panels
       TARGETS test-grotto-panels-smoke INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/lsan.supp")
-    nostrc_describe_test(grotto-panels/no-secrets OWNER grotto.panels TARGETS grotto-panels
+    nostrc_describe_test(grotto-panels/no-secrets OWNER grotto.panels TARGETS grotto-panels test-grotto-panels-admission
       INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/test-boundaries.py")
     nostrc_describe_test(grotto-panels/control1-service OWNER grotto.panels
       TARGETS test-grotto-panels-control1

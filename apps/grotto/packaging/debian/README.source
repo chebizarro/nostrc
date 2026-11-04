@@ -9,6 +9,11 @@ headless package recipe. Replace it only in that disposable copy:
     cp -a apps/grotto/packaging/debian debian
     dpkg-buildpackage -us -uc -b
 
+Build and install the separate grotto-panels runtime/SDK provider first; see
+`gnome/grotto-panels/packaging/README.md` in the repository root. This recipe
+requires libgrotto-panels-0-dev >=0.1.0 to build and libgrotto-panels-0-0 >=0.1.0
+at runtime. GROTTO_USE_SYSTEM_PANELS=ON prevents an unclaimed nested DSO install.
+
 Install build dependencies from debian/control in the target distribution.
 Supported floor is Ubuntu 24.04: GTK >=4.14, libadwaita >=1.5, GLib >=2.80.
 Do not claim Ubuntu 22.04/Debian 12 support. Debian stable and Fedora target

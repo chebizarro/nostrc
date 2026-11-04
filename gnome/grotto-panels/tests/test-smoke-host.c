@@ -45,8 +45,9 @@ static void mounted(void) {
   grotto_panels_fake_service_set_can(fake, GROTTO_PANEL_SET_CLIENT_LABEL, TRUE);
   GrottoPanelsMetadata metadata = {.id="app", .label="<b>Untrusted & text</b>", .reason="<i>daemon reason</i>",
     .state="inactive", .access_policy="future-policy", .blocked=TRUE, .needs_review=TRUE};
-  grotto_panels_fake_service_replace(fake, GROTTO_PANELS_APPS, &metadata);
+  g_assert_true(grotto_panels_fake_service_replace(fake, GROTTO_PANELS_APPS, &metadata, NULL));
   for (guint narrow = 0; narrow < 2; narrow++) {
+    g_assert_true(grotto_panels_fake_service_replace(fake, GROTTO_PANELS_APPS, &metadata, NULL));
     GtkWidget *window = adw_window_new();
     g_object_ref_sink(window);
     gtk_window_set_default_size(GTK_WINDOW(window), narrow ? 360 : 920, 640);
@@ -58,16 +59,22 @@ static void mounted(void) {
     guint callbacks = 0, releases = 0;
     GrottoPanelsHost host = {with_text, with_text, without_text, without_text, with_text, with_text, with_text, with_text};
     grotto_panel_set_host(GROTTO_PANEL(panel), &host, &callbacks, destroyed);
-    gpointer host_data = NULL;
-    const GrottoPanelsHost *copy = grotto_panel_get_host(GROTTO_PANEL(panel), &host_data);
-    copy->show_toast(host_data, "toast"); copy->review_request(host_data, "request");
-    copy->add_identity(host_data); copy->add_app(host_data);
-    copy->open_backup(host_data, "public-key"); copy->remove_identity(host_data, "public-key");
-    copy->replace_identity(host_data, "public-key"); copy->open_in_signer(host_data, "identity");
+    const char *payloads[] = {"nsec1not-public", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about", "token=not-public"};
+    for (guint i = 0; i < G_N_ELEMENTS(payloads); i++) {
+      for (guint action = 0; action < GROTTO_PANEL_HOST_N_ACTIONS; action++) {
+        g_autoptr(GError) error = NULL;
+        g_assert_false(grotto_panel_host_invoke(GROTTO_PANEL(panel), action, payloads[i], &error));
+        g_assert_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT);
+      }
+    }
+    g_assert_cmpuint(callbacks, ==, 0);
+    for (guint action = 0; action < GROTTO_PANEL_HOST_N_ACTIONS; action++)
+      g_assert_true(grotto_panel_host_invoke(GROTTO_PANEL(panel), action,
+        action == GROTTO_PANEL_HOST_ADD_IDENTITY || action == GROTTO_PANEL_HOST_ADD_APP ? NULL : "public-target", NULL));
     g_assert_cmpuint(callbacks, ==, 8);
     grotto_panel_set_host(GROTTO_PANEL(panel), NULL, &releases, destroyed);
     g_assert_cmpuint(callbacks, ==, 9);
-    g_assert_null(grotto_panel_get_host(GROTTO_PANEL(panel), NULL)->open_backup);
+    g_assert_false(grotto_panel_host_can(GROTTO_PANEL(panel), GROTTO_PANEL_HOST_BACKUP));
     adw_navigation_split_view_set_content(split, ADW_NAVIGATION_PAGE(panel));
     adw_navigation_split_view_set_collapsed(split, narrow);
     adw_navigation_split_view_set_show_content(split, TRUE);
@@ -85,7 +92,7 @@ static void mounted(void) {
     g_assert_cmpstr(roundtrip->state, ==, "inactive");
     g_assert_true(roundtrip->blocked); g_assert_true(roundtrip->needs_review);
     metadata.label = narrow ? "Changed twice" : "Changed";
-    grotto_panels_fake_service_replace(fake, GROTTO_PANELS_APPS, &metadata);
+    g_assert_true(grotto_panels_fake_service_replace(fake, GROTTO_PANELS_APPS, &metadata, NULL));
     row = ADW_ACTION_ROW(gtk_list_box_get_row_at_index(panel->list, 0));
     g_assert_cmpstr(adw_preferences_row_get_title(ADW_PREFERENCES_ROW(row)), ==, metadata.label);
     g_assert_true(gtk_widget_get_visible(panel->edit));
@@ -95,6 +102,7 @@ static void mounted(void) {
     grotto_panels_fake_service_set_available(fake, FALSE);
     g_assert_false(gtk_widget_get_visible(panel->edit));
     grotto_panels_fake_service_set_available(fake, TRUE);
+    grotto_panels_fake_service_set_can(fake, GROTTO_PANEL_SET_CLIENT_LABEL, TRUE);
     AdwNavigationPage *sub = adw_navigation_page_new(gtk_label_new("Subpage"), "Subpage");
     adw_navigation_view_push(panel->navigation, sub);
     g_assert_true(adw_navigation_view_get_visible_page(panel->navigation) == sub);
@@ -121,35 +129,85 @@ static void commands(void) {
   g_autoptr(GrottoPanelsFakeService) fake = grotto_panels_fake_service_new();
   for (gint command = -1; command <= GROTTO_PANEL_N_COMMANDS; command++) {
     Completion c = {0};
-    g_autoptr(GVariant) args = g_variant_ref_sink(g_variant_new("()"));
-    grotto_panels_service_invoke_async(GROTTO_PANELS_SERVICE(fake), command, args, NULL, complete, &c);
+    const GrottoPanelCommandArgs args = {0};
+    grotto_panels_service_invoke_async(GROTTO_PANELS_SERVICE(fake), command, &args, NULL, complete, &c);
     while (!c.done) g_main_context_iteration(NULL, TRUE);
     g_assert_false(c.ok); g_assert_nonnull(c.error); g_clear_error(&c.error);
   }
   Completion absent = {0};
-  g_autoptr(GVariant) args = g_variant_ref_sink(g_variant_new("()"));
-  grotto_panels_service_invoke_async(NULL, GROTTO_PANEL_PAUSE, args, NULL, complete, &absent);
+  const GrottoPanelCommandArgs args = {0};
+  grotto_panels_service_invoke_async(NULL, GROTTO_PANEL_PAUSE, &args, NULL, complete, &absent);
   while (!absent.done) g_main_context_iteration(NULL, TRUE);
   g_assert_error(absent.error, G_IO_ERROR, G_IO_ERROR_NOT_INITIALIZED);
   g_clear_error(&absent.error);
   grotto_panels_fake_service_set_available(fake, TRUE);
   Completion denied = {0};
-  grotto_panels_service_invoke_async(GROTTO_PANELS_SERVICE(fake), GROTTO_PANEL_PAUSE, args, NULL, complete, &denied);
+  grotto_panels_service_invoke_async(GROTTO_PANELS_SERVICE(fake), GROTTO_PANEL_PAUSE, &args, NULL, complete, &denied);
   while (!denied.done) g_main_context_iteration(NULL, TRUE);
   g_assert_error(denied.error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED); g_clear_error(&denied.error);
   grotto_panels_fake_service_set_can(fake, GROTTO_PANEL_PAUSE, TRUE);
   Completion allowed = {0};
-  grotto_panels_service_invoke_async(GROTTO_PANELS_SERVICE(fake), GROTTO_PANEL_PAUSE, args, NULL, complete, &allowed);
+  grotto_panels_service_invoke_async(GROTTO_PANELS_SERVICE(fake), GROTTO_PANEL_PAUSE, &args, NULL, complete, &allowed);
   while (!allowed.done) g_main_context_iteration(NULL, TRUE);
   g_assert_true(allowed.ok); g_assert_no_error(allowed.error);
   g_assert_cmpint(grotto_panel_command_get_access(GROTTO_PANEL_SET_CLIENT_LABEL), ==, GROTTO_PANELS_ACCESS_MANAGER);
   g_assert_cmpint(grotto_panel_command_get_access(GROTTO_PANEL_RESUME), ==, GROTTO_PANELS_ACCESS_APPROVER);
   g_assert_cmpint(grotto_panel_command_get_access(GROTTO_PANEL_PAUSE), ==, GROTTO_PANELS_ACCESS_SESSION);
 }
+static void negative_paths(void) {
+  g_autoptr(GrottoPanelsFakeService) fake = grotto_panels_fake_service_new();
+  grotto_panels_fake_service_set_available(fake, TRUE);
+  grotto_panels_fake_service_set_can(fake, GROTTO_PANEL_SET_CLIENT_LABEL, TRUE);
+  grotto_panels_fake_service_set_deferred(fake, TRUE);
+  SmokePanel *panel = g_object_ref_sink(g_object_new(smoke_panel_get_type(), "service", fake, NULL));
+  const GrottoPanelCommandArgs args = {.principal = "app", .label = "Cosmetic name"};
+  GrottoPanelsMetadata metadata = {.id = "app", .label = "Unchanged after refusal"};
+  g_assert_true(grotto_panels_fake_service_replace(fake, GROTTO_PANELS_APPS, &metadata, NULL));
+  const GIOErrorEnum failures[] = {G_IO_ERROR_BUSY, G_IO_ERROR_PERMISSION_DENIED,
+    G_IO_ERROR_NOT_SUPPORTED, G_IO_ERROR_INVALID_ARGUMENT, G_IO_ERROR_FAILED};
+  for (guint i = 0; i < G_N_ELEMENTS(failures); i++) {
+    Completion c = {0};
+    grotto_panels_fake_service_set_failure(fake, GROTTO_PANEL_SET_CLIENT_LABEL, failures[i]);
+    grotto_panels_service_invoke_async(GROTTO_PANELS_SERVICE(fake), GROTTO_PANEL_SET_CLIENT_LABEL,
+      &args, grotto_panel_get_cancellable(GROTTO_PANEL(panel)), complete, &c);
+    g_assert_false(c.done); g_assert_cmpuint(grotto_panels_fake_service_get_pending(fake), ==, 1);
+    g_assert_cmpint(grotto_panels_fake_service_get_last_command(fake), ==, GROTTO_PANEL_SET_CLIENT_LABEL);
+    g_assert_cmpstr(grotto_panels_fake_service_get_last_args(fake)->label, ==, args.label);
+    g_assert_null(grotto_panels_fake_service_get_last_args(fake)->trust);
+    g_assert_true(grotto_panels_fake_service_complete_next(fake));
+    while (!c.done) g_main_context_iteration(NULL, TRUE);
+    g_assert_false(c.ok); g_assert_error(c.error, G_IO_ERROR, (gint)failures[i]); g_clear_error(&c.error);
+    AdwActionRow *row = ADW_ACTION_ROW(gtk_list_box_get_row_at_index(panel->list, 0));
+    g_assert_cmpstr(adw_preferences_row_get_title(ADW_PREFERENCES_ROW(row)), ==, metadata.label);
+  }
+  grotto_panels_fake_service_set_failure(fake, GROTTO_PANEL_SET_CLIENT_LABEL, -1);
+  Completion cancelled = {0};
+  grotto_panels_service_invoke_async(GROTTO_PANELS_SERVICE(fake), GROTTO_PANEL_SET_CLIENT_LABEL,
+    &args, grotto_panel_get_cancellable(GROTTO_PANEL(panel)), complete, &cancelled);
+  g_assert_false(cancelled.done);
+  grotto_panel_set_service(GROTTO_PANEL(panel), NULL);
+  while (!cancelled.done) g_main_context_iteration(NULL, TRUE);
+  g_assert_false(cancelled.ok); g_assert_error(cancelled.error, G_IO_ERROR, G_IO_ERROR_CANCELLED);
+  g_clear_error(&cancelled.error);
+  g_assert_cmpuint(grotto_panels_fake_service_get_pending(fake), ==, 0);
+  Completion owner_lost = {0};
+  grotto_panels_service_invoke_async(GROTTO_PANELS_SERVICE(fake), GROTTO_PANEL_SET_CLIENT_LABEL,
+    &args, NULL, complete, &owner_lost);
+  grotto_panels_fake_service_set_available(fake, FALSE);
+  while (!owner_lost.done) g_main_context_iteration(NULL, TRUE);
+  g_assert_error(owner_lost.error, G_IO_ERROR, G_IO_ERROR_CANCELLED); g_clear_error(&owner_lost.error);
+  g_assert_false(grotto_panels_service_can(GROTTO_PANELS_SERVICE(fake), GROTTO_PANEL_SET_CLIENT_LABEL));
+  g_object_unref(panel);
+  gpointer weak_fake = fake;
+  g_object_add_weak_pointer(G_OBJECT(fake), &weak_fake);
+  g_clear_object(&fake);
+  g_assert_null(weak_fake);
+}
 int main(int argc, char **argv) {
   g_test_init(&argc, &argv, NULL);
   adw_init(); /* Missing display is a failure, not a successful skip. */
   g_test_add_func("/grotto-panels/mount", mounted);
   g_test_add_func("/grotto-panels/commands", commands);
+  g_test_add_func("/grotto-panels/negative-paths", negative_paths);
   return g_test_run();
 }
