@@ -15,7 +15,7 @@ BUILDDIR = obj-desktop
 
 override_dh_auto_configure:
 	dh_auto_configure -- \
-		-DCMAKE_BUILD_TYPE=RelWithDebInfo \
+		-DCMAKE_BUILD_TYPE=RelWithDebInfo -DGROTTO_USE_SYSTEM_PANELS=ON \
 		-DBUILD_GROUNDHOG=ON \
 		-DGROUNDHOG_PACKAGE_CHANNEL=deb \
 		-DBUILD_APPS=ON \

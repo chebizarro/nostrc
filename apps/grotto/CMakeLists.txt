@@ -7,6 +7,14 @@ add_compile_definitions(GROTTO_VERSION="${GROTTO_VERSION}")
 
 include(GNUInstallDirs)
 
+option(GROTTO_USE_SYSTEM_PANELS "Use the installed grotto-panels runtime/SDK (native packages)" OFF)
+if(GROTTO_USE_SYSTEM_PANELS)
+  find_package(GrottoPanels 0.1 REQUIRED CONFIG)
+elseif(NOT TARGET GrottoPanels::Panels)
+  add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/../../gnome/grotto-panels"
+    "${CMAKE_CURRENT_BINARY_DIR}/grotto-panels")
+endif()
+
 # IDs and binaries
 set(SUITE_NAME "GNostr")
 set(APP_SIGNER_NAME "Grotto")
@@ -228,6 +236,8 @@ target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/nips/ni
 # libnostr core for keys.h and crypto/bip39.h
 target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/libnostr/include)
 # Link against core to resolve owner APIs
+target_sources(${APP_SIGNER_BIN} PRIVATE src/grotto-panels-control1-service.c)
+target_link_libraries(${APP_SIGNER_BIN} PRIVATE GrottoPanels::Panels)
 target_link_libraries(${APP_SIGNER_BIN} PRIVATE PkgConfig::GTK4 PkgConfig::GLIB PkgConfig::ADWAITA PkgConfig::JSON_GLIB nostr_nip55l_core nip04)
 # Ensure library directories are passed to linker (macOS fix)
 target_link_directories(${APP_SIGNER_BIN} PRIVATE ${GLIB_LIBRARY_DIRS})

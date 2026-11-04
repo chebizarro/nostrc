@@ -1,0 +1,11 @@
+# grotto-panels/smoke-host ONLY; no adapter/private-bus suppression.
+# nostrc-ydtdf (same Ubuntu 24.04 Pango 1.52/fontconfig 2.15 caches as the
+# existing Grotto GUI route), exercised by nostrc-u6v55.23.2. detect_leaks=1
+# stays enabled; no panel/GObject/allocator/module/wildcard suppressions.
+# Matching Pango/fontconfig debug symbols are needed; absent symbols fail.
+# FcFontSetMatch result retained in the Pango font-map match cache.
+leak:match_in_thread
+# Fontset/pattern caches created through default_substitute/get_patterns.
+leak:pango_fc_font_map_load_fontset
+# Parsed fontconfig patterns attached to the process default configuration.
+leak:FcParsePattern

@@ -11,6 +11,7 @@ Build-Depends: debhelper-compat (= 13),
                libglib2.0-dev (>= 2.80),
                libgtk-4-dev (>= 4.14),
                libadwaita-1-dev (>= 1.5),
+               libgrotto-panels-0-dev (>= 0.1.0),
                libjson-glib-dev,
                libsoup-3.0-dev,
                libsecret-1-dev,
@@ -63,7 +64,8 @@ Description: Private messaging on Nostr for GNOME
 
 Package: grotto
 Architecture: any
-Depends: ${shlibs:Depends},
+Depends: libgrotto-panels-0-0 (>= 0.1.0),
+         ${shlibs:Depends},
          ${misc:Depends},
          dbus-user-session,
          gstreamer1.0-plugins-base,

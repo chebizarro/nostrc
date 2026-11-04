@@ -1,0 +1,11 @@
+#!/usr/bin/make -f
+# SPDX-License-Identifier: MIT
+%:
+	dh $@ --buildsystem=cmake+ninja --sourcedirectory=gnome/grotto-panels
+
+override_dh_auto_configure:
+	dh_auto_configure --sourcedirectory=gnome/grotto-panels -- \
+		-DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
+
+override_dh_auto_test:
+	# Focused private-bus/display/admission tests run explicitly, not as root in packaging.

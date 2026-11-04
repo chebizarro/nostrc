@@ -17,6 +17,7 @@ BuildRequires:  python3
 BuildRequires:  gettext
 BuildRequires:  pkgconfig(gtk4) >= 4.14
 BuildRequires:  pkgconfig(libadwaita-1) >= 1.5
+BuildRequires:  pkgconfig(grotto-panels-0) >= 0.1.0
 BuildRequires:  pkgconfig(glib-2.0) >= 2.80
 BuildRequires:  pkgconfig(json-glib-1.0)
 BuildRequires:  pkgconfig(libsecret-1)
@@ -37,6 +38,7 @@ BuildRequires:  appstream
 BuildRequires:  systemd-rpm-macros
 Requires:       gtk4 >= 4.14
 Requires:       libadwaita >= 1.5
+Requires:       grotto-panels >= 0.1.0
 Requires:       glib2 >= 2.80
 Requires:       gstreamer1-plugins-base
 Requires:       gstreamer1-plugins-good
@@ -55,7 +57,7 @@ boundary against malware running as the same user. Preview acceptance is pending
 %autosetup -n grotto-%{version}
 
 %build
-%cmake -G Ninja -DCMAKE_BUILD_TYPE=Release \
+%cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DGROTTO_USE_SYSTEM_PANELS=ON \
     -DBUILD_APPS=ON -DBUILD_GNOSTR_APP=OFF -DBUILD_GROUNDHOG=OFF \
     -DBUILD_TESTING=OFF -DBUILD_TESTING_FRAMEWORK=OFF \
     -DBUILD_SIGNER_TESTS=OFF -DBUILD_NATIVE_HOST=ON \

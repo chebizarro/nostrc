@@ -1,0 +1,5 @@
+grotto-panels (0.1.0-1) unstable; urgency=medium
+
+  * Initial MIT public-metadata panel runtime and SDK, SONAME major 0.
+
+ -- Grotto Maintainers <chebizarro@protonmail.com>  Wed, 04 Nov 2026 00:00:00 +0000

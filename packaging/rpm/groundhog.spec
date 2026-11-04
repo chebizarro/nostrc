@@ -24,6 +24,7 @@ URL:            https://github.com/chebizarro/nostrc
 Source0:        %{url}/releases/download/groundhog-v%{upstream_version}/groundhog-%{upstream_version}.tar.gz
 
 BuildRequires:  cmake >= 3.22
+BuildRequires:  pkgconfig(grotto-panels-0) >= 0.1.0
 BuildRequires:  ninja-build
 BuildRequires:  gcc
 BuildRequires:  gcc-c++
@@ -85,6 +86,7 @@ This is an alpha release.
 
 %package -n grotto
 Summary:        Keeps your Nostr keys and signs for your apps (preview)
+Requires:       grotto-panels >= 0.1.0
 Requires:       hicolor-icon-theme
 Recommends:     gnome-keyring
 %if %{without system_nsync}
@@ -111,9 +113,10 @@ Grotto is a preview: its interface is still being reworked.
 # BUILD_TESTING must stay OFF: a testing build carries a test-only D-Bus
 # interface and refuses to install.
 # Fedora's cmake macro sets BUILD_SHARED_LIBS=ON; the apps link the in-tree
-# libraries statically (only libnostr-json is shared, installed privately).
+# core libraries statically (libnostr-json is private); grotto-panels is the
+# separately packaged public runtime resolved with GROTTO_USE_SYSTEM_PANELS.
 %cmake -G Ninja \
-    -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+    -DCMAKE_BUILD_TYPE=RelWithDebInfo -DGROTTO_USE_SYSTEM_PANELS=ON \
     -DBUILD_SHARED_LIBS=OFF \
     -DBUILD_GROUNDHOG=ON \
     -DGROUNDHOG_PACKAGE_CHANNEL=rpm \
