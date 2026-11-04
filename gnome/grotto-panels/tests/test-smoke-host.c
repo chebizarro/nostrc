@@ -57,7 +57,9 @@ static void mounted(void) {
     gpointer weak = panel;
     g_object_add_weak_pointer(G_OBJECT(panel), &weak);
     guint callbacks = 0, releases = 0;
-    GrottoPanelsHost host = {with_text, with_text, without_text, without_text, with_text, with_text, with_text, with_text};
+    GrottoPanelsHost host = {.show_toast = with_text, .review_request = with_text,
+      .add_identity = without_text, .add_app = without_text, .open_backup = with_text,
+      .remove_identity = with_text, .replace_identity = with_text, .open_in_signer = with_text};
     grotto_panel_set_host(GROTTO_PANEL(panel), &host, &callbacks, destroyed);
     const char *payloads[] = {"nsec1not-public", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about", "token=not-public"};
     for (guint i = 0; i < G_N_ELEMENTS(payloads); i++) {
@@ -285,6 +287,7 @@ static void identity_mounted(void) {
   GtkWidget *unavailable = grotto_identity_panel_new(GROTTO_PANELS_SERVICE(fake), NULL); g_object_ref_sink(unavailable);
   g_assert_false(gtk_widget_get_visible(identity_child(unavailable, "backup_row"))); g_object_unref(unavailable);
 }
+void register_management_panels_tests(void);
 int main(int argc, char **argv) {
   g_test_init(&argc, &argv, NULL);
   adw_init(); /* Missing display is a failure, not a successful skip. */
@@ -293,5 +296,6 @@ int main(int argc, char **argv) {
   g_test_add_func("/grotto-panels/mount", mounted);
   g_test_add_func("/grotto-panels/commands", commands);
   g_test_add_func("/grotto-panels/negative-paths", negative_paths);
+  register_management_panels_tests();
   return g_test_run();
 }

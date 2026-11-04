@@ -3,10 +3,7 @@
 data/ui/approval-dialog.ui
 data/ui/lock-screen.ui
 data/ui/onboarding-assistant.ui
-data/ui/page-home.ui
 data/ui/page-connect.ui
-data/ui/page-client-detail.ui
-data/ui/page-history.ui
 data/ui/page-settings.ui
 data/ui/page-identity-detail.ui
 data/ui/shortcuts-window.ui
@@ -19,6 +16,7 @@ data/ui/widgets/gn-secure-entry.ui
 data/org.nostr.Grotto.desktop
 packaging/appimage/grotto.desktop
 
+src/approval-controller.c
 src/main_app.c
 src/bunker_service.c
 src/session-manager.c
@@ -27,11 +25,8 @@ src/home-model.c
 src/ui/signer-window.c
 src/ui/lock-screen.c
 src/ui/approval_dialog.c
-src/ui/page-home.c
 src/ui/page-connect.c
-src/ui/page-client-detail.c
 src/ui/kind-catalog.inc
-src/ui/page-history.c
 src/ui/page-settings.c
 src/ui/page-identity-detail.c
 src/ui/onboarding-assistant.c

@@ -35,29 +35,8 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
         </child>
         <child>
           <object class="GtkLabel">
-            <property name="label" translatable="yes">Remote signing relays</property>
-            <property name="xalign">0</property>
-          </object>
-        </child>
-        <child>
-          <object class="GtkEntry" id="entry_relay">
-            <property name="placeholder-text" translatable="yes">Explicit relay URLs, separated by spaces</property>
-          </object>
-        </child>
-        <child>
-          <object class="GtkLabel">
-            <property name="label" translatable="yes">Relays see your network address and connection timing. No default relays or Tor proxy are used.</property>
+            <property name="label" translatable="yes">Configure status, relays and allowed methods in Remote Signing. A link is available only when the signer is ready.</property>
             <property name="wrap">true</property>
-          </object>
-        </child>
-        <child>
-          <object class="GtkCheckButton" id="enabled">
-            <property name="label" translatable="yes">Enable remote signing</property>
-          </object>
-        </child>
-        <child>
-          <object class="GtkButton" id="btn_apply">
-            <property name="label" translatable="yes">Apply Relay Preferences (no restart)</property>
           </object>
         </child>
         <child>
@@ -70,11 +49,6 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
           <object class="GtkButton" id="btn_create">
             <property name="label" translatable="yes">Create Single-Use Pairing Link</property>
             <property name="sensitive">false</property>
-          </object>
-        </child>
-        <child>
-          <object class="GtkButton" id="btn_reset">
-            <property name="label" translatable="yes">Set Up / Reset Remote Signing Endpoint…</property>
           </object>
         </child>
         <child>

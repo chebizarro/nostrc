@@ -1,13 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <gresources>
   <gresource prefix="/org/gnostr/signer">
-    <file>css/app.css</file>
-    <file>css/high-contrast.css</file>
     <file preprocess="xml-stripblanks">ui/signer-window.ui</file>
-    <file preprocess="xml-stripblanks">ui/page-home.ui</file>
     <file preprocess="xml-stripblanks">ui/page-connect.ui</file>
-    <file preprocess="xml-stripblanks">ui/page-client-detail.ui</file>
-    <file preprocess="xml-stripblanks">ui/page-history.ui</file>
     <file preprocess="xml-stripblanks">ui/page-settings.ui</file>
     <file preprocess="xml-stripblanks">ui/page-identity-detail.ui</file>
     <file preprocess="xml-stripblanks">ui/approval-dialog.ui</file>

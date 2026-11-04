@@ -3,77 +3,41 @@ using Adw 1;
 template $SignerWindow: Adw.ApplicationWindow {
   default-width: 920; default-height: 640;
   width-request: 360; height-request: 480;
-  accessibility { label: _("Grotto main window"); }
-  Adw.Breakpoint { condition ("max-width: 800px") setters { split_view.collapsed: true; sidebar_toggle_btn.visible: true; } }
-  Adw.Breakpoint { condition ("max-width: 500px") setters { split_view.collapsed: true; bottom_bar.reveal: true; sidebar_toggle_btn.visible: false; } }
+  accessibility { label: _("Grotto Main Window"); }
+  Adw.Breakpoint { condition ("max-width: 600sp") setters { split_view.collapsed: true; } }
   Adw.ToastOverlay toast_overlay {
     Stack main_stack {
       StackPage { name: "locked"; child: $GnLockScreen lock_screen {}; }
       StackPage {
         name: "unlocked";
-        child: Adw.ToolbarView toolbar_view {
-          [top] Adw.HeaderBar header_bar {
-            [start] ToggleButton sidebar_toggle_btn {
-              icon-name: "sidebar-show-symbolic"; visible: false;
-              tooltip-text: _("Toggle sidebar"); accessibility { label: _("Toggle sidebar"); }
-            }
-            title-widget: Adw.WindowTitle switcher_title { title: "Grotto"; subtitle: _("Preview"); };
-            [end] MenuButton menu_btn { icon-name: "open-menu-symbolic"; accessibility { label: _("Application menu"); } }
+        child: Adw.NavigationSplitView split_view {
+          min-sidebar-width: 200; max-sidebar-width: 280;
+          [content] Adw.NavigationPage content_page {
+            title: _("Identity");
+            child: Stack panel_stack { hhomogeneous: false; vhomogeneous: false; };
           }
-          Adw.NavigationSplitView split_view {
-            min-sidebar-width: 180; max-sidebar-width: 260;
-            [sidebar] Adw.NavigationPage {
-              title: _("Sections");
-              child: ScrolledWindow {
+          [sidebar] Adw.NavigationPage {
+            title: _("Grotto");
+            child: Adw.ToolbarView {
+              [top] Adw.HeaderBar {
+                [end] MenuButton menu_btn {
+                  icon-name: "open-menu-symbolic";
+                  primary: true;
+                  tooltip-text: _("Main Menu");
+                  accessibility { label: _("Main Menu"); }
+                }
+              }
+              content: ScrolledWindow {
                 hscrollbar-policy: never;
                 ListBox sidebar {
-                  selection-mode: browse; activate-on-single-click: true;
+                  selection-mode: browse;
+                  activate-on-single-click: true;
                   styles ["navigation-sidebar"]
-                  accessibility { label: _("Navigation sections"); }
-                  ListBoxRow { accessibility { label: _("Home"); }
-                    Box { spacing: 12; margin-start: 12; margin-end: 12; margin-top: 12; margin-bottom: 12;
-                      Image { icon-name: "go-home-symbolic"; }
-                      Label { label: _("Home"); }
-                    }
-                  }
-                  ListBoxRow { accessibility { label: _("Activity"); }
-                    Box { spacing: 12; margin-start: 12; margin-end: 12; margin-top: 12; margin-bottom: 12;
-                      Image { icon-name: "document-open-recent-symbolic"; }
-                      Label { label: _("Activity"); }
-                    }
-                  }
-                  ListBoxRow { accessibility { label: _("Connect"); }
-                    Box { spacing: 12; margin-start: 12; margin-end: 12; margin-top: 12; margin-bottom: 12;
-                      Image { icon-name: "network-wireless-symbolic"; }
-                      Label { label: _("Connect"); }
-                    }
-                  }
-                  ListBoxRow { accessibility { label: _("Preferences"); }
-                    Box { spacing: 12; margin-start: 12; margin-end: 12; margin-top: 12; margin-bottom: 12;
-                      Image { icon-name: "emblem-system-symbolic"; }
-                      Label { label: _("Preferences"); }
-                    }
-                  }
+                  accessibility { label: _("Panels"); }
                 }
               };
-            }
-            Adw.NavigationPage {
-              title: _("Grotto");
-              child: Adw.NavigationView detail_navigation {
-                Adw.NavigationPage {
-                  tag: "root";
-                  title: _("Home");
-                  child: Adw.ViewStack stack {
-                    Adw.ViewStackPage { name: "home"; title: _("Home"); icon-name: "go-home-symbolic"; child: $GrottoPageHome page_home {}; }
-                    Adw.ViewStackPage { name: "activity"; title: _("Activity"); icon-name: "document-open-recent-symbolic"; child: $GnPageHistory page_history {}; }
-                    Adw.ViewStackPage { name: "connect"; title: _("Connect"); icon-name: "network-wireless-symbolic"; child: $GrottoPageConnect page_connect {}; }
-                    Adw.ViewStackPage { name: "settings"; title: _("Preferences"); icon-name: "emblem-system-symbolic"; child: $PageSettings page_settings {}; }
-                  };
-                }
-              };
-            }
+            };
           }
-          [bottom] Adw.ViewSwitcherBar bottom_bar { stack: stack; reveal: false; accessibility { label: _("Bottom navigation"); } }
         };
       }
     }

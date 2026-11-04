@@ -1,8 +1,18 @@
 #include "../i18n.h"
 #include "page-connect.h"
-#include "page-history.h"
 #include "app-resources.h"
 #include "pairing-flow.h"
+
+static const char *remote_state_label(const char *state) {
+  if (!g_strcmp0(state, "DISABLED")) return _("Disabled");
+  if (!g_strcmp0(state, "STARTING")) return _("Starting");
+  if (!g_strcmp0(state, "LISTENING")) return _("Ready");
+  if (!g_strcmp0(state, "DEGRADED")) return _("Degraded");
+  if (!g_strcmp0(state, "OFFLINE")) return _("Offline");
+  if (!g_strcmp0(state, "STOPPING")) return _("Stopping");
+  if (!g_strcmp0(state, "ERROR")) return _("Error");
+  return _("Unavailable");
+}
 #include "sheets/sheet-qr-scanner.h"
 #include "sheets/sheet-create-bunker.h"
 #include <secure_buf.h>
@@ -86,7 +96,7 @@ static void model_changed(GrottoHomeModel *model, gpointer data) {
     g_variant_lookup(status, "bunker_state", "&s", &state); g_variant_lookup(status, "bunker_pending_pairing_requests", "u", &pending);
     g_variant_lookup(status, "bunker_pending_pairing_acks", "u", &acknowledgements);
   }
-  g_autofree gchar *text = g_strdup_printf(_("%s · %u awaiting review · %u awaiting relay acknowledgement"), gn_page_history_remote_state_label(state), pending, acknowledgements);
+  g_autofree gchar *text = g_strdup_printf(_("%s · %u awaiting review · %u awaiting relay acknowledgement"), remote_state_label(state), pending, acknowledgements);
   adw_action_row_set_subtitle(self->runtime, text);
 }
 void grotto_page_connect_set_model(GrottoPageConnect *self, GrottoHomeModel *model) {

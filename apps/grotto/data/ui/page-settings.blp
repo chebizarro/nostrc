@@ -2,41 +2,16 @@ using Gtk 4.0;
 using Adw 1;
 template $PageSettings: Adw.PreferencesPage {
   title: _("Preferences");
-  Adw.PreferencesGroup appearance {
-    title: _("Appearance and Accessibility");
-    Adw.ComboRow theme { title: _("Appearance"); model: StringList { strings [_("System"), _("Light"), _("Dark"), _("High contrast")] }; }
-    Adw.SwitchRow high_contrast { title: _("Force high contrast"); }
-    Adw.ComboRow contrast_variant { title: _("High-contrast colours"); model: StringList { strings [_("Black on white"), _("White on black"), _("Yellow on black")] }; }
-    Adw.ComboRow language { title: _("Language (restart required)"); model: StringList { strings [_("System"), "English", "日本語", "Español", "Português", "Bahasa Indonesia", "فارسی"] }; }
-  }
   Adw.PreferencesGroup security {
     title: _("Security");
-    description: _("UI lock protects management, not the key backend. Pause signing stops authorised requests too.");
-    Adw.ComboRow lock_timeout { title: _("Lock management after"); model: StringList { strings [_("Never"), _("1 minute"), _("5 minutes"), _("15 minutes"), _("30 minutes"), _("1 hour")] }; }
-    Adw.SwitchRow lock_idle { title: _("Lock management on system idle"); }
-    Adw.SwitchRow pause_lock { title: _("Pause signing on screen lock"); subtitle: _("Resume requires an unlocked, observed session"); }
-    Adw.ActionRow confirmation { title: _("Ask-by-default event types"); subtitle: _("Ask before a scoped first grant; saved permissions still apply"); activatable: true;
-      [suffix] Image { icon-name: "go-next-symbolic"; }
-    }
-    Button { label: _("Pause Signing"); action-name: "app.pause-signing"; halign: start; }
+    description: _("The management lock protects this window, not the key backend. Pause Signing stops authorised requests too.");
+    Adw.ComboRow lock_timeout { title: _("Lock Management After"); model: StringList { strings [_("Never"), _("1 minute"), _("5 minutes"), _("15 minutes"), _("30 minutes"), _("1 hour")] }; }
+    Adw.SwitchRow lock_idle { title: _("Lock Management on System Idle"); }
+    Adw.SwitchRow pause_lock { title: _("Pause Signing on Screen Lock"); subtitle: _("Resume requires an unlocked, observed session"); }
   }
-  Adw.PreferencesGroup remote {
-    title: _("Remote Signing");
-    Adw.ActionRow runtime { title: _("Runtime status"); subtitle: _("Connecting to signer…"); subtitle-lines: 3; }
-    Adw.ActionRow relays { title: _("Relays and method allowlist"); subtitle: _("Changes apply without restarting the signer"); activatable: true;
-      [suffix] Image { icon-name: "go-next-symbolic"; }
-    }
-    Button reset { label: _("Reset Remote Endpoint…"); halign: start; }
-  }
-  Adw.PreferencesGroup retention {
-    title: _("Activity"); description: _("Metadata only — no messages, secrets or event content.");
-    Adw.SpinRow retention_days {
-      title: _("Keep activity (days)");
-      adjustment: Adjustment { lower: 1; upper: 30; step-increment: 1; value: 30; };
-    }
-    Button { label: _("View Activity"); action-name: "win.activity"; halign: start; }
-  }
-  Adw.PreferencesGroup about {
-    Button { label: _("About Grotto"); action-name: "win.about"; halign: start; }
+  Adw.PreferencesGroup management {
+    Adw.ActionRow remote { title: _("Remote Signing"); subtitle: _("Status, relays, allowed methods and endpoint"); activatable: true; [suffix] Image { icon-name: "go-next-symbolic"; } }
+    Adw.SpinRow retention { title: _("Keep Activity (Days)"); subtitle: _("Metadata only — no messages, secrets or event content"); adjustment: Adjustment { lower: 1; upper: 30; step-increment: 1; }; }
+    Adw.ActionRow about { title: _("About Grotto…"); activatable: true; action-name: "win.about"; }
   }
 }

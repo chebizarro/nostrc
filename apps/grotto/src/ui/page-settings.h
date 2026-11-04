@@ -8,5 +8,7 @@ PageSettings *page_settings_new(void);
 #include "../home-model.h"
 void page_settings_set_model(PageSettings *, GrottoHomeModel *);
 void page_settings_add_background_group(PageSettings *, AdwPreferencesGroup *);
+void page_settings_show_ask_defaults(PageSettings *, GtkWidget *parent);
+void page_settings_show_retention(PageSettings *, GtkWidget *parent);
 G_END_DECLS
 #endif /* APPS_GNOSTR_SIGNER_UI_PAGE_SETTINGS_H */

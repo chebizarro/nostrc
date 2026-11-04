@@ -4,8 +4,8 @@ MIT, GTK **4.14** / libadwaita **1.5**. Version **0.1.0**; public include
 `<grotto-panels.h>`, pkg-config `grotto-panels-0`, SONAME
 `libgrotto-panels-0.so.0`, CMake target `GrottoPanels::Panels`.
 
-G17's shared **Identity panel** is implemented; Apps/Activity/Remote Signing
-remain later slices. `grotto_identity_panel_new(service, NULL)` shows the daemon
+G17's shared **Identity, Connected Apps, Activity and Remote Signing** panels
+are implemented. `grotto_panels_get_descriptors()` supplies the host sidebar. `grotto_identity_panel_new(service, NULL)` shows the daemon
 default (or first listed identity); a public key pins a detail page. Other
 Identities pushes pinned pages without changing the default. Add Identity is a
 flat action; Backup, removal and public-key QR stay host callbacks.
@@ -41,9 +41,11 @@ Grotto owns the Control1 adapter in
 pins each call to the daemon's unique owner, rejects stale owner/signal
 snapshots, deduplicates IDs, preserves request deadlines and owner-scoped
 resolved-request tombstones. Activity sequence is only a cursor, never a
-snapshot revision. Keep this adapter alive at the **application** level; lazy
-panel remounts must not recreate pending state. It neither replaces nor owns the
-approval controller.
+snapshot revision. Keep a service alive across panel changes; do not recreate it
+on lazy panel remounts. In Grotto the window shares one composite service across
+all four panels. The **application-owned approval controller** supplies the real
+inbox group and the sidebar count from the same model. Its notification, deadline
+and tombstone lifecycle does not depend on the window or selected panel.
 
 Create a GIO proxy for bus **`org.nostr.Signer`**, object
 **`/org/nostr/signer/grotto`**, interface **`org.nostr.Grotto.Control1`** on the GTK
@@ -58,6 +60,21 @@ not tiers.** `SET_CLIENT_TRUST` (tier/preset), permission replacements, defaults
 resume and remote configuration remain approver-only. A label command rejects
 trust/permission fields; the adapter maps it only to `SetClientLabel`. W6 adds
 manager authorization to the daemon; it does not expand this authority split.
+
+`grotto_panel_command_async()` routes cosmetic commands through the injected read
+service. Security commands require the independent trusted host `can_command` /
+`command_async` hooks. Grotto checks the existing management lock and supported
+Control1 state before invoking its host-only adapter entrypoint; the daemon still
+authorizes every call. A read service advertising a security capability alone is
+not enough. Settings without these hooks displays a Grotto hand-off.
+
+Permissions and older activity use closed typed `query_async` requests, never an
+opaque dictionary. Permission reads bracket the snapshot with owner/epoch/revision
+checks; writes carry that revision and owner generation. Conflict refresh retains
+the user's edit and requires an explicit retry. Legacy wildcard review migration
+saves the exact identity scope before removing the old entry. Activity paging uses
+the sequence cursor and deduplicates overlap; kind captions are generated display
+data from the registry, not policy.
 
 Commands accept `GrottoPanelCommandArgs` and typed permission records, not
 `GVariant`, dictionaries, arbitrary object payloads or RPC method names. Every
@@ -89,7 +106,8 @@ legacy default and app counts. Label writes stay in Grotto; default changes use
 keyring items or reads accounts.ini. Settings must not reuse Grotto's local store.
 `SET_IDENTITY_LABEL` is Grotto-local until W6; the common adapter refuses it.
 The `open_in_signer` callback receives the public-only navigation targets
-`public-key:<npub>` (public QR) and `apps:<npub>` (app list). It never receives a
+`public-key:<npub>` (public QR), `apps:<npub>` (app list), `app:<principal>`,
+`activity:<principal>`, `ask-defaults`, `activity-retention`, and `remote-signing`. It never receives a
 QR payload, credential or proposed mutation. Grotto's trusted Backup page owns
 recovery, encrypted export and raw-key dialogs; these are not library resources.
 Review, onboarding, Add App, backup, removal and replacement remain trusted host
@@ -110,7 +128,7 @@ meson test -C /tmp/grotto-panels-meson --print-errorlogs
 ```
 
 Linux smoke tests require `dbus-run-session` and `xvfb-run`, fail visibly when
-missing, and mount the real Identity panel against the fake service, plus the scaffold
+missing, and mount all four real panels against the fake service, plus the scaffold
 panel in a bare `AdwWindow` with a split view. They exercise wide/360px mounting, subpage push/pop, live fake-model
 updates, capability loss, plain untrusted text, every host callback, cancellation
 and destruction. `GTK_A11Y=test` preserves accessibility processing. Under

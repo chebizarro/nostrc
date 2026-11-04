@@ -8,6 +8,10 @@
 #include "nostrc-test-gdk-frame.h"
 #include <glib/gstdio.h>
 
+static GtkWidget *selected_panel(AdwNavigationSplitView *split) {
+  return gtk_stack_get_visible_child(GTK_STACK(adw_navigation_page_get_child(adw_navigation_split_view_get_content(split))));
+}
+
 static GApplication *app;
 static GDBusConnection *connection;
 static GSettings *settings;
@@ -42,6 +46,13 @@ static const char *mode;
 static gboolean bound(gpointer data) { g_error("Desktop activation readiness timed out at line %d", GPOINTER_TO_INT(data)); return G_SOURCE_REMOVE; }
 #define WAIT(condition) do { guint id = g_timeout_add_seconds(10, bound, GINT_TO_POINTER(__LINE__)); \
   while (!(condition)) { g_main_context_iteration(NULL, TRUE); } g_source_remove(id); } while (0)
+static gboolean frame(GtkWidget *widget, GdkFrameClock *clock, gpointer data) {
+  (void)widget; (void)clock; (*(guint *)data)++; return G_SOURCE_CONTINUE;
+}
+static void presented(GtkWidget *widget) {
+  guint frames = 0; guint tick = gtk_widget_add_tick_callback(widget, frame, &frames, NULL);
+  WAIT(frames >= 3); gtk_widget_remove_tick_callback(widget, tick);
+}
 static void name(const char *value, gboolean own) {
   g_autoptr(GVariant) r = g_dbus_connection_call_sync(connection, "org.freedesktop.DBus",
       "/org/freedesktop/DBus", "org.freedesktop.DBus", own ? "RequestName" : "ReleaseName",
@@ -149,8 +160,8 @@ static gboolean exercise(gpointer data) {
   if (!strcmp(mode, "new-identity")) {
     OnboardingAssistant *initial = g_object_get_data(G_OBJECT(win), "grotto-onboarding-assistant");
     g_assert_true(ONBOARDING_IS_ASSISTANT(initial));
-    AdwNavigationView *navigation = ADW_NAVIGATION_VIEW(gtk_widget_get_template_child(GTK_WIDGET(win), TYPE_SIGNER_WINDOW, "detail_navigation"));
-    g_assert_true(GROTTO_IS_IDENTITY_PANEL(adw_navigation_view_get_visible_page(navigation))); /* actual --new-identity route */
+    AdwNavigationSplitView *navigation = ADW_NAVIGATION_SPLIT_VIEW(gtk_widget_get_template_child(GTK_WIDGET(win), TYPE_SIGNER_WINDOW, "split_view"));
+    g_assert_true(GROTTO_IS_IDENTITY_PANEL(selected_panel(navigation))); /* actual --new-identity route */
     gtk_window_close(GTK_WINDOW(initial));
     WAIT(g_list_length(gtk_application_get_windows(GTK_APPLICATION(app))) == 1);
   }
@@ -159,11 +170,22 @@ static gboolean exercise(gpointer data) {
   g_assert_cmpuint(g_list_length(gtk_application_get_windows(GTK_APPLICATION(app))), ==, 1);
   g_action_group_activate_action(G_ACTION_GROUP(app), "settings", NULL);
   g_assert_true(gtk_application_get_active_window(GTK_APPLICATION(app)) == win);
+  AdwDialog *preferences = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(win));
+  g_assert_true(ADW_IS_PREFERENCES_DIALOG(preferences));
+  presented(GTK_WIDGET(preferences));
+  g_assert_true(adw_dialog_close(preferences));
+  WAIT(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(win)) != preferences);
+  AdwDialog *remaining = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(win));
+  if (remaining) g_test_message("Remaining startup dialog: %s", adw_dialog_get_title(remaining));
+  g_assert_null(remaining);
+  g_action_group_activate_action(G_ACTION_GROUP(app), "review-request", g_variant_new_string(""));
+  AdwNavigationSplitView *split = ADW_NAVIGATION_SPLIT_VIEW(gtk_widget_get_template_child(GTK_WIDGET(win), TYPE_SIGNER_WINDOW, "split_view"));
+  g_assert_true(GROTTO_IS_APPS_PANEL(selected_panel(split)));
+  g_assert_null(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(win))); /* Empty target opens inbox, never an arbitrary request. */
   g_action_group_activate_action(G_ACTION_GROUP(app), "new-identity", NULL);
   OnboardingAssistant *create = g_object_get_data(G_OBJECT(win), "grotto-onboarding-assistant");
   g_assert_true(ONBOARDING_IS_ASSISTANT(create));
-  AdwNavigationView *identity_navigation = ADW_NAVIGATION_VIEW(gtk_widget_get_template_child(GTK_WIDGET(win), TYPE_SIGNER_WINDOW, "detail_navigation"));
-  g_assert_true(GROTTO_IS_IDENTITY_PANEL(adw_navigation_view_get_visible_page(identity_navigation))); /* actual GApplication action */
+  g_assert_true(GROTTO_IS_IDENTITY_PANEL(selected_panel(split))); /* actual GApplication action */
   g_action_group_activate_action(G_ACTION_GROUP(app), "new-identity", NULL);
   g_assert_true(g_object_get_data(G_OBJECT(win), "grotto-onboarding-assistant") == create);
   g_assert_cmpuint(g_list_length(gtk_application_get_windows(GTK_APPLICATION(app))), ==, 2);
@@ -178,9 +200,23 @@ static gboolean exercise(gpointer data) {
   g_autoptr(GFile) uri = g_file_new_for_uri("bunker://test?secret=never-log-this");
   GFile *files[] = { uri }; g_application_open(app, files, 1, "");
   g_assert_cmpuint(g_list_length(gtk_application_get_windows(GTK_APPLICATION(app))), ==, 1);
+  AdwDialog *pairing_dialog = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(win)); g_assert_nonnull(pairing_dialog);
+  presented(GTK_WIDGET(pairing_dialog));
+  g_assert_true(adw_dialog_close(pairing_dialog));
+  WAIT(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(win)) != pairing_dialog);
+  remaining = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(win));
+  if (remaining) g_test_message("Remaining pairing dialog: %s", adw_dialog_get_title(remaining));
+  g_assert_null(remaining);
   g_clear_object(&uri); uri = g_file_new_for_uri("nostrconnect://test?secret=never-log-this");
   files[0] = uri; g_application_open(app, files, 1, "");
   g_assert_cmpuint(g_list_length(gtk_application_get_windows(GTK_APPLICATION(app))), ==, 1);
+  pairing_dialog = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(win)); g_assert_nonnull(pairing_dialog);
+  presented(GTK_WIDGET(pairing_dialog));
+  g_assert_true(adw_dialog_close(pairing_dialog));
+  WAIT(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(win)) != pairing_dialog);
+  remaining = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(win));
+  if (remaining) g_test_message("Remaining pairing dialog: %s", adw_dialog_get_title(remaining));
+  g_assert_null(remaining);
   g_clear_object(&uri); uri = g_file_new_for_uri("nostr:test"); files[0] = uri;
   g_test_expect_message(NULL, G_LOG_LEVEL_WARNING, "*does not handle this URI scheme*");
   g_application_open(app, files, 1, ""); g_test_assert_expected_messages();

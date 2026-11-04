@@ -1,0 +1,34 @@
+using Gtk 4.0;
+using Adw 1;
+translation-domain "grotto-panels";
+template $GrottoRemotePanel: $GrottoPanel {
+  title: _("Remote Signing"); tag: "remote-signing";
+  child: Adw.ToolbarView {
+    [top] Adw.HeaderBar {}
+    [top] Adw.Banner feedback { title: _("Signer Unavailable"); }
+    content: Adw.PreferencesPage {
+      Adw.PreferencesGroup {
+        description: _("Allow apps on other devices to request signing. Configure the relays explicitly.");
+        Adw.SwitchRow enabled { title: _("Enable Remote Signing"); }
+        Adw.ActionRow status { title: _("Status"); }
+        Adw.ActionRow handoff { title: _("Change in Grotto…"); activatable: true; visible: false; }
+      }
+      Adw.PreferencesGroup relays_group {
+        title: _("Relays");
+        description: _("Only these relays are used by the signing endpoint");
+        ListBox relays_list { selection-mode: none; styles ["boxed-list"] }
+        Adw.EntryRow new_relay { title: _("Add Relay URL"); show-apply-button: true; }
+      }
+      Adw.PreferencesGroup {
+        Adw.EntryRow methods { title: _("Allowed Methods"); show-apply-button: true; }
+      }
+      Adw.PreferencesGroup {
+        Adw.ActionRow reset {
+          title: _("Reset Endpoint…");
+          subtitle: _("Invalidate remote pairings and links; keep identities and local app permissions");
+          activatable: true;
+        }
+      }
+    };
+  };
+}

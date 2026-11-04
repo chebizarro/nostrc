@@ -84,7 +84,7 @@ turning login launch off does not turn background off. Migration v1 reads the ol
 always visible, never minimized by those old settings.
 
 Open **Preferences** from the primary menu with **Ctrl+,**. The `--preferences`
-switch opens the same page; `--settings` remains a hidden compatibility alias for
+switch opens the same dialog; `--settings` remains a hidden compatibility alias for
 the unreleased 0.1.0 wave.
 
 Desktop actions `grotto --new-identity` and `grotto --preferences` reuse the existing
@@ -97,27 +97,39 @@ module owns `org.nostr.Shell.Signer1`, preventing duplicate indicators.
 
 ## Management pages
 
-- **Home**: management-only identity selection, public-key copy/QR, pending reviews,
-  Signed today / Clients / Pending and connected clients. Signed today counts
-  successful daemon `sign_event` operations since local midnight, not publications;
-  clearing activity resets it. It reflects retained activity, not a lifetime ledger.
-- **Activity**: daemon metadata with event/client/outcome filters and explicit older
-  pages; no historical event JSON or message content is kept.
-- **Connect**: paste, camera/file QR, link entry and single-use pairing offers.
-  Local apps need no pairing. Approved remote connections waiting for relay OK
-  remain visibly incomplete, not paired.
-- **Preferences**: background/login, appearance/accessibility, management lock,
-  screen-lock pause, ask-by-default event types, remote runtime/configuration,
-  1–30 day activity retention, and About. The owner-approved ask-by-default list
-  never overrides a saved grant; Medium's public-publishing set is unchanged.
+The Settings-style sidebar collapses at narrow widths. There is no Home dashboard.
+The default is **Identity**, or **Connected Apps** when requests are pending at
+launch. Explicit navigation wins over the initial inbox reconciliation.
 
-A client opens its label, verified principal, Full/Medium/Low trust, effective
-read-only policy rows, explicit editable permissions with absolute expiry, recent
-activity and Revoke. Lowering trust preserves explicit grants. Clearing remembered
+- **Identity**: local labels, public-key copy/QR, other identities and trusted Backup.
+  Navigating to another identity never changes the daemon default.
+- **Connected Apps**: pending inbox, Pause Signing, app details and Add App. Its
+  sidebar count and hosted inbox use the same application-owned controller model;
+  closing the window or changing panels does not stop notifications. Advanced
+  ask-by-default configuration never overrides a saved grant.
+- **Activity**: a paged list of daemon metadata with app/outcome filters and searchable
+  event-type catalogue (custom numbers remain supported). No event JSON or message
+  content is kept. Retention is configured in Preferences.
+- **Remote Signing**: status, enable, explicit relay list, allowed methods and
+  confirmed endpoint reset. Configuration is no longer duplicated in pairing.
+- **Add App** (trusted dialog): paste, camera/file QR, link files and single-use
+  pairing offers. Local apps need no pairing. Approved remote connections waiting
+  for relay OK remain visibly incomplete, not paired.
+- **Preferences** (dialog): background/login, the existing management lock,
+  screen-lock pause, a Remote Signing link, 1–30 day activity retention and About.
+  Appearance, contrast and language follow the system; there are no in-app overrides.
+
+The four panels come from `grotto-panels-0`. Grotto injects public read models and
+cosmetic label writes separately from its approver-only host hooks for tiers,
+permissions, pause/resume and remote configuration. Settings gains no signing authority.
+
+An app opens its local label, verified principal, G15 access-tier picker, explicit
+editable permissions with absolute expiry, recent activity and **Remove App…**.
+Removal revokes pairing, permissions and pending work; it does not block the app. Lowering trust preserves explicit grants. Clearing remembered
 permissions is explicitly identity-scoped, as is `SetPermissions`; other identities
 are preserved. Editors use an owner/epoch/revision-bracketed permission snapshot,
 submit once with `expected_revision`, and surface conflicts instead of overwriting.
-Identity avatars open G09's pinned identity/backup page. “Default for older apps”
+Other Identities opens the shared panel pinned to that identity; Backup remains trusted Grotto UI. “Default for older apps”
 is a separate daemon action, never changed by management selection.
 
 ### Permission choices
@@ -127,7 +139,7 @@ saves that exact scope until revoked; **24 hours** is the temporary alternative.
 There is no always-confirm class, TTL dropdown or Forever confirmation. **Deny once**
 always denies just this request. **Block this operation for this app** saves a scoped
 deny; **Block app…** requires confirmation and denies the whole app until unblocked
-on its Permissions page. Initial remote connection offers **Pair application**, not
+from its app-detail page. Initial remote connection offers **Pair application**, not
 a remembered connect grant. Paired reconnect uses separate pairing admission.
 
 **Trust this app for routine operations** is one approver-only Control1 decision
@@ -165,7 +177,7 @@ ceiling; production source/resource inventories exclude the retired pages and
 unproven hardware/multisig/delegation/social features. `signer/blueprint-drift`
 checks committed `.ui` and the generated kind display catalogue. The native Linux
 `signer/ui-layout` renders real templates and saves light/dark 360px screenshots
-to `<build>/screenshots/`; `signer/home-model` drives the real model over a private
+to `<build>/screenshots/`; `signer/panel-inbox-model` drives the real model over a private
 bus. These are local source/layout proofs, not the G12 installed GNOME/Orca matrix.
 
 ## Features

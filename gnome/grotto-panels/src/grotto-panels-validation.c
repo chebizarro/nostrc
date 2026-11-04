@@ -51,10 +51,11 @@ static gboolean vector(const char *const *values, gboolean urls, GError **error)
 }
 gboolean grotto_panels_metadata_validate(const GrottoPanelsMetadata *m, GError **error) {
   if (!m) return invalid(error);
-  const char *fields[] = {m->id, m->label, m->public_key, m->state, m->reason, m->access_policy};
+  const char *fields[] = {m->id, m->label, m->public_key, m->state, m->reason, m->access_policy,
+    m->principal, m->verified_as, m->transport, m->operation, m->outcome, m->trust, m->decision, m->relay};
   for (guint i = 0; i < G_N_ELEMENTS(fields); i++)
     if (!grotto_panels_public_text_validate(fields[i], error)) return FALSE;
-  return TRUE;
+  return vector(m->relays, TRUE, error) && vector(m->methods, FALSE, error);
 }
 gboolean grotto_panel_command_args_validate(GrottoPanelCommand command,
   const GrottoPanelCommandArgs *a, GError **error) {

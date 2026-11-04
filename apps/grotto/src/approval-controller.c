@@ -1,4 +1,5 @@
 #include "approval-controller.h"
+#include "i18n.h"
 #include <string.h>
 
 #define SIGNER "org.nostr.Signer"
@@ -1125,14 +1126,13 @@ void grotto_approval_controller_review(GrottoApprovalController *s, const char *
   grotto_approval_controller_reconcile(s);
 }
 
-/* The pending group can be hosted by G10's Home without owning request state. */
+/* Hosts render this inbox without owning or recreating pending request state. */
 static void row_activated(AdwActionRow *row, gpointer data) {
   grotto_approval_controller_review(data, g_object_get_data(G_OBJECT(row), "request-id"));
 }
 static void group_notifications_changed(GrottoApprovalController *s, gpointer data) {
-  adw_preferences_group_set_description(
-      ADW_PREFERENCES_GROUP(data),
-      s->notifications ? NULL : "Notifications unavailable. Requests remain here for review.");
+  AdwBanner *banner = g_object_get_data(G_OBJECT(data), "notification-banner");
+  adw_banner_set_revealed(banner, !s->notifications);
 }
 static void group_update(GListModel *model, guint position, guint removed, guint added,
                          gpointer data) {
@@ -1148,12 +1148,14 @@ static void group_update(GListModel *model, guint position, guint removed, guint
   for (guint i = 0; i < g_list_model_get_n_items(model); i++) {
     g_autoptr(GrottoApprovalRequest) r = g_list_model_get_item(model, i);
     AdwActionRow *row = ADW_ACTION_ROW(adw_action_row_new());
-    adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), client_name(s, r->info));
-    adw_preferences_row_set_use_markup(ADW_PREFERENCES_ROW(row), FALSE);
     g_autofree gchar *operation = operation_label(r->info);
-    adw_action_row_set_subtitle(row, r->state == GROTTO_APPROVAL_READY
-                                         ? operation
-                                         : "Request details unavailable or loading");
+    g_autofree gchar *title = g_strdup_printf(_("%s · %s"), client_name(s, r->info), operation);
+    adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), title);
+    adw_preferences_row_set_use_markup(ADW_PREFERENCES_ROW(row), FALSE);
+    gint64 seconds = MAX((gint64)0, (r->deadline - g_get_monotonic_time()) / G_USEC_PER_SEC);
+    g_autofree gchar *remaining = g_strdup_printf(_("%" G_GINT64_FORMAT " seconds remaining"), seconds);
+    adw_action_row_set_subtitle(row, r->state == GROTTO_APPROVAL_READY && r->deadline
+                                         ? remaining : _("Request details unavailable or loading"));
     gtk_list_box_row_set_activatable(GTK_LIST_BOX_ROW(row), TRUE);
     g_object_set_data_full(G_OBJECT(row), "request-id", g_strdup(r->id), g_free);
     g_signal_connect_object(row, "activated", G_CALLBACK(row_activated), s, 0);
@@ -1165,7 +1167,10 @@ static void group_update(GListModel *model, guint position, guint removed, guint
 }
 GtkWidget *grotto_approval_pending_group_new(GrottoApprovalController *s) {
   GtkWidget *group = adw_preferences_group_new();
-  adw_preferences_group_set_title(ADW_PREFERENCES_GROUP(group), "Pending requests");
+  adw_preferences_group_set_title(ADW_PREFERENCES_GROUP(group), _("Pending Requests"));
+  GtkWidget *banner = adw_banner_new(_("Notifications unavailable. Requests remain here for review."));
+  g_object_set_data(G_OBJECT(group), "notification-banner", banner);
+  adw_preferences_group_add(ADW_PREFERENCES_GROUP(group), banner);
   g_object_set_data_full(G_OBJECT(group), "controller", g_object_ref(s), g_object_unref);
   g_object_set_data_full(G_OBJECT(group), "rows", g_ptr_array_new(),
                          (GDestroyNotify)g_ptr_array_unref);

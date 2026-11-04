@@ -48,6 +48,6 @@ void grotto_approval_controller_decide_flow_async(GrottoApprovalController *self
     gboolean encrypt, gboolean seals, GCancellable *cancel, GAsyncReadyCallback callback, gpointer data);
 gboolean grotto_approval_controller_decide_finish(GrottoApprovalController *self,
                                                   GAsyncResult *result, GError **error);
-/* Reusable Home group; only visible while requests are pending. */
+/* Reusable pending-request inbox group; only visible while requests are pending. */
 GtkWidget *grotto_approval_pending_group_new(GrottoApprovalController *self);
 G_END_DECLS

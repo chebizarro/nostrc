@@ -50,8 +50,12 @@
 
   <screenshots>
     <screenshot type="default">
-      <caption>Home with a disposable identity and fixture client</caption>
-      <image>https://raw.githubusercontent.com/chebizarro/nostrc/master/apps/grotto/data/screenshots/home-light.png</image>
+      <caption>Identity and backup status in the Settings-style window</caption>
+      <image>https://raw.githubusercontent.com/chebizarro/nostrc/master/apps/grotto/data/screenshots/identity-light.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Connected Apps and waiting requests</caption>
+      <image>https://raw.githubusercontent.com/chebizarro/nostrc/master/apps/grotto/data/screenshots/inbox-light.png</image>
     </screenshot>
     <screenshot>
       <caption>Client permissions in the real application templates</caption>

@@ -3,6 +3,8 @@
 struct _GrottoPanelsFakeService {
   GObject parent_instance;
   GListStore *models[GROTTO_PANELS_N_MODELS];
+  GListStore *queries[2];
+  gint query_failures[2];
   gboolean available, caps[GROTTO_PANEL_N_COMMANDS], deferred;
   gint failures[GROTTO_PANEL_N_COMMANDS];
   GQueue pending;
@@ -13,7 +15,8 @@ struct _GrottoPanelsFakeService {
 static void iface_init(GrottoPanelsServiceInterface *iface);
 G_DEFINE_TYPE_WITH_CODE(GrottoPanelsFakeService, grotto_panels_fake_service, G_TYPE_OBJECT,
   G_IMPLEMENT_INTERFACE(GROTTO_TYPE_PANELS_SERVICE, iface_init))
-typedef struct { gint failure; gulong cancel_id; } Pending;
+typedef struct { gint failure; gulong cancel_id; GListModel *result; } Pending;
+static void pending_free(gpointer data) { Pending *p = data; g_clear_object(&p->result); g_free(p); }
 static GListModel *get_model(GrottoPanelsService *service, GrottoPanelsModel model) {
   return G_LIST_MODEL(GROTTO_PANELS_FAKE_SERVICE(service)->models[model]);
 }
@@ -55,6 +58,7 @@ static void finish_task(GTask *task) {
   if (p->cancel_id) { g_signal_handler_disconnect(cancel, p->cancel_id); p->cancel_id = 0; }
   if (!g_task_return_error_if_cancelled(task)) {
     if (p->failure >= 0) g_task_return_new_error(task, G_IO_ERROR, p->failure, "Panel command failed");
+    else if (p->result) g_task_return_pointer(task, g_object_ref(p->result), g_object_unref);
     else g_task_return_boolean(task, TRUE);
   }
   g_object_unref(task);
@@ -70,7 +74,7 @@ static void invoke_async(GrottoPanelsService *service, GrottoPanelCommand comman
   record(self, command, args);
   GTask *task = g_task_new(self, cancel, callback, data);
   Pending *p = g_new0(Pending, 1); p->failure = self->failures[command];
-  g_task_set_task_data(task, p, g_free);
+  g_task_set_task_data(task, p, pending_free);
   if (!self->deferred || g_cancellable_is_cancelled(cancel)) { finish_task(task); return; }
   g_queue_push_tail(&self->pending, task);
   if (cancel) p->cancel_id = g_signal_connect(cancel, "cancelled", G_CALLBACK(cancelled), task);
@@ -79,7 +83,25 @@ static gboolean invoke_finish(GrottoPanelsService *self, GAsyncResult *result, G
   g_return_val_if_fail(g_task_is_valid(result, self), FALSE);
   return g_task_propagate_boolean(G_TASK(result), error);
 }
+static void query_async(GrottoPanelsService *service, GrottoPanelsQuery query, const char *principal,
+  guint64 before, GCancellable *cancel, GAsyncReadyCallback callback, gpointer data) {
+  (void)principal; (void)before; GrottoPanelsFakeService *self = GROTTO_PANELS_FAKE_SERVICE(service);
+  GTask *task = g_task_new(self, cancel, callback, data);
+  Pending *p = g_new0(Pending, 1); p->failure = self->query_failures[query];
+  GListStore *result = g_list_store_new(GROTTO_TYPE_PANELS_ITEM);
+  for (guint i = 0; i < g_list_model_get_n_items(G_LIST_MODEL(self->queries[query])); i++) {
+    g_autoptr(GrottoPanelsItem) item = g_list_model_get_item(G_LIST_MODEL(self->queries[query]), i); g_list_store_append(result, item);
+  }
+  p->result = G_LIST_MODEL(result); g_task_set_task_data(task, p, pending_free);
+  if (!self->deferred || g_cancellable_is_cancelled(cancel)) { finish_task(task); return; }
+  g_queue_push_tail(&self->pending, task);
+  if (cancel) p->cancel_id = g_signal_connect(cancel, "cancelled", G_CALLBACK(cancelled), task);
+}
+static GListModel *query_finish(GrottoPanelsService *service, GAsyncResult *result, GError **error) {
+  g_return_val_if_fail(g_task_is_valid(result, service), NULL); return g_task_propagate_pointer(G_TASK(result), error);
+}
 static void iface_init(GrottoPanelsServiceInterface *iface) {
+  iface->query_async = query_async; iface->query_finish = query_finish;
   iface->get_model = get_model; iface->can = can; iface->is_available = available;
   iface->invoke_async = invoke_async; iface->invoke_finish = invoke_finish;
 }
@@ -87,6 +109,7 @@ static void dispose(GObject *object) {
   GrottoPanelsFakeService *self = GROTTO_PANELS_FAKE_SERVICE(object);
   g_assert_true(g_queue_is_empty(&self->pending));
   clear_record(self);
+  for (guint i = 0; i < 2; i++) g_clear_object(&self->queries[i]);
   for (guint i = 0; i < GROTTO_PANELS_N_MODELS; i++) g_clear_object(&self->models[i]);
   G_OBJECT_CLASS(grotto_panels_fake_service_parent_class)->dispose(object);
 }
@@ -94,6 +117,7 @@ static void grotto_panels_fake_service_class_init(GrottoPanelsFakeServiceClass *
   G_OBJECT_CLASS(klass)->dispose = dispose;
 }
 static void grotto_panels_fake_service_init(GrottoPanelsFakeService *self) {
+  for (guint i = 0; i < 2; i++) { self->queries[i] = g_list_store_new(GROTTO_TYPE_PANELS_ITEM); self->query_failures[i] = -1; }
   for (guint i = 0; i < GROTTO_PANELS_N_MODELS; i++) self->models[i] = g_list_store_new(GROTTO_TYPE_PANELS_ITEM);
   for (guint i = 0; i < GROTTO_PANEL_N_COMMANDS; i++) self->failures[i] = -1;
 }
@@ -107,6 +131,7 @@ void grotto_panels_fake_service_set_available(GrottoPanelsFakeService *self, gbo
       finish_task(task);
     }
     for (guint i = 0; i < GROTTO_PANELS_N_MODELS; i++) g_list_store_remove_all(self->models[i]);
+    for (guint i = 0; i < G_N_ELEMENTS(self->queries); i++) g_list_store_remove_all(self->queries[i]);
     for (guint i = 0; i < GROTTO_PANEL_N_COMMANDS; i++) self->caps[i] = FALSE;
     g_signal_emit_by_name(self, "capabilities-changed");
   }
@@ -125,6 +150,14 @@ gboolean grotto_panels_fake_service_replace(GrottoPanelsFakeService *self, Grott
   gpointer items[] = {item};
   g_list_store_splice(self->models[model], 0, g_list_model_get_n_items(G_LIST_MODEL(self->models[model])), items, item ? 1 : 0);
   return TRUE;
+}
+void grotto_panels_fake_service_set_query_result(GrottoPanelsFakeService *self, GrottoPanelsQuery query,
+  const GrottoPanelsMetadata *rows, gsize length, gint failure) {
+  g_return_if_fail(query == GROTTO_PANELS_QUERY_PERMISSIONS || query == GROTTO_PANELS_QUERY_ACTIVITY);
+  g_list_store_remove_all(self->queries[query]); self->query_failures[query] = failure;
+  for (gsize i = 0; i < length; i++) {
+    g_autoptr(GrottoPanelsItem) item = grotto_panels_item_new(&rows[i], NULL); g_assert_nonnull(item); g_list_store_append(self->queries[query], item);
+  }
 }
 void grotto_panels_fake_service_set_failure(GrottoPanelsFakeService *self, GrottoPanelCommand command, gint code) {
   g_return_if_fail(command >= 0 && command < GROTTO_PANEL_N_COMMANDS);

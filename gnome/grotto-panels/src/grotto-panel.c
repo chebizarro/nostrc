@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: MIT */
-#include "grotto-panels.h"
+#include "grotto-panel-private.h"
 
 typedef struct {
   GrottoPanelsService *service;
@@ -102,6 +102,57 @@ gboolean grotto_panel_host_invoke(GrottoPanel *self, GrottoPanelHostAction actio
   }
   return TRUE;
 }
+gboolean grotto_panel_can_command(GrottoPanel *self, GrottoPanelCommand command) {
+  g_return_val_if_fail(GROTTO_IS_PANEL(self), FALSE);
+  if (command < 0 || command >= GROTTO_PANEL_N_COMMANDS) return FALSE;
+  GrottoPanelPrivate *p = grotto_panel_get_instance_private(self);
+  if (!grotto_panels_service_is_available(p->service)) return FALSE;
+  if (grotto_panel_command_get_access(command) == GROTTO_PANELS_ACCESS_MANAGER)
+    return grotto_panels_service_can(p->service, command);
+  return p->host.can_command && p->host.command_async && p->host.can_command(p->host_data, command);
+}
+static void command_done(GObject *source, GAsyncResult *result, gpointer data) {
+  GTask *task = data; GrottoPanel *self = g_task_get_source_object(task);
+  GrottoPanelPrivate *p = grotto_panel_get_instance_private(self);
+  g_autoptr(GError) error = NULL;
+  gboolean ok = GROTTO_PANELS_IS_SERVICE(source) ?
+    grotto_panels_service_invoke_finish(GROTTO_PANELS_SERVICE(source), result, &error) :
+    G_IS_TASK(result) ? g_task_propagate_boolean(G_TASK(result), &error) : FALSE;
+  if (g_task_return_error_if_cancelled(task)) { g_object_unref(task); return; }
+  if (p->service != g_task_get_task_data(task))
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_CANCELLED, "Panel detached");
+  else if (error) g_task_return_error(task, g_steal_pointer(&error));
+  else if (ok) g_task_return_boolean(task, TRUE);
+  else g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED, "Command failed");
+  g_object_unref(task);
+}
+void grotto_panel_forward_command_async(GrottoPanel *self, GrottoPanelCommand command,
+  const GrottoPanelCommandArgs *args, GCancellable *cancellable, GAsyncReadyCallback callback, gpointer data) {
+  GrottoPanelPrivate *p = grotto_panel_get_instance_private(self);
+  GTask *task = g_task_new(self, cancellable, callback, data);
+  g_autoptr(GError) error = NULL;
+  const GrottoPanelCommandArgs empty = {0}; if (!args) args = &empty;
+  if (!grotto_panel_command_args_validate(command, args, &error)) g_task_return_error(task, g_steal_pointer(&error));
+  else if (!grotto_panel_can_command(self, command))
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED, "Open in Grotto");
+  else {
+    g_task_set_task_data(task, g_object_ref(p->service), g_object_unref);
+    if (grotto_panel_command_get_access(command) == GROTTO_PANELS_ACCESS_MANAGER)
+      grotto_panels_service_invoke_async(p->service, command, args, cancellable, command_done, task);
+    else p->host.command_async(p->host_data, command, args, cancellable, command_done, task);
+    return;
+  }
+  g_object_unref(task);
+}
+void grotto_panel_command_async(GrottoPanel *self, GrottoPanelCommand command,
+  const GrottoPanelCommandArgs *args, GAsyncReadyCallback callback, gpointer data) {
+  g_return_if_fail(GROTTO_IS_PANEL(self));
+  grotto_panel_forward_command_async(self, command, args, grotto_panel_get_cancellable(self), callback, data);
+}
+gboolean grotto_panel_command_finish(GrottoPanel *self, GAsyncResult *result, GError **error) {
+  g_return_val_if_fail(g_task_is_valid(result, self), FALSE);
+  return g_task_propagate_boolean(G_TASK(result), error);
+}
 static void set_property(GObject *object, guint id, const GValue *value, GParamSpec *pspec) {
   GrottoPanelPrivate *p = grotto_panel_get_instance_private(GROTTO_PANEL(object));
   if (id == PROP_SERVICE) grotto_panel_set_service(GROTTO_PANEL(object), g_value_get_object(value));
@@ -128,7 +179,21 @@ static void dispose(GObject *object) {
   grotto_panel_set_host(self, NULL, NULL, NULL);
   G_OBJECT_CLASS(grotto_panel_parent_class)->dispose(object);
 }
+static void panel_unmap(GtkWidget *widget) {
+  GrottoPanelPrivate *p = grotto_panel_get_instance_private(GROTTO_PANEL(widget));
+  if (p->cancellable) g_cancellable_cancel(p->cancellable);
+  GTK_WIDGET_CLASS(grotto_panel_parent_class)->unmap(widget);
+}
+static void panel_map(GtkWidget *widget) {
+  GrottoPanelPrivate *p = grotto_panel_get_instance_private(GROTTO_PANEL(widget));
+  if (p->cancellable && g_cancellable_is_cancelled(p->cancellable)) {
+    g_clear_object(&p->cancellable); p->cancellable = g_cancellable_new();
+  }
+  GTK_WIDGET_CLASS(grotto_panel_parent_class)->map(widget);
+}
 static void grotto_panel_class_init(GrottoPanelClass *klass) {
+  GTK_WIDGET_CLASS(klass)->unmap = panel_unmap;
+  GTK_WIDGET_CLASS(klass)->map = panel_map;
   GObjectClass *object = G_OBJECT_CLASS(klass);
   object->set_property = set_property;
   object->get_property = get_property;

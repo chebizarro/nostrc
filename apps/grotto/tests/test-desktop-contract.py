@@ -56,6 +56,8 @@ for promise in ('same-user malware', 'signing is not publication', 'transiently 
     assert promise in copy, promise
 for unproven in ('hardware wallet', 'pkcs#11', 'multisig', 'social recovery', 'delegation'):
     assert unproven not in copy, unproven
+assert metadata.findtext("screenshots/screenshot[@type='default']/image").endswith('/identity-light.png')
+assert not list((app / 'data/screenshots').glob('home-*.png'))
 for screenshot in metadata.findall('screenshots/screenshot/image'):
     prefix = 'https://raw.githubusercontent.com/chebizarro/nostrc/master/apps/grotto/data/screenshots/'
     assert screenshot.text.startswith(prefix), screenshot.text

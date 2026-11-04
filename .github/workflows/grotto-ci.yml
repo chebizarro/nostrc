@@ -277,7 +277,7 @@ jobs:
             python3 scripts/test-grotto-quarantine.py
           fi
           regex='^(signer/|nip55l_|nostr_signer_webext_host_)'
-          required='signer/bunker signer/bunker-e2e signer/approval-controller signer/approval-integration signer/permissions signer/background signer/onboarding signer/clients signer/activity signer/ui-layout signer/desktop-contract signer/blueprint-drift signer/qr-scanner signer/trust-tiers signer/home-model nip55l_approval_service nip55l_dbus_contract'
+          required='signer/bunker signer/bunker-e2e signer/approval-controller signer/approval-integration signer/permissions signer/background signer/onboarding signer/clients signer/activity signer/ui-layout signer/desktop-contract signer/blueprint-drift signer/qr-scanner signer/trust-tiers signer/panel-inbox-model nip55l_approval_service nip55l_dbus_contract'
           case "$MODE" in
             asan-ubsan)
               required='signer/bunker signer/bunker-e2e signer/approval-controller signer/approval-integration signer/permissions signer/trust-tiers signer/onboarding signer/background signer/clients signer/activity nip55l_approval_service nip55l_cache_concurrency nip55l_dbus_contract'

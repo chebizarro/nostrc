@@ -2,15 +2,14 @@
 #include "signer-window.h"
 #include "page-identity-detail.h"
 #include "grotto-identity-service.h"
+#include "grotto-panels-control1-service.h"
 #include "accounts_store.h"
 #include "sheets/sheet-qr-display.h"
 #include "onboarding-assistant.h"
 #include "pairing-flow.h"
 #include "app-resources.h"
-#include "page-home.h"
+#include "approval-controller.h"
 #include "page-connect.h"
-#include "page-client-detail.h"
-#include "page-history.h"
 #include "page-settings.h"
 #include "lock-screen.h"
 #include "../secret_store.h"
@@ -29,23 +28,19 @@ struct _SignerWindow {
   /* Template children */
   GtkStack *main_stack;
   GnLockScreen *lock_screen;
-  AdwToolbarView *toolbar_view;
-  AdwHeaderBar *header_bar;
-  AdwViewSwitcherTitle *switcher_title;
   AdwNavigationSplitView *split_view;
-  GtkToggleButton *sidebar_toggle_btn;
+  AdwNavigationPage *content_page;
+  GtkStack *panel_stack;
   GtkMenuButton *menu_btn;
   GtkListBox *sidebar;
-  AdwViewStack *stack;
-  /* pages */
-  GtkWidget *page_home;
-  GtkWidget *page_connect;
+  GrottoPanel *panels[4];
+  GtkLabel *pending_count;
+  GListModel *pending;
+  gboolean initial_panel_chosen;
   AdwToastOverlay *toast_overlay;
-  AdwNavigationView *detail_navigation;
   GrottoHomeModel *model;
   GrottoPanelsService *identity_service;
   gboolean pending_backup;
-  GtkWidget *page_history;
   GtkWidget *page_settings;
   /* GSettings for persistence */
   GSettings *settings;
@@ -65,13 +60,16 @@ struct _SignerWindow {
 
 G_DEFINE_TYPE(SignerWindow, signer_window, ADW_TYPE_APPLICATION_WINDOW)
 static void identity_available(GrottoPanelsService *service, SignerWindow *self);
+static AdwNavigationView *identity_navigation(SignerWindow *self);
+static void setup_panels(SignerWindow *self);
+static void show_preferences(SignerWindow *self);
 
 static gboolean restore_transition_focus(GtkWidget *widget, GdkFrameClock *clock, gpointer data) {
   (void)clock; (void)data; SignerWindow *self = SIGNER_WINDOW(widget);
   GtkWidget *destination = !g_strcmp0(gtk_stack_get_visible_child_name(self->main_stack), "locked") ?
       GTK_WIDGET(self->lock_screen) :
       adw_navigation_split_view_get_collapsed(self->split_view) && !adw_navigation_split_view_get_show_content(self->split_view) ?
-      GTK_WIDGET(adw_navigation_split_view_get_sidebar(self->split_view)) : GTK_WIDGET(adw_navigation_view_get_visible_page(self->detail_navigation));
+      GTK_WIDGET(adw_navigation_split_view_get_sidebar(self->split_view)) : GTK_WIDGET(adw_navigation_split_view_get_content(self->split_view));
   /* AdwBreakpointBin remaps its content on the next frame after reparenting. */
   if (!gtk_widget_get_mapped(destination)) return G_SOURCE_CONTINUE;
   if (!gtk_root_get_focus(GTK_ROOT(self))) {
@@ -97,7 +95,7 @@ static void clear_transition_focus(SignerWindow *self) {
 }
 static void signer_window_size_allocate(GtkWidget *widget, int width, int height, int baseline) {
   SignerWindow *self = SIGNER_WINDOW(widget);
-  guint region = width <= 500 ? 2 : width <= 800 ? 1 : 0;
+  guint region = width <= 600 ? 1 : 0;
   if (region != self->breakpoint_region) clear_transition_focus(self);
   self->breakpoint_region = region;
   GTK_WIDGET_CLASS(signer_window_parent_class)->size_allocate(widget, width, height, baseline);
@@ -163,28 +161,15 @@ static gboolean on_close_request(GtkWindow *window, gpointer user_data) {
 static void on_sidebar_row_activated(GtkListBox *box, GtkListBoxRow *row, gpointer user_data) {
   (void)box;
   SignerWindow *self = user_data;
-  if (!self || !self->stack || !row) return;
+  if (!self || !row) return;
   int idx = gtk_list_box_row_get_index(row);
-  const char *names[] = { "home", "activity", "connect", "settings" };
+  const char *names[] = { "identity", "apps", "activity", "remote-signing" };
   if (idx >= 0 && idx < 4) signer_window_show_page(self, names[idx]);
 
   /* On narrow screens when sidebar is collapsed, selecting a row should close the sidebar */
   if (self->split_view && adw_navigation_split_view_get_collapsed(self->split_view)) {
     adw_navigation_split_view_set_show_content(self->split_view, TRUE);
-    if (self->sidebar_toggle_btn) {
-      gtk_toggle_button_set_active(self->sidebar_toggle_btn, FALSE);
-    }
   }
-}
-
-/* Handle sidebar toggle button click for responsive navigation */
-static void on_sidebar_toggle_clicked(GtkToggleButton *button, gpointer user_data) {
-  SignerWindow *self = SIGNER_WINDOW(user_data);
-  if (!self || !self->split_view) return;
-
-  gboolean active = gtk_toggle_button_get_active(button);
-  /* When toggle is active, show sidebar; when inactive, show content */
-  adw_navigation_split_view_set_show_content(self->split_view, !active);
 }
 
 static void signer_window_dispose(GObject *object) {
@@ -210,6 +195,10 @@ static void signer_window_dispose(GObject *object) {
     self->session_signals_connected = FALSE;
   }
 
+  if (self->pending) g_signal_handlers_disconnect_by_data(self->pending, self);
+  g_clear_object(&self->pending);
+  for (guint i = 0; i < G_N_ELEMENTS(self->panels); i++) g_clear_object(&self->panels[i]);
+  g_clear_object(&self->page_settings);
   if (self->model) grotto_home_model_stop(self->model);
   g_clear_object(&self->identity_service);
   g_clear_object(&self->model);
@@ -238,29 +227,19 @@ static void signer_window_class_init(SignerWindowClass *klass) {
    * This is tracked as STARTUP_PHASE_TYPES to separate from page data loading */
   STARTUP_TIME_BEGIN(STARTUP_PHASE_TYPES);
   g_type_ensure(GN_TYPE_LOCK_SCREEN);
-  g_type_ensure(GROTTO_TYPE_PAGE_HOME);
   g_type_ensure(GROTTO_TYPE_PAGE_CONNECT);
-  g_type_ensure(GN_TYPE_PAGE_HISTORY);
   g_type_ensure(TYPE_PAGE_SETTINGS);
   STARTUP_TIME_END(STARTUP_PHASE_TYPES);
 
   gtk_widget_class_set_template_from_resource(widget_class, APP_RESOURCE_PATH "/ui/signer-window.ui");
   gtk_widget_class_bind_template_child(widget_class, SignerWindow, main_stack);
   gtk_widget_class_bind_template_child(widget_class, SignerWindow, lock_screen);
-  gtk_widget_class_bind_template_child(widget_class, SignerWindow, toolbar_view);
-  gtk_widget_class_bind_template_child(widget_class, SignerWindow, header_bar);
-  gtk_widget_class_bind_template_child(widget_class, SignerWindow, switcher_title);
   gtk_widget_class_bind_template_child(widget_class, SignerWindow, split_view);
-  gtk_widget_class_bind_template_child(widget_class, SignerWindow, sidebar_toggle_btn);
+  gtk_widget_class_bind_template_child(widget_class, SignerWindow, content_page);
+  gtk_widget_class_bind_template_child(widget_class, SignerWindow, panel_stack);
   gtk_widget_class_bind_template_child(widget_class, SignerWindow, menu_btn);
   gtk_widget_class_bind_template_child(widget_class, SignerWindow, sidebar);
-  gtk_widget_class_bind_template_child(widget_class, SignerWindow, stack);
-  gtk_widget_class_bind_template_child(widget_class, SignerWindow, page_home);
-  gtk_widget_class_bind_template_child(widget_class, SignerWindow, page_connect);
   gtk_widget_class_bind_template_child(widget_class, SignerWindow, toast_overlay);
-  gtk_widget_class_bind_template_child(widget_class, SignerWindow, detail_navigation);
-  gtk_widget_class_bind_template_child(widget_class, SignerWindow, page_history);
-  gtk_widget_class_bind_template_child(widget_class, SignerWindow, page_settings);
 }
 
 /* Window action handlers for keyboard shortcuts */
@@ -300,7 +279,7 @@ static void on_win_about(GSimpleAction *action, GVariant *param, gpointer user_d
   AdwDialog *about = adw_about_dialog_new();
   adw_about_dialog_set_application_name(ADW_ABOUT_DIALOG(about), "Grotto");
   adw_about_dialog_set_application_icon(ADW_ABOUT_DIALOG(about), "org.nostr.Grotto");
-  adw_about_dialog_set_version(ADW_ABOUT_DIALOG(about), "0.1.0");
+  adw_about_dialog_set_version(ADW_ABOUT_DIALOG(about), GROTTO_VERSION);
   adw_about_dialog_set_website(ADW_ABOUT_DIALOG(about), "https://github.com/chebizarro/nostrc");
   adw_about_dialog_set_issue_url(ADW_ABOUT_DIALOG(about), "https://github.com/chebizarro/nostrc/issues");
   const char *devs[] = { "GNostr Team", NULL };
@@ -334,21 +313,12 @@ static void on_win_show_shortcuts(GSimpleAction *action, GVariant *param, gpoint
 }
 
 static void on_pair_application(GSimpleAction *action, GVariant *parameter, gpointer data) {
-  (void)action; (void)parameter; signer_window_show_page(data, "connect");
+  (void)action; (void)parameter; SignerWindow *self = data;
+  signer_window_show_page(self, "apps");
+  grotto_panel_host_invoke(self->panels[1], GROTTO_PANEL_HOST_ADD_APP, NULL, NULL);
 }
 static void on_activity(GSimpleAction *action, GVariant *parameter, gpointer data) {
   (void)action; (void)parameter; signer_window_show_page(data, "activity");
-}
-static void on_client_selected(GrottoPageHome *home, const gchar *principal, gpointer data) {
-  (void)home; SignerWindow *self = data;
-  adw_navigation_view_push(self->detail_navigation, ADW_NAVIGATION_PAGE(grotto_client_detail_new(self->model, principal)));
-}
-static void on_stack_changed(GObject *object, GParamSpec *pspec, gpointer data) {
-  (void)object; (void)pspec; SignerWindow *self = data;
-  const gchar *name = adw_view_stack_get_visible_child_name(self->stack);
-  const gchar *names[] = {"home", "activity", "connect", "settings"};
-  adw_navigation_view_pop(self->detail_navigation);
-  for (guint i = 0; i < G_N_ELEMENTS(names); i++) if (!g_strcmp0(name, names[i])) gtk_list_box_select_row(self->sidebar, gtk_list_box_get_row_at_index(self->sidebar, i));
 }
 static void on_window_mapped(GtkWidget *widget, gpointer data) {
   (void)data; SignerWindow *self = SIGNER_WINDOW(widget); if (self->model) grotto_home_model_start(self->model);
@@ -558,12 +528,9 @@ static void signer_window_init(SignerWindow *self) {
   self->model = grotto_home_model_new();
   self->identity_service = grotto_identity_service_new(self->model);
   g_signal_connect_object(self->identity_service, "availability-changed", G_CALLBACK(identity_available), self, 0);
-  grotto_page_home_set_model(GROTTO_PAGE_HOME(self->page_home), self->model);
-  grotto_page_connect_set_model(GROTTO_PAGE_CONNECT(self->page_connect), self->model);
+  self->page_settings = GTK_WIDGET(g_object_ref_sink(page_settings_new()));
   page_settings_set_model(PAGE_SETTINGS(self->page_settings), self->model);
-  gn_page_history_set_model(GN_PAGE_HISTORY(self->page_history), self->model);
-  g_signal_connect(self->page_home, "client-selected", G_CALLBACK(on_client_selected), self);
-  g_signal_connect(self->stack, "notify::visible-child-name", G_CALLBACK(on_stack_changed), self);
+  setup_panels(self);
   g_signal_connect(self, "map", G_CALLBACK(on_window_mapped), NULL);
   g_signal_connect(self, "unmap", G_CALLBACK(on_window_unmapped), NULL);
 
@@ -618,27 +585,27 @@ static void signer_window_init(SignerWindow *self) {
 
     /* Profile section - use window actions for shortcuts */
     GMenu *profile_section = g_menu_new();
-    g_menu_append(profile_section, _("New Identity…\tCtrl+N"), "win.new-profile");
-    g_menu_append(profile_section, _("Import Identity…\tCtrl+I"), "win.import-profile");
-    g_menu_append(profile_section, _("Export/Backup…\tCtrl+E"), "win.export");
-    g_menu_append(profile_section, _("Connect an Application…"), "win.pair-application");
+    g_menu_append(profile_section, _("New Identity…"), "win.new-profile");
+    g_menu_append(profile_section, _("Import Identity…"), "win.import-profile");
+    g_menu_append(profile_section, _("Back Up Identity…"), "win.export");
+    g_menu_append(profile_section, _("Add App…"), "win.pair-application");
     g_menu_append_section(menu, NULL, G_MENU_MODEL(profile_section));
     g_object_unref(profile_section);
 
     /* Security section */
     GMenu *security_section = g_menu_new();
-    g_menu_append(security_section, _("Lock Management\tCtrl+L"), "win.lock");
+    g_menu_append(security_section, _("Lock Management"), "win.lock");
     g_menu_append_section(menu, NULL, G_MENU_MODEL(security_section));
     g_object_unref(security_section);
 
     /* App section */
     GMenu *app_section = g_menu_new();
     g_menu_append(app_section, _("Preferences"), "win.preferences");
-    g_menu_append(app_section, _("Keyboard Shortcuts\tCtrl+?"), "win.show-shortcuts");
-    g_menu_append(app_section, _("About Grotto\tF1"), "win.about");
+    g_menu_append(app_section, _("Keyboard Shortcuts"), "win.show-shortcuts");
+    g_menu_append(app_section, _("About Grotto…"), "win.about");
     g_menu_append(app_section, _("Pause Signing"), "app.pause-signing");
     g_menu_append(app_section, _("Resume Signing…"), "app.resume-signing");
-    g_menu_append(app_section, _("Quit Approval UI (authorised signing continues)\tCtrl+Q"), "win.quit");
+    g_menu_append(app_section, _("Quit Approval UI"), "win.quit");
     g_menu_append_section(menu, NULL, G_MENU_MODEL(app_section));
     g_object_unref(app_section);
 
@@ -649,29 +616,51 @@ static void signer_window_init(SignerWindow *self) {
   /* Select first row and show default page */
   GtkListBoxRow *first = gtk_list_box_get_row_at_index(self->sidebar, 0);
   if (first) gtk_list_box_select_row(self->sidebar, first);
-  if (self->stack) adw_view_stack_set_visible_child_name(self->stack, "home");
-
-  /* Connect sidebar toggle button for responsive navigation */
-  if (self->sidebar_toggle_btn) {
-    g_signal_connect(self->sidebar_toggle_btn, "toggled",
-                     G_CALLBACK(on_sidebar_toggle_clicked), self);
-  }
-
-  /* Setup enhanced keyboard navigation for sidebar */
-  static const char *page_names[] = { "home", "activity", "connect", "settings", NULL };
-  gn_keyboard_nav_setup_sidebar(self->sidebar, self->stack, page_names);
+  gtk_stack_set_visible_child(self->panel_stack, GTK_WIDGET(self->panels[0]));
 }
 
 void signer_window_add_background_group(SignerWindow *self, AdwPreferencesGroup *group) {
   page_settings_add_background_group(PAGE_SETTINGS(self->page_settings), group);
 }
 
+static void pending_changed(GListModel *model, guint position, guint removed, guint added, gpointer data) {
+  (void)position; (void)removed; (void)added;
+  SignerWindow *self = data;
+  guint count = g_list_model_get_n_items(model);
+  g_autofree char *label = g_strdup_printf("%u", count);
+  gtk_label_set_text(self->pending_count, label);
+  gtk_widget_set_visible(GTK_WIDGET(self->pending_count), count > 0);
+  g_autofree char *accessible = count ? g_strdup_printf(ngettext("Connected Apps, %u pending request", "Connected Apps, %u pending requests", count), count) : g_strdup(_("Connected Apps"));
+  gtk_accessible_update_property(GTK_ACCESSIBLE(gtk_list_box_get_row_at_index(self->sidebar, 1)), GTK_ACCESSIBLE_PROPERTY_LABEL, accessible, -1);
+}
+static void pending_reconciled(GrottoApprovalController *controller, gboolean success, SignerWindow *self) {
+  (void)controller;
+  if (self->initial_panel_chosen || !success) return;
+  if (self->pending && g_list_model_get_n_items(self->pending)) signer_window_show_page(self, "apps");
+  self->initial_panel_chosen = TRUE;
+}
 void signer_window_set_pending_group(SignerWindow *self, GtkWidget *group) {
-  grotto_page_home_set_pending_group(GROTTO_PAGE_HOME(self->page_home), group);
+  /* Both the hosted inbox and the sidebar use the application-owned controller.
+   * Changing panels never changes notification or request lifetime. */
+  GrottoApprovalController *controller = g_object_get_data(G_OBJECT(group), "controller");
+  grotto_apps_panel_set_pending_group(GROTTO_APPS_PANEL(self->panels[1]), group);
+  if (self->pending) g_signal_handlers_disconnect_by_data(self->pending, self);
+  g_set_object(&self->pending, grotto_approval_controller_get_pending(controller));
+  g_signal_connect(self->pending, "items-changed", G_CALLBACK(pending_changed), self);
+  pending_changed(self->pending, 0, 0, 0, self);
+  g_signal_connect_object(controller, "reconciled", G_CALLBACK(pending_reconciled), self, 0);
+  if (!self->initial_panel_chosen && g_list_model_get_n_items(self->pending))
+    pending_reconciled(controller, TRUE, self);
+}
+static void action_enabled_changed(GActionGroup *app, const char *name, gboolean enabled, SignerWindow *self) {
+  (void)app; (void)enabled;
+  if (!strcmp(name, "resume-signing")) g_signal_emit_by_name(self->identity_service, "capabilities-changed");
 }
 SignerWindow *signer_window_new(AdwApplication *app) {
   g_return_val_if_fail(ADW_IS_APPLICATION(app), NULL);
-  return g_object_new(TYPE_SIGNER_WINDOW, "application", app, NULL);
+  SignerWindow *self = g_object_new(TYPE_SIGNER_WINDOW, "application", app, NULL);
+  g_signal_connect_object(app, "action-enabled-changed", G_CALLBACK(action_enabled_changed), self, 0);
+  return self;
 }
 
 void signer_window_toast(SignerWindow *self, const gchar *message) {
@@ -685,7 +674,7 @@ static void identity_add(gpointer data) {
   g_autoptr(SignerWindow) self = g_weak_ref_get(data); if (self) signer_window_show_new_profile(self);
 }
 static AdwNavigationView *identity_navigation(SignerWindow *self) {
-  AdwNavigationView *navigation = self->detail_navigation;
+  AdwNavigationView *navigation = grotto_identity_panel_get_navigation(GROTTO_IDENTITY_PANEL(self->panels[0]));
   AdwNavigationPage *page = adw_navigation_view_get_visible_page(navigation);
   while (GROTTO_IS_IDENTITY_PANEL(page)) {
     navigation = grotto_identity_panel_get_navigation(GROTTO_IDENTITY_PANEL(page));
@@ -705,9 +694,19 @@ static void identity_open(gpointer data, const char *target) {
     SheetQrDisplay *qr = sheet_qr_display_new(); sheet_qr_display_set_npub(qr, target + strlen("public-key:"));
     adw_dialog_present(ADW_DIALOG(qr), GTK_WIDGET(self));
   } else if (g_str_has_prefix(target, "apps:npub1")) {
-    /* Transitional W3 route: W4 replaces this existing app list with its panel. */
-    signer_window_show_page(self, "home");
-  }
+    signer_window_show_page(self, "apps");
+    grotto_apps_panel_filter_identity(GROTTO_APPS_PANEL(self->panels[1]), target + strlen("apps:"));
+  } else if (g_str_has_prefix(target, "app:")) {
+    signer_window_show_page(self, "apps");
+    grotto_apps_panel_show_app(GROTTO_APPS_PANEL(self->panels[1]), target + 4);
+  } else if (!strcmp(target, "ask-defaults")) {
+    page_settings_show_ask_defaults(PAGE_SETTINGS(self->page_settings), GTK_WIDGET(self));
+  } else if (!strcmp(target, "activity-retention")) {
+    page_settings_show_retention(PAGE_SETTINGS(self->page_settings), GTK_WIDGET(self));
+  } else if (g_str_has_prefix(target, "activity:")) {
+    signer_window_show_page(self, "activity");
+    grotto_activity_panel_filter_app(GROTTO_ACTIVITY_PANEL(self->panels[2]), target + 9);
+  } else signer_window_show_page(self, target);
 }
 static void removal_done(GObject *source, GAsyncResult *result, gpointer data) {
   GTask *task = data; SignerWindow *self = g_task_get_source_object(task);
@@ -771,7 +770,7 @@ static void identity_remove(gpointer data, const char *npub) {
 }
 static void identity_available(GrottoPanelsService *service, SignerWindow *self) {
   if (!self->pending_backup || !grotto_panels_service_is_available(service)) return;
-  AdwNavigationPage *page = adw_navigation_view_get_visible_page(self->detail_navigation);
+  AdwNavigationPage *page = ADW_NAVIGATION_PAGE(gtk_stack_get_visible_child(self->panel_stack));
   if (!GROTTO_IS_IDENTITY_PANEL(page)) { self->pending_backup = FALSE; return; }
   GrottoPanel *panel = GROTTO_PANEL(page);
   GListModel *identities = grotto_panels_service_get_model(service, GROTTO_PANELS_IDENTITIES);
@@ -788,38 +787,120 @@ static void identity_available(GrottoPanelsService *service, SignerWindow *self)
   if (metadata->can_sign && !metadata->watch_only)
     grotto_panel_host_invoke(panel, GROTTO_PANEL_HOST_BACKUP, metadata->public_key, NULL);
 }
+static void preferences_closed(AdwDialog *dialog, gpointer data) {
+  SignerWindow *self = data;
+  adw_preferences_dialog_remove(ADW_PREFERENCES_DIALOG(dialog), ADW_PREFERENCES_PAGE(self->page_settings));
+}
+static void show_preferences(SignerWindow *self) {
+  if (gn_session_manager_is_locked(gn_session_manager_get_default())) return;
+  if (gtk_widget_get_parent(self->page_settings)) return;
+  AdwDialog *dialog = adw_preferences_dialog_new();
+  adw_dialog_set_title(dialog, _("Preferences"));
+  adw_preferences_dialog_add(ADW_PREFERENCES_DIALOG(dialog), ADW_PREFERENCES_PAGE(self->page_settings));
+  g_signal_connect_object(dialog, "closed", G_CALLBACK(preferences_closed), self, 0);
+  adw_dialog_present(dialog, GTK_WIDGET(self));
+}
+static void host_add_app(gpointer data) {
+  g_autoptr(SignerWindow) self = g_weak_ref_get(data);
+  if (!self || gn_session_manager_is_locked(gn_session_manager_get_default())) return;
+  AdwDialog *dialog = adw_dialog_new(); adw_dialog_set_title(dialog, _("Add App"));
+  adw_dialog_set_content_width(dialog, 440); adw_dialog_set_content_height(dialog, 520);
+  GtkWidget *toolbar = adw_toolbar_view_new();
+  adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(toolbar), adw_header_bar_new());
+  GtkWidget *page = g_object_new(GROTTO_TYPE_PAGE_CONNECT, NULL);
+  grotto_page_connect_set_model(GROTTO_PAGE_CONNECT(page), self->model);
+  adw_toolbar_view_set_content(ADW_TOOLBAR_VIEW(toolbar), page);
+  adw_dialog_set_child(dialog, toolbar); adw_dialog_present(dialog, GTK_WIDGET(self));
+}
+static void host_review(gpointer data, const char *request) {
+  g_autoptr(SignerWindow) self = g_weak_ref_get(data);
+  if (!self) return;
+  GtkApplication *app = gtk_window_get_application(GTK_WINDOW(self));
+  if (app) g_action_group_activate_action(G_ACTION_GROUP(app), "review-request", g_variant_new_string(request));
+}
+static gboolean host_can_command(gpointer data, GrottoPanelCommand command) {
+  g_autoptr(SignerWindow) self = g_weak_ref_get(data);
+  if (!self || command == GROTTO_PANEL_SET_IDENTITY_LABEL ||
+      gn_session_manager_is_locked(gn_session_manager_get_default()) || !grotto_home_model_writable(self->model)) return FALSE;
+  if (command == GROTTO_PANEL_RESUME) {
+    GtkApplication *app = gtk_window_get_application(GTK_WINDOW(self));
+    return app && g_action_group_has_action(G_ACTION_GROUP(app), "resume-signing") &&
+      g_action_group_get_action_enabled(G_ACTION_GROUP(app), "resume-signing");
+  }
+  return TRUE;
+}
+static void host_command(gpointer data, GrottoPanelCommand command, const GrottoPanelCommandArgs *args,
+  GCancellable *cancel, GAsyncReadyCallback callback, gpointer user_data) {
+  g_autoptr(SignerWindow) self = g_weak_ref_get(data);
+  if (!self || !host_can_command(data, command)) {
+    GTask *task = g_task_new(self, cancel, callback, user_data);
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED, "Unlock management first");
+    g_object_unref(task); return;
+  }
+  GrottoPanelsService *control = grotto_identity_service_get_control(GROTTO_IDENTITY_SERVICE(self->identity_service));
+  grotto_panels_control1_service_host_command_async(control, command, args, cancel, callback, user_data);
+}
+static void setup_panels(SignerWindow *self) {
+  self->panels[0] = GROTTO_PANEL(g_object_ref_sink(grotto_identity_panel_new(self->identity_service, NULL)));
+  self->panels[1] = GROTTO_PANEL(g_object_ref_sink(grotto_apps_panel_new(self->identity_service)));
+  self->panels[2] = GROTTO_PANEL(g_object_ref_sink(grotto_activity_panel_new(self->identity_service)));
+  self->panels[3] = GROTTO_PANEL(g_object_ref_sink(grotto_remote_panel_new(self->identity_service)));
+  const GrottoPanelsHost host = {.show_toast = identity_toast, .review_request = host_review,
+    .add_identity = identity_add, .add_app = host_add_app, .open_backup = identity_backup,
+    .remove_identity = identity_remove, .open_in_signer = identity_open,
+    .can_command = host_can_command, .command_async = host_command};
+  gsize count = 0; const GrottoPanelDescriptor *descriptors = grotto_panels_get_descriptors(&count);
+  for (guint i = 0; i < count; i++) {
+    GWeakRef *ref = g_new0(GWeakRef, 1); g_weak_ref_init(ref, self);
+    grotto_panel_set_host(self->panels[i], &host, ref, identity_host_free);
+    gtk_stack_add_named(self->panel_stack, GTK_WIDGET(self->panels[i]), descriptors[i].id);
+    GtkWidget *row = adw_action_row_new();
+    adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), g_dgettext("grotto-panels", descriptors[i].title));
+    adw_action_row_add_prefix(ADW_ACTION_ROW(row), gtk_image_new_from_icon_name(descriptors[i].icon_name));
+    gtk_list_box_row_set_activatable(GTK_LIST_BOX_ROW(row), TRUE);
+    if (i == 1) {
+      self->pending_count = GTK_LABEL(gtk_label_new(""));
+      gtk_widget_add_css_class(GTK_WIDGET(self->pending_count), "numeric");
+      gtk_widget_set_visible(GTK_WIDGET(self->pending_count), FALSE);
+      adw_action_row_add_suffix(ADW_ACTION_ROW(row), GTK_WIDGET(self->pending_count));
+    }
+    gtk_list_box_append(self->sidebar, row);
+  }
+}
 void signer_window_show_identity(SignerWindow *self, const gchar *npub) {
   g_return_if_fail(SIGNER_IS_WINDOW(self));
   self->pending_backup = FALSE;
   if (gn_session_manager_is_locked(gn_session_manager_get_default())) return;
   clear_transition_focus(self);
-  adw_navigation_view_pop_to_tag(self->detail_navigation, "root");
-  GrottoPanel *panel = GROTTO_PANEL(grotto_identity_panel_new(self->identity_service, npub));
-  /* Transitional shell already owns the application's window controls. */
-  g_object_set(panel, "show-window-controls", FALSE, NULL);
-  const GrottoPanelsHost host = {.show_toast = identity_toast, .add_identity = identity_add,
-    .open_backup = identity_backup, .remove_identity = identity_remove, .open_in_signer = identity_open};
-  GWeakRef *host_window = g_new0(GWeakRef, 1); g_weak_ref_init(host_window, self);
-  grotto_panel_set_host(panel, &host, host_window, identity_host_free);
-  adw_navigation_view_push(self->detail_navigation, ADW_NAVIGATION_PAGE(panel));
-  adw_navigation_split_view_set_show_content(self->split_view, TRUE);
+  signer_window_show_page(self, "identity");
+  if (npub && *npub) {
+    GrottoPanel *panel = GROTTO_PANEL(grotto_identity_panel_new(self->identity_service, npub));
+    const GrottoPanelsHost host = {.show_toast = identity_toast, .add_identity = identity_add,
+      .open_backup = identity_backup, .remove_identity = identity_remove, .open_in_signer = identity_open};
+    GWeakRef *host_window = g_new0(GWeakRef, 1); g_weak_ref_init(host_window, self);
+    grotto_panel_set_host(panel, &host, host_window, identity_host_free);
+    adw_navigation_view_push(identity_navigation(self), ADW_NAVIGATION_PAGE(panel));
+  }
 }
 void signer_window_show_page(SignerWindow *self, const char *name) {
   g_return_if_fail(self != NULL && name != NULL);
-  if (!strcmp(name, "identity")) { signer_window_show_identity(self, NULL); return; }
+  self->initial_panel_chosen = TRUE; /* Explicit navigation wins over first reconciliation. */
   if (!strcmp(name, "backup")) { signer_window_show_backup(self); return; }
+  if (!strcmp(name, "settings") || !strcmp(name, "preferences")) { show_preferences(self); return; }
+  if (!strcmp(name, "home")) name = "identity";
+  if (!strcmp(name, "connect")) name = "apps";
+  AdwDialog *dialog = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(self));
+  if (ADW_IS_PREFERENCES_DIALOG(dialog)) adw_dialog_force_close(dialog);
   self->pending_backup = FALSE;
-  const gchar *names[] = {"home", "activity", "connect", "settings"};
+  const gchar *names[] = {"identity", "apps", "activity", "remote-signing"};
   for (guint i = 0; i < G_N_ELEMENTS(names); i++) {
     if (strcmp(name, names[i])) continue;
-    if (g_strcmp0(adw_view_stack_get_visible_child_name(self->stack), name) ||
-        adw_navigation_view_get_visible_page(self->detail_navigation) != adw_navigation_view_find_page(self->detail_navigation, "root") ||
-        !adw_navigation_split_view_get_show_content(self->split_view)) clear_transition_focus(self);
-    adw_navigation_view_pop(self->detail_navigation);
-    adw_view_stack_set_visible_child_name(self->stack, name);
+    clear_transition_focus(self);
+    gtk_stack_set_visible_child(self->panel_stack, GTK_WIDGET(self->panels[i]));
+    adw_navigation_page_set_title(self->content_page, adw_navigation_page_get_title(ADW_NAVIGATION_PAGE(self->panels[i])));
+    if (i == 1) grotto_apps_panel_show_app(GROTTO_APPS_PANEL(self->panels[1]), NULL);
     gtk_list_box_select_row(self->sidebar, gtk_list_box_get_row_at_index(self->sidebar, i));
     adw_navigation_split_view_set_show_content(self->split_view, TRUE);
-    if (!i) { adw_preferences_page_scroll_to_top(ADW_PREFERENCES_PAGE(self->page_home)); grotto_home_model_refresh(self->model); }
     break;
   }
 }

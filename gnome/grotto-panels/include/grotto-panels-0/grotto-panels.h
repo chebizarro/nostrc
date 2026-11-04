@@ -34,6 +34,25 @@ typedef struct _GrottoPanelsMetadata {
   gboolean can_sign;
   gboolean backup_acknowledged; /* Owner acknowledgement, not recovery proof. */
   guint app_count;
+  const char *principal;
+  const char *verified_as;
+  const char *transport;
+  const char *operation;
+  const char *outcome;
+  const char *trust;
+  const char *decision;
+  const char *relay;
+  gint event_kind;
+  gboolean has_event_kind;
+  guint64 timestamp;
+  guint64 last_used_at;
+  guint64 expires_at;
+  guint64 revision;
+  guint64 owner_generation;
+  gboolean paused;
+  gboolean remote_enabled;
+  const char *const *relays;
+  const char *const *methods;
 } GrottoPanelsMetadata;
 
 #define GROTTO_TYPE_PANELS_ITEM (grotto_panels_item_get_type())
@@ -53,6 +72,7 @@ typedef enum _GrottoPanelsModel {
   GROTTO_PANELS_APPS,
   GROTTO_PANELS_REQUESTS,
   GROTTO_PANELS_ACTIVITY,
+  GROTTO_PANELS_STATUS,
   GROTTO_PANELS_N_MODELS
 } GrottoPanelsModel;
 
@@ -96,12 +116,15 @@ typedef struct _GrottoPanelCommandArgs {
   const GrottoPanelPermission *permissions;
   gsize n_permissions;
   guint64 expected_revision;
+  guint64 expected_generation; /* Snapshot's daemon owner; zero for no snapshot. */
   gboolean remote_enabled;
   const char *const *relays;
   const char *const *methods;
 } GrottoPanelCommandArgs;
 GROTTO_PANELS_API gboolean grotto_panel_command_args_validate(GrottoPanelCommand command,
   const GrottoPanelCommandArgs *args, GError **error);
+
+typedef enum _GrottoPanelsQuery { GROTTO_PANELS_QUERY_PERMISSIONS, GROTTO_PANELS_QUERY_ACTIVITY } GrottoPanelsQuery;
 
 #define GROTTO_TYPE_PANELS_SERVICE (grotto_panels_service_get_type())
 GROTTO_PANELS_API
@@ -115,7 +138,11 @@ struct _GrottoPanelsServiceInterface {
                        const GrottoPanelCommandArgs *args, GCancellable *cancellable,
                        GAsyncReadyCallback callback, gpointer user_data);
   gboolean (*invoke_finish)(GrottoPanelsService *self, GAsyncResult *result, GError **error);
-  gpointer padding[8];
+  void (*query_async)(GrottoPanelsService *self, GrottoPanelsQuery query,
+    const char *principal, guint64 before, GCancellable *cancellable,
+    GAsyncReadyCallback callback, gpointer user_data);
+  GListModel *(*query_finish)(GrottoPanelsService *self, GAsyncResult *result, GError **error);
+  gpointer padding[6];
 };
 /* All entrypoints, signals and model notifications use the GTK main context.
  * Models: transfer none, item type GrottoPanelsItem, lifetime of service.
@@ -129,6 +156,14 @@ GROTTO_PANELS_API void grotto_panels_service_invoke_async(GrottoPanelsService *s
   const GrottoPanelCommandArgs *args, GCancellable *cancellable, GAsyncReadyCallback callback, gpointer user_data);
 GROTTO_PANELS_API gboolean grotto_panels_service_invoke_finish(GrottoPanelsService *self, GAsyncResult *result, GError **error);
 
+/* Security callbacks exist only in the trusted approver host. The shared read
+ * service never acquires their authority. Results must be boolean GTasks. */
+GROTTO_PANELS_API void grotto_panels_service_query_async(GrottoPanelsService *self,
+  GrottoPanelsQuery query, const char *principal, guint64 before, GCancellable *cancel,
+  GAsyncReadyCallback callback, gpointer data);
+GROTTO_PANELS_API GListModel *grotto_panels_service_query_finish(GrottoPanelsService *self,
+  GAsyncResult *result, GError **error);
+
 typedef struct _GrottoPanelsHost {
   void (*show_toast)(gpointer host, const char *message);
   void (*review_request)(gpointer host, const char *request_id);
@@ -138,6 +173,10 @@ typedef struct _GrottoPanelsHost {
   void (*remove_identity)(gpointer host, const char *public_key);
   void (*replace_identity)(gpointer host, const char *public_key);
   void (*open_in_signer)(gpointer host, const char *public_target);
+  gboolean (*can_command)(gpointer host, GrottoPanelCommand command);
+  void (*command_async)(gpointer host, GrottoPanelCommand command,
+    const GrottoPanelCommandArgs *args, GCancellable *cancellable,
+    GAsyncReadyCallback callback, gpointer user_data);
 } GrottoPanelsHost;
 
 #define GROTTO_TYPE_PANEL (grotto_panel_get_type())
@@ -170,6 +209,10 @@ typedef enum _GrottoPanelHostAction {
 GROTTO_PANELS_API gboolean grotto_panel_host_can(GrottoPanel *self, GrottoPanelHostAction action);
 GROTTO_PANELS_API gboolean grotto_panel_host_invoke(GrottoPanel *self, GrottoPanelHostAction action,
   const char *public_value, GError **error);
+GROTTO_PANELS_API gboolean grotto_panel_can_command(GrottoPanel *self, GrottoPanelCommand command);
+GROTTO_PANELS_API void grotto_panel_command_async(GrottoPanel *self, GrottoPanelCommand command,
+  const GrottoPanelCommandArgs *args, GAsyncReadyCallback callback, gpointer user_data);
+GROTTO_PANELS_API gboolean grotto_panel_command_finish(GrottoPanel *self, GAsyncResult *result, GError **error);
 /* Standard plain-text row helper, deliberately no permission interpretation. */
 GROTTO_PANELS_API GtkWidget *grotto_panel_create_metadata_row(GrottoPanelsItem *item);
 
@@ -179,5 +222,33 @@ G_DECLARE_FINAL_TYPE(GrottoIdentityPanel, grotto_identity_panel, GROTTO, IDENTIT
 /* NULL public_key displays the default identity; otherwise pin this page. */
 GROTTO_PANELS_API GtkWidget *grotto_identity_panel_new(GrottoPanelsService *service, const char *public_key);
 GROTTO_PANELS_API AdwNavigationView *grotto_identity_panel_get_navigation(GrottoIdentityPanel *self);
+
+typedef struct _GrottoPanelDescriptor {
+  const char *id;
+  const char *title;
+  const char *icon_name;
+} GrottoPanelDescriptor;
+GROTTO_PANELS_API const GrottoPanelDescriptor *grotto_panels_get_descriptors(gsize *length);
+
+#define GROTTO_TYPE_APPS_PANEL (grotto_apps_panel_get_type())
+GROTTO_PANELS_API
+G_DECLARE_FINAL_TYPE(GrottoAppsPanel, grotto_apps_panel, GROTTO, APPS_PANEL, GrottoPanel)
+GROTTO_PANELS_API GtkWidget *grotto_apps_panel_new(GrottoPanelsService *service);
+GROTTO_PANELS_API AdwNavigationView *grotto_apps_panel_get_navigation(GrottoAppsPanel *self);
+/* NULL or empty principal returns to the unfiltered inbox/root page. */
+GROTTO_PANELS_API void grotto_apps_panel_show_app(GrottoAppsPanel *self, const char *principal);
+GROTTO_PANELS_API void grotto_apps_panel_filter_identity(GrottoAppsPanel *self, const char *public_key);
+/* Trusted host inbox, backed by its application-owned approval controller. */
+GROTTO_PANELS_API void grotto_apps_panel_set_pending_group(GrottoAppsPanel *self, GtkWidget *group);
+
+#define GROTTO_TYPE_ACTIVITY_PANEL (grotto_activity_panel_get_type())
+GROTTO_PANELS_API
+G_DECLARE_FINAL_TYPE(GrottoActivityPanel, grotto_activity_panel, GROTTO, ACTIVITY_PANEL, GrottoPanel)
+GROTTO_PANELS_API GtkWidget *grotto_activity_panel_new(GrottoPanelsService *service);
+GROTTO_PANELS_API void grotto_activity_panel_filter_app(GrottoActivityPanel *self, const char *principal);
+#define GROTTO_TYPE_REMOTE_PANEL (grotto_remote_panel_get_type())
+GROTTO_PANELS_API
+G_DECLARE_FINAL_TYPE(GrottoRemotePanel, grotto_remote_panel, GROTTO, REMOTE_PANEL, GrottoPanel)
+GROTTO_PANELS_API GtkWidget *grotto_remote_panel_new(GrottoPanelsService *service);
 
 G_END_DECLS

@@ -130,7 +130,7 @@ void grotto_pairing_present(GtkWidget *parent, const gchar *uri) {
     preview_uri(f, uri);
   } else {
     f->entry = gtk_entry_new(); gtk_entry_set_placeholder_text(GTK_ENTRY(f->entry), "Paste a nostrconnect:// link"); gtk_box_append(GTK_BOX(box), f->entry);
-    const gchar *labels[] = {"Preview Pasted Link", "Scan a QR Code…", "Create a Pairing Link / Relay Preferences…"};
+    const gchar *labels[] = {"Preview Pasted Link", "Scan a QR Code…", "Create a Pairing Link…"};
     GCallback callbacks[] = {G_CALLBACK(pasted), G_CALLBACK(scan), G_CALLBACK(create)};
     for (guint i = 0; i < 3; i++) { GtkWidget *b = gtk_button_new_with_label(labels[i]); g_signal_connect(b, "clicked", callbacks[i], f); gtk_box_append(GTK_BOX(box), b); }
   }

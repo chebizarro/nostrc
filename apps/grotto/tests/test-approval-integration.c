@@ -9,7 +9,7 @@
 #include <sys/resource.h>
 #ifndef __APPLE__
 #include "main_app.h"
-#include "ui/page-home.h"
+#include <grotto-panels.h>
 #include "ui/signer-window.h"
 #include "ui/onboarding-assistant.h"
 #include "backup-recovery.h"
@@ -346,7 +346,7 @@ static void onboarding_review(GrottoApprovalController *controller, GApplication
   wait_frames(group);
   GPtrArray *rows = g_object_get_data(G_OBJECT(group), "rows");
   g_assert_cmpuint(rows->len, ==, 1);
-  g_assert_cmpstr(adw_preferences_row_get_title(rows->pdata[0]), ==, "Grotto");
+  g_assert_cmpstr(adw_preferences_row_get_title(rows->pdata[0]), ==, "Grotto · Verify stored identity");
   g_signal_emit_by_name(rows->pdata[0], "activated");
   dialog = adw_window_get_visible_dialog(ADW_WINDOW(assistant));
   g_assert_true(GNOSTR_IS_APPROVAL_DIALOG(dialog));
@@ -381,12 +381,12 @@ static void pending_reachability(GrottoApprovalController *controller, GApplicat
   GtkWidget *group = g_object_get_data(G_OBJECT(win), "grotto-pending-group");
   g_assert_nonnull(group);
   wait_frames(group);
-  g_assert_nonnull(strstr(adw_preferences_group_get_description(ADW_PREFERENCES_GROUP(group)),
-                          "Notifications unavailable"));
-  GtkWidget *page = GTK_WIDGET(
-      gtk_widget_get_template_child(GTK_WIDGET(win), TYPE_SIGNER_WINDOW, "page_home"));
+  g_assert_true(adw_banner_get_revealed(ADW_BANNER(g_object_get_data(G_OBJECT(group), "notification-banner"))));
+  GtkStack *panels = GTK_STACK(gtk_widget_get_template_child(GTK_WIDGET(win), TYPE_SIGNER_WINDOW, "panel_stack"));
+  GtkWidget *page = gtk_stack_get_visible_child(panels);
+  g_assert_true(GROTTO_IS_APPS_PANEL(page));
   GtkWidget *grants =
-      GTK_WIDGET(gtk_widget_get_template_child(page, GROTTO_TYPE_PAGE_HOME, "identity_card"));
+      GTK_WIDGET(gtk_widget_get_template_child(page, GROTTO_TYPE_APPS_PANEL, "controls"));
   graphene_rect_t pending_bounds, grants_bounds;
   g_assert_true(gtk_widget_compute_bounds(group, page, &pending_bounds));
   g_assert_true(gtk_widget_compute_bounds(grants, page, &grants_bounds));
@@ -408,9 +408,9 @@ static void pending_reachability(GrottoApprovalController *controller, GApplicat
   signer_window_show_page(SIGNER_WINDOW(win), "settings");
   g_application_activate(app); /* Ordinary launcher/reopen also reaches the deferred request. */
   WAIT(grotto_approval_controller_get_holds(controller) == 1);
-  AdwViewStack *reopened_stack =
-      ADW_VIEW_STACK(gtk_widget_get_template_child(GTK_WIDGET(win), TYPE_SIGNER_WINDOW, "stack"));
-  g_assert_cmpstr(adw_view_stack_get_visible_child_name(reopened_stack), ==, "home");
+  GtkStack *reopened_stack =
+      GTK_STACK(gtk_widget_get_template_child(GTK_WIDGET(win), TYPE_SIGNER_WINDOW, "panel_stack"));
+  g_assert_cmpstr(gtk_stack_get_visible_child_name(reopened_stack), ==, "apps");
   Desktop d = {0};
   g_autoptr(GDBusNodeInfo) xml = g_dbus_node_info_new_for_xml(desktop_xml, NULL);
   static const GDBusInterfaceVTable table = {.method_call = desktop_call};
@@ -420,14 +420,13 @@ static void pending_reachability(GrottoApprovalController *controller, GApplicat
                    G_CALLBACK(model_changed), &d);
   bus_name(bus, "org.freedesktop.Notifications", TRUE);
   WAIT(grotto_approval_controller_notifications_available(controller));
-  g_assert_cmpstr(adw_preferences_group_get_description(ADW_PREFERENCES_GROUP(group)), ==, "");
+  g_assert_false(adw_banner_get_revealed(ADW_BANNER(g_object_get_data(G_OBJECT(group), "notification-banner"))));
   bus_name(bus, "org.freedesktop.Notifications", FALSE);
   WAIT(!grotto_approval_controller_notifications_available(controller));
-  g_assert_nonnull(strstr(adw_preferences_group_get_description(ADW_PREFERENCES_GROUP(group)),
-                          "Notifications unavailable"));
+  g_assert_true(adw_banner_get_revealed(ADW_BANNER(g_object_get_data(G_OBJECT(group), "notification-banner"))));
   bus_name(bus, "org.freedesktop.Notifications", TRUE);
   WAIT(grotto_approval_controller_notifications_available(controller));
-  g_assert_cmpstr(adw_preferences_group_get_description(ADW_PREFERENCES_GROUP(group)), ==, "");
+  g_assert_false(adw_banner_get_revealed(ADW_BANNER(g_object_get_data(G_OBJECT(group), "notification-banner"))));
   g_assert_cmpuint(d.model_changes, ==, 0); /* Availability alone updates the banner. */
   g_assert_cmpuint(d.notifications, ==, 0); /* Deferred request is not re-notified. */
   g_signal_handlers_disconnect_by_data(grotto_approval_controller_get_pending(controller), &d);
@@ -436,9 +435,9 @@ static void pending_reachability(GrottoApprovalController *controller, GApplicat
   g_dbus_connection_unregister_object(bus, registration);
   signer_window_show_page(SIGNER_WINDOW(win), "settings");
   g_action_group_activate_action(G_ACTION_GROUP(app), "review-request", g_variant_new_string(""));
-  AdwViewStack *stack =
-      ADW_VIEW_STACK(gtk_widget_get_template_child(GTK_WIDGET(win), TYPE_SIGNER_WINDOW, "stack"));
-  g_assert_cmpstr(adw_view_stack_get_visible_child_name(stack), ==, "home");
+  GtkStack *stack =
+      GTK_STACK(gtk_widget_get_template_child(GTK_WIDGET(win), TYPE_SIGNER_WINDOW, "panel_stack"));
+  g_assert_cmpstr(gtk_stack_get_visible_child_name(stack), ==, "apps");
   GPtrArray *rows = g_object_get_data(G_OBJECT(group), "rows");
   g_assert_cmpuint(rows->len, ==, 1);
   g_assert_cmpstr(g_object_get_data(rows->pdata[0], "request-id"), ==, id);
@@ -563,12 +562,16 @@ static gboolean settled(gpointer data) {
   *(gboolean *)data = TRUE;
   return G_SOURCE_REMOVE;
 }
-static gboolean stale_notice(GtkWindow *win) {
-  AdwDialog *dialog = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(win));
-  return ADW_IS_ALERT_DIALOG(dialog) &&
-         !g_strcmp0(adw_alert_dialog_get_body(ADW_ALERT_DIALOG(dialog)),
-                    "That request is no longer waiting.");
+static gboolean has_label(GtkWidget *widget, const char *text) {
+  if (GTK_IS_LABEL(widget) && !g_strcmp0(gtk_label_get_text(GTK_LABEL(widget)), text)) return TRUE;
+  for (GtkWidget *child = gtk_widget_get_first_child(widget); child; child = gtk_widget_get_next_sibling(child))
+    if (has_label(child, text)) return TRUE;
+  return FALSE;
 }
+static gboolean stale_notice(GtkWindow *win) {
+  return has_label(GTK_WIDGET(win), "That request is no longer waiting.");
+}
+
 static void stale_app_actions(GrottoApprovalController *controller, GApplication *app,
                               GDBusConnection *bus) {
   guint availability = 0;
@@ -602,9 +605,9 @@ static void stale_app_actions(GrottoApprovalController *controller, GApplication
       g_action_group_activate_action(G_ACTION_GROUP(app), deny ? "deny-request" : "review-request",
                                      g_variant_new_string("exact-stale-id"));
       WAIT(stale_notice(win));
-      AdwViewStack *stack = ADW_VIEW_STACK(
-          gtk_widget_get_template_child(GTK_WIDGET(win), TYPE_SIGNER_WINDOW, "stack"));
-      g_assert_cmpstr(adw_view_stack_get_visible_child_name(stack), ==, "home");
+      GtkStack *stack = GTK_STACK(
+          gtk_widget_get_template_child(GTK_WIDGET(win), TYPE_SIGNER_WINDOW, "panel_stack"));
+      g_assert_cmpstr(gtk_stack_get_visible_child_name(stack), ==, "apps");
       g_assert_true(gtk_widget_get_visible(GTK_WIDGET(win)));
       g_assert_null(review_dialog(app));
       while (adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(win))) {

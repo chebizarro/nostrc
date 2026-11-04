@@ -143,8 +143,8 @@ endif()
 
 # Exact production inventory, mirrored by Meson and resources.gresource.xml.
 set(BLUEPRINT_SOURCES
-  data/ui/signer-window.blp data/ui/page-home.blp data/ui/page-connect.blp
-  data/ui/page-client-detail.blp data/ui/page-history.blp data/ui/page-settings.blp
+  data/ui/signer-window.blp data/ui/page-connect.blp
+  data/ui/page-settings.blp
   data/ui/page-identity-detail.blp data/ui/approval-dialog.blp data/ui/lock-screen.blp
   data/ui/onboarding-assistant.blp data/ui/shortcuts-window.blp
   data/ui/sheets/sheet-create-bunker.blp data/ui/sheets/sheet-qr-display.blp
@@ -183,8 +183,7 @@ list(REMOVE_ITEM APP_SRC "${CMAKE_CURRENT_SOURCE_DIR}/src/bunker_service.c")
 # Explicit production UI inventory: dormant pages/sheets cannot re-enter via a glob.
 set(APP_UI_SRC
   src/ui/approval_dialog.c src/ui/lock-screen.c src/ui/onboarding-assistant.c
-  src/ui/page-home.c src/ui/page-connect.c src/ui/page-client-detail.c
-  src/ui/page-identity-detail.c src/ui/page-history.c src/ui/page-settings.c
+  src/ui/page-connect.c src/ui/page-identity-detail.c src/ui/page-settings.c
   src/ui/pairing-flow.c src/ui/signer-window.c
   src/ui/sheets/sheet-create-bunker.c src/ui/sheets/sheet-qr-display.c
   src/ui/sheets/sheet-qr-scanner.c src/ui/widgets/gn-secure-entry.c)
@@ -195,8 +194,6 @@ set(APP_GRESOURCE_C ${CMAKE_CURRENT_BINARY_DIR}/resources.c)
 # Rebuild resources.c whenever any referenced UI changes
 set(APP_UI_FILES ${BLUEPRINT_SOURCES})
 list(TRANSFORM APP_UI_FILES REPLACE "\\.blp$" ".ui")
-list(APPEND APP_UI_FILES ${CMAKE_CURRENT_SOURCE_DIR}/data/css/app.css
-  ${CMAKE_CURRENT_SOURCE_DIR}/data/css/high-contrast.css)
 set(_signer_resource_dirs --sourcedir=${CMAKE_CURRENT_SOURCE_DIR}/data)
 if(GROTTO_HAS_PINNED_BLUEPRINT_COMPILER)
   list(PREPEND _signer_resource_dirs --sourcedir=${CMAKE_CURRENT_BINARY_DIR}/data)

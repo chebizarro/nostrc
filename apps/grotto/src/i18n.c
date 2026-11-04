@@ -61,15 +61,7 @@ gn_i18n_init(void)
   bind_textdomain_codeset(GETTEXT_PACKAGE, "UTF-8");
   textdomain(GETTEXT_PACKAGE);
 
-  /* Check for saved language preference */
-  SettingsManager *sm = settings_manager_get_default();
-  if (sm) {
-    gchar *saved_lang = settings_manager_get_language(sm);
-    if (saved_lang && *saved_lang) {
-      gn_i18n_set_language(saved_lang);
-      g_free(saved_lang);
-    }
-  }
+  /* Follow the system locale; the retired in-app language key is ignored. */
 
   /* Apply RTL text direction if needed */
   gn_i18n_apply_text_direction();

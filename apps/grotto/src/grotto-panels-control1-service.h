@@ -13,4 +13,9 @@ G_DECLARE_FINAL_TYPE(GrottoPanelsControl1Service, grotto_panels_control1_service
  * caller-specific management-capabilities, can() is deliberately read-only.
  * Identities stay empty until W3's public metadata composite is installed. */
 GrottoPanelsService *grotto_panels_control1_service_new(GDBusProxy *proxy);
+/* Grotto host hook only: the caller checks management lock and protocol version.
+ * This does not change shared service capabilities or daemon authorization. */
+void grotto_panels_control1_service_host_command_async(GrottoPanelsService *service,
+  GrottoPanelCommand command, const GrottoPanelCommandArgs *args, GCancellable *cancel,
+  GAsyncReadyCallback callback, gpointer data);
 G_END_DECLS

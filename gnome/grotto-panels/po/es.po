@@ -4,7 +4,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: grotto-panels 0.1.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-04 07:43-0800\n"
+"POT-Creation-Date: 2026-11-04 11:51-0800\n"
 "PO-Revision-Date: 2026-11-04 00:00+0000\n"
 "Last-Translator: Grotto contributors\n"
 "Language-Team: Spanish\n"
@@ -15,7 +15,9 @@ msgstr ""
 "Plural-Forms: nplurals=2; plural=(n != 1);\n"
 
 #: data/identity-panel.blp:5 data/identity-panel.blp:9
-#: src/grotto-identity-panel.c:167
+#: src/grotto-identity-panel.c:167 src/grotto-apps-panel.c:25
+#: src/grotto-app-detail.c:297 src/grotto-app-detail.c:299
+#: src/grotto-app-detail.c:301
 msgid "Identity"
 msgstr "Identidad"
 
@@ -63,7 +65,8 @@ msgstr "Mostrar código QR"
 msgid "_Backup"
 msgstr "_Copia de seguridad"
 
-#: data/identity-panel.blp:33
+#: data/identity-panel.blp:33 data/apps-panel.blp:5 data/apps-panel.blp:8
+#: src/grotto-apps-panel.c:26
 msgid "Connected Apps"
 msgstr "Aplicaciones conectadas"
 
@@ -83,13 +86,154 @@ msgstr "Detalles de la identidad"
 msgid "Other Identities"
 msgstr "Otras identidades"
 
-#: data/identity-panel.blp:43
+#: data/identity-panel.blp:43 data/apps-panel.blp:31
 msgid "Advanced"
 msgstr "Avanzado"
 
 #: data/identity-panel.blp:43
 msgid "_Remove Identity…"
 msgstr "_Eliminar identidad…"
+
+#: data/apps-panel.blp:11 data/activity-panel.blp:10 data/remote-panel.blp:8
+#: src/grotto-identity-panel.c:126 src/grotto-remote-panel.c:111
+msgid "Signer Unavailable"
+msgstr "El firmante no está disponible"
+
+#: data/apps-panel.blp:14
+msgid "Pending Requests"
+msgstr ""
+
+#: data/apps-panel.blp:19
+msgid "Pause Signing"
+msgstr ""
+
+#: data/apps-panel.blp:20
+msgid "Apps can't sign until signing resumes"
+msgstr ""
+
+#: data/apps-panel.blp:24
+msgid "Apps"
+msgstr ""
+
+#: data/apps-panel.blp:28
+msgid "_Add App…"
+msgstr ""
+
+#: data/apps-panel.blp:33
+msgid "Ask-by-Default Event Types…"
+msgstr ""
+
+#: data/apps-panel.blp:34
+msgid "Ask before a first grant; saved permissions still apply"
+msgstr ""
+
+#: data/activity-panel.blp:5 src/grotto-apps-panel.c:27
+msgid "Activity"
+msgstr ""
+
+#: data/activity-panel.blp:8
+msgid "Search Activity"
+msgstr ""
+
+#: data/activity-panel.blp:16
+msgid "Outcome"
+msgstr ""
+
+#: data/activity-panel.blp:17
+msgid "All Outcomes"
+msgstr ""
+
+#: data/activity-panel.blp:17 src/grotto-activity-panel.c:21
+msgid "Succeeded"
+msgstr ""
+
+#: data/activity-panel.blp:17 src/grotto-activity-panel.c:21
+msgid "Denied"
+msgstr ""
+
+#: data/activity-panel.blp:17 src/grotto-activity-panel.c:21
+msgid "Expired"
+msgstr ""
+
+#: data/activity-panel.blp:17 src/grotto-activity-panel.c:21
+msgid "Caller Disconnected"
+msgstr ""
+
+#: data/activity-panel.blp:17 src/grotto-activity-panel.c:21
+msgid "Cancelled"
+msgstr ""
+
+#: data/activity-panel.blp:17 src/grotto-activity-panel.c:21
+msgid "Failed"
+msgstr ""
+
+#: data/activity-panel.blp:19
+msgid "Event Type Name or Number"
+msgstr ""
+
+#: data/activity-panel.blp:20
+msgid "Event Type Catalogue"
+msgstr ""
+
+#: data/activity-panel.blp:24
+msgid "Activity Records"
+msgstr ""
+
+#: data/activity-panel.blp:28
+msgid "Load Older"
+msgstr ""
+
+#: data/activity-panel.blp:29
+msgid "Clear…"
+msgstr ""
+
+#: data/remote-panel.blp:5 src/grotto-apps-panel.c:28
+msgid "Remote Signing"
+msgstr ""
+
+#: data/remote-panel.blp:11
+msgid ""
+"Allow apps on other devices to request signing. Configure the relays "
+"explicitly."
+msgstr ""
+
+#: data/remote-panel.blp:12
+msgid "Enable Remote Signing"
+msgstr ""
+
+#: data/remote-panel.blp:13
+msgid "Status"
+msgstr ""
+
+#: data/remote-panel.blp:14 src/grotto-app-detail.c:487
+msgid "Change in Grotto…"
+msgstr ""
+
+#: data/remote-panel.blp:17
+msgid "Relays"
+msgstr ""
+
+#: data/remote-panel.blp:18
+msgid "Only these relays are used by the signing endpoint"
+msgstr ""
+
+#: data/remote-panel.blp:20
+msgid "Add Relay URL"
+msgstr ""
+
+#: data/remote-panel.blp:23
+msgid "Allowed Methods"
+msgstr ""
+
+#: data/remote-panel.blp:27
+msgid "Reset Endpoint…"
+msgstr ""
+
+#: data/remote-panel.blp:28
+msgid ""
+"Invalidate remote pairings and links; keep identities and local app "
+"permissions"
+msgstr ""
 
 #: src/grotto-identity-panel.c:91
 msgid "Identity updated"
@@ -98,10 +242,6 @@ msgstr "Identidad actualizada"
 #: src/grotto-identity-panel.c:91
 msgid "Identity wasn't updated. Try again"
 msgstr "No se ha actualizado la identidad. Vuelve a intentarlo"
-
-#: src/grotto-identity-panel.c:126
-msgid "Signer Unavailable"
-msgstr "El firmante no está disponible"
 
 #: src/grotto-identity-panel.c:126
 msgid "Identity Unavailable"
@@ -154,3 +294,1096 @@ msgstr "Solo observación: no puede firmar"
 #: src/grotto-identity-panel.c:177
 msgid "Public Key (Watch Only — Cannot Sign)"
 msgstr "Clave pública (solo observación: no puede firmar)"
+
+#: src/grotto-apps-panel.c:57 src/grotto-apps-panel.c:78
+#: src/grotto-app-detail.c:289 src/grotto-app-detail.c:434
+#: src/grotto-app-detail.c:502
+msgid "App"
+msgstr ""
+
+#: src/grotto-apps-panel.c:58
+msgid "Remote App"
+msgstr ""
+
+#: src/grotto-apps-panel.c:58
+msgid "Local App"
+msgstr ""
+
+#: src/grotto-apps-panel.c:59
+msgid "Blocked"
+msgstr ""
+
+#: src/grotto-apps-panel.c:59
+msgid "Previous access policy"
+msgstr ""
+
+#: src/grotto-apps-panel.c:60
+msgid "Routine Operations"
+msgstr ""
+
+#: src/grotto-apps-panel.c:60
+msgid "Ask for Sensitive Operations"
+msgstr ""
+
+#: src/grotto-apps-panel.c:60
+msgid "Ask Unless Permitted"
+msgstr ""
+
+#: src/grotto-apps-panel.c:63
+#, c-format
+msgid "Used %s"
+msgstr ""
+
+#: src/grotto-apps-panel.c:63
+msgid "Not Used Yet"
+msgstr ""
+
+#: src/grotto-apps-panel.c:64
+#, c-format
+msgid "%s · %s · %s"
+msgstr ""
+
+#: src/grotto-apps-panel.c:81
+msgid "%"
+msgstr ""
+
+#: src/grotto-apps-panel.c:120
+msgid "Signing state wasn't changed. Review the current state and retry."
+msgstr ""
+
+#: src/grotto-apps-panel.c:139
+msgid "Resume Signing?"
+msgstr ""
+
+#: src/grotto-apps-panel.c:139
+msgid ""
+"Previously authorised apps can sign again. Saved permissions still apply."
+msgstr ""
+
+#: src/grotto-apps-panel.c:140 src/grotto-app-detail.c:107
+#: src/grotto-app-detail.c:124 src/grotto-app-detail.c:139
+#: src/grotto-app-detail.c:261 src/grotto-app-detail.c:329
+#: src/grotto-activity-panel.c:144 src/grotto-remote-panel.c:90
+msgid "Cancel"
+msgstr "Cancelar"
+
+#: src/grotto-apps-panel.c:140
+msgid "Resume Signing"
+msgstr ""
+
+#: src/grotto-app-detail.c:76
+msgid "Saved. Existing permissions are retained when access is lowered."
+msgstr ""
+
+#: src/grotto-app-detail.c:77
+msgid "Not saved. Review the refreshed app settings and try again."
+msgstr ""
+
+#: src/grotto-app-detail.c:106
+msgid "Upgrade Access Policy?"
+msgstr ""
+
+#: src/grotto-app-detail.c:106
+msgid ""
+"Use the current routine preset. Custom event types need their own "
+"permission. Existing saved permissions and blocks remain."
+msgstr ""
+
+#: src/grotto-app-detail.c:107
+msgid "Upgrade Access Policy"
+msgstr ""
+
+#: src/grotto-app-detail.c:123
+msgid "Remove App?"
+msgstr ""
+
+#: src/grotto-app-detail.c:123
+msgid ""
+"Revoke this app's pairing and permissions and cancel its pending requests. "
+"This does not block future requests."
+msgstr ""
+
+#: src/grotto-app-detail.c:124
+msgid "Remove App"
+msgstr ""
+
+#: src/grotto-app-detail.c:138
+msgid "Remove App Block?"
+msgstr ""
+
+#: src/grotto-app-detail.c:138
+msgid ""
+"This app will ask unless permitted. Existing saved permissions still apply."
+msgstr ""
+
+#: src/grotto-app-detail.c:139
+msgid "Remove App Block"
+msgstr ""
+
+#: src/grotto-app-detail.c:190
+msgid "Scoped permission saved. Refreshing before removing the legacy entry."
+msgstr ""
+
+#: src/grotto-app-detail.c:193
+msgid "Permission saved"
+msgstr ""
+
+#: src/grotto-app-detail.c:196
+msgid ""
+"Scoped permission saved, but the legacy entry was not removed. Refresh and "
+"retry removal."
+msgstr ""
+
+#: src/grotto-app-detail.c:197
+msgid "Permission not saved. Refreshing now; review your edit before retrying."
+msgstr ""
+
+#: src/grotto-app-detail.c:209
+msgid "Choose an identity before allowing this permission."
+msgstr ""
+
+#: src/grotto-app-detail.c:217
+msgid "Use an event type number from 0 to 65535."
+msgstr ""
+
+#: src/grotto-app-detail.c:222
+msgid "Choose an exact event type before allowing this permission."
+msgstr ""
+
+#: src/grotto-app-detail.c:236
+msgid "This exact scope already has a permission. Edit that entry instead."
+msgstr ""
+
+#: src/grotto-app-detail.c:260
+msgid "Remove Permission?"
+msgstr ""
+
+#: src/grotto-app-detail.c:260
+msgid ""
+"Removing a saved block can allow access under the app's preset or other "
+"permissions."
+msgstr ""
+
+#: src/grotto-app-detail.c:261
+msgid "Remove Permission"
+msgstr ""
+
+#: src/grotto-app-detail.c:285
+msgid "Edit Permission"
+msgstr ""
+
+#: src/grotto-app-detail.c:288
+msgid "Scope"
+msgstr ""
+
+#: src/grotto-app-detail.c:289 src/grotto-panel-labels.h:15
+msgid "Operation"
+msgstr ""
+
+#: src/grotto-app-detail.c:291
+msgid "Choose an Identity"
+msgstr ""
+
+#: src/grotto-app-detail.c:303
+msgid "Exact Event Type (Number)"
+msgstr ""
+
+#: src/grotto-app-detail.c:307
+msgid "Choose an Event Type"
+msgstr ""
+
+#: src/grotto-app-detail.c:309
+msgid "Custom Number"
+msgstr ""
+
+#: src/grotto-app-detail.c:318
+msgid "Relay Scope"
+msgstr ""
+
+#: src/grotto-app-detail.c:320
+msgid "Permission"
+msgstr ""
+
+#: src/grotto-app-detail.c:320 src/grotto-app-detail.c:366
+msgid "Allow"
+msgstr "Permitir"
+
+#: src/grotto-app-detail.c:320 src/grotto-app-detail.c:366
+msgid "Deny"
+msgstr "Denegar"
+
+#: src/grotto-app-detail.c:321
+msgid "Decision"
+msgstr ""
+
+#: src/grotto-app-detail.c:322
+msgid "Keep Current Expiry"
+msgstr ""
+
+#: src/grotto-app-detail.c:322
+msgid "10 minutes"
+msgstr ""
+
+#: src/grotto-app-detail.c:322
+msgid "1 hour"
+msgstr ""
+
+#: src/grotto-app-detail.c:322
+msgid "24 hours"
+msgstr ""
+
+#: src/grotto-app-detail.c:322 src/grotto-app-detail.c:370
+msgid "Until Revoked"
+msgstr ""
+
+#: src/grotto-app-detail.c:323
+msgid "Duration"
+msgstr ""
+
+#: src/grotto-app-detail.c:325
+msgid "Remove Permission…"
+msgstr ""
+
+#: src/grotto-app-detail.c:329 src/grotto-app-detail.c:350
+msgid "Save Permission"
+msgstr "Guardar permiso"
+
+#: src/grotto-app-detail.c:346
+msgid ""
+"The original permission or signer changed. Close this editor and review the "
+"updated entries."
+msgstr ""
+
+#: src/grotto-app-detail.c:349
+msgid "Scoped permission saved. Remove the legacy entry to finish."
+msgstr ""
+
+#: src/grotto-app-detail.c:350
+msgid "Retry Removing Legacy Entry"
+msgstr ""
+
+#: src/grotto-app-detail.c:350
+msgid "Remove Legacy Entry"
+msgstr ""
+
+#: src/grotto-app-detail.c:350
+msgid "Retry Permission"
+msgstr "Reintentar permiso"
+
+#: src/grotto-app-detail.c:366
+msgid "Needs Review"
+msgstr ""
+
+#: src/grotto-app-detail.c:367
+#, c-format
+msgid "%s · %s (%d)"
+msgstr ""
+
+#: src/grotto-app-detail.c:368
+#, c-format
+msgid "%s · %s"
+msgstr ""
+
+#: src/grotto-app-detail.c:377
+msgid "Permissions could not be loaded. Refresh to try again."
+msgstr ""
+
+#: src/grotto-app-detail.c:396
+msgid "Refresh Permissions"
+msgstr ""
+
+#: src/grotto-app-detail.c:399
+msgid "Saved Permissions"
+msgstr ""
+
+#: src/grotto-app-detail.c:400
+msgid "Status and reasons come from the signer. Expiry is not extended by use."
+msgstr ""
+
+#: src/grotto-app-detail.c:403 src/grotto-app-detail.c:489
+msgid "Permissions"
+msgstr "Permisos"
+
+#: src/grotto-app-detail.c:440
+msgid "Waiting for Consent"
+msgstr ""
+
+#: src/grotto-app-detail.c:445
+msgid ""
+"Previous access policy. Choose routine access to review an explicit upgrade."
+msgstr ""
+
+#: src/grotto-app-detail.c:446
+msgid "App unavailable or removed"
+msgstr ""
+
+#: src/grotto-app-detail.c:474
+msgid "Local Name"
+msgstr ""
+
+#: src/grotto-app-detail.c:475
+msgid "Verified As"
+msgstr ""
+
+#: src/grotto-app-detail.c:475
+msgid "Fingerprint"
+msgstr ""
+
+#: src/grotto-app-detail.c:476
+msgid "Connected Since"
+msgstr ""
+
+#: src/grotto-app-detail.c:477
+msgid "Access"
+msgstr ""
+
+#: src/grotto-app-detail.c:478
+msgid ""
+"Blocked actions always stay blocked. Lowering access keeps saved permissions."
+msgstr ""
+
+#: src/grotto-app-detail.c:479
+msgid "Trust this app for routine operations"
+msgstr ""
+
+#: src/grotto-app-detail.c:479
+msgid "Ask for sensitive operations"
+msgstr ""
+
+#: src/grotto-app-detail.c:479
+msgid "Ask unless permitted"
+msgstr ""
+
+#: src/grotto-app-detail.c:489
+msgid "View saved permissions, status and expiry"
+msgstr ""
+
+#: src/grotto-app-detail.c:492
+msgid "Recent Activity"
+msgstr ""
+
+#: src/grotto-app-detail.c:495
+msgid "Remove App Block…"
+msgstr ""
+
+#: src/grotto-app-detail.c:498
+msgid "Remove App…"
+msgstr ""
+
+#: src/grotto-activity-panel.c:21
+msgid "Unknown Outcome"
+msgstr ""
+
+#: src/grotto-activity-panel.c:116
+msgid "Older activity could not be loaded. Try again."
+msgstr ""
+
+#: src/grotto-activity-panel.c:131
+msgid "Activity wasn't cleared. Try again."
+msgstr ""
+
+#: src/grotto-activity-panel.c:143
+msgid "Clear Activity?"
+msgstr ""
+
+#: src/grotto-activity-panel.c:143
+msgid "Delete retained operation metadata? Permissions are not changed."
+msgstr ""
+
+#: src/grotto-activity-panel.c:144
+msgid "Clear Activity"
+msgstr ""
+
+#: src/grotto-activity-panel.c:173
+msgid "All Event Types"
+msgstr ""
+
+#: src/grotto-remote-panel.c:20
+msgid "Disabled"
+msgstr ""
+
+#: src/grotto-remote-panel.c:20
+msgid "Starting"
+msgstr ""
+
+#: src/grotto-remote-panel.c:20
+msgid "Ready"
+msgstr ""
+
+#: src/grotto-remote-panel.c:20
+msgid "Degraded"
+msgstr ""
+
+#: src/grotto-remote-panel.c:20
+msgid "Offline"
+msgstr ""
+
+#: src/grotto-remote-panel.c:20
+msgid "Stopping"
+msgstr ""
+
+#: src/grotto-remote-panel.c:20
+msgid "Error"
+msgstr "Error"
+
+#: src/grotto-remote-panel.c:22
+msgid "Unavailable"
+msgstr ""
+
+#: src/grotto-remote-panel.c:29
+msgid "Remote signing wasn't changed. Check the configuration and retry."
+msgstr ""
+
+#: src/grotto-remote-panel.c:89
+msgid "Reset Endpoint?"
+msgstr ""
+
+#: src/grotto-remote-panel.c:89
+msgid ""
+"Remote pairings and links will stop working. Your identities and local app "
+"permissions are kept."
+msgstr ""
+
+#: src/grotto-remote-panel.c:90
+msgid "Reset Endpoint"
+msgstr ""
+
+#: src/grotto-remote-panel.c:125
+msgid "Remove Relay"
+msgstr ""
+
+#: src/grotto-panel-labels.h:9
+msgid "Custom Event Type"
+msgstr ""
+
+#: src/grotto-panel-labels.h:13
+msgid "Sign Event"
+msgstr ""
+
+#: src/grotto-panel-labels.h:13
+msgid "Share Public Key"
+msgstr ""
+
+#: src/grotto-panel-labels.h:13
+msgid "Read Relay List"
+msgstr ""
+
+#: src/grotto-panel-labels.h:13
+msgid "Check Connection"
+msgstr ""
+
+#: src/grotto-panel-labels.h:13
+msgid "Connect App"
+msgstr ""
+
+#: src/grotto-panel-labels.h:13
+msgid "Encrypt Message (Legacy)"
+msgstr ""
+
+#: src/grotto-panel-labels.h:13
+msgid "Decrypt Message (Legacy)"
+msgstr ""
+
+#: src/grotto-panel-labels.h:13
+msgid "Encrypt Message"
+msgstr ""
+
+#: src/grotto-panel-labels.h:13
+msgid "Decrypt Message"
+msgstr ""
+
+#: src/grotto-panel-labels.h:13
+msgid "Decrypt Payment"
+msgstr ""
+
+#: src/grotto-panel-labels.h:13
+msgid "Test Identity"
+msgstr ""
+
+#: src/kind-catalog.inc:2
+msgid "Profile metadata"
+msgstr ""
+
+#: src/kind-catalog.inc:3
+msgid "Text note"
+msgstr ""
+
+#: src/kind-catalog.inc:4
+msgid "Recommend server"
+msgstr ""
+
+#: src/kind-catalog.inc:5
+msgid "Follow list"
+msgstr ""
+
+#: src/kind-catalog.inc:6
+msgid "Encrypted direct message"
+msgstr ""
+
+#: src/kind-catalog.inc:7
+msgid "Deletion"
+msgstr ""
+
+#: src/kind-catalog.inc:8
+msgid "Repost"
+msgstr "Repost"
+
+#: src/kind-catalog.inc:9
+msgid "Reaction"
+msgstr "Reacción"
+
+#: src/kind-catalog.inc:10
+msgid "Badge award"
+msgstr ""
+
+#: src/kind-catalog.inc:11
+msgid "Simple group chat message"
+msgstr ""
+
+#: src/kind-catalog.inc:12
+msgid "Simple group threaded reply"
+msgstr ""
+
+#: src/kind-catalog.inc:13
+msgid "Simple group thread"
+msgstr ""
+
+#: src/kind-catalog.inc:14
+msgid "Simple group reply"
+msgstr ""
+
+#: src/kind-catalog.inc:15
+msgid "Seal"
+msgstr ""
+
+#: src/kind-catalog.inc:16
+msgid "Direct message"
+msgstr ""
+
+#: src/kind-catalog.inc:17
+msgid "File message"
+msgstr ""
+
+#: src/kind-catalog.inc:18
+msgid "Generic repost"
+msgstr ""
+
+#: src/kind-catalog.inc:19
+msgid "Reaction to website"
+msgstr ""
+
+#: src/kind-catalog.inc:20
+msgid "Photo"
+msgstr ""
+
+#: src/kind-catalog.inc:21
+msgid "Normal video"
+msgstr ""
+
+#: src/kind-catalog.inc:22
+msgid "Short video"
+msgstr ""
+
+#: src/kind-catalog.inc:23
+msgid "Channel creation"
+msgstr ""
+
+#: src/kind-catalog.inc:24
+msgid "Channel metadata"
+msgstr ""
+
+#: src/kind-catalog.inc:25
+msgid "Channel message"
+msgstr ""
+
+#: src/kind-catalog.inc:26
+msgid "Channel hide message"
+msgstr ""
+
+#: src/kind-catalog.inc:27
+msgid "Channel mute user"
+msgstr ""
+
+#: src/kind-catalog.inc:28
+msgid "Chess"
+msgstr ""
+
+#: src/kind-catalog.inc:29
+msgid "Merge requests"
+msgstr ""
+
+#: src/kind-catalog.inc:30
+msgid "Poll response"
+msgstr ""
+
+#: src/kind-catalog.inc:31
+msgid "Bid"
+msgstr ""
+
+#: src/kind-catalog.inc:32
+msgid "Bid confirmation"
+msgstr ""
+
+#: src/kind-catalog.inc:33
+msgid "Open timestamps"
+msgstr ""
+
+#: src/kind-catalog.inc:34
+msgid "Gift wrap"
+msgstr ""
+
+#: src/kind-catalog.inc:35
+msgid "File metadata"
+msgstr ""
+
+#: src/kind-catalog.inc:36
+msgid "Poll"
+msgstr ""
+
+#: src/kind-catalog.inc:37
+msgid "Comment"
+msgstr ""
+
+#: src/kind-catalog.inc:38
+msgid "Voice"
+msgstr ""
+
+#: src/kind-catalog.inc:39
+msgid "Voice comment"
+msgstr ""
+
+#: src/kind-catalog.inc:40
+msgid "Live chat message"
+msgstr ""
+
+#: src/kind-catalog.inc:41
+msgid "Patch"
+msgstr ""
+
+#: src/kind-catalog.inc:42
+msgid "Issue"
+msgstr ""
+
+#: src/kind-catalog.inc:43
+msgid "Reply"
+msgstr ""
+
+#: src/kind-catalog.inc:44
+msgid "Status open"
+msgstr ""
+
+#: src/kind-catalog.inc:45
+msgid "Status applied"
+msgstr ""
+
+#: src/kind-catalog.inc:46
+msgid "Status closed"
+msgstr ""
+
+#: src/kind-catalog.inc:47
+msgid "Status draft"
+msgstr ""
+
+#: src/kind-catalog.inc:48
+msgid "Problem tracker"
+msgstr ""
+
+#: src/kind-catalog.inc:49
+msgid "Reporting"
+msgstr ""
+
+#: src/kind-catalog.inc:50
+msgid "Label"
+msgstr ""
+
+#: src/kind-catalog.inc:51
+msgid "Relay reviews"
+msgstr ""
+
+#: src/kind-catalog.inc:52
+msgid "Ai embeddings"
+msgstr ""
+
+#: src/kind-catalog.inc:53
+msgid "Torrent"
+msgstr ""
+
+#: src/kind-catalog.inc:54
+msgid "Torrent comment"
+msgstr ""
+
+#: src/kind-catalog.inc:55
+msgid "Coinjoin pool"
+msgstr ""
+
+#: src/kind-catalog.inc:56
+msgid "Community post approval"
+msgstr ""
+
+#: src/kind-catalog.inc:57
+msgid "Simple group add user"
+msgstr ""
+
+#: src/kind-catalog.inc:58
+msgid "Simple group remove user"
+msgstr ""
+
+#: src/kind-catalog.inc:59
+msgid "Simple group edit metadata"
+msgstr ""
+
+#: src/kind-catalog.inc:60
+msgid "Simple group add permission"
+msgstr ""
+
+#: src/kind-catalog.inc:61
+msgid "Simple group remove permission"
+msgstr ""
+
+#: src/kind-catalog.inc:62
+msgid "Simple group delete event"
+msgstr ""
+
+#: src/kind-catalog.inc:63
+msgid "Simple group edit group status"
+msgstr ""
+
+#: src/kind-catalog.inc:64
+msgid "Simple group create group"
+msgstr ""
+
+#: src/kind-catalog.inc:65
+msgid "Simple group delete group"
+msgstr ""
+
+#: src/kind-catalog.inc:66
+msgid "Simple group create invite"
+msgstr ""
+
+#: src/kind-catalog.inc:67
+msgid "Simple group update pin list"
+msgstr ""
+
+#: src/kind-catalog.inc:68
+msgid "Simple group join request"
+msgstr ""
+
+#: src/kind-catalog.inc:69
+msgid "Simple group leave request"
+msgstr ""
+
+#: src/kind-catalog.inc:70
+msgid "Zap goal"
+msgstr ""
+
+#: src/kind-catalog.inc:71
+msgid "Nutzap"
+msgstr ""
+
+#: src/kind-catalog.inc:72
+msgid "Tidal login"
+msgstr ""
+
+#: src/kind-catalog.inc:73
+msgid "Zap request"
+msgstr ""
+
+#: src/kind-catalog.inc:74
+msgid "Zap"
+msgstr ""
+
+#: src/kind-catalog.inc:75
+msgid "Highlights"
+msgstr ""
+
+#: src/kind-catalog.inc:76
+msgid "Mute list"
+msgstr ""
+
+#: src/kind-catalog.inc:77
+msgid "Pin list"
+msgstr ""
+
+#: src/kind-catalog.inc:78
+msgid "Relay list metadata"
+msgstr ""
+
+#: src/kind-catalog.inc:79
+msgid "Bookmark list"
+msgstr ""
+
+#: src/kind-catalog.inc:80
+msgid "Community list"
+msgstr ""
+
+#: src/kind-catalog.inc:81
+msgid "Public chat list"
+msgstr ""
+
+#: src/kind-catalog.inc:82
+msgid "Blocked relay list"
+msgstr ""
+
+#: src/kind-catalog.inc:83
+msgid "Search relay list"
+msgstr ""
+
+#: src/kind-catalog.inc:84
+msgid "Simple group list"
+msgstr ""
+
+#: src/kind-catalog.inc:85
+msgid "Favorite relays"
+msgstr ""
+
+#: src/kind-catalog.inc:86
+msgid "Interest list"
+msgstr ""
+
+#: src/kind-catalog.inc:87
+msgid "Nutzap info"
+msgstr ""
+
+#: src/kind-catalog.inc:88
+msgid "Emoji list"
+msgstr ""
+
+#: src/kind-catalog.inc:89
+msgid "Dm relay list"
+msgstr ""
+
+#: src/kind-catalog.inc:90
+msgid "User server list"
+msgstr ""
+
+#: src/kind-catalog.inc:91
+msgid "File storage server list"
+msgstr ""
+
+#: src/kind-catalog.inc:92
+msgid "Good wiki author list"
+msgstr ""
+
+#: src/kind-catalog.inc:93
+msgid "Good wiki relay list"
+msgstr ""
+
+#: src/kind-catalog.inc:94
+msgid "Nwc wallet info"
+msgstr ""
+
+#: src/kind-catalog.inc:95
+msgid "Lightning pub rpc"
+msgstr ""
+
+#: src/kind-catalog.inc:96
+msgid "Client authentication"
+msgstr ""
+
+#: src/kind-catalog.inc:97
+msgid "Nwc wallet request"
+msgstr ""
+
+#: src/kind-catalog.inc:98
+msgid "Nwc wallet response"
+msgstr ""
+
+#: src/kind-catalog.inc:99
+msgid "Nostr connect"
+msgstr ""
+
+#: src/kind-catalog.inc:100
+msgid "Blobs"
+msgstr ""
+
+#: src/kind-catalog.inc:101
+msgid "Http auth"
+msgstr ""
+
+#: src/kind-catalog.inc:102
+msgid "Categorized people list"
+msgstr ""
+
+#: src/kind-catalog.inc:103
+msgid "Categorized bookmarks list"
+msgstr ""
+
+#: src/kind-catalog.inc:104
+msgid "Relay sets"
+msgstr ""
+
+#: src/kind-catalog.inc:105
+msgid "Bookmark sets"
+msgstr ""
+
+#: src/kind-catalog.inc:106
+msgid "Curated sets"
+msgstr ""
+
+#: src/kind-catalog.inc:107
+msgid "Curated video sets"
+msgstr ""
+
+#: src/kind-catalog.inc:108
+msgid "Mute sets"
+msgstr ""
+
+#: src/kind-catalog.inc:109
+msgid "Profile badges"
+msgstr ""
+
+#: src/kind-catalog.inc:110
+msgid "Badge definition"
+msgstr ""
+
+#: src/kind-catalog.inc:111
+msgid "Interest sets"
+msgstr ""
+
+#: src/kind-catalog.inc:112
+msgid "Stall definition"
+msgstr ""
+
+#: src/kind-catalog.inc:113
+msgid "Product definition"
+msgstr ""
+
+#: src/kind-catalog.inc:114
+msgid "Marketplace ui"
+msgstr ""
+
+#: src/kind-catalog.inc:115
+msgid "Product sold as auction"
+msgstr ""
+
+#: src/kind-catalog.inc:116
+msgid "Article"
+msgstr ""
+
+#: src/kind-catalog.inc:117
+msgid "Draft article"
+msgstr ""
+
+#: src/kind-catalog.inc:118
+msgid "Emoji sets"
+msgstr ""
+
+#: src/kind-catalog.inc:119
+msgid "Modular article header"
+msgstr ""
+
+#: src/kind-catalog.inc:120
+msgid "Modular article content"
+msgstr ""
+
+#: src/kind-catalog.inc:121
+msgid "Release artifact sets"
+msgstr ""
+
+#: src/kind-catalog.inc:122
+msgid "Application specific data"
+msgstr ""
+
+#: src/kind-catalog.inc:123
+msgid "Live event"
+msgstr ""
+
+#: src/kind-catalog.inc:124
+msgid "User statuses"
+msgstr ""
+
+#: src/kind-catalog.inc:125
+msgid "Classified listing"
+msgstr ""
+
+#: src/kind-catalog.inc:126
+msgid "Draft classified listing"
+msgstr ""
+
+#: src/kind-catalog.inc:127
+msgid "Repository announcement"
+msgstr ""
+
+#: src/kind-catalog.inc:128
+msgid "Repository state"
+msgstr ""
+
+#: src/kind-catalog.inc:129
+msgid "Wiki article"
+msgstr ""
+
+#: src/kind-catalog.inc:130
+msgid "Redirects"
+msgstr ""
+
+#: src/kind-catalog.inc:131
+msgid "Feed"
+msgstr ""
+
+#: src/kind-catalog.inc:132
+msgid "Date calendar event"
+msgstr ""
+
+#: src/kind-catalog.inc:133
+msgid "Time calendar event"
+msgstr ""
+
+#: src/kind-catalog.inc:134
+msgid "Calendar"
+msgstr ""
+
+#: src/kind-catalog.inc:135
+msgid "Calendar event rsvp"
+msgstr ""
+
+#: src/kind-catalog.inc:136
+msgid "Relay review"
+msgstr ""
+
+#: src/kind-catalog.inc:137
+msgid "Handler recommendation"
+msgstr ""
+
+#: src/kind-catalog.inc:138
+msgid "Handler information"
+msgstr ""
+
+#: src/kind-catalog.inc:139
+msgid "Video event"
+msgstr ""
+
+#: src/kind-catalog.inc:140
+msgid "Short video event"
+msgstr ""
+
+#: src/kind-catalog.inc:141
+msgid "Video view event"
+msgstr ""
+
+#: src/kind-catalog.inc:142
+msgid "Community definition"
+msgstr ""
+
+#: src/kind-catalog.inc:143
+msgid "Simple group metadata"
+msgstr ""
+
+#: src/kind-catalog.inc:144
+msgid "Simple group admins"
+msgstr ""
+
+#: src/kind-catalog.inc:145
+msgid "Simple group members"
+msgstr ""
+
+#: src/kind-catalog.inc:146
+msgid "Simple group roles"
+msgstr ""
+
+#: src/kind-catalog.inc:147
+msgid "Simple group livekit participants"
+msgstr ""
+
+#: src/kind-catalog.inc:148
+msgid "Simple group pinned events"
+msgstr ""

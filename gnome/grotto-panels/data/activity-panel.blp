@@ -1,0 +1,33 @@
+using Gtk 4.0;
+using Adw 1;
+translation-domain "grotto-panels";
+template $GrottoActivityPanel: $GrottoPanel {
+  title: _("Activity"); tag: "activity";
+  child: Adw.ToolbarView {
+    [top] Adw.HeaderBar {
+      title-widget: SearchEntry search { placeholder-text: _("Search Activity"); width-chars: 8; max-width-chars: 20; };
+    }
+    [top] Adw.Banner feedback { title: _("Signer Unavailable"); }
+    content: Box {
+      orientation: vertical;
+      Adw.PreferencesGroup {
+        margin-start: 12; margin-end: 12; margin-top: 12; margin-bottom: 12;
+        Adw.ComboRow outcome {
+          title: _("Outcome");
+          model: StringList { strings [_("All Outcomes"), _("Succeeded"), _("Denied"), _("Expired"), _("Caller Disconnected"), _("Cancelled"), _("Failed")] };
+        }
+        Adw.EntryRow kind { title: _("Event Type Name or Number"); }
+        Adw.ComboRow catalog { title: _("Event Type Catalogue"); enable-search: true; }
+      }
+      ScrolledWindow {
+        vexpand: true; hscrollbar-policy: never;
+        ListView records { single-click-activate: false; accessibility { label: _("Activity Records"); } }
+      }
+      Box {
+        spacing: 6; margin-start: 12; margin-end: 12; margin-top: 12; margin-bottom: 12;
+        Button older { label: _("Load Older"); }
+        Button clear { label: _("Clear…"); }
+      }
+    };
+  };
+}

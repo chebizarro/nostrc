@@ -14,14 +14,9 @@ template $SheetCreateBunker: Adw.Dialog {
     Label { label: _("Choose the identity this application may request."); wrap: true; }
     DropDown identities { tooltip-text: _("Connect with which identity?"); }
     Entry entry_name { placeholder-text: _("Client label (optional)"); }
-    Label { label: _("Remote signing relays"); xalign: 0; }
-    Entry entry_relay { placeholder-text: _("Explicit relay URLs, separated by spaces"); }
-    Label { label: _("Relays see your network address and connection timing. No default relays or Tor proxy are used."); wrap: true; }
-    CheckButton enabled { label: _("Enable remote signing"); }
-    Button btn_apply { label: _("Apply Relay Preferences (no restart)"); }
+    Label { label: _("Configure status, relays and allowed methods in Remote Signing. A link is available only when the signer is ready."); wrap: true; }
     Label status { label: _("Reading daemon status…"); wrap: true; }
     Button btn_create { label: _("Create Single-Use Pairing Link"); sensitive: false; }
-    Button btn_reset { label: _("Set Up / Reset Remote Signing Endpoint…"); }
     Button btn_cancel { label: _("Close"); }
   }
 }

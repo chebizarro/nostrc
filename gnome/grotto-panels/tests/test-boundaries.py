@@ -22,16 +22,24 @@ schemas = {
         'state': 'const char *', 'reason': 'const char *', 'access_policy': 'const char *',
         'needs_review': 'gboolean', 'blocked': 'gboolean', 'deadline_usec': 'gint64', 'sequence': 'guint64',
         'is_default': 'gboolean', 'watch_only': 'gboolean', 'can_sign': 'gboolean',
-        'backup_acknowledged': 'gboolean', 'app_count': 'guint'},
+        'backup_acknowledged': 'gboolean', 'app_count': 'guint',
+        'principal': 'const char *', 'verified_as': 'const char *', 'transport': 'const char *',
+        'operation': 'const char *', 'outcome': 'const char *', 'trust': 'const char *',
+        'decision': 'const char *', 'relay': 'const char *', 'event_kind': 'gint', 'has_event_kind': 'gboolean',
+        'timestamp': 'guint64', 'last_used_at': 'guint64', 'expires_at': 'guint64', 'revision': 'guint64', 'owner_generation': 'guint64',
+        'paused': 'gboolean', 'remote_enabled': 'gboolean', 'relays': 'const char *const *', 'methods': 'const char *const *'},
+    '_GrottoPanelDescriptor': {'id': 'const char *', 'title': 'const char *', 'icon_name': 'const char *'},
     '_GrottoPanelPermission': {'operation': 'const char *', 'decision': 'const char *', 'event_kind': 'gint',
         'expires_at': 'guint64', 'relay': 'const char *'},
     '_GrottoPanelCommandArgs': {'principal': 'const char *', 'label': 'const char *', 'public_key': 'const char *',
         'trust': 'const char *', 'permissions': 'const GrottoPanelPermission *', 'n_permissions': 'gsize',
-        'expected_revision': 'guint64', 'remote_enabled': 'gboolean', 'relays': 'const char *const *', 'methods': 'const char *const *'},
+        'expected_revision': 'guint64', 'expected_generation': 'guint64', 'remote_enabled': 'gboolean', 'relays': 'const char *const *', 'methods': 'const char *const *'},
     '_GrottoPanelsHost': {'show_toast': 'void (*)(gpointer, const char *)', 'review_request': 'void (*)(gpointer, const char *)',
         'add_identity': 'void (*)(gpointer)', 'add_app': 'void (*)(gpointer)', 'open_backup': 'void (*)(gpointer, const char *)',
         'remove_identity': 'void (*)(gpointer, const char *)', 'replace_identity': 'void (*)(gpointer, const char *)',
-        'open_in_signer': 'void (*)(gpointer, const char *)'},
+        'open_in_signer': 'void (*)(gpointer, const char *)',
+        'can_command': 'gboolean (*)(gpointer, GrottoPanelCommand)',
+        'command_async': 'void (*)(gpointer, GrottoPanelCommand, const GrottoPanelCommandArgs *, GCancellable *, GAsyncReadyCallback, gpointer)'},
     '_GrottoPanelClass': {'parent_class': 'AdwNavigationPageClass', 'padding': 'gpointer[8]'},
 }
 
@@ -52,7 +60,8 @@ def check_schema(header):
     assert enums['_GrottoPanelCommand'] == ['GROTTO_PANEL_' + name for name in (
         'SET_CLIENT_LABEL', 'SET_DEFAULT_IDENTITY', 'SET_CLIENT_TRUST', 'SET_PERMISSIONS', 'REVOKE_CLIENT',
         'PAUSE', 'RESUME', 'CLEAR_ACTIVITY', 'CONFIGURE_REMOTE', 'RESET_REMOTE', 'SET_IDENTITY_LABEL', 'N_COMMANDS')], 'closed command enum changed'
-    assert enums['_GrottoPanelsModel'] == ['GROTTO_PANELS_' + name for name in ('IDENTITIES', 'APPS', 'REQUESTS', 'ACTIVITY', 'N_MODELS')]
+    assert enums['_GrottoPanelsModel'] == ['GROTTO_PANELS_' + name for name in ('IDENTITIES', 'APPS', 'REQUESTS', 'ACTIVITY', 'STATUS', 'N_MODELS')]
+    assert enums['_GrottoPanelsQuery'] == ['GROTTO_PANELS_QUERY_PERMISSIONS', 'GROTTO_PANELS_QUERY_ACTIVITY']
     assert enums['_GrottoPanelsAccess'] == ['GROTTO_PANELS_ACCESS_' + name for name in ('SESSION', 'MANAGER', 'APPROVER')]
     assert enums['_GrottoPanelHostAction'] == ['GROTTO_PANEL_HOST_' + name for name in (
         'TOAST', 'REVIEW', 'ADD_IDENTITY', 'ADD_APP', 'BACKUP', 'REMOVE', 'REPLACE', 'OPEN_SIGNER', 'N_ACTIONS')]
@@ -61,12 +70,14 @@ def check_schema(header):
         assert fields == expected, f'complete compiler schema mismatch: {name}: {fields}'
     iface = records['_GrottoPanelsServiceInterface']
     fields = {f['name']: f['type']['qualType'] for f in iface['inner'] if f['kind'] == 'FieldDecl'}
-    assert set(fields) == {'parent_iface', 'get_model', 'is_available', 'can', 'invoke_async', 'invoke_finish', 'padding'}
+    assert set(fields) == {'parent_iface', 'get_model', 'is_available', 'can', 'invoke_async', 'invoke_finish', 'query_async', 'query_finish', 'padding'}
     assert fields['is_available'] == 'gboolean (*)(GrottoPanelsService *)', fields
     assert fields['can'] == 'gboolean (*)(GrottoPanelsService *, GrottoPanelCommand)', fields
-    assert fields['parent_iface'] == 'GTypeInterface' and fields['padding'] == 'gpointer[8]', fields
+    assert fields['parent_iface'] == 'GTypeInterface' and fields['padding'] == 'gpointer[6]', fields
     assert fields['invoke_async'] == 'void (*)(GrottoPanelsService *, GrottoPanelCommand, const GrottoPanelCommandArgs *, GCancellable *, GAsyncReadyCallback, gpointer)', fields
     assert fields['invoke_finish'] == 'gboolean (*)(GrottoPanelsService *, GAsyncResult *, GError **)', fields
+    assert fields['query_async'] == 'void (*)(GrottoPanelsService *, GrottoPanelsQuery, const char *, guint64, GCancellable *, GAsyncReadyCallback, gpointer)', fields
+    assert fields['query_finish'] == 'GListModel *(*)(GrottoPanelsService *, GAsyncResult *, GError **)', fields
     assert fields['get_model'] == 'GListModel *(*)(GrottoPanelsService *, GrottoPanelsModel)', fields
 
 exports = {
@@ -77,7 +88,13 @@ exports = {
     'grotto_panels_service_invoke_finish', 'grotto_panel_get_type', 'grotto_panel_set_service', 'grotto_panel_get_service',
     'grotto_panel_get_cancellable', 'grotto_panel_set_host', 'grotto_panel_host_can', 'grotto_panel_host_invoke',
     'grotto_panel_create_metadata_row', 'grotto_identity_panel_get_type', 'grotto_identity_panel_new',
-    'grotto_identity_panel_get_navigation',
+    'grotto_identity_panel_get_navigation', 'grotto_panels_get_descriptors',
+    'grotto_panels_service_query_async', 'grotto_panels_service_query_finish',
+    'grotto_panel_can_command', 'grotto_panel_command_async', 'grotto_panel_command_finish',
+    'grotto_apps_panel_get_type', 'grotto_apps_panel_new', 'grotto_apps_panel_get_navigation',
+    'grotto_apps_panel_filter_identity', 'grotto_apps_panel_set_pending_group', 'grotto_apps_panel_show_app',
+    'grotto_activity_panel_get_type', 'grotto_activity_panel_new', 'grotto_activity_panel_filter_app',
+    'grotto_remote_panel_get_type', 'grotto_remote_panel_new',
 }
 # Exact production imports, not a spelling blacklist of individual secret RPCs.
 # No D-Bus, sockets, dynamic loading or file I/O dispatch exists in this DSO.
@@ -88,7 +105,7 @@ imports = set('''g_free g_strdup g_ascii_strdown g_utf8_validate g_set_error_lit
  g_type_check_class_cast g_type_class_peek_parent g_type_interface_peek g_type_register_static_simple
  g_type_add_instance_private g_type_interface_add_prerequisite g_type_add_interface_static
  g_once_init_enter g_once_init_leave g_intern_static_string g_return_if_fail_warning g_log
- g_signal_new g_signal_emit g_signal_connect_data g_signal_handler_disconnect
+ g_signal_new g_signal_emit g_signal_connect_object g_signal_connect_data g_signal_handler_disconnect
  g_cancellable_new g_cancellable_cancel g_list_model_get_item_type
  g_task_new g_task_set_source_tag g_task_return_error g_task_propagate_boolean g_task_is_valid
  g_async_result_is_tagged g_io_error_quark g_object_get_type g_list_model_get_type
@@ -116,6 +133,35 @@ imports.update('''__cxa_atexit adw_action_row_add_prefix adw_action_row_add_suff
  libintl_gettext libintl_ngettext gettext ngettext g_dgettext g_dngettext
  bindtextdomain bind_textdomain_codeset libintl_bindtextdomain libintl_bind_textdomain_codeset
  g_param_spec_boolean g_value_get_boolean g_value_set_boolean g_object_bind_property g_object_get g_object_set'''.split())
+
+# W4 management widgets, typed paged reads, owned arrays and async host results.
+# This remains a closed symbol list; no IPC, filesystem or transport imports.
+imports.update('''adw_action_row_set_activatable_widget adw_action_row_set_subtitle_selectable
+ adw_alert_dialog_add_responses adw_alert_dialog_choose adw_alert_dialog_choose_finish adw_alert_dialog_get_type adw_alert_dialog_new
+ adw_alert_dialog_set_close_response adw_alert_dialog_set_default_response adw_alert_dialog_set_response_appearance
+ adw_avatar_get_type adw_banner_get_type adw_banner_new adw_combo_row_get_selected adw_combo_row_get_type adw_combo_row_new
+ gtk_widget_get_root gtk_root_get_focus gtk_root_set_focus gtk_widget_is_ancestor gtk_button_get_child gtk_widget_child_focus gtk_widget_grab_focus
+ adw_combo_row_set_enable_search adw_combo_row_set_model adw_combo_row_set_selected adw_dialog_close adw_dialog_new adw_dialog_present adw_dialog_set_child
+ adw_dialog_set_content_height adw_dialog_set_content_width adw_dialog_set_title adw_entry_row_get_type adw_entry_row_new
+ adw_entry_row_set_show_apply_button adw_header_bar_new adw_navigation_page_new adw_navigation_page_set_title
+ adw_navigation_view_pop_to_tag adw_navigation_view_add adw_navigation_view_get_type adw_navigation_view_new adw_preferences_group_add adw_preferences_group_get_type
+ adw_preferences_group_new adw_preferences_group_set_description adw_preferences_group_set_title adw_preferences_page_add
+ adw_preferences_page_get_type adw_preferences_page_new adw_preferences_page_remove adw_switch_row_get_active adw_switch_row_set_active
+ adw_toolbar_view_add_bottom_bar adw_toolbar_view_add_top_bar adw_toolbar_view_get_type adw_toolbar_view_new adw_toolbar_view_set_content
+ g_array_append_vals g_array_new g_array_unref g_ascii_strtoll g_cancellable_is_cancelled g_date_time_format
+ g_date_time_new_from_unix_local g_date_time_unref g_get_monotonic_time g_get_real_time g_list_append g_list_free
+ g_list_store_append g_list_store_new g_list_store_remove_all g_ptr_array_add g_ptr_array_new g_ptr_array_new_with_free_func g_ptr_array_unref
+ g_signal_handlers_disconnect_matched g_strdupv g_strfreev g_strjoinv g_strsplit_set g_task_get_source_object g_task_get_task_data
+ g_task_propagate_pointer g_task_return_boolean g_task_return_error_if_cancelled g_task_return_new_error g_task_set_task_data
+ g_utf8_casefold g_weak_ref_set gtk_accessible_get_type gtk_accessible_update_property gtk_box_append gtk_box_get_type gtk_box_new
+ gtk_box_set_homogeneous gtk_button_get_type gtk_button_new_from_icon_name gtk_button_new_with_label gtk_button_set_label
+ gtk_check_button_get_active gtk_check_button_get_type gtk_check_button_new gtk_check_button_set_active gtk_check_button_set_group
+ gtk_custom_filter_new gtk_filter_changed gtk_filter_get_type gtk_filter_list_model_new gtk_label_get_type gtk_label_new
+ gtk_label_set_text gtk_label_set_wrap gtk_label_set_wrap_mode gtk_label_set_xalign gtk_list_box_get_type gtk_list_box_new
+ gtk_list_box_set_selection_mode gtk_list_item_get_child gtk_list_item_get_item gtk_list_item_set_child gtk_list_view_set_factory
+ gtk_list_view_set_model gtk_no_selection_new gtk_selection_model_get_type gtk_signal_list_item_factory_new gtk_string_list_append
+ gtk_string_list_new gtk_widget_add_css_class gtk_widget_get_next_sibling gtk_widget_set_halign gtk_widget_set_margin_bottom
+ gtk_widget_set_margin_end gtk_widget_set_margin_start gtk_widget_set_margin_top gtk_widget_set_tooltip_text gtk_widget_set_valign'''.split())
 
 def check_symbols(path):
     output = subprocess.check_output(['nm', '-g', str(path)] if sys.platform == 'darwin' else ['nm', '-D', str(path)], text=True)

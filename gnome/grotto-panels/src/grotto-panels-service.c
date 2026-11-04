@@ -15,6 +15,10 @@ static void item_finalize(GObject *object) {
   g_free((char *)m->state);
   g_free((char *)m->reason);
   g_free((char *)m->access_policy);
+  g_free((char *)m->principal); g_free((char *)m->verified_as); g_free((char *)m->transport);
+  g_free((char *)m->operation); g_free((char *)m->outcome); g_free((char *)m->trust);
+  g_free((char *)m->decision); g_free((char *)m->relay);
+  g_strfreev((char **)m->relays); g_strfreev((char **)m->methods);
   G_OBJECT_CLASS(grotto_panels_item_parent_class)->finalize(object);
 }
 static void grotto_panels_item_class_init(GrottoPanelsItemClass *klass) {
@@ -27,12 +31,44 @@ GrottoPanelsItem *grotto_panels_item_new(const GrottoPanelsMetadata *metadata, G
   self->metadata = *metadata;
 #define COPY(field) self->metadata.field = g_strdup(metadata->field ? metadata->field : "")
   COPY(id); COPY(label); COPY(public_key); COPY(state); COPY(reason); COPY(access_policy);
+  COPY(principal); COPY(verified_as); COPY(transport); COPY(operation); COPY(outcome); COPY(trust);
+  COPY(decision); COPY(relay);
+  self->metadata.relays = (const char *const *)g_strdupv((char **)metadata->relays);
+  self->metadata.methods = (const char *const *)g_strdupv((char **)metadata->methods);
 #undef COPY
   return self;
 }
 const GrottoPanelsMetadata *grotto_panels_item_get_metadata(GrottoPanelsItem *self) {
   g_return_val_if_fail(GROTTO_IS_PANELS_ITEM(self), NULL);
   return &self->metadata;
+}
+
+void grotto_panels_service_query_async(GrottoPanelsService *self, GrottoPanelsQuery query,
+    const char *principal, guint64 before, GCancellable *cancel, GAsyncReadyCallback callback, gpointer data) {
+  GrottoPanelsServiceInterface *iface = self ? GROTTO_PANELS_SERVICE_GET_IFACE(self) : NULL;
+  g_autoptr(GError) error = NULL;
+  if (!grotto_panels_public_text_validate(principal, &error)) {}
+  else if ((query != GROTTO_PANELS_QUERY_PERMISSIONS && query != GROTTO_PANELS_QUERY_ACTIVITY) ||
+      (query == GROTTO_PANELS_QUERY_PERMISSIONS && (!principal || !*principal || before)) ||
+      (query == GROTTO_PANELS_QUERY_ACTIVITY && principal))
+    g_set_error_literal(&error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "Invalid panel query");
+  else if (!grotto_panels_service_is_available(self))
+    g_set_error_literal(&error, G_IO_ERROR, G_IO_ERROR_NOT_INITIALIZED, "Signer unavailable");
+  else if (iface->query_async && iface->query_finish) {
+    iface->query_async(self, query, principal, before, cancel, callback, data); return;
+  } else g_set_error_literal(&error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED, "Query unavailable");
+  GTask *task = g_task_new(self, cancel, callback, data);
+  g_task_set_source_tag(task, grotto_panels_service_query_async);
+  g_task_return_error(task, g_steal_pointer(&error)); g_object_unref(task);
+}
+GListModel *grotto_panels_service_query_finish(GrottoPanelsService *self, GAsyncResult *result, GError **error) {
+  if (g_async_result_is_tagged(result, grotto_panels_service_query_async)) return g_task_propagate_pointer(G_TASK(result), error);
+  GrottoPanelsServiceInterface *iface = GROTTO_PANELS_SERVICE_GET_IFACE(self);
+  GListModel *model = iface->query_finish(self, result, error);
+  if (model && g_list_model_get_item_type(model) != GROTTO_TYPE_PANELS_ITEM) {
+    g_object_unref(model); g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "Invalid panel result"); return NULL;
+  }
+  return model;
 }
 
 GrottoPanelsAccess grotto_panel_command_get_access(GrottoPanelCommand command) {

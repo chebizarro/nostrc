@@ -583,12 +583,12 @@ if (TARGET grotto-daemon AND "NIP55L_TEST_TRUST_ENV=1" IN_LIST _nip55l_definitio
 endif()
 
 include(identity-tests.cmake)
-add_executable(test-home-dashboard test-home-dashboard.c ../src/home-model.c)
-target_include_directories(test-home-dashboard PRIVATE ${SIGNER_INCLUDE_DIRS} ${CMAKE_SOURCE_DIR})
-target_link_libraries(test-home-dashboard PRIVATE PkgConfig::GLIB nostrc-test-bus)
-target_compile_options(test-home-dashboard PRIVATE -Wall -Wextra -Werror)
-add_test(NAME signer/home-model COMMAND test-home-dashboard)
-set_tests_properties(signer/home-model PROPERTIES TIMEOUT 90 LABELS "signer;unit;home" ENVIRONMENT "GSETTINGS_BACKEND=memory")
+add_executable(test-panel-inbox-model test-panel-inbox-model.c ../src/home-model.c ../src/grotto-panels-control1-service.c)
+target_include_directories(test-panel-inbox-model PRIVATE ${SIGNER_INCLUDE_DIRS} ${CMAKE_SOURCE_DIR})
+target_link_libraries(test-panel-inbox-model PRIVATE PkgConfig::GLIB nostrc-test-bus grotto-panels)
+target_compile_options(test-panel-inbox-model PRIVATE -Wall -Wextra -Werror)
+add_test(NAME signer/panel-inbox-model COMMAND test-panel-inbox-model)
+set_tests_properties(signer/panel-inbox-model PROPERTIES TIMEOUT 90 LABELS "signer;unit;home" ENVIRONMENT "GSETTINGS_BACKEND=memory")
 add_executable(test-ui-layout test-ui-layout.c ${APP_GRESOURCE_C})
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   find_program(GROTTO_TEST_XDOTOOL xdotool REQUIRED)
@@ -621,7 +621,7 @@ set_tests_properties(signer/ui-layout PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77
 add_test(NAME signer/ui-accessibility COMMAND test-ui-layout)
 set_tests_properties(signer/ui-accessibility PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77 LABELS "signer;ui;i18n;a11y"
   ENVIRONMENT "${_UI_TEST_ENV};GTK_A11Y=test;G10_TEST_LANGUAGE=es;GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR}/..;GSETTINGS_BACKEND=memory;ADW_DISABLE_PORTAL=1")
-add_dependencies(signer-tests test-home-dashboard test-ui-layout)
+add_dependencies(signer-tests test-panel-inbox-model test-ui-layout)
 # G08: real background state machine, fake portal only on the private bus.
 if(UNIX)
   add_library(grotto_background_test_core STATIC ../src/background.c)

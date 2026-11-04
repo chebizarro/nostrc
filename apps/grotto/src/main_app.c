@@ -13,6 +13,8 @@
 #include "secure-mem.h"
 #include "i18n.h"
 #include "ui/signer-window.h"
+#include "ui/pairing-flow.h"
+#include "session-manager.h"
 #include "ui/onboarding-assistant.h"
 #include "approval-controller.h"
 #include "background.h"
@@ -50,11 +52,6 @@ static GtkWindow *management_window(GtkApplication *app) {
 }
 
 /* Forward declarations */
-static void apply_theme_preference(SettingsTheme theme);
-static void on_theme_setting_changed(const char *key, gpointer user_data);
-static void update_high_contrast_css(gboolean enable);
-static void on_system_high_contrast_changed(GObject *obj, GParamSpec *pspec, gpointer user_data);
-static gboolean should_use_high_contrast(void);
 static void attach_pending_group(GtkWindow *win);
 
 /* Global application instance for callbacks that need it */
@@ -128,113 +125,6 @@ static void on_app_lock(GSimpleAction *action, GVariant *param, gpointer user_da
   signer_window_lock_session((SignerWindow*)win);
 }
 
-/* Global high-contrast CSS provider (loaded once, added/removed as needed) */
-static GtkCssProvider *high_contrast_provider = NULL;
-
-/* Apply high-contrast styling to all windows */
-static void apply_high_contrast_to_windows(GtkApplication *app, gboolean enable, SettingsHighContrastVariant variant) {
-  GList *windows = gtk_application_get_windows(app);
-  for (GList *l = windows; l != NULL; l = l->next) {
-    GtkWidget *win = GTK_WIDGET(l->data);
-    /* Remove existing high-contrast classes */
-    gtk_widget_remove_css_class(win, "high-contrast");
-    gtk_widget_remove_css_class(win, "inverted");
-    gtk_widget_remove_css_class(win, "yellow-on-black");
-
-    if (enable) {
-      /* Add base high-contrast class */
-      gtk_widget_add_css_class(win, "high-contrast");
-      /* Add variant-specific class */
-      switch (variant) {
-        case SETTINGS_HC_INVERTED:
-          gtk_widget_add_css_class(win, "inverted");
-          break;
-        case SETTINGS_HC_YELLOW_ON_BLACK:
-          gtk_widget_add_css_class(win, "yellow-on-black");
-          break;
-        case SETTINGS_HC_DEFAULT:
-        default:
-          /* Default uses just .high-contrast, no additional class */
-          break;
-      }
-    }
-  }
-}
-
-/* Load or unload high-contrast CSS provider */
-static void update_high_contrast_css(gboolean enable) {
-  GdkDisplay *display = gdk_display_get_default();
-  if (!display) return;
-
-  if (enable) {
-    if (!high_contrast_provider) {
-      high_contrast_provider = gtk_css_provider_new();
-      gtk_css_provider_load_from_resource(high_contrast_provider, "/org/gnostr/signer/css/high-contrast.css");
-    }
-    gtk_style_context_add_provider_for_display(display, GTK_STYLE_PROVIDER(high_contrast_provider),
-                                                GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 1);
-    g_debug("High-contrast CSS loaded");
-  } else {
-    if (high_contrast_provider) {
-      gtk_style_context_remove_provider_for_display(display, GTK_STYLE_PROVIDER(high_contrast_provider));
-      g_debug("High-contrast CSS unloaded");
-    }
-  }
-}
-
-/* Determine if high contrast should be used based on:
- * 1. Force high contrast setting (user preference)
- * 2. Theme explicitly set to high-contrast
- * 3. System high contrast mode (GNOME/GTK accessibility setting)
- */
-static gboolean should_use_high_contrast(void) {
-  SettingsManager *sm = settings_manager_get_default();
-
-  /* Check if user has forced high contrast */
-  if (settings_manager_get_force_high_contrast(sm)) {
-    g_debug("High contrast enabled via force-high-contrast setting");
-    return TRUE;
-  }
-
-  /* Check if theme is explicitly set to high-contrast */
-  SettingsTheme theme = settings_manager_get_theme(sm);
-  if (theme == SETTINGS_THEME_HIGH_CONTRAST) {
-    g_debug("High contrast enabled via theme=high-contrast");
-    return TRUE;
-  }
-
-  /* Check system high contrast preference via AdwStyleManager */
-  AdwStyleManager *style_manager = adw_style_manager_get_default();
-  if (adw_style_manager_get_high_contrast(style_manager)) {
-    g_debug("High contrast enabled via system accessibility setting");
-    return TRUE;
-  }
-
-  return FALSE;
-}
-
-/* Callback for system high contrast changes (GNOME accessibility settings) */
-static void on_system_high_contrast_changed(GObject *obj, GParamSpec *pspec, gpointer user_data) {
-  (void)pspec;
-  (void)user_data;
-
-  AdwStyleManager *style_manager = ADW_STYLE_MANAGER(obj);
-  gboolean system_hc = adw_style_manager_get_high_contrast(style_manager);
-
-  g_debug("System high contrast changed: %s", system_hc ? "enabled" : "disabled");
-
-  /* Re-evaluate whether to use high contrast */
-  gboolean use_hc = should_use_high_contrast();
-  update_high_contrast_css(use_hc);
-
-  /* Apply/remove high-contrast classes on windows */
-  if (global_app) {
-    SettingsManager *sm = settings_manager_get_default();
-    SettingsHighContrastVariant hc_variant = settings_manager_get_high_contrast_variant(sm);
-    apply_high_contrast_to_windows(global_app, use_hc, hc_variant);
-  }
-}
-
 /* Callback when onboarding finishes - present main window */
 static void on_onboarding_finished(gboolean completed, gpointer user_data) {
   GtkApplication *app = GTK_APPLICATION(user_data);
@@ -246,24 +136,7 @@ static void on_onboarding_finished(gboolean completed, gpointer user_data) {
     if (SIGNER_IS_WINDOW(w->data)) { win = w->data; break; }
   if (!win) win = signer_window_new(ADW_APPLICATION(app));
 
-  /* Apply high-contrast class if needed (considers system, force, and theme settings) */
-  gboolean use_high_contrast = should_use_high_contrast();
-  if (use_high_contrast) {
-    SettingsManager *sm = settings_manager_get_default();
-    SettingsHighContrastVariant hc_variant = settings_manager_get_high_contrast_variant(sm);
-    gtk_widget_add_css_class(GTK_WIDGET(win), "high-contrast");
-    switch (hc_variant) {
-      case SETTINGS_HC_INVERTED:
-        gtk_widget_add_css_class(GTK_WIDGET(win), "inverted");
-        break;
-      case SETTINGS_HC_YELLOW_ON_BLACK:
-        gtk_widget_add_css_class(GTK_WIDGET(win), "yellow-on-black");
-        break;
-      case SETTINGS_HC_DEFAULT:
-      default:
-        break;
-    }
-  }
+
 
   attach_pending_group(GTK_WINDOW(win));
   gtk_window_present(GTK_WINDOW(win));
@@ -362,7 +235,7 @@ static GtkWindow *present_pending(GtkApplication *app) {
     }
   }
   attach_pending_group(win);
-  signer_window_show_page(SIGNER_WINDOW(win), "home");
+  signer_window_show_page(SIGNER_WINDOW(win), "apps");
   gtk_window_present(win);
   return win;
 }
@@ -378,8 +251,12 @@ static void on_approval_message(GrottoApprovalController *controller, const char
     win = present_pending(app);
     review_activation = FALSE;
   }
+  if (SIGNER_IS_WINDOW(win)) {
+    signer_window_toast(SIGNER_WINDOW(win), message);
+    return;
+  }
   if (win) {
-    /* The existing default page hosts pending review until G10 supplies Home. */
+    /* Stale actions stay in the inbox; never substitute another request. */
     AdwDialog *alert = adw_alert_dialog_new("Grotto", message);
     adw_alert_dialog_add_response(ADW_ALERT_DIALOG(alert), "close", "Close");
     adw_dialog_present(alert, GTK_WIDGET(win));
@@ -732,53 +609,15 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     attach_pending_group(existing);
     if (SIGNER_IS_WINDOW(existing) && approval_controller &&
         g_list_model_get_n_items(grotto_approval_controller_get_pending(approval_controller)))
-      signer_window_show_page(SIGNER_WINDOW(existing), "home");
+      signer_window_show_page(SIGNER_WINDOW(existing), "apps");
     gtk_window_present(existing);
     if (approval_controller) grotto_approval_controller_reconcile(approval_controller);
     return;
   }
   STARTUP_TIME_MARK("activate-start");
 
-  /* Initialize settings manager and apply theme preference after GTK is initialized */
-  STARTUP_TIME_BEGIN(STARTUP_PHASE_SETTINGS);
-  SettingsManager *sm = settings_manager_get_default();
-
-  /* Preload startup-critical settings in batch to reduce D-Bus round trips */
-  settings_manager_preload_startup_settings(sm);
-
-  SettingsTheme initial_theme = settings_manager_get_theme(sm);
-  STARTUP_TIME_END(STARTUP_PHASE_SETTINGS);
-
-  STARTUP_TIME_BEGIN(STARTUP_PHASE_THEME);
-  apply_theme_preference(initial_theme);
-  STARTUP_TIME_END(STARTUP_PHASE_THEME);
-
-  /* Listen for theme setting changes */
-  settings_manager_connect_changed(sm, "theme", on_theme_setting_changed, NULL);
-  settings_manager_connect_changed(sm, "high-contrast-variant", on_theme_setting_changed, NULL);
-  settings_manager_connect_changed(sm, "force-high-contrast", on_theme_setting_changed, NULL);
-
-  /* Listen for system high contrast changes (GNOME accessibility settings) */
-  AdwStyleManager *style_manager = adw_style_manager_get_default();
-  g_signal_connect(style_manager, "notify::high-contrast",
-                   G_CALLBACK(on_system_high_contrast_changed), NULL);
-
-  /* Load application stylesheet from resources */
-  STARTUP_TIME_BEGIN(STARTUP_PHASE_CSS);
-  GtkCssProvider *prov = gtk_css_provider_new();
-  gtk_css_provider_load_from_resource(prov, "/org/gnostr/signer/css/app.css");
-  GdkDisplay *display = gdk_display_get_default();
-  if (display) {
-    gtk_style_context_add_provider_for_display(display, GTK_STYLE_PROVIDER(prov), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
-  }
-  g_object_unref(prov);
-  STARTUP_TIME_END(STARTUP_PHASE_CSS);
-
-  /* Load high-contrast CSS if needed (considers system, force, and theme settings) */
-  gboolean use_high_contrast = should_use_high_contrast();
-  if (use_high_contrast) {
-    update_high_contrast_css(use_high_contrast);
-  }
+  /* Appearance and accessibility follow the desktop. Old preference keys are ignored. */
+  adw_style_manager_set_color_scheme(adw_style_manager_get_default(), ADW_COLOR_SCHEME_DEFAULT);
 
   /* Check if onboarding should be shown (first run) - this is fast INI file check */
   STARTUP_TIME_MARK("onboarding-check-start");
@@ -804,23 +643,6 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
   STARTUP_TIME_BEGIN(STARTUP_PHASE_WINDOW);
   SignerWindow *win = signer_window_new(ADW_APPLICATION(app));
   g_debug("Created main window: %p", win);
-
-  /* Apply high-contrast class if needed */
-  if (use_high_contrast) {
-    SettingsHighContrastVariant hc_variant = settings_manager_get_high_contrast_variant(sm);
-    gtk_widget_add_css_class(GTK_WIDGET(win), "high-contrast");
-    switch (hc_variant) {
-      case SETTINGS_HC_INVERTED:
-        gtk_widget_add_css_class(GTK_WIDGET(win), "inverted");
-        break;
-      case SETTINGS_HC_YELLOW_ON_BLACK:
-        gtk_widget_add_css_class(GTK_WIDGET(win), "yellow-on-black");
-        break;
-      case SETTINGS_HC_DEFAULT:
-      default:
-        break;
-    }
-  }
 
   attach_pending_group(GTK_WINDOW(win));
   gtk_window_present(GTK_WINDOW(win));
@@ -866,15 +688,17 @@ static void maybe_disclose_background(GtkWindow *win) {
   g_signal_connect(dialog, "response", G_CALLBACK(disclosure_response), NULL);
   adw_dialog_present(dialog, GTK_WIDGET(win));
 }
-/* G06 integration seam: never parse a token or contact a relay here.
- * TODO(nostrc-u6v55.7/G06): hand this URI to the identity-first pairing entry point. */
+/* URI ingestion stays in trusted Grotto. The existing pairing presenter chooses
+ * an identity and previews supplied relays before requesting pairing consent. */
 static void open_pairing_uri(GtkApplication *app, const char *uri) {
-  (void)uri;
   review_activation = TRUE;
-  present_pending(app);
+  GtkWindow *window = present_pending(app);
   review_activation = FALSE;
-  on_approval_message(approval_controller,
-      "Pairing from a link is not available yet. Review requests here; no relay has been contacted.", app);
+  if (!SIGNER_IS_WINDOW(window) || gn_session_manager_is_locked(gn_session_manager_get_default())) {
+    on_approval_message(approval_controller, _("Finish setup and unlock management, then open the pairing link again. No relay has been contacted."), app);
+    return;
+  }
+  grotto_pairing_present(GTK_WIDGET(window), uri);
 }
 static void on_open(GApplication *app, GFile **files, gint count, const char *hint, gpointer data) {
   (void)hint; (void)data;
@@ -912,60 +736,6 @@ static void on_app_quit(GSimpleAction *action, GVariant *param, gpointer user_da
   (void)action; (void)param;
   GtkApplication *app = GTK_APPLICATION(user_data);
   g_application_quit(G_APPLICATION(app));
-}
-
-/* Apply theme preference to AdwStyleManager and handle high-contrast */
-static void apply_theme_preference(SettingsTheme theme) {
-  AdwStyleManager *style_manager = adw_style_manager_get_default();
-  AdwColorScheme color_scheme;
-
-  /* Determine if high contrast should be used (considers system, force, and theme settings) */
-  gboolean use_high_contrast = should_use_high_contrast();
-
-  switch (theme) {
-    case SETTINGS_THEME_LIGHT:
-      color_scheme = ADW_COLOR_SCHEME_FORCE_LIGHT;
-      break;
-    case SETTINGS_THEME_DARK:
-      color_scheme = ADW_COLOR_SCHEME_FORCE_DARK;
-      break;
-    case SETTINGS_THEME_HIGH_CONTRAST:
-      /* High contrast uses force-light as base for Black-on-White variant,
-       * but the CSS overrides will take effect */
-      color_scheme = ADW_COLOR_SCHEME_FORCE_LIGHT;
-      break;
-    case SETTINGS_THEME_SYSTEM:
-    default:
-      color_scheme = ADW_COLOR_SCHEME_DEFAULT;
-      break;
-  }
-
-  adw_style_manager_set_color_scheme(style_manager, color_scheme);
-
-  /* Load/unload high-contrast CSS */
-  update_high_contrast_css(use_high_contrast);
-
-  /* Apply/remove high-contrast classes on windows */
-  if (global_app) {
-    SettingsManager *sm = settings_manager_get_default();
-    SettingsHighContrastVariant hc_variant = settings_manager_get_high_contrast_variant(sm);
-    apply_high_contrast_to_windows(global_app, use_high_contrast, hc_variant);
-  }
-
-  g_debug("Theme applied: %d -> color_scheme=%d, high_contrast=%s", theme, color_scheme,
-          use_high_contrast ? "true" : "false");
-}
-
-/* Callback for theme setting changes */
-static void on_theme_setting_changed(const gchar *key, gpointer user_data) {
-  (void)user_data;
-  if (g_strcmp0(key, "theme") != 0 &&
-      g_strcmp0(key, "high-contrast-variant") != 0 &&
-      g_strcmp0(key, "force-high-contrast") != 0) return;
-
-  SettingsManager *sm = settings_manager_get_default();
-  SettingsTheme theme = settings_manager_get_theme(sm);
-  apply_theme_preference(theme);
 }
 
 /* Callback when re-running onboarding finishes - nothing special needed */
@@ -1071,7 +841,7 @@ AdwApplication *grotto_application_new(GApplicationFlags app_flags) {
   g_application_add_main_option(G_APPLICATION(app), "settings", 0, G_OPTION_FLAG_HIDDEN,
       G_OPTION_ARG_NONE, "Alias for --preferences", NULL);
 
-  /* Store global app reference for theme change callbacks */
+  /* Used by application-level identity and management actions. */
   global_app = GTK_APPLICATION(app);
 
   /* Settings will be initialized in on_activate after GTK is ready */

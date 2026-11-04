@@ -1,2 +1,2 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<gresources><gresource prefix="/org/nostr/GrottoPanels"><file>identity-panel.ui</file><file>icons/scalable/actions/grotto-qr-code-symbolic.svg</file></gresource></gresources>
+<gresources><gresource prefix="/org/nostr/GrottoPanels"><file>identity-panel.ui</file><file>apps-panel.ui</file><file>activity-panel.ui</file><file>remote-panel.ui</file><file>icons/scalable/actions/grotto-qr-code-symbolic.svg</file></gresource></gresources>

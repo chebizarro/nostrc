@@ -88,7 +88,7 @@ steps; always use the returned flags rather than inferring them from a version.
 A GUI must feature-detect Control1/version/capabilities: absence or an older
 version means a read-only **Update Grotto** state, not legacy mutation fallback.
 The daemon keeps the preserved legacy client/approval contract for older UIs.
-The GUI implements owner/epoch/revision checks and read-only version-skew presentation; see `signer/home-model` and `signer/ui-layout`. These automated checks do not replace installed-desktop acceptance.
+The GUI implements owner/epoch/revision checks and read-only version-skew presentation; see `signer/panel-inbox-model` and `signer/ui-layout`. These automated checks do not replace installed-desktop acceptance.
 
 ### Methods
 

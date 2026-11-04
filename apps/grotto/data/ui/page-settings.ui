@@ -9,69 +9,12 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
   <template class="PageSettings" parent="AdwPreferencesPage">
     <property name="title" translatable="yes">Preferences</property>
     <child>
-      <object class="AdwPreferencesGroup" id="appearance">
-        <property name="title" translatable="yes">Appearance and Accessibility</property>
-        <child>
-          <object class="AdwComboRow" id="theme">
-            <property name="title" translatable="yes">Appearance</property>
-            <property name="model">
-              <object class="GtkStringList">
-                <items>
-                  <item translatable="yes">System</item>
-                  <item translatable="yes">Light</item>
-                  <item translatable="yes">Dark</item>
-                  <item translatable="yes">High contrast</item>
-                </items>
-              </object>
-            </property>
-          </object>
-        </child>
-        <child>
-          <object class="AdwSwitchRow" id="high_contrast">
-            <property name="title" translatable="yes">Force high contrast</property>
-          </object>
-        </child>
-        <child>
-          <object class="AdwComboRow" id="contrast_variant">
-            <property name="title" translatable="yes">High-contrast colours</property>
-            <property name="model">
-              <object class="GtkStringList">
-                <items>
-                  <item translatable="yes">Black on white</item>
-                  <item translatable="yes">White on black</item>
-                  <item translatable="yes">Yellow on black</item>
-                </items>
-              </object>
-            </property>
-          </object>
-        </child>
-        <child>
-          <object class="AdwComboRow" id="language">
-            <property name="title" translatable="yes">Language (restart required)</property>
-            <property name="model">
-              <object class="GtkStringList">
-                <items>
-                  <item translatable="yes">System</item>
-                  <item>English</item>
-                  <item>日本語</item>
-                  <item>Español</item>
-                  <item>Português</item>
-                  <item>Bahasa Indonesia</item>
-                  <item>فارسی</item>
-                </items>
-              </object>
-            </property>
-          </object>
-        </child>
-      </object>
-    </child>
-    <child>
       <object class="AdwPreferencesGroup" id="security">
         <property name="title" translatable="yes">Security</property>
-        <property name="description" translatable="yes">UI lock protects management, not the key backend. Pause signing stops authorised requests too.</property>
+        <property name="description" translatable="yes">The management lock protects this window, not the key backend. Pause Signing stops authorised requests too.</property>
         <child>
           <object class="AdwComboRow" id="lock_timeout">
-            <property name="title" translatable="yes">Lock management after</property>
+            <property name="title" translatable="yes">Lock Management After</property>
             <property name="model">
               <object class="GtkStringList">
                 <items>
@@ -88,19 +31,23 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
         </child>
         <child>
           <object class="AdwSwitchRow" id="lock_idle">
-            <property name="title" translatable="yes">Lock management on system idle</property>
+            <property name="title" translatable="yes">Lock Management on System Idle</property>
           </object>
         </child>
         <child>
           <object class="AdwSwitchRow" id="pause_lock">
-            <property name="title" translatable="yes">Pause signing on screen lock</property>
+            <property name="title" translatable="yes">Pause Signing on Screen Lock</property>
             <property name="subtitle" translatable="yes">Resume requires an unlocked, observed session</property>
           </object>
         </child>
+      </object>
+    </child>
+    <child>
+      <object class="AdwPreferencesGroup" id="management">
         <child>
-          <object class="AdwActionRow" id="confirmation">
-            <property name="title" translatable="yes">Ask-by-default event types</property>
-            <property name="subtitle" translatable="yes">Ask before a scoped first grant; saved permissions still apply</property>
+          <object class="AdwActionRow" id="remote">
+            <property name="title" translatable="yes">Remote Signing</property>
+            <property name="subtitle" translatable="yes">Status, relays, allowed methods and endpoint</property>
             <property name="activatable">true</property>
             <child type="suffix">
               <object class="GtkImage">
@@ -110,77 +57,23 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
           </object>
         </child>
         <child>
-          <object class="GtkButton">
-            <property name="label" translatable="yes">Pause Signing</property>
-            <property name="action-name">app.pause-signing</property>
-            <property name="halign">1</property>
-          </object>
-        </child>
-      </object>
-    </child>
-    <child>
-      <object class="AdwPreferencesGroup" id="remote">
-        <property name="title" translatable="yes">Remote Signing</property>
-        <child>
-          <object class="AdwActionRow" id="runtime">
-            <property name="title" translatable="yes">Runtime status</property>
-            <property name="subtitle" translatable="yes">Connecting to signer…</property>
-            <property name="subtitle-lines">3</property>
-          </object>
-        </child>
-        <child>
-          <object class="AdwActionRow" id="relays">
-            <property name="title" translatable="yes">Relays and method allowlist</property>
-            <property name="subtitle" translatable="yes">Changes apply without restarting the signer</property>
-            <property name="activatable">true</property>
-            <child type="suffix">
-              <object class="GtkImage">
-                <property name="icon-name">go-next-symbolic</property>
-              </object>
-            </child>
-          </object>
-        </child>
-        <child>
-          <object class="GtkButton" id="reset">
-            <property name="label" translatable="yes">Reset Remote Endpoint…</property>
-            <property name="halign">1</property>
-          </object>
-        </child>
-      </object>
-    </child>
-    <child>
-      <object class="AdwPreferencesGroup" id="retention">
-        <property name="title" translatable="yes">Activity</property>
-        <property name="description" translatable="yes">Metadata only — no messages, secrets or event content.</property>
-        <child>
-          <object class="AdwSpinRow" id="retention_days">
-            <property name="title" translatable="yes">Keep activity (days)</property>
+          <object class="AdwSpinRow" id="retention">
+            <property name="title" translatable="yes">Keep Activity (Days)</property>
+            <property name="subtitle" translatable="yes">Metadata only — no messages, secrets or event content</property>
             <property name="adjustment">
               <object class="GtkAdjustment">
                 <property name="lower">1</property>
                 <property name="upper">30</property>
                 <property name="step-increment">1</property>
-                <property name="value">30</property>
               </object>
             </property>
           </object>
         </child>
         <child>
-          <object class="GtkButton">
-            <property name="label" translatable="yes">View Activity</property>
-            <property name="action-name">win.activity</property>
-            <property name="halign">1</property>
-          </object>
-        </child>
-      </object>
-    </child>
-    <child>
-      <object class="AdwPreferencesGroup" id="about">
-        <child>
-          <object class="GtkButton">
-            <property name="label" translatable="yes">About Grotto</property>
+          <object class="AdwActionRow" id="about">
+            <property name="title" translatable="yes">About Grotto…</property>
+            <property name="activatable">true</property>
             <property name="action-name">win.about</property>
-            <property name="halign">1</property>
           </object>
         </child>
       </object>

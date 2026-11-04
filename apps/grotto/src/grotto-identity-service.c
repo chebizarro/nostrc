@@ -2,6 +2,7 @@
 #include "grotto-identity-service.h"
 #include "accounts_store.h"
 #include "settings_manager.h"
+#include "grotto-panels-control1-service.h"
 #include <string.h>
 
 /* This Grotto-only adapter joins Control1 snapshots and local public metadata.
@@ -10,6 +11,8 @@ struct _GrottoIdentityService {
   GObject parent_instance;
   GrottoHomeModel *control;
   GListStore *identities, *empty;
+  GrottoPanelsService *shared;
+  GDBusProxy *shared_proxy;
   GSettings *settings;
   guint accounts_changed;
   gulong control_changed, settings_changed;
@@ -24,9 +27,22 @@ static gboolean available(GrottoPanelsService *service) {
 static gboolean can(GrottoPanelsService *service, GrottoPanelCommand command) {
   GrottoIdentityService *self = GROTTO_IDENTITY_SERVICE(service);
   return available(service) && grotto_home_model_writable(self->control) &&
-    (command == GROTTO_PANEL_SET_IDENTITY_LABEL || command == GROTTO_PANEL_SET_DEFAULT_IDENTITY);
+    (command == GROTTO_PANEL_SET_IDENTITY_LABEL || command == GROTTO_PANEL_SET_DEFAULT_IDENTITY || command == GROTTO_PANEL_SET_CLIENT_LABEL);
+}
+static void shared_changed(GrottoPanelsService *shared, gpointer data) {
+  (void)shared; g_signal_emit_by_name(data, "availability-changed"); g_signal_emit_by_name(data, "capabilities-changed");
 }
 static void refresh(GrottoIdentityService *self) {
+  GDBusProxy *proxy = grotto_home_model_proxy(self->control);
+  if (proxy != self->shared_proxy) {
+    if (self->shared) g_signal_handlers_disconnect_by_data(self->shared, self);
+    g_clear_object(&self->shared); g_set_object(&self->shared_proxy, proxy);
+    if (proxy) {
+      self->shared = grotto_panels_control1_service_new(proxy);
+      g_signal_connect(self->shared, "availability-changed", G_CALLBACK(shared_changed), self);
+      g_signal_connect(self->shared, "capabilities-changed", G_CALLBACK(shared_changed), self);
+    }
+  }
   AccountsStore *store = accounts_store_get_default();
   g_autoptr(GPtrArray) entries = accounts_store_list(store);
   g_autoptr(GPtrArray) items = g_ptr_array_new_with_free_func(g_object_unref);
@@ -61,7 +77,8 @@ static void control_changed(GrottoHomeModel *control, gpointer data) { (void)con
 static void settings_changed(GSettings *settings, const char *key, gpointer data) { (void)settings; (void)key; refresh(data); }
 static GListModel *get_model(GrottoPanelsService *service, GrottoPanelsModel model) {
   GrottoIdentityService *self = GROTTO_IDENTITY_SERVICE(service);
-  return G_LIST_MODEL(model == GROTTO_PANELS_IDENTITIES ? self->identities : self->empty);
+  if (model == GROTTO_PANELS_IDENTITIES) return G_LIST_MODEL(self->identities);
+  return self->shared ? grotto_panels_service_get_model(self->shared, model) : G_LIST_MODEL(self->empty);
 }
 static void default_done(GObject *source, GAsyncResult *result, gpointer data) {
   GTask *task = data; GrottoIdentityService *self = g_task_get_source_object(task);
@@ -79,6 +96,10 @@ static void invoke(GrottoPanelsService *service, GrottoPanelCommand command, con
   GrottoIdentityService *self = GROTTO_IDENTITY_SERVICE(service);
   GTask *task = g_task_new(self, cancel, callback, data);
   if (g_task_return_error_if_cancelled(task)) { g_object_unref(task); return; }
+  if (command == GROTTO_PANEL_SET_CLIENT_LABEL && can(service, command) && self->shared) {
+    g_object_unref(task);
+    grotto_panels_control1_service_host_command_async(self->shared, command, args, cancel, callback, data); return;
+  }
   AccountEntry *entry = accounts_store_find(accounts_store_get_default(), args->public_key);
   if (!can(service, command) || !entry || g_strcmp0(entry->id, args->public_key) ||
       (command == GROTTO_PANEL_SET_DEFAULT_IDENTITY && (!entry->has_secret || entry->watch_only))) {
@@ -101,12 +122,23 @@ static void invoke(GrottoPanelsService *service, GrottoPanelCommand command, con
     10000, cancel, default_done, task);
 }
 static gboolean finish(GrottoPanelsService *service, GAsyncResult *result, GError **error) {
-  g_return_val_if_fail(g_task_is_valid(result, service), FALSE);
+  (void)service;
   return g_task_propagate_boolean(G_TASK(result), error);
 }
+static void query(GrottoPanelsService *service, GrottoPanelsQuery query, const char *principal,
+  guint64 before, GCancellable *cancel, GAsyncReadyCallback callback, gpointer data) {
+  GrottoIdentityService *self = GROTTO_IDENTITY_SERVICE(service);
+  grotto_panels_service_query_async(self->shared, query, principal, before, cancel, callback, data);
+}
+static GListModel *query_finish(GrottoPanelsService *service, GAsyncResult *result, GError **error) {
+  (void)service; g_autoptr(GObject) source = g_async_result_get_source_object(result);
+  return grotto_panels_service_query_finish(GROTTO_PANELS_SERVICE(source), result, error);
+}
+GrottoPanelsService *grotto_identity_service_get_control(GrottoIdentityService *self) { return self->shared; }
 static void iface_init(GrottoPanelsServiceInterface *iface) {
   iface->get_model = get_model; iface->is_available = available; iface->can = can;
   iface->invoke_async = invoke; iface->invoke_finish = finish;
+  iface->query_async = query; iface->query_finish = query_finish;
 }
 static void dispose(GObject *object) {
   GrottoIdentityService *self = GROTTO_IDENTITY_SERVICE(object);
@@ -114,6 +146,8 @@ static void dispose(GObject *object) {
   self->accounts_changed = 0;
   if (self->control) g_signal_handler_disconnect(self->control, self->control_changed);
   if (self->settings) g_signal_handler_disconnect(self->settings, self->settings_changed);
+  if (self->shared) g_signal_handlers_disconnect_by_data(self->shared, self);
+  g_clear_object(&self->shared); g_clear_object(&self->shared_proxy);
   g_clear_object(&self->control); g_clear_object(&self->settings);
   g_clear_object(&self->identities); g_clear_object(&self->empty);
   G_OBJECT_CLASS(grotto_identity_service_parent_class)->dispose(object);

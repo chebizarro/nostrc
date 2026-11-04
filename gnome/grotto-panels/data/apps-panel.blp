@@ -1,0 +1,42 @@
+using Gtk 4.0;
+using Adw 1;
+translation-domain "grotto-panels";
+template $GrottoAppsPanel: $GrottoPanel {
+  title: _("Connected Apps"); tag: "apps";
+  child: Adw.NavigationView navigation {
+    Adw.NavigationPage {
+      title: _("Connected Apps"); tag: "apps-root";
+      child: Adw.ToolbarView {
+        [top] Adw.HeaderBar {}
+        [top] Adw.Banner unavailable { title: _("Signer Unavailable"); }
+        content: Adw.PreferencesPage preferences {
+          Adw.PreferencesGroup pending_group {
+            title: _("Pending Requests"); visible: false;
+            ListBox pending_list { selection-mode: none; styles ["boxed-list"] }
+          }
+          Adw.PreferencesGroup controls {
+            Adw.SwitchRow pause_row {
+              title: _("Pause Signing");
+              subtitle: _("Apps can't sign until signing resumes");
+            }
+          }
+          Adw.PreferencesGroup apps_group {
+            title: _("Apps");
+            ListBox apps_list { selection-mode: none; styles ["boxed-list"] }
+          }
+          Adw.PreferencesGroup add_group {
+            Button add_app { label: _("_Add App…"); use-underline: true; halign: center; styles ["pill"] }
+          }
+          Adw.PreferencesGroup advanced {
+            title: _("Advanced");
+            Adw.ActionRow ask_defaults {
+              title: _("Ask-by-Default Event Types…");
+              subtitle: _("Ask before a first grant; saved permissions still apply");
+              activatable: true;
+            }
+          }
+        };
+      };
+    }
+  };
+}

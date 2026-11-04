@@ -15,8 +15,11 @@ find_program(GLIB_COMPILE_RESOURCES glib-compile-resources REQUIRED)
 add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/grotto-panels-resources.c"
   COMMAND ${GLIB_COMPILE_RESOURCES} --generate-source --internal --target=${CMAKE_CURRENT_BINARY_DIR}/grotto-panels-resources.c
     --sourcedir=${CMAKE_CURRENT_SOURCE_DIR}/data ${CMAKE_CURRENT_SOURCE_DIR}/data/grotto-panels.gresource.xml
-  DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/data/grotto-panels.gresource.xml ${CMAKE_CURRENT_SOURCE_DIR}/data/identity-panel.ui ${CMAKE_CURRENT_SOURCE_DIR}/data/icons/scalable/actions/grotto-qr-code-symbolic.svg)
+  DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/data/grotto-panels.gresource.xml ${CMAKE_CURRENT_SOURCE_DIR}/data/identity-panel.ui
+    ${CMAKE_CURRENT_SOURCE_DIR}/data/apps-panel.ui ${CMAKE_CURRENT_SOURCE_DIR}/data/activity-panel.ui
+    ${CMAKE_CURRENT_SOURCE_DIR}/data/remote-panel.ui ${CMAKE_CURRENT_SOURCE_DIR}/data/icons/scalable/actions/grotto-qr-code-symbolic.svg)
 add_library(grotto-panels SHARED src/grotto-panel.c src/grotto-identity-panel.c
+  src/grotto-apps-panel.c src/grotto-app-detail.c src/grotto-activity-panel.c src/grotto-remote-panel.c
   src/grotto-panels-service.c src/grotto-panels-validation.c "${CMAKE_CURRENT_BINARY_DIR}/grotto-panels-resources.c")
 add_library(GrottoPanels::Panels ALIAS grotto-panels)
 set_target_properties(grotto-panels PROPERTIES OUTPUT_NAME grotto-panels-0
@@ -80,7 +83,7 @@ if(BUILD_TESTING)
   if(COMMAND apply_sanitizers)
     apply_sanitizers(test-grotto-panels-admission)
   endif()
-  add_executable(test-grotto-panels-smoke tests/test-smoke-host.c tests/fake-service.c)
+  add_executable(test-grotto-panels-smoke tests/test-smoke-host.c tests/test-management-panels.c tests/fake-service.c)
   target_link_libraries(test-grotto-panels-smoke PRIVATE grotto-panels)
   target_compile_definitions(test-grotto-panels-smoke PRIVATE ${_pins})
   if(COMMAND apply_sanitizers)

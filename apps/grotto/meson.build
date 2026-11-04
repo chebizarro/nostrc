@@ -212,12 +212,9 @@ app_ui_sources = files(
   'src/ui/approval_dialog.c',
   'src/ui/lock-screen.c',
   'src/ui/onboarding-assistant.c',
-  'src/ui/page-home.c',
   'src/ui/page-connect.c',
-  'src/ui/page-client-detail.c',
   'src/ui/page-identity-detail.c',
   'src/secret-clipboard.c',
-  'src/ui/page-history.c',
   'src/ui/page-settings.c',
   'src/ui/signer-window.c',
   'src/ui/pairing-flow.c',
@@ -235,8 +232,8 @@ if run_command(blueprint, '--version', check: true).stdout().strip() != '0.22.2'
 endif
 blueprints = custom_target('blueprints',
   input: files(
-    'data/ui/signer-window.blp', 'data/ui/page-home.blp', 'data/ui/page-connect.blp',
-    'data/ui/page-client-detail.blp', 'data/ui/page-history.blp', 'data/ui/page-settings.blp',
+    'data/ui/signer-window.blp', 'data/ui/page-connect.blp',
+    'data/ui/page-settings.blp',
     'data/ui/page-identity-detail.blp', 'data/ui/approval-dialog.blp',
     'data/ui/lock-screen.blp', 'data/ui/onboarding-assistant.blp', 'data/ui/shortcuts-window.blp',
     'data/ui/sheets/sheet-create-bunker.blp', 'data/ui/sheets/sheet-qr-display.blp',

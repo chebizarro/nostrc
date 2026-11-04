@@ -12,21 +12,12 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
     <property name="width-request">360</property>
     <property name="height-request">480</property>
     <accessibility>
-      <property name="label" translatable="yes">Grotto main window</property>
+      <property name="label" translatable="yes">Grotto Main Window</property>
     </accessibility>
     <child>
       <object class="AdwBreakpoint">
-        <condition>max-width: 800px</condition>
+        <condition>max-width: 600sp</condition>
         <setter object="split_view" property="collapsed">true</setter>
-        <setter object="sidebar_toggle_btn" property="visible">true</setter>
-      </object>
-    </child>
-    <child>
-      <object class="AdwBreakpoint">
-        <condition>max-width: 500px</condition>
-        <setter object="split_view" property="collapsed">true</setter>
-        <setter object="bottom_bar" property="reveal">true</setter>
-        <setter object="sidebar_toggle_btn" property="visible">false</setter>
       </object>
     </child>
     <child>
@@ -45,43 +36,40 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
               <object class="GtkStackPage">
                 <property name="name">unlocked</property>
                 <property name="child">
-                  <object class="AdwToolbarView" id="toolbar_view">
-                    <child type="top">
-                      <object class="AdwHeaderBar" id="header_bar">
-                        <child type="start">
-                          <object class="GtkToggleButton" id="sidebar_toggle_btn">
-                            <property name="icon-name">sidebar-show-symbolic</property>
-                            <property name="visible">false</property>
-                            <property name="tooltip-text" translatable="yes">Toggle sidebar</property>
-                            <accessibility>
-                              <property name="label" translatable="yes">Toggle sidebar</property>
-                            </accessibility>
-                          </object>
-                        </child>
-                        <property name="title-widget">
-                          <object class="AdwWindowTitle" id="switcher_title">
-                            <property name="title">Grotto</property>
-                            <property name="subtitle" translatable="yes">Preview</property>
+                  <object class="AdwNavigationSplitView" id="split_view">
+                    <property name="min-sidebar-width">200</property>
+                    <property name="max-sidebar-width">280</property>
+                    <child type="content">
+                      <object class="AdwNavigationPage" id="content_page">
+                        <property name="title" translatable="yes">Identity</property>
+                        <property name="child">
+                          <object class="GtkStack" id="panel_stack">
+                            <property name="hhomogeneous">false</property>
+                            <property name="vhomogeneous">false</property>
                           </object>
                         </property>
-                        <child type="end">
-                          <object class="GtkMenuButton" id="menu_btn">
-                            <property name="icon-name">open-menu-symbolic</property>
-                            <accessibility>
-                              <property name="label" translatable="yes">Application menu</property>
-                            </accessibility>
-                          </object>
-                        </child>
                       </object>
                     </child>
-                    <child>
-                      <object class="AdwNavigationSplitView" id="split_view">
-                        <property name="min-sidebar-width">180</property>
-                        <property name="max-sidebar-width">260</property>
-                        <child type="sidebar">
-                          <object class="AdwNavigationPage">
-                            <property name="title" translatable="yes">Sections</property>
-                            <property name="child">
+                    <child type="sidebar">
+                      <object class="AdwNavigationPage">
+                        <property name="title" translatable="yes">Grotto</property>
+                        <property name="child">
+                          <object class="AdwToolbarView">
+                            <child type="top">
+                              <object class="AdwHeaderBar">
+                                <child type="end">
+                                  <object class="GtkMenuButton" id="menu_btn">
+                                    <property name="icon-name">open-menu-symbolic</property>
+                                    <property name="primary">true</property>
+                                    <property name="tooltip-text" translatable="yes">Main Menu</property>
+                                    <accessibility>
+                                      <property name="label" translatable="yes">Main Menu</property>
+                                    </accessibility>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            <property name="content">
                               <object class="GtkScrolledWindow">
                                 <property name="hscrollbar-policy">2</property>
                                 <child>
@@ -92,186 +80,14 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                       <class name="navigation-sidebar"/>
                                     </style>
                                     <accessibility>
-                                      <property name="label" translatable="yes">Navigation sections</property>
+                                      <property name="label" translatable="yes">Panels</property>
                                     </accessibility>
-                                    <child>
-                                      <object class="GtkListBoxRow">
-                                        <accessibility>
-                                          <property name="label" translatable="yes">Home</property>
-                                        </accessibility>
-                                        <child>
-                                          <object class="GtkBox">
-                                            <property name="spacing">12</property>
-                                            <property name="margin-start">12</property>
-                                            <property name="margin-end">12</property>
-                                            <property name="margin-top">12</property>
-                                            <property name="margin-bottom">12</property>
-                                            <child>
-                                              <object class="GtkImage">
-                                                <property name="icon-name">go-home-symbolic</property>
-                                              </object>
-                                            </child>
-                                            <child>
-                                              <object class="GtkLabel">
-                                                <property name="label" translatable="yes">Home</property>
-                                              </object>
-                                            </child>
-                                          </object>
-                                        </child>
-                                      </object>
-                                    </child>
-                                    <child>
-                                      <object class="GtkListBoxRow">
-                                        <accessibility>
-                                          <property name="label" translatable="yes">Activity</property>
-                                        </accessibility>
-                                        <child>
-                                          <object class="GtkBox">
-                                            <property name="spacing">12</property>
-                                            <property name="margin-start">12</property>
-                                            <property name="margin-end">12</property>
-                                            <property name="margin-top">12</property>
-                                            <property name="margin-bottom">12</property>
-                                            <child>
-                                              <object class="GtkImage">
-                                                <property name="icon-name">document-open-recent-symbolic</property>
-                                              </object>
-                                            </child>
-                                            <child>
-                                              <object class="GtkLabel">
-                                                <property name="label" translatable="yes">Activity</property>
-                                              </object>
-                                            </child>
-                                          </object>
-                                        </child>
-                                      </object>
-                                    </child>
-                                    <child>
-                                      <object class="GtkListBoxRow">
-                                        <accessibility>
-                                          <property name="label" translatable="yes">Connect</property>
-                                        </accessibility>
-                                        <child>
-                                          <object class="GtkBox">
-                                            <property name="spacing">12</property>
-                                            <property name="margin-start">12</property>
-                                            <property name="margin-end">12</property>
-                                            <property name="margin-top">12</property>
-                                            <property name="margin-bottom">12</property>
-                                            <child>
-                                              <object class="GtkImage">
-                                                <property name="icon-name">network-wireless-symbolic</property>
-                                              </object>
-                                            </child>
-                                            <child>
-                                              <object class="GtkLabel">
-                                                <property name="label" translatable="yes">Connect</property>
-                                              </object>
-                                            </child>
-                                          </object>
-                                        </child>
-                                      </object>
-                                    </child>
-                                    <child>
-                                      <object class="GtkListBoxRow">
-                                        <accessibility>
-                                          <property name="label" translatable="yes">Preferences</property>
-                                        </accessibility>
-                                        <child>
-                                          <object class="GtkBox">
-                                            <property name="spacing">12</property>
-                                            <property name="margin-start">12</property>
-                                            <property name="margin-end">12</property>
-                                            <property name="margin-top">12</property>
-                                            <property name="margin-bottom">12</property>
-                                            <child>
-                                              <object class="GtkImage">
-                                                <property name="icon-name">emblem-system-symbolic</property>
-                                              </object>
-                                            </child>
-                                            <child>
-                                              <object class="GtkLabel">
-                                                <property name="label" translatable="yes">Preferences</property>
-                                              </object>
-                                            </child>
-                                          </object>
-                                        </child>
-                                      </object>
-                                    </child>
                                   </object>
                                 </child>
                               </object>
                             </property>
                           </object>
-                        </child>
-                        <child>
-                          <object class="AdwNavigationPage">
-                            <property name="title" translatable="yes">Grotto</property>
-                            <property name="child">
-                              <object class="AdwNavigationView" id="detail_navigation">
-                                <child>
-                                  <object class="AdwNavigationPage">
-                                    <property name="tag">root</property>
-                                    <property name="title" translatable="yes">Home</property>
-                                    <property name="child">
-                                      <object class="AdwViewStack" id="stack">
-                                        <child>
-                                          <object class="AdwViewStackPage">
-                                            <property name="name">home</property>
-                                            <property name="title" translatable="yes">Home</property>
-                                            <property name="icon-name">go-home-symbolic</property>
-                                            <property name="child">
-                                              <object class="GrottoPageHome" id="page_home"></object>
-                                            </property>
-                                          </object>
-                                        </child>
-                                        <child>
-                                          <object class="AdwViewStackPage">
-                                            <property name="name">activity</property>
-                                            <property name="title" translatable="yes">Activity</property>
-                                            <property name="icon-name">document-open-recent-symbolic</property>
-                                            <property name="child">
-                                              <object class="GnPageHistory" id="page_history"></object>
-                                            </property>
-                                          </object>
-                                        </child>
-                                        <child>
-                                          <object class="AdwViewStackPage">
-                                            <property name="name">connect</property>
-                                            <property name="title" translatable="yes">Connect</property>
-                                            <property name="icon-name">network-wireless-symbolic</property>
-                                            <property name="child">
-                                              <object class="GrottoPageConnect" id="page_connect"></object>
-                                            </property>
-                                          </object>
-                                        </child>
-                                        <child>
-                                          <object class="AdwViewStackPage">
-                                            <property name="name">settings</property>
-                                            <property name="title" translatable="yes">Preferences</property>
-                                            <property name="icon-name">emblem-system-symbolic</property>
-                                            <property name="child">
-                                              <object class="PageSettings" id="page_settings"></object>
-                                            </property>
-                                          </object>
-                                        </child>
-                                      </object>
-                                    </property>
-                                  </object>
-                                </child>
-                              </object>
-                            </property>
-                          </object>
-                        </child>
-                      </object>
-                    </child>
-                    <child type="bottom">
-                      <object class="AdwViewSwitcherBar" id="bottom_bar">
-                        <property name="stack">stack</property>
-                        <property name="reveal">false</property>
-                        <accessibility>
-                          <property name="label" translatable="yes">Bottom navigation</property>
-                        </accessibility>
+                        </property>
                       </object>
                     </child>
                   </object>

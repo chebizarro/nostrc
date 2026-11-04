@@ -49,7 +49,7 @@ _grotto_test(signer/identity-management test-identity-management grotto.daemon
 _grotto_test(signer/onboarding test-onboarding grotto.gui REQUIRES display private_bus
   INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/lsan.supp")
 _grotto_test(signer/identity-model test-home-model grotto.gui REQUIRES display private_bus)
-_grotto_test(signer/home-model test-home-dashboard grotto.gui REQUIRES private_bus)
+_grotto_test(signer/panel-inbox-model test-panel-inbox-model grotto.gui REQUIRES private_bus)
 foreach(suite ui-layout ui-accessibility)
   _grotto_test("signer/${suite}" test-ui-layout grotto.gui
     TARGETS grotto_test_locales grotto_resources REQUIRES display private_bus
