@@ -113,7 +113,9 @@ imports.update('''__cxa_atexit adw_action_row_add_prefix adw_action_row_add_suff
  gtk_widget_dispose_template gtk_widget_get_clipboard gtk_widget_get_first_child gtk_widget_get_type gtk_widget_has_focus
  gdk_display_get_default gtk_icon_theme_add_resource_path gtk_icon_theme_get_for_display
  gtk_widget_init_template gtk_widget_set_sensitive gtk_widget_set_visible gtk_widget_get_state_flags gtk_widget_grab_focus
- libintl_gettext libintl_ngettext gettext ngettext'''.split())
+ libintl_gettext libintl_ngettext gettext ngettext g_dgettext g_dngettext
+ bindtextdomain bind_textdomain_codeset libintl_bindtextdomain libintl_bind_textdomain_codeset
+ g_param_spec_boolean g_value_get_boolean g_value_set_boolean g_object_bind_property g_object_get g_object_set'''.split())
 
 def check_symbols(path):
     output = subprocess.check_output(['nm', '-g', str(path)] if sys.platform == 'darwin' else ['nm', '-D', str(path)], text=True)
@@ -171,7 +173,7 @@ with tempfile.TemporaryDirectory(prefix='grotto-boundary-mutations-') as tempora
         '"Decide" "Request",NULL,NULL,G_DBUS_CALL_FLAGS_NONE,-1,NULL,NULL,NULL);}\n')
     mutant = directory / ('probe.dylib' if sys.platform == 'darwin' else 'probe.so')
     link = shlex.split(subprocess.check_output(['pkg-config', '--libs', 'gtk4', 'libadwaita-1'], text=True))
-    subprocess.run([clang, '-shared', '-fPIC', '-fvisibility=hidden', '-DGROTTO_PANELS_COMPILATION',
+    subprocess.run([clang, '-shared', '-fPIC', '-fvisibility=hidden', '-DGROTTO_PANELS_COMPILATION', '-DGETTEXT_PACKAGE="grotto-panels"', '-DGROTTO_PANELS_LOCALEDIR="/usr/share/locale"',
         *include, *flags, *map(str, root.joinpath('src').rglob('*.c')), str(probe), *link, '-o', str(mutant)], check=True)
     try:
         check_symbols(mutant)

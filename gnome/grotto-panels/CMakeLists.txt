@@ -22,7 +22,8 @@ add_library(GrottoPanels::Panels ALIAS grotto-panels)
 set_target_properties(grotto-panels PROPERTIES OUTPUT_NAME grotto-panels-0
   VERSION ${PROJECT_VERSION} SOVERSION 0 EXPORT_NAME Panels C_VISIBILITY_PRESET hidden)
 target_compile_features(grotto-panels PUBLIC c_std_11)
-target_compile_definitions(grotto-panels PRIVATE GROTTO_PANELS_COMPILATION GETTEXT_PACKAGE="grotto-panels" ${_pins})
+target_compile_definitions(grotto-panels PRIVATE GROTTO_PANELS_COMPILATION GETTEXT_PACKAGE="grotto-panels"
+  GROTTO_PANELS_LOCALEDIR="${CMAKE_INSTALL_FULL_LOCALEDIR}" ${_pins})
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
   target_compile_options(grotto-panels PRIVATE -Wall -Wextra -Werror=deprecated-declarations)
 endif()
@@ -31,6 +32,10 @@ target_include_directories(grotto-panels PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/generated>
   $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/grotto-panels-0>)
 target_link_libraries(grotto-panels PUBLIC PkgConfig::GROTTO_PANELS_DEPS)
+find_package(Intl)
+if(Intl_FOUND)
+  target_link_libraries(grotto-panels PRIVATE Intl::Intl)
+endif()
 if(COMMAND apply_sanitizers)
   apply_sanitizers(grotto-panels)
 endif()
@@ -49,6 +54,21 @@ install(FILES "${CMAKE_CURRENT_BINARY_DIR}/GrottoPanelsConfig.cmake"
   "${CMAKE_CURRENT_BINARY_DIR}/GrottoPanelsConfigVersion.cmake" DESTINATION ${_configdir})
 configure_file(grotto-panels-0.pc.in grotto-panels-0.pc @ONLY)
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/grotto-panels-0.pc" DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)
+
+# Keep the shared domain independent of either hosting application's domain.
+find_program(GROTTO_PANELS_MSGFMT msgfmt REQUIRED)
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/po/LINGUAS" _panel_languages REGEX "^[a-zA-Z_@]+$")
+foreach(_lang IN LISTS _panel_languages)
+  set(_mo "${CMAKE_CURRENT_BINARY_DIR}/po/${_lang}/LC_MESSAGES/grotto-panels.mo")
+  add_custom_command(OUTPUT "${_mo}"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/po/${_lang}/LC_MESSAGES"
+    COMMAND ${GROTTO_PANELS_MSGFMT} --check --output-file=${_mo} "${CMAKE_CURRENT_SOURCE_DIR}/po/${_lang}.po"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/po/${_lang}.po" VERBATIM)
+  list(APPEND _panel_catalogues "${_mo}")
+  install(FILES "${_mo}" DESTINATION "${CMAKE_INSTALL_LOCALEDIR}/${_lang}/LC_MESSAGES" COMPONENT grotto-panels-translations)
+endforeach()
+add_custom_target(grotto-panels-translations ALL DEPENDS ${_panel_catalogues})
+add_dependencies(grotto-panels grotto-panels-translations)
 
 include(CTest)
 if(BUILD_TESTING)

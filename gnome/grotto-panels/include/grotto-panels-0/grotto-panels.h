@@ -147,7 +147,9 @@ struct _GrottoPanelClass {
   AdwNavigationPageClass parent_class;
   gpointer padding[8];
 };
-/* Abstract base. service property is readable/writable; NULL detaches.
+/* Abstract base. show-window-controls defaults to TRUE; hosts with their own
+ * window chrome set it FALSE (also inherited by pinned Identity subpages).
+ * service property is readable/writable; NULL detaches.
  * service-changed is emitted after attachment, availability or capabilities.
  * Detaching disconnects and cancels the old view's cancellable, not the service.
  * A panel owns a strong reference; the host owns long-lived pending state. */

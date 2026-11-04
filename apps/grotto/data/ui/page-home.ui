@@ -46,7 +46,8 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 <child>
                   <object class="AdwActionRow" id="identity_card">
                     <property name="title" translatable="yes">Create or import an identity</property>
-                    <property name="subtitle" translatable="yes">Your management selection does not change an app’s identity.</property>
+                    <property name="subtitle" translatable="yes">Manage identities and backups</property>
+                    <property name="activatable">true</property>
                     <property name="subtitle-lines">2</property>
                     <child type="suffix">
                       <object class="GtkButton" id="copy_key">
@@ -66,6 +67,11 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         <accessibility>
                           <property name="label" translatable="yes">Show public-key QR code</property>
                         </accessibility>
+                      </object>
+                    </child>
+                    <child type="suffix">
+                      <object class="GtkImage">
+                        <property name="icon-name">go-next-symbolic</property>
                       </object>
                     </child>
                   </object>

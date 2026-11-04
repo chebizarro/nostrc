@@ -2,6 +2,7 @@
 #include "background.h"
 #include "approval-controller.h"
 #include "ui/signer-window.h"
+#include <grotto-panels.h>
 #include "ui/onboarding-assistant.h"
 #include "nostrc-test-bus.h"
 #include "nostrc-test-gdk-frame.h"
@@ -148,6 +149,8 @@ static gboolean exercise(gpointer data) {
   if (!strcmp(mode, "new-identity")) {
     OnboardingAssistant *initial = g_object_get_data(G_OBJECT(win), "grotto-onboarding-assistant");
     g_assert_true(ONBOARDING_IS_ASSISTANT(initial));
+    AdwNavigationView *navigation = ADW_NAVIGATION_VIEW(gtk_widget_get_template_child(GTK_WIDGET(win), TYPE_SIGNER_WINDOW, "detail_navigation"));
+    g_assert_true(GROTTO_IS_IDENTITY_PANEL(adw_navigation_view_get_visible_page(navigation))); /* actual --new-identity route */
     gtk_window_close(GTK_WINDOW(initial));
     WAIT(g_list_length(gtk_application_get_windows(GTK_APPLICATION(app))) == 1);
   }
@@ -159,6 +162,8 @@ static gboolean exercise(gpointer data) {
   g_action_group_activate_action(G_ACTION_GROUP(app), "new-identity", NULL);
   OnboardingAssistant *create = g_object_get_data(G_OBJECT(win), "grotto-onboarding-assistant");
   g_assert_true(ONBOARDING_IS_ASSISTANT(create));
+  AdwNavigationView *identity_navigation = ADW_NAVIGATION_VIEW(gtk_widget_get_template_child(GTK_WIDGET(win), TYPE_SIGNER_WINDOW, "detail_navigation"));
+  g_assert_true(GROTTO_IS_IDENTITY_PANEL(adw_navigation_view_get_visible_page(identity_navigation))); /* actual GApplication action */
   g_action_group_activate_action(G_ACTION_GROUP(app), "new-identity", NULL);
   g_assert_true(g_object_get_data(G_OBJECT(win), "grotto-onboarding-assistant") == create);
   g_assert_cmpuint(g_list_length(gtk_application_get_windows(GTK_APPLICATION(app))), ==, 2);

@@ -1,11 +1,12 @@
 /* SPDX-License-Identifier: MIT */
 #include "grotto-panels.h"
-#include <glib/gi18n.h>
+#include <glib/gi18n-lib.h>
 #include <string.h>
 
 struct _GrottoIdentityPanel {
   GrottoPanel parent_instance;
   AdwNavigationView *navigation;
+  AdwHeaderBar *header;
   GtkStack *content;
   AdwStatusPage *empty;
   AdwBanner *banner;
@@ -61,6 +62,9 @@ static void forward_remove(gpointer f, const char *v) { forward(f, GROTTO_PANEL_
 static void forward_open(gpointer f, const char *v) { forward(f, GROTTO_PANEL_HOST_OPEN_SIGNER, v); }
 static void push_identity(GrottoIdentityPanel *self, const char *id) {
   GrottoPanel *child = GROTTO_PANEL(grotto_identity_panel_new(grotto_panel_get_service(GROTTO_PANEL(self)), id));
+  gboolean controls;
+  g_object_get(self, "show-window-controls", &controls, NULL);
+  g_object_set(child, "show-window-controls", controls, NULL);
   GrottoPanelsHost callbacks = {0};
   if (grotto_panel_host_can(GROTTO_PANEL(self), GROTTO_PANEL_HOST_TOAST)) callbacks.show_toast = forward_toast;
   if (grotto_panel_host_can(GROTTO_PANEL(self), GROTTO_PANEL_HOST_BACKUP)) callbacks.open_backup = forward_backup;
@@ -142,7 +146,7 @@ static void render(GrottoIdentityPanel *self) {
   gtk_widget_set_visible(GTK_WIDGET(self->backup_row), !m->watch_only && m->can_sign && available && grotto_panel_host_can(panel, GROTTO_PANEL_HOST_BACKUP));
   adw_action_row_set_subtitle(self->backup_row, m->backup_acknowledged ? _("Backup acknowledged") : _("Not backed up"));
   gtk_widget_set_visible(GTK_WIDGET(self->apps_row), grotto_panel_host_can(panel, GROTTO_PANEL_HOST_OPEN_SIGNER));
-  g_autofree char *count = g_strdup_printf(ngettext("%u app uses this identity", "%u apps use this identity", m->app_count), m->app_count);
+  g_autofree char *count = g_strdup_printf(g_dngettext(GETTEXT_PACKAGE, "%u app uses this identity", "%u apps use this identity", m->app_count), m->app_count);
   adw_action_row_set_subtitle(self->apps_row, count);
   gtk_widget_set_visible(GTK_WIDGET(self->default_row), !m->watch_only && m->can_sign);
   adw_action_row_set_subtitle(self->default_row, m->is_default ? _("Apps that don't choose an identity use this one") : _("Used by apps that don't choose an identity"));
@@ -199,11 +203,13 @@ static void dispose(GObject *object) {
   G_OBJECT_CLASS(grotto_identity_panel_parent_class)->dispose(object);
 }
 static void grotto_identity_panel_class_init(GrottoIdentityPanelClass *klass) {
+  bindtextdomain(GETTEXT_PACKAGE, GROTTO_PANELS_LOCALEDIR);
+  bind_textdomain_codeset(GETTEXT_PACKAGE, "UTF-8");
   G_OBJECT_CLASS(klass)->dispose = dispose;
   GtkWidgetClass *wc = GTK_WIDGET_CLASS(klass);
   gtk_widget_class_set_template_from_resource(wc, "/org/nostr/GrottoPanels/identity-panel.ui");
 #define BIND(name) gtk_widget_class_bind_template_child(wc, GrottoIdentityPanel, name)
-  BIND(navigation); BIND(content); BIND(empty); BIND(banner); BIND(avatar); BIND(name_row); BIND(key_row);
+  BIND(header); BIND(navigation); BIND(content); BIND(empty); BIND(banner); BIND(avatar); BIND(name_row); BIND(key_row);
   BIND(backup_row); BIND(apps_row); BIND(default_row); BIND(details_row); BIND(other_group); BIND(other_list);
   BIND(add_group); BIND(advanced_group); BIND(copy_key); BIND(show_qr); BIND(set_default); BIND(default_check);
   BIND(add_identity); BIND(empty_add); BIND(remove_identity);
@@ -212,6 +218,8 @@ static void grotto_identity_panel_class_init(GrottoIdentityPanelClass *klass) {
 static void grotto_identity_panel_init(GrottoIdentityPanel *self) {
   gtk_icon_theme_add_resource_path(gtk_icon_theme_get_for_display(gdk_display_get_default()), "/org/nostr/GrottoPanels/icons");
   gtk_widget_init_template(GTK_WIDGET(self));
+  g_object_bind_property(self, "show-window-controls", self->header, "show-start-title-buttons", G_BINDING_SYNC_CREATE);
+  g_object_bind_property(self, "show-window-controls", self->header, "show-end-title-buttons", G_BINDING_SYNC_CREATE);
 #define CONNECT(widget, signal, cb) g_signal_connect(self->widget, signal, G_CALLBACK(cb), self)
   CONNECT(add_identity, "clicked", add); CONNECT(empty_add, "clicked", add); CONNECT(banner, "button-clicked", backup);
   CONNECT(backup_row, "activated", backup); CONNECT(remove_identity, "clicked", remove_identity);

@@ -12,7 +12,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
     <child>
       <object class="AdwToolbarView">
         <child type="top">
-          <object class="AdwHeaderBar"></object>
+          <object class="AdwHeaderBar" id="header"></object>
         </child>
         <child type="top">
           <object class="AdwBanner" id="setup_banner">

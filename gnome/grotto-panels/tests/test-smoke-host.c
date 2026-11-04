@@ -222,6 +222,10 @@ static void identity_mounted(void) {
     GtkWidget *window = adw_window_new(); g_object_ref_sink(window);
     gtk_window_set_default_size(GTK_WINDOW(window), narrow ? 360 : 920, 640);
     GtkWidget *panel = grotto_identity_panel_new(GROTTO_PANELS_SERVICE(fake), NULL);
+    AdwHeaderBar *header = ADW_HEADER_BAR(identity_child(panel, "header"));
+    g_assert_true(adw_header_bar_get_show_end_title_buttons(header));
+    g_object_set(panel, "show-window-controls", FALSE, NULL);
+    g_assert_false(adw_header_bar_get_show_start_title_buttons(header)); g_assert_false(adw_header_bar_get_show_end_title_buttons(header));
     guint callbacks = 0; GrottoPanelsHost host = {.add_identity=without_text, .open_backup=with_text, .remove_identity=with_text, .open_in_signer=with_text};
     grotto_panel_set_host(GROTTO_PANEL(panel), &host, &callbacks, NULL);
     adw_window_set_content(ADW_WINDOW(window), panel); gtk_window_present(GTK_WINDOW(window));
@@ -239,6 +243,7 @@ static void identity_mounted(void) {
     AdwNavigationView *nav = grotto_identity_panel_get_navigation(GROTTO_IDENTITY_PANEL(panel));
     GtkWidget *pinned = GTK_WIDGET(adw_navigation_view_get_visible_page(nav));
     g_assert_true(GROTTO_IS_IDENTITY_PANEL(pinned));
+    g_assert_false(adw_header_bar_get_show_end_title_buttons(ADW_HEADER_BAR(identity_child(pinned, "header"))));
     g_assert_cmpstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(identity_child(pinned, "key_row"))), ==, a.public_key);
     g_assert_true(gtk_widget_get_visible(identity_child(pinned, "advanced_group")));
     g_assert_false(gtk_widget_get_visible(identity_child(pinned, "add_group")));

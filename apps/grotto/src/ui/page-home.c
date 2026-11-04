@@ -25,9 +25,10 @@ static void accounts_changed(AccountsStore *store, AccountsChangeType change, co
   (void)store; (void)change; (void)id; identities(data);
 }
 static void identity_clicked(GtkButton *button, gpointer data) {
-  GrottoPageHome *self = data;
-  g_autofree gchar *id = g_strdup(g_object_get_data(G_OBJECT(button), "identity"));
-  page_identity_detail_present_identity(GTK_WIDGET(self), id);
+  (void)button; page_identity_detail_present(GTK_WIDGET(data));
+}
+static void identity_row_activated(AdwActionRow *row, gpointer data) {
+  (void)row; page_identity_detail_present(GTK_WIDGET(data));
 }
 static void add_identity(GtkButton *button, gpointer data) {
   (void)button; GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(data));
@@ -177,6 +178,7 @@ static void grotto_page_home_class_init(GrottoPageHomeClass *klass) {
 static void grotto_page_home_init(GrottoPageHome *self) {
   gtk_widget_init_template(GTK_WIDGET(self));
   adw_preferences_row_set_use_markup(ADW_PREFERENCES_ROW(self->identity_card), FALSE);
+  g_signal_connect(self->identity_card, "activated", G_CALLBACK(identity_row_activated), self);
   g_signal_connect(self->copy_key, "clicked", G_CALLBACK(copy_key), self);
   g_signal_connect(self->show_qr, "clicked", G_CALLBACK(show_qr), self);
   g_signal_connect(self, "map", G_CALLBACK(mapped), NULL);

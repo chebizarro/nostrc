@@ -9,12 +9,14 @@
 #include "../secure-mem.h"
 #include "../secret-variant.h"
 #include "../secret-clipboard.h"
+#include "../session-manager.h"
 #include <string.h>
 #define CONTROL_PATH "/org/nostr/signer/grotto"
 #define CONTROL_IFACE "org.nostr.Grotto.Control1"
 typedef enum { CAPABILITIES, SEED, ENCRYPTED_FILE, ENCRYPTED_QR, RAW, ROTATE, MIGRATION } DetailOperation;
 struct _GrottoIdentityDetail {
   AdwNavigationPage parent_instance;
+  AdwHeaderBar *header;
   AdwActionRow *public_key, *phrase_row, *save_row, *qr_row, *raw_row, *test_row, *replace_row, *announcement_row;
   AdwPreferencesGroup *encrypted_group, *advanced_group;
   AdwBanner *error_banner, *setup_banner;
@@ -26,6 +28,9 @@ struct _GrottoIdentityDetail {
   GtkButton *btn_backup_done;
   GnSecureEntry *passphrase;
   gchar *identity, *phrase;
+  GrottoSecretClipboardLease *clipboard_lease;
+  GnSessionManager *session;
+  gulong locked_handler, unlocked_handler;
   gboolean busy, ready, disposed, backup_available;
   gboolean seed_supported, export_supported, raw_supported;
   guint generation;
@@ -53,12 +58,13 @@ typedef struct { GrottoIdentityDetail *self; guint generation; DetailOperation o
 static DetailCtx *context(GrottoIdentityDetail *self, DetailOperation operation) {
   DetailCtx *ctx = g_new0(DetailCtx, 1); ctx->self = g_object_ref(self); ctx->generation = self->generation; ctx->operation = operation; return ctx;
 }
-static gboolean current(DetailCtx *ctx) { return !ctx->self->disposed && ctx->generation == ctx->self->generation; }
+static gboolean current(DetailCtx *ctx) { return !ctx->self->disposed && ctx->generation == ctx->self->generation && !gn_session_manager_is_locked(ctx->self->session); }
 static void context_free(DetailCtx *ctx) { g_object_unref(ctx->self); g_free(ctx); }
 static void call(GrottoIdentityDetail *self, DetailOperation operation, const gchar *method, GVariant *args);
 static void choose_destination(GrottoIdentityDetail *self, DetailOperation operation);
 static void action(GrottoIdentityDetail *self, DetailOperation operation);
 static void clear_dialog(GrottoIdentityDetail *self) {
+  g_clear_pointer(&self->clipboard_lease, grotto_secret_clipboard_lease_free);
   if (self->seed_words) gn_secure_phrase_set_text(self->seed_words, "");
   if (self->passphrase) gn_secure_entry_clear(self->passphrase);
   g_clear_pointer(&self->phrase, wipe);
@@ -74,10 +80,29 @@ static void dialog_closed(AdwDialog *dialog, gpointer data) {
   clear_dialog(self); self->busy = FALSE;
   adw_dialog_set_child(dialog, NULL); g_clear_object(&self->dialog); update(self, NULL);
 }
+static gboolean finish_early_close(GtkWidget *widget, GdkFrameClock *clock, gpointer data) {
+  (void)clock; guint *frames = data;
+  /* libadwaita 1.5 opens a newly mapped sheet on its second frame. A close
+   * before that is otherwise overwritten by the opening tick (adw-dialog.c,
+   * map_tick_cb). Content is already detached; finish closing after that tick. */
+  if (++*frames < 3) return G_SOURCE_CONTINUE;
+  adw_dialog_force_close(ADW_DIALOG(widget)); return G_SOURCE_REMOVE;
+}
+static void retire_dialog(AdwDialog *dialog) {
+  adw_dialog_set_child(dialog, NULL); /* no secret or stale action survives even an early close */
+  adw_dialog_force_close(dialog);
+  if (gtk_widget_get_parent(GTK_WIDGET(dialog)))
+    gtk_widget_add_tick_callback(GTK_WIDGET(dialog), finish_early_close, g_new0(guint, 1), g_free);
+  g_object_unref(dialog);
+}
 static void close_dialog(GrottoIdentityDetail *self) {
-  if (self->warning) { adw_dialog_force_close(self->warning); g_clear_object(&self->warning); }
+  if (self->dialog || self->warning) {
+    self->generation++; g_cancellable_cancel(self->cancel);
+    g_clear_object(&self->cancel); self->cancel = g_cancellable_new(); self->busy = FALSE;
+  }
   clear_dialog(self);
-  if (self->dialog) { adw_dialog_force_close(self->dialog); g_clear_object(&self->dialog); }
+  if (self->warning) retire_dialog(g_steal_pointer(&self->warning));
+  if (self->dialog) retire_dialog(g_steal_pointer(&self->dialog));
 }
 static void show_toast(GrottoIdentityDetail *self, const char *text) {
   GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(self));
@@ -160,7 +185,8 @@ static void reply(GObject *source, GAsyncResult *result, gpointer data) {
       self->phrase = g_strdup(text);
       self->backup_available = gn_secure_phrase_set_text(self->seed_words, text);
     } else if (ctx->operation == RAW) {
-      grotto_secret_clipboard_copy(gtk_widget_get_clipboard(GTK_WIDGET(self)), text);
+      g_clear_pointer(&self->clipboard_lease, grotto_secret_clipboard_lease_free);
+      self->clipboard_lease = grotto_secret_clipboard_copy(gtk_widget_get_clipboard(GTK_WIDGET(self)), text);
       show_toast(self, _("Secret key copied. Clipboard managers may keep it"));
     } else if (ctx->operation == ENCRYPTED_QR) {
       close_dialog(self);
@@ -180,7 +206,7 @@ static void reply(GObject *source, GAsyncResult *result, gpointer data) {
   update(self, NULL); context_free(ctx);
 }
 static void call(GrottoIdentityDetail *self, DetailOperation operation, const gchar *method, GVariant *args) {
-  if (!self->bus || !self->owner || self->busy || self->disposed) { if (args) { g_variant_ref_sink(args); g_variant_unref(args); } return; }
+  if (!self->bus || !self->owner || self->busy || self->disposed || gn_session_manager_is_locked(self->session)) { if (args) { g_variant_ref_sink(args); g_variant_unref(args); } return; }
   self->busy = TRUE; self->retry_operation = operation;
   adw_banner_set_revealed(self->error_banner, FALSE); update(self, NULL);
   g_dbus_connection_call(self->bus, self->owner, CONTROL_PATH, CONTROL_IFACE, method, args, NULL,
@@ -237,8 +263,10 @@ static void backup_done(GtkButton *button, gpointer data) {
 static void checked(GtkCheckButton *button, gpointer data) { (void)button; update(data, NULL); }
 static void copy_phrase_response(AdwAlertDialog *dialog, const char *response, gpointer data) {
   (void)dialog; GrottoIdentityDetail *self = data;
-  if (!strcmp(response, "copy") && self->phrase && self->ready)
-    grotto_secret_clipboard_copy(gtk_widget_get_clipboard(GTK_WIDGET(self)), self->phrase);
+  if (!strcmp(response, "copy") && self->phrase && self->ready) {
+    g_clear_pointer(&self->clipboard_lease, grotto_secret_clipboard_lease_free);
+    self->clipboard_lease = grotto_secret_clipboard_copy(gtk_widget_get_clipboard(GTK_WIDGET(self)), self->phrase);
+  }
 }
 static void copy_phrase(GtkButton *button, gpointer data) {
   (void)button; GrottoIdentityDetail *self = data;
@@ -286,7 +314,16 @@ static void secret_dialog(GrottoIdentityDetail *self, DetailOperation operation)
     self->passphrase = GN_SECURE_ENTRY(gn_secure_entry_new()); gn_secure_entry_set_show_strength_indicator(self->passphrase, FALSE);
     gtk_widget_set_name(GTK_WIDGET(self->passphrase), "backup-passphrase");
     gtk_accessible_update_property(GTK_ACCESSIBLE(self->passphrase), GTK_ACCESSIBLE_PROPERTY_LABEL, _("Backup Passphrase"), -1);
-    adw_preferences_group_add(ADW_PREFERENCES_GROUP(group), GTK_WIDGET(self->passphrase));
+    GtkWidget *passphrase_row = adw_preferences_row_new();
+    adw_preferences_row_set_title(ADW_PREFERENCES_ROW(passphrase_row), _("Backup Passphrase"));
+    GtkWidget *passphrase_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+    gtk_widget_set_margin_start(passphrase_box, 12); gtk_widget_set_margin_end(passphrase_box, 12);
+    gtk_widget_set_margin_top(passphrase_box, 12); gtk_widget_set_margin_bottom(passphrase_box, 12);
+    GtkWidget *passphrase_label = gtk_label_new(_("Backup Passphrase"));
+    gtk_label_set_xalign(GTK_LABEL(passphrase_label), 0); gtk_label_set_wrap(GTK_LABEL(passphrase_label), TRUE);
+    gtk_box_append(GTK_BOX(passphrase_box), passphrase_label); gtk_box_append(GTK_BOX(passphrase_box), GTK_WIDGET(self->passphrase));
+    gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(passphrase_row), passphrase_box);
+    adw_preferences_group_add(ADW_PREFERENCES_GROUP(group), passphrase_row);
     GtkWidget *commit = gtk_button_new_with_label(operation == ENCRYPTED_QR ? _("Show") : _("Save…"));
     g_object_set_data(G_OBJECT(commit), "qr", GINT_TO_POINTER(operation == ENCRYPTED_QR));
     g_signal_connect(commit, "clicked", G_CALLBACK(export_commit), self);
@@ -352,6 +389,18 @@ static void retry(AdwBanner *banner, gpointer data) {
   if (self->retry_operation == CAPABILITIES) call(self, CAPABILITIES, "GetStatus", NULL);
   else action(self, self->retry_operation);
 }
+static void session_locked(GnSessionManager *session, GnLockReason reason, gpointer data) {
+  (void)session; (void)reason; GrottoIdentityDetail *self = data;
+  if (self->disposed) return;
+  self->generation++; self->ready = self->busy = FALSE;
+  g_cancellable_cancel(self->cancel); close_dialog(self);
+  g_clear_object(&self->cancel); self->cancel = g_cancellable_new();
+  update(self, _("Management is locked"));
+}
+static void session_unlocked(GnSessionManager *session, gpointer data) {
+  (void)session; GrottoIdentityDetail *self = data;
+  if (!self->disposed && gtk_widget_get_mapped(GTK_WIDGET(self))) call(self, CAPABILITIES, "GetStatus", NULL);
+}
 static void owner_appeared(GDBusConnection *bus, const char *name, const char *owner, gpointer data) {
   (void)name; GrottoIdentityDetail *self = data; g_set_object(&self->bus, bus);
   g_free(self->owner); self->owner = g_strdup(owner); call(self, CAPABILITIES, "GetStatus", NULL);
@@ -373,6 +422,9 @@ static void unmap(GtkWidget *widget) {
 }
 static void map(GtkWidget *widget) {
   GrottoIdentityDetail *self = GROTTO_IDENTITY_DETAIL(widget);
+  gboolean controls = !SIGNER_IS_WINDOW(gtk_widget_get_root(widget));
+  adw_header_bar_set_show_start_title_buttons(self->header, controls);
+  adw_header_bar_set_show_end_title_buttons(self->header, controls);
   GTK_WIDGET_CLASS(grotto_identity_detail_parent_class)->map(widget);
   if (g_cancellable_is_cancelled(self->cancel)) { g_clear_object(&self->cancel); self->cancel = g_cancellable_new(); }
   self->owner_watch = g_bus_watch_name(G_BUS_TYPE_SESSION, "org.nostr.Signer", G_BUS_NAME_WATCHER_FLAGS_AUTO_START, owner_appeared, owner_vanished, self, NULL);
@@ -380,6 +432,11 @@ static void map(GtkWidget *widget) {
 static void dispose(GObject *object) {
   GrottoIdentityDetail *self = GROTTO_IDENTITY_DETAIL(object);
   self->disposed = TRUE; self->generation++; if (self->cancel) g_cancellable_cancel(self->cancel); close_dialog(self);
+  if (self->session) {
+    g_signal_handler_disconnect(self->session, self->locked_handler);
+    g_signal_handler_disconnect(self->session, self->unlocked_handler);
+    g_clear_object(&self->session);
+  }
   if (self->owner_watch) { g_bus_unwatch_name(self->owner_watch); self->owner_watch = 0; }
   g_clear_object(&self->cancel); g_clear_object(&self->bus); g_clear_object(&self->destination);
   g_clear_pointer(&self->identity, g_free); g_clear_pointer(&self->owner, g_free);
@@ -391,12 +448,15 @@ static void grotto_identity_detail_class_init(GrottoIdentityDetailClass *klass) 
   GtkWidgetClass *wc = GTK_WIDGET_CLASS(klass); wc->unmap = unmap; wc->map = map;
   gtk_widget_class_set_template_from_resource(wc, APP_RESOURCE_PATH "/ui/page-identity-detail.ui");
 #define BIND(name) gtk_widget_class_bind_template_child(wc, GrottoIdentityDetail, name)
-  BIND(public_key); BIND(phrase_row); BIND(save_row); BIND(qr_row); BIND(raw_row); BIND(test_row); BIND(replace_row); BIND(announcement_row);
+  BIND(header); BIND(public_key); BIND(phrase_row); BIND(save_row); BIND(qr_row); BIND(raw_row); BIND(test_row); BIND(replace_row); BIND(announcement_row);
   BIND(encrypted_group); BIND(advanced_group); BIND(error_banner); BIND(setup_banner);
 #undef BIND
 }
 static void grotto_identity_detail_init(GrottoIdentityDetail *self) {
   gtk_widget_init_template(GTK_WIDGET(self)); self->cancel = g_cancellable_new();
+  self->session = g_object_ref(gn_session_manager_get_default());
+  self->locked_handler = g_signal_connect(self->session, "session-locked", G_CALLBACK(session_locked), self);
+  self->unlocked_handler = g_signal_connect(self->session, "session-unlocked", G_CALLBACK(session_unlocked), self);
   AdwActionRow *rows[] = {self->phrase_row, self->save_row, self->qr_row, self->raw_row, self->test_row, self->replace_row, self->announcement_row};
   for (guint i = 0; i < G_N_ELEMENTS(rows); i++) g_signal_connect(rows[i], "activated", G_CALLBACK(row_activated), self);
   g_signal_connect(self->error_banner, "button-clicked", G_CALLBACK(retry), self);

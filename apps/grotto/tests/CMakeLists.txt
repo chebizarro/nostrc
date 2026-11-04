@@ -590,6 +590,10 @@ target_compile_options(test-home-dashboard PRIVATE -Wall -Wextra -Werror)
 add_test(NAME signer/home-model COMMAND test-home-dashboard)
 set_tests_properties(signer/home-model PROPERTIES TIMEOUT 90 LABELS "signer;unit;home" ENVIRONMENT "GSETTINGS_BACKEND=memory")
 add_executable(test-ui-layout test-ui-layout.c ${APP_GRESOURCE_C})
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  find_program(GROTTO_TEST_XDOTOOL xdotool REQUIRED)
+  target_compile_definitions(test-ui-layout PRIVATE GROTTO_TEST_XDOTOOL="${GROTTO_TEST_XDOTOOL}")
+endif()
 target_include_directories(test-ui-layout PRIVATE ${SIGNER_INCLUDE_DIRS} ${CMAKE_SOURCE_DIR})
 target_link_libraries(test-ui-layout PRIVATE grotto_app_test_core nostrc-test-bus)
 target_compile_definitions(test-ui-layout PRIVATE
@@ -602,7 +606,12 @@ add_custom_command(OUTPUT ${_g10_spanish_mo}
   COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/test-locales/es/LC_MESSAGES"
   COMMAND ${G10_MSGFMT} --check --output-file=${_g10_spanish_mo} ${CMAKE_CURRENT_SOURCE_DIR}/../po/es.po
   DEPENDS ../po/es.po VERBATIM)
-add_custom_target(grotto_test_locales DEPENDS ${_g10_spanish_mo})
+set(_g10_panel_spanish_mo "${CMAKE_CURRENT_BINARY_DIR}/test-locales/es/LC_MESSAGES/grotto-panels.mo")
+add_custom_command(OUTPUT ${_g10_panel_spanish_mo}
+  COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/test-locales/es/LC_MESSAGES"
+  COMMAND ${G10_MSGFMT} --check --output-file=${_g10_panel_spanish_mo} ${CMAKE_SOURCE_DIR}/gnome/grotto-panels/po/es.po
+  DEPENDS ${CMAKE_SOURCE_DIR}/gnome/grotto-panels/po/es.po VERBATIM)
+add_custom_target(grotto_test_locales DEPENDS ${_g10_spanish_mo} ${_g10_panel_spanish_mo})
 add_dependencies(test-ui-layout grotto_test_locales)
 add_dependencies(test-ui-layout grotto-schemas grotto_resources)
 add_test(NAME signer/ui-layout COMMAND test-ui-layout)

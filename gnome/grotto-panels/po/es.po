@@ -1,0 +1,156 @@
+# Spanish translations for Grotto Panels.
+# SPDX-License-Identifier: MIT
+msgid ""
+msgstr ""
+"Project-Id-Version: grotto-panels 0.1.0\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-11-04 07:43-0800\n"
+"PO-Revision-Date: 2026-11-04 00:00+0000\n"
+"Last-Translator: Grotto contributors\n"
+"Language-Team: Spanish\n"
+"Language: es\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+#: data/identity-panel.blp:5 data/identity-panel.blp:9
+#: src/grotto-identity-panel.c:167
+msgid "Identity"
+msgstr "Identidad"
+
+#: data/identity-panel.blp:12 src/grotto-identity-panel.c:129
+msgid "This identity isn't backed up"
+msgstr "Todavía no has hecho una copia de seguridad de esta identidad"
+
+#: data/identity-panel.blp:12 src/grotto-identity-panel.c:131
+msgid "Back Up…"
+msgstr "Crear copia de seguridad…"
+
+#: data/identity-panel.blp:15 src/grotto-identity-panel.c:126
+msgid "No Identity Yet"
+msgstr "Aún no hay ninguna identidad"
+
+#: data/identity-panel.blp:16 src/grotto-identity-panel.c:127
+msgid "Create or import an identity to start signing"
+msgstr "Crea o importa una identidad para empezar a firmar"
+
+#: data/identity-panel.blp:18 data/identity-panel.blp:42
+msgid "_Add Identity…"
+msgstr "_Añadir identidad…"
+
+#: data/identity-panel.blp:23
+msgid "The name is a local label, not a public profile"
+msgstr "El nombre es una etiqueta local; no se publica en tu perfil"
+
+#: data/identity-panel.blp:24
+msgid "_Name"
+msgstr "_Nombre"
+
+#: data/identity-panel.blp:26 src/grotto-identity-panel.c:177
+msgid "Public Key"
+msgstr "Clave pública"
+
+#: data/identity-panel.blp:27
+msgid "Copy Public Key"
+msgstr "Copiar clave pública"
+
+#: data/identity-panel.blp:28
+msgid "Show QR Code"
+msgstr "Mostrar código QR"
+
+#: data/identity-panel.blp:32
+msgid "_Backup"
+msgstr "_Copia de seguridad"
+
+#: data/identity-panel.blp:33
+msgid "Connected Apps"
+msgstr "Aplicaciones conectadas"
+
+#: data/identity-panel.blp:35
+msgid "Default for Older Apps"
+msgstr "Identidad predeterminada para aplicaciones antiguas"
+
+#: data/identity-panel.blp:36
+msgid "Set as Default"
+msgstr "Usar como predeterminada"
+
+#: data/identity-panel.blp:39
+msgid "Identity Details"
+msgstr "Detalles de la identidad"
+
+#: data/identity-panel.blp:41
+msgid "Other Identities"
+msgstr "Otras identidades"
+
+#: data/identity-panel.blp:43
+msgid "Advanced"
+msgstr "Avanzado"
+
+#: data/identity-panel.blp:43
+msgid "_Remove Identity…"
+msgstr "_Eliminar identidad…"
+
+#: src/grotto-identity-panel.c:91
+msgid "Identity updated"
+msgstr "Identidad actualizada"
+
+#: src/grotto-identity-panel.c:91
+msgid "Identity wasn't updated. Try again"
+msgstr "No se ha actualizado la identidad. Vuelve a intentarlo"
+
+#: src/grotto-identity-panel.c:126
+msgid "Signer Unavailable"
+msgstr "El firmante no está disponible"
+
+#: src/grotto-identity-panel.c:126
+msgid "Identity Unavailable"
+msgstr "La identidad no está disponible"
+
+#: src/grotto-identity-panel.c:127
+msgid "Open Grotto and try again"
+msgstr "Abre Grotto y vuelve a intentarlo"
+
+#: src/grotto-identity-panel.c:127
+msgid "This identity is no longer on this device"
+msgstr "Esta identidad ya no está en este dispositivo"
+
+#: src/grotto-identity-panel.c:129
+msgid "Signer unavailable"
+msgstr "El firmante no está disponible"
+
+#: src/grotto-identity-panel.c:137
+#, c-format
+msgid "Identity %.12s…%.6s"
+msgstr "Identidad %.12s…%.6s"
+
+#: src/grotto-identity-panel.c:147
+msgid "Backup acknowledged"
+msgstr "Copia de seguridad confirmada"
+
+#: src/grotto-identity-panel.c:147
+msgid "Not backed up"
+msgstr "Sin copia de seguridad"
+
+#: src/grotto-identity-panel.c:149
+#, c-format
+msgid "%u app uses this identity"
+msgid_plural "%u apps use this identity"
+msgstr[0] "%u aplicación utiliza esta identidad"
+msgstr[1] "%u aplicaciones utilizan esta identidad"
+
+#: src/grotto-identity-panel.c:152
+msgid "Apps that don't choose an identity use this one"
+msgstr "Las aplicaciones que no eligen una identidad utilizan esta"
+
+#: src/grotto-identity-panel.c:152
+msgid "Used by apps that don't choose an identity"
+msgstr "La utilizan las aplicaciones que no eligen una identidad"
+
+#: src/grotto-identity-panel.c:168
+msgid "Watch only — cannot sign"
+msgstr "Solo observación: no puede firmar"
+
+#: src/grotto-identity-panel.c:177
+msgid "Public Key (Watch Only — Cannot Sign)"
+msgstr "Clave pública (solo observación: no puede firmar)"

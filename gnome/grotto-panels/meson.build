@@ -3,6 +3,8 @@ project('grotto-panels', 'c', version: '0.1.0', license: 'MIT',
   meson_version: '>=0.61', default_options: ['c_std=c11', 'warning_level=2'])
 gtk_dep = dependency('gtk4', version: '>=4.14')
 adw_dep = dependency('libadwaita-1', version: '>=1.5')
+intl_dep = dependency('intl', required: false)
+subdir('po')
 pins = ['-DGDK_VERSION_MIN_REQUIRED=GDK_VERSION_4_14', '-DGDK_VERSION_MAX_ALLOWED=GDK_VERSION_4_14',
   '-DGTK_VERSION_MIN_REQUIRED=GDK_VERSION_4_14', '-DGTK_VERSION_MAX_ALLOWED=GDK_VERSION_4_14',
   '-DADW_VERSION_MIN_REQUIRED=ADW_VERSION_1_5', '-DADW_VERSION_MAX_ALLOWED=ADW_VERSION_1_5']
@@ -18,8 +20,9 @@ configure_file(output: 'grotto-panels-version.h', configuration: version_data,
 inc = include_directories('include/grotto-panels-0', '.')
 resources = import('gnome').compile_resources('grotto-panels-resources', 'data/grotto-panels.gresource.xml', source_dir: 'data', export: false)
 panels = shared_library('grotto-panels-0', resources, 'src/grotto-identity-panel.c', 'src/grotto-panel.c', 'src/grotto-panels-service.c', 'src/grotto-panels-validation.c',
-  include_directories: inc, dependencies: [gtk_dep, adw_dep],
-  c_args: ['-DGROTTO_PANELS_COMPILATION', '-DGETTEXT_PACKAGE="grotto-panels"'], gnu_symbol_visibility: 'hidden',
+  include_directories: inc, dependencies: [gtk_dep, adw_dep, intl_dep],
+  c_args: ['-DGROTTO_PANELS_COMPILATION', '-DGETTEXT_PACKAGE="grotto-panels"',
+    '-DGROTTO_PANELS_LOCALEDIR="@0@"'.format(get_option('prefix') / get_option('localedir'))], gnu_symbol_visibility: 'hidden',
   version: meson.project_version(), soversion: '0', install: true)
 install_headers('include/grotto-panels-0/grotto-panels.h', subdir: 'grotto-panels-0')
 import('pkgconfig').generate(panels, filebase: 'grotto-panels-0', name: 'Grotto Panels',

@@ -8,6 +8,7 @@ usr/share/dbus-1/services/org.nostr.Signer.service
 usr/share/dbus-1/interfaces/org.nostr.Grotto.Control1.xml
 usr/share/glib-2.0/schemas/org.nostr.Grotto.gschema.xml
 usr/share/metainfo/org.nostr.Grotto.metainfo.xml
+usr/share/locale/*/LC_MESSAGES/grotto.mo
 usr/share/systemd/user/grotto-daemon.service
 usr/share/doc/grotto/examples/*
 usr/share/grotto/org.nostr.Grotto-autostart.desktop

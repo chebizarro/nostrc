@@ -220,7 +220,8 @@ target_sources(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/gnome/common/gn-ses
 target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/gnome/common)
 target_compile_features(${APP_SIGNER_BIN} PRIVATE c_std_11)
 target_compile_definitions(${APP_SIGNER_BIN} PRIVATE 
-  APP_ID="${APP_SIGNER_FLATPAK_ID}" APP_NAME="${APP_SIGNER_NAME}" APP_RESOURCE_PATH="/org/gnostr/signer")
+  APP_ID="${APP_SIGNER_FLATPAK_ID}" APP_NAME="${APP_SIGNER_NAME}" APP_RESOURCE_PATH="/org/gnostr/signer"
+  LOCALEDIR="${CMAKE_INSTALL_FULL_LOCALEDIR}")
 # NIP-55L core headers for owner/key APIs used by the UI
 target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/nips/nip55l/include)
 # NIP-46 core headers for bunker service
@@ -631,11 +632,29 @@ elseif (BUILD_NATIVE_HOST AND WIN32)
 endif()
 
 # ==============================================================================
+# Installed application gettext catalogues (also used by trusted Backup).
+# ==============================================================================
+find_program(GROTTO_MSGFMT msgfmt REQUIRED)
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/po/LINGUAS" _grotto_languages REGEX "^[a-zA-Z_@]+$")
+foreach(_lang IN LISTS _grotto_languages)
+  set(_mo "${CMAKE_CURRENT_BINARY_DIR}/po/${_lang}/LC_MESSAGES/grotto.mo")
+  add_custom_command(OUTPUT "${_mo}"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/po/${_lang}/LC_MESSAGES"
+    COMMAND ${GROTTO_MSGFMT} --check --output-file=${_mo} "${CMAKE_CURRENT_SOURCE_DIR}/po/${_lang}.po"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/po/${_lang}.po" VERBATIM)
+  list(APPEND _grotto_catalogues "${_mo}")
+  install(FILES "${_mo}" DESTINATION "${CMAKE_INSTALL_LOCALEDIR}/${_lang}/LC_MESSAGES" COMPONENT grotto-translations)
+endforeach()
+add_custom_target(grotto-translations ALL DEPENDS ${_grotto_catalogues})
+add_dependencies(${APP_SIGNER_BIN} grotto-translations)
+
+# ==============================================================================
 # Unit Tests
 # ==============================================================================
 # Include test suite (uses CTest/GLib testing framework)
 # Follows BUILD_TESTING: release configures (scripts/ci/configure-release.sh)
-# must not need the tests' tools (msgfmt, the test bus).
+# must not need test-only tools (the private test bus). msgfmt also builds the
+# installed runtime translations above.
 option(BUILD_SIGNER_TESTS "Build grotto unit tests" ${BUILD_TESTING})
 if (BUILD_SIGNER_TESTS)
   add_subdirectory(tests)

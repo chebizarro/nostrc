@@ -75,6 +75,8 @@ if [ '%{_datadir}/systemd/user' != '%{_userunitdir}' ]; then
     rm %{buildroot}%{_datadir}/systemd/user/grotto-daemon.service
 fi
 
+%find_lang grotto
+
 %check
 desktop-file-validate %{buildroot}%{_datadir}/applications/%{app_id}.desktop
 appstreamcli validate --no-net %{buildroot}%{_datadir}/metainfo/%{app_id}.metainfo.xml
@@ -86,7 +88,7 @@ appstreamcli validate --no-net %{buildroot}%{_datadir}/metainfo/%{app_id}.metain
 %postun
 %{_bindir}/glib-compile-schemas %{_datadir}/glib-2.0/schemas
 
-%files
+%files -f grotto.lang
 %license LICENSE
 %doc apps/grotto/README.md apps/grotto/DAEMON_DEPLOYMENT.md
 %{_bindir}/grotto

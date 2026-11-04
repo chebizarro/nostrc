@@ -9,9 +9,10 @@ typedef struct {
   GDestroyNotify host_destroy;
   gulong capabilities_id, availability_id;
   gboolean disposing;
+  gboolean show_window_controls;
 } GrottoPanelPrivate;
 G_DEFINE_ABSTRACT_TYPE_WITH_PRIVATE(GrottoPanel, grotto_panel, ADW_TYPE_NAVIGATION_PAGE)
-enum { PROP_0, PROP_SERVICE, N_PROPS };
+enum { PROP_0, PROP_SERVICE, PROP_SHOW_WINDOW_CONTROLS, N_PROPS };
 static GParamSpec *properties[N_PROPS];
 static guint changed_signal;
 
@@ -102,11 +103,15 @@ gboolean grotto_panel_host_invoke(GrottoPanel *self, GrottoPanelHostAction actio
   return TRUE;
 }
 static void set_property(GObject *object, guint id, const GValue *value, GParamSpec *pspec) {
+  GrottoPanelPrivate *p = grotto_panel_get_instance_private(GROTTO_PANEL(object));
   if (id == PROP_SERVICE) grotto_panel_set_service(GROTTO_PANEL(object), g_value_get_object(value));
+  else if (id == PROP_SHOW_WINDOW_CONTROLS) p->show_window_controls = g_value_get_boolean(value);
   else G_OBJECT_WARN_INVALID_PROPERTY_ID(object, id, pspec);
 }
 static void get_property(GObject *object, guint id, GValue *value, GParamSpec *pspec) {
+  GrottoPanelPrivate *p = grotto_panel_get_instance_private(GROTTO_PANEL(object));
   if (id == PROP_SERVICE) g_value_set_object(value, grotto_panel_get_service(GROTTO_PANEL(object)));
+  else if (id == PROP_SHOW_WINDOW_CONTROLS) g_value_set_boolean(value, p->show_window_controls);
   else G_OBJECT_WARN_INVALID_PROPERTY_ID(object, id, pspec);
 }
 static void dispose(GObject *object) {
@@ -130,6 +135,8 @@ static void grotto_panel_class_init(GrottoPanelClass *klass) {
   object->dispose = dispose;
   properties[PROP_SERVICE] = g_param_spec_object("service", NULL, NULL, GROTTO_TYPE_PANELS_SERVICE,
     G_PARAM_READWRITE | G_PARAM_EXPLICIT_NOTIFY | G_PARAM_STATIC_STRINGS);
+  properties[PROP_SHOW_WINDOW_CONTROLS] = g_param_spec_boolean("show-window-controls", NULL, NULL, TRUE,
+    G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
   g_object_class_install_properties(object, N_PROPS, properties);
   changed_signal = g_signal_new("service-changed", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST,
     0, NULL, NULL, NULL, G_TYPE_NONE, 0);
@@ -137,6 +144,7 @@ static void grotto_panel_class_init(GrottoPanelClass *klass) {
 static void grotto_panel_init(GrottoPanel *self) {
   GrottoPanelPrivate *p = grotto_panel_get_instance_private(self);
   p->cancellable = g_cancellable_new();
+  p->show_window_controls = TRUE;
 }
 GtkWidget *grotto_panel_create_metadata_row(GrottoPanelsItem *item) {
   const GrottoPanelsMetadata *m = grotto_panels_item_get_metadata(item);

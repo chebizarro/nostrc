@@ -1,0 +1,160 @@
+# SOME DESCRIPTIVE TITLE.
+# Copyright (C) YEAR THE PACKAGE'S COPYRIGHT HOLDER
+# This file is distributed under the same license as the grotto-panels package.
+# FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: grotto-panels 0.1.0\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-11-04 07:43-0800\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"Language: \n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=INTEGER; plural=EXPRESSION;\n"
+
+#: data/identity-panel.blp:5 data/identity-panel.blp:9
+#: src/grotto-identity-panel.c:167
+msgid "Identity"
+msgstr ""
+
+#: data/identity-panel.blp:12 src/grotto-identity-panel.c:129
+msgid "This identity isn't backed up"
+msgstr ""
+
+#: data/identity-panel.blp:12 src/grotto-identity-panel.c:131
+msgid "Back Up…"
+msgstr ""
+
+#: data/identity-panel.blp:15 src/grotto-identity-panel.c:126
+msgid "No Identity Yet"
+msgstr ""
+
+#: data/identity-panel.blp:16 src/grotto-identity-panel.c:127
+msgid "Create or import an identity to start signing"
+msgstr ""
+
+#: data/identity-panel.blp:18 data/identity-panel.blp:42
+msgid "_Add Identity…"
+msgstr ""
+
+#: data/identity-panel.blp:23
+msgid "The name is a local label, not a public profile"
+msgstr ""
+
+#: data/identity-panel.blp:24
+msgid "_Name"
+msgstr ""
+
+#: data/identity-panel.blp:26 src/grotto-identity-panel.c:177
+msgid "Public Key"
+msgstr ""
+
+#: data/identity-panel.blp:27
+msgid "Copy Public Key"
+msgstr ""
+
+#: data/identity-panel.blp:28
+msgid "Show QR Code"
+msgstr ""
+
+#: data/identity-panel.blp:32
+msgid "_Backup"
+msgstr ""
+
+#: data/identity-panel.blp:33
+msgid "Connected Apps"
+msgstr ""
+
+#: data/identity-panel.blp:35
+msgid "Default for Older Apps"
+msgstr ""
+
+#: data/identity-panel.blp:36
+msgid "Set as Default"
+msgstr ""
+
+#: data/identity-panel.blp:39
+msgid "Identity Details"
+msgstr ""
+
+#: data/identity-panel.blp:41
+msgid "Other Identities"
+msgstr ""
+
+#: data/identity-panel.blp:43
+msgid "Advanced"
+msgstr ""
+
+#: data/identity-panel.blp:43
+msgid "_Remove Identity…"
+msgstr ""
+
+#: src/grotto-identity-panel.c:91
+msgid "Identity updated"
+msgstr ""
+
+#: src/grotto-identity-panel.c:91
+msgid "Identity wasn't updated. Try again"
+msgstr ""
+
+#: src/grotto-identity-panel.c:126
+msgid "Signer Unavailable"
+msgstr ""
+
+#: src/grotto-identity-panel.c:126
+msgid "Identity Unavailable"
+msgstr ""
+
+#: src/grotto-identity-panel.c:127
+msgid "Open Grotto and try again"
+msgstr ""
+
+#: src/grotto-identity-panel.c:127
+msgid "This identity is no longer on this device"
+msgstr ""
+
+#: src/grotto-identity-panel.c:129
+msgid "Signer unavailable"
+msgstr ""
+
+#: src/grotto-identity-panel.c:137
+#, c-format
+msgid "Identity %.12s…%.6s"
+msgstr ""
+
+#: src/grotto-identity-panel.c:147
+msgid "Backup acknowledged"
+msgstr ""
+
+#: src/grotto-identity-panel.c:147
+msgid "Not backed up"
+msgstr ""
+
+#: src/grotto-identity-panel.c:149
+#, c-format
+msgid "%u app uses this identity"
+msgid_plural "%u apps use this identity"
+msgstr[0] ""
+msgstr[1] ""
+
+#: src/grotto-identity-panel.c:152
+msgid "Apps that don't choose an identity use this one"
+msgstr ""
+
+#: src/grotto-identity-panel.c:152
+msgid "Used by apps that don't choose an identity"
+msgstr ""
+
+#: src/grotto-identity-panel.c:168
+msgid "Watch only — cannot sign"
+msgstr ""
+
+#: src/grotto-identity-panel.c:177
+msgid "Public Key (Watch Only — Cannot Sign)"
+msgstr ""

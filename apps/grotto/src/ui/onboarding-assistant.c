@@ -9,6 +9,7 @@
 #include "../secret_store.h"
 #include "../secure-mem.h"
 #include "../secret-clipboard.h"
+#include "../session-manager.h"
 #include "widgets/gn-secure-entry.h"
 #include <gio/gio.h>
 #include <string.h>
@@ -37,6 +38,7 @@ struct _OnboardingAssistant {
   gboolean backup_presented;
   GCancellable *cancel;
   gchar *identity, *mnemonic, *nsec;
+  GrottoSecretClipboardLease *clipboard_lease;
   OnboardingAssistantFinishedCb on_finished;
   gpointer on_finished_data;
 };
@@ -51,7 +53,12 @@ static GSettings *settings(void) {
   if (!schema) return NULL;
   g_settings_schema_unref(schema); return g_settings_new("org.nostr.Grotto");
 }
+static void clipboard_locked(GnSessionManager *manager, GnLockReason reason, gpointer data) {
+  (void)manager; (void)reason; OnboardingAssistant *self = data;
+  g_clear_pointer(&self->clipboard_lease, grotto_secret_clipboard_lease_free);
+}
 static void clear_input(OnboardingAssistant *self) {
+  g_clear_pointer(&self->clipboard_lease, grotto_secret_clipboard_lease_free);
   gtk_editable_set_text(GTK_EDITABLE(self->text_import_data), "");
   gn_secure_entry_clear(self->import_passphrase);
   wipe(&self->mnemonic); wipe(&self->nsec);
@@ -339,9 +346,10 @@ static void import_mode(GtkCheckButton *button, gpointer data) {
 }
 static void copy_seed(GtkButton *button, gpointer data) {
   (void)button; OnboardingAssistant *self = data;
-  if (!self->mnemonic || self->closed) return;
-  grotto_secret_clipboard_copy(gdk_display_get_clipboard(gtk_widget_get_display(GTK_WIDGET(self))), self->mnemonic);
-  status(self, "Copied. Clipboard managers may keep seed words. Only Grotto's unchanged clipboard content is cleared after 60 seconds.");
+  if (!self->mnemonic || self->closed || gn_session_manager_is_locked(gn_session_manager_get_default())) return;
+  g_clear_pointer(&self->clipboard_lease, grotto_secret_clipboard_lease_free);
+  self->clipboard_lease = grotto_secret_clipboard_copy(gdk_display_get_clipboard(gtk_widget_get_display(GTK_WIDGET(self))), self->mnemonic);
+  status(self, "Copied. Clipboard managers may keep seed words. Grotto clears its unchanged copy on close, lock or after 60 seconds.");
 }
 static gboolean close_requested(GtkWindow *window, gpointer data) {
   (void)data; OnboardingAssistant *self = ONBOARDING_ASSISTANT(window);
@@ -380,6 +388,7 @@ static void onboarding_assistant_class_init(OnboardingAssistantClass *klass) {
 }
 static void onboarding_assistant_init(OnboardingAssistant *self) {
   gtk_widget_init_template(GTK_WIDGET(self));
+  g_signal_connect_object(gn_session_manager_get_default(), "session-locked", G_CALLBACK(clipboard_locked), self, 0);
   g_autoptr(GtkEntryBuffer) input = gn_secure_entry_buffer_new();
   gtk_entry_set_buffer(self->text_import_data, input);
   gtk_entry_buffer_set_max_length(input, 4096);

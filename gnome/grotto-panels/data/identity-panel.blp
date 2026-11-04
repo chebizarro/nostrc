@@ -1,5 +1,6 @@
 using Gtk 4.0;
 using Adw 1;
+translation-domain "grotto-panels";
 template $GrottoIdentityPanel: $GrottoPanel {
   title: _("Identity");
   tag: "identity";
@@ -7,7 +8,7 @@ template $GrottoIdentityPanel: $GrottoPanel {
     Adw.NavigationPage {
       title: _("Identity");
       Adw.ToolbarView {
-        [top] Adw.HeaderBar {}
+        [top] Adw.HeaderBar header {}
         [top] Adw.Banner banner { title: _("This identity isn't backed up"); button-label: _("Back Up…"); }
         content: Stack content {
           StackPage { name: "empty"; child: Adw.StatusPage empty {

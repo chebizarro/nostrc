@@ -714,7 +714,8 @@ static void removal_done(GObject *source, GAsyncResult *result, gpointer data) {
   g_autoptr(GVariant) reply = g_dbus_proxy_call_finish(G_DBUS_PROXY(source), result, NULL);
   gboolean removed = FALSE;
   if (reply) g_variant_get(reply, "(b)", &removed);
-  if (g_strcmp0(g_object_get_data(G_OBJECT(task), "owner"), g_dbus_proxy_get_name_owner(G_DBUS_PROXY(source)))) removed = FALSE;
+  g_autofree gchar *owner = g_dbus_proxy_get_name_owner(G_DBUS_PROXY(source));
+  if (g_strcmp0(g_object_get_data(G_OBJECT(task), "owner"), owner)) removed = FALSE;
   if (removed) accounts_store_remove(accounts_store_get_default(), g_task_get_task_data(task), NULL);
   signer_window_toast(self, removed ? _("Identity removed from this device") : _("Identity wasn't removed. Check pending requests and retry"));
   g_task_return_boolean(task, removed); g_object_unref(task);
@@ -722,12 +723,13 @@ static void removal_done(GObject *source, GAsyncResult *result, gpointer data) {
 static void removal_proxy(GObject *source, GAsyncResult *result, gpointer data) {
   (void)source; GTask *task = data; SignerWindow *self = g_task_get_source_object(task);
   g_autoptr(GDBusProxy) proxy = g_dbus_proxy_new_for_bus_finish(result, NULL);
-  if (!proxy || !g_dbus_proxy_get_name_owner(proxy) || gn_session_manager_is_locked(gn_session_manager_get_default())) {
+  g_autofree gchar *owner = proxy ? g_dbus_proxy_get_name_owner(proxy) : NULL;
+  if (!owner || gn_session_manager_is_locked(gn_session_manager_get_default())) {
     signer_window_toast(self, _("Identity wasn't removed. Unlock management and retry")); g_task_return_boolean(task, FALSE); g_object_unref(task); return;
   }
   /* GDBusProxy pins this call to its current unique owner, not a later daemon. */
   const char *npub = g_task_get_task_data(task);
-  g_object_set_data_full(G_OBJECT(task), "owner", g_strdup(g_dbus_proxy_get_name_owner(proxy)), g_free);
+  g_object_set_data_full(G_OBJECT(task), "owner", g_steal_pointer(&owner), g_free);
   g_dbus_proxy_call(proxy, "RemoveIdentity", g_variant_new("(ss)", npub, npub), G_DBUS_CALL_FLAGS_NO_AUTO_START, 10000, NULL, removal_done, task);
 }
 static void removal_response(AdwAlertDialog *dialog, const char *response, gpointer data) {
@@ -793,6 +795,8 @@ void signer_window_show_identity(SignerWindow *self, const gchar *npub) {
   clear_transition_focus(self);
   adw_navigation_view_pop_to_tag(self->detail_navigation, "root");
   GrottoPanel *panel = GROTTO_PANEL(grotto_identity_panel_new(self->identity_service, npub));
+  /* Transitional shell already owns the application's window controls. */
+  g_object_set(panel, "show-window-controls", FALSE, NULL);
   const GrottoPanelsHost host = {.show_toast = identity_toast, .add_identity = identity_add,
     .open_backup = identity_backup, .remove_identity = identity_remove, .open_in_signer = identity_open};
   GWeakRef *host_window = g_new0(GWeakRef, 1); g_weak_ref_init(host_window, self);
@@ -855,8 +859,9 @@ GSettings *signer_get_app_settings(void) {
  */
 void signer_window_show_new_profile(SignerWindow *self) {
   g_return_if_fail(SIGNER_IS_WINDOW(self));
-  /* G08's repeated activation contract uses the one live G09 setup flow,
-   * not the retired CreateProfile sheet. */
+  /* Add Identity keeps the existing create/import flow and its one-live-window
+   * contract, with the everyday Identity root as the return destination. */
+  signer_window_show_identity(self, NULL);
   onboarding_assistant_present(GTK_WINDOW(self));
 }
 

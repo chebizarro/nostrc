@@ -31321,9 +31321,9 @@
         "grotto.linux.asan_ubsan"
       ],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "11995a2f615e820606d9b813b83190e1d7681ef95a761662afb13b44feb6a962",
+      "source_sha256": "0dbc6a809991402b36317e522334ce8b271a76b44edbf4a7e8b9ff155b7bb55a",
       "unsupported_reason": "Only fixed ubuntu-24.04 native/ASan configure and signer CTest selection projections are authored, with fresh Linux/aarch64 name-surface evidence (not x86_64 acceptance). Native uses the complete regex, including aliases and registered conditionals. Authored build2/test1 is supported. Default-all selector build attestation/coverage (.34), full audits/nonmember admission, native Go/nak baseline/quarantine, Meson/deb/shell extension steps, ubuntu-latest and TSan instrumented-GLib/nsync/linkage/advisory execution remain unsupported. No whole-job parity or nonmember approval is implied.",
-      "workflow_sha256": "031b2f0d8244b7a3b6302ed0588c4d2e03e9b422b0ad9b62ba5687eab0c09db3",
+      "workflow_sha256": "f11ef5685396962a32fef0d6d89c019a95ebeabf8b3a9c9ecd09f49bcf00a8a9",
       "unimplemented_variants": [
         {
           "runner": "ubuntu-latest",
@@ -31424,9 +31424,9 @@
         "groundhog.mdk011"
       ],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "4ce9a17341fc8df0bd604444cf9338e19e86a94d063e7deb7c7be56bf3daca6b",
+      "source_sha256": "0fe80bce16902102db6b023b67afab62bd1c00b06311048e581f81dbefc6204d",
       "unsupported_reason": "Ordinary and live MDK011 registrations are separate diagnostic profiles. Ordinary selection does not claim live Docker lifecycle coverage; the dedicated live lane preserves docker/display/private_bus and visibly refuses without guarded custody. Full legacy job union, runtime/header audits and original image custody remain unaccepted.",
-      "workflow_sha256": "6da62f8650b78978b1edfeb7423f83b7dc4956a97032de14d82bc58940afb573"
+      "workflow_sha256": "17d0427bbea0f8233d46c525a46e62953b89364e909d608a4bb2934062b0e4fc"
     },
     ".github/workflows/groundhog-ci.yml:groundhog-sanitizers": {
       "matrix_source": "",
@@ -31434,9 +31434,9 @@
         "groundhog.linux.sanitizers"
       ],
       "coverage_gap": "groundhog_sanitizer_execution_contract",
-      "source_sha256": "1e2efc6779360d069a5d52e0689c086ce36997f5ebc9a3db5a552f0da36c4bb5",
+      "source_sha256": "acb721546bb6a8072ab7bc872d37e6bff0aa3f3367c26f7f5d5a9c66542f08a4",
       "unsupported_reason": "Ordinary Groundhog suite/MDK011 application configuration is authored but full registration/runtime/header closure and Docker image custody remain unaccepted.",
-      "workflow_sha256": "6da62f8650b78978b1edfeb7423f83b7dc4956a97032de14d82bc58940afb573"
+      "workflow_sha256": "17d0427bbea0f8233d46c525a46e62953b89364e909d608a4bb2934062b0e4fc"
     },
     ".github/workflows/groundhog-release.yml:identity": {
       "matrix_source": "",
@@ -32017,8 +32017,8 @@
       "coverage_gap": "workflow_profile_union",
       "unsupported_reason": "The selected sanitizer runner executes affected checks; it is not unrestricted legacy sanitizer union or native attested profile acceptance.",
       "matrix_source": "",
-      "source_sha256": "69623fd15c6aa32c259dd933a2e9a3d160bbb30f040e45bffc8436d1bed2f896",
-      "workflow_sha256": "6da62f8650b78978b1edfeb7423f83b7dc4956a97032de14d82bc58940afb573"
+      "source_sha256": "06bff5c2079ff3ccb9b398c782058d1760f83662f199bee37a81237ddad4e04a",
+      "workflow_sha256": "17d0427bbea0f8233d46c525a46e62953b89364e909d608a4bb2934062b0e4fc"
     },
     ".github/workflows/groundhog-release.yml:manual-broad": {
       "profiles": [],

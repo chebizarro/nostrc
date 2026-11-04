@@ -19,7 +19,8 @@ template $GrottoPageHome: Adw.PreferencesPage {
         selection-mode: none; styles ["boxed-list"]
         Adw.ActionRow identity_card {
           title: _("Create or import an identity");
-          subtitle: _("Your management selection does not change an app’s identity.");
+          subtitle: _("Manage identities and backups");
+          activatable: true;
           subtitle-lines: 2;
           [suffix] Button copy_key {
             icon-name: "edit-copy-symbolic"; valign: center;
@@ -31,6 +32,7 @@ template $GrottoPageHome: Adw.PreferencesPage {
             tooltip-text: _("Show public-key QR code");
             accessibility { label: _("Show public-key QR code"); }
           }
+          [suffix] Image { icon-name: "go-next-symbolic"; }
         }
       }
     }

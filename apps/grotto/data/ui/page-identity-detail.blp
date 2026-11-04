@@ -4,7 +4,7 @@ template $GrottoIdentityDetail: Adw.NavigationPage {
   title: _("Back Up Identity");
   tag: "backup";
   Adw.ToolbarView {
-    [top] Adw.HeaderBar {}
+    [top] Adw.HeaderBar header {}
     [top] Adw.Banner setup_banner { title: _("Backup incomplete"); revealed: false; }
     [top] Adw.Banner error_banner { title: _("The backup action couldn't be completed"); button-label: _("Retry"); revealed: false; }
     content: Adw.PreferencesPage {

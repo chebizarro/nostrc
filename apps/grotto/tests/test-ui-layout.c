@@ -1,5 +1,8 @@
 #include "ui/signer-window.h"
 #include <grotto-panels.h>
+#ifdef GROTTO_TEST_XDOTOOL
+#include <gdk/x11/gdkx.h>
+#endif
 #include "ui/page-home.h"
 #include "ui/lock-screen.h"
 #include "ui/page-client-detail.h"
@@ -49,6 +52,24 @@ static gboolean bound(gpointer data) { g_error("UI layout did not reach barrier:
 static gboolean tick(GtkWidget *widget, GdkFrameClock *clock, gpointer data) { (void)widget; (void)clock; (void)data; frames++; return G_SOURCE_CONTINUE; }
 static void wait_frames(GtkWidget *widget) {
   frames = 0; guint id = gtk_widget_add_tick_callback(widget, tick, NULL, NULL); WAIT(frames >= 3); gtk_widget_remove_tick_callback(widget, id);
+}
+#ifdef GROTTO_TEST_XDOTOOL
+static void send_key(SignerWindow *window, const char *key) {
+  GdkSurface *surface = gtk_native_get_surface(GTK_NATIVE(window)); g_assert_true(GDK_IS_X11_SURFACE(surface));
+  g_autofree char *id = g_strdup_printf("%lu", gdk_x11_surface_get_xid(surface));
+  char *argv[] = {GROTTO_TEST_XDOTOOL, "windowfocus", id, "key", "--clearmodifiers", "--delay", "0", (char *)key, NULL};
+  g_autoptr(GError) error = NULL; gint status;
+  g_assert_true(g_spawn_sync(NULL, argv, NULL, G_SPAWN_DEFAULT, NULL, NULL, NULL, NULL, &status, &error));
+  g_assert_no_error(error); g_assert_true(g_spawn_check_wait_status(status, &error)); g_assert_no_error(error);
+  wait_frames(GTK_WIDGET(window));
+}
+#endif
+static void assert_focus_bounds(SignerWindow *window) {
+  GtkWidget *focus = gtk_root_get_focus(GTK_ROOT(window)); g_assert_nonnull(focus);
+  graphene_rect_t bounds; g_assert_true(gtk_widget_compute_bounds(focus, GTK_WIDGET(window), &bounds));
+  g_assert_cmpfloat(bounds.origin.x, >=, 0); g_assert_cmpfloat(bounds.origin.y, >=, 0);
+  g_assert_cmpfloat(bounds.origin.x + bounds.size.width, <=, gtk_widget_get_width(GTK_WIDGET(window)) + 1);
+  g_assert_cmpfloat(bounds.origin.y + bounds.size.height, <=, gtk_widget_get_height(GTK_WIDGET(window)) + 1);
 }
 static void snapshot(GtkWidget *widget, const gchar *name) {
   wait_frames(widget); int width = gtk_widget_get_width(widget), height = gtk_widget_get_height(widget);
@@ -253,7 +274,40 @@ static void layout_activate(GApplication *application, gpointer data) {
   g_signal_emit_by_name(selected_avatar, "clicked");
   AdwNavigationView *identity_navigation = ADW_NAVIGATION_VIEW(gtk_widget_get_template_child(GTK_WIDGET(window), TYPE_SIGNER_WINDOW, "detail_navigation"));
   g_assert_true(GROTTO_IS_IDENTITY_PANEL(adw_navigation_view_get_visible_page(identity_navigation)));
+  GtkWidget *root_panel = GTK_WIDGET(adw_navigation_view_get_visible_page(identity_navigation));
+  g_assert_true(gtk_widget_get_visible(GTK_WIDGET(gtk_widget_get_template_child(root_panel, GROTTO_TYPE_IDENTITY_PANEL, "other_group"))));
+  g_assert_true(gtk_widget_get_visible(GTK_WIDGET(gtk_widget_get_template_child(root_panel, GROTTO_TYPE_IDENTITY_PANEL, "add_group"))));
   g_assert_null(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)));
+  adw_navigation_view_pop(identity_navigation); wait_frames(GTK_WIDGET(window));
+  GtkWidget *identity_card = GTK_WIDGET(gtk_widget_get_template_child(home, GROTTO_TYPE_PAGE_HOME, "identity_card"));
+  g_assert_true(gtk_widget_grab_focus(identity_card));
+#ifdef GROTTO_TEST_XDOTOOL
+  send_key(window, "Return");
+#else
+  g_signal_emit_by_name(identity_card, "activated");
+#endif
+  root_panel = GTK_WIDGET(adw_navigation_view_get_visible_page(identity_navigation)); g_assert_true(GROTTO_IS_IDENTITY_PANEL(root_panel));
+  AdwNavigationView *root_navigation = grotto_identity_panel_get_navigation(GROTTO_IDENTITY_PANEL(root_panel));
+  GtkWidget *other_list = GTK_WIDGET(gtk_widget_get_template_child(root_panel, GROTTO_TYPE_IDENTITY_PANEL, "other_list"));
+  GtkWidget *other = gtk_widget_get_first_child(other_list); g_assert_nonnull(other);
+  g_assert_true(gtk_widget_grab_focus(other));
+#ifdef GROTTO_TEST_XDOTOOL
+  send_key(window, "Return");
+#else
+  g_signal_emit_by_name(other_list, "row-activated", other);
+#endif
+  GtkWidget *pinned_panel = GTK_WIDGET(adw_navigation_view_get_visible_page(root_navigation));
+  g_assert_true(GROTTO_IS_IDENTITY_PANEL(pinned_panel));
+  GtkWidget *pinned_key = GTK_WIDGET(gtk_widget_get_template_child(pinned_panel, GROTTO_TYPE_IDENTITY_PANEL, "key_row"));
+  g_assert_cmpstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(pinned_key)), ==, watch_npub);
+#ifdef GROTTO_TEST_XDOTOOL
+  send_key(window, "alt+Left");
+#else
+  g_assert_true(adw_navigation_view_pop(root_navigation));
+#endif
+  g_assert_false(GROTTO_IS_IDENTITY_PANEL(adw_navigation_view_get_visible_page(root_navigation)));
+  g_autofree char *unchanged_default = g_settings_get_string(settings_manager_get_gsettings(settings_manager_get_default()), "default-identity");
+  g_assert_cmpstr(unchanged_default, ==, npub);
   adw_navigation_view_pop(identity_navigation); wait_frames(GTK_WIDGET(window));
   g_assert_true(accounts_store_exists(store, npub)); /* live avatar route cannot delete implicitly */
   g_assert_cmpstr(adw_view_stack_get_visible_child_name(stack), ==, "home");
@@ -293,34 +347,86 @@ static void layout_activate(GApplication *application, gpointer data) {
   for (guint dark = 0; dark < 2; dark++) {
     /* W3's real routes; Home stays the default until W4. */
     adw_style_manager_set_color_scheme(adw_style_manager_get_default(), dark ? ADW_COLOR_SCHEME_FORCE_DARK : ADW_COLOR_SCHEME_FORCE_LIGHT);
-    signer_window_show_page(window, "identity"); wait_frames(GTK_WIDGET(window));
+    g_signal_emit_by_name(identity_card, "activated"); wait_frames(GTK_WIDGET(window));
     GtkWidget *identity_panel = GTK_WIDGET(adw_navigation_view_get_visible_page(identity_navigation));
     g_assert_true(GROTTO_IS_IDENTITY_PANEL(identity_panel));
+    AdwHeaderBar *identity_header = ADW_HEADER_BAR(gtk_widget_get_template_child(identity_panel, GROTTO_TYPE_IDENTITY_PANEL, "header"));
+    g_assert_false(adw_header_bar_get_show_start_title_buttons(identity_header));
+    g_assert_false(adw_header_bar_get_show_end_title_buttons(identity_header));
     GtkWidget *identity_copy = GTK_WIDGET(gtk_widget_get_template_child(identity_panel, GROTTO_TYPE_IDENTITY_PANEL, "copy_key"));
-    g_assert_cmpstr(gtk_widget_get_tooltip_text(identity_copy), ==, "Copy Public Key");
-    if (accessibility) gtk_test_accessible_assert_property(GTK_ACCESSIBLE(identity_copy), GTK_ACCESSIBLE_PROPERTY_LABEL, "Copy Public Key");
+    g_assert_cmpstr(gtk_widget_get_tooltip_text(identity_copy), ==, g_dgettext("grotto-panels", "Copy Public Key"));
+    if (accessibility) {
+      g_assert_cmpstr(gtk_widget_get_tooltip_text(identity_copy), ==, "Copiar clave pública");
+      g_assert_cmpstr(adw_navigation_page_get_title(ADW_NAVIGATION_PAGE(identity_panel)), ==, "Identidad");
+    }
+    if (accessibility) gtk_test_accessible_assert_property(GTK_ACCESSIBLE(identity_copy), GTK_ACCESSIBLE_PROPERTY_LABEL, g_dgettext("grotto-panels", "Copy Public Key"));
     GtkWidget *identity_qr = GTK_WIDGET(gtk_widget_get_template_child(identity_panel, GROTTO_TYPE_IDENTITY_PANEL, "show_qr"));
-    if (accessibility) gtk_test_accessible_assert_property(GTK_ACCESSIBLE(identity_qr), GTK_ACCESSIBLE_PROPERTY_LABEL, "Show QR Code");
+    if (accessibility) gtk_test_accessible_assert_property(GTK_ACCESSIBLE(identity_qr), GTK_ACCESSIBLE_PROPERTY_LABEL, g_dgettext("grotto-panels", "Show QR Code"));
+    g_assert_true(gtk_widget_grab_focus(identity_qr));
     g_signal_emit_by_name(identity_qr, "clicked");
     AdwDialog *public_qr = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)); g_assert_nonnull(public_qr);
     wait_frames(GTK_WIDGET(public_qr)); adw_dialog_close(public_qr); WAIT(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)) == NULL);
+    wait_frames(GTK_WIDGET(window)); g_assert_true(gtk_root_get_focus(GTK_ROOT(window)) == identity_qr); assert_focus_bounds(window);
     g_assert_true(gtk_widget_grab_focus(identity_copy));
     gtk_window_set_default_size(GTK_WINDOW(window), 920, 640); snapshot(GTK_WIDGET(window), dark ? "identity-dark" : "identity-light");
     gtk_window_set_default_size(GTK_WINDOW(window), 360, 640); wait_frames(GTK_WIDGET(window)); assert_visible_focus(window);
     snapshot(GTK_WIDGET(window), dark ? "identity-360-dark" : "identity-360-light");
     GtkWidget *backup_row = GTK_WIDGET(gtk_widget_get_template_child(identity_panel, GROTTO_TYPE_IDENTITY_PANEL, "backup_row"));
     WAIT(gtk_widget_get_visible(backup_row)); g_assert_cmpuint(seed_exports, ==, 0);
+    g_assert_true(gtk_widget_grab_focus(backup_row));
+#ifdef GROTTO_TEST_XDOTOOL
+    send_key(window, "Return");
+#else
     g_signal_emit_by_name(backup_row, "activated"); wait_frames(GTK_WIDGET(window));
+#endif
     AdwNavigationView *panel_navigation = grotto_identity_panel_get_navigation(GROTTO_IDENTITY_PANEL(identity_panel));
     GtkWidget *backup = GTK_WIDGET(adw_navigation_view_get_visible_page(panel_navigation)); g_assert_true(GROTTO_IS_IDENTITY_DETAIL(backup));
+    AdwHeaderBar *backup_header = ADW_HEADER_BAR(gtk_widget_get_template_child(backup, GROTTO_TYPE_IDENTITY_DETAIL, "header"));
+    g_assert_false(adw_header_bar_get_show_start_title_buttons(backup_header)); g_assert_false(adw_header_bar_get_show_end_title_buttons(backup_header));
     GtkWidget *phrase_row = GTK_WIDGET(gtk_widget_get_template_child(backup, GROTTO_TYPE_IDENTITY_DETAIL, "phrase_row"));
     WAIT(gtk_widget_is_sensitive(phrase_row));
     g_assert_cmpstr(adw_preferences_row_get_title(ADW_PREFERENCES_ROW(phrase_row)), ==, _("Show Recovery Phrase…"));
     g_assert_true(gtk_widget_grab_focus(phrase_row)); assert_visible_focus(window); g_assert_cmpuint(seed_exports, ==, 0);
     snapshot(GTK_WIDGET(window), dark ? "backup-360-dark" : "backup-360-light");
     gtk_window_set_default_size(GTK_WINDOW(window), 920, 640); snapshot(GTK_WIDGET(window), dark ? "backup-dark" : "backup-light");
+#ifdef GROTTO_TEST_XDOTOOL
+    send_key(window, "alt+Left");
+#else
     g_assert_true(gtk_widget_activate_action(backup, "navigation.pop", NULL)); wait_frames(GTK_WIDGET(window));
+#endif
     g_assert_false(GROTTO_IS_IDENTITY_DETAIL(adw_navigation_view_get_visible_page(panel_navigation)));
+    g_assert_true(gtk_root_get_focus(GTK_ROOT(window)) == backup_row); assert_focus_bounds(window);
+    gtk_window_set_default_size(GTK_WINDOW(window), 360, 640);
+    gtk_widget_set_default_direction(GTK_TEXT_DIR_RTL);
+    gtk_widget_set_direction(GTK_WIDGET(window), GTK_TEXT_DIR_RTL); wait_frames(GTK_WIDGET(window));
+    g_assert_cmpint(gtk_widget_get_direction(identity_panel), ==, GTK_TEXT_DIR_RTL);
+    g_assert_cmpint(gtk_widget_get_direction(backup_row), ==, GTK_TEXT_DIR_RTL);
+    g_assert_true(gtk_widget_grab_focus(identity_copy)); wait_frames(GTK_WIDGET(window)); assert_focus_bounds(window);
+#ifdef GROTTO_TEST_XDOTOOL
+    send_key(window, "Tab"); assert_focus_bounds(window);
+#endif
+    snapshot(GTK_WIDGET(window), dark ? "identity-360-rtl-dark" : "identity-360-rtl-light");
+    g_assert_true(gtk_widget_grab_focus(backup_row));
+#ifdef GROTTO_TEST_XDOTOOL
+    send_key(window, "Return");
+#else
+    g_signal_emit_by_name(backup_row, "activated"); wait_frames(GTK_WIDGET(window));
+#endif
+    backup = GTK_WIDGET(adw_navigation_view_get_visible_page(panel_navigation));
+    g_assert_true(GROTTO_IS_IDENTITY_DETAIL(backup));
+    g_assert_cmpint(gtk_widget_get_direction(backup), ==, GTK_TEXT_DIR_RTL);
+    phrase_row = GTK_WIDGET(gtk_widget_get_template_child(backup, GROTTO_TYPE_IDENTITY_DETAIL, "phrase_row"));
+    WAIT(gtk_widget_is_sensitive(phrase_row)); g_assert_true(gtk_widget_grab_focus(phrase_row)); assert_focus_bounds(window);
+    snapshot(GTK_WIDGET(window), dark ? "backup-360-rtl-dark" : "backup-360-rtl-light");
+#ifdef GROTTO_TEST_XDOTOOL
+    send_key(window, "alt+Right");
+#else
+    g_assert_true(gtk_widget_activate_action(backup, "navigation.pop", NULL)); wait_frames(GTK_WIDGET(window));
+#endif
+    g_assert_true(gtk_root_get_focus(GTK_ROOT(window)) == backup_row); assert_focus_bounds(window);
+    g_assert_cmpuint(seed_exports, ==, 0);
+    gtk_widget_set_default_direction(GTK_TEXT_DIR_LTR);
+    gtk_widget_set_direction(GTK_WIDGET(window), GTK_TEXT_DIR_LTR); wait_frames(GTK_WIDGET(window));
     g_assert_true(adw_navigation_view_pop(identity_navigation)); wait_frames(GTK_WIDGET(window));
     signer_window_show_page(window, "home");
     adw_style_manager_set_color_scheme(adw_style_manager_get_default(), dark ? ADW_COLOR_SCHEME_FORCE_DARK : ADW_COLOR_SCHEME_FORCE_LIGHT);
@@ -468,6 +574,16 @@ static void layout_activate(GApplication *application, gpointer data) {
   gtk_editable_set_text(GTK_EDITABLE(name_row), "Everyday identity"); g_signal_emit_by_name(name_row, "apply");
   WAIT(gtk_widget_is_sensitive(name_row));
   AccountEntry *renamed = accounts_store_find(store, npub); g_assert_cmpstr(renamed->label, ==, "Everyday identity"); accounts_store_entry_free(renamed);
+  g_assert_true(accounts_store_set_label(store, npub, "nsec1contaminated-metadata-fixture", NULL));
+  GListModel *public_identities = grotto_panels_service_get_model(grotto_panel_get_service(GROTTO_PANEL(identity_panel)), GROTTO_PANELS_IDENTITIES);
+  gboolean scrubbed = FALSE;
+  for (guint i = 0; i < g_list_model_get_n_items(public_identities); i++) {
+    g_autoptr(GrottoPanelsItem) item = g_list_model_get_item(public_identities, i);
+    const GrottoPanelsMetadata *metadata = grotto_panels_item_get_metadata(item);
+    if (strcmp(metadata->public_key, npub)) continue;
+    g_assert_cmpstr(metadata->label, ==, ""); scrubbed = TRUE;
+  }
+  g_assert_true(scrubbed); g_assert_true(accounts_store_set_label(store, npub, "Everyday identity", NULL));
   signer_window_show_page(window, "backup"); wait_frames(GTK_WIDGET(window));
   identity_panel = GTK_WIDGET(adw_navigation_view_get_visible_page(identity_navigation));
   g_assert_true(GROTTO_IS_IDENTITY_PANEL(identity_panel));
@@ -499,10 +615,18 @@ int main(int argc, char **argv) {
     bindtextdomain(GETTEXT_PACKAGE, G10_TEST_LOCALE_DIR); textdomain(GETTEXT_PACKAGE); bind_textdomain_codeset(GETTEXT_PACKAGE, "UTF-8");
     g_assert_cmpstr(_("Allow"), ==, "Permitir");
     g_assert_cmpstr(_("Custom event"), ==, "Evento personalizado");
+    gtk_disable_setlocale(); /* Preserve the deliberate test locale through gtk_init_check(). */
   }
   g_test_init(&argc, &argv, NULL); nostrc_test_tolerate_gdk_frame_warning();
   if (!gtk_init_check()) { g_print("1..0 # SKIP GTK display unavailable\n"); return 77; }
-  adw_init(); g_object_set(gtk_settings_get_default(), "gtk-enable-animations", FALSE, NULL);
+  adw_init();
+  gpointer panel_class = g_type_class_ref(GROTTO_TYPE_IDENTITY_PANEL); g_type_class_unref(panel_class);
+  bindtextdomain("grotto-panels", G10_TEST_LOCALE_DIR); bind_textdomain_codeset("grotto-panels", "UTF-8");
+  if (language) {
+    g_assert_cmpstr(g_dgettext("grotto-panels", "Copy Public Key"), ==, "Copiar clave pública");
+    g_assert_cmpstr(_("Show Recovery Phrase…"), ==, "Mostrar frase de recuperación…");
+  }
+  g_object_set(gtk_settings_get_default(), "gtk-enable-animations", FALSE, NULL);
   GtkCssProvider *css = gtk_css_provider_new(); gtk_css_provider_load_from_resource(css, "/org/gnostr/signer/css/app.css");
   gtk_style_context_add_provider_for_display(gdk_display_get_default(), GTK_STYLE_PROVIDER(css), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION); g_object_unref(css);
   nostrc_test_bus_tolerate_ebadf(); NostrcTestBus *bus = nostrc_test_bus_new(NOSTRC_TEST_BUS_FLAGS_NONE); nostrc_test_bus_up(bus); server = nostrc_test_bus_connect(bus);

@@ -2491,3 +2491,223 @@ msgstr ""
 #: src/ui/page-settings.c:124
 msgid "Restore Defaults"
 msgstr ""
+
+#: data/ui/page-identity-detail.ui:10 src/ui/page-identity-detail.c:448
+msgid "Back Up Identity"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:19 src/ui/page-identity-detail.c:149
+msgid "Backup incomplete"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:25
+msgid "The backup action couldn't be completed"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:26 src/ui/page-identity-detail.c:317
+msgid "Retry"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:32
+msgid ""
+"Anyone with this backup controls your identity. Grotto developers will never "
+"ask for it"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:44
+msgid "Show Recovery Phrase…"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:45
+msgid "Words to write down and keep offline"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:53 src/ui/page-identity-detail.c:276
+msgid "Encrypted Backup"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:54
+msgid "Protected by a passphrase you choose"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:57
+msgid "Save to File…"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:63
+msgid "Show QR Code…"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:71
+msgid "Advanced"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:75
+msgid "Clipboard managers may keep a copy"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:81
+msgid "Test This Identity"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:82
+msgid "Signs and encrypts a test message on this device"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:88
+msgid "Create Replacement Identity…"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:89
+msgid "Apps aren't moved and permissions aren't copied"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:95
+msgid "Save Migration Announcement…"
+msgstr ""
+
+#: src/ui/page-identity-detail.c:102
+msgid "Backup saved. Keep it and its passphrase safe"
+msgstr ""
+
+#: src/ui/page-identity-detail.c:104
+msgid "Migration announcement saved. Nothing was published"
+msgstr ""
+
+#: src/ui/page-identity-detail.c:105
+msgid "The file wasn't saved. Check the destination and retry"
+msgstr ""
+
+#: src/ui/page-identity-detail.c:132
+msgid "No recovery phrase is stored for this identity. Use an encrypted backup"
+msgstr ""
+
+#: src/ui/page-identity-detail.c:135
+msgid "Recovery phrase unavailable. Use an encrypted backup or retry"
+msgstr ""
+
+#: src/ui/page-identity-detail.c:135
+msgid "The action couldn't be completed. Check the signer and retry"
+msgstr ""
+
+#: src/ui/page-identity-detail.c:149
+msgid "Identity not verified. Test this identity before relying on it"
+msgstr ""
+
+#: src/ui/page-identity-detail.c:159
+msgid "Identity actions are unavailable with this signer"
+msgstr ""
+
+#: src/ui/page-identity-detail.c:171
+msgid "Secret key copied. Clipboard managers may keep it"
+msgstr ""
+
+#: src/ui/page-identity-detail.c:181
+msgid "Replacement identity"
+msgstr ""
+
+#: src/ui/page-identity-detail.c:183
+msgid "Replacement created. Apps and permissions are unchanged"
+msgstr ""
+
+#: src/ui/page-identity-detail.c:199
+msgid "Choose a passphrase first"
+msgstr ""
+
+#: src/ui/page-identity-detail.c:215
+msgid "Export cancelled; no file was written"
+msgstr ""
+
+#: src/ui/page-identity-detail.c:241
+msgid "Backup acknowledged. This isn't proof of recovery"
+msgstr ""
+
+#: src/ui/page-identity-detail.c:242
+msgid ""
+"Backup acknowledgement wasn't saved. Test this identity first, then retry"
+msgstr ""
+
+#: src/ui/page-identity-detail.c:255
+msgid "Copy Recovery Phrase?"
+msgstr ""
+
+#: src/ui/page-identity-detail.c:255
+msgid ""
+"Anyone with these words controls your identity. Clipboard managers may keep "
+"a copy"
+msgstr ""
+
+#: src/ui/page-identity-detail.c:256
+msgid "Copy Phrase"
+msgstr ""
+
+#: src/ui/page-identity-detail.c:276
+msgid "Recovery Phrase"
+msgstr ""
+
+#: src/ui/page-identity-detail.c:280
+msgid "Write these words down in order. Keep them private and offline"
+msgstr ""
+
+#: src/ui/page-identity-detail.c:280
+msgid "Choose a passphrase. It's needed to restore this backup"
+msgstr ""
+
+#: src/ui/page-identity-detail.c:285
+msgid "I wrote these down"
+msgstr ""
+
+#: src/ui/page-identity-detail.c:287 src/ui/page-identity-detail.c:305
+msgid "Record Backup"
+msgstr ""
+
+#: src/ui/page-identity-detail.c:289
+msgid "Copy Recovery Phrase…"
+msgstr ""
+
+#: src/ui/page-identity-detail.c:297
+msgid "Backup Passphrase"
+msgstr ""
+
+#: src/ui/page-identity-detail.c:299
+msgid "Save…"
+msgstr ""
+
+#: src/ui/page-identity-detail.c:304
+msgid "I saved this backup and its passphrase"
+msgstr ""
+
+#: src/ui/page-identity-detail.c:335
+msgid "Copy Secret Key?"
+msgstr ""
+
+#: src/ui/page-identity-detail.c:335
+msgid "Create Replacement Identity?"
+msgstr ""
+
+#: src/ui/page-identity-detail.c:336
+msgid ""
+"Anyone with this key controls your identity. Clipboard managers may keep a "
+"copy"
+msgstr ""
+
+#: src/ui/page-identity-detail.c:336
+msgid ""
+"Both identities stay on this device. Apps keep using this one until changed"
+msgstr ""
+
+#: src/ui/page-identity-detail.c:337
+msgid "Copy Key"
+msgstr ""
+
+#: src/ui/page-identity-detail.c:337
+msgid "Create Identity"
+msgstr ""
+
+#: src/ui/page-identity-detail.c:370
+msgid "Management is locked"
+msgstr ""
+
+#: src/ui/page-identity-detail.c:386
+msgid "Signer unavailable. Open Grotto and retry"
+msgstr ""

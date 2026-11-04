@@ -18,7 +18,7 @@
 
 typedef struct {
   OnboardingAssistant *assistant;
-  GDBusMethodInvocation *store, *test, *seed, *encrypted;
+  GDBusMethodInvocation *store, *test, *seed, *encrypted, *raw;
   guint finished, cancel_calls, remove_calls;
   const gchar *expected_format, *expected_pass;
   gboolean remove_failure, migration_available;
@@ -111,6 +111,9 @@ static void mocked_io(GDBusConnection *bus, const gchar *sender, const gchar *pa
     g_assert_cmpstr(identity, ==, active->npub);
     if (!strcmp(format, "mnemonic")) { g_assert_cmpstr(pass, ==, ""); active->seed = g_object_ref(inv); }
     else { g_assert_cmpstr(format, ==, "ncryptsec"); g_assert_cmpstr(pass, ==, active->expected_pass); active->encrypted = g_object_ref(inv); }
+  } else if (!strcmp(method, "ExportRawIdentity")) {
+    const gchar *identity; g_variant_get(args, "(&s)", &identity); g_assert_cmpstr(identity, ==, active->npub);
+    active->raw = g_object_ref(inv);
   } else if (!strcmp(method, "RemoveIdentity")) {
     const gchar *identity, *typed; g_variant_get(args, "(&s&s)", &identity, &typed);
     g_assert_cmpstr(identity, ==, active->npub); g_assert_cmpstr(typed, ==, identity); active->remove_calls++;
@@ -140,7 +143,7 @@ static void teardown(Fixture *f, gconstpointer data) {
     gtk_window_close(GTK_WINDOW(f->assistant));
     gtk_window_destroy(GTK_WINDOW(f->assistant)); g_object_unref(f->assistant); f->assistant = NULL;
   }
-  GDBusMethodInvocation **pending[] = {&f->store, &f->test, &f->seed, &f->encrypted};
+  GDBusMethodInvocation **pending[] = {&f->store, &f->test, &f->seed, &f->encrypted, &f->raw};
   for (guint i = 0; i < G_N_ELEMENTS(pending); i++) if (*pending[i]) {
     g_dbus_method_invocation_return_dbus_error(*pending[i], "org.nostr.Signer.Error.Cancelled", "test cleanup"); g_clear_object(pending[i]);
   }
@@ -367,6 +370,7 @@ static void typed_deletion_cancel_failure(Fixture *f, gconstpointer data) {
   g_assert_cmpstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(key)), ==, f->npub);
   destroy_detail_window(GTK_WINDOW(window), page);
 }
+static void reply_barrier(void);
 static void backup_deliberate_actions(Fixture *f, gconstpointer data) {
   (void)data;
   g_assert_true(gn_backup_get_npub("0000000000000000000000000000000000000000000000000000000000000002", &f->npub, NULL));
@@ -378,14 +382,15 @@ static void backup_deliberate_actions(Fixture *f, gconstpointer data) {
   guint timeout = g_timeout_add_seconds(10, bound, NULL);
   while (!gtk_widget_get_visible(detail_child(page, "announcement_row"))) g_main_context_iteration(NULL, TRUE);
   g_source_remove(timeout);
-  g_assert_null(f->seed); g_assert_null(f->encrypted); /* mounting never exports */
+  g_assert_null(f->seed); g_assert_null(f->encrypted); g_assert_null(f->raw); /* mounting never exports */
   g_signal_emit_by_name(raw, "activated");
   AdwAlertDialog *dialog = ADW_ALERT_DIALOG(adw_window_get_visible_dialog(window)); g_assert_nonnull(dialog);
   g_assert_cmpstr(adw_alert_dialog_get_heading(dialog), ==, "Copy Secret Key?");
   g_assert_cmpstr(adw_alert_dialog_get_default_response(dialog), ==, "cancel");
   g_assert_cmpstr(adw_alert_dialog_get_response_label(dialog, "proceed"), ==, "Copy Key");
   g_assert_cmpint(adw_alert_dialog_get_response_appearance(dialog, "proceed"), ==, ADW_RESPONSE_DESTRUCTIVE);
-  alert_response(dialog, "cancel"); /* an accidental raw-export RPC fails mocked_io */
+  g_assert_null(f->raw);
+  alert_response(dialog, "cancel"); reply_barrier(); g_assert_null(f->raw);
   destroy_detail_window(GTK_WINDOW(window), page);
 }
 static void distinct_import_passphrase(Fixture *f, gconstpointer data) {
@@ -442,7 +447,7 @@ static void encrypted_file_cancel_failure(Fixture *f, gconstpointer data) {
   stored_identity = g_strdup(f->npub); f->expected_pass = "encrypted file passphrase";
   AccountsStore *as = accounts_store_get_default(); accounts_store_add(as, f->npub, "File export", NULL);
   accounts_store_set_setup_state(as, f->npub, "backup-pending", NULL);
-  AdwWindow *window = ADW_WINDOW(adw_window_new()); g_object_ref(window); gtk_window_set_default_size(GTK_WINDOW(window), 560, 640);
+  AdwWindow *window = ADW_WINDOW(adw_window_new()); g_object_ref(window); gtk_window_set_default_size(GTK_WINDOW(window), 360, 640);
   GtkWidget *page = page_identity_detail_new(f->npub); adw_window_set_content(window, page); gtk_window_present(GTK_WINDOW(window));
   GtkWidget *export = detail_child(page, "save_row"); wait_sensitive(export, TRUE);
   g_signal_emit_by_name(export, "activated");
@@ -484,6 +489,120 @@ static void encrypted_file_cancel_failure(Fixture *f, gconstpointer data) {
   AccountEntry *entry = accounts_store_find(as, f->npub); g_assert_cmpstr(entry->setup_state, ==, success ? "ready" : "backup-pending"); accounts_store_entry_free(entry);
   g_assert_null(f->encrypted); destroy_detail_window(GTK_WINDOW(window), page);
   if (destination) { if (success) g_unlink(destination); else g_rmdir(destination); }
+}
+static void secret_service_appeared(GDBusConnection *bus, const char *name, const char *owner, gpointer data) {
+  (void)bus; (void)name; (void)owner; *(gboolean *)data = TRUE;
+}
+static void barrier_done(GObject *source, GAsyncResult *result, gpointer data) {
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GVariant) reply = g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), result, &error);
+  g_assert_no_error(error); g_assert_nonnull(reply); *(gboolean *)data = TRUE;
+}
+static gboolean dialog_tick(GtkWidget *widget, GdkFrameClock *clock, gpointer data) {
+  (void)widget; (void)clock; (*(guint *)data)++; return G_SOURCE_CONTINUE;
+}
+static void wait_dialog_frames(GtkWidget *widget) {
+  guint frames = 0, tick = gtk_widget_add_tick_callback(widget, dialog_tick, &frames, NULL);
+  guint timeout = g_timeout_add_seconds(10, bound, NULL);
+  while (frames < 3) g_main_context_iteration(NULL, TRUE);
+  g_source_remove(timeout); gtk_widget_remove_tick_callback(widget, tick);
+}
+static void reply_barrier(void) {
+  g_dbus_connection_flush_sync(server, NULL, NULL);
+  g_autoptr(GDBusConnection) client = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
+  gboolean done = FALSE;
+  g_dbus_connection_call(client, "org.nostr.Signer", "/org/nostr/signer/grotto", "org.nostr.Grotto.Control1", "GetStatus",
+    NULL, G_VARIANT_TYPE("(a{sv})"), G_DBUS_CALL_FLAGS_NONE, 5000, NULL, barrier_done, &done);
+  guint timeout = g_timeout_add_seconds(10, bound, NULL);
+  while (!done) g_main_context_iteration(NULL, TRUE); g_source_remove(timeout);
+}
+static GtkWidget *open_backup_shell(Fixture *f, AdwWindow **window) {
+  *window = ADW_WINDOW(adw_window_new()); g_object_ref(*window);
+  gtk_window_set_default_size(GTK_WINDOW(*window), 360, 640); gtk_window_present(GTK_WINDOW(*window));
+  page_identity_detail_present_identity(GTK_WIDGET(*window), f->npub);
+  AdwDialog *shell = adw_window_get_visible_dialog(*window); g_assert_nonnull(shell);
+  GtkWidget *page = GTK_WIDGET(adw_navigation_view_get_visible_page(ADW_NAVIGATION_VIEW(adw_dialog_get_child(shell))));
+  g_object_ref(page); wait_sensitive(detail_child(page, "raw_row"), TRUE); return page;
+}
+static void release_backup_shell(AdwWindow *window, GtkWidget *page) {
+  guint gone = 0; g_object_weak_ref(G_OBJECT(page), weak_gone, &gone);
+  gtk_window_destroy(GTK_WINDOW(window)); g_object_unref(page); g_object_unref(window); await_gone(&gone);
+}
+static void backup_clipboard_close_lock(Fixture *f, gconstpointer data) {
+  (void)data;
+  g_assert_cmpstr(g_getenv("DBUS_SESSION_BUS_ADDRESS"), ==, g_getenv("NOSTRC_TEST_BUS_ADDRESS"));
+  g_assert_nonnull(g_getenv("NOSTRC_TEST_BUS_ADDRESS"));
+  gboolean keyring_ready = FALSE;
+  guint watch = g_bus_watch_name_on_connection(server, "org.freedesktop.secrets", G_BUS_NAME_WATCHER_FLAGS_NONE,
+    secret_service_appeared, NULL, &keyring_ready, NULL);
+  g_autofree char *program = g_find_program_in_path("gnome-keyring-daemon"); g_assert_nonnull(program);
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GSubprocess) keyring = g_subprocess_new(G_SUBPROCESS_FLAGS_STDIN_PIPE | G_SUBPROCESS_FLAGS_STDOUT_SILENCE |
+    G_SUBPROCESS_FLAGS_STDERR_SILENCE, &error, program, "--foreground", "--unlock", "--components=secrets", NULL);
+  g_assert_no_error(error);
+  GOutputStream *input = g_subprocess_get_stdin_pipe(keyring);
+  g_assert_true(g_output_stream_write_all(input, "w3-disposable", 13, NULL, NULL, &error));
+  g_assert_true(g_output_stream_close(input, NULL, &error)); g_assert_no_error(error);
+  guint timeout = g_timeout_add_seconds(10, bound, NULL);
+  while (!keyring_ready) g_main_context_iteration(NULL, TRUE); g_source_remove(timeout); g_bus_unwatch_name(watch);
+  GnSessionManager *session = gn_session_manager_get_default();
+  g_assert_false(gn_session_manager_has_password(session));
+  g_assert_true(gn_session_manager_set_password(session, NULL, "w3-test-password", &error)); g_assert_no_error(error);
+  g_assert_true(gn_backup_get_npub("0000000000000000000000000000000000000000000000000000000000000002", &f->npub, NULL));
+  stored_identity = g_strdup(f->npub);
+  GdkClipboard *clipboard = gdk_display_get_clipboard(gdk_display_get_default());
+  for (guint scenario = 0; scenario < 4; scenario++) {
+    gboolean phrase = scenario % 2, lock = scenario >= 2;
+    gdk_clipboard_set_content(clipboard, NULL); /* private test display, no prior fixture content */
+    g_test_message("successful %s copy, then %s", phrase ? "phrase" : "raw key", lock ? "real management lock" : "Backup shell close");
+    AdwWindow *window; GtkWidget *page = open_backup_shell(f, &window); GtkWidget *word_entry = NULL;
+    g_signal_emit_by_name(detail_child(page, phrase ? "phrase_row" : "raw_row"), "activated");
+    if (phrase) {
+      wait_invocation(&f->seed); g_dbus_method_invocation_return_value(f->seed, g_variant_new("(s)", "disposable recovery phrase")); g_clear_object(&f->seed);
+      timeout = g_timeout_add_seconds(10, bound, NULL);
+      while (!find_flow(GTK_WIDGET(adw_window_get_visible_dialog(window)))) g_main_context_iteration(NULL, TRUE); g_source_remove(timeout);
+      GtkWidget *dialog = GTK_WIDGET(adw_window_get_visible_dialog(window));
+      word_entry = gtk_flow_box_child_get_child(GTK_FLOW_BOX_CHILD(gtk_widget_get_first_child(find_flow(dialog)))); g_object_ref(word_entry);
+      g_signal_emit_by_name(button_named(dialog, "Copy Recovery Phrase…"), "clicked");
+      alert_response(ADW_ALERT_DIALOG(adw_window_get_visible_dialog(window)), "copy");
+    } else {
+      alert_response(ADW_ALERT_DIALOG(adw_window_get_visible_dialog(window)), "proceed"); wait_invocation(&f->raw);
+      g_dbus_method_invocation_return_value(f->raw, g_variant_new("(s)", "nsec1disposable-test-key")); g_clear_object(&f->raw);
+    }
+    timeout = g_timeout_add_seconds(10, bound, NULL);
+    while (!gdk_clipboard_get_content(clipboard)) g_main_context_iteration(NULL, TRUE); g_source_remove(timeout);
+    gpointer provider = gdk_clipboard_get_content(clipboard); g_object_add_weak_pointer(G_OBJECT(provider), &provider);
+    if (lock) {
+      gn_session_manager_lock(session, GN_LOCK_REASON_MANUAL); g_assert_true(gn_session_manager_is_locked(session));
+      g_assert_true(gtk_widget_get_mapped(page)); /* the independent shell did not unmap */
+    } else gtk_window_destroy(GTK_WINDOW(window));
+    g_assert_null(gdk_clipboard_get_content(clipboard)); g_assert_null(provider);
+    if (word_entry) { g_assert_cmpstr(gtk_editable_get_text(GTK_EDITABLE(word_entry)), ==, ""); g_object_unref(word_entry); }
+    if (lock) { g_assert_true(gn_session_manager_authenticate(session, "w3-test-password", &error)); g_assert_no_error(error); }
+    release_backup_shell(window, page);
+  }
+  for (guint scenario = 0; scenario < 3; scenario++) {
+    gboolean raw = scenario == 2, lock = scenario != 0;
+    AdwWindow *window; GtkWidget *page = open_backup_shell(f, &window);
+    g_signal_emit_by_name(detail_child(page, raw ? "raw_row" : "phrase_row"), "activated");
+    if (raw) alert_response(ADW_ALERT_DIALOG(adw_window_get_visible_dialog(window)), "proceed");
+    GDBusMethodInvocation **pending = raw ? &f->raw : &f->seed; wait_invocation(pending);
+    AdwDialog *loading = adw_window_get_visible_dialog(window);
+    timeout = g_timeout_add_seconds(10, bound, NULL);
+    while (!gtk_widget_get_mapped(GTK_WIDGET(loading))) g_main_context_iteration(NULL, TRUE); g_source_remove(timeout);
+    if (!lock) wait_dialog_frames(GTK_WIDGET(loading)); /* a user-visible, opened close affordance */
+    g_test_message("late %s reply after %s", raw ? "raw key" : "phrase", lock ? "real lock" : "opened phrase dialog close");
+    if (lock) gn_session_manager_lock(session, GN_LOCK_REASON_MANUAL);
+    else adw_dialog_force_close(loading);
+    g_dbus_method_invocation_return_value(*pending, g_variant_new("(s)", "late disposable secret")); g_clear_object(pending);
+    reply_barrier();
+    g_assert_null(gdk_clipboard_get_content(clipboard));
+    g_assert_null(find_flow(GTK_WIDGET(window))); /* no late phrase redisclosure */
+    if (lock) { g_assert_true(gn_session_manager_authenticate(session, "w3-test-password", &error)); g_assert_no_error(error); }
+    release_backup_shell(window, page);
+  }
+  g_assert_true(gn_session_manager_clear_password(session, "w3-test-password", &error)); g_assert_no_error(error);
+  g_subprocess_force_exit(keyring); g_assert_true(g_subprocess_wait(keyring, NULL, NULL));
 }
 static void repeated_creation_activation(Fixture *f, gconstpointer data) {
   (void)f; (void)data;
@@ -534,16 +653,22 @@ static void secure_widget_buffer(void) {
 }
 static void clipboard_ownership(void) {
   GdkClipboard *clipboard = gdk_display_get_clipboard(gdk_display_get_default());
-  guint timer = grotto_secret_clipboard_copy(clipboard, "disposable phrase");
+  g_autoptr(GrottoSecretClipboardLease) lease = grotto_secret_clipboard_copy(clipboard, "disposable phrase");
+  gpointer old = gdk_clipboard_get_content(clipboard); g_object_add_weak_pointer(G_OBJECT(old), &old);
   gdk_clipboard_set_text(clipboard, "user's unrelated content");
-  GdkContentProvider *provider = g_object_ref(gdk_clipboard_get_content(clipboard));
-  GSource *source = g_main_context_find_source_by_id(NULL, timer); g_assert_nonnull(source); g_source_set_ready_time(source, 0);
-  while (g_main_context_find_source_by_id(NULL, timer)) g_main_context_iteration(NULL, TRUE);
-  g_assert_true(gdk_clipboard_get_content(clipboard) == provider); g_object_unref(provider);
-  timer = grotto_secret_clipboard_copy(clipboard, "another disposable phrase");
-  source = g_main_context_find_source_by_id(NULL, timer); g_source_set_ready_time(source, 0);
-  while (g_main_context_find_source_by_id(NULL, timer)) g_main_context_iteration(NULL, TRUE);
-  g_assert_null(gdk_clipboard_get_content(clipboard));
+  g_assert_null(old); /* replacement promptly drops the lease's secret provider */
+  GdkContentProvider *provider = gdk_clipboard_get_content(clipboard);
+  g_clear_pointer(&lease, grotto_secret_clipboard_lease_free);
+  g_assert_true(gdk_clipboard_get_content(clipboard) == provider);
+  lease = grotto_secret_clipboard_copy(clipboard, "another disposable phrase");
+  GSource *source = g_main_context_find_source_by_user_data(NULL, lease); g_assert_nonnull(source);
+  g_source_set_ready_time(source, 0);
+  while (gdk_clipboard_get_content(clipboard)) g_main_context_iteration(NULL, TRUE);
+  g_clear_pointer(&lease, grotto_secret_clipboard_lease_free); /* safe after timeout */
+  lease = grotto_secret_clipboard_copy(clipboard, "close before timeout");
+  old = gdk_clipboard_get_content(clipboard); g_object_add_weak_pointer(G_OBJECT(old), &old);
+  g_clear_pointer(&lease, grotto_secret_clipboard_lease_free);
+  g_assert_null(gdk_clipboard_get_content(clipboard)); g_assert_null(old);
 }
 int main(int argc, char **argv) {
 #ifdef __APPLE__
@@ -556,7 +681,7 @@ int main(int argc, char **argv) {
   g_setenv("GDK_DEBUG", "no-portals", TRUE); /* native chooser; portal acceptance is G08/G12 */
   g_setenv("GIO_USE_VOLUME_MONITOR", "unix", TRUE); /* no desktop/global remote-volume proxies in this private-bus fixture */
   NostrcTestBus *bus = nostrc_test_bus_new(NOSTRC_TEST_BUS_FLAGS_NONE); nostrc_test_bus_up(bus); server = nostrc_test_bus_connect(bus);
-  GDBusNodeInfo *info = g_dbus_node_info_new_for_xml("<node><interface name='org.nostr.Signer'><method name='ListIdentities'><arg type='as' direction='out'/></method></interface><interface name='org.nostr.Grotto.Control1'><method name='GetStatus'><arg type='a{sv}' direction='out'/></method><method name='GetIdentityMigration'><arg type='s' direction='in'/><arg type='s' direction='out'/></method><method name='ListClients'><arg type='aa{sv}' direction='out'/></method><method name='ListRequests'><arg type='aa{sv}' direction='out'/></method><method name='ListActivity'><arg type='t' direction='in'/><arg type='u' direction='in'/><arg type='aa{sv}' direction='out'/></method><method name='StoreKeyWithMnemonic'><arg type='s' direction='in'/><arg type='s' direction='in'/><arg type='s' direction='in'/><arg type='s' direction='out'/></method><method name='ImportIdentity'><arg type='s' direction='in'/><arg type='s' direction='in'/><arg type='s' direction='in'/><arg type='s' direction='in'/><arg type='s' direction='out'/></method><method name='SelfTestIdentity'><arg type='s' direction='in'/><arg type='s' direction='out'/></method><method name='CancelIdentitySelfTest'><arg type='s' direction='in'/></method><method name='ExportIdentity'><arg type='s' direction='in'/><arg type='s' direction='in'/><arg type='s' direction='in'/><arg type='s' direction='out'/></method><method name='RemoveIdentity'><arg type='s' direction='in'/><arg type='s' direction='in'/><arg type='b' direction='out'/></method><signal name='IdentitySelfTestTesting'><arg type='s'/></signal></interface></node>", NULL);
+  GDBusNodeInfo *info = g_dbus_node_info_new_for_xml("<node><interface name='org.nostr.Signer'><method name='ListIdentities'><arg type='as' direction='out'/></method></interface><interface name='org.nostr.Grotto.Control1'><method name='GetStatus'><arg type='a{sv}' direction='out'/></method><method name='GetIdentityMigration'><arg type='s' direction='in'/><arg type='s' direction='out'/></method><method name='ListClients'><arg type='aa{sv}' direction='out'/></method><method name='ListRequests'><arg type='aa{sv}' direction='out'/></method><method name='ListActivity'><arg type='t' direction='in'/><arg type='u' direction='in'/><arg type='aa{sv}' direction='out'/></method><method name='StoreKeyWithMnemonic'><arg type='s' direction='in'/><arg type='s' direction='in'/><arg type='s' direction='in'/><arg type='s' direction='out'/></method><method name='ImportIdentity'><arg type='s' direction='in'/><arg type='s' direction='in'/><arg type='s' direction='in'/><arg type='s' direction='in'/><arg type='s' direction='out'/></method><method name='SelfTestIdentity'><arg type='s' direction='in'/><arg type='s' direction='out'/></method><method name='CancelIdentitySelfTest'><arg type='s' direction='in'/></method><method name='ExportRawIdentity'><arg type='s' direction='in'/><arg type='s' direction='out'/></method><method name='ExportIdentity'><arg type='s' direction='in'/><arg type='s' direction='in'/><arg type='s' direction='in'/><arg type='s' direction='out'/></method><method name='RemoveIdentity'><arg type='s' direction='in'/><arg type='s' direction='in'/><arg type='b' direction='out'/></method><signal name='IdentitySelfTestTesting'><arg type='s'/></signal></interface></node>", NULL);
   guint legacy = g_dbus_connection_register_object(server, "/org/nostr/signer", info->interfaces[0], &vtable, NULL, NULL, NULL);
   guint control = g_dbus_connection_register_object(server, "/org/nostr/signer/grotto", info->interfaces[1], &vtable, NULL, NULL, NULL);
   g_autoptr(GVariant) name = g_dbus_connection_call_sync(server, "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "RequestName", g_variant_new("(su)", "org.nostr.Signer", 0), NULL, 0, 5000, NULL, NULL);
@@ -574,6 +699,7 @@ int main(int argc, char **argv) {
   ADD("verification-warning-handoff", NULL, management_warning_handoff);
   ADD("backup-warning-handoff", "backup", management_warning_handoff);
   ADD("backup-deliberate-actions", NULL, backup_deliberate_actions);
+  ADD("backup-clipboard-close-lock-and-late-replies", NULL, backup_clipboard_close_lock);
   ADD("typed-deletion-cancel-failure", NULL, typed_deletion_cancel_failure);
   ADD("mnemonic-passphrase", "mnemonic", distinct_import_passphrase);
   ADD("nip49-passphrase", "ncryptsec", distinct_import_passphrase);

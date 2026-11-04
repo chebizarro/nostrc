@@ -9,6 +9,7 @@ Source0:        grotto-panels-%{version}.tar.gz
 BuildRequires:  cmake >= 3.22
 BuildRequires:  ninja-build
 BuildRequires:  gcc
+BuildRequires:  gettext
 BuildRequires:  pkgconfig(gtk4) >= 4.14
 BuildRequires:  pkgconfig(libadwaita-1) >= 1.5
 Requires:       gtk4 >= 4.14
@@ -38,11 +39,12 @@ cmake --build build --parallel 2
 
 %install
 DESTDIR=%{buildroot} cmake --install build
+%find_lang %{name}
 
 %post -p /sbin/ldconfig
 %postun -p /sbin/ldconfig
 
-%files
+%files -f %{name}.lang
 %license gnome/grotto-panels/LICENSE
 %{_libdir}/libgrotto-panels-0.so.0*
 

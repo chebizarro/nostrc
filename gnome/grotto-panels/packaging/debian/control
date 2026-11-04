@@ -2,7 +2,7 @@ Source: grotto-panels
 Section: libs
 Priority: optional
 Maintainer: Grotto Maintainers <chebizarro@protonmail.com>
-Build-Depends: debhelper-compat (= 13), cmake (>= 3.22), ninja-build, pkg-config,
+Build-Depends: debhelper-compat (= 13), cmake (>= 3.22), ninja-build, pkg-config, gettext,
                libgtk-4-dev (>= 4.14), libadwaita-1-dev (>= 1.5)
 Standards-Version: 4.6.2
 Rules-Requires-Root: no

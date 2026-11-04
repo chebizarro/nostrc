@@ -10,7 +10,11 @@ default (or first listed identity); a public key pins a detail page. Other
 Identities pushes pinned pages without changing the default. Add Identity is a
 flat action; Backup, removal and public-key QR stay host callbacks.
 Resources use `/org/nostr/GrottoPanels`; committed Blueprint/UI pairs are checked
-by `signer/blueprint-drift`.
+by `signer/blueprint-drift`. Hosts which already own window chrome set the
+panel's `show-window-controls` property to false; pinned subpages inherit it.
+The independent `grotto-panels` gettext domain is extracted from `po/POTFILES.in`
+and installed by both build systems (gettext/msgfmt is a build dependency).
+The template and dynamic sentences use that domain, not the host's domain.
 
 ## Ownership and injection
 
