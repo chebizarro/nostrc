@@ -30637,7 +30637,7 @@
       "publisher": "none",
       "version_sources": [
         {"path": "gnome/grotto-panels/CMakeLists.txt", "pattern": "project\\(grotto-panels VERSION ([0-9.]+)"},
-        {"path": "gnome/grotto-panels/meson.build", "pattern": "version: '([0-9.]+)'"}
+        {"path": "gnome/grotto-panels/meson.build", "pattern": "(?m)^project\\('grotto-panels', 'c', version: '([0-9.]+)'"}
       ]
     },
     "porthome-sys": {

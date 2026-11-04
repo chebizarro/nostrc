@@ -439,6 +439,7 @@
     "grotto.lsan_counterfactual",
     "grotto.package_contract.asan_ubsan",
     "grotto.package_contract.native",
+    "grotto.panels",
     "grotto.permissions.repeat",
     "grotto.quarantine_contract.asan_ubsan",
     "grotto.quarantine_contract.native",
