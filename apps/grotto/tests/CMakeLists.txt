@@ -325,11 +325,16 @@ set_tests_properties(signer/core PROPERTIES
 add_executable(test-secure-mem
     test-secure-mem.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/secure-mem.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/secure-memory.c
 )
 target_include_directories(test-secure-mem PRIVATE ${SIGNER_INCLUDE_DIRS})
 target_link_libraries(test-secure-mem PRIVATE ${SIGNER_TEST_LIBS})
 target_link_directories(test-secure-mem PRIVATE ${SIGNER_TEST_LINK_DIRS})
 target_compile_features(test-secure-mem PRIVATE c_std_11)
+if(SODIUM_FOUND)
+    target_link_libraries(test-secure-mem PRIVATE PkgConfig::SODIUM)
+    target_compile_definitions(test-secure-mem PRIVATE GNOSTR_HAVE_SODIUM=1)
+endif()
 apply_test_sanitizers(test-secure-mem)
 
 add_test(NAME signer/secure-mem COMMAND test-secure-mem)
