@@ -12,6 +12,7 @@
 #include "session-manager.h"
 #include "widgets/gn-secure-entry.h"
 #include <gio/gio.h>
+#include <glib/gi18n.h>
 #include <string.h>
 #define CONTROL_PATH "/org/nostr/signer/grotto"
 #define CONTROL_IFACE "org.nostr.Grotto.Control1"
@@ -35,7 +36,7 @@ struct _OnboardingAssistant {
   guint testing_signal;
   gboolean busy, closed, finished, identity_stored, self_test_passed, capabilities_ready;
   guint generation, accounts_changed;
-  gboolean backup_presented;
+  gboolean backup_presented, imported;
   GCancellable *cancel;
   gchar *identity, *mnemonic, *nsec;
   GrottoSecretClipboardLease *clipboard_lease;
@@ -67,10 +68,15 @@ static void navigation(OnboardingAssistant *self) {
   gtk_widget_set_sensitive(GTK_WIDGET(self->btn_back), !self->busy && !self->identity_stored);
   gtk_widget_set_visible(GTK_WIDGET(self->btn_back), self->state != ONBOARDING_WELCOME && !self->identity_stored);
   gtk_widget_set_sensitive(GTK_WIDGET(self->btn_skip), !self->busy);
+  gtk_widget_set_visible(GTK_WIDGET(self->btn_skip), self->state != ONBOARDING_READY);
+  gtk_button_set_label(self->btn_skip, !self->identity_stored ? _("Skip Setup") :
+      self->state == ONBOARDING_BACKUP ? _("Finish Without Backup") : _("Finish Later"));
+  gtk_widget_set_tooltip_text(GTK_WIDGET(self->btn_skip), self->identity_stored ?
+      _("The identity is saved on this device") : NULL);
   gtk_widget_set_sensitive(GTK_WIDGET(self->btn_next), !self->busy && self->capabilities_ready &&
       (self->state != ONBOARDING_BACKUP || (self->backup_presented && gtk_check_button_get_active(self->seed_written_down))));
   gtk_widget_set_visible(GTK_WIDGET(self->btn_retry), self->capabilities_ready && self->identity_stored && !self->self_test_passed && !self->busy);
-  gtk_button_set_label(self->btn_next, self->state == ONBOARDING_READY ? "Open Grotto" :
+  gtk_button_set_label(self->btn_next, self->state == ONBOARDING_READY ? _("Done") :
       self->state == ONBOARDING_CREATE ? "Create Identity" : self->state == ONBOARDING_IMPORT ? "Import Identity" :
       self->state == ONBOARDING_TEST_FAILED ? "Enter Management with Warning" : "Next");
   gtk_widget_set_sensitive(GTK_WIDGET(self->seed_written_down), self->backup_presented && !self->busy);
@@ -101,7 +107,7 @@ static void finish(OnboardingAssistant *self, gboolean verified) {
   /* Dismissed setup is not verified setup; the callback carries the distinction. */
   onboarding_assistant_mark_completed();
   if (self->on_finished) self->on_finished(verified, self->on_finished_data);
-  if (!verified && self->identity_stored) {
+  if (!verified && self->identity_stored && !self->self_test_passed) {
     GtkWindow *parent = gtk_window_get_transient_for(GTK_WINDOW(self));
     GtkApplication *app = gtk_window_get_application(GTK_WINDOW(self));
     if (!parent && app) {
@@ -201,6 +207,7 @@ static void call_done(GObject *source, GAsyncResult *result, gpointer data) {
     if (identity && *identity) {
       /* Copy all borrowed reply fields before releasing the variant. */
       g_free(self->identity); self->identity = g_strdup(identity); self->identity_stored = TRUE;
+      self->imported = ctx->operation == IMPORT;
       clear_input(self);
       AccountsStore *as = accounts_store_get_default();
       if (!accounts_store_exists(as, self->identity) && !accounts_store_add(as, self->identity,
@@ -216,7 +223,12 @@ static void call_done(GObject *source, GAsyncResult *result, gpointer data) {
     self->test_result = self->self_test_passed ? ONBOARDING_TEST_PASSED : ONBOARDING_TEST_VERIFICATION_FAILED;
     if (self->self_test_passed) {
       accounts_store_set_setup_state(accounts_store_get_default(), self->identity, "backup-pending", NULL);
-      show_backup(self);
+      if (self->imported) {
+        step(self, ONBOARDING_READY);
+        gtk_label_set_text(self->ready_summary,
+            _("Identity imported and saved. Signing and encryption checks passed. Backup is available in Identity → Backup."));
+        status(self, "");
+      } else show_backup(self);
     }
     else { step(self, ONBOARDING_TEST_FAILED); status(self, "Self-test failed verification. Retry before relying on this identity."); }
   } else {
@@ -428,6 +440,7 @@ void onboarding_assistant_present(GtkWindow *parent) {
   OnboardingAssistant *self = g_object_get_data(G_OBJECT(parent), "grotto-onboarding-assistant");
   if (self && !self->closed) { gtk_window_present(GTK_WINDOW(self)); return; }
   self = onboarding_assistant_new();
+  step(self, ONBOARDING_CHOICE);
   g_object_set_data(G_OBJECT(parent), "grotto-onboarding-assistant", self);
   g_object_weak_ref(G_OBJECT(self), presented_gone, g_object_ref(parent));
   gtk_window_set_transient_for(GTK_WINDOW(self), parent);

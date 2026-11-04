@@ -17,6 +17,7 @@ struct _GrottoIdentityPanel {
   GtkListBox *other_list;
   GtkButton *copy_key, *show_qr, *set_default, *add_identity, *empty_add, *remove_identity;
   GtkImage *default_check;
+  GtkLabel *identity_count;
   GListModel *model;
   gulong model_changed;
   char *pinned, *identity;
@@ -129,6 +130,10 @@ static void render(GrottoIdentityPanel *self) {
   adw_banner_set_title(self->banner, available ? _("This identity isn't backed up") : _("Signer unavailable"));
   adw_banner_set_revealed(self->banner, m && (!available || (!m->watch_only && !m->backup_acknowledged)));
   adw_banner_set_button_label(self->banner, available && m && m->can_sign && grotto_panel_host_can(panel, GROTTO_PANEL_HOST_BACKUP) ? _("Back Up…") : "");
+  g_autofree char *identity_count = g_strdup_printf(g_dngettext(GETTEXT_PACKAGE,
+      "%u identity on this device", "%u identities on this device", n), n);
+  gtk_label_set_text(self->identity_count, identity_count);
+  gtk_widget_set_visible(GTK_WIDGET(self->identity_count), !self->pinned);
   if (!m) {
     gtk_widget_set_visible(GTK_WIDGET(self->backup_row), FALSE);
     gtk_widget_set_visible(GTK_WIDGET(self->advanced_group), FALSE);
@@ -209,7 +214,7 @@ static void grotto_identity_panel_class_init(GrottoIdentityPanelClass *klass) {
   GtkWidgetClass *wc = GTK_WIDGET_CLASS(klass);
   gtk_widget_class_set_template_from_resource(wc, "/org/nostr/GrottoPanels/identity-panel.ui");
 #define BIND(name) gtk_widget_class_bind_template_child(wc, GrottoIdentityPanel, name)
-  BIND(header); BIND(navigation); BIND(content); BIND(empty); BIND(banner); BIND(avatar); BIND(name_row); BIND(key_row);
+  BIND(header); BIND(navigation); BIND(content); BIND(empty); BIND(banner); BIND(avatar); BIND(identity_count); BIND(name_row); BIND(key_row);
   BIND(backup_row); BIND(apps_row); BIND(default_row); BIND(details_row); BIND(other_group); BIND(other_list);
   BIND(add_group); BIND(advanced_group); BIND(copy_key); BIND(show_qr); BIND(set_default); BIND(default_check);
   BIND(add_identity); BIND(empty_add); BIND(remove_identity);

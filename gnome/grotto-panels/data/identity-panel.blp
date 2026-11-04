@@ -18,7 +18,10 @@ template $GrottoIdentityPanel: $GrottoPanel {
             Button empty_add { label: _("_Add Identity…"); use-underline: true; halign: center; styles ["pill"] }
           }; }
           StackPage { name: "identity"; child: Adw.PreferencesPage preferences {
-            Adw.PreferencesGroup { Adw.Avatar avatar { size: 96; show-initials: true; halign: center; } }
+            Adw.PreferencesGroup {
+              Adw.Avatar avatar { size: 96; show-initials: true; halign: center; }
+              Label identity_count { halign: center; wrap: true; styles ["dim-label"] }
+            }
             Adw.PreferencesGroup {
               description: _("The name is a local label, not a public profile");
               Adw.EntryRow name_row { title: _("_Name"); use-underline: true; show-apply-button: true; }

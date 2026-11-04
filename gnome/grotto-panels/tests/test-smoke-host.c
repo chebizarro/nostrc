@@ -220,6 +220,9 @@ static void identity_mounted(void) {
   g_autoptr(GrottoPanelsItem) second = grotto_panels_item_new(&b, NULL);
   GListStore *store = G_LIST_STORE(grotto_panels_service_get_model(GROTTO_PANELS_SERVICE(fake), GROTTO_PANELS_IDENTITIES));
   g_list_store_append(store, second);
+  GrottoPanelsMetadata observer = {.id="npub1observer", .public_key="npub1observer", .label="Observer", .watch_only=TRUE};
+  g_autoptr(GrottoPanelsItem) watch_item = grotto_panels_item_new(&observer, NULL);
+  g_list_store_append(store, watch_item);
   for (guint narrow = 0; narrow < 2; narrow++) {
     GtkWidget *window = adw_window_new(); g_object_ref_sink(window);
     gtk_window_set_default_size(GTK_WINDOW(window), narrow ? 360 : 920, 640);
@@ -238,7 +241,22 @@ static void identity_mounted(void) {
     g_signal_emit_by_name(identity_child(panel, "backup_row"), "activated");
     g_assert_cmpuint(callbacks, ==, 1); g_assert_cmpuint(grotto_panels_fake_service_get_invocations(fake), ==, narrow * 2);
     GtkListBox *others = GTK_LIST_BOX(identity_child(panel, "other_list"));
+    g_assert_true(gtk_widget_get_visible(identity_child(panel, "other_group")));
+    g_assert_cmpstr(gtk_label_get_text(GTK_LABEL(identity_child(panel, "identity_count"))), ==, "3 identities on this device");
+    g_assert_true(gtk_widget_get_visible(identity_child(panel, "identity_count")));
     GtkWidget *row = gtk_widget_get_first_child(GTK_WIDGET(others));
+    GtkWidget *watch_row = gtk_widget_get_next_sibling(row); g_assert_nonnull(watch_row);
+    g_assert_null(gtk_widget_get_next_sibling(watch_row));
+    g_assert_cmpstr(adw_preferences_row_get_title(ADW_PREFERENCES_ROW(watch_row)), ==, observer.label);
+    g_assert_cmpstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(watch_row)), ==, "Watch only — cannot sign");
+    g_signal_emit_by_name(others, "row-activated", watch_row);
+    AdwNavigationView *watch_nav = grotto_identity_panel_get_navigation(GROTTO_IDENTITY_PANEL(panel));
+    GtkWidget *watch_panel = GTK_WIDGET(adw_navigation_view_get_visible_page(watch_nav));
+    g_assert_cmpstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(identity_child(watch_panel, "key_row"))), ==, observer.public_key);
+    g_assert_false(gtk_widget_get_visible(identity_child(watch_panel, "backup_row")));
+    g_assert_false(gtk_widget_get_visible(identity_child(watch_panel, "default_row")));
+    g_assert_false(gtk_widget_get_visible(identity_child(watch_panel, "identity_count")));
+    g_assert_true(adw_navigation_view_pop(watch_nav));
     g_assert_cmpstr(adw_preferences_row_get_title(ADW_PREFERENCES_ROW(row)), ==, a.label);
     g_assert_false(adw_preferences_row_get_use_markup(ADW_PREFERENCES_ROW(row)));
     g_signal_emit_by_name(others, "row-activated", row);

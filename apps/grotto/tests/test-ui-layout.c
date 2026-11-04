@@ -4,6 +4,7 @@
 #include <gdk/x11/gdkx.h>
 #endif
 #include "ui/lock-screen.h"
+#include "ui/onboarding-assistant.h"
 #include "ui/page-connect.h"
 #include "home-model.h"
 #include "ui/page-identity-detail.h"
@@ -188,7 +189,7 @@ static void call(GDBusConnection *bus, const gchar *sender, const gchar *path, c
     GVariantBuilder b; g_variant_builder_init(&b, G_VARIANT_TYPE_VARDICT);
 #define ADD(k,v) g_variant_builder_add(&b, "{sv}", k, v)
     GVariantBuilder caps; g_variant_builder_init(&caps, G_VARIANT_TYPE("a{sb}"));
-    const char *capabilities[] = {"mnemonic-export", "export-identity", "raw-nsec-export", "identity-self-test", "rotate-identity", "decision-modes"};
+    const char *capabilities[] = {"store-mnemonic", "mnemonic-export", "export-identity", "raw-nsec-export", "identity-self-test", "rotate-identity", "decision-modes"};
     for (guint i = 0; i < G_N_ELEMENTS(capabilities); i++) g_variant_builder_add(&caps, "{sb}", capabilities[i], TRUE);
     ADD("capabilities", g_variant_builder_end(&caps));
     ADD("control_version", g_variant_new_uint32(1)); ADD("permission_policy_version", g_variant_new_uint32(3)); ADD("control_epoch", g_variant_new_string("fixture")); ADD("permissions_revision", g_variant_new_uint64(revision));
@@ -328,6 +329,11 @@ static void layout_activate(GApplication *application, gpointer data) {
   AdwNavigationView *root_navigation = grotto_identity_panel_get_navigation(GROTTO_IDENTITY_PANEL(root_panel));
   GtkWidget *other_list = GTK_WIDGET(gtk_widget_get_template_child(root_panel, GROTTO_TYPE_IDENTITY_PANEL, "other_list"));
   GtkWidget *other = gtk_widget_get_first_child(other_list); g_assert_nonnull(other);
+  g_assert_null(gtk_widget_get_next_sibling(other)); /* All two adapter identities: default + watch-only. */
+  g_assert_cmpstr(adw_preferences_row_get_title(ADW_PREFERENCES_ROW(other)), ==, "Observer");
+  g_autofree char *identity_count = g_strdup_printf(g_dngettext("grotto-panels", "%u identity on this device", "%u identities on this device", 2), 2);
+  GtkLabel *count_label = GTK_LABEL(gtk_widget_get_template_child(root_panel, GROTTO_TYPE_IDENTITY_PANEL, "identity_count"));
+  g_assert_cmpstr(gtk_label_get_text(count_label), ==, identity_count);
   g_assert_true(gtk_widget_grab_focus(other));
 #ifdef GROTTO_TEST_XDOTOOL
   send_key(window, "Return");
@@ -348,6 +354,21 @@ static void layout_activate(GApplication *application, gpointer data) {
   g_assert_cmpstr(unchanged_default, ==, npub);
   g_assert_true(accounts_store_exists(store, npub));
   g_assert_true(GROTTO_IS_IDENTITY_PANEL(selected_panel(split)));
+  GtkWidget *add_identity = GTK_WIDGET(gtk_widget_get_template_child(root_panel, GROTTO_TYPE_IDENTITY_PANEL, "add_identity"));
+  g_assert_true(gtk_widget_has_css_class(add_identity, "flat"));
+  g_signal_emit_by_name(add_identity, "clicked");
+  OnboardingAssistant *add = g_object_get_data(G_OBJECT(window), "grotto-onboarding-assistant");
+  g_assert_true(ONBOARDING_IS_ASSISTANT(add)); g_object_ref(add);
+  g_assert_cmpint(onboarding_assistant_get_state(add), ==, ONBOARDING_CHOICE);
+  GtkWidget *create_choice = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(add), TYPE_ONBOARDING_ASSISTANT, "radio_create"));
+  GtkWidget *import_choice = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(add), TYPE_ONBOARDING_ASSISTANT, "radio_import"));
+  g_assert_true(gtk_widget_get_visible(create_choice)); g_assert_true(gtk_widget_get_visible(import_choice));
+  gtk_check_button_set_active(GTK_CHECK_BUTTON(import_choice), TRUE);
+  GtkWidget *add_next = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(add), TYPE_ONBOARDING_ASSISTANT, "btn_next"));
+  WAIT(gtk_widget_is_sensitive(add_next)); g_signal_emit_by_name(add_next, "clicked");
+  g_assert_cmpint(onboarding_assistant_get_state(add), ==, ONBOARDING_IMPORT);
+  gtk_window_close(GTK_WINDOW(add)); g_object_unref(add);
+  WAIT(g_object_get_data(G_OBJECT(window), "grotto-onboarding-assistant") == NULL);
   signer_window_show_page(window, "preferences"); wait_frames(GTK_WIDGET(window));
   AdwDialog *preferences = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window));
   g_assert_true(ADW_IS_PREFERENCES_DIALOG(preferences));
@@ -795,7 +816,9 @@ int main(int argc, char **argv) {
     gtk_disable_setlocale(); /* Preserve the deliberate test locale through gtk_init_check(). */
   }
   g_test_init(&argc, &argv, NULL); nostrc_test_tolerate_gdk_frame_warning();
-  if (!gtk_init_check()) { g_print("1..0 # SKIP GTK display unavailable\n"); return 77; }
+  /* GTK can open a session connection through GVfs; establish test custody first. */
+  nostrc_test_bus_tolerate_ebadf(); NostrcTestBus *bus = nostrc_test_bus_new(NOSTRC_TEST_BUS_FLAGS_NONE); nostrc_test_bus_up(bus); server = nostrc_test_bus_connect(bus);
+  if (!gtk_init_check()) { nostrc_test_bus_down(bus); g_print("1..0 # SKIP GTK display unavailable\n"); return 77; }
   adw_init();
   gpointer panel_class = g_type_class_ref(GROTTO_TYPE_IDENTITY_PANEL); g_type_class_unref(panel_class);
   bindtextdomain("grotto-panels", G10_TEST_LOCALE_DIR); bind_textdomain_codeset("grotto-panels", "UTF-8");
@@ -805,7 +828,6 @@ int main(int argc, char **argv) {
     g_assert_cmpstr(_("Show Recovery Phrase…"), ==, "Mostrar frase de recuperación…");
   }
   g_object_set(gtk_settings_get_default(), "gtk-enable-animations", FALSE, NULL);
-  nostrc_test_bus_tolerate_ebadf(); NostrcTestBus *bus = nostrc_test_bus_new(NOSTRC_TEST_BUS_FLAGS_NONE); nostrc_test_bus_up(bus); server = nostrc_test_bus_connect(bus);
   gn_backup_get_npub("0000000000000000000000000000000000000000000000000000000000000001", &npub, NULL);
   expires_at = g_get_real_time() / G_USEC_PER_SEC + 600;
   GVariantBuilder initial; g_variant_builder_init(&initial, G_VARIANT_TYPE("aa{sv}"));

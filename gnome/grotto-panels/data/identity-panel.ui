@@ -63,6 +63,15 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                     <property name="halign">3</property>
                                   </object>
                                 </child>
+                                <child>
+                                  <object class="GtkLabel" id="identity_count">
+                                    <property name="halign">3</property>
+                                    <property name="wrap">true</property>
+                                    <style>
+                                      <class name="dim-label"/>
+                                    </style>
+                                  </object>
+                                </child>
                               </object>
                             </child>
                             <child>

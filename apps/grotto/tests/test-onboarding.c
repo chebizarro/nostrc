@@ -7,6 +7,7 @@
 #include "secret-variant.h"
 #include "backup-recovery.h"
 #include "accounts_store.h"
+#include <nostr/nip19/nip19.h>
 #include "secret-clipboard.h"
 #include "secure-mem.h"
 #include "secure-memory.h"
@@ -235,6 +236,42 @@ static void imported_input_cleared(Fixture *f, gconstpointer data) {
   click(f, "btn_next"); wait_invocation(&f->store); g_assert_cmpstr(gtk_editable_get_text(input), ==, "");
   stored(f); g_assert_cmpstr(gtk_editable_get_text(input), ==, "");
 }
+static void imported_completion_persists(Fixture *f, gconstpointer data) {
+  const char *exit = data;
+  click(f, "btn_next");
+  gtk_check_button_set_active(GTK_CHECK_BUTTON(child(f, "radio_import")), TRUE);
+  click(f, "btn_next");
+  guint8 key[32] = {0}; key[31] = 2;
+  g_autofree char *nsec = NULL;
+  g_assert_cmpint(nostr_nip19_encode_nsec(key, &nsec), ==, 0);
+  gtk_editable_set_text(GTK_EDITABLE(child(f, "text_import_data")), nsec);
+  click(f, "btn_next"); wait_invocation(&f->store); stored(f);
+  if (!strcmp(exit, "skip")) {
+    g_dbus_method_invocation_return_dbus_error(f->test, "org.nostr.Signer.Error.ApprovalDenied", "denied");
+    g_clear_object(&f->test); wait_state(f, ONBOARDING_TEST_FAILED);
+    g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(child(f, "btn_skip"))), ==, "Finish Later");
+    click(f, "btn_skip");
+    g_assert_cmpuint(f->finished, ==, 1); g_assert_false(f->verified);
+  } else {
+    g_dbus_method_invocation_return_value(f->test, g_variant_new("(s)", "passed"));
+    g_clear_object(&f->test); wait_state(f, ONBOARDING_READY);
+    g_assert_true(onboarding_assistant_self_test_passed(f->assistant));
+    g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(child(f, "btn_next"))), ==, "Done");
+    g_assert_false(gtk_widget_get_visible(child(f, "btn_skip")));
+    g_assert_null(f->seed); /* Imports must never request a backup export. */
+    g_assert_nonnull(strstr(gtk_label_get_text(GTK_LABEL(child(f, "ready_summary"))), "imported and saved"));
+    if (!strcmp(exit, "close")) gtk_window_close(GTK_WINDOW(f->assistant));
+    else { click(f, "btn_next"); g_assert_cmpuint(f->finished, ==, 1); g_assert_true(f->verified); }
+  }
+  g_assert_cmpstr(stored_identity, ==, f->npub);
+  g_assert_cmpuint(f->remove_calls, ==, 0);
+  AccountsStore *store = accounts_store_get_default();
+  g_assert_true(accounts_store_load(store, NULL));
+  AccountEntry *entry = accounts_store_find(store, f->npub); g_assert_nonnull(entry);
+  /* Completion does not pretend that an optional backup was acknowledged. */
+  g_assert_cmpstr(entry->setup_state, ==, !strcmp(exit, "skip") ? "verification-pending" : "backup-pending");
+  accounts_store_entry_free(entry);
+}
 static void readonly_older_daemon(Fixture *f, gconstpointer data) {
   (void)data; g_assert_false(gtk_widget_get_sensitive(child(f, "btn_next")));
   click(f, "btn_next"); g_assert_cmpint(onboarding_assistant_get_state(f->assistant), ==, ONBOARDING_WELCOME);
@@ -321,8 +358,16 @@ static void management_warning_handoff(Fixture *f, gconstpointer data) {
   }
   AdwWindow *window = ADW_WINDOW(adw_window_new()); g_object_ref(window); gtk_window_set_default_size(GTK_WINDOW(window), 560, 640); gtk_window_present(GTK_WINDOW(window));
   gtk_window_set_transient_for(GTK_WINDOW(f->assistant), GTK_WINDOW(window));
-  if (backup) click(f, "btn_skip"); else click(f, "btn_next");
+  if (backup) {
+    g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(child(f, "btn_skip"))), ==, "Finish Without Backup");
+    click(f, "btn_skip");
+  } else click(f, "btn_next");
   g_assert_false(f->verified); g_assert_cmpuint(f->finished, ==, 1);
+  g_assert_cmpstr(stored_identity, ==, f->npub); g_assert_cmpuint(f->remove_calls, ==, 0);
+  if (backup) {
+    g_assert_null(adw_window_get_visible_dialog(window));
+    gtk_window_destroy(GTK_WINDOW(window)); g_object_unref(window); return;
+  }
   AdwDialog *dialog = adw_window_get_visible_dialog(window); g_assert_nonnull(dialog); g_object_ref(dialog);
   GtkWidget *page = GTK_WIDGET(adw_navigation_view_get_visible_page(ADW_NAVIGATION_VIEW(adw_dialog_get_child(dialog))));
   wait_sensitive(detail_child(page, "test_row"), TRUE);
@@ -348,7 +393,9 @@ static void typed_deletion_cancel_failure(Fixture *f, gconstpointer data) {
   stored_identity = g_strdup(f->npub);
   SignerWindow *window = g_object_new(TYPE_SIGNER_WINDOW, NULL); g_object_ref_sink(window);
   gtk_window_present(GTK_WINDOW(window)); signer_window_show_identity(window, f->npub);
-  AdwNavigationView *navigation = ADW_NAVIGATION_VIEW(gtk_widget_get_template_child(GTK_WIDGET(window), TYPE_SIGNER_WINDOW, "detail_navigation"));
+  GtkStack *panels = GTK_STACK(gtk_widget_get_template_child(GTK_WIDGET(window), TYPE_SIGNER_WINDOW, "panel_stack"));
+  GtkWidget *root = gtk_stack_get_visible_child(panels); g_assert_true(GROTTO_IS_IDENTITY_PANEL(root));
+  AdwNavigationView *navigation = grotto_identity_panel_get_navigation(GROTTO_IDENTITY_PANEL(root));
   GtkWidget *page = GTK_WIDGET(adw_navigation_view_get_visible_page(navigation));
   g_assert_true(GROTTO_IS_IDENTITY_PANEL(page));
   GtkWidget *remove = GTK_WIDGET(gtk_widget_get_template_child(page, GROTTO_TYPE_IDENTITY_PANEL, "remove_identity")); wait_sensitive(remove, TRUE);
@@ -694,6 +741,9 @@ int main(int argc, char **argv) {
   ADD("expired", "org.nostr.Signer.Error.ApprovalTimedOut", failed_test); ADD("keyring-unavailable", "org.nostr.Signer.Error.BackendUnavailable", failed_test);
   ADD("verification-failed", "org.nostr.Signer.Error.VerificationFailed", failed_test);
   ADD("close-during-self-test", NULL, cancelled_test); ADD("import-input-cleanup", NULL, imported_input_cleared);
+  ADD("import-without-backup-done", "done", imported_completion_persists);
+  ADD("import-persists-across-skip", "skip", imported_completion_persists);
+  ADD("import-persists-across-close", "close", imported_completion_persists);
   ADD("pinned-backup-cleanup", NULL, pinned_backup_cleanup);
   ADD("backup-failure-blocks-ready", NULL, backup_failure_blocks_ready);
   ADD("verification-warning-handoff", NULL, management_warning_handoff);
