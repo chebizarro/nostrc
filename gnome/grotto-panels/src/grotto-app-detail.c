@@ -18,11 +18,12 @@ struct _GrottoAppDetail {
   AdwBanner *feedback, *permission_feedback;
   GtkCheckButton *tiers[3];
   GtkWidget *access, *remove, *unblock;
-  GtkListBox *permission_rows;
+  GtkListBox *permission_rows, *effective_rows, *clear_rows;
+  AdwPreferencesGroup *clear_group;
   GListModel *apps, *permissions;
   GrottoPanelsItem *snapshot;
   PermissionEditor *editor;
-  gboolean updating, busy, loading;
+  gboolean updating, busy, loading, clear_failed;
   guint query_serial;
 };
 G_DEFINE_TYPE(GrottoAppDetail, grotto_app_detail, GROTTO_TYPE_PANEL)
@@ -30,6 +31,9 @@ G_DEFINE_TYPE(GrottoAppDetail, grotto_app_detail, GROTTO_TYPE_PANEL)
 static void render(GrottoAppDetail *self);
 static void load_permissions(GrottoAppDetail *self);
 static void editor_refresh(GrottoAppDetail *self);
+static gboolean needs_activation(const GrottoPanelsMetadata *m) {
+  return !strcmp(m->decision, "policy-review") || !strcmp(m->decision, "review");
+}
 static GtkWidget *row(AdwPreferencesGroup *group, const char *title, const char *subtitle) {
   GtkWidget *widget = adw_action_row_new();
   adw_preferences_row_set_use_markup(ADW_PREFERENCES_ROW(widget), FALSE);
@@ -257,8 +261,11 @@ static void removal_confirmed(GObject *source, GAsyncResult *result, gpointer da
 }
 static void editor_remove(GtkButton *button, gpointer data) {
   (void)button; PermissionEditor *e = data;
-  AdwDialog *dialog = adw_alert_dialog_new(_("Remove Permission?"), _("Removing a saved block can allow access under the app's preset or other permissions."));
-  adw_alert_dialog_add_responses(ADW_ALERT_DIALOG(dialog), "cancel", _("Cancel"), "remove", _("Remove Permission"), NULL);
+  gboolean inactive = needs_activation(grotto_panels_item_get_metadata(e->original));
+  AdwDialog *dialog = adw_alert_dialog_new(inactive ? _("Discard Saved Permission?") : _("Remove Permission?"),
+    inactive ? _("Discard this inactive entry without activating it. The app's trust level and other permissions remain unchanged.") :
+    _("Removing a saved block can allow access under the app's preset or other permissions."));
+  adw_alert_dialog_add_responses(ADW_ALERT_DIALOG(dialog), "cancel", _("Cancel"), "remove", inactive ? _("Discard") : _("Remove Permission"), NULL);
   adw_alert_dialog_set_default_response(ADW_ALERT_DIALOG(dialog), "cancel"); adw_alert_dialog_set_close_response(ADW_ALERT_DIALOG(dialog), "cancel");
   adw_alert_dialog_set_response_appearance(ADW_ALERT_DIALOG(dialog), "remove", ADW_RESPONSE_DESTRUCTIVE);
   adw_alert_dialog_choose(ADW_ALERT_DIALOG(dialog), GTK_WIDGET(e->page), grotto_panel_get_cancellable(GROTTO_PANEL(e->page)), removal_confirmed, g_object_ref(e->dialog));
@@ -282,7 +289,8 @@ static void edit_permission(AdwActionRow *row_widget, gpointer data) {
   PermissionEditor *e = g_new0(PermissionEditor, 1); e->page = g_object_ref(self);
   e->original = g_object_ref(g_object_get_data(G_OBJECT(row_widget), "permission")); e->snapshot = g_object_ref(self->permissions);
   const GrottoPanelsMetadata *m = grotto_panels_item_get_metadata(e->original);
-  e->dialog = adw_dialog_new(); adw_dialog_set_title(e->dialog, _("Edit Permission")); adw_dialog_set_content_width(e->dialog, 420); adw_dialog_set_content_height(e->dialog, 560);
+  gboolean inactive = needs_activation(m);
+  e->dialog = adw_dialog_new(); adw_dialog_set_title(e->dialog, inactive ? _("Review Inactive Permission") : _("Edit Permission")); adw_dialog_set_content_width(e->dialog, 420); adw_dialog_set_content_height(e->dialog, 560);
   GtkWidget *toolbar = adw_toolbar_view_new(); adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(toolbar), adw_header_bar_new());
   e->feedback = ADW_BANNER(adw_banner_new("")); adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(toolbar), GTK_WIDGET(e->feedback));
   AdwPreferencesPage *prefs = ADW_PREFERENCES_PAGE(adw_preferences_page_new()); AdwPreferencesGroup *scope = group(prefs, _("Scope"));
@@ -319,14 +327,18 @@ static void edit_permission(AdwActionRow *row_widget, gpointer data) {
   gtk_editable_set_text(GTK_EDITABLE(e->relay), m->relay); adw_preferences_group_add(scope, GTK_WIDGET(e->relay));
   AdwPreferencesGroup *choice = group(prefs, _("Permission")); const char *decisions[] = {_("Allow"), _("Deny"), NULL};
   e->decision = combo(choice, _("Decision"), decisions); adw_combo_row_set_selected(e->decision, !strcmp(m->decision, "deny"));
+  gtk_widget_set_visible(GTK_WIDGET(e->decision), !inactive);
   const char *durations[] = {_("Keep Current Expiry"), _("10 minutes"), _("1 hour"), _("24 hours"), _("Until Revoked"), NULL};
-  e->duration = combo(choice, _("Duration"), durations); adw_combo_row_set_selected(e->duration, !strcmp(m->state, "inactive") ? 1 : 0);
+  e->duration = combo(choice, _("Duration"), durations);
+  /* In particular, dormant policy-review expiry 0 stays until revoked. */
+  adw_combo_row_set_selected(e->duration, 0);
   AdwPreferencesGroup *destructive = group(prefs, NULL);
-  e->remove = GTK_BUTTON(gtk_button_new_with_label(_("Remove Permission…"))); gtk_widget_add_css_class(GTK_WIDGET(e->remove), "destructive-action");
+  e->remove = GTK_BUTTON(gtk_button_new_with_label(inactive ? _("Discard Saved Permission…") : _("Remove Permission…"))); gtk_widget_add_css_class(GTK_WIDGET(e->remove), "destructive-action");
   gtk_widget_set_halign(GTK_WIDGET(e->remove), GTK_ALIGN_CENTER); adw_preferences_group_add(destructive, GTK_WIDGET(e->remove));
   GtkWidget *bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12); gtk_box_set_homogeneous(GTK_BOX(bar), TRUE);
   gtk_widget_set_margin_start(bar, 12); gtk_widget_set_margin_end(bar, 12); gtk_widget_set_margin_top(bar, 12); gtk_widget_set_margin_bottom(bar, 12);
-  GtkWidget *cancel = gtk_button_new_with_label(_("Cancel")); e->save = GTK_BUTTON(gtk_button_new_with_label(_("Save Permission")));
+  GtkWidget *cancel = gtk_button_new_with_label(_("Cancel"));
+  e->save = GTK_BUTTON(gtk_button_new_with_label(inactive ? _("Activate Saved Permission") : _("Save Permission")));
   gtk_label_set_wrap(GTK_LABEL(gtk_button_get_child(e->save)), TRUE);
   gtk_widget_add_css_class(GTK_WIDGET(e->save), "suggested-action"); gtk_box_append(GTK_BOX(bar), cancel); gtk_box_append(GTK_BOX(bar), GTK_WIDGET(e->save));
   adw_toolbar_view_add_bottom_bar(ADW_TOOLBAR_VIEW(toolbar), bar); adw_toolbar_view_set_content(ADW_TOOLBAR_VIEW(toolbar), GTK_WIDGET(prefs));
@@ -347,11 +359,71 @@ static void editor_refresh(GrottoAppDetail *self) {
   else {
     g_set_object(&e->snapshot, self->permissions);
     if (e->cleanup) editor_message(e, _("Scoped permission saved. Remove the legacy entry to finish."));
-    gtk_button_set_label(e->save, e->cleanup ? (e->retry ? _("Retry Removing Legacy Entry") : _("Remove Legacy Entry")) : (e->retry ? _("Retry Permission") : _("Save Permission")));
+    gtk_button_set_label(e->save, e->cleanup ? (e->retry ? _("Retry Removing Legacy Entry") : _("Remove Legacy Entry")) :
+      (e->retry ? _("Retry Permission") : needs_activation(original) ? _("Activate Saved Permission") : _("Save Permission")));
   }
   gboolean writable = found && !self->busy && !self->loading && grotto_panel_can_command(GROTTO_PANEL(self), GROTTO_PANEL_SET_PERMISSIONS);
   gtk_widget_set_sensitive(GTK_WIDGET(e->save), writable); gtk_widget_set_sensitive(GTK_WIDGET(e->remove), writable);
   if (writable && e->cleanup_ready) { e->cleanup_ready = FALSE; save_permission(e, TRUE); }
+}
+typedef struct { GrottoAppDetail *self; GrottoPanelsItem *scope; } ClearScope;
+static void clear_scope_free(ClearScope *clear) {
+  g_object_unref(clear->self); g_object_unref(clear->scope); g_free(clear);
+}
+static void cleared(GObject *source, GAsyncResult *result, gpointer data) {
+  ClearScope *clear = data; GrottoAppDetail *self = clear->self;
+  g_autoptr(GError) error = NULL;
+  self->clear_failed = !grotto_panel_command_finish(GROTTO_PANEL(source), result, &error);
+  self->busy = FALSE;
+  if (!self->clear_failed) forward_toast(self, _("Remembered permissions cleared. Trust level unchanged."));
+  load_permissions(self); render(self); clear_scope_free(clear);
+}
+static void clear_confirmed(GObject *source, GAsyncResult *result, gpointer data) {
+  ClearScope *clear = data; GrottoAppDetail *self = clear->self;
+  const char *response = adw_alert_dialog_choose_finish(ADW_ALERT_DIALOG(source), result);
+  if (strcmp(response, "clear")) { clear_scope_free(clear); return; }
+  if (self->busy || self->loading) {
+    message(self, _("Permissions are refreshing. Review the entries and try again."));
+    clear_scope_free(clear); return;
+  }
+  const GrottoPanelsMetadata *m = grotto_panels_item_get_metadata(clear->scope);
+  GrottoPanelCommandArgs args = {.principal = self->principal, .public_key = m->public_key,
+    .expected_revision = m->revision, .expected_generation = m->owner_generation};
+  self->busy = TRUE; render(self);
+  grotto_panel_command_async(GROTTO_PANEL(self), GROTTO_PANEL_SET_PERMISSIONS, &args, cleared, clear);
+}
+static void clear_scope(AdwActionRow *widget, gpointer data) {
+  GrottoAppDetail *self = data;
+  if (self->busy || self->loading || !self->permissions ||
+      !grotto_panel_can_command(GROTTO_PANEL(self), GROTTO_PANEL_SET_PERMISSIONS)) return;
+  ClearScope *clear = g_new0(ClearScope, 1); clear->self = g_object_ref(self);
+  clear->scope = g_object_ref(g_object_get_data(G_OBJECT(widget), "clear-scope"));
+  const GrottoPanelsMetadata *m = grotto_panels_item_get_metadata(clear->scope);
+  self->clear_failed = FALSE;
+  g_autofree char *body = g_strdup_printf(_("Remove every remembered allow, deny and inactive entry for this app and identity %s? Other identities and the trust level remain unchanged."), m->public_key);
+  AdwDialog *dialog = adw_alert_dialog_new(_("Clear Remembered Permissions?"), body);
+  adw_alert_dialog_add_responses(ADW_ALERT_DIALOG(dialog), "cancel", _("Cancel"), "clear", _("Clear"), NULL);
+  adw_alert_dialog_set_default_response(ADW_ALERT_DIALOG(dialog), "cancel");
+  adw_alert_dialog_set_close_response(ADW_ALERT_DIALOG(dialog), "cancel");
+  adw_alert_dialog_set_response_appearance(ADW_ALERT_DIALOG(dialog), "clear", ADW_RESPONSE_DESTRUCTIVE);
+  adw_alert_dialog_choose(ADW_ALERT_DIALOG(dialog), GTK_WIDGET(self), grotto_panel_get_cancellable(GROTTO_PANEL(self)), clear_confirmed, clear);
+}
+static void render_effective(GrottoAppDetail *self, const GrottoPanelsMetadata *m) {
+  if (!self->effective_rows) return;
+  GtkWidget *child;
+  while ((child = gtk_widget_get_first_child(GTK_WIDGET(self->effective_rows)))) gtk_list_box_remove(self->effective_rows, child);
+  if (!m) return;
+  if (m->blocked) {
+    gtk_list_box_append(self->effective_rows, row(NULL, _("App Blocked"), _("Saved permissions are retained, but inactive while the app is blocked.")));
+    return;
+  }
+  const char *tier = !strcmp(m->trust, "full") ? _("Full") : !strcmp(m->trust, "medium") ? _("Medium") : _("Low");
+  g_autofree char *from = g_strdup_printf(_("From %s trust"), tier);
+  for (guint i = 0; m->effective_permissions && m->effective_permissions[i]; i++) {
+    GtkWidget *widget = row(NULL, m->effective_permissions[i], from);
+    gtk_list_box_row_set_activatable(GTK_LIST_BOX_ROW(widget), FALSE);
+    gtk_list_box_append(self->effective_rows, widget);
+  }
 }
 typedef struct { GrottoAppDetail *self; guint serial; } PermissionRead;
 static void permissions_read(GObject *source, GAsyncResult *result, gpointer data) {
@@ -361,6 +433,8 @@ static void permissions_read(GObject *source, GAsyncResult *result, gpointer dat
   self->loading = FALSE; g_set_object(&self->permissions, model);
   gtk_widget_set_sensitive(GTK_WIDGET(self->permission_rows), model != NULL);
   GtkWidget *child; while ((child = gtk_widget_get_first_child(GTK_WIDGET(self->permission_rows)))) gtk_list_box_remove(self->permission_rows, child);
+  while ((child = gtk_widget_get_first_child(GTK_WIDGET(self->clear_rows)))) gtk_list_box_remove(self->clear_rows, child);
+  g_autoptr(GHashTable) scopes = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   for (guint i = 0; model && i < g_list_model_get_n_items(model); i++) {
     g_autoptr(GrottoPanelsItem) item = g_list_model_get_item(model, i); const GrottoPanelsMetadata *m = grotto_panels_item_get_metadata(item);
     const char *decision = !strcmp(m->decision, "allow") ? _("Allow") : !strcmp(m->decision, "deny") ? _("Deny") : _("Needs Review");
@@ -368,14 +442,30 @@ static void permissions_read(GObject *source, GAsyncResult *result, gpointer dat
       g_strdup_printf(_("%s · %s"), decision, operation_name(m->operation));
     g_autoptr(GDateTime) date = m->expires_at ? g_date_time_new_from_unix_local(m->expires_at) : NULL;
     g_autofree char *when = date ? g_date_time_format(date, "%F %R") : g_strdup(_("Until Revoked"));
-    g_autofree char *subtitle = g_strdup_printf("%s · %s · %s\n%s%s%s", m->state, m->reason, when, m->public_key, *m->relay ? " · " : "", m->relay);
+    gboolean policy_review = !strcmp(m->decision, "policy-review") && !strcmp(m->state, "inactive");
+    g_autofree char *status = policy_review ? g_strdup(_("Inactive — pending policy review")) : g_strdup_printf("%s · %s", m->state, m->reason);
+    g_autofree char *subtitle = g_strdup_printf("%s · %s\n%s%s%s", status, when, m->public_key, *m->relay ? " · " : "", m->relay);
+    if (g_hash_table_add(scopes, g_strdup(m->public_key))) {
+      GtkWidget *clear = row(NULL, _("Clear Remembered Permissions…"), m->public_key);
+      gtk_list_box_row_set_activatable(GTK_LIST_BOX_ROW(clear), TRUE);
+      g_object_set_data_full(G_OBJECT(clear), "clear-scope", g_object_ref(item), g_object_unref);
+      g_signal_connect(clear, "activated", G_CALLBACK(clear_scope), self);
+      gtk_list_box_append(self->clear_rows, clear);
+    }
     GtkWidget *widget = row(NULL, title, subtitle);
     gtk_list_box_row_set_activatable(GTK_LIST_BOX_ROW(widget), grotto_panel_can_command(GROTTO_PANEL(self), GROTTO_PANEL_SET_PERMISSIONS));
     g_object_set_data_full(G_OBJECT(widget), "permission", g_object_ref(item), g_object_unref);
     g_signal_connect(widget, "activated", G_CALLBACK(edit_permission), self); gtk_list_box_append(self->permission_rows, widget);
   }
+  gtk_widget_set_visible(GTK_WIDGET(self->clear_group), g_hash_table_size(scopes) > 0);
+  if (model && !g_list_model_get_n_items(model))
+    gtk_list_box_append(self->permission_rows, row(NULL, _("No Remembered Permissions"), _("Access from the trust level is shown separately.")));
   if (error) message(self, _("Permissions could not be loaded. Refresh to try again."));
-  else { adw_banner_set_revealed(self->permission_feedback, FALSE); editor_refresh(self); }
+  else {
+    if (self->clear_failed) message(self, _("Not cleared. Permissions or the signer changed. Review the refreshed entries and confirm again."));
+    else adw_banner_set_revealed(self->permission_feedback, FALSE);
+    editor_refresh(self);
+  }
   render(self);
   g_object_unref(self); g_free(read);
 }
@@ -383,6 +473,7 @@ static void load_permissions(GrottoAppDetail *self) {
   if (!self->permission_rows || !grotto_panel_get_service(GROTTO_PANEL(self))) return;
   self->loading = TRUE; self->query_serial++;
   gtk_widget_set_sensitive(GTK_WIDGET(self->permission_rows), FALSE);
+  gtk_widget_set_sensitive(GTK_WIDGET(self->clear_rows), FALSE);
   if (self->editor) { self->editor->blocked = TRUE; gtk_widget_set_sensitive(GTK_WIDGET(self->editor->save), FALSE); gtk_widget_set_sensitive(GTK_WIDGET(self->editor->remove), FALSE); }
   PermissionRead *read = g_new0(PermissionRead, 1); *read = (PermissionRead){g_object_ref(self), self->query_serial};
   grotto_panels_service_query_async(grotto_panel_get_service(GROTTO_PANEL(self)), GROTTO_PANELS_QUERY_PERMISSIONS,
@@ -396,10 +487,19 @@ static void open_permissions(AdwActionRow *widget, gpointer data) {
     self->permission_feedback = ADW_BANNER(adw_banner_new("")); adw_banner_set_button_label(self->permission_feedback, _("Refresh Permissions"));
     g_signal_connect(self->permission_feedback, "button-clicked", G_CALLBACK(refresh_clicked), self);
     adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(toolbar), GTK_WIDGET(self->permission_feedback));
-    AdwPreferencesPage *prefs = ADW_PREFERENCES_PAGE(adw_preferences_page_new()); AdwPreferencesGroup *g = group(prefs, _("Saved Permissions"));
-    adw_preferences_group_set_description(g, _("Status and reasons come from the signer. Expiry is not extended by use."));
+    AdwPreferencesPage *prefs = ADW_PREFERENCES_PAGE(adw_preferences_page_new());
+    AdwPreferencesGroup *effective = group(prefs, _("Effective from Trust Level"));
+    adw_preferences_group_set_description(effective, _("Explicit denials win. Saved permissions override presets. Ask-by-default event types and AUTH relays need a scoped first grant."));
+    self->effective_rows = GTK_LIST_BOX(gtk_list_box_new()); gtk_list_box_set_selection_mode(self->effective_rows, GTK_SELECTION_NONE);
+    gtk_widget_add_css_class(GTK_WIDGET(self->effective_rows), "boxed-list"); adw_preferences_group_add(effective, GTK_WIDGET(self->effective_rows));
+    AdwPreferencesGroup *g = group(prefs, _("Remembered Permissions"));
+    adw_preferences_group_set_description(g, _("Explicit entries are editable. Status and reasons come from the signer. Expiry is not extended by use. Inactive entries cannot authorize signing."));
     self->permission_rows = GTK_LIST_BOX(gtk_list_box_new()); gtk_list_box_set_selection_mode(self->permission_rows, GTK_SELECTION_NONE);
     gtk_widget_add_css_class(GTK_WIDGET(self->permission_rows), "boxed-list"); adw_preferences_group_add(g, GTK_WIDGET(self->permission_rows));
+    self->clear_group = group(prefs, _("Clear Remembered Permissions"));
+    adw_preferences_group_set_description(self->clear_group, _("Choose an identity. Clearing removes its explicit allows, denies and inactive entries, not its trust level."));
+    self->clear_rows = GTK_LIST_BOX(gtk_list_box_new()); gtk_list_box_set_selection_mode(self->clear_rows, GTK_SELECTION_NONE);
+    gtk_widget_add_css_class(GTK_WIDGET(self->clear_rows), "boxed-list"); adw_preferences_group_add(self->clear_group, GTK_WIDGET(self->clear_rows));
     adw_toolbar_view_set_content(ADW_TOOLBAR_VIEW(toolbar), GTK_WIDGET(prefs)); self->permissions_page = ADW_NAVIGATION_PAGE(adw_navigation_page_new(toolbar, _("Permissions")));
     adw_navigation_view_add(self->navigation, self->permissions_page);
   }
@@ -414,11 +514,14 @@ static void render(GrottoAppDetail *self) {
   self->updating = TRUE;
   if (self->permission_rows) {
     gboolean edit = grotto_panel_can_command(GROTTO_PANEL(self), GROTTO_PANEL_SET_PERMISSIONS);
-    gtk_widget_set_sensitive(GTK_WIDGET(self->permission_rows), !self->busy && !self->loading && self->permissions != NULL && edit);
+    gboolean writable = !self->busy && !self->loading && self->permissions != NULL && edit;
+    gtk_widget_set_sensitive(GTK_WIDGET(self->permission_rows), !self->busy && !self->loading && self->permissions != NULL);
+    gtk_widget_set_sensitive(GTK_WIDGET(self->clear_rows), writable);
     for (GtkWidget *row = gtk_widget_get_first_child(GTK_WIDGET(self->permission_rows)); row; row = gtk_widget_get_next_sibling(row))
-      gtk_list_box_row_set_activatable(GTK_LIST_BOX_ROW(row), edit);
+      gtk_list_box_row_set_activatable(GTK_LIST_BOX_ROW(row), writable && g_object_get_data(G_OBJECT(row), "permission") != NULL);
   }
   const GrottoPanelsMetadata *m = self->snapshot ? grotto_panels_item_get_metadata(self->snapshot) : NULL;
+  render_effective(self, m);
   gboolean editable = m && !self->busy && grotto_panel_can_command(GROTTO_PANEL(self), GROTTO_PANEL_SET_CLIENT_TRUST);
   gtk_widget_set_visible(self->unblock, m && m->blocked);
   gtk_widget_set_sensitive(self->unblock, editable);
@@ -486,7 +589,7 @@ static void grotto_app_detail_init(GrottoAppDetail *self) {
   }
   AdwPreferencesGroup *links = group(prefs, NULL); self->handoff = ADW_ACTION_ROW(row(links, _("Change in Grotto…"), NULL));
   gtk_list_box_row_set_activatable(GTK_LIST_BOX_ROW(self->handoff), TRUE); g_signal_connect(self->handoff, "activated", G_CALLBACK(handoff), self);
-  self->permissions_link = ADW_ACTION_ROW(row(links, _("Permissions"), _("View saved permissions, status and expiry")));
+  self->permissions_link = ADW_ACTION_ROW(row(links, _("Permissions"), _("View trust-derived access; edit or clear remembered permissions")));
   gtk_list_box_row_set_activatable(GTK_LIST_BOX_ROW(self->permissions_link), TRUE); adw_action_row_add_suffix(self->permissions_link, gtk_image_new_from_icon_name("go-next-symbolic"));
   g_signal_connect(self->permissions_link, "activated", G_CALLBACK(open_permissions), self);
   GtkWidget *recent = row(links, _("Recent Activity"), NULL); gtk_list_box_row_set_activatable(GTK_LIST_BOX_ROW(recent), TRUE);

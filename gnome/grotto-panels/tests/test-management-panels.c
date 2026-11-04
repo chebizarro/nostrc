@@ -20,7 +20,8 @@ static void management_panels(void) {
   grotto_panels_fake_service_set_available(fake, TRUE);
   for (guint i = 0; i < GROTTO_PANEL_N_COMMANDS; i++) grotto_panels_fake_service_set_can(fake, i, TRUE);
   const char *relays[] = {"wss://nos.lol", NULL}, *methods[] = {"sign_event", NULL};
-  GrottoPanelsMetadata app = {.id = "app:test", .label = "<b>Plain App</b>", .trust = "medium", .access_policy = "Ask for sensitive operations", .transport = "Local App"};
+  const char *effective[] = {"Public key after consent", "Public publishing", NULL};
+  GrottoPanelsMetadata app = {.effective_permissions = effective, .id = "app:test", .label = "<b>Plain App</b>", .trust = "medium", .access_policy = "Ask for sensitive operations", .transport = "Local App"};
   GrottoPanelsMetadata status = {.id = "status", .state = "LISTENING", .remote_enabled = TRUE, .relays = relays, .methods = methods};
   GrottoPanelsMetadata request = {.id = "request-1", .label = "Plain App", .operation = "Sign Event", .deadline_usec = g_get_monotonic_time() + 60000000};
   GrottoPanelsMetadata record = {.id = "11", .principal = "app:test", .operation = "event", .outcome = "success", .sequence = 11, .has_event_kind = TRUE, .event_kind = 1};
@@ -57,10 +58,25 @@ static void management_panels(void) {
       WAIT(grotto_panels_fake_service_get_invocations(fake) == 1);
       g_assert_cmpint(grotto_panels_fake_service_get_last_command(fake), ==, GROTTO_PANEL_SET_CLIENT_TRUST);
       g_assert_cmpstr(grotto_panels_fake_service_get_last_args(fake)->trust, ==, "low");
-      GrottoPanelsMetadata permission = {.id = "0", .principal = app.id, .public_key = "public-identity", .operation = "event", .decision = "allow", .state = "active", .has_event_kind = TRUE, .event_kind = 3, .revision = 7};
-      grotto_panels_fake_service_set_query_result(fake, GROTTO_PANELS_QUERY_PERMISSIONS, &permission, 1, -1);
+      GrottoPanelsMetadata permissions_data[] = {{.id = "0", .principal = app.id, .public_key = "public-identity", .operation = "event", .decision = "allow", .state = "active", .has_event_kind = TRUE, .event_kind = 3, .revision = 7},
+        {.id = "1", .principal = app.id, .public_key = "public-identity", .operation = "event", .decision = "policy-review", .state = "inactive", .reason = "Pending policy review", .event_kind = 1, .revision = 7}};
+      grotto_panels_fake_service_set_query_result(fake, GROTTO_PANELS_QUERY_PERMISSIONS, permissions_data, G_N_ELEMENTS(permissions_data), -1);
       GtkWidget *permissions = find_title(detail, "Permissions"); g_assert_nonnull(permissions); g_signal_emit_by_name(permissions, "activated");
       WAIT(find_title(detail, "Allow · Follow list (3)"));
+      GtkWidget *derived = find_title(detail, effective[0]); g_assert_nonnull(derived);
+      g_assert_false(gtk_list_box_row_get_activatable(GTK_LIST_BOX_ROW(derived)));
+      g_assert_cmpstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(derived)), ==, "From Medium trust");
+      /* Kind wording comes from the generated registry; locate the second row by metadata. */
+      GtkWidget *explicit_row = find_title(detail, "Allow · Follow list (3)");
+      GtkWidget *inactive = gtk_widget_get_next_sibling(explicit_row); g_assert_true(ADW_IS_ACTION_ROW(inactive));
+      g_assert_nonnull(strstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(inactive)), "Inactive — pending policy review"));
+      g_assert_nonnull(strstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(inactive)), "Until Revoked"));
+      GtkWidget *clear = find_title(detail, "Clear Remembered Permissions…"); g_assert_nonnull(clear);
+      g_assert_true(gtk_widget_is_sensitive(clear));
+      grotto_panels_fake_service_set_can(fake, GROTTO_PANEL_SET_PERMISSIONS, FALSE);
+      WAIT(!gtk_list_box_row_get_activatable(GTK_LIST_BOX_ROW(explicit_row)));
+      g_assert_false(gtk_widget_is_sensitive(clear));
+      g_assert_true(gtk_widget_is_sensitive(explicit_row)); /* Manager reads remain visible. */
       grotto_panels_fake_service_set_can(fake, GROTTO_PANEL_SET_CLIENT_TRUST, FALSE);
       /* Capability loss reaches an already-mounted detail, not only a new panel. */
       WAIT(!gtk_widget_is_sensitive(low));

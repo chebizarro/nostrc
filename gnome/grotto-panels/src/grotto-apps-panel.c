@@ -15,7 +15,7 @@ struct _GrottoAppsPanel {
   GtkButton *add_app;
   GListModel *apps, *requests, *status;
   GtkWidget *host_pending;
-  char *identity;
+  char *identity, *return_principal;
   gboolean updating, busy;
 };
 G_DEFINE_TYPE(GrottoAppsPanel, grotto_apps_panel, GROTTO_TYPE_PANEL)
@@ -34,10 +34,18 @@ static void clear_list(GtkListBox *list) {
   GtkWidget *child;
   while ((child = gtk_widget_get_first_child(GTK_WIDGET(list)))) gtk_list_box_remove(list, child);
 }
+static void restore_app_focus(AdwNavigationPage *page, gpointer data) {
+  (void)page; GrottoAppsPanel *self = data;
+  /* List snapshots can replace the originating widget while detail is open. */
+  if (!self->return_principal) return;
+  for (GtkWidget *row = gtk_widget_get_first_child(GTK_WIDGET(self->apps_list)); row; row = gtk_widget_get_next_sibling(row)) {
+    if (!g_strcmp0(g_object_get_data(G_OBJECT(row), "principal"), self->return_principal)) {
+      gtk_widget_grab_focus(row); break;
+    }
+  }
+}
 static void open_app(AdwActionRow *row, gpointer data) {
-  GrottoAppsPanel *self = data;
-  adw_navigation_view_push(self->navigation, ADW_NAVIGATION_PAGE(grotto_app_detail_new(
-    GROTTO_PANEL(self), g_object_get_data(G_OBJECT(row), "principal"))));
+  grotto_apps_panel_show_app(data, g_object_get_data(G_OBJECT(row), "principal"));
 }
 static void review(AdwActionRow *row, gpointer data) {
   grotto_panel_host_invoke(data, GROTTO_PANEL_HOST_REVIEW, g_object_get_data(G_OBJECT(row), "request"), NULL);
@@ -163,6 +171,7 @@ static void dispose(GObject *object) {
 }
 static void finalize(GObject *object) {
   g_free(GROTTO_APPS_PANEL(object)->identity);
+  g_free(GROTTO_APPS_PANEL(object)->return_principal);
   G_OBJECT_CLASS(grotto_apps_panel_parent_class)->finalize(object);
 }
 static void grotto_apps_panel_class_init(GrottoAppsPanelClass *klass) {
@@ -176,6 +185,7 @@ static void grotto_apps_panel_class_init(GrottoAppsPanelClass *klass) {
 }
 static void grotto_apps_panel_init(GrottoAppsPanel *self) {
   gtk_widget_init_template(GTK_WIDGET(self));
+  g_signal_connect(adw_navigation_view_get_visible_page(self->navigation), "shown", G_CALLBACK(restore_app_focus), self);
   g_signal_connect(self, "service-changed", G_CALLBACK(attach), NULL);
   g_signal_connect(self->pause_row, "notify::active", G_CALLBACK(pause_changed), self);
   g_signal_connect(self->add_app, "clicked", G_CALLBACK(add_app), self);
@@ -192,6 +202,7 @@ void grotto_apps_panel_show_app(GrottoAppsPanel *self, const char *principal) {
     return;
   }
   if (!grotto_panels_public_text_validate(principal, NULL)) return;
+  g_free(self->return_principal); self->return_principal = g_strdup(principal);
   adw_navigation_view_push(self->navigation, ADW_NAVIGATION_PAGE(grotto_app_detail_new(GROTTO_PANEL(self), principal)));
 }
 AdwNavigationView *grotto_apps_panel_get_navigation(GrottoAppsPanel *self) { return self->navigation; }

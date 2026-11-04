@@ -55,7 +55,8 @@ gboolean grotto_panels_metadata_validate(const GrottoPanelsMetadata *m, GError *
     m->principal, m->verified_as, m->transport, m->operation, m->outcome, m->trust, m->decision, m->relay};
   for (guint i = 0; i < G_N_ELEMENTS(fields); i++)
     if (!grotto_panels_public_text_validate(fields[i], error)) return FALSE;
-  return vector(m->relays, TRUE, error) && vector(m->methods, FALSE, error);
+  return vector(m->relays, TRUE, error) && vector(m->methods, FALSE, error) &&
+    vector(m->effective_permissions, FALSE, error);
 }
 gboolean grotto_panel_command_args_validate(GrottoPanelCommand command,
   const GrottoPanelCommandArgs *a, GError **error) {

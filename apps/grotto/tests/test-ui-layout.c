@@ -30,7 +30,7 @@ static const gchar *tier = "medium";
 static guint64 revision = 12, expires_at;
 static GVariant *permission_rows;
 static gboolean force_conflict, scoped_saved_before_cleanup, fail_permission_read, conflict_cleanup, pending_request;
-static guint permission_attempts, seed_exports;
+static guint permission_attempts, permission_conflicts, seed_exports;
 static const gchar *row_text(GVariant *row, const gchar *key) { const gchar *value = ""; g_variant_lookup(row, key, "&s", &value); return value; }
 static gboolean contains_permission(const gchar *identity, const gchar *decision) {
   for (gsize i = 0; permission_rows && i < g_variant_n_children(permission_rows); i++) {
@@ -46,8 +46,12 @@ static void fixture_permission(GVariantBuilder *rows, const gchar *identity, gin
   g_variant_builder_add(&b, "{sv}", "operation", g_variant_new_string("event"));
   g_variant_builder_add(&b, "{sv}", "event-kind", g_variant_new_int32(kind));
   g_variant_builder_add(&b, "{sv}", "decision", g_variant_new_string(decision));
-  g_variant_builder_add(&b, "{sv}", "state", g_variant_new_string(!strcmp(decision, "review") ? "inactive" : "active"));
-  g_variant_builder_add(&b, "{sv}", "expires-at", g_variant_new_uint64(expires_at));
+  g_variant_builder_add(&b, "{sv}", "state", g_variant_new_string((!strcmp(decision, "review") || !strcmp(decision, "policy-review")) ? "inactive" : "active"));
+  g_variant_builder_add(&b, "{sv}", "expires-at", g_variant_new_uint64(!strcmp(decision, "policy-review") ? 0 : expires_at));
+  if (!strcmp(decision, "policy-review")) {
+    g_variant_builder_add(&b, "{sv}", "reason", g_variant_new_string("Pending policy review"));
+    g_variant_builder_add(&b, "{sv}", "legacy-provenance", g_variant_new_string("pre-policy-v3"));
+  }
   g_variant_builder_add_value(rows, g_variant_builder_end(&b));
 }
 static gboolean bound(gpointer data) { g_error("UI layout did not reach barrier: %s", (const gchar *)data); return G_SOURCE_REMOVE; }
@@ -79,8 +83,24 @@ static void report_wide_widgets(GtkWidget *widget, int width) {
   if (minimum > width) g_test_message("Too wide: %s name=%s minimum=%d", G_OBJECT_TYPE_NAME(widget), gtk_widget_get_name(widget), minimum);
   for (GtkWidget *child = gtk_widget_get_first_child(widget); child; child = gtk_widget_get_next_sibling(child)) report_wide_widgets(child, width);
 }
+static gboolean has_visible_toast(GtkWidget *widget) {
+  if (!strcmp(G_OBJECT_TYPE_NAME(widget), "AdwToastWidget") && gtk_widget_get_mapped(widget)) return TRUE;
+  for (GtkWidget *child = gtk_widget_get_first_child(widget); child; child = gtk_widget_get_next_sibling(child))
+    if (has_visible_toast(child)) return TRUE;
+  return FALSE;
+}
 static void snapshot(GtkWidget *widget, const gchar *name) {
-  wait_frames(widget); int width = gtk_widget_get_width(widget), height = gtk_widget_get_height(widget);
+  /* Observe the actual toast lifecycle. Never dismiss feedback or alter pixels
+   * to make documentation captures look settled. Queued writes may take longer. */
+  guint toast_deadline = g_timeout_add_seconds(60, bound, "production toasts dismissed naturally");
+  for (;;) {
+    /* A newly queued toast is not mapped until the next frame. */
+    wait_frames(widget);
+    if (!has_visible_toast(widget)) break;
+    while (has_visible_toast(widget)) g_main_context_iteration(NULL, TRUE);
+  }
+  g_source_remove(toast_deadline);
+  g_assert_false(has_visible_toast(widget)); int width = gtk_widget_get_width(widget), height = gtk_widget_get_height(widget);
   g_assert_cmpint(width, >, 0); g_assert_cmpint(height, >, 0);
   if (width <= 360) {
     GtkWidget *overlay = GTK_WIDGET(gtk_widget_get_template_child(widget, TYPE_SIGNER_WINDOW, "toast_overlay"));
@@ -126,7 +146,8 @@ static void call(GDBusConnection *bus, const gchar *sender, const gchar *path, c
       force_conflict = FALSE; revision++;
       GVariantBuilder refreshed; g_variant_builder_init(&refreshed, G_VARIANT_TYPE("aa{sv}"));
       for (gsize i = 0; i < g_variant_n_children(permission_rows); i++) { g_autoptr(GVariant) row = g_variant_get_child_value(permission_rows, i); g_variant_builder_add_value(&refreshed, row); }
-      fixture_permission(&refreshed, npub, NOSTR_KIND_REACTION, "deny");
+      /* Each conflict represents a distinct concurrently saved scope. */
+      fixture_permission(&refreshed, npub, permission_conflicts++ ? NOSTR_KIND_REPOST : NOSTR_KIND_REACTION, "deny");
       g_clear_pointer(&permission_rows, g_variant_unref); permission_rows = g_variant_ref_sink(g_variant_builder_end(&refreshed));
       g_dbus_method_invocation_return_dbus_error(inv, "org.nostr.Grotto.Control1.Error.Conflict", "stale snapshot"); return;
     }
@@ -145,7 +166,7 @@ static void call(GDBusConnection *bus, const gchar *sender, const gchar *path, c
       if (!strcmp(row_text(row, "decision"), "allow")) g_assert_cmpstr(identity, !=, "*");
       gint kind; g_variant_lookup(row, "event-kind", "i", &kind);
       if (kind == NOSTR_KIND_FOLLOW_LIST) { guint64 expiry; g_variant_lookup(row, "expires-at", "t", &expiry); g_assert_cmpuint(expiry, ==, expires_at); }
-      GVariantDict d; g_variant_dict_init(&d, row); g_variant_dict_insert(&d, "state", "s", !strcmp(row_text(row, "decision"), "review") ? "inactive" : "active");
+      GVariantDict d; g_variant_dict_init(&d, row); g_variant_dict_insert(&d, "state", "s", (!strcmp(row_text(row, "decision"), "review") || !strcmp(row_text(row, "decision"), "policy-review")) ? "inactive" : "active");
       g_variant_builder_add_value(&next, g_variant_dict_end(&d));
     }
     gboolean legacy_present = contains_permission("*", "review");
@@ -263,6 +284,14 @@ static GtkWidget *find_row(GtkWidget *widget, const char *title) {
   if (ADW_IS_PREFERENCES_ROW(widget) && !g_strcmp0(adw_preferences_row_get_title(ADW_PREFERENCES_ROW(widget)), title)) return widget;
   for (GtkWidget *child = gtk_widget_get_first_child(widget); child; child = gtk_widget_get_next_sibling(child)) {
     GtkWidget *found = find_row(child, title); if (found) return found;
+  }
+  return NULL;
+}
+static GtkWidget *find_clear_scope(GtkWidget *widget, const char *identity) {
+  GrottoPanelsItem *item = g_object_get_data(G_OBJECT(widget), "clear-scope");
+  if (item && !strcmp(grotto_panels_item_get_metadata(item)->public_key, identity)) return widget;
+  for (GtkWidget *child = gtk_widget_get_first_child(widget); child; child = gtk_widget_get_next_sibling(child)) {
+    GtkWidget *found = find_clear_scope(child, identity); if (found) return found;
   }
   return NULL;
 }
@@ -435,7 +464,12 @@ static void layout_activate(GApplication *application, gpointer data) {
     gtk_window_set_default_size(GTK_WINDOW(window), 920, 640); snapshot(GTK_WIDGET(window), dark ? "apps-dark" : "apps-light");
     gtk_window_set_default_size(GTK_WINDOW(window), 360, 640); snapshot(GTK_WIDGET(window), dark ? "apps-360-dark" : "apps-360-light");
     GtkWidget *app_row = NULL; WAIT((app_row = find_row(GTK_WIDGET(apps), "Jank")));
+    g_assert_true(gtk_widget_grab_focus(app_row));
+#ifdef GROTTO_TEST_XDOTOOL
+    send_key(window, "Return");
+#else
     g_signal_emit_by_name(app_row, "activated"); wait_frames(GTK_WIDGET(window));
+#endif
     AdwNavigationView *nav = grotto_apps_panel_get_navigation(apps);
     GtkWidget *detail = GTK_WIDGET(adw_navigation_view_get_visible_page(nav)); g_assert_true(GROTTO_IS_PANEL(detail));
     g_object_weak_ref(G_OBJECT(detail), finalised, &pages_gone);
@@ -443,13 +477,31 @@ static void layout_activate(GApplication *application, gpointer data) {
     GtkWidget *permission = find_row(detail, P_("Permissions")); g_assert_nonnull(permission);
     GtkWidget *low_row = find_row(detail, P_("Ask unless permitted")); g_assert_nonnull(low_row);
     GtkWidget *low = find_editor_control(low_row, GTK_TYPE_CHECK_BUTTON); g_assert_nonnull(low);
+    /* Preset access is a host-supplied read-only description, never an editable
+     * saved grant. Explicit rows retain their own expiry and edit route. */
+    g_signal_emit_by_name(permission, "activated"); wait_frames(GTK_WIDGET(window));
+    GtkWidget *effective = find_row(detail, _("Share public key (after first consent)")); g_assert_nonnull(effective);
+    g_assert_false(gtk_list_box_row_get_activatable(GTK_LIST_BOX_ROW(effective)));
+    g_autofree char *from_tier = g_strdup_printf(P_("From %s trust"), dark ? P_("Low") : P_("Medium"));
+    g_assert_cmpstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(effective)), ==, from_tier);
+    AdwNavigationView *permissions_nav = ADW_NAVIGATION_VIEW(adw_navigation_page_get_child(ADW_NAVIGATION_PAGE(detail)));
+    g_assert_true(adw_navigation_view_pop(permissions_nav)); wait_frames(GTK_WIDGET(window));
     if (!dark) {
       WAIT(gtk_widget_is_sensitive(low)); gtk_check_button_set_active(GTK_CHECK_BUTTON(low), TRUE);
       WAIT(tier_writes == 1 && gtk_widget_is_sensitive(low));
     }
     g_signal_emit_by_name(permission, "activated"); snapshot(GTK_WIDGET(window), dark ? "permissions-dark" : "permissions-light");
     if (!dark) {
-      GtkWidget *remembered = NULL; WAIT((remembered = find_permission(detail, npub, "allow")) && gtk_widget_is_sensitive(remembered));
+      GtkWidget *inactive = NULL; WAIT((inactive = find_permission(detail, npub, "policy-review")) && gtk_widget_is_sensitive(inactive) && gtk_list_box_row_get_activatable(GTK_LIST_BOX_ROW(inactive)));
+      g_assert_nonnull(strstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(inactive)), P_("Inactive — pending policy review")));
+      g_assert_nonnull(strstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(inactive)), P_("Until Revoked")));
+      g_signal_emit_by_name(inactive, "activated");
+      AdwDialog *cancelled = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)); g_assert_nonnull(cancelled);
+      g_assert_nonnull(find_button(GTK_WIDGET(cancelled), P_("Activate Saved Permission")));
+      g_assert_nonnull(find_button(GTK_WIDGET(cancelled), P_("Discard Saved Permission…")));
+      wait_frames(GTK_WIDGET(cancelled)); adw_dialog_close(cancelled); WAIT(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)) == NULL);
+      g_assert_cmpuint(permission_attempts, ==, 0); g_assert_true(contains_permission(npub, "policy-review"));
+      GtkWidget *remembered = NULL; WAIT((remembered = find_permission(detail, npub, "allow")) && gtk_widget_is_sensitive(remembered) && gtk_list_box_row_get_activatable(GTK_LIST_BOX_ROW(remembered)));
       g_signal_emit_by_name(remembered, "activated");
       AdwDialog *editor = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)); g_assert_nonnull(editor);
       g_assert_nonnull(editor); g_object_weak_ref(G_OBJECT(editor), finalised, &editors_gone);
@@ -470,7 +522,7 @@ static void layout_activate(GApplication *application, gpointer data) {
       WAIT(editors_gone == 1 && adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)) == NULL);
       g_assert_false(contains_permission(npub, "allow")); g_assert_true(contains_permission(npub, "deny"));
       g_assert_cmpuint(g_variant_n_children(permission_rows), ==, 4); /* concurrent deny was preserved */
-      GtkWidget *legacy = NULL; WAIT((legacy = find_permission(detail, "*", "review")) && gtk_widget_is_sensitive(legacy));
+      GtkWidget *legacy = NULL; WAIT((legacy = find_permission(detail, "*", "review")) && gtk_widget_is_sensitive(legacy) && gtk_list_box_row_get_activatable(GTK_LIST_BOX_ROW(legacy)));
       g_signal_emit_by_name(legacy, "activated"); editor = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window));
       g_assert_nonnull(editor); g_object_weak_ref(G_OBJECT(editor), finalised, &editors_gone); wait_frames(GTK_WIDGET(editor));
       GtkWidget *identity_picker = find_identity_picker(GTK_WIDGET(editor)); g_assert_nonnull(identity_picker);
@@ -480,7 +532,7 @@ static void layout_activate(GApplication *application, gpointer data) {
       GtkWidget *kind_input = find_row(GTK_WIDGET(editor), P_("Exact Event Type (Number)")); g_assert_nonnull(kind_input);
       g_assert_cmpstr(gtk_editable_get_text(GTK_EDITABLE(kind_input)), ==, "");
       gtk_editable_set_text(GTK_EDITABLE(kind_input), "1");
-      save = find_button(GTK_WIDGET(editor), P_("Save Permission")); g_signal_emit_by_name(save, "clicked");
+      save = find_button(GTK_WIDGET(editor), P_("Activate Saved Permission")); g_signal_emit_by_name(save, "clicked");
       g_assert_cmpuint(permission_attempts, ==, 2); /* no wildcard allow may be submitted */
       adw_combo_row_set_selected(ADW_COMBO_ROW(identity_picker), 1); conflict_cleanup = TRUE;
       g_signal_emit_by_name(save, "clicked");
@@ -494,28 +546,33 @@ static void layout_activate(GApplication *application, gpointer data) {
       WAIT(editors_gone == 2 && adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)) == NULL);
       g_assert_true(scoped_saved_before_cleanup); g_assert_false(contains_permission("*", "review"));
       g_assert_true(contains_permission(npub, "allow"));
-      WAIT((legacy = find_permission(detail, npub, "review")) && gtk_widget_is_sensitive(legacy));
+      WAIT((legacy = find_permission(detail, npub, "policy-review")) && gtk_widget_is_sensitive(legacy) && gtk_list_box_row_get_activatable(GTK_LIST_BOX_ROW(legacy)));
       g_signal_emit_by_name(legacy, "activated"); editor = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window));
       g_assert_nonnull(editor); g_object_weak_ref(G_OBJECT(editor), finalised, &editors_gone); wait_frames(GTK_WIDGET(editor));
       g_assert_null(find_identity_picker(GTK_WIDGET(editor)));
-      save = find_button(GTK_WIDGET(editor), P_("Save Permission")); g_signal_emit_by_name(save, "clicked");
+      save = find_button(GTK_WIDGET(editor), P_("Activate Saved Permission")); g_signal_emit_by_name(save, "clicked");
       WAIT(permission_writes == 4);
       WAIT(editors_gone == 3 && adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)) == NULL);
-      g_assert_false(contains_permission(npub, "review"));
+      g_assert_false(contains_permission(npub, "policy-review"));
+      for (gsize i = 0; i < g_variant_n_children(permission_rows); i++) {
+        g_autoptr(GVariant) row = g_variant_get_child_value(permission_rows, i); gint kind = -1;
+        g_variant_lookup(row, "event-kind", "i", &kind);
+        if (kind == NOSTR_KIND_PROFILE_METADATA) { guint64 expiry = 99; g_assert_true(g_variant_lookup(row, "expires-at", "t", &expiry)); g_assert_cmpuint(expiry, ==, 0); }
+      }
       /* A separate migrated wildcard row is clearable without creating a grant. */
       GVariantBuilder migration; g_variant_builder_init(&migration, G_VARIANT_TYPE("aa{sv}"));
       for (gsize i = 0; i < g_variant_n_children(permission_rows); i++) { g_autoptr(GVariant) row = g_variant_get_child_value(permission_rows, i); g_variant_builder_add_value(&migration, row); }
       fixture_permission(&migration, "*", -1, "review");
       g_clear_pointer(&permission_rows, g_variant_unref); permission_rows = g_variant_ref_sink(g_variant_builder_end(&migration)); revision++;
       g_dbus_connection_emit_signal(server, NULL, "/org/nostr/signer/grotto", "org.nostr.Grotto.Control1", "ClientsChanged", g_variant_new("(t)", revision), NULL);
-      WAIT((legacy = find_permission(detail, "*", "review")) && gtk_widget_is_sensitive(legacy));
+      WAIT((legacy = find_permission(detail, "*", "review")) && gtk_widget_is_sensitive(legacy) && gtk_list_box_row_get_activatable(GTK_LIST_BOX_ROW(legacy)));
       g_signal_emit_by_name(legacy, "activated"); editor = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window));
       g_assert_nonnull(editor); g_object_weak_ref(G_OBJECT(editor), finalised, &editors_gone); wait_frames(GTK_WIDGET(editor));
-      g_signal_emit_by_name(find_button(GTK_WIDGET(editor), P_("Remove Permission…")), "clicked");
+      g_signal_emit_by_name(find_button(GTK_WIDGET(editor), P_("Discard Saved Permission…")), "clicked");
       AdwAlertDialog *confirm = ADW_ALERT_DIALOG(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)));
       g_assert_cmpstr(adw_alert_dialog_get_default_response(confirm), ==, "cancel");
       wait_frames(GTK_WIDGET(confirm));
-      g_signal_emit_by_name(find_button(GTK_WIDGET(confirm), P_("Remove Permission")), "clicked"); WAIT(permission_writes == 5);
+      g_signal_emit_by_name(find_button(GTK_WIDGET(confirm), P_("Discard")), "clicked"); WAIT(permission_writes == 5);
       WAIT(editors_gone == 4 && adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)) == NULL);
       g_assert_false(contains_permission("*", "review"));
       /* Duration edits must preserve independent AUTH grants for two relays. */
@@ -534,7 +591,7 @@ static void layout_activate(GApplication *application, gpointer data) {
       }
       g_clear_pointer(&permission_rows, g_variant_unref); permission_rows = g_variant_ref_sink(g_variant_builder_end(&auth)); revision++;
       g_dbus_connection_emit_signal(server, NULL, "/org/nostr/signer/grotto", "org.nostr.Grotto.Control1", "ClientsChanged", g_variant_new("(t)", revision), NULL);
-      GtkWidget *auth_row = NULL; WAIT((auth_row = find_relay_permission(detail, relays[0])) && gtk_widget_is_sensitive(auth_row));
+      GtkWidget *auth_row = NULL; WAIT((auth_row = find_relay_permission(detail, relays[0])) && gtk_widget_is_sensitive(auth_row) && gtk_list_box_row_get_activatable(GTK_LIST_BOX_ROW(auth_row)));
       g_signal_emit_by_name(auth_row, "activated"); editor = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window));
       g_assert_nonnull(editor); g_object_weak_ref(G_OBJECT(editor), finalised, &editors_gone); wait_frames(GTK_WIDGET(editor));
       GtkWidget *expiry_picker = find_expiry(GTK_WIDGET(editor)); g_assert_nonnull(expiry_picker);
@@ -559,13 +616,103 @@ static void layout_activate(GApplication *application, gpointer data) {
       g_assert_cmpstr(adw_banner_get_title(feedback), ==, P_("Permissions could not be loaded. Refresh to try again."));
       fail_permission_read = FALSE; g_signal_emit_by_name(feedback, "button-clicked");
       WAIT(!adw_banner_get_revealed(feedback) && gtk_widget_is_sensitive(low));
+      /* Policy-review Discard is a distinct, confirmed removal, not activation. */
+      GVariantBuilder extra; g_variant_builder_init(&extra, G_VARIANT_TYPE("aa{sv}"));
+      for (gsize i = 0; i < g_variant_n_children(permission_rows); i++) { g_autoptr(GVariant) one = g_variant_get_child_value(permission_rows, i); g_variant_builder_add_value(&extra, one); }
+      fixture_permission(&extra, npub, NOSTR_KIND_REPOST, "policy-review");
+      fixture_permission(&extra, watch_npub, NOSTR_KIND_TEXT_NOTE, "deny");
+      g_clear_pointer(&permission_rows, g_variant_unref); permission_rows = g_variant_ref_sink(g_variant_builder_end(&extra)); revision++;
+      g_dbus_connection_emit_signal(server, NULL, "/org/nostr/signer/grotto", "org.nostr.Grotto.Control1", "ClientsChanged", g_variant_new("(t)", revision), NULL);
+      WAIT((inactive = find_permission(detail, npub, "policy-review")) && gtk_widget_is_sensitive(inactive) && gtk_list_box_row_get_activatable(GTK_LIST_BOX_ROW(inactive)));
+      guint before = permission_attempts;
+      g_signal_emit_by_name(inactive, "activated"); editor = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window));
+      g_assert_nonnull(editor); wait_frames(GTK_WIDGET(editor));
+      g_signal_emit_by_name(find_button(GTK_WIDGET(editor), P_("Discard Saved Permission…")), "clicked");
+      confirm = ADW_ALERT_DIALOG(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)));
+      g_assert_cmpstr(adw_alert_dialog_get_default_response(confirm), ==, "cancel");
+      wait_frames(GTK_WIDGET(confirm)); adw_dialog_close(ADW_DIALOG(confirm)); WAIT(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)) == editor);
+      g_assert_cmpuint(permission_attempts, ==, before); g_assert_true(contains_permission(npub, "policy-review"));
+      g_signal_emit_by_name(find_button(GTK_WIDGET(editor), P_("Discard Saved Permission…")), "clicked");
+      confirm = ADW_ALERT_DIALOG(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window))); wait_frames(GTK_WIDGET(confirm));
+      g_signal_emit_by_name(find_button(GTK_WIDGET(confirm), P_("Discard")), "clicked");
+      WAIT(permission_writes == 7 && adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)) == NULL);
+      g_assert_false(contains_permission(npub, "policy-review")); g_assert_true(contains_permission(npub, "allow")); g_assert_true(contains_permission(npub, "deny"));
+      /* Clear is scoped, revision-pinned, default-cancel and never upgrades trust. */
+      GtkWidget *clear = NULL; WAIT((clear = find_clear_scope(detail, npub)) && gtk_widget_is_sensitive(clear));
+      g_signal_emit_by_name(clear, "activated"); confirm = ADW_ALERT_DIALOG(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)));
+      g_assert_cmpstr(adw_alert_dialog_get_default_response(confirm), ==, "cancel");
+      g_assert_nonnull(strstr(adw_alert_dialog_get_body(confirm), npub));
+      before = permission_attempts; wait_frames(GTK_WIDGET(confirm)); adw_dialog_close(ADW_DIALOG(confirm)); WAIT(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)) == NULL);
+      g_assert_cmpuint(permission_attempts, ==, before);
+      g_signal_emit_by_name(clear, "activated"); confirm = ADW_ALERT_DIALOG(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window))); wait_frames(GTK_WIDGET(confirm));
+      force_conflict = TRUE; g_signal_emit_by_name(find_button(GTK_WIDGET(confirm), P_("Clear")), "clicked");
+      WAIT(permission_attempts == before + 1 && adw_banner_get_revealed(feedback) && (clear = find_clear_scope(detail, npub)) && gtk_widget_is_sensitive(clear));
+      g_assert_cmpstr(adw_banner_get_title(feedback), ==, P_("Not cleared. Permissions or the signer changed. Review the refreshed entries and confirm again."));
+      g_assert_cmpuint(permission_writes, ==, 7); g_assert_true(contains_permission(npub, "deny")); g_assert_true(contains_permission(npub, "allow"));
+      g_signal_emit_by_name(clear, "activated"); confirm = ADW_ALERT_DIALOG(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window))); wait_frames(GTK_WIDGET(confirm));
+      g_signal_emit_by_name(find_button(GTK_WIDGET(confirm), P_("Clear")), "clicked");
+      WAIT(permission_writes == 8 && !find_clear_scope(detail, npub));
+      g_assert_false(contains_permission(npub, "allow")); g_assert_false(contains_permission(npub, "deny"));
+      g_assert_true(contains_permission(watch_npub, "deny")); g_assert_cmpstr(tier, ==, "low"); g_assert_cmpuint(tier_writes, ==, 1);
 
     }
-    g_assert_true(adw_navigation_view_pop(nav)); wait_frames(GTK_WIDGET(window));
+    /* Exercise the nested app/Permissions route with actual RTL keys at 360px. */
+    g_assert_true(adw_navigation_view_pop(permissions_nav)); wait_frames(GTK_WIDGET(window));
+    gtk_widget_set_default_direction(GTK_TEXT_DIR_RTL); gtk_widget_set_direction(GTK_WIDGET(window), GTK_TEXT_DIR_RTL);
+    g_assert_true(gtk_widget_grab_focus(permission)); wait_frames(GTK_WIDGET(window)); assert_focus_bounds(window);
+#ifdef GROTTO_TEST_XDOTOOL
+    send_key(window, "Return");
+#else
+    g_signal_emit_by_name(permission, "activated");
+#endif
+    WAIT(find_permission(detail, watch_npub, "deny") != NULL); wait_frames(GTK_WIDGET(window));
+    g_assert_cmpstr(adw_navigation_page_get_title(adw_navigation_view_get_visible_page(permissions_nav)), ==, P_("Permissions"));
+    g_assert_cmpint(gtk_widget_get_direction(detail), ==, GTK_TEXT_DIR_RTL);
+#ifdef GROTTO_TEST_XDOTOOL
+    send_key(window, "Tab"); assert_visible_focus(window); assert_focus_bounds(window);
+#endif
+    /* A toast close button can legitimately receive Tab focus and pause its
+     * timeout. Return focus to the permission being inspected before capture. */
+    GtkWidget *rtl_permission = find_permission(detail, watch_npub, "deny");
+    g_assert_true(gtk_widget_grab_focus(rtl_permission)); wait_frames(GTK_WIDGET(window)); assert_focus_bounds(window);
+    snapshot(GTK_WIDGET(window), dark ? "permissions-360-rtl-dark" : "permissions-360-rtl-light");
+#ifdef GROTTO_TEST_XDOTOOL
+    send_key(window, "alt+Right");
+#else
+    g_assert_true(adw_navigation_view_pop(permissions_nav));
+#endif
+    g_assert_true(gtk_root_get_focus(GTK_ROOT(window)) == permission); assert_focus_bounds(window);
+#ifdef GROTTO_TEST_XDOTOOL
+    send_key(window, "alt+Right");
+#else
+    g_assert_true(adw_navigation_view_pop(nav));
+#endif
+    app_row = find_row(GTK_WIDGET(apps), "Jank"); g_assert_nonnull(app_row);
+    g_assert_true(gtk_root_get_focus(GTK_ROOT(window)) == app_row); assert_focus_bounds(window);
+    snapshot(GTK_WIDGET(window), dark ? "apps-360-rtl-dark" : "apps-360-rtl-light");
+    gtk_widget_set_default_direction(GTK_TEXT_DIR_LTR); gtk_widget_set_direction(GTK_WIDGET(window), GTK_TEXT_DIR_LTR); wait_frames(GTK_WIDGET(window));
     for (guint i = 2; i < G_N_ELEMENTS(names); i++) {
       signer_window_show_page(window, names[i]); wait_frames(GTK_WIDGET(window)); assert_visible_focus(window);
       g_autofree char *narrow = g_strdup_printf("%s-360-%s", names[i], dark ? "dark" : "light");
       snapshot(GTK_WIDGET(window), narrow);
+      gtk_widget_set_default_direction(GTK_TEXT_DIR_RTL); gtk_widget_set_direction(GTK_WIDGET(window), GTK_TEXT_DIR_RTL); wait_frames(GTK_WIDGET(window));
+      GtkWidget *rtl_panel = selected_panel(split);
+      g_assert_cmpint(gtk_widget_get_direction(rtl_panel), ==, GTK_TEXT_DIR_RTL);
+      GtkWidget *input = GTK_WIDGET(gtk_widget_get_template_child(rtl_panel, i == 2 ? GROTTO_TYPE_ACTIVITY_PANEL : GROTTO_TYPE_REMOTE_PANEL, i == 2 ? "search" : "new_relay"));
+      g_assert_nonnull(input); g_assert_true(gtk_widget_grab_focus(input));
+      gtk_editable_set_text(GTK_EDITABLE(input), "اختبار طويل لاتجاه النص — keyboard input"); wait_frames(GTK_WIDGET(window)); assert_focus_bounds(window);
+#ifdef GROTTO_TEST_XDOTOOL
+      send_key(window, "ctrl+a"); send_key(window, "BackSpace");
+      g_assert_cmpstr(gtk_editable_get_text(GTK_EDITABLE(input)), ==, "");
+#else
+      gtk_editable_set_text(GTK_EDITABLE(input), "");
+#endif
+#ifdef GROTTO_TEST_XDOTOOL
+      send_key(window, "Tab"); assert_visible_focus(window); assert_focus_bounds(window);
+      send_key(window, "shift+Tab"); assert_visible_focus(window); assert_focus_bounds(window);
+#endif
+      g_autofree char *rtl_name = g_strdup_printf("%s-360-rtl-%s", names[i], dark ? "dark" : "light"); snapshot(GTK_WIDGET(window), rtl_name);
+      gtk_widget_set_default_direction(GTK_TEXT_DIR_LTR); gtk_widget_set_direction(GTK_WIDGET(window), GTK_TEXT_DIR_LTR);
       gtk_window_set_default_size(GTK_WINDOW(window), 920, 640);
       g_autofree char *wide = g_strdup_printf("%s-%s", names[i], dark ? "dark" : "light"); snapshot(GTK_WIDGET(window), wide);
       gtk_window_set_default_size(GTK_WINDOW(window), 360, 640);
@@ -664,7 +811,7 @@ int main(int argc, char **argv) {
   GVariantBuilder initial; g_variant_builder_init(&initial, G_VARIANT_TYPE("aa{sv}"));
   fixture_permission(&initial, npub, NOSTR_KIND_FOLLOW_LIST, "allow");
   fixture_permission(&initial, "*", -1, "review");
-  fixture_permission(&initial, npub, NOSTR_KIND_PROFILE_METADATA, "review");
+  fixture_permission(&initial, npub, NOSTR_KIND_PROFILE_METADATA, "policy-review");
   permission_rows = g_variant_ref_sink(g_variant_builder_end(&initial));
   g_autofree gchar *xml = NULL; g_file_get_contents(G10_CONTROL_XML, &xml, NULL, NULL); g_autoptr(GDBusNodeInfo) node = g_dbus_node_info_new_for_xml(xml, NULL);
   guint registration = g_dbus_connection_register_object(server, "/org/nostr/signer/grotto", node->interfaces[0], &vtable, NULL, NULL, NULL);

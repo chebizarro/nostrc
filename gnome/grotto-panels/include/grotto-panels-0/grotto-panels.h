@@ -53,6 +53,8 @@ typedef struct _GrottoPanelsMetadata {
   gboolean remote_enabled;
   const char *const *relays;
   const char *const *methods;
+  /* Host-supplied, descriptive preset scope; never evaluated as authority by GTK. */
+  const char *const *effective_permissions;
 } GrottoPanelsMetadata;
 
 #define GROTTO_TYPE_PANELS_ITEM (grotto_panels_item_get_type())

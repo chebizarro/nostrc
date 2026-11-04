@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #include "grotto-panels-control1-service.h"
+#include "i18n.h"
 #include <string.h>
 
 #define CONTROL "org.nostr.Grotto.Control1"
@@ -78,6 +79,22 @@ static void apply_rows(Snapshot *snapshot, GVariant *rows) {
     m.event_kind = kind;
     g_variant_lookup(row, "needs-review", "b", &m.needs_review);
     g_variant_lookup(row, "blocked", "b", &m.blocked);
+    /* Presentation of daemon-reported presets, not an evaluator. Explicit
+     * permissions and daemon state/reason remain authoritative for each scope. */
+    const char *effective[5] = {NULL};
+    if (snapshot->slot == GROTTO_PANELS_APPS && !m.blocked) {
+      if (!strcmp(m.access_policy, "Previous access policy"))
+        effective[0] = _("Previous access policy — unchanged until explicitly upgraded");
+      else if (!strcmp(m.trust, "low") || !strcmp(m.trust, "medium") || !strcmp(m.trust, "full")) {
+        effective[0] = _("Share public key (after first consent)");
+        if (strcmp(m.trust, "low")) {
+          effective[1] = _("Read relay list"); effective[2] = _("Check connection");
+          effective[3] = !strcmp(m.trust, "full") ? _("Routine operations, not custom event types") :
+            _("Public publishing: notes, reposts, reactions, articles and comments");
+        }
+      }
+      m.effective_permissions = effective;
+    }
     if (snapshot->slot == GROTTO_PANELS_REQUESTS) {
       guint32 remaining = 0;
       g_variant_lookup(row, "remaining_seconds", "u", &remaining);
@@ -343,7 +360,7 @@ static void query_done(GObject *source, GAsyncResult *result, gpointer data) {
     g_autoptr(GrottoPanelsItem) item = grotto_panels_item_new(&m, NULL);
     if (q->query == GROTTO_PANELS_QUERY_PERMISSIONS && (!item ||
         g_strcmp0(m.principal, q->principal) || !*m.public_key || !*m.operation ||
-        (strcmp(m.decision, "allow") && strcmp(m.decision, "deny") && strcmp(m.decision, "review")))) {
+        (strcmp(m.decision, "allow") && strcmp(m.decision, "deny") && strcmp(m.decision, "review") && strcmp(m.decision, "policy-review")))) {
       /* Never replace a permission set assembled from a lossy projection. */
       g_object_unref(model); g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "Invalid permission snapshot");
       g_object_unref(task); return;

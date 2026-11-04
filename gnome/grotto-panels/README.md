@@ -76,6 +76,15 @@ saves the exact identity scope before removing the old entry. Activity paging us
 the sequence cursor and deduplicates overlap; kind captions are generated display
 data from the registry, not policy.
 
+App metadata's `effective_permissions` is a host-supplied, descriptive preset
+summary, rendered read-only as “From <tier> trust”; GTK never evaluates it as
+permission authority. Explicit rows retain the daemon's state/reason and expiry.
+Both `review` and `policy-review` entries remain inactive until explicitly
+activated, or can be discarded with confirmation. Keeping expiry preserves zero
+(until revoked), including policy-review migration entries. Clear Remembered
+Permissions is identity-scoped, confirms removal of allows/denies/inactive rows,
+pins the displayed revision/owner, and never changes the trust tier.
+
 Commands accept `GrottoPanelCommandArgs` and typed permission records, not
 `GVariant`, dictionaries, arbitrary object payloads or RPC method names. Every
 unused member must be zero. Metadata construction, model replacement, commands

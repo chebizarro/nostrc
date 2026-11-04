@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: grotto 0.1.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-04 11:57-0800\n"
+"POT-Creation-Date: 2026-11-04 12:43-0800\n"
 "PO-Revision-Date: 2024-01-23 00:00+0000\n"
 "Last-Translator: \n"
 "Language-Team: Japanese\n"
@@ -786,7 +786,7 @@ msgstr ""
 msgid "Notifications unavailable. Requests remain here for review."
 msgstr ""
 
-#: src/main_app.c:701
+#: src/main_app.c:698
 msgid ""
 "Finish setup and unlock management, then open the pairing link again. No "
 "relay has been contacted."
@@ -802,6 +802,30 @@ msgstr ""
 
 #: src/home-model.c:91
 msgid "The signer session bus is unavailable."
+msgstr ""
+
+#: src/grotto-panels-control1-service.c:87
+msgid "Previous access policy — unchanged until explicitly upgraded"
+msgstr ""
+
+#: src/grotto-panels-control1-service.c:89
+msgid "Share public key (after first consent)"
+msgstr ""
+
+#: src/grotto-panels-control1-service.c:91
+msgid "Read relay list"
+msgstr ""
+
+#: src/grotto-panels-control1-service.c:91
+msgid "Check connection"
+msgstr ""
+
+#: src/grotto-panels-control1-service.c:92
+msgid "Routine operations, not custom event types"
+msgstr ""
+
+#: src/grotto-panels-control1-service.c:93
+msgid "Public publishing: notes, reposts, reactions, articles and comments"
 msgstr ""
 
 #: src/ui/signer-window.c:110

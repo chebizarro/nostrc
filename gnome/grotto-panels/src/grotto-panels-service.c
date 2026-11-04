@@ -19,6 +19,7 @@ static void item_finalize(GObject *object) {
   g_free((char *)m->operation); g_free((char *)m->outcome); g_free((char *)m->trust);
   g_free((char *)m->decision); g_free((char *)m->relay);
   g_strfreev((char **)m->relays); g_strfreev((char **)m->methods);
+  g_strfreev((char **)m->effective_permissions);
   G_OBJECT_CLASS(grotto_panels_item_parent_class)->finalize(object);
 }
 static void grotto_panels_item_class_init(GrottoPanelsItemClass *klass) {
@@ -35,6 +36,7 @@ GrottoPanelsItem *grotto_panels_item_new(const GrottoPanelsMetadata *metadata, G
   COPY(decision); COPY(relay);
   self->metadata.relays = (const char *const *)g_strdupv((char **)metadata->relays);
   self->metadata.methods = (const char *const *)g_strdupv((char **)metadata->methods);
+  self->metadata.effective_permissions = (const char *const *)g_strdupv((char **)metadata->effective_permissions);
 #undef COPY
   return self;
 }

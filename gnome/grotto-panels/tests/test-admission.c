@@ -83,14 +83,15 @@ static void metadata_admission(void) {
   g_autoptr(GrottoPanelsFakeService) fake = grotto_panels_fake_service_new();
   for (guint model = 0; model < GROTTO_PANELS_N_MODELS; model++) {
     for (guint payload = 0; payload < G_N_ELEMENTS(credentials); payload++) {
-      for (guint field = 0; field < 16; field++) {
+      for (guint field = 0; field < 17; field++) {
         GrottoPanelsMetadata m = {.id = "public-id", .label = "Public name"};
         const char **slots[] = {&m.id, &m.label, &m.public_key, &m.state, &m.reason, &m.access_policy,
           &m.principal, &m.verified_as, &m.transport, &m.operation, &m.outcome, &m.trust, &m.decision, &m.relay};
         const char *vector[] = {credentials[payload], NULL};
         if (field < G_N_ELEMENTS(slots)) *slots[field] = credentials[payload];
         else if (field == G_N_ELEMENTS(slots)) m.relays = vector;
-        else m.methods = vector;
+        else if (field == G_N_ELEMENTS(slots) + 1) m.methods = vector;
+        else m.effective_permissions = vector;
         g_autoptr(GError) error = NULL;
         g_assert_false(grotto_panels_fake_service_replace(fake, model, &m, &error));
         g_assert_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT);

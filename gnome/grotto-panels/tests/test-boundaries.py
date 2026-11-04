@@ -27,7 +27,8 @@ schemas = {
         'operation': 'const char *', 'outcome': 'const char *', 'trust': 'const char *',
         'decision': 'const char *', 'relay': 'const char *', 'event_kind': 'gint', 'has_event_kind': 'gboolean',
         'timestamp': 'guint64', 'last_used_at': 'guint64', 'expires_at': 'guint64', 'revision': 'guint64', 'owner_generation': 'guint64',
-        'paused': 'gboolean', 'remote_enabled': 'gboolean', 'relays': 'const char *const *', 'methods': 'const char *const *'},
+        'paused': 'gboolean', 'remote_enabled': 'gboolean', 'relays': 'const char *const *', 'methods': 'const char *const *',
+        'effective_permissions': 'const char *const *'},
     '_GrottoPanelDescriptor': {'id': 'const char *', 'title': 'const char *', 'icon_name': 'const char *'},
     '_GrottoPanelPermission': {'operation': 'const char *', 'decision': 'const char *', 'event_kind': 'gint',
         'expires_at': 'guint64', 'relay': 'const char *'},
@@ -148,6 +149,7 @@ imports.update('''adw_action_row_set_activatable_widget adw_action_row_set_subti
  adw_preferences_group_new adw_preferences_group_set_description adw_preferences_group_set_title adw_preferences_page_add
  adw_preferences_page_get_type adw_preferences_page_new adw_preferences_page_remove adw_switch_row_get_active adw_switch_row_set_active
  adw_toolbar_view_add_bottom_bar adw_toolbar_view_add_top_bar adw_toolbar_view_get_type adw_toolbar_view_new adw_toolbar_view_set_content
+ g_hash_table_add g_hash_table_new_full g_hash_table_size g_hash_table_unref g_str_equal g_str_hash
  g_array_append_vals g_array_new g_array_unref g_ascii_strtoll g_cancellable_is_cancelled g_date_time_format
  g_date_time_new_from_unix_local g_date_time_unref g_get_monotonic_time g_get_real_time g_list_append g_list_free
  g_list_store_append g_list_store_new g_list_store_remove_all g_ptr_array_add g_ptr_array_new g_ptr_array_new_with_free_func g_ptr_array_unref

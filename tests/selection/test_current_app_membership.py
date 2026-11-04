@@ -33,7 +33,11 @@ class CurrentAppMembership(unittest.TestCase):
                     for name in check.get('ctest_tests', {}).get(profile, []):
                         self.assertNotIn(name, claims, (profile, name))
                         claims[name] = ident
-                self.assertTrue(set(data['registrations']) <= claims.keys())
+                # W4 replaces the retired dashboard model without rewriting the
+                # historical enrollment receipt.
+                current = {'signer/panel-inbox-model' if name == 'signer/home-model' else name
+                           for name in data['registrations']}
+                self.assertTrue(current <= claims.keys())
                 for ident in APP_CHECKS:
                     check = self.policy['checks'][ident]
                     self.assertEqual(check['ctest_tests'][profile], check['ctest_tests'][peer])
@@ -42,6 +46,25 @@ class CurrentAppMembership(unittest.TestCase):
                     for name in check['ctest_tests'][profile]:
                         self.assertEqual(claims[name], ident)
                 self.assertFalse(set(data['support_closure']) & claims.keys())
+
+    def test_grotto_panel_inbox_replaces_retired_dashboard(self):
+        cmake = (ROOT / 'apps/grotto/tests/CMakeLists.txt').read_text()
+        self.assertIn('add_executable(test-panel-inbox-model ', cmake)
+        self.assertIn('add_test(NAME signer/panel-inbox-model COMMAND test-panel-inbox-model)', cmake)
+        self.assertNotIn('test-home-dashboard', cmake)
+        for ident, check in self.policy['checks'].items():
+            self.assertNotIn('test-home-dashboard', check.get('build_targets', []), ident)
+            self.assertNotIn('test-home-model', check.get('build_targets', []), ident)
+            for names in check.get('ctest_tests', {}).values():
+                self.assertNotIn('signer/home-model', names, ident)
+        check = self.policy['checks']['supported.apps.grotto.tests.private_bus']
+        self.assertIn('test-panel-inbox-model', check['build_targets'])
+        for profile, names in check['ctest_tests'].items():
+            self.assertIn('signer/panel-inbox-model', names, profile)
+        plan = s.make_plan(self.policy, [change('apps/grotto/src/home-model.c')],
+                           head='a' * 40, profiles=['core.linux'])
+        self.assertIn('supported.apps.grotto.tests.private_bus', plan['selected_checks'])
+        self.assertFalse(any(check.startswith('libgo.') for check in plan['selected_checks']))
 
     def test_groundhog_default_build_owns_app_nodes_and_nip65(self):
         nodes = set(self.policy['checks']['groundhog.default_build']['nodes'])

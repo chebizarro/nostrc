@@ -593,7 +593,7 @@ target_include_directories(test-panel-inbox-model PRIVATE ${SIGNER_INCLUDE_DIRS}
 target_link_libraries(test-panel-inbox-model PRIVATE PkgConfig::GLIB nostrc-test-bus grotto-panels)
 target_compile_options(test-panel-inbox-model PRIVATE -Wall -Wextra -Werror)
 add_test(NAME signer/panel-inbox-model COMMAND test-panel-inbox-model)
-set_tests_properties(signer/panel-inbox-model PROPERTIES TIMEOUT 90 LABELS "signer;unit;home" ENVIRONMENT "GSETTINGS_BACKEND=memory")
+set_tests_properties(signer/panel-inbox-model PROPERTIES TIMEOUT 90 LABELS "signer;unit;panels;inbox" ENVIRONMENT "GSETTINGS_BACKEND=memory")
 add_executable(test-ui-layout test-ui-layout.c ${APP_GRESOURCE_C})
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   find_program(GROTTO_TEST_XDOTOOL xdotool REQUIRED)
@@ -620,7 +620,7 @@ add_custom_target(grotto_test_locales DEPENDS ${_g10_spanish_mo} ${_g10_panel_sp
 add_dependencies(test-ui-layout grotto_test_locales)
 add_dependencies(test-ui-layout grotto-schemas grotto_resources)
 add_test(NAME signer/ui-layout COMMAND test-ui-layout)
-set_tests_properties(signer/ui-layout PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77 LABELS "signer;ui;home"
+set_tests_properties(signer/ui-layout PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77 LABELS "signer;ui;panels"
   ENVIRONMENT "${_UI_TEST_ENV};GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR}/..;GSETTINGS_BACKEND=memory;ADW_DISABLE_PORTAL=1")
 # GTK's test-only AT context supports property assertions without an AT-SPI bus.
 add_test(NAME signer/ui-accessibility COMMAND test-ui-layout)

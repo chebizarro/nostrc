@@ -19,6 +19,11 @@ The test creates its private bus and writes `<build>/screenshots/`. Copy the
 Identity, Connected Apps, inbox, Activity, Remote Signing, Client, Permissions
 and Preferences light/dark PNGs here without image editing. The `360` captures
 exercise the collapsed sidebar; Preferences keeps the `settings-*.png` filename.
+Before each capture the test waits for production toasts to dismiss naturally;
+it does not suppress feedback, dismiss toasts, or retouch pixels. Keyboard tests
+return focus from transient toast controls to the panel before this wait, since
+focused toasts correctly pause their timeout. RTL captures also cover Connected
+Apps, Permissions, Activity and Remote Signing at 360 px.
 Dynamic fixture timestamps can change bytes on regeneration. The separate
 `approval/` captures retain their own provenance.
 

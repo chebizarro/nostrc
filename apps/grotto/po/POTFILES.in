@@ -22,6 +22,7 @@ src/bunker_service.c
 src/session-manager.c
 src/i18n.c
 src/home-model.c
+src/grotto-panels-control1-service.c
 src/ui/signer-window.c
 src/ui/lock-screen.c
 src/ui/approval_dialog.c
