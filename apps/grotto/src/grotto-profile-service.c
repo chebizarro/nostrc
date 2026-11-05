@@ -475,7 +475,8 @@ static gboolean discover(Job *j, NostrPublishSigner *signer, char **events, GErr
   for (guint round = 0; round < 2; round++) {
     g_autoptr(GStrvBuilder) batch = g_strv_builder_new();
     for (guint i = 0; urls && urls[i] && i < 16; i++) {
-      if (endpoint(urls[i], TRUE) && g_hash_table_add(seen, g_strdup(urls[i]))) {
+      g_autofree char *attempt = g_strdup_printf("%c:%s", j->bootstrap_round ? 'b' : 'o', urls[i]);
+      if (endpoint(urls[i], TRUE) && g_hash_table_add(seen, g_strdup(attempt))) {
         g_strv_builder_add(batch, urls[i]);
         if (!j->discovery_relays || !g_strv_contains((const char *const *)j->discovery_relays, urls[i])) {
           g_autoptr(GStrvBuilder) contacts = g_strv_builder_new();

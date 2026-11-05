@@ -45,8 +45,11 @@ them as outbox relays. Bootstrap connections have **no signing capability**:
 AUTH challenges and auth-required CLOSED are skipped and reported as “relay
 requires authentication”, never answered or submitted for approval. Author-scoped
 REQ still discloses the public key being looked up; it is not an anonymous query
-or proof of key ownership. Normal outbox authentication remains separate. Profile Details discloses every contacted discovery relay
-and the publication/outbox set. Tor mode still fails closed. Image uploads use the verified cached kind-10063 set, frozen before the
+or proof of key ownership. Normal outbox authentication remains separate.
+If signed NIP-65 independently advertises the same URL as an outbox, it is
+retried in that outbox role (including media-list lookup), not as bootstrap.
+Profile Details discloses every contacted discovery relay and the publication/outbox
+set. Tor mode still fails closed. Image uploads use the verified cached kind-10063 set, frozen before the
 upload confirmation; no server outside that set is tried. Save preserves
 unknown profile fields, rejects a newer remote edit, requests one kind-0
 MANAGEMENT review, waits for relay OKs and re-fetches without signing again.

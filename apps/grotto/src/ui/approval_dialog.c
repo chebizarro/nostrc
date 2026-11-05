@@ -963,7 +963,7 @@ void gnostr_approval_dialog_set_profile_provenance(GnostrApprovalDialog *self,
   const char *title = kind == NOSTR_KIND_PROFILE_METADATA ? _("Publication relays:") :
     kind == NOSTR_KIND_BLOBS ? _("Image upload servers:") : _("Relay authentication destination:");
   g_autofree char *display = g_strdup_printf("%s\n%s\n\n%s\n%s", title, *targets ? targets : _("None recorded"),
-    _("Host bootstrap discovery (lookup only, not publication destinations or authorization):"), *lookups ? lookups : _("Not used"));
+    _("Host bootstrap discovery (lookup only, never a publish fallback or authentication grant):"), *lookups ? lookups : _("Not used"));
   adw_action_row_set_subtitle(self->row_relay, display);
   g_autofree char *details = g_strdup_printf("%s\n\n%s", self->profile_details, display);
   gtk_label_set_text(self->label_details, details);

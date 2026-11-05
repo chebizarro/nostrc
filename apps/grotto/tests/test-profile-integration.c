@@ -115,7 +115,7 @@ static void info_done(GObject *source, GAsyncResult *result, gpointer data) {
   } else {
     WAIT(strstr(adw_action_row_get_subtitle(shown_relays), a->discovery));
     g_assert_nonnull(strstr(adw_action_row_get_subtitle(shown_relays), a->relay));
-    g_assert_nonnull(strstr(adw_action_row_get_subtitle(shown_relays), "lookup only, not publication destinations or authorization"));
+    g_assert_nonnull(strstr(adw_action_row_get_subtitle(shown_relays), "lookup only, never a publish fallback or authentication grant"));
     g_assert_nonnull(strstr(gtk_label_get_text(shown_details), a->discovery));
   }
   g_dbus_connection_call(a->bus, "org.nostr.Signer", "/org/nostr/signer/grotto", "org.nostr.Grotto.Control1", "DecideRequest", g_variant_new("(ss)", a->request, "allow-24h"), NULL, 0, 10000, NULL, reusable_refused, a);
@@ -164,13 +164,15 @@ static void seed_profiles(BunkerTestRelay *relay, const char *hex, const char *k
     }
   }
 }
-typedef struct { const char *hex; guint requests; gboolean challenge; BunkerTestRelay *relay; } BootstrapProbe;
+typedef struct { const char *hex; guint requests; gboolean challenge, own_outbox; BunkerTestRelay *relay; } BootstrapProbe;
 static void forbidden_bootstrap_publish(const char *event, gpointer data) { (void)event; (void)data; g_error("Publication must never use bootstrap fallback"); }
 static void bootstrap_request(JsonArray *request, gpointer data) {
   BootstrapProbe *p = data; p->requests++;
-  g_assert_cmpuint(json_array_get_length(request), ==, 5);
-  const guint kinds[] = {0, 10002, 10050};
-  for (guint i = 0; i < 3; i++) {
+  gboolean outbox = p->own_outbox && p->requests == 2;
+  g_assert_cmpuint(json_array_get_length(request), ==, outbox ? 6 : 5);
+  const guint bootstrap_kinds[] = {0, 10002, 10050}, outbox_kinds[] = {0, 10002, 10063, 10050};
+  const guint *kinds = outbox ? outbox_kinds : bootstrap_kinds;
+  for (guint i = 0; i < (outbox ? 4 : 3); i++) {
     JsonObject *filter = json_array_get_object_element(request, i + 2);
     g_assert_cmpint(json_array_get_int_element(json_object_get_array_member(filter, "kinds"), 0), ==, kinds[i]);
     g_assert_cmpstr(json_array_get_string_element(json_object_get_array_member(filter, "authors"), 0), ==, p->hex);
@@ -214,6 +216,28 @@ static void seed_metadata(BunkerTestRelay *relay, const char *hex, const char *k
   g_assert_cmpint(nostr_event_sign(event, key), ==, 0);
   g_autofree char *signed_json = nostr_event_serialize_compact(event); nostr_event_free(event);
   json_array_add_element(bunker_test_relay_events(relay), json_from_string(signed_json, NULL));
+}
+static void bootstrap_is_own_outbox(GSettings *preferences) {
+  const char *key = "0000000000000000000000000000000000000000000000000000000000000002";
+  g_autofree char *hex = nostr_key_get_public(key); guint8 pk[32];
+  for (guint i = 0; i < 32; i++) { char byte[3] = {hex[i*2], hex[i*2+1], 0}; pk[i] = g_ascii_strtoull(byte, NULL, 16); }
+  char *npub = NULL; g_assert_cmpint(nostr_nip19_encode_npub(pk, &npub), ==, 0);
+  BunkerTestRelay *relay = bunker_test_relay_new(); BootstrapProbe probe = {.hex = hex, .own_outbox = TRUE};
+  bunker_test_relay_set_request_callback(relay, bootstrap_request, &probe);
+  g_autofree char *tags = g_strdup_printf("[[\"r\",\"%s\",\"write\"]]", bunker_test_relay_url(relay));
+  seed_metadata(relay, hex, key, 10002, tags);
+  seed_metadata(relay, hex, key, 10063, "[[\"server\",\"https://images.example/\"]]");
+  const char *urls[] = {bunker_test_relay_url(relay), NULL};
+  g_settings_set_strv(preferences, "profile-bootstrap-relays", urls);
+  GAsyncResult *result = NULL;
+  grotto_profile_service_async(NULL, NULL, GROTTO_PROFILE_FETCH, npub, NULL, NULL, host_result, &result); WAIT(result);
+  g_autoptr(GError) error = NULL; g_autoptr(GrottoProfileInfo) info = g_task_propagate_pointer(G_TASK(result), &error); g_object_unref(result);
+  g_assert_no_error(error); g_assert_nonnull(info); g_assert_cmpuint(probe.requests, ==, 2);
+  g_assert_cmpstr(info->bootstrap_relays[0], ==, urls[0]); g_assert_cmpstr(info->publish_relays[0], ==, urls[0]);
+  g_autofree char *cache = g_strdup_printf("%s/grotto/profiles/%s-10063.json", g_get_user_cache_dir(), hex);
+  g_assert_true(g_file_test(cache, G_FILE_TEST_IS_REGULAR));
+  g_assert_cmpuint(bunker_test_relay_auth_count(relay), ==, 0);
+  bunker_test_relay_free(relay); g_free(npub);
 }
 #ifdef __linux__
 static void crop_picker_cancel(SignerWindow *window, AdwDialog *editor) {
@@ -294,6 +318,8 @@ static void profile_activate(GApplication *application, gpointer data) {
   g_assert_error(empty_error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND); g_clear_error(&empty_error); grotto_profile_info_free(missing);
   guint bc, br, bp; bunker_test_relay_stats(bootstrap, &bc, &br, &bp); g_assert_cmpuint(bp, ==, 0);
   bootstrap_auth_refused(connection, npub, bootstrap, &probe);
+  bootstrap_is_own_outbox(preferences);
+  g_settings_set_strv(preferences, "profile-bootstrap-relays", bootstrap_urls);
   guint image_contacts = 0;
   g_autoptr(GSocketService) image_server = g_socket_service_new();
   g_autoptr(GSocketAddress) address = g_inet_socket_address_new_from_string("127.0.0.1", 0); GSocketAddress *effective = NULL;
