@@ -16,6 +16,7 @@
 #include <keys.h>
 #include <glib/gstdio.h>
 #include <signal.h>
+#include <libsoup/soup.h>
 #include <string.h>
 static NostrcTestBus *private_bus;
 static GtkWidget *diagnostic_window;
@@ -163,6 +164,111 @@ static void seed_profiles(BunkerTestRelay *relay, const char *hex, const char *k
       json_array_add_element(bunker_test_relay_events(relay), forged);
     }
   }
+}
+/* Public, test-only self-signed loopback certificate/key. Trust is installed
+ * only in this test process; production TLS validation is unchanged. */
+typedef struct { const char *location; GBytes *png; guint contacts; gboolean encoded; } ImageEndpoint;
+static void image_response(SoupServer *server, SoupServerMessage *message, const char *path, GHashTable *query, gpointer data) {
+  (void)server; (void)query; ImageEndpoint *endpoint = data; endpoint->contacts++;
+  if (g_str_has_prefix(path, "/hop/") && atoi(path + 5) > 0) {
+    g_autofree char *next = g_strdup_printf("/hop/%d", atoi(path + 5) - 1);
+    soup_server_message_set_redirect(message, SOUP_STATUS_FOUND, next);
+  } else if (!strcmp(path, "/via")) {
+    soup_server_message_set_redirect(message, SOUP_STATUS_TEMPORARY_REDIRECT, "/encoded%2Fimage.png?token=a%26b");
+  } else if (endpoint->location && !strcmp(path, "/start")) {
+    soup_server_message_set_redirect(message, SOUP_STATUS_FOUND, endpoint->location);
+  } else {
+    if (endpoint->encoded) {
+      g_autofree char *uri = g_uri_to_string(soup_server_message_get_uri(message));
+      g_assert_true(g_str_has_suffix(uri, "/encoded%2Fimage.png?token=a%26b"));
+    }
+    gsize size; const char *bytes = g_bytes_get_data(endpoint->png, &size);
+    soup_server_message_set_status(message, SOUP_STATUS_OK, NULL);
+    soup_server_message_set_response(message, "image/png", SOUP_MEMORY_COPY, bytes, size);
+  }
+}
+static char *image_listen(SoupServer *server, ImageEndpoint *endpoint) {
+  soup_server_add_handler(server, NULL, image_response, endpoint, NULL);
+  g_assert_true(soup_server_listen_local(server, 0, SOUP_SERVER_LISTEN_IPV4_ONLY | SOUP_SERVER_LISTEN_HTTPS, NULL));
+  GSList *uris = soup_server_get_uris(server);
+  char *url = g_uri_to_string(uris->data); g_slist_free_full(uris, (GDestroyNotify)g_uri_unref); return url;
+}
+static void image_fetch_redirects(void) {
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GTlsCertificate) certificate = g_tls_certificate_new_from_file(PROFILE_TEST_TLS_PEM, &error); g_assert_no_error(error);
+  g_autoptr(GTlsDatabase) original = g_object_ref(g_tls_backend_get_default_database(g_tls_backend_get_default()));
+  g_autoptr(GTlsDatabase) trust = g_tls_file_database_new(PROFILE_TEST_TLS_PEM, &error); g_assert_no_error(error);
+  g_tls_backend_set_default_database(g_tls_backend_get_default(), trust);
+  g_autoptr(GdkPixbuf) pixels = gdk_pixbuf_new(GDK_COLORSPACE_RGB, TRUE, 8, 2, 1); gdk_pixbuf_fill(pixels, 0x224488ff);
+  char *png; gsize size; g_assert_true(gdk_pixbuf_save_to_buffer(pixels, &png, &size, "png", &error, NULL)); g_assert_no_error(error);
+  g_autoptr(GBytes) bytes = g_bytes_new_take(png, size);
+  ImageEndpoint source = {.png = bytes}, target = {.png = bytes, .encoded = TRUE};
+  g_autoptr(SoupServer) first = soup_server_new("tls-certificate", certificate, NULL);
+  g_autoptr(SoupServer) second = soup_server_new("tls-certificate", certificate, "raw-paths", TRUE, NULL);
+  g_autofree char *first_url = image_listen(first, &source), *second_url = image_listen(second, &target);
+  guint downgraded_contacts = 0;
+  g_autoptr(GSocketService) downgrade = g_socket_service_new();
+  g_autoptr(GSocketAddress) loopback = g_inet_socket_address_new_from_string("127.0.0.1", 0);
+  g_autoptr(GSocketAddress) effective = NULL;
+  g_assert_true(g_socket_listener_add_address(G_SOCKET_LISTENER(downgrade), loopback, G_SOCKET_TYPE_STREAM, G_SOCKET_PROTOCOL_TCP, NULL, &effective, &error));
+  g_assert_no_error(error);
+  guint port = g_inet_socket_address_get_port(G_INET_SOCKET_ADDRESS(effective));
+  g_signal_connect(downgrade, "incoming", G_CALLBACK(image_contact), &downgraded_contacts);
+  g_autofree char *https = g_strconcat(second_url, "via", NULL);
+  g_autofree char *http = g_strdup_printf("http://127.0.0.1:%u/image.png", port);
+  GSettings *preferences = settings_manager_get_gsettings(settings_manager_get_default());
+  g_assert_true(g_settings_get_boolean(preferences, "load-profile-images"));
+  for (guint test = 0; test < 6; test++) {
+    /* Off, cross-origin HTTPS + relative hop, downgrade, five hops, six hops,
+     * direct 200. These identities are not enrolled: watch-only fetches. */
+    source.contacts = target.contacts = 0; source.location = test == 2 ? http : https;
+    g_autofree char *url = g_strconcat(first_url, test == 3 ? "hop/5" : test == 4 ? "hop/6" : test == 5 ? "image.png" : "start", NULL);
+    g_autofree char *sk = g_strdup_printf("%064x", 100 + test), *hex = nostr_key_get_public(sk);
+    guint8 pk[32]; for (guint i = 0; i < 32; i++) { char pair[] = {hex[i*2], hex[i*2+1], 0}; pk[i] = g_ascii_strtoull(pair, NULL, 16); }
+    char *npub = NULL; g_assert_cmpint(nostr_nip19_encode_npub(pk, &npub), ==, 0);
+    BunkerTestRelay *relay = bunker_test_relay_new();
+    /* Seed picture and banner, not only one image slot. */
+    g_autofree char *content = g_strdup_printf("{\"picture\":\"%s\",\"banner\":\"%s\"}", url, url);
+    NostrEvent *event = nostr_event_new(); nostr_event_set_kind(event, 0); nostr_event_set_pubkey(event, hex);
+    nostr_event_set_created_at(event, g_get_real_time() / G_USEC_PER_SEC); nostr_event_set_content(event, content);
+    g_assert_cmpint(nostr_event_sign(event, sk), ==, 0);
+    g_autofree char *json = nostr_event_serialize_compact(event); nostr_event_free(event);
+    json_array_add_element(bunker_test_relay_events(relay), json_from_string(json, NULL));
+    const char *relays[] = {bunker_test_relay_url(relay), NULL};
+    g_settings_set_strv(preferences, "profile-bootstrap-relays", relays);
+    g_settings_set_boolean(preferences, "load-profile-images", test != 0);
+    GAsyncResult *result = NULL;
+    grotto_profile_service_async(NULL, NULL, GROTTO_PROFILE_FETCH, npub, NULL, NULL, host_result, &result); WAIT(result);
+    g_autoptr(GrottoProfileInfo) info = g_task_propagate_pointer(G_TASK(result), &error); g_object_unref(result);
+    g_assert_no_error(error); g_assert_nonnull(info);
+    gboolean loaded = test == 1 || test == 3 || test == 5;
+    for (guint i = 0; i < 2; i++) {
+      if (loaded) { g_assert_nonnull(info->images[i]); g_assert_cmpint(gdk_texture_get_width(info->images[i]), ==, 2); }
+      else g_assert_null(info->images[i]);
+    }
+    g_assert_cmpuint(source.contacts, ==, test == 0 ? 0 : (test == 3 || test == 4) ? 12 : 2);
+    g_assert_cmpuint(target.contacts, ==, test == 1 ? 4 : 0);
+    g_assert_cmpuint(downgraded_contacts, ==, 0);
+    guint contacts = source.contacts;
+    /* Setting off still reuses bytes under the original URL, including after
+     * redirects. Tor retains the metadata cache and makes no image request. */
+    for (guint tor = 0; tor < 2; tor++) {
+      g_settings_set_boolean(preferences, "load-profile-images", tor != 0);
+      g_settings_set_boolean(preferences, "use-tor-for-relays", tor != 0);
+      result = NULL; grotto_profile_service_async(NULL, NULL, GROTTO_PROFILE_FETCH, npub, NULL, NULL, host_result, &result); WAIT(result);
+      g_autoptr(GrottoProfileInfo) cached = g_task_propagate_pointer(G_TASK(result), &error); g_object_unref(result);
+      g_assert_no_error(error); g_assert_nonnull(cached); g_assert_cmpint(cached->tor_blocked, ==, tor != 0);
+      for (guint i = 0; i < 2; i++) g_assert_cmpint(cached->images[i] != NULL, ==, loaded);
+      g_assert_cmpuint(source.contacts, ==, contacts);
+      g_assert_cmpuint(target.contacts, ==, test == 1 ? 4 : 0);
+      g_assert_cmpuint(downgraded_contacts, ==, 0);
+    }
+    g_settings_set_boolean(preferences, "use-tor-for-relays", FALSE);
+    g_free(npub); bunker_test_relay_free(relay);
+  }
+  g_settings_reset(preferences, "profile-bootstrap-relays"); g_settings_reset(preferences, "load-profile-images");
+  soup_server_disconnect(first); soup_server_disconnect(second);
+  g_tls_backend_set_default_database(g_tls_backend_get_default(), original);
 }
 typedef struct { const char *hex; guint requests; gboolean challenge, own_outbox; BunkerTestRelay *relay; } BootstrapProbe;
 static void forbidden_bootstrap_publish(const char *event, gpointer data) { (void)event; (void)data; g_error("Publication must never use bootstrap fallback"); }
@@ -371,22 +477,16 @@ static void profile_activate(GApplication *application, gpointer data) {
   WAIT(gtk_widget_is_sensitive(find(panel, "Edit Profile…")));
   g_assert_cmpuint(probe.requests, ==, bootstrap_requests);
   guint rc, rr, rp; bunker_test_relay_stats(read_only, &rc, &rr, &rp); g_assert_cmpuint(rc, ==, 0);
-  g_assert_cmpuint(image_contacts, ==, 0);
-  g_signal_emit_by_name(find(panel, "Load Profile Images…"), "clicked");
-  AdwDialog *consent = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window));
-  g_assert_true(ADW_IS_ALERT_DIALOG(consent));
-  g_assert_nonnull(strstr(adw_alert_dialog_get_body(ADW_ALERT_DIALOG(consent)), "watch-only"));
-  g_assert_nonnull(strstr(adw_alert_dialog_get_body(ADW_ALERT_DIALOG(consent)), image));
-  guint consent_frames = 0; gtk_widget_add_tick_callback(GTK_WIDGET(consent), presented, &consent_frames, NULL); WAIT(consent_frames == 3);
-  g_signal_emit_by_name(find(GTK_WIDGET(consent), "Cancel"), "clicked");
-  WAIT(!adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)) && gtk_widget_is_sensitive(find(panel, "Edit Profile…")));
-  g_assert_cmpuint(image_contacts, ==, 0);
-  g_signal_emit_by_name(find(panel, "Load Profile Images…"), "clicked");
-  consent = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window));
-  consent_frames = 0; gtk_widget_add_tick_callback(GTK_WIDGET(consent), presented, &consent_frames, NULL); WAIT(consent_frames == 3);
-  g_signal_emit_by_name(find(GTK_WIDGET(consent), "Load Images"), "clicked");
-  WAIT(find(panel, "Some profile images could not be loaded. Check the URLs or try again"));
-  g_assert_cmpuint(image_contacts, >, 0); guint consented_contacts = image_contacts;
+  g_assert_cmpuint(image_contacts, >, 0);
+  guint automatic_contacts = image_contacts;
+  g_settings_set_boolean(preferences, "load-profile-images", FALSE);
+  g_signal_emit_by_name(find(panel, "Refresh Profile"), "clicked");
+  WAIT(gtk_widget_is_sensitive(find(panel, "Edit Profile…")));
+  g_assert_cmpuint(image_contacts, ==, automatic_contacts);
+  g_assert_null(find(panel, "Load Profile Images…"));
+  g_assert_null(find(panel, "Some profile images could not be loaded. Check the URLs or try again"));
+  g_assert_null(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)));
+  g_settings_set_boolean(preferences, "load-profile-images", TRUE);
   g_signal_emit_by_name(find(panel, "Edit Profile…"), "clicked");
   AdwDialog *dialog = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)); g_assert_nonnull(dialog);
   guint frames = 0; gtk_widget_add_tick_callback(GTK_WIDGET(dialog), presented, &frames, NULL); WAIT(frames == 3);
@@ -431,7 +531,7 @@ static void profile_activate(GApplication *application, gpointer data) {
   g_autofree char *cache = g_strdup_printf("%s/grotto/profiles/%s-0.json", g_get_user_cache_dir(), hex);
   g_assert_true(g_file_test(cache, G_FILE_TEST_IS_REGULAR));
   g_assert_nonnull(find(panel, "Alice"));
-  g_assert_cmpuint(image_contacts, ==, consented_contacts); /* Save/review do not resolve URLs. */
+  g_assert_cmpuint(image_contacts, ==, automatic_contacts); /* Save/review do not resolve URLs. */
   guint connections, requests, published; bunker_test_relay_stats(relay, &connections, &requests, &published);
   g_assert_cmpuint(requests, >=, 3); /* initial fetch, Save discovery and post-publish EOSE re-fetch */
   /* Stop a second Save at the real daemon review, without signing/publishing. */
@@ -606,6 +706,7 @@ int main(int argc, char **argv) {
   g_test_add_func("/signer/profile/crop-and-nip05", crop_and_nip05);
   g_test_add_func("/signer/profile/authorization-preview", authorization_preview);
   g_test_add_func("/signer/profile/image-privacy-and-limits", privacy_helpers);
+  g_test_add_func("/signer/profile/images-autoload-https-redirects", image_fetch_redirects);
   g_test_add_func("/signer/profile/save-one-review-real-daemon", profile_integration);
   int result = g_test_run(); nostrc_test_bus_down(private_bus);
   g_autoptr(GFile) owned = g_file_new_for_path(home); remove_owned_tree(owned); return result;

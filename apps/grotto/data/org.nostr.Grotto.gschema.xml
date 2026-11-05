@@ -128,6 +128,12 @@
       <description>SOCKS5 proxy URI for Tor (e.g., socks5://127.0.0.1:9050).</description>
     </key>
 
+    <key name="load-profile-images" type="b">
+      <default>true</default>
+      <summary>Load profile images</summary>
+      <description>Fetch avatars and banners from the web addresses in profiles.</description>
+    </key>
+
     <key name="use-tor-for-relays" type="b">
       <default>false</default>
       <summary>Use Tor for relays</summary>

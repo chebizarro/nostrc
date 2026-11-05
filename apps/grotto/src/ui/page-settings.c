@@ -190,6 +190,14 @@ static void page_settings_init(PageSettings *self) {
   g_signal_connect(self->lock_timeout, "notify::selected", G_CALLBACK(combo_changed), self);
   g_settings_bind(self->settings, "log-retention-days", self->retention, "value", G_SETTINGS_BIND_DEFAULT);
   g_signal_connect(self->remote, "activated", G_CALLBACK(open_remote), self);
+  AdwPreferencesGroup *privacy = ADW_PREFERENCES_GROUP(adw_preferences_group_new());
+  adw_preferences_group_set_title(privacy, _("Privacy / Network"));
+  AdwSwitchRow *images = ADW_SWITCH_ROW(adw_switch_row_new());
+  adw_preferences_row_set_title(ADW_PREFERENCES_ROW(images), _("Load Profile Images"));
+  adw_action_row_set_subtitle(ADW_ACTION_ROW(images), _("Fetch avatars and banners from the web addresses in profiles"));
+  g_settings_bind(self->settings, "load-profile-images", images, "active", G_SETTINGS_BIND_DEFAULT);
+  adw_preferences_group_add(privacy, GTK_WIDGET(images));
+  adw_preferences_page_add(ADW_PREFERENCES_PAGE(self), privacy);
   add_profile_discovery(self);
 }
 PageSettings *page_settings_new(void) { return g_object_new(TYPE_PAGE_SETTINGS, NULL); }

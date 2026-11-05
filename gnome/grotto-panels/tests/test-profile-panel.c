@@ -144,8 +144,7 @@ static void profile_panel(void) {
   g_assert_false(gtk_widget_get_visible(find(panel, "Edit Profile…")));
   g_assert_nonnull(find(panel, "Nostr Address"));
   g_assert_cmpuint(host.calls[GROTTO_PROFILE_LOAD_IMAGES], ==, 0);
-  g_signal_emit_by_name(find(panel, "Load Profile Images…"), "clicked");
-  WAIT(host.calls[GROTTO_PROFILE_LOAD_IMAGES] == 1 && gtk_widget_is_sensitive(find(panel, "Load Profile Images…")));
+  g_assert_null(find(panel, "Load Profile Images…"));
   host.info->tor_blocked = TRUE;
   g_signal_emit_by_name(find(panel, "Refresh Profile"), "clicked");
   WAIT(find(panel, "Tor mode — showing the saved profile without network access"));

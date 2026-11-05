@@ -95,6 +95,14 @@ nip55l's signal-confidentiality correction is also folded into 0.8.0.
 grotto-panels 0.1.0 has no additional shipped source change in that correction
 (adapter regression tests do not change the panels runtime).
 
+### Profile image autoload (nostrc-u6v55.33)
+
+Grotto's default-on `load-profile-images` preference, automatic avatar/banner
+fetches, bounded HTTPS image redirects and consent-sheet removal fold into
+unreleased **Grotto 0.1.1**. The panels button removal folds into unreleased
+**grotto-panels 0.1.0**; the unused public action value is retained for ABI.
+No further bump or release-tag change. Tests and documentation need no bump.
+
 ### W7 public identity profiles (nostrc-u6v55.23.9)
 
 | Component | W7 impact | Version decision and reason |
