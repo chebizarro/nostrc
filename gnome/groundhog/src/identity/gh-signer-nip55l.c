@@ -15,7 +15,7 @@
  * result instead of reporting a local transport timeout at 30 seconds. */
 #define SIGNER_CALL_TIMEOUT_MS (330 * 1000)
 
-typedef enum { OP_SIGN, OP_ENCRYPT, OP_DECRYPT, OP_NIP04_DECRYPT } Operation;
+typedef enum { OP_SIGN, OP_ENCRYPT, OP_DECRYPT, OP_NIP04_DECRYPT, OP_DECLARE } Operation;
 typedef struct _Pending Pending;
 struct _GhNip55lSigner {
   gint refs;
@@ -23,8 +23,14 @@ struct _GhNip55lSigner {
   gchar *npub;
   gchar *pubkey;
   GPtrArray *pending; /* non-owning; each Pending keeps signer alive */
+  /* G18: while a RequestPermissions declaration is unanswered, ordinary
+   * operations wait here (a subset of pending) so a slow first review is
+   * never joined by per-kind prompts; they start once it is answered. */
+  GPtrArray *waiting;
+  gboolean declaring;
   guint generation;
 };
+static void release_waiting(GhNip55lSigner *signer);
 struct _Pending {
   GhNip55lSigner *signer;
   GTask *task;
@@ -56,7 +62,9 @@ signer_unref(GhNip55lSigner *signer)
 {
   if (!g_atomic_int_dec_and_test(&signer->refs)) return;
   g_assert(signer->pending->len == 0);
+  g_assert(signer->waiting->len == 0);
   g_ptr_array_unref(signer->pending);
+  g_ptr_array_unref(signer->waiting);
   g_clear_object(&signer->bus);
   g_free(signer->npub);
   g_free(signer->pubkey);
@@ -79,6 +87,7 @@ gh_signer_nip55l_new(GDBusConnection *bus, const gchar *selected_npub, GError **
   signer->npub = g_strdup(selected_npub);
   signer->pubkey = g_steal_pointer(&pubkey);
   signer->pending = g_ptr_array_new();
+  signer->waiting = g_ptr_array_new();
   return signer;
 }
 
@@ -209,6 +218,9 @@ cancel_from_caller(GCancellable *caller, gpointer data)
 static void
 pending_free(Pending *p)
 {
+  /* However the declaration ended (answered, refused, unknown method,
+   * cancelled), the operations that waited for it may proceed. */
+  if (p->op == OP_DECLARE && p->signer->declaring) release_waiting(p->signer);
   if (p->caller_handler) g_cancellable_disconnect(p->caller, p->caller_handler);
   g_clear_object(&p->caller);
   g_clear_object(&p->cancel);
@@ -283,6 +295,12 @@ call_done(GObject *source, GAsyncResult *result, gpointer data)
                             "Signer operation cancelled");
   } else if (bus_error) {
     g_task_return_error(p->task, map_bus_error(bus_error));
+  } else if (p->op == OP_DECLARE) {
+    if (reply && g_variant_is_of_type(reply, G_VARIANT_TYPE("(a{sv})")))
+      g_task_return_boolean(p->task, TRUE);
+    else
+      g_task_return_new_error(p->task, GH_SIGNER_ERROR, GH_SIGNER_ERROR_INVALID_RESULT,
+                              "Signer returned an invalid declaration result");
   } else if (!reply || !g_variant_is_of_type(reply, G_VARIANT_TYPE("(s)"))) {
     g_task_return_new_error(p->task, GH_SIGNER_ERROR, GH_SIGNER_ERROR_INVALID_RESULT,
                             "Signer returned an invalid result");
@@ -312,8 +330,36 @@ operation_method(Operation op, gboolean named)
   case OP_ENCRYPT: return named ? "NIP44EncryptForApp" : "NIP44Encrypt";
   case OP_NIP04_DECRYPT: return named ? "NIP04DecryptForApp" : "NIP04Decrypt";
   case OP_DECRYPT: return named ? "NIP44DecryptForApp" : "NIP44Decrypt";
+  case OP_DECLARE: return "RequestPermissions";
   }
   g_assert_not_reached();
+}
+/* RequestPermissions(aa{sv} permissions, a{sv} context): the tokens use the
+ * NIP-46/NIP-55 vocabulary; identity pins the selected npub and app_id
+ * carries the same named claim as every ForApp call. */
+static GVariant *
+declaration_arguments(Pending *p)
+{
+  GVariantBuilder entries, context;
+  g_variant_builder_init(&entries, G_VARIANT_TYPE("aa{sv}"));
+  g_auto(GStrv) tokens = g_strsplit(p->input, ",", -1);
+  for (guint i = 0; tokens[i]; i++) {
+    GVariantBuilder entry; g_variant_builder_init(&entry, G_VARIANT_TYPE_VARDICT);
+    if (g_str_has_prefix(tokens[i], "sign_event:")) {
+      g_variant_builder_add(&entry, "{sv}", "type", g_variant_new_string("sign_event"));
+      g_variant_builder_add(&entry, "{sv}", "kind",
+                            g_variant_new_uint32((guint32)g_ascii_strtoull(tokens[i] + strlen("sign_event:"), NULL, 10)));
+    } else {
+      g_variant_builder_add(&entry, "{sv}", "type", g_variant_new_string(tokens[i]));
+    }
+    g_variant_builder_add_value(&entries, g_variant_builder_end(&entry));
+  }
+  g_variant_builder_init(&context, G_VARIANT_TYPE_VARDICT);
+  g_variant_builder_add(&context, "{sv}", "identity", g_variant_new_string(p->signer->npub));
+  g_variant_builder_add(&context, "{sv}", "app_id", g_variant_new_string(SIGNER_APP_ID));
+  g_variant_builder_add(&context, "{sv}", "reason",
+                        g_variant_new_string("Messages, groups, lists and relay sign-in for this account"));
+  return g_variant_new("(aa{sv}a{sv})", &entries, &context);
 }
 
 static void
@@ -392,6 +438,9 @@ connection_done(GObject *source, GAsyncResult *result, gpointer data)
   g_dbus_connection_call(p->bus, SIGNER_BUS, SIGNER_PATH, SIGNER_INTERFACE,
                          "EnableTypedApprovalErrors", NULL, NULL, G_DBUS_CALL_FLAGS_NONE,
                          -1, NULL, NULL, NULL);
+  /* A declaration needs no capability probe: an older service answers
+   * UnknownMethod, which maps to UNAVAILABLE and leaves per-request consent. */
+  if (p->op == OP_DECLARE) { send_call(p, FALSE); return; }
   /* Choose the named API before executing, retaining legacy compatibility
    * without replaying a call after an uncertain result. */
   g_dbus_connection_call(p->bus, SIGNER_BUS, SIGNER_PATH, "org.freedesktop.DBus.Introspectable",
@@ -411,14 +460,15 @@ send_call(Pending *p, gboolean wrapped)
     pending_free(p); return;
   }
   const gchar *method = operation_method(p->op, p->named);
-  GVariant *tuple = p->op == OP_SIGN ? g_variant_new("(sss)", p->input, p->signer->npub, SIGNER_APP_ID) :
+  GVariant *tuple = p->op == OP_DECLARE ? declaration_arguments(p) :
+      p->op == OP_SIGN ? g_variant_new("(sss)", p->input, p->signer->npub, SIGNER_APP_ID) :
       p->named ? g_variant_new("(ssss)", p->input, p->peer, p->signer->npub, SIGNER_APP_ID) :
       g_variant_new("(sss)", p->input, p->peer, p->signer->npub);
   p->wrapped = wrapped;
   g_dbus_connection_call(p->bus, SIGNER_BUS, SIGNER_PATH, SIGNER_INTERFACE,
       wrapped ? "CallWithContext" : method,
       wrapped ? g_variant_new("(sv@a{sv})", method, tuple, g_variant_ref(p->context)) : tuple,
-      wrapped ? G_VARIANT_TYPE("(v)") : G_VARIANT_TYPE("(s)"),
+      p->op == OP_DECLARE ? G_VARIANT_TYPE("(a{sv})") : wrapped ? G_VARIANT_TYPE("(v)") : G_VARIANT_TYPE("(s)"),
       G_DBUS_CALL_FLAGS_NONE, SIGNER_CALL_TIMEOUT_MS, p->cancel, call_done, p);
 }
 
@@ -460,6 +510,25 @@ address_done(GObject *source, GAsyncResult *result, gpointer data)
     G_DBUS_CONNECTION_FLAGS_AUTHENTICATION_CLIENT |
       G_DBUS_CONNECTION_FLAGS_MESSAGE_BUS_CONNECTION,
     NULL, p->cancel, connection_done, p);
+}
+
+static void
+launch(Pending *p)
+{
+  GTask *lookup = g_task_new(NULL, p->cancel, address_done, p);
+  g_task_run_in_thread(lookup, address_worker);
+  g_object_unref(lookup);
+}
+
+static void
+release_waiting(GhNip55lSigner *signer)
+{
+  signer->declaring = FALSE;
+  while (signer->waiting->len) {
+    Pending *p = g_ptr_array_index(signer->waiting, 0);
+    g_ptr_array_remove_index(signer->waiting, 0);
+    launch(p); /* cancelled ones finish CANCELLED through the normal path */
+  }
 }
 
 static void
@@ -537,9 +606,65 @@ start_call(GhNip55lSigner *signer, Operation op, const gchar *input, const gchar
   if (p->caller)
     p->caller_handler = g_cancellable_connect(p->caller, G_CALLBACK(cancel_from_caller),
                                                p, NULL);
-  GTask *lookup = g_task_new(NULL, p->cancel, address_done, p);
-  g_task_run_in_thread(lookup, address_worker);
-  g_object_unref(lookup);
+  if (signer->declaring) g_ptr_array_add(signer->waiting, p);
+  else launch(p);
+}
+
+/* Declared permission set (nip55l 0.8.0 RequestPermissions). */
+static gboolean
+valid_token(const gchar *token)
+{
+  static const gchar *const names[] = {"nip04_encrypt", "nip04_decrypt", "nip44_encrypt",
+      "nip44_decrypt", "get_public_key", "get_relays", "decrypt_zap_event", NULL};
+  if (!token || !*token || strchr(token, ',')) return FALSE;
+  if (g_strv_contains(names, token)) return TRUE;
+  if (!g_str_has_prefix(token, "sign_event:")) return FALSE;
+  const gchar *digits = token + strlen("sign_event:");
+  if (!*digits || strlen(digits) > 5) return FALSE;
+  for (const gchar *c = digits; *c; c++) if (!g_ascii_isdigit(*c)) return FALSE;
+  return g_ascii_strtoull(digits, NULL, 10) <= 65535;
+}
+
+void
+gh_signer_nip55l_declare_async(GhNip55lSigner *signer, const gchar *const *tokens,
+                                GCancellable *cancellable, GAsyncReadyCallback callback,
+                                gpointer user_data)
+{
+  g_return_if_fail(signer != NULL);
+  GTask *task = g_task_new(NULL, NULL, callback, user_data);
+  g_task_set_source_tag(task, gh_signer_nip55l_declare_async);
+  guint n = tokens ? g_strv_length((gchar **)tokens) : 0;
+  gboolean valid = n > 0 && n <= 64;
+  for (guint i = 0; valid && i < n; i++) valid = valid_token(tokens[i]);
+  if (!valid) {
+    g_task_return_new_error(task, GH_SIGNER_ERROR, GH_SIGNER_ERROR_INVALID_INPUT,
+                            "Invalid declared permission set");
+    g_object_unref(task);
+    return;
+  }
+  Pending *p = g_new0(Pending, 1);
+  p->signer = signer_ref(signer);
+  p->task = task;
+  p->cancel = g_cancellable_new();
+  g_mutex_init(&p->bus_lock);
+  p->caller = cancellable ? g_object_ref(cancellable) : NULL;
+  p->generation = signer->generation;
+  p->op = OP_DECLARE;
+  p->input = g_strjoinv(",", (gchar **)tokens);
+  g_ptr_array_add(signer->pending, p);
+  if (p->caller)
+    p->caller_handler = g_cancellable_connect(p->caller, G_CALLBACK(cancel_from_caller),
+                                               p, NULL);
+  signer->declaring = TRUE;
+  launch(p);
+}
+
+gboolean
+gh_signer_nip55l_declare_finish(GAsyncResult *result, GError **error)
+{
+  g_return_val_if_fail(G_IS_TASK(result), FALSE);
+  g_return_val_if_fail(g_task_get_source_tag(G_TASK(result)) == gh_signer_nip55l_declare_async, FALSE);
+  return g_task_propagate_boolean(G_TASK(result), error);
 }
 
 void

@@ -28,10 +28,12 @@ struct _SignerPermissions {
 #endif
 };
 typedef struct {
-  gchar *principal, *identity, *operation, *decision, *legacy, *relay;
+  gchar *principal, *identity, *operation, *decision, *legacy, *relay, *source;
   gint kind;
   guint64 expires, created;
 } Row;
+#define RELAY_ANY "*"
+#define SOURCE_DECLARED "declared"
 typedef struct {
   gchar *principal, *identity, *operation, *flow_id;
   gint kind;
@@ -54,7 +56,7 @@ static void flow_window_free(FlowWindow *w) {
 }
 static void row_free(Row *r) {
   g_free(r->principal); g_free(r->identity); g_free(r->operation);
-  g_free(r->decision); g_free(r->legacy); g_free(r->relay); g_free(r);
+  g_free(r->decision); g_free(r->legacy); g_free(r->relay); g_free(r->source); g_free(r);
 }
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(Row, row_free)
 static guint64 now_seconds(SignerPermissions *p) {
@@ -128,6 +130,9 @@ static gboolean valid_row(Row *r) {
   if (!g_strcmp0(r->decision, "review") && (!r->created || !r->legacy || !*r->legacy)) return FALSE;
   if (!g_strcmp0(r->decision, "policy-review") && (!r->legacy || !*r->legacy)) return FALSE;
   if (r->relay && (!*r->relay || strcmp(r->operation, "event") || r->kind != NOSTR_KIND_CLIENT_AUTHENTICATION)) return FALSE;
+  /* Any-relay AUTH authority exists only as an explicitly declared allow. */
+  if (r->relay && !strcmp(r->relay, RELAY_ANY) && (strcmp(r->decision, "allow") || g_strcmp0(r->source, SOURCE_DECLARED))) return FALSE;
+  if (r->source && (strcmp(r->source, SOURCE_DECLARED) || strcmp(r->decision, "allow"))) return FALSE;
   return TRUE;
 }
 static gchar *row_id(Row *r) {
@@ -179,6 +184,7 @@ static Row *read_row(GKeyFile *kf, const gchar *id, GError **out_error) {
   }
   r->legacy = g_key_file_get_string(kf, id, "legacy-scope", NULL);
   r->relay = g_key_file_get_string(kf, id, "relay", NULL);
+  r->source = g_key_file_get_string(kf, id, "source", NULL);
   if (!valid_row(r)) { fail(error, G_IO_ERROR_INVALID_DATA, "invalid permission record"); goto bad; }
   expected = row_id(r);
   if (strcmp(expected, id)) { fail(error, G_IO_ERROR_INVALID_DATA, "permission record id does not match scope"); goto bad; }
@@ -199,6 +205,7 @@ static void write_row(GKeyFile *kf, Row *r) {
   if (r->created) g_key_file_set_uint64(kf, id, "created-at", r->created);
   if (r->legacy) g_key_file_set_string(kf, id, "legacy-scope", r->legacy);
   if (r->relay) g_key_file_set_string(kf, id, "relay", r->relay);
+  if (r->source) g_key_file_set_string(kf, id, "source", r->source);
 }
 static GKeyFile *new_records(void) {
   GKeyFile *kf = g_key_file_new();
@@ -479,7 +486,8 @@ typedef struct { gboolean admitted, review; } Fallback;
 static SignerPermissionResult evaluate_explicit(SignerPermissions *p, const gchar *principal,
     const gchar *identity, const gchar *op, gint kind, const gchar *relay, Fallback *fallback) {
   *fallback = (Fallback){0};
-  g_autofree gchar *canonical = relay ? signer_permissions_canonical_relay(relay) : NULL;
+  /* RELAY_ANY asks whether any-relay authority exists; it never matches an exact relay row. */
+  g_autofree gchar *canonical = !relay ? NULL : !strcmp(relay, RELAY_ANY) ? g_strdup(relay) : signer_permissions_canonical_relay(relay);
   if (relay && !canonical) return SIGNER_PERMISSION_DENY;
   relay = canonical;
   gboolean valid_input = known_operation(op) && kind >= -1 && kind <= G_MAXUINT16 &&
@@ -497,7 +505,7 @@ static SignerPermissionResult evaluate_explicit(SignerPermissions *p, const gcha
     if (g_strcmp0(principal, r->principal) || g_strcmp0(op, r->operation) || !row_live(p, r) ||
         (g_strcmp0(identity ? identity : "", r->identity) && strcmp(r->identity, "*")) ||
         (r->kind != -1 && r->kind != kind) ||
-        (r->relay && g_strcmp0(r->relay, relay))) continue;
+        (r->relay && g_strcmp0(r->relay, relay) && (strcmp(r->relay, RELAY_ANY) || !relay))) continue;
     if (!strcmp(r->decision, "deny")) return SIGNER_PERMISSION_DENY;
     if (!strcmp(r->decision, "policy-review")) review = TRUE;
     if (!strcmp(r->decision, "allow") &&
@@ -680,7 +688,19 @@ static void variant_row(SignerPermissions *p, GVariantBuilder *rows, Row *r) {
   g_variant_builder_add(&b, "{sv}", "reason", g_variant_new_string(reason));
   if (r->relay) g_variant_builder_add(&b, "{sv}", "relay", g_variant_new_string(r->relay));
   if (r->legacy) g_variant_builder_add(&b, "{sv}", "legacy-scope", g_variant_new_string(r->legacy));
+  if (r->source) g_variant_builder_add(&b, "{sv}", "source", g_variant_new_string(r->source));
   g_variant_builder_add_value(rows, g_variant_builder_end(&b));
+}
+gboolean signer_permissions_has_declared(SignerPermissions *p, const gchar *principal, const gchar *identity) {
+  if (!principal || !*principal || !signer_permissions_reload(p, NULL)) return FALSE;
+  g_auto(GStrv) groups = g_key_file_get_groups(p->records, NULL);
+  for (guint i = 0; groups[i]; i++) {
+    if (!g_str_has_prefix(groups[i], "record-")) continue;
+    g_autoptr(Row) r = read_row(p->records, groups[i], NULL);
+    if (r && !strcmp(r->principal, principal) && !g_strcmp0(r->source, SOURCE_DECLARED) &&
+        !g_strcmp0(r->identity, identity ? identity : "") && row_live(p, r)) return TRUE;
+  }
+  return FALSE;
 }
 GVariant *signer_permissions_list(SignerPermissions *p, const gchar *principal, GError **error) {
   if (!signer_permissions_reload(p, error)) return NULL;
@@ -786,7 +806,9 @@ gboolean signer_permissions_remember_scoped(SignerPermissions *p, const gchar *p
   if (ttl > G_MAXUINT64 - now) return fail(error, G_IO_ERROR_INVALID_ARGUMENT, "permission expiry overflow");
   Row row = {.principal=(gchar *)principal, .identity=(gchar *)(identity ? identity : ""),
     .operation=(gchar *)op, .kind=kind, .decision=allow ? "allow" : "deny", .expires=ttl ? now + ttl : 0};
-  g_autofree gchar *canonical = relay ? signer_permissions_canonical_relay(relay) : NULL;
+  /* Reusable per-request consent names one canonical relay; any-relay AUTH
+   * authority comes only from a declared set (grant_tokens). */
+  g_autofree gchar *canonical = relay && strcmp(relay, RELAY_ANY) ? signer_permissions_canonical_relay(relay) : NULL;
   if (relay && !canonical) return fail(error, G_IO_ERROR_INVALID_ARGUMENT, "invalid AUTH relay");
   row.relay = canonical;
   if (!valid_row(&row)) return fail(error, G_IO_ERROR_INVALID_ARGUMENT, "invalid remembered permission scope");
@@ -842,7 +864,7 @@ gboolean signer_permissions_replace(SignerPermissions *p, const gchar *principal
     Row row = {.principal=(gchar *)who, .identity=(gchar *)id, .operation=(gchar *)op,
       .decision=(gchar *)decision, .kind=kind, .expires=expires};
     g_variant_lookup(item, "relay", "&s", &relay);
-    g_autofree gchar *canonical = relay ? signer_permissions_canonical_relay(relay) : NULL;
+    g_autofree gchar *canonical = !relay ? NULL : !strcmp(relay, RELAY_ANY) ? g_strdup(relay) : signer_permissions_canonical_relay(relay);
     if (relay && (!canonical || strcmp(canonical, relay))) return fail(error, G_IO_ERROR_INVALID_ARGUMENT, "AUTH relay must be canonical");
     row.relay = canonical;
     /* Review entries may be retained, but only using the existing migration metadata. */
@@ -855,6 +877,9 @@ gboolean signer_permissions_replace(SignerPermissions *p, const gchar *principal
       /* Retain, never manufacture or extend, a grandfathered wildcard scope. */
       row.legacy = previous->legacy;
     }
+    /* Declared-set provenance (and with it any-relay AUTH) survives an edit of
+     * the same allow scope; management can never manufacture it. */
+    if (previous && !strcmp(decision, "allow") && !strcmp(previous->decision, "allow")) row.source = previous->source;
     if ((!strcmp(decision, "allow") && (!signer_permissions_can_remember(who, op, kind) ||
         (kind == NOSTR_KIND_CLIENT_AUTHENTICATION && !relay))) ||
         !valid_row(&row) || !g_hash_table_add(ids, g_strdup(key)))
@@ -863,6 +888,93 @@ gboolean signer_permissions_replace(SignerPermissions *p, const gchar *principal
   }
   /* Replacing identity policy retires overlapping ephemeral consent, including
    * queued automatic jobs through the revision fence. No flow survives an edit. */
+  signer_permissions_invalidate_flows(p, principal, identity, NULL);
+  return commit(p, next, error);
+}
+/* ---- declared permission sets (G18) ------------------------------------- */
+#define DECLARED_TOKENS_MAX 64
+static const struct { const gchar *token, *operation; } token_operations[] = {
+  {"nip04_encrypt", "nip04_encrypt"}, {"nip04_decrypt", "nip04_decrypt"},
+  {"nip44_encrypt", "nip44_encrypt"}, {"nip44_decrypt", "nip44_decrypt"},
+  {"get_public_key", "get_public_key"}, {"get_relays", "get_relays"},
+  {"decrypt_zap_event", "zap_decrypt"}
+};
+gboolean signer_permissions_token_scope(const gchar *token, const gchar **operation, gint *kind) {
+  if (!token) return FALSE;
+  if (g_str_has_prefix(token, "sign_event:")) {
+    const gchar *digits = token + strlen("sign_event:");
+    if (!g_ascii_isdigit(*digits) || strlen(digits) > 5 || (digits[0] == '0' && digits[1])) return FALSE;
+    gchar *end = NULL; guint64 value = g_ascii_strtoull(digits, &end, 10);
+    if (!end || *end || value > G_MAXUINT16) return FALSE;
+    if (operation) *operation = "event";
+    if (kind) *kind = (gint)value;
+    return TRUE;
+  }
+  for (guint i = 0; i < G_N_ELEMENTS(token_operations); i++) {
+    if (strcmp(token, token_operations[i].token)) continue;
+    if (operation) *operation = token_operations[i].operation;
+    if (kind) *kind = -1;
+    return TRUE;
+  }
+  return FALSE;
+}
+static gint token_compare(gconstpointer a, gconstpointer b) {
+  const gchar *left = *(const gchar *const *)a, *right = *(const gchar *const *)b;
+  gint lk = -1, rk = -1; const gchar *lo = NULL, *ro = NULL;
+  signer_permissions_token_scope(left, &lo, &lk); signer_permissions_token_scope(right, &ro, &rk);
+  gint by_operation = g_strcmp0(lo, ro);
+  return by_operation ? by_operation : lk - rk;
+}
+gchar *signer_permissions_canonical_tokens(const gchar *csv, gboolean strict, GError **error) {
+  if (!csv || strlen(csv) > 4096 || !g_utf8_validate(csv, -1, NULL)) {
+    fail(error, G_IO_ERROR_INVALID_ARGUMENT, "invalid permission token list"); return NULL;
+  }
+  g_autoptr(GPtrArray) tokens = g_ptr_array_new_with_free_func(g_free);
+  g_auto(GStrv) parts = g_strsplit(csv, ",", -1);
+  for (guint i = 0; parts[i]; i++) {
+    const gchar *part = g_strstrip(parts[i]);
+    if (!*part) continue;
+    const gchar *op = NULL; gint kind = -1;
+    gchar *canonical = NULL;
+    if (signer_permissions_token_scope(part, &op, &kind))
+      canonical = kind >= 0 ? g_strdup_printf("sign_event:%d", kind) : g_strdup(part);
+    else if (strict) { fail(error, G_IO_ERROR_INVALID_ARGUMENT, "unknown permission token"); return NULL; }
+    else continue;
+    gboolean duplicate = FALSE;
+    for (guint j = 0; j < tokens->len && !duplicate; j++) duplicate = !strcmp(tokens->pdata[j], canonical);
+    if (duplicate) { g_free(canonical); continue; }
+    if (tokens->len >= DECLARED_TOKENS_MAX) {
+      g_free(canonical);
+      if (strict) { fail(error, G_IO_ERROR_INVALID_ARGUMENT, "too many permission tokens"); return NULL; }
+      break;
+    }
+    g_ptr_array_add(tokens, canonical);
+  }
+  if (strict && !tokens->len) { fail(error, G_IO_ERROR_INVALID_ARGUMENT, "empty permission set"); return NULL; }
+  g_ptr_array_sort(tokens, token_compare);
+  g_ptr_array_add(tokens, NULL);
+  return g_strjoinv(",", (gchar **)tokens->pdata);
+}
+gboolean signer_permissions_grant_tokens(SignerPermissions *p, const gchar *principal,
+    const gchar *identity, const gchar *csv, GError **error) {
+  if (!principal || !*principal || !strcmp(principal, "claimed:") || !identity || !*identity)
+    return fail(error, G_IO_ERROR_INVALID_ARGUMENT, "this app cannot receive reusable consent");
+  g_autofree gchar *canonical = signer_permissions_canonical_tokens(csv, TRUE, error);
+  if (!canonical) return FALSE;
+  if (!signer_permissions_reload(p, error)) return FALSE;
+  g_autoptr(GKeyFile) next = copy_records(p);
+  g_auto(GStrv) tokens = g_strsplit(canonical, ",", -1);
+  for (guint i = 0; tokens[i]; i++) {
+    const gchar *op = NULL; gint kind = -1;
+    if (!signer_permissions_token_scope(tokens[i], &op, &kind) || !signer_permissions_can_remember(principal, op, kind))
+      return fail(error, G_IO_ERROR_INVALID_ARGUMENT, "declared permission cannot receive reusable consent");
+    Row row = {.principal=(gchar *)principal, .identity=(gchar *)identity, .operation=(gchar *)op,
+      .kind=kind, .decision="allow", .expires=0, .source=SOURCE_DECLARED,
+      .relay=kind == NOSTR_KIND_CLIENT_AUTHENTICATION ? RELAY_ANY : NULL};
+    if (!valid_row(&row)) return fail(error, G_IO_ERROR_INVALID_ARGUMENT, "invalid declared permission scope");
+    write_row(next, &row);
+  }
+  /* Declared authority supersedes bounded flow consent for this identity. */
   signer_permissions_invalidate_flows(p, principal, identity, NULL);
   return commit(p, next, error);
 }

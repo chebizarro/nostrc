@@ -607,6 +607,102 @@ static void test_empty_claim_refusal(void) {
   g_assert_cmpint(signer_permissions_evaluate(p, "claimed:", IDENTITY, "nip44_encrypt", -1, TRUE, NULL), ==, SIGNER_PERMISSION_ASK);
 }
 #ifdef NIP55L_TEST_TRUST_ENV
+/* G18: declared permission sets are one until-revoked grant per token,
+ * AUTH as any-relay authority, marked source=declared, surviving restart and
+ * management edits; never writable by per-request consent. */
+static void test_declared_set(void) {
+  g_autoptr(SignerPermissions) p = start();
+  GError *error = NULL;
+  g_autofree gchar *canonical = signer_permissions_canonical_tokens(
+      " nip44_encrypt, sign_event:22242,sign_event:9021,sign_event:13,sign_event:9021 ,decrypt_zap_event,get_public_key", TRUE, &error);
+  g_assert_no_error(error);
+  g_assert_cmpstr(canonical, ==, "sign_event:13,sign_event:9021,sign_event:22242,get_public_key,nip44_encrypt,decrypt_zap_event");
+  g_assert_null(signer_permissions_canonical_tokens("sign_event:1,switch_relays", TRUE, &error));
+  g_assert_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT); g_clear_error(&error);
+  g_assert_null(signer_permissions_canonical_tokens("sign_event:65536", TRUE, &error)); g_clear_error(&error);
+  g_assert_null(signer_permissions_canonical_tokens("sign_event:013", TRUE, &error)); g_clear_error(&error);
+  g_assert_null(signer_permissions_canonical_tokens("connect,ping", TRUE, &error)); g_clear_error(&error);
+  g_assert_null(signer_permissions_canonical_tokens("", TRUE, &error)); g_clear_error(&error);
+  g_autofree gchar *lenient = signer_permissions_canonical_tokens("sign_event:1,switch_relays,connect", FALSE, NULL);
+  g_assert_cmpstr(lenient, ==, "sign_event:1");
+  const gchar *op = NULL; gint kind = -1;
+  g_assert_true(signer_permissions_token_scope("decrypt_zap_event", &op, &kind));
+  g_assert_cmpstr(op, ==, "zap_decrypt"); g_assert_cmpint(kind, ==, -1);
+  g_assert_false(signer_permissions_token_scope("sign_event:", &op, &kind));
+  /* Per-request consent can never create any-relay AUTH authority. */
+  g_assert_false(signer_permissions_remember_scoped(p, PRINCIPAL, IDENTITY, "event", NOSTR_KIND_CLIENT_AUTHENTICATION, "*", TRUE, 0, &error));
+  g_clear_error(&error);
+  g_assert_false(signer_permissions_grant_tokens(p, "claimed:", IDENTITY, canonical, &error)); g_clear_error(&error);
+  g_assert_false(signer_permissions_grant_tokens(p, PRINCIPAL, "", canonical, &error)); g_clear_error(&error);
+  g_assert_false(signer_permissions_has_declared(p, PRINCIPAL, IDENTITY));
+  g_assert_true(signer_permissions_grant_tokens(p, PRINCIPAL, IDENTITY, canonical, &error)); g_assert_no_error(error);
+  g_assert_true(signer_permissions_has_declared(p, PRINCIPAL, IDENTITY));
+  g_assert_false(signer_permissions_has_declared(p, PRINCIPAL, "other"));
+  g_assert_cmpint(evaluate(p, "event", NOSTR_KIND_SEAL), ==, SIGNER_PERMISSION_ALLOW);
+  g_assert_cmpint(evaluate(p, "event", 9021), ==, SIGNER_PERMISSION_ALLOW);
+  g_assert_cmpint(evaluate(p, "nip44_encrypt", -1), ==, SIGNER_PERMISSION_ALLOW);
+  g_assert_cmpint(evaluate(p, "zap_decrypt", -1), ==, SIGNER_PERMISSION_ALLOW);
+  g_assert_cmpint(evaluate(p, "get_public_key", -1), ==, SIGNER_PERMISSION_ALLOW);
+  g_assert_cmpint(evaluate(p, "event", NOSTR_KIND_TEXT_NOTE), ==, SIGNER_PERMISSION_ASK);
+  g_assert_cmpint(evaluate(p, "nip44_decrypt", -1), ==, SIGNER_PERMISSION_ASK);
+  /* Any-relay AUTH covers every canonical relay and the coverage probe "*";
+   * a malformed relay still fails closed. */
+  g_assert_cmpint(signer_permissions_evaluate_scoped(p, PRINCIPAL, IDENTITY, "event", NOSTR_KIND_CLIENT_AUTHENTICATION, "wss://nos.lol", FALSE, NULL), ==, SIGNER_PERMISSION_ALLOW);
+  g_assert_cmpint(signer_permissions_evaluate_scoped(p, PRINCIPAL, IDENTITY, "event", NOSTR_KIND_CLIENT_AUTHENTICATION, "WSS://Relay.Nostr.Band:443/", FALSE, NULL), ==, SIGNER_PERMISSION_ALLOW);
+  g_assert_cmpint(signer_permissions_evaluate_scoped(p, PRINCIPAL, IDENTITY, "event", NOSTR_KIND_CLIENT_AUTHENTICATION, "*", FALSE, NULL), ==, SIGNER_PERMISSION_ALLOW);
+  g_assert_cmpint(signer_permissions_evaluate_scoped(p, PRINCIPAL, IDENTITY, "event", NOSTR_KIND_CLIENT_AUTHENTICATION, "http://not-a-relay", FALSE, NULL), ==, SIGNER_PERMISSION_DENY);
+  g_assert_cmpint(signer_permissions_evaluate_scoped(p, PRINCIPAL, IDENTITY, "event", NOSTR_KIND_CLIENT_AUTHENTICATION, NULL, FALSE, NULL), ==, SIGNER_PERMISSION_ASK);
+  /* An explicit block of one scope replaces that declared allow and wins. */
+  remember(p, IDENTITY, "event", 9021, FALSE, 0);
+  g_assert_cmpint(evaluate(p, "event", 9021), ==, SIGNER_PERMISSION_DENY);
+  g_assert_cmpint(evaluate(p, "event", NOSTR_KIND_SEAL), ==, SIGNER_PERMISSION_ALLOW);
+  g_assert_true(signer_permissions_has_declared(p, PRINCIPAL, IDENTITY));
+  /* Listing exposes provenance and the AUTH row as active any-relay authority. */
+  g_autoptr(GVariant) rows = signer_permissions_list(p, PRINCIPAL, NULL);
+  guint declared = 0, auth_any = 0;
+  for (gsize i = 0; i < g_variant_n_children(rows); i++) {
+    g_autoptr(GVariant) row = g_variant_get_child_value(rows, i);
+    const gchar *source = NULL, *relay = NULL, *state = NULL; gint row_kind = -1;
+    g_variant_lookup(row, "event-kind", "i", &row_kind); g_variant_lookup(row, "state", "&s", &state);
+    if (g_variant_lookup(row, "source", "&s", &source) && !strcmp(source, "declared")) declared++;
+    if (g_variant_lookup(row, "relay", "&s", &relay) && !strcmp(relay, "*")) {
+      auth_any++; g_assert_cmpint(row_kind, ==, NOSTR_KIND_CLIENT_AUTHENTICATION); g_assert_cmpstr(state, ==, "active");
+    }
+  }
+  g_assert_cmpuint(declared, ==, 5); g_assert_cmpuint(auth_any, ==, 1);
+  g_assert_cmpuint(g_variant_n_children(rows), ==, 6);
+  /* Restart keeps everything, including any-relay AUTH. */
+  g_autoptr(SignerPermissions) restarted = signer_permissions_new(NULL);
+  g_assert_true(signer_permissions_has_declared(restarted, PRINCIPAL, IDENTITY));
+  g_assert_cmpint(signer_permissions_evaluate_scoped(restarted, PRINCIPAL, IDENTITY, "event", NOSTR_KIND_CLIENT_AUTHENTICATION, "wss://nos.lol", FALSE, NULL), ==, SIGNER_PERMISSION_ALLOW);
+  /* A management replacement round-trips the rows it was shown (incl. "*") and
+   * keeps provenance; it cannot manufacture any-relay AUTH from scratch. */
+  g_autoptr(GVariant) listed = signer_permissions_list(restarted, PRINCIPAL, NULL);
+  g_assert_true(signer_permissions_replace(restarted, PRINCIPAL, IDENTITY, listed, signer_permissions_revision(restarted), &error));
+  g_assert_no_error(error);
+  g_assert_true(signer_permissions_has_declared(restarted, PRINCIPAL, IDENTITY));
+  g_assert_cmpint(signer_permissions_evaluate_scoped(restarted, PRINCIPAL, IDENTITY, "event", NOSTR_KIND_CLIENT_AUTHENTICATION, "wss://nos.lol", FALSE, NULL), ==, SIGNER_PERMISSION_ALLOW);
+  /* Clearing the principal's rows removes the declared set. */
+  gboolean removed = FALSE;
+  g_assert_true(signer_permissions_clear(restarted, PRINCIPAL, IDENTITY, NULL, &removed, &error)); g_assert_true(removed);
+  g_assert_false(signer_permissions_has_declared(restarted, PRINCIPAL, IDENTITY));
+  g_autoptr(SignerPermissions) fresh = start();
+  GVariantBuilder manufactured, row;
+  g_variant_builder_init(&manufactured, G_VARIANT_TYPE("aa{sv}"));
+  g_variant_builder_init(&row, G_VARIANT_TYPE_VARDICT);
+  g_variant_builder_add(&row, "{sv}", "principal", g_variant_new_string(PRINCIPAL));
+  g_variant_builder_add(&row, "{sv}", "identity", g_variant_new_string(IDENTITY));
+  g_variant_builder_add(&row, "{sv}", "operation", g_variant_new_string("event"));
+  g_variant_builder_add(&row, "{sv}", "event-kind", g_variant_new_int32(NOSTR_KIND_CLIENT_AUTHENTICATION));
+  g_variant_builder_add(&row, "{sv}", "decision", g_variant_new_string("allow"));
+  g_variant_builder_add(&row, "{sv}", "expires-at", g_variant_new_uint64(0));
+  g_variant_builder_add(&row, "{sv}", "relay", g_variant_new_string("*"));
+  g_variant_builder_add_value(&manufactured, g_variant_builder_end(&row));
+  g_autoptr(GVariant) forged = g_variant_ref_sink(g_variant_builder_end(&manufactured));
+  g_assert_false(signer_permissions_replace(fresh, PRINCIPAL, IDENTITY, forged, signer_permissions_revision(fresh), &error));
+  g_clear_error(&error);
+  g_assert_cmpint(signer_permissions_evaluate_scoped(fresh, PRINCIPAL, IDENTITY, "event", NOSTR_KIND_CLIENT_AUTHENTICATION, "wss://nos.lol", FALSE, NULL), ==, SIGNER_PERMISSION_ASK);
+}
 static void test_reusable_durations(void) {
   g_autoptr(SignerPermissions) p = start(); gint64 now = (gint64)2000000000 * G_USEC_PER_SEC;
   signer_permissions_set_wall_clock_for_test(p, fixture_flow_clock, &now);
@@ -636,6 +732,7 @@ int main(int argc, char **argv) {
   g_assert_nonnull(config); g_setenv("XDG_CONFIG_HOME", config, TRUE);
   g_autofree gchar *dir = g_build_filename(config, "gnostr", NULL); g_assert_cmpint(g_mkdir(dir, 0700), ==, 0);
   g_test_add_func("/permissions/policy-review-migration", test_policy_review_migration);
+  g_test_add_func("/permissions/declared-set", test_declared_set);
   g_test_add_func("/permissions/auth-canonical", test_auth_canonical);
   g_test_add_func("/permissions/empty-claim-refusal", test_empty_claim_refusal);
   g_test_add_func("/permissions/flow-scope-budget-restart", test_flow_scope_budget_and_restart);

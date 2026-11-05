@@ -76,5 +76,21 @@ void gh_signer_nip04_decrypt_async(GhSigner *signer, const gchar *ciphertext,
                                     GAsyncReadyCallback callback, gpointer user_data);
 gchar *gh_signer_nip44_finish(GAsyncResult *result, GError **error);
 
+/* Declared permission set (G18, nip55l 0.8.0 RequestPermissions). Groundhog
+ * declares, on first contact with the account's signer, every operation it
+ * will ask for: the signer raises ONE review and later covered calls never
+ * prompt. The Grotto backend sends the declaration; operations issued while
+ * it is unanswered wait for the answer, so a first review is never joined by
+ * per-kind prompts. A pre-0.8.0 signer answers UnknownMethod
+ * (GH_SIGNER_ERROR_UNAVAILABLE): per-request consent continues unchanged. A
+ * remote NIP-46 signer already received its permissions at connect time and
+ * completes at once. Tokens use the NIP-46/NIP-55 vocabulary
+ * ("sign_event:<kind>", "nip44_encrypt", ...). */
+const gchar *const *gh_signer_declared_permissions(void);
+void gh_signer_declare_permissions_async(GhSigner *signer, const gchar *const *tokens,
+                                         GCancellable *cancellable,
+                                         GAsyncReadyCallback callback, gpointer user_data);
+gboolean gh_signer_declare_permissions_finish(GAsyncResult *result, GError **error);
+
 G_END_DECLS
 #endif

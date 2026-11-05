@@ -114,9 +114,17 @@ typedef SignerGateOp SignerOp;
 #define OP_NIP44_DECRYPT_B64 SIGNER_GATE_NIP44_DECRYPT_B64
 #define OP_DECRYPT_ZAP SIGNER_GATE_DECRYPT_ZAP
 
-typedef struct { GDBusMethodInvocation *invocation; gboolean wrapped; } BusReply;
+typedef struct { GDBusMethodInvocation *invocation; gboolean wrapped, vardict; } BusReply;
 static void bus_reply(gpointer data, const gchar *error, const gchar *message, const gchar *result) {
   BusReply *reply = data;
+  if (!error && reply->vardict) {
+    /* Declared-set results travel as GVariant text; the wire shape is a{sv}. */
+    g_autoptr(GError) parse_error = NULL;
+    GVariant *dict = g_variant_parse(G_VARIANT_TYPE("a{sv}"), result ? result : "", NULL, NULL, &parse_error);
+    if (!dict) g_dbus_method_invocation_return_dbus_error(reply->invocation, ORG_NOSTR_SIGNER_ERR_INTERNAL, "invalid declared permission result");
+    else g_dbus_method_invocation_return_value(reply->invocation, g_variant_new("(@a{sv})", dict));
+    g_object_unref(reply->invocation); g_free(reply); return;
+  }
   if (error) {
     const gchar *sender = g_dbus_method_invocation_get_sender(reply->invocation);
     gboolean typed = typed_senders && g_hash_table_contains(typed_senders, sender);
@@ -145,6 +153,7 @@ static void gated_call_full(NostrSigner *object, GDBusMethodInvocation *invocati
   ctx.transport = SIGNER_TRANSPORT_DBUS; ctx.claimed_name = claimed;
   BusReply *reply = g_new0(BusReply, 1);
   reply->invocation = g_object_ref(invocation); reply->wrapped = wrapped;
+  reply->vardict = op == SIGNER_GATE_REQUEST_PERMISSIONS;
   g_autoptr(SignerGateHandle) handle = signer_approval_service_submit(approval_service,
       principal ? principal : base, sender, op, a, b, selector, &ctx, bus_reply, reply);
 }
@@ -240,6 +249,57 @@ static gboolean handle_call_with_context(NostrSigner *o, GDBusMethodInvocation *
 invalid:
   g_dbus_method_invocation_return_dbus_error(inv, ORG_NOSTR_SIGNER_ERR_INVALID_INPUT,
     "CallWithContext requires a supported gated client method, its exact input tuple, and bounded reason/purpose/flow_id strings and optional flow_size:u (1..1024)");
+  return TRUE;
+}
+
+/* RequestPermissions (0.8.0, additive): an app declares every operation and
+ * event kind it will use, once. Entries are a{sv} {type:s, kind:u (sign_event
+ * only)}; context a{sv} may carry identity:s (selector; empty = default),
+ * app_id:s (same meaning as the ForApp argument) and reason:s. The daemon
+ * evaluates the set against existing grants and raises at most ONE review. */
+static gboolean handle_request_permissions(NostrSigner *o, GDBusMethodInvocation *inv,
+    GVariant *permissions, GVariant *context) {
+  const gchar *identity = "", *app_id = "", *reason = NULL;
+  g_autofree gchar *canonical = NULL;
+  g_autoptr(GString) csv = g_string_new(NULL);
+  g_autoptr(GHashTable) seen = g_hash_table_new(g_str_hash, g_str_equal);
+  GVariantIter it; const gchar *key; GVariant *value;
+  g_variant_iter_init(&it, context);
+  while (g_variant_iter_next(&it, "{&sv}", &key, &value)) {
+    gboolean string = g_variant_is_of_type(value, G_VARIANT_TYPE_STRING);
+    const gchar *text = string ? g_variant_get_string(value, NULL) : "";
+    gboolean valid = string && !g_hash_table_contains(seen, key) && g_utf8_validate(text, -1, NULL);
+    if (!strcmp(key, "identity")) valid = valid && strlen(text) <= 4096;
+    else if (!strcmp(key, "app_id")) valid = valid && strlen(text) <= 4096;
+    else if (!strcmp(key, "reason")) valid = valid && strlen(text) <= 512 && g_utf8_strlen(text, -1) <= 160;
+    else valid = FALSE;
+    g_hash_table_add(seen, (gpointer)key);
+    g_variant_unref(value);
+    if (!valid) goto invalid;
+  }
+  g_variant_lookup(context, "identity", "&s", &identity);
+  g_variant_lookup(context, "app_id", "&s", &app_id);
+  g_variant_lookup(context, "reason", "&s", &reason);
+  gsize n = g_variant_n_children(permissions);
+  if (!n || n > 64) goto invalid;
+  for (gsize i = 0; i < n; i++) {
+    g_autoptr(GVariant) entry = g_variant_get_child_value(permissions, i);
+    const gchar *type = NULL; guint32 kind = 0;
+    gboolean has_kind = g_variant_lookup(entry, "kind", "u", &kind);
+    gboolean sign_event = type && !strcmp(type, "sign_event");
+    if (!g_variant_lookup(entry, "type", "&s", &type) || g_variant_n_children(entry) != (has_kind ? 2u : 1u) ||
+        (sign_event = !strcmp(type, "sign_event")) != (has_kind != FALSE) || kind > G_MAXUINT16) goto invalid;
+    if (has_kind) g_string_append_printf(csv, "%ssign_event:%u", csv->len ? "," : "", kind);
+    else g_string_append_printf(csv, "%s%s", csv->len ? "," : "", type);
+  }
+  canonical = signer_permissions_canonical_tokens(csv->str, TRUE, NULL);
+  if (!canonical) goto invalid;
+  SignerGateContext ctx = {.reason = reason};
+  gated_call_full(o, inv, SIGNER_GATE_REQUEST_PERMISSIONS, canonical, NULL, identity, app_id, &ctx, FALSE);
+  return TRUE;
+invalid:
+  g_dbus_method_invocation_return_dbus_error(inv, ORG_NOSTR_SIGNER_ERR_INVALID_INPUT,
+    "RequestPermissions requires 1..64 entries {type:s, kind:u only for sign_event} using sign_event, nip04_encrypt, nip04_decrypt, nip44_encrypt, nip44_decrypt, get_public_key, get_relays or decrypt_zap_event, and a context of identity:s, app_id:s, reason:s");
   return TRUE;
 }
 
@@ -626,6 +686,7 @@ guint signer_export(GDBusConnection *conn, const char *object_path) {
   /* Connect gdbus-codegen handler signals */
   static const struct { const char *signal; GCallback cb; } handlers[] = {
     { "handle-call-with-context", G_CALLBACK(handle_call_with_context) },
+    { "handle-request-permissions", G_CALLBACK(handle_request_permissions) },
     { "handle-get-public-key",                G_CALLBACK(handle_get_public_key) },
     { "handle-get-public-key-for-app",        G_CALLBACK(handle_get_public_key_for_app) },
     { "handle-sign-event",                    G_CALLBACK(handle_sign_event) },

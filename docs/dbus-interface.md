@@ -353,7 +353,10 @@ Full clients retain their previous ceiling until an explicit upgrade. Dormant v2
 for formerly-required kinds migrate to `policy-review`, preserving provenance and expiry
 (including zero indefinitely), not the 90-day legacy `review` state. They remain inactive
 until explicitly activated, or can be discarded. AUTH activation binds the current relay.
-Listing exposes `state` = active/inactive/expired plus `reason`, without filtering expired
+Rows written from a declared set (`RequestPermissions`, NIP-46 pairing perms) carry
+`source=declared`; a declared AUTH row carries `relay=*` (any relay), which only
+`RequestPermissions` can create — `SetPermissions` may round-trip such a row but never
+manufacture one. Listing exposes `state` = active/inactive/expired plus `reason`, without filtering expired
 rows. Replacement edits invalidate overlapping identity flows and fence queued automatic work;
 grant/preset changes also retire eligible pending requests by re-evaluating current policy.
 The compatibility `signer-grants.ini` is re-sanitised on every load, but imported
@@ -791,6 +794,9 @@ Added in 0.7.0 (all existing fields and signatures preserved): `transport`,
 `operation`, `reason`, `reason_source` (`caller` or `signer`), `flow_id`, `purpose`,
 `state` (`s`); `flow_size` (`u`, 0 without flow consent), `flow_remaining_seconds` (`u`),
 `policy_review` and `identity_drift` (`b`);
+`routine_trust_available` (`b`, 0.8.0: also true for `permissions` requests from
+identified callers) and `declared_set` (`b`, 0.8.0: this app already holds a
+declared set for the identity, so an ordinary review extends it);
 `event_kind` (`u`, only when present; absence is not kind 0);
 `event_summary` (`a{sv}`, safe validated type/preview/tag count/peer metadata);
 `expires_at` (`t`, Unix seconds); `remaining_seconds` (`u`, authoritative
@@ -814,12 +820,76 @@ Unknown request: `Error.NotFound`.
 | `target_kind` | `u` | Last `k` tag for those operations, only when a validated decimal kind in 0–65535 |
 | `reaction_value` | `s` | Public reaction text, valid UTF-8 and bounded to 280 characters (including empty, the protocol's default reaction) |
 | `recipient_peer` | `s` | Last `p` tag of private/encrypted-message signing, only when a validated 64-hex public recipient fingerprint; lowercase. May be absent for sealed events. |
+| `declared_permissions` | `aa{sv}` | `permissions` requests only (0.8.0): one `{token:s, type:s, kind:u?, state:s}` per declared entry; `state` is `requested`, `granted` (already covered) or `denied` (explicitly blocked; stays blocked) |
+| `requested_permissions_hint` | `as` | `connect` only: recognised NIP-46 perms tokens |
+| `granted_on_pairing` | `b` | `connect` only (0.8.0): true when the connect resolved an identity, so explicit pairing consent grants those tokens until revoked |
 
 No embedded repost JSON, unknown/custom-event content, arbitrary tag values,
 private bodies, ciphertext, secrets or pairing tokens are copied into the summary.
 Missing fields must not be invented from raw JSON by an approval UI; essential
 AUTH/deletion/target metadata must be present before approving those operations.
 These are presentation fields, not permission grants or fetched profile data.
+
+#### RequestPermissions
+
+*Since nip55l 0.8.0 (additive, G18).* An application declares, **once**, every
+operation and event kind it will use, in the spirit of NIP-55's
+`get_public_key(permissions)` and NIP-46's `connect(perms)`. The daemon raises
+at most **one** review for the whole set; after consent, every later call
+covered by the set runs without a prompt.
+
+```xml
+<method name="RequestPermissions">
+  <arg name="permissions" type="aa{sv}" direction="in"/>
+  <arg name="context" type="a{sv}" direction="in"/>
+  <arg name="result" type="a{sv}" direction="out"/>
+</method>
+```
+
+**Parameters**:
+- `permissions`: 1..64 entries `{type:s, kind:u}`. `kind` is present exactly
+  for `type = "sign_event"` (0..65535). Other types: `nip04_encrypt`,
+  `nip04_decrypt`, `nip44_encrypt`, `nip44_decrypt`, `get_public_key`,
+  `get_relays`, `decrypt_zap_event`. Duplicates collapse; order is irrelevant.
+- `context`: `identity:s` (selector; `""` = the default identity), `app_id:s`
+  (the same named claim / web origin as the `ForApp` argument), `reason:s`
+  (≤160 characters and ≤512 bytes). Unknown or duplicate keys, wrong types and
+  malformed entries fail with `Error.InvalidInput` before any prompt.
+
+**Returns**: `identity:s` (the pinned npub), `granted:aa{sv}` and
+`denied:aa{sv}` (entries shaped like the input).
+
+**Semantics**:
+- Each entry is evaluated against the caller's existing grants and the
+  identity's policy. If every entry is already covered the call returns at
+  once (no prompt). If every entry is explicitly blocked the call fails with
+  `Error.ApprovalDenied`. Otherwise **one** request of kind `permissions` is
+  announced (`ApprovalRequested` kind `permissions`); `GetApprovalInfo` lists
+  every entry under `event_summary.declared_permissions` with its standing
+  (`requested`, `granted`, `denied`).
+- Explicit consent (`ApproveRequest(decision=true)`, Control1 `DecideRequest`
+  with `allow` or `trust-routine`) writes every entry that is not explicitly
+  blocked as an **until-revoked** allow row marked `source=declared`; AUTH
+  (kind 22242) is written with `relay=*` (any relay). A declared set is never
+  "once" or 24 hours: `allow-once`, `allow-24h`, `block-operation`,
+  `activate-saved` and `discard-saved` are refused with `Error.InvalidInput`;
+  `deny-once` and `block-app` apply. `trust-routine` additionally sets the
+  routine preset and still writes the whole declared set, custom kinds included.
+- **One review per app**: an ordinary call that arrives while the declaration is
+  pending and whose scope is listed in it waits silently for that answer
+  (it is not announced); approval executes it, denial fails it with
+  `Error.ApprovalDenied`, and its ordinary deadline still applies.
+- An app that holds a declared set and later asks for an undeclared scope gets
+  one ordinary review whose `GetApprovalInfo` carries `declared_set=true`
+  ("extend the set"); the UI may default that review to *Always allow*.
+- Explicit per-scope blocks (`deny` rows) win over a declared allow and are
+  reported in `denied`, never re-asked. Unidentified and empty-claim callers
+  are denied. A pre-0.8.0 service answers `UnknownMethod`; callers fall back
+  to per-request consent.
+- NIP-46 `connect(perms)` receives the same treatment: explicit pairing
+  consent for a connect that resolved an identity grants the recognised perms
+  tokens as a declared set (`event_summary.granted_on_pairing=true`); paired
+  reconnects grant nothing.
 
 #### CallWithContext
 

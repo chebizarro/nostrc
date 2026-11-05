@@ -8,8 +8,8 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
   <requires lib="gtk" version="4.0"/>
   <template class="GnostrApprovalDialog" parent="AdwDialog">
     <property name="title" translatable="yes">Review Request</property>
-    <property name="content-width">420</property>
-    <property name="content-height">660</property>
+    <property name="content-width">360</property>
+    <property name="content-height">560</property>
     <property name="width-request">300</property>
     <child>
       <object class="GtkBox">
@@ -37,252 +37,278 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
               </object>
             </child>
             <property name="content">
-              <object class="AdwPreferencesPage">
+              <object class="GtkScrolledWindow">
+                <property name="hscrollbar-policy">2</property>
+                <property name="propagate-natural-height">true</property>
                 <child>
-                  <object class="AdwPreferencesGroup">
+                  <object class="AdwClamp">
+                    <property name="maximum-size">400</property>
                     <child>
                       <object class="GtkBox">
                         <property name="orientation">1</property>
                         <property name="spacing">6</property>
-                        <property name="halign">3</property>
-                        <child>
-                          <object class="AdwAvatar" id="app_avatar">
-                            <property name="size">64</property>
-                            <property name="show-initials">true</property>
-                          </object>
-                        </child>
-                        <child>
-                          <object class="GtkLabel" id="header_title">
-                            <property name="label" translatable="yes">Review Request</property>
-                            <property name="wrap">true</property>
-                            <property name="justify">2</property>
-                            <style>
-                              <class name="title-2"/>
-                            </style>
-                          </object>
-                        </child>
-                        <child>
-                          <object class="GtkLabel" id="label_verified">
-                            <property name="wrap">true</property>
-                            <property name="wrap-mode">2</property>
-                            <property name="justify">2</property>
-                            <property name="use-markup">false</property>
-                            <style>
-                              <class name="dim-label"/>
-                            </style>
-                          </object>
-                        </child>
-                      </object>
-                    </child>
-                  </object>
-                </child>
-                <child>
-                  <object class="AdwPreferencesGroup">
-                    <child>
-                      <object class="AdwActionRow" id="row_action">
-                        <property name="title" translatable="yes">Action</property>
-                        <property name="subtitle-lines">0</property>
-                        <property name="use-markup">false</property>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="AdwActionRow" id="row_identity">
-                        <property name="title" translatable="yes">Signing As</property>
-                        <property name="subtitle-lines">0</property>
-                        <property name="subtitle-selectable">true</property>
-                        <property name="use-markup">false</property>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="AdwActionRow" id="row_relay">
-                        <property name="title" translatable="yes">Relay</property>
-                        <property name="visible">false</property>
-                        <property name="subtitle-lines">0</property>
-                        <property name="subtitle-selectable">true</property>
-                        <property name="use-markup">false</property>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="AdwActionRow" id="row_reason">
-                        <property name="title" translatable="yes">Reason Given by App</property>
-                        <property name="visible">false</property>
-                        <property name="subtitle-lines">0</property>
-                        <property name="use-markup">false</property>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="AdwActionRow" id="row_impact">
-                        <property name="title" translatable="yes">Effect</property>
-                        <property name="subtitle-lines">0</property>
-                        <property name="use-markup">false</property>
-                        <child type="suffix">
-                          <object class="GtkSpinner" id="loading">
-                            <property name="spinning">true</property>
-                            <property name="visible">false</property>
-                            <property name="valign">3</property>
-                            <property name="tooltip-text" translatable="yes">Loading Permission Details</property>
-                          </object>
-                        </child>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="AdwActionRow" id="row_expiry">
-                        <property name="title" translatable="yes">Expires</property>
-                        <property name="subtitle-lines">0</property>
-                        <property name="use-markup">false</property>
-                      </object>
-                    </child>
-                  </object>
-                </child>
-                <child>
-                  <object class="AdwPreferencesGroup" id="group_preview">
-                    <property name="title" translatable="yes">Content</property>
-                    <child>
-                      <object class="GtkLabel" id="content_preview">
-                        <property name="wrap">true</property>
-                        <property name="wrap-mode">2</property>
-                        <property name="xalign">0</property>
-                        <property name="selectable">true</property>
-                        <property name="use-markup">false</property>
                         <property name="margin-start">12</property>
                         <property name="margin-end">12</property>
-                        <property name="margin-top">12</property>
-                        <property name="margin-bottom">12</property>
-                        <style>
-                          <class name="card"/>
-                        </style>
-                      </object>
-                    </child>
-                  </object>
-                </child>
-                <child>
-                  <object class="AdwPreferencesGroup" id="group_scope">
-                    <child>
-                      <object class="AdwComboRow" id="permission_choice">
-                        <property name="title" translatable="yes">Permission</property>
-                        <property name="use-markup">false</property>
-                      </object>
-                    </child>
-                  </object>
-                </child>
-                <child>
-                  <object class="AdwPreferencesGroup" id="group_saved">
-                    <property name="visible">false</property>
-                    <child>
-                      <object class="AdwActionRow" id="saved_status">
-                        <property name="title" translatable="yes">Saved Permission Is Inactive</property>
-                        <property name="subtitle-lines">0</property>
-                        <property name="use-markup">false</property>
-                      </object>
-                    </child>
-                  </object>
-                </child>
-                <child>
-                  <object class="AdwPreferencesGroup" id="group_flow">
-                    <property name="title" translatable="yes">This Message Only</property>
-                    <property name="visible">false</property>
-                    <child>
-                      <object class="AdwActionRow" id="row_flow_encrypt">
-                        <property name="title" translatable="yes">Allow encryption for this message only</property>
-                        <property name="use-markup">false</property>
-                        <property name="activatable-widget">chk_flow_encrypt</property>
-                        <child type="prefix">
-                          <object class="GtkCheckButton" id="chk_flow_encrypt"></object>
-                        </child>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="AdwActionRow" id="row_flow_seals">
-                        <property name="title" translatable="yes">Allow signing its encrypted copies</property>
-                        <property name="use-markup">false</property>
-                        <property name="activatable-widget">chk_flow_seals</property>
-                        <child type="prefix">
-                          <object class="GtkCheckButton" id="chk_flow_seals"></object>
-                        </child>
-                      </object>
-                    </child>
-                  </object>
-                </child>
-                <child>
-                  <object class="AdwPreferencesGroup">
-                    <child>
-                      <object class="AdwActionRow" id="stepper">
-                        <property name="visible">false</property>
-                        <property name="title" translatable="yes">1 of 1</property>
-                        <child type="suffix">
-                          <object class="GtkBox">
-                            <property name="valign">3</property>
-                            <style>
-                              <class name="linked"/>
-                            </style>
-                            <child>
-                              <object class="GtkButton" id="btn_previous">
-                                <property name="icon-name">go-previous-symbolic</property>
-                                <property name="tooltip-text" translatable="yes">Previous Request</property>
-                              </object>
-                            </child>
-                            <child>
-                              <object class="GtkButton" id="btn_next">
-                                <property name="icon-name">go-next-symbolic</property>
-                                <property name="tooltip-text" translatable="yes">Next Request</property>
-                              </object>
-                            </child>
-                          </object>
-                        </child>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="AdwExpanderRow" id="batch_expander">
-                        <property name="title" translatable="yes">Requests in This Flow</property>
-                        <property name="visible">false</property>
+                        <property name="margin-top">0</property>
+                        <property name="margin-bottom">2</property>
                         <child>
                           <object class="GtkBox">
                             <property name="orientation">1</property>
-                            <property name="spacing">12</property>
-                            <property name="margin-start">12</property>
-                            <property name="margin-end">12</property>
-                            <property name="margin-top">12</property>
-                            <property name="margin-bottom">12</property>
+                            <property name="spacing">2</property>
+                            <property name="halign">3</property>
                             <child>
-                              <object class="GtkBox" id="batch_box">
-                                <property name="orientation">1</property>
-                                <property name="spacing">12</property>
+                              <object class="AdwAvatar" id="app_avatar">
+                                <property name="size">40</property>
+                                <property name="show-initials">true</property>
                               </object>
                             </child>
                             <child>
-                              <object class="GtkButton" id="btn_approve_selected">
-                                <property name="label" translatable="yes">Allow Selected Once</property>
-                                <property name="sensitive">false</property>
-                              </object>
-                            </child>
-                          </object>
-                        </child>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="AdwExpanderRow" id="details_expander">
-                        <property name="title" translatable="yes">Details</property>
-                        <child>
-                          <object class="GtkBox">
-                            <property name="orientation">1</property>
-                            <property name="spacing">12</property>
-                            <property name="margin-start">12</property>
-                            <property name="margin-end">12</property>
-                            <property name="margin-top">12</property>
-                            <property name="margin-bottom">12</property>
-                            <child>
-                              <object class="GtkLabel" id="label_details">
+                              <object class="GtkLabel" id="header_title">
+                                <property name="label" translatable="yes">Review Request</property>
                                 <property name="wrap">true</property>
                                 <property name="wrap-mode">2</property>
-                                <property name="xalign">0</property>
-                                <property name="selectable">true</property>
+                                <property name="justify">2</property>
+                                <style>
+                                  <class name="title-3"/>
+                                </style>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkLabel" id="label_verified">
+                                <property name="wrap">true</property>
+                                <property name="wrap-mode">2</property>
+                                <property name="justify">2</property>
+                                <property name="use-markup">false</property>
+                                <style>
+                                  <class name="dim-label"/>
+                                  <class name="caption"/>
+                                </style>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="AdwPreferencesGroup" id="group_main">
+                            <child>
+                              <object class="AdwActionRow" id="row_action">
+                                <property name="title" translatable="yes">Action</property>
+                                <property name="subtitle-lines">0</property>
                                 <property name="use-markup">false</property>
                               </object>
                             </child>
                             <child>
-                              <object class="GtkLabel" id="label_timestamp">
-                                <property name="wrap">true</property>
-                                <property name="xalign">0</property>
+                              <object class="AdwActionRow" id="row_identity">
+                                <property name="title" translatable="yes">Signing As</property>
+                                <property name="subtitle-lines">0</property>
+                                <property name="subtitle-selectable">true</property>
+                                <property name="use-markup">false</property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="AdwActionRow" id="row_relay">
+                                <property name="title" translatable="yes">Relay</property>
+                                <property name="visible">false</property>
+                                <property name="subtitle-lines">0</property>
+                                <property name="subtitle-selectable">true</property>
+                                <property name="use-markup">false</property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="AdwComboRow" id="permission_choice">
+                                <property name="title" translatable="yes">Permission</property>
+                                <property name="use-markup">false</property>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="AdwPreferencesGroup" id="group_saved">
+                            <property name="visible">false</property>
+                            <child>
+                              <object class="AdwActionRow" id="saved_status">
+                                <property name="title" translatable="yes">Saved Permission Is Inactive</property>
+                                <property name="subtitle-lines">0</property>
+                                <property name="use-markup">false</property>
+                                <child type="suffix">
+                                  <object class="GtkSpinner" id="loading">
+                                    <property name="spinning">true</property>
+                                    <property name="visible">false</property>
+                                    <property name="valign">3</property>
+                                    <property name="tooltip-text" translatable="yes">Loading Permission Details</property>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="AdwPreferencesGroup" id="group_flow">
+                            <property name="title" translatable="yes">This Message Only</property>
+                            <property name="visible">false</property>
+                            <child>
+                              <object class="AdwActionRow" id="row_flow_encrypt">
+                                <property name="title" translatable="yes">Allow encryption for this message only</property>
+                                <property name="use-markup">false</property>
+                                <property name="activatable-widget">chk_flow_encrypt</property>
+                                <child type="prefix">
+                                  <object class="GtkCheckButton" id="chk_flow_encrypt"></object>
+                                </child>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="AdwActionRow" id="row_flow_seals">
+                                <property name="title" translatable="yes">Allow signing its encrypted copies</property>
+                                <property name="use-markup">false</property>
+                                <property name="activatable-widget">chk_flow_seals</property>
+                                <child type="prefix">
+                                  <object class="GtkCheckButton" id="chk_flow_seals"></object>
+                                </child>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="AdwPreferencesGroup" id="group_batch">
+                            <child>
+                              <object class="AdwActionRow" id="stepper">
+                                <property name="visible">false</property>
+                                <property name="title" translatable="yes">1 of 1</property>
+                                <child type="suffix">
+                                  <object class="GtkBox">
+                                    <property name="valign">3</property>
+                                    <style>
+                                      <class name="linked"/>
+                                    </style>
+                                    <child>
+                                      <object class="GtkButton" id="btn_previous">
+                                        <property name="icon-name">go-previous-symbolic</property>
+                                        <property name="tooltip-text" translatable="yes">Previous Request</property>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkButton" id="btn_next">
+                                        <property name="icon-name">go-next-symbolic</property>
+                                        <property name="tooltip-text" translatable="yes">Next Request</property>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="AdwExpanderRow" id="batch_expander">
+                                <property name="title" translatable="yes">Requests in This Flow</property>
+                                <property name="visible">false</property>
+                                <child>
+                                  <object class="GtkBox">
+                                    <property name="orientation">1</property>
+                                    <property name="spacing">12</property>
+                                    <property name="margin-start">12</property>
+                                    <property name="margin-end">12</property>
+                                    <property name="margin-top">12</property>
+                                    <property name="margin-bottom">12</property>
+                                    <child>
+                                      <object class="GtkBox" id="batch_box">
+                                        <property name="orientation">1</property>
+                                        <property name="spacing">12</property>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkButton" id="btn_approve_selected">
+                                        <property name="label" translatable="yes">Allow Selected Once</property>
+                                        <property name="sensitive">false</property>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="AdwPreferencesGroup" id="group_details">
+                            <child>
+                              <object class="AdwExpanderRow" id="details_expander">
+                                <property name="title" translatable="yes">Details</property>
+                                <child>
+                                  <object class="AdwActionRow" id="row_impact">
+                                    <property name="title" translatable="yes">Effect</property>
+                                    <property name="subtitle-lines">0</property>
+                                    <property name="use-markup">false</property>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="AdwActionRow" id="row_reason">
+                                    <property name="title" translatable="yes">Reason Given by App</property>
+                                    <property name="visible">false</property>
+                                    <property name="subtitle-lines">0</property>
+                                    <property name="use-markup">false</property>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="AdwActionRow" id="row_expiry">
+                                    <property name="title" translatable="yes">Expires</property>
+                                    <property name="subtitle-lines">0</property>
+                                    <property name="use-markup">false</property>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkBox">
+                                    <property name="orientation">1</property>
+                                    <property name="spacing">12</property>
+                                    <property name="margin-start">12</property>
+                                    <property name="margin-end">12</property>
+                                    <property name="margin-top">12</property>
+                                    <property name="margin-bottom">12</property>
+                                    <child>
+                                      <object class="GtkLabel" id="group_preview_title">
+                                        <property name="label" translatable="yes">Content</property>
+                                        <property name="xalign">0</property>
+                                        <style>
+                                          <class name="heading"/>
+                                        </style>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkLabel" id="content_preview">
+                                        <property name="wrap">true</property>
+                                        <property name="wrap-mode">2</property>
+                                        <property name="xalign">0</property>
+                                        <property name="selectable">true</property>
+                                        <property name="use-markup">false</property>
+                                        <property name="margin-start">6</property>
+                                        <property name="margin-end">6</property>
+                                        <property name="margin-top">6</property>
+                                        <property name="margin-bottom">6</property>
+                                        <style>
+                                          <class name="card"/>
+                                        </style>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkLabel" id="label_details">
+                                        <property name="wrap">true</property>
+                                        <property name="wrap-mode">2</property>
+                                        <property name="xalign">0</property>
+                                        <property name="selectable">true</property>
+                                        <property name="use-markup">false</property>
+                                        <style>
+                                          <class name="caption"/>
+                                        </style>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkLabel" id="label_timestamp">
+                                        <property name="wrap">true</property>
+                                        <property name="xalign">0</property>
+                                        <style>
+                                          <class name="caption"/>
+                                          <class name="dim-label"/>
+                                        </style>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
                               </object>
                             </child>
                           </object>
@@ -301,20 +327,11 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
         <child>
           <object class="GtkBox" id="consent_footer">
             <property name="orientation">1</property>
-            <property name="spacing">12</property>
+            <property name="spacing">8</property>
             <property name="margin-start">12</property>
             <property name="margin-end">12</property>
-            <property name="margin-top">12</property>
+            <property name="margin-top">8</property>
             <property name="margin-bottom">12</property>
-            <child>
-              <object class="GtkLabel">
-                <property name="label" translatable="yes">Scope</property>
-                <property name="xalign">0</property>
-                <style>
-                  <class name="heading"/>
-                </style>
-              </object>
-            </child>
             <child>
               <object class="GtkLabel" id="scope_summary">
                 <property name="wrap">true</property>
@@ -322,6 +339,10 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 <property name="xalign">0</property>
                 <property name="selectable">true</property>
                 <property name="use-markup">false</property>
+                <style>
+                  <class name="caption"/>
+                  <class name="dim-label"/>
+                </style>
               </object>
             </child>
             <child>
@@ -332,6 +353,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                   <object class="GtkButton" id="btn_deny">
                     <property name="label" translatable="yes">_Deny Once</property>
                     <property name="use-underline">true</property>
+                    <property name="valign">3</property>
                     <property name="tooltip-text" translatable="yes">Deny Once (Alt+D, Escape)</property>
                   </object>
                 </child>
@@ -339,6 +361,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                   <object class="GtkButton" id="btn_approve">
                     <property name="label" translatable="yes">_Allow Once</property>
                     <property name="use-underline">true</property>
+                    <property name="valign">3</property>
                     <property name="receives-default">false</property>
                     <style>
                       <class name="suggested-action"/>

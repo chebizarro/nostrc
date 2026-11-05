@@ -20,6 +20,10 @@ typedef enum {
   SIGNER_GATE_NIP44_DECRYPT_B64,
   SIGNER_GATE_DECRYPT_ZAP,
   SIGNER_GATE_SELF_TEST, /* approver-only MANAGEMENT, always one-time */
+  /* Declared permission set (G18): `a` is a NIP-46/NIP-55 token list such as
+   * "sign_event:13,nip44_encrypt". Approval grants the whole set until
+   * revoked; covered later calls never prompt. Never executes cryptography. */
+  SIGNER_GATE_REQUEST_PERMISSIONS,
   SIGNER_GATE_OP_COUNT
 } SignerGateOp;
 

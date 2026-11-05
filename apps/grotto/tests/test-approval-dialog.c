@@ -820,6 +820,178 @@ static void snapshots(Fixture *f, gconstpointer data) {
   }
   adw_style_manager_set_color_scheme(adw_style_manager_get_default(), ADW_COLOR_SCHEME_DEFAULT);
 }
+/* G18: an app's declared permission set is one review; the default view is
+ * compact (app, one line, identity, decision) and fits 360 px unscrolled. */
+static GVariant *declared_info(guint remaining, gboolean rememberable, gboolean mixed) {
+  static const guint32 kinds[] = {1, 5, 6, 7, 9, 13, 16, 450, 1621, 9000, 9001, 9002, 9005, 9007, 9009,
+                                  9021, 9022, 10002, 10009, 10050, 22242, 24242, 27001, 30443};
+  GVariantBuilder b, summary, declared;
+  g_variant_builder_init(&b, G_VARIANT_TYPE_VARDICT);
+  g_variant_builder_init(&summary, G_VARIANT_TYPE_VARDICT);
+  g_variant_builder_init(&declared, G_VARIANT_TYPE("aa{sv}"));
+  const gchar *types[] = {"nip04_decrypt", "nip44_encrypt", "nip44_decrypt"};
+  for (guint i = 0; i < G_N_ELEMENTS(kinds) + G_N_ELEMENTS(types); i++) {
+    GVariantBuilder entry; g_variant_builder_init(&entry, G_VARIANT_TYPE_VARDICT);
+    if (i < G_N_ELEMENTS(kinds)) {
+      g_variant_builder_add(&entry, "{sv}", "type", g_variant_new_string("sign_event"));
+      g_variant_builder_add(&entry, "{sv}", "kind", g_variant_new_uint32(kinds[i]));
+    } else g_variant_builder_add(&entry, "{sv}", "type", g_variant_new_string(types[i - G_N_ELEMENTS(kinds)]));
+    g_variant_builder_add(&entry, "{sv}", "state", g_variant_new_string(
+        mixed && i == 0 ? "granted" : mixed && i == 1 ? "denied" : "requested"));
+    g_variant_builder_add_value(&declared, g_variant_builder_end(&entry));
+  }
+#define S(key, value) g_variant_builder_add(&b, "{sv}", key, g_variant_new_string(value))
+  S("identity", public_npub); S("identity_label", "Alice"); S("principal", "exe:/usr/bin/groundhog");
+  S("transport", "DBUS"); S("principal_kind", "executable"); S("operation", "permissions"); S("kind", "permissions");
+  S("state", "PENDING"); S("reason", "Groundhog first contact"); S("reason_source", "caller"); S("claimed_app_id", "org.nostr.Groundhog");
+#undef S
+  g_variant_builder_add(&b, "{sv}", "remaining_seconds", g_variant_new_uint32(remaining));
+  g_variant_builder_add(&b, "{sv}", "verified", g_variant_new_boolean(TRUE));
+  g_variant_builder_add(&b, "{sv}", "rememberable", g_variant_new_boolean(rememberable));
+  g_variant_builder_add(&b, "{sv}", "routine_trust_available", g_variant_new_boolean(rememberable));
+  g_variant_builder_add(&summary, "{sv}", "preview", g_variant_new_string("use this identity for its declared operations"));
+  g_variant_builder_add(&summary, "{sv}", "declared_permissions", g_variant_builder_end(&declared));
+  g_variant_builder_add(&b, "{sv}", "event_summary", g_variant_builder_end(&summary));
+  return g_variant_ref_sink(g_variant_builder_end(&b));
+}
+static GtkAdjustment *page_adjustment(Fixture *f) {
+  GtkWidget *scroller = gtk_widget_get_ancestor(child(f, "permission_choice"), GTK_TYPE_SCROLLED_WINDOW);
+  g_assert_nonnull(scroller);
+  return gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroller));
+}
+static void assert_fits_unscrolled(Fixture *f) {
+  gtk_window_set_default_size(GTK_WINDOW(f->window), 360, 640);
+  wait_frames(f->window);
+  g_assert_cmpint(gtk_widget_get_width(f->window), <=, 360);
+  GtkAdjustment *adjustment = page_adjustment(f);
+  gint minimum = 0, natural = 0;
+  gtk_widget_measure(GTK_WIDGET(f->dialog), GTK_ORIENTATION_VERTICAL, 360, &minimum, &natural, NULL, NULL);
+  graphene_rect_t footer, title;
+  g_assert_true(gtk_widget_compute_bounds(child(f, "btn_approve"), f->window, &footer));
+  g_assert_true(gtk_widget_compute_bounds(child(f, "header_title"), f->window, &title));
+  g_test_message("page %.0f of %.0f content; sheet natural height %d in a %dx%d window; title y=%.0f approve bottom y=%.0f",
+      gtk_adjustment_get_page_size(adjustment), gtk_adjustment_get_upper(adjustment), natural,
+      gtk_widget_get_width(f->window), gtk_widget_get_height(f->window), title.origin.y, footer.origin.y + footer.size.height);
+  /* The sheet is sized naturally and fits the window; the scroller reports its
+   * viewport 2 px shorter than the content it propagates (focus padding).
+   * Anything beyond that would be real scrolling. */
+  g_assert_cmpint(natural, <=, gtk_widget_get_height(f->window));
+  g_assert_cmpfloat(gtk_adjustment_get_upper(adjustment), <=, gtk_adjustment_get_page_size(adjustment) + 2.5);
+  g_assert_false(adw_expander_row_get_expanded(ADW_EXPANDER_ROW(child(f, "details_expander"))));
+  const gchar *visible[] = {"header_title", "row_action", "row_identity", "btn_deny", "btn_approve"};
+  for (guint i = 0; i < G_N_ELEMENTS(visible); i++) g_assert_true(gtk_widget_get_mapped(child(f, visible[i])));
+  assert_decision_visible(f);
+}
+static void declared_set(Fixture *f, gconstpointer data) {
+  (void)data;
+  g_autoptr(GVariant) row = declared_info(120, TRUE, FALSE);
+  g_assert_true(gnostr_approval_info_can_approve(row));
+  gnostr_approval_dialog_set_info(f->dialog, row, "Groundhog");
+  g_assert_cmpstr(gtk_label_get_text(GTK_LABEL(child(f, "header_title"))), ==, "Groundhog wants to use your identity");
+  const gchar *action = subtitle(f, "row_action");
+  g_assert_nonnull(strstr(action, "NIP-29 groups"));
+  g_assert_nonnull(strstr(action, "encrypted messages"));
+  g_assert_nonnull(strstr(action, "relay sign-in"));
+  g_assert_nonnull(strstr(action, "relay lists"));
+  g_assert_nonnull(strstr(action, "deletions"));
+  g_assert_nonnull(strstr(action, "custom kinds (450, 27001, 30443)"));
+  g_assert_null(strstr(action, "9021")); /* kind numbers live under Details */
+  const gchar *details = gtk_label_get_text(GTK_LABEL(child(f, "content_preview")));
+  g_assert_nonnull(strstr(details, "Simple group join request (kind 9021)"));
+  g_assert_nonnull(strstr(details, "Encrypted message (kind 13)"));
+  g_assert_nonnull(strstr(details, "Relay authentication (kind 22242)"));
+  g_assert_nonnull(strstr(details, "Decrypt messages (NIP-44)"));
+  g_assert_nonnull(strstr(details, "Custom event (kind 27001)"));
+  AdwComboRow *choice = ADW_COMBO_ROW(child(f, "permission_choice"));
+  g_assert_true(gtk_widget_get_visible(GTK_WIDGET(choice)));
+  g_assert_cmpuint(g_list_model_get_n_items(adw_combo_row_get_model(choice)), ==, 2);
+  g_assert_cmpuint(adw_combo_row_get_selected(choice), ==, 0);
+  g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(child(f, "btn_approve"))), ==, "_Allow");
+  g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(child(f, "btn_deny"))), ==, "_Deny");
+  g_assert_nonnull(strstr(scope_text(f), "Until you revoke"));
+  g_assert_nonnull(strstr(subtitle(f, "row_identity"), "Alice"));
+  /* No single operation to block in a declared set: the action stays inert. */
+  g_assert_true(gtk_widget_activate_action(GTK_WIDGET(f->dialog), "review.block-operation", NULL));
+  g_assert_null(f->mode); g_assert_false(f->closed);
+  assert_fits_unscrolled(f);
+  /* Mixed standing is reported, never re-asked. */
+  g_autoptr(GVariant) mixed = declared_info(120, TRUE, TRUE);
+  gnostr_approval_dialog_set_info(f->dialog, mixed, "Groundhog");
+  details = gtk_label_get_text(GTK_LABEL(child(f, "content_preview")));
+  g_assert_nonnull(strstr(details, "already allowed"));
+  g_assert_nonnull(strstr(details, "blocked"));
+  g_assert_nonnull(strstr(subtitle(f, "row_impact"), "1 already allowed, 1 blocked"));
+  /* An app that cannot hold reusable consent cannot be granted a set. */
+  g_autoptr(GVariant) claimed = declared_info(120, FALSE, FALSE);
+  gnostr_approval_dialog_set_info(f->dialog, claimed, "Groundhog");
+  g_assert_false(gtk_widget_get_sensitive(child(f, "btn_approve")));
+  gnostr_approval_dialog_set_info(f->dialog, row, "Groundhog");
+  click(f, "btn_approve"); wait_closed(f);
+  g_assert_cmpuint(f->calls, ==, 1); g_assert_true(f->decision); g_assert_true(f->remember); g_assert_cmpuint(f->ttl, ==, 0);
+  g_assert_cmpstr(f->identity, ==, public_npub);
+}
+static void declared_set_trust(Fixture *f, gconstpointer data) {
+  (void)data;
+  g_autoptr(GVariant) row = declared_info(120, TRUE, FALSE);
+  gnostr_approval_dialog_set_info(f->dialog, row, "Groundhog");
+  choose(f, "Trust this app");
+  g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(child(f, "btn_approve"))), ==, "Trust _App");
+  g_assert_nonnull(strstr(scope_text(f), "including custom kinds"));
+  click(f, "btn_approve"); wait_closed(f);
+  g_assert_cmpstr(f->mode, ==, "trust-routine"); g_assert_cmpuint(f->calls, ==, 0);
+}
+static void compact_default(Fixture *f, gconstpointer data) {
+  (void)data;
+  g_autoptr(GVariant) original = info(NOSTR_KIND_FOLLOW_LIST, "sign_event", 120);
+  GVariantDict d; g_variant_dict_init(&d, original);
+  g_variant_dict_insert(&d, "identity", "s", public_npub);
+  g_variant_dict_insert(&d, "identity_label", "s", "Alice");
+  g_autoptr(GVariant) row = g_variant_ref_sink(g_variant_dict_end(&d));
+  gnostr_approval_dialog_set_info(f->dialog, row, "Jank");
+  /* Everything secondary sits under the single Details expander. */
+  const gchar *secondary[] = {"row_impact", "row_reason", "row_expiry", "content_preview", "label_details", "label_timestamp"};
+  GtkWidget *expander = child(f, "details_expander");
+  for (guint i = 0; i < G_N_ELEMENTS(secondary); i++)
+    g_assert_true(gtk_widget_is_ancestor(child(f, secondary[i]), expander));
+  g_assert_false(gtk_widget_is_ancestor(child(f, "row_action"), expander));
+  g_assert_false(gtk_widget_is_ancestor(child(f, "row_identity"), expander));
+  g_assert_false(gtk_widget_is_ancestor(child(f, "permission_choice"), expander));
+  assert_fits_unscrolled(f);
+  /* Details still carry the full record when opened. */
+  adw_expander_row_set_expanded(ADW_EXPANDER_ROW(expander), TRUE);
+  wait_frames(f->window);
+  g_assert_nonnull(strstr(subtitle(f, "row_reason"), "Send my note"));
+  g_assert_nonnull(strstr(gtk_label_get_text(GTK_LABEL(child(f, "label_details"))), "org.example.Client"));
+  assert_decision_visible(f);
+  /* A fresh snapshot collapses Details again. */
+  gnostr_approval_dialog_set_info(f->dialog, row, "Jank");
+  g_assert_false(adw_expander_row_get_expanded(ADW_EXPANDER_ROW(expander)));
+  /* A single-choice request shows no permission dropdown at all. */
+  GVariantDict e; g_variant_dict_init(&e, row);
+  g_variant_dict_insert(&e, "rememberable", "b", FALSE);
+  g_autoptr(GVariant) once_only = g_variant_ref_sink(g_variant_dict_end(&e));
+  gnostr_approval_dialog_set_info(f->dialog, once_only, "Jank");
+  g_assert_false(gtk_widget_get_visible(child(f, "permission_choice")));
+  assert_fits_unscrolled(f);
+}
+static void extend_declared(Fixture *f, gconstpointer data) {
+  (void)data;
+  g_autoptr(GVariant) original = info(NOSTR_KIND_COMMENT, "sign_event", 120);
+  GVariantDict d; g_variant_dict_init(&d, original);
+  g_variant_dict_insert(&d, "declared_set", "b", TRUE);
+  g_autoptr(GVariant) row = g_variant_ref_sink(g_variant_dict_end(&d));
+  gnostr_approval_dialog_set_info(f->dialog, row, "Groundhog");
+  g_assert_cmpstr(gtk_label_get_text(GTK_LABEL(child(f, "header_title"))), ==, "Groundhog wants an additional permission");
+  AdwComboRow *choice = ADW_COMBO_ROW(child(f, "permission_choice"));
+  g_autoptr(GtkStringObject) selected = g_list_model_get_item(adw_combo_row_get_model(choice), adw_combo_row_get_selected(choice));
+  g_assert_true(g_str_has_prefix(gtk_string_object_get_string(selected), "Always allow"));
+  g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(child(f, "btn_approve"))), ==, "_Always Allow");
+  g_assert_nonnull(strstr(scope_text(f), "until revoked"));
+  /* Allow once stays available for a one-off. */
+  choose(f, "Allow once");
+  click(f, "btn_approve"); wait_closed(f);
+  g_assert_true(f->decision); g_assert_false(f->remember);
+}
 int main(int argc, char **argv) {
   if (g_getenv("GNOSTR_SKIP_UI_TESTS")) {
     g_print("1..0 # SKIP UI disabled\n");
@@ -872,6 +1044,10 @@ int main(int argc, char **argv) {
   ADD("caller-labels", caller_labels);
   ADD("scope-viewport", scope_viewport);
   ADD("snapshots", snapshots);
+  ADD("declared-set", declared_set);
+  ADD("declared-set-trust", declared_set_trust);
+  ADD("compact-default", compact_default);
+  ADD("extend-declared", extend_declared);
 #undef ADD
   return g_test_run();
 }

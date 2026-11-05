@@ -1188,6 +1188,179 @@ static void test_readable_summary_contract(Ctx *ctx) {
     watch_stop(ctx, &w);
   }
 }
+/* G18 (nostrc-u6v55.29): a Groundhog-shaped client declares its whole
+ * operation set once over D-Bus. The real daemon raises exactly ONE review
+ * for join/message/DM/AUTH/lists; covered calls that arrive during the
+ * review wait for it; an undeclared kind raises one extension review. */
+static GVariant *declared_entry(const gchar *type, gint kind) {
+  GVariantBuilder b; g_variant_builder_init(&b, G_VARIANT_TYPE_VARDICT);
+  g_variant_builder_add(&b, "{sv}", "type", g_variant_new_string(type));
+  if (kind >= 0) g_variant_builder_add(&b, "{sv}", "kind", g_variant_new_uint32((guint32)kind));
+  return g_variant_builder_end(&b);
+}
+#define GROUNDHOG_DECLARED 27
+static GVariant *groundhog_permissions(void) {
+  /* Derived from gnome/groundhog sources: every kind the account key signs. */
+  static const gint kinds[] = {1, 5, 6, 7, 9, 13, 16, 450, 1621, 9000, 9001, 9002, 9005, 9007, 9009,
+                               9021, 9022, 10002, 10009, 10050, 22242, 24242, 27001, 30443};
+  GVariantBuilder b; g_variant_builder_init(&b, G_VARIANT_TYPE("aa{sv}"));
+  for (guint i = 0; i < G_N_ELEMENTS(kinds); i++) g_variant_builder_add_value(&b, declared_entry("sign_event", kinds[i]));
+  g_variant_builder_add_value(&b, declared_entry("nip04_decrypt", -1));
+  g_variant_builder_add_value(&b, declared_entry("nip44_encrypt", -1));
+  g_variant_builder_add_value(&b, declared_entry("nip44_decrypt", -1));
+  return g_variant_builder_end(&b);
+}
+static GVariant *declared_context(Ctx *ctx) {
+  GVariantBuilder b; g_variant_builder_init(&b, G_VARIANT_TYPE_VARDICT);
+  g_variant_builder_add(&b, "{sv}", "identity", g_variant_new_string(ctx->npub));
+  g_variant_builder_add(&b, "{sv}", "app_id", g_variant_new_string("contract-test"));
+  g_variant_builder_add(&b, "{sv}", "reason", g_variant_new_string("Groundhog first contact"));
+  return g_variant_builder_end(&b);
+}
+static guint declared_count(GVariant *reply, const gchar *key) {
+  g_autoptr(GVariant) dict = g_variant_get_child_value(reply, 0);
+  g_autoptr(GVariant) list = g_variant_lookup_value(dict, key, G_VARIANT_TYPE("aa{sv}"));
+  CHECK(list != NULL);
+  return (guint)g_variant_n_children(list);
+}
+static gchar *groundhog_event(gint kind, const gchar *relay) {
+  if (kind == NOSTR_KIND_CLIENT_AUTHENTICATION)
+    return g_strdup_printf("{\"kind\":22242,\"created_at\":%" G_GINT64_FORMAT ",\"tags\":[[\"relay\",\"%s\"],[\"challenge\",\"c%u\"]],\"content\":\"\"}",
+        g_get_real_time() / G_USEC_PER_SEC, relay, g_random_int());
+  return g_strdup_printf("{\"kind\":%d,\"created_at\":0,\"tags\":[[\"h\",\"group\"]],\"content\":\"%u\"}", kind, g_random_int());
+}
+static void test_declared_set_contract(Ctx *ctx) {
+  GError *err = NULL;
+  const gchar *principal = pr(ctx, "contract-test");
+  char *peer_sk = nostr_key_generate_private();
+  char *peer_pk = nostr_key_get_public(peer_sk);
+  CHECK(peer_sk && peer_pk);
+  g_usleep(120 * 1000);
+  Watch w; watch_start(ctx, &w);
+  w.a.pending_replies++;
+  g_dbus_connection_call(ctx->bus, BUS_NAME, OBJ_PATH, IFACE, "RequestPermissions",
+      g_variant_new("(@aa{sv}@a{sv})", groundhog_permissions(), declared_context(ctx)),
+      G_VARIANT_TYPE("(a{sv})"), G_DBUS_CALL_FLAGS_NONE, 30000, NULL, on_async_reply, &w.a);
+  watch_wait_request(&w, 1);
+  CHECK(g_strcmp0(w.a.kind, "permissions") == 0);
+  CHECK(g_strcmp0(w.a.identity, ctx->npub) == 0);
+  CHECK(g_strcmp0(w.a.app_id, principal) == 0);
+  {
+    g_autoptr(GVariant) info = call(ctx->bus, "GetApprovalInfo", g_variant_new("(s)", w.a.req_id), "(a{sv})", &err);
+    if (!info) { g_printerr("GetApprovalInfo: %s\n", err ? err->message : "?"); exit(1); }
+    g_autoptr(GVariant) row = g_variant_get_child_value(info, 0);
+    gboolean rememberable = FALSE, routine = FALSE, extends = TRUE; const gchar *v = NULL;
+    CHECK(g_variant_lookup(row, "rememberable", "b", &rememberable) && rememberable);
+    CHECK(g_variant_lookup(row, "routine_trust_available", "b", &routine) && routine);
+    CHECK(g_variant_lookup(row, "declared_set", "b", &extends) && !extends);
+    CHECK(g_variant_lookup(row, "reason", "&s", &v) && g_strcmp0(v, "Groundhog first contact") == 0);
+    g_autoptr(GVariant) summary = g_variant_lookup_value(row, "event_summary", G_VARIANT_TYPE_VARDICT);
+    g_autoptr(GVariant) declared = summary ? g_variant_lookup_value(summary, "declared_permissions", G_VARIANT_TYPE("aa{sv}")) : NULL;
+    CHECK(declared && g_variant_n_children(declared) == GROUNDHOG_DECLARED);
+    for (gsize i = 0; i < g_variant_n_children(declared); i++) {
+      g_autoptr(GVariant) entry = g_variant_get_child_value(declared, i);
+      CHECK(g_variant_lookup(entry, "state", "&s", &v) && g_strcmp0(v, "requested") == 0);
+    }
+  }
+  /* Groundhog keeps working while the review is open: a NIP-29 join and a
+   * NIP-44 encryption arrive now and must not raise their own prompts. */
+  g_autofree gchar *join = groundhog_event(NOSTR_KIND_SIMPLE_GROUP_JOIN_REQUEST, NULL);
+  watch_call(ctx, &w, "SignEvent", g_variant_new("(sss)", join, ctx->npub, "contract-test"));
+  watch_call(ctx, &w, "NIP44Encrypt", g_variant_new("(sss)", "hello group", peer_pk, ctx->npub));
+  for (int i = 0; i < 40; i++) { watch_drain(); g_usleep(10 * 1000); }
+  CHECK(w.a.n_requests == 1);
+  CHECK(w.a.replies->len == 0);
+  approve(ctx, w.a.req_id, TRUE, FALSE);
+  watch_wait_replies(&w);
+  CHECK(w.a.replies->len == 3);
+  gchar *ciphertext = NULL; guint dicts = 0, strings = 0;
+  for (guint i = 0; i < w.a.replies->len; i++) {
+    GVariant *reply = w.a.replies->pdata[i]; GError *e = w.a.errors->pdata[i];
+    if (!reply) { g_printerr("declared-set reply %u: %s\n", i, e ? e->message : "?"); exit(1); }
+    if (g_variant_is_of_type(reply, G_VARIANT_TYPE("(a{sv})"))) {
+      dicts++;
+      g_autoptr(GVariant) dict = g_variant_get_child_value(reply, 0); const gchar *identity = NULL;
+      CHECK(g_variant_lookup(dict, "identity", "&s", &identity) && g_strcmp0(identity, ctx->npub) == 0);
+      CHECK(declared_count(reply, "granted") == GROUNDHOG_DECLARED && declared_count(reply, "denied") == 0);
+    } else {
+      strings++;
+      const gchar *text = NULL; g_variant_get(reply, "(&s)", &text);
+      if (text[0] == '{') assert_signed_event(text, ctx->pk_hex, NOSTR_KIND_SIMPLE_GROUP_JOIN_REQUEST, 0);
+      else ciphertext = g_strdup(text);
+    }
+  }
+  CHECK(dicts == 1 && strings == 2 && ciphertext != NULL);
+  CHECK(w.a.n_requests == 1);
+  watch_stop(ctx, &w);
+  /* The rest of the lifecycle: group message, seal, AUTH at two relays, relay
+   * and inbox lists, deletion, key package, custom kinds, decryption. */
+  const gint kinds[] = {NOSTR_KIND_SIMPLE_GROUP_CHAT_MESSAGE, NOSTR_KIND_SEAL, NOSTR_KIND_CLIENT_AUTHENTICATION,
+      NOSTR_KIND_RELAY_LIST_METADATA, NOSTR_KIND_DM_RELAY_LIST, NOSTR_KIND_DELETION, NOSTR_KIND_SIMPLE_GROUP_LIST, 30443, 27001};
+  for (guint i = 0; i < G_N_ELEMENTS(kinds); i++) {
+    g_autofree gchar *json = groundhog_event(kinds[i], "wss://nos.lol");
+    GVariant *r = no_prompt(ctx, "SignEvent", g_variant_new("(sss)", json, ctx->npub, "contract-test"), &err);
+    if (!r) { g_printerr("declared kind %d prompted or failed: %s\n", kinds[i], err ? err->message : "?"); exit(1); }
+    const gchar *signed_json = NULL; g_variant_get(r, "(&s)", &signed_json);
+    assert_signed_event(signed_json, ctx->pk_hex, kinds[i], 0);
+    g_variant_unref(r);
+  }
+  {
+    g_autofree gchar *auth = groundhog_event(NOSTR_KIND_CLIENT_AUTHENTICATION, "wss://relay.nostr.band");
+    GVariant *r = no_prompt(ctx, "SignEvent", g_variant_new("(sss)", auth, ctx->npub, "contract-test"), &err);
+    CHECK(r != NULL); g_variant_unref(r);
+    r = no_prompt(ctx, "NIP44Decrypt", g_variant_new("(sss)", ciphertext, peer_pk, ctx->npub), &err);
+    CHECK(r != NULL);
+    const gchar *plain = NULL; g_variant_get(r, "(&s)", &plain);
+    CHECK(g_strcmp0(plain, "hello group") == 0);
+    g_variant_unref(r);
+  }
+  /* One undeclared kind: exactly one more review, flagged as an extension. */
+  g_usleep(120 * 1000);
+  watch_start(ctx, &w);
+  g_autofree gchar *comment = groundhog_event(NOSTR_KIND_COMMENT, NULL);
+  watch_call(ctx, &w, "SignEvent", g_variant_new("(sss)", comment, ctx->npub, "contract-test"));
+  watch_wait_request(&w, 1);
+  CHECK(g_strcmp0(w.a.kind, "event") == 0);
+  {
+    g_autoptr(GVariant) info = call(ctx->bus, "GetApprovalInfo", g_variant_new("(s)", w.a.req_id), "(a{sv})", &err);
+    CHECK(info != NULL);
+    g_autoptr(GVariant) row = g_variant_get_child_value(info, 0); gboolean extends = FALSE;
+    CHECK(g_variant_lookup(row, "declared_set", "b", &extends) && extends);
+  }
+  approve(ctx, w.a.req_id, TRUE, FALSE);
+  watch_wait_replies(&w);
+  CHECK(w.a.replies->pdata[0] != NULL && w.a.n_requests == 1);
+  watch_stop(ctx, &w);
+  /* Re-declaring a covered set answers without a prompt. */
+  {
+    watch_start(ctx, &w);
+    GVariant *r = call(ctx->bus, "RequestPermissions", g_variant_new("(@aa{sv}@a{sv})", groundhog_permissions(), declared_context(ctx)), "(a{sv})", &err);
+    if (!r) { g_printerr("RequestPermissions (covered): %s\n", err ? err->message : "?"); exit(1); }
+    watch_drain();
+    CHECK(w.a.n_requests == 0);
+    CHECK(declared_count(r, "granted") == GROUNDHOG_DECLARED);
+    g_variant_unref(r);
+    watch_stop(ctx, &w);
+  }
+  /* Malformed declarations fail before any prompt. */
+  {
+    GVariantBuilder bad; GVariant *r;
+    g_variant_builder_init(&bad, G_VARIANT_TYPE("aa{sv}"));
+    g_variant_builder_add_value(&bad, declared_entry("switch_relays", -1));
+    r = call(ctx->bus, "RequestPermissions", g_variant_new("(@aa{sv}@a{sv})", g_variant_builder_end(&bad), declared_context(ctx)), "(a{sv})", &err);
+    CHECK(r == NULL); expect_remote_error(err, ERR_INVALID); g_clear_error(&err);
+    g_variant_builder_init(&bad, G_VARIANT_TYPE("aa{sv}"));
+    g_variant_builder_add_value(&bad, declared_entry("sign_event", -1));
+    r = call(ctx->bus, "RequestPermissions", g_variant_new("(@aa{sv}@a{sv})", g_variant_builder_end(&bad), declared_context(ctx)), "(a{sv})", &err);
+    CHECK(r == NULL); expect_remote_error(err, ERR_INVALID); g_clear_error(&err);
+    g_variant_builder_init(&bad, G_VARIANT_TYPE("aa{sv}"));
+    r = call(ctx->bus, "RequestPermissions", g_variant_new("(@aa{sv}@a{sv})", g_variant_builder_end(&bad), declared_context(ctx)), "(a{sv})", &err);
+    CHECK(r == NULL); expect_remote_error(err, ERR_INVALID); g_clear_error(&err);
+    r = call(ctx->bus, "RequestPermissions", g_variant_new("(@aa{sv}@a{sv})", groundhog_permissions(), context_one("secret", g_variant_new_string("x"))), "(a{sv})", &err);
+    CHECK(r == NULL); expect_remote_error(err, ERR_INVALID); g_clear_error(&err);
+  }
+  g_free(ciphertext); free(peer_sk); free(peer_pk);
+}
 static void test_call_with_context(Ctx *ctx) {
   const gchar *reject[] = {"StoreKey", "ApproveRequest", "ApproveFlowRequest", "ListIdentities", "ListGrants", "CallWithContext", "Unknown",
     "GetPublicKey", "GetRelays", "GetPublicKeyForApp", "NIP44EncryptB64", "DecryptZapEvent", "EnableTypedApprovalErrors"};
@@ -3558,6 +3731,17 @@ int main(int argc, char **argv) {
     test_call_with_context(&ctx);
     ctx_teardown(&ctx);
     g_print("PASS CallWithContext whitelist, signatures, bounded metadata and output tuple\n");
+  }
+
+  /* G18 declared permission sets (nip55l 0.8.0): one review per app. */
+  {
+    Ctx ctx;
+    ctx_setup_full(&ctx, FALSE, FALSE, NULL, &TRUST_UI, NULL, NULL);
+    test_declared_set_contract(&ctx);
+    ctx_teardown(&ctx);
+    g_print("PASS RequestPermissions: one review for %u declared operations, covered calls wait for it, "
+            "join/message/DM/AUTH/lists never prompt again, one extension review for an undeclared kind\n",
+            (guint)GROUNDHOG_DECLARED);
   }
 
   /* The approval UI is started by the bus for a request (nostrc-sh5h). */
