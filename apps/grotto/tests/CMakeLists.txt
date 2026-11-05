@@ -549,7 +549,9 @@ if (TARGET grotto-daemon AND "NIP55L_TEST_TRUST_ENV=1" IN_LIST _nip55l_definitio
   endif()
   target_link_libraries(test-approval-integration PRIVATE grotto_approval_test_core nostrc-test-bus ${SIGNER_TEST_LIBS})
   target_link_directories(test-approval-integration PRIVATE ${SIGNER_TEST_LINK_DIRS})
-  add_dependencies(test-approval-integration grotto-daemon grotto-schemas)
+  add_dependencies(test-approval-integration grotto-daemon grotto-schemas test-control-untrusted)
+  target_compile_definitions(test-approval-integration PRIVATE
+    MANAGER_LABEL_BIN="$<TARGET_FILE:test-control-untrusted>")
   add_test(NAME signer/approval-integration COMMAND test-approval-integration $<TARGET_FILE:grotto-daemon>)
   set_tests_properties(signer/approval-integration PROPERTIES TIMEOUT 90 SKIP_RETURN_CODE 77 LABELS "signer;integration"
     ENVIRONMENT "${_UI_TEST_ENV}")

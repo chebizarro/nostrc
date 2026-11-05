@@ -6,7 +6,7 @@
 static NostrcTestBus *bus;
 static GDBusConnection *server;
 static const char *label = "First";
-static gboolean authorized, have_request = TRUE, hold_clients;
+static gboolean authorized, have_request = TRUE, hold_clients, inventory_error;
 static guint clients_calls, request_calls, mutations;
 static const char *remote_error, *credential_field, *management_role;
 static gboolean hold_command;
@@ -52,6 +52,11 @@ static void method(GDBusConnection *connection, const char *sender, const char *
     g_variant_builder_add(&coarse, "{sb}", "pause", TRUE);
     g_variant_builder_add(&status, "{sv}", "capabilities", g_variant_builder_end(&coarse));
     g_dbus_method_invocation_return_value(invocation, g_variant_new("(a{sv})", &status));
+  } else if (!strcmp(name, "ListIdentities")) {
+    if (inventory_error) g_dbus_method_invocation_return_dbus_error(invocation,
+      "org.nostr.Grotto.Control1.Error.BackendUnavailable", "Inventory unavailable");
+    else g_dbus_method_invocation_return_value(invocation, g_variant_new("(@aa{sv})",
+      g_variant_new_array(G_VARIANT_TYPE_VARDICT, NULL, 0)));
   } else if (!strcmp(name, "ListClients")) {
     clients_calls++;
     if (hold_clients) { hold_clients = FALSE; held = g_object_ref(invocation); }
@@ -219,6 +224,11 @@ static void exercise(void) {
   WAIT(grotto_panels_service_is_available(manager));
   g_assert_true(grotto_panels_service_can(manager, GROTTO_PANEL_SET_CLIENT_LABEL));
   g_assert_false(grotto_panels_service_can(manager, GROTTO_PANEL_RESUME));
+  inventory_error = TRUE; emit("StatusChanged"); WAIT(!grotto_panels_service_is_available(manager));
+  changes = 0; emit("StatusChanged"); WAIT(changes > 0);
+  g_assert_false(grotto_panels_service_is_available(manager));
+  g_assert_false(grotto_panels_service_can(manager, GROTTO_PANEL_SET_CLIENT_LABEL));
+  inventory_error = FALSE; emit("StatusChanged"); WAIT(grotto_panels_service_is_available(manager));
   management_role = NULL; emit("StatusChanged"); WAIT(!grotto_panels_service_is_available(manager));
   gpointer weak_manager = manager;
   g_object_add_weak_pointer(G_OBJECT(manager), &weak_manager);

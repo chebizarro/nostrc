@@ -17,6 +17,8 @@
     <!-- One approver-only decision: allow-once, allow, allow-24h, deny-once,
          block-operation, block-app, trust-routine, activate-saved, discard-saved. -->
     <method name="DecideRequest"><arg name="request_id" type="s" direction="in"/><arg name="mode" type="s" direction="in"/><arg name="ok" type="b" direction="out"/></method>
+    <!-- Approver-only: contains unpublished previews and management details.
+         Managers see pending_count/coarse state in GetStatus, never this body. -->
     <method name="ListRequests"><arg name="requests" type="aa{sv}" direction="out"/></method>
     <!-- Public stored signing npubs only; unknown setup/backup metadata is not
          evidence of recovery. No keyring enumeration in the hosting process. -->

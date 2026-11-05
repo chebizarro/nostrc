@@ -662,7 +662,7 @@ static void decision_done(gpointer data, gboolean ok, const gchar *error, const 
 /* Deliberately closed: new Control1 methods remain approver-only. */
 static gboolean manager_method(const gchar *method) {
   const gchar *allowed[] = {"GetStatus", "ListIdentities", "ListClients", "ListPermissions",
-    "ListRequests", "ListActivity", "SetClientLabel"};
+    "ListActivity", "SetClientLabel"};
   for (guint i = 0; i < G_N_ELEMENTS(allowed); i++)
     if (!strcmp(method, allowed[i])) return TRUE;
   return FALSE;

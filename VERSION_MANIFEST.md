@@ -59,14 +59,18 @@ files already declare a version.
 
 | Component | Impact | Version decision |
 | --- | --- | --- |
-| **Grotto** | MINOR-class additive Control1 manager role, public identity snapshot, caller capabilities and navigation-only host activation | Fold into unreleased **0.1.1** at the owner's direction; CMake/Meson and packaging values unchanged. |
+| **Grotto** | MINOR-class Control1 manager role, public identity snapshot, caller capabilities and navigation-only host activation; review corrections keep pending contents approver-only and cosmetic labels secondary, never verified review/notification names | Fold into unreleased **0.1.1** at the owner's direction; CMake/Meson and packaging values unchanged. |
 | **grotto-panels** | PATCH-class honest unknown backup/usage presentation and consistent host-owned window chrome on shared panels/subpages; no public ABI/schema change | Fold into unreleased **0.1.0**; authoritative sources remain aligned. |
-| **nostr-settings** | MINOR-class sidebar host, shared panels, manager service and runtime dependency; new Meson build mirrors CMake | Fold into unreleased **0.1.0**. This component had no manifest row; add it with both authoritative version sources. |
-| **nip55l** | Internal installed-manager executable attestation helper and build path; no public signer API or protocol change | Fold the authorization implementation into the existing unreleased **0.8.0** wave; no new version/tag. |
+| **nostr-settings** | MINOR-class sidebar host, shared panels, manager service and runtime dependency; new Meson build mirrors CMake. PATCH-class read-error correction preserves unavailable state instead of false empty inventory | Fold into unreleased **0.1.0**. This component had no manifest row; add it with both authoritative version sources. |
+| **nip55l** | Installed-manager executable attestation plus MINOR-class tightening of pending-content signal recipients: ApprovalRequested now unicasts to the freshly authenticated approval-UI owner; non-owner listeners must use authorized snapshot reads. Signal arguments and public function ABI are unchanged. | Fold into the existing unreleased **0.8.0** wave; no new version/tag. |
 | Other components | Existing consumers/prerequisites only | No bump; no owned artifact changes. |
 
 No release/tag columns change; no tag is published. These are folded artifact
-changes, not claims that the changed components are artifact-free.
+changes, not claims that the changed components are artifact-free. The W6 review
+corrections remain in the same unreleased wave: Grotto 0.1.1 and Settings 0.1.0;
+nip55l's signal-confidentiality correction is also folded into 0.8.0.
+grotto-panels 0.1.0 has no additional shipped source change in that correction
+(adapter regression tests do not change the panels runtime).
 
 ### W7 public identity profiles (nostrc-u6v55.23.9)
 

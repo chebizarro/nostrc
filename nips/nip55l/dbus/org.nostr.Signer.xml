@@ -10,7 +10,10 @@
          (that principal, the npub the identity selector resolves to,
          request kind); without one the call is parked and
          ApprovalRequested(app_id = principal, identity = npub, kind,
-         preview, request_id) is emitted. Only identical principal, pinned
+         preview, request_id) is unicast only to the freshly authenticated
+         owner of the configured approval-UI name. It is not a public content
+         broadcast; name ownership without approver attestation is insufficient.
+         Only identical principal, pinned
          identity, operation and canonical arguments share a request; each
          continuation is cancelled independently on disconnect. IDs are
          opaque CSPRNG values, not enumerable counters. Kinds: event,

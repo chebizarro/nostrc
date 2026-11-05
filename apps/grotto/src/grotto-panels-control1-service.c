@@ -13,7 +13,8 @@ struct _GrottoPanelsControl1Service {
   GListStore *models[GROTTO_PANELS_N_MODELS];
   GHashTable *tombstones;
   GCancellable *cancel;
-  gboolean available, manager_only, caps[GROTTO_PANEL_N_COMMANDS];
+  gboolean available, status_available, manager_only, caps[GROTTO_PANEL_N_COMMANDS];
+  gboolean read_ok[GROTTO_PANELS_N_MODELS];
   gulong signal_id, owner_id;
   guint identities_subscription;
 };
@@ -135,6 +136,16 @@ static void apply_rows(Snapshot *snapshot, GVariant *rows) {
   }
   g_list_store_splice(model, 0, g_list_model_get_n_items(G_LIST_MODEL(model)), items->pdata, items->len);
 }
+static void update_availability(GrottoPanelsControl1Service *self) {
+  gboolean available = self->status_available;
+  if (self->manager_only) available = available &&
+    self->read_ok[GROTTO_PANELS_IDENTITIES] && self->read_ok[GROTTO_PANELS_APPS] &&
+    self->read_ok[GROTTO_PANELS_ACTIVITY];
+  gboolean was_available = self->available;
+  self->available = available;
+  changed(self, "capabilities-changed");
+  if (was_available != available) changed(self, "availability-changed");
+}
 static void snapshot_done(GObject *source, GAsyncResult *result, gpointer data) {
   Snapshot *snapshot = data;
   GrottoPanelsControl1Service *self = snapshot->self;
@@ -174,25 +185,26 @@ static void snapshot_done(GObject *source, GAsyncResult *result, gpointer data) 
         if (!available) memset(caps, 0, sizeof caps);
       }
       if (!available) g_list_store_remove_all(self->models[GROTTO_PANELS_STATUS]);
-      gboolean availability_changed = self->available != available;
-      self->available = available;
+      self->status_available = available;
       memcpy(self->caps, caps, sizeof caps);
-      changed(self, "capabilities-changed");
-      if (availability_changed) changed(self, "availability-changed");
     } else if (reply) {
+      self->read_ok[snapshot->slot] = TRUE;
       g_autoptr(GVariant) rows = g_variant_get_child_value(reply, 0);
       apply_rows(snapshot, rows);
     } else {
-      /* Read authorization/availability failure is not stale successful data. */
+      /* A failed snapshot is not a successful empty inventory. Status success
+       * must not erase the manager's outstanding data-read failure. */
+      self->read_ok[snapshot->slot] = FALSE;
       g_list_store_remove_all(self->models[snapshot->slot]);
     }
+    update_availability(self);
   }
   g_object_unref(self);
   g_free(snapshot);
 }
 static void refresh(GrottoPanelsControl1Service *self, guint slot) {
   self->serial[slot]++;
-  if (!self->owner) return;
+  if (!self->owner || (self->manager_only && slot == GROTTO_PANELS_REQUESTS)) return;
   static const char *const reads[] = {[GROTTO_PANELS_IDENTITIES] = "ListIdentities", [GROTTO_PANELS_APPS] = "ListClients",
     [GROTTO_PANELS_REQUESTS] = "ListRequests", [GROTTO_PANELS_ACTIVITY] = "ListActivity", [STATUS_SLOT] = "GetStatus"};
   if (!reads[slot]) return;
@@ -214,7 +226,8 @@ static void owner_changed(GObject *proxy, GParamSpec *pspec, gpointer data) {
   self->cancel = g_cancellable_new();
   g_free(self->owner);
   self->owner = g_steal_pointer(&owner);
-  self->available = FALSE;
+  self->available = self->status_available = FALSE;
+  memset(self->read_ok, 0, sizeof self->read_ok);
   memset(self->caps, 0, sizeof self->caps);
   g_hash_table_remove_all(self->tombstones);
   for (guint i = 0; i < GROTTO_PANELS_N_MODELS; i++) g_list_store_remove_all(self->models[i]);
@@ -247,7 +260,8 @@ static gboolean is_available(GrottoPanelsService *service) {
   return GROTTO_PANELS_CONTROL1_SERVICE(service)->available;
 }
 static gboolean can(GrottoPanelsService *service, GrottoPanelCommand command) {
-  return GROTTO_PANELS_CONTROL1_SERVICE(service)->caps[command];
+  GrottoPanelsControl1Service *self = GROTTO_PANELS_CONTROL1_SERVICE(service);
+  return self->available && self->caps[command];
 }
 typedef struct { guint64 generation; } Invocation;
 static void invocation_done(GObject *source, GAsyncResult *result, gpointer data) {

@@ -15,6 +15,8 @@ static NostrcTestBus *private_bus;
 static GSubprocess *fixture_daemon;
 static const char *daemon_bin;
 static guint handoffs;
+static gchar *pending_id;
+#define PENDING_SENTINEL "W6-UNPUBLISHED-CONTENT-REVIEW-SENTINEL"
 static gboolean saw_backup, saw_review, saw_security;
 static gboolean timeout(gpointer data) { (void)data; g_error("W6 event did not arrive"); return G_SOURCE_REMOVE; }
 #define WAIT(condition) G_STMT_START { guint bound = g_timeout_add_seconds(20, timeout, NULL); \
@@ -62,7 +64,7 @@ static gboolean manager_read(const char *method)
 {
   return !strcmp(method, "GetStatus") || !strcmp(method, "ListIdentities") ||
     !strcmp(method, "ListClients") || !strcmp(method, "ListPermissions") ||
-    !strcmp(method, "ListRequests") || !strcmp(method, "ListActivity");
+    !strcmp(method, "ListActivity");
 }
 static void rejected_contract(void)
 {
@@ -79,7 +81,7 @@ static void rejected_contract(void)
     g_print("manager refused %s\n", m->name); refused++;
   }
   rpc("SetPaused", g_variant_new("(b)", TRUE), CONTROL ".Error.NotAuthorized");
-  g_assert_cmpuint(refused, >=, 20);
+  g_assert_cmpuint(refused, >=, 23);
 }
 static gboolean text_in(GtkWidget *widget, const char *text)
 {
@@ -131,10 +133,61 @@ static void copy_binary(const char *source, const char *destination)
   g_assert_true(g_file_copy(from, to, G_FILE_COPY_OVERWRITE, NULL, NULL, NULL, NULL));
   g_assert_cmpint(g_chmod(destination, 0700), ==, 0);
 }
+static guint pending_changes, private_signals, approver_signals;
+static void private_signal(GDBusConnection *c, const char *sender, const char *path,
+    const char *interface, const char *signal, GVariant *args, gpointer data) {
+  (void)c; (void)sender; (void)path; (void)interface; (void)signal;
+  guint *counter = data;
+  if (counter == &approver_signals) {
+    g_autofree char *dump = g_variant_print(args, FALSE);
+    if (strstr(dump, PENDING_SENTINEL)) (*counter)++;
+  } else (*counter)++;
+}
+static void pending_changed(GDBusConnection *c, const char *sender, const char *path,
+    const char *interface, const char *signal, GVariant *args, gpointer data) {
+  (void)c; (void)sender; (void)path; (void)interface; (void)signal; (void)args; (void)data;
+  pending_changes++;
+}
+static void signing_denied(GObject *source, GAsyncResult *result, gpointer data) {
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GVariant) reply = g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), result, &error);
+  g_assert_null(reply); g_assert_nonnull(error); *(gboolean *)data = TRUE;
+}
+static void pending_content_refused(void) {
+  guint private_watch = g_dbus_connection_signal_subscribe(bus, "org.nostr.Signer", "org.nostr.Signer",
+    "ApprovalRequested", "/org/nostr/signer", NULL, 0, private_signal, &private_signals, NULL);
+  guint watch = g_dbus_connection_signal_subscribe(bus, "org.nostr.Signer", CONTROL,
+    "RequestsChanged", PATH, NULL, 0, pending_changed, NULL, NULL);
+  gboolean denied = FALSE;
+  const char *json = "{\"kind\":1,\"created_at\":1700000000,\"tags\":[],\"content\":\"" PENDING_SENTINEL "\"}";
+  g_dbus_connection_call(bus, "org.nostr.Signer", "/org/nostr/signer", "org.nostr.Signer", "SignEvent",
+    g_variant_new("(sss)", json, "", "Unverified claimed name"), NULL, 0, 15000, NULL, signing_denied, &denied);
+  WAIT(pending_changes > 0);
+  g_autoptr(GVariant) status_reply = rpc("GetStatus", NULL, NULL);
+  g_autoptr(GVariant) status = g_variant_get_child_value(status_reply, 0); guint32 count = 0;
+  g_assert_true(g_variant_lookup(status, "pending_count", "u", &count)); g_assert_cmpuint(count, >, 0);
+  g_autoptr(GVariant) id_reply = g_dbus_connection_call_sync(bus, g_getenv("W6_TEST_HOST"), "/org/nostr/Grotto",
+    "org.nostr.TestHost", "PendingId", NULL, G_VARIANT_TYPE("(s)"), 0, 5000, NULL, NULL);
+  g_assert_nonnull(id_reply); const char *id; g_variant_get(id_reply, "(&s)", &id);
+  rpc("ListRequests", NULL, CONTROL ".Error.NotAuthorized");
+  const char *methods[] = {"GetApprovalInfo", "ListPendingRequests"};
+  for (guint i = 0; i < G_N_ELEMENTS(methods); i++) {
+    g_autoptr(GError) error = NULL;
+    g_autoptr(GVariant) reply = g_dbus_connection_call_sync(bus, "org.nostr.Signer", "/org/nostr/signer", "org.nostr.Signer",
+      methods[i], i == 0 ? g_variant_new("(s)", id) : NULL, NULL, 0, 5000, NULL, &error);
+    g_assert_null(reply); g_autofree char *name = g_dbus_error_get_remote_error(error);
+    g_assert_cmpstr(name, ==, "org.nostr.Signer.Error.PermissionDenied");
+  }
+  fixture_call("DenyPending"); WAIT(denied);
+  while (g_main_context_iteration(NULL, FALSE)) {}
+  g_assert_cmpuint(private_signals, ==, 0);
+  g_dbus_connection_signal_unsubscribe(bus, private_watch);
+  g_dbus_connection_signal_unsubscribe(bus, watch);
+}
 static int manager_child(const char *original, const char *self)
 {
   adw_init(); bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL); g_assert_nonnull(bus);
-  role("manager"); rejected_contract();
+  role("manager"); rejected_contract(); pending_content_refused();
   g_autoptr(GVariant) permissions = rpc("ListPermissions", g_variant_new("(s)", APP), NULL);
   g_autoptr(GVariant) grants = g_variant_get_child_value(permissions, 0);
   g_assert_cmpuint(g_variant_n_children(grants), ==, 1);
@@ -187,6 +240,18 @@ static int manager_child(const char *original, const char *self)
   fixture_call("StartDaemon");
   WAIT(grotto_panels_service_is_available(ctx->grotto) && model_label(apps, args.label));
   g_assert_true(grotto_panels_service_can(ctx->grotto, GROTTO_PANEL_SET_CLIENT_LABEL));
+  GListModel *status_model = grotto_panels_service_get_model(ctx->grotto, GROTTO_PANELS_STATUS);
+  fixture_call("StopDaemon"); WAIT(g_list_model_get_n_items(status_model) == 0);
+  fixture_call("StartWithoutKeys");
+  WAIT(g_list_model_get_n_items(status_model) > 0 && !grotto_panels_service_is_available(ctx->grotto));
+  role("manager");
+  rpc("ListIdentities", NULL, CONTROL ".Error.BackendUnavailable");
+  WAIT(text_in(GTK_WIDGET(id_panel), "Signer Unavailable"));
+  g_assert_false(text_in(GTK_WIDGET(id_panel), "No Identity Yet"));
+  g_assert_false(grotto_panels_service_can(ctx->grotto, GROTTO_PANEL_SET_CLIENT_LABEL));
+  g_assert_true(text_in(GTK_WIDGET(window), "Signer data unavailable"));
+  fixture_call("StopDaemon"); fixture_call("StartDaemon");
+  WAIT(grotto_panels_service_is_available(ctx->grotto) && g_list_model_get_n_items(identities) == 1);
   gtk_window_set_default_size(window, 360, 640);
   g_assert_true(nss_window_show_page(window, "remote-signing"));
   /* Same bytes, new inode. A still-running former manager must lose reads and labels. */
@@ -222,6 +287,18 @@ static void receiver(GDBusConnection *connection, const char *sender, const char
     else if (!strcmp(section, "review")) { g_assert_cmpstr(target, ==, "fixture-request"); saw_review = TRUE; }
     else { g_assert_cmpstr(section, ==, "target"); g_assert_cmpstr(target, ==, "app:" APP); saw_security = TRUE; }
     handoffs++;
+  } else if (!strcmp(method, "PendingId")) {
+    WAIT(approver_signals > 0);
+    g_autoptr(GVariant) reply = rpc("ListRequests", NULL, NULL);
+    g_autoptr(GVariant) rows = g_variant_get_child_value(reply, 0);
+    g_assert_cmpuint(g_variant_n_children(rows), ==, 1);
+    g_autoptr(GVariant) row = g_variant_get_child_value(rows, 0);
+    g_autofree char *dump = g_variant_print(row, FALSE); g_assert_nonnull(strstr(dump, PENDING_SENTINEL));
+    const char *id = NULL; g_assert_true(g_variant_lookup(row, "request_id", "&s", &id));
+    g_free(pending_id); pending_id = g_strdup(id);
+    g_dbus_method_invocation_return_value(inv, g_variant_new("(s)", pending_id)); return;
+  } else if (!strcmp(method, "DenyPending")) {
+    g_autoptr(GVariant) denied = rpc("DecideRequest", g_variant_new("(ss)", pending_id, "deny-once"), NULL);
   } else if (!strcmp(method, "CheckHandoffs")) {
     g_assert_cmpuint(handoffs, ==, 3); g_assert_true(saw_backup && saw_review && saw_security);
   } else if (!strcmp(method, "DropGrotto")) {
@@ -230,9 +307,13 @@ static void receiver(GDBusConnection *connection, const char *sender, const char
     g_assert_nonnull(released);
   } else if (!strcmp(method, "StopDaemon")) {
     g_subprocess_send_signal(fixture_daemon, SIGTERM); g_assert_true(g_subprocess_wait(fixture_daemon, NULL, NULL)); fixture_daemon = NULL;
-  } else if (!strcmp(method, "StartDaemon")) {
+  } else if (!strcmp(method, "StartDaemon") || !strcmp(method, "StartWithoutKeys")) {
+    gboolean without_keys = !strcmp(method, "StartWithoutKeys");
+    g_autofree char *key = g_strdup(g_getenv("NOSTR_SIGNER_SECKEY_HEX"));
+    if (without_keys) g_unsetenv("NOSTR_SIGNER_SECKEY_HEX");
     const char *argv[] = {daemon_bin, NULL};
     fixture_daemon = nostrc_test_bus_spawn_supervised(private_bus, "daemon-restart.log", NULL, argv);
+    if (key) g_setenv("NOSTR_SIGNER_SECKEY_HEX", key, TRUE);
   } else g_assert_not_reached();
   g_dbus_method_invocation_return_value(inv, NULL);
 }
@@ -304,20 +385,24 @@ int main(int argc, char **argv)
   g_autoptr(GVariant) trust = rpc("SetClientTrust", g_variant_new("(ss)", APP, "low"), NULL);
   g_autoptr(GVariant) paused = rpc("SetPaused", g_variant_new("(b)", TRUE), NULL);
   g_autoptr(GVariant) resumed = rpc("SetPaused", g_variant_new("(b)", FALSE), NULL);
-  const char *xml = "<node><interface name='org.freedesktop.Application'><method name='ActivateAction'><arg type='s' direction='in'/><arg type='av' direction='in'/><arg type='a{sv}' direction='in'/></method></interface><interface name='org.nostr.TestHost'><method name='CheckHandoffs'/><method name='DropGrotto'/><method name='StopDaemon'/><method name='StartDaemon'/></interface></node>";
+  const char *xml = "<node><interface name='org.freedesktop.Application'><method name='ActivateAction'><arg type='s' direction='in'/><arg type='av' direction='in'/><arg type='a{sv}' direction='in'/></method></interface><interface name='org.nostr.TestHost'><method name='PendingId'><arg type='s' direction='out'/></method><method name='DenyPending'/><method name='StartWithoutKeys'/><method name='CheckHandoffs'/><method name='DropGrotto'/><method name='StopDaemon'/><method name='StartDaemon'/></interface></node>";
   g_autoptr(GDBusNodeInfo) node = g_dbus_node_info_new_for_xml(xml, NULL);
   guint registrations[2];
   for (guint i = 0; i < 2; i++) registrations[i] = g_dbus_connection_register_object(bus, "/org/nostr/Grotto", node->interfaces[i], &receiver_vtable, NULL, NULL, NULL);
   g_autoptr(GVariant) own = g_dbus_connection_call_sync(bus, "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus",
     "RequestName", g_variant_new("(su)", "org.nostr.Grotto", 0u), NULL, 0, 5000, NULL, NULL); g_assert_nonnull(own);
+  guint private_watch = g_dbus_connection_signal_subscribe(bus, "org.nostr.Signer", "org.nostr.Signer",
+    "ApprovalRequested", "/org/nostr/signer", NULL, 0, private_signal, &approver_signals, NULL);
   g_setenv("W6_TEST_HOST", g_dbus_connection_get_unique_name(bus), TRUE);
   g_autoptr(GSubprocess) other = g_subprocess_new(0, NULL, untrusted, "--untrusted", NULL);
   gboolean finished = FALSE; g_subprocess_wait_check_async(other, NULL, process_done, &finished); WAIT(finished);
   g_autoptr(GSubprocess) child = g_subprocess_new(0, NULL, manager, "--manager", original, manager, NULL);
   finished = FALSE; g_subprocess_wait_check_async(child, NULL, process_done, &finished); WAIT(finished);
   g_dbus_connection_signal_unsubscribe(bus, watch);
+  g_dbus_connection_signal_unsubscribe(bus, private_watch);
   for (guint i = 0; i < 2; i++) g_dbus_connection_unregister_object(bus, registrations[i]);
   nostrc_test_bus_down(private_bus);
+  g_clear_pointer(&pending_id, g_free);
   g_autoptr(GSubprocess) cleanup = g_subprocess_new(0, NULL, "rm", "-rf", "--", home, NULL);
   g_assert_true(g_subprocess_wait_check(cleanup, NULL, NULL));
   return 0;

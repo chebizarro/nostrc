@@ -179,7 +179,7 @@ static void manager_state(GrottoPanelsService *service, gpointer data)
   gboolean manager = available && grotto_panels_service_can(service, GROTTO_PANEL_SET_CLIENT_LABEL);
   adw_banner_set_title(banner, manager ?
     "Security changes, backup and approvals open in Grotto." :
-    "Signer management unavailable. Start Grotto or install a compatible daemon and Settings host.");
+    "Signer data unavailable. Open Grotto to check the connection, permissions or key storage.");
 }
 GtkWindow *
 nss_window_new(GtkApplication *app, const gchar *page)

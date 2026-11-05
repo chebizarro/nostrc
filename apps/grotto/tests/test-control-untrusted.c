@@ -11,6 +11,17 @@ static void denied(GDBusConnection *bus, const gchar *destination, const gchar *
   g_assert_cmpstr(name, ==, IFACE ".Error.NotAuthorized");
 }
 int main(int argc, char **argv) {
+  if (argc == 4 && !strcmp(argv[1], "--label")) {
+    g_autoptr(GError) error = NULL;
+    g_autoptr(GDBusConnection) bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &error); g_assert_no_error(error);
+    g_autoptr(GVariant) status = g_dbus_connection_call_sync(bus, "org.nostr.Signer", "/org/nostr/signer/grotto", IFACE,
+      "GetStatus", NULL, G_VARIANT_TYPE("(a{sv})"), 0, 5000, NULL, &error); g_assert_no_error(error);
+    g_autoptr(GVariant) dict = g_variant_get_child_value(status, 0); const char *role = NULL;
+    g_assert_true(g_variant_lookup(dict, "management-role", "&s", &role)); g_assert_cmpstr(role, ==, "manager");
+    g_autoptr(GVariant) renamed = g_dbus_connection_call_sync(bus, "org.nostr.Signer", "/org/nostr/signer/grotto", IFACE,
+      "SetClientLabel", g_variant_new("(ss)", argv[2], argv[3]), NULL, 0, 5000, NULL, &error);
+    g_assert_no_error(error); g_assert_nonnull(renamed); return 0;
+  }
   g_assert_cmpint(argc, ==, 2); g_autoptr(GError) error = NULL;
   g_autoptr(GDBusConnection) bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &error); g_assert_no_error(error);
   g_autoptr(GVariant) owner = g_dbus_connection_call_sync(bus, "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "RequestName",

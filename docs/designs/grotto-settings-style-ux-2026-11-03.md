@@ -326,7 +326,11 @@ Data gaps the service exposes (W6 unless noted):
 **W6 implementation status:** the former gate below is replaced by fresh,
 PID/path/device/inode manager authentication for the installed Nostr Settings
 host. Managers can read status, public signing identities, clients, permissions,
-requests and activity, and change cosmetic client labels only. Both pause values,
+activity, and change cosmetic client labels only. Pending contents remain
+approver-only; managers see only coarse counts/state, never `ListRequests`,
+`GetApprovalInfo` or `ListPendingRequests` results. Cosmetic labels appear as
+secondary “called …” text in reviews/notifications, never as verified names or
+notification titles. Both pause values,
 tiers, permissions, signing, approval and custody remain refused. Caller-specific
 role/capability reporting drives the host; the existing Grotto lock is unchanged.
 Settings now mounts all four real shared panels in a sidebar shell, preserves
@@ -356,7 +360,8 @@ Implemented `signer_caller_is_manager()`: PID-attested Linux caller, exact insta
 |---|---|---|
 | `GetStatus` | Yes | Yes (coarse same-UID status remains) |
 | `SetPaused(true)` | Yes | **No** (the manager does not inherit the ordinary session pause exception) |
-| `ListClients`, `ListPermissions`, `ListActivity`, `ListRequests` | Yes | **Yes**, read-only |
+| `ListClients`, `ListPermissions`, `ListActivity` | Yes | **Yes**, read-only |
+| `ListRequests`, `GetApprovalInfo`, `ListPendingRequests` | Yes | **No**, unpublished request contents are approver-only |
 | `SetClientLabel` | Yes | **Yes**, cosmetic only; preserve verified principal and policy |
 | `SetClientTrust`, `SetPermissions`, `RevokeClient`, `ClearActivity`, `SetDefaultIdentityForLegacy`, `SetPaused(false)` | Yes | **No** in this phase: `open_in_signer` |
 | `ListIdentities` public snapshot | Yes | **Yes**, signing npubs/default; unavailable local metadata stays explicitly unknown |
@@ -385,7 +390,9 @@ Disposable executable-role fixtures test all current forbidden Control1 methods,
 actual identity/app rows, label-change signals, public activation targets, daemon
 loss/restart, arbitrary same-UID/name-owner rejection and inode replacement. Only
 the desktop activation receiver is captured. Missing bus/display/role support
-fails visibly. Execution results belong in bead `nostrc-u6v55.23.6`; a saved plan
+fails visibly. Manager inventory/model read failure keeps the host unavailable
+until that read succeeds; a successful status reply does not imply an empty,
+healthy inventory. Execution results belong in bead `nostrc-u6v55.23.6`; a saved plan
 or test implementation alone is not a passing execution or VM acceptance.
 
 ## d. Blueprint sketches and dispositions

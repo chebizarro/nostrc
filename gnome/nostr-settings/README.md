@@ -22,13 +22,19 @@ The RPM Settings package explicitly depends on that runtime.
 `nss_window_new` mounts the real Identity, Connected Apps, Activity and Remote
 Signing widgets through one long-lived injected Control1 service. The manager
 role is Linux PID/path/device/inode authenticated; a bus name or claimed app ID
-is not authority. It permits public management reads and **client labels only**,
+is not authority. Pending request contents are approver-only (`ListRequests`,
+`GetApprovalInfo` and `ListPendingRequests` are refused); the manager can see
+pending counts/state only. It permits public management reads and **client labels only**,
 not tiers, permissions, pause/resume, approvals, signing, imports or exports.
 Security edits, backup, profile work and review use **Open in Grotto**. Activation
 passes public navigation targets only; Grotto refetches state and the user makes
 the change there. No management lock redesign or Settings unlock is implied.
 Missing daemon/authorization/version support produces an unavailable/read-only
-state, not fabricated identities or a local permissive fallback. Missing Grotto
+state, not fabricated identities or a local permissive fallback. An inventory
+or model-read failure remains a data-unavailable error until the read recovers,
+never “No Identity Yet” merely because GetStatus still succeeds. Cosmetic
+labels appear only as secondary “called …” text in Grotto reviews and notification
+bodies, never as verified identities or notification titles. Missing Grotto
 activation reports a toast. Daemon loss clears models/capabilities; restart
 resubscribes before snapshots. Setup/backup state and identity app counts that
 are unavailable in Control1 are explicitly unknown. GUI-private local labels,
@@ -54,9 +60,11 @@ CMake: configure the root with `-DENABLE_NOSTR_SETTINGS=ON -DBUILD_APPS=ON
 `ctest --test-dir <build> -R '^nostr-settings/panel-mount$' --output-on-failure`.
 It uses the real window and daemon on `nostrc_test_bus_up`, disposable trusted
 executable copies, Xvfb and an environment fixture identity. All non-manager
-Control1 methods are tested for `NotAuthorized`, including both pause values;
+Control1 methods are tested for `NotAuthorized`, including both pause values
+and pending-content reads against a real sentinel-bearing pending request;
 it verifies real identity/app rows, label signals, exact handoff targets,
-untrusted-name rejection, daemon loss/restart and inode replacement. Only the
+untrusted-name rejection, daemon loss/restart, real inventory failure/recovery
+and inode replacement. Only the
 Grotto desktop activation receiver is a capture fixture, not the signer or
 panels. Missing required bus/display/role support fails this selected test.
 

@@ -70,8 +70,20 @@ Linux bus PID, same UID, EXE or systemd-scope principal and the exact installed
 executable, Flatpak/Snap shapes and UID-only buses do not grant this role.
 
 Managers can call **only** `GetStatus`, `ListIdentities`, `ListClients`,
-`ListPermissions`, `ListRequests`, `ListActivity` and `SetClientLabel`.
+`ListPermissions`, `ListActivity` and `SetClientLabel`.
+Pending request contents remain approver-only: managers cannot call `ListRequests`,
+`GetApprovalInfo` or `ListPendingRequests`. `GetStatus.pending_count` and coarse
+state are the manager's only pending-work view. The legacy content-bearing
+`ApprovalRequested` signal is unicast to the freshly authenticated unique owner
+of the configured approval-UI name; it is not broadcast to managers or other
+same-UID subscribers. Other authorized approver connections use their protected
+snapshot/read APIs rather than relying on public content signals.
 The label is cosmetic; it cannot replace the verified principal, tier or grants.
+Reviews use the verified app identity as their headline and show a label only
+as secondary “called …” text. Single-request notification titles never use
+client labels; the optional label is qualified in the body. Claimed app names
+and remote transport-key evidence remain explicitly distinct from verified
+local app identity.
 All other Control1 methods are denied before argument handling or backend work,
 including approval/decisions, all exports/imports, signing, both pause values,
 tier/default/permission changes, revocation, activity clearing and remote pairing
@@ -127,7 +139,7 @@ are rejected by GDBus using the canonical XML before dispatch.
 | Method | Input → output | Current behavior |
 |---|---|---|
 | `GetStatus` | `() → a{sv}` | Coarse version, capabilities, runtime and store health |
-| `ListRequests` | `() → aa{sv}` | Full pending snapshots from the shared approval service |
+| `ListRequests` | `() → aa{sv}` | **Approver-only** full pending snapshots; managers receive `NotAuthorized` even when requests exist |
 | `ListIdentities` | `() → aa{sv}` | Approver/manager-readable canonical signing npubs, `can-sign`, `watch-only`, `is-default` and `state`; worker-backed daemon inventory, no key material. Backend failure is visible. Setup/backup state is `unknown`: GUI-private labels/watch-only metadata and recovery acknowledgement are not fabricated or read from accounts.ini by Settings. |
 | `ListClients` | `() → aa{sv}` | Durable consent/permission clients, trust tier, pairing/relays, permission count and needs-review flag |
 | `DecideRequest` | `(request_id:s, mode:s) → ok:b` | One approver-only decision; modes below |

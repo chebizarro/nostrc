@@ -627,6 +627,18 @@ static gchar *caller_description(GVariant *info, const gchar *name) {
         *field(info, "app_id") ? field(info, "app_id") : _("Origin not supplied"));
   return g_strdup(local ? _("Verified local app") : _("Verified caller · transport not identified"));
 }
+void gnostr_approval_dialog_set_client_label(GnostrApprovalDialog *self, const char *label) {
+  if (!self->info) return;
+  g_autofree gchar *label_copy = g_strdup(label);
+  label = label_copy;
+  GVariantDict display; g_variant_dict_init(&display, self->info);
+  g_variant_dict_insert(&display, "client_label", "s", label ? label : "");
+  GVariant *updated = g_variant_ref_sink(g_variant_dict_end(&display));
+  g_clear_pointer(&self->info, g_variant_unref); self->info = updated;
+  g_autofree gchar *caller = caller_description(self->info, self->app_name);
+  g_autofree gchar *secondary = label && *label ? g_strdup_printf(_("%s · called “%s”"), caller, label) : NULL;
+  gtk_label_set_text(self->label_verified, secondary ? secondary : caller);
+}
 void gnostr_approval_dialog_set_info(GnostrApprovalDialog *self, GVariant *info, const char *name) {
   g_clear_pointer(&self->info, g_variant_unref);
   self->info = g_variant_ref(info);
@@ -647,8 +659,7 @@ void gnostr_approval_dialog_set_info(GnostrApprovalDialog *self, GVariant *info,
       : g_strdup(self->identity);
   g_autofree gchar *identity_display = g_strdup_printf("%s\n%s", identity_label, short_key);
   if (*self->identity) adw_action_row_set_subtitle(self->row_identity, identity_display);
-  g_autofree gchar *caller = caller_description(info, name);
-  gtk_label_set_text(self->label_verified, caller);
+  gnostr_approval_dialog_set_client_label(self, field(info, "client_label"));
   guint32 remaining = 0;
   g_variant_lookup(info, "remaining_seconds", "u", &remaining);
   g_autofree gchar *expiry = g_strdup_printf(_("Expires in at most %u seconds"), remaining);
