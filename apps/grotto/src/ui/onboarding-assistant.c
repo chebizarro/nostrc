@@ -42,6 +42,7 @@ struct _OnboardingAssistant {
   gboolean backup_presented, imported, import_was_phrase, import_was_encrypted;
   GCancellable *cancel;
   gchar *identity, *mnemonic, *nsec;
+  const gchar *requested_page;
   GrottoSecretClipboardLease *clipboard_lease;
   OnboardingAssistantFinishedCb on_finished;
   gpointer on_finished_data;
@@ -128,16 +129,19 @@ static void finish(OnboardingAssistant *self, gboolean verified) {
      * Maintenance remains available on this exact identity, never a default. */
     if (parent) page_identity_detail_present_identity(GTK_WIDGET(parent), self->identity);
   }
-  if (self->identity_stored && self->self_test_passed) {
+  if (self->requested_page || (self->identity_stored && self->self_test_passed)) {
     GtkWindow *parent = gtk_window_get_transient_for(GTK_WINDOW(self));
     GtkApplication *app = gtk_window_get_application(GTK_WINDOW(self));
     if (!SIGNER_IS_WINDOW(parent) && app) {
       for (GList *it = gtk_application_get_windows(app); it; it = it->next)
         if (SIGNER_IS_WINDOW(it->data)) { parent = it->data; break; }
     }
-    /* Show the imported identity, not an unrelated existing default. Mapping
-     * its profile starts the host's discovery-only bootstrap/outbox flow. */
-    if (SIGNER_IS_WINDOW(parent)) signer_window_show_identity(SIGNER_WINDOW(parent), self->identity);
+    /* Completion may have just created the first-run management window. */
+    if (SIGNER_IS_WINDOW(parent)) {
+      if (self->requested_page) signer_window_show_page(SIGNER_WINDOW(parent), self->requested_page);
+      /* Keep successful setup scoped to its identity, never an unrelated default. */
+      else signer_window_show_identity(SIGNER_WINDOW(parent), self->identity);
+    }
   }
   gtk_window_close(GTK_WINDOW(self));
 }
@@ -328,11 +332,9 @@ static void next(GtkButton *button, gpointer data) {
     case ONBOARDING_CHOICE: break; /* The choice rows navigate directly. */
     case ONBOARDING_CREATE: create_identity(self); break;
     case ONBOARDING_IMPORT: import_identity(self); break;
-    case ONBOARDING_CONNECT: {
-      GtkWindow *parent = gtk_window_get_transient_for(GTK_WINDOW(self));
-      if (SIGNER_IS_WINDOW(parent)) signer_window_show_page(SIGNER_WINDOW(parent), "apps");
+    case ONBOARDING_CONNECT:
+      self->requested_page = "apps";
       finish(self, FALSE); break;
-    }
     case ONBOARDING_BACKUP:
       if (!self->backup_presented || !gtk_check_button_get_active(self->seed_written_down)) return;
       if (!accounts_store_set_setup_state(accounts_store_get_default(), self->identity, "ready", NULL)) {

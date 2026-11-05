@@ -106,6 +106,7 @@ template $OnboardingAssistant: Adw.Window {
             Adw.PreferencesGroup { Box seed_words { orientation: vertical; styles ["monospace"] } }
             Adw.PreferencesGroup {
               CheckButton seed_written_down {
+                accessibility { label: _("I have safely backed up my identity"); }
                 child: Label { label: _("I have safely backed up my identity"); wrap: true; xalign: 0; };
               }
             }

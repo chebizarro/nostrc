@@ -938,12 +938,67 @@ static void remaining_surfaces(void) {
     WAIT(onboarding_assistant_get_state(setup) == ONBOARDING_BACKUP);
     WAIT(gtk_widget_get_first_child(setup_child(setup, "seed_words")) != NULL);
     setup_snapshot(setup, "backup", rtl);
-    gtk_check_button_set_active(GTK_CHECK_BUTTON(setup_child(setup, "seed_written_down")), TRUE);
+    GtkCheckButton *acknowledgement = GTK_CHECK_BUTTON(setup_child(setup, "seed_written_down"));
+    GtkWidget *acknowledgement_label = gtk_check_button_get_child(acknowledgement);
+    g_assert_true(GTK_IS_LABEL(acknowledgement_label));
+    const char *acknowledgement_text = gtk_label_get_text(GTK_LABEL(acknowledgement_label));
+    g_assert_nonnull(acknowledgement_text); g_assert_cmpstr(acknowledgement_text, !=, "");
+    if (!g_strcmp0(g_getenv("GTK_A11Y"), "test"))
+      gtk_test_accessible_assert_property(GTK_ACCESSIBLE(acknowledgement), GTK_ACCESSIBLE_PROPERTY_LABEL, acknowledgement_text);
+    gtk_check_button_set_active(acknowledgement, TRUE);
     g_signal_emit_by_name(setup_child(setup, "btn_next"), "clicked");
     g_assert_cmpint(onboarding_assistant_get_state(setup), ==, ONBOARDING_READY); setup_snapshot(setup, "ready", rtl);
     gtk_window_destroy(GTK_WINDOW(setup)); g_object_unref(setup);
     gtk_widget_set_default_direction(GTK_TEXT_DIR_LTR);
   }
+}
+typedef struct {
+  AdwApplication *app;
+  SignerWindow *window;
+  guint completions;
+} FirstRunConnect;
+static void first_run_connect_finished(gboolean verified, gpointer data) {
+  FirstRunConnect *first = data;
+  g_assert_false(verified); first->completions++;
+  /* Match first-run production: create management only after setup completes. */
+  first->window = signer_window_new(first->app); g_object_ref(first->window);
+  AdwNavigationSplitView *split = ADW_NAVIGATION_SPLIT_VIEW(gtk_widget_get_template_child(
+      GTK_WIDGET(first->window), TYPE_SIGNER_WINDOW, "split_view"));
+  g_assert_true(GROTTO_IS_IDENTITY_PANEL(selected_panel(split)));
+  gtk_window_present(GTK_WINDOW(first->window));
+}
+static void first_run_connect_activate(GApplication *application, gpointer data) {
+  (void)data;
+  FirstRunConnect first = {.app = ADW_APPLICATION(application)};
+  OnboardingAssistant *setup = onboarding_assistant_new(); g_object_ref_sink(setup);
+  gtk_window_set_application(GTK_WINDOW(setup), GTK_APPLICATION(application));
+  g_assert_null(gtk_window_get_transient_for(GTK_WINDOW(setup)));
+  onboarding_assistant_set_on_finished(setup, first_run_connect_finished, &first);
+  gtk_window_present(GTK_WINDOW(setup));
+  WAIT(gtk_widget_is_sensitive(setup_child(setup, "btn_next")));
+  g_signal_emit_by_name(setup_child(setup, "btn_next"), "clicked");
+  g_signal_emit_by_name(setup_child(setup, "choose_connect"), "activated");
+  g_assert_cmpint(onboarding_assistant_get_state(setup), ==, ONBOARDING_CONNECT);
+  g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(setup_child(setup, "btn_next"))), ==, _("Open Connected Apps"));
+  g_signal_emit_by_name(setup_child(setup, "btn_next"), "clicked");
+  g_assert_cmpuint(first.completions, ==, 1); g_assert_nonnull(first.window);
+  AdwNavigationSplitView *split = ADW_NAVIGATION_SPLIT_VIEW(gtk_widget_get_template_child(
+      GTK_WIDGET(first.window), TYPE_SIGNER_WINDOW, "split_view"));
+  g_assert_true(GROTTO_IS_APPS_PANEL(selected_panel(split)));
+  g_assert_false(onboarding_assistant_identity_stored(setup)); g_assert_null(layout_self_test);
+  guint windows_gone = 0; g_object_weak_ref(G_OBJECT(first.window), finalised, &windows_gone);
+  gtk_window_destroy(GTK_WINDOW(first.window)); g_object_unref(first.window);
+  gtk_window_destroy(GTK_WINDOW(setup)); g_object_unref(setup);
+  WAIT(windows_gone == 1);
+  g_application_quit(application);
+}
+static void first_run_connect_destination(void) {
+  guint apps_gone = 0;
+  g_autoptr(AdwApplication) app = adw_application_new("org.nostr.Grotto.FirstRunConnectTest", G_APPLICATION_NON_UNIQUE);
+  g_object_weak_ref(G_OBJECT(app), finalised, &apps_gone);
+  g_signal_connect(app, "activate", G_CALLBACK(first_run_connect_activate), NULL);
+  g_assert_cmpint(g_application_run(G_APPLICATION(app), 0, NULL), ==, 0);
+  g_clear_object(&app); WAIT(apps_gone == 1);
 }
 static void layout(void) {
   guint apps_gone = 0;
@@ -974,6 +1029,7 @@ int main(int argc, char **argv) {
     g_assert_cmpstr(P_("Allow"), ==, "Permitir");
     g_assert_cmpstr(g_dgettext("grotto-panels", "Copy Public Key"), ==, "Copiar clave pública");
     g_assert_cmpstr(_("Show Recovery Phrase…"), ==, "Mostrar frase de recuperación…");
+    g_assert_cmpstr(_("Show QR Code"), ==, "Mostrar código QR");
   }
   g_object_set(gtk_settings_get_default(), "gtk-enable-animations", FALSE, NULL);
   gn_backup_get_npub("0000000000000000000000000000000000000000000000000000000000000001", &npub, NULL);
@@ -996,7 +1052,8 @@ int main(int argc, char **argv) {
   guint inventory = g_dbus_connection_register_object(server, "/org/nostr/signer", identity->interfaces[0], &vtable, NULL, NULL, NULL);
   g_autoptr(GVariant) name = g_dbus_connection_call_sync(server, "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "RequestName", g_variant_new("(su)", "org.nostr.Signer", 0u), NULL, 0, 5000, NULL, NULL); g_assert_nonnull(name);
   g_test_add_func("/signer/layout/real-templates-navigation-focus-screenshots", layout);
-  g_test_add_func("/signer/layout/remaining-surfaces", remaining_surfaces); int result = g_test_run();
+  g_test_add_func("/signer/layout/remaining-surfaces", remaining_surfaces);
+  g_test_add_func("/signer/layout/first-run-connect-destination", first_run_connect_destination); int result = g_test_run();
   bunker_test_relay_free(profile_relay);
   accounts_store_free(accounts_store_get_default()); settings_manager_free(settings_manager_get_default());
   g_dbus_connection_unregister_object(server, registration); g_dbus_connection_unregister_object(server, inventory); nostrc_test_bus_down(bus); g_variant_unref(permission_rows); g_free(npub); return result;

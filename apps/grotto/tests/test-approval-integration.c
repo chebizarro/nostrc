@@ -351,7 +351,7 @@ static void onboarding_review(GrottoApprovalController *controller, GApplication
   wait_frames(group);
   GPtrArray *rows = g_object_get_data(G_OBJECT(group), "rows");
   g_assert_cmpuint(rows->len, ==, 1);
-  g_assert_cmpstr(adw_preferences_row_get_title(rows->pdata[0]), ==, "Grotto · Verify stored identity");
+  g_assert_cmpstr(adw_preferences_row_get_title(rows->pdata[0]), ==, "Grotto · Check identity");
   g_signal_emit_by_name(rows->pdata[0], "activated");
   dialog = adw_window_get_visible_dialog(ADW_WINDOW(assistant));
   g_assert_true(GNOSTR_IS_APPROVAL_DIALOG(dialog));

@@ -315,6 +315,9 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                           <object class="AdwPreferencesGroup">
                             <child>
                               <object class="GtkCheckButton" id="seed_written_down">
+                                <accessibility>
+                                  <property name="label" translatable="yes">I have safely backed up my identity</property>
+                                </accessibility>
                                 <property name="child">
                                   <object class="GtkLabel">
                                     <property name="label" translatable="yes">I have safely backed up my identity</property>

@@ -2981,7 +2981,7 @@ msgstr "Guardar copia…"
 
 #: src/ui/page-identity-detail.c:327
 msgid "Show QR Code"
-msgstr ""
+msgstr "Mostrar código QR"
 
 #: src/ui/page-identity-detail.c:332
 msgid "I saved this backup and its passphrase"
