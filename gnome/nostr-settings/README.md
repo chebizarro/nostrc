@@ -39,6 +39,14 @@ The existing service pages are preferences-page wrappers, mounted on demand.
 `--page`, `last-page`, window state, screenshot mode, and panel-local search are
 retained; the split shell does not claim universal preferences search.
 
+The focused affected route is
+`scripts/test-gate.sh --base "$BASE" --head "$HEAD_SHA" --profile grotto.settings.host.linux`
+(add `--explain` for a plan only). It includes the real host, Control1
+clients/activity compatibility, Grotto approval/navigation integration and panel
+boundary/smoke suites. This explicit projection does not claim unrestricted
+repository or release coverage; the pre-existing full-Settings coverage gap
+remains visible in the unfiltered plan.
+
 CMake: configure the root with `-DENABLE_NOSTR_SETTINGS=ON -DBUILD_APPS=ON
 -DBUILD_SIGNER_TESTS=ON -DBUILD_TESTING=ON -DNIP55L_TEST_TRUST_ENV=ON`, then build
 `nostr-settings grotto test-nostr-settings-panel-mount`. Run

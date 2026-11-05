@@ -1,4 +1,5 @@
-# nostr-settings tests: no display, no network, no real signer/systemd.
+# Core suites below: no display/network/real signer/systemd.
+# The separate panel-mount integration test uses real GTK and a real daemon.
 # D-Bus peers (systemd Manager, SessionRelay1, Wallet1) are mocks on a
 # private GTestDBus bus; relays are libnostr-publish fixture transports.
 
