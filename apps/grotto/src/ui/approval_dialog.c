@@ -2,6 +2,10 @@
 #include "approval_dialog.h"
 #include "nostr-kinds.h"
 #include <string.h>
+#include <json-glib/json-glib.h>
+#include <nostr-event.h>
+#include <json.h>
+#include <nostr/nip19/nip19.h>
 
 struct _GnostrApprovalDialog {
   AdwDialog parent_instance;
@@ -234,6 +238,11 @@ static void permission_changed(GObject *object, GParamSpec *pspec, gpointer data
   if (!strcmp(field(self->info, "operation"), "self_test")) {
     g_free(scope);
     scope = g_strdup(_("This identity test only. Nothing is published and no app permission is stored"));
+  }
+  if (!strcmp(field(self->info, "transport"), "MANAGEMENT") && !strcmp(field(self->info, "purpose"), "profile-management")) {
+    guint32 kind = 0; g_variant_lookup(self->info, "event_kind", "u", &kind);
+    commit = kind == NOSTR_KIND_PROFILE_METADATA ? _("_Publish Profile") : kind == NOSTR_KIND_BLOBS ? _("_Authorize Upload") : _("_Sign In");
+    g_free(scope); scope = g_strdup_printf(_("This exact request only, as %s. No permission is saved. Destinations:\n%s"), identity, field(self->info, "reason"));
   }
   gtk_button_set_label(self->btn_approve, commit);
   if (!strcmp(mode, "discard-saved"))
@@ -505,8 +514,58 @@ void gnostr_approval_dialog_set_position(GnostrApprovalDialog *self, guint posit
   gtk_widget_set_sensitive(GTK_WIDGET(self->btn_previous), position > 1);
   gtk_widget_set_sensitive(GTK_WIDGET(self->btn_next), position < count);
 }
+static gboolean profile_management(GVariant *info) {
+  return !strcmp(field(info, "operation"), "sign_event") && !strcmp(field(info, "transport"), "MANAGEMENT") && !strcmp(field(info, "purpose"), "profile-management");
+}
+static JsonNode *management_event(GVariant *info) {
+  g_autoptr(GVariant) summary = g_variant_lookup_value(info, "event_summary", G_VARIANT_TYPE_VARDICT);
+  const char *raw = field(summary, "management_event_json"); guint32 kind = G_MAXUINT;
+  g_variant_lookup(info, "event_kind", "u", &kind);
+  if (!*raw || strlen(raw) > 32768 || !*field(info, "reason")) return NULL;
+  NostrEvent *event = nostr_event_new(); guint8 pk[32] = {0}; char hex[65];
+  gboolean valid = !nostr_nip19_decode_npub(field(info, "identity"), pk) && !nostr_event_deserialize(event, raw);
+  for (guint i = 0; i < 32; i++) g_snprintf(hex + 2*i, 3, "%02x", pk[i]);
+  valid = valid && (guint)nostr_event_get_kind(event) == kind && !g_strcmp0(hex, nostr_event_get_pubkey(event));
+  if (valid && kind == NOSTR_KIND_PROFILE_METADATA) {
+    g_autoptr(JsonNode) content = json_from_string(nostr_event_get_content(event), NULL);
+    valid = content && JSON_NODE_HOLDS_OBJECT(content) && !nostr_tags_size(nostr_event_get_tags(event));
+  }
+  nostr_event_free(event);
+  return valid ? json_from_string(raw, NULL) : NULL;
+}
+static char *management_preview(JsonNode *event, guint kind) {
+  JsonObject *object = json_node_get_object(event);
+  if (kind == NOSTR_KIND_PROFILE_METADATA) {
+    g_autoptr(JsonNode) content = json_from_string(json_object_get_string_member(object, "content"), NULL);
+    GString *text = g_string_new(_("Complete public profile fields:\n"));
+    GList *members = json_object_get_members(json_node_get_object(content));
+    for (GList *m = members; m; m = m->next) {
+      g_autofree char *value = json_to_string(json_object_get_member(json_node_get_object(content), m->data), FALSE);
+      g_string_append_printf(text, "%s: %s\n", (char *)m->data, value);
+    }
+    g_list_free(members); return g_string_free(text, FALSE);
+  }
+  GString *text = g_string_new(kind == NOSTR_KIND_BLOBS ? _("Public image upload authorization\n") : _("Relay sign-in authorization\n"));
+  JsonArray *tags = json_object_get_array_member(object, "tags"); gboolean server_scoped = FALSE;
+  for (guint i = 0; tags && i < json_array_get_length(tags); i++) {
+    JsonArray *tag = json_array_get_array_element(tags, i);
+    if (!tag || json_array_get_length(tag) < 2) continue;
+    const char *name = json_array_get_string_element(tag, 0), *value = json_array_get_string_element(tag, 1);
+    if (!strcmp(name, "server")) server_scoped = TRUE;
+    const char *label = !strcmp(name, "t") ? _("Action") : !strcmp(name, "x") ? _("Blob SHA-256") : !strcmp(name, "expiration") ? _("Expiry (Unix seconds)") : !strcmp(name, "relay") ? _("Relay") : !strcmp(name, "challenge") ? _("Challenge") : !strcmp(name, "server") ? _("Server restriction") : name;
+    g_string_append_printf(text, "%s: %s\n", label, value);
+    if (!strcmp(name, "expiration")) {
+      g_autoptr(GDateTime) time = g_date_time_new_from_unix_utc(g_ascii_strtoll(value, NULL, 10));
+      g_autofree char *expiry = time ? g_date_time_format_iso8601(time) : NULL;
+      if (expiry) g_string_append_printf(text, _("Expires (UTC): %s\n"), expiry);
+    }
+  }
+  if (kind == NOSTR_KIND_BLOBS && !server_scoped) g_string_append(text, _("No server restriction in this token: it authorizes this exact blob hash at any Blossom server until expiry. Grotto will try only the listed servers, in order."));
+  return g_string_free(text, FALSE);
+}
 gboolean gnostr_approval_info_can_approve(GVariant *info) {
   const char *op = field(info, "operation");
+  if (profile_management(info)) { g_autoptr(JsonNode) event = management_event(info); if (!event) return FALSE; }
   if (!strcmp(op, "connect")) {
     const gchar *principal = field(info, "principal");
     if (!*field(info, "identity") || !g_str_has_prefix(principal, "nip46:") || strlen(principal) != 70) return FALSE;
@@ -641,6 +700,7 @@ void gnostr_approval_dialog_set_info(GnostrApprovalDialog *self, GVariant *info,
   const char *peer = field(summary, "peer");
   g_free(self->relay);
   self->relay = g_strdup(kind == NOSTR_KIND_CLIENT_AUTHENTICATION ? field(summary, "auth_relay") : "");
+  adw_preferences_row_set_title(ADW_PREFERENCES_ROW(self->row_relay), _("Relay"));
   adw_action_row_set_subtitle(self->row_relay, self->relay);
   gtk_widget_set_visible(GTK_WIDGET(self->row_relay), *self->relay != '\0');
   g_free(self->action_text);
@@ -831,6 +891,16 @@ void gnostr_approval_dialog_set_info(GnostrApprovalDialog *self, GVariant *info,
                               permissions, relays);
     impact = _("Pairing admits this application. It grants no signing permissions.");
   }
+  g_autoptr(JsonNode) management = profile_management(info) ? management_event(info) : NULL;
+  if (management) {
+    g_free(preview); preview = management_preview(management, kind);
+    adw_preferences_row_set_title(ADW_PREFERENCES_ROW(self->row_relay), kind == NOSTR_KIND_BLOBS ? _("Upload Servers") : _("Relays"));
+    adw_action_row_set_subtitle(self->row_relay, field(info, "reason"));
+    gtk_widget_set_visible(GTK_WIDGET(self->row_relay), TRUE);
+    impact = kind == NOSTR_KIND_PROFILE_METADATA ? _("Approval signs this exact profile event and allows Grotto to publish it to the relays listed above. Public copies may remain even if you stop later.") :
+      kind == NOSTR_KIND_BLOBS ? _("Approval signs the authorization shown here. Grotto then uploads the original image to the listed servers. It becomes public immediately, independently of profile Save.") :
+      _("Approval signs this relay challenge. Grotto sends AUTH to the relay shown above. This is not permission to publish a profile or save reusable access.");
+  }
   if (preview)
     gtk_label_set_text(self->content_preview, preview);
   if (!gnostr_approval_info_can_approve(info)) {
@@ -849,6 +919,15 @@ void gnostr_approval_dialog_set_info(GnostrApprovalDialog *self, GVariant *info,
       g_strdup_printf(_("%s\nPrincipal: %s\nTransport: %s\nClaimed name (unverified): %s\nSigning identity: %s\nPeer fingerprint: %s"),
                       self_test ? _("Grotto identity self-test") : verified ? _("Verified caller") : _("Unverified app"), field(info, "principal"),
                       field(info, "transport"), field(info, "claimed_app_id"), self->identity, peer);
+  if (management) {
+    g_autofree char *raw = g_strdup(field(summary, "management_event_json"));
+    g_autofree char *profile = NULL;
+    if (kind == NOSTR_KIND_PROFILE_METADATA) {
+      profile = g_strdup(json_object_get_string_member(json_node_get_object(management), "content"));
+    }
+    char *full = g_strdup_printf("%s\n\n%s%s\n\n%s\n%s", details, profile ? _("Exact profile JSON:\n") : "", profile ? profile : "", _("Exact unsigned event JSON:"), raw);
+    g_free(details); details = full;
+  }
   gtk_label_set_text(self->label_details, details);
   gtk_widget_set_visible(GTK_WIDGET(self->loading), (review || drift) && !permissions);
   gtk_widget_set_sensitive(GTK_WIDGET(self->btn_approve), self->ready);

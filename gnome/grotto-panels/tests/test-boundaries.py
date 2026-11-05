@@ -36,7 +36,7 @@ schemas = {
         'trust': 'const char *', 'permissions': 'const GrottoPanelPermission *', 'n_permissions': 'gsize',
         'expected_revision': 'guint64', 'expected_generation': 'guint64', 'remote_enabled': 'gboolean', 'relays': 'const char *const *', 'methods': 'const char *const *'},
     '_GrottoProfileInfo': {'fields': 'char *[9]', 'images': 'GdkTexture *[2]',
-        'created_at': 'guint64', 'published': 'gboolean', 'cached': 'gboolean'},
+        'created_at': 'guint64', 'published': 'gboolean', 'cached': 'gboolean', 'tor_blocked': 'gboolean'},
     '_GrottoPanelsHost': {'show_toast': 'void (*)(gpointer, const char *)', 'review_request': 'void (*)(gpointer, const char *)',
         'add_identity': 'void (*)(gpointer)', 'add_app': 'void (*)(gpointer)', 'open_backup': 'void (*)(gpointer, const char *)',
         'remove_identity': 'void (*)(gpointer, const char *)', 'replace_identity': 'void (*)(gpointer, const char *)',
@@ -71,7 +71,7 @@ def check_schema(header):
         'TOAST', 'REVIEW', 'ADD_IDENTITY', 'ADD_APP', 'BACKUP', 'REMOVE', 'REPLACE', 'OPEN_SIGNER', 'N_ACTIONS')]
     assert enums['_GrottoProfileField'] == ['GROTTO_PROFILE_' + name for name in (
         'NAME', 'DISPLAY_NAME', 'ABOUT', 'PICTURE', 'BANNER', 'NIP05', 'LUD16', 'LUD06', 'WEBSITE', 'N_FIELDS')]
-    assert enums['_GrottoProfileAction'] == ['GROTTO_PROFILE_' + name for name in ('FETCH', 'SAVE', 'CHOOSE_AVATAR', 'CHOOSE_BANNER')]
+    assert enums['_GrottoProfileAction'] == ['GROTTO_PROFILE_' + name for name in ('FETCH', 'SAVE', 'CHOOSE_AVATAR', 'CHOOSE_BANNER', 'LOAD_IMAGES')]
     for name, expected in schemas.items():
         fields = {f['name']: f['type']['qualType'] for f in records[name]['inner'] if f['kind'] == 'FieldDecl'}
         assert fields == expected, f'complete compiler schema mismatch: {name}: {fields}'
@@ -181,7 +181,7 @@ imports.update('''adw_avatar_set_custom_image gtk_picture_get_type gtk_picture_n
  gtk_widget_get_mapped gtk_widget_set_focusable adw_dialog_set_can_close adw_dialog_force_close
  __memset_chk g_error_matches gdk_paintable_get_type gdk_texture_get_type gtk_text_buffer_get_bounds gtk_text_buffer_get_text
  gtk_text_buffer_set_text gtk_text_view_get_buffer gtk_text_view_get_type gtk_text_view_new gtk_text_view_set_wrap_mode
- adw_entry_row_add_suffix adw_header_bar_get_type adw_header_bar_pack_end g_task_return_pointer'''.split())
+ adw_entry_row_add_suffix adw_header_bar_get_type adw_header_bar_pack_end adw_header_bar_pack_start g_task_return_pointer'''.split())
 
 def check_symbols(path):
     output = subprocess.check_output(['nm', '-g', str(path)] if sys.platform == 'darwin' else ['nm', '-D', str(path)], text=True)

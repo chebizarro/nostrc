@@ -19,6 +19,7 @@
 #include <nostr-utils.h>
 #include <nostr-event.h>
 #include <json.h>
+#include <json-glib/json-glib.h>
 #include <nostr-kinds.h>
 #include <nostr/nip55l/error.h>
 #include <nostr/crypto/bip39.h>
@@ -828,7 +829,8 @@ static void method_call(GDBusConnection *bus, const gchar *sender, const gchar *
     if (c->export_busy) { g_dbus_method_invocation_return_dbus_error(inv, GROTTO_CONTROL_ERROR "Busy", "Key management is busy"); return; }
     start_store(c, inv, input, label, NULL, format, passphrase); return;
   } else if (!strcmp(method, "SignProfileEvent")) {
-    const gchar *identity, *json; g_variant_get(args, "(&s&s)", &identity, &json);
+    const gchar *identity, *json; g_auto(GStrv) destinations = NULL;
+    g_variant_get(args, "(&s&s^as)", &identity, &json, &destinations);
     guint8 pk[32] = {0};
     NostrEvent *event = nostr_event_new();
     gboolean valid = strlen(json) <= 32768 && nostr_nip19_decode_npub(identity, pk) == 0 &&
@@ -837,13 +839,48 @@ static void method_call(GDBusConnection *bus, const gchar *sender, const gchar *
     char hex[65] = {0}; for (guint i = 0; i < 32; i++) g_snprintf(hex + 2 * i, 3, "%02x", pk[i]);
     valid = valid && !g_strcmp0(nostr_event_get_pubkey(event), hex) &&
         (kind == NOSTR_KIND_PROFILE_METADATA || kind == NOSTR_KIND_BLOBS || kind == NOSTR_KIND_CLIENT_AUTHENTICATION);
+    if (valid && kind == NOSTR_KIND_PROFILE_METADATA) {
+      g_autoptr(JsonParser) content = json_parser_new();
+      valid = nostr_tags_size(nostr_event_get_tags(event)) == 0 &&
+        json_parser_load_from_data(content, nostr_event_get_content(event), -1, NULL) && JSON_NODE_HOLDS_OBJECT(json_parser_get_root(content));
+    }
+    if (valid && kind == NOSTR_KIND_BLOBS) {
+      guint actions = 0, hashes = 0, expiries = 0;
+      NostrTags *tags = nostr_event_get_tags(event);
+      for (guint i = 0; i < nostr_tags_size(tags); i++) {
+        NostrTag *tag = nostr_tags_get(tags, i); const char *name = nostr_tag_get_key(tag), *value = nostr_tag_get_value(tag);
+        if (!g_strcmp0(name, "t")) { actions++; valid = valid && !g_strcmp0(value, "upload"); }
+        if (!g_strcmp0(name, "x")) { hashes++; valid = valid && value && strlen(value) == 64; for (const char *p = value; valid && *p; p++) valid = g_ascii_isxdigit(*p); }
+        if (!g_strcmp0(name, "expiration")) { expiries++; guint64 expiry = 0, now = g_get_real_time() / G_USEC_PER_SEC; valid = valid && value && g_ascii_string_to_unsigned(value, 10, now, now + 600, &expiry, NULL); }
+      }
+      valid = valid && actions == 1 && hashes == 1 && expiries == 1;
+    }
+    if (valid && kind == NOSTR_KIND_CLIENT_AUTHENTICATION) {
+      guint relays = 0; NostrTags *tags = nostr_event_get_tags(event);
+      valid = destinations && g_strv_length(destinations) == 1;
+      for (guint i = 0; valid && i < nostr_tags_size(tags); i++) {
+        NostrTag *tag = nostr_tags_get(tags, i);
+        if (!g_strcmp0(nostr_tag_get_key(tag), "relay")) { relays++; valid = !g_strcmp0(nostr_tag_get_value(tag), destinations[0]); }
+      }
+      valid = valid && relays == 1;
+    }
+    gsize total = 0;
+    valid = valid && destinations && destinations[0] && g_strv_length(destinations) <= 64;
+    for (guint i = 0; valid && destinations[i]; i++) {
+      g_autoptr(GUri) uri = g_uri_parse(destinations[i], G_URI_FLAGS_NONE, NULL);
+      total += strlen(destinations[i]);
+      const char *scheme = uri ? g_uri_get_scheme(uri) : NULL;
+      valid = total <= 16384 && uri && g_uri_get_host(uri) && !g_uri_get_userinfo(uri) && !g_uri_get_fragment(uri) &&
+        (kind == NOSTR_KIND_BLOBS ? !g_strcmp0(scheme, "https") : (!g_strcmp0(scheme, "ws") || !g_strcmp0(scheme, "wss")));
+    }
     if (event) nostr_event_free(event);
     if (!valid) { g_dbus_method_invocation_return_dbus_error(inv, GROTTO_CONTROL_ERROR "InvalidInput",
-        "Expected profile metadata or profile transport authorization for this identity"); return; }
+        "Expected profile metadata without tags or transport authorization, a matching identity and explicit destinations"); return; }
+    g_autofree char *targets = g_strjoinv("\n", destinations);
+    g_autofree char *reason = g_strdup_printf("%s\n%s", kind == NOSTR_KIND_PROFILE_METADATA ? "Publication relays:" : kind == NOSTR_KIND_BLOBS ? "Image upload servers (fallback order):" : "Relay authentication destination:", targets);
     SignerGateContext context = {.transport = SIGNER_TRANSPORT_MANAGEMENT,
       .purpose = "profile-management", .claimed_name = "Grotto",
-      .reason = kind == NOSTR_KIND_PROFILE_METADATA ? "Publish this identity's public profile to its relays" :
-        kind == NOSTR_KIND_BLOBS ? "Upload a public profile image to the selected Blossom server" : "Authenticate to this identity's relay"};
+      .reason = reason};
     SignerGateHandle *handle = signer_approval_service_submit(c->approval, who, sender,
         SIGNER_GATE_SIGN_EVENT, json, NULL, identity, &context, self_test_reply, g_object_ref(inv));
     signer_gate_handle_unref(handle); return;

@@ -273,6 +273,8 @@ static void summary_event(GVariantBuilder *summary, Request *r) {
   NostrEvent *event = nostr_event_new();
   if (!event) return;
   if (nostr_event_deserialize(event, r->a) != 0) { nostr_event_free(event); return; }
+  if (r->transport == SIGNER_TRANSPORT_MANAGEMENT && !g_strcmp0(r->purpose, "profile-management"))
+    g_variant_builder_add(summary, "{sv}", "management_event_json", g_variant_new_string(r->a));
   NostrTags *tags = nostr_event_get_tags(event);
   guint32 count = nostr_tags_size(tags), deletes = 0;
   const gchar *target = NULL, *peer = NULL, *target_kind = NULL;

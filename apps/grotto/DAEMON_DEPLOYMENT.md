@@ -190,7 +190,11 @@ gdbus call --session --dest org.nostr.Signer --object-path /org/nostr/signer/gro
 ```
 
 Never infer signing success from an IPC send, window state or a returned
-ApprovalCompleted boolean; check the operation's result. Signing is not publication.
+ApprovalCompleted boolean; check the operation's result. A signature alone is not
+relay acceptance. The Grotto profile-management flow **does publish** after signing:
+its review shows the exact final profile JSON and destination relays, then the host
+waits for relay OKs. Profile image uploads are public immediately, before metadata
+Save; their separate authorization review shows the actual scope.
 Activity contains metadata, not raw event/message bodies or reasons. Avoid debug
 logging of secret-bearing input. See the canonical XML and
 [D-Bus contract](../../docs/dbus-interface.md) for typed errors and management auth.

@@ -41,6 +41,7 @@
     <method name="SignProfileEvent">
       <arg name="identity" type="s" direction="in"/>
       <arg name="event_json" type="s" direction="in"/>
+      <arg name="destinations" type="as" direction="in"/>
       <arg name="signed_event" type="s" direction="out"/>
     </method>
     <method name="SelfTestIdentity"><arg name="identity" type="s" direction="in"/><arg name="result" type="s" direction="out"/></method>

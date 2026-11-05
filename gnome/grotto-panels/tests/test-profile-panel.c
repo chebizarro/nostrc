@@ -23,11 +23,12 @@ static GtkTextView *about_view(GtkWidget *widget) {
 static gboolean presented(GtkWidget *widget, GdkFrameClock *clock, gpointer data) {
   (void)widget; (void)clock; return ++*(guint *)data < 3 ? G_SOURCE_CONTINUE : G_SOURCE_REMOVE;
 }
-typedef struct { GrottoProfileInfo *info, *saved; guint calls[4]; gboolean upload_fail, save_fail, offline; } Host;
+typedef struct { GrottoProfileInfo *info, *saved; guint calls[5]; gboolean upload_fail, save_fail, offline, hold; GTask *pending; } Host;
 static void profile(gpointer data, GrottoProfileAction action, const char *key, const GrottoProfileInfo *info,
   GCancellable *cancel, GAsyncReadyCallback callback, gpointer user) {
   Host *host = data; g_assert_cmpstr(key, ==, "public-profile-key"); host->calls[action]++;
   GTask *task = g_task_new(NULL, cancel, callback, user);
+  if (action == GROTTO_PROFILE_SAVE && host->hold) { host->pending = task; return; }
   if ((action == GROTTO_PROFILE_CHOOSE_AVATAR || action == GROTTO_PROFILE_CHOOSE_BANNER) && host->upload_fail)
     g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED, "Image upload failed. Try again");
   else if (action == GROTTO_PROFILE_SAVE && host->save_fail)
@@ -78,7 +79,16 @@ static void profile_panel(void) {
   g_signal_emit_by_name(find(GTK_WIDGET(dialog), "Save"), "clicked");
   WAIT(find(GTK_WIDGET(dialog), "Offline. Your edits have not been saved"));
   g_assert_nonnull(adw_window_get_visible_dialog(window)); g_assert_null(host.saved);
-  host.save_fail = FALSE;
+  host.save_fail = FALSE; host.hold = TRUE;
+  g_signal_emit_by_name(find(GTK_WIDGET(dialog), "Save"), "clicked");
+  g_assert_nonnull(host.pending); g_assert_nonnull(find(GTK_WIDGET(dialog), "Stop"));
+  g_assert_true(gtk_widget_is_sensitive(find(GTK_WIDGET(dialog), "Stop")));
+  g_signal_emit_by_name(find(GTK_WIDGET(dialog), "Stop"), "clicked");
+  g_assert_true(g_cancellable_is_cancelled(g_task_get_cancellable(host.pending)));
+  g_assert_true(g_task_return_error_if_cancelled(host.pending)); g_clear_object(&host.pending);
+  WAIT(find(GTK_WIDGET(dialog), "Stopped. Data may already have reached a server or relay. Refresh before saving again"));
+  g_assert_cmpstr(gtk_editable_get_text(GTK_EDITABLE(find(GTK_WIDGET(dialog), "Name"))), ==, "alice");
+  host.hold = FALSE;
   g_signal_emit_by_name(find(GTK_WIDGET(dialog), "Save"), "clicked");
   WAIT(host.saved);
   WAIT(!adw_window_get_visible_dialog(window));
@@ -94,7 +104,13 @@ static void profile_panel(void) {
   g_assert_true(grotto_panels_fake_service_replace(fake, GROTTO_PANELS_IDENTITIES, &identity, NULL));
   g_assert_false(gtk_widget_get_visible(find(panel, "Edit Profile…")));
   g_assert_nonnull(find(panel, "Nostr Address"));
-  g_assert_cmpuint(host.calls[GROTTO_PROFILE_SAVE], ==, 2);
+  g_assert_cmpuint(host.calls[GROTTO_PROFILE_LOAD_IMAGES], ==, 0);
+  g_signal_emit_by_name(find(panel, "Load Profile Images…"), "clicked");
+  WAIT(host.calls[GROTTO_PROFILE_LOAD_IMAGES] == 1 && gtk_widget_is_sensitive(find(panel, "Load Profile Images…")));
+  host.info->tor_blocked = TRUE;
+  g_signal_emit_by_name(find(panel, "Refresh Profile"), "clicked");
+  WAIT(find(panel, "Tor mode — showing the saved profile without network access"));
+  g_assert_cmpuint(host.calls[GROTTO_PROFILE_SAVE], ==, 3);
   gtk_window_destroy(GTK_WINDOW(window)); g_object_unref(window);
   grotto_profile_info_free(host.info); grotto_profile_info_free(host.saved);
 }

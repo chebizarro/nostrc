@@ -26,6 +26,7 @@ typedef struct {
   GBytes *bytes;
   GdkTexture *preview;
   char *mime;
+  char **destinations;
   GDBusConnection *bus;
   GCancellable *cancel;
   GHashTable *capabilities;
@@ -35,7 +36,7 @@ typedef struct {
 static void cache_lock_free(gpointer data) { g_mutex_clear(data); g_free(data); }
 static void job_free(gpointer data) {
   Job *j = data; g_free(j->npub); grotto_profile_info_free(j->info); g_clear_object(&j->file);
-  g_clear_pointer(&j->bytes, g_bytes_unref); g_clear_object(&j->preview); g_free(j->mime); g_clear_object(&j->bus); g_hash_table_unref(j->capabilities); g_clear_object(&j->cache_scope); g_free(j);
+  g_clear_pointer(&j->bytes, g_bytes_unref); g_clear_object(&j->preview); g_free(j->mime); g_strfreev(j->destinations); g_clear_object(&j->bus); g_hash_table_unref(j->capabilities); g_clear_object(&j->cache_scope); g_free(j);
 }
 static const char *string(JsonObject *o, const char *key) {
   JsonNode *n = o ? json_object_get_member(o, key) : NULL;
@@ -99,8 +100,18 @@ static char *sign_event(gpointer data, const char *unsigned_json, GCancellable *
   if (!json_object_has_member(object, "pubkey")) json_object_set_string_member(object, "pubkey", j->hex);
   g_autofree char *pinned = json_to_string(json_parser_get_root(parser), FALSE);
   unsigned_json = pinned;
+  const char *none[] = {NULL}, *relay_destination[] = {NULL, NULL};
+  const char *const *destinations = j->destinations ? (const char *const *)j->destinations : none;
+  if (json_object_get_int_member(object, "kind") == NOSTR_KIND_CLIENT_AUTHENTICATION) {
+    JsonArray *tags = json_object_get_array_member(object, "tags");
+    for (guint i = 0; tags && i < json_array_get_length(tags); i++) {
+      JsonArray *tag = json_array_get_array_element(tags, i);
+      if (tag && json_array_get_length(tag) >= 2 && !g_strcmp0(json_array_get_string_element(tag, 0), "relay")) relay_destination[0] = json_array_get_string_element(tag, 1);
+    }
+    destinations = relay_destination;
+  }
   g_autoptr(GVariant) reply = g_dbus_connection_call_sync(j->bus, "org.nostr.Signer", "/org/nostr/signer/grotto", "org.nostr.Grotto.Control1", "SignProfileEvent",
-    g_variant_new("(ss)", j->npub, unsigned_json), G_VARIANT_TYPE("(s)"), G_DBUS_CALL_FLAGS_NO_AUTO_START, 180000, cancel, error);
+    g_variant_new("(ss^as)", j->npub, unsigned_json, destinations), G_VARIANT_TYPE("(s)"), G_DBUS_CALL_FLAGS_NO_AUTO_START, 180000, cancel, error);
   if (!reply) {
     if (error && *error && !g_error_matches(*error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
       g_clear_error(error); g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED,
@@ -310,8 +321,9 @@ static char **configured(Job *j, gboolean write) {
     g_autoptr(GSettingsSchema) schema = g_settings_schema_source_lookup(g_settings_schema_source_get_default(), "org.nostr.Grotto", TRUE);
     if (schema) {
       g_autoptr(GSettings) settings = g_settings_new_full(schema, NULL, NULL);
-      g_auto(GStrv) urls = g_settings_get_strv(settings, "relays");
-      for (guint i = 0; urls[i]; i++) if (endpoint(urls[i], TRUE)) g_strv_builder_add(b, urls[i]);
+      g_autoptr(GVariant) explicit = g_settings_get_user_value(settings, "relays");
+      g_auto(GStrv) urls = explicit ? g_variant_dup_strv(explicit, NULL) : NULL;
+      for (guint i = 0; urls && urls[i]; i++) if (endpoint(urls[i], TRUE)) g_strv_builder_add(b, urls[i]);
     }
   }
   relay_store_free(store); return g_strv_builder_end(b);
@@ -376,7 +388,7 @@ static void image_size(GdkPixbufLoader *loader, int width, int height, gpointer 
   gboolean *ok = data; *ok = width > 0 && height > 0 && width <= 8192 && height <= 8192 && (guint64)width * height <= IMAGE_PIXELS;
   if (!*ok) gdk_pixbuf_loader_set_size(loader, 1, 1);
 }
-static GdkTexture *image_decode(GBytes *bytes, char **mime, GError **error) {
+GdkTexture *grotto_profile_decode_image(GBytes *bytes, char **mime, GError **error) {
   gsize len; const guint8 *data = g_bytes_get_data(bytes, &len);
   /* Select a raster decoder before parsing; a renamed SVG must never reach
    * the generic loader (which can resolve external resources). */
@@ -410,7 +422,7 @@ static GdkTexture *download_image(Job *j, const char *url, gboolean online) {
     g_autoptr(SoupMessage) message = soup_message_new("GET", url); soup_message_set_flags(message, SOUP_MESSAGE_NO_REDIRECT);
     g_autoptr(GInputStream) stream = soup_session_send(session, message, j->cancel, NULL);
     if (stream && soup_message_get_status(message) == SOUP_STATUS_OK) bytes = read_stream(stream, IMAGE_LIMIT, j->cancel, NULL);
-    GdkTexture *texture = bytes ? image_decode(bytes, NULL, NULL) : NULL;
+    GdkTexture *texture = bytes ? grotto_profile_decode_image(bytes, NULL, NULL) : NULL;
     if (texture) {
       if (!g_cancellable_is_cancelled(j->cancel) && !g_mkdir_with_parents(dir, 0700)) {
         gsize size; const char *data = g_bytes_get_data(bytes, &size);
@@ -422,7 +434,7 @@ static GdkTexture *download_image(Job *j, const char *url, gboolean online) {
   GStatBuf st; g_autofree char *data = NULL; gsize size;
   if (g_stat(path, &st) || st.st_size > IMAGE_LIMIT || !g_file_get_contents(path, &data, &size, NULL)) return NULL;
   g_clear_pointer(&bytes, g_bytes_unref); bytes = g_bytes_new_take(g_steal_pointer(&data), size);
-  return image_decode(bytes, NULL, NULL);
+  return grotto_profile_decode_image(bytes, NULL, NULL);
 }
 typedef struct { gboolean done, ok; guint accepted; } Publication;
 static void published(NostrPublisher *publisher, const NostrPublishResult *result, gpointer data) {
@@ -449,10 +461,14 @@ static char *save_profile(Job *j, NostrPublishSigner *signer, char **events, GEr
   NostrEvent *event = nostr_event_new(); nostr_event_set_kind(event, NOSTR_KIND_PROFILE_METADATA); nostr_event_set_pubkey(event, j->hex);
   nostr_event_set_created_at(event, MAX((guint64)(g_get_real_time() / G_USEC_PER_SEC), timestamp + 1)); nostr_event_set_content(event, text);
   g_autofree char *raw = nostr_event_serialize_compact(event); nostr_event_free(event);
+  g_strfreev(j->destinations); j->destinations = g_strdupv(urls);
   g_autofree char *signed_json = nostr_publish_signer_sign_event_json(signer, raw, j->cancel, error);
-  if (!signed_json) return NULL;
+  if (!signed_json || g_cancellable_set_error_if_cancelled(j->cancel, error)) return NULL;
   NostrPublisher *publisher = nostr_publisher_new(signer);
   g_autoptr(GPtrArray) connections = open_publish(j, signer, publisher, signed_json, urls);
+  if (g_cancellable_set_error_if_cancelled(j->cancel, error)) {
+    g_clear_pointer(&connections, g_ptr_array_unref); nostr_publisher_free(publisher); return NULL;
+  }
   for (guint i = 0; i < connections->len; i++) ((Fetch *)g_ptr_array_index(connections, i))->publishing = TRUE;
   NostrPublishPolicy policy; nostr_publish_policy_init(&policy); policy.ok_wait_sec = 240;
   Publication p = {0};
@@ -471,9 +487,9 @@ static char *save_profile(Job *j, NostrPublishSigner *signer, char **events, GEr
   cache_write(j, kinds[0], signed_json); return g_steal_pointer(&signed_json);
 }
 static void upload_done(GObject *source, GAsyncResult *result, gpointer data) { (void)source; *(GAsyncResult **)data = g_object_ref(result); }
-static gboolean upload(Job *j, NostrPublishSigner *signer, const char *server_event, GError **error) {
-  g_auto(GStrv) servers = tag_urls(server_event, "server", FALSE);
-  if (!servers[0]) { g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND, _("No Blossom servers found. Set up Media Servers in Nostr Settings first")); return FALSE; }
+static gboolean upload(Job *j, NostrPublishSigner *signer, GError **error) {
+  char **servers = j->destinations;
+  if (!servers || !servers[0]) { g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND, _("No Blossom servers found. Set up Media Servers in Nostr Settings first")); return FALSE; }
   g_autofree char *hash = g_compute_checksum_for_bytes(G_CHECKSUM_SHA256, j->bytes);
   NostrEvent *event = nostr_bud02_create_auth_event(NOSTR_BUD02_ACTION_UPLOAD, hash, 0, NULL); nostr_event_set_pubkey(event, j->hex);
   g_autofree char *raw = nostr_event_serialize_compact(event); nostr_event_free(event);
@@ -518,13 +534,24 @@ static void worker(GTask *task, gpointer source, gpointer data, GCancellable *ca
   }
   if (!network && !error) g_set_error_literal(&error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
     _("Profile network access is unavailable in Tor mode. The saved profile is still available"));
-  gboolean online = network && j->bus && discover(j, signer, events, &error);
+  gboolean metadata = j->action == GROTTO_PROFILE_FETCH || j->action == GROTTO_PROFILE_SAVE;
+  gboolean online = network && j->bus && (!metadata || discover(j, signer, events, &error));
   GrottoProfileInfo *result = NULL;
   if (j->action == GROTTO_PROFILE_FETCH) {
-    if (online || events[0]) { g_clear_error(&error); result = profile_parse(j, events[0], &error); if (result) result->cached = !online; }
+    if (online || events[0]) { g_clear_error(&error); result = profile_parse(j, events[0], &error); if (result) { result->cached = !online; result->tor_blocked = !network; } }
     if (result) {
       if (online) for (guint i = 0; i < 3; i++) cache_write(j, kinds[i], events[i]);
-      for (guint i = 0; i < 2; i++) result->images[i] = download_image(j, result->fields[i ? GROTTO_PROFILE_BANNER : GROTTO_PROFILE_PICTURE], online);
+      for (guint i = 0; i < 2; i++) result->images[i] = download_image(j, result->fields[i ? GROTTO_PROFILE_BANNER : GROTTO_PROFILE_PICTURE], FALSE);
+    }
+  } else if (online && j->action == GROTTO_PROFILE_LOAD_IMAGES) {
+    result = grotto_profile_info_copy(j->info);
+    for (guint i = 0; i < 2; i++) {
+      g_clear_object(&result->images[i]);
+      result->images[i] = download_image(j, result->fields[i ? GROTTO_PROFILE_BANNER : GROTTO_PROFILE_PICTURE], TRUE);
+    }
+    if ((*result->fields[GROTTO_PROFILE_PICTURE] && !result->images[0]) || (*result->fields[GROTTO_PROFILE_BANNER] && !result->images[1])) {
+      g_clear_pointer(&result, grotto_profile_info_free);
+      g_set_error_literal(&error, G_IO_ERROR, G_IO_ERROR_FAILED, _("Some profile images could not be loaded. Check the URLs or try again"));
     }
   } else if (online && j->action == GROTTO_PROFILE_SAVE) {
     g_autofree char *saved = save_profile(j, signer, events, &error);
@@ -534,9 +561,13 @@ static void worker(GTask *task, gpointer source, gpointer data, GCancellable *ca
        * event if a read replica has not caught up yet. Never sign twice. */
       g_autoptr(GError) refresh_error = NULL; gboolean refreshed = discover(j, signer, events, &refresh_error);
       result = profile_parse(j, events[0], &error); if (result) { result->cached = !refreshed;
-        for (guint i = 0; i < 2; i++) result->images[i] = download_image(j, result->fields[i ? GROTTO_PROFILE_BANNER : GROTTO_PROFILE_PICTURE], online); }
+        for (guint i = 0; i < 2; i++) {
+          guint field = i ? GROTTO_PROFILE_BANNER : GROTTO_PROFILE_PICTURE;
+          result->images[i] = j->info->images[i] && !g_strcmp0(result->fields[field], j->info->fields[field]) ? g_object_ref(j->info->images[i]) : download_image(j, result->fields[field], FALSE);
+        }
+      }
     }
-  } else if (online && upload(j, signer, events[2], &error)) result = grotto_profile_info_copy(j->info);
+  } else if (online && upload(j, signer, &error)) result = grotto_profile_info_copy(j->info);
   for (guint i = 0; i < 3; i++) g_free(events[i]);
   if (j->bus) g_dbus_connection_close_sync(j->bus, NULL, NULL);
   g_main_context_pop_thread_default(context);
@@ -544,32 +575,50 @@ static void worker(GTask *task, gpointer source, gpointer data, GCancellable *ca
   else if (error) g_task_return_error(task, g_steal_pointer(&error));
   else g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED, "Profile operation failed");
 }
+AdwAlertDialog *grotto_profile_upload_confirmation(GdkTexture *preview, gboolean banner, const char *const *servers) {
+  g_autofree char *destinations = g_strjoinv("\n", (char **)servers);
+  g_autofree char *body = g_strdup_printf(_("Uploading makes this image public immediately, before Save. Cancelling the profile edit will not delete it or recall copies.\n\nThe original file is uploaded unchanged, including EXIF location, device and other embedded metadata. Remove metadata first if you do not want to share it.\n\nPNG, JPEG or WebP only; up to 5 MiB, 8192 pixels per side and 24 megapixels.\n\nVerified kind-10063 servers, tried in this order:\n%s"), destinations);
+  AdwAlertDialog *dialog = ADW_ALERT_DIALOG(adw_alert_dialog_new(_("Upload Original Profile Image?"), body));
+  GtkWidget *picture = gtk_picture_new_for_paintable(GDK_PAINTABLE(preview)); gtk_picture_set_can_shrink(GTK_PICTURE(picture), TRUE); gtk_widget_set_size_request(picture, -1, 180);
+  gtk_picture_set_alternative_text(GTK_PICTURE(picture), banner ? _("Selected Banner") : _("Selected Avatar"));
+  adw_alert_dialog_set_extra_child(dialog, picture);
+  adw_alert_dialog_add_responses(dialog, "cancel", _("Cancel"), "upload", _("Upload Original Image"), NULL);
+  adw_alert_dialog_set_default_response(dialog, "cancel"); adw_alert_dialog_set_close_response(dialog, "cancel");
+  adw_alert_dialog_set_response_appearance(dialog, "upload", ADW_RESPONSE_SUGGESTED); return dialog;
+}
+AdwAlertDialog *grotto_profile_images_confirmation(const GrottoProfileInfo *info) {
+  g_autofree char *body = g_strdup_printf(_("Loading this identity's avatar and banner contacts the HTTPS origins below and reveals your network address to them. This applies to your own and watch-only identities. A signed profile authenticates the URLs, not the image bytes or the server. Image origins are never contacted automatically or by signing reviews.\n\nAvatar: %s\nBanner: %s"), info->fields[GROTTO_PROFILE_PICTURE], info->fields[GROTTO_PROFILE_BANNER]);
+  AdwAlertDialog *dialog = ADW_ALERT_DIALOG(adw_alert_dialog_new(_("Load Profile Images?"), body));
+  adw_alert_dialog_add_responses(dialog, "cancel", _("Cancel"), "load", _("Load Images"), NULL);
+  adw_alert_dialog_set_default_response(dialog, "cancel"); adw_alert_dialog_set_close_response(dialog, "cancel"); return dialog;
+}
 static void preview_worker(GTask *task, gpointer source, gpointer data, GCancellable *cancel) {
   (void)source; Job *j = data; g_autoptr(GError) error = NULL;
   g_autoptr(GFileInputStream) stream = g_file_read(j->file, cancel, &error);
   j->bytes = stream ? read_stream(G_INPUT_STREAM(stream), IMAGE_LIMIT, cancel, &error) : NULL;
-  j->preview = j->bytes ? image_decode(j->bytes, &j->mime, &error) : NULL;
-  if (j->preview) g_task_return_boolean(task, TRUE); else g_task_return_error(task, g_steal_pointer(&error));
+  j->preview = j->bytes ? grotto_profile_decode_image(j->bytes, &j->mime, &error) : NULL;
+  if (j->preview) {
+    g_autofree char *server_event = cache_read(j, NOSTR_KIND_BLOSSOM_SERVER_LIST);
+    j->destinations = tag_urls(server_event, "server", FALSE);
+    if (!j->destinations[0]) g_set_error_literal(&error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND, _("No verified Blossom server list found. Refresh your profile after setting up Media Servers in Nostr Settings"));
+  }
+  if (!error) g_task_return_boolean(task, TRUE); else g_task_return_error(task, g_steal_pointer(&error));
 }
 static void preview_answer(GObject *source, GAsyncResult *result, gpointer data) {
   GTask *task = data;
   const char *answer = adw_alert_dialog_choose_finish(ADW_ALERT_DIALOG(source), result);
-  if (!strcmp(answer, "upload")) g_task_run_in_thread(task, worker);
+  if (!strcmp(answer, "upload") || !strcmp(answer, "load")) g_task_run_in_thread(task, worker);
   else g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_CANCELLED, "Image selection cancelled");
   g_object_unref(task);
 }
 static void preview_ready(GObject *source, GAsyncResult *result, gpointer data) {
   (void)source; GTask *task = data; Job *j = g_task_get_task_data(task); g_autoptr(GError) error = NULL;
   if (!g_task_propagate_boolean(G_TASK(result), &error)) {
-    if (g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) g_task_return_error(task, g_steal_pointer(&error));
+    if (g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED) || g_error_matches(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND)) g_task_return_error(task, g_steal_pointer(&error));
     else g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, _("The image could not be opened. Choose a PNG, JPEG or WebP image smaller than 5 MB, up to 8192 pixels per side and 24 megapixels"));
     g_object_unref(task); return;
   }
-  AdwDialog *dialog = adw_alert_dialog_new(_("Upload Profile Image?"), _("This image will be public. PNG, JPEG and WebP images up to 5 MB are supported"));
-  GtkWidget *picture = gtk_picture_new_for_paintable(GDK_PAINTABLE(j->preview)); gtk_picture_set_can_shrink(GTK_PICTURE(picture), TRUE); gtk_widget_set_size_request(picture, -1, 180);
-  gtk_picture_set_alternative_text(GTK_PICTURE(picture), j->action == GROTTO_PROFILE_CHOOSE_AVATAR ? _("Selected Avatar") : _("Selected Banner"));
-  adw_alert_dialog_set_extra_child(ADW_ALERT_DIALOG(dialog), picture); adw_alert_dialog_add_responses(ADW_ALERT_DIALOG(dialog), "cancel", _("Cancel"), "upload", _("Upload"), NULL);
-  adw_alert_dialog_set_close_response(ADW_ALERT_DIALOG(dialog), "cancel"); adw_alert_dialog_set_response_appearance(ADW_ALERT_DIALOG(dialog), "upload", ADW_RESPONSE_SUGGESTED);
+  AdwAlertDialog *dialog = grotto_profile_upload_confirmation(j->preview, j->action == GROTTO_PROFILE_CHOOSE_BANNER, (const char *const *)j->destinations);
   adw_alert_dialog_choose(ADW_ALERT_DIALOG(dialog), g_task_get_source_object(task), g_task_get_cancellable(task), preview_answer, task);
 }
 static void chosen(GObject *source, GAsyncResult *result, gpointer data) {
@@ -589,7 +638,7 @@ void grotto_profile_service_async(GtkWindow *parent, GrottoProfileAction action,
   const GrottoProfileInfo *info, GCancellable *cancel, GAsyncReadyCallback callback, gpointer data) {
   g_autoptr(GCancellable) owned_cancel = cancel ? g_object_ref(cancel) : g_cancellable_new();
   GTask *task = g_task_new(parent, owned_cancel, callback, data); guint8 pk[32];
-  if (!npub || nostr_nip19_decode_npub(npub, pk) || !grotto_profile_info_validate(info, NULL)) {
+  if (action < GROTTO_PROFILE_FETCH || action > GROTTO_PROFILE_LOAD_IMAGES || (action != GROTTO_PROFILE_FETCH && !info) || !npub || nostr_nip19_decode_npub(npub, pk) || !grotto_profile_info_validate(info, NULL)) {
     g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "Invalid identity or profile"); g_object_unref(task); return;
   }
   Job *j = g_new0(Job, 1); j->capabilities = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL); j->action = action;
@@ -601,7 +650,10 @@ void grotto_profile_service_async(GtkWindow *parent, GrottoProfileAction action,
   } j->npub = g_strdup(npub); j->info = grotto_profile_info_copy(info);
   for (guint i = 0; i < 32; i++) g_snprintf(j->hex + 2 * i, 3, "%02x", pk[i]);
   g_task_set_task_data(task, j, job_free);
-  if (action == GROTTO_PROFILE_CHOOSE_AVATAR || action == GROTTO_PROFILE_CHOOSE_BANNER) {
+  if (action == GROTTO_PROFILE_LOAD_IMAGES) {
+    AdwAlertDialog *dialog = grotto_profile_images_confirmation(info);
+    adw_alert_dialog_choose(dialog, GTK_WIDGET(parent), owned_cancel, preview_answer, task);
+  } else if (action == GROTTO_PROFILE_CHOOSE_AVATAR || action == GROTTO_PROFILE_CHOOSE_BANNER) {
     g_autoptr(GtkFileDialog) dialog = gtk_file_dialog_new(); gtk_file_dialog_set_title(dialog, action == GROTTO_PROFILE_CHOOSE_AVATAR ? _("Choose Avatar") : _("Choose Banner"));
     g_autoptr(GListStore) filters = g_list_store_new(GTK_TYPE_FILE_FILTER); GtkFileFilter *filter = gtk_file_filter_new(); gtk_file_filter_set_name(filter, _("Profile Images"));
     gtk_file_filter_add_mime_type(filter, "image/png"); gtk_file_filter_add_mime_type(filter, "image/jpeg"); gtk_file_filter_add_mime_type(filter, "image/webp"); g_list_store_append(filters, filter); g_object_unref(filter);

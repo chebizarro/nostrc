@@ -176,13 +176,13 @@ typedef enum _GrottoProfileField {
 } GrottoProfileField;
 typedef enum _GrottoProfileAction {
   GROTTO_PROFILE_FETCH, GROTTO_PROFILE_SAVE, GROTTO_PROFILE_CHOOSE_AVATAR,
-  GROTTO_PROFILE_CHOOSE_BANNER
+  GROTTO_PROFILE_CHOOSE_BANNER, GROTTO_PROFILE_LOAD_IMAGES
 } GrottoProfileAction;
 typedef struct _GrottoProfileInfo {
   char *fields[GROTTO_PROFILE_N_FIELDS];
   GdkTexture *images[2];
   guint64 created_at;
-  gboolean published, cached;
+  gboolean published, cached, tor_blocked;
 } GrottoProfileInfo;
 GROTTO_PANELS_API GrottoProfileInfo *grotto_profile_info_copy(const GrottoProfileInfo *info);
 GROTTO_PANELS_API void grotto_profile_info_free(GrottoProfileInfo *info);

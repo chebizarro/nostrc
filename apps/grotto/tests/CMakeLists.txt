@@ -257,7 +257,7 @@ add_executable(test-approval-dialog
     ${_APPROVAL_GRESOURCE_C}
 )
 target_include_directories(test-approval-dialog PRIVATE ${SIGNER_INCLUDE_DIRS} ${CMAKE_SOURCE_DIR}/tests/common)
-target_link_libraries(test-approval-dialog PRIVATE PkgConfig::GTK4 PkgConfig::ADWAITA PkgConfig::GLIB)
+target_link_libraries(test-approval-dialog PRIVATE PkgConfig::GTK4 PkgConfig::ADWAITA PkgConfig::GLIB PkgConfig::JSON_GLIB libnostr nostr_json nip19)
 target_compile_features(test-approval-dialog PRIVATE c_std_11)
 apply_test_sanitizers(test-approval-dialog)
 
@@ -529,7 +529,7 @@ target_link_libraries(grotto_app_test_core PUBLIC $<TARGET_PROPERTY:grotto,LINK_
 add_library(grotto_approval_test_core STATIC
   ../src/approval-controller.c ../src/ui/approval_dialog.c)
 target_include_directories(grotto_approval_test_core PUBLIC ${SIGNER_INCLUDE_DIRS})
-target_link_libraries(grotto_approval_test_core PUBLIC PkgConfig::GTK4 PkgConfig::ADWAITA PkgConfig::GLIB)
+target_link_libraries(grotto_approval_test_core PUBLIC PkgConfig::GTK4 PkgConfig::ADWAITA PkgConfig::GLIB PkgConfig::JSON_GLIB libnostr nostr_json nip19)
 target_compile_options(grotto_approval_test_core PRIVATE -Wall -Wextra -Werror)
 add_executable(test-approval-controller test-approval-controller.c)
 target_link_libraries(test-approval-controller PRIVATE grotto_approval_test_core nostrc-test-bus)

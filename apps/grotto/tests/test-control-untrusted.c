@@ -32,7 +32,7 @@ int main(int argc, char **argv) {
   denied(bus, argv[1], "StoreKeyWithMnemonic", g_variant_new("(sss)", "", "", ""));
   denied(bus, argv[1], "ImportIdentity", g_variant_new("(ssss)", "key", "", "", ""));
   denied(bus, argv[1], "SelfTestIdentity", g_variant_new("(s)", ""));
-  denied(bus, argv[1], "SignProfileEvent", g_variant_new("(ss)", "", "{}"));
+  denied(bus, argv[1], "SignProfileEvent", g_variant_new("(ss@as)", "", "{}", g_variant_new_strv(NULL, 0)));
   denied(bus, argv[1], "CancelIdentitySelfTest", g_variant_new("(s)", ""));
   denied(bus, argv[1], "GetIdentityMigration", g_variant_new("(s)", ""));
   denied(bus, argv[1], "ExportRawIdentity", g_variant_new("(s)", "")); denied(bus, argv[1], "RotateIdentity", g_variant_new("(s)", ""));

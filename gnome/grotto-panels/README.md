@@ -25,7 +25,7 @@ read-only; a local identity label remains separate from this public profile.
 
 The optional `GrottoPanelsHost.profile_async` hook accepts only a closed action,
 public identity and `GrottoProfileInfo`. Results are owned pointer `GTask`s with
-public fields and immutable in-memory `GdkTexture` previews. No JSON event,
+public fields, cached/Tor status and immutable in-memory `GdkTexture` previews. No JSON event,
 `GFile`, path, signer, secret or network handle crosses this boundary. Pinned
 identity pages forward through the same guarded host hook. Without the hook,
 the panel explains that Grotto is required instead of performing I/O itself.
@@ -33,16 +33,38 @@ the panel explains that Grotto is required instead of performing I/O itself.
 Grotto owns EOSE-aware, author-scoped relay reads, signed-event validation,
 newest-event selection, `$XDG_CACHE_HOME/grotto/profiles` caching, image file
 selection/preview and Blossom uploads. Destinations come from per-identity or
-configured relays, signed kind 10002 and signed kind 10063. Save preserves
+explicitly user-configured relays, signed kind 10002 and signed kind 10063.
+Schema-default relays are never a bootstrap fallback. Missing configuration stays
+missing. Image uploads use the verified cached kind-10063 set, frozen before the
+upload confirmation; no server outside that set is tried. Save preserves
 unknown profile fields, rejects a newer remote edit, requests one kind-0
 MANAGEMENT review, waits for relay OKs and re-fetches without signing again.
+The review shows every final profile field (including extensions), the exact raw
+profile and unsigned event JSON in Details, the pinned identity and the actual
+publication relays. Its approval explicitly permits publication by Grotto.
 Relay authentication and image-upload authorizations also use the signer gate;
-they never grant reusable profile-signing permission. Uploaded images remain
-unpublished drafts until Save succeeds. All I/O and decoding run off the GTK
-thread; upload/publish progress is indeterminate and failures retain the form.
+they never grant reusable profile-signing permission. The upload review shows the actual verb, blob hash, expiry and intended server
+fallback set; the hash-scoped token has no server restriction, which is disclosed.
+Uploads make the original image **public immediately, before Save**. Cancelling
+the metadata draft does not delete that blob or recall copies. Before Upload,
+confirmation names the destinations and explicitly warns that the unchanged
+original includes EXIF/location/device and other embedded metadata; Cancel is
+the default. Remove metadata first if it should not be shared.
+
+Neither signing identities nor watch-only profiles trigger automatic image GETs.
+**Load Profile Images…** asks for explicit consent naming the exact avatar and
+banner URLs and explains network-address disclosure and mutable image bytes.
+Local cached images may be rendered without contacting an origin. Signing
+previews are plain text and never fetch profile URLs.
+
+All I/O and decoding run off the GTK thread; upload/publish progress is
+indeterminate and failures retain the form. **Stop** cancels a pending operation
+and retains the draft; the warning states that data already sent may be public
+and cannot be recalled. Idle **Cancel** discards the local draft only.
 Images are PNG/JPEG/WebP, at most 5 MiB, 8192 pixels per side and 24 megapixels.
 Profile network operations fail visibly in Tor mode rather than bypassing the
-configured privacy setting; saved metadata and images remain readable offline.
+configured privacy setting; saved metadata and images remain readable offline, with a distinct Tor-mode
+explanation rather than a generic offline status.
 
 ## Ownership and injection
 
