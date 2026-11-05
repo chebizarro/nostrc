@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #include "fake-service.h"
-#include "../../../tests/common/nostrc-test-gdk-frame.h"
+#include "nostrc-test-gdk-frame.h"
 
 typedef struct { GrottoPanel parent; GtkListBox *list; GtkWidget *edit; AdwNavigationView *navigation; } SmokePanel;
 typedef struct { GrottoPanelClass parent; } SmokePanelClass;
