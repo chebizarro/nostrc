@@ -845,7 +845,7 @@ static void host_profile(gpointer data, GrottoProfileAction action, const char *
   const GrottoProfileInfo *info, GCancellable *cancel, GAsyncReadyCallback callback, gpointer user_data) {
   g_autoptr(SignerWindow) self = g_weak_ref_get(data);
   gboolean allowed = self && !gn_session_manager_is_locked(gn_session_manager_get_default());
-  if (allowed && action != GROTTO_PROFILE_FETCH && action != GROTTO_PROFILE_LOAD_IMAGES) {
+  if (allowed && action != GROTTO_PROFILE_FETCH && action != GROTTO_PROFILE_LOAD_IMAGES && action != GROTTO_PROFILE_VERIFY_NIP05) {
     allowed = FALSE;
     GListModel *identities = grotto_panels_service_get_model(self->identity_service, GROTTO_PANELS_IDENTITIES);
     for (guint i = 0; identities && i < g_list_model_get_n_items(identities); i++) {

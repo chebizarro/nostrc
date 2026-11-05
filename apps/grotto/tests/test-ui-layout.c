@@ -219,6 +219,13 @@ static void call(GDBusConnection *bus, const gchar *sender, const gchar *path, c
   g_dbus_method_invocation_return_value(inv, g_variant_new("(@aa{sv})", g_variant_builder_end(&rows)));
 }
 static const GDBusInterfaceVTable vtable = {call, NULL, NULL, {0}};
+static GtkTextView *find_text_view(GtkWidget *widget) {
+  if (GTK_IS_TEXT_VIEW(widget)) return GTK_TEXT_VIEW(widget);
+  for (GtkWidget *child = gtk_widget_get_first_child(widget); child; child = gtk_widget_get_next_sibling(child)) {
+    GtkTextView *found = find_text_view(child); if (found) return found;
+  }
+  return NULL;
+}
 static GtkWidget *find_button(GtkWidget *widget, const gchar *label) {
   if (GTK_IS_BUTTON(widget) && !g_strcmp0(gtk_button_get_label(GTK_BUTTON(widget)), label)) return widget;
   for (GtkWidget *child = gtk_widget_get_first_child(widget); child; child = gtk_widget_get_next_sibling(child)) { GtkWidget *found = find_button(child, label); if (found) return found; }
@@ -741,6 +748,27 @@ static void layout_activate(GApplication *application, gpointer data) {
       gtk_window_set_default_size(GTK_WINDOW(window), 360, 640);
     }
     signer_window_show_page(window, "settings"); wait_frames(GTK_WIDGET(window)); assert_visible_focus(window);
+    AdwDialog *preferences = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window));
+    GtkWidget *bootstrap = find_row(GTK_WIDGET(preferences), P_("Use Bootstrap Relays")); g_assert_true(ADW_IS_SWITCH_ROW(bootstrap));
+    adw_switch_row_set_active(ADW_SWITCH_ROW(bootstrap), FALSE);
+    g_assert_false(g_settings_get_boolean(settings_manager_get_gsettings(settings_manager_get_default()), "profile-bootstrap-enabled"));
+    adw_switch_row_set_active(ADW_SWITCH_ROW(bootstrap), TRUE);
+    AdwExpanderRow *discovery = ADW_EXPANDER_ROW(find_row(GTK_WIDGET(preferences), P_("Discovery-Only Relays")));
+    g_assert_nonnull(discovery); adw_expander_row_set_expanded(discovery, TRUE);
+    wait_frames(GTK_WIDGET(preferences));
+    GtkTextView *relay_editor = find_text_view(GTK_WIDGET(discovery)); g_assert_nonnull(relay_editor);
+    gtk_text_buffer_set_text(gtk_text_view_get_buffer(relay_editor), "wss://discovery.example/\nwss://second.example/", -1);
+    g_signal_emit_by_name(find_button(GTK_WIDGET(preferences), P_("Save Discovery Relays")), "clicked");
+    GSettings *profile_settings = settings_manager_get_gsettings(settings_manager_get_default());
+    g_auto(GStrv) saved_relays = g_settings_get_strv(profile_settings, "profile-bootstrap-relays");
+    g_assert_cmpuint(g_strv_length(saved_relays), ==, 2); g_assert_cmpstr(saved_relays[0], ==, "wss://discovery.example/");
+    gtk_text_buffer_set_text(gtk_text_view_get_buffer(relay_editor), "https://not-a-relay.example/", -1);
+    g_signal_emit_by_name(find_button(GTK_WIDGET(preferences), P_("Save Discovery Relays")), "clicked");
+    g_auto(GStrv) unchanged_relays = g_settings_get_strv(profile_settings, "profile-bootstrap-relays");
+    g_assert_true(g_strv_equal((const char *const *)saved_relays, (const char *const *)unchanged_relays));
+    g_signal_emit_by_name(find_button(GTK_WIDGET(preferences), P_("Restore Defaults")), "clicked");
+    g_autoptr(GVariant) defaults = g_settings_get_default_value(profile_settings, "profile-bootstrap-relays");
+    g_autoptr(GVariant) restored = g_settings_get_value(profile_settings, "profile-bootstrap-relays"); g_assert_true(g_variant_equal(defaults, restored));
     snapshot(GTK_WIDGET(window), dark ? "settings-dark" : "settings-light");
     adw_dialog_close(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)));
     WAIT(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)) == NULL);
@@ -759,8 +787,15 @@ static void layout_activate(GApplication *application, gpointer data) {
   g_assert_nonnull(profile_dialog); g_assert_cmpstr(adw_dialog_get_title(profile_dialog), ==, P_("Edit Profile"));
   g_assert_nonnull(find_row(GTK_WIDGET(profile_dialog), P_("Avatar URL")));
   g_assert_nonnull(find_row(GTK_WIDGET(profile_dialog), P_("Banner URL")));
+  g_assert_nonnull(find_row(GTK_WIDGET(profile_dialog), P_("Automated Account (Bot)")));
+  g_assert_nonnull(find_row(GTK_WIDGET(profile_dialog), P_("Profile Preview")));
+  g_assert_nonnull(find_button(GTK_WIDGET(profile_dialog), P_("Discard Local Changes")));
+  g_assert_nonnull(find_button(GTK_WIDGET(profile_dialog), P_("Republish")));
   gtk_window_set_default_size(GTK_WINDOW(window), 360, 640); wait_frames(GTK_WIDGET(window));
   snapshot(GTK_WIDGET(window), "profile-editor-360"); assert_focus_bounds(window);
+  AdwExpanderRow *profile_preview = ADW_EXPANDER_ROW(find_row(GTK_WIDGET(profile_dialog), P_("Profile Preview")));
+  adw_expander_row_set_expanded(profile_preview, TRUE); wait_frames(GTK_WIDGET(window)); snapshot(GTK_WIDGET(window), "profile-preview-360");
+  adw_expander_row_set_expanded(profile_preview, FALSE);
   gtk_window_set_default_size(GTK_WINDOW(window), 920, 640); wait_frames(GTK_WIDGET(window));
   snapshot(GTK_WIDGET(window), "profile-editor-wide"); assert_focus_bounds(window);
   adw_dialog_close(profile_dialog); WAIT(!adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)));

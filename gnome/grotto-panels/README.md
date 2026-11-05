@@ -34,8 +34,15 @@ Grotto owns EOSE-aware, author-scoped relay reads, signed-event validation,
 newest-event selection, `$XDG_CACHE_HOME/grotto/profiles` caching, image file
 selection/preview and Blossom uploads. Destinations come from per-identity or
 explicitly user-configured relays, signed kind 10002 and signed kind 10063.
-Schema-default relays are never a bootstrap fallback. Missing configuration stays
-missing. Image uploads use the verified cached kind-10063 set, frozen before the
+Preferences → Profile Discovery contains the owner-approved, discovery-only
+bootstrap list and an opt-out. Its single source of default data is the Grotto
+GSettings schema. Only when no identity relays are known, these relays receive
+author-scoped kinds 0/10002/10050 filters; a signed 10002 switches discovery to
+that identity's NIP-65 **outbox** (not read-only or DM relays). Known/explicitly
+empty identity configuration does not fall back to bootstrap. Bootstrap relays
+are never publication destinations unless the identity independently advertises
+them as outbox relays. Profile Details discloses every contacted discovery relay
+and the publication/outbox set. Tor mode still fails closed. Image uploads use the verified cached kind-10063 set, frozen before the
 upload confirmation; no server outside that set is tried. Save preserves
 unknown profile fields, rejects a newer remote edit, requests one kind-0
 MANAGEMENT review, waits for relay OKs and re-fetches without signing again.
@@ -45,11 +52,13 @@ publication relays. Its approval explicitly permits publication by Grotto.
 Relay authentication and image-upload authorizations also use the signer gate;
 they never grant reusable profile-signing permission. The upload review shows the actual verb, blob hash, expiry and intended server
 fallback set; the hash-scoped token has no server restriction, which is disclosed.
-Uploads make the original image **public immediately, before Save**. Cancelling
+Uploads make the cropped image **public immediately, before Save**. Cancelling
 the metadata draft does not delete that blob or recall copies. Before Upload,
-confirmation names the destinations and explicitly warns that the unchanged
-original includes EXIF/location/device and other embedded metadata; Cancel is
-the default. Remove metadata first if it should not be shared.
+confirmation names the destinations and shows an adjustable square avatar or
+3:1 banner crop, with zoom/position controls and size guidance. The host
+re-encodes only the selected pixels as PNG (up to 512×512 or 1500×500), dropping
+original EXIF/location/device metadata before hashing, signing or upload. The
+preview matches those uploaded bytes; Cancel is the default.
 
 Neither signing identities nor watch-only profiles trigger automatic image GETs.
 **Load Profile Images…** asks for explicit consent naming the exact avatar and
@@ -57,7 +66,17 @@ banner URLs and explains network-address disclosure and mutable image bytes.
 Local cached images may be rendered without contacting an origin. Signing
 previews are plain text and never fetch profile URLs.
 
-All I/O and decoding run off the GTK thread; upload/publish progress is
+The editor separates display name from username, keeps URLs/addresses behind a
+disclosure, includes the bot flag, and provides a live client-style preview,
+Republish and Discard Local Changes. Last-published event time and outbox relays
+are in Profile Details; no-relay, offline and unpublished states are distinct.
+The host checks a published NIP-05 address using HTTPS and exact lowercase public
+key matching, ignoring redirects. Edited addresses become unchecked; Check makes
+a fresh lookup at the address's domain. Identification is not person verification.
+See [NIP-05](https://github.com/nostr-protocol/nips/blob/master/05.md).
+
+All I/O and input decoding run off the GTK thread; bounded crop-preview pixel
+transforms run on GTK. Upload/publish progress is
 indeterminate and failures retain the form. **Stop** cancels a pending operation
 and retains the draft; the warning states that data already sent may be public
 and cannot be recalled. Idle **Cancel** discards the local draft only.

@@ -102,6 +102,17 @@
     </key>
 
     <!-- Network Settings -->
+    <!-- Owner-approved W7b discovery-only defaults. Never publication destinations. -->
+    <key name="profile-bootstrap-enabled" type="b">
+      <default>true</default>
+      <summary>Discover profiles for identities without known relays</summary>
+      <description>Query only kinds 0, 10002 and 10050, then use the identity's NIP-65 outbox. Disable to avoid disclosing identities to discovery relays.</description>
+    </key>
+    <key name="profile-bootstrap-relays" type="as">
+      <default>['wss://relay.damus.io', 'wss://nos.lol', 'wss://relay.nostr.band', 'wss://purplepag.es']</default>
+      <summary>Discovery-only bootstrap relays</summary>
+      <description>Used only when no identity relays are known. Never used as publish fallback.</description>
+    </key>
     <key name="relays" type="as">
       <default>['wss://nos.lol', 'wss://relay.primal.net', 'wss://relay.sharegap.net', 'wss://relay.nostr.band']</default>
       <summary>Relay URLs</summary>

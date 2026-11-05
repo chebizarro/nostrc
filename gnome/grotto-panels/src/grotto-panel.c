@@ -182,7 +182,7 @@ void grotto_panel_profile_async(GrottoPanel *self, GrottoProfileAction action,
   GrottoPanelPrivate *p = grotto_panel_get_instance_private(self);
   GTask *task = g_task_new(self, cancel, callback, data);
   g_autoptr(GError) error = NULL;
-  if (action < GROTTO_PROFILE_FETCH || action > GROTTO_PROFILE_LOAD_IMAGES ||
+  if (action < GROTTO_PROFILE_FETCH || action > GROTTO_PROFILE_VERIFY_NIP05 ||
       (action != GROTTO_PROFILE_FETCH && !info) || !key || !*key ||
       !grotto_panels_public_text_validate(key, &error) || !grotto_profile_info_validate(info, &error))
     g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "Invalid profile request");

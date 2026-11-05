@@ -146,6 +146,65 @@ static void seed_profiles(BunkerTestRelay *relay, const char *hex, const char *k
     }
   }
 }
+typedef struct { const char *hex; guint requests; } BootstrapProbe;
+static void forbidden_bootstrap_publish(const char *event, gpointer data) { (void)event; (void)data; g_error("Publication must never use bootstrap fallback"); }
+static void bootstrap_request(JsonArray *request, gpointer data) {
+  BootstrapProbe *p = data; p->requests++;
+  g_assert_cmpuint(json_array_get_length(request), ==, 5);
+  const guint kinds[] = {0, 10002, 10050};
+  for (guint i = 0; i < 3; i++) {
+    JsonObject *filter = json_array_get_object_element(request, i + 2);
+    g_assert_cmpint(json_array_get_int_element(json_object_get_array_member(filter, "kinds"), 0), ==, kinds[i]);
+    g_assert_cmpstr(json_array_get_string_element(json_object_get_array_member(filter, "authors"), 0), ==, p->hex);
+    g_assert_cmpint(json_object_get_int_member(filter, "limit"), ==, 1);
+  }
+}
+static void seed_metadata(BunkerTestRelay *relay, const char *hex, const char *key, guint kind, const char *tags) {
+  g_autofree char *raw = g_strdup_printf("{\"pubkey\":\"%s\",\"kind\":%u,\"created_at\":1,\"content\":\"\",\"tags\":%s}", hex, kind, tags);
+  NostrEvent *event = nostr_event_new(); g_assert_cmpint(nostr_event_deserialize(event, raw), ==, 0);
+  g_assert_cmpint(nostr_event_sign(event, key), ==, 0);
+  g_autofree char *signed_json = nostr_event_serialize_compact(event); nostr_event_free(event);
+  json_array_add_element(bunker_test_relay_events(relay), json_from_string(signed_json, NULL));
+}
+#ifdef __linux__
+static void crop_picker_cancel(SignerWindow *window, AdwDialog *editor) {
+  g_autoptr(GdkPixbuf) pixels = gdk_pixbuf_new(GDK_COLORSPACE_RGB, FALSE, 8, 64, 32); gdk_pixbuf_fill(pixels, 0x7faaffff);
+  g_autofree char *path = g_build_filename(g_get_user_cache_dir(), "crop-fixture.png", NULL);
+  g_assert_true(gdk_pixbuf_save(pixels, path, "png", NULL, "tEXt::Comment", "private metadata fixture", NULL));
+  g_signal_emit_by_name(find(GTK_WIDGET(editor), "Choose Avatar…"), "clicked");
+  GtkFileChooser *chooser = NULL; GListModel *windows = gtk_window_get_toplevels();
+  guint timer = g_timeout_add_seconds(30, timeout, "real crop file chooser");
+  while (!chooser) {
+    for (guint i = 0; i < g_list_model_get_n_items(windows); i++) {
+      GtkWidget *candidate = g_list_model_get_item(windows, i);
+      if (GTK_IS_FILE_CHOOSER(candidate) && gtk_widget_get_mapped(candidate) && gtk_window_get_transient_for(GTK_WINDOW(candidate)) == GTK_WINDOW(window)) chooser = GTK_FILE_CHOOSER(candidate);
+      else g_object_unref(candidate);
+      if (chooser) break;
+    }
+    if (!chooser) g_main_context_iteration(NULL, TRUE);
+  }
+  g_source_remove(timer);
+  g_autoptr(GFile) file = g_file_new_for_path(path); g_assert_true(gtk_file_chooser_set_file(chooser, file, NULL));
+  guint frames = 0; gtk_widget_add_tick_callback(GTK_WIDGET(chooser), presented, &frames, NULL); WAIT(frames == 3);
+  GtkWidget *accept = gtk_dialog_get_widget_for_response(GTK_DIALOG(chooser), GTK_RESPONSE_ACCEPT); WAIT(gtk_widget_is_sensitive(accept));
+  g_signal_emit_by_name(accept, "clicked"); g_object_unref(chooser);
+  AdwDialog *visible = NULL;
+  WAIT((visible = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window))) && ADW_IS_ALERT_DIALOG(visible));
+  g_assert_cmpstr(adw_alert_dialog_get_heading(ADW_ALERT_DIALOG(visible)), ==, "Crop and Upload Profile Image?");
+  GtkWidget *box = adw_alert_dialog_get_extra_child(ADW_ALERT_DIALOG(visible));
+  guint ranges = 0;
+  for (GtkWidget *child = gtk_widget_get_first_child(box); child; child = gtk_widget_get_next_sibling(child))
+    if (GTK_IS_RANGE(child)) { gtk_range_set_value(GTK_RANGE(child), ranges++ ? 1 : 2); }
+  g_assert_cmpuint(ranges, ==, 3);
+  GtkWidget *picture = gtk_widget_get_first_child(box); g_assert_true(GTK_IS_PICTURE(picture));
+  GdkPaintable *crop = gtk_picture_get_paintable(GTK_PICTURE(picture)); g_assert_true(GDK_IS_TEXTURE(crop));
+  g_assert_cmpint(gdk_texture_get_width(GDK_TEXTURE(crop)), ==, 16); g_assert_cmpint(gdk_texture_get_height(GDK_TEXTURE(crop)), ==, 16);
+  frames = 0; gtk_widget_add_tick_callback(GTK_WIDGET(visible), presented, &frames, NULL); WAIT(frames == 3);
+  g_signal_emit_by_name(find(GTK_WIDGET(visible), "Cancel"), "clicked");
+  WAIT(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)) == editor && gtk_widget_is_sensitive(find(GTK_WIDGET(editor), "Save")));
+  g_assert_cmpint(g_remove(path), ==, 0);
+}
+#endif
 static void profile_activate(GApplication *application, gpointer data) {
   (void)data; AdwApplication *app = ADW_APPLICATION(application);
   nostrc_test_bus_tolerate_ebadf(); NostrcTestBus *bus = private_bus;
@@ -154,12 +213,37 @@ static void profile_activate(GApplication *application, gpointer data) {
   g_autofree char *hex = nostr_key_get_public(sk); guint8 pk[32];
   for (guint i = 0; i < 32; i++) { char byte[3] = {hex[2*i], hex[2*i+1], 0}; pk[i] = g_ascii_strtoull(byte, NULL, 16); }
   char *npub = NULL; g_assert_cmpint(nostr_nip19_encode_npub(pk, &npub), ==, 0);
-  /* Missing configuration must not bootstrap via schema-default relays. */
+  GSettings *preferences = settings_manager_get_gsettings(settings_manager_get_default());
+  g_settings_set_boolean(preferences, "profile-bootstrap-enabled", FALSE);
+  /* Opt-out: empty configuration makes no network connection and remains editable. */
   GAsyncResult *empty = NULL;
   grotto_profile_service_async(NULL, GROTTO_PROFILE_FETCH, npub, NULL, NULL, host_result, &empty); WAIT(empty);
   g_autoptr(GError) empty_error = NULL;
   GrottoProfileInfo *missing = g_task_propagate_pointer(G_TASK(empty), &empty_error); g_object_unref(empty);
-  g_assert_null(missing); g_assert_error(empty_error, G_IO_ERROR, G_IO_ERROR_HOST_UNREACHABLE);
+  g_assert_no_error(empty_error); g_assert_nonnull(missing); g_assert_true(missing->no_relays); g_assert_false(missing->published); grotto_profile_info_free(missing);
+  g_autoptr(GrottoProfileInfo) invalid_address = grotto_profile_info_copy(NULL);
+  g_free(invalid_address->fields[GROTTO_PROFILE_NIP05]); invalid_address->fields[GROTTO_PROFILE_NIP05] = g_strdup("Invalid@example.com");
+  empty = NULL; grotto_profile_service_async(NULL, GROTTO_PROFILE_VERIFY_NIP05, npub, invalid_address, NULL, host_result, &empty); WAIT(empty);
+  GrottoProfileInfo *checked = g_task_propagate_pointer(G_TASK(empty), &empty_error); g_object_unref(empty);
+  g_assert_no_error(empty_error); g_assert_cmpint(checked->nip05_status, ==, GROTTO_NIP05_INVALID); grotto_profile_info_free(checked);
+  g_settings_set_boolean(preferences, "use-tor-for-relays", TRUE);
+  empty = NULL; grotto_profile_service_async(NULL, GROTTO_PROFILE_VERIFY_NIP05, npub, invalid_address, NULL, host_result, &empty); WAIT(empty);
+  checked = g_task_propagate_pointer(G_TASK(empty), &empty_error); g_object_unref(empty);
+  g_assert_no_error(empty_error); g_assert_cmpint(checked->nip05_status, ==, GROTTO_NIP05_UNAVAILABLE); grotto_profile_info_free(checked);
+  g_settings_set_boolean(preferences, "use-tor-for-relays", FALSE);
+  BunkerTestRelay *bootstrap = bunker_test_relay_new(), *read_only = bunker_test_relay_new();
+  BootstrapProbe probe = {.hex = hex}; bunker_test_relay_set_request_callback(bootstrap, bootstrap_request, &probe);
+  bunker_test_relay_set_event_callback(bootstrap, forbidden_bootstrap_publish, NULL);
+  const char *bootstrap_urls[] = {bunker_test_relay_url(bootstrap), NULL};
+  g_settings_set_strv(preferences, "profile-bootstrap-relays", bootstrap_urls); g_settings_set_boolean(preferences, "profile-bootstrap-enabled", TRUE);
+  empty = NULL; grotto_profile_service_async(NULL, GROTTO_PROFILE_FETCH, npub, NULL, NULL, host_result, &empty); WAIT(empty);
+  missing = g_task_propagate_pointer(G_TASK(empty), &empty_error); g_object_unref(empty);
+  g_assert_no_error(empty_error); g_assert_nonnull(missing); g_assert_true(missing->bootstrap_used); g_assert_false(missing->published);
+  g_assert_null(missing->publish_relays[0]);
+  empty = NULL; grotto_profile_service_async(NULL, GROTTO_PROFILE_SAVE, npub, missing, NULL, host_result, &empty); WAIT(empty);
+  g_assert_null(g_task_propagate_pointer(G_TASK(empty), &empty_error)); g_object_unref(empty);
+  g_assert_error(empty_error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND); g_clear_error(&empty_error); grotto_profile_info_free(missing);
+  guint bc, br, bp; bunker_test_relay_stats(bootstrap, &bc, &br, &bp); g_assert_cmpuint(bp, ==, 0);
   guint image_contacts = 0;
   g_autoptr(GSocketService) image_server = g_socket_service_new();
   g_autoptr(GSocketAddress) address = g_inet_socket_address_new_from_string("127.0.0.1", 0); GSocketAddress *effective = NULL;
@@ -167,7 +251,14 @@ static void profile_activate(GApplication *application, gpointer data) {
   g_autofree char *image = g_strdup_printf("https://127.0.0.1:%u/tracker.png", g_inet_socket_address_get_port(G_INET_SOCKET_ADDRESS(effective))); g_object_unref(effective);
   g_signal_connect(image_server, "incoming", G_CALLBACK(image_contact), &image_contacts); g_socket_service_start(image_server);
   BunkerTestRelay *relay = bunker_test_relay_new(); seed_profiles(relay, hex, sk, image);
-  RelayStore *store = relay_store_new_for_identity(npub); relay_store_add(store, bunker_test_relay_url(relay), TRUE, TRUE); relay_store_save(store); relay_store_free(store);
+#ifdef __linux__
+  seed_metadata(relay, hex, sk, 10063, "[[\"server\",\"https://images.example/\"]]");
+#endif
+  guint initial_events = json_array_get_length(bunker_test_relay_events(relay));
+  g_autofree char *outbox_tags = g_strdup_printf("[[\"r\",\"%s\",\"write\"],[\"r\",\"%s\",\"read\"]]", bunker_test_relay_url(relay), bunker_test_relay_url(read_only));
+  seed_metadata(bootstrap, hex, sk, 10002, outbox_tags);
+  g_autofree char *dm_tags = g_strdup_printf("[[\"relay\",\"%s\"]]", bunker_test_relay_url(read_only));
+  seed_metadata(bootstrap, hex, sk, 10050, dm_tags);
   g_setenv("NOSTR_SIGNER_SECKEY_HEX", sk, TRUE);
   AccountsStore *accounts = accounts_store_get_default(); g_assert_true(accounts_store_add(accounts, npub, "Everyday", NULL));
   g_settings_set_string(settings_manager_get_gsettings(settings_manager_get_default()), "default-identity", npub);
@@ -193,6 +284,14 @@ static void profile_activate(GApplication *application, gpointer data) {
   g_assert_true(grotto_panel_has_profile_host(GROTTO_PANEL(panel)));
   WAIT(find(panel, "Edit Profile…") && gtk_widget_get_visible(find(panel, "Edit Profile…")) && gtk_widget_get_sensitive(find(panel, "Edit Profile…")));
   g_assert_nonnull(find(panel, "Newest")); g_assert_null(find(panel, "Older"));
+  guint bootstrap_requests = probe.requests;
+  g_assert_cmpuint(bootstrap_requests, >=, 3);
+  g_autofree char *dm_cache = g_strdup_printf("%s/grotto/profiles/%s-10050.json", g_get_user_cache_dir(), hex);
+  g_assert_true(g_file_test(dm_cache, G_FILE_TEST_IS_REGULAR));
+  g_signal_emit_by_name(find(panel, "Refresh Profile"), "clicked");
+  WAIT(gtk_widget_is_sensitive(find(panel, "Edit Profile…")));
+  g_assert_cmpuint(probe.requests, ==, bootstrap_requests);
+  guint rc, rr, rp; bunker_test_relay_stats(read_only, &rc, &rr, &rp); g_assert_cmpuint(rc, ==, 0);
   g_assert_cmpuint(image_contacts, ==, 0);
   g_signal_emit_by_name(find(panel, "Load Profile Images…"), "clicked");
   AdwDialog *consent = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window));
@@ -212,8 +311,12 @@ static void profile_activate(GApplication *application, gpointer data) {
   g_signal_emit_by_name(find(panel, "Edit Profile…"), "clicked");
   AdwDialog *dialog = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)); g_assert_nonnull(dialog);
   guint frames = 0; gtk_widget_add_tick_callback(GTK_WIDGET(dialog), presented, &frames, NULL); WAIT(frames == 3);
+#ifdef __linux__
+  crop_picker_cancel(window, dialog); /* Real chooser -> crop controls -> Cancel; no upload authorization. */
+#endif
   gtk_editable_set_text(GTK_EDITABLE(find(GTK_WIDGET(dialog), "Name")), "alice");
   gtk_editable_set_text(GTK_EDITABLE(find(GTK_WIDGET(dialog), "Display Name")), "Alice");
+  adw_switch_row_set_active(ADW_SWITCH_ROW(find(GTK_WIDGET(dialog), "Automated Account (Bot)")), TRUE);
   GtkWidget *save = find(GTK_WIDGET(dialog), "Save"); g_assert_true(gtk_widget_is_sensitive(save));
   GrottoPanelsService *service = grotto_panel_get_service(GROTTO_PANEL(panel));
   /* Opening the real form can overlap a daemon snapshot refresh. Wait for
@@ -223,8 +326,8 @@ static void profile_activate(GApplication *application, gpointer data) {
   g_signal_emit_by_name(save, "clicked");
   WAIT(approval.decisions == 1 && !adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)));
   g_assert_cmpuint(approval.reviews, ==, 1);
-  JsonArray *events = bunker_test_relay_events(relay); g_assert_cmpuint(json_array_get_length(events), ==, 4);
-  g_autofree char *json = json_to_string(json_array_get_element(events, 3), FALSE);
+  JsonArray *events = bunker_test_relay_events(relay); g_assert_cmpuint(json_array_get_length(events), ==, initial_events + 1);
+  g_autofree char *json = json_to_string(json_array_get_element(events, initial_events), FALSE);
   NostrEvent *event = nostr_event_new(); g_assert_cmpint(nostr_event_deserialize_signed(event, json, NULL), ==, NOSTR_EVENT_VALIDATION_OK);
   g_assert_cmpint(nostr_event_validate(event, NULL), ==, NOSTR_EVENT_VALIDATION_OK); g_assert_cmpint(nostr_event_get_kind(event), ==, 0); g_assert_cmpstr(nostr_event_get_pubkey(event), ==, hex);
   g_assert_nonnull(strstr(nostr_event_get_content(event), "alice"));
@@ -234,6 +337,9 @@ static void profile_activate(GApplication *application, gpointer data) {
   g_assert_cmpstr(nostr_event_get_id(event), ==, reviewed_id); g_assert_cmpuint(nostr_tags_size(nostr_event_get_tags(event)), ==, 0); nostr_event_free(reviewed);
   g_autoptr(JsonParser) content = json_parser_new(); g_assert_true(json_parser_load_from_data(content, nostr_event_get_content(event), -1, NULL));
   g_assert_true(json_object_get_boolean_member(json_object_get_object_member(json_node_get_object(json_parser_get_root(content)), "extension"), "keep"));
+  g_assert_true(json_object_get_boolean_member(json_node_get_object(json_parser_get_root(content)), "bot"));
+  g_assert_cmpuint(probe.requests, ==, bootstrap_requests);
+  bunker_test_relay_stats(bootstrap, &bc, &br, &bp); g_assert_cmpuint(bp, ==, 2);
   g_test_message("Published kind-0 event %s after exactly one review", nostr_event_get_id(event)); nostr_event_free(event);
   g_autofree char *cache = g_strdup_printf("%s/grotto/profiles/%s-0.json", g_get_user_cache_dir(), hex);
   g_assert_true(g_file_test(cache, G_FILE_TEST_IS_REGULAR));
@@ -249,13 +355,14 @@ static void profile_activate(GApplication *application, gpointer data) {
   WAIT(grotto_panels_service_can(service, GROTTO_PANEL_SET_IDENTITY_LABEL));
   g_signal_emit_by_name(find(GTK_WIDGET(dialog), "Save"), "clicked");
   WAIT(approval.completed == 2 && find(GTK_WIDGET(dialog), "Stopped. Data may already have reached a server or relay. Refresh before saving again"));
-  g_assert_false(approval.last_allowed); g_assert_cmpuint(json_array_get_length(events), ==, 4);
+  g_assert_false(approval.last_allowed); g_assert_cmpuint(json_array_get_length(events), ==, initial_events + 1);
   g_signal_emit_by_name(find(GTK_WIDGET(dialog), "Cancel"), "clicked");
   WAIT(!adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)));
   /* Offline cache is the same host path, with no synthetic cached result. */
   bunker_test_relay_free(relay); relay = NULL;
   g_signal_emit_by_name(find(panel, "Refresh Profile"), "clicked"); WAIT(find(panel, "Offline — showing the saved profile"));
   g_assert_nonnull(find(panel, "Alice")); g_assert_cmpuint(approval.reviews, ==, 2);
+  bunker_test_relay_free(bootstrap); bunker_test_relay_free(read_only);
   g_socket_service_stop(image_server);
   diagnostic_window = NULL;
   gtk_window_destroy(GTK_WINDOW(window)); g_object_unref(window); WAIT(window_gone);
@@ -306,9 +413,13 @@ static void privacy_helpers(void) {
   const char *servers[] = {"https://images.example/", "https://fallback.example/", NULL};
   AdwAlertDialog *upload = g_object_ref_sink(grotto_profile_upload_confirmation(preview, FALSE, servers));
   const char *body = adw_alert_dialog_get_body(upload);
-  g_assert_nonnull(strstr(body, "EXIF")); g_assert_nonnull(strstr(body, "unchanged")); g_assert_nonnull(strstr(body, "public immediately"));
+  g_assert_nonnull(strstr(body, "EXIF")); g_assert_nonnull(strstr(body, "re-encoded as PNG")); g_assert_nonnull(strstr(body, "public immediately"));
   g_assert_nonnull(strstr(body, "will not delete")); g_assert_nonnull(strstr(body, servers[0])); g_assert_nonnull(strstr(body, servers[1]));
   g_assert_cmpstr(adw_alert_dialog_get_default_response(upload), ==, "cancel"); g_object_unref(upload);
+  g_autoptr(GBytes) clean = grotto_profile_crop_image(preview, FALSE, 1, .5, .5);
+  g_autoptr(GInputStream) clean_stream = g_memory_input_stream_new_from_bytes(clean);
+  g_autoptr(GdkPixbuf) clean_pixels = gdk_pixbuf_new_from_stream(clean_stream, NULL, NULL);
+  g_assert_null(gdk_pixbuf_get_option(clean_pixels, "tEXt::Comment"));
   g_autoptr(GBytes) svg = g_bytes_new_static("<svg/>", 6); g_autoptr(GError) error = NULL;
   g_assert_null(grotto_profile_decode_image(svg, NULL, &error)); g_assert_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA); g_clear_error(&error);
   g_autoptr(GBytes) huge = g_bytes_new_take(g_malloc0(5*1024*1024+1), 5*1024*1024+1);
@@ -317,6 +428,35 @@ static void privacy_helpers(void) {
   data = NULL; g_assert_true(gdk_pixbuf_save_to_buffer(wide, &data, &length, "png", NULL, NULL));
   g_autoptr(GBytes) wide_bytes = g_bytes_new_take(data, length);
   g_assert_null(grotto_profile_decode_image(wide_bytes, NULL, &error)); g_assert_nonnull(error);
+}
+static void crop_and_nip05(void) {
+  g_autoptr(GdkPixbuf) pixels = gdk_pixbuf_new(GDK_COLORSPACE_RGB, FALSE, 8, 1200, 600);
+  gdk_pixbuf_fill(pixels, 0xff0000ff);
+  g_autoptr(GdkPixbuf) right = gdk_pixbuf_new_subpixbuf(pixels, 600, 0, 600, 600); gdk_pixbuf_fill(right, 0x0000ffff);
+  g_autoptr(GdkTexture) texture = gdk_texture_new_for_pixbuf(pixels);
+  g_autoptr(GBytes) left_bytes = grotto_profile_crop_image(texture, FALSE, 1, 0, .5);
+  g_autoptr(GBytes) right_bytes = grotto_profile_crop_image(texture, FALSE, 1, 1, .5);
+  g_autoptr(GdkTexture) left_image = gdk_texture_new_from_bytes(left_bytes, NULL);
+  g_autoptr(GdkTexture) right_image = gdk_texture_new_from_bytes(right_bytes, NULL);
+  g_assert_cmpint(gdk_texture_get_width(left_image), ==, 512); g_assert_cmpint(gdk_texture_get_height(left_image), ==, 512);
+  g_autoptr(GdkPixbuf) left_pixels = gdk_pixbuf_get_from_texture(left_image);
+  g_autoptr(GdkPixbuf) right_pixels = gdk_pixbuf_get_from_texture(right_image);
+  g_assert_cmpuint(gdk_pixbuf_get_pixels(left_pixels)[0], ==, 255); g_assert_cmpuint(gdk_pixbuf_get_pixels(right_pixels)[2], ==, 255);
+  g_autoptr(GBytes) banner = grotto_profile_crop_image(texture, TRUE, 1, .5, 0);
+  g_autoptr(GdkTexture) banner_image = gdk_texture_new_from_bytes(banner, NULL);
+  g_assert_cmpint(gdk_texture_get_width(banner_image), ==, 3 * gdk_texture_get_height(banner_image));
+  g_autoptr(GBytes) zoomed = grotto_profile_crop_image(texture, FALSE, 2, .5, 1);
+  g_autoptr(GdkTexture) zoomed_image = gdk_texture_new_from_bytes(zoomed, NULL);
+  g_assert_cmpint(gdk_texture_get_width(zoomed_image), ==, 300); g_assert_cmpint(gdk_texture_get_height(zoomed_image), ==, 300);
+  const char *hex = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+  g_autofree char *valid = g_strdup_printf("{\"names\":{\"alice\":\"%s\",\"_\":\"%s\"}}", hex, hex);
+  g_assert_cmpint(grotto_profile_nip05_response(valid, strlen(valid), "alice", hex), ==, GROTTO_NIP05_VERIFIED);
+  g_assert_cmpint(grotto_profile_nip05_response(valid, strlen(valid), "_", hex), ==, GROTTO_NIP05_VERIFIED);
+  g_assert_cmpint(grotto_profile_nip05_response(valid, strlen(valid), "other", hex), ==, GROTTO_NIP05_MISMATCH);
+  g_assert_cmpint(grotto_profile_nip05_response("{}", 2, "alice", hex), ==, GROTTO_NIP05_UNAVAILABLE);
+  g_assert_cmpint(grotto_profile_nip05_response("[", 1, "alice", hex), ==, GROTTO_NIP05_UNAVAILABLE);
+  g_autofree char *upper = g_ascii_strup(valid, -1);
+  g_assert_cmpint(grotto_profile_nip05_response(upper, strlen(upper), "alice", hex), !=, GROTTO_NIP05_VERIFIED);
 }
 static void profile_integration(void) {
   gboolean app_gone = FALSE;
@@ -337,6 +477,7 @@ int main(int argc, char **argv) {
   g_setenv("GSETTINGS_BACKEND", "memory", TRUE);
   private_bus = nostrc_test_bus_new(NOSTRC_TEST_BUS_FLAGS_NONE); nostrc_test_bus_up(private_bus);
   adw_init(); g_object_set(gtk_settings_get_default(), "gtk-enable-animations", FALSE, NULL);
+  g_test_add_func("/signer/profile/crop-and-nip05", crop_and_nip05);
   g_test_add_func("/signer/profile/authorization-preview", authorization_preview);
   g_test_add_func("/signer/profile/image-privacy-and-limits", privacy_helpers);
   g_test_add_func("/signer/profile/save-one-review-real-daemon", profile_integration);

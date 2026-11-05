@@ -14,6 +14,9 @@ struct _PageSettings {
   AdwSpinRow *retention;
   AdwComboRow *lock_timeout;
   AdwSwitchRow *lock_idle, *pause_lock;
+  AdwSwitchRow *bootstrap_enabled;
+  GtkTextView *bootstrap_relays;
+  GtkLabel *bootstrap_error;
   GSettings *settings;
   GrottoHomeModel *model;
 };
@@ -125,6 +128,59 @@ static void open_remote(AdwActionRow *row, gpointer data) {
   if (dialog) adw_dialog_close(dialog);
   signer_window_show_page(SIGNER_WINDOW(root), "remote-signing");
 }
+static void bootstrap_save(GtkButton *button, gpointer data) {
+  (void)button; PageSettings *self = data;
+  GtkTextIter start, end; GtkTextBuffer *buffer = gtk_text_view_get_buffer(self->bootstrap_relays);
+  gtk_text_buffer_get_bounds(buffer, &start, &end);
+  g_autofree char *text = gtk_text_buffer_get_text(buffer, &start, &end, FALSE);
+  g_auto(GStrv) lines = g_strsplit(text, "\n", -1);
+  g_autoptr(GStrvBuilder) values = g_strv_builder_new(); guint count = 0;
+  for (guint i = 0; lines[i]; i++) {
+    const char *url = g_strstrip(lines[i]); if (!*url) continue;
+    g_autoptr(GUri) uri = g_uri_parse(url, G_URI_FLAGS_NONE, NULL);
+    if (++count > 16 || strlen(url) > 1024 || !uri || !g_uri_get_host(uri) ||
+        g_strcmp0(g_uri_get_scheme(uri), "wss") || g_uri_get_userinfo(uri) || g_uri_get_query(uri) || g_uri_get_fragment(uri)) {
+      gtk_label_set_text(self->bootstrap_error, _("Use up to 16 wss:// relay URLs, one per line, without credentials, queries or fragments")); return;
+    }
+    g_strv_builder_add(values, url);
+  }
+  g_auto(GStrv) urls = g_strv_builder_end(values);
+  gboolean saved = g_settings_set_strv(self->settings, "profile-bootstrap-relays", (const char *const *)urls);
+  gtk_label_set_text(self->bootstrap_error, saved ? _("Discovery relays saved") : _("Discovery relays could not be saved"));
+}
+static void bootstrap_defaults(GtkButton *button, gpointer data) {
+  (void)button; PageSettings *self = data;
+  g_settings_reset(self->settings, "profile-bootstrap-relays");
+  g_auto(GStrv) urls = g_settings_get_strv(self->settings, "profile-bootstrap-relays");
+  g_autofree char *text = g_strjoinv("\n", urls);
+  gtk_text_buffer_set_text(gtk_text_view_get_buffer(self->bootstrap_relays), text, -1);
+  gtk_label_set_text(self->bootstrap_error, _("Discovery-only defaults restored"));
+}
+static void add_profile_discovery(PageSettings *self) {
+  AdwPreferencesGroup *group = ADW_PREFERENCES_GROUP(adw_preferences_group_new());
+  adw_preferences_group_set_title(group, _("Profile Discovery"));
+  adw_preferences_group_set_description(group, _("For identities with no known relays only. Discovery shares the public identity with these relays, then switches to its own outbox. Never used for publishing."));
+  self->bootstrap_enabled = ADW_SWITCH_ROW(adw_switch_row_new());
+  adw_preferences_row_set_title(ADW_PREFERENCES_ROW(self->bootstrap_enabled), _("Use Bootstrap Relays"));
+  g_settings_bind(self->settings, "profile-bootstrap-enabled", self->bootstrap_enabled, "active", G_SETTINGS_BIND_DEFAULT);
+  adw_preferences_group_add(group, GTK_WIDGET(self->bootstrap_enabled));
+  AdwExpanderRow *details = ADW_EXPANDER_ROW(adw_expander_row_new());
+  adw_preferences_row_set_title(ADW_PREFERENCES_ROW(details), _("Discovery-Only Relays"));
+  adw_expander_row_set_subtitle(details, _("Kinds 0, 10002 and 10050 · Edit or remove defaults"));
+  GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+  gtk_widget_set_margin_start(box, 12); gtk_widget_set_margin_end(box, 12); gtk_widget_set_margin_top(box, 12); gtk_widget_set_margin_bottom(box, 12);
+  self->bootstrap_relays = GTK_TEXT_VIEW(gtk_text_view_new()); gtk_text_view_set_wrap_mode(self->bootstrap_relays, GTK_WRAP_CHAR);
+  gtk_accessible_update_property(GTK_ACCESSIBLE(self->bootstrap_relays), GTK_ACCESSIBLE_PROPERTY_LABEL, _("Discovery relay URLs, one per line"), -1);
+  g_auto(GStrv) urls = g_settings_get_strv(self->settings, "profile-bootstrap-relays");
+  g_autofree char *text = g_strjoinv("\n", urls);
+  gtk_text_buffer_set_text(gtk_text_view_get_buffer(self->bootstrap_relays), text, -1);
+  gtk_widget_set_size_request(GTK_WIDGET(self->bootstrap_relays), -1, 100); gtk_box_append(GTK_BOX(box), GTK_WIDGET(self->bootstrap_relays));
+  GtkWidget *save = gtk_button_new_with_label(_("Save Discovery Relays")), *reset = gtk_button_new_with_label(_("Restore Defaults"));
+  g_signal_connect(save, "clicked", G_CALLBACK(bootstrap_save), self); g_signal_connect(reset, "clicked", G_CALLBACK(bootstrap_defaults), self);
+  gtk_box_append(GTK_BOX(box), save); gtk_box_append(GTK_BOX(box), reset);
+  self->bootstrap_error = GTK_LABEL(gtk_label_new("")); gtk_label_set_wrap(self->bootstrap_error, TRUE); gtk_box_append(GTK_BOX(box), GTK_WIDGET(self->bootstrap_error));
+  adw_expander_row_add_row(details, box); adw_preferences_group_add(group, GTK_WIDGET(details)); adw_preferences_page_add(ADW_PREFERENCES_PAGE(self), group);
+}
 static void page_settings_init(PageSettings *self) {
   gtk_widget_init_template(GTK_WIDGET(self)); self->settings = g_settings_new("org.nostr.Grotto");
   gint timeout = g_settings_get_int(self->settings, "lock-timeout-sec");
@@ -134,5 +190,6 @@ static void page_settings_init(PageSettings *self) {
   g_signal_connect(self->lock_timeout, "notify::selected", G_CALLBACK(combo_changed), self);
   g_settings_bind(self->settings, "log-retention-days", self->retention, "value", G_SETTINGS_BIND_DEFAULT);
   g_signal_connect(self->remote, "activated", G_CALLBACK(open_remote), self);
+  add_profile_discovery(self);
 }
 PageSettings *page_settings_new(void) { return g_object_new(TYPE_PAGE_SETTINGS, NULL); }

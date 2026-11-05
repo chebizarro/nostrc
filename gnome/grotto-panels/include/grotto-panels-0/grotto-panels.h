@@ -176,13 +176,20 @@ typedef enum _GrottoProfileField {
 } GrottoProfileField;
 typedef enum _GrottoProfileAction {
   GROTTO_PROFILE_FETCH, GROTTO_PROFILE_SAVE, GROTTO_PROFILE_CHOOSE_AVATAR,
-  GROTTO_PROFILE_CHOOSE_BANNER, GROTTO_PROFILE_LOAD_IMAGES
+  GROTTO_PROFILE_CHOOSE_BANNER, GROTTO_PROFILE_LOAD_IMAGES, GROTTO_PROFILE_VERIFY_NIP05
 } GrottoProfileAction;
+typedef enum _GrottoNip05Status {
+  GROTTO_NIP05_UNCHECKED, GROTTO_NIP05_VERIFIED, GROTTO_NIP05_MISMATCH,
+  GROTTO_NIP05_INVALID, GROTTO_NIP05_UNAVAILABLE
+} GrottoNip05Status;
 typedef struct _GrottoProfileInfo {
   char *fields[GROTTO_PROFILE_N_FIELDS];
   GdkTexture *images[2];
   guint64 created_at;
-  gboolean published, cached, tor_blocked;
+  gboolean published, cached, tor_blocked, bot, no_relays;
+  GrottoNip05Status nip05_status;
+  char **discovery_relays, **publish_relays;
+  gboolean bootstrap_used;
 } GrottoProfileInfo;
 GROTTO_PANELS_API GrottoProfileInfo *grotto_profile_info_copy(const GrottoProfileInfo *info);
 GROTTO_PANELS_API void grotto_profile_info_free(GrottoProfileInfo *info);
