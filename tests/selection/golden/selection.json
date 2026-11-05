@@ -15,6 +15,7 @@
       "grotto.permissions.repeat",
       "grotto.quarantine_contract.asan_ubsan",
       "grotto.quarantine_contract.native",
+      "grotto.settings.host",
       "grotto.signer.asan_ubsan",
       "grotto.signer.native",
       "groundhog.default_build",
