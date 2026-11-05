@@ -41,7 +41,11 @@ author-scoped kinds 0/10002/10050 filters; a signed 10002 switches discovery to
 that identity's NIP-65 **outbox** (not read-only or DM relays). Known/explicitly
 empty identity configuration does not fall back to bootstrap. Bootstrap relays
 are never publication destinations unless the identity independently advertises
-them as outbox relays. Profile Details discloses every contacted discovery relay
+them as outbox relays. Bootstrap connections have **no signing capability**:
+AUTH challenges and auth-required CLOSED are skipped and reported as “relay
+requires authentication”, never answered or submitted for approval. Author-scoped
+REQ still discloses the public key being looked up; it is not an anonymous query
+or proof of key ownership. Normal outbox authentication remains separate. Profile Details discloses every contacted discovery relay
 and the publication/outbox set. Tor mode still fails closed. Image uploads use the verified cached kind-10063 set, frozen before the
 upload confirmation; no server outside that set is tried. Save preserves
 unknown profile fields, rejects a newer remote edit, requests one kind-0
@@ -49,6 +53,13 @@ MANAGEMENT review, waits for relay OKs and re-fetches without signing again.
 The review shows every final profile field (including extensions), the exact raw
 profile and unsigned event JSON in Details, the pinned identity and the actual
 publication relays. Its approval explicitly permits publication by Grotto.
+Bounded host-side context, including bootstrap contacts first made during Save,
+is kept by the controller for the exact daemon/request ID and decorates this
+same review. The unchanged signing method emits a unicast request-ID notification
+to its submitting host connection; no provenance enters nip55l or signed JSON.
+Before correlation the relays line says “destinations: see Details”; correlation
+updates that request only without resetting consent, gating Save or changing
+authority. Lookup contacts are explicitly separate from publication relays.
 Relay authentication and image-upload authorizations also use the signer gate;
 they never grant reusable profile-signing permission. The upload review shows the actual verb, blob hash, expiry and intended server
 fallback set; the hash-scoped token has no server restriction, which is disclosed.
@@ -68,7 +79,9 @@ previews are plain text and never fetch profile URLs.
 
 The editor separates display name from username, keeps URLs/addresses behind a
 disclosure, includes the bot flag, and provides a live client-style preview,
-Republish and Discard Local Changes. Last-published event time and outbox relays
+Republish and Discard Local Changes. Republish is disabled and guarded while
+local fields differ from the fetched baseline; use Save for edits or discard them
+before republishing the unchanged profile. Last-published event time and outbox relays
 are in Profile Details; no-relay, offline and unpublished states are distinct.
 The host checks a published NIP-05 address using HTTPS and exact lowercase public
 key matching, ignoring redirects. Edited addresses become unchecked; Check makes

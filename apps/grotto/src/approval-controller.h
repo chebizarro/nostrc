@@ -29,6 +29,11 @@ GrottoApprovalController *grotto_approval_controller_new(GApplication *app, GDBu
 /* Optional host metadata lookup; returns an allocated local label for this exact
  * daemon-pinned npub. It never selects an identity or authorizes a request. */
 typedef gchar *(*GrottoApprovalIdentityLabelFunc)(const gchar *npub);
+/* Thread-safe, display-only host provenance for an exact daemon/request ID.
+ * Does not modify the daemon snapshot, decision modes, deadlines or authority. */
+void grotto_approval_controller_set_profile_provenance(GrottoApprovalController *self,
+    const char *daemon_owner, const char *request_id, const char *const *destinations,
+    const char *const *bootstrap_relays);
 void grotto_approval_controller_set_identity_label_func(GrottoApprovalController *self,
     GrottoApprovalIdentityLabelFunc lookup);
 GListModel *grotto_approval_controller_get_pending(GrottoApprovalController *self); /* borrowed */

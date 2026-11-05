@@ -26,7 +26,9 @@ typedef struct {
   GBytes *bytes;
   GdkTexture *preview;
   char *mime;
-  char **destinations, **discovery_relays;
+  char **destinations, **discovery_relays, **auth_required_relays, **bootstrap_relays;
+  GrottoApprovalController *controller;
+  GMainContext *ui_context;
   gboolean bootstrap_used, bootstrap_round, no_relays, crop_frozen;
   GDBusConnection *bus;
   GCancellable *cancel;
@@ -37,7 +39,7 @@ typedef struct {
 static void cache_lock_free(gpointer data) { g_mutex_clear(data); g_free(data); }
 static void job_free(gpointer data) {
   Job *j = data; g_free(j->npub); grotto_profile_info_free(j->info); g_clear_object(&j->file);
-  g_clear_pointer(&j->bytes, g_bytes_unref); g_clear_object(&j->preview); g_free(j->mime); g_strfreev(j->destinations); g_strfreev(j->discovery_relays); g_clear_object(&j->bus); g_hash_table_unref(j->capabilities); g_clear_object(&j->cache_scope); g_free(j);
+  g_clear_pointer(&j->bytes, g_bytes_unref); g_clear_object(&j->preview); g_free(j->mime); g_strfreev(j->destinations); g_strfreev(j->discovery_relays); g_strfreev(j->auth_required_relays); g_strfreev(j->bootstrap_relays); g_clear_object(&j->controller); g_main_context_unref(j->ui_context); g_clear_object(&j->bus); g_hash_table_unref(j->capabilities); g_clear_object(&j->cache_scope); g_free(j);
 }
 static const char *string(JsonObject *o, const char *key) {
   JsonNode *n = o ? json_object_get_member(o, key) : NULL;
@@ -91,8 +93,39 @@ static void cache_write(Job *j, guint kind, const char *json) {
     g_file_set_contents_full(path, json, -1, G_FILE_SET_CONTENTS_CONSISTENT | G_FILE_SET_CONTENTS_DURABLE, 0600, NULL);
   g_mutex_unlock(j->cache_lock);
 }
+typedef struct {
+  GrottoApprovalController *controller; GMainContext *context;
+  char *owner; char **destinations, **bootstrap;
+} ProfileCorrelation;
+static gboolean release_controller(gpointer data) { g_object_unref(data); return G_SOURCE_REMOVE; }
+static void correlation_free(gpointer data) {
+  ProfileCorrelation *c = data;
+  /* Filter destruction may run on D-Bus I/O; GTK/controller teardown must not. */
+  GSource *idle = g_idle_source_new(); g_source_set_callback(idle, release_controller, c->controller, NULL);
+  g_source_attach(idle, c->context); g_source_unref(idle); g_main_context_unref(c->context);
+  g_free(c->owner); g_strfreev(c->destinations); g_strfreev(c->bootstrap); g_free(c);
+}
+static GDBusMessage *profile_submitted(GDBusConnection *bus, GDBusMessage *message, gboolean incoming, gpointer data) {
+  (void)bus; ProfileCorrelation *c = data;
+  if (incoming && g_dbus_message_get_message_type(message) == G_DBUS_MESSAGE_TYPE_SIGNAL &&
+      !g_strcmp0(g_dbus_message_get_sender(message), c->owner) &&
+      !g_strcmp0(g_dbus_message_get_path(message), "/org/nostr/signer/grotto") &&
+      !g_strcmp0(g_dbus_message_get_interface(message), "org.nostr.Grotto.Control1") &&
+      !g_strcmp0(g_dbus_message_get_member(message), "ProfileRequestSubmitted")) {
+    GVariant *body = g_dbus_message_get_body(message);
+    if (body && g_variant_is_of_type(body, G_VARIANT_TYPE("(s)"))) {
+      const char *id; g_variant_get(body, "(&s)", &id);
+      grotto_approval_controller_set_profile_provenance(c->controller, c->owner, id,
+        (const char *const *)c->destinations, (const char *const *)c->bootstrap);
+    }
+  }
+  return message;
+}
 static char *sign_event(gpointer data, const char *unsigned_json, GCancellable *cancel, GError **error) {
   Job *j = data;
+  if (j->bootstrap_round) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED, "Bootstrap discovery cannot sign"); return NULL;
+  }
   /* The shared NIP-42 builder deliberately leaves identity selection to its
    * signer. Pin that selection here, before computing the expected event ID. */
   g_autoptr(JsonParser) parser = json_parser_new();
@@ -111,8 +144,21 @@ static char *sign_event(gpointer data, const char *unsigned_json, GCancellable *
     }
     destinations = relay_destination;
   }
-  g_autoptr(GVariant) reply = g_dbus_connection_call_sync(j->bus, "org.nostr.Signer", "/org/nostr/signer/grotto", "org.nostr.Grotto.Control1", "SignProfileEvent",
+  guint filter = 0; g_autofree char *owner = NULL;
+  if (j->controller) {
+    g_autoptr(GVariant) name = g_dbus_connection_call_sync(j->bus, "org.freedesktop.DBus", "/org/freedesktop/DBus",
+      "org.freedesktop.DBus", "GetNameOwner", g_variant_new("(s)", "org.nostr.Signer"), G_VARIANT_TYPE("(s)"), 0, 1000, cancel, NULL);
+    if (name) {
+      g_variant_get(name, "(s)", &owner);
+      ProfileCorrelation *c = g_new0(ProfileCorrelation, 1); c->controller = g_object_ref(j->controller);
+      c->context = g_main_context_ref(j->ui_context); c->owner = g_strdup(owner);
+      c->destinations = g_strdupv((char **)destinations); c->bootstrap = g_strdupv(j->bootstrap_relays);
+      filter = g_dbus_connection_add_filter(j->bus, profile_submitted, c, correlation_free);
+    }
+  }
+  g_autoptr(GVariant) reply = g_dbus_connection_call_sync(j->bus, owner ? owner : "org.nostr.Signer", "/org/nostr/signer/grotto", "org.nostr.Grotto.Control1", "SignProfileEvent",
     g_variant_new("(ss^as)", j->npub, unsigned_json, destinations), G_VARIANT_TYPE("(s)"), G_DBUS_CALL_FLAGS_NO_AUTO_START, 180000, cancel, error);
+  if (filter) g_dbus_connection_remove_filter(j->bus, filter);
   if (!reply) {
     if (error && *error && !g_error_matches(*error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
       g_clear_error(error); g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED,
@@ -166,9 +212,18 @@ typedef struct {
   NostrPublisher *publisher;
   const char *signed_json;
   char *event_id;
-  gboolean connected, publishing, required_auth, authenticated, requested, probing;
+  gboolean connected, publishing, required_auth, authenticated, requested, probing, discovery_only;
   gint64 auth_deadline;
 } Fetch;
+static void reject_bootstrap_auth(Fetch *f) {
+  f->done = TRUE;
+  g_free(f->failure); f->failure = g_strdup("relay requires authentication");
+  const char *url = nostr_publish_transport_get_url(f->transport);
+  if (f->job->auth_required_relays && g_strv_contains((const char *const *)f->job->auth_required_relays, url)) return;
+  g_autoptr(GStrvBuilder) skipped = g_strv_builder_new();
+  if (f->job->auth_required_relays) g_strv_builder_addv(skipped, (const char **)f->job->auth_required_relays);
+  g_strv_builder_add(skipped, url); g_strfreev(f->job->auth_required_relays); f->job->auth_required_relays = g_strv_builder_end(skipped);
+}
 static void send_req(Fetch *f) {
   if (f->publisher) {
     g_autofree char *frame = g_strdup_printf("[\"EVENT\",%s]", f->signed_json);
@@ -179,7 +234,7 @@ static void send_req(Fetch *f) {
   f->requested = TRUE;
   g_autoptr(GString) filters = g_string_new("[\"REQ\",\"grotto-profile\"");
   for (guint i = 0; i < G_N_ELEMENTS(kinds); i++) {
-    if (f->job->bootstrap_round && kinds[i] == NOSTR_KIND_BLOSSOM_SERVER_LIST) continue;
+    if (f->discovery_only && kinds[i] == NOSTR_KIND_BLOSSOM_SERVER_LIST) continue;
     g_string_append_printf(filters, ",{\"authors\":[\"%s\"],\"kinds\":[%u],\"limit\":1}", f->job->hex, kinds[i]);
   }
   g_string_append(filters, "]"); const char *req = filters->str;
@@ -187,6 +242,7 @@ static void send_req(Fetch *f) {
 }
 static void fetch_state(NostrPublishTransport *transport, gboolean connected, const GError *error, gpointer data) {
   (void)transport; Fetch *f = data;
+  if (f->done) return;
   if (connected) { f->connected = TRUE; if (!f->publisher && !f->required_auth) send_req(f); }
   else if (!f->done) {
     f->done = TRUE; f->failure = g_strdup(error ? error->message : "Relay disconnected");
@@ -207,6 +263,7 @@ static void fetch_frame(NostrPublishTransport *transport, const char *hint, cons
   JsonNode *sub = n > 1 ? json_array_get_element(a, 1) : NULL;
   const char *id = sub && JSON_NODE_HOLDS_VALUE(sub) && json_node_get_value_type(sub) == G_TYPE_STRING ? json_node_get_string(sub) : "";
   if (!strcmp(kind, "AUTH") && *id) {
+    if (f->discovery_only || !f->signer) { reject_bootstrap_auth(f); return; }
     if (f->authed) return;
     f->authed = TRUE;
     g_autoptr(JsonBuilder) b = json_builder_new();
@@ -255,6 +312,7 @@ static void fetch_frame(NostrPublishTransport *transport, const char *hint, cons
   if (!strcmp(kind, "EOSE")) { f->complete = TRUE; f->done = TRUE; }
   else if (!strcmp(kind, "CLOSED")) {
     const char *reason = n > 2 && JSON_NODE_HOLDS_VALUE(json_array_get_element(a, 2)) && json_node_get_value_type(json_array_get_element(a, 2)) == G_TYPE_STRING ? json_array_get_string_element(a, 2) : "Relay closed the profile subscription";
+    if (f->discovery_only && g_str_has_prefix(reason, "auth-required:")) { reject_bootstrap_auth(f); return; }
     if (g_str_has_prefix(reason, "auth-required:") && !f->authed) return; /* AUTH challenge follows */
     if (f->auth_wait) return;
     f->done = TRUE; f->failure = g_strdup(reason);
@@ -262,7 +320,7 @@ static void fetch_frame(NostrPublishTransport *transport, const char *hint, cons
     g_autofree char *event = json_to_string(json_array_get_element(a, 2), FALSE);
     for (guint i = 0; i < G_N_ELEMENTS(kinds); i++) {
       guint64 timestamp = 0, old = 0;
-      if ((f->job->bootstrap_round && kinds[i] == NOSTR_KIND_BLOSSOM_SERVER_LIST) || !verified(event, kinds[i], f->job->hex, &timestamp)) continue;
+      if ((f->discovery_only && kinds[i] == NOSTR_KIND_BLOSSOM_SERVER_LIST) || !verified(event, kinds[i], f->job->hex, &timestamp)) continue;
       if (f->events[i]) verified(f->events[i], kinds[i], f->job->hex, &old);
       gboolean replace = !f->events[i] || timestamp > old;
       if (f->events[i] && timestamp == old) {
@@ -290,6 +348,7 @@ static void probe_ready(GObject *source, GAsyncResult *result, gpointer data) {
   gboolean auth = g_task_propagate_boolean(G_TASK(result), &error);
   /* Advisory only: an actual AUTH/CLOSED frame still decides access. */
   if (!error) g_hash_table_insert(f->job->capabilities, g_strdup(nostr_publish_transport_get_url(f->transport)), GINT_TO_POINTER(auth ? 2 : 1));
+  if (!error && auth && f->discovery_only && !f->done) reject_bootstrap_auth(f);
   f->probing = FALSE;
 }
 static guint fetch_relays(Job *j, NostrPublishSigner *signer, char **urls, char **events) {
@@ -298,7 +357,8 @@ static guint fetch_relays(Job *j, NostrPublishSigner *signer, char **urls, char 
   g_autoptr(GCancellable) probes = g_cancellable_new();
   g_autoptr(GPtrArray) sources = g_ptr_array_new_with_free_func((GDestroyNotify)g_source_unref);
   for (guint i = 0; i < n; i++) {
-    Fetch *f = &batch[i]; f->job = j; f->signer = signer; f->events = events;
+    Fetch *f = &batch[i]; f->job = j; f->discovery_only = j->bootstrap_round;
+    f->signer = f->discovery_only ? NULL : signer; f->events = events;
     f->transport = nostr_publish_transport_new_websocket(urls[i]);
     /* Probe NIP-11 concurrently, without delaying REQ/EOSE behind HTTP. */
     f->probing = TRUE; GTask *probe = g_task_new(NULL, probes, probe_ready, f);
@@ -411,15 +471,22 @@ static gboolean discover(Job *j, NostrPublishSigner *signer, char **events, GErr
     }
   }
   guint attempted = 0, completed = 0;
-  g_autoptr(GStrvBuilder) contacted = g_strv_builder_new();
-  if (j->discovery_relays) g_strv_builder_addv(contacted, (const char **)j->discovery_relays);
   g_autoptr(GHashTable) seen = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   for (guint round = 0; round < 2; round++) {
     g_autoptr(GStrvBuilder) batch = g_strv_builder_new();
     for (guint i = 0; urls && urls[i] && i < 16; i++) {
       if (endpoint(urls[i], TRUE) && g_hash_table_add(seen, g_strdup(urls[i]))) {
         g_strv_builder_add(batch, urls[i]);
-        if (!j->discovery_relays || !g_strv_contains((const char *const *)j->discovery_relays, urls[i])) g_strv_builder_add(contacted, urls[i]);
+        if (!j->discovery_relays || !g_strv_contains((const char *const *)j->discovery_relays, urls[i])) {
+          g_autoptr(GStrvBuilder) contacts = g_strv_builder_new();
+          if (j->discovery_relays) g_strv_builder_addv(contacts, (const char **)j->discovery_relays);
+          g_strv_builder_add(contacts, urls[i]); g_strfreev(j->discovery_relays); j->discovery_relays = g_strv_builder_end(contacts);
+        }
+        if (j->bootstrap_round && (!j->bootstrap_relays || !g_strv_contains((const char *const *)j->bootstrap_relays, urls[i]))) {
+          g_autoptr(GStrvBuilder) boot = g_strv_builder_new();
+          if (j->bootstrap_relays) g_strv_builder_addv(boot, (const char **)j->bootstrap_relays);
+          g_strv_builder_add(boot, urls[i]); g_strfreev(j->bootstrap_relays); j->bootstrap_relays = g_strv_builder_end(boot);
+        }
         attempted++;
       }
     }
@@ -428,11 +495,15 @@ static gboolean discover(Job *j, NostrPublishSigner *signer, char **events, GErr
     j->bootstrap_round = FALSE;
     g_strfreev(urls); urls = events[1] ? nostr_publish_nip65_relays(events[1], NOSTR_PUBLISH_NIP65_WRITE, NULL) : NULL;
   }
-  g_strfreev(j->discovery_relays); j->discovery_relays = g_strv_builder_end(contacted);
   j->no_relays = attempted == 0;
   if (g_cancellable_set_error_if_cancelled(j->cancel, error)) return FALSE;
   if (!attempted) { j->bootstrap_used = FALSE; return TRUE; } /* Editable, not an offline claim. */
-  if (!completed || (!events[0] && completed != attempted)) { g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_HOST_UNREACHABLE, _("Profile unavailable. Check your relays and try again")); return FALSE; }
+  if (!completed || (!events[0] && completed != attempted)) {
+    g_autofree char *skipped = j->auth_required_relays ? g_strjoinv("\n", j->auth_required_relays) : NULL;
+    if (skipped) g_set_error(error, G_IO_ERROR, G_IO_ERROR_HOST_UNREACHABLE, _("Profile unavailable — relay requires authentication. Bootstrap discovery never signs or sends AUTH.\n%s"), skipped);
+    else g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_HOST_UNREACHABLE, _("Profile unavailable. Check your relays and try again"));
+    return FALSE;
+  }
   return TRUE;
 }
 static GrottoProfileInfo *profile_parse(Job *j, const char *event, GError **error) {
@@ -678,6 +749,8 @@ static void worker(GTask *task, gpointer source, gpointer data, GCancellable *ca
   if (result && metadata) {
     result->no_relays = j->no_relays; result->bootstrap_used = j->bootstrap_used;
     result->discovery_relays = g_strdupv(j->discovery_relays);
+    result->auth_required_relays = g_strdupv(j->auth_required_relays);
+    result->bootstrap_relays = g_strdupv(j->bootstrap_relays);
     result->publish_relays = events[1] ? nostr_publish_nip65_relays(events[1], NOSTR_PUBLISH_NIP65_WRITE, NULL) : configured(j, TRUE);
     if (online) for (guint i = 0; i < G_N_ELEMENTS(kinds); i++) cache_write(j, kinds[i], events[i]);
     if (online && !j->no_relays) result->nip05_status = verify_nip05(j, result->fields[GROTTO_PROFILE_NIP05]);
@@ -801,20 +874,23 @@ static void chosen(GObject *source, GAsyncResult *result, gpointer data) {
   GTask *preview = g_task_new(NULL, g_task_get_cancellable(task), preview_ready, task);
   g_task_set_task_data(preview, j, NULL); g_task_run_in_thread(preview, preview_worker); g_object_unref(preview);
 }
-void grotto_profile_service_async(GtkWindow *parent, GrottoProfileAction action, const char *npub,
+void grotto_profile_service_async(GtkWindow *parent, GrottoApprovalController *controller, GrottoProfileAction action, const char *npub,
   const GrottoProfileInfo *info, GCancellable *cancel, GAsyncReadyCallback callback, gpointer data) {
   g_autoptr(GCancellable) owned_cancel = cancel ? g_object_ref(cancel) : g_cancellable_new();
   GTask *task = g_task_new(parent, owned_cancel, callback, data); guint8 pk[32];
   if (action < GROTTO_PROFILE_FETCH || action > GROTTO_PROFILE_VERIFY_NIP05 || (action != GROTTO_PROFILE_FETCH && !info) || !npub || nostr_nip19_decode_npub(npub, pk) || !grotto_profile_info_validate(info, NULL)) {
     g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "Invalid identity or profile"); g_object_unref(task); return;
   }
-  Job *j = g_new0(Job, 1); j->capabilities = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL); j->action = action;
+  Job *j = g_new0(Job, 1); j->controller = controller ? g_object_ref(controller) : NULL;
+  j->ui_context = g_main_context_ref_thread_default(); j->capabilities = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL); j->action = action;
   j->cache_scope = parent ? g_object_ref(G_OBJECT(parent)) : g_object_new(G_TYPE_OBJECT, NULL);
   j->cache_lock = g_object_get_data(j->cache_scope, "grotto-profile-cache-lock");
   if (!j->cache_lock) {
     j->cache_lock = g_new0(GMutex, 1); g_mutex_init(j->cache_lock);
     g_object_set_data_full(j->cache_scope, "grotto-profile-cache-lock", j->cache_lock, cache_lock_free);
   } j->npub = g_strdup(npub); j->info = grotto_profile_info_copy(info);
+  j->bootstrap_used = action != GROTTO_PROFILE_FETCH && info && info->bootstrap_used;
+  if (j->bootstrap_used) { j->discovery_relays = g_strdupv(info->discovery_relays); j->bootstrap_relays = g_strdupv(info->bootstrap_relays); }
   for (guint i = 0; i < 32; i++) g_snprintf(j->hex + 2 * i, 3, "%02x", pk[i]);
   g_task_set_task_data(task, j, job_free);
   if (action == GROTTO_PROFILE_LOAD_IMAGES) {

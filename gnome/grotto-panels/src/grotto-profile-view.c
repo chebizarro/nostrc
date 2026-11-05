@@ -9,7 +9,7 @@ GrottoProfileInfo *grotto_profile_info_copy(const GrottoProfileInfo *info) {
   if (info) {
     copy->created_at = info->created_at; copy->published = info->published; copy->cached = info->cached; copy->tor_blocked = info->tor_blocked;
     copy->bot = info->bot; copy->no_relays = info->no_relays; copy->nip05_status = info->nip05_status;
-    copy->bootstrap_used = info->bootstrap_used; copy->discovery_relays = g_strdupv(info->discovery_relays); copy->publish_relays = g_strdupv(info->publish_relays);
+    copy->bootstrap_used = info->bootstrap_used; copy->discovery_relays = g_strdupv(info->discovery_relays); copy->publish_relays = g_strdupv(info->publish_relays); copy->auth_required_relays = g_strdupv(info->auth_required_relays); copy->bootstrap_relays = g_strdupv(info->bootstrap_relays);
     for (guint i = 0; i < 2; i++) if (info->images[i]) copy->images[i] = g_object_ref(info->images[i]);
   }
   return copy;
@@ -18,7 +18,7 @@ void grotto_profile_info_free(GrottoProfileInfo *info) {
   if (!info) return;
   for (guint i = 0; i < GROTTO_PROFILE_N_FIELDS; i++) g_free(info->fields[i]);
   for (guint i = 0; i < 2; i++) g_clear_object(&info->images[i]);
-  g_strfreev(info->discovery_relays); g_strfreev(info->publish_relays); g_free(info);
+  g_strfreev(info->discovery_relays); g_strfreev(info->publish_relays); g_strfreev(info->auth_required_relays); g_strfreev(info->bootstrap_relays); g_free(info);
 }
 struct _GrottoProfileView {
   GtkBox parent_instance;
@@ -75,6 +75,13 @@ static void render_card(GrottoProfileView *self, GrottoProfileInfo *p) {
   gtk_picture_set_paintable(self->card_banner, GDK_PAINTABLE(p->images[1])); gtk_widget_set_visible(GTK_WIDGET(self->card_banner), p->images[1] != NULL);
   gtk_label_set_text(self->verification, nip05_status(p));
 }
+static gboolean draft_dirty(GrottoProfileView *self) {
+  if (!self->draft || !self->info) return FALSE;
+  if (self->draft->bot != self->info->bot) return TRUE;
+  for (guint i = 0; i < GROTTO_PROFILE_N_FIELDS; i++)
+    if (g_strcmp0(self->draft->fields[i], self->info->fields[i])) return TRUE;
+  return FALSE;
+}
 static void render(GrottoProfileView *self) {
   GrottoProfileInfo *p = self->info;
   g_autoptr(GrottoPanel) panel = g_weak_ref_get(&self->panel);
@@ -95,7 +102,9 @@ static void render(GrottoProfileView *self) {
   gtk_label_set_text(self->publication, published);
   g_autofree char *discovery = p && p->discovery_relays ? g_strjoinv("\n", p->discovery_relays) : g_strdup("");
   g_autofree char *source = g_strdup_printf("%s\n%s", p && p->bootstrap_used ? _("Discovery-only bootstrap used, then the identity's outbox when available. Never used for publishing.") : _("Profile discovery relays"), *discovery ? discovery : _("No relays contacted"));
-  gtk_label_set_text(self->discovery, source);
+  g_autofree char *skipped = p && p->auth_required_relays ? g_strjoinv("\n", p->auth_required_relays) : NULL;
+  g_autofree char *discovery_status = skipped && *skipped ? g_strdup_printf(_("%s\n\nSkipped — relay requires authentication (bootstrap never signs or sends AUTH):\n%s"), source, skipped) : g_strdup(source);
+  gtk_label_set_text(self->discovery, discovery_status);
   g_autofree char *address = p ? g_strdup_printf("%s — %s", p->fields[GROTTO_PROFILE_NIP05], nip05_status(p)) : g_strdup("");
   gtk_label_set_text(self->address, address); gtk_widget_set_visible(GTK_WIDGET(self->address), p && *p->fields[GROTTO_PROFILE_NIP05]);
   gtk_widget_set_visible(GTK_WIDGET(self->edit), self->editable);
@@ -107,7 +116,7 @@ static void render(GrottoProfileView *self) {
   if (self->dialog) {
     gtk_spinner_set_spinning(self->dialog_spinner, self->busy);
     gtk_widget_set_sensitive(GTK_WIDGET(self->save), !self->busy && self->editable);
-    gtk_widget_set_sensitive(GTK_WIDGET(self->republish), !self->busy && self->editable && p && p->published);
+    gtk_widget_set_sensitive(GTK_WIDGET(self->republish), !self->busy && self->editable && p && p->published && !draft_dirty(self));
     gtk_widget_set_sensitive(GTK_WIDGET(self->discard), !self->busy);
     gtk_widget_set_sensitive(GTK_WIDGET(self->verify), !self->busy);
     gtk_widget_set_sensitive(GTK_WIDGET(self->bot), !self->busy && self->editable);
@@ -135,10 +144,14 @@ static GrottoProfileInfo *form(GrottoProfileView *self) {
   return p;
 }
 static void form_changed(gpointer widget, gpointer data) {
-  (void)widget; GrottoProfileView *self = data; if (self->updating || !self->dialog) return;
+  GrottoProfileView *self = data; if (self->updating || !self->dialog) return;
+  /* A closing dialog can outlive its replacement until its final frame. */
+  if (GTK_IS_WIDGET(widget) && !gtk_widget_is_ancestor(GTK_WIDGET(widget), GTK_WIDGET(self->dialog))) return;
+  if (GTK_IS_TEXT_BUFFER(widget) && (!self->about || widget != gtk_text_view_get_buffer(self->about))) return;
   g_autoptr(GrottoProfileInfo) p = form(self);
   g_clear_pointer(&self->draft, grotto_profile_info_free); self->draft = g_steal_pointer(&p); render_card(self, self->draft);
   for (guint i = 0; i < 2; i++) gtk_picture_set_paintable(self->previews[i], GDK_PAINTABLE(self->draft->images[i]));
+  gtk_widget_set_sensitive(GTK_WIDGET(self->republish), !self->busy && self->editable && self->info && self->info->published && !draft_dirty(self));
 }
 static void bot_changed(GObject *object, GParamSpec *spec, gpointer data) { (void)spec; form_changed(object, data); }
 typedef struct { GWeakRef view; guint generation; GrottoProfileAction action; } Pending;
@@ -201,6 +214,11 @@ static void stop(GtkButton *button, gpointer data) {
 }
 static void close_attempt(AdwDialog *dialog, gpointer data) { (void)dialog; stop(NULL, data); }
 static void save(GtkButton *button, gpointer data) { (void)button; request(data, GROTTO_PROFILE_SAVE); }
+static void republish(GtkButton *button, gpointer data) {
+  (void)button; GrottoProfileView *self = data;
+  if (!self->info || !self->info->published || draft_dirty(self)) return;
+  request(self, GROTTO_PROFILE_SAVE);
+}
 static void choose(GtkButton *button, gpointer data) {
   GrottoProfileView *self = data;
   request(self, button == self->choose[0] ? GROTTO_PROFILE_CHOOSE_AVATAR : GROTTO_PROFILE_CHOOSE_BANNER);
@@ -216,7 +234,7 @@ static void discard(GtkButton *button, gpointer data) {
   }
   adw_switch_row_set_active(self->bot, self->draft->bot);
   for (guint i = 0; i < 2; i++) gtk_picture_set_paintable(self->previews[i], GDK_PAINTABLE(self->draft->images[i]));
-  self->updating = FALSE; render_card(self, self->draft);
+  self->updating = FALSE; render_card(self, self->draft); render(self);
   gtk_label_set_text(self->error, _("Local changes discarded. Already uploaded images remain public"));
 }
 static GtkLabel *card_label(GtkBox *box, const char *style) {
@@ -225,7 +243,12 @@ static GtkLabel *card_label(GtkBox *box, const char *style) {
   gtk_box_append(box, GTK_WIDGET(label)); return label;
 }
 static void closed(AdwDialog *dialog, gpointer data) {
-  (void)dialog; GrottoProfileView *self = data;
+  GrottoProfileView *self = data;
+  if (self->dialog != dialog) return;
+  for (guint i = 0; i < GROTTO_PROFILE_N_FIELDS; i++)
+    if (self->entries[i]) g_signal_handlers_disconnect_by_data(self->entries[i], self);
+  if (self->about) g_signal_handlers_disconnect_by_data(gtk_text_view_get_buffer(self->about), self);
+  if (self->bot) g_signal_handlers_disconnect_by_data(self->bot, self);
   self->dialog = NULL; self->error = NULL; self->save = NULL; self->about = NULL; self->dialog_spinner = NULL; self->stop = NULL;
   self->card_name = NULL; self->card_avatar = NULL; self->card_banner = NULL; self->verification = NULL;
   g_clear_pointer(&self->draft, grotto_profile_info_free);
@@ -320,13 +343,14 @@ static void edit(GtkButton *button, gpointer data) {
   g_object_bind_property(self->discovery, "label", discovered_at, "label", G_BINDING_SYNC_CREATE);
   adw_expander_row_add_row(provenance, published_at); adw_expander_row_add_row(provenance, discovered_at);
   adw_preferences_group_add(ADW_PREFERENCES_GROUP(advanced), GTK_WIDGET(provenance));
-  for (guint i = 0; i < GROTTO_PROFILE_N_FIELDS; i++) if (self->entries[i]) g_signal_connect(self->entries[i], "changed", G_CALLBACK(form_changed), self);
-  g_signal_connect(gtk_text_view_get_buffer(self->about), "changed", G_CALLBACK(form_changed), self);
-  g_signal_connect(self->bot, "notify::active", G_CALLBACK(bot_changed), self);
+  for (guint i = 0; i < GROTTO_PROFILE_N_FIELDS; i++) if (self->entries[i]) g_signal_connect_object(self->entries[i], "changed", G_CALLBACK(form_changed), self, 0);
+  g_signal_connect_object(gtk_text_view_get_buffer(self->about), "changed", G_CALLBACK(form_changed), self, 0);
+  g_signal_connect_object(self->bot, "notify::active", G_CALLBACK(bot_changed), self, 0);
   GtkWidget *actions = adw_preferences_group_new(); adw_preferences_page_add(ADW_PREFERENCES_PAGE(page), ADW_PREFERENCES_GROUP(actions));
   self->republish = GTK_BUTTON(gtk_button_new_with_label(_("Republish"))); self->discard = GTK_BUTTON(gtk_button_new_with_label(_("Discard Local Changes")));
   adw_preferences_group_add(ADW_PREFERENCES_GROUP(actions), GTK_WIDGET(self->republish)); adw_preferences_group_add(ADW_PREFERENCES_GROUP(actions), GTK_WIDGET(self->discard));
-  g_signal_connect(self->republish, "clicked", G_CALLBACK(save), self); g_signal_connect(self->discard, "clicked", G_CALLBACK(discard), self);
+  gtk_widget_set_tooltip_text(GTK_WIDGET(self->republish), _("Republish the unchanged profile. Use Save for local edits, or discard them first"));
+  g_signal_connect(self->republish, "clicked", G_CALLBACK(republish), self); g_signal_connect(self->discard, "clicked", G_CALLBACK(discard), self);
   self->error = GTK_LABEL(gtk_label_new("")); gtk_label_set_wrap(self->error, TRUE); gtk_label_set_wrap_mode(self->error, PANGO_WRAP_WORD_CHAR);
   gtk_widget_set_focusable(GTK_WIDGET(self->error), TRUE);
   GtkWidget *progress = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);

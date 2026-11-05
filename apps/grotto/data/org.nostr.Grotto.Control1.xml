@@ -44,6 +44,8 @@
       <arg name="destinations" type="as" direction="in"/>
       <arg name="signed_event" type="s" direction="out"/>
     </method>
+    <!-- Non-authorizing correlation, unicast only to the SignProfileEvent caller. -->
+    <signal name="ProfileRequestSubmitted"><arg name="request_id" type="s"/></signal>
     <method name="SelfTestIdentity"><arg name="identity" type="s" direction="in"/><arg name="result" type="s" direction="out"/></method>
     <method name="CancelIdentitySelfTest"><arg name="identity" type="s" direction="in"/></method>
     <method name="GetIdentityMigration"><arg name="identity" type="s" direction="in"/><arg name="event" type="s" direction="out"/></method>

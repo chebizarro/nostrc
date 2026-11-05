@@ -883,6 +883,11 @@ static void method_call(GDBusConnection *bus, const gchar *sender, const gchar *
       .reason = reason};
     SignerGateHandle *handle = signer_approval_service_submit(c->approval, who, sender,
         SIGNER_GATE_SIGN_EVENT, json, NULL, identity, &context, self_test_reply, g_object_ref(inv));
+    /* Correlation only, unicast to this host connection. No new signing input
+     * or approval metadata is admitted into nip55l. */
+    g_autofree char *request_id = signer_gate_handle_request_id(handle);
+    if (request_id) g_dbus_connection_emit_signal(bus, sender, GROTTO_CONTROL_PATH,
+      "org.nostr.Grotto.Control1", "ProfileRequestSubmitted", g_variant_new("(s)", request_id), NULL);
     signer_gate_handle_unref(handle); return;
   } else if (!strcmp(method, "SelfTestIdentity")) {
     const gchar *identity; g_variant_get(args, "(&s)", &identity);

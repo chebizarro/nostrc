@@ -188,7 +188,7 @@ typedef struct _GrottoProfileInfo {
   guint64 created_at;
   gboolean published, cached, tor_blocked, bot, no_relays;
   GrottoNip05Status nip05_status;
-  char **discovery_relays, **publish_relays;
+  char **discovery_relays, **publish_relays, **auth_required_relays, **bootstrap_relays;
   gboolean bootstrap_used;
 } GrottoProfileInfo;
 GROTTO_PANELS_API GrottoProfileInfo *grotto_profile_info_copy(const GrottoProfileInfo *info);

@@ -36,7 +36,9 @@ gboolean grotto_profile_info_validate(const GrottoProfileInfo *info, GError **er
   if (!info) return TRUE;
   if (info->nip05_status < GROTTO_NIP05_UNCHECKED || info->nip05_status > GROTTO_NIP05_UNAVAILABLE) return invalid(error);
   if (!vector((const char *const *)info->discovery_relays, TRUE, error) ||
-      !vector((const char *const *)info->publish_relays, TRUE, error)) return FALSE;
+      !vector((const char *const *)info->publish_relays, TRUE, error) ||
+      !vector((const char *const *)info->auth_required_relays, TRUE, error) ||
+      !vector((const char *const *)info->bootstrap_relays, TRUE, error)) return FALSE;
   for (guint i = 0; i < 2; i++) if (info->images[i] && !GDK_IS_TEXTURE(info->images[i])) return invalid(error);
   for (guint i = 0; i < GROTTO_PROFILE_N_FIELDS; i++)
     if (!public_text(info->fields[i], i == GROTTO_PROFILE_ABOUT ? 4096 : 1024,

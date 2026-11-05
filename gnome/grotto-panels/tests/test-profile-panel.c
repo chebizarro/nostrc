@@ -20,6 +20,7 @@ static GtkTextView *about_view(GtkWidget *widget) {
   }
   return NULL;
 }
+static void dialog_finalized(gpointer data, GObject *object) { (void)object; *(gboolean *)data = TRUE; }
 static gboolean presented(GtkWidget *widget, GdkFrameClock *clock, gpointer data) {
   (void)widget; (void)clock; return ++*(guint *)data < 3 ? G_SOURCE_CONTINUE : G_SOURCE_REMOVE;
 }
@@ -51,12 +52,14 @@ static void profile_panel(void) {
   GrottoPanelsMetadata identity = {.id = "identity", .public_key = "public-profile-key", .label = "Everyday", .is_default = TRUE, .can_sign = TRUE, .backup_acknowledged = TRUE};
   g_assert_true(grotto_panels_fake_service_replace(fake, GROTTO_PANELS_IDENTITIES, &identity, NULL));
   Host host = {.info = grotto_profile_info_copy(NULL), .nip05 = GROTTO_NIP05_VERIFIED};
+  host.info->auth_required_relays = g_strsplit("wss://auth.discovery.example/", "\n", -1);
   GtkWidget *panel = grotto_identity_panel_new(GROTTO_PANELS_SERVICE(fake), NULL);
   const GrottoPanelsHost callbacks = {.profile_async = profile};
   grotto_panel_set_host(GROTTO_PANEL(panel), &callbacks, &host, NULL);
   AdwWindow *window = ADW_WINDOW(adw_window_new()); g_object_ref_sink(window);
   gtk_window_set_default_size(GTK_WINDOW(window), 360, 720); adw_window_set_content(window, panel); gtk_window_present(GTK_WINDOW(window));
   WAIT(host.calls[GROTTO_PROFILE_FETCH] == 1 && find(panel, "Edit Profile…") && gtk_widget_get_sensitive(find(panel, "Edit Profile…")));
+  g_assert_nonnull(find(panel, "Profile discovery relays\nNo relays contacted\n\nSkipped — relay requires authentication (bootstrap never signs or sends AUTH):\nwss://auth.discovery.example/"));
   GtkWidget *row = find(panel, "Public Profile"); g_assert_nonnull(row);
   g_assert_cmpstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(row)), ==, "Not published yet");
   g_signal_emit_by_name(find(panel, "Edit Profile…"), "clicked");
@@ -107,9 +110,10 @@ static void profile_panel(void) {
   WAIT(find(GTK_WIDGET(dialog), "Stopped. Data may already have reached a server or relay. Refresh before saving again"));
   g_assert_cmpstr(gtk_editable_get_text(GTK_EDITABLE(find(GTK_WIDGET(dialog), "Name"))), ==, "alice");
   host.hold = FALSE;
+  gboolean saved_dialog_gone = FALSE; g_object_weak_ref(G_OBJECT(dialog), dialog_finalized, &saved_dialog_gone);
   g_signal_emit_by_name(find(GTK_WIDGET(dialog), "Save"), "clicked");
   WAIT(host.saved);
-  WAIT(!adw_window_get_visible_dialog(window));
+  WAIT(!adw_window_get_visible_dialog(window) && saved_dialog_gone);
   g_assert_true(host.saved->bot);
   g_assert_cmpstr(host.saved->fields[GROTTO_PROFILE_NAME], ==, "alice");
   g_assert_cmpstr(host.saved->fields[GROTTO_PROFILE_ABOUT], ==, "First line\nSecond line");
@@ -119,7 +123,19 @@ static void profile_panel(void) {
   g_signal_emit_by_name(find(panel, "Edit Profile…"), "clicked");
   dialog = adw_window_get_visible_dialog(window); frames = 0;
   gtk_widget_add_tick_callback(GTK_WIDGET(dialog), presented, &frames, NULL); WAIT(frames == 3);
-  g_signal_emit_by_name(find(GTK_WIDGET(dialog), "Republish"), "clicked"); WAIT(!adw_window_get_visible_dialog(window));
+  gboolean republish_dialog_gone = FALSE; g_object_weak_ref(G_OBJECT(dialog), dialog_finalized, &republish_dialog_gone);
+  GtkWidget *republish = find(GTK_WIDGET(dialog), "Republish"); g_assert_true(gtk_widget_get_sensitive(republish));
+  gtk_editable_set_text(GTK_EDITABLE(find(GTK_WIDGET(dialog), "Name")), "unsaved-draft");
+  g_assert_false(gtk_widget_get_sensitive(republish)); g_signal_emit_by_name(republish, "clicked");
+  g_assert_cmpuint(host.calls[GROTTO_PROFILE_SAVE], ==, 3); /* Guarded even if invoked programmatically. */
+  g_signal_emit_by_name(find(GTK_WIDGET(dialog), "Discard Local Changes"), "clicked");
+  g_assert_cmpstr(gtk_editable_get_text(GTK_EDITABLE(find(GTK_WIDGET(dialog), "Name"))), ==, "alice");
+  g_assert_true(gtk_widget_get_sensitive(republish));
+  adw_switch_row_set_active(ADW_SWITCH_ROW(find(GTK_WIDGET(dialog), "Automated Account (Bot)")), FALSE);
+  g_assert_false(gtk_widget_get_sensitive(republish));
+  adw_switch_row_set_active(ADW_SWITCH_ROW(find(GTK_WIDGET(dialog), "Automated Account (Bot)")), TRUE);
+  g_assert_true(gtk_widget_get_sensitive(republish));
+  g_signal_emit_by_name(republish, "clicked"); WAIT(!adw_window_get_visible_dialog(window) && republish_dialog_gone);
   grotto_profile_info_free(host.info); host.info = grotto_profile_info_copy(host.saved); host.info->published = TRUE; host.offline = TRUE;
   g_signal_emit_by_name(find(panel, "Refresh Profile"), "clicked");
   WAIT(find(panel, "Offline — showing the saved profile"));

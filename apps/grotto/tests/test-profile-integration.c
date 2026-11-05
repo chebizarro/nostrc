@@ -52,11 +52,11 @@ static void remove_owned_tree(GFile *file) {
   g_assert_true(g_file_delete(file, NULL, NULL));
 }
 static void finalised(gpointer data, GObject *object) { (void)object; *(gboolean *)data = TRUE; }
-typedef struct { GDBusConnection *bus; guint reviews, decisions, completed; char *request, *reviewed; const char *relay; gboolean cancel_next, last_allowed; } Approval;
+typedef struct { GDBusConnection *bus; guint reviews, decisions, completed; char *request, *reviewed; const char *relay, *discovery; GrottoApprovalController *controller; gboolean cancel_next, last_allowed, fallback; } Approval;
 static void decision_done(GObject *source, GAsyncResult *result, gpointer data) {
   Approval *a = data; g_autoptr(GError) error = NULL;
-  g_autoptr(GVariant) reply = g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), result, &error);
-  g_assert_no_error(error); g_assert_nonnull(reply); a->decisions++;
+  gboolean ok = grotto_approval_controller_decide_finish(GROTTO_APPROVAL_CONTROLLER(source), result, &error);
+  g_assert_no_error(error); g_assert_true(ok); a->decisions++;
 }
 static void reusable_refused(GObject *source, GAsyncResult *result, gpointer data) {
   Approval *a = data; g_autoptr(GError) error = NULL;
@@ -64,7 +64,7 @@ static void reusable_refused(GObject *source, GAsyncResult *result, gpointer dat
   g_assert_null(reply); g_assert_nonnull(error);
   g_autofree char *name = g_dbus_error_get_remote_error(error); g_assert_cmpstr(name, ==, "org.nostr.Signer.Error.InvalidInput");
   g_assert_nonnull(strstr(error->message, "Management requires one-time consent"));
-  g_dbus_connection_call(a->bus, "org.nostr.Signer", "/org/nostr/signer/grotto", "org.nostr.Grotto.Control1", "DecideRequest", g_variant_new("(ss)", a->request, "allow-once"), NULL, 0, 10000, NULL, decision_done, a);
+  grotto_approval_controller_decide_async(a->controller, a->request, TRUE, FALSE, 0, NULL, decision_done, a);
 }
 static void info_done(GObject *source, GAsyncResult *result, gpointer data) {
   Approval *a = data; g_autoptr(GError) error = NULL;
@@ -79,7 +79,7 @@ static void info_done(GObject *source, GAsyncResult *result, gpointer data) {
   g_assert_true(g_variant_lookup(info, "rememberable", "b", &remember)); g_assert_false(remember);
   g_autoptr(GVariant) summary = g_variant_lookup_value(info, "event_summary", G_VARIANT_TYPE_VARDICT);
   const char *raw = NULL, *reason = NULL;
-  g_assert_true(g_variant_lookup(summary, "management_event_json", "&s", &raw)); a->reviewed = g_strdup(raw);
+  g_assert_true(g_variant_lookup(summary, "management_event_json", "&s", &raw)); g_free(a->reviewed); a->reviewed = g_strdup(raw);
   g_assert_true(g_variant_lookup(info, "reason", "&s", &reason)); g_assert_nonnull(strstr(reason, a->relay));
   GnostrApprovalDialog *dialog = g_object_ref_sink(gnostr_approval_dialog_new());
   gnostr_approval_dialog_set_info(dialog, info, "Grotto");
@@ -97,9 +97,27 @@ static void info_done(GObject *source, GAsyncResult *result, gpointer data) {
   AdwActionRow *impact = ADW_ACTION_ROW(gtk_widget_get_template_child(GTK_WIDGET(dialog), GNOSTR_TYPE_APPROVAL_DIALOG, "row_impact"));
   g_assert_nonnull(strstr(adw_action_row_get_subtitle(impact), "Grotto to publish")); g_assert_null(strstr(adw_action_row_get_subtitle(impact), "does not publish"));
   AdwActionRow *relays = ADW_ACTION_ROW(gtk_widget_get_template_child(GTK_WIDGET(dialog), GNOSTR_TYPE_APPROVAL_DIALOG, "row_relay"));
-  g_assert_nonnull(strstr(adw_action_row_get_subtitle(relays), a->relay));
+  g_assert_cmpstr(adw_action_row_get_subtitle(relays), ==, "destinations: see Details");
+  g_assert_nonnull(strstr(gtk_label_get_text(details), a->relay));
   g_assert_nonnull(strstr(gtk_label_get_text(details), json_object_get_string_member(json_node_get_object(exact), "content")));
   g_assert_true(gnostr_approval_info_can_approve(info)); g_object_unref(dialog);
+  grotto_approval_controller_review(a->controller, a->request);
+  AdwDialog *shown = NULL;
+  WAIT((shown = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(diagnostic_window))) && GNOSTR_IS_APPROVAL_DIALOG(shown));
+  guint review_frames = 0; gtk_widget_add_tick_callback(GTK_WIDGET(shown), presented, &review_frames, NULL); WAIT(review_frames == 3);
+  AdwActionRow *shown_relays = ADW_ACTION_ROW(gtk_widget_get_template_child(GTK_WIDGET(shown), GNOSTR_TYPE_APPROVAL_DIALOG, "row_relay"));
+  GtkLabel *shown_details = GTK_LABEL(gtk_widget_get_template_child(GTK_WIDGET(shown), GNOSTR_TYPE_APPROVAL_DIALOG, "label_details"));
+  if (a->fallback) {
+    g_assert_cmpstr(adw_action_row_get_subtitle(shown_relays), ==, "destinations: see Details");
+    g_assert_nonnull(strstr(gtk_label_get_text(shown_details), a->relay));
+    GtkWidget *approve = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(shown), GNOSTR_TYPE_APPROVAL_DIALOG, "btn_approve"));
+    g_assert_true(gtk_widget_get_sensitive(approve));
+  } else {
+    WAIT(strstr(adw_action_row_get_subtitle(shown_relays), a->discovery));
+    g_assert_nonnull(strstr(adw_action_row_get_subtitle(shown_relays), a->relay));
+    g_assert_nonnull(strstr(adw_action_row_get_subtitle(shown_relays), "lookup only, not publication destinations or authorization"));
+    g_assert_nonnull(strstr(gtk_label_get_text(shown_details), a->discovery));
+  }
   g_dbus_connection_call(a->bus, "org.nostr.Signer", "/org/nostr/signer/grotto", "org.nostr.Grotto.Control1", "DecideRequest", g_variant_new("(ss)", a->request, "allow-24h"), NULL, 0, 10000, NULL, reusable_refused, a);
 }
 static void review(GDBusConnection *bus, const char *sender, const char *path, const char *interface, const char *signal, GVariant *args, gpointer data) {
@@ -110,8 +128,8 @@ static void review(GDBusConnection *bus, const char *sender, const char *path, c
     AdwDialog *dialog = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(diagnostic_window));
     g_assert_nonnull(dialog); g_signal_emit_by_name(find(GTK_WIDGET(dialog), "Stop"), "clicked"); return;
   }
-  g_assert_cmpuint(a->reviews, ==, 1);
-  g_autoptr(GVariant) id = g_variant_get_child_value(args, 4); a->request = g_variant_dup_string(id, NULL);
+  g_assert_cmpuint(a->reviews, ==, a->fallback ? 3 : 1);
+  g_autoptr(GVariant) id = g_variant_get_child_value(args, 4); g_free(a->request); a->request = g_variant_dup_string(id, NULL);
   g_dbus_connection_call(a->bus, "org.nostr.Signer", "/org/nostr/signer/grotto", "org.nostr.Grotto.Control1", "ListRequests", NULL, NULL, 0, 10000, NULL, info_done, a);
 }
 static void completed(GDBusConnection *bus, const char *sender, const char *path, const char *interface, const char *signal, GVariant *args, gpointer data) {
@@ -146,7 +164,7 @@ static void seed_profiles(BunkerTestRelay *relay, const char *hex, const char *k
     }
   }
 }
-typedef struct { const char *hex; guint requests; } BootstrapProbe;
+typedef struct { const char *hex; guint requests; gboolean challenge; BunkerTestRelay *relay; } BootstrapProbe;
 static void forbidden_bootstrap_publish(const char *event, gpointer data) { (void)event; (void)data; g_error("Publication must never use bootstrap fallback"); }
 static void bootstrap_request(JsonArray *request, gpointer data) {
   BootstrapProbe *p = data; p->requests++;
@@ -158,6 +176,37 @@ static void bootstrap_request(JsonArray *request, gpointer data) {
     g_assert_cmpstr(json_array_get_string_element(json_object_get_array_member(filter, "authors"), 0), ==, p->hex);
     g_assert_cmpint(json_object_get_int_member(filter, "limit"), ==, 1);
   }
+  if (p->challenge) bunker_test_relay_challenge(p->relay);
+}
+static void unexpected_signing(GDBusConnection *bus, const char *sender, const char *path, const char *iface, const char *method, GVariant *args, GDBusMethodInvocation *inv, gpointer data) {
+  (void)bus; (void)sender; (void)path; (void)iface; (void)method; (void)args; (*(guint *)data)++;
+  g_dbus_method_invocation_return_dbus_error(inv, "org.nostr.Signer.Error.Denied", "bootstrap must never ask for a signature");
+}
+static void bootstrap_auth_refused(GDBusConnection *bus, const char *npub, BunkerTestRelay *relay, BootstrapProbe *probe) {
+  guint sign_requests = 0;
+  const char *xml = "<node><interface name='org.nostr.Grotto.Control1'>"
+    "<method name='SignProfileEvent'><arg type='s' direction='in'/><arg type='s' direction='in'/><arg type='as' direction='in'/><arg type='s' direction='out'/></method>"
+    "</interface></node>";
+  g_autoptr(GDBusNodeInfo) node = g_dbus_node_info_new_for_xml(xml, NULL);
+  const GDBusInterfaceVTable methods = {.method_call = unexpected_signing};
+  guint object = g_dbus_connection_register_object(bus, "/org/nostr/signer/grotto", node->interfaces[0], &methods, &sign_requests, NULL, NULL); g_assert_cmpuint(object, >, 0);
+  g_autoptr(GVariant) owned = g_dbus_connection_call_sync(bus, "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "RequestName", g_variant_new("(su)", "org.nostr.Signer", 4u), G_VARIANT_TYPE("(u)"), 0, 10000, NULL, NULL);
+  g_assert_nonnull(owned); guint owner; g_variant_get(owned, "(u)", &owner); g_assert_cmpuint(owner, ==, 1);
+  g_autoptr(GrottoProfileInfo) draft = grotto_profile_info_copy(NULL);
+  for (guint closed = 0; closed < 2; closed++) {
+    probe->challenge = !closed; bunker_test_relay_reject_subscriptions(relay, closed);
+    for (guint save = 0; save < 2; save++) {
+      GAsyncResult *result = NULL; g_autoptr(GError) error = NULL;
+      grotto_profile_service_async(NULL, NULL, save ? GROTTO_PROFILE_SAVE : GROTTO_PROFILE_FETCH, npub, save ? draft : NULL, NULL, host_result, &result); WAIT(result);
+      g_assert_null(g_task_propagate_pointer(G_TASK(result), &error)); g_object_unref(result);
+      g_assert_error(error, G_IO_ERROR, G_IO_ERROR_HOST_UNREACHABLE);
+      g_assert_nonnull(strstr(error->message, "relay requires authentication"));
+      g_assert_cmpuint(sign_requests, ==, 0); g_assert_cmpuint(bunker_test_relay_auth_count(relay), ==, 0);
+    }
+  }
+  probe->challenge = FALSE; bunker_test_relay_reject_subscriptions(relay, FALSE);
+  g_autoptr(GVariant) released = g_dbus_connection_call_sync(bus, "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "ReleaseName", g_variant_new("(s)", "org.nostr.Signer"), G_VARIANT_TYPE("(u)"), 0, 10000, NULL, NULL);
+  g_assert_nonnull(released); g_dbus_connection_unregister_object(bus, object);
 }
 static void seed_metadata(BunkerTestRelay *relay, const char *hex, const char *key, guint kind, const char *tags) {
   g_autofree char *raw = g_strdup_printf("{\"pubkey\":\"%s\",\"kind\":%u,\"created_at\":1,\"content\":\"\",\"tags\":%s}", hex, kind, tags);
@@ -217,33 +266,34 @@ static void profile_activate(GApplication *application, gpointer data) {
   g_settings_set_boolean(preferences, "profile-bootstrap-enabled", FALSE);
   /* Opt-out: empty configuration makes no network connection and remains editable. */
   GAsyncResult *empty = NULL;
-  grotto_profile_service_async(NULL, GROTTO_PROFILE_FETCH, npub, NULL, NULL, host_result, &empty); WAIT(empty);
+  grotto_profile_service_async(NULL, NULL, GROTTO_PROFILE_FETCH, npub, NULL, NULL, host_result, &empty); WAIT(empty);
   g_autoptr(GError) empty_error = NULL;
   GrottoProfileInfo *missing = g_task_propagate_pointer(G_TASK(empty), &empty_error); g_object_unref(empty);
   g_assert_no_error(empty_error); g_assert_nonnull(missing); g_assert_true(missing->no_relays); g_assert_false(missing->published); grotto_profile_info_free(missing);
   g_autoptr(GrottoProfileInfo) invalid_address = grotto_profile_info_copy(NULL);
   g_free(invalid_address->fields[GROTTO_PROFILE_NIP05]); invalid_address->fields[GROTTO_PROFILE_NIP05] = g_strdup("Invalid@example.com");
-  empty = NULL; grotto_profile_service_async(NULL, GROTTO_PROFILE_VERIFY_NIP05, npub, invalid_address, NULL, host_result, &empty); WAIT(empty);
+  empty = NULL; grotto_profile_service_async(NULL, NULL, GROTTO_PROFILE_VERIFY_NIP05, npub, invalid_address, NULL, host_result, &empty); WAIT(empty);
   GrottoProfileInfo *checked = g_task_propagate_pointer(G_TASK(empty), &empty_error); g_object_unref(empty);
   g_assert_no_error(empty_error); g_assert_cmpint(checked->nip05_status, ==, GROTTO_NIP05_INVALID); grotto_profile_info_free(checked);
   g_settings_set_boolean(preferences, "use-tor-for-relays", TRUE);
-  empty = NULL; grotto_profile_service_async(NULL, GROTTO_PROFILE_VERIFY_NIP05, npub, invalid_address, NULL, host_result, &empty); WAIT(empty);
+  empty = NULL; grotto_profile_service_async(NULL, NULL, GROTTO_PROFILE_VERIFY_NIP05, npub, invalid_address, NULL, host_result, &empty); WAIT(empty);
   checked = g_task_propagate_pointer(G_TASK(empty), &empty_error); g_object_unref(empty);
   g_assert_no_error(empty_error); g_assert_cmpint(checked->nip05_status, ==, GROTTO_NIP05_UNAVAILABLE); grotto_profile_info_free(checked);
   g_settings_set_boolean(preferences, "use-tor-for-relays", FALSE);
   BunkerTestRelay *bootstrap = bunker_test_relay_new(), *read_only = bunker_test_relay_new();
-  BootstrapProbe probe = {.hex = hex}; bunker_test_relay_set_request_callback(bootstrap, bootstrap_request, &probe);
+  BootstrapProbe probe = {.hex = hex, .relay = bootstrap}; bunker_test_relay_set_request_callback(bootstrap, bootstrap_request, &probe);
   bunker_test_relay_set_event_callback(bootstrap, forbidden_bootstrap_publish, NULL);
   const char *bootstrap_urls[] = {bunker_test_relay_url(bootstrap), NULL};
   g_settings_set_strv(preferences, "profile-bootstrap-relays", bootstrap_urls); g_settings_set_boolean(preferences, "profile-bootstrap-enabled", TRUE);
-  empty = NULL; grotto_profile_service_async(NULL, GROTTO_PROFILE_FETCH, npub, NULL, NULL, host_result, &empty); WAIT(empty);
+  empty = NULL; grotto_profile_service_async(NULL, NULL, GROTTO_PROFILE_FETCH, npub, NULL, NULL, host_result, &empty); WAIT(empty);
   missing = g_task_propagate_pointer(G_TASK(empty), &empty_error); g_object_unref(empty);
   g_assert_no_error(empty_error); g_assert_nonnull(missing); g_assert_true(missing->bootstrap_used); g_assert_false(missing->published);
   g_assert_null(missing->publish_relays[0]);
-  empty = NULL; grotto_profile_service_async(NULL, GROTTO_PROFILE_SAVE, npub, missing, NULL, host_result, &empty); WAIT(empty);
+  empty = NULL; grotto_profile_service_async(NULL, NULL, GROTTO_PROFILE_SAVE, npub, missing, NULL, host_result, &empty); WAIT(empty);
   g_assert_null(g_task_propagate_pointer(G_TASK(empty), &empty_error)); g_object_unref(empty);
   g_assert_error(empty_error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND); g_clear_error(&empty_error); grotto_profile_info_free(missing);
   guint bc, br, bp; bunker_test_relay_stats(bootstrap, &bc, &br, &bp); g_assert_cmpuint(bp, ==, 0);
+  bootstrap_auth_refused(connection, npub, bootstrap, &probe);
   guint image_contacts = 0;
   g_autoptr(GSocketService) image_server = g_socket_service_new();
   g_autoptr(GSocketAddress) address = g_inet_socket_address_new_from_string("127.0.0.1", 0); GSocketAddress *effective = NULL;
@@ -275,6 +325,9 @@ static void profile_activate(GApplication *application, gpointer data) {
   invalid_profile(connection, npub, bunker_test_relay_url(relay), tagged);
   gboolean window_gone = FALSE;
   SignerWindow *window = signer_window_new(app); g_object_ref_sink(window);
+  g_autoptr(GrottoApprovalController) controller = grotto_approval_controller_new(G_APPLICATION(app), connection);
+  approval.controller = controller;
+  signer_window_set_pending_group(window, grotto_approval_pending_group_new(controller));
   g_object_weak_ref(G_OBJECT(window), finalised, &window_gone);
   diagnostic_window = GTK_WIDGET(window);
   gtk_window_set_default_size(GTK_WINDOW(window), 420, 720); gtk_window_present(GTK_WINDOW(window));
@@ -317,6 +370,14 @@ static void profile_activate(GApplication *application, gpointer data) {
   gtk_editable_set_text(GTK_EDITABLE(find(GTK_WIDGET(dialog), "Name")), "alice");
   gtk_editable_set_text(GTK_EDITABLE(find(GTK_WIDGET(dialog), "Display Name")), "Alice");
   adw_switch_row_set_active(ADW_SWITCH_ROW(find(GTK_WIDGET(dialog), "Automated Account (Bot)")), TRUE);
+  /* Save learns a relay list from a new bootstrap contact, not merely the
+   * context previously rendered in the editor. The real review must show it. */
+  BunkerTestRelay *save_bootstrap = bunker_test_relay_new();
+  seed_metadata(save_bootstrap, hex, sk, 10002, outbox_tags);
+  g_autofree char *relay_cache = g_strdup_printf("%s/grotto/profiles/%s-10002.json", g_get_user_cache_dir(), hex);
+  g_assert_cmpint(g_remove(relay_cache), ==, 0);
+  const char *save_lookup[] = {bunker_test_relay_url(save_bootstrap), NULL};
+  g_settings_set_strv(preferences, "profile-bootstrap-relays", save_lookup); approval.discovery = save_lookup[0];
   GtkWidget *save = find(GTK_WIDGET(dialog), "Save"); g_assert_true(gtk_widget_is_sensitive(save));
   GrottoPanelsService *service = grotto_panel_get_service(GROTTO_PANEL(panel));
   /* Opening the real form can overlap a daemon snapshot refresh. Wait for
@@ -358,13 +419,29 @@ static void profile_activate(GApplication *application, gpointer data) {
   g_assert_false(approval.last_allowed); g_assert_cmpuint(json_array_get_length(events), ==, initial_events + 1);
   g_signal_emit_by_name(find(GTK_WIDGET(dialog), "Cancel"), "clicked");
   WAIT(!adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)));
+  /* Missing host correlation is display-only: an ordinary Save still gets
+   * exactly one review and completes through the unchanged real signer gate. */
+  approval.cancel_next = FALSE; approval.fallback = TRUE;
+  g_autoptr(GrottoProfileInfo) fallback_draft = grotto_profile_info_copy(NULL);
+  g_free(fallback_draft->fields[GROTTO_PROFILE_NAME]); fallback_draft->fields[GROTTO_PROFILE_NAME] = g_strdup("alice");
+  g_free(fallback_draft->fields[GROTTO_PROFILE_DISPLAY_NAME]); fallback_draft->fields[GROTTO_PROFILE_DISPLAY_NAME] = g_strdup("Alice");
+  NostrEvent *baseline = nostr_event_new(); nostr_event_deserialize(baseline, json);
+  fallback_draft->created_at = nostr_event_get_created_at(baseline); nostr_event_free(baseline);
+  GAsyncResult *fallback_saved = NULL;
+  grotto_profile_service_async(GTK_WINDOW(window), NULL, GROTTO_PROFILE_SAVE, npub, fallback_draft, NULL, host_result, &fallback_saved); WAIT(fallback_saved);
+  g_autoptr(GError) fallback_error = NULL;
+  g_autoptr(GrottoProfileInfo) fallback_profile = g_task_propagate_pointer(G_TASK(fallback_saved), &fallback_error); g_object_unref(fallback_saved);
+  g_assert_no_error(fallback_error); g_assert_nonnull(fallback_profile); g_assert_true(fallback_profile->published);
+  g_assert_cmpuint(approval.reviews, ==, 3); g_assert_cmpuint(approval.decisions, ==, 2);
+  WAIT(approval.completed == 3 && !adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)));
   /* Offline cache is the same host path, with no synthetic cached result. */
   bunker_test_relay_free(relay); relay = NULL;
   g_signal_emit_by_name(find(panel, "Refresh Profile"), "clicked"); WAIT(find(panel, "Offline — showing the saved profile"));
-  g_assert_nonnull(find(panel, "Alice")); g_assert_cmpuint(approval.reviews, ==, 2);
-  bunker_test_relay_free(bootstrap); bunker_test_relay_free(read_only);
+  g_assert_nonnull(find(panel, "Alice")); g_assert_cmpuint(approval.reviews, ==, 3);
+  bunker_test_relay_free(save_bootstrap); bunker_test_relay_free(bootstrap); bunker_test_relay_free(read_only);
   g_socket_service_stop(image_server);
   diagnostic_window = NULL;
+  grotto_approval_controller_stop(controller);
   gtk_window_destroy(GTK_WINDOW(window)); g_object_unref(window); WAIT(window_gone);
   g_dbus_connection_signal_unsubscribe(connection, subscription); g_dbus_connection_signal_unsubscribe(connection, completions); g_bus_unown_name(gui_name);
   g_subprocess_send_signal(daemon, SIGTERM); g_assert_true(g_subprocess_wait_check(daemon, NULL, NULL));
@@ -383,8 +460,8 @@ static void authorization_preview(void) {
     GVariantBuilder summary, info; g_variant_builder_init(&summary, G_VARIANT_TYPE_VARDICT); g_variant_builder_init(&info, G_VARIANT_TYPE_VARDICT);
     g_variant_builder_add(&summary, "{sv}", "management_event_json", g_variant_new_string(raw));
     if (i) g_variant_builder_add(&summary, "{sv}", "auth_relay", g_variant_new_string("wss://private.example/"));
-    const char *keys[] = {"operation", "transport", "purpose", "identity", "reason"};
-    const char *values[] = {"sign_event", "MANAGEMENT", "profile-management", npub, i ? "wss://private.example/" : "https://images.example/\nhttps://fallback.example/"};
+    const char *keys[] = {"operation", "transport", "purpose", "identity", "reason", "request_id"};
+    const char *values[] = {"sign_event", "MANAGEMENT", "profile-management", npub, i ? "wss://private.example/" : "https://images.example/\nhttps://fallback.example/", "authorization-request"};
     for (guint k = 0; k < G_N_ELEMENTS(keys); k++) g_variant_builder_add(&info, "{sv}", keys[k], g_variant_new_string(values[k]));
     g_variant_builder_add(&info, "{sv}", "event_kind", g_variant_new_uint32(kind)); g_variant_builder_add(&info, "{sv}", "event_summary", g_variant_builder_end(&summary));
     g_autoptr(GVariant) snapshot = g_variant_ref_sink(g_variant_builder_end(&info)); g_assert_true(gnostr_approval_info_can_approve(snapshot));
@@ -395,6 +472,29 @@ static void authorization_preview(void) {
     else { g_assert_nonnull(strstr(text, "Action: upload")); g_assert_nonnull(strstr(text, "Blob SHA-256: ")); g_assert_nonnull(strstr(text, "Expires (UTC)")); g_assert_nonnull(strstr(text, "No server restriction")); }
     AdwActionRow *impact = ADW_ACTION_ROW(gtk_widget_get_template_child(GTK_WIDGET(dialog), GNOSTR_TYPE_APPROVAL_DIALOG, "row_impact"));
     g_assert_null(strstr(adw_action_row_get_subtitle(impact), "does not publish anything"));
+    AdwActionRow *relay_row = ADW_ACTION_ROW(gtk_widget_get_template_child(GTK_WIDGET(dialog), GNOSTR_TYPE_APPROVAL_DIALOG, "row_relay"));
+    GtkLabel *detail_row = GTK_LABEL(gtk_widget_get_template_child(GTK_WIDGET(dialog), GNOSTR_TYPE_APPROVAL_DIALOG, "label_details"));
+    g_assert_cmpstr(adw_action_row_get_subtitle(relay_row), ==, "destinations: see Details");
+    g_assert_true(gnostr_approval_info_can_approve(snapshot));
+    const char *destinations[] = {i ? "wss://private.example/" : "https://images.example/", NULL};
+    const char *bootstrap[] = {"wss://bootstrap.example/", NULL};
+    gnostr_approval_dialog_set_profile_provenance(dialog, "another-request", destinations, bootstrap);
+    g_assert_cmpstr(adw_action_row_get_subtitle(relay_row), ==, "destinations: see Details");
+    gnostr_approval_dialog_set_profile_provenance(dialog, "authorization-request", destinations, bootstrap);
+    g_assert_nonnull(strstr(adw_action_row_get_subtitle(relay_row), bootstrap[0]));
+    g_assert_nonnull(strstr(gtk_label_get_text(detail_row), destinations[0]));
+    g_assert_nonnull(strstr(gtk_label_get_text(detail_row), raw));
+    g_assert_true(gnostr_approval_info_can_approve(snapshot));
+    gnostr_approval_dialog_set_info(dialog, snapshot, "Grotto");
+    g_assert_cmpstr(adw_action_row_get_subtitle(relay_row), ==, "destinations: see Details");
+    if (!i) {
+      const char *effect = adw_action_row_get_subtitle(impact);
+      g_assert_nonnull(strstr(effect, "reviewed, cropped and re-encoded PNG"));
+      g_assert_nonnull(strstr(effect, "without the original file's embedded metadata"));
+      g_assert_nonnull(strstr(effect, "public immediately, independently of profile Save"));
+      g_assert_nonnull(strstr(effect, "Stopping does not delete"));
+      g_assert_null(strstr(effect, "uploads the original image"));
+    }
     g_object_unref(dialog);
     GVariantDict invalid; g_variant_dict_init(&invalid, snapshot); g_variant_dict_insert(&invalid, "event_kind", "u", 1u);
     g_autoptr(GVariant) wrong = g_variant_ref_sink(g_variant_dict_end(&invalid)); g_assert_false(gnostr_approval_info_can_approve(wrong));

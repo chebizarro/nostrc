@@ -41,6 +41,7 @@ struct _SignerWindow {
   AdwToastOverlay *toast_overlay;
   GrottoHomeModel *model;
   GrottoPanelsService *identity_service;
+  GrottoApprovalController *approval_controller;
   gboolean pending_backup;
   GtkWidget *page_settings;
   /* GSettings for persistence */
@@ -202,6 +203,7 @@ static void signer_window_dispose(GObject *object) {
   g_clear_object(&self->page_settings);
   if (self->model) grotto_home_model_stop(self->model);
   g_clear_object(&self->identity_service);
+  g_clear_object(&self->approval_controller);
   g_clear_object(&self->model);
   /* Save state on dispose as a backup */
   signer_window_save_state(self);
@@ -644,6 +646,7 @@ void signer_window_set_pending_group(SignerWindow *self, GtkWidget *group) {
   /* Both the hosted inbox and the sidebar use the application-owned controller.
    * Changing panels never changes notification or request lifetime. */
   GrottoApprovalController *controller = g_object_get_data(G_OBJECT(group), "controller");
+  g_set_object(&self->approval_controller, controller);
   grotto_apps_panel_set_pending_group(GROTTO_APPS_PANEL(self->panels[1]), group);
   if (self->pending) g_signal_handlers_disconnect_by_data(self->pending, self);
   g_set_object(&self->pending, grotto_approval_controller_get_pending(controller));
@@ -858,7 +861,7 @@ static void host_profile(gpointer data, GrottoProfileAction action, const char *
     GTask *task = g_task_new(self, cancel, callback, user_data);
     g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED, "Unlock management and choose a signing identity"); g_object_unref(task); return;
   }
-  grotto_profile_service_async(GTK_WINDOW(self), action, key, info, cancel, callback, user_data);
+  grotto_profile_service_async(GTK_WINDOW(self), self->approval_controller, action, key, info, cancel, callback, user_data);
 }
 static void setup_panels(SignerWindow *self) {
   self->panels[0] = GROTTO_PANEL(g_object_ref_sink(grotto_identity_panel_new(self->identity_service, NULL)));

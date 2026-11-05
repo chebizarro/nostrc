@@ -38,7 +38,7 @@ schemas = {
     '_GrottoProfileInfo': {'fields': 'char *[9]', 'images': 'GdkTexture *[2]',
         'created_at': 'guint64', 'published': 'gboolean', 'cached': 'gboolean', 'tor_blocked': 'gboolean',
         'bot': 'gboolean', 'no_relays': 'gboolean', 'nip05_status': 'GrottoNip05Status',
-        'discovery_relays': 'char **', 'publish_relays': 'char **', 'bootstrap_used': 'gboolean'},
+        'discovery_relays': 'char **', 'publish_relays': 'char **', 'auth_required_relays': 'char **', 'bootstrap_relays': 'char **', 'bootstrap_used': 'gboolean'},
     '_GrottoPanelsHost': {'show_toast': 'void (*)(gpointer, const char *)', 'review_request': 'void (*)(gpointer, const char *)',
         'add_identity': 'void (*)(gpointer)', 'add_app': 'void (*)(gpointer)', 'open_backup': 'void (*)(gpointer, const char *)',
         'remove_identity': 'void (*)(gpointer, const char *)', 'replace_identity': 'void (*)(gpointer, const char *)',
@@ -182,7 +182,7 @@ imports.update('''adw_avatar_set_custom_image gtk_picture_get_type gtk_picture_n
  gtk_picture_set_paintable gtk_picture_new_for_paintable gtk_picture_set_can_shrink gtk_picture_set_alternative_text gtk_spinner_get_type gtk_spinner_new gtk_spinner_set_spinning
  gtk_widget_set_size_request gtk_orientable_get_type gtk_orientable_set_orientation gtk_box_set_spacing
  gtk_widget_get_mapped gtk_widget_set_focusable adw_dialog_set_can_close adw_dialog_force_close
- __memset_chk g_error_matches gdk_paintable_get_type gdk_texture_get_type gtk_text_buffer_get_bounds gtk_text_buffer_get_text
+ __memset_chk g_error_matches gdk_paintable_get_type gdk_texture_get_type gtk_text_buffer_get_type gtk_text_buffer_get_bounds gtk_text_buffer_get_text
  gtk_text_buffer_set_text gtk_text_view_get_buffer gtk_text_view_get_type gtk_text_view_new gtk_text_view_set_wrap_mode
  adw_entry_row_add_suffix adw_header_bar_get_type adw_header_bar_pack_end adw_header_bar_pack_start g_task_return_pointer'''.split())
 
