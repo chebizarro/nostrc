@@ -23,6 +23,10 @@ static gint
 on_options(GApplication *app, GVariantDict *opts, gpointer data)
 {
   (void)app; (void)data;
+  if (g_variant_dict_contains(opts, "version")) {
+    g_print("Nostr Settings %s\n", NSS_VERSION);
+    return 0;
+  }
   const gchar *page = NULL;
   if (g_variant_dict_lookup(opts, "page", "&s", &page)) {
     g_free(opt_page);
@@ -36,6 +40,10 @@ main(int argc, char **argv)
 {
   g_autoptr(AdwApplication) app =
     adw_application_new("org.nostr.Settings", G_APPLICATION_DEFAULT_FLAGS);
+  /* GApplication supplies --help and handles these locally, before GTK
+   * startup or contacting the primary instance/session bus. */
+  g_application_add_main_option(G_APPLICATION(app), "version", 'v', G_OPTION_FLAG_NONE,
+                                G_OPTION_ARG_NONE, "Show version", NULL);
   g_application_add_main_option(G_APPLICATION(app), "page", 'p', G_OPTION_FLAG_NONE,
                                 G_OPTION_ARG_STRING,
                                 "Open this page (identity, relays, notifications, "

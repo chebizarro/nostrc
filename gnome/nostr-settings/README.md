@@ -75,6 +75,40 @@ To select the same real-daemon test, add
 `meson test -C <build> --print-errorlogs` with Grotto schemas available in
 `GSETTINGS_SCHEMA_DIR`. This is local host proof, not VM or release acceptance.
 
+## Native Debian package
+
+Use `gnome/nostr-settings/packaging/debian`, **not the root `debian/` bundle**.
+As in the desktop packaging plan, Settings gets its own GLib/static configure
+pass; it does not build `nostr-share`, the headless login stack, or Grotto.
+Build/install the `gnome/grotto-panels/packaging/debian` runtime and SDK first.
+In a disposable full source copy (including initialized submodules):
+
+```sh
+rm -rf debian  # disposable copy only
+cp -a gnome/nostr-settings/packaging/debian debian
+dpkg-buildpackage -b -us -uc -j2
+```
+
+The runtime dependency is `libgrotto-panels-0-0 >= 0.1.0` (the Debian name
+of grotto-panels). The package carries its private JSON backend and no signer
+activation service. Debian revision **0.4.0-2** supersedes the old bundle's
+0.4.0-1 without an epoch/downgrade; the unreleased application version remains
+**0.1.0**, shared by CMake/Meson and `nostr-settings --version`.
+`nostr-settings --help` and `--version` run without a display or session bus.
+
+Executable packaging regression, on a disposable Ubuntu 24.04 host/container
+with the panels SDK installed:
+
+```sh
+bash gnome/nostr-settings/packaging/tests/test-debian.sh
+```
+
+Use `scripts/linux-ci.Dockerfile` for the container; its package parity check
+includes this recipe's Build-Depends. The regression builds the real recipe
+in a temporary copy, checks the runtime dependency, isolated payload and
+private JSON library, and exercises the packaged CLI with no display/bus.
+It does not install anything, change owner data, or run owner acceptance.
+
 ## Where settings are stored
 
 The app owns no preferences. GSettings `org.nostr.Settings` holds window

@@ -3,6 +3,15 @@
 # D-Bus peers (systemd Manager, SessionRelay1, Wallet1) are mocks on a
 # private GTestDBus bus; relays are libnostr-publish fixture transports.
 
+add_test(NAME nostr-settings-cli COMMAND ${CMAKE_COMMAND}
+  -DNSS_EXECUTABLE=$<TARGET_FILE:nostr-settings> -DNSS_VERSION=${NOSTR_SETTINGS_VERSION}
+  -P ${CMAKE_CURRENT_SOURCE_DIR}/test-cli.cmake)
+set_tests_properties(nostr-settings-cli PROPERTIES LABELS "nostr-settings;unit" TIMEOUT 60)
+if(COMMAND nostrc_describe_test)
+  nostrc_describe_test(nostr-settings-cli OWNER gnome.nostr_settings
+    TARGETS nostr-settings INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/test-cli.cmake")
+endif()
+
 set(_nss_tests config lists nip11 relay_stats systemd wallet identity)
 foreach(_t ${_nss_tests})
   add_executable(test-nostr-settings-${_t} test_${_t}.c)

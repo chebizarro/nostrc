@@ -1,0 +1,23 @@
+Source: nostr-settings
+Section: gnome
+Priority: optional
+Maintainer: GNostr Project <gnostr@example.com>
+Build-Depends: debhelper-compat (= 13),
+ cmake (>= 3.20), ninja-build, pkg-config,
+ libglib2.0-dev, libgtk-4-dev (>= 4.14), libadwaita-1-dev (>= 1.5),
+ libjson-glib-dev, libsoup-3.0-dev, libsecret-1-dev,
+ libssl-dev, libsecp256k1-dev, libjansson-dev, libwebsockets-dev,
+ libnsync-dev, libsodium-dev,
+ libgrotto-panels-0-dev (>= 0.1.0)
+Standards-Version: 4.6.2
+Homepage: https://github.com/chebizarro/nostrc
+Rules-Requires-Root: no
+
+Package: nostr-settings
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, libgrotto-panels-0-0 (>= 0.1.0)
+Suggests: grotto, nostrc-session-relay, nostr-notify, nostr-wallet-agent,
+ seahorse, nostr-seal, nostr-share
+Description: Nostr desktop preferences and public signer management
+ Nostr Settings hosts the shared Grotto management panels with the limited
+ manager role. Signing, approval and secret custody remain in Grotto.
