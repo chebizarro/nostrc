@@ -150,7 +150,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential clang cmake ninja-build meson pkg-config python3 python3-gi \
-            debhelper dpkg-dev fakeroot rsync \
+            debhelper dpkg-dev fakeroot rsync lintian \
             libxml2-dev libgtk-4-dev libadwaita-1-dev libglib2.0-dev libsecret-1-dev \
             libjansson-dev libsecp256k1-dev libwebsockets-dev libsodium-dev \
             libssl-dev libcurl4-openssl-dev libsoup-3.0-dev libjson-glib-dev glib-networking \
@@ -366,6 +366,9 @@ jobs:
           cp /tmp/grotto-package/grotto_*.deb build/packages/
           dpkg-deb -c build/packages/grotto_*.deb | tee build/packages/contents.txt
           ! ls /tmp/grotto-package/grotto-daemon_*.deb
+          sudo apt-get install -y --no-install-recommends --no-remove "$PWD"/build/packages/grotto_*.deb
+          sudo env GROTTO_DEB_TEST_DISPOSABLE=1 bash apps/grotto/packaging/tests/test-debian-triggers.sh \
+            "$PWD"/build/packages/grotto_*.deb 2>&1 | tee build/packages/trigger-test.log
       - name: Shell extension tests
         if: matrix.mode == 'native' && (steps.gate.outputs.affected != 'true' || steps.selection.outputs.shell_extension == 'true')
         run: |

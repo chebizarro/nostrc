@@ -1,4 +1,4 @@
-Grotto Debian Packaging (Preview 0.1.0)
+Grotto Debian Packaging (Preview 0.1.1)
 ======================================
 
 Build from a complete nostrc monorepo checkout with initialized submodules.
@@ -28,7 +28,7 @@ UI changes must be regenerated with 0.22.2. CI installs that pin and requires
 signer/blueprint-drift, which still recompiles and compares every template.
 The optional Shell extension ships GJS/schema data and has no Blueprint dependency.
 
-The single grotto_0.1.0-1_<arch>.deb includes GUI, daemon, both activation
+The single grotto_0.1.1-1_<arch>.deb includes GUI, daemon, both activation
 services, Control1 XML, private JSON runtime library, icons,
 schema, metainfo, opt-in autostart template, systemd user unit, network examples
 and native-host assets. The Shell extension is an optional recommendation.
@@ -42,6 +42,24 @@ packaging uses CMake's apps/grotto component install. Do not substitute the
 AppImage desktop file or legacy appdata XML. No login or network access is
 automatically enabled; D-Bus activation starts the daemon on demand.
 See ../README.md and ../../DAEMON_DEPLOYMENT.md for source/installed procedures.
+
+Desktop caches belong to the system packages (GLib, hicolor-icon-theme and
+desktop-file-utils). The normal dh sequence handles integration; Grotto must
+not register interests in their shared cache paths or run cache tools itself.
+See dh_icons(1): hicolor icons are handled by triggers, not custom snippets.
+
+The native packaging CI step runs the installed-package regression below.
+It is also runnable in a disposable Linux CI container, after installing the
+package's runtime dependencies and lintian. NEVER run it on an owner's desktop:
+
+    sudo env GROTTO_DEB_TEST_DISPOSABLE=1 bash \
+        apps/grotto/packaging/tests/test-debian-triggers.sh /path/to/grotto.deb
+
+This checks lintian's maintainer-script diagnostics, installs the real deb,
+invokes generated postinst recovery/trigger callbacks, then installs/removes a
+throwaway package activating schema, icon and desktop file triggers. It checks
+pending triggers, resulting caches and a clean dpkg audit. It leaves Grotto
+installed in the disposable environment; it does not touch a user profile.
 
 Run lintian on the resulting package and follow docs/testing/grotto-manual-acceptance.md
 before promotion. A successful package build is not installed-GNOME acceptance.
