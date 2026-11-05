@@ -60,7 +60,7 @@ files already declare a version.
 | Component | Impact | Version decision |
 | --- | --- | --- |
 | **Grotto** | MINOR-class additive Control1 manager role, public identity snapshot, caller capabilities and navigation-only host activation | Fold into unreleased **0.1.1** at the owner's direction; CMake/Meson and packaging values unchanged. |
-| **grotto-panels** | PATCH-class honest unknown backup/usage presentation for manager snapshots; no public ABI/schema change | Fold into unreleased **0.1.0**; authoritative sources remain aligned. |
+| **grotto-panels** | PATCH-class honest unknown backup/usage presentation and consistent host-owned window chrome on shared panels/subpages; no public ABI/schema change | Fold into unreleased **0.1.0**; authoritative sources remain aligned. |
 | **nostr-settings** | MINOR-class sidebar host, shared panels, manager service and runtime dependency; new Meson build mirrors CMake | Fold into unreleased **0.1.0**. This component had no manifest row; add it with both authoritative version sources. |
 | **nip55l** | Internal installed-manager executable attestation helper and build path; no public signer API or protocol change | Fold the authorization implementation into the existing unreleased **0.8.0** wave; no new version/tag. |
 | Other components | Existing consumers/prerequisites only | No bump; no owned artifact changes. |

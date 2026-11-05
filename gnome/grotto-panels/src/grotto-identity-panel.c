@@ -240,8 +240,6 @@ static void grotto_identity_panel_init(GrottoIdentityPanel *self) {
   gtk_widget_init_template(GTK_WIDGET(self));
   self->profile = GROTTO_PROFILE_VIEW(grotto_profile_view_new(GROTTO_PANEL(self)));
   gtk_box_append(self->profile_box, GTK_WIDGET(self->profile));
-  g_object_bind_property(self, "show-window-controls", self->header, "show-start-title-buttons", G_BINDING_SYNC_CREATE);
-  g_object_bind_property(self, "show-window-controls", self->header, "show-end-title-buttons", G_BINDING_SYNC_CREATE);
 #define CONNECT(widget, signal, cb) g_signal_connect(self->widget, signal, G_CALLBACK(cb), self)
   CONNECT(add_identity, "clicked", add); CONNECT(empty_add, "clicked", add); CONNECT(banner, "button-clicked", backup);
   CONNECT(backup_row, "activated", backup); CONNECT(remove_identity, "clicked", remove_identity);

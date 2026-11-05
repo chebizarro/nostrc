@@ -95,6 +95,15 @@ static gboolean text_in(GtkWidget *widget, const char *text)
     if (text_in(c, text)) return TRUE;
   return FALSE;
 }
+static void assert_host_chrome(GtkWidget *widget)
+{
+  if (ADW_IS_HEADER_BAR(widget)) {
+    g_assert_false(adw_header_bar_get_show_start_title_buttons(ADW_HEADER_BAR(widget)));
+    g_assert_false(adw_header_bar_get_show_end_title_buttons(ADW_HEADER_BAR(widget)));
+  }
+  for (GtkWidget *child = gtk_widget_get_first_child(widget); child; child = gtk_widget_get_next_sibling(child))
+    assert_host_chrome(child);
+}
 static gboolean model_label(GListModel *model, const char *label)
 {
   for (guint i = 0; i < g_list_model_get_n_items(model); i++) {
@@ -148,6 +157,9 @@ static int manager_child(const char *original, const char *self)
   g_assert_true(GROTTO_IS_IDENTITY_PANEL(id_panel)); g_assert_true(GROTTO_IS_APPS_PANEL(apps_panel));
   g_assert_true(GROTTO_IS_ACTIVITY_PANEL(nss_window_get_panel(window, "activity")));
   g_assert_true(GROTTO_IS_REMOTE_PANEL(nss_window_get_panel(window, "remote-signing")));
+  const char *panel_names[] = {"identity", "apps", "activity", "remote-signing"};
+  for (guint i = 0; i < G_N_ELEMENTS(panel_names); i++)
+    assert_host_chrome(GTK_WIDGET(nss_window_get_panel(window, panel_names[i])));
   WAIT(text_in(GTK_WIDGET(id_panel), npub));
   g_assert_true(nss_window_show_page(window, "apps"));
   WAIT(text_in(GTK_WIDGET(apps_panel), "Connected app fixture"));
@@ -158,6 +170,7 @@ static int manager_child(const char *original, const char *self)
   WAIT(text_in(GTK_WIDGET(apps_panel), args.label));
   g_assert_false(grotto_panel_can_command(apps_panel, GROTTO_PANEL_SET_CLIENT_TRUST));
   grotto_apps_panel_show_app(GROTTO_APPS_PANEL(apps_panel), APP);
+  assert_host_chrome(GTK_WIDGET(apps_panel));
   WAIT(text_in(GTK_WIDGET(apps_panel), "Grotto"));
   g_assert_true(grotto_panel_host_invoke(apps_panel, GROTTO_PANEL_HOST_OPEN_SIGNER, "app:" APP, NULL));
   g_assert_true(grotto_panel_host_invoke(id_panel, GROTTO_PANEL_HOST_BACKUP, npub, NULL));

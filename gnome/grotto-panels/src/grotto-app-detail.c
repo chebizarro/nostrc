@@ -483,7 +483,9 @@ static void refresh_clicked(AdwBanner *banner, gpointer data) { (void)banner; lo
 static void open_permissions(AdwActionRow *widget, gpointer data) {
   (void)widget; GrottoAppDetail *self = data;
   if (!self->permissions_page) {
-    GtkWidget *toolbar = adw_toolbar_view_new(); adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(toolbar), adw_header_bar_new());
+    GtkWidget *toolbar = adw_toolbar_view_new(), *header = adw_header_bar_new();
+    grotto_panel_bind_header_bar(GROTTO_PANEL(self), ADW_HEADER_BAR(header));
+    adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(toolbar), header);
     self->permission_feedback = ADW_BANNER(adw_banner_new("")); adw_banner_set_button_label(self->permission_feedback, _("Refresh Permissions"));
     g_signal_connect(self->permission_feedback, "button-clicked", G_CALLBACK(refresh_clicked), self);
     adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(toolbar), GTK_WIDGET(self->permission_feedback));
@@ -619,6 +621,7 @@ static void parent_changed(GrottoPanel *parent, GrottoAppDetail *self) {
 }
 GtkWidget *grotto_app_detail_new(GrottoPanel *parent, const char *principal) {
   GrottoAppDetail *self = g_object_new(grotto_app_detail_get_type(), NULL); self->principal = g_strdup(principal); g_weak_ref_set(&self->parent, parent);
+  g_object_bind_property(parent, "show-window-controls", self, "show-window-controls", G_BINDING_SYNC_CREATE);
   GrottoPanelsHost host = {.show_toast = forward_toast, .open_in_signer = forward_open, .can_command = forward_can, .command_async = forward_command};
   grotto_panel_set_host(GROTTO_PANEL(self), &host, self, NULL);
   g_signal_connect_object(parent, "service-changed", G_CALLBACK(parent_changed), self, 0);
