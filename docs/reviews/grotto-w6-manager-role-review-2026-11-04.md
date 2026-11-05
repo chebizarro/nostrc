@@ -171,4 +171,3 @@ Supplemental probes authenticate a disposable Python executable via test-only ma
 4. Backend custody/export success, production installed-path/package execution, Meson parity execution, native desktop behavior and release qualification remain outside the executed proof. No arbitrary same-UID manager takeover or direct manager approval/export success was found on Linux.
 
 No fixes were made. No unrelated audits or new delivery prerequisites are proposed.
-
