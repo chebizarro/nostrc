@@ -1,4 +1,5 @@
 #include "qr-scanner.h"
+#include <glib/gi18n.h>
 #include <string.h>
 #include <errno.h>
 #ifdef HAVE_GSTREAMER
@@ -113,15 +114,15 @@ static const gchar *camera_error_message(GError *error, const GstStructure *deta
   if (details) gst_structure_get_int(details, "errno", &system_errno);
   if (error && error->domain == GST_RESOURCE_ERROR) {
     if (error->code == GST_RESOURCE_ERROR_NOT_AUTHORIZED || system_errno == EACCES || system_errno == EPERM)
-      return "Camera access was denied. Paste a link instead.";
+      return _("Camera access was denied. Paste a link instead.");
     if (error->code == GST_RESOURCE_ERROR_BUSY || system_errno == EBUSY)
-      return "The camera is busy in another application. Paste a link instead.";
+      return _("The camera is busy in another application. Paste a link instead.");
     if (error->code == GST_RESOURCE_ERROR_NOT_FOUND || system_errno == ENOENT)
-      return "No camera was found. Paste a link instead.";
+      return _("No camera was found. Paste a link instead.");
     if (error->code == GST_RESOURCE_ERROR_OPEN_READ || error->code == GST_RESOURCE_ERROR_OPEN_READ_WRITE)
-      return "Camera access is unavailable. Check camera permissions, or Paste a link instead.";
+      return _("Camera access is unavailable. Check camera permissions, or paste a link instead.");
   }
-  return "The camera could not be opened. Check access and other camera applications, or paste a link.";
+  return _("The camera could not be opened. Check access and other camera applications, or paste a link.");
 }
 static gboolean bus_message(GstBus *bus, GstMessage *message, gpointer data) {
   (void)bus; GnQrScanner *s = data;
@@ -147,7 +148,7 @@ static gboolean start_pipeline(GnQrScanner *s, const gchar *description, GError 
   GstElement *sink = gst_bin_get_by_name(GST_BIN(s->pipeline), "scan_sink");
   if (!sink || !GST_IS_APP_SINK(sink)) {
     if (sink) gst_object_unref(sink); gn_qr_scanner_stop(s);
-    g_set_error_literal(error, GN_QR_ERROR, GN_QR_ERROR_CAMERA_UNAVAILABLE, "Camera frame decoder is unavailable"); return FALSE;
+    g_set_error_literal(error, GN_QR_ERROR, GN_QR_ERROR_CAMERA_UNAVAILABLE, _("Camera images could not be read")); return FALSE;
   }
   g_signal_connect(sink, "new-sample", G_CALLBACK(sample_received), s); gst_object_unref(sink);
   GstBus *bus = gst_element_get_bus(s->pipeline); s->watch = gst_bus_add_watch(bus, bus_message, s); gst_object_unref(bus);
@@ -193,8 +194,8 @@ gboolean gn_qr_scanner_start(GnQrScanner *s, GError **error) {
     return start_pipeline(s, description, error);
   }
 #endif
-  unavailable(s, "Camera support is unavailable. Paste a link instead.");
-  g_set_error_literal(error, GN_QR_ERROR, GN_QR_ERROR_CAMERA_UNAVAILABLE, "Camera support is unavailable. Paste a link instead."); return FALSE;
+  unavailable(s, _("Camera support is unavailable. Paste a link instead."));
+  g_set_error_literal(error, GN_QR_ERROR, GN_QR_ERROR_CAMERA_UNAVAILABLE, _("Camera support is unavailable. Paste a link instead.")); return FALSE;
 }
 void gn_qr_scanner_stop(GnQrScanner *s) {
   g_return_if_fail(GN_IS_QR_SCANNER(s));
@@ -238,9 +239,10 @@ static void gn_qr_scanner_init(GnQrScanner *s) {
   s->context = g_main_context_ref_thread_default();
 #endif
   s->stack = gtk_stack_new(); gtk_widget_set_parent(s->stack, GTK_WIDGET(s));
-  s->picture = gtk_picture_new(); gtk_widget_set_size_request(s->picture, 320, 240);
+  gtk_stack_set_vhomogeneous(GTK_STACK(s->stack), FALSE);
+  s->picture = gtk_picture_new(); gtk_widget_set_size_request(s->picture, 248, 186);
   gtk_stack_add_named(GTK_STACK(s->stack), s->picture, "preview");
-  s->status = gtk_label_new("Choose Scan to use your camera, or paste a link."); gtk_label_set_wrap(GTK_LABEL(s->status), TRUE);
+  s->status = gtk_label_new(""); gtk_label_set_wrap(GTK_LABEL(s->status), TRUE);
   gtk_stack_add_named(GTK_STACK(s->stack), s->status, "unavailable");
   gtk_stack_set_visible_child_name(GTK_STACK(s->stack), "unavailable");
 }

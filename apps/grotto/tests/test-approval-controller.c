@@ -548,13 +548,13 @@ static void notifications(Fixture *f, gconstpointer data) {
   g_ptr_array_add(f->rows, g_variant_ref_sink(g_variant_dict_end(&dict)));
   arrive(f, "notification-one");
   WAIT(f->notification_body && strstr(f->notification_body,
-      management ? "Verify stored identity" : "Text note"));
+      management ? "Check identity" : "Text note"));
   g_assert_cmpstr(f->notification_title, ==,
       management ? "Grotto" : executable ? "client" : data && g_str_has_prefix(data, "nip46:") ? "Remote NIP-46 client" : "Unverified app");
   gboolean review = FALSE, deny = FALSE;
   for (guint i = 1; f->notification_actions[i - 1] && f->notification_actions[i]; i += 2) {
     review |= !strcmp(f->notification_actions[i], "Review");
-    deny |= !strcmp(f->notification_actions[i], "Deny once");
+    deny |= !strcmp(f->notification_actions[i], "Deny Once");
     g_assert_null(strstr(f->notification_actions[i], "Approve"));
   }
   g_assert_true(review);

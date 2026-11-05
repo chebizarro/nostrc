@@ -4,6 +4,7 @@
  * Falls back gracefully when libraries are not available.
  */
 #include "qr-code.h"
+#include <glib/gi18n.h>
 #include <secure_buf.h>
 
 #include <string.h>
@@ -82,13 +83,13 @@ GnQrContentType gn_qr_detect_content_type(const gchar *data) {
 
 const gchar *gn_qr_content_type_name(GnQrContentType type) {
   switch (type) {
-    case GN_QR_TYPE_NPUB:       return "Public Key (npub)";
-    case GN_QR_TYPE_NSEC:       return "Private Key (nsec)";
-    case GN_QR_TYPE_NCRYPTSEC:  return "Encrypted Key (ncryptsec)";
-    case GN_QR_TYPE_NOSTR_URI:  return "Nostr URI";
-    case GN_QR_TYPE_BUNKER_URI: return "Bunker URI";
-    case GN_QR_TYPE_HEX_KEY:    return "Hex Key";
-    default:                    return "Unknown";
+    case GN_QR_TYPE_NPUB:       return _("Public Key");
+    case GN_QR_TYPE_NSEC:       return _("Secret Key");
+    case GN_QR_TYPE_NCRYPTSEC:  return _("Encrypted Backup");
+    case GN_QR_TYPE_NOSTR_URI:  return _("Nostr Link");
+    case GN_QR_TYPE_BUNKER_URI: return _("App Connection");
+    case GN_QR_TYPE_HEX_KEY:    return _("Secret Key");
+    default:                    return _("Unknown");
   }
 }
 

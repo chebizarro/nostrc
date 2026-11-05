@@ -8,25 +8,26 @@ template $GrottoRemotePanel: $GrottoPanel {
     [top] Adw.Banner feedback { title: _("Signer Unavailable"); }
     content: Adw.PreferencesPage {
       Adw.PreferencesGroup {
-        description: _("Allow apps on other devices to request signing. Configure the relays explicitly.");
+        description: _("Let apps on other devices ask to use your identity");
         Adw.SwitchRow enabled { title: _("Enable Remote Signing"); }
         Adw.ActionRow status { title: _("Status"); }
         Adw.ActionRow handoff { title: _("Change in Grotto…"); activatable: true; visible: false; }
       }
       Adw.PreferencesGroup relays_group {
         title: _("Relays");
-        description: _("Only these relays are used by the signing endpoint");
+        description: _("Remote apps connect through these relays");
         ListBox relays_list { selection-mode: none; styles ["boxed-list"] }
         Adw.EntryRow new_relay { title: _("Add Relay URL"); show-apply-button: true; }
       }
       Adw.PreferencesGroup {
-        Adw.EntryRow methods { title: _("Allowed Methods"); show-apply-button: true; }
-      }
-      Adw.PreferencesGroup {
-        Adw.ActionRow reset {
-          title: _("Reset Endpoint…");
-          subtitle: _("Invalidate remote pairings and links; keep identities and local app permissions");
+        Adw.ExpanderRow {
+          title: _("Details");
+          Adw.EntryRow methods { title: _("Allowed Methods"); show-apply-button: true; }
+          Adw.ActionRow reset {
+          title: _("Reset Remote Connections…");
+          subtitle: _("Disconnect remote apps and cancel pairing links. Identities and local app permissions are kept."); subtitle-lines: 0;
           activatable: true;
+          }
         }
       }
     };

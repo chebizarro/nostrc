@@ -7,53 +7,79 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
 <interface>
   <requires lib="gtk" version="4.0"/>
   <template class="SheetCreateBunker" parent="AdwDialog">
-    <property name="title" translatable="yes">Connect with Which Identity?</property>
-    <property name="content-width">520</property>
+    <property name="title" translatable="yes">Create Pairing Link</property>
+    <property name="content-width">420</property>
     <child>
-      <object class="GtkBox">
-        <property name="orientation">1</property>
-        <property name="spacing">12</property>
-        <property name="margin-start">18</property>
-        <property name="margin-end">18</property>
-        <property name="margin-top">18</property>
-        <property name="margin-bottom">18</property>
-        <child>
-          <object class="GtkLabel">
-            <property name="label" translatable="yes">Choose the identity this application may request.</property>
-            <property name="wrap">true</property>
+      <object class="AdwToolbarView">
+        <child type="top">
+          <object class="AdwHeaderBar">
+            <property name="show-start-title-buttons">false</property>
+            <property name="show-end-title-buttons">false</property>
+            <child type="start">
+              <object class="GtkButton" id="btn_cancel">
+                <property name="label" translatable="yes">Cancel</property>
+              </object>
+            </child>
           </object>
         </child>
         <child>
-          <object class="GtkDropDown" id="identities">
-            <property name="tooltip-text" translatable="yes">Connect with which identity?</property>
-          </object>
-        </child>
-        <child>
-          <object class="GtkEntry" id="entry_name">
-            <property name="placeholder-text" translatable="yes">Client label (optional)</property>
-          </object>
-        </child>
-        <child>
-          <object class="GtkLabel">
-            <property name="label" translatable="yes">Configure status, relays and allowed methods in Remote Signing. A link is available only when the signer is ready.</property>
-            <property name="wrap">true</property>
-          </object>
-        </child>
-        <child>
-          <object class="GtkLabel" id="status">
-            <property name="label" translatable="yes">Reading daemon status…</property>
-            <property name="wrap">true</property>
-          </object>
-        </child>
-        <child>
-          <object class="GtkButton" id="btn_create">
-            <property name="label" translatable="yes">Create Single-Use Pairing Link</property>
-            <property name="sensitive">false</property>
-          </object>
-        </child>
-        <child>
-          <object class="GtkButton" id="btn_cancel">
-            <property name="label" translatable="yes">Close</property>
+          <object class="GtkScrolledWindow">
+            <property name="hscrollbar-policy">2</property>
+            <child>
+              <object class="GtkBox">
+                <property name="orientation">1</property>
+                <property name="spacing">16</property>
+                <property name="margin-start">20</property>
+                <property name="margin-end">20</property>
+                <property name="margin-top">16</property>
+                <property name="margin-bottom">24</property>
+                <child>
+                  <object class="GtkLabel">
+                    <property name="label" translatable="yes">Choose the identity to connect. You'll review the app before it can sign.</property>
+                    <property name="wrap">true</property>
+                    <property name="xalign">0</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel">
+                    <property name="label" translatable="yes">Identity</property>
+                    <property name="xalign">0</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkDropDown" id="identities">
+                    <property name="tooltip-text" translatable="yes">Identity to Connect</property>
+                    <accessibility>
+                      <property name="label" translatable="yes">Identity to Connect</property>
+                    </accessibility>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkEntry" id="entry_name">
+                    <property name="placeholder-text" translatable="yes">App name (optional)</property>
+                    <accessibility>
+                      <property name="label" translatable="yes">App name (optional)</property>
+                    </accessibility>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="status">
+                    <property name="label" translatable="yes">Checking remote signing…</property>
+                    <property name="wrap">true</property>
+                    <property name="xalign">0</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkButton" id="btn_create">
+                    <property name="label" translatable="yes">Create Link</property>
+                    <property name="sensitive">false</property>
+                    <style>
+                      <class name="suggested-action"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
           </object>
         </child>
       </object>

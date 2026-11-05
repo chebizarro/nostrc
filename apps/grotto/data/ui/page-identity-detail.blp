@@ -8,9 +8,9 @@ template $GrottoIdentityDetail: Adw.NavigationPage {
     [top] Adw.Banner setup_banner { title: _("Backup incomplete"); revealed: false; }
     [top] Adw.Banner error_banner { title: _("The backup action couldn't be completed"); button-label: _("Retry"); revealed: false; }
     content: Adw.PreferencesPage {
-      description: _("Anyone with this backup controls your identity. Grotto developers will never ask for it");
+      description: _("Anyone with this backup controls your identity. Keep it private");
       Adw.PreferencesGroup {
-        Adw.ActionRow public_key { title: _("Identity"); subtitle-selectable: true; subtitle-lines: 0; }
+        Adw.ActionRow public_key { title: _("Identity"); subtitle-selectable: true; subtitle-lines: 1; }
         Adw.ActionRow phrase_row { title: _("Show Recovery Phrase…"); subtitle: _("Words to write down and keep offline"); activatable: true; }
       }
       Adw.PreferencesGroup encrypted_group {
@@ -19,11 +19,13 @@ template $GrottoIdentityDetail: Adw.NavigationPage {
         Adw.ActionRow qr_row { title: _("Show QR Code…"); activatable: true; }
       }
       Adw.PreferencesGroup advanced_group {
+        Adw.ExpanderRow {
         title: _("Advanced");
         Adw.ActionRow raw_row { title: _("Copy Secret Key…"); subtitle: _("Clipboard managers may keep a copy"); activatable: true; }
         Adw.ActionRow test_row { title: _("Test This Identity"); subtitle: _("Signs and encrypts a test message on this device"); activatable: true; }
         Adw.ActionRow replace_row { title: _("Create Replacement Identity…"); subtitle: _("Apps aren't moved and permissions aren't copied"); activatable: true; }
         Adw.ActionRow announcement_row { title: _("Save Migration Announcement…"); activatable: true; visible: false; }
+        }
       }
     };
   }

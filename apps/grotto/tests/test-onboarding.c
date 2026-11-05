@@ -159,7 +159,7 @@ static void teardown(Fixture *f, gconstpointer data) {
   g_free(f->npub); active = NULL;
 }
 static void create_waiting(Fixture *f) {
-  click(f, "btn_next"); click(f, "btn_next"); g_assert_cmpint(onboarding_assistant_get_state(f->assistant), ==, ONBOARDING_CREATE);
+  click(f, "btn_next"); g_signal_emit_by_name(child(f, "choose_create"), "activated"); g_assert_cmpint(onboarding_assistant_get_state(f->assistant), ==, ONBOARDING_CREATE);
   /* No creation password or meter exists in the production template. */
   g_assert_null(gtk_widget_get_template_child(GTK_WIDGET(f->assistant), TYPE_ONBOARDING_ASSISTANT, "entry_passphrase"));
   click(f, "btn_next"); wait_invocation(&f->store);
@@ -234,7 +234,7 @@ static void cancelled_test(Fixture *f, gconstpointer data) {
   g_assert_cmpstr(stored_identity, ==, f->npub); g_assert_cmpuint(f->finished, ==, 0);
 }
 static void imported_input_cleared(Fixture *f, gconstpointer data) {
-  (void)data; click(f, "btn_next"); gtk_check_button_set_active(GTK_CHECK_BUTTON(child(f, "radio_import")), TRUE); click(f, "btn_next");
+  (void)data; click(f, "btn_next"); g_signal_emit_by_name(child(f, "choose_import"), "activated");
   GtkEditable *input = GTK_EDITABLE(child(f, "text_import_data"));
   gtk_editable_set_text(input, "  0000000000000000000000000000000000000000000000000000000000000002  ");
   click(f, "btn_next"); wait_invocation(&f->store); g_assert_cmpstr(gtk_editable_get_text(input), ==, "");
@@ -243,8 +243,7 @@ static void imported_input_cleared(Fixture *f, gconstpointer data) {
 static void imported_completion_persists(Fixture *f, gconstpointer data) {
   const char *exit = data;
   click(f, "btn_next");
-  gtk_check_button_set_active(GTK_CHECK_BUTTON(child(f, "radio_import")), TRUE);
-  click(f, "btn_next");
+  g_signal_emit_by_name(child(f, "choose_import"), "activated");
   guint8 key[32] = {0}; key[31] = 2;
   g_autofree char *nsec = NULL;
   g_assert_cmpint(nostr_nip19_encode_nsec(key, &nsec), ==, 0);
@@ -448,18 +447,19 @@ static void backup_deliberate_actions(Fixture *f, gconstpointer data) {
 }
 static void distinct_import_passphrase(Fixture *f, gconstpointer data) {
   const gchar *format = data; f->expected_format = format; f->expected_pass = "distinct recovery passphrase";
-  click(f, "btn_next"); gtk_check_button_set_active(GTK_CHECK_BUTTON(child(f, "radio_import")), TRUE); click(f, "btn_next");
+  click(f, "btn_next"); g_signal_emit_by_name(child(f, "choose_import"), "activated");
   gboolean mnemonic = !strcmp(format, "mnemonic");
-  gtk_check_button_set_active(GTK_CHECK_BUTTON(child(f, "radio_import_seed")), mnemonic);
-  g_assert_nonnull(strstr(gtk_label_get_text(GTK_LABEL(child(f, "import_passphrase_label"))), mnemonic ? "Mnemonic passphrase" : "NIP-49 decryption"));
   GtkWidget *box = child(f, "box_import_passphrase_container");
-  gn_secure_entry_set_text(GN_SECURE_ENTRY(gtk_widget_get_first_child(box)), f->expected_pass);
   gtk_editable_set_text(GTK_EDITABLE(child(f, "text_import_data")), mnemonic ? "  abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about  " : "ncryptsec1fixture");
+  g_assert_cmpstr(gtk_label_get_text(GTK_LABEL(child(f, "import_passphrase_label"))), ==,
+      mnemonic ? "Recovery phrase passphrase (if you used one)" : "Backup passphrase");
+  g_assert_true(gtk_widget_get_visible(child(f, "import_passphrase_group")));
+  gn_secure_entry_set_text(GN_SECURE_ENTRY(gtk_widget_get_first_child(box)), f->expected_pass);
   click(f, "btn_next"); wait_invocation(&f->store);
   g_assert_cmpstr(gtk_editable_get_text(GTK_EDITABLE(child(f, "text_import_data"))), ==, ""); stored(f);
 }
 static void delayed_import_failure(Fixture *f, gconstpointer data) {
-  click(f, "btn_next"); gtk_check_button_set_active(GTK_CHECK_BUTTON(child(f, "radio_import")), TRUE); click(f, "btn_next");
+  click(f, "btn_next"); g_signal_emit_by_name(child(f, "choose_import"), "activated");
   gtk_editable_set_text(GTK_EDITABLE(child(f, "text_import_data")), "0000000000000000000000000000000000000000000000000000000000000002");
   click(f, "btn_next"); wait_invocation(&f->store);
   g_assert_false(gtk_widget_get_sensitive(child(f, "btn_skip"))); click(f, "btn_skip"); g_assert_cmpuint(f->finished, ==, 0);
@@ -476,7 +476,7 @@ static void delayed_import_failure(Fixture *f, gconstpointer data) {
 static void imported_profile_destination(Fixture *f, gconstpointer data) {
   (void)data; SignerWindow *window = g_object_new(TYPE_SIGNER_WINDOW, NULL); g_object_ref_sink(window);
   gtk_window_present(GTK_WINDOW(window)); gtk_window_set_transient_for(GTK_WINDOW(f->assistant), GTK_WINDOW(window));
-  click(f, "btn_next"); gtk_check_button_set_active(GTK_CHECK_BUTTON(child(f, "radio_import")), TRUE); click(f, "btn_next");
+  click(f, "btn_next"); g_signal_emit_by_name(child(f, "choose_import"), "activated");
   gtk_editable_set_text(GTK_EDITABLE(child(f, "text_import_data")), "0000000000000000000000000000000000000000000000000000000000000002");
   click(f, "btn_next"); wait_invocation(&f->store); stored(f);
   g_dbus_method_invocation_return_value(f->test, g_variant_new("(s)", "passed")); g_clear_object(&f->test);
@@ -525,7 +525,7 @@ static void encrypted_file_cancel_failure(Fixture *f, gconstpointer data) {
   AdwDialog *dialog = adw_window_get_visible_dialog(window); g_assert_nonnull(dialog);
   GtkWidget *passphrase = find_named(GTK_WIDGET(dialog), "backup-passphrase"); g_assert_nonnull(passphrase);
   gn_secure_entry_set_text(GN_SECURE_ENTRY(passphrase), f->expected_pass);
-  GtkWidget *commit = button_named(GTK_WIDGET(dialog), "Save…"); g_assert_nonnull(commit);
+  GtkWidget *commit = button_named(GTK_WIDGET(dialog), "Save Backup…"); g_assert_nonnull(commit);
   g_signal_emit_by_name(commit, "clicked"); GtkFileChooser *chooser = wait_chooser(GTK_WINDOW(window));
   g_autofree gchar *destination = NULL;
   if (cancel) { gtk_dialog_response(GTK_DIALOG(chooser), GTK_RESPONSE_CANCEL); }

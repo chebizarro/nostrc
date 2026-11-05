@@ -159,14 +159,14 @@ static void bootstrap_defaults(GtkButton *button, gpointer data) {
 static void add_profile_discovery(PageSettings *self) {
   AdwPreferencesGroup *group = ADW_PREFERENCES_GROUP(adw_preferences_group_new());
   adw_preferences_group_set_title(group, _("Profile Discovery"));
-  adw_preferences_group_set_description(group, _("For identities with no known relays only. Discovery shares the public identity with these relays, then switches to its own outbox. Never used for publishing."));
+  adw_preferences_group_set_description(group, _("For identities with no known relays, share the public key with discovery relays to find a profile. Never used for publishing."));
   self->bootstrap_enabled = ADW_SWITCH_ROW(adw_switch_row_new());
-  adw_preferences_row_set_title(ADW_PREFERENCES_ROW(self->bootstrap_enabled), _("Use Bootstrap Relays"));
+  adw_preferences_row_set_title(ADW_PREFERENCES_ROW(self->bootstrap_enabled), _("Find Profiles Automatically"));
   g_settings_bind(self->settings, "profile-bootstrap-enabled", self->bootstrap_enabled, "active", G_SETTINGS_BIND_DEFAULT);
   adw_preferences_group_add(group, GTK_WIDGET(self->bootstrap_enabled));
   AdwExpanderRow *details = ADW_EXPANDER_ROW(adw_expander_row_new());
   adw_preferences_row_set_title(ADW_PREFERENCES_ROW(details), _("Discovery-Only Relays"));
-  adw_expander_row_set_subtitle(details, _("Kinds 0, 10002 and 10050 · Edit or remove defaults"));
+  adw_expander_row_set_subtitle(details, _("Profiles, public relay lists, and messaging relay lists"));
   GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
   gtk_widget_set_margin_start(box, 12); gtk_widget_set_margin_end(box, 12); gtk_widget_set_margin_top(box, 12); gtk_widget_set_margin_bottom(box, 12);
   self->bootstrap_relays = GTK_TEXT_VIEW(gtk_text_view_new()); gtk_text_view_set_wrap_mode(self->bootstrap_relays, GTK_WRAP_CHAR);

@@ -13,7 +13,6 @@ struct _GrottoAppDetail {
   AdwNavigationView *navigation;
   AdwNavigationPage *permissions_page, *root_page;
   AdwEntryRow *name;
-  AdwAvatar *avatar;
   AdwActionRow *verified, *fingerprint, *since, *permissions_link, *handoff;
   AdwBanner *feedback, *permission_feedback;
   GtkCheckButton *tiers[3];
@@ -23,7 +22,7 @@ struct _GrottoAppDetail {
   GListModel *apps, *permissions;
   GrottoPanelsItem *snapshot;
   PermissionEditor *editor;
-  gboolean updating, busy, loading, clear_failed;
+  gboolean updating, busy, loading, clear_failed, unavailable;
   guint query_serial;
 };
 G_DEFINE_TYPE(GrottoAppDetail, grotto_app_detail, GROTTO_TYPE_PANEL)
@@ -438,7 +437,7 @@ static void permissions_read(GObject *source, GAsyncResult *result, gpointer dat
   for (guint i = 0; model && i < g_list_model_get_n_items(model); i++) {
     g_autoptr(GrottoPanelsItem) item = g_list_model_get_item(model, i); const GrottoPanelsMetadata *m = grotto_panels_item_get_metadata(item);
     const char *decision = !strcmp(m->decision, "allow") ? _("Allow") : !strcmp(m->decision, "deny") ? _("Deny") : _("Needs Review");
-    g_autofree char *title = m->event_kind >= 0 ? g_strdup_printf(_("%s · %s (%d)"), decision, kind_name(m->event_kind), m->event_kind) :
+    g_autofree char *title = m->event_kind >= 0 ? g_strdup_printf(_("%s · %s"), decision, kind_name(m->event_kind)) :
       g_strdup_printf(_("%s · %s"), decision, operation_name(m->operation));
     g_autoptr(GDateTime) date = m->expires_at ? g_date_time_new_from_unix_local(m->expires_at) : NULL;
     g_autofree char *when = date ? g_date_time_format(date, "%F %R") : g_strdup(_("Until Revoked"));
@@ -536,8 +535,13 @@ static void render(GrottoAppDetail *self) {
   gtk_widget_set_sensitive(GTK_WIDGET(self->name), name_editable);
   gtk_widget_set_visible(GTK_WIDGET(self->handoff), !editable && grotto_panel_host_can(GROTTO_PANEL(self), GROTTO_PANEL_HOST_OPEN_SIGNER));
   if (m) {
+    if (self->unavailable) {
+      adw_banner_set_revealed(self->feedback, FALSE);
+      if (self->permission_feedback) adw_banner_set_revealed(self->permission_feedback, FALSE);
+      self->unavailable = FALSE;
+    }
     const char *name = *m->label ? m->label : *m->verified_as ? m->verified_as : _("App");
-    adw_navigation_page_set_title(ADW_NAVIGATION_PAGE(self), name); adw_navigation_page_set_title(self->root_page, name); adw_avatar_set_text(self->avatar, name);
+    adw_navigation_page_set_title(ADW_NAVIGATION_PAGE(self), name); adw_navigation_page_set_title(self->root_page, name);
     if (!editing_name) gtk_editable_set_text(GTK_EDITABLE(self->name), m->label);
     adw_action_row_set_subtitle(self->verified, *m->verified_as ? m->verified_as : self->principal);
     adw_action_row_set_subtitle(self->fingerprint, self->principal);
@@ -548,7 +552,7 @@ static void render(GrottoAppDetail *self) {
     for (guint i = 0; i < 3; i++) gtk_check_button_set_active(self->tiers[i], FALSE);
     if (!m->blocked && strcmp(m->access_policy, "Previous access policy")) gtk_check_button_set_active(self->tiers[tier], TRUE);
     if (!strcmp(m->access_policy, "Previous access policy")) message(self, _("Previous access policy. Choose routine access to review an explicit upgrade."));
-  } else message(self, _("App unavailable or removed"));
+  } else { self->unavailable = TRUE; message(self, _("App unavailable or removed")); }
   self->updating = FALSE;
 }
 static void model_changed(GListModel *model, guint p, guint r, guint a, gpointer data) {
@@ -575,13 +579,10 @@ static void grotto_app_detail_init(GrottoAppDetail *self) {
   GtkWidget *toolbar = adw_toolbar_view_new(); adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(toolbar), adw_header_bar_new());
   self->feedback = ADW_BANNER(adw_banner_new("")); adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(toolbar), GTK_WIDGET(self->feedback));
   AdwPreferencesPage *prefs = ADW_PREFERENCES_PAGE(adw_preferences_page_new()); AdwPreferencesGroup *identity = group(prefs, NULL);
-  self->avatar = ADW_AVATAR(adw_avatar_new(64, "", TRUE)); gtk_widget_set_halign(GTK_WIDGET(self->avatar), GTK_ALIGN_CENTER); adw_preferences_group_add(identity, GTK_WIDGET(self->avatar));
   self->name = ADW_ENTRY_ROW(adw_entry_row_new()); adw_preferences_row_set_title(ADW_PREFERENCES_ROW(self->name), _("Local Name")); adw_entry_row_set_show_apply_button(self->name, TRUE); adw_preferences_group_add(identity, GTK_WIDGET(self->name));
-  self->verified = ADW_ACTION_ROW(row(identity, _("Verified As"), NULL)); self->fingerprint = ADW_ACTION_ROW(row(identity, _("Fingerprint"), NULL));
-  adw_action_row_set_subtitle_selectable(self->fingerprint, TRUE); self->since = ADW_ACTION_ROW(row(identity, _("Connected Since"), NULL));
   AdwPreferencesGroup *access = group(prefs, _("Access")); self->access = GTK_WIDGET(access);
   adw_preferences_group_set_description(access, _("Blocked actions always stay blocked. Lowering access keeps saved permissions."));
-  const char *titles[] = {_("Trust this app for routine operations"), _("Ask for sensitive operations"), _("Ask unless permitted")};
+  const char *titles[] = {_("Trust for Routine Operations"), _("Ask for Sensitive Operations"), _("Ask Unless Permitted")};
   for (guint i = 0; i < 3; i++) {
     GtkWidget *r = row(access, titles[i], NULL); self->tiers[i] = GTK_CHECK_BUTTON(gtk_check_button_new());
     gtk_accessible_update_property(GTK_ACCESSIBLE(self->tiers[i]), GTK_ACCESSIBLE_PROPERTY_LABEL, titles[i], -1);
@@ -591,11 +592,22 @@ static void grotto_app_detail_init(GrottoAppDetail *self) {
   }
   AdwPreferencesGroup *links = group(prefs, NULL); self->handoff = ADW_ACTION_ROW(row(links, _("Change in Grotto…"), NULL));
   gtk_list_box_row_set_activatable(GTK_LIST_BOX_ROW(self->handoff), TRUE); g_signal_connect(self->handoff, "activated", G_CALLBACK(handoff), self);
-  self->permissions_link = ADW_ACTION_ROW(row(links, _("Permissions"), _("View trust-derived access; edit or clear remembered permissions")));
+  self->permissions_link = ADW_ACTION_ROW(row(links, _("Permissions"), _("Review and change saved permissions")));
   gtk_list_box_row_set_activatable(GTK_LIST_BOX_ROW(self->permissions_link), TRUE); adw_action_row_add_suffix(self->permissions_link, gtk_image_new_from_icon_name("go-next-symbolic"));
   g_signal_connect(self->permissions_link, "activated", G_CALLBACK(open_permissions), self);
   GtkWidget *recent = row(links, _("Recent Activity"), NULL); gtk_list_box_row_set_activatable(GTK_LIST_BOX_ROW(recent), TRUE);
   adw_action_row_add_suffix(ADW_ACTION_ROW(recent), gtk_image_new_from_icon_name("go-next-symbolic")); g_signal_connect(recent, "activated", G_CALLBACK(activity), self);
+  AdwPreferencesGroup *details_group = group(prefs, NULL);
+  AdwExpanderRow *details = ADW_EXPANDER_ROW(adw_expander_row_new());
+  adw_preferences_row_set_title(ADW_PREFERENCES_ROW(details), _("Details"));
+  adw_preferences_group_add(details_group, GTK_WIDGET(details));
+  self->verified = ADW_ACTION_ROW(row(NULL, _("Verified As"), NULL));
+  self->fingerprint = ADW_ACTION_ROW(row(NULL, _("Fingerprint"), NULL));
+  self->since = ADW_ACTION_ROW(row(NULL, _("Connected Since"), NULL));
+  adw_action_row_set_subtitle_selectable(self->fingerprint, TRUE);
+  adw_expander_row_add_row(details, GTK_WIDGET(self->verified));
+  adw_expander_row_add_row(details, GTK_WIDGET(self->fingerprint));
+  adw_expander_row_add_row(details, GTK_WIDGET(self->since));
   AdwPreferencesGroup *end = group(prefs, NULL);
   self->unblock = gtk_button_new_with_label(_("Remove App Block…"));
   gtk_widget_set_halign(self->unblock, GTK_ALIGN_CENTER); adw_preferences_group_add(end, self->unblock);

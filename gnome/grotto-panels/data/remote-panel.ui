@@ -23,7 +23,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
           <object class="AdwPreferencesPage">
             <child>
               <object class="AdwPreferencesGroup">
-                <property name="description" translatable="yes">Allow apps on other devices to request signing. Configure the relays explicitly.</property>
+                <property name="description" translatable="yes">Let apps on other devices ask to use your identity</property>
                 <child>
                   <object class="AdwSwitchRow" id="enabled">
                     <property name="title" translatable="yes">Enable Remote Signing</property>
@@ -46,7 +46,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             <child>
               <object class="AdwPreferencesGroup" id="relays_group">
                 <property name="title" translatable="yes">Relays</property>
-                <property name="description" translatable="yes">Only these relays are used by the signing endpoint</property>
+                <property name="description" translatable="yes">Remote apps connect through these relays</property>
                 <child>
                   <object class="GtkListBox" id="relays_list">
                     <property name="selection-mode">0</property>
@@ -66,20 +66,22 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             <child>
               <object class="AdwPreferencesGroup">
                 <child>
-                  <object class="AdwEntryRow" id="methods">
-                    <property name="title" translatable="yes">Allowed Methods</property>
-                    <property name="show-apply-button">true</property>
-                  </object>
-                </child>
-              </object>
-            </child>
-            <child>
-              <object class="AdwPreferencesGroup">
-                <child>
-                  <object class="AdwActionRow" id="reset">
-                    <property name="title" translatable="yes">Reset Endpoint…</property>
-                    <property name="subtitle" translatable="yes">Invalidate remote pairings and links; keep identities and local app permissions</property>
-                    <property name="activatable">true</property>
+                  <object class="AdwExpanderRow">
+                    <property name="title" translatable="yes">Details</property>
+                    <child>
+                      <object class="AdwEntryRow" id="methods">
+                        <property name="title" translatable="yes">Allowed Methods</property>
+                        <property name="show-apply-button">true</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwActionRow" id="reset">
+                        <property name="title" translatable="yes">Reset Remote Connections…</property>
+                        <property name="subtitle" translatable="yes">Disconnect remote apps and cancel pairing links. Identities and local app permissions are kept.</property>
+                        <property name="subtitle-lines">0</property>
+                        <property name="activatable">true</property>
+                      </object>
+                    </child>
                   </object>
                 </child>
               </object>

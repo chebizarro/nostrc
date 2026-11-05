@@ -74,10 +74,9 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                             </child>
                             <child>
                               <object class="AdwPreferencesGroup">
-                                <property name="description" translatable="yes">The name is a local label, not a public profile</property>
                                 <child>
                                   <object class="AdwEntryRow" id="name_row">
-                                    <property name="title" translatable="yes">_Name</property>
+                                    <property name="title" translatable="yes">_Name on This Device</property>
                                     <property name="use-underline">true</property>
                                     <property name="show-apply-button">true</property>
                                   </object>
@@ -86,7 +85,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                   <object class="AdwActionRow" id="key_row">
                                     <property name="title" translatable="yes">Public Key</property>
                                     <property name="subtitle-selectable">true</property>
-                                    <property name="subtitle-lines">0</property>
+                                    <property name="subtitle-lines">1</property>
                                     <child type="suffix">
                                       <object class="GtkButton" id="copy_key">
                                         <property name="icon-name">edit-copy-symbolic</property>
@@ -143,18 +142,23 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                   </object>
                                 </child>
                                 <child>
-                                  <object class="AdwActionRow" id="default_row">
-                                    <property name="title" translatable="yes">Default for Older Apps</property>
-                                    <property name="subtitle-lines">0</property>
-                                    <child type="suffix">
-                                      <object class="GtkButton" id="set_default">
-                                        <property name="label" translatable="yes">Set as Default</property>
-                                        <property name="valign">3</property>
-                                      </object>
-                                    </child>
-                                    <child type="suffix">
-                                      <object class="GtkImage" id="default_check">
-                                        <property name="icon-name">object-select-symbolic</property>
+                                  <object class="AdwExpanderRow">
+                                    <property name="title" translatable="yes">Default Identity</property>
+                                    <child>
+                                      <object class="AdwActionRow" id="default_row">
+                                        <property name="title" translatable="yes">Default for Older Apps</property>
+                                        <property name="subtitle-lines">0</property>
+                                        <child type="suffix">
+                                          <object class="GtkButton" id="set_default">
+                                            <property name="label" translatable="yes">Set as Default</property>
+                                            <property name="valign">3</property>
+                                          </object>
+                                        </child>
+                                        <child type="suffix">
+                                          <object class="GtkImage" id="default_check">
+                                            <property name="icon-name">object-select-symbolic</property>
+                                          </object>
+                                        </child>
                                       </object>
                                     </child>
                                   </object>

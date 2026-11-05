@@ -1,22 +1,25 @@
 using Gtk 4.0;
 using Adw 1;
-
 template $SheetCreateBunker: Adw.Dialog {
-  title: _("Connect with Which Identity?");
-  content-width: 520;
-  Box {
-    orientation: vertical;
-    spacing: 12;
-    margin-start: 18;
-    margin-end: 18;
-    margin-top: 18;
-    margin-bottom: 18;
-    Label { label: _("Choose the identity this application may request."); wrap: true; }
-    DropDown identities { tooltip-text: _("Connect with which identity?"); }
-    Entry entry_name { placeholder-text: _("Client label (optional)"); }
-    Label { label: _("Configure status, relays and allowed methods in Remote Signing. A link is available only when the signer is ready."); wrap: true; }
-    Label status { label: _("Reading daemon status…"); wrap: true; }
-    Button btn_create { label: _("Create Single-Use Pairing Link"); sensitive: false; }
-    Button btn_cancel { label: _("Close"); }
+  title: _("Create Pairing Link");
+  content-width: 420;
+  Adw.ToolbarView {
+    [top] Adw.HeaderBar {
+      show-start-title-buttons: false; show-end-title-buttons: false;
+      [start] Button btn_cancel { label: _("Cancel"); }
+    }
+    ScrolledWindow {
+      hscrollbar-policy: never;
+      Box {
+        orientation: vertical; spacing: 16;
+        margin-start: 20; margin-end: 20; margin-top: 16; margin-bottom: 24;
+        Label { label: _("Choose the identity to connect. You'll review the app before it can sign."); wrap: true; xalign: 0; }
+        Label { label: _("Identity"); xalign: 0; }
+        DropDown identities { tooltip-text: _("Identity to Connect"); accessibility { label: _("Identity to Connect"); } }
+        Entry entry_name { placeholder-text: _("App name (optional)"); accessibility { label: _("App name (optional)"); } }
+        Label status { label: _("Checking remote signing…"); wrap: true; xalign: 0; }
+        Button btn_create { label: _("Create Link"); sensitive: false; styles ["suggested-action"] }
+      }
+    }
   }
 }

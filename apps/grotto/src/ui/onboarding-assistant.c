@@ -21,10 +21,12 @@
 
 struct _OnboardingAssistant {
   AdwWindow parent_instance;
-  GtkStack *steps;
+  AdwNavigationView *steps;
   GtkButton *btn_back, *btn_next, *btn_skip, *btn_retry, *btn_copy_seed, *btn_backup_retry, *btn_backup_export;
-  GtkCheckButton *radio_create, *radio_import, *radio_connect, *radio_import_seed, *seed_written_down;
-  GtkEntry *entry_profile_name, *entry_import_label;
+  AdwActionRow *choose_create, *choose_import, *choose_connect, *connect_create, *connect_import;
+  GtkCheckButton *seed_written_down;
+  GtkEditable *entry_profile_name, *entry_import_label;
+  AdwPreferencesGroup *import_passphrase_group;
   GtkEntry *text_import_data;
   GtkBox *seed_words, *pending_requests;
   GtkBox *box_import_passphrase_container;
@@ -37,9 +39,10 @@ struct _OnboardingAssistant {
   guint testing_signal;
   gboolean busy, closed, finished, identity_stored, self_test_passed, capabilities_ready;
   guint generation, accounts_changed;
-  gboolean backup_presented, imported;
+  gboolean backup_presented, imported, import_was_phrase, import_was_encrypted;
   GCancellable *cancel;
   gchar *identity, *mnemonic, *nsec;
+  const gchar *requested_page;
   GrottoSecretClipboardLease *clipboard_lease;
   OnboardingAssistantFinishedCb on_finished;
   gpointer on_finished_data;
@@ -66,6 +69,8 @@ static void clear_input(OnboardingAssistant *self) {
   wipe(&self->mnemonic); wipe(&self->nsec);
 }
 static void navigation(OnboardingAssistant *self) {
+  AdwActionRow *choices[] = {self->choose_create, self->choose_import, self->choose_connect, self->connect_create, self->connect_import};
+  for (guint i = 0; i < G_N_ELEMENTS(choices); i++) gtk_widget_set_sensitive(GTK_WIDGET(choices[i]), !self->busy && self->capabilities_ready);
   gtk_widget_set_sensitive(GTK_WIDGET(self->btn_back), !self->busy && !self->identity_stored);
   gtk_widget_set_visible(GTK_WIDGET(self->btn_back), self->state != ONBOARDING_WELCOME && !self->identity_stored);
   gtk_widget_set_sensitive(GTK_WIDGET(self->btn_skip), !self->busy);
@@ -77,9 +82,13 @@ static void navigation(OnboardingAssistant *self) {
   gtk_widget_set_sensitive(GTK_WIDGET(self->btn_next), !self->busy && self->capabilities_ready &&
       (self->state != ONBOARDING_BACKUP || (self->backup_presented && gtk_check_button_get_active(self->seed_written_down))));
   gtk_widget_set_visible(GTK_WIDGET(self->btn_retry), self->capabilities_ready && self->identity_stored && !self->self_test_passed && !self->busy);
+  gtk_widget_set_visible(GTK_WIDGET(self->btn_next), self->state != ONBOARDING_CHOICE &&
+      self->state != ONBOARDING_TEST_WAITING && self->state != ONBOARDING_TESTING);
   gtk_button_set_label(self->btn_next, self->state == ONBOARDING_READY ? _("Done") :
-      self->state == ONBOARDING_CREATE ? "Create Identity" : self->state == ONBOARDING_IMPORT ? "Import Identity" :
-      self->state == ONBOARDING_TEST_FAILED ? "Enter Management with Warning" : "Next");
+      self->state == ONBOARDING_CREATE ? _("Create Identity") : self->state == ONBOARDING_IMPORT ? _("Import Identity") :
+      self->state == ONBOARDING_TEST_FAILED ? _("Finish with Warning") :
+      self->state == ONBOARDING_CONNECT ? _("Open Connected Apps") :
+      self->state == ONBOARDING_BACKUP ? _("Confirm Backup") : _("Get Started"));
   gtk_widget_set_sensitive(GTK_WIDGET(self->seed_written_down), self->backup_presented && !self->busy);
   gtk_widget_set_sensitive(GTK_WIDGET(self->btn_copy_seed), self->backup_presented && !self->busy);
   gtk_widget_set_sensitive(GTK_WIDGET(self->btn_backup_retry), !self->busy);
@@ -100,7 +109,8 @@ static void step(OnboardingAssistant *self, OnboardingState state) {
     state == ONBOARDING_CREATE ? "create" : state == ONBOARDING_IMPORT ? "import" :
     state == ONBOARDING_CONNECT ? "connect" : state == ONBOARDING_BACKUP ? "backup" :
     state == ONBOARDING_READY ? "ready" : "test";
-  gtk_stack_set_visible_child_name(self->steps, page); navigation(self);
+  AdwNavigationPage *selected = adw_navigation_view_find_page(self->steps, page);
+  adw_navigation_view_replace(self->steps, &selected, 1); navigation(self);
 }
 static void finish(OnboardingAssistant *self, gboolean verified) {
   if (self->finished || self->busy) return;
@@ -119,16 +129,19 @@ static void finish(OnboardingAssistant *self, gboolean verified) {
      * Maintenance remains available on this exact identity, never a default. */
     if (parent) page_identity_detail_present_identity(GTK_WIDGET(parent), self->identity);
   }
-  if (self->identity_stored && self->self_test_passed) {
+  if (self->requested_page || (self->identity_stored && self->self_test_passed)) {
     GtkWindow *parent = gtk_window_get_transient_for(GTK_WINDOW(self));
     GtkApplication *app = gtk_window_get_application(GTK_WINDOW(self));
     if (!SIGNER_IS_WINDOW(parent) && app) {
       for (GList *it = gtk_application_get_windows(app); it; it = it->next)
         if (SIGNER_IS_WINDOW(it->data)) { parent = it->data; break; }
     }
-    /* Show the imported identity, not an unrelated existing default. Mapping
-     * its profile starts the host's discovery-only bootstrap/outbox flow. */
-    if (SIGNER_IS_WINDOW(parent)) signer_window_show_identity(SIGNER_WINDOW(parent), self->identity);
+    /* Completion may have just created the first-run management window. */
+    if (SIGNER_IS_WINDOW(parent)) {
+      if (self->requested_page) signer_window_show_page(SIGNER_WINDOW(parent), self->requested_page);
+      /* Keep successful setup scoped to its identity, never an unrelated default. */
+      else signer_window_show_identity(SIGNER_WINDOW(parent), self->identity);
+    }
   }
   gtk_window_close(GTK_WINDOW(self));
 }
@@ -157,7 +170,7 @@ static void testing(GDBusConnection *bus, const gchar *sender, const gchar *path
   (void)bus; (void)sender; (void)path; (void)interface; (void)signal;
   OnboardingAssistant *self = data; const gchar *identity; g_variant_get(parameters, "(&s)", &identity);
   if (!self->closed && self->state == ONBOARDING_TEST_WAITING && !g_strcmp0(self->identity, identity)) {
-    step(self, ONBOARDING_TESTING); status(self, "Testing the approved identity locally. Nothing is published…");
+    step(self, ONBOARDING_TESTING); status(self, _("Checking your identity on this device…"));
   }
 }
 static void start_test(OnboardingAssistant *self) {
@@ -165,7 +178,7 @@ static void start_test(OnboardingAssistant *self) {
   self->test_result = ONBOARDING_TEST_NONE;
   step(self, ONBOARDING_TEST_WAITING);
   start_call(self, TEST, TRUE, "SelfTestIdentity", g_variant_new("(s)", self->identity));
-  status(self, "Waiting for one-time consent: sign and verify an unpublished event; NIP-44 encrypt and decrypt a challenge. No permissions are saved.");
+  status(self, _("Waiting for your approval. This check does not save app permissions."));
 }
 static void show_backup(OnboardingAssistant *self) {
   self->backup_presented = FALSE;
@@ -184,25 +197,25 @@ static void call_done(GObject *source, GAsyncResult *result, gpointer data) {
   if (error) {
     if (ctx->operation == CAPABILITIES) {
       self->capabilities_ready = FALSE;
-      status(self, "Signer unavailable or older than this UI. Update Grotto to create, import or verify identities. You can enter management without changing keys.");
+      status(self, _("Identity setup is unavailable. Update Grotto or skip setup to view your identities."));
     } else if (ctx->operation == TEST) {
       self->self_test_passed = FALSE; step(self, ONBOARDING_TEST_FAILED);
       g_autofree gchar *name = g_dbus_error_get_remote_error(error);
       self->test_result = name && g_str_has_suffix(name, "ApprovalTimedOut") ? ONBOARDING_TEST_EXPIRED :
           name && g_str_has_suffix(name, "ApprovalDenied") ? ONBOARDING_TEST_DENIED :
           name && g_str_has_suffix(name, "VerificationFailed") ? ONBOARDING_TEST_VERIFICATION_FAILED : ONBOARDING_TEST_KEYRING_UNAVAILABLE;
-      status(self, self->test_result == ONBOARDING_TEST_EXPIRED ? "Self-test expired. Retry or enter management with a warning." :
-          name && g_str_has_suffix(name, "ApprovalDenied") ? "Self-test denied. Retry or enter management with a warning." :
-          "Self-test did not pass: keyring unavailable, signing paused, or verification failed. Retry or enter management with a warning.");
+      status(self, self->test_result == ONBOARDING_TEST_EXPIRED ? _("The check expired. Try again or finish with a warning.") :
+          name && g_str_has_suffix(name, "ApprovalDenied") ? _("The check was denied. Try again or finish with a warning.") :
+          _("The check did not pass. Unlock your keyring and resume signing, then try again. You can also finish with a warning."));
     } else if (ctx->operation == SEED) {
       g_autofree gchar *name = g_dbus_error_get_remote_error(error);
       self->backup_presented = FALSE;
       status(self, name && g_str_has_suffix(name, "NotFound") ?
-          "No seed words are available for this imported identity. Use the encrypted export in Identity → Backup instead." :
-          "Seed-word export failed. Retry from Identity → Backup when the keyring is available.");
+          _("No recovery phrase is available. Open Backup to save an encrypted backup instead.") :
+          _("The recovery phrase could not be opened. Unlock your keyring and try again."));
       /* No recovery material was presented: acknowledgement cannot make Ready. */
     } else {
-      clear_input(self); status(self, "Identity storage failed. Check that your keyring is available and the input is valid, then retry. A completed daemon store is preserved.");
+      clear_input(self); status(self, _("The identity could not be saved. Check your keyring and input, then try again. Any key already saved is kept."));
     }
   } else if (ctx->operation == CAPABILITIES) {
     g_autoptr(GVariant) row = g_variant_get_child_value(reply, 0);
@@ -211,7 +224,7 @@ static void call_done(GObject *source, GAsyncResult *result, gpointer data) {
     gboolean store = FALSE, test = FALSE;
     if (caps) { g_variant_lookup(caps, "store-mnemonic", "b", &store); g_variant_lookup(caps, "identity-self-test", "b", &test); }
     self->capabilities_ready = version >= 1 && store && test;
-    status(self, self->capabilities_ready ? "" : "Update Grotto. Identity setup is read-only with this daemon.");
+    status(self, self->capabilities_ready ? "" : _("Update Grotto to create, import, or check an identity."));
     if (self->capabilities_ready && self->identity_stored) start_test(self);
   } else if (ctx->operation == STORE || ctx->operation == IMPORT) {
     const gchar *identity = NULL;
@@ -224,11 +237,11 @@ static void call_done(GObject *source, GAsyncResult *result, gpointer data) {
       AccountsStore *as = accounts_store_get_default();
       if (!accounts_store_exists(as, self->identity) && !accounts_store_add(as, self->identity,
           gtk_editable_get_text(GTK_EDITABLE(ctx->operation == STORE ? self->entry_profile_name : self->entry_import_label)), NULL))
-        status(self, "Identity is stored, but its local label could not be saved.");
+        status(self, _("The identity is saved, but its name could not be saved."));
       accounts_store_set_setup_state(as, self->identity, "verification-pending", NULL);
       accounts_store_sync_with_secrets_async(as, NULL, NULL);
       start_test(self);
-    } else { clear_input(self); status(self, "Identity was not stored. Check the input and retry."); }
+    } else { clear_input(self); status(self, _("The identity was not saved. Check the input and try again.")); }
   } else if (ctx->operation == TEST) {
     const gchar *verdict; g_variant_get(reply, "(&s)", &verdict);
     self->self_test_passed = !strcmp(verdict, "passed");
@@ -242,12 +255,12 @@ static void call_done(GObject *source, GAsyncResult *result, gpointer data) {
         status(self, "");
       } else show_backup(self);
     }
-    else { step(self, ONBOARDING_TEST_FAILED); status(self, "Self-test failed verification. Retry before relying on this identity."); }
+    else { step(self, ONBOARDING_TEST_FAILED); status(self, _("The identity could not be verified. Try the check again before using it.")); }
   } else {
     const gchar *phrase; g_variant_get(reply, "(&s)", &phrase);
     wipe(&self->mnemonic); self->mnemonic = g_strdup(phrase);
     self->backup_presented = gn_secure_phrase_set_text(self->seed_words, phrase);
-    status(self, "Write the seed words down privately. Anyone with them has full control of this identity.");
+    status(self, "");
   }
   if (reply) g_variant_unref(reply);
   navigation(self); operation_free(ctx);
@@ -256,7 +269,7 @@ static void bus_ready(GObject *source, GAsyncResult *result, gpointer data) {
   (void)source; OperationCtx *ctx = data; g_autoptr(GError) error = NULL;
   GDBusConnection *bus = g_bus_get_finish(result, &error);
   if (!current(ctx) || !bus) {
-    if (current(ctx)) { ctx->self->busy = FALSE; clear_input(ctx->self); status(ctx->self, "Session signer is unavailable. Retry when it is running."); }
+    if (current(ctx)) { ctx->self->busy = FALSE; clear_input(ctx->self); status(ctx->self, _("Grotto could not reach the signer. Try again when it is running.")); }
     g_clear_object(&bus); operation_free(ctx); return;
   }
   if (ctx->operation == TEST) {
@@ -287,27 +300,27 @@ static void create_identity(OnboardingAssistant *self) {
   g_autoptr(GError) error = NULL;
   clear_input(self);
   if (!gn_backup_generate_mnemonic(12, NULL, &self->mnemonic, &self->nsec, &error)) {
-    status(self, "Could not generate an identity. Retry."); return;
+    status(self, _("An identity could not be created. Try again.")); return;
   }
   const gchar *values[] = {self->nsec, gtk_editable_get_text(GTK_EDITABLE(self->entry_profile_name)), self->mnemonic};
   start_call(self, STORE, TRUE, "StoreKeyWithMnemonic", grotto_secret_tuple(values, G_N_ELEMENTS(values)));
   /* D-Bus owns the in-flight tuple; no seed material remains in labels/UI. */
-  wipe(&self->mnemonic); wipe(&self->nsec); status(self, "Storing identity and seed words in the system keyring…");
+  wipe(&self->mnemonic); wipe(&self->nsec); status(self, _("Saving your identity…"));
 }
 static void import_identity(OnboardingAssistant *self) {
   gchar *input = g_strdup(gtk_editable_get_text(GTK_EDITABLE(self->text_import_data)));
   gsize input_size = strlen(input) + 1; g_strstrip(input);
   gchar *pass = gn_secure_entry_get_text(self->import_passphrase);
-  if (!*input) { status(self, "Enter a private key or recovery phrase."); goto done; }
-  gboolean mnemonic = gtk_check_button_get_active(self->radio_import_seed);
+  if (!*input) { status(self, _("Enter a secret key or recovery phrase.")); goto done; }
+  gboolean mnemonic = strpbrk(input, " \t\r\n") != NULL;
   gboolean encrypted = g_str_has_prefix(input, "ncryptsec1");
-  if (encrypted && (!pass || !*pass)) { status(self, "Enter the NIP-49 decryption passphrase."); goto done; }
+  if (encrypted && (!pass || !*pass)) { status(self, _("Enter the passphrase for this encrypted backup.")); goto done; }
   /* The daemon validates mnemonic checksum/length, nsec checksum, scalar,
    * and authenticated NIP-49 before committing anything. */
   const gchar *values[] = {mnemonic ? "mnemonic" : encrypted ? "ncryptsec" : "key", input,
       mnemonic || encrypted ? (pass ? pass : "") : "", gtk_editable_get_text(GTK_EDITABLE(self->entry_import_label))};
   start_call(self, IMPORT, TRUE, "ImportIdentity", grotto_secret_tuple(values, G_N_ELEMENTS(values)));
-  clear_input(self); status(self, "Validating and storing identity…");
+  clear_input(self); status(self, _("Checking and saving your identity…"));
 done:
   gnostr_secure_clear(input, input_size); g_free(input); gn_secure_entry_free_text(pass);
 }
@@ -316,19 +329,19 @@ static void next(GtkButton *button, gpointer data) {
   if (self->busy || self->closed || !self->capabilities_ready) return;
   switch (self->state) {
     case ONBOARDING_WELCOME: step(self, ONBOARDING_CHOICE); break;
-    case ONBOARDING_CHOICE:
-      step(self, gtk_check_button_get_active(self->radio_create) ? ONBOARDING_CREATE :
-          gtk_check_button_get_active(self->radio_import) ? ONBOARDING_IMPORT : ONBOARDING_CONNECT); break;
+    case ONBOARDING_CHOICE: break; /* The choice rows navigate directly. */
     case ONBOARDING_CREATE: create_identity(self); break;
     case ONBOARDING_IMPORT: import_identity(self); break;
-    case ONBOARDING_CONNECT: finish(self, FALSE); break;
+    case ONBOARDING_CONNECT:
+      self->requested_page = "apps";
+      finish(self, FALSE); break;
     case ONBOARDING_BACKUP:
       if (!self->backup_presented || !gtk_check_button_get_active(self->seed_written_down)) return;
       if (!accounts_store_set_setup_state(accounts_store_get_default(), self->identity, "ready", NULL)) {
-        status(self, "Backup acknowledgement could not be saved. Retry or skip to management with backup pending."); return;
+        status(self, _("Backup confirmation could not be saved. Try again or finish without a backup.")); return;
       }
       step(self, ONBOARDING_READY);
-      gtk_label_set_text(self->ready_summary, "This identity passed signing and encryption checks. Apps ask for permission before using it. Nothing was published."); break;
+      gtk_label_set_text(self->ready_summary, _("Signing and encryption checks passed. Apps will ask for permission before using your identity.")); break;
     case ONBOARDING_READY: finish(self, self->self_test_passed); break;
     case ONBOARDING_TEST_FAILED: finish(self, FALSE); break;
     case ONBOARDING_TEST_WAITING: case ONBOARDING_TESTING: break;
@@ -356,24 +369,38 @@ static void setup_changed(AccountsStore *as, AccountsChangeType change, const gc
   AccountEntry *entry = accounts_store_find(as, self->identity);
   if (entry && !g_strcmp0(entry->setup_state, "ready")) {
     step(self, ONBOARDING_READY);
-    gtk_label_set_text(self->ready_summary, "Identity verification and backup are complete. Apps still ask for permission; nothing was published.");
+    gtk_label_set_text(self->ready_summary, _("Your identity is checked and backed up. Apps will ask for permission before using it."));
   }
   accounts_store_entry_free(entry);
 }
 static void retry(GtkButton *button, gpointer data) { (void)button; start_test(data); }
 static void changed(GtkCheckButton *button, gpointer data) { (void)button; navigation(data); }
-static void import_mode(GtkCheckButton *button, gpointer data) {
+static void import_mode(GtkEditable *input, gpointer data) {
   OnboardingAssistant *self = data;
-  gtk_label_set_text(self->import_passphrase_label, gtk_check_button_get_active(button) ?
-      "Mnemonic passphrase (optional; not a keyring password)" : "NIP-49 decryption passphrase (encrypted imports only)");
-  gn_secure_entry_clear(self->import_passphrase);
+  const char *text = gtk_editable_get_text(input);
+  while (g_ascii_isspace(*text)) text++;
+  gboolean encrypted = g_str_has_prefix(text, "ncryptsec1");
+  gboolean phrase = strpbrk(text, " \t\r\n") != NULL;
+  if (phrase != self->import_was_phrase || encrypted != self->import_was_encrypted)
+    gn_secure_entry_clear(self->import_passphrase);
+  self->import_was_phrase = phrase; self->import_was_encrypted = encrypted;
+  const char *label = phrase ? _("Recovery phrase passphrase (if you used one)") : _("Backup passphrase");
+  gtk_label_set_text(self->import_passphrase_label, label);
+  gn_secure_entry_set_accessible_label(self->import_passphrase, label);
+  gtk_widget_set_visible(GTK_WIDGET(self->import_passphrase_group), encrypted || phrase);
+}
+static void choose(AdwActionRow *row, gpointer data) {
+  OnboardingAssistant *self = data;
+  if (self->busy || self->closed || !self->capabilities_ready || self->identity_stored) return;
+  step(self, row == self->choose_create || row == self->connect_create ? ONBOARDING_CREATE :
+      row == self->choose_import || row == self->connect_import ? ONBOARDING_IMPORT : ONBOARDING_CONNECT);
 }
 static void copy_seed(GtkButton *button, gpointer data) {
   (void)button; OnboardingAssistant *self = data;
   if (!self->mnemonic || self->closed || gn_session_manager_is_locked(gn_session_manager_get_default())) return;
   g_clear_pointer(&self->clipboard_lease, grotto_secret_clipboard_lease_free);
   self->clipboard_lease = grotto_secret_clipboard_copy(gdk_display_get_clipboard(gtk_widget_get_display(GTK_WIDGET(self))), self->mnemonic);
-  status(self, "Copied. Clipboard managers may keep seed words. Grotto clears its unchanged copy on close, lock or after 60 seconds.");
+  status(self, _("Copied. Clipboard managers may keep a copy. Grotto clears its copy when you close or lock this window, or after one minute."));
 }
 static gboolean close_requested(GtkWindow *window, gpointer data) {
   (void)data; OnboardingAssistant *self = ONBOARDING_ASSISTANT(window);
@@ -405,7 +432,8 @@ static void onboarding_assistant_class_init(OnboardingAssistantClass *klass) {
 #define BIND(name) gtk_widget_class_bind_template_child(wc, OnboardingAssistant, name)
   BIND(btn_backup_retry); BIND(btn_backup_export);
   BIND(steps); BIND(btn_back); BIND(btn_next); BIND(btn_skip); BIND(btn_retry); BIND(btn_copy_seed);
-  BIND(radio_create); BIND(radio_import); BIND(radio_connect); BIND(radio_import_seed); BIND(seed_written_down);
+  BIND(choose_create); BIND(choose_import); BIND(choose_connect); BIND(connect_create); BIND(connect_import);
+  BIND(import_passphrase_group); BIND(seed_written_down);
   BIND(entry_profile_name); BIND(entry_import_label); BIND(text_import_data); BIND(box_import_passphrase_container);
   BIND(import_passphrase_label); BIND(lbl_status); BIND(seed_words); BIND(pending_requests); BIND(ready_summary); BIND(spinner_status);
 #undef BIND
@@ -428,7 +456,10 @@ static void onboarding_assistant_init(OnboardingAssistant *self) {
   g_signal_connect(self->btn_backup_export, "clicked", G_CALLBACK(backup_export), self);
   self->accounts_changed = accounts_store_connect_changed(accounts_store_get_default(), setup_changed, self);
   g_signal_connect(self->seed_written_down, "toggled", G_CALLBACK(changed), self);
-  g_signal_connect(self->radio_import_seed, "toggled", G_CALLBACK(import_mode), self);
+  g_signal_connect(self->text_import_data, "changed", G_CALLBACK(import_mode), self);
+  import_mode(GTK_EDITABLE(self->text_import_data), self);
+  AdwActionRow *choices[] = {self->choose_create, self->choose_import, self->choose_connect, self->connect_create, self->connect_import};
+  for (guint i = 0; i < G_N_ELEMENTS(choices); i++) g_signal_connect(choices[i], "activated", G_CALLBACK(choose), self);
   g_signal_connect(self, "close-request", G_CALLBACK(close_requested), NULL);
   step(self, ONBOARDING_WELCOME);
   start_call(self, CAPABILITIES, TRUE, "GetStatus", g_variant_new("()"));

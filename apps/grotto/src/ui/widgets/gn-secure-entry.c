@@ -1015,6 +1015,13 @@ gn_secure_entry_get_show_password(GnSecureEntry *self)
 }
 
 void
+gn_secure_entry_set_accessible_label(GnSecureEntry *self, const gchar *label)
+{
+  g_return_if_fail(GN_IS_SECURE_ENTRY(self));
+  gtk_accessible_update_property(GTK_ACCESSIBLE(self->entry_password), GTK_ACCESSIBLE_PROPERTY_LABEL, label, -1);
+}
+
+void
 gn_secure_entry_set_placeholder_text(GnSecureEntry *self, const gchar *text)
 {
   g_return_if_fail(GN_IS_SECURE_ENTRY(self));

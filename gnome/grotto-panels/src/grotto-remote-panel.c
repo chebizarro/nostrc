@@ -17,7 +17,7 @@ G_DEFINE_TYPE(GrottoRemotePanel, grotto_remote_panel, GROTTO_TYPE_PANEL)
 static void render(GrottoRemotePanel *self);
 static const char *state_label(const char *state) {
   const char *values[] = {"DISABLED", "STARTING", "LISTENING", "DEGRADED", "OFFLINE", "STOPPING", "ERROR"};
-  const char *labels[] = {N_("Disabled"), N_("Starting"), N_("Ready"), N_("Degraded"), N_("Offline"), N_("Stopping"), N_("Error")};
+  const char *labels[] = {N_("Disabled"), N_("Starting"), N_("Ready"), N_("Connection interrupted"), N_("Offline"), N_("Stopping"), N_("Error")};
   for (guint i = 0; i < G_N_ELEMENTS(values); i++) if (!g_strcmp0(values[i], state)) return _(labels[i]);
   return _("Unavailable");
 }
@@ -86,8 +86,8 @@ static void reset_confirmed(GObject *source, GAsyncResult *result, gpointer data
 }
 static void reset(AdwActionRow *row, gpointer data) {
   (void)row; GrottoRemotePanel *self = data;
-  AdwDialog *dialog = adw_alert_dialog_new(_("Reset Endpoint?"), _("Remote pairings and links will stop working. Your identities and local app permissions are kept."));
-  adw_alert_dialog_add_responses(ADW_ALERT_DIALOG(dialog), "cancel", _("Cancel"), "reset", _("Reset Endpoint"), NULL);
+  AdwDialog *dialog = adw_alert_dialog_new(_("Reset Remote Connections?"), _("Remote pairings and links will stop working. Your identities and local app permissions are kept."));
+  adw_alert_dialog_add_responses(ADW_ALERT_DIALOG(dialog), "cancel", _("Cancel"), "reset", _("Reset Connections"), NULL);
   adw_alert_dialog_set_default_response(ADW_ALERT_DIALOG(dialog), "cancel");
   adw_alert_dialog_set_close_response(ADW_ALERT_DIALOG(dialog), "cancel");
   adw_alert_dialog_set_response_appearance(ADW_ALERT_DIALOG(dialog), "reset", ADW_RESPONSE_DESTRUCTIVE);

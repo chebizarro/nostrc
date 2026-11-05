@@ -3,6 +3,7 @@
  * Shows a QR code with copy button and optional security warnings.
  */
 #include "sheet-qr-display.h"
+#include <glib/gi18n.h>
 #include "../app-resources.h"
 #include "../../qr-code.h"
 #include <secure_buf.h>
@@ -20,7 +21,6 @@ struct _SheetQrDisplay {
   /* UI components */
   GtkWidget *header_bar;
   GtkWidget *content_box;
-  GtkWidget *title_label;
   GtkWidget *qr_picture;
   GtkWidget *data_label;
   GtkWidget *type_label;
@@ -52,7 +52,7 @@ static gboolean reset_copy_button_cb(gpointer data) {
   SheetQrDisplay *self = SHEET_QR_DISPLAY(data);
   self->copy_feedback = 0;
   if (self->current_data && GTK_IS_BUTTON(self->btn_copy)) {
-    gtk_button_set_label(GTK_BUTTON(self->btn_copy), "Copy to Clipboard");
+    gtk_button_set_label(GTK_BUTTON(self->btn_copy), _("Copy to Clipboard"));
     gtk_widget_remove_css_class(self->btn_copy, "success");
   }
   return G_SOURCE_REMOVE;
@@ -74,7 +74,7 @@ static void copy_to_clipboard(SheetQrDisplay *self) {
   }
 
   /* Show brief feedback */
-  gtk_button_set_label(GTK_BUTTON(self->btn_copy), "Copied!");
+  gtk_button_set_label(GTK_BUTTON(self->btn_copy), _("Copied"));
   gtk_widget_add_css_class(self->btn_copy, "success");
 
   /* Reset after delay */
@@ -158,7 +158,7 @@ void sheet_qr_display_set_pairing(SheetQrDisplay *self, GDBusConnection *bus, co
   pairing_status_changed(bus, NULL, NULL, NULL, NULL, NULL, self);
   guint64 now = g_get_real_time() / G_USEC_PER_SEC;
   self->expiry = g_timeout_add_seconds(MAX(1, MIN(300, expires_at > now ? expires_at - now : 1)), pairing_expired, self);
-  show_warning(self, "Single-use link. Expires in five minutes or when this sheet closes. Sharing it only requests a pairing review; it never grants signing permissions.");
+  show_warning(self, _("Use this link once within five minutes. Closing this window cancels it. Sharing it does not grant access; you review permissions before connecting."));
 }
 static void sheet_qr_display_dispose(GObject *object) {
   SheetQrDisplay *self = SHEET_QR_DISPLAY(object);
@@ -180,7 +180,6 @@ static void sheet_qr_display_class_init(SheetQrDisplayClass *klass) {
 
   /* Bind template children */
   gtk_widget_class_bind_template_child(widget_class, SheetQrDisplay, content_box);
-  gtk_widget_class_bind_template_child(widget_class, SheetQrDisplay, title_label);
   gtk_widget_class_bind_template_child(widget_class, SheetQrDisplay, qr_picture);
   gtk_widget_class_bind_template_child(widget_class, SheetQrDisplay, data_label);
   gtk_widget_class_bind_template_child(widget_class, SheetQrDisplay, type_label);
@@ -283,22 +282,17 @@ void sheet_qr_display_set_data(SheetQrDisplay *self,
   self->current_type = type;
 
   /* Set title */
-  if (self->title_label) {
-    gtk_label_set_text(GTK_LABEL(self->title_label),
-                       title ? title : "QR Code");
-  }
+  adw_dialog_set_title(ADW_DIALOG(self), title ? title : _("QR Code"));
 
   /* Show appropriate warning for sensitive types */
   switch (type) {
     case GN_QR_TYPE_NSEC:
       show_warning(self,
-        "WARNING: This QR code contains your private key. "
-        "Never share it with anyone. Keep it secure.");
+        _("Anyone with this code controls your identity. Keep it private."));
       break;
     case GN_QR_TYPE_NCRYPTSEC:
       show_warning(self,
-        "This is an encrypted backup of your key. "
-        "You'll need the password to restore it.");
+        _("Keep this backup and its passphrase safe. You need both to restore your identity."));
       break;
     default:
       hide_warning(self);
@@ -317,7 +311,7 @@ void sheet_qr_display_set_npub(SheetQrDisplay *self,
   g_autofree gchar *uri = g_strdup_printf("nostr:%s", npub);
 
   sheet_qr_display_set_data(self, uri, GN_QR_TYPE_NPUB,
-                             "Share Your Public Key");
+                             _("Share Public Key"));
 }
 
 void sheet_qr_display_set_ncryptsec(SheetQrDisplay *self,
@@ -326,7 +320,7 @@ void sheet_qr_display_set_ncryptsec(SheetQrDisplay *self,
   g_return_if_fail(ncryptsec != NULL);
 
   sheet_qr_display_set_data(self, ncryptsec, GN_QR_TYPE_NCRYPTSEC,
-                             "Encrypted Key Backup");
+                             _("Encrypted Backup"));
 }
 
 void sheet_qr_display_set_bunker_uri(SheetQrDisplay *self,
@@ -335,5 +329,5 @@ void sheet_qr_display_set_bunker_uri(SheetQrDisplay *self,
   g_return_if_fail(bunker_uri != NULL);
 
   sheet_qr_display_set_data(self, bunker_uri, GN_QR_TYPE_BUNKER_URI,
-                             "Connect Remote Signer");
+                             _("Connect an App"));
 }

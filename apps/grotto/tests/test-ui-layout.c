@@ -8,6 +8,11 @@
 #include "ui/lock-screen.h"
 #include "ui/onboarding-assistant.h"
 #include "ui/page-connect.h"
+#include "ui/pairing-flow.h"
+#include "ui/widgets/gn-secure-entry.h"
+#include "ui/sheets/sheet-create-bunker.h"
+#include "ui/sheets/sheet-qr-display.h"
+#include "ui/sheets/sheet-qr-scanner.h"
 #include "home-model.h"
 #include "ui/page-identity-detail.h"
 #include "i18n.h"
@@ -28,6 +33,7 @@ static GtkWidget *selected_panel(AdwNavigationSplitView *split) {
   return gtk_stack_get_visible_child(GTK_STACK(adw_navigation_page_get_child(adw_navigation_split_view_get_content(split))));
 }
 
+static GDBusMethodInvocation *layout_self_test;
 static GDBusConnection *server; static gchar *npub; static guint frames, tier_writes, permission_writes;
 static const gchar *tier = "medium";
 static guint64 revision = 12, expires_at;
@@ -105,7 +111,7 @@ static void snapshot(GtkWidget *widget, const gchar *name) {
   g_source_remove(toast_deadline);
   g_assert_false(has_visible_toast(widget)); int width = gtk_widget_get_width(widget), height = gtk_widget_get_height(widget);
   g_assert_cmpint(width, >, 0); g_assert_cmpint(height, >, 0);
-  if (width <= 360) {
+  if (width <= 360 && SIGNER_IS_WINDOW(widget)) {
     GtkWidget *overlay = GTK_WIDGET(gtk_widget_get_template_child(widget, TYPE_SIGNER_WINDOW, "toast_overlay"));
     AdwNavigationSplitView *split = ADW_NAVIGATION_SPLIT_VIEW(gtk_widget_get_template_child(widget, TYPE_SIGNER_WINDOW, "split_view"));
     g_assert_true(adw_navigation_split_view_get_collapsed(split));
@@ -135,6 +141,9 @@ static GVariant *pending_metadata(void) {
 }
 static void call(GDBusConnection *bus, const gchar *sender, const gchar *path, const gchar *interface, const gchar *method, GVariant *args, GDBusMethodInvocation *inv, gpointer data) {
   (void)bus; (void)sender; (void)path; (void)interface; (void)args; (void)data;
+  if (!strcmp(method, "StoreKeyWithMnemonic")) { g_dbus_method_invocation_return_value(inv, g_variant_new("(s)", npub)); return; }
+  if (!strcmp(method, "SelfTestIdentity")) { g_assert_null(layout_self_test); layout_self_test = g_object_ref(inv); return; }
+  if (!strcmp(method, "CancelIdentitySelfTest")) { g_dbus_method_invocation_return_value(inv, NULL); return; }
   if (!strcmp(method, "SetClientTrust")) {
     const gchar *principal, *value; g_variant_get(args, "(&s&s)", &principal, &value);
     g_assert_cmpstr(principal, ==, "https://jank.example"); g_assert_cmpstr(value, ==, "low");
@@ -369,12 +378,10 @@ static void layout_activate(GApplication *application, gpointer data) {
   OnboardingAssistant *add = g_object_get_data(G_OBJECT(window), "grotto-onboarding-assistant");
   g_assert_true(ONBOARDING_IS_ASSISTANT(add)); g_object_ref(add);
   g_assert_cmpint(onboarding_assistant_get_state(add), ==, ONBOARDING_CHOICE);
-  GtkWidget *create_choice = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(add), TYPE_ONBOARDING_ASSISTANT, "radio_create"));
-  GtkWidget *import_choice = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(add), TYPE_ONBOARDING_ASSISTANT, "radio_import"));
+  GtkWidget *create_choice = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(add), TYPE_ONBOARDING_ASSISTANT, "choose_create"));
+  GtkWidget *import_choice = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(add), TYPE_ONBOARDING_ASSISTANT, "choose_import"));
   g_assert_true(gtk_widget_get_visible(create_choice)); g_assert_true(gtk_widget_get_visible(import_choice));
-  gtk_check_button_set_active(GTK_CHECK_BUTTON(import_choice), TRUE);
-  GtkWidget *add_next = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(add), TYPE_ONBOARDING_ASSISTANT, "btn_next"));
-  WAIT(gtk_widget_is_sensitive(add_next)); g_signal_emit_by_name(add_next, "clicked");
+  WAIT(gtk_widget_is_sensitive(import_choice)); g_signal_emit_by_name(import_choice, "activated");
   g_assert_cmpint(onboarding_assistant_get_state(add), ==, ONBOARDING_IMPORT);
   gtk_window_close(GTK_WINDOW(add)); g_object_unref(add);
   WAIT(g_object_get_data(G_OBJECT(window), "grotto-onboarding-assistant") == NULL);
@@ -503,9 +510,10 @@ static void layout_activate(GApplication *application, gpointer data) {
     AdwNavigationView *nav = grotto_apps_panel_get_navigation(apps);
     GtkWidget *detail = GTK_WIDGET(adw_navigation_view_get_visible_page(nav)); g_assert_true(GROTTO_IS_PANEL(detail));
     g_object_weak_ref(G_OBJECT(detail), finalised, &pages_gone);
+    g_assert_false(adw_banner_get_revealed(ADW_BANNER(find_banner(detail))));
     snapshot(GTK_WIDGET(window), dark ? "client-dark" : "client-light");
     GtkWidget *permission = find_row(detail, P_("Permissions")); g_assert_nonnull(permission);
-    GtkWidget *low_row = find_row(detail, P_("Ask unless permitted")); g_assert_nonnull(low_row);
+    GtkWidget *low_row = find_row(detail, P_("Ask Unless Permitted")); g_assert_nonnull(low_row);
     GtkWidget *low = find_editor_control(low_row, GTK_TYPE_CHECK_BUTTON); g_assert_nonnull(low);
     /* Preset access is a host-supplied read-only description, never an editable
      * saved grant. Explicit rows retain their own expiry and edit route. */
@@ -749,26 +757,28 @@ static void layout_activate(GApplication *application, gpointer data) {
     }
     signer_window_show_page(window, "settings"); wait_frames(GTK_WIDGET(window)); assert_visible_focus(window);
     AdwDialog *preferences = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window));
-    GtkWidget *bootstrap = find_row(GTK_WIDGET(preferences), P_("Use Bootstrap Relays")); g_assert_true(ADW_IS_SWITCH_ROW(bootstrap));
+    GtkWidget *bootstrap = find_row(GTK_WIDGET(preferences), _("Find Profiles Automatically")); g_assert_true(ADW_IS_SWITCH_ROW(bootstrap));
     adw_switch_row_set_active(ADW_SWITCH_ROW(bootstrap), FALSE);
     g_assert_false(g_settings_get_boolean(settings_manager_get_gsettings(settings_manager_get_default()), "profile-bootstrap-enabled"));
     adw_switch_row_set_active(ADW_SWITCH_ROW(bootstrap), TRUE);
-    AdwExpanderRow *discovery = ADW_EXPANDER_ROW(find_row(GTK_WIDGET(preferences), P_("Discovery-Only Relays")));
+    AdwExpanderRow *discovery = ADW_EXPANDER_ROW(find_row(GTK_WIDGET(preferences), _("Discovery-Only Relays")));
     g_assert_nonnull(discovery); adw_expander_row_set_expanded(discovery, TRUE);
     wait_frames(GTK_WIDGET(preferences));
     GtkTextView *relay_editor = find_text_view(GTK_WIDGET(discovery)); g_assert_nonnull(relay_editor);
     gtk_text_buffer_set_text(gtk_text_view_get_buffer(relay_editor), "wss://discovery.example/\nwss://second.example/", -1);
-    g_signal_emit_by_name(find_button(GTK_WIDGET(preferences), P_("Save Discovery Relays")), "clicked");
+    g_signal_emit_by_name(find_button(GTK_WIDGET(preferences), _("Save Discovery Relays")), "clicked");
     GSettings *profile_settings = settings_manager_get_gsettings(settings_manager_get_default());
     g_auto(GStrv) saved_relays = g_settings_get_strv(profile_settings, "profile-bootstrap-relays");
     g_assert_cmpuint(g_strv_length(saved_relays), ==, 2); g_assert_cmpstr(saved_relays[0], ==, "wss://discovery.example/");
     gtk_text_buffer_set_text(gtk_text_view_get_buffer(relay_editor), "https://not-a-relay.example/", -1);
-    g_signal_emit_by_name(find_button(GTK_WIDGET(preferences), P_("Save Discovery Relays")), "clicked");
+    g_signal_emit_by_name(find_button(GTK_WIDGET(preferences), _("Save Discovery Relays")), "clicked");
     g_auto(GStrv) unchanged_relays = g_settings_get_strv(profile_settings, "profile-bootstrap-relays");
     g_assert_true(g_strv_equal((const char *const *)saved_relays, (const char *const *)unchanged_relays));
-    g_signal_emit_by_name(find_button(GTK_WIDGET(preferences), P_("Restore Defaults")), "clicked");
+    g_signal_emit_by_name(find_button(GTK_WIDGET(preferences), _("Restore Defaults")), "clicked");
     g_autoptr(GVariant) defaults = g_settings_get_default_value(profile_settings, "profile-bootstrap-relays");
     g_autoptr(GVariant) restored = g_settings_get_value(profile_settings, "profile-bootstrap-relays"); g_assert_true(g_variant_equal(defaults, restored));
+    snapshot(GTK_WIDGET(window), dark ? "settings-details-dark" : "settings-details-light");
+    adw_expander_row_set_expanded(discovery, FALSE);
     snapshot(GTK_WIDGET(window), dark ? "settings-dark" : "settings-light");
     adw_dialog_close(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)));
     WAIT(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)) == NULL);
@@ -814,11 +824,49 @@ static void layout_activate(GApplication *application, gpointer data) {
     g_assert_cmpstr(metadata->label, ==, ""); scrubbed = TRUE;
   }
   g_assert_true(scrubbed); g_assert_true(accounts_store_set_label(store, npub, "Everyday identity", NULL));
+  g_assert_true(accounts_store_set_setup_state(store, npub, "backup-pending", NULL));
   signer_window_show_page(window, "backup"); wait_frames(GTK_WIDGET(window));
   identity_panel = GTK_WIDGET(selected_panel(split));
   g_assert_true(GROTTO_IS_IDENTITY_PANEL(identity_panel));
   g_assert_true(GROTTO_IS_IDENTITY_DETAIL(adw_navigation_view_get_visible_page(grotto_identity_panel_get_navigation(GROTTO_IDENTITY_PANEL(identity_panel)))));
   g_assert_cmpuint(seed_exports, ==, 0); /* backup route still never reveals */
+  gtk_window_set_default_size(GTK_WINDOW(window), 360, 640);
+  snapshot(GTK_WIDGET(window), "backup-360");
+  AdwNavigationPage *backup_page = adw_navigation_view_get_visible_page(grotto_identity_panel_get_navigation(GROTTO_IDENTITY_PANEL(identity_panel)));
+  GtkWidget *raw = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(backup_page), GROTTO_TYPE_IDENTITY_DETAIL, "raw_row"));
+  g_assert_false(gtk_widget_get_mapped(raw));
+  AdwExpanderRow *advanced = ADW_EXPANDER_ROW(find_row(GTK_WIDGET(backup_page), _("Advanced")));
+  adw_expander_row_set_expanded(advanced, TRUE); wait_frames(GTK_WIDGET(window)); g_assert_true(gtk_widget_get_mapped(raw));
+  snapshot(GTK_WIDGET(window), "backup-details-360"); adw_expander_row_set_expanded(advanced, FALSE);
+  SheetQrDisplay *qr = sheet_qr_display_new(); sheet_qr_display_set_npub(qr, npub);
+  adw_dialog_present(ADW_DIALOG(qr), GTK_WIDGET(window)); snapshot(GTK_WIDGET(window), "public-key-qr-360");
+  adw_dialog_close(ADW_DIALOG(qr)); WAIT(!adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)));
+  adw_dialog_present(ADW_DIALOG(sheet_create_bunker_new()), GTK_WIDGET(window)); snapshot(GTK_WIDGET(window), "pairing-create-360");
+  adw_dialog_close(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)));
+  WAIT(!adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)));
+  SheetQrScanner *scanner = sheet_qr_scanner_new();
+  const GnQrContentType pairing_types[] = {GN_QR_TYPE_BUNKER_URI, GN_QR_TYPE_UNKNOWN};
+  sheet_qr_scanner_set_accepted_types(scanner, pairing_types); adw_dialog_present(ADW_DIALOG(scanner), GTK_WIDGET(window));
+  GtkWidget *hint = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(scanner), TYPE_SHEET_QR_SCANNER, "hint_label"));
+  g_assert_cmpstr(gtk_label_get_text(GTK_LABEL(hint)), ==, _("Scan the connection code shown by your app"));
+  snapshot(GTK_WIDGET(window), "pairing-scan-360");
+  GtkWidget *scanner_page = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(scanner), TYPE_SHEET_QR_SCANNER, "scanner_page"));
+  GnQrScanResult scan_result = {.data = "nostrconnect://79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798?relay=wss%3A%2F%2Frelay.example&secret=fixture&name=Example%20App", .type = GN_QR_TYPE_BUNKER_URI};
+  g_signal_emit_by_name(gtk_widget_get_first_child(scanner_page), "qr-detected", &scan_result);
+  GtkWidget *scanner_stack = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(scanner), TYPE_SHEET_QR_SCANNER, "stack"));
+  g_assert_cmpstr(gtk_stack_get_visible_child_name(GTK_STACK(scanner_stack)), ==, "result");
+  GtkWidget *import_button = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(scanner), TYPE_SHEET_QR_SCANNER, "btn_import"));
+  g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(import_button)), ==, _("Choose Identity…"));
+  snapshot(GTK_WIDGET(window), "pairing-scan-result-360");
+  GtkWidget *scan_back = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(scanner), TYPE_SHEET_QR_SCANNER, "btn_back"));
+  g_signal_emit_by_name(scan_back, "clicked"); g_assert_cmpstr(gtk_stack_get_visible_child_name(GTK_STACK(scanner_stack)), ==, "scanner");
+  gtk_widget_set_direction(GTK_WIDGET(window), GTK_TEXT_DIR_RTL); snapshot(GTK_WIDGET(window), "pairing-scan-360-rtl");
+  gtk_widget_set_direction(GTK_WIDGET(window), GTK_TEXT_DIR_LTR); adw_dialog_close(ADW_DIALOG(scanner));
+  WAIT(!adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)));
+  grotto_pairing_present(GTK_WIDGET(window), "nostrconnect://79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798?relay=wss%3A%2F%2Frelay.example&secret=fixture&name=Example%20App");
+  snapshot(GTK_WIDGET(window), "pairing-preview-360");
+  adw_dialog_close(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)));
+  WAIT(!adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)));
   pending_request = TRUE;
   grotto_approval_controller_reconcile(controller);
   GListModel *pending = grotto_approval_controller_get_pending(controller);
@@ -847,6 +895,110 @@ static void layout_activate(GApplication *application, gpointer data) {
   WAIT(pages_gone == 6);
   WAIT(editors_gone == 5);
   g_application_quit(application);
+}
+static GtkWidget *setup_child(OnboardingAssistant *self, const char *name) {
+  return GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(self), TYPE_ONBOARDING_ASSISTANT, name));
+}
+static void setup_snapshot(OnboardingAssistant *setup, const char *stage, gboolean rtl) {
+  int minimum; gtk_widget_measure(GTK_WIDGET(setup), GTK_ORIENTATION_HORIZONTAL, -1, &minimum, NULL, NULL, NULL);
+  g_assert_cmpint(minimum, <=, 360);
+  g_autofree char *name = g_strdup_printf("onboarding-%s-360%s", stage, rtl ? "-rtl" : "");
+  snapshot(GTK_WIDGET(setup), name);
+}
+/* Exercise production navigation against the private-bus fixture. The recovery
+ * phrase is the published test vector, never an operator's recovery material. */
+static void remaining_surfaces(void) {
+  adw_style_manager_set_color_scheme(adw_style_manager_get_default(), ADW_COLOR_SCHEME_FORCE_DARK);
+  for (guint rtl = 0; rtl < 2; rtl++) {
+    gtk_widget_set_default_direction(rtl ? GTK_TEXT_DIR_RTL : GTK_TEXT_DIR_LTR);
+    OnboardingAssistant *setup = onboarding_assistant_new();
+    g_object_ref_sink(setup);
+    gtk_window_set_default_size(GTK_WINDOW(setup), 360, 640);
+    gtk_window_present(GTK_WINDOW(setup));
+    WAIT(gtk_widget_is_sensitive(setup_child(setup, "btn_next")));
+    setup_snapshot(setup, "welcome", rtl);
+    g_signal_emit_by_name(setup_child(setup, "btn_next"), "clicked"); setup_snapshot(setup, "choice", rtl);
+    g_assert_false(gtk_widget_get_visible(setup_child(setup, "btn_next")));
+    g_signal_emit_by_name(setup_child(setup, "choose_connect"), "activated"); setup_snapshot(setup, "connect", rtl);
+    g_signal_emit_by_name(setup_child(setup, "connect_import"), "activated");
+    g_assert_cmpint(onboarding_assistant_get_state(setup), ==, ONBOARDING_IMPORT);
+    gtk_editable_set_text(GTK_EDITABLE(setup_child(setup, "text_import_data")), "ncryptsec1fixture");
+    g_assert_true(gtk_widget_get_visible(setup_child(setup, "import_passphrase_group")));
+    if (!g_strcmp0(g_getenv("GTK_A11Y"), "test")) {
+      GtkWidget *secure = gtk_widget_get_first_child(setup_child(setup, "box_import_passphrase_container"));
+      GtkWidget *entry = GTK_WIDGET(gtk_widget_get_template_child(secure, GN_TYPE_SECURE_ENTRY, "entry_password"));
+      gtk_test_accessible_assert_property(GTK_ACCESSIBLE(entry), GTK_ACCESSIBLE_PROPERTY_LABEL, _("Backup passphrase"));
+    }
+    setup_snapshot(setup, "import", rtl);
+    g_signal_emit_by_name(setup_child(setup, "btn_back"), "clicked");
+    g_signal_emit_by_name(setup_child(setup, "choose_create"), "activated"); setup_snapshot(setup, "create", rtl);
+    g_signal_emit_by_name(setup_child(setup, "btn_next"), "clicked"); WAIT(layout_self_test != NULL);
+    g_assert_cmpint(onboarding_assistant_get_state(setup), ==, ONBOARDING_TEST_WAITING); setup_snapshot(setup, "test", rtl);
+    g_dbus_method_invocation_return_value(layout_self_test, g_variant_new("(s)", "passed")); g_clear_object(&layout_self_test);
+    WAIT(onboarding_assistant_get_state(setup) == ONBOARDING_BACKUP);
+    WAIT(gtk_widget_get_first_child(setup_child(setup, "seed_words")) != NULL);
+    setup_snapshot(setup, "backup", rtl);
+    GtkCheckButton *acknowledgement = GTK_CHECK_BUTTON(setup_child(setup, "seed_written_down"));
+    GtkWidget *acknowledgement_label = gtk_check_button_get_child(acknowledgement);
+    g_assert_true(GTK_IS_LABEL(acknowledgement_label));
+    const char *acknowledgement_text = gtk_label_get_text(GTK_LABEL(acknowledgement_label));
+    g_assert_nonnull(acknowledgement_text); g_assert_cmpstr(acknowledgement_text, !=, "");
+    if (!g_strcmp0(g_getenv("GTK_A11Y"), "test"))
+      gtk_test_accessible_assert_property(GTK_ACCESSIBLE(acknowledgement), GTK_ACCESSIBLE_PROPERTY_LABEL, acknowledgement_text);
+    gtk_check_button_set_active(acknowledgement, TRUE);
+    g_signal_emit_by_name(setup_child(setup, "btn_next"), "clicked");
+    g_assert_cmpint(onboarding_assistant_get_state(setup), ==, ONBOARDING_READY); setup_snapshot(setup, "ready", rtl);
+    gtk_window_destroy(GTK_WINDOW(setup)); g_object_unref(setup);
+    gtk_widget_set_default_direction(GTK_TEXT_DIR_LTR);
+  }
+}
+typedef struct {
+  AdwApplication *app;
+  SignerWindow *window;
+  guint completions;
+} FirstRunConnect;
+static void first_run_connect_finished(gboolean verified, gpointer data) {
+  FirstRunConnect *first = data;
+  g_assert_false(verified); first->completions++;
+  /* Match first-run production: create management only after setup completes. */
+  first->window = signer_window_new(first->app); g_object_ref(first->window);
+  AdwNavigationSplitView *split = ADW_NAVIGATION_SPLIT_VIEW(gtk_widget_get_template_child(
+      GTK_WIDGET(first->window), TYPE_SIGNER_WINDOW, "split_view"));
+  g_assert_true(GROTTO_IS_IDENTITY_PANEL(selected_panel(split)));
+  gtk_window_present(GTK_WINDOW(first->window));
+}
+static void first_run_connect_activate(GApplication *application, gpointer data) {
+  (void)data;
+  FirstRunConnect first = {.app = ADW_APPLICATION(application)};
+  OnboardingAssistant *setup = onboarding_assistant_new(); g_object_ref_sink(setup);
+  gtk_window_set_application(GTK_WINDOW(setup), GTK_APPLICATION(application));
+  g_assert_null(gtk_window_get_transient_for(GTK_WINDOW(setup)));
+  onboarding_assistant_set_on_finished(setup, first_run_connect_finished, &first);
+  gtk_window_present(GTK_WINDOW(setup));
+  WAIT(gtk_widget_is_sensitive(setup_child(setup, "btn_next")));
+  g_signal_emit_by_name(setup_child(setup, "btn_next"), "clicked");
+  g_signal_emit_by_name(setup_child(setup, "choose_connect"), "activated");
+  g_assert_cmpint(onboarding_assistant_get_state(setup), ==, ONBOARDING_CONNECT);
+  g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(setup_child(setup, "btn_next"))), ==, _("Open Connected Apps"));
+  g_signal_emit_by_name(setup_child(setup, "btn_next"), "clicked");
+  g_assert_cmpuint(first.completions, ==, 1); g_assert_nonnull(first.window);
+  AdwNavigationSplitView *split = ADW_NAVIGATION_SPLIT_VIEW(gtk_widget_get_template_child(
+      GTK_WIDGET(first.window), TYPE_SIGNER_WINDOW, "split_view"));
+  g_assert_true(GROTTO_IS_APPS_PANEL(selected_panel(split)));
+  g_assert_false(onboarding_assistant_identity_stored(setup)); g_assert_null(layout_self_test);
+  guint windows_gone = 0; g_object_weak_ref(G_OBJECT(first.window), finalised, &windows_gone);
+  gtk_window_destroy(GTK_WINDOW(first.window)); g_object_unref(first.window);
+  gtk_window_destroy(GTK_WINDOW(setup)); g_object_unref(setup);
+  WAIT(windows_gone == 1);
+  g_application_quit(application);
+}
+static void first_run_connect_destination(void) {
+  guint apps_gone = 0;
+  g_autoptr(AdwApplication) app = adw_application_new("org.nostr.Grotto.FirstRunConnectTest", G_APPLICATION_NON_UNIQUE);
+  g_object_weak_ref(G_OBJECT(app), finalised, &apps_gone);
+  g_signal_connect(app, "activate", G_CALLBACK(first_run_connect_activate), NULL);
+  g_assert_cmpint(g_application_run(G_APPLICATION(app), 0, NULL), ==, 0);
+  g_clear_object(&app); WAIT(apps_gone == 1);
 }
 static void layout(void) {
   guint apps_gone = 0;
@@ -877,6 +1029,7 @@ int main(int argc, char **argv) {
     g_assert_cmpstr(P_("Allow"), ==, "Permitir");
     g_assert_cmpstr(g_dgettext("grotto-panels", "Copy Public Key"), ==, "Copiar clave pública");
     g_assert_cmpstr(_("Show Recovery Phrase…"), ==, "Mostrar frase de recuperación…");
+    g_assert_cmpstr(_("Show QR Code"), ==, "Mostrar código QR");
   }
   g_object_set(gtk_settings_get_default(), "gtk-enable-animations", FALSE, NULL);
   gn_backup_get_npub("0000000000000000000000000000000000000000000000000000000000000001", &npub, NULL);
@@ -898,7 +1051,9 @@ int main(int argc, char **argv) {
   g_autoptr(GDBusNodeInfo) identity = g_dbus_node_info_new_for_xml("<node><interface name='org.nostr.Signer'><method name='ListIdentities'><arg type='as' direction='out'/></method></interface></node>", NULL);
   guint inventory = g_dbus_connection_register_object(server, "/org/nostr/signer", identity->interfaces[0], &vtable, NULL, NULL, NULL);
   g_autoptr(GVariant) name = g_dbus_connection_call_sync(server, "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "RequestName", g_variant_new("(su)", "org.nostr.Signer", 0u), NULL, 0, 5000, NULL, NULL); g_assert_nonnull(name);
-  g_test_add_func("/signer/layout/real-templates-navigation-focus-screenshots", layout); int result = g_test_run();
+  g_test_add_func("/signer/layout/real-templates-navigation-focus-screenshots", layout);
+  g_test_add_func("/signer/layout/remaining-surfaces", remaining_surfaces);
+  g_test_add_func("/signer/layout/first-run-connect-destination", first_run_connect_destination); int result = g_test_run();
   bunker_test_relay_free(profile_relay);
   accounts_store_free(accounts_store_get_default()); settings_manager_free(settings_manager_get_default());
   g_dbus_connection_unregister_object(server, registration); g_dbus_connection_unregister_object(server, inventory); nostrc_test_bus_down(bus); g_variant_unref(permission_rows); g_free(npub); return result;
