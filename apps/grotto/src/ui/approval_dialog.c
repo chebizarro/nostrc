@@ -31,7 +31,7 @@ struct _GnostrApprovalDialog {
   GtkButton *btn_deny, *btn_approve, *btn_not_now, *btn_previous, *btn_next;
   GnostrApprovalCallback callback;
   gpointer user_data;
-  gchar *identity, *client_pubkey;
+  gchar *identity, *client_pubkey, *profile_details;
   gboolean finished, confirming, ready;
   guint position, count;
 };
@@ -441,6 +441,7 @@ static void finalize(GObject *object) {
   GnostrApprovalDialog *self = GNOSTR_APPROVAL_DIALOG(object);
   g_free(self->identity);
   g_free(self->client_pubkey);
+  g_free(self->profile_details);
   g_clear_pointer(&self->info, g_variant_unref);
   g_free(self->app_name); g_free(self->action_text); g_free(self->reusable_text); g_free(self->relay);
   g_free(self->saved_expiry); g_free(self->flow_scope);
@@ -1085,10 +1086,10 @@ void gnostr_approval_dialog_set_info(GnostrApprovalDialog *self, GVariant *info,
   if (management) {
     g_free(preview); preview = management_preview(management, kind);
     adw_preferences_row_set_title(ADW_PREFERENCES_ROW(self->row_relay), kind == NOSTR_KIND_BLOBS ? _("Upload Servers") : _("Relays"));
-    adw_action_row_set_subtitle(self->row_relay, field(info, "reason"));
+    adw_action_row_set_subtitle(self->row_relay, _("destinations: see Details"));
     gtk_widget_set_visible(GTK_WIDGET(self->row_relay), TRUE);
-    impact = kind == NOSTR_KIND_PROFILE_METADATA ? _("Approval signs this exact profile event and allows Grotto to publish it to the relays listed above. Public copies may remain even if you stop later.") :
-      kind == NOSTR_KIND_BLOBS ? _("Approval signs the authorization shown here. Grotto then uploads the original image to the listed servers. It becomes public immediately, independently of profile Save.") :
+    impact = kind == NOSTR_KIND_PROFILE_METADATA ? _("Approval signs this exact profile event and allows Grotto to publish it to the publication relays shown in this review. Public copies may remain even if you stop later.") :
+      kind == NOSTR_KIND_BLOBS ? _("Approval signs the authorization shown here. Grotto then uploads the reviewed, cropped and re-encoded PNG image to the listed servers, without the original file's embedded metadata. It becomes public immediately, independently of profile Save. Stopping does not delete it or recall copies.") :
       _("Approval signs this relay challenge. Grotto sends AUTH to the relay shown above. This is not permission to publish a profile or save reusable access.");
   }
   if (preview)
@@ -1118,6 +1119,11 @@ void gnostr_approval_dialog_set_info(GnostrApprovalDialog *self, GVariant *info,
     char *full = g_strdup_printf("%s\n\n%s%s\n\n%s\n%s", details, profile ? _("Exact profile JSON:\n") : "", profile ? profile : "", _("Exact unsigned event JSON:"), raw);
     g_free(details); details = full;
   }
+  if (management) {
+    char *full = g_strdup_printf("%s\n\n%s\n%s", details, _("Daemon destination details:"), field(info, "reason"));
+    g_free(details); details = full;
+  }
+  g_free(self->profile_details); self->profile_details = management ? g_strdup(details) : NULL;
   gtk_label_set_text(self->label_details, details);
   gtk_widget_set_visible(GTK_WIDGET(self->loading), (review || drift) && !permissions);
   gtk_widget_set_sensitive(GTK_WIDGET(self->btn_approve), self->ready);
@@ -1127,6 +1133,21 @@ void gnostr_approval_dialog_set_info(GnostrApprovalDialog *self, GVariant *info,
   /* Default view stays compact: Details opens only on request. */
   adw_expander_row_set_expanded(self->details_expander, FALSE);
   permission_changed(NULL, NULL, self);
+}
+void gnostr_approval_dialog_set_profile_provenance(GnostrApprovalDialog *self,
+    const char *request_id, const char *const *destinations, const char *const *bootstrap) {
+  if (!self->info || !profile_management(self->info) || !self->profile_details ||
+      !request_id || g_strcmp0(request_id, field(self->info, "request_id"))) return;
+  g_autofree char *targets = destinations ? g_strjoinv("\n", (char **)destinations) : g_strdup("");
+  g_autofree char *lookups = bootstrap ? g_strjoinv("\n", (char **)bootstrap) : g_strdup("");
+  guint32 kind = 0; g_variant_lookup(self->info, "event_kind", "u", &kind);
+  const char *title = kind == NOSTR_KIND_PROFILE_METADATA ? _("Publication relays:") :
+    kind == NOSTR_KIND_BLOBS ? _("Image upload servers:") : _("Relay authentication destination:");
+  g_autofree char *display = g_strdup_printf("%s\n%s\n\n%s\n%s", title, *targets ? targets : _("None recorded"),
+    _("Host bootstrap discovery (lookup only, never a publish fallback or authentication grant):"), *lookups ? lookups : _("Not used"));
+  adw_action_row_set_subtitle(self->row_relay, display);
+  g_autofree char *details = g_strdup_printf("%s\n\n%s", self->profile_details, display);
+  gtk_label_set_text(self->label_details, details);
 }
 GnostrApprovalDialog *gnostr_show_approval_request_dialog(GtkWidget *parent, const char *identity,
                                                           const char *kind, const char *name,

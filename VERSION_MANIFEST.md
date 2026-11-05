@@ -55,6 +55,29 @@ files already declare a version.
 | signet | `signet/` | 0.7.0 | Unreleased | — | `signet/meson.build`, `signet/src/signetd_main.c` (`SIGNET_VERSION`), `signet/src/signetctl_main.c` (`SIGNETCTL_VERSION`); `signet/CMakeLists.txt` declares none |
 
 
+### W7b profile discovery and editor (nostrc-u6v55.23.10)
+
+- **Grotto 0.1.1: FOLD**, per owner into the unreleased wave. MINOR-class
+  functionality: configurable/optional discovery-only bootstrap data (never a
+  publish fallback), NIP-65 outbox handoff, live NIP-05 identification, and
+  pixel-only avatar/banner crop upload. Preferences and profile UI are public.
+  Review fixes remove bootstrap signing/AUTH capability and correct final upload
+  consent. Host/controller-only, request-ID-scoped provenance decorates the same
+  review without entering nip55l or signed JSON. A unicast Control1
+  `ProfileRequestSubmitted` notification correlates the unchanged signing method;
+  absent/late correlation remains display-only and never gates Save.
+- **grotto-panels 0.1.0: FOLD**, per owner into the unreleased wave. MINOR-class
+  functionality: preview, bot, discard/republish and disclosed discovery/outbox
+  metadata. The unreleased `GrottoProfileInfo` layout and action enum expand;
+  hosts must rebuild against the matching library. The public result now also
+  reports skipped AUTH-required discovery relays and the actual bootstrap-only
+  lookup set separately from all discovery contacts. Republish is guarded/disabled
+  while a draft is dirty. No secrets/transport enter it.
+- **nip55l, libnostr-publish, nostr-gobject, libblossom, bud02: NO BUMP**;
+  reused unchanged. The signing method, reason limits, approver check and
+  MANAGEMENT gate remain unchanged; no manager-role or signer authority expansion.
+- Tests/documentation only otherwise. No release/tag columns change.
+
 ### W6 Nostr Settings manager hosting (nostrc-u6v55.23.6)
 
 | Component | Impact | Version decision |

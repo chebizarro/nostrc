@@ -125,6 +125,10 @@ static void mocked_io(GDBusConnection *bus, const gchar *sender, const gchar *pa
 static const GDBusInterfaceVTable vtable = {mocked_io, NULL, NULL, {0}};
 static void setup(Fixture *f, gconstpointer data) {
   active = f; supports_management = g_strcmp0(data, "older") != 0;
+  /* This custody/UI fixture has no relay. Bootstrap discovery has separate
+   * loopback integration coverage; never contact public defaults here. */
+  g_autoptr(GSettings) settings = g_settings_new("org.nostr.Grotto");
+  g_settings_set_boolean(settings, "profile-bootstrap-enabled", FALSE);
   g_clear_pointer(&stored_identity, g_free);
   f->assistant = onboarding_assistant_new(); g_object_ref(f->assistant);
   onboarding_assistant_set_on_finished(f->assistant, finish_cb, f);
@@ -384,7 +388,9 @@ static GtkWidget *button_named(GtkWidget *widget, const gchar *label) {
   }
   return NULL;
 }
+static void wait_dialog_frames(GtkWidget *widget);
 static void alert_response(AdwAlertDialog *dialog, const gchar *response) {
+  wait_dialog_frames(GTK_WIDGET(dialog));
   GtkWidget *button = button_named(GTK_WIDGET(dialog), adw_alert_dialog_get_response_label(dialog, response));
   g_assert_nonnull(button); g_assert_true(gtk_widget_get_sensitive(button)); g_signal_emit_by_name(button, "clicked");
 }
@@ -466,6 +472,24 @@ static void delayed_import_failure(Fixture *f, gconstpointer data) {
   }
   g_assert_cmpstr(gtk_editable_get_text(GTK_EDITABLE(child(f, "text_import_data"))), ==, "");
   g_assert_cmpuint(f->remove_calls, ==, 0);
+}
+static void imported_profile_destination(Fixture *f, gconstpointer data) {
+  (void)data; SignerWindow *window = g_object_new(TYPE_SIGNER_WINDOW, NULL); g_object_ref_sink(window);
+  gtk_window_present(GTK_WINDOW(window)); gtk_window_set_transient_for(GTK_WINDOW(f->assistant), GTK_WINDOW(window));
+  click(f, "btn_next"); gtk_check_button_set_active(GTK_CHECK_BUTTON(child(f, "radio_import")), TRUE); click(f, "btn_next");
+  gtk_editable_set_text(GTK_EDITABLE(child(f, "text_import_data")), "0000000000000000000000000000000000000000000000000000000000000002");
+  click(f, "btn_next"); wait_invocation(&f->store); stored(f);
+  g_dbus_method_invocation_return_value(f->test, g_variant_new("(s)", "passed")); g_clear_object(&f->test);
+  wait_state(f, ONBOARDING_READY); click(f, "btn_next"); g_assert_cmpuint(f->finished, ==, 1);
+  GtkStack *panels = GTK_STACK(gtk_widget_get_template_child(GTK_WIDGET(window), TYPE_SIGNER_WINDOW, "panel_stack"));
+  GrottoIdentityPanel *root = GROTTO_IDENTITY_PANEL(gtk_stack_get_visible_child(panels));
+  GtkWidget *page = GTK_WIDGET(adw_navigation_view_get_visible_page(grotto_identity_panel_get_navigation(root)));
+  g_assert_true(GROTTO_IS_IDENTITY_PANEL(page));
+  GtkWidget *key = GTK_WIDGET(gtk_widget_get_template_child(page, GROTTO_TYPE_IDENTITY_PANEL, "key_row"));
+  guint timeout = g_timeout_add_seconds(10, bound, NULL);
+  while (g_strcmp0(adw_action_row_get_subtitle(ADW_ACTION_ROW(key)), f->npub)) g_main_context_iteration(NULL, TRUE);
+  g_source_remove(timeout); g_assert_true(grotto_panel_has_profile_host(GROTTO_PANEL(page)));
+  destroy_detail_window(GTK_WINDOW(window), page);
 }
 static GtkFileChooser *wait_chooser(GtkWindow *parent) {
   guint timeout = g_timeout_add_seconds(10, bound, NULL);
@@ -751,6 +775,7 @@ int main(int argc, char **argv) {
   ADD("backup-deliberate-actions", NULL, backup_deliberate_actions);
   ADD("backup-clipboard-close-lock-and-late-replies", NULL, backup_clipboard_close_lock);
   ADD("typed-deletion-cancel-failure", NULL, typed_deletion_cancel_failure);
+  ADD("import-shows-profile", NULL, imported_profile_destination);
   ADD("mnemonic-passphrase", "mnemonic", distinct_import_passphrase);
   ADD("nip49-passphrase", "ncryptsec", distinct_import_passphrase);
   ADD("delayed-import-failure", NULL, delayed_import_failure);

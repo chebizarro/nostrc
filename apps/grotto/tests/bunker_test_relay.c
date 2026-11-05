@@ -21,7 +21,7 @@ struct BunkerTestRelay {
     GPtrArray *clients;
     JsonArray *events, *deliveries;
     gint64 last_since;
-    guint connections, requests;
+    guint connections, requests, auth_requests;
     gboolean reject_subscriptions, reject_publishes, hold_acks;
     GPtrArray *held_acks;
     BunkerTestRelayEventCb event_cb; gpointer event_data;
@@ -167,6 +167,13 @@ static void message(SoupWebsocketConnection *socket, SoupWebsocketDataType type,
             while (g_hash_table_iter_next(&iter, &id, &request))
                 if (matches(request, json_node_get_object(event))) deliver(recipient, id, event);
         }
+    } else if (g_strcmp0(verb, "AUTH") == 0) {
+        relay->auth_requests++;
+        JsonObject *event = json_array_get_object_element(frame, 1);
+        JsonArray *ok = json_array_new(); json_array_add_string_element(ok, "OK");
+        json_array_add_string_element(ok, json_object_get_string_member(event, "id"));
+        json_array_add_boolean_element(ok, FALSE); json_array_add_string_element(ok, "restricted: authentication rejected by fixture");
+        send_frame(client, ok);
     } else if (g_strcmp0(verb, "CLOSE") == 0) {
         g_hash_table_remove(client->subscriptions, json_array_get_string_element(frame, 1));
     } else {
@@ -281,6 +288,7 @@ void bunker_test_relay_hold_acks(BunkerTestRelay *r, gboolean enabled) {
         g_ptr_array_set_size(r->held_acks, 0);
     }
 }
+guint bunker_test_relay_auth_count(BunkerTestRelay *r) { return r->auth_requests; }
 void bunker_test_relay_challenge(BunkerTestRelay *r) {
     for (guint i = 0; i < r->clients->len; i++) {
         JsonArray *frame = json_array_new(); json_array_add_string_element(frame, "AUTH");

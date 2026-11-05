@@ -22,5 +22,6 @@ void bunker_test_relay_inject(BunkerTestRelay *, const gchar *event_json);
 void bunker_test_relay_reject_subscriptions(BunkerTestRelay *, gboolean);
 void bunker_test_relay_reject_publishes(BunkerTestRelay *, gboolean);
 void bunker_test_relay_hold_acks(BunkerTestRelay *, gboolean);
+guint bunker_test_relay_auth_count(BunkerTestRelay *);
 void bunker_test_relay_challenge(BunkerTestRelay *);
 void bunker_test_relay_free(BunkerTestRelay *relay);

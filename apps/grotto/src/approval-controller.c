@@ -50,7 +50,8 @@ struct _GrottoApprovalController {
   GWeakRef app, review_window;
   GDBusConnection *bus;
   GListStore *pending;
-  GHashTable *requests, *tombstones, *labels, *tiers;
+  GHashTable *requests, *tombstones, *labels, *tiers, *profile_provenance;
+  GMainContext *context;
   GCancellable *cancel;
   gchar *owner, *review_id, *wanted_review;
   guint64 generation, revision, clients_serial;
@@ -70,6 +71,59 @@ static const char *text_field(GVariant *row, const char *key) {
   if (row)
     g_variant_lookup(row, key, "&s", &s);
   return s;
+}
+static void display_profile_provenance(GrottoApprovalController *s, GrottoApprovalRequest *r) {
+  if (!s->dialog || !r || g_strcmp0(s->review_id, r->id) ||
+      strcmp(text_field(r->info, "transport"), "MANAGEMENT") ||
+      strcmp(text_field(r->info, "purpose"), "profile-management")) return;
+  GVariant *record = g_hash_table_lookup(s->profile_provenance, r->id);
+  if (!record || g_strcmp0(text_field(record, "owner"), s->owner)) return;
+  g_auto(GStrv) destinations = NULL, bootstrap = NULL;
+  g_variant_lookup(record, "destinations", "^as", &destinations);
+  g_variant_lookup(record, "bootstrap_relays", "^as", &bootstrap);
+  gnostr_approval_dialog_set_profile_provenance(s->dialog, r->id,
+    (const char *const *)destinations, (const char *const *)bootstrap);
+}
+typedef struct { GrottoApprovalController *self; char *id; GVariant *record; } ProfileDispatch;
+static gboolean profile_correlated(gpointer data) {
+  ProfileDispatch *d = data; GrottoApprovalController *s = d->self;
+  if (!s->stopped && (!s->owner || !g_strcmp0(s->owner, text_field(d->record, "owner"))) &&
+      !g_hash_table_contains(s->tombstones, d->id) && g_hash_table_size(s->profile_provenance) < 256 &&
+      !g_hash_table_contains(s->profile_provenance, d->id)) {
+    g_hash_table_insert(s->profile_provenance, g_strdup(d->id), g_variant_ref(d->record));
+    display_profile_provenance(s, g_hash_table_lookup(s->requests, d->id));
+  }
+  return G_SOURCE_REMOVE;
+}
+static void profile_dispatch_free(gpointer data) {
+  ProfileDispatch *d = data; g_variant_unref(d->record); g_free(d->id); g_object_unref(d->self); g_free(d);
+}
+static gboolean provenance_urls(const char *const *urls, gboolean relay) {
+  gsize bytes = 0;
+  for (guint i = 0; urls && urls[i]; i++) {
+    if (i >= 64 || strlen(urls[i]) > 1024 || !g_utf8_validate(urls[i], -1, NULL)) return FALSE;
+    bytes += strlen(urls[i]); if (bytes > 16384) return FALSE;
+    g_autoptr(GUri) uri = g_uri_parse(urls[i], G_URI_FLAGS_NONE, NULL);
+    if (!uri || !g_uri_get_host(uri) || g_uri_get_userinfo(uri) || g_uri_get_fragment(uri)) return FALSE;
+    const char *scheme = g_uri_get_scheme(uri);
+    if (g_strcmp0(scheme, "ws") && g_strcmp0(scheme, "wss") && (relay || g_strcmp0(scheme, "https"))) return FALSE;
+    for (const char *p = urls[i]; *p; p++) if (g_ascii_iscntrl(*p)) return FALSE;
+  }
+  return TRUE;
+}
+void grotto_approval_controller_set_profile_provenance(GrottoApprovalController *s,
+    const char *owner, const char *id, const char *const *destinations, const char *const *bootstrap) {
+  if (!owner || owner[0] != ':' || !id || !*id || strlen(id) > 128 || !g_utf8_validate(id, -1, NULL) ||
+      !provenance_urls(destinations, FALSE) || !provenance_urls(bootstrap, TRUE)) return;
+  const char *empty[] = {NULL}; GVariantBuilder b; g_variant_builder_init(&b, G_VARIANT_TYPE_VARDICT);
+  g_variant_builder_add(&b, "{sv}", "owner", g_variant_new_string(owner));
+  g_variant_builder_add(&b, "{sv}", "destinations", g_variant_new_strv(destinations ? destinations : empty, -1));
+  g_variant_builder_add(&b, "{sv}", "bootstrap_relays", g_variant_new_strv(bootstrap ? bootstrap : empty, -1));
+  ProfileDispatch *d = g_new0(ProfileDispatch, 1); d->self = g_object_ref(s); d->id = g_strdup(id);
+  d->record = g_variant_ref_sink(g_variant_builder_end(&b));
+  GSource *idle = g_idle_source_new();
+  g_source_set_callback(idle, profile_correlated, d, profile_dispatch_free);
+  g_source_attach(idle, s->context); g_source_unref(idle);
 }
 static void message(GrottoApprovalController *s, const char *text) {
   g_signal_emit(s, signals[MESSAGE], 0, text);
@@ -219,6 +273,7 @@ static void close_review(GrottoApprovalController *s) {
 }
 static void resolve(GrottoApprovalController *s, const char *id, GrottoApprovalState state) {
   g_hash_table_add(s->tombstones, g_strdup(id));
+  g_hash_table_remove(s->profile_provenance, id);
   GrottoApprovalRequest *r = g_hash_table_lookup(s->requests, id);
   if (!r)
     return;
@@ -554,7 +609,8 @@ static void reset_owner(GrottoApprovalController *s) {
   }
   g_hash_table_remove_all(s->tombstones);
   g_hash_table_remove_all(s->labels);
-  g_hash_table_remove_all(s->tiers);
+    g_hash_table_remove_all(s->tiers);
+    if (s->stopped || s->owner) g_hash_table_remove_all(s->profile_provenance);
   g_clear_pointer(&s->owner, g_free);
   s->revision = 0;
   withdraw(s, SUMMARY_ID);
@@ -1035,6 +1091,7 @@ static void review_permissions_done(GObject *source, GAsyncResult *result, gpoin
       g_autoptr(GVariant) rows = g_variant_get_child_value(reply, 0);
       g_autoptr(GVariant) info = review_display_info(s, f->request->info, rows);
       gnostr_approval_dialog_set_info(s->dialog, info, verified_client_name(f->request->info));
+      display_profile_provenance(s, f->request);
     } else if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
       message(s, "Saved permission details unavailable. Reopen this request to retry.");
   }
@@ -1043,6 +1100,7 @@ static void review_permissions_done(GObject *source, GAsyncResult *result, gpoin
 static void show_review_info(GrottoApprovalController *s, GrottoApprovalRequest *r) {
   g_autoptr(GVariant) display = review_display_info(s, r->info, NULL);
   gnostr_approval_dialog_set_info(s->dialog, display, verified_client_name(r->info));
+  display_profile_provenance(s, r);
   gboolean review = FALSE, drift = FALSE;
   g_variant_lookup(r->info, "policy_review", "b", &review);
   g_variant_lookup(r->info, "identity_drift", "b", &drift);
@@ -1243,6 +1301,7 @@ static void grotto_approval_controller_finalize(GObject *object) {
   g_hash_table_unref(s->tombstones);
   g_hash_table_unref(s->labels);
   g_hash_table_unref(s->tiers);
+  g_hash_table_unref(s->profile_provenance); g_main_context_unref(s->context);
   g_free(s->wanted_review);
   g_weak_ref_clear(&s->app);
   g_weak_ref_clear(&s->review_window);
@@ -1269,6 +1328,8 @@ static void grotto_approval_controller_class_init(GrottoApprovalControllerClass 
 static void grotto_approval_controller_init(GrottoApprovalController *s) {
   g_weak_ref_init(&s->app, NULL);
   g_weak_ref_init(&s->review_window, NULL);
+  s->context = g_main_context_ref_thread_default();
+  s->profile_provenance = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, (GDestroyNotify)g_variant_unref);
   s->locked = TRUE;
   s->pending = g_list_store_new(GROTTO_TYPE_APPROVAL_REQUEST);
   g_signal_connect_object(s->pending, "items-changed", G_CALLBACK(refresh_navigation), s, 0);

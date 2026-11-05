@@ -228,6 +228,9 @@ gboolean gnostr_approval_info_can_approve(GVariant *info);
 gboolean gnostr_approval_dialog_has_batch_request(GnostrApprovalDialog *self, const gchar *id);
 void gnostr_approval_dialog_set_batch(GnostrApprovalDialog *self, GVariant *rows);
 
+/* Display-only, exact-request host metadata. Late correlation never gates Save. */
+void gnostr_approval_dialog_set_profile_provenance(GnostrApprovalDialog *self,
+    const char *request_id, const char *const *destinations, const char *const *bootstrap_relays);
 G_END_DECLS
 
 #endif /* GNOSTR_APPROVAL_DIALOG_H */
