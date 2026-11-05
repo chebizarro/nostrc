@@ -30,6 +30,12 @@ void gh_signer_nip55l_nip04_decrypt_async(GhNip55lSigner *signer, const gchar *t
                                            const gchar *peer, GCancellable *cancel,
                                            GAsyncReadyCallback cb, gpointer data);
 gchar *gh_signer_nip55l_nip44_finish(GAsyncResult *result, GError **error);
+/* G18: declares the whole operation set once (RequestPermissions). Ordinary
+ * operations started while the declaration is unanswered wait for it. An
+ * older service fails with GH_SIGNER_ERROR_UNAVAILABLE and nothing changes. */
+void gh_signer_nip55l_declare_async(GhNip55lSigner *signer, const gchar *const *tokens,
+                                     GCancellable *cancel, GAsyncReadyCallback cb, gpointer data);
+gboolean gh_signer_nip55l_declare_finish(GAsyncResult *result, GError **error);
 
 GhNip46Signer *gh_signer_nip46_new(GhNip46Session *session);
 void gh_signer_nip46_free(GhNip46Signer *signer);

@@ -74,6 +74,42 @@
       <arg type="a{sv}" direction="in" name="context" />
       <arg type="v" direction="out" name="reply" />
     </method>
+    <!-- RequestPermissions (0.8.0, additive): an application declares, once,
+         every operation and event kind it will use, like NIP-55
+         get_public_key(permissions) and NIP-46 connect(perms). permissions is
+         1..64 entries {type:s, kind:u} where kind is present exactly for
+         type "sign_event"; other types: nip04_encrypt, nip04_decrypt,
+         nip44_encrypt, nip44_decrypt, get_public_key, get_relays,
+         decrypt_zap_event. context: identity:s (selector; "" = default
+         identity), app_id:s (same meaning as the ForApp argument), reason:s
+         (160 characters AND 512 bytes). Unknown/duplicate keys or malformed
+         entries fail with Error.InvalidInput before any prompt.
+         The daemon evaluates the set against the caller's existing grants and
+         the identity's policy and raises at most ONE review listing the
+         declared capabilities; explicit consent writes every entry that is
+         not explicitly blocked as an until-revoked grant (AUTH 22242 as
+         any-relay authority, disclosed as such; get_relays identity-less,
+         like its entrypoint), so later calls covered by the set never prompt.
+         Deny wins at write time and at evaluation: an explicit block is never
+         replaced by a declared allow, whichever caller declares (NIP-46
+         pairing included), and blocked entries are shown and reported as
+         denied. A set that is already fully covered returns without a
+         prompt; a set whose entries are all blocked fails with
+         Error.ApprovalDenied. Ordinary calls that arrive while this review is
+         pending and are listed in the set wait for its answer instead of
+         prompting; a denied, expired or cancelled review answers for them the
+         same way. Block app retires the app's allow rows, declared sets
+         included.
+         Reply: identity:s (the pinned npub), granted:aa{sv} and
+         denied:aa{sv} (entries shaped like the input). Same caller
+         authentication, gating and errors as other gated calls; a pre-0.8.0
+         service answers UnknownMethod, so callers fall back to per-request
+         consent. Requests from unidentified or empty-claim callers are denied. -->
+    <method name="RequestPermissions">
+      <arg type="aa{sv}" direction="in" name="permissions" />
+      <arg type="a{sv}" direction="in" name="context" />
+      <arg type="a{sv}" direction="out" name="result" />
+    </method>
     <method name="EnableTypedApprovalErrors" />
     <method name="GetPublicKey">
       <arg type="s" direction="out" name="npub" />

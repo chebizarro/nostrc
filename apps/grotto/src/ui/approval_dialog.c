@@ -15,7 +15,7 @@ struct _GnostrApprovalDialog {
   GtkLabel *scope_summary;
   AdwActionRow *saved_status, *stepper;
   AdwExpanderRow *details_expander, *batch_expander;
-  AdwPreferencesGroup *group_scope, *group_saved, *group_flow;
+  AdwPreferencesGroup *group_saved, *group_flow;
   GtkBox *batch_box;
   AdwComboRow *permission_choice;
   GtkMenuButton *more_menu;
@@ -39,6 +39,15 @@ G_DEFINE_FINAL_TYPE(GnostrApprovalDialog, gnostr_approval_dialog, ADW_TYPE_DIALO
 enum { DEFERRED, STEP, CHANGE_TRUST, APPROVE_SELECTED, APPROVE_FLOW, DECISION_MODE, N_SIGNALS };
 static guint signals[N_SIGNALS];
 
+static const char *field(GVariant *info, const char *key) {
+  const char *s = "";
+  if (info)
+    g_variant_lookup(info, key, "&s", &s);
+  return s;
+}
+static const struct { guint32 kind; const char *name; } kind_catalog[] = {
+#include "kind-catalog.inc"
+};
 const char *gnostr_approval_kind_name(guint32 kind) {
   switch (kind) {
   case NOSTR_KIND_PROFILE_METADATA:
@@ -76,16 +85,108 @@ const char *gnostr_approval_kind_name(guint32 kind) {
     return _("Zap receipt");
   case NOSTR_KIND_NOSTR_CONNECT:
     return _("Remote signer message");
-  default:
+  default: {
+    /* Registry names (generated from nostr-kinds.h) before "Custom event". */
+    for (guint i = 0; i < G_N_ELEMENTS(kind_catalog); i++)
+      if (kind_catalog[i].kind == kind) return _(kind_catalog[i].name);
     return _("Custom event");
   }
+  }
 }
-static const char *field(GVariant *info, const char *key) {
-  const char *s = "";
-  if (info)
-    g_variant_lookup(info, key, "&s", &s);
-  return s;
+/* ---- declared permission sets (G18) ------------------------------------ */
+/* Capabilities group an app's declared tokens into one human sentence; the
+ * exact kinds stay available under Details. Order is display order. */
+typedef enum { CAP_GROUPS, CAP_MESSAGING, CAP_AUTH, CAP_LISTS, CAP_DELETION, CAP_PUBLISHING,
+               CAP_ZAPS, CAP_UPLOADS, CAP_READ, CAP_CUSTOM, CAP_COUNT } Capability;
+static Capability capability_of(const gchar *type, guint32 kind) {
+  if (strcmp(type, "sign_event")) {
+    if (!strcmp(type, "get_public_key") || !strcmp(type, "get_relays")) return CAP_READ;
+    if (!strcmp(type, "decrypt_zap_event")) return CAP_ZAPS;
+    return CAP_MESSAGING;
+  }
+  if ((kind >= NOSTR_KIND_SIMPLE_GROUP_CHAT_MESSAGE && kind <= NOSTR_KIND_SIMPLE_GROUP_REPLY) ||
+      (kind >= NOSTR_KIND_SIMPLE_GROUP_ADD_USER && kind <= 9030) || kind == NOSTR_KIND_SIMPLE_GROUP_LIST ||
+      (kind >= NOSTR_KIND_SIMPLE_GROUP_METADATA && kind <= 39009)) return CAP_GROUPS;
+  if (kind == NOSTR_KIND_PROFILE_METADATA || kind == NOSTR_KIND_FOLLOW_LIST ||
+      (kind >= 10000 && kind <= 10099) || (kind >= 30000 && kind <= 30030)) return CAP_LISTS;
+  switch (kind) {
+  case NOSTR_KIND_ENCRYPTED_DIRECT_MESSAGE: case NOSTR_KIND_SEAL: case NOSTR_KIND_DIRECT_MESSAGE:
+  case NOSTR_KIND_FILE_MESSAGE: case NOSTR_KIND_GIFT_WRAP: return CAP_MESSAGING;
+  case NOSTR_KIND_CLIENT_AUTHENTICATION: return CAP_AUTH;
+  case NOSTR_KIND_DELETION: return CAP_DELETION;
+  case NOSTR_KIND_TEXT_NOTE: case NOSTR_KIND_REPOST: case NOSTR_KIND_GENERIC_REPOST: case NOSTR_KIND_REACTION:
+  case NOSTR_KIND_COMMENT: case NOSTR_KIND_ARTICLE: case 1621: return CAP_PUBLISHING;
+  case NOSTR_KIND_ZAP_REQUEST: return CAP_ZAPS;
+  case 24242: return CAP_UPLOADS;
+  default: return CAP_CUSTOM;
+  }
 }
+static const gchar *capability_label(Capability c) {
+  switch (c) {
+  case CAP_GROUPS: return _("NIP-29 groups");
+  case CAP_MESSAGING: return _("encrypted messages");
+  case CAP_AUTH: return _("sign-in to any relay it chooses");
+  case CAP_LISTS: return _("profile and relay lists");
+  case CAP_DELETION: return _("deletions");
+  case CAP_PUBLISHING: return _("public posts and reactions");
+  case CAP_ZAPS: return _("zaps");
+  case CAP_UPLOADS: return _("file uploads");
+  case CAP_READ: return _("reading your public key and relays");
+  case CAP_CUSTOM: case CAP_COUNT: break;
+  }
+  return _("custom kinds");
+}
+static const gchar *token_label(const gchar *type) {
+  if (!strcmp(type, "nip44_encrypt")) return _("Encrypt messages (NIP-44)");
+  if (!strcmp(type, "nip44_decrypt")) return _("Decrypt messages (NIP-44)");
+  if (!strcmp(type, "nip04_encrypt")) return _("Encrypt messages (legacy NIP-04)");
+  if (!strcmp(type, "nip04_decrypt")) return _("Decrypt messages (legacy NIP-04)");
+  if (!strcmp(type, "get_public_key")) return _("Read your public key");
+  if (!strcmp(type, "get_relays")) return _("Read your relay list");
+  if (!strcmp(type, "decrypt_zap_event")) return _("Decrypt private zaps");
+  return type;
+}
+/* One sentence fragment per capability, custom kinds listed by number. */
+static gchar *declared_action_text(GVariant *declared) {
+  gboolean present[CAP_COUNT] = {0};
+  g_autoptr(GString) custom = g_string_new(NULL);
+  for (gsize i = 0; declared && i < g_variant_n_children(declared); i++) {
+    g_autoptr(GVariant) entry = g_variant_get_child_value(declared, i);
+    const gchar *type = field(entry, "type"); guint32 kind = 0;
+    g_variant_lookup(entry, "kind", "u", &kind);
+    Capability c = capability_of(type, kind);
+    present[c] = TRUE;
+    if (c == CAP_CUSTOM) g_string_append_printf(custom, "%s%u", custom->len ? ", " : "", kind);
+  }
+  GString *text = g_string_new(NULL);
+  for (Capability c = 0; c < CAP_COUNT; c++) {
+    if (!present[c]) continue;
+    if (text->len) g_string_append(text, ", ");
+    if (c == CAP_CUSTOM) g_string_append_printf(text, _("custom kinds (%s)"), custom->str);
+    else g_string_append(text, capability_label(c));
+  }
+  return g_string_free(text, FALSE);
+}
+/* Every declared token with its registry name and current standing. */
+static gchar *declared_details(GVariant *declared, guint *requested, guint *granted, guint *denied) {
+  GString *text = g_string_new(NULL);
+  *requested = *granted = *denied = 0;
+  for (gsize i = 0; declared && i < g_variant_n_children(declared); i++) {
+    g_autoptr(GVariant) entry = g_variant_get_child_value(declared, i);
+    const gchar *type = field(entry, "type"), *state = field(entry, "state"); guint32 kind = 0;
+    gboolean has_kind = g_variant_lookup(entry, "kind", "u", &kind);
+    if (!strcmp(state, "granted")) ++*granted; else if (!strcmp(state, "denied")) ++*denied; else ++*requested;
+    if (text->len) g_string_append_c(text, '\n');
+    if (has_kind) g_string_append_printf(text, "• %s (kind %u)", gnostr_approval_kind_name(kind), kind);
+    else g_string_append_printf(text, "• %s", token_label(type));
+    /* Any-relay AUTH is a broader delegation than one relay sign-in: name it. */
+    if (has_kind && kind == NOSTR_KIND_CLIENT_AUTHENTICATION) g_string_append(text, _(" — any relay this app chooses"));
+    if (!strcmp(state, "granted")) g_string_append(text, _(" — already allowed"));
+    else if (!strcmp(state, "denied")) g_string_append(text, _(" — blocked; stays blocked"));
+  }
+  return g_string_free(text, FALSE);
+}
+
 static gchar *bounded(const char *text, glong max) {
   g_autofree gchar *valid = g_utf8_make_valid(text ? text : "", -1);
   glong n = g_utf8_strlen(valid, -1);
@@ -233,7 +334,24 @@ static void permission_changed(GObject *object, GParamSpec *pspec, gpointer data
   if (!strcmp(field(self->info, "operation"), "connect")) {
     commit = _("Pair _Application");
     g_free(scope);
-    scope = g_strdup(_("Pair this application with the identity and relays shown above. Pairing is saved; no signing permission is granted"));
+    gboolean grants = FALSE;
+    g_autoptr(GVariant) summary = g_variant_lookup_value(self->info, "event_summary", G_VARIANT_TYPE_VARDICT);
+    if (summary) g_variant_lookup(summary, "granted_on_pairing", "b", &grants);
+    scope = g_strdup(grants
+        ? _("Pair this application with the identity and relays shown above. Pairing is saved and grants the permissions it requested (see Details) until revoked")
+        : _("Pair this application with the identity and relays shown above. Pairing is saved; no signing permission is granted"));
+  }
+  if (!strcmp(field(self->info, "operation"), "permissions")) {
+    /* A declared set is one decision, always until revoked; no once/24 h. */
+    g_free(scope);
+    if (!strcmp(mode, "trust-routine")) {
+      commit = _("Trust _App");
+      scope = g_strdup_printf(_("Trust %s for routine operations and allow everything listed above as %s, including custom kinds, until revoked in its Permissions page"), self->app_name, identity);
+    } else {
+      commit = _("_Allow");
+      /* The identity is the Signing As row above; this line states duration. */
+      scope = g_strdup_printf(_("Until you revoke it in %s's Permissions page"), self->app_name);
+    }
   }
   if (!strcmp(field(self->info, "operation"), "self_test")) {
     g_free(scope);
@@ -250,14 +368,20 @@ static void permission_changed(GObject *object, GParamSpec *pspec, gpointer data
   else gtk_widget_add_css_class(GTK_WIDGET(self->btn_approve), "suggested-action");
   gtk_label_set_text(self->scope_summary, scope);
 }
-/* Both the closed selection and every item in the popup must wrap. */
+/* Popup items wrap so every choice is readable; the closed selection stays
+ * one line (the footer caption spells the selected scope out in full). */
 static void choice_setup(GtkSignalListItemFactory *factory, GtkListItem *item, gpointer data) {
-  (void)factory; (void)data;
+  (void)factory;
   GtkWidget *label = gtk_label_new(NULL);
-  gtk_label_set_wrap(GTK_LABEL(label), TRUE);
-  gtk_label_set_wrap_mode(GTK_LABEL(label), PANGO_WRAP_WORD_CHAR);
   gtk_label_set_xalign(GTK_LABEL(label), 0);
-  gtk_label_set_max_width_chars(GTK_LABEL(label), 28);
+  if (data) {
+    gtk_label_set_wrap(GTK_LABEL(label), TRUE);
+    gtk_label_set_wrap_mode(GTK_LABEL(label), PANGO_WRAP_WORD_CHAR);
+    gtk_label_set_max_width_chars(GTK_LABEL(label), 36);
+  } else {
+    gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
+    gtk_label_set_max_width_chars(GTK_LABEL(label), 20);
+  }
   gtk_list_item_set_child(item, label);
 }
 static void choice_bind(GtkSignalListItemFactory *factory, GtkListItem *item, gpointer data) {
@@ -335,7 +459,7 @@ static void gnostr_approval_dialog_class_init(GnostrApprovalDialogClass *klass) 
   BIND(row_impact); BIND(row_expiry); BIND(scope_summary); BIND(saved_status);
   BIND(label_details); BIND(label_timestamp);
   BIND(batch_expander); BIND(batch_box);
-  BIND(group_scope); BIND(group_saved); BIND(group_flow);
+  BIND(group_saved); BIND(group_flow);
   BIND(chk_flow_encrypt); BIND(chk_flow_seals);
   BIND(btn_approve_selected); BIND(content_preview);
   BIND(details_expander); BIND(stepper);
@@ -384,8 +508,11 @@ static void gnostr_approval_dialog_init(GnostrApprovalDialog *self) {
   g_autoptr(GtkListItemFactory) factory = gtk_signal_list_item_factory_new();
   g_signal_connect(factory, "setup", G_CALLBACK(choice_setup), NULL);
   g_signal_connect(factory, "bind", G_CALLBACK(choice_bind), NULL);
+  g_autoptr(GtkListItemFactory) list_factory = gtk_signal_list_item_factory_new();
+  g_signal_connect(list_factory, "setup", G_CALLBACK(choice_setup), GINT_TO_POINTER(1));
+  g_signal_connect(list_factory, "bind", G_CALLBACK(choice_bind), NULL);
   adw_combo_row_set_factory(self->permission_choice, factory);
-  adw_combo_row_set_list_factory(self->permission_choice, factory);
+  adw_combo_row_set_list_factory(self->permission_choice, list_factory);
   g_signal_connect(self->permission_choice, "notify::selected", G_CALLBACK(permission_changed), self);
   self->choices[0] = "allow-once"; self->n_choices = 1;
   const gchar *initial[] = {_("Allow once"), NULL};
@@ -566,6 +693,11 @@ static char *management_preview(JsonNode *event, guint kind) {
 gboolean gnostr_approval_info_can_approve(GVariant *info) {
   const char *op = field(info, "operation");
   if (profile_management(info)) { g_autoptr(JsonNode) event = management_event(info); if (!event) return FALSE; }
+  if (!strcmp(op, "permissions")) {
+    g_autoptr(GVariant) summary = g_variant_lookup_value(info, "event_summary", G_VARIANT_TYPE_VARDICT);
+    g_autoptr(GVariant) declared = summary ? g_variant_lookup_value(summary, "declared_permissions", G_VARIANT_TYPE("aa{sv}")) : NULL;
+    return declared && g_variant_n_children(declared) > 0 && *field(info, "identity");
+  }
   if (!strcmp(op, "connect")) {
     const gchar *principal = field(info, "principal");
     if (!*field(info, "identity") || !g_str_has_prefix(principal, "nip46:") || strlen(principal) != 70) return FALSE;
@@ -645,6 +777,7 @@ void gnostr_approval_dialog_set_info(GnostrApprovalDialog *self, GVariant *info,
   const char *op = field(info, "operation");
   gboolean self_test = !strcmp(op, "self_test") &&
       !strcmp(field(info, "transport"), "MANAGEMENT");
+  gboolean declared = !strcmp(op, "permissions");
   if (self_test)
     name = "Grotto";
   gboolean verified = FALSE, rememberable = FALSE;
@@ -657,7 +790,7 @@ void gnostr_approval_dialog_set_info(GnostrApprovalDialog *self, GVariant *info,
   g_autofree gchar *short_key = strlen(self->identity) > 24
       ? g_strdup_printf("%.12s…%s", self->identity, self->identity + strlen(self->identity) - 8)
       : g_strdup(self->identity);
-  g_autofree gchar *identity_display = g_strdup_printf("%s\n%s", identity_label, short_key);
+  g_autofree gchar *identity_display = g_strdup_printf("%s · %s", identity_label, short_key);
   if (*self->identity) adw_action_row_set_subtitle(self->row_identity, identity_display);
   gnostr_approval_dialog_set_client_label(self, field(info, "client_label"));
   guint32 remaining = 0;
@@ -698,6 +831,12 @@ void gnostr_approval_dialog_set_info(GnostrApprovalDialog *self, GVariant *info,
   gtk_widget_set_visible(GTK_WIDGET(self->row_reason), *reason != '\0');
   guint32 kind = 0;
   gboolean has_kind = g_variant_lookup(info, "event_kind", "u", &kind);
+  g_autoptr(GVariant) declared_summary = g_variant_lookup_value(info, "event_summary", G_VARIANT_TYPE_VARDICT);
+  g_autoptr(GVariant) declared_set = declared && declared_summary
+      ? g_variant_lookup_value(declared_summary, "declared_permissions", G_VARIANT_TYPE("aa{sv}")) : NULL;
+  g_autofree gchar *declared_text = declared ? declared_action_text(declared_set) : NULL;
+  gboolean extends = FALSE;
+  g_variant_lookup(info, "declared_set", "b", &extends);
   if (has_kind && kind <= G_MAXUINT16)
     gnostr_approval_dialog_set_event_type(self, (int)kind);
   else if (!strcmp(op, "sign_event")) {
@@ -715,7 +854,8 @@ void gnostr_approval_dialog_set_info(GnostrApprovalDialog *self, GVariant *info,
   adw_action_row_set_subtitle(self->row_relay, self->relay);
   gtk_widget_set_visible(GTK_WIDGET(self->row_relay), *self->relay != '\0');
   g_free(self->action_text);
-  self->action_text = has_kind && !strcmp(op, "sign_event")
+  self->action_text = declared ? g_strdup(declared_text)
+      : has_kind && !strcmp(op, "sign_event")
       ? kind == NOSTR_KIND_TEXT_NOTE ? g_strdup(_("sign a note (kind 1)"))
       : kind == NOSTR_KIND_FOLLOW_LIST ? g_strdup(_("sign a contact list (kind 3)"))
       : kind == NOSTR_KIND_CLIENT_AUTHENTICATION ? g_strdup(_("sign in to a relay"))
@@ -735,6 +875,9 @@ void gnostr_approval_dialog_set_info(GnostrApprovalDialog *self, GVariant *info,
       : g_strdup(self->action_text);
   g_autofree gchar *headline = NULL;
   if (self_test) headline = g_strdup_printf(_("Test %s's identity"), *field(info, "identity_label") ? field(info, "identity_label") : field(info, "identity"));
+  else if (declared) headline = g_strdup_printf(_("%s wants to use your identity"), name);
+  else if (extends && rememberable && !review && !flow && strcmp(op, "connect") && strcmp(field(info, "transport"), "MANAGEMENT"))
+    headline = g_strdup_printf(_("%s wants an additional permission"), name);
   else if (!strcmp(field(info, "transport"), "MANAGEMENT") &&
       !strcmp(field(info, "purpose"), "profile-management") && has_kind && kind == NOSTR_KIND_PROFILE_METADATA)
     headline = g_strdup_printf(_("Publish profile for %s"), *field(info, "identity_label") ? field(info, "identity_label") : field(info, "identity"));
@@ -752,14 +895,23 @@ void gnostr_approval_dialog_set_info(GnostrApprovalDialog *self, GVariant *info,
     headline = g_strdup_printf(_("%s wants to sign a custom event (kind %u)"), name, kind);
   else headline = g_strdup_printf(_("%s wants to %s"), name, self->action_text);
   gtk_label_set_text(self->header_title, headline);
+  adw_preferences_row_set_title(ADW_PREFERENCES_ROW(self->row_action), declared ? _("Allow It To Use") : _("Action"));
   adw_action_row_set_subtitle(self->row_action, self->action_text);
+  gtk_button_set_label(self->btn_deny, declared ? _("_Deny") : _("_Deny Once"));
+  gtk_widget_set_tooltip_text(GTK_WIDGET(self->btn_deny), declared ? _("Deny This Request (Alt+D, Escape)") : _("Deny Once (Alt+D, Escape)"));
   g_free(self->flow_scope);
   self->flow_scope = g_strdup_printf(_("%u encrypted copies, including your copy, as %s; at most %u seconds left from first arrival. Count is supplied by the app, not proof of recipients. No permission is saved to disk"), size, field(info, "identity"), flow_left);
   g_autoptr(GtkStringList) choices = gtk_string_list_new(NULL);
   self->n_choices = 0;
 #define CHOICE(mode, label) do { self->choices[self->n_choices++] = mode; gtk_string_list_append(choices, label); } while (0)
-  CHOICE("allow-once", _("Allow once"));
-  if (review) {
+  if (declared) {
+    /* One review, one lasting answer: never "once" or 24 h for a declared set. */
+    if (rememberable) CHOICE("allow", _("Allow these permissions"));
+    if (rememberable && routine_trust) CHOICE("trust-routine", _("Trust this app for routine operations"));
+    if (!rememberable) self->ready = FALSE;
+  } else CHOICE("allow-once", _("Allow once"));
+  if (declared) {
+  } else if (review) {
     if (rememberable) CHOICE("activate-saved", _("Activate saved permission"));
     CHOICE("discard-saved", _("Discard saved permission"));
   } else if (rememberable) {
@@ -771,10 +923,17 @@ void gnostr_approval_dialog_set_info(GnostrApprovalDialog *self, GVariant *info,
     if (flow) CHOICE("flow", _("This message only…"));
   }
 #undef CHOICE
-  /* Reset on every authoritative request snapshot; never carry consent between steps. */
+  /* Reset on every authoritative request snapshot; never carry consent between
+   * steps. An app that already holds a declared set is extending it: the
+   * lasting choice is the default, allow-once stays available. */
+  guint initial = 0;
+  if (extends && !declared && !review)
+    for (guint i = 0; i < self->n_choices; i++) if (!strcmp(self->choices[i], "allow")) initial = i;
   adw_combo_row_set_model(self->permission_choice, G_LIST_MODEL(choices));
-  adw_combo_row_set_selected(self->permission_choice, 0);
-  gtk_widget_set_visible(GTK_WIDGET(self->permission_choice), strcmp(op, "connect") && !self_test && strcmp(field(info, "transport"), "MANAGEMENT"));
+  adw_combo_row_set_selected(self->permission_choice, initial);
+  /* The reusable choice appears only where there is a choice to make. */
+  gtk_widget_set_visible(GTK_WIDGET(self->permission_choice), self->n_choices > 1 &&
+      strcmp(op, "connect") && !self_test && strcmp(field(info, "transport"), "MANAGEMENT"));
   gtk_widget_set_sensitive(GTK_WIDGET(self->permission_choice), self->ready);
   g_free(self->saved_expiry);
   self->saved_expiry = NULL;
@@ -811,7 +970,7 @@ void gnostr_approval_dialog_set_info(GnostrApprovalDialog *self, GVariant *info,
           saved_reason, field(info, "identity"), *self->relay ? _(" at ") : "", self->relay, self->saved_expiry)
       : g_strdup_printf(_("%sPermissions do not follow a change of default identity"), other_identities->str);
   adw_action_row_set_subtitle(self->saved_status, saved);
-  g_autofree gchar *preview = NULL;
+  g_autofree gchar *preview = NULL, *declared_effect = NULL;
   const char *impact = _("Grotto returns the result to the app. It does not publish anything.");
   if (!strcmp(op, "sign_event")) {
     guint32 tags = 0, targets = 0;
@@ -879,6 +1038,13 @@ void gnostr_approval_dialog_set_info(GnostrApprovalDialog *self, GVariant *info,
       break;
     }
     }
+  } else if (declared) {
+    guint requested = 0, granted = 0, denied = 0;
+    preview = declared_details(declared_set, &requested, &granted, &denied);
+    g_autofree gchar *counts = granted || denied
+        ? g_strdup_printf(_(" %u new, %u already allowed, %u blocked."), requested, granted, denied) : g_strdup("");
+    declared_effect = g_strdup_printf(_("Grotto saves these permissions for %s until you revoke them in its Permissions page.%s Nothing is signed or published now; every later request listed here runs without asking."), name, counts);
+    impact = declared_effect;
   } else if (g_str_has_suffix(op, "encrypt") || g_str_has_suffix(op, "decrypt")) {
     preview = g_strdup(_("Encrypted message. Private message bodies are not shown."));
   } else if (!strcmp(op, "self_test")) {
@@ -896,11 +1062,24 @@ void gnostr_approval_dialog_set_info(GnostrApprovalDialog *self, GVariant *info,
     g_autofree gchar *permissions = hints ? g_strjoinv(", ", hints) : g_strdup("");
     adw_action_row_set_subtitle(self->row_relay, relays);
     gtk_widget_set_visible(GTK_WIDGET(self->row_relay), *relays != '\0');
-    preview = g_strdup_printf(_("App fingerprint: %s\nClaimed name (unverified): "
-                               "%s\nRequested permissions (hints only): %s\nRelays: %s"),
+    gboolean grants = FALSE;
+    if (summary) g_variant_lookup(summary, "granted_on_pairing", "b", &grants);
+    /* With a pinned identity the daemon reports each perm's standing: an
+     * explicit block is kept, never replaced by pairing; AUTH is any-relay. */
+    g_autoptr(GVariant) standing = summary ? g_variant_lookup_value(summary, "declared_permissions", G_VARIANT_TYPE("aa{sv}")) : NULL;
+    if (standing && g_variant_n_children(standing)) {
+      guint requested = 0, already = 0, blocked = 0;
+      g_autofree gchar *lines = declared_details(standing, &requested, &already, &blocked);
+      g_free(permissions); permissions = g_strconcat("\n", lines, NULL);
+    }
+    preview = g_strdup_printf(grants
+        ? _("App fingerprint: %s\nClaimed name (unverified): %s\nRequested permissions (granted on pairing, until revoked; blocked ones stay blocked): %s\nRelays: %s")
+        : _("App fingerprint: %s\nClaimed name (unverified): "
+            "%s\nRequested permissions (hints only): %s\nRelays: %s"),
                               field(info, "principal"), field(info, "claimed_app_id"),
                               permissions, relays);
-    impact = _("Pairing admits this application. It grants no signing permissions.");
+    impact = grants ? _("Pairing admits this application and saves the permissions it requested (any relay for relay sign-in; blocked ones stay blocked), so those operations will not ask again.")
+                    : _("Pairing admits this application. It grants no signing permissions.");
   }
   g_autoptr(JsonNode) management = profile_management(info) ? management_event(info) : NULL;
   if (management) {
@@ -943,8 +1122,10 @@ void gnostr_approval_dialog_set_info(GnostrApprovalDialog *self, GVariant *info,
   gtk_widget_set_visible(GTK_WIDGET(self->loading), (review || drift) && !permissions);
   gtk_widget_set_sensitive(GTK_WIDGET(self->btn_approve), self->ready);
   gtk_widget_set_sensitive(GTK_WIDGET(self->permission_choice), self->ready);
-  g_simple_action_set_enabled(self->block_operation, rememberable && self->ready);
+  g_simple_action_set_enabled(self->block_operation, rememberable && self->ready && !declared);
   g_simple_action_set_enabled(self->block_app, rememberable && self->ready);
+  /* Default view stays compact: Details opens only on request. */
+  adw_expander_row_set_expanded(self->details_expander, FALSE);
   permission_changed(NULL, NULL, self);
 }
 GnostrApprovalDialog *gnostr_show_approval_request_dialog(GtkWidget *parent, const char *identity,

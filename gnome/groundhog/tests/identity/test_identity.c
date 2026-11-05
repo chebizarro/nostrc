@@ -24,8 +24,11 @@ static const gchar *expected_npub;
 typedef enum { MOCK_OK, MOCK_DENIED, MOCK_TIMEOUT, MOCK_DENIED_TIMEOUT_TEXT,
                MOCK_HOLD, MOCK_WRONG_KEY, MOCK_CHANGED_CONTENT,
                MOCK_BAD_CIPHER, MOCK_APPROVAL_TIMEOUT, MOCK_NO_AGENT,
-               MOCK_TIMEOUT_DENIED_TEXT, MOCK_IDENTITY_CHANGED } MockMode;
+               MOCK_TIMEOUT_DENIED_TEXT, MOCK_IDENTITY_CHANGED,
+               MOCK_OLD_SIGNER /* pre-0.8.0: no RequestPermissions */ } MockMode;
 static MockMode mode;
+static guint declared_entries; /* entries in the last RequestPermissions */
+static gchar *declared_identity, *declared_app_id;
 
 static gchar *
 npub_from_hex(const gchar *hex)
@@ -59,6 +62,35 @@ method_call(GDBusConnection *connection, const gchar *sender, const gchar *path,
   g_assert_true(g_hash_table_remove(typed_senders, sender));
   g_free(last_sender);
   last_sender = g_strdup(sender);
+  if (g_str_equal(method, "RequestPermissions")) {
+    /* G18 declared set: (aa{sv} permissions, a{sv} context) → a{sv}. */
+    if (mode == MOCK_OLD_SIGNER) {
+      g_dbus_method_invocation_return_dbus_error(invocation,
+        "org.freedesktop.DBus.Error.UnknownMethod", "No such method");
+      return;
+    }
+    g_autoptr(GVariant) entries = g_variant_get_child_value(parameters, 0);
+    g_autoptr(GVariant) context = g_variant_get_child_value(parameters, 1);
+    declared_entries = (guint)g_variant_n_children(entries);
+    const gchar *identity = NULL, *app_id = NULL;
+    g_variant_lookup(context, "identity", "&s", &identity);
+    g_variant_lookup(context, "app_id", "&s", &app_id);
+    g_free(declared_identity); declared_identity = g_strdup(identity);
+    g_free(declared_app_id); declared_app_id = g_strdup(app_id);
+    for (gsize i = 0; i < g_variant_n_children(entries); i++) {
+      g_autoptr(GVariant) entry = g_variant_get_child_value(entries, i);
+      const gchar *type = NULL; guint32 kind = 0;
+      g_assert_true(g_variant_lookup(entry, "type", "&s", &type));
+      g_assert_cmpint(g_str_equal(type, "sign_event"), ==, g_variant_lookup(entry, "kind", "u", &kind));
+    }
+    if (mode == MOCK_HOLD) { g_ptr_array_add(held_calls, g_object_ref(invocation)); return; }
+    GVariantBuilder result; g_variant_builder_init(&result, G_VARIANT_TYPE_VARDICT);
+    g_variant_builder_add(&result, "{sv}", "identity", g_variant_new_string(identity ? identity : ""));
+    g_variant_builder_add(&result, "{sv}", "granted", entries);
+    g_variant_builder_add_parsed(&result, "{'denied', <@aa{sv} []>}");
+    g_dbus_method_invocation_return_value(invocation, g_variant_new("(a{sv})", &result));
+    return;
+  }
   const gchar *a, *b, *c;
   g_variant_get(parameters, "(&s&s&s)", &a, &b, &c);
   if (g_str_equal(method, "SignEvent")) {
@@ -152,6 +184,8 @@ setup(void)
     "<arg type='s' direction='in'/><arg type='s' direction='out'/></method>"
     "<method name='NIP44Decrypt'><arg type='s' direction='in'/><arg type='s' direction='in'/>"
     "<arg type='s' direction='in'/><arg type='s' direction='out'/></method>"
+    "<method name='RequestPermissions'><arg type='aa{sv}' direction='in'/>"
+    "<arg type='a{sv}' direction='in'/><arg type='a{sv}' direction='out'/></method>"
     "</interface></node>", &error);
   g_assert_no_error(error);
   registration = g_dbus_connection_register_object(server, "/org/nostr/signer",
@@ -183,6 +217,7 @@ teardown(void)
   test_bus = NULL;
   server = client = NULL;
   g_clear_pointer(&last_sender, g_free);
+  g_clear_pointer(&declared_identity, g_free); g_clear_pointer(&declared_app_id, g_free);
   free(pub_one); free(pub_two);
   g_free(npub_one); g_free(npub_two); g_free(ciphertext);
 }
@@ -490,6 +525,146 @@ test_nip44_cancel(void)
   gh_signer_free(signer);
 }
 
+typedef struct { gboolean done, ok; GError *error; } Declared;
+static void
+declared(GObject *source, GAsyncResult *result, gpointer data)
+{
+  (void)source;
+  Declared *d = data;
+  d->ok = gh_signer_declare_permissions_finish(result, &d->error);
+  d->done = TRUE;
+}
+static void
+settle(guint ms)
+{
+  gint64 until = g_get_monotonic_time() + (gint64)ms * 1000;
+  while (g_get_monotonic_time() < until) g_main_context_iteration(NULL, FALSE);
+}
+/* G18: the declaration carries Groundhog's whole operation set, the named
+ * claim and the pinned identity; an operation issued while it is unanswered
+ * waits for the answer instead of raising its own review. */
+static void
+test_declare_permissions(void)
+{
+  mode = MOCK_HOLD;
+  GhSigner *signer = gh_signer_new(client, npub_one, NULL);
+  Declared decl = {0};
+  gh_signer_declare_permissions_async(signer, gh_signer_declared_permissions(), NULL, declared, &decl);
+  wait_for_held_call();
+  g_assert_cmpstr(g_dbus_method_invocation_get_method_name(g_ptr_array_index(held_calls, 0)), ==, "RequestPermissions");
+  g_assert_cmpuint(declared_entries, ==, g_strv_length((gchar **)gh_signer_declared_permissions()));
+  g_assert_cmpuint(declared_entries, >=, 20);
+  g_assert_cmpstr(declared_identity, ==, npub_one);
+  g_assert_cmpstr(declared_app_id, ==, "org.nostr.Groundhog");
+  g_autofree gchar *request = unsigned_event();
+  Await wait = { .loop = NULL, .sign = TRUE };
+  gh_signer_sign_async(signer, request, NULL, finished, &wait);
+  settle(300);
+  g_assert_cmpuint(held_calls->len, ==, 1); /* the sign waits behind the declaration */
+  g_assert_false(decl.done);
+  /* Answer the declaration; the waiting sign proceeds and is answered. */
+  mode = MOCK_OK;
+  GDBusMethodInvocation *invocation = g_ptr_array_index(held_calls, 0);
+  GVariantBuilder result; g_variant_builder_init(&result, G_VARIANT_TYPE_VARDICT);
+  g_variant_builder_add(&result, "{sv}", "identity", g_variant_new_string(npub_one));
+  g_variant_builder_add_parsed(&result, "{'granted', <@aa{sv} []>}");
+  g_variant_builder_add_parsed(&result, "{'denied', <@aa{sv} []>}");
+  g_dbus_method_invocation_return_value(invocation, g_variant_new("(a{sv})", &result));
+  g_ptr_array_remove_index(held_calls, 0);
+  while (!decl.done) g_main_context_iteration(NULL, TRUE);
+  g_assert_true(decl.ok); g_assert_no_error(decl.error);
+  wait_for_done(&wait);
+  g_assert_no_error(wait.error); g_assert_nonnull(wait.value);
+  g_free(wait.value);
+  /* A denied declaration answers for the operations that waited on it: they
+   * fail the same way and never reach the service as per-kind requests (F3). */
+  mode = MOCK_HOLD;
+  Declared refused = {0}; Await parked = { .loop = NULL, .sign = TRUE };
+  gh_signer_declare_permissions_async(signer, gh_signer_declared_permissions(), NULL, declared, &refused);
+  wait_for_held_call();
+  gh_signer_sign_async(signer, request, NULL, finished, &parked);
+  settle(200);
+  g_assert_cmpuint(held_calls->len, ==, 1);
+  mode = MOCK_OK; /* a launched sign would now succeed: it must not be launched */
+  g_dbus_method_invocation_return_dbus_error(g_ptr_array_index(held_calls, 0),
+    "org.nostr.Signer.Error.ApprovalDenied", "user denied the set");
+  g_ptr_array_remove_index(held_calls, 0);
+  while (!refused.done) g_main_context_iteration(NULL, TRUE);
+  g_assert_error(refused.error, GH_SIGNER_ERROR, GH_SIGNER_ERROR_DENIED);
+  g_clear_error(&refused.error);
+  wait_for_done(&parked);
+  g_assert_error(parked.error, GH_SIGNER_ERROR, GH_SIGNER_ERROR_DENIED);
+  g_assert_null(parked.value); g_clear_error(&parked.error);
+  settle(200);
+  g_assert_cmpuint(held_calls->len, ==, 0); /* never sent */
+  /* The local wait is bounded (F7): the 65th operation fails visibly. */
+  mode = MOCK_HOLD;
+  Declared slow = {0};
+  gh_signer_declare_permissions_async(signer, gh_signer_declared_permissions(), NULL, declared, &slow);
+  wait_for_held_call();
+  Await queued[65];
+  for (guint i = 0; i < 65; i++) {
+    queued[i] = (Await){ .loop = NULL, .sign = TRUE };
+    gh_signer_sign_async(signer, request, NULL, finished, &queued[i]);
+  }
+  wait_for_done(&queued[64]);
+  g_assert_error(queued[64].error, GH_SIGNER_ERROR, GH_SIGNER_ERROR_UNAVAILABLE);
+  g_clear_error(&queued[64].error);
+  for (guint i = 0; i < 64; i++) g_assert_false(queued[i].done);
+  g_assert_cmpuint(held_calls->len, ==, 1);
+  mode = MOCK_OK;
+  {
+    GVariantBuilder ok; g_variant_builder_init(&ok, G_VARIANT_TYPE_VARDICT);
+    g_variant_builder_add(&ok, "{sv}", "identity", g_variant_new_string(npub_one));
+    g_variant_builder_add_parsed(&ok, "{'granted', <@aa{sv} []>}");
+    g_variant_builder_add_parsed(&ok, "{'denied', <@aa{sv} []>}");
+    g_dbus_method_invocation_return_value(g_ptr_array_index(held_calls, 0), g_variant_new("(a{sv})", &ok));
+    g_ptr_array_remove_index(held_calls, 0);
+  }
+  while (!slow.done) g_main_context_iteration(NULL, TRUE);
+  g_assert_true(slow.ok);
+  for (guint i = 0; i < 64; i++) {
+    wait_for_done(&queued[i]);
+    g_assert_no_error(queued[i].error); g_assert_nonnull(queued[i].value); g_free(queued[i].value);
+  }
+  /* A pre-0.8.0 signer: the declaration is unavailable and nothing else changes. */
+  mode = MOCK_OLD_SIGNER;
+  Declared old = {0};
+  gh_signer_declare_permissions_async(signer, gh_signer_declared_permissions(), NULL, declared, &old);
+  Await later = { .loop = NULL, .sign = TRUE };
+  gh_signer_sign_async(signer, request, NULL, finished, &later);
+  while (!old.done) g_main_context_iteration(NULL, TRUE);
+  g_assert_error(old.error, GH_SIGNER_ERROR, GH_SIGNER_ERROR_UNAVAILABLE);
+  g_clear_error(&old.error);
+  mode = MOCK_OK;
+  wait_for_done(&later);
+  g_assert_no_error(later.error); g_assert_nonnull(later.value);
+  g_free(later.value);
+  /* Invalid sets never reach the bus. */
+  const gchar *bad[] = {"sign_event:abc", NULL};
+  Declared invalid = {0};
+  gh_signer_declare_permissions_async(signer, bad, NULL, declared, &invalid);
+  while (!invalid.done) g_main_context_iteration(NULL, TRUE);
+  g_assert_error(invalid.error, GH_SIGNER_ERROR, GH_SIGNER_ERROR_INVALID_INPUT);
+  g_clear_error(&invalid.error);
+  /* Freeing the signer while a declaration and a waiting call are open
+   * cancels both without leaks or stuck tasks. */
+  mode = MOCK_HOLD;
+  Declared cancelled = {0}; Await waiting = { .loop = NULL, .sign = TRUE };
+  gh_signer_declare_permissions_async(signer, gh_signer_declared_permissions(), NULL, declared, &cancelled);
+  wait_for_held_call();
+  gh_signer_sign_async(signer, request, NULL, finished, &waiting);
+  settle(100);
+  g_assert_cmpuint(held_calls->len, ==, 1);
+  gh_signer_free(signer);
+  release_held_call();
+  while (!cancelled.done || !waiting.done) g_main_context_iteration(NULL, TRUE);
+  g_assert_error(cancelled.error, GH_SIGNER_ERROR, GH_SIGNER_ERROR_CANCELLED);
+  g_assert_error(waiting.error, GH_SIGNER_ERROR, GH_SIGNER_ERROR_CANCELLED);
+  g_clear_error(&cancelled.error); g_clear_error(&waiting.error);
+  mode = MOCK_OK;
+}
+
 static void
 test_bad_nip44_result(void)
 {
@@ -535,6 +710,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/signer/nip44-identity-changed", test_nip44_identity_changed);
   g_test_add_func("/groundhog/signer/nip44-cancel", test_nip44_cancel);
   g_test_add_func("/groundhog/signer/nip44-invalid", test_bad_nip44_result);
+  g_test_add_func("/groundhog/signer/declare-permissions", test_declare_permissions);
   int status = g_test_run();
   teardown();
   return status;

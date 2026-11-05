@@ -16,6 +16,7 @@ struct _GhSigner {
   gboolean remote;
   union { GhNip55lSigner *local; GhNip46Signer *remote; } backend;
   GPtrArray *pending; /* non-owning; each Pending holds a signer reference */
+  GCancellable *declaring; /* the in-flight declaration, cancelled with the signer */
 };
 struct _Pending {
   GhSigner *signer;
@@ -47,9 +48,18 @@ signer_unref(GhSigner *self)
   else
     gh_signer_nip55l_free(self->backend.local);
   g_ptr_array_unref(self->pending);
+  g_clear_object(&self->declaring);
   g_free(self->npub);
   g_free(self->pubkey);
   g_free(self);
+}
+
+/* A declaration must never outlive the binding that made it: operations
+ * waiting behind it would otherwise stay parked until the daemon answered. */
+static void
+cancel_declaration(GhSigner *self)
+{
+  if (self->declaring) g_cancellable_cancel(self->declaring);
 }
 
 static GhSigner *
@@ -99,6 +109,7 @@ gh_signer_free(GhSigner *self)
 {
   if (!self) return;
   self->generation++;
+  cancel_declaration(self);
   for (guint i = 0; i < self->pending->len; i++) {
     Pending *p = g_ptr_array_index(self->pending, i);
     g_cancellable_cancel(p->cancel);
@@ -122,6 +133,7 @@ gh_signer_select(GhSigner *self, const gchar *npub, GError **error)
     return FALSE;
   }
   self->generation++;
+  cancel_declaration(self);
   for (guint i = 0; i < self->pending->len; i++) {
     Pending *p = g_ptr_array_index(self->pending, i);
     g_cancellable_cancel(p->cancel);
@@ -226,6 +238,74 @@ cancel_from_caller(GCancellable *caller, gpointer data)
   (void)caller;
   Pending *p = data;
   g_cancellable_cancel(p->cancel);
+}
+
+/* Every kind the account key signs through the signer, derived from this
+ * tree: public posts and NIP-34 issues (1, 6, 16, 1621), NIP-29 chat and
+ * membership (9, 9000-9009 subset, 9021, 9022, 10009), reactions and
+ * deletions (7, 5), NIP-17 seals (13), relay/inbox lists (10002, 10050),
+ * relay AUTH (22242), Blossom upload authorization (24242), MLS identity
+ * proof and key packages (450, 30443), the onboarding self-test (27001),
+ * plus NIP-44 encryption/decryption and legacy NIP-04 decryption. Outer
+ * NIP-59 wraps (1059) and MLS group messages (445) use ephemeral keys and
+ * never reach the signer. */
+const gchar *const *
+gh_signer_declared_permissions(void)
+{
+  static const gchar *const tokens[] = {
+    "sign_event:1", "sign_event:5", "sign_event:6", "sign_event:7", "sign_event:9",
+    "sign_event:13", "sign_event:16", "sign_event:450", "sign_event:1621",
+    "sign_event:9000", "sign_event:9001", "sign_event:9002", "sign_event:9005",
+    "sign_event:9007", "sign_event:9009", "sign_event:9021", "sign_event:9022",
+    "sign_event:10002", "sign_event:10009", "sign_event:10050", "sign_event:22242",
+    "sign_event:24242", "sign_event:27001", "sign_event:30443",
+    "nip04_decrypt", "nip44_encrypt", "nip44_decrypt", NULL
+  };
+  return tokens;
+}
+
+static void
+declared_done(GObject *source, GAsyncResult *result, gpointer data)
+{
+  (void)source;
+  GTask *task = data;
+  GError *error = NULL;
+  if (gh_signer_nip55l_declare_finish(result, &error))
+    g_task_return_boolean(task, TRUE);
+  else
+    g_task_return_error(task, error);
+  g_object_unref(task);
+}
+
+void
+gh_signer_declare_permissions_async(GhSigner *self, const gchar *const *tokens,
+                                    GCancellable *cancellable,
+                                    GAsyncReadyCallback callback, gpointer user_data)
+{
+  g_return_if_fail(self != NULL);
+  GTask *task = g_task_new(NULL, cancellable, callback, user_data);
+  g_task_set_source_tag(task, gh_signer_declare_permissions_async);
+  if (self->remote) {
+    /* NIP-46 perms travel with connect; the remote signer already holds them. */
+    g_task_return_boolean(task, TRUE);
+    g_object_unref(task);
+    return;
+  }
+  cancel_declaration(self);
+  g_clear_object(&self->declaring);
+  self->declaring = g_cancellable_new();
+  if (cancellable)
+    g_cancellable_connect(cancellable, G_CALLBACK(g_cancellable_cancel),
+                          g_object_ref(self->declaring), g_object_unref);
+  gh_signer_nip55l_declare_async(self->backend.local, tokens, self->declaring, declared_done, task);
+}
+
+gboolean
+gh_signer_declare_permissions_finish(GAsyncResult *result, GError **error)
+{
+  g_return_val_if_fail(G_IS_TASK(result), FALSE);
+  g_return_val_if_fail(g_task_get_source_tag(G_TASK(result)) == gh_signer_declare_permissions_async, FALSE);
+  return g_task_propagate_boolean(G_TASK(result), error);
 }
 
 static void

@@ -374,6 +374,20 @@ credential_lookup_done(GObject *source, GAsyncResult *result, gpointer user_data
   g_free(query);
 }
 
+/* G18: declare, once per binding, every operation this account will ask the
+ * signer for, so Grotto raises one review instead of one per kind. Older
+ * signers answer UnknownMethod and per-request consent continues; an already
+ * covered set answers silently. Operations issued meanwhile wait inside the
+ * adapter for the answer. */
+static void
+declaration_done(GObject *source, GAsyncResult *result, gpointer data)
+{
+  (void)source; (void)data;
+  g_autoptr(GError) error = NULL;
+  if (!gh_signer_declare_permissions_finish(result, &error))
+    g_debug("signer permission declaration not applied: %s", error ? error->message : "unknown");
+}
+
 static void
 bind_signer(GhAccountController *self)
 {
@@ -390,8 +404,12 @@ bind_signer(GhAccountController *self)
   self->lookup_interactive = FALSE;
   if (!self->active_npub) return;
   if (self->active_backend == GH_SIGNER_BACKEND_GROTTO) {
-    if (self->bus)
+    if (self->bus) {
       self->signer = gh_signer_new(self->bus, self->active_npub, NULL);
+      if (self->signer)
+        gh_signer_declare_permissions_async(self->signer, gh_signer_declared_permissions(),
+                                            self->generation_cancel, declaration_done, NULL);
+    }
     return;
   }
   self->remote_state = GH_REMOTE_SIGNER_LOADING_CREDENTIAL;

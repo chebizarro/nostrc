@@ -41,7 +41,8 @@ static const OpInfo op_info[OP_COUNT] = {
  [OP_DECRYPT_ZAP] = {"zap_decrypt", TRUE, FALSE},
  [SIGNER_GATE_CONNECT] = {"connect", TRUE, FALSE},
  [SIGNER_GATE_PING] = {"ping", FALSE, FALSE},
- [SIGNER_GATE_SELF_TEST] = {"self_test", TRUE, FALSE}
+ [SIGNER_GATE_SELF_TEST] = {"self_test", TRUE, FALSE},
+ [SIGNER_GATE_REQUEST_PERMISSIONS] = {"permissions", TRUE, FALSE}
 };
 
 typedef struct _Request Request;
@@ -89,6 +90,10 @@ struct _Request {
  SignerRequestState state;
  gboolean resolved, no_identity, no_approval_ui, existing_pairing, announced, decision, remember, preset_saved;
  gboolean finished, caller_disconnected;
+ /* Waiting, unannounced, behind one announced review of this app: its
+  * declared-set review, or an open review of the same identity and scope.
+  * Holds that request's ID; the answer to that one review resolves this. */
+ gchar *parked_behind;
  gint cancelled; /* atomic: worker checks before touching the backend */
  guint64 generation, ttl, permission_revision;
  gint64 deadline, expires_at;
@@ -115,6 +120,14 @@ static void finish(Request *r, SignerRequestState state, const gchar *error, con
 static void request_unref(gpointer data);
 static GVariant *snapshot(Request *r);
 static Request *request_ref(Request *r) { g_atomic_int_inc(&r->refs); return r; }
+static void release_parked(SignerApprovalService *s, Request *done);
+static void resolved(Request *r);
+/* A declared-set review can receive reusable consent whenever its principal
+ * can; the set itself is never a row operation. */
+static gboolean permissions_rememberable(Request *r) {
+  return r->op == SIGNER_GATE_REQUEST_PERMISSIONS && r->transport != SIGNER_TRANSPORT_MANAGEMENT &&
+      r->who->principal && *r->who->principal && strcmp(r->who->principal, "claimed:");
+}
 static void wipe_free(gchar *text) { if (text) { secure_wipe(text, strlen(text)); g_free(text); } }
 
 gchar *signer_gate_handle_request_id(SignerGateHandle *h) {
@@ -140,7 +153,7 @@ static void request_unref(gpointer data) {
   if (r->timeout) { g_source_destroy(r->timeout); g_source_unref(r->timeout); }
   g_ptr_array_unref(r->calls);
   g_strfreev(r->pairing_relays);
-  g_free(r->id); g_free(r->join_key); wipe_free(r->a); g_free(r->b);
+  g_free(r->id); g_free(r->join_key); g_free(r->parked_behind); wipe_free(r->a); g_free(r->b);
   wipe_free(r->selector); g_free(r->npub); g_free(r->claimed);
   wipe_free(r->reason); wipe_free(r->purpose); g_free(r->flow_id); wipe_free(r->preview);
   SignerApprovalService *service = r->service;
@@ -333,6 +346,8 @@ static void summary_event(GVariantBuilder *summary, Request *r) {
 }
 /* Display-only wire scope hints. Unknown text/URLs/tokens are never echoed;
  * neither this list nor connect consent is a signing grant. */
+static SignerPermissionResult declared_token_policy(Request *r, const gchar *token);
+static GVariant *declared_entries(Request *r, const gchar *csv);
 static GVariant *connect_hints(const gchar *csv) {
   const gchar *names[] = {"connect", "get_public_key", "sign_event", "nip04_encrypt", "nip04_decrypt", "nip44_encrypt", "nip44_decrypt", "ping", "get_relays", NULL};
   GVariantBuilder hints; g_variant_builder_init(&hints, G_VARIANT_TYPE("as"));
@@ -369,9 +384,10 @@ static GVariant *snapshot(Request *r) {
       signer_permissions_flow_remaining(r->service->permissions, r->who->principal,
           r->npub, r->transport, r->flow_id, r->flow_size)));
   g_variant_builder_add(&b, "{sv}", "routine_trust_available", g_variant_new_boolean(
-      signer_permissions_can_remember(r->who->principal, op_info[r->op].kind,
+      permissions_rememberable(r) ||
+      (signer_permissions_can_remember(r->who->principal, op_info[r->op].kind,
           r->has_kind ? (gint)r->event_kind : -1) &&
-      signer_permissions_is_routine(op_info[r->op].kind, r->has_kind ? (gint)r->event_kind : -1)));
+      signer_permissions_is_routine(op_info[r->op].kind, r->has_kind ? (gint)r->event_kind : -1))));
   gboolean policy_review = FALSE, identity_drift = FALSE;
   g_autoptr(GVariant) saved = signer_permissions_list(r->service->permissions, r->who->principal, NULL);
   for (gsize i = 0; saved && i < g_variant_n_children(saved); i++) {
@@ -388,13 +404,19 @@ static GVariant *snapshot(Request *r) {
   }
   g_variant_builder_add(&b, "{sv}", "policy_review", g_variant_new_boolean(policy_review));
   g_variant_builder_add(&b, "{sv}", "identity_drift", g_variant_new_boolean(identity_drift));
+  /* This app already holds a declared set for the identity: an ordinary review
+   * is an extension of that set, which the UI may offer as the default. */
+  g_variant_builder_add(&b, "{sv}", "declared_set", g_variant_new_boolean(
+      r->op != SIGNER_GATE_REQUEST_PERMISSIONS && r->who->principal &&
+      signer_permissions_has_declared(r->service->permissions, r->who->principal, r->npub)));
   PUT("flow_id", r->flow_id); PUT("state", state_name(r->state)); PUT("error_code", r->error_code);
 #undef PUT
   g_variant_builder_add(&b, "{sv}", "attested", g_variant_new_boolean(r->who->attested));
   g_variant_builder_add(&b, "{sv}", "verified", g_variant_new_boolean(!r->who->unattested && r->who->principal));
-  g_variant_builder_add(&b, "{sv}", "rememberable", g_variant_new_boolean(r->transport != SIGNER_TRANSPORT_MANAGEMENT && signer_permissions_can_remember(r->who->principal, op_info[r->op].kind,
+  g_variant_builder_add(&b, "{sv}", "rememberable", g_variant_new_boolean(permissions_rememberable(r) ||
+      (r->transport != SIGNER_TRANSPORT_MANAGEMENT && signer_permissions_can_remember(r->who->principal, op_info[r->op].kind,
       r->has_kind ? (gint)r->event_kind : -1) &&
-      (r->event_kind != NOSTR_KIND_CLIENT_AUTHENTICATION || r->auth_relay)));
+      (r->event_kind != NOSTR_KIND_CLIENT_AUTHENTICATION || r->auth_relay))));
   g_variant_builder_add(&b, "{sv}", "calls", g_variant_new_uint32(r->calls->len));
   g_variant_builder_add(&b, "{sv}", "approval_requested", g_variant_new_boolean(r->announced));
   g_variant_builder_add(&b, "{sv}", "explicit_consent", g_variant_new_boolean(r->announced && r->decision));
@@ -418,8 +440,19 @@ static GVariant *snapshot(Request *r) {
     g_variant_builder_add(&summary, "{sv}", "requested_permissions_hint", connect_hints(r->a));
     if (r->pairing_relays) g_variant_builder_add(&summary, "{sv}", "relays", g_variant_new_strv((const gchar *const *)r->pairing_relays, -1));
     g_variant_builder_add(&summary, "{sv}", "requested_permissions_source", g_variant_new_string("client-hints"));
+    /* With a pinned identity, explicit pairing consent grants the hints as a
+     * declared set (G18); identity-less connects remain admission only. */
+    g_variant_builder_add(&summary, "{sv}", "granted_on_pairing", g_variant_new_boolean(r->npub != NULL));
   }
   if (r->op == OP_SIGN_EVENT) summary_event(&summary, r);
+  if (r->op == SIGNER_GATE_REQUEST_PERMISSIONS)
+    g_variant_builder_add(&summary, "{sv}", "declared_permissions", declared_entries(r, r->a));
+  if (r->op == SIGNER_GATE_CONNECT && r->npub) {
+    /* Pairing grants the recognised perms as a declared set: show each one's
+     * standing, so an explicit block is visibly kept, never silently replaced. */
+    g_autofree gchar *tokens = signer_permissions_canonical_tokens(r->a ? r->a : "", FALSE, NULL);
+    if (tokens && *tokens) g_variant_builder_add(&summary, "{sv}", "declared_permissions", declared_entries(r, tokens));
+  }
   g_variant_builder_add(&b, "{sv}", "event_summary", g_variant_builder_end(&summary));
   return g_variant_ref_sink(g_variant_builder_end(&b));
 }
@@ -442,6 +475,7 @@ static void finish(Request *r, SignerRequestState state, const gchar *error, con
     complete_call(r, c, error, message, NULL);
   }
   notify_request(r);
+  release_parked(r->service, r);
   if (r->decision_fn) {
     SignerApprovalDecisionFn fn = r->decision_fn; r->decision_fn = NULL;
     if (r->preset_saved && state != SIGNER_REQUEST_SUCCEEDED)
@@ -613,6 +647,7 @@ static gchar *build_preview(SignerOp op, const char *a, const char *b){
     case OP_DECRYPT_ZAP:       return g_strdup("decrypt a private zap");
     case SIGNER_GATE_CONNECT: return g_strdup("connect a remote client");
     case SIGNER_GATE_PING: return g_strdup("check signer availability");
+    case SIGNER_GATE_REQUEST_PERMISSIONS: return g_strdup("use this identity for its declared operations");
     case SIGNER_GATE_SELF_TEST: break; /* handled above */
     case OP_COUNT: break;
   }
@@ -714,6 +749,7 @@ static int perform(const Call *c, const char *claimed_app_id){
       return rc;
     case SIGNER_GATE_CONNECT: reply_value(inv, "ack"); return 0;
     case SIGNER_GATE_PING: reply_value(inv, "pong"); return 0;
+    case SIGNER_GATE_REQUEST_PERMISSIONS: rc = NOSTR_SIGNER_ERROR_INVALID_ARG; emsg = "declared sets never reach the backend"; break;
     case OP_COUNT: rc = NOSTR_SIGNER_ERROR_INVALID_ARG; emsg = "unknown operation"; break;
   }
   if (rc != 0 || !out) {
@@ -817,8 +853,178 @@ static void job_free(gpointer data) {
 }
 static void queue_job(Request *r, gboolean resolve);
 static GPtrArray *requests_copy(SignerApprovalService *s);
+/* ---- declared permission sets (G18) ------------------------------------ */
+static SignerPermissionResult declared_token_policy(Request *r, const gchar *token) {
+  const gchar *op = NULL; gint kind = -1;
+  if (!signer_permissions_token_scope(token, &op, &kind)) return SIGNER_PERMISSION_ERROR;
+  /* AUTH coverage means any-relay authority: a declared set must not prompt
+   * per relay. GetRelays is identity-less, so its scope is evaluated that way. */
+  return signer_permissions_evaluate_scoped(r->service->permissions, r->who->principal,
+      !strcmp(op, "get_relays") ? "" : r->npub, op, kind,
+      kind == NOSTR_KIND_CLIENT_AUTHENTICATION ? "*" : NULL, grants_lookup_default(op, r->who), NULL);
+}
+/* One a{sv} per token with its current standing for a review: requested
+ * (needs this review), granted (already covered) or denied (an explicit
+ * block wins and stays). AUTH entries name their any-relay scope. */
+static GVariant *declared_entries(Request *r, const gchar *csv) {
+  GVariantBuilder declared; g_variant_builder_init(&declared, G_VARIANT_TYPE("aa{sv}"));
+  g_auto(GStrv) tokens = g_strsplit(csv ? csv : "", ",", -1);
+  for (guint i = 0; tokens[i]; i++) {
+    const gchar *op = NULL; gint kind = -1;
+    if (!signer_permissions_token_scope(tokens[i], &op, &kind)) continue;
+    SignerPermissionResult state = declared_token_policy(r, tokens[i]);
+    GVariantBuilder entry; g_variant_builder_init(&entry, G_VARIANT_TYPE_VARDICT);
+    g_variant_builder_add(&entry, "{sv}", "token", g_variant_new_string(tokens[i]));
+    g_variant_builder_add(&entry, "{sv}", "type", g_variant_new_string(kind >= 0 ? "sign_event" : tokens[i]));
+    if (kind >= 0) g_variant_builder_add(&entry, "{sv}", "kind", g_variant_new_uint32((guint32)kind));
+    if (kind == NOSTR_KIND_CLIENT_AUTHENTICATION) g_variant_builder_add(&entry, "{sv}", "relay", g_variant_new_string("*"));
+    g_variant_builder_add(&entry, "{sv}", "state", g_variant_new_string(
+        state == SIGNER_PERMISSION_ALLOW ? "granted" : state == SIGNER_PERMISSION_DENY ? "denied" : "requested"));
+    g_variant_builder_add_value(&declared, g_variant_builder_end(&entry));
+  }
+  return g_variant_builder_end(&declared);
+}
+/* ASK while any declared token still needs consent; ALLOW once every token is
+ * covered; DENY when explicit blocks cover the whole set or the caller can
+ * never hold reusable consent. */
+static SignerPermissionResult permissions_policy(Request *r) {
+  if (!permissions_rememberable(r)) return SIGNER_PERMISSION_DENY;
+  guint ask = 0, allow = 0;
+  g_auto(GStrv) tokens = g_strsplit(r->a ? r->a : "", ",", -1);
+  for (guint i = 0; tokens[i]; i++) {
+    switch (declared_token_policy(r, tokens[i])) {
+      case SIGNER_PERMISSION_ERROR: return SIGNER_PERMISSION_ERROR;
+      case SIGNER_PERMISSION_ASK: ask++; break;
+      case SIGNER_PERMISSION_ALLOW: allow++; break;
+      default: break;
+    }
+  }
+  return ask ? SIGNER_PERMISSION_ASK : allow ? SIGNER_PERMISSION_ALLOW : SIGNER_PERMISSION_DENY;
+}
+/* The token an ordinary request would need in a declared set. */
+static gchar *request_token(Request *r) {
+  if (r->op == OP_SIGN_EVENT) return r->has_kind ? g_strdup_printf("sign_event:%u", r->event_kind) : NULL;
+  const gchar *kind = op_info[r->op].kind;
+  return !strcmp(kind, "zap_decrypt") ? g_strdup("decrypt_zap_event") :
+      signer_permissions_token_scope(kind, NULL, NULL) ? g_strdup(kind) : NULL;
+}
+static gboolean declared_covers(Request *declaration, Request *r) {
+  g_autofree gchar *token = request_token(r);
+  if (!token) return FALSE;
+  g_auto(GStrv) tokens = g_strsplit(declaration->a ? declaration->a : "", ",", -1);
+  return g_strv_contains((const gchar *const *)tokens, token);
+}
+/* An announced declared-set review of the same app and identity that lists
+ * this request's scope: the answer to that one review decides this request too. */
+static Request *pending_declaration(SignerApprovalService *s, Request *r) {
+  if (r->op == SIGNER_GATE_REQUEST_PERMISSIONS || !r->who->principal || (!r->npub && !r->no_identity)) return NULL;
+  GHashTableIter it; gpointer value;
+  g_hash_table_iter_init(&it, s->requests);
+  while (g_hash_table_iter_next(&it, NULL, &value)) {
+    Request *other = value;
+    if (other->op == SIGNER_GATE_REQUEST_PERMISSIONS && other->announced && !other->finished &&
+        other->state == SIGNER_REQUEST_PENDING && !g_strcmp0(other->who->principal, r->who->principal) &&
+        (r->no_identity || !g_strcmp0(other->npub, r->npub)) && declared_covers(other, r)) return other;
+  }
+  return NULL;
+}
+/* One review per app, identity and permission scope: a second request for
+ * the same operation/kind (and AUTH relay) while that review is open waits
+ * for its answer; a lasting answer covers it, a one-time answer lets it ask. */
+static Request *pending_same_scope(SignerApprovalService *s, Request *r) {
+  if (r->op == SIGNER_GATE_REQUEST_PERMISSIONS || r->op == SIGNER_GATE_CONNECT || r->op == SIGNER_GATE_SELF_TEST ||
+      r->flow_size || !r->who->principal || !r->npub ||
+      !signer_permissions_has_declared(s->permissions, r->who->principal, r->npub)) return NULL;
+  GHashTableIter it; gpointer value;
+  g_hash_table_iter_init(&it, s->requests);
+  while (g_hash_table_iter_next(&it, NULL, &value)) {
+    Request *other = value;
+    if (other == r || !other->announced || other->finished || other->state != SIGNER_REQUEST_PENDING ||
+        other->flow_size || other->op == SIGNER_GATE_REQUEST_PERMISSIONS || other->op == SIGNER_GATE_CONNECT ||
+        other->op == SIGNER_GATE_SELF_TEST) continue;
+    if (strcmp(op_info[other->op].kind, op_info[r->op].kind) || other->has_kind != r->has_kind ||
+        (r->has_kind && other->event_kind != r->event_kind) || g_strcmp0(other->auth_relay, r->auth_relay) ||
+        g_strcmp0(other->who->principal, r->who->principal) || g_strcmp0(other->npub, r->npub)) continue;
+    return other;
+  }
+  return NULL;
+}
+/* The one review a request waited on is answered. A denied, expired,
+ * cancelled or failed declared-set review answers for every request that
+ * waited on it: they never raise the per-kind reviews it replaced. Any other
+ * answer re-evaluates them: covered requests execute, others announce. */
+static void release_parked(SignerApprovalService *s, Request *done) {
+  if (s->stopped) return; /* shutdown finishes every parked request itself */
+  g_autoptr(GPtrArray) all = requests_copy(s);
+  for (guint i = 0; i < all->len; i++) {
+    Request *r = all->pdata[i];
+    if (!r->parked_behind || r->finished || strcmp(r->parked_behind, done->id)) continue;
+    g_clear_pointer(&r->parked_behind, g_free);
+    if (done->op == SIGNER_GATE_REQUEST_PERMISSIONS && done->state != SIGNER_REQUEST_SUCCEEDED) {
+      const gchar *message = done->state == SIGNER_REQUEST_DENIED ? "the app's permission review was denied" :
+          done->state == SIGNER_REQUEST_EXPIRED ? "the app's permission review was not answered" :
+          done->state == SIGNER_REQUEST_CANCELLED ? "the app's permission review was cancelled" :
+          "the app's permission review failed";
+      finish(r, done->state, done->error_code && *done->error_code ? done->error_code : ORG_NOSTR_SIGNER_ERR_INTERNAL, message);
+      continue;
+    }
+    resolved(r);
+  }
+}
+static void declared_entry(GVariantBuilder *list, const gchar *token) {
+  const gchar *op = NULL; gint kind = -1;
+  if (!signer_permissions_token_scope(token, &op, &kind)) return;
+  GVariantBuilder entry; g_variant_builder_init(&entry, G_VARIANT_TYPE_VARDICT);
+  g_variant_builder_add(&entry, "{sv}", "type", g_variant_new_string(kind >= 0 ? "sign_event" : token));
+  if (kind >= 0) g_variant_builder_add(&entry, "{sv}", "kind", g_variant_new_uint32((guint32)kind));
+  g_variant_builder_add_value(list, g_variant_builder_end(&entry));
+}
+/* Owner-thread execution of an admitted declared set: explicit consent writes
+ * every token that is not explicitly blocked as an until-revoked allow; an
+ * already covered set writes nothing. The reply is the a{sv} result in
+ * GVariant text form: identity, granted (aa{sv}), denied (aa{sv}). */
+static void grant_declared(Request *r) {
+  GVariantBuilder reply, granted, denied;
+  g_autoptr(GString) csv = g_string_new(NULL);
+  g_autoptr(GHashTable) blocked = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  g_auto(GStrv) tokens = g_strsplit(r->a ? r->a : "", ",", -1);
+  for (guint i = 0; tokens[i]; i++) {
+    SignerPermissionResult state = declared_token_policy(r, tokens[i]);
+    if (state == SIGNER_PERMISSION_ERROR) {
+      finish(r, SIGNER_REQUEST_FAILED, ORG_NOSTR_SIGNER_ERR_INTERNAL, "cannot load permissions"); return;
+    }
+    if (state == SIGNER_PERMISSION_DENY) g_hash_table_add(blocked, g_strdup(tokens[i]));
+    else g_string_append_printf(csv, "%s%s", csv->len ? "," : "", tokens[i]);
+  }
+  request_ref(r);
+  g_autoptr(GError) error = NULL;
+  g_autofree gchar *kept = NULL;
+  if (r->decision && csv->len && !signer_permissions_grant_tokens(r->service->permissions,
+      r->who->principal, r->npub, csv->str, &kept, &error)) {
+    g_warning("nostr-signer: cannot save declared permissions: %s", error->message);
+    finish(r, SIGNER_REQUEST_FAILED, ORG_NOSTR_SIGNER_ERR_INTERNAL, "cannot save declared permissions");
+    request_unref(r); return;
+  }
+  /* The writer keeps explicit blocks too (deny wins at write time). */
+  g_auto(GStrv) kept_tokens = g_strsplit(kept ? kept : "", ",", -1);
+  for (guint i = 0; kept_tokens[i]; i++) if (*kept_tokens[i]) g_hash_table_add(blocked, g_strdup(kept_tokens[i]));
+  g_variant_builder_init(&reply, G_VARIANT_TYPE_VARDICT);
+  g_variant_builder_init(&granted, G_VARIANT_TYPE("aa{sv}"));
+  g_variant_builder_init(&denied, G_VARIANT_TYPE("aa{sv}"));
+  for (guint i = 0; tokens[i]; i++) declared_entry(g_hash_table_contains(blocked, tokens[i]) ? &denied : &granted, tokens[i]);
+  g_variant_builder_add(&reply, "{sv}", "identity", g_variant_new_string(r->npub ? r->npub : ""));
+  g_variant_builder_add(&reply, "{sv}", "granted", g_variant_builder_end(&granted));
+  g_variant_builder_add(&reply, "{sv}", "denied", g_variant_builder_end(&denied));
+  g_autoptr(GVariant) dict = g_variant_ref_sink(g_variant_builder_end(&reply));
+  g_autofree gchar *text = g_variant_print(dict, TRUE);
+  while (!r->finished && r->calls->len)
+    complete_call(r, g_ptr_array_steal_index(r->calls, 0), NULL, NULL, text);
+  if (!r->finished) finish(r, SIGNER_REQUEST_SUCCEEDED, NULL, NULL);
+  request_unref(r);
+}
 static SignerPermissionResult request_policy(Request *r) {
   if (r->op == SIGNER_GATE_SELF_TEST) return SIGNER_PERMISSION_ASK;
+  if (r->op == SIGNER_GATE_REQUEST_PERMISSIONS) return permissions_policy(r);
   gboolean profile = r->transport == SIGNER_TRANSPORT_MANAGEMENT && !g_strcmp0(r->purpose, "profile-management");
   if (r->has_kind && r->event_kind == NOSTR_KIND_CLIENT_AUTHENTICATION) {
     g_autofree gchar *relay = auth_relay(r->a);
@@ -890,6 +1096,7 @@ static void execute(Request *r) {
     finish(r, SIGNER_REQUEST_CANCELLED, ORG_NOSTR_SIGNER_ERR_CANCELLED, "permissions changed before execution"); return;
   }
   r->state = SIGNER_REQUEST_EXECUTING;
+  if (r->op == SIGNER_GATE_REQUEST_PERMISSIONS) { table_changed(r->service); grant_declared(r); return; }
   if (r->op == SIGNER_GATE_SELF_TEST && r->management_testing) r->management_testing(r->management_data);
   if (r->finished) return;
   queue_job(r, FALSE);
@@ -936,6 +1143,14 @@ static void resolved(Request *r) {
     table_changed(s);
     return;
   }
+  /* One review per app: a request listed in this app's pending declared set,
+   * or (for an app that holds a declared set) matching an already open
+   * extension review of the same identity and scope, waits silently for that
+   * answer instead of raising its own prompt. Exact-argument joining above
+   * still shares one prompt and one execution among identical calls. */
+  Request *open_review = pending_declaration(s, r);
+  if (!open_review) open_review = pending_same_scope(s, r);
+  if (open_review) { r->parked_behind = g_strdup(open_review->id); table_changed(s); return; }
   guint mine = 0, total = 0;
   g_hash_table_iter_init(&it, s->requests);
   while (g_hash_table_iter_next(&it, NULL, &value)) {
@@ -999,6 +1214,17 @@ static gboolean job_done(gpointer data) {
   if (ok && r->remember && r->who->principal &&
       !remember_permission(r, TRUE)) {
     finish(r, SIGNER_REQUEST_FAILED, ORG_NOSTR_SIGNER_ERR_INTERNAL, "cannot save remembered permission"); return G_SOURCE_REMOVE;
+  }
+  /* NIP-46 connect perms are a declared set: explicit pairing consent grants
+   * them until revoked, exactly like RequestPermissions. Reconnects grant nothing. */
+  if (ok && r->op == SIGNER_GATE_CONNECT && r->decision && r->announced && r->npub && r->who->principal) {
+    g_autofree gchar *tokens = signer_permissions_canonical_tokens(r->a ? r->a : "", FALSE, NULL);
+    g_autofree gchar *kept = NULL;
+    if (tokens && *tokens && !signer_permissions_grant_tokens(r->service->permissions, r->who->principal, r->npub, tokens, &kept, NULL)) {
+      finish(r, SIGNER_REQUEST_FAILED, ORG_NOSTR_SIGNER_ERR_INTERNAL, "cannot save the client's requested permissions"); return G_SOURCE_REMOVE;
+    }
+    /* Pairing never replaces an explicit block; the review showed it as kept. */
+    if (kept) g_message("nostr-signer: pairing %s kept explicit blocks: %s", r->who->principal, kept);
   }
   for (guint i = 0; i < j->results->len && !r->finished; i++) {
     Result *out = j->results->pdata[i];
@@ -1099,7 +1325,7 @@ SignerGateHandle *signer_approval_service_submit(SignerApprovalService *s,
   else if ((op_info[op].peer_arg && !is_hex64(b)) ||
       (context && context->existing_pairing && (op != SIGNER_GATE_CONNECT || context->transport != SIGNER_TRANSPORT_NIP46 || who->kind != SIGNER_CALLER_NIP46)) ||
       (context && context->no_identity && ((op != SIGNER_GATE_CONNECT && op != SIGNER_GATE_PING) || (selector && *selector))) ||
-      ((op_info[op].peer_arg || op == OP_DECRYPT_ZAP || op == OP_SIGN_EVENT) && !a)) error = ORG_NOSTR_SIGNER_ERR_INVALID_INPUT;
+      ((op_info[op].peer_arg || op == OP_DECRYPT_ZAP || op == OP_SIGN_EVENT || op == SIGNER_GATE_REQUEST_PERMISSIONS) && !a)) error = ORG_NOSTR_SIGNER_ERR_INVALID_INPUT;
   else if (op == SIGNER_GATE_SELF_TEST && (!context || context->transport != SIGNER_TRANSPORT_MANAGEMENT ||
            !signer_caller_is_approver(who) || !selector || !*selector || (a && *a) || (b && *b))) {
     error = ORG_NOSTR_SIGNER_ERR_APPROVAL; message = "self-test requires authenticated management";
@@ -1158,6 +1384,15 @@ SignerGateHandle *signer_approval_service_submit(SignerApprovalService *s,
         request_unref(r); return handle;
       }
     }
+  }
+  if (op == SIGNER_GATE_REQUEST_PERMISSIONS) {
+    g_autoptr(GError) invalid = NULL;
+    gchar *canonical = signer_permissions_canonical_tokens(a, TRUE, &invalid);
+    if (!canonical) {
+      finish(r, SIGNER_REQUEST_FAILED, ORG_NOSTR_SIGNER_ERR_INVALID_INPUT, invalid->message);
+      request_unref(r); return handle;
+    }
+    wipe_free(r->a); r->a = canonical;
   }
   if (g_hash_table_size(s->requests) > PENDING_CALLS_MAX) {
     finish(r, SIGNER_REQUEST_FAILED, ORG_NOSTR_SIGNER_ERR_RATELIMIT, "too many requests awaiting approval");
@@ -1219,12 +1454,14 @@ void signer_approval_service_decide(SignerApprovalService *s, const gchar *id,
   if (!r || !r->announced || r->state != SIGNER_REQUEST_PENDING) {
     fn(data, FALSE, ORG_NOSTR_SIGNER_ERR_NOT_FOUND, "This request expired; ask the app to try again"); return;
   }
-  if (remember && (r->transport == SIGNER_TRANSPORT_MANAGEMENT || !signer_permissions_can_remember(r->who->principal, op_info[r->op].kind,
-      r->has_kind ? (gint)r->event_kind : -1))) {
+  if (remember && (r->transport == SIGNER_TRANSPORT_MANAGEMENT || !(permissions_rememberable(r) ||
+      signer_permissions_can_remember(r->who->principal, op_info[r->op].kind, r->has_kind ? (gint)r->event_kind : -1)))) {
     fn(data, FALSE, ORG_NOSTR_SIGNER_ERR_INVALID_INPUT, "this request cannot receive reusable consent"); return;
   }
   request_ref(r);
-  r->decision = allow; r->remember = remember && r->op != SIGNER_GATE_SELF_TEST; r->ttl = ttl; r->decision_fn = fn; r->decision_data = data;
+  /* A declared set is written by its own execution; approval is always reusable. */
+  r->decision = allow; r->remember = remember && r->op != SIGNER_GATE_SELF_TEST && r->op != SIGNER_GATE_REQUEST_PERMISSIONS;
+  r->ttl = ttl; r->decision_fn = fn; r->decision_data = data;
   if (g_get_monotonic_time() >= r->deadline) finish(r, SIGNER_REQUEST_EXPIRED, ORG_NOSTR_SIGNER_ERR_APPROVAL_TIMEOUT, "approval timed out");
   else if (allow) execute(r);
   else {
@@ -1249,6 +1486,10 @@ void signer_approval_service_decide_mode(SignerApprovalService *s, const gchar *
       r->deadline <= g_get_monotonic_time()) {
     fn(data, FALSE, ORG_NOSTR_SIGNER_ERR_NOT_FOUND, "This request expired; ask the app to try again"); return;
   }
+  if (r->op == SIGNER_GATE_REQUEST_PERMISSIONS && strcmp(mode, "allow") && strcmp(mode, "trust-routine") &&
+      strcmp(mode, "deny-once") && strcmp(mode, "block-app")) {
+    fn(data, FALSE, ORG_NOSTR_SIGNER_ERR_INVALID_INPUT, "A declared permission set is granted until revoked: allow, trust-routine, deny-once or block-app"); return;
+  }
   if (!strcmp(mode, "allow-once") || !strcmp(mode, "deny-once")) {
     signer_approval_service_decide(s, id, !strcmp(mode, "allow-once"), FALSE, 0, fn, data); return;
   }
@@ -1270,15 +1511,28 @@ void signer_approval_service_decide_mode(SignerApprovalService *s, const gchar *
     else { notify_request(r); fn(data, TRUE, NULL, NULL); }
     request_unref(r); return;
   }
-  if (!signer_permissions_can_remember(r->who->principal, op_info[r->op].kind, kind)) {
+  if (!(permissions_rememberable(r) || signer_permissions_can_remember(r->who->principal, op_info[r->op].kind, kind))) {
     fn(data, FALSE, ORG_NOSTR_SIGNER_ERR_INVALID_INPUT, "This request cannot receive reusable consent"); return;
   }
   if (!strcmp(mode, "trust-routine") || !strcmp(mode, "block-app")) {
-    if (!strcmp(mode, "trust-routine") && !signer_permissions_is_routine(op_info[r->op].kind, kind)) {
+    /* Routine trust on a declared set also writes every declared token,
+     * including custom kinds: the user's permission is final. */
+    if (!strcmp(mode, "trust-routine") && r->op != SIGNER_GATE_REQUEST_PERMISSIONS &&
+        !signer_permissions_is_routine(op_info[r->op].kind, kind)) {
       fn(data, FALSE, ORG_NOSTR_SIGNER_ERR_INVALID_INPUT, "Routine access does not cover this request; use its exact scoped permission instead"); return;
     }
     if (!s->trust_and_approve || policy_denies(r)) {
       fn(data, FALSE, ORG_NOSTR_SIGNER_ERR_APPROVAL, "Client policy decision is unavailable or denied"); return;
+    }
+    if (!strcmp(mode, "block-app")) {
+      /* Block app retires the app's saved authority (declared sets included):
+       * a later unblock starts from nothing, not from masked grants. Explicit
+       * blocks stay. A failed retirement leaves the app unblocked for a retry. */
+      gboolean removed = FALSE; g_autoptr(GError) revoke_error = NULL;
+      if (!signer_permissions_revoke_allows(s->permissions, r->who->principal, &removed, &revoke_error)) {
+        fn(data, FALSE, ORG_NOSTR_SIGNER_ERR_INTERNAL, "Cannot retire this app's saved permissions"); return;
+      }
+      if (r->finished) { fn(data, FALSE, ORG_NOSTR_SIGNER_ERR_NOT_FOUND, "This request expired; ask the app to try again"); return; }
     }
     request_ref(r); r->decision = TRUE;
     g_autoptr(GError) error = NULL;

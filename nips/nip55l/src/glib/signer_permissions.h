@@ -69,9 +69,34 @@ SignerPermissionResult signer_permissions_evaluate_flow(SignerPermissions *permi
 gboolean signer_permissions_invalidate_flows(SignerPermissions *permissions,
     const gchar *principal, const gchar *identity, const gchar *operation);
 /* Rows are aa{sv}: principal, identity, operation, event-kind:i (-1 means
- * operation-wide), decision, expires-at:t, state (active|inactive|expired), reason, relay (AUTH only),
- * legacy-scope for review rows. These are explicit rows; effective tier policy
- * is available through evaluate(), not expanded into persisted grants. */
+ * operation-wide), decision, expires-at:t, state (active|inactive|expired), reason, relay (AUTH only;
+ * "*" = any relay, written only by declared sets), source ("declared" for rows
+ * written from an app's declared permission set), legacy-scope for review rows.
+ * These are explicit rows; effective tier policy is available through
+ * evaluate(), not expanded into persisted grants. */
+/* Declared permission sets (G18). Tokens use the NIP-46/NIP-55 vocabulary:
+ * sign_event:<kind>, nip04_encrypt, nip04_decrypt, nip44_encrypt,
+ * nip44_decrypt, get_public_key, get_relays, decrypt_zap_event. The canonical
+ * form is deduplicated, sorted and comma-joined; at most 64 tokens. strict
+ * rejects unknown tokens, otherwise they are dropped (connect hints). */
+gchar *signer_permissions_canonical_tokens(const gchar *csv, gboolean strict, GError **error);
+/* Maps one canonical token to its row scope; FALSE for connect/ping/unknown. */
+gboolean signer_permissions_token_scope(const gchar *token, const gchar **operation, gint *kind);
+/* Writes one until-revoked allow row per token (AUTH gets relay "*";
+ * get_relays, whose entrypoint has no identity, gets identity "") in one
+ * commit, marked source=declared. Deny wins at write time: a token whose
+ * scope a live explicit deny (or a blocked client) already covers is never
+ * written and is reported in *denied (canonical CSV, NULL when none). The
+ * principal must be able to receive reusable consent. */
+gboolean signer_permissions_grant_tokens(SignerPermissions *permissions,
+    const gchar *principal, const gchar *identity, const gchar *csv, gchar **denied, GError **error);
+/* Block app: retires every allow, review and policy-review row of the
+ * principal (all identities) and its flow consent; explicit deny rows stay. */
+gboolean signer_permissions_revoke_allows(SignerPermissions *permissions,
+    const gchar *principal, gboolean *removed, GError **error);
+/* TRUE when a live declared-set allow exists for this principal and identity. */
+gboolean signer_permissions_has_declared(SignerPermissions *permissions,
+    const gchar *principal, const gchar *identity);
 gboolean signer_permissions_can_remember(const gchar *principal, const gchar *operation, gint kind);
 gboolean signer_permissions_is_routine(const gchar *operation, gint kind);
 /* AUTH uses the canonical relay as an additional exact scope, never a challenge. */
