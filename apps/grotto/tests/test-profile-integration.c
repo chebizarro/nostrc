@@ -4,7 +4,6 @@
 #include "relay_store.h"
 #include "bunker_test_relay.h"
 #include "ui/signer-window.h"
-#include "grotto-identity-service.h"
 #include "session-manager.h"
 #include "accounts_store.h"
 #include "settings_manager.h"
@@ -145,10 +144,10 @@ static void profile_activate(GApplication *application, gpointer data) {
   gtk_editable_set_text(GTK_EDITABLE(find(GTK_WIDGET(dialog), "Name")), "alice");
   gtk_editable_set_text(GTK_EDITABLE(find(GTK_WIDGET(dialog), "Display Name")), "Alice");
   GtkWidget *save = find(GTK_WIDGET(dialog), "Save"); g_assert_true(gtk_widget_is_sensitive(save));
-  GrottoHomeModel *model = grotto_identity_service_get_control(GROTTO_IDENTITY_SERVICE(grotto_panel_get_service(GROTTO_PANEL(panel))));
+  GrottoPanelsService *service = grotto_panel_get_service(GROTTO_PANEL(panel));
   /* Opening the real form can overlap a daemon snapshot refresh. Wait for
    * current authority, not only the last rendered button sensitivity. */
-  WAIT(grotto_home_model_writable(model));
+  WAIT(grotto_panels_service_can(service, GROTTO_PANEL_SET_IDENTITY_LABEL));
   g_assert_false(gn_session_manager_is_locked(gn_session_manager_get_default()));
   g_signal_emit_by_name(save, "clicked");
   WAIT(approval.decisions == 1 && !adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)));
