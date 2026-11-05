@@ -6,9 +6,9 @@ static gboolean invalid(GError **error) {
   g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "Invalid public panel data");
   return FALSE;
 }
-gboolean grotto_panels_public_text_validate(const char *value, GError **error) {
+static gboolean public_text(const char *value, gsize limit, gboolean multiline, GError **error) {
   if (!value) return TRUE;
-  if (!g_utf8_validate(value, -1, NULL) || strlen(value) > 512) return invalid(error);
+  if (!g_utf8_validate(value, -1, NULL) || strlen(value) > limit) return invalid(error);
   g_autofree char *lower = g_ascii_strdown(value, -1);
   static const char *const markers[] = {"nsec1", "ncryptsec1", "nostrconnect:", "bunker:",
     "mnemonic=", "mnemonic:", "token=", "token:", "secret=", "secret:", "access_token", "-----begin private key-----"};
@@ -22,10 +22,21 @@ gboolean grotto_panels_public_text_validate(const char *value, GError **error) {
     if (g_ascii_islower(*p)) { if (!in_word) words++; in_word = TRUE; }
     else if (*p == ' ') in_word = FALSE;
     else phrase = FALSE;
-    if (g_ascii_iscntrl(*p)) return invalid(error);
+    if (g_ascii_iscntrl(*p) && !(multiline && (*p == '\n' || *p == '\t'))) return invalid(error);
   }
   if (phrase && (words == 12 || words == 15 || words == 18 || words == 21 || words == 24))
     return invalid(error);
+  return TRUE;
+}
+gboolean grotto_panels_public_text_validate(const char *value, GError **error) {
+  return public_text(value, 512, FALSE, error);
+}
+gboolean grotto_profile_info_validate(const GrottoProfileInfo *info, GError **error) {
+  if (!info) return TRUE;
+  for (guint i = 0; i < 2; i++) if (info->images[i] && !GDK_IS_TEXTURE(info->images[i])) return invalid(error);
+  for (guint i = 0; i < GROTTO_PROFILE_N_FIELDS; i++)
+    if (!public_text(info->fields[i], i == GROTTO_PROFILE_ABOUT ? 4096 : 1024,
+                     i == GROTTO_PROFILE_ABOUT, error)) return FALSE;
   return TRUE;
 }
 static gboolean identifier(const char *value, gboolean required, GError **error) {

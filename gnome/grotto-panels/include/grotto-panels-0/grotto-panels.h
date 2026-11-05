@@ -166,6 +166,29 @@ GROTTO_PANELS_API void grotto_panels_service_query_async(GrottoPanelsService *se
 GROTTO_PANELS_API GListModel *grotto_panels_service_query_finish(GrottoPanelsService *self,
   GAsyncResult *result, GError **error);
 
+/* Public metadata only. No signed event, file path, credential or transport
+ * crosses the panel boundary. Host results are owned GrottoProfileInfo GTasks. */
+typedef enum _GrottoProfileField {
+  GROTTO_PROFILE_NAME, GROTTO_PROFILE_DISPLAY_NAME, GROTTO_PROFILE_ABOUT,
+  GROTTO_PROFILE_PICTURE, GROTTO_PROFILE_BANNER, GROTTO_PROFILE_NIP05,
+  GROTTO_PROFILE_LUD16, GROTTO_PROFILE_LUD06, GROTTO_PROFILE_WEBSITE,
+  GROTTO_PROFILE_N_FIELDS
+} GrottoProfileField;
+typedef enum _GrottoProfileAction {
+  GROTTO_PROFILE_FETCH, GROTTO_PROFILE_SAVE, GROTTO_PROFILE_CHOOSE_AVATAR,
+  GROTTO_PROFILE_CHOOSE_BANNER
+} GrottoProfileAction;
+typedef struct _GrottoProfileInfo {
+  char *fields[GROTTO_PROFILE_N_FIELDS];
+  GdkTexture *images[2];
+  guint64 created_at;
+  gboolean published, cached;
+} GrottoProfileInfo;
+GROTTO_PANELS_API GrottoProfileInfo *grotto_profile_info_copy(const GrottoProfileInfo *info);
+GROTTO_PANELS_API void grotto_profile_info_free(GrottoProfileInfo *info);
+G_DEFINE_AUTOPTR_CLEANUP_FUNC(GrottoProfileInfo, grotto_profile_info_free)
+GROTTO_PANELS_API gboolean grotto_profile_info_validate(const GrottoProfileInfo *info, GError **error);
+
 typedef struct _GrottoPanelsHost {
   void (*show_toast)(gpointer host, const char *message);
   void (*review_request)(gpointer host, const char *request_id);
@@ -178,6 +201,9 @@ typedef struct _GrottoPanelsHost {
   gboolean (*can_command)(gpointer host, GrottoPanelCommand command);
   void (*command_async)(gpointer host, GrottoPanelCommand command,
     const GrottoPanelCommandArgs *args, GCancellable *cancellable,
+    GAsyncReadyCallback callback, gpointer user_data);
+  void (*profile_async)(gpointer host, GrottoProfileAction action, const char *public_key,
+    const GrottoProfileInfo *info, GCancellable *cancellable,
     GAsyncReadyCallback callback, gpointer user_data);
 } GrottoPanelsHost;
 
@@ -215,6 +241,12 @@ GROTTO_PANELS_API gboolean grotto_panel_can_command(GrottoPanel *self, GrottoPan
 GROTTO_PANELS_API void grotto_panel_command_async(GrottoPanel *self, GrottoPanelCommand command,
   const GrottoPanelCommandArgs *args, GAsyncReadyCallback callback, gpointer user_data);
 GROTTO_PANELS_API gboolean grotto_panel_command_finish(GrottoPanel *self, GAsyncResult *result, GError **error);
+GROTTO_PANELS_API gboolean grotto_panel_has_profile_host(GrottoPanel *self);
+GROTTO_PANELS_API void grotto_panel_profile_async(GrottoPanel *self, GrottoProfileAction action,
+  const char *public_key, const GrottoProfileInfo *info, GCancellable *cancel,
+  GAsyncReadyCallback callback, gpointer data);
+GROTTO_PANELS_API GrottoProfileInfo *grotto_panel_profile_finish(GrottoPanel *self,
+  GAsyncResult *result, GError **error);
 /* Standard plain-text row helper, deliberately no permission interpretation. */
 GROTTO_PANELS_API GtkWidget *grotto_panel_create_metadata_row(GrottoPanelsItem *item);
 

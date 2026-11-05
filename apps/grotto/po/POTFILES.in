@@ -24,6 +24,7 @@ src/i18n.c
 src/home-model.c
 src/grotto-panels-control1-service.c
 src/ui/signer-window.c
+src/grotto-profile-service.c
 src/ui/lock-screen.c
 src/ui/approval_dialog.c
 src/ui/page-connect.c

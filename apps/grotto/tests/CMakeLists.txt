@@ -594,7 +594,7 @@ target_link_libraries(test-panel-inbox-model PRIVATE PkgConfig::GLIB nostrc-test
 target_compile_options(test-panel-inbox-model PRIVATE -Wall -Wextra -Werror)
 add_test(NAME signer/panel-inbox-model COMMAND test-panel-inbox-model)
 set_tests_properties(signer/panel-inbox-model PROPERTIES TIMEOUT 90 LABELS "signer;unit;panels;inbox" ENVIRONMENT "GSETTINGS_BACKEND=memory")
-add_executable(test-ui-layout test-ui-layout.c ${APP_GRESOURCE_C})
+  add_executable(test-ui-layout test-ui-layout.c bunker_test_relay.c ${APP_GRESOURCE_C})
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   find_program(GROTTO_TEST_XDOTOOL xdotool REQUIRED)
   target_compile_definitions(test-ui-layout PRIVATE GROTTO_TEST_XDOTOOL="${GROTTO_TEST_XDOTOOL}")

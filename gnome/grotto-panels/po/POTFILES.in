@@ -3,6 +3,7 @@ data/apps-panel.blp
 data/activity-panel.blp
 data/remote-panel.blp
 src/grotto-identity-panel.c
+src/grotto-profile-view.c
 src/grotto-apps-panel.c
 src/grotto-app-detail.c
 src/grotto-activity-panel.c

@@ -131,9 +131,27 @@ static void opaque_rejected(void) {
   }
   g_object_unref(self);
 }
+static void profile_admission(void) {
+  for (guint field = 0; field < GROTTO_PROFILE_N_FIELDS; field++) {
+    for (guint i = 0; i < G_N_ELEMENTS(credentials); i++) {
+      GrottoProfileInfo info = {0}; info.fields[field] = (char *)credentials[i];
+      g_autoptr(GError) error = NULL; g_assert_false(grotto_profile_info_validate(&info, &error));
+      g_assert_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT);
+    }
+  }
+  GrottoProfileInfo info = {0}; info.fields[GROTTO_PROFILE_ABOUT] = "First line\nSecond line";
+  g_assert_true(grotto_profile_info_validate(&info, NULL));
+  g_autofree char *large = g_strnfill(4097, 'x'); info.fields[GROTTO_PROFILE_ABOUT] = large;
+  g_assert_false(grotto_profile_info_validate(&info, NULL));
+  info.fields[GROTTO_PROFILE_ABOUT] = NULL;
+  g_autoptr(GObject) opaque = g_object_new(G_TYPE_OBJECT, NULL);
+  info.images[0] = (GdkTexture *)opaque;
+  g_assert_false(grotto_profile_info_validate(&info, NULL));
+}
 int main(int argc, char **argv) {
   g_test_init(&argc, &argv, NULL);
   g_test_add_func("/admission/commands", command_admission);
+  g_test_add_func("/admission/profile", profile_admission);
   g_test_add_func("/admission/metadata", metadata_admission);
   g_test_add_func("/admission/opaque-model", opaque_rejected);
   return g_test_run();

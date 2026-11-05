@@ -17,6 +17,9 @@
 #include <secure_buf.h>
 #include <keys.h>
 #include <nostr-utils.h>
+#include <nostr-event.h>
+#include <json.h>
+#include <nostr-kinds.h>
 #include <nostr/nip55l/error.h>
 #include <nostr/crypto/bip39.h>
 #include <nostr/nip19/nip19.h>
@@ -824,6 +827,26 @@ static void method_call(GDBusConnection *bus, const gchar *sender, const gchar *
     }
     if (c->export_busy) { g_dbus_method_invocation_return_dbus_error(inv, GROTTO_CONTROL_ERROR "Busy", "Key management is busy"); return; }
     start_store(c, inv, input, label, NULL, format, passphrase); return;
+  } else if (!strcmp(method, "SignProfileEvent")) {
+    const gchar *identity, *json; g_variant_get(args, "(&s&s)", &identity, &json);
+    guint8 pk[32] = {0};
+    NostrEvent *event = nostr_event_new();
+    gboolean valid = strlen(json) <= 32768 && nostr_nip19_decode_npub(identity, pk) == 0 &&
+        event && nostr_event_deserialize(event, json) == 0;
+    guint kind = valid ? (guint)nostr_event_get_kind(event) : G_MAXUINT;
+    char hex[65] = {0}; for (guint i = 0; i < 32; i++) g_snprintf(hex + 2 * i, 3, "%02x", pk[i]);
+    valid = valid && !g_strcmp0(nostr_event_get_pubkey(event), hex) &&
+        (kind == NOSTR_KIND_PROFILE_METADATA || kind == NOSTR_KIND_BLOBS || kind == NOSTR_KIND_CLIENT_AUTHENTICATION);
+    if (event) nostr_event_free(event);
+    if (!valid) { g_dbus_method_invocation_return_dbus_error(inv, GROTTO_CONTROL_ERROR "InvalidInput",
+        "Expected profile metadata or profile transport authorization for this identity"); return; }
+    SignerGateContext context = {.transport = SIGNER_TRANSPORT_MANAGEMENT,
+      .purpose = "profile-management", .claimed_name = "Grotto",
+      .reason = kind == NOSTR_KIND_PROFILE_METADATA ? "Publish this identity's public profile to its relays" :
+        kind == NOSTR_KIND_BLOBS ? "Upload a public profile image to the selected Blossom server" : "Authenticate to this identity's relay"};
+    SignerGateHandle *handle = signer_approval_service_submit(c->approval, who, sender,
+        SIGNER_GATE_SIGN_EVENT, json, NULL, identity, &context, self_test_reply, g_object_ref(inv));
+    signer_gate_handle_unref(handle); return;
   } else if (!strcmp(method, "SelfTestIdentity")) {
     const gchar *identity; g_variant_get(args, "(&s)", &identity);
     SignerGateContext context = {.transport = SIGNER_TRANSPORT_MANAGEMENT,

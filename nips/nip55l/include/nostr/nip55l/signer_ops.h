@@ -27,8 +27,8 @@ extern "C" {
  * caller disconnected, even before its NameOwnerChanged cleanup runs. */
 #define NOSTR_NIP55L_VERSION_MAJOR 0
 #define NOSTR_NIP55L_VERSION_MINOR 8
-#define NOSTR_NIP55L_VERSION_PATCH 0
-#define NOSTR_NIP55L_VERSION_STRING "0.8.0"
+#define NOSTR_NIP55L_VERSION_PATCH 1
+#define NOSTR_NIP55L_VERSION_STRING "0.8.1"
 
 NOSTR_NIP55L_API int nostr_nip55l_get_public_key(char **out_npub);
 /* npub of the key that `current_user` selects, i.e. the key sign/encrypt/

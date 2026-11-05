@@ -2,6 +2,7 @@
 #include "signer-window.h"
 #include "page-identity-detail.h"
 #include "grotto-identity-service.h"
+#include "grotto-profile-service.h"
 #include "grotto-panels-control1-service.h"
 #include "accounts_store.h"
 #include "sheets/sheet-qr-display.h"
@@ -840,6 +841,25 @@ static void host_command(gpointer data, GrottoPanelCommand command, const Grotto
   GrottoPanelsService *control = grotto_identity_service_get_control(GROTTO_IDENTITY_SERVICE(self->identity_service));
   grotto_panels_control1_service_host_command_async(control, command, args, cancel, callback, user_data);
 }
+static void host_profile(gpointer data, GrottoProfileAction action, const char *key,
+  const GrottoProfileInfo *info, GCancellable *cancel, GAsyncReadyCallback callback, gpointer user_data) {
+  g_autoptr(SignerWindow) self = g_weak_ref_get(data);
+  gboolean allowed = self && !gn_session_manager_is_locked(gn_session_manager_get_default());
+  if (allowed && action != GROTTO_PROFILE_FETCH) {
+    allowed = FALSE;
+    GListModel *identities = grotto_panels_service_get_model(self->identity_service, GROTTO_PANELS_IDENTITIES);
+    for (guint i = 0; identities && i < g_list_model_get_n_items(identities); i++) {
+      g_autoptr(GrottoPanelsItem) item = g_list_model_get_item(identities, i);
+      const GrottoPanelsMetadata *m = grotto_panels_item_get_metadata(item);
+      if (!g_strcmp0(key, m->public_key)) allowed = m->can_sign && !m->watch_only && grotto_home_model_writable(self->model);
+    }
+  }
+  if (!allowed) {
+    GTask *task = g_task_new(self, cancel, callback, user_data);
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED, "Unlock management and choose a signing identity"); g_object_unref(task); return;
+  }
+  grotto_profile_service_async(GTK_WINDOW(self), action, key, info, cancel, callback, user_data);
+}
 static void setup_panels(SignerWindow *self) {
   self->panels[0] = GROTTO_PANEL(g_object_ref_sink(grotto_identity_panel_new(self->identity_service, NULL)));
   self->panels[1] = GROTTO_PANEL(g_object_ref_sink(grotto_apps_panel_new(self->identity_service)));
@@ -848,7 +868,7 @@ static void setup_panels(SignerWindow *self) {
   const GrottoPanelsHost host = {.show_toast = identity_toast, .review_request = host_review,
     .add_identity = identity_add, .add_app = host_add_app, .open_backup = identity_backup,
     .remove_identity = identity_remove, .open_in_signer = identity_open,
-    .can_command = host_can_command, .command_async = host_command};
+    .can_command = host_can_command, .command_async = host_command, .profile_async = host_profile};
   gsize count = 0; const GrottoPanelDescriptor *descriptors = grotto_panels_get_descriptors(&count);
   for (guint i = 0; i < count; i++) {
     GWeakRef *ref = g_new0(GWeakRef, 1); g_weak_ref_init(ref, self);
@@ -876,7 +896,8 @@ void signer_window_show_identity(SignerWindow *self, const gchar *npub) {
   if (npub && *npub) {
     GrottoPanel *panel = GROTTO_PANEL(grotto_identity_panel_new(self->identity_service, npub));
     const GrottoPanelsHost host = {.show_toast = identity_toast, .add_identity = identity_add,
-      .open_backup = identity_backup, .remove_identity = identity_remove, .open_in_signer = identity_open};
+      .open_backup = identity_backup, .remove_identity = identity_remove, .open_in_signer = identity_open,
+      .profile_async = host_profile};
     GWeakRef *host_window = g_new0(GWeakRef, 1); g_weak_ref_init(host_window, self);
     grotto_panel_set_host(panel, &host, host_window, identity_host_free);
     adw_navigation_view_push(identity_navigation(self), ADW_NAVIGATION_PAGE(panel));

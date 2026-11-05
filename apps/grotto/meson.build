@@ -34,6 +34,7 @@ gio_dep = dependency('gio-2.0', version: '>= 2.80')
 adwaita_dep = dependency('libadwaita-1', version: '>= 1.5')
 panels_dep = dependency('grotto-panels-0', version: '>= 0.1.0')
 json_glib_dep = dependency('json-glib-1.0')
+profile_deps = [dependency('nostr-publish'), dependency('bud02'), dependency('libsoup-3.0')]
 native_camera_required = host_machine.system() == 'linux'
 qrencode_dep = dependency('libqrencode', required: native_camera_required)
 zbar_dep = dependency('zbar', required: native_camera_required)
@@ -157,6 +158,7 @@ app_sources = files(
   'src/legacy_dirs.c',
   'src/home-model.c',
   'src/grotto-identity-service.c',
+  'src/grotto-profile-service.c',
   'src/gn-signer-error.c',
   'src/approval-controller.c',
   'src/background.c',
@@ -291,7 +293,7 @@ grotto_exe = executable(app_bin,
     nips_inc,
     nostr_gobject_inc,
   ] + dependency_include_dirs,
-  dependencies: app_deps + [nip55l_core_lib, gnostr_secret_lib],
+  dependencies: app_deps + profile_deps + [nip55l_core_lib, gnostr_secret_lib],
   c_args: [
     '-DGROTTO_VERSION="@0@"'.format(meson.project_version()),
     '-DAPP_ID="@0@"'.format(app_id),

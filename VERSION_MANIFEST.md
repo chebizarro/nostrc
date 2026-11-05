@@ -49,10 +49,23 @@ files already declare a version.
 | bud02 (Blossom authorization codec) | `nips/bud02/` | 0.1.1 | Unreleased | — | `nips/bud02/CMakeLists.txt` (`declare_component_version`) |
 | nip34 (NIP-34 git events) | `nips/nip34/` | 0.2.0 | Unreleased | — | `nips/nip34/CMakeLists.txt` (`declare_component_version`; SONAME `libnip34.so.0`) |
 | nip-communikeys | `nips/nip-communikeys/` | 3.0.0 | Unreleased | — | `nips/nip-communikeys/CMakeLists.txt` (`NIP_COMMUNIKEYS_VERSION`) |
-| nip55l (Linux signer) | `nips/nip55l/` | 0.8.0 | Unreleased | — | `nips/nip55l/include/nostr/nip55l/signer_ops.h` (`NOSTR_NIP55L_VERSION_*`) |
+| nip55l (Linux signer) | `nips/nip55l/` | 0.8.1 | Unreleased | — | `nips/nip55l/include/nostr/nip55l/signer_ops.h` (`NOSTR_NIP55L_VERSION_*`) |
 | nostr-seal | `gnome/nostr-seal/` | 0.1.3 (format nsealed v1) | Unreleased | — | `gnome/nostr-seal/src/main.c` (`NOSTR_SEAL_VERSION`), `gnome/nostr-seal/include/nostr-seal.h` (`NSEAL_FORMAT_VERSION`) |
 | signet | `signet/` | 0.7.0 | Unreleased | — | `signet/meson.build`, `signet/src/signetd_main.c` (`SIGNET_VERSION`), `signet/src/signetctl_main.c` (`SIGNETCTL_VERSION`); `signet/CMakeLists.txt` declares none |
 
+
+### W7 public identity profiles (nostrc-u6v55.23.9)
+
+- Grotto 0.1.1 and grotto-panels 0.1.0: MINOR-class profile UI and additive
+  typed host hooks folded into these unreleased versions at the owner's direction.
+  No published release/tag columns change.
+- nip55l: PATCH 0.8.0 → 0.8.1 for deliberate MANAGEMENT consent: saved/first-party
+  allows cannot bypass profile review, reusable approval modes are refused,
+  and management explanations remain signer-sourced. Existing denies still win.
+- libnostr-publish, nostr-gobject, libblossom and bud02: no bump. Existing signer
+  vtable, relay transport/policy, Blossom client and authorization codec are reused;
+  no source, public API, ABI or wire contract changes in those components.
+- Test selection and build wiring are internal; no other component version changes.
 
 ### Single-file NIP-94 / kind-15 export (nostrc-v04jd.2, SV-A2)
 

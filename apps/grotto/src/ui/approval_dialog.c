@@ -554,6 +554,8 @@ static gchar *caller_description(GVariant *info, const gchar *name) {
     return g_strdup(verified
         ? _("Remote NIP-46 client · verified transport key; app name unverified")
         : _("Remote NIP-46 client · unverified"));
+  if (!strcmp(transport, "MANAGEMENT") && !strcmp(field(info, "purpose"), "profile-management"))
+    return g_strdup(_("Grotto profile management"));
   if (!strcmp(transport, "MANAGEMENT") && !strcmp(field(info, "operation"), "self_test"))
     return g_strdup(_("Grotto identity test"));
   if (!verified || !strcmp(kind, "claimed") ||
@@ -662,6 +664,9 @@ void gnostr_approval_dialog_set_info(GnostrApprovalDialog *self, GVariant *info,
       : g_strdup(self->action_text);
   g_autofree gchar *headline = NULL;
   if (self_test) headline = g_strdup_printf(_("Test %s's identity"), *field(info, "identity_label") ? field(info, "identity_label") : field(info, "identity"));
+  else if (!strcmp(field(info, "transport"), "MANAGEMENT") &&
+      !strcmp(field(info, "purpose"), "profile-management") && has_kind && kind == NOSTR_KIND_PROFILE_METADATA)
+    headline = g_strdup_printf(_("Publish profile for %s"), *field(info, "identity_label") ? field(info, "identity_label") : field(info, "identity"));
   else if (flow) headline = g_strdup_printf(_("%s wants to prepare encrypted messages"), name);
   else if (!strcmp(op, "connect")) headline = g_strdup_printf(_("%s wants to connect"), name);
   else if (g_str_has_suffix(op, "encrypt")) headline = g_strdup_printf(_("%s wants to encrypt a message"), name);
@@ -698,7 +703,7 @@ void gnostr_approval_dialog_set_info(GnostrApprovalDialog *self, GVariant *info,
   /* Reset on every authoritative request snapshot; never carry consent between steps. */
   adw_combo_row_set_model(self->permission_choice, G_LIST_MODEL(choices));
   adw_combo_row_set_selected(self->permission_choice, 0);
-  gtk_widget_set_visible(GTK_WIDGET(self->permission_choice), strcmp(op, "connect") && !self_test);
+  gtk_widget_set_visible(GTK_WIDGET(self->permission_choice), strcmp(op, "connect") && !self_test && strcmp(field(info, "transport"), "MANAGEMENT"));
   gtk_widget_set_sensitive(GTK_WIDGET(self->permission_choice), self->ready);
   g_free(self->saved_expiry);
   self->saved_expiry = NULL;

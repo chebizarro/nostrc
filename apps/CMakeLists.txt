@@ -39,6 +39,12 @@ if (ENABLE_BLOSSOM_CACHE AND GLIB_FOUND)
 endif()
 
 if (GTK4_FOUND AND GLIB_FOUND)
+  # A sibling, not a child install of Grotto: native Grotto packages ship
+  # only a private runtime copy, never this shared library's SDK files.
+  if(NOT TARGET nostr-publish)
+    add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../gnome/libnostr-publish"
+      "${CMAKE_CURRENT_BINARY_DIR}/libnostr-publish")
+  endif()
   add_subdirectory(grotto)
   # Full GNostr desktop app requires libpeas-2 and additional deps;
   # make it optional so signer-only builds (e.g. Windows installer) work.

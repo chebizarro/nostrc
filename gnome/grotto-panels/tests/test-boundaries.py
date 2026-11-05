@@ -35,12 +35,15 @@ schemas = {
     '_GrottoPanelCommandArgs': {'principal': 'const char *', 'label': 'const char *', 'public_key': 'const char *',
         'trust': 'const char *', 'permissions': 'const GrottoPanelPermission *', 'n_permissions': 'gsize',
         'expected_revision': 'guint64', 'expected_generation': 'guint64', 'remote_enabled': 'gboolean', 'relays': 'const char *const *', 'methods': 'const char *const *'},
+    '_GrottoProfileInfo': {'fields': 'char *[9]', 'images': 'GdkTexture *[2]',
+        'created_at': 'guint64', 'published': 'gboolean', 'cached': 'gboolean'},
     '_GrottoPanelsHost': {'show_toast': 'void (*)(gpointer, const char *)', 'review_request': 'void (*)(gpointer, const char *)',
         'add_identity': 'void (*)(gpointer)', 'add_app': 'void (*)(gpointer)', 'open_backup': 'void (*)(gpointer, const char *)',
         'remove_identity': 'void (*)(gpointer, const char *)', 'replace_identity': 'void (*)(gpointer, const char *)',
         'open_in_signer': 'void (*)(gpointer, const char *)',
         'can_command': 'gboolean (*)(gpointer, GrottoPanelCommand)',
-        'command_async': 'void (*)(gpointer, GrottoPanelCommand, const GrottoPanelCommandArgs *, GCancellable *, GAsyncReadyCallback, gpointer)'},
+        'command_async': 'void (*)(gpointer, GrottoPanelCommand, const GrottoPanelCommandArgs *, GCancellable *, GAsyncReadyCallback, gpointer)',
+        'profile_async': 'void (*)(gpointer, GrottoProfileAction, const char *, const GrottoProfileInfo *, GCancellable *, GAsyncReadyCallback, gpointer)'},
     '_GrottoPanelClass': {'parent_class': 'AdwNavigationPageClass', 'padding': 'gpointer[8]'},
 }
 
@@ -66,6 +69,9 @@ def check_schema(header):
     assert enums['_GrottoPanelsAccess'] == ['GROTTO_PANELS_ACCESS_' + name for name in ('SESSION', 'MANAGER', 'APPROVER')]
     assert enums['_GrottoPanelHostAction'] == ['GROTTO_PANEL_HOST_' + name for name in (
         'TOAST', 'REVIEW', 'ADD_IDENTITY', 'ADD_APP', 'BACKUP', 'REMOVE', 'REPLACE', 'OPEN_SIGNER', 'N_ACTIONS')]
+    assert enums['_GrottoProfileField'] == ['GROTTO_PROFILE_' + name for name in (
+        'NAME', 'DISPLAY_NAME', 'ABOUT', 'PICTURE', 'BANNER', 'NIP05', 'LUD16', 'LUD06', 'WEBSITE', 'N_FIELDS')]
+    assert enums['_GrottoProfileAction'] == ['GROTTO_PROFILE_' + name for name in ('FETCH', 'SAVE', 'CHOOSE_AVATAR', 'CHOOSE_BANNER')]
     for name, expected in schemas.items():
         fields = {f['name']: f['type']['qualType'] for f in records[name]['inner'] if f['kind'] == 'FieldDecl'}
         assert fields == expected, f'complete compiler schema mismatch: {name}: {fields}'
@@ -82,6 +88,8 @@ def check_schema(header):
     assert fields['get_model'] == 'GListModel *(*)(GrottoPanelsService *, GrottoPanelsModel)', fields
 
 exports = {
+    'grotto_profile_info_copy', 'grotto_profile_info_free', 'grotto_profile_info_validate',
+    'grotto_panel_has_profile_host', 'grotto_panel_profile_async', 'grotto_panel_profile_finish',
     'grotto_panels_item_get_type', 'grotto_panels_item_new', 'grotto_panels_item_get_metadata',
     'grotto_panels_metadata_validate', 'grotto_panels_public_text_validate', 'grotto_panel_command_get_access',
     'grotto_panel_command_args_validate', 'grotto_panels_service_get_type', 'grotto_panels_service_get_model',
@@ -164,6 +172,16 @@ imports.update('''adw_action_row_set_activatable_widget adw_action_row_set_subti
  gtk_list_view_set_model gtk_no_selection_new gtk_selection_model_get_type gtk_signal_list_item_factory_new gtk_string_list_append
  gtk_string_list_new gtk_widget_add_css_class gtk_widget_get_next_sibling gtk_widget_set_halign gtk_widget_set_margin_bottom
  gtk_widget_set_margin_end gtk_widget_set_margin_start gtk_widget_set_margin_top gtk_widget_set_tooltip_text gtk_widget_set_valign'''.split())
+
+# W7 public metadata, immutable in-memory textures and GTK dialog widgets only.
+# FileDialog, file I/O, image decoding, D-Bus and network remain host-owned.
+imports.update('''adw_avatar_set_custom_image gtk_picture_get_type gtk_picture_new gtk_picture_set_content_fit
+ gtk_picture_set_paintable gtk_picture_new_for_paintable gtk_picture_set_can_shrink gtk_picture_set_alternative_text gtk_spinner_get_type gtk_spinner_new gtk_spinner_set_spinning
+ gtk_widget_set_size_request gtk_orientable_get_type gtk_orientable_set_orientation gtk_box_set_spacing
+ gtk_widget_get_mapped gtk_widget_set_focusable adw_dialog_set_can_close adw_dialog_force_close
+ __memset_chk g_error_matches gdk_paintable_get_type gdk_texture_get_type gtk_text_buffer_get_bounds gtk_text_buffer_get_text
+ gtk_text_buffer_set_text gtk_text_view_get_buffer gtk_text_view_get_type gtk_text_view_new gtk_text_view_set_wrap_mode
+ adw_entry_row_add_suffix adw_header_bar_get_type adw_header_bar_pack_end g_task_return_pointer'''.split())
 
 def check_symbols(path):
     output = subprocess.check_output(['nm', '-g', str(path)] if sys.platform == 'darwin' else ['nm', '-D', str(path)], text=True)

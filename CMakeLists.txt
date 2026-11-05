@@ -647,7 +647,7 @@ endif()
 
 option(ENABLE_LIBNOSTR_PUBLISH "Build libnostr-publish (shared relay publish core; implied by ENABLE_NOSTR_DAV)" OFF)
 option(ENABLE_NOSTR_SHARE "Build nostr-share (Share to Nostr CLI + dialog; needs BUILD_LIBHANAMI)" OFF)
-if (ENABLE_LIBNOSTR_PUBLISH OR ENABLE_NOSTR_DAV OR ENABLE_NOSTR_SHARE OR ENABLE_NOSTR_WALLET_AGENT)
+if ((ENABLE_LIBNOSTR_PUBLISH OR ENABLE_NOSTR_DAV OR ENABLE_NOSTR_SHARE OR ENABLE_NOSTR_WALLET_AGENT) AND NOT TARGET nostr-publish)
   add_subdirectory(gnome/libnostr-publish)
 endif()
 

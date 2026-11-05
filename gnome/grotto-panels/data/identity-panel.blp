@@ -19,7 +19,7 @@ template $GrottoIdentityPanel: $GrottoPanel {
           }; }
           StackPage { name: "identity"; child: Adw.PreferencesPage preferences {
             Adw.PreferencesGroup {
-              Adw.Avatar avatar { size: 96; show-initials: true; halign: center; }
+              Box profile_box { orientation: vertical; }
               Label identity_count { halign: center; wrap: true; styles ["dim-label"] }
             }
             Adw.PreferencesGroup {

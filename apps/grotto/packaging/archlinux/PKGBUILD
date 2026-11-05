@@ -8,7 +8,7 @@ arch=('x86_64' 'aarch64')
 url='https://github.com/chebizarro/nostrc'
 license=('MIT')
 makedepends=('cmake' 'ninja' 'pkgconf' 'python' 'glib2-devel' 'gettext')
-depends=('glib2>=2.80' 'gtk4>=4.14' 'libadwaita>=1.5' 'json-glib' 'libsecret'
+depends=('glib2>=2.80' 'gtk4>=4.14' 'libadwaita>=1.5' 'json-glib' 'libsecret' 'libsoup3' 'curl'
          'openssl' 'libsecp256k1' 'libsodium' 'jansson' 'libwebsockets' 'qrencode'
          'zbar' 'gstreamer' 'gst-plugins-base-libs' 'gst-plugins-base' 'gst-plugins-good'
          'hicolor-icon-theme')

@@ -33,6 +33,7 @@ add_compile_definitions(GDK_VERSION_MIN_REQUIRED=GDK_VERSION_4_14
   ADW_VERSION_MIN_REQUIRED=ADW_VERSION_1_5 ADW_VERSION_MAX_ALLOWED=ADW_VERSION_1_5)
 pkg_check_modules(ADWAITA REQUIRED IMPORTED_TARGET libadwaita-1>=1.5)
 pkg_check_modules(JSON_GLIB REQUIRED IMPORTED_TARGET json-glib-1.0)
+pkg_check_modules(GROTTO_SOUP REQUIRED IMPORTED_TARGET libsoup-3.0)
 pkg_check_modules(LIBSECRET QUIET IMPORTED_TARGET libsecret-1)
 
 # Optional libsodium for secure memory operations and Ed25519 support
@@ -176,6 +177,11 @@ if(GROTTO_HAS_PINNED_BLUEPRINT_COMPILER AND BLUEPRINT_SOURCES)
   add_custom_target(grotto_blueprints ALL DEPENDS ${SIGNER_COMPILED_UI_FILES})
 endif()
 
+# Profile publishing reuses the shared transport/policy and Blossom client.
+if(NOT TARGET bud02 OR NOT BUILD_LIBBLOSSOM)
+  message(FATAL_ERROR "Grotto profile images require ENABLE_BUD02 and BUILD_LIBBLOSSOM")
+endif()
+
 # Main GTK4 application (UI shell)
 file(GLOB APP_SRC CONFIGURE_DEPENDS src/*.c)
 # Only the daemon hosts the shared approval gate; the GUI uses Control1.
@@ -236,7 +242,7 @@ target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/nips/ni
 target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/libnostr/include)
 # Link against core to resolve owner APIs
 target_sources(${APP_SIGNER_BIN} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/grotto-panels-control1-service.c")
-target_link_libraries(${APP_SIGNER_BIN} PRIVATE GrottoPanels::Panels)
+target_link_libraries(${APP_SIGNER_BIN} PRIVATE GrottoPanels::Panels nostr-publish nostrc::bud02 PkgConfig::GROTTO_SOUP)
 target_link_libraries(${APP_SIGNER_BIN} PRIVATE PkgConfig::GTK4 PkgConfig::GLIB PkgConfig::ADWAITA PkgConfig::JSON_GLIB nostr_nip55l_core nip04)
 # Ensure library directories are passed to linker (macOS fix)
 target_link_directories(${APP_SIGNER_BIN} PRIVATE ${GLIB_LIBRARY_DIRS})
@@ -501,6 +507,8 @@ if(NOT WIN32)
     list(APPEND _grotto_install_targets grotto-daemon)
   endif()
   nostrc_install_private_json(grotto ${_grotto_install_targets})
+  install(TARGETS nostr-publish LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}/grotto
+    NAMELINK_SKIP COMPONENT grotto)
   # With Groundhog in the same build nostr_gobject is shared; Grotto links it,
   # so it ships a private copy beside libnostr-json (same RUNPATH).
   if (NOT APPLE AND TARGET nostr_gobject)

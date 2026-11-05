@@ -1,0 +1,610 @@
+/* SPDX-License-Identifier: MIT */
+#include "grotto-profile-service.h"
+#include "relay_store.h"
+#include <nostr-publish/nostr-publish.h>
+#include <nostr-gobject-1.0/gn-blossom-client.h>
+#include <nostr/nip19/nip19.h>
+#include <nostr/bud02/auth.h>
+#include <nostr-event.h>
+#include <json.h>
+#include <nostr-kinds.h>
+#include <libsoup/soup.h>
+#include <json-glib/json-glib.h>
+#include <glib/gi18n.h>
+#include <glib/gstdio.h>
+#include <string.h>
+
+#define IMAGE_LIMIT (5 * 1024 * 1024)
+#define IMAGE_PIXELS (24 * 1024 * 1024)
+static const char *const field_names[] = {"name", "display_name", "about", "picture", "banner", "nip05", "lud16", "lud06", "website"};
+static const guint kinds[] = {NOSTR_KIND_PROFILE_METADATA, NOSTR_KIND_RELAY_LIST_METADATA, NOSTR_KIND_BLOSSOM_SERVER_LIST};
+typedef struct {
+  GrottoProfileAction action;
+  char *npub, hex[65];
+  GrottoProfileInfo *info;
+  GFile *file;
+  GBytes *bytes;
+  GdkTexture *preview;
+  char *mime;
+  GDBusConnection *bus;
+  GCancellable *cancel;
+  GHashTable *capabilities;
+  GObject *cache_scope;
+  GMutex *cache_lock;
+} Job;
+static void cache_lock_free(gpointer data) { g_mutex_clear(data); g_free(data); }
+static void job_free(gpointer data) {
+  Job *j = data; g_free(j->npub); grotto_profile_info_free(j->info); g_clear_object(&j->file);
+  g_clear_pointer(&j->bytes, g_bytes_unref); g_clear_object(&j->preview); g_free(j->mime); g_clear_object(&j->bus); g_hash_table_unref(j->capabilities); g_clear_object(&j->cache_scope); g_free(j);
+}
+static const char *string(JsonObject *o, const char *key) {
+  JsonNode *n = o ? json_object_get_member(o, key) : NULL;
+  return n && JSON_NODE_HOLDS_VALUE(n) && json_node_get_value_type(n) == G_TYPE_STRING ? json_node_get_string(n) : "";
+}
+static gboolean endpoint(const char *url, gboolean relay) {
+  g_autoptr(GUri) uri = url ? g_uri_parse(url, G_URI_FLAGS_NONE, NULL) : NULL;
+  if (!uri || !g_uri_get_host(uri) || g_uri_get_userinfo(uri) || g_uri_get_fragment(uri)) return FALSE;
+  const char *scheme = g_uri_get_scheme(uri);
+  return !g_strcmp0(scheme, relay ? "wss" : "https") || (relay && !g_strcmp0(scheme, "ws"));
+}
+static gboolean verified(const char *json, guint kind, const char *hex, guint64 *timestamp) {
+  NostrEvent *e = nostr_event_new();
+  gboolean ok = json && strlen(json) <= 131072 &&
+    nostr_event_deserialize_signed(e, json, NULL) == NOSTR_EVENT_VALIDATION_OK &&
+    nostr_event_validate(e, NULL) == NOSTR_EVENT_VALIDATION_OK &&
+    nostr_event_get_kind(e) == kind && !g_strcmp0(nostr_event_get_pubkey(e), hex);
+  if (ok && timestamp) *timestamp = nostr_event_get_created_at(e);
+  nostr_event_free(e); return ok;
+}
+static char *cache_path(Job *j, guint kind) {
+  g_autofree char *name = g_strdup_printf("%s-%u.json", j->hex, kind);
+  return g_build_filename(g_get_user_cache_dir(), "grotto", "profiles", name, NULL);
+}
+static char *cache_read(Job *j, guint kind) {
+  g_autofree char *path = cache_path(j, kind); g_autofree char *json = NULL;
+  GStatBuf st;
+  if (g_stat(path, &st) || st.st_size > 131072 || !g_file_get_contents(path, &json, NULL, NULL) || !verified(json, kind, j->hex, NULL)) return NULL;
+  return g_steal_pointer(&json);
+}
+static void cache_write(Job *j, guint kind, const char *json) {
+  if (!json || g_cancellable_is_cancelled(j->cancel)) return;
+  /* The host window owns this lock, not a global cache. A slower read from
+   * a pinned page must not overwrite a newer acknowledged profile. */
+  g_mutex_lock(j->cache_lock);
+  guint64 incoming = 0, current = 0;
+  g_autofree char *previous = cache_read(j, kind);
+  gboolean write = verified(json, kind, j->hex, &incoming);
+  if (write && previous && verified(previous, kind, j->hex, &current)) {
+    if (current > incoming) write = FALSE;
+    else if (current == incoming) {
+      NostrEvent *a = nostr_event_new(), *b = nostr_event_new();
+      nostr_event_deserialize(a, json); nostr_event_deserialize(b, previous);
+      if (strcmp(nostr_event_get_id(b), nostr_event_get_id(a)) <= 0) write = FALSE;
+      nostr_event_free(a); nostr_event_free(b);
+    }
+  }
+  g_autofree char *dir = g_build_filename(g_get_user_cache_dir(), "grotto", "profiles", NULL);
+  g_autofree char *path = cache_path(j, kind);
+  if (write && !g_mkdir_with_parents(dir, 0700))
+    g_file_set_contents_full(path, json, -1, G_FILE_SET_CONTENTS_CONSISTENT | G_FILE_SET_CONTENTS_DURABLE, 0600, NULL);
+  g_mutex_unlock(j->cache_lock);
+}
+static char *sign_event(gpointer data, const char *unsigned_json, GCancellable *cancel, GError **error) {
+  Job *j = data;
+  /* The shared NIP-42 builder deliberately leaves identity selection to its
+   * signer. Pin that selection here, before computing the expected event ID. */
+  g_autoptr(JsonParser) parser = json_parser_new();
+  if (!json_parser_load_from_data(parser, unsigned_json, -1, error) || !JSON_NODE_HOLDS_OBJECT(json_parser_get_root(parser))) return NULL;
+  JsonObject *object = json_node_get_object(json_parser_get_root(parser));
+  if (!json_object_has_member(object, "pubkey")) json_object_set_string_member(object, "pubkey", j->hex);
+  g_autofree char *pinned = json_to_string(json_parser_get_root(parser), FALSE);
+  unsigned_json = pinned;
+  g_autoptr(GVariant) reply = g_dbus_connection_call_sync(j->bus, "org.nostr.Signer", "/org/nostr/signer/grotto", "org.nostr.Grotto.Control1", "SignProfileEvent",
+    g_variant_new("(ss)", j->npub, unsigned_json), G_VARIANT_TYPE("(s)"), G_DBUS_CALL_FLAGS_NO_AUTO_START, 180000, cancel, error);
+  if (!reply) {
+    if (error && *error && !g_error_matches(*error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+      g_clear_error(error); g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED,
+        _("Grotto could not sign this request. Check the review and try again"));
+    }
+    return NULL;
+  }
+  char *json = NULL; g_variant_get(reply, "(s)", &json);
+  NostrEvent *input = nostr_event_new(), *output = nostr_event_new(); char id[65];
+  gboolean valid = nostr_event_deserialize(input, unsigned_json) == 0 && nostr_event_compute_id(input, id) == NOSTR_EVENT_VALIDATION_OK &&
+    nostr_event_deserialize_signed(output, json, NULL) == NOSTR_EVENT_VALIDATION_OK &&
+    nostr_event_validate(output, NULL) == NOSTR_EVENT_VALIDATION_OK &&
+    !g_strcmp0(id, nostr_event_get_id(output)) && !g_strcmp0(nostr_event_get_pubkey(output), j->hex);
+  nostr_event_free(input); nostr_event_free(output);
+  if (!valid) { g_free(json); g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "Signer returned a different or invalid event"); return NULL; }
+  return json;
+}
+static GBytes *read_stream(GInputStream *stream, gsize limit, GCancellable *cancel, GError **error);
+static gboolean probe_relay(Job *j, const char *url) {
+  gpointer known = g_hash_table_lookup(j->capabilities, url);
+  if (known) return GPOINTER_TO_INT(known) == 2;
+  gboolean auth = FALSE;
+  g_autofree char *http = g_strconcat(g_str_has_prefix(url, "wss:") ? "https:" : "http:", strchr(url, ':') + 1, NULL);
+  g_autoptr(SoupSession) session = soup_session_new_with_options("timeout", 3, NULL);
+  g_autoptr(SoupMessage) message = soup_message_new("GET", http);
+  soup_message_set_flags(message, SOUP_MESSAGE_NO_REDIRECT);
+  soup_message_headers_replace(soup_message_get_request_headers(message), "Accept", "application/nostr+json");
+  g_autoptr(GInputStream) stream = soup_session_send(session, message, j->cancel, NULL);
+  g_autoptr(GBytes) bytes = stream && soup_message_get_status(message) == SOUP_STATUS_OK ? read_stream(stream, 65536, j->cancel, NULL) : NULL;
+  if (bytes) {
+    gsize length; const char *data = g_bytes_get_data(bytes, &length); g_autoptr(JsonParser) parser = json_parser_new();
+    if (json_parser_load_from_data(parser, data, length, NULL) && JSON_NODE_HOLDS_OBJECT(json_parser_get_root(parser))) {
+      JsonObject *root = json_node_get_object(json_parser_get_root(parser)); JsonNode *limitation = json_object_get_member(root, "limitation");
+      JsonNode *required = limitation && JSON_NODE_HOLDS_OBJECT(limitation) ? json_object_get_member(json_node_get_object(limitation), "auth_required") : NULL;
+      auth = required && JSON_NODE_HOLDS_VALUE(required) && json_node_get_value_type(required) == G_TYPE_BOOLEAN && json_node_get_boolean(required);
+    }
+  }
+  /* NIP-11 is advisory; a missing document never substitutes for frames. */
+  g_hash_table_insert(j->capabilities, g_strdup(url), GINT_TO_POINTER(auth ? 2 : 1)); return auth;
+}
+/* A finite metadata backfill ends only at EOSE. The watchdog is a failure,
+ * never an empty-profile success. Each relay gets one bounded AUTH retry. */
+typedef struct {
+  Job *job; NostrPublishTransport *transport; NostrPublishSigner *signer;
+  gboolean done, complete, authed, auth_wait;
+  char *auth_id, *failure;
+  char **events;
+  NostrPublisher *publisher;
+  const char *signed_json;
+  char *event_id;
+  gboolean connected, publishing, required_auth, authenticated, requested;
+  gint64 auth_deadline;
+} Fetch;
+static void send_req(Fetch *f) {
+  if (f->publisher) {
+    g_autofree char *frame = g_strdup_printf("[\"EVENT\",%s]", f->signed_json);
+    if (!nostr_publish_transport_send_frame(f->transport, frame, NULL))
+      nostr_publisher_record_ok(f->publisher, nostr_publish_transport_get_url(f->transport), f->event_id, FALSE, "error: relay disconnected");
+    return;
+  }
+  f->requested = TRUE;
+  g_autofree char *req = g_strdup_printf("[\"REQ\",\"grotto-profile\",{\"authors\":[\"%s\"],\"kinds\":[%u],\"limit\":1},{\"authors\":[\"%s\"],\"kinds\":[%u],\"limit\":1},{\"authors\":[\"%s\"],\"kinds\":[%u],\"limit\":1}]", f->job->hex, kinds[0], f->job->hex, kinds[1], f->job->hex, kinds[2]);
+  if (!nostr_publish_transport_send_frame(f->transport, req, NULL)) { f->done = TRUE; f->failure = g_strdup("Relay disconnected"); }
+}
+static void fetch_state(NostrPublishTransport *transport, gboolean connected, const GError *error, gpointer data) {
+  (void)transport; Fetch *f = data;
+  if (connected) { f->connected = TRUE; if (!f->publisher && !f->required_auth) send_req(f); }
+  else if (!f->done) {
+    f->done = TRUE; f->failure = g_strdup(error ? error->message : "Relay disconnected");
+    if (f->publisher && f->publishing) nostr_publisher_record_ok(f->publisher,
+      nostr_publish_transport_get_url(transport), f->event_id, FALSE, "error: relay disconnected");
+  }
+}
+static void fetch_frame(NostrPublishTransport *transport, const char *hint, const char *json, gpointer data) {
+  (void)hint; Fetch *f = data;
+  if (f->done || strlen(json) > 262144) return;
+  g_autoptr(JsonParser) parser = json_parser_new();
+  if (!json_parser_load_from_data(parser, json, -1, NULL) || !JSON_NODE_HOLDS_ARRAY(json_parser_get_root(parser))) return;
+  JsonArray *a = json_node_get_array(json_parser_get_root(parser)); guint n = json_array_get_length(a);
+  if (!n) return;
+  JsonNode *type = json_array_get_element(a, 0);
+  if (!JSON_NODE_HOLDS_VALUE(type) || json_node_get_value_type(type) != G_TYPE_STRING) return;
+  const char *kind = json_node_get_string(type);
+  JsonNode *sub = n > 1 ? json_array_get_element(a, 1) : NULL;
+  const char *id = sub && JSON_NODE_HOLDS_VALUE(sub) && json_node_get_value_type(sub) == G_TYPE_STRING ? json_node_get_string(sub) : "";
+  if (!strcmp(kind, "AUTH") && *id) {
+    if (f->authed) return;
+    f->authed = TRUE;
+    g_autoptr(JsonBuilder) b = json_builder_new();
+    json_builder_begin_object(b); json_builder_set_member_name(b, "pubkey"); json_builder_add_string_value(b, f->job->hex);
+    json_builder_set_member_name(b, "kind"); json_builder_add_int_value(b, NOSTR_KIND_CLIENT_AUTHENTICATION);
+    json_builder_set_member_name(b, "created_at"); json_builder_add_int_value(b, g_get_real_time() / G_USEC_PER_SEC);
+    json_builder_set_member_name(b, "content"); json_builder_add_string_value(b, ""); json_builder_set_member_name(b, "tags"); json_builder_begin_array(b);
+    json_builder_begin_array(b); json_builder_add_string_value(b, "relay"); json_builder_add_string_value(b, nostr_publish_transport_get_url(transport)); json_builder_end_array(b);
+    json_builder_begin_array(b); json_builder_add_string_value(b, "challenge"); json_builder_add_string_value(b, id); json_builder_end_array(b);
+    json_builder_end_array(b); json_builder_end_object(b);
+    g_autoptr(JsonNode) root = json_builder_get_root(b); g_autofree char *raw = json_to_string(root, FALSE);
+    g_autoptr(GError) error = NULL;
+    g_autofree char *signed_json = nostr_publish_signer_sign_event_json(f->signer, raw, f->job->cancel, &error);
+    if (!signed_json) {
+      f->done = TRUE; f->failure = g_strdup(error ? error->message : "Relay authentication denied");
+      if (f->publisher && f->publishing) nostr_publisher_record_ok(f->publisher,
+        nostr_publish_transport_get_url(transport), f->event_id, FALSE, "restricted: relay authentication denied");
+      return;
+    }
+    NostrEvent *auth = nostr_event_new(); nostr_event_deserialize(auth, signed_json);
+    f->auth_id = g_strdup(nostr_event_get_id(auth)); nostr_event_free(auth); f->auth_wait = TRUE; f->auth_deadline = g_get_monotonic_time() + 15 * G_USEC_PER_SEC;
+    g_autofree char *frame = g_strdup_printf("[\"AUTH\",%s]", signed_json); nostr_publish_transport_send_frame(transport, frame, NULL); return;
+  }
+  if (!strcmp(kind, "OK") && f->auth_wait && !g_strcmp0(id, f->auth_id) && n >= 3) {
+    JsonNode *accepted = json_array_get_element(a, 2);
+    if (!JSON_NODE_HOLDS_VALUE(accepted) || json_node_get_value_type(accepted) != G_TYPE_BOOLEAN) return;
+    f->auth_wait = FALSE;
+    if (json_node_get_boolean(accepted)) { f->authenticated = TRUE; if (!f->publisher || f->publishing) send_req(f); }
+    else {
+      f->done = TRUE; f->failure = g_strdup("Relay authentication rejected");
+      if (f->publisher && f->publishing) nostr_publisher_record_ok(f->publisher,
+        nostr_publish_transport_get_url(transport), f->event_id, FALSE, "restricted: relay authentication rejected");
+    } return;
+  }
+  if (f->publisher) {
+    if (strcmp(kind, "OK") || g_strcmp0(id, f->event_id) || n < 3) return;
+    JsonNode *accepted = json_array_get_element(a, 2);
+    if (!JSON_NODE_HOLDS_VALUE(accepted) || json_node_get_value_type(accepted) != G_TYPE_BOOLEAN) return;
+    const char *reason = n > 3 && JSON_NODE_HOLDS_VALUE(json_array_get_element(a, 3)) && json_node_get_value_type(json_array_get_element(a, 3)) == G_TYPE_STRING ? json_array_get_string_element(a, 3) : "";
+    gboolean ok = json_node_get_boolean(accepted);
+    if (!ok && g_str_has_prefix(reason, "auth-required:") && (!f->authed || f->auth_wait)) return;
+    f->done = TRUE;
+    nostr_publisher_record_ok(f->publisher, nostr_publish_transport_get_url(transport), id, ok, reason); return;
+  }
+  if (strcmp(id, "grotto-profile") || !f->requested) return;
+  if (!strcmp(kind, "EOSE")) { f->complete = TRUE; f->done = TRUE; }
+  else if (!strcmp(kind, "CLOSED")) {
+    const char *reason = n > 2 && JSON_NODE_HOLDS_VALUE(json_array_get_element(a, 2)) && json_node_get_value_type(json_array_get_element(a, 2)) == G_TYPE_STRING ? json_array_get_string_element(a, 2) : "Relay closed the profile subscription";
+    if (g_str_has_prefix(reason, "auth-required:") && !f->authed) return; /* AUTH challenge follows */
+    if (f->auth_wait) return;
+    f->done = TRUE; f->failure = g_strdup(reason);
+  } else if (!strcmp(kind, "EVENT") && n >= 3 && JSON_NODE_HOLDS_OBJECT(json_array_get_element(a, 2))) {
+    g_autofree char *event = json_to_string(json_array_get_element(a, 2), FALSE);
+    for (guint i = 0; i < G_N_ELEMENTS(kinds); i++) {
+      guint64 timestamp = 0, old = 0;
+      if (!verified(event, kinds[i], f->job->hex, &timestamp)) continue;
+      if (f->events[i]) verified(f->events[i], kinds[i], f->job->hex, &old);
+      gboolean replace = !f->events[i] || timestamp > old;
+      if (f->events[i] && timestamp == old) {
+        NostrEvent *previous = nostr_event_new(); nostr_event_deserialize(previous, f->events[i]);
+        replace = strcmp(string(json_node_get_object(json_array_get_element(a, 2)), "id"), nostr_event_get_id(previous)) < 0;
+        nostr_event_free(previous);
+      }
+      if (replace) { g_free(f->events[i]); f->events[i] = g_strdup(event); }
+    }
+  }
+}
+static gboolean deadline(gpointer data) {
+  Fetch *f = data;
+  if (f->auth_wait && g_get_monotonic_time() < f->auth_deadline) return G_SOURCE_CONTINUE;
+  if (!f->done) { f->done = TRUE; f->failure = g_strdup("Relay did not finish profile backfill"); }
+  return G_SOURCE_REMOVE;
+}
+static gboolean cancelled(GCancellable *cancel, gpointer data) { (void)cancel; Fetch *f = data; f->done = TRUE; return G_SOURCE_REMOVE; }
+static gboolean fetch_relay(Job *j, NostrPublishSigner *signer, const char *url, char **events) {
+  if (!endpoint(url, TRUE)) return FALSE;
+  g_autoptr(NostrPublishTransport) transport = nostr_publish_transport_new_websocket(url);
+  Fetch f = {.job = j, .transport = transport, .signer = signer, .events = events, .required_auth = probe_relay(j, url)};
+  nostr_publish_transport_set_state_callback(transport, fetch_state, &f); nostr_publish_transport_set_listener(transport, fetch_frame, &f);
+  g_autoptr(GSource) timeout = g_timeout_source_new_seconds(15); g_source_set_callback(timeout, deadline, &f, NULL); g_source_attach(timeout, g_main_context_get_thread_default());
+  g_autoptr(GSource) cancellation = g_cancellable_source_new(j->cancel); g_source_set_callback(cancellation, G_SOURCE_FUNC(cancelled), &f, NULL); g_source_attach(cancellation, g_main_context_get_thread_default());
+  nostr_publish_transport_connect_async(transport);
+  while (!f.done) g_main_context_iteration(g_main_context_get_thread_default(), TRUE);
+  nostr_publish_transport_set_state_callback(transport, NULL, NULL); nostr_publish_transport_set_listener(transport, NULL, NULL);
+  nostr_publish_transport_send_frame(transport, "[\"CLOSE\",\"grotto-profile\"]", NULL); nostr_publish_transport_disconnect(transport);
+  g_source_destroy(timeout); g_source_destroy(cancellation); g_free(f.auth_id); g_free(f.failure); return f.complete;
+}
+static void close_publish(gpointer data) {
+  Fetch *f = data;
+  nostr_publish_transport_set_listener(f->transport, NULL, NULL);
+  nostr_publish_transport_set_state_callback(f->transport, NULL, NULL);
+  nostr_publish_transport_disconnect(f->transport); nostr_publish_transport_unref(f->transport);
+  g_free(f->auth_id); g_free(f->event_id); g_free(f->failure); g_free(f);
+}
+static GPtrArray *open_publish(Job *j, NostrPublishSigner *signer, NostrPublisher *publisher, const char *json, char **urls) {
+  GPtrArray *connections = g_ptr_array_new_with_free_func(close_publish);
+  NostrEvent *event = nostr_event_new(); nostr_event_deserialize(event, json);
+  for (guint i = 0; urls[i] && !g_cancellable_is_cancelled(j->cancel); i++) {
+    if (!endpoint(urls[i], TRUE)) continue;
+    Fetch *f = g_new0(Fetch, 1); f->job = j; f->signer = signer; f->publisher = publisher;
+    f->required_auth = probe_relay(j, urls[i]);
+    f->signed_json = json; f->event_id = g_strdup(nostr_event_get_id(event)); f->transport = nostr_publish_transport_new_websocket(urls[i]);
+    g_ptr_array_add(connections, f);
+    nostr_publish_transport_set_listener(f->transport, fetch_frame, f); nostr_publish_transport_set_state_callback(f->transport, fetch_state, f);
+    g_autoptr(GSource) timer = g_timeout_source_new_seconds(15); g_source_set_callback(timer, deadline, f, NULL); g_source_attach(timer, g_main_context_get_thread_default());
+    g_autoptr(GSource) cancellation = g_cancellable_source_new(j->cancel); g_source_set_callback(cancellation, G_SOURCE_FUNC(cancelled), f, NULL); g_source_attach(cancellation, g_main_context_get_thread_default());
+    nostr_publish_transport_connect_async(f->transport);
+    while (!f->done && (!f->connected || (f->required_auth && !f->authenticated))) g_main_context_iteration(g_main_context_get_thread_default(), TRUE);
+    g_source_destroy(timer); g_source_destroy(cancellation);
+    if (f->connected && !f->done) nostr_publisher_bind_transport(publisher, urls[i], f->transport);
+  }
+  nostr_event_free(event); return connections;
+}
+static char **configured(Job *j, gboolean write) {
+  RelayStore *store = relay_store_new_for_identity(j->npub); relay_store_load(store);
+  if (!relay_store_identity_has_config(j->npub)) { relay_store_free(store); store = relay_store_new(); relay_store_load(store); }
+  g_autoptr(GPtrArray) rows = write ? relay_store_get_write_relays(store) : relay_store_get_read_relays(store);
+  g_autoptr(GStrvBuilder) b = g_strv_builder_new();
+  for (guint i = 0; rows && i < rows->len; i++) { const char *url = g_ptr_array_index(rows, i); if (endpoint(url, TRUE)) g_strv_builder_add(b, url); }
+  if ((!rows || !rows->len) && !relay_store_identity_has_config(j->npub)) {
+    g_autoptr(GSettingsSchema) schema = g_settings_schema_source_lookup(g_settings_schema_source_get_default(), "org.nostr.Grotto", TRUE);
+    if (schema) {
+      g_autoptr(GSettings) settings = g_settings_new_full(schema, NULL, NULL);
+      g_auto(GStrv) urls = g_settings_get_strv(settings, "relays");
+      for (guint i = 0; urls[i]; i++) if (endpoint(urls[i], TRUE)) g_strv_builder_add(b, urls[i]);
+    }
+  }
+  relay_store_free(store); return g_strv_builder_end(b);
+}
+static char **tag_urls(const char *event, const char *tag, gboolean relay) {
+  g_autoptr(GStrvBuilder) b = g_strv_builder_new(); g_autoptr(JsonParser) parser = json_parser_new();
+  if (event && json_parser_load_from_data(parser, event, -1, NULL) && JSON_NODE_HOLDS_OBJECT(json_parser_get_root(parser))) {
+    JsonObject *o = json_node_get_object(json_parser_get_root(parser)); JsonNode *node = json_object_get_member(o, "tags");
+    if (node && JSON_NODE_HOLDS_ARRAY(node)) {
+      JsonArray *tags = json_node_get_array(node);
+      for (guint i = 0; i < json_array_get_length(tags); i++) {
+        JsonNode *n = json_array_get_element(tags, i); if (!JSON_NODE_HOLDS_ARRAY(n)) continue;
+        JsonArray *t = json_node_get_array(n); if (json_array_get_length(t) < 2) continue;
+        JsonNode *k = json_array_get_element(t, 0), *v = json_array_get_element(t, 1);
+        if (!JSON_NODE_HOLDS_VALUE(k) || !JSON_NODE_HOLDS_VALUE(v) || json_node_get_value_type(k) != G_TYPE_STRING || json_node_get_value_type(v) != G_TYPE_STRING) continue;
+        const char *url = json_node_get_string(v);
+        if (!strcmp(json_node_get_string(k), tag) && endpoint(url, relay)) g_strv_builder_add(b, url);
+      }
+    }
+  }
+  return g_strv_builder_end(b);
+}
+static gboolean discover(Job *j, NostrPublishSigner *signer, char **events, GError **error) {
+  g_auto(GStrv) urls = configured(j, FALSE), writes = configured(j, TRUE);
+  g_autoptr(GStrvBuilder) initial = g_strv_builder_new();
+  g_strv_builder_addv(initial, (const char **)urls); g_strv_builder_addv(initial, (const char **)writes);
+  g_strfreev(urls); urls = g_strv_builder_end(initial);
+  guint attempted = 0, completed = 0;
+  g_autoptr(GHashTable) seen = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  for (guint round = 0; round < 2; round++) {
+    for (guint i = 0; urls && urls[i] && !g_cancellable_is_cancelled(j->cancel); i++)
+      if (g_hash_table_add(seen, g_strdup(urls[i]))) { attempted++; if (fetch_relay(j, signer, urls[i], events)) completed++; }
+    g_strfreev(urls); urls = events[1] ? nostr_publish_nip65_relays(events[1], NOSTR_PUBLISH_NIP65_READ | NOSTR_PUBLISH_NIP65_WRITE, NULL) : NULL;
+  }
+  if (g_cancellable_set_error_if_cancelled(j->cancel, error)) return FALSE;
+  if (!completed || (!events[0] && completed != attempted)) { g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_HOST_UNREACHABLE, _("Profile unavailable. Check your relays and try again")); return FALSE; }
+  return TRUE;
+}
+static GrottoProfileInfo *profile_parse(Job *j, const char *event, GError **error) {
+  GrottoProfileInfo *p = grotto_profile_info_copy(NULL);
+  if (!event) return p;
+  NostrEvent *e = nostr_event_new();
+  g_autoptr(JsonParser) parser = json_parser_new();
+  if (!verified(event, kinds[0], j->hex, &p->created_at) || nostr_event_deserialize(e, event)) goto invalid;
+  if (!json_parser_load_from_data(parser, nostr_event_get_content(e), -1, NULL) || !JSON_NODE_HOLDS_OBJECT(json_parser_get_root(parser))) goto invalid;
+  JsonObject *content = json_node_get_object(json_parser_get_root(parser));
+  for (guint i = 0; i < GROTTO_PROFILE_N_FIELDS; i++) { g_free(p->fields[i]); p->fields[i] = g_strdup(string(content, field_names[i])); }
+  if (!grotto_profile_info_validate(p, error)) { nostr_event_free(e); grotto_profile_info_free(p); return NULL; }
+  p->published = TRUE; nostr_event_free(e); return p;
+invalid:
+  nostr_event_free(e); grotto_profile_info_free(p); g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, _("The published profile is not valid metadata")); return NULL;
+}
+static GBytes *read_stream(GInputStream *stream, gsize limit, GCancellable *cancel, GError **error) {
+  g_autoptr(GByteArray) bytes = g_byte_array_new(); guint8 buffer[16384]; gssize n;
+  while ((n = g_input_stream_read(stream, buffer, MIN(sizeof buffer, limit + 1 - bytes->len), cancel, error)) > 0) {
+    g_byte_array_append(bytes, buffer, n);
+    if (bytes->len > limit) { g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NO_SPACE, _("Choose an image smaller than 5 MB")); return NULL; }
+  }
+  return n < 0 ? NULL : g_byte_array_free_to_bytes(g_steal_pointer(&bytes));
+}
+static void image_size(GdkPixbufLoader *loader, int width, int height, gpointer data) {
+  gboolean *ok = data; *ok = width > 0 && height > 0 && width <= 8192 && height <= 8192 && (guint64)width * height <= IMAGE_PIXELS;
+  if (!*ok) gdk_pixbuf_loader_set_size(loader, 1, 1);
+}
+static GdkTexture *image_decode(GBytes *bytes, char **mime, GError **error) {
+  gsize len; const guint8 *data = g_bytes_get_data(bytes, &len);
+  /* Select a raster decoder before parsing; a renamed SVG must never reach
+   * the generic loader (which can resolve external resources). */
+  const char *type = len >= 8 && !memcmp(data, "\211PNG\r\n\032\n", 8) ? "png" :
+    len >= 3 && data[0] == 0xff && data[1] == 0xd8 && data[2] == 0xff ? "jpeg" :
+    len >= 12 && !memcmp(data, "RIFF", 4) && !memcmp(data + 8, "WEBP", 4) ? "webp" : NULL;
+  if (!type || len > IMAGE_LIMIT) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, _("Choose a PNG, JPEG or WebP image smaller than 5 MB")); return NULL;
+  }
+  g_autoptr(GdkPixbufLoader) loader = gdk_pixbuf_loader_new_with_type(type, error);
+  if (!loader) return NULL;
+  gboolean size_ok = FALSE;
+  g_signal_connect(loader, "size-prepared", G_CALLBACK(image_size), &size_ok);
+  gboolean ok = gdk_pixbuf_loader_write(loader, data, len, error);
+  if (!gdk_pixbuf_loader_close(loader, ok ? error : NULL)) ok = FALSE;
+  if (!ok || !size_ok) {
+    if (error && !*error) g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, _("Choose an image up to 8192 pixels per side and 24 megapixels")); return NULL;
+  }
+  if (mime) *mime = g_strdup(!strcmp(type, "png") ? "image/png" : !strcmp(type, "jpeg") ? "image/jpeg" : "image/webp");
+  return gdk_texture_new_for_pixbuf(gdk_pixbuf_loader_get_pixbuf(loader));
+}
+static GdkTexture *download_image(Job *j, const char *url, gboolean online) {
+  if (!endpoint(url, FALSE)) return NULL;
+  g_autofree char *hash = g_compute_checksum_for_string(G_CHECKSUM_SHA256, url, -1);
+  g_autofree char *name = g_strdup_printf("%s-image-%s", j->hex, hash);
+  g_autofree char *dir = g_build_filename(g_get_user_cache_dir(), "grotto", "profiles", NULL);
+  g_autofree char *path = g_build_filename(dir, name, NULL);
+  g_autoptr(GBytes) bytes = NULL;
+  if (online && !g_cancellable_is_cancelled(j->cancel)) {
+    g_autoptr(SoupSession) session = soup_session_new_with_options("timeout", 15, NULL);
+    g_autoptr(SoupMessage) message = soup_message_new("GET", url); soup_message_set_flags(message, SOUP_MESSAGE_NO_REDIRECT);
+    g_autoptr(GInputStream) stream = soup_session_send(session, message, j->cancel, NULL);
+    if (stream && soup_message_get_status(message) == SOUP_STATUS_OK) bytes = read_stream(stream, IMAGE_LIMIT, j->cancel, NULL);
+    GdkTexture *texture = bytes ? image_decode(bytes, NULL, NULL) : NULL;
+    if (texture) {
+      if (!g_cancellable_is_cancelled(j->cancel) && !g_mkdir_with_parents(dir, 0700)) {
+        gsize size; const char *data = g_bytes_get_data(bytes, &size);
+        g_file_set_contents_full(path, data, size, G_FILE_SET_CONTENTS_CONSISTENT, 0600, NULL);
+      }
+      return texture;
+    }
+  }
+  GStatBuf st; g_autofree char *data = NULL; gsize size;
+  if (g_stat(path, &st) || st.st_size > IMAGE_LIMIT || !g_file_get_contents(path, &data, &size, NULL)) return NULL;
+  g_clear_pointer(&bytes, g_bytes_unref); bytes = g_bytes_new_take(g_steal_pointer(&data), size);
+  return image_decode(bytes, NULL, NULL);
+}
+typedef struct { gboolean done, ok; guint accepted; } Publication;
+static void published(NostrPublisher *publisher, const NostrPublishResult *result, gpointer data) {
+  (void)publisher; Publication *p = data; p->done = TRUE; p->ok = nostr_publish_result_get_verdict(result) == NOSTR_PUBLISH_VERDICT_PUBLISHED;
+  p->accepted = nostr_publish_result_get_n_accepted(result);
+}
+static gboolean publish_deadline(gpointer data) { nostr_publisher_tick(data, g_get_real_time() / G_USEC_PER_SEC); return G_SOURCE_CONTINUE; }
+static char *save_profile(Job *j, NostrPublishSigner *signer, char **events, GError **error) {
+  g_auto(GStrv) urls = events[1] ? nostr_publish_nip65_relays(events[1], NOSTR_PUBLISH_NIP65_WRITE, NULL) : configured(j, TRUE);
+  if (!urls || !urls[0]) { g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND, _("No write relays are configured for this identity")); return NULL; }
+  /* Keep fields from other clients (including extension fields) when editing. */
+  g_autoptr(JsonParser) parser = json_parser_new();
+  JsonObject *content = NULL; guint64 timestamp = 0;
+  if (events[0]) {
+    NostrEvent *e = nostr_event_new(); nostr_event_deserialize(e, events[0]);
+    if (json_parser_load_from_data(parser, nostr_event_get_content(e), -1, NULL) && JSON_NODE_HOLDS_OBJECT(json_parser_get_root(parser))) content = json_node_get_object(json_parser_get_root(parser));
+    timestamp = nostr_event_get_created_at(e); nostr_event_free(e);
+  }
+  if (timestamp > j->info->created_at) { g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_BUSY, _("This profile changed elsewhere. Refresh it before saving")); return NULL; }
+  g_autoptr(JsonObject) fresh = content ? json_object_ref(content) : json_object_new();
+  for (guint i = 0; i < GROTTO_PROFILE_N_FIELDS; i++) json_object_set_string_member(fresh, field_names[i], j->info->fields[i]);
+  g_autoptr(JsonNode) node = json_node_new(JSON_NODE_OBJECT); json_node_set_object(node, fresh);
+  g_autofree char *text = json_to_string(node, FALSE);
+  NostrEvent *event = nostr_event_new(); nostr_event_set_kind(event, NOSTR_KIND_PROFILE_METADATA); nostr_event_set_pubkey(event, j->hex);
+  nostr_event_set_created_at(event, MAX((guint64)(g_get_real_time() / G_USEC_PER_SEC), timestamp + 1)); nostr_event_set_content(event, text);
+  g_autofree char *raw = nostr_event_serialize_compact(event); nostr_event_free(event);
+  g_autofree char *signed_json = nostr_publish_signer_sign_event_json(signer, raw, j->cancel, error);
+  if (!signed_json) return NULL;
+  NostrPublisher *publisher = nostr_publisher_new(signer);
+  g_autoptr(GPtrArray) connections = open_publish(j, signer, publisher, signed_json, urls);
+  for (guint i = 0; i < connections->len; i++) ((Fetch *)g_ptr_array_index(connections, i))->publishing = TRUE;
+  NostrPublishPolicy policy; nostr_publish_policy_init(&policy); policy.ok_wait_sec = 240;
+  Publication p = {0};
+  gboolean started = nostr_publisher_publish_signed(publisher, signed_json, (const char *const *)urls, &policy, 0, NULL, published, &p, NULL, error);
+  g_autoptr(GSource) timer = g_timeout_source_new_seconds(1); g_source_set_callback(timer, publish_deadline, publisher, NULL); g_source_attach(timer, g_main_context_get_thread_default());
+  while (started && !p.done && !g_cancellable_is_cancelled(j->cancel)) g_main_context_iteration(g_main_context_get_thread_default(), TRUE);
+  g_source_destroy(timer); g_clear_pointer(&connections, g_ptr_array_unref); nostr_publisher_free(publisher);
+  if (!started) return NULL;
+  if (g_cancellable_set_error_if_cancelled(j->cancel, error)) return NULL;
+  if (!p.ok) {
+    if (p.accepted) cache_write(j, kinds[0], signed_json);
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED, p.accepted
+      ? _("Your profile reached some relays, but not all. Close the editor and refresh before trying again")
+      : _("No relay confirmed publication. Your edits are still here")); return NULL;
+  }
+  cache_write(j, kinds[0], signed_json); return g_steal_pointer(&signed_json);
+}
+static void upload_done(GObject *source, GAsyncResult *result, gpointer data) { (void)source; *(GAsyncResult **)data = g_object_ref(result); }
+static gboolean upload(Job *j, NostrPublishSigner *signer, const char *server_event, GError **error) {
+  g_auto(GStrv) servers = tag_urls(server_event, "server", FALSE);
+  if (!servers[0]) { g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND, _("No Blossom servers found. Set up Media Servers in Nostr Settings first")); return FALSE; }
+  g_autofree char *hash = g_compute_checksum_for_bytes(G_CHECKSUM_SHA256, j->bytes);
+  NostrEvent *event = nostr_bud02_create_auth_event(NOSTR_BUD02_ACTION_UPLOAD, hash, 0, NULL); nostr_event_set_pubkey(event, j->hex);
+  g_autofree char *raw = nostr_event_serialize_compact(event); nostr_event_free(event);
+  g_autofree char *auth = nostr_publish_signer_sign_event_json(signer, raw, j->cancel, error); if (!auth) return FALSE;
+  for (guint i = 0; servers[i] && !g_cancellable_is_cancelled(j->cancel); i++) {
+    g_autoptr(GnBlossomClient) client = gn_blossom_client_new(servers[i]); gn_blossom_client_set_limits(client, IMAGE_LIMIT, 60, "Grotto/" GROTTO_VERSION);
+    GAsyncResult *result = NULL; gn_blossom_client_upload_async(client, j->bytes, hash, j->mime, auth, j->cancel, upload_done, &result);
+    while (!result) g_main_context_iteration(g_main_context_get_thread_default(), TRUE);
+    g_autofree char *url = gn_blossom_client_upload_finish(client, result, NULL); g_object_unref(result);
+    if (url && !*url) { g_free(url); url = g_strdup_printf("%s%s%s", servers[i], g_str_has_suffix(servers[i], "/") ? "" : "/", hash); }
+    if (!url || !endpoint(url, FALSE)) continue;
+    guint index = j->action == GROTTO_PROFILE_CHOOSE_AVATAR ? 0 : 1, field = index ? GROTTO_PROFILE_BANNER : GROTTO_PROFILE_PICTURE;
+    g_free(j->info->fields[field]); j->info->fields[field] = g_strdup(url); g_set_object(&j->info->images[index], j->preview); return TRUE;
+  }
+  if (!g_cancellable_set_error_if_cancelled(j->cancel, error)) g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED, _("Image upload failed. Check your media servers and try again"));
+  return FALSE;
+}
+static void worker(GTask *task, gpointer source, gpointer data, GCancellable *cancel) {
+  (void)source; Job *j = data; j->cancel = cancel;
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GMainContext) context = g_main_context_new(); g_main_context_push_thread_default(context);
+  /* Each operation owns a connection. Closing it on this worker cancels
+   * the daemon continuation too; a local GCancellable alone cannot cancel
+   * an already-delivered D-Bus signing request on the UI's shared bus. */
+  g_autofree char *address = g_dbus_address_get_for_bus_sync(G_BUS_TYPE_SESSION, cancel, &error);
+  j->bus = address ? g_dbus_connection_new_for_address_sync(address,
+    G_DBUS_CONNECTION_FLAGS_AUTHENTICATION_CLIENT | G_DBUS_CONNECTION_FLAGS_MESSAGE_BUS_CONNECTION,
+    NULL, cancel, &error) : NULL;
+  if (j->bus) g_dbus_connection_set_exit_on_close(j->bus, FALSE);
+  else if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+    g_clear_error(&error); g_set_error_literal(&error, G_IO_ERROR, G_IO_ERROR_HOST_UNREACHABLE,
+      _("Signer unavailable. Open Grotto and try again"));
+  }
+  const NostrPublishSignerVTable table = {.sign_event_json = sign_event};
+  g_autoptr(NostrPublishSigner) signer = nostr_publish_signer_new_from_vtable(&table, j);
+  char *events[4] = {cache_read(j, kinds[0]), cache_read(j, kinds[1]), cache_read(j, kinds[2]), NULL};
+  gboolean network = TRUE;
+  g_autoptr(GSettingsSchema) schema = g_settings_schema_source_lookup(g_settings_schema_source_get_default(), "org.nostr.Grotto", TRUE);
+  if (schema) {
+    g_autoptr(GSettings) settings = g_settings_new_full(schema, NULL, NULL);
+    network = !g_settings_get_boolean(settings, "use-tor-for-relays");
+  }
+  if (!network && !error) g_set_error_literal(&error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
+    _("Profile network access is unavailable in Tor mode. The saved profile is still available"));
+  gboolean online = network && j->bus && discover(j, signer, events, &error);
+  GrottoProfileInfo *result = NULL;
+  if (j->action == GROTTO_PROFILE_FETCH) {
+    if (online || events[0]) { g_clear_error(&error); result = profile_parse(j, events[0], &error); if (result) result->cached = !online; }
+    if (result) {
+      if (online) for (guint i = 0; i < 3; i++) cache_write(j, kinds[i], events[i]);
+      for (guint i = 0; i < 2; i++) result->images[i] = download_image(j, result->fields[i ? GROTTO_PROFILE_BANNER : GROTTO_PROFILE_PICTURE], online);
+    }
+  } else if (online && j->action == GROTTO_PROFILE_SAVE) {
+    g_autofree char *saved = save_profile(j, signer, events, &error);
+    if (saved) {
+      g_free(events[0]); events[0] = g_steal_pointer(&saved);
+      /* Re-fetch through the same EOSE-aware path, retaining the acknowledged
+       * event if a read replica has not caught up yet. Never sign twice. */
+      g_autoptr(GError) refresh_error = NULL; gboolean refreshed = discover(j, signer, events, &refresh_error);
+      result = profile_parse(j, events[0], &error); if (result) { result->cached = !refreshed;
+        for (guint i = 0; i < 2; i++) result->images[i] = download_image(j, result->fields[i ? GROTTO_PROFILE_BANNER : GROTTO_PROFILE_PICTURE], online); }
+    }
+  } else if (online && upload(j, signer, events[2], &error)) result = grotto_profile_info_copy(j->info);
+  for (guint i = 0; i < 3; i++) g_free(events[i]);
+  if (j->bus) g_dbus_connection_close_sync(j->bus, NULL, NULL);
+  g_main_context_pop_thread_default(context);
+  if (result) g_task_return_pointer(task, result, (GDestroyNotify)grotto_profile_info_free);
+  else if (error) g_task_return_error(task, g_steal_pointer(&error));
+  else g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED, "Profile operation failed");
+}
+static void preview_worker(GTask *task, gpointer source, gpointer data, GCancellable *cancel) {
+  (void)source; Job *j = data; g_autoptr(GError) error = NULL;
+  g_autoptr(GFileInputStream) stream = g_file_read(j->file, cancel, &error);
+  j->bytes = stream ? read_stream(G_INPUT_STREAM(stream), IMAGE_LIMIT, cancel, &error) : NULL;
+  j->preview = j->bytes ? image_decode(j->bytes, &j->mime, &error) : NULL;
+  if (j->preview) g_task_return_boolean(task, TRUE); else g_task_return_error(task, g_steal_pointer(&error));
+}
+static void preview_answer(GObject *source, GAsyncResult *result, gpointer data) {
+  GTask *task = data;
+  const char *answer = adw_alert_dialog_choose_finish(ADW_ALERT_DIALOG(source), result);
+  if (!strcmp(answer, "upload")) g_task_run_in_thread(task, worker);
+  else g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_CANCELLED, "Image selection cancelled");
+  g_object_unref(task);
+}
+static void preview_ready(GObject *source, GAsyncResult *result, gpointer data) {
+  (void)source; GTask *task = data; Job *j = g_task_get_task_data(task); g_autoptr(GError) error = NULL;
+  if (!g_task_propagate_boolean(G_TASK(result), &error)) {
+    if (g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) g_task_return_error(task, g_steal_pointer(&error));
+    else g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, _("The image could not be opened. Choose a PNG, JPEG or WebP image smaller than 5 MB, up to 8192 pixels per side and 24 megapixels"));
+    g_object_unref(task); return;
+  }
+  AdwDialog *dialog = adw_alert_dialog_new(_("Upload Profile Image?"), _("This image will be public. PNG, JPEG and WebP images up to 5 MB are supported"));
+  GtkWidget *picture = gtk_picture_new_for_paintable(GDK_PAINTABLE(j->preview)); gtk_picture_set_can_shrink(GTK_PICTURE(picture), TRUE); gtk_widget_set_size_request(picture, -1, 180);
+  gtk_picture_set_alternative_text(GTK_PICTURE(picture), j->action == GROTTO_PROFILE_CHOOSE_AVATAR ? _("Selected Avatar") : _("Selected Banner"));
+  adw_alert_dialog_set_extra_child(ADW_ALERT_DIALOG(dialog), picture); adw_alert_dialog_add_responses(ADW_ALERT_DIALOG(dialog), "cancel", _("Cancel"), "upload", _("Upload"), NULL);
+  adw_alert_dialog_set_close_response(ADW_ALERT_DIALOG(dialog), "cancel"); adw_alert_dialog_set_response_appearance(ADW_ALERT_DIALOG(dialog), "upload", ADW_RESPONSE_SUGGESTED);
+  adw_alert_dialog_choose(ADW_ALERT_DIALOG(dialog), g_task_get_source_object(task), g_task_get_cancellable(task), preview_answer, task);
+}
+static void chosen(GObject *source, GAsyncResult *result, gpointer data) {
+  GTask *task = data; Job *j = g_task_get_task_data(task); g_autoptr(GError) error = NULL;
+  j->file = gtk_file_dialog_open_finish(GTK_FILE_DIALOG(source), result, &error);
+  if (!j->file || !g_file_is_native(j->file)) {
+    if (j->file) g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, _("Choose a local image file"));
+    else if (g_error_matches(error, GTK_DIALOG_ERROR, GTK_DIALOG_ERROR_DISMISSED) || g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+      g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_CANCELLED, "Image selection cancelled");
+    else g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED, _("Image selection is unavailable. Try again"));
+    g_object_unref(task); return;
+  }
+  GTask *preview = g_task_new(NULL, g_task_get_cancellable(task), preview_ready, task);
+  g_task_set_task_data(preview, j, NULL); g_task_run_in_thread(preview, preview_worker); g_object_unref(preview);
+}
+void grotto_profile_service_async(GtkWindow *parent, GrottoProfileAction action, const char *npub,
+  const GrottoProfileInfo *info, GCancellable *cancel, GAsyncReadyCallback callback, gpointer data) {
+  g_autoptr(GCancellable) owned_cancel = cancel ? g_object_ref(cancel) : g_cancellable_new();
+  GTask *task = g_task_new(parent, owned_cancel, callback, data); guint8 pk[32];
+  if (!npub || nostr_nip19_decode_npub(npub, pk) || !grotto_profile_info_validate(info, NULL)) {
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "Invalid identity or profile"); g_object_unref(task); return;
+  }
+  Job *j = g_new0(Job, 1); j->capabilities = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL); j->action = action;
+  j->cache_scope = parent ? g_object_ref(G_OBJECT(parent)) : g_object_new(G_TYPE_OBJECT, NULL);
+  j->cache_lock = g_object_get_data(j->cache_scope, "grotto-profile-cache-lock");
+  if (!j->cache_lock) {
+    j->cache_lock = g_new0(GMutex, 1); g_mutex_init(j->cache_lock);
+    g_object_set_data_full(j->cache_scope, "grotto-profile-cache-lock", j->cache_lock, cache_lock_free);
+  } j->npub = g_strdup(npub); j->info = grotto_profile_info_copy(info);
+  for (guint i = 0; i < 32; i++) g_snprintf(j->hex + 2 * i, 3, "%02x", pk[i]);
+  g_task_set_task_data(task, j, job_free);
+  if (action == GROTTO_PROFILE_CHOOSE_AVATAR || action == GROTTO_PROFILE_CHOOSE_BANNER) {
+    g_autoptr(GtkFileDialog) dialog = gtk_file_dialog_new(); gtk_file_dialog_set_title(dialog, action == GROTTO_PROFILE_CHOOSE_AVATAR ? _("Choose Avatar") : _("Choose Banner"));
+    g_autoptr(GListStore) filters = g_list_store_new(GTK_TYPE_FILE_FILTER); GtkFileFilter *filter = gtk_file_filter_new(); gtk_file_filter_set_name(filter, _("Profile Images"));
+    gtk_file_filter_add_mime_type(filter, "image/png"); gtk_file_filter_add_mime_type(filter, "image/jpeg"); gtk_file_filter_add_mime_type(filter, "image/webp"); g_list_store_append(filters, filter); g_object_unref(filter);
+    gtk_file_dialog_set_filters(dialog, G_LIST_MODEL(filters)); gtk_file_dialog_open(dialog, parent, cancel, chosen, task);
+  } else { g_task_run_in_thread(task, worker); g_object_unref(task); }
+}

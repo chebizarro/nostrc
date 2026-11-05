@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #include "grotto-panels.h"
+#include "grotto-profile-view.h"
 #include <glib/gi18n-lib.h>
 #include <string.h>
 
@@ -10,7 +11,8 @@ struct _GrottoIdentityPanel {
   GtkStack *content;
   AdwStatusPage *empty;
   AdwBanner *banner;
-  AdwAvatar *avatar;
+  GtkBox *profile_box;
+  GrottoProfileView *profile;
   AdwEntryRow *name_row;
   AdwActionRow *key_row, *backup_row, *apps_row, *default_row, *details_row;
   AdwPreferencesGroup *other_group, *add_group, *advanced_group;
@@ -61,6 +63,13 @@ static void forward_toast(gpointer f, const char *v) { forward(f, GROTTO_PANEL_H
 static void forward_backup(gpointer f, const char *v) { forward(f, GROTTO_PANEL_HOST_BACKUP, v); }
 static void forward_remove(gpointer f, const char *v) { forward(f, GROTTO_PANEL_HOST_REMOVE, v); }
 static void forward_open(gpointer f, const char *v) { forward(f, GROTTO_PANEL_HOST_OPEN_SIGNER, v); }
+static void forward_profile(gpointer data, GrottoProfileAction action, const char *key,
+  const GrottoProfileInfo *info, GCancellable *cancel, GAsyncReadyCallback callback, gpointer user_data) {
+  Forward *f = data; g_autoptr(GrottoPanel) panel = g_weak_ref_get(&f->panel);
+  if (panel) grotto_panel_profile_async(panel, action, key, info, cancel, callback, user_data);
+  else { GTask *task = g_task_new(NULL, cancel, callback, user_data);
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_CANCELLED, "Host closed"); g_object_unref(task); }
+}
 static void push_identity(GrottoIdentityPanel *self, const char *id) {
   GrottoPanel *child = GROTTO_PANEL(grotto_identity_panel_new(grotto_panel_get_service(GROTTO_PANEL(self)), id));
   gboolean controls;
@@ -71,6 +80,7 @@ static void push_identity(GrottoIdentityPanel *self, const char *id) {
   if (grotto_panel_host_can(GROTTO_PANEL(self), GROTTO_PANEL_HOST_BACKUP)) callbacks.open_backup = forward_backup;
   if (grotto_panel_host_can(GROTTO_PANEL(self), GROTTO_PANEL_HOST_REMOVE)) callbacks.remove_identity = forward_remove;
   if (grotto_panel_host_can(GROTTO_PANEL(self), GROTTO_PANEL_HOST_OPEN_SIGNER)) callbacks.open_in_signer = forward_open;
+  if (grotto_panel_has_profile_host(GROTTO_PANEL(self))) callbacks.profile_async = forward_profile;
   Forward *f = g_new0(Forward, 1); g_weak_ref_init(&f->panel, self);
   grotto_panel_set_host(child, &callbacks, f, forward_free);
   adw_navigation_view_push(self->navigation, ADW_NAVIGATION_PAGE(child));
@@ -135,12 +145,14 @@ static void render(GrottoIdentityPanel *self) {
   gtk_label_set_text(self->identity_count, identity_count);
   gtk_widget_set_visible(GTK_WIDGET(self->identity_count), !self->pinned);
   if (!m) {
+    grotto_profile_view_set_identity(self->profile, NULL, NULL, FALSE);
     gtk_widget_set_visible(GTK_WIDGET(self->backup_row), FALSE);
     gtk_widget_set_visible(GTK_WIDGET(self->advanced_group), FALSE);
     return;
   }
   g_autofree char *fallback = g_strdup_printf(_("Identity %.12s…%.6s"), m->public_key, m->public_key + MAX(0, (gint)strlen(m->public_key) - 6));
-  adw_avatar_set_text(self->avatar, *m->label ? m->label : fallback);
+  grotto_profile_view_set_identity(self->profile, self->identity, *m->label ? m->label : fallback,
+    available && m->can_sign && !m->watch_only);
   if (!self->busy && !(gtk_widget_get_state_flags(GTK_WIDGET(self->name_row)) & GTK_STATE_FLAG_FOCUS_WITHIN)) gtk_editable_set_text(GTK_EDITABLE(self->name_row), m->label);
   gboolean editable = !self->busy && grotto_panels_service_can(service, GROTTO_PANEL_SET_IDENTITY_LABEL);
   if (!editable && (gtk_widget_get_state_flags(GTK_WIDGET(self->name_row)) & GTK_STATE_FLAG_FOCUS_WITHIN))
@@ -214,7 +226,7 @@ static void grotto_identity_panel_class_init(GrottoIdentityPanelClass *klass) {
   GtkWidgetClass *wc = GTK_WIDGET_CLASS(klass);
   gtk_widget_class_set_template_from_resource(wc, "/org/nostr/GrottoPanels/identity-panel.ui");
 #define BIND(name) gtk_widget_class_bind_template_child(wc, GrottoIdentityPanel, name)
-  BIND(header); BIND(navigation); BIND(content); BIND(empty); BIND(banner); BIND(avatar); BIND(identity_count); BIND(name_row); BIND(key_row);
+  BIND(header); BIND(navigation); BIND(content); BIND(empty); BIND(banner); BIND(profile_box); BIND(identity_count); BIND(name_row); BIND(key_row);
   BIND(backup_row); BIND(apps_row); BIND(default_row); BIND(details_row); BIND(other_group); BIND(other_list);
   BIND(add_group); BIND(advanced_group); BIND(copy_key); BIND(show_qr); BIND(set_default); BIND(default_check);
   BIND(add_identity); BIND(empty_add); BIND(remove_identity);
@@ -223,6 +235,8 @@ static void grotto_identity_panel_class_init(GrottoIdentityPanelClass *klass) {
 static void grotto_identity_panel_init(GrottoIdentityPanel *self) {
   gtk_icon_theme_add_resource_path(gtk_icon_theme_get_for_display(gdk_display_get_default()), "/org/nostr/GrottoPanels/icons");
   gtk_widget_init_template(GTK_WIDGET(self));
+  self->profile = GROTTO_PROFILE_VIEW(grotto_profile_view_new(GROTTO_PANEL(self)));
+  gtk_box_append(self->profile_box, GTK_WIDGET(self->profile));
   g_object_bind_property(self, "show-window-controls", self->header, "show-start-title-buttons", G_BINDING_SYNC_CREATE);
   g_object_bind_property(self, "show-window-controls", self->header, "show-end-title-buttons", G_BINDING_SYNC_CREATE);
 #define CONNECT(widget, signal, cb) g_signal_connect(self->widget, signal, G_CALLBACK(cb), self)

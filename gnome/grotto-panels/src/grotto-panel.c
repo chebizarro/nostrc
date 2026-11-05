@@ -153,6 +153,52 @@ gboolean grotto_panel_command_finish(GrottoPanel *self, GAsyncResult *result, GE
   g_return_val_if_fail(g_task_is_valid(result, self), FALSE);
   return g_task_propagate_boolean(G_TASK(result), error);
 }
+gboolean grotto_panel_has_profile_host(GrottoPanel *self) {
+  g_return_val_if_fail(GROTTO_IS_PANEL(self), FALSE);
+  GrottoPanelPrivate *p = grotto_panel_get_instance_private(self);
+  return p->host.profile_async != NULL;
+}
+static void profile_done(GObject *source, GAsyncResult *result, gpointer data) {
+  (void)source;
+  GTask *task = data;
+  GrottoPanel *self = g_task_get_source_object(task);
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GrottoProfileInfo) info = G_IS_TASK(result) ? g_task_propagate_pointer(G_TASK(result), &error) : NULL;
+  if (g_task_return_error_if_cancelled(task)) { g_object_unref(task); return; }
+  if (grotto_panel_get_service(self) != g_task_get_task_data(task))
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_CANCELLED, "Panel detached");
+  else if (error) g_task_return_error(task, g_steal_pointer(&error));
+  else if (!info || !grotto_profile_info_validate(info, &error))
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "Invalid public profile");
+  else {
+    for (guint i = 0; i < GROTTO_PROFILE_N_FIELDS; i++) if (!info->fields[i]) info->fields[i] = g_strdup("");
+    g_task_return_pointer(task, g_steal_pointer(&info), (GDestroyNotify)grotto_profile_info_free);
+  }
+  g_object_unref(task);
+}
+void grotto_panel_profile_async(GrottoPanel *self, GrottoProfileAction action,
+  const char *key, const GrottoProfileInfo *info, GCancellable *cancel,
+  GAsyncReadyCallback callback, gpointer data) {
+  GrottoPanelPrivate *p = grotto_panel_get_instance_private(self);
+  GTask *task = g_task_new(self, cancel, callback, data);
+  g_autoptr(GError) error = NULL;
+  if (action < GROTTO_PROFILE_FETCH || action > GROTTO_PROFILE_CHOOSE_BANNER ||
+      (action != GROTTO_PROFILE_FETCH && !info) || !key || !*key ||
+      !grotto_panels_public_text_validate(key, &error) || !grotto_profile_info_validate(info, &error))
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "Invalid profile request");
+  else if (!p->host.profile_async)
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED, "Open in Grotto");
+  else {
+    if (p->service) g_task_set_task_data(task, g_object_ref(p->service), g_object_unref);
+    p->host.profile_async(p->host_data, action, key, info, cancel, profile_done, task);
+    return;
+  }
+  g_object_unref(task);
+}
+GrottoProfileInfo *grotto_panel_profile_finish(GrottoPanel *self, GAsyncResult *result, GError **error) {
+  g_return_val_if_fail(g_task_is_valid(result, self), NULL);
+  return g_task_propagate_pointer(G_TASK(result), error);
+}
 static void set_property(GObject *object, guint id, const GValue *value, GParamSpec *pspec) {
   GrottoPanelPrivate *p = grotto_panel_get_instance_private(GROTTO_PANEL(object));
   if (id == PROP_SERVICE) grotto_panel_set_service(GROTTO_PANEL(object), g_value_get_object(value));

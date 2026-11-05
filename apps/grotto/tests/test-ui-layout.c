@@ -1,4 +1,6 @@
 #include "ui/signer-window.h"
+#include "bunker_test_relay.h"
+#include "relay_store.h"
 #include <grotto-panels.h>
 #ifdef GROTTO_TEST_XDOTOOL
 #include <gdk/x11/gdkx.h>
@@ -748,6 +750,20 @@ static void layout_activate(GApplication *application, gpointer data) {
    * success toast covering the screenshots. */
   signer_window_show_identity(window, NULL); wait_frames(GTK_WIDGET(window));
   GtkWidget *identity_panel = GTK_WIDGET(selected_panel(split));
+  g_assert_true(grotto_panel_has_profile_host(GROTTO_PANEL(identity_panel)));
+  GtkWidget *profile_box = GTK_WIDGET(gtk_widget_get_template_child(identity_panel, GROTTO_TYPE_IDENTITY_PANEL, "profile_box"));
+  g_assert_nonnull(profile_box); g_assert_true(gtk_widget_get_visible(profile_box));
+  GtkWidget *edit_profile = find_button(profile_box, P_("Edit Profile…")); g_assert_nonnull(edit_profile);
+  WAIT(gtk_widget_get_sensitive(edit_profile)); g_signal_emit_by_name(edit_profile, "clicked");
+  AdwDialog *profile_dialog = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window));
+  g_assert_nonnull(profile_dialog); g_assert_cmpstr(adw_dialog_get_title(profile_dialog), ==, P_("Edit Profile"));
+  g_assert_nonnull(find_row(GTK_WIDGET(profile_dialog), P_("Avatar URL")));
+  g_assert_nonnull(find_row(GTK_WIDGET(profile_dialog), P_("Banner URL")));
+  gtk_window_set_default_size(GTK_WINDOW(window), 360, 640); wait_frames(GTK_WIDGET(window));
+  snapshot(GTK_WIDGET(window), "profile-editor-360"); assert_focus_bounds(window);
+  gtk_window_set_default_size(GTK_WINDOW(window), 920, 640); wait_frames(GTK_WIDGET(window));
+  snapshot(GTK_WIDGET(window), "profile-editor-wide"); assert_focus_bounds(window);
+  adw_dialog_close(profile_dialog); WAIT(!adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)));
   GtkWidget *name_row = GTK_WIDGET(gtk_widget_get_template_child(identity_panel, GROTTO_TYPE_IDENTITY_PANEL, "name_row"));
   WAIT(gtk_widget_is_sensitive(name_row));
   gtk_editable_set_text(GTK_EDITABLE(name_row), "Everyday identity"); g_signal_emit_by_name(name_row, "apply");
@@ -829,6 +845,13 @@ int main(int argc, char **argv) {
   }
   g_object_set(gtk_settings_get_default(), "gtk-enable-animations", FALSE, NULL);
   gn_backup_get_npub("0000000000000000000000000000000000000000000000000000000000000001", &npub, NULL);
+  BunkerTestRelay *profile_relay = bunker_test_relay_new();
+  RelayStore *profile_relays = relay_store_new_for_identity(npub);
+  g_assert_true(relay_store_add(profile_relays, bunker_test_relay_url(profile_relay), TRUE, TRUE));
+  relay_store_save(profile_relays); relay_store_free(profile_relays);
+  profile_relays = relay_store_new();
+  g_assert_true(relay_store_add(profile_relays, bunker_test_relay_url(profile_relay), TRUE, TRUE));
+  relay_store_save(profile_relays); relay_store_free(profile_relays);
   expires_at = g_get_real_time() / G_USEC_PER_SEC + 600;
   GVariantBuilder initial; g_variant_builder_init(&initial, G_VARIANT_TYPE("aa{sv}"));
   fixture_permission(&initial, npub, NOSTR_KIND_FOLLOW_LIST, "allow");
@@ -841,6 +864,7 @@ int main(int argc, char **argv) {
   guint inventory = g_dbus_connection_register_object(server, "/org/nostr/signer", identity->interfaces[0], &vtable, NULL, NULL, NULL);
   g_autoptr(GVariant) name = g_dbus_connection_call_sync(server, "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "RequestName", g_variant_new("(su)", "org.nostr.Signer", 0u), NULL, 0, 5000, NULL, NULL); g_assert_nonnull(name);
   g_test_add_func("/signer/layout/real-templates-navigation-focus-screenshots", layout); int result = g_test_run();
+  bunker_test_relay_free(profile_relay);
   accounts_store_free(accounts_store_get_default()); settings_manager_free(settings_manager_get_default());
   g_dbus_connection_unregister_object(server, registration); g_dbus_connection_unregister_object(server, inventory); nostrc_test_bus_down(bus); g_variant_unref(permission_rows); g_free(npub); return result;
 }

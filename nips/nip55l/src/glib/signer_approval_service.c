@@ -360,7 +360,7 @@ static GVariant *snapshot(Request *r) {
   PUT("app_id", r->who->app_id); PUT("exe", r->who->exe); PUT("via", r->who->via);
   PUT("claimed_app_id", r->claimed); PUT("identity", r->npub); PUT("preview", r->preview);
   PUT("transport", transport_name(r->transport)); PUT("reason", r->reason);
-  PUT("reason_source", r->op != SIGNER_GATE_SELF_TEST && r->reason && *r->reason ? "caller" : "signer");
+  PUT("reason_source", r->transport != SIGNER_TRANSPORT_MANAGEMENT && r->reason && *r->reason ? "caller" : "signer");
   PUT("purpose", r->purpose);
   g_variant_builder_add(&b, "{sv}", "flow_size", g_variant_new_uint32(r->flow_size));
   g_variant_builder_add(&b, "{sv}", "flow_remaining_seconds", g_variant_new_uint32(
@@ -390,7 +390,7 @@ static GVariant *snapshot(Request *r) {
 #undef PUT
   g_variant_builder_add(&b, "{sv}", "attested", g_variant_new_boolean(r->who->attested));
   g_variant_builder_add(&b, "{sv}", "verified", g_variant_new_boolean(!r->who->unattested && r->who->principal));
-  g_variant_builder_add(&b, "{sv}", "rememberable", g_variant_new_boolean(signer_permissions_can_remember(r->who->principal, op_info[r->op].kind,
+  g_variant_builder_add(&b, "{sv}", "rememberable", g_variant_new_boolean(r->transport != SIGNER_TRANSPORT_MANAGEMENT && signer_permissions_can_remember(r->who->principal, op_info[r->op].kind,
       r->has_kind ? (gint)r->event_kind : -1) &&
       (r->event_kind != NOSTR_KIND_CLIENT_AUTHENTICATION || r->auth_relay)));
   g_variant_builder_add(&b, "{sv}", "calls", g_variant_new_uint32(r->calls->len));
@@ -817,11 +817,13 @@ static void queue_job(Request *r, gboolean resolve);
 static GPtrArray *requests_copy(SignerApprovalService *s);
 static SignerPermissionResult request_policy(Request *r) {
   if (r->op == SIGNER_GATE_SELF_TEST) return SIGNER_PERMISSION_ASK;
+  gboolean profile = r->transport == SIGNER_TRANSPORT_MANAGEMENT && !g_strcmp0(r->purpose, "profile-management");
   if (r->has_kind && r->event_kind == NOSTR_KIND_CLIENT_AUTHENTICATION) {
     g_autofree gchar *relay = auth_relay(r->a);
     if (!relay || g_strcmp0(relay, r->auth_relay)) return SIGNER_PERMISSION_DENY;
-    return signer_permissions_evaluate_scoped(r->service->permissions, r->who->principal,
+    SignerPermissionResult auth = signer_permissions_evaluate_scoped(r->service->permissions, r->who->principal,
         r->npub, "event", r->event_kind, relay, FALSE, NULL);
+    return profile && auth == SIGNER_PERMISSION_ALLOW ? SIGNER_PERMISSION_ASK : auth;
   }
   SignerPermissionResult policy = signer_permissions_evaluate_flow(r->service->permissions, r->who->principal,
       r->npub, r->transport, op_info[r->op].kind, r->has_kind ? (gint)r->event_kind : -1,
@@ -831,7 +833,9 @@ static SignerPermissionResult request_policy(Request *r) {
    * Explicit deny / persistence errors still win; no signing scope is granted. */
   if (policy == SIGNER_PERMISSION_ASK && r->op == SIGNER_GATE_CONNECT && r->existing_pairing)
     return SIGNER_PERMISSION_ALLOW;
-  return policy;
+  /* A saved or first-party allow never replaces deliberate profile review.
+   * Explicit denies and evaluator failures still win. */
+  return profile && policy == SIGNER_PERMISSION_ALLOW ? SIGNER_PERMISSION_ASK : policy;
 }
 /* A canonical remote public selector is enough to reject an ASK in headless
  * mode. This is negative-only: ALLOW still resolves/pins the real backend key
@@ -1213,8 +1217,8 @@ void signer_approval_service_decide(SignerApprovalService *s, const gchar *id,
   if (!r || !r->announced || r->state != SIGNER_REQUEST_PENDING) {
     fn(data, FALSE, ORG_NOSTR_SIGNER_ERR_NOT_FOUND, "This request expired; ask the app to try again"); return;
   }
-  if (remember && !signer_permissions_can_remember(r->who->principal, op_info[r->op].kind,
-      r->has_kind ? (gint)r->event_kind : -1)) {
+  if (remember && (r->transport == SIGNER_TRANSPORT_MANAGEMENT || !signer_permissions_can_remember(r->who->principal, op_info[r->op].kind,
+      r->has_kind ? (gint)r->event_kind : -1))) {
     fn(data, FALSE, ORG_NOSTR_SIGNER_ERR_INVALID_INPUT, "this request cannot receive reusable consent"); return;
   }
   request_ref(r);
@@ -1245,6 +1249,9 @@ void signer_approval_service_decide_mode(SignerApprovalService *s, const gchar *
   }
   if (!strcmp(mode, "allow-once") || !strcmp(mode, "deny-once")) {
     signer_approval_service_decide(s, id, !strcmp(mode, "allow-once"), FALSE, 0, fn, data); return;
+  }
+  if (r->transport == SIGNER_TRANSPORT_MANAGEMENT) {
+    fn(data, FALSE, ORG_NOSTR_SIGNER_ERR_INVALID_INPUT, "Management requires one-time consent"); return;
   }
   gint kind = r->has_kind ? (gint)r->event_kind : -1;
   if (!strcmp(mode, "activate-saved") || !strcmp(mode, "discard-saved")) {

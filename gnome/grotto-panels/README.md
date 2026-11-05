@@ -16,6 +16,34 @@ The independent `grotto-panels` gettext domain is extracted from `po/POTFILES.in
 and installed by both build systems (gettext/msgfmt is a build dependency).
 The template and dynamic sentences use that domain, not the host's domain.
 
+## Public profiles
+
+Identity includes the public kind-0 profile and an **Edit Profile…** dialog.
+The form edits name, display name, multiline about, avatar/banner URLs, Nostr
+address (nip05), both Lightning fields and website. Watch-only identities are
+read-only; a local identity label remains separate from this public profile.
+
+The optional `GrottoPanelsHost.profile_async` hook accepts only a closed action,
+public identity and `GrottoProfileInfo`. Results are owned pointer `GTask`s with
+public fields and immutable in-memory `GdkTexture` previews. No JSON event,
+`GFile`, path, signer, secret or network handle crosses this boundary. Pinned
+identity pages forward through the same guarded host hook. Without the hook,
+the panel explains that Grotto is required instead of performing I/O itself.
+
+Grotto owns EOSE-aware, author-scoped relay reads, signed-event validation,
+newest-event selection, `$XDG_CACHE_HOME/grotto/profiles` caching, image file
+selection/preview and Blossom uploads. Destinations come from per-identity or
+configured relays, signed kind 10002 and signed kind 10063. Save preserves
+unknown profile fields, rejects a newer remote edit, requests one kind-0
+MANAGEMENT review, waits for relay OKs and re-fetches without signing again.
+Relay authentication and image-upload authorizations also use the signer gate;
+they never grant reusable profile-signing permission. Uploaded images remain
+unpublished drafts until Save succeeds. All I/O and decoding run off the GTK
+thread; upload/publish progress is indeterminate and failures retain the form.
+Images are PNG/JPEG/WebP, at most 5 MiB, 8192 pixels per side and 24 megapixels.
+Profile network operations fail visibly in Tor mode rather than bypassing the
+configured privacy setting; saved metadata and images remain readable offline.
+
 ## Ownership and injection
 
 Subclass the abstract `GrottoPanel` (`AdwNavigationPage`) and set its `service`

@@ -143,6 +143,8 @@ install_dependencies() {
         "${PREFIX}-libadwaita"
         "${PREFIX}-glib2"
         "${PREFIX}-json-glib"
+        "${PREFIX}-libsoup3"
+        "${PREFIX}-curl"
         "${PREFIX}-gobject-introspection"
     )
 

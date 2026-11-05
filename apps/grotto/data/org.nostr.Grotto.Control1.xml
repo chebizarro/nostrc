@@ -36,6 +36,13 @@
     <method name="ExportRawIdentity"><arg name="identity" type="s" direction="in"/><arg name="nsec" type="s" direction="out"/></method>
     <method name="StoreKeyWithMnemonic"><arg name="key" type="s" direction="in"/><arg name="label" type="s" direction="in"/><arg name="mnemonic" type="s" direction="in"/><arg name="identity" type="s" direction="out"/></method>
     <method name="ImportIdentity"><arg name="format" type="s" direction="in"/><arg name="input" type="s" direction="in"/><arg name="passphrase" type="s" direction="in"/><arg name="label" type="s" direction="in"/><arg name="identity" type="s" direction="out"/></method>
+    <!-- Approver-only, explicit identity. Kind 0 and its relay/Blossom auth only.
+         Every request goes through the MANAGEMENT approval gate. -->
+    <method name="SignProfileEvent">
+      <arg name="identity" type="s" direction="in"/>
+      <arg name="event_json" type="s" direction="in"/>
+      <arg name="signed_event" type="s" direction="out"/>
+    </method>
     <method name="SelfTestIdentity"><arg name="identity" type="s" direction="in"/><arg name="result" type="s" direction="out"/></method>
     <method name="CancelIdentitySelfTest"><arg name="identity" type="s" direction="in"/></method>
     <method name="GetIdentityMigration"><arg name="identity" type="s" direction="in"/><arg name="event" type="s" direction="out"/></method>

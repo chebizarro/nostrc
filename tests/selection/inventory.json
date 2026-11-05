@@ -22318,6 +22318,9 @@
     },
     "grotto.gui": {
       "depends_on": [
+        "gnome.libnostr_publish",
+        "libblossom",
+        "bud02",
         "grotto.panels",
         "nostr.gobject",
         "nip55l",

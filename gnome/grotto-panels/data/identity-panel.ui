@@ -57,10 +57,8 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                             <child>
                               <object class="AdwPreferencesGroup">
                                 <child>
-                                  <object class="AdwAvatar" id="avatar">
-                                    <property name="size">96</property>
-                                    <property name="show-initials">true</property>
-                                    <property name="halign">3</property>
+                                  <object class="GtkBox" id="profile_box">
+                                    <property name="orientation">1</property>
                                   </object>
                                 </child>
                                 <child>

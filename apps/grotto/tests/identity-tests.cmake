@@ -23,6 +23,23 @@ if (TARGET grotto_control_core AND "NIP55L_TEST_TRUST_ENV=1" IN_LIST _nip55l_def
       ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR}/..;GSETTINGS_BACKEND=memory")
   add_dependencies(signer-tests test-identity-management)
 endif()
+if(TARGET grotto-daemon AND "NIP55L_TEST_TRUST_ENV=1" IN_LIST _nip55l_definitions)
+  add_executable(test-profile-integration test-profile-integration.c bunker_test_relay.c ${APP_GRESOURCE_C})
+  target_include_directories(test-profile-integration PRIVATE ${SIGNER_INCLUDE_DIRS}
+    ${CMAKE_SOURCE_DIR})
+  target_link_libraries(test-profile-integration PRIVATE grotto_app_test_core nostrc-test-bus)
+  target_compile_definitions(test-profile-integration PRIVATE PROFILE_DAEMON_BIN="$<TARGET_FILE:grotto-daemon>")
+  add_dependencies(test-profile-integration grotto-daemon grotto-schemas)
+  apply_test_sanitizers(test-profile-integration)
+  add_test(NAME signer/profile-integration COMMAND test-profile-integration)
+  set_tests_properties(signer/profile-integration PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77 LABELS "signer;profile;integration"
+    ENVIRONMENT "${_UI_TEST_ENV};GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR}/..;GSETTINGS_BACKEND=memory;ADW_DISABLE_PORTAL=1")
+  if(COMMAND nostrc_describe_test)
+    nostrc_describe_test(signer/profile-integration OWNER grotto.gui TARGETS test-profile-integration grotto-daemon)
+  endif()
+  add_dependencies(signer-tests test-profile-integration)
+endif()
+
 # Exercise the same host routes and linked panel library as the application.
 foreach(suite onboarding home-model)
   add_executable(test-${suite} test-${suite}.c ${APP_GRESOURCE_C})

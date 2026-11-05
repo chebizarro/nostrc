@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #include "fake-service.h"
+#include "../../../tests/common/nostrc-test-gdk-frame.h"
 
 typedef struct { GrottoPanel parent; GtkListBox *list; GtkWidget *edit; AdwNavigationView *navigation; } SmokePanel;
 typedef struct { GrottoPanelClass parent; } SmokePanelClass;
@@ -306,8 +307,10 @@ static void identity_mounted(void) {
   g_assert_false(gtk_widget_get_visible(identity_child(unavailable, "backup_row"))); g_object_unref(unavailable);
 }
 void register_management_panels_tests(void);
+void register_profile_panel_tests(void);
 int main(int argc, char **argv) {
   g_test_init(&argc, &argv, NULL);
+  nostrc_test_tolerate_gdk_frame_warning();
   adw_init(); /* Missing display is a failure, not a successful skip. */
   g_object_set(gtk_settings_get_default(), "gtk-enable-animations", FALSE, NULL);
   g_test_add_func("/grotto-panels/identity", identity_mounted);
@@ -315,5 +318,6 @@ int main(int argc, char **argv) {
   g_test_add_func("/grotto-panels/commands", commands);
   g_test_add_func("/grotto-panels/negative-paths", negative_paths);
   register_management_panels_tests();
+  register_profile_panel_tests();
   return g_test_run();
 }
