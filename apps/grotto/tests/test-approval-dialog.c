@@ -891,7 +891,7 @@ static void declared_set(Fixture *f, gconstpointer data) {
   const gchar *action = subtitle(f, "row_action");
   g_assert_nonnull(strstr(action, "NIP-29 groups"));
   g_assert_nonnull(strstr(action, "encrypted messages"));
-  g_assert_nonnull(strstr(action, "relay sign-in"));
+  g_assert_nonnull(strstr(action, "sign-in to any relay it chooses")); /* any-relay AUTH is disclosed (F4) */
   g_assert_nonnull(strstr(action, "relay lists"));
   g_assert_nonnull(strstr(action, "deletions"));
   g_assert_nonnull(strstr(action, "custom kinds (450, 27001, 30443)"));
@@ -899,7 +899,7 @@ static void declared_set(Fixture *f, gconstpointer data) {
   const gchar *details = gtk_label_get_text(GTK_LABEL(child(f, "content_preview")));
   g_assert_nonnull(strstr(details, "Simple group join request (kind 9021)"));
   g_assert_nonnull(strstr(details, "Encrypted message (kind 13)"));
-  g_assert_nonnull(strstr(details, "Relay authentication (kind 22242)"));
+  g_assert_nonnull(strstr(details, "Relay authentication (kind 22242) — any relay this app chooses"));
   g_assert_nonnull(strstr(details, "Decrypt messages (NIP-44)"));
   g_assert_nonnull(strstr(details, "Custom event (kind 27001)"));
   AdwComboRow *choice = ADW_COMBO_ROW(child(f, "permission_choice"));
@@ -929,6 +929,51 @@ static void declared_set(Fixture *f, gconstpointer data) {
   click(f, "btn_approve"); wait_closed(f);
   g_assert_cmpuint(f->calls, ==, 1); g_assert_true(f->decision); g_assert_true(f->remember); g_assert_cmpuint(f->ttl, ==, 0);
   g_assert_cmpstr(f->identity, ==, public_npub);
+}
+/* F1: a pairing review names each requested perm's standing; an explicit
+ * block is shown as kept, and any-relay AUTH is disclosed. */
+static void pairing_declared(Fixture *f, gconstpointer data) {
+  (void)data;
+  GVariantBuilder info, summary, declared;
+  g_variant_builder_init(&info, G_VARIANT_TYPE_VARDICT); g_variant_builder_init(&summary, G_VARIANT_TYPE_VARDICT);
+  g_variant_builder_init(&declared, G_VARIANT_TYPE("aa{sv}"));
+  g_variant_builder_add(&info, "{sv}", "operation", g_variant_new_string("connect"));
+  g_variant_builder_add(&info, "{sv}", "transport", g_variant_new_string("NIP46"));
+  g_variant_builder_add(&info, "{sv}", "verified", g_variant_new_boolean(TRUE));
+  g_variant_builder_add(&info, "{sv}", "principal_kind", g_variant_new_string("nip46"));
+  g_variant_builder_add(&info, "{sv}", "principal", g_variant_new_string("nip46:79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"));
+  g_variant_builder_add(&info, "{sv}", "identity", g_variant_new_string(public_npub));
+  g_variant_builder_add(&info, "{sv}", "claimed_app_id", g_variant_new_string("Remote client"));
+  g_variant_builder_add(&info, "{sv}", "state", g_variant_new_string("PENDING"));
+  g_variant_builder_add(&info, "{sv}", "remaining_seconds", g_variant_new_uint32(120));
+  const gchar *urls[] = {"wss://relay.example.test/", NULL};
+  const gchar *hints[] = {"sign_event:1", "sign_event:13", "sign_event:22242", NULL};
+  const struct { const gchar *type; guint32 kind; const gchar *state; } entries[] = {
+    {"sign_event", 1, "requested"}, {"sign_event", 13, "denied"}, {"sign_event", 22242, "requested"}};
+  for (guint i = 0; i < G_N_ELEMENTS(entries); i++) {
+    GVariantBuilder entry; g_variant_builder_init(&entry, G_VARIANT_TYPE_VARDICT);
+    g_variant_builder_add(&entry, "{sv}", "type", g_variant_new_string(entries[i].type));
+    g_variant_builder_add(&entry, "{sv}", "kind", g_variant_new_uint32(entries[i].kind));
+    g_variant_builder_add(&entry, "{sv}", "state", g_variant_new_string(entries[i].state));
+    if (entries[i].kind == 22242) g_variant_builder_add(&entry, "{sv}", "relay", g_variant_new_string("*"));
+    g_variant_builder_add_value(&declared, g_variant_builder_end(&entry));
+  }
+  g_variant_builder_add(&summary, "{sv}", "relays", g_variant_new_strv(urls, -1));
+  g_variant_builder_add(&summary, "{sv}", "requested_permissions_hint", g_variant_new_strv(hints, -1));
+  g_variant_builder_add(&summary, "{sv}", "granted_on_pairing", g_variant_new_boolean(TRUE));
+  g_variant_builder_add(&summary, "{sv}", "declared_permissions", g_variant_builder_end(&declared));
+  g_variant_builder_add(&info, "{sv}", "event_summary", g_variant_builder_end(&summary));
+  g_autoptr(GVariant) row = g_variant_ref_sink(g_variant_builder_end(&info));
+  g_assert_true(gnostr_approval_info_can_approve(row));
+  gnostr_approval_dialog_set_info(f->dialog, row, "Remote application");
+  const gchar *preview = gtk_label_get_text(GTK_LABEL(child(f, "content_preview")));
+  g_assert_nonnull(strstr(preview, "granted on pairing"));
+  g_assert_nonnull(strstr(preview, "Encrypted message (kind 13) — blocked; stays blocked"));
+  g_assert_nonnull(strstr(preview, "Relay authentication (kind 22242) — any relay this app chooses"));
+  g_assert_nonnull(strstr(preview, "Text note (kind 1)"));
+  g_assert_nonnull(strstr(subtitle(f, "row_impact"), "blocked ones stay blocked"));
+  g_assert_nonnull(strstr(scope_text(f), "grants the permissions it requested"));
+  g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(child(f, "btn_approve"))), ==, "Pair _Application");
 }
 static void declared_set_trust(Fixture *f, gconstpointer data) {
   (void)data;
@@ -1046,6 +1091,7 @@ int main(int argc, char **argv) {
   ADD("snapshots", snapshots);
   ADD("declared-set", declared_set);
   ADD("declared-set-trust", declared_set_trust);
+  ADD("pairing-declared", pairing_declared);
   ADD("compact-default", compact_default);
   ADD("extend-declared", extend_declared);
 #undef ADD

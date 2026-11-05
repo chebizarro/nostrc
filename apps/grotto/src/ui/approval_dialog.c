@@ -125,7 +125,7 @@ static const gchar *capability_label(Capability c) {
   switch (c) {
   case CAP_GROUPS: return _("NIP-29 groups");
   case CAP_MESSAGING: return _("encrypted messages");
-  case CAP_AUTH: return _("relay sign-in");
+  case CAP_AUTH: return _("sign-in to any relay it chooses");
   case CAP_LISTS: return _("profile and relay lists");
   case CAP_DELETION: return _("deletions");
   case CAP_PUBLISHING: return _("public posts and reactions");
@@ -179,6 +179,8 @@ static gchar *declared_details(GVariant *declared, guint *requested, guint *gran
     if (text->len) g_string_append_c(text, '\n');
     if (has_kind) g_string_append_printf(text, "• %s (kind %u)", gnostr_approval_kind_name(kind), kind);
     else g_string_append_printf(text, "• %s", token_label(type));
+    /* Any-relay AUTH is a broader delegation than one relay sign-in: name it. */
+    if (has_kind && kind == NOSTR_KIND_CLIENT_AUTHENTICATION) g_string_append(text, _(" — any relay this app chooses"));
     if (!strcmp(state, "granted")) g_string_append(text, _(" — already allowed"));
     else if (!strcmp(state, "denied")) g_string_append(text, _(" — blocked; stays blocked"));
   }
@@ -1051,13 +1053,21 @@ void gnostr_approval_dialog_set_info(GnostrApprovalDialog *self, GVariant *info,
     gtk_widget_set_visible(GTK_WIDGET(self->row_relay), *relays != '\0');
     gboolean grants = FALSE;
     if (summary) g_variant_lookup(summary, "granted_on_pairing", "b", &grants);
+    /* With a pinned identity the daemon reports each perm's standing: an
+     * explicit block is kept, never replaced by pairing; AUTH is any-relay. */
+    g_autoptr(GVariant) standing = summary ? g_variant_lookup_value(summary, "declared_permissions", G_VARIANT_TYPE("aa{sv}")) : NULL;
+    if (standing && g_variant_n_children(standing)) {
+      guint requested = 0, already = 0, blocked = 0;
+      g_autofree gchar *lines = declared_details(standing, &requested, &already, &blocked);
+      g_free(permissions); permissions = g_strconcat("\n", lines, NULL);
+    }
     preview = g_strdup_printf(grants
-        ? _("App fingerprint: %s\nClaimed name (unverified): %s\nRequested permissions (granted on pairing, until revoked): %s\nRelays: %s")
+        ? _("App fingerprint: %s\nClaimed name (unverified): %s\nRequested permissions (granted on pairing, until revoked; blocked ones stay blocked): %s\nRelays: %s")
         : _("App fingerprint: %s\nClaimed name (unverified): "
             "%s\nRequested permissions (hints only): %s\nRelays: %s"),
                               field(info, "principal"), field(info, "claimed_app_id"),
                               permissions, relays);
-    impact = grants ? _("Pairing admits this application and saves the permissions it requested, so those operations will not ask again.")
+    impact = grants ? _("Pairing admits this application and saves the permissions it requested (any relay for relay sign-in; blocked ones stay blocked), so those operations will not ask again.")
                     : _("Pairing admits this application. It grants no signing permissions.");
   }
   g_autoptr(JsonNode) management = profile_management(info) ? management_event(info) : NULL;

@@ -632,10 +632,34 @@ static void test_declared_set(void) {
   /* Per-request consent can never create any-relay AUTH authority. */
   g_assert_false(signer_permissions_remember_scoped(p, PRINCIPAL, IDENTITY, "event", NOSTR_KIND_CLIENT_AUTHENTICATION, "*", TRUE, 0, &error));
   g_clear_error(&error);
-  g_assert_false(signer_permissions_grant_tokens(p, "claimed:", IDENTITY, canonical, &error)); g_clear_error(&error);
-  g_assert_false(signer_permissions_grant_tokens(p, PRINCIPAL, "", canonical, &error)); g_clear_error(&error);
+  g_assert_false(signer_permissions_grant_tokens(p, "claimed:", IDENTITY, canonical, NULL, &error)); g_clear_error(&error);
+  g_assert_false(signer_permissions_grant_tokens(p, PRINCIPAL, "", canonical, NULL, &error)); g_clear_error(&error);
   g_assert_false(signer_permissions_has_declared(p, PRINCIPAL, IDENTITY));
-  g_assert_true(signer_permissions_grant_tokens(p, PRINCIPAL, IDENTITY, canonical, &error)); g_assert_no_error(error);
+  /* Deny wins at write time: an explicit block that predates the declaration
+   * is kept and reported, never replaced by the declared allow (F1). */
+  remember(p, IDENTITY, "event", NOSTR_KIND_SEAL, FALSE, 0);
+  g_autofree gchar *kept = NULL;
+  g_assert_true(signer_permissions_grant_tokens(p, PRINCIPAL, IDENTITY, canonical, &kept, &error)); g_assert_no_error(error);
+  g_assert_cmpstr(kept, ==, "sign_event:13");
+  g_assert_cmpint(evaluate(p, "event", NOSTR_KIND_SEAL), ==, SIGNER_PERMISSION_DENY);
+  g_assert_true(signer_permissions_has_declared(p, PRINCIPAL, IDENTITY));
+  g_autoptr(GVariant) after_block = signer_permissions_list(p, PRINCIPAL, NULL);
+  for (gsize i = 0; i < g_variant_n_children(after_block); i++) {
+    g_autoptr(GVariant) row = g_variant_get_child_value(after_block, i); gint row_kind = -1; const gchar *decision = NULL;
+    g_variant_lookup(row, "event-kind", "i", &row_kind); g_variant_lookup(row, "decision", "&s", &decision);
+    if (row_kind == NOSTR_KIND_SEAL) g_assert_cmpstr(decision, ==, "deny");
+  }
+  /* A set whose every token is blocked writes nothing and reports all of them. */
+  g_autofree gchar *all_kept = NULL;
+  guint64 revision = signer_permissions_revision(p);
+  g_assert_true(signer_permissions_grant_tokens(p, PRINCIPAL, IDENTITY, "sign_event:13", &all_kept, &error)); g_assert_no_error(error);
+  g_assert_cmpstr(all_kept, ==, "sign_event:13"); g_assert_cmpuint(signer_permissions_revision(p), ==, revision);
+  /* Lifting the block and re-declaring grants it like any other token. */
+  gboolean lifted = FALSE;
+  g_assert_true(signer_permissions_clear(p, PRINCIPAL, IDENTITY, "event", &lifted, &error)); g_assert_true(lifted);
+  g_clear_pointer(&kept, g_free);
+  g_assert_true(signer_permissions_grant_tokens(p, PRINCIPAL, IDENTITY, canonical, &kept, &error)); g_assert_no_error(error);
+  g_assert_null(kept);
   g_assert_true(signer_permissions_has_declared(p, PRINCIPAL, IDENTITY));
   g_assert_false(signer_permissions_has_declared(p, PRINCIPAL, "other"));
   g_assert_cmpint(evaluate(p, "event", NOSTR_KIND_SEAL), ==, SIGNER_PERMISSION_ALLOW);
@@ -645,6 +669,11 @@ static void test_declared_set(void) {
   g_assert_cmpint(evaluate(p, "get_public_key", -1), ==, SIGNER_PERMISSION_ALLOW);
   g_assert_cmpint(evaluate(p, "event", NOSTR_KIND_TEXT_NOTE), ==, SIGNER_PERMISSION_ASK);
   g_assert_cmpint(evaluate(p, "nip44_decrypt", -1), ==, SIGNER_PERMISSION_ASK);
+  /* GetRelays has no identity: its declared row carries the identity-less
+   * scope the entrypoint evaluates (F5), never the pinned identity's. */
+  g_assert_true(signer_permissions_grant_tokens(p, PRINCIPAL, IDENTITY, "get_relays", NULL, &error)); g_assert_no_error(error);
+  g_assert_cmpint(signer_permissions_evaluate(p, PRINCIPAL, "", "get_relays", -1, FALSE, NULL), ==, SIGNER_PERMISSION_ALLOW);
+  g_assert_cmpint(signer_permissions_evaluate(p, "other", "", "get_relays", -1, FALSE, NULL), ==, SIGNER_PERMISSION_ASK);
   /* Any-relay AUTH covers every canonical relay and the coverage probe "*";
    * a malformed relay still fails closed. */
   g_assert_cmpint(signer_permissions_evaluate_scoped(p, PRINCIPAL, IDENTITY, "event", NOSTR_KIND_CLIENT_AUTHENTICATION, "wss://nos.lol", FALSE, NULL), ==, SIGNER_PERMISSION_ALLOW);
@@ -669,21 +698,47 @@ static void test_declared_set(void) {
       auth_any++; g_assert_cmpint(row_kind, ==, NOSTR_KIND_CLIENT_AUTHENTICATION); g_assert_cmpstr(state, ==, "active");
     }
   }
-  g_assert_cmpuint(declared, ==, 5); g_assert_cmpuint(auth_any, ==, 1);
-  g_assert_cmpuint(g_variant_n_children(rows), ==, 6);
+  /* 6 declared (13, 22242, get_public_key, nip44_encrypt, decrypt_zap_event,
+   * identity-less get_relays) plus the explicit 9021 block. */
+  g_assert_cmpuint(declared, ==, 6); g_assert_cmpuint(auth_any, ==, 1);
+  g_assert_cmpuint(g_variant_n_children(rows), ==, 7);
   /* Restart keeps everything, including any-relay AUTH. */
   g_autoptr(SignerPermissions) restarted = signer_permissions_new(NULL);
   g_assert_true(signer_permissions_has_declared(restarted, PRINCIPAL, IDENTITY));
   g_assert_cmpint(signer_permissions_evaluate_scoped(restarted, PRINCIPAL, IDENTITY, "event", NOSTR_KIND_CLIENT_AUTHENTICATION, "wss://nos.lol", FALSE, NULL), ==, SIGNER_PERMISSION_ALLOW);
   /* A management replacement round-trips the rows it was shown (incl. "*") and
    * keeps provenance; it cannot manufacture any-relay AUTH from scratch. */
-  g_autoptr(GVariant) listed = signer_permissions_list(restarted, PRINCIPAL, NULL);
+  g_autoptr(GVariant) everything = signer_permissions_list(restarted, PRINCIPAL, NULL);
+  /* SetPermissions edits one identity: the identity-less get_relays row stays. */
+  GVariantBuilder mine; g_variant_builder_init(&mine, G_VARIANT_TYPE("aa{sv}"));
+  for (gsize i = 0; i < g_variant_n_children(everything); i++) {
+    g_autoptr(GVariant) row = g_variant_get_child_value(everything, i); const gchar *who = NULL;
+    if (g_variant_lookup(row, "identity", "&s", &who) && !strcmp(who, IDENTITY)) g_variant_builder_add_value(&mine, row);
+  }
+  g_autoptr(GVariant) listed = g_variant_ref_sink(g_variant_builder_end(&mine));
+  g_assert_cmpuint(g_variant_n_children(listed), ==, 6);
   g_assert_true(signer_permissions_replace(restarted, PRINCIPAL, IDENTITY, listed, signer_permissions_revision(restarted), &error));
+  g_assert_cmpint(signer_permissions_evaluate(restarted, PRINCIPAL, "", "get_relays", -1, FALSE, NULL), ==, SIGNER_PERMISSION_ALLOW);
   g_assert_no_error(error);
   g_assert_true(signer_permissions_has_declared(restarted, PRINCIPAL, IDENTITY));
   g_assert_cmpint(signer_permissions_evaluate_scoped(restarted, PRINCIPAL, IDENTITY, "event", NOSTR_KIND_CLIENT_AUTHENTICATION, "wss://nos.lol", FALSE, NULL), ==, SIGNER_PERMISSION_ALLOW);
-  /* Clearing the principal's rows removes the declared set. */
+  /* Block app retires every allow of the principal but keeps explicit blocks
+   * (F2): an unblock starts from nothing, not from masked declared grants. */
+  remember(restarted, IDENTITY, "event", NOSTR_KIND_REACTION, FALSE, 0);
   gboolean removed = FALSE;
+  g_assert_true(signer_permissions_revoke_allows(restarted, PRINCIPAL, &removed, &error)); g_assert_true(removed); g_assert_no_error(error);
+  g_assert_false(signer_permissions_has_declared(restarted, PRINCIPAL, IDENTITY));
+  g_assert_cmpint(evaluate(restarted, "event", NOSTR_KIND_SEAL), ==, SIGNER_PERMISSION_ASK);
+  g_assert_cmpint(evaluate(restarted, "get_public_key", -1), ==, SIGNER_PERMISSION_ASK);
+  g_assert_cmpint(signer_permissions_evaluate(restarted, PRINCIPAL, "", "get_relays", -1, FALSE, NULL), ==, SIGNER_PERMISSION_ASK);
+  g_assert_cmpint(evaluate(restarted, "event", 9021), ==, SIGNER_PERMISSION_DENY); /* explicit blocks stay */
+  g_assert_cmpint(evaluate(restarted, "event", NOSTR_KIND_REACTION), ==, SIGNER_PERMISSION_DENY);
+  g_assert_cmpint(signer_permissions_evaluate_scoped(restarted, PRINCIPAL, IDENTITY, "event", NOSTR_KIND_CLIENT_AUTHENTICATION, "wss://nos.lol", FALSE, NULL), ==, SIGNER_PERMISSION_ASK);
+  g_autoptr(GVariant) left = signer_permissions_list(restarted, PRINCIPAL, NULL);
+  g_assert_cmpuint(g_variant_n_children(left), ==, 2); /* the two explicit blocks */
+  removed = FALSE;
+  g_assert_true(signer_permissions_revoke_allows(restarted, PRINCIPAL, &removed, &error)); g_assert_false(removed);
+  /* Clearing the principal's rows removes the rest. */
   g_assert_true(signer_permissions_clear(restarted, PRINCIPAL, IDENTITY, NULL, &removed, &error)); g_assert_true(removed);
   g_assert_false(signer_permissions_has_declared(restarted, PRINCIPAL, IDENTITY));
   g_autoptr(SignerPermissions) fresh = start();

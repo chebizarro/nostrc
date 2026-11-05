@@ -82,11 +82,18 @@ gboolean signer_permissions_invalidate_flows(SignerPermissions *permissions,
 gchar *signer_permissions_canonical_tokens(const gchar *csv, gboolean strict, GError **error);
 /* Maps one canonical token to its row scope; FALSE for connect/ping/unknown. */
 gboolean signer_permissions_token_scope(const gchar *token, const gchar **operation, gint *kind);
-/* Writes one until-revoked allow row per token (AUTH gets relay "*") in one
- * commit, marked source=declared. The principal must be able to receive
- * reusable consent; existing rows for the same scope are replaced. */
+/* Writes one until-revoked allow row per token (AUTH gets relay "*";
+ * get_relays, whose entrypoint has no identity, gets identity "") in one
+ * commit, marked source=declared. Deny wins at write time: a token whose
+ * scope a live explicit deny (or a blocked client) already covers is never
+ * written and is reported in *denied (canonical CSV, NULL when none). The
+ * principal must be able to receive reusable consent. */
 gboolean signer_permissions_grant_tokens(SignerPermissions *permissions,
-    const gchar *principal, const gchar *identity, const gchar *csv, GError **error);
+    const gchar *principal, const gchar *identity, const gchar *csv, gchar **denied, GError **error);
+/* Block app: retires every allow, review and policy-review row of the
+ * principal (all identities) and its flow consent; explicit deny rows stay. */
+gboolean signer_permissions_revoke_allows(SignerPermissions *permissions,
+    const gchar *principal, gboolean *removed, GError **error);
 /* TRUE when a live declared-set allow exists for this principal and identity. */
 gboolean signer_permissions_has_declared(SignerPermissions *permissions,
     const gchar *principal, const gchar *identity);

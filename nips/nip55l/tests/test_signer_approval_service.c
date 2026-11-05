@@ -603,48 +603,72 @@ static gboolean trust_routine(const gchar *principal, const gchar *mode, gpointe
   (void)principal; (void)error;
   g_assert_cmpstr(mode, ==, "trust-routine"); *(SignerTrustTier *)data = SIGNER_TRUST_FULL; return TRUE;
 }
+static const gchar *resolved_npub(SignerApprovalService *s, SignerCaller *who, Watch *w) {
+  /* Resolve the fixture identity once through a request that is then denied. */
+  Reply probe = {0}; Decision no = {0};
+  g_autofree gchar *json = event_of_kind(NOSTR_KIND_TEXT_NOTE);
+  g_autoptr(SignerGateHandle) h = submit(s, who, "probe", SIGNER_GATE_SIGN_EVENT, json, NULL, &probe);
+  wait_prompts(w, w->pending->len + 1);
+  const gchar *npub = NULL;
+  g_assert_true(g_variant_lookup(w->pending->pdata[w->pending->len - 1], "identity", "&s", &npub));
+  signer_approval_service_decide(s, request_id(w, w->pending->len - 1), FALSE, FALSE, 0, decided, &no);
+  wait_count(&probe.count, 1); reply_clear(&probe); g_free(no.error);
+  return npub; /* owned by the retained snapshot */
+}
 static void test_declared_set_lifecycle(void) {
   Watch w = {0}; SignerApprovalService *s = start(&w); SignerCaller who = local_caller();
   SignerPermissions *permissions = signer_approval_service_permissions(s);
   Reply declare = {0}, join = {0}, encrypt = {0}; Decision bad = {0}, ok = {0};
   g_autofree gchar *join_event = event_of_kind(NOSTR_KIND_SIMPLE_GROUP_JOIN_REQUEST);
+  /* An explicit block that predates the declaration (F1): it is shown as
+   * denied in the one review and survives the approval of the set. */
+  const gchar *pinned = resolved_npub(s, &who, &w);
+  g_assert_true(signer_permissions_remember(permissions, who.principal, pinned, "event", 1621, FALSE, 0, NULL));
   g_autoptr(SignerGateHandle) hd = submit(s, &who, "declare", SIGNER_GATE_REQUEST_PERMISSIONS, GROUNDHOG_SET, NULL, &declare);
-  wait_prompts(&w, 1);
-  g_autoptr(GVariant) info = signer_approval_service_info(s, request_id(&w, 0));
+  wait_prompts(&w, 2);
+  g_autoptr(GVariant) info = signer_approval_service_info(s, request_id(&w, 1));
   const gchar *operation = NULL, *npub = NULL; gboolean rememberable = FALSE, routine = FALSE, extends = TRUE;
   g_assert_true(g_variant_lookup(info, "operation", "&s", &operation)); g_assert_cmpstr(operation, ==, "permissions");
   g_assert_true(g_variant_lookup(info, "identity", "&s", &npub)); g_assert_true(g_str_has_prefix(npub, "npub1"));
+  g_assert_cmpstr(npub, ==, pinned);
   g_assert_true(g_variant_lookup(info, "rememberable", "b", &rememberable)); g_assert_true(rememberable);
   g_assert_true(g_variant_lookup(info, "routine_trust_available", "b", &routine)); g_assert_true(routine);
   g_assert_true(g_variant_lookup(info, "declared_set", "b", &extends)); g_assert_false(extends);
   g_autoptr(GVariant) summary = g_variant_lookup_value(info, "event_summary", G_VARIANT_TYPE_VARDICT);
   g_autoptr(GVariant) declared = g_variant_lookup_value(summary, "declared_permissions", G_VARIANT_TYPE("aa{sv}"));
   g_assert_cmpuint(g_variant_n_children(declared), ==, GROUNDHOG_SET_COUNT);
+  guint shown_denied = 0, any_relay = 0;
   for (gsize i = 0; i < g_variant_n_children(declared); i++) {
-    g_autoptr(GVariant) entry = g_variant_get_child_value(declared, i); const gchar *state = NULL, *type = NULL;
-    g_assert_true(g_variant_lookup(entry, "state", "&s", &state)); g_assert_cmpstr(state, ==, "requested");
+    g_autoptr(GVariant) entry = g_variant_get_child_value(declared, i); const gchar *state = NULL, *type = NULL, *relay = NULL; guint32 kind = 0;
+    g_assert_true(g_variant_lookup(entry, "state", "&s", &state));
     g_assert_true(g_variant_lookup(entry, "type", "&s", &type));
+    g_variant_lookup(entry, "kind", "u", &kind);
+    if (kind == 1621) { g_assert_cmpstr(state, ==, "denied"); shown_denied++; }
+    else g_assert_cmpstr(state, ==, "requested");
+    if (g_variant_lookup(entry, "relay", "&s", &relay)) { g_assert_cmpuint(kind, ==, NOSTR_KIND_CLIENT_AUTHENTICATION); g_assert_cmpstr(relay, ==, "*"); any_relay++; }
   }
+  g_assert_cmpuint(shown_denied, ==, 1); g_assert_cmpuint(any_relay, ==, 1);
   /* Covered requests arriving during the review wait silently behind it. */
   g_autoptr(SignerGateHandle) hj = submit(s, &who, "join", SIGNER_GATE_SIGN_EVENT, join_event, NULL, &join);
   g_autoptr(SignerGateHandle) he = submit(s, &who, "encrypt", SIGNER_GATE_NIP44_ENCRYPT, "hello group", PEER, &encrypt);
   settle(400);
-  g_assert_cmpuint(w.pending->len, ==, 1); g_assert_cmpuint(join.count, ==, 0); g_assert_cmpuint(encrypt.count, ==, 0);
+  g_assert_cmpuint(w.pending->len, ==, 2); g_assert_cmpuint(join.count, ==, 0); g_assert_cmpuint(encrypt.count, ==, 0);
   g_assert_cmpuint(signer_approval_service_pending_count(s), ==, 3);
   /* A declared set is never "once" or 24 h. */
-  signer_approval_service_decide_mode(s, request_id(&w, 0), "allow-once", decided, &bad);
+  signer_approval_service_decide_mode(s, request_id(&w, 1), "allow-once", decided, &bad);
   g_assert_cmpuint(bad.count, ==, 1); g_assert_false(bad.ok); g_assert_cmpstr(bad.error, ==, ORG_NOSTR_SIGNER_ERR_INVALID_INPUT);
-  signer_approval_service_decide_mode(s, request_id(&w, 0), "allow", decided, &ok);
+  signer_approval_service_decide_mode(s, request_id(&w, 1), "allow", decided, &ok);
   wait_count(&declare.count, 1); wait_count(&ok.count, 1); g_assert_true(ok.ok);
   g_autoptr(GVariant) result = declared_result(&declare);
   const gchar *granted_to = NULL; g_assert_true(g_variant_lookup(result, "identity", "&s", &granted_to));
   g_assert_cmpstr(granted_to, ==, npub);
-  g_assert_cmpuint(declared_count(result, "granted"), ==, GROUNDHOG_SET_COUNT);
-  g_assert_cmpuint(declared_count(result, "denied"), ==, 0);
+  g_assert_cmpuint(declared_count(result, "granted"), ==, GROUNDHOG_SET_COUNT - 1);
+  g_assert_cmpuint(declared_count(result, "denied"), ==, 1);
   g_assert_true(signer_permissions_has_declared(permissions, who.principal, npub));
+  g_assert_cmpint(signer_permissions_evaluate(permissions, who.principal, npub, "event", 1621, FALSE, NULL), ==, SIGNER_PERMISSION_DENY);
   wait_count(&join.count, 1); wait_count(&encrypt.count, 1);
   g_assert_null(join.error); g_assert_nonnull(join.result); g_assert_null(encrypt.error); g_assert_nonnull(encrypt.result);
-  g_assert_cmpuint(w.pending->len, ==, 1);
+  g_assert_cmpuint(w.pending->len, ==, 2);
   /* The whole Groundhog lifecycle without another prompt: group message, seal,
    * AUTH at two relays, relay/inbox lists, deletion, custom kinds, decrypt. */
   const gint kinds[] = {NOSTR_KIND_SIMPLE_GROUP_CHAT_MESSAGE, NOSTR_KIND_SEAL, NOSTR_KIND_CLIENT_AUTHENTICATION,
@@ -655,7 +679,14 @@ static void test_declared_set_lifecycle(void) {
     g_autoptr(SignerGateHandle) h = submit(s, &who, connection, SIGNER_GATE_SIGN_EVENT, json, NULL, &r);
     wait_count(&r.count, 1);
     if (r.error) g_test_message("kind %d: %s", kinds[i], r.error);
-    g_assert_null(r.error); g_assert_nonnull(r.result); g_assert_cmpuint(w.pending->len, ==, 1); reply_clear(&r);
+    g_assert_null(r.error); g_assert_nonnull(r.result); g_assert_cmpuint(w.pending->len, ==, 2); reply_clear(&r);
+  }
+  {
+    /* The pre-existing block still wins at evaluation, without a prompt. */
+    Reply blocked_kind = {0}; g_autofree gchar *issue = event_of_kind(1621);
+    g_autoptr(SignerGateHandle) hb = submit(s, &who, "issue", SIGNER_GATE_SIGN_EVENT, issue, NULL, &blocked_kind);
+    wait_count(&blocked_kind.count, 1); g_assert_cmpstr(blocked_kind.error, ==, ORG_NOSTR_SIGNER_ERR_APPROVAL);
+    g_assert_cmpuint(w.pending->len, ==, 2); reply_clear(&blocked_kind);
   }
   {
     Reply other_relay = {0}, decrypt = {0};
@@ -664,28 +695,39 @@ static void test_declared_set_lifecycle(void) {
     wait_count(&other_relay.count, 1); g_assert_null(other_relay.error); g_assert_nonnull(other_relay.result);
     g_autoptr(SignerGateHandle) hx = submit(s, &who, "decrypt", SIGNER_GATE_NIP44_DECRYPT, encrypt.result, PEER, &decrypt);
     wait_count(&decrypt.count, 1); g_assert_cmpstr(decrypt.result, ==, "hello group");
-    g_assert_cmpuint(w.pending->len, ==, 1); reply_clear(&other_relay); reply_clear(&decrypt);
+    g_assert_cmpuint(w.pending->len, ==, 2); reply_clear(&other_relay); reply_clear(&decrypt);
   }
-  /* An undeclared kind raises exactly one extension review, flagged as such. */
-  Reply comment = {0}; Decision once = {0};
+  /* An undeclared kind raises exactly one extension review, flagged as such;
+   * a second event of that kind waits for the same review (F6). */
+  Reply comment = {0}, comment_too = {0}; Decision once = {0};
   g_autofree gchar *comment_event = event_of_kind(NOSTR_KIND_COMMENT);
+  g_autofree gchar *comment_event_too = event_of_kind(NOSTR_KIND_COMMENT);
   g_autoptr(SignerGateHandle) hc = submit(s, &who, "comment", SIGNER_GATE_SIGN_EVENT, comment_event, NULL, &comment);
-  wait_prompts(&w, 2);
-  g_autoptr(GVariant) extension = signer_approval_service_info(s, request_id(&w, 1));
+  wait_prompts(&w, 3);
+  g_autoptr(SignerGateHandle) hc2 = submit(s, &who, "comment-too", SIGNER_GATE_SIGN_EVENT, comment_event_too, NULL, &comment_too);
+  settle(300);
+  g_assert_cmpuint(w.pending->len, ==, 3); g_assert_cmpuint(comment_too.count, ==, 0);
+  g_autoptr(GVariant) extension = signer_approval_service_info(s, request_id(&w, 2));
   g_assert_true(g_variant_lookup(extension, "declared_set", "b", &extends)); g_assert_true(extends);
-  signer_approval_service_decide(s, request_id(&w, 1), TRUE, FALSE, 0, decided, &once);
+  /* A one-time answer covers only its own event: the second then asks once. */
+  signer_approval_service_decide(s, request_id(&w, 2), TRUE, FALSE, 0, decided, &once);
   wait_count(&comment.count, 1); g_assert_nonnull(comment.result);
+  wait_prompts(&w, 4); g_assert_cmpuint(comment_too.count, ==, 0);
+  Decision lasting = {0};
+  signer_approval_service_decide_mode(s, request_id(&w, 3), "allow", decided, &lasting);
+  wait_count(&comment_too.count, 1); g_assert_nonnull(comment_too.result); g_assert_true(lasting.ok);
   /* Re-declaring a covered set never prompts; an explicit block is reported, not re-asked. */
   Reply again = {0};
   g_autoptr(SignerGateHandle) hr = submit(s, &who, "again", SIGNER_GATE_REQUEST_PERMISSIONS, GROUNDHOG_SET, NULL, &again);
   wait_count(&again.count, 1); g_autoptr(GVariant) covered = declared_result(&again);
-  g_assert_cmpuint(declared_count(covered, "granted"), ==, GROUNDHOG_SET_COUNT); g_assert_cmpuint(w.pending->len, ==, 2);
+  g_assert_cmpuint(declared_count(covered, "granted"), ==, GROUNDHOG_SET_COUNT - 1); g_assert_cmpuint(w.pending->len, ==, 4);
   g_assert_true(signer_permissions_remember(permissions, who.principal, npub, "event", NOSTR_KIND_SIMPLE_GROUP_LEAVE_REQUEST, FALSE, 0, NULL));
   Reply blocked = {0};
   g_autoptr(SignerGateHandle) hb = submit(s, &who, "blocked", SIGNER_GATE_REQUEST_PERMISSIONS, GROUNDHOG_SET, NULL, &blocked);
   wait_count(&blocked.count, 1); g_autoptr(GVariant) partial = declared_result(&blocked);
-  g_assert_cmpuint(declared_count(partial, "granted"), ==, GROUNDHOG_SET_COUNT - 1);
-  g_assert_cmpuint(declared_count(partial, "denied"), ==, 1); g_assert_cmpuint(w.pending->len, ==, 2);
+  g_assert_cmpuint(declared_count(partial, "granted"), ==, GROUNDHOG_SET_COUNT - 2);
+  g_assert_cmpuint(declared_count(partial, "denied"), ==, 2); g_assert_cmpuint(w.pending->len, ==, 4);
+  g_assert_cmpint(signer_permissions_evaluate(permissions, who.principal, npub, "event", NOSTR_KIND_SIMPLE_GROUP_LEAVE_REQUEST, FALSE, NULL), ==, SIGNER_PERMISSION_DENY);
   /* Malformed or unidentified declarations fail before any prompt. */
   Reply invalid = {0}, anonymous = {0};
   g_autoptr(SignerGateHandle) hi = submit(s, &who, "invalid", SIGNER_GATE_REQUEST_PERMISSIONS, "sign_event:1,switch_relays", NULL, &invalid);
@@ -693,7 +735,7 @@ static void test_declared_set_lifecycle(void) {
   SignerCaller nobody = {.kind=SIGNER_CALLER_UNKNOWN, .principal=NULL, .sender="anon", .same_uid=TRUE};
   g_autoptr(SignerGateHandle) hn = submit(s, &nobody, "anon", SIGNER_GATE_REQUEST_PERMISSIONS, "sign_event:1", NULL, &anonymous);
   wait_count(&anonymous.count, 1); g_assert_cmpstr(anonymous.error, ==, ORG_NOSTR_SIGNER_ERR_APPROVAL);
-  g_assert_cmpuint(w.pending->len, ==, 2);
+  g_assert_cmpuint(w.pending->len, ==, 4);
   /* Routine trust on a declared set also grants its custom kinds. */
   SignerCaller other = {.kind=SIGNER_CALLER_EXE, .principal="exe:/test/other-client", .sender="other", .same_uid=TRUE};
   SignerTrustTier tier = SIGNER_TRUST_LOW;
@@ -701,17 +743,155 @@ static void test_declared_set_lifecycle(void) {
   signer_approval_service_set_trust_decision(s, trust_routine, &tier);
   Reply trusted = {0}; Decision trust = {0};
   g_autoptr(SignerGateHandle) ht = submit(s, &other, "trust", SIGNER_GATE_REQUEST_PERMISSIONS, "sign_event:27001,sign_event:13", NULL, &trusted);
-  wait_prompts(&w, 3);
-  signer_approval_service_decide_mode(s, request_id(&w, 2), "trust-routine", decided, &trust);
+  wait_prompts(&w, 5);
+  signer_approval_service_decide_mode(s, request_id(&w, 4), "trust-routine", decided, &trust);
   wait_count(&trusted.count, 1); wait_count(&trust.count, 1); g_assert_true(trust.ok);
   g_assert_cmpint(tier, ==, SIGNER_TRUST_FULL);
   g_autoptr(GVariant) trusted_result = declared_result(&trusted);
   g_assert_cmpuint(declared_count(trusted_result, "granted"), ==, 2);
   g_assert_cmpint(signer_permissions_evaluate(permissions, other.principal, npub, "event", 27001, FALSE, NULL), ==, SIGNER_PERMISSION_ALLOW);
   signer_approval_service_set_trust_decision(s, NULL, NULL); signer_permissions_set_trust_lookup(permissions, NULL, NULL);
-  reply_clear(&declare); reply_clear(&join); reply_clear(&encrypt); reply_clear(&comment); reply_clear(&again);
+  reply_clear(&declare); reply_clear(&join); reply_clear(&encrypt); reply_clear(&comment); reply_clear(&comment_too); reply_clear(&again);
   reply_clear(&blocked); reply_clear(&invalid); reply_clear(&anonymous); reply_clear(&trusted);
-  g_free(bad.error); g_free(ok.error); g_free(once.error); g_free(trust.error);
+  g_free(bad.error); g_free(ok.error); g_free(once.error); g_free(lasting.error); g_free(trust.error);
+  stop(s, &w);
+}
+/* F3: a denied declaration answers for every request that waited on it. */
+static void test_declared_set_denied(void) {
+  Watch w = {0}; SignerApprovalService *s = start(&w); SignerCaller who = local_caller();
+  SignerPermissions *permissions = signer_approval_service_permissions(s);
+  Reply declare = {0}, join = {0}, seal = {0}; Decision no = {0};
+  g_autofree gchar *join_event = event_of_kind(NOSTR_KIND_SIMPLE_GROUP_JOIN_REQUEST);
+  g_autofree gchar *seal_event = event_of_kind(NOSTR_KIND_SEAL);
+  g_autoptr(SignerGateHandle) hd = submit(s, &who, "declare", SIGNER_GATE_REQUEST_PERMISSIONS, GROUNDHOG_SET, NULL, &declare);
+  wait_prompts(&w, 1);
+  g_autoptr(SignerGateHandle) hj = submit(s, &who, "join", SIGNER_GATE_SIGN_EVENT, join_event, NULL, &join);
+  g_autoptr(SignerGateHandle) hs = submit(s, &who, "seal", SIGNER_GATE_SIGN_EVENT, seal_event, NULL, &seal);
+  settle(400);
+  g_assert_cmpuint(w.pending->len, ==, 1); g_assert_cmpuint(signer_approval_service_pending_count(s), ==, 3);
+  const gchar *npub = NULL; g_assert_true(g_variant_lookup(w.pending->pdata[0], "identity", "&s", &npub));
+  signer_approval_service_decide_mode(s, request_id(&w, 0), "deny-once", decided, &no);
+  wait_count(&declare.count, 1); wait_count(&join.count, 1); wait_count(&seal.count, 1);
+  g_assert_true(no.ok);
+  g_assert_cmpstr(declare.error, ==, ORG_NOSTR_SIGNER_ERR_APPROVAL);
+  g_assert_cmpstr(join.error, ==, ORG_NOSTR_SIGNER_ERR_APPROVAL); g_assert_cmpstr(seal.error, ==, ORG_NOSTR_SIGNER_ERR_APPROVAL);
+  settle(300);
+  g_assert_cmpuint(w.pending->len, ==, 1); /* no per-kind reviews followed the denial */
+  g_assert_cmpuint(signer_approval_service_pending_count(s), ==, 0);
+  g_assert_false(signer_permissions_has_declared(permissions, who.principal, npub));
+  g_autoptr(GVariant) rows = signer_permissions_list(permissions, who.principal, NULL);
+  g_assert_cmpuint(g_variant_n_children(rows), ==, 0); /* denial writes nothing */
+  /* The app may ask again later: the next declaration is a fresh review. */
+  Reply later = {0};
+  g_autoptr(SignerGateHandle) hl = submit(s, &who, "later", SIGNER_GATE_REQUEST_PERMISSIONS, GROUNDHOG_SET, NULL, &later);
+  wait_prompts(&w, 2); signer_gate_cancel(hl);
+  reply_clear(&declare); reply_clear(&join); reply_clear(&seal); reply_clear(&later); g_free(no.error);
+  stop(s, &w);
+}
+/* F1: explicit pairing consent grants the perms as a declared set, but an
+ * explicit block of one of them is kept and shown, never replaced. */
+static void test_pairing_keeps_deny(void) {
+  Watch w = {0}; SignerApprovalService *s = start(&w);
+  SignerPermissions *permissions = signer_approval_service_permissions(s);
+  g_autoptr(SignerCaller) who = signer_caller_for_nip46(PEER);
+  SignerCaller local = local_caller();
+  const gchar *npub = resolved_npub(s, &local, &w);
+  g_assert_true(signer_permissions_remember(permissions, who->principal, npub, "event", NOSTR_KIND_SEAL, FALSE, 0, NULL));
+  SignerGateContext context = {.transport=SIGNER_TRANSPORT_NIP46};
+  Reply result = {0}; Decision pair = {0};
+  g_autoptr(SignerGateHandle) handle = signer_approval_service_submit(s, who, who->principal, SIGNER_GATE_CONNECT,
+      "sign_event:1,sign_event:13,sign_event:22242,nip44_encrypt", NULL, "", &context, reply, &result);
+  wait_prompts(&w, 2);
+  g_autoptr(GVariant) info = signer_approval_service_info(s, request_id(&w, 1));
+  g_autoptr(GVariant) summary = g_variant_lookup_value(info, "event_summary", G_VARIANT_TYPE_VARDICT);
+  gboolean on_pairing = FALSE; g_assert_true(g_variant_lookup(summary, "granted_on_pairing", "b", &on_pairing)); g_assert_true(on_pairing);
+  g_autoptr(GVariant) declared = g_variant_lookup_value(summary, "declared_permissions", G_VARIANT_TYPE("aa{sv}"));
+  g_assert_nonnull(declared); g_assert_cmpuint(g_variant_n_children(declared), ==, 4);
+  guint denied = 0, requested = 0, any_relay = 0;
+  for (gsize i = 0; i < g_variant_n_children(declared); i++) {
+    g_autoptr(GVariant) entry = g_variant_get_child_value(declared, i); const gchar *state = NULL, *relay = NULL; guint32 kind = 0;
+    g_variant_lookup(entry, "state", "&s", &state); g_variant_lookup(entry, "kind", "u", &kind);
+    if (!strcmp(state, "denied")) { denied++; g_assert_cmpuint(kind, ==, NOSTR_KIND_SEAL); } else requested++;
+    if (g_variant_lookup(entry, "relay", "&s", &relay)) { any_relay++; g_assert_cmpstr(relay, ==, "*"); }
+  }
+  g_assert_cmpuint(denied, ==, 1); g_assert_cmpuint(requested, ==, 3); g_assert_cmpuint(any_relay, ==, 1);
+  signer_approval_service_decide(s, request_id(&w, 1), TRUE, FALSE, 0, decided, &pair);
+  wait_count(&result.count, 1); g_assert_null(result.error); g_assert_cmpstr(result.result, ==, "ack");
+  g_assert_cmpint(signer_permissions_evaluate(permissions, who->principal, npub, "event", NOSTR_KIND_TEXT_NOTE, FALSE, NULL), ==, SIGNER_PERMISSION_ALLOW);
+  g_assert_cmpint(signer_permissions_evaluate(permissions, who->principal, npub, "nip44_encrypt", -1, FALSE, NULL), ==, SIGNER_PERMISSION_ALLOW);
+  g_assert_cmpint(signer_permissions_evaluate_scoped(permissions, who->principal, npub, "event", NOSTR_KIND_CLIENT_AUTHENTICATION, "wss://nos.lol", FALSE, NULL), ==, SIGNER_PERMISSION_ALLOW);
+  g_assert_cmpint(signer_permissions_evaluate(permissions, who->principal, npub, "event", NOSTR_KIND_SEAL, FALSE, NULL), ==, SIGNER_PERMISSION_DENY);
+  g_autoptr(GVariant) rows = signer_permissions_list(permissions, who->principal, NULL);
+  guint deny_rows = 0, declared_rows = 0;
+  for (gsize i = 0; i < g_variant_n_children(rows); i++) {
+    g_autoptr(GVariant) row = g_variant_get_child_value(rows, i); const gchar *decision = NULL, *source = NULL; gint kind = -1;
+    g_variant_lookup(row, "decision", "&s", &decision); g_variant_lookup(row, "event-kind", "i", &kind);
+    if (!strcmp(decision, "deny")) { deny_rows++; g_assert_cmpint(kind, ==, NOSTR_KIND_SEAL); }
+    if (g_variant_lookup(row, "source", "&s", &source) && !strcmp(source, "declared")) declared_rows++;
+  }
+  g_assert_cmpuint(deny_rows, ==, 1); g_assert_cmpuint(declared_rows, ==, 3);
+  reply_clear(&result); g_free(pair.error); stop(s, &w);
+}
+/* F5: a declared get_relays covers the identity-less GetRelays entrypoint. */
+static void test_declared_get_relays(void) {
+  Watch w = {0}; SignerApprovalService *s = start(&w); SignerCaller who = local_caller();
+  Reply declare = {0}, relays = {0}; Decision ok = {0};
+  g_autoptr(SignerGateHandle) hd = submit(s, &who, "declare", SIGNER_GATE_REQUEST_PERMISSIONS, "get_relays,sign_event:1", NULL, &declare);
+  wait_prompts(&w, 1);
+  /* While the review is open, the identity-less call waits on it too. */
+  g_autoptr(SignerGateHandle) hw = submit(s, &who, "relays-waiting", SIGNER_GATE_GET_RELAYS, NULL, NULL, &relays);
+  settle(300); g_assert_cmpuint(w.pending->len, ==, 1); g_assert_cmpuint(relays.count, ==, 0);
+  signer_approval_service_decide_mode(s, request_id(&w, 0), "allow", decided, &ok);
+  wait_count(&declare.count, 1); g_autoptr(GVariant) result = declared_result(&declare);
+  g_assert_cmpuint(declared_count(result, "granted"), ==, 2);
+  wait_count(&relays.count, 1);
+  /* The fixture has no relay configuration: a backend NotFound, not a prompt. */
+  g_assert_cmpstr(relays.error, !=, ORG_NOSTR_SIGNER_ERR_APPROVAL); g_assert_cmpuint(w.pending->len, ==, 1);
+  Reply again = {0};
+  g_autoptr(SignerGateHandle) ha = submit(s, &who, "relays-again", SIGNER_GATE_GET_RELAYS, NULL, NULL, &again);
+  wait_count(&again.count, 1); g_assert_cmpstr(again.error, !=, ORG_NOSTR_SIGNER_ERR_APPROVAL); g_assert_cmpuint(w.pending->len, ==, 1);
+  reply_clear(&declare); reply_clear(&relays); reply_clear(&again); g_free(ok.error); stop(s, &w);
+}
+static gboolean block_app(const gchar *principal, const gchar *mode, gpointer data, GError **error) {
+  (void)principal; (void)error;
+  if (!strcmp(mode, "block-app")) *(SignerTrustTier *)data = SIGNER_TRUST_BLOCKED;
+  else if (!strcmp(mode, "trust-routine")) *(SignerTrustTier *)data = SIGNER_TRUST_FULL;
+  return TRUE;
+}
+/* F2: Block app retires the declared set; an unblock starts from nothing. */
+static void test_block_app_retires_set(void) {
+  Watch w = {0}; SignerApprovalService *s = start(&w); SignerCaller who = local_caller();
+  SignerPermissions *permissions = signer_approval_service_permissions(s);
+  SignerTrustTier tier = SIGNER_TRUST_LOW;
+  signer_permissions_set_trust_lookup(permissions, full_trust, &tier);
+  signer_approval_service_set_trust_decision(s, block_app, &tier);
+  Reply declare = {0}, comment = {0}; Decision ok = {0}, block = {0};
+  g_autoptr(SignerGateHandle) hd = submit(s, &who, "declare", SIGNER_GATE_REQUEST_PERMISSIONS, GROUNDHOG_SET, NULL, &declare);
+  wait_prompts(&w, 1);
+  const gchar *npub = NULL; g_assert_true(g_variant_lookup(w.pending->pdata[0], "identity", "&s", &npub));
+  signer_approval_service_decide_mode(s, request_id(&w, 0), "allow", decided, &ok);
+  wait_count(&declare.count, 1); g_assert_true(signer_permissions_has_declared(permissions, who.principal, npub));
+  g_assert_true(signer_permissions_remember(permissions, who.principal, npub, "event", NOSTR_KIND_REACTION, FALSE, 0, NULL));
+  g_autofree gchar *comment_event = event_of_kind(NOSTR_KIND_COMMENT);
+  g_autoptr(SignerGateHandle) hc = submit(s, &who, "comment", SIGNER_GATE_SIGN_EVENT, comment_event, NULL, &comment);
+  wait_prompts(&w, 2);
+  signer_approval_service_decide_mode(s, request_id(&w, 1), "block-app", decided, &block);
+  wait_count(&comment.count, 1); g_assert_true(block.ok); g_assert_cmpstr(comment.error, ==, ORG_NOSTR_SIGNER_ERR_APPROVAL);
+  g_assert_cmpint(tier, ==, SIGNER_TRUST_BLOCKED);
+  g_assert_false(signer_permissions_has_declared(permissions, who.principal, npub));
+  g_autoptr(GVariant) rows = signer_permissions_list(permissions, who.principal, NULL);
+  g_assert_cmpuint(g_variant_n_children(rows), ==, 1); /* only the explicit block remains */
+  g_autoptr(GVariant) row = g_variant_get_child_value(rows, 0); const gchar *decision = NULL;
+  g_assert_true(g_variant_lookup(row, "decision", "&s", &decision)); g_assert_cmpstr(decision, ==, "deny");
+  /* Unblocked later: nothing declared survives, the set must be reviewed again. */
+  tier = SIGNER_TRUST_LOW; signer_permissions_policy_changed(permissions);
+  g_assert_cmpint(signer_permissions_evaluate(permissions, who.principal, npub, "event", NOSTR_KIND_SIMPLE_GROUP_JOIN_REQUEST, FALSE, NULL), ==, SIGNER_PERMISSION_ASK);
+  g_assert_cmpint(signer_permissions_evaluate(permissions, who.principal, npub, "event", NOSTR_KIND_REACTION, FALSE, NULL), ==, SIGNER_PERMISSION_DENY);
+  Reply again = {0};
+  g_autoptr(SignerGateHandle) ha = submit(s, &who, "again", SIGNER_GATE_REQUEST_PERMISSIONS, GROUNDHOG_SET, NULL, &again);
+  wait_prompts(&w, 3); signer_gate_cancel(ha);
+  signer_approval_service_set_trust_decision(s, NULL, NULL); signer_permissions_set_trust_lookup(permissions, NULL, NULL);
+  reply_clear(&declare); reply_clear(&comment); reply_clear(&again); g_free(ok.error); g_free(block.error);
   stop(s, &w);
 }
 static void test_nip04_roundtrip(void) {
@@ -989,6 +1169,10 @@ int main(int argc, char **argv) {
   g_test_add_func("/approval/remember-write-failure", test_remember_write_failure);
   g_test_add_func("/approval/nip04-roundtrip", test_nip04_roundtrip);
   g_test_add_func("/approval/declared-set-lifecycle", test_declared_set_lifecycle);
+  g_test_add_func("/approval/declared-set-denied", test_declared_set_denied);
+  g_test_add_func("/approval/pairing-keeps-deny", test_pairing_keeps_deny);
+  g_test_add_func("/approval/declared-get-relays", test_declared_get_relays);
+  g_test_add_func("/approval/block-app-retires-set", test_block_app_retires_set);
   g_test_add_func("/approval/validation-deadline", test_validation_and_deadline);
   g_test_add_func("/approval/metadata-revoke", test_metadata_and_revoke);
   g_test_add_func("/approval/readable-summaries", test_readable_summaries);

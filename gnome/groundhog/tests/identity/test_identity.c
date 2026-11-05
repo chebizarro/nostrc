@@ -576,6 +576,57 @@ test_declare_permissions(void)
   wait_for_done(&wait);
   g_assert_no_error(wait.error); g_assert_nonnull(wait.value);
   g_free(wait.value);
+  /* A denied declaration answers for the operations that waited on it: they
+   * fail the same way and never reach the service as per-kind requests (F3). */
+  mode = MOCK_HOLD;
+  Declared refused = {0}; Await parked = { .loop = NULL, .sign = TRUE };
+  gh_signer_declare_permissions_async(signer, gh_signer_declared_permissions(), NULL, declared, &refused);
+  wait_for_held_call();
+  gh_signer_sign_async(signer, request, NULL, finished, &parked);
+  settle(200);
+  g_assert_cmpuint(held_calls->len, ==, 1);
+  mode = MOCK_OK; /* a launched sign would now succeed: it must not be launched */
+  g_dbus_method_invocation_return_dbus_error(g_ptr_array_index(held_calls, 0),
+    "org.nostr.Signer.Error.ApprovalDenied", "user denied the set");
+  g_ptr_array_remove_index(held_calls, 0);
+  while (!refused.done) g_main_context_iteration(NULL, TRUE);
+  g_assert_error(refused.error, GH_SIGNER_ERROR, GH_SIGNER_ERROR_DENIED);
+  g_clear_error(&refused.error);
+  wait_for_done(&parked);
+  g_assert_error(parked.error, GH_SIGNER_ERROR, GH_SIGNER_ERROR_DENIED);
+  g_assert_null(parked.value); g_clear_error(&parked.error);
+  settle(200);
+  g_assert_cmpuint(held_calls->len, ==, 0); /* never sent */
+  /* The local wait is bounded (F7): the 65th operation fails visibly. */
+  mode = MOCK_HOLD;
+  Declared slow = {0};
+  gh_signer_declare_permissions_async(signer, gh_signer_declared_permissions(), NULL, declared, &slow);
+  wait_for_held_call();
+  Await queued[65];
+  for (guint i = 0; i < 65; i++) {
+    queued[i] = (Await){ .loop = NULL, .sign = TRUE };
+    gh_signer_sign_async(signer, request, NULL, finished, &queued[i]);
+  }
+  wait_for_done(&queued[64]);
+  g_assert_error(queued[64].error, GH_SIGNER_ERROR, GH_SIGNER_ERROR_UNAVAILABLE);
+  g_clear_error(&queued[64].error);
+  for (guint i = 0; i < 64; i++) g_assert_false(queued[i].done);
+  g_assert_cmpuint(held_calls->len, ==, 1);
+  mode = MOCK_OK;
+  {
+    GVariantBuilder ok; g_variant_builder_init(&ok, G_VARIANT_TYPE_VARDICT);
+    g_variant_builder_add(&ok, "{sv}", "identity", g_variant_new_string(npub_one));
+    g_variant_builder_add_parsed(&ok, "{'granted', <@aa{sv} []>}");
+    g_variant_builder_add_parsed(&ok, "{'denied', <@aa{sv} []>}");
+    g_dbus_method_invocation_return_value(g_ptr_array_index(held_calls, 0), g_variant_new("(a{sv})", &ok));
+    g_ptr_array_remove_index(held_calls, 0);
+  }
+  while (!slow.done) g_main_context_iteration(NULL, TRUE);
+  g_assert_true(slow.ok);
+  for (guint i = 0; i < 64; i++) {
+    wait_for_done(&queued[i]);
+    g_assert_no_error(queued[i].error); g_assert_nonnull(queued[i].value); g_free(queued[i].value);
+  }
   /* A pre-0.8.0 signer: the declaration is unavailable and nothing else changes. */
   mode = MOCK_OLD_SIGNER;
   Declared old = {0};

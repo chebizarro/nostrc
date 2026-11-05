@@ -820,7 +820,7 @@ Unknown request: `Error.NotFound`.
 | `target_kind` | `u` | Last `k` tag for those operations, only when a validated decimal kind in 0–65535 |
 | `reaction_value` | `s` | Public reaction text, valid UTF-8 and bounded to 280 characters (including empty, the protocol's default reaction) |
 | `recipient_peer` | `s` | Last `p` tag of private/encrypted-message signing, only when a validated 64-hex public recipient fingerprint; lowercase. May be absent for sealed events. |
-| `declared_permissions` | `aa{sv}` | `permissions` requests only (0.8.0): one `{token:s, type:s, kind:u?, state:s}` per declared entry; `state` is `requested`, `granted` (already covered) or `denied` (explicitly blocked; stays blocked) |
+| `declared_permissions` | `aa{sv}` | `permissions` requests, and `connect` requests with a pinned identity (0.8.0): one `{token:s, type:s, kind:u?, relay:s?, state:s}` per declared entry; `relay` is `*` for AUTH (any relay the app chooses); `state` is `requested`, `granted` (already covered) or `denied` (explicitly blocked; stays blocked) |
 | `requested_permissions_hint` | `as` | `connect` only: recognised NIP-46 perms tokens |
 | `granted_on_pairing` | `b` | `connect` only (0.8.0): true when the connect resolved an identity, so explicit pairing consent grants those tokens until revoked |
 
@@ -870,26 +870,47 @@ covered by the set runs without a prompt.
 - Explicit consent (`ApproveRequest(decision=true)`, Control1 `DecideRequest`
   with `allow` or `trust-routine`) writes every entry that is not explicitly
   blocked as an **until-revoked** allow row marked `source=declared`; AUTH
-  (kind 22242) is written with `relay=*` (any relay). A declared set is never
-  "once" or 24 hours: `allow-once`, `allow-24h`, `block-operation`,
-  `activate-saved` and `discard-saved` are refused with `Error.InvalidInput`;
-  `deny-once` and `block-app` apply. `trust-routine` additionally sets the
-  routine preset and still writes the whole declared set, custom kinds included.
+  (kind 22242) is written with `relay=*` — **any relay the app chooses**, a
+  broader delegation than one relay sign-in, which the review names as such;
+  `get_relays`, whose entrypoint has no identity argument, is written with the
+  identity-less scope that `GetRelays` actually evaluates (never the pinned
+  identity's). A declared set is never "once" or 24 hours: `allow-once`,
+  `allow-24h`, `block-operation`, `activate-saved` and `discard-saved` are
+  refused with `Error.InvalidInput`; `deny-once` and `block-app` apply.
+  `trust-routine` additionally sets the routine preset and still writes the
+  whole declared set, custom kinds included.
+- **Deny wins, at write time and at evaluation.** The common declared-set
+  writer never replaces a live explicit `deny` row (exact, operation-wide or
+  wildcard-identity) or writes for a blocked client, whichever caller declares
+  the set — `RequestPermissions`, `trust-routine` and NIP-46 pairing alike.
+  Blocked entries are shown as `denied` in the review, reported in `denied`,
+  and the block keeps winning at evaluation; a set whose entries are all
+  blocked writes nothing and fails with `Error.ApprovalDenied`.
 - **One review per app**: an ordinary call that arrives while the declaration is
-  pending and whose scope is listed in it waits silently for that answer
-  (it is not announced); approval executes it, denial fails it with
-  `Error.ApprovalDenied`, and its ordinary deadline still applies.
+  pending and whose scope is listed in it waits silently for that answer (it
+  is not announced; an identity-less `GetRelays` waits too). Approval executes
+  it; a denied, expired, cancelled or failed declaration answers for it the
+  same way (`Error.ApprovalDenied` / `ApprovalTimedOut` / `Cancelled` /
+  `Internal`) — the per-kind reviews the declaration replaced are never
+  raised instead. Its ordinary deadline still applies.
 - An app that holds a declared set and later asks for an undeclared scope gets
   one ordinary review whose `GetApprovalInfo` carries `declared_set=true`
-  ("extend the set"); the UI may default that review to *Always allow*.
-- Explicit per-scope blocks (`deny` rows) win over a declared allow and are
-  reported in `denied`, never re-asked. Unidentified and empty-claim callers
-  are denied. A pre-0.8.0 service answers `UnknownMethod`; callers fall back
-  to per-request consent.
+  ("extend the set"); the UI may default that review to *Always allow*. While
+  that review is open, further requests of the same identity and scope
+  (operation/kind, AUTH relay) from that app wait for its answer: a lasting
+  answer covers them, a one-time answer lets each ask once. Exact-argument
+  joining still shares one prompt and one execution among identical calls.
+- **Block app** (Control1 `DecideRequest(block-app)`) retires the app's saved
+  authority — every allow, review and policy-review row of the principal,
+  declared sets included — before blocking it; explicit `deny` rows stay. An
+  unblocked app therefore starts from nothing and must declare again.
+- Unidentified and empty-claim callers are denied. A pre-0.8.0 service
+  answers `UnknownMethod`; callers fall back to per-request consent.
 - NIP-46 `connect(perms)` receives the same treatment: explicit pairing
   consent for a connect that resolved an identity grants the recognised perms
-  tokens as a declared set (`event_summary.granted_on_pairing=true`); paired
-  reconnects grant nothing.
+  tokens as a declared set (`event_summary.granted_on_pairing=true`; the
+  review lists each token's standing under `event_summary.declared_permissions`,
+  so a kept block is visible); paired reconnects grant nothing.
 
 #### CallWithContext
 

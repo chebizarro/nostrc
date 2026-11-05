@@ -85,11 +85,18 @@
          the identity's policy and raises at most ONE review listing the
          declared capabilities; explicit consent writes every entry that is
          not explicitly blocked as an until-revoked grant (AUTH 22242 as
-         any-relay authority), so later calls covered by the set never prompt.
-         A set that is already fully covered returns without a prompt; a set
-         whose entries are all blocked fails with Error.ApprovalDenied.
-         Ordinary calls that arrive while this review is pending and are
-         listed in the set wait for its answer instead of prompting.
+         any-relay authority, disclosed as such; get_relays identity-less,
+         like its entrypoint), so later calls covered by the set never prompt.
+         Deny wins at write time and at evaluation: an explicit block is never
+         replaced by a declared allow, whichever caller declares (NIP-46
+         pairing included), and blocked entries are shown and reported as
+         denied. A set that is already fully covered returns without a
+         prompt; a set whose entries are all blocked fails with
+         Error.ApprovalDenied. Ordinary calls that arrive while this review is
+         pending and are listed in the set wait for its answer instead of
+         prompting; a denied, expired or cancelled review answers for them the
+         same way. Block app retires the app's allow rows, declared sets
+         included.
          Reply: identity:s (the pinned npub), granted:aa{sv} and
          denied:aa{sv} (entries shaped like the input). Same caller
          authentication, gating and errors as other gated calls; a pre-0.8.0

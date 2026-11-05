@@ -14,6 +14,10 @@
 /* The signer can hold an approval for 300 seconds. Leave room for its typed
  * result instead of reporting a local transport timeout at 30 seconds. */
 #define SIGNER_CALL_TIMEOUT_MS (330 * 1000)
+/* Operations retained locally while one declaration is unanswered. The
+ * declaration itself ends within SIGNER_CALL_TIMEOUT_MS, so the wait is time
+ * bounded; this bounds its memory and fails further work visibly. */
+#define WAITING_MAX 64
 
 typedef enum { OP_SIGN, OP_ENCRYPT, OP_DECRYPT, OP_NIP04_DECRYPT, OP_DECLARE } Operation;
 typedef struct _Pending Pending;
@@ -30,7 +34,8 @@ struct _GhNip55lSigner {
   gboolean declaring;
   guint generation;
 };
-static void release_waiting(GhNip55lSigner *signer);
+static void release_waiting(GhNip55lSigner *signer, const GError *outcome);
+static void fail_pending(Pending *p, GError *error);
 struct _Pending {
   GhNip55lSigner *signer;
   GTask *task;
@@ -48,7 +53,19 @@ struct _Pending {
   GVariant *context;
   gboolean wrapped;
   gboolean named;
+  GError *outcome; /* OP_DECLARE: how it ended, for the operations waiting on it */
 };
+/* Every failure of a Pending goes through here so a declaration remembers
+ * its outcome for the operations that waited on it. Takes the error. */
+static void
+fail_pending(Pending *p, GError *error)
+{
+  if (p->op == OP_DECLARE) {
+    g_clear_error(&p->outcome);
+    p->outcome = g_error_copy(error);
+  }
+  g_task_return_error(p->task, error);
+}
 
 static GhNip55lSigner *
 signer_ref(GhNip55lSigner *signer)
@@ -218,9 +235,10 @@ cancel_from_caller(GCancellable *caller, gpointer data)
 static void
 pending_free(Pending *p)
 {
-  /* However the declaration ended (answered, refused, unknown method,
-   * cancelled), the operations that waited for it may proceed. */
-  if (p->op == OP_DECLARE && p->signer->declaring) release_waiting(p->signer);
+  /* However the declaration ended, the operations that waited on it are
+   * resolved by that one outcome: launched, or failed the same way. */
+  if (p->op == OP_DECLARE && p->signer->declaring) release_waiting(p->signer, p->outcome);
+  g_clear_error(&p->outcome);
   if (p->caller_handler) g_cancellable_disconnect(p->caller, p->caller_handler);
   g_clear_object(&p->caller);
   g_clear_object(&p->cancel);
@@ -291,16 +309,16 @@ call_done(GObject *source, GAsyncResult *result, gpointer data)
   g_ptr_array_remove(signer->pending, p);
   if (g_cancellable_is_cancelled(p->cancel) || p->generation != signer->generation ||
       g_dbus_connection_is_closed(p->bus)) {
-    g_task_return_new_error(p->task, GH_SIGNER_ERROR, GH_SIGNER_ERROR_CANCELLED,
-                            "Signer operation cancelled");
+    fail_pending(p, g_error_new_literal(GH_SIGNER_ERROR, GH_SIGNER_ERROR_CANCELLED,
+                                        "Signer operation cancelled"));
   } else if (bus_error) {
-    g_task_return_error(p->task, map_bus_error(bus_error));
+    fail_pending(p, map_bus_error(bus_error));
   } else if (p->op == OP_DECLARE) {
     if (reply && g_variant_is_of_type(reply, G_VARIANT_TYPE("(a{sv})")))
       g_task_return_boolean(p->task, TRUE);
     else
-      g_task_return_new_error(p->task, GH_SIGNER_ERROR, GH_SIGNER_ERROR_INVALID_RESULT,
-                              "Signer returned an invalid declaration result");
+      fail_pending(p, g_error_new_literal(GH_SIGNER_ERROR, GH_SIGNER_ERROR_INVALID_RESULT,
+                                          "Signer returned an invalid declaration result"));
   } else if (!reply || !g_variant_is_of_type(reply, G_VARIANT_TYPE("(s)"))) {
     g_task_return_new_error(p->task, GH_SIGNER_ERROR, GH_SIGNER_ERROR_INVALID_RESULT,
                             "Signer returned an invalid result");
@@ -401,8 +419,8 @@ connection_done(GObject *source, GAsyncResult *result, gpointer data)
       g_object_unref(bus);
     }
     g_ptr_array_remove(signer->pending, p);
-    g_task_return_new_error(p->task, GH_SIGNER_ERROR, GH_SIGNER_ERROR_CANCELLED,
-                            "Signer operation cancelled");
+    fail_pending(p, g_error_new_literal(GH_SIGNER_ERROR, GH_SIGNER_ERROR_CANCELLED,
+                                        "Signer operation cancelled"));
     pending_free(p);
     return;
   }
@@ -413,8 +431,8 @@ connection_done(GObject *source, GAsyncResult *result, gpointer data)
       g_object_unref(bus);
     }
     g_ptr_array_remove(signer->pending, p);
-    g_task_return_new_error(p->task, GH_SIGNER_ERROR, GH_SIGNER_ERROR_UNAVAILABLE,
-                            "Cannot connect to the selected session bus");
+    fail_pending(p, g_error_new_literal(GH_SIGNER_ERROR, GH_SIGNER_ERROR_UNAVAILABLE,
+                                        "Cannot connect to the selected session bus"));
     pending_free(p);
     return;
   }
@@ -424,8 +442,8 @@ connection_done(GObject *source, GAsyncResult *result, gpointer data)
     g_dbus_connection_close(bus, NULL, NULL, NULL);
     g_object_unref(bus);
     g_ptr_array_remove(signer->pending, p);
-    g_task_return_new_error(p->task, GH_SIGNER_ERROR, GH_SIGNER_ERROR_CANCELLED,
-                            "Signer operation cancelled");
+    fail_pending(p, g_error_new_literal(GH_SIGNER_ERROR, GH_SIGNER_ERROR_CANCELLED,
+                                        "Signer operation cancelled"));
     pending_free(p);
     return;
   }
@@ -454,8 +472,8 @@ send_call(Pending *p, gboolean wrapped)
   if (g_cancellable_is_cancelled(p->cancel) || p->generation != p->signer->generation ||
       g_dbus_connection_is_closed(p->bus)) {
     g_ptr_array_remove(p->signer->pending, p);
-    g_task_return_new_error(p->task, GH_SIGNER_ERROR, GH_SIGNER_ERROR_CANCELLED,
-                            "Signer operation cancelled");
+    fail_pending(p, g_error_new_literal(GH_SIGNER_ERROR, GH_SIGNER_ERROR_CANCELLED,
+                                        "Signer operation cancelled"));
     if (!g_dbus_connection_is_closed(p->bus)) g_dbus_connection_close(p->bus, NULL, NULL, NULL);
     pending_free(p); return;
   }
@@ -494,15 +512,15 @@ address_done(GObject *source, GAsyncResult *result, gpointer data)
   if (g_cancellable_is_cancelled(p->cancel) ||
       p->generation != p->signer->generation) {
     g_ptr_array_remove(p->signer->pending, p);
-    g_task_return_new_error(p->task, GH_SIGNER_ERROR, GH_SIGNER_ERROR_CANCELLED,
-                            "Signer operation cancelled");
+    fail_pending(p, g_error_new_literal(GH_SIGNER_ERROR, GH_SIGNER_ERROR_CANCELLED,
+                                        "Signer operation cancelled"));
     pending_free(p);
     return;
   }
   if (!address) {
     g_ptr_array_remove(p->signer->pending, p);
-    g_task_return_new_error(p->task, GH_SIGNER_ERROR, GH_SIGNER_ERROR_UNAVAILABLE,
-                            "Cannot resolve the selected session bus");
+    fail_pending(p, g_error_new_literal(GH_SIGNER_ERROR, GH_SIGNER_ERROR_UNAVAILABLE,
+                                        "Cannot resolve the selected session bus"));
     pending_free(p);
     return;
   }
@@ -520,14 +538,31 @@ launch(Pending *p)
   g_object_unref(lookup);
 }
 
+/* The declaration's one outcome resolves every operation that waited on it.
+ * A service without the method (UnknownMethod -> UNAVAILABLE) or an
+ * unreadable result keeps the old per-request route: the operations start.
+ * A denied, timed-out, agentless, identity-changed or cancelled review
+ * answers for them too: they fail the same way and never raise the per-kind
+ * reviews the declaration was meant to replace. */
 static void
-release_waiting(GhNip55lSigner *signer)
+release_waiting(GhNip55lSigner *signer, const GError *outcome)
 {
   signer->declaring = FALSE;
+  gboolean proceed = !outcome ||
+    g_error_matches(outcome, GH_SIGNER_ERROR, GH_SIGNER_ERROR_UNAVAILABLE) ||
+    g_error_matches(outcome, GH_SIGNER_ERROR, GH_SIGNER_ERROR_INVALID_RESULT);
   while (signer->waiting->len) {
     Pending *p = g_ptr_array_index(signer->waiting, 0);
     g_ptr_array_remove_index(signer->waiting, 0);
-    launch(p); /* cancelled ones finish CANCELLED through the normal path */
+    if (proceed) {
+      launch(p); /* cancelled ones finish CANCELLED through the normal path */
+      continue;
+    }
+    g_ptr_array_remove(signer->pending, p);
+    fail_pending(p, g_error_new(GH_SIGNER_ERROR, outcome->code,
+                                "Not sent: the signer's permission review ended first (%s)",
+                                outcome->message));
+    pending_free(p);
   }
 }
 
@@ -606,8 +641,16 @@ start_call(GhNip55lSigner *signer, Operation op, const gchar *input, const gchar
   if (p->caller)
     p->caller_handler = g_cancellable_connect(p->caller, G_CALLBACK(cancel_from_caller),
                                                p, NULL);
-  if (signer->declaring) g_ptr_array_add(signer->waiting, p);
-  else launch(p);
+  if (!signer->declaring) { launch(p); return; }
+  if (signer->waiting->len >= WAITING_MAX) {
+    /* Bounded wait: further work fails visibly instead of growing memory. */
+    g_ptr_array_remove(signer->pending, p);
+    fail_pending(p, g_error_new_literal(GH_SIGNER_ERROR, GH_SIGNER_ERROR_UNAVAILABLE,
+                                        "Too many operations are waiting for the signer's permission review"));
+    pending_free(p);
+    return;
+  }
+  g_ptr_array_add(signer->waiting, p);
 }
 
 /* Declared permission set (nip55l 0.8.0 RequestPermissions). */

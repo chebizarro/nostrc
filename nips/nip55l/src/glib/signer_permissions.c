@@ -956,27 +956,62 @@ gchar *signer_permissions_canonical_tokens(const gchar *csv, gboolean strict, GE
   return g_strjoinv(",", (gchar **)tokens->pdata);
 }
 gboolean signer_permissions_grant_tokens(SignerPermissions *p, const gchar *principal,
-    const gchar *identity, const gchar *csv, GError **error) {
+    const gchar *identity, const gchar *csv, gchar **denied, GError **error) {
+  if (denied) *denied = NULL;
   if (!principal || !*principal || !strcmp(principal, "claimed:") || !identity || !*identity)
     return fail(error, G_IO_ERROR_INVALID_ARGUMENT, "this app cannot receive reusable consent");
   g_autofree gchar *canonical = signer_permissions_canonical_tokens(csv, TRUE, error);
   if (!canonical) return FALSE;
   if (!signer_permissions_reload(p, error)) return FALSE;
   g_autoptr(GKeyFile) next = copy_records(p);
+  g_autoptr(GString) blocked = g_string_new(NULL);
   g_auto(GStrv) tokens = g_strsplit(canonical, ",", -1);
+  guint written = 0;
   for (guint i = 0; tokens[i]; i++) {
     const gchar *op = NULL; gint kind = -1;
     if (!signer_permissions_token_scope(tokens[i], &op, &kind) || !signer_permissions_can_remember(principal, op, kind))
       return fail(error, G_IO_ERROR_INVALID_ARGUMENT, "declared permission cannot receive reusable consent");
-    Row row = {.principal=(gchar *)principal, .identity=(gchar *)identity, .operation=(gchar *)op,
-      .kind=kind, .decision="allow", .expires=0, .source=SOURCE_DECLARED,
-      .relay=kind == NOSTR_KIND_CLIENT_AUTHENTICATION ? RELAY_ANY : NULL};
+    /* GetRelays has no identity argument: its row must carry the scope the
+     * entrypoint actually evaluates, or the declared grant would never apply. */
+    const gchar *row_identity = !strcmp(op, "get_relays") ? "" : identity;
+    const gchar *relay = kind == NOSTR_KIND_CLIENT_AUTHENTICATION ? RELAY_ANY : NULL;
+    /* Deny wins at write time: an explicit block (or a blocked client) is
+     * never replaced by a declared allow, whichever caller declares it. */
+    if (evaluate_loaded(p, principal, row_identity, op, kind, relay, FALSE) == SIGNER_PERMISSION_DENY) {
+      g_string_append_printf(blocked, "%s%s", blocked->len ? "," : "", tokens[i]);
+      continue;
+    }
+    Row row = {.principal=(gchar *)principal, .identity=(gchar *)row_identity, .operation=(gchar *)op,
+      .kind=kind, .decision="allow", .expires=0, .source=SOURCE_DECLARED, .relay=(gchar *)relay};
     if (!valid_row(&row)) return fail(error, G_IO_ERROR_INVALID_ARGUMENT, "invalid declared permission scope");
-    write_row(next, &row);
+    write_row(next, &row); written++;
   }
+  if (denied && blocked->len) *denied = g_strdup(blocked->str);
+  if (!written) return TRUE; /* nothing to grant: every token stays blocked */
   /* Declared authority supersedes bounded flow consent for this identity. */
   signer_permissions_invalidate_flows(p, principal, identity, NULL);
   return commit(p, next, error);
+}
+gboolean signer_permissions_revoke_allows(SignerPermissions *p, const gchar *principal,
+    gboolean *removed, GError **error) {
+  *removed = FALSE;
+  if (!principal || !*principal) return fail(error, G_IO_ERROR_INVALID_ARGUMENT, "missing principal");
+  /* Ephemeral authority is gone even if durable revocation fails. */
+  *removed = signer_permissions_invalidate_flows(p, principal, NULL, NULL);
+  if (!signer_permissions_reload(p, error)) return FALSE;
+  g_autoptr(GKeyFile) next = copy_records(p);
+  gboolean found = FALSE;
+  g_auto(GStrv) groups = g_key_file_get_groups(next, NULL);
+  for (guint i = 0; groups[i]; i++) {
+    if (!g_str_has_prefix(groups[i], "record-")) continue;
+    g_autoptr(Row) r = read_row(next, groups[i], NULL);
+    /* Quarantined (unreadable) scopes act as denies and stay. */
+    if (!r || strcmp(r->principal, principal) || !strcmp(r->decision, "deny")) continue;
+    g_key_file_remove_group(next, groups[i], NULL); found = TRUE;
+  }
+  if (found && !commit(p, next, error)) return FALSE;
+  *removed = *removed || found;
+  return TRUE;
 }
 GVariant *signer_permissions_list_legacy(SignerPermissions *p, GError **error) {
   if (!signer_permissions_reload(p, error)) return NULL;

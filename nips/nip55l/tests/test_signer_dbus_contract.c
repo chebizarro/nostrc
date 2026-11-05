@@ -1342,6 +1342,89 @@ static void test_declared_set_contract(Ctx *ctx) {
     g_variant_unref(r);
     watch_stop(ctx, &w);
   }
+  /* F6: two different events of one undeclared kind share one review; a
+   * lasting answer covers both without a second prompt. */
+  {
+    g_usleep(120 * 1000);
+    watch_start(ctx, &w);
+    GDBusConnection *second = open_conn();
+    g_autofree gchar *article = groundhog_event(NOSTR_KIND_ARTICLE, NULL);
+    g_autofree gchar *article_too = groundhog_event(NOSTR_KIND_ARTICLE, NULL);
+    watch_call(ctx, &w, "SignEvent", g_variant_new("(sss)", article, ctx->npub, "contract-test"));
+    watch_wait_request(&w, 1);
+    w.a.pending_replies++;
+    g_dbus_connection_call(second, BUS_NAME, OBJ_PATH, IFACE, "SignEvent",
+        g_variant_new("(sss)", article_too, ctx->npub, "contract-test"), G_VARIANT_TYPE("(s)"),
+        G_DBUS_CALL_FLAGS_NONE, 30000, NULL, on_async_reply, &w.a);
+    for (int i = 0; i < 40; i++) { watch_drain(); g_usleep(10 * 1000); }
+    CHECK(w.a.n_requests == 1 && w.a.replies->len == 0);
+    approve(ctx, w.a.req_id, TRUE, TRUE);
+    watch_wait_replies(&w);
+    CHECK(w.a.replies->len == 2 && w.a.n_requests == 1);
+    for (guint i = 0; i < 2; i++) {
+      GVariant *reply = w.a.replies->pdata[i]; GError *e = w.a.errors->pdata[i];
+      if (!reply) { g_printerr("same-scope reply %u: %s\n", i, e ? e->message : "?"); exit(1); }
+      const gchar *text = NULL; g_variant_get(reply, "(&s)", &text);
+      assert_signed_event(text, ctx->pk_hex, NOSTR_KIND_ARTICLE, 0);
+    }
+    close_conn(second);
+    watch_stop(ctx, &w);
+  }
+  /* F1 (deny precedence over a later declaration): block one kind through
+   * the ordinary review, then declare a set that includes it. The set is
+   * reported with that entry denied, writes no allow for it, and the kind
+   * stays blocked without a prompt. */
+  {
+    g_usleep(120 * 1000);
+    watch_start(ctx, &w);
+    g_autofree gchar *zap = groundhog_event(NOSTR_KIND_ZAP_REQUEST, NULL);
+    watch_call(ctx, &w, "SignEvent", g_variant_new("(sss)", zap, ctx->npub, "contract-test"));
+    watch_wait_request(&w, 1);
+    approve(ctx, w.a.req_id, FALSE, TRUE); /* block this operation for this app */
+    watch_wait_replies(&w);
+    expect_remote_error(w.a.errors->pdata[0], ERR_DENIED);
+    watch_stop(ctx, &w);
+    GVariantBuilder with_zap; g_variant_builder_init(&with_zap, G_VARIANT_TYPE("aa{sv}"));
+    g_variant_builder_add_value(&with_zap, declared_entry("sign_event", NOSTR_KIND_ZAP_REQUEST));
+    g_variant_builder_add_value(&with_zap, declared_entry("sign_event", NOSTR_KIND_SIMPLE_GROUP_JOIN_REQUEST));
+    g_variant_builder_add_value(&with_zap, declared_entry("get_relays", -1));
+    g_usleep(120 * 1000); /* the daemon allows one new prompt per 100 ms per sender */
+    watch_start(ctx, &w);
+    w.a.pending_replies++;
+    g_dbus_connection_call(ctx->bus, BUS_NAME, OBJ_PATH, IFACE, "RequestPermissions",
+        g_variant_new("(@aa{sv}@a{sv})", g_variant_builder_end(&with_zap), declared_context(ctx)),
+        G_VARIANT_TYPE("(a{sv})"), G_DBUS_CALL_FLAGS_NONE, 30000, NULL, on_async_reply, &w.a);
+    watch_wait_request(&w, 1); /* get_relays is new: one review, zap shown denied */
+    {
+      g_autoptr(GVariant) info = call(ctx->bus, "GetApprovalInfo", g_variant_new("(s)", w.a.req_id), "(a{sv})", &err);
+      CHECK(info != NULL);
+      g_autoptr(GVariant) row = g_variant_get_child_value(info, 0);
+      g_autoptr(GVariant) summary = g_variant_lookup_value(row, "event_summary", G_VARIANT_TYPE_VARDICT);
+      g_autoptr(GVariant) declared = g_variant_lookup_value(summary, "declared_permissions", G_VARIANT_TYPE("aa{sv}"));
+      CHECK(declared && g_variant_n_children(declared) == 3);
+      guint denied_shown = 0;
+      for (gsize i = 0; i < 3; i++) {
+        g_autoptr(GVariant) entry = g_variant_get_child_value(declared, i); const gchar *state = NULL; guint32 kind = 0;
+        CHECK(g_variant_lookup(entry, "state", "&s", &state)); g_variant_lookup(entry, "kind", "u", &kind);
+        if (kind == NOSTR_KIND_ZAP_REQUEST) { CHECK(g_strcmp0(state, "denied") == 0); denied_shown++; }
+        else if (kind == NOSTR_KIND_SIMPLE_GROUP_JOIN_REQUEST) CHECK(g_strcmp0(state, "granted") == 0);
+        else CHECK(g_strcmp0(state, "requested") == 0);
+      }
+      CHECK(denied_shown == 1);
+    }
+    approve(ctx, w.a.req_id, TRUE, FALSE);
+    watch_wait_replies(&w);
+    GVariant *reply = w.a.replies->pdata[0];
+    if (!reply) { g_printerr("RequestPermissions (with block): %s\n", ((GError *)w.a.errors->pdata[0])->message); exit(1); }
+    CHECK(declared_count(reply, "granted") == 2 && declared_count(reply, "denied") == 1);
+    watch_stop(ctx, &w);
+    GVariant *r = no_prompt(ctx, "SignEvent", g_variant_new("(sss)", zap, ctx->npub, "contract-test"), &err);
+    CHECK(r == NULL); expect_remote_error(err, ERR_DENIED); g_clear_error(&err);
+    /* F5: the identity-less GetRelays entrypoint is covered by the declared
+     * get_relays: no prompt (this fixture has no relay configuration). */
+    r = no_prompt(ctx, "GetRelays", NULL, &err);
+    CHECK(r == NULL); expect_remote_error(err, ERR_NOT_FND); g_clear_error(&err);
+  }
   /* Malformed declarations fail before any prompt. */
   {
     GVariantBuilder bad; GVariant *r;
