@@ -3388,3 +3388,15 @@ msgstr ""
 #: src/ui/signer-window.c:1049
 msgid "Session locked via Ctrl+L"
 msgstr ""
+
+#: src/ui/page-settings.c
+msgid "Privacy / Network"
+msgstr "Privacidad / Red"
+
+#: src/ui/page-settings.c
+msgid "Load Profile Images"
+msgstr "Cargar imágenes de perfil"
+
+#: src/ui/page-settings.c
+msgid "Fetch avatars and banners from the web addresses in profiles"
+msgstr "Obtener avatares y cabeceras de las direcciones web de los perfiles"

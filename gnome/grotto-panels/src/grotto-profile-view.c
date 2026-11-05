@@ -33,7 +33,7 @@ struct _GrottoProfileView {
   GtkLabel *status, *address;
   AdwActionRow *summary, *details[GROTTO_PROFILE_N_FIELDS];
   GtkTextView *about;
-  GtkButton *edit, *refresh, *load_images, *stop;
+  GtkButton *edit, *refresh, *stop;
   GtkSpinner *spinner, *dialog_spinner;
   AdwDialog *dialog;
   AdwEntryRow *entries[GROTTO_PROFILE_N_FIELDS];
@@ -41,7 +41,7 @@ struct _GrottoProfileView {
   GtkPicture *previews[2];
   GtkLabel *error, *publication, *discovery, *verification;
   AdwSwitchRow *bot;
-  GtkButton *republish, *discard, *verify, *card_load;
+  GtkButton *republish, *discard, *verify;
   AdwAvatar *card_avatar;
   GtkPicture *card_banner;
   GtkLabel *card_name, *card_username, *card_about, *card_links, *card_nip05;
@@ -70,7 +70,6 @@ static void render_card(GrottoProfileView *self, GrottoProfileInfo *p) {
     *p->fields[GROTTO_PROFILE_LUD16] ? p->fields[GROTTO_PROFILE_LUD16] : p->fields[GROTTO_PROFILE_LUD06], *p->fields[GROTTO_PROFILE_NIP05] ? "\n" : "", p->fields[GROTTO_PROFILE_NIP05]);
   gtk_label_set_text(self->card_links, links); gtk_label_set_text(self->card_nip05, nip05_status(p));
   gtk_widget_set_visible(GTK_WIDGET(self->card_nip05), *p->fields[GROTTO_PROFILE_NIP05] != '\0');
-  gtk_widget_set_visible(GTK_WIDGET(self->card_load), *p->fields[GROTTO_PROFILE_PICTURE] || *p->fields[GROTTO_PROFILE_BANNER]);
   adw_avatar_set_text(self->card_avatar, name); adw_avatar_set_custom_image(self->card_avatar, GDK_PAINTABLE(p->images[0]));
   gtk_picture_set_paintable(self->card_banner, GDK_PAINTABLE(p->images[1])); gtk_widget_set_visible(GTK_WIDGET(self->card_banner), p->images[1] != NULL);
   gtk_label_set_text(self->verification, nip05_status(p));
@@ -110,8 +109,6 @@ static void render(GrottoProfileView *self) {
   gtk_widget_set_visible(GTK_WIDGET(self->edit), self->editable);
   gtk_widget_set_sensitive(GTK_WIDGET(self->edit), self->editable && !self->busy && self->fetched);
   gtk_widget_set_sensitive(GTK_WIDGET(self->refresh), !self->busy && panel && self->key && grotto_panel_has_profile_host(panel));
-  gtk_widget_set_visible(GTK_WIDGET(self->load_images), p && (*p->fields[GROTTO_PROFILE_PICTURE] || *p->fields[GROTTO_PROFILE_BANNER]));
-  gtk_widget_set_sensitive(GTK_WIDGET(self->load_images), !self->busy && self->info && panel && grotto_panel_has_profile_host(panel));
   gtk_spinner_set_spinning(self->spinner, self->busy);
   if (self->dialog) {
     gtk_spinner_set_spinning(self->dialog_spinner, self->busy);
@@ -163,7 +160,7 @@ static void done(GObject *source, GAsyncResult *result, gpointer data) {
   if (self && pending->generation == self->generation) {
     self->busy = FALSE;
     if (info) {
-      gboolean upload = self->dialog && (pending->action == GROTTO_PROFILE_CHOOSE_AVATAR || pending->action == GROTTO_PROFILE_CHOOSE_BANNER || pending->action == GROTTO_PROFILE_VERIFY_NIP05 || pending->action == GROTTO_PROFILE_LOAD_IMAGES);
+      gboolean upload = self->dialog && (pending->action == GROTTO_PROFILE_CHOOSE_AVATAR || pending->action == GROTTO_PROFILE_CHOOSE_BANNER || pending->action == GROTTO_PROFILE_VERIFY_NIP05);
       self->updating = TRUE;
       if (upload) { grotto_profile_info_free(self->draft); self->draft = g_steal_pointer(&info); }
       else { grotto_profile_info_free(self->info); self->info = g_steal_pointer(&info); }
@@ -194,19 +191,18 @@ static void done(GObject *source, GAsyncResult *result, gpointer data) {
 static void request(GrottoProfileView *self, GrottoProfileAction action) {
   g_autoptr(GrottoPanel) panel = g_weak_ref_get(&self->panel);
   if (!panel || self->busy || !self->key || !grotto_panel_has_profile_host(panel) ||
-      (action != GROTTO_PROFILE_FETCH && action != GROTTO_PROFILE_LOAD_IMAGES && action != GROTTO_PROFILE_VERIFY_NIP05 && !self->editable)) return;
+      (action != GROTTO_PROFILE_FETCH && action != GROTTO_PROFILE_VERIFY_NIP05 && !self->editable)) return;
   g_autoptr(GrottoProfileInfo) info = form(self);
   Pending *pending = g_new0(Pending, 1); g_weak_ref_init(&pending->view, self);
   pending->generation = self->generation; pending->action = action;
   self->busy = TRUE;
-  const char *progress = action == GROTTO_PROFILE_FETCH ? _("Loading profile…") : action == GROTTO_PROFILE_SAVE ? _("Waiting for review and publishing…") : action == GROTTO_PROFILE_VERIFY_NIP05 ? _("Checking Nostr address…") : action == GROTTO_PROFILE_LOAD_IMAGES ? _("Loading images…") : _("Choosing and uploading image…");
+  const char *progress = action == GROTTO_PROFILE_FETCH ? _("Loading profile…") : action == GROTTO_PROFILE_SAVE ? _("Waiting for review and publishing…") : action == GROTTO_PROFILE_VERIFY_NIP05 ? _("Checking Nostr address…") : _("Choosing and uploading image…");
   gtk_label_set_text(self->dialog ? self->error : self->status, progress);
   if (self->dialog) gtk_widget_grab_focus(GTK_WIDGET(self->error));
   render(self);
   grotto_panel_profile_async(panel, action, self->key, info, self->cancel, done, pending);
 }
 static void refresh(GtkButton *button, gpointer data) { (void)button; request(data, GROTTO_PROFILE_FETCH); }
-static void load_images(GtkButton *button, gpointer data) { (void)button; request(data, GROTTO_PROFILE_LOAD_IMAGES); }
 static void stop(GtkButton *button, gpointer data) {
   (void)button; GrottoProfileView *self = data;
   if (self->busy) { g_cancellable_cancel(self->cancel); if (self->error) gtk_label_set_text(self->error, _("Stopping… Data already sent cannot be recalled")); }
@@ -281,8 +277,6 @@ static void edit(GtkButton *button, gpointer data) {
   self->card_avatar = ADW_AVATAR(adw_avatar_new(64, "", TRUE)); gtk_widget_set_halign(GTK_WIDGET(self->card_avatar), GTK_ALIGN_START); gtk_box_append(GTK_BOX(card), GTK_WIDGET(self->card_avatar));
   self->card_name = card_label(GTK_BOX(card), "title-2"); self->card_username = card_label(GTK_BOX(card), "dim-label");
   self->card_about = card_label(GTK_BOX(card), NULL); self->card_links = card_label(GTK_BOX(card), NULL); self->card_nip05 = card_label(GTK_BOX(card), "dim-label");
-  self->card_load = GTK_BUTTON(gtk_button_new_with_label(_("Load Profile Images…")));
-  g_signal_connect(self->card_load, "clicked", G_CALLBACK(load_images), self); gtk_box_append(GTK_BOX(card), GTK_WIDGET(self->card_load));
   adw_expander_row_add_row(preview, card);
   adw_preferences_group_add(ADW_PREFERENCES_GROUP(preview_group), GTK_WIDGET(preview)); adw_preferences_page_add(ADW_PREFERENCES_PAGE(page), ADW_PREFERENCES_GROUP(preview_group));
   GtkWidget *group = adw_preferences_group_new(), *images = adw_preferences_group_new(), *advanced = adw_preferences_group_new();
@@ -437,9 +431,6 @@ static void grotto_profile_view_init(GrottoProfileView *self) {
   GtkWidget *buttons = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6); gtk_widget_set_halign(buttons, GTK_ALIGN_CENTER);
   self->edit = GTK_BUTTON(gtk_button_new_with_label(_("Edit Profile…"))); self->refresh = GTK_BUTTON(gtk_button_new_from_icon_name("view-refresh-symbolic"));
   gtk_widget_set_tooltip_text(GTK_WIDGET(self->refresh), _("Refresh Profile"));
-  self->load_images = GTK_BUTTON(gtk_button_new_with_label(_("Load Profile Images…")));
-  gtk_box_append(GTK_BOX(self), GTK_WIDGET(self->load_images));
-  g_signal_connect(self->load_images, "clicked", G_CALLBACK(load_images), self);
   self->spinner = GTK_SPINNER(gtk_spinner_new());
   gtk_box_append(GTK_BOX(buttons), GTK_WIDGET(self->edit)); gtk_box_append(GTK_BOX(buttons), GTK_WIDGET(self->refresh)); gtk_box_append(GTK_BOX(buttons), GTK_WIDGET(self->spinner)); gtk_box_append(GTK_BOX(self), buttons);
   g_signal_connect(self->edit, "clicked", G_CALLBACK(edit), self); g_signal_connect(self->refresh, "clicked", G_CALLBACK(refresh), self); g_signal_connect(self, "map", G_CALLBACK(mapped), NULL);
