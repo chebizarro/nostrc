@@ -8,10 +8,13 @@ static GDBusConnection *server;
 static const char *label = "First";
 static gboolean authorized, have_request = TRUE, hold_clients;
 static guint clients_calls, request_calls, mutations;
-static const char *remote_error, *credential_field;
+static const char *remote_error, *credential_field, *management_role;
 static gboolean hold_command;
 static GDBusMethodInvocation *pending_command;
 static GDBusMethodInvocation *held;
+static void capabilities_changed(GrottoPanelsService *service, gpointer data) {
+  (void)service; (*(guint *)data)++;
+}
 static GVariant *rows(gboolean request) {
   GVariantBuilder array, row;
   g_variant_builder_init(&array, G_VARIANT_TYPE("aa{sv}"));
@@ -38,6 +41,7 @@ static void method(GDBusConnection *connection, const char *sender, const char *
   if (!strcmp(name, "GetStatus")) {
     GVariantBuilder status, capabilities, coarse;
     g_variant_builder_init(&status, G_VARIANT_TYPE_VARDICT);
+    if (management_role) g_variant_builder_add(&status, "{sv}", "management-role", g_variant_new_string(management_role));
     g_variant_builder_init(&capabilities, G_VARIANT_TYPE("a{sb}"));
     g_variant_builder_add(&capabilities, "{sb}", "set-client-label", authorized);
     g_variant_builder_add(&capabilities, "{sb}", "resume", authorized);
@@ -201,6 +205,24 @@ static void exercise(void) {
     emit("ClientsChanged"); emit("ActivityChanged");
     WAIT(g_list_model_get_n_items(apps) == 1 && g_list_model_get_n_items(activity) == 1);
   }
+  /* Settings' manager adapter fails closed on legacy/misbound role metadata;
+   * even an over-advertised resume capability cannot reach the host. */
+  g_autoptr(GrottoPanelsService) manager = grotto_panels_control1_service_new_manager(proxy);
+  guint changes = 0;
+  g_signal_connect(manager, "capabilities-changed", G_CALLBACK(capabilities_changed), &changes);
+  WAIT(changes > 0);
+  g_assert_false(grotto_panels_service_is_available(manager));
+  authorized = TRUE; management_role = "approver"; changes = 0; emit("StatusChanged"); WAIT(changes > 0);
+  g_assert_false(grotto_panels_service_is_available(manager));
+  g_assert_false(grotto_panels_service_can(manager, GROTTO_PANEL_SET_CLIENT_LABEL));
+  management_role = "manager"; emit("StatusChanged");
+  WAIT(grotto_panels_service_is_available(manager));
+  g_assert_true(grotto_panels_service_can(manager, GROTTO_PANEL_SET_CLIENT_LABEL));
+  g_assert_false(grotto_panels_service_can(manager, GROTTO_PANEL_RESUME));
+  management_role = NULL; emit("StatusChanged"); WAIT(!grotto_panels_service_is_available(manager));
+  gpointer weak_manager = manager;
+  g_object_add_weak_pointer(G_OBJECT(manager), &weak_manager);
+  g_clear_object(&manager); WAIT(weak_manager == NULL);
   gpointer weak_service = service, weak_proxy = proxy;
   g_object_add_weak_pointer(G_OBJECT(service), &weak_service);
   g_object_add_weak_pointer(G_OBJECT(proxy), &weak_proxy);

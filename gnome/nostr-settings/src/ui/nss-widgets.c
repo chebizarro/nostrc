@@ -6,18 +6,27 @@
 #include "nss-identity.h"
 #include "nss-lists.h"
 #include "nss-net.h"
+#include "grotto-panels-control1-service.h"
 
 NssContext *
-nss_context_new(AdwPreferencesWindow *window)
+nss_context_new(GtkWindow *window, AdwToastOverlay *toasts)
 {
   NssContext *ctx = g_new0(NssContext, 1);
   g_atomic_ref_count_init(&ctx->ref);
   ctx->window = window;
+  ctx->toasts = toasts;
+  g_object_add_weak_pointer(G_OBJECT(toasts), (gpointer *)&ctx->toasts);
   g_object_add_weak_pointer(G_OBJECT(window), (gpointer *)&ctx->window);
   g_autoptr(GError) err = NULL;
   ctx->bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &err);
   if (ctx->bus == NULL)
-    g_warning("no session bus: %s", err->message);
+    g_message("no session bus: %s", err->message);
+  if (ctx->bus) {
+    g_autoptr(GDBusProxy) proxy = g_dbus_proxy_new_sync(ctx->bus,
+      G_DBUS_PROXY_FLAGS_DO_NOT_AUTO_START | G_DBUS_PROXY_FLAGS_DO_NOT_LOAD_PROPERTIES,
+      NULL, "org.nostr.Signer", "/org/nostr/signer/grotto", "org.nostr.Grotto.Control1", NULL, NULL);
+    if (proxy) ctx->grotto = grotto_panels_control1_service_new_manager(proxy);
+  }
   ctx->soup = soup_session_new_with_options("timeout", 10, "user-agent",
                                             "org.nostr.Settings/" NSS_VERSION, NULL);
   return ctx;
@@ -37,6 +46,8 @@ nss_context_unref(NssContext *ctx)
     return;
   if (ctx->window)
     g_object_remove_weak_pointer(G_OBJECT(ctx->window), (gpointer *)&ctx->window);
+  if (ctx->toasts) g_object_remove_weak_pointer(G_OBJECT(ctx->toasts), (gpointer *)&ctx->toasts);
+  g_clear_object(&ctx->grotto);
   g_clear_object(&ctx->bus);
   g_clear_object(&ctx->soup);
   g_free(ctx);
@@ -49,12 +60,12 @@ nss_toast(NssContext *ctx, const gchar *fmt, ...)
   va_start(ap, fmt);
   g_autofree gchar *msg = g_strdup_vprintf(fmt, ap);
   va_end(ap);
-  if (ctx->window == NULL)
+  if (ctx->toasts == NULL)
     return;
   AdwToast *t = adw_toast_new(msg);
   adw_toast_set_use_markup(t, FALSE);
   adw_toast_set_timeout(t, 5);
-  adw_preferences_window_add_toast(ctx->window, t);
+  adw_toast_overlay_add_toast(ctx->toasts, t);
 }
 
 typedef struct {

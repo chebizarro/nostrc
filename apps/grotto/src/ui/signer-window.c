@@ -887,6 +887,32 @@ static void setup_panels(SignerWindow *self) {
     gtk_list_box_append(self->sidebar, row);
   }
 }
+void signer_window_open_management(SignerWindow *self, const gchar *section, const gchar *target) {
+  g_return_if_fail(SIGNER_IS_WINDOW(self));
+  if (!section || !target || strlen(target) > 4096 || !grotto_panels_public_text_validate(target, NULL)) return;
+  /* Activation never unlocks management, exports a key or replays an edit. */
+  if (gn_session_manager_is_locked(gn_session_manager_get_default())) return;
+  if (!strcmp(section, "target")) {
+    if (g_str_has_prefix(target, "app:")) {
+      signer_window_show_page(self, "apps");
+      if (self->panels[1]) grotto_apps_panel_show_app(GROTTO_APPS_PANEL(self->panels[1]), target + 4);
+    } else if (g_str_has_prefix(target, "activity:")) {
+      signer_window_show_page(self, "activity");
+      if (self->panels[2]) grotto_activity_panel_filter_app(GROTTO_ACTIVITY_PANEL(self->panels[2]), target + 9);
+    } else if (g_str_has_prefix(target, "apps:npub1")) {
+      signer_window_show_page(self, "apps");
+      if (self->panels[1]) grotto_apps_panel_filter_identity(GROTTO_APPS_PANEL(self->panels[1]), target + 5);
+    } else if (g_str_has_prefix(target, "public-key:npub1")) signer_window_show_identity(self, target + 11);
+    else if (!strcmp(target, "remote-signing")) signer_window_show_page(self, "remote-signing");
+    else signer_window_show_page(self, "identity");
+  } else if (!strcmp(section, "identity") || !strcmp(section, "backup")) {
+    signer_window_show_identity(self, g_str_has_prefix(target, "npub1") ? target : NULL);
+    if (!strcmp(section, "backup")) signer_window_toast(self, _("Choose Backup for this identity."));
+  } else if (!strcmp(section, "apps") || !strcmp(section, "activity") || !strcmp(section, "remote-signing"))
+    signer_window_show_page(self, section);
+  else if (!strcmp(section, "review")) signer_window_show_page(self, "apps");
+  else if (!strcmp(section, "add-identity")) signer_window_show_page(self, "identity");
+}
 void signer_window_show_identity(SignerWindow *self, const gchar *npub) {
   g_return_if_fail(SIGNER_IS_WINDOW(self));
   self->pending_backup = FALSE;

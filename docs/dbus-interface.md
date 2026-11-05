@@ -61,16 +61,39 @@ cache or environment fallbacks.
 
 ### Authentication and compatibility
 
-Every sensitive read and mutation uses a **fresh** `signer_caller_is_approver()`
-check (verified installed path + device/inode, or attested approval-UI app).
+Every management dispatch uses **fresh** caller identification. The approver
+uses `signer_caller_is_approver()` (installed path + device/inode, or attested
+approval-UI app). The narrow **manager** uses `signer_caller_is_manager()`:
+Linux bus PID, same UID, EXE or systemd-scope principal and the exact installed
+`<bindir>/nostr-settings` path plus current device/inode. Owning
+`org.nostr.Settings`, a claimed app ID, an arbitrary same-UID binary, a replaced
+executable, Flatpak/Snap shapes and UID-only buses do not grant this role.
+
+Managers can call **only** `GetStatus`, `ListIdentities`, `ListClients`,
+`ListPermissions`, `ListRequests`, `ListActivity` and `SetClientLabel`.
+The label is cosmetic; it cannot replace the verified principal, tier or grants.
+All other Control1 methods are denied before argument handling or backend work,
+including approval/decisions, all exports/imports, signing, both pause values,
+tier/default/permission changes, revocation, activity clearing and remote pairing
+or configuration. New methods default to approver-only. Settings is never added
+to the approver allowlist. Test-only `NOSTR_SIGNER_TEST_MANAGERS` substitutes a
+disposable installed path only in builds with `NIP55L_TEST_TRUST_ENV`; production
+packages do not honor it.
 Grotto consumes the nip55l implementation headers with PRIVATE build includes;
 a full library/development install places them under
 `libexec/grotto/private/nip55l`, not a public authorization API. The native
 app-only runtime package does not need or ship those implementation headers. The UID-only-bus limitation below also applies here.
 Two owner-confirmed exceptions (2026-10-12): **any same-session, same-UID caller**
-may read the coarse, identity-free `GetStatus`, or call **`SetPaused(true)`**.
+may read the coarse, identity-free `GetStatus`, or call **`SetPaused(true)`**
+(except the identified manager, which cannot pause or resume).
 `SetPaused(false)` still requires the approver. This lets the untrusted Shell
 indicator inspect status and reduce capability, never resume or approve.
+
+`GetStatus` also returns caller-specific `management-role:s` (`session`,
+`manager`, `approver`) and `management-capabilities:a{sb}`. Only
+`set-client-label` is true for managers; no commands are true for a session-only
+caller. These hints never substitute for dispatch authorization. The existing
+Grotto management privacy lock is unchanged and is not Settings authority.
 
 `GetStatus` returns `control_version:u = 1`, `control_epoch:s`,
 `capabilities:a{sb}`, `paused:b`, `pending_count:u`, `bunker_enabled:b`,
@@ -88,6 +111,11 @@ steps; always use the returned flags rather than inferring them from a version.
 A GUI must feature-detect Control1/version/capabilities: absence or an older
 version means a read-only **Update Grotto** state, not legacy mutation fallback.
 The daemon keeps the preserved legacy client/approval contract for older UIs.
+Settings handoffs call the public `org.nostr.Grotto` `open-management` application
+action with `(section, public_target)`. App/identity/activity navigation and review
+refetch current state in Grotto. Backup opens the selected identity, where the
+user chooses Backup; activation itself never exports, approves, unlocks or
+replays a proposed mutation. Missing Grotto activation fails visibly in Settings.
 The GUI implements owner/epoch/revision checks and read-only version-skew presentation; see `signer/panel-inbox-model` and `signer/ui-layout`. These automated checks do not replace installed-desktop acceptance.
 
 ### Methods
@@ -100,6 +128,7 @@ are rejected by GDBus using the canonical XML before dispatch.
 |---|---|---|
 | `GetStatus` | `() → a{sv}` | Coarse version, capabilities, runtime and store health |
 | `ListRequests` | `() → aa{sv}` | Full pending snapshots from the shared approval service |
+| `ListIdentities` | `() → aa{sv}` | Approver/manager-readable canonical signing npubs, `can-sign`, `watch-only`, `is-default` and `state`; worker-backed daemon inventory, no key material. Backend failure is visible. Setup/backup state is `unknown`: GUI-private labels/watch-only metadata and recovery acknowledgement are not fabricated or read from accounts.ini by Settings. |
 | `ListClients` | `() → aa{sv}` | Durable consent/permission clients, trust tier, pairing/relays, permission count and needs-review flag |
 | `DecideRequest` | `(request_id:s, mode:s) → ok:b` | One approver-only decision; modes below |
 | `ListPermissions` | `(principal:s) → aa{sv}` | Daemon-reported active, inactive and expired rows with reason;  live tier policy is in the client record, never expanded into fake persisted grants |

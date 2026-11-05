@@ -659,6 +659,53 @@ static void decision_done(gpointer data, gboolean ok, const gchar *error, const 
   else g_dbus_method_invocation_return_value(inv, g_variant_new("(b)", ok));
   g_object_unref(inv);
 }
+/* Deliberately closed: new Control1 methods remain approver-only. */
+static gboolean manager_method(const gchar *method) {
+  const gchar *allowed[] = {"GetStatus", "ListIdentities", "ListClients", "ListPermissions",
+    "ListRequests", "ListActivity", "SetClientLabel"};
+  for (guint i = 0; i < G_N_ELEMENTS(allowed); i++)
+    if (!strcmp(method, allowed[i])) return TRUE;
+  return FALSE;
+}
+static GVariant *caller_status(GrottoControl *c, gboolean approver, gboolean manager) {
+  g_autoptr(GVariant) coarse = status(c);
+  GVariantDict row; g_variant_dict_init(&row, coarse);
+  GVariantBuilder caps; g_variant_builder_init(&caps, G_VARIANT_TYPE("a{sb}"));
+  const gchar *names[] = {"set-client-label", "set-default-identity", "set-client-trust", "set-permissions",
+    "revoke-client", "pause", "resume", "clear-activity", "configure-remote", "reset-remote"};
+  for (guint i = 0; i < G_N_ELEMENTS(names); i++)
+    g_variant_builder_add(&caps, "{sb}", names[i], approver || (manager && i == 0));
+  g_variant_dict_insert(&row, "management-role", "s", approver ? "approver" : manager ? "manager" : "session");
+  g_variant_dict_insert_value(&row, "management-capabilities", g_variant_builder_end(&caps));
+  return g_variant_ref_sink(g_variant_dict_end(&row));
+}
+/* Inventory is performed in a worker, never by the Settings host or GTK thread.
+ * This snapshot makes no assertion about recovery or GUI-private setup metadata. */
+static void identities_worker(GTask *task, gpointer source, gpointer data, GCancellable *cancel) {
+  (void)source; (void)cancel; const gchar *default_id = data;
+  char **npubs = NULL; int count = 0;
+  int rc = nostr_nip55l_list_identities(&npubs, &count);
+  GVariantBuilder rows; g_variant_builder_init(&rows, G_VARIANT_TYPE("aa{sv}"));
+  for (int i = 0; i < count; i++) {
+    if (!rc) g_variant_builder_add(&rows, "@a{sv}", g_variant_new_parsed(
+      "{'identity': <%s>, 'can-sign': <true>, 'watch-only': <false>, 'is-default': <%b>, 'state': <'unknown'>}",
+      npubs[i], default_id && !strcmp(default_id, npubs[i])));
+    free(npubs[i]);
+  }
+  free(npubs);
+  if (rc) {
+    g_variant_builder_clear(&rows);
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_NOT_INITIALIZED, "Identity inventory unavailable");
+  } else g_task_return_pointer(task, g_variant_ref_sink(g_variant_builder_end(&rows)), (GDestroyNotify)g_variant_unref);
+}
+static void identities_done(GObject *source, GAsyncResult *result, gpointer data) {
+  (void)source; GDBusMethodInvocation *inv = data;
+  g_autoptr(GError) error = NULL;
+  GVariant *rows = g_task_propagate_pointer(G_TASK(result), &error);
+  if (rows) reply_rows(inv, rows);
+  else g_dbus_method_invocation_return_dbus_error(inv, GROTTO_CONTROL_ERROR "BackendUnavailable", "Identity inventory unavailable");
+  g_object_unref(inv);
+}
 static void method_call(GDBusConnection *bus, const gchar *sender, const gchar *path,
     const gchar *interface, const gchar *method, GVariant *args, GDBusMethodInvocation *inv, gpointer data) {
   (void)path; (void)interface; GrottoControl *c = data;
@@ -667,13 +714,23 @@ static void method_call(GDBusConnection *bus, const gchar *sender, const gchar *
   if (!strcmp(method, "SetPaused")) g_variant_get(args, "(b)", &pause);
   /* All methods are checked before dispatch, including unavailable methods.
    * Neither owning the GUI's bus name nor caller-supplied labels are authority. */
-  gboolean approver = signer_caller_is_approver(who);
-  if (!(approver || (who->same_uid && (!strcmp(method, "GetStatus") || (!strcmp(method, "SetPaused") && pause))))) {
+  gboolean manager = signer_caller_is_manager(who);
+  gboolean approver = !manager && signer_caller_is_approver(who);
+  /* Settings does not inherit the session's historical pause exception, even
+   * when a test/operator accidentally also lists it as an approver. */
+  if (!(approver || (manager && manager_method(method)) ||
+        (who->same_uid && !strcmp(method, "GetStatus")) ||
+        (!manager && who->same_uid && !strcmp(method, "SetPaused") && pause))) {
     g_dbus_method_invocation_return_dbus_error(inv, GROTTO_CONTROL_ERROR "NotAuthorized", "A trusted Grotto approver is required"); return;
   }
   g_autoptr(GError) error = NULL;
   if (!strcmp(method, "GetStatus")) {
-    reply_dict(inv, status(c)); return;
+    reply_dict(inv, caller_status(c, approver, manager)); return;
+  }
+  if (!strcmp(method, "ListIdentities")) {
+    g_autoptr(GTask) task = g_task_new(NULL, NULL, identities_done, g_object_ref(inv));
+    g_task_set_task_data(task, c->settings ? g_settings_get_string(c->settings, "default-identity") : NULL, g_free);
+    g_task_run_in_thread(task, identities_worker); return;
   }
   if (!strcmp(method, "DecideRequest")) {
     const gchar *id, *mode; g_variant_get(args, "(&s&s)", &id, &mode);

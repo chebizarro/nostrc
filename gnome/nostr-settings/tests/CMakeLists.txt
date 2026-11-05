@@ -36,6 +36,35 @@ if (TARGET nostr-wallet-agent-core)
   target_compile_definitions(test-nostr-settings-wallet PRIVATE NSS_TEST_WALLET_WRITER=1)
 endif()
 
+# Production shell, real daemon, private bus and Linux executable-role proof.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET grotto-daemon)
+  get_target_property(_w6_defs nostr_nip55l_service COMPILE_DEFINITIONS)
+  if("NIP55L_TEST_TRUST_ENV=1" IN_LIST _w6_defs)
+    find_program(NSS_XVFB_RUN xvfb-run REQUIRED)
+    add_executable(test-nostr-settings-panel-mount test-panel-mount.c)
+    target_include_directories(test-nostr-settings-panel-mount PRIVATE "${CMAKE_SOURCE_DIR}")
+    target_compile_options(test-nostr-settings-panel-mount PRIVATE ${NSS_WARNINGS})
+    target_compile_definitions(test-nostr-settings-panel-mount PRIVATE
+      W6_CONTROL_XML="${CMAKE_SOURCE_DIR}/apps/grotto/data/org.nostr.Grotto.Control1.xml")
+    target_link_libraries(test-nostr-settings-panel-mount PRIVATE nostr-settings-ui nostrc-test-bus)
+    set(_w6_schemas "${CMAKE_CURRENT_BINARY_DIR}/mount-schemas")
+    add_custom_command(OUTPUT "${_w6_schemas}/gschemas.compiled"
+      COMMAND ${CMAKE_COMMAND} -E make_directory "${_w6_schemas}"
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/apps/grotto/data/org.nostr.Grotto.gschema.xml"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../data/org.nostr.Settings.gschema.xml" "${_w6_schemas}"
+      COMMAND ${NSS_GLIB_COMPILE_SCHEMAS} --strict "${_w6_schemas}"
+      DEPENDS ../data/org.nostr.Settings.gschema.xml
+        "${CMAKE_SOURCE_DIR}/apps/grotto/data/org.nostr.Grotto.gschema.xml")
+    add_custom_target(nostr-settings-mount-schemas DEPENDS "${_w6_schemas}/gschemas.compiled")
+    add_dependencies(test-nostr-settings-panel-mount grotto-daemon grotto-schemas nostr-settings-schema nostr-settings-mount-schemas)
+    add_test(NAME nostr-settings/panel-mount COMMAND ${NSS_XVFB_RUN} -a
+      $<TARGET_FILE:test-nostr-settings-panel-mount> $<TARGET_FILE:grotto-daemon>)
+    set_tests_properties(nostr-settings/panel-mount PROPERTIES LABELS "nostr-settings;signer;integration;security"
+      TIMEOUT 120 ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${_w6_schemas};GSETTINGS_BACKEND=memory;GTK_A11Y=test")
+  endif()
+endif()
+
 # Desktop entry lint.
 if (NSS_DESKTOP_FILE_VALIDATE)
   add_test(NAME nostr-settings-desktop-file

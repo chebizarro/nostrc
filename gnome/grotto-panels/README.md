@@ -99,11 +99,11 @@ and tombstone lifecycle does not depend on the window or selected panel.
 
 Create a GIO proxy for bus **`org.nostr.Signer`**, object
 **`/org/nostr/signer/grotto`**, interface **`org.nostr.Grotto.Control1`** on the GTK
-main context, then inject `grotto_panels_control1_service_new(proxy)`. The current
-daemon's coarse feature map does not authorize commands. Until W6 adds
-caller-specific `management-capabilities` (`a{sb}`), the adapter's commands are
-read-only/unavailable. The closed command names in the adapter define the
-future map; no manager role is implemented or assumed here. Cosmetic manager
+main context, then inject `grotto_panels_control1_service_new(proxy)`. The daemon's coarse feature map does not authorize commands. W6's separate
+caller-specific `management-capabilities` (`a{sb}`) permits only client labels
+for the installed PID/path/inode-authenticated Settings manager. Missing maps
+remain read-only/unavailable. The closed command names define that map; the
+daemon checks every invocation again. Cosmetic manager
 commands, session pause and approver-only changes are distinct now; every RPC
 still requires daemon authorization. **Manager means reads and cosmetic labels,
 not tiers.** `SET_CLIENT_TRUST` (tier/preset), permission replacements, defaults,
@@ -156,14 +156,18 @@ The test fake records typed calls and provides configured errors and explicitly
 held completion (deterministic latency), including cancellation and owner loss;
 it does not evaluate signer policy or invent a successful mutation.
 
-The common Control1 service's Identity model stays empty until W6's daemon
-snapshot. Grotto supplies `GrottoIdentityService`, joining its existing
+The common Control1 service populates Identity from W6's daemon-owned public
+`ListIdentities` snapshot. It includes signing npubs/default, not key material;
+unavailable setup/backup/usage metadata is explicitly unknown and displayed as
+such, never inferred from a missing acknowledgement. Settings does not migrate
+or read Grotto's GUI-private accounts.ini. Grotto supplies `GrottoIdentityService`, joining its existing
 signal-driven Control1/home model with public AccountsStore metadata. It exports
 only public identifiers, local labels, setup state, watch/signable flags, the
 legacy default and app counts. Label writes stay in Grotto; default changes use
 `SetDefaultIdentityForLegacy`, pinned to the daemon owner. No panel enumerates
 keyring items or reads accounts.ini. Settings must not reuse Grotto's local store.
-`SET_IDENTITY_LABEL` is Grotto-local until W6; the common adapter refuses it.
+`SET_IDENTITY_LABEL` remains Grotto-local; W6 authorizes **client** labels only,
+and the common adapter refuses local identity-label writes.
 The `open_in_signer` callback receives the public-only navigation targets
 `public-key:<npub>` (public QR), `apps:<npub>` (app list), `app:<principal>`,
 `activity:<principal>`, `ask-defaults`, `activity-retention`, and `remote-signing`. It never receives a
@@ -200,7 +204,8 @@ closure, and builds counterfactuals for both independent-review bypasses. Host
 action smuggling, deferred failures and in-flight detach run in `smoke-host`.
 Tests require Clang for structural C declarations; a missing tool fails visibly. `control1-service` uses the production adapter against a
 fixture implementing the canonical Control1 XML on `nostrc-test-bus`; it is not
-proof of the future manager gate or real Nostr Settings hosting (W6).
+proof of the manager gate or real Settings hosting. That proof is the separate
+`nostr-settings/panel-mount` real-daemon/private-bus test in W6.
 
 Affected selection registers `grotto.panels` and a standalone Linux profile.
 For an explicitly **partial** component projection in an appropriate Linux

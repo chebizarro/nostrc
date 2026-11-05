@@ -20,6 +20,15 @@
     ]
   },
   "checks": {
+    "grotto.settings.host": {
+      "nodes": ["gnome.nostr_settings", "grotto.daemon", "grotto.gui", "grotto.panels", "nip55l.glib"],
+      "profiles": ["grotto.settings.host.linux"],
+      "kind": "ctest", "cost": "ordinary", "requirement": "blocking", "expected_outcome": "pass",
+      "ctest_tests": {"grotto.settings.host.linux": ["nostr-settings/panel-mount", "signer/clients", "signer/activity", "signer/approval-integration", "grotto-panels/smoke-host", "grotto-panels/no-secrets", "grotto-panels/control1-service"]},
+      "build_targets": ["nostr-settings", "grotto", "test-nostr-settings-panel-mount", "test-clients", "test-activity", "test-approval-integration", "test-grotto-panels-smoke", "test-grotto-panels-admission", "test-grotto-panels-control1"],
+      "runtime_inputs": ["{source}/apps/grotto/data/org.nostr.Grotto.Control1.xml"],
+      "requires": ["display", "private_bus"]
+    },
     "grotto.panels": {
       "nodes": ["grotto.panels", "testing.common_inputs"],
       "profiles": ["grotto.panels.linux", "grotto.linux"],
@@ -29237,6 +29246,14 @@
     }
   ],
   "profiles": {
+    "grotto.settings.host.linux": {
+      "platform": "linux", "architecture": "native", "compiler": "gcc", "build_type": "Debug",
+      "instrumentation": "none", "source_dir": ".",
+      "configure_args": ["-G", "Ninja", "-DCMAKE_BUILD_TYPE=Debug", "-DBUILD_TESTING=ON", "-DBUILD_SIGNER_TESTS=ON", "-DBUILD_APPS=ON", "-DBUILD_GNOSTR_APP=OFF", "-DBUILD_GROUNDHOG=OFF", "-DBUILD_RELAYD=OFF", "-DSIGNET_ENABLE=OFF", "-DENABLE_NOSTR_SETTINGS=ON", "-DENABLE_TCP_IPC=ON", "-DNIP55L_TEST_TRUST_ENV=ON", "-DNIP55L_SECRET_BACKEND=libsecret", "-DGROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service"],
+      "environment": {"GTK_A11Y": "test"}, "capabilities": ["display", "private_bus"],
+      "setup": "gnome/nostr-settings/README.md", "local_availability": "host_or_container",
+      "parallelism": 1, "build_parallelism": 4, "timeout_seconds": 1200
+    },
     "grotto.panels.linux": {
       "platform": "linux",
       "architecture": "any",

@@ -1,7 +1,7 @@
 # Nostr Settings — `org.nostr.Settings`
 
-A libadwaita `AdwPreferencesWindow` that looks and behaves like a GNOME
-Settings panel, for the Nostr services on this desktop. gnome-control-center
+A libadwaita sidebar window that hosts shared Grotto management panels and
+service-specific preferences, for the Nostr services on this desktop. gnome-control-center
 has no plugin API (and GOA providers are in-tree only — see commit
 `2cf193a7`), so this is a standalone app; `Categories=Settings;GNOME;GTK;` and
 `Keywords=nostr;relay;identity;wallet;…` make GNOME Shell search list it next
@@ -9,8 +9,54 @@ to Settings. Bead `nostrc-janr`.
 
 ```sh
 nostr-settings                 # D-Bus activatable (org.nostr.Settings)
-nostr-settings --page relays   # identity | relays | notifications | wallet | media | files
+nostr-settings --page relays   # identity | apps | activity | remote-signing | relays | notifications | wallet | media | files
 ```
+
+## Shared panels and manager authority
+
+Requires GTK 4.14, libadwaita 1.5 and **grotto-panels-0 >= 0.1.0** at build and
+runtime (`libgrotto-panels-0-0` on Debian; `grotto-panels` on RPM). CMake can use
+`-DGROTTO_USE_SYSTEM_PANELS=ON`; Meson resolves the installed runtime/SDK.
+The RPM Settings package explicitly depends on that runtime.
+
+`nss_window_new` mounts the real Identity, Connected Apps, Activity and Remote
+Signing widgets through one long-lived injected Control1 service. The manager
+role is Linux PID/path/device/inode authenticated; a bus name or claimed app ID
+is not authority. It permits public management reads and **client labels only**,
+not tiers, permissions, pause/resume, approvals, signing, imports or exports.
+Security edits, backup, profile work and review use **Open in Grotto**. Activation
+passes public navigation targets only; Grotto refetches state and the user makes
+the change there. No management lock redesign or Settings unlock is implied.
+Missing daemon/authorization/version support produces an unavailable/read-only
+state, not fabricated identities or a local permissive fallback. Missing Grotto
+activation reports a toast. Daemon loss clears models/capabilities; restart
+resubscribes before snapshots. Setup/backup state and identity app counts that
+are unavailable in Control1 are explicitly unknown. GUI-private local labels,
+watch-only inventory and backup acknowledgement remain Grotto-owned; Settings
+does not inspect that file or infer that a backup is recoverable.
+
+The existing service pages are preferences-page wrappers, mounted on demand.
+`--page`, `last-page`, window state, screenshot mode, and panel-local search are
+retained; the split shell does not claim universal preferences search.
+
+CMake: configure the root with `-DENABLE_NOSTR_SETTINGS=ON -DBUILD_APPS=ON
+-DBUILD_SIGNER_TESTS=ON -DBUILD_TESTING=ON -DNIP55L_TEST_TRUST_ENV=ON`, then build
+`nostr-settings grotto test-nostr-settings-panel-mount`. Run
+`ctest --test-dir <build> -R '^nostr-settings/panel-mount$' --output-on-failure`.
+It uses the real window and daemon on `nostrc_test_bus_up`, disposable trusted
+executable copies, Xvfb and an environment fixture identity. All non-manager
+Control1 methods are tested for `NotAuthorized`, including both pause values;
+it verifies real identity/app rows, label signals, exact handoff targets,
+untrusted-name rejection, daemon loss/restart and inode replacement. Only the
+Grotto desktop activation receiver is a capture fixture, not the signer or
+panels. Missing required bus/display/role support fails this selected test.
+
+Meson: install libnostr, nip19, nostr-publish and grotto-panels first, then
+`meson setup <build> gnome/nostr-settings` and `meson compile -C <build>`.
+To select the same real-daemon test, add
+`-Dtest_daemon=/absolute/path/to/test-built/grotto-daemon` and run
+`meson test -C <build> --print-errorlogs` with Grotto schemas available in
+`GSETTINGS_SCHEMA_DIR`. This is local host proof, not VM or release acceptance.
 
 ## Where settings are stored
 
@@ -20,9 +66,11 @@ service's own store, so the service stays the single source of truth.
 
 | Page | What | Backing store | Written by Settings? |
 |---|---|---|---|
-| Identity | active identity, relays | `org.nostr.Signer` `GetPublicKey` / `GetRelays` | no (read-only) |
-| Identity | identities in the keyring | Secret Service, schema `org.gnostr.Signer/identity` (`gnostr_secret_store_find_all`, attributes only — no secrets, no unlock) | no |
-| Identity | Passwords and Keys / signer settings | launches `org.gnome.seahorse.Application.desktop` / `org.nostr.Grotto.desktop` action `settings` | — |
+| Identity | shared Identity panel; canonical signing npubs/default | daemon `Control1.ListIdentities`, never a direct keyring/accounts.ini inventory | no |
+| Identity | signer relay summary and Relays link | `org.nostr.Signer.GetRelays` | no |
+| Connected Apps | shared apps/permission views; cosmetic labels | `Control1.ListClients`, `ListPermissions`, `SetClientLabel` | labels only |
+| Activity | shared activity view | `Control1.ListActivity` | no |
+| Remote Signing | shared status and configuration handoff | `Control1.GetStatus` | no |
 | Relays | session relay on/off | systemd `--user`: `nostr-session-relay.socket` (+ `.service`) via `org.freedesktop.systemd1` | unit enablement |
 | Relays | live statistics | `org.nostr.SessionRelay1.GetStats` (never auto-started) | no |
 | Relays | storage limits | `~/.config/nostr/session-relay.conf`, flat `retention_*` keys | only once the relay reports `RetentionSupported` (not yet — `nostrc-prqu.17`) |

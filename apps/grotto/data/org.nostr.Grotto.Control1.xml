@@ -1,7 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- Canonical daemon management contract. Bus org.nostr.Signer,
      object /org/nostr/signer/grotto; NOT the approver's org.nostr.Grotto name.
-     Sensitive reads and mutations require signer_caller_is_approver().
+     Public management reads and SetClientLabel accept the PID-attested installed
+     nostr-settings manager (exact path + device/inode). All other operations
+     require the approver. Managers cannot use either SetPaused value.
+     GetStatus reports caller-specific management-role and management-capabilities.
      GetStatus is an identity-free coarse status for any same-session user;
      SetPaused(true) may also be called by any same-session user.
      SetPaused(false) requires the trusted approver and refuses a known locked
@@ -15,6 +18,9 @@
          block-operation, block-app, trust-routine, activate-saved, discard-saved. -->
     <method name="DecideRequest"><arg name="request_id" type="s" direction="in"/><arg name="mode" type="s" direction="in"/><arg name="ok" type="b" direction="out"/></method>
     <method name="ListRequests"><arg name="requests" type="aa{sv}" direction="out"/></method>
+    <!-- Public stored signing npubs only; unknown setup/backup metadata is not
+         evidence of recovery. No keyring enumeration in the hosting process. -->
+    <method name="ListIdentities"><arg name="identities" type="aa{sv}" direction="out"/></method>
     <method name="ListClients"><arg name="clients" type="aa{sv}" direction="out"/></method>
     <method name="ListPermissions">
       <arg name="principal" type="s" direction="in"/>

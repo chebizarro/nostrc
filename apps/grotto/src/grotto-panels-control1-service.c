@@ -13,8 +13,9 @@ struct _GrottoPanelsControl1Service {
   GListStore *models[GROTTO_PANELS_N_MODELS];
   GHashTable *tombstones;
   GCancellable *cancel;
-  gboolean available, caps[GROTTO_PANEL_N_COMMANDS];
+  gboolean available, manager_only, caps[GROTTO_PANEL_N_COMMANDS];
   gulong signal_id, owner_id;
+  guint identities_subscription;
 };
 static void service_iface_init(GrottoPanelsServiceInterface *iface);
 G_DEFINE_TYPE_WITH_CODE(GrottoPanelsControl1Service, grotto_panels_control1_service, G_TYPE_OBJECT,
@@ -60,6 +61,7 @@ static void apply_rows(Snapshot *snapshot, GVariant *rows) {
     g_variant_lookup(row, "sequence", "t", &sequence);
     g_autofree char *sequence_id = g_strdup_printf("%" G_GUINT64_FORMAT, sequence);
     if (snapshot->slot == GROTTO_PANELS_ACTIVITY) id = sequence_id;
+    if (snapshot->slot == GROTTO_PANELS_IDENTITIES) id = text(row, "identity");
     if (!*id || g_hash_table_contains(seen, id)) continue;
     if (snapshot->slot == GROTTO_PANELS_REQUESTS && g_hash_table_contains(self->tombstones, id)) continue;
     GrottoPanelsMetadata m = {
@@ -77,6 +79,11 @@ static void apply_rows(Snapshot *snapshot, GVariant *rows) {
     guint32 kind = 0;
     m.has_event_kind = g_variant_lookup(row, "event_kind", "u", &kind);
     m.event_kind = kind;
+    g_variant_lookup(row, "is-default", "b", &m.is_default);
+    g_variant_lookup(row, "watch-only", "b", &m.watch_only);
+    g_variant_lookup(row, "can-sign", "b", &m.can_sign);
+    g_variant_lookup(row, "backup-acknowledged", "b", &m.backup_acknowledged);
+    g_variant_lookup(row, "app-count", "u", &m.app_count);
     g_variant_lookup(row, "needs-review", "b", &m.needs_review);
     g_variant_lookup(row, "blocked", "b", &m.blocked);
     /* Presentation of daemon-reported presets, not an evaluator. Explicit
@@ -139,6 +146,9 @@ static void snapshot_done(GObject *source, GAsyncResult *result, gpointer data) 
       gboolean caps[GROTTO_PANEL_N_COMMANDS] = {0};
       if (reply) {
         g_autoptr(GVariant) status = g_variant_get_child_value(reply, 0);
+        const char *role = text(status, "management-role");
+        if (self->manager_only ? strcmp(role, "manager") != 0 :
+            (*role && strcmp(role, "manager") && strcmp(role, "approver"))) available = FALSE;
         g_auto(GStrv) relays = NULL, methods = NULL;
         g_variant_lookup(status, "bunker_relays", "^as", &relays);
         g_variant_lookup(status, "bunker_allowed_methods", "^as", &methods);
@@ -156,6 +166,12 @@ static void snapshot_done(GObject *source, GAsyncResult *result, gpointer data) 
         g_autoptr(GVariant) allowed = g_variant_lookup_value(status, "management-capabilities", G_VARIANT_TYPE("a{sb}"));
         if (allowed) for (guint i = 0; i < GROTTO_PANEL_N_COMMANDS; i++)
           if (capability_names[i]) g_variant_lookup(allowed, capability_names[i], "b", &caps[i]);
+        if (self->manager_only) {
+          for (guint i = 0; i < GROTTO_PANEL_N_COMMANDS; i++)
+            if (i != GROTTO_PANEL_SET_CLIENT_LABEL) caps[i] = FALSE;
+          if (!allowed) available = FALSE;
+        }
+        if (!available) memset(caps, 0, sizeof caps);
       }
       if (!available) g_list_store_remove_all(self->models[GROTTO_PANELS_STATUS]);
       gboolean availability_changed = self->available != available;
@@ -177,9 +193,9 @@ static void snapshot_done(GObject *source, GAsyncResult *result, gpointer data) 
 static void refresh(GrottoPanelsControl1Service *self, guint slot) {
   self->serial[slot]++;
   if (!self->owner) return;
-  static const char *const reads[] = {[GROTTO_PANELS_APPS] = "ListClients",
+  static const char *const reads[] = {[GROTTO_PANELS_IDENTITIES] = "ListIdentities", [GROTTO_PANELS_APPS] = "ListClients",
     [GROTTO_PANELS_REQUESTS] = "ListRequests", [GROTTO_PANELS_ACTIVITY] = "ListActivity", [STATUS_SLOT] = "GetStatus"};
-  if (!reads[slot]) return; /* Identity metadata is W3/W6, never private inventory. */
+  if (!reads[slot]) return;
   Snapshot *snapshot = g_new0(Snapshot, 1);
   *snapshot = (Snapshot){g_object_ref(self), slot, self->generation, self->serial[slot], g_get_monotonic_time()};
   GVariant *args = slot == GROTTO_PANELS_ACTIVITY ? g_variant_new("(tu)", (guint64)0, 100u) : NULL;
@@ -204,7 +220,7 @@ static void owner_changed(GObject *proxy, GParamSpec *pspec, gpointer data) {
   for (guint i = 0; i < GROTTO_PANELS_N_MODELS; i++) g_list_store_remove_all(self->models[i]);
   changed(self, "capabilities-changed");
   changed(self, "availability-changed");
-  for (guint i = GROTTO_PANELS_APPS; i <= STATUS_SLOT; i++) refresh(self, i);
+  for (guint i = GROTTO_PANELS_IDENTITIES; i <= STATUS_SLOT; i++) refresh(self, i);
 }
 static void daemon_signal(GDBusProxy *proxy, const char *sender, const char *name,
                            GVariant *parameters, gpointer data) {
@@ -214,7 +230,15 @@ static void daemon_signal(GDBusProxy *proxy, const char *sender, const char *nam
   if (!strcmp(name, "ClientsChanged")) refresh(self, GROTTO_PANELS_APPS);
   else if (!strcmp(name, "RequestsChanged")) refresh(self, GROTTO_PANELS_REQUESTS);
   else if (!strcmp(name, "ActivityChanged")) refresh(self, GROTTO_PANELS_ACTIVITY);
-  else if (!strcmp(name, "StatusChanged")) refresh(self, STATUS_SLOT);
+  else if (!strcmp(name, "StatusChanged")) {
+    refresh(self, STATUS_SLOT); refresh(self, GROTTO_PANELS_IDENTITIES);
+  }
+}
+static void identities_signal(GDBusConnection *bus, const char *sender, const char *path,
+    const char *interface, const char *name, GVariant *args, gpointer data) {
+  (void)bus; (void)path; (void)interface; (void)name; (void)args;
+  GrottoPanelsControl1Service *self = data;
+  if (!g_strcmp0(sender, self->owner)) refresh(self, GROTTO_PANELS_IDENTITIES);
 }
 static GListModel *get_model(GrottoPanelsService *service, GrottoPanelsModel model) {
   return G_LIST_MODEL(GROTTO_PANELS_CONTROL1_SERVICE(service)->models[model]);
@@ -395,6 +419,9 @@ static void dispose(GObject *object) {
   GrottoPanelsControl1Service *self = GROTTO_PANELS_CONTROL1_SERVICE(object);
   if (self->cancel) g_cancellable_cancel(self->cancel);
   if (self->proxy) {
+    if (self->identities_subscription) g_dbus_connection_signal_unsubscribe(
+      g_dbus_proxy_get_connection(self->proxy), self->identities_subscription);
+    self->identities_subscription = 0;
     g_signal_handler_disconnect(self->proxy, self->signal_id);
     g_signal_handler_disconnect(self->proxy, self->owner_id);
   }
@@ -418,15 +445,25 @@ static void grotto_panels_control1_service_init(GrottoPanelsControl1Service *sel
   self->tombstones = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   for (guint i = 0; i < GROTTO_PANELS_N_MODELS; i++) self->models[i] = g_list_store_new(GROTTO_TYPE_PANELS_ITEM);
 }
-GrottoPanelsService *grotto_panels_control1_service_new(GDBusProxy *proxy) {
+static GrottoPanelsService *new_service(GDBusProxy *proxy, gboolean manager_only) {
   g_return_val_if_fail(G_IS_DBUS_PROXY(proxy), NULL);
   g_return_val_if_fail(!strcmp(g_dbus_proxy_get_name(proxy), "org.nostr.Signer"), NULL);
   g_return_val_if_fail(!strcmp(g_dbus_proxy_get_interface_name(proxy), CONTROL), NULL);
   g_return_val_if_fail(!strcmp(g_dbus_proxy_get_object_path(proxy), CONTROL_PATH), NULL);
   GrottoPanelsControl1Service *self = g_object_new(GROTTO_TYPE_PANELS_CONTROL1_SERVICE, NULL);
+  self->manager_only = manager_only;
   self->proxy = g_object_ref(proxy);
   self->signal_id = g_signal_connect(proxy, "g-signal", G_CALLBACK(daemon_signal), self);
   self->owner_id = g_signal_connect(proxy, "notify::g-name-owner", G_CALLBACK(owner_changed), self);
+  self->identities_subscription = g_dbus_connection_signal_subscribe(g_dbus_proxy_get_connection(proxy),
+    "org.nostr.Signer", "org.nostr.Signer", "IdentitiesChanged", "/org/nostr/signer", NULL,
+    G_DBUS_SIGNAL_FLAGS_NONE, identities_signal, self, NULL);
   owner_changed(G_OBJECT(proxy), NULL, self);
   return GROTTO_PANELS_SERVICE(self);
+}
+GrottoPanelsService *grotto_panels_control1_service_new(GDBusProxy *proxy) {
+  return new_service(proxy, FALSE);
+}
+GrottoPanelsService *grotto_panels_control1_service_new_manager(GDBusProxy *proxy) {
+  return new_service(proxy, TRUE);
 }

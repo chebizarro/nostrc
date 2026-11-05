@@ -405,6 +405,23 @@ static void pending_reachability(GrottoApprovalController *controller, GApplicat
   g_assert_true(ready(controller));
   g_assert_cmpuint(g_list_model_get_n_items(grotto_approval_controller_get_pending(controller)), ==,
                    1);
+  /* Settings handoff uses the production application action. Backup only
+   * navigates to the pinned identity: no export dialog or pending decision. */
+  g_autofree gchar *handoff_npub = NULL;
+  g_assert_true(gn_backup_get_npub(
+    "0000000000000000000000000000000000000000000000000000000000000001", &handoff_npub, NULL));
+  g_autoptr(GSettings) handoff_settings = g_settings_new("org.nostr.Grotto");
+  g_autofree gchar *default_before = g_settings_get_string(handoff_settings, "default-identity");
+  g_action_group_activate_action(G_ACTION_GROUP(app), "open-management", g_variant_new("(ss)", "backup", handoff_npub));
+  g_assert_cmpstr(gtk_stack_get_visible_child_name(panels), ==, "identity");
+  g_assert_null(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(win)));
+  g_assert_true(ready(controller));
+  g_autofree gchar *default_after = g_settings_get_string(handoff_settings, "default-identity");
+  g_assert_cmpstr(default_before, ==, default_after);
+  g_assert_cmpuint(g_list_model_get_n_items(grotto_approval_controller_get_pending(controller)), ==, 1);
+  g_action_group_activate_action(G_ACTION_GROUP(app), "open-management", g_variant_new("(ss)", "remote-signing", ""));
+  g_assert_cmpstr(gtk_stack_get_visible_child_name(panels), ==, "remote-signing");
+  g_assert_true(ready(controller));
   signer_window_show_page(SIGNER_WINDOW(win), "settings");
   g_application_activate(app); /* Ordinary launcher/reopen also reaches the deferred request. */
   WAIT(grotto_approval_controller_get_holds(controller) == 1);

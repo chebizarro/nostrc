@@ -15,7 +15,7 @@ on_activate(GtkApplication *app, gpointer data)
   if (w == NULL)
     w = nss_window_new(app, opt_page);
   else if (opt_page)
-    adw_preferences_window_set_visible_page_name(ADW_PREFERENCES_WINDOW(w), opt_page);
+    nss_window_show_page(w, opt_page);
   gtk_window_present(w);
 }
 
@@ -39,7 +39,7 @@ main(int argc, char **argv)
   g_application_add_main_option(G_APPLICATION(app), "page", 'p', G_OPTION_FLAG_NONE,
                                 G_OPTION_ARG_STRING,
                                 "Open this page (identity, relays, notifications, "
-                                "wallet, media, files)", "PAGE");
+                                "wallet, media, files, apps, activity, remote-signing)", "PAGE");
   g_signal_connect(app, "handle-local-options", G_CALLBACK(on_options), NULL);
   g_signal_connect(app, "activate", G_CALLBACK(on_activate), NULL);
   int rc = g_application_run(G_APPLICATION(app), argc, argv);

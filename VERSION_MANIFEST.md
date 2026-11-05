@@ -28,6 +28,7 @@ files already declare a version.
 | marmot-gobject | `marmot-gobject/` | 1.5.1 | Unreleased | — | `marmot-gobject/CMakeLists.txt`, `marmot-gobject/meson.build` |
 | gnostr | `apps/gnostr/` | 0.2.0 | 0.1.0-preview | `gnostr-v0.1.0-preview` | `apps/gnostr/CMakeLists.txt`; nostrc-0cfsg.28/.32: PATCH-class shipped UI/build corrections folded into intended final base 0.1.0, not artifact-free changes; actual published tag `gnostr-v0.1.0-preview` points to `e8d875745`, whose source also declares 0.1.0; no final 0.1.0 tag exists, so retain the existing unreleased wave and release columns |
 | groundhog | `gnome/groundhog/` | 0.12.1 | Unreleased | — | `gnome/groundhog/CMakeLists.txt` |
+| nostr-settings | `gnome/nostr-settings/` | 0.1.0 | Unreleased | — | `gnome/nostr-settings/CMakeLists.txt` (`NOSTR_SETTINGS_VERSION`), `gnome/nostr-settings/meson.build` (`project` version); W6 adds the previously missing manifest row, not a release |
 | nostr-share | `gnome/nostr-share/` | 0.1.0 | Unreleased | — | `gnome/nostr-share/CMakeLists.txt` (`NOSTR_SHARE_VERSION`) |
 | nostr-homed | `gnome/nostr-homed/` | 0.9.0 | Unreleased | — | `gnome/nostr-homed/CMakeLists.txt`, `gnome/nostr-homed/meson.build`, `gnome/nostr-homed/nostr-homed.pc.in`; nostrc-h10m.10: MINOR 0.7.1 → 0.8.0 for opt-in require-encrypted policy, additive at_rest status and provisioning/PAM/panel warnings. libporthome was unchanged for h10m.10; detection and UI are homed-owned. h10m.12 version decisions follow below. |
 | grotto-panels | `gnome/grotto-panels/` | 0.1.0 | Unreleased | — | `gnome/grotto-panels/CMakeLists.txt` (`project` + `declare_component_version`), `gnome/grotto-panels/meson.build` (`project`); generated public `grotto-panels-version.h`, SONAME `libgrotto-panels-0.so.0`, pkg-config `grotto-panels-0`; duplicate package values: `gnome/grotto-panels/packaging/debian/changelog`, `gnome/grotto-panels/packaging/rpm/grotto-panels.spec` |
@@ -53,6 +54,19 @@ files already declare a version.
 | nostr-seal | `gnome/nostr-seal/` | 0.1.3 (format nsealed v1) | Unreleased | — | `gnome/nostr-seal/src/main.c` (`NOSTR_SEAL_VERSION`), `gnome/nostr-seal/include/nostr-seal.h` (`NSEAL_FORMAT_VERSION`) |
 | signet | `signet/` | 0.7.0 | Unreleased | — | `signet/meson.build`, `signet/src/signetd_main.c` (`SIGNET_VERSION`), `signet/src/signetctl_main.c` (`SIGNETCTL_VERSION`); `signet/CMakeLists.txt` declares none |
 
+
+### W6 Nostr Settings manager hosting (nostrc-u6v55.23.6)
+
+| Component | Impact | Version decision |
+| --- | --- | --- |
+| Grotto | MINOR-class additive Control1 manager role, public identity snapshot, caller capabilities and navigation-only host activation | Fold into unreleased **0.1.1** at the owner's direction; CMake/Meson and packaging values unchanged. |
+| grotto-panels | PATCH-class honest unknown backup/usage presentation for manager snapshots; no public ABI/schema change | Fold into unreleased **0.1.0**; authoritative sources remain aligned. |
+| nostr-settings | MINOR-class sidebar host, shared panels, manager service and runtime dependency; new Meson build mirrors CMake | Fold into unreleased **0.1.0**. This component had no manifest row; add it with both authoritative version sources. |
+| nip55l | Internal installed-manager executable attestation helper and build path; no public signer API or protocol change | Fold the authorization implementation into the existing unreleased **0.8.0** wave; no new version/tag. |
+| Other components | Existing consumers/prerequisites only | No bump; no owned artifact changes. |
+
+No release/tag columns change; no tag is published. These are folded artifact
+changes, not claims that the changed components are artifact-free.
 
 ### W7 public identity profiles (nostrc-u6v55.23.9)
 

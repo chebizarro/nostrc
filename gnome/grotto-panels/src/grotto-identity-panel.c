@@ -137,7 +137,9 @@ static void render(GrottoIdentityPanel *self) {
   adw_status_page_set_title(self->empty, !available ? _("Signer Unavailable") : self->pinned ? _("Identity Unavailable") : _("No Identity Yet"));
   adw_status_page_set_description(self->empty, !available ? _("Open Grotto and try again") : self->pinned ? _("This identity is no longer on this device") : _("Create or import an identity to start signing"));
   gtk_widget_set_visible(GTK_WIDGET(self->empty_add), available && !self->pinned && grotto_panel_host_can(panel, GROTTO_PANEL_HOST_ADD_IDENTITY));
-  adw_banner_set_title(self->banner, available ? _("This identity isn't backed up") : _("Signer unavailable"));
+  gboolean metadata_unknown = m && !strcmp(m->state, "unknown");
+  adw_banner_set_title(self->banner, !available ? _("Signer unavailable") : metadata_unknown ?
+    _("Open Grotto to check backup and setup status") : _("This identity isn't backed up"));
   adw_banner_set_revealed(self->banner, m && (!available || (!m->watch_only && !m->backup_acknowledged)));
   adw_banner_set_button_label(self->banner, available && m && m->can_sign && grotto_panel_host_can(panel, GROTTO_PANEL_HOST_BACKUP) ? _("Back Up…") : "");
   g_autofree char *identity_count = g_strdup_printf(g_dngettext(GETTEXT_PACKAGE,
@@ -161,10 +163,11 @@ static void render(GrottoIdentityPanel *self) {
   adw_action_row_set_subtitle(self->key_row, m->public_key);
   gtk_widget_set_visible(GTK_WIDGET(self->show_qr), grotto_panel_host_can(panel, GROTTO_PANEL_HOST_OPEN_SIGNER));
   gtk_widget_set_visible(GTK_WIDGET(self->backup_row), !m->watch_only && m->can_sign && available && grotto_panel_host_can(panel, GROTTO_PANEL_HOST_BACKUP));
-  adw_action_row_set_subtitle(self->backup_row, m->backup_acknowledged ? _("Backup acknowledged") : _("Not backed up"));
+  adw_action_row_set_subtitle(self->backup_row, metadata_unknown ? _("Backup status unavailable in this host") :
+    m->backup_acknowledged ? _("Backup acknowledged") : _("Not backed up"));
   gtk_widget_set_visible(GTK_WIDGET(self->apps_row), grotto_panel_host_can(panel, GROTTO_PANEL_HOST_OPEN_SIGNER));
   g_autofree char *count = g_strdup_printf(g_dngettext(GETTEXT_PACKAGE, "%u app uses this identity", "%u apps use this identity", m->app_count), m->app_count);
-  adw_action_row_set_subtitle(self->apps_row, count);
+  adw_action_row_set_subtitle(self->apps_row, metadata_unknown ? _("Check identity usage in Grotto") : count);
   gtk_widget_set_visible(GTK_WIDGET(self->default_row), !m->watch_only && m->can_sign);
   adw_action_row_set_subtitle(self->default_row, m->is_default ? _("Apps that don't choose an identity use this one") : _("Used by apps that don't choose an identity"));
   gtk_widget_set_visible(GTK_WIDGET(self->default_check), m->is_default);
