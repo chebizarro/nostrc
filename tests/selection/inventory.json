@@ -24,8 +24,8 @@
       "nodes": ["gnome.nostr_settings", "grotto.daemon", "grotto.gui", "grotto.panels", "nip55l.glib"],
       "profiles": ["grotto.settings.host.linux"],
       "kind": "ctest", "cost": "ordinary", "requirement": "blocking", "expected_outcome": "pass",
-      "ctest_tests": {"grotto.settings.host.linux": ["nostr-settings/panel-mount", "signer/clients", "signer/activity", "signer/approval-integration", "grotto-panels/smoke-host", "grotto-panels/no-secrets", "grotto-panels/control1-service"]},
-      "build_targets": ["nostr-settings", "grotto", "test-nostr-settings-panel-mount", "test-clients", "test-activity", "test-approval-integration", "test-grotto-panels-smoke", "test-grotto-panels-admission", "test-grotto-panels-control1"],
+      "ctest_tests": {"grotto.settings.host.linux": ["nostr-settings/panel-mount", "nostr-settings-config", "nostr-settings-lists", "nostr-settings-nip11", "nostr-settings-relay_stats", "nostr-settings-systemd", "nostr-settings-wallet", "nostr-settings-identity", "signer/clients", "signer/activity", "signer/approval-integration", "grotto-panels/smoke-host", "grotto-panels/no-secrets", "grotto-panels/control1-service"]},
+      "build_targets": ["nostr-settings", "grotto", "test-nostr-settings-panel-mount", "test-nostr-settings-config", "test-nostr-settings-lists", "test-nostr-settings-nip11", "test-nostr-settings-relay_stats", "test-nostr-settings-systemd", "test-nostr-settings-wallet", "test-nostr-settings-identity", "test-clients", "test-activity", "test-approval-integration", "test-grotto-panels-smoke", "test-grotto-panels-admission", "test-grotto-panels-control1"],
       "runtime_inputs": ["{source}/apps/grotto/data/org.nostr.Grotto.Control1.xml"],
       "requires": ["display", "private_bus"]
     },
@@ -22232,7 +22232,6 @@
       "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
     },
     "gnome.nostr_settings": {
-      "coverage_gap": "No fully audited dedicated execution profile yet; broad recovery cannot prove this component validated.",
       "depends_on": [
         "grotto.panels",
         "nostr.gobject"
@@ -22241,7 +22240,7 @@
       "owner_paths": [
         "gnome/nostr-settings"
       ],
-      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+      "rationale": "Dedicated Linux route builds the production Settings shell, runs every core suite plus real-daemon manager hosting and downstream panel/Control1/Grotto navigation compatibility. Normal affected execution, not full-universe attestation or release qualification."
     },
     "gnome.nostr_share": {
       "coverage_gap": "No fully audited dedicated execution profile yet; broad recovery cannot prove this component validated.",

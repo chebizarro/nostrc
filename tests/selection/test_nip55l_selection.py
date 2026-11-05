@@ -66,6 +66,25 @@ class SignerSelectionTests(unittest.TestCase):
         self.assertEqual(result['metadata_changed_checks'], ['grotto.permissions.repeat'])
         self.assertEqual(result['metadata_broad_profiles'], [])
 
+    def test_settings_host_route_selects_real_host_and_core_without_unrelated_suites(self):
+        for path in ('gnome/nostr-settings/src/ui/nss-window.c',
+                     'gnome/nostr-settings/src/core/nss-wallet.c'):
+            with self.subTest(path=path):
+                result = plan(self.p, paths=(path,))
+                self.assertEqual(result['effective_mode'], 'affected')
+                self.assertEqual(result['broadening_reasons'], [])
+                self.assertIn('grotto.settings.host', result['selected_checks'])
+                self.assertFalse(any(x.startswith(('groundhog.', 'mdk011.')) for x in result['selected_checks']))
+        route = self.p['checks']['grotto.settings.host']
+        names = set(route['ctest_tests']['grotto.settings.host.linux'])
+        self.assertIn('nostr-settings/panel-mount', names)
+        self.assertTrue({'nostr-settings-' + name for name in
+                         ('config', 'lists', 'nip11', 'relay_stats', 'systemd', 'wallet', 'identity')} <= names)
+        self.assertTrue({'signer/clients', 'signer/activity', 'signer/approval-integration',
+                         'grotto-panels/control1-service'} <= names)
+        self.assertNotIn('test_nip5f_tcp', names)
+        self.assertEqual(set(route['requires']), {'display', 'private_bus'})
+
     def test_real_adapter_sources_and_seal_registration_contract(self):
         gh = (ROOT / 'gnome/groundhog/CMakeLists.txt').read_text()
         self.assertIn('src/identity/gh-signer-nip55l.c', gh)

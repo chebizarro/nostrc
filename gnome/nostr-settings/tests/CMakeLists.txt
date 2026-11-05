@@ -9,6 +9,10 @@ foreach(_t ${_nss_tests})
   target_compile_options(test-nostr-settings-${_t} PRIVATE ${NSS_WARNINGS})
   target_link_libraries(test-nostr-settings-${_t} PRIVATE nostr-settings-core)
   add_test(NAME nostr-settings-${_t} COMMAND test-nostr-settings-${_t})
+  if(COMMAND nostrc_describe_test)
+    nostrc_describe_test(nostr-settings-${_t} OWNER gnome.nostr_settings
+      TARGETS test-nostr-settings-${_t} INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/test_${_t}.c")
+  endif()
   set_tests_properties(nostr-settings-${_t} PROPERTIES
     LABELS "nostr-settings;unit" TIMEOUT 120
     ENVIRONMENT "GSETTINGS_BACKEND=memory;NO_AT_BRIDGE=1")
@@ -61,6 +65,13 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET grotto-daemon)
     add_dependencies(test-nostr-settings-panel-mount grotto-daemon grotto-schemas nostr-settings-schema nostr-settings-mount-schemas)
     add_test(NAME nostr-settings/panel-mount COMMAND ${NSS_XVFB_RUN} -a
       $<TARGET_FILE:test-nostr-settings-panel-mount> $<TARGET_FILE:grotto-daemon>)
+    if(COMMAND nostrc_describe_test)
+      nostrc_describe_test(nostr-settings/panel-mount OWNER gnome.nostr_settings grotto.daemon
+        TARGETS test-nostr-settings-panel-mount nostr-settings grotto-daemon nostr-settings-mount-schemas
+        INPUTS "${CMAKE_SOURCE_DIR}/apps/grotto/data/org.nostr.Grotto.Control1.xml"
+          "${CMAKE_SOURCE_DIR}/gnome/nostr-settings/data/org.nostr.Settings.gschema.xml"
+        REQUIRES display private_bus)
+    endif()
     set_tests_properties(nostr-settings/panel-mount PROPERTIES LABELS "nostr-settings;signer;integration;security"
       TIMEOUT 120 ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${_w6_schemas};GSETTINGS_BACKEND=memory;GTK_A11Y=test")
   endif()
