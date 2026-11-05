@@ -28,7 +28,8 @@ if(TARGET grotto-daemon AND "NIP55L_TEST_TRUST_ENV=1" IN_LIST _nip55l_definition
   target_include_directories(test-profile-integration PRIVATE ${SIGNER_INCLUDE_DIRS}
     ${CMAKE_SOURCE_DIR})
   target_link_libraries(test-profile-integration PRIVATE grotto_app_test_core nostrc-test-bus)
-  target_compile_definitions(test-profile-integration PRIVATE PROFILE_DAEMON_BIN="$<TARGET_FILE:grotto-daemon>")
+  target_compile_definitions(test-profile-integration PRIVATE PROFILE_DAEMON_BIN="$<TARGET_FILE:grotto-daemon>"
+      PROFILE_TEST_TLS_PEM="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/profile-images-test.pem")
   add_dependencies(test-profile-integration grotto-daemon grotto-schemas)
   apply_test_sanitizers(test-profile-integration)
   add_test(NAME signer/profile-integration COMMAND test-profile-integration)

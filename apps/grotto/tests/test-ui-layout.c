@@ -757,6 +757,14 @@ static void layout_activate(GApplication *application, gpointer data) {
     }
     signer_window_show_page(window, "settings"); wait_frames(GTK_WIDGET(window)); assert_visible_focus(window);
     AdwDialog *preferences = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window));
+    GtkWidget *images = find_row(GTK_WIDGET(preferences), _("Load Profile Images"));
+    g_assert_true(ADW_IS_SWITCH_ROW(images));
+    g_assert_cmpstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(images)), ==, _("Fetch avatars and banners from the web addresses in profiles"));
+    g_assert_true(adw_switch_row_get_active(ADW_SWITCH_ROW(images)));
+    adw_switch_row_set_active(ADW_SWITCH_ROW(images), FALSE);
+    g_assert_false(g_settings_get_boolean(settings_manager_get_gsettings(settings_manager_get_default()), "load-profile-images"));
+    g_settings_set_boolean(settings_manager_get_gsettings(settings_manager_get_default()), "load-profile-images", TRUE);
+    g_assert_true(adw_switch_row_get_active(ADW_SWITCH_ROW(images)));
     GtkWidget *bootstrap = find_row(GTK_WIDGET(preferences), _("Find Profiles Automatically")); g_assert_true(ADW_IS_SWITCH_ROW(bootstrap));
     adw_switch_row_set_active(ADW_SWITCH_ROW(bootstrap), FALSE);
     g_assert_false(g_settings_get_boolean(settings_manager_get_gsettings(settings_manager_get_default()), "profile-bootstrap-enabled"));
