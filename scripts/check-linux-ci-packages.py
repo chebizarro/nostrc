@@ -54,6 +54,18 @@ REQUIRED_GROTTO = REQUIRED_GSTREAMER_RUNTIME | {
     "libgstreamer-plugins-base1.0-dev", "gjs",
 }
 
+# The panels SDK is built from this tree before native package tests, not apt.
+SETTINGS_CONTROL = "gnome/nostr-settings/packaging/debian/control"
+SOURCE_BUILD_DEPS = {"libgrotto-panels-0-dev"}
+
+
+def settings_build_dependencies(text):
+    field = re.search(r"^Build-Depends:\s*(.*?)(?=^[^\s]|\Z)", text, re.M | re.S)
+    if not field:
+        raise ValueError(f"{SETTINGS_CONTROL}: missing Build-Depends")
+    return {entry.strip().split()[0] for entry in field.group(1).split(",")}
+
+
 PACKAGE_RE = re.compile(r"^[a-z0-9][a-z0-9.+-]+$")
 
 
@@ -90,6 +102,12 @@ def check(root):
     if not image:
         return [f"{DOCKERFILE}: no apt-get install packages found"]
     problems = []
+    settings = settings_build_dependencies((root / SETTINGS_CONTROL).read_text())
+    for package in sorted(settings - image - SOURCE_BUILD_DEPS):
+        # The image's debhelper supplies debhelper-compat (= 13).
+        if package == "debhelper-compat" and "debhelper" in image:
+            continue
+        problems.append(f"{SETTINGS_CONTROL}: build dependency {package} missing from {DOCKERFILE}")
     for package in sorted(REQUIRED_GROTTO - image):
         problems.append(f"{DOCKERFILE}: missing required signer package {package}")
     for package in sorted(REQUIRED_GSTREAMER_RUNTIME - image):
@@ -129,9 +147,14 @@ def self_test():
         (root / "scripts").mkdir()
         (root / ".github/workflows").mkdir(parents=True)
         (root / DOCKERFILE).write_text(dockerfile)
+        (root / SETTINGS_CONTROL).parent.mkdir(parents=True)
+        (root / SETTINGS_CONTROL).write_text("Build-Depends: libfoo-dev,\n libgrotto-panels-0-dev (>= 0.1.0)\nStandards-Version: 4.6.2\n")
         for workflow in MIRRORED:
             (root / workflow).write_text(good)
         assert check(root) == [], check(root)
+        (root / SETTINGS_CONTROL).write_text("Build-Depends: libmissing-settings-dev\n")
+        assert check(root) == [f"{SETTINGS_CONTROL}: build dependency libmissing-settings-dev missing from {DOCKERFILE}"]
+        (root / SETTINGS_CONTROL).write_text("Build-Depends: libfoo-dev,\n libgrotto-panels-0-dev (>= 0.1.0)\n")
         (root / MIRRORED[0]).write_text(bad)
         found = check(root)
         assert found == [f"{MIRRORED[0]}: installs libnew-dev, which {DOCKERFILE} does not"], found

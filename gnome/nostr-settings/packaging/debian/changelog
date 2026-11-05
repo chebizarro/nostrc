@@ -1,0 +1,10 @@
+nostr-settings (0.4.0-2) unstable; urgency=medium
+
+  * Build Settings separately from the headless bundle; do not configure
+    nostr-share or change the headless libnostr ABI.
+  * Depend on the shared Grotto panels runtime and SDK.
+  * Add local --version/--help coverage and ship the private JSON backend.
+  * Keep the legacy Debian bundle version ordering above 0.4.0-1; the
+    independently versioned, unreleased Settings application remains 0.1.0.
+
+ -- GNostr Project <gnostr@example.com>  Wed, 04 Nov 2026 12:00:00 -0800

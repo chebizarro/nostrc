@@ -1,5 +1,6 @@
-# Shared Ubuntu 24.04 image for local Linux builds: the pre-push gate's Linux
-# stage (scripts/linux-gate.sh) and scripts/groundhog-linux-ci.sh.
+# Shared Ubuntu 24.04 image for explicitly invoked local Linux builds:
+# scripts/linux-gate.sh, scripts/groundhog-linux-ci.sh and the Settings
+# Debian regression. The static-only pre-push hook never runs this image.
 #
 # The package list is the union of the apt lists in the hosted Linux workflows
 # that build this tree, so a local build sees what CI sees.
@@ -59,7 +60,9 @@ RUN localedef -i en_US -f UTF-8 en_US.UTF-8
 RUN for element in appsrc appsink decodebin audioconvert audioresample \
     scaletempo autoaudiosrc autoaudiosink level opusenc opusdec oggmux \
     oggdemux qtdemux avdec_aac; do gst-inspect-1.0 "$element" >/dev/null; done
-# Native Grotto package verification uses the same debhelper toolchain as CI.
+# Native Grotto/Settings package verification uses the debhelper toolchain.
+# check-linux-ci-packages.py also checks the Settings recipe's Build-Depends;
+# build/install libgrotto-panels-0-dev from this tree before its package test.
 RUN apt-get update && apt-get install -y --no-install-recommends debhelper dpkg-dev fakeroot lintian \
  && rm -rf /var/lib/apt/lists/*
 # Grotto's GUI-only LSan exceptions name static third-party functions, not modules

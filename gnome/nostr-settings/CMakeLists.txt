@@ -91,6 +91,8 @@ add_executable(nostr-settings src/ui/main.c)
 target_compile_options(nostr-settings PRIVATE ${NSS_WARNINGS})
 target_link_libraries(nostr-settings PRIVATE nostr-settings-ui)
 install(TARGETS nostr-settings RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcPrivateJsonLib.cmake")
+nostrc_install_private_json(nostr-settings nostr-settings)
 
 # ---- Data ----
 set(NSS_BINDIR "${CMAKE_INSTALL_FULL_BINDIR}")
