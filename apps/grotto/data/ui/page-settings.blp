@@ -4,14 +4,13 @@ template $PageSettings: Adw.PreferencesPage {
   title: _("Preferences");
   Adw.PreferencesGroup security {
     title: _("Security");
-    description: _("The management lock protects this window, not the key backend. Pause Signing stops authorised requests too.");
-    Adw.ComboRow lock_timeout { title: _("Lock Management After"); model: StringList { strings [_("Never"), _("1 minute"), _("5 minutes"), _("15 minutes"), _("30 minutes"), _("1 hour")] }; }
-    Adw.SwitchRow lock_idle { title: _("Lock Management on System Idle"); }
-    Adw.SwitchRow pause_lock { title: _("Pause Signing on Screen Lock"); subtitle: _("Resume requires an unlocked, observed session"); }
+    Adw.ComboRow lock_timeout { title: _("Lock This Window After"); subtitle: _("Signing can continue while this window is locked"); model: StringList { strings [_("Never"), _("1 minute"), _("5 minutes"), _("15 minutes"), _("30 minutes"), _("1 hour")] }; }
+    Adw.SwitchRow lock_idle { title: _("Lock This Window When Idle"); }
+    Adw.SwitchRow pause_lock { title: _("Pause Signing on Screen Lock"); subtitle: _("Stops previously allowed requests too. Unlock your session to resume."); }
   }
   Adw.PreferencesGroup management {
-    Adw.ActionRow remote { title: _("Remote Signing"); subtitle: _("Status, relays, allowed methods and endpoint"); activatable: true; [suffix] Image { icon-name: "go-next-symbolic"; } }
-    Adw.SpinRow retention { title: _("Keep Activity (Days)"); subtitle: _("Metadata only — no messages, secrets or event content"); adjustment: Adjustment { lower: 1; upper: 30; step-increment: 1; }; }
+    Adw.ActionRow remote { title: _("Remote Signing"); subtitle: _("Connect apps on other devices"); activatable: true; [suffix] Image { icon-name: "go-next-symbolic"; } }
+    Adw.SpinRow retention { title: _("Keep Activity (Days)"); subtitle: _("Request details only, not message content or keys"); adjustment: Adjustment { lower: 1; upper: 30; step-increment: 1; }; }
     Adw.ActionRow about { title: _("About Grotto…"); activatable: true; action-name: "win.about"; }
   }
 }

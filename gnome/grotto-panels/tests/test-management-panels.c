@@ -52,7 +52,7 @@ static void management_panels(void) {
       g_signal_emit_by_name(first, "activated");
       AdwNavigationView *nav = grotto_apps_panel_get_navigation(GROTTO_APPS_PANEL(panel));
       GtkWidget *detail = GTK_WIDGET(adw_navigation_view_get_visible_page(nav));
-      GtkWidget *low_row = find_title(detail, "Ask unless permitted"); g_assert_nonnull(low_row);
+      GtkWidget *low_row = find_title(detail, "Ask Unless Permitted"); g_assert_nonnull(low_row);
       GtkWidget *low = adw_action_row_get_activatable_widget(ADW_ACTION_ROW(low_row));
       gtk_check_button_set_active(GTK_CHECK_BUTTON(low), TRUE);
       WAIT(grotto_panels_fake_service_get_invocations(fake) == 1);
@@ -62,12 +62,12 @@ static void management_panels(void) {
         {.id = "1", .principal = app.id, .public_key = "public-identity", .operation = "event", .decision = "policy-review", .state = "inactive", .reason = "Pending policy review", .event_kind = 1, .revision = 7}};
       grotto_panels_fake_service_set_query_result(fake, GROTTO_PANELS_QUERY_PERMISSIONS, permissions_data, G_N_ELEMENTS(permissions_data), -1);
       GtkWidget *permissions = find_title(detail, "Permissions"); g_assert_nonnull(permissions); g_signal_emit_by_name(permissions, "activated");
-      WAIT(find_title(detail, "Allow · Follow list (3)"));
+      WAIT(find_title(detail, "Allow · Follow list"));
       GtkWidget *derived = find_title(detail, effective[0]); g_assert_nonnull(derived);
       g_assert_false(gtk_list_box_row_get_activatable(GTK_LIST_BOX_ROW(derived)));
       g_assert_cmpstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(derived)), ==, "From Medium trust");
       /* Kind wording comes from the generated registry; locate the second row by metadata. */
-      GtkWidget *explicit_row = find_title(detail, "Allow · Follow list (3)");
+      GtkWidget *explicit_row = find_title(detail, "Allow · Follow list");
       GtkWidget *inactive = gtk_widget_get_next_sibling(explicit_row); g_assert_true(ADW_IS_ACTION_ROW(inactive));
       g_assert_nonnull(strstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(inactive)), "Inactive — pending policy review"));
       g_assert_nonnull(strstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(inactive)), "Until Revoked"));

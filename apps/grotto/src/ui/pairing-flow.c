@@ -3,13 +3,14 @@
 #include "sheets/sheet-create-bunker.h"
 #include "sheets/sheet-qr-scanner.h"
 #include <secure_buf.h>
+#include <glib/gi18n.h>
 
 typedef struct {
   AdwDialog *dialog;
   GDBusConnection *bus;
   GWeakRef parent;
   GCancellable *cancel;
-  GtkWidget *entry, *status, *identities, *submit;
+  GtkWidget *entry, *summary, *status, *identities, *submit;
   gchar *uri;
   gboolean closed;
 } PairingFlow;
@@ -26,13 +27,13 @@ static void identities_ready(GObject *source, GAsyncResult *result, gpointer dat
   AdwDialog *d = data; PairingFlow *f = g_object_get_data(G_OBJECT(d), "pairing-flow");
   g_autoptr(GError) error = NULL; g_autoptr(GVariant) reply = g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), result, &error);
   if (!f->closed) {
-    if (!reply) gtk_label_set_text(GTK_LABEL(f->status), "The signer could not list its identities. Check Grotto is running and unlocked.");
+    if (!reply) gtk_label_set_text(GTK_LABEL(f->status), _("Identities could not be loaded. Check that Grotto is running and unlocked."));
     else {
       g_auto(GStrv) identities = NULL; g_variant_get(reply, "(^as)", &identities);
       GtkStringList *model = gtk_string_list_new((const gchar *const *)identities);
       gtk_drop_down_set_model(GTK_DROP_DOWN(f->identities), G_LIST_MODEL(model)); g_object_unref(model);
       gtk_drop_down_set_selected(GTK_DROP_DOWN(f->identities), GTK_INVALID_LIST_POSITION);
-      gtk_label_set_text(GTK_LABEL(f->status), identities[0] ? "Choose an identity. The next review grants pairing only, not signing permissions." : "Create or import a signable identity first.");
+      gtk_label_set_text(GTK_LABEL(f->status), identities[0] ? _("Choose an identity, then review what the app may do before connecting.") : _("Create or import an identity first."));
       gtk_widget_set_sensitive(f->submit, identities[0] != NULL);
     }
   }
@@ -51,7 +52,7 @@ static void accepted(GObject *source, GAsyncResult *result, gpointer data) {
       adw_dialog_close(d);
     }
   } else if (!f->closed) {
-    gtk_label_set_text(GTK_LABEL(f->status), "Pairing is unavailable. Configure remote signing and wait for a listening relay, then retry.");
+    gtk_label_set_text(GTK_LABEL(f->status), _("Pairing is unavailable. Check Remote Signing, then try again."));
     gtk_widget_set_sensitive(f->submit, TRUE);
   }
   g_object_unref(d);
@@ -59,7 +60,7 @@ static void accepted(GObject *source, GAsyncResult *result, gpointer data) {
 static void request_review(GtkButton *button, gpointer data) {
   (void)button; PairingFlow *f = data;
   guint selected = gtk_drop_down_get_selected(GTK_DROP_DOWN(f->identities));
-  if (selected == GTK_INVALID_LIST_POSITION) { gtk_label_set_text(GTK_LABEL(f->status), "Choose the identity this application may request."); return; }
+  if (selected == GTK_INVALID_LIST_POSITION) { gtk_label_set_text(GTK_LABEL(f->status), _("Choose an identity to connect.")); return; }
   GtkStringObject *item = GTK_STRING_OBJECT(gtk_drop_down_get_selected_item(GTK_DROP_DOWN(f->identities)));
   gtk_widget_set_sensitive(f->submit, FALSE);
   /* Do not cancel an in-flight mutating call without learning its request ID:
@@ -71,16 +72,18 @@ static void preview_uri(PairingFlow *f, const gchar *text) {
   NostrNip46ConnectURI uri; g_autoptr(GError) error = NULL;
   if (!grotto_connect_parse(text, &uri, &error)) {
     gtk_label_set_text(GTK_LABEL(f->status), g_str_has_prefix(text, "bunker://") ?
-        "This is another signer's bunker link. Grotto pairs applications using nostrconnect://; it does not delegate custody to another signer." :
-        "This is not a valid Nostr Connect link. Use nostrconnect:// with a client key, secret, and supported relays."); return;
+        _("This link belongs to another signer. Use a connection link from an app instead.") :
+        _("This connection link is invalid. Copy a new link from your app.")); return;
   }
   f->uri = g_strdup(text);
-  adw_dialog_set_title(f->dialog, "Connect with Which Identity?");
+  adw_dialog_set_title(f->dialog, _("Connect an App"));
+  g_autofree char *summary = g_strdup_printf(_("App name (not verified): %s\nRelays can see your network address and connection timing. No connection has been made yet."), uri.name ? uri.name : _("Not supplied"));
+  gtk_label_set_text(GTK_LABEL(f->summary), summary);
   g_autofree gchar *relays = g_strjoinv("\n", uri.relays);
-  g_autofree gchar *preview = g_strdup_printf("Client transport key: %s\nName supplied by the client (unverified): %s\nRequested permissions (hints only): %s\nRelays:\n%s\n\nThese relays see your network address and connection timing. Nothing has been contacted for this link.",
-      uri.client_pubkey_hex, uri.name ? uri.name : "Not supplied", uri.perms_csv ? uri.perms_csv : "None", relays);
+  g_autofree gchar *preview = g_strdup_printf(_("App key: %s\nRequested permissions (not granted): %s\nRelays:\n%s"),
+      uri.client_pubkey_hex, uri.perms_csv ? uri.perms_csv : _("None"), relays);
   gtk_label_set_text(GTK_LABEL(f->entry), preview); grotto_connect_clear(&uri);
-  if (!f->bus) { gtk_label_set_text(GTK_LABEL(f->status), "The signer session bus is unavailable."); return; }
+  if (!f->bus) { gtk_label_set_text(GTK_LABEL(f->status), _("Grotto could not reach the signer.")); return; }
   g_dbus_connection_call(f->bus, "org.nostr.Signer", "/org/nostr/signer", "org.nostr.Signer", "ListIdentities", NULL,
       G_VARIANT_TYPE("(as)"), G_DBUS_CALL_FLAGS_NONE, 10000, f->cancel, identities_ready, g_object_ref(f->dialog));
 }
@@ -116,23 +119,37 @@ void grotto_pairing_present(GtkWidget *parent, const gchar *uri) {
   GDBusConnection *bus = app ? g_application_get_dbus_connection(app) : NULL; if (bus) f->bus = g_object_ref(bus);
   g_object_set_data_full(G_OBJECT(f->dialog), "pairing-flow", f, flow_free);
   g_signal_connect(f->dialog, "closed", G_CALLBACK(flow_closed), f);
-  adw_dialog_set_title(f->dialog, "Connect an Application"); adw_dialog_set_content_width(f->dialog, 520);
+  adw_dialog_set_title(f->dialog, _("Add App")); adw_dialog_set_content_width(f->dialog, 520);
   GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
   gtk_widget_set_margin_start(box, 18); gtk_widget_set_margin_end(box, 18); gtk_widget_set_margin_top(box, 18); gtk_widget_set_margin_bottom(box, 18);
-  f->status = gtk_label_new("Local GNOME applications do not need pairing. They ask for permission the first time they call Grotto.");
+  f->status = gtk_label_new(_("Apps on this device ask for permission automatically. Use a link or QR code for an app on another device."));
   gtk_label_set_wrap(GTK_LABEL(f->status), TRUE);
   if (uri) {
     f->entry = gtk_label_new(NULL); gtk_label_set_wrap(GTK_LABEL(f->entry), TRUE); gtk_label_set_selectable(GTK_LABEL(f->entry), TRUE);
-    gtk_box_append(GTK_BOX(box), f->entry);
-    f->identities = gtk_drop_down_new(NULL, NULL); gtk_widget_set_tooltip_text(f->identities, "Connect with which identity?"); gtk_box_append(GTK_BOX(box), f->identities);
-    f->submit = gtk_button_new_with_label("Review Connection"); gtk_widget_set_sensitive(f->submit, FALSE);
+    gtk_label_set_wrap_mode(GTK_LABEL(f->entry), PANGO_WRAP_WORD_CHAR);
+    f->summary = gtk_label_new(NULL); gtk_label_set_wrap(GTK_LABEL(f->summary), TRUE); gtk_label_set_xalign(GTK_LABEL(f->summary), 0);
+    gtk_box_append(GTK_BOX(box), f->summary);
+    GtkWidget *details = gtk_expander_new(_("Details")); gtk_expander_set_child(GTK_EXPANDER(details), f->entry);
+    gtk_box_append(GTK_BOX(box), details);
+    GtkWidget *identity_label = gtk_label_new(_("Identity")); gtk_label_set_xalign(GTK_LABEL(identity_label), 0);
+    gtk_box_append(GTK_BOX(box), identity_label);
+    f->identities = gtk_drop_down_new(NULL, NULL); gtk_widget_set_tooltip_text(f->identities, _("Identity to Connect"));
+    gtk_accessible_update_property(GTK_ACCESSIBLE(f->identities), GTK_ACCESSIBLE_PROPERTY_LABEL, _("Identity to Connect"), -1);
+    gtk_box_append(GTK_BOX(box), f->identities);
+    f->submit = gtk_button_new_with_label(_("Review Connection")); gtk_widget_set_sensitive(f->submit, FALSE);
     g_signal_connect(f->submit, "clicked", G_CALLBACK(request_review), f); gtk_box_append(GTK_BOX(box), f->submit);
     preview_uri(f, uri);
   } else {
-    f->entry = gtk_entry_new(); gtk_entry_set_placeholder_text(GTK_ENTRY(f->entry), "Paste a nostrconnect:// link"); gtk_box_append(GTK_BOX(box), f->entry);
-    const gchar *labels[] = {"Preview Pasted Link", "Scan a QR Code…", "Create a Pairing Link…"};
+    f->entry = gtk_entry_new(); gtk_entry_set_placeholder_text(GTK_ENTRY(f->entry), _("Paste an app connection link")); gtk_box_append(GTK_BOX(box), f->entry);
+    const gchar *labels[] = {_("Preview Link"), _("Scan QR Code…"), _("Create Pairing Link…")};
     GCallback callbacks[] = {G_CALLBACK(pasted), G_CALLBACK(scan), G_CALLBACK(create)};
     for (guint i = 0; i < 3; i++) { GtkWidget *b = gtk_button_new_with_label(labels[i]); g_signal_connect(b, "clicked", callbacks[i], f); gtk_box_append(GTK_BOX(box), b); }
   }
-  gtk_box_append(GTK_BOX(box), f->status); adw_dialog_set_child(f->dialog, box); adw_dialog_present(f->dialog, parent);
+  gtk_box_append(GTK_BOX(box), f->status);
+  if (uri) gtk_widget_add_css_class(f->submit, "suggested-action");
+  GtkWidget *scroll = gtk_scrolled_window_new(); gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+  gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), box);
+  GtkWidget *toolbar = adw_toolbar_view_new(); adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(toolbar), adw_header_bar_new());
+  adw_toolbar_view_set_content(ADW_TOOLBAR_VIEW(toolbar), scroll);
+  adw_dialog_set_child(f->dialog, toolbar); adw_dialog_present(f->dialog, parent);
 }

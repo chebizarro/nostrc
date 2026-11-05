@@ -7,7 +7,7 @@ static const char *remote_state_label(const char *state) {
   if (!g_strcmp0(state, "DISABLED")) return _("Disabled");
   if (!g_strcmp0(state, "STARTING")) return _("Starting");
   if (!g_strcmp0(state, "LISTENING")) return _("Ready");
-  if (!g_strcmp0(state, "DEGRADED")) return _("Degraded");
+  if (!g_strcmp0(state, "DEGRADED")) return _("Connection interrupted");
   if (!g_strcmp0(state, "OFFLINE")) return _("Offline");
   if (!g_strcmp0(state, "STOPPING")) return _("Stopping");
   if (!g_strcmp0(state, "ERROR")) return _("Error");
@@ -83,7 +83,7 @@ static void open_link(AdwActionRow *row, gpointer data) {
   if (self->file_cancel) g_cancellable_cancel(self->file_cancel);
   g_clear_object(&self->file_cancel); self->file_cancel = g_cancellable_new();
   LinkFile *file = g_new0(LinkFile, 1); g_weak_ref_init(&file->page, data); file->cancel = g_object_ref(self->file_cancel);
-  g_autoptr(GtkFileDialog) dialog = gtk_file_dialog_new(); gtk_file_dialog_set_title(dialog, _("Open a Nostr Connect Link File"));
+  g_autoptr(GtkFileDialog) dialog = gtk_file_dialog_new(); gtk_file_dialog_set_title(dialog, _("Open App Link File"));
   gtk_file_dialog_open(dialog, GTK_WINDOW(root), file->cancel, link_selected, file);
 }
 static void create_link(AdwActionRow *row, gpointer data) {
@@ -91,13 +91,8 @@ static void create_link(AdwActionRow *row, gpointer data) {
 }
 static void model_changed(GrottoHomeModel *model, gpointer data) {
   GrottoPageConnect *self = data; GVariant *status = grotto_home_model_status(model); const gchar *state = NULL;
-  guint pending = 0, acknowledgements = 0;
-  if (status) {
-    g_variant_lookup(status, "bunker_state", "&s", &state); g_variant_lookup(status, "bunker_pending_pairing_requests", "u", &pending);
-    g_variant_lookup(status, "bunker_pending_pairing_acks", "u", &acknowledgements);
-  }
-  g_autofree gchar *text = g_strdup_printf(_("%s · %u awaiting review · %u awaiting relay acknowledgement"), remote_state_label(state), pending, acknowledgements);
-  adw_action_row_set_subtitle(self->runtime, text);
+  if (status) g_variant_lookup(status, "bunker_state", "&s", &state);
+  adw_action_row_set_subtitle(self->runtime, remote_state_label(state));
 }
 void grotto_page_connect_set_model(GrottoPageConnect *self, GrottoHomeModel *model) {
   g_set_object(&self->model, model); g_signal_connect(model, "changed", G_CALLBACK(model_changed), self); model_changed(model, self);

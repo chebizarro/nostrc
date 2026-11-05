@@ -489,9 +489,9 @@ static void refresh_indicator(void) {
   guint pending = approval_controller ? g_list_model_get_n_items(grotto_approval_controller_get_pending(approval_controller)) : 0;
   GnStatusNotifier *indicator = g_object_get_data(G_OBJECT(global_app), "grotto-indicator");
   if (indicator) {
-    g_autofree gchar *title = !signer_available ? g_strdup("Grotto · Signer unavailable") :
-        signing_paused ? g_strdup("Grotto · Signing paused") : pending ?
-        g_strdup_printf("Grotto · Waiting (%u)", pending) : g_strdup("Grotto · Ready");
+    g_autofree gchar *title = !signer_available ? g_strdup(_("Grotto · Signer unavailable")) :
+        signing_paused ? g_strdup(_("Grotto · Signing paused")) : pending ?
+        g_strdup_printf(_("Grotto · Waiting (%u)"), pending) : g_strdup(_("Grotto · Ready"));
     gboolean visible = shell_known && !shell_indicator;
     if (g_strcmp0(title, g_object_get_data(G_OBJECT(indicator), "grotto-last-title")) ||
         GPOINTER_TO_INT(g_object_get_data(G_OBJECT(indicator), "grotto-last-visible")) != (visible ? 2 : 1)) {
@@ -501,11 +501,11 @@ static void refresh_indicator(void) {
     }
     GnStatusNotifierItem menu[] = {
       { 5, title, FALSE, TRUE, FALSE, -1 },
-      { 1, "Open Grotto", TRUE, TRUE, FALSE, -1 },
-      { 3, "Review requests", TRUE, TRUE, FALSE, -1 },
-      { 4, "Pause signing", signer_available, TRUE, FALSE, -1 },
-      { 6, "Resume signing…", can_resume(), TRUE, FALSE, -1 },
-      { 2, "Quit approval UI (authorised signing continues)", TRUE, TRUE, FALSE, -1 }
+      { 1, _("Open Grotto"), TRUE, TRUE, FALSE, -1 },
+      { 3, _("Review Requests"), TRUE, TRUE, FALSE, -1 },
+      { 4, _("Pause Signing"), signer_available, TRUE, FALSE, -1 },
+      { 6, _("Resume Signing…"), can_resume(), TRUE, FALSE, -1 },
+      { 2, _("Quit Approval UI (Signing Continues)"), TRUE, TRUE, FALSE, -1 }
     };
     gn_status_notifier_set_menu_items(indicator, menu, G_N_ELEMENTS(menu));
   }
@@ -597,7 +597,7 @@ static void on_startup(GtkApplication *app, gpointer user_data) {
   g_signal_connect(indicator, "quit", G_CALLBACK(indicator_quit), app);
   g_object_set_data_full(G_OBJECT(app), "grotto-indicator", indicator, g_object_unref);
   /* Keep the opportunistic notifier passive until Shell ownership is known. */
-  gn_status_notifier_set_presentation(indicator, FALSE, "Grotto · Signer unavailable", "org.nostr.Grotto-symbolic");
+  gn_status_notifier_set_presentation(indicator, FALSE, _("Grotto · Signer unavailable"), "org.nostr.Grotto-symbolic");
   refresh_indicator();
 }
 

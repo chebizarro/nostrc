@@ -11,10 +11,10 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
     <child>
       <object class="AdwPreferencesGroup" id="security">
         <property name="title" translatable="yes">Security</property>
-        <property name="description" translatable="yes">The management lock protects this window, not the key backend. Pause Signing stops authorised requests too.</property>
         <child>
           <object class="AdwComboRow" id="lock_timeout">
-            <property name="title" translatable="yes">Lock Management After</property>
+            <property name="title" translatable="yes">Lock This Window After</property>
+            <property name="subtitle" translatable="yes">Signing can continue while this window is locked</property>
             <property name="model">
               <object class="GtkStringList">
                 <items>
@@ -31,13 +31,13 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
         </child>
         <child>
           <object class="AdwSwitchRow" id="lock_idle">
-            <property name="title" translatable="yes">Lock Management on System Idle</property>
+            <property name="title" translatable="yes">Lock This Window When Idle</property>
           </object>
         </child>
         <child>
           <object class="AdwSwitchRow" id="pause_lock">
             <property name="title" translatable="yes">Pause Signing on Screen Lock</property>
-            <property name="subtitle" translatable="yes">Resume requires an unlocked, observed session</property>
+            <property name="subtitle" translatable="yes">Stops previously allowed requests too. Unlock your session to resume.</property>
           </object>
         </child>
       </object>
@@ -47,7 +47,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
         <child>
           <object class="AdwActionRow" id="remote">
             <property name="title" translatable="yes">Remote Signing</property>
-            <property name="subtitle" translatable="yes">Status, relays, allowed methods and endpoint</property>
+            <property name="subtitle" translatable="yes">Connect apps on other devices</property>
             <property name="activatable">true</property>
             <child type="suffix">
               <object class="GtkImage">
@@ -59,7 +59,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
         <child>
           <object class="AdwSpinRow" id="retention">
             <property name="title" translatable="yes">Keep Activity (Days)</property>
-            <property name="subtitle" translatable="yes">Metadata only — no messages, secrets or event content</property>
+            <property name="subtitle" translatable="yes">Request details only, not message content or keys</property>
             <property name="adjustment">
               <object class="GtkAdjustment">
                 <property name="lower">1</property>

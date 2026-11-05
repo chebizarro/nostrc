@@ -303,7 +303,7 @@ static void secret_dialog(GrottoIdentityDetail *self, DetailOperation operation)
     adw_preferences_group_add(ADW_PREFERENCES_GROUP(group), GTK_WIDGET(self->seed_words));
     self->backup_written_down = GTK_CHECK_BUTTON(gtk_check_button_new_with_label(_("I wrote these down")));
     adw_preferences_group_add(ADW_PREFERENCES_GROUP(group), GTK_WIDGET(self->backup_written_down));
-    self->btn_backup_done = GTK_BUTTON(gtk_button_new_with_label(_("Record Backup")));
+    self->btn_backup_done = GTK_BUTTON(gtk_button_new_with_label(_("Confirm Backup")));
     adw_preferences_group_add(ADW_PREFERENCES_GROUP(group), GTK_WIDGET(self->btn_backup_done));
     GtkWidget *copy = gtk_button_new_with_label(_("Copy Recovery Phrase…")); gtk_widget_add_css_class(copy, "flat");
     adw_preferences_group_add(ADW_PREFERENCES_GROUP(group), copy);
@@ -313,7 +313,7 @@ static void secret_dialog(GrottoIdentityDetail *self, DetailOperation operation)
   } else {
     self->passphrase = GN_SECURE_ENTRY(gn_secure_entry_new()); gn_secure_entry_set_show_strength_indicator(self->passphrase, FALSE);
     gtk_widget_set_name(GTK_WIDGET(self->passphrase), "backup-passphrase");
-    gtk_accessible_update_property(GTK_ACCESSIBLE(self->passphrase), GTK_ACCESSIBLE_PROPERTY_LABEL, _("Backup Passphrase"), -1);
+    gn_secure_entry_set_accessible_label(self->passphrase, _("Backup Passphrase"));
     GtkWidget *passphrase_row = adw_preferences_row_new();
     adw_preferences_row_set_title(ADW_PREFERENCES_ROW(passphrase_row), _("Backup Passphrase"));
     GtkWidget *passphrase_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
@@ -324,13 +324,13 @@ static void secret_dialog(GrottoIdentityDetail *self, DetailOperation operation)
     gtk_box_append(GTK_BOX(passphrase_box), passphrase_label); gtk_box_append(GTK_BOX(passphrase_box), GTK_WIDGET(self->passphrase));
     gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(passphrase_row), passphrase_box);
     adw_preferences_group_add(ADW_PREFERENCES_GROUP(group), passphrase_row);
-    GtkWidget *commit = gtk_button_new_with_label(operation == ENCRYPTED_QR ? _("Show") : _("Save…"));
+    GtkWidget *commit = gtk_button_new_with_label(operation == ENCRYPTED_QR ? _("Show QR Code") : _("Save Backup…"));
     g_object_set_data(G_OBJECT(commit), "qr", GINT_TO_POINTER(operation == ENCRYPTED_QR));
     g_signal_connect(commit, "clicked", G_CALLBACK(export_commit), self);
     adw_preferences_group_add(ADW_PREFERENCES_GROUP(group), commit);
     if (operation == ENCRYPTED_FILE) {
       self->backup_written_down = GTK_CHECK_BUTTON(gtk_check_button_new_with_label(_("I saved this backup and its passphrase")));
-      self->btn_backup_done = GTK_BUTTON(gtk_button_new_with_label(_("Record Backup")));
+      self->btn_backup_done = GTK_BUTTON(gtk_button_new_with_label(_("Confirm Backup")));
       adw_preferences_group_add(ADW_PREFERENCES_GROUP(group), GTK_WIDGET(self->backup_written_down));
       adw_preferences_group_add(ADW_PREFERENCES_GROUP(group), GTK_WIDGET(self->btn_backup_done));
       gtk_widget_set_visible(GTK_WIDGET(self->backup_written_down), FALSE); gtk_widget_set_visible(GTK_WIDGET(self->btn_backup_done), FALSE);

@@ -8,165 +8,174 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
   <requires lib="gtk" version="4.0"/>
   <template class="OnboardingAssistant" parent="AdwWindow">
     <property name="title" translatable="yes">Set Up Grotto</property>
-    <property name="default-width">560</property>
+    <property name="default-width">480</property>
     <property name="default-height">600</property>
     <property name="width-request">320</property>
     <child>
       <object class="GtkBox">
         <property name="orientation">1</property>
         <child>
-          <object class="AdwHeaderBar">
-            <property name="title-widget">
-              <object class="AdwWindowTitle">
-                <property name="title" translatable="yes">Identity Setup</property>
-              </object>
-            </property>
-            <child type="end">
-              <object class="GtkButton" id="btn_skip">
-                <property name="label" translatable="yes">Skip Setup</property>
-              </object>
-            </child>
-          </object>
-        </child>
-        <child>
-          <object class="GtkScrolledWindow">
-            <property name="hscrollbar-policy">2</property>
+          <object class="AdwNavigationView" id="steps">
             <property name="vexpand">true</property>
             <child>
-              <object class="AdwClamp">
-                <property name="maximum-size">480</property>
-                <property name="margin-start">20</property>
-                <property name="margin-end">20</property>
-                <property name="margin-top">16</property>
-                <property name="margin-bottom">16</property>
+              <object class="AdwNavigationPage">
+                <property name="tag">welcome</property>
+                <property name="title" translatable="yes">Set Up Grotto</property>
                 <child>
-                  <object class="GtkStack" id="steps">
-                    <property name="transition-type">0</property>
-                    <child>
-                      <object class="GtkStackPage">
-                        <property name="name">welcome</property>
-                        <property name="child">
-                          <object class="AdwStatusPage">
-                            <property name="icon-name">org.nostr.Grotto</property>
-                            <property name="title" translatable="yes">Your Identity, Your Control</property>
-                            <property name="description" translatable="yes">Keys live in your system keyring. Applications never receive your secret key, and each application asks for permission before signing. Grotto's explicit key-management screens may handle your recovery material briefly.</property>
-                          </object>
-                        </property>
-                      </object>
+                  <object class="AdwToolbarView">
+                    <child type="top">
+                      <object class="AdwHeaderBar"></object>
                     </child>
                     <child>
-                      <object class="GtkStackPage">
-                        <property name="name">choice</property>
-                        <property name="child">
-                          <object class="GtkBox">
-                            <property name="orientation">1</property>
-                            <property name="spacing">18</property>
-                            <child>
-                              <object class="GtkLabel">
-                                <property name="label" translatable="yes">How Would You Like to Start?</property>
-                                <style>
-                                  <class name="title-1"/>
-                                </style>
-                                <property name="wrap">true</property>
-                              </object>
-                            </child>
-                            <child>
-                              <object class="GtkCheckButton" id="radio_create">
-                                <property name="label" translatable="yes">Create an Identity</property>
-                                <property name="active">true</property>
-                              </object>
-                            </child>
-                            <child>
-                              <object class="GtkCheckButton" id="radio_import">
-                                <property name="label" translatable="yes">Import an Identity</property>
-                                <property name="group">radio_create</property>
-                              </object>
-                            </child>
-                            <child>
-                              <object class="GtkCheckButton" id="radio_connect">
-                                <property name="label" translatable="yes">Connect an Application</property>
-                                <property name="group">radio_create</property>
-                              </object>
-                            </child>
-                          </object>
-                        </property>
+                      <object class="AdwStatusPage">
+                        <property name="icon-name">org.nostr.Grotto</property>
+                        <property name="title" translatable="yes">Your Identity, Your Control</property>
+                        <property name="description" translatable="yes">Keep your keys in the system keyring. Choose which apps may use your identity without sharing your secret key.</property>
                       </object>
                     </child>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <child>
+              <object class="AdwNavigationPage">
+                <property name="tag">choice</property>
+                <property name="title" translatable="yes">Add an Identity</property>
+                <child>
+                  <object class="AdwToolbarView">
+                    <child type="top">
+                      <object class="AdwHeaderBar"></object>
+                    </child>
                     <child>
-                      <object class="GtkStackPage">
-                        <property name="name">create</property>
-                        <property name="child">
-                          <object class="GtkBox">
-                            <property name="orientation">1</property>
-                            <property name="spacing">18</property>
+                      <object class="AdwPreferencesPage">
+                        <child>
+                          <object class="AdwPreferencesGroup">
                             <child>
-                              <object class="GtkLabel">
-                                <property name="label" translatable="yes">Create an Identity</property>
-                                <style>
-                                  <class name="title-1"/>
-                                </style>
-                                <property name="wrap">true</property>
+                              <object class="AdwActionRow" id="choose_create">
+                                <property name="title" translatable="yes">Create an Identity</property>
+                                <property name="subtitle" translatable="yes">Start with a new identity</property>
+                                <property name="activatable">true</property>
+                                <child type="suffix">
+                                  <object class="GtkImage">
+                                    <property name="icon-name">go-next-symbolic</property>
+                                  </object>
+                                </child>
                               </object>
                             </child>
                             <child>
-                              <object class="GtkLabel">
-                                <property name="label" translatable="yes">Grotto generates a BIP-39 recovery phrase and stores it with your key in the system keyring. No extra creation password is used.</property>
-                                <property name="wrap">true</property>
-                                <property name="xalign">0</property>
+                              <object class="AdwActionRow" id="choose_import">
+                                <property name="title" translatable="yes">Import an Identity</property>
+                                <property name="subtitle" translatable="yes">Use a key or recovery phrase you already have</property>
+                                <property name="activatable">true</property>
+                                <child type="suffix">
+                                  <object class="GtkImage">
+                                    <property name="icon-name">go-next-symbolic</property>
+                                  </object>
+                                </child>
                               </object>
                             </child>
                             <child>
-                              <object class="GtkEntry" id="entry_profile_name">
-                                <property name="placeholder-text" translatable="yes">Local label (optional)</property>
+                              <object class="AdwActionRow" id="choose_connect">
+                                <property name="title" translatable="yes">Connect an App</property>
+                                <property name="subtitle" translatable="yes">Use an identity already on this device</property>
+                                <property name="activatable">true</property>
+                                <child type="suffix">
+                                  <object class="GtkImage">
+                                    <property name="icon-name">go-next-symbolic</property>
+                                  </object>
+                                </child>
                               </object>
                             </child>
                           </object>
-                        </property>
+                        </child>
                       </object>
                     </child>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <child>
+              <object class="AdwNavigationPage">
+                <property name="tag">create</property>
+                <property name="title" translatable="yes">Create an Identity</property>
+                <child>
+                  <object class="AdwToolbarView">
+                    <child type="top">
+                      <object class="AdwHeaderBar"></object>
+                    </child>
                     <child>
-                      <object class="GtkStackPage">
-                        <property name="name">import</property>
-                        <property name="child">
-                          <object class="GtkBox">
-                            <property name="orientation">1</property>
-                            <property name="spacing">12</property>
+                      <object class="AdwPreferencesPage">
+                        <property name="description" translatable="yes">Your new key is saved in the system keyring. Next, check that it works and save a recovery phrase.</property>
+                        <child>
+                          <object class="AdwPreferencesGroup">
                             <child>
-                              <object class="GtkLabel">
-                                <property name="label" translatable="yes">Import an Identity</property>
-                                <style>
-                                  <class name="title-1"/>
-                                </style>
-                                <property name="wrap">true</property>
+                              <object class="AdwEntryRow" id="entry_profile_name">
+                                <property name="title" translatable="yes">Name on This Device</property>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <child>
+              <object class="AdwNavigationPage">
+                <property name="tag">import</property>
+                <property name="title" translatable="yes">Import an Identity</property>
+                <child>
+                  <object class="AdwToolbarView">
+                    <child type="top">
+                      <object class="AdwHeaderBar"></object>
+                    </child>
+                    <child>
+                      <object class="AdwPreferencesPage">
+                        <property name="description" translatable="yes">Enter your secret key, encrypted backup, or recovery phrase.</property>
+                        <child>
+                          <object class="AdwPreferencesGroup">
+                            <child>
+                              <object class="AdwEntryRow" id="entry_import_label">
+                                <property name="title" translatable="yes">Name on This Device</property>
                               </object>
                             </child>
                             <child>
-                              <object class="GtkLabel">
-                                <property name="label" translatable="yes">Enter nsec, a 64-character private hex key, an encrypted NIP-49 key, or seed words. Input is validated before storage.</property>
-                                <property name="wrap">true</property>
-                                <property name="xalign">0</property>
+                              <object class="AdwPreferencesRow">
+                                <child>
+                                  <object class="GtkBox">
+                                    <property name="orientation">1</property>
+                                    <property name="spacing">6</property>
+                                    <property name="margin-start">12</property>
+                                    <property name="margin-end">12</property>
+                                    <property name="margin-top">12</property>
+                                    <property name="margin-bottom">12</property>
+                                    <child>
+                                      <object class="GtkLabel">
+                                        <property name="label" translatable="yes">Key or Recovery Phrase</property>
+                                        <property name="xalign">0</property>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkEntry" id="text_import_data">
+                                        <property name="visibility">false</property>
+                                        <property name="enable-undo">false</property>
+                                        <accessibility>
+                                          <property name="label" translatable="yes">Key or Recovery Phrase</property>
+                                        </accessibility>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
                               </object>
                             </child>
-                            <child>
-                              <object class="GtkEntry" id="entry_import_label">
-                                <property name="placeholder-text" translatable="yes">Local label (optional)</property>
-                              </object>
-                            </child>
-                            <child>
-                              <object class="GtkCheckButton" id="radio_import_seed">
-                                <property name="label" translatable="yes">This is a BIP-39 recovery phrase</property>
-                              </object>
-                            </child>
-                            <child>
-                              <object class="GtkEntry" id="text_import_data">
-                                <property name="visibility">false</property>
-                                <property name="enable-undo">false</property>
-                                <property name="placeholder-text" translatable="yes">Private key or recovery phrase</property>
-                              </object>
-                            </child>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="AdwPreferencesGroup" id="import_passphrase_group">
                             <child>
                               <object class="GtkLabel" id="import_passphrase_label">
-                                <property name="label" translatable="yes">NIP-49 decryption passphrase (encrypted imports only)</property>
+                                <property name="label" translatable="yes">Backup passphrase</property>
                                 <property name="wrap">true</property>
                                 <property name="xalign">0</property>
                               </object>
@@ -177,81 +186,121 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                               </object>
                             </child>
                           </object>
-                        </property>
+                        </child>
                       </object>
                     </child>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <child>
+              <object class="AdwNavigationPage">
+                <property name="tag">connect</property>
+                <property name="title" translatable="yes">Connect an App</property>
+                <child>
+                  <object class="AdwToolbarView">
+                    <child type="top">
+                      <object class="AdwHeaderBar"></object>
+                    </child>
                     <child>
-                      <object class="GtkStackPage">
-                        <property name="name">connect</property>
-                        <property name="child">
-                          <object class="AdwStatusPage">
-                            <property name="icon-name">network-workgroup-symbolic</property>
-                            <property name="title" translatable="yes">Connect an Application</property>
-                            <property name="description" translatable="yes">Local GNOME applications need no manual registration: their first call asks for consent. Remote applications pair from Connect after you have a signable identity. If you do not have one yet, go Back and create or import it first.</property>
+                      <object class="AdwPreferencesPage">
+                        <property name="description" translatable="yes">Apps on this device ask for permission when they first use Grotto. For an app on another device, open Connected Apps to pair it.</property>
+                        <child>
+                          <object class="AdwPreferencesGroup">
+                            <child>
+                              <object class="AdwActionRow" id="connect_create">
+                                <property name="title" translatable="yes">Create an Identity</property>
+                                <property name="subtitle" translatable="yes">If you don't have one on this device yet</property>
+                                <property name="activatable">true</property>
+                                <child type="suffix">
+                                  <object class="GtkImage">
+                                    <property name="icon-name">go-next-symbolic</property>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="AdwActionRow" id="connect_import">
+                                <property name="title" translatable="yes">Import an Identity</property>
+                                <property name="activatable">true</property>
+                                <child type="suffix">
+                                  <object class="GtkImage">
+                                    <property name="icon-name">go-next-symbolic</property>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
                           </object>
-                        </property>
+                        </child>
                       </object>
                     </child>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <child>
+              <object class="AdwNavigationPage">
+                <property name="tag">test</property>
+                <property name="title" translatable="yes">Check Your Identity</property>
+                <child>
+                  <object class="AdwToolbarView">
+                    <child type="top">
+                      <object class="AdwHeaderBar"></object>
+                    </child>
                     <child>
-                      <object class="GtkStackPage">
-                        <property name="name">test</property>
-                        <property name="child">
-                          <object class="GtkBox">
-                            <property name="orientation">1</property>
-                            <property name="spacing">18</property>
-                            <child>
-                              <object class="GtkLabel">
-                                <property name="label" translatable="yes">Verify Your Stored Identity</property>
-                                <style>
-                                  <class name="title-1"/>
-                                </style>
-                                <property name="wrap">true</property>
-                              </object>
-                            </child>
-                            <child>
-                              <object class="GtkLabel">
-                                <property name="label" translatable="yes">One review covers signing an unpublished event and verifying it, then NIP-44 encryption and decryption with an ephemeral peer. Nothing goes to relays, and no client permissions are created.</property>
-                                <property name="wrap">true</property>
-                                <property name="xalign">0</property>
-                              </object>
-                            </child>
+                      <object class="AdwPreferencesPage">
+                        <property name="description" translatable="yes">Approve a one-time signing and encryption check. Nothing is published and no app permissions are saved.</property>
+                        <child>
+                          <object class="AdwPreferencesGroup">
                             <child>
                               <object class="GtkBox" id="pending_requests">
                                 <property name="orientation">1</property>
                               </object>
                             </child>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="AdwPreferencesGroup">
+                            <child>
+                              <object class="AdwExpanderRow">
+                                <property name="title" translatable="yes">Details</property>
+                                <child>
+                                  <object class="AdwActionRow">
+                                    <property name="title" translatable="yes">On This Device Only</property>
+                                    <property name="subtitle" translatable="yes">Signs and verifies a test message, then encrypts and decrypts it with a temporary key.</property>
+                                    <property name="subtitle-lines">0</property>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
                             <child>
                               <object class="GtkButton" id="btn_retry">
-                                <property name="label" translatable="yes">Retry Self-Test</property>
+                                <property name="label" translatable="yes">Try Check Again</property>
+                                <property name="halign">3</property>
                               </object>
                             </child>
                           </object>
-                        </property>
+                        </child>
                       </object>
                     </child>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <child>
+              <object class="AdwNavigationPage">
+                <property name="tag">backup</property>
+                <property name="title" translatable="yes">Back Up Identity</property>
+                <child>
+                  <object class="AdwToolbarView">
+                    <child type="top">
+                      <object class="AdwHeaderBar"></object>
+                    </child>
                     <child>
-                      <object class="GtkStackPage">
-                        <property name="name">backup</property>
-                        <property name="child">
-                          <object class="GtkBox">
-                            <property name="orientation">1</property>
-                            <property name="spacing">18</property>
-                            <child>
-                              <object class="GtkLabel">
-                                <property name="label" translatable="yes">Back Up Your Identity</property>
-                                <style>
-                                  <class name="title-1"/>
-                                </style>
-                                <property name="wrap">true</property>
-                              </object>
-                            </child>
-                            <child>
-                              <object class="GtkLabel">
-                                <property name="label" translatable="yes">Anyone with these seed words has full control. Write them down privately; never paste them into software you do not trust. Grotto developers will never ask for them.</property>
-                                <property name="wrap">true</property>
-                                <property name="xalign">0</property>
-                              </object>
-                            </child>
+                      <object class="AdwPreferencesPage">
+                        <property name="description" translatable="yes">Write these words down in order and keep them private. Anyone with them controls your identity.</property>
+                        <child>
+                          <object class="AdwPreferencesGroup">
                             <child>
                               <object class="GtkBox" id="seed_words">
                                 <property name="orientation">1</property>
@@ -260,42 +309,92 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                 </style>
                               </object>
                             </child>
-                            <child>
-                              <object class="GtkButton" id="btn_copy_seed">
-                                <property name="label" translatable="yes">Copy Seed Words (clipboard managers may retain them)</property>
-                              </object>
-                            </child>
-                            <child>
-                              <object class="GtkButton" id="btn_backup_retry">
-                                <property name="label" translatable="yes">Retry Seed-Word Export</property>
-                              </object>
-                            </child>
-                            <child>
-                              <object class="GtkButton" id="btn_backup_export">
-                                <property name="label" translatable="yes">Use Encrypted Backup Instead…</property>
-                              </object>
-                            </child>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="AdwPreferencesGroup">
                             <child>
                               <object class="GtkCheckButton" id="seed_written_down">
-                                <property name="label" translatable="yes">I have safely backed up my identity</property>
+                                <property name="child">
+                                  <object class="GtkLabel">
+                                    <property name="label" translatable="yes">I have safely backed up my identity</property>
+                                    <property name="wrap">true</property>
+                                    <property name="xalign">0</property>
+                                  </object>
+                                </property>
                               </object>
                             </child>
                           </object>
-                        </property>
+                        </child>
+                        <child>
+                          <object class="AdwPreferencesGroup">
+                            <child>
+                              <object class="AdwExpanderRow">
+                                <property name="title" translatable="yes">Other Backup Options</property>
+                                <child>
+                                  <object class="AdwActionRow">
+                                    <property name="title" translatable="yes">Copy Recovery Phrase</property>
+                                    <property name="subtitle" translatable="yes">Clipboard managers may keep a copy</property>
+                                    <property name="subtitle-lines">0</property>
+                                    <child type="suffix">
+                                      <object class="GtkButton" id="btn_copy_seed">
+                                        <property name="label" translatable="yes">Copy</property>
+                                        <property name="valign">3</property>
+                                        <accessibility>
+                                          <property name="label" translatable="yes">Copy Recovery Phrase</property>
+                                        </accessibility>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="AdwActionRow">
+                                    <property name="title" translatable="yes">Encrypted Backup</property>
+                                    <child type="suffix">
+                                      <object class="GtkButton" id="btn_backup_export">
+                                        <property name="label" translatable="yes">Open Backup…</property>
+                                        <property name="valign">3</property>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="AdwActionRow">
+                                    <property name="title" translatable="yes">Recovery Phrase Unavailable?</property>
+                                    <child type="suffix">
+                                      <object class="GtkButton" id="btn_backup_retry">
+                                        <property name="label" translatable="yes">Try Again</property>
+                                        <property name="valign">3</property>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
                       </object>
                     </child>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <child>
+              <object class="AdwNavigationPage">
+                <property name="tag">ready</property>
+                <property name="title" translatable="yes">Setup Complete</property>
+                <child>
+                  <object class="AdwToolbarView">
+                    <child type="top">
+                      <object class="AdwHeaderBar"></object>
+                    </child>
                     <child>
-                      <object class="GtkStackPage">
-                        <property name="name">ready</property>
+                      <object class="AdwStatusPage">
+                        <property name="icon-name">emblem-ok-symbolic</property>
+                        <property name="title" translatable="yes">Your Identity Is Ready</property>
                         <property name="child">
-                          <object class="AdwStatusPage">
-                            <property name="icon-name">emblem-ok-symbolic</property>
-                            <property name="title" translatable="yes">Ready to Review Signing Requests</property>
-                            <property name="child">
-                              <object class="GtkLabel" id="ready_summary">
-                                <property name="wrap">true</property>
-                              </object>
-                            </property>
+                          <object class="GtkLabel" id="ready_summary">
+                            <property name="wrap">true</property>
                           </object>
                         </property>
                       </object>
@@ -323,19 +422,30 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
               </object>
             </child>
             <child>
+              <object class="GtkButton" id="btn_next">
+                <property name="label" translatable="yes">Get Started</property>
+                <style>
+                  <class name="suggested-action"/>
+                </style>
+              </object>
+            </child>
+            <child>
               <object class="GtkBox">
                 <property name="spacing">12</property>
                 <child>
                   <object class="GtkButton" id="btn_back">
                     <property name="label" translatable="yes">Back</property>
+                    <style>
+                      <class name="flat"/>
+                    </style>
                   </object>
                 </child>
                 <child>
-                  <object class="GtkButton" id="btn_next">
-                    <property name="label" translatable="yes">Next</property>
+                  <object class="GtkButton" id="btn_skip">
+                    <property name="label" translatable="yes">Skip Setup</property>
                     <property name="hexpand">true</property>
                     <style>
-                      <class name="suggested-action"/>
+                      <class name="flat"/>
                     </style>
                   </object>
                 </child>

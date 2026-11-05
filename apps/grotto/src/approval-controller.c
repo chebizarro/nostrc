@@ -163,30 +163,30 @@ static const char *verified_client_name(GVariant *info) {
   if (info)
     g_variant_lookup(info, "verified", "b", &verified);
   if (!verified || !strcmp(kind, "claimed") || g_str_has_prefix(principal, "claimed:"))
-    return "Unverified app";
+    return _("Unverified app");
   const char *app_id = text_field(info, "app_id");
   if (*app_id)
     return app_id;
   const char *exe = text_field(info, "exe");
   const char *basename = strrchr(exe, G_DIR_SEPARATOR);
-  return basename && basename[1] ? basename + 1 : "Unverified app";
+  return basename && basename[1] ? basename + 1 : _("Unverified app");
 }
 static gchar *operation_label(GVariant *info) {
   const char *op = text_field(info, "operation");
   guint32 kind;
   if (!strcmp(op, "sign_event") && g_variant_lookup(info, "event_kind", "u", &kind))
-    return g_strdup_printf("Sign event · %s (kind %u)", gnostr_approval_kind_name(kind), kind);
+    return g_strdup_printf(_("Sign %s"), gnostr_approval_kind_name(kind));
   if (!strcmp(op, "self_test"))
-    return g_strdup("Verify stored identity");
+    return g_strdup(_("Check identity"));
   if (!strcmp(op, "connect"))
-    return g_strdup("Connect application");
+    return g_strdup(_("Connect app"));
   if (!strcmp(op, "get_public_key"))
-    return g_strdup("Share public key");
+    return g_strdup(_("Share public key"));
   if (g_str_has_suffix(op, "encrypt"))
-    return g_strdup("Encrypt message");
+    return g_strdup(_("Encrypt message"));
   if (g_str_has_suffix(op, "decrypt"))
-    return g_strdup("Decrypt message");
-  return g_strdup("Review signer request");
+    return g_strdup(_("Decrypt message"));
+  return g_strdup(_("Review signing request"));
 }
 static void update_notifications(GrottoApprovalController *s);
 static gboolean summary_ready(gpointer data) {
@@ -225,12 +225,12 @@ static void update_notifications(GrottoApprovalController *s) {
     const char *label = g_hash_table_lookup(s->labels, text_field(single->info, "principal"));
     g_autofree gchar *escaped_label = label && *label ? g_markup_escape_text(label, -1) : NULL;
     g_autofree gchar *labeled_body = escaped_label ? g_strdup_printf(_("%s\ncalled “%s”"), body, escaped_label) : NULL;
-    g_notification_set_body(n, s->locked ? "Grotto needs your approval" : labeled_body ? labeled_body : body);
+    g_notification_set_body(n, s->locked ? _("Grotto needs your approval") : labeled_body ? labeled_body : body);
     g_notification_set_priority(n, G_NOTIFICATION_PRIORITY_NORMAL);
     g_notification_set_category(n, "device");
     g_notification_set_default_action_and_target(n, "app.review-request", "s", single->id);
-    g_notification_add_button_with_target(n, "Review", "app.review-request", "s", single->id);
-    g_notification_add_button_with_target(n, "Deny once", "app.deny-request", "s", single->id);
+    g_notification_add_button_with_target(n, _("Review"), "app.review-request", "s", single->id);
+    g_notification_add_button_with_target(n, _("Deny Once"), "app.deny-request", "s", single->id);
     g_application_send_notification(app, id, n);
   } else {
     gint64 left = s->summary_sent + 2 * G_USEC_PER_SEC - g_get_monotonic_time();
@@ -240,11 +240,11 @@ static void update_notifications(GrottoApprovalController *s) {
       return;
     }
     g_autoptr(GNotification) n = g_notification_new("Grotto");
-    g_autofree gchar *body = g_strdup_printf("%u requests waiting for review", count);
-    g_notification_set_body(n, s->locked ? "Grotto needs your approval" : body);
+    g_autofree gchar *body = g_strdup_printf(ngettext("%u request waiting for review", "%u requests waiting for review", count), count);
+    g_notification_set_body(n, s->locked ? _("Grotto needs your approval") : body);
     g_notification_set_priority(n, G_NOTIFICATION_PRIORITY_NORMAL);
     g_notification_set_default_action_and_target(n, "app.review-request", "s", "");
-    g_notification_add_button_with_target(n, "Review", "app.review-request", "s", "");
+    g_notification_add_button_with_target(n, _("Review"), "app.review-request", "s", "");
     g_application_send_notification(app, SUMMARY_ID, n);
     s->summary_sent = g_get_monotonic_time();
   }

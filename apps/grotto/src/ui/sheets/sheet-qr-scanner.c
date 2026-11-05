@@ -6,6 +6,7 @@
  * 3. Load from file
  */
 #include "sheet-qr-scanner.h"
+#include <glib/gi18n.h>
 #include "../app-resources.h"
 #include "../../qr-code.h"
 #include "../../qr-scanner.h"
@@ -30,7 +31,7 @@ struct _SheetQrScanner {
   GtkWidget *btn_paste;
   GtkWidget *btn_file;
   GtkWidget *btn_cancel;
-  GtkWidget *btn_import;
+  GtkWidget *btn_import, *btn_back;
 
   /* Result display */
   GtkWidget *result_type_label;
@@ -101,12 +102,12 @@ static void handle_scan_result(SheetQrScanner *self, GnQrScanResult *result) {
     if (result->type == GN_QR_TYPE_NOSTR_URI) {
       if (!strstr(result->data, "nsec1")) {
         gtk_label_set_text(GTK_LABEL(self->status_label),
-                           "QR code found but not a valid key");
+                           _("This QR code does not contain a supported key or app link"));
         return;
       }
     } else {
       gtk_label_set_text(GTK_LABEL(self->status_label),
-                         "QR code type not supported for import");
+                         _("This QR code does not contain a supported key or app link"));
       return;
     }
   }
@@ -124,7 +125,7 @@ static void clipboard_scan_done(GnQrScanResult *result,
 
   if (error) {
     if (self->status_label)
-      gtk_label_set_text(GTK_LABEL(self->status_label), error->message);
+      gtk_label_set_text(GTK_LABEL(self->status_label), _("The image could not be scanned. Try another QR image."));
     g_object_unref(self);
     return;
   }
@@ -132,7 +133,7 @@ static void clipboard_scan_done(GnQrScanResult *result,
   if (!result) {
     if (self->status_label)
       gtk_label_set_text(GTK_LABEL(self->status_label),
-                         "No QR code found in clipboard image");
+                         _("No QR code was found in the clipboard image"));
     g_object_unref(self);
     return;
   }
@@ -157,7 +158,7 @@ static void on_camera_clicked(GtkButton *btn, gpointer user_data) {
 
   if (!gn_qr_camera_available()) {
     gtk_label_set_text(GTK_LABEL(self->status_label),
-                       "Camera is not available on this system");
+                       _("No camera is available on this device"));
     return;
   }
 
@@ -166,16 +167,16 @@ static void on_camera_clicked(GtkButton *btn, gpointer user_data) {
     GnQrScanner *scanner = GN_QR_SCANNER(self->scanner_widget);
     if (gn_qr_scanner_is_active(scanner)) {
       gn_qr_scanner_stop(scanner);
-      gtk_button_set_label(GTK_BUTTON(self->btn_camera), "Start Camera");
+      gtk_button_set_label(GTK_BUTTON(self->btn_camera), _("Start Camera"));
     } else {
       GError *error = NULL;
       if (gn_qr_scanner_start(scanner, &error)) {
-        gtk_button_set_label(GTK_BUTTON(self->btn_camera), "Stop Camera");
+        gtk_button_set_label(GTK_BUTTON(self->btn_camera), _("Stop Camera"));
         gtk_label_set_text(GTK_LABEL(self->status_label),
-                           "Point camera at QR code...");
+                           _("Point your camera at a QR code…"));
       } else {
         gtk_label_set_text(GTK_LABEL(self->status_label),
-                           error ? error->message : "Failed to start camera");
+                           _("The camera could not be started"));
         if (error) g_error_free(error);
       }
     }
@@ -186,7 +187,7 @@ static void on_paste_clicked(GtkButton *btn, gpointer user_data) {
   (void)btn;
   SheetQrScanner *self = SHEET_QR_SCANNER(user_data);
 
-  gtk_label_set_text(GTK_LABEL(self->status_label), "Scanning clipboard...");
+  gtk_label_set_text(GTK_LABEL(self->status_label), _("Scanning clipboard image…"));
 
   GdkDisplay *display = gtk_widget_get_display(GTK_WIDGET(self));
   GdkClipboard *clipboard = gdk_display_get_clipboard(display);
@@ -205,7 +206,7 @@ static void on_file_response(GObject *source, GAsyncResult *result, gpointer use
   if (error) {
     if (!g_error_matches(error, GTK_DIALOG_ERROR, GTK_DIALOG_ERROR_DISMISSED) &&
         self->status_label) {
-      gtk_label_set_text(GTK_LABEL(self->status_label), error->message);
+      gtk_label_set_text(GTK_LABEL(self->status_label), _("The image could not be scanned. Try another QR image."));
     }
     g_error_free(error);
     g_object_unref(self);
@@ -221,7 +222,7 @@ static void on_file_response(GObject *source, GAsyncResult *result, gpointer use
   gchar *path = g_file_get_path(file);
 
   if (!path) {
-    gtk_label_set_text(GTK_LABEL(self->status_label), "Could not get file path");
+    gtk_label_set_text(GTK_LABEL(self->status_label), _("This image file could not be opened"));
     g_object_unref(self);
     return;
   }
@@ -231,7 +232,7 @@ static void on_file_response(GObject *source, GAsyncResult *result, gpointer use
 
   if (!pixbuf) {
     gtk_label_set_text(GTK_LABEL(self->status_label),
-                       error ? error->message : "Failed to load image");
+                       _("The image could not be loaded"));
     if (error) g_error_free(error);
     g_object_unref(self);
     return;
@@ -243,7 +244,7 @@ static void on_file_response(GObject *source, GAsyncResult *result, gpointer use
 
   if (!scan_result) {
     gtk_label_set_text(GTK_LABEL(self->status_label),
-                       error ? error->message : "No QR code found in image");
+                       _("No QR code was found in this image"));
     if (error) g_error_free(error);
     g_object_unref(self);
     return;
@@ -259,13 +260,13 @@ static void on_file_clicked(GtkButton *btn, gpointer user_data) {
   SheetQrScanner *self = SHEET_QR_SCANNER(user_data);
 
   GtkFileDialog *dialog = gtk_file_dialog_new();
-  gtk_file_dialog_set_title(dialog, "Open QR Code Image");
+  gtk_file_dialog_set_title(dialog, _("Open QR Image"));
 
   /* Set up file filters */
   GListStore *filters = g_list_store_new(GTK_TYPE_FILE_FILTER);
 
   GtkFileFilter *image_filter = gtk_file_filter_new();
-  gtk_file_filter_set_name(image_filter, "Images");
+  gtk_file_filter_set_name(image_filter, _("Images"));
   gtk_file_filter_add_mime_type(image_filter, "image/*");
   g_list_store_append(filters, image_filter);
   g_object_unref(image_filter);
@@ -319,12 +320,12 @@ static void show_result(SheetQrScanner *self, const gchar *data, GnQrContentType
   if (type == GN_QR_TYPE_BUNKER_URI) {
     NostrNip46ConnectURI uri;
     if (!grotto_connect_parse(data, &uri, NULL)) {
-      gtk_label_set_text(GTK_LABEL(self->status_label), "Use an application's nostrconnect:// link with an explicit client key, secret and supported relays."); return;
+      gtk_label_set_text(GTK_LABEL(self->status_label), _("Use an app's connection link, not another signer's link.")); return;
     }
     g_autofree gchar *relays = g_strjoinv("\n", uri.relays);
-    pairing_preview = g_strdup_printf("Client: %s\nName (unverified): %s\nRelays:\n%s\nPermissions are hints only. No relay has been contacted for this link.", uri.client_pubkey_hex, uri.name ? uri.name : "Not supplied", relays);
+    pairing_preview = g_strdup_printf(_("App key: %s\nName supplied by app: %s\nRelays:\n%s\nNo connection has been made."), uri.client_pubkey_hex, uri.name ? uri.name : _("Not supplied"), relays);
     grotto_connect_clear(&uri);
-    gtk_button_set_label(GTK_BUTTON(self->btn_import), "Choose Identity…");
+    gtk_button_set_label(GTK_BUTTON(self->btn_import), _("Choose Identity…"));
   }
   /* Stop camera if running */
   if (self->scanner_widget && GN_IS_QR_SCANNER(self->scanner_widget)) {
@@ -384,7 +385,7 @@ static void show_scanner(SheetQrScanner *self) {
   self->scanned_data = NULL;
   self->scanned_type = GN_QR_TYPE_UNKNOWN;
 
-  gtk_label_set_text(GTK_LABEL(self->status_label), "Ready to scan");
+  gtk_label_set_text(GTK_LABEL(self->status_label), _("Ready to scan"));
   gtk_stack_set_visible_child_name(GTK_STACK(self->stack), "scanner");
 }
 
@@ -440,6 +441,7 @@ static void sheet_qr_scanner_class_init(SheetQrScannerClass *klass) {
   gtk_widget_class_bind_template_child(widget_class, SheetQrScanner, btn_file);
   gtk_widget_class_bind_template_child(widget_class, SheetQrScanner, btn_cancel);
   gtk_widget_class_bind_template_child(widget_class, SheetQrScanner, btn_import);
+  gtk_widget_class_bind_template_child(widget_class, SheetQrScanner, btn_back);
   gtk_widget_class_bind_template_child(widget_class, SheetQrScanner, result_type_label);
   gtk_widget_class_bind_template_child(widget_class, SheetQrScanner, result_data_label);
   gtk_widget_class_bind_template_child(widget_class, SheetQrScanner, result_icon);
@@ -474,7 +476,7 @@ static void sheet_qr_scanner_init(SheetQrScanner *self) {
     /* Disable if camera not available */
     if (!gn_qr_camera_available()) {
       gtk_widget_set_sensitive(self->btn_camera, FALSE);
-      gtk_button_set_label(GTK_BUTTON(self->btn_camera), "Camera Unavailable");
+      gtk_button_set_label(GTK_BUTTON(self->btn_camera), _("Camera Unavailable"));
     }
   }
   if (self->btn_paste) {
@@ -490,18 +492,7 @@ static void sheet_qr_scanner_init(SheetQrScanner *self) {
     g_signal_connect(self->btn_import, "clicked", G_CALLBACK(on_import_clicked), self);
   }
 
-  /* Find and connect back button in result page */
-  GtkWidget *btn_back = gtk_widget_get_first_child(self->result_page);
-  while (btn_back) {
-    if (GTK_IS_BUTTON(btn_back)) {
-      const gchar *label = gtk_button_get_label(GTK_BUTTON(btn_back));
-      if (label && strstr(label, "Back")) {
-        g_signal_connect(btn_back, "clicked", G_CALLBACK(on_back_clicked), self);
-        break;
-      }
-    }
-    btn_back = gtk_widget_get_next_sibling(btn_back);
-  }
+  g_signal_connect(self->btn_back, "clicked", G_CALLBACK(on_back_clicked), self);
 }
 
 SheetQrScanner *sheet_qr_scanner_new(void) {
@@ -524,6 +515,12 @@ void sheet_qr_scanner_set_accepted_types(SheetQrScanner *self,
   self->accepted_types = NULL;
   self->n_accepted_types = 0;
 
+  gboolean pairing = types && types[0] == GN_QR_TYPE_BUNKER_URI;
+  const char *action = pairing ? _("Choose Identity…") : _("Import Key");
+  gtk_button_set_label(GTK_BUTTON(self->btn_import), action);
+  gtk_label_set_text(GTK_LABEL(self->hint_label), pairing ? _("Scan the connection code shown by your app") : _("Scan a secret key or encrypted backup"));
+  gtk_accessible_update_property(GTK_ACCESSIBLE(self), GTK_ACCESSIBLE_PROPERTY_LABEL,
+      pairing ? _("Scan App Connection") : _("Scan Identity Key"), -1);
   if (!types) return;
 
   /* Count types */

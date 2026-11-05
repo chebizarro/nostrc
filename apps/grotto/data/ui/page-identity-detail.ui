@@ -29,14 +29,14 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
         </child>
         <property name="content">
           <object class="AdwPreferencesPage">
-            <property name="description" translatable="yes">Anyone with this backup controls your identity. Grotto developers will never ask for it</property>
+            <property name="description" translatable="yes">Anyone with this backup controls your identity. Keep it private</property>
             <child>
               <object class="AdwPreferencesGroup">
                 <child>
                   <object class="AdwActionRow" id="public_key">
                     <property name="title" translatable="yes">Identity</property>
                     <property name="subtitle-selectable">true</property>
-                    <property name="subtitle-lines">0</property>
+                    <property name="subtitle-lines">1</property>
                   </object>
                 </child>
                 <child>
@@ -68,33 +68,37 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             </child>
             <child>
               <object class="AdwPreferencesGroup" id="advanced_group">
-                <property name="title" translatable="yes">Advanced</property>
                 <child>
-                  <object class="AdwActionRow" id="raw_row">
-                    <property name="title" translatable="yes">Copy Secret Key…</property>
-                    <property name="subtitle" translatable="yes">Clipboard managers may keep a copy</property>
-                    <property name="activatable">true</property>
-                  </object>
-                </child>
-                <child>
-                  <object class="AdwActionRow" id="test_row">
-                    <property name="title" translatable="yes">Test This Identity</property>
-                    <property name="subtitle" translatable="yes">Signs and encrypts a test message on this device</property>
-                    <property name="activatable">true</property>
-                  </object>
-                </child>
-                <child>
-                  <object class="AdwActionRow" id="replace_row">
-                    <property name="title" translatable="yes">Create Replacement Identity…</property>
-                    <property name="subtitle" translatable="yes">Apps aren't moved and permissions aren't copied</property>
-                    <property name="activatable">true</property>
-                  </object>
-                </child>
-                <child>
-                  <object class="AdwActionRow" id="announcement_row">
-                    <property name="title" translatable="yes">Save Migration Announcement…</property>
-                    <property name="activatable">true</property>
-                    <property name="visible">false</property>
+                  <object class="AdwExpanderRow">
+                    <property name="title" translatable="yes">Advanced</property>
+                    <child>
+                      <object class="AdwActionRow" id="raw_row">
+                        <property name="title" translatable="yes">Copy Secret Key…</property>
+                        <property name="subtitle" translatable="yes">Clipboard managers may keep a copy</property>
+                        <property name="activatable">true</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwActionRow" id="test_row">
+                        <property name="title" translatable="yes">Test This Identity</property>
+                        <property name="subtitle" translatable="yes">Signs and encrypts a test message on this device</property>
+                        <property name="activatable">true</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwActionRow" id="replace_row">
+                        <property name="title" translatable="yes">Create Replacement Identity…</property>
+                        <property name="subtitle" translatable="yes">Apps aren't moved and permissions aren't copied</property>
+                        <property name="activatable">true</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="AdwActionRow" id="announcement_row">
+                        <property name="title" translatable="yes">Save Migration Announcement…</property>
+                        <property name="activatable">true</property>
+                        <property name="visible">false</property>
+                      </object>
+                    </child>
                   </object>
                 </child>
               </object>

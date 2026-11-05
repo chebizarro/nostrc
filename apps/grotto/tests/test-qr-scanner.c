@@ -69,7 +69,11 @@ static void unavailable_pipeline(void) {
 }
 static void denied_busy(void) {
   const gint codes[] = {GST_RESOURCE_ERROR_NOT_AUTHORIZED, GST_RESOURCE_ERROR_BUSY, GST_RESOURCE_ERROR_OPEN_READ_WRITE};
-  const gchar *expected[] = {"denied", "busy", "permissions"};
+  const gchar *expected[] = {
+    "Camera access was denied. Paste a link instead.",
+    "The camera is busy in another application. Paste a link instead.",
+    "Camera access is unavailable. Check camera permissions, or paste a link instead."
+  };
   for (guint i = 0; i < G_N_ELEMENTS(codes); i++) {
     GnQrScanner *s = g_object_ref_sink(gn_qr_scanner_new()); finished = FALSE;
     g_signal_connect(s, "error", G_CALLBACK(scan_error), NULL);
@@ -78,7 +82,7 @@ static void denied_busy(void) {
     g_assert_no_error(error);
     error = g_error_new_literal(GST_RESOURCE_ERROR, codes[i], "Nicht verfügbar — indisponible — 利用できません");
     gn_qr_scanner_test_post_error(s, error); wait_signal();
-    g_assert_nonnull(strstr(last_error, expected[i])); g_assert_nonnull(strstr(last_error, "Paste a link"));
+    g_assert_cmpstr(last_error, ==, expected[i]);
     g_assert_false(gn_qr_scanner_is_active(s));
     g_assert_false(gn_qr_scanner_test_has_pipeline(s)); g_object_unref(s);
     while (g_main_context_iteration(NULL, FALSE));

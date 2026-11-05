@@ -108,6 +108,8 @@ gboolean gn_secure_entry_get_show_password(GnSecureEntry *self);
  * Sets the placeholder text shown when the entry is empty.
  */
 void gn_secure_entry_set_placeholder_text(GnSecureEntry *self, const gchar *text);
+/* Label the focusable entry for the current import or backup task. */
+void gn_secure_entry_set_accessible_label(GnSecureEntry *self, const gchar *label);
 
 /**
  * gn_secure_entry_get_placeholder_text:
