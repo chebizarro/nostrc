@@ -22,7 +22,8 @@ dpkg-deb -f "${deb[0]}" Depends | grep -E 'libgrotto-panels-0-0 \(>= 0\.1\.0\)'
 dpkg-deb -x "${deb[0]}" "$work/payload"
 test -f "$work/payload/usr/share/dbus-1/services/org.nostr.Settings.service"
 test -f "$work/payload/usr/share/glib-2.0/schemas/org.nostr.Settings.gschema.xml"
-test -f "$work/payload/usr/lib/$(dpkg-architecture -qDEB_HOST_MULTIARCH)/nostr-settings/libnostr-json.so.1"
+test -f "$work/payload/usr/lib/$(dpkg-architecture -qDEB_HOST_MULTIARCH)/nostr-settings/libnostr-json.so.2"
+test -f "$work/payload/usr/lib/$(dpkg-architecture -qDEB_HOST_MULTIARCH)/nostr-settings/libnostr-publish.so.0"
 # No other app/daemon, public library or activation authority may ride along.
 test "$(find "$work/payload/usr/bin" -type f | wc -l)" -eq 1
 test "$(find "$work/payload/usr/share/dbus-1/services" -type f | wc -l)" -eq 1

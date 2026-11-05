@@ -93,6 +93,16 @@ target_link_libraries(nostr-settings PRIVATE nostr-settings-ui)
 install(TARGETS nostr-settings RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcPrivateJsonLib.cmake")
 nostrc_install_private_json(nostr-settings nostr-settings)
+# Component-only packaging must build the dlopen backend too. The publish
+# library is always shared; keep this desktop flavour private, not over the
+# headless bundle's public library of the same SONAME.
+if(TARGET nostr_json)
+  add_dependencies(nostr-settings nostr_json)
+endif()
+install(FILES $<TARGET_FILE:nostr-publish>
+  DESTINATION ${CMAKE_INSTALL_LIBDIR}/nostr-settings
+  RENAME $<TARGET_SONAME_FILE_NAME:nostr-publish>)
+
 
 # ---- Data ----
 set(NSS_BINDIR "${CMAKE_INSTALL_FULL_BINDIR}")
