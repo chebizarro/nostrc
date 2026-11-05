@@ -1,20 +1,23 @@
-/* nss-window.c — the AdwPreferencesWindow and its pages.
+/* nss-window.c — sidebar host for service pages and shared Grotto panels.
  * SPDX-License-Identifier: MIT
  */
 #include "nss-ui.h"
 
 typedef struct {
-  const gchar *name;
+  const gchar *name, *title, *icon;
   AdwPreferencesPage *(*make)(NssContext *ctx);
 } PageDef;
 
 static const PageDef PAGES[] = {
-  { "identity",      nss_page_identity_new },
-  { "relays",        nss_page_relays_new },
-  { "notifications", nss_page_notifications_new },
-  { "wallet",        nss_page_wallet_new },
-  { "media",         nss_page_media_new },
-  { "files",         nss_page_files_new },
+  { "identity", "Identity", "avatar-default-symbolic", NULL },
+  { "apps", "Connected Apps", "application-x-executable-symbolic", NULL },
+  { "activity", "Activity", "document-open-recent-symbolic", NULL },
+  { "remote-signing", "Remote Signing", "network-server-symbolic", NULL },
+  { "relays", "Relays", "network-transmit-receive-symbolic", nss_page_relays_new },
+  { "notifications", "Notifications", "preferences-system-notifications-symbolic", nss_page_notifications_new },
+  { "wallet", "Wallet", "wallet-symbolic", nss_page_wallet_new },
+  { "media", "Media Servers", "folder-pictures-symbolic", nss_page_media_new },
+  { "files", "Files", "folder-symbolic", nss_page_files_new },
 };
 
 static gboolean
@@ -49,9 +52,7 @@ on_close(GtkWindow *w, gpointer data)
     g_settings_set_int(gs, "window-height", height);
   }
   g_settings_set_boolean(gs, "window-maximized", gtk_window_is_maximized(w));
-  AdwPreferencesPage *vis = adw_preferences_window_get_visible_page(ADW_PREFERENCES_WINDOW(w));
-  if (vis)
-    g_settings_set_string(gs, "last-page", adw_preferences_page_get_name(vis));
+  g_settings_set_string(gs, "last-page", nss_window_get_page(w));
   return FALSE;
 }
 
@@ -72,8 +73,7 @@ shot_now(gpointer data)
 {
   Shot *s = data;
   GtkWidget *w = GTK_WIDGET(s->win);
-  const gchar *name =
-    adw_preferences_window_get_visible_page_name(ADW_PREFERENCES_WINDOW(s->win));
+  const gchar *name = nss_window_get_page(s->win);
   int width = gtk_widget_get_width(w), height = gtk_widget_get_height(w);
   /* The window's children on an opaque background (the window draws its
    * own CSS background, not its children). */
@@ -132,23 +132,132 @@ maybe_screenshot(GtkWindow *win)
   g_timeout_add_seconds(secs ? secs : 6, shot_now, s);
 }
 
+const gchar *nss_window_get_page(GtkWindow *window)
+{
+  return gtk_stack_get_visible_child_name(g_object_get_data(G_OBJECT(window), "nss-stack"));
+}
+GrottoPanel *nss_window_get_panel(GtkWindow *window, const gchar *page)
+{
+  g_autofree gchar *key = g_strconcat("nss-panel-", page, NULL);
+  return g_object_get_data(G_OBJECT(window), key);
+}
+gboolean nss_window_show_page(GtkWindow *window, const gchar *page)
+{
+  if (!known_page(page)) return FALSE;
+  GtkStack *stack = g_object_get_data(G_OBJECT(window), "nss-stack");
+  NssContext *ctx = g_object_get_data(G_OBJECT(window), "nss-context");
+  for (gsize i = 0; i < G_N_ELEMENTS(PAGES); i++) if (!strcmp(page, PAGES[i].name)) {
+    GtkWidget *box = gtk_stack_get_child_by_name(stack, page);
+    if (PAGES[i].make && !gtk_widget_get_first_child(box)) {
+      GtkWidget *prefs = GTK_WIDGET(PAGES[i].make(ctx));
+      adw_preferences_page_set_name(ADW_PREFERENCES_PAGE(prefs), page);
+      gtk_box_append(GTK_BOX(box), prefs);
+      gtk_widget_set_vexpand(prefs, TRUE);
+    }
+    GtkListBox *sidebar = g_object_get_data(G_OBJECT(window), "nss-sidebar");
+    gtk_list_box_select_row(sidebar, gtk_list_box_get_row_at_index(sidebar, (int)i));
+    gtk_stack_set_visible_child_name(stack, page);
+    AdwOverlaySplitView *split = g_object_get_data(G_OBJECT(window), "nss-split");
+    if (adw_overlay_split_view_get_collapsed(split)) adw_overlay_split_view_set_show_sidebar(split, FALSE);
+    return TRUE;
+  }
+  return FALSE;
+}
+static void selected(GtkListBox *box, GtkListBoxRow *row, gpointer data)
+{
+  (void)box; if (row) nss_window_show_page(data, PAGES[gtk_list_box_row_get_index(row)].name);
+}
+static void open_current(GtkButton *button, gpointer data)
+{
+  (void)button; GtkWindow *window = data;
+  nss_grotto_open(g_object_get_data(G_OBJECT(window), "nss-context"), nss_window_get_page(window), "");
+}
+static void manager_state(GrottoPanelsService *service, gpointer data)
+{
+  AdwBanner *banner = data;
+  gboolean available = grotto_panels_service_is_available(service);
+  gboolean manager = available && grotto_panels_service_can(service, GROTTO_PANEL_SET_CLIENT_LABEL);
+  adw_banner_set_title(banner, manager ?
+    "Security changes, backup and approvals open in Grotto." :
+    "Signer data unavailable. Open Grotto to check the connection, permissions or key storage.");
+}
 GtkWindow *
 nss_window_new(GtkApplication *app, const gchar *page)
 {
-  AdwPreferencesWindow *win = ADW_PREFERENCES_WINDOW(adw_preferences_window_new());
+  AdwApplicationWindow *win = ADW_APPLICATION_WINDOW(adw_application_window_new(app));
   gtk_window_set_application(GTK_WINDOW(win), app);
   gtk_window_set_title(GTK_WINDOW(win), "Nostr Settings");
-  adw_preferences_window_set_search_enabled(win, TRUE);
-
-  NssContext *ctx = nss_context_new(win);
-  g_object_set_data_full(G_OBJECT(win), "nss-context", ctx,
-                         (GDestroyNotify)nss_context_unref);
-
-  for (gsize i = 0; i < G_N_ELEMENTS(PAGES); i++) {
-    AdwPreferencesPage *p = PAGES[i].make(ctx);
-    adw_preferences_page_set_name(p, PAGES[i].name);
-    adw_preferences_window_add(win, p);
+  gtk_widget_set_size_request(GTK_WIDGET(win), 360, 480);
+  AdwToastOverlay *toasts = ADW_TOAST_OVERLAY(adw_toast_overlay_new());
+  adw_application_window_set_content(win, GTK_WIDGET(toasts));
+  AdwOverlaySplitView *split = ADW_OVERLAY_SPLIT_VIEW(adw_overlay_split_view_new());
+  adw_toast_overlay_set_child(toasts, GTK_WIDGET(split));
+  adw_overlay_split_view_set_min_sidebar_width(split, 210);
+  adw_overlay_split_view_set_max_sidebar_width(split, 240);
+  AdwBreakpoint *bp = adw_breakpoint_new(adw_breakpoint_condition_parse("max-width: 700sp"));
+  GValue collapsed = G_VALUE_INIT;
+  g_value_init(&collapsed, G_TYPE_BOOLEAN); g_value_set_boolean(&collapsed, TRUE);
+  adw_breakpoint_add_setter(bp, G_OBJECT(split), "collapsed", &collapsed);
+  g_value_unset(&collapsed);
+  adw_application_window_add_breakpoint(win, bp);
+  NssContext *ctx = nss_context_new(GTK_WINDOW(win), toasts);
+  g_object_set_data_full(G_OBJECT(win), "nss-context", ctx, (GDestroyNotify)nss_context_unref);
+  GtkStack *stack = GTK_STACK(gtk_stack_new());
+  gtk_stack_set_hhomogeneous(stack, FALSE); gtk_stack_set_vhomogeneous(stack, FALSE);
+  GtkListBox *sidebar = GTK_LIST_BOX(gtk_list_box_new());
+  gtk_widget_add_css_class(GTK_WIDGET(sidebar), "navigation-sidebar");
+  g_object_set_data(G_OBJECT(win), "nss-stack", stack);
+  g_object_set_data(G_OBJECT(win), "nss-sidebar", sidebar);
+  g_object_set_data(G_OBJECT(win), "nss-split", split);
+  AdwToolbarView *side = ADW_TOOLBAR_VIEW(adw_toolbar_view_new());
+  AdwHeaderBar *side_header = ADW_HEADER_BAR(adw_header_bar_new());
+  adw_header_bar_set_title_widget(side_header, gtk_label_new("Nostr Settings"));
+  adw_toolbar_view_add_top_bar(side, GTK_WIDGET(side_header));
+  GtkWidget *scroll = gtk_scrolled_window_new();
+  gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), GTK_WIDGET(sidebar));
+  adw_toolbar_view_set_content(side, scroll);
+  adw_overlay_split_view_set_sidebar(split, GTK_WIDGET(side));
+  AdwToolbarView *content = ADW_TOOLBAR_VIEW(adw_toolbar_view_new());
+  AdwHeaderBar *header = ADW_HEADER_BAR(adw_header_bar_new());
+  GtkWidget *toggle = gtk_toggle_button_new();
+  gtk_button_set_icon_name(GTK_BUTTON(toggle), "sidebar-show-symbolic");
+  gtk_widget_set_tooltip_text(toggle, "Show settings pages");
+  g_object_bind_property(split, "show-sidebar", toggle, "active", G_BINDING_BIDIRECTIONAL | G_BINDING_SYNC_CREATE);
+  g_object_bind_property(split, "collapsed", toggle, "visible", G_BINDING_SYNC_CREATE);
+  adw_header_bar_pack_start(header, toggle);
+  GtkWidget *open = gtk_button_new_with_label("Open in Grotto");
+  g_signal_connect(open, "clicked", G_CALLBACK(open_current), win);
+  adw_header_bar_pack_end(header, open);
+  adw_toolbar_view_add_top_bar(content, GTK_WIDGET(header));
+  AdwBanner *banner = ADW_BANNER(adw_banner_new("Signer management unavailable. Start Grotto to manage identities."));
+  adw_banner_set_revealed(banner, TRUE);
+  adw_toolbar_view_add_top_bar(content, GTK_WIDGET(banner));
+  if (ctx->grotto) {
+    g_signal_connect_object(ctx->grotto, "availability-changed", G_CALLBACK(manager_state), banner, 0);
+    g_signal_connect_object(ctx->grotto, "capabilities-changed", G_CALLBACK(manager_state), banner, 0);
+    manager_state(ctx->grotto, banner);
   }
+  adw_toolbar_view_set_content(content, GTK_WIDGET(stack));
+  adw_overlay_split_view_set_content(split, GTK_WIDGET(content));
+  for (gsize i = 0; i < G_N_ELEMENTS(PAGES); i++) {
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_stack_add_titled(stack, box, PAGES[i].name, PAGES[i].title);
+    if (!PAGES[i].make) {
+      GtkWidget *panel = i == 0 ? grotto_identity_panel_new(ctx->grotto, NULL) :
+        i == 1 ? grotto_apps_panel_new(ctx->grotto) :
+        i == 2 ? grotto_activity_panel_new(ctx->grotto) : grotto_remote_panel_new(ctx->grotto);
+      nss_grotto_attach_host(GROTTO_PANEL(panel), ctx);
+      gtk_widget_set_vexpand(panel, TRUE); gtk_box_append(GTK_BOX(box), panel);
+      g_autofree gchar *key = g_strconcat("nss-panel-", PAGES[i].name, NULL);
+      g_object_set_data(G_OBJECT(win), key, panel);
+      if (i == 0) gtk_box_append(GTK_BOX(box), GTK_WIDGET(nss_page_identity_new(ctx)));
+    }
+    GtkWidget *row = adw_action_row_new();
+    adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), PAGES[i].title);
+    adw_action_row_add_prefix(ADW_ACTION_ROW(row), gtk_image_new_from_icon_name(PAGES[i].icon));
+    gtk_list_box_append(sidebar, row);
+  }
+  g_signal_connect(sidebar, "row-selected", G_CALLBACK(selected), win);
 
   GSettings *gs = window_settings();
   if (gs != NULL) {
@@ -159,14 +268,15 @@ nss_window_new(GtkApplication *app, const gchar *page)
       gtk_window_maximize(GTK_WINDOW(win));
     g_autofree gchar *last = g_settings_get_string(gs, "last-page");
     if (page == NULL && known_page(last))
-      adw_preferences_window_set_visible_page_name(win, last);
+      nss_window_show_page(GTK_WINDOW(win), last);
   } else {
     gtk_window_set_default_size(GTK_WINDOW(win), 760, 640);
   }
   if (known_page(page))
-    adw_preferences_window_set_visible_page_name(win, page);
+    nss_window_show_page(GTK_WINDOW(win), page);
   else if (page != NULL)
     g_printerr("nostr-settings: unknown page “%s”\n", page);
+  if (!gtk_list_box_get_selected_row(sidebar)) nss_window_show_page(GTK_WINDOW(win), "identity");
   g_signal_connect(win, "close-request", G_CALLBACK(on_close), gs);
   maybe_screenshot(GTK_WINDOW(win));
   return GTK_WINDOW(win);

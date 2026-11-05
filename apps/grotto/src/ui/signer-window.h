@@ -89,6 +89,8 @@ GSettings *signer_window_get_gsettings(SignerWindow *self);
 GSettings *signer_get_app_settings(void);
 
 void signer_window_show_identity(SignerWindow *self, const gchar *npub);
+/* Untrusted cross-host navigation; never runs a mutation or export. */
+void signer_window_open_management(SignerWindow *self, const gchar *section, const gchar *target);
 void signer_window_toast(SignerWindow *self, const gchar *message);
 G_END_DECLS
 #endif /* APPS_GNOSTR_SIGNER_UI_SIGNER_WINDOW_H */

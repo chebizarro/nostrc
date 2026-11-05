@@ -121,6 +121,9 @@ gboolean      signer_caller_may_assert_origin(const SignerCaller *c);
  * executable is an installed approval UI (path AND device/inode), or it is
  * the attested Flatpak app of that UI. */
 gboolean      signer_caller_is_approver(const SignerCaller *c);
+/* Installed Settings host: PID + exact path/device/inode; no UID-only or
+ * sandbox app-id fallback. Control1 enforces a closed manager allowlist. */
+gboolean      signer_caller_is_manager(const SignerCaller *c);
 /* New WEB_ORIGIN principal for @origin acting through @bridge. */
 SignerCaller *signer_caller_for_origin(const SignerCaller *bridge, const gchar *origin);
 /* Unattested caller (see above): copy whose principal is "claimed:<app_id>"

@@ -732,6 +732,21 @@ static gint on_command_line(GApplication *app, GApplicationCommandLine *command,
   }
   return 0;
 }
+static void on_open_management(GSimpleAction *action, GVariant *param, gpointer user_data) {
+  (void)action; const gchar *section, *target;
+  g_variant_get(param, "(&s&s)", &section, &target);
+  if (strlen(section) > 32 || strlen(target) > 4096) return;
+  GtkApplication *app = GTK_APPLICATION(user_data);
+  if (!strcmp(section, "review")) {
+    g_autoptr(GVariant) id = g_variant_ref_sink(g_variant_new_string(target));
+    on_review_request(NULL, id, app); return; /* Existing refetch-and-review, never a decision. */
+  }
+  review_activation = TRUE;
+  g_application_activate(G_APPLICATION(app));
+  review_activation = FALSE;
+  GtkWindow *win = management_window(app);
+  if (win && SIGNER_IS_WINDOW(win)) signer_window_open_management(SIGNER_WINDOW(win), section, target);
+}
 static void on_app_quit(GSimpleAction *action, GVariant *param, gpointer user_data) {
   (void)action; (void)param;
   GtkApplication *app = GTK_APPLICATION(user_data);
@@ -855,6 +870,7 @@ AdwApplication *grotto_application_new(GApplicationFlags app_flags) {
     { "pause-signing", on_pause_signing, NULL, NULL, NULL },
     { "resume-signing", on_resume_signing, NULL, NULL, NULL },
     { "review-request", on_review_request, "s", NULL, NULL },
+    { "open-management", on_open_management, "(ss)", NULL, NULL },
     { "deny-request", on_deny_request, "s", NULL, NULL },
     { "preferences", on_app_preferences, NULL, NULL, NULL },
     { "about", on_app_about, NULL, NULL, NULL },

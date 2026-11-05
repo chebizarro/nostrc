@@ -66,6 +66,7 @@ Source0:        %{url}/archive/refs/tags/v%{version}/nostrc-%{version}.tar.gz
 # `tag-in-description BuildRequires:` for that subpackage's description).
 
 BuildRequires:  cmake >= 3.22
+BuildRequires:  pkgconfig(grotto-panels-0) >= 0.1.0
 BuildRequires:  ninja-build
 BuildRequires:  gcc
 BuildRequires:  pkgconfig
@@ -644,6 +645,7 @@ no network calls. Modern replacement for seahorse-nautilus.
 # --- Sub-package: nostr-settings --------------------------------------------
 %package -n nostr-settings
 Summary:        Nostr Settings: preferences for Nostr on the GNOME desktop
+Requires:       grotto-panels%{?_isa} >= 0.1.0
 Requires:       libadwaita
 Requires:       libnostr-publish%{?_isa} = %{version}-%{release}
 Requires:       libnostr-nips%{?_isa} = %{version}-%{release}
@@ -743,6 +745,7 @@ the `application/vnd.nostr.sealed` (`*.nsealed`) MIME type.
 %cmake \
     -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
+    -DGROTTO_USE_SYSTEM_PANELS=ON \
     -DBUILD_SHARED_LIBS=ON \
     -DNOSTR_WITH_GLIB=OFF \
     -DBUILD_APPS=OFF \

@@ -853,14 +853,18 @@ static gboolean appr_timeout(gpointer ud) {
   return G_SOURCE_REMOVE;
 }
 
-typedef struct { ApprCtx a; guint sub; guint to; } Watch;
+typedef struct { ApprCtx a; guint sub; guint to; GDBusConnection *observer; } Watch;
 
 static void watch_start(Ctx *ctx, Watch *w) {
+  (void)ctx;
   memset(w, 0, sizeof *w);
   w->a.loop = g_main_loop_new(NULL, FALSE);
   w->a.replies = g_ptr_array_new();
   w->a.errors = g_ptr_array_new();
-  w->sub = g_dbus_connection_signal_subscribe(ctx->bus, BUS_NAME, IFACE, "ApprovalRequested",
+  /* Requests may originate on another connection; private approval signals go
+   * only to this fixture's authenticated approval-UI owner connection. */
+  w->observer = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL); CHECK(w->observer != NULL);
+  w->sub = g_dbus_connection_signal_subscribe(w->observer, BUS_NAME, IFACE, "ApprovalRequested",
                                               OBJ_PATH, NULL, G_DBUS_SIGNAL_FLAGS_NONE,
                                               on_approval_requested, &w->a, NULL);
   w->to = g_timeout_add_seconds(20, appr_timeout, &w->a);
@@ -875,7 +879,9 @@ static void watch_stop(Ctx *ctx, Watch *w) {
   CHECK(w->a.pending_replies == 0);
   watch_drain();
   g_source_remove(w->to);
-  g_dbus_connection_signal_unsubscribe(ctx->bus, w->sub);
+  (void)ctx;
+  g_dbus_connection_signal_unsubscribe(w->observer, w->sub);
+  g_clear_object(&w->observer);
   for (guint i = 0; i < w->a.replies->len; i++)
     if (w->a.replies->pdata[i]) g_variant_unref(w->a.replies->pdata[i]);
   for (guint i = 0; i < w->a.errors->len; i++)
@@ -1541,7 +1547,7 @@ static void test_gating(Ctx *ctx) {
   }
 
   /* No approval agent on the bus and none the bus can start (no service
-   * file here): the request is queued and announced, the daemon's attempt
+   * file here): the request is queued privately, the daemon's attempt
    * to start the UI fails, and the call is rejected (nostrc-sh5h). The
    * daemon checks its prompt rate limit before the agent, so this call too
    * must come 100 ms after the last prompt (nostrc-oauv). */
@@ -1556,7 +1562,7 @@ static void test_gating(Ctx *ctx) {
     r = call(ctx->bus, "NIP04Encrypt", g_variant_new("(sss)", "hi", peer_pk, ""), "(s)", &err);
     CHECK(r == NULL); expect_remote_error(err, ERR_DENIED); g_clear_error(&err);
     watch_drain();
-    CHECK(w.a.n_requests == 1);
+    CHECK(w.a.n_requests == 0); /* No authenticated UI owner: no private content signal. */
     watch_stop(ctx, &w);
   }
 
@@ -1750,13 +1756,17 @@ static void test_untrusted_approver(Ctx *ctx) {
   g_dbus_connection_call(ctx->bus, BUS_NAME, OBJ_PATH, IFACE, "NIP04Encrypt",
       g_variant_new("(sss)", "hi", peer_pk, ""), G_VARIANT_TYPE("(s)"),
       G_DBUS_CALL_FLAGS_NONE, 30000, cancel, on_async_reply, &w.a);
-  watch_wait_request(&w, 1);
+  /* An untrusted name owner no longer receives private request IDs/previews.
+   * An arbitrary ID must still be rejected before lookup, without approving
+   * or exposing the parked call. The real manager-host test also checks a live
+   * request ID obtained separately by its authenticated approver fixture. */
   GError *err = NULL;
-  GVariant *ok = approve_call(ctx, w.a.req_id, TRUE, TRUE, &err);
+  const char *opaque_id = "untrusted-cannot-enumerate-pending";
+  GVariant *ok = approve_call(ctx, opaque_id, TRUE, TRUE, &err);
   CHECK(ok == NULL); expect_remote_error(err, ERR_PERM); g_clear_error(&err);
-  ok = call(ctx->bus, "ApproveFlowRequest", g_variant_new("(sbbt)", w.a.req_id, TRUE, TRUE, (guint64)600), "(b)", &err);
+  ok = call(ctx->bus, "ApproveFlowRequest", g_variant_new("(sbbt)", opaque_id, TRUE, TRUE, (guint64)600), "(b)", &err);
   CHECK(ok == NULL); expect_remote_error(err, ERR_PERM); g_clear_error(&err);
-  GVariant *info = call(ctx->bus, "GetApprovalInfo", g_variant_new("(s)", w.a.req_id), "(a{sv})", &err);
+  GVariant *info = call(ctx->bus, "GetApprovalInfo", g_variant_new("(s)", opaque_id), "(a{sv})", &err);
   CHECK(info == NULL); expect_remote_error(err, ERR_PERM); g_clear_error(&err);
   /* Nor list or revoke grants (nostrc-yjky). */
   info = call(ctx->bus, "ListGrants", NULL, "(a(sssbt))", &err);
@@ -1769,6 +1779,7 @@ static void test_untrusted_approver(Ctx *ctx) {
   watch_wait_replies(&w);
   CHECK(w.a.replies->len == 1 && w.a.replies->pdata[0] == NULL);
   CHECK(g_error_matches(w.a.errors->pdata[0], G_IO_ERROR, G_IO_ERROR_CANCELLED));
+  watch_drain(); CHECK(w.a.n_requests == 0);
   g_object_unref(cancel);
   watch_stop(ctx, &w);
   free(peer_sk); free(peer_pk);
@@ -3466,8 +3477,8 @@ static char *write_approval_ui_service(void) {
   return dir;
 }
 
-/* No approval UI on the bus when the call arrives: the daemon announces the
- * request, starts the UI, and the UI answers from ListPendingRequests. */
+/* No approval UI on the bus when the call arrives: the daemon starts the UI,
+ * which answers from ListPendingRequests. Other connections get no preview. */
 static void test_summon_approval_ui(Ctx *ctx) {
   GError *err = NULL;
   char *peer_sk = nostr_key_generate_private();
@@ -3480,7 +3491,7 @@ static void test_summon_approval_ui(Ctx *ctx) {
   CHECK(r != NULL && err == NULL);
   g_variant_unref(r);
   watch_drain();
-  CHECK(w.a.n_requests == 1);
+  CHECK(w.a.n_requests == 0);
   watch_stop(ctx, &w);
   free(peer_sk);
   free(peer_pk);

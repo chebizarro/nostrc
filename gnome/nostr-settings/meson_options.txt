@@ -1,0 +1,1 @@
+option('test_daemon', type: 'string', value: '', description: 'Explicit path to a real grotto-daemon built with NIP55L_TEST_TRUST_ENV for panel-mount')

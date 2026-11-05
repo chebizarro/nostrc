@@ -151,18 +151,18 @@ static void withdraw(GrottoApprovalController *s, const char *id) {
 static gchar *notification_id(const char *id) {
   return g_strconcat("grotto-request-", id, NULL);
 }
-static const char *client_name(GrottoApprovalController *s, GVariant *info) {
+static const char *verified_client_name(GVariant *info) {
   if (!strcmp(text_field(info, "transport"), "MANAGEMENT") &&
       !strcmp(text_field(info, "operation"), "self_test"))
     return "Grotto";
   const char *principal = text_field(info, "principal");
-  const char *label = g_hash_table_lookup(s->labels, principal);
-  if (label && *label)
-    return label;
+  const char *kind = text_field(info, "principal_kind");
+  if (!strcmp(text_field(info, "transport"), "NIP46") || !strcmp(kind, "nip46") ||
+      g_str_has_prefix(principal, "nip46:")) return "Remote NIP-46 client";
   gboolean verified = FALSE;
   if (info)
     g_variant_lookup(info, "verified", "b", &verified);
-  if (!verified)
+  if (!verified || !strcmp(kind, "claimed") || g_str_has_prefix(principal, "claimed:"))
     return "Unverified app";
   const char *app_id = text_field(info, "app_id");
   if (*app_id)
@@ -220,9 +220,12 @@ static void update_notifications(GrottoApprovalController *s) {
     withdraw(s, SUMMARY_ID);
     g_autofree gchar *id = notification_id(single->id);
     g_autoptr(GNotification) n =
-        g_notification_new(s->locked ? "Grotto" : client_name(s, single->info));
+        g_notification_new(s->locked ? "Grotto" : verified_client_name(single->info));
     g_autofree gchar *body = operation_label(single->info);
-    g_notification_set_body(n, s->locked ? "Grotto needs your approval" : body);
+    const char *label = g_hash_table_lookup(s->labels, text_field(single->info, "principal"));
+    g_autofree gchar *escaped_label = label && *label ? g_markup_escape_text(label, -1) : NULL;
+    g_autofree gchar *labeled_body = escaped_label ? g_strdup_printf(_("%s\ncalled “%s”"), body, escaped_label) : NULL;
+    g_notification_set_body(n, s->locked ? "Grotto needs your approval" : labeled_body ? labeled_body : body);
     g_notification_set_priority(n, G_NOTIFICATION_PRIORITY_NORMAL);
     g_notification_set_category(n, "device");
     g_notification_set_default_action_and_target(n, "app.review-request", "s", single->id);
@@ -571,9 +574,12 @@ static void clients_done(GObject *source, GAsyncResult *result, gpointer data) {
     GrottoApprovalController *s = f->self;
     GrottoApprovalRequest *review =
         s->review_id ? g_hash_table_lookup(s->requests, s->review_id) : NULL;
-    if (s->dialog && review)
+    if (s->dialog && review) {
       gnostr_approval_dialog_set_trust_level(
           s->dialog, g_hash_table_lookup(s->tiers, text_field(review->info, "principal")));
+      gnostr_approval_dialog_set_client_label(s->dialog,
+          g_hash_table_lookup(s->labels, text_field(review->info, "principal")));
+    }
     guint count = g_list_model_get_n_items(G_LIST_MODEL(s->pending));
     if (count)
       g_list_model_items_changed(G_LIST_MODEL(s->pending), 0, count, count);
@@ -1065,6 +1071,8 @@ static GVariant *review_display_info(GrottoApprovalController *s, GVariant *info
   g_variant_dict_init(&display, info);
   g_autofree gchar *label = s->identity_label ? s->identity_label(text_field(info, "identity")) : NULL;
   if (label) g_variant_dict_insert(&display, "identity_label", "s", label);
+  const char *client_label = g_hash_table_lookup(s->labels, text_field(info, "principal"));
+  if (client_label) g_variant_dict_insert(&display, "client_label", "s", client_label);
   if (rows) g_variant_dict_insert_value(&display, "permission_rows", rows);
   return g_variant_ref_sink(g_variant_dict_end(&display));
 }
@@ -1082,7 +1090,7 @@ static void review_permissions_done(GObject *source, GAsyncResult *result, gpoin
     if (reply) {
       g_autoptr(GVariant) rows = g_variant_get_child_value(reply, 0);
       g_autoptr(GVariant) info = review_display_info(s, f->request->info, rows);
-      gnostr_approval_dialog_set_info(s->dialog, info, client_name(s, f->request->info));
+      gnostr_approval_dialog_set_info(s->dialog, info, verified_client_name(f->request->info));
       display_profile_provenance(s, f->request);
     } else if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
       message(s, "Saved permission details unavailable. Reopen this request to retry.");
@@ -1091,7 +1099,7 @@ static void review_permissions_done(GObject *source, GAsyncResult *result, gpoin
 }
 static void show_review_info(GrottoApprovalController *s, GrottoApprovalRequest *r) {
   g_autoptr(GVariant) display = review_display_info(s, r->info, NULL);
-  gnostr_approval_dialog_set_info(s->dialog, display, client_name(s, r->info));
+  gnostr_approval_dialog_set_info(s->dialog, display, verified_client_name(r->info));
   display_profile_provenance(s, r);
   gboolean review = FALSE, drift = FALSE;
   g_variant_lookup(r->info, "policy_review", "b", &review);
@@ -1207,7 +1215,7 @@ static void group_update(GListModel *model, guint position, guint removed, guint
     g_autoptr(GrottoApprovalRequest) r = g_list_model_get_item(model, i);
     AdwActionRow *row = ADW_ACTION_ROW(adw_action_row_new());
     g_autofree gchar *operation = operation_label(r->info);
-    g_autofree gchar *title = g_strdup_printf(_("%s · %s"), client_name(s, r->info), operation);
+    g_autofree gchar *title = g_strdup_printf(_("%s · %s"), verified_client_name(r->info), operation);
     adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), title);
     adw_preferences_row_set_use_markup(ADW_PREFERENCES_ROW(row), FALSE);
     gint64 seconds = MAX((gint64)0, (r->deadline - g_get_monotonic_time()) / G_USEC_PER_SEC);

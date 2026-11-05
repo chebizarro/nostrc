@@ -9,6 +9,7 @@
 #define NSS_UI_H
 
 #include <adwaita.h>
+#include <grotto-panels.h>
 #if __has_include(<gio/gdesktopappinfo.h>)
 #include <gio/gdesktopappinfo.h>
 #define NSS_HAVE_DESKTOP_APPINFO 1
@@ -24,10 +25,12 @@ typedef struct {
   gatomicrefcount       ref;
   GDBusConnection      *bus;       /* session bus; NULL if unavailable */
   SoupSession          *soup;
-  AdwPreferencesWindow *window;
+  GtkWindow            *window;
+  AdwToastOverlay      *toasts; /* weak, owned by window */
+  GrottoPanelsService  *grotto; /* shared across panel remounts */
 } NssContext;
 
-NssContext *nss_context_new(AdwPreferencesWindow *window);
+NssContext *nss_context_new(GtkWindow *window, AdwToastOverlay *toasts);
 NssContext *nss_context_ref(NssContext *ctx);
 void        nss_context_unref(NssContext *ctx);
 
@@ -97,6 +100,11 @@ AdwPreferencesPage *nss_page_media_new(NssContext *ctx);
 AdwPreferencesPage *nss_page_files_new(NssContext *ctx);
 
 GtkWindow *nss_window_new(GtkApplication *app, const gchar *page);
+gboolean nss_window_show_page(GtkWindow *window, const gchar *page);
+const gchar *nss_window_get_page(GtkWindow *window);
+GrottoPanel *nss_window_get_panel(GtkWindow *window, const gchar *page);
+void nss_grotto_attach_host(GrottoPanel *panel, NssContext *ctx);
+void nss_grotto_open(NssContext *ctx, const gchar *section, const gchar *target);
 
 G_END_DECLS
 

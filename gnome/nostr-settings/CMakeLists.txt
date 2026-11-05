@@ -72,8 +72,9 @@ else()
 endif()
 
 # ---- App ----
-add_executable(nostr-settings
-  src/ui/main.c
+add_library(nostr-settings-ui STATIC
+  "${CMAKE_CURRENT_LIST_DIR}/../../apps/grotto/src/grotto-panels-control1-service.c"
+  src/ui/nss-grotto.c
   src/ui/nss-window.c
   src/ui/nss-widgets.c
   src/ui/nss-page-identity.c
@@ -82,9 +83,13 @@ add_executable(nostr-settings
   src/ui/nss-page-wallet.c
   src/ui/nss-page-media.c
   src/ui/nss-page-files.c)
-target_include_directories(nostr-settings PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/ui)
+target_include_directories(nostr-settings-ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
+  PRIVATE "${CMAKE_CURRENT_LIST_DIR}/../../apps/grotto/src")
+target_compile_options(nostr-settings-ui PRIVATE ${NSS_WARNINGS})
+target_link_libraries(nostr-settings-ui PUBLIC nostr-settings-core PkgConfig::NSS_ADW GrottoPanels::Panels)
+add_executable(nostr-settings src/ui/main.c)
 target_compile_options(nostr-settings PRIVATE ${NSS_WARNINGS})
-target_link_libraries(nostr-settings PRIVATE nostr-settings-core PkgConfig::NSS_ADW GrottoPanels::Panels)
+target_link_libraries(nostr-settings PRIVATE nostr-settings-ui)
 install(TARGETS nostr-settings RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
 # ---- Data ----

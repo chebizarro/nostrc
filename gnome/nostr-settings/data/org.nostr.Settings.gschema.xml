@@ -21,7 +21,7 @@
     <key name="last-page" type="s">
       <default>'identity'</default>
       <summary>Page shown when the window opens</summary>
-      <description>One of identity, relays, notifications, wallet, media, files.</description>
+      <description>One of identity, apps, activity, remote-signing, relays, notifications, wallet, media, files.</description>
     </key>
   </schema>
 </schemalist>

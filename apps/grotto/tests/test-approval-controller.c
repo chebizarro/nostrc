@@ -550,7 +550,7 @@ static void notifications(Fixture *f, gconstpointer data) {
   WAIT(f->notification_body && strstr(f->notification_body,
       management ? "Verify stored identity" : "Text note"));
   g_assert_cmpstr(f->notification_title, ==,
-      management ? "Grotto" : executable ? "client" : "Unverified app");
+      management ? "Grotto" : executable ? "client" : data && g_str_has_prefix(data, "nip46:") ? "Remote NIP-46 client" : "Unverified app");
   gboolean review = FALSE, deny = FALSE;
   for (guint i = 1; f->notification_actions[i - 1] && f->notification_actions[i]; i += 2) {
     review |= !strcmp(f->notification_actions[i], "Review");

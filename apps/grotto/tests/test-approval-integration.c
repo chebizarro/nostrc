@@ -166,7 +166,7 @@ static void bus_name(GDBusConnection *bus, const char *name, gboolean claim) {
 typedef struct {
   guint notifications, version, lists, decisions, infos, model_changes;
   gboolean fail_list, valid_request, policy_review_test, saved_inactive;
-  gchar notification_title[256];
+  gchar notification_title[256], notification_body[1024];
 } Desktop;
 static GVariant *other_request(void) {
   GVariantBuilder b;
@@ -195,13 +195,17 @@ static void desktop_call(GDBusConnection *bus, const char *sender, const char *p
   (void)path;
   (void)iface;
   Desktop *d = data;
-  if (!strcmp(name, "Notify")) {
+  if (!strcmp(name, "GetActive")) {
+    g_dbus_method_invocation_return_value(inv, g_variant_new("(b)", FALSE));
+  } else if (!strcmp(name, "Notify")) {
     guint replace = 0;
     g_variant_get_child(args, 1, "u", &replace);
     d->notifications++;
     const char *title;
     g_variant_get_child(args, 3, "&s", &title);
     g_strlcpy(d->notification_title, title, sizeof d->notification_title);
+    const char *body; g_variant_get_child(args, 4, "&s", &body);
+    g_strlcpy(d->notification_body, body, sizeof d->notification_body);
     g_dbus_method_invocation_return_value(
         inv, g_variant_new("(u)", replace ? replace : d->notifications));
   } else if (!strcmp(name, "GetCapabilities")) {
@@ -286,7 +290,8 @@ static const char desktop_xml[] =
     "<arg type='a{sv}' direction='out'/></method><method name='ApproveRequest'><arg type='s' "
     "direction='in'/>"
     "<arg type='b' direction='in'/><arg type='b' direction='in'/><arg type='t' direction='in'/>"
-    "<arg type='b' direction='out'/></method></interface></node>";
+    "<arg type='b' direction='out'/></method></interface>"
+    "<interface name='org.gnome.ScreenSaver'><method name='GetActive'><arg type='b' direction='out'/></method></interface></node>";
 static void onboarding_review(GrottoApprovalController *controller, GApplication *app,
                                GDBusConnection *bus) {
   Desktop desktop = {0};
@@ -405,6 +410,23 @@ static void pending_reachability(GrottoApprovalController *controller, GApplicat
   g_assert_true(ready(controller));
   g_assert_cmpuint(g_list_model_get_n_items(grotto_approval_controller_get_pending(controller)), ==,
                    1);
+  /* Settings handoff uses the production application action. Backup only
+   * navigates to the pinned identity: no export dialog or pending decision. */
+  g_autofree gchar *handoff_npub = NULL;
+  g_assert_true(gn_backup_get_npub(
+    "0000000000000000000000000000000000000000000000000000000000000001", &handoff_npub, NULL));
+  g_autoptr(GSettings) handoff_settings = g_settings_new("org.nostr.Grotto");
+  g_autofree gchar *default_before = g_settings_get_string(handoff_settings, "default-identity");
+  g_action_group_activate_action(G_ACTION_GROUP(app), "open-management", g_variant_new("(ss)", "backup", handoff_npub));
+  g_assert_cmpstr(gtk_stack_get_visible_child_name(panels), ==, "identity");
+  g_assert_null(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(win)));
+  g_assert_true(ready(controller));
+  g_autofree gchar *default_after = g_settings_get_string(handoff_settings, "default-identity");
+  g_assert_cmpstr(default_before, ==, default_after);
+  g_assert_cmpuint(g_list_model_get_n_items(grotto_approval_controller_get_pending(controller)), ==, 1);
+  g_action_group_activate_action(G_ACTION_GROUP(app), "open-management", g_variant_new("(ss)", "remote-signing", ""));
+  g_assert_cmpstr(gtk_stack_get_visible_child_name(panels), ==, "remote-signing");
+  g_assert_true(ready(controller));
   signer_window_show_page(SIGNER_WINDOW(win), "settings");
   g_application_activate(app); /* Ordinary launcher/reopen also reaches the deferred request. */
   WAIT(grotto_approval_controller_get_holds(controller) == 1);
@@ -762,6 +784,58 @@ static void trust_failure(GrottoApprovalController *controller, GDBusConnection 
   g_signal_handler_disconnect(controller, listener); g_free(feedback);
   g_dbus_connection_close_sync(failed_caller, NULL, NULL);
 }
+#ifdef __linux__
+static void manager_label(const char *principal, const char *label) {
+  g_autoptr(GSubprocess) peer = g_subprocess_new(G_SUBPROCESS_FLAGS_NONE, NULL,
+    MANAGER_LABEL_BIN, "--label", principal, label, NULL);
+  g_assert_nonnull(peer); g_assert_true(g_subprocess_wait_check(peer, NULL, NULL));
+}
+static void label_provenance(GrottoApprovalController *controller, GDBusConnection *connection,
+    GApplication *app, GrottoApprovalRequest *request) {
+  Desktop desktop = {0};
+  g_autoptr(GDBusNodeInfo) xml = g_dbus_node_info_new_for_xml(desktop_xml, NULL);
+  static const GDBusInterfaceVTable table = {.method_call = desktop_call};
+  guint registration = g_dbus_connection_register_object(connection, "/org/freedesktop/Notifications",
+    xml->interfaces[0], &table, &desktop, NULL, NULL);
+  guint lock_registration = g_dbus_connection_register_object(connection, "/org/gnome/ScreenSaver",
+    xml->interfaces[3], &table, &desktop, NULL, NULL);
+  bus_name(connection, "org.gnome.ScreenSaver", TRUE);
+  bus_name(connection, "org.freedesktop.Notifications", TRUE);
+  WAIT(grotto_approval_controller_notifications_available(controller) && desktop.notifications > 0 &&
+       strcmp(desktop.notification_title, "Grotto"));
+  g_autofree gchar *verified_title = g_strdup(desktop.notification_title);
+  g_assert_null(strstr(verified_title, "Grotto"));
+  const char *principal = NULL;
+  g_assert_true(g_variant_lookup(grotto_approval_request_get_info(request), "principal", "&s", &principal));
+  manager_label(principal, "Grotto");
+  WAIT(strstr(desktop.notification_body, "called “Grotto”") != NULL);
+  g_assert_cmpstr(desktop.notification_title, ==, verified_title);
+  g_action_group_activate_action(G_ACTION_GROUP(app), "review-request",
+    g_variant_new_string(grotto_approval_request_get_id(request)));
+  AdwDialog *dialog = review_dialog(app); g_assert_nonnull(dialog); wait_frames(GTK_WIDGET(dialog));
+  GtkLabel *headline = GTK_LABEL(dialog_child(dialog, "header_title"));
+  GtkLabel *secondary = GTK_LABEL(dialog_child(dialog, "label_verified"));
+  g_assert_nonnull(strstr(gtk_label_get_text(headline), verified_title));
+  g_assert_null(strstr(gtk_label_get_text(headline), "Grotto"));
+  g_assert_nonnull(strstr(gtk_label_get_text(secondary), "Verified local app"));
+  g_assert_nonnull(strstr(gtk_label_get_text(secondary), "called “Grotto”"));
+  AdwComboRow *choice = ADW_COMBO_ROW(dialog_child(dialog, "permission_choice"));
+  if (g_list_model_get_n_items(adw_combo_row_get_model(choice)) > 1) adw_combo_row_set_selected(choice, 1);
+  guint selected = adw_combo_row_get_selected(choice);
+  manager_label(principal, "<b>Other App</b>");
+  WAIT(strstr(gtk_label_get_text(secondary), "called “<b>Other App</b>”") != NULL);
+  g_assert_false(gtk_label_get_use_markup(secondary));
+  g_assert_cmpuint(adw_combo_row_get_selected(choice), ==, selected);
+  g_assert_null(strstr(gtk_label_get_text(headline), "Other App"));
+  g_signal_emit_by_name(dialog_child(dialog, "btn_not_now"), "clicked"); WAIT(review_dialog(app) == NULL);
+  manager_label(principal, "");
+  bus_name(connection, "org.gnome.ScreenSaver", FALSE);
+  g_dbus_connection_unregister_object(connection, lock_registration);
+  bus_name(connection, "org.freedesktop.Notifications", FALSE);
+  WAIT(!grotto_approval_controller_notifications_available(controller));
+  g_dbus_connection_unregister_object(connection, registration);
+}
+#endif
 static void run_flow(GDBusConnection *connection, GDBusConnection *consumer, GApplication *app,
                      gboolean gui) {
   GrottoApprovalController *installed =
@@ -858,6 +932,9 @@ static void run_flow(GDBusConnection *connection, GDBusConnection *consumer, GAp
     g_assert_null(strstr(dump, "PAIRING-TOKEN"));
 #ifndef __APPLE__
     if (gui) {
+#ifdef __linux__
+      if (i == 0) label_provenance(controller, connection, app, request);
+#endif
       click_review(controller, app, grotto_approval_request_get_id(request), TRUE, TRUE, i % 2 == 0,
                    cases[i].preview);
       decision.done = 1;
@@ -992,6 +1069,9 @@ int main(int argc, char **argv) {
   struct rlimit limit = {0, 0};
   setrlimit(RLIMIT_CORE, &limit);
   g_setenv("NOSTR_SIGNER_TEST_APPROVERS", argv[0], TRUE);
+#ifdef __linux__
+  g_setenv("NOSTR_SIGNER_TEST_MANAGERS", MANAGER_LABEL_BIN, TRUE);
+#endif
   g_setenv("NOSTR_SIGNER_SECKEY_HEX",
            "0000000000000000000000000000000000000000000000000000000000000001", TRUE);
   /* The private daemon is D-Bus only: never inherit an ambient NIP-5F endpoint

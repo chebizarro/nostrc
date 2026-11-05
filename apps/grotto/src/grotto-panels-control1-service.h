@@ -9,10 +9,13 @@ G_DECLARE_FINAL_TYPE(GrottoPanelsControl1Service, grotto_panels_control1_service
  * the GTK main context, independently of panel mount/unmount. The supplied
  * proxy must address org.nostr.Signer /org/nostr/signer/grotto Control1 and be
  * created on that context. Subscribes before taking initial snapshots.
- * Current coarse feature flags do NOT authorize mutations. Until W6 supplies
- * caller-specific management-capabilities, can() is deliberately read-only.
- * Identities stay empty until W3's public metadata composite is installed. */
+ * Coarse feature flags do NOT authorize mutations. Missing caller-specific
+ * management-capabilities keep can() read-only. Public identities come only
+ * from Control1.ListIdentities; Grotto may overlay its local metadata. */
 GrottoPanelsService *grotto_panels_control1_service_new(GDBusProxy *proxy);
+/* Settings fails closed on missing/skewed role metadata and exposes only the
+ * cosmetic manager command, even if a peer advertises approver capabilities. */
+GrottoPanelsService *grotto_panels_control1_service_new_manager(GDBusProxy *proxy);
 /* Grotto host hook only: the caller checks management lock and protocol version.
  * This does not change shared service capabilities or daemon authorization. */
 void grotto_panels_control1_service_host_command_async(GrottoPanelsService *service,

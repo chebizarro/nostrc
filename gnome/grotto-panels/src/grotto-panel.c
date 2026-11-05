@@ -237,6 +237,20 @@ static void panel_map(GtkWidget *widget) {
   }
   GTK_WIDGET_CLASS(grotto_panel_parent_class)->map(widget);
 }
+void grotto_panel_bind_header_bar(GrottoPanel *self, AdwHeaderBar *header) {
+  g_object_bind_property(self, "show-window-controls", header, "show-start-title-buttons", G_BINDING_SYNC_CREATE);
+  g_object_bind_property(self, "show-window-controls", header, "show-end-title-buttons", G_BINDING_SYNC_CREATE);
+}
+static void bind_headers(GrottoPanel *self, GtkWidget *widget) {
+  if (widget != GTK_WIDGET(self) && GROTTO_IS_PANEL(widget)) return;
+  if (ADW_IS_HEADER_BAR(widget)) grotto_panel_bind_header_bar(self, ADW_HEADER_BAR(widget));
+  for (GtkWidget *child = gtk_widget_get_first_child(widget); child; child = gtk_widget_get_next_sibling(child))
+    bind_headers(self, child);
+}
+static void constructed(GObject *object) {
+  G_OBJECT_CLASS(grotto_panel_parent_class)->constructed(object);
+  bind_headers(GROTTO_PANEL(object), GTK_WIDGET(object));
+}
 static void grotto_panel_class_init(GrottoPanelClass *klass) {
   GTK_WIDGET_CLASS(klass)->unmap = panel_unmap;
   GTK_WIDGET_CLASS(klass)->map = panel_map;
@@ -244,6 +258,7 @@ static void grotto_panel_class_init(GrottoPanelClass *klass) {
   object->set_property = set_property;
   object->get_property = get_property;
   object->dispose = dispose;
+  object->constructed = constructed;
   properties[PROP_SERVICE] = g_param_spec_object("service", NULL, NULL, GROTTO_TYPE_PANELS_SERVICE,
     G_PARAM_READWRITE | G_PARAM_EXPLICIT_NOTIFY | G_PARAM_STATIC_STRINGS);
   properties[PROP_SHOW_WINDOW_CONTROLS] = g_param_spec_boolean("show-window-controls", NULL, NULL, TRUE,

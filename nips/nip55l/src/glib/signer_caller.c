@@ -24,6 +24,9 @@
 #ifndef NIP55L_ORIGIN_BRIDGE_PATHS
 #define NIP55L_ORIGIN_BRIDGE_PATHS ""
 #endif
+#ifndef NIP55L_MANAGER_PATHS
+#define NIP55L_MANAGER_PATHS ""
+#endif
 #ifndef NIP55L_APPROVER_PATHS
 #define NIP55L_APPROVER_PATHS ""
 #endif
@@ -358,6 +361,22 @@ signer_caller_may_assert_origin(const SignerCaller *c)
   if (!c || (c->kind != SIGNER_CALLER_EXE && c->kind != SIGNER_CALLER_SYSTEMD_SCOPE)) return FALSE;
   g_auto(GStrv) bridges = signer_caller_origin_bridges();
   return exe_in(c, bridges);
+}
+
+gboolean
+signer_caller_is_manager(const SignerCaller *c)
+{
+#ifndef __linux__
+  (void)c;
+  return FALSE;
+#else
+  /* Linux PID proof only: no UID-only or claimed app-id fallback. A sandbox
+   * shape is not an installed host executable, even with a matching app ID. */
+  if (!c || c->unattested || !c->pid ||
+      (c->kind != SIGNER_CALLER_EXE && c->kind != SIGNER_CALLER_SYSTEMD_SCOPE)) return FALSE;
+  g_auto(GStrv) managers = path_list("NOSTR_SIGNER_TEST_MANAGERS", NIP55L_MANAGER_PATHS);
+  return exe_in(c, managers);
+#endif
 }
 
 gboolean

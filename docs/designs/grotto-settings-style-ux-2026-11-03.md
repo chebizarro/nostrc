@@ -323,7 +323,29 @@ Data gaps the service exposes (W6 unless noted):
 
 ### c.4 Blocker: the approver gate, and the manager role
 
-Every `Control1` method except `GetStatus` and `SetPaused(true)` requires `signer_caller_is_approver()` (`grotto_control.c:666-669`). This matches an exact installed path and inode against `NIP55L_APPROVAL_UI_PATHS`, which is `${BINDIR}/grotto` (`signer_caller.c:364-376`, `nips/nip55l/CMakeLists.txt:219`). A panel inside `nostr-settings` would therefore get `NotAuthorized` on every read. A fake-service smoke test alone would hide that, so W6 has a real-daemon test.
+**W6 implementation status:** the former gate below is replaced by fresh,
+PID/path/device/inode manager authentication for the installed Nostr Settings
+host. Managers can read status, public signing identities, clients, permissions,
+activity, and change cosmetic client labels only. Pending contents remain
+approver-only; managers see only coarse counts/state, never `ListRequests`,
+`GetApprovalInfo` or `ListPendingRequests` results. Cosmetic labels appear as
+secondary “called …” text in reviews/notifications, never as verified names or
+notification titles. Both pause values,
+tiers, permissions, signing, approval and custody remain refused. Caller-specific
+role/capability reporting drives the host; the existing Grotto lock is unchanged.
+Settings now mounts all four real shared panels in a sidebar shell, preserves
+service pages, page selection/window state/screenshots and the relay-summary link,
+and hands public targets to Grotto's navigation-only `open-management` action.
+Backup navigation selects the identity; the user must choose Backup in Grotto.
+
+The additive identity snapshot reports canonical stored signing npubs/default
+and explicit unknown setup/backup metadata. It does not migrate GUI-private
+labels, watch-only inventory or recovery acknowledgement to daemon ownership.
+The current W6 direction scopes delivery to public metadata and manager hosting;
+that larger metadata-writer migration remains separate, not fabricated by a
+shared-file Settings reader. Unknown status is displayed honestly in the panel.
+
+Historically, every `Control1` method except `GetStatus` and `SetPaused(true)` required `signer_caller_is_approver()` (`grotto_control.c:666-669`). This matches an exact installed path and inode against `NIP55L_APPROVAL_UI_PATHS`, which is `${BINDIR}/grotto` (`signer_caller.c:364-376`, `nips/nip55l/CMakeLists.txt:219`). A panel inside `nostr-settings` would therefore get `NotAuthorized` on every read. A fake-service smoke test alone would hide that, so W6 has a real-daemon test.
 
 | Option | Verdict | Reason |
 |---|---|---|
@@ -332,15 +354,17 @@ Every `Control1` method except `GetStatus` and `SetPaused(true)` requires `signe
 | C. Separate windows, no hosting | Rejected | Contradicts the owner's phasing; GTK 4 has no cross-process widget embedding |
 | **D. New manager role plus hand-off** | **Recommended** | In-tree precedent: Nostr Settings already "administers grants, not money" with `nostr-wallet-agent`, by the same path-and-inode proof (`gnome/nostr-settings/README.md:45-57`) |
 
-Proposed `signer_caller_is_manager()`: PID-attested Linux caller, exact installed executable path plus current device/inode of `${BINDIR}/nostr-settings`, same UID; deny an arbitrary same-UID executable, name owner, claimed app ID, replaced binary and unsupported sandbox shape. No new UID-only manager fallback. Grotto's existing approver compatibility exception is not made into a cross-platform security promise.
+Implemented `signer_caller_is_manager()`: PID-attested Linux caller, exact installed executable path plus current device/inode of `${BINDIR}/nostr-settings`, same UID; deny an arbitrary same-UID executable, name owner, claimed app ID, replaced binary and unsupported sandbox shape. No new UID-only manager fallback. Grotto's existing approver compatibility exception is not made into a cross-platform security promise.
 
 | Method | Approver (Grotto) | Manager (Nostr Settings) |
 |---|---|---|
-| `GetStatus`, `SetPaused(true)` | Yes | Yes (same-UID today) |
-| `ListClients`, `ListPermissions`, `ListActivity`, `ListRequests` | Yes | **Yes**, read-only |
+| `GetStatus` | Yes | Yes (coarse same-UID status remains) |
+| `SetPaused(true)` | Yes | **No** (the manager does not inherit the ordinary session pause exception) |
+| `ListClients`, `ListPermissions`, `ListActivity` | Yes | **Yes**, read-only |
+| `ListRequests`, `GetApprovalInfo`, `ListPendingRequests` | Yes | **No**, unpublished request contents are approver-only |
 | `SetClientLabel` | Yes | **Yes**, cosmetic only; preserve verified principal and policy |
 | `SetClientTrust`, `SetPermissions`, `RevokeClient`, `ClearActivity`, `SetDefaultIdentityForLegacy`, `SetPaused(false)` | Yes | **No** in this phase: `open_in_signer` |
-| Proposed identity metadata snapshot | Yes | **Yes**, public identifiers/local labels/setup acknowledgement only |
+| `ListIdentities` public snapshot | Yes | **Yes**, signing npubs/default; unavailable local metadata stays explicitly unknown |
 | `DecideRequest`, `Export*`, `ImportIdentity`, `StoreKeyWithMnemonic`, `RemoveIdentity`, `RotateIdentity`, `SelfTestIdentity`, bunker and pairing methods | Yes | **No** |
 
 **Why not a “lowering only” generic permission editor?** Removing a deny can increase effective authority; lowering a tier retains explicit grants. Comparing arbitrary replacement sets safely would add policy complexity to a UI project. Keep the panel, but hand off all security mutations to Grotto at the selected app/identity. The user sees “Change in Grotto…” instead of a switch that fails after activation. The activated target only navigates: Grotto refetches daemon state and asks for the actual change. A URI/desktop activation is never approval. The copied callback must not replay a decision supplied by another process.
@@ -360,7 +384,16 @@ Two levels. Only the second counts as proof of production hosting.
 1. **`grotto-panels/smoke-host` (W2).** A test executable that links only GTK, libadwaita and `libgrotto-panels`, and builds a Settings-style split view. Using the fake service it mounts every descriptor; navigates to each; pushes and pops a sub-page; emits a model change and asserts the row updates; removes an operation from `can()` and asserts the row hides or offers hand-off; exercises each `GrottoPanelsHost` callback; rebuilds at 360 px; unmounts and asserts no leak under the existing sanitizer route. `nm -D` asserts no `accounts_store_*` symbol.
 2. **`nostr-settings/panel-mount` (W6).** The real `nostr-settings` window with the real daemon on a private bus (`nostrc_test_bus_up`). It mounts **the real shared Identity and Connected Apps panels** through `nss_window_new`, checks public identity/app rows populate, changes a label through the manager API, receives a daemon signal, and verifies security edits/backup/review activate Grotto at the selected target. Grotto must only navigate, not approve or mutate on activation. Direct `SetPermissions`, `SetClientTrust`, `ExportRawIdentity` and `DecideRequest` calls from the Settings process return `NotAuthorized`; the fixture's approver can still perform its authorized actions. An arbitrary same-UID test client is denied the manager reads, and replacing the trusted test executable invalidates its role. Use disposable installed-path fixtures with the repository's supported test caller configuration, not a production allowlist broadened to the test runner.
 
-**Proof status:** these are smoke-test designs, not results. Source inspection shows the mount adapter required and the current authorization obstruction; no smoke executable or real-daemon panel-mount run was created or executed for this design task. Acceptance of W6 requires that real host result, not an isolated helper/fake green. A missing bus, daemon, display or role capability must fail the selected test visibly.
+**W6 test implementation:** `gnome/nostr-settings/tests/test-panel-mount.c` uses
+real `nss_window_new`, shared panels and a real `grotto-daemon` on a private bus.
+Disposable executable-role fixtures test all current forbidden Control1 methods,
+actual identity/app rows, label-change signals, public activation targets, daemon
+loss/restart, arbitrary same-UID/name-owner rejection and inode replacement. Only
+the desktop activation receiver is captured. Missing bus/display/role support
+fails visibly. Manager inventory/model read failure keeps the host unavailable
+until that read succeeds; a successful status reply does not imply an empty,
+healthy inventory. Execution results belong in bead `nostrc-u6v55.23.6`; a saved plan
+or test implementation alone is not a passing execution or VM acceptance.
 
 ## d. Blueprint sketches and dispositions
 

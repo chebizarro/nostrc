@@ -58,6 +58,8 @@ void gnostr_approval_dialog_set_event_type(GnostrApprovalDialog *self, int kind)
  */
 void gnostr_approval_dialog_set_app_name(GnostrApprovalDialog *self,
                                          const char *app_name);
+/* Cosmetic label only; never changes the verified headline or decision state. */
+void gnostr_approval_dialog_set_client_label(GnostrApprovalDialog *self, const char *label);
 
 /**
  * gnostr_approval_dialog_set_identity:

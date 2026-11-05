@@ -179,7 +179,20 @@ static void on_approval_change(gpointer data, GVariant *info) {
     const gchar *principal = "", *identity = "", *kind = "", *preview = "";
     g_variant_lookup(info, "principal", "&s", &principal); g_variant_lookup(info, "identity", "&s", &identity);
     g_variant_lookup(info, "kind", "&s", &kind); g_variant_lookup(info, "preview", "&s", &preview);
-    nostr_signer_emit_approval_requested(signer_skel, principal, identity, kind, preview, id);
+    /* Pending content is approver-only on signals as well as method reads.
+     * Name ownership alone is not authorization; pin the verified unique
+     * owner so a later name takeover cannot receive this snapshot. */
+    static const gchar approver_name[] = NIP55L_APPROVER_BUS_NAME;
+    g_autoptr(GVariant) owner_reply = *approver_name ? g_dbus_connection_call_sync(signer_bus,
+      "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "GetNameOwner",
+      g_variant_new("(s)", approver_name), G_VARIANT_TYPE("(s)"), 0, 5000, NULL, NULL) : NULL;
+    if (owner_reply) {
+      const gchar *owner = NULL; g_variant_get(owner_reply, "(&s)", &owner);
+      g_autoptr(SignerCaller) caller = signer_caller_identify_fresh(signer_bus, owner);
+      if (!signer_caller_is_manager(caller) && signer_caller_is_approver(caller))
+        g_dbus_connection_emit_signal(signer_bus, owner, "/org/nostr/signer", "org.nostr.Signer",
+          "ApprovalRequested", g_variant_new("(sssss)", principal, identity, kind, preview, id), NULL);
+    }
     if (!approver_present(signer_bus)) approver_summon(signer_bus, id);
   } else {
     gboolean announced = FALSE;
