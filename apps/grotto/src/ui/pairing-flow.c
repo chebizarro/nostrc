@@ -154,7 +154,7 @@ void grotto_pairing_present(GtkWidget *parent, const gchar *uri) {
     g_signal_connect(f->identities, "notify::selected", G_CALLBACK(identity_selected), f);
     preview_uri(f, uri);
   } else {
-    f->entry = gtk_entry_new(); gtk_entry_set_placeholder_text(GTK_ENTRY(f->entry), _("Paste an app connection link")); gtk_box_append(GTK_BOX(box), f->entry);
+    f->entry = gtk_entry_new(); gtk_entry_set_activates_default(GTK_ENTRY(f->entry), TRUE); gtk_entry_set_placeholder_text(GTK_ENTRY(f->entry), _("Paste an app connection link")); gtk_box_append(GTK_BOX(box), f->entry);
     f->submit = gtk_button_new_with_mnemonic(_("_Preview")); gtk_widget_set_sensitive(f->submit, FALSE);
     g_signal_connect(f->submit, "clicked", G_CALLBACK(pasted), f);
     g_signal_connect(f->entry, "changed", G_CALLBACK(link_changed), f);

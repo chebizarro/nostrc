@@ -14,7 +14,7 @@ template $SheetCreateBunker: Adw.Dialog {
       description: _("Choose the identity to connect. You'll review the app before it can sign.");
       Adw.PreferencesGroup {
         Adw.ComboRow identities { title: _("Identity"); }
-        Adw.EntryRow entry_name { title: _("App Name (Optional)"); }
+        Adw.EntryRow entry_name { title: _("App Name (Optional)"); activates-default: true; }
       }
       Adw.PreferencesGroup {
         Label status { label: _("Checking remote signing…"); wrap: true; xalign: 0; }

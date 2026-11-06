@@ -345,6 +345,7 @@ static void secret_dialog(GrottoIdentityDetail *self, DetailOperation operation)
     adw_preferences_group_add(ADW_PREFERENCES_GROUP(group), passphrase_row);
     GtkWidget *commit = affirmative; self->backup_export = commit;
     g_signal_connect(self->passphrase, "changed", G_CALLBACK(passphrase_changed), self);
+    g_signal_connect_swapped(self->passphrase, "activate", G_CALLBACK(gtk_widget_activate_default), self->passphrase);
     g_object_set_data(G_OBJECT(commit), "qr", GINT_TO_POINTER(operation == ENCRYPTED_QR));
     g_signal_connect(commit, "clicked", G_CALLBACK(export_commit), self);
     if (operation == ENCRYPTED_FILE) {
@@ -372,6 +373,7 @@ static void secret_dialog(GrottoIdentityDetail *self, DetailOperation operation)
   adw_toolbar_view_set_content(ADW_TOOLBAR_VIEW(toolbar), page); adw_dialog_set_child(dialog, toolbar);
   g_signal_connect_object(dialog, "closed", G_CALLBACK(dialog_closed), self, 0);
   adw_dialog_present(dialog, GTK_WIDGET(self));
+  if (self->passphrase) gn_secure_entry_grab_focus_entry(self->passphrase);
   if (operation == SEED) call(self, SEED, "ExportIdentity", g_variant_new("(sss)", self->identity, "mnemonic", ""));
 }
 static void confirmed(AdwAlertDialog *dialog, const char *response, gpointer data) {

@@ -32,6 +32,16 @@ static void combo_changed(GObject *object, GParamSpec *pspec, gpointer data) {
 static void retention_changed(AdwSpinRow *row, GParamSpec *pspec, gpointer data) {
   (void)pspec; PageSettings *self = data; g_settings_set_int(self->settings, "log-retention-days", (gint)adw_spin_row_get_value(row));
 }
+static gboolean retention_key(GtkEventControllerKey *controller, guint keyval, guint keycode,
+    GdkModifierType state, gpointer data) {
+  (void)controller; (void)keycode;
+  if ((keyval != GDK_KEY_Return && keyval != GDK_KEY_KP_Enter) ||
+      (state & (GDK_CONTROL_MASK | GDK_ALT_MASK | GDK_SUPER_MASK))) return FALSE;
+  AdwSpinRow *row = data;
+  adw_spin_row_update(row);
+  gtk_widget_activate_default(GTK_WIDGET(row));
+  return TRUE;
+}
 static void retention_save(GtkButton *button, gpointer data) {
   PageSettings *self = data;
   AdwSpinRow *row = g_object_get_data(G_OBJECT(button), "retention-row");
@@ -50,6 +60,10 @@ void page_settings_show_retention(PageSettings *self, GtkWidget *parent) {
   AdwSpinRow *row = ADW_SPIN_ROW(adw_spin_row_new_with_range(1, 30, 1));
   adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), _("Keep Activity (Days)"));
   adw_spin_row_set_value(row, CLAMP(g_settings_get_int(self->settings, "log-retention-days"), 1, 30));
+  GtkEventController *keys = gtk_event_controller_key_new();
+  gtk_event_controller_set_propagation_phase(keys, GTK_PHASE_CAPTURE);
+  g_signal_connect(keys, "key-pressed", G_CALLBACK(retention_key), row);
+  gtk_widget_add_controller(GTK_WIDGET(row), keys);
   g_object_set_data(G_OBJECT(save), "retention-row", row);
   g_signal_connect_object(save, "clicked", G_CALLBACK(retention_save), self, 0);
   adw_preferences_group_add(group, GTK_WIDGET(row)); adw_preferences_page_add(page, group);
@@ -135,6 +149,7 @@ void page_settings_show_ask_defaults(PageSettings *self, GtkWidget *parent) {
     if (!known) { if (others->len) g_string_append(others, ", "); g_string_append(others, values[i]); }
   }
   gtk_box_append(GTK_BOX(box), gtk_label_new(_("Additional custom event types (comma-separated)"))); p->custom = GTK_ENTRY(gtk_entry_new());
+  gtk_entry_set_activates_default(p->custom, TRUE);
   gtk_editable_set_text(GTK_EDITABLE(p->custom), others->str); g_string_free(others, TRUE);
   gtk_accessible_update_property(GTK_ACCESSIBLE(p->custom), GTK_ACCESSIBLE_PROPERTY_LABEL, _("Additional custom event types"), -1); gtk_box_append(GTK_BOX(box), GTK_WIDGET(p->custom));
   p->error = GTK_LABEL(gtk_label_new(NULL)); gtk_label_set_wrap(p->error, TRUE); gtk_box_append(GTK_BOX(box), GTK_WIDGET(p->error));

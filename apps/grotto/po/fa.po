@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: grotto 0.1.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-06 11:40-0800\n"
+"POT-Creation-Date: 2026-11-06 12:36-0800\n"
 "PO-Revision-Date: 2024-01-23 00:00+0000\n"
 "Last-Translator: \n"
 "Language-Team: Persian\n"
@@ -254,7 +254,7 @@ msgid "Use a key or recovery phrase you already have"
 msgstr ""
 
 #: data/ui/onboarding-assistant.ui:79 data/ui/onboarding-assistant.ui:199
-#: src/ui/pairing-flow.c:92 src/ui/sheets/sheet-qr-display.c:332
+#: src/ui/pairing-flow.c:92 src/ui/sheets/sheet-qr-display.c:334
 msgid "Connect an App"
 msgstr ""
 
@@ -321,7 +321,7 @@ msgstr ""
 #. Onboarding also offers backup before the management window exists. This
 #. * trusted shell contains only the pinned Backup page, not another editor.
 #: data/ui/onboarding-assistant.ui:294 data/ui/page-identity-detail.ui:10
-#: src/ui/page-identity-detail.c:501
+#: src/ui/page-identity-detail.c:503
 msgid "Back Up Identity"
 msgstr ""
 
@@ -353,7 +353,7 @@ msgstr ""
 
 #: data/ui/onboarding-assistant.ui:357 data/ui/page-identity-detail.ui:53
 #: src/qr-code.c:88 src/ui/page-identity-detail.c:307
-#: src/ui/sheets/sheet-qr-display.c:323
+#: src/ui/sheets/sheet-qr-display.c:325
 msgid "Encrypted Backup"
 msgstr ""
 
@@ -495,7 +495,7 @@ msgstr ""
 msgid "Stops previously allowed requests too. Unlock your session to resume."
 msgstr ""
 
-#: data/ui/page-settings.ui:49 src/ui/page-settings.c:51
+#: data/ui/page-settings.ui:49 src/ui/page-settings.c:61
 msgid "Keep Activity (Days)"
 msgstr ""
 
@@ -634,7 +634,7 @@ msgstr ""
 #: data/ui/sheets/sheet-create-bunker.ui:21
 #: data/ui/sheets/sheet-qr-scanner.ui:22 src/ui/signer-window.c:769
 #: src/ui/dialog-actions.h:11 src/ui/page-identity-detail.c:284
-#: src/ui/page-identity-detail.c:389 src/ui/onboarding-assistant.c:81
+#: src/ui/page-identity-detail.c:391 src/ui/onboarding-assistant.c:81
 msgid "_Cancel"
 msgstr "لغو(_C)"
 
@@ -651,21 +651,21 @@ msgstr ""
 msgid "App Name (Optional)"
 msgstr ""
 
-#: data/ui/sheets/sheet-create-bunker.ui:58
+#: data/ui/sheets/sheet-create-bunker.ui:59
 msgid "Checking remote signing…"
 msgstr ""
 
 #. Set title
 #: data/ui/sheets/sheet-qr-display.ui:10 data/ui/sheets/sheet-qr-display.ui:51
-#: src/ui/sheets/sheet-qr-display.c:285
+#: src/ui/sheets/sheet-qr-display.c:287
 msgid "QR Code"
 msgstr "کد QR"
 
-#: data/ui/sheets/sheet-qr-display.ui:20 src/ui/page-identity-detail.c:507
+#: data/ui/sheets/sheet-qr-display.ui:20 src/ui/page-identity-detail.c:509
 msgid "_Close"
 msgstr "بستن(_C)"
 
-#: data/ui/sheets/sheet-qr-display.ui:27
+#: data/ui/sheets/sheet-qr-display.ui:27 src/ui/sheets/sheet-qr-display.c:56
 msgid "Copy to Clipboard"
 msgstr ""
 
@@ -2858,113 +2858,113 @@ msgstr ""
 msgid "Simple group pinned events"
 msgstr ""
 
-#: src/ui/page-settings.c:42
+#: src/ui/page-settings.c:52
 msgid "Activity Retention"
 msgstr ""
 
-#: src/ui/page-settings.c:44 src/ui/page-settings.c:101
+#: src/ui/page-settings.c:54 src/ui/page-settings.c:115
 msgid "_Save"
 msgstr ""
 
-#: src/ui/page-settings.c:49
+#: src/ui/page-settings.c:59
 msgid "Metadata only — no messages, secrets or event content"
 msgstr ""
 
-#: src/ui/page-settings.c:72 src/ui/page-settings.c:91
+#: src/ui/page-settings.c:86 src/ui/page-settings.c:105
 msgid "Use whole event-type numbers from 0 to 65535, separated by commas."
 msgstr ""
 
-#: src/ui/page-settings.c:78
+#: src/ui/page-settings.c:92
 msgid "The ask-by-default policy could not be saved."
 msgstr ""
 
-#: src/ui/page-settings.c:100
+#: src/ui/page-settings.c:114
 msgid "Ask-by-Default Event Types"
 msgstr ""
 
-#: src/ui/page-settings.c:120
+#: src/ui/page-settings.c:134
 #, c-format
 msgid "Kind %u"
 msgstr ""
 
-#: src/ui/page-settings.c:121
+#: src/ui/page-settings.c:135
 #, c-format
 msgid "%s, kind %u"
 msgstr ""
 
-#: src/ui/page-settings.c:137
+#: src/ui/page-settings.c:151
 msgid "Additional custom event types (comma-separated)"
 msgstr ""
 
-#: src/ui/page-settings.c:139
+#: src/ui/page-settings.c:154
 msgid "Additional custom event types"
 msgstr ""
 
-#: src/ui/page-settings.c:143
+#: src/ui/page-settings.c:158
 msgid "_Restore Defaults"
 msgstr ""
 
-#: src/ui/page-settings.c:184
+#: src/ui/page-settings.c:199
 msgid ""
 "Use up to 16 wss:// relay URLs, one per line, without credentials, queries "
 "or fragments"
 msgstr ""
 
-#: src/ui/page-settings.c:190
+#: src/ui/page-settings.c:205
 msgid "Discovery relays saved"
 msgstr ""
 
-#: src/ui/page-settings.c:190
+#: src/ui/page-settings.c:205
 msgid "Discovery relays could not be saved"
 msgstr ""
 
-#: src/ui/page-settings.c:198
+#: src/ui/page-settings.c:213
 msgid "Discovery-only defaults restored"
 msgstr ""
 
-#: src/ui/page-settings.c:202
+#: src/ui/page-settings.c:217
 msgid "Profile Discovery"
 msgstr ""
 
-#: src/ui/page-settings.c:203
+#: src/ui/page-settings.c:218
 msgid ""
 "For identities with no known relays, share the public key with discovery "
 "relays to find a profile. Never used for publishing."
 msgstr ""
 
-#: src/ui/page-settings.c:205
+#: src/ui/page-settings.c:220
 msgid "Find Profiles Automatically"
 msgstr ""
 
-#: src/ui/page-settings.c:209
+#: src/ui/page-settings.c:224
 msgid "Discovery-Only Relays"
 msgstr ""
 
-#: src/ui/page-settings.c:210
+#: src/ui/page-settings.c:225
 msgid "Profiles, public relay lists, and messaging relay lists"
 msgstr ""
 
-#: src/ui/page-settings.c:214
+#: src/ui/page-settings.c:229
 msgid "Discovery relay URLs, one per line"
 msgstr ""
 
-#: src/ui/page-settings.c:219
+#: src/ui/page-settings.c:234
 msgid "Save Discovery Relays"
 msgstr ""
 
-#: src/ui/page-settings.c:219
+#: src/ui/page-settings.c:234
 msgid "Restore Defaults"
 msgstr ""
 
-#: src/ui/page-settings.c:234
+#: src/ui/page-settings.c:249
 msgid "Privacy and Network"
 msgstr ""
 
-#: src/ui/page-settings.c:236
+#: src/ui/page-settings.c:251
 msgid "Load Profile Images"
 msgstr ""
 
-#: src/ui/page-settings.c:237
+#: src/ui/page-settings.c:252
 msgid "Fetch avatars and banners from the web addresses in profiles"
 msgstr ""
 
@@ -3047,7 +3047,7 @@ msgstr ""
 msgid "Recovery Phrase"
 msgstr ""
 
-#: src/ui/page-identity-detail.c:310 src/ui/page-identity-detail.c:352
+#: src/ui/page-identity-detail.c:310 src/ui/page-identity-detail.c:353
 msgid "Confirm _Backup"
 msgstr ""
 
@@ -3080,46 +3080,46 @@ msgstr ""
 msgid "Backup Passphrase"
 msgstr ""
 
-#: src/ui/page-identity-detail.c:351
+#: src/ui/page-identity-detail.c:352
 msgid "I saved this backup and its passphrase"
 msgstr ""
 
-#: src/ui/page-identity-detail.c:366
+#: src/ui/page-identity-detail.c:367
 msgid "_Retry"
 msgstr ""
 
-#: src/ui/page-identity-detail.c:387
+#: src/ui/page-identity-detail.c:389
 msgid "Copy Secret Key?"
 msgstr ""
 
-#: src/ui/page-identity-detail.c:387
+#: src/ui/page-identity-detail.c:389
 msgid "Create Replacement Identity?"
 msgstr ""
 
-#: src/ui/page-identity-detail.c:388
+#: src/ui/page-identity-detail.c:390
 msgid ""
 "Anyone with this key controls your identity. Clipboard managers may keep a "
 "copy"
 msgstr ""
 
-#: src/ui/page-identity-detail.c:388
+#: src/ui/page-identity-detail.c:390
 msgid ""
 "Both identities stay on this device. Apps keep using this one until changed"
 msgstr ""
 
-#: src/ui/page-identity-detail.c:389
+#: src/ui/page-identity-detail.c:391
 msgid "Copy _Key"
 msgstr ""
 
-#: src/ui/page-identity-detail.c:389
+#: src/ui/page-identity-detail.c:391
 msgid "Create _Identity"
 msgstr ""
 
-#: src/ui/page-identity-detail.c:422
+#: src/ui/page-identity-detail.c:424
 msgid "Management is locked"
 msgstr ""
 
-#: src/ui/page-identity-detail.c:438
+#: src/ui/page-identity-detail.c:440
 msgid "Signer unavailable. Open Grotto and retry"
 msgstr ""
 
@@ -3387,32 +3387,27 @@ msgid ""
 "pairing links, then try again."
 msgstr ""
 
-#: src/ui/sheets/sheet-qr-display.c:55
-msgid "Cop_y to Clipboard"
-msgstr "کپی به کلیپ‌بورد(_y)"
-
-#. Show brief feedback
-#: src/ui/sheets/sheet-qr-display.c:77
+#: src/ui/sheets/sheet-qr-display.c:79
 msgid "Copied"
 msgstr ""
 
-#: src/ui/sheets/sheet-qr-display.c:161
+#: src/ui/sheets/sheet-qr-display.c:163
 msgid ""
 "Use this link once within five minutes. Closing this window cancels it. "
 "Sharing it does not grant access; you review permissions before connecting."
 msgstr ""
 
-#: src/ui/sheets/sheet-qr-display.c:291
+#: src/ui/sheets/sheet-qr-display.c:293
 msgid "Anyone with this code controls your identity. Keep it private."
 msgstr ""
 
-#: src/ui/sheets/sheet-qr-display.c:295
+#: src/ui/sheets/sheet-qr-display.c:297
 msgid ""
 "Keep this backup and its passphrase safe. You need both to restore your "
 "identity."
 msgstr ""
 
-#: src/ui/sheets/sheet-qr-display.c:314
+#: src/ui/sheets/sheet-qr-display.c:316
 msgid "Share Public Key"
 msgstr ""
 

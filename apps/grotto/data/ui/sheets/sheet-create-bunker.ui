@@ -47,6 +47,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 <child>
                   <object class="AdwEntryRow" id="entry_name">
                     <property name="title" translatable="yes">App Name (Optional)</property>
+                    <property name="activates-default">true</property>
                   </object>
                 </child>
               </object>
