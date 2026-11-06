@@ -55,6 +55,8 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     <child>
                       <object class="GtkLabel" id="lbl_title">
                         <property name="label" translatable="yes">Management Locked</property>
+                        <property name="wrap">true</property>
+                        <property name="justify">2</property>
                         <accessibility>
                           <property name="description" translatable="yes">Title indicating the current lock state</property>
                         </accessibility>
