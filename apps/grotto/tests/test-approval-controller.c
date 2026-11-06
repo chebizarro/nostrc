@@ -1,6 +1,7 @@
 #include "approval-controller.h"
 #include "nostr-kinds.h"
 #include "nostrc-test-bus.h"
+#include "nostrc-test-gdk-frame.h"
 #include <string.h>
 
 typedef struct {
@@ -13,7 +14,7 @@ typedef struct {
   GVariant *delayed_rows;
   guint registration[4], lists, infos, decisions, messages, notification_count, last_notification,
       notification_activated;
-  gchar *notification_title, *notification_body;
+  gchar *notification_title, *notification_body, *notification_icon;
   gchar **notification_actions;
   gboolean delay, delay_info, delayed_is_info, fail_decision, fail_list, reconciled_ok;
   guint status_version, reconciles;
@@ -228,6 +229,7 @@ static void teardown(Fixture *f, gconstpointer data) {
   g_free(f->last_message);
   g_free(f->notification_title);
   g_free(f->notification_body);
+  g_free(f->notification_icon);
   g_strfreev(f->notification_actions);
   g_ptr_array_unref(f->rows);
   g_object_unref(f->app);
@@ -470,6 +472,12 @@ static void desktop_method(GDBusConnection *bus, const char *sender, const char 
     g_dbus_method_invocation_return_value(invocation, NULL);
   else if (!strcmp(name, "Notify")) {
     const char *title, *body;
+    const char *icon;
+    g_variant_get_child(args, 2, "&s", &icon);
+    /* GIO's FDO backend sends GNotification icons in the image-path hint. */
+    g_autoptr(GVariant) hints = g_variant_get_child_value(args, 6);
+    g_variant_lookup(hints, "image-path", "&s", &icon);
+    g_free(f->notification_icon); f->notification_icon = g_strdup(icon);
     g_variant_get_child(args, 3, "&s", &title);
     g_variant_get_child(args, 4, "&s", &body);
     g_free(f->notification_title);
@@ -494,8 +502,16 @@ static void notification_action(GSimpleAction *action, GVariant *parameter, gpoi
   g_assert_cmpstr(g_variant_get_string(parameter, NULL), ==, "");
   ((Fixture *)data)->notification_activated++;
 }
+static const char *test_binary_path;
+static void run_gui_peer(Fixture *f, const char *mode, const char *principal, const char *expected);
+static GtkWidget *find_pending_row(GtkWidget *widget) {
+  if (ADW_IS_ACTION_ROW(widget) && g_object_get_data(G_OBJECT(widget), "request-id")) return widget;
+  for (GtkWidget *child = gtk_widget_get_first_child(widget); child; child = gtk_widget_get_next_sibling(child)) {
+    GtkWidget *found = find_pending_row(child); if (found) return found;
+  }
+  return NULL;
+}
 static void notifications(Fixture *f, gconstpointer data) {
-  (void)data;
   static const char desktop_xml[] =
       "<node><interface name='org.freedesktop.Notifications'>"
       "<method name='Notify'><arg type='s' direction='in'/><arg type='u' direction='in'/><arg "
@@ -532,14 +548,25 @@ static void notifications(Fixture *f, gconstpointer data) {
   g_variant_dict_insert(&dict, "reason", "s", "private reason");
   gboolean management = !g_strcmp0(data, "management");
   gboolean executable = data && g_str_has_prefix(data, "exe:");
+  gboolean scoped = data && strstr(data, ";exe:");
+  gboolean unmatched_id = executable && strstr(data, "unknown-app-id");
+  gboolean website = data && g_str_has_prefix(data, "https://");
+  gboolean desktop = !g_strcmp0(data, "exe:/usr/bin/true") || !g_strcmp0(data, "exe:/usr/bin/false") ||
+    !g_strcmp0(data, "flatpak:org.nostr.GrottoTest");
   if (data) {
     g_variant_dict_insert(&dict, "verified", "b", TRUE);
     g_variant_dict_insert(&dict, "principal", "s", (const char *)data);
     g_variant_dict_insert(&dict, "transport", "s",
                           g_str_has_prefix(data, "nip46:") ? "NIP46" : "DBUS");
-    g_variant_dict_insert(&dict, "app_id", "s", "");
+    g_variant_dict_insert(&dict, "app_id", "s", unmatched_id ? "org.nostr.UnknownApp" : g_str_has_prefix(data, "app:") ? (const char *)data + 4 : "");
     if (executable)
       g_variant_dict_insert(&dict, "exe", "s", (const char *)data + 4);
+    if (website) {
+      g_variant_dict_insert(&dict, "principal_kind", "s", "website");
+      g_variant_dict_insert(&dict, "app_id", "s", (const char *)data);
+      g_variant_dict_insert(&dict, "exe", "s", "/usr/bin/true");
+      g_variant_dict_insert(&dict, "via", "s", "exe:/usr/bin/true");
+    }
     if (management) {
       g_variant_dict_insert(&dict, "transport", "s", "MANAGEMENT");
       g_variant_dict_insert(&dict, "operation", "s", "self_test");
@@ -550,7 +577,10 @@ static void notifications(Fixture *f, gconstpointer data) {
   WAIT(f->notification_body && strstr(f->notification_body,
       management ? "Check identity" : "Text note"));
   g_assert_cmpstr(f->notification_title, ==,
-      management ? "Grotto" : executable ? "client" : data && g_str_has_prefix(data, "nip46:") ? "Remote NIP-46 client" : "Unverified app");
+      management ? "Grotto" : website ? (const char *)data : desktop ? "Friendly Test App" : executable || scoped ? "client" : data && g_str_has_prefix(data, "nip46:") ? "Remote NIP-46 client" : "Unverified app");
+  g_assert_cmpstr(f->notification_icon, ==, desktop || website ? "grotto-test-app" : executable || scoped ? "application-x-executable-symbolic" : "");
+  if (website) g_assert_nonnull(strstr(f->notification_body, "Via Friendly Test App · exe:/usr/bin/true"));
+  run_gui_peer(f, "--pending-worker", data ? data : "org.test.Client", f->notification_title);
   gboolean review = FALSE, deny = FALSE;
   for (guint i = 1; f->notification_actions[i - 1] && f->notification_actions[i]; i += 2) {
     review |= !strcmp(f->notification_actions[i], "Review");
@@ -559,8 +589,11 @@ static void notifications(Fixture *f, gconstpointer data) {
   }
   g_assert_true(review);
   g_assert_true(deny);
-  g_assert_null(strstr(f->notification_body, "private"));
-  if (data) {
+  g_assert_null(strstr(f->notification_body, "private reason"));
+  if (executable || scoped || (desktop && !website)) {
+    g_assert_nonnull(strstr(f->notification_body, data));
+    g_assert_nonnull(strstr(f->notification_body, "Desktop label (unverified)"));
+  } else if (data && !website) {
     g_assert_null(strstr(f->notification_title, data));
     g_assert_null(strstr(f->notification_body, data));
   }
@@ -573,6 +606,7 @@ static void notifications(Fixture *f, gconstpointer data) {
                                 "ActiveChanged", g_variant_new("(b)", TRUE), NULL);
   WAIT(g_strcmp0(f->notification_body, "Grotto needs your approval") == 0);
   g_assert_cmpstr(f->notification_title, ==, "Grotto");
+  g_assert_cmpstr(f->notification_icon, ==, "");
   /* Action delivery is an ACK barrier for Gio's asynchronous notification
    * backend, not a sleep. Review removes the summary, not either request. */
   g_dbus_connection_emit_signal(f->server, NULL, "/org/freedesktop/Notifications",
@@ -581,9 +615,111 @@ static void notifications(Fixture *f, gconstpointer data) {
   WAIT(f->notification_activated > 0);
   g_assert_cmpuint(pending(f), ==, 2);
 }
+static GnostrApprovalDialog *visible_review(Fixture *f) {
+  for (GList *w = gtk_application_get_windows(GTK_APPLICATION(f->app)); w; w = w->next) {
+    AdwDialog *dialog = ADW_IS_WINDOW(w->data) ? adw_window_get_visible_dialog(w->data) : NULL;
+    if (dialog && GNOSTR_IS_APPROVAL_DIALOG(dialog)) return GNOSTR_APPROVAL_DIALOG(dialog);
+  }
+  return NULL;
+}
+static void dialog_principal(Fixture *f, gconstpointer data) {
+  const char *principal = (const char *)data + strlen("dialog:");
+  g_autoptr(GVariant) base = request("principal-review", 120);
+  GVariantDict dict; g_variant_dict_init(&dict, base);
+  g_variant_dict_insert(&dict, "principal", "s", principal);
+  g_variant_dict_insert(&dict, "app_id", "s", "org.nostr.GrottoTest");
+  g_variant_dict_insert(&dict, "verified", "b", TRUE);
+  g_variant_dict_insert(&dict, "principal_kind", "s", g_str_has_prefix(principal, "claimed:") ? "claimed" : "executable");
+  g_variant_dict_insert(&dict, "preview", "s", "{\"kind\":1,\"content\":\"public\",\"tags\":[]}");
+  g_ptr_array_add(f->rows, g_variant_ref_sink(g_variant_dict_end(&dict)));
+  run_gui_peer(f, "--review-worker", principal, "");
+}
+static int presentation_worker(const char *mode, const char *principal, const char *expected) {
+  /* Like approval-integration's GUI peer, GTK's process-global desktop proxies
+   * live only in this short-lived child on the coordinator's private bus. */
+  adw_init();
+  Fixture state = {0}; Fixture *f = &state;
+  gboolean review = !strcmp(mode, "--review-worker");
+  f->app = review ? G_APPLICATION(gtk_application_new("org.test.PresentationPeer", G_APPLICATION_NON_UNIQUE)) :
+    g_application_new("org.test.PresentationPeer", G_APPLICATION_NON_UNIQUE);
+  g_autoptr(GError) error = NULL;
+  f->client = g_dbus_connection_new_for_address_sync(g_getenv("DBUS_SESSION_BUS_ADDRESS"),
+    G_DBUS_CONNECTION_FLAGS_AUTHENTICATION_CLIENT | G_DBUS_CONNECTION_FLAGS_MESSAGE_BUS_CONNECTION, NULL, NULL, &error);
+  g_assert_no_error(error); g_assert_nonnull(f->client);
+  if (review) { g_assert_true(g_application_register(f->app, NULL, &error)); g_assert_no_error(error); }
+  f->controller = grotto_approval_controller_new(f->app, f->client);
+  WAIT(ready(f));
+  if (!review) {
+    g_autoptr(GtkWidget) group = g_object_ref_sink(grotto_approval_pending_group_new(f->controller));
+    GtkWidget *row = find_pending_row(group); g_assert_nonnull(row);
+    g_assert_true(g_str_has_prefix(adw_preferences_row_get_title(ADW_PREFERENCES_ROW(row)), expected));
+    const char *subtitle = adw_action_row_get_subtitle(ADW_ACTION_ROW(row));
+    if (g_str_has_prefix(principal, "https://")) g_assert_nonnull(strstr(subtitle, "Via Friendly Test App · exe:/usr/bin/true"));
+    else if (g_str_has_prefix(principal, "exe:") || g_str_has_prefix(principal, "flatpak:") || strstr(principal, ";exe:")) g_assert_nonnull(strstr(subtitle, principal));
+  } else {
+    gboolean claim = (g_str_has_prefix(principal, "app:") && !strstr(principal, ";exe:")) || g_str_has_prefix(principal, "claimed:");
+    grotto_approval_controller_review(f->controller, "principal-review");
+    WAIT(visible_review(f));
+    GnostrApprovalDialog *dialog = visible_review(f);
+    GtkLabel *headline = GTK_LABEL(gtk_widget_get_template_child(GTK_WIDGET(dialog), GNOSTR_TYPE_APPROVAL_DIALOG, "header_title"));
+    GtkLabel *verification = GTK_LABEL(gtk_widget_get_template_child(GTK_WIDGET(dialog), GNOSTR_TYPE_APPROVAL_DIALOG, "label_verified"));
+    if (claim) {
+      g_assert_nonnull(strstr(gtk_label_get_text(verification), "Unverified"));
+      g_assert_null(strstr(gtk_label_get_text(verification), "Verified local app"));
+      g_assert_null(strstr(gtk_label_get_text(headline), "Friendly Test App"));
+    } else {
+      g_assert_nonnull(strstr(gtk_label_get_text(headline), principal));
+      g_assert_null(strstr(gtk_label_get_text(headline), "Friendly Test App"));
+      g_assert_cmpstr(gtk_label_get_text(verification), ==, "Verified local app");
+    }
+    /* Rendering never rewrites the daemon snapshot or its principal/policy key. */
+    g_autoptr(GrottoApprovalRequest) row = g_list_model_get_item(grotto_approval_controller_get_pending(f->controller), 0);
+    gboolean verified = FALSE;
+    g_variant_lookup(grotto_approval_request_get_info(row), "verified", "b", &verified);
+    g_assert_true(verified);
+  }
+  grotto_approval_controller_stop(f->controller);
+  WAIT(grotto_approval_controller_get_holds(f->controller) == 0);
+  g_clear_object(&f->controller);
+  if (review) g_signal_emit_by_name(f->app, "shutdown");
+  g_clear_object(&f->app); g_clear_object(&f->client);
+  return 0;
+}
+typedef struct { gboolean done, ok; GError *error; } PeerResult;
+static void peer_done(GObject *source, GAsyncResult *result, gpointer data) {
+  PeerResult *peer = data;
+  peer->ok = g_subprocess_wait_check_finish(G_SUBPROCESS(source), result, &peer->error);
+  peer->done = TRUE;
+}
+static void run_gui_peer(Fixture *f, const char *mode, const char *principal, const char *expected) {
+  g_autoptr(GSubprocessLauncher) launcher = g_subprocess_launcher_new(G_SUBPROCESS_FLAGS_STDERR_MERGE);
+  g_autofree char *log = g_build_filename(nostrc_test_bus_get_dir(f->bus), "presentation-peer.log", NULL);
+  g_subprocess_launcher_set_stdout_file_path(launcher, log);
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GSubprocess) process = g_subprocess_launcher_spawn(launcher, &error,
+    test_binary_path, mode, principal, expected, NULL);
+  g_assert_no_error(error); g_assert_nonnull(process);
+  PeerResult result = {0};
+  g_subprocess_wait_check_async(process, NULL, peer_done, &result);
+  WAIT(result.done);
+  nostrc_test_bus_dump_log(f->bus, "presentation-peer.log");
+  g_assert_no_error(result.error); g_assert_true(result.ok);
+}
 #endif
 int main(int argc, char **argv) {
+#ifndef __APPLE__
+  const char *worker_mode = argc == 4 && (!strcmp(argv[1], "--review-worker") || !strcmp(argv[1], "--pending-worker")) ? argv[1] : NULL;
+  const char *principal = worker_mode ? argv[2] : NULL, *expected = worker_mode ? argv[3] : NULL;
+  test_binary_path = argv[0];
+  if (worker_mode) { argc = 1; argv[1] = NULL; }
+#endif
   g_test_init(&argc, &argv, NULL);
+#ifndef __APPLE__
+  if (worker_mode) {
+    nostrc_test_tolerate_gdk_frame_warning();
+    return presentation_worker(worker_mode, principal, expected);
+  }
+#endif
 #define ADD(name, fn)                                                                              \
   g_test_add("/signer/approval-controller/" name, Fixture, NULL, setup, fn, teardown)
   ADD("dedup-holds", dedup);
@@ -599,12 +735,38 @@ int main(int argc, char **argv) {
   ADD("missing-preview-blocks-approve", missing_preview_blocks_approve);
 #undef ADD
 #ifndef __APPLE__
+  g_test_add("/signer/approval-controller/dialog-executable-principal", Fixture,
+             "dialog:exe:/usr/bin/true", setup, dialog_principal, teardown);
+  g_test_add("/signer/approval-controller/dialog-scope-principal", Fixture,
+             "dialog:app:org.nostr.GrottoTest;exe:/opt/unrelated/client", setup, dialog_principal, teardown);
+  g_test_add("/signer/approval-controller/dialog-unattested-app-id", Fixture,
+             "dialog:app:org.nostr.GrottoTest", setup, dialog_principal, teardown);
+  g_test_add("/signer/approval-controller/dialog-claimed-app-id", Fixture,
+             "dialog:claimed:org.nostr.GrottoTest", setup, dialog_principal, teardown);
   g_test_add("/signer/approval-controller/notifications", Fixture, NULL, setup, notifications,
              teardown);
   g_test_add("/signer/approval-controller/notifications-management", Fixture,
              "management", setup, notifications, teardown);
   g_test_add("/signer/approval-controller/notifications-nameless-executable", Fixture,
              "exe:/home/alice/private-directory/client", setup, notifications, teardown);
+  g_test_add("/signer/approval-controller/notifications-desktop-executable", Fixture,
+             "exe:/usr/bin/true", setup, notifications, teardown);
+  g_test_add("/signer/approval-controller/notifications-unmatched-id-basename", Fixture,
+             "exe:/opt/unknown-app-id/client", setup, notifications, teardown);
+  g_test_add("/signer/approval-controller/notifications-scope-mismatched-executable", Fixture,
+             "app:org.nostr.GrottoTest;exe:/opt/unrelated/client", setup, notifications, teardown);
+  g_test_add("/signer/approval-controller/notifications-unattested-app-id", Fixture,
+             "app:org.nostr.GrottoTest", setup, notifications, teardown);
+  g_test_add("/signer/approval-controller/notifications-claimed-app-id", Fixture,
+             "claimed:org.nostr.GrottoTest", setup, notifications, teardown);
+  g_test_add("/signer/approval-controller/notifications-flatpak-id", Fixture,
+             "flatpak:org.nostr.GrottoTest", setup, notifications, teardown);
+  g_test_add("/signer/approval-controller/notifications-same-label-other-principal", Fixture,
+             "exe:/usr/bin/false", setup, notifications, teardown);
+  g_test_add("/signer/approval-controller/notifications-website-first", Fixture,
+             "https://first.example", setup, notifications, teardown);
+  g_test_add("/signer/approval-controller/notifications-website-second", Fixture,
+             "https://second.example", setup, notifications, teardown);
   g_test_add("/signer/approval-controller/notifications-nameless-nip46", Fixture,
              "nip46:79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798", setup,
              notifications, teardown);

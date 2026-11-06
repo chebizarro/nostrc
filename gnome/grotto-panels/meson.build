@@ -19,7 +19,7 @@ configure_file(output: 'grotto-panels-version.h', configuration: version_data,
   install_dir: get_option('includedir') / 'grotto-panels-0')
 inc = include_directories('include/grotto-panels-0', '.')
 resources = import('gnome').compile_resources('grotto-panels-resources', 'data/grotto-panels.gresource.xml', source_dir: 'data', export: false)
-panels = shared_library('grotto-panels-0', resources, 'src/grotto-apps-panel.c', 'src/grotto-app-detail.c', 'src/grotto-activity-panel.c', 'src/grotto-remote-panel.c', 'src/grotto-identity-panel.c', 'src/grotto-profile-view.c', 'src/grotto-panel.c', 'src/grotto-panels-service.c', 'src/grotto-panels-validation.c',
+panels = shared_library('grotto-panels-0', resources, 'src/grotto-app-info.c', 'src/grotto-apps-panel.c', 'src/grotto-app-detail.c', 'src/grotto-activity-panel.c', 'src/grotto-remote-panel.c', 'src/grotto-identity-panel.c', 'src/grotto-profile-view.c', 'src/grotto-panel.c', 'src/grotto-panels-service.c', 'src/grotto-panels-validation.c',
   include_directories: inc, dependencies: [gtk_dep, adw_dep, intl_dep],
   c_args: ['-DGROTTO_PANELS_COMPILATION', '-DGETTEXT_PACKAGE="grotto-panels"',
     '-DGROTTO_PANELS_LOCALEDIR="@0@"'.format(get_option('prefix') / get_option('localedir'))], gnu_symbol_visibility: 'hidden',
@@ -34,16 +34,26 @@ if get_option('tests')
   python = import('python').find_installation('python3')
   clang = find_program('clang')
   admission = executable('test-grotto-panels-admission', 'tests/test-admission.c', 'tests/fake-service.c', dependencies: panels_dep)
+  smoke_deps = [panels_dep]
+  if host_machine.system() == 'linux'
+    smoke_deps += meson.get_compiler('c').find_library('dl')
+  endif
   smoke = executable('test-grotto-panels-smoke', 'tests/test-smoke-host.c', 'tests/test-management-panels.c', 'tests/test-profile-panel.c', 'tests/fake-service.c',
-    include_directories: include_directories('../../tests/common'), dependencies: panels_dep)
+    include_directories: include_directories('../../tests/common'), dependencies: smoke_deps)
   if host_machine.system() == 'linux'
     runner = find_program('dbus-run-session')
     xvfb = find_program('xvfb-run')
+    test('management-panels', runner, args: ['--', xvfb.full_path(), '-a', smoke.full_path(), '-p', '/panels/management-real-widgets'],
+      depends: smoke, suite: 'grotto-panels', timeout: 30, env: ['XDG_DATA_DIRS=' + meson.current_source_dir() / 'tests/fixtures' + ':/usr/local/share:/usr/share', 'G_DEBUG=fatal-warnings', 'GTK_A11Y=test',
+        'LSAN_OPTIONS=suppressions=' + meson.current_source_dir() / 'tests/lsan.supp' + ':print_suppressions=1'])
     test('smoke-host', runner, args: ['--', xvfb.full_path(), '-a', smoke.full_path()],
-      depends: smoke, suite: 'grotto-panels', timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GTK_A11Y=test',
+      depends: smoke, suite: 'grotto-panels', timeout: 30, env: ['XDG_DATA_DIRS=' + meson.current_source_dir() / 'tests/fixtures' + ':/usr/local/share:/usr/share', 'G_DEBUG=fatal-warnings', 'GTK_A11Y=test',
         'LSAN_OPTIONS=suppressions=' + meson.current_source_dir() / 'tests/lsan.supp' + ':print_suppressions=1'])
   else
-    test('smoke-host', smoke, suite: 'grotto-panels', timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GTK_A11Y=test',
+    test('management-panels', smoke, args: ['-p', '/panels/management-real-widgets'],
+      suite: 'grotto-panels', timeout: 30, env: ['XDG_DATA_DIRS=' + meson.current_source_dir() / 'tests/fixtures' + ':/usr/local/share:/usr/share', 'G_DEBUG=fatal-warnings', 'GTK_A11Y=test',
+        'LSAN_OPTIONS=suppressions=' + meson.current_source_dir() / 'tests/lsan.supp' + ':print_suppressions=1'])
+    test('smoke-host', smoke, suite: 'grotto-panels', timeout: 30, env: ['XDG_DATA_DIRS=' + meson.current_source_dir() / 'tests/fixtures' + ':/usr/local/share:/usr/share', 'G_DEBUG=fatal-warnings', 'GTK_A11Y=test',
         'LSAN_OPTIONS=suppressions=' + meson.current_source_dir() / 'tests/lsan.supp' + ':print_suppressions=1'])
   endif
   test('no-secrets', python, args: [files('tests/test-boundaries.py'), meson.current_source_dir(), panels.full_path(),

@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: grotto 0.1.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-06 01:50-0800\n"
+"POT-Creation-Date: 2026-11-06 03:01-0800\n"
 "PO-Revision-Date: 2024-01-23 00:00+0000\n"
 "Last-Translator: \n"
 "Language-Team: Persian\n"
@@ -768,85 +768,106 @@ msgstr ""
 msgid "Authorize Nostr app requests securely"
 msgstr ""
 
-#: src/approval-controller.c:166 src/approval-controller.c:172
-#: src/ui/approval_dialog.c:549 src/ui/approval_dialog.c:582
-#: src/ui/approval_dialog.c:585 src/ui/approval_dialog.c:1110
+#: src/approval-controller.c:177
+msgid "Remote NIP-46 client"
+msgstr ""
+
+#: src/approval-controller.c:178 src/ui/approval_dialog.c:549
+#: src/ui/approval_dialog.c:582 src/ui/approval_dialog.c:585
+#: src/ui/approval_dialog.c:1110
 msgid "Unverified app"
 msgstr ""
 
-#: src/approval-controller.c:178
+#: src/approval-controller.c:194
+#, c-format
+msgid "Via %s · %s"
+msgstr ""
+
+#: src/approval-controller.c:196
+#, c-format
+msgid "Desktop label (unverified) · %s"
+msgstr ""
+
+#: src/approval-controller.c:209
 #, c-format
 msgid "Sign %s"
 msgstr ""
 
-#: src/approval-controller.c:180
+#: src/approval-controller.c:211
 msgid "Check identity"
 msgstr ""
 
-#: src/approval-controller.c:182
+#: src/approval-controller.c:213
 msgid "Connect app"
 msgstr ""
 
-#: src/approval-controller.c:184
+#: src/approval-controller.c:215
 msgid "Share public key"
 msgstr ""
 
-#: src/approval-controller.c:186
+#: src/approval-controller.c:217
 msgid "Encrypt message"
 msgstr ""
 
-#: src/approval-controller.c:188
+#: src/approval-controller.c:219
 msgid "Decrypt message"
 msgstr ""
 
-#: src/approval-controller.c:189
+#: src/approval-controller.c:220
 msgid "Review signing request"
 msgstr ""
 
-#: src/approval-controller.c:227
+#: src/approval-controller.c:266 src/approval-controller.c:1275
+#, c-format
+msgid ""
+"%s\n"
+"%s"
+msgstr ""
+
+#: src/approval-controller.c:269
 #, c-format
 msgid ""
 "%s\n"
 "called “%s”"
 msgstr ""
 
-#: src/approval-controller.c:228 src/approval-controller.c:244
+#: src/approval-controller.c:270 src/approval-controller.c:286
 msgid "Grotto needs your approval"
 msgstr ""
 
-#: src/approval-controller.c:232 src/approval-controller.c:247
+#: src/approval-controller.c:274 src/approval-controller.c:289
 msgid "Review"
 msgstr ""
 
-#: src/approval-controller.c:233
+#: src/approval-controller.c:275
 msgid "Deny Once"
 msgstr ""
 
-#: src/approval-controller.c:243
+#: src/approval-controller.c:285
 #, c-format
 msgid "%u request waiting for review"
 msgid_plural "%u requests waiting for review"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/approval-controller.c:1218
+#: src/approval-controller.c:1267
 #, c-format
 msgid "%s · %s"
 msgstr ""
 
-#: src/approval-controller.c:1222
+#: src/approval-controller.c:1271
 msgid "%"
 msgstr ""
 
-#: src/approval-controller.c:1224
+#: src/approval-controller.c:1274
 msgid "Request details unavailable or loading"
 msgstr ""
 
-#: src/approval-controller.c:1236
+#: src/approval-controller.c:1288
 msgid "Pending Requests"
 msgstr ""
 
-#: src/approval-controller.c:1237
+#: src/approval-controller.c:1289
 msgid "Notifications unavailable. Requests remain here for review."
 msgstr ""
 

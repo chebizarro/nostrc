@@ -15,6 +15,18 @@
 
 G_BEGIN_DECLS
 
+/* Warm the desktop catalog on the GUI main context before rendering rows.
+ * Included in unreleased 0.1.0; idempotent and cosmetic only. */
+GROTTO_PANELS_API void grotto_panels_app_info_prepare(void);
+
+/* Cosmetic desktop metadata only, never identity/authorization evidence.
+ * Uses a process-local indexed desktop catalog, refreshed by GAppInfoMonitor.
+ * Returns a newly allocated cosmetic name; label may be a user-assigned name.
+ * Callers must display the principal separately; this does not attest a name.
+ * If icon is non-NULL, returns an owned desktop icon or generic app fallback.
+ * Included in unreleased 0.1.0. No public structure or existing ABI is changed. */
+GROTTO_PANELS_API char *grotto_panels_app_display_info(const char *principal, const char *label, GIcon **icon);
+
 /* Only public display metadata. No opaque daemon dictionaries enter a panel.
  * Strings are untrusted plain text; state/reason/access_policy are daemon facts,
  * not inputs to a panel-side permission evaluator. All strings are copied. */
