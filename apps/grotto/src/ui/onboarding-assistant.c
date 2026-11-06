@@ -75,8 +75,8 @@ static void navigation(OnboardingAssistant *self) {
   gtk_widget_set_visible(GTK_WIDGET(self->btn_back), self->state != ONBOARDING_WELCOME && !self->identity_stored);
   gtk_widget_set_sensitive(GTK_WIDGET(self->btn_skip), !self->busy);
   gtk_widget_set_visible(GTK_WIDGET(self->btn_skip), self->state != ONBOARDING_READY);
-  gtk_button_set_label(self->btn_skip, !self->identity_stored ? _("Skip Setup") :
-      self->state == ONBOARDING_BACKUP ? _("Finish Without Backup") : _("Finish Later"));
+  gtk_button_set_label(self->btn_skip, !self->identity_stored ? _("_Skip Setup") :
+      self->state == ONBOARDING_BACKUP ? _("Finish _Without Backup") : _("Finish _Later"));
   gtk_widget_set_tooltip_text(GTK_WIDGET(self->btn_skip), self->identity_stored ?
       _("The identity is saved on this device") : NULL);
   gtk_widget_set_sensitive(GTK_WIDGET(self->btn_next), !self->busy && self->capabilities_ready &&

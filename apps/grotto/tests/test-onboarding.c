@@ -252,7 +252,7 @@ static void imported_completion_persists(Fixture *f, gconstpointer data) {
   if (!strcmp(exit, "skip")) {
     g_dbus_method_invocation_return_dbus_error(f->test, "org.nostr.Signer.Error.ApprovalDenied", "denied");
     g_clear_object(&f->test); wait_state(f, ONBOARDING_TEST_FAILED);
-    g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(child(f, "btn_skip"))), ==, "Finish Later");
+    g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(child(f, "btn_skip"))), ==, "Finish _Later");
     click(f, "btn_skip");
     g_assert_cmpuint(f->finished, ==, 1); g_assert_false(f->verified);
   } else {
@@ -362,7 +362,7 @@ static void management_warning_handoff(Fixture *f, gconstpointer data) {
   AdwWindow *window = ADW_WINDOW(adw_window_new()); g_object_ref(window); gtk_window_set_default_size(GTK_WINDOW(window), 560, 640); gtk_window_present(GTK_WINDOW(window));
   gtk_window_set_transient_for(GTK_WINDOW(f->assistant), GTK_WINDOW(window));
   if (backup) {
-    g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(child(f, "btn_skip"))), ==, "Finish Without Backup");
+    g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(child(f, "btn_skip"))), ==, "Finish _Without Backup");
     click(f, "btn_skip");
   } else click(f, "btn_next");
   g_assert_false(f->verified); g_assert_cmpuint(f->finished, ==, 1);

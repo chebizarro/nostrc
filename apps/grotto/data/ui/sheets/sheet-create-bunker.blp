@@ -8,18 +8,18 @@ template $SheetCreateBunker: Adw.Dialog {
       show-start-title-buttons: false; show-end-title-buttons: false;
       [start] Button btn_cancel { label: _("_Cancel"); use-underline: true; }
     }
-    Adw.PreferencesPage {
+    content: Adw.PreferencesPage {
       description: _("Choose the identity to connect. You'll review the app before it can sign.");
       Adw.PreferencesGroup {
         Adw.ComboRow identities { title: _("Identity"); }
         Adw.EntryRow entry_name { title: _("App Name (Optional)"); }
       }
-      Adw.PreferencesGroup {
-        Label status { label: _("Checking remote signing…"); wrap: true; xalign: 0; }
-      }
-      Adw.PreferencesGroup {
-        Button btn_create { label: _("Create _Link"); use-underline: true; sensitive: false; halign: center; styles ["suggested-action", "pill"] }
-      }
+    };
+    [bottom] Box {
+      orientation: vertical; spacing: 12;
+      margin-start: 20; margin-end: 20; margin-top: 12; margin-bottom: 20;
+      Label status { label: _("Checking remote signing…"); wrap: true; xalign: 0; }
+      Button btn_create { label: _("Create _Link"); use-underline: true; sensitive: false; halign: center; styles ["suggested-action", "pill"] }
     }
   }
 }

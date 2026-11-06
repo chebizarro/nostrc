@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: grotto 0.1.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-05 22:37-0800\n"
+"POT-Creation-Date: 2026-11-05 22:50-0800\n"
 "PO-Revision-Date: 2024-01-23 00:00+0000\n"
 "Last-Translator: \n"
 "Language-Team: Indonesian\n"
@@ -381,7 +381,7 @@ msgstr ""
 msgid "_Back"
 msgstr "_Kembali"
 
-#: data/ui/onboarding-assistant.ui:454
+#: data/ui/onboarding-assistant.ui:454 src/ui/onboarding-assistant.c:78
 msgid "_Skip Setup"
 msgstr ""
 
@@ -653,11 +653,11 @@ msgstr ""
 msgid "App Name (Optional)"
 msgstr ""
 
-#: data/ui/sheets/sheet-create-bunker.ui:47
+#: data/ui/sheets/sheet-create-bunker.ui:55
 msgid "Checking remote signing…"
 msgstr ""
 
-#: data/ui/sheets/sheet-create-bunker.ui:58
+#: data/ui/sheets/sheet-create-bunker.ui:62
 msgid "Create _Link"
 msgstr ""
 
@@ -674,7 +674,7 @@ msgstr "_Tutup"
 msgid "Scan with a compatible app"
 msgstr ""
 
-#: data/ui/sheets/sheet-qr-display.ui:63
+#: data/ui/sheets/sheet-qr-display.ui:63 src/ui/sheets/sheet-qr-display.c:55
 msgid "Cop_y to Clipboard"
 msgstr "_Salin ke papan klip"
 
@@ -690,7 +690,7 @@ msgstr ""
 msgid "Scan a secret key or encrypted backup"
 msgstr ""
 
-#: data/ui/sheets/sheet-qr-scanner.ui:58
+#: data/ui/sheets/sheet-qr-scanner.ui:58 src/ui/sheets/sheet-qr-scanner.c:170
 msgid "_Start Camera"
 msgstr ""
 
@@ -706,7 +706,7 @@ msgstr ""
 msgid "QR Code Scanned"
 msgstr ""
 
-#: data/ui/sheets/sheet-qr-scanner.ui:131
+#: data/ui/sheets/sheet-qr-scanner.ui:131 src/ui/sheets/sheet-qr-scanner.c:519
 msgid "_Import Key"
 msgstr ""
 
@@ -3076,16 +3076,12 @@ msgstr ""
 msgid "Signer unavailable. Open Grotto and retry"
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:78
-msgid "Skip Setup"
+#: src/ui/onboarding-assistant.c:79
+msgid "Finish _Without Backup"
 msgstr ""
 
 #: src/ui/onboarding-assistant.c:79
-msgid "Finish Without Backup"
-msgstr ""
-
-#: src/ui/onboarding-assistant.c:79
-msgid "Finish Later"
+msgid "Finish _Later"
 msgstr ""
 
 #: src/ui/onboarding-assistant.c:81
@@ -3094,7 +3090,7 @@ msgstr ""
 
 #: src/ui/onboarding-assistant.c:87
 msgid "_Open Grotto"
-msgstr "_Grotto"
+msgstr ""
 
 #: src/ui/onboarding-assistant.c:88
 msgid "_Create Identity"
@@ -3331,10 +3327,6 @@ msgid ""
 "pairing links, then try again."
 msgstr ""
 
-#: src/ui/sheets/sheet-qr-display.c:55
-msgid "Copy to Clipboard"
-msgstr "Salin ke papan klip"
-
 #: src/ui/sheets/sheet-qr-display.c:77
 msgid "Copied"
 msgstr ""
@@ -3375,12 +3367,8 @@ msgstr ""
 msgid "No camera is available on this device"
 msgstr ""
 
-#: src/ui/sheets/sheet-qr-scanner.c:170
-msgid "Start Camera"
-msgstr ""
-
 #: src/ui/sheets/sheet-qr-scanner.c:174
-msgid "Stop Camera"
+msgid "_Stop Camera"
 msgstr ""
 
 #: src/ui/sheets/sheet-qr-scanner.c:176
@@ -3430,15 +3418,11 @@ msgid ""
 msgstr ""
 
 #: src/ui/sheets/sheet-qr-scanner.c:328 src/ui/sheets/sheet-qr-scanner.c:519
-msgid "Choose Identity…"
+msgid "Choose _Identity…"
 msgstr ""
 
 #: src/ui/sheets/sheet-qr-scanner.c:479
 msgid "Camera Unavailable"
-msgstr ""
-
-#: src/ui/sheets/sheet-qr-scanner.c:519
-msgid "Import Key"
 msgstr ""
 
 #: src/ui/sheets/sheet-qr-scanner.c:521

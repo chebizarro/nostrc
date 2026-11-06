@@ -864,7 +864,7 @@ static void layout_activate(GApplication *application, gpointer data) {
   GtkWidget *scanner_stack = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(scanner), TYPE_SHEET_QR_SCANNER, "stack"));
   g_assert_cmpstr(gtk_stack_get_visible_child_name(GTK_STACK(scanner_stack)), ==, "result");
   GtkWidget *import_button = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(scanner), TYPE_SHEET_QR_SCANNER, "btn_import"));
-  g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(import_button)), ==, _("Choose Identity…"));
+  g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(import_button)), ==, _("Choose _Identity…"));
   snapshot(GTK_WIDGET(window), "pairing-scan-result-360");
   GtkWidget *scan_back = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(scanner), TYPE_SHEET_QR_SCANNER, "btn_back"));
   g_signal_emit_by_name(scan_back, "clicked"); g_assert_cmpstr(gtk_stack_get_visible_child_name(GTK_STACK(scanner_stack)), ==, "scanner");

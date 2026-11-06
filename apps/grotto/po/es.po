@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: grotto 0.1.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-05 22:37-0800\n"
+"POT-Creation-Date: 2026-11-05 22:50-0800\n"
 "PO-Revision-Date: 2024-01-23 00:00+0000\n"
 "Last-Translator: \n"
 "Language-Team: Spanish\n"
@@ -368,7 +368,7 @@ msgstr "Copia de seguridad cifrada"
 
 #: data/ui/onboarding-assistant.ui:360
 msgid "_Open Backup…"
-msgstr "_Abrir copia de seguridad…"
+msgstr "Abrir copia de _seguridad…"
 
 #: data/ui/onboarding-assistant.ui:369
 msgid "Recovery Phrase Unavailable?"
@@ -394,7 +394,7 @@ msgstr "_Empezar"
 msgid "_Back"
 msgstr "_Atrás"
 
-#: data/ui/onboarding-assistant.ui:454
+#: data/ui/onboarding-assistant.ui:454 src/ui/onboarding-assistant.c:78
 msgid "_Skip Setup"
 msgstr "_Omitir configuración"
 
@@ -675,13 +675,13 @@ msgstr ""
 msgid "App Name (Optional)"
 msgstr "Nombre de la aplicación (opcional)"
 
-#: data/ui/sheets/sheet-create-bunker.ui:47
+#: data/ui/sheets/sheet-create-bunker.ui:55
 msgid "Checking remote signing…"
 msgstr "Comprobando la firma remota…"
 
-#: data/ui/sheets/sheet-create-bunker.ui:58
+#: data/ui/sheets/sheet-create-bunker.ui:62
 msgid "Create _Link"
-msgstr "_Crear enlace"
+msgstr "Crear _enlace"
 
 #: data/ui/sheets/sheet-qr-display.ui:10 data/ui/sheets/sheet-qr-display.ui:44
 #: src/ui/sheets/sheet-qr-display.c:285
@@ -696,9 +696,9 @@ msgstr "_Cerrar"
 msgid "Scan with a compatible app"
 msgstr "Escanea con una aplicación compatible"
 
-#: data/ui/sheets/sheet-qr-display.ui:63
+#: data/ui/sheets/sheet-qr-display.ui:63 src/ui/sheets/sheet-qr-display.c:55
 msgid "Cop_y to Clipboard"
-msgstr "_Copiar al portapapeles"
+msgstr "Cop_iar al portapapeles"
 
 #: data/ui/sheets/sheet-qr-scanner.ui:10
 msgid "Scan QR Code"
@@ -712,7 +712,7 @@ msgstr "Listo para escanear"
 msgid "Scan a secret key or encrypted backup"
 msgstr "Escanea una clave secreta o copia cifrada"
 
-#: data/ui/sheets/sheet-qr-scanner.ui:58
+#: data/ui/sheets/sheet-qr-scanner.ui:58 src/ui/sheets/sheet-qr-scanner.c:170
 msgid "_Start Camera"
 msgstr "_Iniciar cámara"
 
@@ -728,7 +728,7 @@ msgstr "_Abrir imagen QR…"
 msgid "QR Code Scanned"
 msgstr "Código QR escaneado"
 
-#: data/ui/sheets/sheet-qr-scanner.ui:131
+#: data/ui/sheets/sheet-qr-scanner.ui:131 src/ui/sheets/sheet-qr-scanner.c:519
 msgid "_Import Key"
 msgstr "_Importar clave"
 
@@ -3110,17 +3110,13 @@ msgstr "La gestión está bloqueada"
 msgid "Signer unavailable. Open Grotto and retry"
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:78
-msgid "Skip Setup"
-msgstr "Omitir configuración"
+#: src/ui/onboarding-assistant.c:79
+msgid "Finish _Without Backup"
+msgstr "_Finalizar sin copia"
 
 #: src/ui/onboarding-assistant.c:79
-msgid "Finish Without Backup"
-msgstr "Finalizar sin copia"
-
-#: src/ui/onboarding-assistant.c:79
-msgid "Finish Later"
-msgstr "Finalizar más tarde"
+msgid "Finish _Later"
+msgstr "_Finalizar más tarde"
 
 #: src/ui/onboarding-assistant.c:81
 msgid "The identity is saved on this device"
@@ -3406,10 +3402,6 @@ msgstr ""
 "No se pudo crear un enlace. Revisa Firma remota, cierra los enlaces sin usar "
 "y reintenta."
 
-#: src/ui/sheets/sheet-qr-display.c:55
-msgid "Copy to Clipboard"
-msgstr "Copiar al portapapeles"
-
 #: src/ui/sheets/sheet-qr-display.c:77
 msgid "Copied"
 msgstr "Copiado"
@@ -3456,13 +3448,9 @@ msgstr "No se encontró ningún código QR en la imagen del portapapeles"
 msgid "No camera is available on this device"
 msgstr "No hay una cámara disponible en este dispositivo"
 
-#: src/ui/sheets/sheet-qr-scanner.c:170
-msgid "Start Camera"
-msgstr "Iniciar cámara"
-
 #: src/ui/sheets/sheet-qr-scanner.c:174
-msgid "Stop Camera"
-msgstr "Detener cámara"
+msgid "_Stop Camera"
+msgstr "_Detener cámara"
 
 #: src/ui/sheets/sheet-qr-scanner.c:176
 msgid "Point your camera at a QR code…"
@@ -3516,16 +3504,12 @@ msgstr ""
 "No se ha realizado ninguna conexión."
 
 #: src/ui/sheets/sheet-qr-scanner.c:328 src/ui/sheets/sheet-qr-scanner.c:519
-msgid "Choose Identity…"
-msgstr "Elegir identidad…"
+msgid "Choose _Identity…"
+msgstr "Elegir _identidad…"
 
 #: src/ui/sheets/sheet-qr-scanner.c:479
 msgid "Camera Unavailable"
 msgstr "Cámara no disponible"
-
-#: src/ui/sheets/sheet-qr-scanner.c:519
-msgid "Import Key"
-msgstr "Importar clave"
 
 #: src/ui/sheets/sheet-qr-scanner.c:521
 msgid "Scan the connection code shown by your app"
