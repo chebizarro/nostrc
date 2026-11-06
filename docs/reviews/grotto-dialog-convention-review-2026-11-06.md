@@ -116,3 +116,48 @@ Grotto remains **0.1.1**, grotto-panels remains **0.1.0**, both unreleased (`VER
 ## Merge recommendation
 
 **Request changes before merging unchanged.** Correct Return routing for the safe forms (F1), preserve the QR icon through its actual Copy/reset lifecycle (F2), and fit the Spanish recovery header (F3); set useful initial passphrase focus as a small polish correction (F4). Keep the shared Cancel-first header convention, validated affirmatives, staged cancellation, alert confirmations and untouched Review Request footer. Verify those finite corrections through their real widgets/callbacks in both locales; there is no basis here for new consent policy, extra secret-reveal ceremony, version bumps or a full-suite prerequisite. No implementation fix was made by this review.
+
+## Re-check (0a0da7747)
+
+Date: 2026-11-06. Re-check task: `nostrc-gifce`. Ran `git pull --ff-only` in this same worktree; the branch was already at pushed commit **`0a0da7747916269f15f2bdf0086c8de3fd8fb470`**. Reviewed only its F1–F4 corrections relative to report commit `4186b34bb`, then reran the same seven suites. The original findings and failed/partial diagnostic receipts above remain historical evidence; this section supplies the superseding verdict. No implementation changes or temporary replacement test harnesses were made for this re-check.
+
+### Findings rechecked
+
+| Finding | Current evidence and disposition |
+|---|---|
+| **F1 — resolved** | Ask-by-Default and Paste Link entries now activate the default; Create Pairing Link's `AdwEntryRow` declares `activates-default`; the secure passphrase entry forwards activation; retention's row-local Return handler updates typed input before activating Save (`page-settings.c:34-43,63-66,152`; `pairing-flow.c:157`; `sheet-create-bunker.blp:17`; `page-identity-detail.c:348`). The rebuilt Linux tests use **real xdotool Return**, not the non-Linux fallback. They observe persisted policy/typed retention values, no export for empty passphrase, one `ExportIdentity` call and the resulting encrypted QR after valid input, and the real file chooser opening without premature export. Create Link remains inactive with no selected identity, then sends exactly one real `CreatePairing` call after selection; the fixture explicitly refuses the request rather than fabricating a successful link. Invalid Paste Link stays open; valid input plus Return opens the production connection preview. All these assertions passed in English and Spanish. This proves the changed UI-to-service/chooser paths, not live pairing or cryptographic export acceptance. |
+| **F2 — resolved** | The production Copy callback changes the icon to `object-select-symbolic` and the tooltip to translated Copied, then restores `edit-copy-symbolic`, the Copy tooltip and normal styling; it no longer calls `gtk_button_set_label` (`sheet-qr-display.c:51-58,76-85`). Both locale tests actually click Copy, verify a null label in feedback and reset states, the correct icons/tooltips, exact `nostr:npub` clipboard text, a fitting header, and clipboard cleanup on close. The fresh Spanish reset screenshot was directly inspected: Copy remains an icon and its action is fully visible. |
+| **F3 — resolved** | Spanish now uses **`Con_firmar`**, with the unique **F** access key rather than the long Confirmar respaldo (`po/es.po:3077-3079`). The recovery dialog is now actually opened by both locale layout runs; `assert_header_fits` measures its header against the available window width and the mapped mnemonic collector checks for collisions. Both pass with Confirm still insensitive before acknowledgement. The fresh Spanish recovery screenshot at **350×630** content size was directly inspected: Cancelar and Confirmar fit without the former horizontal overflow. Title ellipsization is normal and does not hide an action. |
+| **F4 — resolved** | `secret_dialog()` explicitly focuses the secure entry after presentation (`page-identity-detail.c:375`). Both locale runs assert that the initial root focus is inside that input **before** the Return helper sets focus, separately for encrypted QR and file-backup dialogs. Thus this is an opening-focus check, not merely a helper forcing focus immediately before typing. |
+
+The test updates strengthen the production-path evidence rather than substitute isolated helpers: `return_from_input()` verifies focus ancestry and calls the existing xdotool route; new service counters check actual method arguments/calls, and file-backup Return reaches GTK's chooser. The prior clear-to-empty check is replaced by initial empty-input/no-export and valid-input/export assertions. No production callback was blocked, no required assertion was bypassed, and no warning guard was relaxed. Review Request's implementation/templates, the destructive-confirmation policy and the version sources have no changes in this corrective commit.
+
+### Verification actually rerun
+
+A **fresh** disposable `nostrc-linux-ci:arm64` container used the same image ID recorded above, this worktree mounted read-only at `/src`, a new `/tmp/grotto-review-build`, and container-only xdotool installation. The configure/build flags and six explicit build targets were exactly those recorded in the original verification block. `CMakeCache.txt` confirms `GROTTO_TEST_XDOTOOL:FILEPATH=/usr/bin/xdotool` and `GROTTO_VERSION:STRING=0.1.1`. The unmodified checked-in tests were then executed once, serially:
+
+```sh
+xvfb-run -a ctest --test-dir /tmp/grotto-review-build -j1 \
+  -R '^signer/(ui-layout|ui-accessibility|qr-scanner|identity-management|onboarding|blueprint-drift|approval-dialog)$' \
+  --output-on-failure
+```
+
+| Check | Re-check result |
+|---|---|
+| `signer/ui-layout` | **PASS**, 5 cases, 65.28 s |
+| `signer/ui-accessibility` | **PASS**, 5 cases, Spanish/GTK test accessibility, 65.20 s |
+| `signer/qr-scanner` | **PASS**, 3 cases, 0.27 s |
+| `signer/identity-management` | **PASS**, 12 cases, 3.57 s |
+| `signer/onboarding` | **PASS**, 32 cases, 6.02 s |
+| `signer/blueprint-drift` | **PASS**, 1.36 s |
+| `signer/approval-dialog` | **PASS**, 40 cases, 6.02 s |
+| Required `grotto-tests-test-homes` setup fixture | **PASS**, 0.05 s |
+| All six shipped Grotto/panels `.po` catalogs, `msgfmt --check --check-format` | **PASS** |
+
+CTest exit **0**, **147.78 s**, all seven requested suites plus their setup fixture passing, with no skipped suite or retry. The two additional layout cases are `create-link-keyboard` and `backup-file-keyboard`, both executed in each locale run. The drift check covers the changed Blueprint/generated UI and refreshed catalogs. This was not a full-suite run.
+
+Receipts: `/tmp/grotto-dialog-recheck-0a0da7747/{driver.log,configure.log,build.log,requested-tests.log,ctest-LastTest.log,CMakeCache.txt,catalogs.log,deps.log,screenshots/}`. Directly inspected `recovery-phrase-360-es.png` and `public-key-qr-copy-reset-360-es.png` from this run. The task-owned container/build was removed after copying receipts; host receipts remain. Test homes/private buses stayed isolated. No developer keychain, live relay/camera, native desktop/Orca, hosted CI or release acceptance was exercised.
+
+### Final verdict
+
+**Approve within this re-check's scope: F1–F4 are resolved at `0a0da7747`.** This supersedes the original request-changes recommendation for those findings. The requested seven serial suites and catalog checks pass, with production-path keyboard, clipboard, sizing and initial-focus evidence in both locales. No further prerequisite is added. Grotto remains **0.1.1**, panels **0.1.0**, and this appended documentation-only review requires **no version bump**. Only the report is changed by the reviewer; no implementation fix or master merge is performed.
