@@ -26,8 +26,10 @@ struct _GrottoProfileView {
   char *key, *label;
   GrottoProfileInfo *info, *draft;
   GCancellable *cancel;
+  GrottoPanelsService *service;
+  gulong profile_updated;
   guint generation;
-  gboolean editable, busy, fetched, fetch_failed;
+  gboolean editable, busy, fetched, fetch_failed, fetch_pending;
   AdwAvatar *avatar;
   GtkPicture *banner;
   GtkLabel *status, *address;
@@ -102,8 +104,8 @@ static void render(GrottoProfileView *self) {
   g_autofree char *address = p ? g_strdup_printf("%s — %s", p->fields[GROTTO_PROFILE_NIP05], nip05_status(p)) : g_strdup("");
   gtk_label_set_text(self->address, address); gtk_widget_set_visible(GTK_WIDGET(self->address), p && *p->fields[GROTTO_PROFILE_NIP05]);
   gtk_widget_set_visible(GTK_WIDGET(self->edit), self->editable);
-  gtk_widget_set_sensitive(GTK_WIDGET(self->edit), self->editable && !self->busy && self->fetched);
-  gtk_widget_set_sensitive(GTK_WIDGET(self->refresh), !self->busy && panel && self->key && grotto_panel_has_profile_host(panel));
+  gtk_widget_set_sensitive(GTK_WIDGET(self->edit), self->editable && !self->busy && !self->fetch_pending && self->fetched);
+  gtk_widget_set_sensitive(GTK_WIDGET(self->refresh), !self->busy && !self->fetch_pending && panel && self->key && grotto_panel_has_profile_host(panel));
   if (self->fetch_failed) gtk_button_set_label(self->refresh, _("Retry"));
   else gtk_button_set_icon_name(self->refresh, "view-refresh-symbolic");
   gtk_spinner_set_spinning(self->spinner, self->busy);
@@ -147,6 +149,26 @@ static void form_changed(gpointer widget, gpointer data) {
   for (guint i = 0; i < 2; i++) gtk_picture_set_paintable(self->previews[i], GDK_PAINTABLE(self->draft->images[i]));
 }
 static void bot_changed(GObject *object, GParamSpec *spec, gpointer data) { (void)spec; form_changed(object, data); }
+static void profile_status(GrottoProfileView *self) {
+  gtk_label_set_text(self->status, self->info->tor_blocked ? _("Tor mode — showing the saved profile without network access") : self->info->cached ? _("Offline — showing the saved profile") : self->info->no_relays ? _("No relays — enable discovery or configure this identity's relays") : self->editable ? _("Public information shared with others") : _("This identity's profile is read-only"));
+}
+static void accept_profile(GrottoProfileView *self, const GrottoProfileInfo *info) {
+  if (self->info && (self->info->created_at > info->created_at || (self->info->published && !info->published))) return;
+  g_clear_pointer(&self->info, grotto_profile_info_free); self->info = grotto_profile_info_copy(info);
+  self->fetched = TRUE; self->fetch_failed = FALSE; profile_status(self);
+}
+static void profile_updated(GrottoPanelsService *service, const char *key, gpointer data) {
+  GrottoProfileView *self = data;
+  if (service != self->service || g_strcmp0(key, self->key)) return;
+  g_autoptr(GrottoProfileInfo) info = grotto_panels_service_dup_profile(service, key);
+  if (!info) return;
+  accept_profile(self, info);
+  if (self->fetch_pending) self->busy = FALSE;
+  /* Only the published display changes. An open editor retains its draft and
+   * original timestamp, so Save still detects a concurrent publication. */
+  render(self);
+}
+static void begin_request(GrottoProfileView *self, GrottoProfileAction action);
 typedef struct { GWeakRef view; guint generation; GrottoProfileAction action; } Pending;
 static void done(GObject *source, GAsyncResult *result, gpointer data) {
   Pending *pending = data;
@@ -155,30 +177,44 @@ static void done(GObject *source, GAsyncResult *result, gpointer data) {
   g_autoptr(GrottoProfileInfo) info = grotto_panel_profile_finish(GROTTO_PANEL(source), result, &error);
   if (self && pending->generation == self->generation) {
     self->busy = FALSE;
+    gboolean fetch = pending->action == GROTTO_PROFILE_FETCH || pending->action == GROTTO_PROFILE_FETCH_CACHED;
+    if (fetch) self->fetch_pending = FALSE;
+    if (pending->action == GROTTO_PROFILE_FETCH_CACHED) {
+      if (info) {
+        if (self->service) grotto_panels_service_set_profile(self->service, self->key, info);
+        accept_profile(self, info);
+      }
+      render(self);
+      if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) begin_request(self, GROTTO_PROFILE_FETCH);
+      g_weak_ref_clear(&pending->view); g_free(pending); return;
+    }
     if (info) {
       gboolean upload = self->dialog && (pending->action == GROTTO_PROFILE_CHOOSE_AVATAR || pending->action == GROTTO_PROFILE_CHOOSE_BANNER || pending->action == GROTTO_PROFILE_VERIFY_NIP05);
       self->updating = TRUE;
       if (upload) { grotto_profile_info_free(self->draft); self->draft = g_steal_pointer(&info); }
-      else { grotto_profile_info_free(self->info); self->info = g_steal_pointer(&info); }
-      if (pending->action == GROTTO_PROFILE_FETCH || pending->action == GROTTO_PROFILE_SAVE) {
-        self->fetched = TRUE; self->fetch_failed = FALSE;
-        gtk_label_set_text(self->status, self->info->tor_blocked ? _("Tor mode — showing the saved profile without network access") : self->info->cached ? _("Offline — showing the saved profile") : self->info->no_relays ? _("No relays — enable discovery or configure this identity's relays") : self->editable ? _("Public information shared with others") : _("This identity's profile is read-only"));
+      else {
+        if (self->service) {
+          grotto_panels_service_set_profile(self->service, self->key, info);
+          g_autoptr(GrottoProfileInfo) winner = grotto_panels_service_dup_profile(self->service, self->key);
+          if (winner) { grotto_profile_info_free(info); info = g_steal_pointer(&winner); }
+        }
+        accept_profile(self, info);
       }
       GrottoProfileInfo *display = upload ? self->draft : self->info;
       if (self->error) gtk_label_set_text(self->error, "");
       if (pending->action == GROTTO_PROFILE_SAVE && self->dialog) {
         adw_dialog_set_can_close(self->dialog, TRUE); adw_dialog_close(self->dialog);
       }
-      else if (self->dialog) for (guint i = 0; i < GROTTO_PROFILE_N_FIELDS; i++) {
+      else if (self->dialog && !fetch) for (guint i = 0; i < GROTTO_PROFILE_N_FIELDS; i++) {
         if (i == GROTTO_PROFILE_ABOUT) gtk_text_buffer_set_text(gtk_text_view_get_buffer(self->about), display->fields[i], -1);
         else gtk_editable_set_text(GTK_EDITABLE(self->entries[i]), display->fields[i]);
       }
-      if (self->dialog) { adw_switch_row_set_active(self->bot, display->bot); render_card(self, display); }
+      if (self->dialog && !fetch) { adw_switch_row_set_active(self->bot, display->bot); render_card(self, display); }
       self->updating = FALSE;
     } else if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
       if (pending->action == GROTTO_PROFILE_FETCH) {
         self->fetched = TRUE;
-        self->fetch_failed = TRUE;
+        self->fetch_failed = !self->info || self->fetch_failed;
         if (!self->info) self->info = grotto_profile_info_copy(NULL);
       }
       const char *message = error ? error->message : _("Profile unavailable. Try again");
@@ -191,19 +227,30 @@ static void done(GObject *source, GAsyncResult *result, gpointer data) {
   }
   g_weak_ref_clear(&pending->view); g_free(pending);
 }
-static void request(GrottoProfileView *self, GrottoProfileAction action) {
+static void begin_request(GrottoProfileView *self, GrottoProfileAction action) {
   g_autoptr(GrottoPanel) panel = g_weak_ref_get(&self->panel);
-  if (!panel || self->busy || !self->key || !grotto_panel_has_profile_host(panel) ||
-      (action != GROTTO_PROFILE_FETCH && action != GROTTO_PROFILE_VERIFY_NIP05 && !self->editable)) return;
+  gboolean fetch = action == GROTTO_PROFILE_FETCH || action == GROTTO_PROFILE_FETCH_CACHED;
+  if (!panel || self->busy || self->fetch_pending || !self->key || !grotto_panel_has_profile_host(panel) ||
+      (!fetch && action != GROTTO_PROFILE_VERIFY_NIP05 && !self->editable)) return;
   g_autoptr(GrottoProfileInfo) info = form(self);
   Pending *pending = g_new0(Pending, 1); g_weak_ref_init(&pending->view, self);
   pending->generation = self->generation; pending->action = action;
-  self->busy = TRUE;
+  self->fetch_pending = fetch;
+  self->busy = !fetch || (action == GROTTO_PROFILE_FETCH && (!self->fetched || self->fetch_failed));
   const char *progress = action == GROTTO_PROFILE_FETCH ? _("Loading profile…") : action == GROTTO_PROFILE_SAVE ? _("Waiting for review and publishing…") : action == GROTTO_PROFILE_VERIFY_NIP05 ? _("Checking Nostr address…") : _("Choosing and uploading image…");
-  gtk_label_set_text(self->dialog ? self->error : self->status, progress);
-  if (self->dialog) gtk_widget_grab_focus(GTK_WIDGET(self->error));
+  if (self->busy) gtk_label_set_text(self->dialog ? self->error : self->status, progress);
+  if (self->dialog && self->busy) gtk_widget_grab_focus(GTK_WIDGET(self->error));
   render(self);
   grotto_panel_profile_async(panel, action, self->key, info, self->cancel, done, pending);
+}
+static void request(GrottoProfileView *self, GrottoProfileAction action) {
+  if (self->busy || self->fetch_pending) return;
+  if (action == GROTTO_PROFILE_FETCH) {
+    g_autoptr(GrottoProfileInfo) cached = grotto_panels_service_dup_profile(self->service, self->key);
+    if (cached) { accept_profile(self, cached); render(self); }
+    if (!self->fetched || self->fetch_failed) action = GROTTO_PROFILE_FETCH_CACHED;
+  }
+  begin_request(self, action);
 }
 static void refresh(GtkButton *button, gpointer data) { (void)button; request(data, GROTTO_PROFILE_FETCH); }
 static void stop(GtkButton *button, gpointer data) {
@@ -464,11 +511,19 @@ static void edit(GtkButton *button, gpointer data) {
 }
 static void mapped(GtkWidget *widget, gpointer data) {
   (void)data; GrottoProfileView *self = GROTTO_PROFILE_VIEW(widget);
-  if (!self->fetched) request(self, GROTTO_PROFILE_FETCH);
+  /* Adaptive reparenting can remap the underlying page during editing; it is
+   * not a new visit. Existing refresh signals still update the public display. */
+  if (!self->dialog) request(self, GROTTO_PROFILE_FETCH);
 }
 void grotto_profile_view_set_identity(GrottoProfileView *self, const char *key, const char *label, gboolean editable) {
   g_autoptr(GrottoPanel) panel = g_weak_ref_get(&self->panel);
-  gboolean changed = g_strcmp0(self->key, key) != 0;
+  GrottoPanelsService *service = panel ? grotto_panel_get_service(panel) : NULL;
+  gboolean changed = g_strcmp0(self->key, key) != 0 || service != self->service;
+  if (service != self->service) {
+    if (self->service) g_signal_handler_disconnect(self->service, self->profile_updated);
+    g_set_object(&self->service, service);
+    if (service) self->profile_updated = g_signal_connect(service, "profile-updated", G_CALLBACK(profile_updated), self);
+  }
   gboolean was_editable = self->editable;
   self->editable = editable && panel && grotto_panel_has_profile_host(panel);
   if (was_editable != self->editable && self->info && !self->fetch_failed && !self->busy && !self->dialog)
@@ -476,19 +531,26 @@ void grotto_profile_view_set_identity(GrottoProfileView *self, const char *key, 
       self->editable ? _("Public information shared with others") : _("This identity's profile is read-only"));
   if (changed) {
     self->generation++; g_cancellable_cancel(self->cancel); g_clear_object(&self->cancel); self->cancel = g_cancellable_new();
-    self->busy = FALSE; self->fetched = FALSE; self->fetch_failed = FALSE;
+    self->busy = FALSE; self->fetch_pending = FALSE; self->fetched = FALSE; self->fetch_failed = FALSE;
+    gtk_label_set_text(self->status, "");
     if (self->dialog) { adw_dialog_set_can_close(self->dialog, TRUE); adw_dialog_force_close(self->dialog); }
     g_free(self->key); self->key = g_strdup(key);
     g_clear_pointer(&self->info, grotto_profile_info_free);
   }
   g_free(self->label); self->label = g_strdup(label ? label : "");
+  if (changed && self->key) {
+    g_autoptr(GrottoProfileInfo) cached = grotto_panels_service_dup_profile(self->service, self->key);
+    if (cached) accept_profile(self, cached);
+  }
   if (!panel || !grotto_panel_has_profile_host(panel)) gtk_label_set_text(self->status, _("Open Grotto to view or edit this profile"));
   render(self);
-  if (!self->fetched && gtk_widget_get_mapped(GTK_WIDGET(self))) request(self, GROTTO_PROFILE_FETCH);
+  if ((changed || !self->fetched) && gtk_widget_get_mapped(GTK_WIDGET(self))) request(self, GROTTO_PROFILE_FETCH);
 }
 static void dispose(GObject *object) {
   GrottoProfileView *self = GROTTO_PROFILE_VIEW(object);
   self->generation++; if (self->cancel) g_cancellable_cancel(self->cancel);
+  if (self->service) g_signal_handler_disconnect(self->service, self->profile_updated);
+  g_clear_object(&self->service);
   if (self->dialog) { adw_dialog_set_can_close(self->dialog, TRUE); adw_dialog_force_close(self->dialog); }
   g_clear_object(&self->cancel); g_weak_ref_set(&self->panel, NULL);
   G_OBJECT_CLASS(grotto_profile_view_parent_class)->dispose(object);

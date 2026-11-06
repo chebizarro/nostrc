@@ -64,7 +64,9 @@ static void profile(gpointer data, GrottoProfileAction action, const char *key, 
   GTask *task = g_task_new(NULL, cancel, callback, user);
   if (action == GROTTO_PROFILE_FETCH && host->hold_fetch) { host->pending = task; return; }
   if (action == GROTTO_PROFILE_SAVE && host->hold) { host->pending = task; return; }
-  if (action == GROTTO_PROFILE_FETCH && host->fetch_fail)
+  if (action == GROTTO_PROFILE_FETCH_CACHED)
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_NOT_FOUND, "No cached profile");
+  else if (action == GROTTO_PROFILE_FETCH && host->fetch_fail)
     g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_HOST_UNREACHABLE, "Profile unavailable. Check your relays and try again");
   else if ((action == GROTTO_PROFILE_CHOOSE_AVATAR || action == GROTTO_PROFILE_CHOOSE_BANNER) && host->upload_fail)
     g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED, "Image upload failed. Try again");
@@ -75,8 +77,8 @@ static void profile(gpointer data, GrottoProfileAction action, const char *key, 
     result->cached = host->offline;
     if (action == GROTTO_PROFILE_VERIFY_NIP05) result->nip05_status = host->nip05;
     if (action == GROTTO_PROFILE_SAVE) {
-      g_clear_pointer(&host->saved, grotto_profile_info_free); host->saved = grotto_profile_info_copy(info);
       result->published = TRUE; result->created_at++;
+      g_clear_pointer(&host->saved, grotto_profile_info_free); host->saved = grotto_profile_info_copy(result);
     }
     g_task_return_pointer(task, result, (GDestroyNotify)grotto_profile_info_free);
   }
@@ -106,7 +108,8 @@ static void profile_panel(void) {
   g_assert_false(gtk_widget_get_visible(spinner));
   host.fetch_fail = TRUE;
   g_signal_emit_by_name(find(panel, "Refresh Profile"), "clicked");
-  WAIT(find(panel, "Profile unavailable. Check your relays and try again"));
+  WAIT(host.calls[GROTTO_PROFILE_FETCH] == 2 && find(panel, "Profile unavailable. Check your relays and try again") &&
+    gtk_widget_get_sensitive(find(panel, "Edit Profile…")));
   g_assert_true(gtk_widget_get_sensitive(find(panel, "Edit Profile…")));
   GtkWidget *failed_summary = find(panel, "Public Profile");
   g_assert_cmpstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(failed_summary)), ==, "Profile not loaded");
@@ -328,7 +331,96 @@ static void cached_identity_avatar(void) {
   g_assert_cmpuint(winner->created_at, ==, 200);
   g_assert_true(winner->images[0] == profile->images[0]);
 }
+static void assert_no_loading(GtkWidget *widget) {
+  g_assert_null(find(widget, "Loading profile…"));
+  if (GTK_IS_SPINNER(widget)) {
+    g_assert_false(gtk_spinner_get_spinning(GTK_SPINNER(widget)));
+    g_assert_false(gtk_widget_get_visible(widget));
+  }
+  for (GtkWidget *child = gtk_widget_get_first_child(widget); child; child = gtk_widget_get_next_sibling(child)) assert_no_loading(child);
+}
+typedef struct { GTask *pending, *cache_pending; guint fetches, checks; } ViewHost;
+static void view_profile(gpointer data, GrottoProfileAction action, const char *key, const GrottoProfileInfo *info,
+  GCancellable *cancel, GAsyncReadyCallback callback, gpointer user) {
+  (void)key; (void)info; ViewHost *host = data;
+  if (action == GROTTO_PROFILE_FETCH_CACHED) {
+    host->checks++; g_assert_null(host->cache_pending); host->cache_pending = g_task_new(NULL, cancel, callback, user);
+  } else {
+    g_assert_cmpint(action, ==, GROTTO_PROFILE_FETCH);
+    host->fetches++; g_assert_null(host->pending); host->pending = g_task_new(NULL, cancel, callback, user);
+  }
+}
+static void finish_view_read(ViewHost *host, GtkWidget *panel, const GrottoProfileInfo *info) {
+  g_assert_nonnull(host->pending);
+  g_task_return_pointer(host->pending, grotto_profile_info_copy(info), (GDestroyNotify)grotto_profile_info_free); g_clear_object(&host->pending);
+  WAIT(gtk_widget_get_sensitive(find(panel, "Refresh Profile")));
+}
+static void cache_first_live_view(void) {
+  g_autoptr(GrottoPanelsFakeService) fake = grotto_panels_fake_service_new();
+  GrottoPanelsService *service = GROTTO_PANELS_SERVICE(fake); grotto_panels_fake_service_set_available(fake, TRUE);
+  GrottoPanelsMetadata identity = {.id = "identity", .public_key = "cached-key", .label = "Local", .is_default = TRUE, .can_sign = TRUE, .backup_acknowledged = TRUE};
+  g_assert_true(grotto_panels_fake_service_replace(fake, GROTTO_PANELS_IDENTITIES, &identity, NULL));
+  g_autoptr(GrottoProfileInfo) cached = grotto_profile_info_copy(NULL); cached->published = TRUE; cached->created_at = 100;
+  g_free(cached->fields[GROTTO_PROFILE_DISPLAY_NAME]); cached->fields[GROTTO_PROFILE_DISPLAY_NAME] = g_strdup("Cached profile");
+  static const guint8 pixel[] = {80, 120, 180, 255}; g_autoptr(GBytes) bytes = g_bytes_new_static(pixel, sizeof pixel);
+  cached->images[0] = gdk_memory_texture_new(1, 1, GDK_MEMORY_R8G8B8A8, bytes, 4); cached->images[1] = g_object_ref(cached->images[0]);
+  grotto_panels_service_set_profile(service, "cached-key", cached);
+  GtkWidget *panel = grotto_identity_panel_new(service, NULL);
+  ViewHost host = {0}; const GrottoPanelsHost callbacks = {.profile_async = view_profile};
+  grotto_panel_set_host(GROTTO_PANEL(panel), &callbacks, &host, NULL);
+  g_assert_nonnull(find(panel, "Cached profile")); assert_no_loading(panel);
+  AdwWindow *window = ADW_WINDOW(g_object_ref_sink(adw_window_new())); adw_window_set_content(window, panel); gtk_window_present(GTK_WINDOW(window));
+  WAIT(host.pending); g_assert_cmpuint(host.checks, ==, 0); assert_no_loading(panel);
+  g_assert_true(adw_avatar_get_custom_image(row_avatar(panel)) == GDK_PAINTABLE(cached->images[0]));
+  g_autoptr(GrottoProfileInfo) newer = grotto_profile_info_copy(cached); newer->created_at = 200;
+  g_free(newer->fields[GROTTO_PROFILE_DISPLAY_NAME]); newer->fields[GROTTO_PROFILE_DISPLAY_NAME] = g_strdup("Live newer profile");
+  grotto_panels_service_set_profile(service, "cached-key", newer);
+  g_assert_nonnull(find(panel, "Live newer profile")); assert_no_loading(panel);
+  finish_view_read(&host, panel, cached); /* A delayed older FETCH cannot regress the signal's winner. */
+  g_assert_nonnull(find(panel, "Live newer profile")); g_assert_null(find(panel, "Cached profile"));
+  g_signal_emit_by_name(find(panel, "Edit Profile…"), "clicked");
+  AdwDialog *dialog = adw_window_get_visible_dialog(window); g_assert_nonnull(dialog);
+  guint frames = 0; gtk_widget_add_tick_callback(GTK_WIDGET(dialog), presented, &frames, NULL); WAIT(frames == 3);
+  gtk_editable_set_text(GTK_EDITABLE(find(GTK_WIDGET(dialog), "Name")), "unsaved-draft");
+  GtkTextBuffer *about = gtk_text_view_get_buffer(about_view(GTK_WIDGET(dialog))); gtk_text_buffer_set_text(about, "Unsaved about", -1);
+  guint fetches = host.fetches;
+  GtkWidget *profile_box = GTK_WIDGET(gtk_widget_get_template_child(panel, GROTTO_TYPE_IDENTITY_PANEL, "profile_box"));
+  gtk_widget_set_visible(profile_box, FALSE); gtk_widget_set_visible(profile_box, TRUE);
+  g_assert_true(gtk_widget_get_mapped(profile_box)); g_assert_cmpuint(host.fetches, ==, fetches); g_assert_null(host.pending);
+  newer->created_at = 300; grotto_panels_service_set_profile(service, "cached-key", newer);
+  g_assert_cmpstr(gtk_editable_get_text(GTK_EDITABLE(find(GTK_WIDGET(dialog), "Name"))), ==, "unsaved-draft");
+  GtkTextIter start, end; gtk_text_buffer_get_bounds(about, &start, &end);
+  g_autofree char *draft = gtk_text_buffer_get_text(about, &start, &end, FALSE); g_assert_cmpstr(draft, ==, "Unsaved about");
+  g_signal_emit_by_name(find(GTK_WIDGET(dialog), "Cancel"), "clicked"); WAIT(!adw_window_get_visible_dialog(window));
+  grotto_panels_service_set_profile(service, "other-key", cached);
+  identity.public_key = "other-key"; g_assert_true(grotto_panels_fake_service_replace(fake, GROTTO_PANELS_IDENTITIES, &identity, NULL));
+  g_assert_nonnull(find(panel, "Cached profile")); assert_no_loading(panel);
+  g_assert_true(adw_avatar_get_custom_image(row_avatar(panel)) == GDK_PAINTABLE(cached->images[0])); finish_view_read(&host, panel, cached);
+  identity.public_key = "cached-key"; g_assert_true(grotto_panels_fake_service_replace(fake, GROTTO_PANELS_IDENTITIES, &identity, NULL));
+  g_assert_nonnull(find(panel, "Live newer profile")); assert_no_loading(panel);
+  g_assert_true(adw_avatar_get_custom_image(row_avatar(panel)) == GDK_PAINTABLE(cached->images[0])); finish_view_read(&host, panel, newer);
+  /* An initially cold in-process cache probes disk before showing any spinner. */
+  identity.public_key = "disk-key"; g_assert_true(grotto_panels_fake_service_replace(fake, GROTTO_PANELS_IDENTITIES, &identity, NULL));
+  g_assert_nonnull(host.cache_pending); assert_no_loading(panel);
+  g_task_return_pointer(host.cache_pending, grotto_profile_info_copy(cached), (GDestroyNotify)grotto_profile_info_free); g_clear_object(&host.cache_pending);
+  WAIT(host.pending); g_assert_nonnull(find(panel, "Cached profile")); assert_no_loading(panel);
+  finish_view_read(&host, panel, cached); g_assert_cmpuint(host.checks, ==, 1);
+  /* Switching away from a held cold FETCH must not carry its loading label
+   * into another identity's disk-cache probe or accept its cancelled reply. */
+  identity.public_key = "uncached-key"; g_assert_true(grotto_panels_fake_service_replace(fake, GROTTO_PANELS_IDENTITIES, &identity, NULL));
+  g_assert_nonnull(host.cache_pending); g_task_return_new_error(host.cache_pending, G_IO_ERROR, G_IO_ERROR_NOT_FOUND, "No cached profile"); g_clear_object(&host.cache_pending);
+  WAIT(host.pending); g_assert_nonnull(find(panel, "Loading profile…"));
+  identity.public_key = "disk-again"; g_assert_true(grotto_panels_fake_service_replace(fake, GROTTO_PANELS_IDENTITIES, &identity, NULL));
+  g_assert_nonnull(host.cache_pending); assert_no_loading(panel);
+  g_assert_true(g_cancellable_is_cancelled(g_task_get_cancellable(host.pending)));
+  g_assert_true(g_task_return_error_if_cancelled(host.pending)); g_clear_object(&host.pending);
+  g_task_return_pointer(host.cache_pending, grotto_profile_info_copy(cached), (GDestroyNotify)grotto_profile_info_free); g_clear_object(&host.cache_pending);
+  WAIT(host.pending); g_assert_nonnull(find(panel, "Cached profile")); assert_no_loading(panel); finish_view_read(&host, panel, cached);
+  gtk_window_destroy(GTK_WINDOW(window)); g_object_unref(window);
+  newer->created_at++; grotto_panels_service_set_profile(service, "disk-key", newer); /* Disconnected on disposal. */
+}
 void register_profile_panel_tests(void) {
   g_test_add_func("/grotto-panels/profile/editor", profile_panel);
   g_test_add_func("/grotto-panels/profile/cached-identity-avatar", cached_identity_avatar);
+  g_test_add_func("/grotto-panels/profile/cache-first-live", cache_first_live_view);
 }
