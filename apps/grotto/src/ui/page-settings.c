@@ -1,6 +1,7 @@
 #include "page-settings.h"
 #include "signer-window.h"
 #include "app-resources.h"
+#include "dialog-actions.h"
 #include "approval_dialog.h"
 #include "../settings_manager.h"
 #include "../session-manager.h"
@@ -31,19 +32,31 @@ static void combo_changed(GObject *object, GParamSpec *pspec, gpointer data) {
 static void retention_changed(AdwSpinRow *row, GParamSpec *pspec, gpointer data) {
   (void)pspec; PageSettings *self = data; g_settings_set_int(self->settings, "log-retention-days", (gint)adw_spin_row_get_value(row));
 }
+static void retention_save(GtkButton *button, gpointer data) {
+  PageSettings *self = data;
+  AdwSpinRow *row = g_object_get_data(G_OBJECT(button), "retention-row");
+  if (g_settings_set_int(self->settings, "log-retention-days", (gint)adw_spin_row_get_value(row)))
+    adw_dialog_close(ADW_DIALOG(gtk_widget_get_ancestor(GTK_WIDGET(button), ADW_TYPE_DIALOG)));
+}
 void page_settings_show_retention(PageSettings *self, GtkWidget *parent) {
-  AdwDialog *dialog = adw_preferences_dialog_new(); adw_dialog_set_title(dialog, _("Activity Retention"));
+  AdwDialog *dialog = adw_dialog_new(); adw_dialog_set_title(dialog, _("Activity Retention"));
+  adw_dialog_set_content_width(dialog, 400);
+  GtkWidget *save = gtk_button_new_with_mnemonic(_("_Save"));
+  GtkWidget *toolbar = adw_toolbar_view_new();
+  adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(toolbar), grotto_dialog_header(dialog, save));
   AdwPreferencesPage *page = ADW_PREFERENCES_PAGE(adw_preferences_page_new());
   AdwPreferencesGroup *group = ADW_PREFERENCES_GROUP(adw_preferences_group_new());
   adw_preferences_group_set_description(group, _("Metadata only — no messages, secrets or event content"));
   AdwSpinRow *row = ADW_SPIN_ROW(adw_spin_row_new_with_range(1, 30, 1));
   adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), _("Keep Activity (Days)"));
   adw_spin_row_set_value(row, CLAMP(g_settings_get_int(self->settings, "log-retention-days"), 1, 30));
-  g_signal_connect_object(row, "notify::value", G_CALLBACK(retention_changed), self, 0);
+  g_object_set_data(G_OBJECT(save), "retention-row", row);
+  g_signal_connect_object(save, "clicked", G_CALLBACK(retention_save), self, 0);
   adw_preferences_group_add(group, GTK_WIDGET(row)); adw_preferences_page_add(page, group);
-  adw_preferences_dialog_add(ADW_PREFERENCES_DIALOG(dialog), page); adw_dialog_present(dialog, parent);
+  adw_toolbar_view_set_content(ADW_TOOLBAR_VIEW(toolbar), GTK_WIDGET(page));
+  adw_dialog_set_child(dialog, toolbar); adw_dialog_present(dialog, parent);
 }
-typedef struct { GSettings *settings; AdwDialog *dialog; GtkEntry *custom; GtkLabel *error; GPtrArray *checks; } Policy;
+typedef struct { GSettings *settings; AdwDialog *dialog; GtkEntry *custom; GtkLabel *error; GtkWidget *save; GPtrArray *checks; } Policy;
 static void policy_free(gpointer data) { Policy *p = data; g_object_unref(p->settings); g_ptr_array_unref(p->checks); g_free(p); }
 static void policy_save(GtkButton *button, gpointer data) {
   (void)button; Policy *p = data; g_autoptr(GPtrArray) values = g_ptr_array_new_with_free_func(g_free);
@@ -66,13 +79,29 @@ static void policy_save(GtkButton *button, gpointer data) {
   }
   adw_dialog_close(p->dialog);
 }
-static void policy_default(GtkButton *button, gpointer data) {
-  (void)button; Policy *p = data; g_settings_reset(p->settings, "require-confirmation-kinds"); adw_dialog_close(p->dialog);
+static void policy_validate(GtkEditable *editable, gpointer data) {
+  Policy *p = data; gboolean valid = TRUE;
+  g_auto(GStrv) custom = g_strsplit_set(gtk_editable_get_text(editable), ", \t\n", -1);
+  for (guint i = 0; custom[i]; i++) {
+    if (!*custom[i]) continue;
+    gchar *end = NULL; guint64 kind = g_ascii_strtoull(custom[i], &end, 10);
+    if (end == custom[i] || *end || kind > G_MAXUINT16 || *custom[i] == '-') { valid = FALSE; break; }
+  }
+  gtk_widget_set_sensitive(p->save, valid);
+  gtk_label_set_text(p->error, valid ? "" : _("Use whole event-type numbers from 0 to 65535, separated by commas."));
+}
+static void policy_default(AdwActionRow *row, gpointer data) {
+  (void)row; Policy *p = data;
+  for (guint i = 0; i < p->checks->len; i++) gtk_check_button_set_active(p->checks->pdata[i], TRUE);
+  gtk_editable_set_text(GTK_EDITABLE(p->custom), "");
 }
 void page_settings_show_ask_defaults(PageSettings *self, GtkWidget *parent) {
   Policy *p = g_new0(Policy, 1); p->settings = g_object_ref(self->settings); p->checks = g_ptr_array_new();
   p->dialog = adw_dialog_new(); adw_dialog_set_title(p->dialog, _("Ask-by-Default Event Types")); adw_dialog_set_content_width(p->dialog, 400);
-  GtkWidget *toolbar = adw_toolbar_view_new(); adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(toolbar), adw_header_bar_new());
+  p->save = gtk_button_new_with_mnemonic(_("_Save"));
+  g_signal_connect(p->save, "clicked", G_CALLBACK(policy_save), p);
+  GtkWidget *toolbar = adw_toolbar_view_new();
+  adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(toolbar), grotto_dialog_header(p->dialog, p->save));
   GtkWidget *scroll = gtk_scrolled_window_new(), *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
   gtk_scrolled_window_set_propagate_natural_height(GTK_SCROLLED_WINDOW(scroll), TRUE); gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
   gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
@@ -109,8 +138,13 @@ void page_settings_show_ask_defaults(PageSettings *self, GtkWidget *parent) {
   gtk_editable_set_text(GTK_EDITABLE(p->custom), others->str); g_string_free(others, TRUE);
   gtk_accessible_update_property(GTK_ACCESSIBLE(p->custom), GTK_ACCESSIBLE_PROPERTY_LABEL, _("Additional custom event types"), -1); gtk_box_append(GTK_BOX(box), GTK_WIDGET(p->custom));
   p->error = GTK_LABEL(gtk_label_new(NULL)); gtk_label_set_wrap(p->error, TRUE); gtk_box_append(GTK_BOX(box), GTK_WIDGET(p->error));
-  GtkWidget *save = gtk_button_new_with_label(_("Save Ask-by-Default Policy")); g_signal_connect(save, "clicked", G_CALLBACK(policy_save), p); gtk_box_append(GTK_BOX(box), save);
-  GtkWidget *defaults = gtk_button_new_with_label(_("Restore Defaults")); g_signal_connect(defaults, "clicked", G_CALLBACK(policy_default), p); gtk_box_append(GTK_BOX(box), defaults);
+  g_signal_connect(p->custom, "changed", G_CALLBACK(policy_validate), p); policy_validate(GTK_EDITABLE(p->custom), p);
+  GtkWidget *group = adw_preferences_group_new(), *defaults = adw_action_row_new();
+  adw_preferences_row_set_title(ADW_PREFERENCES_ROW(defaults), _("_Restore Defaults"));
+  adw_preferences_row_set_use_underline(ADW_PREFERENCES_ROW(defaults), TRUE);
+  gtk_list_box_row_set_activatable(GTK_LIST_BOX_ROW(defaults), TRUE);
+  g_signal_connect(defaults, "activated", G_CALLBACK(policy_default), p);
+  adw_preferences_group_add(ADW_PREFERENCES_GROUP(group), defaults); gtk_box_append(GTK_BOX(box), group);
   gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), box); adw_toolbar_view_set_content(ADW_TOOLBAR_VIEW(toolbar), scroll);
   g_object_set_data_full(G_OBJECT(p->dialog), "policy", p, policy_free); adw_dialog_set_child(p->dialog, toolbar); adw_dialog_present(p->dialog, parent);
 }

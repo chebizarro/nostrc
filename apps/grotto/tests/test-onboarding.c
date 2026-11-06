@@ -442,7 +442,7 @@ static void backup_deliberate_actions(Fixture *f, gconstpointer data) {
   AdwAlertDialog *dialog = ADW_ALERT_DIALOG(adw_window_get_visible_dialog(window)); g_assert_nonnull(dialog);
   g_assert_cmpstr(adw_alert_dialog_get_heading(dialog), ==, "Copy Secret Key?");
   g_assert_cmpstr(adw_alert_dialog_get_default_response(dialog), ==, "cancel");
-  g_assert_cmpstr(adw_alert_dialog_get_response_label(dialog, "proceed"), ==, "Copy Key");
+  g_assert_cmpstr(adw_alert_dialog_get_response_label(dialog, "proceed"), ==, "Copy _Key");
   g_assert_cmpint(adw_alert_dialog_get_response_appearance(dialog, "proceed"), ==, ADW_RESPONSE_DESTRUCTIVE);
   g_assert_null(f->raw);
   alert_response(dialog, "cancel"); reply_barrier(); g_assert_null(f->raw);
@@ -527,8 +527,13 @@ static void encrypted_file_cancel_failure(Fixture *f, gconstpointer data) {
   g_signal_emit_by_name(export, "activated");
   AdwDialog *dialog = adw_window_get_visible_dialog(window); g_assert_nonnull(dialog);
   GtkWidget *passphrase = find_named(GTK_WIDGET(dialog), "backup-passphrase"); g_assert_nonnull(passphrase);
+  GtkWidget *commit = button_named(GTK_WIDGET(dialog), "_Save Backup…"); g_assert_nonnull(commit);
+  AdwHeaderBar *header = ADW_HEADER_BAR(gtk_widget_get_ancestor(commit, ADW_TYPE_HEADER_BAR));
+  g_assert_nonnull(header); g_assert_true(gtk_widget_has_css_class(commit, "suggested-action"));
+  g_assert_false(adw_header_bar_get_show_start_title_buttons(header)); g_assert_false(adw_header_bar_get_show_end_title_buttons(header));
+  g_assert_false(gtk_widget_is_sensitive(commit));
   gn_secure_entry_set_text(GN_SECURE_ENTRY(passphrase), f->expected_pass);
-  GtkWidget *commit = button_named(GTK_WIDGET(dialog), "Save Backup…"); g_assert_nonnull(commit);
+  g_assert_true(gtk_widget_is_sensitive(commit));
   g_signal_emit_by_name(commit, "clicked"); GtkFileChooser *chooser = wait_chooser(GTK_WINDOW(window));
   g_autofree gchar *destination = NULL;
   if (cancel) { gtk_dialog_response(GTK_DIALOG(chooser), GTK_RESPONSE_CANCEL); }
@@ -554,6 +559,11 @@ static void encrypted_file_cancel_failure(Fixture *f, gconstpointer data) {
   g_test_message("File completion status: %s", gtk_label_get_text(GTK_LABEL(feedback)));
   g_assert_nonnull(strstr(gtk_label_get_text(GTK_LABEL(feedback)), cancel ? "cancelled" : success ? "Backup saved" : "wasn't saved"));
   if (success) {
+    g_assert_false(gtk_widget_get_visible(commit));
+    GtkWidget *confirm = find_named(GTK_WIDGET(dialog), "record-backup");
+    g_assert_true(gtk_widget_get_visible(confirm));
+    g_assert_nonnull(gtk_widget_get_ancestor(confirm, ADW_TYPE_HEADER_BAR));
+    g_assert_true(adw_dialog_get_default_widget(dialog) == confirm);
     g_autofree gchar *contents = NULL; g_assert_true(g_file_get_contents(destination, &contents, NULL, NULL));
     g_assert_cmpstr(contents, ==, "ncryptsec1fixture"); GStatBuf statbuf;
     g_assert_cmpint(g_stat(destination, &statbuf), ==, 0); g_assert_cmpuint(statbuf.st_mode & 0777, ==, 0600);
@@ -596,7 +606,12 @@ static GtkWidget *open_backup_shell(Fixture *f, AdwWindow **window) {
   page_identity_detail_present_identity(GTK_WIDGET(*window), f->npub);
   AdwDialog *shell = adw_window_get_visible_dialog(*window); g_assert_nonnull(shell);
   GtkWidget *page = GTK_WIDGET(adw_navigation_view_get_visible_page(ADW_NAVIGATION_VIEW(adw_dialog_get_child(shell))));
-  g_object_ref(page); wait_sensitive(detail_child(page, "raw_row"), TRUE); return page;
+  g_object_ref(page); wait_sensitive(detail_child(page, "raw_row"), TRUE);
+  AdwHeaderBar *header = ADW_HEADER_BAR(detail_child(page, "header"));
+  g_assert_false(adw_header_bar_get_show_start_title_buttons(header));
+  g_assert_false(adw_header_bar_get_show_end_title_buttons(header));
+  g_assert_nonnull(button_named(GTK_WIDGET(header), "_Close"));
+  return page;
 }
 static void release_backup_shell(AdwWindow *window, GtkWidget *page) {
   guint gone = 0; g_object_weak_ref(G_OBJECT(page), weak_gone, &gone);
@@ -649,7 +664,10 @@ static void backup_clipboard_close_lock(Fixture *f, gconstpointer data) {
       while (!find_flow(GTK_WIDGET(adw_window_get_visible_dialog(window)))) g_main_context_iteration(NULL, TRUE); g_source_remove(timeout);
       GtkWidget *dialog = GTK_WIDGET(adw_window_get_visible_dialog(window));
       word_entry = gtk_flow_box_child_get_child(GTK_FLOW_BOX_CHILD(gtk_widget_get_first_child(find_flow(dialog)))); g_object_ref(word_entry);
-      g_signal_emit_by_name(button_named(dialog, "Copy Recovery Phrase…"), "clicked");
+      GtkWidget *confirm = find_named(dialog, "record-backup");
+      g_assert_nonnull(gtk_widget_get_ancestor(confirm, ADW_TYPE_HEADER_BAR));
+      g_assert_true(gtk_widget_has_css_class(confirm, "suggested-action"));
+      g_signal_emit_by_name(find_named(dialog, "copy-recovery-phrase"), "activated");
       alert_response(ADW_ALERT_DIALOG(adw_window_get_visible_dialog(window)), "copy");
     } else {
       alert_response(ADW_ALERT_DIALOG(adw_window_get_visible_dialog(window)), "proceed"); wait_invocation(&f->raw);

@@ -20,11 +20,6 @@ template $GrottoPageConnect: Adw.PreferencesPage {
       [prefix] Image { icon-name: "insert-link-symbolic"; }
       [suffix] Image { icon-name: "go-next-symbolic"; }
     }
-    Adw.ActionRow create_link {
-      title: _("Create Pairing Link…"); subtitle: _("Show a single-use link or QR code"); activatable: true;
-      [prefix] Image { icon-name: "list-add-symbolic"; }
-      [suffix] Image { icon-name: "go-next-symbolic"; }
-    }
   }
   Adw.PreferencesGroup {
     Adw.ActionRow runtime { title: _("Remote Signing"); subtitle: _("Connecting to signer…"); subtitle-lines: 3; }

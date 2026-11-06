@@ -70,6 +70,11 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="0.1.2" type="development" date="2026-11-06">
+      <description>
+        <p>Use consistent header actions in dialogs and disable actions until inputs are valid.</p>
+      </description>
+    </release>
     <release version="0.1.1" type="development" date="2026-10-27">
       <description>
         <p>Fix the alternate Meson frontend's Groundhog executable-side link closure.</p>

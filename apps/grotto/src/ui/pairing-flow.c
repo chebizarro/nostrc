@@ -1,4 +1,5 @@
 #include "pairing-flow.h"
+#include "dialog-actions.h"
 #include "../pairing_uri.h"
 #include "sheets/sheet-create-bunker.h"
 #include "sheets/sheet-qr-scanner.h"
@@ -23,6 +24,16 @@ static void flow_closed(AdwDialog *dialog, gpointer data) {
   if (GTK_IS_EDITABLE(f->entry)) gtk_editable_set_text(GTK_EDITABLE(f->entry), "");
   if (f->uri) { secure_wipe(f->uri, strlen(f->uri)); g_clear_pointer(&f->uri, g_free); }
 }
+static void identity_selected(GObject *object, GParamSpec *pspec, gpointer data) {
+  (void)pspec; PairingFlow *f = data;
+  gtk_widget_set_sensitive(f->submit, gtk_drop_down_get_selected(GTK_DROP_DOWN(object)) != GTK_INVALID_LIST_POSITION);
+}
+static void link_changed(GtkEditable *editable, gpointer data) {
+  PairingFlow *f = data; NostrNip46ConnectURI uri;
+  gboolean valid = grotto_connect_parse(gtk_editable_get_text(editable), &uri, NULL);
+  if (valid) grotto_connect_clear(&uri);
+  gtk_widget_set_sensitive(f->submit, valid);
+}
 static void identities_ready(GObject *source, GAsyncResult *result, gpointer data) {
   AdwDialog *d = data; PairingFlow *f = g_object_get_data(G_OBJECT(d), "pairing-flow");
   g_autoptr(GError) error = NULL; g_autoptr(GVariant) reply = g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), result, &error);
@@ -34,7 +45,7 @@ static void identities_ready(GObject *source, GAsyncResult *result, gpointer dat
       gtk_drop_down_set_model(GTK_DROP_DOWN(f->identities), G_LIST_MODEL(model)); g_object_unref(model);
       gtk_drop_down_set_selected(GTK_DROP_DOWN(f->identities), GTK_INVALID_LIST_POSITION);
       gtk_label_set_text(GTK_LABEL(f->status), identities[0] ? _("Choose an identity, then review what the app may do before connecting.") : _("Create or import an identity first."));
-      gtk_widget_set_sensitive(f->submit, identities[0] != NULL);
+      gtk_widget_set_sensitive(f->submit, FALSE);
     }
   }
   g_object_unref(d);
@@ -54,6 +65,7 @@ static void accepted(GObject *source, GAsyncResult *result, gpointer data) {
   } else if (!f->closed) {
     gtk_label_set_text(GTK_LABEL(f->status), _("Pairing is unavailable. Check Remote Signing, then try again."));
     gtk_widget_set_sensitive(f->submit, TRUE);
+    gtk_widget_set_sensitive(f->identities, TRUE);
   }
   g_object_unref(d);
 }
@@ -63,6 +75,7 @@ static void request_review(GtkButton *button, gpointer data) {
   if (selected == GTK_INVALID_LIST_POSITION) { gtk_label_set_text(GTK_LABEL(f->status), _("Choose an identity to connect.")); return; }
   GtkStringObject *item = GTK_STRING_OBJECT(gtk_drop_down_get_selected_item(GTK_DROP_DOWN(f->identities)));
   gtk_widget_set_sensitive(f->submit, FALSE);
+  gtk_widget_set_sensitive(f->identities, FALSE);
   /* Do not cancel an in-flight mutating call without learning its request ID:
    * the callback cancels that exact pairing if the sheet was closed. */
   g_dbus_connection_call(f->bus, "org.nostr.Signer", "/org/nostr/signer/grotto", "org.nostr.Grotto.Control1", "AcceptConnectURI",
@@ -97,7 +110,7 @@ static void scanned(const gchar *text, GnQrContentType type, gpointer data) {
   GtkWidget *parent = g_object_get_data(G_OBJECT(scanner), "pairing-parent");
   if (parent) grotto_pairing_present(parent, text);
 }
-static void scan(GtkButton *button, gpointer data) {
+static void scan(AdwActionRow *button, gpointer data) {
   (void)button; PairingFlow *f = data; g_autoptr(GtkWidget) parent = g_weak_ref_get(&f->parent);
   if (!parent) return;
   SheetQrScanner *scanner = sheet_qr_scanner_new();
@@ -107,7 +120,7 @@ static void scan(GtkButton *button, gpointer data) {
   g_object_set_data_full(G_OBJECT(scanner), "pairing-parent", g_object_ref(parent), g_object_unref);
   adw_dialog_present(ADW_DIALOG(scanner), parent); adw_dialog_close(f->dialog);
 }
-static void create(GtkButton *button, gpointer data) {
+static void create(AdwActionRow *button, gpointer data) {
   (void)button; PairingFlow *f = data; g_autoptr(GtkWidget) parent = g_weak_ref_get(&f->parent);
   if (parent) { adw_dialog_present(ADW_DIALOG(sheet_create_bunker_new()), parent); adw_dialog_close(f->dialog); }
 }
@@ -136,20 +149,33 @@ void grotto_pairing_present(GtkWidget *parent, const gchar *uri) {
     f->identities = gtk_drop_down_new(NULL, NULL); gtk_widget_set_tooltip_text(f->identities, _("Identity to Connect"));
     gtk_accessible_update_property(GTK_ACCESSIBLE(f->identities), GTK_ACCESSIBLE_PROPERTY_LABEL, _("Identity to Connect"), -1);
     gtk_box_append(GTK_BOX(box), f->identities);
-    f->submit = gtk_button_new_with_label(_("Review Connection")); gtk_widget_set_sensitive(f->submit, FALSE);
-    g_signal_connect(f->submit, "clicked", G_CALLBACK(request_review), f); gtk_box_append(GTK_BOX(box), f->submit);
+    f->submit = gtk_button_new_with_mnemonic(_("_Review")); gtk_widget_set_sensitive(f->submit, FALSE);
+    g_signal_connect(f->submit, "clicked", G_CALLBACK(request_review), f);
+    g_signal_connect(f->identities, "notify::selected", G_CALLBACK(identity_selected), f);
     preview_uri(f, uri);
   } else {
     f->entry = gtk_entry_new(); gtk_entry_set_placeholder_text(GTK_ENTRY(f->entry), _("Paste an app connection link")); gtk_box_append(GTK_BOX(box), f->entry);
-    const gchar *labels[] = {_("Preview Link"), _("Scan QR Code…"), _("Create Pairing Link…")};
-    GCallback callbacks[] = {G_CALLBACK(pasted), G_CALLBACK(scan), G_CALLBACK(create)};
-    for (guint i = 0; i < 3; i++) { GtkWidget *b = gtk_button_new_with_label(labels[i]); g_signal_connect(b, "clicked", callbacks[i], f); gtk_box_append(GTK_BOX(box), b); }
+    f->submit = gtk_button_new_with_mnemonic(_("_Preview")); gtk_widget_set_sensitive(f->submit, FALSE);
+    g_signal_connect(f->submit, "clicked", G_CALLBACK(pasted), f);
+    g_signal_connect(f->entry, "changed", G_CALLBACK(link_changed), f);
+    const gchar *labels[] = {_("_Scan QR Code…"), _("Create Pairing _Link…")};
+    GCallback callbacks[] = {G_CALLBACK(scan), G_CALLBACK(create)};
+    GtkWidget *group = adw_preferences_group_new();
+    for (guint i = 0; i < G_N_ELEMENTS(labels); i++) {
+      GtkWidget *row = adw_action_row_new(); adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), labels[i]);
+      adw_preferences_row_set_use_underline(ADW_PREFERENCES_ROW(row), TRUE);
+      gtk_list_box_row_set_activatable(GTK_LIST_BOX_ROW(row), TRUE);
+      g_signal_connect(row, "activated", callbacks[i], f); adw_preferences_group_add(ADW_PREFERENCES_GROUP(group), row);
+    }
+    gtk_box_append(GTK_BOX(box), group);
   }
   gtk_box_append(GTK_BOX(box), f->status);
-  if (uri) gtk_widget_add_css_class(f->submit, "suggested-action");
   GtkWidget *scroll = gtk_scrolled_window_new(); gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
   gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), box);
-  GtkWidget *toolbar = adw_toolbar_view_new(); adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(toolbar), adw_header_bar_new());
+  GtkWidget *toolbar = adw_toolbar_view_new();
+  adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(toolbar), grotto_dialog_header(f->dialog, f->submit));
   adw_toolbar_view_set_content(ADW_TOOLBAR_VIEW(toolbar), scroll);
-  adw_dialog_set_child(f->dialog, toolbar); adw_dialog_present(f->dialog, parent);
+  adw_dialog_set_child(f->dialog, toolbar);
+  adw_dialog_set_focus(f->dialog, uri ? f->identities : f->entry);
+  adw_dialog_present(f->dialog, parent);
 }

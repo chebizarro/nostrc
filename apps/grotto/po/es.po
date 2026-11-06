@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: grotto 0.1.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-06 03:02-0800\n"
+"POT-Creation-Date: 2026-11-06 11:40-0800\n"
 "PO-Revision-Date: 2024-01-23 00:00+0000\n"
 "Last-Translator: \n"
 "Language-Team: Spanish\n"
@@ -91,8 +91,8 @@ msgid "Allow _Selected Once"
 msgstr ""
 
 #: data/ui/approval-dialog.ui:240 data/ui/onboarding-assistant.ui:266
-#: data/ui/sheets/sheet-qr-display.ui:71 data/ui/sheets/sheet-qr-scanner.ui:114
-#: src/ui/pairing-flow.c:132
+#: data/ui/sheets/sheet-qr-display.ui:70 data/ui/sheets/sheet-qr-scanner.ui:144
+#: src/ui/pairing-flow.c:145
 msgid "Details"
 msgstr "Detalles"
 
@@ -254,7 +254,7 @@ msgid "Use a key or recovery phrase you already have"
 msgstr "Usar una clave o frase de recuperación que ya tienes"
 
 #: data/ui/onboarding-assistant.ui:79 data/ui/onboarding-assistant.ui:199
-#: src/ui/pairing-flow.c:79 src/ui/sheets/sheet-qr-display.c:332
+#: src/ui/pairing-flow.c:92 src/ui/sheets/sheet-qr-display.c:332
 msgid "Connect an App"
 msgstr "Conectar una aplicación"
 
@@ -330,7 +330,7 @@ msgstr "_Repetir comprobación"
 #. Onboarding also offers backup before the management window exists. This
 #. * trusted shell contains only the pinned Backup page, not another editor.
 #: data/ui/onboarding-assistant.ui:294 data/ui/page-identity-detail.ui:10
-#: src/ui/page-identity-detail.c:476
+#: src/ui/page-identity-detail.c:501
 msgid "Back Up Identity"
 msgstr "Respaldar identidad"
 
@@ -363,7 +363,7 @@ msgid "Cop_y"
 msgstr "Cop_iar"
 
 #: data/ui/onboarding-assistant.ui:357 data/ui/page-identity-detail.ui:53
-#: src/qr-code.c:88 src/ui/page-identity-detail.c:295
+#: src/qr-code.c:88 src/ui/page-identity-detail.c:307
 #: src/ui/sheets/sheet-qr-display.c:323
 msgid "Encrypted Backup"
 msgstr "Copia de seguridad cifrada"
@@ -424,7 +424,7 @@ msgstr "Pegar enlace de aplicación"
 msgid "Preview a link from your clipboard"
 msgstr ""
 
-#: data/ui/page-connect.ui:34 src/ui/pairing-flow.c:144
+#: data/ui/page-connect.ui:34
 msgid "Scan QR Code…"
 msgstr "Escanear código QR…"
 
@@ -440,23 +440,15 @@ msgstr "Abrir archivo de enlace…"
 msgid "Choose a connection link saved by your app"
 msgstr "Elige un enlace de conexión guardado por tu aplicación"
 
-#: data/ui/page-connect.ui:68 src/ui/pairing-flow.c:144
-msgid "Create Pairing Link…"
-msgstr "Crear enlace de vinculación…"
-
-#: data/ui/page-connect.ui:69
-msgid "Show a single-use link or QR code"
-msgstr "Mostrar un enlace o código QR de un solo uso"
-
-#: data/ui/page-connect.ui:89
+#: data/ui/page-connect.ui:72
 msgid "Remote Signing"
 msgstr "Firma remota"
 
-#: data/ui/page-connect.ui:90 src/home-model.c:119
+#: data/ui/page-connect.ui:73 src/home-model.c:119
 msgid "Connecting to signer…"
 msgstr "Conectando con el firmante…"
 
-#: data/ui/page-connect.ui:96
+#: data/ui/page-connect.ui:79
 msgid ""
 "Apps on this device ask for permission automatically. Apps can sign only "
 "after you approve their permissions."
@@ -465,8 +457,8 @@ msgstr ""
 "pueden firmar después de que apruebes sus permisos."
 
 #: data/ui/page-settings.ui:10 data/ui/shortcuts-window.ui:45
-#: data/org.nostr.Grotto.desktop:30 src/ui/signer-window.c:610
-#: src/ui/signer-window.c:803
+#: data/org.nostr.Grotto.desktop:30 src/ui/signer-window.c:612
+#: src/ui/signer-window.c:805
 msgid "Preferences"
 msgstr ""
 
@@ -520,7 +512,7 @@ msgstr ""
 "También detiene las solicitudes ya autorizadas. Desbloquea la sesión para "
 "reanudar."
 
-#: data/ui/page-settings.ui:49 src/ui/page-settings.c:40
+#: data/ui/page-settings.ui:49 src/ui/page-settings.c:51
 msgid "Keep Activity (Days)"
 msgstr ""
 
@@ -528,7 +520,7 @@ msgstr ""
 msgid "Request details only, not message content or keys"
 msgstr "Solo detalles de solicitudes, sin contenido de mensajes ni claves"
 
-#: data/ui/page-identity-detail.ui:19 src/ui/page-identity-detail.c:168
+#: data/ui/page-identity-detail.ui:19 src/ui/page-identity-detail.c:177
 msgid "Backup incomplete"
 msgstr "La copia de seguridad todavía no está completa"
 
@@ -536,7 +528,7 @@ msgstr "La copia de seguridad todavía no está completa"
 msgid "The backup action couldn't be completed"
 msgstr "No se ha podido completar la acción de copia de seguridad"
 
-#: data/ui/page-identity-detail.ui:26 src/ui/page-identity-detail.c:345
+#: data/ui/page-identity-detail.ui:26
 msgid "Retry"
 msgstr "Reintentar"
 
@@ -546,8 +538,8 @@ msgstr ""
 "Cualquiera que tenga esta copia controla tu identidad. Mantenla en privado"
 
 #: data/ui/page-identity-detail.ui:37 data/ui/signer-window.ui:44
-#: data/ui/sheets/sheet-create-bunker.ui:33 src/ui/approval_dialog.c:306
-#: src/ui/approval_dialog.c:789 src/ui/pairing-flow.c:134
+#: data/ui/sheets/sheet-create-bunker.ui:44 src/ui/approval_dialog.c:306
+#: src/ui/approval_dialog.c:789 src/ui/pairing-flow.c:147
 msgid "Identity"
 msgstr "Identidad"
 
@@ -609,19 +601,19 @@ msgid "Grotto"
 msgstr "Grotto"
 
 #: data/ui/shortcuts-window.ui:20 data/org.nostr.Grotto.desktop:26
-#: src/ui/signer-window.c:593
+#: src/ui/signer-window.c:595
 msgid "New Identity…"
 msgstr ""
 
-#: data/ui/shortcuts-window.ui:26 src/ui/signer-window.c:594
+#: data/ui/shortcuts-window.ui:26 src/ui/signer-window.c:596
 msgid "Import Identity…"
 msgstr ""
 
-#: data/ui/shortcuts-window.ui:32 src/ui/signer-window.c:595
+#: data/ui/shortcuts-window.ui:32 src/ui/signer-window.c:597
 msgid "Back Up Identity…"
 msgstr ""
 
-#: data/ui/shortcuts-window.ui:38 src/ui/signer-window.c:602
+#: data/ui/shortcuts-window.ui:38 src/ui/signer-window.c:604
 msgid "Lock Management"
 msgstr ""
 
@@ -637,7 +629,7 @@ msgstr ""
 msgid "Quit Approval UI (authorized signing continues)"
 msgstr "Cerrar la interfaz de aprobación (la firma continúa)"
 
-#: data/ui/shortcuts-window.ui:63 src/ui/signer-window.c:611
+#: data/ui/shortcuts-window.ui:63 src/ui/signer-window.c:613
 msgid "Keyboard Shortcuts"
 msgstr ""
 
@@ -653,87 +645,93 @@ msgstr ""
 msgid "Panels"
 msgstr ""
 
-#: data/ui/sheets/sheet-create-bunker.ui:10
+#: data/ui/sheets/sheet-create-bunker.ui:10 src/ui/signer-window.c:820
 msgid "Create Pairing Link"
 msgstr "Crear enlace de vinculación"
 
-#: data/ui/sheets/sheet-create-bunker.ui:20
-#: data/ui/sheets/sheet-qr-scanner.ui:21 src/ui/onboarding-assistant.c:81
+#: data/ui/sheets/sheet-create-bunker.ui:21
+#: data/ui/sheets/sheet-qr-scanner.ui:22 src/ui/signer-window.c:769
+#: src/ui/dialog-actions.h:11 src/ui/page-identity-detail.c:284
+#: src/ui/page-identity-detail.c:389 src/ui/onboarding-assistant.c:81
 msgid "_Cancel"
 msgstr "_Cancelar"
 
-#: data/ui/sheets/sheet-create-bunker.ui:28
+#: data/ui/sheets/sheet-create-bunker.ui:27
+msgid "Create _Link"
+msgstr "Crear _enlace"
+
+#: data/ui/sheets/sheet-create-bunker.ui:39
 msgid ""
 "Choose the identity to connect. You'll review the app before it can sign."
 msgstr ""
 "Elige la identidad que quieres conectar. Revisarás la aplicación antes de "
 "que pueda firmar."
 
-#: data/ui/sheets/sheet-create-bunker.ui:38
+#: data/ui/sheets/sheet-create-bunker.ui:49
 msgid "App Name (Optional)"
 msgstr "Nombre de la aplicación (opcional)"
 
-#: data/ui/sheets/sheet-create-bunker.ui:55
+#: data/ui/sheets/sheet-create-bunker.ui:58
 msgid "Checking remote signing…"
 msgstr "Comprobando la firma remota…"
 
-#: data/ui/sheets/sheet-create-bunker.ui:62
-msgid "Create _Link"
-msgstr "Crear _enlace"
-
 #. Set title
-#: data/ui/sheets/sheet-qr-display.ui:10 data/ui/sheets/sheet-qr-display.ui:45
+#: data/ui/sheets/sheet-qr-display.ui:10 data/ui/sheets/sheet-qr-display.ui:51
 #: src/ui/sheets/sheet-qr-display.c:285
 msgid "QR Code"
 msgstr "Código QR"
 
-#: data/ui/sheets/sheet-qr-display.ui:20
+#: data/ui/sheets/sheet-qr-display.ui:20 src/ui/page-identity-detail.c:507
 msgid "_Close"
 msgstr "_Cerrar"
 
-#: data/ui/sheets/sheet-qr-display.ui:46
+#: data/ui/sheets/sheet-qr-display.ui:27
+msgid "Copy to Clipboard"
+msgstr "Copiar al portapapeles"
+
+#: data/ui/sheets/sheet-qr-display.ui:52
 msgid "Scan with a compatible app"
 msgstr "Escanea con una aplicación compatible"
-
-#: data/ui/sheets/sheet-qr-display.ui:64 src/ui/sheets/sheet-qr-display.c:55
-msgid "Cop_y to Clipboard"
-msgstr "Cop_iar al portapapeles"
 
 #: data/ui/sheets/sheet-qr-scanner.ui:10
 msgid "Scan QR Code"
 msgstr "Escanear código QR"
 
-#: data/ui/sheets/sheet-qr-scanner.ui:46 src/ui/sheets/sheet-qr-scanner.c:388
-msgid "Ready to scan"
-msgstr "Listo para escanear"
-
-#: data/ui/sheets/sheet-qr-scanner.ui:52 src/ui/sheets/sheet-qr-scanner.c:521
-msgid "Scan a secret key or encrypted backup"
-msgstr "Escanea una clave secreta o copia cifrada"
-
-#: data/ui/sheets/sheet-qr-scanner.ui:58 src/ui/sheets/sheet-qr-scanner.c:170
-msgid "_Start Camera"
-msgstr "_Iniciar cámara"
-
-#: data/ui/sheets/sheet-qr-scanner.ui:67
-msgid "_Paste QR Image"
-msgstr "_Pegar imagen QR"
-
-#: data/ui/sheets/sheet-qr-scanner.ui:73
-msgid "_Open QR Image…"
-msgstr "_Abrir imagen QR…"
-
-#: data/ui/sheets/sheet-qr-scanner.ui:100
-msgid "QR Code Scanned"
-msgstr "Código QR escaneado"
-
-#: data/ui/sheets/sheet-qr-scanner.ui:131 src/ui/sheets/sheet-qr-scanner.c:519
+#: data/ui/sheets/sheet-qr-scanner.ui:28 src/ui/sheets/sheet-qr-scanner.c:522
 msgid "_Import Key"
 msgstr "_Importar clave"
 
-#: data/ui/sheets/sheet-qr-scanner.ui:140
+#: data/ui/sheets/sheet-qr-scanner.ui:57 src/ui/sheets/sheet-qr-scanner.c:390
+msgid "Ready to scan"
+msgstr "Listo para escanear"
+
+#: data/ui/sheets/sheet-qr-scanner.ui:63 src/ui/sheets/sheet-qr-scanner.c:525
+msgid "Scan a secret key or encrypted backup"
+msgstr "Escanea una clave secreta o copia cifrada"
+
+#: data/ui/sheets/sheet-qr-scanner.ui:71 src/ui/sheets/sheet-qr-scanner.c:170
+msgid "_Start Camera"
+msgstr "Iniciar cá_mara"
+
+#: data/ui/sheets/sheet-qr-scanner.ui:83
+msgid "_Paste QR Image"
+msgstr "_Pegar imagen QR"
+
+#: data/ui/sheets/sheet-qr-scanner.ui:95
+msgid "_Open QR Image…"
+msgstr "_Abrir imagen QR…"
+
+#: data/ui/sheets/sheet-qr-scanner.ui:130
+msgid "QR Code Scanned"
+msgstr "Código QR escaneado"
+
+#: data/ui/sheets/sheet-qr-scanner.ui:163
 msgid "Scan _Another Code"
-msgstr "_Escanear otro código"
+msgstr "Escanear _otro código"
+
+#: data/ui/sheets/sheet-qr-scanner.ui:166
+msgid "Scan Another Code"
+msgstr "Escanear otro código"
 
 #: data/ui/widgets/gn-secure-entry.ui:29
 msgid "Enter your password. Characters are hidden for security."
@@ -920,11 +918,11 @@ msgstr "Abrir Grotto"
 msgid "Review Requests"
 msgstr "Revisar solicitudes"
 
-#: src/main_app.c:506 src/ui/signer-window.c:603
+#: src/main_app.c:506 src/ui/signer-window.c:605
 msgid "Pause Signing"
 msgstr "Pausar firma"
 
-#: src/main_app.c:507 src/ui/signer-window.c:604
+#: src/main_app.c:507 src/ui/signer-window.c:606
 msgid "Resume Signing…"
 msgstr "Reanudar firma…"
 
@@ -1030,112 +1028,110 @@ msgstr ""
 msgid "Public publishing: notes, reposts, reactions, articles and comments"
 msgstr ""
 
-#: src/ui/signer-window.c:112
+#: src/ui/signer-window.c:114
 #, c-format
 msgid "GSettings schema %s not found"
 msgstr ""
 
-#: src/ui/signer-window.c:135
+#: src/ui/signer-window.c:137
 #, c-format
 msgid "Window state saved: maximized=%d"
 msgstr ""
 
-#: src/ui/signer-window.c:152
+#: src/ui/signer-window.c:154
 #, c-format
 msgid "Window state restored: width=%d height=%d maximized=%d"
 msgstr ""
 
-#: src/ui/signer-window.c:439
+#: src/ui/signer-window.c:441
 #, c-format
 msgid "Window: session locked (reason=%d)"
 msgstr ""
 
-#: src/ui/signer-window.c:453
+#: src/ui/signer-window.c:455
 msgid "Window: session unlocked"
 msgstr ""
 
 #. Show a toast warning about impending timeout
-#: src/ui/signer-window.c:461
+#: src/ui/signer-window.c:463
 #, c-format
 msgid "Management will lock in %u seconds"
 msgstr ""
 
-#: src/ui/signer-window.c:474
+#: src/ui/signer-window.c:476
 msgid "Window: unlock requested from lock screen"
 msgstr ""
 
-#: src/ui/signer-window.c:596
+#: src/ui/signer-window.c:598
 msgid "Add App…"
 msgstr ""
 
-#: src/ui/signer-window.c:612
+#: src/ui/signer-window.c:614
 msgid "About Grotto"
 msgstr "Grotto"
 
-#: src/ui/signer-window.c:637
+#: src/ui/signer-window.c:639
 #, c-format
 msgid "Connected Apps, %u pending request"
 msgid_plural "Connected Apps, %u pending requests"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/ui/signer-window.c:637
+#: src/ui/signer-window.c:639
 msgid "Connected Apps"
 msgstr ""
 
-#: src/ui/signer-window.c:724
+#: src/ui/signer-window.c:726
 msgid "Identity removed from this device"
 msgstr ""
 
-#: src/ui/signer-window.c:724
+#: src/ui/signer-window.c:726
 msgid "Identity wasn't removed. Check pending requests and retry"
 msgstr ""
 
-#: src/ui/signer-window.c:732
+#: src/ui/signer-window.c:734
 msgid "Identity wasn't removed. Unlock management and retry"
 msgstr ""
 
-#: src/ui/signer-window.c:758
+#: src/ui/signer-window.c:760
 msgid "Remove Identity?"
 msgstr ""
 
-#: src/ui/signer-window.c:758
+#: src/ui/signer-window.c:760
 msgid ""
 "This identity is deleted from this device. Without a backup it can't be "
 "recovered."
 msgstr ""
 
-#: src/ui/signer-window.c:761
+#: src/ui/signer-window.c:763
 msgid "Copy Public Key"
 msgstr ""
 
-#: src/ui/signer-window.c:762
+#: src/ui/signer-window.c:764
 msgid "Type the full npub to confirm removal"
 msgstr ""
 
-#: src/ui/signer-window.c:763
+#: src/ui/signer-window.c:765
 msgid "Public Key Confirmation"
 msgstr ""
 
-#: src/ui/signer-window.c:767 src/grotto-profile-service.c:794
-#: src/ui/approval_dialog.c:422 src/ui/page-identity-detail.c:275
-#: src/ui/page-identity-detail.c:365
-msgid "Cancel"
-msgstr "Cancelar"
+#: src/ui/signer-window.c:769
+msgid "_Remove"
+msgstr "_Eliminar"
 
-#: src/ui/signer-window.c:767
-msgid "Remove"
-msgstr ""
-
-#: src/ui/signer-window.c:811 src/ui/pairing-flow.c:122
+#: src/ui/signer-window.c:816 src/ui/pairing-flow.c:135
 msgid "Add App"
 msgstr "Añadir aplicación"
 
-#: src/ui/signer-window.c:914
+#: src/ui/signer-window.c:819
+msgid "Create _Link…"
+msgstr "Crear _enlace…"
+
+#: src/ui/signer-window.c:922
 msgid "Choose Backup for this identity."
 msgstr ""
 
-#: src/ui/signer-window.c:1050
+#: src/ui/signer-window.c:1058
 msgid "Session locked via Ctrl+L"
 msgstr ""
 
@@ -1234,6 +1230,10 @@ msgstr ""
 #: src/grotto-profile-service.c:792
 msgid "Selected Avatar"
 msgstr ""
+
+#: src/grotto-profile-service.c:794 src/ui/approval_dialog.c:422
+msgid "Cancel"
+msgstr "Cancelar"
 
 #: src/grotto-profile-service.c:794
 msgid "Upload Cropped Image"
@@ -1737,7 +1737,7 @@ msgid ""
 "Peer: %s"
 msgstr ""
 
-#: src/ui/approval_dialog.c:612 src/ui/pairing-flow.c:84
+#: src/ui/approval_dialog.c:612 src/ui/pairing-flow.c:97
 msgid "None"
 msgstr ""
 
@@ -2307,18 +2307,18 @@ msgstr "Error"
 msgid "Unavailable"
 msgstr ""
 
-#: src/ui/page-connect.c:58
+#: src/ui/page-connect.c:57
 msgid ""
 "Could not read a valid link file (maximum 64 KiB). Paste or scan the link "
 "instead."
 msgstr ""
 
-#: src/ui/page-connect.c:68
+#: src/ui/page-connect.c:67
 msgid ""
 "The selected link file could not be read. Paste or scan the link instead."
 msgstr ""
 
-#: src/ui/page-connect.c:86
+#: src/ui/page-connect.c:85
 msgid "Open App Link File"
 msgstr "Abrir archivo de enlace de aplicación"
 
@@ -2882,75 +2882,75 @@ msgstr ""
 msgid "Simple group pinned events"
 msgstr ""
 
-#: src/ui/page-settings.c:35
+#: src/ui/page-settings.c:42
 msgid "Activity Retention"
 msgstr ""
 
-#: src/ui/page-settings.c:38
+#: src/ui/page-settings.c:44 src/ui/page-settings.c:101
+msgid "_Save"
+msgstr "_Guardar"
+
+#: src/ui/page-settings.c:49
 msgid "Metadata only — no messages, secrets or event content"
 msgstr ""
 
-#: src/ui/page-settings.c:59
+#: src/ui/page-settings.c:72 src/ui/page-settings.c:91
 msgid "Use whole event-type numbers from 0 to 65535, separated by commas."
 msgstr ""
 
-#: src/ui/page-settings.c:65
+#: src/ui/page-settings.c:78
 msgid "The ask-by-default policy could not be saved."
 msgstr ""
 
-#: src/ui/page-settings.c:74
+#: src/ui/page-settings.c:100
 msgid "Ask-by-Default Event Types"
 msgstr ""
 
-#: src/ui/page-settings.c:91
+#: src/ui/page-settings.c:120
 #, c-format
 msgid "Kind %u"
 msgstr ""
 
-#: src/ui/page-settings.c:92
+#: src/ui/page-settings.c:121
 #, c-format
 msgid "%s, kind %u"
 msgstr ""
 
-#: src/ui/page-settings.c:108
+#: src/ui/page-settings.c:137
 msgid "Additional custom event types (comma-separated)"
 msgstr ""
 
-#: src/ui/page-settings.c:110
+#: src/ui/page-settings.c:139
 msgid "Additional custom event types"
 msgstr ""
 
-#: src/ui/page-settings.c:112
-msgid "Save Ask-by-Default Policy"
-msgstr ""
+#: src/ui/page-settings.c:143
+msgid "_Restore Defaults"
+msgstr "_Restablecer valores predeterminados"
 
-#: src/ui/page-settings.c:113 src/ui/page-settings.c:185
-msgid "Restore Defaults"
-msgstr ""
-
-#: src/ui/page-settings.c:150
+#: src/ui/page-settings.c:184
 msgid ""
 "Use up to 16 wss:// relay URLs, one per line, without credentials, queries "
 "or fragments"
 msgstr ""
 
-#: src/ui/page-settings.c:156
+#: src/ui/page-settings.c:190
 msgid "Discovery relays saved"
 msgstr ""
 
-#: src/ui/page-settings.c:156
+#: src/ui/page-settings.c:190
 msgid "Discovery relays could not be saved"
 msgstr ""
 
-#: src/ui/page-settings.c:164
+#: src/ui/page-settings.c:198
 msgid "Discovery-only defaults restored"
 msgstr ""
 
-#: src/ui/page-settings.c:168
+#: src/ui/page-settings.c:202
 msgid "Profile Discovery"
 msgstr ""
 
-#: src/ui/page-settings.c:169
+#: src/ui/page-settings.c:203
 msgid ""
 "For identities with no known relays, share the public key with discovery "
 "relays to find a profile. Never used for publishing."
@@ -2958,187 +2958,195 @@ msgstr ""
 "Para identidades sin relés conocidos, comparte la clave pública con relés de "
 "descubrimiento para encontrar un perfil. Nunca se usan para publicar."
 
-#: src/ui/page-settings.c:171
+#: src/ui/page-settings.c:205
 msgid "Find Profiles Automatically"
 msgstr "Buscar perfiles automáticamente"
 
-#: src/ui/page-settings.c:175
+#: src/ui/page-settings.c:209
 msgid "Discovery-Only Relays"
 msgstr ""
 
-#: src/ui/page-settings.c:176
+#: src/ui/page-settings.c:210
 msgid "Profiles, public relay lists, and messaging relay lists"
 msgstr "Perfiles, listas de relés públicos y de mensajería"
 
-#: src/ui/page-settings.c:180
+#: src/ui/page-settings.c:214
 msgid "Discovery relay URLs, one per line"
 msgstr ""
 
-#: src/ui/page-settings.c:185
+#: src/ui/page-settings.c:219
 msgid "Save Discovery Relays"
 msgstr ""
 
-#: src/ui/page-settings.c:200
+#: src/ui/page-settings.c:219
+msgid "Restore Defaults"
+msgstr ""
+
+#: src/ui/page-settings.c:234
 msgid "Privacy and Network"
 msgstr "Privacidad y red"
 
-#: src/ui/page-settings.c:202
+#: src/ui/page-settings.c:236
 msgid "Load Profile Images"
 msgstr "Cargar imágenes de perfil"
 
-#: src/ui/page-settings.c:203
+#: src/ui/page-settings.c:237
 msgid "Fetch avatars and banners from the web addresses in profiles"
 msgstr "Obtener avatares y cabeceras de las direcciones web de los perfiles"
 
-#: src/ui/page-identity-detail.c:121
+#: src/ui/page-identity-detail.c:130
 msgid "Backup saved. Keep it and its passphrase safe"
 msgstr ""
 
-#: src/ui/page-identity-detail.c:123
+#: src/ui/page-identity-detail.c:132
 msgid "Migration announcement saved. Nothing was published"
 msgstr ""
 
-#: src/ui/page-identity-detail.c:124
+#: src/ui/page-identity-detail.c:133
 msgid "The file wasn't saved. Check the destination and retry"
 msgstr ""
 
-#: src/ui/page-identity-detail.c:151
+#: src/ui/page-identity-detail.c:160
 msgid "No recovery phrase is stored for this identity. Use an encrypted backup"
 msgstr ""
 
-#: src/ui/page-identity-detail.c:154
+#: src/ui/page-identity-detail.c:163
 msgid "Recovery phrase unavailable. Use an encrypted backup or retry"
 msgstr ""
 
-#: src/ui/page-identity-detail.c:154
+#: src/ui/page-identity-detail.c:163
 msgid "The action couldn't be completed. Check the signer and retry"
 msgstr ""
 
-#: src/ui/page-identity-detail.c:168
+#: src/ui/page-identity-detail.c:177
 msgid "Identity not verified. Test this identity before relying on it"
 msgstr ""
 "La identidad no está verificada. Compruébala antes de empezar a utilizarla"
 
-#: src/ui/page-identity-detail.c:178
+#: src/ui/page-identity-detail.c:187
 msgid "Identity actions are unavailable with this signer"
 msgstr ""
 
-#: src/ui/page-identity-detail.c:190
+#: src/ui/page-identity-detail.c:199
 msgid "Secret key copied. Clipboard managers may keep it"
 msgstr ""
 
-#: src/ui/page-identity-detail.c:200
+#: src/ui/page-identity-detail.c:209
 msgid "Replacement identity"
 msgstr ""
 
-#: src/ui/page-identity-detail.c:202
+#: src/ui/page-identity-detail.c:211
 msgid "Replacement created. Apps and permissions are unchanged"
 msgstr ""
 
-#: src/ui/page-identity-detail.c:218
+#: src/ui/page-identity-detail.c:227
 msgid "Choose a passphrase first"
 msgstr ""
 
-#: src/ui/page-identity-detail.c:234
+#: src/ui/page-identity-detail.c:243
 msgid "Export cancelled; no file was written"
 msgstr ""
 
-#: src/ui/page-identity-detail.c:260
+#: src/ui/page-identity-detail.c:269
 msgid "Backup acknowledged. This isn't proof of recovery"
 msgstr ""
 
-#: src/ui/page-identity-detail.c:261
+#: src/ui/page-identity-detail.c:270
 msgid ""
 "Backup acknowledgement wasn't saved. Test this identity first, then retry"
 msgstr ""
 
-#: src/ui/page-identity-detail.c:274
+#: src/ui/page-identity-detail.c:283
 msgid "Copy Recovery Phrase?"
 msgstr ""
 
-#: src/ui/page-identity-detail.c:274
+#: src/ui/page-identity-detail.c:283
 msgid ""
 "Anyone with these words controls your identity. Clipboard managers may keep "
 "a copy"
 msgstr ""
 
-#: src/ui/page-identity-detail.c:275
-msgid "Copy Phrase"
-msgstr ""
+#: src/ui/page-identity-detail.c:284
+msgid "Cop_y Phrase"
+msgstr "Co_piar frase"
 
-#: src/ui/page-identity-detail.c:295
+#: src/ui/page-identity-detail.c:307
 msgid "Recovery Phrase"
 msgstr "Frase de recuperación"
 
-#: src/ui/page-identity-detail.c:299
+#: src/ui/page-identity-detail.c:310 src/ui/page-identity-detail.c:352
+msgid "Confirm _Backup"
+msgstr "Confirmar _respaldo"
+
+#: src/ui/page-identity-detail.c:311
+msgid "Show _QR Code"
+msgstr "Mostrar _QR"
+
+#: src/ui/page-identity-detail.c:311
+msgid "_Save Backup…"
+msgstr "_Guardar copia…"
+
+#: src/ui/page-identity-detail.c:316
 msgid "Write these words down in order. Keep them private and offline"
 msgstr ""
 
-#: src/ui/page-identity-detail.c:299
+#: src/ui/page-identity-detail.c:316
 msgid "Choose a passphrase. It's needed to restore this backup"
 msgstr ""
 
-#: src/ui/page-identity-detail.c:304
+#: src/ui/page-identity-detail.c:321
 msgid "I wrote these down"
 msgstr "He anotado estas palabras"
 
-#: src/ui/page-identity-detail.c:306 src/ui/page-identity-detail.c:333
-msgid "Confirm Backup"
-msgstr "Confirmar copia"
+#: src/ui/page-identity-detail.c:325
+msgid "Cop_y Recovery Phrase…"
+msgstr "Co_piar frase de recuperación…"
 
-#: src/ui/page-identity-detail.c:308
-msgid "Copy Recovery Phrase…"
-msgstr ""
-
-#: src/ui/page-identity-detail.c:316 src/ui/page-identity-detail.c:318
-#: src/ui/page-identity-detail.c:322
+#: src/ui/page-identity-detail.c:335 src/ui/page-identity-detail.c:337
+#: src/ui/page-identity-detail.c:341
 msgid "Backup Passphrase"
 msgstr "Contraseña de la copia de seguridad"
 
-#: src/ui/page-identity-detail.c:327
-msgid "Show QR Code"
-msgstr "Mostrar código QR"
-
-#: src/ui/page-identity-detail.c:327
-msgid "Save Backup…"
-msgstr "Guardar copia…"
-
-#: src/ui/page-identity-detail.c:332
+#: src/ui/page-identity-detail.c:351
 msgid "I saved this backup and its passphrase"
 msgstr ""
 
-#: src/ui/page-identity-detail.c:363
+#: src/ui/page-identity-detail.c:366
+msgid "_Retry"
+msgstr "Re_intentar"
+
+#: src/ui/page-identity-detail.c:387
 msgid "Copy Secret Key?"
 msgstr ""
 
-#: src/ui/page-identity-detail.c:363
+#: src/ui/page-identity-detail.c:387
 msgid "Create Replacement Identity?"
 msgstr ""
 
-#: src/ui/page-identity-detail.c:364
+#: src/ui/page-identity-detail.c:388
 msgid ""
 "Anyone with this key controls your identity. Clipboard managers may keep a "
 "copy"
 msgstr ""
 
-#: src/ui/page-identity-detail.c:364
+#: src/ui/page-identity-detail.c:388
 msgid ""
 "Both identities stay on this device. Apps keep using this one until changed"
 msgstr ""
 
-#: src/ui/page-identity-detail.c:365
-msgid "Copy Key"
-msgstr ""
+#: src/ui/page-identity-detail.c:389
+msgid "Copy _Key"
+msgstr "Copiar c_lave"
 
-#: src/ui/page-identity-detail.c:365
-msgid "Create Identity"
-msgstr "Crear identidad"
+#: src/ui/page-identity-detail.c:389
+msgid "Create _Identity"
+msgstr "Crear _identidad"
 
-#: src/ui/page-identity-detail.c:398
+#: src/ui/page-identity-detail.c:422
 msgid "Management is locked"
 msgstr "La gestión está bloqueada"
 
-#: src/ui/page-identity-detail.c:414
+#: src/ui/page-identity-detail.c:438
 msgid "Signer unavailable. Open Grotto and retry"
 msgstr ""
 
@@ -3325,32 +3333,32 @@ msgstr ""
 "Copiado. Los gestores del portapapeles pueden conservar una copia. Grotto "
 "borra la suya al cerrar o bloquear esta ventana, o tras un minuto."
 
-#: src/ui/pairing-flow.c:30
+#: src/ui/pairing-flow.c:41
 msgid ""
 "Identities could not be loaded. Check that Grotto is running and unlocked."
 msgstr ""
 "No se pudieron cargar las identidades. Comprueba que Grotto esté en "
 "ejecución y desbloqueado."
 
-#: src/ui/pairing-flow.c:36
+#: src/ui/pairing-flow.c:47
 msgid "Choose an identity, then review what the app may do before connecting."
 msgstr ""
 "Elige una identidad y revisa lo que podrá hacer la aplicación antes de "
 "conectarla."
 
-#: src/ui/pairing-flow.c:36
+#: src/ui/pairing-flow.c:47
 msgid "Create or import an identity first."
 msgstr "Primero crea o importa una identidad."
 
-#: src/ui/pairing-flow.c:55
+#: src/ui/pairing-flow.c:66
 msgid "Pairing is unavailable. Check Remote Signing, then try again."
 msgstr "La vinculación no está disponible. Revisa Firma remota y reintenta."
 
-#: src/ui/pairing-flow.c:63
+#: src/ui/pairing-flow.c:75
 msgid "Choose an identity to connect."
 msgstr "Elige una identidad para conectar."
 
-#: src/ui/pairing-flow.c:75
+#: src/ui/pairing-flow.c:88
 msgid ""
 "This link belongs to another signer. Use a connection link from an app "
 "instead."
@@ -3358,12 +3366,12 @@ msgstr ""
 "Este enlace pertenece a otro firmante. Usa un enlace de conexión de una "
 "aplicación."
 
-#: src/ui/pairing-flow.c:76
+#: src/ui/pairing-flow.c:89
 msgid "This connection link is invalid. Copy a new link from your app."
 msgstr ""
 "Este enlace de conexión no es válido. Copia uno nuevo desde tu aplicación."
 
-#: src/ui/pairing-flow.c:80
+#: src/ui/pairing-flow.c:93
 #, c-format
 msgid ""
 "App name (not verified): %s\n"
@@ -3374,11 +3382,11 @@ msgstr ""
 "Los relés pueden ver tu dirección de red y cuándo te conectas. Aún no se ha "
 "realizado ninguna conexión."
 
-#: src/ui/pairing-flow.c:80 src/ui/sheets/sheet-qr-scanner.c:326
+#: src/ui/pairing-flow.c:93 src/ui/sheets/sheet-qr-scanner.c:326
 msgid "Not supplied"
 msgstr "No indicado"
 
-#: src/ui/pairing-flow.c:83
+#: src/ui/pairing-flow.c:96
 #, c-format
 msgid ""
 "App key: %s\n"
@@ -3391,11 +3399,11 @@ msgstr ""
 "Relés:\n"
 "%s"
 
-#: src/ui/pairing-flow.c:86 src/ui/sheets/sheet-create-bunker.c:114
+#: src/ui/pairing-flow.c:99 src/ui/sheets/sheet-create-bunker.c:114
 msgid "Grotto could not reach the signer."
 msgstr "Grotto no pudo contactar con el firmante."
 
-#: src/ui/pairing-flow.c:125
+#: src/ui/pairing-flow.c:138
 msgid ""
 "Apps on this device ask for permission automatically. Use a link or QR code "
 "for an app on another device."
@@ -3403,21 +3411,29 @@ msgstr ""
 "Las aplicaciones de este dispositivo piden permiso automáticamente. Usa un "
 "enlace o código QR para una aplicación de otro dispositivo."
 
-#: src/ui/pairing-flow.c:136 src/ui/pairing-flow.c:137
+#: src/ui/pairing-flow.c:149 src/ui/pairing-flow.c:150
 msgid "Identity to Connect"
 msgstr "Identidad para conectar"
 
-#: src/ui/pairing-flow.c:139
-msgid "Review Connection"
-msgstr "Revisar conexión"
+#: src/ui/pairing-flow.c:152
+msgid "_Review"
+msgstr "_Revisar"
 
-#: src/ui/pairing-flow.c:143
+#: src/ui/pairing-flow.c:157
 msgid "Paste an app connection link"
 msgstr "Pega un enlace de conexión de una aplicación"
 
-#: src/ui/pairing-flow.c:144
-msgid "Preview Link"
-msgstr "Vista previa del enlace"
+#: src/ui/pairing-flow.c:158
+msgid "_Preview"
+msgstr "_Vista previa"
+
+#: src/ui/pairing-flow.c:161
+msgid "_Scan QR Code…"
+msgstr "_Escanear código QR…"
+
+#: src/ui/pairing-flow.c:161
+msgid "Create Pairing _Link…"
+msgstr "Crear en_lace de vinculación…"
 
 #: src/ui/sheets/sheet-create-bunker.c:25
 msgid "Open Remote Signing to set up a connection, then try again."
@@ -3438,6 +3454,10 @@ msgid ""
 msgstr ""
 "No se pudo crear un enlace. Revisa Firma remota, cierra los enlaces sin usar "
 "y reintenta."
+
+#: src/ui/sheets/sheet-qr-display.c:55
+msgid "Cop_y to Clipboard"
+msgstr "Cop_iar al portapapeles"
 
 #. Show brief feedback
 #: src/ui/sheets/sheet-qr-display.c:77
@@ -3541,22 +3561,30 @@ msgstr ""
 "%s\n"
 "No se ha realizado ninguna conexión."
 
-#: src/ui/sheets/sheet-qr-scanner.c:328 src/ui/sheets/sheet-qr-scanner.c:519
-msgid "Choose _Identity…"
-msgstr "Elegir _identidad…"
+#: src/ui/sheets/sheet-qr-scanner.c:328 src/ui/sheets/sheet-qr-scanner.c:522
+msgid "Con_tinue"
+msgstr "Con_tinuar"
 
-#: src/ui/sheets/sheet-qr-scanner.c:479
+#: src/ui/sheets/sheet-qr-scanner.c:329 src/ui/sheets/sheet-qr-scanner.c:523
+msgid "Choose an Identity"
+msgstr "Elegir una identidad"
+
+#: src/ui/sheets/sheet-qr-scanner.c:482
 msgid "Camera Unavailable"
 msgstr "Cámara no disponible"
 
-#: src/ui/sheets/sheet-qr-scanner.c:521
+#: src/ui/sheets/sheet-qr-scanner.c:523
+msgid "Import Key"
+msgstr "Importar clave"
+
+#: src/ui/sheets/sheet-qr-scanner.c:525
 msgid "Scan the connection code shown by your app"
 msgstr "Escanea el código de conexión que muestra tu aplicación"
 
-#: src/ui/sheets/sheet-qr-scanner.c:523
+#: src/ui/sheets/sheet-qr-scanner.c:527
 msgid "Scan App Connection"
 msgstr "Escanear conexión de aplicación"
 
-#: src/ui/sheets/sheet-qr-scanner.c:523
+#: src/ui/sheets/sheet-qr-scanner.c:527
 msgid "Scan Identity Key"
 msgstr "Escanear clave de identidad"

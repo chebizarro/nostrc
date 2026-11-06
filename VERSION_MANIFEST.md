@@ -32,7 +32,7 @@ files already declare a version.
 | nostr-share | `gnome/nostr-share/` | 0.1.0 | Unreleased | — | `gnome/nostr-share/CMakeLists.txt` (`NOSTR_SHARE_VERSION`) |
 | nostr-homed | `gnome/nostr-homed/` | 0.9.0 | Unreleased | — | `gnome/nostr-homed/CMakeLists.txt`, `gnome/nostr-homed/meson.build`, `gnome/nostr-homed/nostr-homed.pc.in`; nostrc-h10m.10: MINOR 0.7.1 → 0.8.0 for opt-in require-encrypted policy, additive at_rest status and provisioning/PAM/panel warnings. libporthome was unchanged for h10m.10; detection and UI are homed-owned. h10m.12 version decisions follow below. |
 | grotto-panels | `gnome/grotto-panels/` | 0.1.0 | Unreleased | — | `gnome/grotto-panels/CMakeLists.txt` (`project` + `declare_component_version`), `gnome/grotto-panels/meson.build` (`project`); generated public `grotto-panels-version.h`, SONAME `libgrotto-panels-0.so.0`, pkg-config `grotto-panels-0`; duplicate package values: `gnome/grotto-panels/packaging/debian/changelog`, `gnome/grotto-panels/packaging/rpm/grotto-panels.spec`; nostrc-u6v55.37 folds the additive display-name/icon resolver API into unreleased 0.1.0 (no version bump) |
-| Grotto (Preview) | `apps/grotto/` | 0.1.1 | Unreleased | — | `apps/grotto/CMakeLists.txt` (`GROTTO_VERSION`), `apps/grotto/meson.build` (`project` version); About and daemon consume the build version; duplicate package values: `apps/grotto/data/org.nostr.Grotto.metainfo.xml`, `apps/grotto/packaging/debian/changelog`, `apps/grotto/packaging/rpm/grotto.spec`, `apps/grotto/packaging/archlinux/PKGBUILD`, `flake.nix` (Grotto version), `apps/grotto/packaging/macos/create-dmg.sh`, `apps/grotto/packaging/windows/grotto.nsi`, `apps/grotto/packaging/windows/build-msys2.sh` |
+| Grotto (Preview) | `apps/grotto/` | 0.1.2 | Unreleased | — | `apps/grotto/CMakeLists.txt` (`GROTTO_VERSION`), `apps/grotto/meson.build` (`project` version); About and daemon consume the build version; duplicate package values: `apps/grotto/data/org.nostr.Grotto.metainfo.xml`, `apps/grotto/packaging/debian/changelog`, `apps/grotto/packaging/rpm/grotto.spec`, `apps/grotto/packaging/archlinux/PKGBUILD`, `flake.nix` (Grotto version), `apps/grotto/packaging/macos/create-dmg.sh`, `apps/grotto/packaging/windows/grotto.nsi`, `apps/grotto/packaging/windows/build-msys2.sh` |
 | nostr-signer-webext-host | `apps/grotto/native-host/` | 0.2.0 | Unreleased | — | `apps/grotto/native-host/CMakeLists.txt` (`NMH_VERSION`), `apps/grotto/native-host/main_native_host.c` (standalone fallback) |
 | Nostr Shell extension | `gnome/nostr-shell-extension/` | 0.5.0 | Unreleased | — | `gnome/nostr-shell-extension/metadata.json` (`version-name`) |
 | NIP-46 client/provider | `nips/nip46/` | 0.2.0 | Unreleased | — | `nips/nip46/CMakeLists.txt` (`declare_component_version(nip46 ...)`; owns core and optional GLib client/bunker layer) |
@@ -54,6 +54,14 @@ files already declare a version.
 | nostr-seal | `gnome/nostr-seal/` | 0.1.3 (format nsealed v1) | Unreleased | — | `gnome/nostr-seal/src/main.c` (`NOSTR_SEAL_VERSION`), `gnome/nostr-seal/include/nostr-seal.h` (`NSEAL_FORMAT_VERSION`) |
 | signet | `signet/` | 0.7.0 | Unreleased | — | `signet/meson.build`, `signet/src/signetd_main.c` (`SIGNET_VERSION`), `signet/src/signetctl_main.c` (`SIGNETCTL_VERSION`); `signet/CMakeLists.txt` declares none |
 
+
+### Dialog button convention (nostrc-u6v55.57)
+
+- **Grotto 0.1.1 → 0.1.2: PATCH** for shipped dialog placement, cancellation,
+  access keys and invalid-input sensitivity corrections; no new public API.
+  Packaging version duplicates agree; no release tag is published by this task.
+- **grotto-panels, nip55l and other components: no bump** in this change; their
+  sources and public contracts are unchanged (panels edits belong to sibling B).
 
 ### W7b profile discovery and editor (nostrc-u6v55.23.10)
 

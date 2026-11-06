@@ -4,10 +4,12 @@ template $SheetQrScanner: Adw.Dialog {
   title: _("Scan QR Code");
   content-width: 360;
   content-height: 480;
+  default-widget: btn_import;
   Adw.ToolbarView {
     [top] Adw.HeaderBar {
       show-end-title-buttons: false; show-start-title-buttons: false;
       [start] Button btn_cancel { label: _("_Cancel"); use-underline: true; }
+      [end] Button btn_import { label: _("_Import Key"); use-underline: true; sensitive: false; styles ["suggested-action"] }
     }
     ScrolledWindow {
       hscrollbar-policy: never;
@@ -20,9 +22,20 @@ template $SheetQrScanner: Adw.Dialog {
             margin-start: 20; margin-end: 20; margin-top: 16; margin-bottom: 24;
             Label status_label { label: _("Ready to scan"); wrap: true; }
             Label hint_label { label: _("Scan a secret key or encrypted backup"); wrap: true; }
-            Button btn_camera { label: _("_Start Camera"); use-underline: true; styles ["suggested-action"] }
-            Button btn_paste { label: _("_Paste QR Image"); use-underline: true; }
-            Button btn_file { label: _("_Open QR Image…"); use-underline: true; }
+            Adw.PreferencesGroup {
+              Adw.ActionRow btn_camera {
+                title: _("_Start Camera"); use-underline: true; activatable: true;
+                [prefix] Image { icon-name: "camera-photo-symbolic"; }
+              }
+              Adw.ActionRow btn_paste {
+                title: _("_Paste QR Image"); use-underline: true; activatable: true;
+                [prefix] Image { icon-name: "edit-paste-symbolic"; }
+              }
+              Adw.ActionRow btn_file {
+                title: _("_Open QR Image…"); use-underline: true; activatable: true;
+                [prefix] Image { icon-name: "document-open-symbolic"; }
+              }
+            }
           };
         }
         StackPage {
@@ -37,8 +50,13 @@ template $SheetQrScanner: Adw.Dialog {
               label: _("Details");
               Label result_data_label { wrap: true; wrap-mode: char; selectable: true; xalign: 0; styles ["monospace", "caption"] }
             }
-            Button btn_import { label: _("_Import Key"); use-underline: true; styles ["suggested-action"] }
-            Button btn_back { label: _("Scan _Another Code"); use-underline: true; }
+            Adw.PreferencesGroup {
+              Adw.ActionRow btn_back {
+                title: _("Scan _Another Code"); use-underline: true; activatable: true;
+                tooltip-text: _("Scan Another Code");
+                [prefix] Image { icon-name: "view-refresh-symbolic"; }
+              }
+            }
           };
         }
       }

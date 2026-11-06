@@ -8,6 +8,7 @@
 #include "ui/lock-screen.h"
 #include "ui/onboarding-assistant.h"
 #include "ui/page-connect.h"
+#include "ui/page-settings.h"
 #include "ui/pairing-flow.h"
 #include "ui/widgets/gn-secure-entry.h"
 #include "ui/sheets/sheet-create-bunker.h"
@@ -240,6 +241,35 @@ static GtkWidget *find_button(GtkWidget *widget, const gchar *label) {
   for (GtkWidget *child = gtk_widget_get_first_child(widget); child; child = gtk_widget_get_next_sibling(child)) { GtkWidget *found = find_button(child, label); if (found) return found; }
   return NULL;
 }
+static void assert_header_control(GtkWidget *control, gboolean affirmative) {
+  g_assert_nonnull(control);
+  AdwHeaderBar *header = ADW_HEADER_BAR(gtk_widget_get_ancestor(control, ADW_TYPE_HEADER_BAR));
+  g_assert_nonnull(header);
+  g_assert_false(adw_header_bar_get_show_start_title_buttons(header));
+  g_assert_false(adw_header_bar_get_show_end_title_buttons(header));
+  if (affirmative) {
+    g_assert_true(gtk_widget_has_css_class(control, "suggested-action"));
+    g_assert_true(gtk_button_get_use_underline(GTK_BUTTON(control)));
+  }
+}
+static void collect_dialog_mnemonics(GtkWidget *widget, GHashTable *keys) {
+  const gchar *label = NULL;
+  if (!gtk_widget_get_mapped(widget)) return;
+  if (GTK_IS_BUTTON(widget) && gtk_button_get_use_underline(GTK_BUTTON(widget))) label = gtk_button_get_label(GTK_BUTTON(widget));
+  else if (ADW_IS_PREFERENCES_ROW(widget) && adw_preferences_row_get_use_underline(ADW_PREFERENCES_ROW(widget))) label = adw_preferences_row_get_title(ADW_PREFERENCES_ROW(widget));
+  if (label) for (const gchar *p = label; *p; p = g_utf8_next_char(p)) {
+    if (*p != '_') continue;
+    p++; if (!*p) break; if (*p == '_') continue;
+    gunichar key = g_unichar_tolower(g_utf8_get_char(p));
+    g_test_message("Dialog access key: %s", label);
+    g_assert_true(g_hash_table_add(keys, GUINT_TO_POINTER(key))); break;
+  }
+  for (GtkWidget *child = gtk_widget_get_first_child(widget); child; child = gtk_widget_get_next_sibling(child)) collect_dialog_mnemonics(child, keys);
+}
+static void assert_dialog_mnemonics(AdwDialog *dialog) {
+  g_autoptr(GHashTable) keys = g_hash_table_new(g_direct_hash, g_direct_equal);
+  collect_dialog_mnemonics(GTK_WIDGET(dialog), keys);
+}
 static GtkWidget *find_permission(GtkWidget *widget, const gchar *identity, const gchar *decision) {
   GrottoPanelsItem *item = g_object_get_data(G_OBJECT(widget), "permission");
   const GrottoPanelsMetadata *row = item ? grotto_panels_item_get_metadata(item) : NULL;
@@ -415,6 +445,7 @@ static void layout_activate(GApplication *application, gpointer data) {
   signer_window_show_page(window, "preferences"); wait_frames(GTK_WIDGET(window));
   AdwDialog *preferences = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window));
   g_assert_true(ADW_IS_PREFERENCES_DIALOG(preferences));
+  PageSettings *settings_page = PAGE_SETTINGS(find_editor_control(GTK_WIDGET(preferences), TYPE_PAGE_SETTINGS)); g_assert_nonnull(settings_page);
   g_assert_null(find_row(GTK_WIDGET(preferences), _("Appearance")));
   g_assert_null(find_row(GTK_WIDGET(preferences), _("Language")));
   g_assert_null(find_row(GTK_WIDGET(preferences), _("Remote Signing")));
@@ -433,12 +464,48 @@ static void layout_activate(GApplication *application, gpointer data) {
   GtkWidget *first_kind = find_editor_control(GTK_WIDGET(policy), GTK_TYPE_CHECK_BUTTON);
   g_autofree gchar *disabled_kind = g_strdup(g_object_get_data(G_OBJECT(first_kind), "kind"));
   gtk_check_button_set_active(GTK_CHECK_BUTTON(first_kind), FALSE);
-  g_signal_emit_by_name(find_button(GTK_WIDGET(policy), _("Save Ask-by-Default Policy")), "clicked");
+  GtkWidget *policy_save = find_button(GTK_WIDGET(policy), _("_Save")); assert_header_control(policy_save, TRUE);
+  assert_dialog_mnemonics(policy);
+  GtkWidget *custom = find_editor_control(GTK_WIDGET(policy), GTK_TYPE_ENTRY);
+  g_assert_nonnull(custom); gtk_editable_set_text(GTK_EDITABLE(custom), "65536");
+  g_assert_false(gtk_widget_is_sensitive(policy_save));
+  gtk_editable_set_text(GTK_EDITABLE(custom), ""); g_assert_true(gtk_widget_is_sensitive(policy_save));
+  g_signal_emit_by_name(policy_save, "clicked");
   WAIT(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)) == NULL);
   g_auto(GStrv) saved_kinds = g_settings_get_strv(policy_settings, "require-confirmation-kinds");
   g_assert_cmpuint(g_strv_length(saved_kinds), ==, kind_count - 1);
   g_assert_false(g_strv_contains((const gchar *const *)saved_kinds, disabled_kind));
+  g_signal_emit_by_name(ask_defaults, "activated"); wait_frames(GTK_WIDGET(window));
+  policy = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window));
+  g_signal_emit_by_name(find_row(GTK_WIDGET(policy), _("_Restore Defaults")), "activated");
+  g_auto(GStrv) before_cancel = g_settings_get_strv(policy_settings, "require-confirmation-kinds");
+  g_assert_cmpuint(g_strv_length(before_cancel), ==, kind_count - 1);
+  g_signal_emit_by_name(find_button(GTK_WIDGET(policy), _("_Cancel")), "clicked");
+  WAIT(!adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)));
+  g_auto(GStrv) after_cancel = g_settings_get_strv(policy_settings, "require-confirmation-kinds");
+  g_assert_cmpuint(g_strv_length(after_cancel), ==, kind_count - 1);
   g_settings_reset(policy_settings, "require-confirmation-kinds");
+  gint retention_before = g_settings_get_int(policy_settings, "log-retention-days");
+  page_settings_show_retention(settings_page, GTK_WIDGET(window)); wait_frames(GTK_WIDGET(window));
+  AdwDialog *retention = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window));
+  assert_header_control(find_button(GTK_WIDGET(retention), _("_Save")), TRUE); assert_dialog_mnemonics(retention);
+  GtkWidget *days = find_editor_control(GTK_WIDGET(retention), ADW_TYPE_SPIN_ROW); g_assert_nonnull(days);
+  adw_spin_row_set_value(ADW_SPIN_ROW(days), retention_before == 1 ? 2 : 1);
+#ifdef GROTTO_TEST_XDOTOOL
+  send_key(window, "Escape");
+#else
+  adw_dialog_close(retention);
+#endif
+  WAIT(!adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)));
+  g_assert_cmpint(g_settings_get_int(policy_settings, "log-retention-days"), ==, retention_before);
+  page_settings_show_retention(settings_page, GTK_WIDGET(window)); wait_frames(GTK_WIDGET(window));
+  retention = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window));
+  days = find_editor_control(GTK_WIDGET(retention), ADW_TYPE_SPIN_ROW);
+  gint retention_after = retention_before == 1 ? 2 : 1; adw_spin_row_set_value(ADW_SPIN_ROW(days), retention_after);
+  g_signal_emit_by_name(find_button(GTK_WIDGET(retention), _("_Save")), "clicked");
+  WAIT(!adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)));
+  g_assert_cmpint(g_settings_get_int(policy_settings, "log-retention-days"), ==, retention_after);
+  g_settings_set_int(policy_settings, "log-retention-days", retention_before);
   g_assert_false(g_action_get_enabled(g_action_map_lookup_action(G_ACTION_MAP(window), "lock")));
   GtkStack *main_stack = GTK_STACK(gtk_widget_get_template_child(GTK_WIDGET(window), TYPE_SIGNER_WINDOW, "main_stack"));
   GtkWidget *lock_screen = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(window), TYPE_SIGNER_WINDOW, "lock_screen"));
@@ -895,35 +962,76 @@ static void layout_activate(GApplication *application, gpointer data) {
   AdwExpanderRow *advanced = ADW_EXPANDER_ROW(find_row(GTK_WIDGET(backup_page), _("Advanced")));
   adw_expander_row_set_expanded(advanced, TRUE); wait_frames(GTK_WIDGET(window)); g_assert_true(gtk_widget_get_mapped(raw));
   snapshot(GTK_WIDGET(window), "backup-details-360"); adw_expander_row_set_expanded(advanced, FALSE);
+  GtkWidget *encrypted_qr_row = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(backup_page), GROTTO_TYPE_IDENTITY_DETAIL, "qr_row"));
+  WAIT(gtk_widget_is_sensitive(encrypted_qr_row)); g_signal_emit_by_name(encrypted_qr_row, "activated"); wait_frames(GTK_WIDGET(window));
+  AdwDialog *passphrase_dialog = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window));
+  GtkWidget *show_qr = find_button(GTK_WIDGET(passphrase_dialog), _("Show _QR Code"));
+  assert_header_control(show_qr, TRUE); g_assert_false(gtk_widget_is_sensitive(show_qr)); assert_dialog_mnemonics(passphrase_dialog);
+  GtkWidget *secure_entry = find_editor_control(GTK_WIDGET(passphrase_dialog), GN_TYPE_SECURE_ENTRY); g_assert_nonnull(secure_entry);
+  gn_secure_entry_set_text(GN_SECURE_ENTRY(secure_entry), "disposable passphrase"); g_assert_true(gtk_widget_is_sensitive(show_qr));
+  gn_secure_entry_clear(GN_SECURE_ENTRY(secure_entry)); g_assert_false(gtk_widget_is_sensitive(show_qr));
+  adw_dialog_close(passphrase_dialog); WAIT(!adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)));
   SheetQrDisplay *qr = sheet_qr_display_new(); sheet_qr_display_set_npub(qr, npub);
   adw_dialog_present(ADW_DIALOG(qr), GTK_WIDGET(window)); snapshot(GTK_WIDGET(window), "public-key-qr-360");
+  GtkWidget *copy_qr = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(qr), TYPE_SHEET_QR_DISPLAY, "btn_copy"));
+  assert_header_control(copy_qr, FALSE);
+  g_assert_cmpstr(gtk_widget_get_tooltip_text(copy_qr), ==, _("Copy to Clipboard"));
+  assert_dialog_mnemonics(ADW_DIALOG(qr));
   adw_dialog_close(ADW_DIALOG(qr)); WAIT(!adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)));
-  adw_dialog_present(ADW_DIALOG(sheet_create_bunker_new()), GTK_WIDGET(window)); snapshot(GTK_WIDGET(window), "pairing-create-360");
+  g_action_group_activate_action(G_ACTION_GROUP(window), "pair-application", NULL); wait_frames(GTK_WIDGET(window));
+  AdwDialog *add_app = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window));
+  g_assert_cmpstr(adw_dialog_get_title(add_app), ==, _("Add App"));
+  GtkWidget *create_link = find_button(GTK_WIDGET(add_app), _("Create _Link…"));
+  assert_header_control(create_link, TRUE); assert_dialog_mnemonics(add_app);
+  snapshot(GTK_WIDGET(window), "add-app-360");
+  g_signal_emit_by_name(create_link, "clicked"); snapshot(GTK_WIDGET(window), "pairing-create-360");
+  AdwDialog *create_sheet = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window));
+  g_assert_true(SHEET_IS_CREATE_BUNKER(create_sheet));
+  GtkWidget *create_submit = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(create_sheet), TYPE_SHEET_CREATE_BUNKER, "btn_create"));
+  assert_header_control(create_submit, TRUE); assert_dialog_mnemonics(create_sheet);
   adw_dialog_close(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)));
-  WAIT(!adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)));
+  WAIT(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)) == add_app);
+  adw_dialog_close(add_app); WAIT(!adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)));
   SheetQrScanner *scanner = sheet_qr_scanner_new();
   const GnQrContentType pairing_types[] = {GN_QR_TYPE_BUNKER_URI, GN_QR_TYPE_UNKNOWN};
   sheet_qr_scanner_set_accepted_types(scanner, pairing_types); adw_dialog_present(ADW_DIALOG(scanner), GTK_WIDGET(window));
   GtkWidget *hint = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(scanner), TYPE_SHEET_QR_SCANNER, "hint_label"));
   g_assert_cmpstr(gtk_label_get_text(GTK_LABEL(hint)), ==, _("Scan the connection code shown by your app"));
   snapshot(GTK_WIDGET(window), "pairing-scan-360");
+  GtkWidget *scanner_submit = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(scanner), TYPE_SHEET_QR_SCANNER, "btn_import"));
+  assert_header_control(scanner_submit, TRUE); g_assert_false(gtk_widget_is_sensitive(scanner_submit));
+  assert_dialog_mnemonics(ADW_DIALOG(scanner));
   GtkWidget *scanner_page = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(scanner), TYPE_SHEET_QR_SCANNER, "scanner_page"));
   GnQrScanResult scan_result = {.data = "nostrconnect://79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798?relay=wss%3A%2F%2Frelay.example&secret=fixture&name=Example%20App", .type = GN_QR_TYPE_BUNKER_URI};
   g_signal_emit_by_name(gtk_widget_get_first_child(scanner_page), "qr-detected", &scan_result);
   GtkWidget *scanner_stack = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(scanner), TYPE_SHEET_QR_SCANNER, "stack"));
   g_assert_cmpstr(gtk_stack_get_visible_child_name(GTK_STACK(scanner_stack)), ==, "result");
   GtkWidget *import_button = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(scanner), TYPE_SHEET_QR_SCANNER, "btn_import"));
-  g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(import_button)), ==, _("Choose _Identity…"));
+  g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(import_button)), ==, _("Con_tinue"));
+  g_assert_cmpstr(gtk_widget_get_tooltip_text(import_button), ==, _("Choose an Identity"));
   snapshot(GTK_WIDGET(window), "pairing-scan-result-360");
+  g_assert_true(gtk_widget_is_sensitive(import_button)); assert_dialog_mnemonics(ADW_DIALOG(scanner));
   GtkWidget *scan_back = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(scanner), TYPE_SHEET_QR_SCANNER, "btn_back"));
-  g_signal_emit_by_name(scan_back, "clicked"); g_assert_cmpstr(gtk_stack_get_visible_child_name(GTK_STACK(scanner_stack)), ==, "scanner");
+  g_signal_emit_by_name(scan_back, "activated"); g_assert_cmpstr(gtk_stack_get_visible_child_name(GTK_STACK(scanner_stack)), ==, "scanner");
+  g_assert_false(gtk_widget_is_sensitive(import_button));
   gtk_widget_set_direction(GTK_WIDGET(window), GTK_TEXT_DIR_RTL); snapshot(GTK_WIDGET(window), "pairing-scan-360-rtl");
   gtk_widget_set_direction(GTK_WIDGET(window), GTK_TEXT_DIR_LTR); adw_dialog_close(ADW_DIALOG(scanner));
   WAIT(!adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)));
   grotto_pairing_present(GTK_WIDGET(window), "nostrconnect://79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798?relay=wss%3A%2F%2Frelay.example&secret=fixture&name=Example%20App");
   snapshot(GTK_WIDGET(window), "pairing-preview-360");
+  AdwDialog *preview = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window));
+  GtkWidget *review = find_button(GTK_WIDGET(preview), _("_Review"));
+  assert_header_control(review, TRUE); g_assert_false(gtk_widget_is_sensitive(review)); assert_dialog_mnemonics(preview);
   adw_dialog_close(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)));
   WAIT(!adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)));
+  grotto_pairing_present(GTK_WIDGET(window), NULL); wait_frames(GTK_WIDGET(window));
+  AdwDialog *paste_sheet = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window));
+  GtkWidget *preview_link = find_button(GTK_WIDGET(paste_sheet), _("_Preview"));
+  assert_header_control(preview_link, TRUE); g_assert_false(gtk_widget_is_sensitive(preview_link)); assert_dialog_mnemonics(paste_sheet);
+  GtkWidget *link_entry = find_editor_control(GTK_WIDGET(paste_sheet), GTK_TYPE_ENTRY); g_assert_nonnull(link_entry);
+  gtk_editable_set_text(GTK_EDITABLE(link_entry), "not a connection link"); g_assert_false(gtk_widget_is_sensitive(preview_link));
+  gtk_editable_set_text(GTK_EDITABLE(link_entry), scan_result.data); g_assert_true(gtk_widget_is_sensitive(preview_link));
+  adw_dialog_close(paste_sheet); WAIT(!adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)));
   pending_request = TRUE;
   grotto_approval_controller_reconcile(controller);
   GListModel *pending = grotto_approval_controller_get_pending(controller);
@@ -1086,7 +1194,7 @@ int main(int argc, char **argv) {
     g_assert_cmpstr(P_("Allow"), ==, "Permitir");
     g_assert_cmpstr(g_dgettext("grotto-panels", "Copy Public Key"), ==, "Copiar clave pública");
     g_assert_cmpstr(_("Show Recovery Phrase…"), ==, "Mostrar frase de recuperación…");
-    g_assert_cmpstr(_("Show QR Code"), ==, "Mostrar código QR");
+    g_assert_cmpstr(_("Show _QR Code"), ==, "Mostrar _QR");
   }
   g_object_set(gtk_settings_get_default(), "gtk-enable-animations", FALSE, NULL);
   gn_backup_get_npub("0000000000000000000000000000000000000000000000000000000000000001", &npub, NULL);

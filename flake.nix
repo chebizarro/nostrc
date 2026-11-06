@@ -70,7 +70,7 @@
           };
           grotto = pkgs.stdenv.mkDerivation {
             pname = "grotto";
-            version = "0.1.1";
+            version = "0.1.2";
             src = ./.;
             nativeBuildInputs = desktopNativeBuildInputs;
             buildInputs = desktopBuildInputs;
