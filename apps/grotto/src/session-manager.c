@@ -72,6 +72,7 @@ enum {
   PROP_STATE,
   PROP_TIMEOUT,
   PROP_REMAINING_TIME,
+  PROP_HAS_PASSWORD,
   N_PROPS
 };
 
@@ -264,6 +265,9 @@ gn_session_manager_get_property(GObject *object,
     case PROP_TIMEOUT:
       g_value_set_uint(value, self->timeout_seconds);
       break;
+    case PROP_HAS_PASSWORD:
+      g_value_set_boolean(value, self->password_configured);
+      break;
     case PROP_REMAINING_TIME:
       g_value_set_uint(value, gn_session_manager_get_remaining_time(self));
       break;
@@ -361,6 +365,11 @@ gn_session_manager_class_init(GnSessionManagerClass *klass)
                       "Seconds until auto-lock",
                       0, G_MAXUINT, 0,
                       G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
+
+  properties[PROP_HAS_PASSWORD] =
+    g_param_spec_boolean("has-password", "Has Password",
+                         "Whether management can be password-locked", FALSE,
+                         G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
 
   g_object_class_install_properties(object_class, N_PROPS, properties);
 
@@ -836,6 +845,7 @@ gn_session_manager_set_password(GnSessionManager *self,
   }
   self->password_hash = new_hash;
   self->password_configured = TRUE;
+  g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_HAS_PASSWORD]);
   /* Locking starts to mean something now: the idle timer runs. */
   if (self->state == GN_SESSION_STATE_AUTHENTICATED)
     gn_session_manager_start_timer(self);
@@ -896,6 +906,7 @@ gn_session_manager_clear_password(GnSessionManager *self,
     self->password_hash = NULL;
   }
   self->password_configured = FALSE;
+  g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_HAS_PASSWORD]);
   /* Nothing to lock with any more: open, and no idle lock. */
   gn_session_manager_stop_timer(self);
   if (self->state != GN_SESSION_STATE_AUTHENTICATED) {

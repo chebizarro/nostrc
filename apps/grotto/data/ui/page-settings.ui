@@ -45,18 +45,6 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
     <child>
       <object class="AdwPreferencesGroup" id="management">
         <child>
-          <object class="AdwActionRow" id="remote">
-            <property name="title" translatable="yes">Remote Signing</property>
-            <property name="subtitle" translatable="yes">Connect apps on other devices</property>
-            <property name="activatable">true</property>
-            <child type="suffix">
-              <object class="GtkImage">
-                <property name="icon-name">go-next-symbolic</property>
-              </object>
-            </child>
-          </object>
-        </child>
-        <child>
           <object class="AdwSpinRow" id="retention">
             <property name="title" translatable="yes">Keep Activity (Days)</property>
             <property name="subtitle" translatable="yes">Request details only, not message content or keys</property>

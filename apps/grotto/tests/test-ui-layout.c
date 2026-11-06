@@ -270,6 +270,26 @@ static GtkWidget *find_editor_control(GtkWidget *widget, GType type) {
   for (GtkWidget *child = gtk_widget_get_first_child(widget); child; child = gtk_widget_get_next_sibling(child)) { GtkWidget *found = find_editor_control(child, type); if (found) return found; }
   return NULL;
 }
+static guint assert_kind_rows(GtkWidget *widget, gboolean accessibility) {
+  guint count = 0;
+  const gchar *kind = g_object_get_data(G_OBJECT(widget), "kind");
+  if (GTK_IS_CHECK_BUTTON(widget) && kind) {
+    GtkWidget *row = gtk_widget_get_ancestor(widget, ADW_TYPE_ACTION_ROW);
+    g_assert_nonnull(row);
+    g_autofree gchar *subtitle = g_strdup_printf(_("Kind %u"), (guint)g_ascii_strtoull(kind, NULL, 10));
+    g_assert_cmpstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(row)), ==, subtitle);
+    g_assert_true(adw_action_row_get_activatable_widget(ADW_ACTION_ROW(row)) == widget);
+    g_assert_true(gtk_check_button_get_active(GTK_CHECK_BUTTON(widget)));
+    if (accessibility) {
+      g_autofree gchar *name = g_strdup_printf(_("%s, kind %u"),
+          adw_preferences_row_get_title(ADW_PREFERENCES_ROW(row)), (guint)g_ascii_strtoull(kind, NULL, 10));
+      gtk_test_accessible_assert_property(GTK_ACCESSIBLE(widget), GTK_ACCESSIBLE_PROPERTY_LABEL, name);
+    }
+    count++;
+  }
+  for (GtkWidget *child = gtk_widget_get_first_child(widget); child; child = gtk_widget_get_next_sibling(child)) count += assert_kind_rows(child, accessibility);
+  return count;
+}
 static GtkWidget *find_identity_picker(GtkWidget *widget) {
   if (ADW_IS_COMBO_ROW(widget)) {
     GListModel *model = adw_combo_row_get_model(ADW_COMBO_ROW(widget));
@@ -378,19 +398,51 @@ static void layout_activate(GApplication *application, gpointer data) {
   OnboardingAssistant *add = g_object_get_data(G_OBJECT(window), "grotto-onboarding-assistant");
   g_assert_true(ONBOARDING_IS_ASSISTANT(add)); g_object_ref(add);
   g_assert_cmpint(onboarding_assistant_get_state(add), ==, ONBOARDING_CHOICE);
+  GtkWidget *add_back = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(add), TYPE_ONBOARDING_ASSISTANT, "btn_back"));
+  GtkWidget *add_cancel = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(add), TYPE_ONBOARDING_ASSISTANT, "btn_skip"));
+  g_assert_false(gtk_widget_get_visible(add_back));
+  g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(add_cancel)), ==, _("_Cancel"));
+  g_assert_cmpstr(gtk_widget_get_tooltip_text(add_cancel), ==, _("Cancel Adding an Identity"));
+  if (accessibility) gtk_test_accessible_assert_property(GTK_ACCESSIBLE(add_cancel), GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, _("Cancel Adding an Identity"));
   GtkWidget *create_choice = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(add), TYPE_ONBOARDING_ASSISTANT, "choose_create"));
   GtkWidget *import_choice = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(add), TYPE_ONBOARDING_ASSISTANT, "choose_import"));
   g_assert_true(gtk_widget_get_visible(create_choice)); g_assert_true(gtk_widget_get_visible(import_choice));
   WAIT(gtk_widget_is_sensitive(import_choice)); g_signal_emit_by_name(import_choice, "activated");
   g_assert_cmpint(onboarding_assistant_get_state(add), ==, ONBOARDING_IMPORT);
-  gtk_window_close(GTK_WINDOW(add)); g_object_unref(add);
+  g_assert_true(gtk_widget_get_visible(add_back));
+  g_signal_emit_by_name(add_back, "clicked");
+  g_assert_cmpint(onboarding_assistant_get_state(add), ==, ONBOARDING_CHOICE);
+  g_assert_false(gtk_widget_get_visible(add_back));
+  g_signal_emit_by_name(add_cancel, "clicked"); g_object_unref(add);
   WAIT(g_object_get_data(G_OBJECT(window), "grotto-onboarding-assistant") == NULL);
   signer_window_show_page(window, "preferences"); wait_frames(GTK_WIDGET(window));
   AdwDialog *preferences = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window));
   g_assert_true(ADW_IS_PREFERENCES_DIALOG(preferences));
   g_assert_null(find_row(GTK_WIDGET(preferences), _("Appearance")));
   g_assert_null(find_row(GTK_WIDGET(preferences), _("Language")));
+  g_assert_null(find_row(GTK_WIDGET(preferences), _("Remote Signing")));
+  g_assert_nonnull(find_row(GTK_WIDGET(preferences), _("Keep Activity (Days)")));
   adw_dialog_close(preferences); WAIT(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)) == NULL);
+  GSettings *policy_settings = settings_manager_get_gsettings(settings_manager_get_default());
+  g_settings_reset(policy_settings, "require-confirmation-kinds");
+  signer_window_show_page(window, "apps"); wait_frames(GTK_WIDGET(window));
+  GtkWidget *policy_panel = GTK_WIDGET(selected_panel(split));
+  g_assert_true(GROTTO_IS_APPS_PANEL(policy_panel));
+  GtkWidget *ask_defaults = GTK_WIDGET(gtk_widget_get_template_child(policy_panel, GROTTO_TYPE_APPS_PANEL, "ask_defaults"));
+  g_signal_emit_by_name(ask_defaults, "activated"); wait_frames(GTK_WIDGET(window));
+  AdwDialog *policy = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window));
+  g_assert_nonnull(policy);
+  guint kind_count = assert_kind_rows(GTK_WIDGET(policy), accessibility); g_assert_cmpuint(kind_count, >, 5);
+  GtkWidget *first_kind = find_editor_control(GTK_WIDGET(policy), GTK_TYPE_CHECK_BUTTON);
+  g_autofree gchar *disabled_kind = g_strdup(g_object_get_data(G_OBJECT(first_kind), "kind"));
+  gtk_check_button_set_active(GTK_CHECK_BUTTON(first_kind), FALSE);
+  g_signal_emit_by_name(find_button(GTK_WIDGET(policy), _("Save Ask-by-Default Policy")), "clicked");
+  WAIT(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)) == NULL);
+  g_auto(GStrv) saved_kinds = g_settings_get_strv(policy_settings, "require-confirmation-kinds");
+  g_assert_cmpuint(g_strv_length(saved_kinds), ==, kind_count - 1);
+  g_assert_false(g_strv_contains((const gchar *const *)saved_kinds, disabled_kind));
+  g_settings_reset(policy_settings, "require-confirmation-kinds");
+  g_assert_false(g_action_get_enabled(g_action_map_lookup_action(G_ACTION_MAP(window), "lock")));
   GtkStack *main_stack = GTK_STACK(gtk_widget_get_template_child(GTK_WIDGET(window), TYPE_SIGNER_WINDOW, "main_stack"));
   GtkWidget *lock_screen = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(window), TYPE_SIGNER_WINDOW, "lock_screen"));
   gtk_stack_set_visible_child_name(main_stack, "locked"); wait_frames(GTK_WIDGET(window));

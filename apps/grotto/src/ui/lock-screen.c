@@ -50,6 +50,14 @@ static guint signals[N_SIGNALS] = { 0 };
 G_DEFINE_FINAL_TYPE(GnLockScreen, gn_lock_screen, GTK_TYPE_BOX)
 
 /* Forward declarations */
+static void password_changed(GnSessionManager *sm, GParamSpec *pspec, GnLockScreen *self) {
+  (void)pspec;
+  gboolean has_password = gn_session_manager_has_password(sm);
+  gtk_widget_set_visible(gtk_widget_get_parent(GTK_WIDGET(self->entry_password)), has_password);
+  gtk_label_set_text(self->lbl_subtitle, has_password ? _("Enter your password to unlock") : _("Click to unlock"));
+  gtk_editable_set_text(GTK_EDITABLE(self->entry_password), "");
+}
+
 static void on_unlock_clicked(GtkButton *btn, gpointer user_data);
 static void on_password_activate(AdwPasswordEntryRow *entry, gpointer user_data);
 static void attempt_unlock(GnLockScreen *self);
@@ -133,13 +141,8 @@ gn_lock_screen_init(GnLockScreen *self)
 
   /* Check if password is configured */
   GnSessionManager *sm = gn_session_manager_get_default();
-  if (!gn_session_manager_has_password(sm)) {
-    /* No password required - show different UI */
-    gtk_label_set_text(self->lbl_subtitle, _("Click to unlock"));
-    /* The row's list, or an empty boxed list would show (nostrc-wic1). */
-    gtk_widget_set_visible(gtk_widget_get_parent(GTK_WIDGET(self->entry_password)), FALSE);
-    gtk_button_set_label(self->btn_unlock, _("Unlock"));
-  }
+  g_signal_connect_object(sm, "notify::has-password", G_CALLBACK(password_changed), self, 0);
+  password_changed(sm, NULL, self);
 
   /* Create rate limit UI box (nostrc-1g1) */
   self->box_rate_limit = GTK_BOX(gtk_box_new(GTK_ORIENTATION_VERTICAL, 6));

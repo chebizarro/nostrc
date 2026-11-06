@@ -36,6 +36,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             <child>
               <object class="GtkShortcutsShortcut">
                 <property name="title" translatable="yes">Lock Management</property>
+                <property name="subtitle" translatable="yes">Requires a management password</property>
                 <property name="accelerator">&lt;Control&gt;l</property>
               </object>
             </child>

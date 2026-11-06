@@ -347,6 +347,8 @@ static void setup_window_shortcuts(SignerWindow *self) {
     { "show-shortcuts", on_win_show_shortcuts, NULL, NULL, NULL },
   };
   g_action_map_add_action_entries(G_ACTION_MAP(self), win_entries, G_N_ELEMENTS(win_entries), self);
+  g_object_bind_property(gn_session_manager_get_default(), "has-password",
+      g_action_map_lookup_action(G_ACTION_MAP(self), "lock"), "enabled", G_BINDING_SYNC_CREATE);
 
   /* Create a GtkShortcutController with global scope for window-wide shortcuts */
   GtkEventController *controller = gtk_shortcut_controller_new();

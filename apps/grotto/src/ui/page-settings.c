@@ -10,7 +10,6 @@
 struct _PageSettings {
   AdwPreferencesPage parent_instance;
   AdwPreferencesGroup *security, *management;
-  AdwActionRow *remote;
   AdwSpinRow *retention;
   AdwComboRow *lock_timeout;
   AdwSwitchRow *lock_idle, *pause_lock;
@@ -80,12 +79,26 @@ void page_settings_show_ask_defaults(PageSettings *self, GtkWidget *parent) {
   gtk_widget_set_margin_start(box, 18); gtk_widget_set_margin_end(box, 18); gtk_widget_set_margin_top(box, 12); gtk_widget_set_margin_bottom(box, 12);
   g_autoptr(GVariant) configured = g_settings_get_user_value(self->settings, "require-confirmation-kinds");
   g_auto(GStrv) values = configured ? g_variant_dup_strv(configured, NULL) : NULL;
+  GtkWidget *kinds = gtk_list_box_new();
+  gtk_list_box_set_selection_mode(GTK_LIST_BOX(kinds), GTK_SELECTION_NONE);
+  gtk_widget_add_css_class(kinds, "boxed-list");
+  gtk_box_append(GTK_BOX(box), kinds);
   GString *others = g_string_new("");
   for (guint i = 0; i < G_N_ELEMENTS(signer_default_ask_by_default_kinds); i++) {
     guint32 kind = signer_default_ask_by_default_kinds[i]; g_autofree gchar *number = g_strdup_printf("%u", kind);
-    GtkWidget *check = gtk_check_button_new_with_label(gnostr_approval_kind_name(kind));
+    GtkWidget *row = adw_action_row_new(), *check = gtk_check_button_new();
+    const gchar *name = gnostr_approval_kind_name(kind);
+    g_autofree gchar *subtitle = g_strdup_printf(_("Kind %u"), kind);
+    g_autofree gchar *accessible_name = g_strdup_printf(_("%s, kind %u"), name, kind);
+    adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), name);
+    adw_action_row_set_subtitle(ADW_ACTION_ROW(row), subtitle);
+    gtk_widget_set_valign(check, GTK_ALIGN_CENTER);
+    gtk_accessible_update_property(GTK_ACCESSIBLE(check), GTK_ACCESSIBLE_PROPERTY_LABEL, accessible_name, -1);
+    adw_action_row_add_prefix(ADW_ACTION_ROW(row), check);
+    adw_action_row_set_activatable_widget(ADW_ACTION_ROW(row), check);
     gtk_check_button_set_active(GTK_CHECK_BUTTON(check), !configured || g_strv_contains((const gchar *const *)values, number));
-    g_object_set_data_full(G_OBJECT(check), "kind", g_strdup(number), g_free); gtk_box_append(GTK_BOX(box), check); g_ptr_array_add(p->checks, check);
+    g_object_set_data_full(G_OBJECT(check), "kind", g_strdup(number), g_free);
+    gtk_list_box_append(GTK_LIST_BOX(kinds), row); g_ptr_array_add(p->checks, check);
   }
   for (guint i = 0; values && values[i]; i++) {
     gboolean known = FALSE;
@@ -119,15 +132,8 @@ static void page_settings_class_init(PageSettingsClass *klass) {
   G_OBJECT_CLASS(klass)->dispose = dispose; GtkWidgetClass *wc = GTK_WIDGET_CLASS(klass);
   gtk_widget_class_set_template_from_resource(wc, APP_RESOURCE_PATH "/ui/page-settings.ui");
 #define BIND(x) gtk_widget_class_bind_template_child(wc, PageSettings, x)
-  BIND(security); BIND(management); BIND(remote); BIND(retention); BIND(lock_timeout); BIND(lock_idle); BIND(pause_lock);
+  BIND(security); BIND(management); BIND(retention); BIND(lock_timeout); BIND(lock_idle); BIND(pause_lock);
 #undef BIND
-}
-static void open_remote(AdwActionRow *row, gpointer data) {
-  (void)row; PageSettings *self = data; GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(self));
-  if (!SIGNER_IS_WINDOW(root)) return;
-  AdwDialog *dialog = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(root));
-  if (dialog) adw_dialog_close(dialog);
-  signer_window_show_page(SIGNER_WINDOW(root), "remote-signing");
 }
 static void bootstrap_save(GtkButton *button, gpointer data) {
   (void)button; PageSettings *self = data;
@@ -190,9 +196,8 @@ static void page_settings_init(PageSettings *self) {
   g_settings_bind(self->settings, "pause-on-screen-lock", self->pause_lock, "active", G_SETTINGS_BIND_DEFAULT);
   g_signal_connect(self->lock_timeout, "notify::selected", G_CALLBACK(combo_changed), self);
   g_settings_bind(self->settings, "log-retention-days", self->retention, "value", G_SETTINGS_BIND_DEFAULT);
-  g_signal_connect(self->remote, "activated", G_CALLBACK(open_remote), self);
   AdwPreferencesGroup *privacy = ADW_PREFERENCES_GROUP(adw_preferences_group_new());
-  adw_preferences_group_set_title(privacy, _("Privacy / Network"));
+  adw_preferences_group_set_title(privacy, _("Privacy and Network"));
   AdwSwitchRow *images = ADW_SWITCH_ROW(adw_switch_row_new());
   adw_preferences_row_set_title(ADW_PREFERENCES_ROW(images), _("Load Profile Images"));
   adw_action_row_set_subtitle(ADW_ACTION_ROW(images), _("Fetch avatars and banners from the web addresses in profiles"));
