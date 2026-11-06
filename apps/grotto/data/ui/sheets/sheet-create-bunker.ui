@@ -9,6 +9,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
   <template class="SheetCreateBunker" parent="AdwDialog">
     <property name="title" translatable="yes">Create Pairing Link</property>
     <property name="content-width">420</property>
+    <property name="default-widget">btn_create</property>
     <child>
       <object class="AdwToolbarView">
         <child type="top">
@@ -19,6 +20,16 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
               <object class="GtkButton" id="btn_cancel">
                 <property name="label" translatable="yes">_Cancel</property>
                 <property name="use-underline">true</property>
+              </object>
+            </child>
+            <child type="end">
+              <object class="GtkButton" id="btn_create">
+                <property name="label" translatable="yes">Create _Link</property>
+                <property name="use-underline">true</property>
+                <property name="sensitive">false</property>
+                <style>
+                  <class name="suggested-action"/>
+                </style>
               </object>
             </child>
           </object>
@@ -36,41 +47,24 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 <child>
                   <object class="AdwEntryRow" id="entry_name">
                     <property name="title" translatable="yes">App Name (Optional)</property>
+                    <property name="activates-default">true</property>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <child>
+              <object class="AdwPreferencesGroup">
+                <child>
+                  <object class="GtkLabel" id="status">
+                    <property name="label" translatable="yes">Checking remote signing…</property>
+                    <property name="wrap">true</property>
+                    <property name="xalign">0</property>
                   </object>
                 </child>
               </object>
             </child>
           </object>
         </property>
-        <child type="bottom">
-          <object class="GtkBox">
-            <property name="orientation">1</property>
-            <property name="spacing">12</property>
-            <property name="margin-start">20</property>
-            <property name="margin-end">20</property>
-            <property name="margin-top">12</property>
-            <property name="margin-bottom">20</property>
-            <child>
-              <object class="GtkLabel" id="status">
-                <property name="label" translatable="yes">Checking remote signing…</property>
-                <property name="wrap">true</property>
-                <property name="xalign">0</property>
-              </object>
-            </child>
-            <child>
-              <object class="GtkButton" id="btn_create">
-                <property name="label" translatable="yes">Create _Link</property>
-                <property name="use-underline">true</property>
-                <property name="sensitive">false</property>
-                <property name="halign">3</property>
-                <style>
-                  <class name="suggested-action"/>
-                  <class name="pill"/>
-                </style>
-              </object>
-            </child>
-          </object>
-        </child>
       </object>
     </child>
   </template>

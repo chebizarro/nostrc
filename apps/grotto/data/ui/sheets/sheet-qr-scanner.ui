@@ -10,6 +10,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
     <property name="title" translatable="yes">Scan QR Code</property>
     <property name="content-width">360</property>
     <property name="content-height">480</property>
+    <property name="default-widget">btn_import</property>
     <child>
       <object class="AdwToolbarView">
         <child type="top">
@@ -20,6 +21,16 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
               <object class="GtkButton" id="btn_cancel">
                 <property name="label" translatable="yes">_Cancel</property>
                 <property name="use-underline">true</property>
+              </object>
+            </child>
+            <child type="end">
+              <object class="GtkButton" id="btn_import">
+                <property name="label" translatable="yes">_Import Key</property>
+                <property name="use-underline">true</property>
+                <property name="sensitive">false</property>
+                <style>
+                  <class name="suggested-action"/>
+                </style>
               </object>
             </child>
           </object>
@@ -54,24 +65,43 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                           </object>
                         </child>
                         <child>
-                          <object class="GtkButton" id="btn_camera">
-                            <property name="label" translatable="yes">_Start Camera</property>
-                            <property name="use-underline">true</property>
-                            <style>
-                              <class name="suggested-action"/>
-                            </style>
-                          </object>
-                        </child>
-                        <child>
-                          <object class="GtkButton" id="btn_paste">
-                            <property name="label" translatable="yes">_Paste QR Image</property>
-                            <property name="use-underline">true</property>
-                          </object>
-                        </child>
-                        <child>
-                          <object class="GtkButton" id="btn_file">
-                            <property name="label" translatable="yes">_Open QR Image…</property>
-                            <property name="use-underline">true</property>
+                          <object class="AdwPreferencesGroup">
+                            <child>
+                              <object class="AdwActionRow" id="btn_camera">
+                                <property name="title" translatable="yes">_Start Camera</property>
+                                <property name="use-underline">true</property>
+                                <property name="activatable">true</property>
+                                <child type="prefix">
+                                  <object class="GtkImage">
+                                    <property name="icon-name">camera-photo-symbolic</property>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="AdwActionRow" id="btn_paste">
+                                <property name="title" translatable="yes">_Paste QR Image</property>
+                                <property name="use-underline">true</property>
+                                <property name="activatable">true</property>
+                                <child type="prefix">
+                                  <object class="GtkImage">
+                                    <property name="icon-name">edit-paste-symbolic</property>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="AdwActionRow" id="btn_file">
+                                <property name="title" translatable="yes">_Open QR Image…</property>
+                                <property name="use-underline">true</property>
+                                <property name="activatable">true</property>
+                                <child type="prefix">
+                                  <object class="GtkImage">
+                                    <property name="icon-name">document-open-symbolic</property>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
                           </object>
                         </child>
                       </object>
@@ -127,18 +157,20 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                           </object>
                         </child>
                         <child>
-                          <object class="GtkButton" id="btn_import">
-                            <property name="label" translatable="yes">_Import Key</property>
-                            <property name="use-underline">true</property>
-                            <style>
-                              <class name="suggested-action"/>
-                            </style>
-                          </object>
-                        </child>
-                        <child>
-                          <object class="GtkButton" id="btn_back">
-                            <property name="label" translatable="yes">Scan _Another Code</property>
-                            <property name="use-underline">true</property>
+                          <object class="AdwPreferencesGroup">
+                            <child>
+                              <object class="AdwActionRow" id="btn_back">
+                                <property name="title" translatable="yes">Scan _Another Code</property>
+                                <property name="use-underline">true</property>
+                                <property name="activatable">true</property>
+                                <property name="tooltip-text" translatable="yes">Scan Another Code</property>
+                                <child type="prefix">
+                                  <object class="GtkImage">
+                                    <property name="icon-name">view-refresh-symbolic</property>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
                           </object>
                         </child>
                       </object>

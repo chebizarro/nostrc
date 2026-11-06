@@ -2,6 +2,7 @@
 #include "page-identity-detail.h"
 #include "signer-window.h"
 #include "app-resources.h"
+#include "dialog-actions.h"
 #include "onboarding-assistant.h"
 #include "widgets/gn-secure-entry.h"
 #include "sheets/sheet-qr-display.h"
@@ -22,7 +23,8 @@ struct _GrottoIdentityDetail {
   AdwBanner *error_banner, *setup_banner;
   AdwDialog *dialog, *warning;
   GtkLabel *dialog_error;
-  GtkButton *dialog_retry;
+  AdwActionRow *dialog_retry;
+  GtkWidget *backup_export;
   GtkBox *seed_words;
   GtkCheckButton *backup_written_down;
   GtkButton *btn_backup_done;
@@ -52,6 +54,11 @@ static void update(GrottoIdentityDetail *self, const gchar *error) {
   GtkWidget *actions[] = {GTK_WIDGET(self->phrase_row), GTK_WIDGET(self->save_row), GTK_WIDGET(self->qr_row),
     GTK_WIDGET(self->raw_row), GTK_WIDGET(self->test_row), GTK_WIDGET(self->replace_row), GTK_WIDGET(self->announcement_row)};
   for (guint i = 0; i < G_N_ELEMENTS(actions); i++) gtk_widget_set_sensitive(actions[i], self->ready && !self->busy && self->identity);
+  if (self->backup_export) {
+    gchar *pass = self->passphrase ? gn_secure_entry_get_text(self->passphrase) : NULL;
+    gtk_widget_set_sensitive(self->backup_export, pass && *pass && self->ready && !self->busy);
+    gn_secure_entry_free_text(pass);
+  }
   if (self->btn_backup_done) gtk_widget_set_sensitive(GTK_WIDGET(self->btn_backup_done), self->backup_available && !self->busy && self->ready && gtk_check_button_get_active(self->backup_written_down));
 }
 typedef struct { GrottoIdentityDetail *self; guint generation; DetailOperation operation; } DetailCtx;
@@ -69,7 +76,7 @@ static void clear_dialog(GrottoIdentityDetail *self) {
   if (self->passphrase) gn_secure_entry_clear(self->passphrase);
   g_clear_pointer(&self->phrase, wipe);
   self->seed_words = NULL; self->passphrase = NULL; self->backup_written_down = NULL; self->btn_backup_done = NULL;
-  self->dialog_error = NULL; self->dialog_retry = NULL;
+  self->dialog_error = NULL; self->dialog_retry = NULL; self->backup_export = NULL;
   self->backup_available = FALSE;
 }
 static void dialog_closed(AdwDialog *dialog, gpointer data) {
@@ -118,6 +125,8 @@ static void file_done(GObject *source, GAsyncResult *result, gpointer data) {
       self->backup_available = TRUE;
       gtk_widget_set_visible(GTK_WIDGET(self->backup_written_down), TRUE);
       gtk_widget_set_visible(GTK_WIDGET(self->btn_backup_done), TRUE);
+      gtk_widget_set_visible(self->backup_export, FALSE);
+      adw_dialog_set_default_widget(self->dialog, GTK_WIDGET(self->btn_backup_done));
       gtk_label_set_text(self->dialog_error, _("Backup saved. Keep it and its passphrase safe"));
       update(self, NULL);
     } else if (ok) { close_dialog(self); show_toast(self, _("Migration announcement saved. Nothing was published")); }
@@ -268,11 +277,11 @@ static void copy_phrase_response(AdwAlertDialog *dialog, const char *response, g
     self->clipboard_lease = grotto_secret_clipboard_copy(gtk_widget_get_clipboard(GTK_WIDGET(self)), self->phrase);
   }
 }
-static void copy_phrase(GtkButton *button, gpointer data) {
+static void copy_phrase(AdwActionRow *button, gpointer data) {
   (void)button; GrottoIdentityDetail *self = data;
   if (self->warning) { adw_dialog_force_close(self->warning); g_clear_object(&self->warning); }
   AdwDialog *dialog = adw_alert_dialog_new(_("Copy Recovery Phrase?"), _("Anyone with these words controls your identity. Clipboard managers may keep a copy"));
-  adw_alert_dialog_add_responses(ADW_ALERT_DIALOG(dialog), "cancel", _("Cancel"), "copy", _("Copy Phrase"), NULL);
+  adw_alert_dialog_add_responses(ADW_ALERT_DIALOG(dialog), "cancel", _("_Cancel"), "copy", _("Cop_y Phrase"), NULL);
   adw_alert_dialog_set_response_appearance(ADW_ALERT_DIALOG(dialog), "copy", ADW_RESPONSE_DESTRUCTIVE);
   adw_alert_dialog_set_default_response(ADW_ALERT_DIALOG(dialog), "cancel");
   adw_alert_dialog_set_close_response(ADW_ALERT_DIALOG(dialog), "cancel");
@@ -285,16 +294,24 @@ static void export_commit(GtkButton *button, gpointer data) {
   if (GPOINTER_TO_INT(g_object_get_data(G_OBJECT(button), "qr"))) export_call(self, ENCRYPTED_QR);
   else choose_destination(self, ENCRYPTED_FILE);
 }
-static void dialog_retry(GtkButton *button, gpointer data) {
+static void dialog_retry(AdwActionRow *button, gpointer data) {
   (void)button; GrottoIdentityDetail *self = data; DetailOperation operation = self->retry_operation;
   self->busy = FALSE; action(self, operation);
+}
+static void passphrase_changed(GnSecureEntry *entry, gpointer data) {
+  (void)entry; update(data, NULL);
 }
 static void secret_dialog(GrottoIdentityDetail *self, DetailOperation operation) {
   close_dialog(self);
   AdwDialog *dialog = adw_dialog_new(); self->dialog = g_object_ref(dialog);
   adw_dialog_set_title(dialog, operation == SEED ? _("Recovery Phrase") : _("Encrypted Backup"));
   adw_dialog_set_content_width(dialog, 400);
-  GtkWidget *toolbar = adw_toolbar_view_new(); adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(toolbar), adw_header_bar_new());
+  GtkWidget *toolbar = adw_toolbar_view_new();
+  GtkWidget *affirmative = gtk_button_new_with_mnemonic(operation == SEED ? _("Confirm _Backup") :
+      operation == ENCRYPTED_QR ? _("Show _QR Code") : _("_Save Backup…"));
+  gtk_widget_set_sensitive(affirmative, FALSE);
+  GtkWidget *header = grotto_dialog_header(dialog, affirmative);
+  adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(toolbar), header);
   GtkWidget *page = adw_preferences_page_new();
   adw_preferences_page_set_description(ADW_PREFERENCES_PAGE(page), operation == SEED ? _("Write these words down in order. Keep them private and offline") : _("Choose a passphrase. It's needed to restore this backup"));
   GtkWidget *group = adw_preferences_group_new(); adw_preferences_page_add(ADW_PREFERENCES_PAGE(page), ADW_PREFERENCES_GROUP(group));
@@ -303,11 +320,13 @@ static void secret_dialog(GrottoIdentityDetail *self, DetailOperation operation)
     adw_preferences_group_add(ADW_PREFERENCES_GROUP(group), GTK_WIDGET(self->seed_words));
     self->backup_written_down = GTK_CHECK_BUTTON(gtk_check_button_new_with_label(_("I wrote these down")));
     adw_preferences_group_add(ADW_PREFERENCES_GROUP(group), GTK_WIDGET(self->backup_written_down));
-    self->btn_backup_done = GTK_BUTTON(gtk_button_new_with_label(_("Confirm Backup")));
-    adw_preferences_group_add(ADW_PREFERENCES_GROUP(group), GTK_WIDGET(self->btn_backup_done));
-    GtkWidget *copy = gtk_button_new_with_label(_("Copy Recovery Phrase…")); gtk_widget_add_css_class(copy, "flat");
+    self->btn_backup_done = GTK_BUTTON(affirmative);
+    GtkWidget *copy = adw_action_row_new(); gtk_widget_set_name(copy, "copy-recovery-phrase");
+    adw_preferences_row_set_title(ADW_PREFERENCES_ROW(copy), _("Cop_y Recovery Phrase…"));
+    adw_preferences_row_set_use_underline(ADW_PREFERENCES_ROW(copy), TRUE);
+    gtk_list_box_row_set_activatable(GTK_LIST_BOX_ROW(copy), TRUE);
     adw_preferences_group_add(ADW_PREFERENCES_GROUP(group), copy);
-    g_signal_connect(copy, "clicked", G_CALLBACK(copy_phrase), self);
+    g_signal_connect(copy, "activated", G_CALLBACK(copy_phrase), self);
     g_signal_connect(self->backup_written_down, "toggled", G_CALLBACK(checked), self);
     g_signal_connect(self->btn_backup_done, "clicked", G_CALLBACK(backup_done), self);
   } else {
@@ -324,15 +343,17 @@ static void secret_dialog(GrottoIdentityDetail *self, DetailOperation operation)
     gtk_box_append(GTK_BOX(passphrase_box), passphrase_label); gtk_box_append(GTK_BOX(passphrase_box), GTK_WIDGET(self->passphrase));
     gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(passphrase_row), passphrase_box);
     adw_preferences_group_add(ADW_PREFERENCES_GROUP(group), passphrase_row);
-    GtkWidget *commit = gtk_button_new_with_label(operation == ENCRYPTED_QR ? _("Show QR Code") : _("Save Backup…"));
+    GtkWidget *commit = affirmative; self->backup_export = commit;
+    g_signal_connect(self->passphrase, "changed", G_CALLBACK(passphrase_changed), self);
+    g_signal_connect_swapped(self->passphrase, "activate", G_CALLBACK(gtk_widget_activate_default), self->passphrase);
     g_object_set_data(G_OBJECT(commit), "qr", GINT_TO_POINTER(operation == ENCRYPTED_QR));
     g_signal_connect(commit, "clicked", G_CALLBACK(export_commit), self);
-    adw_preferences_group_add(ADW_PREFERENCES_GROUP(group), commit);
     if (operation == ENCRYPTED_FILE) {
       self->backup_written_down = GTK_CHECK_BUTTON(gtk_check_button_new_with_label(_("I saved this backup and its passphrase")));
-      self->btn_backup_done = GTK_BUTTON(gtk_button_new_with_label(_("Confirm Backup")));
+      self->btn_backup_done = GTK_BUTTON(gtk_button_new_with_mnemonic(_("Confirm _Backup")));
+      gtk_widget_add_css_class(GTK_WIDGET(self->btn_backup_done), "suggested-action");
       adw_preferences_group_add(ADW_PREFERENCES_GROUP(group), GTK_WIDGET(self->backup_written_down));
-      adw_preferences_group_add(ADW_PREFERENCES_GROUP(group), GTK_WIDGET(self->btn_backup_done));
+      adw_header_bar_pack_end(ADW_HEADER_BAR(header), GTK_WIDGET(self->btn_backup_done));
       gtk_widget_set_visible(GTK_WIDGET(self->backup_written_down), FALSE); gtk_widget_set_visible(GTK_WIDGET(self->btn_backup_done), FALSE);
       g_signal_connect(self->backup_written_down, "toggled", G_CALLBACK(checked), self);
       g_signal_connect(self->btn_backup_done, "clicked", G_CALLBACK(backup_done), self);
@@ -342,12 +363,17 @@ static void secret_dialog(GrottoIdentityDetail *self, DetailOperation operation)
   if (self->btn_backup_done) gtk_widget_set_name(GTK_WIDGET(self->btn_backup_done), "record-backup");
   self->dialog_error = GTK_LABEL(gtk_label_new("")); gtk_label_set_wrap(self->dialog_error, TRUE); gtk_widget_set_name(GTK_WIDGET(self->dialog_error), "backup-feedback");
   adw_preferences_group_add(ADW_PREFERENCES_GROUP(group), GTK_WIDGET(self->dialog_error));
-  self->dialog_retry = GTK_BUTTON(gtk_button_new_with_label(_("Retry"))); gtk_widget_set_visible(GTK_WIDGET(self->dialog_retry), FALSE);
-  g_signal_connect(self->dialog_retry, "clicked", G_CALLBACK(dialog_retry), self);
+  self->dialog_retry = ADW_ACTION_ROW(adw_action_row_new());
+  adw_preferences_row_set_title(ADW_PREFERENCES_ROW(self->dialog_retry), _("_Retry"));
+  adw_preferences_row_set_use_underline(ADW_PREFERENCES_ROW(self->dialog_retry), TRUE);
+  gtk_list_box_row_set_activatable(GTK_LIST_BOX_ROW(self->dialog_retry), TRUE);
+  gtk_widget_set_visible(GTK_WIDGET(self->dialog_retry), FALSE);
+  g_signal_connect(self->dialog_retry, "activated", G_CALLBACK(dialog_retry), self);
   adw_preferences_group_add(ADW_PREFERENCES_GROUP(group), GTK_WIDGET(self->dialog_retry));
   adw_toolbar_view_set_content(ADW_TOOLBAR_VIEW(toolbar), page); adw_dialog_set_child(dialog, toolbar);
   g_signal_connect_object(dialog, "closed", G_CALLBACK(dialog_closed), self, 0);
   adw_dialog_present(dialog, GTK_WIDGET(self));
+  if (self->passphrase) gn_secure_entry_grab_focus_entry(self->passphrase);
   if (operation == SEED) call(self, SEED, "ExportIdentity", g_variant_new("(sss)", self->identity, "mnemonic", ""));
 }
 static void confirmed(AdwAlertDialog *dialog, const char *response, gpointer data) {
@@ -362,8 +388,8 @@ static void confirmation_free(gpointer data, GClosure *closure) { (void)closure;
 static void confirm(GrottoIdentityDetail *self, DetailOperation operation) {
   AdwDialog *dialog = adw_alert_dialog_new(operation == RAW ? _("Copy Secret Key?") : _("Create Replacement Identity?"),
     operation == RAW ? _("Anyone with this key controls your identity. Clipboard managers may keep a copy") : _("Both identities stay on this device. Apps keep using this one until changed"));
-  adw_alert_dialog_add_responses(ADW_ALERT_DIALOG(dialog), "cancel", _("Cancel"), "proceed", operation == RAW ? _("Copy Key") : _("Create Identity"), NULL);
-  if (operation == RAW) adw_alert_dialog_set_response_appearance(ADW_ALERT_DIALOG(dialog), "proceed", ADW_RESPONSE_DESTRUCTIVE);
+  adw_alert_dialog_add_responses(ADW_ALERT_DIALOG(dialog), "cancel", _("_Cancel"), "proceed", operation == RAW ? _("Copy _Key") : _("Create _Identity"), NULL);
+  adw_alert_dialog_set_response_appearance(ADW_ALERT_DIALOG(dialog), "proceed", operation == RAW ? ADW_RESPONSE_DESTRUCTIVE : ADW_RESPONSE_SUGGESTED);
   adw_alert_dialog_set_default_response(ADW_ALERT_DIALOG(dialog), "cancel"); adw_alert_dialog_set_close_response(ADW_ALERT_DIALOG(dialog), "cancel");
   self->busy = TRUE; update(self, NULL);
   self->dialog = g_object_ref(dialog);
@@ -422,7 +448,8 @@ static void unmap(GtkWidget *widget) {
 }
 static void map(GtkWidget *widget) {
   GrottoIdentityDetail *self = GROTTO_IDENTITY_DETAIL(widget);
-  gboolean controls = !SIGNER_IS_WINDOW(gtk_widget_get_root(widget));
+  gboolean controls = !SIGNER_IS_WINDOW(gtk_widget_get_root(widget)) &&
+      !gtk_widget_get_ancestor(widget, ADW_TYPE_DIALOG);
   adw_header_bar_set_show_start_title_buttons(self->header, controls);
   adw_header_bar_set_show_end_title_buttons(self->header, controls);
   GTK_WIDGET_CLASS(grotto_identity_detail_parent_class)->map(widget);
@@ -476,7 +503,13 @@ void page_identity_detail_present_identity(GtkWidget *parent, const gchar *npub)
   AdwDialog *dialog = adw_dialog_new(); adw_dialog_set_title(dialog, _("Back Up Identity"));
   adw_dialog_set_content_width(dialog, 400); adw_dialog_set_content_height(dialog, 640);
   AdwNavigationView *navigation = ADW_NAVIGATION_VIEW(adw_navigation_view_new());
-  adw_navigation_view_add(navigation, ADW_NAVIGATION_PAGE(page_identity_detail_new(npub)));
+  GrottoIdentityDetail *page = GROTTO_IDENTITY_DETAIL(page_identity_detail_new(npub));
+  adw_header_bar_set_show_start_title_buttons(page->header, FALSE);
+  adw_header_bar_set_show_end_title_buttons(page->header, FALSE);
+  GtkWidget *close = gtk_button_new_with_mnemonic(_("_Close"));
+  g_signal_connect_swapped(close, "clicked", G_CALLBACK(adw_dialog_close), dialog);
+  adw_header_bar_pack_start(page->header, close);
+  adw_navigation_view_add(navigation, ADW_NAVIGATION_PAGE(page));
   adw_dialog_set_child(dialog, GTK_WIDGET(navigation));
   g_signal_connect(dialog, "closed", G_CALLBACK(backup_shell_closed), NULL);
   adw_dialog_present(dialog, parent);

@@ -52,7 +52,8 @@ static gboolean reset_copy_button_cb(gpointer data) {
   SheetQrDisplay *self = SHEET_QR_DISPLAY(data);
   self->copy_feedback = 0;
   if (self->current_data && GTK_IS_BUTTON(self->btn_copy)) {
-    gtk_button_set_label(GTK_BUTTON(self->btn_copy), _("Cop_y to Clipboard"));
+    gtk_button_set_icon_name(GTK_BUTTON(self->btn_copy), "edit-copy-symbolic");
+    gtk_widget_set_tooltip_text(self->btn_copy, _("Copy to Clipboard"));
     gtk_widget_remove_css_class(self->btn_copy, "success");
   }
   return G_SOURCE_REMOVE;
@@ -74,7 +75,8 @@ static void copy_to_clipboard(SheetQrDisplay *self) {
   }
 
   /* Show brief feedback */
-  gtk_button_set_label(GTK_BUTTON(self->btn_copy), _("Copied"));
+  gtk_button_set_icon_name(GTK_BUTTON(self->btn_copy), "object-select-symbolic");
+  gtk_widget_set_tooltip_text(self->btn_copy, _("Copied"));
   gtk_widget_add_css_class(self->btn_copy, "success");
 
   /* Reset after delay */

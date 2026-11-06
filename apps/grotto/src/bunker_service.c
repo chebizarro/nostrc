@@ -20,6 +20,7 @@
 #include <secure_buf.h>
 #include <json-glib/json-glib.h>
 #include <glib/gstdio.h>
+#include <glib/gi18n.h>
 #include <string.h>
 #include <time.h>
 
@@ -68,7 +69,9 @@ static void deliver_offers(BunkerService *s);
 struct _BunkerService {
   gint refs;
   GMainContext *context;
-  GMutex ack_mutex;
+  GMutex ack_mutex, transport_mutex;
+  gboolean allow_transport_creation;
+  gint transport_jobs;
   GPtrArray *ack_sources, *pairing_waiters;
   guint generation;
   gboolean closing, starting, no_ui;
@@ -115,7 +118,7 @@ static void service_unref(BunkerService *s) {
   g_strfreev(s->relays); g_strfreev(s->configured_relays); g_strfreev(s->allowed_methods); g_strfreev(s->allowed_pubkeys);
   g_hash_table_unref(s->connections); g_hash_table_unref(s->rpcs); g_hash_table_unref(s->relay_states);
   g_hash_table_unref(s->offers); g_key_file_unref(s->seen); g_main_context_unref(s->context);
-  g_ptr_array_unref(s->ack_sources); g_ptr_array_unref(s->pairing_waiters); g_mutex_clear(&s->ack_mutex); g_free(s);
+  g_ptr_array_unref(s->ack_sources); g_ptr_array_unref(s->pairing_waiters); g_mutex_clear(&s->ack_mutex); g_mutex_clear(&s->transport_mutex); g_free(s);
 }
 static gboolean contains(gchar **values, const gchar *value) {
   return values && g_strv_contains((const gchar *const *)values, value);
@@ -544,12 +547,18 @@ static void request_received(GNostrNip46Bunker *bunker, NostrNip46BunkerRequest 
 static void relay_state(GNostrNip46Bunker *bunker, const gchar *relay, const gchar *state, gpointer data) {
   (void)bunker; BunkerService *s = data;
   if (!contains(s->relays, relay)) return;
+  const gchar *public_states[] = {"EOSE", "CLOSED", "AUTH", "OFFLINE", "STARTING", NULL};
+  if (!state || !g_strv_contains(public_states, state)) state = "OFFLINE";
   g_hash_table_replace(s->relay_states, g_strdup(relay), g_strdup(state));
   guint ready = 0;
   GHashTableIter it; gpointer value; g_hash_table_iter_init(&it, s->relay_states);
   while (g_hash_table_iter_next(&it, NULL, &value)) if (!strcmp(value, "EOSE")) ready++;
   if (ready) set_state(s, ready == g_strv_length(s->relays) ? BUNKER_STATE_RUNNING : BUNKER_STATE_DEGRADED, NULL);
-  else set_state(s, BUNKER_STATE_OFFLINE, "No usable relay subscription");
+  else {
+    g_autofree gchar *origin = grotto_relay_public_name(relay);
+    g_autofree gchar *reason = g_strdup_printf(_("Could not connect to %s (%s)"), origin ? origin : _("configured relay"), state);
+    set_state(s, BUNKER_STATE_OFFLINE, reason);
+  }
   if (s->state != BUNKER_STATE_RUNNING) {
     GList *keys = g_hash_table_get_keys(s->offers);
     for (GList *it = keys; it; it = it->next) {
@@ -562,7 +571,7 @@ static void relay_state(GNostrNip46Bunker *bunker, const gchar *relay, const gch
 }
 BunkerService *bunker_service_new(void) {
   BunkerService *s = g_new0(BunkerService, 1); s->refs = 1;
-  s->context = g_main_context_ref_thread_default(); g_mutex_init(&s->ack_mutex);
+  s->context = g_main_context_ref_thread_default(); g_mutex_init(&s->ack_mutex); g_mutex_init(&s->transport_mutex);
   s->ack_sources = g_ptr_array_new_with_free_func((GDestroyNotify)g_source_unref);
   s->pairing_waiters = g_ptr_array_new_with_free_func(pairing_waiter_free);
   s->offers = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, offer_free);
@@ -596,13 +605,37 @@ void bunker_service_free(BunkerService *s) {
     bunker_service_stop(s); service_unref(s);
   }
 }
-typedef struct { BunkerService *service; guint generation; nostr_secure_buf key; gint result; } Start;
+typedef struct { BunkerService *service; guint generation; nostr_secure_buf key; gint result; gboolean initialize; } Start;
 static void start_free(gpointer data) {
   Start *job = data; secure_free(&job->key); service_unref(job->service); g_free(job);
 }
 static void load_transport(GTask *task, gpointer source, gpointer data, GCancellable *cancel) {
   (void)source; (void)cancel; Start *job = data;
+  /* The public marker distinguishes first use from lost credentials. Never
+   * replace an established endpoint, or overwrite an unavailable keyring. */
+  BunkerService *s = job->service;
+  g_autofree gchar *marker = g_build_filename(g_get_user_config_dir(), "grotto", "bunker-transport-pubkey", NULL);
+  g_mutex_lock(&s->transport_mutex);
   job->result = nostr_nip55l_bunker_transport_load(job->key.ptr);
+  if (job->result == NOSTR_SIGNER_ERROR_NOT_FOUND && job->initialize &&
+      !nostrc_profile_guard_refuses_path(marker) && !g_file_test(marker, G_FILE_TEST_EXISTS)) {
+    char *secret = nostr_key_generate_private();
+    job->result = secret && nostr_hex2bin(job->key.ptr, secret, 32) ?
+        nostr_nip55l_bunker_transport_store(job->key.ptr) : NOSTR_SIGNER_ERROR_BACKEND;
+    if (secret) { secure_wipe(secret, strlen(secret)); free(secret); }
+  }
+  if (!job->result) {
+    char secret[65];
+    for (guint i = 0; i < 32; i++) g_snprintf(secret + 2 * i, 3, "%02x", ((guint8 *)job->key.ptr)[i]);
+    char *pubkey = nostr_key_get_public(secret); secure_wipe(secret, sizeof(secret));
+    g_autofree gchar *dir = g_path_get_dirname(marker);
+    if (!pubkey || nostrc_profile_guard_refuses_path(marker) || g_mkdir_with_parents(dir, 0700) ||
+        !g_file_set_contents_full(marker, pubkey, -1, G_FILE_SET_CONTENTS_CONSISTENT | G_FILE_SET_CONTENTS_DURABLE, 0600, NULL))
+      job->result = NOSTR_SIGNER_ERROR_BACKEND;
+    free(pubkey);
+  }
+  g_mutex_unlock(&s->transport_mutex);
+  g_atomic_int_add(&s->transport_jobs, -1);
   g_task_return_boolean(task, TRUE);
 }
 static void transport_ready(GObject *source, GAsyncResult *result, gpointer data) {
@@ -612,7 +645,7 @@ static void transport_ready(GObject *source, GAsyncResult *result, gpointer data
   s->starting = FALSE;
   if (job->result) {
     set_state(s, BUNKER_STATE_ERROR, job->result == NOSTR_SIGNER_ERROR_NOT_FOUND ?
-        "Transport key missing; reset bunker endpoint" : "Transport key unavailable"); return;
+        _("Transport key missing; reset bunker endpoint") : _("Transport key unavailable")); return;
   }
   s->bunker = gnostr_nip46_bunker_new();
   gboolean installed = gnostr_nip46_bunker_set_transport_key(s->bunker, job->key.ptr, NULL) && gnostr_nip46_bunker_enable_requests(s->bunker);
@@ -629,29 +662,31 @@ static void transport_ready(GObject *source, GAsyncResult *result, gpointer data
     set_state(s, BUNKER_STATE_ERROR, "Failed to start bunker listener");
   }
 }
+gboolean bunker_service_transport_busy(BunkerService *s) {
+  return s && g_atomic_int_get(&s->transport_jobs) > 0;
+}
+void bunker_service_allow_transport_creation(BunkerService *s, gboolean allowed) {
+  if (s) s->allow_transport_creation = allowed;
+}
 gboolean bunker_service_start(BunkerService *s, const gchar *const *relays, const gchar *identity) {
   if (!s || s->closing) return FALSE;
+  gboolean initialize = s->allow_transport_creation && !s->transport_pubkey;
   /* Initial client-URI approval may be waiting for its first transport. Keep
    * that offer alive; ordinary explicit starts retain stop/start semantics. */
   if (s->bunker || s->starting || !g_hash_table_size(s->offers)) bunker_service_stop(s);
   if (identity && *identity && accounts_store_is_watch_only(accounts_store_get_default(), identity)) {
     set_state(s, BUNKER_STATE_ERROR, "A signable identity is required"); return FALSE;
   }
-  if (!relays || !relays[0]) { set_state(s, BUNKER_STATE_ERROR, "No bunker relays configured"); return FALSE; }
+  if (!relays || !relays[0]) { set_state(s, BUNKER_STATE_ERROR, _("No relays configured")); return FALSE; }
   if (!s->seen_healthy) { set_state(s, BUNKER_STATE_ERROR, "Replay protection unavailable"); return FALSE; }
   guint relay_count = 0;
   for (; relays[relay_count]; relay_count++) {
     if (relay_count >= 64 || strlen(relays[relay_count]) > 2048) {
       set_state(s, BUNKER_STATE_ERROR, "Relay configuration exceeds bounds"); return FALSE;
     }
-    g_autoptr(GUri) uri = g_uri_parse(relays[relay_count], G_URI_FLAGS_NONE, NULL);
-    const gchar *scheme = uri ? g_uri_get_scheme(uri) : NULL, *host = uri ? g_uri_get_host(uri) : NULL;
-    g_autofree gchar *lower_host = host ? g_ascii_strdown(host, -1) : NULL;
-    gboolean loopback = lower_host && (!strcmp(lower_host, "127.0.0.1") || !strcmp(lower_host, "::1") || !strcmp(lower_host, "localhost"));
-    if (!uri || !host || !*host || g_uri_get_userinfo(uri) || g_uri_get_fragment(uri) ||
-        (!g_strcmp0(scheme, "ws") ? !loopback : g_strcmp0(scheme, "wss")) || g_str_has_suffix(lower_host, ".onion")) {
-      set_state(s, BUNKER_STATE_ERROR, "Invalid or unsupported relay URL"); return FALSE;
-    }
+  }
+  if (!grotto_relays_validate(relays, relay_count, NULL)) {
+    set_state(s, BUNKER_STATE_ERROR, "Invalid or unsupported relay URL"); return FALSE;
   }
   g_autofree gchar *canonical = NULL;
   if (nostr_nip55l_relays_from_list(relays, relay_count, &canonical)) {
@@ -675,12 +710,14 @@ gboolean bunker_service_start(BunkerService *s, const gchar *const *relays, cons
   g_strfreev(s->relays); s->relays = g_steal_pointer(&candidate_relays);
   g_free(s->identity_npub); s->identity_npub = g_steal_pointer(&candidate_identity);
   Start *job = g_new0(Start, 1); job->service = s; job->generation = s->generation;
+  job->initialize = initialize;
   job->key = secure_alloc(32);
   if (!job->key.ptr) { g_free(job); set_state(s, BUNKER_STATE_ERROR, "Transport key allocation failed"); return FALSE; }
   g_atomic_int_inc(&s->refs);
   g_autoptr(GTask) task = g_task_new(NULL, NULL, transport_ready, NULL);
   g_task_set_task_data(task, job, start_free);
   s->starting = TRUE; set_state(s, BUNKER_STATE_STARTING, NULL);
+  g_atomic_int_inc(&s->transport_jobs);
   g_task_run_in_thread(task, load_transport);
   return TRUE;
 }
@@ -999,7 +1036,11 @@ gchar *bunker_service_accept_connect_uri(BunkerService *s, const gchar *text, co
   return id;
 }
 gboolean bunker_service_reconfigure(BunkerService *s, const gchar *const *relays, const gchar *identity) {
-  if (!s || !grotto_relays_validate(relays, relays ? g_strv_length((gchar **)relays) : 0, NULL)) return FALSE;
+  if (!s) return FALSE;
+  if (!relays || !relays[0]) {
+    bunker_service_stop(s); set_state(s, BUNKER_STATE_ERROR, _("No relays configured")); return FALSE;
+  }
+  if (!grotto_relays_validate(relays, g_strv_length((gchar **)relays), NULL)) return FALSE;
   g_autofree gchar *canonical = NULL;
   if (nostr_nip55l_relays_from_list(relays, g_strv_length((gchar **)relays), &canonical)) return FALSE;
   g_autoptr(JsonParser) parser = json_parser_new();
@@ -1059,7 +1100,9 @@ GVariant *bunker_service_relay_status(BunkerService *s) {
   GVariantBuilder rows; g_variant_builder_init(&rows, G_VARIANT_TYPE("a{ss}"));
   for (guint i = 0; s && s->relays && s->relays[i]; i++) {
     const gchar *state = g_hash_table_lookup(s->relay_states, s->relays[i]);
-    g_variant_builder_add(&rows, "{ss}", s->relays[i], state ? state : "STARTING");
+    g_autofree gchar *origin = grotto_relay_public_name(s->relays[i]);
+    g_autofree gchar *fallback = origin ? NULL : g_strdup_printf("relay-%u", i + 1);
+    g_variant_builder_add(&rows, "{ss}", origin ? origin : fallback, state ? state : "STARTING");
   }
   return g_variant_ref_sink(g_variant_builder_end(&rows));
 }

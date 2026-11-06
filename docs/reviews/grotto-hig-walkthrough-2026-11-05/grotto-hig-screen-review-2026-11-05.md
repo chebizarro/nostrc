@@ -220,3 +220,22 @@ Linux container.
 Not covered: Nostr Settings hosting of the shared panels, the Shell extension,
 onboarding Check/Backup/Ready pages, Paste App Link (clipboard-dependent), Save
 to File, high-contrast style, screen reader.
+
+## Addendum 2026-11-06: dialog buttons
+
+The walkthrough missed a cross-dialog inconsistency: `share-public-key-qr-sheet.png`
+puts Close in the header and Copy below; `backup-encrypted-passphrase-sheet.png`
+uses a full-width bottom Show QR Code button; `create-pairing-link-sheet.png`
+uses a footer pill; `qr-scanner-sheet.png` stacks three full-width buttons;
+`ask-by-default-event-types.png` shows no affirmative action in the visible
+viewport; and `add-app-dialog.png` offers no consistent header action.
+
+Convention: action sheets use an `AdwHeaderBar`, Cancel at the start, and one
+suggested imperative affirmative at the end, insensitive until inputs are valid.
+Hide window-close buttons, place content below, and use rows, tooltip-equipped
+header icons or menus for secondary actions, never bottom button stacks. The
+informational QR display uses Close at the start and a Copy icon at the end.
+Confirmations remain `AdwAlertDialog`: Cancel first, destructive/suggested action
+last, Escape cancels. Preserve access keys and tooltips. The Review Request consent
+footer deliberately remains unchanged; the profile editor follows the same
+convention in sibling B's separate panels change.

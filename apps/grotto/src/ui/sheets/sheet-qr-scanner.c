@@ -152,7 +152,7 @@ static void on_qr_detected(GnQrScanner *scanner,
 }
 
 /* Button handlers */
-static void on_camera_clicked(GtkButton *btn, gpointer user_data) {
+static void on_camera_clicked(AdwActionRow *btn, gpointer user_data) {
   (void)btn;
   SheetQrScanner *self = SHEET_QR_SCANNER(user_data);
 
@@ -167,11 +167,11 @@ static void on_camera_clicked(GtkButton *btn, gpointer user_data) {
     GnQrScanner *scanner = GN_QR_SCANNER(self->scanner_widget);
     if (gn_qr_scanner_is_active(scanner)) {
       gn_qr_scanner_stop(scanner);
-      gtk_button_set_label(GTK_BUTTON(self->btn_camera), _("_Start Camera"));
+      adw_preferences_row_set_title(ADW_PREFERENCES_ROW(self->btn_camera), _("_Start Camera"));
     } else {
       GError *error = NULL;
       if (gn_qr_scanner_start(scanner, &error)) {
-        gtk_button_set_label(GTK_BUTTON(self->btn_camera), _("_Stop Camera"));
+        adw_preferences_row_set_title(ADW_PREFERENCES_ROW(self->btn_camera), _("_Stop Camera"));
         gtk_label_set_text(GTK_LABEL(self->status_label),
                            _("Point your camera at a QR code…"));
       } else {
@@ -183,7 +183,7 @@ static void on_camera_clicked(GtkButton *btn, gpointer user_data) {
   }
 }
 
-static void on_paste_clicked(GtkButton *btn, gpointer user_data) {
+static void on_paste_clicked(AdwActionRow *btn, gpointer user_data) {
   (void)btn;
   SheetQrScanner *self = SHEET_QR_SCANNER(user_data);
 
@@ -255,7 +255,7 @@ static void on_file_response(GObject *source, GAsyncResult *result, gpointer use
   g_object_unref(self);
 }
 
-static void on_file_clicked(GtkButton *btn, gpointer user_data) {
+static void on_file_clicked(AdwActionRow *btn, gpointer user_data) {
   (void)btn;
   SheetQrScanner *self = SHEET_QR_SCANNER(user_data);
 
@@ -308,7 +308,7 @@ static void on_import_clicked(GtkButton *btn, gpointer user_data) {
   adw_dialog_close(ADW_DIALOG(self));
 }
 
-static void on_back_clicked(GtkButton *btn, gpointer user_data) {
+static void on_back_clicked(AdwActionRow *btn, gpointer user_data) {
   (void)btn;
   SheetQrScanner *self = SHEET_QR_SCANNER(user_data);
   show_scanner(self);
@@ -325,7 +325,8 @@ static void show_result(SheetQrScanner *self, const gchar *data, GnQrContentType
     g_autofree gchar *relays = g_strjoinv("\n", uri.relays);
     pairing_preview = g_strdup_printf(_("App key: %s\nName supplied by app: %s\nRelays:\n%s\nNo connection has been made."), uri.client_pubkey_hex, uri.name ? uri.name : _("Not supplied"), relays);
     grotto_connect_clear(&uri);
-    gtk_button_set_label(GTK_BUTTON(self->btn_import), _("Choose _Identity…"));
+    gtk_button_set_label(GTK_BUTTON(self->btn_import), _("Con_tinue"));
+    gtk_widget_set_tooltip_text(self->btn_import, _("Choose an Identity"));
   }
   /* Stop camera if running */
   if (self->scanner_widget && GN_IS_QR_SCANNER(self->scanner_widget)) {
@@ -376,6 +377,7 @@ static void show_result(SheetQrScanner *self, const gchar *data, GnQrContentType
 
   /* Show result page */
   gtk_stack_set_visible_child_name(GTK_STACK(self->stack), "result");
+  gtk_widget_set_sensitive(self->btn_import, TRUE);
 }
 
 /* Show scanner page */
@@ -387,6 +389,7 @@ static void show_scanner(SheetQrScanner *self) {
 
   gtk_label_set_text(GTK_LABEL(self->status_label), _("Ready to scan"));
   gtk_stack_set_visible_child_name(GTK_STACK(self->stack), "scanner");
+  gtk_widget_set_sensitive(self->btn_import, FALSE);
 }
 
 static void scanner_closed(AdwDialog *dialog, gpointer unused) {
@@ -472,18 +475,18 @@ static void sheet_qr_scanner_init(SheetQrScanner *self) {
 
   /* Connect button signals */
   if (self->btn_camera) {
-    g_signal_connect(self->btn_camera, "clicked", G_CALLBACK(on_camera_clicked), self);
+    g_signal_connect(self->btn_camera, "activated", G_CALLBACK(on_camera_clicked), self);
     /* Disable if camera not available */
     if (!gn_qr_camera_available()) {
       gtk_widget_set_sensitive(self->btn_camera, FALSE);
-      gtk_button_set_label(GTK_BUTTON(self->btn_camera), _("Camera Unavailable"));
+      adw_preferences_row_set_title(ADW_PREFERENCES_ROW(self->btn_camera), _("Camera Unavailable"));
     }
   }
   if (self->btn_paste) {
-    g_signal_connect(self->btn_paste, "clicked", G_CALLBACK(on_paste_clicked), self);
+    g_signal_connect(self->btn_paste, "activated", G_CALLBACK(on_paste_clicked), self);
   }
   if (self->btn_file) {
-    g_signal_connect(self->btn_file, "clicked", G_CALLBACK(on_file_clicked), self);
+    g_signal_connect(self->btn_file, "activated", G_CALLBACK(on_file_clicked), self);
   }
   if (self->btn_cancel) {
     g_signal_connect(self->btn_cancel, "clicked", G_CALLBACK(on_cancel_clicked), self);
@@ -492,7 +495,7 @@ static void sheet_qr_scanner_init(SheetQrScanner *self) {
     g_signal_connect(self->btn_import, "clicked", G_CALLBACK(on_import_clicked), self);
   }
 
-  g_signal_connect(self->btn_back, "clicked", G_CALLBACK(on_back_clicked), self);
+  g_signal_connect(self->btn_back, "activated", G_CALLBACK(on_back_clicked), self);
 }
 
 SheetQrScanner *sheet_qr_scanner_new(void) {
@@ -516,7 +519,8 @@ void sheet_qr_scanner_set_accepted_types(SheetQrScanner *self,
   self->n_accepted_types = 0;
 
   gboolean pairing = types && types[0] == GN_QR_TYPE_BUNKER_URI;
-  const char *action = pairing ? _("Choose _Identity…") : _("_Import Key");
+  const char *action = pairing ? _("Con_tinue") : _("_Import Key");
+  gtk_widget_set_tooltip_text(self->btn_import, pairing ? _("Choose an Identity") : _("Import Key"));
   gtk_button_set_label(GTK_BUTTON(self->btn_import), action);
   gtk_label_set_text(GTK_LABEL(self->hint_label), pairing ? _("Scan the connection code shown by your app") : _("Scan a secret key or encrypted backup"));
   gtk_accessible_update_property(GTK_ACCESSIBLE(self), GTK_ACCESSIBLE_PROPERTY_LABEL,

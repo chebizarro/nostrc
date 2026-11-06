@@ -187,6 +187,7 @@ static void snapshot_done(GObject *source, GAsyncResult *result, gpointer data) 
         g_variant_lookup(status, "bunker_relays", "^as", &relays);
         g_variant_lookup(status, "bunker_allowed_methods", "^as", &methods);
         GrottoPanelsMetadata metadata = {.id = "status", .state = text(status, "bunker_state"),
+          .reason = text(status, "bunker_error"),
           .relays = (const char *const *)relays, .methods = (const char *const *)methods,
           .owner_generation = self->generation};
         g_variant_lookup(status, "paused", "b", &metadata.paused);

@@ -4,7 +4,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: grotto-panels 0.1.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-06 13:00-0800\n"
+"POT-Creation-Date: 2026-11-06 13:41-0800\n"
 "PO-Revision-Date: 2026-11-04 00:00+0000\n"
 "Last-Translator: Grotto contributors\n"
 "Language-Team: Spanish\n"
@@ -99,7 +99,7 @@ msgid "_Remove Identity…"
 msgstr "_Eliminar identidad…"
 
 #: data/apps-panel.blp:11 data/activity-panel.blp:10 data/remote-panel.blp:8
-#: src/grotto-identity-panel.c:166 src/grotto-remote-panel.c:111
+#: src/grotto-identity-panel.c:166 src/grotto-remote-panel.c:130
 msgid "Signer Unavailable"
 msgstr "El firmante no está disponible"
 
@@ -196,10 +196,14 @@ msgid "Remote Signing"
 msgstr "Firma remota"
 
 #: data/remote-panel.blp:11
-msgid "Let apps on other devices ask to use your identity"
+msgid ""
+"Remote signing lets apps on other devices request signatures without sharing "
+"your secret key. Enable it, then choose Add App → Create Pairing Link… to "
+"connect an app."
 msgstr ""
-"Permitir que las aplicaciones de otros dispositivos soliciten usar tu "
-"identidad"
+"La firma remota permite que las aplicaciones de otros dispositivos soliciten "
+"firmas sin compartir la clave secreta. Actívela y elija Añadir aplicación → "
+"Crear enlace de vinculación… para conectar una aplicación."
 
 #: data/remote-panel.blp:12
 msgid "Enable Remote Signing"
@@ -209,35 +213,47 @@ msgstr ""
 msgid "Status"
 msgstr ""
 
-#: data/remote-panel.blp:14 src/grotto-app-detail.c:602
+#: data/remote-panel.blp:15
+msgid "Add App…"
+msgstr "Añadir aplicación…"
+
+#: data/remote-panel.blp:16
+msgid "Choose Create Pairing Link… and open the link in the remote app"
+msgstr "Elija Crear enlace de vinculación… y ábralo en la aplicación remota"
+
+#: data/remote-panel.blp:20 src/grotto-app-detail.c:602
 msgid "Change in Grotto…"
 msgstr ""
 
-#: data/remote-panel.blp:17
+#: data/remote-panel.blp:23
 msgid "Relays"
 msgstr ""
 
-#: data/remote-panel.blp:18
-msgid "Remote apps connect through these relays"
-msgstr "Las aplicaciones remotas se conectan a través de estos relés"
+#: data/remote-panel.blp:24
+msgid ""
+"Remote apps connect through these relays. Use wss://, or ws:// for a "
+"loopback address."
+msgstr ""
+"Las aplicaciones remotas se conectan mediante estos relés. Use wss://, o "
+"ws:// para una dirección de bucle local."
 
-#: data/remote-panel.blp:20
+#: data/remote-panel.blp:26
 msgid "Add Relay URL"
 msgstr ""
 
-#: data/remote-panel.blp:24 src/grotto-app-detail.c:611
+#: data/remote-panel.blp:30 src/grotto-app-detail.c:611
 msgid "Details"
 msgstr "Detalles"
 
-#: data/remote-panel.blp:25
+#: data/remote-panel.blp:31
 msgid "Allowed Methods"
 msgstr ""
 
-#: data/remote-panel.blp:27
+#: data/remote-panel.blp:33
 msgid "Reset Remote Connections…"
 msgstr "Restablecer conexiones remotas…"
 
-#: data/remote-panel.blp:28
+#: data/remote-panel.blp:34
 msgid ""
 "Disconnect remote apps and cancel pairing links. Identities and local app "
 "permissions are kept."
@@ -451,7 +467,7 @@ msgstr ""
 #: src/grotto-app-detail.c:128 src/grotto-app-detail.c:143
 #: src/grotto-app-detail.c:268 src/grotto-app-detail.c:340
 #: src/grotto-app-detail.c:405 src/grotto-activity-panel.c:158
-#: src/grotto-remote-panel.c:90
+#: src/grotto-remote-panel.c:102
 msgid "Cancel"
 msgstr "Cancelar"
 
@@ -1165,25 +1181,33 @@ msgstr "Error"
 msgid "Unavailable"
 msgstr ""
 
-#: src/grotto-remote-panel.c:29
+#: src/grotto-remote-panel.c:32
 msgid "Remote signing wasn't changed. Check the configuration and retry."
 msgstr ""
 
-#: src/grotto-remote-panel.c:89
+#: src/grotto-remote-panel.c:68
+msgid ""
+"Use wss://, or ws:// on loopback. Remove credentials, query parameters, "
+"fragments and .onion hosts."
+msgstr ""
+"Use wss://, o ws:// en bucle local. Quite las credenciales, los parámetros "
+"de consulta, los fragmentos y los servidores .onion."
+
+#: src/grotto-remote-panel.c:101
 msgid "Reset Remote Connections?"
 msgstr "¿Restablecer las conexiones remotas?"
 
-#: src/grotto-remote-panel.c:89
+#: src/grotto-remote-panel.c:101
 msgid ""
 "Remote pairings and links will stop working. Your identities and local app "
 "permissions are kept."
 msgstr ""
 
-#: src/grotto-remote-panel.c:90
+#: src/grotto-remote-panel.c:102
 msgid "Reset Connections"
 msgstr "Restablecer conexiones"
 
-#: src/grotto-remote-panel.c:125
+#: src/grotto-remote-panel.c:147
 msgid "Remove Relay"
 msgstr ""
 
