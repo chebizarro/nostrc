@@ -276,12 +276,13 @@ static void about_reveal_caret(GdkFrameClock *clock, gpointer data) {
   if (!gtk_widget_compute_point(GTK_WIDGET(about), viewport, &GRAPHENE_POINT_INIT(x, y), &point)) return;
   GtkAdjustment *adjustment = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroller));
   double top = gtk_adjustment_get_value(adjustment) + point.y;
+  /* GtkViewport animates the whole focused widget into view. Stop that older
+   * target before revealing the caret; clamp_page alone leaves it running. */
+  gtk_adjustment_set_value(adjustment, gtk_adjustment_get_value(adjustment));
   gtk_adjustment_clamp_page(adjustment, top - 6, top + cursor.height + 6);
 }
-static void about_cursor_changed(GObject *object, GParamSpec *spec, gpointer data) {
-  (void)object; (void)spec;
-  GtkWidget *about = data;
-  if (!gtk_widget_has_focus(about) || g_object_get_data(G_OBJECT(about), "caret-reveal-handler")) return;
+static void about_schedule_reveal(GtkWidget *about) {
+  if (g_object_get_data(G_OBJECT(about), "caret-reveal-handler")) return;
   GdkFrameClock *clock = gtk_widget_get_frame_clock(about);
   if (!clock) return;
   /* The expanding field's new allocation and the page adjustment must settle
@@ -289,6 +290,18 @@ static void about_cursor_changed(GObject *object, GParamSpec *spec, gpointer dat
   gulong handler = g_signal_connect_object(clock, "after-paint", G_CALLBACK(about_reveal_caret), about, 0);
   g_object_set_data(G_OBJECT(about), "caret-reveal-handler", GSIZE_TO_POINTER(handler));
   gtk_widget_queue_draw(about);
+}
+static void about_cursor_changed(GObject *object, GParamSpec *spec, gpointer data) {
+  (void)object; (void)spec;
+  if (gtk_widget_has_focus(GTK_WIDGET(data))) about_schedule_reveal(data);
+}
+static void about_layout_changed(GtkAdjustment *adjustment, gpointer data) {
+  (void)adjustment;
+  if (gtk_widget_has_focus(GTK_WIDGET(data))) about_schedule_reveal(data);
+}
+static void about_focus_enter(GtkEventControllerFocus *controller, gpointer data) {
+  (void)controller;
+  about_schedule_reveal(data);
 }
 static void about_changed(GtkTextBuffer *buffer, gpointer data) {
   gtk_widget_set_visible(GTK_WIDGET(data), gtk_text_buffer_get_char_count(buffer) == 0);
@@ -365,7 +378,12 @@ static void edit(GtkButton *button, gpointer data) {
       gtk_widget_set_size_request(GTK_WIDGET(self->about), -1, 100);
       gtk_text_view_set_accepts_tab(self->about, FALSE);
       g_signal_connect_object(gtk_text_view_get_buffer(self->about), "notify::cursor-position", G_CALLBACK(about_cursor_changed), self->about, 0);
-      g_signal_connect(self->about, "notify::has-focus", G_CALLBACK(about_cursor_changed), self->about);
+      GtkEventController *focus = gtk_event_controller_focus_new();
+      g_signal_connect(focus, "enter", G_CALLBACK(about_focus_enter), self->about);
+      gtk_widget_add_controller(GTK_WIDGET(self->about), focus);
+      GtkAdjustment *text_adjustment = gtk_scrollable_get_vadjustment(GTK_SCROLLABLE(self->about));
+      g_signal_connect_object(text_adjustment, "changed", G_CALLBACK(about_layout_changed), self->about, 0);
+      g_signal_connect_object(text_adjustment, "value-changed", G_CALLBACK(about_layout_changed), self->about, 0);
       gtk_text_view_set_top_margin(self->about, 6); gtk_text_view_set_bottom_margin(self->about, 6);
       self->about_placeholder = GTK_LABEL(gtk_label_new(_("Write something about yourself…")));
       gtk_label_set_wrap(self->about_placeholder, TRUE); gtk_label_set_xalign(self->about_placeholder, 0);

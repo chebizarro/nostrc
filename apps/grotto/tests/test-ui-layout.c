@@ -66,9 +66,10 @@ static void fixture_permission(GVariantBuilder *rows, const gchar *identity, gin
 static gboolean bound(gpointer data) { g_error("UI layout did not reach barrier: %s", (const gchar *)data); return G_SOURCE_REMOVE; }
 #define WAIT(condition) do { guint timer = g_timeout_add_seconds(15, bound, #condition); while (!(condition)) g_main_context_iteration(NULL, TRUE); g_source_remove(timer); } while (0)
 static gboolean tick(GtkWidget *widget, GdkFrameClock *clock, gpointer data) { (void)widget; (void)clock; (void)data; frames++; return G_SOURCE_CONTINUE; }
-static void wait_frames(GtkWidget *widget) {
-  frames = 0; guint id = gtk_widget_add_tick_callback(widget, tick, NULL, NULL); WAIT(frames >= 3); gtk_widget_remove_tick_callback(widget, id);
+static void wait_for_frames(GtkWidget *widget, guint count) {
+  frames = 0; guint id = gtk_widget_add_tick_callback(widget, tick, NULL, NULL); WAIT(frames >= count); gtk_widget_remove_tick_callback(widget, id);
 }
+static void wait_frames(GtkWidget *widget) { wait_for_frames(widget, 3); }
 #ifdef GROTTO_TEST_XDOTOOL
 static void send_key(SignerWindow *window, const char *key) {
   GdkSurface *surface = gtk_native_get_surface(GTK_NATIVE(window)); g_assert_true(GDK_IS_X11_SURFACE(surface));
@@ -896,7 +897,16 @@ static void layout_activate(GApplication *application, gpointer data) {
   GtkWidget *profile_box = GTK_WIDGET(gtk_widget_get_template_child(identity_panel, GROTTO_TYPE_IDENTITY_PANEL, "profile_box"));
   g_assert_nonnull(profile_box); g_assert_true(gtk_widget_get_visible(profile_box));
   GtkWidget *edit_profile = find_button(profile_box, P_("Edit Profile…")); g_assert_nonnull(edit_profile);
-  WAIT(gtk_widget_get_sensitive(edit_profile)); g_signal_emit_by_name(edit_profile, "clicked");
+  WAIT(gtk_widget_get_sensitive(edit_profile));
+#ifdef GROTTO_TEST_XDOTOOL
+  /* ScrolledWindow configures its adjustment animation when it maps. Enable
+   * animations before creating the editor so the focus-race test is real. */
+  GtkSettings *profile_gtk_settings = gtk_settings_get_default();
+  gboolean profile_animations;
+  g_object_get(profile_gtk_settings, "gtk-enable-animations", &profile_animations, NULL);
+  g_object_set(profile_gtk_settings, "gtk-enable-animations", TRUE, NULL);
+#endif
+  g_signal_emit_by_name(edit_profile, "clicked");
   AdwDialog *profile_dialog = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window));
   g_assert_nonnull(profile_dialog); g_assert_cmpstr(adw_dialog_get_title(profile_dialog), ==, P_("Edit Profile"));
   g_assert_nonnull(find_row(GTK_WIDGET(profile_dialog), P_("Avatar URL")));
@@ -937,21 +947,53 @@ static void layout_activate(GApplication *application, gpointer data) {
   g_assert_true(gtk_widget_is_ancestor(GTK_WIDGET(profile_scroll), gtk_widget_get_ancestor(about_row, ADW_TYPE_PREFERENCES_PAGE)));
   g_autoptr(GString) biography = g_string_new(NULL);
   for (guint i = 0; i < 80; i++) g_string_append_printf(biography, "Line %u of an editable profile biography\n", i);
-  gtk_text_buffer_set_text(profile_buffer, biography->str, -1);
-  g_assert_true(gtk_widget_grab_focus(GTK_WIDGET(profile_about))); send_key(window, "ctrl+End");
-  assert_about_caret_visible(profile_about, window);
-  g_assert_cmpfloat(gtk_adjustment_get_value(profile_adjustment), >, 0);
-  send_key(window, "a"); assert_about_caret_visible(profile_about, window);
-  send_key(window, "Return"); assert_about_caret_visible(profile_about, window);
-  g_assert_true(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)) == profile_dialog);
-  snapshot(GTK_WIDGET(window), "profile-about-long-end-360");
-  send_key(window, "ctrl+Home");
-  graphene_point_t caret = assert_about_caret_visible(profile_about, window);
-  double before_wheel = gtk_adjustment_get_value(profile_adjustment);
-  scroll_about_with_wheel(window, caret);
-  g_assert_cmpfloat(gtk_adjustment_get_value(profile_adjustment), >, before_wheel);
-  g_assert_cmpfloat(gtk_adjustment_get_value(gtk_scrollable_get_vadjustment(GTK_SCROLLABLE(profile_about))), ==, 0);
+  const int profile_widths[] = {360, 798};
+  for (guint i = 0; i < G_N_ELEMENTS(profile_widths); i++) {
+    gtk_window_set_default_size(GTK_WINDOW(window), profile_widths[i] + profile_inset, 720);
+    wait_for_frames(GTK_WIDGET(window), 30);
+    g_assert_cmpint(gtk_widget_get_width(GTK_WIDGET(window)), ==, profile_widths[i]);
+    gtk_text_buffer_set_text(profile_buffer, biography->str, -1);
+    g_assert_true(gtk_widget_grab_focus(GTK_WIDGET(profile_about))); send_key(window, "ctrl+End");
+    wait_for_frames(GTK_WIDGET(window), 30);
+    g_assert_cmpint(gtk_widget_get_height(GTK_WIDGET(profile_about)), >, gtk_widget_get_height(GTK_WIDGET(profile_scroll)));
+    assert_about_caret_visible(profile_about, window);
+    g_assert_cmpfloat(gtk_adjustment_get_value(profile_adjustment), >, 0);
+    send_key(window, "a"); wait_for_frames(GTK_WIDGET(window), 30);
+    assert_about_caret_visible(profile_about, window);
+    send_key(window, "Return"); wait_for_frames(GTK_WIDGET(window), 30);
+    g_assert_cmpint(gtk_text_buffer_get_line_count(profile_buffer), ==, 82);
+    assert_about_caret_visible(profile_about, window);
+    g_assert_true(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)) == profile_dialog);
+    g_autofree char *end_capture = g_strdup_printf("profile-about-long-end-%d", profile_widths[i]);
+    snapshot(GTK_WIDGET(window), end_capture);
+    /* Leave the field, scroll its retained end caret out of view, then use
+     * actual backward keyboard traversal to re-enter it without moving the mark. */
+    send_key(window, "Tab"); wait_for_frames(GTK_WIDGET(window), 30);
+    g_assert_true(gtk_root_get_focus(GTK_ROOT(window)) != GTK_WIDGET(profile_about));
+    gtk_adjustment_set_value(profile_adjustment, gtk_adjustment_get_lower(profile_adjustment));
+    wait_for_frames(GTK_WIDGET(window), 30);
+    GdkRectangle insertion; int x, y; graphene_point_t offscreen;
+    gtk_text_view_get_cursor_locations(profile_about, NULL, &insertion, NULL);
+    gtk_text_view_buffer_to_window_coords(profile_about, GTK_TEXT_WINDOW_WIDGET, insertion.x, insertion.y, &x, &y);
+    g_assert_true(gtk_widget_compute_point(GTK_WIDGET(profile_about), GTK_WIDGET(window), &GRAPHENE_POINT_INIT(x, y), &offscreen));
+    graphene_rect_t clip;
+    g_assert_true(gtk_widget_compute_bounds(gtk_scrolled_window_get_child(profile_scroll), GTK_WIDGET(window), &clip));
+    g_assert_cmpfloat(offscreen.y, >, clip.origin.y + clip.size.height);
+    send_key(window, "shift+Tab"); wait_for_frames(GTK_WIDGET(window), 30);
+    g_assert_true(gtk_root_get_focus(GTK_ROOT(window)) == GTK_WIDGET(profile_about));
+    assert_about_caret_visible(profile_about, window);
+    g_autofree char *focus_capture = g_strdup_printf("profile-about-focus-reentry-%d", profile_widths[i]);
+    snapshot(GTK_WIDGET(window), focus_capture);
+    send_key(window, "ctrl+Home"); wait_for_frames(GTK_WIDGET(window), 30);
+    graphene_point_t caret = assert_about_caret_visible(profile_about, window);
+    double before_wheel = gtk_adjustment_get_value(profile_adjustment);
+    scroll_about_with_wheel(window, caret); wait_for_frames(GTK_WIDGET(window), 30);
+    g_assert_cmpfloat(gtk_adjustment_get_value(profile_adjustment), >, before_wheel);
+    g_assert_cmpfloat(gtk_adjustment_get_value(gtk_scrollable_get_vadjustment(GTK_SCROLLABLE(profile_about))), ==, 0);
+  }
+  g_object_set(profile_gtk_settings, "gtk-enable-animations", profile_animations, NULL);
   gtk_text_buffer_set_text(profile_buffer, original_about, -1);
+  gtk_window_set_default_size(GTK_WINDOW(window), 360 + profile_inset, 640); wait_frames(GTK_WIDGET(window));
   g_assert_true(gtk_widget_grab_focus(GTK_WIDGET(profile_about))); send_key(window, "Tab");
   GtkWidget *after_about = gtk_root_get_focus(GTK_ROOT(window));
   g_assert_nonnull(after_about); g_assert_true(after_about != GTK_WIDGET(profile_about));
