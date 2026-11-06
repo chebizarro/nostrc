@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: grotto 0.1.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-06 00:56-0800\n"
+"POT-Creation-Date: 2026-11-06 01:35-0800\n"
 "PO-Revision-Date: 2024-01-23 00:00+0000\n"
 "Last-Translator: \n"
 "Language-Team: Spanish\n"
@@ -2954,7 +2954,7 @@ msgstr ""
 
 #: src/ui/page-settings.c:200
 msgid "Privacy and Network"
-msgstr ""
+msgstr "Privacidad y red"
 
 #: src/ui/page-settings.c:202
 msgid "Load Profile Images"
@@ -3129,7 +3129,7 @@ msgid "The identity is saved on this device"
 msgstr "La identidad está guardada en este dispositivo"
 
 #: src/ui/onboarding-assistant.c:84
-msgid "Cancel adding an identity"
+msgid "Cancel Adding an Identity"
 msgstr ""
 
 #: src/ui/onboarding-assistant.c:93

@@ -708,7 +708,7 @@ static void repeated_creation_activation(Fixture *f, gconstpointer data) {
   GtkWidget *cancel_button = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(setup), TYPE_ONBOARDING_ASSISTANT, "btn_skip"));
   g_assert_false(gtk_widget_get_visible(back_button));
   g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(cancel_button)), ==, "_Cancel");
-  g_assert_cmpstr(gtk_widget_get_tooltip_text(cancel_button), ==, "Cancel adding an identity");
+  g_assert_cmpstr(gtk_widget_get_tooltip_text(cancel_button), ==, "Cancel Adding an Identity");
   guint gone = 0; g_object_weak_ref(G_OBJECT(setup), weak_gone, &gone);
   gtk_window_close(setup); gtk_window_destroy(setup); g_object_unref(setup);
   guint timeout = g_timeout_add_seconds(10, bound, NULL); while (!gone) g_main_context_iteration(NULL, TRUE); g_source_remove(timeout);

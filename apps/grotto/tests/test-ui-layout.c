@@ -402,8 +402,8 @@ static void layout_activate(GApplication *application, gpointer data) {
   GtkWidget *add_cancel = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(add), TYPE_ONBOARDING_ASSISTANT, "btn_skip"));
   g_assert_false(gtk_widget_get_visible(add_back));
   g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(add_cancel)), ==, _("_Cancel"));
-  g_assert_cmpstr(gtk_widget_get_tooltip_text(add_cancel), ==, _("Cancel adding an identity"));
-  if (accessibility) gtk_test_accessible_assert_property(GTK_ACCESSIBLE(add_cancel), GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, _("Cancel adding an identity"));
+  g_assert_cmpstr(gtk_widget_get_tooltip_text(add_cancel), ==, _("Cancel Adding an Identity"));
+  if (accessibility) gtk_test_accessible_assert_property(GTK_ACCESSIBLE(add_cancel), GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, _("Cancel Adding an Identity"));
   GtkWidget *create_choice = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(add), TYPE_ONBOARDING_ASSISTANT, "choose_create"));
   GtkWidget *import_choice = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(add), TYPE_ONBOARDING_ASSISTANT, "choose_import"));
   g_assert_true(gtk_widget_get_visible(create_choice)); g_assert_true(gtk_widget_get_visible(import_choice));

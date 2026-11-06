@@ -81,7 +81,7 @@ static void navigation(OnboardingAssistant *self) {
       (self->running_session ? _("_Cancel") : _("_Skip Setup")) :
       self->state == ONBOARDING_BACKUP ? _("Finish _Without Backup") : _("Finish _Later"));
   const gchar *skip_description = self->identity_stored ? _("The identity is saved on this device") :
-      self->running_session ? _("Cancel adding an identity") : NULL;
+      self->running_session ? _("Cancel Adding an Identity") : NULL;
   gtk_widget_set_tooltip_text(GTK_WIDGET(self->btn_skip), skip_description);
   gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_skip), GTK_ACCESSIBLE_PROPERTY_DESCRIPTION,
       skip_description ? skip_description : "", -1);
