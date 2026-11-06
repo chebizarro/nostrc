@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: grotto 0.1.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-06 13:10-0800\n"
+"POT-Creation-Date: 2026-11-06 13:41-0800\n"
 "PO-Revision-Date: 2024-01-23 00:00+0000\n"
 "Last-Translator: \n"
 "Language-Team: Portuguese (Brazil)\n"
@@ -1122,19 +1122,19 @@ msgstr ""
 msgid "Create _Link…"
 msgstr ""
 
-#: src/ui/signer-window.c:922
+#: src/ui/signer-window.c:923
 msgid "Choose Backup for this identity."
 msgstr ""
 
-#: src/ui/signer-window.c:1058
+#: src/ui/signer-window.c:1059
 msgid "Session locked via Ctrl+L"
 msgstr ""
 
-#: src/grotto-profile-service.c:169
+#: src/grotto-profile-service.c:214
 msgid "Grotto could not sign this request. Check the review and try again"
 msgstr ""
 
-#: src/grotto-profile-service.c:512
+#: src/grotto-profile-service.c:557
 #, c-format
 msgid ""
 "Profile unavailable — relay requires authentication. Bootstrap discovery "
@@ -1142,63 +1142,67 @@ msgid ""
 "%s"
 msgstr ""
 
-#: src/grotto-profile-service.c:513
+#: src/grotto-profile-service.c:558
 msgid "Profile unavailable. Check your relays and try again"
 msgstr ""
 
-#: src/grotto-profile-service.c:532
+#: src/grotto-profile-service.c:577
 msgid "The published profile is not valid metadata"
 msgstr ""
 
-#: src/grotto-profile-service.c:538
+#: src/grotto-profile-service.c:583
 msgid "Choose an image smaller than 5 MB"
 msgstr ""
 
-#: src/grotto-profile-service.c:554
+#: src/grotto-profile-service.c:599
 msgid "Choose a PNG, JPEG or WebP image smaller than 5 MB"
 msgstr ""
 
-#: src/grotto-profile-service.c:563
+#: src/grotto-profile-service.c:608
 msgid "Choose an image up to 8192 pixels per side and 24 megapixels"
 msgstr ""
 
-#: src/grotto-profile-service.c:623
+#: src/grotto-profile-service.c:701
 msgid "No write relays are configured for this identity"
 msgstr ""
 
-#: src/grotto-profile-service.c:632
+#: src/grotto-profile-service.c:710
 msgid "This profile changed elsewhere. Refresh it before saving"
 msgstr ""
 
-#: src/grotto-profile-service.c:661
+#: src/grotto-profile-service.c:739
 msgid ""
 "Your profile reached some relays, but not all. Close the editor and refresh "
 "before trying again"
 msgstr ""
 
-#: src/grotto-profile-service.c:662
+#: src/grotto-profile-service.c:740
 msgid "No relay confirmed publication. Your edits are still here"
 msgstr ""
 
-#: src/grotto-profile-service.c:669
+#: src/grotto-profile-service.c:747
 msgid "No Blossom servers found. Set up Media Servers in Nostr Settings first"
 msgstr ""
 
-#: src/grotto-profile-service.c:684
+#: src/grotto-profile-service.c:762
 msgid "Image upload failed. Check your media servers and try again"
 msgstr ""
 
-#: src/grotto-profile-service.c:728
+#: src/grotto-profile-service.c:844
+msgid "No cached profile"
+msgstr ""
+
+#: src/grotto-profile-service.c:857
 msgid "Signer unavailable. Open Grotto and try again"
 msgstr ""
 
-#: src/grotto-profile-service.c:742
+#: src/grotto-profile-service.c:862
 msgid ""
 "Profile network access is unavailable in Tor mode. The saved profile is "
 "still available"
 msgstr ""
 
-#: src/grotto-profile-service.c:789
+#: src/grotto-profile-service.c:910
 #, c-format
 msgid ""
 "Uploading makes this image public immediately, before Save. Cancelling the "
@@ -1214,79 +1218,79 @@ msgid ""
 "%s"
 msgstr ""
 
-#: src/grotto-profile-service.c:790
+#: src/grotto-profile-service.c:911
 msgid "Crop and Upload Profile Image?"
 msgstr ""
 
-#: src/grotto-profile-service.c:792
+#: src/grotto-profile-service.c:913
 msgid "Selected Banner"
 msgstr ""
 
-#: src/grotto-profile-service.c:792
+#: src/grotto-profile-service.c:913
 msgid "Selected Avatar"
 msgstr ""
 
-#: src/grotto-profile-service.c:794 src/ui/approval_dialog.c:422
+#: src/grotto-profile-service.c:915 src/ui/approval_dialog.c:422
 msgid "Cancel"
 msgstr "Cancelar"
 
-#: src/grotto-profile-service.c:794
+#: src/grotto-profile-service.c:915
 msgid "Upload Cropped Image"
 msgstr ""
 
-#: src/grotto-profile-service.c:806
+#: src/grotto-profile-service.c:927
 msgid ""
 "No verified Blossom server list found. Refresh your profile after setting up "
 "Media Servers in Nostr Settings"
 msgstr ""
 
-#: src/grotto-profile-service.c:859
+#: src/grotto-profile-service.c:980
 msgid ""
 "The image could not be opened. Choose a PNG, JPEG or WebP image smaller than "
 "5 MB, up to 8192 pixels per side and 24 megapixels"
 msgstr ""
 
-#: src/grotto-profile-service.c:866
+#: src/grotto-profile-service.c:987
 msgid "Cropped Image Preview"
 msgstr ""
 
-#: src/grotto-profile-service.c:868
+#: src/grotto-profile-service.c:989
 msgid "Banner: 3∶1, up to 1500 × 500 pixels"
 msgstr ""
 
-#: src/grotto-profile-service.c:868
+#: src/grotto-profile-service.c:989
 msgid "Avatar: square, up to 512 × 512 pixels"
 msgstr ""
 
-#: src/grotto-profile-service.c:870
+#: src/grotto-profile-service.c:991
 msgid "Zoom"
 msgstr ""
 
-#: src/grotto-profile-service.c:871
+#: src/grotto-profile-service.c:992
 msgid "Horizontal Position"
 msgstr ""
 
-#: src/grotto-profile-service.c:872
+#: src/grotto-profile-service.c:993
 msgid "Vertical Position"
 msgstr ""
 
-#: src/grotto-profile-service.c:883
+#: src/grotto-profile-service.c:1004
 msgid "Choose a local image file"
 msgstr ""
 
-#: src/grotto-profile-service.c:886
+#: src/grotto-profile-service.c:1007
 msgid "Image selection is unavailable. Try again"
 msgstr ""
 
-#: src/grotto-profile-service.c:912
+#: src/grotto-profile-service.c:1072
 msgid "Choose Avatar"
 msgstr ""
 
-#: src/grotto-profile-service.c:912
+#: src/grotto-profile-service.c:1072
 msgid "Choose Banner"
 msgstr ""
 
-#: src/grotto-profile-service.c:913
+#: src/grotto-profile-service.c:1073
 msgid "Profile Images"
 msgstr ""
 

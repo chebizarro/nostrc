@@ -95,6 +95,82 @@ static void grotto_panels_service_default_init(GrottoPanelsServiceInterface *ifa
                0, NULL, NULL, NULL, G_TYPE_NONE, 0);
   g_signal_new("availability-changed", G_TYPE_FROM_INTERFACE(iface), G_SIGNAL_RUN_LAST,
                0, NULL, NULL, NULL, G_TYPE_NONE, 0);
+  g_signal_new("profile-updated", G_TYPE_FROM_INTERFACE(iface), G_SIGNAL_RUN_LAST,
+               0, NULL, NULL, NULL, G_TYPE_NONE, 1, G_TYPE_STRING);
+}
+typedef struct { char *key; GrottoProfileInfo *info; gsize bytes; } DisplayProfile;
+typedef struct { GQueue entries; gsize bytes; } DisplayCache;
+static void display_profile_free(gpointer data) {
+  DisplayProfile *p = data; g_free(p->key); grotto_profile_info_free(p->info); g_free(p);
+}
+static void display_cache_free(gpointer data) {
+  DisplayCache *c = data; g_queue_clear_full(&c->entries, display_profile_free); g_free(c);
+}
+static DisplayCache *display_cache(GrottoPanelsService *self) {
+  DisplayCache *c = g_object_get_data(G_OBJECT(self), "grotto-display-profiles");
+  if (!c) { c = g_new0(DisplayCache, 1); g_object_set_data_full(G_OBJECT(self), "grotto-display-profiles", c, display_cache_free); }
+  return c;
+}
+static GList *display_find(DisplayCache *c, const char *key) {
+  for (GList *l = c->entries.head; l; l = l->next)
+    if (!g_strcmp0(((DisplayProfile *)l->data)->key, key)) return l;
+  return NULL;
+}
+GrottoProfileInfo *grotto_panels_service_dup_profile(GrottoPanelsService *self, const char *key) {
+  if (!self || !key) return NULL;
+  g_return_val_if_fail(GROTTO_PANELS_IS_SERVICE(self), NULL);
+  DisplayCache *c = display_cache(self); GList *l = display_find(c, key);
+  if (!l) return NULL;
+  DisplayProfile *p = l->data; g_queue_unlink(&c->entries, l); g_queue_push_head_link(&c->entries, l);
+  return grotto_profile_info_copy(p->info);
+}
+static gboolean display_relays_equal(char **a, char **b) {
+  if (!a || !a[0]) return !b || !b[0];
+  return b && g_strv_equal((const char *const *)a, (const char *const *)b);
+}
+void grotto_panels_service_set_profile(GrottoPanelsService *self, const char *key, const GrottoProfileInfo *info) {
+  g_return_if_fail(GROTTO_PANELS_IS_SERVICE(self));
+  if (!key || !*key || !info || !grotto_panels_public_text_validate(key, NULL) || !grotto_profile_info_validate(info, NULL)) return;
+  DisplayCache *c = display_cache(self); GList *l = display_find(c, key);
+  g_autoptr(GrottoProfileInfo) hydrated = NULL;
+  if (l) {
+    DisplayProfile *p = l->data;
+    if (p->info->created_at > info->created_at || (p->info->published && !info->published)) return;
+    /* A cache read can finish after hydration of the same metadata revision.
+     * Missing pixels must not erase an already loaded image for that URL. */
+    if (p->info->created_at == info->created_at && p->info->published == info->published) {
+      for (guint i = 0; i < 2; i++) {
+        guint field = i ? GROTTO_PROFILE_BANNER : GROTTO_PROFILE_PICTURE;
+        if (!info->images[i] && p->info->images[i] && !g_strcmp0(p->info->fields[field], info->fields[field])) {
+          if (!hydrated) hydrated = grotto_profile_info_copy(info);
+          g_set_object(&hydrated->images[i], p->info->images[i]);
+        }
+      }
+      if (hydrated) info = hydrated;
+    }
+    gboolean equal = p->info->published == info->published && p->info->created_at == info->created_at &&
+      p->info->bot == info->bot && p->info->tor_blocked == info->tor_blocked && p->info->cached == info->cached &&
+      p->info->no_relays == info->no_relays && p->info->nip05_status == info->nip05_status &&
+      p->info->bootstrap_used == info->bootstrap_used &&
+      display_relays_equal(p->info->discovery_relays, info->discovery_relays) &&
+      display_relays_equal(p->info->auth_required_relays, info->auth_required_relays) &&
+      display_relays_equal(p->info->bootstrap_relays, info->bootstrap_relays) &&
+      display_relays_equal(p->info->publish_relays, info->publish_relays);
+    for (guint i = 0; i < GROTTO_PROFILE_N_FIELDS; i++) equal &= !g_strcmp0(p->info->fields[i], info->fields[i]);
+    for (guint i = 0; i < 2; i++) equal &= p->info->images[i] == info->images[i];
+    if (equal) return;
+    c->bytes -= p->bytes; g_queue_delete_link(&c->entries, l); display_profile_free(p);
+  }
+  DisplayProfile *p = g_new0(DisplayProfile, 1); p->key = g_strdup(key); p->info = grotto_profile_info_copy(info);
+  for (guint i = 0; i < 2; i++) if (p->info->images[i]) {
+    gsize size = (gsize)gdk_texture_get_width(p->info->images[i]) * gdk_texture_get_height(p->info->images[i]) * 4;
+    if (size > 32 * 1024 * 1024 - p->bytes) g_clear_object(&p->info->images[i]); else p->bytes += size;
+  }
+  c->bytes += p->bytes; g_queue_push_head(&c->entries, p);
+  while (c->entries.length > 32 || c->bytes > 32 * 1024 * 1024) {
+    DisplayProfile *old = g_queue_pop_tail(&c->entries); c->bytes -= old->bytes; display_profile_free(old);
+  }
+  g_signal_emit_by_name(self, "profile-updated", key);
 }
 GListModel *grotto_panels_service_get_model(GrottoPanelsService *self, GrottoPanelsModel model) {
   g_return_val_if_fail(GROTTO_PANELS_IS_SERVICE(self), NULL);

@@ -21,7 +21,8 @@ struct _GrottoIdentityPanel {
   GtkLabel *default_check;
   GtkButton *dismiss_backup;
   GListModel *model;
-  gulong model_changed;
+  gulong model_changed, profile_changed;
+  GrottoPanelsService *profile_service;
   char *pinned, *identity;
   gboolean busy, disposed;
   guint generation;
@@ -122,6 +123,30 @@ static void invoke(GrottoIdentityPanel *self, GrottoPanelCommand command) {
 }
 static void label_apply(AdwEntryRow *row, gpointer data) { (void)row; invoke(data, GROTTO_PANEL_SET_IDENTITY_LABEL); }
 static void make_default(GtkButton *button, gpointer data) { (void)button; invoke(data, GROTTO_PANEL_SET_DEFAULT_IDENTITY); }
+typedef struct { GWeakRef avatar; GrottoPanelsService *service; char *key; } AvatarRead;
+static void avatar_ready(GObject *source, GAsyncResult *result, gpointer data) {
+  AvatarRead *read = data; g_autoptr(GError) error = NULL;
+  g_autoptr(GrottoProfileInfo) info = grotto_panel_profile_finish(GROTTO_PANEL(source), result, &error);
+  g_autoptr(AdwAvatar) avatar = g_weak_ref_get(&read->avatar);
+  if (info && avatar && grotto_panel_get_service(GROTTO_PANEL(source)) == read->service) {
+    if (read->service) {
+      grotto_panels_service_set_profile(read->service, read->key, info);
+      g_autoptr(GrottoProfileInfo) winner = grotto_panels_service_dup_profile(read->service, read->key);
+      if (winner) adw_avatar_set_custom_image(avatar, GDK_PAINTABLE(winner->images[0]));
+    } else adw_avatar_set_custom_image(avatar, GDK_PAINTABLE(info->images[0]));
+  }
+  g_weak_ref_clear(&read->avatar); g_clear_object(&read->service); g_free(read->key); g_free(read);
+}
+static void profile_updated(GrottoPanelsService *service, const char *key, gpointer data) {
+  GrottoIdentityPanel *self = data;
+  g_autoptr(GrottoProfileInfo) info = grotto_panels_service_dup_profile(service, key);
+  if (!info) return;
+  for (GtkWidget *row = gtk_widget_get_first_child(GTK_WIDGET(self->other_list)); row; row = gtk_widget_get_next_sibling(row)) {
+    if (g_strcmp0(g_object_get_data(G_OBJECT(row), "identity"), key)) continue;
+    AdwAvatar *avatar = g_object_get_data(G_OBJECT(row), "avatar");
+    if (avatar) adw_avatar_set_custom_image(avatar, GDK_PAINTABLE(info->images[0]));
+  }
+}
 static void render(GrottoIdentityPanel *self) {
   GrottoPanel *panel = GROTTO_PANEL(self);
   GrottoPanelsService *service = grotto_panel_get_service(panel);
@@ -194,7 +219,17 @@ static void render(GrottoIdentityPanel *self) {
     adw_action_row_set_subtitle(ADW_ACTION_ROW(row), other->watch_only ? _("Watch only — cannot sign") : other->public_key);
     adw_action_row_set_subtitle_lines(ADW_ACTION_ROW(row), 1);
     gtk_list_box_row_set_activatable(GTK_LIST_BOX_ROW(row), TRUE);
-    adw_action_row_add_prefix(ADW_ACTION_ROW(row), adw_avatar_new(40, other->label, TRUE));
+    GtkWidget *avatar = adw_avatar_new(40, other->label, TRUE);
+    adw_action_row_add_prefix(ADW_ACTION_ROW(row), avatar);
+    g_object_set_data(G_OBJECT(row), "avatar", avatar);
+    g_autoptr(GrottoProfileInfo) profile = grotto_panels_service_dup_profile(service, other->public_key);
+    if (profile) adw_avatar_set_custom_image(ADW_AVATAR(avatar), GDK_PAINTABLE(profile->images[0]));
+    if ((!profile || !profile->images[0]) && grotto_panel_has_profile_host(panel)) {
+      AvatarRead *read = g_new0(AvatarRead, 1); g_weak_ref_init(&read->avatar, avatar);
+      read->service = service ? g_object_ref(service) : NULL; read->key = g_strdup(other->public_key);
+      grotto_panel_profile_async(panel, GROTTO_PROFILE_FETCH_CACHED, other->public_key, NULL,
+        grotto_panel_get_cancellable(panel), avatar_ready, read);
+    }
     adw_action_row_add_suffix(ADW_ACTION_ROW(row), gtk_image_new_from_icon_name("go-next-symbolic"));
     g_object_set_data_full(G_OBJECT(row), "identity", g_strdup(other->public_key), g_free);
     gtk_list_box_append(self->other_list, row);
@@ -209,6 +244,11 @@ static void attach(GrottoPanel *panel, gpointer data) {
   (void)data; GrottoIdentityPanel *self = GROTTO_IDENTITY_PANEL(panel);
   if (self->disposed) return;
   GrottoPanelsService *service = grotto_panel_get_service(panel);
+  if (service != self->profile_service) {
+    if (self->profile_service) g_signal_handler_disconnect(self->profile_service, self->profile_changed);
+    g_set_object(&self->profile_service, service);
+    if (service) self->profile_changed = g_signal_connect(service, "profile-updated", G_CALLBACK(profile_updated), self);
+  }
   GListModel *model = service ? grotto_panels_service_get_model(service, GROTTO_PANELS_IDENTITIES) : NULL;
   if (model != self->model) {
     if (self->model) g_signal_handler_disconnect(self->model, self->model_changed);
@@ -220,6 +260,8 @@ static void attach(GrottoPanel *panel, gpointer data) {
 static void dispose(GObject *object) {
   GrottoIdentityPanel *self = GROTTO_IDENTITY_PANEL(object);
   self->disposed = TRUE; self->generation++;
+  if (self->profile_service) g_signal_handler_disconnect(self->profile_service, self->profile_changed);
+  g_clear_object(&self->profile_service);
   if (self->model) g_signal_handler_disconnect(self->model, self->model_changed);
   g_clear_object(&self->model); g_clear_pointer(&self->identity, g_free); g_clear_pointer(&self->pinned, g_free);
   /* The inherited AdwNavigationPage owns child too. Detach it before template

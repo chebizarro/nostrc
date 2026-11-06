@@ -73,7 +73,7 @@ def check_schema(header):
         'TOAST', 'REVIEW', 'ADD_IDENTITY', 'ADD_APP', 'BACKUP', 'REMOVE', 'REPLACE', 'OPEN_SIGNER', 'N_ACTIONS')]
     assert enums['_GrottoProfileField'] == ['GROTTO_PROFILE_' + name for name in (
         'NAME', 'DISPLAY_NAME', 'ABOUT', 'PICTURE', 'BANNER', 'NIP05', 'LUD16', 'LUD06', 'WEBSITE', 'N_FIELDS')]
-    assert enums['_GrottoProfileAction'] == ['GROTTO_PROFILE_' + name for name in ('FETCH', 'SAVE', 'CHOOSE_AVATAR', 'CHOOSE_BANNER', 'LOAD_IMAGES', 'VERIFY_NIP05')]
+    assert enums['_GrottoProfileAction'] == ['GROTTO_PROFILE_' + name for name in ('FETCH', 'SAVE', 'CHOOSE_AVATAR', 'CHOOSE_BANNER', 'LOAD_IMAGES', 'VERIFY_NIP05', 'FETCH_CACHED')]
     assert enums['_GrottoNip05Status'] == ['GROTTO_NIP05_' + name for name in ('UNCHECKED', 'VERIFIED', 'MISMATCH', 'INVALID', 'UNAVAILABLE')]
     for name, expected in schemas.items():
         fields = {f['name']: f['type']['qualType'] for f in records[name]['inner'] if f['kind'] == 'FieldDecl'}
@@ -93,6 +93,7 @@ def check_schema(header):
 
 exports = {
     'grotto_profile_info_copy', 'grotto_profile_info_free', 'grotto_profile_info_validate',
+    'grotto_panels_service_dup_profile', 'grotto_panels_service_set_profile',
     'grotto_panel_has_profile_host', 'grotto_panel_profile_async', 'grotto_panel_profile_finish',
     'grotto_panels_item_get_type', 'grotto_panels_item_new', 'grotto_panels_item_get_metadata',
     'grotto_panels_item_new_with_backup_banner_state', 'grotto_panels_item_get_backup_banner_dismissed',
@@ -217,6 +218,12 @@ imports.update('''g_app_info_monitor_get g_find_program_in_path g_list_sort g_on
  g_str_has_prefix g_str_has_suffix g_strndup g_themed_icon_new strchr strcspn memcmp
  adw_entry_row_add_prefix gtk_image_get_type gtk_image_new gtk_image_new_from_gicon
  gtk_image_set_from_gicon gtk_widget_set_hexpand'''.split())
+
+# Bounded, service-owned public display cache and row-avatar references only.
+# These add no I/O, decoder, secret or policy imports.
+imports.update('''g_object_set_data g_queue_clear_full g_queue_delete_link g_queue_pop_tail
+ g_queue_push_head g_queue_push_head_link g_queue_unlink g_signal_emit_by_name g_strv_equal
+ gdk_texture_get_height gdk_texture_get_width'''.split())
 
 def check_symbols(path):
     output = subprocess.check_output(['nm', '-g', str(path)] if sys.platform == 'darwin' else ['nm', '-D', str(path)], text=True)

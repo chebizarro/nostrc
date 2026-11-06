@@ -168,9 +168,10 @@ static void seed_profiles(BunkerTestRelay *relay, const char *hex, const char *k
 }
 /* Public, test-only self-signed loopback certificate/key. Trust is installed
  * only in this test process; production TLS validation is unchanged. */
-typedef struct { const char *location; GBytes *png; guint contacts; gboolean encoded; } ImageEndpoint;
+typedef struct { const char *location; GBytes *png; guint contacts; gboolean encoded, fail; } ImageEndpoint;
 static void image_response(SoupServer *server, SoupServerMessage *message, const char *path, GHashTable *query, gpointer data) {
   (void)server; (void)query; ImageEndpoint *endpoint = data; endpoint->contacts++;
+  if (endpoint->fail) { soup_server_message_set_status(message, SOUP_STATUS_SERVICE_UNAVAILABLE, NULL); return; }
   if (g_str_has_prefix(path, "/hop/") && atoi(path + 5) > 0) {
     g_autofree char *next = g_strdup_printf("/hop/%d", atoi(path + 5) - 1);
     soup_server_message_set_redirect(message, SOUP_STATUS_FOUND, next);
@@ -247,8 +248,8 @@ static void image_fetch_redirects(void) {
       if (loaded) { g_assert_nonnull(info->images[i]); g_assert_cmpint(gdk_texture_get_width(info->images[i]), ==, 2); }
       else g_assert_null(info->images[i]);
     }
-    g_assert_cmpuint(source.contacts, ==, test == 0 ? 0 : (test == 3 || test == 4) ? 12 : 2);
-    g_assert_cmpuint(target.contacts, ==, test == 1 ? 4 : 0);
+    g_assert_cmpuint(source.contacts, ==, test == 0 ? 0 : test == 3 ? 6 : test == 4 ? 12 : test == 5 ? 1 : test == 1 ? 1 : 2);
+    g_assert_cmpuint(target.contacts, ==, test == 1 ? 2 : 0);
     g_assert_cmpuint(downgraded_contacts, ==, 0);
     guint contacts = source.contacts;
     /* Setting off still reuses bytes under the original URL, including after
@@ -261,7 +262,7 @@ static void image_fetch_redirects(void) {
       g_assert_no_error(error); g_assert_nonnull(cached); g_assert_cmpint(cached->tor_blocked, ==, tor != 0);
       for (guint i = 0; i < 2; i++) g_assert_cmpint(cached->images[i] != NULL, ==, loaded);
       g_assert_cmpuint(source.contacts, ==, contacts);
-      g_assert_cmpuint(target.contacts, ==, test == 1 ? 4 : 0);
+      g_assert_cmpuint(target.contacts, ==, test == 1 ? 2 : 0);
       g_assert_cmpuint(downgraded_contacts, ==, 0);
     }
     g_settings_set_boolean(preferences, "use-tor-for-relays", FALSE);
@@ -270,6 +271,237 @@ static void image_fetch_redirects(void) {
   g_settings_reset(preferences, "profile-bootstrap-relays"); g_settings_reset(preferences, "load-profile-images");
   soup_server_disconnect(first); soup_server_disconnect(second);
   g_tls_backend_set_default_database(g_tls_backend_get_default(), original);
+}
+static char *cache_test_event(const char *sk, const char *hex, guint64 created_at, const char *content) {
+  NostrEvent *event = nostr_event_new(); nostr_event_set_pubkey(event, hex); nostr_event_set_kind(event, 0);
+  nostr_event_set_created_at(event, created_at); nostr_event_set_content(event, content);
+  g_assert_cmpint(nostr_event_sign(event, sk), ==, 0);
+  char *json = nostr_event_serialize_compact(event); nostr_event_free(event); return json;
+}
+static void cache_test_stamp(const char *path, gint64 time) {
+  g_autoptr(GKeyFile) stamp = g_key_file_new(); g_key_file_set_int64(stamp, "fetch", "time", time);
+  g_assert_true(g_key_file_save_to_file(stamp, path, NULL));
+}
+static gboolean cache_test_fresh(const char *path) {
+  g_autoptr(GKeyFile) stamp = g_key_file_new();
+  return g_key_file_load_from_file(stamp, path, G_KEY_FILE_NONE, NULL) &&
+    g_key_file_get_int64(stamp, "fetch", "time", NULL) > g_get_real_time() / G_USEC_PER_SEC - 60;
+}
+static gboolean cached_named(GrottoPanelsService *service, const char *npub, const char *name) {
+  g_autoptr(GrottoProfileInfo) info = grotto_panels_service_dup_profile(service, npub);
+  return info && !g_strcmp0(info->fields[GROTTO_PROFILE_NAME], name);
+}
+static gboolean cached_offline(GrottoPanelsService *service, const char *npub) {
+  g_autoptr(GrottoProfileInfo) info = grotto_panels_service_dup_profile(service, npub);
+  return info && info->cached;
+}
+static void cached_before_refresh(JsonArray *request, gpointer data) { (void)request; g_assert_true(*(gboolean *)data); }
+static void cached_profile_host(gpointer data, GrottoProfileAction action, const char *key, const GrottoProfileInfo *info,
+  GCancellable *cancel, GAsyncReadyCallback callback, gpointer user) {
+  grotto_profile_service_async(GTK_WINDOW(data), NULL, action, key, info, cancel, callback, user);
+}
+typedef struct { GtkWidget *panel; guint frames; } CacheFrames;
+static void assert_no_profile_loading(GtkWidget *widget) {
+  if (GTK_IS_LABEL(widget)) g_assert_cmpstr(gtk_label_get_text(GTK_LABEL(widget)), !=, "Loading profile…");
+  if (GTK_IS_SPINNER(widget)) g_assert_false(gtk_spinner_get_spinning(GTK_SPINNER(widget)));
+  for (GtkWidget *child = gtk_widget_get_first_child(widget); child; child = gtk_widget_get_next_sibling(child)) assert_no_profile_loading(child);
+}
+static gboolean cache_frame(GtkWidget *widget, GdkFrameClock *clock, gpointer data) {
+  (void)widget; (void)clock; CacheFrames *frames = data;
+  assert_no_profile_loading(frames->panel); frames->frames++; return G_SOURCE_CONTINUE;
+}
+static guint displayed_textures(GtkWidget *widget, GdkTexture *texture) {
+  guint count = (ADW_IS_AVATAR(widget) && adw_avatar_get_custom_image(ADW_AVATAR(widget)) == GDK_PAINTABLE(texture)) ||
+    (GTK_IS_PICTURE(widget) && gtk_picture_get_paintable(GTK_PICTURE(widget)) == GDK_PAINTABLE(texture));
+  for (GtkWidget *child = gtk_widget_get_first_child(widget); child; child = gtk_widget_get_next_sibling(child)) count += displayed_textures(child, texture);
+  return count;
+}
+static void cache_first_profile(void) {
+  GSettings *preferences = settings_manager_get_gsettings(settings_manager_get_default());
+  g_settings_set_boolean(preferences, "use-tor-for-relays", FALSE);
+  g_autoptr(GtkWindow) window = g_object_ref_sink(GTK_WINDOW(gtk_window_new()));
+  g_autoptr(GrottoPanelsService) service = g_object_new(GROTTO_TYPE_PANELS_CONTROL1_SERVICE, NULL);
+  grotto_profile_service_bind(window, service);
+  g_autofree char *sk = g_strdup_printf("%064x", 501), *hex = nostr_key_get_public(sk);
+  guint8 pk[32]; for (guint i = 0; i < 32; i++) { char pair[] = {hex[i*2], hex[i*2+1], 0}; pk[i] = g_ascii_strtoull(pair, NULL, 16); }
+  char *encoded = NULL; g_assert_cmpint(nostr_nip19_encode_npub(pk, &encoded), ==, 0); g_autofree char *npub = encoded;
+  g_autofree char *dir = g_build_filename(g_get_user_cache_dir(), "grotto", "profiles", NULL);
+  g_assert_cmpint(g_mkdir_with_parents(dir, 0700), ==, 0);
+  g_autofree char *path = g_strdup_printf("%s/%s-0.json", dir, hex), *stamp = g_strdup_printf("%s/%s-fetch.ini", dir, hex);
+  guint image_contacts = 0;
+  g_autoptr(GSocketService) image_server = g_socket_service_new();
+  g_autoptr(GSocketAddress) address = g_inet_socket_address_new_from_string("127.0.0.1", 0), effective = NULL;
+  g_assert_true(g_socket_listener_add_address(G_SOCKET_LISTENER(image_server), address, G_SOCKET_TYPE_STREAM, G_SOCKET_PROTOCOL_TCP, NULL, &effective, NULL));
+  g_signal_connect(image_server, "incoming", G_CALLBACK(image_contact), &image_contacts);
+  g_autofree char *image_url = g_strdup_printf("https://127.0.0.1:%u/cache-only.png", g_inet_socket_address_get_port(G_INET_SOCKET_ADDRESS(effective)));
+  g_autofree char *content = g_strdup_printf("{\"name\":\"cached\",\"picture\":\"%s\",\"banner\":\"%s\"}", image_url, image_url);
+  gint64 now = g_get_real_time() / G_USEC_PER_SEC;
+  g_autofree char *event = cache_test_event(sk, hex, now - 90 * 86400, content);
+  g_assert_true(g_file_set_contents(path, event, -1, NULL)); cache_test_stamp(stamp, now);
+  g_autoptr(GdkPixbuf) pixels = gdk_pixbuf_new(GDK_COLORSPACE_RGB, TRUE, 8, 2, 2); gdk_pixbuf_fill(pixels, 0x224488ff);
+  g_autofree char *hash = g_compute_checksum_for_string(G_CHECKSUM_SHA256, image_url, -1);
+  g_autofree char *image_path = g_strdup_printf("%s/%s-image-%s", dir, hex, hash);
+  g_assert_true(gdk_pixbuf_save(pixels, image_path, "png", NULL, NULL));
+  BunkerTestRelay *relay = bunker_test_relay_new(); const char *relays[] = {bunker_test_relay_url(relay), NULL};
+  g_settings_set_strv(preferences, "profile-bootstrap-relays", relays);
+  /* Cold process display: the real view must probe the persistent cache before
+   * any loading frame, then let FETCH apply the host's freshness policy. */
+  GrottoPanelsMetadata identity = {.id = "cached", .public_key = npub, .label = "Local", .is_default = TRUE, .watch_only = TRUE};
+  g_autoptr(GrottoPanelsItem) item = grotto_panels_item_new(&identity, NULL);
+  g_list_store_append(G_LIST_STORE(grotto_panels_service_get_model(service, GROTTO_PANELS_IDENTITIES)), item);
+  GtkWidget *panel = grotto_identity_panel_new(service, npub);
+  const GrottoPanelsHost callbacks = {.profile_async = cached_profile_host};
+  grotto_panel_set_host(GROTTO_PANEL(panel), &callbacks, window, NULL);
+  gtk_window_set_child(window, panel); CacheFrames frames = {.panel = panel};
+  gtk_widget_add_tick_callback(panel, cache_frame, &frames, NULL); gtk_window_present(window);
+  GAsyncResult *result = NULL; g_autoptr(GError) error = NULL;
+  grotto_profile_service_async(window, NULL, GROTTO_PROFILE_FETCH, npub, NULL, NULL, host_result, &result); WAIT(result);
+  g_autoptr(GrottoProfileInfo) first = g_task_propagate_pointer(G_TASK(result), &error); g_object_unref(result);
+  g_assert_no_error(error); g_assert_nonnull(first); g_assert_cmpstr(first->fields[GROTTO_PROFILE_NAME], ==, "cached");
+  g_assert_nonnull(first->images[0]); g_assert_true(first->images[0] == first->images[1]);
+  WAIT(find(panel, "cached") && gtk_widget_get_sensitive(find(panel, "Refresh Profile")) && frames.frames >= 3);
+  g_assert_cmpuint(displayed_textures(panel, first->images[0]), >=, 2); assert_no_profile_loading(panel);
+  guint connections = 0, requests = 0, published = 0;
+  bunker_test_relay_stats(relay, &connections, &requests, &published); g_assert_cmpuint(connections, ==, 0); g_assert_cmpuint(requests, ==, 0);
+  g_autofree char *second_sk = g_strdup_printf("%064x", 502), *second_hex = nostr_key_get_public(second_sk);
+  for (guint i = 0; i < 32; i++) { char pair[] = {second_hex[i*2], second_hex[i*2+1], 0}; pk[i] = g_ascii_strtoull(pair, NULL, 16); }
+  encoded = NULL; g_assert_cmpint(nostr_nip19_encode_npub(pk, &encoded), ==, 0); g_autofree char *second_npub = encoded;
+  /* Cache misses must remain misses, not invented unpublished profiles. */
+  result = NULL; grotto_profile_service_async(window, NULL, GROTTO_PROFILE_FETCH_CACHED, second_npub, NULL, NULL, host_result, &result); WAIT(result);
+  g_autoptr(GrottoProfileInfo) missing = g_task_propagate_pointer(G_TASK(result), &error); g_object_unref(result);
+  g_assert_null(missing); g_assert_error(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND); g_clear_error(&error);
+  result = NULL; grotto_profile_service_async(window, NULL, GROTTO_PROFILE_FETCH, second_npub, NULL, NULL, host_result, &result); WAIT(result);
+  g_autoptr(GrottoProfileInfo) empty = g_task_propagate_pointer(G_TASK(result), &error); g_object_unref(result);
+  g_assert_no_error(error); g_assert_nonnull(empty); g_assert_false(empty->published);
+  bunker_test_relay_stats(relay, &connections, &requests, &published); guint empty_requests = requests;
+  result = NULL; grotto_profile_service_async(window, NULL, GROTTO_PROFILE_FETCH, second_npub, NULL, NULL, host_result, &result); WAIT(result);
+  g_autoptr(GrottoProfileInfo) empty_cached = g_task_propagate_pointer(G_TASK(result), &error); g_object_unref(result);
+  g_assert_no_error(error); g_assert_nonnull(empty_cached); g_assert_false(empty_cached->published);
+  bunker_test_relay_stats(relay, &connections, &requests, &published); g_assert_cmpuint(requests, ==, empty_requests);
+  /* Switching back must retain decoded textures even after cached bytes
+   * disappear. The list/cache-only path must never connect to image hosts. */
+  g_assert_cmpint(g_remove(image_path), ==, 0);
+  result = NULL; grotto_profile_service_async(window, NULL, GROTTO_PROFILE_FETCH_CACHED, npub, NULL, NULL, host_result, &result); WAIT(result);
+  g_autoptr(GrottoProfileInfo) again = g_task_propagate_pointer(G_TASK(result), &error); g_object_unref(result); g_assert_no_error(error);
+  g_assert_true(again->images[0] == first->images[0]);
+  gboolean returned = FALSE; bunker_test_relay_set_request_callback(relay, cached_before_refresh, &returned);
+  g_autofree char *newer = cache_test_event(sk, hex, now - 1, "{\"name\":\"newer\"}");
+  json_array_add_element(bunker_test_relay_events(relay), json_from_string(newer, NULL));
+  json_array_add_element(bunker_test_relay_events(relay), json_from_string(event, NULL));
+  cache_test_stamp(stamp, now - 901);
+  result = NULL; grotto_profile_service_async(window, NULL, GROTTO_PROFILE_FETCH, npub, NULL, NULL, host_result, &result); WAIT(result);
+  g_autoptr(GrottoProfileInfo) stale = g_task_propagate_pointer(G_TASK(result), &error); g_object_unref(result); g_assert_no_error(error);
+  g_assert_cmpstr(stale->fields[GROTTO_PROFILE_NAME], ==, "cached"); returned = TRUE;
+  WAIT(cached_named(service, npub, "newer"));
+  g_assert_nonnull(find(panel, "newer")); g_assert_null(find(panel, "cached")); assert_no_profile_loading(panel);
+  g_assert_true(cache_test_fresh(stamp));
+  bunker_test_relay_stats(relay, &connections, &requests, &published); g_assert_cmpuint(requests, >, 0); g_assert_cmpuint(published, ==, 2); /* Only the two seeded events. */
+  g_assert_cmpuint(bunker_test_relay_auth_count(relay), ==, 0);
+  g_autofree char *winner = NULL; g_assert_true(g_file_get_contents(path, &winner, NULL, NULL)); g_assert_cmpstr(winner, ==, newer);
+  /* A stale refresh from an old relay must not regress the display or disk. */
+  json_array_remove_element(bunker_test_relay_events(relay), 0); cache_test_stamp(stamp, now - 901);
+  result = NULL; grotto_profile_service_async(window, NULL, GROTTO_PROFILE_FETCH, npub, NULL, NULL, host_result, &result); WAIT(result);
+  g_autoptr(GrottoProfileInfo) latest = g_task_propagate_pointer(G_TASK(result), &error); g_object_unref(result); g_assert_no_error(error);
+  g_assert_cmpstr(latest->fields[GROTTO_PROFILE_NAME], ==, "newer"); WAIT(cache_test_fresh(stamp));
+  g_clear_pointer(&winner, g_free); g_assert_true(g_file_get_contents(path, &winner, NULL, NULL)); g_assert_cmpstr(winner, ==, newer);
+  g_assert_true(cached_named(service, npub, "newer"));
+  g_assert_nonnull(find(panel, "newer")); g_assert_null(find(panel, "cached")); assert_no_profile_loading(panel);
+  g_assert_cmpuint(image_contacts, ==, 0);
+  g_settings_reset(preferences, "profile-bootstrap-relays"); bunker_test_relay_free(relay);
+  gboolean gone = FALSE; g_object_weak_ref(G_OBJECT(window), finalised, &gone); gtk_window_destroy(window); g_clear_object(&window); WAIT(gone);
+}
+static gboolean cached_images_loaded(GrottoPanelsService *service, const char *key) {
+  g_autoptr(GrottoProfileInfo) info = grotto_panels_service_dup_profile(service, key);
+  return info && info->images[0] && info->images[1];
+}
+static void images_reenable_and_retry(void) {
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GTlsCertificate) certificate = g_tls_certificate_new_from_file(PROFILE_TEST_TLS_PEM, &error); g_assert_no_error(error);
+  g_autoptr(GTlsDatabase) original = g_object_ref(g_tls_backend_get_default_database(g_tls_backend_get_default()));
+  g_autoptr(GTlsDatabase) trust = g_tls_file_database_new(PROFILE_TEST_TLS_PEM, &error); g_assert_no_error(error);
+  g_tls_backend_set_default_database(g_tls_backend_get_default(), trust);
+  g_autoptr(GdkPixbuf) pixels = gdk_pixbuf_new(GDK_COLORSPACE_RGB, TRUE, 8, 2, 1); gdk_pixbuf_fill(pixels, 0x224488ff);
+  char *png = NULL; gsize size;
+  g_assert_true(gdk_pixbuf_save_to_buffer(pixels, &png, &size, "png", &error, NULL)); g_assert_no_error(error);
+  g_autoptr(GBytes) bytes = g_bytes_new_take(png, size);
+  ImageEndpoint endpoint = {.png = bytes};
+  g_autoptr(SoupServer) server = soup_server_new("tls-certificate", certificate, NULL);
+  g_autofree char *base = image_listen(server, &endpoint);
+  GSettings *settings = settings_manager_get_gsettings(settings_manager_get_default());
+  g_settings_set_boolean(settings, "use-tor-for-relays", FALSE);
+  for (guint retry = 0; retry < 2; retry++) {
+    endpoint.contacts = 0; endpoint.fail = retry != 0;
+    g_settings_set_boolean(settings, "load-profile-images", retry != 0);
+    g_autoptr(GtkWindow) window = g_object_ref_sink(GTK_WINDOW(gtk_window_new()));
+    g_autoptr(GrottoPanelsService) service = g_object_new(GROTTO_TYPE_PANELS_CONTROL1_SERVICE, NULL);
+    grotto_profile_service_bind(window, service);
+    g_autofree char *sk = g_strdup_printf("%064x", 701 + retry), *hex = nostr_key_get_public(sk);
+    guint8 pk[32]; for (guint i = 0; i < 32; i++) { char pair[] = {hex[i*2], hex[i*2+1], 0}; pk[i] = g_ascii_strtoull(pair, NULL, 16); }
+    char *encoded = NULL; g_assert_cmpint(nostr_nip19_encode_npub(pk, &encoded), ==, 0); g_autofree char *npub = encoded;
+    g_autofree char *content = g_strdup_printf("{\"name\":\"images\",\"picture\":\"%savatar-%u.png\",\"banner\":\"%sbanner-%u.png\"}", base, retry, base, retry);
+    g_autofree char *event = cache_test_event(sk, hex, g_get_real_time() / G_USEC_PER_SEC - 86400, content);
+    BunkerTestRelay *relay = bunker_test_relay_new();
+    json_array_add_element(bunker_test_relay_events(relay), json_from_string(event, NULL));
+    const char *relays[] = {bunker_test_relay_url(relay), NULL}; g_settings_set_strv(settings, "profile-bootstrap-relays", relays);
+    GAsyncResult *result = NULL;
+    grotto_profile_service_async(window, NULL, GROTTO_PROFILE_FETCH, npub, NULL, NULL, host_result, &result); WAIT(result);
+    g_autoptr(GrottoProfileInfo) first = g_task_propagate_pointer(G_TASK(result), &error); g_object_unref(result);
+    g_assert_no_error(error); g_assert_nonnull(first); g_assert_true(first->published);
+    g_assert_null(first->images[0]); g_assert_null(first->images[1]);
+    g_assert_cmpuint(endpoint.contacts, ==, retry ? 2 : 0);
+    guint connections, requests, events; bunker_test_relay_stats(relay, &connections, &requests, &events); guint initial_requests = requests;
+    g_assert_cmpuint(initial_requests, >, 0);
+    g_autofree char *stamp = g_strdup_printf("%s/grotto/profiles/%s-fetch.ini", g_get_user_cache_dir(), hex);
+    /* Fresh but not from this second: image hydration must not renew the TTL. */
+    cache_test_stamp(stamp, g_get_real_time() / G_USEC_PER_SEC - 100);
+    g_autofree char *before = NULL; g_assert_true(g_file_get_contents(stamp, &before, NULL, NULL));
+    GtkWidget *panel = NULL; CacheFrames frames = {0};
+    if (!retry) {
+      GrottoPanelsMetadata identity = {.id = "images", .public_key = npub, .label = "Local", .is_default = TRUE, .watch_only = TRUE};
+      g_autoptr(GrottoPanelsItem) item = grotto_panels_item_new(&identity, NULL);
+      g_list_store_append(G_LIST_STORE(grotto_panels_service_get_model(service, GROTTO_PANELS_IDENTITIES)), item);
+      panel = grotto_identity_panel_new(service, npub);
+      const GrottoPanelsHost callbacks = {.profile_async = cached_profile_host};
+      grotto_panel_set_host(GROTTO_PANEL(panel), &callbacks, window, NULL);
+      gtk_window_set_child(window, panel); frames.panel = panel;
+      gtk_widget_add_tick_callback(panel, cache_frame, &frames, NULL); gtk_window_present(window);
+      WAIT(gtk_widget_get_sensitive(find(panel, "Refresh Profile")) && frames.frames >= 3);
+      /* Even with missing images, both privacy cutoffs forbid hydration. */
+      g_settings_set_boolean(settings, "load-profile-images", TRUE); g_settings_set_boolean(settings, "use-tor-for-relays", TRUE);
+      g_signal_emit_by_name(find(panel, "Refresh Profile"), "clicked"); WAIT(gtk_widget_get_sensitive(find(panel, "Refresh Profile")));
+      g_assert_cmpuint(endpoint.contacts, ==, 0);
+      g_settings_set_boolean(settings, "use-tor-for-relays", FALSE); g_settings_set_boolean(settings, "load-profile-images", FALSE);
+      g_signal_emit_by_name(find(panel, "Refresh Profile"), "clicked"); WAIT(gtk_widget_get_sensitive(find(panel, "Refresh Profile")));
+      g_assert_cmpuint(endpoint.contacts, ==, 0);
+    }
+    endpoint.fail = FALSE; g_settings_set_boolean(settings, "load-profile-images", TRUE);
+    /* The list/cache-only action must still never hydrate missing images. */
+    result = NULL; grotto_profile_service_async(window, NULL, GROTTO_PROFILE_FETCH_CACHED, npub, NULL, NULL, host_result, &result); WAIT(result);
+    g_autoptr(GrottoProfileInfo) cache_only = g_task_propagate_pointer(G_TASK(result), &error); g_object_unref(result);
+    g_assert_no_error(error); g_assert_nonnull(cache_only); g_assert_null(cache_only->images[0]); g_assert_null(cache_only->images[1]);
+    g_assert_cmpuint(endpoint.contacts, ==, retry ? 2 : 0);
+    if (panel) g_signal_emit_by_name(find(panel, "Refresh Profile"), "clicked");
+    else {
+      result = NULL; grotto_profile_service_async(window, NULL, GROTTO_PROFILE_FETCH, npub, NULL, NULL, host_result, &result); WAIT(result);
+      g_autoptr(GrottoProfileInfo) cached = g_task_propagate_pointer(G_TASK(result), &error); g_object_unref(result); g_assert_no_error(error); g_assert_nonnull(cached);
+    }
+    WAIT(cached_images_loaded(service, npub));
+    g_autoptr(GrottoProfileInfo) loaded = grotto_panels_service_dup_profile(service, npub);
+    if (panel) {
+      g_assert_cmpuint(displayed_textures(panel, loaded->images[0]), >=, 1);
+      g_assert_cmpuint(displayed_textures(panel, loaded->images[1]), >=, 1); assert_no_profile_loading(panel);
+    }
+    g_assert_cmpuint(endpoint.contacts, ==, retry ? 4 : 2);
+    bunker_test_relay_stats(relay, &connections, &requests, &events); g_assert_cmpuint(requests, ==, initial_requests);
+    g_autofree char *after = NULL; g_assert_true(g_file_get_contents(stamp, &after, NULL, NULL)); g_assert_cmpstr(after, ==, before);
+    result = NULL; grotto_profile_service_async(window, NULL, GROTTO_PROFILE_FETCH, npub, NULL, NULL, host_result, &result); WAIT(result);
+    g_autoptr(GrottoProfileInfo) again = g_task_propagate_pointer(G_TASK(result), &error); g_object_unref(result); g_assert_no_error(error);
+    g_assert_true(again->images[0] == loaded->images[0]); g_assert_true(again->images[1] == loaded->images[1]);
+    gboolean gone = FALSE; g_object_weak_ref(G_OBJECT(window), finalised, &gone); gtk_window_destroy(window); g_clear_object(&window); WAIT(gone);
+    g_assert_cmpuint(endpoint.contacts, ==, retry ? 4 : 2); bunker_test_relay_free(relay);
+  }
+  g_settings_reset(settings, "load-profile-images"); g_settings_reset(settings, "profile-bootstrap-relays");
+  soup_server_disconnect(server); g_tls_backend_set_default_database(g_tls_backend_get_default(), original);
 }
 typedef struct { const char *hex; guint requests; gboolean challenge, own_outbox; BunkerTestRelay *relay; } BootstrapProbe;
 static void forbidden_bootstrap_publish(const char *event, gpointer data) { (void)event; (void)data; g_error("Publication must never use bootstrap fallback"); }
@@ -296,7 +528,11 @@ static void bounded_empty_discovery(void) {
   const char *urls[] = {bunker_test_relay_url(relay), NULL};
   g_settings_set_boolean(settings, "profile-bootstrap-enabled", TRUE);
   g_settings_set_strv(settings, "profile-bootstrap-relays", urls);
+  g_autofree char *stamp = g_strdup_printf("%s/grotto/profiles/%s-fetch.ini", g_get_user_cache_dir(), hex);
   for (guint mode = 0; mode < 3; mode++) {
+    /* Each mode exercises cold discovery, not the previous mode's valid
+     * EOSE-confirmed negative cache (covered by cache_first_profile). */
+    if (g_file_test(stamp, G_FILE_TEST_EXISTS)) g_assert_cmpint(g_remove(stamp), ==, 0);
     gboolean silent = mode == 1;
     g_settings_set_boolean(settings, "profile-bootstrap-enabled", mode != 2);
     bunker_test_relay_hold_eose(relay, silent);
@@ -318,6 +554,9 @@ static void unexpected_signing(GDBusConnection *bus, const char *sender, const c
   g_dbus_method_invocation_return_dbus_error(inv, "org.nostr.Signer.Error.Denied", "bootstrap must never ask for a signature");
 }
 static void bootstrap_auth_refused(GDBusConnection *bus, const char *npub, BunkerTestRelay *relay, BootstrapProbe *probe) {
+  /* This checks cold AUTH/CLOSED admission, not a fresh cached absence. */
+  g_autofree char *stamp = g_strdup_printf("%s/grotto/profiles/%s-fetch.ini", g_get_user_cache_dir(), probe->hex);
+  if (g_file_test(stamp, G_FILE_TEST_EXISTS)) g_assert_cmpint(g_remove(stamp), ==, 0);
   guint sign_requests = 0;
   const char *xml = "<node><interface name='org.nostr.Grotto.Control1'>"
     "<method name='SignProfileEvent'><arg type='s' direction='in'/><arg type='s' direction='in'/><arg type='as' direction='in'/><arg type='s' direction='out'/></method>"
@@ -521,8 +760,12 @@ static void profile_activate(GApplication *application, gpointer data) {
   g_assert_cmpuint(bootstrap_requests, >=, 3);
   g_autofree char *dm_cache = g_strdup_printf("%s/grotto/profiles/%s-10050.json", g_get_user_cache_dir(), hex);
   g_assert_true(g_file_test(dm_cache, G_FILE_TEST_IS_REGULAR));
+  guint before_retry = image_contacts;
   g_signal_emit_by_name(find(panel, "Refresh Profile"), "clicked");
   WAIT(gtk_widget_is_sensitive(find(panel, "Edit Profile…")));
+  /* Fresh metadata still retries the failed picture. Observe that request
+   * before measuring the subsequent images-off and Save/review boundaries. */
+  WAIT(image_contacts > before_retry);
   g_assert_cmpuint(probe.requests, ==, bootstrap_requests);
   guint rc, rr, rp; bunker_test_relay_stats(read_only, &rc, &rr, &rp); g_assert_cmpuint(rc, ==, 0);
   g_assert_cmpuint(image_contacts, >, 0);
@@ -608,9 +851,21 @@ static void profile_activate(GApplication *application, gpointer data) {
   g_assert_no_error(fallback_error); g_assert_nonnull(fallback_profile); g_assert_true(fallback_profile->published);
   g_assert_cmpuint(approval.reviews, ==, 3); g_assert_cmpuint(approval.decisions, ==, 2);
   WAIT(approval.completed == 3 && !adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)));
-  /* Offline cache is the same host path, with no synthetic cached result. */
+  /* A fresh cache does not contact a disconnected relay or falsely declare
+   * offline. The stale background failure retains the same signed profile. */
   bunker_test_relay_free(relay); relay = NULL;
-  g_signal_emit_by_name(find(panel, "Refresh Profile"), "clicked"); WAIT(find(panel, "Offline — showing the saved profile"));
+  g_signal_emit_by_name(find(panel, "Refresh Profile"), "clicked");
+  WAIT(gtk_widget_get_sensitive(find(panel, "Edit Profile…")));
+  g_assert_nonnull(find(panel, "Alice")); g_assert_null(find(panel, "Offline — showing the saved profile"));
+  g_autofree char *stamp = g_strdup_printf("%s/grotto/profiles/%s-fetch.ini", g_get_user_cache_dir(), hex);
+  cache_test_stamp(stamp, g_get_real_time() / G_USEC_PER_SEC - 901);
+  GAsyncResult *offline_read = NULL;
+  grotto_profile_service_async(GTK_WINDOW(window), NULL, GROTTO_PROFILE_FETCH, npub, NULL, NULL, host_result, &offline_read); WAIT(offline_read);
+  g_autoptr(GrottoProfileInfo) offline_profile = g_task_propagate_pointer(G_TASK(offline_read), &fallback_error); g_object_unref(offline_read);
+  g_assert_no_error(fallback_error); g_assert_nonnull(offline_profile);
+  g_assert_cmpstr(offline_profile->fields[GROTTO_PROFILE_DISPLAY_NAME], ==, "Alice");
+  WAIT(cached_offline(service, npub));
+  WAIT(find(panel, "Offline — showing the saved profile"));
   g_assert_nonnull(find(panel, "Alice")); g_assert_cmpuint(approval.reviews, ==, 3);
   bunker_test_relay_free(save_bootstrap); bunker_test_relay_free(bootstrap); bunker_test_relay_free(read_only);
   g_socket_service_stop(image_server);
@@ -758,6 +1013,8 @@ int main(int argc, char **argv) {
   g_test_add_func("/signer/profile/authorization-preview", authorization_preview);
   g_test_add_func("/signer/profile/image-privacy-and-limits", privacy_helpers);
   g_test_add_func("/signer/profile/images-autoload-https-redirects", image_fetch_redirects);
+  g_test_add_func("/signer/profile/cache-first", cache_first_profile);
+  g_test_add_func("/signer/profile/images-reenable-and-retry", images_reenable_and_retry);
   g_test_add_func("/signer/profile/save-one-review-real-daemon", profile_integration);
   int result = g_test_run(); nostrc_test_bus_down(private_bus);
   g_autoptr(GFile) owned = g_file_new_for_path(home); remove_owned_tree(owned); return result;
