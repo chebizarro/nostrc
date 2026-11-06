@@ -8,14 +8,20 @@ template $GrottoRemotePanel: $GrottoPanel {
     [top] Adw.Banner feedback { title: _("Signer Unavailable"); }
     content: Adw.PreferencesPage {
       Adw.PreferencesGroup {
-        description: _("Let apps on other devices ask to use your identity");
+        description: _("Remote signing lets apps on other devices request signatures without sharing your secret key. Enable it, then choose Add App → Create Pairing Link… to connect an app.");
         Adw.SwitchRow enabled { title: _("Enable Remote Signing"); }
-        Adw.ActionRow status { title: _("Status"); }
+        Adw.ActionRow status { title: _("Status"); use-markup: false; subtitle-lines: 0; }
+        Adw.ActionRow pairing {
+          title: _("Add App…");
+          subtitle: _("Choose Create Pairing Link… and open the link in the remote app");
+          subtitle-lines: 0; activatable: true;
+          [suffix] Image { icon-name: "go-next-symbolic"; }
+        }
         Adw.ActionRow handoff { title: _("Change in Grotto…"); activatable: true; visible: false; }
       }
       Adw.PreferencesGroup relays_group {
         title: _("Relays");
-        description: _("Remote apps connect through these relays");
+        description: _("Remote apps connect through these relays. Use wss://, or ws:// for a loopback address.");
         ListBox relays_list { selection-mode: none; styles ["boxed-list"] }
         Adw.EntryRow new_relay { title: _("Add Relay URL"); show-apply-button: true; }
       }

@@ -14,6 +14,7 @@
 #include <nostr-utils.h>
 #include <nostr-tag.h>
 #include <nostr/nip55l/signer_ops.h>
+#include <nostr/nip55l/error.h>
 #include <secure_buf.h>
 #include "grotto_clients.h"
 #include "signer_permissions.h"
@@ -46,7 +47,7 @@ typedef struct {
     gboolean restarted, restart_ok, reconnected;
     gint64 reconnect_since;
     GPtrArray *deferred_ids, *sensitive;
-    gboolean ready, passed, timed_out;
+    gboolean ready, passed, timed_out, enabling, focused;
 } Fixture;
 
 #define REQUIRE(condition, message) do { \
@@ -709,16 +710,25 @@ static gboolean run_rpc_flow(Fixture *f)
     REQUIRE(strstr(xml, "org.nostr.Signer") != NULL, "local signer interface remains available");
     g_print("local org.nostr.Signer remains available\n");
 
-    if (!f->headless) REQUIRE(token_pairing(f), "single-use token admission, reservation, cancellation and revoke");
+    if (!f->headless && !f->focused) REQUIRE(token_pairing(f), "single-use token admission, reservation, cancellation and revoke");
     g_autofree gchar *encoded = g_uri_escape_string(bunker_test_relay_url(f->relay), NULL, FALSE);
     g_autofree gchar *uri = g_strdup_printf("bunker://%s?relay=%s", f->transport_pk, encoded);
+    g_autoptr(GVariant) offer = f->focused ? create_offer(f, f->account_pk) : NULL;
+    NostrNip46BunkerURI pairing = {0};
+    if (f->focused) {
+        const gchar *link = NULL; REQUIRE(offer && g_variant_lookup(offer, "uri", "&s", &link), "create pairing through real Control1");
+        g_ptr_array_add(f->sensitive, g_strdup(link));
+        REQUIRE(!nostr_nip46_uri_parse_bunker(link, &pairing), "parse single-use pairing link");
+        g_free(uri); uri = g_strdup(link);
+    }
     REQUIRE(nostr_nip46_client_connect(f->client, uri, NULL) == 0, "parse real daemon bunker endpoint");
     REQUIRE(nostr_nip46_client_set_secret(f->client, f->client_sk) == 0, "install disposable client key");
     nostr_nip46_client_set_timeout(f->client, 4000); /* failure bound, not readiness */
 
     g_autofree gchar *ack = NULL;
-    int rc = nostr_nip46_client_connect_rpc(f->client, NULL,
+    int rc = nostr_nip46_client_connect_rpc(f->client, pairing.secret,
         "get_public_key,sign_event,nip44_encrypt,nip44_decrypt", &ack);
+    if (pairing.secret) { secure_wipe(pairing.secret, strlen(pairing.secret)); nostr_nip46_uri_bunker_free(&pairing); }
     g_print("client connect rc=%d reply=%s\n", rc, ack ? ack : "(none)");
     REQUIRE(rc == 0 && g_strcmp0(ack, "ack") == 0,
         "real grotto-daemon --bunker must answer encrypted connect; no listener/reply is NOT RUNNING");
@@ -749,6 +759,25 @@ static gboolean run_rpc_flow(Fixture *f)
         nostr_event_check_signature(event);
     nostr_event_free(event);
     REQUIRE(valid, "signed event must have the account pubkey, requested content/kind and a valid signature");
+    if (f->focused) {
+        const gchar *added[] = {bunker_test_relay_url(f->relay), bunker_test_relay_url(f->relay2)};
+        const gchar *restored[] = {bunker_test_relay_url(f->relay)};
+        REQUIRE(configure_relays(f, TRUE, added, 2) && await_bunker_state(f, "LISTENING"), "added relay reaches EOSE without dropping pairing");
+        REQUIRE(configure_relays(f, TRUE, restored, 1) && await_bunker_state(f, "LISTENING"), "removed relay leaves the running bunker");
+        REQUIRE(client_pairing_state(f, f->client_pk, TRUE, FALSE, TRUE), "relay edits retain acknowledged pairing");
+        REQUIRE(restart_daemon(f), "restart with host-persisted relay configuration");
+        g_autoptr(GVariant) status_reply = g_dbus_connection_call_sync(f->approver, "org.nostr.Signer", "/org/nostr/signer/grotto",
+            "org.nostr.Grotto.Control1", "GetStatus", NULL, G_VARIANT_TYPE("(a{sv})"), G_DBUS_CALL_FLAGS_NONE, 5000, NULL, NULL);
+        REQUIRE(status_reply, "read restored relay list");
+        g_autoptr(GVariant) status = g_variant_get_child_value(status_reply, 0); g_auto(GStrv) persisted = NULL;
+        REQUIRE(g_variant_lookup(status, "bunker_relays", "^as", &persisted) &&
+            g_strv_length(persisted) == 1 && !strcmp(persisted[0], restored[0]), "add/remove persisted through daemon restart");
+        g_clear_pointer(&pubkey, g_free);
+        REQUIRE(!nostr_nip46_client_get_public_key_rpc(f->client, &pubkey) && !g_strcmp0(pubkey, f->account_pk),
+            "paired NIP46 client still works after relay edits and restart");
+        g_print("remote-signing proof: token pairing, valid account signature, live relay add/remove, persisted relays and pairing\n");
+        return TRUE;
+    }
 
     /* Independently decrypt/encrypt as the peer: two matching RPC bugs must not
      * turn a self-consistent round-trip into false proof of account-key use. */
@@ -893,11 +922,45 @@ static gpointer rpc_worker(gpointer data)
     return NULL;
 }
 
+static void enabled_from_disabled(GObject *source, GAsyncResult *result, gpointer data) {
+    (void)data; g_autoptr(GError) error = NULL;
+    g_autoptr(GVariant) reply = g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), result, &error);
+    g_assert_no_error(error); g_assert_nonnull(reply);
+}
+static void initial_status(GObject *source, GAsyncResult *result, gpointer data) {
+    Fixture *f = data; g_autoptr(GError) error = NULL;
+    g_autoptr(GVariant) reply = g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), result, &error);
+    g_assert_no_error(error); g_assert_nonnull(reply);
+    g_autoptr(GVariant) row = g_variant_get_child_value(reply, 0);
+    const gchar *state = NULL; g_assert_true(g_variant_lookup(row, "bunker_state", "&s", &state));
+    g_assert_cmpstr(state, ==, "DISABLED");
+    g_auto(GStrv) seeded = NULL; g_assert_true(g_variant_lookup(row, "bunker_relays", "^as", &seeded));
+    const gchar *defaults[] = {"wss://auth.nostr1.com/", "wss://bucket.coracle.social/", "wss://nrs.primal.net/", "wss://relay.nip46.com/", NULL};
+    g_assert_true(g_strv_equal((const gchar *const *)seeded, defaults));
+    g_autofree gchar *path = g_build_filename(g_get_user_config_dir(), "grotto", "bunker.ini", NULL);
+    g_autoptr(GKeyFile) stored = g_key_file_new(); g_assert_true(g_key_file_load_from_file(stored, path, G_KEY_FILE_NONE, NULL));
+    g_auto(GStrv) persisted = g_key_file_get_string_list(stored, "bunker", "relays", NULL, NULL);
+    g_assert_true(g_strv_equal((const gchar *const *)persisted, defaults));
+    g_auto(GStrv) methods = NULL; g_assert_true(g_variant_lookup(row, "bunker_allowed_methods", "^as", &methods));
+    const gchar *relays[] = {bunker_test_relay_url(f->relay), NULL};
+    GVariantBuilder config; g_variant_builder_init(&config, G_VARIANT_TYPE_VARDICT);
+    g_variant_builder_add(&config, "{sv}", "enabled", g_variant_new_boolean(TRUE));
+    g_variant_builder_add(&config, "{sv}", "relays", g_variant_new_strv(relays, -1));
+    g_variant_builder_add(&config, "{sv}", "allowed-methods", g_variant_new_strv((const gchar *const *)methods, -1));
+    g_dbus_connection_call(f->approver, "org.nostr.Signer", "/org/nostr/signer/grotto", "org.nostr.Grotto.Control1",
+        "ConfigureBunker", g_variant_new("(a{sv})", &config), NULL, G_DBUS_CALL_FLAGS_NO_AUTO_START,
+        5000, NULL, enabled_from_disabled, f);
+}
 static void check_daemon_log(Fixture *f)
 {
     if (f->ready) return;
     g_autofree gchar *log = NULL;
     if (!g_file_get_contents(f->log_path, &log, NULL, NULL)) return;
+    if (!f->enabling && strstr(log, "name acquired org.nostr.Signer")) {
+        f->enabling = TRUE;
+        g_dbus_connection_call(f->approver, "org.nostr.Signer", "/org/nostr/signer/grotto", "org.nostr.Grotto.Control1",
+            "GetStatus", NULL, NULL, G_DBUS_CALL_FLAGS_NO_AUTO_START, 5000, NULL, initial_status, f);
+    }
     gboolean running = strstr(log, "BUNKER_STATE state=LISTENING") != NULL;
     gboolean failed = strstr(log, "BUNKER_START_FAILED: state=ERROR") != NULL;
     if (running && failed) {
@@ -909,11 +972,16 @@ static void check_daemon_log(Fixture *f)
         bunker_test_relay_stats(f->relay, &connections, &requests, &published);
         g_print("daemon reported %s; before client: connections=%u REQ=%u\n",
             failed ? "ERROR (no RUNNING claim)" : "RUNNING", connections, requests);
-        /* G01 fixes reporting only. Still exercise the nonfunctional daemon
-         * and fail at encrypted connect; WILL_FAIL stays until G05. */
+        const gchar *starting = strstr(log, "BUNKER_STATE state=STARTING");
+        g_assert_nonnull(starting); g_assert_true(starting < strstr(log, "BUNKER_STATE state=LISTENING"));
+        guint8 transport[32]; g_assert_cmpint(nostr_nip55l_bunker_transport_load(transport), ==, 0);
+        f->transport_sk = g_malloc0(65);
+        for (guint i = 0; i < 32; i++) g_snprintf(f->transport_sk + 2 * i, 3, "%02x", transport[i]);
+        secure_wipe(transport, sizeof(transport)); f->transport_pk = nostr_key_get_public(f->transport_sk);
+        g_print("startup evidence: Disabled → Starting → Ready; %s transport persisted without reset\n", f->headless ? "restored" : "first-use");
         f->worker = g_thread_new("bunker-client", rpc_worker, f);
     } else if (strstr(log, "BUNKER_START_FAILED") || strstr(log, "BUNKER_NO_") ||
-               strstr(log, "BUNKER_DISABLED") || strstr(log, "BUNKER_OPEN_ACL")) {
+               strstr(log, "BUNKER_OPEN_ACL")) {
         g_printerr("ASSERTION FAILED: isolated daemon configuration/startup rejected\n");
         g_main_loop_quit(f->loop);
     }
@@ -1035,6 +1103,10 @@ static gboolean audit_frames(Fixture *f)
     g_print("relay decrypted requests=%u matched replies=%u\n",
         g_hash_table_size(requests), g_hash_table_size(replies));
     REQUIRE(valid, "signed NIP-44 envelopes, transport targets and matching client/RPC identities");
+    if (f->focused && f->passed) {
+        REQUIRE(g_hash_table_size(signatures) == 1, "focused flow observes one verified signed event");
+        return TRUE;
+    }
     if (f->passed) {
         REQUIRE(g_hash_table_size(requests) >= 14 && g_hash_table_size(replies) == g_hash_table_size(requests),
             "every unique client/RPC identity has a matching response");
@@ -1051,6 +1123,7 @@ static gboolean audit_frames(Fixture *f)
         const gchar *cancelled[] = {"pending-pause", "pending-revoke", "headless-review", "raw-stale", "raw-future", "raw-wrong"};
         for (guint i = 0; i < G_N_ELEMENTS(cancelled); i++) {
             g_autofree gchar *denied = g_strdup_printf("%s:%s", i == 5 ? f->peer_pk : f->client_pk, cancelled[i]);
+            if (g_hash_table_contains(successes, denied)) g_printerr("Unexpected signature for cancelled RPC %s: %u replies\n", cancelled[i], GPOINTER_TO_UINT(g_hash_table_lookup(successes, denied)));
             REQUIRE(!g_hash_table_contains(successes, denied), "cancelled/revoked/rejected RPC has zero account signatures");
         }
         g_hash_table_iter_init(&counts, successes);
@@ -1137,11 +1210,12 @@ static gboolean configure_schema(Fixture *f, const gchar *schema_source, const g
     g_autofree gchar *path = g_build_filename(dir, "org.nostr.Grotto.gschema.xml", NULL);
     REQUIRE(g_file_get_contents(schema_source, &schema, NULL, NULL) &&
         g_file_set_contents(path, schema, -1, NULL), "copy shipped Grotto schema");
+    g_autofree gchar *legacy = f->focused ? g_strdup("[]") : g_strdup_printf("['%s','%s']", f->client_pk, f->second_pk);
     g_autofree gchar *defaults = g_strdup_printf(
-        "[org.nostr.Grotto]\nbunker-enabled=true\nbunker-relays=['%s']\n"
-        "bunker-allowed-pubkeys=['%s','%s']\nbunker-auto-approve-kinds=['%d']\n"
+        "[org.nostr.Grotto]\nbunker-enabled=false\nbunker-relays=[]\n"
+        "bunker-allowed-pubkeys=%s\nbunker-auto-approve-kinds=['%d']\n"
         "bunker-allowed-methods=['connect','get_public_key','sign_event','nip44_encrypt','nip44_decrypt','nip04_encrypt','nip04_decrypt','ping','get_relays']\n"
-        "default-identity='%s'\n", bunker_test_relay_url(f->relay), f->client_pk, f->second_pk,
+        "default-identity='%s'\n", legacy,
         NOSTR_KIND_TEXT_NOTE, f->account_pk);
     g_autofree gchar *override = g_build_filename(dir, "g00.gschema.override", NULL);
     REQUIRE(g_file_set_contents(override, defaults, -1, NULL), "write private memory GSettings defaults");
@@ -1198,7 +1272,8 @@ int main(int argc, char **argv)
     }
     if (!nostrc_test_bus_available()) return 77;
     nostr_json_init();
-    Fixture f = {0}; f.headless = argc == 5; f.daemon_binary = argv[1];
+    Fixture f = {0}; f.focused = argc == 5 && !strcmp(argv[4], "--remote-signing");
+    f.headless = argc == 5 && !f.focused; f.daemon_binary = argv[1];
     f.account_sk = nostr_key_generate_private(); f.account_pk = nostr_key_get_public(f.account_sk);
     f.client_sk = nostr_key_generate_private(); f.client_pk = nostr_key_get_public(f.client_sk);
     f.second_sk = nostr_key_generate_private(); f.second_pk = nostr_key_get_public(f.second_sk);
@@ -1206,10 +1281,16 @@ int main(int argc, char **argv)
     f.sensitive = g_ptr_array_new_with_free_func(g_free);
     g_setenv("GROTTO_TEST_PAIRING_TTL_MS", "10000", TRUE);
     f.peer_sk = nostr_key_generate_private(); f.peer_pk = nostr_key_get_public(f.peer_sk);
-    f.transport_sk = nostr_key_generate_private(); f.transport_pk = nostr_key_get_public(f.transport_sk);
     g_setenv("NOSTR_SIGNER_TEST_TRANSPORT_BACKEND", "file", TRUE);
-    guint8 transport[32]; g_assert_true(nostr_hex2bin(transport, f.transport_sk, 32));
-    g_assert_cmpint(nostr_nip55l_bunker_transport_store(transport), ==, 0); secure_wipe(transport, 32);
+    guint8 transport[32]; g_assert_cmpint(nostr_nip55l_bunker_transport_load(transport), ==, NOSTR_SIGNER_ERROR_NOT_FOUND);
+    /* The headless case restores pre-existing grants, so it must also restore
+     * their endpoint. Only the new interactive case may create first custody. */
+    if (f.headless) {
+        char *secret = nostr_key_generate_private(); g_assert_nonnull(secret);
+        g_assert_true(nostr_hex2bin(transport, secret, sizeof(transport)));
+        g_assert_cmpint(nostr_nip55l_bunker_transport_store(transport), ==, 0);
+        secure_wipe(secret, strlen(secret)); free(secret); secure_wipe(transport, sizeof(transport));
+    }
     g_autofree gchar *test_binary = g_canonicalize_filename(argv[0], NULL);
     g_setenv("NOSTR_SIGNER_TEST_APPROVERS", test_binary, TRUE);
     g_assert_nonnull(f.account_pk); g_assert_nonnull(f.client_pk); g_assert_nonnull(f.peer_pk);
@@ -1243,8 +1324,8 @@ int main(int argc, char **argv)
         /* Optional debugger wrapper observes the same binary, without changing
          * arguments or keys. Normal CTest never needs a debugger. */
         const gchar *wrapper = g_getenv("NOSTRC_BUNKER_DEBUGGER_WRAPPER");
-        const gchar *command[] = {argv[1], "--bunker", f.headless ? "--no-approval-ui" : NULL, NULL};
-        const gchar *wrapped[] = {wrapper, argv[1], "--bunker", f.headless ? "--no-approval-ui" : NULL, NULL};
+        const gchar *command[] = {argv[1], f.headless ? "--no-approval-ui" : NULL, NULL};
+        const gchar *wrapped[] = {wrapper, argv[1], f.headless ? "--no-approval-ui" : NULL, NULL};
         f.daemon = nostrc_test_bus_spawn_supervised(f.bus, "grotto-daemon.log", NULL, wrapper ? wrapped : command);
         timeout_id = g_timeout_add_seconds(60, deadline, &f);
         check_daemon_log(&f);

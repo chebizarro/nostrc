@@ -114,7 +114,7 @@ exports = {
 # Exact production imports, not a spelling blacklist of individual secret RPCs.
 # No D-Bus, sockets, dynamic loading or generic file I/O dispatch exists in this DSO.
 # Desktop-entry reads through GAppInfo are the cosmetic metadata exception below.
-imports = set('''g_free g_strdup g_ascii_strdown g_utf8_validate g_set_error_literal g_error_free
+imports = set('''g_free g_strdup g_ascii_strdown g_ascii_strcasecmp g_strchomp g_strchug g_utf8_validate g_set_error_literal g_error_free
  g_uri_parse g_uri_unref g_uri_get_host g_uri_get_userinfo g_uri_get_query g_uri_get_fragment g_uri_get_scheme g_strcmp0
  g_object_new g_object_ref g_object_unref g_object_notify_by_pspec g_object_class_install_properties
  g_param_spec_object g_value_get_object g_value_set_object g_type_check_instance_cast g_type_check_instance_is_a
@@ -193,6 +193,20 @@ imports.update('''adw_avatar_set_custom_image gtk_picture_get_type gtk_picture_n
 # W7b adds only disclosure widgets; public status and relay vectors are closed above.
 imports.update('''adw_expander_row_new adw_expander_row_get_type adw_expander_row_add_row
  adw_expander_row_set_subtitle adw_expander_row_set_expanded adw_switch_row_new adw_switch_row_get_type'''.split())
+
+# Profile layout, multiline field and accessibility widgets only.
+# Keep the exact allowlist: these add no IPC, file I/O or transport capability.
+imports.update('''adw_avatar_get_size adw_preferences_row_new
+ adw_header_bar_set_show_end_title_buttons adw_header_bar_set_show_start_title_buttons
+ g_object_set_data gtk_accessible_update_state gtk_list_box_row_set_child gtk_list_box_row_set_selectable
+ gtk_overlay_add_overlay gtk_overlay_get_type gtk_overlay_new gtk_overlay_set_child
+ gtk_text_buffer_get_char_count gtk_text_view_set_accepts_tab gtk_text_view_set_bottom_margin gtk_text_view_set_top_margin
+ gtk_widget_get_visible gtk_widget_set_can_target
+ gtk_adjustment_clamp_page gtk_adjustment_get_value gtk_adjustment_set_value gtk_scrolled_window_get_type
+ gtk_scrolled_window_get_child gtk_scrolled_window_get_vadjustment
+ gtk_text_view_get_cursor_locations gtk_text_view_buffer_to_window_coords
+ gtk_widget_compute_point gtk_widget_get_ancestor gtk_widget_get_frame_clock gtk_widget_queue_draw
+ gtk_event_controller_focus_new gtk_widget_add_controller gtk_scrollable_get_type gtk_scrollable_get_vadjustment'''.split())
 
 # Cosmetic desktop-entry lookup and row icons only. No launch, secret store,
 # generic file reads or IPC entrypoints are admitted.

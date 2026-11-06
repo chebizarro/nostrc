@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: grotto 0.1.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-06 12:36-0800\n"
+"POT-Creation-Date: 2026-11-06 13:10-0800\n"
 "PO-Revision-Date: 2024-01-23 00:00+0000\n"
 "Last-Translator: \n"
 "Language-Team: Indonesian\n"
@@ -911,6 +911,27 @@ msgstr ""
 msgid ""
 "Finish setup and unlock management, then open the pairing link again. No "
 "relay has been contacted."
+msgstr ""
+
+#: src/bunker_service.c:559
+#, c-format
+msgid "Could not connect to %s (%s)"
+msgstr ""
+
+#: src/bunker_service.c:559
+msgid "configured relay"
+msgstr ""
+
+#: src/bunker_service.c:648
+msgid "Transport key missing; reset bunker endpoint"
+msgstr ""
+
+#: src/bunker_service.c:648
+msgid "Transport key unavailable"
+msgstr ""
+
+#: src/bunker_service.c:680 src/bunker_service.c:1041
+msgid "No relays configured"
 msgstr ""
 
 #: src/qr-code.c:86

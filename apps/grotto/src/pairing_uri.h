@@ -4,6 +4,8 @@
 #include <nostr/nip46/nip46_uri.h>
 /* Pure validation: never dials, fetches metadata, or grants authority. The
  * caller owns the parsed secret and must clear it with grotto_connect_clear. */
+/* Allocated, bounded origin only, or NULL for an unsafe/unparseable origin. */
+gchar *grotto_relay_public_name(const gchar *url);
 gboolean grotto_relays_validate(const gchar *const *relays, gsize count, GError **error);
 gboolean grotto_connect_parse(const gchar *uri, NostrNip46ConnectURI *out, GError **error);
 void grotto_connect_clear(NostrNip46ConnectURI *uri);

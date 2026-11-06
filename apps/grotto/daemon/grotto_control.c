@@ -47,6 +47,7 @@ struct _GrottoControl {
   gpointer active_rotation; /* owner-thread pointer to the current worker job */
   gchar *bunker_path;
   gchar **bunker_relays, **bunker_methods;
+  gboolean bunker_defaults_seeded, bunker_relays_initialized;
   GHashTable *accept_reviews;
 };
 static void cancel_rotation_if_paused(GrottoControl *c);
@@ -185,7 +186,14 @@ static GVariant *status(GrottoControl *c) {
   const gchar *bunker_error = c->bunker ? bunker_service_get_error(c->bunker) : NULL;
   g_variant_builder_add(&row, "{sv}", "bunker_error", g_variant_new_string(bunker_error ? bunker_error : ""));
   g_variant_builder_add(&row, "{sv}", "bunker_config_healthy", g_variant_new_boolean(c->config_healthy));
-  g_variant_builder_add(&row, "{sv}", "bunker_relays", g_variant_new_strv((const gchar *const *)c->bunker_relays, -1));
+  /* Old or rejected configuration may still contain credentials. It is not
+   * public metadata and must never cross Control1 into a panel snapshot. */
+  g_autoptr(GPtrArray) public_relays = g_ptr_array_new();
+  for (guint i = 0; c->bunker_relays && c->bunker_relays[i]; i++) {
+    const gchar *candidate[] = {c->bunker_relays[i]};
+    if (grotto_relays_validate(candidate, 1, NULL)) g_ptr_array_add(public_relays, c->bunker_relays[i]);
+  }
+  g_variant_builder_add(&row, "{sv}", "bunker_relays", g_variant_new_strv((const gchar *const *)public_relays->pdata, public_relays->len));
   g_variant_builder_add(&row, "{sv}", "bunker_allowed_methods", g_variant_new_strv((const gchar *const *)c->bunker_methods, -1));
   g_autoptr(GVariant) relay_states = bunker_service_relay_status(c->bunker);
   g_variant_builder_add(&row, "{sv}", "bunker_relay_states", relay_states);
@@ -444,7 +452,9 @@ static void reset_finished(GObject *source, GAsyncResult *result, gpointer data)
 }
 static void reset_endpoint(GrottoControl *c, GDBusMethodInvocation *inv) {
   if (!c->bunker) { bunker_unavailable(c, inv); return; }
-  if (c->reset_busy) { g_dbus_method_invocation_return_dbus_error(inv, GROTTO_CONTROL_ERROR "Busy", "Endpoint reset is in progress"); return; }
+  if (c->reset_busy || bunker_service_transport_busy(c->bunker)) {
+    g_dbus_method_invocation_return_dbus_error(inv, GROTTO_CONTROL_ERROR "Busy", "Transport key operation is in progress; retry when it finishes"); return;
+  }
   bunker_service_stop(c->bunker);
   /* Revoke before key replacement. A partial persistence failure leaves the
    * listener stopped; retry is idempotent and never preserves old pairings. */
@@ -507,6 +517,10 @@ static gboolean apply_bunker(GrottoControl *c) {
   if (!c->config_healthy) { bunker_service_fail_configuration(c->bunker); return FALSE; }
   if (!c->desired_bunker) { bunker_service_stop(c->bunker); status_changed(c); return TRUE; }
   g_auto(GStrv) relays = effective_relays(c, c->bunker_relays, NULL, NULL);
+  if (!relays[0]) {
+    gboolean ok = bunker_service_reconfigure(c->bunker, (const gchar *const *)relays, NULL);
+    status_changed(c); return ok;
+  }
   SettingsManager *sm = settings_manager_get_default();
   g_autofree gchar *identity = g_strdup(settings_manager_get_default_identity(sm));
   if (!identity || !*identity) { g_clear_pointer(&identity, g_free); accounts_store_get_active(accounts_store_get_default(), &identity, NULL); }
@@ -514,15 +528,30 @@ static gboolean apply_bunker(GrottoControl *c) {
   bunker_service_set_allowed_pubkeys(c->bunker, (const gchar *const *)legacy);
   bunker_service_set_allowed_methods(c->bunker, (const gchar *const *)c->bunker_methods);
   bunker_service_set_configured_relays(c->bunker, (const gchar *const *)c->bunker_relays);
+  gboolean first_use = c->client_healthy;
+  g_autoptr(GVariant) clients = grotto_clients_list(c->clients);
+  g_autoptr(GVariant) grants = signer_permissions_list(permissions(c), NULL, NULL);
+  if (!grants) first_use = FALSE;
+  GVariant *inventories[] = {clients, grants};
+  for (guint i = 0; i < G_N_ELEMENTS(inventories); i++) {
+    for (gsize j = 0; inventories[i] && j < g_variant_n_children(inventories[i]); j++) {
+      g_autoptr(GVariant) row = g_variant_get_child_value(inventories[i], j);
+      const gchar *principal = NULL; g_variant_lookup(row, "principal", "&s", &principal);
+      if (principal && g_str_has_prefix(principal, "nip46:")) first_use = FALSE;
+    }
+  }
+  bunker_service_allow_transport_creation(c->bunker, first_use);
   gboolean ok = bunker_service_reconfigure(c->bunker, (const gchar *const *)relays, identity);
-  if (!ok && bunker_service_get_state(c->bunker) == BUNKER_STATE_STOPPED)
-    bunker_service_start(c->bunker, (const gchar *const *)relays, identity);
-  if (!ok) bunker_service_fail_configuration(c->bunker);
+  /* Preserve the service's specific startup error; a failed listener is not
+   * evidence that the durable configuration itself is corrupt. */
+  if (!ok && bunker_service_get_state(c->bunker) != BUNKER_STATE_ERROR)
+    bunker_service_fail_configuration(c->bunker);
   status_changed(c); return ok;
 }
 static gboolean save_bunker_config(GrottoControl *c, gboolean enabled, gchar **relays, gchar **methods, GError **error) {
   g_autoptr(GKeyFile) file = g_key_file_new();
   g_key_file_set_integer(file, "meta", "version", 1); g_key_file_set_boolean(file, "bunker", "enabled", enabled);
+  g_key_file_set_boolean(file, "bunker", "relays-initialized", TRUE);
   g_key_file_set_string_list(file, "bunker", "relays", (const gchar *const *)relays, g_strv_length(relays));
   g_key_file_set_string_list(file, "bunker", "allowed-methods", (const gchar *const *)methods, g_strv_length(methods));
   gsize length; g_autofree gchar *text = g_key_file_to_data(file, &length, NULL);
@@ -557,12 +586,14 @@ static gboolean pairing_commit(const gchar *client, const gchar *identity, const
   signer_permissions_policy_changed(permissions(c)); refresh(c);
   return !relays || apply_bunker(c);
 }
-static void load_bunker_config(GrottoControl *c, const gchar *config_home) {
+static void load_stored_bunker_config(GrottoControl *c, const gchar *config_home) {
   c->bunker_path = g_build_filename(config_home ? config_home : g_get_user_config_dir(), "grotto", "bunker.ini", NULL);
   SettingsManager *sm = settings_manager_get_default();
   c->bunker_relays = settings_manager_get_bunker_relays(sm);
   c->bunker_methods = settings_manager_get_bunker_allowed_methods(sm);
-  c->desired_bunker = settings_manager_get_bunker_enabled(sm); c->config_healthy = TRUE;
+  c->desired_bunker = settings_manager_get_bunker_enabled(sm);
+  c->config_healthy = c->bunker_relays && methods_valid(c->bunker_methods) &&
+      (!c->bunker_relays[0] || grotto_relays_validate((const gchar *const *)c->bunker_relays, g_strv_length(c->bunker_relays), NULL));
   if (!g_file_test(c->bunker_path, G_FILE_TEST_EXISTS)) return;
   g_autoptr(GKeyFile) file = g_key_file_new(); g_autoptr(GError) error = NULL;
   c->config_healthy = !nostrc_profile_guard_refuses_path(c->bunker_path) &&
@@ -575,8 +606,21 @@ static void load_bunker_config(GrottoControl *c, const gchar *config_home) {
       (!relays[0] || grotto_relays_validate((const gchar *const *)relays, g_strv_length(relays), NULL));
   if (!c->config_healthy) return;
   c->desired_bunker = enabled;
+  c->bunker_relays_initialized = g_key_file_get_boolean(file, "bunker", "relays-initialized", NULL);
   g_strfreev(c->bunker_relays); c->bunker_relays = g_steal_pointer(&relays);
   g_strfreev(c->bunker_methods); c->bunker_methods = g_steal_pointer(&methods);
+}
+static void load_bunker_config(GrottoControl *c, const gchar *config_home) {
+  load_stored_bunker_config(c, config_home);
+  /* Preserve an explicitly emptied editor; only legacy/uninitialized empty
+   * configurations receive the first-run defaults. */
+  if (!c->config_healthy || c->bunker_relays_initialized || (c->bunker_relays && c->bunker_relays[0])) return;
+  /* Amber defaultAppRelays, AmberSettings.kt at
+   * 621c445a985470f58c9b5575ba2246e36e347fde (2026-11-06). */
+  const gchar *defaults[] = {"wss://auth.nostr1.com/", "wss://bucket.coracle.social/",
+    "wss://nrs.primal.net/", "wss://relay.nip46.com/", NULL};
+  g_strfreev(c->bunker_relays); c->bunker_relays = g_strdupv((gchar **)defaults);
+  c->bunker_defaults_seeded = TRUE;
 }
 static gboolean configure_bunker(GrottoControl *c, GVariant *config, GError **error) {
   GVariantIter it; const gchar *key; GVariant *value;
@@ -594,7 +638,7 @@ static gboolean configure_bunker(GrottoControl *c, GVariant *config, GError **er
     g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "Full valid bunker configuration required"); return FALSE;
   }
   g_auto(GStrv) effective = effective_relays(c, relays, NULL, NULL);
-  if (enabled && !grotto_relays_validate((const gchar *const *)effective, g_strv_length(effective), error)) return FALSE;
+  if (enabled && effective[0] && !grotto_relays_validate((const gchar *const *)effective, g_strv_length(effective), error)) return FALSE;
   if (!save_bunker_config(c, enabled, relays, methods, error)) return FALSE;
   if (c->desired_bunker != enabled || !g_strv_equal((const gchar *const *)c->bunker_relays, (const gchar *const *)relays) ||
       !g_strv_equal((const gchar *const *)c->bunker_methods, (const gchar *const *)methods)) {
@@ -1061,6 +1105,10 @@ void grotto_control_set_bunker(GrottoControl *c, BunkerService *bunker, gboolean
   }
   c->bunker = bunker;
   if (desired && !g_file_test(c->bunker_path, G_FILE_TEST_EXISTS)) c->desired_bunker = TRUE;
+  if (c->bunker_defaults_seeded) {
+    c->config_healthy = save_bunker_config(c, c->desired_bunker, c->bunker_relays, c->bunker_methods, NULL);
+    c->bunker_defaults_seeded = FALSE;
+  }
   if (bunker) {
     bunker_service_set_client_lookup(bunker, bunker_lookup, c);
     bunker_service_set_pairing_commit(bunker, pairing_commit, c);
