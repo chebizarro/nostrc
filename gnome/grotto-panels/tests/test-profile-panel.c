@@ -20,6 +20,39 @@ static GtkTextView *about_view(GtkWidget *widget) {
   }
   return NULL;
 }
+static guint assert_profile_header(GtkWidget *root, gboolean has_banner) {
+  if (GTK_IS_OVERLAY(root)) {
+    GtkWidget *box = gtk_overlay_get_child(GTK_OVERLAY(root));
+    GtkWidget *avatar = gtk_widget_get_next_sibling(box);
+    if (ADW_IS_AVATAR(avatar)) {
+      GtkWidget *banner = gtk_widget_get_first_child(box);
+      graphene_rect_t a, b;
+      g_assert_true(GTK_IS_PICTURE(banner));
+      g_assert_cmpint(gtk_widget_get_visible(banner), ==, has_banner);
+      g_assert_true(gtk_widget_compute_bounds(avatar, root, &a));
+      g_assert_cmpfloat_with_epsilon(a.origin.x + a.size.width / 2, gtk_widget_get_width(root) / 2.0, 1);
+      if (has_banner) {
+        g_assert_true(gtk_widget_compute_bounds(banner, root, &b));
+        g_assert_cmpfloat_with_epsilon(a.origin.y + a.size.height / 2, b.origin.y + b.size.height, 1);
+      } else {
+        g_assert_cmpint(gtk_widget_get_height(root), ==, adw_avatar_get_size(ADW_AVATAR(avatar)));
+      }
+      return 1;
+    }
+  }
+  guint count = 0;
+  for (GtkWidget *child = gtk_widget_get_first_child(root); child; child = gtk_widget_get_next_sibling(child))
+    count += assert_profile_header(child, has_banner);
+  return count;
+}
+static void assert_detail_rows(GtkWidget *root) {
+  const char *titles[] = {"Publication", "Discovery", "Name", "Display Name", "About"};
+  for (guint i = 0; i < G_N_ELEMENTS(titles); i++) {
+    GtkWidget *row = find(root, titles[i]); g_assert_true(ADW_IS_ACTION_ROW(row));
+    g_assert_true(adw_action_row_get_subtitle_selectable(ADW_ACTION_ROW(row)));
+    g_assert_false(adw_preferences_row_get_use_markup(ADW_PREFERENCES_ROW(row)));
+  }
+}
 static void dialog_finalized(gpointer data, GObject *object) { (void)object; *(gboolean *)data = TRUE; }
 static gboolean presented(GtkWidget *widget, GdkFrameClock *clock, gpointer data) {
   (void)widget; (void)clock; return ++*(guint *)data < 3 ? G_SOURCE_CONTINUE : G_SOURCE_REMOVE;
@@ -81,6 +114,20 @@ static void profile_panel(void) {
   g_signal_emit_by_name(find(panel, "Edit Profile…"), "clicked");
   AdwDialog *check_dialog = adw_window_get_visible_dialog(window); g_assert_nonnull(check_dialog);
   guint check_frames = 0; gtk_widget_add_tick_callback(GTK_WIDGET(check_dialog), presented, &check_frames, NULL); WAIT(check_frames == 3);
+  g_assert_cmpint(gtk_widget_get_width(GTK_WIDGET(window)), >, 0);
+  g_assert_cmpint(gtk_widget_get_width(GTK_WIDGET(window)), <=, 360);
+  g_assert_cmpuint(assert_profile_header(panel, FALSE), ==, 1);
+  adw_expander_row_set_expanded(ADW_EXPANDER_ROW(find(GTK_WIDGET(check_dialog), "Profile Preview")), TRUE);
+  check_frames = 0; gtk_widget_add_tick_callback(GTK_WIDGET(check_dialog), presented, &check_frames, NULL); WAIT(check_frames == 3);
+  g_assert_cmpuint(assert_profile_header(GTK_WIDGET(check_dialog), FALSE), ==, 1);
+  gtk_window_set_default_size(GTK_WINDOW(window), 920, 720);
+  check_frames = 0; gtk_widget_add_tick_callback(GTK_WIDGET(window), presented, &check_frames, NULL); WAIT(check_frames == 3);
+  g_assert_cmpint(gtk_widget_get_width(GTK_WIDGET(window)), >, 360);
+  g_assert_cmpuint(assert_profile_header(panel, FALSE), ==, 1);
+  g_assert_cmpuint(assert_profile_header(GTK_WIDGET(check_dialog), FALSE), ==, 1);
+  gtk_window_set_default_size(GTK_WINDOW(window), 360, 720);
+  check_frames = 0; gtk_widget_add_tick_callback(GTK_WIDGET(window), presented, &check_frames, NULL); WAIT(check_frames == 3);
+  g_assert_cmpint(gtk_widget_get_width(GTK_WIDGET(window)), <=, 360);
   gtk_editable_set_text(GTK_EDITABLE(find(GTK_WIDGET(check_dialog), "Nostr Address")), "alice@example.com");
   g_signal_emit_by_name(find(GTK_WIDGET(check_dialog), "Check"), "clicked");
   WAIT(host.calls[GROTTO_PROFILE_VERIFY_NIP05] == 1 && find(GTK_WIDGET(check_dialog), "Address matches this public key"));
@@ -95,6 +142,9 @@ static void profile_panel(void) {
   g_assert_true(gtk_widget_get_sensitive(find(panel, "Edit Profile…")));
   g_assert_true(gtk_widget_get_sensitive(find(panel, "Retry")));
   host.fetch_fail = FALSE;
+  static const guint8 pixels[] = {80, 120, 180, 255, 80, 120, 180, 255, 80, 120, 180, 255};
+  g_autoptr(GBytes) bytes = g_bytes_new_static(pixels, sizeof pixels);
+  host.info->images[1] = gdk_memory_texture_new(3, 1, GDK_MEMORY_R8G8B8A8, bytes, 12);
   g_signal_emit_by_name(find(panel, "Refresh Profile"), "clicked");
   WAIT(find(panel, "No profile published yet") && gtk_widget_get_sensitive(find(panel, "Edit Profile…")));
   g_assert_nonnull(find(panel, "Profile discovery relays\nNo relays contacted\n\nSkipped — relay requires authentication (bootstrap never signs or sends AUTH):\nwss://auth.discovery.example/"));
@@ -105,8 +155,38 @@ static void profile_panel(void) {
   /* libadwaita 1.5 opens its sheet after the initial frame ticks. Drive the
    * presented form, not a programmatic click before the sheet can be seen. */
   guint frames = 0; gtk_widget_add_tick_callback(GTK_WIDGET(dialog), presented, &frames, NULL); WAIT(frames == 3);
+  GtkWidget *header = gtk_widget_get_parent(find(GTK_WIDGET(dialog), "Save"));
+  while (header && !ADW_IS_HEADER_BAR(header)) header = gtk_widget_get_parent(header);
+  g_assert_nonnull(header);
+  g_assert_false(adw_header_bar_get_show_start_title_buttons(ADW_HEADER_BAR(header)));
+  g_assert_false(adw_header_bar_get_show_end_title_buttons(ADW_HEADER_BAR(header)));
+  g_assert_null(find(GTK_WIDGET(dialog), "Republish"));
+  assert_detail_rows(panel);
+  g_assert_cmpint(gtk_widget_get_width(GTK_WIDGET(window)), <=, 360);
+  g_assert_cmpuint(assert_profile_header(panel, TRUE), ==, 1);
+  adw_expander_row_set_expanded(ADW_EXPANDER_ROW(find(GTK_WIDGET(dialog), "Profile Preview")), TRUE);
+  frames = 0; gtk_widget_add_tick_callback(GTK_WIDGET(dialog), presented, &frames, NULL); WAIT(frames == 3);
+  g_assert_cmpuint(assert_profile_header(GTK_WIDGET(dialog), TRUE), ==, 1);
+  gtk_window_set_default_size(GTK_WINDOW(window), 920, 720);
+  frames = 0; gtk_widget_add_tick_callback(GTK_WIDGET(window), presented, &frames, NULL); WAIT(frames == 3);
+  g_assert_cmpint(gtk_widget_get_width(GTK_WIDGET(window)), >, 360);
+  g_assert_cmpuint(assert_profile_header(panel, TRUE), ==, 1); g_assert_cmpuint(assert_profile_header(GTK_WIDGET(dialog), TRUE), ==, 1);
+  adw_expander_row_set_expanded(ADW_EXPANDER_ROW(find(GTK_WIDGET(dialog), "Profile Preview")), FALSE);
+  GtkTextView *about_field = about_view(GTK_WIDGET(dialog));
+  GtkWidget *about_row = gtk_widget_get_ancestor(GTK_WIDGET(about_field), GTK_TYPE_LIST_BOX_ROW);
+  g_assert_nonnull(about_row);
+  g_assert_true(gtk_widget_get_parent(about_row) == gtk_widget_get_parent(find(GTK_WIDGET(dialog), "Name")));
+  g_assert_false(gtk_text_view_get_accepts_tab(about_field));
+  GtkWidget *placeholder = find(GTK_WIDGET(dialog), "Write something about yourself…");
+  g_assert_true(gtk_widget_get_visible(placeholder));
+  gtk_text_buffer_set_text(gtk_text_view_get_buffer(about_field), "A draft", -1);
+  g_assert_false(gtk_widget_get_visible(placeholder));
   gtk_editable_set_text(GTK_EDITABLE(find(GTK_WIDGET(dialog), "Name")), "discard-me");
-  g_signal_emit_by_name(find(GTK_WIDGET(dialog), "Discard Local Changes"), "clicked");
+  g_signal_emit_by_name(find(GTK_WIDGET(dialog), "Discard Local Changes"), "activated");
+  g_assert_true(gtk_widget_get_visible(placeholder));
+  GtkWidget *provenance = find(GTK_WIDGET(dialog), "Publication and Discovery Details");
+  g_assert_true(ADW_IS_ACTION_ROW(find(provenance, "Publication")));
+  g_assert_true(ADW_IS_ACTION_ROW(find(provenance, "Discovery")));
   g_assert_cmpstr(gtk_editable_get_text(GTK_EDITABLE(find(GTK_WIDGET(dialog), "Name"))), ==, "");
   const char *titles[] = {"Name", "Display Name", "Avatar URL", "Banner URL", "Nostr Address", "Lightning Address", "Lightning LNURL", "Website"};
   const char *values[] = {"alice", "Alice", "https://media.example/avatar.png", "https://media.example/banner.png", "alice@example.com", "alice@pay.example", "lnurl1example", "https://example.com"};
@@ -161,19 +241,19 @@ static void profile_panel(void) {
   g_signal_emit_by_name(find(panel, "Edit Profile…"), "clicked");
   dialog = adw_window_get_visible_dialog(window); frames = 0;
   gtk_widget_add_tick_callback(GTK_WIDGET(dialog), presented, &frames, NULL); WAIT(frames == 3);
-  gboolean republish_dialog_gone = FALSE; g_object_weak_ref(G_OBJECT(dialog), dialog_finalized, &republish_dialog_gone);
-  GtkWidget *republish = find(GTK_WIDGET(dialog), "Republish"); g_assert_true(gtk_widget_get_sensitive(republish));
+  gboolean cancelled_dialog_gone = FALSE; g_object_weak_ref(G_OBJECT(dialog), dialog_finalized, &cancelled_dialog_gone);
   gtk_editable_set_text(GTK_EDITABLE(find(GTK_WIDGET(dialog), "Name")), "unsaved-draft");
-  g_assert_false(gtk_widget_get_sensitive(republish)); g_signal_emit_by_name(republish, "clicked");
-  g_assert_cmpuint(host.calls[GROTTO_PROFILE_SAVE], ==, 3); /* Guarded even if invoked programmatically. */
-  g_signal_emit_by_name(find(GTK_WIDGET(dialog), "Discard Local Changes"), "clicked");
+  g_signal_emit_by_name(find(GTK_WIDGET(dialog), "Cancel"), "clicked");
+  WAIT(!adw_window_get_visible_dialog(window) && cancelled_dialog_gone);
+  g_assert_cmpuint(host.calls[GROTTO_PROFILE_SAVE], ==, 3);
+  g_assert_cmpstr(host.saved->fields[GROTTO_PROFILE_NAME], ==, "alice");
+  g_signal_emit_by_name(find(panel, "Edit Profile…"), "clicked");
+  dialog = adw_window_get_visible_dialog(window); frames = 0;
+  gtk_widget_add_tick_callback(GTK_WIDGET(dialog), presented, &frames, NULL); WAIT(frames == 3);
   g_assert_cmpstr(gtk_editable_get_text(GTK_EDITABLE(find(GTK_WIDGET(dialog), "Name"))), ==, "alice");
-  g_assert_true(gtk_widget_get_sensitive(republish));
-  adw_switch_row_set_active(ADW_SWITCH_ROW(find(GTK_WIDGET(dialog), "Automated Account (Bot)")), FALSE);
-  g_assert_false(gtk_widget_get_sensitive(republish));
-  adw_switch_row_set_active(ADW_SWITCH_ROW(find(GTK_WIDGET(dialog), "Automated Account (Bot)")), TRUE);
-  g_assert_true(gtk_widget_get_sensitive(republish));
-  g_signal_emit_by_name(republish, "clicked"); WAIT(!adw_window_get_visible_dialog(window) && republish_dialog_gone);
+  gboolean unchanged_dialog_gone = FALSE; g_object_weak_ref(G_OBJECT(dialog), dialog_finalized, &unchanged_dialog_gone);
+  g_signal_emit_by_name(find(GTK_WIDGET(dialog), "Save"), "clicked");
+  WAIT(!adw_window_get_visible_dialog(window) && unchanged_dialog_gone);
   grotto_profile_info_free(host.info); host.info = grotto_profile_info_copy(host.saved); host.info->published = TRUE; host.offline = TRUE;
   g_signal_emit_by_name(find(panel, "Refresh Profile"), "clicked");
   WAIT(find(panel, "Offline — showing the saved profile"));
