@@ -23,7 +23,7 @@ Selection mode should only be used when there are a range of actions that can be
 
 - When one or more items are selected, selection mode should be active.
 
-- When selection mode is active:  
+- When selection mode is active:
   - Clicking anywhere on a content item should toggle its selection state.
   - The header bar should show a cancel button and the heading should indicate the number of selected items.
   - An action bar should show available actions for the selection, at the bottom of the screen.

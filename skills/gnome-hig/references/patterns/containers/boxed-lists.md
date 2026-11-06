@@ -63,7 +63,7 @@ Design conventions exist for editable boxed lists, which allow users to add, rem
 
 - Place a remove button at the end of each row.
 
-- If changing list order is required:  
+- If changing list order is required:
   - Include drag handles at the beginning of the rows, to allow moving them.
   - Instead of showing a remove button at the end of each row, include a button menu, with items for "move up", "move down," and "remove" (menu items for move actions are required for accessibility purposes).
 

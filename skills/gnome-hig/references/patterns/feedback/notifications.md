@@ -17,7 +17,7 @@ Because they are shown by the system, notifications are a useful way of communic
 
 - Be careful not to needlessly distract users with notifications, and question whether users really need to be informed about the events you want to communicate.
 
-- Apps that deal with lots of events, such as email or social media messages, run a particular risk of distracting users with too many notifications. In these situations:  
+- Apps that deal with lots of events, such as email or social media messages, run a particular risk of distracting users with too many notifications. In these situations:
   - It is often desirable to place restrictions on how frequently notifications are shown. For example, instead of showing a notification for each new message, periodic notifications can show a summary of messages that have been received.
   - Provide an option for users to disable and/or reduce the number of notifications.
 

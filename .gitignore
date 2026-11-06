@@ -141,3 +141,6 @@ vm-ci-logs/
 
 # Oracle chat + orchestrator prompt exports (per-user agent workspace)
 prompt-exports/
+
+# skill eval workspaces (skill-creator output)
+skills/*-workspace/

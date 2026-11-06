@@ -24,7 +24,7 @@ The following guidelines apply to all menus.
 
 - Order items logically, either by importance, task order, or expected frequency of use. Items at the top and bottom of the menu are more noticeable and easily targeted, so reserve these locations for particularly important or interesting functionality.
 
-- Organize similar menu items into groups — this will make them easier to understand and quicker to use. When creating groups:  
+- Organize similar menu items into groups — this will make them easier to understand and quicker to use. When creating groups:
   - Place single-item groups at the top or bottom of the menu, or group them together with other single items.
   - Do not mix different types of menu item within each group — actions, check box and radio button items should be kept separate.
 
@@ -36,7 +36,7 @@ Most apps have primary menus, and they are the location for standard features wh
 
 - The button for primary menus should use the `open-menu-symbolic` icon.
 
-- Primary menus are typically placed at the end (in Western locales on the right) of the header bar. Although, there are two exceptions to this rule:  
+- Primary menus are typically placed at the end (in Western locales on the right) of the header bar. Although, there are two exceptions to this rule:
   - If the window incorporates [hierarchical navigation](../../guidelines/navigation.md), the primary menu should only be visible while on the top level view. (If other views require a menu, a secondary menu can be used.)
   - If the window has a [sidebar](../nav/sidebars.md), the primary menu should be placed above the sidebar list.
 

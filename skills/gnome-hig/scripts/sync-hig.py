@@ -209,7 +209,9 @@ def pandoc(rst: str) -> str:
     if proc.stderr.strip():
         print(proc.stderr.rstrip(), file=sys.stderr)
     # RST default-role text (`like this`) comes out as a title-ref span; plain emphasis reads better.
-    return re.sub(r'<span class="title-ref">(.*?)</span>', r"*\1*", proc.stdout)
+    md = re.sub(r'<span class="title-ref">(.*?)</span>', r"*\1*", proc.stdout)
+    # pandoc marks hard line breaks with trailing double spaces, which trips `git diff --check`.
+    return "\n".join(line.rstrip() for line in md.splitlines()) + "\n"
 
 
 def git(hig_dir: Path, *args: str) -> str:
