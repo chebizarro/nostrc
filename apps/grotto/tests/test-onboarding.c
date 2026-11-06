@@ -1,6 +1,7 @@
 #include "ui/onboarding-assistant.h"
 #include "ui/page-identity-detail.h"
 #include "ui/signer-window.h"
+#include "ui/lock-screen.h"
 #include <grotto-panels.h>
 #include "session-manager.h"
 #include "ui/widgets/gn-secure-entry.h"
@@ -159,6 +160,8 @@ static void teardown(Fixture *f, gconstpointer data) {
   g_free(f->npub); active = NULL;
 }
 static void create_waiting(Fixture *f) {
+  g_assert_false(gtk_widget_get_visible(child(f, "btn_back")));
+  g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(child(f, "btn_skip"))), ==, "_Skip Setup");
   click(f, "btn_next"); g_signal_emit_by_name(child(f, "choose_create"), "activated"); g_assert_cmpint(onboarding_assistant_get_state(f->assistant), ==, ONBOARDING_CREATE);
   /* No creation password or meter exists in the production template. */
   g_assert_null(gtk_widget_get_template_child(GTK_WIDGET(f->assistant), TYPE_ONBOARDING_ASSISTANT, "entry_passphrase"));
@@ -618,7 +621,19 @@ static void backup_clipboard_close_lock(Fixture *f, gconstpointer data) {
   while (!keyring_ready) g_main_context_iteration(NULL, TRUE); g_source_remove(timeout); g_bus_unwatch_name(watch);
   GnSessionManager *session = gn_session_manager_get_default();
   g_assert_false(gn_session_manager_has_password(session));
+  SignerWindow *management = g_object_new(TYPE_SIGNER_WINDOW, NULL); g_object_ref_sink(management);
+  GAction *lock = g_action_map_lookup_action(G_ACTION_MAP(management), "lock");
+  g_assert_false(g_action_get_enabled(lock));
+  g_action_activate(lock, NULL);
+  g_assert_false(gn_session_manager_is_locked(session));
+  GtkWidget *lock_screen = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(management), TYPE_SIGNER_WINDOW, "lock_screen"));
+  GtkWidget *password = GTK_WIDGET(gtk_widget_get_template_child(lock_screen, GN_TYPE_LOCK_SCREEN, "entry_password"));
+  g_assert_false(gtk_widget_get_visible(gtk_widget_get_parent(password)));
   g_assert_true(gn_session_manager_set_password(session, NULL, "w3-test-password", &error)); g_assert_no_error(error);
+  g_assert_true(g_action_get_enabled(lock));
+  g_assert_true(gtk_widget_get_visible(gtk_widget_get_parent(password)));
+  g_action_activate(lock, NULL); g_assert_true(gn_session_manager_is_locked(session));
+  g_assert_true(gn_session_manager_authenticate(session, "w3-test-password", &error)); g_assert_no_error(error);
   g_assert_true(gn_backup_get_npub("0000000000000000000000000000000000000000000000000000000000000002", &f->npub, NULL));
   stored_identity = g_strdup(f->npub);
   GdkClipboard *clipboard = gdk_display_get_clipboard(gdk_display_get_default());
@@ -673,6 +688,9 @@ static void backup_clipboard_close_lock(Fixture *f, gconstpointer data) {
     release_backup_shell(window, page);
   }
   g_assert_true(gn_session_manager_clear_password(session, "w3-test-password", &error)); g_assert_no_error(error);
+  g_assert_false(g_action_get_enabled(lock));
+  g_assert_false(gtk_widget_get_visible(gtk_widget_get_parent(password)));
+  gtk_window_destroy(GTK_WINDOW(management)); g_object_unref(management);
   g_subprocess_force_exit(keyring); g_assert_true(g_subprocess_wait(keyring, NULL, NULL));
 }
 static void repeated_creation_activation(Fixture *f, gconstpointer data) {
@@ -685,7 +703,13 @@ static void repeated_creation_activation(Fixture *f, gconstpointer data) {
     if (ONBOARDING_IS_ASSISTANT(window) && gtk_window_get_transient_for(window) == parent) { count++; setup = window; }
     else g_object_unref(window);
   }
-  g_assert_cmpuint(count, ==, 1); guint gone = 0; g_object_weak_ref(G_OBJECT(setup), weak_gone, &gone);
+  g_assert_cmpuint(count, ==, 1);
+  GtkWidget *back_button = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(setup), TYPE_ONBOARDING_ASSISTANT, "btn_back"));
+  GtkWidget *cancel_button = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(setup), TYPE_ONBOARDING_ASSISTANT, "btn_skip"));
+  g_assert_false(gtk_widget_get_visible(back_button));
+  g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(cancel_button)), ==, "_Cancel");
+  g_assert_cmpstr(gtk_widget_get_tooltip_text(cancel_button), ==, "Cancel adding an identity");
+  guint gone = 0; g_object_weak_ref(G_OBJECT(setup), weak_gone, &gone);
   gtk_window_close(setup); gtk_window_destroy(setup); g_object_unref(setup);
   guint timeout = g_timeout_add_seconds(10, bound, NULL); while (!gone) g_main_context_iteration(NULL, TRUE); g_source_remove(timeout);
   gtk_window_destroy(parent); g_object_unref(parent);
