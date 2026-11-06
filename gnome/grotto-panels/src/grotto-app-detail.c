@@ -401,7 +401,7 @@ static void clear_scope(AdwActionRow *widget, gpointer data) {
   self->clear_failed = FALSE;
   g_autofree char *body = g_strdup_printf(_("Remove every remembered allow, deny and inactive entry for this app and identity %s? Other identities and the trust level remain unchanged."), m->public_key);
   AdwDialog *dialog = adw_alert_dialog_new(_("Clear Remembered Permissions?"), body);
-  adw_alert_dialog_add_responses(ADW_ALERT_DIALOG(dialog), "cancel", _("Cancel"), "clear", _("Clear"), NULL);
+  adw_alert_dialog_add_responses(ADW_ALERT_DIALOG(dialog), "cancel", _("Cancel"), "clear", _("Clear Permissions"), NULL);
   adw_alert_dialog_set_default_response(ADW_ALERT_DIALOG(dialog), "cancel");
   adw_alert_dialog_set_close_response(ADW_ALERT_DIALOG(dialog), "cancel");
   adw_alert_dialog_set_response_appearance(ADW_ALERT_DIALOG(dialog), "clear", ADW_RESPONSE_DESTRUCTIVE);

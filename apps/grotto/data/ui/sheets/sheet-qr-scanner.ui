@@ -18,7 +18,8 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             <property name="show-start-title-buttons">false</property>
             <child type="start">
               <object class="GtkButton" id="btn_cancel">
-                <property name="label" translatable="yes">Cancel</property>
+                <property name="label" translatable="yes">_Cancel</property>
+                <property name="use-underline">true</property>
               </object>
             </child>
           </object>
@@ -54,7 +55,8 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         </child>
                         <child>
                           <object class="GtkButton" id="btn_camera">
-                            <property name="label" translatable="yes">Start Camera</property>
+                            <property name="label" translatable="yes">_Start Camera</property>
+                            <property name="use-underline">true</property>
                             <style>
                               <class name="suggested-action"/>
                             </style>
@@ -62,12 +64,14 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         </child>
                         <child>
                           <object class="GtkButton" id="btn_paste">
-                            <property name="label" translatable="yes">Paste QR Image</property>
+                            <property name="label" translatable="yes">_Paste QR Image</property>
+                            <property name="use-underline">true</property>
                           </object>
                         </child>
                         <child>
                           <object class="GtkButton" id="btn_file">
-                            <property name="label" translatable="yes">Open QR Image…</property>
+                            <property name="label" translatable="yes">_Open QR Image…</property>
+                            <property name="use-underline">true</property>
                           </object>
                         </child>
                       </object>
@@ -124,7 +128,8 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         </child>
                         <child>
                           <object class="GtkButton" id="btn_import">
-                            <property name="label" translatable="yes">Import Key</property>
+                            <property name="label" translatable="yes">_Import Key</property>
+                            <property name="use-underline">true</property>
                             <style>
                               <class name="suggested-action"/>
                             </style>
@@ -132,7 +137,8 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         </child>
                         <child>
                           <object class="GtkButton" id="btn_back">
-                            <property name="label" translatable="yes">Scan Another Code</property>
+                            <property name="label" translatable="yes">Scan _Another Code</property>
+                            <property name="use-underline">true</property>
                           </object>
                         </child>
                       </object>

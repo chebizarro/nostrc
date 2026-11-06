@@ -9,7 +9,7 @@ template $GnLockScreen: Box {
 
   accessibility {
     label: _("Lock screen");
-    description: _("Management is locked. Already-authorised signing continues unless signing is paused.");
+    description: _("Management is locked. Already-authorized signing continues unless signing is paused.");
   }
 
   ScrolledWindow {
@@ -51,7 +51,9 @@ template $GnLockScreen: Box {
           }
 
           Label lbl_title {
-            label: _("Management locked");
+            label: _("Management Locked");
+            wrap: true;
+            justify: center;
 
             accessibility {
               description: _("Title indicating the current lock state");
@@ -124,7 +126,7 @@ template $GnLockScreen: Box {
 
           accessibility {
             label: _("Unlock management");
-            description: _("Click to unlock management with the entered password. Press Enter or Alt+U.");
+            description: _("Unlocks management with the entered password");
           }
 
           styles [

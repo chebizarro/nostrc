@@ -683,12 +683,12 @@ static void layout_activate(GApplication *application, gpointer data) {
       before = permission_attempts; wait_frames(GTK_WIDGET(confirm)); adw_dialog_close(ADW_DIALOG(confirm)); WAIT(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)) == NULL);
       g_assert_cmpuint(permission_attempts, ==, before);
       g_signal_emit_by_name(clear, "activated"); confirm = ADW_ALERT_DIALOG(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window))); wait_frames(GTK_WIDGET(confirm));
-      force_conflict = TRUE; g_signal_emit_by_name(find_button(GTK_WIDGET(confirm), P_("Clear")), "clicked");
+      force_conflict = TRUE; g_signal_emit_by_name(find_button(GTK_WIDGET(confirm), P_("Clear Permissions")), "clicked");
       WAIT(permission_attempts == before + 1 && adw_banner_get_revealed(feedback) && (clear = find_clear_scope(detail, npub)) && gtk_widget_is_sensitive(clear));
       g_assert_cmpstr(adw_banner_get_title(feedback), ==, P_("Not cleared. Permissions or the signer changed. Review the refreshed entries and confirm again."));
       g_assert_cmpuint(permission_writes, ==, 7); g_assert_true(contains_permission(npub, "deny")); g_assert_true(contains_permission(npub, "allow"));
       g_signal_emit_by_name(clear, "activated"); confirm = ADW_ALERT_DIALOG(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window))); wait_frames(GTK_WIDGET(confirm));
-      g_signal_emit_by_name(find_button(GTK_WIDGET(confirm), P_("Clear")), "clicked");
+      g_signal_emit_by_name(find_button(GTK_WIDGET(confirm), P_("Clear Permissions")), "clicked");
       WAIT(permission_writes == 8 && !find_clear_scope(detail, npub));
       g_assert_false(contains_permission(npub, "allow")); g_assert_false(contains_permission(npub, "deny"));
       g_assert_true(contains_permission(watch_npub, "deny")); g_assert_cmpstr(tier, ==, "low"); g_assert_cmpuint(tier_writes, ==, 1);
@@ -864,7 +864,7 @@ static void layout_activate(GApplication *application, gpointer data) {
   GtkWidget *scanner_stack = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(scanner), TYPE_SHEET_QR_SCANNER, "stack"));
   g_assert_cmpstr(gtk_stack_get_visible_child_name(GTK_STACK(scanner_stack)), ==, "result");
   GtkWidget *import_button = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(scanner), TYPE_SHEET_QR_SCANNER, "btn_import"));
-  g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(import_button)), ==, _("Choose Identity…"));
+  g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(import_button)), ==, _("Choose _Identity…"));
   snapshot(GTK_WIDGET(window), "pairing-scan-result-360");
   GtkWidget *scan_back = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(scanner), TYPE_SHEET_QR_SCANNER, "btn_back"));
   g_signal_emit_by_name(scan_back, "clicked"); g_assert_cmpstr(gtk_stack_get_visible_child_name(GTK_STACK(scanner_stack)), ==, "scanner");
@@ -987,7 +987,7 @@ static void first_run_connect_activate(GApplication *application, gpointer data)
   g_signal_emit_by_name(setup_child(setup, "btn_next"), "clicked");
   g_signal_emit_by_name(setup_child(setup, "choose_connect"), "activated");
   g_assert_cmpint(onboarding_assistant_get_state(setup), ==, ONBOARDING_CONNECT);
-  g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(setup_child(setup, "btn_next"))), ==, _("Open Connected Apps"));
+  g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(setup_child(setup, "btn_next"))), ==, _("_Open Connected Apps"));
   g_signal_emit_by_name(setup_child(setup, "btn_next"), "clicked");
   g_assert_cmpuint(first.completions, ==, 1); g_assert_nonnull(first.window);
   AdwNavigationSplitView *split = ADW_NAVIGATION_SPLIT_VIEW(gtk_widget_get_template_child(

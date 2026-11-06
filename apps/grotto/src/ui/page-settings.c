@@ -75,6 +75,7 @@ void page_settings_show_ask_defaults(PageSettings *self, GtkWidget *parent) {
   p->dialog = adw_dialog_new(); adw_dialog_set_title(p->dialog, _("Ask-by-Default Event Types")); adw_dialog_set_content_width(p->dialog, 400);
   GtkWidget *toolbar = adw_toolbar_view_new(); adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(toolbar), adw_header_bar_new());
   GtkWidget *scroll = gtk_scrolled_window_new(), *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+  gtk_scrolled_window_set_propagate_natural_height(GTK_SCROLLED_WINDOW(scroll), TRUE); gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
   gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
   gtk_widget_set_margin_start(box, 18); gtk_widget_set_margin_end(box, 18); gtk_widget_set_margin_top(box, 12); gtk_widget_set_margin_bottom(box, 12);
   g_autoptr(GVariant) configured = g_settings_get_user_value(self->settings, "require-confirmation-kinds");

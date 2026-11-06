@@ -16,7 +16,7 @@ G_DEFINE_TYPE(SheetCreateBunker, sheet_create_bunker, ADW_TYPE_DIALOG)
 static void refresh(SheetCreateBunker *self);
 static void update_create(SheetCreateBunker *self) {
   gtk_widget_set_sensitive(self->btn_create, !self->closed && self->listening &&
-      gtk_drop_down_get_selected(GTK_DROP_DOWN(self->identities)) != GTK_INVALID_LIST_POSITION);
+      adw_combo_row_get_selected(ADW_COMBO_ROW(self->identities)) != GTK_INVALID_LIST_POSITION);
 }
 static void status_ready(GObject *source, GAsyncResult *result, gpointer data) {
   SheetCreateBunker *s = data; g_autoptr(GError) error = NULL;
@@ -49,8 +49,8 @@ static void identities_ready(GObject *source, GAsyncResult *result, gpointer dat
   if (!s->closed && reply) {
     g_auto(GStrv) ids = NULL; g_variant_get(reply, "(^as)", &ids);
     GtkStringList *model = gtk_string_list_new((const gchar *const *)ids);
-    gtk_drop_down_set_model(GTK_DROP_DOWN(s->identities), G_LIST_MODEL(model)); g_object_unref(model);
-    gtk_drop_down_set_selected(GTK_DROP_DOWN(s->identities), GTK_INVALID_LIST_POSITION);
+    adw_combo_row_set_model(ADW_COMBO_ROW(s->identities), G_LIST_MODEL(model)); g_object_unref(model);
+    adw_combo_row_set_selected(ADW_COMBO_ROW(s->identities), GTK_INVALID_LIST_POSITION);
   }
   g_object_unref(s);
 }
@@ -73,7 +73,7 @@ static void created(GObject *source, GAsyncResult *result, gpointer data) {
 }
 static void create(GtkButton *button, gpointer data) {
   (void)button; SheetCreateBunker *s = data;
-  GtkStringObject *identity = GTK_STRING_OBJECT(gtk_drop_down_get_selected_item(GTK_DROP_DOWN(s->identities)));
+  GtkStringObject *identity = GTK_STRING_OBJECT(adw_combo_row_get_selected_item(ADW_COMBO_ROW(s->identities)));
   if (!s->bus || !s->listening || !identity) return;
   gtk_widget_set_sensitive(s->btn_create, FALSE);
   g_dbus_connection_call(s->bus, "org.nostr.Signer", "/org/nostr/signer/grotto", "org.nostr.Grotto.Control1", "CreatePairing",

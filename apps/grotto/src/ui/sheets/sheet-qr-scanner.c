@@ -167,11 +167,11 @@ static void on_camera_clicked(GtkButton *btn, gpointer user_data) {
     GnQrScanner *scanner = GN_QR_SCANNER(self->scanner_widget);
     if (gn_qr_scanner_is_active(scanner)) {
       gn_qr_scanner_stop(scanner);
-      gtk_button_set_label(GTK_BUTTON(self->btn_camera), _("Start Camera"));
+      gtk_button_set_label(GTK_BUTTON(self->btn_camera), _("_Start Camera"));
     } else {
       GError *error = NULL;
       if (gn_qr_scanner_start(scanner, &error)) {
-        gtk_button_set_label(GTK_BUTTON(self->btn_camera), _("Stop Camera"));
+        gtk_button_set_label(GTK_BUTTON(self->btn_camera), _("_Stop Camera"));
         gtk_label_set_text(GTK_LABEL(self->status_label),
                            _("Point your camera at a QR code…"));
       } else {
@@ -325,7 +325,7 @@ static void show_result(SheetQrScanner *self, const gchar *data, GnQrContentType
     g_autofree gchar *relays = g_strjoinv("\n", uri.relays);
     pairing_preview = g_strdup_printf(_("App key: %s\nName supplied by app: %s\nRelays:\n%s\nNo connection has been made."), uri.client_pubkey_hex, uri.name ? uri.name : _("Not supplied"), relays);
     grotto_connect_clear(&uri);
-    gtk_button_set_label(GTK_BUTTON(self->btn_import), _("Choose Identity…"));
+    gtk_button_set_label(GTK_BUTTON(self->btn_import), _("Choose _Identity…"));
   }
   /* Stop camera if running */
   if (self->scanner_widget && GN_IS_QR_SCANNER(self->scanner_widget)) {
@@ -516,7 +516,7 @@ void sheet_qr_scanner_set_accepted_types(SheetQrScanner *self,
   self->n_accepted_types = 0;
 
   gboolean pairing = types && types[0] == GN_QR_TYPE_BUNKER_URI;
-  const char *action = pairing ? _("Choose Identity…") : _("Import Key");
+  const char *action = pairing ? _("Choose _Identity…") : _("_Import Key");
   gtk_button_set_label(GTK_BUTTON(self->btn_import), action);
   gtk_label_set_text(GTK_LABEL(self->hint_label), pairing ? _("Scan the connection code shown by your app") : _("Scan a secret key or encrypted backup"));
   gtk_accessible_update_property(GTK_ACCESSIBLE(self), GTK_ACCESSIBLE_PROPERTY_LABEL,

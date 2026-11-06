@@ -92,7 +92,7 @@ template $OnboardingAssistant: Adw.Window {
                 title: _("Details");
                 Adw.ActionRow { title: _("On This Device Only"); subtitle: _("Signs and verifies a test message, then encrypts and decrypts it with a temporary key."); subtitle-lines: 0; }
               }
-              Button btn_retry { label: _("Try Check Again"); halign: center; }
+              Button btn_retry { label: _("_Try Check Again"); use-underline: true; halign: center; }
             }
           }
         }
@@ -115,10 +115,10 @@ template $OnboardingAssistant: Adw.Window {
                 title: _("Other Backup Options");
                 Adw.ActionRow {
                   title: _("Copy Recovery Phrase"); subtitle: _("Clipboard managers may keep a copy"); subtitle-lines: 0;
-                  [suffix] Button btn_copy_seed { label: _("Copy"); valign: center; accessibility { label: _("Copy Recovery Phrase"); } }
+                  [suffix] Button btn_copy_seed { label: _("Cop_y"); use-underline: true; valign: center; accessibility { label: _("Copy Recovery Phrase"); } }
                 }
-                Adw.ActionRow { title: _("Encrypted Backup"); [suffix] Button btn_backup_export { label: _("Open Backup…"); valign: center; } }
-                Adw.ActionRow { title: _("Recovery Phrase Unavailable?"); [suffix] Button btn_backup_retry { label: _("Try Again"); valign: center; } }
+                Adw.ActionRow { title: _("Encrypted Backup"); [suffix] Button btn_backup_export { label: _("_Open Backup…"); use-underline: true; valign: center; } }
+                Adw.ActionRow { title: _("Recovery Phrase Unavailable?"); [suffix] Button btn_backup_retry { label: _("_Try Again"); use-underline: true; valign: center; } }
               }
             }
           }
@@ -140,11 +140,11 @@ template $OnboardingAssistant: Adw.Window {
       margin-start: 20; margin-end: 20; margin-bottom: 16;
       Spinner spinner_status {}
       Label lbl_status { wrap: true; xalign: 0; }
-      Button btn_next { label: _("Get Started"); styles ["suggested-action"] }
+      Button btn_next { label: _("_Get Started"); use-underline: true; styles ["suggested-action"] }
       Box {
         spacing: 12;
-        Button btn_back { label: _("Back"); styles ["flat"] }
-        Button btn_skip { label: _("Skip Setup"); hexpand: true; styles ["flat"] }
+        Button btn_back { label: _("_Back"); use-underline: true; styles ["flat"] }
+        Button btn_skip { label: _("_Skip Setup"); use-underline: true; hexpand: true; styles ["flat"] }
       }
     }
   }

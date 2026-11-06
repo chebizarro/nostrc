@@ -6,20 +6,20 @@ template $SheetCreateBunker: Adw.Dialog {
   Adw.ToolbarView {
     [top] Adw.HeaderBar {
       show-start-title-buttons: false; show-end-title-buttons: false;
-      [start] Button btn_cancel { label: _("Cancel"); }
+      [start] Button btn_cancel { label: _("_Cancel"); use-underline: true; }
     }
-    ScrolledWindow {
-      hscrollbar-policy: never;
-      Box {
-        orientation: vertical; spacing: 16;
-        margin-start: 20; margin-end: 20; margin-top: 16; margin-bottom: 24;
-        Label { label: _("Choose the identity to connect. You'll review the app before it can sign."); wrap: true; xalign: 0; }
-        Label { label: _("Identity"); xalign: 0; }
-        DropDown identities { tooltip-text: _("Identity to Connect"); accessibility { label: _("Identity to Connect"); } }
-        Entry entry_name { placeholder-text: _("App name (optional)"); accessibility { label: _("App name (optional)"); } }
-        Label status { label: _("Checking remote signing…"); wrap: true; xalign: 0; }
-        Button btn_create { label: _("Create Link"); sensitive: false; styles ["suggested-action"] }
+    content: Adw.PreferencesPage {
+      description: _("Choose the identity to connect. You'll review the app before it can sign.");
+      Adw.PreferencesGroup {
+        Adw.ComboRow identities { title: _("Identity"); }
+        Adw.EntryRow entry_name { title: _("App Name (Optional)"); }
       }
+    };
+    [bottom] Box {
+      orientation: vertical; spacing: 12;
+      margin-start: 20; margin-end: 20; margin-top: 12; margin-bottom: 20;
+      Label status { label: _("Checking remote signing…"); wrap: true; xalign: 0; }
+      Button btn_create { label: _("Create _Link"); use-underline: true; sensitive: false; halign: center; styles ["suggested-action", "pill"] }
     }
   }
 }

@@ -144,7 +144,7 @@ static void pause_changed(GObject *object, GParamSpec *pspec, gpointer data) {
   if (adw_switch_row_get_active(self->pause_row))
     grotto_panel_command_async(GROTTO_PANEL(self), GROTTO_PANEL_PAUSE, NULL, pause_done, g_object_ref(self));
   else {
-    AdwDialog *dialog = adw_alert_dialog_new(_("Resume Signing?"), _("Previously authorised apps can sign again. Saved permissions still apply."));
+    AdwDialog *dialog = adw_alert_dialog_new(_("Resume Signing?"), _("Previously authorized apps can sign again. Saved permissions still apply."));
     adw_alert_dialog_add_responses(ADW_ALERT_DIALOG(dialog), "cancel", _("Cancel"), "resume", _("Resume Signing"), NULL);
     adw_alert_dialog_set_default_response(ADW_ALERT_DIALOG(dialog), "cancel");
     adw_alert_dialog_set_close_response(ADW_ALERT_DIALOG(dialog), "cancel");

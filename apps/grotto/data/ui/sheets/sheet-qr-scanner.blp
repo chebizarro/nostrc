@@ -7,7 +7,7 @@ template $SheetQrScanner: Adw.Dialog {
   Adw.ToolbarView {
     [top] Adw.HeaderBar {
       show-end-title-buttons: false; show-start-title-buttons: false;
-      [start] Button btn_cancel { label: _("Cancel"); }
+      [start] Button btn_cancel { label: _("_Cancel"); use-underline: true; }
     }
     ScrolledWindow {
       hscrollbar-policy: never;
@@ -20,9 +20,9 @@ template $SheetQrScanner: Adw.Dialog {
             margin-start: 20; margin-end: 20; margin-top: 16; margin-bottom: 24;
             Label status_label { label: _("Ready to scan"); wrap: true; }
             Label hint_label { label: _("Scan a secret key or encrypted backup"); wrap: true; }
-            Button btn_camera { label: _("Start Camera"); styles ["suggested-action"] }
-            Button btn_paste { label: _("Paste QR Image"); }
-            Button btn_file { label: _("Open QR Image…"); }
+            Button btn_camera { label: _("_Start Camera"); use-underline: true; styles ["suggested-action"] }
+            Button btn_paste { label: _("_Paste QR Image"); use-underline: true; }
+            Button btn_file { label: _("_Open QR Image…"); use-underline: true; }
           };
         }
         StackPage {
@@ -37,8 +37,8 @@ template $SheetQrScanner: Adw.Dialog {
               label: _("Details");
               Label result_data_label { wrap: true; wrap-mode: char; selectable: true; xalign: 0; styles ["monospace", "caption"] }
             }
-            Button btn_import { label: _("Import Key"); styles ["suggested-action"] }
-            Button btn_back { label: _("Scan Another Code"); }
+            Button btn_import { label: _("_Import Key"); use-underline: true; styles ["suggested-action"] }
+            Button btn_back { label: _("Scan _Another Code"); use-underline: true; }
           };
         }
       }
