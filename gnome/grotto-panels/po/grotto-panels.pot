@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: grotto-panels\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-06 03:02-0800\n"
+"POT-Creation-Date: 2026-11-06 11:36-0800\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -18,17 +18,17 @@ msgstr ""
 "Plural-Forms: nplurals=INTEGER; plural=EXPRESSION;\n"
 
 #: data/identity-panel.blp:5 data/identity-panel.blp:9
-#: src/grotto-identity-panel.c:193 src/grotto-apps-panel.c:25
+#: src/grotto-identity-panel.c:218 src/grotto-apps-panel.c:25
 #: src/grotto-app-detail.c:305 src/grotto-app-detail.c:307
 #: src/grotto-app-detail.c:309
 msgid "Identity"
 msgstr ""
 
-#: data/identity-panel.blp:14 src/grotto-identity-panel.c:146
+#: data/identity-panel.blp:14 src/grotto-identity-panel.c:171
 msgid "This identity isn't backed up"
 msgstr ""
 
-#: data/identity-panel.blp:14 src/grotto-identity-panel.c:153
+#: data/identity-panel.blp:14 src/grotto-identity-panel.c:178
 msgid "Back Up…"
 msgstr ""
 
@@ -36,11 +36,11 @@ msgstr ""
 msgid "Dismiss Backup Reminder"
 msgstr ""
 
-#: data/identity-panel.blp:19 src/grotto-identity-panel.c:141
+#: data/identity-panel.blp:19 src/grotto-identity-panel.c:166
 msgid "No Identity Yet"
 msgstr ""
 
-#: data/identity-panel.blp:20 src/grotto-identity-panel.c:142
+#: data/identity-panel.blp:20 src/grotto-identity-panel.c:167
 msgid "Create or import an identity to start signing"
 msgstr ""
 
@@ -52,7 +52,7 @@ msgstr ""
 msgid "_Name on This Device"
 msgstr ""
 
-#: data/identity-panel.blp:31 src/grotto-identity-panel.c:203
+#: data/identity-panel.blp:31 src/grotto-identity-panel.c:238
 msgid "Public Key"
 msgstr ""
 
@@ -102,7 +102,7 @@ msgid "_Remove Identity…"
 msgstr ""
 
 #: data/apps-panel.blp:11 data/activity-panel.blp:10 data/remote-panel.blp:8
-#: src/grotto-identity-panel.c:141 src/grotto-remote-panel.c:111
+#: src/grotto-identity-panel.c:166 src/grotto-remote-panel.c:111
 msgid "Signer Unavailable"
 msgstr ""
 
@@ -244,75 +244,75 @@ msgid ""
 "permissions are kept."
 msgstr ""
 
-#: src/grotto-identity-panel.c:106
+#: src/grotto-identity-panel.c:107
 msgid "Identity updated"
 msgstr ""
 
-#: src/grotto-identity-panel.c:106
+#: src/grotto-identity-panel.c:107
 msgid "Identity wasn't updated. Try again"
 msgstr ""
 
-#: src/grotto-identity-panel.c:141
+#: src/grotto-identity-panel.c:166
 msgid "Identity Unavailable"
 msgstr ""
 
-#: src/grotto-identity-panel.c:142
+#: src/grotto-identity-panel.c:167
 msgid "Open Grotto and try again"
 msgstr ""
 
-#: src/grotto-identity-panel.c:142
+#: src/grotto-identity-panel.c:167
 msgid "This identity is no longer on this device"
 msgstr ""
 
-#: src/grotto-identity-panel.c:145
+#: src/grotto-identity-panel.c:170
 msgid "Signer unavailable"
 msgstr ""
 
-#: src/grotto-identity-panel.c:146
+#: src/grotto-identity-panel.c:171
 msgid "Open Grotto to check backup and setup status"
 msgstr ""
 
-#: src/grotto-identity-panel.c:160
+#: src/grotto-identity-panel.c:185
 #, c-format
 msgid "Identity %.12s…%.6s"
 msgstr ""
 
-#: src/grotto-identity-panel.c:171
+#: src/grotto-identity-panel.c:196
 msgid "Backup status unavailable in this host"
 msgstr ""
 
-#: src/grotto-identity-panel.c:172
+#: src/grotto-identity-panel.c:197
 msgid "Backup acknowledged"
 msgstr ""
 
-#: src/grotto-identity-panel.c:172
+#: src/grotto-identity-panel.c:197
 msgid "Not backed up"
 msgstr ""
 
-#: src/grotto-identity-panel.c:174
+#: src/grotto-identity-panel.c:199
 #, c-format
 msgid "%u app uses this identity"
 msgid_plural "%u apps use this identity"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/grotto-identity-panel.c:175
+#: src/grotto-identity-panel.c:200
 msgid "Check identity usage in Grotto"
 msgstr ""
 
-#: src/grotto-identity-panel.c:177
+#: src/grotto-identity-panel.c:202
 msgid "Apps that don't choose an identity use this one"
 msgstr ""
 
-#: src/grotto-identity-panel.c:177
+#: src/grotto-identity-panel.c:202
 msgid "Used by apps that don't choose an identity"
 msgstr ""
 
-#: src/grotto-identity-panel.c:194
+#: src/grotto-identity-panel.c:219
 msgid "Watch only — cannot sign"
 msgstr ""
 
-#: src/grotto-identity-panel.c:203
+#: src/grotto-identity-panel.c:238
 msgid "Public Key (Watch Only — Cannot Sign)"
 msgstr ""
 

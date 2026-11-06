@@ -24,7 +24,7 @@ static void dialog_finalized(gpointer data, GObject *object) { (void)object; *(g
 static gboolean presented(GtkWidget *widget, GdkFrameClock *clock, gpointer data) {
   (void)widget; (void)clock; return ++*(guint *)data < 3 ? G_SOURCE_CONTINUE : G_SOURCE_REMOVE;
 }
-typedef struct { GrottoProfileInfo *info, *saved; guint calls[6]; GrottoNip05Status nip05; gboolean upload_fail, save_fail, fetch_fail, offline, hold, hold_fetch; GTask *pending; } Host;
+typedef struct { GrottoProfileInfo *info, *saved; guint calls[GROTTO_PROFILE_FETCH_CACHED + 1]; GrottoNip05Status nip05; gboolean upload_fail, save_fail, fetch_fail, offline, hold, hold_fetch; GTask *pending; } Host;
 static void profile(gpointer data, GrottoProfileAction action, const char *key, const GrottoProfileInfo *info,
   GCancellable *cancel, GAsyncReadyCallback callback, gpointer user) {
   Host *host = data; g_assert_cmpstr(key, ==, "public-profile-key"); host->calls[action]++;
@@ -190,4 +190,65 @@ static void profile_panel(void) {
   gtk_window_destroy(GTK_WINDOW(window)); g_object_unref(window);
   grotto_profile_info_free(host.info); grotto_profile_info_free(host.saved);
 }
-void register_profile_panel_tests(void) { g_test_add_func("/grotto-panels/profile", profile_panel); }
+static AdwAvatar *row_avatar(GtkWidget *widget) {
+  if (ADW_IS_AVATAR(widget)) return ADW_AVATAR(widget);
+  for (GtkWidget *child = gtk_widget_get_first_child(widget); child; child = gtk_widget_get_next_sibling(child)) {
+    AdwAvatar *avatar = row_avatar(child); if (avatar) return avatar;
+  }
+  return NULL;
+}
+typedef struct { guint calls; GTask *pending; } AvatarHost;
+static void cached_avatar_host(gpointer data, GrottoProfileAction action, const char *key, const GrottoProfileInfo *info,
+  GCancellable *cancel, GAsyncReadyCallback callback, gpointer user) {
+  (void)info; AvatarHost *host = data; host->calls++;
+  g_assert_cmpint(action, ==, GROTTO_PROFILE_FETCH_CACHED); g_assert_cmpstr(key, ==, "other-key");
+  g_assert_null(host->pending); host->pending = g_task_new(NULL, cancel, callback, user);
+}
+static void cached_identity_avatar(void) {
+  g_autoptr(GrottoPanelsFakeService) fake = grotto_panels_fake_service_new();
+  GrottoPanelsService *service = GROTTO_PANELS_SERVICE(fake);
+  grotto_panels_fake_service_set_available(fake, TRUE);
+  GrottoPanelsMetadata identity = {.id = "main", .public_key = "main-key", .label = "Main", .is_default = TRUE};
+  g_assert_true(grotto_panels_fake_service_replace(fake, GROTTO_PANELS_IDENTITIES, &identity, NULL));
+  identity.id = "other"; identity.public_key = "other-key"; identity.label = "Other"; identity.is_default = FALSE;
+  g_autoptr(GrottoPanelsItem) other = grotto_panels_item_new(&identity, NULL);
+  g_list_store_append(G_LIST_STORE(grotto_panels_service_get_model(service, GROTTO_PANELS_IDENTITIES)), other);
+  g_autoptr(GtkWidget) panel = g_object_ref_sink(grotto_identity_panel_new(service, NULL));
+  AvatarHost host = {0}; const GrottoPanelsHost callbacks = {.profile_async = cached_avatar_host};
+  grotto_panel_set_host(GROTTO_PANEL(panel), &callbacks, &host, NULL);
+  WAIT(host.calls == 1);
+  AdwAvatar *avatar = row_avatar(find(panel, "Other")); g_assert_nonnull(avatar);
+  g_assert_null(adw_avatar_get_custom_image(avatar));
+  g_assert_true(adw_avatar_get_show_initials(avatar));
+  g_autoptr(GdkPixbuf) pixels = gdk_pixbuf_new(GDK_COLORSPACE_RGB, TRUE, 8, 2, 2); gdk_pixbuf_fill(pixels, 0x224488ff);
+  g_autoptr(GrottoProfileInfo) profile = grotto_profile_info_copy(NULL);
+  profile->published = TRUE; profile->created_at = 200; profile->images[0] = gdk_texture_new_for_pixbuf(pixels);
+  grotto_panels_service_set_profile(service, "other-key", profile);
+  g_assert_true(adw_avatar_get_custom_image(avatar) == GDK_PAINTABLE(profile->images[0]));
+  /* A delayed, older cache-only reply must not clear the refreshed avatar. */
+  g_autoptr(GrottoProfileInfo) older = grotto_profile_info_copy(NULL); older->published = TRUE; older->created_at = 100;
+  gboolean reply_gone = FALSE; g_object_weak_ref(G_OBJECT(host.pending), dialog_finalized, &reply_gone);
+  g_task_return_pointer(host.pending, grotto_profile_info_copy(older), (GDestroyNotify)grotto_profile_info_free); g_clear_object(&host.pending);
+  WAIT(reply_gone);
+  while (g_main_context_pending(NULL)) g_main_context_iteration(NULL, FALSE);
+  g_assert_true(adw_avatar_get_custom_image(avatar) == GDK_PAINTABLE(profile->images[0]));
+  /* Relay-only changes must update the snapshot even when kind 0 is unchanged. */
+  profile->publish_relays = g_strsplit("wss://outbox.example/", " ", -1);
+  profile->bootstrap_used = TRUE; profile->bootstrap_relays = g_strsplit("wss://discovery.example/", " ", -1);
+  grotto_panels_service_set_profile(service, "other-key", profile);
+  g_autoptr(GrottoProfileInfo) relays = grotto_panels_service_dup_profile(service, "other-key");
+  g_assert_true(relays->bootstrap_used); g_assert_cmpstr(relays->publish_relays[0], ==, "wss://outbox.example/");
+  g_assert_cmpstr(relays->bootstrap_relays[0], ==, "wss://discovery.example/");
+  /* Model rebuild/identity switch reuses the cache; it must not call FETCH. */
+  g_signal_emit_by_name(service, "capabilities-changed");
+  avatar = row_avatar(find(panel, "Other"));
+  g_assert_true(adw_avatar_get_custom_image(avatar) == GDK_PAINTABLE(profile->images[0])); g_assert_cmpuint(host.calls, ==, 1);
+  grotto_panels_service_set_profile(service, "other-key", older);
+  g_autoptr(GrottoProfileInfo) winner = grotto_panels_service_dup_profile(service, "other-key");
+  g_assert_cmpuint(winner->created_at, ==, 200);
+  g_assert_true(winner->images[0] == profile->images[0]);
+}
+void register_profile_panel_tests(void) {
+  g_test_add_func("/grotto-panels/profile/editor", profile_panel);
+  g_test_add_func("/grotto-panels/profile/cached-identity-avatar", cached_identity_avatar);
+}

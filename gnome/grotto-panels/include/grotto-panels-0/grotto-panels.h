@@ -197,7 +197,8 @@ typedef enum _GrottoProfileAction {
   GROTTO_PROFILE_FETCH, GROTTO_PROFILE_SAVE, GROTTO_PROFILE_CHOOSE_AVATAR,
   GROTTO_PROFILE_CHOOSE_BANNER,
   GROTTO_PROFILE_LOAD_IMAGES, /* Deprecated/unused; retained for ABI compatibility. */
-  GROTTO_PROFILE_VERIFY_NIP05
+  GROTTO_PROFILE_VERIFY_NIP05,
+  GROTTO_PROFILE_FETCH_CACHED /* Cache only: never discovery, HTTP or signing. */
 } GrottoProfileAction;
 typedef enum _GrottoNip05Status {
   GROTTO_NIP05_UNCHECKED, GROTTO_NIP05_VERIFIED, GROTTO_NIP05_MISMATCH,
@@ -216,6 +217,12 @@ GROTTO_PANELS_API GrottoProfileInfo *grotto_profile_info_copy(const GrottoProfil
 GROTTO_PANELS_API void grotto_profile_info_free(GrottoProfileInfo *info);
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(GrottoProfileInfo, grotto_profile_info_free)
 GROTTO_PANELS_API gboolean grotto_profile_info_validate(const GrottoProfileInfo *info, GError **error);
+/* Main-context-only, bounded public display cache. dup returns an owned copy or
+ * NULL. Hosts publish successful reads/refreshes; older profiles are ignored.
+ * profile-updated(public_key) is emitted after an effective display change.
+ * Views can consult dup before showing loading UI and listen for refreshes. */
+GROTTO_PANELS_API GrottoProfileInfo *grotto_panels_service_dup_profile(GrottoPanelsService *self, const char *public_key);
+GROTTO_PANELS_API void grotto_panels_service_set_profile(GrottoPanelsService *self, const char *public_key, const GrottoProfileInfo *info);
 
 typedef struct _GrottoPanelsHost {
   void (*show_toast)(gpointer host, const char *message);

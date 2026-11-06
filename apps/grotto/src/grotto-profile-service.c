@@ -16,6 +16,17 @@
 
 #define IMAGE_LIMIT (5 * 1024 * 1024)
 #define IMAGE_PIXELS (24 * 1024 * 1024)
+#define PROFILE_FRESH_SECONDS (15 * 60)
+#define TEXTURE_CACHE_BYTES (32 * 1024 * 1024)
+#define TEXTURE_CACHE_ENTRIES 32
+typedef struct { char *url; GdkTexture *texture; gsize bytes; } TextureEntry;
+typedef struct { GQueue textures; gsize bytes; GHashTable *refreshing; } ProfileCache;
+static void texture_entry_free(gpointer data) {
+  TextureEntry *e = data; g_free(e->url); g_object_unref(e->texture); g_free(e);
+}
+static void profile_cache_free(gpointer data) {
+  ProfileCache *c = data; g_queue_clear_full(&c->textures, texture_entry_free); g_hash_table_unref(c->refreshing); g_free(c);
+}
 static const char *const field_names[] = {"name", "display_name", "about", "picture", "banner", "nip05", "lud16", "lud06", "website"};
 static const guint kinds[] = {NOSTR_KIND_PROFILE_METADATA, NOSTR_KIND_RELAY_LIST_METADATA, NOSTR_KIND_BLOSSOM_SERVER_LIST, NOSTR_KIND_DM_RELAY_LIST};
 typedef struct {
@@ -36,10 +47,15 @@ typedef struct {
   GObject *cache_scope;
   GMutex *cache_lock;
   gint64 discovery_deadline;
+  ProfileCache *cache;
+  gboolean refresh, cache_hit, stale;
+  GrottoProfileInfo *notify;
+  GAsyncReadyCallback callback;
+  gpointer user_data;
 } Job;
 static void cache_lock_free(gpointer data) { g_mutex_clear(data); g_free(data); }
 static void job_free(gpointer data) {
-  Job *j = data; g_free(j->npub); grotto_profile_info_free(j->info); g_clear_object(&j->file);
+  Job *j = data; grotto_profile_info_free(j->notify); g_free(j->npub); grotto_profile_info_free(j->info); g_clear_object(&j->file);
   g_clear_pointer(&j->bytes, g_bytes_unref); g_clear_object(&j->preview); g_free(j->mime); g_strfreev(j->destinations); g_strfreev(j->discovery_relays); g_strfreev(j->auth_required_relays); g_strfreev(j->bootstrap_relays); g_clear_object(&j->controller); g_main_context_unref(j->ui_context); g_clear_object(&j->bus); g_hash_table_unref(j->capabilities); g_clear_object(&j->cache_scope); g_free(j);
 }
 static const char *string(JsonObject *o, const char *key) {
@@ -92,6 +108,35 @@ static void cache_write(Job *j, guint kind, const char *json) {
   g_autofree char *path = cache_path(j, kind);
   if (write && !g_mkdir_with_parents(dir, 0700))
     g_file_set_contents_full(path, json, -1, G_FILE_SET_CONTENTS_CONSISTENT | G_FILE_SET_CONTENTS_DURABLE, 0600, NULL);
+  g_mutex_unlock(j->cache_lock);
+}
+/* A successful EOSE backfill is fresh for fifteen minutes, independent of
+ * event created_at (an unchanged profile may be years old). Missing/invalid or
+ * future stamps are stale. A negative result is cached only after real EOSE,
+ * never on timeout, Tor refusal, or an identity with no relays. */
+static char *fetch_stamp_path(Job *j) {
+  g_autofree char *name = g_strdup_printf("%s-fetch.ini", j->hex);
+  return g_build_filename(g_get_user_cache_dir(), "grotto", "profiles", name, NULL);
+}
+static GKeyFile *fetch_stamp(Job *j) {
+  GKeyFile *stamp = g_key_file_new(); g_autofree char *path = fetch_stamp_path(j);
+  GStatBuf st;
+  if (!g_stat(path, &st) && st.st_size <= 65536) g_key_file_load_from_file(stamp, path, G_KEY_FILE_NONE, NULL);
+  return stamp;
+}
+static void remember_fetch(Job *j, gboolean absent) {
+  if (g_cancellable_is_cancelled(j->cancel) || j->no_relays) return;
+  g_autoptr(GKeyFile) stamp = g_key_file_new();
+  g_key_file_set_int64(stamp, "fetch", "time", g_get_real_time() / G_USEC_PER_SEC);
+  g_key_file_set_boolean(stamp, "fetch", "absent", absent);
+  g_key_file_set_boolean(stamp, "fetch", "bootstrap", j->bootstrap_used);
+  if (j->discovery_relays) g_key_file_set_string_list(stamp, "fetch", "discovery", (const char *const *)j->discovery_relays, g_strv_length(j->discovery_relays));
+  if (j->bootstrap_relays) g_key_file_set_string_list(stamp, "fetch", "bootstrap-relays", (const char *const *)j->bootstrap_relays, g_strv_length(j->bootstrap_relays));
+  if (j->auth_required_relays) g_key_file_set_string_list(stamp, "fetch", "auth-required-relays", (const char *const *)j->auth_required_relays, g_strv_length(j->auth_required_relays));
+  g_autofree char *path = fetch_stamp_path(j), *text = g_key_file_to_data(stamp, NULL, NULL);
+  g_autofree char *dir = g_path_get_dirname(path);
+  g_mutex_lock(j->cache_lock);
+  if (!g_mkdir_with_parents(dir, 0700)) g_file_set_contents_full(path, text, -1, G_FILE_SET_CONTENTS_CONSISTENT, 0600, NULL);
   g_mutex_unlock(j->cache_lock);
 }
 typedef struct {
@@ -565,13 +610,49 @@ GdkTexture *grotto_profile_decode_image(GBytes *bytes, char **mime, GError **err
   if (mime) *mime = g_strdup(!strcmp(type, "png") ? "image/png" : !strcmp(type, "jpeg") ? "image/jpeg" : "image/webp");
   return gdk_texture_new_for_pixbuf(gdk_pixbuf_loader_get_pixbuf(loader));
 }
+static GdkTexture *texture_lookup(Job *j, const char *url) {
+  GdkTexture *texture = NULL; g_mutex_lock(j->cache_lock);
+  for (GList *l = j->cache->textures.head; l; l = l->next) {
+    TextureEntry *e = l->data;
+    if (strcmp(e->url, url)) continue;
+    texture = g_object_ref(e->texture); g_queue_unlink(&j->cache->textures, l); g_queue_push_head_link(&j->cache->textures, l); break;
+  }
+  g_mutex_unlock(j->cache_lock); return texture;
+}
+static GdkTexture *texture_remember(Job *j, const char *url, GdkTexture *texture) {
+  if (!texture) return NULL;
+  gsize size = (gsize)gdk_texture_get_width(texture) * gdk_texture_get_height(texture) * 4;
+  if (size > TEXTURE_CACHE_BYTES) return texture;
+  g_mutex_lock(j->cache_lock);
+  for (GList *l = j->cache->textures.head; l; l = l->next) {
+    TextureEntry *e = l->data;
+    if (strcmp(e->url, url)) continue;
+    g_object_unref(texture); texture = g_object_ref(e->texture);
+    g_queue_unlink(&j->cache->textures, l); g_queue_push_head_link(&j->cache->textures, l);
+    g_mutex_unlock(j->cache_lock); return texture;
+  }
+  TextureEntry *e = g_new0(TextureEntry, 1); e->url = g_strdup(url); e->texture = g_object_ref(texture); e->bytes = size;
+  g_queue_push_head(&j->cache->textures, e); j->cache->bytes += size;
+  while (j->cache->textures.length > TEXTURE_CACHE_ENTRIES || j->cache->bytes > TEXTURE_CACHE_BYTES) {
+    TextureEntry *old = g_queue_pop_tail(&j->cache->textures); j->cache->bytes -= old->bytes; texture_entry_free(old);
+  }
+  g_mutex_unlock(j->cache_lock); return texture;
+}
 static GdkTexture *download_image(Job *j, const char *url, gboolean online) {
   if (!endpoint(url, FALSE)) return NULL;
+  GdkTexture *known = texture_lookup(j, url); if (known) return known;
   g_autofree char *hash = g_compute_checksum_for_string(G_CHECKSUM_SHA256, url, -1);
   g_autofree char *name = g_strdup_printf("%s-image-%s", j->hex, hash);
   g_autofree char *dir = g_build_filename(g_get_user_cache_dir(), "grotto", "profiles", NULL);
   g_autofree char *path = g_build_filename(dir, name, NULL);
   g_autoptr(GBytes) bytes = NULL;
+  GStatBuf st; g_autofree char *data = NULL; gsize size;
+  if (!g_stat(path, &st) && st.st_size <= IMAGE_LIMIT && g_file_get_contents(path, &data, &size, NULL)) {
+    bytes = g_bytes_new_take(g_steal_pointer(&data), size);
+    GdkTexture *texture = grotto_profile_decode_image(bytes, NULL, NULL);
+    if (texture) return texture_remember(j, url, texture);
+    g_clear_pointer(&bytes, g_bytes_unref);
+  }
   if (online && !g_cancellable_is_cancelled(j->cancel)) {
     g_autoptr(SoupSession) session = soup_session_new_with_options("timeout", 15, NULL);
     g_autofree char *current = g_strdup(url);
@@ -604,13 +685,10 @@ static GdkTexture *download_image(Job *j, const char *url, gboolean online) {
         gsize size; const char *data = g_bytes_get_data(bytes, &size);
         g_file_set_contents_full(path, data, size, G_FILE_SET_CONTENTS_CONSISTENT, 0600, NULL);
       }
-      return texture;
+      return texture_remember(j, url, texture);
     }
   }
-  GStatBuf st; g_autofree char *data = NULL; gsize size;
-  if (g_stat(path, &st) || st.st_size > IMAGE_LIMIT || !g_file_get_contents(path, &data, &size, NULL)) return NULL;
-  g_clear_pointer(&bytes, g_bytes_unref); bytes = g_bytes_new_take(g_steal_pointer(&data), size);
-  return grotto_profile_decode_image(bytes, NULL, NULL);
+  return NULL;
 }
 typedef struct { gboolean done, ok; guint accepted; } Publication;
 static void published(NostrPublisher *publisher, const NostrPublishResult *result, gpointer data) {
@@ -711,10 +789,55 @@ GrottoNip05Status grotto_profile_nip05_response(const char *data, gsize length, 
   const char *key = string(json_node_get_object(names), name);
   return strlen(key) == 64 && !strcmp(key, hex) ? GROTTO_NIP05_VERIFIED : GROTTO_NIP05_MISMATCH;
 }
+static void merge_cached_events(Job *j, char **events) {
+  for (guint i = 0; i < G_N_ELEMENTS(kinds); i++) cache_write(j, kinds[i], events[i]);
+  /* Re-read the winner: another page may have published while discovery was
+   * in flight. Its newer event owns both the disk cache and this display. */
+  for (guint i = 0; i < G_N_ELEMENTS(kinds); i++) {
+    char *current = cache_read(j, kinds[i]);
+    if (current) { g_free(events[i]); events[i] = current; }
+  }
+}
 static void worker(GTask *task, gpointer source, gpointer data, GCancellable *cancel) {
   (void)source; Job *j = data; j->cancel = cancel;
   g_autoptr(GError) error = NULL;
   g_autoptr(GMainContext) context = g_main_context_new(); g_main_context_push_thread_default(context);
+  char *events[G_N_ELEMENTS(kinds)] = {0};
+  for (guint i = 0; i < G_N_ELEMENTS(kinds); i++) events[i] = cache_read(j, kinds[i]);
+  gboolean network = TRUE, load_images = TRUE;
+  g_autoptr(GSettingsSchema) schema = g_settings_schema_source_lookup(g_settings_schema_source_get_default(), "org.nostr.Grotto", TRUE);
+  if (schema) {
+    g_autoptr(GSettings) settings = g_settings_new_full(schema, NULL, NULL);
+    network = !g_settings_get_boolean(settings, "use-tor-for-relays");
+    load_images = g_settings_get_boolean(settings, "load-profile-images");
+  }
+  if (!j->refresh && (j->action == GROTTO_PROFILE_FETCH || j->action == GROTTO_PROFILE_FETCH_CACHED)) {
+    g_autoptr(GKeyFile) stamp = fetch_stamp(j);
+    gint64 fetched = g_key_file_get_int64(stamp, "fetch", "time", NULL), now = g_get_real_time() / G_USEC_PER_SEC;
+    j->stale = fetched <= 0 || fetched > now || now - fetched >= PROFILE_FRESH_SECONDS;
+    g_autofree char *metadata_path = cache_path(j, kinds[0]);
+    gboolean absent = fetched > 0 && fetched <= now && g_key_file_get_boolean(stamp, "fetch", "absent", NULL) &&
+      !g_file_test(metadata_path, G_FILE_TEST_EXISTS);
+    GrottoProfileInfo *cached = (events[0] || absent) ? profile_parse(j, events[0], NULL) : NULL;
+    if (cached) {
+      j->cache_hit = TRUE; cached->cached = !network; cached->tor_blocked = !network;
+      cached->bootstrap_used = g_key_file_get_boolean(stamp, "fetch", "bootstrap", NULL);
+      cached->discovery_relays = g_key_file_get_string_list(stamp, "fetch", "discovery", NULL, NULL);
+      cached->bootstrap_relays = g_key_file_get_string_list(stamp, "fetch", "bootstrap-relays", NULL, NULL);
+      cached->auth_required_relays = g_key_file_get_string_list(stamp, "fetch", "auth-required-relays", NULL, NULL);
+      cached->publish_relays = events[1] ? nostr_publish_nip65_relays(events[1], NOSTR_PUBLISH_NIP65_WRITE, NULL) : configured(j, TRUE);
+      for (guint i = 0; i < 2; i++) cached->images[i] = download_image(j, cached->fields[i ? GROTTO_PROFILE_BANNER : GROTTO_PROFILE_PICTURE], FALSE);
+      if (!g_cancellable_is_cancelled(cancel)) j->notify = grotto_profile_info_copy(cached);
+      for (guint i = 0; i < G_N_ELEMENTS(kinds); i++) g_free(events[i]);
+      g_main_context_pop_thread_default(context);
+      g_task_return_pointer(task, cached, (GDestroyNotify)grotto_profile_info_free); return;
+    }
+    if (j->action == GROTTO_PROFILE_FETCH_CACHED) {
+      for (guint i = 0; i < G_N_ELEMENTS(kinds); i++) g_free(events[i]);
+      g_main_context_pop_thread_default(context);
+      g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_NOT_FOUND, _("No cached profile")); return;
+    }
+  }
   /* Each operation owns a connection. Closing it on this worker cancels
    * the daemon continuation too; a local GCancellable alone cannot cancel
    * an already-delivered D-Bus signing request on the UI's shared bus. */
@@ -729,24 +852,15 @@ static void worker(GTask *task, gpointer source, gpointer data, GCancellable *ca
   }
   const NostrPublishSignerVTable table = {.sign_event_json = sign_event};
   g_autoptr(NostrPublishSigner) signer = nostr_publish_signer_new_from_vtable(&table, j);
-  char *events[G_N_ELEMENTS(kinds)] = {0};
-  for (guint i = 0; i < G_N_ELEMENTS(kinds); i++) events[i] = cache_read(j, kinds[i]);
-  gboolean network = TRUE, load_images = TRUE;
-  g_autoptr(GSettingsSchema) schema = g_settings_schema_source_lookup(g_settings_schema_source_get_default(), "org.nostr.Grotto", TRUE);
-  if (schema) {
-    g_autoptr(GSettings) settings = g_settings_new_full(schema, NULL, NULL);
-    network = !g_settings_get_boolean(settings, "use-tor-for-relays");
-    load_images = g_settings_get_boolean(settings, "load-profile-images");
-  }
   if (!network && !error) g_set_error_literal(&error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
     _("Profile network access is unavailable in Tor mode. The saved profile is still available"));
   gboolean metadata = j->action == GROTTO_PROFILE_FETCH || j->action == GROTTO_PROFILE_SAVE;
   gboolean online = network && j->bus && (!metadata || discover(j, signer, events, &error));
   GrottoProfileInfo *result = NULL;
   if (j->action == GROTTO_PROFILE_FETCH) {
+    if (online) merge_cached_events(j, events);
     if (online || events[0]) { g_clear_error(&error); result = profile_parse(j, events[0], &error); if (result) { result->cached = !online; result->tor_blocked = !network; } }
     if (result) {
-      if (online) for (guint i = 0; i < G_N_ELEMENTS(kinds); i++) cache_write(j, kinds[i], events[i]);
       for (guint i = 0; i < 2; i++) result->images[i] = download_image(j, result->fields[i ? GROTTO_PROFILE_BANNER : GROTTO_PROFILE_PICTURE], online && load_images);
     }
   } else if (j->action == GROTTO_PROFILE_VERIFY_NIP05) {
@@ -759,6 +873,7 @@ static void worker(GTask *task, gpointer source, gpointer data, GCancellable *ca
       /* Re-fetch through the same EOSE-aware path, retaining the acknowledged
        * event if a read replica has not caught up yet. Never sign twice. */
       g_autoptr(GError) refresh_error = NULL; gboolean refreshed = discover(j, signer, events, &refresh_error);
+      merge_cached_events(j, events);
       result = profile_parse(j, events[0], &error); if (result) { result->cached = !refreshed;
         for (guint i = 0; i < 2; i++) {
           guint field = i ? GROTTO_PROFILE_BANNER : GROTTO_PROFILE_PICTURE;
@@ -773,14 +888,14 @@ static void worker(GTask *task, gpointer source, gpointer data, GCancellable *ca
     result->auth_required_relays = g_strdupv(j->auth_required_relays);
     result->bootstrap_relays = g_strdupv(j->bootstrap_relays);
     result->publish_relays = events[1] ? nostr_publish_nip65_relays(events[1], NOSTR_PUBLISH_NIP65_WRITE, NULL) : configured(j, TRUE);
-    if (online) for (guint i = 0; i < G_N_ELEMENTS(kinds); i++) cache_write(j, kinds[i], events[i]);
+    if (online) { merge_cached_events(j, events); remember_fetch(j, !events[0]); }
     if (online && !j->no_relays) result->nip05_status = verify_nip05(j, result->fields[GROTTO_PROFILE_NIP05]);
   }
   if (g_cancellable_is_cancelled(cancel)) { g_clear_pointer(&result, grotto_profile_info_free); g_clear_error(&error); g_cancellable_set_error_if_cancelled(cancel, &error); }
   for (guint i = 0; i < G_N_ELEMENTS(kinds); i++) g_free(events[i]);
   if (j->bus) g_dbus_connection_close_sync(j->bus, NULL, NULL);
   g_main_context_pop_thread_default(context);
-  if (result) g_task_return_pointer(task, result, (GDestroyNotify)grotto_profile_info_free);
+  if (result) { if (metadata) j->notify = grotto_profile_info_copy(result); g_task_return_pointer(task, result, (GDestroyNotify)grotto_profile_info_free); }
   else if (error) g_task_return_error(task, g_steal_pointer(&error));
   else g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED, "Profile operation failed");
 }
@@ -889,16 +1004,54 @@ static void chosen(GObject *source, GAsyncResult *result, gpointer data) {
   GTask *preview = g_task_new(NULL, g_task_get_cancellable(task), preview_ready, task);
   g_task_set_task_data(preview, j, NULL); g_task_run_in_thread(preview, preview_worker); g_object_unref(preview);
 }
-void grotto_profile_service_async(GtkWindow *parent, GrottoApprovalController *controller, GrottoProfileAction action, const char *npub,
-  const GrottoProfileInfo *info, GCancellable *cancel, GAsyncReadyCallback callback, gpointer data) {
+static void service_async(GtkWindow *parent, GrottoApprovalController *controller, GrottoProfileAction action, const char *npub,
+  const GrottoProfileInfo *info, GCancellable *cancel, GAsyncReadyCallback callback, gpointer data, GObject *scope, gboolean refresh);
+static gboolean refresh_later(gpointer data) {
+  GTask *task = data; Job *j = g_task_get_task_data(task);
+  if (g_cancellable_is_cancelled(g_task_get_cancellable(task))) g_hash_table_remove(j->cache->refreshing, j->npub);
+  else service_async(g_task_get_source_object(task), j->controller, GROTTO_PROFILE_FETCH, j->npub, NULL,
+    g_task_get_cancellable(task), NULL, NULL, j->cache_scope, TRUE);
+  return G_SOURCE_REMOVE;
+}
+static void operation_ready(GObject *source, GAsyncResult *result, gpointer data) {
+  (void)data; GTask *task = G_TASK(result); Job *j = g_task_get_task_data(task);
+  if (j) {
+    if (j->refresh) g_hash_table_remove(j->cache->refreshing, j->npub);
+    if (j->notify && !g_cancellable_is_cancelled(g_task_get_cancellable(task))) {
+      GrottoPanelsService *service = g_object_get_data(j->cache_scope, "grotto-profile-panels-service");
+      if (service) grotto_panels_service_set_profile(service, j->npub, j->notify);
+      if (j->action == GROTTO_PROFILE_FETCH && j->cache_hit && j->stale && !j->notify->tor_blocked &&
+          !g_hash_table_contains(j->cache->refreshing, j->npub)) {
+        g_hash_table_add(j->cache->refreshing, g_strdup(j->npub));
+        /* Deliver through the panel's normal-priority callback chain before
+         * a background worker can contact relays. Keep the task/host alive and
+         * recheck cancellation when this lower-priority idle actually runs. */
+        GSource *idle = g_idle_source_new();
+        g_source_set_callback(idle, refresh_later, g_object_ref(task), g_object_unref);
+        g_source_attach(idle, j->ui_context); g_source_unref(idle);
+      }
+    }
+    if (j->callback) j->callback(source, result, j->user_data);
+    else { g_autoptr(GError) error = NULL; g_autoptr(GrottoProfileInfo) ignored = g_task_propagate_pointer(task, &error); }
+  }
+}
+static void service_async(GtkWindow *parent, GrottoApprovalController *controller, GrottoProfileAction action, const char *npub,
+  const GrottoProfileInfo *info, GCancellable *cancel, GAsyncReadyCallback callback, gpointer data, GObject *scope, gboolean refresh) {
   g_autoptr(GCancellable) owned_cancel = cancel ? g_object_ref(cancel) : g_cancellable_new();
-  GTask *task = g_task_new(parent, owned_cancel, callback, data); guint8 pk[32];
-  if (action < GROTTO_PROFILE_FETCH || action > GROTTO_PROFILE_VERIFY_NIP05 || action == GROTTO_PROFILE_LOAD_IMAGES || (action != GROTTO_PROFILE_FETCH && !info) || !npub || nostr_nip19_decode_npub(npub, pk) || !grotto_profile_info_validate(info, NULL)) {
+  GTask *task = g_task_new(parent, owned_cancel, operation_ready, NULL); guint8 pk[32];
+  if (action < GROTTO_PROFILE_FETCH || action > GROTTO_PROFILE_FETCH_CACHED || action == GROTTO_PROFILE_LOAD_IMAGES || (action != GROTTO_PROFILE_FETCH && action != GROTTO_PROFILE_FETCH_CACHED && !info) || !npub || nostr_nip19_decode_npub(npub, pk) || !grotto_profile_info_validate(info, NULL)) {
+    /* Invalid requests have no Job; use the caller's normal async delivery. */
+    g_object_unref(task); task = g_task_new(parent, owned_cancel, callback, data);
     g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "Invalid identity or profile"); g_object_unref(task); return;
   }
-  Job *j = g_new0(Job, 1); j->controller = controller ? g_object_ref(controller) : NULL;
+  Job *j = g_new0(Job, 1); j->callback = callback; j->user_data = data; j->refresh = refresh; j->controller = controller ? g_object_ref(controller) : NULL;
   j->ui_context = g_main_context_ref_thread_default(); j->capabilities = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL); j->action = action;
-  j->cache_scope = parent ? g_object_ref(G_OBJECT(parent)) : g_object_new(G_TYPE_OBJECT, NULL);
+  j->cache_scope = scope ? g_object_ref(scope) : parent ? g_object_ref(G_OBJECT(parent)) : g_object_new(G_TYPE_OBJECT, NULL);
+  j->cache = g_object_get_data(j->cache_scope, "grotto-profile-cache");
+  if (!j->cache) {
+    j->cache = g_new0(ProfileCache, 1); j->cache->refreshing = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+    g_object_set_data_full(j->cache_scope, "grotto-profile-cache", j->cache, profile_cache_free);
+  }
   j->cache_lock = g_object_get_data(j->cache_scope, "grotto-profile-cache-lock");
   if (!j->cache_lock) {
     j->cache_lock = g_new0(GMutex, 1); g_mutex_init(j->cache_lock);
@@ -914,4 +1067,13 @@ void grotto_profile_service_async(GtkWindow *parent, GrottoApprovalController *c
     gtk_file_filter_add_mime_type(filter, "image/png"); gtk_file_filter_add_mime_type(filter, "image/jpeg"); gtk_file_filter_add_mime_type(filter, "image/webp"); g_list_store_append(filters, filter); g_object_unref(filter);
     gtk_file_dialog_set_filters(dialog, G_LIST_MODEL(filters)); gtk_file_dialog_open(dialog, parent, cancel, chosen, task);
   } else { g_task_run_in_thread(task, worker); g_object_unref(task); }
+}
+void grotto_profile_service_bind(GtkWindow *parent, GrottoPanelsService *service) {
+  g_return_if_fail(GTK_IS_WINDOW(parent));
+  g_return_if_fail(!service || GROTTO_PANELS_IS_SERVICE(service));
+  g_object_set_data_full(G_OBJECT(parent), "grotto-profile-panels-service", service ? g_object_ref(service) : NULL, service ? g_object_unref : NULL);
+}
+void grotto_profile_service_async(GtkWindow *parent, GrottoApprovalController *controller, GrottoProfileAction action, const char *npub,
+  const GrottoProfileInfo *info, GCancellable *cancel, GAsyncReadyCallback callback, gpointer data) {
+  service_async(parent, controller, action, npub, info, cancel, callback, data, NULL, FALSE);
 }

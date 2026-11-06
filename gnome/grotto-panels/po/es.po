@@ -4,7 +4,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: grotto-panels 0.1.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-06 03:02-0800\n"
+"POT-Creation-Date: 2026-11-06 11:36-0800\n"
 "PO-Revision-Date: 2026-11-04 00:00+0000\n"
 "Last-Translator: Grotto contributors\n"
 "Language-Team: Spanish\n"
@@ -15,17 +15,17 @@ msgstr ""
 "Plural-Forms: nplurals=2; plural=(n != 1);\n"
 
 #: data/identity-panel.blp:5 data/identity-panel.blp:9
-#: src/grotto-identity-panel.c:193 src/grotto-apps-panel.c:25
+#: src/grotto-identity-panel.c:218 src/grotto-apps-panel.c:25
 #: src/grotto-app-detail.c:305 src/grotto-app-detail.c:307
 #: src/grotto-app-detail.c:309
 msgid "Identity"
 msgstr "Identidad"
 
-#: data/identity-panel.blp:14 src/grotto-identity-panel.c:146
+#: data/identity-panel.blp:14 src/grotto-identity-panel.c:171
 msgid "This identity isn't backed up"
 msgstr "Todavía no has hecho una copia de seguridad de esta identidad"
 
-#: data/identity-panel.blp:14 src/grotto-identity-panel.c:153
+#: data/identity-panel.blp:14 src/grotto-identity-panel.c:178
 msgid "Back Up…"
 msgstr "Crear copia de seguridad…"
 
@@ -33,11 +33,11 @@ msgstr "Crear copia de seguridad…"
 msgid "Dismiss Backup Reminder"
 msgstr "Descartar recordatorio de copia de seguridad"
 
-#: data/identity-panel.blp:19 src/grotto-identity-panel.c:141
+#: data/identity-panel.blp:19 src/grotto-identity-panel.c:166
 msgid "No Identity Yet"
 msgstr "Aún no hay ninguna identidad"
 
-#: data/identity-panel.blp:20 src/grotto-identity-panel.c:142
+#: data/identity-panel.blp:20 src/grotto-identity-panel.c:167
 msgid "Create or import an identity to start signing"
 msgstr "Crea o importa una identidad para empezar a firmar"
 
@@ -49,7 +49,7 @@ msgstr "_Añadir identidad…"
 msgid "_Name on This Device"
 msgstr "_Nombre en este dispositivo"
 
-#: data/identity-panel.blp:31 src/grotto-identity-panel.c:203
+#: data/identity-panel.blp:31 src/grotto-identity-panel.c:238
 msgid "Public Key"
 msgstr "Clave pública"
 
@@ -99,7 +99,7 @@ msgid "_Remove Identity…"
 msgstr "_Eliminar identidad…"
 
 #: data/apps-panel.blp:11 data/activity-panel.blp:10 data/remote-panel.blp:8
-#: src/grotto-identity-panel.c:141 src/grotto-remote-panel.c:111
+#: src/grotto-identity-panel.c:166 src/grotto-remote-panel.c:111
 msgid "Signer Unavailable"
 msgstr "El firmante no está disponible"
 
@@ -245,75 +245,75 @@ msgstr ""
 "Desconecta las aplicaciones remotas y cancela los enlaces de vinculación. Se "
 "conservan las identidades y los permisos de las aplicaciones locales."
 
-#: src/grotto-identity-panel.c:106
+#: src/grotto-identity-panel.c:107
 msgid "Identity updated"
 msgstr "Identidad actualizada"
 
-#: src/grotto-identity-panel.c:106
+#: src/grotto-identity-panel.c:107
 msgid "Identity wasn't updated. Try again"
 msgstr "No se ha actualizado la identidad. Vuelve a intentarlo"
 
-#: src/grotto-identity-panel.c:141
+#: src/grotto-identity-panel.c:166
 msgid "Identity Unavailable"
 msgstr "La identidad no está disponible"
 
-#: src/grotto-identity-panel.c:142
+#: src/grotto-identity-panel.c:167
 msgid "Open Grotto and try again"
 msgstr "Abre Grotto y vuelve a intentarlo"
 
-#: src/grotto-identity-panel.c:142
+#: src/grotto-identity-panel.c:167
 msgid "This identity is no longer on this device"
 msgstr "Esta identidad ya no está en este dispositivo"
 
-#: src/grotto-identity-panel.c:145
+#: src/grotto-identity-panel.c:170
 msgid "Signer unavailable"
 msgstr "El firmante no está disponible"
 
-#: src/grotto-identity-panel.c:146
+#: src/grotto-identity-panel.c:171
 msgid "Open Grotto to check backup and setup status"
 msgstr ""
 
-#: src/grotto-identity-panel.c:160
+#: src/grotto-identity-panel.c:185
 #, c-format
 msgid "Identity %.12s…%.6s"
 msgstr "Identidad %.12s…%.6s"
 
-#: src/grotto-identity-panel.c:171
+#: src/grotto-identity-panel.c:196
 msgid "Backup status unavailable in this host"
 msgstr ""
 
-#: src/grotto-identity-panel.c:172
+#: src/grotto-identity-panel.c:197
 msgid "Backup acknowledged"
 msgstr "Copia de seguridad confirmada"
 
-#: src/grotto-identity-panel.c:172
+#: src/grotto-identity-panel.c:197
 msgid "Not backed up"
 msgstr "Sin copia de seguridad"
 
-#: src/grotto-identity-panel.c:174
+#: src/grotto-identity-panel.c:199
 #, c-format
 msgid "%u app uses this identity"
 msgid_plural "%u apps use this identity"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/grotto-identity-panel.c:175
+#: src/grotto-identity-panel.c:200
 msgid "Check identity usage in Grotto"
 msgstr ""
 
-#: src/grotto-identity-panel.c:177
+#: src/grotto-identity-panel.c:202
 msgid "Apps that don't choose an identity use this one"
 msgstr "Las aplicaciones que no eligen una identidad utilizan esta"
 
-#: src/grotto-identity-panel.c:177
+#: src/grotto-identity-panel.c:202
 msgid "Used by apps that don't choose an identity"
 msgstr "La utilizan las aplicaciones que no eligen una identidad"
 
-#: src/grotto-identity-panel.c:194
+#: src/grotto-identity-panel.c:219
 msgid "Watch only — cannot sign"
 msgstr "Solo observación: no puede firmar"
 
-#: src/grotto-identity-panel.c:203
+#: src/grotto-identity-panel.c:238
 msgid "Public Key (Watch Only — Cannot Sign)"
 msgstr "Clave pública (solo observación: no puede firmar)"
 

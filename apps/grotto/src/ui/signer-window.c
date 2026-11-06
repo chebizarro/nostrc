@@ -849,7 +849,7 @@ static void host_profile(gpointer data, GrottoProfileAction action, const char *
   const GrottoProfileInfo *info, GCancellable *cancel, GAsyncReadyCallback callback, gpointer user_data) {
   g_autoptr(SignerWindow) self = g_weak_ref_get(data);
   gboolean allowed = self && !gn_session_manager_is_locked(gn_session_manager_get_default());
-  if (allowed && action != GROTTO_PROFILE_FETCH && action != GROTTO_PROFILE_VERIFY_NIP05) {
+  if (allowed && action != GROTTO_PROFILE_FETCH && action != GROTTO_PROFILE_FETCH_CACHED && action != GROTTO_PROFILE_VERIFY_NIP05) {
     allowed = FALSE;
     GListModel *identities = grotto_panels_service_get_model(self->identity_service, GROTTO_PANELS_IDENTITIES);
     for (guint i = 0; identities && i < g_list_model_get_n_items(identities); i++) {
@@ -865,6 +865,7 @@ static void host_profile(gpointer data, GrottoProfileAction action, const char *
   grotto_profile_service_async(GTK_WINDOW(self), self->approval_controller, action, key, info, cancel, callback, user_data);
 }
 static void setup_panels(SignerWindow *self) {
+  grotto_profile_service_bind(GTK_WINDOW(self), self->identity_service);
   self->panels[0] = GROTTO_PANEL(g_object_ref_sink(grotto_identity_panel_new(self->identity_service, NULL)));
   self->panels[1] = GROTTO_PANEL(g_object_ref_sink(grotto_apps_panel_new(self->identity_service)));
   self->panels[2] = GROTTO_PANEL(g_object_ref_sink(grotto_activity_panel_new(self->identity_service)));
