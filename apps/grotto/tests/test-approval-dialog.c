@@ -240,6 +240,7 @@ static void explicit_mode(Fixture *f, gconstpointer data) {
   g_autoptr(GVariant) row = info(NOSTR_KIND_PROFILE_METADATA, "sign_event", 120);
   GVariantDict d; g_variant_dict_init(&d, row);
   g_variant_dict_insert(&d, "policy_review", "b", g_str_has_suffix(mode, "saved"));
+  g_variant_dict_insert(&d, "identity_label", "s", "UTM");
   g_variant_dict_insert(&d, "identity_drift", "b", TRUE);
   GVariantBuilder permissions, permission;
   g_variant_builder_init(&permissions, G_VARIANT_TYPE("aa{sv}"));
@@ -255,6 +256,12 @@ static void explicit_mode(Fixture *f, gconstpointer data) {
   g_autoptr(GVariant) with_review = g_variant_ref_sink(g_variant_dict_end(&d));
   gnostr_approval_dialog_set_info(f->dialog, with_review, "Verified client");
   g_assert_true(gtk_widget_get_visible(child(f, "group_saved")));
+  if (g_str_has_suffix(mode, "saved")) {
+    g_assert_cmpstr(subtitle(f, "saved_status"), ==,
+        "pending policy review. Identity: UTM. Original expiry: Until revoked");
+    g_assert_null(strstr(subtitle(f, "saved_status"), "npub"));
+    g_assert_nonnull(strstr(subtitle(f, "row_identity"), "UTM · npub-pinned-by-daemon"));
+  }
   if (!strcmp(mode, "block-operation"))
     g_assert_true(gtk_widget_activate_action(GTK_WIDGET(f->dialog), "review.block-operation", NULL));
   else {
@@ -277,6 +284,33 @@ static void explicit_mode(Fixture *f, gconstpointer data) {
     g_assert_true(gtk_widget_get_sensitive(child(f, "btn_approve")));
   }
   g_assert_cmpstr(f->mode, ==, mode); g_assert_cmpuint(f->calls, ==, 0);
+}
+static void saved_identity_drift(Fixture *f, gconstpointer data) {
+  (void)data;
+  g_autoptr(GVariant) original = info(NOSTR_KIND_TEXT_NOTE, "sign_event", 120);
+  for (guint other = 0; other < 2; other++) {
+    GVariantDict display; g_variant_dict_init(&display, original);
+    g_variant_dict_insert(&display, "identity_label", "s", "UTM");
+    g_variant_dict_insert(&display, "identity_drift", "b", TRUE);
+    GVariantBuilder permissions, permission;
+    g_variant_builder_init(&permissions, G_VARIANT_TYPE("aa{sv}"));
+    g_variant_builder_init(&permission, G_VARIANT_TYPE_VARDICT);
+    g_variant_builder_add(&permission, "{sv}", "operation", g_variant_new_string("event"));
+    g_variant_builder_add(&permission, "{sv}", "event-kind", g_variant_new_int32(NOSTR_KIND_TEXT_NOTE));
+    g_variant_builder_add(&permission, "{sv}", "identity",
+        g_variant_new_string(other ? "npub-another-identity" : "npub-other-identity"));
+    g_variant_builder_add_value(&permissions, g_variant_builder_end(&permission));
+    g_variant_dict_insert_value(&display, "permission_rows", g_variant_builder_end(&permissions));
+    g_autoptr(GVariant) row = g_variant_ref_sink(g_variant_dict_end(&display));
+    gnostr_approval_dialog_set_info(f->dialog, row, "Verified client");
+    g_assert_true(gtk_widget_get_visible(child(f, "group_saved")));
+    g_assert_cmpstr(subtitle(f, "saved_status"), ==,
+        "Saved permission is for another identity. Permissions do not follow a change of default identity");
+    g_assert_null(strstr(subtitle(f, "saved_status"), "npub"));
+    g_assert_null(strstr(subtitle(f, "saved_status"), "UTM"));
+    g_assert_nonnull(strstr(subtitle(f, "row_identity"), "UTM · npub-pinned-by-daemon"));
+    g_assert_true(gtk_widget_get_sensitive(child(f, "btn_approve")));
+  }
 }
 static GtkWidget *button_named(GtkWidget *root, const gchar *label) {
   if (GTK_IS_BUTTON(root) && !g_strcmp0(gtk_button_get_label(GTK_BUTTON(root)), label)) return root;
@@ -1119,6 +1153,7 @@ int main(int argc, char **argv) {
   ADD("until-revoked-default", until_revoked);
   ADD("deny-with-reusable-allow", deny_with_reusable_allow);
   ADD("block-app-confirmation", block_app_confirmation);
+  ADD("saved-identity-drift", saved_identity_drift);
   const gchar *modes[] = {"trust-routine", "block-operation", "activate-saved", "discard-saved"};
   for (guint i = 0; i < G_N_ELEMENTS(modes); i++) {
     g_autofree gchar *path = g_strconcat("/signer/approval-dialog/", modes[i], NULL);

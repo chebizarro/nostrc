@@ -949,7 +949,7 @@ void gnostr_approval_dialog_set_info(GnostrApprovalDialog *self, GVariant *info,
         (*field(row, "relay") && strcmp(field(row, "relay"), self->relay))) continue;
     if (strcmp(field(row, "identity"), field(info, "identity"))) {
       if (strcmp(field(row, "identity"), "*"))
-        g_string_append_printf(other_identities, _("Saved permission is for %s. "), field(row, "identity"));
+        g_string_append(other_identities, _("Saved permission is for another identity. "));
     } else if (!strcmp(field(row, "decision"), "policy-review")) {
       guint64 expires = 0;
       if (g_variant_lookup(row, "expires-at", "t", &expires)) {
@@ -967,7 +967,7 @@ void gnostr_approval_dialog_set_info(GnostrApprovalDialog *self, GVariant *info,
   if (!self->saved_expiry) self->saved_expiry = g_strdup(_("Loading…"));
   g_autofree gchar *saved = review
       ? g_strdup_printf(_("%s. Identity: %s%s%s. Original expiry: %s"),
-          saved_reason, field(info, "identity"), *self->relay ? _(" at ") : "", self->relay, self->saved_expiry)
+          saved_reason, identity_label, *self->relay ? _(" at ") : "", self->relay, self->saved_expiry)
       : g_strdup_printf(_("%sPermissions do not follow a change of default identity"), other_identities->str);
   adw_action_row_set_subtitle(self->saved_status, saved);
   g_autofree gchar *preview = NULL, *declared_effect = NULL;

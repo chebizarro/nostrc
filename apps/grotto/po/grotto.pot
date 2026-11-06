@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: grotto\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-06 00:53-0800\n"
+"POT-Creation-Date: 2026-11-06 01:44-0800\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -1975,8 +1975,7 @@ msgid "Inactive under the previous access policy"
 msgstr ""
 
 #: src/ui/approval_dialog.c:952
-#, c-format
-msgid "Saved permission is for %s. "
+msgid "Saved permission is for another identity. "
 msgstr ""
 
 #: src/ui/approval_dialog.c:959
