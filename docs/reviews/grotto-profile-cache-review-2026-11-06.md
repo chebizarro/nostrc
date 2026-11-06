@@ -73,3 +73,49 @@ This review changes documentation only: **no bump** for Grotto or grotto-panels 
 ## Merge recommendation
 
 **Request changes before merging unchanged.** Correct F1 with image-only hydration/retry while retaining cache-first rendering, the metadata TTL, off/Tor behavior and cache-only identity-list semantics. Rerun its directly affected profile integration coverage. Also obtain a clean ordinary accessibility execution or explicitly triage/disposition the retained teardown failure; the successful instrumented run is not its replacement. No cache-signature bypass, older-event regression, LRU-bound violation, cross-identity metadata leak, bootstrap-signing regression or new panel authority transfer was found. Do not expand this into a full-suite qualification exercise or treat the accepted smoke-host baseline as a new prerequisite.
+
+## Re-check (fbd2fccae)
+
+Date: 2026-11-06. Re-check task: `nostrc-x0blw`. Reviewed HEAD: `fbd2fccae6ff67fc8ecc1c67c048b500ec3ea711`, obtained with `git pull --ff-only` in the same worktree/branch. The relevant changes since this report are image hydration `d137c7d5f` and late-cache texture preservation `fbd2fccae`; merge `115c5fff9` includes master `561a52c97`. This re-check is limited to F1, its immediate downstream behavior and the seven requested checks, not a new review of the merged master work. Earlier findings and failed receipts above remain intact.
+
+### F1 disposition — resolved, confirmed/executed and static
+
+`apps/grotto/src/grotto-profile-service.c:814-845,1015-1040` now distinguishes a fresh-metadata image-only job from a stale metadata refresh. Missing images schedule background hydration only for ordinary FETCH when downloads are allowed; the worker rechecks `network && load_images` before HTTP (`:833-834`). FETCH_CACHED cannot schedule hydration. The image-only path returns before discovery and freshness-stamp writes, and background jobs cannot recursively schedule another hydration attempt.
+
+The unmodified real-host loopback-TLS integration case `/signer/profile/images-reenable-and-retry` (`apps/grotto/tests/test-profile-integration.c:417-508`) executed and passed. It verifies:
+
+- A successful EOSE fetch with images off leaves both textures absent and makes **zero** HTTPS image contacts. A deliberately fresh 100-second-old metadata stamp is then used for the remaining checks.
+- With fresh metadata and missing images, another ordinary profile refresh with the preference off still makes **zero** image contacts. Tor mode with the preference on also makes **zero** contacts.
+- FETCH_CACHED remains image-network-free even after downloads are enabled.
+- Re-enabling downloads and activating the real profile view's Refresh Profile action loads **both** avatar and banner through the service and into visible widgets: **two** HTTPS contacts, **no additional relay REQs**, and the freshness file remains **byte-for-byte unchanged**. Cached rendering remains spinner-free. This verifies completed asynchronous hydration, not an assumption that the initial cache-return callback must synchronously contain downloaded images.
+- A separate case first receives two HTTP 503 responses, then successfully retries both images while metadata is still fresh (four contacts total). A subsequent FETCH reuses both textures without another image contact.
+
+Late same-revision cache replies also cannot erase the hydrated textures: `gnome/grotto-panels/src/grotto-panels-service.c:139-151` preserves them only for unchanged image URLs, and both view completion paths consume the service winner through `grotto-profile-view.c:160-166,189-199`. The executed profile-panel regression holds cache-only/FETCH replies until after hydration, checks retained textures, and checks that changed URLs do **not** retain the old images (`gnome/grotto-panels/tests/test-profile-panel.c:404-426`). No new finding was identified in this scoped re-check.
+
+### Verification actually run
+
+Same `nostrc-linux-ci:arm64` image ID as above; assigned source mounted read-only at `/src`. Installed xdotool in a new disposable container, reconfigured with the same focused Debug/libsecret options, and explicitly rebuilt the same five focused targets (393 build steps). Ran **one ordinary serial CTest invocation**, without debugger, suppression, bypass or retry-to-green:
+
+```sh
+xvfb-run -a ctest --test-dir /build -j1 -V \
+  -R '^(signer/(profile-integration|ui-layout|ui-accessibility)|grotto-panels/(profile-panel|management-panels|no-secrets|control1-service))$' \
+  --output-on-failure --output-junit /evidence/focused.xml
+```
+
+| Requested check | Result |
+|---|---|
+| signer/profile-integration | PASS, 12.99 s; includes the re-enable/retry case above |
+| signer/ui-layout | PASS, 76.45 s |
+| signer/ui-accessibility | PASS, 76.49 s; ordinary execution, **teardown trap did not recur** |
+| grotto-panels/profile-panel | PASS, 2.38 s |
+| grotto-panels/management-panels | PASS, 0.32 s |
+| grotto-panels/no-secrets | PASS, 4.58 s |
+| grotto-panels/control1-service | PASS, 0.03 s |
+
+Overall **8/8 PASS including the required test-home fixture**, exit 0, 173.32 seconds. The initial review's AddMatch failure is still valid historical evidence: this clean execution does not establish its cause or prove it cannot recur. It remains separately tracked, with attribution open, in `nostrc-rmea8`; it is not reclassified as the accepted smoke-host baseline. No full suite or smoke-host run was performed, and catalogs/Blueprint were not separately rerun in this narrowly requested re-check.
+
+Receipts retained at `/tmp/grotto-profile-cache-recheck-x0blw/`: `commit.txt`, `source-sha256.txt`, `apt.log`, `configure.log`, `build.log`, `focused.log` and `focused.xml`. The task-owned container/build volume are removed after retaining these receipts; shared seeds and the unmerged feature branch/worktree remain. No implementation or test was edited. This documentation-only append needs **no version bump**; Grotto **0.1.1** and grotto-panels **0.1.0** remain unchanged.
+
+### Final verdict
+
+**Approve the requested profile-cache/avatar scope at fbd2fccae.** F1 is resolved and all seven requested checks now pass in an ordinary serial run. This supersedes the original request-changes recommendation for this reviewed scope; it does not erase the earlier failed receipt, close `nostrc-rmea8`, or claim native-desktop, hosted-CI, live-service or release acceptance.
