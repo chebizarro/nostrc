@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 #include "fake-service.h"
+#include <glib/gstdio.h>
 #ifdef __linux__
 #include <dlfcn.h>
 static guint catalog_reads;
@@ -237,4 +238,82 @@ static void identity_actions(void) {
   g_assert_false(grotto_panels_item_get_metadata(item)->backup_acknowledged);
   gtk_window_destroy(GTK_WINDOW(window)); g_object_unref(window);
 }
-void register_management_panels_tests(void) { g_test_add_func("/panels/management-real-widgets", management_panels); g_test_add_func("/panels/identity-actions", identity_actions); }
+typedef struct { GrottoPanelsFakeService *service; const char *path; guint writes, pairings; } RelayHost;
+static gboolean relay_host_can(gpointer data, GrottoPanelCommand cmd) {
+  (void)data; return cmd == GROTTO_PANEL_CONFIGURE_REMOTE;
+}
+static void relay_host_read(RelayHost *host) {
+  g_autoptr(GKeyFile) file = g_key_file_new();
+  g_assert_true(g_key_file_load_from_file(file, host->path, G_KEY_FILE_NONE, NULL));
+  g_auto(GStrv) relays = g_key_file_get_string_list(file, "remote", "relays", NULL, NULL);
+  const char *methods[] = {"sign_event", NULL};
+  GrottoPanelsMetadata status = {.id = "status", .state = "LISTENING", .remote_enabled = TRUE,
+    .relays = (const char *const *)relays, .methods = methods};
+  g_assert_true(grotto_panels_fake_service_replace(host->service, GROTTO_PANELS_STATUS, &status, NULL));
+}
+static void relay_host_command(gpointer data, GrottoPanelCommand cmd, const GrottoPanelCommandArgs *args,
+  GCancellable *cancel, GAsyncReadyCallback callback, gpointer user) {
+  RelayHost *host = data; g_assert_cmpint(cmd, ==, GROTTO_PANEL_CONFIGURE_REMOTE);
+  g_autoptr(GKeyFile) file = g_key_file_new();
+  g_key_file_set_string_list(file, "remote", "relays", args->relays, g_strv_length((char **)args->relays));
+  g_autofree char *text = g_key_file_to_data(file, NULL, NULL);
+  g_assert_true(g_file_set_contents(host->path, text, -1, NULL)); host->writes++;
+  GTask *task = g_task_new(NULL, cancel, callback, user); g_task_return_boolean(task, TRUE); g_object_unref(task);
+  relay_host_read(host);
+}
+static void relay_host_pair(gpointer data) { ((RelayHost *)data)->pairings++; }
+static GtkWidget *remove_button(GtkWidget *widget) {
+  if (GTK_IS_BUTTON(widget) && !g_strcmp0(gtk_widget_get_tooltip_text(widget), "Remove Relay")) return widget;
+  for (GtkWidget *child = gtk_widget_get_first_child(widget); child; child = gtk_widget_get_next_sibling(child)) {
+    GtkWidget *found = remove_button(child); if (found) return found;
+  }
+  return NULL;
+}
+static void remote_persistence(void) {
+  g_autoptr(GrottoPanelsFakeService) fake = grotto_panels_fake_service_new();
+  grotto_panels_fake_service_set_available(fake, TRUE);
+  const char *initial[] = {"wss://nos.lol", NULL}, *methods[] = {"sign_event", NULL};
+  GrottoPanelsMetadata status = {.id = "status", .state = "ERROR", .reason = "Could not connect to wss://example.com/a&b (OFFLINE)",
+    .remote_enabled = TRUE, .relays = initial, .methods = methods};
+  g_assert_true(grotto_panels_fake_service_replace(fake, GROTTO_PANELS_STATUS, &status, NULL));
+  g_autofree char *dir = g_dir_make_tmp("grotto-relays-XXXXXX", NULL);
+  g_autofree char *path = g_build_filename(dir, "relays.ini", NULL);
+  RelayHost state = {.service = fake, .path = path};
+  GrottoPanelsHost host = {.can_command = relay_host_can, .command_async = relay_host_command, .add_app = relay_host_pair};
+  GtkWidget *window = adw_window_new(); g_object_ref_sink(window);
+  GrottoPanel *panel = GROTTO_PANEL(grotto_remote_panel_new(GROTTO_PANELS_SERVICE(fake)));
+  grotto_panel_set_host(panel, &host, &state, NULL);
+  adw_window_set_content(ADW_WINDOW(window), GTK_WIDGET(panel)); gtk_window_present(GTK_WINDOW(window));
+  WAIT(gtk_widget_get_mapped(GTK_WIDGET(panel)));
+  GtkWidget *status_row = find_title(GTK_WIDGET(panel), "Status");
+  g_assert_false(adw_preferences_row_get_use_markup(ADW_PREFERENCES_ROW(status_row)));
+  g_assert_cmpstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(status_row)), ==, status.reason);
+  g_signal_emit_by_name(find_title(GTK_WIDGET(panel), "Add App…"), "activated"); g_assert_cmpuint(state.pairings, ==, 1);
+  GtkWidget *entry = find_title(GTK_WIDGET(panel), "Add Relay URL");
+  const char *invalid[] = {"https://example.com", "ws://example.com", "wss://", "wss://user@example.com", NULL};
+  for (guint i = 0; invalid[i]; i++) {
+    gtk_editable_set_text(GTK_EDITABLE(entry), invalid[i]); g_signal_emit_by_name(entry, "apply");
+    g_assert_cmpuint(state.writes, ==, 0);
+  }
+  gtk_editable_set_text(GTK_EDITABLE(entry), " ws://127.0.0.1:7777/ "); g_signal_emit_by_name(entry, "apply");
+  WAIT(state.writes == 1 && gtk_widget_get_sensitive(entry));
+  g_assert_cmpstr(gtk_editable_get_text(GTK_EDITABLE(entry)), ==, "");
+  GtkWidget *added = find_title(GTK_WIDGET(panel), "ws://127.0.0.1:7777/"); g_assert_nonnull(added);
+  g_signal_emit_by_name(remove_button(added), "clicked");
+  WAIT(state.writes == 2 && gtk_widget_get_sensitive(entry));
+  g_assert_null(find_title(GTK_WIDGET(panel), "ws://127.0.0.1:7777/"));
+  gtk_editable_set_text(GTK_EDITABLE(entry), "wss://relay.nostr.band"); g_signal_emit_by_name(entry, "apply");
+  WAIT(state.writes == 3 && gtk_widget_get_sensitive(entry));
+  gtk_window_destroy(GTK_WINDOW(window)); g_object_unref(window);
+  /* Rebuild the model and widget from only the host's durable configuration. */
+  g_list_store_remove_all(G_LIST_STORE(grotto_panels_service_get_model(GROTTO_PANELS_SERVICE(fake), GROTTO_PANELS_STATUS))); relay_host_read(&state);
+  window = adw_window_new(); g_object_ref_sink(window);
+  GtkWidget *restored = grotto_remote_panel_new(GROTTO_PANELS_SERVICE(fake));
+  adw_window_set_content(ADW_WINDOW(window), restored);
+  g_assert_nonnull(find_title(restored, "wss://nos.lol"));
+  g_assert_nonnull(find_title(restored, "wss://relay.nostr.band"));
+  g_assert_null(find_title(restored, "ws://127.0.0.1:7777/"));
+  gtk_window_destroy(GTK_WINDOW(window)); g_object_unref(window);
+  g_unlink(path); g_rmdir(dir);
+}
+void register_management_panels_tests(void) { g_test_add_func("/panels/remote-persistence", remote_persistence); g_test_add_func("/panels/management-real-widgets", management_panels); g_test_add_func("/panels/identity-actions", identity_actions); }

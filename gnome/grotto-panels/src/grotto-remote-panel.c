@@ -6,12 +6,12 @@ struct _GrottoRemotePanel {
   GrottoPanel parent_instance;
   AdwBanner *feedback;
   AdwSwitchRow *enabled;
-  AdwActionRow *status, *reset, *handoff;
+  AdwActionRow *status, *reset, *handoff, *pairing;
   AdwEntryRow *new_relay, *methods;
   GtkListBox *relays_list;
   GListModel *model;
   GrottoPanelsItem *snapshot;
-  gboolean updating, busy;
+  gboolean updating, busy, adding_relay;
 };
 G_DEFINE_TYPE(GrottoRemotePanel, grotto_remote_panel, GROTTO_TYPE_PANEL)
 static void render(GrottoRemotePanel *self);
@@ -24,7 +24,10 @@ static const char *state_label(const char *state) {
 static void finished(GObject *source, GAsyncResult *result, gpointer data) {
   GrottoRemotePanel *self = data; g_autoptr(GError) error = NULL;
   gboolean ok = grotto_panel_command_finish(GROTTO_PANEL(source), result, &error);
-  self->busy = FALSE; render(self);
+  self->busy = FALSE;
+  if (ok && self->adding_relay) gtk_editable_set_text(GTK_EDITABLE(self->new_relay), "");
+  self->adding_relay = FALSE;
+  render(self);
   if (!ok) {
     adw_banner_set_title(self->feedback, _("Remote signing wasn't changed. Check the configuration and retry."));
     adw_banner_set_revealed(self->feedback, TRUE);
@@ -57,13 +60,22 @@ static void remove_relay(GtkButton *button, gpointer data) {
 static void add_relay(AdwEntryRow *row, gpointer data) {
   GrottoRemotePanel *self = data; if (!self->snapshot) return;
   const GrottoPanelsMetadata *m = grotto_panels_item_get_metadata(self->snapshot);
-  const char *url = gtk_editable_get_text(GTK_EDITABLE(row));
+  g_autofree char *url = g_strdup(gtk_editable_get_text(GTK_EDITABLE(row)));
+  g_strstrip(url);
+  const char *candidate[] = {url, NULL};
+  GrottoPanelCommandArgs check = {.relays = candidate};
+  if (!grotto_panel_command_args_validate(GROTTO_PANEL_CONFIGURE_REMOTE, &check, NULL)) {
+    adw_banner_set_title(self->feedback, _("Enter a wss:// relay URL, or ws:// for a loopback address."));
+    adw_banner_set_revealed(self->feedback, TRUE);
+    return;
+  }
   g_autoptr(GPtrArray) relays = g_ptr_array_new();
   for (guint i = 0; m->relays && m->relays[i]; i++) {
     if (!strcmp(url, m->relays[i])) return;
     g_ptr_array_add(relays, (gpointer)m->relays[i]);
   }
   g_ptr_array_add(relays, (gpointer)url); g_ptr_array_add(relays, NULL);
+  self->adding_relay = TRUE;
   configure(self, m->remote_enabled, (const char *const *)relays->pdata, m->methods);
 }
 static void methods_apply(AdwEntryRow *row, gpointer data) {
@@ -96,6 +108,13 @@ static void reset(AdwActionRow *row, gpointer data) {
 static void handoff(AdwActionRow *row, gpointer data) {
   (void)row; grotto_panel_host_invoke(data, GROTTO_PANEL_HOST_OPEN_SIGNER, "remote-signing", NULL);
 }
+static void pairing(AdwActionRow *row, gpointer data) {
+  (void)row;
+  GrottoPanel *panel = data;
+  if (grotto_panel_host_can(panel, GROTTO_PANEL_HOST_ADD_APP))
+    grotto_panel_host_invoke(panel, GROTTO_PANEL_HOST_ADD_APP, NULL, NULL);
+  else grotto_panel_host_invoke(panel, GROTTO_PANEL_HOST_OPEN_SIGNER, "remote-signing", NULL);
+}
 static void render(GrottoRemotePanel *self) {
   self->updating = TRUE;
   g_clear_object(&self->snapshot);
@@ -110,7 +129,10 @@ static void render(GrottoRemotePanel *self) {
   if (move_focus) gtk_root_set_focus(root, NULL);
   adw_banner_set_title(self->feedback, _("Signer Unavailable"));
   adw_banner_set_revealed(self->feedback, !m);
-  adw_action_row_set_subtitle(self->status, state_label(m ? m->state : NULL));
+  adw_action_row_set_subtitle(self->status, m && m->reason && *m->reason ? m->reason : state_label(m ? m->state : NULL));
+  gtk_widget_set_sensitive(GTK_WIDGET(self->pairing), m && !self->busy &&
+    (grotto_panel_host_can(GROTTO_PANEL(self), GROTTO_PANEL_HOST_ADD_APP) ||
+     grotto_panel_host_can(GROTTO_PANEL(self), GROTTO_PANEL_HOST_OPEN_SIGNER)));
   adw_switch_row_set_active(self->enabled, m && m->remote_enabled);
   gtk_widget_set_sensitive(GTK_WIDGET(self->enabled), can);
   gtk_widget_set_sensitive(GTK_WIDGET(self->new_relay), can);
@@ -159,7 +181,7 @@ static void grotto_remote_panel_class_init(GrottoRemotePanelClass *klass) {
   G_OBJECT_CLASS(klass)->dispose = dispose; GtkWidgetClass *wc = GTK_WIDGET_CLASS(klass);
   gtk_widget_class_set_template_from_resource(wc, "/org/nostr/GrottoPanels/remote-panel.ui");
 #define BIND(x) gtk_widget_class_bind_template_child(wc, GrottoRemotePanel, x)
-  BIND(feedback); BIND(enabled); BIND(status); BIND(reset); BIND(handoff); BIND(new_relay); BIND(methods); BIND(relays_list);
+  BIND(feedback); BIND(enabled); BIND(status); BIND(pairing); BIND(reset); BIND(handoff); BIND(new_relay); BIND(methods); BIND(relays_list);
 #undef BIND
 }
 static void grotto_remote_panel_init(GrottoRemotePanel *self) {
@@ -170,5 +192,6 @@ static void grotto_remote_panel_init(GrottoRemotePanel *self) {
   g_signal_connect(self->methods, "apply", G_CALLBACK(methods_apply), self);
   g_signal_connect(self->reset, "activated", G_CALLBACK(reset), self);
   g_signal_connect(self->handoff, "activated", G_CALLBACK(handoff), self);
+  g_signal_connect(self->pairing, "activated", G_CALLBACK(pairing), self);
 }
 GtkWidget *grotto_remote_panel_new(GrottoPanelsService *service) { return g_object_new(GROTTO_TYPE_REMOTE_PANEL, "service", service, NULL); }

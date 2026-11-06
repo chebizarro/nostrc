@@ -38,7 +38,7 @@ static void state_changed(BunkerState state, const gchar *error, gpointer data)
 static void test_no_relays(void)
 {
     BunkerService *service = bunker_service_new();
-    StateEvidence evidence = {0, "No bunker relays configured"};
+    StateEvidence evidence = {0, "No relays configured"};
     const gchar *empty[] = {NULL};
     bunker_service_set_state_callback(service, state_changed, &evidence);
     g_assert_false(bunker_service_start(service, NULL, identity));
@@ -55,6 +55,10 @@ static void test_listener_failure(void)
     StateEvidence evidence = {0, "Transport key missing; reset bunker endpoint"};
     g_autofree gchar *key_path = g_build_filename(g_get_user_config_dir(), "grotto", "test-bunker-transport", NULL);
     g_unlink(key_path);
+    bunker_service_allow_transport_creation(service, TRUE);
+    g_autofree gchar *marker = g_build_filename(g_get_user_config_dir(), "grotto", "bunker-transport-pubkey", NULL);
+    g_autofree gchar *dir = g_path_get_dirname(marker); g_assert_cmpint(g_mkdir_with_parents(dir, 0700), ==, 0);
+    g_assert_true(g_file_set_contents(marker, identity, -1, NULL));
     const gchar *relays[] = {"ws://127.0.0.1:1/", NULL};
     bunker_service_set_state_callback(service, state_changed, &evidence);
     /* Missing custody never silently regenerates a new endpoint. */

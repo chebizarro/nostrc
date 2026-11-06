@@ -1,4 +1,5 @@
 #include "test-control-common.h"
+#include "bunker_service.h"
 #include <nostr-kinds.h>
 #include <nostr/nip55l/signer_ops.h>
 #include <nostr/nip19/nip19.h>
@@ -49,6 +50,28 @@ static void test_contract(ControlFixture *f, gconstpointer data) {
   g_assert_true(signer_approval_service_is_paused(f->approval));
   g_autoptr(GVariant) resumed = control_call(f, "SetPaused", g_variant_new("(b)", FALSE));
   g_assert_false(signer_approval_service_is_paused(f->approval));
+}
+static void test_empty_relays(ControlFixture *f, gconstpointer data) {
+  (void)data;
+  BunkerService *bunker = bunker_service_new();
+  grotto_control_set_bunker(f->control, bunker, FALSE);
+  g_autoptr(GVariant) initial = get_status(f);
+  g_auto(GStrv) methods = NULL;
+  g_assert_true(g_variant_lookup(initial, "bunker_allowed_methods", "^as", &methods));
+  GVariantBuilder config; g_variant_builder_init(&config, G_VARIANT_TYPE_VARDICT);
+  g_variant_builder_add(&config, "{sv}", "enabled", g_variant_new_boolean(TRUE));
+  g_variant_builder_add(&config, "{sv}", "relays", g_variant_new_strv(NULL, 0));
+  g_variant_builder_add(&config, "{sv}", "allowed-methods", g_variant_new_strv((const gchar *const *)methods, -1));
+  g_autoptr(GVariant) saved = control_call(f, "ConfigureBunker", g_variant_new("(a{sv})", &config));
+  g_assert_nonnull(saved);
+  g_autoptr(GVariant) empty = get_status(f); const gchar *reason = NULL;
+  g_assert_true(g_variant_lookup(empty, "bunker_error", "&s", &reason));
+  g_assert_cmpstr(reason, ==, "No relays configured");
+  grotto_control_free(f->control); bunker_service_free(bunker);
+  f->control = grotto_control_new(f->server, f->approval, NULL, NULL); g_assert_nonnull(f->control);
+  g_autoptr(GVariant) restored = get_status(f); g_auto(GStrv) relays = NULL;
+  g_assert_true(g_variant_lookup(restored, "bunker_relays", "^as", &relays));
+  g_assert_cmpuint(g_strv_length(relays), ==, 0);
 }
 static void test_conflict(ControlFixture *f, gconstpointer data) {
   (void)data; const gchar *p = "https://one.example"; guint64 revision = get_revision(f);
@@ -366,6 +389,7 @@ int main(int argc, char **argv) {
   test_environment(argv[0]); g_test_init(&argc, &argv, NULL);
   if (!nostrc_test_bus_available()) return 77;
 #define ADD(name, fn) g_test_add(name, ControlFixture, NULL, fixture_setup, fn, fixture_teardown)
+  ADD("/control/empty-relays-persist", test_empty_relays);
   ADD("/control/contract", test_contract); ADD("/control/conflict-epoch", test_conflict);
   ADD("/control/auth-pause-asymmetry", test_auth); ADD("/control/real-daemon-export", test_daemon_export);
   ADD("/control/confirmation-settings-live", test_confirmation_settings);

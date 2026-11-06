@@ -3,11 +3,12 @@
 # This file is distributed under the same license as the grotto-panels package.
 # FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
 #
+#, fuzzy
 msgid ""
 msgstr ""
 "Project-Id-Version: grotto-panels\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-06 03:02-0800\n"
+"POT-Creation-Date: 2026-11-06 11:39-0800\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -15,7 +16,6 @@ msgstr ""
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
-"Plural-Forms: nplurals=INTEGER; plural=EXPRESSION;\n"
 
 #: data/identity-panel.blp:5 data/identity-panel.blp:9
 #: src/grotto-identity-panel.c:193 src/grotto-apps-panel.c:25
@@ -102,7 +102,7 @@ msgid "_Remove Identity…"
 msgstr ""
 
 #: data/apps-panel.blp:11 data/activity-panel.blp:10 data/remote-panel.blp:8
-#: src/grotto-identity-panel.c:141 src/grotto-remote-panel.c:111
+#: src/grotto-identity-panel.c:141 src/grotto-remote-panel.c:130
 msgid "Signer Unavailable"
 msgstr ""
 
@@ -199,7 +199,10 @@ msgid "Remote Signing"
 msgstr ""
 
 #: data/remote-panel.blp:11
-msgid "Let apps on other devices ask to use your identity"
+msgid ""
+"Remote signing lets apps on other devices request signatures without sharing "
+"your secret key. Enable it, then choose Add App → Create Pairing Link… to "
+"connect an app."
 msgstr ""
 
 #: data/remote-panel.blp:12
@@ -210,35 +213,45 @@ msgstr ""
 msgid "Status"
 msgstr ""
 
-#: data/remote-panel.blp:14 src/grotto-app-detail.c:602
+#: data/remote-panel.blp:15
+msgid "Add App…"
+msgstr ""
+
+#: data/remote-panel.blp:16
+msgid "Choose Create Pairing Link… and open the link in the remote app"
+msgstr ""
+
+#: data/remote-panel.blp:20 src/grotto-app-detail.c:602
 msgid "Change in Grotto…"
 msgstr ""
 
-#: data/remote-panel.blp:17
+#: data/remote-panel.blp:23
 msgid "Relays"
 msgstr ""
 
-#: data/remote-panel.blp:18
-msgid "Remote apps connect through these relays"
+#: data/remote-panel.blp:24
+msgid ""
+"Remote apps connect through these relays. Use wss://, or ws:// for a "
+"loopback address."
 msgstr ""
 
-#: data/remote-panel.blp:20
+#: data/remote-panel.blp:26
 msgid "Add Relay URL"
 msgstr ""
 
-#: data/remote-panel.blp:24 src/grotto-app-detail.c:611
+#: data/remote-panel.blp:30 src/grotto-app-detail.c:611
 msgid "Details"
 msgstr ""
 
-#: data/remote-panel.blp:25
+#: data/remote-panel.blp:31
 msgid "Allowed Methods"
 msgstr ""
 
-#: data/remote-panel.blp:27
+#: data/remote-panel.blp:33
 msgid "Reset Remote Connections…"
 msgstr ""
 
-#: data/remote-panel.blp:28
+#: data/remote-panel.blp:34
 msgid ""
 "Disconnect remote apps and cancel pairing links. Identities and local app "
 "permissions are kept."
@@ -288,13 +301,6 @@ msgstr ""
 #: src/grotto-identity-panel.c:172
 msgid "Not backed up"
 msgstr ""
-
-#: src/grotto-identity-panel.c:174
-#, c-format
-msgid "%u app uses this identity"
-msgid_plural "%u apps use this identity"
-msgstr[0] ""
-msgstr[1] ""
 
 #: src/grotto-identity-panel.c:175
 msgid "Check identity usage in Grotto"
@@ -450,7 +456,7 @@ msgstr ""
 #: src/grotto-app-detail.c:128 src/grotto-app-detail.c:143
 #: src/grotto-app-detail.c:268 src/grotto-app-detail.c:340
 #: src/grotto-app-detail.c:405 src/grotto-activity-panel.c:158
-#: src/grotto-remote-panel.c:90
+#: src/grotto-remote-panel.c:102
 msgid "Cancel"
 msgstr ""
 
@@ -1162,25 +1168,29 @@ msgstr ""
 msgid "Unavailable"
 msgstr ""
 
-#: src/grotto-remote-panel.c:29
+#: src/grotto-remote-panel.c:32
 msgid "Remote signing wasn't changed. Check the configuration and retry."
 msgstr ""
 
-#: src/grotto-remote-panel.c:89
+#: src/grotto-remote-panel.c:68
+msgid "Enter a wss:// relay URL, or ws:// for a loopback address."
+msgstr ""
+
+#: src/grotto-remote-panel.c:101
 msgid "Reset Remote Connections?"
 msgstr ""
 
-#: src/grotto-remote-panel.c:89
+#: src/grotto-remote-panel.c:101
 msgid ""
 "Remote pairings and links will stop working. Your identities and local app "
 "permissions are kept."
 msgstr ""
 
-#: src/grotto-remote-panel.c:90
+#: src/grotto-remote-panel.c:102
 msgid "Reset Connections"
 msgstr ""
 
-#: src/grotto-remote-panel.c:125
+#: src/grotto-remote-panel.c:147
 msgid "Remove Relay"
 msgstr ""
 
@@ -1232,7 +1242,6 @@ msgstr ""
 msgid "Test Identity"
 msgstr ""
 
-#. Generated display data; no policy. Run scripts/generate-grotto-kind-catalog.py.
 #: src/kind-catalog.inc:2
 msgid "Profile metadata"
 msgstr ""

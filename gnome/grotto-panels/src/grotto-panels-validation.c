@@ -53,7 +53,10 @@ static gboolean identifier(const char *value, gboolean required, GError **error)
 static gboolean relay(const char *value, GError **error) {
   if (!identifier(value, TRUE, error)) return FALSE;
   g_autoptr(GUri) uri = g_uri_parse(value, G_URI_FLAGS_NONE, NULL);
-  if (!uri || !g_uri_get_host(uri) || g_uri_get_userinfo(uri) || g_uri_get_query(uri) || g_uri_get_fragment(uri) ||
+  const char *host = uri ? g_uri_get_host(uri) : NULL;
+  gboolean loopback = host && (!g_ascii_strcasecmp(host, "localhost") || !strcmp(host, "127.0.0.1") || !strcmp(host, "::1"));
+  if (!uri || !host || !*host || g_uri_get_userinfo(uri) || g_uri_get_query(uri) || g_uri_get_fragment(uri) ||
+      (!g_strcmp0(g_uri_get_scheme(uri), "ws") && !loopback) ||
       (g_strcmp0(g_uri_get_scheme(uri), "wss") && g_strcmp0(g_uri_get_scheme(uri), "ws")))
     return invalid(error);
   return TRUE;

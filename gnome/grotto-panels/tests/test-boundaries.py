@@ -114,7 +114,7 @@ exports = {
 # Exact production imports, not a spelling blacklist of individual secret RPCs.
 # No D-Bus, sockets, dynamic loading or generic file I/O dispatch exists in this DSO.
 # Desktop-entry reads through GAppInfo are the cosmetic metadata exception below.
-imports = set('''g_free g_strdup g_ascii_strdown g_utf8_validate g_set_error_literal g_error_free
+imports = set('''g_free g_strdup g_ascii_strdown g_ascii_strcasecmp g_strchomp g_strchug g_utf8_validate g_set_error_literal g_error_free
  g_uri_parse g_uri_unref g_uri_get_host g_uri_get_userinfo g_uri_get_query g_uri_get_fragment g_uri_get_scheme g_strcmp0
  g_object_new g_object_ref g_object_unref g_object_notify_by_pspec g_object_class_install_properties
  g_param_spec_object g_value_get_object g_value_set_object g_type_check_instance_cast g_type_check_instance_is_a

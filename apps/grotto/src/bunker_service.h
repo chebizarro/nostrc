@@ -86,6 +86,12 @@ BunkerService *bunker_service_new(void);
 /* Free the bunker service */
 void bunker_service_free(BunkerService *bs);
 
+/* Only the daemon's empty remote-client/grant inventory may authorize first
+ * creation. A persisted endpoint marker always forbids automatic replacement. */
+void bunker_service_allow_transport_creation(BunkerService *bs, gboolean allowed);
+/* Includes cancelled starts whose credential worker has not finished yet. */
+gboolean bunker_service_transport_busy(BunkerService *bs);
+
 /* Start the bunker service.
  * @relays: Array of relay URLs to listen on
  * @identity: npub to use as bunker identity
