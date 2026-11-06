@@ -1,9 +1,3 @@
-grotto (0.1.2-1) UNRELEASED; urgency=medium
-
-  * Standardize action-sheet header buttons and input validation (nostrc-u6v55.57).
-
- -- Biz <chebizarro@protonmail.com>  Fri, 06 Nov 2026 12:00:00 +0000
-
 grotto (0.1.1-1) UNRELEASED; urgency=medium
 
   * Fix the alternate Meson frontend's Groundhog executable-side link closure.
