@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: grotto 0.1.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-05 22:50-0800\n"
+"POT-Creation-Date: 2026-11-06 01:08-0800\n"
 "PO-Revision-Date: 2024-01-23 00:00+0000\n"
 "Last-Translator: \n"
 "Language-Team: Spanish\n"
@@ -91,7 +91,7 @@ msgid "Allow _Selected Once"
 msgstr ""
 
 #: data/ui/approval-dialog.ui:233 data/ui/onboarding-assistant.ui:266
-#: data/ui/sheets/sheet-qr-display.ui:70 data/ui/sheets/sheet-qr-scanner.ui:114
+#: data/ui/sheets/sheet-qr-display.ui:71 data/ui/sheets/sheet-qr-scanner.ui:114
 #: src/ui/pairing-flow.c:132
 msgid "Details"
 msgstr "Detalles"
@@ -155,63 +155,63 @@ msgstr ""
 msgid "Management Locked"
 msgstr "Gestión bloqueada"
 
-#: data/ui/lock-screen.ui:59
+#: data/ui/lock-screen.ui:61
 msgid "Title indicating the current lock state"
 msgstr ""
 
-#: data/ui/lock-screen.ui:68
+#: data/ui/lock-screen.ui:70
 msgid "Enter your password to unlock"
 msgstr "Introduce tu contraseña para desbloquear"
 
-#: data/ui/lock-screen.ui:71
+#: data/ui/lock-screen.ui:73
 msgid "Instructions for unlocking the session"
 msgstr ""
 
-#: data/ui/lock-screen.ui:93 data/ui/widgets/gn-secure-entry.ui:28
+#: data/ui/lock-screen.ui:95 data/ui/widgets/gn-secure-entry.ui:28
 msgid "Password"
 msgstr "Contraseña"
 
-#: data/ui/lock-screen.ui:95
+#: data/ui/lock-screen.ui:97
 msgid "Password entry"
 msgstr ""
 
-#: data/ui/lock-screen.ui:96
+#: data/ui/lock-screen.ui:98
 msgid "Enter your unlock password here"
 msgstr ""
 
-#: data/ui/lock-screen.ui:108
+#: data/ui/lock-screen.ui:110
 msgid "Error message"
 msgstr ""
 
-#: data/ui/lock-screen.ui:109
+#: data/ui/lock-screen.ui:111
 msgid "Displays error messages when unlock fails"
 msgstr ""
 
-#: data/ui/lock-screen.ui:120
+#: data/ui/lock-screen.ui:122
 msgid "_Unlock"
 msgstr ""
 
-#: data/ui/lock-screen.ui:126
+#: data/ui/lock-screen.ui:128
 msgid "Unlock management"
 msgstr ""
 
-#: data/ui/lock-screen.ui:127
+#: data/ui/lock-screen.ui:129
 msgid "Unlocks management with the entered password"
 msgstr ""
 
-#: data/ui/lock-screen.ui:142
+#: data/ui/lock-screen.ui:144
 msgid "Session information"
 msgstr ""
 
-#: data/ui/lock-screen.ui:143
+#: data/ui/lock-screen.ui:145
 msgid "Additional information about the locked session"
 msgstr ""
 
-#: data/ui/lock-screen.ui:147 src/ui/lock-screen.c:427
+#: data/ui/lock-screen.ui:149 src/ui/lock-screen.c:427
 msgid "Locked due to inactivity"
 msgstr ""
 
-#: data/ui/lock-screen.ui:156
+#: data/ui/lock-screen.ui:158
 msgid "Locked at 12:00"
 msgstr ""
 
@@ -327,6 +327,8 @@ msgstr ""
 msgid "_Try Check Again"
 msgstr "_Repetir comprobación"
 
+#. Onboarding also offers backup before the management window exists. This
+#. * trusted shell contains only the pinned Backup page, not another editor.
 #: data/ui/onboarding-assistant.ui:294 data/ui/page-identity-detail.ui:10
 #: src/ui/page-identity-detail.c:476
 msgid "Back Up Identity"
@@ -530,10 +532,6 @@ msgstr ""
 msgid "Request details only, not message content or keys"
 msgstr "Solo detalles de solicitudes, sin contenido de mensajes ni claves"
 
-#: data/ui/page-settings.ui:74 src/ui/signer-window.c:610
-msgid "About Grotto"
-msgstr "Grotto"
-
 #: data/ui/page-identity-detail.ui:19 src/ui/page-identity-detail.c:168
 msgid "Backup incomplete"
 msgstr "La copia de seguridad todavía no está completa"
@@ -683,7 +681,8 @@ msgstr "Comprobando la firma remota…"
 msgid "Create _Link"
 msgstr "Crear _enlace"
 
-#: data/ui/sheets/sheet-qr-display.ui:10 data/ui/sheets/sheet-qr-display.ui:44
+#. Set title
+#: data/ui/sheets/sheet-qr-display.ui:10 data/ui/sheets/sheet-qr-display.ui:45
 #: src/ui/sheets/sheet-qr-display.c:285
 msgid "QR Code"
 msgstr "Código QR"
@@ -692,11 +691,11 @@ msgstr "Código QR"
 msgid "_Close"
 msgstr "_Cerrar"
 
-#: data/ui/sheets/sheet-qr-display.ui:45
+#: data/ui/sheets/sheet-qr-display.ui:46
 msgid "Scan with a compatible app"
 msgstr "Escanea con una aplicación compatible"
 
-#: data/ui/sheets/sheet-qr-display.ui:63 src/ui/sheets/sheet-qr-display.c:55
+#: data/ui/sheets/sheet-qr-display.ui:64 src/ui/sheets/sheet-qr-display.c:55
 msgid "Cop_y to Clipboard"
 msgstr "Cop_iar al portapapeles"
 
@@ -874,6 +873,7 @@ msgstr ""
 msgid "Notifications unavailable. Requests remain here for review."
 msgstr ""
 
+#. Keep the opportunistic notifier passive until Shell ownership is known.
 #: src/main_app.c:492 src/main_app.c:600
 msgid "Grotto · Signer unavailable"
 msgstr "Grotto · Firmante no disponible"
@@ -985,27 +985,27 @@ msgstr ""
 msgid "The signer session bus is unavailable."
 msgstr ""
 
-#: src/grotto-panels-control1-service.c:95
+#: src/grotto-panels-control1-service.c:97
 msgid "Previous access policy — unchanged until explicitly upgraded"
 msgstr ""
 
-#: src/grotto-panels-control1-service.c:97
+#: src/grotto-panels-control1-service.c:99
 msgid "Share public key (after first consent)"
 msgstr ""
 
-#: src/grotto-panels-control1-service.c:99
+#: src/grotto-panels-control1-service.c:101
 msgid "Read relay list"
 msgstr ""
 
-#: src/grotto-panels-control1-service.c:99
+#: src/grotto-panels-control1-service.c:101
 msgid "Check connection"
 msgstr ""
 
-#: src/grotto-panels-control1-service.c:100
+#: src/grotto-panels-control1-service.c:102
 msgid "Routine operations, not custom event types"
 msgstr ""
 
-#: src/grotto-panels-control1-service.c:101
+#: src/grotto-panels-control1-service.c:103
 msgid "Public publishing: notes, reposts, reactions, articles and comments"
 msgstr ""
 
@@ -1033,6 +1033,7 @@ msgstr ""
 msgid "Window: session unlocked"
 msgstr ""
 
+#. Show a toast warning about impending timeout
 #: src/ui/signer-window.c:459
 #, c-format
 msgid "Management will lock in %u seconds"
@@ -1045,6 +1046,10 @@ msgstr ""
 #: src/ui/signer-window.c:594
 msgid "Add App…"
 msgstr ""
+
+#: src/ui/signer-window.c:610
+msgid "About Grotto"
+msgstr "Grotto"
 
 #: src/ui/signer-window.c:635
 #, c-format
@@ -1091,7 +1096,7 @@ msgstr ""
 msgid "Public Key Confirmation"
 msgstr ""
 
-#: src/ui/signer-window.c:765 src/grotto-profile-service.c:786
+#: src/ui/signer-window.c:765 src/grotto-profile-service.c:794
 #: src/ui/approval_dialog.c:423 src/ui/page-identity-detail.c:275
 #: src/ui/page-identity-detail.c:365
 msgid "Cancel"
@@ -1113,11 +1118,11 @@ msgstr ""
 msgid "Session locked via Ctrl+L"
 msgstr ""
 
-#: src/grotto-profile-service.c:165
+#: src/grotto-profile-service.c:169
 msgid "Grotto could not sign this request. Check the review and try again"
 msgstr ""
 
-#: src/grotto-profile-service.c:504
+#: src/grotto-profile-service.c:512
 #, c-format
 msgid ""
 "Profile unavailable — relay requires authentication. Bootstrap discovery "
@@ -1125,63 +1130,63 @@ msgid ""
 "%s"
 msgstr ""
 
-#: src/grotto-profile-service.c:505
+#: src/grotto-profile-service.c:513
 msgid "Profile unavailable. Check your relays and try again"
 msgstr ""
 
-#: src/grotto-profile-service.c:524
+#: src/grotto-profile-service.c:532
 msgid "The published profile is not valid metadata"
 msgstr ""
 
-#: src/grotto-profile-service.c:530
+#: src/grotto-profile-service.c:538
 msgid "Choose an image smaller than 5 MB"
 msgstr ""
 
-#: src/grotto-profile-service.c:546
+#: src/grotto-profile-service.c:554
 msgid "Choose a PNG, JPEG or WebP image smaller than 5 MB"
 msgstr ""
 
-#: src/grotto-profile-service.c:555
+#: src/grotto-profile-service.c:563
 msgid "Choose an image up to 8192 pixels per side and 24 megapixels"
 msgstr ""
 
-#: src/grotto-profile-service.c:615
+#: src/grotto-profile-service.c:623
 msgid "No write relays are configured for this identity"
 msgstr ""
 
-#: src/grotto-profile-service.c:624
+#: src/grotto-profile-service.c:632
 msgid "This profile changed elsewhere. Refresh it before saving"
 msgstr ""
 
-#: src/grotto-profile-service.c:653
+#: src/grotto-profile-service.c:661
 msgid ""
 "Your profile reached some relays, but not all. Close the editor and refresh "
 "before trying again"
 msgstr ""
 
-#: src/grotto-profile-service.c:654
+#: src/grotto-profile-service.c:662
 msgid "No relay confirmed publication. Your edits are still here"
 msgstr ""
 
-#: src/grotto-profile-service.c:661
+#: src/grotto-profile-service.c:669
 msgid "No Blossom servers found. Set up Media Servers in Nostr Settings first"
 msgstr ""
 
-#: src/grotto-profile-service.c:676
+#: src/grotto-profile-service.c:684
 msgid "Image upload failed. Check your media servers and try again"
 msgstr ""
 
-#: src/grotto-profile-service.c:720
+#: src/grotto-profile-service.c:728
 msgid "Signer unavailable. Open Grotto and try again"
 msgstr ""
 
-#: src/grotto-profile-service.c:734
+#: src/grotto-profile-service.c:742
 msgid ""
 "Profile network access is unavailable in Tor mode. The saved profile is "
 "still available"
 msgstr ""
 
-#: src/grotto-profile-service.c:781
+#: src/grotto-profile-service.c:789
 #, c-format
 msgid ""
 "Uploading makes this image public immediately, before Save. Cancelling the "
@@ -1197,78 +1202,79 @@ msgid ""
 "%s"
 msgstr ""
 
-#: src/grotto-profile-service.c:782
+#: src/grotto-profile-service.c:790
 msgid "Crop and Upload Profile Image?"
 msgstr ""
 
-#: src/grotto-profile-service.c:784
+#: src/grotto-profile-service.c:792
 msgid "Selected Banner"
 msgstr ""
 
-#: src/grotto-profile-service.c:784
+#: src/grotto-profile-service.c:792
 msgid "Selected Avatar"
 msgstr ""
 
-#: src/grotto-profile-service.c:786
+#: src/grotto-profile-service.c:794
 msgid "Upload Cropped Image"
 msgstr ""
 
-#: src/grotto-profile-service.c:798
+#: src/grotto-profile-service.c:806
 msgid ""
 "No verified Blossom server list found. Refresh your profile after setting up "
 "Media Servers in Nostr Settings"
 msgstr ""
 
-#: src/grotto-profile-service.c:851
+#: src/grotto-profile-service.c:859
 msgid ""
 "The image could not be opened. Choose a PNG, JPEG or WebP image smaller than "
 "5 MB, up to 8192 pixels per side and 24 megapixels"
 msgstr ""
 
-#: src/grotto-profile-service.c:858
+#: src/grotto-profile-service.c:866
 msgid "Cropped Image Preview"
 msgstr ""
 
-#: src/grotto-profile-service.c:860
+#: src/grotto-profile-service.c:868
 msgid "Banner: 3∶1, up to 1500 × 500 pixels"
 msgstr ""
 
-#: src/grotto-profile-service.c:860
+#: src/grotto-profile-service.c:868
 msgid "Avatar: square, up to 512 × 512 pixels"
 msgstr ""
 
-#: src/grotto-profile-service.c:862
+#: src/grotto-profile-service.c:870
 msgid "Zoom"
 msgstr ""
 
-#: src/grotto-profile-service.c:863
+#: src/grotto-profile-service.c:871
 msgid "Horizontal Position"
 msgstr ""
 
-#: src/grotto-profile-service.c:864
+#: src/grotto-profile-service.c:872
 msgid "Vertical Position"
 msgstr ""
 
-#: src/grotto-profile-service.c:875
+#: src/grotto-profile-service.c:883
 msgid "Choose a local image file"
 msgstr ""
 
-#: src/grotto-profile-service.c:878
+#: src/grotto-profile-service.c:886
 msgid "Image selection is unavailable. Try again"
 msgstr ""
 
-#: src/grotto-profile-service.c:904
+#: src/grotto-profile-service.c:912
 msgid "Choose Avatar"
 msgstr ""
 
-#: src/grotto-profile-service.c:904
+#: src/grotto-profile-service.c:912
 msgid "Choose Banner"
 msgstr ""
 
-#: src/grotto-profile-service.c:905
+#: src/grotto-profile-service.c:913
 msgid "Profile Images"
 msgstr ""
 
+#. No password required - show different UI
 #: src/ui/lock-screen.c:138
 msgid "Click to unlock"
 msgstr ""
@@ -1362,6 +1368,7 @@ msgstr ""
 msgid "Unlocking…"
 msgstr ""
 
+#. Generated by scripts/generate-grotto-kind-catalog.py; do not edit.
 #: src/ui/approval_dialog.c:54 src/ui/kind-catalog.inc:2
 msgid "Profile metadata"
 msgstr ""
@@ -1500,6 +1507,7 @@ msgstr ""
 msgid "custom kinds (%s)"
 msgstr ""
 
+#. Any-relay AUTH is a broader delegation than one relay sign-in: name it.
 #: src/ui/approval_dialog.c:183
 msgid " — any relay this app chooses"
 msgstr ""
@@ -1619,6 +1627,7 @@ msgstr ""
 msgid "_Allow"
 msgstr ""
 
+#. The identity is the Signing As row above; this line states duration.
 #: src/ui/approval_dialog.c:353
 #, c-format
 msgid "Until you revoke it in %s's Permissions page"
@@ -1678,6 +1687,7 @@ msgstr ""
 msgid "No content"
 msgstr ""
 
+#. This compatibility entrypoint has no transport evidence.
 #: src/ui/approval_dialog.c:583 src/ui/approval_dialog.c:586
 #: src/ui/approval_dialog.c:1111
 msgid "Verified caller"
@@ -1966,6 +1976,7 @@ msgid ""
 "No permission is saved to disk"
 msgstr ""
 
+#. One review, one lasting answer: never "once" or 24 h for a declared set.
 #: src/ui/approval_dialog.c:910
 msgid "Allow these permissions"
 msgstr ""
@@ -2880,45 +2891,45 @@ msgstr ""
 msgid "Ask-by-Default Event Types"
 msgstr ""
 
-#: src/ui/page-settings.c:94
+#: src/ui/page-settings.c:95
 msgid "Additional custom event types (comma-separated)"
 msgstr ""
 
-#: src/ui/page-settings.c:96
+#: src/ui/page-settings.c:97
 msgid "Additional custom event types"
 msgstr ""
 
-#: src/ui/page-settings.c:98
+#: src/ui/page-settings.c:99
 msgid "Save Ask-by-Default Policy"
 msgstr ""
 
-#: src/ui/page-settings.c:99 src/ui/page-settings.c:178
+#: src/ui/page-settings.c:100 src/ui/page-settings.c:179
 msgid "Restore Defaults"
 msgstr ""
 
-#: src/ui/page-settings.c:143
+#: src/ui/page-settings.c:144
 msgid ""
 "Use up to 16 wss:// relay URLs, one per line, without credentials, queries "
 "or fragments"
 msgstr ""
 
-#: src/ui/page-settings.c:149
+#: src/ui/page-settings.c:150
 msgid "Discovery relays saved"
 msgstr ""
 
-#: src/ui/page-settings.c:149
+#: src/ui/page-settings.c:150
 msgid "Discovery relays could not be saved"
 msgstr ""
 
-#: src/ui/page-settings.c:157
+#: src/ui/page-settings.c:158
 msgid "Discovery-only defaults restored"
 msgstr ""
 
-#: src/ui/page-settings.c:161
+#: src/ui/page-settings.c:162
 msgid "Profile Discovery"
 msgstr ""
 
-#: src/ui/page-settings.c:162
+#: src/ui/page-settings.c:163
 msgid ""
 "For identities with no known relays, share the public key with discovery "
 "relays to find a profile. Never used for publishing."
@@ -2926,35 +2937,35 @@ msgstr ""
 "Para identidades sin relés conocidos, comparte la clave pública con relés de "
 "descubrimiento para encontrar un perfil. Nunca se usan para publicar."
 
-#: src/ui/page-settings.c:164
+#: src/ui/page-settings.c:165
 msgid "Find Profiles Automatically"
 msgstr "Buscar perfiles automáticamente"
 
-#: src/ui/page-settings.c:168
+#: src/ui/page-settings.c:169
 msgid "Discovery-Only Relays"
 msgstr ""
 
-#: src/ui/page-settings.c:169
+#: src/ui/page-settings.c:170
 msgid "Profiles, public relay lists, and messaging relay lists"
 msgstr "Perfiles, listas de relés públicos y de mensajería"
 
-#: src/ui/page-settings.c:173
+#: src/ui/page-settings.c:174
 msgid "Discovery relay URLs, one per line"
 msgstr ""
 
-#: src/ui/page-settings.c:178
+#: src/ui/page-settings.c:179
 msgid "Save Discovery Relays"
 msgstr ""
 
-#: src/ui/page-settings.c:194
+#: src/ui/page-settings.c:195
 msgid "Privacy / Network"
 msgstr "Privacidad / Red"
 
-#: src/ui/page-settings.c:196
+#: src/ui/page-settings.c:197
 msgid "Load Profile Images"
 msgstr "Cargar imágenes de perfil"
 
-#: src/ui/page-settings.c:197
+#: src/ui/page-settings.c:198
 msgid "Fetch avatars and banners from the web addresses in profiles"
 msgstr "Obtener avatares y cabeceras de las direcciones web de los perfiles"
 
@@ -3237,6 +3248,7 @@ msgstr ""
 msgid "An identity could not be created. Try again."
 msgstr "No se pudo crear una identidad. Reintenta."
 
+#. D-Bus owns the in-flight tuple; no seed material remains in labels/UI.
 #: src/ui/onboarding-assistant.c:308
 msgid "Saving your identity…"
 msgstr "Guardando tu identidad…"
@@ -3402,6 +3414,7 @@ msgstr ""
 "No se pudo crear un enlace. Revisa Firma remota, cierra los enlaces sin usar "
 "y reintenta."
 
+#. Show brief feedback
 #: src/ui/sheets/sheet-qr-display.c:77
 msgid "Copied"
 msgstr "Copiado"

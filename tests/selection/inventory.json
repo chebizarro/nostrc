@@ -24,7 +24,7 @@
       "nodes": ["gnome.nostr_settings", "grotto.daemon", "grotto.gui", "grotto.panels", "nip55l.glib"],
       "profiles": ["grotto.settings.host.linux"],
       "kind": "ctest", "cost": "ordinary", "requirement": "blocking", "expected_outcome": "pass",
-      "ctest_tests": {"grotto.settings.host.linux": ["nostr-settings-cli", "nostr-settings/panel-mount", "nostr-settings-config", "nostr-settings-lists", "nostr-settings-nip11", "nostr-settings-relay_stats", "nostr-settings-systemd", "nostr-settings-wallet", "nostr-settings-identity", "signer/clients", "signer/activity", "signer/approval-integration", "grotto-panels/smoke-host", "grotto-panels/no-secrets", "grotto-panels/control1-service"]},
+      "ctest_tests": {"grotto.settings.host.linux": ["nostr-settings-cli", "nostr-settings/panel-mount", "nostr-settings-config", "nostr-settings-lists", "nostr-settings-nip11", "nostr-settings-relay_stats", "nostr-settings-systemd", "nostr-settings-wallet", "nostr-settings-identity", "signer/clients", "signer/activity", "signer/approval-integration", "grotto-panels/smoke-host", "grotto-panels/profile-panel", "grotto-panels/management-panels", "grotto-panels/no-secrets", "grotto-panels/control1-service"]},
       "build_targets": ["nostr-settings", "grotto", "test-nostr-settings-panel-mount", "test-nostr-settings-config", "test-nostr-settings-lists", "test-nostr-settings-nip11", "test-nostr-settings-relay_stats", "test-nostr-settings-systemd", "test-nostr-settings-wallet", "test-nostr-settings-identity", "test-clients", "test-activity", "test-approval-integration", "test-grotto-panels-smoke", "test-grotto-panels-admission", "test-grotto-panels-control1"],
       "runtime_inputs": ["{source}/apps/grotto/data/org.nostr.Grotto.Control1.xml"],
       "requires": ["display", "private_bus"]
@@ -37,8 +37,8 @@
       "requirement": "blocking",
       "expected_outcome": "pass",
       "ctest_tests": {
-        "grotto.panels.linux": ["grotto-panels/smoke-host", "grotto-panels/no-secrets", "grotto-panels/control1-service"],
-        "grotto.linux": ["grotto-panels/smoke-host", "grotto-panels/no-secrets", "grotto-panels/control1-service"]
+        "grotto.panels.linux": ["grotto-panels/smoke-host", "grotto-panels/profile-panel", "grotto-panels/management-panels", "grotto-panels/no-secrets", "grotto-panels/control1-service"],
+        "grotto.linux": ["grotto-panels/smoke-host", "grotto-panels/profile-panel", "grotto-panels/management-panels", "grotto-panels/no-secrets", "grotto-panels/control1-service"]
       },
       "build_targets": ["test-grotto-panels-smoke", "test-grotto-panels-control1", "test-grotto-panels-admission"],
       "runtime_inputs": ["{source}/apps/grotto/data/org.nostr.Grotto.Control1.xml"],

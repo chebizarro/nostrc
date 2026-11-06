@@ -9,7 +9,11 @@ template $GrottoIdentityPanel: $GrottoPanel {
       title: _("Identity");
       Adw.ToolbarView {
         [top] Adw.HeaderBar header {}
-        [top] Adw.Banner banner { title: _("This identity isn't backed up"); button-label: _("Back Up…"); }
+        [top] Box {
+          orientation: horizontal;
+          Adw.Banner banner { hexpand: true; title: _("This identity isn't backed up"); button-label: _("Back Up…"); }
+          Button dismiss_backup { icon-name: "window-close-symbolic"; valign: center; tooltip-text: _("Dismiss Backup Reminder"); accessibility { label: _("Dismiss Backup Reminder"); } styles ["flat"] }
+        }
         content: Stack content {
           StackPage { name: "empty"; child: Adw.StatusPage empty {
             title: _("No Identity Yet");
@@ -20,7 +24,6 @@ template $GrottoIdentityPanel: $GrottoPanel {
           StackPage { name: "identity"; child: Adw.PreferencesPage preferences {
             Adw.PreferencesGroup {
               Box profile_box { orientation: vertical; }
-              Label identity_count { halign: center; wrap: true; styles ["dim-label"] }
             }
             Adw.PreferencesGroup {
               Adw.EntryRow name_row { title: _("_Name on This Device"); use-underline: true; show-apply-button: true; }
@@ -33,13 +36,10 @@ template $GrottoIdentityPanel: $GrottoPanel {
             Adw.PreferencesGroup {
               Adw.ActionRow backup_row { title: _("_Backup"); use-underline: true; activatable: true; [suffix] Image { icon-name: "go-next-symbolic"; } }
               Adw.ActionRow apps_row { title: _("Connected Apps"); activatable: true; [suffix] Image { icon-name: "go-next-symbolic"; } }
-              Adw.ExpanderRow {
-                title: _("Default Identity");
               Adw.ActionRow default_row {
-                title: _("Default for Older Apps"); subtitle-lines: 0;
-                [suffix] Button set_default { label: _("Set as Default"); valign: center; }
-                [suffix] Image default_check { icon-name: "object-select-symbolic"; }
-              }
+                title: _("Default Identity"); subtitle-lines: 0; activatable-widget: set_default;
+                [suffix] Button set_default { label: _("Use as Default"); valign: center; }
+                [suffix] Label default_check { label: _("Default"); styles ["dim-label"] }
               }
               Adw.ActionRow details_row { title: _("Identity Details"); activatable: true; [suffix] Image { icon-name: "go-next-symbolic"; } }
             }

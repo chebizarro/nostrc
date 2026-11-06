@@ -13,14 +13,14 @@ cmake_minimum_required(VERSION 3.16)
 include(GNUInstallDirs)
 option(GROTTO_USE_SYSTEM_PANELS "Use the installed grotto-panels runtime/SDK (native packages)" OFF)
 if(GROTTO_USE_SYSTEM_PANELS)
-  find_package(GrottoPanels 0.1 REQUIRED CONFIG)
+  find_package(GrottoPanels 0.2 REQUIRED CONFIG)
 elseif(NOT TARGET GrottoPanels::Panels)
   add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/../grotto-panels"
     "${CMAKE_CURRENT_BINARY_DIR}/grotto-panels")
 endif()
 find_package(PkgConfig REQUIRED)
 
-set(NOSTR_SETTINGS_VERSION 0.1.0)
+set(NOSTR_SETTINGS_VERSION 0.2.0)
 
 foreach(_nss_dep nostr-publish nostr nip19)
   if (NOT TARGET ${_nss_dep})

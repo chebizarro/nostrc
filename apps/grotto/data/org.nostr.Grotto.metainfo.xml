@@ -70,6 +70,9 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="0.2.0" type="development" date="2026-11-06">
+      <description><p>Discoverable identity switching, bounded profile discovery and dismissible backup reminders.</p></description>
+    </release>
     <release version="0.1.1" type="development" date="2026-10-27">
       <description>
         <p>Fix the alternate Meson frontend's Groundhog executable-side link closure.</p>

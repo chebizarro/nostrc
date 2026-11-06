@@ -25,3 +25,5 @@ void bunker_test_relay_hold_acks(BunkerTestRelay *, gboolean);
 guint bunker_test_relay_auth_count(BunkerTestRelay *);
 void bunker_test_relay_challenge(BunkerTestRelay *);
 void bunker_test_relay_free(BunkerTestRelay *relay);
+
+void bunker_test_relay_hold_eose(BunkerTestRelay *, gboolean);

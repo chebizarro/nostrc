@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-project('grotto-panels', 'c', version: '0.1.0', license: 'MIT',
+project('grotto-panels', 'c', version: '0.2.0', license: 'MIT',
   meson_version: '>=0.61', default_options: ['c_std=c11', 'warning_level=2'])
 gtk_dep = dependency('gtk4', version: '>=4.14')
 adw_dep = dependency('libadwaita-1', version: '>=1.5')
@@ -46,6 +46,15 @@ if get_option('tests')
     test('smoke-host', smoke, suite: 'grotto-panels', timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GTK_A11Y=test',
         'LSAN_OPTIONS=suppressions=' + meson.current_source_dir() / 'tests/lsan.supp' + ':print_suppressions=1'])
   endif
+  foreach focused : [['profile-panel', '/grotto-panels/profile'], ['management-panels', '/panels']]
+    if host_machine.system() == 'linux'
+      test(focused[0], runner, args: ['--', xvfb.full_path(), '-a', smoke.full_path(), '-p', focused[1]],
+        depends: smoke, suite: 'grotto-panels', timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GTK_A11Y=test'])
+    else
+      test(focused[0], smoke, args: ['-p', focused[1]], suite: 'grotto-panels', timeout: 30,
+        env: ['G_DEBUG=fatal-warnings', 'GTK_A11Y=test'])
+    endif
+  endforeach
   test('no-secrets', python, args: [files('tests/test-boundaries.py'), meson.current_source_dir(), panels.full_path(),
       admission.full_path(), meson.current_build_dir(), clang.full_path()],
     depends: [panels, admission], suite: 'grotto-panels')
@@ -55,5 +64,11 @@ if get_option('tests')
     include_directories: include_directories('../../apps/grotto/src', '../../tests/common'),
     c_args: ['-D_GNU_SOURCE', '-DGROTTO_CONTROL_XML_PATH="' + meson.current_source_dir() / '../../apps/grotto/data/org.nostr.Grotto.Control1.xml' + '"'],
     dependencies: [panels_dep, dependency('gio-unix-2.0')])
-  test('control1-service', control, suite: 'grotto-panels', timeout: 30, env: ['G_DEBUG=fatal-warnings'])
+  panel_schema = configure_file(input: '../../apps/grotto/data/org.nostr.Grotto.gschema.xml',
+    output: 'org.nostr.Grotto.gschema.xml', copy: true)
+  panel_test_schemas = custom_target('panel-test-schemas', input: panel_schema,
+    output: 'gschemas.compiled', command: [find_program('glib-compile-schemas'), '--strict', meson.current_build_dir()],
+    build_by_default: true)
+  test('control1-service', control, depends: panel_test_schemas, suite: 'grotto-panels', timeout: 30,
+    env: ['G_DEBUG=fatal-warnings', 'GSETTINGS_BACKEND=memory', 'GSETTINGS_SCHEMA_DIR=' + meson.current_build_dir()])
 endif

@@ -8,6 +8,7 @@
 struct _GrottoPanelsControl1Service {
   GObject parent_instance;
   GDBusProxy *proxy;
+  GHashTable *reminders;
   char *owner;
   guint64 generation, serial[GROTTO_PANELS_N_MODELS + 1];
   GListStore *models[GROTTO_PANELS_N_MODELS];
@@ -24,11 +25,11 @@ G_DEFINE_TYPE_WITH_CODE(GrottoPanelsControl1Service, grotto_panels_control1_serv
 /* This closed table is the ONLY RPC dispatch route for panel commands. */
 static const char *const methods[] = {
   "SetClientLabel", "SetDefaultIdentityForLegacy", "SetClientTrust", "SetPermissions",
-  "RevokeClient", "SetPaused", "SetPaused", "ClearActivity", "ConfigureBunker", "ResetBunkerEndpoint", NULL /* Local metadata, not a daemon RPC. */
+  "RevokeClient", "SetPaused", "SetPaused", "ClearActivity", "ConfigureBunker", "ResetBunkerEndpoint", NULL /* Local metadata, not a daemon RPC. */, NULL /* Cosmetic preference. */
 };
 static const char *const capability_names[] = {
   "set-client-label", "set-default-identity", "set-client-trust", "set-permissions",
-  "revoke-client", "pause", "resume", "clear-activity", "configure-remote", "reset-remote", NULL
+  "revoke-client", "pause", "resume", "clear-activity", "configure-remote", "reset-remote", NULL, NULL
 };
 G_STATIC_ASSERT(G_N_ELEMENTS(methods) == GROTTO_PANEL_N_COMMANDS);
 G_STATIC_ASSERT(G_N_ELEMENTS(capability_names) == GROTTO_PANEL_N_COMMANDS);
@@ -42,6 +43,7 @@ typedef struct {
   gint64 started;
 } Snapshot;
 static void refresh(GrottoPanelsControl1Service *self, guint slot);
+static void cosmetic_changed(GSettings *settings, const char *key, gpointer data);
 static const char *text(GVariant *row, const char *key) {
   const char *value = "";
   g_variant_lookup(row, key, "&s", &value);
@@ -103,7 +105,13 @@ static void apply_rows(Snapshot *snapshot, GVariant *rows) {
       }
       m.effective_permissions = effective;
     }
-    if (snapshot->slot == GROTTO_PANELS_REQUESTS) {
+    if (snapshot->slot == GROTTO_PANELS_IDENTITIES) {
+    GHashTableIter iter; gpointer key;
+    g_hash_table_iter_init(&iter, self->reminders);
+    while (g_hash_table_iter_next(&iter, &key, NULL))
+      if (!g_hash_table_contains(seen, key)) g_hash_table_iter_remove(&iter);
+  }
+  if (snapshot->slot == GROTTO_PANELS_REQUESTS) {
       guint32 remaining = 0;
       g_variant_lookup(row, "remaining_seconds", "u", &remaining);
       m.deadline_usec = snapshot->started + (gint64)remaining * G_USEC_PER_SEC;
@@ -122,10 +130,25 @@ static void apply_rows(Snapshot *snapshot, GVariant *rows) {
       rejected |= field != NULL;
     }
     if (rejected) continue;
-    GrottoPanelsItem *item = grotto_panels_item_new(&m, NULL);
+    if (snapshot->slot == GROTTO_PANELS_IDENTITIES && !g_hash_table_contains(self->reminders, m.public_key)) {
+      GSettings *settings = grotto_panels_backup_reminder_settings(m.public_key);
+      if (settings) {
+        g_signal_connect_object(settings, "changed::dismissed", G_CALLBACK(cosmetic_changed), self, 0);
+        g_signal_connect_object(settings, "writable-changed::dismissed", G_CALLBACK(cosmetic_changed), self, 0);
+        g_hash_table_insert(self->reminders, g_strdup(m.public_key), settings);
+      }
+    }
+    GrottoPanelsItem *item = grotto_panels_item_new_with_backup_banner_state(&m,
+      snapshot->slot == GROTTO_PANELS_IDENTITIES && grotto_panels_backup_banner_dismissed(m.public_key), NULL);
     if (!item) continue;
     g_ptr_array_add(items, item);
     g_hash_table_add(seen, (gpointer)grotto_panels_item_get_metadata(item)->id);
+  }
+  if (snapshot->slot == GROTTO_PANELS_IDENTITIES) {
+    GHashTableIter iter; gpointer key;
+    g_hash_table_iter_init(&iter, self->reminders);
+    while (g_hash_table_iter_next(&iter, &key, NULL))
+      if (!g_hash_table_contains(seen, key)) g_hash_table_iter_remove(&iter);
   }
   if (snapshot->slot == GROTTO_PANELS_REQUESTS) {
     for (guint i = 0; i < g_list_model_get_n_items(G_LIST_MODEL(model)); i++) {
@@ -182,6 +205,7 @@ static void snapshot_done(GObject *source, GAsyncResult *result, gpointer data) 
             if (i != GROTTO_PANEL_SET_CLIENT_LABEL) caps[i] = FALSE;
           if (!allowed) available = FALSE;
         }
+        caps[GROTTO_PANEL_DISMISS_BACKUP_BANNER] = !strcmp(role, "manager") || !strcmp(role, "approver");
         if (!available) memset(caps, 0, sizeof caps);
       }
       if (!available) g_list_store_remove_all(self->models[GROTTO_PANELS_STATUS]);
@@ -261,7 +285,15 @@ static gboolean is_available(GrottoPanelsService *service) {
 }
 static gboolean can(GrottoPanelsService *service, GrottoPanelCommand command) {
   GrottoPanelsControl1Service *self = GROTTO_PANELS_CONTROL1_SERVICE(service);
-  return self->available && self->caps[command];
+  if (!self->available || !self->caps[command]) return FALSE;
+  if (command == GROTTO_PANEL_DISMISS_BACKUP_BANNER) {
+    GHashTableIter iter; gpointer settings;
+    g_hash_table_iter_init(&iter, self->reminders);
+    while (g_hash_table_iter_next(&iter, NULL, &settings))
+      if (g_settings_is_writable(settings, "dismissed")) return TRUE;
+    return FALSE;
+  }
+  return TRUE;
 }
 typedef struct { guint64 generation; } Invocation;
 static void invocation_done(GObject *source, GAsyncResult *result, gpointer data) {
@@ -293,6 +325,19 @@ static void invoke_async(GrottoPanelsService *service, GrottoPanelCommand comman
   GCancellable *cancel, GAsyncReadyCallback callback, gpointer data) {
   GrottoPanelsControl1Service *self = GROTTO_PANELS_CONTROL1_SERVICE(service);
   GTask *task = g_task_new(self, cancel, callback, data);
+  if (command == GROTTO_PANEL_DISMISS_BACKUP_BANNER) {
+    gboolean found = FALSE;
+    GListModel *identities = G_LIST_MODEL(self->models[GROTTO_PANELS_IDENTITIES]);
+    for (guint i = 0; i < g_list_model_get_n_items(identities); i++) {
+      g_autoptr(GrottoPanelsItem) item = g_list_model_get_item(identities, i);
+      found |= !g_strcmp0(grotto_panels_item_get_metadata(item)->public_key, args->public_key);
+    }
+    if (!g_task_return_error_if_cancelled(task)) {
+      if (found && grotto_panels_dismiss_backup_banner(args->public_key)) g_task_return_boolean(task, TRUE);
+      else g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED, "Reminder preference wasn't saved");
+    }
+    g_object_unref(task); return;
+  }
   Invocation *invocation = g_new0(Invocation, 1);
   invocation->generation = self->generation;
   g_task_set_task_data(task, invocation, g_free);
@@ -421,7 +466,11 @@ static void query_async(GrottoPanelsService *service, GrottoPanelsQuery kind, co
 static GListModel *query_finish(GrottoPanelsService *service, GAsyncResult *result, GError **error) {
   g_return_val_if_fail(g_task_is_valid(result, service), NULL); return g_task_propagate_pointer(G_TASK(result), error);
 }
+static gboolean can_dismiss_backup_banner(GrottoPanelsService *service) {
+  return can(service, GROTTO_PANEL_DISMISS_BACKUP_BANNER);
+}
 static void service_iface_init(GrottoPanelsServiceInterface *iface) {
+  iface->can_dismiss_backup_banner = can_dismiss_backup_banner;
   iface->query_async = query_async; iface->query_finish = query_finish;
   iface->get_model = get_model;
   iface->is_available = is_available;
@@ -439,6 +488,7 @@ static void dispose(GObject *object) {
     g_signal_handler_disconnect(self->proxy, self->signal_id);
     g_signal_handler_disconnect(self->proxy, self->owner_id);
   }
+  g_clear_pointer(&self->reminders, g_hash_table_unref);
   g_clear_object(&self->proxy);
   g_clear_object(&self->cancel);
   for (guint i = 0; i < GROTTO_PANELS_N_MODELS; i++) g_clear_object(&self->models[i]);
@@ -454,7 +504,29 @@ static void grotto_panels_control1_service_class_init(GrottoPanelsControl1Servic
   G_OBJECT_CLASS(klass)->dispose = dispose;
   G_OBJECT_CLASS(klass)->finalize = finalize;
 }
+GSettings *grotto_panels_backup_reminder_settings(const char *key) {
+  if (!key || !*key) return NULL;
+  GSettingsSchemaSource *source = g_settings_schema_source_get_default();
+  g_autoptr(GSettingsSchema) schema = source ? g_settings_schema_source_lookup(source, "org.nostr.Grotto.IdentityReminder", TRUE) : NULL;
+  if (!schema) return NULL;
+  g_autofree char *hash = g_compute_checksum_for_string(G_CHECKSUM_SHA256, key, -1);
+  g_autofree char *path = g_strdup_printf("/org/nostr/grotto/identity-reminders/%s/", hash);
+  return g_settings_new_full(schema, NULL, path);
+}
+gboolean grotto_panels_backup_banner_dismissed(const char *key) {
+  g_autoptr(GSettings) settings = grotto_panels_backup_reminder_settings(key);
+  return settings && g_settings_get_boolean(settings, "dismissed");
+}
+gboolean grotto_panels_dismiss_backup_banner(const char *key) {
+  g_autoptr(GSettings) settings = grotto_panels_backup_reminder_settings(key);
+  return settings && g_settings_is_writable(settings, "dismissed") && g_settings_set_boolean(settings, "dismissed", TRUE);
+}
+static void cosmetic_changed(GSettings *settings, const char *key, gpointer data) {
+  (void)settings; (void)key; refresh(data, GROTTO_PANELS_IDENTITIES);
+  changed(data, "capabilities-changed");
+}
 static void grotto_panels_control1_service_init(GrottoPanelsControl1Service *self) {
+  self->reminders = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_object_unref);
   self->cancel = g_cancellable_new();
   self->tombstones = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   for (guint i = 0; i < GROTTO_PANELS_N_MODELS; i++) self->models[i] = g_list_store_new(GROTTO_TYPE_PANELS_ITEM);

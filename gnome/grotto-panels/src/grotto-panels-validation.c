@@ -87,7 +87,7 @@ gboolean grotto_panel_command_args_validate(GrottoPanelCommand command,
    * or a cosmetic label smuggled into a tier/default/pause command. */
   gboolean principal = command == GROTTO_PANEL_SET_CLIENT_LABEL || command == GROTTO_PANEL_SET_CLIENT_TRUST ||
     command == GROTTO_PANEL_SET_PERMISSIONS || command == GROTTO_PANEL_REVOKE_CLIENT;
-  gboolean identity = command == GROTTO_PANEL_SET_DEFAULT_IDENTITY || command == GROTTO_PANEL_SET_PERMISSIONS || command == GROTTO_PANEL_SET_IDENTITY_LABEL;
+  gboolean identity = command == GROTTO_PANEL_SET_DEFAULT_IDENTITY || command == GROTTO_PANEL_SET_PERMISSIONS || command == GROTTO_PANEL_SET_IDENTITY_LABEL || command == GROTTO_PANEL_DISMISS_BACKUP_BANNER;
   gboolean permissions = command == GROTTO_PANEL_SET_PERMISSIONS;
   gboolean remote = command == GROTTO_PANEL_CONFIGURE_REMOTE;
   if ((!principal && a->principal) || (!identity && a->public_key) ||

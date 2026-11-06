@@ -27,7 +27,7 @@ struct _GrottoProfileView {
   GrottoProfileInfo *info, *draft;
   GCancellable *cancel;
   guint generation;
-  gboolean editable, busy, fetched;
+  gboolean editable, busy, fetched, fetch_failed;
   AdwAvatar *avatar;
   GtkPicture *banner;
   GtkLabel *status, *address;
@@ -88,7 +88,7 @@ static void render(GrottoProfileView *self) {
   adw_avatar_set_custom_image(self->avatar, p ? GDK_PAINTABLE(p->images[0]) : NULL);
   gtk_picture_set_paintable(self->banner, p ? GDK_PAINTABLE(p->images[1]) : NULL);
   gtk_widget_set_visible(GTK_WIDGET(self->banner), p && p->images[1]);
-  adw_action_row_set_subtitle(self->summary, p && p->published ? p->fields[GROTTO_PROFILE_ABOUT] : _("Not published yet"));
+  adw_action_row_set_subtitle(self->summary, p && p->published ? p->fields[GROTTO_PROFILE_ABOUT] : self->fetched && !self->fetch_failed ? _("No profile published yet") : _("Profile not loaded"));
   adw_preferences_row_set_title(ADW_PREFERENCES_ROW(self->summary), p && *p->fields[GROTTO_PROFILE_DISPLAY_NAME] ? p->fields[GROTTO_PROFILE_DISPLAY_NAME] : p && *p->fields[GROTTO_PROFILE_NAME] ? p->fields[GROTTO_PROFILE_NAME] : _("Public Profile"));
   for (guint i = 0; i < GROTTO_PROFILE_N_FIELDS; i++) {
     gtk_widget_set_visible(GTK_WIDGET(self->details[i]), p && p->fields[i] && *p->fields[i]);
@@ -110,6 +110,7 @@ static void render(GrottoProfileView *self) {
   gtk_widget_set_sensitive(GTK_WIDGET(self->edit), self->editable && !self->busy && self->fetched);
   gtk_widget_set_sensitive(GTK_WIDGET(self->refresh), !self->busy && panel && self->key && grotto_panel_has_profile_host(panel));
   gtk_spinner_set_spinning(self->spinner, self->busy);
+  gtk_widget_set_visible(GTK_WIDGET(self->spinner), self->busy);
   if (self->dialog) {
     gtk_spinner_set_spinning(self->dialog_spinner, self->busy);
     gtk_widget_set_sensitive(GTK_WIDGET(self->save), !self->busy && self->editable);
@@ -164,7 +165,7 @@ static void done(GObject *source, GAsyncResult *result, gpointer data) {
       self->updating = TRUE;
       if (upload) { grotto_profile_info_free(self->draft); self->draft = g_steal_pointer(&info); }
       else { grotto_profile_info_free(self->info); self->info = g_steal_pointer(&info); }
-      self->fetched = TRUE;
+      self->fetched = TRUE; self->fetch_failed = FALSE;
       GrottoProfileInfo *display = upload ? self->draft : self->info;
       gtk_label_set_text(self->status, self->info->tor_blocked ? _("Tor mode — showing the saved profile without network access") : self->info->cached ? _("Offline — showing the saved profile") : self->info->no_relays ? _("No relays — enable discovery or configure this identity's relays") : self->editable ? _("Public information shared with others") : _("This identity's profile is read-only"));
       if (self->error) gtk_label_set_text(self->error, "");
@@ -178,6 +179,11 @@ static void done(GObject *source, GAsyncResult *result, gpointer data) {
       if (self->dialog) { adw_switch_row_set_active(self->bot, display->bot); render_card(self, display); }
       self->updating = FALSE;
     } else if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+      if (pending->action == GROTTO_PROFILE_FETCH) {
+        self->fetched = TRUE;
+        self->fetch_failed = TRUE;
+        if (!self->info) self->info = grotto_profile_info_copy(NULL);
+      }
       const char *message = error ? error->message : _("Profile unavailable. Try again");
       gtk_label_set_text(self->dialog ? self->error : self->status, message);
     } else if (self->error) gtk_label_set_text(self->error, _("Stopped. Data may already have reached a server or relay. Refresh before saving again"));
@@ -371,7 +377,7 @@ void grotto_profile_view_set_identity(GrottoProfileView *self, const char *key, 
       self->editable ? _("Public information shared with others") : _("This identity's profile is read-only"));
   if (changed) {
     self->generation++; g_cancellable_cancel(self->cancel); g_clear_object(&self->cancel); self->cancel = g_cancellable_new();
-    self->busy = FALSE; self->fetched = FALSE;
+    self->busy = FALSE; self->fetched = FALSE; self->fetch_failed = FALSE;
     if (self->dialog) { adw_dialog_set_can_close(self->dialog, TRUE); adw_dialog_force_close(self->dialog); }
     g_free(self->key); self->key = g_strdup(key);
     g_clear_pointer(&self->info, grotto_profile_info_free);
@@ -427,12 +433,16 @@ static void grotto_profile_view_init(GrottoProfileView *self) {
   self->address = GTK_LABEL(gtk_label_new("")); gtk_label_set_wrap(self->address, TRUE); gtk_label_set_wrap_mode(self->address, PANGO_WRAP_WORD_CHAR);
   gtk_box_append(GTK_BOX(self), GTK_WIDGET(self->address));
   self->status = GTK_LABEL(gtk_label_new("")); gtk_label_set_wrap(self->status, TRUE); gtk_widget_add_css_class(GTK_WIDGET(self->status), "dim-label");
-  gtk_box_append(GTK_BOX(self), GTK_WIDGET(self->status));
+  GtkWidget *progress = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+  gtk_widget_set_halign(progress, GTK_ALIGN_CENTER);
+  self->spinner = GTK_SPINNER(gtk_spinner_new());
+  gtk_box_append(GTK_BOX(progress), GTK_WIDGET(self->spinner));
+  gtk_box_append(GTK_BOX(progress), GTK_WIDGET(self->status));
+  gtk_box_append(GTK_BOX(self), progress);
   GtkWidget *buttons = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6); gtk_widget_set_halign(buttons, GTK_ALIGN_CENTER);
   self->edit = GTK_BUTTON(gtk_button_new_with_label(_("Edit Profile…"))); self->refresh = GTK_BUTTON(gtk_button_new_from_icon_name("view-refresh-symbolic"));
   gtk_widget_set_tooltip_text(GTK_WIDGET(self->refresh), _("Refresh Profile"));
-  self->spinner = GTK_SPINNER(gtk_spinner_new());
-  gtk_box_append(GTK_BOX(buttons), GTK_WIDGET(self->edit)); gtk_box_append(GTK_BOX(buttons), GTK_WIDGET(self->refresh)); gtk_box_append(GTK_BOX(buttons), GTK_WIDGET(self->spinner)); gtk_box_append(GTK_BOX(self), buttons);
+  gtk_box_append(GTK_BOX(buttons), GTK_WIDGET(self->edit)); gtk_box_append(GTK_BOX(buttons), GTK_WIDGET(self->refresh)); gtk_box_append(GTK_BOX(self), buttons);
   g_signal_connect(self->edit, "clicked", G_CALLBACK(edit), self); g_signal_connect(self->refresh, "clicked", G_CALLBACK(refresh), self); g_signal_connect(self, "map", G_CALLBACK(mapped), NULL);
 }
 GtkWidget *grotto_profile_view_new(GrottoPanel *panel) {

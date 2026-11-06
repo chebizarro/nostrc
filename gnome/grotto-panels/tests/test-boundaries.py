@@ -65,7 +65,7 @@ def check_schema(header):
              for o in declarations if o.get('kind') == 'EnumDecl'}
     assert enums['_GrottoPanelCommand'] == ['GROTTO_PANEL_' + name for name in (
         'SET_CLIENT_LABEL', 'SET_DEFAULT_IDENTITY', 'SET_CLIENT_TRUST', 'SET_PERMISSIONS', 'REVOKE_CLIENT',
-        'PAUSE', 'RESUME', 'CLEAR_ACTIVITY', 'CONFIGURE_REMOTE', 'RESET_REMOTE', 'SET_IDENTITY_LABEL', 'N_COMMANDS')], 'closed command enum changed'
+        'PAUSE', 'RESUME', 'CLEAR_ACTIVITY', 'CONFIGURE_REMOTE', 'RESET_REMOTE', 'SET_IDENTITY_LABEL', 'DISMISS_BACKUP_BANNER', 'N_COMMANDS')], 'closed command enum changed'
     assert enums['_GrottoPanelsModel'] == ['GROTTO_PANELS_' + name for name in ('IDENTITIES', 'APPS', 'REQUESTS', 'ACTIVITY', 'STATUS', 'N_MODELS')]
     assert enums['_GrottoPanelsQuery'] == ['GROTTO_PANELS_QUERY_PERMISSIONS', 'GROTTO_PANELS_QUERY_ACTIVITY']
     assert enums['_GrottoPanelsAccess'] == ['GROTTO_PANELS_ACCESS_' + name for name in ('SESSION', 'MANAGER', 'APPROVER')]
@@ -80,10 +80,11 @@ def check_schema(header):
         assert fields == expected, f'complete compiler schema mismatch: {name}: {fields}'
     iface = records['_GrottoPanelsServiceInterface']
     fields = {f['name']: f['type']['qualType'] for f in iface['inner'] if f['kind'] == 'FieldDecl'}
-    assert set(fields) == {'parent_iface', 'get_model', 'is_available', 'can', 'invoke_async', 'invoke_finish', 'query_async', 'query_finish', 'padding'}
+    assert set(fields) == {'parent_iface', 'get_model', 'is_available', 'can', 'invoke_async', 'invoke_finish', 'query_async', 'query_finish', 'can_dismiss_backup_banner', 'padding'}
     assert fields['is_available'] == 'gboolean (*)(GrottoPanelsService *)', fields
+    assert fields['can_dismiss_backup_banner'] == 'gboolean (*)(GrottoPanelsService *)', fields
     assert fields['can'] == 'gboolean (*)(GrottoPanelsService *, GrottoPanelCommand)', fields
-    assert fields['parent_iface'] == 'GTypeInterface' and fields['padding'] == 'gpointer[6]', fields
+    assert fields['parent_iface'] == 'GTypeInterface' and fields['padding'] == 'gpointer[5]', fields
     assert fields['invoke_async'] == 'void (*)(GrottoPanelsService *, GrottoPanelCommand, const GrottoPanelCommandArgs *, GCancellable *, GAsyncReadyCallback, gpointer)', fields
     assert fields['invoke_finish'] == 'gboolean (*)(GrottoPanelsService *, GAsyncResult *, GError **)', fields
     assert fields['query_async'] == 'void (*)(GrottoPanelsService *, GrottoPanelsQuery, const char *, guint64, GCancellable *, GAsyncReadyCallback, gpointer)', fields
@@ -94,6 +95,7 @@ exports = {
     'grotto_profile_info_copy', 'grotto_profile_info_free', 'grotto_profile_info_validate',
     'grotto_panel_has_profile_host', 'grotto_panel_profile_async', 'grotto_panel_profile_finish',
     'grotto_panels_item_get_type', 'grotto_panels_item_new', 'grotto_panels_item_get_metadata',
+    'grotto_panels_item_new_with_backup_banner_state', 'grotto_panels_item_get_backup_banner_dismissed',
     'grotto_panels_metadata_validate', 'grotto_panels_public_text_validate', 'grotto_panel_command_get_access',
     'grotto_panel_command_args_validate', 'grotto_panels_service_get_type', 'grotto_panels_service_get_model',
     'grotto_panels_service_is_available', 'grotto_panels_service_can', 'grotto_panels_service_invoke_async',

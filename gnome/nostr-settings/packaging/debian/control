@@ -8,14 +8,14 @@ Build-Depends: debhelper-compat (= 13),
  libjson-glib-dev, libsoup-3.0-dev, libsecret-1-dev,
  libssl-dev, libsecp256k1-dev, libjansson-dev, libwebsockets-dev,
  libnsync-dev, libsodium-dev,
- libgrotto-panels-0-dev (>= 0.1.0)
+ libgrotto-panels-0-dev (>= 0.2.0)
 Standards-Version: 4.6.2
 Homepage: https://github.com/chebizarro/nostrc
 Rules-Requires-Root: no
 
 Package: nostr-settings
 Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}, libgrotto-panels-0-0 (>= 0.1.0)
+Depends: ${shlibs:Depends}, ${misc:Depends}, libgrotto-panels-0-0 (>= 0.2.0)
 Suggests: grotto, nostrc-session-relay, nostr-notify, nostr-wallet-agent,
  seahorse, nostr-seal, nostr-share
 Description: Nostr desktop preferences and public signer management

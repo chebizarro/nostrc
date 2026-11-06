@@ -1,6 +1,28 @@
 /* SPDX-License-Identifier: MIT */
 #include "fake-service.h"
 
+typedef struct { GObject parent_instance; } LegacyService;
+typedef struct { GObjectClass parent_class; } LegacyServiceClass;
+static void legacy_iface_init(GrottoPanelsServiceInterface *iface);
+G_DEFINE_TYPE_WITH_CODE(LegacyService, legacy_service, G_TYPE_OBJECT,
+  G_IMPLEMENT_INTERFACE(GROTTO_TYPE_PANELS_SERVICE, legacy_iface_init))
+static gboolean legacy_available(GrottoPanelsService *service) { (void)service; return TRUE; }
+static gboolean legacy_can(GrottoPanelsService *service, GrottoPanelCommand command) {
+  (void)service;
+  g_assert_cmpint(command, <, GROTTO_PANEL_DISMISS_BACKUP_BANNER);
+  return TRUE;
+}
+static void legacy_iface_init(GrottoPanelsServiceInterface *iface) {
+  iface->is_available = legacy_available; iface->can = legacy_can;
+}
+static void legacy_service_init(LegacyService *self) { (void)self; }
+static void legacy_service_class_init(LegacyServiceClass *klass) { (void)klass; }
+static void legacy_commands(void) {
+  GrottoPanelsService *service = g_object_new(legacy_service_get_type(), NULL);
+  g_assert_true(grotto_panels_service_can(service, GROTTO_PANEL_SET_CLIENT_LABEL));
+  g_assert_false(grotto_panels_service_can(service, GROTTO_PANEL_DISMISS_BACKUP_BANNER));
+  g_object_unref(service);
+}
 typedef struct { gboolean done, ok; GError *error; } Result;
 static void finished(GObject *source, GAsyncResult *result, gpointer data) {
   Result *r = data;
@@ -27,6 +49,7 @@ static GrottoPanelCommandArgs valid(GrottoPanelCommand command) {
     case GROTTO_PANEL_SET_CLIENT_TRUST: args.principal = "app"; args.trust = "ask"; break;
     case GROTTO_PANEL_REVOKE_CLIENT: args.principal = "app"; break;
     case GROTTO_PANEL_SET_DEFAULT_IDENTITY: args.public_key = "npub-public"; break;
+    case GROTTO_PANEL_DISMISS_BACKUP_BANNER: args.public_key = "npub-public"; break;
     case GROTTO_PANEL_SET_IDENTITY_LABEL: args.public_key = "npub-public"; args.label = "Local name"; break;
     case GROTTO_PANEL_SET_PERMISSIONS:
       args.principal = "app"; args.public_key = "npub-public"; args.permissions = permissions;
@@ -75,6 +98,9 @@ static void command_admission(void) {
   /* Manager labels never accept tier/permission payloads. Trust stays approver-only. */
   GrottoPanelCommandArgs label = valid(GROTTO_PANEL_SET_CLIENT_LABEL); label.trust = "routine";
   rejected(fake, GROTTO_PANEL_SET_CLIENT_LABEL, &label);
+  GrottoPanelCommandArgs dismiss = valid(GROTTO_PANEL_DISMISS_BACKUP_BANNER); dismiss.label = "not an acknowledgement";
+  rejected(fake, GROTTO_PANEL_DISMISS_BACKUP_BANNER, &dismiss);
+  g_assert_cmpint(grotto_panel_command_get_access(GROTTO_PANEL_DISMISS_BACKUP_BANNER), ==, GROTTO_PANELS_ACCESS_MANAGER);
   g_assert_cmpint(grotto_panel_command_get_access(GROTTO_PANEL_SET_CLIENT_LABEL), ==, GROTTO_PANELS_ACCESS_MANAGER);
   g_assert_cmpint(grotto_panel_command_get_access(GROTTO_PANEL_SET_CLIENT_TRUST), ==, GROTTO_PANELS_ACCESS_APPROVER);
   g_assert_cmpint(grotto_panel_command_get_access(GROTTO_PANEL_SET_PERMISSIONS), ==, GROTTO_PANELS_ACCESS_APPROVER);
@@ -150,6 +176,7 @@ static void profile_admission(void) {
 }
 int main(int argc, char **argv) {
   g_test_init(&argc, &argv, NULL);
+  g_test_add_func("/admission/legacy-commands", legacy_commands);
   g_test_add_func("/admission/commands", command_admission);
   g_test_add_func("/admission/profile", profile_admission);
   g_test_add_func("/admission/metadata", metadata_admission);

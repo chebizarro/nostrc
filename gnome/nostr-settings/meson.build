@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: MIT
-project('nostr-settings', 'c', version: '0.1.0', meson_version: '>=0.59',
+project('nostr-settings', 'c', version: '0.2.0', meson_version: '>=0.59',
   default_options: ['c_std=gnu11', 'warning_level=2', 'werror=true'])
 cc = meson.get_compiler('c')
 deps = [dependency('glib-2.0', version: '>=2.76'), dependency('gio-2.0'),
   dependency('gio-unix-2.0'), dependency('gobject-2.0'), dependency('json-glib-1.0'),
   dependency('libsoup-3.0'), dependency('gtk4', version: '>=4.14'),
-  dependency('libadwaita-1', version: '>=1.5'), dependency('grotto-panels-0', version: '>=0.1.0'),
+  dependency('libadwaita-1', version: '>=1.5'), dependency('grotto-panels-0', version: '>=0.2.0'),
   dependency('nostr-publish'), dependency('nostr'), cc.find_library('nip19')]
 add_project_arguments('-DGLIB_VERSION_MIN_REQUIRED=GLIB_VERSION_2_76',
   '-DGLIB_VERSION_MAX_ALLOWED=GLIB_VERSION_2_80',
