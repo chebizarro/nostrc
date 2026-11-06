@@ -75,6 +75,25 @@ static void profile_panel(void) {
   g_signal_emit_by_name(find(panel, "Refresh Profile"), "clicked");
   WAIT(find(panel, "Profile unavailable. Check your relays and try again"));
   g_assert_true(gtk_widget_get_sensitive(find(panel, "Edit Profile…")));
+  GtkWidget *failed_summary = find(panel, "Public Profile");
+  g_assert_cmpstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(failed_summary)), ==, "Profile not loaded");
+  /* Address verification checks the draft, not whether a kind 0 exists. */
+  g_signal_emit_by_name(find(panel, "Edit Profile…"), "clicked");
+  AdwDialog *check_dialog = adw_window_get_visible_dialog(window); g_assert_nonnull(check_dialog);
+  guint check_frames = 0; gtk_widget_add_tick_callback(GTK_WIDGET(check_dialog), presented, &check_frames, NULL); WAIT(check_frames == 3);
+  gtk_editable_set_text(GTK_EDITABLE(find(GTK_WIDGET(check_dialog), "Nostr Address")), "alice@example.com");
+  g_signal_emit_by_name(find(GTK_WIDGET(check_dialog), "Check"), "clicked");
+  WAIT(host.calls[GROTTO_PROFILE_VERIFY_NIP05] == 1 && find(GTK_WIDGET(check_dialog), "Address matches this public key"));
+  g_assert_cmpstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(failed_summary)), ==, "Profile not loaded");
+  g_assert_nonnull(find(panel, "Profile unavailable. Check your relays and try again"));
+  g_assert_cmpuint(host.calls[GROTTO_PROFILE_FETCH], ==, 2); g_assert_cmpuint(host.calls[GROTTO_PROFILE_SAVE], ==, 0);
+  gboolean check_dialog_gone = FALSE; g_object_weak_ref(G_OBJECT(check_dialog), dialog_finalized, &check_dialog_gone);
+  g_signal_emit_by_name(find(GTK_WIDGET(check_dialog), "Cancel"), "clicked");
+  WAIT(!adw_window_get_visible_dialog(window) && check_dialog_gone);
+  g_assert_cmpstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(failed_summary)), ==, "Profile not loaded");
+  g_assert_nonnull(find(panel, "Profile unavailable. Check your relays and try again"));
+  g_assert_true(gtk_widget_get_sensitive(find(panel, "Edit Profile…")));
+  g_assert_true(gtk_widget_get_sensitive(find(panel, "Retry")));
   host.fetch_fail = FALSE;
   g_signal_emit_by_name(find(panel, "Refresh Profile"), "clicked");
   WAIT(find(panel, "No profile published yet") && gtk_widget_get_sensitive(find(panel, "Edit Profile…")));
@@ -100,12 +119,12 @@ static void profile_panel(void) {
   g_assert_nonnull(find(GTK_WIDGET(dialog), "@alice · Bot"));
   g_assert_nonnull(find(GTK_WIDGET(dialog), "First line\nSecond line"));
   g_signal_emit_by_name(find(GTK_WIDGET(dialog), "Check"), "clicked");
-  WAIT(host.calls[GROTTO_PROFILE_VERIFY_NIP05] == 1 && find(GTK_WIDGET(dialog), "Address matches this public key"));
+  WAIT(host.calls[GROTTO_PROFILE_VERIFY_NIP05] == 2 && find(GTK_WIDGET(dialog), "Address matches this public key"));
   const GrottoNip05Status states[] = {GROTTO_NIP05_MISMATCH, GROTTO_NIP05_INVALID, GROTTO_NIP05_UNAVAILABLE};
   const char *messages[] = {"Address does not match this public key", "Invalid Nostr address", "Could not check address — offline or server unavailable"};
   for (guint i = 0; i < G_N_ELEMENTS(states); i++) {
     host.nip05 = states[i]; g_signal_emit_by_name(find(GTK_WIDGET(dialog), "Check"), "clicked");
-    WAIT(host.calls[GROTTO_PROFILE_VERIFY_NIP05] == i + 2 && find(GTK_WIDGET(dialog), messages[i]));
+    WAIT(host.calls[GROTTO_PROFILE_VERIFY_NIP05] == i + 3 && find(GTK_WIDGET(dialog), messages[i]));
   }
   gtk_editable_set_text(GTK_EDITABLE(find(GTK_WIDGET(dialog), "Nostr Address")), "changed@example.com");
   g_assert_nonnull(find(GTK_WIDGET(dialog), "Address not checked"));

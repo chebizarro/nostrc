@@ -109,6 +109,8 @@ static void render(GrottoProfileView *self) {
   gtk_widget_set_visible(GTK_WIDGET(self->edit), self->editable);
   gtk_widget_set_sensitive(GTK_WIDGET(self->edit), self->editable && !self->busy && self->fetched);
   gtk_widget_set_sensitive(GTK_WIDGET(self->refresh), !self->busy && panel && self->key && grotto_panel_has_profile_host(panel));
+  if (self->fetch_failed) gtk_button_set_label(self->refresh, _("Retry"));
+  else gtk_button_set_icon_name(self->refresh, "view-refresh-symbolic");
   gtk_spinner_set_spinning(self->spinner, self->busy);
   gtk_widget_set_visible(GTK_WIDGET(self->spinner), self->busy);
   if (self->dialog) {
@@ -165,9 +167,11 @@ static void done(GObject *source, GAsyncResult *result, gpointer data) {
       self->updating = TRUE;
       if (upload) { grotto_profile_info_free(self->draft); self->draft = g_steal_pointer(&info); }
       else { grotto_profile_info_free(self->info); self->info = g_steal_pointer(&info); }
-      self->fetched = TRUE; self->fetch_failed = FALSE;
+      if (pending->action == GROTTO_PROFILE_FETCH || pending->action == GROTTO_PROFILE_SAVE) {
+        self->fetched = TRUE; self->fetch_failed = FALSE;
+        gtk_label_set_text(self->status, self->info->tor_blocked ? _("Tor mode — showing the saved profile without network access") : self->info->cached ? _("Offline — showing the saved profile") : self->info->no_relays ? _("No relays — enable discovery or configure this identity's relays") : self->editable ? _("Public information shared with others") : _("This identity's profile is read-only"));
+      }
       GrottoProfileInfo *display = upload ? self->draft : self->info;
-      gtk_label_set_text(self->status, self->info->tor_blocked ? _("Tor mode — showing the saved profile without network access") : self->info->cached ? _("Offline — showing the saved profile") : self->info->no_relays ? _("No relays — enable discovery or configure this identity's relays") : self->editable ? _("Public information shared with others") : _("This identity's profile is read-only"));
       if (self->error) gtk_label_set_text(self->error, "");
       if (pending->action == GROTTO_PROFILE_SAVE && self->dialog) {
         adw_dialog_set_can_close(self->dialog, TRUE); adw_dialog_close(self->dialog);
@@ -372,7 +376,7 @@ void grotto_profile_view_set_identity(GrottoProfileView *self, const char *key, 
   gboolean changed = g_strcmp0(self->key, key) != 0;
   gboolean was_editable = self->editable;
   self->editable = editable && panel && grotto_panel_has_profile_host(panel);
-  if (was_editable != self->editable && self->info && !self->busy && !self->dialog)
+  if (was_editable != self->editable && self->info && !self->fetch_failed && !self->busy && !self->dialog)
     gtk_label_set_text(self->status, self->info->tor_blocked ? _("Tor mode — showing the saved profile without network access") : self->info->cached ? _("Offline — showing the saved profile") :
       self->editable ? _("Public information shared with others") : _("This identity's profile is read-only"));
   if (changed) {

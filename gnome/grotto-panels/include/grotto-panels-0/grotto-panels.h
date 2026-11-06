@@ -148,7 +148,7 @@ struct _GrottoPanelsServiceInterface {
     const char *principal, guint64 before, GCancellable *cancellable,
     GAsyncReadyCallback callback, gpointer user_data);
   GListModel *(*query_finish)(GrottoPanelsService *self, GAsyncResult *result, GError **error);
-  /* Since 0.2: explicit opt-in, so a 0.1 host's can() never receives a new
+  /* Explicit opt-in, so an older host's can() never receives a new
    * command value that could index beyond its compiled capability table. */
   gboolean (*can_dismiss_backup_banner)(GrottoPanelsService *self);
   gpointer padding[5];

@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: grotto-panels\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-06 01:02-0800\n"
+"POT-Creation-Date: 2026-11-06 02:37-0800\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -324,8 +324,8 @@ msgstr ""
 msgid "Display Name"
 msgstr ""
 
-#: src/grotto-profile-view.c:51 src/grotto-profile-view.c:296
-#: src/grotto-profile-view.c:301
+#: src/grotto-profile-view.c:51 src/grotto-profile-view.c:300
+#: src/grotto-profile-view.c:305
 msgid "About"
 msgstr ""
 
@@ -437,11 +437,15 @@ msgid ""
 "%s"
 msgstr ""
 
-#: src/grotto-profile-view.c:125
+#: src/grotto-profile-view.c:112
+msgid "Retry"
+msgstr ""
+
+#: src/grotto-profile-view.c:127
 msgid "Stop"
 msgstr ""
 
-#: src/grotto-profile-view.c:125 src/grotto-profile-view.c:266
+#: src/grotto-profile-view.c:127 src/grotto-profile-view.c:270
 #: src/grotto-apps-panel.c:148 src/grotto-app-detail.c:110
 #: src/grotto-app-detail.c:127 src/grotto-app-detail.c:142
 #: src/grotto-app-detail.c:267 src/grotto-app-detail.c:339
@@ -450,169 +454,169 @@ msgstr ""
 msgid "Cancel"
 msgstr ""
 
-#: src/grotto-profile-view.c:170 src/grotto-profile-view.c:376
+#: src/grotto-profile-view.c:172 src/grotto-profile-view.c:380
 msgid "Tor mode — showing the saved profile without network access"
 msgstr ""
 
-#: src/grotto-profile-view.c:170 src/grotto-profile-view.c:376
+#: src/grotto-profile-view.c:172 src/grotto-profile-view.c:380
 msgid "Offline — showing the saved profile"
 msgstr ""
 
-#: src/grotto-profile-view.c:170
+#: src/grotto-profile-view.c:172
 msgid "No relays — enable discovery or configure this identity's relays"
 msgstr ""
 
-#: src/grotto-profile-view.c:170 src/grotto-profile-view.c:377
+#: src/grotto-profile-view.c:172 src/grotto-profile-view.c:381
 msgid "Public information shared with others"
 msgstr ""
 
-#: src/grotto-profile-view.c:170 src/grotto-profile-view.c:377
+#: src/grotto-profile-view.c:172 src/grotto-profile-view.c:381
 msgid "This identity's profile is read-only"
 msgstr ""
 
-#: src/grotto-profile-view.c:187
+#: src/grotto-profile-view.c:191
 msgid "Profile unavailable. Try again"
 msgstr ""
 
-#: src/grotto-profile-view.c:189
+#: src/grotto-profile-view.c:193
 msgid ""
 "Stopped. Data may already have reached a server or relay. Refresh before "
 "saving again"
 msgstr ""
 
-#: src/grotto-profile-view.c:205
+#: src/grotto-profile-view.c:209
 msgid "Loading profile…"
 msgstr ""
 
-#: src/grotto-profile-view.c:205
+#: src/grotto-profile-view.c:209
 msgid "Waiting for review and publishing…"
 msgstr ""
 
-#: src/grotto-profile-view.c:205
+#: src/grotto-profile-view.c:209
 msgid "Checking Nostr address…"
 msgstr ""
 
-#: src/grotto-profile-view.c:205
+#: src/grotto-profile-view.c:209
 msgid "Choosing and uploading image…"
 msgstr ""
 
-#: src/grotto-profile-view.c:214
+#: src/grotto-profile-view.c:218
 msgid "Stopping… Data already sent cannot be recalled"
 msgstr ""
 
-#: src/grotto-profile-view.c:240
+#: src/grotto-profile-view.c:244
 msgid "Local changes discarded. Already uploaded images remain public"
 msgstr ""
 
-#: src/grotto-profile-view.c:264
+#: src/grotto-profile-view.c:268
 msgid "Edit Profile"
 msgstr ""
 
-#: src/grotto-profile-view.c:270
+#: src/grotto-profile-view.c:274
 msgid "Save"
 msgstr ""
 
-#: src/grotto-profile-view.c:277
+#: src/grotto-profile-view.c:281
 msgid "Profile Preview"
 msgstr ""
 
-#: src/grotto-profile-view.c:278
+#: src/grotto-profile-view.c:282
 msgid "A client-style preview of your unsaved changes"
 msgstr ""
 
-#: src/grotto-profile-view.c:282
+#: src/grotto-profile-view.c:286
 msgid "Preview Banner"
 msgstr ""
 
-#: src/grotto-profile-view.c:290
+#: src/grotto-profile-view.c:294
 msgid "Links, Addresses and More"
 msgstr ""
 
-#: src/grotto-profile-view.c:292
+#: src/grotto-profile-view.c:296
 msgid ""
 "Your profile is public. Saving asks you to review the final JSON and "
 "publication relays"
 msgstr ""
 
-#: src/grotto-profile-view.c:311
+#: src/grotto-profile-view.c:315
 msgid "Check"
 msgstr ""
 
-#: src/grotto-profile-view.c:312
+#: src/grotto-profile-view.c:316
 msgid "Check this address using HTTPS at its domain"
 msgstr ""
 
-#: src/grotto-profile-view.c:319
+#: src/grotto-profile-view.c:323
 msgid "Choose Banner…"
 msgstr ""
 
-#: src/grotto-profile-view.c:319
+#: src/grotto-profile-view.c:323
 msgid "Choose Avatar…"
 msgstr ""
 
-#: src/grotto-profile-view.c:323
+#: src/grotto-profile-view.c:327
 msgid "Banner Preview"
 msgstr ""
 
-#: src/grotto-profile-view.c:323
+#: src/grotto-profile-view.c:327
 msgid "Avatar Preview"
 msgstr ""
 
-#: src/grotto-profile-view.c:325
+#: src/grotto-profile-view.c:329
 msgid "Banner"
 msgstr ""
 
-#: src/grotto-profile-view.c:325
+#: src/grotto-profile-view.c:329
 msgid "Avatar"
 msgstr ""
 
-#: src/grotto-profile-view.c:326
+#: src/grotto-profile-view.c:330
 msgid "Crop to 3∶1 · Up to 1500 × 500"
 msgstr ""
 
-#: src/grotto-profile-view.c:326
+#: src/grotto-profile-view.c:330
 msgid "Square crop · Up to 512 × 512"
 msgstr ""
 
-#: src/grotto-profile-view.c:334
+#: src/grotto-profile-view.c:338
 msgid "Automated Account (Bot)"
 msgstr ""
 
-#: src/grotto-profile-view.c:338
+#: src/grotto-profile-view.c:342
 msgid "Publication and Discovery Details"
 msgstr ""
 
-#: src/grotto-profile-view.c:350
+#: src/grotto-profile-view.c:354
 msgid "Republish"
 msgstr ""
 
-#: src/grotto-profile-view.c:350
+#: src/grotto-profile-view.c:354
 msgid "Discard Local Changes"
 msgstr ""
 
-#: src/grotto-profile-view.c:352
+#: src/grotto-profile-view.c:356
 msgid ""
 "Republish the unchanged profile. Use Save for local edits, or discard them "
 "first"
 msgstr ""
 
-#: src/grotto-profile-view.c:386
+#: src/grotto-profile-view.c:390
 msgid "Open Grotto to view or edit this profile"
 msgstr ""
 
-#: src/grotto-profile-view.c:409
+#: src/grotto-profile-view.c:413
 msgid "Profile Banner"
 msgstr ""
 
-#: src/grotto-profile-view.c:421
+#: src/grotto-profile-view.c:425
 msgid "Profile Details"
 msgstr ""
 
-#: src/grotto-profile-view.c:443
+#: src/grotto-profile-view.c:447
 msgid "Edit Profile…"
 msgstr ""
 
-#: src/grotto-profile-view.c:444
+#: src/grotto-profile-view.c:448
 msgid "Refresh Profile"
 msgstr ""
 

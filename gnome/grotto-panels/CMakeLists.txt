@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 cmake_minimum_required(VERSION 3.22)
-project(grotto-panels VERSION 0.2.0 LANGUAGES C)
+project(grotto-panels VERSION 0.1.0 LANGUAGES C)
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/VersionHelpers.cmake")

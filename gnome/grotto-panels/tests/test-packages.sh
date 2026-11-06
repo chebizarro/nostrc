@@ -11,7 +11,7 @@ done
 root=$(cd "$(dirname "$0")/../../.." && pwd)
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-source=$work/grotto-panels-0.2.0
+source=$work/grotto-panels-0.1.0
 mkdir -p "$source/gnome" "$source/cmake"
 cp -R "$root/gnome/grotto-panels" "$source/gnome/"
 cp "$root/cmake/VersionHelpers.cmake" "$source/cmake/"
@@ -45,7 +45,7 @@ add_executable(installed-consumer main.c)
 target_link_libraries(installed-consumer PRIVATE GrottoPanels::Panels)
 CMAKE
 check_consumer() {
-  [[ $(pkg-config --modversion grotto-panels-0) == 0.2.0 ]]
+  [[ $(pkg-config --modversion grotto-panels-0) == 0.1.0 ]]
   [[ -e $(pkg-config --variable=libdir grotto-panels-0)/libgrotto-panels-0.so.0 ]]
   # Intentional shell splitting of pkg-config's compiler/linker flags.
   cc "$work/consumer/main.c" $(pkg-config --cflags --libs grotto-panels-0) -o "$work/consumer/pc-consumer"
@@ -62,16 +62,16 @@ check_consumer deb
 dpkg --purge libgrotto-panels-0-dev libgrotto-panels-0-0
 rpmroot=$work/rpm
 mkdir -p "$rpmroot/SOURCES" "$rpmroot/SPECS"
-tar -czf "$rpmroot/SOURCES/grotto-panels-0.2.0.tar.gz" -C "$work" \
-  grotto-panels-0.2.0/gnome grotto-panels-0.2.0/cmake
+tar -czf "$rpmroot/SOURCES/grotto-panels-0.1.0.tar.gz" -C "$work" \
+  grotto-panels-0.1.0/gnome grotto-panels-0.1.0/cmake
 cp "$root/gnome/grotto-panels/packaging/rpm/grotto-panels.spec" "$rpmroot/SPECS/"
 libdir=/usr/lib/$(dpkg-architecture -qDEB_HOST_MULTIARCH)
 rpmbuild -bb --nodeps --define "_topdir $rpmroot" --define "_libdir $libdir" "$rpmroot/SPECS/grotto-panels.spec"
-runtime=$(find "$rpmroot/RPMS" -name 'grotto-panels-0.2.0-*.rpm' -print -quit)
-devel=$(find "$rpmroot/RPMS" -name 'grotto-panels-devel-0.2.0-*.rpm' -print -quit)
+runtime=$(find "$rpmroot/RPMS" -name 'grotto-panels-0.1.0-*.rpm' -print -quit)
+devel=$(find "$rpmroot/RPMS" -name 'grotto-panels-devel-0.1.0-*.rpm' -print -quit)
 [[ -n $runtime && -n $devel ]]
 rpm -qp --provides "$runtime" | grep -F 'libgrotto-panels-0.so.0'
-rpm -qp --provides "$devel" | grep -F 'pkgconfig(grotto-panels-0) = 0.2.0'
+rpm -qp --provides "$devel" | grep -F 'pkgconfig(grotto-panels-0) = 0.1.0'
 rpm -qp --requires "$devel"
 rpm --install --nodeps "$runtime" "$devel"
 /sbin/ldconfig

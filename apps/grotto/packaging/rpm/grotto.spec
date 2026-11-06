@@ -2,7 +2,7 @@
 # Requires GTK >=4.14, libadwaita >=1.5, GLib >=2.80 (not RHEL 9/Fedora 38).
 %global app_id org.nostr.Grotto
 Name:           grotto
-Version:        0.2.0
+Version:        0.1.1
 Release:        1%{?dist}
 Summary:        Nostr identity management and signing service (Preview)
 License:        MIT
@@ -17,7 +17,7 @@ BuildRequires:  python3
 BuildRequires:  gettext
 BuildRequires:  pkgconfig(gtk4) >= 4.14
 BuildRequires:  pkgconfig(libadwaita-1) >= 1.5
-BuildRequires:  pkgconfig(grotto-panels-0) >= 0.2.0
+BuildRequires:  pkgconfig(grotto-panels-0) >= 0.1.0
 BuildRequires:  pkgconfig(glib-2.0) >= 2.80
 BuildRequires:  pkgconfig(json-glib-1.0)
 BuildRequires:  pkgconfig(libsoup-3.0)
@@ -40,7 +40,7 @@ BuildRequires:  appstream
 BuildRequires:  systemd-rpm-macros
 Requires:       gtk4 >= 4.14
 Requires:       libadwaita >= 1.5
-Requires:       grotto-panels >= 0.2.0
+Requires:       grotto-panels >= 0.1.0
 Requires:       glib2 >= 2.80
 Requires:       gstreamer1-plugins-base
 Requires:       gstreamer1-plugins-good
@@ -111,9 +111,6 @@ appstreamcli validate --no-net %{buildroot}%{_datadir}/metainfo/%{app_id}.metain
 %{_datadir}/doc/nostr-signer-webext-host/
 
 %changelog
-* Fri Nov 06 2026 Grotto Maintainers - 0.2.0-1
-- Bound profile discovery and persist cosmetic identity backup reminders
-
 * Tue Oct 27 2026 Grotto Maintainers - 0.1.1-1
 - Fix the alternate Meson frontend's Groundhog executable-side link closure
 
