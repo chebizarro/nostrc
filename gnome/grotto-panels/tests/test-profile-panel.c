@@ -362,6 +362,8 @@ static void cache_first_live_view(void) {
   g_assert_true(grotto_panels_fake_service_replace(fake, GROTTO_PANELS_IDENTITIES, &identity, NULL));
   g_autoptr(GrottoProfileInfo) cached = grotto_profile_info_copy(NULL); cached->published = TRUE; cached->created_at = 100;
   g_free(cached->fields[GROTTO_PROFILE_DISPLAY_NAME]); cached->fields[GROTTO_PROFILE_DISPLAY_NAME] = g_strdup("Cached profile");
+  g_free(cached->fields[GROTTO_PROFILE_PICTURE]); cached->fields[GROTTO_PROFILE_PICTURE] = g_strdup("https://images.example/avatar.png");
+  g_free(cached->fields[GROTTO_PROFILE_BANNER]); cached->fields[GROTTO_PROFILE_BANNER] = g_strdup("https://images.example/banner.png");
   static const guint8 pixel[] = {80, 120, 180, 255}; g_autoptr(GBytes) bytes = g_bytes_new_static(pixel, sizeof pixel);
   cached->images[0] = gdk_memory_texture_new(1, 1, GDK_MEMORY_R8G8B8A8, bytes, 4); cached->images[1] = g_object_ref(cached->images[0]);
   grotto_panels_service_set_profile(service, "cached-key", cached);
@@ -402,9 +404,26 @@ static void cache_first_live_view(void) {
   /* An initially cold in-process cache probes disk before showing any spinner. */
   identity.public_key = "disk-key"; g_assert_true(grotto_panels_fake_service_replace(fake, GROTTO_PANELS_IDENTITIES, &identity, NULL));
   g_assert_nonnull(host.cache_pending); assert_no_loading(panel);
-  g_task_return_pointer(host.cache_pending, grotto_profile_info_copy(cached), (GDestroyNotify)grotto_profile_info_free); g_clear_object(&host.cache_pending);
+  g_autoptr(GrottoProfileInfo) missing = grotto_profile_info_copy(cached);
+  g_clear_object(&missing->images[0]); g_clear_object(&missing->images[1]);
+  /* Hydration completes before a held, same-revision cache-only snapshot. Both
+   * that reply and a delayed FETCH must preserve the images already loaded. */
+  grotto_panels_service_set_profile(service, "disk-key", cached);
+  g_task_return_pointer(host.cache_pending, grotto_profile_info_copy(missing), (GDestroyNotify)grotto_profile_info_free); g_clear_object(&host.cache_pending);
   WAIT(host.pending); g_assert_nonnull(find(panel, "Cached profile")); assert_no_loading(panel);
-  finish_view_read(&host, panel, cached); g_assert_cmpuint(host.checks, ==, 1);
+  g_assert_true(adw_avatar_get_custom_image(row_avatar(panel)) == GDK_PAINTABLE(cached->images[0]));
+  finish_view_read(&host, panel, missing); g_assert_cmpuint(host.checks, ==, 1);
+  g_autoptr(GrottoProfileInfo) hydrated = grotto_panels_service_dup_profile(service, "disk-key");
+  g_assert_true(hydrated->images[0] == cached->images[0]); g_assert_true(hydrated->images[1] == cached->images[1]);
+  g_assert_true(adw_avatar_get_custom_image(row_avatar(panel)) == GDK_PAINTABLE(cached->images[0]));
+  /* Matching timestamps alone must not keep an image belonging to another URL. */
+  g_autoptr(GrottoProfileInfo) changed = grotto_profile_info_copy(missing);
+  g_free(changed->fields[GROTTO_PROFILE_PICTURE]); changed->fields[GROTTO_PROFILE_PICTURE] = g_strdup("https://images.example/new-avatar.png");
+  g_free(changed->fields[GROTTO_PROFILE_BANNER]); changed->fields[GROTTO_PROFILE_BANNER] = g_strdup("https://images.example/new-banner.png");
+  grotto_panels_service_set_profile(service, "disk-key", changed);
+  g_autoptr(GrottoProfileInfo) changed_cached = grotto_panels_service_dup_profile(service, "disk-key");
+  g_assert_null(changed_cached->images[0]); g_assert_null(changed_cached->images[1]);
+  g_assert_null(adw_avatar_get_custom_image(row_avatar(panel)));
   /* Switching away from a held cold FETCH must not carry its loading label
    * into another identity's disk-cache probe or accept its cancelled reply. */
   identity.public_key = "uncached-key"; g_assert_true(grotto_panels_fake_service_replace(fake, GROTTO_PANELS_IDENTITIES, &identity, NULL));

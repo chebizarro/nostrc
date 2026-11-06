@@ -157,6 +157,13 @@ static void accept_profile(GrottoProfileView *self, const GrottoProfileInfo *inf
   g_clear_pointer(&self->info, grotto_profile_info_free); self->info = grotto_profile_info_copy(info);
   self->fetched = TRUE; self->fetch_failed = FALSE; profile_status(self);
 }
+static void accept_cached_profile(GrottoProfileView *self, const GrottoProfileInfo *info) {
+  if (self->service) {
+    grotto_panels_service_set_profile(self->service, self->key, info);
+    g_autoptr(GrottoProfileInfo) winner = grotto_panels_service_dup_profile(self->service, self->key);
+    accept_profile(self, winner ? winner : info);
+  } else accept_profile(self, info);
+}
 static void profile_updated(GrottoPanelsService *service, const char *key, gpointer data) {
   GrottoProfileView *self = data;
   if (service != self->service || g_strcmp0(key, self->key)) return;
@@ -180,10 +187,7 @@ static void done(GObject *source, GAsyncResult *result, gpointer data) {
     gboolean fetch = pending->action == GROTTO_PROFILE_FETCH || pending->action == GROTTO_PROFILE_FETCH_CACHED;
     if (fetch) self->fetch_pending = FALSE;
     if (pending->action == GROTTO_PROFILE_FETCH_CACHED) {
-      if (info) {
-        if (self->service) grotto_panels_service_set_profile(self->service, self->key, info);
-        accept_profile(self, info);
-      }
+      if (info) accept_cached_profile(self, info);
       render(self);
       if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) begin_request(self, GROTTO_PROFILE_FETCH);
       g_weak_ref_clear(&pending->view); g_free(pending); return;
@@ -192,14 +196,7 @@ static void done(GObject *source, GAsyncResult *result, gpointer data) {
       gboolean upload = self->dialog && (pending->action == GROTTO_PROFILE_CHOOSE_AVATAR || pending->action == GROTTO_PROFILE_CHOOSE_BANNER || pending->action == GROTTO_PROFILE_VERIFY_NIP05);
       self->updating = TRUE;
       if (upload) { grotto_profile_info_free(self->draft); self->draft = g_steal_pointer(&info); }
-      else {
-        if (self->service) {
-          grotto_panels_service_set_profile(self->service, self->key, info);
-          g_autoptr(GrottoProfileInfo) winner = grotto_panels_service_dup_profile(self->service, self->key);
-          if (winner) { grotto_profile_info_free(info); info = g_steal_pointer(&winner); }
-        }
-        accept_profile(self, info);
-      }
+      else accept_cached_profile(self, info);
       GrottoProfileInfo *display = upload ? self->draft : self->info;
       if (self->error) gtk_label_set_text(self->error, "");
       if (pending->action == GROTTO_PROFILE_SAVE && self->dialog) {

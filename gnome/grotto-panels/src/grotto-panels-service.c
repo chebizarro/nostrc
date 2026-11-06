@@ -132,9 +132,22 @@ void grotto_panels_service_set_profile(GrottoPanelsService *self, const char *ke
   g_return_if_fail(GROTTO_PANELS_IS_SERVICE(self));
   if (!key || !*key || !info || !grotto_panels_public_text_validate(key, NULL) || !grotto_profile_info_validate(info, NULL)) return;
   DisplayCache *c = display_cache(self); GList *l = display_find(c, key);
+  g_autoptr(GrottoProfileInfo) hydrated = NULL;
   if (l) {
     DisplayProfile *p = l->data;
     if (p->info->created_at > info->created_at || (p->info->published && !info->published)) return;
+    /* A cache read can finish after hydration of the same metadata revision.
+     * Missing pixels must not erase an already loaded image for that URL. */
+    if (p->info->created_at == info->created_at && p->info->published == info->published) {
+      for (guint i = 0; i < 2; i++) {
+        guint field = i ? GROTTO_PROFILE_BANNER : GROTTO_PROFILE_PICTURE;
+        if (!info->images[i] && p->info->images[i] && !g_strcmp0(p->info->fields[field], info->fields[field])) {
+          if (!hydrated) hydrated = grotto_profile_info_copy(info);
+          g_set_object(&hydrated->images[i], p->info->images[i]);
+        }
+      }
+      if (hydrated) info = hydrated;
+    }
     gboolean equal = p->info->published == info->published && p->info->created_at == info->created_at &&
       p->info->bot == info->bot && p->info->tor_blocked == info->tor_blocked && p->info->cached == info->cached &&
       p->info->no_relays == info->no_relays && p->info->nip05_status == info->nip05_status &&
