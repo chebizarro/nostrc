@@ -130,3 +130,38 @@ The independent strict caret probe **failed with exit 134** after Return at 360 
 Evidence is retained at `/tmp/grotto-profile-layout-recheck-16bf21139/`: `focused.log`, `focused.exit`, `LastTest-focused.log`, build/configuration/dependency logs, `catalogs.log`, `static-extras.log`, diagnostic sources, `probe.log`/`.exit` and `probe-continue.log`/`.exit`. The initial diagnostic assertion failure is preserved separately from the continuation run. Only task-owned container/volume resources are removed after export; the assigned branch/worktree and sibling resources are retained. Tracker remote synchronization is still unavailable because no Beads remote is configured. No full suite, accepted-baseline smoke-host, native desktop/Orca, hosted CI, external relay or release acceptance was run or claimed.
 
 **Final verdict: request changes; F1 is only partially resolved.** Keep the successful single-scroller fix and accessible placeholder, but make the caret remain visible after settled newline layout and keyboard focus re-entry, with focused coverage of those two cases. F2 and the catalog/placeholder nits are resolved. The six serial container checks are green; they do not override the independently reproduced residual failure. No fix was made in this re-check.
+
+## Re-check (ae90f75a5)
+
+Date: 2026-11-06. Final re-check task: `nostrc-nvje2`. `git pull --ff-only` confirmed the clean assigned branch at `ae90f75a5b1e3b9450263df040bd05fbfdcb0e26`. Reviewed only its five-file diff against `e59fe567d` and the two remaining F1 behaviors. Prior failure evidence and verdicts above are historical and preserved; this section supplies the final verdict. Only the report is changed by this review.
+
+### F1 — Resolved, confirmed/executed
+
+The production fix now handles focus entry and text-adjustment layout changes, and stops an older viewport focus-animation target before clamping the page to the caret (`gnome/grotto-panels/src/grotto-profile-view.c:262-304,381-386`). It retains one outer page scroller and event-driven, weak-widget-bound scheduling, not a nested text scroller or polling timer.
+
+The independent reproducer from the previous re-check was run against the freshly rebuilt production library with animations enabled **before** editor creation, actual `xdotool` keyboard input and 30 frame ticks after each operation. At actual content widths 360 and 798 px, both formerly failing operations now keep the whole caret inside the page viewport:
+
+| Width | Operation | Caret y, px | Viewport y clip, px | Result |
+|---|---|---|---|---|
+| 360 | Return at the long biography's end | `687…704` | `96…710` | PASS |
+| 360 | Actual Tab out, then Shift+Tab back | `602…619` | `96…710` | PASS |
+| 798 | Return at the long biography's end | `657…674` | `76…680` | PASS |
+| 798 | Actual Tab out, then Shift+Tab back | `575…592` | `76…680` | PASS |
+
+The diagnostic additionally checked horizontal containment: caret x=26 at 360 px was inside viewport x=0…360, and x=170 at 798 px was inside x=129…669. Ctrl+End, typing, Ctrl+Home, keyboard reachability from Name, Tab/Shift+Tab traversal, accessible name/placeholder, Return without Save, and dirty Escape/reopen also passed. Exactly one scroller ancestor remains; wheel input moves the outer adjustment from 293 to 365.2/364.5 while the TextView's internal adjustment stays 0. **Diagnostic exit 0; zero caret-visibility failures.** `nostrc-lapf9` is independently confirmed resolved, not accepted merely because the implementer's bead was closed.
+
+### Regression-test assertions verified
+
+`apps/grotto/tests/test-ui-layout.c:950-998` exercises **both exact allocated widths** with an 80-line biography, animations enabled before opening the editor (`:900-907`) and 30-frame settling after the relevant actions. After Return it asserts the expected line count and caret visibility (`:963-965`). For re-entry, it first traverses out with Tab, deliberately scrolls the retained insertion point out of view and asserts that offscreen precondition, then delivers actual Shift+Tab, asserts root focus has returned to About, and rechecks visibility (`:971-984`). It does not substitute a programmatic focus grab for that re-entry.
+
+The helper at `:83-97` obtains the cursor rectangle, converts its coordinates into the window, computes bounds of the **page scroller's viewport**, and asserts both `caret.y >= viewport.top` and `caret.y + caret.height <= viewport.bottom`. Thus it checks the whole **vertical extent**, not merely the caret origin, text-view allocation or outer adjustment value. The committed helper has no separate horizontal-bound assertion; the independent diagnostic above supplied that two-axis check. Its vertical assertions directly cover both reported scrolling failures. Both English layout and Spanish accessibility executions passed these new assertions.
+
+### Verification and final verdict
+
+A fresh `nostrc-linux-ci:arm64` container used the same image ID recorded above, GTK 4.14.5/libadwaita 1.5.0, container-only `xdotool`, a read-only source mount, private copied build, libsecret backend and isolated homes/buses. The same four focused build prerequisites were rebuilt before execution. All five remediation inputs byte-matched this worktree after execution.
+
+The six requested checks ran once, serially, with the original CTest regex and `--parallel 1 --output-on-failure`: **7/7 PASS including the required homes fixture; exit 0; 158.77 s**. Individual times: profile-panel 1.98 s; management-panels 0.24 s; no-secrets 3.74 s; profile-integration 12.35 s; ui-layout 69.97 s; ui-accessibility 70.44 s. No skip, retry or weakened assertion was used. The real-daemon/local-relay profile integration again passed exactly-one-review and reviewed/published-event checks; its fixture event ID was `ec637de5fc177e178318bd985da2bffa6c1e5c99c61dde61ea0b41a3ead86232`. The independent settled-frame diagnostic also passed. Six shipped catalogs still pass `msgfmt --check --check-format`, PO/POT have zero fuzzy entries, panels template coverage passes, and `git diff --check e59fe567d..ae90f75a5` passes; F2 remains resolved.
+
+Evidence is retained at `/tmp/grotto-profile-layout-recheck-ae90f75a5/`, including build/configuration/dependency logs, `focused.log`/`.exit`, `LastTest-focused.log`, `probe.c`, `probe.log`/`.exit` and `static.log`. Only this run's container/volume are removed after export; the assigned branch/worktree and sibling resources are preserved. This is local container/fixture evidence, not native desktop/Orca, hosted CI, external relay or release acceptance. No full suite or accepted-baseline smoke-host was run. No product fixes, authority/policy changes or version changes were made by this review; panels stays **0.1.0**, Grotto **0.1.1**, and this documentation-only appendix needs no bump. Beads remote synchronization remains unavailable because no remote is configured.
+
+**Final verdict: approve the scoped profile-view layout changes at ae90f75a5.** Both remaining F1 failures are resolved and covered by meaningful viewport-based regression assertions at 360 and 798 px; F2 and the previous nits remain resolved. No blocking findings remain in this review's agreed scope. This supersedes the earlier request-changes verdicts without erasing their failed receipts or extending acceptance to unexecuted environments.
