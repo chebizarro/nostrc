@@ -5,25 +5,43 @@ template $OnboardingAssistant: Adw.Window {
   default-width: 480;
   default-height: 600;
   width-request: 320;
-  Box {
-    orientation: vertical;
-    Adw.NavigationView steps {
-      vexpand: true;
-      Adw.NavigationPage {
-        tag: "welcome"; title: _("Set Up Grotto");
-        Adw.ToolbarView {
-          [top] Adw.HeaderBar {}
+  Adw.ToolbarView {
+    [top] Adw.HeaderBar header_actions {
+      title-widget: Label {
+        label: bind template.title;
+        ellipsize: end;
+        styles ["title"]
+      };
+      show-start-title-buttons: false;
+      show-end-title-buttons: false;
+      [start] MenuButton finish_menu {
+        visible: false;
+        icon-name: "view-more-symbolic";
+        tooltip-text: _("More Setup Options");
+        popover: Popover finish_popover {};
+      }
+      [start] Button btn_skip { label: _("_Skip Setup"); use-underline: true; }
+      [start] Button btn_back {
+        icon-name: "go-previous-symbolic";
+        tooltip-text: _("Back");
+        accessibility { label: _("Back"); }
+      }
+      [end] Button btn_next { label: _("_Get Started"); use-underline: true; styles ["suggested-action"] }
+    }
+    Box {
+      orientation: vertical;
+      Adw.NavigationView steps {
+        vexpand: true;
+        Adw.NavigationPage {
+          tag: "welcome"; title: _("Set Up Grotto");
           Adw.StatusPage {
             icon-name: "org.nostr.Grotto";
             title: _("Your Identity, Your Control");
             description: _("Keep your keys in the system keyring. Choose which apps may use your identity without sharing your secret key.");
           }
         }
-      }
-      Adw.NavigationPage {
-        tag: "choice"; title: _("Add an Identity");
-        Adw.ToolbarView {
-          [top] Adw.HeaderBar {}
+        Adw.NavigationPage {
+          tag: "choice"; title: _("Add an Identity");
           Adw.PreferencesPage {
             Adw.PreferencesGroup {
               Adw.ActionRow choose_create { title: _("Create an Identity"); subtitle: _("Start with a new identity"); activatable: true; [suffix] Image { icon-name: "go-next-symbolic"; } }
@@ -32,21 +50,15 @@ template $OnboardingAssistant: Adw.Window {
             }
           }
         }
-      }
-      Adw.NavigationPage {
-        tag: "create"; title: _("Create an Identity");
-        Adw.ToolbarView {
-          [top] Adw.HeaderBar {}
+        Adw.NavigationPage {
+          tag: "create"; title: _("Create an Identity");
           Adw.PreferencesPage {
             description: _("Your new key is saved in the system keyring. Next, check that it works and save a recovery phrase.");
             Adw.PreferencesGroup { Adw.EntryRow entry_profile_name { title: _("Name on This Device"); } }
           }
         }
-      }
-      Adw.NavigationPage {
-        tag: "import"; title: _("Import an Identity");
-        Adw.ToolbarView {
-          [top] Adw.HeaderBar {}
+        Adw.NavigationPage {
+          tag: "import"; title: _("Import an Identity");
           Adw.PreferencesPage {
             description: _("Enter your secret key, encrypted backup, or recovery phrase.");
             Adw.PreferencesGroup {
@@ -66,11 +78,8 @@ template $OnboardingAssistant: Adw.Window {
             }
           }
         }
-      }
-      Adw.NavigationPage {
-        tag: "connect"; title: _("Connect an App");
-        Adw.ToolbarView {
-          [top] Adw.HeaderBar {}
+        Adw.NavigationPage {
+          tag: "connect"; title: _("Connect an App");
           Adw.PreferencesPage {
             description: _("Apps on this device ask for permission when they first use Grotto. For an app on another device, open Connected Apps to pair it.");
             Adw.PreferencesGroup {
@@ -79,11 +88,8 @@ template $OnboardingAssistant: Adw.Window {
             }
           }
         }
-      }
-      Adw.NavigationPage {
-        tag: "test"; title: _("Check Your Identity");
-        Adw.ToolbarView {
-          [top] Adw.HeaderBar {}
+        Adw.NavigationPage {
+          tag: "test"; title: _("Check Your Identity");
           Adw.PreferencesPage {
             description: _("Approve a one-time signing and encryption check. Nothing is published and no app permissions are saved.");
             Adw.PreferencesGroup { Box pending_requests { orientation: vertical; } }
@@ -96,11 +102,8 @@ template $OnboardingAssistant: Adw.Window {
             }
           }
         }
-      }
-      Adw.NavigationPage {
-        tag: "backup"; title: _("Back Up Identity");
-        Adw.ToolbarView {
-          [top] Adw.HeaderBar {}
+        Adw.NavigationPage {
+          tag: "backup"; title: _("Back Up Identity");
           Adw.PreferencesPage {
             description: _("Write these words down in order and keep them private. Anyone with them controls your identity.");
             Adw.PreferencesGroup { Box seed_words { orientation: vertical; styles ["monospace"] } }
@@ -123,28 +126,19 @@ template $OnboardingAssistant: Adw.Window {
             }
           }
         }
-      }
-      Adw.NavigationPage {
-        tag: "ready"; title: _("Setup Complete");
-        Adw.ToolbarView {
-          [top] Adw.HeaderBar {}
+        Adw.NavigationPage {
+          tag: "ready"; title: _("Setup Complete");
           Adw.StatusPage {
             icon-name: "emblem-ok-symbolic"; title: _("Your Identity Is Ready");
             child: Label ready_summary { wrap: true; };
           }
         }
       }
-    }
-    Box {
-      orientation: vertical; spacing: 8;
-      margin-start: 20; margin-end: 20; margin-bottom: 16;
-      Spinner spinner_status {}
-      Label lbl_status { wrap: true; xalign: 0; }
-      Button btn_next { label: _("_Get Started"); use-underline: true; styles ["suggested-action"] }
       Box {
-        spacing: 12;
-        Button btn_back { label: _("_Back"); use-underline: true; styles ["flat"] }
-        Button btn_skip { label: _("_Skip Setup"); use-underline: true; hexpand: true; styles ["flat"] }
+        orientation: vertical; spacing: 8;
+        margin-start: 20; margin-end: 20; margin-bottom: 16;
+        Spinner spinner_status {}
+        Label lbl_status { wrap: true; xalign: 0; }
       }
     }
   }

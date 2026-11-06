@@ -11,7 +11,7 @@ typedef struct {
   GDBusConnection *bus;
   GWeakRef parent;
   GCancellable *cancel;
-  GtkWidget *entry, *summary, *status, *identities, *submit;
+  GtkWidget *entry, *summary, *details, *status, *identities, *submit;
   gchar *uri;
   gboolean closed;
 } PairingFlow;
@@ -33,6 +33,9 @@ static void link_changed(GtkEditable *editable, gpointer data) {
   gboolean valid = grotto_connect_parse(gtk_editable_get_text(editable), &uri, NULL);
   if (valid) grotto_connect_clear(&uri);
   gtk_widget_set_sensitive(f->submit, valid);
+  gtk_label_set_text(GTK_LABEL(f->status), valid ?
+      _("Preview the app details before choosing an identity.") :
+      _("This connection link is invalid. Copy a new link from your app."));
 }
 static void identities_ready(GObject *source, GAsyncResult *result, gpointer data) {
   AdwDialog *d = data; PairingFlow *f = g_object_get_data(G_OBJECT(d), "pairing-flow");
@@ -84,6 +87,10 @@ static void request_review(GtkButton *button, gpointer data) {
 static void preview_uri(PairingFlow *f, const gchar *text) {
   NostrNip46ConnectURI uri; g_autoptr(GError) error = NULL;
   if (!grotto_connect_parse(text, &uri, &error)) {
+    adw_dialog_set_title(f->dialog, _("Invalid App Link"));
+    gtk_widget_set_visible(f->summary, FALSE);
+    gtk_widget_set_visible(f->details, FALSE);
+    gtk_widget_set_sensitive(f->identities, FALSE);
     gtk_label_set_text(GTK_LABEL(f->status), g_str_has_prefix(text, "bunker://") ?
         _("This link belongs to another signer. Use a connection link from an app instead.") :
         _("This connection link is invalid. Copy a new link from your app.")); return;
@@ -142,8 +149,8 @@ void grotto_pairing_present(GtkWidget *parent, const gchar *uri) {
     gtk_label_set_wrap_mode(GTK_LABEL(f->entry), PANGO_WRAP_WORD_CHAR);
     f->summary = gtk_label_new(NULL); gtk_label_set_wrap(GTK_LABEL(f->summary), TRUE); gtk_label_set_xalign(GTK_LABEL(f->summary), 0);
     gtk_box_append(GTK_BOX(box), f->summary);
-    GtkWidget *details = gtk_expander_new(_("Details")); gtk_expander_set_child(GTK_EXPANDER(details), f->entry);
-    gtk_box_append(GTK_BOX(box), details);
+    f->details = gtk_expander_new(_("Details")); gtk_expander_set_child(GTK_EXPANDER(f->details), f->entry);
+    gtk_box_append(GTK_BOX(box), f->details);
     GtkWidget *identity_label = gtk_label_new(_("Identity")); gtk_label_set_xalign(GTK_LABEL(identity_label), 0);
     gtk_box_append(GTK_BOX(box), identity_label);
     f->identities = gtk_drop_down_new(NULL, NULL); gtk_widget_set_tooltip_text(f->identities, _("Identity to Connect"));
@@ -171,6 +178,9 @@ void grotto_pairing_present(GtkWidget *parent, const gchar *uri) {
   }
   gtk_box_append(GTK_BOX(box), f->status);
   GtkWidget *scroll = gtk_scrolled_window_new(); gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+  gtk_scrolled_window_set_propagate_natural_height(GTK_SCROLLED_WINDOW(scroll), TRUE);
+  gtk_scrolled_window_set_min_content_height(GTK_SCROLLED_WINDOW(scroll), 240);
+  gtk_scrolled_window_set_max_content_height(GTK_SCROLLED_WINDOW(scroll), 520);
   gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), box);
   GtkWidget *toolbar = adw_toolbar_view_new();
   adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(toolbar), grotto_dialog_header(f->dialog, f->submit));

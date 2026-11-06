@@ -12,20 +12,66 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
     <property name="default-height">600</property>
     <property name="width-request">320</property>
     <child>
-      <object class="GtkBox">
-        <property name="orientation">1</property>
+      <object class="AdwToolbarView">
+        <child type="top">
+          <object class="AdwHeaderBar" id="header_actions">
+            <property name="title-widget">
+              <object class="GtkLabel">
+                <property name="label" bind-source="OnboardingAssistant" bind-property="title" bind-flags="sync-create"/>
+                <property name="ellipsize">3</property>
+                <style>
+                  <class name="title"/>
+                </style>
+              </object>
+            </property>
+            <property name="show-start-title-buttons">false</property>
+            <property name="show-end-title-buttons">false</property>
+            <child type="start">
+              <object class="GtkMenuButton" id="finish_menu">
+                <property name="visible">false</property>
+                <property name="icon-name">view-more-symbolic</property>
+                <property name="tooltip-text" translatable="yes">More Setup Options</property>
+                <property name="popover">
+                  <object class="GtkPopover" id="finish_popover"></object>
+                </property>
+              </object>
+            </child>
+            <child type="start">
+              <object class="GtkButton" id="btn_skip">
+                <property name="label" translatable="yes">_Skip Setup</property>
+                <property name="use-underline">true</property>
+              </object>
+            </child>
+            <child type="start">
+              <object class="GtkButton" id="btn_back">
+                <property name="icon-name">go-previous-symbolic</property>
+                <property name="tooltip-text" translatable="yes">Back</property>
+                <accessibility>
+                  <property name="label" translatable="yes">Back</property>
+                </accessibility>
+              </object>
+            </child>
+            <child type="end">
+              <object class="GtkButton" id="btn_next">
+                <property name="label" translatable="yes">_Get Started</property>
+                <property name="use-underline">true</property>
+                <style>
+                  <class name="suggested-action"/>
+                </style>
+              </object>
+            </child>
+          </object>
+        </child>
         <child>
-          <object class="AdwNavigationView" id="steps">
-            <property name="vexpand">true</property>
+          <object class="GtkBox">
+            <property name="orientation">1</property>
             <child>
-              <object class="AdwNavigationPage">
-                <property name="tag">welcome</property>
-                <property name="title" translatable="yes">Set Up Grotto</property>
+              <object class="AdwNavigationView" id="steps">
+                <property name="vexpand">true</property>
                 <child>
-                  <object class="AdwToolbarView">
-                    <child type="top">
-                      <object class="AdwHeaderBar"></object>
-                    </child>
+                  <object class="AdwNavigationPage">
+                    <property name="tag">welcome</property>
+                    <property name="title" translatable="yes">Set Up Grotto</property>
                     <child>
                       <object class="AdwStatusPage">
                         <property name="icon-name">org.nostr.Grotto</property>
@@ -35,17 +81,10 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     </child>
                   </object>
                 </child>
-              </object>
-            </child>
-            <child>
-              <object class="AdwNavigationPage">
-                <property name="tag">choice</property>
-                <property name="title" translatable="yes">Add an Identity</property>
                 <child>
-                  <object class="AdwToolbarView">
-                    <child type="top">
-                      <object class="AdwHeaderBar"></object>
-                    </child>
+                  <object class="AdwNavigationPage">
+                    <property name="tag">choice</property>
+                    <property name="title" translatable="yes">Add an Identity</property>
                     <child>
                       <object class="AdwPreferencesPage">
                         <child>
@@ -92,17 +131,10 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     </child>
                   </object>
                 </child>
-              </object>
-            </child>
-            <child>
-              <object class="AdwNavigationPage">
-                <property name="tag">create</property>
-                <property name="title" translatable="yes">Create an Identity</property>
                 <child>
-                  <object class="AdwToolbarView">
-                    <child type="top">
-                      <object class="AdwHeaderBar"></object>
-                    </child>
+                  <object class="AdwNavigationPage">
+                    <property name="tag">create</property>
+                    <property name="title" translatable="yes">Create an Identity</property>
                     <child>
                       <object class="AdwPreferencesPage">
                         <property name="description" translatable="yes">Your new key is saved in the system keyring. Next, check that it works and save a recovery phrase.</property>
@@ -119,17 +151,10 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     </child>
                   </object>
                 </child>
-              </object>
-            </child>
-            <child>
-              <object class="AdwNavigationPage">
-                <property name="tag">import</property>
-                <property name="title" translatable="yes">Import an Identity</property>
                 <child>
-                  <object class="AdwToolbarView">
-                    <child type="top">
-                      <object class="AdwHeaderBar"></object>
-                    </child>
+                  <object class="AdwNavigationPage">
+                    <property name="tag">import</property>
+                    <property name="title" translatable="yes">Import an Identity</property>
                     <child>
                       <object class="AdwPreferencesPage">
                         <property name="description" translatable="yes">Enter your secret key, encrypted backup, or recovery phrase.</property>
@@ -191,17 +216,10 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     </child>
                   </object>
                 </child>
-              </object>
-            </child>
-            <child>
-              <object class="AdwNavigationPage">
-                <property name="tag">connect</property>
-                <property name="title" translatable="yes">Connect an App</property>
                 <child>
-                  <object class="AdwToolbarView">
-                    <child type="top">
-                      <object class="AdwHeaderBar"></object>
-                    </child>
+                  <object class="AdwNavigationPage">
+                    <property name="tag">connect</property>
+                    <property name="title" translatable="yes">Connect an App</property>
                     <child>
                       <object class="AdwPreferencesPage">
                         <property name="description" translatable="yes">Apps on this device ask for permission when they first use Grotto. For an app on another device, open Connected Apps to pair it.</property>
@@ -236,17 +254,10 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     </child>
                   </object>
                 </child>
-              </object>
-            </child>
-            <child>
-              <object class="AdwNavigationPage">
-                <property name="tag">test</property>
-                <property name="title" translatable="yes">Check Your Identity</property>
                 <child>
-                  <object class="AdwToolbarView">
-                    <child type="top">
-                      <object class="AdwHeaderBar"></object>
-                    </child>
+                  <object class="AdwNavigationPage">
+                    <property name="tag">test</property>
+                    <property name="title" translatable="yes">Check Your Identity</property>
                     <child>
                       <object class="AdwPreferencesPage">
                         <property name="description" translatable="yes">Approve a one-time signing and encryption check. Nothing is published and no app permissions are saved.</property>
@@ -286,17 +297,10 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     </child>
                   </object>
                 </child>
-              </object>
-            </child>
-            <child>
-              <object class="AdwNavigationPage">
-                <property name="tag">backup</property>
-                <property name="title" translatable="yes">Back Up Identity</property>
                 <child>
-                  <object class="AdwToolbarView">
-                    <child type="top">
-                      <object class="AdwHeaderBar"></object>
-                    </child>
+                  <object class="AdwNavigationPage">
+                    <property name="tag">backup</property>
+                    <property name="title" translatable="yes">Back Up Identity</property>
                     <child>
                       <object class="AdwPreferencesPage">
                         <property name="description" translatable="yes">Write these words down in order and keep them private. Anyone with them controls your identity.</property>
@@ -384,17 +388,10 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     </child>
                   </object>
                 </child>
-              </object>
-            </child>
-            <child>
-              <object class="AdwNavigationPage">
-                <property name="tag">ready</property>
-                <property name="title" translatable="yes">Setup Complete</property>
                 <child>
-                  <object class="AdwToolbarView">
-                    <child type="top">
-                      <object class="AdwHeaderBar"></object>
-                    </child>
+                  <object class="AdwNavigationPage">
+                    <property name="tag">ready</property>
+                    <property name="title" translatable="yes">Setup Complete</property>
                     <child>
                       <object class="AdwStatusPage">
                         <property name="icon-name">emblem-ok-symbolic</property>
@@ -410,53 +407,20 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 </child>
               </object>
             </child>
-          </object>
-        </child>
-        <child>
-          <object class="GtkBox">
-            <property name="orientation">1</property>
-            <property name="spacing">8</property>
-            <property name="margin-start">20</property>
-            <property name="margin-end">20</property>
-            <property name="margin-bottom">16</property>
-            <child>
-              <object class="GtkSpinner" id="spinner_status"></object>
-            </child>
-            <child>
-              <object class="GtkLabel" id="lbl_status">
-                <property name="wrap">true</property>
-                <property name="xalign">0</property>
-              </object>
-            </child>
-            <child>
-              <object class="GtkButton" id="btn_next">
-                <property name="label" translatable="yes">_Get Started</property>
-                <property name="use-underline">true</property>
-                <style>
-                  <class name="suggested-action"/>
-                </style>
-              </object>
-            </child>
             <child>
               <object class="GtkBox">
-                <property name="spacing">12</property>
+                <property name="orientation">1</property>
+                <property name="spacing">8</property>
+                <property name="margin-start">20</property>
+                <property name="margin-end">20</property>
+                <property name="margin-bottom">16</property>
                 <child>
-                  <object class="GtkButton" id="btn_back">
-                    <property name="label" translatable="yes">_Back</property>
-                    <property name="use-underline">true</property>
-                    <style>
-                      <class name="flat"/>
-                    </style>
-                  </object>
+                  <object class="GtkSpinner" id="spinner_status"></object>
                 </child>
                 <child>
-                  <object class="GtkButton" id="btn_skip">
-                    <property name="label" translatable="yes">_Skip Setup</property>
-                    <property name="use-underline">true</property>
-                    <property name="hexpand">true</property>
-                    <style>
-                      <class name="flat"/>
-                    </style>
+                  <object class="GtkLabel" id="lbl_status">
+                    <property name="wrap">true</property>
+                    <property name="xalign">0</property>
                   </object>
                 </child>
               </object>

@@ -338,6 +338,13 @@ static void assert_header_control(GtkWidget *control, gboolean affirmative) {
     g_assert_true(gtk_button_get_use_underline(GTK_BUTTON(control)));
   }
 }
+static GtkWidget *find_label_containing(GtkWidget *widget, const gchar *text) {
+  if (GTK_IS_LABEL(widget) && strstr(gtk_label_get_text(GTK_LABEL(widget)), text)) return widget;
+  for (GtkWidget *child = gtk_widget_get_first_child(widget); child; child = gtk_widget_get_next_sibling(child)) {
+    GtkWidget *found = find_label_containing(child, text); if (found) return found;
+  }
+  return NULL;
+}
 static void assert_header_fits(GtkWidget *control, SignerWindow *window) {
   GtkWidget *header = gtk_widget_get_ancestor(control, ADW_TYPE_HEADER_BAR); g_assert_nonnull(header);
   int minimum = 0; gtk_widget_measure(header, GTK_ORIENTATION_HORIZONTAL, -1, &minimum, NULL, NULL, NULL);
@@ -390,6 +397,16 @@ static GtkWidget *find_editor_control(GtkWidget *widget, GType type) {
   if (g_type_is_a(G_OBJECT_TYPE(widget), type)) return widget;
   for (GtkWidget *child = gtk_widget_get_first_child(widget); child; child = gtk_widget_get_next_sibling(child)) { GtkWidget *found = find_editor_control(child, type); if (found) return found; }
   return NULL;
+}
+static void assert_pairing_size(AdwDialog *dialog, SignerWindow *window) {
+  GtkWidget *scroll = find_editor_control(GTK_WIDGET(dialog), GTK_TYPE_SCROLLED_WINDOW);
+  g_assert_nonnull(scroll);
+  g_assert_true(gtk_scrolled_window_get_propagate_natural_height(GTK_SCROLLED_WINDOW(scroll)));
+  g_assert_cmpint(gtk_scrolled_window_get_min_content_height(GTK_SCROLLED_WINDOW(scroll)), ==, 240);
+  g_assert_cmpint(gtk_scrolled_window_get_max_content_height(GTK_SCROLLED_WINDOW(scroll)), ==, 520);
+  g_assert_cmpint(gtk_widget_get_height(scroll), >=, 240);
+  g_assert_cmpint(gtk_widget_get_width(scroll), <=, gtk_widget_get_width(GTK_WIDGET(window)));
+  g_assert_cmpint(gtk_widget_get_height(scroll), <=, gtk_widget_get_height(GTK_WIDGET(window)));
 }
 static guint assert_kind_rows(GtkWidget *widget, gboolean accessibility) {
   guint count = 0;
@@ -518,6 +535,9 @@ static void layout_activate(GApplication *application, gpointer data) {
   g_assert_cmpint(onboarding_assistant_get_state(add), ==, ONBOARDING_CHOICE);
   GtkWidget *add_back = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(add), TYPE_ONBOARDING_ASSISTANT, "btn_back"));
   GtkWidget *add_cancel = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(add), TYPE_ONBOARDING_ASSISTANT, "btn_skip"));
+  GtkWidget *add_next = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(add), TYPE_ONBOARDING_ASSISTANT, "btn_next"));
+  assert_header_control(add_cancel, FALSE); assert_header_control(add_back, FALSE); assert_header_control(add_next, TRUE);
+  g_assert_false(gtk_widget_get_visible(add_next));
   g_assert_false(gtk_widget_get_visible(add_back));
   g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(add_cancel)), ==, _("_Cancel"));
   g_assert_cmpstr(gtk_widget_get_tooltip_text(add_cancel), ==, _("Cancel Adding an Identity"));
@@ -527,10 +547,15 @@ static void layout_activate(GApplication *application, gpointer data) {
   g_assert_true(gtk_widget_get_visible(create_choice)); g_assert_true(gtk_widget_get_visible(import_choice));
   WAIT(gtk_widget_is_sensitive(import_choice)); g_signal_emit_by_name(import_choice, "activated");
   g_assert_cmpint(onboarding_assistant_get_state(add), ==, ONBOARDING_IMPORT);
+  g_assert_true(gtk_widget_get_visible(add_next)); assert_header_control(add_next, TRUE);
+  g_assert_false(gtk_widget_get_visible(add_cancel));
+  g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(add_next)), ==, _("_Import Identity"));
+  g_assert_cmpstr(gtk_window_get_title(GTK_WINDOW(add)), ==, _("Import an Identity"));
   g_assert_true(gtk_widget_get_visible(add_back));
   g_signal_emit_by_name(add_back, "clicked");
   g_assert_cmpint(onboarding_assistant_get_state(add), ==, ONBOARDING_CHOICE);
   g_assert_false(gtk_widget_get_visible(add_back));
+  g_assert_true(gtk_widget_get_visible(add_cancel));
   g_signal_emit_by_name(add_cancel, "clicked"); g_object_unref(add);
   WAIT(g_object_get_data(G_OBJECT(window), "grotto-onboarding-assistant") == NULL);
   signer_window_show_page(window, "preferences"); wait_frames(GTK_WIDGET(window));
@@ -1255,6 +1280,41 @@ static void layout_activate(GApplication *application, gpointer data) {
   assert_header_control(create_submit, TRUE); assert_dialog_mnemonics(create_sheet);
   adw_dialog_close(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)));
   WAIT(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)) == add_app);
+  GtkWidget *connect_page = find_editor_control(GTK_WIDGET(add_app), GROTTO_TYPE_PAGE_CONNECT);
+  GtkWidget *paste_row = GTK_WIDGET(gtk_widget_get_template_child(connect_page, GROTTO_TYPE_PAGE_CONNECT, "paste"));
+  const gchar *app_link = "nostrconnect://79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798?relay=wss%3A%2F%2Frelay.example&secret=fixture&name=Example%20App";
+  GdkClipboard *app_clipboard = gtk_widget_get_clipboard(paste_row);
+  gdk_clipboard_set_text(app_clipboard, app_link);
+  g_signal_emit_by_name(paste_row, "activated");
+  WAIT(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)) != add_app);
+  AdwDialog *clipboard_preview = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window));
+  snapshot(GTK_WIDGET(window), "clipboard-link-preview-360"); assert_pairing_size(clipboard_preview, window);
+  g_assert_cmpstr(adw_dialog_get_title(clipboard_preview), ==, _("Connect an App"));
+  g_assert_nonnull(find_label_containing(GTK_WIDGET(clipboard_preview), "Example App"));
+  g_assert_null(find_label_containing(GTK_WIDGET(clipboard_preview), "secret=fixture"));
+  GtkWidget *clipboard_review = find_button(GTK_WIDGET(clipboard_preview), _("_Review"));
+  assert_header_control(clipboard_review, TRUE); assert_header_control(find_button(GTK_WIDGET(clipboard_preview), _("_Cancel")), FALSE);
+  g_assert_false(gtk_widget_is_sensitive(clipboard_review)); assert_header_fits(clipboard_review, window);
+  GtkWidget *details = find_editor_control(GTK_WIDGET(clipboard_preview), GTK_TYPE_EXPANDER);
+  gtk_expander_set_expanded(GTK_EXPANDER(details), TRUE);
+  snapshot(GTK_WIDGET(window), "clipboard-link-details-360"); assert_pairing_size(clipboard_preview, window);
+  g_assert_nonnull(find_label_containing(GTK_WIDGET(clipboard_preview), "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"));
+  g_assert_nonnull(find_label_containing(GTK_WIDGET(clipboard_preview), "wss://relay.example"));
+  adw_dialog_close(clipboard_preview); WAIT(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)) == add_app);
+  gdk_clipboard_set_text(app_clipboard, "not an app link");
+  g_signal_emit_by_name(paste_row, "activated");
+  WAIT(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)) != add_app);
+  AdwDialog *invalid_preview = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window));
+  snapshot(GTK_WIDGET(window), "clipboard-invalid-link-360"); assert_pairing_size(invalid_preview, window);
+  g_assert_cmpstr(adw_dialog_get_title(invalid_preview), ==, _("Invalid App Link"));
+  g_assert_nonnull(find_label_containing(GTK_WIDGET(invalid_preview), _("This connection link is invalid. Copy a new link from your app.")));
+  GtkWidget *invalid_review = find_button(GTK_WIDGET(invalid_preview), _("_Review"));
+  assert_header_control(invalid_review, TRUE); g_assert_false(gtk_widget_is_sensitive(invalid_review));
+  GtkWidget *invalid_identity = find_editor_control(GTK_WIDGET(invalid_preview), GTK_TYPE_DROP_DOWN);
+  g_assert_false(gtk_widget_is_sensitive(invalid_identity));
+  g_signal_emit_by_name(find_button(GTK_WIDGET(invalid_preview), _("_Cancel")), "clicked");
+  WAIT(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)) == add_app);
+  gdk_clipboard_set_text(app_clipboard, "");
   adw_dialog_close(add_app); WAIT(!adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)));
   SheetQrScanner *scanner = sheet_qr_scanner_new();
   const GnQrContentType pairing_types[] = {GN_QR_TYPE_BUNKER_URI, GN_QR_TYPE_UNKNOWN};
@@ -1330,6 +1390,8 @@ static GtkWidget *setup_child(OnboardingAssistant *self, const char *name) {
 }
 static void setup_snapshot(OnboardingAssistant *setup, const char *stage, gboolean rtl) {
   int minimum; gtk_widget_measure(GTK_WIDGET(setup), GTK_ORIENTATION_HORIZONTAL, -1, &minimum, NULL, NULL, NULL);
+  g_test_message("Onboarding %s minimum width: %d", stage, minimum);
+  assert_header_control(setup_child(setup, "btn_next"), TRUE);
   g_assert_cmpint(minimum, <=, 360);
   g_autofree char *name = g_strdup_printf("onboarding-%s-360%s", stage, rtl ? "-rtl" : "");
   snapshot(GTK_WIDGET(setup), name);
@@ -1367,6 +1429,13 @@ static void remaining_surfaces(void) {
     WAIT(onboarding_assistant_get_state(setup) == ONBOARDING_BACKUP);
     WAIT(gtk_widget_get_first_child(setup_child(setup, "seed_words")) != NULL);
     setup_snapshot(setup, "backup", rtl);
+    GtkMenuButton *finish_menu = GTK_MENU_BUTTON(setup_child(setup, "finish_menu"));
+    g_assert_true(gtk_widget_get_visible(GTK_WIDGET(finish_menu)));
+    gtk_menu_button_popup(finish_menu);
+    g_assert_nonnull(gtk_widget_get_ancestor(setup_child(setup, "btn_skip"), GTK_TYPE_POPOVER));
+    g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(setup_child(setup, "btn_skip"))), ==, _("Finish _Without Backup"));
+    setup_snapshot(setup, "backup-options", rtl);
+    gtk_menu_button_popdown(finish_menu);
     GtkCheckButton *acknowledgement = GTK_CHECK_BUTTON(setup_child(setup, "seed_written_down"));
     GtkWidget *acknowledgement_label = gtk_check_button_get_child(acknowledgement);
     g_assert_true(GTK_IS_LABEL(acknowledgement_label));
