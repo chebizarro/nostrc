@@ -18,7 +18,7 @@ G_BEGIN_DECLS
 /* Cosmetic desktop metadata only, never identity/authorization evidence.
  * Returns a newly allocated display name; label may be a user-assigned name.
  * If icon is non-NULL, returns an owned desktop icon or generic app fallback.
- * Since 0.2.0. No public structure or existing ABI is changed. */
+ * Included in unreleased 0.1.0. No public structure or existing ABI is changed. */
 GROTTO_PANELS_API char *grotto_panels_app_display_info(const char *principal, const char *label, GIcon **icon);
 
 /* Only public display metadata. No opaque daemon dictionaries enter a panel.

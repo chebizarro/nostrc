@@ -5,7 +5,7 @@
 # This provides meson build support alongside the existing CMake configuration.
 
 project('grotto', 'c',
-  version: '0.1.2',
+  version: '0.1.1',
   default_options: [
     'c_std=gnu11',
     'warning_level=2',
@@ -32,7 +32,7 @@ glib_dep = dependency('glib-2.0', version: '>= 2.80')
 gobject_dep = dependency('gobject-2.0', version: '>= 2.80')
 gio_dep = dependency('gio-2.0', version: '>= 2.80')
 adwaita_dep = dependency('libadwaita-1', version: '>= 1.5')
-panels_dep = dependency('grotto-panels-0', version: '>= 0.2.0')
+panels_dep = dependency('grotto-panels-0', version: '>= 0.1.0')
 json_glib_dep = dependency('json-glib-1.0')
 profile_deps = [dependency('nostr-publish'), dependency('bud02'), dependency('libsoup-3.0')]
 native_camera_required = host_machine.system() == 'linux'

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-project('grotto-panels', 'c', version: '0.2.0', license: 'MIT',
+project('grotto-panels', 'c', version: '0.1.0', license: 'MIT',
   meson_version: '>=0.61', default_options: ['c_std=c11', 'warning_level=2'])
 gtk_dep = dependency('gtk4', version: '>=4.14')
 adw_dep = dependency('libadwaita-1', version: '>=1.5')

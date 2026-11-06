@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 cmake_minimum_required(VERSION 3.22)
-project(grotto-panels VERSION 0.2.0 LANGUAGES C)
+project(grotto-panels VERSION 0.1.0 LANGUAGES C)
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/VersionHelpers.cmake")
@@ -51,7 +51,7 @@ set(_configdir ${CMAKE_INSTALL_LIBDIR}/cmake/GrottoPanels)
 configure_package_config_file(cmake/GrottoPanelsConfig.cmake.in
   "${CMAKE_CURRENT_BINARY_DIR}/GrottoPanelsConfig.cmake" INSTALL_DESTINATION ${_configdir})
 write_basic_package_version_file("${CMAKE_CURRENT_BINARY_DIR}/GrottoPanelsConfigVersion.cmake"
-  VERSION ${PROJECT_VERSION} COMPATIBILITY SameMajorVersion)
+  VERSION ${PROJECT_VERSION} COMPATIBILITY SameMinorVersion)
 install(EXPORT GrottoPanelsTargets NAMESPACE GrottoPanels:: DESTINATION ${_configdir})
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/GrottoPanelsConfig.cmake"
   "${CMAKE_CURRENT_BINARY_DIR}/GrottoPanelsConfigVersion.cmake" DESTINATION ${_configdir})
