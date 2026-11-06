@@ -40,6 +40,7 @@ struct _OnboardingAssistant {
   gboolean busy, closed, finished, identity_stored, self_test_passed, capabilities_ready;
   guint generation, accounts_changed;
   gboolean backup_presented, imported, import_was_phrase, import_was_encrypted;
+  gboolean running_session;
   GCancellable *cancel;
   gchar *identity, *mnemonic, *nsec;
   const gchar *requested_page;
@@ -72,13 +73,18 @@ static void navigation(OnboardingAssistant *self) {
   AdwActionRow *choices[] = {self->choose_create, self->choose_import, self->choose_connect, self->connect_create, self->connect_import};
   for (guint i = 0; i < G_N_ELEMENTS(choices); i++) gtk_widget_set_sensitive(GTK_WIDGET(choices[i]), !self->busy && self->capabilities_ready);
   gtk_widget_set_sensitive(GTK_WIDGET(self->btn_back), !self->busy && !self->identity_stored);
-  gtk_widget_set_visible(GTK_WIDGET(self->btn_back), self->state != ONBOARDING_WELCOME && !self->identity_stored);
+  gtk_widget_set_visible(GTK_WIDGET(self->btn_back), self->state != ONBOARDING_WELCOME &&
+      !(self->running_session && self->state == ONBOARDING_CHOICE) && !self->identity_stored);
   gtk_widget_set_sensitive(GTK_WIDGET(self->btn_skip), !self->busy);
   gtk_widget_set_visible(GTK_WIDGET(self->btn_skip), self->state != ONBOARDING_READY);
-  gtk_button_set_label(self->btn_skip, !self->identity_stored ? _("_Skip Setup") :
+  gtk_button_set_label(self->btn_skip, !self->identity_stored ?
+      (self->running_session ? _("_Cancel") : _("_Skip Setup")) :
       self->state == ONBOARDING_BACKUP ? _("Finish _Without Backup") : _("Finish _Later"));
-  gtk_widget_set_tooltip_text(GTK_WIDGET(self->btn_skip), self->identity_stored ?
-      _("The identity is saved on this device") : NULL);
+  const gchar *skip_description = self->identity_stored ? _("The identity is saved on this device") :
+      self->running_session ? _("Cancel Adding an Identity") : NULL;
+  gtk_widget_set_tooltip_text(GTK_WIDGET(self->btn_skip), skip_description);
+  gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_skip), GTK_ACCESSIBLE_PROPERTY_DESCRIPTION,
+      skip_description ? skip_description : "", -1);
   gtk_widget_set_sensitive(GTK_WIDGET(self->btn_next), !self->busy && self->capabilities_ready &&
       (self->state != ONBOARDING_BACKUP || (self->backup_presented && gtk_check_button_get_active(self->seed_written_down))));
   gtk_widget_set_visible(GTK_WIDGET(self->btn_retry), self->capabilities_ready && self->identity_stored && !self->self_test_passed && !self->busy);
@@ -483,6 +489,7 @@ void onboarding_assistant_present(GtkWindow *parent) {
   OnboardingAssistant *self = g_object_get_data(G_OBJECT(parent), "grotto-onboarding-assistant");
   if (self && !self->closed) { gtk_window_present(GTK_WINDOW(self)); return; }
   self = onboarding_assistant_new();
+  self->running_session = TRUE;
   step(self, ONBOARDING_CHOICE);
   g_object_set_data(G_OBJECT(parent), "grotto-onboarding-assistant", self);
   g_object_weak_ref(G_OBJECT(self), presented_gone, g_object_ref(parent));
