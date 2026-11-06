@@ -290,10 +290,18 @@ static void remote_persistence(void) {
   g_assert_cmpstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(status_row)), ==, status.reason);
   g_signal_emit_by_name(find_title(GTK_WIDGET(panel), "Add App…"), "activated"); g_assert_cmpuint(state.pairings, ==, 1);
   GtkWidget *entry = find_title(GTK_WIDGET(panel), "Add Relay URL");
-  const char *invalid[] = {"https://example.com", "ws://example.com", "wss://", "wss://user@example.com", NULL};
+  const char *invalid[] = {"https://example.com", "ws://example.com", "wss://", "wss://user@example.com",
+    "wss://example.onion/", "wss://EXAMPLE.ONION/", "wss://example.com/?opaque=credential",
+    "wss://example.com/?", "wss://example.com/#credential", NULL};
   for (guint i = 0; invalid[i]; i++) {
     gtk_editable_set_text(GTK_EDITABLE(entry), invalid[i]); g_signal_emit_by_name(entry, "apply");
     g_assert_cmpuint(state.writes, ==, 0);
+  }
+  const char *valid[] = {"wss://example.com/relay", "ws://localhost:7777/", "ws://[::1]:7777/", NULL};
+  for (guint i = 0; valid[i]; i++) {
+    const char *relays[] = {valid[i], NULL};
+    GrottoPanelCommandArgs args = {.relays = relays};
+    g_assert_true(grotto_panel_command_args_validate(GROTTO_PANEL_CONFIGURE_REMOTE, &args, NULL));
   }
   gtk_editable_set_text(GTK_EDITABLE(entry), " ws://127.0.0.1:7777/ "); g_signal_emit_by_name(entry, "apply");
   WAIT(state.writes == 1 && gtk_widget_get_sensitive(entry));

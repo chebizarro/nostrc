@@ -1,5 +1,6 @@
 #include "test-control-common.h"
 #include "bunker_service.h"
+#include "settings_manager.h"
 #include <nostr-kinds.h>
 #include <nostr/nip55l/signer_ops.h>
 #include <nostr/nip19/nip19.h>
@@ -50,6 +51,40 @@ static void test_contract(ControlFixture *f, gconstpointer data) {
   g_assert_true(signer_approval_service_is_paused(f->approval));
   g_autoptr(GVariant) resumed = control_call(f, "SetPaused", g_variant_new("(b)", FALSE));
   g_assert_false(signer_approval_service_is_paused(f->approval));
+}
+static void test_private_relay_status(ControlFixture *f, gconstpointer data) {
+  (void)data;
+  const gchar *unsafe[] = {"wss://review-user:review-secret@example.com/?opaque=review-token", NULL};
+  const gchar *methods[] = {"sign_event", NULL};
+  BunkerService *bunker = bunker_service_new(); grotto_control_set_bunker(f->control, bunker, FALSE);
+  GVariantBuilder config; g_variant_builder_init(&config, G_VARIANT_TYPE_VARDICT);
+  g_variant_builder_add(&config, "{sv}", "enabled", g_variant_new_boolean(TRUE));
+  g_variant_builder_add(&config, "{sv}", "relays", g_variant_new_strv(unsafe, -1));
+  g_variant_builder_add(&config, "{sv}", "allowed-methods", g_variant_new_strv(methods, -1));
+  expect_control_error(f, "ConfigureBunker", g_variant_new("(a{sv})", &config), GROTTO_CONTROL_ERROR "InvalidInput");
+  grotto_control_free(f->control); bunker_service_free(bunker);
+  SettingsManager *settings = settings_manager_get_default();
+  g_auto(GStrv) previous = settings_manager_get_bunker_relays(settings);
+  settings_manager_set_bunker_relays(settings, unsafe);
+  g_autofree gchar *path = g_build_filename(g_get_user_config_dir(), "grotto", "bunker.ini", NULL);
+  g_autofree gchar *saved = NULL; g_assert_true(g_file_get_contents(path, &saved, NULL, NULL));
+  g_autoptr(GKeyFile) file = g_key_file_new();
+  g_key_file_set_integer(file, "meta", "version", 1); g_key_file_set_boolean(file, "bunker", "enabled", TRUE);
+  g_key_file_set_string_list(file, "bunker", "relays", unsafe, 1);
+  g_key_file_set_string_list(file, "bunker", "allowed-methods", methods, 1);
+  g_autofree gchar *text = g_key_file_to_data(file, NULL, NULL);
+  g_assert_true(g_file_set_contents(path, text, -1, NULL));
+  f->control = grotto_control_new(f->server, f->approval, NULL, NULL); g_assert_nonnull(f->control);
+  bunker = bunker_service_new(); grotto_control_set_bunker(f->control, bunker, FALSE);
+  g_assert_false(grotto_control_start_bunker(f->control));
+  g_autoptr(GVariant) status = get_status(f); gboolean healthy = TRUE;
+  g_assert_true(g_variant_lookup(status, "bunker_config_healthy", "b", &healthy)); g_assert_false(healthy);
+  g_autofree gchar *public = g_variant_print(status, TRUE);
+  g_assert_null(strstr(public, "review-user")); g_assert_null(strstr(public, "review-secret"));
+  g_assert_null(strstr(public, "review-token"));
+  grotto_control_set_bunker(f->control, NULL, FALSE); bunker_service_free(bunker);
+  settings_manager_set_bunker_relays(settings, (const gchar *const *)previous);
+  g_assert_true(g_file_set_contents(path, saved, -1, NULL));
 }
 static void test_empty_relays(ControlFixture *f, gconstpointer data) {
   (void)data;
@@ -389,6 +424,7 @@ int main(int argc, char **argv) {
   test_environment(argv[0]); g_test_init(&argc, &argv, NULL);
   if (!nostrc_test_bus_available()) return 77;
 #define ADD(name, fn) g_test_add(name, ControlFixture, NULL, fixture_setup, fn, fixture_teardown)
+  ADD("/control/private-relay-status", test_private_relay_status);
   ADD("/control/empty-relays-persist", test_empty_relays);
   ADD("/control/contract", test_contract); ADD("/control/conflict-epoch", test_conflict);
   ADD("/control/auth-pause-asymmetry", test_auth); ADD("/control/real-daemon-export", test_daemon_export);

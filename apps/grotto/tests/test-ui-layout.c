@@ -567,7 +567,10 @@ static void layout_activate(GApplication *application, gpointer data) {
     /* Preset access is a host-supplied read-only description, never an editable
      * saved grant. Explicit rows retain their own expiry and edit route. */
     g_signal_emit_by_name(permission, "activated"); wait_frames(GTK_WIDGET(window));
-    GtkWidget *effective = find_row(detail, _("Share public key (after first consent)")); g_assert_nonnull(effective);
+    /* Frame delivery is not completion of the asynchronous permissions query. */
+    GtkWidget *effective = NULL;
+    WAIT((effective = find_row(detail, _("Share public key (after first consent)"))));
+    g_assert_nonnull(effective);
     g_assert_false(gtk_list_box_row_get_activatable(GTK_LIST_BOX_ROW(effective)));
     g_autofree char *from_tier = g_strdup_printf(P_("From %s trust"), dark ? P_("Low") : P_("Medium"));
     g_assert_cmpstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(effective)), ==, from_tier);

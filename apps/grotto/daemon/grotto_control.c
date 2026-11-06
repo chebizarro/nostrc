@@ -186,7 +186,14 @@ static GVariant *status(GrottoControl *c) {
   const gchar *bunker_error = c->bunker ? bunker_service_get_error(c->bunker) : NULL;
   g_variant_builder_add(&row, "{sv}", "bunker_error", g_variant_new_string(bunker_error ? bunker_error : ""));
   g_variant_builder_add(&row, "{sv}", "bunker_config_healthy", g_variant_new_boolean(c->config_healthy));
-  g_variant_builder_add(&row, "{sv}", "bunker_relays", g_variant_new_strv((const gchar *const *)c->bunker_relays, -1));
+  /* Old or rejected configuration may still contain credentials. It is not
+   * public metadata and must never cross Control1 into a panel snapshot. */
+  g_autoptr(GPtrArray) public_relays = g_ptr_array_new();
+  for (guint i = 0; c->bunker_relays && c->bunker_relays[i]; i++) {
+    const gchar *candidate[] = {c->bunker_relays[i]};
+    if (grotto_relays_validate(candidate, 1, NULL)) g_ptr_array_add(public_relays, c->bunker_relays[i]);
+  }
+  g_variant_builder_add(&row, "{sv}", "bunker_relays", g_variant_new_strv((const gchar *const *)public_relays->pdata, public_relays->len));
   g_variant_builder_add(&row, "{sv}", "bunker_allowed_methods", g_variant_new_strv((const gchar *const *)c->bunker_methods, -1));
   g_autoptr(GVariant) relay_states = bunker_service_relay_status(c->bunker);
   g_variant_builder_add(&row, "{sv}", "bunker_relay_states", relay_states);
@@ -584,7 +591,9 @@ static void load_stored_bunker_config(GrottoControl *c, const gchar *config_home
   SettingsManager *sm = settings_manager_get_default();
   c->bunker_relays = settings_manager_get_bunker_relays(sm);
   c->bunker_methods = settings_manager_get_bunker_allowed_methods(sm);
-  c->desired_bunker = settings_manager_get_bunker_enabled(sm); c->config_healthy = TRUE;
+  c->desired_bunker = settings_manager_get_bunker_enabled(sm);
+  c->config_healthy = c->bunker_relays && methods_valid(c->bunker_methods) &&
+      (!c->bunker_relays[0] || grotto_relays_validate((const gchar *const *)c->bunker_relays, g_strv_length(c->bunker_relays), NULL));
   if (!g_file_test(c->bunker_path, G_FILE_TEST_EXISTS)) return;
   g_autoptr(GKeyFile) file = g_key_file_new(); g_autoptr(GError) error = NULL;
   c->config_healthy = !nostrc_profile_guard_refuses_path(c->bunker_path) &&

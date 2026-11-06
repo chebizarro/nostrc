@@ -3,12 +3,11 @@
 # This file is distributed under the same license as the grotto-panels package.
 # FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
 #
-#, fuzzy
 msgid ""
 msgstr ""
 "Project-Id-Version: grotto-panels\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-06 11:39-0800\n"
+"POT-Creation-Date: 2026-11-06 12:24-0800\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -1173,7 +1172,9 @@ msgid "Remote signing wasn't changed. Check the configuration and retry."
 msgstr ""
 
 #: src/grotto-remote-panel.c:68
-msgid "Enter a wss:// relay URL, or ws:// for a loopback address."
+msgid ""
+"Use wss://, or ws:// on loopback. Remove credentials, query parameters, "
+"fragments and .onion hosts."
 msgstr ""
 
 #: src/grotto-remote-panel.c:101

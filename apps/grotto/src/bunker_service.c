@@ -547,13 +547,16 @@ static void request_received(GNostrNip46Bunker *bunker, NostrNip46BunkerRequest 
 static void relay_state(GNostrNip46Bunker *bunker, const gchar *relay, const gchar *state, gpointer data) {
   (void)bunker; BunkerService *s = data;
   if (!contains(s->relays, relay)) return;
+  const gchar *public_states[] = {"EOSE", "CLOSED", "AUTH", "OFFLINE", "STARTING", NULL};
+  if (!state || !g_strv_contains(public_states, state)) state = "OFFLINE";
   g_hash_table_replace(s->relay_states, g_strdup(relay), g_strdup(state));
   guint ready = 0;
   GHashTableIter it; gpointer value; g_hash_table_iter_init(&it, s->relay_states);
   while (g_hash_table_iter_next(&it, NULL, &value)) if (!strcmp(value, "EOSE")) ready++;
   if (ready) set_state(s, ready == g_strv_length(s->relays) ? BUNKER_STATE_RUNNING : BUNKER_STATE_DEGRADED, NULL);
   else {
-    g_autofree gchar *reason = g_strdup_printf(_("Could not connect to %s (%s)"), relay, state);
+    g_autofree gchar *origin = grotto_relay_public_name(relay);
+    g_autofree gchar *reason = g_strdup_printf(_("Could not connect to %s (%s)"), origin ? origin : _("configured relay"), state);
     set_state(s, BUNKER_STATE_OFFLINE, reason);
   }
   if (s->state != BUNKER_STATE_RUNNING) {
@@ -681,14 +684,9 @@ gboolean bunker_service_start(BunkerService *s, const gchar *const *relays, cons
     if (relay_count >= 64 || strlen(relays[relay_count]) > 2048) {
       set_state(s, BUNKER_STATE_ERROR, "Relay configuration exceeds bounds"); return FALSE;
     }
-    g_autoptr(GUri) uri = g_uri_parse(relays[relay_count], G_URI_FLAGS_NONE, NULL);
-    const gchar *scheme = uri ? g_uri_get_scheme(uri) : NULL, *host = uri ? g_uri_get_host(uri) : NULL;
-    g_autofree gchar *lower_host = host ? g_ascii_strdown(host, -1) : NULL;
-    gboolean loopback = lower_host && (!strcmp(lower_host, "127.0.0.1") || !strcmp(lower_host, "::1") || !strcmp(lower_host, "localhost"));
-    if (!uri || !host || !*host || g_uri_get_userinfo(uri) || g_uri_get_fragment(uri) ||
-        (!g_strcmp0(scheme, "ws") ? !loopback : g_strcmp0(scheme, "wss")) || g_str_has_suffix(lower_host, ".onion")) {
-      set_state(s, BUNKER_STATE_ERROR, "Invalid or unsupported relay URL"); return FALSE;
-    }
+  }
+  if (!grotto_relays_validate(relays, relay_count, NULL)) {
+    set_state(s, BUNKER_STATE_ERROR, "Invalid or unsupported relay URL"); return FALSE;
   }
   g_autofree gchar *canonical = NULL;
   if (nostr_nip55l_relays_from_list(relays, relay_count, &canonical)) {
@@ -1102,7 +1100,9 @@ GVariant *bunker_service_relay_status(BunkerService *s) {
   GVariantBuilder rows; g_variant_builder_init(&rows, G_VARIANT_TYPE("a{ss}"));
   for (guint i = 0; s && s->relays && s->relays[i]; i++) {
     const gchar *state = g_hash_table_lookup(s->relay_states, s->relays[i]);
-    g_variant_builder_add(&rows, "{ss}", s->relays[i], state ? state : "STARTING");
+    g_autofree gchar *origin = grotto_relay_public_name(s->relays[i]);
+    g_autofree gchar *fallback = origin ? NULL : g_strdup_printf("relay-%u", i + 1);
+    g_variant_builder_add(&rows, "{ss}", origin ? origin : fallback, state ? state : "STARTING");
   }
   return g_variant_ref_sink(g_variant_builder_end(&rows));
 }

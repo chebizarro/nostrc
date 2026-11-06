@@ -4,7 +4,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: grotto-panels 0.1.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-06 11:24-0800\n"
+"POT-Creation-Date: 2026-11-06 12:24-0800\n"
 "PO-Revision-Date: 2026-11-04 00:00+0000\n"
 "Last-Translator: Grotto contributors\n"
 "Language-Team: Spanish\n"
@@ -1177,9 +1177,10 @@ msgid "Remote signing wasn't changed. Check the configuration and retry."
 msgstr ""
 
 #: src/grotto-remote-panel.c:68
-msgid "Enter a wss:// relay URL, or ws:// for a loopback address."
-msgstr ""
-"Introduzca una URL de relé wss://, o ws:// para una dirección de bucle local."
+msgid ""
+"Use wss://, or ws:// on loopback. Remove credentials, query parameters, "
+"fragments and .onion hosts."
+msgstr "Use wss://, o ws:// en bucle local. Quite las credenciales, los parámetros de consulta, los fragmentos y los servidores .onion."
 
 #: src/grotto-remote-panel.c:101
 msgid "Reset Remote Connections?"

@@ -2,6 +2,7 @@
  * Wire policy/crypto/replay/cancellation are exercised by bunker-e2e. */
 #include <glib.h>
 #include "bunker_service.h"
+#include "pairing_uri.h"
 #include "bunker_test_relay.h"
 #include <nostr/nip55l/signer_ops.h>
 #include <nostr-utils.h>
@@ -100,6 +101,49 @@ static void test_lifecycle(void) {
         g_assert_null(bunker_service_get_bunker_uri(service, NULL));
     }
     bunker_service_free(service); bunker_test_relay_free(relay);
+}
+static void test_private_relay_diagnostics(void) {
+    if (g_test_subprocess()) {
+        const gchar *unsafe[] = {
+            "wss://review-user:review-secret@example.com/path?token=review-token#review-fragment",
+            "ws://review-user:review-secret@127.0.0.1:1/",
+            "ws://127.0.0.1:1/?password=review-secret",
+            "wss://example.com/?opaque=review-token",
+            "wss://example.com/#review-fragment", NULL};
+        BunkerService *service = bunker_service_new();
+        for (guint i = 0; unsafe[i]; i++) {
+            const gchar *relays[] = {unsafe[i], NULL};
+            g_assert_false(grotto_relays_validate(relays, 1, NULL));
+            g_assert_false(bunker_service_start(service, relays, identity));
+            g_assert_cmpint(bunker_service_get_state(service), ==, BUNKER_STATE_ERROR);
+            g_print("public status: %s\n", bunker_service_get_error(service));
+            g_autoptr(GVariant) states = bunker_service_relay_status(service);
+            g_autofree gchar *text = g_variant_print(states, TRUE); g_print("%s\n", text);
+        }
+        bunker_service_free(service); return;
+    }
+    /* Capture every output stream, including lower-level transport logs. A
+     * rejected credential-bearing URL must never reach the transport at all. */
+    g_test_trap_subprocess(NULL, 5 * G_USEC_PER_SEC, G_TEST_SUBPROCESS_DEFAULT);
+    g_test_trap_assert_passed();
+    g_test_trap_assert_stdout_unmatched("*review-user*"); g_test_trap_assert_stderr_unmatched("*review-user*");
+    g_test_trap_assert_stdout_unmatched("*review-secret*"); g_test_trap_assert_stderr_unmatched("*review-secret*");
+    g_test_trap_assert_stdout_unmatched("*review-token*"); g_test_trap_assert_stderr_unmatched("*review-token*");
+    g_test_trap_assert_stdout_unmatched("*review-fragment*"); g_test_trap_assert_stderr_unmatched("*review-fragment*");
+    const gchar *valid[] = {"wss://example.com/relay", "ws://localhost:7777/", "ws://[::1]:7777/", NULL};
+    for (guint i = 0; valid[i]; i++) {
+        const gchar *relays[] = {valid[i]};
+        g_assert_true(grotto_relays_validate(relays, 1, NULL));
+    }
+    const gchar *onion[] = {"wss://example.onion/", "wss://EXAMPLE.ONION/"};
+    for (guint i = 0; i < G_N_ELEMENTS(onion); i++) {
+        const gchar *relays[] = {onion[i]}; g_assert_false(grotto_relays_validate(relays, 1, NULL));
+    }
+    g_autofree gchar *origin = grotto_relay_public_name("wss://review-user:review-secret@example.com:443/review-path?opaque=review-token#review-fragment");
+    g_assert_cmpstr(origin, ==, "wss://example.com:443");
+    g_autofree gchar *ipv6 = grotto_relay_public_name("ws://[::1]:1234/review-path");
+    g_assert_cmpstr(ipv6, ==, "ws://[::1]:1234");
+    g_assert_null(grotto_relay_public_name("not a URL containing review-secret"));
 }
 static void test_invalid_config(void) {
     BunkerService *service = bunker_service_new();
@@ -352,6 +396,7 @@ int main(int argc, char **argv)
     g_test_add_func("/bunker-startup/listener-failure", test_listener_failure);
     g_test_add_func("/bunker/lifecycle", test_lifecycle);
     g_test_add_func("/bunker/invalid-config", test_invalid_config);
+    g_test_add_func("/bunker/private-relay-diagnostics", test_private_relay_diagnostics);
     g_test_add_func("/bunker/request-boundary", test_request_boundary);
     g_test_add_func("/bunker/recovery-window", test_recovery_window);
     g_test_add_func("/bunker/owner-queue-bound", test_owner_queue_bound);

@@ -3,12 +3,11 @@
 # This file is distributed under the same license as the grotto package.
 # FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
 #
-#, fuzzy
 msgid ""
 msgstr ""
 "Project-Id-Version: grotto\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-06 11:48-0800\n"
+"POT-Creation-Date: 2026-11-06 12:26-0800\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -914,20 +913,24 @@ msgid ""
 "relay has been contacted."
 msgstr ""
 
-#: src/bunker_service.c:556
+#: src/bunker_service.c:559
 #, c-format
 msgid "Could not connect to %s (%s)"
 msgstr ""
 
-#: src/bunker_service.c:645
+#: src/bunker_service.c:559
+msgid "configured relay"
+msgstr ""
+
+#: src/bunker_service.c:648
 msgid "Transport key missing; reset bunker endpoint"
 msgstr ""
 
-#: src/bunker_service.c:645
+#: src/bunker_service.c:648
 msgid "Transport key unavailable"
 msgstr ""
 
-#: src/bunker_service.c:677 src/bunker_service.c:1043
+#: src/bunker_service.c:680 src/bunker_service.c:1041
 msgid "No relays configured"
 msgstr ""
 

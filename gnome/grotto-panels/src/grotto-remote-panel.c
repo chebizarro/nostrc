@@ -65,7 +65,7 @@ static void add_relay(AdwEntryRow *row, gpointer data) {
   const char *candidate[] = {url, NULL};
   GrottoPanelCommandArgs check = {.relays = candidate};
   if (!grotto_panel_command_args_validate(GROTTO_PANEL_CONFIGURE_REMOTE, &check, NULL)) {
-    adw_banner_set_title(self->feedback, _("Enter a wss:// relay URL, or ws:// for a loopback address."));
+    adw_banner_set_title(self->feedback, _("Use wss://, or ws:// on loopback. Remove credentials, query parameters, fragments and .onion hosts."));
     adw_banner_set_revealed(self->feedback, TRUE);
     return;
   }
