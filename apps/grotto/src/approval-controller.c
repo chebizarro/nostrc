@@ -1,5 +1,6 @@
 #include "approval-controller.h"
 #include "i18n.h"
+#include <grotto-panels.h>
 #include <string.h>
 
 #define SIGNER "org.nostr.Signer"
@@ -151,25 +152,25 @@ static void withdraw(GrottoApprovalController *s, const char *id) {
 static gchar *notification_id(const char *id) {
   return g_strconcat("grotto-request-", id, NULL);
 }
-static const char *verified_client_name(GVariant *info) {
+static char *verified_client_name(GVariant *info, GIcon **icon) {
+  if (icon) *icon = NULL;
   if (!strcmp(text_field(info, "transport"), "MANAGEMENT") &&
       !strcmp(text_field(info, "operation"), "self_test"))
-    return "Grotto";
+    return g_strdup("Grotto");
   const char *principal = text_field(info, "principal");
   const char *kind = text_field(info, "principal_kind");
   if (!strcmp(text_field(info, "transport"), "NIP46") || !strcmp(kind, "nip46") ||
-      g_str_has_prefix(principal, "nip46:")) return "Remote NIP-46 client";
+      g_str_has_prefix(principal, "nip46:")) return g_strdup(_("Remote NIP-46 client"));
   gboolean verified = FALSE;
   if (info)
     g_variant_lookup(info, "verified", "b", &verified);
   if (!verified || !strcmp(kind, "claimed") || g_str_has_prefix(principal, "claimed:"))
-    return _("Unverified app");
+    return g_strdup(_("Unverified app"));
   const char *app_id = text_field(info, "app_id");
-  if (*app_id)
-    return app_id;
   const char *exe = text_field(info, "exe");
-  const char *basename = strrchr(exe, G_DIR_SEPARATOR);
-  return basename && basename[1] ? basename + 1 : _("Unverified app");
+  g_autofree char *display_principal = *app_id ? g_strconcat("app:", app_id, *exe ? ";exe:" : "", exe, NULL) :
+    *exe ? g_strconcat("exe:", exe, NULL) : g_strdup(principal);
+  return grotto_panels_app_display_info(display_principal, NULL, icon);
 }
 static gchar *operation_label(GVariant *info) {
   const char *op = text_field(info, "operation");
@@ -219,8 +220,8 @@ static void update_notifications(GrottoApprovalController *s) {
   if (count == 1) {
     withdraw(s, SUMMARY_ID);
     g_autofree gchar *id = notification_id(single->id);
-    g_autoptr(GNotification) n =
-        g_notification_new(s->locked ? "Grotto" : verified_client_name(single->info));
+    g_autofree char *app_name = verified_client_name(single->info, NULL);
+    g_autoptr(GNotification) n = g_notification_new(s->locked ? "Grotto" : app_name);
     g_autofree gchar *body = operation_label(single->info);
     const char *label = g_hash_table_lookup(s->labels, text_field(single->info, "principal"));
     g_autofree gchar *escaped_label = label && *label ? g_markup_escape_text(label, -1) : NULL;
@@ -1090,7 +1091,8 @@ static void review_permissions_done(GObject *source, GAsyncResult *result, gpoin
     if (reply) {
       g_autoptr(GVariant) rows = g_variant_get_child_value(reply, 0);
       g_autoptr(GVariant) info = review_display_info(s, f->request->info, rows);
-      gnostr_approval_dialog_set_info(s->dialog, info, verified_client_name(f->request->info));
+      g_autofree char *app_name = verified_client_name(f->request->info, NULL);
+      gnostr_approval_dialog_set_info(s->dialog, info, app_name);
       display_profile_provenance(s, f->request);
     } else if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
       message(s, "Saved permission details unavailable. Reopen this request to retry.");
@@ -1099,7 +1101,8 @@ static void review_permissions_done(GObject *source, GAsyncResult *result, gpoin
 }
 static void show_review_info(GrottoApprovalController *s, GrottoApprovalRequest *r) {
   g_autoptr(GVariant) display = review_display_info(s, r->info, NULL);
-  gnostr_approval_dialog_set_info(s->dialog, display, verified_client_name(r->info));
+  g_autofree char *app_name = verified_client_name(r->info, NULL);
+  gnostr_approval_dialog_set_info(s->dialog, display, app_name);
   display_profile_provenance(s, r);
   gboolean review = FALSE, drift = FALSE;
   g_variant_lookup(r->info, "policy_review", "b", &review);
@@ -1215,7 +1218,11 @@ static void group_update(GListModel *model, guint position, guint removed, guint
     g_autoptr(GrottoApprovalRequest) r = g_list_model_get_item(model, i);
     AdwActionRow *row = ADW_ACTION_ROW(adw_action_row_new());
     g_autofree gchar *operation = operation_label(r->info);
-    g_autofree gchar *title = g_strdup_printf(_("%s · %s"), verified_client_name(r->info), operation);
+    g_autoptr(GIcon) icon = NULL;
+    g_autofree char *app_name = verified_client_name(r->info, &icon);
+    if (!icon) icon = g_themed_icon_new("application-x-executable-symbolic");
+    adw_action_row_add_prefix(row, gtk_image_new_from_gicon(icon));
+    g_autofree gchar *title = g_strdup_printf(_("%s · %s"), app_name, operation);
     adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), title);
     adw_preferences_row_set_use_markup(ADW_PREFERENCES_ROW(row), FALSE);
     gint64 seconds = MAX((gint64)0, (r->deadline - g_get_monotonic_time()) / G_USEC_PER_SEC);

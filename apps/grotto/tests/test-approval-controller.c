@@ -532,12 +532,15 @@ static void notifications(Fixture *f, gconstpointer data) {
   g_variant_dict_insert(&dict, "reason", "s", "private reason");
   gboolean management = !g_strcmp0(data, "management");
   gboolean executable = data && g_str_has_prefix(data, "exe:");
+  gboolean unmatched_id = executable && strstr(data, "unknown-app-id");
+  gboolean desktop = !g_strcmp0(data, "exe:/usr/bin/true") ||
+    !g_strcmp0(data, "app:org.nostr.GrottoTest");
   if (data) {
     g_variant_dict_insert(&dict, "verified", "b", TRUE);
     g_variant_dict_insert(&dict, "principal", "s", (const char *)data);
     g_variant_dict_insert(&dict, "transport", "s",
                           g_str_has_prefix(data, "nip46:") ? "NIP46" : "DBUS");
-    g_variant_dict_insert(&dict, "app_id", "s", "");
+    g_variant_dict_insert(&dict, "app_id", "s", unmatched_id ? "org.nostr.UnknownApp" : g_str_has_prefix(data, "app:") ? (const char *)data + 4 : "");
     if (executable)
       g_variant_dict_insert(&dict, "exe", "s", (const char *)data + 4);
     if (management) {
@@ -550,7 +553,7 @@ static void notifications(Fixture *f, gconstpointer data) {
   WAIT(f->notification_body && strstr(f->notification_body,
       management ? "Check identity" : "Text note"));
   g_assert_cmpstr(f->notification_title, ==,
-      management ? "Grotto" : executable ? "client" : data && g_str_has_prefix(data, "nip46:") ? "Remote NIP-46 client" : "Unverified app");
+      management ? "Grotto" : desktop ? "Friendly Test App" : executable ? "client" : data && g_str_has_prefix(data, "nip46:") ? "Remote NIP-46 client" : "Unverified app");
   gboolean review = FALSE, deny = FALSE;
   for (guint i = 1; f->notification_actions[i - 1] && f->notification_actions[i]; i += 2) {
     review |= !strcmp(f->notification_actions[i], "Review");
@@ -605,6 +608,12 @@ int main(int argc, char **argv) {
              "management", setup, notifications, teardown);
   g_test_add("/signer/approval-controller/notifications-nameless-executable", Fixture,
              "exe:/home/alice/private-directory/client", setup, notifications, teardown);
+  g_test_add("/signer/approval-controller/notifications-desktop-executable", Fixture,
+             "exe:/usr/bin/true", setup, notifications, teardown);
+  g_test_add("/signer/approval-controller/notifications-unmatched-id-basename", Fixture,
+             "exe:/opt/unknown-app-id/client", setup, notifications, teardown);
+  g_test_add("/signer/approval-controller/notifications-desktop-id", Fixture,
+             "app:org.nostr.GrottoTest", setup, notifications, teardown);
   g_test_add("/signer/approval-controller/notifications-nameless-nip46", Fixture,
              "nip46:79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798", setup,
              notifications, teardown);

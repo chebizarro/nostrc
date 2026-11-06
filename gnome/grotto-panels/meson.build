@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-project('grotto-panels', 'c', version: '0.1.0', license: 'MIT',
+project('grotto-panels', 'c', version: '0.2.0', license: 'MIT',
   meson_version: '>=0.61', default_options: ['c_std=c11', 'warning_level=2'])
 gtk_dep = dependency('gtk4', version: '>=4.14')
 adw_dep = dependency('libadwaita-1', version: '>=1.5')
@@ -19,7 +19,7 @@ configure_file(output: 'grotto-panels-version.h', configuration: version_data,
   install_dir: get_option('includedir') / 'grotto-panels-0')
 inc = include_directories('include/grotto-panels-0', '.')
 resources = import('gnome').compile_resources('grotto-panels-resources', 'data/grotto-panels.gresource.xml', source_dir: 'data', export: false)
-panels = shared_library('grotto-panels-0', resources, 'src/grotto-apps-panel.c', 'src/grotto-app-detail.c', 'src/grotto-activity-panel.c', 'src/grotto-remote-panel.c', 'src/grotto-identity-panel.c', 'src/grotto-profile-view.c', 'src/grotto-panel.c', 'src/grotto-panels-service.c', 'src/grotto-panels-validation.c',
+panels = shared_library('grotto-panels-0', resources, 'src/grotto-app-info.c', 'src/grotto-apps-panel.c', 'src/grotto-app-detail.c', 'src/grotto-activity-panel.c', 'src/grotto-remote-panel.c', 'src/grotto-identity-panel.c', 'src/grotto-profile-view.c', 'src/grotto-panel.c', 'src/grotto-panels-service.c', 'src/grotto-panels-validation.c',
   include_directories: inc, dependencies: [gtk_dep, adw_dep, intl_dep],
   c_args: ['-DGROTTO_PANELS_COMPILATION', '-DGETTEXT_PACKAGE="grotto-panels"',
     '-DGROTTO_PANELS_LOCALEDIR="@0@"'.format(get_option('prefix') / get_option('localedir'))], gnu_symbol_visibility: 'hidden',
@@ -39,11 +39,17 @@ if get_option('tests')
   if host_machine.system() == 'linux'
     runner = find_program('dbus-run-session')
     xvfb = find_program('xvfb-run')
+    test('management-panels', runner, args: ['--', xvfb.full_path(), '-a', smoke.full_path(), '-p', '/panels/management-real-widgets'],
+      depends: smoke, suite: 'grotto-panels', timeout: 30, env: ['XDG_DATA_DIRS=' + meson.current_source_dir() / 'tests/fixtures' + ':/usr/local/share:/usr/share', 'G_DEBUG=fatal-warnings', 'GTK_A11Y=test',
+        'LSAN_OPTIONS=suppressions=' + meson.current_source_dir() / 'tests/lsan.supp' + ':print_suppressions=1'])
     test('smoke-host', runner, args: ['--', xvfb.full_path(), '-a', smoke.full_path()],
-      depends: smoke, suite: 'grotto-panels', timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GTK_A11Y=test',
+      depends: smoke, suite: 'grotto-panels', timeout: 30, env: ['XDG_DATA_DIRS=' + meson.current_source_dir() / 'tests/fixtures' + ':/usr/local/share:/usr/share', 'G_DEBUG=fatal-warnings', 'GTK_A11Y=test',
         'LSAN_OPTIONS=suppressions=' + meson.current_source_dir() / 'tests/lsan.supp' + ':print_suppressions=1'])
   else
-    test('smoke-host', smoke, suite: 'grotto-panels', timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GTK_A11Y=test',
+    test('management-panels', smoke, args: ['-p', '/panels/management-real-widgets'],
+      suite: 'grotto-panels', timeout: 30, env: ['XDG_DATA_DIRS=' + meson.current_source_dir() / 'tests/fixtures' + ':/usr/local/share:/usr/share', 'G_DEBUG=fatal-warnings', 'GTK_A11Y=test',
+        'LSAN_OPTIONS=suppressions=' + meson.current_source_dir() / 'tests/lsan.supp' + ':print_suppressions=1'])
+    test('smoke-host', smoke, suite: 'grotto-panels', timeout: 30, env: ['XDG_DATA_DIRS=' + meson.current_source_dir() / 'tests/fixtures' + ':/usr/local/share:/usr/share', 'G_DEBUG=fatal-warnings', 'GTK_A11Y=test',
         'LSAN_OPTIONS=suppressions=' + meson.current_source_dir() / 'tests/lsan.supp' + ':print_suppressions=1'])
   endif
   test('no-secrets', python, args: [files('tests/test-boundaries.py'), meson.current_source_dir(), panels.full_path(),

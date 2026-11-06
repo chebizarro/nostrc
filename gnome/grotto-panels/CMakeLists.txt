@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 cmake_minimum_required(VERSION 3.22)
-project(grotto-panels VERSION 0.1.0 LANGUAGES C)
+project(grotto-panels VERSION 0.2.0 LANGUAGES C)
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/VersionHelpers.cmake")
@@ -19,7 +19,7 @@ add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/grotto-panels-resources.c
     ${CMAKE_CURRENT_SOURCE_DIR}/data/apps-panel.ui ${CMAKE_CURRENT_SOURCE_DIR}/data/activity-panel.ui
     ${CMAKE_CURRENT_SOURCE_DIR}/data/remote-panel.ui ${CMAKE_CURRENT_SOURCE_DIR}/data/icons/scalable/actions/grotto-qr-code-symbolic.svg)
 add_library(grotto-panels SHARED src/grotto-panel.c src/grotto-identity-panel.c src/grotto-profile-view.c
-  src/grotto-apps-panel.c src/grotto-app-detail.c src/grotto-activity-panel.c src/grotto-remote-panel.c
+  src/grotto-app-info.c src/grotto-apps-panel.c src/grotto-app-detail.c src/grotto-activity-panel.c src/grotto-remote-panel.c
   src/grotto-panels-service.c src/grotto-panels-validation.c "${CMAKE_CURRENT_BINARY_DIR}/grotto-panels-resources.c")
 add_library(GrottoPanels::Panels ALIAS grotto-panels)
 set_target_properties(grotto-panels PROPERTIES OUTPUT_NAME grotto-panels-0
@@ -51,7 +51,7 @@ set(_configdir ${CMAKE_INSTALL_LIBDIR}/cmake/GrottoPanels)
 configure_package_config_file(cmake/GrottoPanelsConfig.cmake.in
   "${CMAKE_CURRENT_BINARY_DIR}/GrottoPanelsConfig.cmake" INSTALL_DESTINATION ${_configdir})
 write_basic_package_version_file("${CMAKE_CURRENT_BINARY_DIR}/GrottoPanelsConfigVersion.cmake"
-  VERSION ${PROJECT_VERSION} COMPATIBILITY SameMinorVersion)
+  VERSION ${PROJECT_VERSION} COMPATIBILITY SameMajorVersion)
 install(EXPORT GrottoPanelsTargets NAMESPACE GrottoPanels:: DESTINATION ${_configdir})
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/GrottoPanelsConfig.cmake"
   "${CMAKE_CURRENT_BINARY_DIR}/GrottoPanelsConfigVersion.cmake" DESTINATION ${_configdir})
@@ -100,8 +100,16 @@ if(BUILD_TESTING)
   else()
     add_test(NAME grotto-panels/smoke-host COMMAND test-grotto-panels-smoke)
   endif()
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_test(NAME grotto-panels/management-panels COMMAND ${DBUS_RUN_SESSION} -- ${XVFB_RUN} -a
+      $<TARGET_FILE:test-grotto-panels-smoke> -p /panels/management-real-widgets)
+  else()
+    add_test(NAME grotto-panels/management-panels COMMAND test-grotto-panels-smoke -p /panels/management-real-widgets)
+  endif()
+  set_tests_properties(grotto-panels/management-panels PROPERTIES TIMEOUT 30
+    ENVIRONMENT "XDG_DATA_DIRS=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures:/usr/local/share:/usr/share;G_DEBUG=fatal-warnings;GTK_A11Y=test;LSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/tests/lsan.supp:print_suppressions=1")
   set_tests_properties(grotto-panels/smoke-host PROPERTIES TIMEOUT 30
-    ENVIRONMENT "G_DEBUG=fatal-warnings;GTK_A11Y=test;LSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/tests/lsan.supp:print_suppressions=1")
+    ENVIRONMENT "XDG_DATA_DIRS=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures:/usr/local/share:/usr/share;G_DEBUG=fatal-warnings;GTK_A11Y=test;LSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/tests/lsan.supp:print_suppressions=1")
   add_test(NAME grotto-panels/no-secrets COMMAND ${Python3_EXECUTABLE}
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/test-boundaries.py" "${CMAKE_CURRENT_SOURCE_DIR}" $<TARGET_FILE:grotto-panels>
     $<TARGET_FILE:test-grotto-panels-admission> "${CMAKE_CURRENT_BINARY_DIR}/generated" "${GROTTO_PANELS_CLANG}")
@@ -120,6 +128,8 @@ if(BUILD_TESTING)
   add_test(NAME grotto-panels/control1-service COMMAND test-grotto-panels-control1)
   set_tests_properties(grotto-panels/control1-service PROPERTIES TIMEOUT 30 ENVIRONMENT "G_DEBUG=fatal-warnings")
   if(COMMAND nostrc_describe_test)
+    nostrc_describe_test(grotto-panels/management-panels OWNER grotto.panels
+      TARGETS test-grotto-panels-smoke INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/lsan.supp")
     nostrc_describe_test(grotto-panels/smoke-host OWNER grotto.panels
       TARGETS test-grotto-panels-smoke INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/lsan.supp")
     nostrc_describe_test(grotto-panels/no-secrets OWNER grotto.panels TARGETS grotto-panels test-grotto-panels-admission

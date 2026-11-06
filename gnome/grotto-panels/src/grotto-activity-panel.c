@@ -31,7 +31,8 @@ static gboolean matches(gpointer item, gpointer data) {
   if (self->principal && !strcmp(search, self->principal) && strcmp(m->principal, self->principal)) return FALSE;
   guint outcome = adw_combo_row_get_selected(self->outcome);
   if (outcome < G_N_ELEMENTS(outcomes) && outcome && strcmp(m->outcome, outcomes[outcome])) return FALSE;
-  if (*search && !contains(m->principal, search) && !contains(m->label, search) && !contains(operation_name(m->operation), search)) return FALSE;
+  g_autofree char *app_name = grotto_panels_app_display_info(m->principal, m->label, NULL);
+  if (*search && !contains(m->principal, search) && !contains(app_name, search) && !contains(operation_name(m->operation), search)) return FALSE;
   if (*kind) {
     char *end = NULL; gint64 number = g_ascii_strtoll(kind, &end, 10);
     if (!m->has_event_kind || (end != kind && !*end ? number != m->event_kind : !contains(kind_name(m->event_kind), kind))) return FALSE;
@@ -54,18 +55,29 @@ static void setup(GtkSignalListItemFactory *factory, GtkListItem *item, gpointer
     if (i) gtk_widget_add_css_class(label, "dim-label");
     gtk_box_append(GTK_BOX(box), label);
   }
-  gtk_list_item_set_child(item, box);
+  GtkWidget *row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+  GtkWidget *icon = gtk_image_new();
+  gtk_widget_set_margin_start(icon, 18);
+  gtk_widget_set_hexpand(box, TRUE);
+  gtk_box_append(GTK_BOX(row), icon);
+  gtk_box_append(GTK_BOX(row), box);
+  gtk_list_item_set_child(item, row);
 }
 static void bind(GtkSignalListItemFactory *factory, GtkListItem *item, gpointer data) {
   (void)factory; (void)data;
   const GrottoPanelsMetadata *m = grotto_panels_item_get_metadata(gtk_list_item_get_item(item));
-  GtkWidget *title = gtk_widget_get_first_child(gtk_list_item_get_child(item)), *subtitle = gtk_widget_get_next_sibling(title);
+  GtkWidget *icon = gtk_widget_get_first_child(gtk_list_item_get_child(item));
+  GtkWidget *title = gtk_widget_get_first_child(gtk_widget_get_next_sibling(icon)), *subtitle = gtk_widget_get_next_sibling(title);
+  g_autoptr(GIcon) app_icon = NULL;
+  g_autofree char *app_name = grotto_panels_app_display_info(m->principal, m->label, &app_icon);
+  gtk_image_set_from_gicon(GTK_IMAGE(icon), app_icon);
   g_autofree char *name = m->has_event_kind ? g_strdup_printf("%s · %s (%d)", operation_name(m->operation), kind_name(m->event_kind), m->event_kind) : g_strdup(operation_name(m->operation));
-  gtk_label_set_text(GTK_LABEL(title), name);
+  g_autofree char *heading = g_strdup_printf(_("%s · %s"), app_name, name);
+  gtk_label_set_text(GTK_LABEL(title), heading);
   guint outcome = 0; for (guint i = 1; i < G_N_ELEMENTS(outcomes); i++) if (!strcmp(m->outcome, outcomes[i])) outcome = i;
   g_autoptr(GDateTime) date = m->timestamp ? g_date_time_new_from_unix_local(m->timestamp) : NULL;
   g_autofree char *when = date ? g_date_time_format(date, "%F %R") : g_strdup("");
-  g_autofree char *detail = g_strdup_printf("%s · %s\n%s", _(outcome_labels[outcome]), when, *m->label ? m->label : m->principal);
+  g_autofree char *detail = g_strdup_printf("%s · %s\n%s", _(outcome_labels[outcome]), when, m->principal);
   gtk_label_set_text(GTK_LABEL(subtitle), detail);
 }
 static void controls(GrottoActivityPanel *self) {

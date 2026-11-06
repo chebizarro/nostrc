@@ -529,13 +529,13 @@ target_link_libraries(grotto_app_test_core PUBLIC $<TARGET_PROPERTY:grotto,LINK_
 add_library(grotto_approval_test_core STATIC
   ../src/approval-controller.c ../src/ui/approval_dialog.c)
 target_include_directories(grotto_approval_test_core PUBLIC ${SIGNER_INCLUDE_DIRS})
-target_link_libraries(grotto_approval_test_core PUBLIC PkgConfig::GTK4 PkgConfig::ADWAITA PkgConfig::GLIB PkgConfig::JSON_GLIB libnostr nostr_json nip19)
+target_link_libraries(grotto_approval_test_core PUBLIC GrottoPanels::Panels PkgConfig::GTK4 PkgConfig::ADWAITA PkgConfig::GLIB PkgConfig::JSON_GLIB libnostr nostr_json nip19)
 target_compile_options(grotto_approval_test_core PRIVATE -Wall -Wextra -Werror)
 add_executable(test-approval-controller test-approval-controller.c)
 target_link_libraries(test-approval-controller PRIVATE grotto_approval_test_core nostrc-test-bus)
 add_test(NAME signer/approval-controller COMMAND test-approval-controller)
 set_tests_properties(signer/approval-controller PROPERTIES TIMEOUT 90 LABELS "signer;unit"
-  ENVIRONMENT "${_UI_TEST_ENV}")
+  ENVIRONMENT "${_UI_TEST_ENV};XDG_DATA_DIRS=${CMAKE_CURRENT_SOURCE_DIR}/../../../gnome/grotto-panels/tests/fixtures:/usr/local/share:/usr/share")
 add_dependencies(signer-tests test-approval-controller)
 if (TARGET grotto-daemon AND "NIP55L_TEST_TRUST_ENV=1" IN_LIST _nip55l_definitions)
   if(NOT APPLE)

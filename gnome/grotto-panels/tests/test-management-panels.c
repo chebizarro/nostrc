@@ -14,17 +14,45 @@ static GtkWidget *find_title(GtkWidget *widget, const char *title) {
   }
   return NULL;
 }
+static gboolean has_label(GtkWidget *widget, const char *text) {
+  if (GTK_IS_LABEL(widget) && strstr(gtk_label_get_text(GTK_LABEL(widget)), text)) return TRUE;
+  for (GtkWidget *child = gtk_widget_get_first_child(widget); child; child = gtk_widget_get_next_sibling(child))
+    if (has_label(child, text)) return TRUE;
+  return FALSE;
+}
+static gboolean has_icon(GtkWidget *widget, GIcon *icon) {
+  if (GTK_IS_IMAGE(widget) && gtk_image_get_storage_type(GTK_IMAGE(widget)) == GTK_IMAGE_GICON &&
+      g_icon_equal(gtk_image_get_gicon(GTK_IMAGE(widget)), icon)) return TRUE;
+  for (GtkWidget *child = gtk_widget_get_first_child(widget); child; child = gtk_widget_get_next_sibling(child))
+    if (has_icon(child, icon)) return TRUE;
+  return FALSE;
+}
 static void management_panels(void) {
+  g_autoptr(GIcon) expected_icon = g_themed_icon_new("grotto-test-app");
+  const char *principals[] = {"exe:/usr/bin/true", "app:org.nostr.GrottoTest", "flatpak:org.nostr.GrottoTest", "snap:org.nostr.GrottoTest;exe:/usr/bin/true", "app:org.nostr.Missing;exe:/usr/bin/true"};
+  for (guint i = 0; i < G_N_ELEMENTS(principals); i++) {
+    g_autoptr(GIcon) icon = NULL;
+    g_autofree char *name = grotto_panels_app_display_info(principals[i], principals[i], &icon);
+    g_assert_cmpstr(name, ==, "Friendly Test App");
+    g_assert_true(g_icon_equal(icon, expected_icon));
+  }
+  g_autoptr(GIcon) fallback_icon = NULL;
+  g_autofree char *fallback = grotto_panels_app_display_info("exe:/opt/no-desktop/unknown-client", NULL, &fallback_icon);
+  g_assert_cmpstr(fallback, ==, "unknown-client");
+  g_autoptr(GIcon) generic = g_themed_icon_new("application-x-executable-symbolic");
+  g_assert_true(g_icon_equal(fallback_icon, generic));
+  g_autofree char *custom = grotto_panels_app_display_info(principals[0], "<b>Plain App</b>", NULL);
+  g_assert_cmpstr(custom, ==, "<b>Plain App</b>");
   g_autoptr(GrottoPanelsFakeService) fake = grotto_panels_fake_service_new();
   GrottoPanelsService *service = GROTTO_PANELS_SERVICE(fake);
   grotto_panels_fake_service_set_available(fake, TRUE);
   for (guint i = 0; i < GROTTO_PANEL_N_COMMANDS; i++) grotto_panels_fake_service_set_can(fake, i, TRUE);
   const char *relays[] = {"wss://nos.lol", NULL}, *methods[] = {"sign_event", NULL};
   const char *effective[] = {"Public key after consent", "Public publishing", NULL};
-  GrottoPanelsMetadata app = {.effective_permissions = effective, .id = "app:test", .label = "<b>Plain App</b>", .trust = "medium", .access_policy = "Ask for sensitive operations", .transport = "Local App"};
+  GrottoPanelsMetadata app = {.effective_permissions = effective, .id = "exe:/usr/bin/true", .label = "exe:/usr/bin/true", .trust = "medium", .access_policy = "Ask for sensitive operations", .transport = "Local App"};
   GrottoPanelsMetadata status = {.id = "status", .state = "LISTENING", .remote_enabled = TRUE, .relays = relays, .methods = methods};
   GrottoPanelsMetadata request = {.id = "request-1", .label = "Plain App", .operation = "Sign Event", .deadline_usec = g_get_monotonic_time() + 60000000};
-  GrottoPanelsMetadata record = {.id = "11", .principal = "app:test", .operation = "event", .outcome = "success", .sequence = 11, .has_event_kind = TRUE, .event_kind = 1};
+  GrottoPanelsMetadata record = {.id = "11", .principal = app.id, .operation = "event", .outcome = "success", .sequence = 11, .has_event_kind = TRUE, .event_kind = 1};
   g_assert_true(grotto_panels_fake_service_replace(fake, GROTTO_PANELS_APPS, &app, NULL));
   g_assert_true(grotto_panels_fake_service_replace(fake, GROTTO_PANELS_STATUS, &status, NULL));
   g_assert_true(grotto_panels_fake_service_replace(fake, GROTTO_PANELS_REQUESTS, &request, NULL));
@@ -48,10 +76,16 @@ static void management_panels(void) {
       GtkWidget *apps = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(panel), GROTTO_TYPE_APPS_PANEL, "apps_list"));
       GtkWidget *first = gtk_widget_get_first_child(apps); g_assert_nonnull(first);
       g_assert_false(adw_preferences_row_get_use_markup(ADW_PREFERENCES_ROW(first)));
-      g_assert_cmpstr(adw_preferences_row_get_title(ADW_PREFERENCES_ROW(first)), ==, app.label);
+      g_assert_cmpstr(adw_preferences_row_get_title(ADW_PREFERENCES_ROW(first)), ==, "Friendly Test App");
+      g_assert_nonnull(strstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(first)), app.id));
+      g_assert_true(has_icon(first, expected_icon));
       g_signal_emit_by_name(first, "activated");
       AdwNavigationView *nav = grotto_apps_panel_get_navigation(GROTTO_APPS_PANEL(panel));
       GtkWidget *detail = GTK_WIDGET(adw_navigation_view_get_visible_page(nav));
+      g_assert_cmpstr(adw_navigation_page_get_title(ADW_NAVIGATION_PAGE(detail)), ==, "Friendly Test App");
+      GtkWidget *fingerprint = find_title(detail, "Fingerprint");
+      g_assert_cmpstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(fingerprint)), ==, app.id);
+      g_assert_true(has_icon(detail, expected_icon));
       GtkWidget *low_row = find_title(detail, "Ask Unless Permitted"); g_assert_nonnull(low_row);
       GtkWidget *low = adw_action_row_get_activatable_widget(ADW_ACTION_ROW(low_row));
       gtk_check_button_set_active(GTK_CHECK_BUTTON(low), TRUE);
@@ -80,10 +114,19 @@ static void management_panels(void) {
       grotto_panels_fake_service_set_can(fake, GROTTO_PANEL_SET_CLIENT_TRUST, FALSE);
       /* Capability loss reaches an already-mounted detail, not only a new panel. */
       WAIT(!gtk_widget_is_sensitive(low));
+      app.label = "<b>Plain App</b>";
+      g_assert_true(grotto_panels_fake_service_replace(fake, GROTTO_PANELS_APPS, &app, NULL));
+      WAIT(!g_strcmp0(adw_navigation_page_get_title(ADW_NAVIGATION_PAGE(detail)), app.label));
+      first = gtk_widget_get_first_child(apps);
+      g_assert_cmpstr(adw_preferences_row_get_title(ADW_PREFERENCES_ROW(first)), ==, app.label);
+      g_assert_false(adw_preferences_row_get_use_markup(ADW_PREFERENCES_ROW(first)));
     }
     if (i == 1) {
+      WAIT(has_label(GTK_WIDGET(panel), "Friendly Test App · Sign Event"));
+      g_assert_true(has_label(GTK_WIDGET(panel), app.id));
+      g_assert_true(has_icon(GTK_WIDGET(panel), expected_icon));
       GrottoPanelsMetadata older[] = {
-        {.id = "11", .sequence = 11, .principal = "app:test", .operation = "event", .outcome = "success"},
+        {.id = "11", .sequence = 11, .principal = app.id, .operation = "event", .outcome = "success"},
         {.id = "10", .sequence = 10, .principal = "app:other", .operation = "event", .outcome = "denied"}
       };
       grotto_panels_fake_service_set_query_result(fake, GROTTO_PANELS_QUERY_ACTIVITY, older, 2, -1);
@@ -91,7 +134,7 @@ static void management_panels(void) {
       GtkWidget *load = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(panel), GROTTO_TYPE_ACTIVITY_PANEL, "older"));
       g_signal_emit_by_name(load, "clicked");
       WAIT(g_list_model_get_n_items(G_LIST_MODEL(gtk_list_view_get_model(records))) == 2); /* Sequence 11 is deduplicated. */
-      grotto_activity_panel_filter_app(GROTTO_ACTIVITY_PANEL(panel), "app:test");
+      grotto_activity_panel_filter_app(GROTTO_ACTIVITY_PANEL(panel), app.id);
       WAIT(g_list_model_get_n_items(G_LIST_MODEL(gtk_list_view_get_model(records))) == 1);
       grotto_activity_panel_filter_app(GROTTO_ACTIVITY_PANEL(panel), NULL);
       WAIT(g_list_model_get_n_items(G_LIST_MODEL(gtk_list_view_get_model(records))) == 2);

@@ -13,6 +13,7 @@ struct _GrottoAppDetail {
   AdwNavigationView *navigation;
   AdwNavigationPage *permissions_page, *root_page;
   AdwEntryRow *name;
+  GtkImage *app_icon;
   AdwActionRow *verified, *fingerprint, *since, *permissions_link, *handoff;
   AdwBanner *feedback, *permission_feedback;
   GtkCheckButton *tiers[3];
@@ -540,7 +541,9 @@ static void render(GrottoAppDetail *self) {
       if (self->permission_feedback) adw_banner_set_revealed(self->permission_feedback, FALSE);
       self->unavailable = FALSE;
     }
-    const char *name = *m->label ? m->label : *m->verified_as ? m->verified_as : _("App");
+    g_autoptr(GIcon) icon = NULL;
+    g_autofree char *name = grotto_panels_app_display_info(self->principal, m->label, &icon);
+    gtk_image_set_from_gicon(self->app_icon, icon);
     adw_navigation_page_set_title(ADW_NAVIGATION_PAGE(self), name); adw_navigation_page_set_title(self->root_page, name);
     if (!editing_name) gtk_editable_set_text(GTK_EDITABLE(self->name), m->label);
     adw_action_row_set_subtitle(self->verified, *m->verified_as ? m->verified_as : self->principal);
@@ -580,6 +583,8 @@ static void grotto_app_detail_init(GrottoAppDetail *self) {
   self->feedback = ADW_BANNER(adw_banner_new("")); adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(toolbar), GTK_WIDGET(self->feedback));
   AdwPreferencesPage *prefs = ADW_PREFERENCES_PAGE(adw_preferences_page_new()); AdwPreferencesGroup *identity = group(prefs, NULL);
   self->name = ADW_ENTRY_ROW(adw_entry_row_new()); adw_preferences_row_set_title(ADW_PREFERENCES_ROW(self->name), _("Local Name")); adw_entry_row_set_show_apply_button(self->name, TRUE); adw_preferences_group_add(identity, GTK_WIDGET(self->name));
+  self->app_icon = GTK_IMAGE(gtk_image_new());
+  adw_entry_row_add_prefix(self->name, GTK_WIDGET(self->app_icon));
   AdwPreferencesGroup *access = group(prefs, _("Access")); self->access = GTK_WIDGET(access);
   adw_preferences_group_set_description(access, _("Blocked actions always stay blocked. Lowering access keeps saved permissions."));
   const char *titles[] = {_("Trust for Routine Operations"), _("Ask for Sensitive Operations"), _("Ask Unless Permitted")};

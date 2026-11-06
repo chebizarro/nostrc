@@ -1,3 +1,10 @@
+grotto-panels (0.2.0-1) UNRELEASED; urgency=medium
+
+  * Add cosmetic GIO desktop-entry name/icon resolution and use it in app and
+    activity rows and app details. Preserve existing public structures and ABI 0.
+
+ -- Grotto Maintainers <chebizarro@protonmail.com>  Fri, 06 Nov 2026 12:00:00 -0800
+
 grotto-panels (0.1.0-1) unstable; urgency=medium
 
   * Initial MIT public-metadata panel runtime and SDK, SONAME major 0.

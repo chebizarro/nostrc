@@ -62,16 +62,19 @@ static void render(GrottoAppsPanel *self) {
     if (self->identity && g_strcmp0(self->identity, m->public_key)) continue;
     GtkWidget *row = adw_action_row_new();
     adw_preferences_row_set_use_markup(ADW_PREFERENCES_ROW(row), FALSE);
-    adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), *m->label ? m->label : *m->verified_as ? m->verified_as : _("App"));
+    g_autoptr(GIcon) icon = NULL;
+    g_autofree char *name = grotto_panels_app_display_info(m->id, m->label, &icon);
+    adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), name);
+    adw_action_row_add_prefix(ADW_ACTION_ROW(row), gtk_image_new_from_gicon(icon));
     const char *transport = !strcmp(m->transport, "NIP46") ? _("Remote App") : _("Local App");
     const char *access = m->blocked ? _("Blocked") : !strcmp(m->access_policy, "Previous access policy") ? _("Previous access policy") :
       !strcmp(m->trust, "full") ? _("Routine Operations") : !strcmp(m->trust, "medium") ? _("Ask for Sensitive Operations") : _("Ask Unless Permitted");
     g_autoptr(GDateTime) date = m->last_used_at ? g_date_time_new_from_unix_local(m->last_used_at) : NULL;
     g_autofree char *when = date ? g_date_time_format(date, "%x") : NULL;
     g_autofree char *used = when ? g_strdup_printf(_("Used %s"), when) : g_strdup(_("Not Used Yet"));
-    g_autofree char *subtitle = g_strdup_printf(_("%s · %s · %s"), transport, access, used);
+    g_autofree char *subtitle = g_strdup_printf(_("%s\n%s · %s · %s"), m->id, transport, access, used);
     adw_action_row_set_subtitle(ADW_ACTION_ROW(row), subtitle);
-    adw_action_row_set_subtitle_lines(ADW_ACTION_ROW(row), 1);
+    adw_action_row_set_subtitle_lines(ADW_ACTION_ROW(row), 2);
     adw_action_row_add_suffix(ADW_ACTION_ROW(row), gtk_image_new_from_icon_name("go-next-symbolic"));
     gtk_list_box_row_set_activatable(GTK_LIST_BOX_ROW(row), TRUE);
     g_object_set_data_full(G_OBJECT(row), "principal", g_strdup(m->id), g_free);
@@ -83,7 +86,10 @@ static void render(GrottoAppsPanel *self) {
     const GrottoPanelsMetadata *m = grotto_panels_item_get_metadata(item);
     GtkWidget *row = adw_action_row_new();
     adw_preferences_row_set_use_markup(ADW_PREFERENCES_ROW(row), FALSE);
-    g_autofree char *title = g_strdup_printf("%s · %s", *m->label ? m->label : _("App"), m->operation);
+    g_autoptr(GIcon) icon = NULL;
+    g_autofree char *name = grotto_panels_app_display_info(m->principal, m->label, &icon);
+    adw_action_row_add_prefix(ADW_ACTION_ROW(row), gtk_image_new_from_gicon(icon));
+    g_autofree char *title = g_strdup_printf("%s · %s", name, m->operation);
     adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), title);
     gint64 seconds = MAX((gint64)0, (m->deadline_usec - g_get_monotonic_time()) / G_USEC_PER_SEC);
     g_autofree char *remaining = g_strdup_printf(_("%" G_GINT64_FORMAT " seconds remaining"), seconds);
