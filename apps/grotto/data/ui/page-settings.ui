@@ -69,13 +69,6 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             </property>
           </object>
         </child>
-        <child>
-          <object class="AdwActionRow" id="about">
-            <property name="title" translatable="yes">About Grotto</property>
-            <property name="activatable">true</property>
-            <property name="action-name">win.about</property>
-          </object>
-        </child>
       </object>
     </child>
   </template>
