@@ -24,13 +24,16 @@ static void dialog_finalized(gpointer data, GObject *object) { (void)object; *(g
 static gboolean presented(GtkWidget *widget, GdkFrameClock *clock, gpointer data) {
   (void)widget; (void)clock; return ++*(guint *)data < 3 ? G_SOURCE_CONTINUE : G_SOURCE_REMOVE;
 }
-typedef struct { GrottoProfileInfo *info, *saved; guint calls[6]; GrottoNip05Status nip05; gboolean upload_fail, save_fail, offline, hold; GTask *pending; } Host;
+typedef struct { GrottoProfileInfo *info, *saved; guint calls[6]; GrottoNip05Status nip05; gboolean upload_fail, save_fail, fetch_fail, offline, hold, hold_fetch; GTask *pending; } Host;
 static void profile(gpointer data, GrottoProfileAction action, const char *key, const GrottoProfileInfo *info,
   GCancellable *cancel, GAsyncReadyCallback callback, gpointer user) {
   Host *host = data; g_assert_cmpstr(key, ==, "public-profile-key"); host->calls[action]++;
   GTask *task = g_task_new(NULL, cancel, callback, user);
+  if (action == GROTTO_PROFILE_FETCH && host->hold_fetch) { host->pending = task; return; }
   if (action == GROTTO_PROFILE_SAVE && host->hold) { host->pending = task; return; }
-  if ((action == GROTTO_PROFILE_CHOOSE_AVATAR || action == GROTTO_PROFILE_CHOOSE_BANNER) && host->upload_fail)
+  if (action == GROTTO_PROFILE_FETCH && host->fetch_fail)
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_HOST_UNREACHABLE, "Profile unavailable. Check your relays and try again");
+  else if ((action == GROTTO_PROFILE_CHOOSE_AVATAR || action == GROTTO_PROFILE_CHOOSE_BANNER) && host->upload_fail)
     g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED, "Image upload failed. Try again");
   else if (action == GROTTO_PROFILE_SAVE && host->save_fail)
     g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_HOST_UNREACHABLE, "Offline. Your edits have not been saved");
@@ -51,17 +54,52 @@ static void profile_panel(void) {
   grotto_panels_fake_service_set_available(fake, TRUE);
   GrottoPanelsMetadata identity = {.id = "identity", .public_key = "public-profile-key", .label = "Everyday", .is_default = TRUE, .can_sign = TRUE, .backup_acknowledged = TRUE};
   g_assert_true(grotto_panels_fake_service_replace(fake, GROTTO_PANELS_IDENTITIES, &identity, NULL));
-  Host host = {.info = grotto_profile_info_copy(NULL), .nip05 = GROTTO_NIP05_VERIFIED};
+  Host host = {.info = grotto_profile_info_copy(NULL), .nip05 = GROTTO_NIP05_VERIFIED, .hold_fetch = TRUE};
   host.info->auth_required_relays = g_strsplit("wss://auth.discovery.example/", "\n", -1);
   GtkWidget *panel = grotto_identity_panel_new(GROTTO_PANELS_SERVICE(fake), NULL);
   const GrottoPanelsHost callbacks = {.profile_async = profile};
   grotto_panel_set_host(GROTTO_PANEL(panel), &callbacks, &host, NULL);
   AdwWindow *window = ADW_WINDOW(adw_window_new()); g_object_ref_sink(window);
   gtk_window_set_default_size(GTK_WINDOW(window), 360, 720); adw_window_set_content(window, panel); gtk_window_present(GTK_WINDOW(window));
+  WAIT(host.pending);
+  GtkWidget *loading = find(panel, "Loading profile…"); g_assert_nonnull(loading);
+  GtkWidget *spinner = gtk_widget_get_prev_sibling(loading); g_assert_true(GTK_IS_SPINNER(spinner));
+  g_assert_true(gtk_spinner_get_spinning(GTK_SPINNER(spinner)));
+  g_assert_false(gtk_widget_get_sensitive(find(panel, "Edit Profile…")));
+  host.hold_fetch = FALSE;
+  g_task_return_new_error(host.pending, G_IO_ERROR, G_IO_ERROR_HOST_UNREACHABLE, "Profile unavailable. Check your relays and try again"); g_clear_object(&host.pending);
   WAIT(host.calls[GROTTO_PROFILE_FETCH] == 1 && find(panel, "Edit Profile…") && gtk_widget_get_sensitive(find(panel, "Edit Profile…")));
+  g_assert_false(gtk_spinner_get_spinning(GTK_SPINNER(spinner)));
+  g_assert_false(gtk_widget_get_visible(spinner));
+  host.fetch_fail = TRUE;
+  g_signal_emit_by_name(find(panel, "Refresh Profile"), "clicked");
+  WAIT(find(panel, "Profile unavailable. Check your relays and try again"));
+  g_assert_true(gtk_widget_get_sensitive(find(panel, "Edit Profile…")));
+  GtkWidget *failed_summary = find(panel, "Public Profile");
+  g_assert_cmpstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(failed_summary)), ==, "Profile not loaded");
+  /* Address verification checks the draft, not whether a kind 0 exists. */
+  g_signal_emit_by_name(find(panel, "Edit Profile…"), "clicked");
+  AdwDialog *check_dialog = adw_window_get_visible_dialog(window); g_assert_nonnull(check_dialog);
+  guint check_frames = 0; gtk_widget_add_tick_callback(GTK_WIDGET(check_dialog), presented, &check_frames, NULL); WAIT(check_frames == 3);
+  gtk_editable_set_text(GTK_EDITABLE(find(GTK_WIDGET(check_dialog), "Nostr Address")), "alice@example.com");
+  g_signal_emit_by_name(find(GTK_WIDGET(check_dialog), "Check"), "clicked");
+  WAIT(host.calls[GROTTO_PROFILE_VERIFY_NIP05] == 1 && find(GTK_WIDGET(check_dialog), "Address matches this public key"));
+  g_assert_cmpstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(failed_summary)), ==, "Profile not loaded");
+  g_assert_nonnull(find(panel, "Profile unavailable. Check your relays and try again"));
+  g_assert_cmpuint(host.calls[GROTTO_PROFILE_FETCH], ==, 2); g_assert_cmpuint(host.calls[GROTTO_PROFILE_SAVE], ==, 0);
+  gboolean check_dialog_gone = FALSE; g_object_weak_ref(G_OBJECT(check_dialog), dialog_finalized, &check_dialog_gone);
+  g_signal_emit_by_name(find(GTK_WIDGET(check_dialog), "Cancel"), "clicked");
+  WAIT(!adw_window_get_visible_dialog(window) && check_dialog_gone);
+  g_assert_cmpstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(failed_summary)), ==, "Profile not loaded");
+  g_assert_nonnull(find(panel, "Profile unavailable. Check your relays and try again"));
+  g_assert_true(gtk_widget_get_sensitive(find(panel, "Edit Profile…")));
+  g_assert_true(gtk_widget_get_sensitive(find(panel, "Retry")));
+  host.fetch_fail = FALSE;
+  g_signal_emit_by_name(find(panel, "Refresh Profile"), "clicked");
+  WAIT(find(panel, "No profile published yet") && gtk_widget_get_sensitive(find(panel, "Edit Profile…")));
   g_assert_nonnull(find(panel, "Profile discovery relays\nNo relays contacted\n\nSkipped — relay requires authentication (bootstrap never signs or sends AUTH):\nwss://auth.discovery.example/"));
   GtkWidget *row = find(panel, "Public Profile"); g_assert_nonnull(row);
-  g_assert_cmpstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(row)), ==, "Not published yet");
+  g_assert_cmpstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(row)), ==, "No profile published yet");
   g_signal_emit_by_name(find(panel, "Edit Profile…"), "clicked");
   AdwDialog *dialog = adw_window_get_visible_dialog(window); g_assert_nonnull(dialog);
   /* libadwaita 1.5 opens its sheet after the initial frame ticks. Drive the
@@ -81,12 +119,12 @@ static void profile_panel(void) {
   g_assert_nonnull(find(GTK_WIDGET(dialog), "@alice · Bot"));
   g_assert_nonnull(find(GTK_WIDGET(dialog), "First line\nSecond line"));
   g_signal_emit_by_name(find(GTK_WIDGET(dialog), "Check"), "clicked");
-  WAIT(host.calls[GROTTO_PROFILE_VERIFY_NIP05] == 1 && find(GTK_WIDGET(dialog), "Address matches this public key"));
+  WAIT(host.calls[GROTTO_PROFILE_VERIFY_NIP05] == 2 && find(GTK_WIDGET(dialog), "Address matches this public key"));
   const GrottoNip05Status states[] = {GROTTO_NIP05_MISMATCH, GROTTO_NIP05_INVALID, GROTTO_NIP05_UNAVAILABLE};
   const char *messages[] = {"Address does not match this public key", "Invalid Nostr address", "Could not check address — offline or server unavailable"};
   for (guint i = 0; i < G_N_ELEMENTS(states); i++) {
     host.nip05 = states[i]; g_signal_emit_by_name(find(GTK_WIDGET(dialog), "Check"), "clicked");
-    WAIT(host.calls[GROTTO_PROFILE_VERIFY_NIP05] == i + 2 && find(GTK_WIDGET(dialog), messages[i]));
+    WAIT(host.calls[GROTTO_PROFILE_VERIFY_NIP05] == i + 3 && find(GTK_WIDGET(dialog), messages[i]));
   }
   gtk_editable_set_text(GTK_EDITABLE(find(GTK_WIDGET(dialog), "Nostr Address")), "changed@example.com");
   g_assert_nonnull(find(GTK_WIDGET(dialog), "Address not checked"));
@@ -95,7 +133,7 @@ static void profile_panel(void) {
   g_signal_emit_by_name(find(GTK_WIDGET(dialog), "Choose Avatar…"), "clicked");
   WAIT(find(GTK_WIDGET(dialog), "Image upload failed. Try again"));
   g_assert_cmpstr(gtk_editable_get_text(GTK_EDITABLE(find(GTK_WIDGET(dialog), "Avatar URL"))), ==, values[2]);
-  g_assert_cmpstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(row)), ==, "Not published yet");
+  g_assert_cmpstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(row)), ==, "No profile published yet");
   host.save_fail = TRUE;
   g_signal_emit_by_name(find(GTK_WIDGET(dialog), "Save"), "clicked");
   WAIT(find(GTK_WIDGET(dialog), "Offline. Your edits have not been saved"));

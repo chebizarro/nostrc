@@ -18,8 +18,8 @@ struct _GrottoIdentityPanel {
   AdwPreferencesGroup *other_group, *add_group, *advanced_group;
   GtkListBox *other_list;
   GtkButton *copy_key, *show_qr, *set_default, *add_identity, *empty_add, *remove_identity;
-  GtkImage *default_check;
-  GtkLabel *identity_count;
+  GtkLabel *default_check;
+  GtkButton *dismiss_backup;
   GListModel *model;
   gulong model_changed;
   char *pinned, *identity;
@@ -28,6 +28,10 @@ struct _GrottoIdentityPanel {
 };
 G_DEFINE_TYPE(GrottoIdentityPanel, grotto_identity_panel, GROTTO_TYPE_PANEL)
 static void render(GrottoIdentityPanel *self);
+static void invoke(GrottoIdentityPanel *self, GrottoPanelCommand command);
+static void dismiss_backup(GtkButton *button, gpointer data) {
+  (void)button; invoke(data, GROTTO_PANEL_DISMISS_BACKUP_BANNER);
+}
 static void host(GrottoIdentityPanel *self, GrottoPanelHostAction action, const char *value) {
   grotto_panel_host_invoke(GROTTO_PANEL(self), action, value, NULL);
 }
@@ -140,12 +144,13 @@ static void render(GrottoIdentityPanel *self) {
   gboolean metadata_unknown = m && !strcmp(m->state, "unknown");
   adw_banner_set_title(self->banner, !available ? _("Signer unavailable") : metadata_unknown ?
     _("Open Grotto to check backup and setup status") : _("This identity isn't backed up"));
-  adw_banner_set_revealed(self->banner, m && (!available || (!m->watch_only && !m->backup_acknowledged)));
+  gboolean show_banner = m && (!available || (!m->watch_only && !m->backup_acknowledged &&
+    !grotto_panels_item_get_backup_banner_dismissed(selected)));
+  adw_banner_set_revealed(self->banner, show_banner);
+  gtk_widget_set_visible(GTK_WIDGET(self->dismiss_backup), show_banner && available &&
+    grotto_panels_service_can(service, GROTTO_PANEL_DISMISS_BACKUP_BANNER));
+  gtk_widget_set_sensitive(GTK_WIDGET(self->dismiss_backup), !self->busy);
   adw_banner_set_button_label(self->banner, available && m && m->can_sign && grotto_panel_host_can(panel, GROTTO_PANEL_HOST_BACKUP) ? _("Back Up…") : "");
-  g_autofree char *identity_count = g_strdup_printf(g_dngettext(GETTEXT_PACKAGE,
-      "%u identity on this device", "%u identities on this device", n), n);
-  gtk_label_set_text(self->identity_count, identity_count);
-  gtk_widget_set_visible(GTK_WIDGET(self->identity_count), !self->pinned);
   if (!m) {
     grotto_profile_view_set_identity(self->profile, NULL, NULL, FALSE);
     gtk_widget_set_visible(GTK_WIDGET(self->backup_row), FALSE);
@@ -170,6 +175,7 @@ static void render(GrottoIdentityPanel *self) {
   adw_action_row_set_subtitle(self->apps_row, metadata_unknown ? _("Check identity usage in Grotto") : count);
   gtk_widget_set_visible(GTK_WIDGET(self->default_row), !m->watch_only && m->can_sign);
   adw_action_row_set_subtitle(self->default_row, m->is_default ? _("Apps that don't choose an identity use this one") : _("Used by apps that don't choose an identity"));
+  gtk_list_box_row_set_activatable(GTK_LIST_BOX_ROW(self->default_row), !m->is_default);
   gtk_widget_set_visible(GTK_WIDGET(self->default_check), m->is_default);
   gtk_widget_set_visible(GTK_WIDGET(self->set_default), !m->is_default);
   gtk_widget_set_sensitive(GTK_WIDGET(self->set_default), !self->busy && grotto_panels_service_can(service, GROTTO_PANEL_SET_DEFAULT_IDENTITY));
@@ -229,7 +235,7 @@ static void grotto_identity_panel_class_init(GrottoIdentityPanelClass *klass) {
   GtkWidgetClass *wc = GTK_WIDGET_CLASS(klass);
   gtk_widget_class_set_template_from_resource(wc, "/org/nostr/GrottoPanels/identity-panel.ui");
 #define BIND(name) gtk_widget_class_bind_template_child(wc, GrottoIdentityPanel, name)
-  BIND(header); BIND(navigation); BIND(content); BIND(empty); BIND(banner); BIND(profile_box); BIND(identity_count); BIND(name_row); BIND(key_row);
+  BIND(header); BIND(navigation); BIND(content); BIND(empty); BIND(banner); BIND(profile_box); BIND(dismiss_backup); BIND(name_row); BIND(key_row);
   BIND(backup_row); BIND(apps_row); BIND(default_row); BIND(details_row); BIND(other_group); BIND(other_list);
   BIND(add_group); BIND(advanced_group); BIND(copy_key); BIND(show_qr); BIND(set_default); BIND(default_check);
   BIND(add_identity); BIND(empty_add); BIND(remove_identity);
@@ -245,6 +251,7 @@ static void grotto_identity_panel_init(GrottoIdentityPanel *self) {
   CONNECT(backup_row, "activated", backup); CONNECT(remove_identity, "clicked", remove_identity);
   CONNECT(copy_key, "clicked", copy_key); CONNECT(show_qr, "clicked", qr); CONNECT(apps_row, "activated", apps);
   CONNECT(other_list, "row-activated", other_activated); CONNECT(details_row, "activated", details);
+  CONNECT(dismiss_backup, "clicked", dismiss_backup);
   CONNECT(name_row, "apply", label_apply); CONNECT(set_default, "clicked", make_default);
 #undef CONNECT
   g_signal_connect(self, "service-changed", G_CALLBACK(attach), NULL);

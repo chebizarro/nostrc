@@ -243,8 +243,8 @@ static void identity_mounted(void) {
     g_assert_cmpuint(callbacks, ==, 1); g_assert_cmpuint(grotto_panels_fake_service_get_invocations(fake), ==, narrow * 2);
     GtkListBox *others = GTK_LIST_BOX(identity_child(panel, "other_list"));
     g_assert_true(gtk_widget_get_visible(identity_child(panel, "other_group")));
-    g_assert_cmpstr(gtk_label_get_text(GTK_LABEL(identity_child(panel, "identity_count"))), ==, "3 identities on this device");
-    g_assert_true(gtk_widget_get_visible(identity_child(panel, "identity_count")));
+    /* Device count no longer sits beneath the profile actions. */
+    g_assert_null(gtk_widget_get_template_child(panel, GROTTO_TYPE_IDENTITY_PANEL, "identity_count"));
     GtkWidget *row = gtk_widget_get_first_child(GTK_WIDGET(others));
     GtkWidget *watch_row = gtk_widget_get_next_sibling(row); g_assert_nonnull(watch_row);
     g_assert_null(gtk_widget_get_next_sibling(watch_row));
@@ -256,7 +256,7 @@ static void identity_mounted(void) {
     g_assert_cmpstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(identity_child(watch_panel, "key_row"))), ==, observer.public_key);
     g_assert_false(gtk_widget_get_visible(identity_child(watch_panel, "backup_row")));
     g_assert_false(gtk_widget_get_visible(identity_child(watch_panel, "default_row")));
-    g_assert_false(gtk_widget_get_visible(identity_child(watch_panel, "identity_count")));
+    g_assert_null(gtk_widget_get_template_child(watch_panel, GROTTO_TYPE_IDENTITY_PANEL, "identity_count"));
     g_assert_true(adw_navigation_view_pop(watch_nav));
     g_assert_cmpstr(adw_preferences_row_get_title(ADW_PREFERENCES_ROW(row)), ==, a.label);
     g_assert_false(adw_preferences_row_get_use_markup(ADW_PREFERENCES_ROW(row)));

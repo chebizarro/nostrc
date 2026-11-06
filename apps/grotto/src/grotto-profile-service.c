@@ -35,6 +35,7 @@ typedef struct {
   GHashTable *capabilities;
   GObject *cache_scope;
   GMutex *cache_lock;
+  gint64 discovery_deadline;
 } Job;
 static void cache_lock_free(gpointer data) { g_mutex_clear(data); g_free(data); }
 static void job_free(gpointer data) {
@@ -144,6 +145,9 @@ static char *sign_event(gpointer data, const char *unsigned_json, GCancellable *
     }
     destinations = relay_destination;
   }
+  gint timeout_ms = 180000;
+  if (json_object_get_int_member(object, "kind") == NOSTR_KIND_CLIENT_AUTHENTICATION && j->discovery_deadline)
+    timeout_ms = MAX(1, (j->discovery_deadline - g_get_monotonic_time()) / 1000);
   guint filter = 0; g_autofree char *owner = NULL;
   if (j->controller) {
     g_autoptr(GVariant) name = g_dbus_connection_call_sync(j->bus, "org.freedesktop.DBus", "/org/freedesktop/DBus",
@@ -157,7 +161,7 @@ static char *sign_event(gpointer data, const char *unsigned_json, GCancellable *
     }
   }
   g_autoptr(GVariant) reply = g_dbus_connection_call_sync(j->bus, owner ? owner : "org.nostr.Signer", "/org/nostr/signer/grotto", "org.nostr.Grotto.Control1", "SignProfileEvent",
-    g_variant_new("(ss^as)", j->npub, unsigned_json, destinations), G_VARIANT_TYPE("(s)"), G_DBUS_CALL_FLAGS_NO_AUTO_START, 180000, cancel, error);
+    g_variant_new("(ss^as)", j->npub, unsigned_json, destinations), G_VARIANT_TYPE("(s)"), G_DBUS_CALL_FLAGS_NO_AUTO_START, timeout_ms, cancel, error);
   if (filter) g_dbus_connection_remove_filter(j->bus, filter);
   if (!reply) {
     if (error && *error && !g_error_matches(*error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
@@ -334,7 +338,7 @@ static void fetch_frame(NostrPublishTransport *transport, const char *hint, cons
 }
 static gboolean deadline(gpointer data) {
   Fetch *f = data;
-  if (f->auth_wait && g_get_monotonic_time() < f->auth_deadline) return G_SOURCE_CONTINUE;
+  if (f->publisher && f->auth_wait && g_get_monotonic_time() < f->auth_deadline) return G_SOURCE_CONTINUE;
   if (!f->done) { f->done = TRUE; f->failure = g_strdup("Relay did not finish profile backfill"); }
   return G_SOURCE_REMOVE;
 }
@@ -351,7 +355,7 @@ static void probe_ready(GObject *source, GAsyncResult *result, gpointer data) {
   if (!error && auth && f->discovery_only && !f->done) reject_bootstrap_auth(f);
   f->probing = FALSE;
 }
-static guint fetch_relays(Job *j, NostrPublishSigner *signer, char **urls, char **events) {
+static guint fetch_relays(Job *j, NostrPublishSigner *signer, char **urls, char **events, gint64 end) {
   guint n = g_strv_length(urls), completed = 0;
   g_autofree Fetch *batch = g_new0(Fetch, n);
   g_autoptr(GCancellable) probes = g_cancellable_new();
@@ -365,7 +369,8 @@ static guint fetch_relays(Job *j, NostrPublishSigner *signer, char **urls, char 
     g_task_set_task_data(probe, f, NULL); g_task_run_in_thread(probe, probe_worker); g_object_unref(probe);
     nostr_publish_transport_set_state_callback(f->transport, fetch_state, f);
     nostr_publish_transport_set_listener(f->transport, fetch_frame, f);
-    GSource *timeout = g_timeout_source_new_seconds(15);
+    GSource *timeout = g_timeout_source_new(0);
+    g_source_set_ready_time(timeout, end);
     g_source_set_callback(timeout, deadline, f, NULL); g_source_attach(timeout, g_main_context_get_thread_default()); g_ptr_array_add(sources, timeout);
     GSource *cancellation = g_cancellable_source_new(j->cancel);
     g_source_set_callback(cancellation, G_SOURCE_FUNC(cancelled), f, NULL); g_source_attach(cancellation, g_main_context_get_thread_default()); g_ptr_array_add(sources, cancellation);
@@ -470,6 +475,7 @@ static gboolean discover(Job *j, NostrPublishSigner *signer, char **events, GErr
       }
     }
   }
+  const gint64 end = j->discovery_deadline = g_get_monotonic_time() + 10 * G_TIME_SPAN_SECOND;
   guint attempted = 0, completed = 0;
   g_autoptr(GHashTable) seen = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   for (guint round = 0; round < 2; round++) {
@@ -492,10 +498,12 @@ static gboolean discover(Job *j, NostrPublishSigner *signer, char **events, GErr
       }
     }
     g_auto(GStrv) unique = g_strv_builder_end(batch);
-    completed += fetch_relays(j, signer, unique, events);
+    completed += fetch_relays(j, signer, unique, events, end);
     j->bootstrap_round = FALSE;
+    if (g_get_monotonic_time() >= end || g_cancellable_is_cancelled(j->cancel)) break;
     g_strfreev(urls); urls = events[1] ? nostr_publish_nip65_relays(events[1], NOSTR_PUBLISH_NIP65_WRITE, NULL) : NULL;
   }
+  j->discovery_deadline = 0;
   j->no_relays = attempted == 0;
   if (g_cancellable_set_error_if_cancelled(j->cancel, error)) return FALSE;
   if (!attempted) { j->bootstrap_used = FALSE; return TRUE; } /* Editable, not an offline claim. */

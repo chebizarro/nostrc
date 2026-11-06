@@ -369,9 +369,6 @@ static void layout_activate(GApplication *application, gpointer data) {
   GtkWidget *other = gtk_widget_get_first_child(other_list); g_assert_nonnull(other);
   g_assert_null(gtk_widget_get_next_sibling(other)); /* All two adapter identities: default + watch-only. */
   g_assert_cmpstr(adw_preferences_row_get_title(ADW_PREFERENCES_ROW(other)), ==, "Observer");
-  g_autofree char *identity_count = g_strdup_printf(g_dngettext("grotto-panels", "%u identity on this device", "%u identities on this device", 2), 2);
-  GtkLabel *count_label = GTK_LABEL(gtk_widget_get_template_child(root_panel, GROTTO_TYPE_IDENTITY_PANEL, "identity_count"));
-  g_assert_cmpstr(gtk_label_get_text(count_label), ==, identity_count);
   g_assert_true(gtk_widget_grab_focus(other));
 #ifdef GROTTO_TEST_XDOTOOL
   send_key(window, "Return");

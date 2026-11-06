@@ -198,4 +198,43 @@ static void management_panels(void) {
     gtk_window_destroy(GTK_WINDOW(window)); g_object_unref(window); WAIT(destroyed);
   }
 }
-void register_management_panels_tests(void) { g_test_add_func("/panels/management-real-widgets", management_panels); }
+static GtkWidget *identity_child(GtkWidget *panel, const char *name) {
+  return GTK_WIDGET(gtk_widget_get_template_child(panel, GROTTO_TYPE_IDENTITY_PANEL, name));
+}
+static void identity_actions(void) {
+  g_autoptr(GrottoPanelsFakeService) fake = grotto_panels_fake_service_new();
+  grotto_panels_fake_service_set_available(fake, TRUE);
+  grotto_panels_fake_service_set_can(fake, GROTTO_PANEL_SET_DEFAULT_IDENTITY, TRUE);
+  grotto_panels_fake_service_set_can(fake, GROTTO_PANEL_DISMISS_BACKUP_BANNER, TRUE);
+  GrottoPanelsMetadata m = {.id = "identity", .public_key = "identity-public-key", .can_sign = TRUE};
+  g_assert_true(grotto_panels_fake_service_replace(fake, GROTTO_PANELS_IDENTITIES, &m, NULL));
+  GtkWidget *panel = grotto_identity_panel_new(GROTTO_PANELS_SERVICE(fake), m.public_key);
+  GtkWidget *window = adw_window_new(); g_object_ref_sink(window); adw_window_set_content(ADW_WINDOW(window), panel);
+  gtk_window_present(GTK_WINDOW(window)); WAIT(gtk_widget_get_mapped(panel));
+  GtkWidget *use = identity_child(panel, "set_default"), *badge = identity_child(panel, "default_check");
+  g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(use)), ==, "Use as Default");
+  g_assert_true(gtk_widget_is_visible(use)); g_assert_false(gtk_widget_get_visible(badge));
+  g_signal_emit_by_name(use, "clicked");
+  WAIT(grotto_panels_fake_service_get_invocations(fake) == 1 && gtk_widget_get_sensitive(use));
+  g_assert_cmpint(grotto_panels_fake_service_get_last_command(fake), ==, GROTTO_PANEL_SET_DEFAULT_IDENTITY);
+  g_assert_cmpstr(grotto_panels_fake_service_get_last_args(fake)->public_key, ==, m.public_key);
+  m.is_default = TRUE;
+  g_assert_true(grotto_panels_fake_service_replace(fake, GROTTO_PANELS_IDENTITIES, &m, NULL));
+  g_assert_false(gtk_widget_get_visible(use)); g_assert_true(gtk_widget_get_visible(badge));
+  GtkWidget *dismiss = identity_child(panel, "dismiss_backup");
+  AdwBanner *banner = ADW_BANNER(identity_child(panel, "banner"));
+  g_assert_true(adw_banner_get_revealed(banner)); g_assert_true(gtk_widget_get_visible(dismiss));
+  g_signal_emit_by_name(dismiss, "clicked");
+  WAIT(grotto_panels_fake_service_get_invocations(fake) == 2 && gtk_widget_get_sensitive(dismiss));
+  g_assert_cmpint(grotto_panels_fake_service_get_last_command(fake), ==, GROTTO_PANEL_DISMISS_BACKUP_BANNER);
+  g_assert_cmpstr(grotto_panels_fake_service_get_last_args(fake)->public_key, ==, m.public_key);
+  g_autoptr(GrottoPanelsItem) item = grotto_panels_item_new_with_backup_banner_state(&m, TRUE, NULL);
+  g_assert_true(grotto_panels_item_get_backup_banner_dismissed(item));
+  GListStore *model = G_LIST_STORE(grotto_panels_service_get_model(GROTTO_PANELS_SERVICE(fake), GROTTO_PANELS_IDENTITIES));
+  gpointer items[] = {item}; g_list_store_splice(model, 0, 1, items, 1);
+  g_assert_false(adw_banner_get_revealed(banner));
+  g_assert_cmpstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(identity_child(panel, "backup_row"))), ==, "Not backed up");
+  g_assert_false(grotto_panels_item_get_metadata(item)->backup_acknowledged);
+  gtk_window_destroy(GTK_WINDOW(window)); g_object_unref(window);
+}
+void register_management_panels_tests(void) { g_test_add_func("/panels/management-real-widgets", management_panels); g_test_add_func("/panels/identity-actions", identity_actions); }

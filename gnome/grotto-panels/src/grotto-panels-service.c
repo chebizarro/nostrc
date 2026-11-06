@@ -4,6 +4,7 @@
 struct _GrottoPanelsItem {
   GObject parent_instance;
   GrottoPanelsMetadata metadata;
+  gboolean backup_banner_dismissed;
 };
 G_DEFINE_FINAL_TYPE(GrottoPanelsItem, grotto_panels_item, G_TYPE_OBJECT)
 
@@ -40,6 +41,15 @@ GrottoPanelsItem *grotto_panels_item_new(const GrottoPanelsMetadata *metadata, G
 #undef COPY
   return self;
 }
+GrottoPanelsItem *grotto_panels_item_new_with_backup_banner_state(const GrottoPanelsMetadata *metadata, gboolean dismissed, GError **error) {
+  GrottoPanelsItem *self = grotto_panels_item_new(metadata, error);
+  if (self) self->backup_banner_dismissed = dismissed;
+  return self;
+}
+gboolean grotto_panels_item_get_backup_banner_dismissed(GrottoPanelsItem *self) {
+  g_return_val_if_fail(GROTTO_IS_PANELS_ITEM(self), FALSE);
+  return self->backup_banner_dismissed;
+}
 const GrottoPanelsMetadata *grotto_panels_item_get_metadata(GrottoPanelsItem *self) {
   g_return_val_if_fail(GROTTO_IS_PANELS_ITEM(self), NULL);
   return &self->metadata;
@@ -75,7 +85,7 @@ GListModel *grotto_panels_service_query_finish(GrottoPanelsService *self, GAsync
 
 GrottoPanelsAccess grotto_panel_command_get_access(GrottoPanelCommand command) {
   if (command == GROTTO_PANEL_PAUSE) return GROTTO_PANELS_ACCESS_SESSION;
-  if (command == GROTTO_PANEL_SET_CLIENT_LABEL) return GROTTO_PANELS_ACCESS_MANAGER;
+  if (command == GROTTO_PANEL_SET_CLIENT_LABEL || command == GROTTO_PANEL_DISMISS_BACKUP_BANNER) return GROTTO_PANELS_ACCESS_MANAGER;
   return GROTTO_PANELS_ACCESS_APPROVER;
 }
 
@@ -104,6 +114,8 @@ gboolean grotto_panels_service_is_available(GrottoPanelsService *self) {
 gboolean grotto_panels_service_can(GrottoPanelsService *self, GrottoPanelCommand command) {
   if (command < 0 || command >= GROTTO_PANEL_N_COMMANDS || !grotto_panels_service_is_available(self)) return FALSE;
   GrottoPanelsServiceInterface *iface = GROTTO_PANELS_SERVICE_GET_IFACE(self);
+  if (command == GROTTO_PANEL_DISMISS_BACKUP_BANNER)
+    return iface->can_dismiss_backup_banner && iface->can_dismiss_backup_banner(self);
   return iface->can && iface->can(self, command);
 }
 void grotto_panels_service_invoke_async(GrottoPanelsService *self, GrottoPanelCommand command,

@@ -65,7 +65,7 @@ def check_schema(header):
              for o in declarations if o.get('kind') == 'EnumDecl'}
     assert enums['_GrottoPanelCommand'] == ['GROTTO_PANEL_' + name for name in (
         'SET_CLIENT_LABEL', 'SET_DEFAULT_IDENTITY', 'SET_CLIENT_TRUST', 'SET_PERMISSIONS', 'REVOKE_CLIENT',
-        'PAUSE', 'RESUME', 'CLEAR_ACTIVITY', 'CONFIGURE_REMOTE', 'RESET_REMOTE', 'SET_IDENTITY_LABEL', 'N_COMMANDS')], 'closed command enum changed'
+        'PAUSE', 'RESUME', 'CLEAR_ACTIVITY', 'CONFIGURE_REMOTE', 'RESET_REMOTE', 'SET_IDENTITY_LABEL', 'DISMISS_BACKUP_BANNER', 'N_COMMANDS')], 'closed command enum changed'
     assert enums['_GrottoPanelsModel'] == ['GROTTO_PANELS_' + name for name in ('IDENTITIES', 'APPS', 'REQUESTS', 'ACTIVITY', 'STATUS', 'N_MODELS')]
     assert enums['_GrottoPanelsQuery'] == ['GROTTO_PANELS_QUERY_PERMISSIONS', 'GROTTO_PANELS_QUERY_ACTIVITY']
     assert enums['_GrottoPanelsAccess'] == ['GROTTO_PANELS_ACCESS_' + name for name in ('SESSION', 'MANAGER', 'APPROVER')]
@@ -80,10 +80,11 @@ def check_schema(header):
         assert fields == expected, f'complete compiler schema mismatch: {name}: {fields}'
     iface = records['_GrottoPanelsServiceInterface']
     fields = {f['name']: f['type']['qualType'] for f in iface['inner'] if f['kind'] == 'FieldDecl'}
-    assert set(fields) == {'parent_iface', 'get_model', 'is_available', 'can', 'invoke_async', 'invoke_finish', 'query_async', 'query_finish', 'padding'}
+    assert set(fields) == {'parent_iface', 'get_model', 'is_available', 'can', 'invoke_async', 'invoke_finish', 'query_async', 'query_finish', 'can_dismiss_backup_banner', 'padding'}
     assert fields['is_available'] == 'gboolean (*)(GrottoPanelsService *)', fields
+    assert fields['can_dismiss_backup_banner'] == 'gboolean (*)(GrottoPanelsService *)', fields
     assert fields['can'] == 'gboolean (*)(GrottoPanelsService *, GrottoPanelCommand)', fields
-    assert fields['parent_iface'] == 'GTypeInterface' and fields['padding'] == 'gpointer[6]', fields
+    assert fields['parent_iface'] == 'GTypeInterface' and fields['padding'] == 'gpointer[5]', fields
     assert fields['invoke_async'] == 'void (*)(GrottoPanelsService *, GrottoPanelCommand, const GrottoPanelCommandArgs *, GCancellable *, GAsyncReadyCallback, gpointer)', fields
     assert fields['invoke_finish'] == 'gboolean (*)(GrottoPanelsService *, GAsyncResult *, GError **)', fields
     assert fields['query_async'] == 'void (*)(GrottoPanelsService *, GrottoPanelsQuery, const char *, guint64, GCancellable *, GAsyncReadyCallback, gpointer)', fields
@@ -94,6 +95,7 @@ exports = {
     'grotto_profile_info_copy', 'grotto_profile_info_free', 'grotto_profile_info_validate',
     'grotto_panel_has_profile_host', 'grotto_panel_profile_async', 'grotto_panel_profile_finish',
     'grotto_panels_item_get_type', 'grotto_panels_item_new', 'grotto_panels_item_get_metadata',
+    'grotto_panels_item_new_with_backup_banner_state', 'grotto_panels_item_get_backup_banner_dismissed',
     'grotto_panels_app_info_prepare', 'grotto_panels_app_display_info',
     'grotto_panels_metadata_validate', 'grotto_panels_public_text_validate', 'grotto_panel_command_get_access',
     'grotto_panel_command_args_validate', 'grotto_panels_service_get_type', 'grotto_panels_service_get_model',
@@ -169,7 +171,7 @@ imports.update('''adw_action_row_set_activatable_widget adw_action_row_set_subti
  g_signal_handlers_disconnect_matched g_strdupv g_strfreev g_strjoinv g_strsplit_set g_task_get_source_object g_task_get_task_data
  g_task_propagate_pointer g_task_return_boolean g_task_return_error_if_cancelled g_task_return_new_error g_task_set_task_data
  g_utf8_casefold g_weak_ref_set gtk_accessible_get_type gtk_accessible_update_property gtk_box_append gtk_box_get_type gtk_box_new
- gtk_box_set_homogeneous gtk_button_get_type gtk_button_new_from_icon_name gtk_button_new_with_label gtk_button_set_label
+ gtk_box_set_homogeneous gtk_button_get_type gtk_button_new_from_icon_name gtk_button_new_with_label gtk_button_set_icon_name gtk_button_set_label
  gtk_check_button_get_active gtk_check_button_get_type gtk_check_button_new gtk_check_button_set_active gtk_check_button_set_group
  gtk_custom_filter_new gtk_filter_changed gtk_filter_get_type gtk_filter_list_model_new gtk_label_get_type gtk_label_new
  gtk_label_set_text gtk_label_set_wrap gtk_label_set_wrap_mode gtk_label_set_xalign gtk_list_box_get_type gtk_list_box_new

@@ -6,7 +6,7 @@
 static NostrcTestBus *bus;
 static GDBusConnection *server;
 static const char *label = "First";
-static gboolean authorized, have_request = TRUE, hold_clients, inventory_error;
+static gboolean authorized, have_request = TRUE, hold_clients, inventory_error, have_identity;
 static guint clients_calls, request_calls, mutations;
 static const char *remote_error, *credential_field, *management_role;
 static gboolean hold_command;
@@ -55,8 +55,9 @@ static void method(GDBusConnection *connection, const char *sender, const char *
   } else if (!strcmp(name, "ListIdentities")) {
     if (inventory_error) g_dbus_method_invocation_return_dbus_error(invocation,
       "org.nostr.Grotto.Control1.Error.BackendUnavailable", "Inventory unavailable");
-    else g_dbus_method_invocation_return_value(invocation, g_variant_new("(@aa{sv})",
-      g_variant_new_array(G_VARIANT_TYPE_VARDICT, NULL, 0)));
+    else if (have_identity) g_dbus_method_invocation_return_value(invocation, g_variant_new("(@aa{sv})",
+      g_variant_new_parsed("[{'identity': <'identity-public-key'>, 'can-sign': <true>, 'state': <'unknown'>}]")));
+    else g_dbus_method_invocation_return_value(invocation, g_variant_new("(@aa{sv})", g_variant_new_array(G_VARIANT_TYPE_VARDICT, NULL, 0)));
   } else if (!strcmp(name, "ListClients")) {
     clients_calls++;
     if (hold_clients) { hold_clients = FALSE; held = g_object_ref(invocation); }
@@ -212,6 +213,7 @@ static void exercise(void) {
   }
   /* Settings' manager adapter fails closed on legacy/misbound role metadata;
    * even an over-advertised resume capability cannot reach the host. */
+  have_identity = TRUE;
   g_autoptr(GrottoPanelsService) manager = grotto_panels_control1_service_new_manager(proxy);
   guint changes = 0;
   g_signal_connect(manager, "capabilities-changed", G_CALLBACK(capabilities_changed), &changes);
@@ -223,6 +225,31 @@ static void exercise(void) {
   management_role = "manager"; emit("StatusChanged");
   WAIT(grotto_panels_service_is_available(manager));
   g_assert_true(grotto_panels_service_can(manager, GROTTO_PANEL_SET_CLIENT_LABEL));
+  /* Both Settings' manager and a recreated adapter read the same persisted
+   * cosmetic preference. No mutation RPC or backup acknowledgement is sent. */
+  g_autoptr(GSettingsSchema) schema = g_settings_schema_source_lookup(g_settings_schema_source_get_default(), "org.nostr.Grotto.IdentityReminder", TRUE);
+  g_assert_nonnull(schema);
+  {
+    guint before_mutations = mutations;
+    GrottoPanelCommandArgs dismiss = {.public_key = "identity-public-key"}; gboolean saved = FALSE;
+    g_assert_true(grotto_panels_service_can(manager, GROTTO_PANEL_DISMISS_BACKUP_BANNER));
+    grotto_panels_service_invoke_async(manager, GROTTO_PANEL_DISMISS_BACKUP_BANNER, &dismiss, NULL, done, &saved); WAIT(saved);
+    g_assert_true(grotto_panels_backup_banner_dismissed(dismiss.public_key));
+    g_assert_false(grotto_panels_backup_banner_dismissed("other-public-key"));
+    /* Open both writers first; independent keys cannot overwrite each other. */
+    g_autoptr(GSettings) first = grotto_panels_backup_reminder_settings("first-writer-key");
+    g_autoptr(GSettings) second = grotto_panels_backup_reminder_settings("second-writer-key");
+    g_assert_true(g_settings_set_boolean(first, "dismissed", TRUE));
+    g_assert_true(g_settings_set_boolean(second, "dismissed", TRUE));
+    g_assert_true(grotto_panels_backup_banner_dismissed("first-writer-key"));
+    g_assert_true(grotto_panels_backup_banner_dismissed("second-writer-key"));
+    g_assert_cmpuint(mutations, ==, before_mutations);
+    g_autoptr(GrottoPanelsService) remount = grotto_panels_control1_service_new_manager(proxy);
+    WAIT(grotto_panels_service_is_available(remount));
+    g_autoptr(GrottoPanelsItem) identity = g_list_model_get_item(grotto_panels_service_get_model(remount, GROTTO_PANELS_IDENTITIES), 0);
+    g_assert_true(grotto_panels_item_get_backup_banner_dismissed(identity));
+    g_assert_false(grotto_panels_item_get_metadata(identity)->backup_acknowledged);
+  }
   g_assert_false(grotto_panels_service_can(manager, GROTTO_PANEL_RESUME));
   inventory_error = TRUE; emit("StatusChanged"); WAIT(!grotto_panels_service_is_available(manager));
   changes = 0; emit("StatusChanged"); WAIT(changes > 0);
@@ -241,6 +268,7 @@ static void exercise(void) {
   g_dbus_connection_unregister_object(server, registration);
 }
 int main(int argc, char **argv) {
+  g_setenv("GSETTINGS_BACKEND", "memory", TRUE);
   g_test_init(&argc, &argv, NULL);
   bus = nostrc_test_bus_new(NOSTRC_TEST_BUS_FLAGS_NOT_SESSION);
   nostrc_test_bus_up(bus);

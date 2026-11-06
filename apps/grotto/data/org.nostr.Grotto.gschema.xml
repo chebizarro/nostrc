@@ -279,4 +279,13 @@
     </key>
 
   </schema>
+  <!-- Relocatable: independent public-identity preferences prevent two GUI
+       hosts from overwriting each other's dismissals. Never backup proof. -->
+  <schema id="org.nostr.Grotto.IdentityReminder">
+    <key name="dismissed" type="b">
+      <default>false</default>
+      <summary>Dismissed backup reminder</summary>
+      <description>Hide this public identity's cosmetic backup reminder, without acknowledging a backup.</description>
+    </key>
+  </schema>
 </schemalist>

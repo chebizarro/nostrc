@@ -22,3 +22,8 @@ void grotto_panels_control1_service_host_command_async(GrottoPanelsService *serv
   GrottoPanelCommand command, const GrottoPanelCommandArgs *args, GCancellable *cancel,
   GAsyncReadyCallback callback, gpointer data);
 G_END_DECLS
+
+/* Shared GUI cosmetic preference; no daemon policy or backup acknowledgement. */
+GSettings *grotto_panels_backup_reminder_settings(const char *public_key);
+gboolean grotto_panels_backup_banner_dismissed(const char *public_key);
+gboolean grotto_panels_dismiss_backup_banner(const char *public_key);

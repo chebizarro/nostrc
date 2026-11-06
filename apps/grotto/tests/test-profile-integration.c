@@ -6,6 +6,7 @@
 #include "ui/signer-window.h"
 #include "session-manager.h"
 #include "grotto-profile-service.h"
+#include "grotto-panels-control1-service.h"
 #include "accounts_store.h"
 #include "settings_manager.h"
 #include "tests/common/nostrc-test-bus.h"
@@ -286,6 +287,32 @@ static void bootstrap_request(JsonArray *request, gpointer data) {
   }
   if (p->challenge) bunker_test_relay_challenge(p->relay);
 }
+static void bounded_empty_discovery(void) {
+  GSettings *settings = settings_manager_get_gsettings(settings_manager_get_default());
+  g_autofree char *hex = nostr_key_get_public("0000000000000000000000000000000000000000000000000000000000000099");
+  guint8 pk[32]; for (guint i = 0; i < 32; i++) { char pair[] = {hex[2*i], hex[2*i+1], 0}; pk[i] = g_ascii_strtoull(pair, NULL, 16); }
+  char *npub = NULL; g_assert_cmpint(nostr_nip19_encode_npub(pk, &npub), ==, 0);
+  BunkerTestRelay *relay = bunker_test_relay_new();
+  const char *urls[] = {bunker_test_relay_url(relay), NULL};
+  g_settings_set_boolean(settings, "profile-bootstrap-enabled", TRUE);
+  g_settings_set_strv(settings, "profile-bootstrap-relays", urls);
+  for (guint mode = 0; mode < 3; mode++) {
+    gboolean silent = mode == 1;
+    g_settings_set_boolean(settings, "profile-bootstrap-enabled", mode != 2);
+    bunker_test_relay_hold_eose(relay, silent);
+    GAsyncResult *result = NULL; gint64 start = g_get_monotonic_time();
+    grotto_profile_service_async(NULL, NULL, GROTTO_PROFILE_FETCH, npub, NULL, NULL, host_result, &result); WAIT(result);
+    gint64 elapsed = g_get_monotonic_time() - start;
+    g_autoptr(GError) error = NULL;
+    g_autoptr(GrottoProfileInfo) info = g_task_propagate_pointer(G_TASK(result), &error); g_object_unref(result);
+    if (silent) { g_assert_null(info); g_assert_error(error, G_IO_ERROR, G_IO_ERROR_HOST_UNREACHABLE); g_assert_cmpint(elapsed, >=, 9 * G_TIME_SPAN_SECOND); }
+    else { g_assert_no_error(error); g_assert_nonnull(info); g_assert_false(info->published); g_assert_cmpint(info->no_relays, ==, mode == 2); }
+    g_assert_cmpint(elapsed, <, 12 * G_TIME_SPAN_SECOND);
+    g_test_message("%s discovery: %.3f seconds", silent ? "Silent" : mode == 2 ? "No relays" : "Empty EOSE", elapsed / 1000000.0);
+  }
+  g_settings_reset(settings, "profile-bootstrap-relays"); g_settings_reset(settings, "profile-bootstrap-enabled");
+  bunker_test_relay_free(relay); g_free(npub);
+}
 static void unexpected_signing(GDBusConnection *bus, const char *sender, const char *path, const char *iface, const char *method, GVariant *args, GDBusMethodInvocation *inv, gpointer data) {
   (void)bus; (void)sender; (void)path; (void)iface; (void)method; (void)args; (*(guint *)data)++;
   g_dbus_method_invocation_return_dbus_error(inv, "org.nostr.Signer.Error.Denied", "bootstrap must never ask for a signature");
@@ -455,6 +482,7 @@ static void profile_activate(GApplication *application, gpointer data) {
   invalid_profile(connection, npub, bunker_test_relay_url(relay), mismatch);
   g_autofree char *tagged = g_strdup_printf("{\"kind\":0,\"pubkey\":\"%s\",\"created_at\":1,\"tags\":[[\"t\",\"smuggled\"]],\"content\":\"{}\"}", hex);
   invalid_profile(connection, npub, bunker_test_relay_url(relay), tagged);
+  g_settings_set_string(preferences, "default-identity", "");
   gboolean window_gone = FALSE;
   SignerWindow *window = signer_window_new(app); g_object_ref_sink(window);
   g_autoptr(GrottoApprovalController) controller = grotto_approval_controller_new(G_APPLICATION(app), connection);
@@ -469,6 +497,26 @@ static void profile_activate(GApplication *application, gpointer data) {
   g_assert_true(grotto_panel_has_profile_host(GROTTO_PANEL(panel)));
   WAIT(find(panel, "Edit Profile…") && gtk_widget_get_visible(find(panel, "Edit Profile…")) && gtk_widget_get_sensitive(find(panel, "Edit Profile…")));
   g_assert_nonnull(find(panel, "Newest")); g_assert_null(find(panel, "Older"));
+  /* Real panel -> identity service -> daemon -> shared persistent settings. */
+  GtkWidget *use_default = GTK_WIDGET(gtk_widget_get_template_child(panel, GROTTO_TYPE_IDENTITY_PANEL, "set_default"));
+  GtkWidget *default_badge = GTK_WIDGET(gtk_widget_get_template_child(panel, GROTTO_TYPE_IDENTITY_PANEL, "default_check"));
+  g_assert_true(gtk_widget_get_visible(use_default));
+  WAIT(gtk_widget_is_sensitive(use_default));
+  g_signal_emit_by_name(use_default, "clicked");
+  WAIT(gtk_widget_get_visible(default_badge));
+  g_autofree char *active = g_settings_get_string(preferences, "default-identity"); g_assert_cmpstr(active, ==, npub);
+  AdwBanner *reminder = ADW_BANNER(gtk_widget_get_template_child(panel, GROTTO_TYPE_IDENTITY_PANEL, "banner"));
+  AdwActionRow *backup = ADW_ACTION_ROW(gtk_widget_get_template_child(panel, GROTTO_TYPE_IDENTITY_PANEL, "backup_row"));
+  g_assert_true(adw_banner_get_revealed(reminder));
+  GtkWidget *dismiss = GTK_WIDGET(gtk_widget_get_template_child(panel, GROTTO_TYPE_IDENTITY_PANEL, "dismiss_backup"));
+  WAIT(gtk_widget_is_sensitive(dismiss));
+  g_signal_emit_by_name(dismiss, "clicked"); WAIT(!adw_banner_get_revealed(reminder));
+  g_assert_cmpstr(adw_action_row_get_subtitle(backup), ==, "Not backed up");
+  g_assert_true(grotto_panels_backup_banner_dismissed(npub));
+  g_assert_false(grotto_panels_backup_banner_dismissed("different-public-identity"));
+  g_autoptr(GrottoPanel) remount = g_object_ref_sink(GROTTO_PANEL(grotto_identity_panel_new(grotto_panel_get_service(GROTTO_PANEL(panel)), npub)));
+  g_assert_false(adw_banner_get_revealed(ADW_BANNER(gtk_widget_get_template_child(GTK_WIDGET(remount), GROTTO_TYPE_IDENTITY_PANEL, "banner"))));
+  g_clear_object(&remount);
   guint bootstrap_requests = probe.requests;
   g_assert_cmpuint(bootstrap_requests, >=, 3);
   g_autofree char *dm_cache = g_strdup_printf("%s/grotto/profiles/%s-10050.json", g_get_user_cache_dir(), hex);
@@ -700,9 +748,12 @@ int main(int argc, char **argv) {
   g_autofree char *home = g_dir_make_tmp("grotto-profile-integration-XXXXXX", NULL); g_assert_nonnull(home);
   g_autofree char *config = g_build_filename(home, "config", NULL), *cache = g_build_filename(home, "cache", NULL);
   g_setenv("XDG_CONFIG_HOME", config, TRUE); g_setenv("XDG_CACHE_HOME", cache, TRUE);
-  g_setenv("GSETTINGS_BACKEND", "memory", TRUE);
+  /* Both GUI and daemon use this test-owned XDG_CONFIG_HOME. Real keyfile
+   * persistence exercises cross-process default changes without dconf state. */
+  g_setenv("GSETTINGS_BACKEND", "keyfile", TRUE);
   private_bus = nostrc_test_bus_new(NOSTRC_TEST_BUS_FLAGS_NONE); nostrc_test_bus_up(private_bus);
   adw_init(); g_object_set(gtk_settings_get_default(), "gtk-enable-animations", FALSE, NULL);
+  g_test_add_func("/signer/profile/bounded-empty-discovery", bounded_empty_discovery);
   g_test_add_func("/signer/profile/crop-and-nip05", crop_and_nip05);
   g_test_add_func("/signer/profile/authorization-preview", authorization_preview);
   g_test_add_func("/signer/profile/image-privacy-and-limits", privacy_helpers);

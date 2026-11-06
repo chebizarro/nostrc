@@ -73,6 +73,9 @@ typedef struct _GrottoPanelsMetadata {
 GROTTO_PANELS_API
 G_DECLARE_FINAL_TYPE(GrottoPanelsItem, grotto_panels_item, GROTTO, PANELS_ITEM, GObject)
 GROTTO_PANELS_API GrottoPanelsItem *grotto_panels_item_new(const GrottoPanelsMetadata *metadata, GError **error);
+/* Additive constructor: preserves the original metadata struct's ABI. */
+GROTTO_PANELS_API GrottoPanelsItem *grotto_panels_item_new_with_backup_banner_state(const GrottoPanelsMetadata *metadata, gboolean dismissed, GError **error);
+GROTTO_PANELS_API gboolean grotto_panels_item_get_backup_banner_dismissed(GrottoPanelsItem *self);
 GROTTO_PANELS_API gboolean grotto_panels_metadata_validate(const GrottoPanelsMetadata *metadata, GError **error);
 /* Admission checks reject known credential encodings/markers, not arbitrary
  * covert data hidden in ordinary text. This is not a sandbox for native code. */
@@ -102,12 +105,13 @@ typedef enum _GrottoPanelCommand {
   GROTTO_PANEL_CONFIGURE_REMOTE,
   GROTTO_PANEL_RESET_REMOTE,
   GROTTO_PANEL_SET_IDENTITY_LABEL,     /* Grotto-local metadata until W6. */
+  GROTTO_PANEL_DISMISS_BACKUP_BANNER, /* Host-persisted cosmetic preference only. */
   GROTTO_PANEL_N_COMMANDS
 } GrottoPanelCommand;
 
 typedef enum _GrottoPanelsAccess {
   GROTTO_PANELS_ACCESS_SESSION, /* pause only */
-  GROTTO_PANELS_ACCESS_MANAGER, /* cosmetic label only; reads are models */
+  GROTTO_PANELS_ACCESS_MANAGER, /* cosmetic preferences only; reads are models */
   GROTTO_PANELS_ACCESS_APPROVER
 } GrottoPanelsAccess;
 /* Classification documents the boundary; it never grants authorization. */
@@ -156,7 +160,10 @@ struct _GrottoPanelsServiceInterface {
     const char *principal, guint64 before, GCancellable *cancellable,
     GAsyncReadyCallback callback, gpointer user_data);
   GListModel *(*query_finish)(GrottoPanelsService *self, GAsyncResult *result, GError **error);
-  gpointer padding[6];
+  /* Explicit opt-in, so an older host's can() never receives a new
+   * command value that could index beyond its compiled capability table. */
+  gboolean (*can_dismiss_backup_banner)(GrottoPanelsService *self);
+  gpointer padding[5];
 };
 /* All entrypoints, signals and model notifications use the GTK main context.
  * Models: transfer none, item type GrottoPanelsItem, lifetime of service.

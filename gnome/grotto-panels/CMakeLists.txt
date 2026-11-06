@@ -100,21 +100,38 @@ if(BUILD_TESTING)
   else()
     add_test(NAME grotto-panels/smoke-host COMMAND test-grotto-panels-smoke)
   endif()
-  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    add_test(NAME grotto-panels/management-panels COMMAND ${DBUS_RUN_SESSION} -- ${XVFB_RUN} -a
-      $<TARGET_FILE:test-grotto-panels-smoke> -p /panels/management-real-widgets)
-  else()
-    add_test(NAME grotto-panels/management-panels COMMAND test-grotto-panels-smoke -p /panels/management-real-widgets)
-  endif()
-  set_tests_properties(grotto-panels/management-panels PROPERTIES TIMEOUT 30
-    ENVIRONMENT "XDG_DATA_DIRS=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures:/usr/local/share:/usr/share;G_DEBUG=fatal-warnings;GTK_A11Y=test;LSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/tests/lsan.supp:print_suppressions=1")
   set_tests_properties(grotto-panels/smoke-host PROPERTIES TIMEOUT 30
     ENVIRONMENT "XDG_DATA_DIRS=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures:/usr/local/share:/usr/share;G_DEBUG=fatal-warnings;GTK_A11Y=test;LSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/tests/lsan.supp:print_suppressions=1")
+  foreach(focused profile-panel management-panels)
+    if(focused STREQUAL "profile-panel")
+      set(_panel_path /grotto-panels/profile)
+    else()
+      set(_panel_path /panels)
+    endif()
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+      add_test(NAME grotto-panels/${focused} COMMAND ${DBUS_RUN_SESSION} -- ${XVFB_RUN} -a
+        $<TARGET_FILE:test-grotto-panels-smoke> -p ${_panel_path})
+    else()
+      add_test(NAME grotto-panels/${focused} COMMAND test-grotto-panels-smoke -p ${_panel_path})
+    endif()
+    set_tests_properties(grotto-panels/${focused} PROPERTIES TIMEOUT 30
+      ENVIRONMENT "XDG_DATA_DIRS=${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures:/usr/local/share:/usr/share;G_DEBUG=fatal-warnings;GTK_A11Y=test;LSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/tests/lsan.supp:print_suppressions=1")
+  endforeach()
   add_test(NAME grotto-panels/no-secrets COMMAND ${Python3_EXECUTABLE}
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/test-boundaries.py" "${CMAKE_CURRENT_SOURCE_DIR}" $<TARGET_FILE:grotto-panels>
     $<TARGET_FILE:test-grotto-panels-admission> "${CMAKE_CURRENT_BINARY_DIR}/generated" "${GROTTO_PANELS_CLANG}")
   set_tests_properties(grotto-panels/no-secrets PROPERTIES TIMEOUT 60 ENVIRONMENT "G_DEBUG=fatal-warnings")
   include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcTestBus.cmake")
+  find_program(GROTTO_PANELS_COMPILE_SCHEMAS glib-compile-schemas REQUIRED)
+  set(_panel_test_schema "${CMAKE_CURRENT_BINARY_DIR}/test-schemas/gschemas.compiled")
+  add_custom_command(OUTPUT ${_panel_test_schema}
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/test-schemas"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${CMAKE_CURRENT_SOURCE_DIR}/../../apps/grotto/data/org.nostr.Grotto.gschema.xml"
+      "${CMAKE_CURRENT_BINARY_DIR}/test-schemas/"
+    COMMAND ${GROTTO_PANELS_COMPILE_SCHEMAS} "${CMAKE_CURRENT_BINARY_DIR}/test-schemas"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/../../apps/grotto/data/org.nostr.Grotto.gschema.xml" VERBATIM)
+  add_custom_target(grotto-panels-test-schemas DEPENDS ${_panel_test_schema})
   add_executable(test-grotto-panels-control1 tests/test-control1.c
     ../../apps/grotto/src/grotto-panels-control1-service.c)
   target_include_directories(test-grotto-panels-control1 PRIVATE ../../apps/grotto/src ../../tests/common)
@@ -125,13 +142,16 @@ if(BUILD_TESTING)
   if(COMMAND apply_sanitizers)
     apply_sanitizers(test-grotto-panels-control1)
   endif()
+  add_dependencies(test-grotto-panels-control1 grotto-panels-test-schemas)
   add_test(NAME grotto-panels/control1-service COMMAND test-grotto-panels-control1)
-  set_tests_properties(grotto-panels/control1-service PROPERTIES TIMEOUT 30 ENVIRONMENT "G_DEBUG=fatal-warnings")
+  set_tests_properties(grotto-panels/control1-service PROPERTIES TIMEOUT 30 ENVIRONMENT "G_DEBUG=fatal-warnings;GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR}/test-schemas;GSETTINGS_BACKEND=memory")
   if(COMMAND nostrc_describe_test)
-    nostrc_describe_test(grotto-panels/management-panels OWNER grotto.panels
-      TARGETS test-grotto-panels-smoke INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/lsan.supp")
     nostrc_describe_test(grotto-panels/smoke-host OWNER grotto.panels
       TARGETS test-grotto-panels-smoke INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/lsan.supp")
+    foreach(focused profile-panel management-panels)
+      nostrc_describe_test(grotto-panels/${focused} OWNER grotto.panels TARGETS test-grotto-panels-smoke
+        INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/lsan.supp")
+    endforeach()
     nostrc_describe_test(grotto-panels/no-secrets OWNER grotto.panels TARGETS grotto-panels test-grotto-panels-admission
       INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/test-boundaries.py")
     nostrc_describe_test(grotto-panels/control1-service OWNER grotto.panels

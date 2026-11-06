@@ -100,7 +100,11 @@ static void query_async(GrottoPanelsService *service, GrottoPanelsQuery query, c
 static GListModel *query_finish(GrottoPanelsService *service, GAsyncResult *result, GError **error) {
   g_return_val_if_fail(g_task_is_valid(result, service), NULL); return g_task_propagate_pointer(G_TASK(result), error);
 }
+static gboolean can_dismiss_backup_banner(GrottoPanelsService *service) {
+  return can(service, GROTTO_PANEL_DISMISS_BACKUP_BANNER);
+}
 static void iface_init(GrottoPanelsServiceInterface *iface) {
+  iface->can_dismiss_backup_banner = can_dismiss_backup_banner;
   iface->query_async = query_async; iface->query_finish = query_finish;
   iface->get_model = get_model; iface->can = can; iface->is_available = available;
   iface->invoke_async = invoke_async; iface->invoke_finish = invoke_finish;

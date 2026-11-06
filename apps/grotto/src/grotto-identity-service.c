@@ -14,6 +14,7 @@ struct _GrottoIdentityService {
   GrottoPanelsService *shared;
   GDBusProxy *shared_proxy;
   GSettings *settings;
+  GHashTable *reminders;
   guint accounts_changed;
   gulong control_changed, settings_changed;
 };
@@ -24,8 +25,16 @@ static gboolean available(GrottoPanelsService *service) {
   GrottoIdentityService *self = GROTTO_IDENTITY_SERVICE(service);
   return self->control && grotto_home_model_status(self->control) != NULL;
 }
+static void settings_changed(GSettings *settings, const char *key, gpointer data);
 static gboolean can(GrottoPanelsService *service, GrottoPanelCommand command) {
   GrottoIdentityService *self = GROTTO_IDENTITY_SERVICE(service);
+  if (command == GROTTO_PANEL_DISMISS_BACKUP_BANNER && available(service)) {
+    GHashTableIter iter; gpointer settings;
+    g_hash_table_iter_init(&iter, self->reminders);
+    while (g_hash_table_iter_next(&iter, NULL, &settings))
+      if (g_settings_is_writable(settings, "dismissed")) return TRUE;
+    return FALSE;
+  }
   return available(service) && grotto_home_model_writable(self->control) &&
     (command == GROTTO_PANEL_SET_IDENTITY_LABEL || command == GROTTO_PANEL_SET_DEFAULT_IDENTITY || command == GROTTO_PANEL_SET_CLIENT_LABEL);
 }
@@ -63,7 +72,16 @@ static void refresh(GrottoIdentityService *self) {
     /* Invalid stored labels cannot smuggle credential encodings into the DSO.
      * Keep the public identity navigable with a safe empty-label fallback. */
     if (!grotto_panels_public_text_validate(m.label, NULL)) m.label = "";
-    GrottoPanelsItem *item = grotto_panels_item_new(&m, NULL);
+    if (!g_hash_table_contains(self->reminders, entry->id)) {
+      GSettings *settings = grotto_panels_backup_reminder_settings(entry->id);
+      if (settings) {
+        g_signal_connect_object(settings, "changed::dismissed", G_CALLBACK(settings_changed), self, 0);
+        g_signal_connect_object(settings, "writable-changed::dismissed", G_CALLBACK(settings_changed), self, 0);
+        g_hash_table_insert(self->reminders, g_strdup(entry->id), settings);
+      }
+    }
+    GrottoPanelsItem *item = grotto_panels_item_new_with_backup_banner_state(&m,
+      grotto_panels_backup_banner_dismissed(entry->id), NULL);
     if (item) g_ptr_array_add(items, item);
   }
   g_list_store_splice(self->identities, 0, g_list_model_get_n_items(G_LIST_MODEL(self->identities)), items->pdata, items->len);
@@ -108,6 +126,11 @@ static void invoke(GrottoPanelsService *service, GrottoPanelCommand command, con
     g_object_unref(task); return;
   }
   accounts_store_entry_free(entry);
+  if (command == GROTTO_PANEL_DISMISS_BACKUP_BANNER) {
+    if (grotto_panels_dismiss_backup_banner(args->public_key)) g_task_return_boolean(task, TRUE);
+    else g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED, "Reminder preference wasn't saved");
+    g_object_unref(task); return;
+  }
   if (command == GROTTO_PANEL_SET_IDENTITY_LABEL) {
     if (accounts_store_set_label(accounts_store_get_default(), args->public_key, args->label, NULL)) g_task_return_boolean(task, TRUE);
     else g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED, "Label wasn't saved");
@@ -135,7 +158,11 @@ static GListModel *query_finish(GrottoPanelsService *service, GAsyncResult *resu
   return grotto_panels_service_query_finish(GROTTO_PANELS_SERVICE(source), result, error);
 }
 GrottoPanelsService *grotto_identity_service_get_control(GrottoIdentityService *self) { return self->shared; }
+static gboolean can_dismiss_backup_banner(GrottoPanelsService *service) {
+  return can(service, GROTTO_PANEL_DISMISS_BACKUP_BANNER);
+}
 static void iface_init(GrottoPanelsServiceInterface *iface) {
+  iface->can_dismiss_backup_banner = can_dismiss_backup_banner;
   iface->get_model = get_model; iface->is_available = available; iface->can = can;
   iface->invoke_async = invoke; iface->invoke_finish = finish;
   iface->query_async = query; iface->query_finish = query_finish;
@@ -148,12 +175,14 @@ static void dispose(GObject *object) {
   if (self->settings) g_signal_handler_disconnect(self->settings, self->settings_changed);
   if (self->shared) g_signal_handlers_disconnect_by_data(self->shared, self);
   g_clear_object(&self->shared); g_clear_object(&self->shared_proxy);
+  g_clear_pointer(&self->reminders, g_hash_table_unref);
   g_clear_object(&self->control); g_clear_object(&self->settings);
   g_clear_object(&self->identities); g_clear_object(&self->empty);
   G_OBJECT_CLASS(grotto_identity_service_parent_class)->dispose(object);
 }
 static void grotto_identity_service_class_init(GrottoIdentityServiceClass *klass) { G_OBJECT_CLASS(klass)->dispose = dispose; }
 static void grotto_identity_service_init(GrottoIdentityService *self) {
+  self->reminders = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_object_unref);
   self->identities = g_list_store_new(GROTTO_TYPE_PANELS_ITEM); self->empty = g_list_store_new(GROTTO_TYPE_PANELS_ITEM);
 }
 GrottoPanelsService *grotto_identity_service_new(GrottoHomeModel *control) {

@@ -22,7 +22,7 @@ struct BunkerTestRelay {
     JsonArray *events, *deliveries;
     gint64 last_since;
     guint connections, requests, auth_requests;
-    gboolean reject_subscriptions, reject_publishes, hold_acks;
+    gboolean reject_subscriptions, reject_publishes, hold_acks, hold_eose;
     GPtrArray *held_acks;
     BunkerTestRelayEventCb event_cb; gpointer event_data;
     BunkerTestRelayRequestCb request_cb; gpointer request_data;
@@ -139,7 +139,8 @@ static void message(SoupWebsocketConnection *socket, SoupWebsocketDataType type,
         JsonArray *eose = json_array_new();
         json_array_add_string_element(eose, "EOSE");
         json_array_add_string_element(eose, id);
-        send_frame(client, eose);
+        if (!relay->hold_eose) send_frame(client, eose);
+        else json_array_unref(eose);
     } else if (g_strcmp0(verb, "EVENT") == 0) {
         JsonNode *event = json_array_get_element(frame, 1);
         g_autofree gchar *serialized = json_to_string(event, FALSE);
@@ -304,3 +305,5 @@ void bunker_test_relay_free(BunkerTestRelay *relay)
     json_array_unref(relay->events); json_array_unref(relay->deliveries);
     g_free(relay->url); g_free(relay);
 }
+
+void bunker_test_relay_hold_eose(BunkerTestRelay *r, gboolean enabled) { r->hold_eose = enabled; }
