@@ -29,6 +29,7 @@ src/ui/signer-window.c
 src/grotto-profile-service.c
 src/ui/lock-screen.c
 src/ui/approval_dialog.c
+src/ui/dialog-actions.h
 src/ui/page-connect.c
 src/ui/kind-catalog.inc
 src/ui/page-settings.c

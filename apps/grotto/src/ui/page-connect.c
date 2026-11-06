@@ -14,10 +14,9 @@ static const char *remote_state_label(const char *state) {
   return _("Unavailable");
 }
 #include "sheets/sheet-qr-scanner.h"
-#include "sheets/sheet-create-bunker.h"
 #include <secure_buf.h>
 #include <string.h>
-struct _GrottoPageConnect { AdwPreferencesPage parent_instance; AdwActionRow *paste, *scan, *open_link, *create_link, *runtime; GrottoHomeModel *model; GCancellable *file_cancel; };
+struct _GrottoPageConnect { AdwPreferencesPage parent_instance; AdwActionRow *paste, *scan, *open_link, *runtime; GrottoHomeModel *model; GCancellable *file_cancel; };
 G_DEFINE_TYPE(GrottoPageConnect, grotto_page_connect, ADW_TYPE_PREFERENCES_PAGE)
 static void paste_ready(GObject *source, GAsyncResult *result, gpointer data) {
   GWeakRef *ref = data; g_autoptr(GtkWidget) page = g_weak_ref_get(ref);
@@ -86,9 +85,6 @@ static void open_link(AdwActionRow *row, gpointer data) {
   g_autoptr(GtkFileDialog) dialog = gtk_file_dialog_new(); gtk_file_dialog_set_title(dialog, _("Open App Link File"));
   gtk_file_dialog_open(dialog, GTK_WINDOW(root), file->cancel, link_selected, file);
 }
-static void create_link(AdwActionRow *row, gpointer data) {
-  (void)row; adw_dialog_present(ADW_DIALOG(sheet_create_bunker_new()), data);
-}
 static void model_changed(GrottoHomeModel *model, gpointer data) {
   GrottoPageConnect *self = data; GVariant *status = grotto_home_model_status(model); const gchar *state = NULL;
   if (status) g_variant_lookup(status, "bunker_state", "&s", &state);
@@ -113,7 +109,6 @@ static void grotto_page_connect_class_init(GrottoPageConnectClass *klass) {
   gtk_widget_class_bind_template_child(wc, GrottoPageConnect, paste);
   gtk_widget_class_bind_template_child(wc, GrottoPageConnect, scan);
   gtk_widget_class_bind_template_child(wc, GrottoPageConnect, open_link);
-  gtk_widget_class_bind_template_child(wc, GrottoPageConnect, create_link);
 }
 static void unmapped(GtkWidget *widget, gpointer data) {
   (void)data; GrottoPageConnect *self = GROTTO_PAGE_CONNECT(widget);
@@ -125,5 +120,4 @@ static void grotto_page_connect_init(GrottoPageConnect *self) {
   g_signal_connect(self->paste, "activated", G_CALLBACK(paste), self);
   g_signal_connect(self->scan, "activated", G_CALLBACK(scan), self);
   g_signal_connect(self->open_link, "activated", G_CALLBACK(open_link), self);
-  g_signal_connect(self->create_link, "activated", G_CALLBACK(create_link), self);
 }

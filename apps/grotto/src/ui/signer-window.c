@@ -1,5 +1,7 @@
 #include "../i18n.h"
 #include "signer-window.h"
+#include "dialog-actions.h"
+#include "sheets/sheet-create-bunker.h"
 #include "page-identity-detail.h"
 #include "grotto-identity-service.h"
 #include "grotto-profile-service.h"
@@ -764,7 +766,7 @@ static void identity_remove(gpointer data, const char *npub) {
   gtk_box_append(GTK_BOX(box), key); gtk_box_append(GTK_BOX(box), copy); gtk_box_append(GTK_BOX(box), entry);
   adw_alert_dialog_set_extra_child(ADW_ALERT_DIALOG(dialog), box);
   g_object_set_data_full(G_OBJECT(dialog), "identity", g_strdup(npub), g_free);
-  adw_alert_dialog_add_responses(ADW_ALERT_DIALOG(dialog), "cancel", _("Cancel"), "remove", _("Remove"), NULL);
+  adw_alert_dialog_add_responses(ADW_ALERT_DIALOG(dialog), "cancel", _("_Cancel"), "remove", _("_Remove"), NULL);
   adw_alert_dialog_set_response_appearance(ADW_ALERT_DIALOG(dialog), "remove", ADW_RESPONSE_DESTRUCTIVE);
   adw_alert_dialog_set_default_response(ADW_ALERT_DIALOG(dialog), "cancel"); adw_alert_dialog_set_close_response(ADW_ALERT_DIALOG(dialog), "cancel");
   adw_alert_dialog_set_response_enabled(ADW_ALERT_DIALOG(dialog), "remove", FALSE);
@@ -805,14 +807,20 @@ static void show_preferences(SignerWindow *self) {
   g_signal_connect_object(dialog, "closed", G_CALLBACK(preferences_closed), self, 0);
   adw_dialog_present(dialog, GTK_WIDGET(self));
 }
+static void create_app_link(GtkButton *button, gpointer data) {
+  (void)button; adw_dialog_present(ADW_DIALOG(sheet_create_bunker_new()), GTK_WIDGET(data));
+}
 static void host_add_app(gpointer data) {
   g_autoptr(SignerWindow) self = g_weak_ref_get(data);
   if (!self || gn_session_manager_is_locked(gn_session_manager_get_default())) return;
   AdwDialog *dialog = adw_dialog_new(); adw_dialog_set_title(dialog, _("Add App"));
   adw_dialog_set_content_width(dialog, 440); adw_dialog_set_content_height(dialog, 520);
   GtkWidget *toolbar = adw_toolbar_view_new();
-  adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(toolbar), adw_header_bar_new());
+  GtkWidget *create = gtk_button_new_with_mnemonic(_("Create _Link…"));
+  gtk_widget_set_tooltip_text(create, _("Create Pairing Link"));
+  adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(toolbar), grotto_dialog_header(dialog, create));
   GtkWidget *page = g_object_new(GROTTO_TYPE_PAGE_CONNECT, NULL);
+  g_signal_connect_object(create, "clicked", G_CALLBACK(create_app_link), page, 0);
   grotto_page_connect_set_model(GROTTO_PAGE_CONNECT(page), self->model);
   adw_toolbar_view_set_content(ADW_TOOLBAR_VIEW(toolbar), page);
   adw_dialog_set_child(dialog, toolbar); adw_dialog_present(dialog, GTK_WIDGET(self));
