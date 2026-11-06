@@ -916,9 +916,8 @@ msgid "Clear Remembered Permissions?"
 msgstr ""
 
 #: src/grotto-app-detail.c:404
-#, fuzzy
 msgid "Clear Permissions"
-msgstr "Reintentar permiso"
+msgstr ""
 
 #: src/grotto-app-detail.c:416
 msgid "App Blocked"
