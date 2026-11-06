@@ -111,3 +111,45 @@ Delivery is this report committed and pushed on the existing `grotto/identity-pa
 ## Merge recommendation
 
 **Request changes.** Preserve the bounded EOSE-aware behavior, direct default action, host-owned cosmetic dismissal and reduced layout. Correct the address-check/failed-discovery state transition (F1), and reconcile the panels version/minimums with the current owner policy (F2). Then rerun the directly affected profile-state checks and version/build consistency checks. No new approval ceremony, bootstrap authentication, repository-wide audit or accepted-smoke-baseline repair is warranted by these findings.
+
+## Re-check (61e0391a8)
+
+Date: 2026-11-06. Re-check task: `nostrc-6vk0w`. Pulled with `git pull --ff-only` in the same worktree/branch and verified HEAD `61e0391a8c60c1ab2da70b2a273fcc096b1c3838`. Examined only the follow-up diff `2090bda54..61e0391a8` and the F1/F2 production/test paths. The original findings and receipts above remain historical evidence at their stated commit; this section records their disposition. No implementation was changed by the reviewer.
+
+### F1 — Resolved, confirmed/static and executed
+
+`gnome/grotto-panels/src/grotto-profile-view.c:170-173` now clears failed-discovery state and replaces the main status only for successful FETCH/SAVE results. NIP-05 checking and image-only operations no longer establish discovery success. The summary at `:91` still requires completed, non-failed fetch state and no published profile for “No profile published yet”; a failed fetch sets `fetch_failed` (`:185-192`) and shows “Profile not loaded” with a sensitive **Retry** action (`:109-113`). Edit Profile… remains enabled after failure. The editability-change path also preserves the fetch error (`:379-381`). Retry uses the existing refresh/FETCH callback, not a new discovery mechanism.
+
+The new regression sequence in `gnome/grotto-panels/tests/test-profile-panel.c:74-99` covers failed discovery → Edit Profile… → successful NIP-05 check → Cancel. It asserts that both the not-loaded summary and the original error survive before and after the dialog closes, no Save occurs, no additional FETCH is manufactured, and Edit Profile…/Retry remain sensitive. A subsequent successful empty FETCH produces the empty-state text. This sequence passed inside `grotto-panels/profile-panel`, against the production widget with controlled host results. The real profile-service integration separately passed the empty-EOSE, silent-relay timeout/error and no-relays cases: **0.004 s**, **10.010 s**, and **0.000 s** as printed by the fixtures. The intentional no-relays terminal result still carries configuration guidance; it is not a global absence proof. No relay/protocol code changed in this follow-up, and a timer still does not count as successful backfill.
+
+### F2 — Resolved, confirmed/static and generated-build evidence
+
+The manifest now declares panels **0.1.0**, Grotto **0.1.1**, and Nostr Settings **0.1.0**, all unreleased (`VERSION_MANIFEST.md:31,34-35`). Both panels project versions are 0.1.0 (`gnome/grotto-panels/CMakeLists.txt:3`, `meson.build:2`); both Grotto project versions are 0.1.1. Grotto/Settings CMake minimums are back to panels 0.1, with Meson and Debian/RPM dependencies at `>= 0.1.0`. The obsolete “Since 0.2” API comment is removed without changing the additive interface layout.
+
+An executed source-parity check verified **18 version-owning files byte-for-byte against `ca1a0b746`**: the manifest; Grotto CMake/Meson, AppStream, Debian/RPM/Arch/macOS/Windows packaging and flake; panels Debian/RPM packaging and package-test expectations; Settings CMake/Meson and Debian dependencies. Separate assertions checked both panels project declarations and removal of the obsolete API comment. Thus the package-test script again expects 0.1.0 in its archive names, pkg-config checks and RPM names/provides. A focused search found no residual 0.2 version/minimum in the relevant project, packaging or test trees; the independently versioned native host was not reclassified.
+
+The fresh build also confirmed `GROTTO_VERSION:STRING=0.1.1`, generated panels pkg-config/public-header version **0.1.0**, and `libgrotto-panels-0.so.0.1.0`. Settings compiled against the changed panels. These are source/build checks, not a Debian/RPM installation or release qualification. This append is documentation-only: **no component bump**, tag or release-column change.
+
+### Verification rerun
+
+Used the same `nostrc-linux-ci:arm64` image ID, GTK 4.14.5/libadwaita 1.5.0 floor, read-only `/src`, Debug/Ninja flags and explicit targets described above, with a new ignored build/receipt directory `_build/identity-panel-recheck-61e0391a8`. Installed xdotool/libxdo3 only in this re-check's disposable container. Ran the **same exact seven-test regex above with `-j1 -V --no-tests=error`**, once; no full suite or aggregate smoke-host was run.
+
+| Check | Actual result |
+|---|---|
+| `grotto-panels/profile-panel` | PASS, 1.45 s, including the new F1 regression |
+| `grotto-panels/management-panels` | PASS, 0.22 s |
+| `grotto-panels/no-secrets` | PASS, 3.60 s |
+| `grotto-panels/control1-service` | PASS, 0.03 s |
+| Required `grotto-tests-test-homes` fixture | PASS, 0.09 s |
+| `signer/profile-integration` | PASS, 12.33 s |
+| `signer/ui-layout` | PASS, 59.42 s |
+| `signer/ui-accessibility` | PASS, 59.66 s |
+| CTest-reported outcomes | **8/8 PASS** including fixture; no failed/skipped tests; 136.83 s |
+| Pinned Blueprint 0.22.2 drift; six catalogs with `msgfmt --check --check-format`; fuzzy/obsolete scan | PASS; new Spanish Retry is “Reintentar” |
+| Source-version restoration assertions and generated-version assertions; follow-up diff whitespace | PASS |
+
+**Wrapper caveat, not hidden:** the enclosing `docker exec ... bash -lc 'set -euo pipefail; ...'` returned **1 after printing the successful CTest summary**. Docker's exec-completion receipt confirms that outer status. A successful no-op ending in `exit 0` reproduces status 1 with the same login-shell/errexit combination, while the identical non-login shell returns 0; the image's `/home/ci/.bash_logout` invokes `clear_console` on logout. This separates the shell-logout failure from the eight recorded passing test outcomes. No test was rerun to manufacture a green wrapper status, and no shell startup file or test guard was changed. Subsequent static checks used a non-login shell and returned 0. The shell failure and its diagnostic receipts are retained.
+
+Local receipts are under `_build/identity-panel-recheck-61e0391a8/`: `focused-tests.log`, build/configure/dependency logs, `version-restoration.log`, `generated-versions.log`, `blueprint-drift.log`, `catalogs.log`, `catalog-flags.log`, `docker-exec-completion.log` and `shell-exit-diagnostic.log`. Relevance filtering used three `rpce-jev find-lines` calls (four requests, 29,264 input tokens, $0.001229), all answered; actual source spans and execution, not those judgments, establish the conclusions. The original native/hosted/live-relay/release limits and accepted `nostrc-qdgge` exclusion remain unchanged. Only the report append is committed; the review-owned container and disposable build outputs are cleaned up, preserving compact receipts and the unmerged branch/worktree.
+
+**Final verdict: approve the scoped identity-panel change for merge. F1 and F2 are resolved.** This supersedes the earlier request-changes recommendation for these findings, without expanding the review or claiming native/hosted/release acceptance.
