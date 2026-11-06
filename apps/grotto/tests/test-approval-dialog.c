@@ -425,6 +425,7 @@ static void set_room_flow_remaining(Fixture *f, guint remaining) {
       "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"));
   g_variant_builder_add(&b, "{sv}", "operation", g_variant_new_string("nip44_encrypt"));
   g_variant_builder_add(&b, "{sv}", "identity", g_variant_new_string("npub-pinned"));
+  g_variant_builder_add(&b, "{sv}", "identity_label", g_variant_new_string("Alice"));
   g_variant_builder_add(&b, "{sv}", "purpose", g_variant_new_string("nip17-room-send"));
   g_variant_builder_add(&b, "{sv}", "flow_id", g_variant_new_string("room-send"));
   g_variant_builder_add(&b, "{sv}", "flow_size", g_variant_new_uint32(4));
@@ -443,7 +444,8 @@ static void set_room_flow_remaining(Fixture *f, guint remaining) {
     g_assert_nonnull(strstr(scope_text(f), "4 encrypted copies"));
     g_assert_nonnull(strstr(scope_text(f), "30 seconds left"));
     g_assert_null(strstr(scope_text(f), "600 seconds"));
-    g_assert_nonnull(strstr(scope_text(f), "npub-pinned"));
+    g_assert_nonnull(strstr(scope_text(f), "as Alice"));
+    g_assert_null(strstr(scope_text(f), "npub"));
   }
   g_assert_false(gtk_check_button_get_active(GTK_CHECK_BUTTON(child(f, "chk_flow_encrypt"))));
   g_assert_false(gtk_check_button_get_active(GTK_CHECK_BUTTON(child(f, "chk_flow_seals"))));
@@ -553,11 +555,17 @@ static void scope_and_reset(Fixture *f, gconstpointer data) {
     choose(f, choices[i]);
     const gchar *scope = scope_text(f);
     g_assert_nonnull(strstr(scope, "Alice"));
-    g_assert_nonnull(strstr(scope, "npub-pinned-by-daemon"));
+    g_assert_null(strstr(scope, "npub"));
+    g_assert_nonnull(strstr(subtitle(f, "row_identity"), "Alice · npub-pinned-by-daemon"));
     g_assert_nonnull(strstr(scope, "wss://nos.lol"));
     g_assert_nonnull(strstr(scope, scopes[i]));
     g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(child(f, "btn_approve"))), ==, commits[i]);
   }
+  AdwComboRow *choice = ADW_COMBO_ROW(child(f, "permission_choice"));
+  g_autoptr(GtkStringObject) selected = g_list_model_get_item(
+      adw_combo_row_get_model(choice), adw_combo_row_get_selected(choice));
+  g_assert_cmpstr(gtk_string_object_get_string(selected), ==,
+      "Always allow this app to sign in to a relay as Alice at wss://nos.lol");
   gnostr_approval_dialog_set_info(f->dialog, original, "Other app");
   g_assert_cmpuint(adw_combo_row_get_selected(ADW_COMBO_ROW(child(f, "permission_choice"))), ==, 0);
   g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(child(f, "btn_approve"))), ==, "_Allow Once");
@@ -711,7 +719,7 @@ static void scope_viewport(Fixture *f, gconstpointer data) {
       wait_frames(f->window);
       assert_decision_visible(f);
       if (i < 3) {
-        g_assert_nonnull(strstr(scope_text(f), public_npub));
+        g_assert_null(strstr(scope_text(f), public_npub));
         g_assert_nonnull(strstr(scope_text(f), "Alice"));
         g_assert_nonnull(strstr(scope_text(f), "wss://nos.lol"));
       }
@@ -775,8 +783,8 @@ static void snapshots(Fixture *f, gconstpointer data) {
     adw_style_manager_set_color_scheme(adw_style_manager_get_default(),
         dark ? ADW_COLOR_SCHEME_FORCE_DARK : ADW_COLOR_SCHEME_FORCE_LIGHT);
     for (guint narrow = 0; narrow < 2; narrow++) {
-      guint width = narrow ? 360 : 420;
-      gtk_window_set_default_size(GTK_WINDOW(f->window), width, 700);
+      guint width = narrow ? 360 : 920;
+      gtk_window_set_default_size(GTK_WINDOW(f->window), width, 640);
       wait_frames(f->window);
       gint minimum;
       gtk_widget_measure(GTK_WIDGET(f->dialog), GTK_ORIENTATION_HORIZONTAL, -1, &minimum, NULL, NULL, NULL);
@@ -1019,6 +1027,53 @@ static void compact_default(Fixture *f, gconstpointer data) {
   g_assert_false(gtk_widget_get_visible(child(f, "permission_choice")));
   assert_fits_unscrolled(f);
 }
+static void compact_auth_layout(Fixture *f, gconstpointer data) {
+  (void)data;
+  g_autoptr(GVariant) original = info(NOSTR_KIND_CLIENT_AUTHENTICATION, "sign_event", 120);
+  GVariantDict d; g_variant_dict_init(&d, original);
+  g_variant_dict_insert(&d, "identity", "s", public_npub);
+  g_variant_dict_insert(&d, "identity_label", "s", "UTM");
+  g_autoptr(GVariant) row = g_variant_ref_sink(g_variant_dict_end(&d));
+  gnostr_approval_dialog_set_info(f->dialog, row, "Example App");
+  const guint widths[] = {920, 360};
+  const gchar *modes[] = {"Allow once", "Allow for 24 hours", "Always allow"};
+  const gchar *rows[] = {"row_action", "row_identity", "row_relay", "permission_choice", "details_expander"};
+  GtkWidget *scroller = gtk_widget_get_ancestor(child(f, "details_expander"), GTK_TYPE_SCROLLED_WINDOW);
+  g_assert_nonnull(scroller);
+  for (guint dark = 0; dark < 2; dark++) {
+    adw_style_manager_set_color_scheme(adw_style_manager_get_default(),
+        dark ? ADW_COLOR_SCHEME_FORCE_DARK : ADW_COLOR_SCHEME_FORCE_LIGHT);
+    for (guint w = 0; w < G_N_ELEMENTS(widths); w++) {
+      gtk_window_set_default_size(GTK_WINDOW(f->window), widths[w], 640);
+      for (guint m = 0; m < G_N_ELEMENTS(modes); m++) {
+        choose(f, modes[m]);
+        gtk_adjustment_set_value(page_adjustment(f), 0);
+        wait_frames(f->window);
+        g_assert_cmpint(gtk_widget_get_allocated_width(f->window), ==, widths[w]);
+        g_assert_cmpint(gtk_widget_get_allocated_height(f->window), ==, 640);
+        g_assert_cmpint(adw_dialog_get_content_height(ADW_DIALOG(f->dialog)), ==, 560);
+        g_assert_false(adw_expander_row_get_expanded(ADW_EXPANDER_ROW(child(f, "details_expander"))));
+        graphene_rect_t footer;
+        g_assert_true(gtk_widget_compute_bounds(child(f, "scope_summary"), GTK_WIDGET(f->dialog), &footer));
+        for (guint r = 0; r < G_N_ELEMENTS(rows); r++) {
+          GtkWidget *widget = child(f, rows[r]);
+          graphene_rect_t viewport_bounds, dialog_bounds;
+          g_assert_true(gtk_widget_get_mapped(widget));
+          g_assert_true(gtk_widget_compute_bounds(widget, scroller, &viewport_bounds));
+          g_assert_true(gtk_widget_compute_bounds(widget, GTK_WIDGET(f->dialog), &dialog_bounds));
+          g_test_message("%ux640 %s %s: bottom %.0f, viewport %d", widths[w], modes[m], rows[r],
+              viewport_bounds.origin.y + viewport_bounds.size.height, gtk_widget_get_height(scroller));
+          g_assert_cmpfloat(viewport_bounds.origin.y, >=, 0);
+          g_assert_cmpfloat(viewport_bounds.origin.y + viewport_bounds.size.height, <=, gtk_widget_get_height(scroller));
+          g_assert_cmpfloat(dialog_bounds.origin.y + dialog_bounds.size.height, <=, footer.origin.y);
+          g_assert_cmpfloat(dialog_bounds.origin.y + dialog_bounds.size.height, <=, gtk_widget_get_height(GTK_WIDGET(f->dialog)));
+        }
+        assert_decision_visible(f);
+      }
+    }
+  }
+  adw_style_manager_set_color_scheme(adw_style_manager_get_default(), ADW_COLOR_SCHEME_DEFAULT);
+}
 static void extend_declared(Fixture *f, gconstpointer data) {
   (void)data;
   g_autoptr(GVariant) original = info(NOSTR_KIND_COMMENT, "sign_event", 120);
@@ -1093,6 +1148,7 @@ int main(int argc, char **argv) {
   ADD("declared-set-trust", declared_set_trust);
   ADD("pairing-declared", pairing_declared);
   ADD("compact-default", compact_default);
+  ADD("compact-auth-layout", compact_auth_layout);
   ADD("extend-declared", extend_declared);
 #undef ADD
   return g_test_run();

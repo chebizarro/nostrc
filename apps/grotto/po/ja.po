@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: grotto 0.1.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-05 22:50-0800\n"
+"POT-Creation-Date: 2026-11-06 00:53-0800\n"
 "PO-Revision-Date: 2024-01-23 00:00+0000\n"
 "Last-Translator: \n"
 "Language-Team: Japanese\n"
@@ -16,7 +16,7 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=1; plural=0;\n"
 
-#: data/ui/approval-dialog.ui:10 data/ui/approval-dialog.ui:67
+#: data/ui/approval-dialog.ui:10 data/ui/approval-dialog.ui:72
 msgid "Review Request"
 msgstr ""
 
@@ -32,104 +32,104 @@ msgstr ""
 msgid "More Options"
 msgstr ""
 
-#: data/ui/approval-dialog.ui:94 src/ui/approval_dialog.c:683
-#: src/ui/approval_dialog.c:899
+#: data/ui/approval-dialog.ui:101 src/ui/approval_dialog.c:682
+#: src/ui/approval_dialog.c:898
 msgid "Action"
 msgstr ""
 
-#: data/ui/approval-dialog.ui:101
+#: data/ui/approval-dialog.ui:108
 msgid "Signing As"
 msgstr ""
 
-#: data/ui/approval-dialog.ui:109 src/ui/approval_dialog.c:683
-#: src/ui/approval_dialog.c:854
+#: data/ui/approval-dialog.ui:116 src/ui/approval_dialog.c:682
+#: src/ui/approval_dialog.c:853
 msgid "Relay"
 msgstr ""
 
-#: data/ui/approval-dialog.ui:118
+#: data/ui/approval-dialog.ui:125
 msgid "Permission"
 msgstr ""
 
-#: data/ui/approval-dialog.ui:129
+#: data/ui/approval-dialog.ui:136
 msgid "Saved Permission Is Inactive"
 msgstr ""
 
-#: data/ui/approval-dialog.ui:137
+#: data/ui/approval-dialog.ui:144
 msgid "Loading Permission Details"
 msgstr ""
 
-#: data/ui/approval-dialog.ui:146
+#: data/ui/approval-dialog.ui:153
 msgid "This Message Only"
 msgstr ""
 
-#: data/ui/approval-dialog.ui:150
+#: data/ui/approval-dialog.ui:157
 msgid "Allow encryption for this message only"
 msgstr ""
 
-#: data/ui/approval-dialog.ui:160
+#: data/ui/approval-dialog.ui:167
 msgid "Allow signing its encrypted copies"
 msgstr ""
 
-#: data/ui/approval-dialog.ui:175
+#: data/ui/approval-dialog.ui:182
 msgid "1 of 1"
 msgstr ""
 
-#: data/ui/approval-dialog.ui:185
+#: data/ui/approval-dialog.ui:192
 msgid "Previous Request"
 msgstr ""
 
-#: data/ui/approval-dialog.ui:191
+#: data/ui/approval-dialog.ui:198
 msgid "Next Request"
 msgstr ""
 
-#: data/ui/approval-dialog.ui:200
+#: data/ui/approval-dialog.ui:207
 msgid "Requests in This Flow"
 msgstr ""
 
-#: data/ui/approval-dialog.ui:218
+#: data/ui/approval-dialog.ui:225
 msgid "Allow _Selected Once"
 msgstr ""
 
-#: data/ui/approval-dialog.ui:233 data/ui/onboarding-assistant.ui:266
-#: data/ui/sheets/sheet-qr-display.ui:70 data/ui/sheets/sheet-qr-scanner.ui:114
+#: data/ui/approval-dialog.ui:240 data/ui/onboarding-assistant.ui:266
+#: data/ui/sheets/sheet-qr-display.ui:71 data/ui/sheets/sheet-qr-scanner.ui:114
 #: src/ui/pairing-flow.c:132
 msgid "Details"
 msgstr ""
 
-#: data/ui/approval-dialog.ui:236
+#: data/ui/approval-dialog.ui:243
 msgid "Effect"
 msgstr ""
 
-#: data/ui/approval-dialog.ui:243 src/ui/approval_dialog.c:830
+#: data/ui/approval-dialog.ui:250 src/ui/approval_dialog.c:829
 msgid "Reason Given by App"
 msgstr ""
 
-#: data/ui/approval-dialog.ui:251
+#: data/ui/approval-dialog.ui:258
 msgid "Expires"
 msgstr ""
 
-#: data/ui/approval-dialog.ui:266
+#: data/ui/approval-dialog.ui:273
 msgid "Content"
 msgstr ""
 
-#: data/ui/approval-dialog.ui:355 src/ui/approval_dialog.c:901
+#: data/ui/approval-dialog.ui:362 src/ui/approval_dialog.c:900
 msgid "_Deny Once"
 msgstr ""
 
-#: data/ui/approval-dialog.ui:358 src/ui/approval_dialog.c:902
+#: data/ui/approval-dialog.ui:365 src/ui/approval_dialog.c:901
 msgid "Deny Once (Alt+D, Escape)"
 msgstr ""
 
-#: data/ui/approval-dialog.ui:363 src/ui/approval_dialog.c:301
-#: src/ui/approval_dialog.c:591
+#: data/ui/approval-dialog.ui:370 src/ui/approval_dialog.c:301
+#: src/ui/approval_dialog.c:590
 msgid "_Allow Once"
 msgstr ""
 
-#: data/ui/approval-dialog.ui:382
+#: data/ui/approval-dialog.ui:389
 msgid "Block This Operation for This App"
 msgstr ""
 
-#: data/ui/approval-dialog.ui:386
+#: data/ui/approval-dialog.ui:393
 msgid "Block App…"
 msgstr ""
 
@@ -155,63 +155,63 @@ msgstr ""
 msgid "Management Locked"
 msgstr ""
 
-#: data/ui/lock-screen.ui:59
+#: data/ui/lock-screen.ui:61
 msgid "Title indicating the current lock state"
 msgstr ""
 
-#: data/ui/lock-screen.ui:68
+#: data/ui/lock-screen.ui:70
 msgid "Enter your password to unlock"
 msgstr "パスワードを入力してロックを解除"
 
-#: data/ui/lock-screen.ui:71
+#: data/ui/lock-screen.ui:73
 msgid "Instructions for unlocking the session"
 msgstr ""
 
-#: data/ui/lock-screen.ui:93 data/ui/widgets/gn-secure-entry.ui:28
+#: data/ui/lock-screen.ui:95 data/ui/widgets/gn-secure-entry.ui:28
 msgid "Password"
 msgstr "パスワード"
 
-#: data/ui/lock-screen.ui:95
+#: data/ui/lock-screen.ui:97
 msgid "Password entry"
 msgstr ""
 
-#: data/ui/lock-screen.ui:96
+#: data/ui/lock-screen.ui:98
 msgid "Enter your unlock password here"
 msgstr ""
 
-#: data/ui/lock-screen.ui:108
+#: data/ui/lock-screen.ui:110
 msgid "Error message"
 msgstr ""
 
-#: data/ui/lock-screen.ui:109
+#: data/ui/lock-screen.ui:111
 msgid "Displays error messages when unlock fails"
 msgstr ""
 
-#: data/ui/lock-screen.ui:120
+#: data/ui/lock-screen.ui:122
 msgid "_Unlock"
 msgstr ""
 
-#: data/ui/lock-screen.ui:126
+#: data/ui/lock-screen.ui:128
 msgid "Unlock management"
 msgstr ""
 
-#: data/ui/lock-screen.ui:127
+#: data/ui/lock-screen.ui:129
 msgid "Unlocks management with the entered password"
 msgstr ""
 
-#: data/ui/lock-screen.ui:142
+#: data/ui/lock-screen.ui:144
 msgid "Session information"
 msgstr ""
 
-#: data/ui/lock-screen.ui:143
+#: data/ui/lock-screen.ui:145
 msgid "Additional information about the locked session"
 msgstr ""
 
-#: data/ui/lock-screen.ui:147 src/ui/lock-screen.c:427
+#: data/ui/lock-screen.ui:149 src/ui/lock-screen.c:427
 msgid "Locked due to inactivity"
 msgstr ""
 
-#: data/ui/lock-screen.ui:156
+#: data/ui/lock-screen.ui:158
 msgid "Locked at 12:00"
 msgstr ""
 
@@ -511,10 +511,6 @@ msgstr ""
 msgid "Request details only, not message content or keys"
 msgstr ""
 
-#: data/ui/page-settings.ui:74 src/ui/signer-window.c:610
-msgid "About Grotto"
-msgstr "GNostr サイナー"
-
 #: data/ui/page-identity-detail.ui:19 src/ui/page-identity-detail.c:168
 msgid "Backup incomplete"
 msgstr ""
@@ -532,8 +528,8 @@ msgid "Anyone with this backup controls your identity. Keep it private"
 msgstr ""
 
 #: data/ui/page-identity-detail.ui:37 data/ui/signer-window.ui:44
-#: data/ui/sheets/sheet-create-bunker.ui:33 src/ui/approval_dialog.c:790
-#: src/ui/pairing-flow.c:134
+#: data/ui/sheets/sheet-create-bunker.ui:33 src/ui/approval_dialog.c:306
+#: src/ui/approval_dialog.c:789 src/ui/pairing-flow.c:134
 msgid "Identity"
 msgstr ""
 
@@ -661,7 +657,7 @@ msgstr ""
 msgid "Create _Link"
 msgstr ""
 
-#: data/ui/sheets/sheet-qr-display.ui:10 data/ui/sheets/sheet-qr-display.ui:44
+#: data/ui/sheets/sheet-qr-display.ui:10 data/ui/sheets/sheet-qr-display.ui:45
 #: src/ui/sheets/sheet-qr-display.c:285
 msgid "QR Code"
 msgstr "QRコード"
@@ -670,11 +666,11 @@ msgstr "QRコード"
 msgid "_Close"
 msgstr "閉じる(_C)"
 
-#: data/ui/sheets/sheet-qr-display.ui:45
+#: data/ui/sheets/sheet-qr-display.ui:46
 msgid "Scan with a compatible app"
 msgstr ""
 
-#: data/ui/sheets/sheet-qr-display.ui:63 src/ui/sheets/sheet-qr-display.c:55
+#: data/ui/sheets/sheet-qr-display.ui:64 src/ui/sheets/sheet-qr-display.c:55
 msgid "Cop_y to Clipboard"
 msgstr "クリップボードにコピー(_y)"
 
@@ -771,8 +767,8 @@ msgid "Authorize Nostr app requests securely"
 msgstr ""
 
 #: src/approval-controller.c:166 src/approval-controller.c:172
-#: src/ui/approval_dialog.c:550 src/ui/approval_dialog.c:583
-#: src/ui/approval_dialog.c:586 src/ui/approval_dialog.c:1111
+#: src/ui/approval_dialog.c:549 src/ui/approval_dialog.c:582
+#: src/ui/approval_dialog.c:585 src/ui/approval_dialog.c:1110
 msgid "Unverified app"
 msgstr ""
 
@@ -1019,6 +1015,10 @@ msgstr ""
 msgid "Add App…"
 msgstr ""
 
+#: src/ui/signer-window.c:610
+msgid "About Grotto"
+msgstr "GNostr サイナー"
+
 #: src/ui/signer-window.c:635
 #, c-format
 msgid "Connected Apps, %u pending request"
@@ -1064,7 +1064,7 @@ msgid "Public Key Confirmation"
 msgstr ""
 
 #: src/ui/signer-window.c:765 src/grotto-profile-service.c:786
-#: src/ui/approval_dialog.c:423 src/ui/page-identity-detail.c:275
+#: src/ui/approval_dialog.c:422 src/ui/page-identity-detail.c:275
 #: src/ui/page-identity-detail.c:365
 msgid "Cancel"
 msgstr "キャンセル"
@@ -1344,7 +1344,7 @@ msgid "Contact list"
 msgstr ""
 
 #: src/ui/approval_dialog.c:60 src/ui/approval_dialog.c:74
-#: src/ui/approval_dialog.c:892
+#: src/ui/approval_dialog.c:891
 msgid "Encrypted message"
 msgstr ""
 
@@ -1368,7 +1368,7 @@ msgstr ""
 msgid "Comment"
 msgstr ""
 
-#: src/ui/approval_dialog.c:77 src/ui/approval_dialog.c:893
+#: src/ui/approval_dialog.c:77 src/ui/approval_dialog.c:892
 msgid "Private message"
 msgstr ""
 
@@ -1392,7 +1392,7 @@ msgstr ""
 msgid "Remote signer message"
 msgstr ""
 
-#: src/ui/approval_dialog.c:92 src/ui/approval_dialog.c:895
+#: src/ui/approval_dialog.c:92 src/ui/approval_dialog.c:894
 msgid "Custom event"
 msgstr ""
 
@@ -1486,33 +1486,29 @@ msgstr ""
 msgid " at %s"
 msgstr ""
 
-#: src/ui/approval_dialog.c:307
-msgid "No signing identity"
-msgstr ""
-
-#: src/ui/approval_dialog.c:309
+#: src/ui/approval_dialog.c:308
 msgid "_Allow for 24 Hours"
 msgstr ""
 
-#: src/ui/approval_dialog.c:310
+#: src/ui/approval_dialog.c:309
 #, c-format
 msgid "%s may %s as %s%s for 24 hours"
 msgstr ""
 
-#: src/ui/approval_dialog.c:313
+#: src/ui/approval_dialog.c:312
 msgid "_Always Allow"
 msgstr ""
 
-#: src/ui/approval_dialog.c:314
+#: src/ui/approval_dialog.c:313
 #, c-format
-msgid "Always allow this app to %s as %s%s, until revoked. App: %s"
+msgid "%s may %s as %s%s until revoked"
 msgstr ""
 
-#: src/ui/approval_dialog.c:317 src/ui/approval_dialog.c:348
+#: src/ui/approval_dialog.c:316 src/ui/approval_dialog.c:347
 msgid "Trust _App"
 msgstr ""
 
-#: src/ui/approval_dialog.c:318
+#: src/ui/approval_dialog.c:317
 msgid ""
 "Trust this app for routine operations. Changes this app's access preset, not "
 "only this request or identity. Includes publishing, messaging, relay sign-"
@@ -1521,162 +1517,162 @@ msgid ""
 "effect"
 msgstr ""
 
-#: src/ui/approval_dialog.c:320
+#: src/ui/approval_dialog.c:319
 msgid "_Activate Permission"
 msgstr ""
 
-#: src/ui/approval_dialog.c:321
+#: src/ui/approval_dialog.c:320
 #, c-format
 msgid "Activate the saved permission for %s%s. Original expiry: %s"
 msgstr ""
 
-#: src/ui/approval_dialog.c:322 src/ui/approval_dialog.c:968
+#: src/ui/approval_dialog.c:321 src/ui/approval_dialog.c:967
 msgid "Loading…"
 msgstr ""
 
-#: src/ui/approval_dialog.c:324
+#: src/ui/approval_dialog.c:323
 msgid "Discard _Permission"
 msgstr ""
 
-#: src/ui/approval_dialog.c:325
+#: src/ui/approval_dialog.c:324
 msgid ""
 "Delete the inactive saved permission. This request stays waiting; no "
 "operation is approved"
 msgstr ""
 
-#: src/ui/approval_dialog.c:327
+#: src/ui/approval_dialog.c:326
 msgid "_Allow for This Message"
 msgstr ""
 
-#: src/ui/approval_dialog.c:330
+#: src/ui/approval_dialog.c:329
 #, c-format
 msgid "Only this request from %s, to %s as %s%s. No permission is saved"
 msgstr ""
 
-#: src/ui/approval_dialog.c:331
+#: src/ui/approval_dialog.c:330
 msgid "this app"
 msgstr ""
 
-#: src/ui/approval_dialog.c:332
+#: src/ui/approval_dialog.c:331
 msgid "perform this operation"
 msgstr ""
 
-#: src/ui/approval_dialog.c:335
+#: src/ui/approval_dialog.c:334
 msgid "Pair _Application"
 msgstr ""
 
-#: src/ui/approval_dialog.c:341
+#: src/ui/approval_dialog.c:340
 msgid ""
 "Pair this application with the identity and relays shown above. Pairing is "
 "saved and grants the permissions it requested (see Details) until revoked"
 msgstr ""
 
-#: src/ui/approval_dialog.c:342
+#: src/ui/approval_dialog.c:341
 msgid ""
 "Pair this application with the identity and relays shown above. Pairing is "
 "saved; no signing permission is granted"
 msgstr ""
 
-#: src/ui/approval_dialog.c:349
+#: src/ui/approval_dialog.c:348
 #, c-format
 msgid ""
 "Trust %s for routine operations and allow everything listed above as %s, "
 "including custom kinds, until revoked in its Permissions page"
 msgstr ""
 
-#: src/ui/approval_dialog.c:351
+#: src/ui/approval_dialog.c:350
 msgid "_Allow"
 msgstr ""
 
-#: src/ui/approval_dialog.c:353
+#: src/ui/approval_dialog.c:352
 #, c-format
 msgid "Until you revoke it in %s's Permissions page"
 msgstr ""
 
-#: src/ui/approval_dialog.c:358
+#: src/ui/approval_dialog.c:357
 msgid ""
 "This identity test only. Nothing is published and no app permission is stored"
 msgstr ""
 
-#: src/ui/approval_dialog.c:362
+#: src/ui/approval_dialog.c:361
 msgid "_Publish Profile"
 msgstr ""
 
-#: src/ui/approval_dialog.c:362
+#: src/ui/approval_dialog.c:361
 msgid "_Authorize Upload"
 msgstr ""
 
-#: src/ui/approval_dialog.c:362
+#: src/ui/approval_dialog.c:361
 msgid "_Sign In"
 msgstr ""
 
-#: src/ui/approval_dialog.c:363
+#: src/ui/approval_dialog.c:362
 #, c-format
 msgid ""
 "This exact request only, as %s. No permission is saved. Destinations:\n"
 "%s"
 msgstr ""
 
-#: src/ui/approval_dialog.c:422
+#: src/ui/approval_dialog.c:421
 msgid "Block App?"
 msgstr ""
 
-#: src/ui/approval_dialog.c:422
+#: src/ui/approval_dialog.c:421
 msgid ""
 "Deny all operations from this app until you remove the block in its "
 "Permissions page."
 msgstr ""
 
-#: src/ui/approval_dialog.c:423
+#: src/ui/approval_dialog.c:422
 msgid "Block App"
 msgstr ""
 
-#: src/ui/approval_dialog.c:519 src/ui/approval_dialog.c:913
+#: src/ui/approval_dialog.c:518 src/ui/approval_dialog.c:912
 msgid "Allow once"
 msgstr ""
 
-#: src/ui/approval_dialog.c:546
+#: src/ui/approval_dialog.c:545
 msgid "No identity (identity-independent operation)"
 msgstr ""
 
-#: src/ui/approval_dialog.c:559
+#: src/ui/approval_dialog.c:558
 msgid "Request time: %"
 msgstr ""
 
-#: src/ui/approval_dialog.c:564
+#: src/ui/approval_dialog.c:563
 msgid "No content"
 msgstr ""
 
-#: src/ui/approval_dialog.c:583 src/ui/approval_dialog.c:586
-#: src/ui/approval_dialog.c:1111
+#: src/ui/approval_dialog.c:582 src/ui/approval_dialog.c:585
+#: src/ui/approval_dialog.c:1110
 msgid "Verified caller"
 msgstr ""
 
-#: src/ui/approval_dialog.c:584
+#: src/ui/approval_dialog.c:583
 msgid "Identity self-test"
 msgstr ""
 
-#: src/ui/approval_dialog.c:584
+#: src/ui/approval_dialog.c:583
 msgid "Unknown request"
 msgstr ""
 
-#: src/ui/approval_dialog.c:586
+#: src/ui/approval_dialog.c:585
 #, c-format
 msgid "%s%s%s"
 msgstr ""
 
-#: src/ui/approval_dialog.c:587
+#: src/ui/approval_dialog.c:586
 msgid ""
 "\n"
 "Claimed name (unverified): "
 msgstr ""
 
-#: src/ui/approval_dialog.c:606
+#: src/ui/approval_dialog.c:605
 #, c-format
 msgid "%s · %s (kind %u)"
 msgstr ""
 
-#: src/ui/approval_dialog.c:610
+#: src/ui/approval_dialog.c:609
 #, c-format
 msgid ""
 "%s\n"
@@ -1684,250 +1680,250 @@ msgid ""
 "Peer: %s"
 msgstr ""
 
-#: src/ui/approval_dialog.c:613 src/ui/pairing-flow.c:84
+#: src/ui/approval_dialog.c:612 src/ui/pairing-flow.c:84
 msgid "None"
 msgstr ""
 
-#: src/ui/approval_dialog.c:668
+#: src/ui/approval_dialog.c:667
 msgid "Complete public profile fields:\n"
 msgstr ""
 
-#: src/ui/approval_dialog.c:676
+#: src/ui/approval_dialog.c:675
 msgid "Public image upload authorization\n"
 msgstr ""
 
-#: src/ui/approval_dialog.c:676
+#: src/ui/approval_dialog.c:675
 msgid "Relay sign-in authorization\n"
 msgstr ""
 
-#: src/ui/approval_dialog.c:683
+#: src/ui/approval_dialog.c:682
 msgid "Blob SHA-256"
 msgstr ""
 
-#: src/ui/approval_dialog.c:683
+#: src/ui/approval_dialog.c:682
 msgid "Expiry (Unix seconds)"
 msgstr ""
 
-#: src/ui/approval_dialog.c:683
+#: src/ui/approval_dialog.c:682
 msgid "Challenge"
 msgstr ""
 
-#: src/ui/approval_dialog.c:683
+#: src/ui/approval_dialog.c:682
 msgid "Server restriction"
 msgstr ""
 
-#: src/ui/approval_dialog.c:688
+#: src/ui/approval_dialog.c:687
 #, c-format
 msgid "Expires (UTC): %s\n"
 msgstr ""
 
-#: src/ui/approval_dialog.c:691
+#: src/ui/approval_dialog.c:690
 msgid ""
 "No server restriction in this token: it authorizes this exact blob hash at "
 "any Blossom server until expiry. Grotto will try only the listed servers, in "
 "order."
 msgstr ""
 
-#: src/ui/approval_dialog.c:747
+#: src/ui/approval_dialog.c:746
 msgid "Remote NIP-46 client · verified transport key; app name unverified"
 msgstr ""
 
-#: src/ui/approval_dialog.c:748
+#: src/ui/approval_dialog.c:747
 msgid "Remote NIP-46 client · unverified"
 msgstr ""
 
-#: src/ui/approval_dialog.c:750
+#: src/ui/approval_dialog.c:749
 msgid "Grotto profile management"
 msgstr ""
 
-#: src/ui/approval_dialog.c:752
+#: src/ui/approval_dialog.c:751
 msgid "Grotto identity test"
 msgstr ""
 
-#: src/ui/approval_dialog.c:755
+#: src/ui/approval_dialog.c:754
 #, c-format
 msgid "Unverified: claims to be “%s”"
 msgstr ""
 
-#: src/ui/approval_dialog.c:759
+#: src/ui/approval_dialog.c:758
 #, c-format
 msgid "Browser origin via bridge · %s"
 msgstr ""
 
-#: src/ui/approval_dialog.c:760
+#: src/ui/approval_dialog.c:759
 msgid "Origin not supplied"
 msgstr ""
 
-#: src/ui/approval_dialog.c:761
+#: src/ui/approval_dialog.c:760
 msgid "Verified local app"
 msgstr ""
 
-#: src/ui/approval_dialog.c:761
+#: src/ui/approval_dialog.c:760
 msgid "Verified caller · transport not identified"
 msgstr ""
 
-#: src/ui/approval_dialog.c:772
+#: src/ui/approval_dialog.c:771
 #, c-format
 msgid "%s · called “%s”"
 msgstr ""
 
-#: src/ui/approval_dialog.c:799
+#: src/ui/approval_dialog.c:798
 #, c-format
 msgid "Expires in at most %u seconds"
 msgstr ""
 
-#: src/ui/approval_dialog.c:830
+#: src/ui/approval_dialog.c:829
 msgid "Signer Explanation"
 msgstr ""
 
-#: src/ui/approval_dialog.c:846
+#: src/ui/approval_dialog.c:845
 msgid "Invalid or missing event kind"
 msgstr ""
 
-#: src/ui/approval_dialog.c:860
+#: src/ui/approval_dialog.c:859
 msgid "sign a note (kind 1)"
 msgstr ""
 
-#: src/ui/approval_dialog.c:861
+#: src/ui/approval_dialog.c:860
 msgid "sign a contact list (kind 3)"
 msgstr ""
 
-#: src/ui/approval_dialog.c:862
+#: src/ui/approval_dialog.c:861
 msgid "sign in to a relay"
 msgstr ""
 
-#: src/ui/approval_dialog.c:863
+#: src/ui/approval_dialog.c:862
 #, c-format
 msgid "sign an event: %s (kind %u)"
 msgstr ""
 
-#: src/ui/approval_dialog.c:864
+#: src/ui/approval_dialog.c:863
 msgid "encrypt a message"
 msgstr ""
 
-#: src/ui/approval_dialog.c:865
+#: src/ui/approval_dialog.c:864
 msgid "decrypt a message"
 msgstr ""
 
-#: src/ui/approval_dialog.c:866
+#: src/ui/approval_dialog.c:865
 msgid "connect"
 msgstr ""
 
-#: src/ui/approval_dialog.c:866
+#: src/ui/approval_dialog.c:865
 msgid "test this identity"
 msgstr ""
 
-#: src/ui/approval_dialog.c:867
+#: src/ui/approval_dialog.c:866
 msgid "read the public key"
 msgstr ""
 
-#: src/ui/approval_dialog.c:868
+#: src/ui/approval_dialog.c:867
 msgid "read relay settings"
 msgstr ""
 
-#: src/ui/approval_dialog.c:869
+#: src/ui/approval_dialog.c:868
 msgid "check the signer connection"
 msgstr ""
 
-#: src/ui/approval_dialog.c:872
+#: src/ui/approval_dialog.c:871
 msgid "sign notes (kind 1)"
 msgstr ""
 
-#: src/ui/approval_dialog.c:873
+#: src/ui/approval_dialog.c:872
 msgid "sign contact lists (kind 3)"
 msgstr ""
 
-#: src/ui/approval_dialog.c:874
+#: src/ui/approval_dialog.c:873
 msgid "encrypt messages (all peers)"
 msgstr ""
 
-#: src/ui/approval_dialog.c:875
+#: src/ui/approval_dialog.c:874
 msgid "decrypt messages (all peers)"
 msgstr ""
 
-#: src/ui/approval_dialog.c:878
+#: src/ui/approval_dialog.c:877
 #, c-format
 msgid "Test %s's identity"
 msgstr ""
 
-#: src/ui/approval_dialog.c:879
+#: src/ui/approval_dialog.c:878
 #, c-format
 msgid "%s wants to use your identity"
 msgstr ""
 
-#: src/ui/approval_dialog.c:881
+#: src/ui/approval_dialog.c:880
 #, c-format
 msgid "%s wants an additional permission"
 msgstr ""
 
-#: src/ui/approval_dialog.c:884
+#: src/ui/approval_dialog.c:883
 #, c-format
 msgid "Publish profile for %s"
 msgstr ""
 
-#: src/ui/approval_dialog.c:885
+#: src/ui/approval_dialog.c:884
 #, c-format
 msgid "%s wants to prepare encrypted messages"
 msgstr ""
 
-#: src/ui/approval_dialog.c:886
+#: src/ui/approval_dialog.c:885
 #, c-format
 msgid "%s wants to connect"
 msgstr ""
 
-#: src/ui/approval_dialog.c:887
+#: src/ui/approval_dialog.c:886
 #, c-format
 msgid "%s wants to encrypt a message"
 msgstr ""
 
-#: src/ui/approval_dialog.c:888
+#: src/ui/approval_dialog.c:887
 #, c-format
 msgid "%s wants to decrypt a message"
 msgstr ""
 
-#: src/ui/approval_dialog.c:889
+#: src/ui/approval_dialog.c:888
 #, c-format
 msgid "%s wants to sign a note"
 msgstr ""
 
-#: src/ui/approval_dialog.c:890
+#: src/ui/approval_dialog.c:889
 #, c-format
 msgid "%s wants to update your contact list"
 msgstr ""
 
-#: src/ui/approval_dialog.c:891
+#: src/ui/approval_dialog.c:890
 #, c-format
 msgid "%s wants to sign in to a relay"
 msgstr ""
 
-#: src/ui/approval_dialog.c:894
+#: src/ui/approval_dialog.c:893
 #, c-format
 msgid "%s wants to sign an encrypted message"
 msgstr ""
 
-#: src/ui/approval_dialog.c:896
+#: src/ui/approval_dialog.c:895
 #, c-format
 msgid "%s wants to sign a custom event (kind %u)"
 msgstr ""
 
-#: src/ui/approval_dialog.c:897
+#: src/ui/approval_dialog.c:896
 #, c-format
 msgid "%s wants to %s"
 msgstr ""
 
-#: src/ui/approval_dialog.c:899
+#: src/ui/approval_dialog.c:898
 msgid "Allow It To Use"
 msgstr ""
 
-#: src/ui/approval_dialog.c:901
+#: src/ui/approval_dialog.c:900
 msgid "_Deny"
 msgstr ""
 
-#: src/ui/approval_dialog.c:902
+#: src/ui/approval_dialog.c:901
 msgid "Deny This Request (Alt+D, Escape)"
 msgstr ""
 
-#: src/ui/approval_dialog.c:904
+#: src/ui/approval_dialog.c:903
 #, c-format
 msgid ""
 "%u encrypted copies, including your copy, as %s; at most %u seconds left "
@@ -1935,89 +1931,89 @@ msgid ""
 "No permission is saved to disk"
 msgstr ""
 
-#: src/ui/approval_dialog.c:910
+#: src/ui/approval_dialog.c:909
 msgid "Allow these permissions"
 msgstr ""
 
-#: src/ui/approval_dialog.c:911 src/ui/approval_dialog.c:923
+#: src/ui/approval_dialog.c:910 src/ui/approval_dialog.c:922
 msgid "Trust this app for routine operations"
 msgstr ""
 
-#: src/ui/approval_dialog.c:916
+#: src/ui/approval_dialog.c:915
 msgid "Activate saved permission"
 msgstr ""
 
-#: src/ui/approval_dialog.c:917
+#: src/ui/approval_dialog.c:916
 msgid "Discard saved permission"
 msgstr ""
 
-#: src/ui/approval_dialog.c:919
+#: src/ui/approval_dialog.c:918
 msgid "Allow for 24 hours"
 msgstr ""
 
-#: src/ui/approval_dialog.c:920
+#: src/ui/approval_dialog.c:919
 #, c-format
 msgid "Always allow this app to %s as %s%s%s"
 msgstr ""
 
-#: src/ui/approval_dialog.c:921 src/ui/approval_dialog.c:971
+#: src/ui/approval_dialog.c:920 src/ui/approval_dialog.c:970
 msgid " at "
 msgstr ""
 
-#: src/ui/approval_dialog.c:924
+#: src/ui/approval_dialog.c:923
 msgid "This message only…"
 msgstr ""
 
-#: src/ui/approval_dialog.c:943
+#: src/ui/approval_dialog.c:942
 msgid "Inactive under the previous access policy"
 msgstr ""
 
-#: src/ui/approval_dialog.c:953
+#: src/ui/approval_dialog.c:952
 #, c-format
 msgid "Saved permission is for %s. "
 msgstr ""
 
-#: src/ui/approval_dialog.c:960
+#: src/ui/approval_dialog.c:959
 msgid "Invalid expiry"
 msgstr ""
 
-#: src/ui/approval_dialog.c:961
+#: src/ui/approval_dialog.c:960
 msgid "Until revoked"
 msgstr ""
 
-#: src/ui/approval_dialog.c:970
+#: src/ui/approval_dialog.c:969
 #, c-format
 msgid "%s. Identity: %s%s%s. Original expiry: %s"
 msgstr ""
 
-#: src/ui/approval_dialog.c:972
+#: src/ui/approval_dialog.c:971
 #, c-format
 msgid "%sPermissions do not follow a change of default identity"
 msgstr ""
 
-#: src/ui/approval_dialog.c:975
+#: src/ui/approval_dialog.c:974
 msgid "Grotto returns the result to the app. It does not publish anything."
 msgstr ""
 
-#: src/ui/approval_dialog.c:989
+#: src/ui/approval_dialog.c:988
 #, c-format
 msgid ""
 "Encrypted message — private content is not shown.\n"
 "Recipient: %s"
 msgstr ""
 
-#: src/ui/approval_dialog.c:991
+#: src/ui/approval_dialog.c:990
 msgid "Not visible in this event"
 msgstr ""
 
-#: src/ui/approval_dialog.c:995
+#: src/ui/approval_dialog.c:994
 #, c-format
 msgid ""
 "Delete %u target(s). Deletion is a permanent request; copies may remain "
 "elsewhere."
 msgstr ""
 
-#: src/ui/approval_dialog.c:1000
+#: src/ui/approval_dialog.c:999
 #, c-format
 msgid ""
 "Relay claimed by app: %s\n"
@@ -2025,47 +2021,47 @@ msgid ""
 "connection."
 msgstr ""
 
-#: src/ui/approval_dialog.c:1001 src/ui/approval_dialog.c:1012
+#: src/ui/approval_dialog.c:1000 src/ui/approval_dialog.c:1011
 msgid "Not supplied by daemon"
 msgstr ""
 
-#: src/ui/approval_dialog.c:1009
+#: src/ui/approval_dialog.c:1008
 #, c-format
 msgid ""
 "\n"
 "Target type: %s (kind %u)"
 msgstr ""
 
-#: src/ui/approval_dialog.c:1014
+#: src/ui/approval_dialog.c:1013
 #, c-format
 msgid ""
 "Target: %s%s\n"
 "Reaction: %s"
 msgstr ""
 
-#: src/ui/approval_dialog.c:1016
+#: src/ui/approval_dialog.c:1015
 #, c-format
 msgid "Target: %s%s"
 msgstr ""
 
-#: src/ui/approval_dialog.c:1027
+#: src/ui/approval_dialog.c:1026
 #, c-format
 msgid "Kind %u · %u structured tags"
 msgstr ""
 
-#: src/ui/approval_dialog.c:1036
+#: src/ui/approval_dialog.c:1035
 #, c-format
 msgid ""
 "\n"
 "%s: %u"
 msgstr ""
 
-#: src/ui/approval_dialog.c:1046
+#: src/ui/approval_dialog.c:1045
 #, c-format
 msgid " %u new, %u already allowed, %u blocked."
 msgstr ""
 
-#: src/ui/approval_dialog.c:1047
+#: src/ui/approval_dialog.c:1046
 #, c-format
 msgid ""
 "Grotto saves these permissions for %s until you revoke them in its "
@@ -2073,24 +2069,24 @@ msgid ""
 "listed here runs without asking."
 msgstr ""
 
-#: src/ui/approval_dialog.c:1050
+#: src/ui/approval_dialog.c:1049
 msgid "Encrypted message. Private message bodies are not shown."
 msgstr ""
 
-#: src/ui/approval_dialog.c:1052
+#: src/ui/approval_dialog.c:1051
 msgid ""
 "1. Sign and verify an unpublished test event.\n"
 "2. Encrypt a random challenge to a temporary peer.\n"
 "3. Decrypt the peer's reply and compare the challenge."
 msgstr ""
 
-#: src/ui/approval_dialog.c:1055
+#: src/ui/approval_dialog.c:1054
 msgid ""
 "One-time identity test. Nothing is published and no app permissions are "
 "saved."
 msgstr ""
 
-#: src/ui/approval_dialog.c:1077
+#: src/ui/approval_dialog.c:1076
 #, c-format
 msgid ""
 "App fingerprint: %s\n"
@@ -2100,7 +2096,7 @@ msgid ""
 "Relays: %s"
 msgstr ""
 
-#: src/ui/approval_dialog.c:1078
+#: src/ui/approval_dialog.c:1077
 #, c-format
 msgid ""
 "App fingerprint: %s\n"
@@ -2109,37 +2105,37 @@ msgid ""
 "Relays: %s"
 msgstr ""
 
-#: src/ui/approval_dialog.c:1082
+#: src/ui/approval_dialog.c:1081
 msgid ""
 "Pairing admits this application and saves the permissions it requested (any "
 "relay for relay sign-in; blocked ones stay blocked), so those operations "
 "will not ask again."
 msgstr ""
 
-#: src/ui/approval_dialog.c:1083
+#: src/ui/approval_dialog.c:1082
 msgid "Pairing admits this application. It grants no signing permissions."
 msgstr ""
 
-#: src/ui/approval_dialog.c:1088
+#: src/ui/approval_dialog.c:1087
 msgid "Upload Servers"
 msgstr ""
 
-#: src/ui/approval_dialog.c:1088
+#: src/ui/approval_dialog.c:1087
 msgid "Relays"
 msgstr ""
 
-#: src/ui/approval_dialog.c:1089
+#: src/ui/approval_dialog.c:1088
 msgid "destinations: see Details"
 msgstr ""
 
-#: src/ui/approval_dialog.c:1091
+#: src/ui/approval_dialog.c:1090
 msgid ""
 "Approval signs this exact profile event and allows Grotto to publish it to "
 "the publication relays shown in this review. Public copies may remain even "
 "if you stop later."
 msgstr ""
 
-#: src/ui/approval_dialog.c:1092
+#: src/ui/approval_dialog.c:1091
 msgid ""
 "Approval signs the authorization shown here. Grotto then uploads the "
 "reviewed, cropped and re-encoded PNG image to the listed servers, without "
@@ -2147,29 +2143,29 @@ msgid ""
 "independently of profile Save. Stopping does not delete it or recall copies."
 msgstr ""
 
-#: src/ui/approval_dialog.c:1093
+#: src/ui/approval_dialog.c:1092
 msgid ""
 "Approval signs this relay challenge. Grotto sends AUTH to the relay shown "
 "above. This is not permission to publish a profile or save reusable access."
 msgstr ""
 
-#: src/ui/approval_dialog.c:1100
+#: src/ui/approval_dialog.c:1099
 msgid ""
 "The daemon did not supply the required preview details. Update Grotto before "
 "approving; you can still deny this request."
 msgstr ""
 
-#: src/ui/approval_dialog.c:1104
+#: src/ui/approval_dialog.c:1103
 #, c-format
 msgid "%s can publish this signed note. Grotto does not publish it"
 msgstr ""
 
-#: src/ui/approval_dialog.c:1106
+#: src/ui/approval_dialog.c:1105
 #, c-format
 msgid "%s can publish this signed contact list. Grotto does not publish it"
 msgstr ""
 
-#: src/ui/approval_dialog.c:1110
+#: src/ui/approval_dialog.c:1109
 #, c-format
 msgid ""
 "%s\n"
@@ -2180,45 +2176,45 @@ msgid ""
 "Peer fingerprint: %s"
 msgstr ""
 
-#: src/ui/approval_dialog.c:1111
+#: src/ui/approval_dialog.c:1110
 msgid "Grotto identity self-test"
 msgstr ""
 
-#: src/ui/approval_dialog.c:1119
+#: src/ui/approval_dialog.c:1118
 msgid "Exact profile JSON:\n"
 msgstr ""
 
-#: src/ui/approval_dialog.c:1119
+#: src/ui/approval_dialog.c:1118
 msgid "Exact unsigned event JSON:"
 msgstr ""
 
-#: src/ui/approval_dialog.c:1123
+#: src/ui/approval_dialog.c:1122
 msgid "Daemon destination details:"
 msgstr ""
 
-#: src/ui/approval_dialog.c:1144
+#: src/ui/approval_dialog.c:1143
 msgid "Publication relays:"
 msgstr ""
 
-#: src/ui/approval_dialog.c:1145
+#: src/ui/approval_dialog.c:1144
 msgid "Image upload servers:"
 msgstr ""
 
-#: src/ui/approval_dialog.c:1145
+#: src/ui/approval_dialog.c:1144
 msgid "Relay authentication destination:"
 msgstr ""
 
-#: src/ui/approval_dialog.c:1146
+#: src/ui/approval_dialog.c:1145
 msgid "None recorded"
 msgstr ""
 
-#: src/ui/approval_dialog.c:1147
+#: src/ui/approval_dialog.c:1146
 msgid ""
 "Host bootstrap discovery (lookup only, never a publish fallback or "
 "authentication grant):"
 msgstr ""
 
-#: src/ui/approval_dialog.c:1147
+#: src/ui/approval_dialog.c:1146
 msgid "Not used"
 msgstr ""
 
@@ -2849,79 +2845,79 @@ msgstr ""
 msgid "Ask-by-Default Event Types"
 msgstr ""
 
-#: src/ui/page-settings.c:94
+#: src/ui/page-settings.c:95
 msgid "Additional custom event types (comma-separated)"
 msgstr ""
 
-#: src/ui/page-settings.c:96
+#: src/ui/page-settings.c:97
 msgid "Additional custom event types"
 msgstr ""
 
-#: src/ui/page-settings.c:98
+#: src/ui/page-settings.c:99
 msgid "Save Ask-by-Default Policy"
 msgstr ""
 
-#: src/ui/page-settings.c:99 src/ui/page-settings.c:178
+#: src/ui/page-settings.c:100 src/ui/page-settings.c:179
 msgid "Restore Defaults"
 msgstr ""
 
-#: src/ui/page-settings.c:143
+#: src/ui/page-settings.c:144
 msgid ""
 "Use up to 16 wss:// relay URLs, one per line, without credentials, queries "
 "or fragments"
 msgstr ""
 
-#: src/ui/page-settings.c:149
+#: src/ui/page-settings.c:150
 msgid "Discovery relays saved"
 msgstr ""
 
-#: src/ui/page-settings.c:149
+#: src/ui/page-settings.c:150
 msgid "Discovery relays could not be saved"
 msgstr ""
 
-#: src/ui/page-settings.c:157
+#: src/ui/page-settings.c:158
 msgid "Discovery-only defaults restored"
 msgstr ""
 
-#: src/ui/page-settings.c:161
+#: src/ui/page-settings.c:162
 msgid "Profile Discovery"
 msgstr ""
 
-#: src/ui/page-settings.c:162
+#: src/ui/page-settings.c:163
 msgid ""
 "For identities with no known relays, share the public key with discovery "
 "relays to find a profile. Never used for publishing."
 msgstr ""
 
-#: src/ui/page-settings.c:164
+#: src/ui/page-settings.c:165
 msgid "Find Profiles Automatically"
 msgstr ""
 
-#: src/ui/page-settings.c:168
+#: src/ui/page-settings.c:169
 msgid "Discovery-Only Relays"
 msgstr ""
 
-#: src/ui/page-settings.c:169
+#: src/ui/page-settings.c:170
 msgid "Profiles, public relay lists, and messaging relay lists"
 msgstr ""
 
-#: src/ui/page-settings.c:173
+#: src/ui/page-settings.c:174
 msgid "Discovery relay URLs, one per line"
 msgstr ""
 
-#: src/ui/page-settings.c:178
+#: src/ui/page-settings.c:179
 msgid "Save Discovery Relays"
 msgstr ""
 
-#: src/ui/page-settings.c:194
+#: src/ui/page-settings.c:195
 msgid "Privacy / Network"
 msgstr ""
 
-#: src/ui/page-settings.c:196
+#: src/ui/page-settings.c:197
 msgid "Load Profile Images"
 msgstr ""
 
-#: src/ui/page-settings.c:197
+#: src/ui/page-settings.c:198
 msgid "Fetch avatars and banners from the web addresses in profiles"
 msgstr ""
 

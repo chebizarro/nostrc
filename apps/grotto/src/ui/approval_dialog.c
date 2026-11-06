@@ -302,17 +302,16 @@ static void permission_changed(GObject *object, GParamSpec *pspec, gpointer data
   g_autofree gchar *scope = NULL;
   g_autofree gchar *at_relay = self->relay && *self->relay
       ? g_strdup_printf(_(" at %s"), self->relay) : g_strdup("");
-  g_autofree gchar *identity = *field(self->info, "identity_label")
-      ? g_strdup_printf("%s (%s)", field(self->info, "identity_label"), self->identity)
-      : g_strdup(self->identity && *self->identity ? self->identity : _("No signing identity"));
+  const gchar *identity = *field(self->info, "identity_label")
+      ? field(self->info, "identity_label") : _("Identity");
   if (!strcmp(mode, "allow-24h")) {
     commit = _("_Allow for 24 Hours");
     scope = g_strdup_printf(_("%s may %s as %s%s for 24 hours"),
         self->app_name, self->reusable_text, identity, at_relay);
   } else if (!strcmp(mode, "allow")) {
     commit = _("_Always Allow");
-    scope = g_strdup_printf(_("Always allow this app to %s as %s%s, until revoked. App: %s"),
-        self->reusable_text, identity, at_relay, self->app_name);
+    scope = g_strdup_printf(_("%s may %s as %s%s until revoked"),
+        self->app_name, self->reusable_text, identity, at_relay);
   } else if (!strcmp(mode, "trust-routine")) {
     commit = _("Trust _App");
     scope = g_strdup(_("Trust this app for routine operations. Changes this app's access preset, not only this request or identity. Includes publishing, messaging, relay sign-in, profile/contact changes, deletion and zap requests. Custom kinds and other ask-by-default kinds still need their own grant. Blocks remain in effect"));
@@ -901,7 +900,7 @@ void gnostr_approval_dialog_set_info(GnostrApprovalDialog *self, GVariant *info,
   gtk_button_set_label(self->btn_deny, declared ? _("_Deny") : _("_Deny Once"));
   gtk_widget_set_tooltip_text(GTK_WIDGET(self->btn_deny), declared ? _("Deny This Request (Alt+D, Escape)") : _("Deny Once (Alt+D, Escape)"));
   g_free(self->flow_scope);
-  self->flow_scope = g_strdup_printf(_("%u encrypted copies, including your copy, as %s; at most %u seconds left from first arrival. Count is supplied by the app, not proof of recipients. No permission is saved to disk"), size, field(info, "identity"), flow_left);
+  self->flow_scope = g_strdup_printf(_("%u encrypted copies, including your copy, as %s; at most %u seconds left from first arrival. Count is supplied by the app, not proof of recipients. No permission is saved to disk"), size, identity_label, flow_left);
   g_autoptr(GtkStringList) choices = gtk_string_list_new(NULL);
   self->n_choices = 0;
 #define CHOICE(mode, label) do { self->choices[self->n_choices++] = mode; gtk_string_list_append(choices, label); } while (0)
@@ -918,7 +917,7 @@ void gnostr_approval_dialog_set_info(GnostrApprovalDialog *self, GVariant *info,
   } else if (rememberable) {
     CHOICE("allow-24h", _("Allow for 24 hours"));
     g_autofree gchar *permission = g_strdup_printf(_("Always allow this app to %s as %s%s%s"),
-        self->reusable_text, field(info, "identity"), *self->relay ? _(" at ") : "", self->relay);
+        self->reusable_text, identity_label, *self->relay ? _(" at ") : "", self->relay);
     CHOICE("allow", permission);
     if (routine_trust) CHOICE("trust-routine", _("Trust this app for routine operations"));
     if (flow) CHOICE("flow", _("This message only…"));
