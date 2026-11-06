@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: grotto-panels\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-06 01:08-0800\n"
+"POT-Creation-Date: 2026-11-06 02:05-0800\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -205,7 +205,7 @@ msgstr ""
 msgid "Status"
 msgstr ""
 
-#: data/remote-panel.blp:14 src/grotto-app-detail.c:598
+#: data/remote-panel.blp:14 src/grotto-app-detail.c:602
 msgid "Change in Grotto…"
 msgstr ""
 
@@ -221,7 +221,7 @@ msgstr ""
 msgid "Add Relay URL"
 msgstr ""
 
-#: data/remote-panel.blp:24 src/grotto-app-detail.c:607
+#: data/remote-panel.blp:24 src/grotto-app-detail.c:611
 msgid "Details"
 msgstr ""
 
@@ -426,10 +426,10 @@ msgid "Stop"
 msgstr ""
 
 #: src/grotto-profile-view.c:124 src/grotto-profile-view.c:260
-#: src/grotto-apps-panel.c:154 src/grotto-app-detail.c:111
+#: src/grotto-apps-panel.c:155 src/grotto-app-detail.c:111
 #: src/grotto-app-detail.c:128 src/grotto-app-detail.c:143
 #: src/grotto-app-detail.c:268 src/grotto-app-detail.c:340
-#: src/grotto-app-detail.c:405 src/grotto-activity-panel.c:156
+#: src/grotto-app-detail.c:405 src/grotto-activity-panel.c:158
 #: src/grotto-remote-panel.c:90
 msgid "Cancel"
 msgstr ""
@@ -600,8 +600,8 @@ msgstr ""
 msgid "Refresh Profile"
 msgstr ""
 
-#: src/grotto-app-info.c:34 src/grotto-app-detail.c:297
-#: src/grotto-app-detail.c:624
+#: src/grotto-app-info.c:92 src/grotto-app-detail.c:297
+#: src/grotto-app-detail.c:587 src/grotto-app-detail.c:628
 msgid "App"
 msgstr ""
 
@@ -625,11 +625,11 @@ msgstr ""
 msgid "Routine Operations"
 msgstr ""
 
-#: src/grotto-apps-panel.c:71 src/grotto-app-detail.c:590
+#: src/grotto-apps-panel.c:71 src/grotto-app-detail.c:594
 msgid "Ask for Sensitive Operations"
 msgstr ""
 
-#: src/grotto-apps-panel.c:71 src/grotto-app-detail.c:590
+#: src/grotto-apps-panel.c:71 src/grotto-app-detail.c:594
 msgid "Ask Unless Permitted"
 msgstr ""
 
@@ -653,20 +653,27 @@ msgstr ""
 msgid "%"
 msgstr ""
 
-#: src/grotto-apps-panel.c:134
+#: src/grotto-apps-panel.c:96
+#, c-format
+msgid ""
+"%s\n"
+"%s"
+msgstr ""
+
+#: src/grotto-apps-panel.c:135
 msgid "Signing state wasn't changed. Review the current state and retry."
 msgstr ""
 
-#: src/grotto-apps-panel.c:153
+#: src/grotto-apps-panel.c:154
 msgid "Resume Signing?"
 msgstr ""
 
-#: src/grotto-apps-panel.c:153
+#: src/grotto-apps-panel.c:154
 msgid ""
 "Previously authorized apps can sign again. Saved permissions still apply."
 msgstr ""
 
-#: src/grotto-apps-panel.c:154
+#: src/grotto-apps-panel.c:155
 msgid "Resume Signing"
 msgstr ""
 
@@ -948,7 +955,7 @@ msgid "Needs Review"
 msgstr ""
 
 #: src/grotto-app-detail.c:441 src/grotto-app-detail.c:442
-#: src/grotto-activity-panel.c:75
+#: src/grotto-activity-panel.c:77
 #, c-format
 msgid "%s · %s"
 msgstr ""
@@ -1013,65 +1020,65 @@ msgid ""
 "inactive entries, not its trust level."
 msgstr ""
 
-#: src/grotto-app-detail.c:505 src/grotto-app-detail.c:600
+#: src/grotto-app-detail.c:505 src/grotto-app-detail.c:604
 msgid "Permissions"
 msgstr ""
 
-#: src/grotto-app-detail.c:552
+#: src/grotto-app-detail.c:554
 msgid "Waiting for Consent"
 msgstr ""
 
-#: src/grotto-app-detail.c:557
+#: src/grotto-app-detail.c:559
 msgid ""
 "Previous access policy. Choose routine access to review an explicit upgrade."
 msgstr ""
 
-#: src/grotto-app-detail.c:558
+#: src/grotto-app-detail.c:560
 msgid "App unavailable or removed"
 msgstr ""
 
-#: src/grotto-app-detail.c:585
+#: src/grotto-app-detail.c:589
 msgid "Local Name"
 msgstr ""
 
-#: src/grotto-app-detail.c:588
+#: src/grotto-app-detail.c:592
 msgid "Access"
 msgstr ""
 
-#: src/grotto-app-detail.c:589
+#: src/grotto-app-detail.c:593
 msgid ""
 "Blocked actions always stay blocked. Lowering access keeps saved permissions."
 msgstr ""
 
-#: src/grotto-app-detail.c:590
+#: src/grotto-app-detail.c:594
 msgid "Trust for Routine Operations"
 msgstr ""
 
-#: src/grotto-app-detail.c:600
+#: src/grotto-app-detail.c:604
 msgid "Review and change saved permissions"
 msgstr ""
 
-#: src/grotto-app-detail.c:603
+#: src/grotto-app-detail.c:607
 msgid "Recent Activity"
 msgstr ""
 
-#: src/grotto-app-detail.c:609
+#: src/grotto-app-detail.c:613
 msgid "Verified As"
 msgstr ""
 
-#: src/grotto-app-detail.c:610
+#: src/grotto-app-detail.c:614
 msgid "Fingerprint"
 msgstr ""
 
-#: src/grotto-app-detail.c:611
+#: src/grotto-app-detail.c:615
 msgid "Connected Since"
 msgstr ""
 
-#: src/grotto-app-detail.c:617
+#: src/grotto-app-detail.c:621
 msgid "Remove App Block…"
 msgstr ""
 
-#: src/grotto-app-detail.c:620
+#: src/grotto-app-detail.c:624
 msgid "Remove App…"
 msgstr ""
 
@@ -1079,27 +1086,27 @@ msgstr ""
 msgid "Unknown Outcome"
 msgstr ""
 
-#: src/grotto-activity-panel.c:128
+#: src/grotto-activity-panel.c:130
 msgid "Older activity could not be loaded. Try again."
 msgstr ""
 
-#: src/grotto-activity-panel.c:143
+#: src/grotto-activity-panel.c:145
 msgid "Activity wasn't cleared. Try again."
 msgstr ""
 
-#: src/grotto-activity-panel.c:155
+#: src/grotto-activity-panel.c:157
 msgid "Clear Activity?"
 msgstr ""
 
-#: src/grotto-activity-panel.c:155
+#: src/grotto-activity-panel.c:157
 msgid "Delete retained operation metadata? Permissions are not changed."
 msgstr ""
 
-#: src/grotto-activity-panel.c:156
+#: src/grotto-activity-panel.c:158
 msgid "Clear Activity"
 msgstr ""
 
-#: src/grotto-activity-panel.c:185
+#: src/grotto-activity-panel.c:187
 msgid "All Event Types"
 msgstr ""
 

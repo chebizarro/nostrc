@@ -531,7 +531,8 @@ add_library(grotto_approval_test_core STATIC
 target_include_directories(grotto_approval_test_core PUBLIC ${SIGNER_INCLUDE_DIRS})
 target_link_libraries(grotto_approval_test_core PUBLIC GrottoPanels::Panels PkgConfig::GTK4 PkgConfig::ADWAITA PkgConfig::GLIB PkgConfig::JSON_GLIB libnostr nostr_json nip19)
 target_compile_options(grotto_approval_test_core PRIVATE -Wall -Wextra -Werror)
-add_executable(test-approval-controller test-approval-controller.c)
+add_executable(test-approval-controller test-approval-controller.c ${_APPROVAL_GRESOURCE_C})
+add_dependencies(test-approval-controller grotto-schemas)
 target_link_libraries(test-approval-controller PRIVATE grotto_approval_test_core nostrc-test-bus)
 add_test(NAME signer/approval-controller COMMAND test-approval-controller)
 set_tests_properties(signer/approval-controller PROPERTIES TIMEOUT 90 LABELS "signer;unit"

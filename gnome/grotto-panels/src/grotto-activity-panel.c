@@ -31,8 +31,10 @@ static gboolean matches(gpointer item, gpointer data) {
   if (self->principal && !strcmp(search, self->principal) && strcmp(m->principal, self->principal)) return FALSE;
   guint outcome = adw_combo_row_get_selected(self->outcome);
   if (outcome < G_N_ELEMENTS(outcomes) && outcome && strcmp(m->outcome, outcomes[outcome])) return FALSE;
-  g_autofree char *app_name = grotto_panels_app_display_info(m->principal, m->label, NULL);
-  if (*search && !contains(m->principal, search) && !contains(app_name, search) && !contains(operation_name(m->operation), search)) return FALSE;
+  if (*search) {
+    g_autofree char *app_name = grotto_panels_app_display_info(m->principal, m->label, NULL);
+    if (!contains(m->principal, search) && !contains(app_name, search) && !contains(operation_name(m->operation), search)) return FALSE;
+  }
   if (*kind) {
     char *end = NULL; gint64 number = g_ascii_strtoll(kind, &end, 10);
     if (!m->has_event_kind || (end != kind && !*end ? number != m->event_kind : !contains(kind_name(m->event_kind), kind))) return FALSE;

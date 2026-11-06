@@ -34,8 +34,12 @@ if get_option('tests')
   python = import('python').find_installation('python3')
   clang = find_program('clang')
   admission = executable('test-grotto-panels-admission', 'tests/test-admission.c', 'tests/fake-service.c', dependencies: panels_dep)
+  smoke_deps = [panels_dep]
+  if host_machine.system() == 'linux'
+    smoke_deps += meson.get_compiler('c').find_library('dl')
+  endif
   smoke = executable('test-grotto-panels-smoke', 'tests/test-smoke-host.c', 'tests/test-management-panels.c', 'tests/test-profile-panel.c', 'tests/fake-service.c',
-    include_directories: include_directories('../../tests/common'), dependencies: panels_dep)
+    include_directories: include_directories('../../tests/common'), dependencies: smoke_deps)
   if host_machine.system() == 'linux'
     runner = find_program('dbus-run-session')
     xvfb = find_program('xvfb-run')

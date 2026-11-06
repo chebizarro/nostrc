@@ -1,5 +1,16 @@
 /* SPDX-License-Identifier: MIT */
 #include "fake-service.h"
+#ifdef __linux__
+#include <dlfcn.h>
+static guint catalog_reads;
+/* Count actual production-DSO catalog calls without replacing desktop data. */
+GList *g_app_info_get_all(void) {
+  GList *(*original)(void) = (GList *(*)(void))dlsym(RTLD_NEXT, "g_app_info_get_all");
+  g_assert_nonnull(original);
+  catalog_reads++;
+  return original();
+}
+#endif
 static gboolean timeout(gpointer data) { g_error("Management panel barrier: %s", (char *)data); return G_SOURCE_REMOVE; }
 #define WAIT(c) do { guint timer = g_timeout_add_seconds(10, timeout, #c); while (!(c)) g_main_context_iteration(NULL, TRUE); g_source_remove(timer); } while (0)
 static void gone(gpointer data, GObject *object) { (void)object; *(gboolean *)data = TRUE; }
@@ -36,6 +47,21 @@ static void management_panels(void) {
     g_assert_cmpstr(name, ==, "Friendly Test App");
     g_assert_true(g_icon_equal(icon, expected_icon));
   }
+#ifdef __linux__
+  guint reads = catalog_reads;
+  for (guint i = 0; i < 200; i++) {
+    g_autofree char *name = grotto_panels_app_display_info(principals[0], NULL, NULL);
+    g_assert_cmpstr(name, ==, "Friendly Test App");
+  }
+  g_assert_cmpuint(catalog_reads, ==, reads);
+  g_autoptr(GAppInfoMonitor) monitor = g_app_info_monitor_get();
+  g_signal_emit_by_name(monitor, "changed");
+  g_assert_cmpuint(catalog_reads, ==, reads + 1);
+#endif
+  g_autofree char *spoof = grotto_panels_app_display_info("exe:/tmp/review-other/true", NULL, NULL);
+  g_assert_cmpstr(spoof, ==, "true");
+  g_autofree char *mismatch = grotto_panels_app_display_info("app:org.nostr.GrottoTest;exe:/opt/unrelated/client", NULL, NULL);
+  g_assert_cmpstr(mismatch, ==, "client");
   g_autoptr(GIcon) fallback_icon = NULL;
   g_autofree char *fallback = grotto_panels_app_display_info("exe:/opt/no-desktop/unknown-client", NULL, &fallback_icon);
   g_assert_cmpstr(fallback, ==, "unknown-client");
@@ -54,6 +80,9 @@ static void management_panels(void) {
   GrottoPanelsMetadata request = {.id = "request-1", .label = "Plain App", .operation = "Sign Event", .deadline_usec = g_get_monotonic_time() + 60000000};
   GrottoPanelsMetadata record = {.id = "11", .principal = app.id, .operation = "event", .outcome = "success", .sequence = 11, .has_event_kind = TRUE, .event_kind = 1};
   g_assert_true(grotto_panels_fake_service_replace(fake, GROTTO_PANELS_APPS, &app, NULL));
+  GrottoPanelsMetadata other = app; other.id = "exe:/usr/bin/false"; other.label = other.id;
+  g_autoptr(GrottoPanelsItem) other_item = grotto_panels_item_new(&other, NULL);
+  g_list_store_append(G_LIST_STORE(grotto_panels_service_get_model(service, GROTTO_PANELS_APPS)), other_item);
   g_assert_true(grotto_panels_fake_service_replace(fake, GROTTO_PANELS_STATUS, &status, NULL));
   g_assert_true(grotto_panels_fake_service_replace(fake, GROTTO_PANELS_REQUESTS, &request, NULL));
   g_assert_true(grotto_panels_fake_service_replace(fake, GROTTO_PANELS_ACTIVITY, &record, NULL));
@@ -79,10 +108,18 @@ static void management_panels(void) {
       g_assert_cmpstr(adw_preferences_row_get_title(ADW_PREFERENCES_ROW(first)), ==, "Friendly Test App");
       g_assert_nonnull(strstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(first)), app.id));
       g_assert_true(has_icon(first, expected_icon));
+      GtkWidget *second = gtk_widget_get_next_sibling(first);
+      g_assert_nonnull(second);
+      g_assert_cmpstr(adw_preferences_row_get_title(ADW_PREFERENCES_ROW(second)), ==, "Friendly Test App");
+      g_assert_nonnull(strstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(second)), other.id));
+      g_assert_cmpstr(g_object_get_data(G_OBJECT(first), "principal"), !=, g_object_get_data(G_OBJECT(second), "principal"));
       g_signal_emit_by_name(first, "activated");
       AdwNavigationView *nav = grotto_apps_panel_get_navigation(GROTTO_APPS_PANEL(panel));
       GtkWidget *detail = GTK_WIDGET(adw_navigation_view_get_visible_page(nav));
       g_assert_cmpstr(adw_navigation_page_get_title(ADW_NAVIGATION_PAGE(detail)), ==, "Friendly Test App");
+      GtkWidget *identity = find_title(detail, "Friendly Test App");
+      g_assert_nonnull(identity);
+      g_assert_cmpstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(identity)), ==, app.id);
       GtkWidget *fingerprint = find_title(detail, "Fingerprint");
       g_assert_cmpstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(fingerprint)), ==, app.id);
       g_assert_true(has_icon(detail, expected_icon));

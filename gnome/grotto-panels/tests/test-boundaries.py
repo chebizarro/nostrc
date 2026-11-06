@@ -94,7 +94,7 @@ exports = {
     'grotto_profile_info_copy', 'grotto_profile_info_free', 'grotto_profile_info_validate',
     'grotto_panel_has_profile_host', 'grotto_panel_profile_async', 'grotto_panel_profile_finish',
     'grotto_panels_item_get_type', 'grotto_panels_item_new', 'grotto_panels_item_get_metadata',
-    'grotto_panels_app_display_info',
+    'grotto_panels_app_info_prepare', 'grotto_panels_app_display_info',
     'grotto_panels_metadata_validate', 'grotto_panels_public_text_validate', 'grotto_panel_command_get_access',
     'grotto_panel_command_args_validate', 'grotto_panels_service_get_type', 'grotto_panels_service_get_model',
     'grotto_panels_service_is_available', 'grotto_panels_service_can', 'grotto_panels_service_invoke_async',
@@ -194,7 +194,9 @@ imports.update('''adw_expander_row_new adw_expander_row_get_type adw_expander_ro
 
 # Cosmetic desktop-entry lookup and row icons only. No launch, secret store,
 # generic file reads or IPC entrypoints are admitted.
-imports.update('''g_app_info_get_all g_app_info_get_display_name g_app_info_get_executable
+imports.update('''g_app_info_monitor_get g_find_program_in_path g_list_sort g_once_impl
+ g_mutex_init g_mutex_lock g_mutex_unlock g_hash_table_lookup g_hash_table_insert g_hash_table_contains g_hash_table_remove_all
+ g_app_info_get_all g_app_info_get_display_name g_app_info_get_executable
  g_app_info_get_icon g_app_info_get_id g_list_free_full g_path_get_basename g_path_is_absolute
  g_str_has_prefix g_str_has_suffix g_strndup g_themed_icon_new strchr strcspn memcmp
  adw_entry_row_add_prefix gtk_image_get_type gtk_image_new gtk_image_new_from_gicon

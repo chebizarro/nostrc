@@ -93,7 +93,8 @@ static void render(GrottoAppsPanel *self) {
     adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), title);
     gint64 seconds = MAX((gint64)0, (m->deadline_usec - g_get_monotonic_time()) / G_USEC_PER_SEC);
     g_autofree char *remaining = g_strdup_printf(_("%" G_GINT64_FORMAT " seconds remaining"), seconds);
-    adw_action_row_set_subtitle(ADW_ACTION_ROW(row), remaining);
+    g_autofree char *subtitle = g_strdup_printf(_("%s\n%s"), m->principal, remaining);
+    adw_action_row_set_subtitle(ADW_ACTION_ROW(row), subtitle);
     gtk_list_box_row_set_activatable(GTK_LIST_BOX_ROW(row), grotto_panel_host_can(panel, GROTTO_PANEL_HOST_REVIEW));
     g_object_set_data_full(G_OBJECT(row), "request", g_strdup(m->id), g_free);
     g_signal_connect(row, "activated", G_CALLBACK(review), self); gtk_list_box_append(self->pending_list, row);

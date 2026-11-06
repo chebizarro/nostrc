@@ -1,5 +1,5 @@
 [Desktop Entry]
 Type=Application
 Name=Friendly Test App
-Exec=/usr/bin/true
+Exec=true
 Icon=grotto-test-app

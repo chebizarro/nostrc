@@ -268,6 +268,7 @@ static void grotto_panel_class_init(GrottoPanelClass *klass) {
     0, NULL, NULL, NULL, G_TYPE_NONE, 0);
 }
 static void grotto_panel_init(GrottoPanel *self) {
+  grotto_panels_app_info_prepare();
   GrottoPanelPrivate *p = grotto_panel_get_instance_private(self);
   p->cancellable = g_cancellable_new();
   p->show_window_controls = TRUE;
