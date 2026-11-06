@@ -67,7 +67,18 @@ static void apply_rows(Snapshot *snapshot, GVariant *rows) {
     if (snapshot->slot == GROTTO_PANELS_IDENTITIES) id = text(row, "identity");
     if (!*id || g_hash_table_contains(seen, id)) continue;
     if (snapshot->slot == GROTTO_PANELS_REQUESTS && g_hash_table_contains(self->tombstones, id)) continue;
+    g_auto(GStrv) client_relays = NULL;
+    g_variant_lookup(row, "relays", "^as", &client_relays);
+    const char *client_relay = "";
+    for (guint j = 0; client_relays && client_relays[j]; j++) {
+      const char *candidate[] = {client_relays[j], NULL};
+      GrottoPanelCommandArgs admission = {.relays = candidate};
+      if (grotto_panel_command_args_validate(GROTTO_PANEL_CONFIGURE_REMOTE, &admission, NULL)) {
+        client_relay = client_relays[j]; break;
+      }
+    }
     GrottoPanelsMetadata m = {
+      .relay = client_relay,
       .id = id, .label = text(row, "label"), .public_key = text(row, "identity"),
       .state = text(row, "state"), .reason = text(row, "reason"),
       .access_policy = text(row, "access-policy"), .sequence = sequence,

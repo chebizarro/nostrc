@@ -46,6 +46,7 @@ struct _GrottoControl {
   gboolean desired_bunker, client_healthy, config_healthy;
   gpointer active_rotation; /* owner-thread pointer to the current worker job */
   gchar *bunker_path;
+  gchar *connection_identity; /* Ephemeral link display choice, not an account default or grant. */
   gchar **bunker_relays, **bunker_methods;
   gboolean bunker_defaults_seeded, bunker_relays_initialized;
   GHashTable *accept_reviews;
@@ -289,7 +290,7 @@ static void control_unref(GrottoControl *c) {
   if (!g_atomic_int_dec_and_test(&c->refs)) return;
   grotto_clients_free(c->clients); g_clear_object(&c->history);
     g_clear_pointer(&c->accept_reviews, g_hash_table_unref);
-  g_free(c->bunker_path); g_strfreev(c->bunker_relays); g_strfreev(c->bunker_methods);
+  g_free(c->bunker_path); g_free(c->connection_identity); g_strfreev(c->bunker_relays); g_strfreev(c->bunker_methods);
   signer_approval_service_unref(c->approval); g_object_unref(c->connection); g_free(c->epoch); g_free(c);
 }
 typedef struct {
@@ -651,7 +652,7 @@ static gboolean configure_bunker(GrottoControl *c, GVariant *config, GError **er
    * divergence; never roll back a user's explicit disable after an I/O error. */
   apply_bunker(c); return TRUE;
 }
-typedef struct { GrottoControl *control; GDBusMethodInvocation *inv; gchar *identity, *label, *npub, *uri; gint rc; } PairingIdentity;
+typedef struct { GrottoControl *control; GDBusMethodInvocation *inv; gchar *identity, *label, *npub, *uri; gint rc; gboolean connection_link; } PairingIdentity;
 static void pairing_identity_free(gpointer data) {
   PairingIdentity *job = data; control_unref(job->control); g_object_unref(job->inv);
   g_free(job->identity); g_free(job->label); free(job->npub);
@@ -659,7 +660,15 @@ static void pairing_identity_free(gpointer data) {
 }
 static void pairing_identity_worker(GTask *task, gpointer source, gpointer data, GCancellable *cancel) {
   (void)source; (void)cancel; PairingIdentity *job = data; char *selector = NULL;
-  job->rc = nostr_nip55l_normalize_selector(job->identity, &selector, &job->npub);
+  if (job->connection_link && !*job->identity) {
+    char **ids = NULL; int count = 0;
+    job->rc = nostr_nip55l_list_identities(&ids, &count);
+    if (!job->rc && count == 1) { g_free(job->identity); job->identity = g_strdup(ids[0]); }
+    else job->rc = -1;
+    for (int i = 0; i < count; i++) free(ids[i]);
+    free(ids);
+  }
+  if (!job->rc) job->rc = nostr_nip55l_normalize_selector(job->identity, &selector, &job->npub);
   free(selector); g_task_return_boolean(task, TRUE);
 }
 static void pairing_identity_ready(GObject *source, GAsyncResult *result, gpointer data) {
@@ -678,8 +687,13 @@ static void pairing_identity_ready(GObject *source, GAsyncResult *result, gpoint
     g_hash_table_insert(c->accept_reviews, g_strdup(id), g_object_ref(job->inv));
     finish_accept_reviews(c); return;
   }
-  GVariant *offer = bunker_service_create_pairing(c->bunker, job->npub, job->label, &error);
+  GVariant *offer = job->connection_link ? bunker_service_connection_link(c->bunker, job->npub, &error) :
+      bunker_service_create_pairing(c->bunker, job->npub, job->label, &error);
   if (!offer) { error_reply(job->inv, error); return; }
+  if (job->connection_link && g_strcmp0(c->connection_identity, job->npub)) {
+    g_free(c->connection_identity); c->connection_identity = g_strdup(job->npub);
+    status_changed(c);
+  }
   reply_pairing(job->inv, offer);
 }
 static void create_pairing(GrottoControl *c, GDBusMethodInvocation *inv, const gchar *identity, const gchar *label, const gchar *uri) {
@@ -885,6 +899,7 @@ static void method_call(GDBusConnection *bus, const gchar *sender, const gchar *
     GSettings *settings = settings_manager_get_gsettings(settings_manager_get_default());
     g_autofree gchar *default_id = g_settings_get_string(settings, "default-identity");
     if (!strcmp(default_id, identity)) g_settings_set_string(settings, "default-identity", "");
+    if (!g_strcmp0(c->connection_identity, identity)) g_clear_pointer(&c->connection_identity, g_free);
     signer_notify_identities_changed(); status_changed(c);
     g_dbus_method_invocation_return_value(inv, g_variant_new("(b)", TRUE)); return;
   } else if (!strcmp(method, "ConfigureBunker")) {
@@ -892,6 +907,18 @@ static void method_call(GDBusConnection *bus, const gchar *sender, const gchar *
     g_autoptr(GVariant) config = NULL; g_variant_get(args, "(@a{sv})", &config);
     if (!configure_bunker(c, config, &error)) { error_reply(inv, error); return; }
     reply_dict(inv, status(c)); return;
+  } else if (!strcmp(method, "GetConnectionLink")) {
+    if (!c->bunker || c->reset_busy || !c->desired_bunker || !c->config_healthy) { bunker_unavailable(c, inv); return; }
+    const gchar *identity; g_variant_get(args, "(&s)", &identity);
+    if (strlen(identity) > 4096) {
+      g_dbus_method_invocation_return_dbus_error(inv, GROTTO_CONTROL_ERROR "InvalidInput", "Invalid identity"); return;
+    }
+    PairingIdentity *job = g_new0(PairingIdentity, 1); job->control = c; g_atomic_int_inc(&c->refs);
+    job->inv = g_object_ref(inv); job->connection_link = TRUE; job->label = g_strdup("");
+    job->identity = *identity ? g_strdup(identity) : c->connection_identity ? g_strdup(c->connection_identity) :
+      c->settings ? g_settings_get_string(c->settings, "default-identity") : g_strdup("");
+    g_autoptr(GTask) task = g_task_new(NULL, NULL, pairing_identity_ready, NULL);
+    g_task_set_task_data(task, job, pairing_identity_free); g_task_run_in_thread(task, pairing_identity_worker); return;
   } else if (!strcmp(method, "CreatePairing")) {
     if (!c->bunker || c->reset_busy) { bunker_unavailable(c, inv); return; }
     const gchar *identity, *label; g_variant_get(args, "(&s&s)", &identity, &label);

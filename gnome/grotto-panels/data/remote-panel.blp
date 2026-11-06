@@ -8,16 +8,26 @@ template $GrottoRemotePanel: $GrottoPanel {
     [top] Adw.Banner feedback { title: _("Signer Unavailable"); }
     content: Adw.PreferencesPage {
       Adw.PreferencesGroup {
-        description: _("Remote signing lets apps on other devices request signatures without sharing your secret key. Enable it, then choose Add App → Create Pairing Link… to connect an app.");
+        description: _("Remote signing lets apps on other devices request signatures without sharing your secret key.");
         Adw.SwitchRow enabled { title: _("Enable Remote Signing"); }
         Adw.ActionRow status { title: _("Status"); use-markup: false; subtitle-lines: 0; }
+        Adw.ActionRow handoff { title: _("Change in Grotto…"); activatable: true; visible: false; }
+      }
+      Adw.PreferencesGroup connection_group {
+        title: _("Connection Link");
+        description: _("Enable remote signing to produce a link that an app can paste or scan to connect.");
+        Adw.ActionRow connection_link {
+          title: _("Connection Link"); use-markup: false;
+          subtitle-lines: 3; subtitle-selectable: true; visible: false;
+          [suffix] Button copy_link {
+            icon-name: "edit-copy-symbolic"; tooltip-text: _("Copy Connection Link");
+            valign: center; sensitive: false; styles ["flat"]
+          }
+        }
         Adw.ActionRow pairing {
-          title: _("Add App…");
-          subtitle: _("Choose Create Pairing Link… and open the link in the remote app");
-          subtitle-lines: 0; activatable: true;
+          title: _("Show QR Code"); activatable: true; visible: false;
           [suffix] Image { icon-name: "go-next-symbolic"; }
         }
-        Adw.ActionRow handoff { title: _("Change in Grotto…"); activatable: true; visible: false; }
       }
       Adw.PreferencesGroup relays_group {
         title: _("Relays");

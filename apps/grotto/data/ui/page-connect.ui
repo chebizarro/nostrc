@@ -14,8 +14,8 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
         <property name="description" translatable="yes">Connect an app on another device. You'll choose an identity and review the connection first.</property>
         <child>
           <object class="AdwActionRow" id="paste">
-            <property name="title" translatable="yes">Paste App Link</property>
-            <property name="subtitle" translatable="yes">Preview a link from your clipboard</property>
+            <property name="title" translatable="yes">Paste Connection Link</property>
+            <property name="subtitle" translatable="yes">Preview a nostrconnect:// link from the remote app</property>
             <property name="activatable">true</property>
             <child type="prefix">
               <object class="GtkImage">
@@ -47,9 +47,10 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
           </object>
         </child>
         <child>
-          <object class="AdwActionRow" id="open_link">
-            <property name="title" translatable="yes">Open Link File…</property>
-            <property name="subtitle" translatable="yes">Choose a connection link saved by your app</property>
+          <object class="AdwActionRow" id="show_link">
+            <property name="title" translatable="yes">Show My Connection Link</property>
+            <property name="subtitle" translatable="yes">Open to enable remote signing and show a connection link</property>
+            <property name="subtitle-lines">0</property>
             <property name="activatable">true</property>
             <child type="prefix">
               <object class="GtkImage">
@@ -61,24 +62,6 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 <property name="icon-name">go-next-symbolic</property>
               </object>
             </child>
-          </object>
-        </child>
-      </object>
-    </child>
-    <child>
-      <object class="AdwPreferencesGroup">
-        <child>
-          <object class="AdwActionRow" id="runtime">
-            <property name="title" translatable="yes">Remote Signing</property>
-            <property name="subtitle" translatable="yes">Connecting to signer…</property>
-            <property name="subtitle-lines">3</property>
-          </object>
-        </child>
-        <child>
-          <object class="GtkLabel">
-            <property name="label" translatable="yes">Apps on this device ask for permission automatically. Apps can sign only after you approve their permissions.</property>
-            <property name="wrap">true</property>
-            <property name="xalign">0</property>
           </object>
         </child>
       </object>

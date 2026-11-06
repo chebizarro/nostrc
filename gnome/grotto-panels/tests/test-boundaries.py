@@ -110,7 +110,7 @@ exports = {
     'grotto_apps_panel_get_type', 'grotto_apps_panel_new', 'grotto_apps_panel_get_navigation',
     'grotto_apps_panel_filter_identity', 'grotto_apps_panel_set_pending_group', 'grotto_apps_panel_show_app',
     'grotto_activity_panel_get_type', 'grotto_activity_panel_new', 'grotto_activity_panel_filter_app',
-    'grotto_remote_panel_get_type', 'grotto_remote_panel_new',
+    'grotto_remote_panel_get_type', 'grotto_remote_panel_new', 'grotto_remote_panel_set_connection_link',
 }
 # Exact production imports, not a spelling blacklist of individual secret RPCs.
 # No D-Bus, sockets, dynamic loading or generic file I/O dispatch exists in this DSO.
@@ -218,6 +218,11 @@ imports.update('''g_app_info_monitor_get g_find_program_in_path g_list_sort g_on
  g_str_has_prefix g_str_has_suffix g_strndup g_themed_icon_new strchr strcspn memcmp
  adw_entry_row_add_prefix gtk_image_get_type gtk_image_new gtk_image_new_from_gicon
  gtk_image_set_from_gicon gtk_widget_set_hexpand'''.split())
+
+# Host-provided shareable connection URI display: scoped clipboard ownership and
+# optional host signal discovery only. No IPC, key-store or policy imports.
+imports.update('''g_signal_has_handler_pending g_signal_lookup gdk_clipboard_get_content
+ gdk_clipboard_set_content gdk_content_provider_new_typed'''.split())
 
 # Bounded, service-owned public display cache and row-avatar references only.
 # These add no I/O, decoder, secret or policy imports.

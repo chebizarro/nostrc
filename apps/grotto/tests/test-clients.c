@@ -44,6 +44,7 @@ static void test_contract(ControlFixture *f, gconstpointer data) {
   g_autoptr(GVariant) reqs = get_rows(f, "ListRequests", NULL); g_assert_cmpuint(g_variant_n_children(reqs), ==, 0);
   expect_control_error(f, "ConfigureBunker", g_variant_new("(@a{sv})", g_variant_new_array(G_VARIANT_TYPE("{sv}"), NULL, 0)), GROTTO_CONTROL_ERROR "NotReady");
   expect_control_error(f, "CreatePairing", g_variant_new("(ss)", "", ""), GROTTO_CONTROL_ERROR "NotReady");
+  expect_control_error(f, "GetConnectionLink", g_variant_new("(s)", ""), GROTTO_CONTROL_ERROR "NotReady");
   expect_control_error(f, "AcceptConnectURI", g_variant_new("(ss)", "nostrconnect://invalid", ""), GROTTO_CONTROL_ERROR "NotReady");
   expect_control_error(f, "CancelPairing", g_variant_new("(s)", "opaque-id"), GROTTO_CONTROL_ERROR "NotReady");
   expect_control_error(f, "ResetBunkerEndpoint", NULL, GROTTO_CONTROL_ERROR "NotReady");

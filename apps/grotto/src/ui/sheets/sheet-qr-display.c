@@ -24,6 +24,7 @@ struct _SheetQrDisplay {
   GtkWidget *qr_picture;
   GtkWidget *data_label;
   GtkWidget *type_label;
+  GtkWidget *data_details;
   GtkWidget *warning_box;
   GtkWidget *warning_label;
   GtkWidget *btn_copy;
@@ -33,11 +34,14 @@ struct _SheetQrDisplay {
   gchar *current_data;
   GnQrContentType current_type;
   GdkTexture *qr_texture;
-  GDBusConnection *pairing_bus;
-  gchar *pairing_id;
-  guint expiry, copy_feedback, status_subscription, owner_watch;
-  gboolean status_pending, status_dirty;
+  guint expiry, copy_feedback, owner_watch;
   GdkContentProvider *clipboard_content;
+  GDBusConnection *connection_bus;
+  GCancellable *connection_cancel;
+  AdwComboRow *connection_identity;
+  GtkWidget *connection_enable;
+  gboolean connection_closed, connection_busy, connection_dirty, connection_user_selection;
+  guint connection_subscription;
 };
 
 G_DEFINE_TYPE(SheetQrDisplay, sheet_qr_display, ADW_TYPE_DIALOG)
@@ -98,16 +102,18 @@ static void on_close_clicked(GtkButton *btn, gpointer user_data) {
   adw_dialog_close(ADW_DIALOG(self));
 }
 
-static void pairing_closed(AdwDialog *dialog, gpointer unused) {
+static void sheet_closed(AdwDialog *dialog, gpointer unused) {
   (void)unused; SheetQrDisplay *self = SHEET_QR_DISPLAY(dialog);
-  if (!self->current_data && !self->pairing_id && !self->expiry && !self->clipboard_content && !self->copy_feedback && !self->status_subscription && !self->owner_watch) return;
+  self->connection_closed = TRUE;
+  if (self->connection_cancel) g_cancellable_cancel(self->connection_cancel);
+  if (self->connection_subscription && self->connection_bus)
+    g_dbus_connection_signal_unsubscribe(self->connection_bus, self->connection_subscription);
+  self->connection_subscription = 0;
+  g_clear_object(&self->connection_bus); g_clear_object(&self->connection_cancel);
+  if (!self->current_data && !self->expiry && !self->clipboard_content && !self->copy_feedback && !self->owner_watch) return;
   if (self->copy_feedback) { guint id = self->copy_feedback; self->copy_feedback = 0; g_source_remove(id); }
   if (self->expiry) { g_source_remove(self->expiry); self->expiry = 0; }
-  if (self->pairing_id && self->pairing_bus) g_dbus_connection_call(self->pairing_bus, "org.nostr.Signer", "/org/nostr/signer/grotto", "org.nostr.Grotto.Control1", "CancelPairing", g_variant_new("(s)", self->pairing_id), NULL, G_DBUS_CALL_FLAGS_NONE, 5000, NULL, NULL, NULL);
-  if (self->status_subscription && self->pairing_bus) g_dbus_connection_signal_unsubscribe(self->pairing_bus, self->status_subscription);
-  self->status_subscription = 0;
   if (self->owner_watch) { g_bus_unwatch_name(self->owner_watch); self->owner_watch = 0; }
-  g_clear_pointer(&self->pairing_id, g_free); g_clear_object(&self->pairing_bus);
   if (self->clipboard_content) {
     GdkClipboard *clipboard = gtk_widget_get_clipboard(GTK_WIDGET(self));
     if (gdk_clipboard_get_content(clipboard) == self->clipboard_content) gdk_clipboard_set_content(clipboard, NULL);
@@ -118,54 +124,14 @@ static void pairing_closed(AdwDialog *dialog, gpointer unused) {
   gtk_label_set_text(GTK_LABEL(self->data_label), "");
   gtk_picture_set_paintable(GTK_PICTURE(self->qr_picture), NULL); g_clear_object(&self->qr_texture);
 }
-static gboolean pairing_expired(gpointer data) {
-  SheetQrDisplay *self = data; self->expiry = 0; adw_dialog_close(ADW_DIALOG(self)); return G_SOURCE_REMOVE;
-}
-static void pairing_status_changed(GDBusConnection *, const gchar *, const gchar *, const gchar *, const gchar *, GVariant *, gpointer);
-static void pairing_owner_vanished(GDBusConnection *bus, const gchar *name, gpointer data) {
+static void connection_owner_vanished(GDBusConnection *bus, const gchar *name, gpointer data) {
   (void)bus; (void)name; SheetQrDisplay *self = data;
-  pairing_closed(ADW_DIALOG(self), NULL); adw_dialog_close(ADW_DIALOG(self));
-}
-static void pairing_status_ready(GObject *source, GAsyncResult *result, gpointer data) {
-  SheetQrDisplay *self = data; self->status_pending = FALSE;
-  g_autoptr(GVariant) reply = g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), result, NULL);
-  if (self->pairing_id) {
-    const gchar *state = NULL; g_autoptr(GVariant) row = reply ? g_variant_get_child_value(reply, 0) : NULL;
-    if (!row || !g_variant_lookup(row, "bunker_state", "&s", &state) || g_strcmp0(state, "LISTENING")) {
-      pairing_closed(ADW_DIALOG(self), NULL); adw_dialog_close(ADW_DIALOG(self));
-    }
-  }
-  if (self->pairing_id && self->status_dirty) {
-    self->status_dirty = FALSE;
-    pairing_status_changed(G_DBUS_CONNECTION(source), NULL, NULL, NULL, NULL, NULL, self);
-  }
-  g_object_unref(self);
-}
-static void pairing_status_changed(GDBusConnection *bus, const gchar *sender, const gchar *path,
-    const gchar *interface, const gchar *signal, GVariant *parameters, gpointer data) {
-  (void)sender; (void)path; (void)interface; (void)signal; (void)parameters;
-  SheetQrDisplay *self = data;
-  if (!self->pairing_id) return;
-  if (self->status_pending) { self->status_dirty = TRUE; return; }
-  self->status_pending = TRUE;
-  g_dbus_connection_call(bus, "org.nostr.Signer", "/org/nostr/signer/grotto", "org.nostr.Grotto.Control1", "GetStatus",
-      NULL, G_VARIANT_TYPE("(a{sv})"), G_DBUS_CALL_FLAGS_NONE, 5000, NULL, pairing_status_ready, g_object_ref(self));
-}
-void sheet_qr_display_set_pairing(SheetQrDisplay *self, GDBusConnection *bus, const gchar *id, guint64 expires_at) {
-  g_set_object(&self->pairing_bus, bus); self->pairing_id = g_strdup(id);
-  self->status_subscription = g_dbus_connection_signal_subscribe(bus, "org.nostr.Signer", "org.nostr.Grotto.Control1",
-      "StatusChanged", "/org/nostr/signer/grotto", NULL, G_DBUS_SIGNAL_FLAGS_NONE, pairing_status_changed, self, NULL);
-  self->owner_watch = g_bus_watch_name_on_connection(bus, "org.nostr.Signer", G_BUS_NAME_WATCHER_FLAGS_NONE,
-      NULL, pairing_owner_vanished, self, NULL);
-  pairing_status_changed(bus, NULL, NULL, NULL, NULL, NULL, self);
-  guint64 now = g_get_real_time() / G_USEC_PER_SEC;
-  self->expiry = g_timeout_add_seconds(MAX(1, MIN(300, expires_at > now ? expires_at - now : 1)), pairing_expired, self);
-  show_warning(self, _("Use this link once within five minutes. Closing this window cancels it. Sharing it does not grant access; you review permissions before connecting."));
+  sheet_closed(ADW_DIALOG(self), NULL); adw_dialog_close(ADW_DIALOG(self));
 }
 static void sheet_qr_display_dispose(GObject *object) {
   SheetQrDisplay *self = SHEET_QR_DISPLAY(object);
 
-  pairing_closed(ADW_DIALOG(self), NULL);
+  sheet_closed(ADW_DIALOG(self), NULL);
 
   G_OBJECT_CLASS(sheet_qr_display_parent_class)->dispose(object);
 }
@@ -185,6 +151,7 @@ static void sheet_qr_display_class_init(SheetQrDisplayClass *klass) {
   gtk_widget_class_bind_template_child(widget_class, SheetQrDisplay, qr_picture);
   gtk_widget_class_bind_template_child(widget_class, SheetQrDisplay, data_label);
   gtk_widget_class_bind_template_child(widget_class, SheetQrDisplay, type_label);
+  gtk_widget_class_bind_template_child(widget_class, SheetQrDisplay, data_details);
   gtk_widget_class_bind_template_child(widget_class, SheetQrDisplay, warning_box);
   gtk_widget_class_bind_template_child(widget_class, SheetQrDisplay, warning_label);
   gtk_widget_class_bind_template_child(widget_class, SheetQrDisplay, btn_copy);
@@ -193,7 +160,7 @@ static void sheet_qr_display_class_init(SheetQrDisplayClass *klass) {
 
 static void sheet_qr_display_init(SheetQrDisplay *self) {
   gtk_widget_init_template(GTK_WIDGET(self));
-  g_signal_connect(self, "closed", G_CALLBACK(pairing_closed), NULL);
+  g_signal_connect(self, "closed", G_CALLBACK(sheet_closed), NULL);
 
   self->current_data = NULL;
   self->current_type = GN_QR_TYPE_UNKNOWN;
@@ -217,10 +184,14 @@ SheetQrDisplay *sheet_qr_display_new(void) {
 
 /* Update the QR code display */
 static void update_qr_display(SheetQrDisplay *self) {
-  if (!self->current_data || !*self->current_data) {
+  gboolean has_data = self->current_data && *self->current_data;
+  gtk_widget_set_visible(self->qr_picture, has_data);
+  gtk_widget_set_visible(self->data_details, has_data);
+  if (!has_data) {
     if (self->qr_picture) {
       gtk_picture_set_paintable(GTK_PICTURE(self->qr_picture), NULL);
     }
+    g_clear_object(&self->qr_texture);
     return;
   }
 
@@ -247,7 +218,7 @@ static void update_qr_display(SheetQrDisplay *self) {
   /* Update data label (truncated for long data) */
   if (self->data_label) {
     gsize len = strlen(self->current_data);
-    if (len > 60) {
+    if (len > 60 && self->current_type != GN_QR_TYPE_BUNKER_URI) {
       /* Show truncated version */
       g_autofree gchar *truncated = g_strdup_printf("%.30s...%.20s",
                                                      self->current_data,
@@ -278,10 +249,23 @@ void sheet_qr_display_set_data(SheetQrDisplay *self,
                                 const gchar *title) {
   g_return_if_fail(SHEET_IS_QR_DISPLAY(self));
 
+  if (g_strcmp0(self->current_data, data)) {
+    if (self->copy_feedback) { g_source_remove(self->copy_feedback); self->copy_feedback = 0; }
+    gtk_button_set_icon_name(GTK_BUTTON(self->btn_copy), "edit-copy-symbolic");
+    gtk_widget_set_tooltip_text(self->btn_copy, _("Copy to Clipboard"));
+    gtk_widget_remove_css_class(self->btn_copy, "success");
+    if (self->clipboard_content) {
+      GdkClipboard *clipboard = gtk_widget_get_clipboard(GTK_WIDGET(self));
+      if (gdk_clipboard_get_content(clipboard) == self->clipboard_content) gdk_clipboard_set_content(clipboard, NULL);
+      g_clear_object(&self->clipboard_content);
+    }
+  }
   if (self->current_data) secure_wipe(self->current_data, strlen(self->current_data));
   g_free(self->current_data);
   self->current_data = g_strdup(data);
   self->current_type = type;
+  gtk_widget_set_sensitive(self->btn_copy, data && *data);
+  gtk_label_set_text(GTK_LABEL(self->data_label), "");
 
   /* Set title */
   adw_dialog_set_title(ADW_DIALOG(self), title ? title : _("QR Code"));
@@ -302,6 +286,152 @@ void sheet_qr_display_set_data(SheetQrDisplay *self,
   }
 
   update_qr_display(self);
+}
+
+static void connection_refresh(SheetQrDisplay *self);
+static void connection_selected(GObject *object, GParamSpec *pspec, gpointer data);
+static gboolean connection_expired(gpointer data) {
+  SheetQrDisplay *self = data; self->expiry = 0;
+  sheet_qr_display_set_data(self, NULL, GN_QR_TYPE_BUNKER_URI, _("Connection Link"));
+  connection_refresh(self); return G_SOURCE_REMOVE;
+}
+static void connection_offer_ready(GObject *source, GAsyncResult *result, gpointer data) {
+  SheetQrDisplay *self = data; self->connection_busy = FALSE;
+  g_autoptr(GVariant) reply = g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), result, NULL);
+  if (!self->connection_closed) {
+    if (self->connection_dirty) { self->connection_dirty = FALSE; connection_refresh(self); }
+    else if (reply) {
+      g_autoptr(GVariant) offer = g_variant_get_child_value(reply, 0);
+      const gchar *uri = NULL, *identity = NULL; guint64 expires = 0;
+      if (g_variant_lookup(offer, "identity", "&s", &identity)) {
+        GListModel *ids = adw_combo_row_get_model(self->connection_identity);
+        for (guint i = 0; ids && i < g_list_model_get_n_items(ids); i++) {
+          g_autoptr(GtkStringObject) id = g_list_model_get_item(ids, i);
+          if (!g_strcmp0(identity, gtk_string_object_get_string(id))) {
+            g_signal_handlers_block_by_func(self->connection_identity, connection_selected, self);
+            adw_combo_row_set_selected(self->connection_identity, i);
+            g_signal_handlers_unblock_by_func(self->connection_identity, connection_selected, self); break;
+          }
+        }
+      }
+      g_variant_lookup(offer, "uri", "&s", &uri); g_variant_lookup(offer, "expires_at", "t", &expires);
+      sheet_qr_display_set_data(self, uri, GN_QR_TYPE_BUNKER_URI, _("Connection Link"));
+      show_warning(self, _("Paste or scan this link in a remote app; single-use links are replaced after an app connects."));
+      guint64 now = g_get_real_time() / G_USEC_PER_SEC;
+      if (self->expiry) g_source_remove(self->expiry);
+      self->expiry = g_timeout_add_seconds(MAX(1, MIN(300, expires > now ? expires - now : 1)), connection_expired, self);
+    } else {
+      sheet_qr_display_set_data(self, NULL, GN_QR_TYPE_BUNKER_URI, _("Connection Link"));
+      show_warning(self, _("A connection link could not be created. Choose a signing identity and check Remote Signing."));
+    }
+  }
+  g_object_unref(self);
+}
+static void connection_status_ready(GObject *source, GAsyncResult *result, gpointer data) {
+  SheetQrDisplay *self = data;
+  g_autoptr(GVariant) reply = g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), result, NULL);
+  if (!self->connection_closed && !self->connection_dirty && reply) {
+    g_autoptr(GVariant) status = g_variant_get_child_value(reply, 0);
+    const gchar *state = NULL; gboolean enabled = FALSE;
+    g_variant_lookup(status, "bunker_state", "&s", &state); g_variant_lookup(status, "bunker_enabled", "b", &enabled);
+    gtk_widget_set_visible(self->connection_enable, !enabled);
+    if (!g_strcmp0(state, "LISTENING")) {
+      GtkStringObject *id = GTK_STRING_OBJECT(adw_combo_row_get_selected_item(self->connection_identity));
+      if (id || !self->connection_user_selection) {
+        g_dbus_connection_call(self->connection_bus, "org.nostr.Signer", "/org/nostr/signer/grotto", "org.nostr.Grotto.Control1",
+          "GetConnectionLink", g_variant_new("(s)", self->connection_user_selection ? gtk_string_object_get_string(id) : ""), G_VARIANT_TYPE("(a{sv})"),
+          G_DBUS_CALL_FLAGS_NONE, 10000, self->connection_cancel, connection_offer_ready, self); return;
+      }
+      sheet_qr_display_set_data(self, NULL, GN_QR_TYPE_BUNKER_URI, _("Connection Link"));
+      show_warning(self, _("Choose the identity to connect."));
+    } else {
+      sheet_qr_display_set_data(self, NULL, GN_QR_TYPE_BUNKER_URI, _("Connection Link"));
+      show_warning(self, enabled ? _("The connection link will appear when remote signing is ready.") :
+        _("Enable remote signing to produce a link that an app can paste or scan to connect."));
+    }
+  } else if (!self->connection_closed && !reply) {
+    sheet_qr_display_set_data(self, NULL, GN_QR_TYPE_BUNKER_URI, _("Connection Link"));
+    show_warning(self, _("Grotto could not reach the signer."));
+  }
+  self->connection_busy = FALSE;
+  if (!self->connection_closed && self->connection_dirty) { self->connection_dirty = FALSE; connection_refresh(self); }
+  g_object_unref(self);
+}
+static void connection_refresh(SheetQrDisplay *self) {
+  if (self->connection_closed || !self->connection_bus) return;
+  if (self->connection_busy) { self->connection_dirty = TRUE; return; }
+  self->connection_busy = TRUE;
+  g_dbus_connection_call(self->connection_bus, "org.nostr.Signer", "/org/nostr/signer/grotto", "org.nostr.Grotto.Control1", "GetStatus",
+    NULL, G_VARIANT_TYPE("(a{sv})"), G_DBUS_CALL_FLAGS_NONE, 10000, self->connection_cancel, connection_status_ready, g_object_ref(self));
+}
+static void connection_changed(GDBusConnection *bus, const gchar *sender, const gchar *path, const gchar *interface,
+    const gchar *signal, GVariant *parameters, gpointer data) {
+  (void)bus; (void)sender; (void)path; (void)interface; (void)signal; (void)parameters; connection_refresh(data);
+}
+static void connection_selected(GObject *object, GParamSpec *pspec, gpointer data) {
+  (void)object; (void)pspec; SheetQrDisplay *self = data;
+  self->connection_user_selection = TRUE;
+  sheet_qr_display_set_data(self, NULL, GN_QR_TYPE_BUNKER_URI, _("Connection Link"));
+  connection_refresh(self);
+}
+static void connection_enable(GtkButton *button, gpointer data) {
+  (void)button; SheetQrDisplay *self = data;
+  if (!gtk_widget_activate_action(GTK_WIDGET(self), "win.enable-remote-signing", NULL))
+    show_warning(self, _("Open Remote Signing in Grotto to enable it."));
+}
+static void connection_identities_ready(GObject *source, GAsyncResult *result, gpointer data) {
+  SheetQrDisplay *self = data;
+  g_autoptr(GVariant) reply = g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), result, NULL);
+  if (!self->connection_closed && reply) {
+    g_autoptr(GVariant) rows = g_variant_get_child_value(reply, 0);
+    g_autoptr(GtkStringList) ids = gtk_string_list_new(NULL); guint selected = GTK_INVALID_LIST_POSITION;
+    for (gsize i = 0; i < g_variant_n_children(rows); i++) {
+      g_autoptr(GVariant) row = g_variant_get_child_value(rows, i); const gchar *id = NULL;
+      gboolean can_sign = FALSE, watch_only = TRUE, is_default = FALSE;
+      g_variant_lookup(row, "identity", "&s", &id); g_variant_lookup(row, "can-sign", "b", &can_sign);
+      g_variant_lookup(row, "watch-only", "b", &watch_only); g_variant_lookup(row, "is-default", "b", &is_default);
+      if (!id || !can_sign || watch_only) continue;
+      if (is_default) selected = g_list_model_get_n_items(G_LIST_MODEL(ids));
+      gtk_string_list_append(ids, id);
+    }
+    guint count = g_list_model_get_n_items(G_LIST_MODEL(ids));
+    self->connection_user_selection = count == 1;
+    g_signal_handlers_block_by_func(self->connection_identity, connection_selected, self);
+    adw_combo_row_set_model(self->connection_identity, G_LIST_MODEL(ids));
+    adw_combo_row_set_selected(self->connection_identity, count == 1 ? 0 : selected);
+    gtk_widget_set_visible(GTK_WIDGET(self->connection_identity), count > 1);
+    g_signal_handlers_unblock_by_func(self->connection_identity, connection_selected, self);
+    connection_refresh(self);
+  } else if (!self->connection_closed) show_warning(self, _("Grotto could not load signing identities."));
+  g_object_unref(self);
+}
+SheetQrDisplay *sheet_qr_display_new_connection(void) {
+  SheetQrDisplay *self = sheet_qr_display_new();
+  sheet_qr_display_set_data(self, NULL, GN_QR_TYPE_BUNKER_URI, _("Connection Link"));
+  self->connection_identity = ADW_COMBO_ROW(adw_combo_row_new());
+  adw_preferences_row_set_title(ADW_PREFERENCES_ROW(self->connection_identity), _("Identity"));
+  GtkWidget *group = adw_preferences_group_new();
+  adw_preferences_group_add(ADW_PREFERENCES_GROUP(group), GTK_WIDGET(self->connection_identity));
+  gtk_box_prepend(GTK_BOX(self->content_box), group);
+  self->connection_enable = adw_action_row_new();
+  adw_preferences_row_set_title(ADW_PREFERENCES_ROW(self->connection_enable), _("Enable Remote Signing"));
+  gtk_list_box_row_set_activatable(GTK_LIST_BOX_ROW(self->connection_enable), TRUE);
+  adw_action_row_add_suffix(ADW_ACTION_ROW(self->connection_enable), gtk_image_new_from_icon_name("go-next-symbolic"));
+  gtk_widget_set_visible(self->connection_enable, FALSE);
+  adw_preferences_group_add(ADW_PREFERENCES_GROUP(group), self->connection_enable);
+  g_signal_connect(self->connection_enable, "activated", G_CALLBACK(connection_enable), self);
+  g_signal_connect(self->connection_identity, "notify::selected", G_CALLBACK(connection_selected), self);
+  GApplication *app = g_application_get_default(); GDBusConnection *bus = app ? g_application_get_dbus_connection(app) : NULL;
+  if (bus) {
+    self->connection_bus = g_object_ref(bus); self->connection_cancel = g_cancellable_new();
+    self->connection_subscription = g_dbus_connection_signal_subscribe(bus, "org.nostr.Signer", "org.nostr.Grotto.Control1", "StatusChanged",
+      "/org/nostr/signer/grotto", NULL, G_DBUS_SIGNAL_FLAGS_NONE, connection_changed, self, NULL);
+    self->owner_watch = g_bus_watch_name_on_connection(bus, "org.nostr.Signer", G_BUS_NAME_WATCHER_FLAGS_NONE,
+      NULL, connection_owner_vanished, self, NULL);
+    g_dbus_connection_call(bus, "org.nostr.Signer", "/org/nostr/signer/grotto", "org.nostr.Grotto.Control1", "ListIdentities", NULL,
+      G_VARIANT_TYPE("(aa{sv})"), G_DBUS_CALL_FLAGS_NONE, 10000, self->connection_cancel, connection_identities_ready, g_object_ref(self));
+  } else show_warning(self, _("Grotto could not reach the signer."));
+  return self;
 }
 
 void sheet_qr_display_set_npub(SheetQrDisplay *self,

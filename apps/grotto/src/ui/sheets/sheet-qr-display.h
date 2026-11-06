@@ -23,6 +23,8 @@ G_DECLARE_FINAL_TYPE(SheetQrDisplay, sheet_qr_display, SHEET, QR_DISPLAY, AdwDia
  * Returns: A new SheetQrDisplay
  */
 SheetQrDisplay *sheet_qr_display_new(void);
+/* Shared daemon-owned connection link, with identity choice only when needed. */
+SheetQrDisplay *sheet_qr_display_new_connection(void);
 
 /* Set the data to display as a QR code.
  *
@@ -57,7 +59,5 @@ void sheet_qr_display_set_ncryptsec(SheetQrDisplay *self,
 void sheet_qr_display_set_bunker_uri(SheetQrDisplay *self,
                                       const gchar *bunker_uri);
 
-/* Binds a daemon-issued single-use offer to this sheet's close/expiry. */
-void sheet_qr_display_set_pairing(SheetQrDisplay *, GDBusConnection *, const gchar *pairing_id, guint64 expires_at);
 G_END_DECLS
 #endif /* APPS_GNOSTR_SIGNER_UI_SHEETS_SHEET_QR_DISPLAY_H */

@@ -6,7 +6,7 @@ template $GrottoPageConnect: Adw.PreferencesPage {
     title: _("Connect an Application");
     description: _("Connect an app on another device. You'll choose an identity and review the connection first.");
     Adw.ActionRow paste {
-      title: _("Paste App Link"); subtitle: _("Preview a link from your clipboard"); activatable: true;
+      title: _("Paste Connection Link"); subtitle: _("Preview a nostrconnect:// link from the remote app"); activatable: true;
       [prefix] Image { icon-name: "edit-paste-symbolic"; }
       [suffix] Image { icon-name: "go-next-symbolic"; }
     }
@@ -15,17 +15,10 @@ template $GrottoPageConnect: Adw.PreferencesPage {
       [prefix] Image { icon-name: "camera-photo-symbolic"; }
       [suffix] Image { icon-name: "go-next-symbolic"; }
     }
-    Adw.ActionRow open_link {
-      title: _("Open Link File…"); subtitle: _("Choose a connection link saved by your app"); activatable: true;
+    Adw.ActionRow show_link {
+      title: _("Show My Connection Link"); subtitle: _("Open to enable remote signing and show a connection link"); subtitle-lines: 0; activatable: true;
       [prefix] Image { icon-name: "insert-link-symbolic"; }
       [suffix] Image { icon-name: "go-next-symbolic"; }
-    }
-  }
-  Adw.PreferencesGroup {
-    Adw.ActionRow runtime { title: _("Remote Signing"); subtitle: _("Connecting to signer…"); subtitle-lines: 3; }
-    Label {
-      label: _("Apps on this device ask for permission automatically. Apps can sign only after you approve their permissions.");
-      wrap: true; xalign: 0;
     }
   }
 }

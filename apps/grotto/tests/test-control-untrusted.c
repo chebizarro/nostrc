@@ -18,6 +18,7 @@ int main(int argc, char **argv) {
       "GetStatus", NULL, G_VARIANT_TYPE("(a{sv})"), 0, 5000, NULL, &error); g_assert_no_error(error);
     g_autoptr(GVariant) dict = g_variant_get_child_value(status, 0); const char *role = NULL;
     g_assert_true(g_variant_lookup(dict, "management-role", "&s", &role)); g_assert_cmpstr(role, ==, "manager");
+    denied(bus, "org.nostr.Signer", "GetConnectionLink", g_variant_new("(s)", ""));
     g_autoptr(GVariant) renamed = g_dbus_connection_call_sync(bus, "org.nostr.Signer", "/org/nostr/signer/grotto", IFACE,
       "SetClientLabel", g_variant_new("(ss)", argv[2], argv[3]), NULL, 0, 5000, NULL, &error);
     g_assert_no_error(error); g_assert_nonnull(renamed); return 0;
@@ -49,6 +50,7 @@ int main(int argc, char **argv) {
   denied(bus, argv[1], "ExportRawIdentity", g_variant_new("(s)", "")); denied(bus, argv[1], "RotateIdentity", g_variant_new("(s)", ""));
   denied(bus, argv[1], "ConfigureBunker", g_variant_new("(@a{sv})", g_variant_new_array(G_VARIANT_TYPE("{sv}"), NULL, 0)));
   denied(bus, argv[1], "CreatePairing", g_variant_new("(ss)", "", ""));
+  denied(bus, argv[1], "GetConnectionLink", g_variant_new("(s)", ""));
   denied(bus, argv[1], "AcceptConnectURI", g_variant_new("(ss)", "invalid", ""));
   denied(bus, argv[1], "CancelPairing", g_variant_new("(s)", "id")); denied(bus, argv[1], "ResetBunkerEndpoint", NULL);
   denied(bus, argv[1], "ListActivity", g_variant_new("(tu)", (guint64)0, (guint)100)); denied(bus, argv[1], "ClearActivity", NULL);

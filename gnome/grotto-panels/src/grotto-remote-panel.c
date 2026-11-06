@@ -6,7 +6,11 @@ struct _GrottoRemotePanel {
   GrottoPanel parent_instance;
   AdwBanner *feedback;
   AdwSwitchRow *enabled;
-  AdwActionRow *status, *reset, *handoff, *pairing;
+  AdwActionRow *status, *reset, *handoff, *pairing, *connection_link;
+  AdwPreferencesGroup *connection_group;
+  GtkButton *copy_link;
+  gchar *connection_uri;
+  GdkContentProvider *clipboard_content;
   AdwEntryRow *new_relay, *methods;
   GtkListBox *relays_list;
   GListModel *model;
@@ -109,11 +113,38 @@ static void handoff(AdwActionRow *row, gpointer data) {
   (void)row; grotto_panel_host_invoke(data, GROTTO_PANEL_HOST_OPEN_SIGNER, "remote-signing", NULL);
 }
 static void pairing(AdwActionRow *row, gpointer data) {
-  (void)row;
-  GrottoPanel *panel = data;
-  if (grotto_panel_host_can(panel, GROTTO_PANEL_HOST_ADD_APP))
-    grotto_panel_host_invoke(panel, GROTTO_PANEL_HOST_ADD_APP, NULL, NULL);
-  else grotto_panel_host_invoke(panel, GROTTO_PANEL_HOST_OPEN_SIGNER, "remote-signing", NULL);
+  (void)row; g_signal_emit_by_name(data, "show-connection-link");
+}
+static void clear_clipboard(GrottoRemotePanel *self) {
+  if (!self->clipboard_content) return;
+  GdkClipboard *clipboard = gtk_widget_get_clipboard(GTK_WIDGET(self));
+  if (gdk_clipboard_get_content(clipboard) == self->clipboard_content) gdk_clipboard_set_content(clipboard, NULL);
+  g_clear_object(&self->clipboard_content);
+}
+void grotto_remote_panel_set_connection_link(GrottoRemotePanel *self, const char *uri) {
+  g_return_if_fail(GROTTO_IS_REMOTE_PANEL(self));
+  if (uri && (!g_str_has_prefix(uri, "bunker://") || strlen(uri) > 65536 || !g_utf8_validate(uri, -1, NULL))) uri = NULL;
+  if (g_strcmp0(self->connection_uri, uri)) clear_clipboard(self);
+  g_free(self->connection_uri); self->connection_uri = g_strdup(uri);
+  adw_action_row_set_subtitle(self->connection_link, uri ? uri : _("Open Show QR Code to choose an identity or check the connection"));
+  gtk_widget_set_sensitive(GTK_WIDGET(self->copy_link), uri != NULL);
+}
+static void copy_link(GtkButton *button, gpointer data) {
+  (void)button; GrottoRemotePanel *self = data;
+  if (!self->connection_uri) return;
+  clear_clipboard(self);
+  self->clipboard_content = gdk_content_provider_new_typed(G_TYPE_STRING, self->connection_uri);
+  gdk_clipboard_set_content(gtk_widget_get_clipboard(GTK_WIDGET(self)), self->clipboard_content);
+}
+static void request_connection_link(GtkWidget *widget, gpointer data) {
+  (void)data; GrottoRemotePanel *self = GROTTO_REMOTE_PANEL(widget);
+  const GrottoPanelsMetadata *m = self->snapshot ? grotto_panels_item_get_metadata(self->snapshot) : NULL;
+  if (m && m->remote_enabled && !g_strcmp0(m->state, "LISTENING") &&
+      grotto_panel_can_command(GROTTO_PANEL(self), GROTTO_PANEL_CONFIGURE_REMOTE))
+    g_signal_emit_by_name(self, "connection-link-requested");
+}
+static void unmap_connection(GtkWidget *widget, gpointer data) {
+  (void)data; grotto_remote_panel_set_connection_link(GROTTO_REMOTE_PANEL(widget), NULL);
 }
 static void render(GrottoRemotePanel *self) {
   self->updating = TRUE;
@@ -130,9 +161,16 @@ static void render(GrottoRemotePanel *self) {
   adw_banner_set_title(self->feedback, _("Signer Unavailable"));
   adw_banner_set_revealed(self->feedback, !m);
   adw_action_row_set_subtitle(self->status, m && m->reason && *m->reason ? m->reason : state_label(m ? m->state : NULL));
-  gtk_widget_set_sensitive(GTK_WIDGET(self->pairing), m && !self->busy &&
-    (grotto_panel_host_can(GROTTO_PANEL(self), GROTTO_PANEL_HOST_ADD_APP) ||
-     grotto_panel_host_can(GROTTO_PANEL(self), GROTTO_PANEL_HOST_OPEN_SIGNER)));
+  gboolean ready = m && m->remote_enabled && !g_strcmp0(m->state, "LISTENING");
+  if (!ready) grotto_remote_panel_set_connection_link(self, NULL);
+  gtk_widget_set_visible(GTK_WIDGET(self->connection_link), m && m->remote_enabled);
+  gtk_widget_set_visible(GTK_WIDGET(self->pairing), m && m->remote_enabled);
+  gtk_widget_set_sensitive(GTK_WIDGET(self->pairing), can && g_signal_has_handler_pending(self,
+    g_signal_lookup("show-connection-link", GROTTO_TYPE_REMOTE_PANEL), 0, TRUE));
+  adw_preferences_group_set_description(self->connection_group, ready ?
+    _("Paste or scan this link in a remote app; single-use links are replaced after an app connects.") :
+    m && m->remote_enabled ? _("The connection link will appear when remote signing is ready.") :
+    _("Enable remote signing to produce a link that an app can paste or scan to connect."));
   adw_switch_row_set_active(self->enabled, m && m->remote_enabled);
   gtk_widget_set_sensitive(GTK_WIDGET(self->enabled), can);
   gtk_widget_set_sensitive(GTK_WIDGET(self->new_relay), can);
@@ -156,6 +194,7 @@ static void render(GrottoRemotePanel *self) {
   }
   self->updating = FALSE;
   if (move_focus) gtk_widget_child_focus(GTK_WIDGET(self), GTK_DIR_TAB_FORWARD);
+  if (gtk_widget_get_mapped(GTK_WIDGET(self))) request_connection_link(GTK_WIDGET(self), NULL);
 }
 static void changed(GListModel *model, guint p, guint r, guint a, gpointer data) { (void)model; (void)p; (void)r; (void)a; render(data); }
 static void attach(GrottoPanel *panel, gpointer data) {
@@ -173,19 +212,27 @@ static void dispose(GObject *object) {
   GrottoRemotePanel *self = GROTTO_REMOTE_PANEL(object);
   if (self->model) g_signal_handlers_disconnect_by_data(self->model, self);
   g_clear_object(&self->model); g_clear_object(&self->snapshot);
+  clear_clipboard(self); g_clear_pointer(&self->connection_uri, g_free);
   adw_navigation_page_set_child(ADW_NAVIGATION_PAGE(self), NULL);
   gtk_widget_dispose_template(GTK_WIDGET(self), GROTTO_TYPE_REMOTE_PANEL);
   G_OBJECT_CLASS(grotto_remote_panel_parent_class)->dispose(object);
 }
 static void grotto_remote_panel_class_init(GrottoRemotePanelClass *klass) {
   G_OBJECT_CLASS(klass)->dispose = dispose; GtkWidgetClass *wc = GTK_WIDGET_CLASS(klass);
+  g_signal_new("connection-link-requested", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL, G_TYPE_NONE, 0);
+  g_signal_new("show-connection-link", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL, G_TYPE_NONE, 0);
   gtk_widget_class_set_template_from_resource(wc, "/org/nostr/GrottoPanels/remote-panel.ui");
 #define BIND(x) gtk_widget_class_bind_template_child(wc, GrottoRemotePanel, x)
+  BIND(connection_group); BIND(connection_link); BIND(copy_link);
   BIND(feedback); BIND(enabled); BIND(status); BIND(pairing); BIND(reset); BIND(handoff); BIND(new_relay); BIND(methods); BIND(relays_list);
 #undef BIND
 }
 static void grotto_remote_panel_init(GrottoRemotePanel *self) {
   gtk_widget_init_template(GTK_WIDGET(self));
+  g_signal_connect(self, "map", G_CALLBACK(request_connection_link), NULL);
+  g_signal_connect(self, "unmap", G_CALLBACK(unmap_connection), NULL);
+  g_signal_connect(self->copy_link, "clicked", G_CALLBACK(copy_link), self);
+  grotto_remote_panel_set_connection_link(self, NULL);
   g_signal_connect(self, "service-changed", G_CALLBACK(attach), NULL);
   g_signal_connect(self->enabled, "notify::active", G_CALLBACK(enabled_changed), self);
   g_signal_connect(self->new_relay, "apply", G_CALLBACK(add_relay), self);

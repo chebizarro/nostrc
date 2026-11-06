@@ -148,7 +148,7 @@ set(BLUEPRINT_SOURCES
   data/ui/page-settings.blp
   data/ui/page-identity-detail.blp data/ui/approval-dialog.blp data/ui/lock-screen.blp
   data/ui/onboarding-assistant.blp data/ui/shortcuts-window.blp
-  data/ui/sheets/sheet-create-bunker.blp data/ui/sheets/sheet-qr-display.blp
+  data/ui/sheets/sheet-qr-display.blp
   data/ui/sheets/sheet-qr-scanner.blp data/ui/widgets/gn-secure-entry.blp)
 list(TRANSFORM BLUEPRINT_SOURCES PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
 
@@ -191,7 +191,7 @@ set(APP_UI_SRC
   src/ui/approval_dialog.c src/ui/lock-screen.c src/ui/onboarding-assistant.c
   src/ui/page-connect.c src/ui/page-identity-detail.c src/ui/page-settings.c
   src/ui/pairing-flow.c src/ui/signer-window.c
-  src/ui/sheets/sheet-create-bunker.c src/ui/sheets/sheet-qr-display.c
+  src/ui/sheets/sheet-qr-display.c
   src/ui/sheets/sheet-qr-scanner.c src/ui/widgets/gn-secure-entry.c)
 list(TRANSFORM APP_UI_SRC PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
 list(APPEND APP_SRC ${APP_UI_SRC})
@@ -241,7 +241,8 @@ target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/nips/ni
 # libnostr core for keys.h and crypto/bip39.h
 target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/libnostr/include)
 # Link against core to resolve owner APIs
-target_sources(${APP_SIGNER_BIN} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/grotto-panels-control1-service.c")
+target_sources(${APP_SIGNER_BIN} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src/grotto-panels-control1-service.c"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/grotto-connection-link.c")
 target_link_libraries(${APP_SIGNER_BIN} PRIVATE GrottoPanels::Panels nostr-publish nostrc::bud02 PkgConfig::GROTTO_SOUP)
 target_link_libraries(${APP_SIGNER_BIN} PRIVATE PkgConfig::GTK4 PkgConfig::GLIB PkgConfig::ADWAITA PkgConfig::JSON_GLIB nostr_nip55l_core nip04)
 # Ensure library directories are passed to linker (macOS fix)

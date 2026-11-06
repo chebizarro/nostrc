@@ -49,7 +49,7 @@ typedef struct {
   nostr_secure_buf secret;
   gint64 deadline;
   guint generation;
-  gboolean outbound, approved, consumed, terminal;
+  gboolean outbound, approved, consumed, terminal, connection_link;
   gint tier;
   SignerGateHandle *handle;
   NostrNip46CancelHandle *delivery_cancel;
@@ -912,7 +912,10 @@ static void finish_offer(PairOffer *o) {
 }
 static void wipe_variant_string(gpointer data) { wipe(data); }
 static gboolean offer_expired(gpointer data) {
-  PairOffer *o = data; bunker_service_cancel_pairing(o->service, o->id); return G_SOURCE_REMOVE;
+  PairOffer *o = data; BunkerService *s = o->service; gboolean connection_link = o->connection_link;
+  bunker_service_cancel_pairing(s, o->id);
+  if (connection_link) pairing_status_changed(s);
+  return G_SOURCE_REMOVE;
 }
 static PairOffer *offer_new(BunkerService *s, const gchar *identity, const gchar *label, GError **error) {
   SignerApprovalService *approval = signer_get_approval_service();
@@ -947,6 +950,7 @@ static PairOffer *offer_new(BunkerService *s, const gchar *identity, const gchar
   g_source_attach(o->expiry, g_main_context_get_thread_default());
   g_hash_table_insert(s->offers, g_strdup(o->id), o); return o;
 }
+static GVariant *pairing_offer(BunkerService *s, PairOffer *o, GError **error);
 GVariant *bunker_service_create_pairing(BunkerService *s, const gchar *identity, const gchar *label, GError **error) {
   if (!s || s->state != BUNKER_STATE_RUNNING) { pairing_error(error, G_IO_ERROR_NOT_CONNECTED); return NULL; }
   PairOffer *o = offer_new(s, identity, label, error); if (!o) return NULL;
@@ -957,14 +961,37 @@ GVariant *bunker_service_create_pairing(BunkerService *s, const gchar *identity,
   gchar *encoded = g_base64_encode(random.ptr, 32); secure_free(&random);
   for (guint i = 0; i < 43; i++) ((gchar *)o->secret.ptr)[i] = encoded[i] == '+' ? '-' : encoded[i] == '/' ? '_' : encoded[i];
   ((gchar *)o->secret.ptr)[43] = 0; wipe(encoded);
+  return pairing_offer(s, o, error);
+}
+static GVariant *pairing_offer(BunkerService *s, PairOffer *o, GError **error) {
   gchar *uri = bunker_service_get_bunker_uri(s, o->secret.ptr);
   if (!uri) { bunker_service_cancel_pairing(s, o->id); pairing_error(error, G_IO_ERROR_FAILED); return NULL; }
   GVariantBuilder b; g_variant_builder_init(&b, G_VARIANT_TYPE_VARDICT);
   g_variant_builder_add(&b, "{sv}", "pairing_id", g_variant_new_string(o->id));
+  g_variant_builder_add(&b, "{sv}", "identity", g_variant_new_string(o->identity));
   g_variant_builder_add(&b, "{sv}", "uri", g_variant_new_from_data(G_VARIANT_TYPE_STRING,
       uri, strlen(uri) + 1, TRUE, wipe_variant_string, uri));
   g_variant_builder_add(&b, "{sv}", "expires_at", g_variant_new_uint64(time(NULL) + (o->deadline - g_get_monotonic_time() + G_USEC_PER_SEC - 1) / G_USEC_PER_SEC));
   return g_variant_ref_sink(g_variant_builder_end(&b));
+}
+GVariant *bunker_service_connection_link(BunkerService *s, const gchar *identity, GError **error) {
+  SignerApprovalService *approval = signer_get_approval_service();
+  if (!s || s->closing || s->no_ui || !s->seen_healthy || !approval || signer_approval_service_is_paused(approval) || s->state != BUNKER_STATE_RUNNING) { pairing_error(error, G_IO_ERROR_NOT_CONNECTED); return NULL; }
+  GHashTableIter it; gpointer value;
+  g_hash_table_iter_init(&it, s->offers);
+  while (g_hash_table_iter_next(&it, NULL, &value)) {
+    PairOffer *o = value;
+    if (o->connection_link && !g_strcmp0(o->identity, identity) && !o->consumed && !o->terminal &&
+        o->generation == s->generation && o->security_generation == signer_approval_service_generation(approval) &&
+        o->deadline > g_get_monotonic_time() && o->secret.ptr)
+      return pairing_offer(s, o, error);
+  }
+  GVariant *offer = bunker_service_create_pairing(s, identity, "", error);
+  if (offer) {
+    const gchar *id = NULL; g_variant_lookup(offer, "pairing_id", "&s", &id);
+    PairOffer *o = g_hash_table_lookup(s->offers, id); o->connection_link = TRUE;
+  }
+  return offer;
 }
 static void deliver_offers(BunkerService *s) {
   GHashTableIter it; gpointer value; g_hash_table_iter_init(&it, s->offers);

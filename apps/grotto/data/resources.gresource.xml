@@ -9,7 +9,6 @@
     <file preprocess="xml-stripblanks">ui/lock-screen.ui</file>
     <file preprocess="xml-stripblanks">ui/onboarding-assistant.ui</file>
     <file preprocess="xml-stripblanks">ui/shortcuts-window.ui</file>
-    <file preprocess="xml-stripblanks">ui/sheets/sheet-create-bunker.ui</file>
     <file preprocess="xml-stripblanks">ui/sheets/sheet-qr-display.ui</file>
     <file preprocess="xml-stripblanks">ui/sheets/sheet-qr-scanner.ui</file>
     <file preprocess="xml-stripblanks">ui/widgets/gn-secure-entry.ui</file>

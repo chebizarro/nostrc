@@ -68,6 +68,8 @@ typedef gboolean (*BunkerPairingCommitCb)(const gchar *client_hex, const gchar *
     const gchar *label, const gchar *const *relays, gint tier, gboolean acknowledged, const gchar *attempt, gpointer data);
 void bunker_service_set_pairing_commit(BunkerService *, BunkerPairingCommitCb, gpointer);
 GVariant *bunker_service_create_pairing(BunkerService *, const gchar *identity, const gchar *label, GError **);
+/* Reuse the unconsumed panel/sheet offer; regenerate after use or expiry. */
+GVariant *bunker_service_connection_link(BunkerService *, const gchar *identity, GError **);
 gchar *bunker_service_accept_connect_uri(BunkerService *, const gchar *uri, const gchar *identity, GError **);
 gboolean bunker_service_cancel_pairing(BunkerService *, const gchar *id);
 void bunker_service_invalidate_pairings(BunkerService *);
