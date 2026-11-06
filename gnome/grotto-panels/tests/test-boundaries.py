@@ -201,7 +201,11 @@ imports.update('''adw_avatar_get_size adw_preferences_row_new
  g_object_set_data gtk_accessible_update_state gtk_list_box_row_set_child gtk_list_box_row_set_selectable
  gtk_overlay_add_overlay gtk_overlay_get_type gtk_overlay_new gtk_overlay_set_child
  gtk_text_buffer_get_char_count gtk_text_view_set_accepts_tab gtk_text_view_set_bottom_margin gtk_text_view_set_top_margin
- gtk_widget_get_visible gtk_widget_set_can_target'''.split())
+ gtk_widget_get_visible gtk_widget_set_can_target
+ gtk_adjustment_clamp_page gtk_adjustment_get_value gtk_scrolled_window_get_type
+ gtk_scrolled_window_get_child gtk_scrolled_window_get_vadjustment
+ gtk_text_view_get_cursor_locations gtk_text_view_buffer_to_window_coords
+ gtk_widget_compute_point gtk_widget_get_ancestor gtk_widget_get_frame_clock gtk_widget_queue_draw'''.split())
 
 # Cosmetic desktop-entry lookup and row icons only. No launch, secret store,
 # generic file reads or IPC entrypoints are admitted.

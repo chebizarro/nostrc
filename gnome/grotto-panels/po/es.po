@@ -4,7 +4,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: grotto-panels 0.1.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-06 11:29-0800\n"
+"POT-Creation-Date: 2026-11-06 11:52-0800\n"
 "PO-Revision-Date: 2026-11-04 00:00+0000\n"
 "Last-Translator: Grotto contributors\n"
 "Language-Team: Spanish\n"
@@ -290,6 +290,13 @@ msgstr "Copia de seguridad confirmada"
 msgid "Not backed up"
 msgstr "Sin copia de seguridad"
 
+#: src/grotto-identity-panel.c:174
+#, c-format
+msgid "%u app uses this identity"
+msgid_plural "%u apps use this identity"
+msgstr[0] "%u aplicación usa esta identidad"
+msgstr[1] "%u aplicaciones usan esta identidad"
+
 #: src/grotto-identity-panel.c:175
 msgid "Check identity usage in Grotto"
 msgstr ""
@@ -318,8 +325,8 @@ msgstr ""
 msgid "Display Name"
 msgstr ""
 
-#: src/grotto-profile-view.c:53 src/grotto-profile-view.c:323
-#: src/grotto-profile-view.c:324 src/grotto-profile-view.c:348
+#: src/grotto-profile-view.c:53 src/grotto-profile-view.c:354
+#: src/grotto-profile-view.c:355 src/grotto-profile-view.c:381
 msgid "About"
 msgstr ""
 
@@ -439,7 +446,7 @@ msgstr "Reintentar"
 msgid "Stop"
 msgstr ""
 
-#: src/grotto-profile-view.c:121 src/grotto-profile-view.c:291
+#: src/grotto-profile-view.c:121 src/grotto-profile-view.c:322
 #: src/grotto-apps-panel.c:155 src/grotto-app-detail.c:111
 #: src/grotto-app-detail.c:128 src/grotto-app-detail.c:143
 #: src/grotto-app-detail.c:268 src/grotto-app-detail.c:340
@@ -448,11 +455,11 @@ msgstr ""
 msgid "Cancel"
 msgstr "Cancelar"
 
-#: src/grotto-profile-view.c:165 src/grotto-profile-view.c:423
+#: src/grotto-profile-view.c:165 src/grotto-profile-view.c:457
 msgid "Tor mode — showing the saved profile without network access"
 msgstr ""
 
-#: src/grotto-profile-view.c:165 src/grotto-profile-view.c:423
+#: src/grotto-profile-view.c:165 src/grotto-profile-view.c:457
 msgid "Offline — showing the saved profile"
 msgstr ""
 
@@ -460,11 +467,11 @@ msgstr ""
 msgid "No relays — enable discovery or configure this identity's relays"
 msgstr ""
 
-#: src/grotto-profile-view.c:165 src/grotto-profile-view.c:424
+#: src/grotto-profile-view.c:165 src/grotto-profile-view.c:458
 msgid "Public information shared with others"
 msgstr ""
 
-#: src/grotto-profile-view.c:165 src/grotto-profile-view.c:424
+#: src/grotto-profile-view.c:165 src/grotto-profile-view.c:458
 msgid "This identity's profile is read-only"
 msgstr ""
 
@@ -502,117 +509,117 @@ msgstr ""
 msgid "Local changes discarded. Already uploaded images remain public"
 msgstr ""
 
-#: src/grotto-profile-view.c:287
+#: src/grotto-profile-view.c:318
 msgid "Edit Profile"
 msgstr ""
 
-#: src/grotto-profile-view.c:295
+#: src/grotto-profile-view.c:326
 msgid "Save"
 msgstr ""
 
-#: src/grotto-profile-view.c:302
+#: src/grotto-profile-view.c:333
 msgid "Profile Preview"
 msgstr ""
 
-#: src/grotto-profile-view.c:303
+#: src/grotto-profile-view.c:334
 msgid "A client-style preview of your unsaved changes"
 msgstr ""
 
-#: src/grotto-profile-view.c:307
+#: src/grotto-profile-view.c:338
 msgid "Preview Banner"
 msgstr ""
 
-#: src/grotto-profile-view.c:316
+#: src/grotto-profile-view.c:347
 msgid "Links, Addresses and More"
 msgstr ""
 
-#: src/grotto-profile-view.c:318
+#: src/grotto-profile-view.c:349
 msgid ""
 "Your profile is public. Saving asks you to review the final JSON and "
 "publication relays"
 msgstr ""
 
-#: src/grotto-profile-view.c:337
+#: src/grotto-profile-view.c:370 src/grotto-profile-view.c:382
 msgid "Write something about yourself…"
 msgstr "Escribe algo sobre ti…"
 
-#: src/grotto-profile-view.c:359
+#: src/grotto-profile-view.c:393
 msgid "Check"
 msgstr ""
 
-#: src/grotto-profile-view.c:360
+#: src/grotto-profile-view.c:394
 msgid "Check this address using HTTPS at its domain"
 msgstr ""
 
-#: src/grotto-profile-view.c:367
+#: src/grotto-profile-view.c:401
 msgid "Choose Banner…"
 msgstr ""
 
-#: src/grotto-profile-view.c:367
+#: src/grotto-profile-view.c:401
 msgid "Choose Avatar…"
 msgstr ""
 
-#: src/grotto-profile-view.c:371
+#: src/grotto-profile-view.c:405
 msgid "Banner Preview"
 msgstr ""
 
-#: src/grotto-profile-view.c:371
+#: src/grotto-profile-view.c:405
 msgid "Avatar Preview"
 msgstr ""
 
-#: src/grotto-profile-view.c:373
+#: src/grotto-profile-view.c:407
 msgid "Banner"
 msgstr ""
 
-#: src/grotto-profile-view.c:373
+#: src/grotto-profile-view.c:407
 msgid "Avatar"
 msgstr ""
 
-#: src/grotto-profile-view.c:374
+#: src/grotto-profile-view.c:408
 msgid "Crop to 3∶1 · Up to 1500 × 500"
 msgstr ""
 
-#: src/grotto-profile-view.c:374
+#: src/grotto-profile-view.c:408
 msgid "Square crop · Up to 512 × 512"
 msgstr ""
 
-#: src/grotto-profile-view.c:382
+#: src/grotto-profile-view.c:416
 msgid "Automated Account (Bot)"
 msgstr ""
 
-#: src/grotto-profile-view.c:386
+#: src/grotto-profile-view.c:420
 msgid "Publication and Discovery Details"
 msgstr ""
 
-#: src/grotto-profile-view.c:387 src/grotto-profile-view.c:468
+#: src/grotto-profile-view.c:421 src/grotto-profile-view.c:502
 msgid "Publication"
 msgstr "Publicación"
 
-#: src/grotto-profile-view.c:387 src/grotto-profile-view.c:468
+#: src/grotto-profile-view.c:421 src/grotto-profile-view.c:502
 msgid "Discovery"
 msgstr "Descubrimiento"
 
-#: src/grotto-profile-view.c:396
+#: src/grotto-profile-view.c:430
 msgid "Discard Local Changes"
 msgstr ""
 
-#: src/grotto-profile-view.c:433
+#: src/grotto-profile-view.c:467
 msgid "Open Grotto to view or edit this profile"
 msgstr ""
 
-#: src/grotto-profile-view.c:456
+#: src/grotto-profile-view.c:490
 msgid "Profile Banner"
 msgstr ""
 
-#: src/grotto-profile-view.c:467
+#: src/grotto-profile-view.c:501
 msgid "Profile Details"
 msgstr ""
 
-#: src/grotto-profile-view.c:484
+#: src/grotto-profile-view.c:518
 msgid "Edit Profile…"
 msgstr ""
 
-#: src/grotto-profile-view.c:485
+#: src/grotto-profile-view.c:519
 msgid "Refresh Profile"
 msgstr ""
 

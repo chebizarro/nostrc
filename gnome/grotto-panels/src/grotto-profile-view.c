@@ -259,6 +259,37 @@ static GtkWidget *profile_header(GtkPicture *banner, AdwAvatar *avatar) {
   banner_visibility(G_OBJECT(banner), NULL, space);
   return overlay;
 }
+static void about_reveal_caret(GdkFrameClock *clock, gpointer data) {
+  GtkTextView *about = data;
+  gulong handler = GPOINTER_TO_SIZE(g_object_get_data(G_OBJECT(about), "caret-reveal-handler"));
+  g_object_set_data(G_OBJECT(about), "caret-reveal-handler", NULL);
+  g_signal_handler_disconnect(clock, handler);
+  if (!gtk_widget_has_focus(GTK_WIDGET(about))) return;
+  GtkWidget *scroller = gtk_widget_get_ancestor(GTK_WIDGET(about), GTK_TYPE_SCROLLED_WINDOW);
+  if (!scroller) return;
+  GdkRectangle cursor;
+  int x, y;
+  gtk_text_view_get_cursor_locations(about, NULL, &cursor, NULL);
+  gtk_text_view_buffer_to_window_coords(about, GTK_TEXT_WINDOW_WIDGET, cursor.x, cursor.y, &x, &y);
+  graphene_point_t point;
+  GtkWidget *viewport = gtk_scrolled_window_get_child(GTK_SCROLLED_WINDOW(scroller));
+  if (!gtk_widget_compute_point(GTK_WIDGET(about), viewport, &GRAPHENE_POINT_INIT(x, y), &point)) return;
+  GtkAdjustment *adjustment = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(scroller));
+  double top = gtk_adjustment_get_value(adjustment) + point.y;
+  gtk_adjustment_clamp_page(adjustment, top - 6, top + cursor.height + 6);
+}
+static void about_cursor_changed(GObject *object, GParamSpec *spec, gpointer data) {
+  (void)object; (void)spec;
+  GtkWidget *about = data;
+  if (!gtk_widget_has_focus(about) || g_object_get_data(G_OBJECT(about), "caret-reveal-handler")) return;
+  GdkFrameClock *clock = gtk_widget_get_frame_clock(about);
+  if (!clock) return;
+  /* The expanding field's new allocation and the page adjustment must settle
+   * before revealing its caret. Keep one outer scroller, not a nested text pane. */
+  gulong handler = g_signal_connect_object(clock, "after-paint", G_CALLBACK(about_reveal_caret), about, 0);
+  g_object_set_data(G_OBJECT(about), "caret-reveal-handler", GSIZE_TO_POINTER(handler));
+  gtk_widget_queue_draw(about);
+}
 static void about_changed(GtkTextBuffer *buffer, gpointer data) {
   gtk_widget_set_visible(GTK_WIDGET(data), gtk_text_buffer_get_char_count(buffer) == 0);
 }
@@ -333,6 +364,8 @@ static void edit(GtkButton *button, gpointer data) {
       gtk_text_buffer_set_text(gtk_text_view_get_buffer(self->about), self->info->fields[i], -1);
       gtk_widget_set_size_request(GTK_WIDGET(self->about), -1, 100);
       gtk_text_view_set_accepts_tab(self->about, FALSE);
+      g_signal_connect_object(gtk_text_view_get_buffer(self->about), "notify::cursor-position", G_CALLBACK(about_cursor_changed), self->about, 0);
+      g_signal_connect(self->about, "notify::has-focus", G_CALLBACK(about_cursor_changed), self->about);
       gtk_text_view_set_top_margin(self->about, 6); gtk_text_view_set_bottom_margin(self->about, 6);
       self->about_placeholder = GTK_LABEL(gtk_label_new(_("Write something about yourself…")));
       gtk_label_set_wrap(self->about_placeholder, TRUE); gtk_label_set_xalign(self->about_placeholder, 0);
@@ -345,7 +378,8 @@ static void edit(GtkButton *button, gpointer data) {
       gtk_overlay_add_overlay(GTK_OVERLAY(overlay), GTK_WIDGET(self->about_placeholder));
       g_signal_connect_object(gtk_text_view_get_buffer(self->about), "changed", G_CALLBACK(about_changed), self->about_placeholder, 0);
       about_changed(gtk_text_view_get_buffer(self->about), self->about_placeholder);
-      gtk_accessible_update_property(GTK_ACCESSIBLE(self->about), GTK_ACCESSIBLE_PROPERTY_LABEL, _("About"), -1);
+      gtk_accessible_update_property(GTK_ACCESSIBLE(self->about), GTK_ACCESSIBLE_PROPERTY_LABEL, _("About"),
+        GTK_ACCESSIBLE_PROPERTY_PLACEHOLDER, _("Write something about yourself…"), -1);
       gtk_box_append(GTK_BOX(box), label); gtk_box_append(GTK_BOX(box), overlay);
       gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), box);
       adw_preferences_group_add(ADW_PREFERENCES_GROUP(group), row); continue;
