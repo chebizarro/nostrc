@@ -598,6 +598,8 @@ static void signer_window_init(SignerWindow *self) {
     /* Security section */
     GMenu *security_section = g_menu_new();
     g_menu_append(security_section, _("Lock Management"), "win.lock");
+    g_menu_append(security_section, _("Pause Signing"), "app.pause-signing");
+    g_menu_append(security_section, _("Resume Signing…"), "app.resume-signing");
     g_menu_append_section(menu, NULL, G_MENU_MODEL(security_section));
     g_object_unref(security_section);
 
@@ -605,10 +607,7 @@ static void signer_window_init(SignerWindow *self) {
     GMenu *app_section = g_menu_new();
     g_menu_append(app_section, _("Preferences"), "win.preferences");
     g_menu_append(app_section, _("Keyboard Shortcuts"), "win.show-shortcuts");
-    g_menu_append(app_section, _("About Grotto…"), "win.about");
-    g_menu_append(app_section, _("Pause Signing"), "app.pause-signing");
-    g_menu_append(app_section, _("Resume Signing…"), "app.resume-signing");
-    g_menu_append(app_section, _("Quit Approval UI"), "win.quit");
+    g_menu_append(app_section, _("About Grotto"), "win.about");
     g_menu_append_section(menu, NULL, G_MENU_MODEL(app_section));
     g_object_unref(app_section);
 

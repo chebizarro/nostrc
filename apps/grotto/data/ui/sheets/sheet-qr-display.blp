@@ -7,7 +7,7 @@ template $SheetQrDisplay: Adw.Dialog {
     [top] Adw.HeaderBar {
       show-end-title-buttons: false;
       show-start-title-buttons: false;
-      [end] Button btn_close { label: _("Close"); }
+      [end] Button btn_close { label: _("_Close"); use-underline: true; }
     }
     ScrolledWindow {
       hscrollbar-policy: never;
@@ -23,7 +23,7 @@ template $SheetQrDisplay: Adw.Dialog {
           visible: false;
           Label warning_label { wrap: true; xalign: 0; hexpand: true; }
         }
-        Button btn_copy { label: _("Copy to Clipboard"); halign: center; }
+        Button btn_copy { label: _("Cop_y to Clipboard"); use-underline: true; halign: center; }
         Expander {
           label: _("Details");
           Box {

@@ -275,7 +275,8 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                             </child>
                             <child>
                               <object class="GtkButton" id="btn_retry">
-                                <property name="label" translatable="yes">Try Check Again</property>
+                                <property name="label" translatable="yes">_Try Check Again</property>
+                                <property name="use-underline">true</property>
                                 <property name="halign">3</property>
                               </object>
                             </child>
@@ -341,7 +342,8 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                     <property name="subtitle-lines">0</property>
                                     <child type="suffix">
                                       <object class="GtkButton" id="btn_copy_seed">
-                                        <property name="label" translatable="yes">Copy</property>
+                                        <property name="label" translatable="yes">Cop_y</property>
+                                        <property name="use-underline">true</property>
                                         <property name="valign">3</property>
                                         <accessibility>
                                           <property name="label" translatable="yes">Copy Recovery Phrase</property>
@@ -355,7 +357,8 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                     <property name="title" translatable="yes">Encrypted Backup</property>
                                     <child type="suffix">
                                       <object class="GtkButton" id="btn_backup_export">
-                                        <property name="label" translatable="yes">Open Backup…</property>
+                                        <property name="label" translatable="yes">_Open Backup…</property>
+                                        <property name="use-underline">true</property>
                                         <property name="valign">3</property>
                                       </object>
                                     </child>
@@ -366,7 +369,8 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                     <property name="title" translatable="yes">Recovery Phrase Unavailable?</property>
                                     <child type="suffix">
                                       <object class="GtkButton" id="btn_backup_retry">
-                                        <property name="label" translatable="yes">Try Again</property>
+                                        <property name="label" translatable="yes">_Try Again</property>
+                                        <property name="use-underline">true</property>
                                         <property name="valign">3</property>
                                       </object>
                                     </child>
@@ -426,7 +430,8 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             </child>
             <child>
               <object class="GtkButton" id="btn_next">
-                <property name="label" translatable="yes">Get Started</property>
+                <property name="label" translatable="yes">_Get Started</property>
+                <property name="use-underline">true</property>
                 <style>
                   <class name="suggested-action"/>
                 </style>
@@ -437,7 +442,8 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 <property name="spacing">12</property>
                 <child>
                   <object class="GtkButton" id="btn_back">
-                    <property name="label" translatable="yes">Back</property>
+                    <property name="label" translatable="yes">_Back</property>
+                    <property name="use-underline">true</property>
                     <style>
                       <class name="flat"/>
                     </style>
@@ -445,7 +451,8 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 </child>
                 <child>
                   <object class="GtkButton" id="btn_skip">
-                    <property name="label" translatable="yes">Skip Setup</property>
+                    <property name="label" translatable="yes">_Skip Setup</property>
+                    <property name="use-underline">true</property>
                     <property name="hexpand">true</property>
                     <style>
                       <class name="flat"/>

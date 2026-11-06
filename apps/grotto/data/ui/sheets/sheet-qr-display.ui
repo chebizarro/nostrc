@@ -17,7 +17,8 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             <property name="show-start-title-buttons">false</property>
             <child type="end">
               <object class="GtkButton" id="btn_close">
-                <property name="label" translatable="yes">Close</property>
+                <property name="label" translatable="yes">_Close</property>
+                <property name="use-underline">true</property>
               </object>
             </child>
           </object>
@@ -59,7 +60,8 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 </child>
                 <child>
                   <object class="GtkButton" id="btn_copy">
-                    <property name="label" translatable="yes">Copy to Clipboard</property>
+                    <property name="label" translatable="yes">Cop_y to Clipboard</property>
+                    <property name="use-underline">true</property>
                     <property name="halign">3</property>
                   </object>
                 </child>

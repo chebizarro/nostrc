@@ -259,7 +259,7 @@ static void imported_completion_persists(Fixture *f, gconstpointer data) {
     g_dbus_method_invocation_return_value(f->test, g_variant_new("(s)", "passed"));
     g_clear_object(&f->test); wait_state(f, ONBOARDING_READY);
     g_assert_true(onboarding_assistant_self_test_passed(f->assistant));
-    g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(child(f, "btn_next"))), ==, "Done");
+    g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(child(f, "btn_next"))), ==, "_Open Grotto");
     g_assert_false(gtk_widget_get_visible(child(f, "btn_skip")));
     g_assert_null(f->seed); /* Imports must never request a backup export. */
     g_assert_nonnull(strstr(gtk_label_get_text(GTK_LABEL(child(f, "ready_summary"))), "imported and saved"));

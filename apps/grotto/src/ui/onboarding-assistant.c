@@ -84,11 +84,11 @@ static void navigation(OnboardingAssistant *self) {
   gtk_widget_set_visible(GTK_WIDGET(self->btn_retry), self->capabilities_ready && self->identity_stored && !self->self_test_passed && !self->busy);
   gtk_widget_set_visible(GTK_WIDGET(self->btn_next), self->state != ONBOARDING_CHOICE &&
       self->state != ONBOARDING_TEST_WAITING && self->state != ONBOARDING_TESTING);
-  gtk_button_set_label(self->btn_next, self->state == ONBOARDING_READY ? _("Done") :
-      self->state == ONBOARDING_CREATE ? _("Create Identity") : self->state == ONBOARDING_IMPORT ? _("Import Identity") :
-      self->state == ONBOARDING_TEST_FAILED ? _("Finish with Warning") :
-      self->state == ONBOARDING_CONNECT ? _("Open Connected Apps") :
-      self->state == ONBOARDING_BACKUP ? _("Confirm Backup") : _("Get Started"));
+  gtk_button_set_label(self->btn_next, self->state == ONBOARDING_READY ? _("_Open Grotto") :
+      self->state == ONBOARDING_CREATE ? _("_Create Identity") : self->state == ONBOARDING_IMPORT ? _("_Import Identity") :
+      self->state == ONBOARDING_TEST_FAILED ? _("_Finish with Warning") :
+      self->state == ONBOARDING_CONNECT ? _("_Open Connected Apps") :
+      self->state == ONBOARDING_BACKUP ? _("_Confirm Backup") : _("_Get Started"));
   gtk_widget_set_sensitive(GTK_WIDGET(self->seed_written_down), self->backup_presented && !self->busy);
   gtk_widget_set_sensitive(GTK_WIDGET(self->btn_copy_seed), self->backup_presented && !self->busy);
   gtk_widget_set_sensitive(GTK_WIDGET(self->btn_backup_retry), !self->busy);

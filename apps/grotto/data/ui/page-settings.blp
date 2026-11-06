@@ -11,6 +11,6 @@ template $PageSettings: Adw.PreferencesPage {
   Adw.PreferencesGroup management {
     Adw.ActionRow remote { title: _("Remote Signing"); subtitle: _("Connect apps on other devices"); activatable: true; [suffix] Image { icon-name: "go-next-symbolic"; } }
     Adw.SpinRow retention { title: _("Keep Activity (Days)"); subtitle: _("Request details only, not message content or keys"); adjustment: Adjustment { lower: 1; upper: 30; step-increment: 1; }; }
-    Adw.ActionRow about { title: _("About Grotto…"); activatable: true; action-name: "win.about"; }
+    Adw.ActionRow about { title: _("About Grotto"); activatable: true; action-name: "win.about"; }
   }
 }

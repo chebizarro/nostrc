@@ -17,51 +17,31 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             <property name="show-end-title-buttons">false</property>
             <child type="start">
               <object class="GtkButton" id="btn_cancel">
-                <property name="label" translatable="yes">Cancel</property>
+                <property name="label" translatable="yes">_Cancel</property>
+                <property name="use-underline">true</property>
               </object>
             </child>
           </object>
         </child>
         <child>
-          <object class="GtkScrolledWindow">
-            <property name="hscrollbar-policy">2</property>
+          <object class="AdwPreferencesPage">
+            <property name="description" translatable="yes">Choose the identity to connect. You'll review the app before it can sign.</property>
             <child>
-              <object class="GtkBox">
-                <property name="orientation">1</property>
-                <property name="spacing">16</property>
-                <property name="margin-start">20</property>
-                <property name="margin-end">20</property>
-                <property name="margin-top">16</property>
-                <property name="margin-bottom">24</property>
+              <object class="AdwPreferencesGroup">
                 <child>
-                  <object class="GtkLabel">
-                    <property name="label" translatable="yes">Choose the identity to connect. You'll review the app before it can sign.</property>
-                    <property name="wrap">true</property>
-                    <property name="xalign">0</property>
+                  <object class="AdwComboRow" id="identities">
+                    <property name="title" translatable="yes">Identity</property>
                   </object>
                 </child>
                 <child>
-                  <object class="GtkLabel">
-                    <property name="label" translatable="yes">Identity</property>
-                    <property name="xalign">0</property>
+                  <object class="AdwEntryRow" id="entry_name">
+                    <property name="title" translatable="yes">App Name (Optional)</property>
                   </object>
                 </child>
-                <child>
-                  <object class="GtkDropDown" id="identities">
-                    <property name="tooltip-text" translatable="yes">Identity to Connect</property>
-                    <accessibility>
-                      <property name="label" translatable="yes">Identity to Connect</property>
-                    </accessibility>
-                  </object>
-                </child>
-                <child>
-                  <object class="GtkEntry" id="entry_name">
-                    <property name="placeholder-text" translatable="yes">App name (optional)</property>
-                    <accessibility>
-                      <property name="label" translatable="yes">App name (optional)</property>
-                    </accessibility>
-                  </object>
-                </child>
+              </object>
+            </child>
+            <child>
+              <object class="AdwPreferencesGroup">
                 <child>
                   <object class="GtkLabel" id="status">
                     <property name="label" translatable="yes">Checking remote signing…</property>
@@ -69,12 +49,19 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     <property name="xalign">0</property>
                   </object>
                 </child>
+              </object>
+            </child>
+            <child>
+              <object class="AdwPreferencesGroup">
                 <child>
                   <object class="GtkButton" id="btn_create">
-                    <property name="label" translatable="yes">Create Link</property>
+                    <property name="label" translatable="yes">Create _Link</property>
+                    <property name="use-underline">true</property>
                     <property name="sensitive">false</property>
+                    <property name="halign">3</property>
                     <style>
                       <class name="suggested-action"/>
+                      <class name="pill"/>
                     </style>
                   </object>
                 </child>

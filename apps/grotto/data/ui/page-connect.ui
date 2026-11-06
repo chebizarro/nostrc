@@ -31,7 +31,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
         </child>
         <child>
           <object class="AdwActionRow" id="scan">
-            <property name="title" translatable="yes">Scan QR Code</property>
+            <property name="title" translatable="yes">Scan QR Code…</property>
             <property name="subtitle" translatable="yes">Use your camera or a QR image</property>
             <property name="activatable">true</property>
             <child type="prefix">
@@ -65,7 +65,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
         </child>
         <child>
           <object class="AdwActionRow" id="create_link">
-            <property name="title" translatable="yes">Create Pairing Link</property>
+            <property name="title" translatable="yes">Create Pairing Link…</property>
             <property name="subtitle" translatable="yes">Show a single-use link or QR code</property>
             <property name="activatable">true</property>
             <child type="prefix">

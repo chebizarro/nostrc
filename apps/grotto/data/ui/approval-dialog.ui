@@ -215,7 +215,8 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                     </child>
                                     <child>
                                       <object class="GtkButton" id="btn_approve_selected">
-                                        <property name="label" translatable="yes">Allow Selected Once</property>
+                                        <property name="label" translatable="yes">Allow _Selected Once</property>
+                                        <property name="use-underline">true</property>
                                         <property name="sensitive">false</property>
                                       </object>
                                     </child>
