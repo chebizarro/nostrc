@@ -23,7 +23,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
           <object class="AdwPreferencesPage">
             <child>
               <object class="AdwPreferencesGroup">
-                <property name="description" translatable="yes">Let apps on other devices ask to use your identity</property>
+                <property name="description" translatable="yes">Remote signing lets apps on other devices request signatures without sharing your secret key. Enable it, then choose Add App → Create Pairing Link… to connect an app.</property>
                 <child>
                   <object class="AdwSwitchRow" id="enabled">
                     <property name="title" translatable="yes">Enable Remote Signing</property>
@@ -32,6 +32,21 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 <child>
                   <object class="AdwActionRow" id="status">
                     <property name="title" translatable="yes">Status</property>
+                    <property name="use-markup">false</property>
+                    <property name="subtitle-lines">0</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="AdwActionRow" id="pairing">
+                    <property name="title" translatable="yes">Add App…</property>
+                    <property name="subtitle" translatable="yes">Choose Create Pairing Link… and open the link in the remote app</property>
+                    <property name="subtitle-lines">0</property>
+                    <property name="activatable">true</property>
+                    <child type="suffix">
+                      <object class="GtkImage">
+                        <property name="icon-name">go-next-symbolic</property>
+                      </object>
+                    </child>
                   </object>
                 </child>
                 <child>
@@ -46,7 +61,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             <child>
               <object class="AdwPreferencesGroup" id="relays_group">
                 <property name="title" translatable="yes">Relays</property>
-                <property name="description" translatable="yes">Remote apps connect through these relays</property>
+                <property name="description" translatable="yes">Remote apps connect through these relays. Use wss://, or ws:// for a loopback address.</property>
                 <child>
                   <object class="GtkListBox" id="relays_list">
                     <property name="selection-mode">0</property>

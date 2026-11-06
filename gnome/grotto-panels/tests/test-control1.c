@@ -41,6 +41,8 @@ static void method(GDBusConnection *connection, const char *sender, const char *
   if (!strcmp(name, "GetStatus")) {
     GVariantBuilder status, capabilities, coarse;
     g_variant_builder_init(&status, G_VARIANT_TYPE_VARDICT);
+    g_variant_builder_add(&status, "{sv}", "bunker_state", g_variant_new_string("ERROR"));
+    g_variant_builder_add(&status, "{sv}", "bunker_error", g_variant_new_string("Transport key unavailable"));
     if (management_role) g_variant_builder_add(&status, "{sv}", "management-role", g_variant_new_string(management_role));
     g_variant_builder_init(&capabilities, G_VARIANT_TYPE("a{sb}"));
     g_variant_builder_add(&capabilities, "{sb}", "set-client-label", authorized);
@@ -132,6 +134,10 @@ static void exercise(void) {
   g_assert_no_error(error);
   g_autoptr(GrottoPanelsService) service = grotto_panels_control1_service_new(proxy);
   GListModel *apps = grotto_panels_service_get_model(service, GROTTO_PANELS_APPS);
+  GListModel *status_model = grotto_panels_service_get_model(service, GROTTO_PANELS_STATUS);
+  WAIT(g_list_model_get_n_items(status_model) == 1);
+  g_autoptr(GrottoPanelsItem) status_item = g_list_model_get_item(status_model, 0);
+  g_assert_cmpstr(grotto_panels_item_get_metadata(status_item)->reason, ==, "Transport key unavailable");
   GListModel *requests = grotto_panels_service_get_model(service, GROTTO_PANELS_REQUESTS);
   WAIT(grotto_panels_service_is_available(service) && g_list_model_get_n_items(apps) == 1 && g_list_model_get_n_items(requests) == 1);
   /* Today's coarse features are not role authorization. */

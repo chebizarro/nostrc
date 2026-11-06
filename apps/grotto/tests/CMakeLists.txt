@@ -478,12 +478,16 @@ if(UNIX AND TARGET grotto-daemon AND TARGET nostr_nip46_core)
         $<TARGET_FILE:grotto-daemon>
         ${CMAKE_CURRENT_SOURCE_DIR}/../data/org.nostr.Grotto.gschema.xml
         ${G00_GLIB_COMPILE_SCHEMAS})
+    add_test(NAME signer/remote-signing COMMAND test-bunker-e2e
+        $<TARGET_FILE:grotto-daemon>
+        ${CMAKE_CURRENT_SOURCE_DIR}/../data/org.nostr.Grotto.gschema.xml
+        ${G00_GLIB_COMPILE_SCHEMAS} --remote-signing)
     add_test(NAME signer/bunker-headless COMMAND test-bunker-e2e
         $<TARGET_FILE:grotto-daemon>
         ${CMAKE_CURRENT_SOURCE_DIR}/../data/org.nostr.Grotto.gschema.xml
         ${G00_GLIB_COMPILE_SCHEMAS} --headless)
     # G05: normal success, no inverted nonfunctional baseline.
-    set_tests_properties(signer/bunker-e2e signer/bunker-headless PROPERTIES
+    set_tests_properties(signer/bunker-e2e signer/bunker-headless signer/remote-signing PROPERTIES
         TIMEOUT 60 SKIP_RETURN_CODE 77 LABELS "signer;bunker;nip46;integration")
 endif()
 

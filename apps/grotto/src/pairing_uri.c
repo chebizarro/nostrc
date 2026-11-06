@@ -9,6 +9,18 @@ static gboolean invalid(GError **error) {
   g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "Invalid pairing data or unsupported relay URL");
   return FALSE;
 }
+gchar *grotto_relay_public_name(const gchar *url) {
+  /* An origin is public routing information. Paths, userinfo, queries and
+   * fragments are never diagnostic text, including for invalid old config. */
+  g_autoptr(GUri) uri = url ? g_uri_parse(url, G_URI_FLAGS_NONE, NULL) : NULL;
+  const gchar *host = uri ? g_uri_get_host(uri) : NULL;
+  const gchar *scheme = uri ? g_uri_get_scheme(uri) : NULL;
+  if (!host || !*host || strlen(host) > 253 ||
+      (g_strcmp0(scheme, "wss") && g_strcmp0(scheme, "ws"))) return NULL;
+  for (const gchar *p = host; *p; p++)
+    if (!g_ascii_isalnum(*p) && !strchr(".-_:", *p)) return NULL;
+  return g_uri_join(G_URI_FLAGS_NONE, scheme, NULL, host, g_uri_get_port(uri), "", NULL, NULL);
+}
 gboolean grotto_relays_validate(const gchar *const *relays, gsize count, GError **error) {
   if (!relays || !count || count > 64) return invalid(error);
   for (gsize i = 0; i < count; i++) {
@@ -18,7 +30,7 @@ gboolean grotto_relays_validate(const gchar *const *relays, gsize count, GError 
     const gchar *scheme = uri ? g_uri_get_scheme(uri) : NULL;
     g_autofree gchar *lower = host ? g_ascii_strdown(host, -1) : NULL;
     gboolean loopback = lower && (!strcmp(lower, "127.0.0.1") || !strcmp(lower, "::1") || !strcmp(lower, "localhost"));
-    if (!uri || !lower || !*lower || g_uri_get_userinfo(uri) || g_uri_get_fragment(uri) ||
+    if (!uri || !lower || !*lower || g_uri_get_userinfo(uri) || g_uri_get_query(uri) || g_uri_get_fragment(uri) ||
         (!g_strcmp0(scheme, "ws") ? !loopback : g_strcmp0(scheme, "wss")) || g_str_has_suffix(lower, ".onion")) return invalid(error);
   }
   return TRUE;
