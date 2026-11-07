@@ -60,7 +60,7 @@ jobs:
           submodules: recursive
           persist-credentials: false
       - uses: docker/setup-buildx-action@v3
-      - name: SQLite and SQLCipher Meson suites in clean image
+      - name: Outbound TLS regression and SQLite/SQLCipher Meson suites in clean image
         env:
           PASSKEYS: ${{ matrix.passkeys }}
         run: signet/deploy/build-image.sh "$PASSKEYS" --target test --progress plain

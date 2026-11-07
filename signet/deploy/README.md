@@ -16,7 +16,9 @@ as supported container surfaces.
 
 `versions.env` selects Debian/Caddy by registry digest and CMake/Meson and host
 Docker/Compose/containerd by version. `build-image.sh OFF|ON` reads these pins;
-`--target test` executes BOTH SQLite and SQLCipher Meson suites. Runtime builds
+`--target test` executes the libnostr outbound TLS regression
+(`test_connection_tls_no_resumption`: ClientHello settings, untrusted-CA and
+wrong-hostname refusal) and BOTH SQLite and SQLCipher Meson suites. Runtime builds
 use SQLCipher, disable test hooks and contain only the daemon, CLI, required
 libraries, curl and a read-only SQLCipher inspection tool. libcbor is installed
 only for the passkeys variant. Package inventories and both `ldd` reports are in
