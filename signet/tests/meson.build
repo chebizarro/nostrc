@@ -410,3 +410,12 @@ if get_option('signet_enable_passkeys')
     timeout: 180,
   )
 endif
+
+# Management ingress boundary regression (nostrc-a7p6i; separate ownership).
+test('mgmt_ingress_wire', find_program('python3'),
+  args: [meson.current_source_dir() / 'test_mgmt_ingress_wire.py',
+         test_mgmt_replay.full_path()],
+  depends: test_mgmt_replay,
+  timeout: 30,
+)
+# End management ingress boundary block.

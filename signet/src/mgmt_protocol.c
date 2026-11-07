@@ -1340,10 +1340,11 @@ int signet_mgmt_handler_handle_direct_intent(SignetMgmtHandler *h,
                                   now, true);
 }
 
-int signet_mgmt_handler_handle_gift_wrap(SignetMgmtHandler *h,
-                                         const char *event_json,
-                                         const char *event_id_hex,
-                                         int64_t now) {
+static int signet_mgmt_handle_gift_wrap_since(SignetMgmtHandler *h,
+                                              const char *event_json,
+                                              const char *event_id_hex,
+                                              int64_t now,
+                                              int64_t live_since) {
   if (!h || !h->bunker_sk_hex || !event_json) return -1;
   NostrEvent *gw = nostr_event_new();
   if (!gw) return -1;
@@ -1356,9 +1357,14 @@ int signet_mgmt_handler_handle_gift_wrap(SignetMgmtHandler *h,
      * the gift wrap's is randomized by NIP-59. */
     if (nostr_nip17_decrypt_dm_ex(gw, h->bunker_sk_hex, &inner, &sender,
                                   &rumor_at) == 0 && inner) {
-      rc = signet_mgmt_handler_handle_intent(h, sender ? sender : "", inner,
-                                             event_id_hex ? event_id_hex : "",
-                                             rumor_at, now);
+      if (live_since > 0 && rumor_at < live_since) {
+        signet_mgmt_refusal_audit(h, "mgmt_history_dropped", sender, NULL,
+                                  "before_live_boundary", NULL, NULL, now);
+      } else {
+        rc = signet_mgmt_handler_handle_intent(h, sender ? sender : "", inner,
+                                               event_id_hex ? event_id_hex : "",
+                                               rumor_at, now);
+      }
     }
     if (inner) {
       secure_wipe(inner, strlen(inner));
@@ -1368,6 +1374,32 @@ int signet_mgmt_handler_handle_gift_wrap(SignetMgmtHandler *h,
   }
   nostr_event_free(gw);
   return rc;
+}
+
+int signet_mgmt_handler_handle_gift_wrap(SignetMgmtHandler *h,
+                                         const char *json, const char *id,
+                                         int64_t now) {
+  return signet_mgmt_handle_gift_wrap_since(h, json, id, now, 0);
+}
+
+int signet_mgmt_handler_handle_relay_event(SignetMgmtHandler *h,
+                                           const SignetRelayEventView *ev,
+                                           int64_t now) {
+  if (!h || !ev || (ev->kind != CAS_INTENT && ev->kind != NIP59_GIFT_WRAP))
+    return -1;
+  if (ev->live_since <= 0 ||
+      (ev->kind == CAS_INTENT && ev->created_at < ev->live_since)) {
+    signet_mgmt_refusal_audit(h, "mgmt_history_dropped", ev->pubkey_hex,
+                              NULL, "before_live_boundary", NULL, NULL, now);
+    return -1;
+  }
+  if (ev->kind == CAS_INTENT)
+    return signet_mgmt_handler_handle_direct_intent(h, ev->pubkey_hex,
+        ev->content, ev->event_id_hex, ev->created_at, now);
+  /* NIP-59 randomizes the outer timestamp. Compare only the authenticated
+   * rumor time with this source subscription's EOSE boundary. */
+  return signet_mgmt_handle_gift_wrap_since(h, ev->event_json, ev->event_id_hex,
+                                           now, ev->live_since);
 }
 
 /* Append a redacted entry to the store's hash-chained audit log for a

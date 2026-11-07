@@ -275,6 +275,11 @@ NOSTR_API void nostr_simple_pool_query_single(NostrSimplePool *pool, const char 
  * to the extended and batch variants below. */
 NOSTR_API void nostr_simple_pool_set_event_middleware(NostrSimplePool *pool,
                                              void (*cb)(NostrIncomingEvent *));
+/* Borrowed source subscription during this pool's single-event middleware or
+ * subscription-state callback only; NULL outside them (and in batch middleware).
+ * The pointer expires on return; do not retain it. NostrIncomingEvent ABI is
+ * unchanged. This lets callers scope admission to their current subscription. */
+NOSTR_API const struct NostrSubscription *nostr_simple_pool_get_callback_subscription(NostrSimplePool *pool);
 NOSTR_API void nostr_simple_pool_set_event_middleware_ex(NostrSimplePool *pool,
                                                void (*cb)(NostrIncomingEvent *, void *),
                                                void *user_data);

@@ -445,11 +445,26 @@ static unsigned pool_recovery_window(NostrSimplePool *pool) {
     SubscriptionRegistry *registry = pool->sub_registry;
     return registry ? atomic_load(&registry->recovery_window) : 0;
 }
-static void pool_subscription_notify(NostrSimplePool *pool, NostrRelay *relay, const char *state, const char *reason) {
+static _Thread_local NostrSimplePool *middleware_pool;
+static _Thread_local NostrSubscription *middleware_subscription;
+
+const struct NostrSubscription *nostr_simple_pool_get_callback_subscription(NostrSimplePool *pool) {
+    return pool && pool == middleware_pool ? middleware_subscription : NULL;
+}
+
+static void pool_subscription_notify(NostrSimplePool *pool, NostrRelay *relay,
+                                     NostrSubscription *sub,
+                                     const char *state, const char *reason) {
+    NostrSimplePool *previous_pool = middleware_pool;
+    NostrSubscription *previous_sub = middleware_subscription;
+    middleware_pool = pool;
+    middleware_subscription = sub;
     pthread_mutex_lock(&observer_mutex);
     for (PoolObserver *o = observers; o; o = o->next)
         if (o->pool == pool) { o->callback(relay, state, reason, o->data); break; }
     pthread_mutex_unlock(&observer_mutex);
+    middleware_pool = previous_pool;
+    middleware_subscription = previous_sub;
 }
 
 void nostr_simple_pool_set_event_middleware(NostrSimplePool *pool,
@@ -1049,53 +1064,81 @@ static int pool_seen(NostrSimplePool *pool, const char *id) {
 
 /* Helper: add an event to the batch, growing the buffer as needed.
  * Returns 1 if added, 0 if allocation failed (caller frees ev). */
-static int batch_add(NostrIncomingEvent **batch, size_t *len, size_t *cap,
-                     NostrEvent *ev, NostrRelay *relay) {
+typedef struct {
+    NostrIncomingEvent incoming;
+    NostrSubscription *subscription; /* borrowed until this batch is delivered */
+} PoolIncomingEvent;
+
+static int batch_add(PoolIncomingEvent **batch, size_t *len, size_t *cap,
+                     NostrEvent *ev, NostrRelay *relay, NostrSubscription *sub) {
     if (*len == *cap) {
         size_t new_cap = *cap ? *cap * 2 : 64;
-        NostrIncomingEvent *nb = realloc(*batch, new_cap * sizeof(NostrIncomingEvent));
+        PoolIncomingEvent *nb = realloc(*batch, new_cap * sizeof(PoolIncomingEvent));
         if (!nb) return 0;
         *batch = nb;
         *cap = new_cap;
     }
-    (*batch)[(*len)++] = (NostrIncomingEvent){ .event = ev, .relay = relay };
+    (*batch)[(*len)++] = (PoolIncomingEvent){
+        .incoming = {.event = ev, .relay = relay}, .subscription = sub };
     return 1;
 }
 
 /* Deliver before a boundary callback or teardown, always outside pool_mutex.
  * Middleware takes ownership of the events; retain only the reusable buffer. */
-static void pool_deliver_batch(NostrSimplePool *pool, NostrIncomingEvent *batch,
+static void pool_deliver_batch(NostrSimplePool *pool, PoolIncomingEvent *batch,
                                size_t *len) {
     if (*len == 0) return;
     if (pool->batch_middleware) {
-        pool->batch_middleware(batch, *len);
+        NostrSimplePool *previous_pool = middleware_pool;
+        NostrSubscription *previous_sub = middleware_subscription;
+        middleware_pool = NULL;
+        middleware_subscription = NULL;
+        NostrIncomingEvent *events = malloc(*len * sizeof(*events));
+        if (events) {
+            for (size_t i = 0; i < *len; i++) events[i] = batch[i].incoming;
+            pool->batch_middleware(events, *len);
+            free(events);
+        } else {
+            /* Preserve delivery even if the contiguous public view cannot
+             * be allocated. Neither public event layout nor ownership changes. */
+            for (size_t i = 0; i < *len; i++)
+                pool->batch_middleware(&batch[i].incoming, 1);
+        }
+        middleware_pool = previous_pool;
+        middleware_subscription = previous_sub;
     } else {
         for (size_t i = 0; i < *len; i++) {
+            NostrSimplePool *previous_pool = middleware_pool;
+            NostrSubscription *previous_sub = middleware_subscription;
+            middleware_pool = pool;
+            middleware_subscription = batch[i].subscription;
             if (pool->event_middleware_ex)
-                pool->event_middleware_ex(&batch[i], pool->event_middleware_data);
+                pool->event_middleware_ex(&batch[i].incoming, pool->event_middleware_data);
             else if (pool->event_middleware)
-                pool->event_middleware(&batch[i]);
+                pool->event_middleware(&batch[i].incoming);
             else
-                nostr_event_free(batch[i].event);
+                nostr_event_free(batch[i].incoming.event);
+            middleware_pool = previous_pool;
+            middleware_subscription = previous_sub;
         }
     }
     *len = 0;
 }
 
 static void pool_collect_event(NostrSimplePool *pool, NostrSubscription *sub,
-                                NostrEvent *ev, NostrIncomingEvent **batch,
+                                NostrEvent *ev, PoolIncomingEvent **batch,
                                 size_t *len, size_t *cap) {
     char *eid = nostr_event_get_id(ev);
     int seen = pool_seen(pool, eid);
     free(eid);
     if (!seen && (pool->event_middleware_ex || pool->event_middleware || pool->batch_middleware)
-        && batch_add(batch, len, cap, ev, nostr_subscription_get_relay(sub)))
+        && batch_add(batch, len, cap, ev, nostr_subscription_get_relay(sub), sub))
         return;
     nostr_event_free(ev);
 }
 
 static void pool_drain_events(NostrSimplePool *pool, NostrSubscription *sub,
-                               size_t budget, NostrIncomingEvent **batch,
+                               size_t budget, PoolIncomingEvent **batch,
                                size_t *len, size_t *cap) {
     GoChannel *ch = nostr_subscription_get_events_channel(sub);
     void *msg = NULL;
@@ -1114,7 +1157,7 @@ static void pool_drain_events(NostrSimplePool *pool, NostrSubscription *sub,
  * In MPMC mode the atomic depth can include a reserved live slot; an empty
  * receive can only truncate that later tail, not the published stored prefix. */
 static void pool_drain_boundary_events(NostrSimplePool *pool, NostrSubscription *sub,
-                                       NostrIncomingEvent **batch, size_t *len,
+                                       PoolIncomingEvent **batch, size_t *len,
                                        size_t *cap) {
     GoChannel *ch = nostr_subscription_get_events_channel(sub);
     if (!ch) return;
@@ -1136,7 +1179,7 @@ static void pool_remove_sub_locked(NostrSimplePool *pool, size_t j) {
  * Also handles CLOSED and EOSE signals. */
 static void pool_drain_all(NostrSimplePool *pool,
                            NostrSubscription **subs, size_t count,
-                           NostrIncomingEvent **batch, size_t *batch_len,
+                           PoolIncomingEvent **batch, size_t *batch_len,
                            size_t *batch_cap) {
     const int spin_limit = 256;
 
@@ -1161,7 +1204,7 @@ static void pool_drain_all(NostrSimplePool *pool,
 
         /* --- CLOSED signal: prune subscription --- */
         if (closed) {
-            pool_subscription_notify(pool, nostr_subscription_get_relay(sub), "CLOSED", closed_msg);
+            pool_subscription_notify(pool, nostr_subscription_get_relay(sub), sub, "CLOSED", closed_msg);
             free(closed_msg);
             pthread_mutex_lock(&pool->pool_mutex);
             for (size_t j = 0; j < pool->subs_count; j++) {
@@ -1179,7 +1222,7 @@ static void pool_drain_all(NostrSimplePool *pool,
 
         /* --- EOSE signal: optionally auto-unsubscribe --- */
         if (eose) {
-            pool_subscription_notify(pool, nostr_subscription_get_relay(sub), "EOSE", NULL);
+            pool_subscription_notify(pool, nostr_subscription_get_relay(sub), sub, "EOSE", NULL);
             if (pool->auto_unsub_on_eose) {
                 pthread_mutex_lock(&pool->pool_mutex);
                 for (size_t j = 0; j < pool->subs_count; j++) {
@@ -1215,7 +1258,7 @@ static void pool_drain_stopped(NostrSimplePool *pool) {
         /* Lifecycle closes EVENT under sub_mutex, after in-flight dispatch. */
         nostr_subscription_wait(subs[i]);
     }
-    NostrIncomingEvent *batch = NULL;
+    PoolIncomingEvent *batch = NULL;
     size_t len = 0, cap = 0;
     pool_drain_all(pool, subs, count, &batch, &len, &cap);
     for (size_t i = 0; i < count; i++) {
@@ -1368,7 +1411,7 @@ void *simple_pool_thread_func(void *arg) {
             pool_reconcile_subs(pool);
 
         /* 6. Greedy drain ALL subscription channels (events + closed + eose) */
-        NostrIncomingEvent *batch = NULL;
+        PoolIncomingEvent *batch = NULL;
         size_t batch_len = 0, batch_cap = 0;
 
         if (local_subs && local_count > 0) {
@@ -1650,7 +1693,7 @@ void nostr_simple_pool_query_single(NostrSimplePool *pool, const char **urls, si
             { .op = GO_SELECT_RECEIVE, .chan = ch_closed, .recv_buf = &closed_reason },
         };
         int result = go_select(cases, 3);
-        NostrIncomingEvent *batch = NULL;
+        PoolIncomingEvent *batch = NULL;
         size_t len = 0, cap = 0;
         /* select already received this event; a second receive loses it. */
         if (selected_event)
@@ -1662,7 +1705,7 @@ void nostr_simple_pool_query_single(NostrSimplePool *pool, const char **urls, si
         pool_deliver_batch(pool, batch, &len);
         free(batch);
         if (result == 1 || result == 2)
-            pool_subscription_notify(pool, relay, result == 1 ? "EOSE" : "CLOSED", closed_reason);
+            pool_subscription_notify(pool, relay, sub, result == 1 ? "EOSE" : "CLOSED", closed_reason);
         free(closed_reason);
 
         // Close/free ephemeral subscription

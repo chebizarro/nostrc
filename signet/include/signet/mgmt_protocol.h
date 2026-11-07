@@ -40,6 +40,7 @@ extern "C" {
 #endif
 
 #include "signet/cascadia.h"
+#include "signet/relay_pool.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -445,6 +446,14 @@ int signet_mgmt_handler_handle_gift_wrap(SignetMgmtHandler *h,
                                          const char *event_json,
                                          const char *event_id_hex,
                                          int64_t now);
+
+/* Production relay ingress: history (no current source EOSE, or request
+ * timestamp before that boundary) is dropped with a bounded audit record.
+ * Gift wraps use the authenticated rumor time, never the outer timestamp.
+ * Existing freshness and replay-cache checks still apply after admission. */
+int signet_mgmt_handler_handle_relay_event(SignetMgmtHandler *h,
+                                           const SignetRelayEventView *ev,
+                                           int64_t now);
 
 /* Create, attach and own the management replay caches, one per sender
  * class (provisioners; self-service agents; delivery-grant requesters), so
