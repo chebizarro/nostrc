@@ -1,9 +1,10 @@
 # Signet: single-host deployment and recovery
 
 This is the W3/W4 operator route for Linux/amd64 Ubuntu 24.04.
-The stop rule is conservatively **270 seconds**, exceeding the plan's >=150-second
-minimum: a request accepted 120 seconds in the future remains admissible for up
-to 240 seconds after execution. Preflight bounds `[replay] skew_seconds` to
+The enforced stop rule is **270 seconds**: a request accepted 120 seconds in the
+future remains admissible for up to 240 seconds after execution. Quarantine covers
+twice the maximum 120-second replay skew plus 30 seconds of margin.
+Preflight bounds `[replay] skew_seconds` to
 1..120 seconds; zero/unbounded or larger settings are refused. It depends on the
 W1 strict config/file-key/loopback changes and W2 relay fixes. Packaging source
 and local tests are **not** release acceptance. The owner must execute the live

@@ -70,7 +70,7 @@ All provisioning, revocation, and policy management is done through Cascadia Con
 | 25910 | `agent/list-clients` | List an agent's persistent NIP-46 client bindings |
 | 25910 | `agent/revoke-client` | Soft-revoke a NIP-46 client binding (client must re-pair) |
 
-Management intents are encrypted between provisioner and bunker when transported through gift-wrap. Responses are correlated, gift-wrapped ContextVM results. Authorization requires the event pubkey to be in the `provisioner_pubkeys` list, with two exceptions: `agent/reissue-connect` is also authorized when the signed sender IS the target agent (self-service re-pairing; grants no power over other agents or methods), and `credential/inspect`, `credential/list` and `credential/deliver` are also authorized for a requester that the credential owner's policy grants exactly `credential.deliver` (a secret-reading identity with no management authority; see [INTEGRATION.md](INTEGRATION.md#credential-methods)). Replies echo the request's JSON-RPC id, refusals included. Replay protection is RAM-only and keyed by delivered event id: authenticated request time must be within `[replay] skew_seconds`, and ids are retained for twice that window without evicting unexpired entries. It is not durable exactly-once execution: restart, rewrapping and newly signed retries can repeat a logical mutation. After a timeout, inspect state before deciding whether to retry; a lost reply does not mean the mutation failed. Any deliberate stop must keep the daemon down for at least 150 seconds before restart (the launch rule assumes the default 120-second skew); abrupt restarts retain a replay risk. Direct kind-25910 request content is readable by relays: use gift-wrap for confidentiality. Non-provisioner senders are rate-limited per sender before any refusal or audit, and their refusals are audited within a global budget.
+Management intents are encrypted between provisioner and bunker when transported through gift-wrap. Responses are correlated, gift-wrapped ContextVM results. Authorization requires the event pubkey to be in the `provisioner_pubkeys` list, with two exceptions: `agent/reissue-connect` is also authorized when the signed sender IS the target agent (self-service re-pairing; grants no power over other agents or methods), and `credential/inspect`, `credential/list` and `credential/deliver` are also authorized for a requester that the credential owner's policy grants exactly `credential.deliver` (a secret-reading identity with no management authority; see [INTEGRATION.md](INTEGRATION.md#credential-methods)). Replies echo the request's JSON-RPC id, refusals included. Replay protection is RAM-only and keyed by delivered event id: authenticated request time must be within `[replay] skew_seconds`, and ids are retained for twice that window without evicting unexpired entries. It is not durable exactly-once execution: restart, rewrapping and newly signed retries can repeat a logical mutation. After a timeout, inspect state before deciding whether to retry; a lost reply does not mean the mutation failed. Any deliberate stop must keep the daemon down for at least 270 seconds before restart (twice the maximum 120-second replay skew plus 30 seconds of margin); abrupt restarts retain a replay risk. Direct kind-25910 request content is readable by relays: use gift-wrap for confidentiality. Non-provisioner senders are rate-limited per sender before any refusal or audit, and their refusals are audited within a global budget.
 
 ### Bootstrap & Onboarding
 
@@ -203,7 +203,7 @@ explicit invalid config or required-encryption startup without usable persistent
 storage. Cache-only mode remains an explicit development option when encryption
 is not required. Install protected files before starting; do not generate a new
 identity when a file is absent. See the [runbook](deploy/README.md) for custody,
-permissions, online backup and the ≥150-second deliberate-stop rule.
+permissions, online backup and the ≥270-second deliberate-stop rule.
 
 ### Docker
 
@@ -432,7 +432,7 @@ export SIGNET_GIT_CREDENTIAL_ID=<credential-id>
 Encrypted backup and offline restore use protected key files (legacy value env
 inputs remain compatible), never argv. The launch route is online backup via
 the ops service, gated on concurrent-writer consistency verification; see the
-[runbook](deploy/README.md). Stop `signetd` before restore and wait ≥150 seconds
+[runbook](deploy/README.md). Stop `signetd` before restore and wait ≥270 seconds
 before restart; the previous database is retained as `<db>.pre-restore`.
 
 ```bash
@@ -568,7 +568,7 @@ The authority for these guarantees and exclusions is [THREAT_MODEL.md](docs/THRE
 - Revocation resolves the agent pubkey, adds it to the deny list, burns leases, revokes the agent's persistent client bindings, wipes the key from cache and store, and records an audit entry
 - NIP-46 pairing is atomic (secret consumption + durable client binding in one transaction); bindings are pinned to the agent identity pubkey at pairing time, so rotation or reprovisioning never resurrects old client authority
 - The daemon's live deny list is enforced on every NIP-46 path (pairing, reconnect, per-request) before policy evaluation — suspension takes effect immediately
-- Management replay caches protect delivered ids during one process lifetime, not logical mutations across restarts/new wraps/new signatures. Observe the ≥150-second deliberate-stop rule and do not blindly retry timed-out mutations.
+- Management replay caches protect delivered ids during one process lifetime, not logical mutations across restarts/new wraps/new signatures. Observe the ≥270-second deliberate-stop rule and do not blindly retry timed-out mutations.
 - One custody pubkey cannot be bound to two agents (partial unique index + non-destructive upsert).
 - Credential rotation archives and updates secrets in a single SQLite transaction
 - The database audit chain detects covered-record edits, not whole-history replacement without an external checkpoint; the generic logger has no field allowlist, so redaction remains a call-site responsibility.
