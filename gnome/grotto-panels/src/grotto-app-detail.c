@@ -210,8 +210,8 @@ static void save_permission(PermissionEditor *e, gboolean remove) {
   const char *identity = original->public_key;
   if (e->identity && !remove) {
     guint selected = adw_combo_row_get_selected(e->identity);
-    if (!selected || selected > e->identities->len) { editor_message(e, _("Choose an identity before allowing this permission.")); return; }
-    identity = e->identities->pdata[selected - 1];
+    if (selected >= e->identities->len) { editor_message(e, _("Choose an identity before allowing this permission.")); return; }
+    identity = e->identities->pdata[selected];
   }
   gint kind = original->event_kind;
   if (e->kind) {
@@ -296,16 +296,18 @@ static void edit_permission(AdwActionRow *row_widget, gpointer data) {
   AdwPreferencesPage *prefs = ADW_PREFERENCES_PAGE(adw_preferences_page_new()); AdwPreferencesGroup *scope = group(prefs, _("Scope"));
   row(scope, _("App"), self->principal); row(scope, _("Operation"), operation_name(m->operation));
   if (!strcmp(m->public_key, "*") && !strcmp(m->state, "inactive")) {
-    e->identities = g_ptr_array_new_with_free_func(g_free); GtkStringList *names = gtk_string_list_new(NULL); gtk_string_list_append(names, _("Choose an Identity"));
+    e->identities = g_ptr_array_new_with_free_func(g_free); GtkStringList *names = gtk_string_list_new(NULL);
     GListModel *identities = grotto_panels_service_get_model(grotto_panel_get_service(GROTTO_PANEL(self)), GROTTO_PANELS_IDENTITIES);
     for (guint i = 0; identities && i < g_list_model_get_n_items(identities); i++) {
       g_autoptr(GrottoPanelsItem) item = g_list_model_get_item(identities, i); const GrottoPanelsMetadata *id = grotto_panels_item_get_metadata(item);
       if (id->watch_only) continue;
       g_ptr_array_add(e->identities, g_strdup(id->public_key));
-      g_autofree char *name = g_strdup_printf("%s · %s", *id->label ? id->label : _("Identity"), id->public_key); gtk_string_list_append(names, name);
+      gtk_string_list_append(names, id->public_key);
     }
-    e->identity = ADW_COMBO_ROW(adw_combo_row_new()); adw_preferences_row_set_title(ADW_PREFERENCES_ROW(e->identity), _("Identity"));
-    adw_combo_row_set_model(e->identity, G_LIST_MODEL(names)); g_object_unref(names); adw_preferences_group_add(scope, GTK_WIDGET(e->identity));
+    e->identity = ADW_COMBO_ROW(grotto_identity_picker_new(grotto_panel_get_service(GROTTO_PANEL(self)))); adw_preferences_row_set_title(ADW_PREFERENCES_ROW(e->identity), _("Identity"));
+    adw_combo_row_set_model(e->identity, G_LIST_MODEL(names)); g_object_unref(names);
+    adw_combo_row_set_selected(e->identity, GTK_INVALID_LIST_POSITION);
+    adw_preferences_group_add(scope, GTK_WIDGET(e->identity));
   } else row(scope, _("Identity"), m->public_key);
   if (!strcmp(m->operation, "event")) {
     e->kind = ADW_ENTRY_ROW(adw_entry_row_new()); adw_preferences_row_set_title(ADW_PREFERENCES_ROW(e->kind), _("Exact Event Type (Number)"));

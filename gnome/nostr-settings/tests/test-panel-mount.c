@@ -210,9 +210,16 @@ static int manager_child(const char *original, const char *self)
   g_assert_true(GROTTO_IS_IDENTITY_PANEL(id_panel)); g_assert_true(GROTTO_IS_APPS_PANEL(apps_panel));
   g_assert_true(GROTTO_IS_ACTIVITY_PANEL(nss_window_get_panel(window, "activity")));
   g_assert_true(GROTTO_IS_REMOTE_PANEL(nss_window_get_panel(window, "remote-signing")));
-  const char *panel_names[] = {"identity", "apps", "activity", "remote-signing"};
-  for (guint i = 0; i < G_N_ELEMENTS(panel_names); i++)
+  const char *panel_names[] = {"identity", "apps", "remote-signing", "activity"};
+  const char *panel_titles[] = {"Identity", "Connected Apps", "Remote Signing", "Activity"};
+  GtkListBox *sidebar = g_object_get_data(G_OBJECT(window), "nss-sidebar");
+  for (guint i = 0; i < G_N_ELEMENTS(panel_names); i++) {
     assert_host_chrome(GTK_WIDGET(nss_window_get_panel(window, panel_names[i])));
+    GtkListBoxRow *row = gtk_list_box_get_row_at_index(sidebar, i);
+    g_assert_cmpstr(adw_preferences_row_get_title(ADW_PREFERENCES_ROW(row)), ==, panel_titles[i]);
+    gtk_list_box_select_row(sidebar, row);
+    g_assert_cmpstr(nss_window_get_page(window), ==, panel_names[i]);
+  }
   WAIT(text_in(GTK_WIDGET(id_panel), npub));
   g_assert_true(nss_window_show_page(window, "apps"));
   WAIT(text_in(GTK_WIDGET(apps_panel), "Connected app fixture"));

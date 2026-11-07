@@ -4,7 +4,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: grotto-panels 0.1.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-06 14:31-0800\n"
+"POT-Creation-Date: 2026-11-07 02:43-0800\n"
 "PO-Revision-Date: 2026-11-04 00:00+0000\n"
 "Last-Translator: Grotto contributors\n"
 "Language-Team: Spanish\n"
@@ -16,8 +16,7 @@ msgstr ""
 
 #: data/identity-panel.blp:5 data/identity-panel.blp:9
 #: src/grotto-identity-panel.c:218 src/grotto-apps-panel.c:25
-#: src/grotto-app-detail.c:305 src/grotto-app-detail.c:307
-#: src/grotto-app-detail.c:309
+#: src/grotto-app-detail.c:307 src/grotto-app-detail.c:311
 msgid "Identity"
 msgstr "Identidad"
 
@@ -131,7 +130,7 @@ msgstr ""
 msgid "Ask before a first grant; saved permissions still apply"
 msgstr ""
 
-#: data/activity-panel.blp:5 src/grotto-apps-panel.c:27
+#: data/activity-panel.blp:5 src/grotto-apps-panel.c:28
 msgid "Activity"
 msgstr ""
 
@@ -191,7 +190,7 @@ msgstr ""
 msgid "Clear…"
 msgstr ""
 
-#: data/remote-panel.blp:5 src/grotto-apps-panel.c:28
+#: data/remote-panel.blp:5 src/grotto-apps-panel.c:27
 msgid "Remote Signing"
 msgstr "Firma remota"
 
@@ -209,7 +208,7 @@ msgstr ""
 msgid "Status"
 msgstr ""
 
-#: data/remote-panel.blp:14 src/grotto-app-detail.c:602
+#: data/remote-panel.blp:14 src/grotto-app-detail.c:604
 msgid "Change in Grotto…"
 msgstr ""
 
@@ -243,7 +242,7 @@ msgstr ""
 msgid "Add Relay URL"
 msgstr ""
 
-#: data/remote-panel.blp:40 src/grotto-app-detail.c:611
+#: data/remote-panel.blp:40 src/grotto-app-detail.c:613
 msgid "Details"
 msgstr "Detalles"
 
@@ -460,8 +459,8 @@ msgstr ""
 #: src/grotto-profile-view.c:123 src/grotto-profile-view.c:379
 #: src/grotto-apps-panel.c:157 src/grotto-app-detail.c:111
 #: src/grotto-app-detail.c:128 src/grotto-app-detail.c:143
-#: src/grotto-app-detail.c:268 src/grotto-app-detail.c:340
-#: src/grotto-app-detail.c:405 src/grotto-activity-panel.c:158
+#: src/grotto-app-detail.c:268 src/grotto-app-detail.c:342
+#: src/grotto-app-detail.c:407 src/grotto-activity-panel.c:158
 #: src/grotto-remote-panel.c:106
 msgid "Cancel"
 msgstr "Cancelar"
@@ -635,7 +634,7 @@ msgid "Refresh Profile"
 msgstr ""
 
 #: src/grotto-app-info.c:92 src/grotto-app-detail.c:297
-#: src/grotto-app-detail.c:587 src/grotto-app-detail.c:628
+#: src/grotto-app-detail.c:589 src/grotto-app-detail.c:630
 msgid "App"
 msgstr ""
 
@@ -659,11 +658,11 @@ msgstr ""
 msgid "Routine Operations"
 msgstr ""
 
-#: src/grotto-apps-panel.c:71 src/grotto-app-detail.c:594
+#: src/grotto-apps-panel.c:71 src/grotto-app-detail.c:596
 msgid "Ask for Sensitive Operations"
 msgstr "Preguntar para operaciones sensibles"
 
-#: src/grotto-apps-panel.c:71 src/grotto-app-detail.c:594
+#: src/grotto-apps-panel.c:71 src/grotto-app-detail.c:596
 msgid "Ask Unless Permitted"
 msgstr "Preguntar salvo si tiene permiso"
 
@@ -838,281 +837,277 @@ msgstr ""
 msgid "Operation"
 msgstr ""
 
-#: src/grotto-app-detail.c:299
-msgid "Choose an Identity"
-msgstr ""
-
-#: src/grotto-app-detail.c:311
+#: src/grotto-app-detail.c:313
 msgid "Exact Event Type (Number)"
 msgstr ""
 
-#: src/grotto-app-detail.c:315
+#: src/grotto-app-detail.c:317
 msgid "Choose an Event Type"
 msgstr ""
 
-#: src/grotto-app-detail.c:317
+#: src/grotto-app-detail.c:319
 msgid "Custom Number"
 msgstr ""
 
-#: src/grotto-app-detail.c:326
+#: src/grotto-app-detail.c:328
 msgid "Relay Scope"
 msgstr ""
 
-#: src/grotto-app-detail.c:328
+#: src/grotto-app-detail.c:330
 msgid "Permission"
 msgstr ""
 
-#: src/grotto-app-detail.c:328 src/grotto-app-detail.c:440
+#: src/grotto-app-detail.c:330 src/grotto-app-detail.c:442
 msgid "Allow"
 msgstr "Permitir"
 
-#: src/grotto-app-detail.c:328 src/grotto-app-detail.c:440
+#: src/grotto-app-detail.c:330 src/grotto-app-detail.c:442
 msgid "Deny"
 msgstr "Denegar"
 
-#: src/grotto-app-detail.c:329
+#: src/grotto-app-detail.c:331
 msgid "Decision"
 msgstr ""
 
-#: src/grotto-app-detail.c:331
+#: src/grotto-app-detail.c:333
 msgid "Keep Current Expiry"
 msgstr ""
 
-#: src/grotto-app-detail.c:331
+#: src/grotto-app-detail.c:333
 msgid "10 minutes"
 msgstr ""
 
-#: src/grotto-app-detail.c:331
+#: src/grotto-app-detail.c:333
 msgid "1 hour"
 msgstr ""
 
-#: src/grotto-app-detail.c:331
+#: src/grotto-app-detail.c:333
 msgid "24 hours"
 msgstr ""
 
-#: src/grotto-app-detail.c:331 src/grotto-app-detail.c:444
+#: src/grotto-app-detail.c:333 src/grotto-app-detail.c:446
 msgid "Until Revoked"
 msgstr ""
 
-#: src/grotto-app-detail.c:332
+#: src/grotto-app-detail.c:334
 msgid "Duration"
 msgstr ""
 
-#: src/grotto-app-detail.c:336
+#: src/grotto-app-detail.c:338
 msgid "Discard Saved Permission…"
 msgstr ""
 
-#: src/grotto-app-detail.c:336
+#: src/grotto-app-detail.c:338
 msgid "Remove Permission…"
 msgstr ""
 
-#: src/grotto-app-detail.c:341 src/grotto-app-detail.c:363
+#: src/grotto-app-detail.c:343 src/grotto-app-detail.c:365
 msgid "Activate Saved Permission"
 msgstr ""
 
-#: src/grotto-app-detail.c:341 src/grotto-app-detail.c:363
+#: src/grotto-app-detail.c:343 src/grotto-app-detail.c:365
 msgid "Save Permission"
 msgstr "Guardar permiso"
 
-#: src/grotto-app-detail.c:358
+#: src/grotto-app-detail.c:360
 msgid ""
 "The original permission or signer changed. Close this editor and review the "
 "updated entries."
 msgstr ""
 
-#: src/grotto-app-detail.c:361
+#: src/grotto-app-detail.c:363
 msgid "Scoped permission saved. Remove the legacy entry to finish."
 msgstr ""
 
-#: src/grotto-app-detail.c:362
+#: src/grotto-app-detail.c:364
 msgid "Retry Removing Legacy Entry"
 msgstr ""
 
-#: src/grotto-app-detail.c:362
+#: src/grotto-app-detail.c:364
 msgid "Remove Legacy Entry"
 msgstr ""
 
-#: src/grotto-app-detail.c:363
+#: src/grotto-app-detail.c:365
 msgid "Retry Permission"
 msgstr "Reintentar permiso"
 
-#: src/grotto-app-detail.c:378
+#: src/grotto-app-detail.c:380
 msgid "Remembered permissions cleared. Trust level unchanged."
 msgstr ""
 
-#: src/grotto-app-detail.c:386
+#: src/grotto-app-detail.c:388
 msgid "Permissions are refreshing. Review the entries and try again."
 msgstr ""
 
-#: src/grotto-app-detail.c:403
+#: src/grotto-app-detail.c:405
 #, c-format
 msgid ""
 "Remove every remembered allow, deny and inactive entry for this app and "
 "identity %s? Other identities and the trust level remain unchanged."
 msgstr ""
 
-#: src/grotto-app-detail.c:404
+#: src/grotto-app-detail.c:406
 msgid "Clear Remembered Permissions?"
 msgstr ""
 
-#: src/grotto-app-detail.c:405
+#: src/grotto-app-detail.c:407
 msgid "Clear Permissions"
 msgstr ""
 
-#: src/grotto-app-detail.c:417
+#: src/grotto-app-detail.c:419
 msgid "App Blocked"
 msgstr ""
 
-#: src/grotto-app-detail.c:417
+#: src/grotto-app-detail.c:419
 msgid "Saved permissions are retained, but inactive while the app is blocked."
 msgstr ""
 
-#: src/grotto-app-detail.c:420
+#: src/grotto-app-detail.c:422
 msgid "Full"
 msgstr ""
 
-#: src/grotto-app-detail.c:420
+#: src/grotto-app-detail.c:422
 msgid "Medium"
 msgstr ""
 
-#: src/grotto-app-detail.c:420
+#: src/grotto-app-detail.c:422
 msgid "Low"
 msgstr ""
 
-#: src/grotto-app-detail.c:421
+#: src/grotto-app-detail.c:423
 #, c-format
 msgid "From %s trust"
 msgstr ""
 
-#: src/grotto-app-detail.c:440
+#: src/grotto-app-detail.c:442
 msgid "Needs Review"
 msgstr ""
 
-#: src/grotto-app-detail.c:441 src/grotto-app-detail.c:442
+#: src/grotto-app-detail.c:443 src/grotto-app-detail.c:444
 #: src/grotto-activity-panel.c:77
 #, c-format
 msgid "%s · %s"
 msgstr ""
 
-#: src/grotto-app-detail.c:446
+#: src/grotto-app-detail.c:448
 msgid "Inactive — pending policy review"
 msgstr ""
 
-#: src/grotto-app-detail.c:449
+#: src/grotto-app-detail.c:451
 msgid "Clear Remembered Permissions…"
 msgstr ""
 
-#: src/grotto-app-detail.c:462
+#: src/grotto-app-detail.c:464
 msgid "No Remembered Permissions"
 msgstr ""
 
-#: src/grotto-app-detail.c:462
+#: src/grotto-app-detail.c:464
 msgid "Access from the trust level is shown separately."
 msgstr ""
 
-#: src/grotto-app-detail.c:463
+#: src/grotto-app-detail.c:465
 msgid "Permissions could not be loaded. Refresh to try again."
 msgstr ""
 
-#: src/grotto-app-detail.c:465
+#: src/grotto-app-detail.c:467
 msgid ""
 "Not cleared. Permissions or the signer changed. Review the refreshed entries "
 "and confirm again."
 msgstr ""
 
-#: src/grotto-app-detail.c:489
+#: src/grotto-app-detail.c:491
 msgid "Refresh Permissions"
 msgstr ""
 
-#: src/grotto-app-detail.c:493
+#: src/grotto-app-detail.c:495
 msgid "Effective from Trust Level"
 msgstr ""
 
-#: src/grotto-app-detail.c:494
+#: src/grotto-app-detail.c:496
 msgid ""
 "Explicit denials win. Saved permissions override presets. Ask-by-default "
 "event types and AUTH relays need a scoped first grant."
 msgstr ""
 
-#: src/grotto-app-detail.c:497
+#: src/grotto-app-detail.c:499
 msgid "Remembered Permissions"
 msgstr ""
 
-#: src/grotto-app-detail.c:498
+#: src/grotto-app-detail.c:500
 msgid ""
 "Explicit entries are editable. Status and reasons come from the signer. "
 "Expiry is not extended by use. Inactive entries cannot authorize signing."
 msgstr ""
 
-#: src/grotto-app-detail.c:501
+#: src/grotto-app-detail.c:503
 msgid "Clear Remembered Permissions"
 msgstr ""
 
-#: src/grotto-app-detail.c:502
+#: src/grotto-app-detail.c:504
 msgid ""
 "Choose an identity. Clearing removes its explicit allows, denies and "
 "inactive entries, not its trust level."
 msgstr ""
 
-#: src/grotto-app-detail.c:505 src/grotto-app-detail.c:604
+#: src/grotto-app-detail.c:507 src/grotto-app-detail.c:606
 msgid "Permissions"
 msgstr "Permisos"
 
-#: src/grotto-app-detail.c:554
+#: src/grotto-app-detail.c:556
 msgid "Waiting for Consent"
 msgstr ""
 
-#: src/grotto-app-detail.c:559
+#: src/grotto-app-detail.c:561
 msgid ""
 "Previous access policy. Choose routine access to review an explicit upgrade."
 msgstr ""
 
-#: src/grotto-app-detail.c:560
+#: src/grotto-app-detail.c:562
 msgid "App unavailable or removed"
 msgstr ""
 
-#: src/grotto-app-detail.c:589
+#: src/grotto-app-detail.c:591
 msgid "Local Name"
 msgstr ""
 
-#: src/grotto-app-detail.c:592
+#: src/grotto-app-detail.c:594
 msgid "Access"
 msgstr ""
 
-#: src/grotto-app-detail.c:593
+#: src/grotto-app-detail.c:595
 msgid ""
 "Blocked actions always stay blocked. Lowering access keeps saved permissions."
 msgstr ""
 
-#: src/grotto-app-detail.c:594
+#: src/grotto-app-detail.c:596
 msgid "Trust for Routine Operations"
 msgstr "Confiar para operaciones habituales"
 
-#: src/grotto-app-detail.c:604
+#: src/grotto-app-detail.c:606
 msgid "Review and change saved permissions"
 msgstr "Revisar y cambiar los permisos guardados"
 
-#: src/grotto-app-detail.c:607
+#: src/grotto-app-detail.c:609
 msgid "Recent Activity"
 msgstr ""
 
-#: src/grotto-app-detail.c:613
+#: src/grotto-app-detail.c:615
 msgid "Verified As"
 msgstr ""
 
-#: src/grotto-app-detail.c:614
+#: src/grotto-app-detail.c:616
 msgid "Fingerprint"
 msgstr ""
 
-#: src/grotto-app-detail.c:615
+#: src/grotto-app-detail.c:617
 msgid "Connected Since"
 msgstr ""
 
-#: src/grotto-app-detail.c:621
+#: src/grotto-app-detail.c:623
 msgid "Remove App Block…"
 msgstr ""
 
-#: src/grotto-app-detail.c:624
+#: src/grotto-app-detail.c:626
 msgid "Remove App…"
 msgstr ""
 

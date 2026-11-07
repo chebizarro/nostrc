@@ -3,6 +3,7 @@
 
 #include <adwaita.h>
 #include <gio/gio.h>
+#include <grotto-panels.h>
 
 G_BEGIN_DECLS
 /* Public navigation only; never imports, exports or authorizes on activation. */
@@ -12,6 +13,8 @@ G_BEGIN_DECLS
 G_DECLARE_FINAL_TYPE(SignerWindow, signer_window, SIGNER, WINDOW, AdwApplicationWindow)
 
 SignerWindow *signer_window_new(AdwApplication *app);
+/* Borrowed public metadata/cache service for cosmetic identity pickers. */
+GrottoPanelsService *signer_window_get_identity_service(SignerWindow *self);
 void signer_window_show_page(SignerWindow *self, const char *name);
 void signer_window_set_pending_group(SignerWindow *self, GtkWidget *group);
 void signer_window_add_background_group(SignerWindow *self, AdwPreferencesGroup *group);

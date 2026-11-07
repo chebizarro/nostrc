@@ -224,6 +224,12 @@ GROTTO_PANELS_API gboolean grotto_profile_info_validate(const GrottoProfileInfo 
 GROTTO_PANELS_API GrottoProfileInfo *grotto_panels_service_dup_profile(GrottoPanelsService *self, const char *public_key);
 GROTTO_PANELS_API void grotto_panels_service_set_profile(GrottoPanelsService *self, const char *public_key, const GrottoProfileInfo *info);
 
+/* Public-key GtkStringList model; presentation uses device label, then cached
+ * profile display_name, then short npub. Both selected and popover items show a cached
+ * avatar or initials. Never fetches profiles/images or invokes host policy.
+ * The caller sets the row title and model. Included in unreleased 0.1.0. */
+GROTTO_PANELS_API GtkWidget *grotto_identity_picker_new(GrottoPanelsService *service);
+
 typedef struct _GrottoPanelsHost {
   void (*show_toast)(gpointer host, const char *message);
   void (*review_request)(gpointer host, const char *request_id);

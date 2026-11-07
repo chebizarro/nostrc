@@ -19,7 +19,7 @@ configure_file(output: 'grotto-panels-version.h', configuration: version_data,
   install_dir: get_option('includedir') / 'grotto-panels-0')
 inc = include_directories('include/grotto-panels-0', '.')
 resources = import('gnome').compile_resources('grotto-panels-resources', 'data/grotto-panels.gresource.xml', source_dir: 'data', export: false)
-panels = shared_library('grotto-panels-0', resources, 'src/grotto-app-info.c', 'src/grotto-apps-panel.c', 'src/grotto-app-detail.c', 'src/grotto-activity-panel.c', 'src/grotto-remote-panel.c', 'src/grotto-identity-panel.c', 'src/grotto-profile-view.c', 'src/grotto-panel.c', 'src/grotto-panels-service.c', 'src/grotto-panels-validation.c',
+panels = shared_library('grotto-panels-0', resources, 'src/grotto-app-info.c', 'src/grotto-identity-picker.c', 'src/grotto-apps-panel.c', 'src/grotto-app-detail.c', 'src/grotto-activity-panel.c', 'src/grotto-remote-panel.c', 'src/grotto-identity-panel.c', 'src/grotto-profile-view.c', 'src/grotto-panel.c', 'src/grotto-panels-service.c', 'src/grotto-panels-validation.c',
   include_directories: inc, dependencies: [gtk_dep, adw_dep, intl_dep],
   c_args: ['-DGROTTO_PANELS_COMPILATION', '-DGETTEXT_PACKAGE="grotto-panels"',
     '-DGROTTO_PANELS_LOCALEDIR="@0@"'.format(get_option('prefix') / get_option('localedir'))], gnu_symbol_visibility: 'hidden',

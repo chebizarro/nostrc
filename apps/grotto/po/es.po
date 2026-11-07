@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: grotto 0.1.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-07 09:13+0000\n"
+"POT-Creation-Date: 2026-11-07 02:46-0800\n"
 "PO-Revision-Date: 2024-01-23 00:00+0000\n"
 "Last-Translator: \n"
 "Language-Team: Spanish\n"
@@ -92,7 +92,7 @@ msgstr ""
 
 #: data/ui/approval-dialog.ui:240 data/ui/onboarding-assistant.ui:246
 #: data/ui/sheets/sheet-qr-display.ui:73 data/ui/sheets/sheet-qr-scanner.ui:144
-#: src/ui/pairing-flow.c:134
+#: src/ui/pairing-flow.c:120
 msgid "Details"
 msgstr "Detalles"
 
@@ -254,7 +254,7 @@ msgid "Use a key or recovery phrase you already have"
 msgstr "Usar una clave o frase de recuperación que ya tienes"
 
 #: data/ui/onboarding-assistant.ui:84 data/ui/onboarding-assistant.ui:191
-#: src/ui/pairing-flow.c:104 src/ui/sheets/sheet-qr-display.c:464
+#: src/ui/pairing-flow.c:90 src/ui/sheets/sheet-qr-display.c:464
 msgid "Connect an App"
 msgstr "Conectar una aplicación"
 
@@ -439,7 +439,7 @@ msgid "Open to enable remote signing and show a connection link"
 msgstr ""
 
 #: data/ui/page-settings.ui:10 data/ui/shortcuts-window.ui:45
-#: data/org.nostr.Grotto.desktop:31 src/ui/signer-window.c:636
+#: data/org.nostr.Grotto.desktop:30 src/ui/signer-window.c:636
 #: src/ui/signer-window.c:830
 msgid "Preferences"
 msgstr ""
@@ -521,7 +521,7 @@ msgstr ""
 
 #: data/ui/page-identity-detail.ui:37 data/ui/signer-window.ui:44
 #: src/ui/approval_dialog.c:306 src/ui/approval_dialog.c:789
-#: src/ui/pairing-flow.c:136 src/ui/sheets/sheet-qr-display.c:412
+#: src/ui/sheets/sheet-qr-display.c:412
 msgid "Identity"
 msgstr "Identidad"
 
@@ -578,11 +578,11 @@ msgid "Management"
 msgstr ""
 
 #: data/ui/shortcuts-window.ui:17 data/ui/signer-window.ui:55
-#: packaging/appimage/grotto.desktop:4
+#: packaging/appimage/grotto.desktop:3
 msgid "Grotto"
 msgstr "Grotto"
 
-#: data/ui/shortcuts-window.ui:20 data/org.nostr.Grotto.desktop:27
+#: data/ui/shortcuts-window.ui:20 data/org.nostr.Grotto.desktop:26
 #: src/ui/signer-window.c:619
 msgid "New Identity…"
 msgstr ""
@@ -727,23 +727,23 @@ msgstr ""
 msgid "Warning: Caps Lock is enabled"
 msgstr ""
 
-#: data/org.nostr.Grotto.desktop:4
+#: data/org.nostr.Grotto.desktop:3
 msgid "Grotto (Preview)"
 msgstr ""
 
-#: data/org.nostr.Grotto.desktop:5 packaging/appimage/grotto.desktop:5
+#: data/org.nostr.Grotto.desktop:4 packaging/appimage/grotto.desktop:4
 msgid "Nostr Signer"
 msgstr ""
 
-#: data/org.nostr.Grotto.desktop:6
+#: data/org.nostr.Grotto.desktop:5
 msgid "Manage Nostr identities and review signing requests (NIP-55L, NIP-46)"
 msgstr ""
 
-#: data/org.nostr.Grotto.desktop:12
+#: data/org.nostr.Grotto.desktop:11
 msgid "nostr;signer;keys;identity;crypto;signing;"
 msgstr ""
 
-#: packaging/appimage/grotto.desktop:6
+#: packaging/appimage/grotto.desktop:5
 msgid "Authorize Nostr app requests securely"
 msgstr ""
 
@@ -1104,15 +1104,15 @@ msgstr ""
 msgid "_Remove"
 msgstr "_Eliminar"
 
-#: src/ui/signer-window.c:838 src/ui/pairing-flow.c:123
+#: src/ui/signer-window.c:838 src/ui/pairing-flow.c:109
 msgid "Add App"
 msgstr "Añadir aplicación"
 
-#: src/ui/signer-window.c:949
+#: src/ui/signer-window.c:953
 msgid "Choose Backup for this identity."
 msgstr ""
 
-#: src/ui/signer-window.c:1085
+#: src/ui/signer-window.c:1089
 msgid "Session locked via Ctrl+L"
 msgstr ""
 
@@ -1710,7 +1710,7 @@ msgid ""
 "Peer: %s"
 msgstr ""
 
-#: src/ui/approval_dialog.c:612 src/ui/pairing-flow.c:109
+#: src/ui/approval_dialog.c:612 src/ui/pairing-flow.c:95
 msgid "None"
 msgstr ""
 
@@ -2247,15 +2247,15 @@ msgstr ""
 msgid "Not used"
 msgstr ""
 
-#: src/ui/page-connect.c:22
+#: src/ui/page-connect.c:23
 msgid "Copy a nostrconnect:// connection link from the remote app first"
 msgstr ""
 
-#: src/ui/page-connect.c:52
+#: src/ui/page-connect.c:56
 msgid "Let a remote app paste or scan this signer’s link"
 msgstr ""
 
-#: src/ui/page-connect.c:53
+#: src/ui/page-connect.c:57
 msgid ""
 "Remote signing is disabled. Open to enable it and show a connection link."
 msgstr ""
@@ -3270,36 +3270,36 @@ msgstr ""
 "Copiado. Los gestores del portapapeles pueden conservar una copia. Grotto "
 "borra la suya al cerrar o bloquear esta ventana, o tras un minuto."
 
-#: src/ui/pairing-flow.c:49
+#: src/ui/pairing-flow.c:35
 msgid ""
 "Identities could not be loaded. Check that Grotto is running and unlocked."
 msgstr ""
 "No se pudieron cargar las identidades. Comprueba que Grotto esté en "
 "ejecución y desbloqueado."
 
-#: src/ui/pairing-flow.c:55
+#: src/ui/pairing-flow.c:41
 msgid "Choose an identity, then review what the app may do before connecting."
 msgstr ""
 "Elige una identidad y revisa lo que podrá hacer la aplicación antes de "
 "conectarla."
 
-#: src/ui/pairing-flow.c:55
+#: src/ui/pairing-flow.c:41
 msgid "Create or import an identity first."
 msgstr "Primero crea o importa una identidad."
 
-#: src/ui/pairing-flow.c:74
+#: src/ui/pairing-flow.c:60
 msgid "Pairing is unavailable. Check Remote Signing, then try again."
 msgstr "La vinculación no está disponible. Revisa Firma remota y reintenta."
 
-#: src/ui/pairing-flow.c:83
+#: src/ui/pairing-flow.c:69
 msgid "Choose an identity to connect."
 msgstr "Elige una identidad para conectar."
 
-#: src/ui/pairing-flow.c:95
+#: src/ui/pairing-flow.c:81
 msgid "Invalid App Link"
 msgstr "Enlace de Aplicación No Válido"
 
-#: src/ui/pairing-flow.c:100
+#: src/ui/pairing-flow.c:86
 msgid ""
 "This link belongs to another signer. Use a connection link from an app "
 "instead."
@@ -3307,12 +3307,12 @@ msgstr ""
 "Este enlace pertenece a otro firmante. Usa un enlace de conexión de una "
 "aplicación."
 
-#: src/ui/pairing-flow.c:101
+#: src/ui/pairing-flow.c:87
 msgid "This connection link is invalid. Copy a new link from your app."
 msgstr ""
 "Este enlace de conexión no es válido. Copia uno nuevo desde tu aplicación."
 
-#: src/ui/pairing-flow.c:105
+#: src/ui/pairing-flow.c:91
 #, c-format
 msgid ""
 "App name (not verified): %s\n"
@@ -3323,11 +3323,11 @@ msgstr ""
 "Los relés pueden ver tu dirección de red y cuándo te conectas. Aún no se ha "
 "realizado ninguna conexión."
 
-#: src/ui/pairing-flow.c:105 src/ui/sheets/sheet-qr-scanner.c:326
+#: src/ui/pairing-flow.c:91 src/ui/sheets/sheet-qr-scanner.c:326
 msgid "Not supplied"
 msgstr "No indicado"
 
-#: src/ui/pairing-flow.c:108
+#: src/ui/pairing-flow.c:94
 #, c-format
 msgid ""
 "App key: %s\n"
@@ -3340,16 +3340,16 @@ msgstr ""
 "Relés:\n"
 "%s"
 
-#: src/ui/pairing-flow.c:111 src/ui/sheets/sheet-qr-display.c:354
+#: src/ui/pairing-flow.c:97 src/ui/sheets/sheet-qr-display.c:354
 #: src/ui/sheets/sheet-qr-display.c:433
 msgid "Grotto could not reach the signer."
 msgstr "Grotto no pudo contactar con el firmante."
 
-#: src/ui/pairing-flow.c:145 src/ui/pairing-flow.c:146
+#: src/ui/pairing-flow.c:125
 msgid "Identity to Connect"
 msgstr "Identidad para conectar"
 
-#: src/ui/pairing-flow.c:148
+#: src/ui/pairing-flow.c:129
 msgid "_Review"
 msgstr "_Revisar"
 
