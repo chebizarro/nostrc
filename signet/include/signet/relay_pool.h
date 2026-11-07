@@ -81,6 +81,12 @@ void signet_relay_pool_set_subscription_callback(SignetRelayPool *rp,
                                                  SignetSubscriptionCallback cb,
                                                  void *user_data);
 
+/* Snapshot counters; independent of subscription readiness. */
+typedef struct {
+  uint64_t accepted, rejected, timed_out, transport_aborted;
+} SignetReplyAckStats;
+void signet_relay_pool_get_reply_ack_stats(SignetRelayPool *rp, SignetReplyAckStats *out);
+
 /**
  * SignetRelayPoolConfig:
  * @relays: relays value.
@@ -238,7 +244,7 @@ int signet_relay_pool_publish_event_json(SignetRelayPool *rp, const char *event_
  *
  * Callback invoked once per watched relay operation. accepted=false with
  * reason "transport-aborted:" or "timeout:" distinguishes local terminals
- * from relay rejection. Callbacks may run on worker or GLib main-context threads.
+ * from relay rejection (whose reason is prefixed with "relay-rejected:"). Callbacks may run on worker or GLib main-context threads.
  * user_data must remain valid until the callback or synchronous pool stop has
  * returned. stop() inside a callback defers quiescence; never call free() there.
  *

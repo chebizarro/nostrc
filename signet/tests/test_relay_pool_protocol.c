@@ -14,6 +14,8 @@
  */
 
 #include "signet/relay_pool.h"
+#include "relay_pool_private.h"
+#include <time.h>
 
 #include "test_check.h"
 
@@ -606,7 +608,125 @@ static void test_relays_redial_without_a_pool_bounce(void) {
 
 /* ---- main ---- */
 
-int main(void) {
+typedef struct {
+  SignetRelayPool *pool;
+  GMainLoop *loop;
+  const char *json;
+  int boundaries;
+  gboolean replied;
+  gboolean complete;
+  gboolean expect_timeout;
+} Wire;
+static gboolean wire_deadline(gpointer data) {
+  Wire *w = data;
+  g_main_loop_quit(w->loop);
+  return G_SOURCE_CONTINUE;
+}
+static void wire_event(const SignetRelayEventView *event, void *data) {
+  Wire *w = data;
+  if (event->kind == 12345) {
+    SignetReplyAckStats stats = {0};
+    signet_relay_pool_get_reply_ack_stats(w->pool, &stats);
+    CHECK(stats.accepted == 1); /* OK precedes EVENT on this same connection */
+    g_atomic_int_set(&w->replied, TRUE);
+    int barrier_kind[] = {12346};
+    CHECK(!signet_relay_pool_subscribe_kinds(w->pool, barrier_kind, 1));
+  }
+}
+static void wire_subscription(const char *url, const char *state, const char *reason, void *data) {
+  (void)url; (void)reason;
+  Wire *w = data;
+  if (!strcmp(state, "EOSE")) {
+    CHECK(signet_relay_pool_is_subscribed(w->pool));
+    if (++w->boundaries == 1) {
+      int kinds[] = {12345};
+      CHECK(!signet_relay_pool_subscribe_scoped(w->pool, kinds, 1,
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", 424242));
+      CHECK(!signet_relay_pool_is_subscribed(w->pool));
+    } else if (w->boundaries == 2) {
+      CHECK(!signet_relay_pool_publish_reply(w->pool, w->json));
+    }
+  } else if (!strcmp(state, "CLOSED") && w->boundaries >= 2) {
+    CHECK(!signet_relay_pool_is_subscribed(w->pool));
+    SignetReplyAckStats stats = {0};
+    signet_relay_pool_get_reply_ack_stats(w->pool, &stats);
+    CHECK(stats.accepted == 1);
+    CHECK(stats.rejected == (w->expect_timeout ? 0 : 1));
+    CHECK(stats.timed_out == (w->expect_timeout ? 1 : 0));
+    CHECK(g_atomic_int_get(&w->replied));
+    w->complete = TRUE;
+    g_main_loop_quit(w->loop);
+  }
+}
+static int test_wire(int argc, char **argv) {
+  CHECK(argc == 4);
+  Wire w = {.expect_timeout = !strcmp(argv[1], "--wire-timeout")};
+  w.loop = g_main_loop_new(NULL, FALSE);
+  const char *urls[] = {argv[2], argv[3]};
+  SignetRelayPoolConfig cfg = {.relays = urls, .n_relays = 2,
+    .on_event = wire_event, .user_data = &w};
+  w.pool = signet_relay_pool_new(&cfg);
+  CHECK(w.pool);
+  signet_relay_pool_set_subscription_callback(w.pool, wire_subscription, &w);
+  int kinds[] = {12345};
+  CHECK(!signet_relay_pool_subscribe_scoped(w.pool, kinds, 1,
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 313131));
+  NostrEvent *event = nostr_event_new();
+  nostr_event_set_kind(event, 12345);
+  nostr_event_set_created_at(event, time(NULL));
+  nostr_event_set_content(event, "signed-reply-fixture");
+  CHECK(!nostr_event_sign(event,
+    "0000000000000000000000000000000000000000000000000000000000000001"));
+  w.json = nostr_event_serialize_compact(event);
+  nostr_event_free(event);
+  CHECK(!signet_relay_pool_start(w.pool));
+  guint deadline = g_timeout_add_seconds(15, wire_deadline, &w);
+  g_main_loop_run(w.loop);
+  g_source_remove(deadline);
+  signet_relay_pool_free(w.pool);
+  free((char *)w.json);
+  g_main_loop_unref(w.loop);
+  CHECK(w.complete);
+  puts("wire: current EOSE, stale EOSE, full filter, CLOSED, same-signed-reply failover PASS");
+  return 0;
+}
+
+static void reconnect_subscription(const char *url, const char *state, const char *reason, void *data) {
+  (void)url; (void)reason;
+  Wire *w = data;
+  if (!strcmp(state, "EOSE")) {
+    CHECK(signet_relay_pool_is_subscribed(w->pool));
+    w->complete = TRUE;
+    g_main_loop_quit(w->loop);
+  } else if (!strcmp(state, "DISCONNECTED") || !strcmp(state, "CLOSED")) {
+    CHECK(!signet_relay_pool_is_subscribed(w->pool));
+  }
+}
+static int test_wire_reconnect(const char *url) {
+  Wire w = {.loop = g_main_loop_new(NULL, FALSE)};
+  SignetRelayPoolConfig cfg = {.relays = &url, .n_relays = 1,
+    .auth_sk_hex = "0000000000000000000000000000000000000000000000000000000000000001"};
+  w.pool = signet_relay_pool_new(&cfg);
+  CHECK(w.pool);
+  signet_relay_pool_set_subscription_callback(w.pool, reconnect_subscription, &w);
+  int kinds[] = {12345};
+  CHECK(!signet_relay_pool_subscribe_scoped(w.pool, kinds, 1,
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 313131));
+  CHECK(!signet_relay_pool_start(w.pool));
+  guint deadline = g_timeout_add_seconds(15, wire_deadline, &w);
+  g_main_loop_run(w.loop);
+  g_source_remove(deadline);
+  signet_relay_pool_free(w.pool);
+  g_main_loop_unref(w.loop);
+  CHECK(w.complete);
+  puts("wire: disconnect during AUTH, challenge-free reconnect/current EOSE PASS");
+  return 0;
+}
+
+int main(int argc, char **argv) {
+  if (argc == 3 && !strcmp(argv[1], "--wire-reconnect")) return test_wire_reconnect(argv[2]);
+  if (argc > 1 && (!strcmp(argv[1], "--wire") || !strcmp(argv[1], "--wire-timeout")))
+    return test_wire(argc, argv);
   printf("=== Signet Relay Pool Protocol Tests (NPA-11) ===\n");
 
   test_relay_pool_lifecycle();

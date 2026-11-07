@@ -47,6 +47,7 @@ struct SignetRelayPool {
   GHashTable *relay_states; /* relay -> RelayState, owns references */
   GHashTable *sources;      /* source ID -> GSource, owns references */
   uint64_t watch_serial;
+  SignetReplyAckStats reply_acks;
   SignetSubscriptionCallback on_subscription;
   void *subscription_data;
 
@@ -529,7 +530,11 @@ static void ok_dispatch(const char *id, bool accepted, const char *reason, void 
       }
       g_mutex_unlock(&rp->mu);
     }
-    finish_watch(w, accepted, reason);
+    /* Keep local terminal statuses distinct even if an untrusted relay uses
+     * our reserved timeout/transport-aborted text as its rejection reason. */
+    char *relay_reason = accepted ? NULL : g_strdup_printf("relay-rejected: %s", reason ? reason : "");
+    finish_watch(w, accepted, accepted ? reason : relay_reason);
+    g_free(relay_reason);
     w = next;
   }
 }
@@ -1171,6 +1176,102 @@ int signet_relay_pool_publish_selected_ack(SignetRelayPool *rp, const char *json
                                            const char *url, SignetPublishOkCallback cb, void *data) {
   if (!url) return -1;
   return publish_ack(rp, json, cb, data, url);
+}
+
+typedef struct {
+  gint refs;
+  SignetRelayPool *rp;
+  char *json;
+  char *id;
+  GHashTable *attempted;
+} ReplyDelivery;
+typedef struct { ReplyDelivery *delivery; size_t relay_index; } ReplyAttempt;
+
+static void reply_delivery_unref(ReplyDelivery *d) {
+  if (!g_atomic_int_dec_and_test(&d->refs)) return;
+  sodium_memzero(d->json, strlen(d->json));
+  g_free(d->json);
+  free(d->id);
+  g_hash_table_destroy(d->attempted);
+  pool_release(d->rp);
+  g_free(d);
+}
+static void reply_attempt_free(gpointer data) {
+  ReplyAttempt *a = data;
+  reply_delivery_unref(a->delivery);
+  g_free(a);
+}
+static gboolean reply_next_locked(ReplyDelivery *d);
+static void reply_ok(const char *id, bool accepted, const char *reason, void *data) {
+  (void)id;
+  ReplyAttempt *a = data;
+  ReplyDelivery *d = a->delivery;
+  SignetRelayPool *rp = d->rp;
+  const char *result;
+  g_mutex_lock(&rp->mu);
+  if (accepted) { rp->reply_acks.accepted++; result = "accept"; }
+  else if (!g_strcmp0(reason, "timeout:")) { rp->reply_acks.timed_out++; result = "timeout"; }
+  else if (!g_strcmp0(reason, "transport-aborted:")) {
+    rp->reply_acks.transport_aborted++; result = "transport-aborted";
+  } else { rp->reply_acks.rejected++; result = "reject"; }
+  if (!accepted && rp->started && !rp->stopping && !rp->disposing)
+    reply_next_locked(d);
+  g_mutex_unlock(&rp->mu);
+  /* Only a stable relay index and fixed outcome labels: no ciphertext, request,
+   * signer identity, arbitrary relay reason or credential-bearing URL. */
+  g_message("[signetd] nip46-reply-ack relay=%zu result=%s", a->relay_index, result);
+}
+static gboolean reply_next_locked(ReplyDelivery *d) {
+  SignetRelayPool *rp = d->rp;
+  if (!rp->started || rp->stopping || rp->disposing) return FALSE;
+  NostrEvent *evt = nostr_event_new();
+  if (!evt || !nostr_event_deserialize_compact(evt, d->json, NULL)) {
+    if (evt) nostr_event_free(evt);
+    return FALSE;
+  }
+  gboolean sent = FALSE;
+  for (size_t i = 0; i < rp->pool->relay_count; i++) {
+    NostrRelay *relay = rp->pool->relays[i];
+    const char *url = relay ? nostr_relay_get_url_const(relay) : NULL;
+    if (!url || !nostr_relay_is_connected(relay) || g_hash_table_contains(d->attempted, url)) continue;
+    g_hash_table_add(d->attempted, g_strdup(url));
+    ReplyAttempt *a = g_new0(ReplyAttempt, 1);
+    a->delivery = d;
+    a->relay_index = i;
+    g_atomic_int_inc(&d->refs);
+    watch_publish_locked(rp, relay, d->id, reply_ok, a, reply_attempt_free);
+    sent = enqueue_event(relay, evt); /* same signed event; never re-sign */
+    break;
+  }
+  nostr_event_free(evt);
+  return sent;
+}
+int signet_relay_pool_publish_reply(SignetRelayPool *rp, const char *json) {
+  if (!rp || !json) return -1;
+  NostrEvent *evt = nostr_event_new();
+  if (!evt || !nostr_event_deserialize_compact(evt, json, NULL)) {
+    if (evt) nostr_event_free(evt);
+    return -1;
+  }
+  ReplyDelivery *d = g_new0(ReplyDelivery, 1);
+  d->refs = 1;
+  d->rp = rp;
+  g_atomic_int_inc(&rp->refs);
+  d->json = g_strdup(json);
+  d->id = nostr_event_get_id(evt);
+  d->attempted = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  nostr_event_free(evt);
+  g_mutex_lock(&rp->mu);
+  gboolean sent = reply_next_locked(d);
+  g_mutex_unlock(&rp->mu);
+  reply_delivery_unref(d);
+  return sent ? 0 : -2;
+}
+void signet_relay_pool_get_reply_ack_stats(SignetRelayPool *rp, SignetReplyAckStats *out) {
+  if (!rp || !out) return;
+  g_mutex_lock(&rp->mu);
+  *out = rp->reply_acks;
+  g_mutex_unlock(&rp->mu);
 }
 
 int signet_relay_pool_handle_event_json(SignetRelayPool *rp, const char *event_json) {

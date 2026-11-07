@@ -25,4 +25,11 @@ void signet_relay_pool_watch_auth_ok(SignetRelayPool *rp, NostrRelay *relay,
 void signet_relay_pool_watch_publish_ok(SignetRelayPool *rp, NostrRelay *relay, const char *event_id,
                                         SignetPublishOkCallback cb, void *user_data);
 
+/* NIP-46 replies: already signed bytes, sequential failover to other connected
+ * relays on reject/deadline; no request execution or signing in this path. */
+int signet_relay_pool_publish_reply(SignetRelayPool *rp, const char *event_json);
+int signet_relay_pool_publish_selected_ack(SignetRelayPool *rp, const char *event_json,
+                                           const char *relay_url,
+                                           SignetPublishOkCallback cb, void *user_data);
+
 #endif /* SIGNET_RELAY_POOL_PRIVATE_H */

@@ -180,7 +180,23 @@ static void test_callback_stop(void) {
   result_clear(&pending);
 }
 
+static void test_relay_cannot_spoof_transport_terminal(void) {
+  SignetRelayPool *rp = pool_new();
+  NostrRelay *relay = relay_new();
+  Result result; result_init(&result);
+  signet_relay_pool_watch_publish_ok(rp, relay, ID_A, outcome, &result);
+  NostrEnvelope *env = nostr_envelope_parse("[\"OK\",\"" ID_A "\",false,\"transport-aborted:\"]");
+  CHECK(env);
+  nostr_relay_dispatch_control_envelope(relay, env);
+  nostr_envelope_free(env);
+  CHECK(result.calls == 1 && !result.accepted && !result.aborted);
+  signet_relay_pool_free(rp);
+  nostr_relay_free(relay);
+  result_clear(&result);
+}
+
 int main(void) {
+  test_relay_cannot_spoof_transport_terminal();
   test_callback_stop();
   test_queued_auth_secret_teardown(FALSE);
   test_queued_auth_secret_teardown(TRUE);
