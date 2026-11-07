@@ -911,17 +911,6 @@ static void worker(GTask *task, gpointer source, gpointer data, GCancellable *ca
   else if (error) g_task_return_error(task, g_steal_pointer(&error));
   else g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED, "Profile operation failed");
 }
-AdwAlertDialog *grotto_profile_upload_confirmation(GdkTexture *preview, gboolean banner, const char *const *servers) {
-  g_autofree char *destinations = g_strjoinv("\n", (char **)servers);
-  g_autofree char *body = g_strdup_printf(_("Uploading makes this image public immediately, before Save. Cancelling the profile edit will not delete it or recall copies.\n\nThe selected crop is re-encoded as PNG without the original EXIF, location or device metadata. Only the previewed pixels are uploaded.\n\nPNG, JPEG or WebP only; up to 5 MiB, 8192 pixels per side and 24 megapixels.\n\nVerified kind-10063 servers, tried in this order:\n%s"), destinations);
-  AdwAlertDialog *dialog = ADW_ALERT_DIALOG(adw_alert_dialog_new(_("Crop and Upload Profile Image?"), body));
-  GtkWidget *picture = gtk_picture_new_for_paintable(GDK_PAINTABLE(preview)); gtk_picture_set_can_shrink(GTK_PICTURE(picture), TRUE); gtk_widget_set_size_request(picture, -1, 180);
-  gtk_picture_set_alternative_text(GTK_PICTURE(picture), banner ? _("Selected Banner") : _("Selected Avatar"));
-  adw_alert_dialog_set_extra_child(dialog, picture);
-  adw_alert_dialog_add_responses(dialog, "cancel", _("Cancel"), "upload", _("Upload Cropped Image"), NULL);
-  adw_alert_dialog_set_default_response(dialog, "cancel"); adw_alert_dialog_set_close_response(dialog, "cancel");
-  adw_alert_dialog_set_response_appearance(dialog, "upload", ADW_RESPONSE_SUGGESTED); return dialog;
-}
 static void preview_worker(GTask *task, gpointer source, gpointer data, GCancellable *cancel) {
   (void)source; Job *j = data; g_autoptr(GError) error = NULL;
   g_autoptr(GFileInputStream) stream = g_file_read(j->file, cancel, &error);
@@ -960,17 +949,23 @@ GBytes *grotto_profile_crop_image(GdkTexture *source, gboolean banner, double zo
   if (!gdk_pixbuf_save_to_buffer(scaled, &bytes, &length, "png", NULL, NULL)) return NULL;
   return g_bytes_new_take(bytes, length);
 }
-typedef struct { Job *job; GTask *task; GdkTexture *original; GtkPicture *picture; GtkRange *zoom, *x, *y; } Crop;
-static void crop_free(gpointer data) { Crop *c = data; g_object_unref(c->original); g_object_unref(c->task); g_free(c); }
+typedef struct { Job *job; GTask *task; GdkTexture *original; GBytes *bytes; GtkPicture *picture; GtkRange *zoom, *x, *y; gboolean banner; } Crop;
+static void crop_free(gpointer data) { Crop *c = data; g_object_unref(c->original); g_clear_pointer(&c->bytes, g_bytes_unref); g_clear_object(&c->task); g_free(c); }
+static void crop_update_job(Crop *c) {
+  if (!c->job) return;
+  g_clear_pointer(&c->job->bytes, g_bytes_unref); c->job->bytes = g_bytes_ref(c->bytes);
+  g_set_object(&c->job->preview, GDK_TEXTURE(gtk_picture_get_paintable(c->picture)));
+  g_free(c->job->mime); c->job->mime = g_strdup("image/png");
+}
 static void crop_changed(GtkRange *range, gpointer data) {
-  (void)range; Crop *c = data; if (c->job->crop_frozen) return;
-  g_autoptr(GBytes) bytes = grotto_profile_crop_image(c->original, c->job->action == GROTTO_PROFILE_CHOOSE_BANNER,
+  (void)range; Crop *c = data; if (c->job && c->job->crop_frozen) return;
+  g_autoptr(GBytes) bytes = grotto_profile_crop_image(c->original, c->banner,
     gtk_range_get_value(c->zoom), gtk_range_get_value(c->x), gtk_range_get_value(c->y));
   if (!bytes) return;
-  g_clear_pointer(&c->job->bytes, g_bytes_unref); c->job->bytes = g_bytes_ref(bytes);
-  g_clear_object(&c->job->preview); c->job->preview = gdk_texture_new_from_bytes(bytes, NULL);
-  g_free(c->job->mime); c->job->mime = g_strdup("image/png");
-  gtk_picture_set_paintable(c->picture, GDK_PAINTABLE(c->job->preview));
+  g_autoptr(GdkTexture) preview = gdk_texture_new_from_bytes(bytes, NULL);
+  g_clear_pointer(&c->bytes, g_bytes_unref); c->bytes = g_bytes_ref(bytes);
+  gtk_picture_set_paintable(c->picture, GDK_PAINTABLE(preview));
+  crop_update_job(c);
 }
 static GtkRange *crop_range(GtkBox *box, const char *label, double min, double max, double value) {
   GtkWidget *scale = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, min, max, .01);
@@ -978,6 +973,30 @@ static GtkRange *crop_range(GtkBox *box, const char *label, double min, double m
   gtk_accessible_update_property(GTK_ACCESSIBLE(scale), GTK_ACCESSIBLE_PROPERTY_LABEL, label, -1);
   GtkWidget *text = gtk_label_new(label); gtk_label_set_xalign(GTK_LABEL(text), 0);
   gtk_box_append(box, text); gtk_box_append(box, scale); return GTK_RANGE(scale);
+}
+AdwAlertDialog *grotto_profile_upload_confirmation(GdkTexture *preview, gboolean banner, const char *const *servers) {
+  g_autofree char *destinations = g_strjoinv("\n", (char **)servers);
+  g_autofree char *body = g_strdup_printf(_("Uploading makes this image public immediately, before Save. Cancelling the profile edit will not delete it or recall copies.\n\nThe selected crop is re-encoded as PNG without the original EXIF, location or device metadata. Only the previewed pixels are uploaded.\n\nPNG, JPEG or WebP only; up to 5 MiB, 8192 pixels per side and 24 megapixels.\n\nVerified kind-10063 servers, tried in this order:\n%s"), destinations);
+  AdwAlertDialog *dialog = ADW_ALERT_DIALOG(adw_alert_dialog_new(_("Crop and Upload Profile Image?"), body));
+  adw_alert_dialog_add_responses(dialog, "cancel", _("Cancel"), "upload", _("Upload Cropped Image"), NULL);
+  adw_alert_dialog_set_default_response(dialog, "cancel"); adw_alert_dialog_set_close_response(dialog, "cancel");
+  adw_alert_dialog_set_response_appearance(dialog, "upload", ADW_RESPONSE_SUGGESTED);
+  Crop *crop = g_new0(Crop, 1); crop->original = g_object_ref(preview); crop->banner = banner;
+  GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+  crop->picture = GTK_PICTURE(gtk_picture_new()); gtk_picture_set_can_shrink(crop->picture, TRUE);
+  gtk_picture_set_alternative_text(crop->picture, _("Cropped Image Preview"));
+  gtk_widget_set_size_request(GTK_WIDGET(crop->picture), -1, 180); gtk_box_append(GTK_BOX(box), GTK_WIDGET(crop->picture));
+  GtkWidget *guidance = gtk_label_new(banner ? _("Banner: 3∶1, up to 1500 × 500 pixels") : _("Avatar: square, up to 512 × 512 pixels"));
+  gtk_label_set_wrap(GTK_LABEL(guidance), TRUE); gtk_box_append(GTK_BOX(box), guidance);
+  crop->zoom = crop_range(GTK_BOX(box), _("Zoom"), 1, 4, 1);
+  crop->x = crop_range(GTK_BOX(box), _("Horizontal Position"), 0, 1, .5);
+  crop->y = crop_range(GTK_BOX(box), _("Vertical Position"), 0, 1, .5);
+  g_signal_connect(crop->zoom, "value-changed", G_CALLBACK(crop_changed), crop);
+  g_signal_connect(crop->x, "value-changed", G_CALLBACK(crop_changed), crop);
+  g_signal_connect(crop->y, "value-changed", G_CALLBACK(crop_changed), crop);
+  adw_alert_dialog_set_extra_child(dialog, box); g_object_set_data_full(G_OBJECT(dialog), "crop", crop, crop_free); crop_changed(NULL, crop);
+  if (!crop->bytes) { g_object_ref_sink(dialog); g_object_unref(dialog); return NULL; }
+  return dialog;
 }
 static void preview_ready(GObject *source, GAsyncResult *result, gpointer data) {
   (void)source; GTask *task = data; Job *j = g_task_get_task_data(task); g_autoptr(GError) error = NULL;
@@ -987,20 +1006,12 @@ static void preview_ready(GObject *source, GAsyncResult *result, gpointer data) 
     g_object_unref(task); return;
   }
   AdwAlertDialog *dialog = grotto_profile_upload_confirmation(j->preview, j->action == GROTTO_PROFILE_CHOOSE_BANNER, (const char *const *)j->destinations);
-  Crop *crop = g_new0(Crop, 1); crop->job = j; crop->task = g_object_ref(task); crop->original = g_object_ref(j->preview);
-  GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
-  crop->picture = GTK_PICTURE(gtk_picture_new()); gtk_picture_set_can_shrink(crop->picture, TRUE);
-  gtk_picture_set_alternative_text(crop->picture, _("Cropped Image Preview"));
-  gtk_widget_set_size_request(GTK_WIDGET(crop->picture), -1, 180); gtk_box_append(GTK_BOX(box), GTK_WIDGET(crop->picture));
-  GtkWidget *guidance = gtk_label_new(j->action == GROTTO_PROFILE_CHOOSE_BANNER ? _("Banner: 3∶1, up to 1500 × 500 pixels") : _("Avatar: square, up to 512 × 512 pixels"));
-  gtk_label_set_wrap(GTK_LABEL(guidance), TRUE); gtk_box_append(GTK_BOX(box), guidance);
-  crop->zoom = crop_range(GTK_BOX(box), _("Zoom"), 1, 4, 1);
-  crop->x = crop_range(GTK_BOX(box), _("Horizontal Position"), 0, 1, .5);
-  crop->y = crop_range(GTK_BOX(box), _("Vertical Position"), 0, 1, .5);
-  g_signal_connect(crop->zoom, "value-changed", G_CALLBACK(crop_changed), crop);
-  g_signal_connect(crop->x, "value-changed", G_CALLBACK(crop_changed), crop);
-  g_signal_connect(crop->y, "value-changed", G_CALLBACK(crop_changed), crop);
-  adw_alert_dialog_set_extra_child(dialog, box); g_object_set_data_full(G_OBJECT(dialog), "crop", crop, crop_free); crop_changed(NULL, crop);
+  if (!dialog) {
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, _("The image could not be opened. Choose a PNG, JPEG or WebP image smaller than 5 MB, up to 8192 pixels per side and 24 megapixels"));
+    g_object_unref(task); return;
+  }
+  Crop *crop = g_object_get_data(G_OBJECT(dialog), "crop"); crop->job = j; crop->task = g_object_ref(task);
+  crop_update_job(crop);
   adw_alert_dialog_choose(ADW_ALERT_DIALOG(dialog), g_task_get_source_object(task), g_task_get_cancellable(task), preview_answer, task);
 }
 static void chosen(GObject *source, GAsyncResult *result, gpointer data) {

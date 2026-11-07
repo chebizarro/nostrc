@@ -69,6 +69,8 @@ endif()
 if(TEST signer/dialog-sizing-static)
   nostrc_describe_test(signer/dialog-sizing-static OWNER grotto.gui grotto.panels
     INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/test-dialog-sizing.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/test-dialog-sizing.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/dialog-sizing-coverage.json"
       "${CMAKE_CURRENT_SOURCE_DIR}/../data" "${CMAKE_CURRENT_SOURCE_DIR}/../src"
       "${CMAKE_SOURCE_DIR}/gnome/grotto-panels/data"
       "${CMAKE_SOURCE_DIR}/gnome/grotto-panels/src")

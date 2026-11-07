@@ -12,6 +12,7 @@
 #include "ui/sheets/sheet-qr-display.h"
 #include "ui/sheets/sheet-qr-scanner.h"
 #include "accounts_store.h"
+#include "grotto-profile-service.h"
 #include "backup-recovery.h"
 #include "settings_manager.h"
 #include "i18n.h"
@@ -288,6 +289,35 @@ static GtkWidget *open_preferences(SignerWindow *window, const char *npub) {
   (void)npub; g_action_group_activate_action(G_ACTION_GROUP(window), "preferences", NULL);
   SIZING_WAIT(sizing_dialog(window)); return GTK_WIDGET(sizing_dialog(window));
 }
+static guint sizing_count(GtkWidget *widget, GType type) {
+  guint count = g_type_is_a(G_OBJECT_TYPE(widget), type) ? 1 : 0;
+  for (GtkWidget *child = gtk_widget_get_first_child(widget); child; child = gtk_widget_get_next_sibling(child))
+    count += sizing_count(child, type);
+  return count;
+}
+static GtkWidget *open_crop(SignerWindow *window, gboolean banner) {
+  g_autoptr(GdkPixbuf) pixels = gdk_pixbuf_new(GDK_COLORSPACE_RGB, FALSE, 8, 48, 24);
+  gdk_pixbuf_fill(pixels, 0x3c79bbff);
+  g_autoptr(GdkTexture) texture = gdk_texture_new_for_pixbuf(pixels);
+  const char *servers[] = {"https://images.example/", "https://fallback.example/", NULL};
+  AdwAlertDialog *dialog = grotto_profile_upload_confirmation(texture, banner, servers);
+  GtkWidget *controls = adw_alert_dialog_get_extra_child(dialog);
+  g_assert_cmpuint(sizing_count(controls, GTK_TYPE_SCALE), ==, 3);
+  GtkWidget *picture = sizing_find(controls, GTK_TYPE_PICTURE, NULL); g_assert_nonnull(picture);
+  g_assert_nonnull(gtk_picture_get_paintable(GTK_PICTURE(picture)));
+  /* Exercise the production crop callback, without any Job, publication or
+   * network operation. Both production and this sweep use the complete factory. */
+  GtkRange *zoom = GTK_RANGE(sizing_find(controls, GTK_TYPE_SCALE, NULL));
+  gtk_range_set_value(zoom, 1.5);
+  g_assert_cmpstr(adw_alert_dialog_get_default_response(dialog), ==, "cancel");
+  adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(window)); return GTK_WIDGET(dialog);
+}
+static GtkWidget *open_crop_avatar(SignerWindow *window, const char *npub) {
+  (void)npub; return open_crop(window, FALSE);
+}
+static GtkWidget *open_crop_banner(SignerWindow *window, const char *npub) {
+  (void)npub; return open_crop(window, TRUE);
+}
 static GtkWidget *open_assistant(SignerWindow *window, const char *npub) {
   (void)npub; OnboardingAssistant *assistant = onboarding_assistant_new();
   gtk_window_set_transient_for(GTK_WINDOW(assistant), GTK_WINDOW(window));
@@ -300,6 +330,9 @@ typedef struct {
   const char *affirmative, *cancel;
   int floor;
   gboolean body_actions;
+  /* Only a deliberately fixed viewport from the source contract belongs here.
+   * Never infer a ceiling from AdwDialog's mutable post-presentation geometry. */
+  int viewport_height;
 } SizingSurface;
 static const SizingSurface surfaces[] = {
   {"qr-display", open_qr, NULL, "_Close", 200},
@@ -322,8 +355,10 @@ static const SizingSurface surfaces[] = {
   {"paste-link-preview", open_preview, "_Review", "_Cancel", 200},
   {"invalid-link-preview", open_invalid_preview, "_Review", "_Cancel", 200},
   {"edit-profile", open_edit, "Save", "Cancel", 200},
-  {"edit-permission", open_permission, "Save Permission", "Cancel", 200, TRUE},
-  {"inactive-permission", open_inactive_permission, "Activate Saved Permission", "Cancel", 200, TRUE},
+  {"crop-upload-avatar", open_crop_avatar, "Upload Cropped Image", "Cancel", 120},
+  {"crop-upload-banner", open_crop_banner, "Upload Cropped Image", "Cancel", 120},
+  {"edit-permission", open_permission, "Save Permission", "Cancel", 200, TRUE, 560},
+  {"inactive-permission", open_inactive_permission, "Activate Saved Permission", "Cancel", 200, TRUE, 560},
   {"discard-permission-alert", open_discard, "Discard", "Cancel", 120},
   {"remove-permission-alert", open_remove_permission, "Remove Permission", "Cancel", 120},
   {"remove-app-alert", open_remove_app, "Remove App", "Cancel", 120},
@@ -399,16 +434,17 @@ static void sizing_assert(GtkWidget *surface, SignerWindow *window, const Sizing
   GtkWidget *content = ADW_IS_DIALOG(surface) ? adw_dialog_get_child(ADW_DIALOG(surface)) : gtk_window_get_child(GTK_WINDOW(surface));
   g_assert_nonnull(content); g_assert_true(gtk_widget_get_mapped(content));
   int height = gtk_widget_get_height(content), natural = sizing_natural(content);
-  /* Floating dialogs reserve outer shadow/margin space; bottom sheets reserve
-   * the top inset. Do not mistake window decorations for available content. */
-  /* libadwaita 1.5 reserves 30px above bottom sheets and 30px on each
-   * side of floating dialogs at these host sizes (GTK logical pixels). */
-  int available = gtk_widget_get_height(GTK_WIDGET(window)) - (gtk_widget_get_width(GTK_WIDGET(window)) > 450 ? 60 : 30);
-  int host_available = available;
-  if (ADW_IS_DIALOG(surface) && !adw_dialog_get_follows_content_size(ADW_DIALOG(surface))) {
-    int ceiling = adw_dialog_get_content_height(ADW_DIALOG(surface));
-    if (ceiling > 0) available = MIN(available, ceiling);
+  /* Availability is independent of the dialog's allocated/requested height.
+   * Alert dialogs float even on narrow hosts; ordinary dialogs become sheets.
+   * At these sizes libadwaita 1.5 reserves 30px on each floating side or above
+   * a bottom sheet. Windows use their complete host content allocation. */
+  int host_available = gtk_widget_get_height(GTK_WIDGET(window));
+  if (ADW_IS_DIALOG(surface)) {
+    GType floating = g_type_from_name("AdwFloatingSheet");
+    gboolean floats = floating && gtk_widget_get_ancestor(content, floating);
+    host_available -= floats ? 60 : 30;
   }
+  int available = test->viewport_height > 0 ? MIN(host_available, test->viewport_height) : host_available;
   int required = MAX(MIN(test->floor, host_available), MIN(natural, available));
   g_test_message("%s at %dx640: content=%dx%d natural=%d available=%d required=%d", test->name,
     gtk_widget_get_width(GTK_WIDGET(window)), gtk_widget_get_width(content), height, natural, available, required);
