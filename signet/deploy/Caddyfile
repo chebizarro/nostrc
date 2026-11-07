@@ -1,0 +1,36 @@
+{
+	admin off
+	persist_config off
+	auto_https disable_redirects
+	servers {
+		protocols h1 h2
+		max_header_size 16KB
+		timeouts {
+			read_header 5s
+			read_body 10s
+			write 30s
+			idle 60s
+		}
+	}
+}
+
+https://{$SIGNET_ENROLLMENT_HOST} {
+	bind 0.0.0.0
+	tls {
+		issuer acme {
+			disable_http_challenge
+		}
+	}
+	@enrollment path /bootstrap /challenge /auth
+	handle @enrollment {
+		request_body {
+			max_size 8KB
+		}
+		reverse_proxy 127.0.0.1:9487 {
+			header_up X-Forwarded-Proto https
+		}
+	}
+	handle {
+		respond 404
+	}
+}

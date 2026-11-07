@@ -1,0 +1,23 @@
+[Unit]
+Description=Signet digest-pinned Compose deployment
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+RequiresMountsFor=/srv/signet
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/signet/current
+ExecStartPre=/opt/signet/current/signet/deploy/preflight.sh
+ExecStart=/usr/bin/python3 /opt/signet/current/signet/deploy/ops.py supervise
+ExecStop=/usr/bin/python3 /opt/signet/current/signet/deploy/ops.py stop
+ExecStopPost=/usr/bin/python3 /opt/signet/current/signet/deploy/ops.py mark-stop
+Restart=on-failure
+RestartSec=275s
+TimeoutStopSec=60s
+UMask=0077
+LimitCORE=0
+
+[Install]
+WantedBy=multi-user.target

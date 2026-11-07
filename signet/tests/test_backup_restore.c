@@ -11,6 +11,7 @@
 #include "signet/store.h"
 #include "signet/store_audit.h"
 #include "signet/store_secrets.h"
+#include "nostr-keys.h"
 
 #include "test_check.h"
 #include <stdio.h>
@@ -28,6 +29,7 @@
 #define WRONG_KEY  "1111111111111111111111111111111111111111111111111111111111111111"
 
 #define NOW 2000000000
+static const char *backup_cli;
 
 static char *temp_path(const char *tag) {
   char *tmpl = g_strdup_printf("/tmp/signet-backup-%s-XXXXXX.db", tag);
@@ -371,11 +373,153 @@ static void test_file_tamper_rejected(void) {
   printf("test_file_tamper_rejected: PASS\n");
 }
 
-int main(void) {
+/* W4: two independently opened connections, with a writer active throughout
+ * export. This is store-level consistency evidence, not a deployed CLI drill. */
+typedef struct {
+  SignetStore *store;
+  GMutex mu;
+  GCond changed;
+  unsigned committed;
+  bool stop;
+} BackupWriter;
+
+static gpointer backup_writer(gpointer data) {
+  BackupWriter *w = data;
+  for (unsigned i = 0; ; i++) {
+    char id[48];
+    snprintf(id, sizeof(id), "online-%u", i);
+    uint8_t sk[32];
+    randombytes_buf(sk, sizeof(sk));
+    char hex[65];
+    sodium_bin2hex(hex, sizeof(hex), sk, sizeof(sk));
+    char *pk = nostr_key_get_public(hex);
+    CHECK(pk != NULL);
+    CHECK(signet_store_put_agent_ex(w->store, id, sk, sizeof(sk),
+                                     id, pk, "provisioned", NOW) == 0);
+    free(pk);
+    sodium_memzero(hex, sizeof(hex));
+    sodium_memzero(sk, sizeof(sk));
+    /* A nontrivial payload makes export overlap actual WAL writes. */
+    uint8_t payload[16384];
+    memset(payload, 'a', sizeof(payload));
+    SignetSecretMetadata md = {0};
+    CHECK(signet_store_create_secret(w->store, id, SIGNET_SECRET_API_TOKEN,
+        "online", payload, sizeof(payload), NULL, 0, "created", NULL, NOW,
+        &md) == SIGNET_SECRET_OK);
+    memset(payload, 'b', sizeof(payload));
+    CHECK(signet_store_rotate_secret_ex(w->store, md.id, payload,
+        sizeof(payload), false, 0, NOW + 1, NULL) == SIGNET_SECRET_OK);
+    CHECK(signet_audit_log_append(w->store, NOW + i, id, "online_rotate",
+                                 md.id, "test", NULL) == 0);
+    signet_secret_metadata_clear(&md);
+    g_mutex_lock(&w->mu);
+    w->committed++;
+    g_cond_signal(&w->changed);
+    bool done = w->stop;
+    g_mutex_unlock(&w->mu);
+    if (done) break;
+    CHECK(i < 10000); /* finite failure rather than an unbounded writer */
+  }
+  return NULL;
+}
+
+static void test_online_backup_consistency(void) {
+  if (!signet_store_sqlcipher_available()) {
+    puts("test_online_backup_consistency: SKIP (no SQLCipher; no online-backup proof)");
+    return;
+  }
+  char *db = temp_path("online"), *bak = temp_path("online-backup");
+  char *restored = temp_path("online-restored");
+  SignetStore *daemon = open_store(db, MASTER_KEY);
+  CHECK(daemon != NULL);
+  CHECK(backup_cli != NULL);
+  char *config = temp_path("online-config");
+  char *ini = g_strdup_printf("[store]\ndb_path=%s\n[nostr]\nbunker_pubkey=%064d\nrelays=wss://relay.test.invalid\n", db, 1);
+  CHECK(g_file_set_contents(config, ini, -1, NULL));
+  CHECK(g_chmod(config, 0600) == 0);
+  g_free(ini);
+  BackupWriter w = {.store = daemon};
+  g_mutex_init(&w.mu);
+  g_cond_init(&w.changed);
+  GThread *thread = g_thread_new("backup-writer", backup_writer, &w);
+  g_mutex_lock(&w.mu);
+  while (w.committed < 64) g_cond_wait(&w.changed, &w.mu);
+  unsigned before = w.committed;
+  g_mutex_unlock(&w.mu);
+  char **env = g_get_environ();
+  env = g_environ_unsetenv(env, "SIGNET_DB_KEY_FILE");
+  env = g_environ_unsetenv(env, "SIGNET_BACKUP_KEY_FILE");
+  env = g_environ_setenv(env, "SIGNET_DB_KEY", MASTER_KEY, TRUE);
+  env = g_environ_setenv(env, "SIGNET_BACKUP_KEY", BACKUP_KEY, TRUE);
+  char *args[] = {(char *)backup_cli, "-c", config, "backup-db", bak, NULL};
+  int status = -1;
+  char *output = NULL, *errors = NULL;
+  CHECK(g_spawn_sync(NULL, args, env, G_SPAWN_DEFAULT, NULL, NULL,
+                     &output, &errors, &status, NULL));
+  if (!g_spawn_check_wait_status(status, NULL)) fprintf(stderr, "backup CLI failed: %s\n", errors ? errors : "");
+  CHECK(g_spawn_check_wait_status(status, NULL));
+  g_strfreev(env); g_free(output); g_free(errors);
+  g_mutex_lock(&w.mu);
+  unsigned after = w.committed;
+  w.stop = true;
+  g_mutex_unlock(&w.mu);
+  g_thread_join(thread);
+  CHECK(after > before); /* observed writes during the export, not just a thread */
+  signet_store_close(daemon);
+  CHECK(signet_store_restore_backup(bak, BACKUP_KEY, restored, MASTER_KEY) == 0);
+  SignetStore *snapshot = open_store(restored, MASTER_KEY);
+  CHECK(snapshot != NULL && signet_store_is_encrypted(snapshot));
+  int64_t broken = 0;
+  CHECK(signet_audit_verify_chain(snapshot, 0, 0, &broken) == 0);
+  char **ids = NULL;
+  size_t count = 0;
+  CHECK(signet_store_list_agents(snapshot, &ids, &count) == 0);
+  CHECK(count >= before && count <= w.committed);
+  for (size_t i = 0; i < count; i++) {
+    SignetAgentRecord rec = {0};
+    SignetAgentMeta meta = {0};
+    CHECK(signet_store_get_agent(snapshot, ids[i], &rec) == 0);
+    CHECK(signet_store_get_agent_meta(snapshot, ids[i], &meta) == 0);
+    CHECK(rec.secret_key_len == 32);
+    char hex[65];
+    sodium_bin2hex(hex, sizeof(hex), rec.secret_key, rec.secret_key_len);
+    char *pk = nostr_key_get_public(hex);
+    CHECK(pk && meta.pubkey && strcmp(pk, meta.pubkey) == 0);
+    sodium_memzero(hex, sizeof(hex));
+    free(pk);
+    signet_agent_record_clear(&rec);
+    signet_agent_meta_clear(&meta);
+  }
+  /* Each committed loop has exactly one credential and audit entry; export may
+   * snapshot the single in-flight loop between its independent transactions. */
+  sqlite3_stmt *stmt = NULL;
+  CHECK(sqlite3_prepare_v2(signet_store_get_db(snapshot),
+      "SELECT (SELECT count(*) FROM secrets), (SELECT count(*) FROM audit_log);",
+      -1, &stmt, NULL) == SQLITE_OK);
+  CHECK(sqlite3_step(stmt) == SQLITE_ROW);
+  size_t secrets = (size_t)sqlite3_column_int64(stmt, 0);
+  size_t audits = (size_t)sqlite3_column_int64(stmt, 1);
+  CHECK(secrets <= count && secrets + 1 >= count);
+  CHECK(audits <= secrets && audits + 1 >= secrets);
+  sqlite3_finalize(stmt);
+  signet_store_free_agent_ids(ids, count);
+  signet_store_close(snapshot);
+  g_cond_clear(&w.changed);
+  g_mutex_clear(&w.mu);
+  remove_sidecars(db); remove_sidecars(restored);
+  unlink(db); unlink(bak); unlink(restored);
+  unlink(config); g_free(config);
+  g_free(db); g_free(bak); g_free(restored);
+  puts("test_online_backup_consistency: PASS (concurrent writes observed)");
+}
+
+int main(int argc, char **argv) {
+  backup_cli = argc > 1 ? argv[1] : NULL;
   CHECK(sodium_init() >= 0);
   test_restart_durability();
   test_envelope_tamper_rejected();
   test_backup_restore_roundtrip();
+  test_online_backup_consistency();
   test_wrong_keys_fail_closed();
   test_backup_refusals();
   test_file_tamper_rejected();

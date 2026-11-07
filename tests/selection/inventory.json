@@ -24334,6 +24334,14 @@
   },
   "path_rules": [
     {
+      "exact": ".dockerignore",
+      "effect": "impact",
+      "nodes": [
+        "signet"
+      ],
+      "reason": "Signet image context and secret exclusion boundary."
+    },
+    {
       "prefix": "gnome/grotto-panels",
       "effect": "impact",
       "nodes": ["grotto.panels"],
@@ -30956,8 +30964,11 @@
     },
     "signet": {
       "manifest_name": "signet",
-      "package_jobs": [],
-      "publisher": "none",
+      "package_jobs": [
+        "package.default",
+        "package.passkeys"
+      ],
+      "publisher": "signet",
       "version_sources": [
         {
           "path": "signet/meson.build",
@@ -31035,6 +31046,46 @@
     }
   },
   "workflow_jobs": {
+    ".github/workflows/signet-release.yml:bundle": {
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union",
+      "unsupported_reason": "Signet container release packaging/publication runs in its dedicated workflow; not an attested selective-profile execution receipt.",
+      "matrix_source": "",
+      "source_sha256": "7fba9806435020ec04c7fab856f18fff8ad86a9a9dccb15d3cf94ad8ae8eb077",
+      "workflow_sha256": "8498b66994e512e68951e596280f0cd1c8672c4678f2bceed5a72c00b52faae5"
+    },
+    ".github/workflows/signet-release.yml:publish": {
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union",
+      "unsupported_reason": "Signet container release packaging/publication runs in its dedicated workflow; not an attested selective-profile execution receipt.",
+      "matrix_source": "matrix:\n        include:\n          - variant: default\n            suffix: ''\n          - variant: passkeys\n            suffix: '-passkeys'",
+      "source_sha256": "765bb6b0e53da09f97f4c2da2baa8c30db729dd6dfd333caba4c16abf436b85c",
+      "workflow_sha256": "8498b66994e512e68951e596280f0cd1c8672c4678f2bceed5a72c00b52faae5"
+    },
+    ".github/workflows/signet-release.yml:package": {
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union",
+      "unsupported_reason": "Signet container release packaging/publication runs in its dedicated workflow; not an attested selective-profile execution receipt.",
+      "matrix_source": "matrix:\n        include:\n          - variant: default\n            passkeys: 'OFF'\n            suffix: ''\n          - variant: passkeys\n            passkeys: 'ON'\n            suffix: '-passkeys'",
+      "source_sha256": "09be9cf0c805a6cea15d46c2e9acdd9c509c97ac9dea663686b90975bb8f0111",
+      "workflow_sha256": "8498b66994e512e68951e596280f0cd1c8672c4678f2bceed5a72c00b52faae5"
+    },
+    ".github/workflows/signet-release.yml:signet-ci": {
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union",
+      "unsupported_reason": "Signet container release packaging/publication runs in its dedicated workflow; not an attested selective-profile execution receipt.",
+      "matrix_source": "",
+      "source_sha256": "45e9a83079843f40b63148ca7a81e9e0b1ce9e470bdc1b4933a84931bd776b5c",
+      "workflow_sha256": "8498b66994e512e68951e596280f0cd1c8672c4678f2bceed5a72c00b52faae5"
+    },
+    ".github/workflows/signet-release.yml:identity": {
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union",
+      "unsupported_reason": "Signet container release packaging/publication runs in its dedicated workflow; not an attested selective-profile execution receipt.",
+      "matrix_source": "",
+      "source_sha256": "048dd39688de6c23c52363c4a0f7446f1e7cf343c7e839b5f3ab13c20cdac488",
+      "workflow_sha256": "8498b66994e512e68951e596280f0cd1c8672c4678f2bceed5a72c00b52faae5"
+    },
     ".github/workflows/dependency-tests.yml:grotto_asan": {
       "matrix_source": "",
       "source_sha256": "72accdb4b893ca94b7da22fd618cd40b59d84b84895c87afff93530e204cb0f5",
@@ -31771,9 +31822,9 @@
       "matrix_source": "matrix:\n        passkeys: [ 'OFF', 'ON' ]\n        sqlcipher: [ 'OFF', 'ON' ]\n        build_type: [ 'Debug' ]\n        include:\n          # Exercise binding-race and forced-secret regressions in one test\n          # build; the Release configuration below keeps hooks disabled.\n          - passkeys: 'ON'\n            sqlcipher: 'OFF'\n            build_type: 'Debug'\n            test_hooks: 'ON'\n          # fp-52iq: assurance comes from running tests the way the project is\n          # shipped. Release optimizes signet_core and defines NDEBUG, so cover\n          # the shipped configuration too instead of testing Debug only.\n          - passkeys: 'ON'\n            sqlcipher: 'ON'\n            build_type: 'Release'",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "62922660c8a9d2392d547027f0052f94ec97a0a10792fde821ce221cd05bede8",
+      "source_sha256": "df16196679f40f35d20f42d2c69b082e2e26f77241cb1eb3a03577238a112a4e",
       "unsupported_reason": "Five passkeys/sqlcipher/hooks/build-type Meson variants and daemon/control smoke lack distinct exact profile/membership/runtime contracts.",
-      "workflow_sha256": "f1cf30c5cf7aa7ccba6f28673c18f04274adc121046a068e4cb40c116b8c01f5"
+      "workflow_sha256": "c274cd2a6b3a999c06983ca3e308ecd00c871dd01124013d3c840326318ada23"
     },
     ".github/workflows/static-checks.yml:static-checks": {
       "matrix_source": "",

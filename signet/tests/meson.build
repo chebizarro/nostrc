@@ -32,6 +32,21 @@ test('http_listen', test_http_listen_exe)
 test('http_routes', test_http_routes_exe)
 test('daemon_startup', find_program('sh'),
   args: [files('test_daemon_startup.sh'), signetd_exe, signetctl_exe], timeout: 120)
+# W3/W4 deployment packaging and explicitly enabled live drills (separate ownership).
+nip46_reference_client = executable('nip46_reference_client',
+  'integration/nip46_reference_client.c',
+  link_with: signet_core, include_directories: signet_includes,
+  dependencies: signet_deps + [in_tree_dep], install: false)
+test('deployment_contract', find_program('bash'),
+  args: [meson.current_source_dir() / 'test_deployment_smoke.sh', '--static'],
+  depends: nip46_reference_client)
+if get_option('signet_deployment_live_tests')
+  test('production_roundtrip', find_program('bash'),
+    args: [meson.current_source_dir() / 'integration/test_production_roundtrip.sh',
+           nip46_reference_client.full_path()],
+    depends: nip46_reference_client, suite: ['live', 'manual', 'deployment'], timeout: 600)
+endif
+# End W3/W4 block.
 
 test_exe = executable('test_signet_smoke',
   'test_signet_smoke.c',
@@ -339,7 +354,8 @@ test('signetctl_credentials', find_program('sh'),
          signetctl_exe.full_path(), test_key_store.full_path()],
   depends: [signetctl_exe, test_key_store])
 test('item3_concurrency', test_item3_concurrency, timeout: 60)
-test('backup_restore', test_backup_restore, timeout: 60)
+test('backup_restore', test_backup_restore, args: [signetctl_exe.full_path()],
+  depends: signetctl_exe, timeout: 60)
 
 if get_option('signet_enable_passkeys')
   test_store_passkeys = executable('test_store_passkeys',
@@ -390,6 +406,7 @@ if get_option('signet_enable_passkeys')
     args: [meson.current_source_dir() / 'run_fido_interop_external_check.sh',
            test_fido_interop_json.full_path(),
            meson.current_build_dir() / 'phase3_interop'],
+    depends: test_fido_interop_json,
     timeout: 180,
   )
 endif

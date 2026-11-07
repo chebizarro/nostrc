@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Signet host manifest (no secrets)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "source_commit", "component_version", "images", "packages", "volume", "profiles", "config", "public_identifiers", "last_successful_backup", "upgrade"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "source_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "component_version": {"type": "string", "pattern": "^[0-9]+[.][0-9]+[.][0-9]+$"},
+    "images": {"type": "object", "additionalProperties": false, "required": ["default", "passkeys", "caddy"], "properties": {"default": {"$ref": "#/$defs/image"}, "passkeys": {"$ref": "#/$defs/image"}, "caddy": {"$ref": "#/$defs/image"}}},
+    "packages": {"type": "object", "required": ["docker", "compose", "containerd"], "additionalProperties": {"type": "string", "minLength": 1}},
+    "volume": {"type": "object", "additionalProperties": false, "required": ["id", "name", "filesystem_uuid"], "properties": {"id": {"type": "string", "format": "uuid"}, "name": {"type": "string", "pattern": "^[a-z0-9-]+$"}, "filesystem_uuid": {"type": "string", "format": "uuid"}}},
+    "profiles": {"type": "array", "uniqueItems": true, "items": {"enum": ["bootstrap", "passkeys", "ctap"]}},
+    "config": {"type": "object", "required": ["revision", "sha256"], "properties": {"revision": {"type": "string"}, "sha256": {"$ref": "#/$defs/hash"}}, "additionalProperties": false},
+    "public_identifiers": {"type": "object", "required": ["bunker", "provisioners"], "properties": {"bunker": {"$ref": "#/$defs/hash"}, "provisioners": {"type": "array", "items": {"$ref": "#/$defs/hash"}}}, "additionalProperties": false},
+    "last_successful_backup": {"type": ["object", "null"], "required": ["reference", "local_path", "checksums", "off_host"], "properties": {"reference": {"type": "string"}, "local_path": {"type": "string"}, "checksums": {"type": "object", "additionalProperties": {"$ref": "#/$defs/hash"}}, "off_host": {"type": "boolean"}}, "additionalProperties": false},
+    "upgrade": {"type": ["object", "null"], "required": ["previous", "backup", "before", "after"], "properties": {"previous": {"type": "string"}, "backup": {"type": "string"}, "before": {"$ref": "#/$defs/store"}, "after": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/store"}]}}, "additionalProperties": false}
+  },
+  "$defs": {
+    "hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "image": {"type": "string", "pattern": "^[a-z0-9./:_-]+@sha256:[0-9a-f]{64}$"},
+    "store": {"type": "object", "additionalProperties": false, "required": ["schema_version", "schema_sha256"], "properties": {"schema_version": {"type": "integer", "minimum": 0}, "schema_sha256": {"$ref": "#/$defs/hash"}}}
+  }
+}
