@@ -87,12 +87,15 @@ static void focus_window(GtkWindow *window) {
   g_assert_no_error(error); g_assert_true(g_spawn_check_wait_status(status, &error)); g_assert_no_error(error);
   WAIT(gtk_window_is_active(window));
 }
-static void send_key(GtkWindow *window, const char *key) {
+static void send_key_event(GtkWindow *window, const char *key) {
   focus_window(window);
   char *argv[] = {GROTTO_TEST_XDOTOOL, "key", "--clearmodifiers", "--delay", "0", (char *)key, NULL};
   g_autoptr(GError) error = NULL; gint status;
   g_assert_true(g_spawn_sync(NULL, argv, NULL, G_SPAWN_DEFAULT, NULL, NULL, NULL, NULL, &status, &error));
   g_assert_no_error(error); g_assert_true(g_spawn_check_wait_status(status, &error)); g_assert_no_error(error);
+}
+static void send_key(GtkWindow *window, const char *key) {
+  send_key_event(window, key);
   wait_frames(GTK_WIDGET(window));
 }
 static graphene_point_t assert_about_caret_visible(GtkTextView *about, SignerWindow *window) {
@@ -524,36 +527,40 @@ static void finalised(gpointer data, GObject *object) { (void)object; (*(guint *
 static GtkWidget *setup_child(OnboardingAssistant *self, const char *name) {
   return GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(self), TYPE_ONBOARDING_ASSISTANT, name));
 }
-static void assert_assistant_footer(OnboardingAssistant *setup, gboolean running) {
-  GtkWidget *next = setup_child(setup, "btn_next"), *back = setup_child(setup, "btn_back");
-  GtkWidget *skip = setup_child(setup, "btn_skip"), *header = setup_child(setup, "header_actions");
-  GtkWidget *footer = gtk_widget_get_parent(next), *secondary = gtk_widget_get_parent(back);
-  g_assert_true(GTK_IS_BOX(footer)); g_assert_true(GTK_IS_BOX(secondary));
-  g_assert_true(gtk_widget_get_parent(skip) == secondary);
-  g_assert_true(gtk_widget_get_parent(secondary) == footer);
-  g_assert_cmpint(gtk_orientable_get_orientation(GTK_ORIENTABLE(footer)), ==, GTK_ORIENTATION_VERTICAL);
-  g_assert_cmpint(gtk_box_get_spacing(GTK_BOX(footer)), ==, 8);
-  g_assert_cmpint(gtk_widget_get_margin_start(footer), ==, 20);
-  g_assert_cmpint(gtk_widget_get_margin_end(footer), ==, 20);
-  g_assert_cmpint(gtk_widget_get_margin_top(footer), ==, 12);
-  g_assert_cmpint(gtk_widget_get_margin_bottom(footer), ==, 16);
-  g_assert_cmpint(gtk_orientable_get_orientation(GTK_ORIENTABLE(secondary)), ==, GTK_ORIENTATION_HORIZONTAL);
-  g_assert_cmpint(gtk_box_get_spacing(GTK_BOX(secondary)), ==, 12);
-  g_assert_true(gtk_box_get_homogeneous(GTK_BOX(secondary)));
-  g_assert_true(gtk_widget_has_css_class(next, "suggested-action"));
-  g_assert_true(gtk_widget_has_css_class(next, "pill"));
-  g_assert_cmpint(gtk_widget_get_halign(next), ==, GTK_ALIGN_FILL);
-  GtkWidget *actions[] = {next, back, skip};
-  for (guint i = 0; i < G_N_ELEMENTS(actions); i++)
-    g_assert_null(gtk_widget_get_ancestor(actions[i], ADW_TYPE_HEADER_BAR));
-  g_assert_true(gtk_widget_has_css_class(back, "flat"));
-  g_assert_true(gtk_widget_has_css_class(skip, "flat"));
-  AdwToolbarView *toolbar = ADW_TOOLBAR_VIEW(gtk_widget_get_ancestor(header, ADW_TYPE_TOOLBAR_VIEW));
-  g_assert_nonnull(toolbar);
-  g_assert_true(gtk_widget_is_ancestor(footer, GTK_WIDGET(toolbar)));
-  g_assert_false(gtk_widget_is_ancestor(footer, adw_toolbar_view_get_content(toolbar)));
+static void assert_assistant_actions(OnboardingAssistant *setup, gboolean running) {
+  wait_frames(GTK_WIDGET(setup));
+  GtkWidget *next = setup_child(setup, "btn_next"), *skip = setup_child(setup, "btn_skip");
+  AdwNavigationView *view = ADW_NAVIGATION_VIEW(setup_child(setup, "steps"));
+  AdwNavigationPage *page = adw_navigation_view_get_visible_page(view);
+  GtkWidget *header = gtk_widget_get_ancestor(skip, ADW_TYPE_HEADER_BAR);
+  g_assert_nonnull(header);
+  g_assert_true(gtk_widget_is_ancestor(header, GTK_WIDGET(page)));
   g_assert_false(adw_header_bar_get_show_start_title_buttons(ADW_HEADER_BAR(header)));
-  g_assert_cmpint(adw_header_bar_get_show_end_title_buttons(ADW_HEADER_BAR(header)), ==, running);
+  g_assert_false(adw_header_bar_get_show_end_title_buttons(ADW_HEADER_BAR(header)));
+  g_assert_null(gtk_widget_get_template_child(GTK_WIDGET(setup), TYPE_ONBOARDING_ASSISTANT, "btn_back"));
+  OnboardingState state = onboarding_assistant_get_state(setup);
+  gboolean status_page = state == ONBOARDING_WELCOME || state == ONBOARDING_CONNECT ||
+      state == ONBOARDING_TEST_FAILED || state == ONBOARDING_READY;
+  g_assert_true(gtk_widget_has_css_class(next, "suggested-action"));
+  g_assert_cmpint(gtk_widget_has_css_class(next, "pill"), ==, status_page);
+  if (status_page) {
+    g_assert_nonnull(gtk_widget_get_ancestor(next, ADW_TYPE_STATUS_PAGE));
+    g_assert_null(gtk_widget_get_ancestor(next, ADW_TYPE_HEADER_BAR));
+    g_assert_cmpint(gtk_widget_get_halign(next), ==, GTK_ALIGN_CENTER);
+  } else g_assert_true(gtk_widget_get_ancestor(next, ADW_TYPE_HEADER_BAR) == header);
+  if (running) g_assert_true(gtk_window_get_modal(GTK_WINDOW(setup)));
+  if (gtk_widget_get_mapped(next) && gtk_widget_get_mapped(skip) && !status_page) {
+    graphene_rect_t affirmative, cancel;
+    g_assert_true(gtk_widget_compute_bounds(next, header, &affirmative));
+    g_assert_true(gtk_widget_compute_bounds(skip, header, &cancel));
+    gboolean rtl = gtk_widget_get_direction(header) == GTK_TEXT_DIR_RTL;
+    g_assert_cmpint(cancel.origin.x < affirmative.origin.x, ==, !rtl);
+  }
+  g_autoptr(GHashTable) keys = g_hash_table_new(g_direct_hash, g_direct_equal);
+  collect_dialog_mnemonics(GTK_WIDGET(setup), keys);
+}
+static void assistant_back(OnboardingAssistant *setup) {
+  g_assert_true(adw_navigation_view_pop(ADW_NAVIGATION_VIEW(setup_child(setup, "steps"))));
 }
 static void layout_activate(GApplication *application, gpointer data) {
   (void)data; AdwApplication *app = ADW_APPLICATION(application);
@@ -615,12 +622,10 @@ static void layout_activate(GApplication *application, gpointer data) {
   OnboardingAssistant *add = g_object_get_data(G_OBJECT(window), "grotto-onboarding-assistant");
   g_assert_true(ONBOARDING_IS_ASSISTANT(add)); g_object_ref(add);
   g_assert_cmpint(onboarding_assistant_get_state(add), ==, ONBOARDING_CHOICE);
-  GtkWidget *add_back = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(add), TYPE_ONBOARDING_ASSISTANT, "btn_back"));
   GtkWidget *add_cancel = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(add), TYPE_ONBOARDING_ASSISTANT, "btn_skip"));
   GtkWidget *add_next = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(add), TYPE_ONBOARDING_ASSISTANT, "btn_next"));
-  assert_assistant_footer(add, TRUE);
+  assert_assistant_actions(add, TRUE);
   g_assert_false(gtk_widget_get_visible(add_next));
-  g_assert_false(gtk_widget_get_visible(add_back));
   g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(add_cancel)), ==, _("_Cancel"));
   g_assert_cmpstr(gtk_widget_get_tooltip_text(add_cancel), ==, _("Cancel Adding an Identity"));
   if (accessibility) gtk_test_accessible_assert_property(GTK_ACCESSIBLE(add_cancel), GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, _("Cancel Adding an Identity"));
@@ -629,14 +634,13 @@ static void layout_activate(GApplication *application, gpointer data) {
   g_assert_true(gtk_widget_get_visible(create_choice)); g_assert_true(gtk_widget_get_visible(import_choice));
   WAIT(gtk_widget_is_sensitive(import_choice)); g_signal_emit_by_name(import_choice, "activated");
   g_assert_cmpint(onboarding_assistant_get_state(add), ==, ONBOARDING_IMPORT);
-  g_assert_true(gtk_widget_get_visible(add_next)); assert_assistant_footer(add, TRUE);
-  g_assert_false(gtk_widget_get_visible(add_cancel));
-  g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(add_next)), ==, _("_Import Identity"));
+  g_assert_true(gtk_widget_get_visible(add_next)); assert_assistant_actions(add, TRUE);
+  g_assert_true(gtk_widget_get_visible(add_cancel));
+  g_assert_false(gtk_widget_is_sensitive(add_next));
+  g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(add_next)), ==, _("_Import"));
   g_assert_cmpstr(gtk_window_get_title(GTK_WINDOW(add)), ==, _("Import an Identity"));
-  g_assert_true(gtk_widget_get_visible(add_back));
-  g_signal_emit_by_name(add_back, "clicked");
+  assistant_back(add);
   g_assert_cmpint(onboarding_assistant_get_state(add), ==, ONBOARDING_CHOICE);
-  g_assert_false(gtk_widget_get_visible(add_back));
   g_assert_true(gtk_widget_get_visible(add_cancel));
   g_signal_emit_by_name(add_cancel, "clicked"); g_object_unref(add);
   WAIT(g_object_get_data(G_OBJECT(window), "grotto-onboarding-assistant") == NULL);
@@ -1484,7 +1488,7 @@ static void layout_activate(GApplication *application, gpointer data) {
 static void setup_snapshot(OnboardingAssistant *setup, const char *stage, gboolean rtl) {
   int minimum; gtk_widget_measure(GTK_WIDGET(setup), GTK_ORIENTATION_HORIZONTAL, -1, &minimum, NULL, NULL, NULL);
   g_test_message("Onboarding %s minimum width: %d", stage, minimum);
-  assert_assistant_footer(setup, gtk_window_get_transient_for(GTK_WINDOW(setup)) != NULL);
+  assert_assistant_actions(setup, gtk_window_get_transient_for(GTK_WINDOW(setup)) != NULL);
   g_assert_cmpint(minimum, <=, 360);
   g_autofree char *name = g_strdup_printf("onboarding-%s-360%s", stage, rtl ? "-rtl" : "");
   snapshot(GTK_WIDGET(setup), name);
@@ -1504,7 +1508,7 @@ static void remaining_surfaces(void) {
     } else {
       setup = onboarding_assistant_new(); g_object_ref_sink(setup);
     }
-    g_test_message("Assistant footer page walk, running=%u, rtl=%u", running, rtl);
+    g_test_message("Assistant HIG page walk, running=%u, rtl=%u", running, rtl);
     gtk_window_set_default_size(GTK_WINDOW(setup), 360, 640);
     gtk_window_present(GTK_WINDOW(setup));
     WAIT(gtk_widget_is_sensitive(setup_child(setup, "btn_next")));
@@ -1525,7 +1529,9 @@ static void remaining_surfaces(void) {
       gtk_test_accessible_assert_property(GTK_ACCESSIBLE(entry), GTK_ACCESSIBLE_PROPERTY_LABEL, _("Backup passphrase"));
     }
     setup_snapshot(setup, "import", rtl);
-    g_signal_emit_by_name(setup_child(setup, "btn_back"), "clicked");
+    assistant_back(setup); /* Import returns to Connect, not a synthetic choice page. */
+    g_assert_cmpint(onboarding_assistant_get_state(setup), ==, ONBOARDING_CONNECT);
+    assistant_back(setup);
     g_signal_emit_by_name(setup_child(setup, "choose_create"), "activated"); setup_snapshot(setup, "create", rtl);
     g_signal_emit_by_name(setup_child(setup, "btn_next"), "clicked"); WAIT(layout_self_test != NULL);
     g_assert_cmpint(onboarding_assistant_get_state(setup), ==, ONBOARDING_TEST_WAITING); setup_snapshot(setup, "test", rtl);
@@ -1535,9 +1541,12 @@ static void remaining_surfaces(void) {
     setup_snapshot(setup, "backup", rtl);
     g_assert_true(gtk_widget_get_visible(setup_child(setup, "btn_skip")));
     g_assert_null(gtk_widget_get_ancestor(setup_child(setup, "btn_skip"), GTK_TYPE_POPOVER));
-    g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(setup_child(setup, "btn_skip"))), ==, _("Finish _Without Backup"));
+    g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(setup_child(setup, "btn_skip"))), ==, _("_Cancel"));
+    AdwExpanderRow *options = ADW_EXPANDER_ROW(gtk_widget_get_ancestor(setup_child(setup, "btn_copy_seed"), ADW_TYPE_EXPANDER_ROW));
+    g_assert_nonnull(options); adw_expander_row_set_expanded(options, TRUE);
     g_autoptr(GHashTable) keys = g_hash_table_new(g_direct_hash, g_direct_equal);
     wait_frames(GTK_WIDGET(setup)); collect_dialog_mnemonics(GTK_WIDGET(setup), keys);
+    adw_expander_row_set_expanded(options, FALSE);
     GtkCheckButton *acknowledgement = GTK_CHECK_BUTTON(setup_child(setup, "seed_written_down"));
     GtkWidget *acknowledgement_label = gtk_check_button_get_child(acknowledgement);
     g_assert_true(GTK_IS_LABEL(acknowledgement_label));
@@ -1560,7 +1569,61 @@ static void assistant_input_keyboard_activate(GApplication *application, gpointe
   (void)data;
   /* Keep this scenario's modality separate from other test applications. */
   g_autoptr(GtkWindowGroup) group = gtk_window_group_new();
-  const char *inputs[] = {"entry_profile_name", "entry_import_label", "text_import_data"};
+  const char *cancel_pages[] = {NULL, "choice", "choose_create", "choose_import", "choose_connect"};
+  for (guint running = 0; running < 2; running++) for (guint stage = running ? 1 : 0; stage < G_N_ELEMENTS(cancel_pages); stage++) {
+    GtkWindow *parent = NULL;
+    OnboardingAssistant *setup;
+    onboarding_assistant_reset();
+    if (running) {
+      parent = GTK_WINDOW(adw_application_window_new(GTK_APPLICATION(application))); g_object_ref_sink(parent);
+      gtk_window_group_add_window(group, parent); gtk_window_present(parent);
+      onboarding_assistant_present(parent);
+      setup = g_object_ref(g_object_get_data(G_OBJECT(parent), "grotto-onboarding-assistant"));
+    } else {
+      setup = onboarding_assistant_new(); g_object_ref_sink(setup);
+      gtk_window_set_application(GTK_WINDOW(setup), GTK_APPLICATION(application));
+      gtk_window_present(GTK_WINDOW(setup));
+    }
+    gtk_window_group_add_window(group, GTK_WINDOW(setup));
+    WAIT(gtk_widget_is_sensitive(setup_child(setup, "choose_create")));
+    if (!running && stage) g_signal_emit_by_name(setup_child(setup, "btn_next"), "clicked");
+    if (stage > 1) g_signal_emit_by_name(setup_child(setup, cancel_pages[stage]), "activated");
+    wait_frames(GTK_WIDGET(setup)); assert_assistant_actions(setup, running);
+    guint creates_before = identity_creates, imports_before = identity_imports;
+#ifdef GROTTO_TEST_XDOTOOL
+    if (stage == 2) {
+      AdwAlertDialog *nested = ADW_ALERT_DIALOG(adw_alert_dialog_new(_("Check Your Identity"), NULL));
+      adw_alert_dialog_add_response(nested, "cancel", _("_Cancel"));
+      adw_alert_dialog_set_close_response(nested, "cancel");
+      adw_alert_dialog_set_default_response(nested, "cancel");
+      adw_dialog_present(ADW_DIALOG(nested), GTK_WIDGET(setup));
+      WAIT(gtk_widget_get_mapped(GTK_WIDGET(nested)));
+      wait_frames(GTK_WIDGET(nested));
+      send_key_event(GTK_WINDOW(setup), "Escape");
+      WAIT(adw_window_get_visible_dialog(ADW_WINDOW(setup)) == NULL);
+      g_assert_true(gtk_widget_get_mapped(GTK_WIDGET(setup)));
+      g_assert_cmpint(onboarding_assistant_get_state(setup), ==, ONBOARDING_CREATE);
+    }
+#endif
+    g_test_message("Escape cancels page %u, running=%u", stage, running);
+#ifdef GROTTO_TEST_XDOTOOL
+    send_key_event(GTK_WINDOW(setup), "Escape");
+    WAIT(!gtk_widget_get_mapped(GTK_WIDGET(setup)));
+#else
+    g_signal_emit_by_name(setup_child(setup, "btn_skip"), "clicked");
+#endif
+    g_assert_cmpuint(identity_creates, ==, creates_before);
+    g_assert_cmpuint(identity_imports, ==, imports_before);
+    g_assert_false(onboarding_assistant_identity_stored(setup));
+    g_autoptr(GSettings) settings = g_settings_new("org.nostr.Grotto");
+    g_assert_cmpint(g_settings_get_boolean(settings, "onboarding-completed"), ==, !running);
+    gtk_window_destroy(GTK_WINDOW(setup)); g_object_unref(setup);
+    if (parent) {
+      WAIT(g_object_get_data(G_OBJECT(parent), "grotto-onboarding-assistant") == NULL);
+      gtk_window_destroy(parent); g_object_unref(parent);
+    }
+  }
+  const char *inputs[] = {"entry_profile_name", "entry_import_label", "text_import_data", "box_import_passphrase_container"};
   for (guint running = 0; running < 2; running++) for (guint mode = 0; mode < G_N_ELEMENTS(inputs); mode++) {
     GtkWindow *parent = NULL;
     OnboardingAssistant *setup;
@@ -1581,32 +1644,54 @@ static void assistant_input_keyboard_activate(GApplication *application, gpointe
     GtkWidget *choice = setup_child(setup, mode ? "choose_import" : "choose_create");
     WAIT(gtk_widget_is_sensitive(choice)); g_signal_emit_by_name(choice, "activated");
     wait_frames(GTK_WIDGET(setup));
-    if (mode) gtk_editable_set_text(GTK_EDITABLE(setup_child(setup, "text_import_data")),
+    if (mode) gtk_editable_set_text(GTK_EDITABLE(setup_child(setup, "text_import_data")), mode == 3 ?
+        "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about" :
         "0000000000000000000000000000000000000000000000000000000000000001");
     GtkWidget *input = setup_child(setup, inputs[mode]);
+    if (mode == 3) {
+      input = gtk_widget_get_first_child(input);
+      gn_secure_entry_set_text(GN_SECURE_ENTRY(input), "Keyboard passphrase");
+    }
     if (ADW_IS_ENTRY_ROW(input)) {
       gtk_editable_set_text(GTK_EDITABLE(input), "Keyboard Identity");
       g_assert_true(adw_entry_row_get_activates_default(ADW_ENTRY_ROW(input)));
-    } else g_assert_true(gtk_entry_get_activates_default(GTK_ENTRY(input)));
+    } else if (GTK_IS_ENTRY(input)) g_assert_true(gtk_entry_get_activates_default(GTK_ENTRY(input)));
     g_assert_true(gtk_widget_is_sensitive(setup_child(setup, "btn_next")));
     guint creates_before = identity_creates, imports_before = identity_imports;
     g_assert_true(gtk_window_get_default_widget(GTK_WINDOW(setup)) == setup_child(setup, "btn_next"));
-    assert_assistant_footer(setup, running);
+    assert_assistant_actions(setup, running);
     g_test_message("Return input %s, running=%u", inputs[mode], running);
     return_from_input(GTK_WINDOW(setup), input);
     WAIT(layout_self_test != NULL);
+#ifdef GROTTO_TEST_XDOTOOL
+    send_key(GTK_WINDOW(setup), "Escape");
+    g_assert_true(gtk_widget_get_mapped(GTK_WIDGET(setup)));
+    g_assert_cmpint(onboarding_assistant_get_state(setup), ==, ONBOARDING_TEST_WAITING);
+#endif
     g_assert_cmpuint(identity_creates, ==, creates_before + (mode == 0));
     g_assert_cmpuint(identity_imports, ==, imports_before + (mode != 0));
-    g_dbus_method_invocation_return_value(layout_self_test, g_variant_new("(s)", "denied"));
+    g_dbus_method_invocation_return_value(layout_self_test, g_variant_new("(s)", mode ? "denied" : "passed"));
     g_clear_object(&layout_self_test);
-    WAIT(onboarding_assistant_get_state(setup) == ONBOARDING_TEST_FAILED);
+    WAIT(onboarding_assistant_get_state(setup) == (mode ? ONBOARDING_TEST_FAILED : ONBOARDING_BACKUP));
+    WAIT(gtk_widget_is_sensitive(setup_child(setup, "btn_skip")));
     WAIT(gtk_widget_get_mapped(setup_child(setup, "btn_skip")));
-    assert_assistant_footer(setup, running);
+    assert_assistant_actions(setup, running);
     g_autoptr(GHashTable) keys = g_hash_table_new(g_direct_hash, g_direct_equal);
     collect_dialog_mnemonics(GTK_WIDGET(setup), keys);
-    gboolean spanish = !g_strcmp0(g_getenv("G10_TEST_LANGUAGE"), "es");
-    g_assert_true(g_hash_table_contains(keys, GUINT_TO_POINTER(spanish ? 'a' : 'f')));
-    g_assert_true(g_hash_table_contains(keys, GUINT_TO_POINTER(spanish ? 'f' : 'l')));
+    g_assert_cmpuint(g_hash_table_size(keys), ==, 2);
+    g_assert_nonnull(gtk_widget_get_ancestor(setup_child(setup, "btn_next"), mode ? ADW_TYPE_STATUS_PAGE : ADW_TYPE_HEADER_BAR));
+    guint imports_after = identity_imports, creates_after = identity_creates;
+    g_object_ref(setup);
+#ifdef GROTTO_TEST_XDOTOOL
+    send_key_event(GTK_WINDOW(setup), "Escape");
+    WAIT(!gtk_widget_get_mapped(GTK_WIDGET(setup)));
+#else
+    g_signal_emit_by_name(setup_child(setup, "btn_skip"), "clicked");
+#endif
+    g_assert_true(onboarding_assistant_identity_stored(setup));
+    g_assert_cmpuint(identity_imports, ==, imports_after);
+    g_assert_cmpuint(identity_creates, ==, creates_after);
+    g_object_unref(setup);
     gtk_window_destroy(GTK_WINDOW(setup)); g_object_unref(setup);
     if (parent) {
       WAIT(g_object_get_data(G_OBJECT(parent), "grotto-onboarding-assistant") == NULL);

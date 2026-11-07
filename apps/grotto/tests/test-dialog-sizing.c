@@ -1,7 +1,7 @@
 /* Executed sizing sweep. The private bus, identities, profile relay, schemas,
  * animation settings and real application lifecycle come from test-ui-layout.c.
  * Add a surface with one row in surfaces[]; openers use production entrypoints.
- * This is geometry coverage, not a second onboarding/footer or policy test. */
+ * This is geometry coverage, not a second onboarding or policy test. */
 #include "ui/signer-window.h"
 #include "test-ui-layout-harness.h"
 #include "ui/onboarding-assistant.h"
@@ -454,9 +454,17 @@ static void sizing_assert(GtkWidget *surface, SignerWindow *window, const Sizing
   sizing_contained(content, content);
   gboolean header = ADW_IS_DIALOG(surface) && !ADW_IS_ALERT_DIALOG(surface) && !GNOSTR_IS_APPROVAL_DIALOG(surface) && !test->body_actions;
   if ((ADW_IS_DIALOG(surface) && !ADW_IS_ALERT_DIALOG(surface)) || ADW_IS_WINDOW(surface)) {
-    /* Window chrome only: the assistant footer belongs to the sibling task. */
+    /* Every visible window/page keeps its standard header chrome. */
     GtkWidget *bar = sizing_find(content, ADW_TYPE_HEADER_BAR, NULL);
     g_assert_nonnull(bar); g_assert_true(gtk_widget_get_mapped(bar)); sizing_contained(bar, content);
+  }
+  if (ONBOARDING_IS_ASSISTANT(surface)) {
+    GtkWidget *next = GTK_WIDGET(gtk_widget_get_template_child(surface, TYPE_ONBOARDING_ASSISTANT, "btn_next"));
+    GtkWidget *skip = GTK_WIDGET(gtk_widget_get_template_child(surface, TYPE_ONBOARDING_ASSISTANT, "btn_skip"));
+    g_assert_nonnull(gtk_widget_get_ancestor(next, ADW_TYPE_STATUS_PAGE));
+    g_assert_nonnull(gtk_widget_get_ancestor(skip, ADW_TYPE_HEADER_BAR));
+    g_assert_true(gtk_widget_get_mapped(next)); g_assert_true(gtk_widget_get_mapped(skip));
+    sizing_contained(next, content); sizing_contained(skip, content);
   }
   sizing_control(surface, content, test->affirmative ? _(test->affirmative) : NULL, header);
   sizing_control(surface, content, test->cancel ? _(test->cancel) : NULL, header);
