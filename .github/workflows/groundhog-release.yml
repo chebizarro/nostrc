@@ -262,7 +262,11 @@ jobs:
             image: 'menci/archlinuxarm@sha256:57ed42430d3d3f22beb2983de1aa23396b27fcf33ebf5dd781947cdc1038a640'
     steps:
       - name: Install checkout prerequisite
-        run: pacman -Syu --noconfirm --needed git
+        run: |
+          # Match the helper's container download policy before its first use.
+          grep -q '^DisableSandbox' /etc/pacman.conf ||
+            sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf
+          pacman -Syu --noconfirm --needed git
       - uses: actions/checkout@v4
         with:
           sparse-checkout: scripts/ci

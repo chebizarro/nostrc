@@ -148,6 +148,7 @@ mv %{buildroot}%{_datadir}/systemd/user/grotto-daemon.service %{buildroot}%{_use
 # Locale catalogs: Groundhog's and the bundled portable widgets' domains.
 %find_lang groundhog
 %find_lang nostr-gtk
+%find_lang grotto
 cat nostr-gtk.lang >> groundhog.lang
 
 %check
@@ -168,13 +169,14 @@ appstream-util validate-relax --nonet %{buildroot}%{_metainfodir}/org.nostr.Grou
 %{_datadir}/icons/hicolor/*/apps/org.nostr.Groundhog.png
 %{_metainfodir}/org.nostr.Groundhog.metainfo.xml
 
-%files -n grotto
+%files -n grotto -f grotto.lang
 %license LICENSE
 %{_bindir}/grotto
 %{_bindir}/grotto-daemon
 %dir %{_libdir}/grotto
 %{_libdir}/grotto/libnostr-json.so.2
 %{_libdir}/grotto/libnostr-gobject-1.0.so.3*
+%{_libdir}/grotto/libnostr-publish.so.0*
 %{_datadir}/applications/org.nostr.Grotto.desktop
 %{_datadir}/dbus-1/services/org.nostr.Grotto.service
 %{_datadir}/dbus-1/services/org.nostr.Signer.service

@@ -31533,7 +31533,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "da2e52a73062792e1ddbaba9a917cf2083e67855170d1af62044450e58c44719",
       "unsupported_reason": "groundhog-release:identity identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
-      "workflow_sha256": "450e815c554bd645e2916a4cc148a6fc7842268e6f23d8ab90f59a96067856c9"
+      "workflow_sha256": "a4b1bc4512e143e977bc92c6c848823bb0e0720f43b75f57cf349381c0a5ee63"
     },
     ".github/workflows/groundhog-release.yml:validation": {
       "matrix_source": "",
@@ -31541,7 +31541,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "722572b7cdb010c34b64e43d62e9e87acec11be6e48ab6cb76da17d290ecf5e6",
       "unsupported_reason": "groundhog-release:validation identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
-      "workflow_sha256": "450e815c554bd645e2916a4cc148a6fc7842268e6f23d8ab90f59a96067856c9"
+      "workflow_sha256": "a4b1bc4512e143e977bc92c6c848823bb0e0720f43b75f57cf349381c0a5ee63"
     },
     ".github/workflows/groundhog-release.yml:source": {
       "matrix_source": "",
@@ -31549,7 +31549,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "fa364540320a32d45836f8c29d0b6816126695b6079cf4bcb89cfe6dd915b052",
       "unsupported_reason": "groundhog-release:source identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
-      "workflow_sha256": "450e815c554bd645e2916a4cc148a6fc7842268e6f23d8ab90f59a96067856c9"
+      "workflow_sha256": "a4b1bc4512e143e977bc92c6c848823bb0e0720f43b75f57cf349381c0a5ee63"
     },
     ".github/workflows/groundhog-release.yml:deb": {
       "matrix_source": "matrix:\n        # One deb per release: library names differ (libsecp256k1-1 on\n        # 24.04, -2 on Debian 13, newer on 26.04), so a 24.04 build does\n        # not install elsewhere. The version carries the distribution;\n        # dpkg names the file _amd64 or _arm64.\n        distro:\n          - { image: 'ubuntu:24.04', name: 'Ubuntu 24.04', tag: ubuntu24.04 }\n          - { image: 'ubuntu:26.04', name: 'Ubuntu 26.04', tag: ubuntu26.04 }\n          - { image: 'debian:13',    name: 'Debian 13',    tag: debian13 }\n        arch: [x86_64, aarch64]\n        include:\n          - { arch: x86_64,  runner: ubuntu-24.04 }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
@@ -31557,7 +31557,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "a29bd82ca3bf1dd07c9b246a8719cfeca5f94acaf787554f687d8e6efc83bbf1",
       "unsupported_reason": "groundhog-release:deb identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
-      "workflow_sha256": "450e815c554bd645e2916a4cc148a6fc7842268e6f23d8ab90f59a96067856c9"
+      "workflow_sha256": "a4b1bc4512e143e977bc92c6c848823bb0e0720f43b75f57cf349381c0a5ee63"
     },
     ".github/workflows/groundhog-release.yml:rpm": {
       "matrix_source": "matrix:\n        include:\n          - { arch: x86_64,  runner: ubuntu-24.04 }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
@@ -31565,15 +31565,15 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "1b122e1903b0156c4e2405836509c3d3335ece6aabec7ef6181aa4d38e1d509b",
       "unsupported_reason": "groundhog-release:rpm identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
-      "workflow_sha256": "450e815c554bd645e2916a4cc148a6fc7842268e6f23d8ab90f59a96067856c9"
+      "workflow_sha256": "a4b1bc4512e143e977bc92c6c848823bb0e0720f43b75f57cf349381c0a5ee63"
     },
     ".github/workflows/groundhog-release.yml:arch": {
       "matrix_source": "matrix:\n        include:\n          - { arch: x86_64, runner: ubuntu-24.04, image: 'archlinux:latest' }\n          # The official archlinux image is x86_64 only. Arch Linux ARM is\n          # what Linux-on-Android setups run (Termux proot-distro archlinux,\n          # chroots), so the aarch64 package is built on an Arch Linux ARM\n          # root: menci/archlinuxarm is rebuilt daily from the official\n          # ArchLinuxARM-aarch64 rootfs with the archlinuxarm keyring\n          # initialised. Pinned by digest; bump it deliberately.\n          - arch: aarch64\n            runner: ubuntu-24.04-arm\n            image: 'menci/archlinuxarm@sha256:57ed42430d3d3f22beb2983de1aa23396b27fcf33ebf5dd781947cdc1038a640'",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "7097f41182b7d65e48d13437820b618883e154a05ad81deb666729d56b28f3b3",
+      "source_sha256": "6a5fee219e59e8d20c8400e1174ebfa2b86785928b033e926762eddb34a70f2e",
       "unsupported_reason": "groundhog-release:arch identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
-      "workflow_sha256": "450e815c554bd645e2916a4cc148a6fc7842268e6f23d8ab90f59a96067856c9"
+      "workflow_sha256": "a4b1bc4512e143e977bc92c6c848823bb0e0720f43b75f57cf349381c0a5ee63"
     },
     ".github/workflows/groundhog-release.yml:flatpak": {
       "matrix_source": "matrix:\n        include:\n          - { arch: x86_64,  runner: ubuntu-24.04 }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
@@ -31581,7 +31581,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "8421c3efce07286ebfc7e88284e3563babd3d24e4ee001191b4ade423c6516fa",
       "unsupported_reason": "groundhog-release:flatpak identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
-      "workflow_sha256": "450e815c554bd645e2916a4cc148a6fc7842268e6f23d8ab90f59a96067856c9"
+      "workflow_sha256": "a4b1bc4512e143e977bc92c6c848823bb0e0720f43b75f57cf349381c0a5ee63"
     },
     ".github/workflows/groundhog-release.yml:nix": {
       "matrix_source": "matrix:\n        include:\n          - { system: x86_64-linux,  runner: ubuntu-24.04 }\n          - { system: aarch64-linux, runner: ubuntu-24.04-arm }",
@@ -31589,7 +31589,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "dc3ec6503c329aacaee1f864e6dc22e2ca8e00ca27608ff3e735ff39d638cb3f",
       "unsupported_reason": "groundhog-release:nix identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
-      "workflow_sha256": "450e815c554bd645e2916a4cc148a6fc7842268e6f23d8ab90f59a96067856c9"
+      "workflow_sha256": "a4b1bc4512e143e977bc92c6c848823bb0e0720f43b75f57cf349381c0a5ee63"
     },
     ".github/workflows/groundhog-release.yml:release-aggregate": {
       "matrix_source": "",
@@ -31597,7 +31597,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "36e2b8e04e82122e7b69cadb662d2376089297d38f762398897543d197e62e98",
       "unsupported_reason": "groundhog-release:release-aggregate identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
-      "workflow_sha256": "450e815c554bd645e2916a4cc148a6fc7842268e6f23d8ab90f59a96067856c9"
+      "workflow_sha256": "a4b1bc4512e143e977bc92c6c848823bb0e0720f43b75f57cf349381c0a5ee63"
     },
     ".github/workflows/groundhog-release.yml:release": {
       "matrix_source": "",
@@ -31605,7 +31605,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "c9dbe4fcb59118f40a909bce63a1f68b13df322940d88905da052ca4e5edf87b",
       "unsupported_reason": "groundhog-release:release identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
-      "workflow_sha256": "450e815c554bd645e2916a4cc148a6fc7842268e6f23d8ab90f59a96067856c9"
+      "workflow_sha256": "a4b1bc4512e143e977bc92c6c848823bb0e0720f43b75f57cf349381c0a5ee63"
     },
     ".github/workflows/libgo-ci.yml:build-and-test": {
       "matrix_source": "matrix:\n        os: [ubuntu-latest, macos-latest]\n        # tsan keeps the default TSAN configuration (single-lock ring);\n        # tsan_mpmc keeps the MPMC slot protocol every other build ships, so\n        # the lock-free channel paths get ThreadSanitizer coverage too\n        # (nostrc-75rv review F8).\n        sanitizer: [asan_ubsan, tsan, tsan_mpmc]",
@@ -32115,7 +32115,7 @@
       "unsupported_reason": "Manual broad validation routes to reusable families and is not an independent execution profile or publisher attestation.",
       "matrix_source": "",
       "source_sha256": "eac4bdb9262da2fb5159ed8729f8ca69dfa3fea3b80ed9bfcd13ba21167c1e72",
-      "workflow_sha256": "450e815c554bd645e2916a4cc148a6fc7842268e6f23d8ab90f59a96067856c9"
+      "workflow_sha256": "a4b1bc4512e143e977bc92c6c848823bb0e0720f43b75f57cf349381c0a5ee63"
     },
     ".github/workflows/nip55l-libsecret-ci.yml:signer-consumers": {
       "profiles": [],
