@@ -401,19 +401,25 @@ static void test_direct_ingress_requires_gift_wrap(void) {
   printf("test_direct_ingress_requires_gift_wrap: PASS\n");
 }
 
-/* Real relay-pool ingress fixture. Exercise old REQs and socket reconnect
- * separately and together; history/EOSE/live boundaries never depend on sleeps. */
+/* Real relay-pool ingress fixture. The relay fans every live event out to
+ * each of its open REQs, oldest first, as a real relay does, and signetd's
+ * startup leaves two REQs with the same filter on a fast relay
+ * (nostrc-5xqun). Exercise an older draining REQ, a socket reconnect, a peer
+ * relay that never reaches EOSE and a relay-set reload; history/EOSE/live
+ * boundaries never depend on sleeps. */
 typedef struct {
   Fixture f;
   SignetRelayPool *pool;
   GMainLoop *loop;
+  const char *url;    /* the answering relay: subscribe on its first CONNECTED */
   gint accepted;
   gint dropped;
   int eoses;
   bool need_live;
-  bool primed;
+  bool subscribed;
   bool isolate;
   bool reconnect;
+  bool reload;
   gint64 started;
 } IngressWire;
 
@@ -441,6 +447,15 @@ static char *adopt_gift(Fixture *f, const char *agent, int64_t rumor_at) {
   return json;
 }
 
+static gboolean ingress_reload(void *data) {
+  IngressWire *w = data;
+  /* signetd changes its relay set from the main loop (SIGHUP). The fresh
+   * pool must replay the subscription and admit the next live request. */
+  w->need_live = true;
+  CHECK(signet_relay_pool_set_relays(w->pool, &w->url, 1) == 0);
+  return G_SOURCE_REMOVE;
+}
+
 static void ingress_event(const SignetRelayEventView *ev, void *data) {
   IngressWire *w = data;
   int rc = signet_mgmt_handler_handle_relay_event(w->f.mgmt, ev, time(NULL));
@@ -450,8 +465,33 @@ static void ingress_event(const SignetRelayEventView *ev, void *data) {
   }
   CHECK(ev->live_since > 0);
   CHECK(g_get_monotonic_time() - w->started < 10 * G_USEC_PER_SEC);
-  if (g_atomic_int_add(&w->accepted, 1) + 1 == (w->reconnect ? 2 : 1)) {
+  int accepted = g_atomic_int_add(&w->accepted, 1) + 1;
+  int phases = (w->reconnect || w->reload) ? 2 : 1;
+  if (accepted % 2 == 1) {
+    /* The warm-up came back on the required REQ alone, so the pool has
+     * processed every older REQ's EOSE ahead of it. The relay fans these
+     * out to all of its open REQs, oldest first: a still-fresh rumor from
+     * BEFORE the boundary must not execute even when delivered live, and
+     * the live mutation must execute whichever REQ carries it. Outer wrap
+     * timestamps are randomized. */
+    int phase = (accepted + 1) / 2;
+    char agent[32];
+    g_snprintf(agent, sizeof(agent), "stale%d", phase);
+    char *json = adopt_gift(&w->f, agent, time(NULL) - 30);
+    CHECK(signet_relay_pool_publish_event_json(w->pool, json) == 0);
+    free(json);
+    g_snprintf(agent, sizeof(agent), "live%d", phase);
+    json = adopt_gift(&w->f, agent, time(NULL));
+    CHECK(signet_relay_pool_publish_event_json(w->pool, json) == 0);
+    free(json);
+    return;
+  }
+  if (accepted == phases * 2) {
     g_main_loop_quit(w->loop);
+    return;
+  }
+  if (w->reload) {
+    g_idle_add(ingress_reload, w);
     return;
   }
   /* A fixture control publication asks the relay to disconnect only AFTER
@@ -469,31 +509,29 @@ static void ingress_event(const SignetRelayEventView *ev, void *data) {
 
 static void ingress_subscription(const char *url, const char *state,
                                   const char *reason, void *data) {
-  (void)url; (void)reason;
+  (void)reason;
   IngressWire *w = data;
-  if (strcmp(state, "DISCONNECTED") == 0) w->need_live = true;
-  if (strcmp(state, "EOSE") || !w->need_live) return;
-  if (w->isolate && !w->primed) {
-    w->primed = true;
-    /* Keep an older REQ alive deliberately. Its late events must not
-     * inherit the new required subscription's EOSE boundary. */
+  if (strcmp(state, "CONNECTED") == 0) {
+    if (w->subscribed || strcmp(url, w->url)) return;
+    /* signetd subscribes after start, once the relay is already up: the REQ
+     * fires immediately and the CONNECTED re-subscribe installs a second
+     * REQ with the same filter right behind it. The relay answers fresh
+     * requests on the older one first. */
+    w->subscribed = true;
     int kinds[] = {CAS_INTENT, NIP59_GIFT_WRAP};
     CHECK(signet_relay_pool_subscribe_scoped(w->pool, kinds, 2,
-        w->f.bunker_pk_hex, time(NULL) - 49 * 3600 - 1) == 0);
+        w->f.bunker_pk_hex, time(NULL) - 49 * 3600) == 0);
     return;
   }
+  if (strcmp(state, "DISCONNECTED") == 0) w->need_live = true;
+  if (strcmp(state, "EOSE") || !w->need_live) return;
   w->need_live = false;
   CHECK(++w->eoses <= 2);
   CHECK(signet_relay_pool_is_subscribed(w->pool));
-  /* A still-fresh rumor from BEFORE this EOSE must not execute even if
-   * delivered in the live phase. Outer wrap timestamps are randomized. */
+  /* Warm-up: a live mutation the relay answers on the required REQ only. */
   char agent[32];
-  g_snprintf(agent, sizeof(agent), "stale%d", w->eoses);
-  char *json = adopt_gift(&w->f, agent, time(NULL) - 30);
-  CHECK(signet_relay_pool_publish_event_json(w->pool, json) == 0);
-  free(json);
-  g_snprintf(agent, sizeof(agent), "live%d", w->eoses);
-  json = adopt_gift(&w->f, agent, time(NULL));
+  g_snprintf(agent, sizeof(agent), "warm%d", w->eoses);
+  char *json = adopt_gift(&w->f, agent, time(NULL));
   CHECK(signet_relay_pool_publish_event_json(w->pool, json) == 0);
   free(json);
 }
@@ -504,8 +542,10 @@ static gboolean ingress_deadline(void *data) {
 }
 
 static int test_wire_ingress(const char *url, const char *fixture_path,
-                             bool isolate, bool reconnect) {
-  IngressWire w = {.need_live = true, .isolate = isolate, .reconnect = reconnect};
+                             bool isolate, bool reconnect, bool reload,
+                             const char *peer_url) {
+  IngressWire w = {.url = url, .need_live = true, .isolate = isolate,
+                   .reconnect = reconnect, .reload = reload};
   fixture_setup(&w.f, true);
   /* Future-dated history is inside the skew window and after the coming
    * EOSE timestamp; the pre-EOSE classification must still reject it. */
@@ -519,30 +559,36 @@ static int test_wire_ingress(const char *url, const char *fixture_path,
   free(history2);
   free(late);
   w.loop = g_main_loop_new(NULL, FALSE);
-  SignetRelayPoolConfig cfg = {.relays = &url, .n_relays = 1,
+  const char *relays[2] = {url, peer_url};
+  SignetRelayPoolConfig cfg = {.relays = relays, .n_relays = peer_url ? 2 : 1,
       .on_event = ingress_event, .user_data = &w};
   w.pool = signet_relay_pool_new(&cfg);
   CHECK(w.pool);
   signet_relay_pool_set_subscription_callback(w.pool, ingress_subscription, &w);
-  int kinds[] = {CAS_INTENT, NIP59_GIFT_WRAP};
-  CHECK(signet_relay_pool_subscribe_scoped(w.pool, kinds, 2,
-      w.f.bunker_pk_hex, time(NULL) - 49 * 3600) == 0);
   w.started = g_get_monotonic_time();
+  /* Like signetd: start first, subscribe once the relay reports CONNECTED. */
   CHECK(signet_relay_pool_start(w.pool) == 0);
   guint deadline = g_timeout_add_seconds(12, ingress_deadline, &w);
   g_main_loop_run(w.loop);
-  int expected = reconnect ? 2 : 1;
-  int expected_dropped = expected * 2 + (isolate ? 1 : 0);
-  if (g_atomic_int_get(&w.accepted) == expected) g_source_remove(deadline);
+  int phases = (reconnect || reload) ? 2 : 1;
+  int expected_accepted = phases * 2;              /* warm-up + live per phase */
+  int expected_dropped = phases * 2 + (isolate ? 1 : 0); /* history + stale, late */
+  if (g_atomic_int_get(&w.accepted) == expected_accepted) g_source_remove(deadline);
   signet_relay_pool_free(w.pool);
-  CHECK(w.eoses == expected && g_atomic_int_get(&w.accepted) == expected);
+  CHECK(w.eoses == phases && g_atomic_int_get(&w.accepted) == expected_accepted);
   CHECK(g_atomic_int_get(&w.dropped) == expected_dropped);
   SignetStore *store = signet_key_store_get_store(w.f.ks);
-  const char *agents[] = {"history1", "history2", "history-late", "stale1", "stale2", "live1", "live2"};
-  for (size_t i = 0; i < G_N_ELEMENTS(agents); i++) {
+  const char *refused[] = {"history1", "history2", "history-late", "stale1", "stale2"};
+  for (size_t i = 0; i < G_N_ELEMENTS(refused); i++) {
     SignetAgentRecord rec = {0};
-    int rc = signet_store_get_agent(store, agents[i], &rec);
-    CHECK((i < 5 || (!reconnect && i == 6)) ? rc != 0 : rc == 0);
+    CHECK(signet_store_get_agent(store, refused[i], &rec) != 0);
+    signet_agent_record_clear(&rec);
+  }
+  const char *executed[] = {"warm1", "live1", "warm2", "live2"};
+  for (size_t i = 0; i < G_N_ELEMENTS(executed); i++) {
+    SignetAgentRecord rec = {0};
+    int rc = signet_store_get_agent(store, executed[i], &rec);
+    CHECK((i < 2 || phases == 2) ? rc == 0 : rc != 0);
     signet_agent_record_clear(&rec);
   }
   sqlite3_stmt *stmt = NULL;
@@ -553,9 +599,11 @@ static int test_wire_ingress(const char *url, const char *fixture_path,
   sqlite3_finalize(stmt);
   fixture_teardown(&w.f);
   g_main_loop_unref(w.loop);
-  puts(isolate && reconnect ? "wire: old-REQ isolation, live mutation, reconnect and second live mutation PASS"
-       : isolate ? "wire: old-subscription history refused after current EOSE PASS"
-               : "wire: pre-EOSE history and old rumors audited; live mutations within 10s and reconnect PASS");
+  puts(isolate && reconnect ? "wire: draining-REQ isolation, live mutation on the older REQ, reconnect and second live mutation PASS"
+       : isolate ? "wire: draining startup REQ refused after the required EOSE PASS"
+       : reload ? "wire: live mutations on the older REQ before and after relay-set reload PASS"
+       : peer_url ? "wire: live mutation on the older REQ beside a peer relay that never reaches EOSE PASS"
+               : "wire: startup REQ pair, pre-EOSE history and old rumors audited; live mutations on the older REQ within 10s and reconnect PASS");
   return 0;
 }
 
@@ -565,11 +613,23 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  if (argc == 4 && (strcmp(argv[1], "--wire-ingress") == 0 ||
-                    strcmp(argv[1], "--wire-isolation") == 0 ||
-                    strcmp(argv[1], "--wire-combined") == 0))
-    return test_wire_ingress(argv[2], argv[3], strcmp(argv[1], "--wire-ingress") != 0,
-                             strcmp(argv[1], "--wire-isolation") != 0);
+  if (argc >= 4 && strncmp(argv[1], "--wire-", 7) == 0) {
+    const char *mode = argv[1] + 7;
+    bool isolate = !strcmp(mode, "isolation") || !strcmp(mode, "combined");
+    bool reconnect = !strcmp(mode, "ingress") || !strcmp(mode, "combined");
+    bool reload = !strcmp(mode, "reload");
+    bool multi = !strcmp(mode, "multi");
+    const char *peer = argc > 4 ? argv[4] : NULL;
+    if (!isolate && !reconnect && !reload && !multi) {
+      fprintf(stderr, "unknown wire mode %s\n", argv[1]);
+      return 2;
+    }
+    if ((multi || reload) && !peer) {
+      fprintf(stderr, "%s needs a peer relay URL\n", argv[1]);
+      return 2;
+    }
+    return test_wire_ingress(argv[2], argv[3], isolate, reconnect, reload, peer);
+  }
 
   test_no_cache_duplicates_execute();
   test_cache_rejects_duplicate();

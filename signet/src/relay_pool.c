@@ -192,7 +192,7 @@ struct RelayState {
   gboolean closed_unreported;
   NostrSubscription *required;
   gboolean ready;
-  int64_t live_since;
+  GHashTable *boundaries;     /* open REQ (owned ref) -> gint64 EOSE time on this connection */
   gboolean auth_pending;
   uint64_t subscription_revision;
   gboolean attached;
@@ -252,6 +252,7 @@ static void relay_state_unref(gpointer data) {
   if (!last) return;
   if (s->required) nostr_subscription_unref(s->required);
   g_hash_table_destroy(s->watches);
+  g_hash_table_destroy(s->boundaries);
   g_free(s->challenge);
   g_free(s->closed_reason);
   g_cond_clear(&s->retired);
@@ -296,7 +297,7 @@ static GPtrArray *take_aborted_watches(RelayState *s) {
     g_hash_table_iter_steal(&it);
   }
   s->ready = FALSE;
-  s->live_since = 0;
+  g_hash_table_remove_all(s->boundaries);
   s->auth_pending = FALSE;
   g_clear_pointer(&s->challenge, g_free);
   if (s->required) nostr_subscription_unref(s->required);
@@ -349,7 +350,6 @@ static void capture_required_locked(SignetRelayPool *rp) {
     s->required = latest ? nostr_subscription_ref(latest) : NULL;
     s->subscription_revision++;
     s->ready = FALSE;
-    s->live_since = 0;
     g_mutex_unlock(&s->mu);
   }
   pthread_mutex_unlock(&pool->pool_mutex);
@@ -560,7 +560,6 @@ static void auth_challenge(NostrRelay *relay, const char *challenge, void *data)
     g_free(s->challenge);
     s->challenge = g_strdup(challenge); /* challenges are not truncated */
     s->ready = FALSE;
-    s->live_since = 0;
     s->auth_pending = TRUE;
   }
   g_mutex_unlock(&s->mu);
@@ -611,6 +610,8 @@ static RelayState *ensure_state_locked(SignetRelayPool *rp, NostrRelay *relay) {
   g_mutex_init(&s->mu);
   g_cond_init(&s->retired);
   s->watches = g_hash_table_new_full(g_str_hash, g_str_equal, NULL, watch_free);
+  s->boundaries = g_hash_table_new_full(g_direct_hash, g_direct_equal,
+                                        (GDestroyNotify)nostr_subscription_unref, g_free);
   g_hash_table_insert(rp->relay_states, relay, s);
   nostr_relay_set_ok_callback_full(relay, ok_dispatch, relay_state_ref(s), relay_state_unref);
   nostr_relay_set_auth_callback_full(relay, auth_challenge, relay_state_ref(s), relay_state_unref);
@@ -681,24 +682,40 @@ static void subscription_changed(NostrRelay *relay, const char *state,
   const NostrSubscription *source = nostr_simple_pool_get_callback_subscription(rp->pool);
   if (s && source && !rp->stopping && !rp->disposing) {
     g_mutex_lock(&s->mu);
+    gboolean closed = nostr_subscription_is_closed(source);
+    /* Every REQ this pool holds on the relay becomes a live source at its
+     * own EOSE, required or not: the relay fans a fresh event out to each
+     * matching REQ, oldest first, and simplepool forwards only the first
+     * copy. Startup, reconnect re-fire, reissue and AUTH all leave more than
+     * one open REQ with this filter on a relay. simplepool drains queued
+     * history before delivering this EOSE callback, so the boundary is
+     * captured here, not in the deferred UI notification. EOSE is signalled
+     * once per (re)fire, so a replacement is a re-fired REQ's new catch-up
+     * and must move the floor forward. A CLOSED REQ is freed right after
+     * this callback; drop its boundary with it. */
+    if (closed) {
+      g_hash_table_remove(s->boundaries, source);
+    } else if (nostr_subscription_is_eosed(source) && nostr_relay_is_connected(relay)) {
+      gint64 *at = g_new(gint64, 1);
+      *at = time(NULL);
+      /* The key owns a reference so the address cannot be reused by another
+       * REQ while its boundary exists; a replacement releases the extra ref. */
+      g_hash_table_insert(s->boundaries,
+                          nostr_subscription_ref((NostrSubscription *)source), at);
+    }
     if (source != s->required) {
       g_mutex_unlock(&s->mu);
       g_mutex_unlock(&rp->mu);
       return;
     }
-    gboolean closed = s->required && nostr_subscription_is_closed(s->required);
     if (closed) {
       g_free(s->closed_reason);
       s->closed_reason = g_strdup(reason);
       s->closed_unreported = TRUE;
     }
-    gboolean ready = !s->auth_pending && s->required && !closed && nostr_relay_is_connected(relay) &&
+    gboolean ready = !s->auth_pending && !closed && nostr_relay_is_connected(relay) &&
                        nostr_subscription_is_eosed(s->required);
     gboolean newly_ready = ready && !s->ready;
-    /* simplepool drains queued history before delivering this EOSE callback.
-     * Capture the boundary here, not in the deferred UI notification. */
-    if (newly_ready) s->live_since = time(NULL);
-    if (!ready) s->live_since = 0;
     s->ready = ready;
     g_mutex_unlock(&s->mu);
     if ((!strcmp(state, "EOSE") && newly_ready) || (!strcmp(state, "CLOSED") && closed))
@@ -707,22 +724,29 @@ static void subscription_changed(NostrRelay *relay, const char *state,
   g_mutex_unlock(&rp->mu);
 }
 
-/* A ready peer must never admit another relay's backfill. The boundary is
- * scoped to the delivering subscription as well as the relay: older REQs
- * may still be draining when the current REQ reaches EOSE. AUTH, CLOSED and
- * reconnect reset it. A synthetic/local event has no boundary. */
+/* A fresh event is live when the REQ that delivered it has reached its own
+ * EOSE on the delivering relay's current connection. That REQ need not be the
+ * required one: the relay fans each match out to every open REQ, oldest
+ * first, and simplepool forwards only the first copy, so a boundary scoped to
+ * the required REQ alone refused live traffic whenever the relay held more
+ * than one REQ with this filter (nostrc-5xqun: signetd's startup REQ plus the
+ * CONNECTED re-subscribe). A ready peer still never admits another relay's
+ * backfill, and a REQ still draining history admits nothing even on a ready
+ * relay; neither does a CLOSED REQ, a relay with AUTH pending, a retired pool
+ * or a synthetic/local event. Disconnect discards every boundary and a
+ * re-fired REQ earns a new one at its next EOSE. */
 static int64_t relay_live_since(SignetRelayPool *rp, NostrRelay *relay) {
   int64_t since = 0;
   g_mutex_lock(&rp->mu);
   const NostrSubscription *subscription = nostr_simple_pool_get_callback_subscription(rp->pool);
   RelayState *s = g_hash_table_lookup(rp->relay_states, relay);
-  if (s && !rp->stopping && !rp->disposing) {
+  if (s && subscription && !rp->stopping && !rp->disposing) {
     g_mutex_lock(&s->mu);
-    if (s->ready && !s->auth_pending && s->required &&
-        subscription == s->required &&
-        !nostr_subscription_is_closed(s->required) &&
-        nostr_subscription_is_eosed(s->required) &&
-        nostr_relay_is_connected(relay)) since = s->live_since;
+    const gint64 *at = g_hash_table_lookup(s->boundaries, subscription);
+    if (at && !s->auth_pending &&
+        !nostr_subscription_is_closed(subscription) &&
+        nostr_subscription_is_eosed(subscription) &&
+        nostr_relay_is_connected(relay)) since = *at;
     g_mutex_unlock(&s->mu);
   }
   g_mutex_unlock(&rp->mu);
