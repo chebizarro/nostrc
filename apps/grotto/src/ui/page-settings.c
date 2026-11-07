@@ -51,8 +51,10 @@ static void retention_save(GtkButton *button, gpointer data) {
 void page_settings_show_retention(PageSettings *self, GtkWidget *parent) {
   AdwDialog *dialog = adw_dialog_new(); adw_dialog_set_title(dialog, _("Activity Retention"));
   adw_dialog_set_content_width(dialog, 400);
+  adw_dialog_set_follows_content_size(dialog, TRUE);
   GtkWidget *save = gtk_button_new_with_mnemonic(_("_Save"));
   GtkWidget *toolbar = adw_toolbar_view_new();
+  gtk_widget_set_size_request(toolbar, -1, 200);
   adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(toolbar), grotto_dialog_header(dialog, save));
   AdwPreferencesPage *page = ADW_PREFERENCES_PAGE(adw_preferences_page_new());
   AdwPreferencesGroup *group = ADW_PREFERENCES_GROUP(adw_preferences_group_new());
@@ -148,7 +150,9 @@ void page_settings_show_ask_defaults(PageSettings *self, GtkWidget *parent) {
     for (guint j = 0; j < p->checks->len; j++) if (!strcmp(values[i], g_object_get_data(G_OBJECT(p->checks->pdata[j]), "kind"))) known = TRUE;
     if (!known) { if (others->len) g_string_append(others, ", "); g_string_append(others, values[i]); }
   }
-  gtk_box_append(GTK_BOX(box), gtk_label_new(_("Additional custom event types (comma-separated)"))); p->custom = GTK_ENTRY(gtk_entry_new());
+  GtkWidget *custom_label = gtk_label_new(_("Additional custom event types (comma-separated)"));
+  gtk_label_set_wrap(GTK_LABEL(custom_label), TRUE); gtk_label_set_xalign(GTK_LABEL(custom_label), 0);
+  gtk_box_append(GTK_BOX(box), custom_label); p->custom = GTK_ENTRY(gtk_entry_new());
   gtk_entry_set_activates_default(p->custom, TRUE);
   gtk_editable_set_text(GTK_EDITABLE(p->custom), others->str); g_string_free(others, TRUE);
   gtk_accessible_update_property(GTK_ACCESSIBLE(p->custom), GTK_ACCESSIBLE_PROPERTY_LABEL, _("Additional custom event types"), -1); gtk_box_append(GTK_BOX(box), GTK_WIDGET(p->custom));

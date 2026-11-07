@@ -783,7 +783,8 @@ static void identity_remove(gpointer data, const char *npub) {
   if (!self || gn_session_manager_is_locked(gn_session_manager_get_default())) return;
   AdwDialog *dialog = adw_alert_dialog_new(_("Remove Identity?"), _("This identity is deleted from this device. Without a backup it can't be recovered."));
   GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
-  GtkWidget *key = gtk_label_new(npub); gtk_label_set_wrap(GTK_LABEL(key), TRUE); gtk_label_set_selectable(GTK_LABEL(key), TRUE);
+  GtkWidget *key = gtk_label_new(npub); gtk_label_set_wrap(GTK_LABEL(key), TRUE);
+  gtk_label_set_wrap_mode(GTK_LABEL(key), PANGO_WRAP_WORD_CHAR); gtk_label_set_selectable(GTK_LABEL(key), TRUE);
   GtkWidget *copy = gtk_button_new_with_label(_("Copy Public Key"));
   GtkWidget *entry = gtk_entry_new(); gtk_entry_set_placeholder_text(GTK_ENTRY(entry), _("Type the full npub to confirm removal"));
   gtk_accessible_update_property(GTK_ACCESSIBLE(entry), GTK_ACCESSIBLE_PROPERTY_LABEL, _("Public Key Confirmation"), -1);
