@@ -58,6 +58,26 @@ int main(void) {
   CHECK(strstr(response, "\"provisioner_writeback_failed\":true"));
   CHECK(http_get(port, "/metrics", NULL, response, sizeof(response)) == 200);
   CHECK(strstr(response, "signet_provisioner_writeback_failures_total 3\n"));
+  CHECK(strstr(response, "# TYPE signet_nip46_reply_ack_total counter\n"));
+  CHECK(strstr(response, "signet_nip46_reply_ack_total{result=\"accept\"} 0\n"));
+
+  snap.nip46_reply_ack_accept = UINT64_C(4294967297);
+  snap.nip46_reply_ack_reject = 2;
+  snap.nip46_reply_ack_timeout = 3;
+  snap.nip46_reply_ack_transport_aborted = 4;
+  signet_health_server_set_snapshot(hs, &snap);
+  CHECK(http_get(port, "/metrics", NULL, response, sizeof(response)) == 200);
+  CHECK(strstr(response, "signet_nip46_reply_ack_total{result=\"accept\"} 4294967297\n"));
+  CHECK(strstr(response, "signet_nip46_reply_ack_total{result=\"reject\"} 2\n"));
+  CHECK(strstr(response, "signet_nip46_reply_ack_total{result=\"timeout\"} 3\n"));
+  CHECK(strstr(response, "signet_nip46_reply_ack_total{result=\"transport-aborted\"} 4\n"));
+  /* Reply publication outcomes neither revoke readiness nor manufacture it. */
+  CHECK(http_get(port, "/ready", NULL, response, sizeof(response)) == 200);
+  CHECK(strstr(response, "\"ready\":true"));
+  snap.fleet_synced = false;
+  signet_health_server_set_snapshot(hs, &snap);
+  CHECK(http_get(port, "/ready", NULL, response, sizeof(response)) == 503);
+  CHECK(strstr(response, "\"ready\":false"));
   signet_health_server_free(hs);
   /* Listener free precedes every borrowed dependency. */
   signet_challenge_store_free(challenges);

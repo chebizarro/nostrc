@@ -20,6 +20,7 @@
 #include <nostr-simple-pool.h>
 #include <nostr-relay.h>
 #include <nostr-event.h>
+#include <nostr-envelope.h>
 #include <nostr-filter.h>
 #include <nostr-keys.h>
 #include <nostr-tag.h>
@@ -28,11 +29,27 @@
 #include <nostr-connection.h>
 
 #include <time.h>
+#include <sodium.h>
+
+typedef struct RelayState RelayState;
+static GPrivate callback_pool = G_PRIVATE_INIT(NULL);
+static void pool_release(SignetRelayPool *rp);
+static void relay_state_unref(gpointer data);
+static void signet_relay_pool_register_auth(SignetRelayPool *rp);
 
 /* ------------------------------ relay pool ------------------------------- */
 
 struct SignetRelayPool {
   NostrSimplePool *pool;
+  gint refs;
+  gboolean stopping;
+  GSource *stop_source;
+  GHashTable *relay_states; /* relay -> RelayState, owns references */
+  GHashTable *sources;      /* source ID -> GSource, owns references */
+  uint64_t watch_serial;
+  SignetReplyAckStats reply_acks;
+  SignetSubscriptionCallback on_subscription;
+  void *subscription_data;
 
   /* Relay URLs (kept for subscribe/publish iteration) */
   char **urls;
@@ -132,7 +149,10 @@ static void signet_pool_event_middleware(NostrIncomingEvent *incoming, void *use
     g_mutex_unlock(&rp->mu);
   }
 
+  gpointer previous_pool = g_private_get(&callback_pool);
+  g_private_set(&callback_pool, rp);
   rp->on_event(&ev, rp->user_data);
+  g_private_set(&callback_pool, previous_pool);
 
   free((void *)ev.event_json);
   free(event_id);
@@ -140,293 +160,543 @@ static void signet_pool_event_middleware(NostrIncomingEvent *incoming, void *use
 
 /* ----------------------- NIP-42 auth callback ----------------------------- */
 
-/* One NIP-42 AUTH to send, handed from the relay's AUTH callback to the GLib
- * main loop. Owned by signet_send_auth_idle(), which wipes and frees it. */
-typedef struct {
-  NostrRelay      *relay;
-  SignetRelayPool *pool;
-  char             sk_hex[65];       /* signing key */
-  char             challenge[64];    /* AUTH challenge */
-  char             relay_url[256];   /* relay URL for relay tag */
-} PostAuthResubData;
+/* The relay owns callback references; the pool and each deferred source own
+ * separate references. A detached callback may finish after stop(), but cannot
+ * outlive either the pool allocation or its relay allocation. */
+typedef struct OkWatch {
+  struct OkWatch *next;
+  uint64_t serial;
+  char *event_id;
+  char *key;
+  SignetRelayPool *rp;
+  uint64_t generation;
+  gboolean auth;
+  SignetPublishOkCallback cb;
+  void *data;
+  GDestroyNotify destroy;
+} OkWatch;
 
-static void post_auth_data_free(PostAuthResubData *rd) {
-  if (!rd) return;
-  memset(rd->sk_hex, 0, sizeof(rd->sk_hex));
-  g_free(rd);
+struct RelayState {
+  gint refs;
+  SignetRelayPool *rp;
+  NostrRelay *relay;
+  NostrSimplePool *owner_pool;
+  GMutex mu;
+  GCond retired;
+  GHashTable *watches;
+  uint64_t generation;
+  char *challenge;
+  char *closed_reason;
+  gboolean closed_unreported;
+  NostrSubscription *required;
+  gboolean ready;
+  gboolean auth_pending;
+  uint64_t subscription_revision;
+  gboolean attached;
+};
+
+typedef struct {
+  RelayState *state;
+  uint64_t generation;
+  uint64_t subscription_revision;
+  uint64_t watch_serial;
+  guint id;
+  GSource *source;
+  char *challenge;
+  char sk_hex[65];
+  char *event_id;
+  char *notification;
+  char *reason;
+  gboolean resubscribe;
+  gboolean auth_complete;
+} Deferred;
+
+static RelayState *relay_state_ref(RelayState *s) {
+  g_atomic_int_inc(&s->refs);
+  return s;
 }
 
-/* What the OK for a sent AUTH event needs. The relay's OK callback
- * registration owns it (nostr_relay_set_ok_callback_full()): removing the
- * callback does not wait for a call already running on a libnostr worker,
- * which still reads it, so the relay frees it after that call returns
- * (nostrc-tw7f, as nostrc-flp7). The post-AUTH re-subscribe gets a copy. */
-typedef struct {
-  NostrRelay      *relay;
-  SignetRelayPool *pool;
-  char             relay_url[256];
-  char             auth_event_id[65];
-} AuthOkWatch;
+static void watch_free(gpointer data) {
+  OkWatch *w = data;
+  while (w) {
+    OkWatch *next = w->next;
+    if (w->destroy) w->destroy(w->data);
+    g_free(w->event_id);
+    g_free(w->key);
+    g_free(w);
+    w = next;
+  }
+}
 
-/* GLib idle callback: fires from the GLib main loop after Khatru confirms auth.
- * Called via g_idle_add from the OK response callback when OK true is received
- * for our AUTH event. This ensures REQ is never sent until Khatru has
- * authenticated the connection (no more race condition). */
-static gboolean signet_post_auth_resubscribe(gpointer data) {
-  AuthOkWatch     *rd = (AuthOkWatch *)data;
-  SignetRelayPool *rp  = rd->pool;
-  const char      *rurl = rd->relay_url[0] ? rd->relay_url
-                                            : nostr_relay_get_url_const(rd->relay);
+/* One wire OK resolves all callers watching the same signed event. */
+static gboolean insert_watch_locked(RelayState *s, OkWatch *w) {
+  w->rp = s->rp;
+  w->key = g_strdup_printf("%" G_GUINT64_FORMAT ":%s", w->generation, w->event_id);
+  OkWatch *old = g_hash_table_lookup(s->watches, w->key);
+  w->serial = old ? old->serial : ++s->rp->watch_serial;
+  w->next = old;
+  if (old) g_hash_table_steal(s->watches, old->key);
+  g_hash_table_insert(s->watches, w->key, w);
+  return old == NULL;
+}
 
-  g_message("[signetd] auth-ok: Khatru confirmed auth, re-subscribing on %s", rurl);
+static void relay_state_unref(gpointer data) {
+  RelayState *s = data;
+  g_mutex_lock(&s->mu);
+  gboolean last = g_atomic_int_dec_and_test(&s->refs);
+  g_cond_broadcast(&s->retired);
+  g_mutex_unlock(&s->mu);
+  if (!last) return;
+  if (s->required) nostr_subscription_unref(s->required);
+  g_hash_table_destroy(s->watches);
+  g_free(s->challenge);
+  g_free(s->closed_reason);
+  g_cond_clear(&s->retired);
+  g_mutex_clear(&s->mu);
+  nostr_relay_unref(s->relay);
+  SignetRelayPool *rp = s->rp;
+  g_free(s);
+  pool_release(rp);
+}
 
-  int *kinds = NULL;
-  size_t n_kinds = 0;
+static uint64_t relay_generation(NostrRelay *relay) {
+  uint64_t generation = 0;
+  char *challenge = nostr_relay_get_auth_challenge(relay, &generation);
+  free(challenge);
+  return generation;
+}
+
+static void finish_watch(OkWatch *w, gboolean accepted, const char *reason) {
+  while (w) {
+    OkWatch *next = w->next;
+    w->next = NULL;
+    if (w->cb) {
+      gpointer previous = g_private_get(&callback_pool);
+      g_private_set(&callback_pool, w->rp);
+      w->cb(w->event_id, accepted, reason, w->data);
+      g_private_set(&callback_pool, previous);
+    }
+    watch_free(w);
+    w = next;
+  }
+}
+
+/* Callbacks are never invoked while holding rp->mu or the dispatcher mutex. */
+static GPtrArray *take_aborted_watches(RelayState *s) {
+  GPtrArray *pending = g_ptr_array_new();
+  g_mutex_lock(&s->mu);
+  GHashTableIter it;
+  gpointer value;
+  g_hash_table_iter_init(&it, s->watches);
+  while (g_hash_table_iter_next(&it, NULL, &value)) {
+    g_ptr_array_add(pending, value);
+    g_hash_table_iter_steal(&it);
+  }
+  s->ready = FALSE;
+  s->auth_pending = FALSE;
+  g_clear_pointer(&s->challenge, g_free);
+  if (s->required) nostr_subscription_unref(s->required);
+  s->required = NULL;
+  g_mutex_unlock(&s->mu);
+  return pending;
+}
+static void finish_aborted_watches(GPtrArray *pending) {
+  for (guint i = 0; i < pending->len; i++)
+    finish_watch(g_ptr_array_index(pending, i), FALSE, "transport-aborted:");
+  g_ptr_array_free(pending, TRUE);
+}
+
+static void abort_watches(RelayState *s) {
+  finish_aborted_watches(take_aborted_watches(s));
+}
+
+static void deferred_free(gpointer data) {
+  Deferred *d = data;
+  SignetRelayPool *rp = d->state->rp;
   g_mutex_lock(&rp->mu);
-  if (rp->active_kinds && rp->n_active_kinds > 0) {
-    n_kinds = rp->n_active_kinds;
-    kinds = (int *)malloc(n_kinds * sizeof(int));
-    if (kinds) memcpy(kinds, rp->active_kinds, n_kinds * sizeof(int));
+  Deferred *registered = g_hash_table_lookup(rp->sources, GUINT_TO_POINTER(d->id));
+  GSource *source = registered ? registered->source : NULL;
+  if (source) g_hash_table_steal(rp->sources, GUINT_TO_POINTER(d->id));
+  g_mutex_unlock(&rp->mu);
+  if (source) g_source_unref(source);
+  sodium_memzero(d->sk_hex, sizeof(d->sk_hex));
+  g_free(d->challenge);
+  g_free(d->event_id);
+  g_free(d->notification);
+  g_free(d->reason);
+  relay_state_unref(d->state);
+  g_free(d);
+}
+
+static void capture_required_locked(SignetRelayPool *rp) {
+  NostrSimplePool *pool = rp->pool;
+  pthread_mutex_lock(&pool->pool_mutex);
+  GHashTableIter it;
+  gpointer value;
+  g_hash_table_iter_init(&it, rp->relay_states);
+  while (g_hash_table_iter_next(&it, NULL, &value)) {
+    RelayState *s = value;
+    NostrSubscription *latest = NULL;
+    for (size_t i = 0; i < pool->subs_count; i++)
+      if (pool->subs[i] && nostr_subscription_get_relay(pool->subs[i]) == s->relay)
+        latest = pool->subs[i];
+    g_mutex_lock(&s->mu);
+    if (s->required) nostr_subscription_unref(s->required);
+    s->required = latest ? nostr_subscription_ref(latest) : NULL;
+    s->subscription_revision++;
+    s->ready = FALSE;
+    g_mutex_unlock(&s->mu);
+  }
+  pthread_mutex_unlock(&pool->pool_mutex);
+}
+
+static gboolean deferred_run(gpointer data);
+
+/* nostr_relay_write copies the frame. Close before draining so the writer
+ * either already supplied its Error or must release it on failed send. */
+static void release_write_answer(GoChannel *answer) {
+  if (!answer) return;
+  go_channel_close(answer);
+  void *result = NULL;
+  while (go_channel_try_receive(answer, &result) == 0) {
+    if (result) free_error(result);
+    result = NULL;
+  }
+  go_channel_unref(answer);
+}
+
+/* Unlike nostr_relay_publish(), this does not wait up to five seconds for
+ * writer completion on the GLib main thread. OK watches own relay outcomes. */
+static gboolean enqueue_event(NostrRelay *relay, NostrEvent *event) {
+  NostrEventEnvelope event_env = {.base.type = NOSTR_ENVELOPE_EVENT, .event = event};
+  NostrAuthEnvelope auth_env = {.base.type = NOSTR_ENVELOPE_AUTH, .event = event};
+  const NostrEnvelope *envelope = nostr_event_get_kind(event) == NOSTR_KIND_CLIENT_AUTHENTICATION
+    ? (const NostrEnvelope *)&auth_env : (const NostrEnvelope *)&event_env;
+  char *frame = nostr_envelope_serialize_compact(envelope);
+  if (!frame) return FALSE;
+  GoChannel *answer = nostr_relay_write(relay, frame);
+  free(frame); /* nostr_relay_write copied it */
+  gboolean enqueued = answer != NULL;
+  release_write_answer(answer);
+  return enqueued;
+}
+
+/* Caller holds rp->mu. Attaching only after publishing the ID closes the
+ * attach/dispatch race when a different thread owns the GLib main context. */
+static void defer_locked(RelayState *s, Deferred *d, guint timeout_ms) {
+  SignetRelayPool *rp = s->rp;
+  d->state = relay_state_ref(s);
+  d->generation = relay_generation(s->relay);
+  g_mutex_lock(&s->mu);
+  d->subscription_revision = s->subscription_revision;
+  g_mutex_unlock(&s->mu);
+  GSource *source = timeout_ms ? g_timeout_source_new(timeout_ms) : g_idle_source_new();
+  g_source_set_callback(source, deferred_run, d, deferred_free);
+  d->source = source;
+  d->id = g_source_attach(source, NULL);
+  g_hash_table_insert(rp->sources, GUINT_TO_POINTER(d->id), d);
+}
+
+static gboolean deferred_run(gpointer data) {
+  Deferred *d = data;
+  RelayState *s = d->state;
+  SignetRelayPool *rp = s->rp;
+  OkWatch *expired = NULL;
+  SignetSubscriptionCallback cb = NULL;
+  void *cb_data = NULL;
+  g_mutex_lock(&rp->mu);
+  if (rp->stopping || rp->disposing || !s->attached ||
+      (!d->event_id && d->generation != relay_generation(s->relay))) {
+    g_mutex_unlock(&rp->mu);
+    return G_SOURCE_REMOVE;
+  }
+  if (d->event_id) {
+    g_mutex_lock(&s->mu);
+    expired = g_hash_table_lookup(s->watches, d->event_id);
+    if (expired && expired->serial == d->watch_serial)
+      g_hash_table_steal(s->watches, d->event_id);
+    else expired = NULL;
+    g_mutex_unlock(&s->mu);
+  } else if (d->notification) {
+    gboolean current = TRUE;
+    g_mutex_lock(&s->mu);
+    if (!strcmp(d->notification, "EOSE"))
+      current = d->subscription_revision == s->subscription_revision && s->ready &&
+        s->required && !nostr_subscription_is_closed(s->required) &&
+        nostr_subscription_is_eosed(s->required) && nostr_relay_is_connected(s->relay);
+    else if (!strcmp(d->notification, "CLOSED") && g_strcmp0(d->reason, "auth-rejected:"))
+      current = d->subscription_revision == s->subscription_revision && s->required &&
+        nostr_subscription_is_closed(s->required);
+    g_mutex_unlock(&s->mu);
+    cb = current ? rp->on_subscription : NULL;
+    cb_data = rp->subscription_data;
+  } else if (d->resubscribe) {
+    if (d->auth_complete) {
+      g_mutex_lock(&s->mu);
+      s->auth_pending = FALSE;
+      g_mutex_unlock(&s->mu);
+    }
+    NostrFilters *filters = signet_relay_pool_build_filters_locked(rp);
+    if (filters) {
+      nostr_simple_pool_subscribe_async(rp->pool, (const char **)rp->urls,
+                                        rp->n_urls, *filters, true);
+      capture_required_locked(rp);
+      nostr_filters_free(filters);
+    }
+  } else if (d->challenge && d->sk_hex[0]) {
+    NostrEvent *evt = nostr_event_new();
+    nostr_event_set_kind(evt, NOSTR_KIND_CLIENT_AUTHENTICATION);
+    nostr_event_set_created_at(evt, time(NULL));
+    nostr_event_set_content(evt, "");
+    NostrTags *tags = nostr_tags_new(0);
+    const char *url = rp->auth_relay_tag_url[0] ? rp->auth_relay_tag_url
+                                               : nostr_relay_get_url_const(s->relay);
+    nostr_tags_append(tags, nostr_tag_new("relay", url, NULL));
+    nostr_tags_append(tags, nostr_tag_new("challenge", d->challenge, NULL));
+    nostr_event_set_tags(evt, tags);
+    if (nostr_event_sign(evt, d->sk_hex) == 0) {
+      char *id = nostr_event_get_id(evt);
+      OkWatch *w = g_new0(OkWatch, 1);
+      w->event_id = id;
+      w->generation = d->generation;
+      w->auth = TRUE;
+      g_mutex_lock(&s->mu);
+      insert_watch_locked(s, w);
+      g_mutex_unlock(&s->mu);
+      enqueue_event(s->relay, evt);
+    }
+    nostr_event_free(evt);
   }
   g_mutex_unlock(&rp->mu);
-
-  if (kinds && n_kinds > 0) {
-    if (signet_relay_pool_subscribe_kinds(rp, kinds, n_kinds) == 0) {
-      g_message("[signetd] post-AUTH re-subscribed on %s", rurl);
-    } else {
-      g_warning("[signetd] post-AUTH re-subscribe failed on %s", rurl);
-    }
-    free(kinds);
-  } else {
-    g_warning("[signetd] post-AUTH re-subscribe skipped on %s: no active kinds", rurl);
+  if (expired) finish_watch(expired, FALSE,
+    d->generation == relay_generation(s->relay) ? "timeout:" : "transport-aborted:");
+  if (cb) {
+    gpointer previous = g_private_get(&callback_pool);
+    g_private_set(&callback_pool, rp);
+    cb(nostr_relay_get_url_const(s->relay), d->notification, d->reason, cb_data);
+    g_private_set(&callback_pool, previous);
   }
-
-  g_free(rd);
-  return G_SOURCE_REMOVE;  /* one-shot */
+  return G_SOURCE_REMOVE;
 }
 
-/* OK response callback fired from the libnostr relay worker thread.
- * Checks if this OK is for our pending AUTH event; if so, schedules
- * re-subscribe via g_idle_add (GLib main loop thread-safe). */
-static void signet_ok_response_callback(const char *event_id, bool ok,
-                                         const char *reason, void *user_data) {
-  AuthOkWatch *rd = (AuthOkWatch *)user_data;
-  if (!rd || !event_id) return;
+static void notify_locked(RelayState *s, const char *state, const char *reason) {
+  Deferred *d = g_new0(Deferred, 1);
+  d->notification = g_strdup(state);
+  d->reason = g_strdup(reason);
+  defer_locked(s, d, 0);
+}
 
-  /* Only act on the OK for our specific AUTH event */
-  if (strcmp(event_id, rd->auth_event_id) != 0) return;
-
-  const char *rurl = rd->relay_url[0] ? rd->relay_url : "(unknown)";
-
-  if (ok) {
-    g_message("[signetd] auth-ok: relay=%s event=%s OK=true — scheduling re-subscribe", rurl, event_id);
-    /* Schedule resubscribe from GLib main loop (not from relay worker thread),
-     * with its own copy: the relay frees @rd. */
-    AuthOkWatch *resub = g_new(AuthOkWatch, 1);
-    *resub = *rd;
-    g_idle_add(signet_post_auth_resubscribe, resub);
-  } else {
-    g_warning("[signetd] auth-ok: relay=%s event=%s OK=false reason=\"%s\" — auth REJECTED",
-              rurl, event_id, reason ? reason : "");
-    /* Auth rejected; auth_sent will be reset on next challenge. */
+static void ok_dispatch(const char *id, bool accepted, const char *reason, void *data) {
+  RelayState *s = data;
+  OkWatch *w = NULL;
+  g_mutex_lock(&s->mu);
+  char *key = g_strdup_printf("%" G_GUINT64_FORMAT ":%s", relay_generation(s->relay), id);
+  w = g_hash_table_lookup(s->watches, key);
+  if (!w) {
+    GHashTableIter it;
+    gpointer value;
+    g_hash_table_iter_init(&it, s->watches);
+    while (g_hash_table_iter_next(&it, NULL, &value)) {
+      OkWatch *old = value;
+      if (!strcmp(old->event_id, id)) { w = old; break; }
+    }
   }
-  /* One-shot: deregister. @rd stays valid until this call returns. */
-  nostr_relay_set_ok_callback(rd->relay, NULL, NULL);
+  if (w) g_hash_table_steal(s->watches, w->key); /* terminal exactly once */
+  g_free(key);
+  g_mutex_unlock(&s->mu);
+  if (!w) return;
+  while (w) {
+    OkWatch *next = w->next;
+    w->next = NULL;
+    if (w->generation != relay_generation(s->relay)) {
+      finish_watch(w, FALSE, "transport-aborted:");
+      w = next;
+      continue;
+    }
+    if (w->auth) {
+      SignetRelayPool *rp = s->rp;
+      g_mutex_lock(&rp->mu);
+      if (!rp->stopping && !rp->disposing && s->attached &&
+          w->generation == relay_generation(s->relay)) {
+        if (accepted) {
+          Deferred *d = g_new0(Deferred, 1);
+          d->resubscribe = TRUE;
+          d->auth_complete = TRUE;
+          defer_locked(s, d, 0);
+        } else {
+          /* Do not log arbitrary relay reason text: it may echo secrets. */
+          notify_locked(s, "CLOSED", "auth-rejected:");
+        }
+      }
+      g_mutex_unlock(&rp->mu);
+    }
+    /* Keep local terminal statuses distinct even if an untrusted relay uses
+     * our reserved timeout/transport-aborted text as its rejection reason. */
+    char *relay_reason = accepted ? NULL : g_strdup_printf("relay-rejected: %s", reason ? reason : "");
+    finish_watch(w, accepted, accepted ? reason : relay_reason);
+    g_free(relay_reason);
+    w = next;
+  }
+}
+
+static void auth_challenge(NostrRelay *relay, const char *challenge, void *data) {
+  RelayState *s = data;
+  SignetRelayPool *rp = s->rp;
+  g_mutex_lock(&rp->mu);
+  if (rp->stopping || rp->disposing || !s->attached || !rp->auth_sk_hex[0]) {
+    g_mutex_unlock(&rp->mu);
+    return;
+  }
+  uint64_t generation = relay_generation(relay);
+  g_mutex_lock(&s->mu);
+  gboolean duplicate = s->generation == generation && !g_strcmp0(s->challenge, challenge);
+  if (!duplicate) {
+    s->generation = generation;
+    g_free(s->challenge);
+    s->challenge = g_strdup(challenge); /* challenges are not truncated */
+    s->ready = FALSE;
+    s->auth_pending = TRUE;
+  }
+  g_mutex_unlock(&s->mu);
+  if (!duplicate) {
+    Deferred *d = g_new0(Deferred, 1);
+    d->challenge = g_strdup(challenge);
+    memcpy(d->sk_hex, rp->auth_sk_hex, sizeof(d->sk_hex));
+    defer_locked(s, d, 0);
+    /* A proactive AUTH can change the retained challenge generation before
+     * the queued CONNECTED notification runs. Notify the current generation. */
+    if (nostr_relay_is_connected(relay)) notify_locked(s, "CONNECTED", NULL);
+  }
+  g_mutex_unlock(&rp->mu);
+}
+
+static void relay_changed(NostrRelay *relay, NostrRelayConnectionState old_state,
+                           NostrRelayConnectionState state, void *data) {
+  (void)old_state;
+  RelayState *s = data;
+  SignetRelayPool *rp = s->rp;
+  GPtrArray *aborted = NULL;
+  g_mutex_lock(&rp->mu);
+  if (!rp->stopping && !rp->disposing && s->attached &&
+      nostr_relay_get_connection_state(relay) == state) {
+    if (state != NOSTR_RELAY_STATE_CONNECTED) aborted = take_aborted_watches(s);
+    notify_locked(s, state == NOSTR_RELAY_STATE_CONNECTED ? "CONNECTED" : "DISCONNECTED", NULL);
+    if (state == NOSTR_RELAY_STATE_CONNECTED) {
+      Deferred *d = g_new0(Deferred, 1);
+      d->resubscribe = TRUE;
+      defer_locked(s, d, 0);
+    }
+  }
+  g_mutex_unlock(&rp->mu);
+  if (aborted) finish_aborted_watches(aborted);
+}
+
+static RelayState *ensure_state_locked(SignetRelayPool *rp, NostrRelay *relay) {
+  RelayState *s = g_hash_table_lookup(rp->relay_states, relay);
+  if (s) return s;
+  s = g_new0(RelayState, 1);
+  s->refs = 1;
+  s->rp = rp;
+  g_atomic_int_inc(&rp->refs);
+  s->relay = nostr_relay_ref(relay);
+  s->owner_pool = rp->pool;
+  s->generation = relay_generation(relay);
+  s->attached = TRUE;
+  g_mutex_init(&s->mu);
+  g_cond_init(&s->retired);
+  s->watches = g_hash_table_new_full(g_str_hash, g_str_equal, NULL, watch_free);
+  g_hash_table_insert(rp->relay_states, relay, s);
+  nostr_relay_set_ok_callback_full(relay, ok_dispatch, relay_state_ref(s), relay_state_unref);
+  nostr_relay_set_auth_callback_full(relay, auth_challenge, relay_state_ref(s), relay_state_unref);
+  nostr_relay_set_state_callback_full(relay, relay_changed, relay_state_ref(s), relay_state_unref);
+  char *retained = nostr_relay_get_auth_challenge(relay, NULL);
+  if (retained && rp->auth_sk_hex[0]) {
+    s->auth_pending = TRUE;
+    s->challenge = g_strdup(retained);
+    Deferred *d = g_new0(Deferred, 1);
+    d->challenge = g_strdup(retained);
+    memcpy(d->sk_hex, rp->auth_sk_hex, sizeof(d->sk_hex));
+    defer_locked(s, d, 0);
+  }
+  free(retained);
+  if (nostr_relay_is_connected(relay)) notify_locked(s, "CONNECTED", NULL);
+  return s;
 }
 
 void signet_relay_pool_watch_auth_ok(SignetRelayPool *rp, NostrRelay *relay,
-                                     const char *auth_event_id,
-                                     const char *relay_url) {
-  AuthOkWatch *w = g_new0(AuthOkWatch, 1);
-  w->relay = relay;
-  w->pool  = rp;
-  g_strlcpy(w->relay_url, relay_url ? relay_url : "", sizeof(w->relay_url));
-  g_strlcpy(w->auth_event_id, auth_event_id ? auth_event_id : "", sizeof(w->auth_event_id));
-  nostr_relay_set_ok_callback_full(relay, signet_ok_response_callback, w, g_free);
+                                     const char *id, const char *url) {
+  (void)url;
+  g_mutex_lock(&rp->mu);
+  RelayState *s = ensure_state_locked(rp, relay);
+  OkWatch *w = g_new0(OkWatch, 1);
+  w->event_id = g_strdup(id);
+  w->auth = TRUE;
+  w->generation = relay_generation(relay);
+  g_mutex_lock(&s->mu);
+  insert_watch_locked(s, w);
+  g_mutex_unlock(&s->mu);
+  g_mutex_unlock(&rp->mu);
 }
 
-/* GLib idle callback: runs from the GLib main loop (NOT the LWS callback chain).
- * Builds and sends the NIP-42 AUTH response, then schedules the re-subscribe. */
-static gboolean signet_send_auth_idle(gpointer data) {
-  PostAuthResubData *rd   = (PostAuthResubData *)data;
-  NostrRelay        *r    = rd->relay;
-  const char        *rurl = rd->relay_url[0] ? rd->relay_url
-                                              : nostr_relay_get_url_const(r);
+static void watch_publish_locked(SignetRelayPool *rp, NostrRelay *relay, const char *id,
+                                 SignetPublishOkCallback cb, void *data, GDestroyNotify destroy) {
+  RelayState *s = ensure_state_locked(rp, relay);
+  OkWatch *w = g_new0(OkWatch, 1);
+  w->event_id = g_strdup(id);
+  w->generation = relay_generation(relay);
+  w->cb = cb;
+  w->data = data;
+  w->destroy = destroy;
+  g_mutex_lock(&s->mu);
+  gboolean first = insert_watch_locked(s, w);
+  uint64_t serial = w->serial;
+  char *key = first ? g_strdup(w->key) : NULL;
+  g_mutex_unlock(&s->mu);
+  if (first) {
+    Deferred *d = g_new0(Deferred, 1);
+    d->event_id = key; /* generation + event ID, not another generation's watch */
+    d->watch_serial = serial;
+    defer_locked(s, d, 10000); /* operation deadline, not a catch-up timer */
+  }
+}
 
-  g_message("[signetd] auth-idle: building AUTH for %s challenge=%.16s", rurl, rd->challenge);
+void signet_relay_pool_watch_publish_ok(SignetRelayPool *rp, NostrRelay *relay,
+                                        const char *id, SignetPublishOkCallback cb, void *data) {
+  g_mutex_lock(&rp->mu);
+  watch_publish_locked(rp, relay, id, cb, data, NULL);
+  g_mutex_unlock(&rp->mu);
+}
 
-  if (rd->sk_hex[0] && rd->challenge[0]) {
-    NostrEvent *evt = nostr_event_new();
-    if (evt) {
-      nostr_event_set_kind(evt, NOSTR_KIND_CLIENT_AUTHENTICATION);
-      nostr_event_set_created_at(evt, (int64_t)time(NULL));
-      nostr_event_set_content(evt, "");
-
-      NostrTags *tags = nostr_tags_new(0);
-      if (tags) {
-        NostrTag *t_relay     = nostr_tag_new("relay",     rurl,         NULL);
-        NostrTag *t_challenge = nostr_tag_new("challenge", rd->challenge, NULL);
-        if (t_relay)     nostr_tags_append(tags, t_relay);
-        if (t_challenge) nostr_tags_append(tags, t_challenge);
-        nostr_event_set_tags(evt, tags);
-      }
-
-      if (nostr_event_sign(evt, rd->sk_hex) == 0) {
-        char *event_json = nostr_event_serialize_compact(evt);
-        if (event_json) {
-          /* Store the AUTH event ID so the OK callback can match the response */
-          char auth_event_id[65] = "";
-          char *id_start = strstr(event_json, "\"id\":\"");
-          if (id_start) {
-            id_start += 6; /* skip `"id":"` */
-            size_t copy_len = 0;
-            while (id_start[copy_len] && id_start[copy_len] != '"' && copy_len < 64)
-              copy_len++;
-            memcpy(auth_event_id, id_start, copy_len);
-            auth_event_id[copy_len] = '\0';
-          }
-
-          /* Register OK callback BEFORE sending AUTH so we don't miss the response */
-          signet_relay_pool_watch_auth_ok(rd->pool, r, auth_event_id, rd->relay_url);
-
-          char *auth_envelope = g_strdup_printf("[\"AUTH\",%s]", event_json);
-          free(event_json);
-          if (auth_envelope) {
-            /* nostr_relay_write owns the string — pass a strdup'd copy */
-            GoChannel *wch = nostr_relay_write(r, strdup(auth_envelope));
-            g_free(auth_envelope);
-            if (wch) {
-              g_message("[signetd] NIP-42 AUTH sent to %s (via idle+write_queue), waiting for OK", rurl);
-              /* NOTE: do NOT unref wch prematurely. write_operations holds a
-               * pointer to the answer channel (req->answer) and sends the write
-               * result back to it.  Calling go_channel_unref here before
-               * write_ops processes the request causes a use-after-free that
-               * crashes the write worker thread.  The channel is cleaned up
-               * by write_operations after it sends the result. */
-            } else {
-              g_warning("[signetd] auth-idle: nostr_relay_write returned NULL for %s", rurl);
-              /* The relay frees the watch once no OK callback is using it. */
-              nostr_relay_set_ok_callback(r, NULL, NULL);
-            }
-          }
-        }
-      } else {
-        g_warning("[signetd] auth-idle: sign failed for %s", rurl);
-      }
-      nostr_event_free(evt);
+static void subscription_changed(NostrRelay *relay, const char *state,
+                                  const char *reason, void *data) {
+  SignetRelayPool *rp = data;
+  g_mutex_lock(&rp->mu);
+  RelayState *s = g_hash_table_lookup(rp->relay_states, relay);
+  if (s && !rp->stopping && !rp->disposing) {
+    g_mutex_lock(&s->mu);
+    gboolean closed = s->required && nostr_subscription_is_closed(s->required);
+    if (closed) {
+      g_free(s->closed_reason);
+      s->closed_reason = g_strdup(reason);
+      s->closed_unreported = TRUE;
     }
+    gboolean ready = !s->auth_pending && s->required && !closed && nostr_relay_is_connected(relay) &&
+                       nostr_subscription_is_eosed(s->required);
+    gboolean newly_ready = ready && !s->ready;
+    s->ready = ready;
+    g_mutex_unlock(&s->mu);
+    if ((!strcmp(state, "EOSE") && newly_ready) || (!strcmp(state, "CLOSED") && closed))
+      notify_locked(s, state, reason);
   }
-
-  /* The OK callback owns what it needs (AuthOkWatch); the re-subscribe
-   * happens only after OK true. */
-  post_auth_data_free(rd);
-  return G_SOURCE_REMOVE;  /* one-shot */
+  g_mutex_unlock(&rp->mu);
 }
 
-/* NPA-05: Legacy signet_post_auth_resub_thread removed.
- * The 800ms g_usleep timeout-based AUTH wait was fragile — too short for
- * high-latency relays, too long for LANs.  The OK-callback path
- * (signet_send_auth_idle → signet_ok_response_callback →
- * signet_post_auth_resubscribe) is the correct protocol-driven flow. */
-
-/* User-data struct threaded through per-relay auth callbacks.
- * Pointer to owning pool so the callback can replay subscriptions after auth. */
-typedef struct {
-  char sk_hex[65];          /* bunker private key hex */
-  SignetRelayPool *pool;    /* back-pointer for post-auth re-subscribe */
-  gint auth_sent;           /* atomic: 0 = first challenge, 1 = thread already running */
-  char last_challenge[64];  /* challenge string that triggered the running thread;
-                             * if a NEW challenge arrives (relay reconnected), reset
-                             * auth_sent so a fresh thread is spawned */
-  GMutex challenge_mu;      /* protects last_challenge */
-} SignetAuthCallbackData;
-
-static void signet_relay_auth_callback(NostrRelay *relay,
-                                       const char *challenge,
-                                       void *user_data) {
-  if (!relay || !challenge || !user_data) return;
-  const SignetAuthCallbackData *d = (const SignetAuthCallbackData *)user_data;
-  if (!d->sk_hex[0]) return;
-
-  const char *url = nostr_relay_get_url_const(relay);
-
-  /* All NIP-42 work (sign, send, wait, re-subscribe) happens in a background
-   * thread NOT in the LWS callback chain.  lws_cancel_service() only wakes
-   * the LWS loop when called from a *different* thread — calling it from
-   * within LWS_CALLBACK_CLIENT_RECEIVE (where this callback fires) is a
-   * no-op, so the queued AUTH write would never drain to the wire.
-   *
-   * Spawn a thread for the FIRST challenge on each relay connection.
-   * Khatru re-challenges on every unauthenticated REQ (same challenge, same
-   * WebSocket) — those are dropped.  But when the relay reconnects after a
-   * WebSocket close, Khatru issues a NEW challenge string.  Detect this by
-   * comparing with last_challenge: if different, reset auth_sent and spawn
-   * a fresh thread. */
-  SignetAuthCallbackData *mdata = (SignetAuthCallbackData *)user_data;
-  g_mutex_lock(&mdata->challenge_mu);
-  gboolean new_connection = (strcmp(mdata->last_challenge, challenge) != 0);
-  if (new_connection) {
-    /* Different challenge → relay reconnected.  Reset so we can re-auth. */
-    g_strlcpy(mdata->last_challenge, challenge, sizeof(mdata->last_challenge));
-    g_atomic_int_set(&mdata->auth_sent, 0);
-    g_message("[signetd] NIP-42 new connection detected (challenge changed) for %s", url ? url : "?");
-  }
-  g_mutex_unlock(&mdata->challenge_mu);
-
-  if (g_atomic_int_compare_and_exchange(&mdata->auth_sent, 0, 1) == FALSE) {
-    g_message("[signetd] NIP-42 challenge ignored (thread already running) for %s", url ? url : "?");
-    return;
-  }
-
-  SignetRelayPool *rp = d->pool;
-  if (!rp) return;
-
-  PostAuthResubData *rd = g_new0(PostAuthResubData, 1);
-  rd->relay = relay;
-  rd->pool  = rp;
-  g_strlcpy(rd->sk_hex,    d->sk_hex,       sizeof(rd->sk_hex));
-  g_strlcpy(rd->challenge, challenge,        sizeof(rd->challenge));
-  /* Use auth_relay_tag_url override if set (allows connecting via internal address
-   * while signing AUTH events with the relay's public URL). */
-  const char *auth_url = (rp->auth_relay_tag_url[0])
-                         ? rp->auth_relay_tag_url
-                         : (url ? url : "");
-  g_strlcpy(rd->relay_url, auth_url, sizeof(rd->relay_url));
-
-  /* Schedule AUTH send from GLib main loop (idle priority).
-   * The idle callback runs outside the LWS callback chain — lws_cancel_service
-   * will properly wake the LWS send loop. */
-  g_idle_add(signet_send_auth_idle, rd);
-}
-
-/* Destroy notify of a relay's auth callback data (the relay owns it). */
-static void signet_auth_callback_data_free(void *data) {
-  SignetAuthCallbackData *d = (SignetAuthCallbackData *)data;
-  memset(d->sk_hex, 0, sizeof(d->sk_hex));
-  g_mutex_clear(&d->challenge_mu);
-  free(d);
-}
-
-/* Register the auth callback on every relay in the pool.
- * Must be called after relays have been added via ensure_relay. Each relay
- * owns its callback data and wipes and frees it when the callback is replaced
- * or the relay freed, once no call is still using it (nostrc-tw7f). */
 static void signet_relay_pool_register_auth(SignetRelayPool *rp) {
-  if (!rp->auth_sk_hex[0]) return;
-
   NostrSimplePool *pool = rp->pool;
-  for (size_t i = 0; i < pool->relay_count; i++) {
-    NostrRelay *relay = pool->relays[i];
-    if (!relay) continue;
-    SignetAuthCallbackData *d = (SignetAuthCallbackData *)calloc(1, sizeof(*d));
-    if (!d) continue;
-    memcpy(d->sk_hex, rp->auth_sk_hex, sizeof(d->sk_hex));
-    d->pool = rp;
-    d->last_challenge[0] = '\0';
-    g_mutex_init(&d->challenge_mu);
-    nostr_relay_set_auth_callback_full(relay, signet_relay_auth_callback, d,
-                                       signet_auth_callback_data_free);
-  }
+  pthread_mutex_lock(&pool->pool_mutex);
+  for (size_t i = 0; i < pool->relay_count; i++)
+    if (pool->relays[i]) ensure_state_locked(rp, pool->relays[i]);
+  pthread_mutex_unlock(&pool->pool_mutex);
 }
 
 /* ------------------------------ public API -------------------------------- */
@@ -437,6 +707,9 @@ SignetRelayPool *signet_relay_pool_new(const SignetRelayPoolConfig *cfg) {
   SignetRelayPool *rp = (SignetRelayPool *)calloc(1, sizeof(*rp));
   if (!rp) return NULL;
 
+  rp->refs = 1;
+  rp->relay_states = g_hash_table_new_full(g_direct_hash, g_direct_equal, NULL, relay_state_unref);
+  rp->sources = g_hash_table_new(g_direct_hash, g_direct_equal);
   g_mutex_init(&rp->mu);
   g_mutex_init(&rp->reconfig_mu);
   g_cond_init(&rp->reconfig_cond);
@@ -460,9 +733,13 @@ SignetRelayPool *signet_relay_pool_new(const SignetRelayPoolConfig *cfg) {
     g_cond_clear(&rp->reconfig_cond);
     g_mutex_clear(&rp->reconfig_mu);
     g_mutex_clear(&rp->mu);
+    g_hash_table_destroy(rp->relay_states);
+    g_hash_table_destroy(rp->sources);
     free(rp);
     return NULL;
   }
+
+  nostr_simple_pool_set_subscription_callback(rp->pool, subscription_changed, rp);
 
   /* Wire live incoming-event dispatch through libnostr SimplePool.
    * NPA-09: Use _ex variant to pass relay pool as user_data instead of
@@ -520,25 +797,66 @@ void signet_relay_pool_free(SignetRelayPool *rp) {
     rp->pool = NULL;
   }
 
-  if (rp->urls) {
-    for (size_t i = 0; i < rp->n_urls; i++) {
-      g_free(rp->urls[i]);
-    }
-    free(rp->urls);
-    rp->urls = NULL;
-  }
+  pool_release(rp);
+}
 
+static void pool_release(SignetRelayPool *rp) {
+  if (!g_atomic_int_dec_and_test(&rp->refs)) return;
+  for (size_t i = 0; i < rp->n_urls; i++) g_free(rp->urls[i]);
+  free(rp->urls);
   free(rp->active_kinds);
-  rp->active_kinds = NULL;
-  rp->n_active_kinds = 0;
-
   g_free(rp->filter_pubkey_hex);
-  rp->filter_pubkey_hex = NULL;
-
+  sodium_memzero(rp->auth_sk_hex, sizeof(rp->auth_sk_hex));
+  g_hash_table_destroy(rp->relay_states);
+  g_hash_table_destroy(rp->sources);
   g_cond_clear(&rp->reconfig_cond);
   g_mutex_clear(&rp->reconfig_mu);
   g_mutex_clear(&rp->mu);
   free(rp);
+}
+
+/* Mark/cancel/detach before joining any worker. Never join under rp->mu. */
+static void retire_pool(SignetRelayPool *rp, NostrSimplePool *pool) {
+  GPtrArray *states = g_ptr_array_new();
+  GPtrArray *sources = g_ptr_array_new();
+  g_mutex_lock(&rp->mu);
+  GHashTableIter it;
+  gpointer value;
+  g_hash_table_iter_init(&it, rp->relay_states);
+  while (g_hash_table_iter_next(&it, NULL, &value)) {
+    RelayState *s = value;
+    if (s->owner_pool != pool) continue;
+    s->attached = FALSE;
+    g_ptr_array_add(states, s);
+    g_hash_table_iter_steal(&it);
+  }
+  g_hash_table_iter_init(&it, rp->sources);
+  while (g_hash_table_iter_next(&it, NULL, &value)) {
+    Deferred *d = value;
+    if (d->state->owner_pool != pool) continue;
+    g_ptr_array_add(sources, d->source);
+    g_hash_table_iter_steal(&it);
+  }
+  g_mutex_unlock(&rp->mu);
+  for (guint i = 0; i < sources->len; i++) {
+    GSource *source = g_ptr_array_index(sources, i);
+    g_source_destroy(source);
+    g_source_unref(source);
+  }
+  nostr_simple_pool_set_subscription_callback(pool, NULL, NULL);
+  for (guint i = 0; i < states->len; i++) {
+    RelayState *s = g_ptr_array_index(states, i);
+    nostr_relay_set_auth_callback(s->relay, NULL, NULL);
+    nostr_relay_set_ok_callback(s->relay, NULL, NULL);
+    nostr_relay_set_state_callback(s->relay, NULL, NULL);
+    abort_watches(s);
+    g_mutex_lock(&s->mu);
+    while (g_atomic_int_get(&s->refs) > 1) g_cond_wait(&s->retired, &s->mu);
+    g_mutex_unlock(&s->mu);
+    relay_state_unref(s);
+  }
+  g_ptr_array_free(sources, TRUE);
+  g_ptr_array_free(states, TRUE);
 }
 
 int signet_relay_pool_start(SignetRelayPool *rp) {
@@ -550,6 +868,10 @@ int signet_relay_pool_start(SignetRelayPool *rp) {
     return 0;
   }
 
+  if (rp->disposing || rp->stop_source) { g_mutex_unlock(&rp->mu); return -1; }
+  rp->stopping = FALSE;
+  signet_relay_pool_register_auth(rp);
+  nostr_simple_pool_set_subscription_callback(rp->pool, subscription_changed, rp);
   nostr_simple_pool_start(rp->pool);
   rp->started = TRUE;
 
@@ -557,18 +879,58 @@ int signet_relay_pool_start(SignetRelayPool *rp) {
   return 0;
 }
 
-void signet_relay_pool_stop(SignetRelayPool *rp) {
-  if (!rp || !rp->pool) return;
-
+static void stop_source_release(gpointer data) { pool_release(data); }
+static gboolean stop_from_main_context(gpointer data) {
+  SignetRelayPool *rp = data;
   g_mutex_lock(&rp->mu);
-  if (!rp->started) {
+  GSource *source = rp->stop_source;
+  rp->stop_source = NULL;
+  g_mutex_unlock(&rp->mu);
+  if (source) g_source_unref(source);
+  signet_relay_pool_stop(rp);
+  return G_SOURCE_REMOVE;
+}
+
+void signet_relay_pool_stop(SignetRelayPool *rp) {
+  if (!rp) return;
+  g_mutex_lock(&rp->mu);
+  if (g_private_get(&callback_pool) == rp) {
+    /* Quiescence cannot wait on the callback initiating shutdown. Mark now,
+     * then join after this invocation has relinquished its reference. */
+    if (!rp->stopping && !rp->stop_source) {
+      rp->stopping = TRUE;
+      rp->started = FALSE;
+      g_atomic_int_inc(&rp->refs);
+      rp->stop_source = g_idle_source_new();
+      g_source_set_callback(rp->stop_source, stop_from_main_context, rp, stop_source_release);
+      g_source_attach(rp->stop_source, NULL);
+    }
     g_mutex_unlock(&rp->mu);
     return;
   }
-
-  nostr_simple_pool_stop(rp->pool);
+  GSource *stop_source = rp->stop_source;
+  rp->stop_source = NULL;
+  rp->stopping = TRUE;
   rp->started = FALSE;
+  ++rp->reconfig_gen;
+  while (rp->reconfig_pending) g_cond_wait(&rp->reconfig_cond, &rp->mu);
+  NostrSimplePool *pool = rp->pool;
+  g_mutex_unlock(&rp->mu);
+  if (stop_source) {
+    g_source_destroy(stop_source);
+    g_source_unref(stop_source);
+  }
+  if (!pool) return;
+  retire_pool(rp, pool);
+  nostr_simple_pool_stop(pool);
+}
 
+void signet_relay_pool_set_subscription_callback(SignetRelayPool *rp,
+                                                 SignetSubscriptionCallback cb,
+                                                 void *data) {
+  g_mutex_lock(&rp->mu);
+  rp->on_subscription = cb;
+  rp->subscription_data = data;
   g_mutex_unlock(&rp->mu);
 }
 
@@ -656,6 +1018,7 @@ int signet_relay_pool_subscribe_kinds(SignetRelayPool *rp, const int *kinds, siz
   nostr_simple_pool_subscribe_async(rp->pool,
                                     (const char **)rp->urls, rp->n_urls,
                                     *filters, true);
+  capture_required_locked(rp);
 
   g_mutex_unlock(&rp->mu);
 
@@ -698,6 +1061,7 @@ int signet_relay_pool_subscribe_scoped(SignetRelayPool *rp,
   nostr_simple_pool_subscribe_async(rp->pool,
                                     (const char **)rp->urls, rp->n_urls,
                                     *filters, true);
+  capture_required_locked(rp);
 
   g_mutex_unlock(&rp->mu);
 
@@ -736,8 +1100,7 @@ int signet_relay_pool_publish_event_json(SignetRelayPool *rp, const char *event_
   for (size_t i = 0; i < pool->relay_count; i++) {
     NostrRelay *relay = pool->relays[i];
     if (relay && nostr_relay_is_connected(relay)) {
-      nostr_relay_publish(relay, evt);
-      sent++;
+      if (enqueue_event(relay, evt)) sent++;
     }
   }
 
@@ -748,50 +1111,9 @@ int signet_relay_pool_publish_event_json(SignetRelayPool *rp, const char *event_
   return sent > 0 ? 0 : -2;
 }
 
-/* NPA-02: Publish OK tracking.
- * We install a temporary OK callback per-relay that matches a specific
- * event ID and forwards to the user callback, then removes itself. The
- * relay owns the context (nostr_relay_set_ok_callback_full()): an OK callback
- * already running on a libnostr worker when the context's registration is
- * removed or replaced still reads it (nostrc-tw7f, as nostrc-flp7). */
-typedef struct {
-  char event_id[65];
-  SignetPublishOkCallback user_cb;
-  void *user_data;
-  NostrRelay *relay;
-} PublishOkCtx;
-
-static void signet_publish_ok_handler(const char *event_id, bool ok,
-                                       const char *reason, void *user_data) {
-  PublishOkCtx *ctx = (PublishOkCtx *)user_data;
-  if (!ctx || !event_id || strcmp(event_id, ctx->event_id) != 0) return;
-
-  /* This OK is for our published event — fire user callback */
-  if (ctx->user_cb) {
-    ctx->user_cb(event_id, ok, reason, ctx->user_data);
-  }
-  if (!ok) {
-    g_warning("[signetd] publish-ok: relay rejected event %s: %s",
-              event_id, reason ? reason : "(no reason)");
-  }
-  /* One-shot: deregister. @ctx stays valid until this call returns. */
-  nostr_relay_set_ok_callback(ctx->relay, NULL, NULL);
-}
-
-void signet_relay_pool_watch_publish_ok(NostrRelay *relay, const char *event_id,
-                                        SignetPublishOkCallback cb, void *user_data) {
-  PublishOkCtx *ctx = g_new0(PublishOkCtx, 1);
-  g_strlcpy(ctx->event_id, event_id, sizeof(ctx->event_id));
-  ctx->user_cb = cb;
-  ctx->user_data = user_data;
-  ctx->relay = relay;
-  nostr_relay_set_ok_callback_full(relay, signet_publish_ok_handler, ctx, g_free);
-}
-
-int signet_relay_pool_publish_event_json_ack(SignetRelayPool *rp,
-                                              const char *event_json,
-                                              SignetPublishOkCallback cb,
-                                              void *user_data) {
+static int publish_ack(SignetRelayPool *rp, const char *event_json,
+                       SignetPublishOkCallback cb, void *user_data,
+                       const char *selected_url) {
   if (!rp || !rp->pool || !event_json) return -1;
 
   g_mutex_lock(&rp->mu);
@@ -820,13 +1142,22 @@ int signet_relay_pool_publish_event_json_ack(SignetRelayPool *rp,
   for (size_t i = 0; i < pool->relay_count; i++) {
     NostrRelay *relay = pool->relays[i];
     if (relay && nostr_relay_is_connected(relay)) {
-      if (cb && eid) {
-        /* Install per-event OK tracker. It replaces any other OK callback on
-         * this relay (the AUTH path re-registers its own before sending AUTH). */
-        signet_relay_pool_watch_publish_ok(relay, eid, cb, user_data);
+      if (selected_url) {
+        if (strcmp(selected_url, nostr_relay_get_url_const(relay))) continue;
+        RelayState *state = g_hash_table_lookup(rp->relay_states, relay);
+        if (!state) continue;
+        g_mutex_lock(&state->mu);
+        gboolean ready = state->ready && state->required &&
+          !nostr_subscription_is_closed(state->required) &&
+          nostr_subscription_is_eosed(state->required);
+        g_mutex_unlock(&state->mu);
+        if (!ready) continue;
       }
-      nostr_relay_publish(relay, evt);
-      sent++;
+      if (cb && eid) {
+        /* Register before send; AUTH and other publishes retain their watches. */
+        watch_publish_locked(rp, relay, eid, cb, user_data, NULL);
+      }
+      if (enqueue_event(relay, evt)) sent++;
     }
   }
 
@@ -835,6 +1166,112 @@ int signet_relay_pool_publish_event_json_ack(SignetRelayPool *rp,
   g_mutex_unlock(&rp->mu);
   /* -2: started but no connected relay received the event. */
   return sent > 0 ? 0 : -2;
+}
+
+int signet_relay_pool_publish_event_json_ack(SignetRelayPool *rp, const char *json,
+                                              SignetPublishOkCallback cb, void *data) {
+  return publish_ack(rp, json, cb, data, NULL);
+}
+int signet_relay_pool_publish_selected_ack(SignetRelayPool *rp, const char *json,
+                                           const char *url, SignetPublishOkCallback cb, void *data) {
+  if (!url) return -1;
+  return publish_ack(rp, json, cb, data, url);
+}
+
+typedef struct {
+  gint refs;
+  SignetRelayPool *rp;
+  char *json;
+  char *id;
+  GHashTable *attempted;
+} ReplyDelivery;
+typedef struct { ReplyDelivery *delivery; size_t relay_index; } ReplyAttempt;
+
+static void reply_delivery_unref(ReplyDelivery *d) {
+  if (!g_atomic_int_dec_and_test(&d->refs)) return;
+  sodium_memzero(d->json, strlen(d->json));
+  g_free(d->json);
+  free(d->id);
+  g_hash_table_destroy(d->attempted);
+  pool_release(d->rp);
+  g_free(d);
+}
+static void reply_attempt_free(gpointer data) {
+  ReplyAttempt *a = data;
+  reply_delivery_unref(a->delivery);
+  g_free(a);
+}
+static gboolean reply_next_locked(ReplyDelivery *d);
+static void reply_ok(const char *id, bool accepted, const char *reason, void *data) {
+  (void)id;
+  ReplyAttempt *a = data;
+  ReplyDelivery *d = a->delivery;
+  SignetRelayPool *rp = d->rp;
+  const char *result;
+  g_mutex_lock(&rp->mu);
+  if (accepted) { rp->reply_acks.accepted++; result = "accept"; }
+  else if (!g_strcmp0(reason, "timeout:")) { rp->reply_acks.timed_out++; result = "timeout"; }
+  else if (!g_strcmp0(reason, "transport-aborted:")) {
+    rp->reply_acks.transport_aborted++; result = "transport-aborted";
+  } else { rp->reply_acks.rejected++; result = "reject"; }
+  if (!accepted && rp->started && !rp->stopping && !rp->disposing)
+    reply_next_locked(d);
+  g_mutex_unlock(&rp->mu);
+  /* Only a stable relay index and fixed outcome labels: no ciphertext, request,
+   * signer identity, arbitrary relay reason or credential-bearing URL. */
+  g_message("[signetd] nip46-reply-ack relay=%zu result=%s", a->relay_index, result);
+}
+static gboolean reply_next_locked(ReplyDelivery *d) {
+  SignetRelayPool *rp = d->rp;
+  if (!rp->started || rp->stopping || rp->disposing) return FALSE;
+  NostrEvent *evt = nostr_event_new();
+  if (!evt || !nostr_event_deserialize_compact(evt, d->json, NULL)) {
+    if (evt) nostr_event_free(evt);
+    return FALSE;
+  }
+  gboolean sent = FALSE;
+  for (size_t i = 0; i < rp->pool->relay_count; i++) {
+    NostrRelay *relay = rp->pool->relays[i];
+    const char *url = relay ? nostr_relay_get_url_const(relay) : NULL;
+    if (!url || !nostr_relay_is_connected(relay) || g_hash_table_contains(d->attempted, url)) continue;
+    g_hash_table_add(d->attempted, g_strdup(url));
+    ReplyAttempt *a = g_new0(ReplyAttempt, 1);
+    a->delivery = d;
+    a->relay_index = i;
+    g_atomic_int_inc(&d->refs);
+    watch_publish_locked(rp, relay, d->id, reply_ok, a, reply_attempt_free);
+    sent = enqueue_event(relay, evt); /* same signed event; never re-sign */
+    break;
+  }
+  nostr_event_free(evt);
+  return sent;
+}
+int signet_relay_pool_publish_reply(SignetRelayPool *rp, const char *json) {
+  if (!rp || !json) return -1;
+  NostrEvent *evt = nostr_event_new();
+  if (!evt || !nostr_event_deserialize_compact(evt, json, NULL)) {
+    if (evt) nostr_event_free(evt);
+    return -1;
+  }
+  ReplyDelivery *d = g_new0(ReplyDelivery, 1);
+  d->refs = 1;
+  d->rp = rp;
+  g_atomic_int_inc(&rp->refs);
+  d->json = g_strdup(json);
+  d->id = nostr_event_get_id(evt);
+  d->attempted = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  nostr_event_free(evt);
+  g_mutex_lock(&rp->mu);
+  gboolean sent = reply_next_locked(d);
+  g_mutex_unlock(&rp->mu);
+  reply_delivery_unref(d);
+  return sent ? 0 : -2;
+}
+void signet_relay_pool_get_reply_ack_stats(SignetRelayPool *rp, SignetReplyAckStats *out) {
+  if (!rp || !out) return;
+  g_mutex_lock(&rp->mu);
+  *out = rp->reply_acks;
+  g_mutex_unlock(&rp->mu);
 }
 
 int signet_relay_pool_handle_event_json(SignetRelayPool *rp, const char *event_json) {
@@ -901,7 +1338,10 @@ int signet_relay_pool_handle_event_json(SignetRelayPool *rp, const char *event_j
   ev.pubkey_hex = pubkey;
   ev.content = content;
 
+  gpointer previous_pool = g_private_get(&callback_pool);
+  g_private_set(&callback_pool, rp);
   rp->on_event(&ev, rp->user_data);
+  g_private_set(&callback_pool, previous_pool);
 
   g_object_unref(p);
   return 0;
@@ -950,6 +1390,7 @@ static gpointer signet_relay_pool_reconfigure_worker(gpointer data) {
    * signet_pool_event_middleware waiting on rp->mu. Freeing its relays also
    * releases their auth callback data. */
   if (job->old_pool) {
+    retire_pool(rp, job->old_pool);
     if (job->old_started) nostr_simple_pool_stop(job->old_pool);
     nostr_simple_pool_free(job->old_pool);
   }
@@ -966,7 +1407,12 @@ static gpointer signet_relay_pool_reconfigure_worker(gpointer data) {
      * between relays so a shutdown waits out at most one connect timeout
      * rather than one per configured relay. */
     for (size_t i = 0; i < job->n_urls && !superseded; i++) {
-      nostr_simple_pool_ensure_relay(job->fresh, job->urls[i]);
+      g_mutex_lock(&rp->mu);
+      if (rp->pool == job->fresh) {
+        nostr_simple_pool_ensure_relay_async(job->fresh, job->urls[i]);
+        signet_relay_pool_register_auth(rp);
+      }
+      g_mutex_unlock(&rp->mu);
       g_mutex_lock(&rp->mu);
       superseded = (rp->reconfig_gen != job->gen) || rp->disposing;
       g_mutex_unlock(&rp->mu);
@@ -1008,8 +1454,13 @@ static gpointer signet_relay_pool_reconfigure_worker(gpointer data) {
       if (filters) {
         /* Outside rp->mu: subscribe() calls ensure_relay internally, which
          * blocks again on any relay that has not come up. */
-        nostr_simple_pool_subscribe(job->fresh, (const char **)job->urls,
-                                    job->n_urls, *filters, true);
+        g_mutex_lock(&rp->mu);
+        if (rp->pool == job->fresh && !rp->stopping && !rp->disposing) {
+          nostr_simple_pool_subscribe_async(job->fresh, (const char **)job->urls,
+                                            job->n_urls, *filters, true);
+          capture_required_locked(rp);
+        }
+        g_mutex_unlock(&rp->mu);
       }
     }
     if (filters) nostr_filters_free(filters);
@@ -1098,6 +1549,13 @@ int signet_relay_pool_set_relays(SignetRelayPool *rp,
   job->urls = job_urls;
   job->n_urls = n_urls;
 
+  GHashTableIter state_it;
+  gpointer state_value;
+  g_hash_table_iter_init(&state_it, rp->relay_states);
+  while (g_hash_table_iter_next(&state_it, NULL, &state_value)) {
+    RelayState *state = state_value;
+    if (state->owner_pool == rp->pool) state->attached = FALSE;
+  }
   rp->pool = fresh;
   /* The replacement pool is not running yet. Leaving started TRUE would make
    * publish paths iterate a pool with no relays; FALSE makes them return the
@@ -1119,6 +1577,7 @@ int signet_relay_pool_set_relays(SignetRelayPool *rp,
   nostr_simple_pool_set_event_middleware_ex(fresh, signet_pool_event_middleware,
                                             rp);
   nostr_simple_pool_set_auto_unsub_on_eose(fresh, false);
+  nostr_simple_pool_set_subscription_callback(fresh, subscription_changed, rp);
 
   job->gen = ++rp->reconfig_gen;
   rp->reconfig_pending++;
@@ -1260,43 +1719,42 @@ int64_t signet_relay_pool_update_since_from_latest(SignetRelayPool *rp) {
 }
 
 bool signet_relay_pool_is_subscribed(SignetRelayPool *rp) {
-  if (!rp || !rp->pool) return false;
-
+  if (!rp) return false;
+  gboolean ready = FALSE;
   g_mutex_lock(&rp->mu);
-  NostrSimplePool *pool = rp->pool;
-  bool any_eosed = false;
-
-  /* NPA-10: Check all active subscriptions for EOSE (End of Stored Events).
-   * EOSE means the relay accepted our REQ and sent back all stored events.
-   * Before EOSE, the subscription may still be pending (waiting for AUTH). */
-  for (size_t i = 0; i < pool->subs_count; i++) {
-    if (pool->subs[i] && nostr_subscription_is_eosed(pool->subs[i])) {
-      any_eosed = true;
-      break;
-    }
+  GHashTableIter it;
+  gpointer value;
+  g_hash_table_iter_init(&it, rp->relay_states);
+  while (!rp->stopping && !rp->disposing && g_hash_table_iter_next(&it, NULL, &value)) {
+    RelayState *s = value;
+    if (s->owner_pool != rp->pool || !s->attached) continue;
+    g_mutex_lock(&s->mu);
+    ready = s->ready && s->required && nostr_relay_is_connected(s->relay) &&
+      !nostr_subscription_is_closed(s->required) && nostr_subscription_is_eosed(s->required);
+    g_mutex_unlock(&s->mu);
+    if (ready) break;
   }
-
   g_mutex_unlock(&rp->mu);
-  return any_eosed;
+  return ready;
 }
 
 bool signet_relay_pool_check_sub_closed(SignetRelayPool *rp) {
-  if (!rp || !rp->pool) return false;
-
+  if (!rp) return false;
+  gboolean closed = FALSE;
   g_mutex_lock(&rp->mu);
-  NostrSimplePool *pool = rp->pool;
-  bool any_closed = false;
-
-  /* NPA-06: Check all active subscriptions for CLOSED state.
-   * A CLOSED frame from the relay means our subscription was terminated
-   * (auth-required, policy, rate limit, etc.). */
-  for (size_t i = 0; i < pool->subs_count; i++) {
-    if (pool->subs[i] && nostr_subscription_is_closed(pool->subs[i])) {
-      any_closed = true;
-      break;
+  GHashTableIter it;
+  gpointer value;
+  g_hash_table_iter_init(&it, rp->relay_states);
+  while (g_hash_table_iter_next(&it, NULL, &value)) {
+    RelayState *s = value;
+    if (s->owner_pool != rp->pool || !s->attached) continue;
+    g_mutex_lock(&s->mu);
+    if (s->closed_unreported) {
+      closed = TRUE;
+      s->closed_unreported = FALSE;
     }
+    g_mutex_unlock(&s->mu);
   }
-
   g_mutex_unlock(&rp->mu);
-  return any_closed;
+  return closed;
 }

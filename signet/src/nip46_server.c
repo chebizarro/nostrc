@@ -43,6 +43,7 @@
 
 /* libnostr */
 #include <nostr-event.h>
+#include "relay_pool_private.h"
 #include <nostr-keys.h>
 #include <secure_buf.h>
 
@@ -953,10 +954,9 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
         event_id_hex, now, enc_resp, &outer_err);
     if (outer_evt) {
       if (s->relays) {
-        /* NPA-02: Use ack-aware publish so relay rejections are logged.
-         * The callback logs warnings; published tracks enqueue success. */
-        published = (signet_relay_pool_publish_event_json_ack(
-                       s->relays, outer_evt, NULL, NULL) == 0);
+        /* Enqueue is neither relay acceptance nor recipient delivery. Failover
+         * retains these exact signed bytes; it never re-executes custody. */
+        published = (signet_relay_pool_publish_reply(s->relays, outer_evt) == 0);
       }
       free(outer_evt);
     }

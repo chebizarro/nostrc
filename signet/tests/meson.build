@@ -108,7 +108,7 @@ test_config_reload = executable('test_config_reload',
 test_relay_pool = executable('test_relay_pool_protocol',
   'test_relay_pool_protocol.c',
   link_with: signet_core,
-  include_directories: signet_includes,
+  include_directories: [signet_includes, include_directories('../src')],
   dependencies: signet_deps + [in_tree_dep],
   c_args: signet_test_c_args,
   install: false,
@@ -308,7 +308,11 @@ test('policy_engine', test_policy)
 test('audit_logger', test_audit)
 test('bootstrap_contract', test_bootstrap_contract)
 test('capability', test_capability)
-test('relay_pool_protocol', test_relay_pool)
+  test('relay_pool_protocol', test_relay_pool)
+  test('relay_pool_wire', find_program('python3'),
+    args: [meson.current_source_dir() / 'test_relay_pool_wire.py',
+           test_relay_pool.full_path(), signetctl_exe.full_path()],
+    depends: [test_relay_pool, signetctl_exe], timeout: 60)
 # Freed memory is scribbled (macOS) or perturbed (glibc), so reading an OK
 # callback's freed data fails without ASan too.
 test('relay_pool_ok_lifetime', test_relay_pool_ok_lifetime, timeout: 60,

@@ -70,6 +70,7 @@ signet_add_test_executable(test_key_store)
 signet_add_test_executable(test_nostr_auth)               # challenge store
 signet_add_test_executable(test_capability)               # policy registry
 signet_add_test_executable(test_relay_pool_protocol)      # NPA-11
+  target_include_directories(test_relay_pool_protocol PRIVATE ${CMAKE_SOURCE_DIR}/signet/src)
 signet_add_test_executable(test_relay_pool_ok_lifetime)   # nostrc-tw7f
 # This white-box control-frame injection is not part of the installed ABI.
 # Use one core implementation: the ordinary signet_core link interface would
@@ -262,7 +263,16 @@ add_test(NAME store COMMAND test_store)
 add_test(NAME key_store COMMAND test_key_store)
 add_test(NAME nostr_auth COMMAND test_nostr_auth)
 add_test(NAME capability COMMAND test_capability)
-add_test(NAME relay_pool_protocol COMMAND test_relay_pool_protocol)
+  add_test(NAME relay_pool_protocol COMMAND test_relay_pool_protocol)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  add_test(NAME relay_pool_wire COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_relay_pool_wire.py
+    $<TARGET_FILE:test_relay_pool_protocol> $<TARGET_FILE:signetctl>)
+  set_tests_properties(relay_pool_wire PROPERTIES TIMEOUT 60)
+  if(COMMAND nostrc_describe_test)
+    nostrc_describe_test(relay_pool_wire OWNER signet TARGETS test_relay_pool_protocol signetctl
+      INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/test_relay_pool_wire.py")
+  endif()
 add_test(NAME relay_pool_ok_lifetime COMMAND test_relay_pool_ok_lifetime)
 # Freed memory is scribbled (macOS) or perturbed (glibc), so reading an OK
 # callback's freed data fails without ASan too.

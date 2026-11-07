@@ -37,17 +37,13 @@
 #include <nostr/nip17/nip17.h>   /* NIP-59/NIP-17 gift-wrap for ContextVM intents */
 
 #include <secure_buf.h>
+#include <glib-unix.h>
+#include "relay_pool_private.h"
+#include <signal.h>
 
 #define SIGNETCTL_VERSION "0.8.0"
 #define SIGNETCTL_TIMEOUT_SEC 10
-#define SIGNETCTL_MAIN_CONTEXT_DRAIN_LIMIT 64
 
-static void signetctl_drain_main_context(void) {
-  for (int i = 0; i < SIGNETCTL_MAIN_CONTEXT_DRAIN_LIMIT; i++) {
-    if (!g_main_context_iteration(NULL, FALSE))
-      break;
-  }
-}
 
 /* ----------------------------- usage ------------------------------------- */
 
@@ -438,7 +434,17 @@ static int signetctl_handle_reissue_result(const char *reply_json,
 
 /* ---------------------- ack response handling ----------------------------- */
 
+typedef enum { CONNECTING, REPLY_SUBSCRIBING, REQUEST_PENDING, COMPLETE } SignetctlRelayState;
+
 typedef struct {
+  SignetctlRelayState state;
+  GMainLoop *loop;
+  SignetRelayPool *pool;
+  const char *event_json;
+  const char *failure;
+  char *selected_relay;
+  GHashTable *closed_relays;
+  size_t n_relays;
   bool received;
   bool is_error;                     /* true if the JSON-RPC reply carried an error */
   char *response_json;
@@ -516,15 +522,83 @@ static void signetctl_on_event(const SignetRelayEventView *ev, void *user_data) 
   if (!id_ok && !is_error) { signetctl_wipe_free_reply(inner); free(sender); return; }
 
   g_mutex_lock(&ctx->mu);
-  if (!ctx->received) {
+  if (!ctx->received && ctx->state == REQUEST_PENDING) {
+    ctx->state = COMPLETE;
     ctx->received = true;
     ctx->is_error = is_error;
     ctx->response_json = g_strdup(inner);
     g_cond_signal(&ctx->cond);
+    g_main_loop_quit(ctx->loop);
   }
   g_mutex_unlock(&ctx->mu);
   signetctl_wipe_free_reply(inner);
   free(sender);
+}
+
+/* Relay callbacks and deadlines drive one operation; never re-sign/re-execute
+ * a mutation after an ambiguous transport result. */
+static void signetctl_fail(SignetctlAckCtx *ctx, const char *failure) {
+  g_mutex_lock(&ctx->mu);
+  if (ctx->state != COMPLETE) {
+    ctx->state = COMPLETE;
+    ctx->failure = failure;
+    g_main_loop_quit(ctx->loop);
+  }
+  g_mutex_unlock(&ctx->mu);
+}
+static gboolean signetctl_deadline(gpointer data) {
+  signetctl_fail(data, "operation deadline; mutation outcome is unknown, do not blindly retry");
+  return G_SOURCE_CONTINUE;
+}
+static gboolean signetctl_cancel(gpointer data) {
+  signetctl_fail(data, "cancelled; mutation outcome may be unknown");
+  return G_SOURCE_CONTINUE;
+}
+static void signetctl_publish_ok(const char *id, bool accepted, const char *reason, void *data) {
+  (void)id;
+  if (!accepted) signetctl_fail(data, !g_strcmp0(reason, "transport-aborted:")
+    ? "transport aborted; mutation outcome is unknown" : "relay rejected request or did not acknowledge it");
+}
+static void signetctl_subscription(const char *url, const char *state,
+                                    const char *reason, void *data) {
+  SignetctlAckCtx *ctx = data;
+  g_mutex_lock(&ctx->mu);
+  SignetctlRelayState current = ctx->state;
+  g_mutex_unlock(&ctx->mu);
+  if (current == COMPLETE) return;
+  if (!strcmp(state, "CONNECTED")) g_hash_table_remove(ctx->closed_relays, url);
+  if (!strcmp(state, "CONNECTED") && current == CONNECTING) {
+    g_mutex_lock(&ctx->mu);
+    ctx->state = REPLY_SUBSCRIBING;
+    g_mutex_unlock(&ctx->mu);
+    int kinds[] = { NIP59_GIFT_WRAP };
+    char *pubkey = nostr_key_get_public(ctx->provisioner_sk_hex);
+    int rc = pubkey ? signet_relay_pool_subscribe_scoped(ctx->pool, kinds, 1, pubkey,
+                           (int64_t)time(NULL) - 49 * 3600) : -1;
+    free(pubkey);
+    if (rc) signetctl_fail(ctx, "reply subscription failed");
+  } else if (!strcmp(state, "EOSE") && current == REPLY_SUBSCRIBING &&
+             signet_relay_pool_is_subscribed(ctx->pool)) {
+    g_mutex_lock(&ctx->mu);
+    ctx->selected_relay = g_strdup(url);
+    ctx->state = REQUEST_PENDING; /* before send: a fast reply cannot be missed */
+    g_mutex_unlock(&ctx->mu);
+    /* Exactly one caught-up relay: another relay's rejection cannot race and
+     * poison a viable path. A transport failure is ambiguous, never retried. */
+    if (signet_relay_pool_publish_selected_ack(ctx->pool, ctx->event_json, url,
+                                               signetctl_publish_ok, ctx))
+      signetctl_fail(ctx, "request could not be enqueued");
+  } else if (!strcmp(state, "CLOSED")) {
+    if (!reason || !g_str_has_prefix(reason, "auth-required:")) {
+      g_hash_table_add(ctx->closed_relays, g_strdup(url));
+      if ((ctx->selected_relay && !strcmp(url, ctx->selected_relay)) ||
+          (!ctx->selected_relay && g_hash_table_size(ctx->closed_relays) >= ctx->n_relays))
+        signetctl_fail(ctx, "relay closed reply subscription");
+    }
+  } else if (!strcmp(state, "DISCONNECTED") && current != CONNECTING &&
+             !signet_relay_pool_is_connected(ctx->pool)) {
+    signetctl_fail(ctx, "relay connection failed; mutation outcome may be unknown");
+  }
 }
 
 /* ---------------------- resolve provisioner key --------------------------- */
@@ -1498,102 +1572,23 @@ int main(int argc, char **argv) {
   SignetRelayPool *rp = signet_relay_pool_new(&rp_cfg);
 
   int exit_code = 1;
+  guint deadline_source = 0, interrupt_source = 0, terminate_source = 0;
+  ack_ctx.loop = g_main_loop_new(NULL, FALSE);
 
   if (!rp || signet_relay_pool_start(rp) != 0) {
     fprintf(stderr, "signetctl: failed to start relay pool\n");
     goto cleanup;
   }
 
-  /* Wait for relay connections, pumping the GLib main context.
-   *
-   * WHY: signet_relay_auth_callback schedules NIP-42 AUTH via g_idle_add().
-   * Idle callbacks only execute when a GMainLoop is running or the context
-   * is polled explicitly.  A plain g_usleep() here means AUTH never fires,
-   * so auth-required relays (armada) always time out.
-   *
-   * Pumping the context also drains the post-auth re-subscribe chain
-   * (signet_post_auth_resubscribe), ensuring reply subscriptions are
-   * live before we publish the management event.
-   *
-   * We give up to 5s: connection RTT + NIP-42 challenge/response (2 relay
-   * round trips) + re-subscribe EOSE.  In practice this completes in <200ms
-   * on a LAN relay. */
-  {
-    int64_t connect_deadline = g_get_monotonic_time() + 5000000LL; /* 5s */
-    gboolean connected = FALSE;
-    while (g_get_monotonic_time() < connect_deadline) {
-      /* Drain all pending GLib sources (idle, I/O ready, timeouts). */
-      signetctl_drain_main_context();
-      if (signet_relay_pool_is_connected(rp)) {
-        connected = TRUE;
-        break;
-      }
-      g_usleep(10 * 1000); /* 10ms poll */
-    }
-
-    if (!connected) {
-      fprintf(stderr, "signetctl: no relay connected after 5s\n");
-      goto cleanup;
-    }
-
-    /* Subscribe for gift-wrapped ContextVM replies (kind 1059) addressed to us,
-     * only AFTER the relay is connected. nostr_simple_pool_ensure_relay
-     * disconnects+reconnects a relay that is not yet connected, so subscribing
-     * before the initial async handshake completes churns the connection and the
-     * subsequent publish can race a torn-down socket (nostrc-7k6). NIP-59
-     * randomizes the gift-wrap created_at up to ~2 days into the past, so the
-     * `since` window reaches back beyond that or the reply would be filtered. */
-    {
-      int reply_kinds[] = { NIP59_GIFT_WRAP };
-      int64_t reply_since = (int64_t)time(NULL) - (2 * 24 * 3600) - 3600;
-      if (reply_since < 0) reply_since = 0;
-      char *prov_pub = nostr_key_get_public(ack_ctx.provisioner_sk_hex);
-      signet_relay_pool_subscribe_scoped(rp, reply_kinds, 1, prov_pub, reply_since);
-      free(prov_pub);
-    }
-
-    /* Give the freshly-fired reply subscription a bounded settle period before
-     * publishing. Do not wait on signet_relay_pool_is_subscribed() here: the
-     * one-shot CLI only needs the listener installed, and live relay traffic can
-     * leave pool/subscription locks contended long enough to prevent publish. */
-    int64_t settle_deadline = g_get_monotonic_time() + 1000000LL; /* 1s */
-    while (g_get_monotonic_time() < settle_deadline) {
-      signetctl_drain_main_context();
-      g_usleep(10 * 1000);
-    }
-  }
-
-  /* Publish the gift-wrapped ContextVM intent. */
-  if (signet_relay_pool_publish_event_json(rp, event_json) != 0) {
-    fprintf(stderr, "signetctl: failed to publish event\n");
-    goto cleanup;
-  }
-
-  fprintf(op == SIGNET_MGMT_OP_DELIVER_CREDENTIAL ? stderr : stdout,
-          "Published %s ContextVM intent (gift-wrapped). Waiting for reply...\n",
-          signet_mgmt_op_to_string(op));
-
-  /* Wait for ack with timeout, pumping the GLib main context.
-   *
-   * The ack event arrives on the relay worker thread and is dispatched via
-   * signet_pool_event_middleware → signetctl_on_event → g_mutex/g_cond signal.
-   * g_cond_wait_until would work for the signal, BUT we must keep pumping the
-   * main context in case additional idle callbacks are still pending (e.g.
-   * a second auth round-trip after a relay reconnect).
-   *
-   * Pattern: unlock → pump → re-lock → check condition → repeat. */
-  {
-    int64_t end_time = g_get_monotonic_time() + (SIGNETCTL_TIMEOUT_SEC * G_USEC_PER_SEC);
-    g_mutex_lock(&ack_ctx.mu);
-    while (!ack_ctx.received) {
-      if (g_get_monotonic_time() >= end_time) break;
-      g_mutex_unlock(&ack_ctx.mu);
-      signetctl_drain_main_context();
-      g_usleep(5 * 1000); /* 5ms */
-      g_mutex_lock(&ack_ctx.mu);
-    }
-    g_mutex_unlock(&ack_ctx.mu);
-  }
+  ack_ctx.pool = rp;
+  ack_ctx.event_json = event_json;
+  ack_ctx.n_relays = cfg.n_relays;
+  ack_ctx.closed_relays = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  signet_relay_pool_set_subscription_callback(rp, signetctl_subscription, &ack_ctx);
+  deadline_source = g_timeout_add_seconds(SIGNETCTL_TIMEOUT_SEC, signetctl_deadline, &ack_ctx);
+  interrupt_source = g_unix_signal_add(SIGINT, signetctl_cancel, &ack_ctx);
+  terminate_source = g_unix_signal_add(SIGTERM, signetctl_cancel, &ack_ctx);
+  g_main_loop_run(ack_ctx.loop);
 
   if (ack_ctx.received && ack_ctx.response_json) {
     if (ack_ctx.is_error) {
@@ -1618,15 +1613,21 @@ int main(int argc, char **argv) {
       }
     }
   } else {
-    fprintf(stderr, "signetctl: timeout waiting for reply (%ds)\n", SIGNETCTL_TIMEOUT_SEC);
+    fprintf(stderr, "signetctl: %s\n", ack_ctx.failure ? ack_ctx.failure : "operation failed");
   }
 
 cleanup:
-  free(event_json);
+  if (deadline_source) g_source_remove(deadline_source);
+  if (interrupt_source) g_source_remove(interrupt_source);
+  if (terminate_source) g_source_remove(terminate_source);
   if (rp) {
     signet_relay_pool_stop(rp);
     signet_relay_pool_free(rp);
   }
+  signetctl_wipe_free_string(event_json);
+  g_free(ack_ctx.selected_relay);
+  if (ack_ctx.closed_relays) g_hash_table_destroy(ack_ctx.closed_relays);
+  g_main_loop_unref(ack_ctx.loop);
   /* The reply may embed a fresh connect_secret (reissue-connect) or bunker
    * URI (provision/adopt) — wipe before free. */
   if (ack_ctx.response_json) secure_wipe(ack_ctx.response_json, strlen(ack_ctx.response_json));

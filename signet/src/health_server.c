@@ -166,6 +166,17 @@ static char *signet_build_metrics(const SignetHealthSnapshot *s, uint64_t uptime
   g_string_append_printf(m, "# TYPE signet_sign_total counter\n");
   g_string_append_printf(m, "signet_sign_total %" G_GUINT64_FORMAT "\n", s->sign_total);
 
+  g_string_append(m, "# HELP signet_nip46_reply_ack_total NIP-46 reply publication outcomes per relay.\n"
+                     "# TYPE signet_nip46_reply_ack_total counter\n");
+  g_string_append_printf(m, "signet_nip46_reply_ack_total{result=\"accept\"} %" G_GUINT64_FORMAT "\n",
+                         s->nip46_reply_ack_accept);
+  g_string_append_printf(m, "signet_nip46_reply_ack_total{result=\"reject\"} %" G_GUINT64_FORMAT "\n",
+                         s->nip46_reply_ack_reject);
+  g_string_append_printf(m, "signet_nip46_reply_ack_total{result=\"timeout\"} %" G_GUINT64_FORMAT "\n",
+                         s->nip46_reply_ack_timeout);
+  g_string_append_printf(m, "signet_nip46_reply_ack_total{result=\"transport-aborted\"} %" G_GUINT64_FORMAT "\n",
+                         s->nip46_reply_ack_transport_aborted);
+
   g_string_append_printf(m, "# HELP signet_revoke_total Revocations.\n");
   g_string_append_printf(m, "# TYPE signet_revoke_total counter\n");
   g_string_append_printf(m, "signet_revoke_total %" G_GUINT64_FORMAT "\n", s->revoke_total);
