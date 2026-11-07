@@ -1269,6 +1269,37 @@ static void pool_drain_stopped(NostrSimplePool *pool) {
     free(subs);
 }
 
+/* Each subscription outlives the pool's replaceable reconnect template.
+ * Own its snapshot until the last subscription reference is released, including
+ * references held by an in-flight relay refire. Called with pool_mutex held. */
+static NostrSubscription *pool_prepare_subscription(NostrRelay *relay,
+                                                   const NostrFilters *filters) {
+    if (!filters) return NULL;
+    NostrFilters *owned = nostr_filters_new();
+    if (!owned) return NULL;
+    for (size_t i = 0; i < filters->count; i++) {
+        NostrFilter *dup = nostr_filter_copy(&filters->filters[i]);
+        if (!dup) {
+            nostr_filters_free(owned);
+            return NULL;
+        }
+        bool added = nostr_filters_add(owned, dup);
+        if (!added) nostr_filter_clear(dup);
+        free(dup);
+        if (!added) {
+            nostr_filters_free(owned);
+            return NULL;
+        }
+    }
+    NostrSubscription *sub = nostr_relay_prepare_subscription(relay, NULL, owned);
+    if (!sub) {
+        nostr_filters_free(owned);
+        return NULL;
+    }
+    nostr_subscription_set_filters(sub, owned);
+    return sub;
+}
+
 /* nostrc-el92: (Re)fire the shared subscription on connected relays that lack
  * a live sub. nostr_subscription_fire fails when a relay's websocket is not
  * yet up, and previously the error was swallowed with no retry — the pool
@@ -1295,7 +1326,7 @@ static void pool_reconcile_subs(NostrSimplePool *pool) {
             }
         }
         if (has_sub) continue;
-        NostrSubscription *sub = nostr_relay_prepare_subscription(relay, NULL, pool->filters_shared);
+        NostrSubscription *sub = pool_prepare_subscription(relay, pool->filters_shared);
         if (!sub) continue;
         nostr_subscription_set_duplicate_delivery(sub, !pool->dedup_unique);
         nostr_subscription_set_recovery_window(sub, pool_recovery_window(pool));
@@ -1588,7 +1619,7 @@ static void pool_subscribe_impl(NostrSimplePool *pool, const char **urls,
     for (size_t i = 0; i < pool->relay_count; i++) {
         NostrRelay *relay = pool->relays[i];
         if (!relay) continue;
-        NostrSubscription *sub = nostr_relay_prepare_subscription(relay, NULL, pool->filters_shared);
+        NostrSubscription *sub = pool_prepare_subscription(relay, pool->filters_shared);
         if (!sub) continue;
         nostr_subscription_set_duplicate_delivery(sub, !pool->dedup_unique);
         nostr_subscription_set_recovery_window(sub, pool_recovery_window(pool));
