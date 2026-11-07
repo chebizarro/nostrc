@@ -39,6 +39,7 @@ typedef struct {
   char *mime;
   char **destinations, **discovery_relays, **auth_required_relays, **bootstrap_relays;
   GrottoApprovalController *controller;
+  GApplication *application;
   GMainContext *ui_context;
   gboolean bootstrap_used, bootstrap_round, no_relays, crop_frozen;
   GDBusConnection *bus;
@@ -56,7 +57,12 @@ typedef struct {
 static void cache_lock_free(gpointer data) { g_mutex_clear(data); g_free(data); }
 static void job_free(gpointer data) {
   Job *j = data; grotto_profile_info_free(j->notify); g_free(j->npub); grotto_profile_info_free(j->info); g_clear_object(&j->file);
-  g_clear_pointer(&j->bytes, g_bytes_unref); g_clear_object(&j->preview); g_free(j->mime); g_strfreev(j->destinations); g_strfreev(j->discovery_relays); g_strfreev(j->auth_required_relays); g_strfreev(j->bootstrap_relays); g_clear_object(&j->controller); g_main_context_unref(j->ui_context); g_clear_object(&j->bus); g_hash_table_unref(j->capabilities); g_clear_object(&j->cache_scope); g_free(j);
+  g_clear_pointer(&j->bytes, g_bytes_unref); g_clear_object(&j->preview); g_free(j->mime); g_strfreev(j->destinations); g_strfreev(j->discovery_relays); g_strfreev(j->auth_required_relays); g_strfreev(j->bootstrap_relays); g_clear_object(&j->controller); g_main_context_unref(j->ui_context); g_clear_object(&j->bus); g_hash_table_unref(j->capabilities); g_clear_object(&j->cache_scope);
+  if (j->application) {
+    g_application_release(j->application);
+    g_clear_object(&j->application);
+  }
+  g_free(j);
 }
 static const char *string(JsonObject *o, const char *key) {
   JsonNode *n = o ? json_object_get_member(o, key) : NULL;
@@ -1052,6 +1058,14 @@ static void service_async(GtkWindow *parent, GrottoApprovalController *controlle
     g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "Invalid identity or profile"); g_object_unref(task); return;
   }
   Job *j = g_new0(Job, 1); j->callback = callback; j->user_data = data; j->refresh = refresh; j->images_only = images_only; j->controller = controller ? g_object_ref(controller) : NULL;
+  /* Window destruction can outlive its application while a worker still uses
+   * process-global crypto. Keep the run loop and application alive until the
+   * task and any queued refresh handoff have released this job. */
+  GApplication *application = g_application_get_default();
+  if (application) {
+    j->application = g_object_ref(application);
+    g_application_hold(application);
+  }
   j->ui_context = g_main_context_ref_thread_default(); j->capabilities = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL); j->action = action;
   j->cache_scope = scope ? g_object_ref(scope) : parent ? g_object_ref(G_OBJECT(parent)) : g_object_new(G_TYPE_OBJECT, NULL);
   j->cache = g_object_get_data(j->cache_scope, "grotto-profile-cache");
