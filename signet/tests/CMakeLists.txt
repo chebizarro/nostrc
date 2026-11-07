@@ -24,7 +24,11 @@ endif()
 # subset of libraries, which is what let the two build systems drift: adding a
 # test to CMake meant reproducing a 15-line block, so it was easy to skip.
 function(signet_add_test_executable name)
-  add_executable(${name} ${name}.c)
+  if (ARGN)
+    add_executable(${name} ${ARGN})
+  else()
+    add_executable(${name} ${name}.c)
+  endif()
   target_link_libraries(${name} PRIVATE signet_core)
   target_include_directories(${name} PRIVATE
     ${CMAKE_SOURCE_DIR}
@@ -278,7 +282,8 @@ if(COMMAND nostrc_describe_test)
   nostrc_describe_test(signetctl_credentials OWNER signet TARGETS signetctl
     INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/test_signetctl_credentials.sh")
 endif()
-add_test(NAME backup_restore COMMAND test_backup_restore)
+add_test(NAME backup_restore COMMAND test_backup_restore $<TARGET_FILE:signetctl>)
+add_dependencies(test_backup_restore signetctl)
 add_test(NAME item3_concurrency COMMAND test_item3_concurrency)
 
 # Match the meson timeouts for the three tests that do real socket/threading
@@ -302,6 +307,19 @@ if (SIGNET_ENABLE_PASSKEYS)
     DISABLED TRUE
     LABELS "manual;interop;dbus;passkeys")
 endif()
+
+# W3/W4 deployment packaging and explicitly enabled live drills (separate ownership).
+option(SIGNET_DEPLOYMENT_LIVE_TESTS "Run destructive operator-configured live deployment drill" OFF)
+signet_add_test_executable(nip46_reference_client integration/nip46_reference_client.c)
+add_test(NAME deployment_contract
+  COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/test_deployment_smoke.sh --static)
+add_test(NAME production_roundtrip
+  COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/integration/test_production_roundtrip.sh $<TARGET_FILE:nip46_reference_client>)
+set_tests_properties(production_roundtrip PROPERTIES LABELS "live;manual;deployment" TIMEOUT 600)
+if (NOT SIGNET_DEPLOYMENT_LIVE_TESTS)
+  set_tests_properties(production_roundtrip PROPERTIES DISABLED TRUE)
+endif()
+# End W3/W4 block.
 
 # Private HOME/XDG_* and NOSTRC_TEST_ISOLATION for every test above
 # (nostrc-wqn0u). Must stay last, after every add_test() in this directory.
