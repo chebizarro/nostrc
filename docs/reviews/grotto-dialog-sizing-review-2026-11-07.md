@@ -104,3 +104,49 @@ This review is documentation-only: **no bump** for Grotto or grotto-panels; no o
 ## Merge recommendation
 
 **Request changes, retaining the UI fixes.** Correct the runtime expected-height calculation and demonstrate that restoring Recovery's collapse fails the executed test (F1). Complete the finite source-to-runtime inventory, exercise custom crop/upload content, and narrow or explicitly justify toolkit exceptions (F2). Add C GTK-window recognition as a small guard correction (F3). Rerun affected focused checks and retain the negative-control receipt. Passing the current eight checks does not establish the regression-detection claim; no extra consent step, product policy or repository-wide test programme is required.
+
+## Re-check (c2dd54d2a)
+
+Re-check date: 2026-11-07. Task: `nostrc-361yo`. `git pull --ff-only` confirmed this branch at `c2dd54d2ab0334edb74eb5af14b60b844dad8e5a`, including master integration `24fdbd9c3`. This is a finite re-check of F1–F3, not a new review of merged master. The original findings and receipts above remain historical evidence; the final verdict below supersedes the original request-changes recommendation. Only this report was edited.
+
+### Finding disposition
+
+- **F1 — resolved, independently executed.** `test-dialog-sizing.c:431-451` derives available height from the host and actual floating/sheet presentation, not the dialog's post-presentation content-height getter. Only the two permission-editor rows declare intentional 560 px viewports (`:360-361`). I cloned the fresh build, reset only the clone's diagnostic home, removed only Recovery's `adw_dialog_set_follows_content_size(dialog, TRUE);` from a scratch source copy, and rebuilt its cloned core object/archive and executable with unchanged test objects. Running `signer/dialog-sizing` against that clone now **fails at the geometry assertion**, not an account/fixture error:
+
+  ```text
+  recovery-phrase at 920x640: content=400x251 natural=371 available=580 required=371
+  assertion failed (height + 2 >= required): (253 >= 371)
+  ```
+
+  CTest exit **8**, runtime test failed / prerequisite fixture passed, **4.67 s**. The original production build passed before this deliberate mutation; no tracked source or original build was changed. This directly demonstrates detection of the same real collapse that formerly passed.
+- **F2 — resolved within the documented coverage boundary.** Both avatar and banner rows now open the complete production `grotto_profile_upload_confirmation()` factory (`test-dialog-sizing.c:298-321,358-359`). Its actual production caller uses that same factory and then binds the upload job (`grotto-profile-service.c:977-1014`), rather than replacing a test-only preview with additional controls afterward. The test requires three sliders, a populated picture, exercises zoom, checks default Cancel and presents the actual dialog. Both variants passed at both widths; narrow alerts measured **300×580**, against 580 px floating-host availability. This proves crop UI geometry/callback execution, not file-picker, network or upload completion.
+
+  Independent constructor/subclass/markup grep reconciled the **39 source sites** with `dialog-sizing-coverage.json`: **33 runtime rows / 66 presentations**, and **12 explicit exceptions**. The exceptions document bare toolkit alerts/About/Shortcuts and the bare default-sized standalone review carrier; they explicitly disclaim corresponding lifecycle/policy execution. No current custom crop/upload or other application-owned child subtree is hidden by those waivers. The static guard now inspects custom alert descendants in BLP, XML and C, and the inventory rejects missing/stale sites, unknown runtime rows and exceptions on detected custom-child sites (`test-dialog-sizing.py:111-137,203-289,373-405`). My independent BLP/XML/C custom-alert/scroller probes now produce the missing-propagation diagnostic. This is an honest, checked execution/exception inventory, not a claim that all 39 sites were individually presented.
+- **F3 — resolved, independently probed.** GTK window/application-window factories, generic constructors and subclasses now enter the same size rules (`test-dialog-sizing.py:163,212-217,283-294`). Independent parser probes rejected all six unsized direct/generic/subclass cases across both GTK window families; sized factory counterparts passed. A separate complete CLI run on a scratch GtkWindow factory plus subclass returned **exit 1 / three diagnostics**, replacing the prior false green. The static CTest also passed all **seven parser self-test groups**. These are static/parser negative controls, not compiled GTK product executions.
+
+The related pairing selector now follows content (`ui/pairing-flow.c:124`), and its production runtime row passed at **281×442** wide and **360×401** narrow under the stronger natural-height assertion. No new consent action or authority change was found in these remediation edits: crop retains default/close Cancel and existing upload dispatch, and the shared dialog convention/approval handlers are untouched. Grotto **0.1.1** and grotto-panels **0.1.0** CMake/Meson versions remain unchanged; this documentation-only append requires no component bump.
+
+### Verification actually rerun
+
+Fresh disposable `nostrc-linux-ci:arm64` container, same image ID as the original review; `aarch64`, GTK **4.14.5**, libadwaita **1.5.0**. Installed `xdotool` only in the container, mounted this worktree read-only and built the same four focused targets/prerequisites. Ran the **identical eight-check regex/command above**, with `-j1`, private D-Bus and Xvfb; no full suite or extra onboarding suite was selected.
+
+| Re-check | Actual result |
+|---|---|
+| `signer/dialog-sizing` | PASS, **30.46 s**; **66** measurements, including both complete crop variants |
+| `signer/dialog-sizing-static` | PASS, **3.13 s**; 120 files, 39 sites, 33 rows, 12 exceptions, seven self-test groups |
+| `signer/blueprint-drift` | PASS, **1.39 s** |
+| `signer/ui-layout` | PASS, **80.47 s** |
+| `signer/ui-accessibility` | PASS, **80.44 s** |
+| `signer/qr-scanner` | PASS, **0.26 s** |
+| `grotto-panels/management-panels` | PASS, **0.84 s** |
+| `grotto-panels/no-secrets` | PASS, **5.01 s** |
+| Required test-homes fixture | PASS, **0.06 s**; requested total **9/9, exit 0, 202.08 s** |
+| Independent scratch Recovery reversion | Expected geometry **FAIL**, exit 8, **251 px allocated / 371 px required**; 4.67 s |
+| Independent GTK/window and custom-alert negative probes | Expected diagnostics; sized controls accepted; complete unsized GTK CLI exit 1 |
+| Six shipped `.po` catalogs, `msgfmt --check --check-format` | PASS; all eight PO/POT files also have no fuzzy/obsolete entries |
+
+Receipts are retained at `/tmp/grotto-dialog-sizing-recheck-c2dd54d2a/`, including `requested.log`, `collapse.log`, `collapse-build.log`, `collapse-probe.py`, `negative-control-provenance.log`, `guard-probes.py`, `guard-probes.log`, `gtk-cli-negative.log`, both independent source inventories, `catalogs.log` and setup/build logs. The deliberate negative failure is retained, not retried to green. The original build/source remained unmodified; the task-owned container and cloned build were removed after evidence extraction. Beads synchronization remains unavailable without a configured Dolt remote. No product fix was made by this re-check.
+
+### Final verdict
+
+**Approve / merge-ready for the reviewed dialog-sizing scope at c2dd54d2a. F1, F2 and F3 are resolved.** The requested eight checks pass and the independent real-collapse reversion now fails for the intended reason. No outstanding finding remains from this review. The explicit inventory exceptions and original native-desktop/live-service/owner-acceptance limits remain; this is not full-suite, upload, hosted-CI or release acceptance.
