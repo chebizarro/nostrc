@@ -1,0 +1,35 @@
+# Optional, disabled at launch. See README.md for certificate/firewall custody.
+services:
+  caddy:
+    profiles: [bootstrap]
+    image: ${CADDY_IMAGE:?digest-pinned CADDY_IMAGE required}
+    network_mode: host
+    # Root only to bind 443; no Docker socket, all other capabilities dropped.
+    user: "0:0"
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    restart: "no"
+    stop_grace_period: 30s
+    environment:
+      SIGNET_ENROLLMENT_HOST: ${SIGNET_ENROLLMENT_HOST:?enrollment hostname required}
+    volumes:
+      - type: bind
+        source: /opt/signet/config/Caddyfile
+        target: /etc/caddy/Caddyfile
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: /srv/signet/caddy/data
+        target: /data
+        bind: {create_host_path: false}
+      - type: bind
+        source: /srv/signet/caddy/config
+        target: /config
+        bind: {create_host_path: false}
+    tmpfs: ["/tmp:size=10M,noexec,nosuid,nodev"]
+    ulimits: {core: 0}
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}

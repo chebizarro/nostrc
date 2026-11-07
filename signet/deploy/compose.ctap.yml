@@ -1,0 +1,14 @@
+# Experimental Linux host only. Explicit overlay, never loaded by the baseline.
+# SIGNET_IMAGE must select the passkeys digest; this is not remote browser HID.
+services:
+  signetd:
+    devices: ["/dev/uhid:/dev/uhid:rw"]
+    group_add: ["${SIGNET_UHID_GID:?set the host uhid group ID}"]
+    environment:
+      SIGNET_PASSKEYS_SYNC_KEY_FILE: /run/secrets/signet_passkey_sync_key
+    volumes:
+      - type: bind
+        source: /opt/signet/secrets/passkey-sync.key
+        target: /run/secrets/signet_passkey_sync_key
+        read_only: true
+        bind: {create_host_path: false}
