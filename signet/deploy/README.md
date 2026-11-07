@@ -35,9 +35,21 @@ an image has already reached GHCR. Never deploy a partially published run.
 Vulnerability exceptions require `id`, `finding`, `reason`, and an ISO `expires`
 date in `vulnerability-exceptions.json`; expired entries fail release checks.
 
-GHCR packages must stay private; CI refuses an existing public package and checks
-visibility again after publication. Grant the host a dedicated **read-only**
-package credential, stored in root-only `/opt/signet/secrets/docker/config.json`
+GHCR packages must stay private. CI obtains an anonymous GHCR pull token and
+probes the candidate manifest before push and the captured digest after push.
+HTTP 200 refuses publication; 401/403/404 mean private or absent. A token-endpoint
+401/403/404 also means anonymous access is denied; the manifest probe then runs
+without a bearer token. Transport errors, malformed successful token responses,
+and unexpected HTTP responses fail closed, including before any push.
+This proves anonymous unreadability, not package existence or authenticated access.
+GitHub defaults new packages to private; do not change their visibility to public.
+No extra secret is required. An optional `GHCR_READ_TOKEN` repository secret
+(classic PAT, `read:packages`) enriches the pre-push check with user-owned package
+REST metadata; a successful lookup must report `private`, while an unavailable
+lookup only warns. The repository `GITHUB_TOKEN` is used for push, not that lookup.
+See [GitHub's GHCR defaults and anonymous access documentation](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry).
+Grant the host a dedicated **read-only** package credential, stored in root-only
+`/opt/signet/secrets/docker/config.json`
 using `docker --config /opt/signet/secrets/docker login ghcr.io --password-stdin`.
 Never put it in cloud-init. Source/image provenance and release-bundle checksum
 verification are owner requirements before install. The legacy `release.yml` /
