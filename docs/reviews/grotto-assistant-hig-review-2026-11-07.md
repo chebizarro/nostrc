@@ -2,6 +2,19 @@
 
 Date: 2026-11-07. Review task: `nostrc-t91xv`; implementation: `nostrc-u6v55.71` and `nostrc-lcs47`.
 
+## Subsequent owner-directed corrections
+
+The owner rejected four aspects of the layout approved below. The original review text and verdict remain a historical assessment of **1bd36d288**, not approval of the subsequent implementation. The screenshot set linked below has now been regenerated from the corrected local branch; the original set remains available in commit **b7bd502b6**.
+
+- Cancel is root-only: Choice in-session, or Welcome's Skip Setup in first run. Pages with navigation history expose only the standard Back control at the start. Escape closes the whole assistant, matching the chosen AdwDialog convention; busy operations remain protected, child dialogs keep their own Escape handling, and Ready closes with its verified completion result.
+- Headings omit articles: Add Identity, Create Identity, Import Identity, Connect App, Check Identity and Back Up Identity. Tests now assert that the **actual mapped header title's Pango layout is not ellipsized**, at exact 360 px in English/Spanish and both directions. The exact-width screenshot walk also checks every header at 360/480 px in both modes. Spanish uses concise contextual wording, including “Respaldar”, rather than smaller fonts, custom button padding or hidden clipping.
+- Key or Recovery Phrase is now an `AdwPasswordEntryRow`, matching the native entry-row treatment of the optional local name. Its delegated GtkText retains the wiping buffer, masking, disabled undo, Return submission and existing passphrase-group behavior.
+- Backup starts with **Skip**, not Cancel. It retains the saved identity and does not mark a skipped backup complete; Confirm remains acknowledgement-gated.
+- The Welcome icon name was correct. The uninstalled test fixture now resolves and asserts the real shipped hicolor PNG, and the screenshot container installs that same icon set. The regenerated Welcome images show the app icon, not a missing-image placeholder. No production icon name or asset was changed.
+- The generated POT header is normalized with `msgattrib --clear-fuzzy`; all five PO catalogs pass `msgfmt --check --check-format`, and PO/POT fuzzy scans are clean (`nostrc-wtxzo`).
+
+Verification: the six requested ARM64 checks plus the static dialog sweep passed serially with `ctest --parallel 1` (**8/8 including the home fixture**, about 221 s). No full suite, VM deployment, push or merge. The current production-object page walk produced 50 captures per language, plus the Spanish Connect refocus captures. Before/after composites use exact **de2a40876** assistant C/UI blobs, rerendered with the same icon fixture and current unchanged dependency objects; they remain before-layout evidence, not a full base build. The composites add captions/gutters only. Current recipes, raw captures and passing/failed diagnostic receipts are under `.cache/assistant-hig-review/` (`followup-*`, `build-current-probe.py`, `build-base-followup.sh`); the original review receipts are retained separately there.
+
 ## Boundary and verdict
 
 Reviewed exactly `git diff de2a40876...1bd36d288`:

@@ -28,20 +28,20 @@ template $OnboardingAssistant: Adw.Window {
         }
       }
       Adw.NavigationPage {
-        tag: "choice"; title: _("Add an Identity");
+        tag: "choice"; title: _("Add Identity");
         Adw.ToolbarView {
           [top] Adw.HeaderBar header_choice { show-start-title-buttons: false; show-end-title-buttons: false; }
           Adw.PreferencesPage {
             Adw.PreferencesGroup {
-              Adw.ActionRow choose_create { title: _("Create an Identity"); subtitle: _("Start with a new identity"); activatable: true; [suffix] Image { icon-name: "go-next-symbolic"; } }
-              Adw.ActionRow choose_import { title: _("Import an Identity"); subtitle: _("Use a key or recovery phrase you already have"); activatable: true; [suffix] Image { icon-name: "go-next-symbolic"; } }
-              Adw.ActionRow choose_connect { title: _("Connect an App"); subtitle: _("Use an identity already on this device"); activatable: true; [suffix] Image { icon-name: "go-next-symbolic"; } }
+              Adw.ActionRow choose_create { title: _("Create Identity"); subtitle: _("Start with a new identity"); activatable: true; [suffix] Image { icon-name: "go-next-symbolic"; } }
+              Adw.ActionRow choose_import { title: _("Import Identity"); subtitle: _("Use a key or recovery phrase you already have"); activatable: true; [suffix] Image { icon-name: "go-next-symbolic"; } }
+              Adw.ActionRow choose_connect { title: _("Connect App"); subtitle: _("Use an identity already on this device"); activatable: true; [suffix] Image { icon-name: "go-next-symbolic"; } }
             }
           }
         }
       }
       Adw.NavigationPage {
-        tag: "create"; title: _("Create an Identity");
+        tag: "create"; title: _("Create Identity");
         Adw.ToolbarView {
           [top] Adw.HeaderBar header_create { show-start-title-buttons: false; show-end-title-buttons: false; }
           Adw.PreferencesPage {
@@ -51,20 +51,17 @@ template $OnboardingAssistant: Adw.Window {
         }
       }
       Adw.NavigationPage {
-        tag: "import"; title: _("Import an Identity");
+        tag: "import"; title: _("Import Identity");
         Adw.ToolbarView {
           [top] Adw.HeaderBar header_import { show-start-title-buttons: false; show-end-title-buttons: false; }
           Adw.PreferencesPage {
             description: _("Enter your secret key, encrypted backup, or recovery phrase.");
             Adw.PreferencesGroup {
               Adw.EntryRow entry_import_label { title: _("Name on This Device"); activates-default: true; }
-              Adw.PreferencesRow {
-                Box {
-                  orientation: vertical; spacing: 6;
-                  margin-start: 12; margin-end: 12; margin-top: 12; margin-bottom: 12;
-                  Label { label: _("Key or Recovery Phrase"); xalign: 0; }
-                  Entry text_import_data { visibility: false; enable-undo: false; activates-default: true; accessibility { label: _("Key or Recovery Phrase"); } }
-                }
+              Adw.PasswordEntryRow text_import_data {
+                title: _("Key or Recovery Phrase");
+                enable-undo: false;
+                activates-default: true;
               }
             }
             Adw.PreferencesGroup import_passphrase_group {
@@ -75,24 +72,24 @@ template $OnboardingAssistant: Adw.Window {
         }
       }
       Adw.NavigationPage {
-        tag: "connect"; title: _("Connect an App");
+        tag: "connect"; title: _("Connect App");
         Adw.ToolbarView {
           [top] Adw.HeaderBar header_connect { show-start-title-buttons: false; show-end-title-buttons: false; }
           Adw.StatusPage {
-            icon-name: "application-x-addon-symbolic"; title: _("Connect an App");
+            icon-name: "application-x-addon-symbolic"; title: _("Connect App");
             description: _("Apps on this device ask for permission when they first use Grotto. For an app on another device, open Connected Apps to pair it.");
             child: Box connect_actions {
               orientation: vertical; spacing: 18;
               Adw.PreferencesGroup {
-                Adw.ActionRow connect_create { title: _("Create an Identity"); subtitle: _("If you don't have one on this device yet"); activatable: true; [suffix] Image { icon-name: "go-next-symbolic"; } }
-                Adw.ActionRow connect_import { title: _("Import an Identity"); activatable: true; [suffix] Image { icon-name: "go-next-symbolic"; } }
+                Adw.ActionRow connect_create { title: _("Create Identity"); subtitle: _("If you don't have one on this device yet"); activatable: true; [suffix] Image { icon-name: "go-next-symbolic"; } }
+                Adw.ActionRow connect_import { title: _("Import Identity"); activatable: true; [suffix] Image { icon-name: "go-next-symbolic"; } }
               }
             };
           }
         }
       }
       Adw.NavigationPage {
-        tag: "test"; title: _("Check Your Identity");
+        tag: "test"; title: _("Check Identity");
         Adw.ToolbarView {
           [top] Adw.HeaderBar header_test { show-start-title-buttons: false; show-end-title-buttons: false; }
           Adw.PreferencesPage {

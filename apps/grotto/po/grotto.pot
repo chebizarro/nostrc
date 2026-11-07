@@ -3,12 +3,11 @@
 # This file is distributed under the same license as the grotto package.
 # FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
 #
-#, fuzzy
 msgid ""
 msgstr ""
 "Project-Id-Version: grotto 0.1.1\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-07 02:58-0800\n"
+"POT-Creation-Date: 2026-11-07 03:44-0800\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -92,7 +91,7 @@ msgstr ""
 msgid "Allow _Selected Once"
 msgstr ""
 
-#: data/ui/approval-dialog.ui:240 data/ui/onboarding-assistant.ui:317
+#: data/ui/approval-dialog.ui:240 data/ui/onboarding-assistant.ui:294
 #: data/ui/sheets/sheet-qr-display.ui:73 data/ui/sheets/sheet-qr-scanner.ui:144
 #: src/ui/pairing-flow.c:134
 msgid "Details"
@@ -221,7 +220,7 @@ msgstr ""
 msgid "Set Up Grotto"
 msgstr ""
 
-#: data/ui/onboarding-assistant.ui:32 src/ui/onboarding-assistant.c:129
+#: data/ui/onboarding-assistant.ui:32 src/ui/onboarding-assistant.c:130
 msgid "_Skip Setup"
 msgstr ""
 
@@ -235,17 +234,17 @@ msgid ""
 "identity without sharing your secret key."
 msgstr ""
 
-#: data/ui/onboarding-assistant.ui:49 src/ui/onboarding-assistant.c:144
+#: data/ui/onboarding-assistant.ui:49 src/ui/onboarding-assistant.c:145
 msgid "_Get Started"
 msgstr ""
 
 #: data/ui/onboarding-assistant.ui:68
-msgid "Add an Identity"
+msgid "Add Identity"
 msgstr ""
 
 #: data/ui/onboarding-assistant.ui:83 data/ui/onboarding-assistant.ui:128
-#: data/ui/onboarding-assistant.ui:258
-msgid "Create an Identity"
+#: data/ui/onboarding-assistant.ui:235
+msgid "Create Identity"
 msgstr ""
 
 #: data/ui/onboarding-assistant.ui:84
@@ -253,18 +252,17 @@ msgid "Start with a new identity"
 msgstr ""
 
 #: data/ui/onboarding-assistant.ui:95 data/ui/onboarding-assistant.ui:159
-#: data/ui/onboarding-assistant.ui:270
-msgid "Import an Identity"
+#: data/ui/onboarding-assistant.ui:247
+msgid "Import Identity"
 msgstr ""
 
 #: data/ui/onboarding-assistant.ui:96
 msgid "Use a key or recovery phrase you already have"
 msgstr ""
 
-#: data/ui/onboarding-assistant.ui:107 data/ui/onboarding-assistant.ui:236
-#: data/ui/onboarding-assistant.ui:248 src/ui/pairing-flow.c:104
-#: src/ui/sheets/sheet-qr-display.c:464
-msgid "Connect an App"
+#: data/ui/onboarding-assistant.ui:107 data/ui/onboarding-assistant.ui:213
+#: data/ui/onboarding-assistant.ui:225
+msgid "Connect App"
 msgstr ""
 
 #: data/ui/onboarding-assistant.ui:108
@@ -285,49 +283,49 @@ msgstr ""
 msgid "Enter your secret key, encrypted backup, or recovery phrase."
 msgstr ""
 
-#: data/ui/onboarding-assistant.ui:191 data/ui/onboarding-assistant.ui:201
+#: data/ui/onboarding-assistant.ui:181
 msgid "Key or Recovery Phrase"
 msgstr ""
 
-#: data/ui/onboarding-assistant.ui:215 src/ui/onboarding-assistant.c:479
+#: data/ui/onboarding-assistant.ui:192 src/ui/onboarding-assistant.c:484
 msgid "Backup passphrase"
 msgstr ""
 
-#: data/ui/onboarding-assistant.ui:249
+#: data/ui/onboarding-assistant.ui:226
 msgid ""
 "Apps on this device ask for permission when they first use Grotto. For an "
 "app on another device, open Connected Apps to pair it."
 msgstr ""
 
-#: data/ui/onboarding-assistant.ui:259
+#: data/ui/onboarding-assistant.ui:236
 msgid "If you don't have one on this device yet"
 msgstr ""
 
-#: data/ui/onboarding-assistant.ui:292
-msgid "Check Your Identity"
+#: data/ui/onboarding-assistant.ui:269
+msgid "Check Identity"
 msgstr ""
 
-#: data/ui/onboarding-assistant.ui:303
+#: data/ui/onboarding-assistant.ui:280
 msgid ""
 "Approve a one-time signing and encryption check. Nothing is published and no "
 "app permissions are saved."
 msgstr ""
 
-#: data/ui/onboarding-assistant.ui:320
+#: data/ui/onboarding-assistant.ui:297
 msgid "On This Device Only"
 msgstr ""
 
-#: data/ui/onboarding-assistant.ui:321
+#: data/ui/onboarding-assistant.ui:298
 msgid ""
 "Signs and verifies a test message, then encrypts and decrypts it with a "
 "temporary key."
 msgstr ""
 
-#: data/ui/onboarding-assistant.ui:338 data/ui/onboarding-assistant.ui:350
+#: data/ui/onboarding-assistant.ui:315 data/ui/onboarding-assistant.ui:327
 msgid "Identity Check Failed"
 msgstr ""
 
-#: data/ui/onboarding-assistant.ui:351
+#: data/ui/onboarding-assistant.ui:328
 msgid ""
 "Your identity is saved. Try the check again, or skip it and keep a warning "
 "on this identity."
@@ -335,60 +333,60 @@ msgstr ""
 
 #. Onboarding also offers backup before the management window exists. This
 #. * trusted shell contains only the pinned Backup page, not another editor.
-#: data/ui/onboarding-assistant.ui:367 data/ui/page-identity-detail.ui:10
+#: data/ui/onboarding-assistant.ui:344 data/ui/page-identity-detail.ui:10
 #: src/ui/page-identity-detail.c:504
 msgid "Back Up Identity"
 msgstr ""
 
-#: data/ui/onboarding-assistant.ui:378
+#: data/ui/onboarding-assistant.ui:355
 msgid ""
 "Write these words down in order and keep them private. Anyone with them "
 "controls your identity."
 msgstr ""
 
-#: data/ui/onboarding-assistant.ui:396 data/ui/onboarding-assistant.ui:400
+#: data/ui/onboarding-assistant.ui:373 data/ui/onboarding-assistant.ui:377
 msgid "I have safely backed up my identity"
 msgstr ""
 
-#: data/ui/onboarding-assistant.ui:413
+#: data/ui/onboarding-assistant.ui:390
 msgid "Other Backup Options"
 msgstr ""
 
-#: data/ui/onboarding-assistant.ui:416 data/ui/onboarding-assistant.ui:425
+#: data/ui/onboarding-assistant.ui:393 data/ui/onboarding-assistant.ui:402
 msgid "Copy Recovery Phrase"
 msgstr ""
 
-#: data/ui/onboarding-assistant.ui:417 data/ui/page-identity-detail.ui:77
+#: data/ui/onboarding-assistant.ui:394 data/ui/page-identity-detail.ui:77
 msgid "Clipboard managers may keep a copy"
 msgstr ""
 
-#: data/ui/onboarding-assistant.ui:421
+#: data/ui/onboarding-assistant.ui:398
 msgid "Cop_y"
 msgstr ""
 
-#: data/ui/onboarding-assistant.ui:433 data/ui/page-identity-detail.ui:53
+#: data/ui/onboarding-assistant.ui:410 data/ui/page-identity-detail.ui:53
 #: src/qr-code.c:88 src/ui/page-identity-detail.c:307
 #: src/ui/sheets/sheet-qr-display.c:455
 msgid "Encrypted Backup"
 msgstr ""
 
-#: data/ui/onboarding-assistant.ui:436
+#: data/ui/onboarding-assistant.ui:413
 msgid "_Open Backup…"
 msgstr ""
 
-#: data/ui/onboarding-assistant.ui:445
+#: data/ui/onboarding-assistant.ui:422
 msgid "Recovery Phrase Unavailable?"
 msgstr ""
 
-#: data/ui/onboarding-assistant.ui:448 src/ui/onboarding-assistant.c:142
+#: data/ui/onboarding-assistant.ui:425 src/ui/onboarding-assistant.c:143
 msgid "_Try Again"
 msgstr ""
 
-#: data/ui/onboarding-assistant.ui:468
+#: data/ui/onboarding-assistant.ui:445
 msgid "Setup Complete"
 msgstr ""
 
-#: data/ui/onboarding-assistant.ui:480
+#: data/ui/onboarding-assistant.ui:457
 msgid "Your Identity Is Ready"
 msgstr ""
 
@@ -641,7 +639,7 @@ msgstr ""
 
 #: data/ui/sheets/sheet-qr-scanner.ui:22 src/ui/signer-window.c:794
 #: src/ui/dialog-actions.h:11 src/ui/page-identity-detail.c:284
-#: src/ui/page-identity-detail.c:392 src/ui/onboarding-assistant.c:129
+#: src/ui/page-identity-detail.c:392 src/ui/onboarding-assistant.c:130
 msgid "_Cancel"
 msgstr ""
 
@@ -3078,153 +3076,153 @@ msgstr ""
 msgid "Signer unavailable. Open Grotto and retry"
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:128
+#: src/ui/onboarding-assistant.c:129
 msgid "_Skip"
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:130
+#: src/ui/onboarding-assistant.c:131
 msgid "The identity is saved on this device"
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:131
+#: src/ui/onboarding-assistant.c:132
 msgid "Cancel Adding an Identity"
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:140
+#: src/ui/onboarding-assistant.c:141
 msgid "_Open Grotto"
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:141
+#: src/ui/onboarding-assistant.c:142
 msgid "C_reate"
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:141
+#: src/ui/onboarding-assistant.c:142
 msgid "_Import"
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:143
+#: src/ui/onboarding-assistant.c:144
 msgid "_Open Connected Apps"
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:144
+#: src/ui/onboarding-assistant.c:145
 msgid "Con_firm"
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:237
+#: src/ui/onboarding-assistant.c:238
 msgid "Checking your identity on this device…"
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:245
+#: src/ui/onboarding-assistant.c:246
 msgid "Waiting for your approval. This check does not save app permissions."
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:264
+#: src/ui/onboarding-assistant.c:265
 msgid ""
 "Identity setup is unavailable. Update Grotto or skip setup to view your "
 "identities."
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:271
+#: src/ui/onboarding-assistant.c:272
 msgid "The check expired. Try again or finish with a warning."
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:272
+#: src/ui/onboarding-assistant.c:273
 msgid "The check was denied. Try again or finish with a warning."
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:273
+#: src/ui/onboarding-assistant.c:274
 msgid ""
 "The check did not pass. Unlock your keyring and resume signing, then try "
 "again. You can also finish with a warning."
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:278
+#: src/ui/onboarding-assistant.c:279
 msgid ""
 "No recovery phrase is available. Open Backup to save an encrypted backup "
 "instead."
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:279
+#: src/ui/onboarding-assistant.c:280
 msgid ""
 "The recovery phrase could not be opened. Unlock your keyring and try again."
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:282
+#: src/ui/onboarding-assistant.c:283
 msgid ""
 "The identity could not be saved. Check your keyring and input, then try "
 "again. Any key already saved is kept."
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:291
+#: src/ui/onboarding-assistant.c:292
 msgid "Update Grotto to create, import, or check an identity."
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:306
+#: src/ui/onboarding-assistant.c:307
 msgid "The identity is saved, but its name could not be saved."
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:310
+#: src/ui/onboarding-assistant.c:311
 msgid "The identity was not saved. Check the input and try again."
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:320
+#: src/ui/onboarding-assistant.c:321
 msgid ""
 "Identity imported and saved. Signing and encryption checks passed. Backup is "
 "available in Identity → Backup."
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:324
+#: src/ui/onboarding-assistant.c:325
 msgid ""
 "The identity could not be verified. Try the check again before using it."
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:345
+#: src/ui/onboarding-assistant.c:346
 msgid "Grotto could not reach the signer. Try again when it is running."
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:377
+#: src/ui/onboarding-assistant.c:378
 msgid "An identity could not be created. Try again."
 msgstr ""
 
 #. D-Bus owns the in-flight tuple; no seed material remains in labels/UI.
-#: src/ui/onboarding-assistant.c:382
+#: src/ui/onboarding-assistant.c:383
 msgid "Saving your identity…"
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:388
+#: src/ui/onboarding-assistant.c:389
 msgid "Enter a secret key or recovery phrase."
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:391
+#: src/ui/onboarding-assistant.c:392
 msgid "Enter the passphrase for this encrypted backup."
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:397
+#: src/ui/onboarding-assistant.c:398
 msgid "Checking and saving your identity…"
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:415
+#: src/ui/onboarding-assistant.c:416
 msgid ""
 "Backup confirmation could not be saved. Try again or finish without a backup."
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:418
+#: src/ui/onboarding-assistant.c:419
 msgid ""
 "Signing and encryption checks passed. Apps will ask for permission before "
 "using your identity."
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:460
+#: src/ui/onboarding-assistant.c:465
 msgid ""
 "Your identity is checked and backed up. Apps will ask for permission before "
 "using it."
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:479
+#: src/ui/onboarding-assistant.c:484
 msgid "Recovery phrase passphrase (if you used one)"
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:496
+#: src/ui/onboarding-assistant.c:501
 msgid ""
 "Copied. Clipboard managers may keep a copy. Grotto clears its copy when you "
 "close or lock this window, or after one minute."
@@ -3263,6 +3261,10 @@ msgstr ""
 
 #: src/ui/pairing-flow.c:101
 msgid "This connection link is invalid. Copy a new link from your app."
+msgstr ""
+
+#: src/ui/pairing-flow.c:104 src/ui/sheets/sheet-qr-display.c:464
+msgid "Connect an App"
 msgstr ""
 
 #: src/ui/pairing-flow.c:105

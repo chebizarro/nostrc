@@ -251,6 +251,13 @@ static void cancelled_test(Fixture *f, gconstpointer data) {
 static void imported_input_cleared(Fixture *f, gconstpointer data) {
   (void)data; click(f, "btn_next"); g_signal_emit_by_name(child(f, "choose_import"), "activated");
   GtkEditable *input = GTK_EDITABLE(child(f, "text_import_data"));
+  g_assert_true(ADW_IS_PASSWORD_ENTRY_ROW(input));
+  g_assert_true(adw_entry_row_get_activates_default(ADW_ENTRY_ROW(input)));
+  g_assert_false(gtk_editable_get_enable_undo(input));
+  GtkText *text = GTK_TEXT(gtk_editable_get_delegate(input));
+  g_assert_false(gtk_text_get_visibility(text));
+  g_assert_false(gtk_editable_get_enable_undo(GTK_EDITABLE(text)));
+  g_assert_cmpstr(adw_preferences_row_get_title(ADW_PREFERENCES_ROW(input)), ==, "Key or Recovery Phrase");
   g_assert_false(gtk_widget_is_sensitive(child(f, "btn_next")));
   gtk_editable_set_text(input, "not a recovery phrase");
   g_assert_false(gtk_widget_is_sensitive(child(f, "btn_next")));
@@ -382,7 +389,7 @@ static void management_warning_handoff(Fixture *f, gconstpointer data) {
   AdwWindow *window = ADW_WINDOW(adw_window_new()); g_object_ref(window); gtk_window_set_default_size(GTK_WINDOW(window), 560, 640); gtk_window_present(GTK_WINDOW(window));
   gtk_window_set_transient_for(GTK_WINDOW(f->assistant), GTK_WINDOW(window));
   if (backup) {
-    g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(child(f, "btn_skip"))), ==, "_Cancel");
+    g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(child(f, "btn_skip"))), ==, "_Skip");
     click(f, "btn_skip");
   } else click(f, "btn_skip");
   g_assert_false(f->verified); g_assert_cmpuint(f->finished, ==, 1);

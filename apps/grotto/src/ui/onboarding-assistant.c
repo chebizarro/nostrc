@@ -30,7 +30,7 @@ struct _OnboardingAssistant {
   GtkCheckButton *seed_written_down;
   GtkEditable *entry_profile_name, *entry_import_label;
   AdwPreferencesGroup *import_passphrase_group;
-  GtkEntry *text_import_data;
+  AdwPasswordEntryRow *text_import_data;
   GtkBox *seed_words, *pending_requests;
   GtkBox *box_import_passphrase_container;
   GnSecureEntry *import_passphrase;
@@ -124,8 +124,9 @@ static void navigation(OnboardingAssistant *self) {
   AdwNavigationPage *page = adw_navigation_view_get_visible_page(self->steps);
   if (page) adw_navigation_page_set_can_pop(page, !self->busy && !self->identity_stored);
   gtk_widget_set_sensitive(GTK_WIDGET(self->btn_skip), !self->busy);
-  gtk_widget_set_visible(GTK_WIDGET(self->btn_skip), self->state != ONBOARDING_READY);
-  gtk_button_set_label(self->btn_skip, self->identity_stored && self->state != ONBOARDING_BACKUP ? _("_Skip") :
+  gboolean subpage = page && adw_navigation_view_get_previous_page(self->steps, page) != NULL;
+  gtk_widget_set_visible(GTK_WIDGET(self->btn_skip), !subpage && self->state != ONBOARDING_READY);
+  gtk_button_set_label(self->btn_skip, self->identity_stored ? _("_Skip") :
       self->state == ONBOARDING_WELCOME && !self->running_session ? _("_Skip Setup") : _("_Cancel"));
   const gchar *skip_description = self->identity_stored ? _("The identity is saved on this device") :
       self->running_session ? _("Cancel Adding an Identity") : NULL;
@@ -441,8 +442,12 @@ static void skip(GtkButton *button, gpointer data) {
 static gboolean escape_pressed(GtkEventControllerKey *controller, guint keyval, guint keycode, GdkModifierType modifiers, gpointer data) {
   (void)controller; (void)keycode; (void)modifiers; OnboardingAssistant *self = data;
   if (keyval != GDK_KEY_Escape || adw_window_get_visible_dialog(ADW_WINDOW(self))) return FALSE;
-  if (gtk_widget_get_visible(GTK_WIDGET(self->btn_skip)) && gtk_widget_is_sensitive(GTK_WIDGET(self->btn_skip)))
-    skip(self->btn_skip, self);
+  /* Match AdwDialog: Escape closes the whole dialog, including subpages
+   * whose header exposes only the standard navigation Back control. */
+  if (!self->busy) {
+    if (self->state == ONBOARDING_READY) finish(self, self->self_test_passed);
+    else skip(self->btn_skip, self);
+  }
   /* Busy operations keep their existing custody/cancellation semantics. */
   return TRUE;
 }
@@ -538,7 +543,10 @@ static void onboarding_assistant_init(OnboardingAssistant *self) {
   gtk_widget_init_template(GTK_WIDGET(self));
   g_signal_connect_object(gn_session_manager_get_default(), "session-locked", G_CALLBACK(clipboard_locked), self, 0);
   g_autoptr(GtkEntryBuffer) input = gn_secure_entry_buffer_new();
-  gtk_entry_set_buffer(self->text_import_data, input);
+  GtkText *text = GTK_TEXT(gtk_editable_get_delegate(GTK_EDITABLE(self->text_import_data)));
+  gtk_text_set_buffer(text, input);
+  gtk_text_set_visibility(text, FALSE);
+  gtk_editable_set_enable_undo(GTK_EDITABLE(self->text_import_data), FALSE);
   gtk_entry_buffer_set_max_length(input, 4096);
   self->import_passphrase = GN_SECURE_ENTRY(gn_secure_entry_new());
   gn_secure_entry_set_show_strength_indicator(self->import_passphrase, FALSE);

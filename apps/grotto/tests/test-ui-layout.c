@@ -539,6 +539,12 @@ static void assert_assistant_actions(OnboardingAssistant *setup, gboolean runnin
   g_assert_false(adw_header_bar_get_show_end_title_buttons(ADW_HEADER_BAR(header)));
   g_assert_null(gtk_widget_get_template_child(GTK_WIDGET(setup), TYPE_ONBOARDING_ASSISTANT, "btn_back"));
   OnboardingState state = onboarding_assistant_get_state(setup);
+  gboolean subpage = adw_navigation_view_get_previous_page(view, page) != NULL;
+  g_assert_cmpint(gtk_widget_get_visible(skip), ==, !subpage && state != ONBOARDING_READY);
+  GtkWidget *title = find_label_containing(header, adw_navigation_page_get_title(page));
+  g_assert_nonnull(title); g_assert_true(gtk_widget_get_mapped(title));
+  g_test_message("Assistant title at %dpx: %s", gtk_widget_get_width(GTK_WIDGET(setup)), gtk_label_get_text(GTK_LABEL(title)));
+  g_assert_false(pango_layout_is_ellipsized(gtk_label_get_layout(GTK_LABEL(title))));
   gboolean status_page = state == ONBOARDING_WELCOME || state == ONBOARDING_CONNECT ||
       state == ONBOARDING_TEST_FAILED || state == ONBOARDING_READY;
   g_assert_true(gtk_widget_has_css_class(next, "suggested-action"));
@@ -635,10 +641,10 @@ static void layout_activate(GApplication *application, gpointer data) {
   WAIT(gtk_widget_is_sensitive(import_choice)); g_signal_emit_by_name(import_choice, "activated");
   g_assert_cmpint(onboarding_assistant_get_state(add), ==, ONBOARDING_IMPORT);
   g_assert_true(gtk_widget_get_visible(add_next)); assert_assistant_actions(add, TRUE);
-  g_assert_true(gtk_widget_get_visible(add_cancel));
+  g_assert_false(gtk_widget_get_visible(add_cancel));
   g_assert_false(gtk_widget_is_sensitive(add_next));
   g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(add_next)), ==, _("_Import"));
-  g_assert_cmpstr(gtk_window_get_title(GTK_WINDOW(add)), ==, _("Import an Identity"));
+  g_assert_cmpstr(gtk_window_get_title(GTK_WINDOW(add)), ==, _("Import Identity"));
   assistant_back(add);
   g_assert_cmpint(onboarding_assistant_get_state(add), ==, ONBOARDING_CHOICE);
   g_assert_true(gtk_widget_get_visible(add_cancel));
@@ -1486,6 +1492,13 @@ static void layout_activate(GApplication *application, gpointer data) {
   g_application_quit(application);
 }
 static void setup_snapshot(OnboardingAssistant *setup, const char *stage, gboolean rtl) {
+  wait_frames(GTK_WIDGET(setup));
+  int width = gtk_widget_get_width(GTK_WIDGET(setup));
+  if (width != 360) {
+    gtk_window_set_default_size(GTK_WINDOW(setup), 360 + (360 - width), 640);
+    wait_frames(GTK_WIDGET(setup));
+  }
+  g_assert_cmpint(gtk_widget_get_width(GTK_WIDGET(setup)), ==, 360);
   int minimum; gtk_widget_measure(GTK_WIDGET(setup), GTK_ORIENTATION_HORIZONTAL, -1, &minimum, NULL, NULL, NULL);
   g_test_message("Onboarding %s minimum width: %d", stage, minimum);
   assert_assistant_actions(setup, gtk_window_get_transient_for(GTK_WINDOW(setup)) != NULL);
@@ -1541,7 +1554,7 @@ static void remaining_surfaces(void) {
     setup_snapshot(setup, "backup", rtl);
     g_assert_true(gtk_widget_get_visible(setup_child(setup, "btn_skip")));
     g_assert_null(gtk_widget_get_ancestor(setup_child(setup, "btn_skip"), GTK_TYPE_POPOVER));
-    g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(setup_child(setup, "btn_skip"))), ==, _("_Cancel"));
+    g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(setup_child(setup, "btn_skip"))), ==, _("_Skip"));
     AdwExpanderRow *options = ADW_EXPANDER_ROW(gtk_widget_get_ancestor(setup_child(setup, "btn_copy_seed"), ADW_TYPE_EXPANDER_ROW));
     g_assert_nonnull(options); adw_expander_row_set_expanded(options, TRUE);
     g_autoptr(GHashTable) keys = g_hash_table_new(g_direct_hash, g_direct_equal);
@@ -1557,6 +1570,11 @@ static void remaining_surfaces(void) {
     gtk_check_button_set_active(acknowledgement, TRUE);
     g_signal_emit_by_name(setup_child(setup, "btn_next"), "clicked");
     g_assert_cmpint(onboarding_assistant_get_state(setup), ==, ONBOARDING_READY); setup_snapshot(setup, "ready", rtl);
+#ifdef GROTTO_TEST_XDOTOOL
+    send_key_event(GTK_WINDOW(setup), "Escape");
+    WAIT(!gtk_widget_get_mapped(GTK_WIDGET(setup)));
+    g_assert_true(onboarding_assistant_self_test_passed(setup));
+#endif
     gtk_window_destroy(GTK_WINDOW(setup)); g_object_unref(setup);
     if (parent) {
       WAIT(g_object_get_data(G_OBJECT(parent), "grotto-onboarding-assistant") == NULL);
@@ -1653,7 +1671,7 @@ static void assistant_input_keyboard_activate(GApplication *application, gpointe
       gn_secure_entry_set_text(GN_SECURE_ENTRY(input), "Keyboard passphrase");
     }
     if (ADW_IS_ENTRY_ROW(input)) {
-      gtk_editable_set_text(GTK_EDITABLE(input), "Keyboard Identity");
+      if (mode < 2) gtk_editable_set_text(GTK_EDITABLE(input), "Keyboard Identity");
       g_assert_true(adw_entry_row_get_activates_default(ADW_ENTRY_ROW(input)));
     } else if (GTK_IS_ENTRY(input)) g_assert_true(gtk_entry_get_activates_default(GTK_ENTRY(input)));
     g_assert_true(gtk_widget_is_sensitive(setup_child(setup, "btn_next")));
@@ -1891,6 +1909,16 @@ int main(int argc, char **argv) {
   nostrc_test_bus_tolerate_ebadf(); NostrcTestBus *bus = nostrc_test_bus_new(NOSTRC_TEST_BUS_FLAGS_NONE); nostrc_test_bus_up(bus); server = nostrc_test_bus_connect(bus);
   if (!gtk_init_check()) { nostrc_test_bus_down(bus); g_print("1..0 # SKIP GTK display unavailable\n"); return 77; }
   adw_init();
+  /* Resolve the shipped app icon even in an uninstalled container build. */
+  g_autofree gchar *data_dir = g_path_get_dirname(G10_CONTROL_XML);
+  g_autofree gchar *icons = g_build_filename(data_dir, "icons", NULL);
+  GtkIconTheme *theme = gtk_icon_theme_get_for_display(gdk_display_get_default());
+  gtk_icon_theme_add_search_path(theme, icons);
+  g_assert_true(gtk_icon_theme_has_icon(theme, "org.nostr.Grotto"));
+  g_autoptr(GtkIconPaintable) icon = gtk_icon_theme_lookup_icon(theme, "org.nostr.Grotto", NULL, 128, 1, GTK_TEXT_DIR_LTR, 0);
+  g_assert_nonnull(gtk_icon_paintable_get_file(icon));
+  g_autofree gchar *icon_file = g_file_get_basename(gtk_icon_paintable_get_file(icon));
+  g_assert_cmpstr(icon_file, ==, "org.nostr.Grotto.png");
   gpointer panel_class = g_type_class_ref(GROTTO_TYPE_IDENTITY_PANEL); g_type_class_unref(panel_class);
   bindtextdomain("grotto-panels", G10_TEST_LOCALE_DIR); bind_textdomain_codeset("grotto-panels", "UTF-8");
   if (language) {

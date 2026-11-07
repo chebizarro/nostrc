@@ -65,7 +65,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             <child>
               <object class="AdwNavigationPage">
                 <property name="tag">choice</property>
-                <property name="title" translatable="yes">Add an Identity</property>
+                <property name="title" translatable="yes">Add Identity</property>
                 <child>
                   <object class="AdwToolbarView">
                     <child type="top">
@@ -80,7 +80,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                           <object class="AdwPreferencesGroup">
                             <child>
                               <object class="AdwActionRow" id="choose_create">
-                                <property name="title" translatable="yes">Create an Identity</property>
+                                <property name="title" translatable="yes">Create Identity</property>
                                 <property name="subtitle" translatable="yes">Start with a new identity</property>
                                 <property name="activatable">true</property>
                                 <child type="suffix">
@@ -92,7 +92,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                             </child>
                             <child>
                               <object class="AdwActionRow" id="choose_import">
-                                <property name="title" translatable="yes">Import an Identity</property>
+                                <property name="title" translatable="yes">Import Identity</property>
                                 <property name="subtitle" translatable="yes">Use a key or recovery phrase you already have</property>
                                 <property name="activatable">true</property>
                                 <child type="suffix">
@@ -104,7 +104,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                             </child>
                             <child>
                               <object class="AdwActionRow" id="choose_connect">
-                                <property name="title" translatable="yes">Connect an App</property>
+                                <property name="title" translatable="yes">Connect App</property>
                                 <property name="subtitle" translatable="yes">Use an identity already on this device</property>
                                 <property name="activatable">true</property>
                                 <child type="suffix">
@@ -125,7 +125,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             <child>
               <object class="AdwNavigationPage">
                 <property name="tag">create</property>
-                <property name="title" translatable="yes">Create an Identity</property>
+                <property name="title" translatable="yes">Create Identity</property>
                 <child>
                   <object class="AdwToolbarView">
                     <child type="top">
@@ -156,7 +156,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             <child>
               <object class="AdwNavigationPage">
                 <property name="tag">import</property>
-                <property name="title" translatable="yes">Import an Identity</property>
+                <property name="title" translatable="yes">Import Identity</property>
                 <child>
                   <object class="AdwToolbarView">
                     <child type="top">
@@ -177,33 +177,10 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                               </object>
                             </child>
                             <child>
-                              <object class="AdwPreferencesRow">
-                                <child>
-                                  <object class="GtkBox">
-                                    <property name="orientation">1</property>
-                                    <property name="spacing">6</property>
-                                    <property name="margin-start">12</property>
-                                    <property name="margin-end">12</property>
-                                    <property name="margin-top">12</property>
-                                    <property name="margin-bottom">12</property>
-                                    <child>
-                                      <object class="GtkLabel">
-                                        <property name="label" translatable="yes">Key or Recovery Phrase</property>
-                                        <property name="xalign">0</property>
-                                      </object>
-                                    </child>
-                                    <child>
-                                      <object class="GtkEntry" id="text_import_data">
-                                        <property name="visibility">false</property>
-                                        <property name="enable-undo">false</property>
-                                        <property name="activates-default">true</property>
-                                        <accessibility>
-                                          <property name="label" translatable="yes">Key or Recovery Phrase</property>
-                                        </accessibility>
-                                      </object>
-                                    </child>
-                                  </object>
-                                </child>
+                              <object class="AdwPasswordEntryRow" id="text_import_data">
+                                <property name="title" translatable="yes">Key or Recovery Phrase</property>
+                                <property name="enable-undo">false</property>
+                                <property name="activates-default">true</property>
                               </object>
                             </child>
                           </object>
@@ -233,7 +210,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             <child>
               <object class="AdwNavigationPage">
                 <property name="tag">connect</property>
-                <property name="title" translatable="yes">Connect an App</property>
+                <property name="title" translatable="yes">Connect App</property>
                 <child>
                   <object class="AdwToolbarView">
                     <child type="top">
@@ -245,7 +222,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     <child>
                       <object class="AdwStatusPage">
                         <property name="icon-name">application-x-addon-symbolic</property>
-                        <property name="title" translatable="yes">Connect an App</property>
+                        <property name="title" translatable="yes">Connect App</property>
                         <property name="description" translatable="yes">Apps on this device ask for permission when they first use Grotto. For an app on another device, open Connected Apps to pair it.</property>
                         <property name="child">
                           <object class="GtkBox" id="connect_actions">
@@ -255,7 +232,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                               <object class="AdwPreferencesGroup">
                                 <child>
                                   <object class="AdwActionRow" id="connect_create">
-                                    <property name="title" translatable="yes">Create an Identity</property>
+                                    <property name="title" translatable="yes">Create Identity</property>
                                     <property name="subtitle" translatable="yes">If you don't have one on this device yet</property>
                                     <property name="activatable">true</property>
                                     <child type="suffix">
@@ -267,7 +244,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                 </child>
                                 <child>
                                   <object class="AdwActionRow" id="connect_import">
-                                    <property name="title" translatable="yes">Import an Identity</property>
+                                    <property name="title" translatable="yes">Import Identity</property>
                                     <property name="activatable">true</property>
                                     <child type="suffix">
                                       <object class="GtkImage">
@@ -289,7 +266,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             <child>
               <object class="AdwNavigationPage">
                 <property name="tag">test</property>
-                <property name="title" translatable="yes">Check Your Identity</property>
+                <property name="title" translatable="yes">Check Identity</property>
                 <child>
                   <object class="AdwToolbarView">
                     <child type="top">
