@@ -60,7 +60,7 @@ if not fs.is_file(publish_link_export)
   error('Required CMake publish link export missing: ' + publish_link_export +
     '; configure and build the nostr-publish target first')
 endif
-profile_deps = [dependency(publish_link_export, method: 'pkg-config'), dependency('libsoup-3.0')]
+profile_deps = [dependency(publish_link_export, method: 'pkg-config'), dependency('libsoup-3.0'), dependency('libcrypto')]
 nostr_gobject_link_dir = cmake_build_dir / 'nostr-gobject'
 if cmake_configuration != ''
   nostr_gobject_link_dir = nostr_gobject_link_dir / cmake_configuration

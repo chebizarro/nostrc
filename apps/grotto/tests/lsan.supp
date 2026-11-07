@@ -1,5 +1,6 @@
-# Linux ASAN GUI workers only: signer/approval-integration and signer/onboarding.
-# detect_leaks=1 stays on. Never load this in controller/private-bus suites.
+# Linux ASAN GUI workers only: approval-integration, onboarding, and the
+# controller's separate presentation child (never its private-bus coordinator).
+# detect_leaks=1 stays on; no application/fixture allocations are exempt.
 # No module, allocator, GObject, GVariant or wildcard suppressions.
 # Matching Ubuntu debug symbols are required (also for inlined/static frames).
 # Source proof, build IDs and counterfactual checks: G12 release-readiness report.

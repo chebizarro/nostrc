@@ -13,6 +13,7 @@
 #include <glib/gi18n.h>
 #include <glib/gstdio.h>
 #include <string.h>
+#include <openssl/crypto.h>
 
 #define IMAGE_LIMIT (5 * 1024 * 1024)
 #define IMAGE_PIXELS (24 * 1024 * 1024)
@@ -106,7 +107,8 @@ static void cache_write(Job *j, guint kind, const char *json) {
     else if (current == incoming) {
       NostrEvent *a = nostr_event_new(), *b = nostr_event_new();
       nostr_event_deserialize(a, json); nostr_event_deserialize(b, previous);
-      if (strcmp(nostr_event_get_id(b), nostr_event_get_id(a)) <= 0) write = FALSE;
+      g_autofree char *a_id = nostr_event_get_id(a), *b_id = nostr_event_get_id(b);
+      if (strcmp(b_id, a_id) <= 0) write = FALSE;
       nostr_event_free(a); nostr_event_free(b);
     }
   }
@@ -222,11 +224,11 @@ static char *sign_event(gpointer data, const char *unsigned_json, GCancellable *
     return NULL;
   }
   char *json = NULL; g_variant_get(reply, "(s)", &json);
-  NostrEvent *input = nostr_event_new(), *output = nostr_event_new(); char id[65];
+  NostrEvent *input = nostr_event_new(), *output = nostr_event_new(); char id[65], signed_id[65];
   gboolean valid = nostr_event_deserialize(input, unsigned_json) == 0 && nostr_event_compute_id(input, id) == NOSTR_EVENT_VALIDATION_OK &&
     nostr_event_deserialize_signed(output, json, NULL) == NOSTR_EVENT_VALIDATION_OK &&
-    nostr_event_validate(output, NULL) == NOSTR_EVENT_VALIDATION_OK &&
-    !g_strcmp0(id, nostr_event_get_id(output)) && !g_strcmp0(nostr_event_get_pubkey(output), j->hex);
+    nostr_event_validate(output, signed_id) == NOSTR_EVENT_VALIDATION_OK &&
+    !g_strcmp0(id, signed_id) && !g_strcmp0(nostr_event_get_pubkey(output), j->hex);
   nostr_event_free(input); nostr_event_free(output);
   if (!valid) { g_free(json); g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "Signer returned a different or invalid event"); return NULL; }
   return json;
@@ -339,7 +341,7 @@ static void fetch_frame(NostrPublishTransport *transport, const char *hint, cons
       return;
     }
     NostrEvent *auth = nostr_event_new(); nostr_event_deserialize(auth, signed_json);
-    f->auth_id = g_strdup(nostr_event_get_id(auth)); nostr_event_free(auth); f->auth_wait = TRUE; f->auth_deadline = g_get_monotonic_time() + 15 * G_USEC_PER_SEC;
+    f->auth_id = nostr_event_get_id(auth); nostr_event_free(auth); f->auth_wait = TRUE; f->auth_deadline = g_get_monotonic_time() + 15 * G_USEC_PER_SEC;
     g_autofree char *frame = g_strdup_printf("[\"AUTH\",%s]", signed_json); nostr_publish_transport_send_frame(transport, frame, NULL); return;
   }
   if (!strcmp(kind, "OK") && f->auth_wait && !g_strcmp0(id, f->auth_id) && n >= 3) {
@@ -380,7 +382,8 @@ static void fetch_frame(NostrPublishTransport *transport, const char *hint, cons
       gboolean replace = !f->events[i] || timestamp > old;
       if (f->events[i] && timestamp == old) {
         NostrEvent *previous = nostr_event_new(); nostr_event_deserialize(previous, f->events[i]);
-        replace = strcmp(string(json_node_get_object(json_array_get_element(a, 2)), "id"), nostr_event_get_id(previous)) < 0;
+        g_autofree char *previous_id = nostr_event_get_id(previous);
+        replace = strcmp(string(json_node_get_object(json_array_get_element(a, 2)), "id"), previous_id) < 0;
         nostr_event_free(previous);
       }
       if (replace) { g_free(f->events[i]); f->events[i] = g_strdup(event); }
@@ -463,7 +466,7 @@ static GPtrArray *open_publish(Job *j, NostrPublishSigner *signer, NostrPublishe
     if (!endpoint(urls[i], TRUE)) continue;
     Fetch *f = g_new0(Fetch, 1); f->job = j; f->signer = signer; f->publisher = publisher;
     f->required_auth = probe_relay(j, urls[i]);
-    f->signed_json = json; f->event_id = g_strdup(nostr_event_get_id(event)); f->transport = nostr_publish_transport_new_websocket(urls[i]);
+    f->signed_json = json; f->event_id = nostr_event_get_id(event); f->transport = nostr_publish_transport_new_websocket(urls[i]);
     g_ptr_array_add(connections, f);
     nostr_publish_transport_set_listener(f->transport, fetch_frame, f); nostr_publish_transport_set_state_callback(f->transport, fetch_state, f);
     g_autoptr(GSource) timer = g_timeout_source_new_seconds(15); g_source_set_callback(timer, deadline, f, NULL); g_source_attach(timer, g_main_context_get_thread_default());
@@ -842,11 +845,13 @@ static void worker(GTask *task, gpointer source, gpointer data, GCancellable *ca
       if (!g_cancellable_is_cancelled(cancel)) j->notify = grotto_profile_info_copy(cached);
       for (guint i = 0; i < G_N_ELEMENTS(kinds); i++) g_free(events[i]);
       g_main_context_pop_thread_default(context);
+      OPENSSL_thread_stop();
       g_task_return_pointer(task, cached, (GDestroyNotify)grotto_profile_info_free); return;
     }
     if (j->action == GROTTO_PROFILE_FETCH_CACHED || j->images_only) {
       for (guint i = 0; i < G_N_ELEMENTS(kinds); i++) g_free(events[i]);
       g_main_context_pop_thread_default(context);
+      OPENSSL_thread_stop();
       g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_NOT_FOUND, _("No cached profile")); return;
     }
   }
@@ -907,6 +912,9 @@ static void worker(GTask *task, gpointer source, gpointer data, GCancellable *ca
   for (guint i = 0; i < G_N_ELEMENTS(kinds); i++) g_free(events[i]);
   if (j->bus) g_dbus_connection_close_sync(j->bus, NULL, NULL);
   g_main_context_pop_thread_default(context);
+  /* GTask pool threads outlive their jobs. Release OpenSSL's per-thread error
+   * queue before completion can let the owner exit and run process cleanup. */
+  OPENSSL_thread_stop();
   if (result) { if (metadata) j->notify = grotto_profile_info_copy(result); g_task_return_pointer(task, result, (GDestroyNotify)grotto_profile_info_free); }
   else if (error) g_task_return_error(task, g_steal_pointer(&error));
   else g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED, "Profile operation failed");
@@ -921,6 +929,7 @@ static void preview_worker(GTask *task, gpointer source, gpointer data, GCancell
     j->destinations = tag_urls(server_event, "server", FALSE);
     if (!j->destinations[0]) g_set_error_literal(&error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND, _("No verified Blossom server list found. Refresh your profile after setting up Media Servers in Nostr Settings"));
   }
+  OPENSSL_thread_stop();
   if (!error) g_task_return_boolean(task, TRUE); else g_task_return_error(task, g_steal_pointer(&error));
 }
 static void preview_answer(GObject *source, GAsyncResult *result, gpointer data) {

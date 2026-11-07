@@ -1122,6 +1122,7 @@ static void resolved(Request *r) {
   if (r->no_approval_ui || s->no_approval_ui) {
     finish(r, SIGNER_REQUEST_FAILED, ORG_NOSTR_SIGNER_ERR_NO_APPROVER, "approval UI disabled"); return;
   }
+  g_free(r->join_key);
   r->join_key = join_key(r);
   GHashTableIter it; gpointer value;
   g_hash_table_iter_init(&it, s->requests);
