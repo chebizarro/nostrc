@@ -8,7 +8,7 @@ ARG MESON_VERSION
 ARG SIGNET_PASSKEYS=OFF
 RUN case "$SIGNET_PASSKEYS" in ON|OFF) ;; *) exit 1;; esac \
  && apt-get update && apt-get install -y --no-install-recommends \
-    build-essential ninja-build pkg-config python3-pip python3-venv python3-jsonschema git \
+    build-essential ninja-build pkg-config python3-pip python3-venv python3-jsonschema python3-yaml git \
     libglib2.0-dev libjson-glib-dev libjansson-dev libssl-dev \
     libsqlite3-dev libsqlcipher-dev libsodium-dev libmicrohttpd-dev \
     libsecp256k1-dev libcurl4-openssl-dev libwebsockets-dev libnsync-dev \

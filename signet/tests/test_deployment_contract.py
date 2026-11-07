@@ -21,6 +21,14 @@ try:
 except RuntimeError as error:
     print(f'deployment_contract: missing capability: {error}', file=sys.stderr)
     sys.exit(1)
+try:
+    import yaml
+except ModuleNotFoundError as error:
+    if error.name != 'yaml':
+        raise
+    print('deployment_contract: missing capability: missing python3 module yaml; '
+          'install python3-yaml or pip install PyYAML', file=sys.stderr)
+    sys.exit(1)
 COMPOSE = '--compose' in sys.argv
 if COMPOSE:
     sys.argv.remove('--compose')
@@ -40,6 +48,17 @@ class DeploymentContracts(unittest.TestCase):
         self.assertEqual(result.stderr, 'deployment_contract: missing capability: '
                          'missing python3 module jsonschema; '
                          'install python3-jsonschema or pip install jsonschema\n')
+
+    def test_deployment_capability_failure_without_yaml(self):
+        result = subprocess.run(
+            [sys.executable, '-c',
+             'import runpy, sys; sys.modules["yaml"] = None; '
+             'runpy.run_path(sys.argv[1], run_name="__main__")',
+             str(Path(__file__).resolve())], text=True, capture_output=True)
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stderr, 'deployment_contract: missing capability: '
+                         'missing python3 module yaml; '
+                         'install python3-yaml or pip install PyYAML\n')
 
     def test_missing_jsonschema_refused(self):
         with patch.dict(sys.modules, {'jsonschema': None}):
@@ -175,8 +194,6 @@ class DeploymentContracts(unittest.TestCase):
         self.assertNotIn('/health', c)
 
     def test_compose_source_bind_mounts(self):
-        import yaml
-
         paths = [ROOT / 'signet/docker-compose.yml', *sorted(DEPLOY.glob('compose.*.yml'))]
         for path in paths:
             config = yaml.safe_load(path.read_text())

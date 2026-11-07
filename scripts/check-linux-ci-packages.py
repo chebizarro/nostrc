@@ -31,7 +31,6 @@ MIRRORED = (
 )
 NOT_BUILD_DEPS = {
     "cloud-init": "signet-ci validates deployment cloud-init schema; not a build dependency",
-    "python3-yaml": "signet-ci deployment tooling parses/renders cloud-init YAML; not a build dependency",
     "shellcheck": "signet-ci lints deployment scripts; not a build dependency",
     "wget": "gnostr-appimage downloads appimagetool",
     "file": "gnostr-appimage inspects the bundle",
