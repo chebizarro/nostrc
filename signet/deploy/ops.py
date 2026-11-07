@@ -387,7 +387,7 @@ def release(args):
     run(['systemctl', 'start', 'signet-compose.service'])
     # Daemon startup is not relay catch-up. Wait on readiness with a bounded
     # health probe, never restart/re-pair just because a relay is unavailable.
-    deadline = time.monotonic() + 120
+    deadline = time.monotonic() + 180
     while True:
         try:
             health(q, n, f)

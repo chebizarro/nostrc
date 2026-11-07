@@ -304,8 +304,12 @@ Install and bind the candidate bundle; do not change `current` by hand. Run
 inspects the candidate first, validates config, stops the daemon, makes a protected
 pre-upgrade backup, records the schema, switches the symlink, enforces the stopped
 interval, starts and checks health/readiness/digest, then records the new schema.
-A failed pull changes nothing. A failed later step stays failed and preserves
-artifacts; there is no automatic state rollback. Complete acceptance with signed
+A failed pull changes nothing. After start, readiness has a bounded 180-second
+budget, separate from the 270-second stopped interval; live two-relay startup
+has taken 137 seconds while an unavailable relay's NIP-11 lookup completed.
+A readiness timeout remains a failed operation, even if the daemon becomes ready
+later. A failed later step stays failed and preserves artifacts; there is no
+automatic state rollback. Complete acceptance with signed
 management and the existing reference client from the workstation.
 
 For an explicitly approved unpublished-image drill, use `release.sh upgrade
