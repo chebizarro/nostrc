@@ -141,7 +141,49 @@ static void test_concurrent_duplicate(void) {
   nostr_relay_free(relay);
   result_clear(&a);
 }
+static void test_queued_auth_secret_teardown(gboolean reconfigure) {
+  SignetRelayPoolConfig cfg = {.auth_sk_hex =
+    "0000000000000000000000000000000000000000000000000000000000000001"};
+  SignetRelayPool *rp = signet_relay_pool_new(&cfg);
+  NostrRelay *relay = relay_new();
+  signet_relay_pool_watch_auth_ok(rp, relay, ID_C, NULL);
+  NostrEnvelope *env = nostr_envelope_parse("[\"AUTH\",\"queued-secret-lifetime-fixture\"]");
+  CHECK(env);
+  nostr_relay_dispatch_control_envelope(relay, env);
+  nostr_envelope_free(env);
+  /* Do not dispatch the default context: stop must cancel and destroy the
+   * secret-bearing AUTH source itself, including its copied signing key. */
+  if (reconfigure) {
+    const char *replacement[] = {"ws://127.0.0.1:1"};
+    CHECK(!signet_relay_pool_set_relays(rp, replacement, 1));
+  }
+  signet_relay_pool_free(rp);
+  while (g_main_context_iteration(NULL, FALSE)) {}
+  nostr_relay_free(relay);
+}
+
+static void stop_from_callback(const char *id, bool accepted, const char *reason, void *data) {
+  (void)id; (void)accepted; (void)reason;
+  signet_relay_pool_stop(data); /* must not wait for this callback's own ref */
+}
+static void test_callback_stop(void) {
+  SignetRelayPool *rp = pool_new();
+  NostrRelay *relay = relay_new();
+  Result pending; result_init(&pending);
+  signet_relay_pool_watch_publish_ok(rp, relay, ID_A, stop_from_callback, rp);
+  signet_relay_pool_watch_publish_ok(rp, relay, ID_B, outcome, &pending);
+  deliver(relay, ID_A, true);
+  while (g_main_context_iteration(NULL, FALSE)) {}
+  CHECK(pending.calls == 1 && pending.aborted);
+  signet_relay_pool_free(rp);
+  nostr_relay_free(relay);
+  result_clear(&pending);
+}
+
 int main(void) {
+  test_callback_stop();
+  test_queued_auth_secret_teardown(FALSE);
+  test_queued_auth_secret_teardown(TRUE);
   test_overlap_and_once();
   test_generation_and_abort();
   test_concurrent_duplicate();
