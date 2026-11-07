@@ -1,0 +1,1692 @@
+Signet W4 disposable drill receipts — UTC 2026-11-07
+Selected actual outputs, not a reconstructed complete shell transcript.
+Secret-bearing values removed; see review for command prefixes and limitations.
+
+===== preflight-missing-volume.log =====
+2026-11-07T06:16:12Z
+signet deployment refused: Command '['findmnt', '--json', '--mountpoint', '/srv/signet', '-o', 'TARGET,SOURCE,UUID,FSTYPE']' returned non-zero exit status 1.
+preflight_exit=1
+NO_ROOT_STATE
+NO_ROOT_BACKUPS
+
+===== preflight-wrong-uuid.log =====
+2026-11-07T06:20:06Z
+signet deployment refused: wrong volume UUID/type
+preflight_exit=1
+
+===== preflight-start.log =====
+2026-11-07T06:22:25Z
+PREFLIGHT_CORRECT_PASS
+signet deployment refused: [Errno 2] No such file or directory: '/opt/signet/secrets/db.key'
+missing /opt/signet/secrets/db.key preflight_exit=1
+signet deployment refused: [Errno 2] No such file or directory: '/opt/signet/config/signet.conf'
+missing /opt/signet/config/signet.conf preflight_exit=1
+Created symlink /etc/systemd/system/multi-user.target.wants/signet-compose.service → /etc/systemd/system/signet-compose.service.
+active
+
+===== custody-mount.log =====
+0:0 700 /opt/signet/secrets
+10001:10001 400 /opt/signet/secrets/db.key
+10001:10001 400 /opt/signet/secrets/bunker.nsec
+10001:10001 400 /opt/signet/secrets/backup.key
+TARGET      SOURCE   FSTYPE OPTIONS
+/srv/signet /dev/sda ext4   rw,nosuid,nodev,relatime
+
+===== host-hardening.log =====
+2026-11-07T06:23:43Z
+{"status":"error","timestamp":1794032623,"uptime_seconds":74,"components":{"db":"closed","relays":0,"agents_active":0,"cache_entries":0,"key_store":"unavailable"}}{"ready":false,"detail":{"provisioner_writeback_failed":false}}# HELP signet_provisioner_writeback_failures_total Failed provisioner config writes.
+# TYPE signet_provisioner_writeback_failures_total counter
+signet_provisioner_writeback_failures_total 0
+# HELP signet_up Whether signet is up.
+# TYPE signet_up gauge
+signet_up 1
+# HELP signet_uptime_seconds Daemon uptime.
+# TYPE signet_uptime_seconds gauge
+signet_uptime_seconds 74
+# HELP signet_bootstrap_total Bootstrap attempts.
+# TYPE signet_bootstrap_total counter
+signet_bootstrap_total 0
+# HELP signet_auth_total Auth attempts by result.
+# TYPE signet_auth_total counter
+signet_auth_total{result="ok"} 0
+signet_auth_total{result="denied"} 0
+signet_auth_total{result="error"} 0
+# HELP signet_sign_total Signing operations.
+# TYPE signet_sign_total counter
+signet_sign_total 0
+# HELP signet_nip46_reply_ack_total NIP-46 reply publication outcomes per relay.
+# TYPE signet_nip46_reply_ack_total counter
+signet_nip46_reply_ack_total{result="accept"} 0
+signet_nip46_reply_ack_total{result="reject"} 0
+signet_nip46_reply_ack_total{result="timeout"} 0
+signet_nip46_reply_ack_total{result="transport-aborted"} 0
+# HELP signet_revoke_total Revocations.
+# TYPE signet_revoke_total counter
+signet_revoke_total 0
+# HELP signet_connection_denied_total Connections denied at transport limits.
+# TYPE signet_connection_denied_total counter
+signet_connection_denied_total{transport="nip5l"} 0
+signet_connection_denied_total{transport="ssh_agent"} 0
+# HELP signet_fleet_sync_last_timestamp Fleet sync time.
+# TYPE signet_fleet_sync_last_timestamp gauge
+State  Recv-Q Send-Q Local Address:Port Peer Address:PortProcess
+LISTEN 0      4096       127.0.0.1:8080      0.0.0.0:*    users:(("signetd",pid=12605,fd=10))
+LISTEN 0      4096      127.0.0.54:53        0.0.0.0:*    users:(("systemd-resolve",pid=686,fd=17))
+LISTEN 0      4096   127.0.0.53%lo:53        0.0.0.0:*    users:(("systemd-resolve",pid=686,fd=15))
+LISTEN 0      4096         0.0.0.0:22        0.0.0.0:*    users:(("sshd",pid=1352,fd=3),("systemd",pid=1,fd=116))
+LISTEN 0      4096            [::]:22           [::]:*    users:(("sshd",pid=1352,fd=4),("systemd",pid=1,fd=117))
+Uid:	10001	10001	10001	10001
+VmLck:	  629280 kB
+CapInh:	0000000000000000
+CapPrm:	0000000000000000
+CapEff:	0000000000000000
+CapBnd:	0000000000000000
+CapAmb:	0000000000000000
+NoNewPrivs:	1
+Max core file size        0                    0                    bytes
+Max locked memory         unlimited            unlimited            bytes
+["SIGNET_BUNKER_NSEC_FILE=/run/secrets/signet_bunker_nsec","SIGNET_REQUIRE_ENCRYPTED_DB=true","SIGNET_DB_KEY_FILE=/run/secrets/signet_db_key","PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"]
+
+===== offhost-ports.log =====
+2026-11-07T06:22:59.924990+00:00
+159.203.99.21:8080 unreachable: TimeoutError
+159.203.99.21:9487 unreachable: TimeoutError
+
+===== backup-service.log =====
+Result=success
+ExecMainStatus=0
+Nov 07 06:24:57 signet-drill-primary systemd[1]: Starting signet-backup.service - Signet online encrypted backup to Spaces...
+Nov 07 06:24:59 signet-drill-primary backup.sh[13261]: signetctl: encrypted backup written to '/backups/20261107T062457Z-819f1098/store.db'.
+Nov 07 06:24:59 signet-drill-primary backup.sh[13261]:   It contains current AND archived secrets (envelope-encrypted;
+Nov 07 06:24:59 signet-drill-primary backup.sh[13261]:   payloads additionally require the master key on restore).
+Nov 07 06:25:05 signet-drill-primary systemd[1]: signet-backup.service: Deactivated successfully.
+Nov 07 06:25:05 signet-drill-primary systemd[1]: Finished signet-backup.service - Signet online encrypted backup to Spaces.
+Nov 07 06:25:05 signet-drill-primary systemd[1]: signet-backup.service: Consumed 5.971s CPU time.
+
+===== restore-cloud-init.log =====
+Warning: Permanently added '104.131.179.166' (ED25519) to the list of known hosts.
+...........................................................................................................................................................................................................................................................................................................................status: done
+extended_status: done
+boot_status_code: enabled-by-generator
+last_update: Thu, 01 Jan 1970 00:03:18 +0000
+detail: DataSourceConfigDrive [net,ver=2][source=/dev/vdb]
+errors: []
+recoverable_errors: {}
+aws-cli/1.46.3 Python/3.12.3 Linux/6.8.0-147-generic botocore/1.43.62
+[["driver-type","io.containerd.snapshotter.v1"]]
+TARGET      SOURCE   FSTYPE OPTIONS
+/srv/signet /dev/sda ext4   rw,nosuid,nodev,relatime,discard
+
+===== restore-store.log =====
+2026-11-07T06:36:05Z
+inactive
+Allowlisted configuration restored; new host volume identity manifest retained
+signetctl: restored '/data/signet.db' from backup '/backups/from-spaces/store.db'.
+  The previous database (if any) was kept at '/data/signet.db.pre-restore'.
+
+===== restore-verify.log =====
+2026-11-07T06:36:40Z
+Audit log integrity: OK
+Total entries: 0
+AGENT_ID                 PROVENANCE  PUBKEY                                                           STATUS        CREATED_AT
+
+Total: 0 agents, 0 failed verification
+RESTORE_VERIFIED_NOT_STARTED_PRIMARY_STILL_RUNNING
+2026-11-07T06:36:42Z
+
+===== entrypoint-faults.log =====
+CASE=wrong-key
+2026-11-07T06:37:22Z
+** Message: 06:37:23.202: [signetd] mlockall(MCL_CURRENT|MCL_FUTURE) OK ? all pages locked
+
+** (process:1): CRITICAL **: 06:37:23.361: [signet] keyed read failed for '/data/signet.db': file is encrypted or is not a database (wrong SIGNET_DB_KEY or database locked?). Refusing to open.
+signetd: persistent encrypted key store unavailable
+daemon_exit=1
+ORIGINAL_ENCRYPTED_DB_UNCHANGED
+CASE=missing-key
+2026-11-07T06:37:23Z
+** Message: 06:37:23.915: [signetd] mlockall(MCL_CURRENT|MCL_FUTURE) OK ? all pages locked
+signet: invalid protected file for SIGNET_DB_KEY_FILE
+signetd: required database key or path unavailable
+daemon_exit=1
+ORIGINAL_ENCRYPTED_DB_UNCHANGED
+CASE=missing-config
+2026-11-07T06:37:24Z
+** Message: 06:37:24.418: [signetd] mlockall(MCL_CURRENT|MCL_FUTURE) OK ? all pages locked
+signet: cannot load config '/etc/signet/absent.conf' (unreadable file)
+signetd: failed to load config
+daemon_exit=1
+ORIGINAL_ENCRYPTED_DB_UNCHANGED
+
+===== idle-15min.log =====
+{"start_utc": "2026-11-07T06:24:30.165800+00:00", "pid": 12605, "ticks": 50, "starttime": 77757, "hz": 100}
+top - 06:24:30 up 14 min,  2 users,  load average: 0.11, 0.23, 0.25
+Tasks:   1 total,   0 running,   1 sleeping,   0 stopped,   0 zombie
+%Cpu(s):  0.0 us, 10.0 sy,  0.0 ni, 90.0 id,  0.0 wa,  0.0 hi,  0.0 si,  0.0 st
+MiB Mem :   1968.0 total,    140.1 free,    543.1 used,   1501.3 buff/cache
+MiB Swap:      0.0 total,      0.0 free,      0.0 used.   1424.8 avail Mem
+
+    PID USER      PR  NI    VIRT    RES    SHR S  %CPU  %MEM     TIME+ COMMAND
+  12605 signet    20   0  629316 107284  27396 S   0.0   5.3   0:00.50 signetd
+{"end_utc": "2026-11-07T06:39:30.387325+00:00", "pid": 12605, "elapsed_seconds": 900.22152334, "tick_delta": 568, "cpu_percent_one_core": 0.6309558095129826}
+top - 06:39:30 up 29 min,  2 users,  load average: 0.04, 0.07, 0.12
+Tasks:   1 total,   0 running,   1 sleeping,   0 stopped,   0 zombie
+%Cpu(s):  0.0 us, 10.0 sy,  0.0 ni, 90.0 id,  0.0 wa,  0.0 hi,  0.0 si,  0.0 st
+MiB Mem :   1968.0 total,    204.1 free,    582.1 used,   1397.4 buff/cache
+MiB Swap:      0.0 total,      0.0 free,      0.0 used.   1385.9 avail Mem
+
+    PID USER      PR  NI    VIRT    RES    SHR S  %CPU  %MEM     TIME+ COMMAND
+  12605 signet    20   0  663720 141948  27396 S   0.0   7.0   0:06.18 signetd
+
+===== upgrade-unpublished-refusal.log =====
+ signetd Pulling
+ signetd Error pull access denied for signet-drill, repository does not exist or may require 'docker login'
+Error response from daemon: pull access denied for signet-drill, repository does not exist or may require 'docker login'
+signet deployment refused: Command '['docker', 'compose', '--project-name', 'signet', '--env-file', '/opt/signet/config/deploy.env', '--env-file', '/opt/signet/releases/4fbac4ea9c04088a8015cff8b2f173587300d8a8/release.env', '-f', '/opt/signet/releases/4fbac4ea9c04088a8015cff8b2f173587300d8a8/signet/docker-compose.yml', '--profile', 'ops', 'pull', 'signetd']' returned non-zero exit status 1.
+release_exit=1
+/opt/signet/releases/7f2aeaecde6dc271d5a8d2754a708c95177652ba
+active
+
+===== upgrade-offline.log =====
+2026-11-07T06:40:15Z
+Offline upgrade: validating preloaded pinned images; no registry pull.
+signetctl: encrypted backup written to '/backups/20261107T064018Z-dc43c966/store.db'.
+  It contains current AND archived secrets (envelope-encrypted;
+  payloads additionally require the master key on restore).
+signet deployment refused: HTTP Error 503: Service Unavailable
+upgrade_exit=1
+2026-11-07T06:46:49Z
+/opt/signet/releases/4fbac4ea9c04088a8015cff8b2f173587300d8a8
+
+===== quarantine-refusal.log =====
+2026-11-07T06:41:26Z
+failed
+{
+  "boot_id": "7a0e75d3-a213-4d3f-9424-1cc8eb717b65",
+  "monotonic": 1846.192570476,
+  "service_result": "exit-code",
+  "wall_time": 1794033617.5395687
+}
+signet deployment refused: restart refused: 200s remain in stop quarantine
+quarantine_preflight_exit=1
+
+===== rollback-gates.log =====
+signet deployment refused: schema changed or post-upgrade inspection missing: image rollback refused
+incomplete_upgrade_image_rollback_exit=1
+signet deployment refused: state rollback requires explicit authorization-loss confirmation
+unconfirmed_state_rollback_exit=1
+/opt/signet/releases/4fbac4ea9c04088a8015cff8b2f173587300d8a8
+active
+
+===== state-rollback.log =====
+2026-11-07T06:50:06Z
+signetctl: restored '/data/signet.db' from backup '/backups/20261107T064018Z-dc43c966/store.db'.
+  The previous database (if any) was kept at '/data/signet.db.pre-restore'.
+Audit log integrity: OK
+Total entries: 3
+AGENT_ID                 PROVENANCE  PUBKEY                                                           STATUS        CREATED_AT
+
+Total: 0 agents, 0 failed verification
+Host checks passed. Run signed management + existing-client proof; no automatic rollback.
+confirmed_state_rollback_exit=0
+2026-11-07T06:56:56Z
+/opt/signet/releases/7f2aeaecde6dc271d5a8d2754a708c95177652ba
+
+===== upgrade-image-rollback.log =====
+BEGIN_CORRECTED_UPGRADE
+2026-11-07T06:58:19Z
+Offline upgrade: validating preloaded pinned images; no registry pull.
+signetctl: encrypted backup written to '/backups/20261107T065822Z-3b330961/store.db'.
+  It contains current AND archived secrets (envelope-encrypted;
+  payloads additionally require the master key on restore).
+Host checks passed. Run signed management + existing-client proof; no automatic rollback.
+{"source_commit": "4fbac4ea9c04088a8015cff8b2f173587300d8a8", "upgrade": {"after": {"schema_sha256": "52a50d7b752a6ab61f449de825b4c6c79d0555334f3ae6738fb3220acd4d9a28", "schema_version": 33}, "backup": "/srv/signet/backups/20261107T065822Z-3b330961", "before": {"schema_sha256": "52a50d7b752a6ab61f449de825b4c6c79d0555334f3ae6738fb3220acd4d9a28", "schema_version": 33}, "previous": "/opt/signet/releases/7f2aeaecde6dc271d5a8d2754a708c95177652ba"}}
+CORRECTED_UPGRADE_PASS
+2026-11-07T07:05:12Z
+BEGIN_IMAGE_ROLLBACK
+
+===== diagnostic-ready-boundary.log =====
+2026-11-07T07:13:24Z
+{"ready":true,"detail":{"provisioner_writeback_failed":false}}Nov 07 07:10:29 signet-drill-primary python3[23432]: signetd-1  | [RECONNECT] Connection lost to wss://relay.nostr.band, attempt 5, waiting 18692ms
+Nov 07 07:10:52 signet-drill-primary python3[23432]: signetd-1  | [RECONNECT] Connection lost to wss://relay.nostr.band, attempt 6, waiting 39696ms
+Nov 07 07:11:37 signet-drill-primary python3[23432]: signetd-1  | [RECONNECT] Connection lost to wss://relay.nostr.band, attempt 7, waiting 71049ms
+Nov 07 07:12:00 signet-drill-primary python3[23432]: signetd-1  | ** Message: 07:12:00.245: [signetd] NIP-11: wss://relay.nostr.band ? no information document available
+Nov 07 07:12:00 signet-drill-primary python3[23432]: signetd-1  | [simplepool] subscribe fire failed on wss://relay.nostr.band (will retry on connect): subscription or connection is NULL
+Nov 07 07:12:00 signet-drill-primary python3[23432]: signetd-1  | ** Message: 07:12:00.259: [signetd] subscribed to canonical management kinds on relay pool (p-tag=b8cf710a0293897a136cc7ce43b22a9d91313decdd3cd662f9d266896ce56a39)
+Nov 07 07:12:00 signet-drill-primary python3[23432]: signetd-1  | ** Message: 07:12:00.260: [signetd] entering event-driven main loop
+Nov 07 07:12:00 signet-drill-primary python3[23432]: signetd-1  | [simplepool] subscribe fire failed on wss://relay.nostr.band (will retry on connect): subscription or connection is NULL
+Nov 07 07:12:00 signet-drill-primary python3[23432]: signetd-1  | [RELAY_POOL] Subscription 1 received 3 events before EOSE
+Nov 07 07:12:00 signet-drill-primary python3[23432]: signetd-1  | [RELAY_POOL] Subscription 3 received 3 events before EOSE
+Nov 07 07:12:48 signet-drill-primary python3[23432]: signetd-1  | [simplepool] (re)subscribed on wss://relay.nostr.band
+Nov 07 07:12:53 signet-drill-primary python3[23432]: signetd-1  | [RECONNECT] Connection lost to wss://relay.nostr.band, attempt 8, waiting 112691ms
+
+===== diagnostic-status-nos.log =====
+[pool] cleanup worker thread started
+[pool] cleanup_worker: STARTED
+[pool] redial connected: wss://nos.lol
+DRILL_SUB url=wss://nos.lol state=CONNECTED client_state=0 subscribed=0 reason=
+[RELAY_POOL] Subscription 1 received 0 events before EOSE
+[RELAY_POOL] Subscription 2 received 0 events before EOSE
+DRILL_SUB url=wss://nos.lol state=EOSE client_state=1 subscribed=1 reason=
+DRILL_ACK id=0529f59d7de0348fc40b60a69f8f660b1a4604327ca81b7d1f5b5c25487208a7 accepted=1 reason=
+signetctl: operation deadline; mutation outcome is unknown, do not blindly retry
+[pool] shutting down cleanup worker...
+[pool] cleanup_worker: EXITING
+[pool] cleanup worker shutdown complete
+[pool] cancelling 0 registered subscriptions...
+[pool] subscription registry freed
+
+===== diagnostic-status-band.log =====
+[pool] cleanup worker thread started
+[pool] cleanup_worker: STARTED
+DRILL_SUB url=wss://relay.nostr.band state=DISCONNECTED client_state=0 subscribed=0 reason=
+DRILL_SUB url=wss://relay.nostr.band state=CONNECTED client_state=0 subscribed=0 reason=
+[pool] redial connected: wss://relay.nostr.band
+DRILL_SUB url=wss://relay.nostr.band state=DISCONNECTED client_state=1 subscribed=0 reason=
+[RECONNECT] Connection lost to wss://relay.nostr.band, attempt 1, waiting 1042ms
+signetctl: relay connection failed; mutation outcome may be unknown
+[pool] shutting down cleanup worker...
+[pool] cleanup_worker: EXITING
+[pool] cleanup worker shutdown complete
+[pool] cancelling 0 registered subscriptions...
+[pool] subscription registry freed
+
+===== relay-stored-nos.log =====
+{"query_time": 1794035931, "relay": "nos.lol", "filter": {"kinds": [24133, 25910, 1059], "#p": ["b8cf710a0293897a136cc7ce43b22a9d91313decdd3cd662f9d266896ce56a39"], "since": 1793859531}}
+{"frame": "EVENT", "id": "44c57ba6343d30e58a9318c2f01b765a1e7479cdc0e9ea08c690b3af7cd57fe4", "created_at": 1793966244, "kind": 1059, "tags": [["p", "b8cf710a0293897a136cc7ce43b22a9d91313decdd3cd662f9d266896ce56a39"]]}
+{"frame": "EVENT", "id": "1c902de6de1fe63173c500efb08026a58cbfbdc73fc4754a90940df14daea549", "created_at": 1793961149, "kind": 1059, "tags": [["p", "b8cf710a0293897a136cc7ce43b22a9d91313decdd3cd662f9d266896ce56a39"]]}
+{"frame": "EVENT", "id": "cac7c6c8064818dfc52e7184844c545a18f8db1fa28115e212baeb4da3c52969", "created_at": 1793914443, "kind": 1059, "tags": [["p", "b8cf710a0293897a136cc7ce43b22a9d91313decdd3cd662f9d266896ce56a39"]]}
+{"frame": "EVENT", "id": "0529f59d7de0348fc40b60a69f8f660b1a4604327ca81b7d1f5b5c25487208a7", "created_at": 1793897853, "kind": 1059, "tags": [["p", "b8cf710a0293897a136cc7ce43b22a9d91313decdd3cd662f9d266896ce56a39"]]}
+{"frame": "EVENT", "id": "d2fa6dee12fc45c83a09ca063bcb81d96133141d2500bcaf138e6ffd634e5e5b", "created_at": 1793880841, "kind": 1059, "tags": [["p", "b8cf710a0293897a136cc7ce43b22a9d91313decdd3cd662f9d266896ce56a39"]]}
+["EOSE", "w4diag-1794035931"]
+
+===== relay-stored-band.log =====
+{"query_time": 1794035802, "relay": "relay.nostr.band", "filter": {"kinds": [24133, 25910, 1059], "#p": ["b8cf710a0293897a136cc7ce43b22a9d91313decdd3cd662f9d266896ce56a39"], "since": 1793859402}}
+FAILED TimeoutError _ssl.c:1064: The handshake operation timed out
+
+===== decrypted-metadata.log =====
+{"id":"44c57ba6343d30e58a9318c2f01b765a1e7479cdc0e9ea08c690b3af7cd57fe4","outer_at":1793966244,"rumor_at":1794032922,"sender":"d6285cbe2abd0980cd38b6111424192224eb465f9e9988a579b773f1e765a6fb","method":"agent/get-status","decrypt_rc":0}
+{"id":"1c902de6de1fe63173c500efb08026a58cbfbdc73fc4754a90940df14daea549","outer_at":1793961149,"rumor_at":1794033570,"sender":"d6285cbe2abd0980cd38b6111424192224eb465f9e9988a579b773f1e765a6fb","method":"agent/provision","decrypt_rc":0}
+{"id":"cac7c6c8064818dfc52e7184844c545a18f8db1fa28115e212baeb4da3c52969","outer_at":1793914443,"rumor_at":1794035862,"sender":"937b4fcec1fe5ea6b744382290e550a6245ece03b9d8bd35afe7a5ee1737cb03","method":"agent/provision","decrypt_rc":0}
+{"id":"0529f59d7de0348fc40b60a69f8f660b1a4604327ca81b7d1f5b5c25487208a7","outer_at":1793897853,"rumor_at":1794035605,"sender":"d6285cbe2abd0980cd38b6111424192224eb465f9e9988a579b773f1e765a6fb","method":"agent/get-status","decrypt_rc":0}
+{"id":"d2fa6dee12fc45c83a09ca063bcb81d96133141d2500bcaf138e6ffd634e5e5b","outer_at":1793880841,"rumor_at":1794032830,"sender":"d6285cbe2abd0980cd38b6111424192224eb465f9e9988a579b773f1e765a6fb","method":"agent/get-status","decrypt_rc":0}
+
+===== diagnostic-chain-audit.log =====
+ts|operation|agent_id|detail
+1794032831|mgmt_history_dropped|78f8e53a3df8f0d4aa6ac6752833177a3c80c636cf7d1f6ffdebd9007d2c2323|{"decision":"deny","reason":"before_live_boundary"}
+1794032923|mgmt_history_dropped|9fb813094431818770b77211cacb855b6ca0e2bd33dfbb359a77cccf22b70b07|{"decision":"deny","reason":"before_live_boundary"}
+1794033572|mgmt_history_dropped|36d33b4304d096c64f20e8a021575a9b99ef0f4bc826a90f4edcc4ca02942e05|{"decision":"deny","reason":"before_live_boundary"}
+1794034615|mgmt_history_dropped|9fb813094431818770b77211cacb855b6ca0e2bd33dfbb359a77cccf22b70b07|{"decision":"deny","reason":"before_live_boundary"}
+1794034615|mgmt_history_dropped|36d33b4304d096c64f20e8a021575a9b99ef0f4bc826a90f4edcc4ca02942e05|{"decision":"deny","reason":"before_live_boundary"}
+1794034615|mgmt_history_dropped|78f8e53a3df8f0d4aa6ac6752833177a3c80c636cf7d1f6ffdebd9007d2c2323|{"decision":"deny","reason":"before_live_boundary"}
+1794035110|mgmt_history_dropped|9fb813094431818770b77211cacb855b6ca0e2bd33dfbb359a77cccf22b70b07|{"decision":"deny","reason":"before_live_boundary"}
+1794035110|mgmt_history_dropped|36d33b4304d096c64f20e8a021575a9b99ef0f4bc826a90f4edcc4ca02942e05|{"decision":"deny","reason":"before_live_boundary"}
+1794035110|mgmt_history_dropped|78f8e53a3df8f0d4aa6ac6752833177a3c80c636cf7d1f6ffdebd9007d2c2323|{"decision":"deny","reason":"before_live_boundary"}
+1794035520|mgmt_history_dropped|9fb813094431818770b77211cacb855b6ca0e2bd33dfbb359a77cccf22b70b07|{"decision":"deny","reason":"before_live_boundary"}
+1794035520|mgmt_history_dropped|36d33b4304d096c64f20e8a021575a9b99ef0f4bc826a90f4edcc4ca02942e05|{"decision":"deny","reason":"before_live_boundary"}
+1794035520|mgmt_history_dropped|78f8e53a3df8f0d4aa6ac6752833177a3c80c636cf7d1f6ffdebd9007d2c2323|{"decision":"deny","reason":"before_live_boundary"}
+1794035606|mgmt_history_dropped|1749e2881912070819e79802f7674696f6992091dea964e86ce322ba3c6d229c|{"decision":"deny","reason":"before_live_boundary"}
+1794035864|mgmt_history_dropped|2c6079c413747059f4462e6c64480b41b71ab36f334458d28b0b26c68003da1d|{"decision":"deny","reason":"before_live_boundary"}
+agents
+0
+
+===== second-provisioner-reload.log =====
+signet-signetd-1
+Sat Nov  7 07:17:37 UTC 2026
+Nov 07 07:17:37 signet-drill-primary python3[23432]: signetd-1  | ** Message: 07:17:37.974: [signetd] SIGHUP received ? reloading configuration
+Nov 07 07:17:37 signet-drill-primary python3[23432]: signetd-1  | ** Message: 07:17:37.983: [signetd] reload: provisioners reconciled (granted=1 revoked=0 unchanged=1 refused=0)
+Nov 07 07:17:37 signet-drill-primary python3[23432]: signetd-1  | ** Message: 07:17:37.989: [signetd] reload: provisioner set written back to /etc/signet/signet.conf (2 authorized)
+Nov 07 07:17:37 signet-drill-primary python3[23432]: signetd-1  | ** Message: 07:17:37.989: [signetd] policy store: loaded 0 identities from /data/policies.conf
+Nov 07 07:17:37 signet-drill-primary python3[23432]: signetd-1  | ** Message: 07:17:37.989: [signetd] reload: configuration applied (restart-only changes warned: 0)
+
+===== diagnostic-nos-only-reload.log =====
+Sat Nov  7 07:18:51 UTC 2026
+signet-signetd-1
+# HELP signet_provisioner_writeback_failures_total Failed provisioner config writes.
+# TYPE signet_provisioner_writeback_failures_total counter
+signet_provisioner_writeback_failures_total 0
+# HELP signet_up Whether signet is up.
+# TYPE signet_up gauge
+signet_up 1
+# HELP signet_uptime_seconds Daemon uptime.
+# TYPE signet_uptime_seconds gauge
+signet_uptime_seconds 544
+# HELP signet_bootstrap_total Bootstrap attempts.
+# TYPE signet_bootstrap_total counter
+signet_bootstrap_total 0
+# HELP signet_auth_total Auth attempts by result.
+# TYPE signet_auth_total counter
+signet_auth_total{result="ok"} 0
+signet_auth_total{result="denied"} 0
+signet_auth_total{result="error"} 0
+# HELP signet_sign_total Signing operations.
+# TYPE signet_sign_total counter
+signet_sign_total 0
+# HELP signet_nip46_reply_ack_total NIP-46 reply publication outcomes per relay.
+# TYPE signet_nip46_reply_ack_total counter
+signet_nip46_reply_ack_total{result="accept"} 0
+signet_nip46_reply_ack_total{result="reject"} 0
+signet_nip46_reply_ack_total{result="timeout"} 0
+signet_nip46_reply_ack_total{result="transport-aborted"} 0
+# HELP signet_revoke_total Revocations.
+# TYPE signet_revoke_total counter
+signet_revoke_total 0
+# HELP signet_connection_denied_total Connections denied at transport limits.
+# TYPE signet_connection_denied_total counter
+signet_connection_denied_total{transport="nip5l"} 0
+signet_connection_denied_total{transport="ssh_agent"} 0
+# HELP signet_fleet_sync_last_timestamp Fleet sync time.
+# TYPE signet_fleet_sync_last_timestamp gauge
+signet_fleet_sync_last_timestamp 1794035931
+# HELP signet_active_sessions Current sessions.
+# TYPE signet_active_sessions gauge
+signet_active_sessions 0
+# HELP signet_active_leases Current credential leases.
+# TYPE signet_active_leases gauge
+signet_active_leases 0
+# HELP signet_agents_active Active agents.
+# TYPE signet_agents_active gauge
+signet_agents_active 0
+# HELP signet_relays_connected Connected relays.
+# TYPE signet_relays_connected gauge
+signet_relays_connected 2
+Sat Nov  7 07:18:54 UTC 2026
+Nov 07 07:17:37 signet-drill-primary python3[23432]: signetd-1  | ** Message: 07:17:37.974: [signetd] SIGHUP received ? reloading configuration
+Nov 07 07:17:37 signet-drill-primary python3[23432]: signetd-1  | ** Message: 07:17:37.983: [signetd] reload: provisioners reconciled (granted=1 revoked=0 unchanged=1 refused=0)
+Nov 07 07:17:37 signet-drill-primary python3[23432]: signetd-1  | ** Message: 07:17:37.989: [signetd] reload: provisioner set written back to /etc/signet/signet.conf (2 authorized)
+Nov 07 07:17:37 signet-drill-primary python3[23432]: signetd-1  | ** Message: 07:17:37.989: [signetd] policy store: loaded 0 identities from /data/policies.conf
+Nov 07 07:17:37 signet-drill-primary python3[23432]: signetd-1  | ** Message: 07:17:37.989: [signetd] reload: configuration applied (restart-only changes warned: 0)
+Nov 07 07:18:51 signet-drill-primary python3[23432]: signetd-1  | ** Message: 07:18:51.782: [signetd] SIGHUP received ? reloading configuration
+Nov 07 07:18:51 signet-drill-primary python3[23432]: signetd-1  | [pool] cleanup worker thread started
+Nov 07 07:18:51 signet-drill-primary python3[23432]: signetd-1  | [pool] cleanup_worker: STARTED
+Nov 07 07:18:51 signet-drill-primary python3[23432]: signetd-1  | ** Message: 07:18:51.820: [signetd] reload: relay set changed (2 -> 1 relays); connecting in background
+Nov 07 07:18:51 signet-drill-primary python3[23432]: signetd-1  | [simplepool] subscribe fire failed on wss://nos.lol (will retry on connect): subscription or connection is NULL
+Nov 07 07:18:51 signet-drill-primary python3[23432]: signetd-1  | ** Message: 07:18:51.823: [signetd] reload: resubscribed to management kinds on the new relay set
+Nov 07 07:18:51 signet-drill-primary python3[23432]: signetd-1  | ** Message: 07:18:51.824: [signetd] policy store: loaded 0 identities from /data/policies.conf
+Nov 07 07:18:51 signet-drill-primary python3[23432]: signetd-1  | ** Message: 07:18:51.826: [signetd] reload: configuration applied (restart-only changes warned: 0)
+Nov 07 07:18:51 signet-drill-primary python3[23432]: signetd-1  | [pool] shutting down cleanup worker...
+Nov 07 07:18:51 signet-drill-primary python3[23432]: signetd-1  | [pool] cleanup_worker: EXITING
+Nov 07 07:18:51 signet-drill-primary python3[23432]: signetd-1  | [pool] cleanup worker shutdown complete
+Nov 07 07:18:51 signet-drill-primary python3[23432]: signetd-1  | [pool] cancelling 0 registered subscriptions...
+Nov 07 07:18:51 signet-drill-primary python3[23432]: signetd-1  | [pool] subscription registry freed
+Nov 07 07:18:51 signet-drill-primary python3[23432]: signetd-1  | [pool] redial connected: wss://nos.lol
+Nov 07 07:18:52 signet-drill-primary python3[23432]: signetd-1  | [RELAY_POOL] Subscription 7 received 5 events before EOSE
+
+===== diagnostic-chain-audit-final.log =====
+ts|operation|agent_id|detail
+1794032831|mgmt_history_dropped|78f8e53a3df8f0d4aa6ac6752833177a3c80c636cf7d1f6ffdebd9007d2c2323|{"decision":"deny","reason":"before_live_boundary"}
+1794032923|mgmt_history_dropped|9fb813094431818770b77211cacb855b6ca0e2bd33dfbb359a77cccf22b70b07|{"decision":"deny","reason":"before_live_boundary"}
+1794033572|mgmt_history_dropped|36d33b4304d096c64f20e8a021575a9b99ef0f4bc826a90f4edcc4ca02942e05|{"decision":"deny","reason":"before_live_boundary"}
+1794034615|mgmt_history_dropped|9fb813094431818770b77211cacb855b6ca0e2bd33dfbb359a77cccf22b70b07|{"decision":"deny","reason":"before_live_boundary"}
+1794034615|mgmt_history_dropped|36d33b4304d096c64f20e8a021575a9b99ef0f4bc826a90f4edcc4ca02942e05|{"decision":"deny","reason":"before_live_boundary"}
+1794034615|mgmt_history_dropped|78f8e53a3df8f0d4aa6ac6752833177a3c80c636cf7d1f6ffdebd9007d2c2323|{"decision":"deny","reason":"before_live_boundary"}
+1794035110|mgmt_history_dropped|9fb813094431818770b77211cacb855b6ca0e2bd33dfbb359a77cccf22b70b07|{"decision":"deny","reason":"before_live_boundary"}
+1794035110|mgmt_history_dropped|36d33b4304d096c64f20e8a021575a9b99ef0f4bc826a90f4edcc4ca02942e05|{"decision":"deny","reason":"before_live_boundary"}
+1794035110|mgmt_history_dropped|78f8e53a3df8f0d4aa6ac6752833177a3c80c636cf7d1f6ffdebd9007d2c2323|{"decision":"deny","reason":"before_live_boundary"}
+1794035520|mgmt_history_dropped|9fb813094431818770b77211cacb855b6ca0e2bd33dfbb359a77cccf22b70b07|{"decision":"deny","reason":"before_live_boundary"}
+1794035520|mgmt_history_dropped|36d33b4304d096c64f20e8a021575a9b99ef0f4bc826a90f4edcc4ca02942e05|{"decision":"deny","reason":"before_live_boundary"}
+1794035520|mgmt_history_dropped|78f8e53a3df8f0d4aa6ac6752833177a3c80c636cf7d1f6ffdebd9007d2c2323|{"decision":"deny","reason":"before_live_boundary"}
+1794035606|mgmt_history_dropped|1749e2881912070819e79802f7674696f6992091dea964e86ce322ba3c6d229c|{"decision":"deny","reason":"before_live_boundary"}
+1794035864|mgmt_history_dropped|2c6079c413747059f4462e6c64480b41b71ab36f334458d28b0b26c68003da1d|{"decision":"deny","reason":"before_live_boundary"}
+1794035932|mgmt_history_dropped|9fb813094431818770b77211cacb855b6ca0e2bd33dfbb359a77cccf22b70b07|{"decision":"deny","reason":"before_live_boundary"}
+1794035932|mgmt_history_dropped|36d33b4304d096c64f20e8a021575a9b99ef0f4bc826a90f4edcc4ca02942e05|{"decision":"deny","reason":"before_live_boundary"}
+1794035932|mgmt_history_dropped|2c6079c413747059f4462e6c64480b41b71ab36f334458d28b0b26c68003da1d|{"decision":"deny","reason":"before_live_boundary"}
+1794035932|mgmt_history_dropped|1749e2881912070819e79802f7674696f6992091dea964e86ce322ba3c6d229c|{"decision":"deny","reason":"before_live_boundary"}
+1794035932|mgmt_history_dropped|78f8e53a3df8f0d4aa6ac6752833177a3c80c636cf7d1f6ffdebd9007d2c2323|{"decision":"deny","reason":"before_live_boundary"}
+1794035938|mgmt_provision_agent|drill-nos-only|{"decision":"allow","reason":"provisioned"}
+agents
+1
+
+===== diagnostic-final-host.log =====
+Sat Nov  7 07:19:42 UTC 2026
+{"ready":true,"detail":{"provisioner_writeback_failed":false}}{"status":"ok","timestamp":1794035983,"uptime_seconds":596,"components":{"db":"open","relays":1,"agents_active":1,"cache_entries":1,"key_store":"available"}}# HELP signet_provisioner_writeback_failures_total Failed provisioner config writes.
+# TYPE signet_provisioner_writeback_failures_total counter
+signet_provisioner_writeback_failures_total 0
+# HELP signet_up Whether signet is up.
+# TYPE signet_up gauge
+signet_up 1
+# HELP signet_uptime_seconds Daemon uptime.
+# TYPE signet_uptime_seconds gauge
+signet_uptime_seconds 596
+# HELP signet_bootstrap_total Bootstrap attempts.
+# TYPE signet_bootstrap_total counter
+signet_bootstrap_total 0
+# HELP signet_auth_total Auth attempts by result.
+# TYPE signet_auth_total counter
+signet_auth_total{result="ok"} 0
+signet_auth_total{result="denied"} 0
+signet_auth_total{result="error"} 0
+# HELP signet_sign_total Signing operations.
+# TYPE signet_sign_total counter
+signet_sign_total 0
+# HELP signet_nip46_reply_ack_total NIP-46 reply publication outcomes per relay.
+# TYPE signet_nip46_reply_ack_total counter
+signet_nip46_reply_ack_total{result="accept"} 0
+signet_nip46_reply_ack_total{result="reject"} 0
+signet_nip46_reply_ack_total{result="timeout"} 0
+signet_nip46_reply_ack_total{result="transport-aborted"} 0
+# HELP signet_revoke_total Revocations.
+# TYPE signet_revoke_total counter
+signet_revoke_total 0
+# HELP signet_connection_denied_total Connections denied at transport limits.
+# TYPE signet_connection_denied_total counter
+signet_connection_denied_total{transport="nip5l"} 0
+signet_connection_denied_total{transport="ssh_agent"} 0
+# HELP signet_fleet_sync_last_timestamp Fleet sync time.
+# TYPE signet_fleet_sync_last_timestamp gauge
+signet_fleet_sync_last_timestamp 1794035982
+# HELP signet_active_sessions Current sessions.
+# TYPE signet_active_sessions gauge
+signet_active_sessions 0
+# HELP signet_active_leases Current credential leases.
+# TYPE signet_active_leases gauge
+signet_active_leases 0
+# HELP signet_agents_active Active agents.
+# TYPE signet_agents_active gauge
+signet_agents_active 1
+# HELP signet_relays_connected Connected relays.
+# TYPE signet_relays_connected gauge
+signet_relays_connected 1
+ActiveState=active
+SubState=running
+/opt/signet/releases/7f2aeaecde6dc271d5a8d2754a708c95177652ba
+Nov 07 07:17:37 signet-drill-primary python3[23432]: signetd-1  | ** Message: 07:17:37.974: [signetd] SIGHUP received ? reloading configuration
+Nov 07 07:17:37 signet-drill-primary python3[23432]: signetd-1  | ** Message: 07:17:37.983: [signetd] reload: provisioners reconciled (granted=1 revoked=0 unchanged=1 refused=0)
+Nov 07 07:17:37 signet-drill-primary python3[23432]: signetd-1  | ** Message: 07:17:37.989: [signetd] reload: provisioner set written back to /etc/signet/signet.conf (2 authorized)
+Nov 07 07:17:37 signet-drill-primary python3[23432]: signetd-1  | ** Message: 07:17:37.989: [signetd] policy store: loaded 0 identities from /data/policies.conf
+Nov 07 07:17:37 signet-drill-primary python3[23432]: signetd-1  | ** Message: 07:17:37.989: [signetd] reload: configuration applied (restart-only changes warned: 0)
+Nov 07 07:18:51 signet-drill-primary python3[23432]: signetd-1  | ** Message: 07:18:51.782: [signetd] SIGHUP received ? reloading configuration
+Nov 07 07:18:51 signet-drill-primary python3[23432]: signetd-1  | [pool] cleanup worker thread started
+Nov 07 07:18:51 signet-drill-primary python3[23432]: signetd-1  | [pool] cleanup_worker: STARTED
+Nov 07 07:18:51 signet-drill-primary python3[23432]: signetd-1  | ** Message: 07:18:51.820: [signetd] reload: relay set changed (2 -> 1 relays); connecting in background
+Nov 07 07:18:51 signet-drill-primary python3[23432]: signetd-1  | [simplepool] subscribe fire failed on wss://nos.lol (will retry on connect): subscription or connection is NULL
+Nov 07 07:18:51 signet-drill-primary python3[23432]: signetd-1  | ** Message: 07:18:51.823: [signetd] reload: resubscribed to management kinds on the new relay set
+Nov 07 07:18:51 signet-drill-primary python3[23432]: signetd-1  | ** Message: 07:18:51.824: [signetd] policy store: loaded 0 identities from /data/policies.conf
+Nov 07 07:18:51 signet-drill-primary python3[23432]: signetd-1  | ** Message: 07:18:51.826: [signetd] reload: configuration applied (restart-only changes warned: 0)
+Nov 07 07:18:51 signet-drill-primary python3[23432]: signetd-1  | [pool] shutting down cleanup worker...
+Nov 07 07:18:51 signet-drill-primary python3[23432]: signetd-1  | [pool] cleanup_worker: EXITING
+Nov 07 07:18:51 signet-drill-primary python3[23432]: signetd-1  | [pool] cleanup worker shutdown complete
+Nov 07 07:18:51 signet-drill-primary python3[23432]: signetd-1  | [pool] cancelling 0 registered subscriptions...
+Nov 07 07:18:51 signet-drill-primary python3[23432]: signetd-1  | [pool] subscription registry freed
+Nov 07 07:18:51 signet-drill-primary python3[23432]: signetd-1  | [pool] redial connected: wss://nos.lol
+Nov 07 07:18:52 signet-drill-primary python3[23432]: signetd-1  | [RELAY_POOL] Subscription 7 received 5 events before EOSE
+
+===== client-pair.log =====
+[nip46] client_connect: parsed bunker URI, 1 relays:
+  relay[0]: wss://nos.lol
+[pool] cleanup worker thread started
+[pool] cleanup_worker: STARTED
+[nip46] client_start: persistent pool started with 1 relay(s)
+[nip46] connect: building request
+[nip46] connect: request id = c98f8321b391e32e99339b5b8374aef159c4671dda5072fb1c231054fa647950
+[nip46] connect: publishing via persistent pool (1 relay(s))
+[RELAY_POOL] Subscription 1 received 0 events before EOSE
+[nip46] connect: req=c98f8321b391e32e99339b5b8374aef159c4671dda5072fb1c231054fa647950 accepted by wss://nos.lol
+[nip46] connect: req=c98f8321b391e32e99339b5b8374aef159c4671dda5072fb1c231054fa647950 waiting for response via persistent subscription (timeout=30000 ms)
+[nip46] persistent_cb: received response from b8cf710a0293897a136cc7ce43b22a9d91313decdd3cd662f9d266896ce56a39
+[nip46] connect: SUCCESS - result: ack
+[nip46] nip44_encrypt: building request
+[nip46] nip44_encrypt: request id = fb4b6d6af4799570b3dc3a9df727ddd0ec742012114446276eddbc436e502fca
+[nip46] nip44_encrypt: publishing via persistent pool (1 relay(s))
+[nip46] nip44_encrypt: req=fb4b6d6af4799570b3dc3a9df727ddd0ec742012114446276eddbc436e502fca accepted by wss://nos.lol
+[nip46] nip44_encrypt: req=fb4b6d6af4799570b3dc3a9df727ddd0ec742012114446276eddbc436e502fca waiting for response via persistent subscription (timeout=30000 ms)
+[nip46] persistent_cb: received response from b8cf710a0293897a136cc7ce43b22a9d91313decdd3cd662f9d266896ce56a39
+[nip46] nip44_encrypt: SUCCESS - result: Alvz5s4ZZ1Goq5WPV/m68oiB+gOs0574qXEqIU+JDXeFyGaQBA
+[nip46] sign_event: building request
+[nip46] sign_event: request id = e2e76be017bbccfdc690d03114af180946b253e7cc59f718eb99032bc4d6ecf2
+[nip46] sign_event: publishing via persistent pool (1 relay(s))
+[nip46] sign_event: req=e2e76be017bbccfdc690d03114af180946b253e7cc59f718eb99032bc4d6ecf2 accepted by wss://nos.lol
+[nip46] sign_event: req=e2e76be017bbccfdc690d03114af180946b253e7cc59f718eb99032bc4d6ecf2 waiting for response via persistent subscription (timeout=30000 ms)
+[nip46] persistent_cb: received response from b8cf710a0293897a136cc7ce43b22a9d91313decdd3cd662f9d266896ce56a39
+[nip46] sign_event: SUCCESS - result: {"id":"55ff88ccec0fc52cc227c174c9801919dcc1edc4845
+[pool] shutting down cleanup worker...
+[pool] cleanup_worker: EXITING
+[pool] cleanup worker shutdown complete
+[pool] cancelling 0 registered subscriptions...
+[pool] subscription registry freed
+[nip46] client_stop: persistent pool stopped
+[nip46] client_stop: persistent pool stopped
+signed-event-id=55ff88ccec0fc52cc227c174c9801919dcc1edc4845bef645e93f4bd25a69d7f
+
+===== client-deny.log =====
+[nip46] client_connect: parsed bunker URI, 1 relays:
+  relay[0]: wss://nos.lol
+[pool] cleanup worker thread started
+[pool] cleanup_worker: STARTED
+[nip46] client_start: persistent pool started with 1 relay(s)
+[nip46] nip44_encrypt: building request
+[nip46] nip44_encrypt: request id = ad8e2f6222335b2b016e6849d5077b6f316d368fdf5f3034c52715274085d0d0
+[nip46] nip44_encrypt: publishing via persistent pool (1 relay(s))
+[nip46] persistent_cb: received response from b8cf710a0293897a136cc7ce43b22a9d91313decdd3cd662f9d266896ce56a39
+[RELAY_POOL] Subscription 1 received 3 events before EOSE
+[nip46] persistent_cb: received response from b8cf710a0293897a136cc7ce43b22a9d91313decdd3cd662f9d266896ce56a39
+[nip46] persistent_cb: received response from b8cf710a0293897a136cc7ce43b22a9d91313decdd3cd662f9d266896ce56a39
+[nip46] nip44_encrypt: req=ad8e2f6222335b2b016e6849d5077b6f316d368fdf5f3034c52715274085d0d0 accepted by wss://nos.lol
+[nip46] nip44_encrypt: req=ad8e2f6222335b2b016e6849d5077b6f316d368fdf5f3034c52715274085d0d0 waiting for response via persistent subscription (timeout=30000 ms)
+[nip46] persistent_cb: received response from b8cf710a0293897a136cc7ce43b22a9d91313decdd3cd662f9d266896ce56a39
+[nip46] nip44_encrypt: SUCCESS - result: AsKMsolTOdYNA5jYBowSBMTfxV1zaBC40FP/wFW1HRHyiyB7OI
+[nip46] nip44_decrypt: building request
+[nip46] nip44_decrypt: request id = e65aecc663b7f64c9d95cc7a28c1989bf30bf649a55c087ff25fac416e4c3655
+[nip46] nip44_decrypt: publishing via persistent pool (1 relay(s))
+[nip46] nip44_decrypt: req=e65aecc663b7f64c9d95cc7a28c1989bf30bf649a55c087ff25fac416e4c3655 accepted by wss://nos.lol
+[nip46] nip44_decrypt: req=e65aecc663b7f64c9d95cc7a28c1989bf30bf649a55c087ff25fac416e4c3655 waiting for response via persistent subscription (timeout=30000 ms)
+[nip46] persistent_cb: received response from b8cf710a0293897a136cc7ce43b22a9d91313decdd3cd662f9d266896ce56a39
+[nip46] nip44_decrypt: received error response: policy.deny.method
+[pool] shutting down cleanup worker...
+[pool] cleanup_worker: EXITING
+[pool] cleanup worker shutdown complete
+[pool] cancelling 0 registered subscriptions...
+[pool] subscription registry freed
+[nip46] client_stop: persistent pool stopped
+[nip46] client_stop: persistent pool stopped
+policy: authenticated refusal
+
+===== client-reconnect.log =====
+[nip46] client_connect: parsed bunker URI, 1 relays:
+  relay[0]: wss://nos.lol
+[pool] cleanup worker thread started
+[pool] cleanup_worker: STARTED
+[nip46] client_start: persistent pool started with 1 relay(s)
+[nip46] nip44_encrypt: building request
+[nip46] nip44_encrypt: request id = 390ddd51964924ca8bbb93cd0bb583ccf206af3a81ec6913f37e300cfef3ee80
+[nip46] nip44_encrypt: publishing via persistent pool (1 relay(s))
+[nip46] persistent_cb: received response from b8cf710a0293897a136cc7ce43b22a9d91313decdd3cd662f9d266896ce56a39
+[RELAY_POOL] Subscription 1 received 5 events before EOSE
+[nip46] persistent_cb: received response from b8cf710a0293897a136cc7ce43b22a9d91313decdd3cd662f9d266896ce56a39
+[nip46] persistent_cb: received response from b8cf710a0293897a136cc7ce43b22a9d91313decdd3cd662f9d266896ce56a39
+[nip46] persistent_cb: received response from b8cf710a0293897a136cc7ce43b22a9d91313decdd3cd662f9d266896ce56a39
+[nip46] persistent_cb: received response from b8cf710a0293897a136cc7ce43b22a9d91313decdd3cd662f9d266896ce56a39
+[nip46] nip44_encrypt: req=390ddd51964924ca8bbb93cd0bb583ccf206af3a81ec6913f37e300cfef3ee80 accepted by wss://nos.lol
+[nip46] nip44_encrypt: req=390ddd51964924ca8bbb93cd0bb583ccf206af3a81ec6913f37e300cfef3ee80 waiting for response via persistent subscription (timeout=30000 ms)
+[nip46] persistent_cb: received response from b8cf710a0293897a136cc7ce43b22a9d91313decdd3cd662f9d266896ce56a39
+[nip46] nip44_encrypt: SUCCESS - result: Ao9H0toNnDfa00npD9x8yt02W0FkKTcr1E4/+tnDATU3XzVmAm
+[nip46] sign_event: building request
+[nip46] sign_event: request id = 9625c9de6519dec6aeb2876037a246c84c6e9cc9af621e7730a37ee56c8d6283
+[nip46] sign_event: publishing via persistent pool (1 relay(s))
+[nip46] sign_event: req=9625c9de6519dec6aeb2876037a246c84c6e9cc9af621e7730a37ee56c8d6283 accepted by wss://nos.lol
+[nip46] sign_event: req=9625c9de6519dec6aeb2876037a246c84c6e9cc9af621e7730a37ee56c8d6283 waiting for response via persistent subscription (timeout=30000 ms)
+[nip46] persistent_cb: received response from b8cf710a0293897a136cc7ce43b22a9d91313decdd3cd662f9d266896ce56a39
+[nip46] sign_event: SUCCESS - result: {"id":"ef5cb82afebfdc15cd79067130380f5fc31127c7c09
+[pool] shutting down cleanup worker...
+[pool] cleanup_worker: EXITING
+[pool] cleanup worker shutdown complete
+[pool] cancelling 0 registered subscriptions...
+[pool] subscription registry freed
+[nip46] client_stop: persistent pool stopped
+[nip46] client_stop: persistent pool stopped
+signed-event-id=ef5cb82afebfdc15cd79067130380f5fc31127c7c09f4378f8e23a6b5e149fa5
+
+===== client2-pair.log =====
+[nip46] client_connect: parsed bunker URI, 1 relays:
+  relay[0]: wss://nos.lol
+[pool] cleanup worker thread started
+[pool] cleanup_worker: STARTED
+[nip46] client_start: persistent pool started with 1 relay(s)
+[nip46] connect: building request
+[nip46] connect: request id = 8a34e6c877f977f62671875245068f5a970690f5dcfe8e8255621c71b725ee26
+[nip46] connect: publishing via persistent pool (1 relay(s))
+[RELAY_POOL] Subscription 1 received 0 events before EOSE
+[nip46] connect: req=8a34e6c877f977f62671875245068f5a970690f5dcfe8e8255621c71b725ee26 accepted by wss://nos.lol
+[nip46] connect: req=8a34e6c877f977f62671875245068f5a970690f5dcfe8e8255621c71b725ee26 waiting for response via persistent subscription (timeout=30000 ms)
+[nip46] persistent_cb: received response from b8cf710a0293897a136cc7ce43b22a9d91313decdd3cd662f9d266896ce56a39
+[nip46] connect: SUCCESS - result: ack
+[nip46] nip44_encrypt: building request
+[nip46] nip44_encrypt: request id = f3c0f3b12510358f06937698a62a740f27cacfdfcdab908087414525ab72cbe4
+[nip46] nip44_encrypt: publishing via persistent pool (1 relay(s))
+[nip46] nip44_encrypt: req=f3c0f3b12510358f06937698a62a740f27cacfdfcdab908087414525ab72cbe4 accepted by wss://nos.lol
+[nip46] nip44_encrypt: req=f3c0f3b12510358f06937698a62a740f27cacfdfcdab908087414525ab72cbe4 waiting for response via persistent subscription (timeout=30000 ms)
+[nip46] persistent_cb: received response from b8cf710a0293897a136cc7ce43b22a9d91313decdd3cd662f9d266896ce56a39
+[nip46] nip44_encrypt: SUCCESS - result: AhVgumPwp9i11kyuniqqjAhSFDW7KvMkOnwCmpD/SufbloCzMs
+[nip46] sign_event: building request
+[nip46] sign_event: request id = c2f1377c644c756de36365b7d55650a95093c8ab9a5d76e863ce981172a86435
+[nip46] sign_event: publishing via persistent pool (1 relay(s))
+[nip46] sign_event: req=c2f1377c644c756de36365b7d55650a95093c8ab9a5d76e863ce981172a86435 accepted by wss://nos.lol
+[nip46] sign_event: req=c2f1377c644c756de36365b7d55650a95093c8ab9a5d76e863ce981172a86435 waiting for response via persistent subscription (timeout=30000 ms)
+[nip46] persistent_cb: received response from b8cf710a0293897a136cc7ce43b22a9d91313decdd3cd662f9d266896ce56a39
+[nip46] sign_event: SUCCESS - result: {"id":"ac83055a14217c73dcfceb6cf5aa6e128eafabe9218
+[pool] shutting down cleanup worker...
+[pool] cleanup_worker: EXITING
+[pool] cleanup worker shutdown complete
+[pool] cancelling 0 registered subscriptions...
+[pool] subscription registry freed
+[nip46] client_stop: persistent pool stopped
+[nip46] client_stop: persistent pool stopped
+signed-event-id=ac83055a14217c73dcfceb6cf5aa6e128eafabe92186550d3dcad983dadff4e8
+
+===== revoke-client2.log =====
+[pool] cleanup worker thread started
+[pool] cleanup_worker: STARTED
+[pool] redial connected: wss://nos.lol
+[RELAY_POOL] Subscription 1 received 4 events before EOSE
+[RELAY_POOL] Subscription 2 received 4 events before EOSE
+[pool] shutting down cleanup worker...
+[pool] cleanup_worker: EXITING
+[pool] cleanup worker shutdown complete
+[pool] cancelling 0 registered subscriptions...
+[pool] subscription registry freed
+Reply received:
+{"jsonrpc":"2.0","result":{"ok":true,"request_id":"00065faa96143146","code":"client_revoked","message":"client binding revoked"},"id":"00065faa96143146"}
+
+===== client2-revoked.log =====
+[nip46] client_connect: parsed bunker URI, 1 relays:
+  relay[0]: wss://nos.lol
+[pool] cleanup worker thread started
+[pool] cleanup_worker: STARTED
+[nip46] client_start: persistent pool started with 1 relay(s)
+[nip46] nip44_encrypt: building request
+[nip46] nip44_encrypt: request id = 71f9d8ad61a1141f11cc4a6f2c83ef22d0557c15585d22bb0580a84f2155e760
+[nip46] nip44_encrypt: publishing via persistent pool (1 relay(s))
+[nip46] persistent_cb: received response from b8cf710a0293897a136cc7ce43b22a9d91313decdd3cd662f9d266896ce56a39
+[RELAY_POOL] Subscription 1 received 3 events before EOSE
+[nip46] persistent_cb: received response from b8cf710a0293897a136cc7ce43b22a9d91313decdd3cd662f9d266896ce56a39
+[nip46] persistent_cb: received response from b8cf710a0293897a136cc7ce43b22a9d91313decdd3cd662f9d266896ce56a39
+[nip46] nip44_encrypt: req=71f9d8ad61a1141f11cc4a6f2c83ef22d0557c15585d22bb0580a84f2155e760 accepted by wss://nos.lol
+[nip46] nip44_encrypt: req=71f9d8ad61a1141f11cc4a6f2c83ef22d0557c15585d22bb0580a84f2155e760 waiting for response via persistent subscription (timeout=30000 ms)
+[nip46] persistent_cb: received response from b8cf710a0293897a136cc7ce43b22a9d91313decdd3cd662f9d266896ce56a39
+[nip46] nip44_encrypt: received error response: client has no active NIP-46 session
+[pool] shutting down cleanup worker...
+[pool] cleanup_worker: EXITING
+[pool] cleanup worker shutdown complete
+[pool] cancelling 0 registered subscriptions...
+[pool] subscription registry freed
+[nip46] client_stop: persistent pool stopped
+[nip46] client_stop: persistent pool stopped
+revocation: authenticated refusal of previously allowed encryption
+
+===== homed-config-failure.log =====
+Internal ctest changing into directory: /src/build-docker/gnome/nostr-homed
+Test project /src/build-docker/gnome/nostr-homed
+    Start 8: homed_broker_login_nip46_live
+1/1 Test #8: homed_broker_login_nip46_live ....***Failed    0.01 sec
+live-nip46: cannot read /work/homed.toml: No such file or directory
+
+
+0% tests passed, 1 tests failed out of 1
+
+Label Time Summary:
+live           =   0.01 sec*proc (1 test)
+manual         =   0.01 sec*proc (1 test)
+nip46          =   0.01 sec*proc (1 test)
+nostr-homed    =   0.01 sec*proc (1 test)
+
+Total Test time (real) =   0.03 sec
+
+The following tests FAILED:
+	  8 - homed_broker_login_nip46_live (Failed)
+Errors while running CTest
+
+===== homed-live.log =====
+Internal ctest changing into directory: /src/build-docker/gnome/nostr-homed
+Test project /src/build-docker/gnome/nostr-homed
+    Start 8: homed_broker_login_nip46_live
+1/1 Test #8: homed_broker_login_nip46_live ....   Passed    5.39 sec
+
+100% tests passed, 0 tests failed out of 1
+
+Label Time Summary:
+live           =   5.39 sec*proc (1 test)
+manual         =   5.39 sec*proc (1 test)
+nip46          =   5.39 sec*proc (1 test)
+nostr-homed    =   5.39 sec*proc (1 test)
+
+Total Test time (real) =   5.41 sec
+
+===== writer-acquire.log =====
+[pool] cleanup worker thread started
+[pool] cleanup_worker: STARTED
+[pool] redial connected: wss://nos.lol
+[RELAY_POOL] Subscription 1 received 5 events before EOSE
+[RELAY_POOL] Subscription 2 received 5 events before EOSE
+[pool] shutting down cleanup worker...
+[pool] cleanup_worker: EXITING
+[pool] cleanup worker shutdown complete
+[pool] cancelling 0 registered subscriptions...
+[pool] subscription registry freed
+Reply received:
+{"jsonrpc":"2.0","result":{"epoch":1},"id":"00065faa9a2b5fa0"}
+
+===== writer-owner-sign.log =====
+[nip46] client_connect: parsed bunker URI, 1 relays:
+  relay[0]: wss://nos.lol
+[pool] cleanup worker thread started
+[pool] cleanup_worker: STARTED
+[nip46] client_start: persistent pool started with 1 relay(s)
+[nip46] nip44_encrypt: building request
+[nip46] nip44_encrypt: request id = 8421794d21359d629a000c78d50160dfbe0ddae93943e4abf01fed05421cd997
+[nip46] nip44_encrypt: publishing via persistent pool (1 relay(s))
+[nip46] persistent_cb: received response from b8cf710a0293897a136cc7ce43b22a9d91313decdd3cd662f9d266896ce56a39
+[RELAY_POOL] Subscription 1 received 4 events before EOSE
+[nip46] persistent_cb: received response from b8cf710a0293897a136cc7ce43b22a9d91313decdd3cd662f9d266896ce56a39
+[nip46] persistent_cb: received response from b8cf710a0293897a136cc7ce43b22a9d91313decdd3cd662f9d266896ce56a39
+[nip46] persistent_cb: received response from b8cf710a0293897a136cc7ce43b22a9d91313decdd3cd662f9d266896ce56a39
+[nip46] nip44_encrypt: req=8421794d21359d629a000c78d50160dfbe0ddae93943e4abf01fed05421cd997 accepted by wss://nos.lol
+[nip46] nip44_encrypt: req=8421794d21359d629a000c78d50160dfbe0ddae93943e4abf01fed05421cd997 waiting for response via persistent subscription (timeout=30000 ms)
+[nip46] persistent_cb: received response from b8cf710a0293897a136cc7ce43b22a9d91313decdd3cd662f9d266896ce56a39
+[nip46] nip44_encrypt: SUCCESS - result: Aj1QR/YK1yZP4gOKMhBNghutFTb4njd4/pcf5/8kgODl8dQrHj
+[nip46] sign_event: building request
+[nip46] sign_event: request id = aece19d619cd271d4305ce8091811c844765511c2fb182040bacef1571d22bf0
+[nip46] sign_event: publishing via persistent pool (1 relay(s))
+[nip46] sign_event: req=aece19d619cd271d4305ce8091811c844765511c2fb182040bacef1571d22bf0 accepted by wss://nos.lol
+[nip46] sign_event: req=aece19d619cd271d4305ce8091811c844765511c2fb182040bacef1571d22bf0 waiting for response via persistent subscription (timeout=30000 ms)
+[nip46] persistent_cb: received response from b8cf710a0293897a136cc7ce43b22a9d91313decdd3cd662f9d266896ce56a39
+[nip46] sign_event: SUCCESS - result: {"id":"5fea39ddd7bea76eb51b6dede684d0f2ab726842f4d
+[pool] shutting down cleanup worker...
+[pool] cleanup_worker: EXITING
+[pool] cleanup worker shutdown complete
+[pool] cancelling 0 registered subscriptions...
+[pool] subscription registry freed
+[nip46] client_stop: persistent pool stopped
+[nip46] client_stop: persistent pool stopped
+signed-event-id=5fea39ddd7bea76eb51b6dede684d0f2ab726842f4daa3d5fc4c51d52a13b63a
+
+===== writer-other-pair-denied.log =====
+[nip46] client_connect: parsed bunker URI, 1 relays:
+  relay[0]: wss://nos.lol
+[pool] cleanup worker thread started
+[pool] cleanup_worker: STARTED
+[nip46] client_start: persistent pool started with 1 relay(s)
+[nip46] connect: building request
+[nip46] connect: request id = bd8a11b49db64fb623a71ee4418f335118ab8154d2bbad901da8d980a25cc674
+[nip46] connect: publishing via persistent pool (1 relay(s))
+[RELAY_POOL] Subscription 1 received 0 events before EOSE
+[nip46] connect: req=bd8a11b49db64fb623a71ee4418f335118ab8154d2bbad901da8d980a25cc674 accepted by wss://nos.lol
+[nip46] connect: req=bd8a11b49db64fb623a71ee4418f335118ab8154d2bbad901da8d980a25cc674 waiting for response via persistent subscription (timeout=30000 ms)
+[nip46] persistent_cb: received response from b8cf710a0293897a136cc7ce43b22a9d91313decdd3cd662f9d266896ce56a39
+[nip46] connect: SUCCESS - result: ack
+[nip46] nip44_encrypt: building request
+[nip46] nip44_encrypt: request id = e036fe3f69776c83969b0e614852e2d76fb98e4c7ae54efee62ee5a396e59d28
+[nip46] nip44_encrypt: publishing via persistent pool (1 relay(s))
+[nip46] nip44_encrypt: req=e036fe3f69776c83969b0e614852e2d76fb98e4c7ae54efee62ee5a396e59d28 accepted by wss://nos.lol
+[nip46] nip44_encrypt: req=e036fe3f69776c83969b0e614852e2d76fb98e4c7ae54efee62ee5a396e59d28 waiting for response via persistent subscription (timeout=30000 ms)
+[nip46] persistent_cb: received response from b8cf710a0293897a136cc7ce43b22a9d91313decdd3cd662f9d266896ce56a39
+[nip46] nip44_encrypt: received error response: crypto operation denied or failed
+NIP-46 live proof FAILED (no secrets logged); absent daemon/relay is not a denial
+[pool] shutting down cleanup worker...
+[pool] cleanup_worker: EXITING
+[pool] cleanup worker shutdown complete
+[pool] cancelling 0 registered subscriptions...
+[pool] subscription registry freed
+[nip46] client_stop: persistent pool stopped
+[nip46] client_stop: persistent pool stopped
+
+===== list-clients.log =====
+[pool] cleanup worker thread started
+[pool] cleanup_worker: STARTED
+[pool] redial connected: wss://nos.lol
+[RELAY_POOL] Subscription 1 received 8 events before EOSE
+[RELAY_POOL] Subscription 2 received 8 events before EOSE
+[pool] shutting down cleanup worker...
+[pool] cleanup_worker: EXITING
+[pool] cleanup worker shutdown complete
+[pool] cancelling 0 registered subscriptions...
+[pool] subscription registry freed
+Reply received:
+{"jsonrpc":"2.0","result":{"agent_id":"drill-nos-only","count":3,"clients":[{"client_pubkey":"ac63ea17a6150f8d5894bfada873df236795b3c3d475aca4d08c7522494fe647","bound_at":1794036076,"last_used":1794036196,"active":true},{"client_pubkey":"a66c1184d321570e7817a7bcb41889c9042fdddf90cfa2b8600fc3e1d97acf46","bound_at":1794036125,"last_used":1794036125,"active":false,"revoked_at":1794036128},{"client_pubkey":"93261770f2442f5533b8ee6f9144623bcdc08c56c51d39b3255d10c055ebb28e","bound_at":1794036217,"last_used":1794036217,"active":true}]},"id":"00065faa9b846c5e"}
+
+===== paired-container-restart.log =====
+Sat Nov  7 07:23:42 UTC 2026
+Job for signet-compose.service failed because the control process exited with error code.
+See "systemctl status signet-compose.service" and "journalctl -xeu signet-compose.service" for details.
+Sat Nov  7 07:23:43 UTC 2026
+curl: (7) Failed to connect to 127.0.0.1 port 8080 after 0 ms: Couldn't connect to server
+Nov 07 07:23:38 signet-drill-primary python3[23432]: signetd-1  | ** Message: 07:23:38.114: [signetd] nip46-reply-ack relay=0 result=accept
+Nov 07 07:23:42 signet-drill-primary systemd[1]: Stopping signet-compose.service - Signet digest-pinned Compose deployment...
+Nov 07 07:23:42 signet-drill-primary python3[27176]:  Container signet-signetd-1  Stopping
+Nov 07 07:23:42 signet-drill-primary python3[23432]: signetd-1  | [pool] shutting down cleanup worker...
+Nov 07 07:23:42 signet-drill-primary python3[23432]: signetd-1  | [pool] cleanup_worker: EXITING
+Nov 07 07:23:42 signet-drill-primary python3[23432]: signetd-1  | [pool] cleanup worker shutdown complete
+Nov 07 07:23:42 signet-drill-primary python3[23432]: signetd-1  | [pool] cancelling 0 registered subscriptions...
+Nov 07 07:23:42 signet-drill-primary python3[23432]: signetd-1  | [pool] subscription registry freed
+Nov 07 07:23:42 signet-drill-primary python3[27176]:  Container signet-signetd-1  Stopped
+Nov 07 07:23:42 signet-drill-primary python3[27176]:  Container signet-signetd-1  Removing
+Nov 07 07:23:42 signet-drill-primary python3[23432]: [32B blob data]
+Nov 07 07:23:42 signet-drill-primary python3[23432]: Aborting on container exit...
+Nov 07 07:23:42 signet-drill-primary python3[27176]:  Container signet-signetd-1  Removed
+Nov 07 07:23:42 signet-drill-primary python3[23432]:  Container signet-signetd-1  Stopping
+Nov 07 07:23:42 signet-drill-primary python3[23432]:  Container signet-signetd-1  Error while Stopping
+Nov 07 07:23:42 signet-drill-primary python3[23432]: Error response from daemon: No such container: 5811dffae2425328acc9087b59b51b254da5b862b217b81a25eac6bbf786163f
+Nov 07 07:23:42 signet-drill-primary python3[23372]: signet deployment refused: Command '['docker', 'compose', '--project-name', 'signet', '--env-file', '/opt/signet/config/deploy.env', '--env-file', '/opt/signet/releases/7f2aeaecde6dc271d5a8d2754a708c95177652ba/release.env', '-f', '/opt/signet/releases/7f2aeaecde6dc271d5a8d2754a708c95177652ba/signet/docker-compose.yml', '--profile', 'ops', 'up', '--no-build', '--pull', 'never', '--abort-on-container-exit', '--exit-code-from', 'signetd', 'signetd']' returned non-zero exit status 1.
+Nov 07 07:23:43 signet-drill-primary systemd[1]: signet-compose.service: Deactivated successfully.
+Nov 07 07:23:43 signet-drill-primary systemd[1]: Stopped signet-compose.service - Signet digest-pinned Compose deployment.
+Nov 07 07:23:43 signet-drill-primary systemd[1]: signet-compose.service: Consumed 1.979s CPU time, 36.5M memory peak, 0B memory swap peak.
+Nov 07 07:23:43 signet-drill-primary systemd[1]: Starting signet-compose.service - Signet digest-pinned Compose deployment...
+Nov 07 07:23:43 signet-drill-primary preflight.sh[27232]: signet deployment refused: restart refused: 270s remain in stop quarantine
+Nov 07 07:23:43 signet-drill-primary systemd[1]: signet-compose.service: Control process exited, code=exited, status=1/FAILURE
+Nov 07 07:23:43 signet-drill-primary systemd[1]: signet-compose.service: Failed with result 'exit-code'.
+Nov 07 07:23:43 signet-drill-primary systemd[1]: Failed to start signet-compose.service - Signet digest-pinned Compose deployment.
+
+===== paired-restarts-sequence.log =====
+Sat Nov  7 07:29:13 UTC 2026
+active
+{"ready":true,"detail":{"provisioner_writeback_failed":false}}Nov 07 07:23:43 signet-drill-primary systemd[1]: signet-compose.service: Control process exited, code=exited, status=1/FAILURE
+Nov 07 07:23:43 signet-drill-primary systemd[1]: signet-compose.service: Failed with result 'exit-code'.
+Nov 07 07:23:43 signet-drill-primary systemd[1]: Failed to start signet-compose.service - Signet digest-pinned Compose deployment.
+Nov 07 07:28:18 signet-drill-primary systemd[1]: signet-compose.service: Scheduled restart job, restart counter is at 1.
+Nov 07 07:28:18 signet-drill-primary systemd[1]: Starting signet-compose.service - Signet digest-pinned Compose deployment...
+Nov 07 07:28:19 signet-drill-primary systemd[1]: Started signet-compose.service - Signet digest-pinned Compose deployment.
+Nov 07 07:28:19 signet-drill-primary python3[27368]:  Container signet-signetd-1  Creating
+Nov 07 07:28:20 signet-drill-primary python3[27368]:  Container signet-signetd-1  Created
+Nov 07 07:28:20 signet-drill-primary python3[27368]: Attaching to signetd-1
+Nov 07 07:28:20 signet-drill-primary python3[27368]: signetd-1  | ** Message: 07:28:20.349: [signetd] mlockall(MCL_CURRENT|MCL_FUTURE) OK ? all pages locked
+Nov 07 07:28:20 signet-drill-primary python3[27368]: signetd-1  | ** Message: 07:28:20.495: [signetd] policy store: loaded 1 identities from /data/policies.conf
+Nov 07 07:28:20 signet-drill-primary python3[27368]: signetd-1  | [pool] cleanup worker thread started
+Nov 07 07:28:20 signet-drill-primary python3[27368]: signetd-1  | [pool] cleanup_worker: STARTED
+Nov 07 07:28:20 signet-drill-primary python3[27368]: signetd-1  | [pool] redial connected: wss://nos.lol
+Nov 07 07:28:20 signet-drill-primary python3[27368]: signetd-1  | ** Message: 07:28:20.814: [signetd] NIP-11: wss://nos.lol ? name="nos.lol" software=git+https://github.com/hoytech/strfry.git/1.1.3 NIPs=[1,2,4,9,11,28,40,45,70]
+Nov 07 07:28:20 signet-drill-primary python3[27368]: signetd-1  | ** Message: 07:28:20.815: [signetd] NIP-11: wss://nos.lol max_message_length=131072
+Nov 07 07:28:20 signet-drill-primary python3[27368]: signetd-1  | ** Message: 07:28:20.827: [signetd] subscribed to canonical management kinds on relay pool (p-tag=b8cf710a0293897a136cc7ce43b22a9d91313decdd3cd662f9d266896ce56a39)
+Nov 07 07:28:20 signet-drill-primary python3[27368]: signetd-1  | ** Message: 07:28:20.836: [signetd] entering event-driven main loop
+Nov 07 07:28:21 signet-drill-primary python3[27368]: signetd-1  | [RELAY_POOL] Subscription 1 received 16 events before EOSE
+Nov 07 07:28:21 signet-drill-primary python3[27368]: signetd-1  | [RELAY_POOL] Subscription 2 received 16 events before EOSE
+Nov 07 07:28:21 signet-drill-primary python3[27368]: signetd-1  | ** Message: 07:28:21.185: [signetd] nip46-reply-ack relay=0 result=accept
+Nov 07 07:28:21 signet-drill-primary python3[27368]: signetd-1  | ** Message: 07:28:21.185: [signetd] nip46-reply-ack relay=0 result=accept
+[nip46] client_connect: parsed bunker URI, 1 relays:
+  relay[0]: wss://nos.lol
+[pool] cleanup worker thread started
+[pool] cleanup_worker: STARTED
+[nip46] client_start: persistent pool started with 1 relay(s)
+[nip46] nip44_encrypt: building request
+[nip46] nip44_encrypt: request id = bcff207a2663af48ecdf8488f74df55e4ff89d16cb82c4f893dfe7c6bfb44fd2
+[nip46] nip44_encrypt: publishing via persistent pool (1 relay(s))
+[RELAY_POOL] Subscription 1 received 0 events before EOSE
+[nip46] nip44_encrypt: req=bcff207a2663af48ecdf8488f74df55e4ff89d16cb82c4f893dfe7c6bfb44fd2 accepted by wss://nos.lol
+[nip46] nip44_encrypt: req=bcff207a2663af48ecdf8488f74df55e4ff89d16cb82c4f893dfe7c6bfb44fd2 waiting for response via persistent subscription (timeout=30000 ms)
+[nip46] persistent_cb: received response from b8cf710a0293897a136cc7ce43b22a9d91313decdd3cd662f9d266896ce56a39
+[nip46] nip44_encrypt: SUCCESS - result: AvZ12r/L16XAdKpaycQ1uMJDUIWUCeamBCcLU5Fk7wFwGiRof3
+[nip46] sign_event: building request
+[nip46] sign_event: request id = fcf89a425cc0d4c7f3c0c43e0d8105972669099a165e9b02e59720c1b1b82386
+[nip46] sign_event: publishing via persistent pool (1 relay(s))
+[nip46] sign_event: req=fcf89a425cc0d4c7f3c0c43e0d8105972669099a165e9b02e59720c1b1b82386 accepted by wss://nos.lol
+[nip46] sign_event: req=fcf89a425cc0d4c7f3c0c43e0d8105972669099a165e9b02e59720c1b1b82386 waiting for response via persistent subscription (timeout=30000 ms)
+[nip46] persistent_cb: received response from b8cf710a0293897a136cc7ce43b22a9d91313decdd3cd662f9d266896ce56a39
+[nip46] sign_event: SUCCESS - result: {"id":"d86df56d7edab17fc0f2956c6dc17b1447db418dfc5
+[pool] shutting down cleanup worker...
+[pool] cleanup_worker: EXITING
+[pool] cleanup worker shutdown complete
+[pool] cancelling 0 registered subscriptions...
+[pool] subscription registry freed
+[nip46] client_stop: persistent pool stopped
+[nip46] client_stop: persistent pool stopped
+signed-event-id=d86df56d7edab17fc0f2956c6dc17b1447db418dfc51878951405b6d29448341
+PAIRED_CONTAINER_RESTART_PASS
+Sat Nov  7 07:29:15 UTC 2026
+7a0e75d3-a213-4d3f-9424-1cc8eb717b65
+Sat Nov  7 07:34:39 UTC 2026
+dfe81dee-b3a4-47f8-b9d8-c1efaf4c5944
+active
+{"ready":true,"detail":{"provisioner_writeback_failed":false}}Nov 07 07:29:39 signet-drill-primary systemd[1]: Starting signet-compose.service - Signet digest-pinned Compose deployment...
+Nov 07 07:29:40 signet-drill-primary preflight.sh[1177]: signet deployment refused: restart refused: 250s remain in stop quarantine
+Nov 07 07:29:40 signet-drill-primary systemd[1]: signet-compose.service: Control process exited, code=exited, status=1/FAILURE
+Nov 07 07:29:40 signet-drill-primary systemd[1]: signet-compose.service: Failed with result 'exit-code'.
+Nov 07 07:29:40 signet-drill-primary systemd[1]: Failed to start signet-compose.service - Signet digest-pinned Compose deployment.
+Nov 07 07:34:15 signet-drill-primary systemd[1]: signet-compose.service: Scheduled restart job, restart counter is at 1.
+Nov 07 07:34:15 signet-drill-primary systemd[1]: Starting signet-compose.service - Signet digest-pinned Compose deployment...
+Nov 07 07:34:16 signet-drill-primary systemd[1]: Started signet-compose.service - Signet digest-pinned Compose deployment.
+Nov 07 07:34:17 signet-drill-primary python3[1267]:  Container signet-signetd-1  Creating
+Nov 07 07:34:17 signet-drill-primary python3[1267]:  Container signet-signetd-1  Created
+Nov 07 07:34:17 signet-drill-primary python3[1267]: Attaching to signetd-1
+Nov 07 07:34:18 signet-drill-primary python3[1267]: signetd-1  | ** Message: 07:34:18.032: [signetd] mlockall(MCL_CURRENT|MCL_FUTURE) OK ? all pages locked
+Nov 07 07:34:18 signet-drill-primary python3[1267]: signetd-1  | ** Message: 07:34:18.187: [signetd] policy store: loaded 1 identities from /data/policies.conf
+Nov 07 07:34:18 signet-drill-primary python3[1267]: signetd-1  | [pool] cleanup worker thread started
+Nov 07 07:34:18 signet-drill-primary python3[1267]: signetd-1  | [pool] cleanup_worker: STARTED
+Nov 07 07:34:18 signet-drill-primary python3[1267]: signetd-1  | [pool] redial connected: wss://nos.lol
+Nov 07 07:34:18 signet-drill-primary python3[1267]: signetd-1  | ** Message: 07:34:18.529: [signetd] NIP-11: wss://nos.lol ? name="nos.lol" software=git+https://github.com/hoytech/strfry.git/1.1.3 NIPs=[1,2,4,9,11,28,40,45,70]
+Nov 07 07:34:18 signet-drill-primary python3[1267]: signetd-1  | ** Message: 07:34:18.530: [signetd] NIP-11: wss://nos.lol max_message_length=131072
+Nov 07 07:34:18 signet-drill-primary python3[1267]: signetd-1  | ** Message: 07:34:18.550: [signetd] subscribed to canonical management kinds on relay pool (p-tag=b8cf710a0293897a136cc7ce43b22a9d91313decdd3cd662f9d266896ce56a39)
+Nov 07 07:34:18 signet-drill-primary python3[1267]: signetd-1  | ** Message: 07:34:18.570: [signetd] entering event-driven main loop
+Nov 07 07:34:18 signet-drill-primary python3[1267]: signetd-1  | [RELAY_POOL] Subscription 1 received 14 events before EOSE
+Nov 07 07:34:18 signet-drill-primary python3[1267]: signetd-1  | [RELAY_POOL] Subscription 2 received 14 events before EOSE
+REBOOT_HOST_READY_NEEDS_TUNNEL
+
+===== populated-restore.log =====
+BACKUP_METADATA {"checksums": {"config.tar.gz": "055154c7b69889962ae582fe50895363d1f1cdae4dc44fc2e5238e2349527607", "store.db": "f6435e0ebda710432288bb57d2bba60e224e026aa5c1f1d64c015c4a1ab35a57"}, "local_path": "/srv/signet/backups/20261107T073501Z-51727768", "off_host": true, "reference": "s3://signet-drill-20261107/signet/20261107T073501Z-51727768/"}
+SHA256_OK config.tar.gz 055154c7b69889962ae582fe50895363d1f1cdae4dc44fc2e5238e2349527607
+SHA256_OK store.db f6435e0ebda710432288bb57d2bba60e224e026aa5c1f1d64c015c4a1ab35a57
+Sat Nov  7 07:35:14 UTC 2026
+failed
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+tar: Ignoring unknown extended header keyword 'LIBARCHIVE.xattr.com.apple.provenance'
+Allowlisted config restored; replacement volume manifest retained
+signetctl: restored '/data/signet.db' from backup '/backups/populated/store.db'.
+  The previous database (if any) was kept at '/data/signet.db.pre-restore'.
+Audit log integrity: OK
+Total entries: 55
+AGENT_ID                 PROVENANCE  PUBKEY                                                           STATUS        CREATED_AT
+drill-nos-only           provisioned d97373786c90167c1e19e5e0ba2a8e4eabddae02d8375b7987005930ffb89e50 ok            1794035938
+
+Total: 1 agents, 0 failed verification
+Sat Nov  7 07:35:24 UTC 2026
+Created symlink /etc/systemd/system/multi-user.target.wants/signet-compose.service → /etc/systemd/system/signet-compose.service.
+{"ready":true,"detail":{"provisioner_writeback_failed":false}}Sat Nov  7 07:40:10 UTC 2026
+POPULATED_RESTORE_HOST_PASS
+
+===== restore-client-sign.log =====
+[nip46] client_connect: parsed bunker URI, 1 relays:
+  relay[0]: wss://nos.lol
+[pool] cleanup worker thread started
+[pool] cleanup_worker: STARTED
+[nip46] client_start: persistent pool started with 1 relay(s)
+[nip46] nip44_encrypt: building request
+[nip46] nip44_encrypt: request id = 7c7051a7a1e143a46e26d5b13cf561321643a77fc4034fd59de44c21f0415d31
+[nip46] nip44_encrypt: publishing via persistent pool (1 relay(s))
+[nip46] persistent_cb: received response from b8cf710a0293897a136cc7ce43b22a9d91313decdd3cd662f9d266896ce56a39
+[nip46] persistent_cb: received response from b8cf710a0293897a136cc7ce43b22a9d91313decdd3cd662f9d266896ce56a39
+[RELAY_POOL] Subscription 1 received 2 events before EOSE
+[nip46] nip44_encrypt: req=7c7051a7a1e143a46e26d5b13cf561321643a77fc4034fd59de44c21f0415d31 no OK from wss://nos.lol within 2s (continuing): timed out waiting for relay OK for event aaa63e3654d1fd446ddb1e4589a2187bc7f8167d7613150eeb64d8c16c91a651
+[nip46] nip44_encrypt: req=7c7051a7a1e143a46e26d5b13cf561321643a77fc4034fd59de44c21f0415d31 waiting for response via persistent subscription (timeout=30000 ms)
+[nip46] persistent_cb: received response from b8cf710a0293897a136cc7ce43b22a9d91313decdd3cd662f9d266896ce56a39
+[nip46] nip44_encrypt: SUCCESS - result: AtZL5pl3oUdzz+0OLumBxqetCf0UGmz3PwXHYYHxlT8SBoVnjc
+[nip46] sign_event: building request
+[nip46] sign_event: request id = 132c24e7ab08e4830e05f404d1589795fc0a51ee3dab374069666250203cc827
+[nip46] sign_event: publishing via persistent pool (1 relay(s))
+[nip46] sign_event: req=132c24e7ab08e4830e05f404d1589795fc0a51ee3dab374069666250203cc827 no OK from wss://nos.lol within 2s (continuing): timed out waiting for relay OK for event e22eb64496fc6bf8fa49cfcdb09d4cb413775d50f78a1570bece8ca52a8c89d4
+[nip46] sign_event: req=132c24e7ab08e4830e05f404d1589795fc0a51ee3dab374069666250203cc827 waiting for response via persistent subscription (timeout=30000 ms)
+[nip46] persistent_cb: received response from b8cf710a0293897a136cc7ce43b22a9d91313decdd3cd662f9d266896ce56a39
+[nip46] sign_event: SUCCESS - result: {"id":"a46d2f04a2918f1774eb789abeb3572ac6ee0d32cd1
+[pool] shutting down cleanup worker...
+[pool] cleanup_worker: EXITING
+[pool] cleanup worker shutdown complete
+[pool] cancelling 0 registered subscriptions...
+[pool] subscription registry freed
+[nip46] client_stop: persistent pool stopped
+[nip46] client_stop: persistent pool stopped
+signed-event-id=a46d2f04a2918f1774eb789abeb3572ac6ee0d32cd1574dcfb3e4d924bc49faa
+
+===== restore-client-revoked.log =====
+[nip46] client_connect: parsed bunker URI, 1 relays:
+  relay[0]: wss://nos.lol
+[pool] cleanup worker thread started
+[pool] cleanup_worker: STARTED
+[nip46] client_start: persistent pool started with 1 relay(s)
+[nip46] nip44_encrypt: building request
+[nip46] nip44_encrypt: request id = 2c8b8042d9b383683a536a5ca1fc6f34aad6ec0ca112219f356a7f445f38cc7d
+[nip46] nip44_encrypt: publishing via persistent pool (1 relay(s))
+[RELAY_POOL] Subscription 1 received 0 events before EOSE
+[nip46] nip44_encrypt: req=2c8b8042d9b383683a536a5ca1fc6f34aad6ec0ca112219f356a7f445f38cc7d accepted by wss://nos.lol
+[nip46] nip44_encrypt: req=2c8b8042d9b383683a536a5ca1fc6f34aad6ec0ca112219f356a7f445f38cc7d waiting for response via persistent subscription (timeout=30000 ms)
+[nip46] persistent_cb: received response from b8cf710a0293897a136cc7ce43b22a9d91313decdd3cd662f9d266896ce56a39
+[nip46] nip44_encrypt: received error response: client has no active NIP-46 session
+[pool] shutting down cleanup worker...
+[pool] cleanup_worker: EXITING
+[pool] cleanup worker shutdown complete
+[pool] cancelling 0 registered subscriptions...
+[pool] subscription registry freed
+[nip46] client_stop: persistent pool stopped
+[nip46] client_stop: persistent pool stopped
+revocation: authenticated refusal of previously allowed encryption
+
+===== reboot-client-sign.log =====
+[nip46] client_connect: parsed bunker URI, 1 relays:
+  relay[0]: wss://nos.lol
+[pool] cleanup worker thread started
+[pool] cleanup_worker: STARTED
+[nip46] client_start: persistent pool started with 1 relay(s)
+[nip46] nip44_encrypt: building request
+[nip46] nip44_encrypt: request id = 250289a24858465cb4a3cd3bb068ae71150c8f4ddd7f05ca7a23945b5b0b64cd
+[nip46] nip44_encrypt: publishing via persistent pool (1 relay(s))
+[RELAY_POOL] Subscription 1 received 0 events before EOSE
+[nip46] nip44_encrypt: req=250289a24858465cb4a3cd3bb068ae71150c8f4ddd7f05ca7a23945b5b0b64cd accepted by wss://nos.lol
+[nip46] nip44_encrypt: req=250289a24858465cb4a3cd3bb068ae71150c8f4ddd7f05ca7a23945b5b0b64cd waiting for response via persistent subscription (timeout=30000 ms)
+[nip46] persistent_cb: received response from b8cf710a0293897a136cc7ce43b22a9d91313decdd3cd662f9d266896ce56a39
+[nip46] nip44_encrypt: SUCCESS - result: AmB3krDmURJKOWnt0OZ/eDs7qwX/Pdq7F6ewoOfBSMbP7onqov
+[nip46] sign_event: building request
+[nip46] sign_event: request id = 8812412e16b24a54d96866fd5664a0372e851acc91ddf4fb2a03fee819635d7d
+[nip46] sign_event: publishing via persistent pool (1 relay(s))
+[nip46] sign_event: req=8812412e16b24a54d96866fd5664a0372e851acc91ddf4fb2a03fee819635d7d accepted by wss://nos.lol
+[nip46] sign_event: req=8812412e16b24a54d96866fd5664a0372e851acc91ddf4fb2a03fee819635d7d waiting for response via persistent subscription (timeout=30000 ms)
+[nip46] persistent_cb: received response from b8cf710a0293897a136cc7ce43b22a9d91313decdd3cd662f9d266896ce56a39
+[nip46] sign_event: SUCCESS - result: {"id":"dfc83987db8d857da5b08c7667275f8e40fd870c559
+[pool] shutting down cleanup worker...
+[pool] cleanup_worker: EXITING
+[pool] cleanup worker shutdown complete
+[pool] cancelling 0 registered subscriptions...
+[pool] subscription registry freed
+[nip46] client_stop: persistent pool stopped
+[nip46] client_stop: persistent pool stopped
+signed-event-id=dfc83987db8d857da5b08c7667275f8e40fd870c5599878f01acbd1f94735070
+
+===== destruction.log =====
+Sat Nov  7 07:50:47 UTC 2026
+BEGIN_BUCKET_DELETE 2026-11-07T07:50:51.810463+00:00
+DELETED_OBJECT_VERSIONS_AND_MARKERS 6
+BUCKET_DELETED signet-drill-20261107
+BUCKET_LIST_SIGNET_DRILL ["signet-drill-20261107"]
+Traceback (most recent call last):
+  File "/tmp/signet-drill-20261107.p5S0Ke/destroy-bucket.py", line 20, in <module>
+    print('BUCKET_LIST_SIGNET_DRILL',json.dumps(left)); assert not left
+                                                               ^^^^^^^^
+AssertionError
+BOUNDED_BUCKET_DELETE_VERIFICATION_RETRY 2026-11-07T07:51:51.392188+00:00
+BUCKET_LIST_SIGNET_DRILL []
+HEAD_DELETED_BUCKET_HTTP 404
+SPACES_KEYS_DELETED DO801VXADJHDKC9XTB28 DO00B7W9GGXU2W46KWJC
+DROPLETS_DELETE_ACCEPTED 616800461 616803351
+Sat Nov  7 07:52:01 UTC 2026
+VOLUMES_FIREWALL_SSH_KEY_DELETED
+Sat Nov  7 07:52:33 UTC 2026
+doctl compute droplet list --output json | task-resource-filter
+[]
+doctl compute volume list --output json | task-resource-filter
+[]
+doctl compute firewall list --output json | task-resource-filter
+[]
+doctl compute ssh-key list --output json | task-resource-filter
+[]
+doctl spaces keys list --output json | task-resource-filter
+[]
+doctl compute snapshot list --output json | task-resource-filter
+[]
+TAG_DELETED signet-drill; no named auth context was created; default context preserved
+Sat Nov  7 07:52:37 UTC 2026
+
+===== local-cleanup.log =====
+LOCAL_CLEANUP_START 2026-11-07T07:53:14.507922+00:00
+docker rm signet-drill-proxy-nos exit=0 signet-drill-proxy-nos
+docker rm signet-drill-proxy-band exit=0 signet-drill-proxy-band
+docker network rm signet-drill exit=0 signet-drill
+docker image rm task tags exit=0
+Untagged: signet-drill:decrypt
+Deleted: sha256:52d4048c0ea3612bb7fa908f5424638c37cbaebf035d9fc2cd8de83da771063d
+Untagged: signet-drill:diagnostic
+Deleted: sha256:9194baf4ea9f0527c7502858a5a5d55f9c962bd5691ea33b7ee7313dbea34501
+Untagged: signet-drill:alternate
+Deleted: sha256:4ef581e0b574c54c5401e080a0cd50911a3000fac472713854c5ca69888033de
+Untagged: signet-drill:homed
+Deleted: sha256:35aa681055f64835926eb3e329477d49a2b7238111ecc2d2e261cb4b1a099956
+Untagged: signet-drill:client
+Deleted: sha256:461d53b56e423257a1a4a97c26afe50ef186c279903c756005ef70beb3d748c9
+Untagged: signet-drill:builder
+Deleted: sha256:643646277a71ff4e0a6f42fa756d77e394d3f58686506c5cd6e570b82ff202ca
+Untagged: signet-drill:candidate
+Deleted: sha256:98b163ac2650f1834f53245bb5827b4aa2dbe9e5b195d3d27e47334a7ebb0ad3
+
+REMAINING_TASK_IMAGE_TAGS []
+REMAINING_TASK_CONTAINERS []
+REMAINING_TASK_NETWORKS []
+
+===== paired-release-sequence.log =====
+BEGIN_PAIRED_RESTORE_HOST_UPGRADE
+Sat Nov  7 07:41:15 UTC 2026
+Offline upgrade: validating preloaded pinned images; no registry pull.
+signetctl: encrypted backup written to '/backups/20261107T074119Z-f9d45d7b/store.db'.
+  It contains current AND archived secrets (envelope-encrypted;
+  payloads additionally require the master key on restore).
+Host checks passed. Run signed management + existing-client proof; no automatic rollback.
+[nip46] client_connect: parsed bunker URI, 1 relays:
+  relay[0]: wss://nos.lol
+[pool] cleanup worker thread started
+[pool] cleanup_worker: STARTED
+[nip46] client_start: persistent pool started with 1 relay(s)
+[nip46] nip44_encrypt: building request
+[nip46] nip44_encrypt: request id = 0676f8a4e05e3784d49f6bf63c8ed546aaedcd69e67a2fff46c08c629f0181b5
+[nip46] nip44_encrypt: publishing via persistent pool (1 relay(s))
+[RELAY_POOL] Subscription 1 received 0 events before EOSE
+[nip46] nip44_encrypt: req=0676f8a4e05e3784d49f6bf63c8ed546aaedcd69e67a2fff46c08c629f0181b5 accepted by wss://nos.lol
+[nip46] nip44_encrypt: req=0676f8a4e05e3784d49f6bf63c8ed546aaedcd69e67a2fff46c08c629f0181b5 waiting for response via persistent subscription (timeout=30000 ms)
+[nip46] persistent_cb: received response from b8cf710a0293897a136cc7ce43b22a9d91313decdd3cd662f9d266896ce56a39
+[nip46] nip44_encrypt: SUCCESS - result: An9WhdsrheFBCBC6K4lpOHrMwkQx3VXugSj4SwK6gASaEbVf8N
+[nip46] sign_event: building request
+[nip46] sign_event: request id = bea271a1da2a1b9fa2fc9b18da6418ca34b43ac20c20451c13268d7c64ccad3c
+[nip46] sign_event: publishing via persistent pool (1 relay(s))
+[nip46] sign_event: req=bea271a1da2a1b9fa2fc9b18da6418ca34b43ac20c20451c13268d7c64ccad3c accepted by wss://nos.lol
+[nip46] sign_event: req=bea271a1da2a1b9fa2fc9b18da6418ca34b43ac20c20451c13268d7c64ccad3c waiting for response via persistent subscription (timeout=30000 ms)
+[nip46] persistent_cb: received response from b8cf710a0293897a136cc7ce43b22a9d91313decdd3cd662f9d266896ce56a39
+[nip46] sign_event: SUCCESS - result: {"id":"b88c1b238896388fac39e4b454b91aa15b22cea59f2
+[pool] shutting down cleanup worker...
+[pool] cleanup_worker: EXITING
+[pool] cleanup worker shutdown complete
+[pool] cancelling 0 registered subscriptions...
+[pool] subscription registry freed
+[nip46] client_stop: persistent pool stopped
+[nip46] client_stop: persistent pool stopped
+signed-event-id=b88c1b238896388fac39e4b454b91aa15b22cea59f28bfd8fe9d15c9f9b4eed3
+[nip46] client_connect: parsed bunker URI, 1 relays:
+  relay[0]: wss://nos.lol
+[pool] cleanup worker thread started
+[pool] cleanup_worker: STARTED
+[nip46] client_start: persistent pool started with 1 relay(s)
+[nip46] nip44_encrypt: building request
+[nip46] nip44_encrypt: request id = 9d2cea68bd0802273bfbe51dc5417d9f12fbe14195b7d153dad44e31ee84d677
+[nip46] nip44_encrypt: publishing via persistent pool (1 relay(s))
+[RELAY_POOL] Subscription 1 received 0 events before EOSE
+[nip46] nip44_encrypt: req=9d2cea68bd0802273bfbe51dc5417d9f12fbe14195b7d153dad44e31ee84d677 accepted by wss://nos.lol
+[nip46] nip44_encrypt: req=9d2cea68bd0802273bfbe51dc5417d9f12fbe14195b7d153dad44e31ee84d677 waiting for response via persistent subscription (timeout=30000 ms)
+[nip46] persistent_cb: received response from b8cf710a0293897a136cc7ce43b22a9d91313decdd3cd662f9d266896ce56a39
+[nip46] nip44_encrypt: received error response: client has no active NIP-46 session
+[pool] shutting down cleanup worker...
+[pool] cleanup_worker: EXITING
+[pool] cleanup worker shutdown complete
+[pool] cancelling 0 registered subscriptions...
+[pool] subscription registry freed
+[nip46] client_stop: persistent pool stopped
+[nip46] client_stop: persistent pool stopped
+revocation: authenticated refusal of previously allowed encryption
+PAIRED_UPGRADE_PASS
+Sat Nov  7 07:45:57 UTC 2026
+Host checks passed. Run signed management + existing-client proof; no automatic rollback.
+[nip46] client_connect: parsed bunker URI, 1 relays:
+  relay[0]: wss://nos.lol
+[pool] cleanup worker thread started
+[pool] cleanup_worker: STARTED
+[nip46] client_start: persistent pool started with 1 relay(s)
+[nip46] nip44_encrypt: building request
+[nip46] nip44_encrypt: request id = f4ec44e95d4441e00328f81d27f87fa45fffd1ce5c513375a39204377b11d669
+[nip46] nip44_encrypt: publishing via persistent pool (1 relay(s))
+[nip46] persistent_cb: received response from b8cf710a0293897a136cc7ce43b22a9d91313decdd3cd662f9d266896ce56a39
+[RELAY_POOL] Subscription 1 received 2 events before EOSE
+[nip46] persistent_cb: received response from b8cf710a0293897a136cc7ce43b22a9d91313decdd3cd662f9d266896ce56a39
+[nip46] nip44_encrypt: req=f4ec44e95d4441e00328f81d27f87fa45fffd1ce5c513375a39204377b11d669 accepted by wss://nos.lol
+[nip46] nip44_encrypt: req=f4ec44e95d4441e00328f81d27f87fa45fffd1ce5c513375a39204377b11d669 waiting for response via persistent subscription (timeout=30000 ms)
+[nip46] persistent_cb: received response from b8cf710a0293897a136cc7ce43b22a9d91313decdd3cd662f9d266896ce56a39
+[nip46] nip44_encrypt: SUCCESS - result: Ardm9yMtlpcdVAnplXGFkWi+wnI0ontJHu1FPV5YQxGyGvYsgo
+[nip46] sign_event: building request
+[nip46] sign_event: request id = 81d7b6ddc4316f1f4890438b20978822b4a41fa8b42d0cf2cbc1611c12b74fe5
+[nip46] sign_event: publishing via persistent pool (1 relay(s))
+[nip46] sign_event: req=81d7b6ddc4316f1f4890438b20978822b4a41fa8b42d0cf2cbc1611c12b74fe5 accepted by wss://nos.lol
+[nip46] sign_event: req=81d7b6ddc4316f1f4890438b20978822b4a41fa8b42d0cf2cbc1611c12b74fe5 waiting for response via persistent subscription (timeout=30000 ms)
+[nip46] persistent_cb: received response from b8cf710a0293897a136cc7ce43b22a9d91313decdd3cd662f9d266896ce56a39
+[nip46] sign_event: SUCCESS - result: {"id":"aee9a50b0dc7e914fd489e5e92029336f7da7d99896
+[pool] shutting down cleanup worker...
+[pool] cleanup_worker: EXITING
+[pool] cleanup worker shutdown complete
+[pool] cancelling 0 registered subscriptions...
+[pool] subscription registry freed
+[nip46] client_stop: persistent pool stopped
+[nip46] client_stop: persistent pool stopped
+signed-event-id=aee9a50b0dc7e914fd489e5e92029336f7da7d99896d311d51ac4e276b0d83a0
+[nip46] client_connect: parsed bunker URI, 1 relays:
+  relay[0]: wss://nos.lol
+[pool] cleanup worker thread started
+[pool] cleanup_worker: STARTED
+[nip46] client_start: persistent pool started with 1 relay(s)
+[nip46] nip44_encrypt: building request
+[nip46] nip44_encrypt: request id = 173eb16d45f40e5be3ae6cb198f0e23799fa2e095a30eb1b5da8d4453096eff9
+[nip46] nip44_encrypt: publishing via persistent pool (1 relay(s))
+[nip46] persistent_cb: received response from b8cf710a0293897a136cc7ce43b22a9d91313decdd3cd662f9d266896ce56a39
+[RELAY_POOL] Subscription 1 received 1 events before EOSE
+[nip46] nip44_encrypt: req=173eb16d45f40e5be3ae6cb198f0e23799fa2e095a30eb1b5da8d4453096eff9 accepted by wss://nos.lol
+[nip46] nip44_encrypt: req=173eb16d45f40e5be3ae6cb198f0e23799fa2e095a30eb1b5da8d4453096eff9 waiting for response via persistent subscription (timeout=29999 ms)
+[nip46] persistent_cb: received response from b8cf710a0293897a136cc7ce43b22a9d91313decdd3cd662f9d266896ce56a39
+[nip46] nip44_encrypt: received error response: client has no active NIP-46 session
+[pool] shutting down cleanup worker...
+[pool] cleanup_worker: EXITING
+[pool] cleanup worker shutdown complete
+[pool] cancelling 0 registered subscriptions...
+[pool] subscription registry freed
+[nip46] client_stop: persistent pool stopped
+[nip46] client_stop: persistent pool stopped
+revocation: authenticated refusal of previously allowed encryption
+PAIRED_IMAGE_ROLLBACK_PASS
+Sat Nov  7 07:50:40 UTC 2026
+
+===== precleanup-resources.log =====
+[
+  {
+    "id": 616803351,
+    "name": "signet-drill-restore",
+    "created_at": "2026-11-07T06:25:44Z",
+    "status": "active",
+    "size_slug": "s-1vcpu-2gb"
+  },
+  {
+    "id": 616800461,
+    "name": "signet-drill-primary",
+    "created_at": "2026-11-07T06:09:11Z",
+    "status": "active",
+    "size_slug": "s-1vcpu-2gb"
+  }
+]
+SNAPSHOTS []
+
+===== final-metrics.log =====
+Sat Nov  7 07:50:41 UTC 2026
+/opt/signet/releases/7f2aeaecde6dc271d5a8d2754a708c95177652ba
+signet-drill@sha256:98b163ac2650f1834f53245bb5827b4aa2dbe9e5b195d3d27e47334a7ebb0ad3
+{"ready":true,"detail":{"provisioner_writeback_failed":false}}# HELP signet_provisioner_writeback_failures_total Failed provisioner config writes.
+# TYPE signet_provisioner_writeback_failures_total counter
+signet_provisioner_writeback_failures_total 0
+# HELP signet_up Whether signet is up.
+# TYPE signet_up gauge
+signet_up 1
+# HELP signet_uptime_seconds Daemon uptime.
+# TYPE signet_uptime_seconds gauge
+signet_uptime_seconds 8
+# HELP signet_bootstrap_total Bootstrap attempts.
+# TYPE signet_bootstrap_total counter
+signet_bootstrap_total 0
+# HELP signet_auth_total Auth attempts by result.
+# TYPE signet_auth_total counter
+signet_auth_total{result="ok"} 2
+signet_auth_total{result="denied"} 1
+signet_auth_total{result="error"} 3
+# HELP signet_sign_total Signing operations.
+# TYPE signet_sign_total counter
+signet_sign_total 1
+# HELP signet_nip46_reply_ack_total NIP-46 reply publication outcomes per relay.
+# TYPE signet_nip46_reply_ack_total counter
+signet_nip46_reply_ack_total{result="accept"} 6
+signet_nip46_reply_ack_total{result="reject"} 0
+signet_nip46_reply_ack_total{result="timeout"} 0
+signet_nip46_reply_ack_total{result="transport-aborted"} 0
+# HELP signet_revoke_total Revocations.
+# TYPE signet_revoke_total counter
+signet_revoke_total 0
+# HELP signet_connection_denied_total Connections denied at transport limits.
+# TYPE signet_connection_denied_total counter
+signet_connection_denied_total{transport="nip5l"} 0
+signet_connection_denied_total{transport="ssh_agent"} 0
+# HELP signet_fleet_sync_last_timestamp Fleet sync time.
+# TYPE signet_fleet_sync_last_timestamp gauge
+signet_fleet_sync_last_timestamp 1794037841
+# HELP signet_active_sessions Current sessions.
+# TYPE signet_active_sessions gauge
+signet_active_sessions 0
+# HELP signet_active_leases Current credential leases.
+# TYPE signet_active_leases gauge
+signet_active_leases 0
+# HELP signet_agents_active Active agents.
+# TYPE signet_agents_active gauge
+signet_agents_active 1
+# HELP signet_relays_connected Connected relays.
+# TYPE signet_relays_connected gauge
+signet_relays_connected 1
+
+===== primary-stopped-before-restore.log =====
+Sat Nov  7 07:36:15 UTC 2026
+ActiveState=failed
+SubState=failed
+PRIMARY_NO_SIGNER_LISTENER
+
+===== restore-list-clients.log =====
+[pool] cleanup worker thread started
+[pool] cleanup_worker: STARTED
+[pool] redial connected: wss://nos.lol
+[RELAY_POOL] Subscription 1 received 9 events before EOSE
+[RELAY_POOL] Subscription 2 received 9 events before EOSE
+signetctl: operation deadline; mutation outcome is unknown, do not blindly retry
+[pool] shutting down cleanup worker...
+[pool] cleanup_worker: EXITING
+[pool] cleanup worker shutdown complete
+[pool] cancelling 0 registered subscriptions...
+[pool] subscription registry freed
+
+===== restored-bindings-audit.log =====
+client_pubkey|agent_id|revoked_at
+ac63ea17a6150f8d5894bfada873df236795b3c3d475aca4d08c7522494fe647|drill-nos-only|
+a66c1184d321570e7817a7bcb41889c9042fdddf90cfa2b8600fc3e1d97acf46|drill-nos-only|1794036128
+93261770f2442f5533b8ee6f9144623bcdc08c56c51d39b3255d10c055ebb28e|drill-nos-only|
+ts|operation|agent_id|detail
+1794037245|mgmt_history_dropped|7654fabd78352caf4be9e511c9059fea5d4e4edb662d2015f98084a9e62b203b|{"decision":"deny","reason":"before_live_boundary"}
+1794037197|mgmt_history_dropped|78f8e53a3df8f0d4aa6ac6752833177a3c80c636cf7d1f6ffdebd9007d2c2323|{"decision":"deny","reason":"before_live_boundary"}
+
+===== restore-initial-client-diagnosis.log =====
+Sat Nov  7 07:40:36 UTC 2026
+# HELP signet_provisioner_writeback_failures_total Failed provisioner config writes.
+# TYPE signet_provisioner_writeback_failures_total counter
+signet_provisioner_writeback_failures_total 0
+# HELP signet_up Whether signet is up.
+# TYPE signet_up gauge
+signet_up 1
+# HELP signet_uptime_seconds Daemon uptime.
+# TYPE signet_uptime_seconds gauge
+signet_uptime_seconds 39
+# HELP signet_bootstrap_total Bootstrap attempts.
+# TYPE signet_bootstrap_total counter
+signet_bootstrap_total 0
+# HELP signet_auth_total Auth attempts by result.
+# TYPE signet_auth_total counter
+signet_auth_total{result="ok"} 1
+signet_auth_total{result="denied"} 0
+signet_auth_total{result="error"} 2
+# HELP signet_sign_total Signing operations.
+# TYPE signet_sign_total counter
+signet_sign_total 0
+# HELP signet_nip46_reply_ack_total NIP-46 reply publication outcomes per relay.
+# TYPE signet_nip46_reply_ack_total counter
+signet_nip46_reply_ack_total{result="accept"} 3
+signet_nip46_reply_ack_total{result="reject"} 0
+signet_nip46_reply_ack_total{result="timeout"} 0
+signet_nip46_reply_ack_total{result="transport-aborted"} 0
+# HELP signet_revoke_total Revocations.
+# TYPE signet_revoke_total counter
+signet_revoke_total 0
+# HELP signet_connection_denied_total Connections denied at transport limits.
+# TYPE signet_connection_denied_total counter
+signet_connection_denied_total{transport="nip5l"} 0
+signet_connection_denied_total{transport="ssh_agent"} 0
+# HELP signet_fleet_sync_last_timestamp Fleet sync time.
+# TYPE signet_fleet_sync_last_timestamp gauge
+signet_fleet_sync_last_timestamp 1794037235
+# HELP signet_active_sessions Current sessions.
+# TYPE signet_active_sessions gauge
+signet_active_sessions 0
+# HELP signet_active_leases Current credential leases.
+# TYPE signet_active_leases gauge
+signet_active_leases 0
+# HELP signet_agents_active Active agents.
+# TYPE signet_agents_active gauge
+signet_agents_active 1
+# HELP signet_relays_connected Connected relays.
+# TYPE signet_relays_connected gauge
+signet_relays_connected 1
+Nov 07 07:39:55 signet-drill-restore systemd[1]: Starting signet-compose.service - Signet digest-pinned Compose deployment...
+Nov 07 07:39:55 signet-drill-restore systemd[1]: Started signet-compose.service - Signet digest-pinned Compose deployment.
+Nov 07 07:39:56 signet-drill-restore python3[11906]:  Container signet-signetd-1  Creating
+Nov 07 07:39:56 signet-drill-restore python3[11906]:  Container signet-signetd-1  Created
+Nov 07 07:39:56 signet-drill-restore python3[11906]: Attaching to signetd-1
+Nov 07 07:39:56 signet-drill-restore python3[11906]: signetd-1  | ** Message: 07:39:56.795: [signetd] mlockall(MCL_CURRENT|MCL_FUTURE) OK ? all pages locked
+Nov 07 07:39:56 signet-drill-restore python3[11906]: signetd-1  | ** Message: 07:39:56.973: [signetd] policy store: loaded 1 identities from /data/policies.conf
+Nov 07 07:39:56 signet-drill-restore python3[11906]: signetd-1  | [pool] cleanup worker thread started
+Nov 07 07:39:56 signet-drill-restore python3[11906]: signetd-1  | [pool] cleanup_worker: STARTED
+Nov 07 07:39:57 signet-drill-restore python3[11906]: signetd-1  | [pool] redial connected: wss://nos.lol
+Nov 07 07:39:57 signet-drill-restore python3[11906]: signetd-1  | ** Message: 07:39:57.378: [signetd] NIP-11: wss://nos.lol ? name="nos.lol" software=git+https://github.com/hoytech/strfry.git/1.1.3 NIPs=[1,2,4,9,11,28,40,45,70]
+Nov 07 07:39:57 signet-drill-restore python3[11906]: signetd-1  | ** Message: 07:39:57.379: [signetd] NIP-11: wss://nos.lol max_message_length=131072
+Nov 07 07:39:57 signet-drill-restore python3[11906]: signetd-1  | ** Message: 07:39:57.410: [signetd] subscribed to canonical management kinds on relay pool (p-tag=b8cf710a0293897a136cc7ce43b22a9d91313decdd3cd662f9d266896ce56a39)
+Nov 07 07:39:57 signet-drill-restore python3[11906]: signetd-1  | ** Message: 07:39:57.437: [signetd] entering event-driven main loop
+Nov 07 07:39:57 signet-drill-restore python3[11906]: signetd-1  | [RELAY_POOL] Subscription 1 received 16 events before EOSE
+Nov 07 07:39:57 signet-drill-restore python3[11906]: signetd-1  | [RELAY_POOL] Subscription 2 received 16 events before EOSE
+Nov 07 07:39:59 signet-drill-restore python3[11906]: signetd-1  | ** Message: 07:39:59.851: [signetd] nip46-reply-ack relay=0 result=accept
+Nov 07 07:39:59 signet-drill-restore python3[11906]: signetd-1  | ** Message: 07:39:59.853: [signetd] nip46-reply-ack relay=0 result=accept
+Nov 07 07:40:27 signet-drill-restore python3[11906]: signetd-1  | ** Message: 07:40:27.170: [signetd] nip46-reply-ack relay=0 result=accept
+ts|operation|agent_id|detail
+1794037197|mgmt_history_dropped|78f8e53a3df8f0d4aa6ac6752833177a3c80c636cf7d1f6ffdebd9007d2c2323|{"decision":"deny","reason":"before_live_boundary"}
+1794037197|mgmt_history_dropped|1749e2881912070819e79802f7674696f6992091dea964e86ce322ba3c6d229c|{"decision":"deny","reason":"before_live_boundary"}
+1794037197|mgmt_history_dropped|cc36de6464f8e21ed7ea299913a08763402eec9d488f0a7381b66bd4b14d671f|{"decision":"deny","reason":"before_live_boundary"}
+1794037197|mgmt_history_dropped|2c6079c413747059f4462e6c64480b41b71ab36f334458d28b0b26c68003da1d|{"decision":"deny","reason":"before_live_boundary"}
+1794037197|mgmt_history_dropped|68f8e148eaa80a0a0775ae6cc28e2a12f1fcb05389428334749e897f95653811|{"decision":"deny","reason":"before_live_boundary"}
+1794037197|mgmt_history_dropped|1187271fbac5d114bf7a473a8379a896c3a801e657dff1bc15d5a513d429a4cc|{"decision":"deny","reason":"before_live_boundary"}
+1794037197|mgmt_history_dropped|8a08c96263f94912c0970f8d550735e8024ec60e457e502bd0db1692444f1812|{"decision":"deny","reason":"before_live_boundary"}
+1794037197|mgmt_history_dropped|36d33b4304d096c64f20e8a021575a9b99ef0f4bc826a90f4edcc4ca02942e05|{"decision":"deny","reason":"before_live_boundary"}
+
+===== driver-commands.log =====
+
+===== finish-restarts.sh =====
+#!/bin/bash
+set -euo pipefail
+D=$(cat /tmp/signet-w4-current-path)
+# Enforced systemd restart delay is 270 seconds; allow a bounded 300-second window.
+sleep 270
+"$D/ssh-host" 'date -u; sudo systemctl is-active signet-compose.service; curl -fsS http://127.0.0.1:8080/ready; sudo journalctl -u signet-compose.service --since "2026-11-07 07:23:00" --no-pager | tail -22'
+"$D/ref-nos" /work/client.ini sign
+printf 'PAIRED_CONTAINER_RESTART_PASS\n'; date -u
+"$D/ssh-host" 'sudo cat /proc/sys/kernel/random/boot_id; sudo systemctl reboot' || true
+# Boot starts the fail-closed quarantine; this wait is not relay catch-up polling.
+sleep 320
+"$D/ssh-host" 'date -u; sudo cat /proc/sys/kernel/random/boot_id; sudo systemctl is-active signet-compose.service; curl -fsS http://127.0.0.1:8080/ready; sudo journalctl -b -u signet-compose.service --no-pager | tail -30'
+# Reboot kills the old forwarding connection: the caller must reconnect the tunnel.
+printf 'REBOOT_HOST_READY_NEEDS_TUNNEL\n'
+
+===== populated-restore.sh =====
+#!/bin/bash
+set -euo pipefail
+D=$(cat /tmp/signet-w4-current-path)
+"$D/ssh-host" 'date -u; sudo systemctl start signet-backup.service; sudo systemctl show signet-backup.service -p Result -p ExecMainStatus; sudo cat /opt/signet/current/manifest.json' > "$D/populated-backup-manifest.log"
+"$D/ssh-host" 'sudo cat /opt/signet/current/manifest.json' > "$D/populated-manifest.json"
+"$D/venv/bin/python" - "$D" <<'PY'
+import pathlib,json,sys,boto3,hashlib,urllib.parse
+p=pathlib.Path(sys.argv[1]); m=json.loads((p/'populated-manifest.json').read_text()); print('BACKUP_METADATA',json.dumps(m['last_successful_backup']))
+a=json.loads((p/'spaces-admin.json').read_text())[0]
+s=boto3.client('s3',endpoint_url='https://nyc3.digitaloceanspaces.com',region_name='nyc3',aws_access_key_id=a['access_key'],aws_secret_access_key=a['secret_key'])
+b=m['last_successful_backup']; ref=b.get('reference') or b.get('s3_uri') or b.get('ref')
+if not ref:
+ print('REF_FIELD_NOT_FOUND'); raise SystemExit(2)
+u=urllib.parse.urlparse(ref); assert u.netloc=='signet-drill-20261107'
+out=p/'populated-backup';out.mkdir(exist_ok=True)
+for name in ('store.db','config.tar.gz','checksums.json'): s.download_file(u.netloc,u.path.strip('/')+'/'+name,str(out/name)); (out/name).chmod(0o600)
+for name,wanted in json.loads((out/'checksums.json').read_text()).items():
+ got=hashlib.sha256((out/name).read_bytes()).hexdigest(); assert got==wanted==b['checksums'][name]; print('SHA256_OK',name,got)
+PY
+# No active duplicated bunker identity: primary is stopped before restoring/start.
+"$D/ssh-host" 'sudo systemctl stop signet-compose.service; date -u; sudo systemctl is-active signet-compose.service || true'
+tar -C "$D/populated-backup" -cf - store.db config.tar.gz checksums.json | "$D/ssh-restore" 'sudo install -d -o 10001 -g 10001 -m 0700 /srv/signet/backups/populated; sudo tar -xf - -C /srv/signet/backups/populated; sudo chown -R 10001:10001 /srv/signet/backups/populated'
+"$D/ssh-restore" 'sudo bash -s' <<'REMOTE'
+set -euo pipefail
+systemctl stop signet-compose.service
+install -d -m 0700 /srv/signet/backups/before-populated
+if [ -f /srv/signet/state/signet.db.pre-restore ]; then mv /srv/signet/state/signet.db.pre-restore /srv/signet/backups/before-populated/; fi
+python3 - <<'PY'
+import tarfile,pathlib,os
+base=pathlib.Path('/srv/signet/backups/populated')
+for name, target,mode in [('signet.conf','/opt/signet/config/signet.conf',0o640),('deploy.env','/opt/signet/config/deploy.env',0o640),('policies.conf','/srv/signet/state/policies.conf',0o640),('audit.jsonl','/srv/signet/state/audit.jsonl',0o640)]:
+ with tarfile.open(base/'config.tar.gz') as t:
+  f=t.extractfile(name); data=f.read()
+ p=pathlib.Path(target); p.write_bytes(data); os.chown(p,10001,10001);os.chmod(p,mode)
+print('Allowlisted config restored; replacement volume manifest retained')
+PY
+ops() { docker --config /opt/signet/secrets/docker compose --project-name signet --env-file /opt/signet/config/deploy.env --env-file /opt/signet/current/release.env -f /opt/signet/current/signet/docker-compose.yml --profile ops run --rm -T signet-ops "$@" </dev/null; }
+ops restore-db /backups/populated/store.db --confirm
+ops verify-audit
+ops list-agents --verify
+python3 /opt/signet/current/signet/deploy/ops.py quarantine
+date -u
+sleep 270
+systemctl enable --now signet-compose.service
+# Startup on the sole working relay normally completes in seconds. One bounded delay.
+sleep 15
+curl -fsS http://127.0.0.1:8080/ready
+date -u
+REMOTE
+printf 'POPULATED_RESTORE_HOST_PASS\n'
+
+===== paired-release-sequence.sh =====
+#!/bin/bash
+set -euo pipefail
+D=$(cat /tmp/signet-w4-current-path)
+T=/opt/signet/drill-tools/23978065f/signet/deploy/release.sh
+A=/opt/signet/releases/4fbac4ea9c04088a8015cff8b2f173587300d8a8
+C=/opt/signet/releases/7f2aeaecde6dc271d5a8d2754a708c95177652ba
+printf 'BEGIN_PAIRED_RESTORE_HOST_UPGRADE\n'; date -u
+"$D/ssh-restore" "sudo '$T' upgrade '$A' --offline" </dev/null
+"$D/ref-nos" /work/client.ini sign
+"$D/ref-nos" /work/client2.ini revoked
+printf 'PAIRED_UPGRADE_PASS\n'; date -u
+"$D/ssh-restore" "sudo '$T' rollback-image '$C'" </dev/null
+"$D/ref-nos" /work/client.ini sign
+"$D/ref-nos" /work/client2.ini revoked
+printf 'PAIRED_IMAGE_ROLLBACK_PASS\n'; date -u
+
+===== destroy-cloud.sh =====
+#!/bin/bash
+set -euo pipefail
+set +x
+export DIGITALOCEAN_ACCESS_TOKEN="$(tr -d '[:space:]' < ~/.config/doctl/token)"
+D=$(cat /tmp/signet-w4-current-path)
+date -u
+"$D/ssh-host" 'sudo systemctl stop signet-backup.timer signet-compose.service'
+"$D/ssh-restore" 'sudo systemctl stop signet-backup.timer signet-compose.service'
+"$D/venv/bin/python" "$D/destroy-bucket.py" "$D"
+doctl spaces keys delete DO801VXADJHDKC9XTB28
+doctl spaces keys delete DO00B7W9GGXU2W46KWJC
+printf 'SPACES_KEYS_DELETED DO801VXADJHDKC9XTB28 DO00B7W9GGXU2W46KWJC\n'
+doctl compute droplet delete 616800461 616803351 --force
+printf 'DROPLETS_DELETE_ACCEPTED 616800461 616803351\n'; date -u
+sleep 30
+doctl compute volume delete bd0ea39e-da71-11f1-af9f-dafd37c47a91 --force
+doctl compute volume delete 0ba40963-da74-11f1-b80e-d67dcaaf751c --force
+doctl compute firewall delete 4fc68123-21fb-4b43-b6f6-405b36d44b8e --force
+doctl compute ssh-key delete 60686858 --force
+printf 'VOLUMES_FIREWALL_SSH_KEY_DELETED\n'; date -u
+# Full list responses are filtered locally to task IDs/names/tags; no unrelated inventory is published.
+for spec in 'compute droplet' 'compute volume' 'compute firewall' 'compute ssh-key' 'spaces keys' 'compute snapshot'; do
+ printf 'doctl %s list --output json | task-resource-filter\n' "$spec"
+ doctl $spec list --output json | python3 -c 'import json,sys; a=json.load(sys.stdin); ids={"616800461","616803351","60686858","bd0ea39e-da71-11f1-af9f-dafd37c47a91","0ba40963-da74-11f1-b80e-d67dcaaf751c","4fc68123-21fb-4b43-b6f6-405b36d44b8e","DO00B7W9GGXU2W46KWJC","DO801VXADJHDKC9XTB28"}; left=[{k:x.get(k) for k in ("id","name","access_key") if x.get(k) is not None} for x in a if x.get("name","").startswith("signet-drill") or "signet-drill" in (x.get("tags") or []) or str(x.get("id")) in ids or x.get("access_key") in ids]; print(json.dumps(left)); assert not left'
+done
+doctl compute tag delete signet-drill --force
+printf 'TAG_DELETED signet-drill; no named auth context was created; default context preserved\n'
+date -u
+
+===== destroy-bucket.py =====
+import boto3,json,pathlib,sys,datetime
+p=pathlib.Path(sys.argv[1]); a=json.loads((p/'spaces-admin.json').read_text())[0]
+s=boto3.client('s3',endpoint_url='https://nyc3.digitaloceanspaces.com',region_name='nyc3',aws_access_key_id=a['access_key'],aws_secret_access_key=a['secret_key'])
+b='signet-drill-20261107'; print('BEGIN_BUCKET_DELETE',datetime.datetime.now(datetime.timezone.utc).isoformat())
+items=[]
+for page in s.get_paginator('list_object_versions').paginate(Bucket=b):
+ for kind in ('Versions','DeleteMarkers'):
+  items += [{'Key':v['Key'],'VersionId':v['VersionId']} for v in page.get(kind,[])]
+for i in range(0,len(items),1000):
+ r=s.delete_objects(Bucket=b,Delete={'Objects':items[i:i+1000],'Quiet':True}); assert not r.get('Errors'), r.get('Errors')
+print('DELETED_OBJECT_VERSIONS_AND_MARKERS',len(items))
+# Include any unversioned objects not represented above.
+for page in s.get_paginator('list_objects_v2').paginate(Bucket=b):
+ objects=[{'Key':v['Key']} for v in page.get('Contents',[])]
+ if objects:
+  r=s.delete_objects(Bucket=b,Delete={'Objects':objects,'Quiet':True}); assert not r.get('Errors')
+s.delete_bucket(Bucket=b)
+print('BUCKET_DELETED',b)
+left=[v['Name'] for v in s.list_buckets()['Buckets'] if v['Name'].startswith('signet-drill')]
+print('BUCKET_LIST_SIGNET_DRILL',json.dumps(left)); assert not left
+try: s.head_bucket(Bucket=b)
+except s.exceptions.ClientError as e:
+ code=e.response['ResponseMetadata']['HTTPStatusCode']; print('HEAD_DELETED_BUCKET_HTTP',code); assert code==404
+else: raise RuntimeError('bucket still exists')
+
+===== diagnostic/query-relay.py =====
+import sys,socket,ssl,json,time,os
+from pathlib import Path
+from websockets.sync.client import connect
+d=Path(sys.argv[1]); host=sys.argv[2]; port=int(sys.argv[3]); pub=(d/'keys/bunker.pub').read_text().strip(); now=int(time.time()); sub='w4diag-'+str(now)
+f={'kinds':[24133,25910,1059],'#p':[pub],'since':now-49*3600}
+print(json.dumps({'query_time':now,'relay':host,'filter':f}),flush=True)
+try:
+ with connect('wss://'+host,sock=socket.create_connection(('127.0.0.1',port),timeout=10),ssl=ssl.create_default_context(),server_hostname=host,proxy=None,open_timeout=12,close_timeout=2) as ws:
+  ws.send(json.dumps(['REQ',sub,f])); events=[]
+  while True:
+   a=json.loads(ws.recv(timeout=20))
+   if a[0]=='EVENT':
+    e=a[2]; events.append(e); print(json.dumps({'frame':'EVENT','id':e['id'],'created_at':e['created_at'],'kind':e['kind'],'tags':e['tags']}),flush=True)
+   else: print(json.dumps(a),flush=True)
+   if a[0] in ('EOSE','CLOSED'):break
+  ws.send(json.dumps(['CLOSE',sub]))
+  p=d/('stored-'+host+'.jsonl'); fd=os.open(p,os.O_CREAT|os.O_WRONLY|os.O_TRUNC,0o600)
+  with os.fdopen(fd,'w') as out:
+   for e in events: out.write(json.dumps(e)+'\n')
+except Exception as e: print('FAILED',type(e).__name__,str(e)); sys.exit(1)
+
+===== final-version-check.log =====
+{"sha": "23978065fcf22cefb2073ff8da51b0e0d9b7f2d0", "version": "0.8.0", "image_tag": "0.8.0-rc.1"}
+
+===== deployment-static.log (selected test result lines) =====
+Ran 13 tests in 0.137s
+OK
+
+===== offline-static.log (selected test result lines) =====
+Ran 14 tests in 0.130s
+OK
+
+===== readiness-static.log (selected test result lines) =====
+Ran 14 tests in 0.140s
+OK
+
+===== build-tests.log (selected test result lines) =====
+#9 [builder 5/5] RUN cmake -B build-docker -G Ninja     -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF     -DSIGNET_ENABLE=ON -DSIGNET_USE_SQLCIPHER=ON     -DSIGNET_ENABLE_PASSKEYS=OFF -DSIGNET_ENABLE_TEST_HOOKS=OFF     -DBUILD_NOSTR_GTK=OFF -DBUILD_APPS=OFF -DBUILD_RELAYD=OFF     -DBUILD_LIBMARMOT=OFF -DBUILD_MARMOT_GOBJECT=OFF -DLIBNOSTR_WITH_NOSTRDB=OFF -DWITH_NOSTRDB=OFF  && cmake --build build-docker --target signetd signetctl -j2  && cc -O2 -Wall -Wextra -Werror -I/usr/include/sqlcipher signet/deploy/store-inspect.c       -o /src/build-docker/signet-inspect-store -lsqlcipher -lsodium  && dpkg-query -W > /src/build-docker/package-inputs.txt
+#10 13.43 1/1 Test #14: test_connection_tls_no_resumption ...   Passed    0.51 sec
+#10 13.43 100% tests passed, 0 tests failed out of 1
+#11 11.70 [97/104] Compiling C object tests/test_backup_restore.p/test_backup_restore.c.o
+#11 11.87 [103/104] Linking target tests/test_backup_restore
+#11 11.96  1/39 signetctl_intent       OK               0.07s
+#11 11.96  2/39 http_listen            OK               0.06s
+#11 11.96  3/39 health_readiness       OK               0.04s
+#11 11.96  4/39 replay_cache           OK               0.04s
+#11 11.98  5/39 secret_input           OK               0.09s
+#11 11.99  6/39 http_routes            OK               0.09s
+#11 11.99  7/39 signet_smoke           OK               0.07s
+#11 11.99  8/39 no_bare_assert         OK               0.08s
+#11 12.00  9/39 audit_logger           OK               0.06s
+#11 12.01 10/39 policy_engine          OK               0.08s
+#11 12.02 11/39 capability             OK               0.06s
+#11 12.03 12/39 relay_pool_ok_lifetime OK               0.05s
+#11 12.06 13/39 nostr_auth             OK               0.06s
+#11 12.12 14/39 db_migration           OK               0.10s
+#11 12.20 15/39 bootstrap_contract     OK               0.25s
+#11 12.21 16/39 test_list_parity       OK               0.30s
+#11 12.31 17/39 signing_crypto         OK               0.32s
+#11 12.36 18/39 store_lifecycle        OK               0.36s
+#11 12.41 19/39 reissue_connect        OK               0.35s
+#11 12.65 20/39 pubkey_backfill        OK               0.45s
+#11 12.66 21/39 deployment_contract    OK               0.75s
+#11 12.70 22/39 cli_secret_output      OK               0.05s
+#11 12.71 23/39 config_reload          OK               0.72s
+#11 12.80 24/39 mgmt_replay            OK               0.69s
+#11 12.84 25/39 adopt_existing         OK               0.81s
+#11 12.85 26/39 git_credential         OK               0.20s
+#11 12.90 27/39 daemon_startup         OK               0.99s
+#11 13.07 28/39 backup_restore         OK               0.26s
+#11 13.21 29/39 store                  OK               1.20s
+#11 13.26 30/39 reissue_self_service   OK               1.04s
+#11 13.38 31/39 credential_access      OK               0.97s
+#11 13.48 32/39 item3_concurrency      OK               0.77s
+#11 13.52 33/39 key_store              OK               1.50s
+#11 13.70 34/39 signetctl_credentials  OK               0.99s
+#11 13.78 35/39 client_bindings        OK               1.47s
+#11 14.29 36/39 credential_lifecycle   OK               1.93s
+#11 17.57 37/39 relay_pool_protocol    OK               5.60s
+#11 25.23 38/39 relay_pool_wire        OK              13.25s
+#11 25.46 39/39 mgmt_ingress_wire      FAIL            12.61s   exit status 1
+#11 25.46 >>> UBSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1 MESON_TEST_ITERATION=1 MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1 ASAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1 MALLOC_PERTURB_=176 /usr/bin/python3 /src/signet/tests/test_mgmt_ingress_wire.py /src/signet/build-meson-sqlite/tests/test_mgmt_replay
+#11 25.46 wire: old-subscription history refused after current EOSE PASS
+#11 25.46   File "/src/signet/tests/test_mgmt_ingress_wire.py", line 83, in <module>
+#11 25.46   File "/src/signet/tests/test_mgmt_ingress_wire.py", line 73, in run
+#11 25.46 AssertionError: (1, {'requests': 5, 'sid': '3', 'old_sid': '2', 'live': 4, 'connections': 2, 'late_sent': False}, "\n** (process:1031): WARNING **: 06:05:31.052: [signet] database at '/tmp/signet-test-mgmt-replay-Y7cOiJ.db' is NOT SQLCipher-encrypted at rest (plain SQLite). Secret keys remain envelope-encrypted, but connect secrets and metadata are stored in cleartext. Build against SQLCipher or set SIGNET_REQUIRE_ENCRYPTED_DB=true to enforce.\n[pool] cleanup worker thread started\n[pool] cleanup_worker: STARTED\n[simplepool] subscribe fire failed on ws://127.0.0.1:55717 (will retry on connect): subscription or connection is NULL\n[pool] redial connected: ws://127.0.0.1:55717\n[simplepool] (re)subscribed on ws://127.0.0.1:55717\n[RELAY_POOL] Subscription 2 received 1 events before EOSE\n[RELAY_POOL] Subscription 3 received 1 events before EOSE\n[RECONNECT] Connection lost to ws://127.0.0.1:55717, attempt 1, waiting 775ms\n[RECONNECT] Re-fired 2 subscription(s) for ws://127.0.0.1:55717\n[RECONNECT] Successfully reconnected to ws://127.0.0.1:55717\n[RELAY_POOL] Subscription 4 received 1 events before EOSE\n[RELAY_POOL] Subscription 2 received 2 events before EOSE\n[RELAY_POOL] Subscription 3 received 4 events before EOSE\n[pool] shutting down cleanup worker...\n[pool] cleanup_worker: EXITING\n[pool] cleanup worker shutdown complete\n[pool] cancelling 0 registered subscriptions...\n[pool] subscription registry freed\n\nFAIL ../tests/test_mgmt_replay.c:538: w.eoses == expected && g_atomic_int_get(&w.accepted) == expected\n")
+#11 25.46 39/39 mgmt_ingress_wire      FAIL            12.61s   exit status 1
+#11 29.30 [101/104] Compiling C object tests/test_backup_restore.p/test_backup_restore.c.o
+#11 29.45 [103/104] Linking target tests/test_backup_restore
+#11 29.53  1/39 signetctl_intent       OK               0.06s
+#11 29.53  2/39 http_listen            OK               0.05s
+#11 29.53  3/39 health_readiness       OK               0.03s
+#11 29.53  4/39 replay_cache           OK               0.03s
+#11 29.55  5/39 secret_input           OK               0.08s
+#11 29.56  6/39 signet_smoke           OK               0.06s
+#11 29.56  7/39 http_routes            OK               0.08s
+#11 29.56  8/39 policy_engine          OK               0.05s
+#11 29.57  9/39 audit_logger           OK               0.05s
+#11 29.57 10/39 no_bare_assert         OK               0.08s
+#11 29.59 11/39 capability             OK               0.05s
+#11 29.61 12/39 relay_pool_ok_lifetime OK               0.06s
+#11 29.62 13/39 nostr_auth             OK               0.06s
+#11 29.86 14/39 test_list_parity       OK               0.36s
+#11 29.90 15/39 bootstrap_contract     OK               0.38s
+#11 30.06 16/39 signing_crypto         OK               0.50s
+#11 30.09 17/39 store_lifecycle        OK               0.52s
+#11 30.14 18/39 deployment_contract    OK               0.65s
+#11 30.16 19/39 reissue_connect        OK               0.54s
+#11 30.33 20/39 db_migration           OK               0.74s
+#11 30.38 21/39 cli_secret_output      OK               0.06s
+#11 30.66 22/39 config_reload          OK               1.10s
+#11 30.69 23/39 git_credential         OK               0.31s
+#11 30.78 24/39 pubkey_backfill        OK               0.88s
+#11 30.82 25/39 daemon_startup         OK               1.34s
+#11 30.91 26/39 mgmt_replay            OK               1.05s
+#11 30.95 27/39 adopt_existing         OK               1.34s
+#11 31.20 28/39 credential_access      OK               1.04s
+#11 31.42 29/39 reissue_self_service   OK               1.36s
+#11 31.44 30/39 store                  OK               1.87s
+#11 31.44 31/39 item3_concurrency      OK               0.75s
+#11 31.97 32/39 signetctl_credentials  OK               1.31s
+#11 32.06 33/39 client_bindings        OK               1.98s
+#11 32.33 34/39 key_store              OK               2.75s
+#11 32.54 35/39 credential_lifecycle   OK               2.40s
+#11 35.09 36/39 backup_restore         OK               4.31s
+#11 35.22 37/39 relay_pool_protocol    OK               5.69s
+#11 43.42 38/39 relay_pool_wire        OK              13.88s
+#11 44.49 39/39 mgmt_ingress_wire      FAIL            13.66s   exit status 1
+#11 44.49 >>> MALLOC_PERTURB_=236 MESON_TEST_ITERATION=1 MSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1 ASAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1 UBSAN_OPTIONS=halt_on_error=1:abort_on_error=1:print_summary=1:print_stacktrace=1 /usr/bin/python3 /src/signet/tests/test_mgmt_ingress_wire.py /src/signet/build-meson-sqlcipher/tests/test_mgmt_replay
+#11 44.49 wire: old-subscription history refused after current EOSE PASS
+#11 44.49   File "/src/signet/tests/test_mgmt_ingress_wire.py", line 83, in <module>
+#11 44.49   File "/src/signet/tests/test_mgmt_ingress_wire.py", line 73, in run
+#11 44.49 AssertionError: (1, {'requests': 5, 'sid': '3', 'old_sid': '2', 'live': 4, 'connections': 2, 'late_sent': False}, '[pool] cleanup worker thread started\n[pool] cleanup_worker: STARTED\n[simplepool] subscribe fire failed on ws://127.0.0.1:44795 (will retry on connect): subscription or connection is NULL\n[pool] redial connected: ws://127.0.0.1:44795\n[simplepool] (re)subscribed on ws://127.0.0.1:44795\n[RELAY_POOL] Subscription 2 received 1 events before EOSE\n[RELAY_POOL] Subscription 3 received 1 events before EOSE\n[RECONNECT] Connection lost to ws://127.0.0.1:44795, attempt 1, waiting 1241ms\n[RECONNECT] Re-fired 2 subscription(s) for ws://127.0.0.1:44795\n[RECONNECT] Successfully reconnected to ws://127.0.0.1:44795\n[RELAY_POOL] Subscription 4 received 1 events before EOSE\n[RELAY_POOL] Subscription 2 received 2 events before EOSE\n[RELAY_POOL] Subscription 3 received 4 events before EOSE\n[pool] shutting down cleanup worker...\n[pool] cleanup_worker: EXITING\n[pool] cleanup worker shutdown complete\n[pool] cancelling 0 registered subscriptions...\n[pool] subscription registry freed\n\nFAIL ../tests/test_mgmt_replay.c:538: w.eoses == expected && g_atomic_int_get(&w.accepted) == expected\n')
+#11 44.49 39/39 mgmt_ingress_wire      FAIL            13.66s   exit status 1
+#11 ERROR: process "/bin/sh -c if [ \"$SIGNET_PASSKEYS\" = ON ]; then passkeys=true; else passkeys=false; fi  && meson setup signet/build-meson-sqlite signet       -Dnostrc_build_dir=/src/build-docker -Dsignet_enable_tests=true       -Dsignet_enable_passkeys=$passkeys -Dsignet_enable_test_hooks=false  && meson setup signet/build-meson-sqlcipher signet       -Dnostrc_build_dir=/src/build-docker -Dsignet_enable_tests=true       -Dsignet_use_sqlcipher=true -Dsignet_enable_passkeys=$passkeys       -Dsignet_enable_test_hooks=false  && (meson test -C signet/build-meson-sqlite --print-errorlogs; sqlite_status=$?;      meson test -C signet/build-meson-sqlcipher --print-errorlogs; cipher_status=$?;      test \"$sqlite_status\" = 0 && test \"$cipher_status\" = 0)" did not complete successfully: exit code: 1
+44.49 39/39 mgmt_ingress_wire      FAIL            13.66s   exit status 1
+  40 | >>> RUN if [ "$SIGNET_PASSKEYS" = ON ]; then passkeys=true; else passkeys=false; fi \
+ERROR: failed to build: failed to solve: process "/bin/sh -c if [ \"$SIGNET_PASSKEYS\" = ON ]; then passkeys=true; else passkeys=false; fi  && meson setup signet/build-meson-sqlite signet       -Dnostrc_build_dir=/src/build-docker -Dsignet_enable_tests=true       -Dsignet_enable_passkeys=$passkeys -Dsignet_enable_test_hooks=false  && meson setup signet/build-meson-sqlcipher signet       -Dnostrc_build_dir=/src/build-docker -Dsignet_enable_tests=true       -Dsignet_use_sqlcipher=true -Dsignet_enable_passkeys=$passkeys       -Dsignet_enable_test_hooks=false  && (meson test -C signet/build-meson-sqlite --print-errorlogs; sqlite_status=$?;      meson test -C signet/build-meson-sqlcipher --print-errorlogs; cipher_status=$?;      test \"$sqlite_status\" = 0 && test \"$cipher_status\" = 0)" did not complete successfully: exit code: 1
+
+===== final local-secret destruction =====
+2026-11-07T07:54:00.288661+00:00
+TEMP_DRILL_DIRECTORY_ABSENT true
+THROWAWAY_SSH_PRIVATE_KEY_ABSENT true
+TEMP_POINTER_ABSENT true
+KNOWN_SECRET_SCAN_PASS before deletion
+NO_SIGNET_DRILL_AUTH_CONTEXT (verified doctl auth list 07:47:28Z)
+USER_DO_TOKEN_AND_DEFAULT_CONTEXT_PRESERVED
