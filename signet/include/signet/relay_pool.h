@@ -72,6 +72,15 @@ typedef struct {
  */
 typedef void (*SignetRelayEventCallback)(const SignetRelayEventView *ev, void *user_data);
 
+/* Main-context notification for the current reply subscription. States are
+ * CONNECTED, DISCONNECTED, EOSE and CLOSED. reason is borrowed and untrusted.
+ * Set before start; callbacks must not free the pool from inside the callback. */
+typedef void (*SignetSubscriptionCallback)(const char *relay_url, const char *state,
+                                          const char *reason, void *user_data);
+void signet_relay_pool_set_subscription_callback(SignetRelayPool *rp,
+                                                 SignetSubscriptionCallback cb,
+                                                 void *user_data);
+
 /**
  * SignetRelayPoolConfig:
  * @relays: relays value.
@@ -150,6 +159,9 @@ int signet_relay_pool_start(SignetRelayPool *rp);
  * @rp: (nullable): a #SignetRelayPool
  *
  * Stop relay connections/subscriptions. Safe to call multiple times.
+ * When called inside a pool callback, marks stopping immediately and defers
+ * the quiescence/join to the default GLib main context. Otherwise synchronous.
+ * Do not free the pool from a pool callback; free it after callback return.
  *
  * Since: 1.0
  */
@@ -224,7 +236,11 @@ int signet_relay_pool_publish_event_json(SignetRelayPool *rp, const char *event_
  * @reason: (nullable): reason
  * @user_data: (not nullable): user data
  *
- * Callback invoked for relay OK acknowledgements.
+ * Callback invoked once per watched relay operation. accepted=false with
+ * reason "transport-aborted:" or "timeout:" distinguishes local terminals
+ * from relay rejection. Callbacks may run on worker or GLib main-context threads.
+ * user_data must remain valid until the callback or synchronous pool stop has
+ * returned. stop() inside a callback defers quiescence; never call free() there.
  *
  * Since: 1.0
  */
@@ -232,8 +248,9 @@ typedef void (*SignetPublishOkCallback)(const char *event_id, bool accepted,
                                         const char *reason, void *user_data);
 
 /* Publish with OK acknowledgment tracking.
- * The callback fires once for each relay that responds with OK.
- * Returns 0 on enqueue success, -1 if not started / OOM. */
+ * The callback fires once per watched relay, on OK, timeout, or transport abort.
+ * Returns 0 on enqueue success, -1 if not started / OOM, -2 if none connected.
+ * A GLib default main loop must run to dispatch operation deadlines. */
 /**
  * signet_relay_pool_publish_event_json_ack:
  * @rp: (not nullable): a #SignetRelayPool
@@ -241,7 +258,10 @@ typedef void (*SignetPublishOkCallback)(const char *event_id, bool accepted,
  * @cb: cb
  * @user_data: (not nullable): user data
  *
- * Publish with OK acknowledgment tracking. The callback fires once for each relay that responds with OK. Returns 0 on enqueue success, -1 if not started / OOM.
+ * Publish with independent per-relay OK, timeout and transport-abort terminals.
+ * Enqueue success is neither relay acceptance nor recipient delivery. The GLib
+ * default main context dispatches deadlines. Returns 0 on enqueue success,
+ * -1 if not started / invalid input, or -2 if no relay is connected.
  *
  * Thread safety: this function is safe to call concurrently; access is serialized internally where required.
  *
@@ -331,15 +351,14 @@ unsigned signet_relay_pool_dial_attempts(SignetRelayPool *rp);
  */
 bool signet_relay_pool_dial_in_flight(SignetRelayPool *rp);
 
-/* NPA-10: Check if any active subscription has received EOSE.
- * Returns true once the relay has acknowledged our subscription by sending
- * End-of-Stored-Events. Useful for waiting until AUTH + subscribe is complete
- * before publishing events. */
+/* True only while a connected relay's current required subscription has
+ * crossed EOSE. Replacement, reconnect, AUTH and CLOSED invalidate readiness. */
 /**
  * signet_relay_pool_is_subscribed:
  * @rp: (not nullable): a #SignetRelayPool
  *
- * NPA-10: Check if any active subscription has received EOSE. Returns true once the relay has acknowledged our subscription by sending End-of-Stored-Events. Useful for waiting until AUTH + subscribe is complete before publishing events.
+ * Check the current required subscription's EOSE, never an older subscription.
+ * Reconnect, AUTH, replacement and CLOSED invalidate readiness.
  *
  * Returns: %true if the condition is met, otherwise %false
  *

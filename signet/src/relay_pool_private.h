@@ -2,9 +2,8 @@
  *
  * relay_pool_private.h - relay_pool.c internals shared with its tests.
  *
- * Not installed. The per-relay OK callbacks that finish a NIP-42 AUTH and
- * that acknowledge a publish, exposed so tests can drive them on a single
- * NostrRelay (nostrc-tw7f).
+ * Not installed. Dispatcher watch registration exposed for deterministic
+ * control-frame/lifetime tests on a single NostrRelay.
  */
 
 #ifndef SIGNET_RELAY_POOL_PRIVATE_H
@@ -14,18 +13,16 @@
 
 #include <nostr-relay.h>
 
-/* Registers @relay's OK callback for a sent AUTH event @auth_event_id: an OK
- * true schedules @rp's post-AUTH re-subscribe on the default main context, an
- * OK false gives up; either removes the callback. @relay_url names the relay
- * in logs. The relay owns the registration's data (nostrc-tw7f). */
+/* Add a generation-scoped AUTH watch without displacing publish watches.
+ * An accepted OK schedules the complete stored filter on the default context.
+ * The pool owns the watch, callback references and deferred source. */
 void signet_relay_pool_watch_auth_ok(SignetRelayPool *rp, NostrRelay *relay,
                                      const char *auth_event_id,
                                      const char *relay_url);
 
-/* Registers @relay's OK callback for a published @event_id: the first OK for
- * it is passed to @cb, and the callback removes itself. The relay owns the
- * registration's data (nostrc-tw7f). */
-void signet_relay_pool_watch_publish_ok(NostrRelay *relay, const char *event_id,
+/* Add a publish watch. The dispatcher removes the watch, not its own callback;
+ * duplicate/concurrent OKs cannot fire a watch twice. Stop aborts pending watches. */
+void signet_relay_pool_watch_publish_ok(SignetRelayPool *rp, NostrRelay *relay, const char *event_id,
                                         SignetPublishOkCallback cb, void *user_data);
 
 #endif /* SIGNET_RELAY_POOL_PRIVATE_H */
