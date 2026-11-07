@@ -245,6 +245,8 @@ signet_includes = [
 # Core library sources (everything except main entrypoints)
 signet_core_sources = files(
   'src/signet_config.c',
+  'src/secret_input.c',
+  'src/http_listen.c',
   'src/config_reload.c',
   'src/store.c',
   'src/audit_logger.c',
@@ -308,7 +310,7 @@ signet_core = static_library('signet_core',
 )
 
 # Daemon + CLI
-executable('signetd',
+signetd_exe = executable('signetd',
   'src/signetd_main.c',
   link_with: signet_core,
   include_directories: signet_includes,

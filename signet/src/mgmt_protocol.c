@@ -8,6 +8,7 @@
  */
 
 #include "signet/mgmt_protocol.h"
+#include "signet/health_server.h"
 #include "signet/cascadia.h"
 #include "signet/key_store.h"
 #include "signet/policy_store.h"
@@ -543,7 +544,8 @@ static int signet_mgmt_writeback_provisioners(SignetMgmtHandler *h) {
   char **pubkeys = NULL;
   size_t count = 0;
   if (signet_store_list_provisioners(h->provisioner_store, &pubkeys, &count) != 0) {
-    g_warning("[signetd] provisioner config write-back skipped: cannot read "
+    signet_provisioner_writeback_result(true);
+    g_critical("[signetd] provisioner config write-back skipped: cannot read "
               "persisted provisioner set");
     return -1;
   }
@@ -553,6 +555,7 @@ static int signet_mgmt_writeback_provisioners(SignetMgmtHandler *h) {
       h->config_path, (const char *const *)pubkeys, count, err, sizeof(err));
   signet_store_free_provisioner_list(pubkeys, count);
 
+  signet_provisioner_writeback_result(rc != 0);
   if (rc != 0) {
     g_critical("[signetd] provisioner config write-back to '%s' FAILED: %s. "
                "The persisted revocation tombstone still prevents a reload "

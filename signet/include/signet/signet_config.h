@@ -183,7 +183,10 @@ typedef struct {
   bool audit_stdout;
 
   /* --- [bootstrap] --- */
-  int bootstrap_port;              /* 0 = disabled (default) */
+  int bootstrap_port;
+  bool bootstrap_require_tls;
+  char **bootstrap_trusted_proxy_cidrs;
+  size_t n_bootstrap_trusted_proxy_cidrs;              /* 0 = disabled (default) */
 
   /* --- [dbus] --- */
   bool dbus_unix_enabled;          /* system D-Bus (default false) */
@@ -239,15 +242,16 @@ void signet_config_init(SignetConfig *cfg);
  */
 void signet_config_clear(SignetConfig *cfg);
 
-/* Load configuration from path. If path is NULL or missing, defaults are applied.
- * Environment variable overrides are always applied last.
- * Returns 0 on success, -1 on hard failure (e.g., out-of-memory). */
+/* NULL/empty path selects defaults + env. Explicit unreadable/malformed files
+ * fail; environment overrides are applied only after a valid file.
+ * Returns 0 on success, -1 on failure. */
 /**
  * signet_config_load:
  * @path: (nullable): filesystem path
  * @out_cfg: (out) (not nullable): return location for cfg
  *
- * Load configuration from path. If path is NULL or missing, defaults are applied. Environment variable overrides are always applied last. Returns 0 on success, -1 on hard failure (e.g., out-of-memory).
+ * NULL/empty path selects defaults + env. Explicit unreadable/malformed files
+ * fail. Environment overrides are applied last. Returns 0 on success, -1 on failure.
  *
  * Returns: operation-specific status or value as documented by the function
  *

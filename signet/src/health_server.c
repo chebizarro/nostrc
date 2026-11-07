@@ -19,12 +19,15 @@
 #include <glib.h>
 #include <json-glib/json-glib.h>
 #include <microhttpd.h>
+#include <arpa/inet.h>
+#include "http_listen.h"
 
 /* Process-global atomic counters — incremented by subsystem handlers. */
 SignetMetricsCounters g_signet_metrics;
 
 struct SignetHealthServer {
   char *listen;
+  SignetHttpListen address;
   struct MHD_Daemon *mhd;
 
   GMutex mu;
@@ -107,10 +110,14 @@ signet_handle_ready(SignetHealthServer *hs, struct MHD_Connection *connection) {
 
   bool ready = signet_health_snapshot_is_ready(&snap_copy);
   unsigned int status = ready ? MHD_HTTP_OK : MHD_HTTP_SERVICE_UNAVAILABLE;
-  const char *body = ready ? "{\"ready\":true}" : "{\"ready\":false}";
+  char body[160];
+  snprintf(body, sizeof(body),
+           "{\"ready\":%s,\"detail\":{\"provisioner_writeback_failed\":%s}}",
+           ready ? "true" : "false",
+           snap_copy.provisioner_writeback_failed ? "true" : "false");
 
   struct MHD_Response *resp = MHD_create_response_from_buffer(
-      strlen(body), (void *)body, MHD_RESPMEM_PERSISTENT);
+      strlen(body), (void *)body, MHD_RESPMEM_MUST_COPY);
   MHD_add_response_header(resp, "Content-Type", "application/json");
   MHD_add_response_header(resp, "Cache-Control", "no-store");
   enum MHD_Result ret = MHD_queue_response(connection, status, resp);
@@ -129,6 +136,10 @@ bool signet_health_snapshot_is_ready(const SignetHealthSnapshot *snap) {
 static char *signet_build_metrics(const SignetHealthSnapshot *s, uint64_t uptime_sec) {
   GString *m = g_string_sized_new(1024);
 
+  g_string_append(m, "# HELP signet_provisioner_writeback_failures_total Failed provisioner config writes.\n"
+                     "# TYPE signet_provisioner_writeback_failures_total counter\n");
+  g_string_append_printf(m, "signet_provisioner_writeback_failures_total %" G_GUINT64_FORMAT "\n",
+                         s->provisioner_writeback_failures);
   g_string_append_printf(m, "# HELP signet_up Whether signet is up.\n");
   g_string_append_printf(m, "# TYPE signet_up gauge\n");
   g_string_append_printf(m, "signet_up 1\n");
@@ -323,6 +334,10 @@ SignetHealthServer *signet_health_server_new(const SignetHealthServerConfig *cfg
   SignetHealthServer *hs = (SignetHealthServer *)calloc(1, sizeof(*hs));
   if (!hs) return NULL;
 
+  if (signet_http_listen_parse(cfg->listen, &hs->address) != 0) {
+    free(hs);
+    return NULL;
+  }
   hs->listen = g_strdup(cfg->listen);
   g_mutex_init(&hs->mu);
   memset(&hs->snap, 0, sizeof(hs->snap));
@@ -343,21 +358,13 @@ int signet_health_server_start(SignetHealthServer *hs) {
   if (!hs || !hs->listen) return -1;
   if (hs->mhd) return 0; /* already started */
 
-  /* Parse host:port from listen string. */
-  const char *colon = strrchr(hs->listen, ':');
-  if (!colon || colon[1] == '\0') return -1;
-
-  errno = 0;
-  char *end = NULL;
-  unsigned long parsed = strtoul(colon + 1, &end, 10);
-  if (errno != 0 || end == colon + 1 || *end != '\0' || parsed > 65535UL) return -1;
-  unsigned int port = (unsigned int)parsed;
-
   hs->mhd = MHD_start_daemon(
-      MHD_USE_INTERNAL_POLLING_THREAD | MHD_USE_ERROR_LOG,
-      (uint16_t)port,
+      MHD_USE_INTERNAL_POLLING_THREAD | MHD_USE_ERROR_LOG |
+          (hs->address.family == AF_INET6 ? MHD_USE_IPv6 : 0),
+      0,
       NULL, NULL,                        /* accept policy: accept all */
       signet_health_handler, hs,         /* handler + cls */
+      MHD_OPTION_SOCK_ADDR, (struct sockaddr *)&hs->address.address,
       MHD_OPTION_END);
 
   if (!hs->mhd) return -1;
@@ -367,6 +374,17 @@ int signet_health_server_start(SignetHealthServer *hs) {
   g_mutex_unlock(&hs->mu);
 
   return 0;
+}
+
+uint16_t signet_health_server_bound_port(SignetHealthServer *hs) {
+  if (!hs || !hs->mhd) return 0;
+  const union MHD_DaemonInfo *info = MHD_get_daemon_info(hs->mhd, MHD_DAEMON_INFO_LISTEN_FD);
+  struct sockaddr_storage addr;
+  socklen_t len = sizeof(addr);
+  if (!info || getsockname(info->listen_fd, (struct sockaddr *)&addr, &len)) return 0;
+  return ntohs(addr.ss_family == AF_INET
+      ? ((struct sockaddr_in *)&addr)->sin_port
+      : ((struct sockaddr_in6 *)&addr)->sin6_port);
 }
 
 void signet_health_server_stop(SignetHealthServer *hs) {

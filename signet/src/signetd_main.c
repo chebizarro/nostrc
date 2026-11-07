@@ -18,6 +18,8 @@
  *   same source.
  */
 
+#include "secret_input.h"
+#include <sodium.h>
 #include "signet/signet_config.h"
 #include "signet/config_reload.h"
 #include "signet/audit_logger.h"
@@ -134,7 +136,6 @@ static int64_t signet_now_unix(void) {
   return (int64_t)time(NULL);
 }
 
-#ifdef SIGNET_ENABLE_TEST_HOOKS
 static bool signet_env_truthy(const char *value) {
   return value && (strcmp(value, "1") == 0 ||
                    g_ascii_strcasecmp(value, "true") == 0 ||
@@ -142,6 +143,7 @@ static bool signet_env_truthy(const char *value) {
                    g_ascii_strcasecmp(value, "on") == 0);
 }
 
+#ifdef SIGNET_ENABLE_TEST_HOOKS
 typedef struct {
   uid_t uid;
   char agent_id[SIGNET_MAX_STR];
@@ -456,6 +458,10 @@ static gboolean signetd_health_tick(gpointer data) {
       (uint64_t)g_atomic_int_get(&g_signet_metrics.nip5l_connections_denied);
   snap.ssh_agent_connections_denied =
       (uint64_t)g_atomic_int_get(&g_signet_metrics.ssh_agent_connections_denied);
+  snap.provisioner_writeback_failures =
+      (uint64_t)g_atomic_int_get(&g_signet_metrics.provisioner_writeback_failures);
+  snap.provisioner_writeback_failed =
+      g_atomic_int_get(&g_signet_metrics.provisioner_writeback_failed) != 0;
 
   int64_t now = signet_now_unix();
   snap.uptime_sec = (now >= ctx->started_at) ? (uint64_t)(now - ctx->started_at) : 0;
@@ -680,6 +686,17 @@ int main(int argc, char **argv) {
     }
   }
 
+  char *db_key = NULL;
+  int key_rc = signet_secret_input_resolve("SIGNET_DB_KEY", "SIGNET_DB_KEY_FILE", &db_key);
+  bool require_encrypted = signet_env_truthy(g_getenv("SIGNET_REQUIRE_ENCRYPTED_DB"));
+  if (key_rc < 0 || (require_encrypted &&
+      (!db_key || !db_key[0] || !cfg.db_path[0]))) {
+    fprintf(stderr, "signetd: required database key or path unavailable\n");
+    sodium_free(db_key);
+    signet_config_clear(&cfg);
+    return 1;
+  }
+
   /* 1) Audit logger */
   SignetAuditLoggerConfig audit_cfg = {
     .path = cfg.audit_path,
@@ -699,12 +716,21 @@ int main(int argc, char **argv) {
   SignetReplayCache *replay = signet_replay_cache_new(&replay_cfg);
 
   /* 3) Key store (SQLCipher + mlock'd hot cache) */
-  const char *db_key = g_getenv("SIGNET_DB_KEY");
   SignetKeyStoreConfig ks_cfg = {
     .db_path = cfg.db_path,
     .master_key = db_key ? db_key : "",
   };
   SignetKeyStore *keys = signet_key_store_new(audit, &ks_cfg);
+  sodium_free(db_key);
+  db_key = NULL;
+  if (!keys || (require_encrypted && !signet_key_store_get_store(keys))) {
+    fprintf(stderr, "signetd: persistent encrypted key store unavailable\n");
+    signet_key_store_free(keys);
+    signet_replay_cache_free(replay);
+    signet_audit_logger_free(audit);
+    signet_config_clear(&cfg);
+    return 1;
+  }
 #ifdef SIGNET_ENABLE_TEST_HOOKS
   if (keys && test_uid_map.agent_id[0] && test_dbus_provision_agent) {
     char existing_pubkey[65];
@@ -966,9 +992,14 @@ int main(int argc, char **argv) {
 
   /* 8c) Bootstrap server */
   SignetBootstrapServer *bootstrap = NULL;
+  SignetDbusServer *dbus_unix = NULL;
+  SignetDbusTcpServer *dbus_tcp = NULL;
+  SignetNip5lServer *nip5l = NULL;
+  SignetSshAgent *ssh_agent = NULL;
+  SignetHealthServer *health = NULL;
   if (cfg.bootstrap_port > 0) {
     char bs_listen[64];
-    snprintf(bs_listen, sizeof(bs_listen), "0.0.0.0:%d", cfg.bootstrap_port);
+    snprintf(bs_listen, sizeof(bs_listen), "127.0.0.1:%d", cfg.bootstrap_port);
     SignetBootstrapServerConfig bs_cfg = {
       .listen = bs_listen,
       .keys = keys,
@@ -979,19 +1010,20 @@ int main(int argc, char **argv) {
       .bunker_pubkey_hex = cfg.remote_signer_pubkey_hex,
       .relay_urls = (const char *const *)cfg.relays,
       .n_relay_urls = cfg.n_relays,
+      .require_tls = cfg.bootstrap_require_tls,
+      .trusted_proxy_cidrs = (const char *const *)cfg.bootstrap_trusted_proxy_cidrs,
+      .n_trusted_proxy_cidrs = cfg.n_bootstrap_trusted_proxy_cidrs,
     };
     bootstrap = signet_bootstrap_server_new(&bs_cfg);
-    if (bootstrap && signet_bootstrap_server_start(bootstrap) != 0) {
+    if (!bootstrap || signet_bootstrap_server_start(bootstrap) != 0) {
       fprintf(stderr, "signetd: failed to start bootstrap server on %s\n", bs_listen);
-      signet_bootstrap_server_free(bootstrap);
-      bootstrap = NULL;
+      goto cleanup;
     } else if (bootstrap) {
       g_message("[signetd] bootstrap server listening on %s", bs_listen);
     }
   }
 
   /* 8d) D-Bus Unix transport */
-  SignetDbusServer *dbus_unix = NULL;
   if (cfg.dbus_unix_enabled) {
     SignetDbusServerConfig du_cfg = {
       .keys = keys,
@@ -1021,7 +1053,6 @@ int main(int argc, char **argv) {
   }
 
   /* 8e) D-Bus TCP transport */
-  SignetDbusTcpServer *dbus_tcp = NULL;
   if (cfg.dbus_tcp_enabled) {
     char tcp_addr[128];
     snprintf(tcp_addr, sizeof(tcp_addr), "tcp:host=0.0.0.0,port=%d",
@@ -1048,7 +1079,6 @@ int main(int argc, char **argv) {
   }
 
   /* 8f) NIP-5L transport */
-  SignetNip5lServer *nip5l = NULL;
   if (cfg.nip5l_enabled) {
     const char *nip5l_path = cfg.nip5l_socket_path[0]
         ? cfg.nip5l_socket_path : "/run/signet/nip5l.sock";
@@ -1073,7 +1103,6 @@ int main(int argc, char **argv) {
   }
 
   /* 8g) SSH agent */
-  SignetSshAgent *ssh_agent = NULL;
   if (cfg.ssh_agent_enabled) {
     const char *ssh_path = cfg.ssh_agent_socket_path[0]
         ? cfg.ssh_agent_socket_path : "/run/signet/ssh-agent.sock";
@@ -1101,7 +1130,6 @@ int main(int argc, char **argv) {
   }
 
   /* 8) Health server */
-  SignetHealthServer *health = NULL;
   if (cfg.health_port > 0) {
     char listen_buf[64];
     snprintf(listen_buf, sizeof(listen_buf), "127.0.0.1:%d", cfg.health_port);
@@ -1109,10 +1137,7 @@ int main(int argc, char **argv) {
     health = signet_health_server_new(&hs_cfg);
     if (!health || signet_health_server_start(health) != 0) {
       fprintf(stderr, "signetd: failed to start health server on %s\n", listen_buf);
-      if (health) {
-        signet_health_server_free(health);
-        health = NULL;
-      }
+      goto cleanup;
     }
   }
 
