@@ -3,7 +3,7 @@
 # the whole tree, submodules included.
 name: grotto-daemon
 base: core24
-version: 0.1.0
+version: 0.1.1-alpha1
 summary: Grotto Daemon
 description: |
   Background daemon for Grotto to handle signing and IPC.

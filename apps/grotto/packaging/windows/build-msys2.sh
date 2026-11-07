@@ -242,7 +242,7 @@ if [[ "${CREATE_PACKAGE}" == "true" ]]; then
     # Build NSIS installer
     cd "${SCRIPT_DIR}"
     makensis \
-        -DVERSION="0.1.1" \
+        -DVERSION="0.1.1-alpha1" \
         -DARCH="x64" \
         -DBUILD_DIR="${BUILD_DIR}" \
         -DDEPS_DIR="${BUILD_DIR}/deps" \

@@ -3,7 +3,7 @@
 # the whole tree, submodules included.
 name: grotto
 base: core24
-version: 0.1.0
+version: 0.1.1-alpha1
 summary: Grotto, a Nostr signer (GTK)
 description: |
   Grotto securely authorizes Nostr app requests (NIP-55L, NIP-46).

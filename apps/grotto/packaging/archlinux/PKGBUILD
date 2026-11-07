@@ -1,7 +1,8 @@
-# Build from a local, complete grotto-0.1.1.tar.gz archive (including submodules).
+# Build from a local, complete grotto-0.1.1-alpha1.tar.gz archive (including submodules).
 # No published Grotto release is implied. See ../README.md.
 pkgname=grotto
-pkgver=0.1.1
+_version=0.1.1-alpha1
+pkgver=${_version//-/}
 pkgrel=1
 pkgdesc='Nostr identity management and signing service (Preview)'
 arch=('x86_64' 'aarch64')
@@ -14,11 +15,11 @@ depends=('glib2>=2.80' 'gtk4>=4.14' 'libadwaita>=1.5' 'json-glib' 'libsecret' 'l
          'hicolor-icon-theme')
 optdepends=('gnome-keyring: Secret Service key custody'
             'gnome-shell-extension-nostr: optional signer panel indicator')
-source=("grotto-${pkgver}.tar.gz")
+source=("grotto-${_version}.tar.gz")
 # A local development archive, not an unchecked remote release.
 sha256sums=('SKIP')
 build() {
-  cmake -S "grotto-${pkgver}" -B build -G Ninja \
+  cmake -S "grotto-${_version}" -B build -G Ninja \
     -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr \
     -DBUILD_APPS=ON -DBUILD_GNOSTR_APP=OFF -DBUILD_GROUNDHOG=OFF \
     -DBUILD_TESTING=OFF -DBUILD_TESTING_FRAMEWORK=OFF \
@@ -29,5 +30,5 @@ build() {
 }
 package() {
   DESTDIR="$pkgdir" cmake --install build/apps/grotto
-  install -Dm644 "grotto-${pkgver}/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 "grotto-${_version}/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }

@@ -1,5 +1,7 @@
-grotto (0.1.1-1) UNRELEASED; urgency=medium
+grotto (0.1.1~alpha1-1) UNRELEASED; urgency=medium
 
+  * Prepare 0.1.1-alpha1; show the full version in About and CLI output.
+  * Use the application name Grotto, without the Preview suffix.
   * Fix the alternate Meson frontend's Groundhog executable-side link closure.
   * Let system desktop-cache triggers and debhelper own schema/icon/desktop
     updates; remove redundant cache maintainer scripts and trigger interests

@@ -1,9 +1,21 @@
 cmake_minimum_required(VERSION 3.22)
-project(grotto)
+project(grotto VERSION 0.1.1 LANGUAGES C)
 
-set(GROTTO_VERSION "0.1.1" CACHE STRING "Application version for packaging")
-# About and daemon output consume the same component version as packaging.
-add_compile_definitions(GROTTO_VERSION="${GROTTO_VERSION}")
+# The pre-release label shown by About, --version and the daemon; empty for final.
+# Keep meson.build, data/org.nostr.Grotto.metainfo.xml, flake.nix (Grotto),
+# packaging/debian/changelog, packaging/rpm/grotto.spec (upstream_version,
+# Version, Release), packaging/archlinux/PKGBUILD (_version),
+# packaging/macos/create-dmg.sh, packaging/windows/grotto.nsi,
+# packaging/windows/build-msys2.sh and snap/{grotto,grotto-daemon}/snapcraft.yaml
+# and VERSION_MANIFEST.md in agreement. tests/selection/inventory.json maps
+# the release sources. grotto-packaging-version checks versions; release.yml refuses a
+# grotto-v* tag that does not equal GROTTO_VERSION_FULL. Info.plist stays numeric.
+set(GROTTO_PRERELEASE "alpha1")
+set(GROTTO_VERSION_FULL "${PROJECT_VERSION}")
+if (GROTTO_PRERELEASE)
+  string(APPEND GROTTO_VERSION_FULL "-${GROTTO_PRERELEASE}")
+endif()
+add_compile_definitions(GROTTO_VERSION="${GROTTO_VERSION_FULL}")
 
 include(GNUInstallDirs)
 
@@ -723,7 +735,7 @@ if(WIN32)
       add_custom_target(windows-installer
         COMMAND ${CMAKE_COMMAND} -E echo "Building Windows NSIS installer..."
         COMMAND ${MAKENSIS_EXECUTABLE}
-          /DVERSION=${GROTTO_VERSION}
+          /DVERSION=${GROTTO_VERSION_FULL}
           /DARCH=x64
           /DBUILD_DIR=${CMAKE_BINARY_DIR}
           /DDEPS_DIR=${CMAKE_BINARY_DIR}/deps
@@ -754,17 +766,9 @@ if(APPLE)
     # Path to packaging files
     set(MACOS_PACKAGING_DIR ${CMAKE_CURRENT_SOURCE_DIR}/packaging/macos)
 
-    # Generate Info.plist from template
-    configure_file(
-      ${MACOS_PACKAGING_DIR}/Info.plist.in
-      ${CMAKE_CURRENT_BINARY_DIR}/Info.plist
-      @ONLY
-    )
-    string(REPLACE "@VERSION@" "${GROTTO_VERSION}" _info_plist_content "")
-
-    # Configure the Info.plist with version substitution
+    # Apple bundle version fields require the numeric base, not the prerelease.
     file(READ ${MACOS_PACKAGING_DIR}/Info.plist.in INFO_PLIST_CONTENT)
-    string(REPLACE "@VERSION@" "${GROTTO_VERSION}" INFO_PLIST_CONTENT "${INFO_PLIST_CONTENT}")
+    string(REPLACE "@VERSION@" "${PROJECT_VERSION}" INFO_PLIST_CONTENT "${INFO_PLIST_CONTENT}")
     file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/Info.plist "${INFO_PLIST_CONTENT}")
 
     # Custom target to build macOS .app bundle
@@ -772,7 +776,7 @@ if(APPLE)
       COMMAND ${CMAKE_COMMAND} -E echo "Building macOS application bundle..."
       COMMAND ${MACOS_PACKAGING_DIR}/create-dmg.sh
         --build-dir "${CMAKE_BINARY_DIR}"
-        --version "${GROTTO_VERSION}"
+        --version "${GROTTO_VERSION_FULL}"
         --output-dir "${CMAKE_BINARY_DIR}/bundle"
         --skip-dmg
       DEPENDS ${APP_SIGNER_BIN} grotto-daemon
@@ -786,7 +790,7 @@ if(APPLE)
       COMMAND ${CMAKE_COMMAND} -E echo "Building macOS DMG installer..."
       COMMAND ${MACOS_PACKAGING_DIR}/create-dmg.sh
         --build-dir "${CMAKE_BINARY_DIR}"
-        --version "${GROTTO_VERSION}"
+        --version "${GROTTO_VERSION_FULL}"
         --output-dir "${CMAKE_BINARY_DIR}/bundle"
       DEPENDS ${APP_SIGNER_BIN} grotto-daemon
       WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
@@ -799,7 +803,7 @@ if(APPLE)
       COMMAND ${CMAKE_COMMAND} -E echo "Building signed macOS DMG installer..."
       COMMAND ${MACOS_PACKAGING_DIR}/create-dmg.sh
         --build-dir "${CMAKE_BINARY_DIR}"
-        --version "${GROTTO_VERSION}"
+        --version "${GROTTO_VERSION_FULL}"
         --output-dir "${CMAKE_BINARY_DIR}/bundle"
         --sign "$ENV{DEVELOPER_ID}"
       DEPENDS ${APP_SIGNER_BIN} grotto-daemon
@@ -813,7 +817,7 @@ if(APPLE)
       COMMAND ${CMAKE_COMMAND} -E echo "Building notarized macOS DMG installer..."
       COMMAND ${MACOS_PACKAGING_DIR}/create-dmg.sh
         --build-dir "${CMAKE_BINARY_DIR}"
-        --version "${GROTTO_VERSION}"
+        --version "${GROTTO_VERSION_FULL}"
         --output-dir "${CMAKE_BINARY_DIR}/bundle"
         --sign "$ENV{DEVELOPER_ID}"
         --notarize
@@ -839,6 +843,15 @@ foreach(_grotto_archive IN ITEMS grotto_control_core grotto_bunker_core)
     nostrc_internal_visibility(${_grotto_archive})
   endif()
 endforeach()
+
+if (BUILD_TESTING)
+  add_test(NAME grotto-version COMMAND grotto --version)
+  set_tests_properties(grotto-version PROPERTIES
+    PASS_REGULAR_EXPRESSION "Grotto ${GROTTO_VERSION_FULL}\n")
+  add_test(NAME grotto-packaging-version
+    COMMAND ${CMAKE_COMMAND} -DVERSION=${GROTTO_VERSION_FULL} -DROOT=${CMAKE_SOURCE_DIR}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/CheckPackagingVersion.cmake)
+endif()
 
 # Private HOME/XDG_* and NOSTRC_TEST_ISOLATION for every test above
 # (nostrc-wqn0u). Must stay last, after every add_test() in this directory.

@@ -674,7 +674,7 @@ endif()
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 add_dependencies(signer-tests ${APP_SIGNER_BIN})
 add_test(NAME signer/version COMMAND ${Python3_EXECUTABLE}
-  ${CMAKE_CURRENT_SOURCE_DIR}/test-version.py $<TARGET_FILE:${APP_SIGNER_BIN}> ${GROTTO_VERSION})
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-version.py $<TARGET_FILE:${APP_SIGNER_BIN}> ${GROTTO_VERSION_FULL})
 set_tests_properties(signer/version PROPERTIES TIMEOUT 10 LABELS "signer;packaging;unit")
 add_test(NAME signer/dialog-sizing-static COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/test-dialog-sizing.py ${CMAKE_SOURCE_DIR})

@@ -5,9 +5,9 @@
 #
 msgid ""
 msgstr ""
-"Project-Id-Version: grotto 0.1.1\n"
+"Project-Id-Version: grotto 0.1.1-alpha1\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-07 09:13+0000\n"
+"POT-Creation-Date: 2026-11-07 02:46-0800\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -425,7 +425,7 @@ msgid "Open to enable remote signing and show a connection link"
 msgstr ""
 
 #: data/ui/page-settings.ui:10 data/ui/shortcuts-window.ui:45
-#: data/org.nostr.Grotto.desktop:31 src/ui/signer-window.c:636
+#: data/org.nostr.Grotto.desktop:30 src/ui/signer-window.c:636
 #: src/ui/signer-window.c:830
 msgid "Preferences"
 msgstr ""
@@ -561,11 +561,11 @@ msgid "Management"
 msgstr ""
 
 #: data/ui/shortcuts-window.ui:17 data/ui/signer-window.ui:55
-#: packaging/appimage/grotto.desktop:4
+#: data/org.nostr.Grotto.desktop:3 packaging/appimage/grotto.desktop:3
 msgid "Grotto"
 msgstr ""
 
-#: data/ui/shortcuts-window.ui:20 data/org.nostr.Grotto.desktop:27
+#: data/ui/shortcuts-window.ui:20 data/org.nostr.Grotto.desktop:26
 #: src/ui/signer-window.c:619
 msgid "New Identity…"
 msgstr ""
@@ -710,23 +710,19 @@ msgstr ""
 msgid "Warning: Caps Lock is enabled"
 msgstr ""
 
-#: data/org.nostr.Grotto.desktop:4
-msgid "Grotto (Preview)"
-msgstr ""
-
-#: data/org.nostr.Grotto.desktop:5 packaging/appimage/grotto.desktop:5
+#: data/org.nostr.Grotto.desktop:4 packaging/appimage/grotto.desktop:4
 msgid "Nostr Signer"
 msgstr ""
 
-#: data/org.nostr.Grotto.desktop:6
+#: data/org.nostr.Grotto.desktop:5
 msgid "Manage Nostr identities and review signing requests (NIP-55L, NIP-46)"
 msgstr ""
 
-#: data/org.nostr.Grotto.desktop:12
+#: data/org.nostr.Grotto.desktop:11
 msgid "nostr;signer;keys;identity;crypto;signing;"
 msgstr ""
 
-#: packaging/appimage/grotto.desktop:6
+#: packaging/appimage/grotto.desktop:5
 msgid "Authorize Nostr app requests securely"
 msgstr ""
 

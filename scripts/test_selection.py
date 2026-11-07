@@ -1136,10 +1136,12 @@ def release_plan(repo, policy, *, head, tag=None, component=None, dry_run=False,
     verified = {}
     for ident, spec in components.items():
         label = spec.get("manifest_name", ident)
-        rows = [line.split("|") for line in manifest.splitlines() if line.startswith("|") and line.split("|")[1].strip() == label]
+        # Only the six-column version table is authoritative, not impact tables.
+        rows = [line.split("|") for line in manifest.splitlines() if line.startswith("|")]
+        rows = [row for row in rows if len(row) == 8 and row[1].strip() == label]
         require(len(rows) == 1, f"missing/duplicate manifest component: {ident}")
-        declared = rows[0][3].strip().split()[0]
-        _semver(declared)
+        declared_full = rows[0][3].strip().split()[0]
+        declared = _semver(declared_full)
         versions = []
         for source in spec.get("version_sources", []):
             path = normalized_path(source["path"])
@@ -1154,13 +1156,15 @@ def release_plan(repo, policy, *, head, tag=None, component=None, dry_run=False,
             raise CheckFailure(f"{ident}: source/manifest version disagreement")
         if tag and component != "legacy_global" and declared != base_version:
             raise CheckFailure(f"{ident}: tag/declared base-version mismatch")
-        if tag and component != "legacy_global" and spec.get("full_version_source"):
+        if spec.get("full_version_source"):
             src = spec["full_version_source"]
             text = git(repo, "show", f"{tested}:{src['path']}").stdout.decode()
             suffix = re.findall(src["pattern"], text, re.MULTILINE)
             require(len(suffix) == 1, "missing prerelease source")
             full = declared + ("-" + suffix[0] if suffix[0] else "")
-            if version.split("+", 1)[0] != full:
+            require(declared_full in {declared, full}, f"{ident}: prerelease source/manifest mismatch")
+            require(all(v in {declared, full} for v in versions), f"{ident}: prerelease source/version disagreement")
+            if tag and component != "legacy_global" and version.split("+", 1)[0] != full:
                 raise CheckFailure(f"{ident}: prerelease source/tag mismatch")
         verified[ident] = declared
     route = policy.get("legacy_global", {}) if component == "legacy_global" else components[component]

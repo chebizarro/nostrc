@@ -30729,7 +30729,11 @@
       ]
     },
     "grotto": {
-      "manifest_name": "Grotto (Preview)",
+      "full_version_source": {
+        "path": "apps/grotto/CMakeLists.txt",
+        "pattern": "set\\(GROTTO_PRERELEASE \"([^\"]*)\"\\)"
+      },
+      "manifest_name": "Grotto",
       "package_jobs": [
         "source",
         "build-linux.x86_64",
@@ -30748,11 +30752,11 @@
       "version_sources": [
         {
           "path": "apps/grotto/CMakeLists.txt",
-          "pattern": "set\\(GROTTO_VERSION\\s+\"([0-9.]+)\"\\s+CACHE"
+          "pattern": "project\\(grotto VERSION ([0-9.]+)"
         },
         {
           "path": "apps/grotto/meson.build",
-          "pattern": "(?m)^\\s*version:\\s*['\\\"]([0-9]+\\.[0-9]+\\.[0-9]+)['\\\"]"
+          "pattern": "(?m)^\\s*version:\\s*['\\\"]([^'\\\"]+)['\\\"]"
         }
       ]
     },
@@ -31717,9 +31721,9 @@
       "matrix_source": "",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "dfe878a6e2a92306f2f3f13a35de5a59a40a1344b1bde277a33d1abc4c8dddbd",
+      "source_sha256": "343dc6dc7e36da6861465d27bca695c1890dfb26980c82e570cf4b4eea81bc65",
       "unsupported_reason": "release:detect-component identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
-      "workflow_sha256": "0cd1ca2ede668c7ff44d320da8d434ab2e262c0bc25a4ccd5be0dada5ea7b11f"
+      "workflow_sha256": "cd16188e73b6d781d4d530a41308c6b4e8215dacfa34d6d2372843f791742843"
     },
     ".github/workflows/release.yml:validation": {
       "matrix_source": "",
@@ -31727,7 +31731,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "d8bc53d229992a4f4100ac571998c80d08710f3aa671996342ae2d3425ddbcc2",
       "unsupported_reason": "release:validation identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
-      "workflow_sha256": "0cd1ca2ede668c7ff44d320da8d434ab2e262c0bc25a4ccd5be0dada5ea7b11f"
+      "workflow_sha256": "cd16188e73b6d781d4d530a41308c6b4e8215dacfa34d6d2372843f791742843"
     },
     ".github/workflows/release.yml:release-aggregate": {
       "matrix_source": "",
@@ -31735,7 +31739,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "820eeb3b3f75bb0af9c853f7d03b7fd10991a8af10fee670f696cbf552cbb76f",
       "unsupported_reason": "release:release-aggregate identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
-      "workflow_sha256": "0cd1ca2ede668c7ff44d320da8d434ab2e262c0bc25a4ccd5be0dada5ea7b11f"
+      "workflow_sha256": "cd16188e73b6d781d4d530a41308c6b4e8215dacfa34d6d2372843f791742843"
     },
     ".github/workflows/release.yml:build-source": {
       "matrix_source": "",
@@ -31743,7 +31747,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "d017b4f9e45c13ddfd6435fbdb11c8c26e09f36fe2d38f12d877e5addc401ef6",
       "unsupported_reason": "release:build-source identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
-      "workflow_sha256": "0cd1ca2ede668c7ff44d320da8d434ab2e262c0bc25a4ccd5be0dada5ea7b11f"
+      "workflow_sha256": "cd16188e73b6d781d4d530a41308c6b4e8215dacfa34d6d2372843f791742843"
     },
     ".github/workflows/release.yml:build-linux": {
       "matrix_source": "matrix:\n        include:\n          - { arch: x86_64,  runner: ubuntu-24.04 }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
@@ -31751,7 +31755,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "b9d036d0b4e107e9b633a734ee497eb7b081e822a3983d6f8d6a2aa966f5a97d",
       "unsupported_reason": "release:build-linux identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
-      "workflow_sha256": "0cd1ca2ede668c7ff44d320da8d434ab2e262c0bc25a4ccd5be0dada5ea7b11f"
+      "workflow_sha256": "cd16188e73b6d781d4d530a41308c6b4e8215dacfa34d6d2372843f791742843"
     },
     ".github/workflows/release.yml:build-linux-daemon-tcp": {
       "matrix_source": "matrix:\n        include:\n          - { arch: x86_64,  runner: ubuntu-24.04 }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
@@ -31759,7 +31763,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "415a80de7966ee33c528803b0ff329bb42bd5e9dda8ae9c48df49a88b06f5217",
       "unsupported_reason": "release:build-linux-daemon-tcp identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
-      "workflow_sha256": "0cd1ca2ede668c7ff44d320da8d434ab2e262c0bc25a4ccd5be0dada5ea7b11f"
+      "workflow_sha256": "cd16188e73b6d781d4d530a41308c6b4e8215dacfa34d6d2372843f791742843"
     },
     ".github/workflows/release.yml:build-appimage-gnostr": {
       "matrix_source": "",
@@ -31767,7 +31771,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "2ec8423c678ae81601f5e0837fac15fb5a660a8d2d13bff25a0edb32103f4b0f",
       "unsupported_reason": "release:build-appimage-gnostr identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
-      "workflow_sha256": "0cd1ca2ede668c7ff44d320da8d434ab2e262c0bc25a4ccd5be0dada5ea7b11f"
+      "workflow_sha256": "cd16188e73b6d781d4d530a41308c6b4e8215dacfa34d6d2372843f791742843"
     },
     ".github/workflows/release.yml:build-snap-gnostr": {
       "matrix_source": "matrix:\n        include:\n          - { arch: x86_64,  runner: ubuntu-latest }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
@@ -31775,7 +31779,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "04a8458e438830df4a0e5d18196bbd5ed4294431190b7177eeeed13cfbc778a2",
       "unsupported_reason": "release:build-snap-gnostr identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
-      "workflow_sha256": "0cd1ca2ede668c7ff44d320da8d434ab2e262c0bc25a4ccd5be0dada5ea7b11f"
+      "workflow_sha256": "cd16188e73b6d781d4d530a41308c6b4e8215dacfa34d6d2372843f791742843"
     },
     ".github/workflows/release.yml:build-snap-signer": {
       "matrix_source": "matrix:\n        include:\n          - { arch: x86_64,  runner: ubuntu-latest }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
@@ -31783,7 +31787,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "136cea0c7d27c819fa521b478d4d2d59132e16e51fd501ee13bda614c686e9b3",
       "unsupported_reason": "release:build-snap-signer identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
-      "workflow_sha256": "0cd1ca2ede668c7ff44d320da8d434ab2e262c0bc25a4ccd5be0dada5ea7b11f"
+      "workflow_sha256": "cd16188e73b6d781d4d530a41308c6b4e8215dacfa34d6d2372843f791742843"
     },
     ".github/workflows/release.yml:build-snap-daemon": {
       "matrix_source": "matrix:\n        include:\n          - { arch: x86_64,  runner: ubuntu-latest }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
@@ -31791,7 +31795,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "b5298108193e3f492f584d831fd675aa18e4a435cd18f608b0999b46c4ee72b0",
       "unsupported_reason": "release:build-snap-daemon identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
-      "workflow_sha256": "0cd1ca2ede668c7ff44d320da8d434ab2e262c0bc25a4ccd5be0dada5ea7b11f"
+      "workflow_sha256": "cd16188e73b6d781d4d530a41308c6b4e8215dacfa34d6d2372843f791742843"
     },
     ".github/workflows/release.yml:create-release": {
       "matrix_source": "",
@@ -31799,7 +31803,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "20b27d29797b5a752b50c147ef757644c5c8754e418adeb2776a32ebb2283d0f",
       "unsupported_reason": "release:create-release identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
-      "workflow_sha256": "0cd1ca2ede668c7ff44d320da8d434ab2e262c0bc25a4ccd5be0dada5ea7b11f"
+      "workflow_sha256": "cd16188e73b6d781d4d530a41308c6b4e8215dacfa34d6d2372843f791742843"
     },
     ".github/workflows/release.yml:build-flatpak": {
       "matrix_source": "matrix:\n        include:\n          - { arch: x86_64,  runner: ubuntu-latest }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
@@ -31807,7 +31811,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "94f1de1dc72a89a40fd94082104a6c73039e5d22129ed51ed838ecbb5a97dd23",
       "unsupported_reason": "release:build-flatpak identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
-      "workflow_sha256": "0cd1ca2ede668c7ff44d320da8d434ab2e262c0bc25a4ccd5be0dada5ea7b11f"
+      "workflow_sha256": "cd16188e73b6d781d4d530a41308c6b4e8215dacfa34d6d2372843f791742843"
     },
     ".github/workflows/release.yml:build-flatpak-gnostr": {
       "matrix_source": "matrix:\n        include:\n          - { arch: x86_64,  runner: ubuntu-latest }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
@@ -31815,7 +31819,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "623023a77f8ebc1c33936d68c51d99e35bd53e865e524ab10043278a39d4149a",
       "unsupported_reason": "release:build-flatpak-gnostr identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
-      "workflow_sha256": "0cd1ca2ede668c7ff44d320da8d434ab2e262c0bc25a4ccd5be0dada5ea7b11f"
+      "workflow_sha256": "cd16188e73b6d781d4d530a41308c6b4e8215dacfa34d6d2372843f791742843"
     },
     ".github/workflows/release.yml:build-macos-signer-dmg": {
       "matrix_source": "",
@@ -31823,7 +31827,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "f9d67b8b5c0b015d5e739329deec95acbbb9dfe2cc319c75de4f91d4052d7afd",
       "unsupported_reason": "release:build-macos-signer-dmg identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
-      "workflow_sha256": "0cd1ca2ede668c7ff44d320da8d434ab2e262c0bc25a4ccd5be0dada5ea7b11f"
+      "workflow_sha256": "cd16188e73b6d781d4d530a41308c6b4e8215dacfa34d6d2372843f791742843"
     },
     ".github/workflows/release.yml:build-macos-tarball": {
       "matrix_source": "",
@@ -31831,7 +31835,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "ea18df39988cae1ab16dfa548a4bc756e7e14db26ca712575656d7b965c6b67b",
       "unsupported_reason": "release:build-macos-tarball identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
-      "workflow_sha256": "0cd1ca2ede668c7ff44d320da8d434ab2e262c0bc25a4ccd5be0dada5ea7b11f"
+      "workflow_sha256": "cd16188e73b6d781d4d530a41308c6b4e8215dacfa34d6d2372843f791742843"
     },
     ".github/workflows/signet-ci.yml:build-and-test": {
       "matrix_source": "matrix:\n        passkeys: [ 'OFF', 'ON' ]\n        sqlcipher: [ 'OFF', 'ON' ]\n        build_type: [ 'Debug' ]\n        include:\n          # Exercise binding-race and forced-secret regressions in one test\n          # build; the Release configuration below keeps hooks disabled.\n          - passkeys: 'ON'\n            sqlcipher: 'OFF'\n            build_type: 'Debug'\n            test_hooks: 'ON'\n          # fp-52iq: assurance comes from running tests the way the project is\n          # shipped. Release optimizes signet_core and defines NDEBUG, so cover\n          # the shipped configuration too instead of testing Debug only.\n          - passkeys: 'ON'\n            sqlcipher: 'ON'\n            build_type: 'Release'",
@@ -32127,7 +32131,7 @@
       "unsupported_reason": "Manual broad validation routes to reusable families and is not an independent execution profile or publisher attestation.",
       "matrix_source": "",
       "source_sha256": "51687237ccce7e6b3b4bee1a8d2e330127edbd1f0e45722ec7d660fe3f6edc71",
-      "workflow_sha256": "0cd1ca2ede668c7ff44d320da8d434ab2e262c0bc25a4ccd5be0dada5ea7b11f"
+      "workflow_sha256": "cd16188e73b6d781d4d530a41308c6b4e8215dacfa34d6d2372843f791742843"
     },
     ".github/workflows/rust-bindings-ci.yml:installed-consumer": {
       "profiles": [],

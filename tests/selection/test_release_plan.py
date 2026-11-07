@@ -58,6 +58,35 @@ class ReleaseTests(GitCase):
         with self.assertRaises(s.CheckFailure):
             self.tagged("groundhog-v0.12.0-alpha7")
 
+    def grotto_snapshot(self, declared="0.1.1-alpha1", meson="0.1.1-alpha1"):
+        # Use the production source patterns, but only synthetic local tag refs.
+        policy = s.load_inventory(ROOT / "tests/selection/inventory.json")
+        self.p["release_components"]["grotto"] = copy.deepcopy(policy["release_components"]["grotto"])
+        self.p["release_components"]["grotto"]["package_jobs"] = ["source"]
+        manifest = (self.repo / "VERSION_MANIFEST.md").read_text()
+        self.write("VERSION_MANIFEST.md", manifest + f"| Grotto | apps/grotto | {declared} | Unreleased | - | CMake + Meson |\n"
+                   "\n| Component | Impact | Decision |\n| Grotto | Historical UI change | No additional bump |\n")
+        self.write("apps/grotto/CMakeLists.txt", 'project(grotto VERSION 0.1.1 LANGUAGES C)\nset(GROTTO_PRERELEASE "alpha1")\n')
+        self.write("apps/grotto/meson.build", f"project('grotto', 'c',\n  version: '{meson}',\n)\n")
+        self.head = self.commit()
+
+    def test_grotto_full_manifest_and_prerelease_tag(self):
+        self.grotto_snapshot()
+        self.assertEqual(self.tagged("grotto-v0.1.1-alpha1")["version"], "0.1.1-alpha1")
+        for tag in ("grotto-v0.1.1", "grotto-v0.1.1-alpha2"):
+            with self.subTest(tag=tag), self.assertRaises(s.CheckFailure):
+                self.tagged(tag)
+
+    def test_grotto_manifest_prerelease_must_match_source(self):
+        self.grotto_snapshot(declared="0.1.1-alpha2")
+        with self.assertRaisesRegex(s.ContractError, "prerelease source/manifest mismatch"):
+            self.tagged("grotto-v0.1.1-alpha1")
+
+    def test_grotto_meson_prerelease_must_match_cmake(self):
+        self.grotto_snapshot(meson="0.1.1-alpha2")
+        with self.assertRaisesRegex(s.ContractError, "prerelease source/version disagreement"):
+            self.tagged("grotto-v0.1.1-alpha1")
+
     def test_bad_semver(self):
         for value in ("01.2.3", "1.2", "1.2.3-01", "1.2.3-", "1.2.3.4"):
             with self.subTest(value=value), self.assertRaises(s.ContractError):

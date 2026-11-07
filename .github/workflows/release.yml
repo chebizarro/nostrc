@@ -42,6 +42,18 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Require Grotto tag to match the application's full version
+        if: startsWith(github.ref, 'refs/tags/grotto-v')
+        run: |
+          v="${GITHUB_REF_NAME#grotto-v}"
+          cmake_file=apps/grotto/CMakeLists.txt
+          base=$(sed -n 's/^project(grotto VERSION \([0-9.]*\).*/\1/p' "$cmake_file")
+          pre=$(sed -n 's/^set(GROTTO_PRERELEASE "\([^"]*\)")/\1/p' "$cmake_file")
+          full="$base${pre:+-$pre}"
+          if [ "$v" != "$full" ]; then
+            echo "tag version $v does not match the app's version $full ($cmake_file)" >&2
+            exit 1
+          fi
       - name: Validate release identity and peel tag
         id: detect
         env:
