@@ -341,6 +341,17 @@ if (NOT SIGNET_DEPLOYMENT_LIVE_TESTS)
 endif()
 # End W3/W4 block.
 
+# Management ingress boundary regression (nostrc-a7p6i; separate ownership).
+add_test(NAME mgmt_ingress_wire COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/test_mgmt_ingress_wire.py $<TARGET_FILE:test_mgmt_replay>)
+set_tests_properties(mgmt_ingress_wire PROPERTIES TIMEOUT 30)
+if(COMMAND nostrc_describe_test)
+  nostrc_describe_test(mgmt_ingress_wire OWNER signet TARGETS test_mgmt_replay
+    INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/test_mgmt_ingress_wire.py"
+           "${CMAKE_CURRENT_SOURCE_DIR}/test_relay_pool_wire.py")
+endif()
+# End management ingress boundary block.
+
 # Private HOME/XDG_* and NOSTRC_TEST_ISOLATION for every test above
 # (nostrc-wqn0u). Must stay last, after every add_test() in this directory.
 if (BUILD_TESTING)

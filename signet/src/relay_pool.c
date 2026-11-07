@@ -111,6 +111,7 @@ typedef struct {
 
 /* Forward declarations — defined after public API section */
 static NostrFilters *signet_relay_pool_build_filters_locked(SignetRelayPool *rp);
+static int64_t relay_live_since(SignetRelayPool *rp, NostrRelay *relay);
 
 /* ----------------------- event middleware bridge -------------------------- */
 
@@ -130,7 +131,8 @@ static void signet_pool_event_middleware(NostrIncomingEvent *incoming, void *use
 
   char *event_id = nostr_event_get_id(incoming->event);
 
-  SignetRelayEventView ev;
+  SignetRelayEventView ev = {0};
+  ev.live_since = relay_live_since(rp, incoming->relay);
   ev.kind = nostr_event_get_kind(incoming->event);
   ev.created_at = nostr_event_get_created_at(incoming->event);
   ev.event_id_hex = event_id;
@@ -190,6 +192,7 @@ struct RelayState {
   gboolean closed_unreported;
   NostrSubscription *required;
   gboolean ready;
+  int64_t live_since;
   gboolean auth_pending;
   uint64_t subscription_revision;
   gboolean attached;
@@ -293,6 +296,7 @@ static GPtrArray *take_aborted_watches(RelayState *s) {
     g_hash_table_iter_steal(&it);
   }
   s->ready = FALSE;
+  s->live_since = 0;
   s->auth_pending = FALSE;
   g_clear_pointer(&s->challenge, g_free);
   if (s->required) nostr_subscription_unref(s->required);
@@ -345,6 +349,7 @@ static void capture_required_locked(SignetRelayPool *rp) {
     s->required = latest ? nostr_subscription_ref(latest) : NULL;
     s->subscription_revision++;
     s->ready = FALSE;
+    s->live_since = 0;
     g_mutex_unlock(&s->mu);
   }
   pthread_mutex_unlock(&pool->pool_mutex);
@@ -555,6 +560,7 @@ static void auth_challenge(NostrRelay *relay, const char *challenge, void *data)
     g_free(s->challenge);
     s->challenge = g_strdup(challenge); /* challenges are not truncated */
     s->ready = FALSE;
+    s->live_since = 0;
     s->auth_pending = TRUE;
   }
   g_mutex_unlock(&s->mu);
@@ -672,8 +678,14 @@ static void subscription_changed(NostrRelay *relay, const char *state,
   SignetRelayPool *rp = data;
   g_mutex_lock(&rp->mu);
   RelayState *s = g_hash_table_lookup(rp->relay_states, relay);
-  if (s && !rp->stopping && !rp->disposing) {
+  const NostrSubscription *source = nostr_simple_pool_get_callback_subscription(rp->pool);
+  if (s && source && !rp->stopping && !rp->disposing) {
     g_mutex_lock(&s->mu);
+    if (source != s->required) {
+      g_mutex_unlock(&s->mu);
+      g_mutex_unlock(&rp->mu);
+      return;
+    }
     gboolean closed = s->required && nostr_subscription_is_closed(s->required);
     if (closed) {
       g_free(s->closed_reason);
@@ -683,12 +695,38 @@ static void subscription_changed(NostrRelay *relay, const char *state,
     gboolean ready = !s->auth_pending && s->required && !closed && nostr_relay_is_connected(relay) &&
                        nostr_subscription_is_eosed(s->required);
     gboolean newly_ready = ready && !s->ready;
+    /* simplepool drains queued history before delivering this EOSE callback.
+     * Capture the boundary here, not in the deferred UI notification. */
+    if (newly_ready) s->live_since = time(NULL);
+    if (!ready) s->live_since = 0;
     s->ready = ready;
     g_mutex_unlock(&s->mu);
     if ((!strcmp(state, "EOSE") && newly_ready) || (!strcmp(state, "CLOSED") && closed))
       notify_locked(s, state, reason);
   }
   g_mutex_unlock(&rp->mu);
+}
+
+/* A ready peer must never admit another relay's backfill. The boundary is
+ * scoped to the delivering subscription as well as the relay: older REQs
+ * may still be draining when the current REQ reaches EOSE. AUTH, CLOSED and
+ * reconnect reset it. A synthetic/local event has no boundary. */
+static int64_t relay_live_since(SignetRelayPool *rp, NostrRelay *relay) {
+  int64_t since = 0;
+  g_mutex_lock(&rp->mu);
+  const NostrSubscription *subscription = nostr_simple_pool_get_callback_subscription(rp->pool);
+  RelayState *s = g_hash_table_lookup(rp->relay_states, relay);
+  if (s && !rp->stopping && !rp->disposing) {
+    g_mutex_lock(&s->mu);
+    if (s->ready && !s->auth_pending && s->required &&
+        subscription == s->required &&
+        !nostr_subscription_is_closed(s->required) &&
+        nostr_subscription_is_eosed(s->required) &&
+        nostr_relay_is_connected(relay)) since = s->live_since;
+    g_mutex_unlock(&s->mu);
+  }
+  g_mutex_unlock(&rp->mu);
+  return since;
 }
 
 static void signet_relay_pool_register_auth(SignetRelayPool *rp) {
@@ -1331,7 +1369,7 @@ int signet_relay_pool_handle_event_json(SignetRelayPool *rp, const char *event_j
   if (json_object_has_member(o, "pubkey")) pubkey = json_object_get_string_member(o, "pubkey");
   if (json_object_has_member(o, "content")) content = json_object_get_string_member(o, "content");
 
-  SignetRelayEventView ev;
+  SignetRelayEventView ev = {0};
   ev.kind = kind;
   ev.created_at = created_at;
   ev.event_id_hex = id;

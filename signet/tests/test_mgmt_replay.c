@@ -16,6 +16,11 @@
 #include "signet/mgmt_protocol.h"
 #include "signet/replay_cache.h"
 #include "signet/store.h"
+#include "signet/store_audit.h"
+#include <nostr-event.h>
+#include <nostr/nip17/nip17.h>
+#include <sqlite3.h>
+#include <time.h>
 #include "signet/audit_logger.h"
 
 #include <nostr-keys.h>
@@ -324,17 +329,248 @@ static void test_writer_management_requires_provisioner(void) {
   printf("test_writer_management_requires_provisioner: PASS\n");
 }
 
-int main(void) {
+static void test_direct_ingress_requires_gift_wrap(void) {
+  Fixture f;
+  fixture_setup(&f, true);
+  int64_t now = time(NULL);
+  char agent_sk[65], agent_pk[65];
+  gen_keypair_hex(agent_sk, agent_pk);
+  char *rpc = g_strdup_printf(
+      "{\"jsonrpc\":\"2.0\",\"id\":\"adopt\","
+      "\"method\":\"agent/adopt-existing\",\"params\":{"
+      "\"agent_id\":\"private-agent\",\"agent_nsec\":\"%s\"}}", agent_sk);
+  SignetStore *store = signet_key_store_get_store(f.ks);
+  CHECK(signet_mgmt_handler_handle_direct_intent(f.mgmt, f.prov_pk_hex,
+      rpc, "direct-adopt", now, now) == -1);
+  SignetAgentRecord rec = {0};
+  CHECK(signet_store_get_agent(store, "private-agent", &rec) != 0);
+  signet_agent_record_clear(&rec);
+
+  const char *methods[] = {"agent/restore-existing", "credential/create",
+      "credential/import", "credential/rotate", "agent/revoke",
+      "credential/deliver"};
+  for (size_t i = 0; i < G_N_ELEMENTS(methods); i++) {
+    char *direct = g_strdup_printf(
+        "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"%s\","
+        "\"params\":{\"agent_nsec\":\"%s\",\"payload_b64\":\"PRIVATE-PAYLOAD\"}}",
+        methods[i], agent_sk);
+    CHECK(signet_mgmt_handler_handle_direct_intent(f.mgmt, f.prov_pk_hex,
+        direct, "direct-other", now, now) == -1);
+    sodium_memzero(direct, strlen(direct));
+    g_free(direct);
+  }
+  sqlite3_stmt *stmt = NULL;
+  CHECK(sqlite3_prepare_v2(signet_store_get_db(store),
+      "SELECT detail FROM audit_log WHERE operation='mgmt_direct_refused'",
+      -1, &stmt, NULL) == SQLITE_OK);
+  int rows = 0;
+  while (sqlite3_step(stmt) == SQLITE_ROW) {
+    const char *detail = (const char *)sqlite3_column_text(stmt, 0);
+    CHECK(detail && strstr(detail, "gift_wrap_required"));
+    CHECK(!strstr(detail, agent_sk) && !strstr(detail, "PRIVATE-PAYLOAD"));
+    rows++;
+  }
+  sqlite3_finalize(stmt);
+  CHECK(rows == 7);
+  CHECK(signet_audit_verify_chain(store, 0, 0, NULL) == 0);
+
+  /* Exercise the real authenticated unwrap, not just the inner dispatcher. */
+  NostrEvent *gift = nostr_nip17_wrap_dm(f.prov_sk_hex, f.bunker_pk_hex, rpc);
+  CHECK(gift);
+  char *json = nostr_event_serialize_compact(gift);
+  CHECK(json);
+  CHECK(signet_mgmt_handler_handle_gift_wrap(f.mgmt, json, "wrapped-adopt",
+      time(NULL)) == 0);
+  CHECK(signet_store_get_agent(store, "private-agent", &rec) == 0);
+  uint8_t expected_sk[32];
+  CHECK(hex_to_bytes(agent_sk, expected_sk, sizeof(expected_sk)) == 0);
+  CHECK(rec.secret_key_len == sizeof(expected_sk));
+  CHECK(sodium_memcmp(rec.secret_key, expected_sk, sizeof(expected_sk)) == 0);
+  sodium_memzero(expected_sk, sizeof(expected_sk));
+  signet_agent_record_clear(&rec);
+  free(json);
+  nostr_event_free(gift);
+  sodium_memzero(rpc, strlen(rpc));
+  g_free(rpc);
+  sodium_memzero(agent_sk, sizeof(agent_sk));
+
+  CHECK(signet_mgmt_handler_handle_direct_intent(f.mgmt, f.prov_pk_hex,
+      "{\"jsonrpc\":\"2.0\",\"id\":\"list\",\"method\":\"agent/list\",\"params\":{}}",
+      "direct-list", now, now) == 0);
+  fixture_teardown(&f);
+  printf("test_direct_ingress_requires_gift_wrap: PASS\n");
+}
+
+/* Real relay-pool ingress fixture. Separate scenarios exercise old REQs and
+ * socket reconnect; history/EOSE/live boundaries never depend on sleeps. */
+typedef struct {
+  Fixture f;
+  SignetRelayPool *pool;
+  GMainLoop *loop;
+  gint accepted;
+  gint dropped;
+  int eoses;
+  bool need_live;
+  bool primed;
+  bool isolate;
+  gint64 started;
+} IngressWire;
+
+static char *adopt_gift(Fixture *f, const char *agent, int64_t rumor_at) {
+  char sk[65], pk[65];
+  gen_keypair_hex(sk, pk);
+  char *rpc = g_strdup_printf("{\"jsonrpc\":\"2.0\",\"id\":\"%s\","
+      "\"method\":\"agent/adopt-existing\",\"params\":{"
+      "\"agent_id\":\"%s\",\"agent_nsec\":\"%s\"}}", agent, agent, sk);
+  NostrEvent *rumor = nostr_nip17_create_rumor(f->prov_pk_hex,
+      f->bunker_pk_hex, rpc, rumor_at);
+  CHECK(rumor);
+  NostrEvent *seal = nostr_nip17_create_seal(rumor, f->prov_sk_hex, f->bunker_pk_hex);
+  CHECK(seal);
+  NostrEvent *gift = nostr_nip17_create_gift_wrap(seal, f->bunker_pk_hex);
+  CHECK(gift);
+  char *json = nostr_event_serialize_compact(gift);
+  CHECK(json);
+  nostr_event_free(gift);
+  nostr_event_free(seal);
+  nostr_event_free(rumor);
+  sodium_memzero(rpc, strlen(rpc));
+  g_free(rpc);
+  sodium_memzero(sk, sizeof(sk));
+  return json;
+}
+
+static void ingress_event(const SignetRelayEventView *ev, void *data) {
+  IngressWire *w = data;
+  int rc = signet_mgmt_handler_handle_relay_event(w->f.mgmt, ev, time(NULL));
+  if (rc != 0) {
+    g_atomic_int_inc(&w->dropped);
+    return;
+  }
+  CHECK(ev->live_since > 0);
+  CHECK(g_get_monotonic_time() - w->started < 10 * G_USEC_PER_SEC);
+  if (g_atomic_int_add(&w->accepted, 1) + 1 == (w->isolate ? 1 : 2)) {
+    g_main_loop_quit(w->loop);
+    return;
+  }
+  /* A fixture control publication asks the relay to disconnect only AFTER
+   * the first live mutation has committed. It is not management traffic. */
+  NostrEvent *control = nostr_event_new();
+  nostr_event_set_kind(control, 12345);
+  nostr_event_set_created_at(control, time(NULL));
+  nostr_event_set_content(control, "reconnect");
+  CHECK(nostr_event_sign(control, w->f.prov_sk_hex) == 0);
+  char *json = nostr_event_serialize_compact(control);
+  CHECK(signet_relay_pool_publish_event_json(w->pool, json) == 0);
+  free(json);
+  nostr_event_free(control);
+}
+
+static void ingress_subscription(const char *url, const char *state,
+                                  const char *reason, void *data) {
+  (void)url; (void)reason;
+  IngressWire *w = data;
+  if (strcmp(state, "DISCONNECTED") == 0) w->need_live = true;
+  if (strcmp(state, "EOSE") || !w->need_live) return;
+  if (w->isolate && !w->primed) {
+    w->primed = true;
+    /* Keep an older REQ alive deliberately. Its late events must not
+     * inherit the new required subscription's EOSE boundary. */
+    int kinds[] = {CAS_INTENT, NIP59_GIFT_WRAP};
+    CHECK(signet_relay_pool_subscribe_scoped(w->pool, kinds, 2,
+        w->f.bunker_pk_hex, time(NULL) - 49 * 3600 - 1) == 0);
+    return;
+  }
+  w->need_live = false;
+  CHECK(++w->eoses <= 2);
+  CHECK(signet_relay_pool_is_subscribed(w->pool));
+  /* A still-fresh rumor from BEFORE this EOSE must not execute even if
+   * delivered in the live phase. Outer wrap timestamps are randomized. */
+  char agent[32];
+  g_snprintf(agent, sizeof(agent), "stale%d", w->eoses);
+  char *json = adopt_gift(&w->f, agent, time(NULL) - 30);
+  CHECK(signet_relay_pool_publish_event_json(w->pool, json) == 0);
+  free(json);
+  g_snprintf(agent, sizeof(agent), "live%d", w->eoses);
+  json = adopt_gift(&w->f, agent, time(NULL));
+  CHECK(signet_relay_pool_publish_event_json(w->pool, json) == 0);
+  free(json);
+}
+
+static gboolean ingress_deadline(void *data) {
+  g_main_loop_quit(((IngressWire *)data)->loop);
+  return G_SOURCE_REMOVE;
+}
+
+static int test_wire_ingress(const char *url, const char *fixture_path, bool isolate) {
+  IngressWire w = {.need_live = true, .isolate = isolate};
+  fixture_setup(&w.f, true);
+  /* Future-dated history is inside the skew window and after the coming
+   * EOSE timestamp; the pre-EOSE classification must still reject it. */
+  char *history1 = adopt_gift(&w.f, "history1", time(NULL) + 60);
+  char *history2 = adopt_gift(&w.f, "history2", time(NULL) + 60);
+  char *late = adopt_gift(&w.f, "history-late", time(NULL) + 60);
+  char *fixtures = g_strdup_printf("[%s,%s,%s]", history1, history2, late);
+  CHECK(g_file_set_contents(fixture_path, fixtures, -1, NULL));
+  g_free(fixtures);
+  free(history1);
+  free(history2);
+  free(late);
+  w.loop = g_main_loop_new(NULL, FALSE);
+  SignetRelayPoolConfig cfg = {.relays = &url, .n_relays = 1,
+      .on_event = ingress_event, .user_data = &w};
+  w.pool = signet_relay_pool_new(&cfg);
+  CHECK(w.pool);
+  signet_relay_pool_set_subscription_callback(w.pool, ingress_subscription, &w);
+  int kinds[] = {CAS_INTENT, NIP59_GIFT_WRAP};
+  CHECK(signet_relay_pool_subscribe_scoped(w.pool, kinds, 2,
+      w.f.bunker_pk_hex, time(NULL) - 49 * 3600) == 0);
+  w.started = g_get_monotonic_time();
+  CHECK(signet_relay_pool_start(w.pool) == 0);
+  guint deadline = g_timeout_add_seconds(12, ingress_deadline, &w);
+  g_main_loop_run(w.loop);
+  int expected = isolate ? 1 : 2;
+  if (g_atomic_int_get(&w.accepted) == expected) g_source_remove(deadline);
+  signet_relay_pool_free(w.pool);
+  CHECK(w.eoses == expected && g_atomic_int_get(&w.accepted) == expected);
+  CHECK(g_atomic_int_get(&w.dropped) == (isolate ? 3 : 4));
+  SignetStore *store = signet_key_store_get_store(w.f.ks);
+  const char *agents[] = {"history1", "history2", "history-late", "stale1", "stale2", "live1", "live2"};
+  for (size_t i = 0; i < G_N_ELEMENTS(agents); i++) {
+    SignetAgentRecord rec = {0};
+    int rc = signet_store_get_agent(store, agents[i], &rec);
+    CHECK((i < 5 || (isolate && i == 6)) ? rc != 0 : rc == 0);
+    signet_agent_record_clear(&rec);
+  }
+  sqlite3_stmt *stmt = NULL;
+  CHECK(sqlite3_prepare_v2(signet_store_get_db(store),
+      "SELECT count(*) FROM audit_log WHERE operation='mgmt_history_dropped'",
+      -1, &stmt, NULL) == SQLITE_OK);
+  CHECK(sqlite3_step(stmt) == SQLITE_ROW && sqlite3_column_int(stmt, 0) == (isolate ? 3 : 4));
+  sqlite3_finalize(stmt);
+  fixture_teardown(&w.f);
+  g_main_loop_unref(w.loop);
+  puts(isolate ? "wire: old-subscription history refused after current EOSE PASS"
+               : "wire: pre-EOSE history and old rumors audited; live mutations within 10s and reconnect PASS");
+  return 0;
+}
+
+int main(int argc, char **argv) {
   if (sodium_init() < 0) {
     fprintf(stderr, "sodium_init failed\n");
     return 1;
   }
+
+  if (argc == 4 && (strcmp(argv[1], "--wire-ingress") == 0 ||
+                    strcmp(argv[1], "--wire-isolation") == 0))
+    return test_wire_ingress(argv[2], argv[3], strcmp(argv[1], "--wire-isolation") == 0);
 
   test_no_cache_duplicates_execute();
   test_cache_rejects_duplicate();
   test_replayed_reissue_mints_once();
   test_missing_event_id_fails_closed();
   test_writer_management_requires_provisioner();
+  test_direct_ingress_requires_gift_wrap();
 
   printf("All management replay tests passed.\n");
   return 0;

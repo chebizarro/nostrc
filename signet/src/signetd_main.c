@@ -53,9 +53,6 @@
  * Subscribe back far enough to catch legitimate fresh commands without forcing
  * signetctl to override normal wrap timestamps. */
 #define SIGNET_MGMT_GIFT_WRAP_WINDOW_SEC ((int64_t)((2 * 24 * 3600) + 3600))
-/* Ignore management traffic for a short window after subscribe/reconnect so
- * relays can drain stored history before we accept fresh commands. */
-#define SIGNET_MGMT_ACCEPT_DELAY_SEC ((int64_t)10)
 
 /* Subscribe the relay pool to the event kinds signetd must receive: NIP-46
  * signing requests (24133), Cascadia ContextVM management intents (25910), and
@@ -170,7 +167,6 @@ typedef struct {
   SignetMgmtHandler *mgmt;
   SignetDenyList *deny;
   SignetKeyStore *keys;
-  int64_t mgmt_accept_after;
 } SignetDaemonCtx;
 
 /* Fleet membership: a pubkey is in-fleet if it belongs to a provisioned agent.
@@ -346,7 +342,6 @@ typedef struct {
   SignetKeyStore *keys;
   SignetPolicyStore *store;
   const SignetConfig *cfg;
-  SignetDaemonCtx *daemon_ctx;
   int64_t started_at;
   int64_t last_reconnect_attempt;
   int64_t fleet_sync_last_ts;
@@ -365,8 +360,6 @@ static gboolean signetd_health_tick(gpointer data) {
   /* NPA-06: CLOSED subscription detection. */
   if (snap.relay_connected && signet_relay_pool_check_sub_closed(ctx->relays)) {
     g_warning("[signetd] subscription CLOSED by relay \u2014 re-subscribing");
-    if (ctx->daemon_ctx)
-      ctx->daemon_ctx->mgmt_accept_after = signet_now_unix() + SIGNET_MGMT_ACCEPT_DELAY_SEC;
     signetd_subscribe_mgmt_kinds(ctx->relays,
                                  ctx->cfg->remote_signer_pubkey_hex[0]
                                    ? ctx->cfg->remote_signer_pubkey_hex : NULL,
@@ -422,8 +415,6 @@ static gboolean signetd_health_tick(gpointer data) {
                 "refreshing the subscription");
       signet_relay_pool_update_since_from_latest(ctx->relays);
       if (signet_relay_pool_start(ctx->relays) == 0) {
-        if (ctx->daemon_ctx)
-          ctx->daemon_ctx->mgmt_accept_after = signet_now_unix() + SIGNET_MGMT_ACCEPT_DELAY_SEC;
         signetd_subscribe_mgmt_kinds(ctx->relays,
                                      ctx->cfg->remote_signer_pubkey_hex[0]
                                        ? ctx->cfg->remote_signer_pubkey_hex : NULL,
@@ -481,7 +472,6 @@ static gboolean signetd_health_tick(gpointer data) {
 
 typedef struct {
   SignetReloadCtx reload;
-  SignetDaemonCtx *daemon_ctx;
   SignetAuditLogger *audit;
   const char *config_path;
 } SignetSighupCtx;
@@ -497,9 +487,6 @@ static void signetd_on_relays_changed(void *user_data) {
   SignetRelayPool *relays = (SignetRelayPool *)ctx->reload.relays;
   const SignetConfig *cfg = ctx->reload.live;
 
-  if (ctx->daemon_ctx)
-    ctx->daemon_ctx->mgmt_accept_after =
-        signet_now_unix() + SIGNET_MGMT_ACCEPT_DELAY_SEC;
 
   const char *bunker_pk = (cfg && cfg->remote_signer_pubkey_hex[0])
                             ? cfg->remote_signer_pubkey_hex : NULL;
@@ -558,30 +545,10 @@ static void signet_on_relay_event(const SignetRelayEventView *ev, void *user_dat
     return;
   }
 
-  /* Cascadia canonical ContextVM management intents (kind 25910). */
-  if (ev->kind == CAS_INTENT && ctx->mgmt) {
-    if (signet_now_unix() < ctx->mgmt_accept_after) return;
-    if (!signet_relay_pool_is_subscribed(ctx->relays)) return;
-    (void)signet_mgmt_handler_handle_intent(ctx->mgmt,
-                                            ev->pubkey_hex ? ev->pubkey_hex : "",
-                                            ev->content ? ev->content : "",
-                                            ev->event_id_hex ? ev->event_id_hex : "",
-                                            ev->created_at,
-                                            signet_now_unix());
-    return;
-  }
-
-  /* NIP-59/NIP-17 gift-wrapped ContextVM management intents (kind 1059). */
-  if (ev->kind == NIP59_GIFT_WRAP && ctx->mgmt && ev->event_json) {
-    if (signet_now_unix() < ctx->mgmt_accept_after) return;
-    if (!signet_relay_pool_is_subscribed(ctx->relays)) return;
-    /* Unwraps with the bunker key and passes the rumor's (authenticated)
-     * created_at to the replay window. */
-    (void)signet_mgmt_handler_handle_gift_wrap(
-        ctx->mgmt, ev->event_json, ev->event_id_hex ? ev->event_id_hex : "",
-        signet_now_unix());
-    return;
-  }
+  /* Admission uses the source relay's current EOSE boundary. History is
+   * audited and dropped; gift wraps compare the authenticated rumor time. */
+  if ((ev->kind == CAS_INTENT || ev->kind == NIP59_GIFT_WRAP) && ctx->mgmt)
+    (void)signet_mgmt_handler_handle_relay_event(ctx->mgmt, ev, signet_now_unix());
 
 }
 
@@ -911,7 +878,6 @@ int main(int argc, char **argv) {
   memset(&dctx, 0, sizeof(dctx));
   dctx.cfg = &cfg;
   dctx.keys = keys;
-  dctx.mgmt_accept_after = signet_now_unix() + SIGNET_MGMT_ACCEPT_DELAY_SEC;
 
   SignetRelayPoolConfig rp_cfg = {
     .relays = (const char *const *)cfg.relays,
@@ -1210,7 +1176,6 @@ int main(int argc, char **argv) {
     .keys = keys,
     .store = store,
     .cfg = &cfg,
-    .daemon_ctx = &dctx,
     .started_at = started_at,
     .last_reconnect_attempt = 0,
     .fleet_sync_last_ts = 0,
@@ -1229,7 +1194,6 @@ int main(int argc, char **argv) {
   hupctx.reload.store = base_store;
   hupctx.reload.on_relays_changed = signetd_on_relays_changed;
   hupctx.reload.user_data = &hupctx;
-  hupctx.daemon_ctx = &dctx;
   hupctx.audit = audit;
   hupctx.config_path = config_path;
 

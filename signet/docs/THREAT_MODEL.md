@@ -200,13 +200,13 @@ Mutations reach the store only through the ContextVM management handler:
 
 - **Confidentiality is transport-dependent**: the supported gift-wrapped
   kind-1059 route encrypts content and authenticates the seal author. Direct
-  kind-25910 ingress can parse readable JSON-RPC content; authorization does
-  not make that content confidential. Do not send secrets over direct ingress:
-  the handler currently still executes secret-bearing methods (adopt/restore,
-  credential create/import/rotate) received that way (SR-01).
-  `test_plaintext_mutation_rejected` covers a particular rejected input path,
-  not universal rejection of plaintext management mutations. Reply encryption
-  failures must not fall back to plaintext.
+  kind-25910 ingress is relay-readable and permits only `agent/get-status`,
+  `agent/list`, `agent/list-clients`, `credential/list` and `credential/inspect`.
+  Mutations and credential delivery require gift-wrap; direct attempts are
+  refused with `gift_wrap_required` and a bounded, non-secret-bearing audit
+  record (`test_mgmt_replay.c`). Refusal cannot undo disclosure by a client
+  that already published secrets in plaintext. Reply encryption failures
+  must not fall back to plaintext.
 - **Replay**: with the replay cache attached, a delivered event id executes at
   most once; duplicates are dropped, missing ids fail closed
   (`test_credential_mutation_replay_rejected`, `test_mgmt_replay.c`). The
@@ -359,7 +359,7 @@ Known residual gaps (accepted, documented):
 |---|---|
 | Create/read/list without payload disclosure | `test_credential_lifecycle.c`, `test_signetctl_credentials.sh`, `test_credential_access.c` (redaction) |
 | Wrong agent / missing capability / deny precedence / lease burn / rate limit | `test_credential_access.c` |
-| Specific plaintext-input refusal (not universal direct-ingress confidentiality) | `test_credential_lifecycle.c:test_plaintext_mutation_rejected` |
+| Direct mutation/delivery refusal; confidential wrapped adoption | `test_mgmt_replay.c:test_direct_ingress_requires_gift_wrap`, `test_credential_lifecycle.c:test_contextvm_reply_shapes` |
 | Replay (mgmt + credential mutations) | `test_mgmt_replay.c`, `test_credential_lifecycle.c:test_credential_mutation_replay_rejected`, `test_replay_cache.c` |
 | Duplicate/overwrite refusal | `test_credential_lifecycle.c` (deterministic-id refusal) |
 | Rotation + archived versions | `test_credential_lifecycle.c`, `test_backup_restore.c` |
