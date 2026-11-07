@@ -30,6 +30,13 @@ RUN cmake -B build-docker -G Ninja \
  && dpkg-query -W > /src/build-docker/package-inputs.txt
 
 FROM builder AS test
+# Keep testing out of the runtime builder; compile only the outbound TLS regression
+# and its dependencies, without the unrelated GObject/test-framework trees.
+RUN cmake -B build-docker -DBUILD_TESTING=ON \
+      -DBUILD_NOSTR_GOBJECT=OFF -DBUILD_TESTING_FRAMEWORK=OFF \
+ && cmake --build build-docker --target test_connection_tls_no_resumption -j2 \
+ && ctest --test-dir build-docker/tests --output-on-failure --no-tests=error \
+      -R '^test_connection_tls_no_resumption$'
 RUN if [ "$SIGNET_PASSKEYS" = ON ]; then passkeys=true; else passkeys=false; fi \
  && meson setup signet/build-meson-sqlite signet \
       -Dnostrc_build_dir=/src/build-docker -Dsignet_enable_tests=true \
