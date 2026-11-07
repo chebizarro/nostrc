@@ -8,6 +8,7 @@
 GrottoNip05Status grotto_profile_nip05_response(const char *data, gsize length, const char *name, const char *hex);
 GBytes *grotto_profile_crop_image(GdkTexture *source, gboolean banner, double zoom, double x, double y);
 GdkTexture *grotto_profile_decode_image(GBytes *bytes, char **mime, GError **error);
+/* Complete crop UI; returns NULL if the initial preview cannot be encoded. */
 AdwAlertDialog *grotto_profile_upload_confirmation(GdkTexture *preview, gboolean banner, const char *const *servers);
 /* Publish cache reads/background refreshes to the panels' public display cache. */
 void grotto_profile_service_bind(GtkWindow *parent, GrottoPanelsService *service);

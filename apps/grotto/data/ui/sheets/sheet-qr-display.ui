@@ -9,6 +9,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
   <template class="SheetQrDisplay" parent="AdwDialog">
     <property name="title" translatable="yes">QR Code</property>
     <property name="content-width">360</property>
+    <property name="follows-content-size">true</property>
     <child>
       <object class="AdwToolbarView">
         <child type="top">
@@ -33,6 +34,8 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
           <object class="GtkScrolledWindow">
             <property name="hscrollbar-policy">2</property>
             <property name="propagate-natural-height">true</property>
+            <property name="min-content-height">200</property>
+            <property name="max-content-height">560</property>
             <child>
               <object class="GtkBox" id="content_box">
                 <property name="orientation">1</property>

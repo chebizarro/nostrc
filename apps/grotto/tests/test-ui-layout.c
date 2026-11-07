@@ -1,4 +1,5 @@
 #include "ui/signer-window.h"
+#include "test-ui-layout-harness.h"
 #include "bunker_test_relay.h"
 #include "relay_store.h"
 #include <grotto-panels.h>
@@ -1786,6 +1787,11 @@ static void layout(void) {
   g_clear_object(&app);
   WAIT(apps_gone == 1);
 }
+void grotto_test_connection_listening(gboolean listening) {
+  pairing_listening = listening;
+  g_assert_true(g_dbus_connection_emit_signal(server, NULL, "/org/nostr/signer/grotto",
+    "org.nostr.Grotto.Control1", "StatusChanged", g_variant_new("(t)", revision), NULL));
+}
 int main(int argc, char **argv) {
   if (g_getenv("GNOSTR_SKIP_UI_TESTS")) { g_print("1..0 # SKIP native UI disabled\n"); return 77; }
   const gchar *language = g_getenv("G10_TEST_LANGUAGE");
@@ -1828,12 +1834,17 @@ int main(int argc, char **argv) {
   g_autoptr(GDBusNodeInfo) identity = g_dbus_node_info_new_for_xml("<node><interface name='org.nostr.Signer'><method name='ListIdentities'><arg type='as' direction='out'/></method></interface></node>", NULL);
   guint inventory = g_dbus_connection_register_object(server, "/org/nostr/signer", identity->interfaces[0], &vtable, NULL, NULL, NULL);
   g_autoptr(GVariant) name = g_dbus_connection_call_sync(server, "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "RequestName", g_variant_new("(su)", "org.nostr.Signer", 0u), NULL, 0, 5000, NULL, NULL); g_assert_nonnull(name);
+  if (g_getenv("GROTTO_TEST_DIALOG_SIZING")) {
+    grotto_test_add_dialog_sizing();
+  } else {
   g_test_add_func("/signer/layout/real-templates-navigation-focus-screenshots", layout);
   g_test_add_func("/signer/layout/remaining-surfaces", remaining_surfaces);
   g_test_add_func("/signer/layout/first-run-connect-destination", first_run_connect_destination);
   g_test_add_func("/signer/layout/connection-link-actions", connection_link_actions);
   g_test_add_func("/signer/layout/backup-file-keyboard", backup_file_keyboard);
-  g_test_add_func("/signer/layout/assistant-input-keyboard", assistant_input_keyboard); int result = g_test_run();
+  g_test_add_func("/signer/layout/assistant-input-keyboard", assistant_input_keyboard);
+  }
+  int result = g_test_run();
   bunker_test_relay_free(profile_relay);
   accounts_store_free(accounts_store_get_default());
   g_dbus_connection_unregister_object(server, registration); g_dbus_connection_unregister_object(server, inventory); nostrc_test_bus_down(bus);

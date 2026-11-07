@@ -602,7 +602,7 @@ target_link_libraries(test-panel-inbox-model PRIVATE PkgConfig::GLIB nostrc-test
 target_compile_options(test-panel-inbox-model PRIVATE -Wall -Wextra -Werror)
 add_test(NAME signer/panel-inbox-model COMMAND test-panel-inbox-model)
 set_tests_properties(signer/panel-inbox-model PROPERTIES TIMEOUT 90 LABELS "signer;unit;panels;inbox" ENVIRONMENT "GSETTINGS_BACKEND=memory")
-  add_executable(test-ui-layout test-ui-layout.c bunker_test_relay.c ${APP_GRESOURCE_C})
+add_executable(test-ui-layout test-ui-layout.c test-dialog-sizing.c bunker_test_relay.c ${APP_GRESOURCE_C})
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   find_program(GROTTO_TEST_XDOTOOL xdotool REQUIRED)
   target_compile_definitions(test-ui-layout PRIVATE GROTTO_TEST_XDOTOOL="${GROTTO_TEST_XDOTOOL}")
@@ -630,6 +630,9 @@ add_dependencies(test-ui-layout grotto-schemas grotto_resources)
 add_test(NAME signer/ui-layout COMMAND test-ui-layout)
 set_tests_properties(signer/ui-layout PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77 LABELS "signer;ui;panels"
   ENVIRONMENT "${_UI_TEST_ENV};GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR}/..;GSETTINGS_BACKEND=memory;ADW_DISABLE_PORTAL=1")
+add_test(NAME signer/dialog-sizing COMMAND test-ui-layout)
+set_tests_properties(signer/dialog-sizing PROPERTIES TIMEOUT 120 LABELS "signer;ui;panels"
+  ENVIRONMENT "${_UI_TEST_ENV};GROTTO_TEST_DIALOG_SIZING=1;GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR}/..;GSETTINGS_BACKEND=memory;ADW_DISABLE_PORTAL=1")
 # GTK's test-only AT context supports property assertions without an AT-SPI bus.
 add_test(NAME signer/ui-accessibility COMMAND test-ui-layout)
 set_tests_properties(signer/ui-accessibility PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77 LABELS "signer;ui;i18n;a11y"
@@ -673,6 +676,9 @@ add_dependencies(signer-tests ${APP_SIGNER_BIN})
 add_test(NAME signer/version COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/test-version.py $<TARGET_FILE:${APP_SIGNER_BIN}> ${GROTTO_VERSION})
 set_tests_properties(signer/version PROPERTIES TIMEOUT 10 LABELS "signer;packaging;unit")
+add_test(NAME signer/dialog-sizing-static COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-dialog-sizing.py ${CMAKE_SOURCE_DIR})
+set_tests_properties(signer/dialog-sizing-static PROPERTIES TIMEOUT 30 LABELS "signer;ui;static")
 if(GROTTO_HAS_PINNED_BLUEPRINT_COMPILER)
   add_test(NAME signer/blueprint-drift COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test-blueprint-drift.py ${CMAKE_CURRENT_SOURCE_DIR}/.. ${BLUEPRINT_COMPILER})
   set_tests_properties(signer/blueprint-drift PROPERTIES TIMEOUT 90 LABELS "signer;ui;blueprint")

@@ -121,6 +121,7 @@ void grotto_pairing_present(GtkWidget *parent, const gchar *uri) {
   g_object_set_data_full(G_OBJECT(f->dialog), "pairing-flow", f, flow_free);
   g_signal_connect(f->dialog, "closed", G_CALLBACK(flow_closed), f);
   adw_dialog_set_title(f->dialog, _("Add App")); adw_dialog_set_content_width(f->dialog, 520);
+  adw_dialog_set_follows_content_size(f->dialog, TRUE);
   GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
   gtk_widget_set_margin_start(box, 18); gtk_widget_set_margin_end(box, 18); gtk_widget_set_margin_top(box, 18); gtk_widget_set_margin_bottom(box, 18);
   f->status = gtk_label_new(NULL);

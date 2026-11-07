@@ -50,7 +50,7 @@ _grotto_test(signer/onboarding test-onboarding grotto.gui REQUIRES display priva
   INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/lsan.supp")
 _grotto_test(signer/identity-model test-home-model grotto.gui REQUIRES display private_bus)
 _grotto_test(signer/panel-inbox-model test-panel-inbox-model grotto.gui REQUIRES private_bus)
-foreach(suite ui-layout ui-accessibility)
+foreach(suite ui-layout ui-accessibility dialog-sizing)
   _grotto_test("signer/${suite}" test-ui-layout grotto.gui
     TARGETS grotto_test_locales grotto_resources REQUIRES display private_bus
     INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/../data/org.nostr.Grotto.Control1.xml"
@@ -65,6 +65,15 @@ if(TEST signer/version)
   nostrc_describe_test(signer/version OWNER grotto.gui TARGETS grotto
     INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/test-version.py"
       "${CMAKE_CURRENT_SOURCE_DIR}/../src/main_app.c")
+endif()
+if(TEST signer/dialog-sizing-static)
+  nostrc_describe_test(signer/dialog-sizing-static OWNER grotto.gui grotto.panels
+    INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/test-dialog-sizing.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/test-dialog-sizing.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/dialog-sizing-coverage.json"
+      "${CMAKE_CURRENT_SOURCE_DIR}/../data" "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+      "${CMAKE_SOURCE_DIR}/gnome/grotto-panels/data"
+      "${CMAKE_SOURCE_DIR}/gnome/grotto-panels/src")
 endif()
 if(TEST signer/blueprint-drift)
   nostrc_describe_test(signer/blueprint-drift OWNER grotto.gui

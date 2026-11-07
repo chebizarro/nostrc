@@ -1,0 +1,189 @@
+{
+  "apps/grotto/data/ui/approval-dialog:GnostrApprovalDialog": {
+    "runtime": [
+      "review-request"
+    ]
+  },
+  "apps/grotto/data/ui/onboarding-assistant:OnboardingAssistant": {
+    "runtime": [
+      "onboarding-assistant"
+    ]
+  },
+  "apps/grotto/data/ui/signer-window:SignerWindow": {
+    "runtime": [
+      "@host"
+    ]
+  },
+  "apps/grotto/data/ui/sheets/sheet-qr-display:SheetQrDisplay": {
+    "runtime": [
+      "qr-display",
+      "connection-link",
+      "connection-link-ready",
+      "connection-link-empty"
+    ]
+  },
+  "apps/grotto/data/ui/sheets/sheet-qr-scanner:SheetQrScanner": {
+    "runtime": [
+      "qr-scanner",
+      "qr-scanner-result"
+    ]
+  },
+  "apps/grotto/data/ui/shortcuts-window:shortcuts_window": {
+    "exception": "GTK-owned paginated ShortcutsWindow, no custom action content. Resource/class checked by Blueprint drift; not claimed as executed sizing coverage."
+  },
+  "apps/grotto/src/approval-controller.c:grotto_approval_controller_review": {
+    "exception": "Bare default-sized AdwWindow carrier hosting the same Review Request template. No custom child or controls in the carrier. Standalone-controller lifecycle is outside this geometry fixture."
+  },
+  "apps/grotto/src/grotto-profile-service.c:grotto_profile_upload_confirmation": {
+    "runtime": [
+      "crop-upload-avatar",
+      "crop-upload-banner"
+    ]
+  },
+  "apps/grotto/src/main_app.c:on_app_about": {
+    "exception": "AdwAboutDialog owns pages and viewports. Metadata only, no custom child; not claimed as executed About-page coverage."
+  },
+  "apps/grotto/src/main_app.c:on_approval_message": {
+    "exception": "Toolkit message/Close alert on non-management fallback, no extra child. Shared alert layout is exercised by crop-upload and confirmations; application-error routing is not covered."
+  },
+  "apps/grotto/src/main_app.c:on_resume_signing": {
+    "exception": "Toolkit message/two-response alert, no custom child. Layout represented by confirmations; desktop lock/control-owner authorization is outside the geometry fixture."
+  },
+  "apps/grotto/src/main_app.c:maybe_disclose_background": {
+    "exception": "Toolkit long-message/two-response alert, no custom child. Longer crop-upload message exercises shared alert scrolling. No startup/background-policy claim."
+  },
+  "apps/grotto/src/ui/approval_dialog.c:block_activated": {
+    "exception": "Toolkit message/two-response alert, no extra child. Same layout as remove-app-alert and crop-upload. Approval/block dispatch is outside the geometry fixture."
+  },
+  "apps/grotto/src/ui/approval_dialog.c:GnostrApprovalDialog": {
+    "runtime": [
+      "review-request"
+    ]
+  },
+  "apps/grotto/src/ui/onboarding-assistant.c:OnboardingAssistant": {
+    "runtime": [
+      "onboarding-assistant"
+    ]
+  },
+  "apps/grotto/src/ui/page-identity-detail.c:copy_phrase": {
+    "runtime": [
+      "copy-recovery-alert"
+    ]
+  },
+  "apps/grotto/src/ui/page-identity-detail.c:secret_dialog": {
+    "runtime": [
+      "recovery-phrase",
+      "encrypted-backup-passphrase",
+      "encrypted-backup-file-passphrase"
+    ]
+  },
+  "apps/grotto/src/ui/page-identity-detail.c:confirm": {
+    "runtime": [
+      "raw-key-alert",
+      "replace-identity-alert"
+    ]
+  },
+  "apps/grotto/src/ui/page-identity-detail.c:page_identity_detail_present_identity": {
+    "runtime": [
+      "backup-sheet"
+    ]
+  },
+  "apps/grotto/src/ui/page-settings.c:page_settings_show_retention": {
+    "runtime": [
+      "activity-retention"
+    ]
+  },
+  "apps/grotto/src/ui/page-settings.c:page_settings_show_ask_defaults": {
+    "runtime": [
+      "ask-by-default"
+    ]
+  },
+  "apps/grotto/src/ui/pairing-flow.c:grotto_pairing_present": {
+    "runtime": [
+      "pairing-selector",
+      "paste-link-preview",
+      "invalid-link-preview"
+    ]
+  },
+  "apps/grotto/src/ui/sheets/sheet-qr-display.c:SheetQrDisplay": {
+    "runtime": [
+      "qr-display",
+      "connection-link",
+      "connection-link-ready",
+      "connection-link-empty"
+    ]
+  },
+  "apps/grotto/src/ui/sheets/sheet-qr-scanner.c:SheetQrScanner": {
+    "runtime": [
+      "qr-scanner",
+      "qr-scanner-result"
+    ]
+  },
+  "apps/grotto/src/ui/signer-window.c:on_win_about": {
+    "exception": "Toolkit About dialog, metadata only, no custom child. Same ownership exception as application About; no executed About-page claim."
+  },
+  "apps/grotto/src/ui/signer-window.c:identity_remove": {
+    "runtime": [
+      "remove-identity-alert"
+    ]
+  },
+  "apps/grotto/src/ui/signer-window.c:show_preferences": {
+    "runtime": [
+      "preferences"
+    ]
+  },
+  "apps/grotto/src/ui/signer-window.c:host_add_app": {
+    "runtime": [
+      "add-app"
+    ]
+  },
+  "apps/grotto/src/ui/signer-window.c:SignerWindow": {
+    "runtime": [
+      "@host"
+    ]
+  },
+  "gnome/grotto-panels/src/grotto-activity-panel.c:clear": {
+    "runtime": [
+      "clear-activity-alert"
+    ]
+  },
+  "gnome/grotto-panels/src/grotto-app-detail.c:tier_changed": {
+    "exception": "Toolkit Upgrade Access Policy message/two-response alert, no extra child. Layout represented by permission confirmations; policy-upgrade state is not geometry coverage."
+  },
+  "gnome/grotto-panels/src/grotto-app-detail.c:remove_app": {
+    "runtime": [
+      "remove-app-alert"
+    ]
+  },
+  "gnome/grotto-panels/src/grotto-app-detail.c:unblock_app": {
+    "exception": "Toolkit Remove App Block message/two-response alert, no extra child. Layout represented by remove-app-alert; no unblock-policy claim."
+  },
+  "gnome/grotto-panels/src/grotto-app-detail.c:editor_remove": {
+    "runtime": [
+      "discard-permission-alert",
+      "remove-permission-alert"
+    ]
+  },
+  "gnome/grotto-panels/src/grotto-app-detail.c:edit_permission": {
+    "runtime": [
+      "edit-permission",
+      "inactive-permission"
+    ]
+  },
+  "gnome/grotto-panels/src/grotto-app-detail.c:clear_scope": {
+    "runtime": [
+      "clear-permissions-alert"
+    ]
+  },
+  "gnome/grotto-panels/src/grotto-apps-panel.c:pause_changed": {
+    "exception": "Toolkit Resume Signing message/two-response alert, no extra child. Layout represented by confirmations; paused-state/host-authority transition is not covered."
+  },
+  "gnome/grotto-panels/src/grotto-profile-view.c:edit": {
+    "runtime": [
+      "edit-profile"
+    ]
+  },
+  "gnome/grotto-panels/src/grotto-remote-panel.c:reset": {
+    "exception": "Toolkit Reset Remote Connections message/two-response alert, no custom child. Layout represented by removal/crop confirmations. No destructive reset is executed."
+  }
+}

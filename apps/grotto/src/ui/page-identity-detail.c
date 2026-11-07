@@ -306,6 +306,7 @@ static void secret_dialog(GrottoIdentityDetail *self, DetailOperation operation)
   AdwDialog *dialog = adw_dialog_new(); self->dialog = g_object_ref(dialog);
   adw_dialog_set_title(dialog, operation == SEED ? _("Recovery Phrase") : _("Encrypted Backup"));
   adw_dialog_set_content_width(dialog, 400);
+  adw_dialog_set_follows_content_size(dialog, TRUE);
   GtkWidget *toolbar = adw_toolbar_view_new();
   GtkWidget *affirmative = gtk_button_new_with_mnemonic(operation == SEED ? _("Confirm _Backup") :
       operation == ENCRYPTED_QR ? _("Show _QR Code") : _("_Save Backup…"));
