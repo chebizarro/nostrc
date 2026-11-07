@@ -19,7 +19,7 @@ files already declare a version.
 
 | Component | Path | Declared version | Latest release | Release tag | Authoritative version source(s) |
 | --- | --- | --- | --- | --- | --- |
-| libnostr | `libnostr/` | 2.1.2 | Unreleased | — | `libnostr/CMakeLists.txt` |
+| libnostr | `libnostr/` | 2.1.3 | Unreleased | — | `libnostr/CMakeLists.txt` |
 | libjson (libnostr-json) | `libjson/` | 2.0.0 | Unreleased | — | `libjson/CMakeLists.txt` (`declare_component_version`) |
 | libgo | `libgo/` | 0.2.0 | Unreleased | — | `libgo/CMakeLists.txt` |
 | nostr-gobject | `nostr-gobject/` | 3.0.1 | Unreleased | — | `nostr-gobject/CMakeLists.txt`, `nostr-gobject/meson.build` |
@@ -54,6 +54,17 @@ files already declare a version.
 | nostr-seal | `gnome/nostr-seal/` | 0.1.3 (format nsealed v1) | Unreleased | — | `gnome/nostr-seal/src/main.c` (`NOSTR_SEAL_VERSION`), `gnome/nostr-seal/include/nostr-seal.h` (`NSEAL_FORMAT_VERSION`) |
 | signet | `signet/` | 0.8.0 | Unreleased | — | `signet/meson.build`, `signet/src/signetd_main.c` (`SIGNET_VERSION`), `signet/src/signetctl_main.c` (`SIGNETCTL_VERSION`), `signet/CMakeLists.txt` (`project VERSION`) |
 
+
+### libnostr client TLS hardening (nostrc-86xt, nostrc-mk7v1.3)
+
+- **libnostr 2.1.2 → 2.1.3: PATCH.** Activate the existing client SSL context
+  hardening on the libwebsockets client callback path. This is a backward-compatible
+  shipped security correction, with no new public API or wire format.
+- `libnostr/CMakeLists.txt` is the authoritative version source; its generated
+  version metadata and the Declared version above agree. Latest release and
+  Release tag remain unchanged because no tag is published here.
+- Signet retains the coordinated unreleased **0.8.0 MINOR** version below; this
+  integration version assessment does not add another Signet bump.
 
 ### Signet first-deployment interfaces (nostrc-mk7v1.6)
 
