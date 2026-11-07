@@ -22,6 +22,9 @@
 struct _OnboardingAssistant {
   AdwWindow parent_instance;
   AdwNavigationView *steps;
+  AdwHeaderBar *header_actions;
+  GtkMenuButton *finish_menu;
+  GtkPopover *finish_popover;
   GtkButton *btn_back, *btn_next, *btn_skip, *btn_retry, *btn_copy_seed, *btn_backup_retry, *btn_backup_export;
   AdwActionRow *choose_create, *choose_import, *choose_connect, *connect_create, *connect_import;
   GtkCheckButton *seed_written_down;
@@ -40,7 +43,7 @@ struct _OnboardingAssistant {
   gboolean busy, closed, finished, identity_stored, self_test_passed, capabilities_ready;
   guint generation, accounts_changed;
   gboolean backup_presented, imported, import_was_phrase, import_was_encrypted;
-  gboolean running_session;
+  gboolean running_session, skip_in_menu;
   GCancellable *cancel;
   gchar *identity, *mnemonic, *nsec;
   const gchar *requested_page;
@@ -75,8 +78,21 @@ static void navigation(OnboardingAssistant *self) {
   gtk_widget_set_sensitive(GTK_WIDGET(self->btn_back), !self->busy && !self->identity_stored);
   gtk_widget_set_visible(GTK_WIDGET(self->btn_back), self->state != ONBOARDING_WELCOME &&
       !(self->running_session && self->state == ONBOARDING_CHOICE) && !self->identity_stored);
+  /* Once saved, finishing is secondary to backup/checking. Keep the full,
+   * explicit action in a header menu instead of squeezing two long labels. */
+  if (self->identity_stored && !self->skip_in_menu) {
+    g_object_ref(self->btn_skip);
+    adw_header_bar_remove(self->header_actions, GTK_WIDGET(self->btn_skip));
+    gtk_popover_set_child(self->finish_popover, GTK_WIDGET(self->btn_skip));
+    gtk_widget_add_css_class(GTK_WIDGET(self->btn_skip), "flat");
+    g_object_unref(self->btn_skip);
+    self->skip_in_menu = TRUE;
+  }
+  gtk_widget_set_visible(GTK_WIDGET(self->finish_menu), self->identity_stored && self->state != ONBOARDING_READY);
+  gtk_widget_set_sensitive(GTK_WIDGET(self->finish_menu), !self->busy);
   gtk_widget_set_sensitive(GTK_WIDGET(self->btn_skip), !self->busy);
-  gtk_widget_set_visible(GTK_WIDGET(self->btn_skip), self->state != ONBOARDING_READY);
+  gtk_widget_set_visible(GTK_WIDGET(self->btn_skip), self->state != ONBOARDING_READY &&
+      !gtk_widget_get_visible(GTK_WIDGET(self->btn_back)));
   gtk_button_set_label(self->btn_skip, !self->identity_stored ?
       (self->running_session ? _("_Cancel") : _("_Skip Setup")) :
       self->state == ONBOARDING_BACKUP ? _("Finish _Without Backup") : _("Finish _Later"));
@@ -95,6 +111,7 @@ static void navigation(OnboardingAssistant *self) {
       self->state == ONBOARDING_TEST_FAILED ? _("_Finish with Warning") :
       self->state == ONBOARDING_CONNECT ? _("_Open Connected Apps") :
       self->state == ONBOARDING_BACKUP ? _("_Confirm Backup") : _("_Get Started"));
+  gtk_window_set_default_widget(GTK_WINDOW(self), gtk_widget_get_visible(GTK_WIDGET(self->btn_next)) ? GTK_WIDGET(self->btn_next) : NULL);
   gtk_widget_set_sensitive(GTK_WIDGET(self->seed_written_down), self->backup_presented && !self->busy);
   gtk_widget_set_sensitive(GTK_WIDGET(self->btn_copy_seed), self->backup_presented && !self->busy);
   gtk_widget_set_sensitive(GTK_WIDGET(self->btn_backup_retry), !self->busy);
@@ -116,7 +133,9 @@ static void step(OnboardingAssistant *self, OnboardingState state) {
     state == ONBOARDING_CONNECT ? "connect" : state == ONBOARDING_BACKUP ? "backup" :
     state == ONBOARDING_READY ? "ready" : "test";
   AdwNavigationPage *selected = adw_navigation_view_find_page(self->steps, page);
-  adw_navigation_view_replace(self->steps, &selected, 1); navigation(self);
+  adw_navigation_view_replace(self->steps, &selected, 1);
+  gtk_window_set_title(GTK_WINDOW(self), adw_navigation_page_get_title(selected));
+  navigation(self);
 }
 static void finish(OnboardingAssistant *self, gboolean verified) {
   if (self->finished || self->busy) return;
@@ -437,6 +456,7 @@ static void onboarding_assistant_class_init(OnboardingAssistantClass *klass) {
   gtk_widget_class_set_template_from_resource(wc, APP_RESOURCE_PATH "/ui/onboarding-assistant.ui");
 #define BIND(name) gtk_widget_class_bind_template_child(wc, OnboardingAssistant, name)
   BIND(btn_backup_retry); BIND(btn_backup_export);
+  BIND(header_actions); BIND(finish_menu); BIND(finish_popover);
   BIND(steps); BIND(btn_back); BIND(btn_next); BIND(btn_skip); BIND(btn_retry); BIND(btn_copy_seed);
   BIND(choose_create); BIND(choose_import); BIND(choose_connect); BIND(connect_create); BIND(connect_import);
   BIND(import_passphrase_group); BIND(seed_written_down);
