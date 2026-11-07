@@ -16,12 +16,42 @@ DEPLOY = ROOT / 'signet/deploy'
 spec = importlib.util.spec_from_file_location('signet_ops', DEPLOY / 'ops.py')
 ops = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ops)
+try:
+    ops.require_jsonschema()
+except RuntimeError as error:
+    print(f'deployment_contract: missing capability: {error}', file=sys.stderr)
+    sys.exit(1)
 COMPOSE = '--compose' in sys.argv
 if COMPOSE:
     sys.argv.remove('--compose')
 
 
 class DeploymentContracts(unittest.TestCase):
+    def test_ops_help_without_jsonschema(self):
+        result = subprocess.run([sys.executable, '-S', str(DEPLOY / 'ops.py'), '--help'],
+                                text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('usage:', result.stdout)
+
+    def test_deployment_capability_failure_without_jsonschema(self):
+        result = subprocess.run([sys.executable, '-S', str(Path(__file__).resolve())],
+                                text=True, capture_output=True)
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stderr, 'deployment_contract: missing capability: '
+                         'missing python3 module jsonschema; '
+                         'install python3-jsonschema or pip install jsonschema\n')
+
+    def test_missing_jsonschema_refused(self):
+        with patch.dict(sys.modules, {'jsonschema': None}):
+            with self.assertRaisesRegex(RuntimeError, '^missing python3 module jsonschema; '
+                                        'install python3-jsonschema or pip install jsonschema$'):
+                ops.bundle()
+
+    def test_jsonschema_dependency_error_not_masked(self):
+        with patch('builtins.__import__', side_effect=ModuleNotFoundError(name='referencing')):
+            with self.assertRaises(ModuleNotFoundError):
+                ops.require_jsonschema()
+
     def test_docker_security_options(self):
         d = (ROOT / 'signet/Dockerfile').read_text()
         for required in ('SIGNET_PASSKEYS=OFF', '-DSIGNET_USE_SQLCIPHER=ON',

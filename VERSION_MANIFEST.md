@@ -84,6 +84,11 @@ files already declare a version.
   tag is `signet-v0.8.0-rc.1`; Latest release and Release tag stay unchanged until
   publication. Docs/examples alone require no further bump. Other components
   are unchanged by W5; W2's libnostr changes need their own assessment.
+- **signet 0.8.0: FOLD (nostrc-bcbt9).** Per owner, the deployment tooling/test
+  prerequisite correction remains in the same untagged first-release wave;
+  no additional version bump. All four authoritative sources and the declared
+  version remain at 0.8.0 for the planned `signet-v0.8.0-rc.1` tag. Other
+  components are unchanged.
 
 ### W7b profile discovery and editor (nostrc-u6v55.23.10)
 

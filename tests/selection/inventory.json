@@ -20332,6 +20332,21 @@
       ],
       "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
+    "signet.deployment_contract": {
+      "nodes": ["signet"],
+      "profiles": ["core.linux", "groundhog.mdk08"],
+      "kind": "ctest",
+      "cost": "ordinary",
+      "requirement": "blocking",
+      "expected_outcome": "pass",
+      "ctest_tests": {
+        "core.linux": ["deployment_contract"],
+        "groundhog.mdk08": ["deployment_contract"]
+      },
+      "requires": ["python3_jsonschema"],
+      "runtime_inputs": [],
+      "build_targets": []
+    },
     "supported.signet.tests": {
       "nodes": [
         "execution.core",
