@@ -58,7 +58,7 @@ class ReleaseTests(GitCase):
         with self.assertRaises(s.CheckFailure):
             self.tagged("groundhog-v0.12.0-alpha7")
 
-    def grotto_snapshot(self, declared="0.1.1-alpha1", meson="0.1.1-alpha1"):
+    def grotto_snapshot(self, declared="0.1.1", meson="0.1.1-alpha1"):
         # Use the production source patterns, but only synthetic local tag refs.
         policy = s.load_inventory(ROOT / "tests/selection/inventory.json")
         self.p["release_components"]["grotto"] = copy.deepcopy(policy["release_components"]["grotto"])
@@ -70,7 +70,7 @@ class ReleaseTests(GitCase):
         self.write("apps/grotto/meson.build", f"project('grotto', 'c',\n  version: '{meson}',\n)\n")
         self.head = self.commit()
 
-    def test_grotto_full_manifest_and_prerelease_tag(self):
+    def test_grotto_base_manifest_and_prerelease_tag(self):
         self.grotto_snapshot()
         self.assertEqual(self.tagged("grotto-v0.1.1-alpha1")["version"], "0.1.1-alpha1")
         for tag in ("grotto-v0.1.1", "grotto-v0.1.1-alpha2"):

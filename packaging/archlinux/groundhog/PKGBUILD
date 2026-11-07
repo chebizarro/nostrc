@@ -78,7 +78,7 @@ package_groundhog() {
 package_grotto() {
   # Split packages share the bundle pkgver. Independently versioned Grotto
   # builds use apps/grotto/packaging/archlinux/PKGBUILD instead.
-  pkgdesc="Nostr identity management and signing service (Preview)"
+  pkgdesc="Nostr identity management and signing service"
   depends=(
     'glib2>=2.80' 'gtk4>=4.14' 'libadwaita>=1.5' 'json-glib' 'libsecret' 'openssl'
     'libsecp256k1' 'libsodium' 'jansson' 'libwebsockets' 'qrencode'

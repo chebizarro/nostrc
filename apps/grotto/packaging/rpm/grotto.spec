@@ -1,11 +1,11 @@
-# Native Grotto Preview; build from a complete checkout/archive with submodules.
+# Native Grotto; build from a complete checkout/archive with submodules.
 # Requires GTK >=4.14, libadwaita >=1.5, GLib >=2.80 (not RHEL 9/Fedora 38).
 %global app_id org.nostr.Grotto
 %global upstream_version 0.1.1-alpha1
 Name:           grotto
 Version:        0.1.1
 Release:        0.1.alpha1%{?dist}
-Summary:        Nostr identity management and signing service (Preview)
+Summary:        Nostr identity management and signing service
 License:        MIT
 URL:            https://github.com/chebizarro/nostrc
 # Local source archive, including third_party submodules; no fictitious release tag.
@@ -54,7 +54,7 @@ One package containing the Grotto GUI and D-Bus-activated daemon. Scoped
 permissions govern local NIP-55L and explicitly paired NIP-46 clients.
 Client applications do not receive private keys; explicit Grotto key-management
 operations may handle them. Signing is not publication. Grotto is not a security
-boundary against malware running as the same user. Preview acceptance is pending.
+boundary against malware running as the same user. Release acceptance is pending.
 
 %prep
 %autosetup -n grotto-%{upstream_version}

@@ -94,6 +94,15 @@ assert 'set_version(ADW_ABOUT_DIALOG(about), GROTTO_VERSION)' in (app / 'src/mai
 assert '#define DAEMON_VERSION GROTTO_VERSION' in (app / 'daemon/main_daemon.c').read_text()
 subprocess.run(['cmake', f'-DVERSION={version}', f'-DROOT={root}',
                 '-P', str(app / 'cmake/CheckPackagingVersion.cmake')], check=True)
+manuals = (app / 'packaging/debian/grotto.manpages').read_text().splitlines()
+for command in ('grotto', 'grotto-daemon'):
+    manual = (build / 'apps/grotto' / f'{command}.1').read_text()
+    assert f'"Grotto {version}"' in manual.splitlines()[0], command
+    assert '@GROTTO_VERSION_FULL@' not in manual and 'Preview' not in manual, command
+    assert f'obj-*/apps/grotto/{command}.1' in manuals, command
+for package in ('packaging/debian/control', 'packaging/rpm/grotto.spec',
+                'packaging/archlinux/PKGBUILD'):
+    assert '(preview)' not in (app / package).read_text().lower(), package
 # The removed unsupported TCP package must not survive as a dangling overlay export.
 assert 'grotto-daemon-tcp' not in (root / 'flake.nix').read_text()
 control = (app / 'packaging/debian/control').read_text()

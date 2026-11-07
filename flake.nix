@@ -90,7 +90,7 @@
               runHook postInstall
             '';
             meta = with pkgs.lib; {
-              description = "Keeps your Nostr keys and signs for your apps (preview)";
+              description = "Keeps your Nostr keys and signs for your apps";
               homepage = "https://github.com/chebizarro/nostrc";
               license = licenses.mit;
               mainProgram = "grotto";

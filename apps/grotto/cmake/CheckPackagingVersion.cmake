@@ -2,7 +2,8 @@ cmake_minimum_required(VERSION 3.22)
 
 # All Grotto version authorities must agree with GROTTO_VERSION_FULL.
 # Native package syntax may differ: Debian uses ~, RPM a pre-final Release,
-# Arch strips the hyphen, and Apple's bundle fields retain the numeric base.
+# Arch strips the hyphen; the manifest declaration and Apple bundle fields
+# retain the numeric base, following Groundhog's prerelease convention.
 if (NOT VERSION OR NOT ROOT)
   message(FATAL_ERROR "usage: cmake -DVERSION=... -DROOT=... -P CheckPackagingVersion.cmake")
 endif()
@@ -23,7 +24,7 @@ expect(${APP}/CMakeLists.txt "project(grotto VERSION ${BASE_VERSION} LANGUAGES C
 expect(${APP}/CMakeLists.txt "set(GROTTO_PRERELEASE \"${PRERELEASE}\")")
 expect(${APP}/meson.build "version: '${VERSION}',")
 expect(${APP}/data/org.nostr.Grotto.metainfo.xml "<release version=\"${VERSION}\"")
-expect(VERSION_MANIFEST.md "| Grotto | `apps/grotto/` | ${VERSION} |")
+expect(VERSION_MANIFEST.md "| Grotto | `apps/grotto/` | ${BASE_VERSION} |")
 expect(flake.nix "pname = \"grotto\";\n            version = \"${VERSION}\";")
 expect(${APP}/packaging/archlinux/PKGBUILD "\n_version=${VERSION}\n")
 expect(${APP}/packaging/archlinux/PKGBUILD [=[pkgver=${_version//-/}]=])

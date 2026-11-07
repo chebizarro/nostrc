@@ -7,7 +7,9 @@ project(grotto VERSION 0.1.1 LANGUAGES C)
 # Version, Release), packaging/archlinux/PKGBUILD (_version),
 # packaging/macos/create-dmg.sh, packaging/windows/grotto.nsi,
 # packaging/windows/build-msys2.sh and snap/{grotto,grotto-daemon}/snapcraft.yaml
-# and VERSION_MANIFEST.md in agreement. tests/selection/inventory.json maps
+# in agreement with the numeric base in VERSION_MANIFEST.md. Debian manuals
+# (packaging/debian/grotto{,-daemon}.1.in) use GROTTO_VERSION_FULL at configure
+# time. tests/selection/inventory.json maps
 # the release sources. grotto-packaging-version checks versions; release.yml refuses a
 # grotto-v* tag that does not equal GROTTO_VERSION_FULL. Info.plist stays numeric.
 set(GROTTO_PRERELEASE "alpha1")
@@ -16,6 +18,11 @@ if (GROTTO_PRERELEASE)
   string(APPEND GROTTO_VERSION_FULL "-${GROTTO_PRERELEASE}")
 endif()
 add_compile_definitions(GROTTO_VERSION="${GROTTO_VERSION_FULL}")
+
+# dh_installman consumes these configured manuals, never the source templates.
+foreach(_manual grotto grotto-daemon)
+  configure_file(packaging/debian/${_manual}.1.in ${_manual}.1 @ONLY)
+endforeach()
 
 include(GNUInstallDirs)
 
