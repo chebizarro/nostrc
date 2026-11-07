@@ -59,8 +59,10 @@ typedef struct {
   int64_t created_at;            /* unix seconds */
   const char *content;           /* borrowed; may be NULL */
   const char *event_json;        /* borrowed serialized event JSON; may be NULL */
-  /* Unix-second boundary of the source relay's current required EOSE.
-   * Zero for history, not-ready peers and synthetic/local injection. */
+  /* Unix-second EOSE boundary of the REQ that delivered this event on its
+   * source relay's current connection. Zero for history (any REQ still
+   * draining), AUTH-pending or disconnected peers and synthetic/local
+   * injection. */
   int64_t live_since;
 } SignetRelayEventView;
 
