@@ -107,3 +107,37 @@ The review changes documentation only: **no bump**. The implementation's correct
 ## Merge recommendation
 
 **Request changes before accepting .66 as fully usable at 360 px:** cover and constrain the selected-identity label (F1), not just the unselected preview. Preserve the new header placement and import/pairing semantics. F2/F3 are explicit keyboard-review failures but inherited, not newly introduced regressions; address them as finite input/default and translation corrections or obtain an explicit scope waiver rather than presenting the assistant as keyboard-clean. Track the intermittent extra integration teardown separately (`nostrc-4iz0k`); its cause remains unresolved. No repository-wide audit, full-suite gate, new permission policy or version bump is requested.
+
+## Re-check (fada74a06)
+
+Re-check task: `nostrc-lddig`. Pulled this same branch with `git pull --ff-only`; the clean worktree was already at **`fada74a0644c1dc347d7fd10ac4b61ca769009dc`**. Reviewed only the corrective delta `df3753e70..fada74a06` for F1–F3 and `nostrc-4iz0k`. The earlier report and failed receipts above remain historical evidence; this section supplies the current verdict. No product code or tests were changed by the reviewer.
+
+- **F1 resolved — confirmed/static, executed and visual.** `pairing-flow.c:27-41,171-178` installs selected-item and popup factories with ellipsized, bounded labels and full-identity tooltips. The real clipboard-path tests now wait for inventory, select an identity, assert sensitive Review, retain the exact full npub in the selected model item/tooltip, and assert dialog minimum width **≤360 px** (`test-ui-layout.c:1312-1328`). Both English and Spanish executions passed, including expanded details and the existing invalid-input checks. Independently inspected both newly generated `clipboard-selected-identity-360` captures: the selected identifier, picker and header buttons fit. The original URI/identity submission handlers remain unchanged; shortening display text does not shorten the identity sent to pairing.
+- **F2 resolved — confirmed/static and executed.** All three relevant inputs now activate the default (`onboarding-assistant.blp:57,65,71`); `onboarding-assistant.c:114` assigns the affirmative as default only while visible. The added keyboard scenario (`test-ui-layout.c:1480-1546`) uses actual xdotool Return events, not a synthetic submit click, from the create-name, import-name and import-key inputs. This run logged **12 cases: three inputs × first-run/running-session × English/Spanish**. Each reached self-test and asserted exactly one corresponding create/import call, with the other counter unchanged. Existing import persistence and first-run destination checks also passed within the requested suites.
+- **F3 resolved — confirmed/static and executed.** Spanish now uses `Finalizar con _advertencia` (Alt+A) versus `_Finalizar más tarde` (Alt+F), at `po/es.po:3211-3212,3187-3188`. The keyboard scenario opens the failed-check finish menu in both flows, runs the mapped-control uniqueness collector, and asserts the distinct expected keys (`test-ui-layout.c:1523-1532`). Both locale suites passed. All five catalogs passed `msgfmt --check --check-format`; no fuzzy entries were found.
+- **`nostrc-4iz0k` resolved for this re-check — confirmed/static and executed.** Every valid profile Job now refs and holds the default application (`grotto-profile-service.c:1061-1070`), with matched release/unref in `job_free` (`:58-66`). The Job is owned by the task (`:1084`); the queued refresh retains that task through its handoff (`:1021-1027,1042-1044`). This preserves application lifetime while work and completion delivery still use process-global crypto, rather than changing approval semantics or suppressing a failure. The unchanged, uninstrumented approval-integration test passed end-to-end, including real-daemon self-test review through action/inbox, advancement to Backup, later GUI flows and shutdown. This is one fresh passing run at the corrected revision, not a universal race-freedom claim; the original failing runs are not discarded.
+
+**Fixture follow-up:** `nostrc-u6v55.68` remains open for the older modal dialog retained between layout cases. The new assistant scenario uses a private `GtkWindowGroup` and a real `g_application_run` lifecycle to avoid that unrelated test application's modality. It still sends real keys and retains the backend exactly-once assertions; there is no production window-group workaround. The test-only SettingsManager cleanup now follows bus shutdown so draining inventory callbacks do not borrow freed settings (`test-ui-layout.c:1736-1740`). Neither fixture follow-up is conflated with the profile-worker application-lifetime correction. `.68` is not a new merge prerequisite.
+
+### Re-check execution and final verdict
+
+Fresh task-owned container: `nostrc-linux-ci:arm64`, image ID `sha256:3d1c8f2383c7159a44e3c8f1714476ca749333d34c887b780d6efc144eab35e2`; read-only worktree mount at `/src`, fresh Debug build at `/build`, libsecret and existing private-home/bus isolation. Installed xdotool only inside this container. Explicitly built the six required executable targets (`test-onboarding`, `test-ui-layout`, `test-identity-management`, `test-qr-scanner`, `test-approval-integration`, `grotto-daemon`) and their prerequisites. No test timeout, suppression or integration assertion was changed.
+
+Ran once, serially: `xvfb-run -a ctest --test-dir /build -j1 -R '^signer/(onboarding|ui-layout|ui-accessibility|identity-management|blueprint-drift|qr-scanner|approval-integration)$' --output-on-failure`.
+
+| Check | Re-check result |
+|---|---|
+| signer/onboarding | PASS, 5.91 s |
+| signer/ui-layout | PASS, 79.34 s |
+| signer/ui-accessibility (Spanish) | PASS, 79.45 s |
+| signer/identity-management | PASS, 3.58 s |
+| signer/blueprint-drift | PASS, 1.29 s; compiler 0.22.2 |
+| signer/qr-scanner | PASS, 0.27 s |
+| signer/approval-integration | PASS, 12.23 s |
+| Required home fixture | PASS, 0.05 s |
+
+**Overall: 8/8 passed, zero skips, CTest exit 0, 182.14 s.** Catalog checks/no-fuzzy and `git diff --check` also passed. Receipts: `/tmp/grotto-assistant-preview-recheck-fada74a06/{serial-seven.log,LastTest.log,catalogs.log,configure.log,build.log,deps.log}` and the two selected-identity captures. This re-check did not rerun unrelated diagnostics, a full suite, sanitizers, native/Orca, live pairing or release acceptance. It does not broaden the earlier short-height observations into a universal adaptation claim. Task-owned container/build removed after copying receipts; source worktree preserved.
+
+Versions remain Grotto **0.1.1** / grotto-panels **0.1.0**, with no version-source change in this corrective delta; this report-only append requires **no bump**.
+
+**Final verdict: approve merging the reviewed changes at `fada74a06`. F1, F2 and F3 are resolved, and the formerly failing integration check passes with the profile-job lifetime correction. No blocking finding remains within this re-check's scope. Keep `nostrc-u6v55.68` open as the separate fixture follow-up.**
