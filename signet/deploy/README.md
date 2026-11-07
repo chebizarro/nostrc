@@ -35,24 +35,26 @@ an image has already reached GHCR. Never deploy a partially published run.
 Vulnerability exceptions require `id`, `finding`, `reason`, and an ISO `expires`
 date in `vulnerability-exceptions.json`; expired entries fail release checks.
 
-GHCR packages must stay private. CI obtains an anonymous GHCR pull token and
-probes the candidate manifest before push and the captured digest after push.
-HTTP 200 refuses publication; 401/403/404 mean private or absent. A token-endpoint
-401/403/404 also means anonymous access is denied; the manifest probe then runs
-without a bearer token. Transport errors, malformed successful token responses,
-and unexpected HTTP responses fail closed, including before any push.
-This proves anonymous unreadability, not package existence or authenticated access.
-GitHub defaults new packages to private; do not change their visibility to public.
+`ghcr.io/chebizarro/nostrc-signet` is **public** (owner-approved 2026-11-07):
+the repo is public and the image carries no secrets. Droplet pulls are anonymous;
+no read-only package credential or registry login is required. Keep the digest pin.
+Image integrity relies on digest pinning and provenance attestation, not visibility.
+CI obtains an anonymous GHCR pull token and probes the candidate tag before push:
+HTTP 200 accepts an existing public image; 401/403/404 allow push for an absent or
+inaccessible image. After push and digest capture, the anonymous tag manifest
+**must return HTTP 200**, and its SHA-256 digest must equal the captured push digest
+before attestations run. Any other post-push status or digest mismatch fails.
+A token-endpoint 401/403/404 makes the manifest probe run without a bearer token.
+Transport errors, malformed successful token responses and unexpected token or
+pre-push manifest HTTP responses fail closed. GitHub defaults new packages to
+private; the owner must make a newly created package public for the post-push gate.
 No extra secret is required. An optional `GHCR_READ_TOKEN` repository secret
-(classic PAT, `read:packages`) enriches the pre-push check with user-owned package
-REST metadata; a successful lookup must report `private`, while an unavailable
-lookup only warns. The repository `GITHUB_TOKEN` is used for push, not that lookup.
+(classic PAT, `read:packages`) only enriches the pre-push check with user-owned
+package REST visibility metadata; an unavailable lookup warns. The repository
+`GITHUB_TOKEN` is used for push, not that lookup.
 See [GitHub's GHCR defaults and anonymous access documentation](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry).
-Grant the host a dedicated **read-only** package credential, stored in root-only
-`/opt/signet/secrets/docker/config.json`
-using `docker --config /opt/signet/secrets/docker login ghcr.io --password-stdin`.
-Never put it in cloud-init. Source/image provenance and release-bundle checksum
-verification are owner requirements before install. The legacy `release.yml` /
+Source/image provenance and release-bundle checksum verification are owner
+requirements before install. The legacy `release.yml` /
 `configure-release.sh` route intentionally still excludes Signet. The scoped
 `update-inventory.py` regenerates its selector publisher/package metadata; it
 never rewrites unrelated inventory fields.
