@@ -19,7 +19,7 @@ files already declare a version.
 
 | Component | Path | Declared version | Latest release | Release tag | Authoritative version source(s) |
 | --- | --- | --- | --- | --- | --- |
-| libnostr | `libnostr/` | 2.1.3 | Unreleased | — | `libnostr/CMakeLists.txt` |
+| libnostr | `libnostr/` | 2.2.0 | Unreleased | — | `libnostr/CMakeLists.txt` |
 | libjson (libnostr-json) | `libjson/` | 2.0.0 | Unreleased | — | `libjson/CMakeLists.txt` (`declare_component_version`) |
 | libgo | `libgo/` | 0.2.0 | Unreleased | — | `libgo/CMakeLists.txt` |
 | nostr-gobject | `nostr-gobject/` | 3.0.1 | Unreleased | — | `nostr-gobject/CMakeLists.txt`, `nostr-gobject/meson.build` |
@@ -55,11 +55,14 @@ files already declare a version.
 | signet | `signet/` | 0.8.0 | Unreleased | — | `signet/meson.build`, `signet/src/signetd_main.c` (`SIGNET_VERSION`), `signet/src/signetctl_main.c` (`SIGNETCTL_VERSION`), `signet/CMakeLists.txt` (`project VERSION`) |
 
 
-### libnostr client TLS hardening (nostrc-86xt, nostrc-mk7v1.3)
+### libnostr callback API and client TLS hardening (nostrc-a7p6i, nostrc-86xt, nostrc-mk7v1.3)
 
-- **libnostr 2.1.2 → 2.1.3: PATCH.** Activate the existing client SSL context
-  hardening on the libwebsockets client callback path. This is a backward-compatible
-  shipped security correction, with no new public API or wire format.
+- **libnostr 2.1.2 → 2.2.0: MINOR.** Add the backward-compatible, ABI-preserving
+  simplepool subscription callback API used for EOSE-based management admission.
+  This supersedes the unreleased 2.1.3 PATCH assessment: the same wave also activates
+  the existing client SSL context hardening on the libwebsockets client callback
+  path, a shipped security correction. MINOR is the highest applicable change;
+  no wire format changes.
 - `libnostr/CMakeLists.txt` is the authoritative version source; its generated
   version metadata and the Declared version above agree. Latest release and
   Release tag remain unchanged because no tag is published here.
