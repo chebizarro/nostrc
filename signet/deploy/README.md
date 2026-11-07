@@ -75,8 +75,23 @@ Failures do not automatically delete resources; use those IDs to reconcile them.
 Do not blindly rerun creation against existing names.
 
 `cloud-init.yaml` is a template. The renderer inserts the public SSH key, volume
-ID, pinned package versions and the exact repository systemd units. Volume
-formatting is performed by `doctl --fs-type ext4`, **not** by cloud-init: cloud-init
+ID, pinned package versions and the exact repository systemd units. On Linux with
+`cloud-init` and PyYAML installed, run the same schema-only check as CI:
+
+```sh
+bash signet/deploy/digitalocean/validate-cloud-init.sh
+```
+
+This validates both the raw template and temporary user-data produced by the same
+renderer used by `create-droplet.sh`, with a throwaway public SSH key and placeholder
+volume inputs. The rendered check includes the real `write_files` set (systemd
+units, volume ID and host-init script); it does not create resources or execute
+host initialization. The raw template alone is schema-valid but is not deployable
+user-data. When `cloud-init` is installed on the operator workstation,
+`create-droplet.sh` also validates the actual rendered receipt before sending it
+to DigitalOcean.
+
+Volume formatting is performed by `doctl --fs-type ext4`, **not** by cloud-init: cloud-init
 requires the named DO by-id device already to be ext4, records its UUID, and
 mounts it via UUID without `nofail`. It never formats an unknown attached disk.
 Only after the mount succeeds are `state` and `backups` created. This deliberately
