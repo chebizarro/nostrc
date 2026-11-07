@@ -230,3 +230,16 @@ This review and the THREAT_MODEL edit change documentation only: **no component 
 ## Merge recommendation
 
 **Merge** the review and THREAT_MODEL commits (documentation only). **Do not tag `signet-v0.8.0-rc.1` yet.** Blockers 5–13 need deployed-image, Droplet, operator or W6 independent-review evidence. Before W6, the owner should accept or schedule the six Medium findings (SR-01–SR-06). SR-04 and SR-05 are disposed by keeping the bootstrap profile disabled; SR-06 by keeping ctap unsupported.
+
+## Owner dispositions (2026-11-07)
+
+Recorded by the coordinator under delegated owner authority; the W6 independent review (`docs/reviews/signet-rc1-independent-review-2026-11-06.md`) concurred on severity and disposition for all six.
+
+| Finding | Bead | Disposition for `signet-v0.8.0-rc.1` | Condition |
+|---|---|---|---|
+| SR-01 plaintext direct-25910 mutations | `nostrc-z3b0s` | **Fixed** (`4090fc20a`): secret-bearing/mutating intents over direct 25910 are refused and audited | — |
+| SR-02 manual-start replay bypass | `nostrc-17ggo` | Accepted: 270 s quarantine enforced on every supported start path; manual `docker compose up` bypass documented | Durable replay marker before promotion to `signet-v0.8.0` |
+| SR-03 sender self-rewrap replay | `nostrc-hbj7a` | Accepted: requires the authenticated provisioner's own key | Inner-rumor-id dedupe before promotion to `signet-v0.8.0` |
+| SR-04 unbounded `/challenge` store | `nostrc-d1g76` | Accepted while the bootstrap profile ships disabled | Must be fixed before the profile is ever enabled (High if enabled) |
+| SR-05 `/bootstrap` without possession proof | `nostrc-nmefa` | Accepted while the bootstrap profile ships disabled | Must be fixed before the profile is enabled |
+| SR-06 CTAP-HID local device access | `nostrc-k2d0c` | Accepted while the CTAP profile is unsupported | Re-assess before any supported CTAP profile |

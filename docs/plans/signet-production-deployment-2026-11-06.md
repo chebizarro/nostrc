@@ -509,6 +509,7 @@ Closed since 2026-08-08 (25) provide regression context, not permission to skip 
 | 4 | AUTH/publish OK collision; callback use-after-free | `nostrc-izf9`, `-8str` fixed with concurrent/teardown tests | §8.A |
 | 5 | Ineffective outbound TLS hardening/verification | `nostrc-86xt` reviewed; negative TLS tests; verification confirmed in image | §8.A |
 | 6 | Unresolved critical/high NIP-46 or management findings | fix + independent review (`nostrc-1r5d.3`) or remove the surface | §8.B–D |
+| 6a | Six Medium findings (SR-01…SR-06) | SR-01 fixed (`4090fc20a`); SR-02…SR-06 accepted for rc.1 with conditions recorded in the security review "Owner dispositions (2026-11-07)" and on beads `nostrc-17ggo`, `-hbj7a`, `-d1g76`, `-nmefa`, `-k2d0c` | §8.D |
 | 7 | No proven launch client enrollment/reconnect | `homed_broker_login_nip46_live` + `signet/tests/integration/` reference client against the rc image and launch relays (`nostrc-1cx`), not mocked handlers | §10.D |
 | 8 | SQLCipher custody review / deployed-image proof | `signet-sqlcipher-key-store-test-20261015` independently reviewed; encrypted restart + restore verified | §8.C, §10.F |
 | 9 | No trustworthy recovery procedure | successful fresh-host restore drill | §10.F |
