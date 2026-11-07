@@ -1,4 +1,4 @@
-# Grotto daemon deployment (Preview 0.1.0)
+# Grotto daemon deployment
 
 Native Linux is the primary distribution. The one `grotto` package includes
 `grotto`, `grotto-daemon`, their activation assets and optional network examples.

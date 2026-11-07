@@ -70,7 +70,7 @@ static void on_app_about(GSimpleAction *action, GVariant *param, gpointer user_d
   GtkApplication *app = GTK_APPLICATION(user_data);
   GtkWindow *parent = gtk_application_get_active_window(app);
   AdwDialog *about = adw_about_dialog_new();
-  adw_about_dialog_set_application_name(ADW_ABOUT_DIALOG(about), "Grotto (Preview)");
+  adw_about_dialog_set_application_name(ADW_ABOUT_DIALOG(about), "Grotto");
   adw_about_dialog_set_application_icon(ADW_ABOUT_DIALOG(about), "org.nostr.Grotto");
   adw_about_dialog_set_version(ADW_ABOUT_DIALOG(about), GROTTO_VERSION);
   adw_about_dialog_set_website(ADW_ABOUT_DIALOG(about), "https://github.com/chebizarro/nostrc");

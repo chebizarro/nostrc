@@ -73,7 +73,7 @@ Depends: libgrotto-panels-0-0 (>= 0.1.0),
 Recommends: gnome-keyring | org.freedesktop.secrets,
             gnome-shell-extension-nostr
 Provides: grotto-daemon
-Description: Keeps your Nostr keys and signs for your apps (preview)
+Description: Keeps your Nostr keys and signs for your apps
  Grotto holds your Nostr identities in the system keyring and signs,
  encrypts and decrypts for every Nostr app that speaks NIP-55L (local apps
  over the session bus, org.nostr.Signer) or NIP-46 (Nostr Connect, remote
@@ -86,4 +86,4 @@ Description: Keeps your Nostr keys and signs for your apps (preview)
  This package contains the Grotto app (approvals, identities, settings) and
  its background service, which starts on demand when an app asks.
  .
- Grotto is Preview 0.1.0; installed-desktop release acceptance remains pending.
+ Installed-desktop release acceptance remains pending for Grotto.

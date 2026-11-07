@@ -1,6 +1,6 @@
 [Desktop Entry]
 Type=Application
-Name=Grotto (Preview)
+Name=Grotto
 GenericName=Nostr Signer
 Comment=Manage Nostr identities and review signing requests (NIP-55L, NIP-46)
 Exec=grotto %U

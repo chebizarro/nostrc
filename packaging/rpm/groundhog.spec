@@ -85,7 +85,7 @@ or online status, and nothing loads from the web unless you ask.
 This is an alpha release.
 
 %package -n grotto
-Summary:        Keeps your Nostr keys and signs for your apps (preview)
+Summary:        Keeps your Nostr keys and signs for your apps
 Requires:       grotto-panels >= 0.1.0
 Requires:       hicolor-icon-theme
 Recommends:     gnome-keyring
@@ -104,7 +104,7 @@ leave Grotto.
 This package contains the Grotto app (approvals, identities, settings) and
 its background service, which starts on demand when an app asks.
 
-Grotto is a preview: its interface is still being reworked.
+Grotto is an alpha release; its interface may change.
 
 %prep
 %autosetup -n groundhog-%{upstream_version}

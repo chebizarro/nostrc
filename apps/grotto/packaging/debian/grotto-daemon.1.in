@@ -1,6 +1,6 @@
-.TH GROTTO-DAEMON 1 "October 2026" "Grotto Preview 0.1.0" "User Commands"
+.TH GROTTO-DAEMON 1 "October 2026" "Grotto @GROTTO_VERSION_FULL@" "User Commands"
 .SH NAME
-grotto-daemon \- post-login Nostr signing service (Preview)
+grotto-daemon \- post-login Nostr signing service
 .SH SYNOPSIS
 .B grotto-daemon
 [\fB\-\-bunker\fR] [\fB\-\-no-approval-ui\fR]

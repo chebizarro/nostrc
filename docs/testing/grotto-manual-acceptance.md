@@ -1,4 +1,4 @@
-# Grotto Preview: installed desktop acceptance
+# Grotto: installed desktop acceptance
 
 Status **NOT RUN — no real desktop available in G12 (2026-10-14)**. This is the
 exact release handoff for plan §9, not a report of executed steps. Source/Xvfb,

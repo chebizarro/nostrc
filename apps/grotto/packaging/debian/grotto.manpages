@@ -1,2 +1,2 @@
-debian/grotto.1
-debian/grotto-daemon.1
+obj-*/apps/grotto/grotto.1
+obj-*/apps/grotto/grotto-daemon.1

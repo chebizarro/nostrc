@@ -50,7 +50,7 @@ Breaks: grotto-daemon (<= 0.1.0-1),
         nostr-signer-webext-host (<= 0.4.0-1)
 Replaces: grotto-daemon (<= 0.1.0-1),
           nostr-signer-webext-host (<= 0.4.0-1)
-Description: Nostr identity management and signing service (Preview)
+Description: Nostr identity management and signing service
  Grotto is a GTK4/libadwaita application for managing Nostr identities
  and signing events. It keeps your private keys safe while allowing Nostr
  clients to request signatures through a secure D-Bus interface.

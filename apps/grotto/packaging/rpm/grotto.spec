@@ -1,14 +1,15 @@
-# Native Grotto Preview; build from a complete checkout/archive with submodules.
+# Native Grotto; build from a complete checkout/archive with submodules.
 # Requires GTK >=4.14, libadwaita >=1.5, GLib >=2.80 (not RHEL 9/Fedora 38).
 %global app_id org.nostr.Grotto
+%global upstream_version 0.1.1-alpha1
 Name:           grotto
 Version:        0.1.1
-Release:        1%{?dist}
-Summary:        Nostr identity management and signing service (Preview)
+Release:        0.1.alpha1%{?dist}
+Summary:        Nostr identity management and signing service
 License:        MIT
 URL:            https://github.com/chebizarro/nostrc
 # Local source archive, including third_party submodules; no fictitious release tag.
-Source0:        grotto-%{version}.tar.gz
+Source0:        grotto-%{upstream_version}.tar.gz
 BuildRequires:  cmake >= 3.22
 BuildRequires:  ninja-build
 BuildRequires:  gcc
@@ -53,10 +54,10 @@ One package containing the Grotto GUI and D-Bus-activated daemon. Scoped
 permissions govern local NIP-55L and explicitly paired NIP-46 clients.
 Client applications do not receive private keys; explicit Grotto key-management
 operations may handle them. Signing is not publication. Grotto is not a security
-boundary against malware running as the same user. Preview acceptance is pending.
+boundary against malware running as the same user. Release acceptance is pending.
 
 %prep
-%autosetup -n grotto-%{version}
+%autosetup -n grotto-%{upstream_version}
 
 %build
 %cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DGROTTO_USE_SYSTEM_PANELS=ON \
@@ -115,5 +116,5 @@ appstreamcli validate --no-net %{buildroot}%{_datadir}/metainfo/%{app_id}.metain
 - Fix the alternate Meson frontend's Groundhog executable-side link closure
 
 * Wed Oct 14 2026 Grotto Maintainers - 0.1.0-1
-- Fold native GUI/daemon packaging correction into unreleased Preview 0.1.0
+- Fold native GUI/daemon packaging correction into unreleased 0.1.0
 - Use canonical desktop/metainfo, activation, autostart template and network examples

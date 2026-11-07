@@ -24,7 +24,7 @@ def desktop(path):
     return result
 
 entry = desktop(app / 'data/org.nostr.Grotto.desktop')
-assert entry['Desktop Entry']['Name'] == 'Grotto (Preview)'
+assert entry['Desktop Entry']['Name'] == 'Grotto'
 assert entry['Desktop Entry']['DBusActivatable'] == 'true'
 assert entry['Desktop Entry']['X-GNOME-UsesNotifications'] == 'true'
 assert set(entry['Desktop Entry']['Actions'].strip(';').split(';')) == {'new-identity', 'settings'}
@@ -50,7 +50,7 @@ if validator:
 elif sys.platform != 'darwin':
     raise RuntimeError('Linux desktop-contract requires appstreamcli (install appstream)')
 metadata = ET.parse(app / 'data/org.nostr.Grotto.metainfo.xml')
-assert metadata.findtext('name') == 'Grotto (Preview)'
+assert metadata.findtext('name') == 'Grotto'
 copy = ' '.join(metadata.getroot().itertext()).lower()
 for promise in ('same-user malware', 'signing is not publication', 'transiently handle key material'):
     assert promise in copy, promise
@@ -84,14 +84,25 @@ assert "install_data('packaging/appimage/grotto.desktop'" not in meson
 # Version consolidation is atomic with native packaging: no independent About
 # or daemon literal may drift away from the build's component version.
 version = metadata.find('releases/release').attrib['version']
-assert f'set(GROTTO_VERSION "{version}"' in cmake
+base, _, prerelease = version.partition('-')
+assert f'project(grotto VERSION {base} LANGUAGES C)' in cmake
+assert f'set(GROTTO_PRERELEASE "{prerelease}")' in cmake
+assert 'GROTTO_VERSION="${GROTTO_VERSION_FULL}"' in cmake
 assert f"version: '{version}'" in meson
 assert f'-DGROTTO_VERSION="@0@"' in meson
 assert 'set_version(ADW_ABOUT_DIALOG(about), GROTTO_VERSION)' in (app / 'src/main_app.c').read_text()
 assert '#define DAEMON_VERSION GROTTO_VERSION' in (app / 'daemon/main_daemon.c').read_text()
-assert (app / 'packaging/debian/changelog').read_text().startswith(f'grotto ({version}-')
-assert f'Version:        {version}\n' in (app / 'packaging/rpm/grotto.spec').read_text()
-assert f'pkgver={version}\n' in (app / 'packaging/archlinux/PKGBUILD').read_text()
+subprocess.run(['cmake', f'-DVERSION={version}', f'-DROOT={root}',
+                '-P', str(app / 'cmake/CheckPackagingVersion.cmake')], check=True)
+manuals = (app / 'packaging/debian/grotto.manpages').read_text().splitlines()
+for command in ('grotto', 'grotto-daemon'):
+    manual = (build / 'apps/grotto' / f'{command}.1').read_text()
+    assert f'"Grotto {version}"' in manual.splitlines()[0], command
+    assert '@GROTTO_VERSION_FULL@' not in manual and 'Preview' not in manual, command
+    assert f'obj-*/apps/grotto/{command}.1' in manuals, command
+for package in ('packaging/debian/control', 'packaging/rpm/grotto.spec',
+                'packaging/archlinux/PKGBUILD'):
+    assert '(preview)' not in (app / package).read_text().lower(), package
 # The removed unsupported TCP package must not survive as a dangling overlay export.
 assert 'grotto-daemon-tcp' not in (root / 'flake.nix').read_text()
 control = (app / 'packaging/debian/control').read_text()

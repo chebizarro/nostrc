@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: grotto 0.1.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-07 04:06-0800\n"
+"POT-Creation-Date: 2026-11-07 04:08-0800\n"
 "PO-Revision-Date: 2024-01-23 00:00+0000\n"
 "Last-Translator: \n"
 "Language-Team: Portuguese (Brazil)\n"
@@ -562,7 +562,7 @@ msgid "Management"
 msgstr ""
 
 #: data/ui/shortcuts-window.ui:17 data/ui/signer-window.ui:55
-#: packaging/appimage/grotto.desktop:3
+#: data/org.nostr.Grotto.desktop:3 packaging/appimage/grotto.desktop:3
 msgid "Grotto"
 msgstr "Grotto"
 
@@ -709,10 +709,6 @@ msgstr ""
 
 #: data/ui/widgets/gn-secure-entry.ui:121
 msgid "Warning: Caps Lock is enabled"
-msgstr ""
-
-#: data/org.nostr.Grotto.desktop:3
-msgid "Grotto (Preview)"
 msgstr ""
 
 #: data/org.nostr.Grotto.desktop:4 packaging/appimage/grotto.desktop:4

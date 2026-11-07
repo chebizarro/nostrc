@@ -1,6 +1,6 @@
-.TH GROTTO 1 "October 2026" "Grotto Preview 0.1.0" "User Commands"
+.TH GROTTO 1 "October 2026" "Grotto @GROTTO_VERSION_FULL@" "User Commands"
 .SH NAME
-grotto \- manage Nostr identities and review signing requests (Preview)
+grotto \- manage Nostr identities and review signing requests
 .SH SYNOPSIS
 .B grotto
 [\fB\-\-new-identity\fR | \fB\-\-preferences\fR] [\fIURI\fR]
