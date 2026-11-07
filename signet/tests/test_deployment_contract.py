@@ -174,7 +174,62 @@ class DeploymentContracts(unittest.TestCase):
             self.assertIn(required, c)
         self.assertNotIn('/health', c)
 
+    def test_compose_source_bind_mounts(self):
+        import yaml
+
+        paths = [ROOT / 'signet/docker-compose.yml', *sorted(DEPLOY.glob('compose.*.yml'))]
+        for path in paths:
+            config = yaml.safe_load(path.read_text())
+            for name, service in config['services'].items():
+                for mount in service.get('volumes', []):
+                    with self.subTest(path=path.name, service=name, mount=mount):
+                        # Short syntax cannot explicitly disable host-path creation.
+                        self.assertIsInstance(mount, dict)
+                        if mount['type'] == 'bind':
+                            self.assertIs(mount.get('bind', {}).get('create_host_path'), False)
+
+    def assert_compose_profile_contract(self, config):
+        daemon = config['services']['signetd']
+        self.assertEqual(daemon['network_mode'], 'host')
+        self.assertEqual(daemon['restart'], 'no')
+        self.assertEqual(daemon['cap_drop'], ['ALL'])
+        self.assertTrue(daemon['read_only'])
+        self.assertFalse(set(daemon) & {'build', 'ports', 'cap_add', 'privileged'})
+        self.assertNotIn('SIGNET_PROVISIONER_PUBKEYS', daemon['environment'])
+        # Compose's JSON serializer omits zero-valued soft/hard fields.
+        self.assertEqual(daemon['ulimits']['core'].get('hard', 0), 0)
+        self.assertEqual(daemon['ulimits']['core'].get('soft', 0), 0)
+        for name, service in config['services'].items():
+            for mount in service.get('volumes', []):
+                if mount['type'] == 'bind':
+                    # Some Compose versions omit the false/default value in JSON.
+                    # The source contract above still requires explicit false.
+                    self.assertIs(mount.get('bind', {}).get('create_host_path', False), False,
+                                  f'{name}: {mount["target"]}: create_host_path must not be true')
+        conf = next(v for v in daemon['volumes'] if v['target'] == '/etc/signet')
+        self.assertFalse(conf.get('read_only', False))
+        service = config['services']['signet-ops']
+        self.assertEqual(service['network_mode'], 'none')
+        self.assertFalse(any('bunker' in v['source'] for v in service['volumes']))
+        self.assertTrue(service['healthcheck']['disable'])
+
+    def test_compose_rendered_without_create_host_path(self):
+        # Minimal config JSON with create_host_path stripped from every bind.
+        config = json.loads((ROOT / 'signet/tests/fixtures/compose-no-create-host-path.json').read_text())
+        self.assert_compose_profile_contract(config)
+
+    def test_compose_rendered_create_host_path_true_rejected(self):
+        config = json.loads((ROOT / 'signet/tests/fixtures/compose-no-create-host-path.json').read_text())
+        for name, service in config['services'].items():
+            for mount in service['volumes']:
+                with self.subTest(service=name, target=mount['target']):
+                    mount['bind']['create_host_path'] = True
+                    with self.assertRaisesRegex(AssertionError, 'create_host_path must not be true'):
+                        self.assert_compose_profile_contract(config)
+                    del mount['bind']['create_host_path']
+
     def test_compose_profiles(self):
+        print(subprocess.check_output(['docker', 'compose', 'version'], text=True).strip(), flush=True)
         with tempfile.TemporaryDirectory() as t:
             env = Path(t) / 'release.env'
             env.write_text('SIGNET_IMAGE=ghcr.io/test/signet@sha256:' + '1'*64 + '\n'
@@ -187,24 +242,7 @@ class DeploymentContracts(unittest.TestCase):
                 command += ['--profile', '*', 'config', '--format', 'json']
                 config = json.loads(subprocess.check_output(command, text=True,
                                   env={k: v for k, v in os.environ.items() if not k.startswith(('SIGNET_', 'COMPOSE_', 'CADDY_'))}))
-                daemon = config['services']['signetd']
-                self.assertEqual(daemon['network_mode'], 'host')
-                self.assertEqual(daemon['restart'], 'no')
-                self.assertEqual(daemon['cap_drop'], ['ALL'])
-                self.assertTrue(daemon['read_only'])
-                self.assertFalse(set(daemon) & {'build', 'ports', 'cap_add', 'privileged'})
-                self.assertNotIn('SIGNET_PROVISIONER_PUBKEYS', daemon['environment'])
-                # Compose's JSON serializer omits zero-valued soft/hard fields.
-                self.assertEqual(daemon['ulimits']['core'].get('hard', 0), 0)
-                self.assertEqual(daemon['ulimits']['core'].get('soft', 0), 0)
-                for mount in daemon['volumes']:
-                    self.assertFalse(mount['bind']['create_host_path'])
-                conf = next(v for v in daemon['volumes'] if v['target'] == '/etc/signet')
-                self.assertFalse(conf.get('read_only', False))
-                service = config['services']['signet-ops']
-                self.assertEqual(service['network_mode'], 'none')
-                self.assertFalse(any('bunker' in v['source'] for v in service['volumes']))
-                self.assertTrue(service['healthcheck']['disable'])
+                self.assert_compose_profile_contract(config)
 
 
 if not COMPOSE:

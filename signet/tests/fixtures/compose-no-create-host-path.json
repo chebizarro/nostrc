@@ -1,0 +1,45 @@
+{
+  "services": {
+    "signetd": {
+      "network_mode": "host",
+      "restart": "no",
+      "cap_drop": ["ALL"],
+      "read_only": true,
+      "environment": {
+        "SIGNET_REQUIRE_ENCRYPTED_DB": "true"
+      },
+      "ulimits": {"core": {}},
+      "volumes": [
+        {
+          "type": "bind",
+          "source": "/opt/signet/config",
+          "target": "/etc/signet",
+          "bind": {}
+        }
+      ]
+    },
+    "signet-ops": {
+      "network_mode": "none",
+      "healthcheck": {"disable": true},
+      "volumes": [
+        {
+          "type": "bind",
+          "source": "/srv/signet/state",
+          "target": "/data",
+          "bind": {}
+        }
+      ]
+    },
+    "caddy": {
+      "volumes": [
+        {
+          "type": "bind",
+          "source": "/opt/signet/config/Caddyfile",
+          "target": "/etc/caddy/Caddyfile",
+          "read_only": true,
+          "bind": {}
+        }
+      ]
+    }
+  }
+}
