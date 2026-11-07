@@ -141,6 +141,12 @@ typedef struct {
   uint64_t ssh_agent_connections_denied;
   uint64_t provisioner_writeback_failures;
   bool provisioner_writeback_failed;
+
+  /* Pool-owned per-relay NIP-46 reply outcomes; do not gate readiness. */
+  uint64_t nip46_reply_ack_accept;
+  uint64_t nip46_reply_ack_reject;
+  uint64_t nip46_reply_ack_timeout;
+  uint64_t nip46_reply_ack_transport_aborted;
 } SignetHealthSnapshot;
 
 /* Ready only when the signer can serve its authoritative Nostr request path:

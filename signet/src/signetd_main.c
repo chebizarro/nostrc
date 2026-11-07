@@ -446,6 +446,13 @@ static gboolean signetd_health_tick(gpointer data) {
     ctx->fleet_sync_last_ts = signet_now_unix();
   snap.fleet_sync_last_ts = ctx->fleet_sync_last_ts;
 
+  SignetReplyAckStats reply_acks = {0};
+  signet_relay_pool_get_reply_ack_stats(ctx->relays, &reply_acks);
+  snap.nip46_reply_ack_accept = reply_acks.accepted;
+  snap.nip46_reply_ack_reject = reply_acks.rejected;
+  snap.nip46_reply_ack_timeout = reply_acks.timed_out;
+  snap.nip46_reply_ack_transport_aborted = reply_acks.transport_aborted;
+
   snap.sign_total = (uint64_t)g_atomic_int_get(&g_signet_metrics.sign_total);
   snap.auth_total_ok = (uint64_t)g_atomic_int_get(&g_signet_metrics.auth_ok);
   snap.auth_total_denied = (uint64_t)g_atomic_int_get(&g_signet_metrics.auth_denied);
