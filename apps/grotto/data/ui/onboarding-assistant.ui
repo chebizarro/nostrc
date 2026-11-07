@@ -26,40 +26,6 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             </property>
             <property name="show-start-title-buttons">false</property>
             <property name="show-end-title-buttons">false</property>
-            <child type="start">
-              <object class="GtkMenuButton" id="finish_menu">
-                <property name="visible">false</property>
-                <property name="icon-name">view-more-symbolic</property>
-                <property name="tooltip-text" translatable="yes">More Setup Options</property>
-                <property name="popover">
-                  <object class="GtkPopover" id="finish_popover"></object>
-                </property>
-              </object>
-            </child>
-            <child type="start">
-              <object class="GtkButton" id="btn_skip">
-                <property name="label" translatable="yes">_Skip Setup</property>
-                <property name="use-underline">true</property>
-              </object>
-            </child>
-            <child type="start">
-              <object class="GtkButton" id="btn_back">
-                <property name="icon-name">go-previous-symbolic</property>
-                <property name="tooltip-text" translatable="yes">Back</property>
-                <accessibility>
-                  <property name="label" translatable="yes">Back</property>
-                </accessibility>
-              </object>
-            </child>
-            <child type="end">
-              <object class="GtkButton" id="btn_next">
-                <property name="label" translatable="yes">_Get Started</property>
-                <property name="use-underline">true</property>
-                <style>
-                  <class name="suggested-action"/>
-                </style>
-              </object>
-            </child>
           </object>
         </child>
         <child>
@@ -410,12 +376,19 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 </child>
               </object>
             </child>
+          </object>
+        </child>
+        <child type="bottom">
+          <object class="AdwClamp">
+            <property name="maximum-size">480</property>
+            <property name="tightening-threshold">320</property>
             <child>
               <object class="GtkBox">
                 <property name="orientation">1</property>
                 <property name="spacing">8</property>
                 <property name="margin-start">20</property>
                 <property name="margin-end">20</property>
+                <property name="margin-top">12</property>
                 <property name="margin-bottom">16</property>
                 <child>
                   <object class="GtkSpinner" id="spinner_status"></object>
@@ -424,6 +397,43 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                   <object class="GtkLabel" id="lbl_status">
                     <property name="wrap">true</property>
                     <property name="xalign">0</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkButton" id="btn_next">
+                    <property name="label" translatable="yes">_Get Started</property>
+                    <property name="use-underline">true</property>
+                    <style>
+                      <class name="suggested-action"/>
+                      <class name="pill"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkBox">
+                    <property name="spacing">12</property>
+                    <property name="homogeneous">true</property>
+                    <child>
+                      <object class="GtkButton" id="btn_back">
+                        <property name="icon-name">go-previous-symbolic</property>
+                        <property name="tooltip-text" translatable="yes">Back</property>
+                        <accessibility>
+                          <property name="label" translatable="yes">Back</property>
+                        </accessibility>
+                        <style>
+                          <class name="flat"/>
+                        </style>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkButton" id="btn_skip">
+                        <property name="label" translatable="yes">_Skip Setup</property>
+                        <property name="use-underline">true</property>
+                        <style>
+                          <class name="flat"/>
+                        </style>
+                      </object>
+                    </child>
                   </object>
                 </child>
               </object>
