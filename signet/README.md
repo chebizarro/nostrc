@@ -2,6 +2,26 @@
 
 Signet is a NIP-46 compliant Nostr bunker server built for managing cryptographic identities in autonomous agent fleets. It is not a general-purpose key manager for humans — it is infrastructure for systems where many agents each require their own Nostr identity, and none of those identities should ever be exposed as a raw private key.
 
+## Launch scope (0.8.0 candidate)
+
+The supported deployment is one Linux/amd64 daemon with a persistent SQLCipher
+store, outbound NIP-46 signing and gift-wrapped management, operator-assisted
+enrollment, and on-box loopback health/metrics. See the
+[deployment runbook](deploy/README.md) and the
+[implemented-vs-promised assessment](../docs/plans/signet-production-deployment-2026-11-06.md#11a-assessment-table-promised--observed--status--launch-action).
+The assessment is a source-inspection baseline, not proof that the candidate
+has passed deployment acceptance.
+
+HTTP bootstrap is packaged behind an optional Caddy profile but disabled at
+launch: there is no shipped HTTP session-token consumer. Programmatic passkeys
+require the optional `passkeys` image, runtime configuration, a persistent store
+and a mounted single-instance fleet PSK; cross-instance sync is not supported
+at launch. Virtual CTAP-HID is experimental Linux-host functionality, not a
+remote browser authenticator or a Droplet requirement. D-Bus, NIP-5L, SSH agent
+and `signet-git-credential` are outside the container launch baseline.
+The Go `signet-mcp` wrapper is a stub (fixed `tools/call` response), **not built
+or shipped in this release**; a future native sidecar is separate work.
+
 ## Features
 
 ### Core Signing
@@ -9,9 +29,9 @@ Signet is a NIP-46 compliant Nostr bunker server built for managing cryptographi
 - **NIP-46 Remote Signing** — Signs Nostr events on behalf of registered agents over relay-based NIP-46 sessions
 - **Persistent Client Pairing** — The one-time `connect_secret` is a pairing bootstrap: it is consumed atomically with a durable `client_pubkey → agent` binding, so bound clients reconnect across agent AND daemon restarts with no secret and no operator (identity-pinned; suspension/revocation take effect immediately)
 - **NIP-04 / NIP-44 Encryption** — Encrypt and decrypt messages for agents using standard Nostr encryption protocols, including NIP-44 v2 `nip44_encrypt` / `nip44_decrypt` over NIP-46
-- **Hot Key Cache** — `sodium_malloc`-backed, `mlock`'d GHashTable for legacy non-signing key uses; signing now reads custody under a durable SQLite writer transaction
+- **Hot Key Cache** — `sodium_malloc`-backed GHashTable (memory locking is best-effort) for legacy non-signing key uses; signing now reads custody under a durable SQLite writer transaction
 - **Single-Writer Fence** — A provisioner can assign a service identity one authorized NIP-46 client (a single-use client key); every other client, any former owner, and non-NIP-46 transports are refused at custody. Standard NIP-46 request shapes are unchanged. See [cutover contract](docs/WRITER_EPOCH_CUTOVER.md).
-- **SQLCipher Persistence** — AES-256 encrypted SQLite database for agent records, key material, credentials, leases, and audit logs, verified at startup with `PRAGMA cipher_version` plus a keyed read
+- **SQLCipher Persistence** — When built with SQLCipher and opened with a master key, AES-256 encrypted SQLite database for agent records, key material, credentials, leases, and audit logs, verified at startup with `PRAGMA cipher_version` plus a keyed read
 - **Per-Agent Key Rotation** — Rotate an agent's keypair without reprovisioning; old keys are wiped from cache and store
 
 ### Policy & Authorization
@@ -50,14 +70,13 @@ All provisioning, revocation, and policy management is done through Cascadia Con
 | 25910 | `agent/list-clients` | List an agent's persistent NIP-46 client bindings |
 | 25910 | `agent/revoke-client` | Soft-revoke a NIP-46 client binding (client must re-pair) |
 
-Management intents are encrypted between provisioner and bunker when transported through gift-wrap. Responses are correlated, gift-wrapped ContextVM results. Authorization requires the event pubkey to be in the `provisioner_pubkeys` list, with two exceptions: `agent/reissue-connect` is also authorized when the signed sender IS the target agent (self-service re-pairing; grants no power over other agents or methods), and `credential/inspect`, `credential/list` and `credential/deliver` are also authorized for a requester that the credential owner's policy grants exactly `credential.deliver` (a secret-reading identity with no management authority; see [INTEGRATION.md](INTEGRATION.md#credential-methods)). Replies echo the request's JSON-RPC id, refusals included. Each delivered management event id executes at most once: the request's authenticated `created_at` must be within `[replay] skew_seconds`, management ids are kept for twice that, each sender class has its own replay cache and each non-provisioner id is charged to its sender's quota (nothing unexpired is ever evicted), so relay redelivery, history replay and cache flooding cannot re-run non-idempotent commands. Non-provisioner senders are rate-limited per sender before any refusal or audit, and their refusals are audited within a global budget.
+Management intents are encrypted between provisioner and bunker when transported through gift-wrap. Responses are correlated, gift-wrapped ContextVM results. Authorization requires the event pubkey to be in the `provisioner_pubkeys` list, with two exceptions: `agent/reissue-connect` is also authorized when the signed sender IS the target agent (self-service re-pairing; grants no power over other agents or methods), and `credential/inspect`, `credential/list` and `credential/deliver` are also authorized for a requester that the credential owner's policy grants exactly `credential.deliver` (a secret-reading identity with no management authority; see [INTEGRATION.md](INTEGRATION.md#credential-methods)). Replies echo the request's JSON-RPC id, refusals included. Replay protection is RAM-only and keyed by delivered event id: authenticated request time must be within `[replay] skew_seconds`, and ids are retained for twice that window without evicting unexpired entries. It is not durable exactly-once execution: restart, rewrapping and newly signed retries can repeat a logical mutation. After a timeout, inspect state before deciding whether to retry; a lost reply does not mean the mutation failed. Any deliberate stop must keep the daemon down for at least 150 seconds before restart (the launch rule assumes the default 120-second skew); abrupt restarts retain a replay risk. Direct kind-25910 request content is readable by relays: use gift-wrap for confidentiality. Non-provisioner senders are rate-limited per sender before any refusal or audit, and their refusals are audited within a global budget.
 
 ### Bootstrap & Onboarding
 
-- **NIP-17 Bootstrap Delivery** — Fleet Commander sends bootstrap tokens as gift-wrapped NIP-17 DMs to the agent's throwaway bootstrap pubkey
-- **Single-Use Bootstrap Tokens** — Time-limited, attempt-capped, SHA256-hashed tokens bound to agent_id and bootstrap_pubkey; `POST /bootstrap` consumes the token atomically and replays return 403
-- **Challenge-Response Auth** — Shared signed ContextVM challenge validator used across all transports; 30-second TTL, single-use challenges
-- **Session Leases** — Time-bound session tokens (24h TTL) issued after successful authentication
+- **Launch enrollment** — Operator runs `signetctl provision`; the client pairs once with the returned secret-bearing bunker URI, then reconnects with its persistent client key. See [launch enrollment](INTEGRATION.md#launch-enrollment).
+- **Optional NIP-17 URI handoff** — Provisioning can send a `signet/bunker-handoff` DM. Enqueue or relay acceptance is not recipient delivery; advertise only after a real receiver completes the round trip.
+- **Deferred HTTP workflow** — `/bootstrap`, `/challenge` and `/auth` exist, with token/challenge/lease helpers, but token insertion and receive/ACK helpers have no production callers. These do not constitute automated fleet enrollment; the HTTP profile stays disabled.
 
 ### Credential Management
 
@@ -70,28 +89,26 @@ Management intents are encrypted between provisioner and bunker when transported
 
 ### Audit & Observability
 
-- **Hash-Chained Audit Log** — Every signing, management, and credential operation is written to the SQLCipher audit store with `entry_hash = SHA256(ts || agent_id || op || detail || prev_hash)`. Chain integrity is verifiable offline via `signetctl verify-audit`. (Hash-chaining applies to the database audit store; the stdout/file JSON stream below is a separate, non-chained operational log.)
-- **Structured JSON Logging** — 12-factor compliant; operational audit output to stdout or file (not hash-chained; use the SQLCipher store for tamper-evident history)
-- **Health Endpoint** — `GET /health` via libmicrohttpd with Prometheus-style counters (bootstrap_total, auth_ok/denied/error, sign_total, revoke_total, active sessions/leases)
+- **Database Audit Chain** — Credential-operation audit records use the database hash chain, verifiable with `signetctl verify-audit`. This is not a claim that every signing/management operation is chained. The JSON operational stream is separate and unchained; without an independently retained checkpoint the chain cannot detect wholesale history replacement.
+- **Structured JSON Logging** — Operational audit output to stdout or file, not hash-chained. Launch persists `/data/audit.jsonl` and includes it in the backup bundle.
+- **Observability** — libmicrohttpd serves `/health` liveness, `/ready` readiness and `/metrics` Prometheus counters; loopback-only in the launch layout
 - **Replay Protection** — In-memory rolling window with configurable TTL and clock skew tolerance
 
 ### Process Hardening
 
-- `sodium_malloc` + `mlock` on all key material (never swapped to disk)
-- `prctl(PR_SET_DUMPABLE, 0)` disables core dumps
-- `secure_wipe` / `explicit_bzero` on all secret buffers at revocation and shutdown
-- Non-root `signet` user in production (Docker)
-- Agent nsecs never leave Signet's process — agents receive only `nostrconnect://` URIs
+- Guarded `sodium_malloc` allocations and explicit wiping reduce exposure; locking is best-effort, not a guarantee against swap or all transient copies.
+- Linux `prctl(PR_SET_DUMPABLE, 0)` and `mlockall` failures warn and continue. Enforce a zero core limit in deployment; verify actual process limits.
+- Non-root container user; live root/same-UID compromise is outside the at-rest protection boundary.
+- Normal remote signing does not export agent nsecs. BYO import, operator-held keys, encrypted backups and credential delivery have separate custody boundaries; bunker URIs are secrets.
 
 ## Architecture
 
-The control plane is Nostr. All of it. There is no REST management API. The only HTTP surface is `/health` and the bootstrap endpoints.
+The control plane is Nostr. All of it. There is no REST management API. HTTP provides `/health`, `/ready`, `/metrics` and the optional, disabled bootstrap endpoints.
 
 ```
-Agent → NIP-46 request → Relay → signetd → hot cache → sign → Relay → Agent
-Agent → D-Bus / NIP-5L / SSH → signetd → hot cache → sign → Agent
-Admin → ContextVM 25910 intent → Relay → signetd → provision/revoke/policy → Relay → Admin
-Fleet Cmdr → NIP-17 bootstrap → Relay → Agent → POST /bootstrap → signetd → bunker:// URI
+Agent → NIP-46 request → Relay → signetd → persistent custody transaction → Relay → Agent
+Admin → gift-wrapped ContextVM intent → Relay → signetd → mutation → encrypted reply
+Operator → provision → secret-bearing bunker URI → client pairing (no HTTP session)
 ```
 
 ### Components
@@ -101,7 +118,7 @@ Fleet Cmdr → NIP-17 bootstrap → Relay → Agent → POST /bootstrap → sign
 | **signetd**          | Main daemon; wires all subsystems with config-gated activation |
 | **signetctl**        | CLI for remote management and local store introspection        |
 | **NIP-46 Server**    | Handles `sign_event`, `get_public_key`, `connect` (pairing + binding reconnect), NIP-04/NIP-44 encryption, `get_relays`, `ping`; resolves clients via persistent, identity-pinned bindings |
-| **Key Store**        | `mlock`'d GHashTable + SQLCipher persistence                   |
+| **Key Store**        | Guarded cache + persistent custody transactions                   |
 | **Policy Store**     | File-backed (GKeyFile) with SIGHUP reload and TTL              |
 | **Policy Engine**    | Evaluates requests against per-agent policy and rate limits    |
 | **Capability Engine**| Capability-based authorization with rate limiting              |
@@ -164,7 +181,7 @@ open a legacy database), set `SIGNET_MIGRATE_PLAINTEXT_DB=false`. You can also
 migrate explicitly without starting the daemon:
 
 ```bash
-SIGNET_DB_KEY=... signetctl -c signet.conf migrate-db
+SIGNET_DB_KEY_FILE=/run/secrets/signet_db_key signetctl -c signet.conf migrate-db
 ```
 
 Migration requires a SQLCipher-linked build (`-Dsignet_use_sqlcipher=true` for
@@ -174,18 +191,30 @@ prior behavior.
 ### Run
 
 ```bash
-export SIGNET_DB_KEY="<base64-encoded-32-byte-key>"
+export SIGNET_DB_KEY_FILE="/run/secrets/signet_db_key"
+export SIGNET_REQUIRE_ENCRYPTED_DB=true
 export SIGNET_BUNKER_NSEC_FILE="/run/secrets/signet-bunker-nsec"
 ./builddir/signetd -c signet.conf
 ```
 
-Both `SIGNET_DB_KEY` and `SIGNET_BUNKER_NSEC_FILE` are **required** for a deployment. Without `SIGNET_DB_KEY` signetd starts in cache-only mode: nothing is persisted, and agents and NIP-46 client pairings last only until the process exits (see "Cache-only mode" in [INTEGRATION.md](INTEGRATION.md)). In production, also set `SIGNET_REQUIRE_ENCRYPTED_DB=true` so startup fails unless SQLCipher verification succeeds.
+Production requires a master-key file, bunker identity file, persistent DB path
+and `SIGNET_REQUIRE_ENCRYPTED_DB=true`. The 0.8.0 runtime contract refuses an
+explicit invalid config or required-encryption startup without usable persistent
+storage. Cache-only mode remains an explicit development option when encryption
+is not required. Install protected files before starting; do not generate a new
+identity when a file is absent. See the [runbook](deploy/README.md) for custody,
+permissions, online backup and the ≥150-second deliberate-stop rule.
 
 ### Docker
 
-```bash
-docker compose up -d
-```
+Use the [deployment runbook](deploy/README.md), following
+[image/Compose packaging](../docs/plans/signet-production-deployment-2026-11-06.md#9-w3--images-compose-release-packaging)
+and [provisioning/operations](../docs/plans/signet-production-deployment-2026-11-06.md#10-w4--digitalocean-provisioning-and-operations).
+The launch layout uses digest-pinned GHCR images, systemd supervision, host
+networking with loopback observability, rw `/etc/signet` for D2 write-back,
+separately mounted secrets and a verified state volume. IPv6 and bootstrap are
+disabled; Caddy is only for the optional bootstrap profile. Do not use the old
+`signet.toml.example` quick start (that file does not exist).
 
 ## Configuration
 
@@ -207,7 +236,7 @@ identity = default
 
 [policy_defaults]
 default_decision = deny
-policy_file = /etc/signet/policies.conf
+policy_file = /data/policies.conf
 allowed_kinds =
 rate_limit_rpm = 0
 
@@ -217,33 +246,40 @@ ttl_seconds = 600
 skew_seconds = 120
 
 [audit]
-path =
-stdout = true
+path = /data/audit.jsonl
+stdout = false
 
 [bootstrap]
-# port = 9487
+port = 0
+require_tls = true
+trusted_proxy_cidrs = 127.0.0.0/8;::1/128;
 
 [dbus]
-# unix = true
-# tcp = false
+unix_enabled = false
+tcp_enabled = false
 # tcp_port = 47472
 
 [nip5l]
 # enabled = false
-# socket = /run/signet/nip5l.sock
+# socket_path = /run/signet/nip5l.sock
 
 [ssh_agent]
 # enabled = false
-# socket = /run/signet/ssh-agent.sock
+# socket_path = /run/signet/ssh-agent.sock
 ```
 
 ### Environment Variable Overrides
 
-All configuration can be overridden with `SIGNET_`-prefixed environment variables:
+Supported overrides follow (not every INI field has an environment override).
+New 0.8.0 file-key and bootstrap-trust inputs are the release contract in
+[plan §7.B/§7.D](../docs/plans/signet-production-deployment-2026-11-06.md#7-w1--runtime-safety-and-interface-changes):
 
 | Variable                       | Description                              |
 |--------------------------------|------------------------------------------|
-| `SIGNET_DB_KEY`                | SQLCipher master key (required; hex, base64, or passphrase) |
+| `SIGNET_DB_KEY_FILE` | Protected master-key file; preferred production input |
+| `SIGNET_DB_KEY` | Legacy value-bearing master key; do not put in production env files |
+| `SIGNET_BACKUP_KEY_FILE` | Protected independent backup-key file for local backup/restore |
+| `SIGNET_BACKUP_KEY` | Legacy value-bearing backup key; compatibility only |
 | `SIGNET_REQUIRE_ENCRYPTED_DB`  | Refuse to start unless the DB is SQLCipher-encrypted |
 | `SIGNET_MIGRATE_PLAINTEXT_DB`  | Auto-migrate a legacy plaintext DB to SQLCipher on open (default true; set `false` to refuse instead) |
 | `SIGNET_BUNKER_NSEC_FILE`     | File containing bunker identity nsec (required) |
@@ -255,8 +291,10 @@ All configuration can be overridden with `SIGNET_`-prefixed environment variable
 | `SIGNET_HEALTH_PORT`          | Health endpoint port (0 to disable)      |
 | `SIGNET_AUDIT_PATH`           | Audit log file path (empty = stdout)     |
 | `SIGNET_POLICY_PATH`          | Policy file path                         |
-| `SIGNET_PROVISIONER_PUBKEYS`  | Legacy one-time seed used only when persisted provisioner state is absent |
-| `SIGNET_BOOTSTRAP_PORT`       | Bootstrap HTTP port (0 = disabled)       |
+| `SIGNET_PROVISIONER_PUBKEYS`  | Overrides the D2 desired-state config list; never set in production (see below) |
+| `SIGNET_BOOTSTRAP_PORT`       | Bootstrap HTTP port (default 0 = disabled) |
+| `SIGNET_BOOTSTRAP_REQUIRE_TLS` | `[bootstrap] require_tls`, default true |
+| `SIGNET_BOOTSTRAP_TRUSTED_PROXY_CIDRS` | CSV override of `[bootstrap] trusted_proxy_cidrs`; default loopback v4/v6; invalid CIDRs fail validation |
 | `SIGNET_DBUS_UNIX`            | Enable D-Bus Unix (`true`/`false`)       |
 | `SIGNET_DBUS_TCP`             | Enable D-Bus TCP (`true`/`false`)        |
 | `SIGNET_DBUS_TCP_PORT`        | D-Bus TCP port                           |
@@ -264,6 +302,21 @@ All configuration can be overridden with `SIGNET_`-prefixed environment variable
 | `SIGNET_NIP5L_SOCKET`         | NIP-5L socket path                       |
 | `SIGNET_SSH_AGENT`            | Enable SSH agent (`true`/`false`)        |
 | `SIGNET_SSH_AGENT_SOCKET`     | SSH agent socket path                    |
+| `SIGNET_PASSKEYS_ENABLED` | Enable programmatic passkeys (default false) |
+| `SIGNET_PASSKEYS_BACKEND` | Backend (`software-openssl`) |
+| `SIGNET_PASSKEYS_AAGUID` | Authenticator AAGUID |
+| `SIGNET_PASSKEYS_ATTESTATION` | Attestation mode (`none`) |
+| `SIGNET_PASSKEYS_ALLOW_HEADLESS_UV` | Opt in to headless UV (default false) |
+| `SIGNET_PASSKEYS_VIRTUAL_CTAP` | Experimental Linux UHID adapter (default false) |
+| `SIGNET_PASSKEYS_SYNC_KEY` | Value-bearing fleet PSK; compatibility only, prefer file |
+| `SIGNET_PASSKEYS_SYNC_KEY_FILE` | Mounted single-instance PSK file (64 hex chars) |
+
+Master/backup file inputs require a regular file owned by the effective UID,
+no group/world permission bits, no symlink, at most 4 KiB, and a nonempty
+single-line value (one trailing LF or CRLF is stripped). A nonempty legacy
+value plus nonempty file path is ambiguous and refused; an empty env value does
+not conflict. Run local store commands as the file owner via the ops service.
+Bunker/provisioner key decoding is separate. Never put secrets in argv.
 
 ## CLI (signetctl)
 
@@ -274,7 +327,14 @@ All configuration can be overridden with `SIGNET_`-prefixed environment variable
 signetctl provision my-agent
 
 # Adopt an existing (BYO) keypair as an agent
-signetctl adopt-existing my-agent --sec nsec1... --expected-pubkey <hex>
+signetctl adopt-existing my-agent --sec - --expected-pubkey <hex> < /secure/agent.nsec
+
+# Restore custody for an existing agent (stdin, or --sec-from-store)
+signetctl restore-existing my-agent --sec - < /secure/agent.nsec
+
+# Assign a new, never-used writer client key; policy is JSON, not a key
+signetctl writer-acquire my-agent <client-pubkey-hex>
+signetctl set-policy my-agent '{"default":"deny","allow_methods":["sign_event"],"allow_kinds":[1]}'
 
 # Mint a fresh one-time connect_secret (forced re-pairing);
 # --out writes it atomically (0600) for a file-backed client config
@@ -317,7 +377,7 @@ signetctl list-leases
 signetctl verify-audit
 
 # Migrate a legacy plaintext SQLite DB to SQLCipher (requires a SQLCipher build)
-SIGNET_DB_KEY=... signetctl migrate-db
+SIGNET_DB_KEY_FILE=/run/secrets/signet_db_key signetctl migrate-db
 ```
 
 Remote commands emit **Cascadia ContextVM** JSON-RPC 2.0 intents (kind 25910)
@@ -369,20 +429,22 @@ export SIGNET_GIT_CREDENTIAL_ID=<credential-id>
 # Alternatively: export SIGNET_AGENT_ID=<agent-id>
 ```
 
-Encrypted backup and offline restore take both keys from the environment, never
-from argv. Stop `signetd` before restore; the previous database is retained as
-`<db>.pre-restore`.
+Encrypted backup and offline restore use protected key files (legacy value env
+inputs remain compatible), never argv. The launch route is online backup via
+the ops service, gated on concurrent-writer consistency verification; see the
+[runbook](deploy/README.md). Stop `signetd` before restore and wait ≥150 seconds
+before restart; the previous database is retained as `<db>.pre-restore`.
 
 ```bash
-export SIGNET_DB_KEY=<store-master-key>
-export SIGNET_BACKUP_KEY=<independent-backup-key>
+export SIGNET_DB_KEY_FILE=/run/secrets/signet_db_key
+export SIGNET_BACKUP_KEY_FILE=/run/secrets/signet_backup_key
 signetctl backup-db /secure/signet-backup.db
 signetctl restore-db /secure/signet-backup.db --confirm
 ```
 
 ## Policy Configuration
 
-See `policies.toml.example` for detailed examples. Policies are defined per-identity in GKeyFile format:
+See [policies.conf.example](policies.conf.example) for the canonical example; `policies.toml.example` is deprecated. Policies are defined per-identity in GKeyFile format:
 
 ```ini
 [identity.my-agent]
@@ -396,7 +458,21 @@ ttl_seconds = 3600
 
 Policies can be updated at runtime via the SET_POLICY management command or by editing the policy file and sending SIGHUP.
 
-Provisioner authorization is separate persisted state in the encrypted Signet database. `SIGNET_PROVISIONER_PUBKEYS` (and legacy `[nostr] provisioner_pubkeys`) seed that state only when it has never been initialized; later environment/config changes never overwrite grants or revocations. Authorized `config/grant-provisioner` and `config/revoke-provisioner` ContextVM intents persist before becoming effective and are visible to the next management request without a restart.
+Provisioner authority follows **D2: config is desired state**. On first boot the
+list seeds the store; on SIGHUP listed keys are granted and omitted keys revoked.
+Runtime `grant-provisioner` / `revoke-provisioner` commits to the store before
+visibility, then writes the effective list back to the INI. Mount the entire
+`/etc/signet` directory rw, owned by UID/GID 10001 (0750), so temp-file + rename
+write-back works. Edit the config list and reload, or use signed runtime
+commands; do not mix changes without reloading.
+
+A tombstone blocks a listed key only while the config mtime is no later than
+the revocation time: editing a stale config after revocation can re-grant that
+key if write-back had failed. `SIGNET_PROVISIONER_PUBKEYS` shadows the file,
+cannot be written back and is treated as older than any revocation. Never set
+it in production. Write-back failure is drift, not loss of current store
+authority; the 0.8.0 contract exposes a critical log, metric and `/ready` detail
+flag without forcing readiness false. See [plan §7.E](../docs/plans/signet-production-deployment-2026-11-06.md#7e-provisioner-authority-keep-d2-fix-adoption-make-write-back-a-deployment-invariant).
 
 ## NIP-46 Methods
 
@@ -449,46 +525,53 @@ Signet exposes two D-Bus interfaces (see `dbus/net.signet.Signer.xml`):
 ## Health Endpoint
 
 ```bash
-curl http://localhost:8080/health
+curl --fail http://127.0.0.1:8080/health
+curl --fail http://127.0.0.1:8080/ready
+curl --fail http://127.0.0.1:8080/metrics
 ```
 
-```json
-{
-  "status": "ok",
-  "db_open": true,
-  "relays_connected": true,
-  "agents_active": 14,
-  "cache_entries": 14,
-  "relay_count": 2,
-  "uptime_sec": 86400,
-  "active_sessions": 12,
-  "active_leases": 8,
-  "sign_total": 42891,
-  "auth_total_ok": 156,
-  "auth_total_denied": 3
-}
-```
+`/health` is process liveness with a JSON component snapshot (which can be
+degraded); a relay outage must not cause container recreation. `/ready` returns
+200 only when DB, key store, policy store, relay and fleet catch-up state are
+ready, otherwise 503. `/metrics` is unauthenticated Prometheus text. These are
+on-box loopback endpoints, never public proxy routes; inspect readiness rather
+than treating HTTP liveness as enrollment or signing proof.
 
 ## Testing & CI
 
-Signet has a real hardening test suite: 23 Meson tests / 18 CMake ctests by default. Passkeys-ON registers 27 Meson tests / 23 CMake ctests (the latter includes one disabled manual interop test). Coverage includes real crypto paths, rate-limit enforcement, signed-challenge authentication verification, audit hash-chain tamper detection, management replay protection, connect-secret reissue and self-service authorization, persistent client-binding pairing/reconnect/revocation, pubkey backfill/uniqueness, credential lifecycle (create/import/rotate/revoke, expiry, and overwrite protection), unified credential access enforcement (capability, ownership, deny/revoke precedence, lease burn, and audit redaction), the Git credential helper, `signetctl` CLI exit codes, encrypted backup/restore (tamper, wrong-key, and restart cases), and concurrency (NIP-5L/SSH bounds and port parsing). `.github/workflows/signet-ci.yml` runs the Signet CI matrix, including a passkeys-ON entry.
+Discover and execute the tests registered by your actual build, rather than
+relying on fixed test counts:
+
+```bash
+ctest --test-dir build-signet-prod/signet/tests -N
+ctest --test-dir build-signet-prod/signet/tests --output-on-failure
+meson test -C build-signet-meson-sqlcipher --list
+meson test -C build-signet-meson-sqlcipher --print-errorlogs
+```
+
+See [TESTING](../docs/TESTING.md#signet-packaging-and-live-acceptance) for build,
+packaging and live entry points. SQLCipher skips in a plain-SQLite build are not
+encrypted-store proof; helper tests are not deployed enrollment acceptance.
 
 ## Security Model
 
-- Agent nsecs never leave Signet's process — agents only receive `nostrconnect://` URIs
-- Key material in the hot cache is `sodium_malloc`'d + `mlock`'d (never swapped) and `secure_wipe`'d on revocation/shutdown
+The authority for these guarantees and exclusions is [THREAT_MODEL.md](docs/THREAT_MODEL.md).
+
+- Normal remote signing does not export agent nsecs; BYO custody, backup recovery and explicit credential delivery are distinct boundaries. Bunker URIs contain secrets.
+- Guarded allocations and wiping reduce memory exposure; memory locking is best-effort, not a never-swapped guarantee.
 - SQLCipher provides AES-256 encryption at rest and is verified at startup with `PRAGMA cipher_version` plus a keyed read; with `SIGNET_REQUIRE_ENCRYPTED_DB=true`, verification failure stops the daemon
 - Credential payloads are envelope-encrypted with per-agent libsodium secretbox keys derived via BLAKE2b from the store DEK and agent pubkey
-- Core dumps disabled via `prctl(PR_SET_DUMPABLE, 0)`
-- Management protocol uses NIP-44 v2 encryption between provisioner and bunker, and ACKs fail closed instead of falling back to plaintext on encryption errors
+- Linux dumpability hardening is warn-only; enforce and verify deployment core limits.
+- Gift-wrapped management encrypts request/reply content; direct 25910 ingress is not confidential. Encryption failure does not authorize plaintext reply fallback.
 - Relay publish reports an error when zero relays are connected instead of pretending success
 - Bootstrap tokens are single-use, time-limited, attempt-capped, and stored as SHA256 hashes; `POST /bootstrap` consumes them atomically and replay returns 403
 - Revocation resolves the agent pubkey, adds it to the deny list, burns leases, revokes the agent's persistent client bindings, wipes the key from cache and store, and records an audit entry
 - NIP-46 pairing is atomic (secret consumption + durable client binding in one transaction); bindings are pinned to the agent identity pubkey at pairing time, so rotation or reprovisioning never resurrects old client authority
 - The daemon's live deny list is enforced on every NIP-46 path (pairing, reconnect, per-request) before policy evaluation — suspension takes effect immediately
-- Management intents are replay-protected per delivered event id within a clock window on the request's authenticated `created_at`, with per-sender quotas that refuse rather than evict (no sender can flood another's ids out), and one custody pubkey can never be bound to two agents (partial unique index + non-destructive upsert)
+- Management replay caches protect delivered ids during one process lifetime, not logical mutations across restarts/new wraps/new signatures. Observe the ≥150-second deliberate-stop rule and do not blindly retry timed-out mutations.
+- One custody pubkey cannot be bound to two agents (partial unique index + non-destructive upsert).
 - Credential rotation archives and updates secrets in a single SQLite transaction
-- Hash-chained audit log provides tamper-evident operation history
+- The database audit chain detects covered-record edits, not whole-history replacement without an external checkpoint; the generic logger has no field allowlist, so redaction remains a call-site responsibility.
 - Runs as non-root `signet` user in production
 
 ## License
