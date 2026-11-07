@@ -44,6 +44,7 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/time.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #include "connection-private.h" /* nostr_connection_wait_handshake */
@@ -116,6 +117,9 @@ static void make_certificate(void) {
 #define MAX_HELLOS 16
 
 typedef struct {
+    int weak_cipher;
+    int weak_version;
+    int hybrid_group;
     int psk;     /* pre_shared_key (41) */
     long ticket; /* SessionTicket (35) payload length; -1 without the extension */
     int resumed; /* SSL_session_reused() */
@@ -148,6 +152,25 @@ static int on_client_hello(SSL *ssl, int *alert, void *arg) {
         pending->hello.psk = 1;
     if (SSL_client_hello_get0_ext(ssl, 35, &ext, &length) && (long)length > pending->hello.ticket)
         pending->hello.ticket = (long)length;
+    const unsigned char *ciphers = NULL;
+    size_t nciphers = SSL_client_hello_get0_ciphers(ssl, &ciphers);
+    for (size_t i = 0; i + 1 < nciphers; i += 2) {
+        unsigned code = ((unsigned)ciphers[i] << 8) | ciphers[i + 1];
+        if (code == 0x00ff) continue; /* renegotiation SCSV is not a cipher */
+        if (!(code == 0x1301 || code == 0x1302 || code == 0x1303 ||
+              code == 0xc02b || code == 0xc02c || code == 0xc02f || code == 0xc030 ||
+              code == 0xcca8 || code == 0xcca9)) pending->hello.weak_cipher = 1;
+    }
+    if (SSL_client_hello_get0_ext(ssl, 43, &ext, &length)) {
+        for (size_t i = 1; i + 1 < length; i += 2)
+            if ((((unsigned)ext[i] << 8) | ext[i + 1]) < TLS1_2_VERSION)
+                pending->hello.weak_version = 1;
+    }
+    if (SSL_client_hello_get0_ext(ssl, 10, &ext, &length)) {
+        for (size_t i = 2; i + 1 < length; i += 2)
+            if ((((unsigned)ext[i] << 8) | ext[i + 1]) == 0x11ec)
+                pending->hello.hybrid_group = 1; /* X25519MLKEM768 */
+    }
     return SSL_CLIENT_HELLO_SUCCESS;
 }
 
@@ -386,8 +409,17 @@ static void control_connect(int established_before) {
 
 /* ---- the checks ------------------------------------------------------------------- */
 
-int main(void) {
+int main(int argc, char **argv) {
     signal(SIGPIPE, SIG_IGN);
+    if (argc == 4 && !strcmp(argv[1], "--negative")) {
+        unsetenv("NOSTR_TEST_MODE");
+        if (!strcmp(argv[2], "untrusted")) setenv("SSL_CERT_FILE", "/dev/null", 1);
+        NostrConnection *connection = nostr_connection_new(argv[3]);
+        CHECK(!connection || nostr_connection_wait_handshake(connection, 10000) != 1,
+              "TLS identity verification accepted an invalid peer");
+        if (connection) nostr_connection_close(connection);
+        return 0;
+    }
     unsetenv("NOSTR_TEST_MODE"); /* the real network path */
     lws_set_log_level(LLL_ERR, NULL);
     make_certificate();
@@ -464,8 +496,65 @@ int main(void) {
     CHECK(!offers(hello_at(4)) && !offers(hello_at(5)),
           "a libnostr connection offered a TLS session: relays can link its connections");
 
+    CHECK(!hello_at(4).weak_cipher && !hello_at(5).weak_cipher,
+          "libnostr offered a cipher outside the ECDHE AEAD allowlist");
+    CHECK(!hello_at(4).weak_version && !hello_at(5).weak_version,
+          "libnostr offered a protocol older than TLS 1.2");
+    if (hello_at(0).hybrid_group)
+        CHECK(hello_at(4).hybrid_group && hello_at(5).hybrid_group,
+              "hardening dropped the provider default X25519MLKEM768 group");
+    printf("PASS: ClientHello TLS >=1.2, ECDHE AEAD only, provider groups preserved\n");
+
     nostr_connection_close(a);
     nostr_connection_close(b);
+    /* New processes use independent client contexts and the same real TLS
+     * fixture. A negative must reach ClientHello, not just fail DNS/connect. */
+    for (int n = 0; n < 2; n++) {
+        if (n) {
+            /* Numeric dial avoids localhost selecting ::1 when the fixture
+             * listens on IPv4. The leaf chains to the same trusted CA, but
+             * its only name is wrong.invalid, not the numeric dial address. */
+            X509 *wrong = X509_dup(g_cert);
+            CHECK(wrong, "duplicate certificate");
+            ASN1_INTEGER_set(X509_get_serialNumber(wrong), 2);
+            X509_NAME *name = X509_NAME_new();
+            X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
+                                       (const unsigned char *)"wrong.invalid", -1, -1, 0);
+            X509_set_subject_name(wrong, name);
+            X509_NAME_free(name);
+            int san = X509_get_ext_by_NID(wrong, NID_subject_alt_name, -1);
+            CHECK(san >= 0, "fixture SAN");
+            X509_EXTENSION_free(X509_delete_ext(wrong, san));
+            X509_EXTENSION *extension = X509V3_EXT_conf_nid(NULL, NULL,
+                                       NID_subject_alt_name, "DNS:wrong.invalid");
+            CHECK(extension && X509_add_ext(wrong, extension, -1), "wrong-name SAN");
+            X509_EXTENSION_free(extension);
+            CHECK(X509_sign(wrong, g_key, EVP_sha256()) > 0, "wrong-name signature");
+            X509_STORE *store = X509_STORE_new();
+            X509_STORE_CTX *verify = X509_STORE_CTX_new();
+            CHECK(store && verify && X509_STORE_add_cert(store, g_cert) &&
+                  X509_STORE_CTX_init(verify, store, wrong, NULL) && X509_verify_cert(verify) == 1,
+                  "wrong-name leaf must have an otherwise valid trusted chain");
+            X509_STORE_CTX_free(verify);
+            X509_STORE_free(store);
+            CHECK(SSL_CTX_use_certificate(g_srv_ctx, wrong), "install wrong-name certificate");
+            X509_free(wrong);
+        }
+        char bad_url[80];
+        snprintf(bad_url, sizeof bad_url, "wss://127.0.0.1:%d/", g_port);
+        pid_t child = fork();
+        CHECK(child >= 0, "fork negative TLS client");
+        if (!child) {
+            execl(argv[0], argv[0], "--negative", n ? "hostname" : "untrusted", bad_url, NULL);
+            _exit(127);
+        }
+        int status = 0;
+        CHECK(waitpid(child, &status, 0) == child && WIFEXITED(status) && !WEXITSTATUS(status),
+              "negative TLS verification client failed");
+        wait_hellos(7 + n);
+        CHECK(hello_at(6 + n).failed, "invalid peer unexpectedly completed TLS");
+    }
+    printf("PASS: untrusted CA and wrong hostname both refused\n");
     lws_context_destroy(g_control_ctx);
     server_stop();
     unlink(ca_path);
