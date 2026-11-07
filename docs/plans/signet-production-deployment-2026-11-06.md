@@ -523,6 +523,8 @@ Closed since 2026-08-08 (25) provide regression context, not permission to skip 
 
 **Status at `signet-v0.8.0-rc.1` (2026-11-07):** see the addendum in `docs/reviews/signet-rc1-independent-review-2026-11-06.md` and the drill report `docs/reviews/signet-rc1-droplet-drill-2026-11-07.md`; all 15 rows are cleared or carry a recorded disposition. The production key ceremony (§10.C) remains the operator's launch step.
 
+**Published 2026-11-07:** `signet-v0.8.0-rc.1` at `de2a40876` via `Signet release` run 42363870599 (all jobs green). Images (public GHCR, owner decision 2026-11-07): `ghcr.io/chebizarro/nostrc-signet@sha256:6aff3456f7926cab6ab61d3335ba77ea06b549377da36bc74fb8a235295fe1ef` (default, tag `0.8.0-rc.1`) and `ghcr.io/chebizarro/nostrc-signet@sha256:d3896a746fafd3ad734139d2800e23803195e84c685da3df4a42a54e03527732` (passkeys, tag `0.8.0-rc.1-passkeys`); SLSA provenance verified with `gh attestation verify`, SBOM attestation present. The image ships 29 unfixed bookworm HIGH/CRITICAL CVEs under documented exceptions expiring 2026-12-07 (`signet/deploy/vulnerability-exceptions.json`); remediation and the SR-02/SR-03 conditions gate promotion to `signet-v0.8.0`.
+
 **Not baseline blockers:** replacing MCP, activating HTTP sessions, virtual CTAP-HID on the Droplet, universal zero-restart config, historical writer cutover for a fresh DB, unrelated desktop/sanitizer failures.
 
 **Release cut (decided): `signet-v0.8.0-rc.1`.** Blockers 1–15 must each be cleared or carry an explicit disposition in the W6 review before the tag; the rc label communicates maturity but does not waive critical/high findings. Promotion to `signet-v0.8.0` follows a soak on the production Droplet with no new critical/high findings.
