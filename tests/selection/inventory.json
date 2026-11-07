@@ -31051,24 +31051,24 @@
       "coverage_gap": "workflow_profile_union",
       "unsupported_reason": "Signet container release packaging/publication runs in its dedicated workflow; not an attested selective-profile execution receipt.",
       "matrix_source": "",
-      "source_sha256": "7fba9806435020ec04c7fab856f18fff8ad86a9a9dccb15d3cf94ad8ae8eb077",
-      "workflow_sha256": "8498b66994e512e68951e596280f0cd1c8672c4678f2bceed5a72c00b52faae5"
+      "source_sha256": "c64174e10c9d7f44c5d768939b6863177099a026d33a9fc3b450fd0ab070fb5f",
+      "workflow_sha256": "0981ba926a0b20ad801e3d8f08cbae2919ae051a221c8274420e52eda1a7decf"
     },
     ".github/workflows/signet-release.yml:publish": {
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
       "unsupported_reason": "Signet container release packaging/publication runs in its dedicated workflow; not an attested selective-profile execution receipt.",
       "matrix_source": "matrix:\n        include:\n          - variant: default\n            suffix: ''\n          - variant: passkeys\n            suffix: '-passkeys'",
-      "source_sha256": "765bb6b0e53da09f97f4c2da2baa8c30db729dd6dfd333caba4c16abf436b85c",
-      "workflow_sha256": "8498b66994e512e68951e596280f0cd1c8672c4678f2bceed5a72c00b52faae5"
+      "source_sha256": "697b1dcf0f7910e37b63bf9b2740da6b12aa52ee99eb72b870c8f18a9c2ad129",
+      "workflow_sha256": "0981ba926a0b20ad801e3d8f08cbae2919ae051a221c8274420e52eda1a7decf"
     },
     ".github/workflows/signet-release.yml:package": {
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
       "unsupported_reason": "Signet container release packaging/publication runs in its dedicated workflow; not an attested selective-profile execution receipt.",
       "matrix_source": "matrix:\n        include:\n          - variant: default\n            passkeys: 'OFF'\n            suffix: ''\n          - variant: passkeys\n            passkeys: 'ON'\n            suffix: '-passkeys'",
-      "source_sha256": "09be9cf0c805a6cea15d46c2e9acdd9c509c97ac9dea663686b90975bb8f0111",
-      "workflow_sha256": "8498b66994e512e68951e596280f0cd1c8672c4678f2bceed5a72c00b52faae5"
+      "source_sha256": "f8f5c385524114216b715b902b92dc994fa96c43a144682c6fb373f3974cc4a0",
+      "workflow_sha256": "0981ba926a0b20ad801e3d8f08cbae2919ae051a221c8274420e52eda1a7decf"
     },
     ".github/workflows/signet-release.yml:signet-ci": {
       "profiles": [],
@@ -31076,15 +31076,15 @@
       "unsupported_reason": "Signet container release packaging/publication runs in its dedicated workflow; not an attested selective-profile execution receipt.",
       "matrix_source": "",
       "source_sha256": "45e9a83079843f40b63148ca7a81e9e0b1ce9e470bdc1b4933a84931bd776b5c",
-      "workflow_sha256": "8498b66994e512e68951e596280f0cd1c8672c4678f2bceed5a72c00b52faae5"
+      "workflow_sha256": "0981ba926a0b20ad801e3d8f08cbae2919ae051a221c8274420e52eda1a7decf"
     },
     ".github/workflows/signet-release.yml:identity": {
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
       "unsupported_reason": "Signet container release packaging/publication runs in its dedicated workflow; not an attested selective-profile execution receipt.",
       "matrix_source": "",
-      "source_sha256": "048dd39688de6c23c52363c4a0f7446f1e7cf343c7e839b5f3ab13c20cdac488",
-      "workflow_sha256": "8498b66994e512e68951e596280f0cd1c8672c4678f2bceed5a72c00b52faae5"
+      "source_sha256": "f052bc1af1fe0f075c2090ce42262aa74bf514003bd80ce0943b6c0bfeec50e5",
+      "workflow_sha256": "0981ba926a0b20ad801e3d8f08cbae2919ae051a221c8274420e52eda1a7decf"
     },
     ".github/workflows/dependency-tests.yml:grotto_asan": {
       "matrix_source": "",
@@ -31822,9 +31822,9 @@
       "matrix_source": "matrix:\n        passkeys: [ 'OFF', 'ON' ]\n        sqlcipher: [ 'OFF', 'ON' ]\n        build_type: [ 'Debug' ]\n        include:\n          # Exercise binding-race and forced-secret regressions in one test\n          # build; the Release configuration below keeps hooks disabled.\n          - passkeys: 'ON'\n            sqlcipher: 'OFF'\n            build_type: 'Debug'\n            test_hooks: 'ON'\n          # fp-52iq: assurance comes from running tests the way the project is\n          # shipped. Release optimizes signet_core and defines NDEBUG, so cover\n          # the shipped configuration too instead of testing Debug only.\n          - passkeys: 'ON'\n            sqlcipher: 'ON'\n            build_type: 'Release'",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "df16196679f40f35d20f42d2c69b082e2e26f77241cb1eb3a03577238a112a4e",
+      "source_sha256": "0eafa5f3ed79eb201b22b3f4db3bb34cfc749b30bfeb75366a96765807cd0c44",
       "unsupported_reason": "Five passkeys/sqlcipher/hooks/build-type Meson variants and daemon/control smoke lack distinct exact profile/membership/runtime contracts.",
-      "workflow_sha256": "c274cd2a6b3a999c06983ca3e308ecd00c871dd01124013d3c840326318ada23"
+      "workflow_sha256": "21773beae14d0b1aedbdfbd97365a8fb70665b148b7c6abbdb34c01f68e779c0"
     },
     ".github/workflows/static-checks.yml:static-checks": {
       "matrix_source": "",

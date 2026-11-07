@@ -99,7 +99,9 @@ Provision, pair a fresh persistent client, acquire a new writer key if needed,
 and verify owner success, other-client denial and restart durability. That is
 not evidence that an existing fleet or its retained secrets/outboxes were cut
 over. Follow the [deployment runbook](../deploy/README.md); any deliberate stop
-must keep the daemon down ≥150 seconds before restarting (RAM replay caches).
+must keep the daemon down ≥270 seconds before restarting: RAM replay caches are
+lost, so quarantine must cover twice the maximum 120-second replay skew plus
+30 seconds of margin.
 
 The stage-01/edge-01 rollout below remains separate historical operational
 work; this documentation update does not perform or close it. Restoring old

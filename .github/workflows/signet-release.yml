@@ -21,7 +21,7 @@ jobs:
       tag: ${{ steps.identity.outputs.tag }}
       image: ${{ steps.identity.outputs.image }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with: {persist-credentials: false}
       - id: identity
         env:
@@ -43,6 +43,11 @@ jobs:
   package:
     needs: [identity, signet-ci]
     runs-on: ubuntu-24.04
+    outputs:
+      identity_default: ${{ steps.build.outputs.identity_default }}
+      identity_passkeys: ${{ steps.build.outputs.identity_passkeys }}
+      sbom_default: ${{ steps.sbom.outputs.sbom_default }}
+      sbom_passkeys: ${{ steps.sbom.outputs.sbom_passkeys }}
     strategy:
       fail-fast: false
       matrix:
@@ -54,18 +59,21 @@ jobs:
             passkeys: 'ON'
             suffix: '-passkeys'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ needs.identity.outputs.sha }}
           submodules: recursive
           persist-credentials: false
-      - uses: docker/setup-buildx-action@v3
+      - name: Create isolated builder
+        run: docker buildx create --use
       - name: Outbound TLS regression and SQLite/SQLCipher Meson suites in clean image
         env:
           PASSKEYS: ${{ matrix.passkeys }}
         run: signet/deploy/build-image.sh "$PASSKEYS" --target test --progress plain
-      - name: Build candidate (no registry write)
+      - name: Build and seal candidate identity (no registry write)
+        id: build
         env:
+          VARIANT: ${{ matrix.variant }}
           PASSKEYS: ${{ matrix.passkeys }}
           IMAGE: ${{ needs.identity.outputs.image }}:${{ needs.identity.outputs.tag }}${{ matrix.suffix }}
           SIGNET_BUILD_VERSION: ${{ needs.identity.outputs.tag }}
@@ -77,29 +85,45 @@ jobs:
           docker image inspect "$IMAGE" > evidence/image.json
           docker save "$IMAGE" -o evidence/image.tar
           sha256sum evidence/image.tar > evidence/image.tar.sha256
-      - uses: anchore/sbom-action@v0
+          # Job outputs, not scanner-writable evidence files, anchor publication.
+          image_id=$(jq -er '."containerimage.config.digest"' evidence/build.json)
+          test "$image_id" = "$(docker image inspect "$IMAGE" --format '{{.Id}}')"
+          identity=$(jq -cn --arg image_id "$image_id" \
+            --arg archive_sha256 "$(sha256sum evidence/image.tar | cut -d' ' -f1)" \
+            --arg build_sha256 "$(sha256sum evidence/build.json | cut -d' ' -f1)" \
+            '{image_id: $image_id, archive_sha256: $archive_sha256, build_sha256: $build_sha256}')
+          {
+            echo "image_id=$image_id"
+            echo "identity_$VARIANT=$identity"
+          } >> "$GITHUB_OUTPUT"
+      - uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:
-          image: ${{ needs.identity.outputs.image }}:${{ needs.identity.outputs.tag }}${{ matrix.suffix }}
+          image: ${{ steps.build.outputs.image_id }}
           format: spdx-json
           output-file: evidence/sbom.spdx.json
           upload-artifact: false
+      - name: Seal SBOM before subsequent actions
+        id: sbom
+        env:
+          VARIANT: ${{ matrix.variant }}
+        run: echo "sbom_$VARIANT=$(sha256sum evidence/sbom.spdx.json | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
       - name: Validate expiring vulnerability exceptions
         run: python3 signet/deploy/check-release.py --ignore-output .trivyignore
       - name: Vulnerability report
-        uses: aquasecurity/trivy-action@0.33.1
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
         with:
-          image-ref: ${{ needs.identity.outputs.image }}:${{ needs.identity.outputs.tag }}${{ matrix.suffix }}
+          image-ref: ${{ steps.build.outputs.image_id }}
           format: json
           output: evidence/vulnerabilities.json
           exit-code: '0'
       - name: Refuse unaccepted high/critical findings
-        uses: aquasecurity/trivy-action@0.33.1
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
         with:
-          image-ref: ${{ needs.identity.outputs.image }}:${{ needs.identity.outputs.tag }}${{ matrix.suffix }}
+          image-ref: ${{ steps.build.outputs.image_id }}
           severity: HIGH,CRITICAL
           exit-code: '1'
           trivyignores: .trivyignore
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
           name: signet-${{ matrix.variant }}
@@ -124,7 +148,7 @@ jobs:
           - variant: passkeys
             suffix: '-passkeys'
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: signet-${{ matrix.variant }}
           path: evidence
@@ -145,7 +169,7 @@ jobs:
             *) echo "Package privacy lookup failed: $status" >&2; exit 1 ;;
           esac
           echo "PACKAGE_API=$scope/$OWNER/packages/container/$package" >> "$GITHUB_ENV"
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -155,27 +179,32 @@ jobs:
         env:
           IMAGE: ${{ needs.identity.outputs.image }}:${{ needs.identity.outputs.tag }}${{ matrix.suffix }}
           GH_TOKEN: ${{ github.token }}
+          EXPECTED_IDENTITY: ${{ needs.package.outputs[format('identity_{0}', matrix.variant)] }}
+          EXPECTED_SBOM: ${{ needs.package.outputs[format('sbom_{0}', matrix.variant)] }}
         run: |
-          sha256sum --check evidence/image.tar.sha256
+          printf '%s  %s\n' \
+            "$(jq -er .archive_sha256 <<< "$EXPECTED_IDENTITY")" evidence/image.tar \
+            "$(jq -er .build_sha256 <<< "$EXPECTED_IDENTITY")" evidence/build.json \
+            "$EXPECTED_SBOM" evidence/sbom.spdx.json | sha256sum --check --strict
           docker load -i evidence/image.tar
-          test "$(docker image inspect "$IMAGE" --format '{{.Id}}')" = "$(jq -r '.[0].Id' evidence/image.json)"
+          test "$(docker image inspect "$IMAGE" --format '{{.Id}}')" = "$(jq -er .image_id <<< "$EXPECTED_IDENTITY")"
           docker push "$IMAGE"
           digest=$(docker image inspect "$IMAGE" --format '{{index .RepoDigests 0}}' | cut -d@ -f2)
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
           printf '%s@%s\n' "${IMAGE%:*}" "$digest" > evidence/digest.txt
           test "$(gh api "$PACKAGE_API" --jq .visibility)" = private
-      - uses: actions/attest-build-provenance@v3
+      - uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
         with:
           subject-name: ${{ needs.identity.outputs.image }}
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
-      - uses: actions/attest-sbom@v3
+      - uses: actions/attest-sbom@4651f806c01d8637787e274ac3bdf724ef169f34 # v3.0.0
         with:
           subject-name: ${{ needs.identity.outputs.image }}
           subject-digest: ${{ steps.push.outputs.digest }}
           sbom-path: evidence/sbom.spdx.json
           push-to-registry: true
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: signet-published-${{ matrix.variant }}
           path: evidence/digest.txt
@@ -183,11 +212,11 @@ jobs:
     needs: [identity, publish]
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ needs.identity.outputs.sha }}
           persist-credentials: false
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: signet-published-*
           path: published
@@ -199,7 +228,7 @@ jobs:
             --output bundles
           tar -czf signet-deployment.tar.gz -C bundles .
           sha256sum signet-deployment.tar.gz > signet-deployment.tar.gz.sha256
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: signet-deployment-bundle
           path: |

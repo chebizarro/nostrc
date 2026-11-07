@@ -13,6 +13,7 @@ p.add_argument('--tag', default='')
 p.add_argument('--ignore-output')
 a = p.parse_args()
 sources = [('signet/meson.build', r"version:\s*'([0-9]+\.[0-9]+\.[0-9]+)'"),
+           ('signet/CMakeLists.txt', r'project\(signet VERSION ([0-9.]+)'),
            ('signet/src/signetd_main.c', r'#define SIGNET_VERSION\s+"([^"]+)"'),
            ('signet/src/signetctl_main.c', r'#define SIGNETCTL_VERSION\s+"([^"]+)"')]
 versions = []
