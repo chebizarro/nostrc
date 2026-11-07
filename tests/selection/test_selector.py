@@ -32,6 +32,32 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(plan(paths=("docs/guide.md",))["lanes"], [])
         self.assertEqual(plan(paths=())["lanes"], [])
 
+    def test_documentation_assets_use_non_execution_inventory_rule(self):
+        p = s.load_inventory(ROOT / "tests/selection/inventory.json")
+        for suffix in (".md", ".rst", ".txt", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp"):
+            path = "docs/reviews/screenshot" + suffix
+            with self.subTest(path=path):
+                classified = s.classify(p, path)
+                self.assertEqual((classified["effect"], classified["nodes"], classified["unclassified"]),
+                                 ("non_execution", [], False))
+                result = plan(p, paths=(path,))
+                self.assertEqual((result["effective_mode"], result["selected_checks"], result["lanes"]),
+                                 ("affected", [], []))
+                self.assertTrue(s.classify(p, path, executable=True)["unclassified"])
+                self.assertEqual(s.make_plan(p, [dict(change(path), executable=True, old_executable=True)],
+                                            head="a" * 40)["effective_mode"], "broad")
+                outside = "assets/screenshot" + suffix
+                self.assertNotEqual(s.classify(p, outside)["effect"], "non_execution")
+                # Even an explicit non-execution rule cannot exempt assets outside docs.
+                p["path_rules"].append(dict(exact=outside, effect="non_execution", nodes=[],
+                                            reason="Negative test of documentation boundary."))
+                self.assertTrue(s.classify(p, outside)["unclassified"])
+                self.assertEqual(plan(p, paths=(outside,))["effective_mode"], "broad")
+        for path in ("docs/reviews/payload.bin", "docs/reviews/run.py", "docs/reviews/run.sh"):
+            with self.subTest(path=path):
+                self.assertTrue(s.classify(p, path)["unclassified"])
+                self.assertEqual(plan(p, paths=(path,))["effective_mode"], "broad")
+
     def test_executable_prose_cannot_use_docs_allowlist(self):
         p = policy()
         result = s.make_plan(p, [dict(change("docs/guide.md"), executable=True, old_executable=True)], head="a" * 40)
