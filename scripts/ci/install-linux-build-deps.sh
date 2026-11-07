@@ -23,7 +23,7 @@ sudo=
 [ "$(id -u)" -eq 0 ] || sudo=sudo
 export DEBIAN_FRONTEND=noninteractive
 
-pkgs="build-essential cmake ninja-build pkg-config git ca-certificates python3-pip
+pkgs="build-essential cmake ninja-build pkg-config git ca-certificates python3-pip gettext
   libgtk-4-dev libadwaita-1-dev libjansson-dev libwebsockets-dev
   libsecret-1-dev libssl-dev libpeas-2-dev libjson-glib-dev
   libsoup-3.0-dev libsqlite3-dev libqrencode-dev libsecp256k1-dev

@@ -18,7 +18,7 @@ arch=('x86_64' 'aarch64')
 url="https://github.com/chebizarro/nostrc"
 license=('MIT')
 makedepends=(
-  'cmake' 'ninja' 'pkgconf' 'python' 'gettext'
+  'cmake' 'ninja' 'pkgconf' 'python' 'gettext' 'grotto-panels>=0.1.0'
   'glib2' 'glib2-devel' 'gtk4' 'libadwaita' 'json-glib' 'libsoup3' 'libsecret'
   'sqlcipher' 'libxml2' 'gstreamer' 'gst-plugins-base-libs'
   'openssl' 'libsecp256k1' 'libsodium' 'jansson' 'libwebsockets'
@@ -41,6 +41,7 @@ build() {
     -DBUILD_GNOSTR_APP=OFF \
     -DBUILD_NATIVE_HOST=OFF \
     -DBUILD_SIGNER_TESTS=OFF \
+    -DGROTTO_USE_SYSTEM_PANELS=ON \
     -DGROTTO_WITH_PKCS11=OFF \
     -DGROTTO_WITH_HW_WALLET=OFF \
     -DBUILD_RELAYD=OFF \
@@ -82,7 +83,7 @@ package_grotto() {
   depends=(
     'glib2>=2.80' 'gtk4>=4.14' 'libadwaita>=1.5' 'json-glib' 'libsecret' 'openssl'
     'libsecp256k1' 'libsodium' 'jansson' 'libwebsockets' 'qrencode'
-    'gdk-pixbuf2' 'gstreamer' 'gst-plugins-base-libs' 'gst-plugins-base'
+    'grotto-panels>=0.1.0' 'gdk-pixbuf2' 'gstreamer' 'gst-plugins-base-libs' 'gst-plugins-base'
     'gst-plugins-good' 'zbar' 'hicolor-icon-theme'
   )
   optdepends=(

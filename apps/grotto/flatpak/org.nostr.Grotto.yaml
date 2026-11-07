@@ -54,6 +54,7 @@ modules:
   - ../../../packaging/flatpak/modules/libsecp256k1.yml
   - ../../../packaging/flatpak/modules/libsodium.yml
   - ../../../packaging/flatpak/modules/libqrencode.yml
+  - ../../../packaging/flatpak/modules/zbar.yml
   - ../../../packaging/flatpak/modules/nsync.yml
   - ../../../packaging/flatpak/modules/jansson.yml
   - ../../../packaging/flatpak/modules/libwebsockets.yml
@@ -65,6 +66,7 @@ modules:
     build-commands:
       - scripts/ci/configure-release.sh build -DCMAKE_INSTALL_PREFIX=/app -DCMAKE_INSTALL_LIBDIR=lib
       - cmake --build build --target grotto grotto-daemon -j
+      - cmake --install build/gnome/grotto-panels
       - install -Dm755 build/apps/grotto/grotto /app/bin/grotto
       - install -Dm755 build/apps/grotto/grotto-daemon /app/bin/grotto-daemon
       - install -Dm644 apps/grotto/data/org.nostr.Grotto.desktop /app/share/applications/org.nostr.Grotto.desktop
