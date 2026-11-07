@@ -6,6 +6,7 @@
  * Uses the provisioner's file-backed nsec (SIGNET_PROVISIONER_NSEC_FILE) to sign.
  */
 
+#include "secret_input.h"
 #include "signet/signet_config.h"
 #include "signet/mgmt_protocol.h"
 #include "signet/relay_pool.h"
@@ -61,7 +62,7 @@ static void signetctl_usage(FILE *out) {
     "                           Provision and optionally gift-wrap bunker URI\n"
     "  revoke <agent_id>        Revoke an agent identity\n"
     "  rotate <agent_id>        Rotate an agent identity key\n"
-    "  adopt-existing <agent_id> --sec <nsec-or-hex|->\n"
+    "  adopt-existing <agent_id> --sec -\n"
     "                 [--expected-pubkey <hex>] [--deliver <bootstrap_pubkey>] [--ttl <sec>]\n"
     "                           Adopt an existing (BYO) keypair as an agent\n"
     "                           (--sec - reads the secret from stdin)\n"
@@ -71,7 +72,7 @@ static void signetctl_usage(FILE *out) {
     "                           revoking its persistent client bindings\n"
     "  reissue-connect <agent_id> [--out <path>] [--show-secret]\n"
     "                           Mint a fresh one-time connect_secret for an\n"
-    "                           existing agent (restart recovery). --out writes\n"
+    "                           existing agent (explicit re-pairing). --out writes\n"
     "                           the secret atomically to <path> (0600);\n"
     "                           --show-secret prints it to stdout instead\n"
     "  list-clients <agent_id>  List the agent's persistent NIP-46 client\n"
@@ -128,12 +129,12 @@ static void signetctl_usage(FILE *out) {
     "Environment:\n"
     "  SIGNET_PROVISIONER_NSEC_FILE  File containing provisioner nsec (required)\\n"
     "  SIGNET_RELAYS            Comma-separated relay URLs (or set in config)\n"
-    "  SIGNET_DB_KEY            Store master key (local store commands)\n"
-    "  SIGNET_BACKUP_KEY        Independent backup key for backup-db/restore-db\n"
+    "  SIGNET_DB_KEY_FILE       Protected master-key file (or legacy SIGNET_DB_KEY)\n"
+    "  SIGNET_BACKUP_KEY_FILE   Protected backup-key file (or legacy SIGNET_BACKUP_KEY)\n"
     "\n"
     "Examples:\n"
     "  signetctl provision my-agent\n"
-    "  signetctl adopt-existing my-agent --sec nsec1... --expected-pubkey <hex>\n"
+    "  signetctl adopt-existing my-agent --sec - --expected-pubkey <hex>\n"
     "  signetctl reissue-connect my-agent --out /run/agent/connect-secret\n"
     "  signetctl revoke my-agent\n"
     "  signetctl status\n"
@@ -172,6 +173,31 @@ static const char *signetctl_contextvm_method(SignetMgmtOp op) {
   }
 }
 
+static void signetctl_wipe_json(JsonNode *node) {
+  if (!node) return;
+  if (JSON_NODE_HOLDS_VALUE(node) && json_node_get_value_type(node) == G_TYPE_STRING) {
+    const char *s = json_node_get_string(node);
+    if (s) secure_wipe((void *)s, strlen(s));
+  } else if (JSON_NODE_HOLDS_OBJECT(node)) {
+    JsonObject *object = json_node_get_object(node);
+    GList *members = json_object_get_members(object);
+    for (GList *it = members; it; it = it->next)
+      signetctl_wipe_json(json_object_get_member(object, it->data));
+    g_list_free(members);
+  } else if (JSON_NODE_HOLDS_ARRAY(node)) {
+    JsonArray *array = json_node_get_array(node);
+    for (guint i = 0; i < json_array_get_length(array); i++)
+      signetctl_wipe_json(json_array_get_element(array, i));
+  }
+}
+
+typedef JsonParser SignetSecretJsonParser;
+static void signetctl_secret_parser_free(SignetSecretJsonParser *parser) {
+  signetctl_wipe_json(json_parser_get_root(parser));
+  g_object_unref(parser);
+}
+G_DEFINE_AUTOPTR_CLEANUP_FUNC(SignetSecretJsonParser, signetctl_secret_parser_free)
+
 /* Build a Cascadia ContextVM JSON-RPC 2.0 intent:
  *   {"jsonrpc":"2.0","id":"<request_id>","method":"agent/...","params":{...}}
  * This is the kind-25910 CAS_INTENT payload the daemon parses. */
@@ -188,6 +214,7 @@ static char *signetctl_build_intent(SignetMgmtOp op, const char *agent_id, const
   const char *method = signetctl_contextvm_method(op);
   if (!method) return NULL;
 
+  g_autoptr(SignetSecretJsonParser) policy_parser = NULL;
   JsonBuilder *b = json_builder_new();
   if (!b) return NULL;
   json_builder_begin_object(b);
@@ -254,9 +281,9 @@ static char *signetctl_build_intent(SignetMgmtOp op, const char *agent_id, const
     json_builder_add_int_value(b, delivery_ttl > 0 ? delivery_ttl : 600);
   }
   if (policy_json) {
-    g_autoptr(JsonParser) pp = json_parser_new();
-    if (json_parser_load_from_data(pp, policy_json, -1, NULL)) {
-      JsonNode *proot = json_parser_get_root(pp);
+    policy_parser = json_parser_new();
+    if (json_parser_load_from_data(policy_parser, policy_json, -1, NULL)) {
+      JsonNode *proot = json_parser_get_root(policy_parser);
       if (proot && JSON_NODE_HOLDS_OBJECT(proot)) {
         json_builder_set_member_name(b, "policy");
         json_builder_add_value(b, json_node_copy(proot));
@@ -272,6 +299,7 @@ static char *signetctl_build_intent(SignetMgmtOp op, const char *agent_id, const
   json_generator_set_root(gen, root);
   json_generator_set_pretty(gen, FALSE);
   char *out = json_generator_to_data(gen, NULL);
+  signetctl_wipe_json(root);
   json_node_free(root);
   g_object_unref(gen);
   g_object_unref(b);
@@ -292,15 +320,15 @@ static char *signetctl_build_gift_wrapped_intent(const char *intent_json,
 }
 
 /* Print only agent_id, pubkey, bunker_uri from an adopt-existing JSON-RPC
- * reply ({"jsonrpc":"2.0","result":{...}}). Never echoes secret material. */
+ * reply. A bunker URI is a bearer secret, not public metadata. */
 static void signetctl_print_adopt_result(const char *reply_json) {
-  g_autoptr(JsonParser) p = json_parser_new();
+  g_autoptr(SignetSecretJsonParser) p = json_parser_new();
   if (!reply_json || !json_parser_load_from_data(p, reply_json, -1, NULL)) {
-    if (reply_json) printf("%s\n", reply_json);
+    fprintf(stderr, "signetctl: invalid adopt/restore reply\n");
     return;
   }
   JsonNode *root = json_parser_get_root(p);
-  if (!root || !JSON_NODE_HOLDS_OBJECT(root)) { printf("%s\n", reply_json); return; }
+  if (!root || !JSON_NODE_HOLDS_OBJECT(root)) return;
   JsonObject *o = json_node_get_object(root);
   JsonObject *res = o;
   if (json_object_has_member(o, "result")) {
@@ -312,7 +340,7 @@ static void signetctl_print_adopt_result(const char *reply_json) {
   const char *uri = json_object_has_member(res, "bunker_uri") ? json_object_get_string_member(res, "bunker_uri") : NULL;
   if (aid) printf("agent_id: %s\n", aid);
   if (pk)  printf("pubkey: %s\n", pk);
-  if (uri) printf("bunker_uri: %s\n", uri);
+  if (uri) printf("bunker_uri: [redacted; use reissue-connect --out <file>]\n");
 }
 
 /* Atomically write a secret to path with mode 0600: write to a same-directory
@@ -363,7 +391,7 @@ static int signetctl_write_secret_file(const char *path, const char *secret) {
 static int signetctl_handle_reissue_result(const char *reply_json,
                                            const char *out_path,
                                            bool show_secret) {
-  g_autoptr(JsonParser) p = json_parser_new();
+  g_autoptr(SignetSecretJsonParser) p = json_parser_new();
   if (!reply_json || !json_parser_load_from_data(p, reply_json, -1, NULL)) {
     fprintf(stderr, "signetctl: unparseable reissue-connect reply\n");
     return 1;
@@ -422,6 +450,11 @@ typedef struct {
   char provisioner_sk_hex[65];       /* our SK for gift-wrap decrypt */
 } SignetctlAckCtx;
 
+static void signetctl_wipe_free_reply(char *value) {
+  if (value) secure_wipe(value, strlen(value));
+  free(value);
+}
+
 static void signetctl_on_event(const SignetRelayEventView *ev, void *user_data) {
   SignetctlAckCtx *ctx = (SignetctlAckCtx *)user_data;
   if (!ctx || !ev) return;
@@ -441,12 +474,12 @@ static void signetctl_on_event(const SignetRelayEventView *ev, void *user_data) 
     }
     if (gw) nostr_event_free(gw);
   }
-  if (!inner) { free(inner); free(sender); return; }
+  if (!inner) { signetctl_wipe_free_reply(inner); free(sender); return; }
 
   /* The reply must come from our bunker. */
   if (ctx->expected_sender_hex[0] &&
       (!sender || g_ascii_strcasecmp(sender, ctx->expected_sender_hex) != 0)) {
-    free(inner); free(sender);
+    signetctl_wipe_free_reply(inner); free(sender);
     return;
   }
 
@@ -458,7 +491,7 @@ static void signetctl_on_event(const SignetRelayEventView *ev, void *user_data) 
   bool is_error = false;
   bool id_ok = (ctx->expected_request_id[0] == '\0');
   {
-    g_autoptr(JsonParser) p = json_parser_new();
+    g_autoptr(SignetSecretJsonParser) p = json_parser_new();
     if (json_parser_load_from_data(p, inner, -1, NULL)) {
       JsonNode *root = json_parser_get_root(p);
       if (root && JSON_NODE_HOLDS_OBJECT(root)) {
@@ -477,10 +510,10 @@ static void signetctl_on_event(const SignetRelayEventView *ev, void *user_data) 
     }
   }
   if (is_error && ctx->expected_request_id[0] && !id_ok) {
-    free(inner); free(sender);
+    signetctl_wipe_free_reply(inner); free(sender);
     return;
   }
-  if (!id_ok && !is_error) { free(inner); free(sender); return; }
+  if (!id_ok && !is_error) { signetctl_wipe_free_reply(inner); free(sender); return; }
 
   g_mutex_lock(&ctx->mu);
   if (!ctx->received) {
@@ -490,7 +523,7 @@ static void signetctl_on_event(const SignetRelayEventView *ev, void *user_data) 
     g_cond_signal(&ctx->cond);
   }
   g_mutex_unlock(&ctx->mu);
-  free(inner);
+  signetctl_wipe_free_reply(inner);
   free(sender);
 }
 
@@ -507,42 +540,69 @@ static bool signetctl_resolve_provisioner_key(char *out_sk_hex, size_t sz) {
   const char *path = g_getenv("SIGNET_PROVISIONER_NSEC_FILE");
   if (!path || !path[0]) return false;
 
-  gchar *contents = NULL;
-  gsize contents_len = 0;
-  if (!g_file_get_contents(path, &contents, &contents_len, NULL) ||
-      contents_len > 4096) {
-    fprintf(stderr, "signetctl: cannot read valid SIGNET_PROVISIONER_NSEC_FILE\n");
-    if (contents) {
-      secure_wipe(contents, contents_len);
-      g_free(contents);
-    }
+  char *contents = NULL;
+  if (signet_secret_input_file(path, &contents) != 0) {
+    fprintf(stderr, "signetctl: cannot read protected SIGNET_PROVISIONER_NSEC_FILE\n");
     return false;
   }
-  g_strstrip(contents);
   const char *nsec = contents;
   bool ok = false;
 
-  if (g_ascii_strncasecmp(nsec, "nsec1", 5) == 0) {
-    uint8_t sk[32];
-    if (nostr_nip19_decode_nsec(nsec, sk) == 0) {
-      static const char hex[] = "0123456789abcdef";
-      for (int i = 0; i < 32; i++) {
-        out_sk_hex[i*2]   = hex[(sk[i] >> 4) & 0xF];
-        out_sk_hex[i*2+1] = hex[sk[i] & 0xF];
-      }
-      out_sk_hex[64] = '\0';
-      secure_wipe(sk, 32);
-      ok = true;
-    }
-  } else if (strlen(nsec) == 64) {
-    memcpy(out_sk_hex, nsec, 64);
+  uint8_t raw[32] = {0};
+  if (g_ascii_strncasecmp(nsec, "nsec1", 5) == 0)
+    ok = nostr_nip19_decode_nsec(nsec, raw) == 0;
+  else
+    ok = signet_hex_to_bytes32(nsec, raw);
+  if (ok) {
+    for (int i = 0; i < 32; i++) sprintf(out_sk_hex + i * 2, "%02x", raw[i]);
     out_sk_hex[64] = '\0';
-    ok = true;
   }
+  sodium_memzero(raw, sizeof(raw));
 
-  secure_wipe(contents, contents_len);
-  g_free(contents);
+  sodium_free(contents);
   return ok;
+}
+
+/* Caller owns the locked result. No secret survives a failed load. */
+static char *signetctl_load_agent_secret(const char *store_path, const char *agent_id) {
+  char *secret = sodium_malloc(256);
+  if (!secret) return NULL;
+  memset(secret, 0, 256);
+  if (store_path) {
+    char *key = NULL;
+    if (signet_secret_input_resolve("SIGNET_DB_KEY", "SIGNET_DB_KEY_FILE", &key) != 0) {
+      sodium_free(secret);
+      return NULL;
+    }
+    SignetStoreConfig scfg = {.db_path = store_path, .master_key = key, .read_only = true};
+    SignetStore *source = signet_store_open(&scfg);
+    sodium_free(key);
+    SignetAgentRecord rec = {0};
+    bool ok = source && signet_store_get_agent(source, agent_id, &rec) == 0 &&
+              rec.secret_key && rec.secret_key_len == 32;
+    if (ok) {
+      for (int i = 0; i < 32; i++) sprintf(secret + i * 2, "%02x", rec.secret_key[i]);
+    }
+    signet_agent_record_clear(&rec);
+    if (source) signet_store_close(source);
+    if (!ok) { sodium_free(secret); return NULL; }
+  } else {
+    size_t n = 0;
+    int c;
+    while ((c = fgetc(stdin)) != EOF && c != '\n') {
+      if (c == 0 || n == 255) { sodium_free(secret); return NULL; }
+      secret[n++] = (char)c;
+    }
+    if (ferror(stdin) || !n) { sodium_free(secret); return NULL; }
+    if (n && secret[n - 1] == '\r') --n;
+    secret[n] = '\0';
+  }
+  uint8_t raw[32] = {0};
+  bool ok = signet_hex_to_bytes32(secret, raw) ||
+            (g_str_has_prefix(secret, "nsec1") && nostr_nip19_decode_nsec(secret, raw) == 0);
+  sodium_memzero(raw, sizeof(raw));
+  if (!ok) { sodium_free(secret); return NULL; }
+  return secret;
 }
 
 #define SIGNETCTL_MAX_CREDENTIAL_PAYLOAD (1024u * 1024u)
@@ -678,7 +738,6 @@ int main(int argc, char **argv) {
   int delivery_ttl = 600;
   const char *adopt_sec = NULL;
   const char *restore_store_path = NULL;
-  char restore_sec_hex[65] = {0};
   const char *adopt_expected_pubkey = NULL;
   const char *reissue_out_path = NULL;
   bool reissue_show_secret = false;
@@ -801,10 +860,18 @@ int main(int argc, char **argv) {
     agent_id = argv[argi++];
     while (argi < argc) {
       if (strcmp(argv[argi], "--sec") == 0 && (argi + 1) < argc) {
+        if (adopt_sec || restore_store_path || strcmp(argv[argi + 1], "-") != 0) {
+          fprintf(stderr, "signetctl: choose exactly one secret source; --sec accepts only -\n");
+          return 2;
+        }
         adopt_sec = argv[argi + 1];
         argi += 2;
       } else if (restoring && strcmp(argv[argi], "--sec-from-store") == 0 &&
                  (argi + 1) < argc) {
+        if (restore_store_path || adopt_sec || !argv[argi + 1][0]) {
+          fprintf(stderr, "signetctl: choose exactly one secret source\n");
+          return 2;
+        }
         restore_store_path = argv[argi + 1];
         argi += 2;
       } else if (strcmp(argv[argi], "--expected-pubkey") == 0 && (argi + 1) < argc) {
@@ -829,51 +896,9 @@ int main(int argc, char **argv) {
       fprintf(stderr, "signetctl: choose exactly one secret source\n");
       return 2;
     }
-    if (restoring && adopt_sec && strcmp(adopt_sec, "-") != 0) {
-      fprintf(stderr, "signetctl: restore-existing accepts secret input only from stdin\n");
+    if (adopt_sec && strcmp(adopt_sec, "-") != 0) {
+      fprintf(stderr, "signetctl: secret input is accepted only from stdin\n");
       return 2;
-    }
-    if (adopt_sec && strcmp(adopt_sec, "-") == 0) {
-      /* Read the secret from stdin so it never appears in argv / shell history. */
-      static char sec_stdin[256];
-      if (!fgets(sec_stdin, sizeof(sec_stdin), stdin)) {
-        fprintf(stderr, "signetctl: failed to read --sec from stdin\n");
-        return 2;
-      }
-      sec_stdin[strcspn(sec_stdin, "\r\n")] = '\0';
-      if (!sec_stdin[0]) {
-        fprintf(stderr, "signetctl: empty --sec read from stdin\n");
-        return 2;
-      }
-      adopt_sec = sec_stdin;
-    }
-    if (restore_store_path) {
-      const char *db_key = g_getenv("SIGNET_DB_KEY");
-      if (!db_key || !db_key[0]) {
-        fprintf(stderr, "signetctl: SIGNET_DB_KEY is required for --sec-from-store\n");
-        return 2;
-      }
-      SignetStoreConfig scfg = {
-        .db_path = restore_store_path,
-        .master_key = db_key,
-        .read_only = true,
-      };
-      SignetStore *source = signet_store_open(&scfg);
-      SignetAgentRecord rec;
-      memset(&rec, 0, sizeof(rec));
-      if (!source || signet_store_get_agent(source, agent_id, &rec) != 0 ||
-          !rec.secret_key || rec.secret_key_len != 32) {
-        fprintf(stderr, "signetctl: cannot recover agent from source store\n");
-        if (source) signet_store_close(source);
-        signet_agent_record_clear(&rec);
-        return 1;
-      }
-      for (int i = 0; i < 32; i++)
-        sprintf(restore_sec_hex + i * 2, "%02x", rec.secret_key[i]);
-      restore_sec_hex[64] = '\0';
-      signet_agent_record_clear(&rec);
-      signet_store_close(source);
-      adopt_sec = restore_sec_hex;
     }
   } else if (strcmp(cmd, "set-policy") == 0) {
     op = SIGNET_MGMT_OP_SET_POLICY;
@@ -1052,9 +1077,12 @@ int main(int argc, char **argv) {
       fprintf(stderr, "signetctl: failed to load config\n");
       return 1;
     }
-    const char *db_key = g_getenv("SIGNET_DB_KEY");
+    char *db_key = NULL;
+    int db_key_rc = signet_secret_input_resolve("SIGNET_DB_KEY", "SIGNET_DB_KEY_FILE", &db_key);
     int ret = 1;
-    if (!signet_store_sqlcipher_available()) {
+    if (db_key_rc < 0) {
+      fprintf(stderr, "signetctl: invalid database key input\n");
+    } else if (!signet_store_sqlcipher_available()) {
       fprintf(stderr, "signetctl: this build is not linked against SQLCipher; "
               "cannot migrate. Rebuild with -Dsignet_use_sqlcipher=true.\n");
     } else if (!db_key || !db_key[0]) {
@@ -1073,11 +1101,12 @@ int main(int argc, char **argv) {
       fprintf(stderr, "signetctl: migration of '%s' failed (original left intact).\n",
               lcfg.db_path);
     }
+    sodium_free(db_key);
     signet_config_clear(&lcfg);
     return ret;
   } else if (strcmp(cmd, "backup-db") == 0 || strcmp(cmd, "restore-db") == 0) {
     /* Encrypted backup/restore of the local store. Keys come from the
-     * environment ONLY (SIGNET_DB_KEY, SIGNET_BACKUP_KEY) — never argv. */
+     * protected files or legacy environment values — never argv. */
     bool is_backup = strcmp(cmd, "backup-db") == 0;
     const char *file_path = NULL;
     bool confirmed = false;
@@ -1100,11 +1129,13 @@ int main(int argc, char **argv) {
       fprintf(stderr, "signetctl: failed to load config\n");
       return 1;
     }
-    const char *db_key = g_getenv("SIGNET_DB_KEY");
-    const char *backup_key = g_getenv("SIGNET_BACKUP_KEY");
+    char *db_key = NULL;
+    int db_key_rc = signet_secret_input_resolve("SIGNET_DB_KEY", "SIGNET_DB_KEY_FILE", &db_key);
+    char *backup_key = NULL;
+    int backup_key_rc = signet_secret_input_resolve("SIGNET_BACKUP_KEY", "SIGNET_BACKUP_KEY_FILE", &backup_key);
     int ret = 1;
-    if (!db_key || !db_key[0]) {
-      fprintf(stderr, "signetctl: SIGNET_DB_KEY is required.\n");
+    if (db_key_rc != 0 || backup_key_rc < 0) {
+      fprintf(stderr, "signetctl: invalid or missing database/backup key input\n");
     } else if (!backup_key || !backup_key[0]) {
       fprintf(stderr, "signetctl: SIGNET_BACKUP_KEY is required (an independent "
               "key protecting the backup file; >= 32 bytes of key material).\n");
@@ -1138,6 +1169,8 @@ int main(int argc, char **argv) {
                 "original database is untouched.\n", lcfg.db_path, file_path);
       }
     }
+    sodium_free(backup_key);
+    sodium_free(db_key);
     signet_config_clear(&lcfg);
     return ret;
   } else if (strcmp(cmd, "list-agents") == 0 ||
@@ -1163,7 +1196,12 @@ int main(int argc, char **argv) {
       fprintf(stderr, "signetctl: failed to load config\n");
       return 1;
     }
-    const char *db_key = g_getenv("SIGNET_DB_KEY");
+    char *db_key = NULL;
+    int db_key_rc = signet_secret_input_resolve("SIGNET_DB_KEY", "SIGNET_DB_KEY_FILE", &db_key);
+    if (db_key_rc < 0) {
+      signet_config_clear(&lcfg);
+      return 1;
+    }
     /* Local introspection never mutates the daemon-owned store. */
     bool ro = true;
     SignetStoreConfig scfg = {
@@ -1172,6 +1210,7 @@ int main(int argc, char **argv) {
       .read_only = ro,
     };
     SignetStore *store = signet_store_open(&scfg);
+    sodium_free(db_key);
     if (!store) {
       fprintf(stderr, "signetctl: failed to open store at %s "
               "(see the [signet] log line above for the underlying error)\n",
@@ -1180,6 +1219,7 @@ int main(int argc, char **argv) {
       return 1;
     }
 
+    int local_rc = 0;
     if (strcmp(cmd, "list-agents") == 0) {
       char **ids = NULL;
       size_t count = 0;
@@ -1208,9 +1248,10 @@ int main(int argc, char **argv) {
             SignetAgentRecord rec;
             memset(&rec, 0, sizeof(rec));
             int grc = signet_store_get_agent(store, ids[i], &rec);
-            if (grc != 0) {
+            if (grc != 0 || !rec.secret_key || rec.secret_key_len != 32) {
               status = "DECRYPT_FAIL";
               failed++;
+              signet_agent_record_clear(&rec);
             } else {
               char skx[65];
               for (size_t b = 0; b < rec.secret_key_len && b < 32; b++)
@@ -1246,8 +1287,10 @@ int main(int argc, char **argv) {
           printf("\nTotal: %zu agents, %zu failed verification\n", count, failed);
         else
           printf("\nTotal: %zu agents\n", count);
+        if (failed) local_rc = 1;
         signet_store_free_agent_ids(ids, count);
       } else {
+        local_rc = 1;
         fprintf(stderr, "signetctl: failed to list agents\n");
       }
     } else if (strcmp(cmd, "list-leases") == 0) {
@@ -1269,6 +1312,7 @@ int main(int argc, char **argv) {
         printf("\nTotal: %zu active leases\n", count);
         signet_lease_list_free(leases, count);
       } else {
+        local_rc = 1;
         fprintf(stderr, "signetctl: failed to list leases\n");
       }
     } else if (strcmp(cmd, "list-sessions") == 0) {
@@ -1293,6 +1337,7 @@ int main(int argc, char **argv) {
         printf("\nTotal: %zu active sessions\n", session_count);
         signet_lease_list_free(leases, count);
       } else {
+        local_rc = 1;
         fprintf(stderr, "signetctl: failed to list sessions\n");
       }
     } else if (strcmp(cmd, "verify-audit") == 0) {
@@ -1303,15 +1348,29 @@ int main(int argc, char **argv) {
         printf("Audit log integrity: OK\n");
         printf("Total entries: %" G_GINT64_FORMAT "\n", total);
       } else if (vrc == 1) {
+        local_rc = 1;
         fprintf(stderr, "Audit log integrity: BROKEN at entry %" G_GINT64_FORMAT "\n", broken_id);
       } else {
+        local_rc = 1;
         fprintf(stderr, "signetctl: failed to verify audit chain\n");
       }
     }
 
     signet_store_close(store);
     signet_config_clear(&lcfg);
-    return 0;
+    return local_rc;
+  }
+
+  /* Validate config before reading any command secrets. */
+  SignetConfig cfg;
+  if (signet_config_load(config_path, &cfg) != 0) {
+    fprintf(stderr, "signetctl: failed to load config\n");
+    return 1;
+  }
+  if (cfg.n_relays == 0 || !cfg.remote_signer_pubkey_hex[0]) {
+    fprintf(stderr, "signetctl: relay list and bunker pubkey are required\n");
+    signet_config_clear(&cfg);
+    return 1;
   }
 
   if (op == SIGNET_MGMT_OP_CREATE_CREDENTIAL ||
@@ -1322,12 +1381,14 @@ int main(int argc, char **argv) {
     if (signetctl_read_credential_payload(credential_input_file,
                                           credential_from_stdin,
                                           &payload, &payload_len) != 0) {
+      signet_config_clear(&cfg);
       return 1;
     }
     credential_payload_b64 = g_base64_encode(payload, payload_len);
     sodium_free(payload);
     if (!credential_payload_b64) {
       fprintf(stderr, "signetctl: failed to encode credential payload\n");
+      signet_config_clear(&cfg);
       return 1;
     }
   }
@@ -1336,25 +1397,23 @@ int main(int argc, char **argv) {
   char provisioner_sk_hex[65];
   if (!signetctl_resolve_provisioner_key(provisioner_sk_hex, sizeof(provisioner_sk_hex))) {
     fprintf(stderr, "signetctl: SIGNET_PROVISIONER_NSEC_FILE not set or invalid\n");
-    signetctl_wipe_free_string(credential_payload_b64);
-    return 1;
-  }
-
-  /* Load config for relay list and bunker pubkey. */
-  SignetConfig cfg;
-  if (signet_config_load(config_path, &cfg) != 0) {
-    fprintf(stderr, "signetctl: failed to load config\n");
-    secure_wipe(provisioner_sk_hex, 64);
-    signetctl_wipe_free_string(credential_payload_b64);
-    return 1;
-  }
-
-  if (cfg.n_relays == 0) {
-    fprintf(stderr, "signetctl: no relays configured\n");
+    secure_wipe(provisioner_sk_hex, sizeof(provisioner_sk_hex));
     signet_config_clear(&cfg);
-    secure_wipe(provisioner_sk_hex, 64);
     signetctl_wipe_free_string(credential_payload_b64);
     return 1;
+  }
+
+  char *agent_secret = NULL;
+  if (adopt_sec || restore_store_path) {
+    agent_secret = signetctl_load_agent_secret(restore_store_path, agent_id);
+    if (!agent_secret) {
+      fprintf(stderr, "signetctl: cannot load valid 32-byte agent secret\n");
+      signet_config_clear(&cfg);
+      secure_wipe(provisioner_sk_hex, sizeof(provisioner_sk_hex));
+      signetctl_wipe_free_string(credential_payload_b64);
+      return 1;
+    }
+    adopt_sec = agent_secret;
   }
 
   /* Generate a request ID for correlation. */
@@ -1379,6 +1438,7 @@ int main(int argc, char **argv) {
                                         has_credential_expires_at,
                                         credential_expires_at,
                                         writer_pubkey);
+  sodium_free(agent_secret);
   signetctl_wipe_free_string(credential_payload_b64);
   credential_payload_b64 = NULL;
   if (!intent) {
@@ -1537,10 +1597,11 @@ int main(int argc, char **argv) {
 
   if (ack_ctx.received && ack_ctx.response_json) {
     if (ack_ctx.is_error) {
-      fprintf(stderr, "Error reply:\n%s\n", ack_ctx.response_json);
+      fprintf(stderr, "signetctl: management request refused\n");
       exit_code = 1;
     } else {
-      if (op == SIGNET_MGMT_OP_ADOPT_EXISTING ||
+      if (op == SIGNET_MGMT_OP_PROVISION_AGENT ||
+          op == SIGNET_MGMT_OP_ADOPT_EXISTING ||
           op == SIGNET_MGMT_OP_RESTORE_EXISTING) {
         signetctl_print_adopt_result(ack_ctx.response_json);
         exit_code = 0;
@@ -1561,7 +1622,6 @@ int main(int argc, char **argv) {
   }
 
 cleanup:
-  sodium_memzero(restore_sec_hex, sizeof(restore_sec_hex));
   free(event_json);
   if (rp) {
     signet_relay_pool_stop(rp);

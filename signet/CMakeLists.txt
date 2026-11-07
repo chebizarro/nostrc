@@ -55,6 +55,8 @@ endif()
 
 set(SIGNET_CORE_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/signet_config.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/secret_input.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/http_listen.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/config_reload.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/store.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/audit_logger.c

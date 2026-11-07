@@ -50,6 +50,11 @@ int signet_health_server_start(SignetHealthServer *hs) {
   return -1;
 }
 
+uint16_t signet_health_server_bound_port(SignetHealthServer *hs) {
+  (void)hs;
+  return 0;
+}
+
 void signet_health_server_stop(SignetHealthServer *hs) {
   (void)hs;
 }
