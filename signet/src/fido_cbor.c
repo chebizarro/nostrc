@@ -95,9 +95,10 @@ static int serialize_item(cbor_item_t *item, uint8_t **out, size_t *out_len) {
   *out = NULL;
   *out_len = 0;
   unsigned char *buf = NULL;
-  size_t len = 0;
-  size_t rc = cbor_serialize_alloc(item, &buf, &len);
-  (void)rc;
+  size_t capacity = 0;
+  /* Before libcbor 0.10, capacity can exceed the encoded length. Only the
+   * returned byte count belongs on the wire, never the allocation slack. */
+  size_t len = cbor_serialize_alloc(item, &buf, &capacity);
   if (!buf || len == 0) {
     free(buf);
     return -1;
