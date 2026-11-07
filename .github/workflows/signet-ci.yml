@@ -43,7 +43,7 @@ jobs:
 
     steps:
       - name: Checkout (with submodules)
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
           submodules: recursive
@@ -55,6 +55,26 @@ jobs:
         env:
           REQUESTED_SHA: ${{ inputs.sha }}
         run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
+
+      - name: Packaging tools
+        if: matrix.passkeys == 'OFF' && matrix.sqlcipher == 'OFF'
+        run: sudo apt-get update && sudo apt-get install -y shellcheck python3-jsonschema python3-yaml cloud-init
+      - name: Source and Compose contracts (all profiles)
+        if: matrix.passkeys == 'OFF' && matrix.sqlcipher == 'OFF'
+        run: |
+          python3 signet/deploy/check-release.py
+          python3 signet/deploy/update-inventory.py --check
+          bash signet/tests/test_deployment_smoke.sh --compose
+          shellcheck -x -P signet/deploy signet/deploy/*.sh signet/deploy/digitalocean/*.sh signet/tests/test_deployment_smoke.sh signet/tests/integration/test_production_roundtrip.sh
+          cloud-init schema --config-file signet/deploy/digitalocean/cloud-init.yaml
+          sh signet/tests/check_test_parity.sh signet/tests
+      - name: Validate Caddy configuration without serving
+        if: matrix.passkeys == 'OFF' && matrix.sqlcipher == 'OFF'
+        run: |
+          source signet/deploy/versions.env
+          docker run --rm --network none -e SIGNET_ENROLLMENT_HOST=enroll.example.org \
+            -v "$PWD/signet/deploy/Caddyfile:/etc/caddy/Caddyfile:ro" "$CADDY_IMAGE" \
+            caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 
       - name: Cache apt package downloads
         id: apt-cache
@@ -68,13 +88,13 @@ jobs:
             libjansson-dev libsecp256k1-dev libwebsockets-dev libsodium-dev \
             libssl-dev libcurl4-openssl-dev libglib2.0-dev libsoup-3.0-dev \
             libjson-glib-dev libgit2-dev libnsync-dev \
-            libsqlite3-dev libmicrohttpd-dev libcbor-dev libsqlcipher-dev
+            libsqlite3-dev libmicrohttpd-dev libcbor-dev libsqlcipher-dev python3-jsonschema
           echo "CC=clang" >> "$GITHUB_ENV"
           echo "CXX=clang++" >> "$GITHUB_ENV"
 
       - name: Save apt package downloads even after failure
         if: always() && steps.apt-cache.outputs.key != '' && steps.apt-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: /var/cache/nostrc-apt/archives/*.deb
           key: ${{ steps.apt-cache.outputs.key }}${{ job.status != 'success' && format('-partial-{0}-{1}-{2}', github.run_id, github.run_attempt, strategy.job-index || 0) || '' }}

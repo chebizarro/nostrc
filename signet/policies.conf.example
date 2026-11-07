@@ -1,0 +1,25 @@
+# Signet policies: GKeyFile INI, NOT TOML or a JSON document.
+# Only [identity.<agent_id>] groups are loaded. JSON arrays are accepted as
+# individual values. Start default-deny and grant only the client/method/kinds
+# needed. Replace the example pubkey with the paired client's real 64-hex key.
+# Put this mutable file at /data/policies.conf; configure
+# [policy_defaults] policy_file accordingly. Runtime set-policy writes it;
+# file edits require SIGHUP. Keep it writable by the daemon's UID (10001).
+
+[identity.launch-agent]
+default = deny
+allow_clients = ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+allow_methods = ["sign_event", "get_public_key"]
+allow_kinds = [1]
+deny_clients = []
+deny_methods = []
+deny_kinds = []
+
+# Separate credential-owner example: exact credential.deliver grant, not a
+# signing policy. No wildcard, extra method, kind or deny rule is allowed.
+# The requester can inspect/list/deliver this owner's credentials, not manage
+# the fleet. Replace the key and owner name; do not deploy a placeholder grant.
+[identity.credential-owner]
+default = deny
+allow_clients = ["bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"]
+allow_methods = ["credential.deliver"]

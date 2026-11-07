@@ -24,7 +24,11 @@ endif()
 # subset of libraries, which is what let the two build systems drift: adding a
 # test to CMake meant reproducing a 15-line block, so it was easy to skip.
 function(signet_add_test_executable name)
-  add_executable(${name} ${name}.c)
+  if (ARGN)
+    add_executable(${name} ${ARGN})
+  else()
+    add_executable(${name} ${name}.c)
+  endif()
   target_link_libraries(${name} PRIVATE signet_core)
   target_include_directories(${name} PRIVATE
     ${CMAKE_SOURCE_DIR}
@@ -51,6 +55,16 @@ endfunction()
 # Test executables. Keep in step with the executable() list in meson.build.
 signet_add_test_executable(test_signet_smoke)             # smoke
 signet_add_test_executable(test_health_readiness)
+signet_add_test_executable(test_signetctl_intent)
+add_test(NAME signetctl_intent COMMAND test_signetctl_intent)
+signet_add_test_executable(test_secret_input)
+signet_add_test_executable(test_http_listen)
+signet_add_test_executable(test_http_routes)
+add_test(NAME secret_input COMMAND test_secret_input)
+add_test(NAME http_listen COMMAND test_http_listen)
+add_test(NAME http_routes COMMAND test_http_routes)
+add_test(NAME daemon_startup COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/test_daemon_startup.sh $<TARGET_FILE:signetd> $<TARGET_FILE:signetctl>)
+set_tests_properties(daemon_startup PROPERTIES TIMEOUT 120)
 signet_add_test_executable(test_replay_cache)
 signet_add_test_executable(test_policy_engine)
 signet_add_test_executable(test_audit_logger)
@@ -60,6 +74,7 @@ signet_add_test_executable(test_key_store)
 signet_add_test_executable(test_nostr_auth)               # challenge store
 signet_add_test_executable(test_capability)               # policy registry
 signet_add_test_executable(test_relay_pool_protocol)      # NPA-11
+  target_include_directories(test_relay_pool_protocol PRIVATE ${CMAKE_SOURCE_DIR}/signet/src)
 signet_add_test_executable(test_relay_pool_ok_lifetime)   # nostrc-tw7f
 # This white-box control-frame injection is not part of the installed ABI.
 # Use one core implementation: the ordinary signet_core link interface would
@@ -252,7 +267,16 @@ add_test(NAME store COMMAND test_store)
 add_test(NAME key_store COMMAND test_key_store)
 add_test(NAME nostr_auth COMMAND test_nostr_auth)
 add_test(NAME capability COMMAND test_capability)
-add_test(NAME relay_pool_protocol COMMAND test_relay_pool_protocol)
+  add_test(NAME relay_pool_protocol COMMAND test_relay_pool_protocol)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  add_test(NAME relay_pool_wire COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_CURRENT_SOURCE_DIR}/test_relay_pool_wire.py
+    $<TARGET_FILE:test_relay_pool_protocol> $<TARGET_FILE:signetctl>)
+  set_tests_properties(relay_pool_wire PROPERTIES TIMEOUT 60)
+  if(COMMAND nostrc_describe_test)
+    nostrc_describe_test(relay_pool_wire OWNER signet TARGETS test_relay_pool_protocol signetctl
+      INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/test_relay_pool_wire.py")
+  endif()
 add_test(NAME relay_pool_ok_lifetime COMMAND test_relay_pool_ok_lifetime)
 # Freed memory is scribbled (macOS) or perturbed (glibc), so reading an OK
 # callback's freed data fails without ASan too.
@@ -273,12 +297,13 @@ add_test(NAME credential_access COMMAND test_credential_access)
 add_test(NAME cli_secret_output COMMAND test_cli_secret_output)
 add_test(NAME git_credential COMMAND test_git_credential)
 add_test(NAME signetctl_credentials
-  COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/test_signetctl_credentials.sh $<TARGET_FILE:signetctl>)
+  COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/test_signetctl_credentials.sh $<TARGET_FILE:signetctl> $<TARGET_FILE:test_key_store>)
 if(COMMAND nostrc_describe_test)
   nostrc_describe_test(signetctl_credentials OWNER signet TARGETS signetctl
     INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/test_signetctl_credentials.sh")
 endif()
-add_test(NAME backup_restore COMMAND test_backup_restore)
+add_test(NAME backup_restore COMMAND test_backup_restore $<TARGET_FILE:signetctl>)
+add_dependencies(test_backup_restore signetctl)
 add_test(NAME item3_concurrency COMMAND test_item3_concurrency)
 
 # Match the meson timeouts for the three tests that do real socket/threading
@@ -302,6 +327,38 @@ if (SIGNET_ENABLE_PASSKEYS)
     DISABLED TRUE
     LABELS "manual;interop;dbus;passkeys")
 endif()
+
+# W3/W4 deployment packaging and explicitly enabled live drills (separate ownership).
+option(SIGNET_DEPLOYMENT_LIVE_TESTS "Run destructive operator-configured live deployment drill" OFF)
+signet_add_test_executable(nip46_reference_client integration/nip46_reference_client.c)
+add_test(NAME deployment_contract
+  COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/test_deployment_smoke.sh --static)
+if(COMMAND nostrc_describe_test)
+  nostrc_describe_test(deployment_contract OWNER signet
+    INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/test_deployment_smoke.sh"
+           "${CMAKE_CURRENT_SOURCE_DIR}/test_deployment_contract.py"
+           "${CMAKE_CURRENT_SOURCE_DIR}/../deploy"
+           "${CMAKE_CURRENT_SOURCE_DIR}/../Dockerfile"
+    REQUIRES python3_jsonschema)
+endif()
+add_test(NAME production_roundtrip
+  COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/integration/test_production_roundtrip.sh $<TARGET_FILE:nip46_reference_client>)
+set_tests_properties(production_roundtrip PROPERTIES LABELS "live;manual;deployment" TIMEOUT 600)
+if (NOT SIGNET_DEPLOYMENT_LIVE_TESTS)
+  set_tests_properties(production_roundtrip PROPERTIES DISABLED TRUE)
+endif()
+# End W3/W4 block.
+
+# Management ingress boundary regression (nostrc-a7p6i; separate ownership).
+add_test(NAME mgmt_ingress_wire COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/test_mgmt_ingress_wire.py $<TARGET_FILE:test_mgmt_replay>)
+set_tests_properties(mgmt_ingress_wire PROPERTIES TIMEOUT 30)
+if(COMMAND nostrc_describe_test)
+  nostrc_describe_test(mgmt_ingress_wire OWNER signet TARGETS test_mgmt_replay
+    INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/test_mgmt_ingress_wire.py"
+           "${CMAKE_CURRENT_SOURCE_DIR}/test_relay_pool_wire.py")
+endif()
+# End management ingress boundary block.
 
 # Private HOME/XDG_* and NOSTRC_TEST_ISOLATION for every test above
 # (nostrc-wqn0u). Must stay last, after every add_test() in this directory.

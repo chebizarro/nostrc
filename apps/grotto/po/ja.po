@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: grotto 0.1.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-07 08:15+0000\n"
+"POT-Creation-Date: 2026-11-06 23:44-0800\n"
 "PO-Revision-Date: 2024-01-23 00:00+0000\n"
 "Last-Translator: \n"
 "Language-Team: Japanese\n"
@@ -90,8 +90,8 @@ msgstr ""
 msgid "Allow _Selected Once"
 msgstr ""
 
-#: data/ui/approval-dialog.ui:240 data/ui/onboarding-assistant.ui:280
-#: data/ui/sheets/sheet-qr-display.ui:73 data/ui/sheets/sheet-qr-scanner.ui:144
+#: data/ui/approval-dialog.ui:240 data/ui/onboarding-assistant.ui:246
+#: data/ui/sheets/sheet-qr-display.ui:70 data/ui/sheets/sheet-qr-scanner.ui:144
 #: src/ui/pairing-flow.c:133
 msgid "Details"
 msgstr ""
@@ -215,178 +215,174 @@ msgstr ""
 msgid "Locked at 12:00"
 msgstr ""
 
-#: data/ui/onboarding-assistant.ui:10 data/ui/onboarding-assistant.ui:74
+#: data/ui/onboarding-assistant.ui:10 data/ui/onboarding-assistant.ui:40
 msgid "Set Up Grotto"
 msgstr ""
 
-#: data/ui/onboarding-assistant.ui:33
-msgid "More Setup Options"
-msgstr ""
-
-#: data/ui/onboarding-assistant.ui:41 src/ui/onboarding-assistant.c:97
-msgid "_Skip Setup"
-msgstr ""
-
-#: data/ui/onboarding-assistant.ui:48 data/ui/onboarding-assistant.ui:50
-msgid "Back"
-msgstr ""
-
-#: data/ui/onboarding-assistant.ui:56 src/ui/onboarding-assistant.c:113
-msgid "_Get Started"
-msgstr ""
-
-#: data/ui/onboarding-assistant.ui:78
+#: data/ui/onboarding-assistant.ui:44
 msgid "Your Identity, Your Control"
 msgstr ""
 
-#: data/ui/onboarding-assistant.ui:79
+#: data/ui/onboarding-assistant.ui:45
 msgid ""
 "Keep your keys in the system keyring. Choose which apps may use your "
 "identity without sharing your secret key."
 msgstr ""
 
-#: data/ui/onboarding-assistant.ui:87
+#: data/ui/onboarding-assistant.ui:53
 msgid "Add an Identity"
 msgstr ""
 
-#: data/ui/onboarding-assistant.ui:94 data/ui/onboarding-assistant.ui:137
-#: data/ui/onboarding-assistant.ui:233
+#: data/ui/onboarding-assistant.ui:60 data/ui/onboarding-assistant.ui:103
+#: data/ui/onboarding-assistant.ui:199
 msgid "Create an Identity"
 msgstr ""
 
-#: data/ui/onboarding-assistant.ui:95
+#: data/ui/onboarding-assistant.ui:61
 msgid "Start with a new identity"
 msgstr ""
 
-#: data/ui/onboarding-assistant.ui:106 data/ui/onboarding-assistant.ui:158
-#: data/ui/onboarding-assistant.ui:245
+#: data/ui/onboarding-assistant.ui:72 data/ui/onboarding-assistant.ui:124
+#: data/ui/onboarding-assistant.ui:211
 msgid "Import an Identity"
 msgstr ""
 
-#: data/ui/onboarding-assistant.ui:107
+#: data/ui/onboarding-assistant.ui:73
 msgid "Use a key or recovery phrase you already have"
 msgstr ""
 
-#: data/ui/onboarding-assistant.ui:118 data/ui/onboarding-assistant.ui:225
+#: data/ui/onboarding-assistant.ui:84 data/ui/onboarding-assistant.ui:191
 #: src/ui/pairing-flow.c:104 src/ui/sheets/sheet-qr-display.c:464
 msgid "Connect an App"
 msgstr ""
 
-#: data/ui/onboarding-assistant.ui:119
+#: data/ui/onboarding-assistant.ui:85
 msgid "Use an identity already on this device"
 msgstr ""
 
-#: data/ui/onboarding-assistant.ui:140
+#: data/ui/onboarding-assistant.ui:106
 msgid ""
 "Your new key is saved in the system keyring. Next, check that it works and "
 "save a recovery phrase."
 msgstr ""
 
-#: data/ui/onboarding-assistant.ui:145 data/ui/onboarding-assistant.ui:166
+#: data/ui/onboarding-assistant.ui:111 data/ui/onboarding-assistant.ui:132
 msgid "Name on This Device"
 msgstr ""
 
-#: data/ui/onboarding-assistant.ui:161
+#: data/ui/onboarding-assistant.ui:127
 msgid "Enter your secret key, encrypted backup, or recovery phrase."
 msgstr ""
 
-#: data/ui/onboarding-assistant.ui:182 data/ui/onboarding-assistant.ui:192
+#: data/ui/onboarding-assistant.ui:148 data/ui/onboarding-assistant.ui:158
 msgid "Key or Recovery Phrase"
 msgstr ""
 
-#: data/ui/onboarding-assistant.ui:206 src/ui/onboarding-assistant.c:412
+#: data/ui/onboarding-assistant.ui:172 src/ui/onboarding-assistant.c:399
 msgid "Backup passphrase"
 msgstr ""
 
-#: data/ui/onboarding-assistant.ui:228
+#: data/ui/onboarding-assistant.ui:194
 msgid ""
 "Apps on this device ask for permission when they first use Grotto. For an "
 "app on another device, open Connected Apps to pair it."
 msgstr ""
 
-#: data/ui/onboarding-assistant.ui:234
+#: data/ui/onboarding-assistant.ui:200
 msgid "If you don't have one on this device yet"
 msgstr ""
 
-#: data/ui/onboarding-assistant.ui:263
+#: data/ui/onboarding-assistant.ui:229
 msgid "Check Your Identity"
 msgstr ""
 
-#: data/ui/onboarding-assistant.ui:266
+#: data/ui/onboarding-assistant.ui:232
 msgid ""
 "Approve a one-time signing and encryption check. Nothing is published and no "
 "app permissions are saved."
 msgstr ""
 
-#: data/ui/onboarding-assistant.ui:283
+#: data/ui/onboarding-assistant.ui:249
 msgid "On This Device Only"
 msgstr ""
 
-#: data/ui/onboarding-assistant.ui:284
+#: data/ui/onboarding-assistant.ui:250
 msgid ""
 "Signs and verifies a test message, then encrypts and decrypts it with a "
 "temporary key."
 msgstr ""
 
-#: data/ui/onboarding-assistant.ui:292
+#: data/ui/onboarding-assistant.ui:258
 msgid "_Try Check Again"
 msgstr ""
 
-#: data/ui/onboarding-assistant.ui:306 data/ui/page-identity-detail.ui:10
-#: src/ui/page-identity-detail.c:504
+#: data/ui/onboarding-assistant.ui:272 data/ui/page-identity-detail.ui:10
+#: src/ui/page-identity-detail.c:503
 msgid "Back Up Identity"
 msgstr ""
 
-#: data/ui/onboarding-assistant.ui:309
+#: data/ui/onboarding-assistant.ui:275
 msgid ""
 "Write these words down in order and keep them private. Anyone with them "
 "controls your identity."
 msgstr ""
 
-#: data/ui/onboarding-assistant.ui:327 data/ui/onboarding-assistant.ui:331
+#: data/ui/onboarding-assistant.ui:293 data/ui/onboarding-assistant.ui:297
 msgid "I have safely backed up my identity"
 msgstr ""
 
-#: data/ui/onboarding-assistant.ui:344
+#: data/ui/onboarding-assistant.ui:310
 msgid "Other Backup Options"
 msgstr ""
 
-#: data/ui/onboarding-assistant.ui:347 data/ui/onboarding-assistant.ui:356
+#: data/ui/onboarding-assistant.ui:313 data/ui/onboarding-assistant.ui:322
 msgid "Copy Recovery Phrase"
 msgstr ""
 
-#: data/ui/onboarding-assistant.ui:348 data/ui/page-identity-detail.ui:77
+#: data/ui/onboarding-assistant.ui:314 data/ui/page-identity-detail.ui:77
 msgid "Clipboard managers may keep a copy"
 msgstr ""
 
-#: data/ui/onboarding-assistant.ui:352
+#: data/ui/onboarding-assistant.ui:318
 msgid "Cop_y"
 msgstr ""
 
-#: data/ui/onboarding-assistant.ui:364 data/ui/page-identity-detail.ui:53
+#: data/ui/onboarding-assistant.ui:330 data/ui/page-identity-detail.ui:53
 #: src/qr-code.c:88 src/ui/page-identity-detail.c:307
 #: src/ui/sheets/sheet-qr-display.c:455
 msgid "Encrypted Backup"
 msgstr ""
 
-#: data/ui/onboarding-assistant.ui:367
+#: data/ui/onboarding-assistant.ui:333
 msgid "_Open Backup…"
 msgstr ""
 
-#: data/ui/onboarding-assistant.ui:376
+#: data/ui/onboarding-assistant.ui:342
 msgid "Recovery Phrase Unavailable?"
 msgstr ""
 
-#: data/ui/onboarding-assistant.ui:379
+#: data/ui/onboarding-assistant.ui:345
 msgid "_Try Again"
 msgstr ""
 
-#: data/ui/onboarding-assistant.ui:397
+#: data/ui/onboarding-assistant.ui:363
 msgid "Setup Complete"
 msgstr ""
 
-#: data/ui/onboarding-assistant.ui:401
+#: data/ui/onboarding-assistant.ui:367
 msgid "Your Identity Is Ready"
+msgstr ""
+
+#: data/ui/onboarding-assistant.ui:404 src/ui/onboarding-assistant.c:100
+msgid "_Get Started"
+msgstr ""
+
+#: data/ui/onboarding-assistant.ui:419 data/ui/onboarding-assistant.ui:421
+msgid "Back"
+msgstr ""
+
+#: data/ui/onboarding-assistant.ui:430 src/ui/onboarding-assistant.c:84
+msgid "_Skip Setup"
 msgstr ""
 
 #: data/ui/page-connect.ui:10
@@ -428,8 +424,8 @@ msgid "Open to enable remote signing and show a connection link"
 msgstr ""
 
 #: data/ui/page-settings.ui:10 data/ui/shortcuts-window.ui:45
-#: data/org.nostr.Grotto.desktop:31 src/ui/signer-window.c:636
-#: src/ui/signer-window.c:830
+#: data/org.nostr.Grotto.desktop:30 src/ui/signer-window.c:636
+#: src/ui/signer-window.c:829
 msgid "Preferences"
 msgstr ""
 
@@ -481,7 +477,7 @@ msgstr ""
 msgid "Stops previously allowed requests too. Unlock your session to resume."
 msgstr ""
 
-#: data/ui/page-settings.ui:49 src/ui/page-settings.c:63
+#: data/ui/page-settings.ui:49 src/ui/page-settings.c:61
 msgid "Keep Activity (Days)"
 msgstr ""
 
@@ -564,11 +560,11 @@ msgid "Management"
 msgstr ""
 
 #: data/ui/shortcuts-window.ui:17 data/ui/signer-window.ui:55
-#: packaging/appimage/grotto.desktop:4
+#: packaging/appimage/grotto.desktop:3
 msgid "Grotto"
 msgstr "GNostr サイナー"
 
-#: data/ui/shortcuts-window.ui:20 data/org.nostr.Grotto.desktop:27
+#: data/ui/shortcuts-window.ui:20 data/org.nostr.Grotto.desktop:26
 #: src/ui/signer-window.c:619
 msgid "New Identity…"
 msgstr ""
@@ -613,21 +609,21 @@ msgstr ""
 msgid "Panels"
 msgstr ""
 
-#: data/ui/sheets/sheet-qr-display.ui:10 data/ui/sheets/sheet-qr-display.ui:54
+#: data/ui/sheets/sheet-qr-display.ui:10 data/ui/sheets/sheet-qr-display.ui:51
 #: src/ui/sheets/sheet-qr-display.c:271
 msgid "QR Code"
 msgstr "QRコード"
 
-#: data/ui/sheets/sheet-qr-display.ui:21 src/ui/page-identity-detail.c:510
+#: data/ui/sheets/sheet-qr-display.ui:20 src/ui/page-identity-detail.c:509
 msgid "_Close"
 msgstr "閉じる(_C)"
 
-#: data/ui/sheets/sheet-qr-display.ui:28 src/ui/sheets/sheet-qr-display.c:60
+#: data/ui/sheets/sheet-qr-display.ui:27 src/ui/sheets/sheet-qr-display.c:60
 #: src/ui/sheets/sheet-qr-display.c:255
 msgid "Copy to Clipboard"
 msgstr ""
 
-#: data/ui/sheets/sheet-qr-display.ui:55
+#: data/ui/sheets/sheet-qr-display.ui:52
 msgid "Scan with a compatible app"
 msgstr ""
 
@@ -635,9 +631,9 @@ msgstr ""
 msgid "Scan QR Code"
 msgstr ""
 
-#: data/ui/sheets/sheet-qr-scanner.ui:22 src/ui/signer-window.c:794
+#: data/ui/sheets/sheet-qr-scanner.ui:22 src/ui/signer-window.c:793
 #: src/ui/dialog-actions.h:11 src/ui/page-identity-detail.c:284
-#: src/ui/page-identity-detail.c:392 src/ui/onboarding-assistant.c:97
+#: src/ui/page-identity-detail.c:391 src/ui/onboarding-assistant.c:84
 msgid "_Cancel"
 msgstr "キャンセル(_C)"
 
@@ -713,23 +709,23 @@ msgstr ""
 msgid "Warning: Caps Lock is enabled"
 msgstr ""
 
-#: data/org.nostr.Grotto.desktop:4
+#: data/org.nostr.Grotto.desktop:3
 msgid "Grotto (Preview)"
 msgstr ""
 
-#: data/org.nostr.Grotto.desktop:5 packaging/appimage/grotto.desktop:5
+#: data/org.nostr.Grotto.desktop:4 packaging/appimage/grotto.desktop:4
 msgid "Nostr Signer"
 msgstr ""
 
-#: data/org.nostr.Grotto.desktop:6
+#: data/org.nostr.Grotto.desktop:5
 msgid "Manage Nostr identities and review signing requests (NIP-55L, NIP-46)"
 msgstr ""
 
-#: data/org.nostr.Grotto.desktop:12
+#: data/org.nostr.Grotto.desktop:11
 msgid "nostr;signer;keys;identity;crypto;signing;"
 msgstr ""
 
-#: packaging/appimage/grotto.desktop:6
+#: packaging/appimage/grotto.desktop:5
 msgid "Authorize Nostr app requests securely"
 msgstr ""
 
@@ -1068,31 +1064,31 @@ msgid ""
 "recovered."
 msgstr ""
 
-#: src/ui/signer-window.c:788
+#: src/ui/signer-window.c:787
 msgid "Copy Public Key"
 msgstr ""
 
-#: src/ui/signer-window.c:789
+#: src/ui/signer-window.c:788
 msgid "Type the full npub to confirm removal"
 msgstr ""
 
-#: src/ui/signer-window.c:790
+#: src/ui/signer-window.c:789
 msgid "Public Key Confirmation"
 msgstr ""
 
-#: src/ui/signer-window.c:794
+#: src/ui/signer-window.c:793
 msgid "_Remove"
 msgstr ""
 
-#: src/ui/signer-window.c:838 src/ui/pairing-flow.c:123
+#: src/ui/signer-window.c:837 src/ui/pairing-flow.c:123
 msgid "Add App"
 msgstr ""
 
-#: src/ui/signer-window.c:949
+#: src/ui/signer-window.c:948
 msgid "Choose Backup for this identity."
 msgstr ""
 
-#: src/ui/signer-window.c:1085
+#: src/ui/signer-window.c:1084
 msgid "Session locked via Ctrl+L"
 msgstr ""
 
@@ -2809,109 +2805,109 @@ msgstr ""
 msgid "Activity Retention"
 msgstr ""
 
-#: src/ui/page-settings.c:55 src/ui/page-settings.c:117
+#: src/ui/page-settings.c:54 src/ui/page-settings.c:115
 msgid "_Save"
 msgstr ""
 
-#: src/ui/page-settings.c:61
+#: src/ui/page-settings.c:59
 msgid "Metadata only — no messages, secrets or event content"
 msgstr ""
 
-#: src/ui/page-settings.c:88 src/ui/page-settings.c:107
+#: src/ui/page-settings.c:86 src/ui/page-settings.c:105
 msgid "Use whole event-type numbers from 0 to 65535, separated by commas."
 msgstr ""
 
-#: src/ui/page-settings.c:94
+#: src/ui/page-settings.c:92
 msgid "The ask-by-default policy could not be saved."
 msgstr ""
 
-#: src/ui/page-settings.c:116
+#: src/ui/page-settings.c:114
 msgid "Ask-by-Default Event Types"
 msgstr ""
 
-#: src/ui/page-settings.c:136
+#: src/ui/page-settings.c:134
 #, c-format
 msgid "Kind %u"
 msgstr ""
 
-#: src/ui/page-settings.c:137
+#: src/ui/page-settings.c:135
 #, c-format
 msgid "%s, kind %u"
 msgstr ""
 
-#: src/ui/page-settings.c:153
+#: src/ui/page-settings.c:151
 msgid "Additional custom event types (comma-separated)"
 msgstr ""
 
-#: src/ui/page-settings.c:158
+#: src/ui/page-settings.c:154
 msgid "Additional custom event types"
 msgstr ""
 
-#: src/ui/page-settings.c:162
+#: src/ui/page-settings.c:158
 msgid "_Restore Defaults"
 msgstr ""
 
-#: src/ui/page-settings.c:203
+#: src/ui/page-settings.c:199
 msgid ""
 "Use up to 16 wss:// relay URLs, one per line, without credentials, queries "
 "or fragments"
 msgstr ""
 
-#: src/ui/page-settings.c:209
+#: src/ui/page-settings.c:205
 msgid "Discovery relays saved"
 msgstr ""
 
-#: src/ui/page-settings.c:209
+#: src/ui/page-settings.c:205
 msgid "Discovery relays could not be saved"
 msgstr ""
 
-#: src/ui/page-settings.c:217
+#: src/ui/page-settings.c:213
 msgid "Discovery-only defaults restored"
 msgstr ""
 
-#: src/ui/page-settings.c:221
+#: src/ui/page-settings.c:217
 msgid "Profile Discovery"
 msgstr ""
 
-#: src/ui/page-settings.c:222
+#: src/ui/page-settings.c:218
 msgid ""
 "For identities with no known relays, share the public key with discovery "
 "relays to find a profile. Never used for publishing."
 msgstr ""
 
-#: src/ui/page-settings.c:224
+#: src/ui/page-settings.c:220
 msgid "Find Profiles Automatically"
 msgstr ""
 
-#: src/ui/page-settings.c:228
+#: src/ui/page-settings.c:224
 msgid "Discovery-Only Relays"
 msgstr ""
 
-#: src/ui/page-settings.c:229
+#: src/ui/page-settings.c:225
 msgid "Profiles, public relay lists, and messaging relay lists"
 msgstr ""
 
-#: src/ui/page-settings.c:233
+#: src/ui/page-settings.c:229
 msgid "Discovery relay URLs, one per line"
 msgstr ""
 
-#: src/ui/page-settings.c:238
+#: src/ui/page-settings.c:234
 msgid "Save Discovery Relays"
 msgstr ""
 
-#: src/ui/page-settings.c:238
+#: src/ui/page-settings.c:234
 msgid "Restore Defaults"
 msgstr ""
 
-#: src/ui/page-settings.c:253
+#: src/ui/page-settings.c:249
 msgid "Privacy and Network"
 msgstr ""
 
-#: src/ui/page-settings.c:255
+#: src/ui/page-settings.c:251
 msgid "Load Profile Images"
 msgstr ""
 
-#: src/ui/page-settings.c:256
+#: src/ui/page-settings.c:252
 msgid "Fetch avatars and banners from the web addresses in profiles"
 msgstr ""
 
@@ -2994,236 +2990,236 @@ msgstr ""
 msgid "Recovery Phrase"
 msgstr ""
 
-#: src/ui/page-identity-detail.c:311 src/ui/page-identity-detail.c:354
+#: src/ui/page-identity-detail.c:310 src/ui/page-identity-detail.c:353
 msgid "Confirm _Backup"
 msgstr ""
 
-#: src/ui/page-identity-detail.c:312
+#: src/ui/page-identity-detail.c:311
 msgid "Show _QR Code"
 msgstr ""
 
-#: src/ui/page-identity-detail.c:312
+#: src/ui/page-identity-detail.c:311
 msgid "_Save Backup…"
 msgstr ""
 
-#: src/ui/page-identity-detail.c:317
+#: src/ui/page-identity-detail.c:316
 msgid "Write these words down in order. Keep them private and offline"
 msgstr ""
 
-#: src/ui/page-identity-detail.c:317
+#: src/ui/page-identity-detail.c:316
 msgid "Choose a passphrase. It's needed to restore this backup"
 msgstr ""
 
-#: src/ui/page-identity-detail.c:322
+#: src/ui/page-identity-detail.c:321
 msgid "I wrote these down"
 msgstr ""
 
-#: src/ui/page-identity-detail.c:326
+#: src/ui/page-identity-detail.c:325
 msgid "Cop_y Recovery Phrase…"
 msgstr ""
 
-#: src/ui/page-identity-detail.c:336 src/ui/page-identity-detail.c:338
-#: src/ui/page-identity-detail.c:342
+#: src/ui/page-identity-detail.c:335 src/ui/page-identity-detail.c:337
+#: src/ui/page-identity-detail.c:341
 msgid "Backup Passphrase"
 msgstr ""
 
-#: src/ui/page-identity-detail.c:353
+#: src/ui/page-identity-detail.c:352
 msgid "I saved this backup and its passphrase"
 msgstr ""
 
-#: src/ui/page-identity-detail.c:368
+#: src/ui/page-identity-detail.c:367
 msgid "_Retry"
 msgstr ""
 
-#: src/ui/page-identity-detail.c:390
+#: src/ui/page-identity-detail.c:389
 msgid "Copy Secret Key?"
 msgstr ""
 
-#: src/ui/page-identity-detail.c:390
+#: src/ui/page-identity-detail.c:389
 msgid "Create Replacement Identity?"
 msgstr ""
 
-#: src/ui/page-identity-detail.c:391
+#: src/ui/page-identity-detail.c:390
 msgid ""
 "Anyone with this key controls your identity. Clipboard managers may keep a "
 "copy"
 msgstr ""
 
-#: src/ui/page-identity-detail.c:391
+#: src/ui/page-identity-detail.c:390
 msgid ""
 "Both identities stay on this device. Apps keep using this one until changed"
 msgstr ""
 
-#: src/ui/page-identity-detail.c:392
+#: src/ui/page-identity-detail.c:391
 msgid "Copy _Key"
 msgstr ""
 
-#: src/ui/page-identity-detail.c:392
+#: src/ui/page-identity-detail.c:391
 msgid "Create _Identity"
 msgstr ""
 
-#: src/ui/page-identity-detail.c:425
+#: src/ui/page-identity-detail.c:424
 msgid "Management is locked"
 msgstr ""
 
-#: src/ui/page-identity-detail.c:441
+#: src/ui/page-identity-detail.c:440
 msgid "Signer unavailable. Open Grotto and retry"
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:98
+#: src/ui/onboarding-assistant.c:85
 msgid "Finish _Without Backup"
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:98
+#: src/ui/onboarding-assistant.c:85
 msgid "Finish _Later"
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:99
+#: src/ui/onboarding-assistant.c:86
 msgid "The identity is saved on this device"
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:100
+#: src/ui/onboarding-assistant.c:87
 msgid "Cancel Adding an Identity"
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:109
+#: src/ui/onboarding-assistant.c:96
 msgid "_Open Grotto"
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:110
+#: src/ui/onboarding-assistant.c:97
 msgid "_Create Identity"
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:110
+#: src/ui/onboarding-assistant.c:97
 msgid "_Import Identity"
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:111
+#: src/ui/onboarding-assistant.c:98
 msgid "_Finish with Warning"
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:112
+#: src/ui/onboarding-assistant.c:99
 msgid "_Open Connected Apps"
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:113
+#: src/ui/onboarding-assistant.c:100
 msgid "_Confirm Backup"
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:198
+#: src/ui/onboarding-assistant.c:185
 msgid "Checking your identity on this device…"
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:206
+#: src/ui/onboarding-assistant.c:193
 msgid "Waiting for your approval. This check does not save app permissions."
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:225
+#: src/ui/onboarding-assistant.c:212
 msgid ""
 "Identity setup is unavailable. Update Grotto or skip setup to view your "
 "identities."
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:232
+#: src/ui/onboarding-assistant.c:219
 msgid "The check expired. Try again or finish with a warning."
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:233
+#: src/ui/onboarding-assistant.c:220
 msgid "The check was denied. Try again or finish with a warning."
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:234
+#: src/ui/onboarding-assistant.c:221
 msgid ""
 "The check did not pass. Unlock your keyring and resume signing, then try "
 "again. You can also finish with a warning."
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:239
+#: src/ui/onboarding-assistant.c:226
 msgid ""
 "No recovery phrase is available. Open Backup to save an encrypted backup "
 "instead."
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:240
+#: src/ui/onboarding-assistant.c:227
 msgid ""
 "The recovery phrase could not be opened. Unlock your keyring and try again."
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:243
+#: src/ui/onboarding-assistant.c:230
 msgid ""
 "The identity could not be saved. Check your keyring and input, then try "
 "again. Any key already saved is kept."
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:252
+#: src/ui/onboarding-assistant.c:239
 msgid "Update Grotto to create, import, or check an identity."
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:265
+#: src/ui/onboarding-assistant.c:252
 msgid "The identity is saved, but its name could not be saved."
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:269
+#: src/ui/onboarding-assistant.c:256
 msgid "The identity was not saved. Check the input and try again."
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:279
+#: src/ui/onboarding-assistant.c:266
 msgid ""
 "Identity imported and saved. Signing and encryption checks passed. Backup is "
 "available in Identity → Backup."
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:283
+#: src/ui/onboarding-assistant.c:270
 msgid ""
 "The identity could not be verified. Try the check again before using it."
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:297
+#: src/ui/onboarding-assistant.c:284
 msgid "Grotto could not reach the signer. Try again when it is running."
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:328
+#: src/ui/onboarding-assistant.c:315
 msgid "An identity could not be created. Try again."
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:333
+#: src/ui/onboarding-assistant.c:320
 msgid "Saving your identity…"
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:339
+#: src/ui/onboarding-assistant.c:326
 msgid "Enter a secret key or recovery phrase."
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:342
+#: src/ui/onboarding-assistant.c:329
 msgid "Enter the passphrase for this encrypted backup."
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:348
+#: src/ui/onboarding-assistant.c:335
 msgid "Checking and saving your identity…"
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:366
+#: src/ui/onboarding-assistant.c:353
 msgid ""
 "Backup confirmation could not be saved. Try again or finish without a backup."
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:369
+#: src/ui/onboarding-assistant.c:356
 msgid ""
 "Signing and encryption checks passed. Apps will ask for permission before "
 "using your identity."
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:397
+#: src/ui/onboarding-assistant.c:384
 msgid ""
 "Your identity is checked and backed up. Apps will ask for permission before "
 "using it."
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:412
+#: src/ui/onboarding-assistant.c:399
 msgid "Recovery phrase passphrase (if you used one)"
 msgstr ""
 
-#: src/ui/onboarding-assistant.c:428
+#: src/ui/onboarding-assistant.c:415
 msgid ""
 "Copied. Clipboard managers may keep a copy. Grotto clears its copy when you "
 "close or lock this window, or after one minute."

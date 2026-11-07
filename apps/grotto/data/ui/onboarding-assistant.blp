@@ -14,19 +14,6 @@ template $OnboardingAssistant: Adw.Window {
       };
       show-start-title-buttons: false;
       show-end-title-buttons: false;
-      [start] MenuButton finish_menu {
-        visible: false;
-        icon-name: "view-more-symbolic";
-        tooltip-text: _("More Setup Options");
-        popover: Popover finish_popover {};
-      }
-      [start] Button btn_skip { label: _("_Skip Setup"); use-underline: true; }
-      [start] Button btn_back {
-        icon-name: "go-previous-symbolic";
-        tooltip-text: _("Back");
-        accessibility { label: _("Back"); }
-      }
-      [end] Button btn_next { label: _("_Get Started"); use-underline: true; styles ["suggested-action"] }
     }
     Box {
       orientation: vertical;
@@ -134,11 +121,30 @@ template $OnboardingAssistant: Adw.Window {
           }
         }
       }
+    }
+    [bottom] Adw.Clamp {
+      maximum-size: 480;
+      tightening-threshold: 320;
       Box {
         orientation: vertical; spacing: 8;
-        margin-start: 20; margin-end: 20; margin-bottom: 16;
+        margin-start: 20; margin-end: 20; margin-top: 12; margin-bottom: 16;
         Spinner spinner_status {}
         Label lbl_status { wrap: true; xalign: 0; }
+        Button btn_next {
+          label: _("_Get Started"); use-underline: true;
+          styles ["suggested-action", "pill"]
+        }
+        Box {
+          spacing: 12;
+          homogeneous: true;
+          Button btn_back {
+            icon-name: "go-previous-symbolic";
+            tooltip-text: _("Back");
+            accessibility { label: _("Back"); }
+            styles ["flat"]
+          }
+          Button btn_skip { label: _("_Skip Setup"); use-underline: true; styles ["flat"] }
+        }
       }
     }
   }

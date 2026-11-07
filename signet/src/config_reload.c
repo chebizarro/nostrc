@@ -12,6 +12,7 @@
 #include "signet/policy_engine.h"
 #include "signet/policy_store.h"
 #include "signet/relay_pool.h"
+#include "signet/health_server.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -70,6 +71,14 @@ static size_t reload_warn_restart_only(const SignetConfig *live,
   /* Listening sockets. */
   n += reload_warn_int("[server] health_port", live->health_port, cand->health_port);
   n += reload_warn_int("[bootstrap] port", live->bootstrap_port, cand->bootstrap_port);
+  n += reload_warn_bool("[bootstrap] require_tls", live->bootstrap_require_tls, cand->bootstrap_require_tls);
+  bool proxies_changed = live->n_bootstrap_trusted_proxy_cidrs != cand->n_bootstrap_trusted_proxy_cidrs;
+  for (size_t i = 0; !proxies_changed && i < live->n_bootstrap_trusted_proxy_cidrs; i++)
+    proxies_changed = g_strcmp0(live->bootstrap_trusted_proxy_cidrs[i], cand->bootstrap_trusted_proxy_cidrs[i]) != 0;
+  if (proxies_changed) {
+    g_warning("[signetd] reload: '[bootstrap] trusted_proxy_cidrs' changed but is restart-only");
+    n++;
+  }
   n += reload_warn_bool("[dbus] unix_enabled", live->dbus_unix_enabled,
                         cand->dbus_unix_enabled);
   n += reload_warn_bool("[dbus] tcp_enabled", live->dbus_tcp_enabled,
@@ -175,6 +184,7 @@ static void reload_reconcile_provisioners(const SignetReloadCtx *ctx,
 
   if (from_env) {
     report->provisioner_writeback_failed = true;
+    signet_provisioner_writeback_result(true);
     g_critical("[signetd] reload: SIGNET_PROVISIONER_PUBKEYS overrides the "
                "config file, so the authorized provisioner set cannot be "
                "written back. Revocations remain enforced via their "
@@ -189,7 +199,8 @@ static void reload_reconcile_provisioners(const SignetReloadCtx *ctx,
   size_t n_authorized = 0;
   if (signet_store_list_provisioners(ctx->store, &authorized, &n_authorized) != 0) {
     report->provisioner_writeback_failed = true;
-    g_warning("[signetd] reload: cannot read persisted provisioner set for "
+    signet_provisioner_writeback_result(true);
+    g_critical("[signetd] reload: cannot read persisted provisioner set for "
               "config write-back");
     return;
   }
@@ -199,11 +210,13 @@ static void reload_reconcile_provisioners(const SignetReloadCtx *ctx,
                                        (const char *const *)authorized,
                                        n_authorized, err, sizeof(err)) != 0) {
     report->provisioner_writeback_failed = true;
+    signet_provisioner_writeback_result(true);
     g_critical("[signetd] reload: provisioner config write-back to '%s' "
                "FAILED: %s. Persisted authorization is correct and revocation "
                "tombstones still block resurrection, but the config file is "
                "now stale.", ctx->config_path, err);
   } else {
+    signet_provisioner_writeback_result(false);
     g_message("[signetd] reload: provisioner set written back to %s "
               "(%zu authorized)", ctx->config_path, n_authorized);
   }
@@ -234,9 +247,13 @@ int signet_config_reload_adopt_persisted(const SignetReloadCtx *ctx, int64_t now
   if (out_adopted) *out_adopted = false;
   if (!ctx || !ctx->store) return -1;
 
-  int marked = signet_store_policy_state_mark_once(
-      ctx->store, SIGNET_PROVISIONER_ADOPTION_MARKER, now);
-  if (marked < 0) return -1;
+  int marked = signet_store_policy_state_is_marked(
+      ctx->store, SIGNET_PROVISIONER_ADOPTION_MARKER);
+  if (marked < 0) {
+    signet_provisioner_writeback_result(true);
+    g_critical("[signetd] provisioner adoption: cannot read convergence marker");
+    return -1;
+  }
   if (marked == 1) return 0; /* invariant already established */
 
   /* First run under desired-state semantics. This database may already carry
@@ -247,15 +264,19 @@ int signet_config_reload_adopt_persisted(const SignetReloadCtx *ctx, int64_t now
    * every later reload starts from config and store already agreeing. */
   char **authorized = NULL;
   size_t n_authorized = 0;
-  if (signet_store_list_provisioners(ctx->store, &authorized, &n_authorized) != 0)
+  if (signet_store_list_provisioners(ctx->store, &authorized, &n_authorized) != 0) {
+    signet_provisioner_writeback_result(true);
+    g_critical("[signetd] provisioner adoption: cannot read authorized set for write-back");
     return -1;
+  }
 
   /* If the config file already names exactly the authorized set there is
    * nothing to converge — don't rewrite (and reformat) a file needlessly on
    * every upgrade. */
   {
     SignetConfig current;
-    if (signet_config_load(ctx->config_path, &current) == 0) {
+    if (!signet_config_provisioners_from_env() && ctx->config_path && ctx->config_path[0] &&
+        signet_config_load(ctx->config_path, &current) == 0) {
       bool same = reload_pubkey_sets_equal(
           (const char *const *)current.provisioner_pubkeys,
           current.n_provisioner_pubkeys,
@@ -263,15 +284,18 @@ int signet_config_reload_adopt_persisted(const SignetReloadCtx *ctx, int64_t now
       signet_config_clear(&current);
       if (same) {
         signet_store_free_provisioner_list(authorized, n_authorized);
-        if (out_adopted) *out_adopted = true;
-        return 0;
+        int rc = signet_store_policy_state_mark_once(ctx->store, SIGNET_PROVISIONER_ADOPTION_MARKER, now);
+        if (out_adopted) *out_adopted = rc >= 0;
+        if (rc >= 0) signet_provisioner_writeback_result(false);
+        else g_critical("[signetd] provisioner adoption: cannot persist convergence marker");
+        return rc < 0 ? -1 : 0;
       }
     }
   }
 
   int rc = 0;
   if (signet_config_provisioners_from_env()) {
-    g_warning("[signetd] provisioner desired-state adoption: "
+    g_critical("[signetd] provisioner desired-state adoption: "
               "SIGNET_PROVISIONER_PUBKEYS shadows the config file, so the "
               "persisted set (%zu authorized) could not be written back. "
               "Remove the environment override so config can express "
@@ -282,7 +306,7 @@ int signet_config_reload_adopt_persisted(const SignetReloadCtx *ctx, int64_t now
     if (signet_config_write_provisioners(ctx->config_path,
                                         (const char *const *)authorized,
                                         n_authorized, err, sizeof(err)) != 0) {
-      g_warning("[signetd] provisioner desired-state adoption: write-back to "
+      g_critical("[signetd] provisioner desired-state adoption: write-back to "
                 "'%s' failed: %s", ctx->config_path, err);
       rc = -1;
     } else {
@@ -290,10 +314,18 @@ int signet_config_reload_adopt_persisted(const SignetReloadCtx *ctx, int64_t now
                 "authorization (%zu authorized) and written to %s",
                 n_authorized, ctx->config_path);
     }
+  } else {
+    g_critical("[signetd] provisioner adoption requires a writable config path");
+    rc = -1;
   }
 
   signet_store_free_provisioner_list(authorized, n_authorized);
-  if (out_adopted) *out_adopted = true;
+  signet_provisioner_writeback_result(rc != 0);
+  if (rc == 0) {
+    rc = signet_store_policy_state_mark_once(ctx->store, SIGNET_PROVISIONER_ADOPTION_MARKER, now) < 0 ? -1 : 0;
+    if (out_adopted) *out_adopted = rc == 0;
+    if (rc != 0) g_critical("[signetd] provisioner adoption: cannot persist convergence marker");
+  }
   return rc;
 }
 

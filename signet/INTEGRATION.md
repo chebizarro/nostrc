@@ -2,7 +2,37 @@
 
 ## Agent Integration
 
-Agents connect to Signet via the NIP-46 protocol over Nostr relays, or locally via D-Bus, NIP-5L Unix socket, or SSH agent protocol.
+The 0.8.0 launch path is NIP-46 over outbound relays with gift-wrapped
+management and a persistent SQLCipher store. Local D-Bus, NIP-5L and SSH agent
+transports are optional and outside the container launch baseline. See the
+[deployment runbook](deploy/README.md).
+
+### Launch enrollment
+
+1. On the operator workstation, configure relay URLs, the bunker **public** key
+   and `SIGNET_PROVISIONER_NSEC_FILE` (protected file; never mount the
+   provisioner private key into signetd). Run `signetctl -c operator.conf provision launch-agent`.
+2. Treat the returned bunker URI as a secret. Give each client its own persistent
+   client keypair and a protected one-time login bundle, not an argv/env secret.
+3. Prove login with the in-repo nostr-homed CTest
+   `homed_broker_login_nip46_live`: set `NH_NIP46_LIVE=1` and
+   `NH_NIP46_LIVE_CONFIG` to the protected bundle (bunker URI + fresh client key).
+   See [the historical proof and grant procedure](docs/GRANT_LOGIN_KIND.md#historical-live-proof-2026-09-21).
+   Grant only the policy needed, including the login kind (1).
+4. Use the release reference client under `signet/tests/integration/` to verify
+   pair → permitted signature → denied operation, autonomous reconnect after
+   daemon/client restart, and denial after `list-clients` / `revoke-client`.
+   Its release entry point is `test_production_roundtrip.sh`; this procedure is
+   not evidence that it has run against the candidate image.
+5. For a single-writer identity, `signetctl writer-acquire <agent> <new-client-pubkey>`
+   and prove owner success plus other-client denial. A fresh DB does not prove
+   historical fleet cutover.
+
+`/auth` sessions are **not** part of launch enrollment. The optional HTTP
+bootstrap profile remains disabled without a named session-token consumer.
+A provision-time NIP-17 URI handoff is separate from HTTP tokens; verify a real
+receiving consumer before advertising delivery. See [TESTING](../docs/TESTING.md#signet-packaging-and-live-acceptance)
+for acceptance commands and capability limits.
 
 ### NIP-46 (Relay-Based)
 
@@ -10,8 +40,8 @@ Agents connect to Signet via the NIP-46 protocol over Nostr relays, or locally v
    `agent/provision` intent to Signet via a Nostr relay, typically gift-wrapped as kind `1059`.
    Signet generates a keypair and returns a `nostrconnect://` URI.
 
-2. **Agent Boot / Pairing**: The agent receives the `nostrconnect://`/`bunker://` URI as an
-   environment variable. Its first NIP-46 `connect` presents the one-time `connect_secret`,
+2. **Agent Boot / Pairing**: The agent receives the `nostrconnect://`/`bunker://` URI in an
+   owner-only client configuration file. Its first NIP-46 `connect` presents the one-time `connect_secret`,
    which Signet consumes while durably recording the client pairing (one transaction).
 
 3. **Signing**: The agent sends `sign_event` requests via NIP-46. Signet resolves the
@@ -34,20 +64,21 @@ Agents connect to Signet via the NIP-46 protocol over Nostr relays, or locally v
 
 Agents on the same machine or LAN can use the `net.signet.Signer` D-Bus interface:
 
-- **Unix socket** (system bus): Auth via `SO_PEERCRED` UID → agent_id mapping. Enable with `dbus_unix = true`.
-- **TCP**: For LAN agents. Enable with `dbus_tcp = true` and `dbus_tcp_port = 47472`.
+- **Unix socket** (system bus): Auth via `SO_PEERCRED` UID → agent_id mapping. Enable with `[dbus] unix_enabled = true`.
+- **TCP**: For LAN agents. Enable with `[dbus] tcp_enabled = true` and `tcp_port = 47472`.
 
 ### NIP-5L (Unix Socket)
 
-Line-delimited NIP-46 JSON framing over `/run/signet/nip5l.sock`. Auth uses a signed ContextVM challenge event. Supports systemd socket activation. Enable with `nip5l = true`.
+Line-delimited NIP-46 JSON framing over `/run/signet/nip5l.sock`. Auth uses a signed ContextVM challenge event. Supports systemd socket activation. Enable with `[nip5l] enabled = true`; the path key is `socket_path`.
 
 ### SSH Agent
 
-OpenSSH agent protocol on `/run/signet/ssh-agent.sock`. Auth via `SO_PEERCRED`. Enable with `ssh_agent = true`.
+OpenSSH agent protocol on `/run/signet/ssh-agent.sock`. Auth via `SO_PEERCRED`. Enable with `[ssh_agent] enabled = true`; the path key is `socket_path`.
 
 ### Passkeys / WebAuthn (Programmatic API)
 
-When `[passkeys] enabled = true`, Signet exposes a software FIDO2 authenticator via:
+With a passkey-enabled build/image, persistent store, mounted fleet PSK and
+`[passkeys] enabled = true`, Signet exposes a software FIDO2 authenticator via:
 
 - D-Bus `net.signet.Passkeys`: `GetInfo()`, `MakeCredential(request_json)`, `GetAssertion(request_json)`, `ExportCredential(request_json)`, `ImportCredential(request_json)`
 - NIP-46: `webauthn_get_info`, `webauthn_make_credential`, `webauthn_get_assertion`, `webauthn_export`, `webauthn_import`
@@ -59,6 +90,11 @@ When `[passkeys] enabled = true`, Signet exposes a software FIDO2 authenticator 
 `ExportCredential` / `webauthn_export` request JSON fields: base64 `credentialId`. Response returns a versioned base64 `container` (`format: "signet-passkey-export"`, `formatVersion: 1`) carrying credential metadata and the fleet-PSK-wrapped payload.
 
 `ImportCredential` / `webauthn_import` request JSON fields: base64 `container`. Import validates the container decrypts under this instance's `[passkeys] sync_key`; containers from another fleet PSK are rejected.
+
+The launch PSK is single-instance custody; export/import is not an automatic
+cross-instance synchronization service. Keep the PSK separate from exported
+containers: possession permits unwrapping them. Virtual CTAP-HID remains
+experimental and does not expose a Droplet's UHID device to a remote browser.
 
 Headless user-present (`UP`) is asserted after Signet policy approval. `userVerification: "required"` is denied unless `[passkeys] allow_headless_uv = true`.
 
@@ -117,7 +153,7 @@ allow_headless_uv = false
 sync_key_file = /run/secrets/signet-passkey-sync-key
 ```
 
-Run `signetd` with normal `SIGNET_DB_KEY`, `SIGNET_BUNKER_NSEC_FILE`, and relay/policy configuration. The virtual CTAP adapter currently uses the daemon `[nostr] identity` value as the `SignetFidoService` `agent_id` for credentials created through the HID path, so provision policy/capability state for that identity before testing.
+Run `signetd` with protected `SIGNET_DB_KEY_FILE`, `SIGNET_BUNKER_NSEC_FILE`, and relay/policy configuration. The virtual CTAP adapter currently uses the daemon `[nostr] identity` value as the `SignetFidoService` `agent_id` for credentials created through the HID path, so provision policy/capability state for that identity before testing.
 
 Functional smoke with libfido2 tools:
 
@@ -158,7 +194,24 @@ Browsers and `fido2-token` must be tested on Linux because macOS does not provid
 
 ## Management Protocol
 
-All management traffic uses Cascadia ContextVM kind `25910` signed Nostr intents. Relay transport should gift-wrap the intent with NIP-59/NIP-17 kind `1059`; authorization requires the inner sender pubkey (the seal author) to be in the `provisioner_pubkeys` list, with two exceptions: `agent/reissue-connect` also accepts the target agent itself, and `credential/inspect`, `credential/list` and `credential/deliver` also accept a requester holding the owner's exact delivery grant (see [Credential methods](#credential-methods)). Responses are correlated, gift-wrapped ContextVM results. Each management **event id** executes at most once: relay redelivery, republishing of the same serialized event, and history replay are silently dropped instead of re-running non-idempotent commands such as `agent/rotate-key` or `agent/reissue-connect`. The request's own `created_at` — the rumor's for a gift wrap (NIP-59 randomizes only the seal and wrap timestamps; the seal signature authenticates the rumor), the event's for a plain 25910 — must be within `[replay] skew_seconds` (default 120, never 0 for management) of Signet's clock, and management ids are kept twice that long (`[replay] ttl_seconds` applies to NIP-46 only), so a captured request can never run again. Provisioners, self-service agents and delivery-grant requesters each have their own replay cache (16384 live ids), so one class cannot fill another's; a non-provisioner sender may hold 512 live ids (more than its rate limit admits in that time), provisioners are not limited per sender, and a full sender or cache is refused rather than evicting anyone's ids. Many colluding authorized senders of one class can still fill that class's cache and have its requests refused (`replay_quota_exceeded`) until their ids expire; they cannot affect the other classes or replay anything. Note this keys on the delivered Nostr event id — a client retry that re-signs the same request produces a new event id and executes again; recover from a lost reply by sending a new intent. Retired custom management event kinds are not subscribed, parsed, or emitted.
+All management traffic uses Cascadia ContextVM kind `25910` signed Nostr intents. Relay transport should gift-wrap the intent with NIP-59/NIP-17 kind `1059`; authorization requires the inner sender pubkey (the seal author) to be in the `provisioner_pubkeys` list, with two exceptions: `agent/reissue-connect` also accepts the target agent itself, and `credential/inspect`, `credential/list` and `credential/deliver` also accept a requester holding the owner's exact delivery grant (see [Credential methods](#credential-methods)). Responses are correlated, gift-wrapped ContextVM results. During one process lifetime each cached delivered management **event id** executes at most once; duplicate redelivery is dropped. Caches are RAM-only, not a durable logical-operation ledger. The request's own `created_at` — the rumor's for a gift wrap (NIP-59 randomizes only the seal and wrap timestamps; the seal signature authenticates the rumor), the event's for a plain 25910 — must be within `[replay] skew_seconds` (default 120, never 0 for management) of Signet's clock, and management ids are kept twice that long (`[replay] ttl_seconds` applies to NIP-46 only), which bounds replay only while the process retains its caches. Provisioners, self-service agents and delivery-grant requesters each have their own replay cache (16384 live ids), so one class cannot fill another's; a non-provisioner sender may hold 512 live ids (more than its rate limit admits in that time), provisioners are not limited per sender, and a full sender or cache is refused rather than evicting anyone's ids. Many colluding authorized senders of one class can still fill that class's cache and have its requests refused (`replay_quota_exceeded`) until their ids expire; they cannot evict the other classes' cached ids. A new wrap or newly signed retry can have a new delivered id and repeat a logical mutation. **A timeout is ambiguous:** the mutation may have committed even if its reply was lost. Inspect state before deciding whether to issue another request; never blindly re-sign/retry a mutation. A JSON-RPC id correlates a reply, not durable idempotency. Relay enqueue, relay ACK and recipient receipt are different outcomes. Any deliberate daemon stop must last ≥270 seconds before restart (twice the maximum 120-second replay skew plus 30 seconds of margin); abrupt restarts retain replay risk. Direct 25910 request content is readable to relays and is accepted only for `agent/get-status`, `agent/list`, `agent/list-clients`, `credential/list` and `credential/inspect`, subject to the same authorization checks. All mutations and `credential/deliver` require gift-wrapped 1059; direct attempts receive an encrypted `gift_wrap_required` error and a non-secret-bearing refusal audit. Never publish secrets in direct requests: refusal cannot retract relay-visible content. Retired custom management event kinds are not subscribed, parsed, or emitted.
+
+Management admission starts at the EOSE of the subscription that delivered the
+request on its source relay, not a startup delay. A relay fans a live event
+out to every open REQ it matches, oldest first, and only the first copy reaches
+the daemon; signetd holds more than one REQ with the same filter on a relay
+after startup, reconnect re-fire, reissue or AUTH, so each open REQ becomes a
+live source at its own EOSE and a REQ still draining history admits nothing
+even when the relay is otherwise ready. Pre-EOSE history is dropped with a
+bounded audit; a live request must also have `created_at` at or after that
+EOSE boundary (the authenticated rumor time for gift wraps). Reconnect and
+CLOSED discard a REQ's boundary (a re-fired REQ earns a new one at its next
+EOSE) and a pending AUTH suspends admission on that relay. Readiness
+(`/ready`, `signet_relay_pool_is_subscribed`) still follows the relay's current
+required REQ; admission does not wait for it. Clients must publish
+after catch-up; a command delivered as history is not executed. The skew
+window, RAM replay caches and supported restart quarantine still apply; this is
+not durable exactly-once protection.
 
 | Kind  | Method | Description |
 |-------|--------|-------------|
@@ -224,8 +277,8 @@ by `id`, not by arrival time.
 ### Credential methods
 
 Credentials are generic secrets owned by an agent (`agent_id`). Their id is
-`cred_` plus 64 hex characters, derived from owner, type and label. Payloads
-travel only inside the encrypted request or reply, base64-encoded
+`cred_` plus 64 hex characters, derived from owner, type and label. On the supported gift-wrapped route, payloads
+travel inside the encrypted request or reply, base64-encoded
 (`payload_b64`, at most 1 MiB decoded), and never reach logs or audit records.
 
 **Metadata** (the result of create, import, inspect, rotate, revoke, and each
@@ -320,8 +373,9 @@ itself anything. Keep it separate from provisioner keys.
 
 Binds an `agent_id` to an already-canonical identity instead of minting a fresh
 keypair. Same authorization as other management ops (inner sender must be a
-configured provisioner). The secret arrives only inside the encrypted
-ContextVM/gift-wrap management path; it is never echoed in results, logs, or
+configured provisioner). Clients must send the secret inside the encrypted
+ContextVM/gift-wrap management path; direct 25910 ingress is not confidential and
+must not carry secrets. On the supported path, it is never echoed in results, logs, or
 audit detail, and secret buffers are zeroized after use.
 
 **Params:**
@@ -355,11 +409,13 @@ is `adopted`.
 **CLI:**
 
 ```
-signetctl adopt-existing <agent_id> --sec <nsec-or-hex> \
+signetctl adopt-existing <agent_id> --sec - \
     [--expected-pubkey <hex>] [--deliver <bootstrap_pubkey>] [--ttl <sec>]
 ```
 
-The CLI prints only `agent_id`, `pubkey`, and `bunker_uri`.
+Read the nsec/hex from stdin (for example, redirect an owner-only file); inline
+`--sec` values are rejected by the 0.8.0 CLI contract. The CLI prints `agent_id`,
+`pubkey` and the **secret-bearing** `bunker_uri`; protect that output.
 
 ### `agent/reissue-connect` (forced re-pairing)
 
@@ -388,7 +444,8 @@ the agent's identity private key, so self-service applies to **adopted
 inside Signet** never receive their identity key — they only hold a NIP-46
 client keypair, which has no verified binding to the identity outside an
 established session and is therefore deliberately NOT accepted as an auth
-basis — so they must recover via a provisioner (or the bootstrap-token flow).
+basis — so replacement client keys must pair via a provisioner. The HTTP bootstrap-token
+workflow is not a launch recovery path.
 This is intentional: "self" is proven by an unforgeable signature under the
 identity key, never by a claimed `client_pubkey` or request params.
 
@@ -497,7 +554,9 @@ CLI: `signetctl list-clients <agent_id>`, `signetctl revoke-client <client_pubke
 
 #### Cache-only mode (no persistent store)
 
-Without `SIGNET_DB_KEY` (or with an empty `[store] db_path`) the key store
+In development, when encrypted operation is not required, without a resolved
+master key (`SIGNET_DB_KEY_FILE` or legacy `SIGNET_DB_KEY`) or with an empty
+`[store] db_path`, the key store
 runs cache-only: agents, their pending connect secrets and client bindings
 live in the `signetd` process and nothing is written to disk. NIP-46 pairing
 follows the same rules as above for the life of that process:
@@ -528,17 +587,20 @@ follows the same rules as above for the life of that process:
 Cache-only mode is for tests and development; deploy with the persistent
 store.
 
-## Bootstrap Flow
+## Optional HTTP bootstrap (deferred)
 
-For automated fleet provisioning:
+The packaged `/bootstrap`, `/challenge` and `/auth` routes do not supply a
+complete production token/session workflow: token insertion and receive/ACK
+helpers have no production callers. Keep `[bootstrap] port = 0` at launch.
+Do not sequence HTTP session creation before NIP-46 pairing; use
+[launch enrollment](#launch-enrollment).
 
-1. Fleet Commander provisions agent via a `25910` `agent/provision` management intent
-2. Fleet Commander sends bootstrap token to agent via NIP-17 gift-wrapped DM
-3. Agent decrypts token, calls `POST /bootstrap` to verify
-4. Signet atomically consumes the single-use bootstrap token; replay attempts return 403
-5. Signet returns a `nostrconnect://` handoff URI
-6. Agent calls `GET /challenge` and `POST /auth` to establish a session
-7. Agent connects via NIP-46 using the handoff URI
+If evaluating the optional Caddy profile, retain `[bootstrap] require_tls = true`
+and restrict `trusted_proxy_cidrs` (CSV env override
+`SIGNET_BOOTSTRAP_TRUSTED_PROXY_CIDRS`). Only a trusted TCP peer and exactly one
+trimmed `X-Forwarded-Proto: https` satisfy the 0.8.0 trust contract. With host
+networking, loopback trust distinguishes on-box from off-box only: a local
+process can forge this header. See [THREAT_MODEL](docs/THREAT_MODEL.md).
 
 ## Health Endpoint
 
@@ -546,7 +608,11 @@ For automated fleet provisioning:
 curl http://localhost:8080/health
 ```
 
-Returns 200 if healthy (SQLCipher open, relays connected), 503 otherwise.
+`/health` is liveness with component detail and can report degraded state while
+returning 200. `/ready` returns 200 only with DB, key store, policy, relay and
+fleet catch-up ready; otherwise 503. `/metrics` is unauthenticated Prometheus
+text. All three are loopback-only on-box routes in the launch layout. A relay
+outage is not a reason to recreate the process.
 
 ## Security Guarantees
 
@@ -557,7 +623,7 @@ Returns 200 if healthy (SQLCipher open, relays connected), 503 otherwise.
 - **Complete revocation**: `revoke_agent` denies the resolved pubkey, burns active leases, revokes the agent's persistent client bindings, wipes cache and persistent key material, and audits the operation.
 - **Atomic pairing**: NIP-46 `connect` consumes the one-time secret and records the durable client binding in one SQLite transaction — the credential cannot be burned without the pairing (or vice versa).
 - **Identity-pinned bindings**: client bindings resolve only while the agent's current identity pubkey matches the one pinned at pairing time — rotation or reprovisioning cannot resurrect prior authority.
-- **Management replay protection**: each delivered management event id executes at most once: the request's authenticated `created_at` must be within the clock window, ids outlive the window, each sender class has its own cache, and non-provisioner ids are charged to their sender's quota with nothing unexpired ever evicted, so no sender can flood another's ids out of a cache.
+- **Bounded management replay protection**: per-delivered-id RAM caches refuse rather than evict unexpired entries. They do not guarantee exactly-once execution across restart, rewrapping or new signatures; a lost reply is ambiguous. Observe the ≥270-second deliberate-stop rule and inspect before retrying.
 - **Bounded refusals**: non-provisioner senders are rate-limited before any refusal or audit, and their refusals are audited within a global budget (aggregated beyond it).
 - **Least-privilege credential delivery**: a delivery requester needs no provisioner rights; the owner's exact `credential.deliver` grant authorizes it to inspect, list and receive that owner's credentials and nothing else, and deny entries override the grant.
 - **DB-level identity uniqueness**: a partial unique index on `agents.pubkey` (with upsert semantics that error instead of destructively replacing) prevents one custody key from ever being bound to two agents.

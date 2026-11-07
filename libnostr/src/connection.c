@@ -188,6 +188,24 @@ static void conn_wsi_gone(NostrConnection *conn, struct lws *wsi) {
 
 static int websocket_callback(struct lws *wsi, enum lws_callback_reasons reason,
                               void *user, void *in, size_t len) {
+    /* The vhost TLS callback has a synthetic wsi with no connection. Handle
+     * it before the detached-connection guard (nostrc-86xt). */
+    if (reason == LWS_CALLBACK_OPENSSL_LOAD_EXTRA_CLIENT_VERIFY_CERTS) {
+        SSL_CTX *ctx = (SSL_CTX *)user; /* lws callback contract: user, not in */
+        if (!ctx || !SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION) ||
+            !SSL_CTX_set_ciphersuites(ctx,
+                "TLS_AES_128_GCM_SHA256:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_256_GCM_SHA384") ||
+            !SSL_CTX_set_cipher_list(ctx,
+                "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:"
+                "ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:"
+                "ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384"))
+            return -1;
+        SSL_CTX_set_options(ctx, SSL_OP_NO_COMPRESSION | SSL_OP_NO_RENEGOTIATION | SSL_OP_NO_TICKET);
+        SSL_CTX_set_session_cache_mode(ctx, SSL_SESS_CACHE_OFF);
+        /* Preserve provider defaults, including OpenSSL 3.5+ X25519MLKEM768.
+         * Do not replace the groups list with a classical-only allowlist. */
+        return 0;
+    }
     (void)user; // not used; use opaque user data API
     NostrConnection *conn = (NostrConnection *)lws_get_opaque_user_data(wsi);
 
@@ -520,41 +538,6 @@ queue_message:;
     case LWS_CALLBACK_WSI_DESTROY:
         conn_wsi_gone(conn, wsi);
         break;
-    case LWS_CALLBACK_OPENSSL_LOAD_EXTRA_CLIENT_VERIFY_CERTS:
-#if defined(LWS_CALLBACK_OPENSSL_CTX_LOAD_EXTRA_CLIENT_VERIFY_CERTS) && \
-    (LWS_CALLBACK_OPENSSL_CTX_LOAD_EXTRA_CLIENT_VERIFY_CERTS != LWS_CALLBACK_OPENSSL_LOAD_EXTRA_CLIENT_VERIFY_CERTS)
-    case LWS_CALLBACK_OPENSSL_CTX_LOAD_EXTRA_CLIENT_VERIFY_CERTS:
-#endif
-    {
-        // Configure OpenSSL SSL_CTX ciphers / versions / groups for client side
-        (void)user; (void)len;
-        SSL_CTX *ctx = (SSL_CTX *)in;
-        if (!ctx) break;
-        // Min protocol version: TLS 1.2 (prefer 1.3 during negotiation)
-        SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
-        // Disable compression and renegotiation
-        SSL_CTX_set_options(ctx, SSL_OP_NO_COMPRESSION | SSL_OP_NO_RENEGOTIATION);
-        // TLS 1.3 cipher suites (server order irrelevant in TLS1.3, but set list)
-        (void)SSL_CTX_set_ciphersuites(ctx,
-          "TLS_AES_128_GCM_SHA256:"
-          "TLS_CHACHA20_POLY1305_SHA256:"
-          "TLS_AES_256_GCM_SHA384");
-        // TLS 1.2 AEAD-only cipher list
-        (void)SSL_CTX_set_cipher_list(ctx,
-          "ECDHE-ECDSA-AES128-GCM-SHA256:"
-          "ECDHE-RSA-AES128-GCM-SHA256:"
-          "ECDHE-ECDSA-CHACHA20-POLY1305:"
-          "ECDHE-RSA-CHACHA20-POLY1305:"
-          "ECDHE-ECDSA-AES256-GCM-SHA384:"
-          "ECDHE-RSA-AES256-GCM-SHA384");
-        // Groups preference (key exchange)
-        (void)SSL_CTX_set1_groups_list(ctx, "X25519:P-256");
-        // Disable 0-RTT by simply not enabling early data API calls here
-        // Session tickets (rotation advisable by external ticket key mgmt)
-        SSL_CTX_set_session_cache_mode(ctx, SSL_SESS_CACHE_SERVER);
-        SSL_CTX_set_num_tickets(ctx, 2);
-        break;
-    }
     case LWS_CALLBACK_TIMER: {
         NostrConnectionPrivate *priv = priv_try_ref(conn->priv);
         if (!priv) break;

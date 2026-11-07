@@ -1,0 +1,11 @@
+[Unit]
+Description=Signet online encrypted backup to Spaces
+After=signet-compose.service
+RequiresMountsFor=/srv/signet
+
+[Service]
+Type=oneshot
+ExecStart=/opt/signet/current/signet/deploy/backup.sh
+UMask=0077
+LimitCORE=0
+TimeoutStartSec=30min

@@ -2,6 +2,9 @@
 #
 # Signet (NIP-46 bunker service) Meson options
 
+option('signet_deployment_live_tests', type: 'boolean', value: false,
+  description: 'Run destructive operator-configured live deployment drill')
+
 option('signet_enable_tests',
   type: 'boolean',
   value: true,

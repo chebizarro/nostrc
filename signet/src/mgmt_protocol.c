@@ -8,6 +8,7 @@
  */
 
 #include "signet/mgmt_protocol.h"
+#include "signet/health_server.h"
 #include "signet/cascadia.h"
 #include "signet/key_store.h"
 #include "signet/policy_store.h"
@@ -543,7 +544,8 @@ static int signet_mgmt_writeback_provisioners(SignetMgmtHandler *h) {
   char **pubkeys = NULL;
   size_t count = 0;
   if (signet_store_list_provisioners(h->provisioner_store, &pubkeys, &count) != 0) {
-    g_warning("[signetd] provisioner config write-back skipped: cannot read "
+    signet_provisioner_writeback_result(true);
+    g_critical("[signetd] provisioner config write-back skipped: cannot read "
               "persisted provisioner set");
     return -1;
   }
@@ -553,6 +555,7 @@ static int signet_mgmt_writeback_provisioners(SignetMgmtHandler *h) {
       h->config_path, (const char *const *)pubkeys, count, err, sizeof(err));
   signet_store_free_provisioner_list(pubkeys, count);
 
+  signet_provisioner_writeback_result(rc != 0);
   if (rc != 0) {
     g_critical("[signetd] provisioner config write-back to '%s' FAILED: %s. "
                "The persisted revocation tombstone still prevents a reload "
@@ -1209,12 +1212,13 @@ static char *signet_mgmt_contextvm_error_json(int code, const char *message,
   return s;
 }
 
-int signet_mgmt_handler_handle_intent(SignetMgmtHandler *h,
+static int signet_mgmt_handle_intent(SignetMgmtHandler *h,
                                       const char *event_pubkey_hex,
                                       const char *content_json,
                                       const char *event_id_hex,
                                       int64_t event_created_at,
-                                      int64_t now) {
+                                      int64_t now,
+                                      bool direct) {
   if (!h) return -1;
 
   SignetMgmtOp op = SIGNET_MGMT_OP_UNKNOWN;
@@ -1274,6 +1278,24 @@ int signet_mgmt_handler_handle_intent(SignetMgmtHandler *h,
     goto out;
   }
 
+  /* Direct kind-25910 content is relay-readable. Default deny keeps new
+   * methods private too; delivery is excluded even though it is not a
+   * credential mutation. Never echo request params in the refusal. */
+  if (direct && op != SIGNET_MGMT_OP_GET_STATUS &&
+      op != SIGNET_MGMT_OP_LIST_AGENTS && op != SIGNET_MGMT_OP_LIST_CLIENTS &&
+      op != SIGNET_MGMT_OP_LIST_CREDENTIALS &&
+      op != SIGNET_MGMT_OP_INSPECT_CREDENTIAL) {
+    signet_mgmt_refusal_audit(h, "mgmt_direct_refused", event_pubkey_hex,
+                              NULL, "gift_wrap_required", NULL, NULL, now);
+    char *err = signet_mgmt_contextvm_error_json(
+        -32003, "this method requires encrypted gift-wrap transport",
+        "gift_wrap_required", rpc_id);
+    signet_mgmt_publish_ack(h, event_pubkey_hex, err, event_id_hex, now,
+                            SIGNET_MGMT_REPLY_CONTEXTVM, rpc_id);
+    g_free(err);
+    goto out;
+  }
+
   {
     char *encrypted = NULL;
     uint8_t sk[32], pk[32];
@@ -1301,10 +1323,28 @@ out:
   return rc;
 }
 
-int signet_mgmt_handler_handle_gift_wrap(SignetMgmtHandler *h,
-                                         const char *event_json,
-                                         const char *event_id_hex,
-                                         int64_t now) {
+int signet_mgmt_handler_handle_intent(SignetMgmtHandler *h,
+                                      const char *sender, const char *content,
+                                      const char *event_id, int64_t created_at,
+                                      int64_t now) {
+  return signet_mgmt_handle_intent(h, sender, content, event_id, created_at,
+                                  now, false);
+}
+
+int signet_mgmt_handler_handle_direct_intent(SignetMgmtHandler *h,
+                                             const char *sender,
+                                             const char *content,
+                                             const char *event_id,
+                                             int64_t created_at, int64_t now) {
+  return signet_mgmt_handle_intent(h, sender, content, event_id, created_at,
+                                  now, true);
+}
+
+static int signet_mgmt_handle_gift_wrap_since(SignetMgmtHandler *h,
+                                              const char *event_json,
+                                              const char *event_id_hex,
+                                              int64_t now,
+                                              int64_t live_since) {
   if (!h || !h->bunker_sk_hex || !event_json) return -1;
   NostrEvent *gw = nostr_event_new();
   if (!gw) return -1;
@@ -1317,9 +1357,14 @@ int signet_mgmt_handler_handle_gift_wrap(SignetMgmtHandler *h,
      * the gift wrap's is randomized by NIP-59. */
     if (nostr_nip17_decrypt_dm_ex(gw, h->bunker_sk_hex, &inner, &sender,
                                   &rumor_at) == 0 && inner) {
-      rc = signet_mgmt_handler_handle_intent(h, sender ? sender : "", inner,
-                                             event_id_hex ? event_id_hex : "",
-                                             rumor_at, now);
+      if (live_since > 0 && rumor_at < live_since) {
+        signet_mgmt_refusal_audit(h, "mgmt_history_dropped", sender, NULL,
+                                  "before_live_boundary", NULL, NULL, now);
+      } else {
+        rc = signet_mgmt_handler_handle_intent(h, sender ? sender : "", inner,
+                                               event_id_hex ? event_id_hex : "",
+                                               rumor_at, now);
+      }
     }
     if (inner) {
       secure_wipe(inner, strlen(inner));
@@ -1329,6 +1374,32 @@ int signet_mgmt_handler_handle_gift_wrap(SignetMgmtHandler *h,
   }
   nostr_event_free(gw);
   return rc;
+}
+
+int signet_mgmt_handler_handle_gift_wrap(SignetMgmtHandler *h,
+                                         const char *json, const char *id,
+                                         int64_t now) {
+  return signet_mgmt_handle_gift_wrap_since(h, json, id, now, 0);
+}
+
+int signet_mgmt_handler_handle_relay_event(SignetMgmtHandler *h,
+                                           const SignetRelayEventView *ev,
+                                           int64_t now) {
+  if (!h || !ev || (ev->kind != CAS_INTENT && ev->kind != NIP59_GIFT_WRAP))
+    return -1;
+  if (ev->live_since <= 0 ||
+      (ev->kind == CAS_INTENT && ev->created_at < ev->live_since)) {
+    signet_mgmt_refusal_audit(h, "mgmt_history_dropped", ev->pubkey_hex,
+                              NULL, "before_live_boundary", NULL, NULL, now);
+    return -1;
+  }
+  if (ev->kind == CAS_INTENT)
+    return signet_mgmt_handler_handle_direct_intent(h, ev->pubkey_hex,
+        ev->content, ev->event_id_hex, ev->created_at, now);
+  /* NIP-59 randomizes the outer timestamp. Compare only the authenticated
+   * rumor time with this source subscription's EOSE boundary. */
+  return signet_mgmt_handle_gift_wrap_since(h, ev->event_json, ev->event_id_hex,
+                                           now, ev->live_since);
 }
 
 /* Append a redacted entry to the store's hash-chained audit log for a

@@ -761,6 +761,8 @@ int signet_store_revoke_provisioner(SignetStore *store,
 
 /* Record a one-shot policy_state marker. Returns 0 when the marker was newly
  * written, 1 when it already existed (nothing changed), -1 on error. */
+/* 1 = marked, 0 = absent, -1 = read failure. Does not mutate policy state. */
+int signet_store_policy_state_is_marked(SignetStore *store, const char *name);
 int signet_store_policy_state_mark_once(SignetStore *store, const char *name,
                                         int64_t now);
 

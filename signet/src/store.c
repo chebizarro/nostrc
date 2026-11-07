@@ -2414,6 +2414,17 @@ int signet_store_revoke_provisioner(SignetStore *store,
                                             (int64_t)time(NULL));
 }
 
+int signet_store_policy_state_is_marked(SignetStore *store, const char *name) {
+  if (!store || !store->open || !store->db || !name || !name[0]) return -1;
+  sqlite3_stmt *stmt = NULL;
+  if (sqlite3_prepare_v2(store->db, "SELECT 1 FROM policy_state WHERE name=?1;",
+                         -1, &stmt, NULL) != SQLITE_OK) return -1;
+  sqlite3_bind_text(stmt, 1, name, -1, SQLITE_TRANSIENT);
+  int rc = sqlite3_step(stmt);
+  sqlite3_finalize(stmt);
+  return rc == SQLITE_ROW ? 1 : rc == SQLITE_DONE ? 0 : -1;
+}
+
 int signet_store_policy_state_mark_once(SignetStore *store, const char *name,
                                         int64_t now) {
   if (!store || !store->open || !store->db || !name || !name[0]) return -1;

@@ -1,136 +1,90 @@
 # SPDX-License-Identifier: MIT
-#
-# Signet - NIP-46 Nostr bunker service
-#
-# Multi-stage build: compile with full toolchain, run with minimal runtime.
-# Uses CMake monorepo build to resolve in-tree dependencies.
-
-# ============================================================================
-# Stage 1: Build
-# ============================================================================
-FROM debian:bookworm-slim AS builder
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    cmake \
-    ninja-build \
-    pkg-config \
-    meson \
-    python3-pip \
-    git \
-    libglib2.0-dev \
-    libjson-glib-dev \
-    libjansson-dev \
-    libssl-dev \
-    libsqlite3-dev \
-    libsqlcipher-dev \
-    libsodium-dev \
-    libmicrohttpd-dev \
-    libsecp256k1-dev \
-    libcurl4-openssl-dev \
-    libwebsockets-dev \
-    libnsync-dev \
-    libgit2-dev \
-    ca-certificates \
-  && rm -rf /var/lib/apt/lists/* \
-  && pip3 install --no-cache-dir --break-system-packages "cmake>=3.30,<3.31"
-
-# Copy the entire monorepo (needed for in-tree libs)
+# Build from the repository root via signet/deploy/build-image.sh.
+# All external selections are supplied from deploy/versions.env; no floating default.
+ARG DEBIAN_IMAGE
+FROM ${DEBIAN_IMAGE} AS builder
+ARG CMAKE_VERSION
+ARG MESON_VERSION
+ARG SIGNET_PASSKEYS=OFF
+RUN case "$SIGNET_PASSKEYS" in ON|OFF) ;; *) exit 1;; esac \
+ && apt-get update && apt-get install -y --no-install-recommends \
+    build-essential ninja-build pkg-config python3-pip python3-venv python3-jsonschema git \
+    libglib2.0-dev libjson-glib-dev libjansson-dev libssl-dev \
+    libsqlite3-dev libsqlcipher-dev libsodium-dev libmicrohttpd-dev \
+    libsecp256k1-dev libcurl4-openssl-dev libwebsockets-dev libnsync-dev \
+    libgit2-dev ca-certificates \
+ && if [ "$SIGNET_PASSKEYS" = ON ]; then apt-get install -y --no-install-recommends libcbor-dev; fi \
+ && rm -rf /var/lib/apt/lists/* \
+ && pip3 install --no-cache-dir --break-system-packages "cmake==$CMAKE_VERSION" "meson==$MESON_VERSION"
 WORKDIR /src
 COPY . .
-
-# Build the monorepo with CMake to produce libnostr, nip libs, etc.
 RUN cmake -B build-docker -G Ninja \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DBUILD_TESTING=OFF \
-    -DSIGNET_ENABLE=ON \
-    -DSIGNET_USE_SQLCIPHER=ON \
-    -DBUILD_NOSTR_GTK=OFF \
-    -DBUILD_APPS=OFF \
-    -DBUILD_LIBMARMOT=OFF \
-    -DBUILD_MARMOT_GOBJECT=OFF \
-    -DLIBNOSTR_WITH_NOSTRDB=OFF \
-  && cmake --build build-docker --target signetd signetctl
+    -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
+    -DSIGNET_ENABLE=ON -DSIGNET_USE_SQLCIPHER=ON \
+    -DSIGNET_ENABLE_PASSKEYS=${SIGNET_PASSKEYS} -DSIGNET_ENABLE_TEST_HOOKS=OFF \
+    -DBUILD_NOSTR_GTK=OFF -DBUILD_APPS=OFF -DBUILD_RELAYD=OFF \
+    -DBUILD_LIBMARMOT=OFF -DBUILD_MARMOT_GOBJECT=OFF -DLIBNOSTR_WITH_NOSTRDB=OFF -DWITH_NOSTRDB=OFF \
+ && cmake --build build-docker --target signetd signetctl -j2 \
+ && cc -O2 -Wall -Wextra -Werror -I/usr/include/sqlcipher signet/deploy/store-inspect.c \
+      -o /src/build-docker/signet-inspect-store -lsqlcipher -lsodium \
+ && dpkg-query -W > /src/build-docker/package-inputs.txt
 
-# Validate the standalone Meson suite against the in-tree libraries produced
-# above, for both supported database backends.
-RUN meson setup signet/build-meson-sqlite signet \
-      -Dnostrc_build_dir=/src/build-docker \
-  && meson test -C signet/build-meson-sqlite --print-errorlogs
-RUN meson setup signet/build-meson-sqlcipher signet \
-      -Dnostrc_build_dir=/src/build-docker \
-      -Dsignet_use_sqlcipher=true \
-  && meson test -C signet/build-meson-sqlcipher --print-errorlogs
+FROM builder AS test
+# Keep testing out of the runtime builder; compile only the outbound TLS regression
+# and its dependencies, without the unrelated GObject/test-framework trees.
+RUN cmake -B build-docker -DBUILD_TESTING=ON \
+      -DBUILD_NOSTR_GOBJECT=OFF -DBUILD_TESTING_FRAMEWORK=OFF \
+ && cmake --build build-docker --target test_connection_tls_no_resumption -j2 \
+ && ctest --test-dir build-docker/tests --output-on-failure --no-tests=error \
+      -R '^test_connection_tls_no_resumption$'
+RUN if [ "$SIGNET_PASSKEYS" = ON ]; then passkeys=true; else passkeys=false; fi \
+ && meson setup signet/build-meson-sqlite signet \
+      -Dnostrc_build_dir=/src/build-docker -Dsignet_enable_tests=true \
+      -Dsignet_enable_passkeys=$passkeys -Dsignet_enable_test_hooks=false \
+ && meson setup signet/build-meson-sqlcipher signet \
+      -Dnostrc_build_dir=/src/build-docker -Dsignet_enable_tests=true \
+      -Dsignet_use_sqlcipher=true -Dsignet_enable_passkeys=$passkeys \
+      -Dsignet_enable_test_hooks=false \
+ && (meson test -C signet/build-meson-sqlite --print-errorlogs; sqlite_status=$?; \
+     meson test -C signet/build-meson-sqlcipher --print-errorlogs; cipher_status=$?; \
+     test "$sqlite_status" = 0 && test "$cipher_status" = 0)
 
-# ============================================================================
-# Stage 2: Runtime
-# ============================================================================
-FROM debian:bookworm-slim AS runtime
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libglib2.0-0 \
-    libjson-glib-1.0-0 \
-    libjansson4 \
-    libssl3 \
-    libsqlite3-0 \
-    libsqlcipher0 \
-    libsodium23 \
-    libmicrohttpd12 \
-    libsecp256k1-1 \
-    libnsync1 \
-    libwebsockets17 \
-    libcap2 \
-    ca-certificates \
-    curl \
-  && rm -rf /var/lib/apt/lists/*
-
-# Create non-root user for the daemon
-RUN groupadd -r signet && useradd -r -g signet -d /data -s /usr/sbin/nologin signet
-
-# Copy binaries from build stage
+FROM ${DEBIAN_IMAGE} AS runtime
+ARG SIGNET_PASSKEYS=OFF
+ARG SOURCE_URL=https://github.com/chebizarro/nostrc
+ARG REVISION
+ARG VERSION
+ARG CREATED
+LABEL org.opencontainers.image.source=$SOURCE_URL \
+      org.opencontainers.image.revision=$REVISION \
+      org.opencontainers.image.version=$VERSION \
+      org.opencontainers.image.created=$CREATED \
+      org.opencontainers.image.licenses=MIT
+RUN case "$SIGNET_PASSKEYS" in ON|OFF) ;; *) exit 1;; esac \
+ && apt-get update && apt-get install -y --no-install-recommends \
+    libglib2.0-0 libjson-glib-1.0-0 libjansson4 libssl3 libsqlcipher0 \
+    libsodium23 libmicrohttpd12 libsecp256k1-1 libnsync1 libwebsockets17 \
+    libcurl4 ca-certificates curl sqlcipher \
+ && if [ "$SIGNET_PASSKEYS" = ON ]; then apt-get install -y --no-install-recommends libcbor0.8; fi \
+ && rm -rf /var/lib/apt/lists/* \
+ && groupadd -g 10001 signet \
+ && useradd -u 10001 -g 10001 -d /data -s /usr/sbin/nologin signet \
+ && install -d -o 10001 -g 10001 /data /etc/signet /usr/share/signet \
+ && dpkg-query -W > /usr/share/signet/runtime-packages.txt
 COPY --from=builder /src/build-docker/signet/signetd /usr/local/bin/signetd
 COPY --from=builder /src/build-docker/signet/signetctl /usr/local/bin/signetctl
-
-# Grant CAP_IPC_LOCK so mlockall() works for non-root deployments without
-# Docker cap_add (e.g., bare metal with systemd).  Requires libcap2-bin.
-RUN apt-get update && apt-get install -y --no-install-recommends libcap2-bin \
-  && setcap cap_ipc_lock+ep /usr/local/bin/signetd \
-  && apt-get purge -y libcap2-bin && apt-get autoremove -y \
-  && rm -rf /var/lib/apt/lists/*
-
-# Copy shared libraries built by the monorepo
+COPY --from=builder /src/build-docker/package-inputs.txt /usr/share/signet/build-packages.txt
 COPY --from=builder /src/build-docker/libnostr/libnostr.so* /usr/local/lib/
-# libjson's CMake target is named nostr_json, but its installed/runtime SONAME
-# is deliberately hyphenated (libnostr-json.so.1).  Copy the real artifact,
-# not the obsolete underscore compatibility spelling generated only by the
-# install target.
 COPY --from=builder /src/build-docker/libjson/libnostr-json.so* /usr/local/lib/
 COPY --from=builder /src/build-docker/nips/nip04/libnip04.so* /usr/local/lib/
 COPY --from=builder /src/build-docker/nips/nip19/libnip19.so* /usr/local/lib/
 COPY --from=builder /src/build-docker/nips/nip44/libnip44.so* /usr/local/lib/
 COPY --from=builder /src/build-docker/nips/nip46/libnip46.so* /usr/local/lib/
 RUN ldconfig \
-  && ! ldd /usr/local/bin/signetd | grep -q 'not found'
-
-# Data directory for SQLCipher database
-RUN mkdir -p /data && chown signet:signet /data
-VOLUME /data
-
-# Health check endpoint
-EXPOSE 8080
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD curl -sf http://127.0.0.1:8080/health || exit 1
-
-# Process hardening: run as non-root
-USER signet
-
-# Required environment variables:
-#   SIGNET_DB_KEY       - Master key for SQLCipher
-#   SIGNET_BUNKER_NSEC_FILE - Mounted file containing bunker identity nsec
-#   SIGNET_RELAYS       - Comma-separated relay URLs
-ENV SIGNET_DB_KEY="" \
-    SIGNET_BUNKER_NSEC_FILE="/run/secrets/signet_bunker_nsec" \
-    SIGNET_RELAYS=""
-
+ && ldd /usr/local/bin/signetd > /usr/share/signet/ldd-signetd.txt \
+ && ldd /usr/local/bin/signetctl > /usr/share/signet/ldd-signetctl.txt \
+ && ! grep -q 'not found' /usr/share/signet/ldd-*.txt
+COPY --from=builder /src/build-docker/signet-inspect-store /usr/local/bin/signet-inspect-store
+USER 10001:10001
 ENTRYPOINT ["signetd"]
-CMD ["-c", "/data/signet.toml"]
+CMD ["-c", "/etc/signet/signet.conf"]

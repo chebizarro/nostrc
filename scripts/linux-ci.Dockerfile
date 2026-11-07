@@ -26,7 +26,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # gnostr-appimage.yml (Gnostr, grotto, nostr-gtk)
     libpeas-2-dev librsvg2-dev libgdk-pixbuf-2.0-dev \
     # signet-ci.yml
-    libmicrohttpd-dev libcbor-dev \
+    libmicrohttpd-dev libcbor-dev python3-jsonschema \
     # local tooling: sources, debugging, the gate's tree sync and lock
     git python3 ca-certificates curl gdb rsync util-linux \
  && rm -rf /var/lib/apt/lists/*

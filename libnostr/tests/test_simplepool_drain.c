@@ -112,6 +112,14 @@ typedef struct {
 
 static void event_received(NostrIncomingEvent *incoming, void *data) {
     Observations *o = data;
+    const NostrSubscription *source = nostr_simple_pool_get_callback_subscription(o->pool);
+    if (!o->pool->batch_middleware) {
+        assert(source);
+        /* One-shot queries use an ephemeral sub outside the registry. */
+        if (o->pool->subs_count) assert(source == o->pool->subs[0]);
+    } else {
+        assert(source == NULL);
+    }
     pthread_mutex_lock(&o->mutex);
     assert(nostr_event_get_created_at(incoming->event) == o->events + 1);
     o->events++;
@@ -124,6 +132,9 @@ static void boundary_received(NostrRelay *relay, const char *state,
                               const char *reason, void *data) {
     (void)relay;
     Observations *o = data;
+    const NostrSubscription *source = nostr_simple_pool_get_callback_subscription(o->pool);
+    assert(source);
+    if (o->pool->subs_count) assert(source == o->pool->subs[0]);
     pthread_mutex_lock(&o->mutex);
     assert(strcmp(state, o->state) == 0);
     o->events_at_boundary = o->events;
@@ -147,6 +158,7 @@ static NostrSubscription *setup(Observations *o, int expected, const char *state
     o->state = state;
     o->pool = nostr_simple_pool_new();
     assert(o->pool);
+    assert(nostr_simple_pool_get_callback_subscription(o->pool) == NULL);
     nostr_simple_pool_set_event_middleware_ex(o->pool, event_received, o);
     nostr_simple_pool_set_auto_unsub_on_eose(o->pool, true);
     nostr_simple_pool_set_subscription_callback(o->pool, boundary_received, o);
@@ -175,15 +187,14 @@ static void teardown(Observations *o) {
     pthread_mutex_destroy(&o->mutex);
 }
 
-/* Match the worker's final delivery on the unfixed implementation too, so the
- * same test source builds and runs before and after the production fix. */
+/* Match the worker's final delivery, including callback-scoped metadata. */
 static void drain(Observations *o) {
     size_t count = o->pool->subs_count;
     NostrSubscription *snapshot[1] = {count ? o->pool->subs[0] : NULL};
-    NostrIncomingEvent *batch = NULL;
+    PoolIncomingEvent *batch = NULL;
     size_t len = 0, cap = 0;
     pool_drain_all(o->pool, snapshot, count, &batch, &len, &cap);
-    for (size_t i = 0; i < len; i++) event_received(&batch[i], o);
+    pool_deliver_batch(o->pool, batch, &len);
     free(batch);
 }
 

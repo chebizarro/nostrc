@@ -13,6 +13,41 @@
 # file that forgets the header still gets working checks.
 signet_test_c_args = ['-UNDEBUG']
 
+test_signetctl_intent_exe = executable('test_signetctl_intent', 'test_signetctl_intent.c',
+  link_with: signet_core, include_directories: signet_includes,
+  dependencies: signet_deps + [in_tree_dep], c_args: signet_test_c_args, install: false)
+test('signetctl_intent', test_signetctl_intent_exe)
+
+test_secret_input_exe = executable('test_secret_input', 'test_secret_input.c',
+  link_with: signet_core, include_directories: signet_includes,
+  dependencies: signet_deps + [in_tree_dep], c_args: signet_test_c_args, install: false)
+test_http_listen_exe = executable('test_http_listen', 'test_http_listen.c',
+  link_with: signet_core, include_directories: signet_includes,
+  dependencies: signet_deps + [in_tree_dep], c_args: signet_test_c_args, install: false)
+test_http_routes_exe = executable('test_http_routes', 'test_http_routes.c',
+  link_with: signet_core, include_directories: signet_includes,
+  dependencies: signet_deps + [in_tree_dep], c_args: signet_test_c_args, install: false)
+test('secret_input', test_secret_input_exe)
+test('http_listen', test_http_listen_exe)
+test('http_routes', test_http_routes_exe)
+test('daemon_startup', find_program('sh'),
+  args: [files('test_daemon_startup.sh'), signetd_exe, signetctl_exe], timeout: 120)
+# W3/W4 deployment packaging and explicitly enabled live drills (separate ownership).
+nip46_reference_client = executable('nip46_reference_client',
+  'integration/nip46_reference_client.c',
+  link_with: signet_core, include_directories: signet_includes,
+  dependencies: signet_deps + [in_tree_dep], install: false)
+test('deployment_contract', find_program('bash'),
+  args: [meson.current_source_dir() / 'test_deployment_smoke.sh', '--static'],
+  depends: nip46_reference_client)
+if get_option('signet_deployment_live_tests')
+  test('production_roundtrip', find_program('bash'),
+    args: [meson.current_source_dir() / 'integration/test_production_roundtrip.sh',
+           nip46_reference_client.full_path()],
+    depends: nip46_reference_client, suite: ['live', 'manual', 'deployment'], timeout: 600)
+endif
+# End W3/W4 block.
+
 test_exe = executable('test_signet_smoke',
   'test_signet_smoke.c',
   link_with: signet_core,
@@ -88,7 +123,7 @@ test_config_reload = executable('test_config_reload',
 test_relay_pool = executable('test_relay_pool_protocol',
   'test_relay_pool_protocol.c',
   link_with: signet_core,
-  include_directories: signet_includes,
+  include_directories: [signet_includes, include_directories('../src')],
   dependencies: signet_deps + [in_tree_dep],
   c_args: signet_test_c_args,
   install: false,
@@ -288,7 +323,11 @@ test('policy_engine', test_policy)
 test('audit_logger', test_audit)
 test('bootstrap_contract', test_bootstrap_contract)
 test('capability', test_capability)
-test('relay_pool_protocol', test_relay_pool)
+  test('relay_pool_protocol', test_relay_pool)
+  test('relay_pool_wire', find_program('python3'),
+    args: [meson.current_source_dir() / 'test_relay_pool_wire.py',
+           test_relay_pool.full_path(), signetctl_exe.full_path()],
+    depends: [test_relay_pool, signetctl_exe], timeout: 60)
 # Freed memory is scribbled (macOS) or perturbed (glibc), so reading an OK
 # callback's freed data fails without ASan too.
 test('relay_pool_ok_lifetime', test_relay_pool_ok_lifetime, timeout: 60,
@@ -312,10 +351,11 @@ test('cli_secret_output', test_cli_secret_output)
 test('git_credential', test_git_credential)
 test('signetctl_credentials', find_program('sh'),
   args: [meson.current_source_dir() / 'test_signetctl_credentials.sh',
-         signetctl_exe.full_path()],
-  depends: signetctl_exe)
+         signetctl_exe.full_path(), test_key_store.full_path()],
+  depends: [signetctl_exe, test_key_store])
 test('item3_concurrency', test_item3_concurrency, timeout: 60)
-test('backup_restore', test_backup_restore, timeout: 60)
+test('backup_restore', test_backup_restore, args: [signetctl_exe.full_path()],
+  depends: signetctl_exe, timeout: 60)
 
 if get_option('signet_enable_passkeys')
   test_store_passkeys = executable('test_store_passkeys',
@@ -366,6 +406,16 @@ if get_option('signet_enable_passkeys')
     args: [meson.current_source_dir() / 'run_fido_interop_external_check.sh',
            test_fido_interop_json.full_path(),
            meson.current_build_dir() / 'phase3_interop'],
+    depends: test_fido_interop_json,
     timeout: 180,
   )
 endif
+
+# Management ingress boundary regression (nostrc-a7p6i; separate ownership).
+test('mgmt_ingress_wire', find_program('python3'),
+  args: [meson.current_source_dir() / 'test_mgmt_ingress_wire.py',
+         test_mgmt_replay.full_path()],
+  depends: test_mgmt_replay,
+  timeout: 30,
+)
+# End management ingress boundary block.

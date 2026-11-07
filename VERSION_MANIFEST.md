@@ -19,7 +19,7 @@ files already declare a version.
 
 | Component | Path | Declared version | Latest release | Release tag | Authoritative version source(s) |
 | --- | --- | --- | --- | --- | --- |
-| libnostr | `libnostr/` | 2.1.2 | Unreleased | — | `libnostr/CMakeLists.txt` |
+| libnostr | `libnostr/` | 2.2.0 | Unreleased | — | `libnostr/CMakeLists.txt` |
 | libjson (libnostr-json) | `libjson/` | 2.0.0 | Unreleased | — | `libjson/CMakeLists.txt` (`declare_component_version`) |
 | libgo | `libgo/` | 0.2.0 | Unreleased | — | `libgo/CMakeLists.txt` |
 | nostr-gobject | `nostr-gobject/` | 3.0.1 | Unreleased | — | `nostr-gobject/CMakeLists.txt`, `nostr-gobject/meson.build` |
@@ -52,8 +52,43 @@ files already declare a version.
 | nip-communikeys | `nips/nip-communikeys/` | 3.0.0 | Unreleased | — | `nips/nip-communikeys/CMakeLists.txt` (`NIP_COMMUNIKEYS_VERSION`) |
 | nip55l (Linux signer) | `nips/nip55l/` | 0.8.0 | Unreleased | — | `nips/nip55l/include/nostr/nip55l/signer_ops.h` (`NOSTR_NIP55L_VERSION_*`) |
 | nostr-seal | `gnome/nostr-seal/` | 0.1.3 (format nsealed v1) | Unreleased | — | `gnome/nostr-seal/src/main.c` (`NOSTR_SEAL_VERSION`), `gnome/nostr-seal/include/nostr-seal.h` (`NSEAL_FORMAT_VERSION`) |
-| signet | `signet/` | 0.7.0 | Unreleased | — | `signet/meson.build`, `signet/src/signetd_main.c` (`SIGNET_VERSION`), `signet/src/signetctl_main.c` (`SIGNETCTL_VERSION`); `signet/CMakeLists.txt` declares none |
+| signet | `signet/` | 0.8.0 | Unreleased | — | `signet/meson.build`, `signet/src/signetd_main.c` (`SIGNET_VERSION`), `signet/src/signetctl_main.c` (`SIGNETCTL_VERSION`), `signet/CMakeLists.txt` (`project VERSION`) |
 
+
+### libnostr callback API and client TLS hardening (nostrc-a7p6i, nostrc-86xt, nostrc-mk7v1.3)
+
+- **libnostr 2.1.2 → 2.2.0: MINOR.** Add the backward-compatible, ABI-preserving
+  simplepool subscription callback API used for EOSE-based management admission.
+  This supersedes the unreleased 2.1.3 PATCH assessment: the same wave also activates
+  the existing client SSL context hardening on the libwebsockets client callback
+  path, a shipped security correction. MINOR is the highest applicable change;
+  no wire format changes.
+- `libnostr/CMakeLists.txt` is the authoritative version source; its generated
+  version metadata and the Declared version above agree. Latest release and
+  Release tag remain unchanged because no tag is published here.
+- Signet retains the coordinated unreleased **0.8.0 MINOR** version below; this
+  integration version assessment does not add another Signet bump.
+
+### Signet first-deployment interfaces (nostrc-mk7v1.6)
+
+- **signet 0.7.0 → 0.8.0: MINOR.** Additive protected file-key and bootstrap
+  TLS/proxy configuration interfaces, plus incompatible behavior in a 0.x
+  component: explicit invalid config is refused; required encrypted mode cannot
+  fall back to ephemeral storage; bootstrap binds loopback and rejects untrusted
+  or ambiguous forwarding headers; inline BYO CLI keys are rejected; local
+  verification failures return nonzero. D2 adoption marks only after successful
+  write-back and warns on env shadowing. Builds without libmicrohttpd must set
+  `health_port = 0` or fail startup. These are the coordinated release contract,
+  not proof of deployment acceptance. No DB schema/key-derivation format change.
+- All authoritative sources carry the base **0.8.0** in one commit. The planned
+  tag is `signet-v0.8.0-rc.1`; Latest release and Release tag stay unchanged until
+  publication. Docs/examples alone require no further bump. Other components
+  are unchanged by W5; W2's libnostr changes need their own assessment.
+- **signet 0.8.0: FOLD (nostrc-bcbt9).** Per owner, the deployment tooling/test
+  prerequisite correction remains in the same untagged first-release wave;
+  no additional version bump. All four authoritative sources and the declared
+  version remain at 0.8.0 for the planned `signet-v0.8.0-rc.1` tag. Other
+  components are unchanged.
 
 ### W7b profile discovery and editor (nostrc-u6v55.23.10)
 

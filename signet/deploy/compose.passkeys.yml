@@ -1,0 +1,11 @@
+# Optional programmatic passkeys; select passkeys digest in release.env.
+services:
+  signetd:
+    environment:
+      SIGNET_PASSKEYS_SYNC_KEY_FILE: /run/secrets/signet_passkey_sync_key
+    volumes:
+      - type: bind
+        source: /opt/signet/secrets/passkey-sync.key
+        target: /run/secrets/signet_passkey_sync_key
+        read_only: true
+        bind: {create_host_path: false}

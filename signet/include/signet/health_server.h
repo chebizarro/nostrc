@@ -53,6 +53,8 @@ typedef struct {
   volatile gint active_leases;
   volatile gint nip5l_connections_denied;
   volatile gint ssh_agent_connections_denied;
+  volatile gint provisioner_writeback_failures;
+  volatile gint provisioner_writeback_failed;
 } SignetMetricsCounters;
 
 /* Process-global counters.  Defined in health_server.c. */
@@ -63,6 +65,11 @@ typedef struct {
  * Since: 1.0
  */
 extern SignetMetricsCounters g_signet_metrics;
+
+static inline void signet_provisioner_writeback_result(bool failed) {
+  if (failed) g_atomic_int_inc(&g_signet_metrics.provisioner_writeback_failures);
+  g_atomic_int_set(&g_signet_metrics.provisioner_writeback_failed, failed);
+}
 
 /**
  * SignetHealthServer:
@@ -132,6 +139,14 @@ typedef struct {
   uint32_t active_leases;
   uint64_t nip5l_connections_denied;
   uint64_t ssh_agent_connections_denied;
+  uint64_t provisioner_writeback_failures;
+  bool provisioner_writeback_failed;
+
+  /* Pool-owned per-relay NIP-46 reply outcomes; do not gate readiness. */
+  uint64_t nip46_reply_ack_accept;
+  uint64_t nip46_reply_ack_reject;
+  uint64_t nip46_reply_ack_timeout;
+  uint64_t nip46_reply_ack_transport_aborted;
 } SignetHealthSnapshot;
 
 /* Ready only when the signer can serve its authoritative Nostr request path:
@@ -175,6 +190,9 @@ void signet_health_server_free(SignetHealthServer *hs);
  * Since: 1.0
  */
 int signet_health_server_start(SignetHealthServer *hs);
+
+/* Actual bound socket port, or zero when stopped/unavailable. */
+uint16_t signet_health_server_bound_port(SignetHealthServer *hs);
 
 /* Stop listener. Safe to call multiple times. */
 /**
