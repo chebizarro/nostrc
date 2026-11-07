@@ -48,7 +48,14 @@ never rewrites unrelated inventory fields.
 ## Host creation (operator only)
 
 Install doctl, Python 3, PyYAML and optionally cloud-init schema validation on the
-operator workstation. Authenticate doctl locally; no credential is accepted in
+operator workstation. Manifest validation in `ops.py` and the CTest/Meson
+`deployment_contract` test also require the Python 3 `jsonschema` module:
+install `python3-jsonschema` on Debian/Ubuntu, or `python3 -m pip install
+jsonschema` in a virtual environment (use its `bin` directory first on `PATH`
+for tests). Missing `jsonschema` is an explicit failure, not a skip; importing
+`ops.py` or requesting `--help` does not require it. The Linux CI image already
+installs this package, and cloud-init installs it on the deployment host.
+Authenticate doctl locally; no credential is accepted in
 user-data. Inspect installed `doctl ... --help` and the commands before use:
 
 ```sh

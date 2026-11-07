@@ -333,6 +333,14 @@ option(SIGNET_DEPLOYMENT_LIVE_TESTS "Run destructive operator-configured live de
 signet_add_test_executable(nip46_reference_client integration/nip46_reference_client.c)
 add_test(NAME deployment_contract
   COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/test_deployment_smoke.sh --static)
+if(COMMAND nostrc_describe_test)
+  nostrc_describe_test(deployment_contract OWNER signet
+    INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/test_deployment_smoke.sh"
+           "${CMAKE_CURRENT_SOURCE_DIR}/test_deployment_contract.py"
+           "${CMAKE_CURRENT_SOURCE_DIR}/../deploy"
+           "${CMAKE_CURRENT_SOURCE_DIR}/../Dockerfile"
+    REQUIRES python3_jsonschema)
+endif()
 add_test(NAME production_roundtrip
   COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/integration/test_production_roundtrip.sh $<TARGET_FILE:nip46_reference_client>)
 set_tests_properties(production_roundtrip PROPERTIES LABELS "live;manual;deployment" TIMEOUT 600)

@@ -387,6 +387,16 @@ must fail visibly. Candidate W1/W2 entry points include `test_http_listen.c`,
 `test_relay_pool_ok_lifetime.c`. Registration/availability must be checked in the
 candidate tree; names in a plan are not passing tests.
 
+The CTest/Meson `deployment_contract` entry (`test_deployment_smoke.sh --static`)
+requires the Python 3 `jsonschema` module. Install `python3-jsonschema` on
+Debian/Ubuntu, or run `python3 -m pip install jsonschema` in a virtual environment
+and put that environment's `bin` directory first on `PATH` when running CTest or
+Meson. A missing module is a named capability failure with exit code 1, not a
+skip. The selection inventory and CTest descriptor declare `python3_jsonschema`
+for this check. Attested profiles must separately provision and declare that
+capability; this test declaration does not assert host availability. The Linux
+CI image already installs `python3-jsonschema`.
+
 Packaging/live entry points added by the release work are
 `signet/tests/test_deployment_smoke.sh` and
 `signet/tests/integration/test_production_roundtrip.sh`, with the reference

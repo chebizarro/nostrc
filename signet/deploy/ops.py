@@ -21,7 +21,6 @@ import sys
 import tarfile
 import time
 import urllib.request
-import jsonschema
 
 HOME = Path('/opt/signet')
 VOLUME = Path('/srv/signet')
@@ -84,7 +83,19 @@ def env_file(path, allowed):
     return values
 
 
+def require_jsonschema():
+    try:
+        import jsonschema
+    except ModuleNotFoundError as error:
+        if error.name != 'jsonschema':
+            raise
+        raise RuntimeError('missing python3 module jsonschema; '
+                           'install python3-jsonschema or pip install jsonschema') from None
+    return jsonschema
+
+
 def bundle(path=None):
+    jsonschema = require_jsonschema()
     p = (Path(path) if path else HOME / 'current').resolve(strict=True)
     require(p.parent == HOME / 'releases' and re.fullmatch(r'[0-9a-f]{40}', p.name),
             'bundle must be /opt/signet/releases/<full source commit>')
