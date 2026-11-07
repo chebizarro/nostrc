@@ -41,7 +41,7 @@
 #include "relay_pool_private.h"
 #include <signal.h>
 
-#define SIGNETCTL_VERSION "0.8.1"
+#define SIGNETCTL_VERSION "0.8.0"
 #define SIGNETCTL_TIMEOUT_SEC 10
 
 

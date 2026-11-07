@@ -7,7 +7,7 @@
 
 cmake_minimum_required(VERSION 3.22)
 
-project(signet VERSION 0.8.1 LANGUAGES C)
+project(signet VERSION 0.8.0 LANGUAGES C)
 
 if (NOT DEFINED SIGNET_ENABLE)
   option(SIGNET_ENABLE "Build Signet NIP-46 bunker service (signetd + signetctl)" ON)
