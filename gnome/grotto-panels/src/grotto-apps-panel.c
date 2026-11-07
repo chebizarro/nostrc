@@ -66,15 +66,17 @@ static void render(GrottoAppsPanel *self) {
     g_autofree char *name = grotto_panels_app_display_info(m->id, m->label, &icon);
     adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), name);
     adw_action_row_add_prefix(ADW_ACTION_ROW(row), gtk_image_new_from_gicon(icon));
-    const char *transport = !strcmp(m->transport, "NIP46") ? _("Remote App") : _("Local App");
+    const char *transport = !strcmp(m->transport, "NIP46") ? _("Remote") : _("Local App");
     const char *access = m->blocked ? _("Blocked") : !strcmp(m->access_policy, "Previous access policy") ? _("Previous access policy") :
       !strcmp(m->trust, "full") ? _("Routine Operations") : !strcmp(m->trust, "medium") ? _("Ask for Sensitive Operations") : _("Ask Unless Permitted");
     g_autoptr(GDateTime) date = m->last_used_at ? g_date_time_new_from_unix_local(m->last_used_at) : NULL;
     g_autofree char *when = date ? g_date_time_format(date, "%x") : NULL;
     g_autofree char *used = when ? g_strdup_printf(_("Used %s"), when) : g_strdup(_("Not Used Yet"));
-    g_autofree char *subtitle = g_strdup_printf(_("%s\n%s · %s · %s"), m->id, transport, access, used);
+    g_autofree char *connection = !strcmp(m->transport, "NIP46") && m->relay && *m->relay ?
+      g_strdup_printf("%s · %s", transport, m->relay) : g_strdup(transport);
+    g_autofree char *subtitle = g_strdup_printf(_("%s\n%s · %s · %s"), m->id, connection, access, used);
     adw_action_row_set_subtitle(ADW_ACTION_ROW(row), subtitle);
-    adw_action_row_set_subtitle_lines(ADW_ACTION_ROW(row), 2);
+    adw_action_row_set_subtitle_lines(ADW_ACTION_ROW(row), !strcmp(m->transport, "NIP46") ? 0 : 2);
     adw_action_row_add_suffix(ADW_ACTION_ROW(row), gtk_image_new_from_icon_name("go-next-symbolic"));
     gtk_list_box_row_set_activatable(GTK_LIST_BOX_ROW(row), TRUE);
     g_object_set_data_full(G_OBJECT(row), "principal", g_strdup(m->id), g_free);

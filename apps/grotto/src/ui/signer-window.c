@@ -1,9 +1,9 @@
 #include "../i18n.h"
 #include "signer-window.h"
 #include "dialog-actions.h"
-#include "sheets/sheet-create-bunker.h"
 #include "page-identity-detail.h"
 #include "grotto-identity-service.h"
+#include "grotto-connection-link.h"
 #include "grotto-profile-service.h"
 #include "grotto-panels-control1-service.h"
 #include "accounts_store.h"
@@ -322,6 +322,28 @@ static void on_pair_application(GSimpleAction *action, GVariant *parameter, gpoi
   signer_window_show_page(self, "apps");
   grotto_panel_host_invoke(self->panels[1], GROTTO_PANEL_HOST_ADD_APP, NULL, NULL);
 }
+static void show_connection_link(GSimpleAction *action, GVariant *parameter, gpointer data) {
+  (void)action; (void)parameter; SignerWindow *self = data;
+  if (!gn_session_manager_is_locked(gn_session_manager_get_default()))
+    adw_dialog_present(ADW_DIALOG(sheet_qr_display_new_connection()), GTK_WIDGET(self));
+}
+static void remote_enabled(GObject *source, GAsyncResult *result, gpointer data) {
+  SignerWindow *self = data;
+  if (!grotto_panel_command_finish(GROTTO_PANEL(source), result, NULL))
+    adw_toast_overlay_add_toast(self->toast_overlay, adw_toast_new(_("Remote signing could not be enabled")));
+  g_object_unref(self);
+}
+static void enable_remote_signing(GSimpleAction *action, GVariant *parameter, gpointer data) {
+  (void)action; (void)parameter; SignerWindow *self = data;
+  if (gn_session_manager_is_locked(gn_session_manager_get_default())) return;
+  GListModel *status = grotto_panels_service_get_model(self->identity_service, GROTTO_PANELS_STATUS);
+  g_autoptr(GrottoPanelsItem) item = status && g_list_model_get_n_items(status) ? g_list_model_get_item(status, 0) : NULL;
+  if (!item) return;
+  const GrottoPanelsMetadata *m = grotto_panels_item_get_metadata(item);
+  GrottoPanelCommandArgs args = {.remote_enabled = TRUE, .relays = m->relays, .methods = m->methods,
+    .expected_generation = m->owner_generation};
+  grotto_panel_command_async(self->panels[3], GROTTO_PANEL_CONFIGURE_REMOTE, &args, remote_enabled, g_object_ref(self));
+}
 static void on_activity(GSimpleAction *action, GVariant *parameter, gpointer data) {
   (void)action; (void)parameter; signer_window_show_page(data, "activity");
 }
@@ -338,6 +360,8 @@ static void setup_window_shortcuts(SignerWindow *self) {
   static const GActionEntry win_entries[] = {
     { "pair-application", on_pair_application, NULL, NULL, NULL },
     { "connect", on_pair_application, NULL, NULL, NULL },
+    { "show-connection-link", show_connection_link, NULL, NULL, NULL },
+    { "enable-remote-signing", enable_remote_signing, NULL, NULL, NULL },
     { "activity", on_activity, NULL, NULL, NULL },
     { "new-profile", on_win_new_profile, NULL, NULL, NULL },
     { "import-profile", on_win_import_profile, NULL, NULL, NULL },
@@ -807,20 +831,14 @@ static void show_preferences(SignerWindow *self) {
   g_signal_connect_object(dialog, "closed", G_CALLBACK(preferences_closed), self, 0);
   adw_dialog_present(dialog, GTK_WIDGET(self));
 }
-static void create_app_link(GtkButton *button, gpointer data) {
-  (void)button; adw_dialog_present(ADW_DIALOG(sheet_create_bunker_new()), GTK_WIDGET(data));
-}
 static void host_add_app(gpointer data) {
   g_autoptr(SignerWindow) self = g_weak_ref_get(data);
   if (!self || gn_session_manager_is_locked(gn_session_manager_get_default())) return;
   AdwDialog *dialog = adw_dialog_new(); adw_dialog_set_title(dialog, _("Add App"));
   adw_dialog_set_content_width(dialog, 440); adw_dialog_set_content_height(dialog, 520);
   GtkWidget *toolbar = adw_toolbar_view_new();
-  GtkWidget *create = gtk_button_new_with_mnemonic(_("Create _Link…"));
-  gtk_widget_set_tooltip_text(create, _("Create Pairing Link"));
-  adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(toolbar), grotto_dialog_header(dialog, create));
+  adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(toolbar), grotto_dialog_header(dialog, NULL));
   GtkWidget *page = g_object_new(GROTTO_TYPE_PAGE_CONNECT, NULL);
-  g_signal_connect_object(create, "clicked", G_CALLBACK(create_app_link), page, 0);
   grotto_page_connect_set_model(GROTTO_PAGE_CONNECT(page), self->model);
   adw_toolbar_view_set_content(ADW_TOOLBAR_VIEW(toolbar), page);
   adw_dialog_set_child(dialog, toolbar); adw_dialog_present(dialog, GTK_WIDGET(self));
@@ -872,12 +890,19 @@ static void host_profile(gpointer data, GrottoProfileAction action, const char *
   }
   grotto_profile_service_async(GTK_WINDOW(self), self->approval_controller, action, key, info, cancel, callback, user_data);
 }
+static void panel_show_connection(GrottoRemotePanel *panel, gpointer data) {
+  (void)panel; show_connection_link(NULL, NULL, data);
+}
 static void setup_panels(SignerWindow *self) {
   grotto_profile_service_bind(GTK_WINDOW(self), self->identity_service);
   self->panels[0] = GROTTO_PANEL(g_object_ref_sink(grotto_identity_panel_new(self->identity_service, NULL)));
   self->panels[1] = GROTTO_PANEL(g_object_ref_sink(grotto_apps_panel_new(self->identity_service)));
   self->panels[2] = GROTTO_PANEL(g_object_ref_sink(grotto_activity_panel_new(self->identity_service)));
   self->panels[3] = GROTTO_PANEL(g_object_ref_sink(grotto_remote_panel_new(self->identity_service)));
+  GtkApplication *app = gtk_window_get_application(GTK_WINDOW(self));
+  GDBusConnection *bus = app ? g_application_get_dbus_connection(G_APPLICATION(app)) : NULL;
+  if (bus) grotto_connection_link_bind(GROTTO_REMOTE_PANEL(self->panels[3]), bus);
+  g_signal_connect_object(self->panels[3], "show-connection-link", G_CALLBACK(panel_show_connection), self, 0);
   const GrottoPanelsHost host = {.show_toast = identity_toast, .review_request = host_review,
     .add_identity = identity_add, .add_app = host_add_app, .open_backup = identity_backup,
     .remove_identity = identity_remove, .open_in_signer = identity_open,

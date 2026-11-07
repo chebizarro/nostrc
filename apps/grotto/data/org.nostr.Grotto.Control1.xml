@@ -64,6 +64,7 @@
     </method>
     <method name="RotateIdentity"><arg name="identity" type="s" direction="in"/><arg name="new_identity" type="s" direction="out"/></method>
     <method name="ConfigureBunker"><arg name="config" type="a{sv}" direction="in"/><arg name="state" type="a{sv}" direction="out"/></method>
+    <method name="GetConnectionLink"><arg name="identity" type="s" direction="in"/><arg name="pairing" type="a{sv}" direction="out"/></method>
     <method name="CreatePairing"><arg name="identity" type="s" direction="in"/><arg name="label" type="s" direction="in"/><arg name="pairing" type="a{sv}" direction="out"/></method>
     <method name="AcceptConnectURI"><arg name="uri" type="s" direction="in"/><arg name="identity" type="s" direction="in"/><arg name="request_id" type="s" direction="out"/></method>
     <method name="CancelPairing"><arg name="pairing_id" type="s" direction="in"/></method>

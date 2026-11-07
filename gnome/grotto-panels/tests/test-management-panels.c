@@ -261,7 +261,7 @@ static void relay_host_command(gpointer data, GrottoPanelCommand cmd, const Grot
   GTask *task = g_task_new(NULL, cancel, callback, user); g_task_return_boolean(task, TRUE); g_object_unref(task);
   relay_host_read(host);
 }
-static void relay_host_pair(gpointer data) { ((RelayHost *)data)->pairings++; }
+static void relay_host_pair(GrottoRemotePanel *panel, gpointer data) { (void)panel; ((RelayHost *)data)->pairings++; }
 static GtkWidget *remove_button(GtkWidget *widget) {
   if (GTK_IS_BUTTON(widget) && !g_strcmp0(gtk_widget_get_tooltip_text(widget), "Remove Relay")) return widget;
   for (GtkWidget *child = gtk_widget_get_first_child(widget); child; child = gtk_widget_get_next_sibling(child)) {
@@ -279,16 +279,17 @@ static void remote_persistence(void) {
   g_autofree char *dir = g_dir_make_tmp("grotto-relays-XXXXXX", NULL);
   g_autofree char *path = g_build_filename(dir, "relays.ini", NULL);
   RelayHost state = {.service = fake, .path = path};
-  GrottoPanelsHost host = {.can_command = relay_host_can, .command_async = relay_host_command, .add_app = relay_host_pair};
+  GrottoPanelsHost host = {.can_command = relay_host_can, .command_async = relay_host_command};
   GtkWidget *window = adw_window_new(); g_object_ref_sink(window);
   GrottoPanel *panel = GROTTO_PANEL(grotto_remote_panel_new(GROTTO_PANELS_SERVICE(fake)));
+  g_signal_connect(panel, "show-connection-link", G_CALLBACK(relay_host_pair), &state);
   grotto_panel_set_host(panel, &host, &state, NULL);
   adw_window_set_content(ADW_WINDOW(window), GTK_WIDGET(panel)); gtk_window_present(GTK_WINDOW(window));
   WAIT(gtk_widget_get_mapped(GTK_WIDGET(panel)));
   GtkWidget *status_row = find_title(GTK_WIDGET(panel), "Status");
   g_assert_false(adw_preferences_row_get_use_markup(ADW_PREFERENCES_ROW(status_row)));
   g_assert_cmpstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(status_row)), ==, status.reason);
-  g_signal_emit_by_name(find_title(GTK_WIDGET(panel), "Add App…"), "activated"); g_assert_cmpuint(state.pairings, ==, 1);
+  g_signal_emit_by_name(find_title(GTK_WIDGET(panel), "Show QR Code"), "activated"); g_assert_cmpuint(state.pairings, ==, 1);
   GtkWidget *entry = find_title(GTK_WIDGET(panel), "Add Relay URL");
   const char *invalid[] = {"https://example.com", "ws://example.com", "wss://", "wss://user@example.com",
     "wss://example.onion/", "wss://EXAMPLE.ONION/", "wss://example.com/?opaque=credential",
@@ -324,4 +325,62 @@ static void remote_persistence(void) {
   gtk_window_destroy(GTK_WINDOW(window)); g_object_unref(window);
   g_unlink(path); g_rmdir(dir);
 }
-void register_management_panels_tests(void) { g_test_add_func("/panels/remote-persistence", remote_persistence); g_test_add_func("/panels/management-real-widgets", management_panels); g_test_add_func("/panels/identity-actions", identity_actions); }
+static void connection_requested(GrottoRemotePanel *panel, gpointer data) {
+  guint *requests = data; (*requests)++;
+  g_autofree char *uri = g_strdup_printf("bunker://79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798?relay=wss%%3A%%2F%%2Fnos.lol&secret=fixture-%u", *requests);
+  grotto_remote_panel_set_connection_link(panel, uri);
+}
+static void connection_states(void) {
+  g_autoptr(GrottoPanelsFakeService) fake = grotto_panels_fake_service_new();
+  grotto_panels_fake_service_set_available(fake, TRUE);
+  grotto_panels_fake_service_set_can(fake, GROTTO_PANEL_CONFIGURE_REMOTE, TRUE);
+  GrottoPanelsMetadata status = {.id = "status", .state = "DISABLED"};
+  g_assert_true(grotto_panels_fake_service_replace(fake, GROTTO_PANELS_STATUS, &status, NULL));
+  GtkWidget *window = adw_window_new(); g_object_ref_sink(window);
+  GrottoRemotePanel *panel = GROTTO_REMOTE_PANEL(grotto_remote_panel_new(GROTTO_PANELS_SERVICE(fake)));
+  GrottoPanelsHost host = {.can_command = can, .command_async = command};
+  grotto_panel_set_host(GROTTO_PANEL(panel), &host, fake, NULL);
+  guint requests = 0; g_signal_connect(panel, "connection-link-requested", G_CALLBACK(connection_requested), &requests);
+  adw_window_set_content(ADW_WINDOW(window), GTK_WIDGET(panel)); gtk_window_present(GTK_WINDOW(window));
+  WAIT(gtk_widget_get_mapped(GTK_WIDGET(panel)));
+  GtkWidget *link = find_title(GTK_WIDGET(panel), "Connection Link");
+  GtkWidget *qr = find_title(GTK_WIDGET(panel), "Show QR Code");
+  g_assert_false(gtk_widget_get_visible(link)); g_assert_false(gtk_widget_get_visible(qr)); g_assert_cmpuint(requests, ==, 0);
+  g_assert_true(has_label(GTK_WIDGET(panel), "Enable remote signing to produce a link"));
+  status.remote_enabled = TRUE; status.state = "STARTING";
+  g_assert_true(grotto_panels_fake_service_replace(fake, GROTTO_PANELS_STATUS, &status, NULL));
+  g_assert_cmpuint(requests, ==, 0); g_assert_true(has_label(GTK_WIDGET(panel), "when remote signing is ready"));
+  status.state = "LISTENING";
+  g_assert_true(grotto_panels_fake_service_replace(fake, GROTTO_PANELS_STATUS, &status, NULL));
+  g_assert_cmpuint(requests, ==, 1); g_assert_true(gtk_widget_get_visible(link));
+  g_autofree char *first = g_strdup(adw_action_row_get_subtitle(ADW_ACTION_ROW(link)));
+  g_assert_nonnull(strstr(first, "secret=fixture-1"));
+  GtkWidget *copy = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(panel), GROTTO_TYPE_REMOTE_PANEL, "copy_link"));
+  g_assert_true(gtk_widget_is_sensitive(copy)); g_signal_emit_by_name(copy, "clicked");
+  GdkClipboard *clipboard = gtk_widget_get_clipboard(GTK_WIDGET(panel));
+  g_assert_nonnull(gdk_clipboard_get_content(clipboard));
+  grotto_remote_panel_set_connection_link(panel, first);
+  g_assert_nonnull(gdk_clipboard_get_content(clipboard));
+  /* The host replaces a consumed offer after the daemon publishes a snapshot. */
+  g_assert_true(grotto_panels_fake_service_replace(fake, GROTTO_PANELS_STATUS, &status, NULL));
+  g_assert_cmpuint(requests, ==, 2);
+  g_assert_cmpstr(first, !=, adw_action_row_get_subtitle(ADW_ACTION_ROW(link)));
+  g_assert_null(gdk_clipboard_get_content(clipboard));
+  status.remote_enabled = FALSE; status.state = "DISABLED";
+  g_assert_true(grotto_panels_fake_service_replace(fake, GROTTO_PANELS_STATUS, &status, NULL));
+  g_assert_false(gtk_widget_get_visible(link)); g_assert_false(gtk_widget_is_sensitive(copy));
+  gtk_window_destroy(GTK_WINDOW(window)); g_object_unref(window);
+}
+static void remote_app_subtitle(void) {
+  g_autoptr(GrottoPanelsFakeService) fake = grotto_panels_fake_service_new();
+  grotto_panels_fake_service_set_available(fake, TRUE);
+  GrottoPanelsMetadata app = {.id = "nip46:79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+    .label = "Remote client", .transport = "NIP46", .relay = "wss://nos.lol", .trust = "medium"};
+  g_assert_true(grotto_panels_fake_service_replace(fake, GROTTO_PANELS_APPS, &app, NULL));
+  GtkWidget *panel = grotto_apps_panel_new(GROTTO_PANELS_SERVICE(fake)); g_object_ref_sink(panel);
+  GtkWidget *row = find_title(panel, "Remote client"); g_assert_nonnull(row);
+  g_assert_nonnull(strstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(row)), "Remote · wss://nos.lol"));
+  g_assert_cmpint(adw_action_row_get_subtitle_lines(ADW_ACTION_ROW(row)), ==, 0);
+  g_object_unref(panel);
+}
+void register_management_panels_tests(void) { g_test_add_func("/panels/connection-states", connection_states); g_test_add_func("/panels/remote-client-subtitle", remote_app_subtitle); g_test_add_func("/panels/remote-persistence", remote_persistence); g_test_add_func("/panels/management-real-widgets", management_panels); g_test_add_func("/panels/identity-actions", identity_actions); }

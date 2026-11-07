@@ -5,9 +5,9 @@
 #
 msgid ""
 msgstr ""
-"Project-Id-Version: grotto-panels\n"
+"Project-Id-Version: grotto-panels 0.1.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-06 13:46-0800\n"
+"POT-Creation-Date: 2026-11-06 15:02-0800\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -15,7 +15,6 @@ msgstr ""
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
-"Plural-Forms: nplurals=INTEGER; plural=EXPRESSION;\n"
 
 #: data/identity-panel.blp:5 data/identity-panel.blp:9
 #: src/grotto-identity-panel.c:218 src/grotto-apps-panel.c:25
@@ -60,7 +59,7 @@ msgstr ""
 msgid "Copy Public Key"
 msgstr ""
 
-#: data/identity-panel.blp:33
+#: data/identity-panel.blp:33 data/remote-panel.blp:28
 msgid "Show QR Code"
 msgstr ""
 
@@ -102,7 +101,7 @@ msgid "_Remove Identity…"
 msgstr ""
 
 #: data/apps-panel.blp:11 data/activity-panel.blp:10 data/remote-panel.blp:8
-#: src/grotto-identity-panel.c:166 src/grotto-remote-panel.c:130
+#: src/grotto-identity-panel.c:166 src/grotto-remote-panel.c:161
 msgid "Signer Unavailable"
 msgstr ""
 
@@ -201,8 +200,7 @@ msgstr ""
 #: data/remote-panel.blp:11
 msgid ""
 "Remote signing lets apps on other devices request signatures without sharing "
-"your secret key. Enable it, then choose Add App → Create Pairing Link… to "
-"connect an app."
+"your secret key."
 msgstr ""
 
 #: data/remote-panel.blp:12
@@ -213,45 +211,51 @@ msgstr ""
 msgid "Status"
 msgstr ""
 
-#: data/remote-panel.blp:15
-msgid "Add App…"
-msgstr ""
-
-#: data/remote-panel.blp:16
-msgid "Choose Create Pairing Link… and open the link in the remote app"
-msgstr ""
-
-#: data/remote-panel.blp:20 src/grotto-app-detail.c:602
+#: data/remote-panel.blp:14 src/grotto-app-detail.c:602
 msgid "Change in Grotto…"
 msgstr ""
 
+#: data/remote-panel.blp:17 data/remote-panel.blp:20
+msgid "Connection Link"
+msgstr ""
+
+#: data/remote-panel.blp:18 src/grotto-remote-panel.c:173
+msgid ""
+"Enable remote signing to produce a link that an app can paste or scan to "
+"connect."
+msgstr ""
+
 #: data/remote-panel.blp:23
+msgid "Copy Connection Link"
+msgstr ""
+
+#: data/remote-panel.blp:33
 msgid "Relays"
 msgstr ""
 
-#: data/remote-panel.blp:24
+#: data/remote-panel.blp:34
 msgid ""
 "Remote apps connect through these relays. Use wss://, or ws:// for a "
 "loopback address."
 msgstr ""
 
-#: data/remote-panel.blp:26
+#: data/remote-panel.blp:36
 msgid "Add Relay URL"
 msgstr ""
 
-#: data/remote-panel.blp:30 src/grotto-app-detail.c:611
+#: data/remote-panel.blp:40 src/grotto-app-detail.c:611
 msgid "Details"
 msgstr ""
 
-#: data/remote-panel.blp:31
+#: data/remote-panel.blp:41
 msgid "Allowed Methods"
 msgstr ""
 
-#: data/remote-panel.blp:33
+#: data/remote-panel.blp:43
 msgid "Reset Remote Connections…"
 msgstr ""
 
-#: data/remote-panel.blp:34
+#: data/remote-panel.blp:44
 msgid ""
 "Disconnect remote apps and cancel pairing links. Identities and local app "
 "permissions are kept."
@@ -301,13 +305,6 @@ msgstr ""
 #: src/grotto-identity-panel.c:197
 msgid "Not backed up"
 msgstr ""
-
-#: src/grotto-identity-panel.c:199
-#, c-format
-msgid "%u app uses this identity"
-msgid_plural "%u apps use this identity"
-msgstr[0] ""
-msgstr[1] ""
 
 #: src/grotto-identity-panel.c:200
 msgid "Check identity usage in Grotto"
@@ -459,11 +456,11 @@ msgid "Stop"
 msgstr ""
 
 #: src/grotto-profile-view.c:123 src/grotto-profile-view.c:379
-#: src/grotto-apps-panel.c:155 src/grotto-app-detail.c:111
+#: src/grotto-apps-panel.c:157 src/grotto-app-detail.c:111
 #: src/grotto-app-detail.c:128 src/grotto-app-detail.c:143
 #: src/grotto-app-detail.c:268 src/grotto-app-detail.c:340
 #: src/grotto-app-detail.c:405 src/grotto-activity-panel.c:158
-#: src/grotto-remote-panel.c:102
+#: src/grotto-remote-panel.c:106
 msgid "Cancel"
 msgstr ""
 
@@ -641,7 +638,7 @@ msgid "App"
 msgstr ""
 
 #: src/grotto-apps-panel.c:69
-msgid "Remote App"
+msgid "Remote"
 msgstr ""
 
 #: src/grotto-apps-panel.c:69
@@ -677,38 +674,38 @@ msgstr ""
 msgid "Not Used Yet"
 msgstr ""
 
-#: src/grotto-apps-panel.c:75
+#: src/grotto-apps-panel.c:77
 #, c-format
 msgid ""
 "%s\n"
 "%s · %s · %s"
 msgstr ""
 
-#: src/grotto-apps-panel.c:95
+#: src/grotto-apps-panel.c:97
 msgid "%"
 msgstr ""
 
-#: src/grotto-apps-panel.c:96
+#: src/grotto-apps-panel.c:98
 #, c-format
 msgid ""
 "%s\n"
 "%s"
 msgstr ""
 
-#: src/grotto-apps-panel.c:135
+#: src/grotto-apps-panel.c:137
 msgid "Signing state wasn't changed. Review the current state and retry."
 msgstr ""
 
-#: src/grotto-apps-panel.c:154
+#: src/grotto-apps-panel.c:156
 msgid "Resume Signing?"
 msgstr ""
 
-#: src/grotto-apps-panel.c:154
+#: src/grotto-apps-panel.c:156
 msgid ""
 "Previously authorized apps can sign again. Saved permissions still apply."
 msgstr ""
 
-#: src/grotto-apps-panel.c:155
+#: src/grotto-apps-panel.c:157
 msgid "Resume Signing"
 msgstr ""
 
@@ -1145,63 +1142,77 @@ msgstr ""
 msgid "All Event Types"
 msgstr ""
 
-#: src/grotto-remote-panel.c:20
+#: src/grotto-remote-panel.c:24
 msgid "Disabled"
 msgstr ""
 
-#: src/grotto-remote-panel.c:20
+#: src/grotto-remote-panel.c:24
 msgid "Starting"
 msgstr ""
 
-#: src/grotto-remote-panel.c:20
+#: src/grotto-remote-panel.c:24
 msgid "Ready"
 msgstr ""
 
-#: src/grotto-remote-panel.c:20
+#: src/grotto-remote-panel.c:24
 msgid "Connection interrupted"
 msgstr ""
 
-#: src/grotto-remote-panel.c:20
+#: src/grotto-remote-panel.c:24
 msgid "Offline"
 msgstr ""
 
-#: src/grotto-remote-panel.c:20
+#: src/grotto-remote-panel.c:24
 msgid "Stopping"
 msgstr ""
 
-#: src/grotto-remote-panel.c:20
+#: src/grotto-remote-panel.c:24
 msgid "Error"
 msgstr ""
 
-#: src/grotto-remote-panel.c:22
+#: src/grotto-remote-panel.c:26
 msgid "Unavailable"
 msgstr ""
 
-#: src/grotto-remote-panel.c:32
+#: src/grotto-remote-panel.c:36
 msgid "Remote signing wasn't changed. Check the configuration and retry."
 msgstr ""
 
-#: src/grotto-remote-panel.c:68
+#: src/grotto-remote-panel.c:72
 msgid ""
 "Use wss://, or ws:// on loopback. Remove credentials, query parameters, "
 "fragments and .onion hosts."
 msgstr ""
 
-#: src/grotto-remote-panel.c:101
+#: src/grotto-remote-panel.c:105
 msgid "Reset Remote Connections?"
 msgstr ""
 
-#: src/grotto-remote-panel.c:101
+#: src/grotto-remote-panel.c:105
 msgid ""
 "Remote pairings and links will stop working. Your identities and local app "
 "permissions are kept."
 msgstr ""
 
-#: src/grotto-remote-panel.c:102
+#: src/grotto-remote-panel.c:106
 msgid "Reset Connections"
 msgstr ""
 
-#: src/grotto-remote-panel.c:147
+#: src/grotto-remote-panel.c:129
+msgid "Open Show QR Code to choose an identity or check the connection"
+msgstr ""
+
+#: src/grotto-remote-panel.c:171
+msgid ""
+"Paste or scan this link in a remote app; single-use links are replaced after "
+"an app connects."
+msgstr ""
+
+#: src/grotto-remote-panel.c:172
+msgid "The connection link will appear when remote signing is ready."
+msgstr ""
+
+#: src/grotto-remote-panel.c:185
 msgid "Remove Relay"
 msgstr ""
 
@@ -1253,7 +1264,6 @@ msgstr ""
 msgid "Test Identity"
 msgstr ""
 
-#. Generated display data; no policy. Run scripts/generate-grotto-kind-catalog.py.
 #: src/kind-catalog.inc:2
 msgid "Profile metadata"
 msgstr ""

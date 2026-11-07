@@ -26,6 +26,11 @@ static GVariant *rows(gboolean request) {
     g_variant_builder_add(&row, "{sv}", "reason", g_variant_new_string("daemon-reason"));
     g_variant_builder_add(&row, "{sv}", "access-policy", g_variant_new_string("unknown-preset"));
     g_variant_builder_add(&row, "{sv}", "blocked", g_variant_new_boolean(TRUE));
+    if (!request) {
+      const char *relays[] = {"wss://fixture-user:fixture-password@example.com/?opaque=fixture-token", "wss://nos.lol", NULL};
+      g_variant_builder_add(&row, "{sv}", "transport", g_variant_new_string("NIP46"));
+      g_variant_builder_add(&row, "{sv}", "relays", g_variant_new_strv(relays, -1));
+    }
     g_variant_builder_add(&row, "{sv}", "remaining_seconds", g_variant_new_uint32(100));
     /* Deliberately hostile unrecognized payload. The adapter must discard it. */
     g_variant_builder_add(&row, "{sv}", "private_payload", g_variant_new_string("must-not-cross"));
@@ -146,6 +151,9 @@ static void exercise(void) {
   const GrottoPanelsMetadata *m = grotto_panels_item_get_metadata(app);
   g_assert_cmpstr(m->state, ==, "daemon-state");
   g_assert_cmpstr(m->reason, ==, "daemon-reason");
+  g_assert_cmpstr(m->transport, ==, "NIP46");
+  g_assert_cmpstr(m->relay, ==, "wss://nos.lol");
+  g_assert_null(strstr(m->relay, "fixture-password"));
   g_assert_cmpstr(m->access_policy, ==, "unknown-preset"); g_assert_true(m->blocked);
   g_autoptr(GrottoPanelsItem) request = g_list_model_get_item(requests, 0);
   gint64 deadline = grotto_panels_item_get_metadata(request)->deadline_usec;

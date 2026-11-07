@@ -319,5 +319,10 @@ GROTTO_PANELS_API void grotto_activity_panel_filter_app(GrottoActivityPanel *sel
 GROTTO_PANELS_API
 G_DECLARE_FINAL_TYPE(GrottoRemotePanel, grotto_remote_panel, GROTTO, REMOTE_PANEL, GrottoPanel)
 GROTTO_PANELS_API GtkWidget *grotto_remote_panel_new(GrottoPanelsService *service);
+/* Additive connection display API. The trusted host supplies the shareable
+ * bunker URI only, not account/transport keys or policy. NULL clears it.
+ * connection-link-requested and show-connection-link ask the host to refresh
+ * the display or open its connection QR sheet, respectively. */
+GROTTO_PANELS_API void grotto_remote_panel_set_connection_link(GrottoRemotePanel *self, const char *uri);
 
 G_END_DECLS

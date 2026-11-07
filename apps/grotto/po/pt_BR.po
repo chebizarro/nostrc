@@ -6,7 +6,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: grotto 0.1.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-06 15:37-0800\n"
+"POT-Creation-Date: 2026-11-06 16:44-0800\n"
 "PO-Revision-Date: 2024-01-23 00:00+0000\n"
 "Last-Translator: \n"
 "Language-Team: Portuguese (Brazil)\n"
@@ -92,7 +92,7 @@ msgstr ""
 
 #: data/ui/approval-dialog.ui:240 data/ui/onboarding-assistant.ui:280
 #: data/ui/sheets/sheet-qr-display.ui:70 data/ui/sheets/sheet-qr-scanner.ui:144
-#: src/ui/pairing-flow.c:167
+#: src/ui/pairing-flow.c:133
 msgid "Details"
 msgstr ""
 
@@ -268,7 +268,7 @@ msgid "Use a key or recovery phrase you already have"
 msgstr ""
 
 #: data/ui/onboarding-assistant.ui:118 data/ui/onboarding-assistant.ui:225
-#: src/ui/pairing-flow.c:114 src/ui/sheets/sheet-qr-display.c:334
+#: src/ui/pairing-flow.c:104 src/ui/sheets/sheet-qr-display.c:464
 msgid "Connect an App"
 msgstr ""
 
@@ -332,8 +332,6 @@ msgstr ""
 msgid "_Try Check Again"
 msgstr ""
 
-#. Onboarding also offers backup before the management window exists. This
-#. * trusted shell contains only the pinned Backup page, not another editor.
 #: data/ui/onboarding-assistant.ui:306 data/ui/page-identity-detail.ui:10
 #: src/ui/page-identity-detail.c:503
 msgid "Back Up Identity"
@@ -367,7 +365,7 @@ msgstr ""
 
 #: data/ui/onboarding-assistant.ui:364 data/ui/page-identity-detail.ui:53
 #: src/qr-code.c:88 src/ui/page-identity-detail.c:307
-#: src/ui/sheets/sheet-qr-display.c:325
+#: src/ui/sheets/sheet-qr-display.c:455
 msgid "Encrypted Backup"
 msgstr ""
 
@@ -406,11 +404,11 @@ msgid ""
 msgstr ""
 
 #: data/ui/page-connect.ui:17
-msgid "Paste App Link"
+msgid "Paste Connection Link"
 msgstr ""
 
 #: data/ui/page-connect.ui:18
-msgid "Preview a link from your clipboard"
+msgid "Preview a nostrconnect:// link from the remote app"
 msgstr ""
 
 #: data/ui/page-connect.ui:34
@@ -422,30 +420,16 @@ msgid "Use your camera or a QR image"
 msgstr ""
 
 #: data/ui/page-connect.ui:51
-msgid "Open Link File…"
+msgid "Show My Connection Link"
 msgstr ""
 
 #: data/ui/page-connect.ui:52
-msgid "Choose a connection link saved by your app"
-msgstr ""
-
-#: data/ui/page-connect.ui:72
-msgid "Remote Signing"
-msgstr ""
-
-#: data/ui/page-connect.ui:73 src/home-model.c:119
-msgid "Connecting to signer…"
-msgstr ""
-
-#: data/ui/page-connect.ui:79
-msgid ""
-"Apps on this device ask for permission automatically. Apps can sign only "
-"after you approve their permissions."
+msgid "Open to enable remote signing and show a connection link"
 msgstr ""
 
 #: data/ui/page-settings.ui:10 data/ui/shortcuts-window.ui:45
-#: data/org.nostr.Grotto.desktop:30 src/ui/signer-window.c:612
-#: src/ui/signer-window.c:805
+#: data/org.nostr.Grotto.desktop:30 src/ui/signer-window.c:636
+#: src/ui/signer-window.c:829
 msgid "Preferences"
 msgstr ""
 
@@ -522,8 +506,8 @@ msgid "Anyone with this backup controls your identity. Keep it private"
 msgstr ""
 
 #: data/ui/page-identity-detail.ui:37 data/ui/signer-window.ui:44
-#: data/ui/sheets/sheet-create-bunker.ui:44 src/ui/approval_dialog.c:306
-#: src/ui/approval_dialog.c:789 src/ui/pairing-flow.c:169
+#: src/ui/approval_dialog.c:306 src/ui/approval_dialog.c:789
+#: src/ui/pairing-flow.c:135 src/ui/sheets/sheet-qr-display.c:412
 msgid "Identity"
 msgstr ""
 
@@ -585,19 +569,19 @@ msgid "Grotto"
 msgstr "Grotto"
 
 #: data/ui/shortcuts-window.ui:20 data/org.nostr.Grotto.desktop:26
-#: src/ui/signer-window.c:595
+#: src/ui/signer-window.c:619
 msgid "New Identity…"
 msgstr ""
 
-#: data/ui/shortcuts-window.ui:26 src/ui/signer-window.c:596
+#: data/ui/shortcuts-window.ui:26 src/ui/signer-window.c:620
 msgid "Import Identity…"
 msgstr ""
 
-#: data/ui/shortcuts-window.ui:32 src/ui/signer-window.c:597
+#: data/ui/shortcuts-window.ui:32 src/ui/signer-window.c:621
 msgid "Back Up Identity…"
 msgstr ""
 
-#: data/ui/shortcuts-window.ui:38 src/ui/signer-window.c:604
+#: data/ui/shortcuts-window.ui:38 src/ui/signer-window.c:628
 msgid "Lock Management"
 msgstr ""
 
@@ -613,7 +597,7 @@ msgstr ""
 msgid "Quit Approval UI (authorized signing continues)"
 msgstr ""
 
-#: data/ui/shortcuts-window.ui:63 src/ui/signer-window.c:613
+#: data/ui/shortcuts-window.ui:63 src/ui/signer-window.c:637
 msgid "Keyboard Shortcuts"
 msgstr ""
 
@@ -629,37 +613,8 @@ msgstr ""
 msgid "Panels"
 msgstr ""
 
-#: data/ui/sheets/sheet-create-bunker.ui:10 src/ui/signer-window.c:820
-msgid "Create Pairing Link"
-msgstr ""
-
-#: data/ui/sheets/sheet-create-bunker.ui:21
-#: data/ui/sheets/sheet-qr-scanner.ui:22 src/ui/signer-window.c:769
-#: src/ui/dialog-actions.h:11 src/ui/page-identity-detail.c:284
-#: src/ui/page-identity-detail.c:391 src/ui/onboarding-assistant.c:97
-msgid "_Cancel"
-msgstr "_Cancelar"
-
-#: data/ui/sheets/sheet-create-bunker.ui:27
-msgid "Create _Link"
-msgstr ""
-
-#: data/ui/sheets/sheet-create-bunker.ui:39
-msgid ""
-"Choose the identity to connect. You'll review the app before it can sign."
-msgstr ""
-
-#: data/ui/sheets/sheet-create-bunker.ui:49
-msgid "App Name (Optional)"
-msgstr ""
-
-#: data/ui/sheets/sheet-create-bunker.ui:59
-msgid "Checking remote signing…"
-msgstr ""
-
-#. Set title
 #: data/ui/sheets/sheet-qr-display.ui:10 data/ui/sheets/sheet-qr-display.ui:51
-#: src/ui/sheets/sheet-qr-display.c:287
+#: src/ui/sheets/sheet-qr-display.c:271
 msgid "QR Code"
 msgstr "Código QR"
 
@@ -667,7 +622,8 @@ msgstr "Código QR"
 msgid "_Close"
 msgstr "_Fechar"
 
-#: data/ui/sheets/sheet-qr-display.ui:27 src/ui/sheets/sheet-qr-display.c:56
+#: data/ui/sheets/sheet-qr-display.ui:27 src/ui/sheets/sheet-qr-display.c:60
+#: src/ui/sheets/sheet-qr-display.c:255
 msgid "Copy to Clipboard"
 msgstr ""
 
@@ -678,6 +634,12 @@ msgstr ""
 #: data/ui/sheets/sheet-qr-scanner.ui:10
 msgid "Scan QR Code"
 msgstr ""
+
+#: data/ui/sheets/sheet-qr-scanner.ui:22 src/ui/signer-window.c:793
+#: src/ui/dialog-actions.h:11 src/ui/page-identity-detail.c:284
+#: src/ui/page-identity-detail.c:391 src/ui/onboarding-assistant.c:97
+msgid "_Cancel"
+msgstr "_Cancelar"
 
 #: data/ui/sheets/sheet-qr-scanner.ui:28 src/ui/sheets/sheet-qr-scanner.c:522
 msgid "_Import Key"
@@ -874,7 +836,6 @@ msgstr ""
 msgid "Notifications unavailable. Requests remain here for review."
 msgstr ""
 
-#. Keep the opportunistic notifier passive until Shell ownership is known.
 #: src/main_app.c:492 src/main_app.c:600
 msgid "Grotto · Signer unavailable"
 msgstr ""
@@ -900,11 +861,11 @@ msgstr ""
 msgid "Review Requests"
 msgstr ""
 
-#: src/main_app.c:506 src/ui/signer-window.c:605
+#: src/main_app.c:506 src/ui/signer-window.c:629
 msgid "Pause Signing"
 msgstr ""
 
-#: src/main_app.c:507 src/ui/signer-window.c:606
+#: src/main_app.c:507 src/ui/signer-window.c:630
 msgid "Resume Signing…"
 msgstr ""
 
@@ -935,7 +896,7 @@ msgstr ""
 msgid "Transport key unavailable"
 msgstr ""
 
-#: src/bunker_service.c:680 src/bunker_service.c:1041
+#: src/bunker_service.c:680 src/bunker_service.c:1068
 msgid "No relays configured"
 msgstr ""
 
@@ -1003,27 +964,31 @@ msgstr ""
 msgid "The signer session bus is unavailable."
 msgstr ""
 
-#: src/grotto-panels-control1-service.c:97
+#: src/home-model.c:119
+msgid "Connecting to signer…"
+msgstr ""
+
+#: src/grotto-panels-control1-service.c:108
 msgid "Previous access policy — unchanged until explicitly upgraded"
 msgstr ""
 
-#: src/grotto-panels-control1-service.c:99
+#: src/grotto-panels-control1-service.c:110
 msgid "Share public key (after first consent)"
 msgstr ""
 
-#: src/grotto-panels-control1-service.c:101
+#: src/grotto-panels-control1-service.c:112
 msgid "Read relay list"
 msgstr ""
 
-#: src/grotto-panels-control1-service.c:101
+#: src/grotto-panels-control1-service.c:112
 msgid "Check connection"
 msgstr ""
 
-#: src/grotto-panels-control1-service.c:102
+#: src/grotto-panels-control1-service.c:113
 msgid "Routine operations, not custom event types"
 msgstr ""
 
-#: src/grotto-panels-control1-service.c:103
+#: src/grotto-panels-control1-service.c:114
 msgid "Public publishing: notes, reposts, reactions, articles and comments"
 msgstr ""
 
@@ -1042,95 +1007,94 @@ msgstr ""
 msgid "Window state restored: width=%d height=%d maximized=%d"
 msgstr ""
 
-#: src/ui/signer-window.c:441
+#: src/ui/signer-window.c:333
+msgid "Remote signing could not be enabled"
+msgstr ""
+
+#: src/ui/signer-window.c:465
 #, c-format
 msgid "Window: session locked (reason=%d)"
 msgstr ""
 
-#: src/ui/signer-window.c:455
+#: src/ui/signer-window.c:479
 msgid "Window: session unlocked"
 msgstr ""
 
-#. Show a toast warning about impending timeout
-#: src/ui/signer-window.c:463
+#: src/ui/signer-window.c:487
 #, c-format
 msgid "Management will lock in %u seconds"
 msgstr ""
 
-#: src/ui/signer-window.c:476
+#: src/ui/signer-window.c:500
 msgid "Window: unlock requested from lock screen"
 msgstr ""
 
-#: src/ui/signer-window.c:598
+#: src/ui/signer-window.c:622
 msgid "Add App…"
 msgstr ""
 
-#: src/ui/signer-window.c:614
+#: src/ui/signer-window.c:638
 msgid "About Grotto"
 msgstr "Grotto"
 
-#: src/ui/signer-window.c:639
+#: src/ui/signer-window.c:663
 #, c-format
 msgid "Connected Apps, %u pending request"
 msgid_plural "Connected Apps, %u pending requests"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/ui/signer-window.c:639
+#: src/ui/signer-window.c:663
 msgid "Connected Apps"
 msgstr ""
 
-#: src/ui/signer-window.c:726
+#: src/ui/signer-window.c:750
 msgid "Identity removed from this device"
 msgstr ""
 
-#: src/ui/signer-window.c:726
+#: src/ui/signer-window.c:750
 msgid "Identity wasn't removed. Check pending requests and retry"
 msgstr ""
 
-#: src/ui/signer-window.c:734
+#: src/ui/signer-window.c:758
 msgid "Identity wasn't removed. Unlock management and retry"
 msgstr ""
 
-#: src/ui/signer-window.c:760
+#: src/ui/signer-window.c:784
 msgid "Remove Identity?"
 msgstr ""
 
-#: src/ui/signer-window.c:760
+#: src/ui/signer-window.c:784
 msgid ""
 "This identity is deleted from this device. Without a backup it can't be "
 "recovered."
 msgstr ""
 
-#: src/ui/signer-window.c:763
+#: src/ui/signer-window.c:787
 msgid "Copy Public Key"
 msgstr ""
 
-#: src/ui/signer-window.c:764
+#: src/ui/signer-window.c:788
 msgid "Type the full npub to confirm removal"
 msgstr ""
 
-#: src/ui/signer-window.c:765
+#: src/ui/signer-window.c:789
 msgid "Public Key Confirmation"
 msgstr ""
 
-#: src/ui/signer-window.c:769
+#: src/ui/signer-window.c:793
 msgid "_Remove"
 msgstr ""
 
-#: src/ui/signer-window.c:816 src/ui/pairing-flow.c:157
+#: src/ui/signer-window.c:837 src/ui/pairing-flow.c:123
 msgid "Add App"
 msgstr ""
 
-#: src/ui/signer-window.c:819
-msgid "Create _Link…"
-msgstr ""
-
-#: src/ui/signer-window.c:923
+#: src/ui/signer-window.c:948
 msgid "Choose Backup for this identity."
 msgstr ""
 
-#: src/ui/signer-window.c:1059
+#: src/ui/signer-window.c:1084
 msgid "Session locked via Ctrl+L"
 msgstr ""
 
@@ -1387,7 +1351,6 @@ msgstr ""
 msgid "Unlocking…"
 msgstr ""
 
-#. Generated by scripts/generate-grotto-kind-catalog.py; do not edit.
 #: src/ui/approval_dialog.c:54 src/ui/kind-catalog.inc:2
 msgid "Profile metadata"
 msgstr ""
@@ -1526,7 +1489,6 @@ msgstr ""
 msgid "custom kinds (%s)"
 msgstr ""
 
-#. Any-relay AUTH is a broader delegation than one relay sign-in: name it.
 #: src/ui/approval_dialog.c:183
 msgid " — any relay this app chooses"
 msgstr ""
@@ -1642,7 +1604,6 @@ msgstr ""
 msgid "_Allow"
 msgstr ""
 
-#. The identity is the Signing As row above; this line states duration.
 #: src/ui/approval_dialog.c:352
 #, c-format
 msgid "Until you revoke it in %s's Permissions page"
@@ -1702,7 +1663,6 @@ msgstr ""
 msgid "No content"
 msgstr ""
 
-#. This compatibility entrypoint has no transport evidence.
 #: src/ui/approval_dialog.c:582 src/ui/approval_dialog.c:585
 #: src/ui/approval_dialog.c:1110
 msgid "Verified caller"
@@ -1740,7 +1700,7 @@ msgid ""
 "Peer: %s"
 msgstr ""
 
-#: src/ui/approval_dialog.c:612 src/ui/pairing-flow.c:119
+#: src/ui/approval_dialog.c:612 src/ui/pairing-flow.c:109
 msgid "None"
 msgstr ""
 
@@ -1991,7 +1951,6 @@ msgid ""
 "No permission is saved to disk"
 msgstr ""
 
-#. One review, one lasting answer: never "once" or 24 h for a declared set.
 #: src/ui/approval_dialog.c:909
 msgid "Allow these permissions"
 msgstr ""
@@ -2278,51 +2237,17 @@ msgstr ""
 msgid "Not used"
 msgstr ""
 
-#: src/ui/page-connect.c:7
-msgid "Disabled"
+#: src/ui/page-connect.c:22
+msgid "Copy a nostrconnect:// connection link from the remote app first"
 msgstr ""
 
-#: src/ui/page-connect.c:8
-msgid "Starting"
+#: src/ui/page-connect.c:52
+msgid "Let a remote app paste or scan this signer’s link"
 msgstr ""
 
-#: src/ui/page-connect.c:9
-msgid "Ready"
-msgstr ""
-
-#: src/ui/page-connect.c:10
-msgid "Connection interrupted"
-msgstr ""
-
-#: src/ui/page-connect.c:11
-msgid "Offline"
-msgstr ""
-
-#: src/ui/page-connect.c:12
-msgid "Stopping"
-msgstr ""
-
-#: src/ui/page-connect.c:13
-msgid "Error"
-msgstr "Erro"
-
-#: src/ui/page-connect.c:14
-msgid "Unavailable"
-msgstr ""
-
-#: src/ui/page-connect.c:57
+#: src/ui/page-connect.c:53
 msgid ""
-"Could not read a valid link file (maximum 64 KiB). Paste or scan the link "
-"instead."
-msgstr ""
-
-#: src/ui/page-connect.c:67
-msgid ""
-"The selected link file could not be read. Paste or scan the link instead."
-msgstr ""
-
-#: src/ui/page-connect.c:85
-msgid "Open App Link File"
+"Remote signing is disabled. Open to enable it and show a connection link."
 msgstr ""
 
 #: src/ui/kind-catalog.inc:4
@@ -3266,7 +3191,6 @@ msgstr ""
 msgid "An identity could not be created. Try again."
 msgstr ""
 
-#. D-Bus owns the in-flight tuple; no seed material remains in labels/UI.
 #: src/ui/onboarding-assistant.c:333
 msgid "Saving your identity…"
 msgstr ""
@@ -3310,46 +3234,42 @@ msgid ""
 "close or lock this window, or after one minute."
 msgstr ""
 
-#: src/ui/pairing-flow.c:52
-msgid "Preview the app details before choosing an identity."
-msgstr ""
-
-#: src/ui/pairing-flow.c:53 src/ui/pairing-flow.c:111
-msgid "This connection link is invalid. Copy a new link from your app."
-msgstr ""
-
-#: src/ui/pairing-flow.c:59
+#: src/ui/pairing-flow.c:49
 msgid ""
 "Identities could not be loaded. Check that Grotto is running and unlocked."
 msgstr ""
 
-#: src/ui/pairing-flow.c:65
+#: src/ui/pairing-flow.c:55
 msgid "Choose an identity, then review what the app may do before connecting."
 msgstr ""
 
-#: src/ui/pairing-flow.c:65
+#: src/ui/pairing-flow.c:55
 msgid "Create or import an identity first."
 msgstr ""
 
-#: src/ui/pairing-flow.c:84
+#: src/ui/pairing-flow.c:74
 msgid "Pairing is unavailable. Check Remote Signing, then try again."
 msgstr ""
 
-#: src/ui/pairing-flow.c:93
+#: src/ui/pairing-flow.c:83
 msgid "Choose an identity to connect."
 msgstr ""
 
-#: src/ui/pairing-flow.c:105
+#: src/ui/pairing-flow.c:95
 msgid "Invalid App Link"
 msgstr ""
 
-#: src/ui/pairing-flow.c:110
+#: src/ui/pairing-flow.c:100
 msgid ""
 "This link belongs to another signer. Use a connection link from an app "
 "instead."
 msgstr ""
 
-#: src/ui/pairing-flow.c:115
+#: src/ui/pairing-flow.c:101
+msgid "This connection link is invalid. Copy a new link from your app."
+msgstr ""
+
+#: src/ui/pairing-flow.c:105
 #, c-format
 msgid ""
 "App name (not verified): %s\n"
@@ -3357,11 +3277,11 @@ msgid ""
 "been made yet."
 msgstr ""
 
-#: src/ui/pairing-flow.c:115 src/ui/sheets/sheet-qr-scanner.c:326
+#: src/ui/pairing-flow.c:105 src/ui/sheets/sheet-qr-scanner.c:326
 msgid "Not supplied"
 msgstr ""
 
-#: src/ui/pairing-flow.c:118
+#: src/ui/pairing-flow.c:108
 #, c-format
 msgid ""
 "App key: %s\n"
@@ -3370,79 +3290,79 @@ msgid ""
 "%s"
 msgstr ""
 
-#: src/ui/pairing-flow.c:121 src/ui/sheets/sheet-create-bunker.c:114
+#: src/ui/pairing-flow.c:111 src/ui/sheets/sheet-qr-display.c:354
+#: src/ui/sheets/sheet-qr-display.c:433
 msgid "Grotto could not reach the signer."
 msgstr ""
 
-#: src/ui/pairing-flow.c:160
-msgid ""
-"Apps on this device ask for permission automatically. Use a link or QR code "
-"for an app on another device."
-msgstr ""
-
-#: src/ui/pairing-flow.c:178 src/ui/pairing-flow.c:179
+#: src/ui/pairing-flow.c:144 src/ui/pairing-flow.c:145
 msgid "Identity to Connect"
 msgstr ""
 
-#: src/ui/pairing-flow.c:181
+#: src/ui/pairing-flow.c:147
 msgid "_Review"
 msgstr ""
 
-#: src/ui/pairing-flow.c:186
-msgid "Paste an app connection link"
-msgstr ""
-
-#: src/ui/pairing-flow.c:187
-msgid "_Preview"
-msgstr ""
-
-#: src/ui/pairing-flow.c:190
-msgid "_Scan QR Code…"
-msgstr ""
-
-#: src/ui/pairing-flow.c:190
-msgid "Create Pairing _Link…"
-msgstr ""
-
-#: src/ui/sheets/sheet-create-bunker.c:25
-msgid "Open Remote Signing to set up a connection, then try again."
-msgstr ""
-
-#: src/ui/sheets/sheet-create-bunker.c:30
-msgid "Ready to create a single-use link"
-msgstr ""
-
-#: src/ui/sheets/sheet-create-bunker.c:30
-msgid "Remote signing is not ready. Check Remote Signing, then try again."
-msgstr ""
-
-#: src/ui/sheets/sheet-create-bunker.c:71
-msgid ""
-"A link could not be created. Check Remote Signing and close any unused "
-"pairing links, then try again."
-msgstr ""
-
-#: src/ui/sheets/sheet-qr-display.c:79
+#: src/ui/sheets/sheet-qr-display.c:83
 msgid "Copied"
 msgstr ""
 
-#: src/ui/sheets/sheet-qr-display.c:163
-msgid ""
-"Use this link once within five minutes. Closing this window cancels it. "
-"Sharing it does not grant access; you review permissions before connecting."
-msgstr ""
-
-#: src/ui/sheets/sheet-qr-display.c:293
+#: src/ui/sheets/sheet-qr-display.c:277
 msgid "Anyone with this code controls your identity. Keep it private."
 msgstr ""
 
-#: src/ui/sheets/sheet-qr-display.c:297
+#: src/ui/sheets/sheet-qr-display.c:281
 msgid ""
 "Keep this backup and its passphrase safe. You need both to restore your "
 "identity."
 msgstr ""
 
-#: src/ui/sheets/sheet-qr-display.c:316
+#: src/ui/sheets/sheet-qr-display.c:295 src/ui/sheets/sheet-qr-display.c:318
+#: src/ui/sheets/sheet-qr-display.c:324 src/ui/sheets/sheet-qr-display.c:345
+#: src/ui/sheets/sheet-qr-display.c:348 src/ui/sheets/sheet-qr-display.c:353
+#: src/ui/sheets/sheet-qr-display.c:374 src/ui/sheets/sheet-qr-display.c:410
+msgid "Connection Link"
+msgstr ""
+
+#: src/ui/sheets/sheet-qr-display.c:319
+msgid ""
+"Paste or scan this link in a remote app; single-use links are replaced after "
+"an app connects."
+msgstr ""
+
+#: src/ui/sheets/sheet-qr-display.c:325
+msgid ""
+"A connection link could not be created. Choose a signing identity and check "
+"Remote Signing."
+msgstr ""
+
+#: src/ui/sheets/sheet-qr-display.c:346
+msgid "Choose the identity to connect."
+msgstr ""
+
+#: src/ui/sheets/sheet-qr-display.c:349
+msgid "The connection link will appear when remote signing is ready."
+msgstr ""
+
+#: src/ui/sheets/sheet-qr-display.c:350
+msgid ""
+"Enable remote signing to produce a link that an app can paste or scan to "
+"connect."
+msgstr ""
+
+#: src/ui/sheets/sheet-qr-display.c:380
+msgid "Open Remote Signing in Grotto to enable it."
+msgstr ""
+
+#: src/ui/sheets/sheet-qr-display.c:405
+msgid "Grotto could not load signing identities."
+msgstr ""
+
+#: src/ui/sheets/sheet-qr-display.c:417
+msgid "Enable Remote Signing"
+msgstr ""
+
+#: src/ui/sheets/sheet-qr-display.c:446
 msgid "Share Public Key"
 msgstr ""
 

@@ -4,6 +4,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include "nostrc-test-bus.h"
+#include "nostrc-test-gdk-frame.h"
+#include "nostrc-test-isolation.h"
 #include "bunker_test_relay.h"
 #include "nostr/nip46/nip46_client.h"
 #include "nostr/nip46/nip46_msg.h"
@@ -17,6 +19,8 @@
 #include <nostr/nip55l/error.h>
 #include <secure_buf.h>
 #include "grotto_clients.h"
+#include "grotto-connection-link.h"
+#include "grotto-panels-control1-service.h"
 #include "signer_permissions.h"
 #include "nip55l_dbus_errors.h"
 #include <nostr/nip19/nip19.h>
@@ -48,12 +52,27 @@ typedef struct {
     gint64 reconnect_since;
     GPtrArray *deferred_ids, *sensitive;
     gboolean ready, passed, timed_out, enabling, focused;
+    GtkWidget *panel_window;
+    GrottoPanelsService *panel_service;
+    gchar *panel_uri;
 } Fixture;
 
 #define REQUIRE(condition, message) do { \
     if (!(condition)) { g_printerr("ASSERTION FAILED: %s\n", message); return FALSE; } \
 } while (0)
 
+static GSubprocess *spawn_daemon(Fixture *f, const gchar *log, const gchar *const *command) {
+    if (!f->focused) return nostrc_test_bus_spawn_supervised(f->bus, log, NULL, command);
+    /* GTK keeps process-wide desktop proxies on the outer test session bus;
+     * only the daemon and explicit Control1 connection use the private bus. */
+    g_autofree gchar *address = g_strconcat("DBUS_SESSION_BUS_ADDRESS=", nostrc_test_bus_get_address(f->bus), NULL);
+    g_autofree gchar *marker = g_strconcat(NOSTRC_TEST_BUS_ADDRESS_ENV "=", nostrc_test_bus_get_address(f->bus), NULL);
+    g_autoptr(GPtrArray) argv = g_ptr_array_new();
+    g_ptr_array_add(argv, (gpointer)"env"); g_ptr_array_add(argv, address); g_ptr_array_add(argv, marker);
+    for (guint i = 0; command[i]; i++) g_ptr_array_add(argv, (gpointer)command[i]);
+    g_ptr_array_add(argv, NULL);
+    return nostrc_test_bus_spawn_supervised(f->bus, log, NULL, (const gchar *const *)argv->pdata);
+}
 typedef struct { Fixture *fixture; gchar *event; BunkerTestRelay *relay; } Injection;
 static gboolean inject_on_main(gpointer data) {
     Injection *job = data; bunker_test_relay_inject(job->relay ? job->relay : job->fixture->relay, job->event);
@@ -255,7 +274,7 @@ static gboolean restart_on_main(gpointer data) {
     g_assert_nonnull(f->restart_monitor);
     g_signal_connect(f->restart_monitor, "changed", G_CALLBACK(restart_log_changed), f);
     const gchar *command[] = {f->daemon_binary, "--bunker", f->headless ? "--no-approval-ui" : NULL, NULL};
-    f->daemon = nostrc_test_bus_spawn_supervised(f->bus, "grotto-restart.log", NULL, command);
+    f->daemon = spawn_daemon(f, "grotto-restart.log", command);
     restart_log_changed(NULL, NULL, NULL, 0, f); return G_SOURCE_REMOVE;
 }
 static gboolean drain_approver(Fixture *f) {
@@ -323,6 +342,35 @@ static gchar *await_connect_review(Fixture *f) {
     g_mutex_lock(&f->capture_mutex); gint64 bound = g_get_monotonic_time() + 10 * G_USEC_PER_SEC;
     while (!f->connect_review) if (!g_cond_wait_until(&f->capture_cond, &f->capture_mutex, bound)) break;
     gchar *id = g_steal_pointer(&f->connect_review); g_mutex_unlock(&f->capture_mutex); return id;
+}
+static gboolean panel_can_command(gpointer data, GrottoPanelCommand command) {
+    return grotto_panels_service_can(data, command);
+}
+static void panel_command(gpointer data, GrottoPanelCommand command, const GrottoPanelCommandArgs *args,
+    GCancellable *cancel, GAsyncReadyCallback callback, gpointer user_data) {
+    grotto_panels_control1_service_host_command_async(data, command, args, cancel, callback, user_data);
+}
+static void panel_link_changed(AdwActionRow *row, GParamSpec *pspec, gpointer data) {
+    (void)pspec; Fixture *f = data; const gchar *uri = adw_action_row_get_subtitle(row);
+    g_mutex_lock(&f->capture_mutex);
+    if (f->panel_uri) { secure_wipe(f->panel_uri, strlen(f->panel_uri)); g_clear_pointer(&f->panel_uri, g_free); }
+    if (uri && g_str_has_prefix(uri, "bunker://")) f->panel_uri = g_strdup(uri);
+    g_cond_broadcast(&f->capture_cond); g_mutex_unlock(&f->capture_mutex);
+}
+static gchar *await_panel_link(Fixture *f, const gchar *previous) {
+    gint64 bound = g_get_monotonic_time() + 10000000;
+    g_mutex_lock(&f->capture_mutex);
+    while (!f->panel_uri || !g_strcmp0(previous, f->panel_uri))
+        if (!g_cond_wait_until(&f->capture_cond, &f->capture_mutex, bound)) break;
+    gchar *uri = f->panel_uri && g_strcmp0(previous, f->panel_uri) ? g_strdup(f->panel_uri) : NULL;
+    g_mutex_unlock(&f->capture_mutex); return uri;
+}
+static gboolean connection_offer_matches(Fixture *f, const gchar *uri) {
+    g_autoptr(GVariant) reply = g_dbus_connection_call_sync(f->approver, "org.nostr.Signer", "/org/nostr/signer/grotto",
+        "org.nostr.Grotto.Control1", "GetConnectionLink", g_variant_new("(s)", ""),
+        G_VARIANT_TYPE("(a{sv})"), G_DBUS_CALL_FLAGS_NONE, 10000, NULL, NULL);
+    g_autoptr(GVariant) offer = reply ? g_variant_get_child_value(reply, 0) : NULL; const gchar *link = NULL;
+    return offer && g_variant_lookup(offer, "uri", "&s", &link) && !g_strcmp0(link, uri);
 }
 static GVariant *create_offer(Fixture *f, const gchar *identity) {
     GVariant *reply = g_dbus_connection_call_sync(f->approver, "org.nostr.Signer", "/org/nostr/signer/grotto",
@@ -698,7 +746,7 @@ static gboolean run_rpc_flow(Fixture *f)
     if (!f->status_subscription) f->status_subscription = g_dbus_connection_signal_subscribe(f->approver, "org.nostr.Signer", "org.nostr.Grotto.Control1", "StatusChanged",
         "/org/nostr/signer/grotto", NULL, G_DBUS_SIGNAL_FLAGS_NONE, runtime_changed, f, NULL);
     /* The remote lane may be in ERROR, but the exported local signer survives. */
-    g_autoptr(GDBusConnection) bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
+    g_autoptr(GDBusConnection) bus = g_object_ref(f->approver);
     REQUIRE(bus != NULL, "connect to isolated signer bus");
     g_autoptr(GVariant) local = g_dbus_connection_call_sync(bus,
         "org.nostr.Signer", "/org/nostr/signer", "org.freedesktop.DBus.Introspectable",
@@ -713,12 +761,13 @@ static gboolean run_rpc_flow(Fixture *f)
     if (!f->headless && !f->focused) REQUIRE(token_pairing(f), "single-use token admission, reservation, cancellation and revoke");
     g_autofree gchar *encoded = g_uri_escape_string(bunker_test_relay_url(f->relay), NULL, FALSE);
     g_autofree gchar *uri = g_strdup_printf("bunker://%s?relay=%s", f->transport_pk, encoded);
-    g_autoptr(GVariant) offer = f->focused ? create_offer(f, f->account_pk) : NULL;
     NostrNip46BunkerURI pairing = {0};
     if (f->focused) {
-        const gchar *link = NULL; REQUIRE(offer && g_variant_lookup(offer, "uri", "&s", &link), "create pairing through real Control1");
+        g_autofree gchar *link = await_panel_link(f, NULL); REQUIRE(link, "real Remote Signing panel displays the daemon connection link");
+        REQUIRE(connection_offer_matches(f, link) && connection_offer_matches(f, link), "Control1 reuses the panel offer before consumption");
         g_ptr_array_add(f->sensitive, g_strdup(link));
         REQUIRE(!nostr_nip46_uri_parse_bunker(link, &pairing), "parse single-use pairing link");
+        g_ptr_array_add(f->sensitive, g_strdup(pairing.secret));
         g_free(uri); uri = g_strdup(link);
     }
     REQUIRE(nostr_nip46_client_connect(f->client, uri, NULL) == 0, "parse real daemon bunker endpoint");
@@ -726,6 +775,7 @@ static gboolean run_rpc_flow(Fixture *f)
     nostr_nip46_client_set_timeout(f->client, 4000); /* failure bound, not readiness */
 
     g_autofree gchar *ack = NULL;
+    if (f->focused) hold_acks(f, f->relay, TRUE);
     int rc = nostr_nip46_client_connect_rpc(f->client, pairing.secret,
         "get_public_key,sign_event,nip44_encrypt,nip44_decrypt", &ack);
     if (pairing.secret) { secure_wipe(pairing.secret, strlen(pairing.secret)); nostr_nip46_uri_bunker_free(&pairing); }
@@ -733,6 +783,15 @@ static gboolean run_rpc_flow(Fixture *f)
     REQUIRE(rc == 0 && g_strcmp0(ack, "ack") == 0,
         "real grotto-daemon --bunker must answer encrypted connect; no listener/reply is NOT RUNNING");
 
+    if (f->focused) {
+        REQUIRE(client_pairing_state(f, f->client_pk, FALSE, TRUE, TRUE), "original connect remains pending while the relay withholds OK");
+        g_autofree gchar *next = await_panel_link(f, uri);
+        REQUIRE(next && connection_offer_matches(f, next), "Control1 regenerates the consumed single-use link and the real panel refreshes before durable acknowledgment");
+        g_ptr_array_add(f->sensitive, g_strdup(next));
+        NostrNip46BunkerURI rotated = {0}; REQUIRE(!nostr_nip46_uri_parse_bunker(next, &rotated), "parse rotated link");
+        g_ptr_array_add(f->sensitive, g_strdup(rotated.secret)); secure_wipe(rotated.secret, strlen(rotated.secret)); nostr_nip46_uri_bunker_free(&rotated);
+        hold_acks(f, f->relay, FALSE);
+    }
     REQUIRE(client_pairing_state(f, f->client_pk, TRUE, FALSE, TRUE), "wait for relay-accepted durable pairing before editing scoped permissions");
     /* Use the real management contract for explicit account/operation scopes.
      * Rapid synthetic UI decisions must not race the production prompt throttle;
@@ -1273,6 +1332,11 @@ int main(int argc, char **argv)
     if (!nostrc_test_bus_available()) return 77;
     nostr_json_init();
     Fixture f = {0}; f.focused = argc == 5 && !strcmp(argv[4], "--remote-signing");
+    if (f.focused) {
+        int gtk_argc = 1; char *gtk_args[] = {argv[0], NULL}; char **gtk_argv = gtk_args;
+        g_test_init(&gtk_argc, &gtk_argv, NULL);
+        nostrc_test_tolerate_gdk_frame_warning();
+    }
     f.headless = argc == 5 && !f.focused; f.daemon_binary = argv[1];
     f.account_sk = nostr_key_generate_private(); f.account_pk = nostr_key_get_public(f.account_sk);
     f.client_sk = nostr_key_generate_private(); f.client_pk = nostr_key_get_public(f.client_sk);
@@ -1296,7 +1360,7 @@ int main(int argc, char **argv)
     g_assert_nonnull(f.account_pk); g_assert_nonnull(f.client_pk); g_assert_nonnull(f.peer_pk);
     f.client = nostr_nip46_client_new();
     g_assert_nonnull(f.client);
-    f.bus = nostrc_test_bus_new(NOSTRC_TEST_BUS_FLAGS_NONE);
+    f.bus = nostrc_test_bus_new(f.focused ? NOSTRC_TEST_BUS_FLAGS_NOT_SESSION : NOSTRC_TEST_BUS_FLAGS_NONE);
     nostrc_test_bus_up(f.bus);
     f.approver = nostrc_test_bus_connect(f.bus);
     f.approver_name = g_bus_own_name_on_connection(f.approver, "org.nostr.Grotto", G_BUS_NAME_OWNER_FLAGS_NONE, NULL, NULL, NULL, NULL);
@@ -1307,6 +1371,22 @@ int main(int argc, char **argv)
     g_mutex_init(&f.capture_mutex); g_cond_init(&f.capture_cond);
     f.captured = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
     f.capture_relays = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+    if (f.focused) {
+        g_setenv("GTK_A11Y", "none", TRUE);
+        adw_init();
+        g_autoptr(GDBusProxy) proxy = g_dbus_proxy_new_sync(f.approver,
+            G_DBUS_PROXY_FLAGS_DO_NOT_AUTO_START | G_DBUS_PROXY_FLAGS_DO_NOT_LOAD_PROPERTIES, NULL,
+            "org.nostr.Signer", "/org/nostr/signer/grotto", "org.nostr.Grotto.Control1", NULL, NULL);
+        g_assert_nonnull(proxy); f.panel_service = grotto_panels_control1_service_new(proxy);
+        GrottoRemotePanel *panel = GROTTO_REMOTE_PANEL(grotto_remote_panel_new(f.panel_service));
+        const GrottoPanelsHost host = {.can_command = panel_can_command, .command_async = panel_command};
+        grotto_panel_set_host(GROTTO_PANEL(panel), &host, f.panel_service, NULL);
+        grotto_connection_link_bind(panel, f.approver);
+        AdwActionRow *link = ADW_ACTION_ROW(gtk_widget_get_template_child(GTK_WIDGET(panel), GROTTO_TYPE_REMOTE_PANEL, "connection_link"));
+        g_signal_connect(link, "notify::subtitle", G_CALLBACK(panel_link_changed), &f);
+        f.panel_window = adw_window_new(); g_object_ref_sink(f.panel_window);
+        adw_window_set_content(ADW_WINDOW(f.panel_window), GTK_WIDGET(panel)); gtk_window_present(GTK_WINDOW(f.panel_window));
+    }
     f.relay = bunker_test_relay_new(); f.relay2 = bunker_test_relay_new();
     bunker_test_relay_set_event_callback(f.relay2, capture_response_b, &f);
     bunker_test_relay_set_event_callback(f.relay, capture_response_a, &f);
@@ -1326,7 +1406,7 @@ int main(int argc, char **argv)
         const gchar *wrapper = g_getenv("NOSTRC_BUNKER_DEBUGGER_WRAPPER");
         const gchar *command[] = {argv[1], f.headless ? "--no-approval-ui" : NULL, NULL};
         const gchar *wrapped[] = {wrapper, argv[1], f.headless ? "--no-approval-ui" : NULL, NULL};
-        f.daemon = nostrc_test_bus_spawn_supervised(f.bus, "grotto-daemon.log", NULL, wrapper ? wrapped : command);
+        f.daemon = spawn_daemon(&f, "grotto-daemon.log", wrapper ? wrapped : command);
         timeout_id = g_timeout_add_seconds(60, deadline, &f);
         check_daemon_log(&f);
         g_main_loop_run(f.loop);
@@ -1352,8 +1432,11 @@ int main(int argc, char **argv)
     g_dbus_connection_signal_unsubscribe(f.approver, f.approval_subscription);
     if (f.status_subscription) g_dbus_connection_signal_unsubscribe(f.approver, f.status_subscription);
     g_bus_unown_name(f.approver_name);
+    if (f.panel_window) { gtk_window_destroy(GTK_WINDOW(f.panel_window)); g_object_unref(f.panel_window); }
+    g_clear_object(&f.panel_service);
     nostrc_test_bus_down(f.bus);
     g_main_loop_unref(f.loop);
+    if (f.panel_uri) { secure_wipe(f.panel_uri, strlen(f.panel_uri)); g_free(f.panel_uri); }
     g_hash_table_unref(f.captured); g_hash_table_unref(f.capture_relays); g_mutex_clear(&f.capture_mutex); g_cond_clear(&f.capture_cond);
     g_free(f.log_path);
     secure_wipe(f.account_sk, strlen(f.account_sk)); free(f.account_sk); free(f.account_pk);

@@ -463,11 +463,12 @@ endif()
 if(UNIX AND TARGET grotto-daemon AND TARGET nostr_nip46_core)
     find_program(G00_GLIB_COMPILE_SCHEMAS glib-compile-schemas REQUIRED)
     pkg_check_modules(G00_SOUP REQUIRED IMPORTED_TARGET libsoup-3.0)
-    add_executable(test-bunker-e2e test-bunker-e2e.c bunker_test_relay.c)
+    add_executable(test-bunker-e2e test-bunker-e2e.c bunker_test_relay.c
+        ../src/grotto-connection-link.c ../src/grotto-panels-control1-service.c)
     target_include_directories(test-bunker-e2e PRIVATE ${SIGNER_INCLUDE_DIRS}
         ${CMAKE_SOURCE_DIR}/apps/grotto/daemon ${CMAKE_SOURCE_DIR}/nips/nip55l/src/glib)
     target_link_libraries(test-bunker-e2e PRIVATE
-        ${SIGNER_TEST_LIBS} nostr_nip46_core nostr_nip55l_core grotto_control_core PkgConfig::G00_SOUP nostrc-test-bus)
+        ${SIGNER_TEST_LIBS} nostr_nip46_core nostr_nip55l_core grotto_control_core PkgConfig::G00_SOUP nostrc-test-bus grotto-panels)
     target_link_directories(test-bunker-e2e PRIVATE ${SIGNER_TEST_LINK_DIRS})
     target_compile_features(test-bunker-e2e PRIVATE c_std_11)
     target_compile_options(test-bunker-e2e PRIVATE -Wall -Wextra -Werror)

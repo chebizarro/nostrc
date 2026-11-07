@@ -8,7 +8,6 @@ data/ui/page-settings.ui
 data/ui/page-identity-detail.ui
 data/ui/shortcuts-window.ui
 data/ui/signer-window.ui
-data/ui/sheets/sheet-create-bunker.ui
 data/ui/sheets/sheet-qr-display.ui
 data/ui/sheets/sheet-qr-scanner.ui
 data/ui/widgets/gn-secure-entry.ui
@@ -36,7 +35,6 @@ src/ui/page-settings.c
 src/ui/page-identity-detail.c
 src/ui/onboarding-assistant.c
 src/ui/pairing-flow.c
-src/ui/sheets/sheet-create-bunker.c
 src/ui/sheets/sheet-qr-display.c
 src/ui/sheets/sheet-qr-scanner.c
 src/ui/widgets/gn-secure-entry.c
