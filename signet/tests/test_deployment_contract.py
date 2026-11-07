@@ -132,6 +132,26 @@ class DeploymentContracts(unittest.TestCase):
                 with self.assertRaises(subprocess.CalledProcessError):
                     ops.confirmed_stopped(Path('/unused'), {'profiles': []})
 
+    def test_upgrade_requires_candidate_preflight_even_offline(self):
+        from types import SimpleNamespace
+        current, candidate = Path('/current'), Path('/candidate')
+        manifest = {'volume': {}, 'profiles': []}
+        for offline in (False, True):
+            with self.subTest(offline=offline):
+                args = SimpleNamespace(action='upgrade', bundle=str(candidate), offline=offline)
+                with patch.object(ops, 'preflight', side_effect=[
+                        (current, manifest, {}), RuntimeError('local image digest mismatch')]) as preflight, \
+                     patch.object(ops, 'bundle', return_value=(candidate, manifest, {})), \
+                     patch.object(ops, 'compose') as compose, patch.object(ops, 'stop') as stop:
+                    with self.assertRaisesRegex(RuntimeError, 'local image digest mismatch'):
+                        ops.release(args)
+                    preflight.assert_called_with(candidate, starting=False)
+                    stop.assert_not_called()
+                    if offline:
+                        compose.assert_not_called()
+                    else:
+                        compose.assert_called_once_with(candidate, manifest, 'pull', 'signetd')
+
     def test_schema_changed_rollback_refused_before_stop(self):
         from types import SimpleNamespace
         previous = Path('/previous')

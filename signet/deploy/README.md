@@ -83,6 +83,9 @@ Only after the mount succeeds are `state` and `backups` created. This deliberate
 avoids a second `fs_setup` that might destroy an existing recovery volume.
 Inspect `cloud-init status --long`, `/etc/signet-volume-{id,uuid}`, `findmnt`,
 `docker version`, `docker compose version`, and `dpkg-query -W do-agent` over SSH.
+Ubuntu 24.04 has no `awscli` apt candidate. Cloud-init installs the pinned
+`AWSCLI_VERSION` into `/opt/signet-tools/awscli` using `python3-venv` and exposes
+its root-owned launcher at `/usr/local/bin/aws`; verify `aws --version` too.
 `--enable-monitoring` installs the DO agent; its absence requires owner repair.
 The Signet unit and backup timer remain disabled until custody is ready.
 
@@ -301,9 +304,25 @@ Install and bind the candidate bundle; do not change `current` by hand. Run
 inspects the candidate first, validates config, stops the daemon, makes a protected
 pre-upgrade backup, records the schema, switches the symlink, enforces the stopped
 interval, starts and checks health/readiness/digest, then records the new schema.
-A failed pull changes nothing. A failed later step stays failed and preserves
-artifacts; there is no automatic state rollback. Complete acceptance with signed
+A failed pull changes nothing. After start, readiness has a bounded 180-second
+budget, separate from the 270-second stopped interval; live two-relay startup
+has taken 137 seconds while an unavailable relay's NIP-11 lookup completed.
+A readiness timeout remains a failed operation, even if the daemon becomes ready
+later. A failed later step stays failed and preserves artifacts; there is no
+automatic state rollback. Complete acceptance with signed
 management and the existing reference client from the workstation.
+
+For an explicitly approved unpublished-image drill, use `release.sh upgrade
+<bundle> --offline` only after transferring verified image archives. This skips
+registry access, not digest verification: preflight must find every selected
+image by its manifest digest before the current daemon is stopped. The default
+route still pulls. Docker 28's classic image store may lose `RepoDigests` on
+`docker load`; use the supported containerd image store on a fresh drill host
+(`{"features":{"containerd-snapshotter":true}}` in `/etc/docker/daemon.json`,
+then restart Docker) and verify the exact `RepoDigests` after import. Do not
+switch an existing production host's image store as part of an upgrade: that
+hides its old containers/images. Never substitute a tag or config ID for a
+missing repository digest.
 
 `release.sh rollback-image <previous-bundle>` requires the recorded before/after
 schema **and current schema** to match. The observation is SQLite's schema cookie

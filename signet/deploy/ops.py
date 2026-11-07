@@ -333,8 +333,11 @@ def release(args):
     require(n['volume'] == m['volume'], 'candidate changes volume identity')
     if args.action == 'upgrade':
         # Failure to pull leaves the current daemon and release untouched.
-        compose(q, n, 'pull', 'signetd', *(['caddy'] if 'bootstrap' in n['profiles'] else []))
-        preflight(q, starting=False)
+        if args.offline:
+            print('Offline upgrade: validating preloaded pinned images; no registry pull.', flush=True)
+        else:
+            compose(q, n, 'pull', 'signetd', *(['caddy'] if 'bootstrap' in n['profiles'] else []))
+        preflight(q, starting=False)  # Still verifies every selected local digest before stop.
         stop(p, m)
         before = inspect_store(p, m)
         saved = backup(p, m, upload=False)
@@ -384,7 +387,7 @@ def release(args):
     run(['systemctl', 'start', 'signet-compose.service'])
     # Daemon startup is not relay catch-up. Wait on readiness with a bounded
     # health probe, never restart/re-pair just because a relay is unavailable.
-    deadline = time.monotonic() + 120
+    deadline = time.monotonic() + 180
     while True:
         try:
             health(q, n, f)
@@ -404,7 +407,10 @@ def main():
     parser.add_argument('action', choices=['preflight', 'backup', 'upgrade', 'rollback-image', 'rollback-state', 'supervise', 'stop', 'mark-stop', 'quarantine', 'health'])
     parser.add_argument('bundle', nargs='?')
     parser.add_argument('--confirm')
+    parser.add_argument('--offline', action='store_true',
+                        help='upgrade only: require preloaded pinned images instead of pulling')
     args = parser.parse_args()
+    require(not args.offline or args.action == 'upgrade', '--offline is only valid for upgrade')
     require(os.geteuid() == 0, 'host tooling requires root')
     if args.action == 'preflight':
         preflight(args.bundle)

@@ -17,7 +17,7 @@ apt:
     - arches: [default]
       uri: https://security.ubuntu.com/ubuntu/
 package_update: true
-packages: [ca-certificates, curl, gnupg, python3, python3-jsonschema, awscli, util-linux]
+packages: [ca-certificates, curl, gnupg, python3, python3-jsonschema, python3-venv, util-linux]
 write_files: []
 runcmd:
   - [bash, /root/signet-host-init.sh]
