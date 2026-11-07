@@ -401,8 +401,8 @@ static void test_direct_ingress_requires_gift_wrap(void) {
   printf("test_direct_ingress_requires_gift_wrap: PASS\n");
 }
 
-/* Real relay-pool ingress fixture. Separate scenarios exercise old REQs and
- * socket reconnect; history/EOSE/live boundaries never depend on sleeps. */
+/* Real relay-pool ingress fixture. Exercise old REQs and socket reconnect
+ * separately and together; history/EOSE/live boundaries never depend on sleeps. */
 typedef struct {
   Fixture f;
   SignetRelayPool *pool;
@@ -413,6 +413,7 @@ typedef struct {
   bool need_live;
   bool primed;
   bool isolate;
+  bool reconnect;
   gint64 started;
 } IngressWire;
 
@@ -449,7 +450,7 @@ static void ingress_event(const SignetRelayEventView *ev, void *data) {
   }
   CHECK(ev->live_since > 0);
   CHECK(g_get_monotonic_time() - w->started < 10 * G_USEC_PER_SEC);
-  if (g_atomic_int_add(&w->accepted, 1) + 1 == (w->isolate ? 1 : 2)) {
+  if (g_atomic_int_add(&w->accepted, 1) + 1 == (w->reconnect ? 2 : 1)) {
     g_main_loop_quit(w->loop);
     return;
   }
@@ -502,8 +503,9 @@ static gboolean ingress_deadline(void *data) {
   return G_SOURCE_REMOVE;
 }
 
-static int test_wire_ingress(const char *url, const char *fixture_path, bool isolate) {
-  IngressWire w = {.need_live = true, .isolate = isolate};
+static int test_wire_ingress(const char *url, const char *fixture_path,
+                             bool isolate, bool reconnect) {
+  IngressWire w = {.need_live = true, .isolate = isolate, .reconnect = reconnect};
   fixture_setup(&w.f, true);
   /* Future-dated history is inside the skew window and after the coming
    * EOSE timestamp; the pre-EOSE classification must still reject it. */
@@ -529,28 +531,30 @@ static int test_wire_ingress(const char *url, const char *fixture_path, bool iso
   CHECK(signet_relay_pool_start(w.pool) == 0);
   guint deadline = g_timeout_add_seconds(12, ingress_deadline, &w);
   g_main_loop_run(w.loop);
-  int expected = isolate ? 1 : 2;
+  int expected = reconnect ? 2 : 1;
+  int expected_dropped = expected * 2 + (isolate ? 1 : 0);
   if (g_atomic_int_get(&w.accepted) == expected) g_source_remove(deadline);
   signet_relay_pool_free(w.pool);
   CHECK(w.eoses == expected && g_atomic_int_get(&w.accepted) == expected);
-  CHECK(g_atomic_int_get(&w.dropped) == (isolate ? 3 : 4));
+  CHECK(g_atomic_int_get(&w.dropped) == expected_dropped);
   SignetStore *store = signet_key_store_get_store(w.f.ks);
   const char *agents[] = {"history1", "history2", "history-late", "stale1", "stale2", "live1", "live2"};
   for (size_t i = 0; i < G_N_ELEMENTS(agents); i++) {
     SignetAgentRecord rec = {0};
     int rc = signet_store_get_agent(store, agents[i], &rec);
-    CHECK((i < 5 || (isolate && i == 6)) ? rc != 0 : rc == 0);
+    CHECK((i < 5 || (!reconnect && i == 6)) ? rc != 0 : rc == 0);
     signet_agent_record_clear(&rec);
   }
   sqlite3_stmt *stmt = NULL;
   CHECK(sqlite3_prepare_v2(signet_store_get_db(store),
       "SELECT count(*) FROM audit_log WHERE operation='mgmt_history_dropped'",
       -1, &stmt, NULL) == SQLITE_OK);
-  CHECK(sqlite3_step(stmt) == SQLITE_ROW && sqlite3_column_int(stmt, 0) == (isolate ? 3 : 4));
+  CHECK(sqlite3_step(stmt) == SQLITE_ROW && sqlite3_column_int(stmt, 0) == expected_dropped);
   sqlite3_finalize(stmt);
   fixture_teardown(&w.f);
   g_main_loop_unref(w.loop);
-  puts(isolate ? "wire: old-subscription history refused after current EOSE PASS"
+  puts(isolate && reconnect ? "wire: old-REQ isolation, live mutation, reconnect and second live mutation PASS"
+       : isolate ? "wire: old-subscription history refused after current EOSE PASS"
                : "wire: pre-EOSE history and old rumors audited; live mutations within 10s and reconnect PASS");
   return 0;
 }
@@ -562,8 +566,10 @@ int main(int argc, char **argv) {
   }
 
   if (argc == 4 && (strcmp(argv[1], "--wire-ingress") == 0 ||
-                    strcmp(argv[1], "--wire-isolation") == 0))
-    return test_wire_ingress(argv[2], argv[3], strcmp(argv[1], "--wire-isolation") == 0);
+                    strcmp(argv[1], "--wire-isolation") == 0 ||
+                    strcmp(argv[1], "--wire-combined") == 0))
+    return test_wire_ingress(argv[2], argv[3], strcmp(argv[1], "--wire-ingress") != 0,
+                             strcmp(argv[1], "--wire-isolation") != 0);
 
   test_no_cache_duplicates_execute();
   test_cache_rejects_duplicate();

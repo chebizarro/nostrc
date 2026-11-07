@@ -10,7 +10,7 @@ import tempfile
 from test_relay_pool_wire import Relay
 
 
-def run(binary, isolate):
+def run(binary, isolate, reconnect=False):
     with tempfile.TemporaryDirectory(prefix='signet-ingress-') as tmp:
         fixtures = Path(tmp) / 'history.json'
         state = {'requests': 0, 'sid': None, 'old_sid': None,
@@ -63,14 +63,16 @@ def run(binary, isolate):
             env = {key: value for key, value in os.environ.items()
                    if not key.startswith('CLAUDE_CODE_') and key != 'SSH_AUTH_SOCK'}
             try:
-                result = subprocess.run([binary, '--wire-isolation' if isolate else '--wire-ingress',
+                mode = '--wire-combined' if isolate and reconnect else (
+                    '--wire-isolation' if isolate else '--wire-ingress')
+                result = subprocess.run([binary, mode,
                                          relay.url, str(fixtures)],
                                         env=env, capture_output=True, text=True, timeout=20)
             except subprocess.TimeoutExpired as exc:
                 raise AssertionError((state, exc.stdout, exc.stderr)) from exc
             assert result.returncode == 0, (result.returncode, state, result.stdout + result.stderr)
-            assert state['connections'] == (1 if isolate else 2), state
-            assert state['live'] == (2 if isolate else 4), state
+            assert state['connections'] == (1 if isolate and not reconnect else 2), state
+            assert state['live'] == (2 if isolate and not reconnect else 4), state
             print(result.stdout, end='')
         finally:
             relay.close()
@@ -79,3 +81,4 @@ def run(binary, isolate):
 if __name__ == '__main__':
     run(sys.argv[1], isolate=True)
     run(sys.argv[1], isolate=False)
+    run(sys.argv[1], isolate=True, reconnect=True)
