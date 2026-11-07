@@ -20,7 +20,7 @@ volume_id = str(uuid.UUID(os.environ['DO_VOLUME_ID']))
 pins = dict(line.split('=', 1) for line in (here.parent / 'versions.env').read_text().splitlines()
             if line and not line.startswith('#'))
 cfg['users'][0]['ssh_authorized_keys'] = [key]
-files = cfg['write_files']
+files = cfg.setdefault('write_files', [])
 for unit in (here.parent / 'systemd').iterdir():
     files.append({'path': '/etc/systemd/system/' + unit.name, 'owner': 'root:root',
                   'permissions': '0644', 'content': unit.read_text()})
