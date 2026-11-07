@@ -308,6 +308,18 @@ A failed pull changes nothing. A failed later step stays failed and preserves
 artifacts; there is no automatic state rollback. Complete acceptance with signed
 management and the existing reference client from the workstation.
 
+For an explicitly approved unpublished-image drill, use `release.sh upgrade
+<bundle> --offline` only after transferring verified image archives. This skips
+registry access, not digest verification: preflight must find every selected
+image by its manifest digest before the current daemon is stopped. The default
+route still pulls. Docker 28's classic image store may lose `RepoDigests` on
+`docker load`; use the supported containerd image store on a fresh drill host
+(`{"features":{"containerd-snapshotter":true}}` in `/etc/docker/daemon.json`,
+then restart Docker) and verify the exact `RepoDigests` after import. Do not
+switch an existing production host's image store as part of an upgrade: that
+hides its old containers/images. Never substitute a tag or config ID for a
+missing repository digest.
+
 `release.sh rollback-image <previous-bundle>` requires the recorded before/after
 schema **and current schema** to match. The observation is SQLite's schema cookie
 plus a hash of ordered DDL, not a claim of an application migration-version API.
