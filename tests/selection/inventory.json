@@ -27174,7 +27174,7 @@
       "effect": "non_execution",
       "nodes": [],
       "prefix": "docs",
-      "reason": "Prose/tracker allowlist only; executable inputs must override or broaden."
+      "reason": "Documentation prose and image assets only; executable inputs must override or broaden."
     },
     {
       "effect": "non_execution",

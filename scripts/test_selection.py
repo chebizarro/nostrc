@@ -387,10 +387,12 @@ def classify(policy, path, executable=False):
         probe_evidence = (any(r.get("prefix") == "docs/analysis" for r in rules)
                           and re.fullmatch(r"docs/analysis/[^/]+-probe-\d{4}-\d{2}-\d{2}/.+", path) is not None)
         allowed = (path == "LICENSE" or path.startswith(".beads/")
-                   or (path.startswith("docs/") and PurePosixPath(path).suffix in {".md", ".rst", ".txt"} and not executable)
+                   or (path.startswith("docs/") and not executable
+                       and PurePosixPath(path).suffix in {
+                           ".md", ".rst", ".txt", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp"})
                    or probe_evidence)
         if not allowed:
-            return {"path": path, "effect": "global", "nodes": [], "reason": "non-prose input under non-execution rule", "unclassified": True}
+            return {"path": path, "effect": "global", "nodes": [], "reason": "non-documentation input under non-execution rule", "unclassified": True}
     return {"path": path, "effect": effect, "nodes": sorted({n for r in rules for n in r["nodes"]}), "reason": "; ".join(sorted({r["reason"] for r in rules})), "unclassified": False}
 
 

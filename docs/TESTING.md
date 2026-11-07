@@ -90,6 +90,12 @@ alone selects only the operational suite. Regression-test-only changes to
 production logic lives in `scripts/test_selection.py`, not that test module.
 Unknown source paths retain conservative broad fallback.
 
+The inventory's `docs` non-execution rule accepts non-executable prose
+(`.md`, `.rst`, `.txt`) and documentation images (`.png`, `.jpg`, `.jpeg`,
+`.gif`, `.svg`, `.webp`) under `docs/`; these select no tests. The same image
+suffixes outside `docs/`, executable assets, and other unknown file types do
+not gain this exemption. More-specific execution rules still take precedence.
+
 `--explain --head` uses the policy in that committed tree. It cannot retroactively
 change a historical inventory. Replaying historical paths with new policy must
 identify the new source-bound replay commits, separately from the original plan.
