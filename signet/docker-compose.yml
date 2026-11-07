@@ -1,74 +1,89 @@
 # SPDX-License-Identifier: MIT
-#
-# Signet docker-compose deployment
-#
-# Usage:
-#   cp signet.toml.example data/signet.toml
-#   # Edit data/signet.toml with your relay URLs
-#   docker compose up -d
-#
-# Required environment variables (create .env from .env.example):
-#   cp .env.example .env   # then edit with real values
-#   SIGNET_DB_KEY       - Master key for SQLCipher (min 32 bytes, hex)
-#   SIGNET_BUNKER_NSEC_FILE - Host path to a file containing the bunker identity nsec
-#   SIGNET_RELAYS       - Comma-separated relay URLs
-
+# See deploy/README.md. Production is started only by signet-compose.service.
+# Supply BOTH site deploy.env and the selected release.env; no build fallback.
+name: signet
+x-hardened: &hardened
+  image: ${SIGNET_IMAGE:?digest-pinned SIGNET_IMAGE required from release.env}
+  user: "10001:10001"
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  read_only: true
+  tmpfs: ["/tmp:size=10M,mode=1777,noexec,nosuid,nodev"]
+  ulimits:
+    core: 0
+    memlock: {soft: -1, hard: -1}
+  mem_limit: 512m
+  cpus: 1.0
+  restart: "no"
+  logging:
+    driver: json-file
+    options: {max-size: "10m", max-file: "3"}
 services:
   signetd:
-    build:
-      context: ..        # monorepo root (needs libnostr, nips, etc.)
-      dockerfile: signet/Dockerfile
-    container_name: signetd
-    restart: unless-stopped
-
+    <<: *hardened
+    network_mode: host
+    command: ["-c", "/etc/signet/signet.conf"]
+    stop_grace_period: 30s
     environment:
-      - SIGNET_DB_KEY=${SIGNET_DB_KEY}
-      - SIGNET_BUNKER_NSEC_FILE=/run/secrets/signet_bunker_nsec
-      - SIGNET_RELAYS=${SIGNET_RELAYS:-wss://nos.lol}
-      - SIGNET_LOG_LEVEL=${SIGNET_LOG_LEVEL:-info}
-      - SIGNET_PROVISIONER_PUBKEYS=${SIGNET_PROVISIONER_PUBKEYS:-}
-
+      SIGNET_REQUIRE_ENCRYPTED_DB: "true"
+      SIGNET_DB_KEY_FILE: /run/secrets/signet_db_key
+      SIGNET_BUNKER_NSEC_FILE: /run/secrets/signet_bunker_nsec
     volumes:
-      - signet-data:/data
-    secrets:
-      - signet_bunker_nsec
-
-    ports:
-      - "${SIGNET_HEALTH_PORT:-8080}:8080"
-
-    # Security hardening
-    cap_add:
-      - IPC_LOCK              # required for mlockall() — prevents key swap
-    security_opt:
-      - no-new-privileges:true
-    read_only: true
-    tmpfs:
-      - /tmp:size=10M
-    ulimits:
-      memlock:
-        soft: -1              # unlimited — mlockall(MCL_FUTURE) needs this
-        hard: -1
-
-    # Resource limits
-    deploy:
-      resources:
-        limits:
-          memory: 256M
-          cpus: '1.0'
-        reservations:
-          memory: 64M
-
+      - type: bind
+        source: /opt/signet/config
+        target: /etc/signet
+        bind: {create_host_path: false}
+      - type: bind
+        source: /srv/signet/state
+        target: /data
+        bind: {create_host_path: false}
+      - type: bind
+        source: /opt/signet/secrets/db.key
+        target: /run/secrets/signet_db_key
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: /opt/signet/secrets/bunker.nsec
+        target: /run/secrets/signet_bunker_nsec
+        read_only: true
+        bind: {create_host_path: false}
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8080/health"]
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:${SIGNET_HEALTH_PORT:?pin health port in deploy.env and INI}/health"]
       interval: 30s
       timeout: 5s
       start_period: 10s
       retries: 3
-
-volumes:
-  signet-data:
-    driver: local
-
-secrets:
-  signet_bunker_nsec:
-    file: ${SIGNET_BUNKER_NSEC_FILE:-./data/bunker.nsec}
+  signet-ops:
+    <<: *hardened
+    profiles: [ops]
+    network_mode: none
+    entrypoint: ["signetctl", "-c", "/etc/signet/signet.conf"]
+    healthcheck: {disable: true}
+    environment:
+      SIGNET_REQUIRE_ENCRYPTED_DB: "true"
+      SIGNET_DB_KEY_FILE: /run/secrets/signet_db_key
+      SIGNET_BACKUP_KEY_FILE: /run/secrets/signet_backup_key
+    volumes:
+      - type: bind
+        source: /opt/signet/config
+        target: /etc/signet
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: /srv/signet/state
+        target: /data
+        bind: {create_host_path: false}
+      - type: bind
+        source: /srv/signet/backups
+        target: /backups
+        bind: {create_host_path: false}
+      - type: bind
+        source: /opt/signet/secrets/db.key
+        target: /run/secrets/signet_db_key
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: /opt/signet/secrets/backup.key
+        target: /run/secrets/signet_backup_key
+        read_only: true
+        bind: {create_host_path: false}
