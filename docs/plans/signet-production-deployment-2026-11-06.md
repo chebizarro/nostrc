@@ -386,7 +386,7 @@ Upgrade: install bundle under `releases/<commit>` → pull + inspect candidate b
 | Volume missing | preflight fails before Compose; no root-disk state dir created |
 | Wrong volume | UUID mismatch fails even if mountpoint exists (enforced on every boot because systemd runs preflight; Compose has no restart policy) |
 | Provisioner write-back fails | critical log + metric + `/ready` detail flag; authorization unchanged; preflight refuses a non-writable config dir |
-| Restart < 150 s after stop | `release.sh`/`restore` refuse; manual restarts documented as a replay risk |
+| Restart < 270 s after stop | `release.sh`/`restore`/`preflight.sh` refuse; manual `docker compose up` bypass documented as a replay risk (SR-02, `nostrc-17ggo`) |
 | Wrong DB key | store refuses; no second database created |
 | SQLCipher unavailable | required encrypted mode refuses startup |
 | Relay AUTH rejected | reason logged without secrets; readiness false; bounded reconnect, no busy-spin |
