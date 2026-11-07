@@ -87,3 +87,45 @@ Delivery is this report, committed **locally only** on `grotto/identity-picker-s
 ## Merge recommendation
 
 **Request changes for F1 before merging unchanged.** Make the intended label-based name reach the real accessible option/container, retain the distinct key text and key-based selection, and verify that finite correction on the actual backend. Resolve F2 by following the stated fallback hierarchy or explicitly accepting the extra profile-name tier. Keep the cache-only factory, existing selection/permission behavior, compact layout, new sidebar order and stable page names; there is no evidence here for changing authorization, adding confirmation steps, making rendering fetch profiles, or starting a broader qualification programme. All requested focused checks are green; the exported-name defect is a targeted diagnostic finding, not a claim that those checks failed.
+
+## Re-check (5d83516f2)
+
+Date: 2026-11-07. Re-check task: `nostrc-xarpy`. Reviewed fix: `5d83516f26e16b84ae1987b427173aac7bc2acdb`, on the same local branch/worktree. Scope was only F1/F2 and repetition of the original serial checks; `git diff 5d83516f2^..5d83516f2` changes the picker, its public comment, focused management tests and the two GTK accessibility imports in the boundary allowlist. No implementation, catalog, template, version or test file was modified by this re-check. The original findings above remain historical evidence.
+
+### Findings resolved
+
+- **F1 resolved — confirmed/executed and static.** `gnome/grotto-panels/src/grotto-identity-picker.c:47-50` now sets the actual `GtkListItem` accessible label to the chosen identity name and its description to the short npub, rather than labelling the generic box. A weak reference avoids an item/child ownership cycle (`:9,18,66`); unbind clears both accessible properties (`:100-105`). The updated management test checks the option's list-item role, label and description, including duplicate labels, cached images and model/profile updates. It passed against GTK 4.14.5/libadwaita 1.5.0.
+- **Real AT export, not just test-backend properties:** a separately compiled diagnostic used the unchanged production panels library and two distinct public-key model items both labelled `Same device label`. Under `GTK_A11Y=atspi`, the selected presentation and both popup options exported that name, with distinct descriptions `npub1qqqqqqq…zqujme` and `npub1lllllll…q7lrjw`. The focused popup option was named, not empty. Return → Down → Return selected index 1 with the exact second full key; the closed selected presentation then exported the second key's description. Thus the same-label options remain distinguishable to AT without substituting their cosmetic label for their key. This verifies exported AT-SPI metadata and keyboard behavior, not Orca spoken output.
+- **F2 resolved — confirmed/executed and static.** The renderer now implements exactly device label → cached `display_name` → short npub (`grotto-identity-picker.c:31-42`), with no `profile.name` tier. The independent AT diagnostic ran three separate fixtures: both label and display name populated; empty label with display name populated; then empty label/display name with a deliberately nonempty `profile.name`. Selected, popup and keyboard-chosen names passed at each tier (nine phase assertions). The last fixture exported the short npubs and never rendered `Unexpected profile name`. Each fixture also retained the exact second key after keyboard selection. The production management test independently covers removal of each fallback tier and retains the nonempty profile-name exclusion assertion.
+- **No authority/I/O expansion:** models still contain the original keys; the cached profile accessor and avatar path are unchanged. The only newly allowed library imports are the two `gtk_list_item_set_accessible_*` setters. `grotto-panels/no-secrets` passed; no fetch/network/signing/policy path was added.
+
+Representative new backend output (the tuple fields are name, description, focused):
+
+```text
+PASS label popup [('Same device label', 'npub1qqqqqqq…zqujme', False), ('Same device label', 'npub1qqqqqqq…zqujme', True), ('Same device label', 'npub1lllllll…q7lrjw', False)]
+PASS label chosen [('Same device label', 'npub1lllllll…q7lrjw', False)]
+PASS display chosen [('Cached display name', 'npub1lllllll…q7lrjw', False)]
+PASS short chosen [('npub1lllllll…q7lrjw', 'npub1lllllll…q7lrjw', False)]
+```
+
+### Re-check verification actually run
+
+A new disposable `nostrc-linux-ci:arm64` container used the same image ID recorded above, confirmed `aarch64`, GTK **4.14.5**, libadwaita **1.5.0**, Blueprint **0.22.2**. This worktree was mounted read-only; `/build` was a private copy of the read-only seed, reconfigured with `-DGROTTO_TEST_XDOTOOL=/usr/bin/xdotool -DENABLE_NOSTR_SETTINGS=ON`. `xdotool` and the AT-SPI runtime/Python bindings were installed only in the container. The same six build targets listed above were rebuilt with `--parallel 1`, including the production Settings executable and real-host/daemon prerequisites. Checks and diagnostics ran serially; no full suite or concurrent test run was started.
+
+| Repeated command/check | Actual result at `5d83516f2` |
+|---|---|
+| Same `xvfb-run -a ctest --test-dir /build --parallel 1 -R` expression recorded above: five signer checks, panels management/no-secrets, Settings panel-mount | **PASS, 9/9**, including automatic test-home fixture; **199.83 s**, no skips; first execution passed |
+| Production-factory AT-SPI duplicate-label/fallback diagnostic, three fixtures × selected/popup/chosen phases | **PASS**, nine phase assertions, distinct key descriptions, named focused options and exact second-key selection in all three fixtures |
+| Isolated copy of the existing real Grotto-window fixture, linked to current production objects, with sidebar keyboard assertions | **PASS, 1/1**: Apps → Remote Signing (index 2) → Activity (index 3), then back; fresh isolated home; bounded diagnostic, not another full layout-suite run |
+| Actual Nostr Settings executable: separate `--page remote-signing` and `--page activity` launches, Shift+Tab reachability, Down/Return and Up/Return | **PASS**: correct selected page, unchanged sidebar order and keyboard navigation |
+| `msgfmt --check --check-format -o /dev/null` for all six catalogs, fuzzy-marker checks for catalogs and both POTs | **PASS**, no fuzzy markers |
+| Blueprint drift, via the selected CTest check | **PASS**, pinned 0.22.2 |
+| `git diff --check 5d83516f2^..5d83516f2`; authoritative version/build/template diff inspection | **PASS**; no version or `.blp`/`.ui` changes in the fix |
+
+Receipts and diagnostic sources: `/tmp/grotto-recheck-5d83516f2/`, notably `tests.log`, `LastTest.log`, `picker-keyboard.log`, `picker-{label,display,short}-{closed,popup,chosen}.log`, the per-tier selection logs, `sidebar-keyboard.log`, `nss-deeplink.log`, `catalogs.log`, `environment.log`, `configure.log` and `build.log`. All new checks/diagnostics passed; earlier failures remain in the original review's separate receipt directory. The task-owned container was removed after collection; the borrowed seed and other resources were preserved. Dolt sync was attempted once and still reported no configured remote. No code or tracker push was performed.
+
+Versions remain Grotto **0.1.1**, grotto-panels **0.1.0**, Nostr Settings **0.1.0**, as directed; no release/tag change. This report-only append warrants **no component bump**. No native desktop/Orca speech, hosted CI, live-relay/keyring, sanitizer, deployment or full-suite acceptance is claimed.
+
+### Final verdict
+
+**Approve the reviewed identity-picker/sidebar changes with `5d83516f2`; F1 and F2 are resolved.** This verdict supersedes the original request-changes recommendation above. No outstanding finding remains within this re-check's scope. Delivery is only this appended report, committed locally on `grotto/identity-picker-sidebar`; no product fix, merge or push was performed by the reviewer.
