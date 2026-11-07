@@ -2,11 +2,17 @@
 #
 # Signet configuration (GKeyFile INI format)
 #
-# Required environment variables (Signet refuses to start without these):
-#   SIGNET_DB_KEY       - Master key for SQLCipher (min 32 bytes, base64 or hex encoded)
-#   SIGNET_BUNKER_NSEC_FILE - file containing Signet's bunker identity nsec
+# Production inputs (0.8.0 file-key contract):
+#   SIGNET_DB_KEY_FILE - protected master-key file (>=32 bytes key material)
+#   SIGNET_BUNKER_NSEC_FILE - protected bunker identity file
+#   SIGNET_REQUIRE_ENCRYPTED_DB=true - require a usable persistent SQLCipher store
+#   SIGNET_BACKUP_KEY_FILE - independent protected key for local backup/restore
+# Master/backup files: effective-UID-owned regular files, no group/world bits,
+# no symlinks, <=4 KiB, nonempty single line; one trailing LF/CRLF is stripped.
+# Do not combine a nonempty legacy SIGNET_DB_KEY / SIGNET_BACKUP_KEY value with
+# its *_FILE path. Keep secret values out of environment files and argv.
 #
-# All config values may be overridden by SIGNET_-prefixed environment variables.
+# Supported overrides are listed in README.md (not every INI field has one).
 # Lists use semicolons as separators (GKeyFile format).
 #
 # RELOADING (SIGHUP)
@@ -22,19 +28,22 @@
 #   the policy file's contents
 #
 # Restart-only (a change is WARNED in the log, never silently ignored):
-#   listeners        - [server] health_port, [bootstrap] port, [dbus] *,
+#   listeners        - [server] health_port, [bootstrap] *, [dbus] *,
 #                      [nip5l] *, [ssh_agent] *
 #   storage bindings - [store] db_path, [audit] *, [policy_defaults] policy_file,
 #                      [replay] *
 #   identity         - [nostr] identity, bunker_pubkey, [uid_map], [passkeys] *
 #
 # provisioner_pubkeys is DESIRED STATE: on reload this list wins, so removing a
-# pubkey here and sending SIGHUP revokes it. The reverse is NOT true — a
-# provisioner revoked at runtime (config/revoke-provisioner) is never restored
-# by a reload, even if this file still lists it. Runtime grants and revocations
-# are written back into this file so the two never disagree; signetd therefore
-# needs write access to it. Setting SIGNET_PROVISIONER_PUBKEYS defeats that
-# write-back — prefer the file.
+# pubkey here and sending SIGHUP revokes it. A tombstone blocks a listed key
+# only while this file's mtime <= its revocation time: a later edit to a stale
+# list can re-grant a revoked key if runtime write-back had failed.
+# Runtime grants/revocations persist first, then write the effective list back.
+# Mount /etc/signet as a rw directory owned by 10001:10001 (0750); atomic rename
+# needs directory write access. Edit + reload OR use signed runtime commands;
+# do not mix without reloading. Never set SIGNET_PROVISIONER_PUBKEYS in production:
+# it shadows the file, defeats write-back and is older than every revocation.
+# See deploy/README.md for preflight and observable write-back failures.
 
 [server]
 log_level = info
@@ -43,8 +52,8 @@ health_port = 8080
 [store]
 # Path to SQLCipher database file
 db_path = /data/signet.db
-# Master key injected via env: SIGNET_DB_KEY (required, no default)
-# Minimum 32 bytes of entropy, base64 or hex encoded
+# Master key via SIGNET_DB_KEY_FILE (no value stored in this INI).
+# Generate >=32 bytes with a CSPRNG; length validation is not entropy measurement.
 
 [nostr]
 # Signet's own bunker identity
@@ -68,8 +77,9 @@ identity = default
 
 [policy_defaults]
 default_decision = deny
-# Path to policy JSON file (optional)
-policy_file =
+# GKeyFile INI policy file: see policies.conf.example, [identity.<name>] groups.
+# Mutable state; runtime policy updates persist here.
+policy_file = /data/policies.conf
 allowed_kinds =
 rate_limit_rpm = 0
 
@@ -81,15 +91,33 @@ max_entries = 50000
 ttl_seconds = 600
 skew_seconds = 120
 
-# Audit logging (structured JSON to stdout, 12-factor)
+# Separate unchained operational audit stream; preserve with the backup bundle.
 [audit]
-path =
-stdout = true
+path = /data/audit.jsonl
+stdout = false
 
 [bootstrap]
-# HTTP bootstrap listener; Wave 0 automated delivery sends bunker:// handoff
-# payloads over NIP-17/NIP-59 gift-wrap instead.
+# Packaged but disabled at launch: no production HTTP session-token consumer.
+# Optional Caddy profile only; listener is loopback, never public health/metrics.
 port = 0
+# 0.8.0 TLS trust contract (restart-only): trusted TCP peer AND exactly one
+# X-Forwarded-Proto: https. Loopback trust separates on-box from off-box only.
+require_tls = true
+trusted_proxy_cidrs = 127.0.0.0/8;::1/128;
+# Env: SIGNET_BOOTSTRAP_REQUIRE_TLS; SIGNET_BOOTSTRAP_TRUSTED_PROXY_CIDRS (CSV).
+
+[dbus]
+unix_enabled = false
+tcp_enabled = false
+tcp_port = 47472
+
+[nip5l]
+enabled = false
+socket_path = /run/signet/nip5l.sock
+
+[ssh_agent]
+enabled = false
+socket_path = /run/signet/ssh-agent.sock
 
 [uid_map]
 # SO_PEERCRED peer UID -> agent_id mapping for the local D-Bus Unix and SSH
@@ -112,7 +140,8 @@ allow_headless_uv = false
 # Optional Linux-only /dev/uhid virtual CTAP-HID device for browser/libfido2 use.
 # Disabled by default; requires SIGNET_ENABLE_PASSKEYS build, Linux, and /dev/uhid access.
 virtual_ctap = false
-# Fleet PSK for portable passkey credential wrapping (64 hex chars), or a file
-# containing the same. Prefer sync_key_file or SIGNET_PASSKEYS_SYNC_KEY_FILE.
+# Single-instance fleet PSK (64 hex chars); no cross-instance sync at launch.
+# Keep separately from exported containers and backup objects. Prefer a mounted
+# file via sync_key_file or SIGNET_PASSKEYS_SYNC_KEY_FILE, not a value in this INI.
 sync_key =
 sync_key_file =
