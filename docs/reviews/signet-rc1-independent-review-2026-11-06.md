@@ -209,3 +209,22 @@ This review is documentation only: **no component bump.** Signet stays at 0.8.0 
   4. The owner Droplet steps 7, 8 (in-image restart/restore), 9, 10 and 13 are demonstrated on a commit-addressed candidate image, with 11 observed in the same session. This is per plan §16 order; the owner may choose to sequence it differently, but should record that choice.
   5. Recommended, not required: the W6-02 doc fix lands in the same pre-tag commit.
 - **Promotion criteria for `signet-v0.8.0`:** keep the plan's proposed criteria (14-day soak, no new Critical/High, one scheduled backup + restore drill), and add SR-01 and SR-03 remediation.
+
+## Addendum — changes landed after this review (2026-11-07)
+
+Recorded by the coordinator; the tag `signet-v0.8.0-rc.1` was cut at the commit containing all of these.
+
+| Item | Bead | Commit | Effect on this review |
+|---|---|---|---|
+| trivy-action pin + digest-first publish ordering (the High above) | `nostrc-kc35u` | `78d199e7a` | Fixed; all third-party actions SHA-pinned |
+| 150 s → 270 s docs; CMake version check | `nostrc-b82i4`, `nostrc-bo0if` | `6c47833a6`, `735447f6b` | Fixed |
+| Direct-25910 mutation refusal (SR-01) | `nostrc-z3b0s` | `4090fc20a` | Medium fixed |
+| EOSE-based management admission replaces 10 s gate | `nostrc-a7p6i` | `4090fc20a` | New admission path; libnostr additive API → 2.2.0 |
+| Pool subscription filters UAF on replacement/reconnect | `nostrc-sleft` | `bc291f93a` | ASan-proven fix |
+| libcbor 0.8 COSE length bug (passkeys image) | `nostrc-1kgtz` | `da59e1b36` | Passkeys image 42/42 both backends |
+| Selection inventory gaps; `jsonschema` capability failure | `nostrc-xhzem`, `nostrc-bcbt9` | `93a016af9`, `4fbac4ea9` | Executing test gate now selects lanes |
+| Wire-harness superseded-REQ echo | `nostrc-onloi` | `b443fcfae` | Image test stage green |
+| Startup REQ pair → fresh management rejected at live boundary (found in the live drill) | `nostrc-5xqun` | `dd941ad86` | Per-delivering-REQ EOSE boundary; negative control reproduces the Droplet failure |
+| Live Droplet drills (procedure evidence, throwaway keys) | `nostrc-mk7v1.5` | `8c7d3cf21` | `docs/reviews/signet-rc1-droplet-drill-2026-11-07.md` |
+
+Blocker status at the tag: 1–6, 10, 12, 14, 15 cleared; 7 cleared by the in-repo nostr-homed live test (1/1) and reference-client proof on the drill plus the deterministic regression for the two-relay startup defect (not re-drilled live after the fix); 8/9 cleared by the populated restore drill with existing and revoked clients (release-image qualification happens in the tag's workflow); 11 cleared (0.63 % CPU over 900 s idle); 13 procedure proved with throwaway keys — the production ceremony is the operator's launch step. Medium dispositions SR-02…SR-06 accepted with conditions (security review "Owner dispositions"). Follow-ups: `nostrc-4np3z` (duplicate REQs per relay), `nostrc-24y5k` (Spaces retention), `nostrc-udqwi` (systemd stop race).

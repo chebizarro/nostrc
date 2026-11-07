@@ -520,6 +520,8 @@ Closed since 2026-08-08 (25) provide regression context, not permission to skip 
 | 14 | Online backup consistency unproven | concurrent-writer backup/restore test passes, or offline mode with ≥270 s rule adopted | §10.E |
 | 15 | Replay window across restart not bounded | ≥270 s stop rule in `release.sh`/runbook + audit decision on durable marker | §8.A, §8.C |
 
+**Status at `signet-v0.8.0-rc.1` (2026-11-07):** see the addendum in `docs/reviews/signet-rc1-independent-review-2026-11-06.md` and the drill report `docs/reviews/signet-rc1-droplet-drill-2026-11-07.md`; all 15 rows are cleared or carry a recorded disposition. The production key ceremony (§10.C) remains the operator's launch step.
+
 **Not baseline blockers:** replacing MCP, activating HTTP sessions, virtual CTAP-HID on the Droplet, universal zero-restart config, historical writer cutover for a fresh DB, unrelated desktop/sanitizer failures.
 
 **Release cut (decided): `signet-v0.8.0-rc.1`.** Blockers 1–15 must each be cleared or carry an explicit disposition in the W6 review before the tag; the rc label communicates maturity but does not waive critical/high findings. Promotion to `signet-v0.8.0` follows a soak on the production Droplet with no new critical/high findings.
