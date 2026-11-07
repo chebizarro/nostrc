@@ -225,7 +225,7 @@ GROTTO_PANELS_API GrottoProfileInfo *grotto_panels_service_dup_profile(GrottoPan
 GROTTO_PANELS_API void grotto_panels_service_set_profile(GrottoPanelsService *self, const char *public_key, const GrottoProfileInfo *info);
 
 /* Public-key GtkStringList model; presentation uses device label, then cached
- * profile name, then short npub. Both selected and popover items show a cached
+ * profile display_name, then short npub. Both selected and popover items show a cached
  * avatar or initials. Never fetches profiles/images or invokes host policy.
  * The caller sets the row title and model. Included in unreleased 0.1.0. */
 GROTTO_PANELS_API GtkWidget *grotto_identity_picker_new(GrottoPanelsService *service);

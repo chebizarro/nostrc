@@ -136,7 +136,8 @@ imports = set('''g_free g_strdup g_ascii_strdown g_ascii_strcasecmp g_strchomp g
 # Cache-only identity picker presentation; no new I/O or authority imports.
 imports.update('''adw_combo_row_set_factory adw_combo_row_set_list_factory
  gtk_label_set_ellipsize gtk_label_set_max_width_chars
- gtk_string_object_get_string gtk_string_object_get_type'''.split())
+ gtk_string_object_get_string gtk_string_object_get_type
+ gtk_list_item_set_accessible_label gtk_list_item_set_accessible_description'''.split())
 
 # W3 Identity widget/template/model/clipboard and translation imports only.
 # Still no bus, network, filesystem, generic dispatch or secret-store imports.

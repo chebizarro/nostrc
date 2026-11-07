@@ -6,6 +6,7 @@
 typedef struct {
   GrottoPanelsService *service;
   GtkWidget *box;
+  GWeakRef item;
   AdwAvatar *avatar;
   GtkLabel *name, *key;
   char *public_key;
@@ -14,6 +15,7 @@ typedef struct {
 static void picker_item_free(gpointer data) {
   PickerItem *p = data;
   g_clear_object(&p->service);
+  g_weak_ref_clear(&p->item);
   g_free(p->public_key);
   g_free(p);
 }
@@ -36,16 +38,17 @@ static void picker_render(PickerItem *p) {
       break;
     }
   }
-  if (!name && profile) {
-    name = profile->fields[GROTTO_PROFILE_DISPLAY_NAME];
-    if (!name || !*name) name = profile->fields[GROTTO_PROFILE_NAME];
-  }
+  if (!name && profile) name = profile->fields[GROTTO_PROFILE_DISPLAY_NAME];
   if (!name || !*name) name = short_key;
   gtk_label_set_text(p->name, name);
   gtk_label_set_text(p->key, short_key);
   adw_avatar_set_text(p->avatar, name);
   adw_avatar_set_custom_image(p->avatar, profile && profile->images[0] ? GDK_PAINTABLE(profile->images[0]) : NULL);
-  gtk_accessible_update_property(GTK_ACCESSIBLE(p->box), GTK_ACCESSIBLE_PROPERTY_LABEL, name, -1);
+  g_autoptr(GtkListItem) item = g_weak_ref_get(&p->item);
+  if (item) {
+    gtk_list_item_set_accessible_label(item, name);
+    gtk_list_item_set_accessible_description(item, short_key);
+  }
   gtk_widget_set_tooltip_text(p->box, name);
 }
 
@@ -60,6 +63,7 @@ static void identities_changed(GListModel *model, guint position, guint removed,
 static void picker_setup(GtkSignalListItemFactory *factory, GtkListItem *item, gpointer data) {
   (void)factory; PickerItem *p = g_new0(PickerItem, 1);
   p->service = data ? g_object_ref(data) : NULL;
+  g_weak_ref_init(&p->item, item);
   p->box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
   p->avatar = ADW_AVATAR(adw_avatar_new(32, NULL, TRUE));
   gtk_accessible_update_state(GTK_ACCESSIBLE(p->avatar), GTK_ACCESSIBLE_STATE_HIDDEN, TRUE, -1);
@@ -97,6 +101,8 @@ static void picker_unbind(GtkSignalListItemFactory *factory, GtkListItem *item, 
   (void)factory; (void)data;
   PickerItem *p = g_object_get_data(G_OBJECT(gtk_list_item_get_child(item)), "identity-picker-item");
   g_clear_pointer(&p->public_key, g_free);
+  gtk_list_item_set_accessible_label(item, NULL);
+  gtk_list_item_set_accessible_description(item, NULL);
   adw_avatar_set_custom_image(p->avatar, NULL);
 }
 GtkWidget *grotto_identity_picker_new(GrottoPanelsService *service) {
