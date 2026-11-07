@@ -80,3 +80,40 @@ This report is documentation-only: **no bump** for Grotto, grotto-panels, the in
 ## Merge recommendation
 
 **Request the finite F1/F2 reconciliations before merging unchanged.** Preserve the working full-version propagation, unchanged application ID, numeric Apple fields, prerelease package ordering and fail-closed tag guard. Align the manifest declaration/check with the documented Groundhog convention and finish the shipped packaging/manual naming cleanup, then rerun their directly affected version/branding checks. The requested ARM64 checks already pass. Keep `nostrc-p4bcf` and unrelated Groundhog `nostrc-gsj76` separate; neither justifies a full-suite expansion, baseline repair or a new release-qualification programme. This review makes no implementation fixes and is delivered only as a local report commit.
+
+## Re-check (9135187b6)
+
+Date: 2026-11-07. Re-check task: `nostrc-5tqzu`. Reviewed implementation `9135187b6774f217d7cbf7cd72423dce3925786e` on the same local branch/worktree, limited to F1/F2 and their previously requested serial checks. This section updates the findings' status and merge recommendation; the original observations above remain historical evidence. No implementation fixes or push were made.
+
+### F1 — Resolved, confirmed/static and executed
+
+`VERSION_MANIFEST.md:35` now declares numeric base **0.1.1**, and `apps/grotto/cmake/CheckPackagingVersion.cmake:27` expects `BASE_VERSION`. The owner-selected runtime/package string remains **0.1.1-alpha1**. Repeated the original isolated manifest-cell diagnostic against the production checker: a copied manifest declaring **0.1.1 passes, exit 0**. Changing only that copied cell to **0.1.1-alpha1 fails, exit 1**, with the expected base-version requirement. No tracked cell was edited. This resolves the Groundhog/AGENTS.md convention mismatch without changing the full display version or advancing unpublished release columns.
+
+### F2 — Partially resolved; one shipped description remains, confirmed/static and executed metadata probe
+
+The originally cited summaries and manual NAME sections are clean. CMake now configures `grotto.1` and `grotto-daemon.1` from `.1.in` templates (`apps/grotto/CMakeLists.txt:22-25`). The real `dh_installman -pgrotto` command, in an isolated fixture using the actual Debian control/changelog/manpages inputs and the newly CMake-generated manuals, installed both manuals with **Grotto 0.1.1-alpha1** titles and no Preview text or unexpanded token. This verifies the new `obj-*/apps/grotto/*.1` install inputs, not just template substitution.
+
+**Remaining where:** `packaging/debian-desktop/control:89`, in the `Package: grotto` long Description: **“Grotto is Preview 0.1.0; installed-desktop release acceptance remains pending.”** This is current package metadata, unlike a historical changelog or the documentation headings. Both `scripts/build-desktop-deb.sh:31` and `.github/workflows/groundhog-release.yml:162` copy this recipe into the build's `debian/` directory. A real `dpkg-gencontrol -pgrotto -Pdebian/grotto -O` invocation with the actual split-package control/changelog in a metadata-only fixture reproduced the stale sentence in the generated binary control Description. Its undefined shlibs/misc substitution warnings are expected because no complete package build was attempted; they do not prevent reproducing the Description.
+
+**Failure scenario:** the Groundhog-bundled Grotto Debian package still advertises Preview 0.1.0 in package-manager details despite its clean short summary and the corrected standalone Grotto version/manuals. The literal `(Preview)` search now finds only `apps/grotto/docs/pairing.md:1`, but a case-insensitive `preview` search exposes this unparenthesized long-description case. The passing desktop-contract assertion at `apps/grotto/tests/test-desktop-contract.py:103-105` checks parenthesized wording in the standalone recipe files, not this split-package description. F2 therefore remains open only for this missed metadata sentence. Preserve the release-acceptance caveat when reconciling its obsolete name/version wording; do not treat cleanup as release acceptance. No source was fixed here.
+
+### Verification repeated
+
+Fresh `nostrc-linux-ci:arm64` container, same image ID `sha256:3d1c8f2383c7159a44e3c8f1714476ca749333d34c887b780d6efc144eab35e2`, reporting `aarch64`; read-only source mount and a fresh task-owned build volume. Repeated the initial review's CMake configuration and targeted build with `--parallel 1`, then executed checks serially. Container-only dependencies included xdotool, RPM diagnostics and debhelper; no developer keychain commands were run.
+
+| Check | Actual result |
+|---|---|
+| Same seven-check `xvfb-run -a ctest --test-dir /build --parallel 1 --no-tests=error` selection: `grotto-version`, `grotto-packaging-version`, `signer/version`, `signer/ui-layout`, `signer/ui-accessibility`, `signer/blueprint-drift`, `signer/desktop-contract` | **PASS 9/9** including both isolation fixtures; no skips; 165.38 seconds. |
+| Newly built GUI and daemon `--version` | Both show **0.1.1-alpha1**. |
+| `desktop-file-validate`; `appstreamcli validate --no-net` on canonical inputs | Both exit 0; AppStream retains one non-failing pedantic hint. |
+| Repeated manifest-cell diagnostic | Numeric base accepted; full prerelease cell refused as expected; F1 resolved. |
+| Real `dh_installman` fixture using production inputs | Both generated manuals installed with **Grotto 0.1.1-alpha1** titles, no Preview/token residue. |
+| Literal `(Preview)` grep over `apps/grotto packaging data po`, plus case-insensitive grep across standalone/split packaging, canonical desktop/metainfo and `flake.nix` | Literal search: only the previously excluded pairing documentation heading. Broader search: the current split Debian long Description above remains; **F2 cleanup is not complete**. Other matches are documentation/history or legitimate operation/link previews. |
+| Real split-package `dpkg-gencontrol` metadata fixture | Command exits 0 and **reproduces the remaining F2 sentence**. Not a complete `.deb` build/install or release proof. |
+| Repeated version ordering, catalogs, unchanged tag-guard and plist diagnostics | PASS: Debian prerelease sorts before final; librpm 4.18.2 returns -1 for both tested comparisons (`rpmdev-vercmp` unavailable); all five Grotto catalogs plus panels Spanish pass `msgfmt --check --check-format`, no fuzzy flags; matching alpha1 guard exits 0 and the same three mismatches exit 1; both plist paths retain numeric **0.1.1**. |
+| Host `PYTHONPATH=tests/selection python3 -m unittest test_release_plan` | **14/15 pass**; all three Grotto cases pass. The sole failure remains `25 != 24` in `nostrc-p4bcf`; master confirmation is the original review's evidence, not a fresh master run. |
+| `git diff --check 9452e538a...9135187b6` | PASS. |
+
+New receipts and probe scripts are retained under ignored `.cache/grotto-version-recheck-9135187b6/`, especially `evidence/{ctest,manifest-base,manifest-full-negative,manual-install,split-control,preview-literal,preview-packaging-casefold,diagnostics,release-module}.log`. The task-owned container, build volume and fixture copies were removed after verification. No full suite, broad gate, native package build, hosted workflow, live service, tag creation, merge or publication was performed. This report append is documentation-only: no component bump; Grotto stays base **0.1.1** / full **0.1.1-alpha1**, grotto-panels **0.1.0**.
+
+**Final verdict at 9135187b6: request changes for the single remaining F2 split-Debian description. F1 and the generated-manual portion of F2 are resolved, and all requested serial ARM64 checks pass.** No new audit or broader qualification is required; the unrelated baseline issues remain separate.
