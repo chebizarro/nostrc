@@ -95,6 +95,18 @@ typedef struct {
 /* Forward declarations — defined after public API section */
 static NostrFilters *signet_relay_pool_build_filters_locked(SignetRelayPool *rp);
 
+/* nostr_relay_write copies the frame; caller owns one answer reference. */
+static void signet_write_answer_release(GoChannel *answer) {
+  if (!answer) return;
+  go_channel_close(answer);
+  void *result = NULL;
+  while (go_channel_try_receive(answer, &result) == 0) {
+    if (result) free_error(result);
+    result = NULL;
+  }
+  go_channel_unref(answer);
+}
+
 /* ----------------------- event middleware bridge -------------------------- */
 
 static void signet_pool_event_middleware(NostrIncomingEvent *incoming, void *user_data) {
@@ -292,17 +304,12 @@ static gboolean signet_send_auth_idle(gpointer data) {
           char *auth_envelope = g_strdup_printf("[\"AUTH\",%s]", event_json);
           free(event_json);
           if (auth_envelope) {
-            /* nostr_relay_write owns the string — pass a strdup'd copy */
-            GoChannel *wch = nostr_relay_write(r, strdup(auth_envelope));
+            /* libnostr copies the frame and retains its own answer ref. */
+            GoChannel *wch = nostr_relay_write(r, auth_envelope);
             g_free(auth_envelope);
             if (wch) {
               g_message("[signetd] NIP-42 AUTH sent to %s (via idle+write_queue), waiting for OK", rurl);
-              /* NOTE: do NOT unref wch prematurely. write_operations holds a
-               * pointer to the answer channel (req->answer) and sends the write
-               * result back to it.  Calling go_channel_unref here before
-               * write_ops processes the request causes a use-after-free that
-               * crashes the write worker thread.  The channel is cleaned up
-               * by write_operations after it sends the result. */
+              signet_write_answer_release(wch);
             } else {
               g_warning("[signetd] auth-idle: nostr_relay_write returned NULL for %s", rurl);
               /* The relay frees the watch once no OK callback is using it. */
