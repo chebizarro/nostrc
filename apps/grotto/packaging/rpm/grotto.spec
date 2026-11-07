@@ -116,5 +116,5 @@ appstreamcli validate --no-net %{buildroot}%{_datadir}/metainfo/%{app_id}.metain
 - Fix the alternate Meson frontend's Groundhog executable-side link closure
 
 * Wed Oct 14 2026 Grotto Maintainers - 0.1.0-1
-- Fold native GUI/daemon packaging correction into unreleased Preview 0.1.0
+- Fold native GUI/daemon packaging correction into unreleased 0.1.0
 - Use canonical desktop/metainfo, activation, autostart template and network examples

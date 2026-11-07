@@ -86,4 +86,4 @@ Description: Keeps your Nostr keys and signs for your apps
  This package contains the Grotto app (approvals, identities, settings) and
  its background service, which starts on demand when an app asks.
  .
- Grotto is Preview 0.1.0; installed-desktop release acceptance remains pending.
+ Installed-desktop release acceptance remains pending for Grotto.

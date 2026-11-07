@@ -1,4 +1,4 @@
-# Grotto native packaging (Preview 0.1.0)
+# Grotto native packaging
 
 One `grotto` package contains GUI + daemon. Debian recommends
 `gnome-shell-extension-nostr`; the optional indicator never authorizes signing.
@@ -11,8 +11,8 @@ libgit2/curl/SQLite build dependencies into a signer-only package.
   `debian/`, then `dpkg-buildpackage -us -uc -b`. CMake builds
   `apps/grotto/all` and installs only `build/apps/grotto`; BUILD_TESTING is off.
   GUI and daemon are not split. Breaks/Replaces handles the old 0.1.0-1 split.
-- **RPM**: `rpm/grotto.spec`; use a complete local `grotto-0.1.0.tar.gz`
-  with root `grotto-0.1.0/`, including checked-out submodules, not GitHub's
+- **RPM**: `rpm/grotto.spec`; use a complete local `grotto-0.1.1-alpha1.tar.gz`
+  with root `grotto-0.1.1-alpha1/`, including checked-out submodules, not GitHub's
   incomplete source archive. Build with `rpmbuild -ba`. The dependency floor,
   not the historical Fedora 38/RHEL 9 claim, determines compatibility.
 - **Arch**: `archlinux/PKGBUILD` consumes the same local complete source archive.

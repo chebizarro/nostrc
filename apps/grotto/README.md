@@ -1,4 +1,4 @@
-# Grotto (Preview 0.1.0)
+# Grotto
 
 Native Linux is the primary distribution (GTK ≥4.14, libadwaita ≥1.5, GLib ≥2.80).
 The single `grotto` package contains GUI and daemon and recommends the optional
@@ -6,7 +6,7 @@ GNOME Shell extension. RPM/Arch/Nix recipes require installed-platform validatio
 Flatpak and AppImage signer bundles are **experimental, not release-supported**.
 See [packaging](packaging/README.md), the [manual acceptance matrix](../../docs/testing/grotto-manual-acceptance.md)
 and [release readiness](../../docs/reviews/grotto-release-readiness-2026-10-14.md).
-Preview removal requires a separate owner decision after all promotion gates.
+Release promotion requires a separate owner decision after all promotion gates.
 
 Grotto keeps your Nostr identities and signs, encrypts and decrypts for the
 apps you allow. Client apps never receive the private key; explicit identity

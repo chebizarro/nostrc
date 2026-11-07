@@ -1,5 +1,5 @@
-Grotto Debian Packaging (Preview 0.1.1)
-======================================
+Grotto Debian Packaging
+=======================
 
 Build from a complete nostrc monorepo checkout with initialized submodules.
 Use a clean source copy: the repository's root debian/ is a different,
@@ -28,7 +28,7 @@ UI changes must be regenerated with 0.22.2. CI installs that pin and requires
 signer/blueprint-drift, which still recompiles and compares every template.
 The optional Shell extension ships GJS/schema data and has no Blueprint dependency.
 
-The single grotto_0.1.1-1_<arch>.deb includes GUI, daemon, both activation
+The single grotto_0.1.1~alpha1-1_<arch>.deb includes GUI, daemon, both activation
 services, Control1 XML, private JSON runtime library, icons,
 schema, metainfo, opt-in autostart template, systemd user unit, network examples
 and native-host assets. The Shell extension is an optional recommendation.
