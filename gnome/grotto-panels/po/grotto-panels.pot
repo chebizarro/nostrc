@@ -3,11 +3,12 @@
 # This file is distributed under the same license as the grotto-panels package.
 # FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
 #
+#, fuzzy
 msgid ""
 msgstr ""
-"Project-Id-Version: grotto-panels 0.1.0\n"
+"Project-Id-Version: grotto-panels\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-07 02:43-0800\n"
+"POT-Creation-Date: 2026-11-07 03:01-0800\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"

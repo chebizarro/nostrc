@@ -22,13 +22,15 @@
 struct _OnboardingAssistant {
   AdwWindow parent_instance;
   AdwNavigationView *steps;
-  AdwHeaderBar *header_actions;
-  GtkButton *btn_back, *btn_next, *btn_skip, *btn_retry, *btn_copy_seed, *btn_backup_retry, *btn_backup_export;
+  AdwHeaderBar *header_welcome, *header_choice, *header_create, *header_import, *header_connect;
+  AdwHeaderBar *header_test, *header_failed, *header_backup, *header_ready;
+  GtkBox *welcome_actions, *connect_actions, *failed_actions, *ready_actions;
+  GtkButton *btn_next, *btn_skip, *btn_copy_seed, *btn_backup_retry, *btn_backup_export;
   AdwActionRow *choose_create, *choose_import, *choose_connect, *connect_create, *connect_import;
   GtkCheckButton *seed_written_down;
   GtkEditable *entry_profile_name, *entry_import_label;
   AdwPreferencesGroup *import_passphrase_group;
-  GtkEntry *text_import_data;
+  AdwPasswordEntryRow *text_import_data;
   GtkBox *seed_words, *pending_requests;
   GtkBox *box_import_passphrase_container;
   GnSecureEntry *import_passphrase;
@@ -70,34 +72,77 @@ static void clear_input(OnboardingAssistant *self) {
   gn_secure_entry_clear(self->import_passphrase);
   wipe(&self->mnemonic); wipe(&self->nsec);
 }
+static void move_action(GtkWidget *button, AdwHeaderBar *header, GtkBox *content, gboolean start) {
+  GtkWidget *parent = gtk_widget_get_parent(button);
+  AdwHeaderBar *old_header = ADW_HEADER_BAR(gtk_widget_get_ancestor(button, ADW_TYPE_HEADER_BAR));
+  if ((header && old_header == header) || (content && parent == GTK_WIDGET(content))) return;
+  g_object_ref(button);
+  if (old_header) adw_header_bar_remove(old_header, button);
+  else if (parent) gtk_box_remove(GTK_BOX(parent), button);
+  if (content) gtk_box_append(content, button);
+  else if (start) adw_header_bar_pack_start(header, button);
+  else adw_header_bar_pack_end(header, button);
+  g_object_unref(button);
+}
+static gboolean import_has_required_input(OnboardingAssistant *self) {
+  gchar *text = g_strdup(gtk_editable_get_text(GTK_EDITABLE(self->text_import_data)));
+  gsize size = strlen(text) + 1;
+  g_strstrip(text);
+  gboolean valid = FALSE;
+  if (g_str_has_prefix(text, "ncryptsec1")) {
+    gchar *pass = gn_secure_entry_get_text(self->import_passphrase);
+    valid = gn_backup_validate_ncryptsec(text) && pass && *pass;
+    gn_secure_entry_free_text(pass);
+  } else if (strpbrk(text, " \t\r\n")) valid = gn_backup_validate_mnemonic(text);
+  else if (*text) {
+    g_autofree gchar *npub = NULL;
+    valid = gn_backup_get_npub(text, &npub, NULL);
+  }
+  gnostr_secure_clear(text, size); g_free(text);
+  return valid;
+}
 static void navigation(OnboardingAssistant *self) {
   AdwActionRow *choices[] = {self->choose_create, self->choose_import, self->choose_connect, self->connect_create, self->connect_import};
   for (guint i = 0; i < G_N_ELEMENTS(choices); i++) gtk_widget_set_sensitive(GTK_WIDGET(choices[i]), !self->busy && self->capabilities_ready);
-  gtk_widget_set_sensitive(GTK_WIDGET(self->btn_back), !self->busy && !self->identity_stored);
-  gtk_widget_set_visible(GTK_WIDGET(self->btn_back), self->state != ONBOARDING_WELCOME &&
-      !(self->running_session && self->state == ONBOARDING_CHOICE) && !self->identity_stored);
-  adw_header_bar_set_show_end_title_buttons(self->header_actions, self->running_session);
+  AdwHeaderBar *header = self->state == ONBOARDING_WELCOME ? self->header_welcome :
+      self->state == ONBOARDING_CHOICE ? self->header_choice :
+      self->state == ONBOARDING_CREATE ? self->header_create :
+      self->state == ONBOARDING_IMPORT ? self->header_import :
+      self->state == ONBOARDING_CONNECT ? self->header_connect :
+      self->state == ONBOARDING_BACKUP ? self->header_backup :
+      self->state == ONBOARDING_READY ? self->header_ready :
+      self->state == ONBOARDING_TEST_FAILED ? self->header_failed : self->header_test;
+  GtkBox *actions = self->state == ONBOARDING_WELCOME ? self->welcome_actions :
+      self->state == ONBOARDING_CONNECT ? self->connect_actions :
+      self->state == ONBOARDING_TEST_FAILED ? self->failed_actions :
+      self->state == ONBOARDING_READY ? self->ready_actions : NULL;
+  move_action(GTK_WIDGET(self->btn_skip), header, NULL, TRUE);
+  move_action(GTK_WIDGET(self->btn_next), header, actions, FALSE);
+  gtk_widget_set_halign(GTK_WIDGET(self->btn_next), actions ? GTK_ALIGN_CENTER : GTK_ALIGN_FILL);
+  if (actions) gtk_widget_add_css_class(GTK_WIDGET(self->btn_next), "pill");
+  else gtk_widget_remove_css_class(GTK_WIDGET(self->btn_next), "pill");
+  AdwNavigationPage *page = adw_navigation_view_get_visible_page(self->steps);
+  if (page) adw_navigation_page_set_can_pop(page, !self->busy && !self->identity_stored);
   gtk_widget_set_sensitive(GTK_WIDGET(self->btn_skip), !self->busy);
-  gtk_widget_set_visible(GTK_WIDGET(self->btn_skip), self->state != ONBOARDING_READY &&
-      !gtk_widget_get_visible(GTK_WIDGET(self->btn_back)));
-  gtk_button_set_label(self->btn_skip, !self->identity_stored ?
-      (self->running_session ? _("_Cancel") : _("_Skip Setup")) :
-      self->state == ONBOARDING_BACKUP ? _("Finish _Without Backup") : _("Finish _Later"));
+  gboolean subpage = page && adw_navigation_view_get_previous_page(self->steps, page) != NULL;
+  gtk_widget_set_visible(GTK_WIDGET(self->btn_skip), !subpage && self->state != ONBOARDING_READY);
+  gtk_button_set_label(self->btn_skip, self->identity_stored ? _("_Skip") :
+      self->state == ONBOARDING_WELCOME && !self->running_session ? _("_Skip Setup") : _("_Cancel"));
   const gchar *skip_description = self->identity_stored ? _("The identity is saved on this device") :
       self->running_session ? _("Cancel Adding an Identity") : NULL;
   gtk_widget_set_tooltip_text(GTK_WIDGET(self->btn_skip), skip_description);
   gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_skip), GTK_ACCESSIBLE_PROPERTY_DESCRIPTION,
       skip_description ? skip_description : "", -1);
   gtk_widget_set_sensitive(GTK_WIDGET(self->btn_next), !self->busy && self->capabilities_ready &&
+      (self->state != ONBOARDING_IMPORT || import_has_required_input(self)) &&
       (self->state != ONBOARDING_BACKUP || (self->backup_presented && gtk_check_button_get_active(self->seed_written_down))));
-  gtk_widget_set_visible(GTK_WIDGET(self->btn_retry), self->capabilities_ready && self->identity_stored && !self->self_test_passed && !self->busy);
   gtk_widget_set_visible(GTK_WIDGET(self->btn_next), self->state != ONBOARDING_CHOICE &&
       self->state != ONBOARDING_TEST_WAITING && self->state != ONBOARDING_TESTING);
   gtk_button_set_label(self->btn_next, self->state == ONBOARDING_READY ? _("_Open Grotto") :
-      self->state == ONBOARDING_CREATE ? _("_Create Identity") : self->state == ONBOARDING_IMPORT ? _("_Import Identity") :
-      self->state == ONBOARDING_TEST_FAILED ? _("_Finish with Warning") :
+      self->state == ONBOARDING_CREATE ? _("C_reate") : self->state == ONBOARDING_IMPORT ? _("_Import") :
+      self->state == ONBOARDING_TEST_FAILED ? _("_Try Again") :
       self->state == ONBOARDING_CONNECT ? _("_Open Connected Apps") :
-      self->state == ONBOARDING_BACKUP ? _("_Confirm Backup") : _("_Get Started"));
+      self->state == ONBOARDING_BACKUP ? _("Con_firm") : _("_Get Started"));
   gtk_window_set_default_widget(GTK_WINDOW(self), gtk_widget_get_visible(GTK_WIDGET(self->btn_next)) ? GTK_WIDGET(self->btn_next) : NULL);
   gtk_widget_set_sensitive(GTK_WIDGET(self->seed_written_down), self->backup_presented && !self->busy);
   gtk_widget_set_sensitive(GTK_WIDGET(self->btn_copy_seed), self->backup_presented && !self->busy);
@@ -118,17 +163,25 @@ static void step(OnboardingAssistant *self, OnboardingState state) {
   const gchar *page = state == ONBOARDING_WELCOME ? "welcome" : state == ONBOARDING_CHOICE ? "choice" :
     state == ONBOARDING_CREATE ? "create" : state == ONBOARDING_IMPORT ? "import" :
     state == ONBOARDING_CONNECT ? "connect" : state == ONBOARDING_BACKUP ? "backup" :
-    state == ONBOARDING_READY ? "ready" : "test";
+    state == ONBOARDING_READY ? "ready" : state == ONBOARDING_TEST_FAILED ? "failed" : "test";
   AdwNavigationPage *selected = adw_navigation_view_find_page(self->steps, page);
-  adw_navigation_view_replace(self->steps, &selected, 1);
+  if (selected != adw_navigation_view_get_visible_page(self->steps)) {
+    if (self->identity_stored || state == ONBOARDING_WELCOME || (self->running_session && state == ONBOARDING_CHOICE))
+      adw_navigation_view_replace(self->steps, &selected, 1);
+    else adw_navigation_view_push(self->steps, selected);
+  }
   gtk_window_set_title(GTK_WINDOW(self), adw_navigation_page_get_title(selected));
   navigation(self);
+  GtkWidget *focus = state == ONBOARDING_CREATE ? GTK_WIDGET(self->entry_profile_name) :
+      state == ONBOARDING_IMPORT ? GTK_WIDGET(self->text_import_data) :
+      state == ONBOARDING_CHOICE ? GTK_WIDGET(self->choose_create) : GTK_WIDGET(self->btn_next);
+  if (gtk_widget_get_visible(focus) && gtk_widget_is_sensitive(focus)) gtk_widget_grab_focus(focus);
 }
 static void finish(OnboardingAssistant *self, gboolean verified) {
   if (self->finished || self->busy) return;
   self->finished = TRUE;
   /* Dismissed setup is not verified setup; the callback carries the distinction. */
-  onboarding_assistant_mark_completed();
+  if (!self->running_session) onboarding_assistant_mark_completed();
   if (self->on_finished) self->on_finished(verified, self->on_finished_data);
   if (!verified && self->identity_stored && !self->self_test_passed) {
     GtkWindow *parent = gtk_window_get_transient_for(GTK_WINDOW(self));
@@ -238,6 +291,8 @@ static void call_done(GObject *source, GAsyncResult *result, gpointer data) {
     self->capabilities_ready = version >= 1 && store && test;
     status(self, self->capabilities_ready ? "" : _("Update Grotto to create, import, or check an identity."));
     if (self->capabilities_ready && self->identity_stored) start_test(self);
+    else if (self->capabilities_ready) gtk_widget_grab_focus(self->state == ONBOARDING_CHOICE ?
+        GTK_WIDGET(self->choose_create) : GTK_WIDGET(self->btn_next));
   } else if (ctx->operation == STORE || ctx->operation == IMPORT) {
     const gchar *identity = NULL;
     g_variant_get(reply, "(&s)", &identity);
@@ -273,6 +328,7 @@ static void call_done(GObject *source, GAsyncResult *result, gpointer data) {
     wipe(&self->mnemonic); self->mnemonic = g_strdup(phrase);
     self->backup_presented = gn_secure_phrase_set_text(self->seed_words, phrase);
     status(self, "");
+    if (self->backup_presented) gtk_widget_grab_focus(GTK_WIDGET(self->seed_written_down));
   }
   if (reply) g_variant_unref(reply);
   navigation(self); operation_free(ctx);
@@ -281,7 +337,14 @@ static void bus_ready(GObject *source, GAsyncResult *result, gpointer data) {
   (void)source; OperationCtx *ctx = data; g_autoptr(GError) error = NULL;
   GDBusConnection *bus = g_bus_get_finish(result, &error);
   if (!current(ctx) || !bus) {
-    if (current(ctx)) { ctx->self->busy = FALSE; clear_input(ctx->self); status(ctx->self, _("Grotto could not reach the signer. Try again when it is running.")); }
+    if (current(ctx)) {
+      ctx->self->busy = FALSE; clear_input(ctx->self);
+      if (ctx->operation == TEST) {
+        ctx->self->test_result = ONBOARDING_TEST_KEYRING_UNAVAILABLE;
+        step(ctx->self, ONBOARDING_TEST_FAILED);
+      }
+      status(ctx->self, _("Grotto could not reach the signer. Try again when it is running."));
+    }
     g_clear_object(&bus); operation_free(ctx); return;
   }
   if (ctx->operation == TEST) {
@@ -343,7 +406,7 @@ static void next(GtkButton *button, gpointer data) {
     case ONBOARDING_WELCOME: step(self, ONBOARDING_CHOICE); break;
     case ONBOARDING_CHOICE: break; /* The choice rows navigate directly. */
     case ONBOARDING_CREATE: create_identity(self); break;
-    case ONBOARDING_IMPORT: import_identity(self); break;
+    case ONBOARDING_IMPORT: if (import_has_required_input(self)) import_identity(self); break;
     case ONBOARDING_CONNECT:
       self->requested_page = "apps";
       finish(self, FALSE); break;
@@ -355,20 +418,38 @@ static void next(GtkButton *button, gpointer data) {
       step(self, ONBOARDING_READY);
       gtk_label_set_text(self->ready_summary, _("Signing and encryption checks passed. Apps will ask for permission before using your identity.")); break;
     case ONBOARDING_READY: finish(self, self->self_test_passed); break;
-    case ONBOARDING_TEST_FAILED: finish(self, FALSE); break;
+    case ONBOARDING_TEST_FAILED: start_test(self); break;
     case ONBOARDING_TEST_WAITING: case ONBOARDING_TESTING: break;
   }
 }
-static void back(GtkButton *button, gpointer data) {
-  (void)button; OnboardingAssistant *self = data;
-  if (self->busy || self->closed || self->identity_stored) return;
-  clear_input(self); status(self, "");
-  step(self, self->state == ONBOARDING_CHOICE ? ONBOARDING_WELCOME : ONBOARDING_CHOICE);
+static void visible_page_changed(AdwNavigationView *view, GParamSpec *pspec, gpointer data) {
+  (void)pspec; OnboardingAssistant *self = data;
+  const char *tag = adw_navigation_page_get_tag(adw_navigation_view_get_visible_page(view));
+  /* Forward transitions set state first. Only a standard navigation pop needs
+   * to restore state and discard input from the page being left. */
+  OnboardingState state = !strcmp(tag, "welcome") ? ONBOARDING_WELCOME :
+      !strcmp(tag, "choice") ? ONBOARDING_CHOICE : !strcmp(tag, "connect") ? ONBOARDING_CONNECT : self->state;
+  if (state == self->state) return;
+  self->state = state; clear_input(self); status(self, "");
+  gtk_window_set_title(GTK_WINDOW(self), adw_navigation_page_get_title(adw_navigation_view_get_visible_page(view)));
 }
 static void skip(GtkButton *button, gpointer data) {
   (void)button; OnboardingAssistant *self = data;
   if (self->busy || self->closed) return;
-  finish(self, FALSE);
+  if (self->running_session && !self->identity_stored) gtk_window_close(GTK_WINDOW(self));
+  else finish(self, FALSE);
+}
+static gboolean escape_pressed(GtkEventControllerKey *controller, guint keyval, guint keycode, GdkModifierType modifiers, gpointer data) {
+  (void)controller; (void)keycode; (void)modifiers; OnboardingAssistant *self = data;
+  if (keyval != GDK_KEY_Escape || adw_window_get_visible_dialog(ADW_WINDOW(self))) return FALSE;
+  /* Match AdwDialog: Escape closes the whole dialog, including subpages
+   * whose header exposes only the standard navigation Back control. */
+  if (!self->busy) {
+    if (self->state == ONBOARDING_READY) finish(self, self->self_test_passed);
+    else skip(self->btn_skip, self);
+  }
+  /* Busy operations keep their existing custody/cancellation semantics. */
+  return TRUE;
 }
 static void backup_retry(GtkButton *button, gpointer data) { (void)button; OnboardingAssistant *self = data; if (!self->busy && self->self_test_passed) show_backup(self); }
 static void backup_export(GtkButton *button, gpointer data) {
@@ -385,14 +466,18 @@ static void setup_changed(AccountsStore *as, AccountsChangeType change, const gc
   }
   accounts_store_entry_free(entry);
 }
-static void retry(GtkButton *button, gpointer data) { (void)button; start_test(data); }
-static void changed(GtkCheckButton *button, gpointer data) { (void)button; navigation(data); }
+static void changed(gpointer control, gpointer data) { (void)control; navigation(data); }
+static void import_activated(GnSecureEntry *entry, gpointer data) {
+  (void)data; gtk_widget_activate_default(GTK_WIDGET(entry));
+}
 static void import_mode(GtkEditable *input, gpointer data) {
   OnboardingAssistant *self = data;
-  const char *text = gtk_editable_get_text(input);
-  while (g_ascii_isspace(*text)) text++;
+  gchar *text = g_strdup(gtk_editable_get_text(input));
+  gsize size = strlen(text) + 1;
+  g_strstrip(text);
   gboolean encrypted = g_str_has_prefix(text, "ncryptsec1");
-  gboolean phrase = strpbrk(text, " \t\r\n") != NULL;
+  gboolean phrase = !encrypted && strpbrk(text, " \t\r\n") != NULL;
+  gnostr_secure_clear(text, size); g_free(text);
   if (phrase != self->import_was_phrase || encrypted != self->import_was_encrypted)
     gn_secure_entry_clear(self->import_passphrase);
   self->import_was_phrase = phrase; self->import_was_encrypted = encrypted;
@@ -400,6 +485,7 @@ static void import_mode(GtkEditable *input, gpointer data) {
   gtk_label_set_text(self->import_passphrase_label, label);
   gn_secure_entry_set_accessible_label(self->import_passphrase, label);
   gtk_widget_set_visible(GTK_WIDGET(self->import_passphrase_group), encrypted || phrase);
+  navigation(self);
 }
 static void choose(AdwActionRow *row, gpointer data) {
   OnboardingAssistant *self = data;
@@ -443,8 +529,10 @@ static void onboarding_assistant_class_init(OnboardingAssistantClass *klass) {
   gtk_widget_class_set_template_from_resource(wc, APP_RESOURCE_PATH "/ui/onboarding-assistant.ui");
 #define BIND(name) gtk_widget_class_bind_template_child(wc, OnboardingAssistant, name)
   BIND(btn_backup_retry); BIND(btn_backup_export);
-  BIND(header_actions);
-  BIND(steps); BIND(btn_back); BIND(btn_next); BIND(btn_skip); BIND(btn_retry); BIND(btn_copy_seed);
+  BIND(header_welcome); BIND(header_choice); BIND(header_create); BIND(header_import); BIND(header_connect);
+  BIND(header_test); BIND(header_failed); BIND(header_backup); BIND(header_ready);
+  BIND(welcome_actions); BIND(connect_actions); BIND(failed_actions); BIND(ready_actions);
+  BIND(steps); BIND(btn_next); BIND(btn_skip); BIND(btn_copy_seed);
   BIND(choose_create); BIND(choose_import); BIND(choose_connect); BIND(connect_create); BIND(connect_import);
   BIND(import_passphrase_group); BIND(seed_written_down);
   BIND(entry_profile_name); BIND(entry_import_label); BIND(text_import_data); BIND(box_import_passphrase_container);
@@ -455,20 +543,28 @@ static void onboarding_assistant_init(OnboardingAssistant *self) {
   gtk_widget_init_template(GTK_WIDGET(self));
   g_signal_connect_object(gn_session_manager_get_default(), "session-locked", G_CALLBACK(clipboard_locked), self, 0);
   g_autoptr(GtkEntryBuffer) input = gn_secure_entry_buffer_new();
-  gtk_entry_set_buffer(self->text_import_data, input);
+  GtkText *text = GTK_TEXT(gtk_editable_get_delegate(GTK_EDITABLE(self->text_import_data)));
+  gtk_text_set_buffer(text, input);
+  gtk_text_set_visibility(text, FALSE);
+  gtk_editable_set_enable_undo(GTK_EDITABLE(self->text_import_data), FALSE);
   gtk_entry_buffer_set_max_length(input, 4096);
   self->import_passphrase = GN_SECURE_ENTRY(gn_secure_entry_new());
   gn_secure_entry_set_show_strength_indicator(self->import_passphrase, FALSE);
   gtk_box_append(self->box_import_passphrase_container, GTK_WIDGET(self->import_passphrase));
   g_signal_connect(self->btn_next, "clicked", G_CALLBACK(next), self);
-  g_signal_connect(self->btn_back, "clicked", G_CALLBACK(back), self);
   g_signal_connect(self->btn_skip, "clicked", G_CALLBACK(skip), self);
-  g_signal_connect(self->btn_retry, "clicked", G_CALLBACK(retry), self);
   g_signal_connect(self->btn_copy_seed, "clicked", G_CALLBACK(copy_seed), self);
   g_signal_connect(self->btn_backup_retry, "clicked", G_CALLBACK(backup_retry), self);
   g_signal_connect(self->btn_backup_export, "clicked", G_CALLBACK(backup_export), self);
   self->accounts_changed = accounts_store_connect_changed(accounts_store_get_default(), setup_changed, self);
   g_signal_connect(self->seed_written_down, "toggled", G_CALLBACK(changed), self);
+  g_signal_connect(self->import_passphrase, "changed", G_CALLBACK(changed), self);
+  g_signal_connect(self->import_passphrase, "activate", G_CALLBACK(import_activated), self);
+  g_signal_connect(self->steps, "notify::visible-page", G_CALLBACK(visible_page_changed), self);
+  GtkEventController *keys = gtk_event_controller_key_new();
+  gtk_event_controller_set_propagation_phase(keys, GTK_PHASE_CAPTURE);
+  g_signal_connect(keys, "key-pressed", G_CALLBACK(escape_pressed), self);
+  gtk_widget_add_controller(GTK_WIDGET(self), keys);
   g_signal_connect(self->text_import_data, "changed", G_CALLBACK(import_mode), self);
   import_mode(GTK_EDITABLE(self->text_import_data), self);
   AdwActionRow *choices[] = {self->choose_create, self->choose_import, self->choose_connect, self->connect_create, self->connect_import};
@@ -484,6 +580,7 @@ void onboarding_assistant_verify_identity(GtkWindow *parent, const gchar *npub) 
   self->identity = g_strdup(npub); self->identity_stored = TRUE;
   gtk_window_set_transient_for(GTK_WINDOW(self), parent);
   gtk_window_set_application(GTK_WINDOW(self), gtk_window_get_application(parent));
+  gtk_window_set_modal(GTK_WINDOW(self), TRUE);
   gtk_window_present(GTK_WINDOW(self)); /* capability reply starts the exact-identity test */
 }
 static void presented_gone(gpointer data, GObject *object) {
@@ -502,6 +599,7 @@ void onboarding_assistant_present(GtkWindow *parent) {
   g_object_weak_ref(G_OBJECT(self), presented_gone, g_object_ref(parent));
   gtk_window_set_transient_for(GTK_WINDOW(self), parent);
   gtk_window_set_application(GTK_WINDOW(self), gtk_window_get_application(parent));
+  gtk_window_set_modal(GTK_WINDOW(self), TRUE);
   gtk_window_present(GTK_WINDOW(self));
 }
 void onboarding_assistant_set_pending_group(OnboardingAssistant *self, GtkWidget *group) {

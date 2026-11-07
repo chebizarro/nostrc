@@ -162,19 +162,16 @@ static void teardown(Fixture *f, gconstpointer data) {
   g_free(f->npub); active = NULL;
 }
 static void create_waiting(Fixture *f) {
-  GtkWidget *header = child(f, "header_actions");
-  GtkWidget *footer = gtk_widget_get_parent(child(f, "btn_next"));
-  g_assert_null(gtk_widget_get_ancestor(child(f, "btn_next"), ADW_TYPE_HEADER_BAR));
-  g_assert_true(gtk_widget_is_ancestor(child(f, "btn_skip"), footer));
-  g_assert_true(gtk_widget_is_ancestor(child(f, "btn_back"), footer));
+  g_assert_nonnull(gtk_widget_get_ancestor(child(f, "btn_next"), ADW_TYPE_STATUS_PAGE));
+  g_assert_nonnull(gtk_widget_get_ancestor(child(f, "btn_skip"), ADW_TYPE_HEADER_BAR));
   g_assert_true(gtk_widget_has_css_class(child(f, "btn_next"), "suggested-action"));
   g_assert_true(gtk_widget_has_css_class(child(f, "btn_next"), "pill"));
-  g_assert_true(gtk_widget_has_css_class(child(f, "btn_back"), "flat"));
-  g_assert_true(gtk_widget_has_css_class(child(f, "btn_skip"), "flat"));
-  g_assert_false(adw_header_bar_get_show_end_title_buttons(ADW_HEADER_BAR(header)));
-  g_assert_false(gtk_widget_get_visible(child(f, "btn_back")));
   g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(child(f, "btn_skip"))), ==, "_Skip Setup");
   click(f, "btn_next"); g_signal_emit_by_name(child(f, "choose_create"), "activated"); g_assert_cmpint(onboarding_assistant_get_state(f->assistant), ==, ONBOARDING_CREATE);
+  g_assert_nonnull(gtk_widget_get_ancestor(child(f, "btn_next"), ADW_TYPE_HEADER_BAR));
+  g_assert_nonnull(adw_navigation_view_get_previous_page(ADW_NAVIGATION_VIEW(child(f, "steps")),
+      adw_navigation_view_get_visible_page(ADW_NAVIGATION_VIEW(child(f, "steps")))));
+  g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(child(f, "btn_next"))), ==, "C_reate");
   /* No creation password or meter exists in the production template. */
   g_assert_null(gtk_widget_get_template_child(GTK_WIDGET(f->assistant), TYPE_ONBOARDING_ASSISTANT, "entry_passphrase"));
   click(f, "btn_next"); wait_invocation(&f->store);
@@ -189,8 +186,9 @@ static void stored(Fixture *f) {
 static void delayed_commit(Fixture *f, gconstpointer data) {
   (void)data; create_waiting(f);
   g_assert_false(onboarding_assistant_identity_stored(f->assistant));
-  g_assert_false(gtk_widget_get_sensitive(child(f, "btn_back"))); g_assert_false(gtk_widget_get_sensitive(child(f, "btn_skip")));
-  click(f, "btn_back"); click(f, "btn_skip"); g_assert_cmpuint(f->finished, ==, 0);
+  g_assert_false(adw_navigation_page_get_can_pop(adw_navigation_view_get_visible_page(ADW_NAVIGATION_VIEW(child(f, "steps")))));
+  g_assert_false(gtk_widget_get_sensitive(child(f, "btn_skip")));
+  click(f, "btn_skip"); g_assert_cmpuint(f->finished, ==, 0);
   g_assert_cmpint(onboarding_assistant_get_state(f->assistant), ==, ONBOARDING_CREATE);
   stored(f); g_assert_false(onboarding_assistant_self_test_passed(f->assistant));
 }
@@ -239,7 +237,9 @@ static void failed_test(Fixture *f, gconstpointer data) {
     g_str_has_suffix(code, "ApprovalTimedOut") ? ONBOARDING_TEST_EXPIRED :
     g_str_has_suffix(code, "VerificationFailed") ? ONBOARDING_TEST_VERIFICATION_FAILED : ONBOARDING_TEST_KEYRING_UNAVAILABLE;
   g_assert_cmpint(onboarding_assistant_get_test_result(f->assistant), ==, expected);
-  g_assert_true(gtk_widget_get_visible(child(f, "btn_retry"))); click(f, "btn_retry"); wait_invocation(&f->test);
+  g_assert_nonnull(gtk_widget_get_ancestor(child(f, "btn_next"), ADW_TYPE_STATUS_PAGE));
+  g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(child(f, "btn_next"))), ==, "_Try Again");
+  click(f, "btn_next"); wait_invocation(&f->test);
   g_assert_cmpint(onboarding_assistant_get_state(f->assistant), ==, ONBOARDING_TEST_WAITING);
 }
 static void cancelled_test(Fixture *f, gconstpointer data) {
@@ -251,7 +251,19 @@ static void cancelled_test(Fixture *f, gconstpointer data) {
 static void imported_input_cleared(Fixture *f, gconstpointer data) {
   (void)data; click(f, "btn_next"); g_signal_emit_by_name(child(f, "choose_import"), "activated");
   GtkEditable *input = GTK_EDITABLE(child(f, "text_import_data"));
+  g_assert_true(ADW_IS_PASSWORD_ENTRY_ROW(input));
+  g_assert_true(adw_entry_row_get_activates_default(ADW_ENTRY_ROW(input)));
+  g_assert_false(gtk_editable_get_enable_undo(input));
+  GtkText *text = GTK_TEXT(gtk_editable_get_delegate(input));
+  g_assert_false(gtk_text_get_visibility(text));
+  g_assert_false(gtk_editable_get_enable_undo(GTK_EDITABLE(text)));
+  g_assert_cmpstr(adw_preferences_row_get_title(ADW_PREFERENCES_ROW(input)), ==, "Key or Recovery Phrase");
+  g_assert_false(gtk_widget_is_sensitive(child(f, "btn_next")));
+  gtk_editable_set_text(input, "not a recovery phrase");
+  g_assert_false(gtk_widget_is_sensitive(child(f, "btn_next")));
+  click(f, "btn_next"); g_assert_null(f->store);
   gtk_editable_set_text(input, "  0000000000000000000000000000000000000000000000000000000000000002  ");
+  g_assert_true(gtk_widget_is_sensitive(child(f, "btn_next")));
   click(f, "btn_next"); wait_invocation(&f->store); g_assert_cmpstr(gtk_editable_get_text(input), ==, "");
   stored(f); g_assert_cmpstr(gtk_editable_get_text(input), ==, "");
 }
@@ -267,7 +279,7 @@ static void imported_completion_persists(Fixture *f, gconstpointer data) {
   if (!strcmp(exit, "skip")) {
     g_dbus_method_invocation_return_dbus_error(f->test, "org.nostr.Signer.Error.ApprovalDenied", "denied");
     g_clear_object(&f->test); wait_state(f, ONBOARDING_TEST_FAILED);
-    g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(child(f, "btn_skip"))), ==, "Finish _Later");
+    g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(child(f, "btn_skip"))), ==, "_Skip");
     click(f, "btn_skip");
     g_assert_cmpuint(f->finished, ==, 1); g_assert_false(f->verified);
   } else {
@@ -377,9 +389,9 @@ static void management_warning_handoff(Fixture *f, gconstpointer data) {
   AdwWindow *window = ADW_WINDOW(adw_window_new()); g_object_ref(window); gtk_window_set_default_size(GTK_WINDOW(window), 560, 640); gtk_window_present(GTK_WINDOW(window));
   gtk_window_set_transient_for(GTK_WINDOW(f->assistant), GTK_WINDOW(window));
   if (backup) {
-    g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(child(f, "btn_skip"))), ==, "Finish _Without Backup");
+    g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(child(f, "btn_skip"))), ==, "_Skip");
     click(f, "btn_skip");
-  } else click(f, "btn_next");
+  } else click(f, "btn_skip");
   g_assert_false(f->verified); g_assert_cmpuint(f->finished, ==, 1);
   g_assert_cmpstr(stored_identity, ==, f->npub); g_assert_cmpuint(f->remove_calls, ==, 0);
   if (backup) {
@@ -465,11 +477,27 @@ static void distinct_import_passphrase(Fixture *f, gconstpointer data) {
   click(f, "btn_next"); g_signal_emit_by_name(child(f, "choose_import"), "activated");
   gboolean mnemonic = !strcmp(format, "mnemonic");
   GtkWidget *box = child(f, "box_import_passphrase_container");
-  gtk_editable_set_text(GTK_EDITABLE(child(f, "text_import_data")), mnemonic ? "  abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about  " : "ncryptsec1fixture");
+  g_autofree gchar *encrypted = NULL;
+  if (!mnemonic) g_assert_true(gn_backup_export_nip49("0000000000000000000000000000000000000000000000000000000000000002",
+      f->expected_pass, GN_BACKUP_SECURITY_FAST, &encrypted, NULL));
+  gtk_editable_set_text(GTK_EDITABLE(child(f, "text_import_data")), mnemonic ? "  abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about  " : encrypted);
+  g_assert_cmpint(gtk_widget_is_sensitive(child(f, "btn_next")), ==, mnemonic);
   g_assert_cmpstr(gtk_label_get_text(GTK_LABEL(child(f, "import_passphrase_label"))), ==,
       mnemonic ? "Recovery phrase passphrase (if you used one)" : "Backup passphrase");
   g_assert_true(gtk_widget_get_visible(child(f, "import_passphrase_group")));
-  gn_secure_entry_set_text(GN_SECURE_ENTRY(gtk_widget_get_first_child(box)), f->expected_pass);
+  GnSecureEntry *passphrase = GN_SECURE_ENTRY(gtk_widget_get_first_child(box));
+  gn_secure_entry_set_text(passphrase, f->expected_pass);
+  if (!mnemonic) {
+    GtkEditable *input = GTK_EDITABLE(child(f, "text_import_data"));
+    int end = (int)strlen(encrypted), position = end;
+    gtk_editable_insert_text(input, " \n", -1, &position);
+    gtk_editable_delete_text(input, end, -1);
+    gchar *retained = gn_secure_entry_get_text(passphrase);
+    g_assert_cmpstr(retained, ==, f->expected_pass);
+    gn_secure_entry_free_text(retained);
+    g_assert_cmpstr(gtk_label_get_text(GTK_LABEL(child(f, "import_passphrase_label"))), ==, "Backup passphrase");
+  }
+  g_assert_true(gtk_widget_is_sensitive(child(f, "btn_next")));
   click(f, "btn_next"); wait_invocation(&f->store);
   g_assert_cmpstr(gtk_editable_get_text(GTK_EDITABLE(child(f, "text_import_data"))), ==, ""); stored(f);
 }
@@ -483,7 +511,9 @@ static void delayed_import_failure(Fixture *f, gconstpointer data) {
     g_dbus_method_invocation_return_value(f->store, g_variant_new("(s)", f->npub)); g_clear_object(&f->store);
   } else {
     g_dbus_method_invocation_return_dbus_error(f->store, "org.nostr.Grotto.Error.BackendUnavailable", "not stored"); g_clear_object(&f->store);
-    wait_sensitive(child(f, "btn_next"), TRUE); g_assert_false(onboarding_assistant_identity_stored(f->assistant));
+    wait_sensitive(child(f, "btn_skip"), TRUE);
+    g_assert_false(gtk_widget_is_sensitive(child(f, "btn_next")));
+    g_assert_false(onboarding_assistant_identity_stored(f->assistant));
   }
   g_assert_cmpstr(gtk_editable_get_text(GTK_EDITABLE(child(f, "text_import_data"))), ==, "");
   g_assert_cmpuint(f->remove_calls, ==, 0);
@@ -734,17 +764,14 @@ static void repeated_creation_activation(Fixture *f, gconstpointer data) {
     else g_object_unref(window);
   }
   g_assert_cmpuint(count, ==, 1);
-  GtkWidget *back_button = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(setup), TYPE_ONBOARDING_ASSISTANT, "btn_back"));
   GtkWidget *cancel_button = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(setup), TYPE_ONBOARDING_ASSISTANT, "btn_skip"));
   GtkWidget *affirmative = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(setup), TYPE_ONBOARDING_ASSISTANT, "btn_next"));
-  AdwHeaderBar *header = ADW_HEADER_BAR(gtk_widget_get_template_child(GTK_WIDGET(setup), TYPE_ONBOARDING_ASSISTANT, "header_actions"));
+  AdwHeaderBar *header = ADW_HEADER_BAR(gtk_widget_get_ancestor(cancel_button, ADW_TYPE_HEADER_BAR));
   g_assert_nonnull(header);
-  g_assert_true(adw_header_bar_get_show_end_title_buttons(header));
-  g_assert_null(gtk_widget_get_ancestor(affirmative, ADW_TYPE_HEADER_BAR));
-  g_assert_null(gtk_widget_get_ancestor(cancel_button, ADW_TYPE_HEADER_BAR));
-  g_assert_true(gtk_widget_is_ancestor(cancel_button, gtk_widget_get_parent(affirmative)));
+  g_assert_false(adw_header_bar_get_show_end_title_buttons(header));
+  g_assert_true(gtk_widget_get_ancestor(affirmative, ADW_TYPE_HEADER_BAR) == GTK_WIDGET(header));
   g_assert_false(gtk_widget_get_visible(affirmative));
-  g_assert_false(gtk_widget_get_visible(back_button));
+  g_assert_true(gtk_window_get_modal(setup));
   g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(cancel_button)), ==, "_Cancel");
   g_assert_cmpstr(gtk_widget_get_tooltip_text(cancel_button), ==, "Cancel Adding an Identity");
   guint gone = 0; g_object_weak_ref(G_OBJECT(setup), weak_gone, &gone);
