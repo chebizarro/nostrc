@@ -480,7 +480,8 @@ static GtkWidget *find_identity_picker(GtkWidget *widget) {
   if (ADW_IS_COMBO_ROW(widget)) {
     GListModel *model = adw_combo_row_get_model(ADW_COMBO_ROW(widget));
     g_autoptr(GtkStringObject) first = model && g_list_model_get_n_items(model) ? g_list_model_get_item(model, 0) : NULL;
-    if (first && !strcmp(gtk_string_object_get_string(first), P_("Choose an Identity"))) return widget;
+    if (first && !strcmp(adw_preferences_row_get_title(ADW_PREFERENCES_ROW(widget)), P_("Identity")) &&
+        g_str_has_prefix(gtk_string_object_get_string(first), "npub1")) return widget;
   }
   for (GtkWidget *child = gtk_widget_get_first_child(widget); child; child = gtk_widget_get_next_sibling(child)) { GtkWidget *found = find_identity_picker(child); if (found) return found; }
   return NULL;
@@ -570,8 +571,8 @@ static void layout_activate(GApplication *application, gpointer data) {
   gboolean accessibility = g_getenv("G10_TEST_LANGUAGE") != NULL;
   GtkWidget *root_panel = GTK_WIDGET(selected_panel(split));
   g_assert_true(GROTTO_IS_IDENTITY_PANEL(root_panel)); /* The real launch default. */
-  const char *names[] = {"identity", "apps", "activity", "remote-signing"};
-  const char *titles[] = {"Identity", "Connected Apps", "Activity", "Remote Signing"};
+  const char *names[] = {"identity", "apps", "remote-signing", "activity"};
+  const char *titles[] = {"Identity", "Connected Apps", "Remote Signing", "Activity"};
   for (guint i = 0; i < G_N_ELEMENTS(names); i++) {
     signer_window_show_page(window, names[i]); wait_frames(GTK_WIDGET(window)); assert_visible_focus(window);
     GrottoPanel *panel = GROTTO_PANEL(selected_panel(split));
@@ -886,15 +887,15 @@ static void layout_activate(GApplication *application, gpointer data) {
       g_signal_emit_by_name(legacy, "activated"); editor = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window));
       g_assert_nonnull(editor); g_object_weak_ref(G_OBJECT(editor), finalised, &editors_gone); wait_frames(GTK_WIDGET(editor));
       GtkWidget *identity_picker = find_identity_picker(GTK_WIDGET(editor)); g_assert_nonnull(identity_picker);
-      g_assert_cmpuint(adw_combo_row_get_selected(ADW_COMBO_ROW(identity_picker)), ==, 0);
+      g_assert_cmpuint(adw_combo_row_get_selected(ADW_COMBO_ROW(identity_picker)), ==, GTK_INVALID_LIST_POSITION);
       snapshot(GTK_WIDGET(window), "permission-review-identity");
-      g_assert_cmpuint(g_list_model_get_n_items(adw_combo_row_get_model(ADW_COMBO_ROW(identity_picker))), ==, 2); /* placeholder + signing identity, watch-only excluded */
+      g_assert_cmpuint(g_list_model_get_n_items(adw_combo_row_get_model(ADW_COMBO_ROW(identity_picker))), ==, 1); /* signing identity only, watch-only excluded */
       GtkWidget *kind_input = find_row(GTK_WIDGET(editor), P_("Exact Event Type (Number)")); g_assert_nonnull(kind_input);
       g_assert_cmpstr(gtk_editable_get_text(GTK_EDITABLE(kind_input)), ==, "");
       gtk_editable_set_text(GTK_EDITABLE(kind_input), "1");
       save = find_button(GTK_WIDGET(editor), P_("Activate Saved Permission")); g_signal_emit_by_name(save, "clicked");
       g_assert_cmpuint(permission_attempts, ==, 2); /* no wildcard allow may be submitted */
-      adw_combo_row_set_selected(ADW_COMBO_ROW(identity_picker), 1); conflict_cleanup = TRUE;
+      adw_combo_row_set_selected(ADW_COMBO_ROW(identity_picker), 0); conflict_cleanup = TRUE;
       g_signal_emit_by_name(save, "clicked");
       WAIT(permission_writes == 2);
       WAIT(!conflict_cleanup);
@@ -1058,7 +1059,7 @@ static void layout_activate(GApplication *application, gpointer data) {
       gtk_widget_set_default_direction(GTK_TEXT_DIR_RTL); gtk_widget_set_direction(GTK_WIDGET(window), GTK_TEXT_DIR_RTL); wait_frames(GTK_WIDGET(window));
       GtkWidget *rtl_panel = selected_panel(split);
       g_assert_cmpint(gtk_widget_get_direction(rtl_panel), ==, GTK_TEXT_DIR_RTL);
-      GtkWidget *input = GTK_WIDGET(gtk_widget_get_template_child(rtl_panel, i == 2 ? GROTTO_TYPE_ACTIVITY_PANEL : GROTTO_TYPE_REMOTE_PANEL, i == 2 ? "search" : "new_relay"));
+      GtkWidget *input = GTK_WIDGET(gtk_widget_get_template_child(rtl_panel, i == 3 ? GROTTO_TYPE_ACTIVITY_PANEL : GROTTO_TYPE_REMOTE_PANEL, i == 3 ? "search" : "new_relay"));
       g_assert_nonnull(input); g_assert_true(gtk_widget_grab_focus(input));
       gtk_editable_set_text(GTK_EDITABLE(input), "اختبار طويل لاتجاه النص — keyboard input"); wait_frames(GTK_WIDGET(window)); assert_focus_bounds(window);
 #ifdef GROTTO_TEST_XDOTOOL
@@ -1377,15 +1378,18 @@ static void layout_activate(GApplication *application, gpointer data) {
   GtkWidget *clipboard_review = find_button(GTK_WIDGET(clipboard_preview), _("_Review"));
   assert_header_control(clipboard_review, TRUE); assert_header_control(find_button(GTK_WIDGET(clipboard_preview), _("_Cancel")), FALSE);
   g_assert_false(gtk_widget_is_sensitive(clipboard_review)); assert_header_fits(clipboard_review, window);
-  GtkDropDown *identity_picker = GTK_DROP_DOWN(find_editor_control(GTK_WIDGET(clipboard_preview), GTK_TYPE_DROP_DOWN));
-  WAIT(gtk_drop_down_get_model(identity_picker) && g_list_model_get_n_items(gtk_drop_down_get_model(identity_picker)) == 1);
-  gtk_drop_down_set_selected(identity_picker, 0);
+  AdwComboRow *identity_picker = ADW_COMBO_ROW(find_editor_control(GTK_WIDGET(clipboard_preview), ADW_TYPE_COMBO_ROW));
+  WAIT(adw_combo_row_get_model(identity_picker) && g_list_model_get_n_items(adw_combo_row_get_model(identity_picker)) == 1);
+  adw_combo_row_set_selected(identity_picker, 0);
   snapshot(GTK_WIDGET(window), "clipboard-selected-identity-360");
   g_assert_true(gtk_widget_is_sensitive(clipboard_review));
-  g_assert_cmpstr(gtk_string_object_get_string(GTK_STRING_OBJECT(gtk_drop_down_get_selected_item(identity_picker))), ==, npub);
-  GtkWidget *identity_label = find_label_containing(GTK_WIDGET(identity_picker), npub);
-  g_assert_nonnull(identity_label);
-  g_assert_cmpstr(gtk_widget_get_tooltip_text(identity_label), ==, npub);
+  g_assert_cmpstr(gtk_string_object_get_string(GTK_STRING_OBJECT(adw_combo_row_get_selected_item(identity_picker))), ==, npub);
+  g_assert_nonnull(find_label_containing(GTK_WIDGET(identity_picker), "Everyday identity"));
+  g_autofree char *short_identity = g_strdup_printf("%.12s…%.6s", npub, npub + strlen(npub) - 6);
+  g_assert_nonnull(find_label_containing(GTK_WIDGET(identity_picker), short_identity));
+  AdwAvatar *picker_avatar = ADW_AVATAR(find_editor_control(GTK_WIDGET(identity_picker), ADW_TYPE_AVATAR));
+  g_assert_nonnull(picker_avatar);
+  g_assert_cmpstr(adw_avatar_get_text(picker_avatar), ==, "Everyday identity");
   int preview_minimum;
   gtk_widget_measure(GTK_WIDGET(clipboard_preview), GTK_ORIENTATION_HORIZONTAL, -1, &preview_minimum, NULL, NULL, NULL);
   g_assert_cmpint(preview_minimum, <=, 360);
@@ -1405,7 +1409,7 @@ static void layout_activate(GApplication *application, gpointer data) {
   g_assert_nonnull(find_label_containing(GTK_WIDGET(invalid_preview), _("This connection link is invalid. Copy a new link from your app.")));
   GtkWidget *invalid_review = find_button(GTK_WIDGET(invalid_preview), _("_Review"));
   assert_header_control(invalid_review, TRUE); g_assert_false(gtk_widget_is_sensitive(invalid_review));
-  GtkWidget *invalid_identity = find_editor_control(GTK_WIDGET(invalid_preview), GTK_TYPE_DROP_DOWN);
+  GtkWidget *invalid_identity = find_editor_control(GTK_WIDGET(invalid_preview), ADW_TYPE_COMBO_ROW);
   g_assert_false(gtk_widget_is_sensitive(invalid_identity));
   g_signal_emit_by_name(find_button(GTK_WIDGET(invalid_preview), _("_Cancel")), "clicked");
   WAIT(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)) == add_app);

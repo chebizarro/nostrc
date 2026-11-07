@@ -1,4 +1,5 @@
 #include "pairing-flow.h"
+#include "signer-window.h"
 #include "dialog-actions.h"
 #include "../pairing_uri.h"
 #include "page-connect.h"
@@ -23,24 +24,9 @@ static void flow_closed(AdwDialog *dialog, gpointer data) {
   if (GTK_IS_EDITABLE(f->entry)) gtk_editable_set_text(GTK_EDITABLE(f->entry), "");
   if (f->uri) { secure_wipe(f->uri, strlen(f->uri)); g_clear_pointer(&f->uri, g_free); }
 }
-static void identity_setup(GtkSignalListItemFactory *factory, GtkListItem *item, gpointer data) {
-  (void)factory; (void)data;
-  GtkWidget *label = gtk_label_new(NULL);
-  gtk_label_set_xalign(GTK_LABEL(label), 0);
-  gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
-  gtk_label_set_max_width_chars(GTK_LABEL(label), 24);
-  gtk_list_item_set_child(item, label);
-}
-static void identity_bind(GtkSignalListItemFactory *factory, GtkListItem *item, gpointer data) {
-  (void)factory; (void)data;
-  const gchar *identity = gtk_string_object_get_string(GTK_STRING_OBJECT(gtk_list_item_get_item(item)));
-  GtkWidget *label = gtk_list_item_get_child(item);
-  gtk_label_set_text(GTK_LABEL(label), identity);
-  gtk_widget_set_tooltip_text(label, identity);
-}
 static void identity_selected(GObject *object, GParamSpec *pspec, gpointer data) {
   (void)pspec; PairingFlow *f = data;
-  gtk_widget_set_sensitive(f->submit, gtk_drop_down_get_selected(GTK_DROP_DOWN(object)) != GTK_INVALID_LIST_POSITION);
+  gtk_widget_set_sensitive(f->submit, adw_combo_row_get_selected(ADW_COMBO_ROW(object)) != GTK_INVALID_LIST_POSITION);
 }
 static void identities_ready(GObject *source, GAsyncResult *result, gpointer data) {
   AdwDialog *d = data; PairingFlow *f = g_object_get_data(G_OBJECT(d), "pairing-flow");
@@ -50,8 +36,8 @@ static void identities_ready(GObject *source, GAsyncResult *result, gpointer dat
     else {
       g_auto(GStrv) identities = NULL; g_variant_get(reply, "(^as)", &identities);
       GtkStringList *model = gtk_string_list_new((const gchar *const *)identities);
-      gtk_drop_down_set_model(GTK_DROP_DOWN(f->identities), G_LIST_MODEL(model)); g_object_unref(model);
-      gtk_drop_down_set_selected(GTK_DROP_DOWN(f->identities), GTK_INVALID_LIST_POSITION);
+      adw_combo_row_set_model(ADW_COMBO_ROW(f->identities), G_LIST_MODEL(model)); g_object_unref(model);
+      adw_combo_row_set_selected(ADW_COMBO_ROW(f->identities), GTK_INVALID_LIST_POSITION);
       gtk_label_set_text(GTK_LABEL(f->status), identities[0] ? _("Choose an identity, then review what the app may do before connecting.") : _("Create or import an identity first."));
       gtk_widget_set_sensitive(f->submit, FALSE);
     }
@@ -79,9 +65,9 @@ static void accepted(GObject *source, GAsyncResult *result, gpointer data) {
 }
 static void request_review(GtkButton *button, gpointer data) {
   (void)button; PairingFlow *f = data;
-  guint selected = gtk_drop_down_get_selected(GTK_DROP_DOWN(f->identities));
+  guint selected = adw_combo_row_get_selected(ADW_COMBO_ROW(f->identities));
   if (selected == GTK_INVALID_LIST_POSITION) { gtk_label_set_text(GTK_LABEL(f->status), _("Choose an identity to connect.")); return; }
-  GtkStringObject *item = GTK_STRING_OBJECT(gtk_drop_down_get_selected_item(GTK_DROP_DOWN(f->identities)));
+  GtkStringObject *item = GTK_STRING_OBJECT(adw_combo_row_get_selected_item(ADW_COMBO_ROW(f->identities)));
   gtk_widget_set_sensitive(f->submit, FALSE);
   gtk_widget_set_sensitive(f->identities, FALSE);
   /* Do not cancel an in-flight mutating call without learning its request ID:
@@ -133,18 +119,13 @@ void grotto_pairing_present(GtkWidget *parent, const gchar *uri) {
     gtk_box_append(GTK_BOX(box), f->summary);
     f->details = gtk_expander_new(_("Details")); gtk_expander_set_child(GTK_EXPANDER(f->details), f->entry);
     gtk_box_append(GTK_BOX(box), f->details);
-    GtkWidget *identity_label = gtk_label_new(_("Identity")); gtk_label_set_xalign(GTK_LABEL(identity_label), 0);
-    gtk_box_append(GTK_BOX(box), identity_label);
-    f->identities = gtk_drop_down_new(NULL, NULL);
-    GtkListItemFactory *identity_factory = gtk_signal_list_item_factory_new();
-    g_signal_connect(identity_factory, "setup", G_CALLBACK(identity_setup), NULL);
-    g_signal_connect(identity_factory, "bind", G_CALLBACK(identity_bind), NULL);
-    gtk_drop_down_set_factory(GTK_DROP_DOWN(f->identities), identity_factory);
-    gtk_drop_down_set_list_factory(GTK_DROP_DOWN(f->identities), identity_factory);
-    g_object_unref(identity_factory);
-    gtk_widget_set_tooltip_text(f->identities, _("Identity to Connect"));
-    gtk_accessible_update_property(GTK_ACCESSIBLE(f->identities), GTK_ACCESSIBLE_PROPERTY_LABEL, _("Identity to Connect"), -1);
-    gtk_box_append(GTK_BOX(box), f->identities);
+    GtkRoot *root = gtk_widget_get_root(parent);
+    GrottoPanelsService *service = SIGNER_IS_WINDOW(root) ? signer_window_get_identity_service(SIGNER_WINDOW(root)) : NULL;
+    f->identities = grotto_identity_picker_new(service);
+    adw_preferences_row_set_title(ADW_PREFERENCES_ROW(f->identities), _("Identity to Connect"));
+    GtkWidget *group = adw_preferences_group_new();
+    adw_preferences_group_add(ADW_PREFERENCES_GROUP(group), f->identities);
+    gtk_box_append(GTK_BOX(box), group);
     f->submit = gtk_button_new_with_mnemonic(_("_Review")); gtk_widget_set_sensitive(f->submit, FALSE);
     g_signal_connect(f->submit, "clicked", G_CALLBACK(request_review), f);
     g_signal_connect(f->identities, "notify::selected", G_CALLBACK(identity_selected), f);

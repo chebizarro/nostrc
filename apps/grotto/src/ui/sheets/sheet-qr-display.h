@@ -11,6 +11,7 @@
 
 #include <gtk/gtk.h>
 #include <adwaita.h>
+#include <grotto-panels.h>
 #include "../../qr-code.h"
 
 G_BEGIN_DECLS
@@ -24,7 +25,7 @@ G_DECLARE_FINAL_TYPE(SheetQrDisplay, sheet_qr_display, SHEET, QR_DISPLAY, AdwDia
  */
 SheetQrDisplay *sheet_qr_display_new(void);
 /* Shared daemon-owned connection link, with identity choice only when needed. */
-SheetQrDisplay *sheet_qr_display_new_connection(void);
+SheetQrDisplay *sheet_qr_display_new_connection(GrottoPanelsService *service);
 
 /* Set the data to display as a QR code.
  *

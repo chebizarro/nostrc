@@ -11,8 +11,8 @@ typedef struct {
 static const PageDef PAGES[] = {
   { "identity", "Identity", "avatar-default-symbolic", NULL },
   { "apps", "Connected Apps", "application-x-executable-symbolic", NULL },
-  { "activity", "Activity", "document-open-recent-symbolic", NULL },
   { "remote-signing", "Remote Signing", "network-server-symbolic", NULL },
+  { "activity", "Activity", "document-open-recent-symbolic", NULL },
   { "relays", "Relays", "network-transmit-receive-symbolic", nss_page_relays_new },
   { "notifications", "Notifications", "preferences-system-notifications-symbolic", nss_page_notifications_new },
   { "wallet", "Wallet", "wallet-symbolic", nss_page_wallet_new },
@@ -245,7 +245,7 @@ nss_window_new(GtkApplication *app, const gchar *page)
     if (!PAGES[i].make) {
       GtkWidget *panel = i == 0 ? grotto_identity_panel_new(ctx->grotto, NULL) :
         i == 1 ? grotto_apps_panel_new(ctx->grotto) :
-        i == 2 ? grotto_activity_panel_new(ctx->grotto) : grotto_remote_panel_new(ctx->grotto);
+        i == 2 ? grotto_remote_panel_new(ctx->grotto) : grotto_activity_panel_new(ctx->grotto);
       nss_grotto_attach_host(GROTTO_PANEL(panel), ctx);
       gtk_widget_set_vexpand(panel, TRUE); gtk_box_append(GTK_BOX(box), panel);
       g_autofree gchar *key = g_strconcat("nss-panel-", PAGES[i].name, NULL);

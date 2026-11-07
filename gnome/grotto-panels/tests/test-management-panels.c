@@ -88,7 +88,7 @@ static void management_panels(void) {
   g_assert_true(grotto_panels_fake_service_replace(fake, GROTTO_PANELS_REQUESTS, &request, NULL));
   g_assert_true(grotto_panels_fake_service_replace(fake, GROTTO_PANELS_ACTIVITY, &record, NULL));
   gsize count = 0; const GrottoPanelDescriptor *descriptors = grotto_panels_get_descriptors(&count); g_assert_cmpuint(count, ==, 4);
-  GtkWidget *(*constructors[])(GrottoPanelsService *) = {grotto_apps_panel_new, grotto_activity_panel_new, grotto_remote_panel_new};
+  GtkWidget *(*constructors[])(GrottoPanelsService *) = {grotto_apps_panel_new, grotto_remote_panel_new, grotto_activity_panel_new};
   for (guint i = 0; i < G_N_ELEMENTS(constructors); i++) {
     gboolean destroyed = FALSE; GrottoPanel *panel = GROTTO_PANEL(constructors[i](service));
     g_object_weak_ref(G_OBJECT(panel), gone, &destroyed);
@@ -159,7 +159,7 @@ static void management_panels(void) {
       g_assert_cmpstr(adw_preferences_row_get_title(ADW_PREFERENCES_ROW(first)), ==, app.label);
       g_assert_false(adw_preferences_row_get_use_markup(ADW_PREFERENCES_ROW(first)));
     }
-    if (i == 1) {
+    if (GROTTO_IS_ACTIVITY_PANEL(panel)) {
       WAIT(has_label(GTK_WIDGET(panel), "Friendly Test App · Sign Event"));
       g_assert_true(has_label(GTK_WIDGET(panel), app.id));
       g_assert_true(has_icon(GTK_WIDGET(panel), expected_icon));
@@ -178,7 +178,7 @@ static void management_panels(void) {
       WAIT(g_list_model_get_n_items(G_LIST_MODEL(gtk_list_view_get_model(records))) == 2);
       grotto_panels_fake_service_set_query_result(fake, GROTTO_PANELS_QUERY_ACTIVITY, NULL, 0, -1);
       g_signal_emit_by_name(load, "clicked"); WAIT(!gtk_widget_get_sensitive(load));
-    } else if (i == 2) {
+    } else if (GROTTO_IS_REMOTE_PANEL(panel)) {
       AdwEntryRow *entry = ADW_ENTRY_ROW(gtk_widget_get_template_child(GTK_WIDGET(panel), GROTTO_TYPE_REMOTE_PANEL, "new_relay"));
       guint before = grotto_panels_fake_service_get_invocations(fake);
       gtk_editable_set_text(GTK_EDITABLE(entry), "wss://relay.nostr.band"); g_signal_emit_by_name(entry, "apply");
@@ -383,4 +383,62 @@ static void remote_app_subtitle(void) {
   g_assert_cmpint(adw_action_row_get_subtitle_lines(ADW_ACTION_ROW(row)), ==, 0);
   g_object_unref(panel);
 }
-void register_management_panels_tests(void) { g_test_add_func("/panels/connection-states", connection_states); g_test_add_func("/panels/remote-client-subtitle", remote_app_subtitle); g_test_add_func("/panels/remote-persistence", remote_persistence); g_test_add_func("/panels/management-real-widgets", management_panels); g_test_add_func("/panels/identity-actions", identity_actions); }
+static guint picker_avatars(GtkWidget *widget, const char *name, GdkTexture *texture) {
+  guint count = 0;
+  if (ADW_IS_AVATAR(widget) && !g_strcmp0(adw_avatar_get_text(ADW_AVATAR(widget)), name)) {
+    g_assert_true(adw_avatar_get_custom_image(ADW_AVATAR(widget)) == (GdkPaintable *)texture);
+    g_assert_true(adw_avatar_get_show_initials(ADW_AVATAR(widget)));
+    gtk_test_accessible_assert_property(gtk_widget_get_parent(widget), GTK_ACCESSIBLE_PROPERTY_LABEL, name);
+    count++;
+  }
+  for (GtkWidget *child = gtk_widget_get_first_child(widget); child; child = gtk_widget_get_next_sibling(child))
+    count += picker_avatars(child, name, texture);
+  return count;
+}
+static void identity_picker(void) {
+  g_autoptr(GrottoPanelsFakeService) fake = grotto_panels_fake_service_new();
+  GrottoPanelsService *service = GROTTO_PANELS_SERVICE(fake);
+  const char *key = "npub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqzqujme";
+  GrottoPanelsMetadata identity = {.id = key, .public_key = key, .label = "Device label"};
+  g_assert_true(grotto_panels_fake_service_replace(fake, GROTTO_PANELS_IDENTITIES, &identity, NULL));
+  const guint8 pixel[] = {255, 0, 0, 255};
+  g_autoptr(GBytes) bytes = g_bytes_new_static(pixel, sizeof pixel);
+  g_autoptr(GdkTexture) texture = GDK_TEXTURE(gdk_memory_texture_new(1, 1, GDK_MEMORY_R8G8B8A8, bytes, 4));
+  g_autoptr(GrottoProfileInfo) profile = grotto_profile_info_copy(NULL);
+  g_free(profile->fields[GROTTO_PROFILE_DISPLAY_NAME]); profile->fields[GROTTO_PROFILE_DISPLAY_NAME] = g_strdup("Profile display name");
+  g_free(profile->fields[GROTTO_PROFILE_NAME]); profile->fields[GROTTO_PROFILE_NAME] = g_strdup("Profile name");
+  profile->images[0] = g_object_ref(texture);
+  grotto_panels_service_set_profile(service, key, profile);
+  GtkWidget *picker = grotto_identity_picker_new(service);
+  adw_preferences_row_set_title(ADW_PREFERENCES_ROW(picker), "Identity");
+  const char *keys[] = {key, "other-public-key", NULL};
+  g_autoptr(GtkStringList) model = gtk_string_list_new(keys);
+  adw_combo_row_set_model(ADW_COMBO_ROW(picker), G_LIST_MODEL(model));
+  GtkWidget *group = adw_preferences_group_new();
+  adw_preferences_group_add(ADW_PREFERENCES_GROUP(group), picker);
+  AdwWindow *window = ADW_WINDOW(adw_window_new()); g_object_ref_sink(window);
+  gtk_window_set_default_size(GTK_WINDOW(window), 360, 640);
+  adw_window_set_content(window, group); gtk_window_present(GTK_WINDOW(window));
+  WAIT(picker_avatars(picker, "Device label", texture) > 0);
+  /* Selected presentation and the popup list both use the same cache-only factory. */
+  g_signal_emit_by_name(picker, "activated");
+  WAIT(picker_avatars(picker, "Device label", texture) >= 2);
+  g_autofree char *short_key = g_strdup_printf("%.12s…%.6s", key, key + strlen(key) - 6);
+  g_assert_true(has_label(picker, short_key));
+  identity.label = "";
+  g_assert_true(grotto_panels_fake_service_replace(fake, GROTTO_PANELS_IDENTITIES, &identity, NULL));
+  WAIT(picker_avatars(picker, "Profile display name", texture) >= 2);
+  g_free(profile->fields[GROTTO_PROFILE_DISPLAY_NAME]); profile->fields[GROTTO_PROFILE_DISPLAY_NAME] = g_strdup("");
+  grotto_panels_service_set_profile(service, key, profile);
+  WAIT(picker_avatars(picker, "Profile name", texture) >= 2);
+  g_free(profile->fields[GROTTO_PROFILE_NAME]); profile->fields[GROTTO_PROFILE_NAME] = g_strdup("");
+  g_clear_object(&profile->images[0]); profile->created_at++;
+  grotto_panels_service_set_profile(service, key, profile);
+  WAIT(picker_avatars(picker, short_key, NULL) >= 2);
+  adw_combo_row_set_selected(ADW_COMBO_ROW(picker), 1);
+  WAIT(picker_avatars(picker, "other-public-key", NULL) > 0);
+  g_assert_cmpstr(gtk_string_object_get_string(GTK_STRING_OBJECT(adw_combo_row_get_selected_item(ADW_COMBO_ROW(picker)))), ==, keys[1]);
+  g_assert_cmpuint(grotto_panels_fake_service_get_invocations(fake), ==, 0);
+  gtk_window_destroy(GTK_WINDOW(window)); g_object_unref(window);
+}
+void register_management_panels_tests(void) { g_test_add_func("/panels/identity-picker", identity_picker); g_test_add_func("/panels/connection-states", connection_states); g_test_add_func("/panels/remote-client-subtitle", remote_app_subtitle); g_test_add_func("/panels/remote-persistence", remote_persistence); g_test_add_func("/panels/management-real-widgets", management_panels); g_test_add_func("/panels/identity-actions", identity_actions); }

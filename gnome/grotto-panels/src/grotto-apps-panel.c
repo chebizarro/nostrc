@@ -24,8 +24,8 @@ const GrottoPanelDescriptor *grotto_panels_get_descriptors(gsize *length) {
   static const GrottoPanelDescriptor panels[] = {
     {"identity", N_("Identity"), "avatar-default-symbolic"},
     {"apps", N_("Connected Apps"), "application-x-executable-symbolic"},
-    {"activity", N_("Activity"), "document-open-recent-symbolic"},
-    {"remote-signing", N_("Remote Signing"), "network-server-symbolic"}
+    {"remote-signing", N_("Remote Signing"), "network-server-symbolic"},
+    {"activity", N_("Activity"), "document-open-recent-symbolic"}
   };
   if (length) *length = G_N_ELEMENTS(panels);
   return panels;

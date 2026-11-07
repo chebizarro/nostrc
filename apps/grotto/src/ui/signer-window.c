@@ -167,7 +167,7 @@ static void on_sidebar_row_activated(GtkListBox *box, GtkListBoxRow *row, gpoint
   SignerWindow *self = user_data;
   if (!self || !row) return;
   int idx = gtk_list_box_row_get_index(row);
-  const char *names[] = { "identity", "apps", "activity", "remote-signing" };
+  const char *names[] = { "identity", "apps", "remote-signing", "activity" };
   if (idx >= 0 && idx < 4) signer_window_show_page(self, names[idx]);
 
   /* On narrow screens when sidebar is collapsed, selecting a row should close the sidebar */
@@ -325,7 +325,7 @@ static void on_pair_application(GSimpleAction *action, GVariant *parameter, gpoi
 static void show_connection_link(GSimpleAction *action, GVariant *parameter, gpointer data) {
   (void)action; (void)parameter; SignerWindow *self = data;
   if (!gn_session_manager_is_locked(gn_session_manager_get_default()))
-    adw_dialog_present(ADW_DIALOG(sheet_qr_display_new_connection()), GTK_WIDGET(self));
+    adw_dialog_present(ADW_DIALOG(sheet_qr_display_new_connection(self->identity_service)), GTK_WIDGET(self));
 }
 static void remote_enabled(GObject *source, GAsyncResult *result, gpointer data) {
   SignerWindow *self = data;
@@ -342,7 +342,7 @@ static void enable_remote_signing(GSimpleAction *action, GVariant *parameter, gp
   const GrottoPanelsMetadata *m = grotto_panels_item_get_metadata(item);
   GrottoPanelCommandArgs args = {.remote_enabled = TRUE, .relays = m->relays, .methods = m->methods,
     .expected_generation = m->owner_generation};
-  grotto_panel_command_async(self->panels[3], GROTTO_PANEL_CONFIGURE_REMOTE, &args, remote_enabled, g_object_ref(self));
+  grotto_panel_command_async(self->panels[2], GROTTO_PANEL_CONFIGURE_REMOTE, &args, remote_enabled, g_object_ref(self));
 }
 static void on_activity(GSimpleAction *action, GVariant *parameter, gpointer data) {
   (void)action; (void)parameter; signer_window_show_page(data, "activity");
@@ -736,7 +736,7 @@ static void identity_open(gpointer data, const char *target) {
     page_settings_show_retention(PAGE_SETTINGS(self->page_settings), GTK_WIDGET(self));
   } else if (g_str_has_prefix(target, "activity:")) {
     signer_window_show_page(self, "activity");
-    grotto_activity_panel_filter_app(GROTTO_ACTIVITY_PANEL(self->panels[2]), target + 9);
+    grotto_activity_panel_filter_app(GROTTO_ACTIVITY_PANEL(self->panels[3]), target + 9);
   } else signer_window_show_page(self, target);
 }
 static void removal_done(GObject *source, GAsyncResult *result, gpointer data) {
@@ -894,16 +894,20 @@ static void host_profile(gpointer data, GrottoProfileAction action, const char *
 static void panel_show_connection(GrottoRemotePanel *panel, gpointer data) {
   (void)panel; show_connection_link(NULL, NULL, data);
 }
+GrottoPanelsService *signer_window_get_identity_service(SignerWindow *self) {
+  g_return_val_if_fail(SIGNER_IS_WINDOW(self), NULL);
+  return self->identity_service;
+}
 static void setup_panels(SignerWindow *self) {
   grotto_profile_service_bind(GTK_WINDOW(self), self->identity_service);
   self->panels[0] = GROTTO_PANEL(g_object_ref_sink(grotto_identity_panel_new(self->identity_service, NULL)));
   self->panels[1] = GROTTO_PANEL(g_object_ref_sink(grotto_apps_panel_new(self->identity_service)));
-  self->panels[2] = GROTTO_PANEL(g_object_ref_sink(grotto_activity_panel_new(self->identity_service)));
-  self->panels[3] = GROTTO_PANEL(g_object_ref_sink(grotto_remote_panel_new(self->identity_service)));
+  self->panels[3] = GROTTO_PANEL(g_object_ref_sink(grotto_activity_panel_new(self->identity_service)));
+  self->panels[2] = GROTTO_PANEL(g_object_ref_sink(grotto_remote_panel_new(self->identity_service)));
   GtkApplication *app = gtk_window_get_application(GTK_WINDOW(self));
   GDBusConnection *bus = app ? g_application_get_dbus_connection(G_APPLICATION(app)) : NULL;
-  if (bus) grotto_connection_link_bind(GROTTO_REMOTE_PANEL(self->panels[3]), bus);
-  g_signal_connect_object(self->panels[3], "show-connection-link", G_CALLBACK(panel_show_connection), self, 0);
+  if (bus) grotto_connection_link_bind(GROTTO_REMOTE_PANEL(self->panels[2]), bus);
+  g_signal_connect_object(self->panels[2], "show-connection-link", G_CALLBACK(panel_show_connection), self, 0);
   const GrottoPanelsHost host = {.show_toast = identity_toast, .review_request = host_review,
     .add_identity = identity_add, .add_app = host_add_app, .open_backup = identity_backup,
     .remove_identity = identity_remove, .open_in_signer = identity_open,
@@ -937,7 +941,7 @@ void signer_window_open_management(SignerWindow *self, const gchar *section, con
       if (self->panels[1]) grotto_apps_panel_show_app(GROTTO_APPS_PANEL(self->panels[1]), target + 4);
     } else if (g_str_has_prefix(target, "activity:")) {
       signer_window_show_page(self, "activity");
-      if (self->panels[2]) grotto_activity_panel_filter_app(GROTTO_ACTIVITY_PANEL(self->panels[2]), target + 9);
+      if (self->panels[3]) grotto_activity_panel_filter_app(GROTTO_ACTIVITY_PANEL(self->panels[3]), target + 9);
     } else if (g_str_has_prefix(target, "apps:npub1")) {
       signer_window_show_page(self, "apps");
       if (self->panels[1]) grotto_apps_panel_filter_identity(GROTTO_APPS_PANEL(self->panels[1]), target + 5);
@@ -978,7 +982,7 @@ void signer_window_show_page(SignerWindow *self, const char *name) {
   AdwDialog *dialog = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(self));
   if (ADW_IS_PREFERENCES_DIALOG(dialog)) adw_dialog_force_close(dialog);
   self->pending_backup = FALSE;
-  const gchar *names[] = {"identity", "apps", "activity", "remote-signing"};
+  const gchar *names[] = {"identity", "apps", "remote-signing", "activity"};
   for (guint i = 0; i < G_N_ELEMENTS(names); i++) {
     if (strcmp(name, names[i])) continue;
     clear_transition_focus(self);

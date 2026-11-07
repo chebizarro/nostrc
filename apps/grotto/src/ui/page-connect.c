@@ -1,5 +1,6 @@
 #include "../i18n.h"
 #include "page-connect.h"
+#include "signer-window.h"
 #include "app-resources.h"
 #include "pairing-flow.h"
 #include "sheets/sheet-qr-scanner.h"
@@ -43,8 +44,11 @@ static void scan(AdwActionRow *row, gpointer data) {
 }
 static void show_link(AdwActionRow *row, gpointer data) {
   (void)row;
-  if (!gtk_widget_activate_action(GTK_WIDGET(data), "win.show-connection-link", NULL))
-    adw_dialog_present(ADW_DIALOG(sheet_qr_display_new_connection()), data);
+  if (!gtk_widget_activate_action(GTK_WIDGET(data), "win.show-connection-link", NULL)) {
+    GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(data));
+    GrottoPanelsService *service = SIGNER_IS_WINDOW(root) ? signer_window_get_identity_service(SIGNER_WINDOW(root)) : NULL;
+    adw_dialog_present(ADW_DIALOG(sheet_qr_display_new_connection(service)), data);
+  }
 }
 static void model_changed(GrottoHomeModel *model, gpointer data) {
   GrottoPageConnect *self = data; GVariant *status = grotto_home_model_status(model); gboolean enabled = FALSE;

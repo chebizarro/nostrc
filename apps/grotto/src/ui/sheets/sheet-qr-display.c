@@ -405,10 +405,10 @@ static void connection_identities_ready(GObject *source, GAsyncResult *result, g
   } else if (!self->connection_closed) show_warning(self, _("Grotto could not load signing identities."));
   g_object_unref(self);
 }
-SheetQrDisplay *sheet_qr_display_new_connection(void) {
+SheetQrDisplay *sheet_qr_display_new_connection(GrottoPanelsService *service) {
   SheetQrDisplay *self = sheet_qr_display_new();
   sheet_qr_display_set_data(self, NULL, GN_QR_TYPE_BUNKER_URI, _("Connection Link"));
-  self->connection_identity = ADW_COMBO_ROW(adw_combo_row_new());
+  self->connection_identity = ADW_COMBO_ROW(grotto_identity_picker_new(service));
   adw_preferences_row_set_title(ADW_PREFERENCES_ROW(self->connection_identity), _("Identity"));
   GtkWidget *group = adw_preferences_group_new();
   adw_preferences_group_add(ADW_PREFERENCES_GROUP(group), GTK_WIDGET(self->connection_identity));

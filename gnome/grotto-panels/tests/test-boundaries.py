@@ -104,7 +104,7 @@ exports = {
     'grotto_panels_service_invoke_finish', 'grotto_panel_get_type', 'grotto_panel_set_service', 'grotto_panel_get_service',
     'grotto_panel_get_cancellable', 'grotto_panel_set_host', 'grotto_panel_host_can', 'grotto_panel_host_invoke',
     'grotto_panel_create_metadata_row', 'grotto_identity_panel_get_type', 'grotto_identity_panel_new',
-    'grotto_identity_panel_get_navigation', 'grotto_panels_get_descriptors',
+    'grotto_identity_panel_get_navigation', 'grotto_identity_picker_new', 'grotto_panels_get_descriptors',
     'grotto_panels_service_query_async', 'grotto_panels_service_query_finish',
     'grotto_panel_can_command', 'grotto_panel_command_async', 'grotto_panel_command_finish',
     'grotto_apps_panel_get_type', 'grotto_apps_panel_new', 'grotto_apps_panel_get_navigation',
@@ -132,6 +132,11 @@ imports = set('''g_free g_strdup g_ascii_strdown g_ascii_strcasecmp g_strchomp g
  _ITM_registerTMCloneTable _ITM_deregisterTMCloneTable adw_navigation_page_get_type adw_action_row_new
  adw_preferences_row_get_type adw_preferences_row_set_use_markup adw_preferences_row_set_title
  adw_action_row_get_type adw_action_row_set_subtitle'''.split())
+
+# Cache-only identity picker presentation; no new I/O or authority imports.
+imports.update('''adw_combo_row_set_factory adw_combo_row_set_list_factory
+ gtk_label_set_ellipsize gtk_label_set_max_width_chars
+ gtk_string_object_get_string gtk_string_object_get_type'''.split())
 
 # W3 Identity widget/template/model/clipboard and translation imports only.
 # Still no bus, network, filesystem, generic dispatch or secret-store imports.
