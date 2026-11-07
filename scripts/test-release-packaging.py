@@ -55,5 +55,24 @@ class SnapSDKTests(unittest.TestCase):
                     subprocess.run([cmake, *roots, "-P", str(check)], check=True)
 
 
+class MacOSTLSDependencyTests(unittest.TestCase):
+    def test_lws_linkage_selects_matching_openssl_major(self):
+        cmake = shutil.which("cmake")
+        self.assertIsNotNone(cmake, "Install CMake to run the TLS dependency regression")
+        with tempfile.TemporaryDirectory(prefix="nostrc-tls-abi-") as temp:
+            root = Path(temp)
+            for major in (3, 4):
+                with self.subTest(major=major):
+                    prefix = f"/opt/homebrew/opt/openssl@{major}"
+                    script = root / "check.cmake"
+                    script.write_text(
+                        f'include("{ROOT}/cmake/NostrcMacOSOpenSSL.cmake")\n'
+                        f'set(linkage "libwebsockets.dylib:\\n\\t{prefix}/lib/libssl.{major}.dylib (compatibility version {major}.0.0)\\n")\n'
+                        'nostrc_openssl_root_from_linkage(actual "${linkage}")\n'
+                        f'if(NOT actual STREQUAL "{prefix}")\n'
+                        '  message(FATAL_ERROR "wrong TLS dependency: ${actual}")\nendif()\n')
+                    subprocess.run([cmake, "-P", str(script)], check=True)
+
+
 if __name__ == "__main__":
     unittest.main()

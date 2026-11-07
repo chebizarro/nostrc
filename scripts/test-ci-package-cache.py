@@ -35,7 +35,8 @@ class WorkflowTests(unittest.TestCase):
                     if str(step.get("uses", "")).endswith("/.github/actions/cache-apt"):
                         cached = True
                         self.assertEqual(step.get("id"), "apt-cache")
-                        saves = [s for s in job["steps"] if s.get("uses") == "actions/cache/save@v4"]
+                        saves = [s for s in job["steps"]
+                                 if s.get("uses", "").split("@", 1)[0] == "actions/cache/save"]
                         self.assertEqual(len(saves), 1, (path.name, job_id))
                         save = saves[0]
                         self.assertIn("always()", save["if"])

@@ -56,6 +56,10 @@ jobs:
           REQUESTED_SHA: ${{ inputs.sha }}
         run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
 
+      - name: Cache apt package downloads
+        id: apt-cache
+        uses: ./.github/actions/cache-apt
+
       - name: Packaging tools
         if: matrix.passkeys == 'OFF' && matrix.sqlcipher == 'OFF'
         run: sudo apt-get update && sudo apt-get install -y shellcheck python3-jsonschema python3-yaml cloud-init
@@ -75,10 +79,6 @@ jobs:
           docker run --rm --network none -e SIGNET_ENROLLMENT_HOST=enroll.example.org \
             -v "$PWD/signet/deploy/Caddyfile:/etc/caddy/Caddyfile:ro" "$CADDY_IMAGE" \
             caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
-
-      - name: Cache apt package downloads
-        id: apt-cache
-        uses: ./.github/actions/cache-apt
 
       - name: Install dependencies
         run: |

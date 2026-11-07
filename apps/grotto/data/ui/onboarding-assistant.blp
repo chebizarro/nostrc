@@ -9,11 +9,12 @@ template $OnboardingAssistant: Adw.Window {
     orientation: vertical;
     Adw.NavigationView steps {
       vexpand: true;
-      Adw.NavigationPage {
+      Adw.NavigationPage page_welcome {
         tag: "welcome"; title: _("Set Up Grotto");
         Adw.ToolbarView {
           [top] Adw.HeaderBar header_welcome {
             show-start-title-buttons: false; show-end-title-buttons: false;
+            title-widget: Label { label: bind page_welcome.title; wrap: true; justify: center; styles ["heading"] };
             [start] Button btn_skip { label: _("_Skip Setup"); use-underline: true; }
           }
           Adw.StatusPage {
@@ -27,10 +28,10 @@ template $OnboardingAssistant: Adw.Window {
           }
         }
       }
-      Adw.NavigationPage {
+      Adw.NavigationPage page_choice {
         tag: "choice"; title: _("Add Identity");
         Adw.ToolbarView {
-          [top] Adw.HeaderBar header_choice { show-start-title-buttons: false; show-end-title-buttons: false; }
+          [top] Adw.HeaderBar header_choice { show-start-title-buttons: false; show-end-title-buttons: false; title-widget: Label { label: bind page_choice.title; wrap: true; justify: center; styles ["heading"] }; }
           Adw.PreferencesPage {
             Adw.PreferencesGroup {
               Adw.ActionRow choose_create { title: _("Create Identity"); subtitle: _("Start with a new identity"); activatable: true; [suffix] Image { icon-name: "go-next-symbolic"; } }
@@ -40,20 +41,20 @@ template $OnboardingAssistant: Adw.Window {
           }
         }
       }
-      Adw.NavigationPage {
+      Adw.NavigationPage page_create {
         tag: "create"; title: _("Create Identity");
         Adw.ToolbarView {
-          [top] Adw.HeaderBar header_create { show-start-title-buttons: false; show-end-title-buttons: false; }
+          [top] Adw.HeaderBar header_create { show-start-title-buttons: false; show-end-title-buttons: false; title-widget: Label { label: bind page_create.title; wrap: true; justify: center; styles ["heading"] }; }
           Adw.PreferencesPage {
             description: _("Your new key is saved in the system keyring. Next, check that it works and save a recovery phrase.");
             Adw.PreferencesGroup { Adw.EntryRow entry_profile_name { title: _("Name on This Device"); activates-default: true; } }
           }
         }
       }
-      Adw.NavigationPage {
+      Adw.NavigationPage page_import {
         tag: "import"; title: _("Import Identity");
         Adw.ToolbarView {
-          [top] Adw.HeaderBar header_import { show-start-title-buttons: false; show-end-title-buttons: false; }
+          [top] Adw.HeaderBar header_import { show-start-title-buttons: false; show-end-title-buttons: false; title-widget: Label { label: bind page_import.title; wrap: true; justify: center; styles ["heading"] }; }
           Adw.PreferencesPage {
             description: _("Enter your secret key, encrypted backup, or recovery phrase.");
             Adw.PreferencesGroup {
@@ -71,10 +72,10 @@ template $OnboardingAssistant: Adw.Window {
           }
         }
       }
-      Adw.NavigationPage {
+      Adw.NavigationPage page_connect {
         tag: "connect"; title: _("Connect App");
         Adw.ToolbarView {
-          [top] Adw.HeaderBar header_connect { show-start-title-buttons: false; show-end-title-buttons: false; }
+          [top] Adw.HeaderBar header_connect { show-start-title-buttons: false; show-end-title-buttons: false; title-widget: Label { label: bind page_connect.title; wrap: true; justify: center; styles ["heading"] }; }
           Adw.StatusPage {
             icon-name: "application-x-addon-symbolic"; title: _("Connect App");
             description: _("Apps on this device ask for permission when they first use Grotto. For an app on another device, open Connected Apps to pair it.");
@@ -88,10 +89,10 @@ template $OnboardingAssistant: Adw.Window {
           }
         }
       }
-      Adw.NavigationPage {
+      Adw.NavigationPage page_test {
         tag: "test"; title: _("Check Identity");
         Adw.ToolbarView {
-          [top] Adw.HeaderBar header_test { show-start-title-buttons: false; show-end-title-buttons: false; }
+          [top] Adw.HeaderBar header_test { show-start-title-buttons: false; show-end-title-buttons: false; title-widget: Label { label: bind page_test.title; wrap: true; justify: center; styles ["heading"] }; }
           Adw.PreferencesPage {
             description: _("Approve a one-time signing and encryption check. Nothing is published and no app permissions are saved.");
             Adw.PreferencesGroup { Box pending_requests { orientation: vertical; } }
@@ -104,10 +105,10 @@ template $OnboardingAssistant: Adw.Window {
           }
         }
       }
-      Adw.NavigationPage {
+      Adw.NavigationPage page_failed {
         tag: "failed"; title: _("Identity Check Failed");
         Adw.ToolbarView {
-          [top] Adw.HeaderBar header_failed { show-start-title-buttons: false; show-end-title-buttons: false; }
+          [top] Adw.HeaderBar header_failed { show-start-title-buttons: false; show-end-title-buttons: false; title-widget: Label { label: bind page_failed.title; wrap: true; justify: center; styles ["heading"] }; }
           Adw.StatusPage {
             icon-name: "dialog-warning-symbolic"; title: _("Identity Check Failed");
             description: _("Your identity is saved. Try the check again, or skip it and keep a warning on this identity.");
@@ -115,10 +116,10 @@ template $OnboardingAssistant: Adw.Window {
           }
         }
       }
-      Adw.NavigationPage {
+      Adw.NavigationPage page_backup {
         tag: "backup"; title: _("Back Up Identity");
         Adw.ToolbarView {
-          [top] Adw.HeaderBar header_backup { show-start-title-buttons: false; show-end-title-buttons: false; }
+          [top] Adw.HeaderBar header_backup { show-start-title-buttons: false; show-end-title-buttons: false; title-widget: Label { label: bind page_backup.title; wrap: true; justify: center; styles ["heading"] }; }
           Adw.PreferencesPage {
             description: _("Write these words down in order and keep them private. Anyone with them controls your identity.");
             Adw.PreferencesGroup { Box seed_words { orientation: vertical; styles ["monospace"] } }
@@ -142,10 +143,10 @@ template $OnboardingAssistant: Adw.Window {
           }
         }
       }
-      Adw.NavigationPage {
+      Adw.NavigationPage page_ready {
         tag: "ready"; title: _("Setup Complete");
         Adw.ToolbarView {
-          [top] Adw.HeaderBar header_ready { show-start-title-buttons: false; show-end-title-buttons: false; }
+          [top] Adw.HeaderBar header_ready { show-start-title-buttons: false; show-end-title-buttons: false; title-widget: Label { label: bind page_ready.title; wrap: true; justify: center; styles ["heading"] }; }
           Adw.StatusPage {
             icon-name: "emblem-ok-symbolic"; title: _("Your Identity Is Ready");
             child: Box ready_actions {

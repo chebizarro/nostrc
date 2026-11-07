@@ -11,12 +11,14 @@
 
 #include "nostr-publish-session-relay.h"
 
+#include <string.h>
+#ifdef G_OS_UNIX
 #include <errno.h>
 #include <fcntl.h>
-#include <string.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
+#endif
 
 #define NP_SR_CALL_TIMEOUT_MS 5000
 
@@ -387,6 +389,7 @@ nostr_publish_session_relay_refresh(NostrPublishSessionRelay *self)
 gboolean
 nostr_publish_session_relay_nudge(const gchar *socket_path)
 {
+#ifdef G_OS_UNIX
   struct sockaddr_un sa;
   if (socket_path == NULL || strlen(socket_path) >= sizeof(sa.sun_path))
     return FALSE;
@@ -403,4 +406,9 @@ nostr_publish_session_relay_nudge(const gchar *socket_path)
   } while (rc != 0 && errno == EINTR);
   close(fd);
   return rc == 0;
+#else
+  (void)socket_path;
+  g_debug("Session relay socket activation is unavailable on this platform");
+  return FALSE;
+#endif
 }

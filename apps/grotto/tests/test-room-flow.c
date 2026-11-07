@@ -204,7 +204,9 @@ static void run_room_flow(GDBusConnection *bus, gboolean gui) {
   g_assert_nonnull(rumor);
   Envelope result = {0};
   gh_nip17_envelope_seal_room_async(accounts, rumor, NULL, NULL, envelope_done, &result);
-  WAIT(ready(controller) || result.done);
+  /* Snapshot readiness and the independently subscribed prompt can arrive in
+   * either order. Observe both before asserting the single-prompt contract. */
+  WAIT((ready(controller) && prompts > 0) || result.done);
   g_assert_false(result.done);
   g_assert_cmpuint(prompts, ==, 1);
   g_autoptr(GrottoApprovalRequest) request =
