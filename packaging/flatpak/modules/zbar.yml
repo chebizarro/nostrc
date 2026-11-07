@@ -4,6 +4,7 @@ config-opts:
   - --disable-static
   - --disable-doc
   - --disable-video
+  - --without-dbus
   - --without-gtk
   - --without-qt
   - --without-python

@@ -39,6 +39,7 @@ modules:
   - ../../../packaging/flatpak/modules/libsecp256k1.yml
   - ../../../packaging/flatpak/modules/libsodium.yml
   - ../../../packaging/flatpak/modules/libqrencode.yml
+  - ../../../packaging/flatpak/modules/zbar.yml
   - ../../../packaging/flatpak/modules/nsync.yml
   - ../../../packaging/flatpak/modules/jansson.yml
   - ../../../packaging/flatpak/modules/libwebsockets.yml

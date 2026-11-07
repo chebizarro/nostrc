@@ -8,7 +8,7 @@ arch=('x86_64' 'aarch64')
 url='https://github.com/chebizarro/nostrc'
 license=('MIT')
 depends=('gtk4>=4.14' 'libadwaita>=1.5')
-makedepends=('cmake' 'ninja' 'pkgconf' 'gettext')
+makedepends=('cmake' 'ninja' 'pkgconf' 'gettext' 'glib2-devel')
 _version=0.12.1-alpha8
 source=("groundhog-${_version}.tar.gz::https://github.com/chebizarro/nostrc/releases/download/groundhog-v${_version}/groundhog-${_version}.tar.gz")
 sha256sums=('SKIP')
