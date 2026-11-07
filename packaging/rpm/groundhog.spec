@@ -16,7 +16,7 @@
 %bcond_with system_nsync
 
 Name:           groundhog
-Version:        0.12.0
+Version:        0.12.1
 Release:        0.8.alpha8%{?dist}
 Summary:        Private messaging on Nostr for GNOME (alpha)
 License:        MIT
