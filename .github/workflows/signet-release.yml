@@ -152,7 +152,7 @@ jobs:
         with:
           name: signet-${{ matrix.variant }}
           path: evidence
-      - name: Require existing package to remain private
+      - name: Check public package publication preconditions
         env:
           GH_TOKEN: ${{ secrets.GHCR_READ_TOKEN }} # Optional metadata enrichment only.
           OWNER: ${{ github.repository_owner }}
@@ -174,7 +174,7 @@ jobs:
                 exit 1
               fi
               authorization="Authorization: Bearer $token" ;;
-            401|403|404) ;; # GHCR can deny anonymous tokens for private/absent packages.
+            401|403|404) ;; # GHCR can deny anonymous tokens for absent or inaccessible packages.
             *) echo '::error::Unexpected anonymous GHCR token response.' >&2; exit 1 ;;
           esac
           if ! status=$(curl -q -sS --connect-timeout 10 --max-time 30 -o /dev/null -w '%{http_code}' \
@@ -185,8 +185,8 @@ jobs:
             exit 1
           fi
           case "$status" in
-            200) echo '::error::Image is anonymously readable; refusing public publication.' >&2; exit 1 ;;
-            401|403|404) echo "Anonymous GHCR manifest: HTTP $status (private or absent)." ;;
+            200) echo 'Anonymous GHCR manifest: HTTP 200 (existing public image).' ;;
+            401|403|404) echo "Anonymous GHCR manifest: HTTP $status (absent or inaccessible; push may proceed)." ;;
             *) echo "::error::Unexpected anonymous GHCR response: HTTP $status" >&2; exit 1 ;;
           esac
           # The repository GITHUB_TOKEN cannot supply user-owned package metadata.
@@ -194,10 +194,6 @@ jobs:
             package=${repository##*/}
             if visibility=$(gh api "users/$OWNER/packages/container/$package" --jq .visibility); then
               echo "Package REST visibility: $visibility"
-              if [ "$visibility" != private ]; then
-                echo '::error::Package metadata is not private; refusing publication.' >&2
-                exit 1
-              fi
             else
               echo '::warning::Optional GHCR_READ_TOKEN metadata unavailable; anonymous gate passed.' >&2
             fi
@@ -240,21 +236,25 @@ jobs:
                 exit 1
               fi
               authorization="Authorization: Bearer $token" ;;
-            401|403|404) ;; # GHCR can deny anonymous tokens for private/absent packages.
+            401|403|404) ;; # GHCR can deny anonymous tokens for absent or inaccessible packages.
             *) echo '::error::Unexpected anonymous GHCR token response.' >&2; exit 1 ;;
           esac
-          if ! status=$(curl -q -sS --connect-timeout 10 --max-time 30 -o /dev/null -w '%{http_code}' \
+          if ! status=$(curl -q -sS --connect-timeout 10 --max-time 30 -o evidence/anonymous-manifest.json -w '%{http_code}' \
             -H "$authorization" \
             -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json' \
-            "https://ghcr.io/v2/$repository/manifests/$digest"); then
+            "https://ghcr.io/v2/$repository/manifests/${IMAGE##*:}"); then
             echo '::error::Anonymous GHCR probe failed after push.' >&2
             exit 1
           fi
           case "$status" in
-            200) echo '::error::Published image is anonymously readable.' >&2; exit 1 ;;
-            401|403|404) echo "Anonymous GHCR manifest: HTTP $status (not publicly readable)." ;;
-            *) echo "::error::Unexpected anonymous GHCR response: HTTP $status" >&2; exit 1 ;;
+            200) echo 'Anonymous GHCR manifest: HTTP 200 (published tag is publicly readable).' ;;
+            *) echo "::error::Published tag must be anonymously readable: HTTP $status" >&2; exit 1 ;;
           esac
+          manifest_digest="sha256:$(sha256sum evidence/anonymous-manifest.json | cut -d' ' -f1)"
+          if [ "$manifest_digest" != "$digest" ]; then
+            echo "::error::Anonymous tag manifest digest $manifest_digest differs from pushed digest $digest" >&2
+            exit 1
+          fi
       - uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
         with:
           subject-name: ${{ needs.identity.outputs.image }}

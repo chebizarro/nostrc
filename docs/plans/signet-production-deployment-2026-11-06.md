@@ -12,10 +12,11 @@ Prepare Signet for its first production deployment on **one DigitalOcean Droplet
 4. **A frank implemented-vs-promised assessment** — per-feature table with doc ref → code ref → status → launch action.
 5. **A consolidated summary of outstanding beads and nostrig issues** — classified by deployment relevance, ending in an explicit blocker list so the owner picks the release cut.
 
-### 1.1 Owner decisions (2026-11-06)
+### 1.1 Owner decisions (2026-11-06; amended 2026-11-07)
 
 | Topic | Decision |
 |---|---|
+| GHCR visibility (2026-11-07) | Public — repo is public, image carries no secrets; Droplet pulls need no credential. |
 | Hosting | Single Droplet + Docker Compose now; App Platform and DOKS recorded as later paths only (App Platform is unsuitable as built: no persistent volumes, no `cap_add`/devices, gVisor). |
 | Surfaces in scope | NIP-46 + management over outbound relay WebSockets; HTTP health/metrics **loopback-only, scraped on-box**; HTTP bootstrap/enrollment server (packaged, disabled); passkeys / virtual CTAP-HID (programmatic acceptance). |
 | Surfaces out of scope | **Go MCP wrapper (`signet-mcp`) — dropped from this release (second round)**; D-Bus TCP (47472), NIP-5L and ssh-agent unix sockets, D-Bus system bus, public health exposure, `signet-git-credential` in the container. |
@@ -121,7 +122,7 @@ Blocking seams: (1) HTTP bind bug; (2) silent config fallback and cache-only pro
 | Virtual CTAP-HID | Experimental Linux-host profile (`compose.ctap.yml`), not a Droplet launch requirement | A UHID device on a Droplet does not present an authenticator to a browser elsewhere |
 | MCP | **Dropped from this release** (owner). Not built, shipped, audited or listed as a surface; README/assessment record it as a stub | No Go CI job in rc.1; a native sidecar (per the 2026-08-19 investigation) is a separate future feature |
 | Writer epochs | Fresh database, one daemon; no historical cutover | Fence behavior stays in audit scope; migrating an existing fleet uses `WRITER_EPOCH_CUTOVER.md` separately |
-| Registry | GHCR (private by default), digest-pinned deployment | DOCR documented as alternative (Starter: 1 repo/500 MiB; manual GC) |
+| Registry | GHCR public (owner-approved 2026-11-07), digest-pinned deployment; anonymous pulls | DOCR documented as alternative (Starter: 1 repo/500 MiB; manual GC) |
 | TLS proxy | Caddy for the optional enrollment profile | nginx is an alternative, not a second maintained route |
 | Provisioner authority | **Keep D2** (config is desired state, write-back converges INI and store; recorded decision fp-56t). `/etc/signet` is mounted **read-write** for UID 10001; production never sets `SIGNET_PROVISIONER_PUBKEYS` (env shadows the file and defeats write-back); fix adoption to mark only after a successful write-back | Runtime grants/revocations survive reloads because write-back succeeds; the persisted-only alternative (export W1.E) is rejected as it reverses a recorded design and silently ignores config edits (§7.E) |
 | IPv6 | Droplet IPv6 **disabled** at first launch (no `--enable-ipv6`); listener tests cover `[::1]` bind correctness only | Firewall rules are IPv4; off-host v6 negative tests are out of scope until IPv6 is enabled |
@@ -310,7 +311,7 @@ Profile off by default; Caddy alone accepts inbound 443; signet bootstrap stays 
 
 ### 9.D Registry and CI
 
-GHCR private by default (fits the Actions release route; avoids DOCR Starter's 1-repo/500 MiB limit); CI publication uses repository-scoped `GITHUB_TOKEN` `packages: write` permissions; Droplet pulls with a dedicated read-only package credential stored under `/opt/signet/secrets` (root-only, never in user-data); DOCR documented as alternative (`doctl registry login --read-only --expiry-seconds`, manual GC read-only window).
+GHCR public (owner-approved 2026-11-07: repo is public, image carries no secrets; fits the Actions release route and avoids DOCR Starter's 1-repo/500 MiB limit); CI publication uses repository-scoped `GITHUB_TOKEN` `packages: write` permissions; Droplet pulls are anonymous and digest-pinned, with no package credential required; DOCR documented as alternative (`doctl registry login --read-only --expiry-seconds`, manual GC read-only window).
 
 New `.github/workflows/signet-release.yml` (pattern: `groundhog-release.yml`): (1) trigger on `signet-v*` tags and manual candidate builds; (2) verify tag/base version across all four authoritative sources; (3) run `signet-ci.yml` + Docker test stage + Meson; (4) build both variants; (5) emit SBOM, vulnerability report, revision, provenance, digests; (6) publish only after checks pass; (7) manual HEAD images carry a commit identity, never a version; (8) maintain a vulnerability-exception list with finding refs and expiry. Extend `signet-ci.yml` with affected packaging checks (no Go job: the SDK/MCP is out of scope). Update `tests/selection/inventory.json` publisher/package metadata via its supported generator (identify it in W0).
 

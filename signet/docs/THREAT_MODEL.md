@@ -75,9 +75,11 @@ In scope:
   possession (SR-05); both must be fixed before the profile is enabled.
 - **A12 — Image/config downgrade and operator secret mistakes**: wrong image,
   plaintext build, stale policy/config, argv/env leakage or writable authority
-  misconfiguration. Digest pinning, provenance, encrypted-mode refusal,
-  protected files and operator review are deployment controls, not defenses
-  against a live administrator intentionally running an old binary.
+  misconfiguration. Digest pinning, provenance attestation, encrypted-mode
+  refusal, protected files and operator review are deployment controls, not
+  defenses against a live administrator intentionally running an old binary.
+  GHCR is public (owner-approved 2026-11-07); image integrity relies on digest
+  pinning and provenance attestation, not registry visibility.
 - **A13 — Restart replay / lost replies**: RAM caches do not survive a restart;
   a committed mutation can outlive its reply. See §3.4 for the stop rule and
   retry boundary.

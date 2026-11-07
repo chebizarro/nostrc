@@ -210,8 +210,10 @@ permissions, online backup and the ≥270-second deliberate-stop rule.
 Use the [deployment runbook](deploy/README.md), following
 [image/Compose packaging](../docs/plans/signet-production-deployment-2026-11-06.md#9-w3--images-compose-release-packaging)
 and [provisioning/operations](../docs/plans/signet-production-deployment-2026-11-06.md#10-w4--digitalocean-provisioning-and-operations).
-The launch layout uses digest-pinned GHCR images, systemd supervision, host
-networking with loopback observability, rw `/etc/signet` for D2 write-back,
+The launch layout uses public, digest-pinned GHCR images (owner-approved
+2026-11-07); Droplet pulls are anonymous and need no package credential.
+It uses systemd supervision, host networking with loopback observability,
+rw `/etc/signet` for D2 write-back,
 separately mounted secrets and a verified state volume. IPv6 and bootstrap are
 disabled; Caddy is only for the optional bootstrap profile. Do not use the old
 `signet.toml.example` quick start (that file does not exist).

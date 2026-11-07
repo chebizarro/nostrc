@@ -31067,15 +31067,15 @@
       "unsupported_reason": "Signet container release packaging/publication runs in its dedicated workflow; not an attested selective-profile execution receipt.",
       "matrix_source": "",
       "source_sha256": "c64174e10c9d7f44c5d768939b6863177099a026d33a9fc3b450fd0ab070fb5f",
-      "workflow_sha256": "ed4148bbceddb2354f5489b2e304398aa82de2ab7bd0cce5c1b44c945c462079"
+      "workflow_sha256": "fa025e226b222223694be565f25aa411c72c8f934ec991d5bf685b94d8a37f95"
     },
     ".github/workflows/signet-release.yml:publish": {
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
       "unsupported_reason": "Signet container release packaging/publication runs in its dedicated workflow; not an attested selective-profile execution receipt.",
       "matrix_source": "matrix:\n        include:\n          - variant: default\n            suffix: ''\n          - variant: passkeys\n            suffix: '-passkeys'",
-      "source_sha256": "90c5c6d1e12a8784deddf69e01d0b80dd96397e33604e2cb2cbb8a17161c41c1",
-      "workflow_sha256": "ed4148bbceddb2354f5489b2e304398aa82de2ab7bd0cce5c1b44c945c462079"
+      "source_sha256": "85af830ccc28c0edd01fef869359828dd9c0f12bf7f35ef671dc5c3b0d0be8fd",
+      "workflow_sha256": "fa025e226b222223694be565f25aa411c72c8f934ec991d5bf685b94d8a37f95"
     },
     ".github/workflows/signet-release.yml:package": {
       "profiles": [],
@@ -31083,7 +31083,7 @@
       "unsupported_reason": "Signet container release packaging/publication runs in its dedicated workflow; not an attested selective-profile execution receipt.",
       "matrix_source": "matrix:\n        include:\n          - variant: default\n            passkeys: 'OFF'\n            suffix: ''\n          - variant: passkeys\n            passkeys: 'ON'\n            suffix: '-passkeys'",
       "source_sha256": "f8f5c385524114216b715b902b92dc994fa96c43a144682c6fb373f3974cc4a0",
-      "workflow_sha256": "ed4148bbceddb2354f5489b2e304398aa82de2ab7bd0cce5c1b44c945c462079"
+      "workflow_sha256": "fa025e226b222223694be565f25aa411c72c8f934ec991d5bf685b94d8a37f95"
     },
     ".github/workflows/signet-release.yml:signet-ci": {
       "profiles": [],
@@ -31091,7 +31091,7 @@
       "unsupported_reason": "Signet container release packaging/publication runs in its dedicated workflow; not an attested selective-profile execution receipt.",
       "matrix_source": "",
       "source_sha256": "45e9a83079843f40b63148ca7a81e9e0b1ce9e470bdc1b4933a84931bd776b5c",
-      "workflow_sha256": "ed4148bbceddb2354f5489b2e304398aa82de2ab7bd0cce5c1b44c945c462079"
+      "workflow_sha256": "fa025e226b222223694be565f25aa411c72c8f934ec991d5bf685b94d8a37f95"
     },
     ".github/workflows/signet-release.yml:identity": {
       "profiles": [],
@@ -31099,7 +31099,7 @@
       "unsupported_reason": "Signet container release packaging/publication runs in its dedicated workflow; not an attested selective-profile execution receipt.",
       "matrix_source": "",
       "source_sha256": "f052bc1af1fe0f075c2090ce42262aa74bf514003bd80ce0943b6c0bfeec50e5",
-      "workflow_sha256": "ed4148bbceddb2354f5489b2e304398aa82de2ab7bd0cce5c1b44c945c462079"
+      "workflow_sha256": "fa025e226b222223694be565f25aa411c72c8f934ec991d5bf685b94d8a37f95"
     },
     ".github/workflows/dependency-tests.yml:grotto_asan": {
       "matrix_source": "",
