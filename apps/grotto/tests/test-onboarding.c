@@ -47,10 +47,7 @@ static GtkWidget *child(Fixture *f, const gchar *name) {
   g_assert_nonnull(widget); return widget;
 }
 static void click(Fixture *f, const gchar *name) {
-  GtkWidget *button = child(f, name);
-  if (gtk_widget_is_sensitive(button) && gtk_widget_get_ancestor(button, GTK_TYPE_POPOVER))
-    gtk_menu_button_popup(GTK_MENU_BUTTON(child(f, "finish_menu")));
-  g_signal_emit_by_name(button, "clicked");
+  g_signal_emit_by_name(child(f, name), "clicked");
 }
 static void finish_cb(gboolean verified, gpointer data) { Fixture *f = data; f->finished++; f->verified = verified; }
 static void mocked_io(GDBusConnection *bus, const gchar *sender, const gchar *path, const gchar *interface,
@@ -165,12 +162,15 @@ static void teardown(Fixture *f, gconstpointer data) {
   g_free(f->npub); active = NULL;
 }
 static void create_waiting(Fixture *f) {
-  GtkWidget *header = gtk_widget_get_ancestor(child(f, "btn_next"), ADW_TYPE_HEADER_BAR);
-  g_assert_nonnull(header);
-  g_assert_true(gtk_widget_get_ancestor(child(f, "btn_skip"), ADW_TYPE_HEADER_BAR) == header);
-  g_assert_true(gtk_widget_get_ancestor(child(f, "btn_back"), ADW_TYPE_HEADER_BAR) == header);
+  GtkWidget *header = child(f, "header_actions");
+  GtkWidget *footer = gtk_widget_get_parent(child(f, "btn_next"));
+  g_assert_null(gtk_widget_get_ancestor(child(f, "btn_next"), ADW_TYPE_HEADER_BAR));
+  g_assert_true(gtk_widget_is_ancestor(child(f, "btn_skip"), footer));
+  g_assert_true(gtk_widget_is_ancestor(child(f, "btn_back"), footer));
   g_assert_true(gtk_widget_has_css_class(child(f, "btn_next"), "suggested-action"));
-  g_assert_false(gtk_widget_has_css_class(child(f, "btn_next"), "pill"));
+  g_assert_true(gtk_widget_has_css_class(child(f, "btn_next"), "pill"));
+  g_assert_true(gtk_widget_has_css_class(child(f, "btn_back"), "flat"));
+  g_assert_true(gtk_widget_has_css_class(child(f, "btn_skip"), "flat"));
   g_assert_false(adw_header_bar_get_show_end_title_buttons(ADW_HEADER_BAR(header)));
   g_assert_false(gtk_widget_get_visible(child(f, "btn_back")));
   g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(child(f, "btn_skip"))), ==, "_Skip Setup");
@@ -737,9 +737,12 @@ static void repeated_creation_activation(Fixture *f, gconstpointer data) {
   GtkWidget *back_button = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(setup), TYPE_ONBOARDING_ASSISTANT, "btn_back"));
   GtkWidget *cancel_button = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(setup), TYPE_ONBOARDING_ASSISTANT, "btn_skip"));
   GtkWidget *affirmative = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(setup), TYPE_ONBOARDING_ASSISTANT, "btn_next"));
-  GtkWidget *header = gtk_widget_get_ancestor(affirmative, ADW_TYPE_HEADER_BAR);
+  AdwHeaderBar *header = ADW_HEADER_BAR(gtk_widget_get_template_child(GTK_WIDGET(setup), TYPE_ONBOARDING_ASSISTANT, "header_actions"));
   g_assert_nonnull(header);
-  g_assert_true(gtk_widget_get_ancestor(cancel_button, ADW_TYPE_HEADER_BAR) == header);
+  g_assert_true(adw_header_bar_get_show_end_title_buttons(header));
+  g_assert_null(gtk_widget_get_ancestor(affirmative, ADW_TYPE_HEADER_BAR));
+  g_assert_null(gtk_widget_get_ancestor(cancel_button, ADW_TYPE_HEADER_BAR));
+  g_assert_true(gtk_widget_is_ancestor(cancel_button, gtk_widget_get_parent(affirmative)));
   g_assert_false(gtk_widget_get_visible(affirmative));
   g_assert_false(gtk_widget_get_visible(back_button));
   g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(cancel_button)), ==, "_Cancel");
