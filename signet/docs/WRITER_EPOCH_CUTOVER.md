@@ -92,7 +92,20 @@ There is no schema migration. The `agent_writer_leases.expires_at` and
 - Transferring back to an earlier writer key is no longer possible; mint a
   new client key for every assignment, including rollback.
 
-## Operational rollout (not performed by this code change)
+## Fresh deployment versus historical cutover
+
+The 0.8.0 launch baseline is a **fresh database and one active daemon**.
+Provision, pair a fresh persistent client, acquire a new writer key if needed,
+and verify owner success, other-client denial and restart durability. That is
+not evidence that an existing fleet or its retained secrets/outboxes were cut
+over. Follow the [deployment runbook](../deploy/README.md); any deliberate stop
+must keep the daemon down ≥150 seconds before restarting (RAM replay caches).
+
+The stage-01/edge-01 rollout below remains separate historical operational
+work; this documentation update does not perform or close it. Restoring old
+state can restore revoked authority and requires explicit review.
+
+## Historical operational rollout (not performed by this documentation change)
 
 1. Mint a **new, dedicated NIP-46 client key** for the incoming writer (not
    a provisioner key, not any key used as a writer before). Confirm the

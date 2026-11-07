@@ -1,11 +1,27 @@
 # Signet: grant login-kind for the nostr-homed NIP-46 provider
 
-This walkthrough closes the C7 live-signer proof (`nostrc-ot2c.7`) once the
-bunker operator opens a narrow ACL hole: signing the auth-challenge event
-(kind `NH_AUTH_CHALLENGE_KIND` = **1**) for the agent bound to nostr-homed's
-pre-paired client transport key. Until that grant lands, provider_nip46
-completes connect + get_public_key against the live bunker but sign_event
-returns `reason_code=policy.default_deny` (see `signet/src/policy_store.c`).
+This walkthrough grants signing of the auth-challenge event (kind
+`NH_AUTH_CHALLENGE_KIND` = **1**) for the agent bound to nostr-homed's paired
+client key. Without a matching grant, `sign_event` is refused by policy;
+kind 1 is not a hardcoded exception. The earlier live-proof blocker is
+historical, not an assertion that the current candidate has been tested.
+
+## Historical live proof (2026-09-21)
+
+The durable Beads record `c7-closed-live-nip-46-external-signer-login` reports
+an end-to-end pass on 2026-09-21 against bunker.sharegap.net. Retrieve the
+source evidence with:
+
+```sh
+bd memories c7-closed-live-nip-46-external-signer-login --json
+```
+
+It records an operator grant for `test-agent-20260921`, connect → ACK,
+`sign_event` returning a real signed event, broker verification
+`result=ok proof=0`, and tampered-account rejection `invalid_proof proof=4`.
+This is historical evidence, **not a rerun against 0.8.0 or the release image**.
+Use the [live-test entry point](../../docs/TESTING.md#signet-packaging-and-live-acceptance)
+for a new candidate; tracker closure must be reconciled separately.
 
 Beads: `nostrc-ot2c.7` (C7 — external pre-login provider full-OK proof),
 `nostrc-7t61` (C7-operator ACL follow-up).
@@ -45,8 +61,9 @@ minimal grant our provider needs:
 secret are rejected by `signetctl_resolve_provisioner_key()` on purpose.
 
 Everything else this helper needs is public: the bunker pubkey and relay
-list live in the interlocutor client config's `bunker_uri` (parsed at run
-time by the helper — no secret material is copied out).
+list can be parsed from the interlocutor client config's `bunker_uri` at run
+time. The URI itself may contain a connect secret: protect that config and do
+not log or copy the URI into an issue.
 
 ## Build signetctl
 
@@ -122,14 +139,15 @@ signet/tools/grant-login-kind.sh --agent <agent_id> --allow-kinds '*'
 signet/tools/grant-login-kind.sh --agent <agent_id> --allow-kinds '1,10002'
 ```
 
-## Confirm the grant closed the proof
+## Verify a new grant (requires an explicit live run)
 
-Re-run the live NIP-46 broker test from a build that includes
+To obtain new evidence, run the live NIP-46 broker test from a build that includes
 `test_broker_login_nip46_live` (see
 `gnome/nostr-homed/tests/integration/test_broker_login_nip46_live.c`):
 
 ```sh
-NH_NIP46_LIVE=1 <build>/gnome/nostr-homed/test_broker_login_nip46_live
+NH_NIP46_LIVE=1 NH_NIP46_LIVE_CONFIG=/secure/login-bundle.conf \
+  ctest --test-dir <build>/gnome/nostr-homed -R '^homed_broker_login_nip46_live$' --output-on-failure
 ```
 
 Expected:

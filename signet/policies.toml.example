@@ -1,3 +1,8 @@
+# DEPRECATED: historical reference only; do not deploy this file.
+# Use policies.conf.example (GKeyFile INI with [identity.<name>] groups).
+# These unprefixed groups are ignored by the loader; the wildcard examples below
+# are not a supported policy contract. Retained for this release only.
+#
 # Signet Policy Configuration Example
 #
 # This file defines authorization policies for NIP-46 remote signing requests.

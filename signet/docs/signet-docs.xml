@@ -7,7 +7,7 @@
 <book id="index">
   <bookinfo>
     <title>Signet Reference Manual</title>
-    <releaseinfo>For Signet 1.0</releaseinfo>
+    <releaseinfo>For Signet 0.8.0</releaseinfo>
   </bookinfo>
 
   <chapter id="signet-api">
