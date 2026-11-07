@@ -1,0 +1,120 @@
+# Setup assistant: independent HIG, behavior and keyboard review
+
+Date: 2026-11-07. Review task: `nostrc-t91xv`; implementation: `nostrc-u6v55.71` and `nostrc-lcs47`.
+
+## Boundary and verdict
+
+Reviewed exactly `git diff de2a40876...1bd36d288`:
+
+- Base: `de2a40876`; reviewed HEAD: `1bd36d288e5c6292e69000a9290437596bce26a7`.
+- Branch: `grotto/assistant-hig-buttons`, local only. No push, merge, checkout of another branch, or implementation fix.
+- Worktree throughout: `/Users/bizarro/Documents/Projects/.repoprompt-worktrees/nostrc/rp-agent-4d597152-grotto-assistant-hig-buttons-2e88be1d`.
+- Scope: setup assistant, its first-run and running-session entrypoints, affected templates/catalogs/tests, and the specifically requested behavior regressions. The review adds only this report and screenshot evidence.
+
+**Verdict: HIG layout/behavior approved; one S3 artifact-only correction requested before merging under the literal no-fuzzy condition.** No actionable HIG widget violation or behavior regression was established. The six requested ARM64 checks pass, as do independent exact-width page walks and the focused real-daemon self-test review diagnostic. The shipped `.po` catalogs are clean, but the changed POT template newly contains a fuzzy header (F1). This is not a claim that every action is initially above the fold: Spanish Connect at 360 px needs a small scroll/refocus, documented below.
+
+Evidence labels: **executed** means run in this review; **static** means traced in source and its caller; **visual** means inspected the captured PNGs. All execution is Linux ARM64 container/Xvfb evidence, not native desktop/Orca, hosted CI, installed-package, live-relay or release acceptance. File references below are repository-relative at the reviewed HEAD.
+
+## Findings, ranked
+
+### F1 — S3, confirmed/static and executed — New POT-header fuzzy marker misses the literal artifact condition
+
+**Where:** `apps/grotto/po/grotto.pot:6`, added by this diff; the base template has no fuzzy marker. Follow-up: `nostrc-wtxzo` (open; no fix made).
+
+**Rule:** the explicit review condition is “catalogs msgfmt --check, no fuzzy”. The [HIG writing guidance](https://developer.gnome.org/hig/guidelines/writing-style.html#translations) says, “It is important that the original English text can be easily translated”. It does **not** prescribe gettext flags: this finding is against the owner's literal no-fuzzy artifact condition, not an invented HIG widget rule or a claim that a normal generated POT-header flag breaks translation.
+
+**Failure scenario:** a no-fuzzy scan including the changed catalog template reports `6:#, fuzzy`; the same scan on the base POT reports no match. All five shipped `.po` catalogs pass `msgfmt --check --check-format` and contain no fuzzy entries, so there is no shown runtime fallback or bad Spanish translation. Normalize/regenerate the template header through the existing catalog workflow to meet the stated condition; no assistant-layout or translated-string change is needed. Direct `msgfmt --check` on the POT fails for placeholder plural/header fields on **both** base and head; that is normal template-versus-compiled-catalog distinction, not a new failure to repair.
+
+No S1/S2, behavior or HIG-layout finding was established. The observations under Screenshots distinguish viewport limitations from violations. Nothing is fixed by this review.
+
+## HIG rules and page-by-page checks
+
+The requested local HIG references were read from `~/.claude/skills/gnome-hig/references/`: `patterns/feedback/dialogs.md`, `patterns/nav/browsing.md`, `patterns/feedback/placeholders.md`, `patterns/controls/buttons.md`, `guidelines/writing-style.md`, and `guidelines/keyboard.md` (snapshot identifies upstream `97028eac3792`). The following are the rules applied, not new acceptance requirements:
+
+- Dialogs: “Always ensure that the cancel button appears first, before the affirmative button.” Also: “Ensure that the Esc key activates the cancel button, if there is one.” [Dialogs](https://developer.gnome.org/hig/patterns/feedback/dialogs.html#general-guidelines)
+- Action dialogs: “Label the affirmative button with a specific imperative verb” and “the affirmative dialog button should be insensitive until the required options have been selected.” [Action dialogs](https://developer.gnome.org/hig/patterns/feedback/dialogs.html#action-dialogs)
+- Defaults: “Assign the return key to activate the affirmative button.” The same paragraph excludes destructive, irreversible or inconvenient actions. [Dialogs](https://developer.gnome.org/hig/patterns/feedback/dialogs.html#general-guidelines)
+- Browsing: “In left-to-right locales, the standard position for the back button is the top-left.” [Browsing](https://developer.gnome.org/hig/patterns/nav/browsing.html#guidelines)
+- Placeholders: “It can also be a good idea to include controls for relevant actions, such as adding content or starting a setup assistant.” [Placeholder pages](https://developer.gnome.org/hig/patterns/feedback/placeholders.html#guidelines)
+- Buttons: “Each view should only ever include a single button using either the suggested or destructive styles.” [Button styles](https://developer.gnome.org/hig/patterns/controls/buttons.html#suggested-destructive-actions)
+- Copy: “Button labels should use imperative verbs, using header capitalization.” [Buttons](https://developer.gnome.org/hig/patterns/controls/buttons.html#general-guidelines) The writing guidance specifically applies header capitalization to short button labels; Spanish uses its own localized capitalization, not forced English title case. [Writing style](https://developer.gnome.org/hig/guidelines/writing-style.html#header-capitalization)
+- Keyboard: “Test how accessible your app is by trying to use it with just a keyboard.” Access keys must be considered in translation as well. [Keyboard](https://developer.gnome.org/hig/guidelines/keyboard.html)
+
+Every applicable page was rendered and inspected at actual **360×640 and 480×640** allocations, in **both modes and both English and Spanish**. Welcome is deliberately absent in-session; that mode starts at Choice. The independent walk produced 50 distinct captures per language, including empty/valid Import, unchecked/checked/expanded Backup and both Ready outcomes.
+
+| Page | Result at both widths and in both applicable modes | Owning source |
+|---|---|---|
+| Welcome | Header-start Skip Setup; one centered suggested Get Started pill in `AdwStatusPage`; Return advances to Choice. No competing suggested action. | `apps/grotto/data/ui/onboarding-assistant.blp:12-28`; `apps/grotto/src/ui/onboarding-assistant.c:119-145` |
+| Choice | Header Cancel; three navigation rows, no redundant affirmative; real Back to Welcome only when first-run history exists. | `.blp:30-42`; `.c:163-173,424-434,584-595` |
+| Create | Standard Back, then Cancel at header start; short Create at end. Optional local name does not spuriously disable creation. Return from the name entry dispatches exactly one store operation. | `.blp:43-52`; `.c:137-145,373-383,404-407` |
+| Import | Header Cancel/Import; empty, malformed and missing required encrypted-backup passphrase inputs remain insensitive. Valid private-key/phrase input enables Import. Return works from name, key and secure passphrase inputs. | `.blp:53-76`; `.c:87-103,134-145,384-400,463-482,551-560` |
+| Connect | Header Cancel and standard Back; navigation rows remain navigation, not extra suggested buttons. Open Connected Apps is the single centered suggested status pill. Destination is Apps, including first-run completion. | `.blp:77-94`; `.c:116-123,196-209,409-411` |
+| Check | Header Skip is visible but insensitive while the operation is busy; no affirmative. Pending-review host and Details remain in the page; busy Escape does not interrupt custody. | `.blp:95-110`; `.c:125-145,237-251,441-448` |
+| Failed check | Header Skip; one Try Again status pill. Return retries the check rather than completing with a warning; Skip still preserves the saved identity. | `.blp:111-121`; `.c:128-144,265-273,324,419,435-448` |
+| Backup | Header Cancel/Confirm. Confirm stays insensitive until recovery material is presented and acknowledged. Expanded alternatives are neutral, not additional suggested actions. Cancel cancels confirmation, never removes the saved key. | `.blp:122-149`; `.c:134-149,412-418,435-440` |
+| Ready | Single Open Grotto status pill; no Cancel, OK or Done. Return closes setup. Imported identities reach Ready without a mandatory backup/export detour. | `.blp:150-161`; `.c:139-145,317-323,418` |
+
+The `.blp` and complete assistant controller were read in full because action reparenting, navigation history, validation, cancellation and completion share state; isolated line selection would not establish their combined behavior. `move_action()` packs cancellation at header start and affirmatives at end or in the designated status-page content (`.c:75-86,105-145`). The standard Back button comes from `AdwNavigationView`; the custom `btn_back` and handler are removed. Back from Import reached through Connect returns to Connect, not a synthetic Choice page. Stored-identity stages replace history and cannot pop into an unsaved operation (`.c:163-173`). Header titles can ellipsize at 360 px without clipping the action labels.
+
+**Welcome Skip Setup is HIG-defensible.** It is the neutral cancellation/escape route at header start, not a second suggested call to action. The placeholder guidance explicitly permits a setup action in the content, while the dialogs guidance puts cancellation first. Welcome is the primary first-run window, not an unparented modal child; in-session Add Identity is modal to its existing parent (`.c:584-595`). This is a reasoned application of the two patterns, not a claim that the HIG mandates a button named Skip Setup.
+
+There are no remaining footer **action** buttons. The bottom clamp contains only operation status/spinner (`.blp:164-171`). Preferences pages use common groups/margins; status actions have consistent pill treatment. Expanded Backup legitimately scrolls at narrow sizes rather than moving Confirm into a second footer.
+
+## Owner-policy and regression checks
+
+- **Real entrypoints — static:** first-run construction/callback are `apps/grotto/src/main_app.c:129-146,630-635`; Add/New/Import converge on `onboarding_assistant_present()` through `apps/grotto/src/ui/signer-window.c:1026-1055`. The running-session API is exercised by both the existing suite and the diagnostic page walk. This is not a claim that three separate menu clicks were independently automated.
+- **Import Skip, `150b89d44` — executed and static:** `test-onboarding.c:263-297` exercises successful completion, Skip after denied verification and close, proves the identity remains stored, and checks zero removal calls. All pass. The imported-success branch goes directly to Ready without exporting recovery words (`onboarding-assistant.c:317-323`). `skip()` and close never call ClearKey (`:435-440,496-509`).
+- **Self-test review, `17f67593e` — executed:** the requested onboarding suite proves the pending host (`test-onboarding.c:206-214`); it alone does not prove review opens. A separate ignored diagnostic copy of `test-approval-integration.c` retained `onboarding_review()` and omitted unrelated `run_flow()` in the GUI worker. Against unchanged production application/controller objects and the real test daemon, it opened the approval dialog on onboarding through `app.review-request`, closed it with Not Now, reopened through the onboarding inbox row, approved and advanced to Backup. The original assertions at `test-approval-integration.c:295-373` ran. This is a focused diagnostic pass, **not** an approval-integration suite pass. Production routing remains `main_app.c:202-219,265-275`.
+- **Destinations — executed and static:** first-run Connect's existing layout case creates management only in the completion callback and asserts Apps afterward (`test-ui-layout.c:1709-1759`). Successful-import profile and failed-import maintenance destinations pass in onboarding. `finish()` resolves the callback-created window and keeps the exact identity/requested destination (`onboarding-assistant.c:179-212`); Connect sets `requested_page = "apps"` (`:409-411`).
+- **Return/Escape — executed:** unchanged layout/a11y suites send real X11 keys with installed xdotool: both modes, en/es, all pre-save cancel pages, nested child-dialog Escape, busy self-test Escape, failed saved import and Backup cancellation; create/import Return dispatch counters remain exact (`test-ui-layout.c:1571-1708`). The additional exact-width walk used real Return for Welcome, Create, Import, failed retry, Backup default and Ready at both widths. The Spanish 360 px Connect refocus diagnostic also completes with Return. Source capture-phase Escape yields to a visible child dialog and only activates an available sensitive Cancel/Skip (`onboarding-assistant.c:441-448,555-558`). Ready has no Cancel/Skip and needs no invented Escape cancellation.
+- **Checkbox Return is not a regression:** a deliberately focused `GtkCheckButton` consumes Return to toggle itself, as GTK specifies: “The default bindings for this signal are all forms of the `␣` and `Enter` keys.” [GTK CheckButton::activate](https://docs.gtk.org/gtk4/signal.CheckButton.activate.html) The diagnostic recorded the toggle, restored acknowledgement, released checkbox focus and proved Return activates the registered Confirm default. Do not replace standard checkbox keyboard semantics to make a mistaken diagnostic assertion green.
+- **Access keys — executed:** mapped-control mnemonic collection passes in both modes, en/es, including expanded Backup. Main pairs are EN Skip Setup/Get Started = S/G, Cancel/Create = C/R, Cancel/Import = C/I, Skip/Try Again = S/T, Cancel/Confirm = C/F; ES Omitir configuración/Empezar = O/E, Cancelar/Crear = C/R, Cancelar/Importar = C/I, Omitir/Reintentar = O/R, Cancelar/Confirmar = C/F. Expanded Backup adds EN Copy/Open Backup/Try Again = Y/O/T and ES Copiar/Abrir copia de seguridad/Reintentar = I/S/R, with no collision. The inherited unmnemonicked navigation rows remain keyboard-reachable; this is uniqueness evidence, not a claim that every label has a mnemonic.
+- **Catalogs/Blueprint — executed:** `msgfmt --check --check-format` passes all five shipped Grotto `.po` files; no `#, ... fuzzy` flags. The requested pinned Blueprint 0.22.2 drift test passes, including generated UI/resource/catalog consistency. The changed POT header is the sole literal no-fuzzy exception (F1); it is not a shipped translation. No catalog/template was regenerated or fixed by the review.
+
+## Screenshots and narrow-layout observations
+
+The layout test does write PNGs (`test-ui-layout.c:197-224,1488-1495`), but its remaining-surface captures are named 360 and reused across modes; it does not provide distinct 480 captures. Therefore those suite snapshots were retained separately and an ignored derivative harness generated distinct mode/width/language filenames. Exact client allocation was calibrated for X11 shadow extents, following the existing sizing harness pattern (`test-dialog-sizing.c:41-50`); the uncalibrated diagnostic observed 350 px for a 360 px default request. No product size, CSS, geometry guard or screenshot pixels were changed to pass.
+
+Committed, directly inspected contact sheets (open at original resolution for text):
+
+| Mode | English | Spanish |
+|---|---|---|
+| First run, 360 | [All pages](grotto-assistant-hig-2026-11-07/first-360-en.png) | [All pages](grotto-assistant-hig-2026-11-07/first-360-es.png) |
+| In-session, 360 | [All applicable pages](grotto-assistant-hig-2026-11-07/session-360-en.png) | [All applicable pages](grotto-assistant-hig-2026-11-07/session-360-es.png) |
+| First run, 480 | [All pages](grotto-assistant-hig-2026-11-07/first-480-en.png) | [All pages](grotto-assistant-hig-2026-11-07/first-480-es.png) |
+| In-session, 480 | [All applicable pages](grotto-assistant-hig-2026-11-07/session-480-en.png) | [All applicable pages](grotto-assistant-hig-2026-11-07/session-480-es.png) |
+
+Before/after at matching 360×640: [Welcome](grotto-assistant-hig-2026-11-07/before-after-welcome-360.png), [Create](grotto-assistant-hig-2026-11-07/before-after-create-360.png), [Backup](grotto-assistant-hig-2026-11-07/before-after-backup-360.png). Before captures use the exact base assistant C/UI blobs extracted with `git show de2a40876:<path>`, compiled in the isolated diagnostic with the same unchanged dependency objects and fixture. These are executed before-layout captures, **not** a full base build/suite or installed baseline qualification. The composites add only captions and gutters; underlying screenshots are not retouched. Raw PNGs remain in the ignored evidence directory.
+
+**Non-finding, documented limitation:** initial Spanish Connect at 360×640 partially clips the bottom of its pill inside the status-page scroller. It is not lost or disabled: measured button y=557, h=44 versus viewport bottom=587; vertical adjustment upper=591/page=541. Real Tab then Shift+Tab scrolls by 14 px and fully reveals it, and Return completes setup in both modes. At 480 it is initially fully visible. See [initial view](grotto-assistant-hig-2026-11-07/connect-360-es-initial.png) and [keyboard-refocused view](grotto-assistant-hig-2026-11-07/connect-360-es-refocused.png). Ordinary scrolling/progressive disclosure is not prohibited by the quoted HIG rules, so this is not recast as a keyboard trap or merge blocker. Similarly, expanded Backup scrolls. The inherited uninstalled application icon renders as missing in both before/after Welcome fixtures; these captures do not establish installed-icon rendering. Check-page captures use a fixture-held self-test without a real pending review row; the separate real-daemon diagnostic above establishes review behavior.
+
+## Verification actually run
+
+Disposable Linux image `nostrc-linux-ci:arm64`, ID `sha256:3d1c8f2383c7159a44e3c8f1714476ca749333d34c887b780d6efc144eab35e2`; `uname -m` = `aarch64`; GTK 4.14.5, libadwaita 1.5.0, Blueprint 0.22.2. The assigned worktree was mounted read-only at `/src`, a task-owned volume at `/build`, and ignored local evidence at `/review`. Installed xdotool/libxdo only in this container; Python Pillow was added there solely to assemble contact sheets. No developer keychain operation, production account or desktop session was used.
+
+Configuration: `cmake -S /src -B /build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DBUILD_GROUNDHOG=ON -DBUILD_TESTING=ON -DNIP55L_SECRET_BACKEND=libsecret -DGROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service`. Only focused prerequisites/targets were built: `test-onboarding test-ui-layout test-identity-management`, plus `test-approval-integration` for the isolated self-test-review diagnostic. Enabling Groundhog for shared configuration did not select its tests.
+
+| Command/check | Actual result |
+|---|---|
+| `xvfb-run -a ctest --test-dir /build --parallel 1 -R '^signer/(onboarding\|ui-layout\|ui-accessibility\|identity-management\|dialog-sizing\|blueprint-drift)$' --output-on-failure` | **PASS 7/7**, including the home fixture; six requested tests, serial, 213.95 s. Identity 3.78 s; onboarding 6.65 s; layout 85.80 s; sizing 30.71 s; accessibility 85.62 s; drift 1.28 s. No skipped requested test. |
+| `msgfmt --check --check-format -o /dev/null /src/apps/grotto/po/<catalog>.po`, each catalog; fuzzy-flag scan | **PASS**, es/fa/id/ja/pt_BR; no fuzzy entries in shipped catalogs. |
+| Fuzzy scan of changed POT; diagnostic `msgfmt --check --check-format` on base/head POT | **F1:** new fuzzy header at head line 6, absent at base. Direct POT compilation exits 1 on both revisions due placeholder plural/header fields; not treated as a new shipped-catalog failure. |
+| Ignored `review-probe -p /signer/review/pages`, then `G10_TEST_LANGUAGE=es` with the same selection | **PASS** both; 50 exact-width page captures per language, both modes, live production objects/resources. |
+| Ignored `base-probe -p /signer/review/pages` | **PASS**, nine before-layout captures at 360 px across both modes; no base-suite claim. |
+| Ignored Spanish `review-probe -p /signer/review/connect-geometry` | **PASS**, real-keyboard scroll/refocus and Return in both modes; initial clipping retained rather than concealed. |
+| Ignored `selftest-review-probe /build/apps/grotto/grotto-daemon` with isolated home and `NOSTRC_TEST_ISOLATION=1` | **PASS**, real-daemon onboarding review by application action and inbox, then Backup. Unrelated integration flows omitted, not counted as passed. |
+| `git diff --check de2a40876...1bd36d288` | **PASS**. |
+
+Receipts, diagnostic sources/build commands and raw PNGs: `.cache/assistant-hig-review/` in this worktree. Important files: `configure.log`, `build-focused.log`, `focused-tests.log`, `LastTest.log`, `catalogs.log`, `pot-header.log`, `pot-base-header.log`, `pages-en.log`, `pages-es.log`, `pages-before.log`, `connect-geometry.log`, `selftest-review.log`, `suite-snapshots/`, `probe-snapshots/` and the `build-*.sh` diagnostic recipes.
+
+Failed setup/diagnostic receipts are preserved, not silently overwritten: the initial Ninja request mistakenly named CTest-only targets (`build.log`: unknown `test-ui-accessibility`, before compilation); the first width assertion saw X11's 350 px client allocation (`pages-en-uncalibrated.log`); a probe wrongly expected Return on a focused checkbox to submit (`pages-en-checkbox-return.log`); and the first focused integration launch omitted its required isolation flag and correctly refused (`selftest-review-no-isolation.log`). Corrections were confined to build invocation or ignored probes/environment. The unmodified six-check suite passed on its one execution; no product failure was retried to green. The focused daemon probe also emits a D-Bus unregister warning during fixture teardown; it still completes all cited behavior assertions, not a warning-free runtime claim. An optional Oracle sanity-check reported missing/wrong selected context, so it supplies no independent verification and is not counted.
+
+No full suite, broad affected-gate execution, sanitizers, live relays, hosted CI, native desktop/Orca, installed-package test or owner acceptance was run. No timeouts, guards, suppressions or expected failures were weakened. Task-owned container/build volume are removed after evidence capture; other agents' resources and the pre-existing `/tmp/grotto71-evidence` receipts are untouched.
+
+## Version and delivery decision
+
+This review changes documentation/screenshots only: **no bump** for Grotto, grotto-panels or any other independently releasable component. The implementation is a PATCH-class shipped-UI correction; the implementation bead records its fold into the existing unreleased Grotto **0.1.1** wave, and `VERSION_MANIFEST.md:35` declares that version. No version source, release column or tag is changed by this review.
+
+## Merge recommendation
+
+**Approve the HIG layout and behavior in `de2a40876...1bd36d288`; request only the small POT-header cleanup in F1 before merging under the literal no-fuzzy condition.** Keep the per-page headers, standard navigation history, gated affirmatives, single status-page call to action and Escape behavior. The focused tests and independent diagnostics support the requested import persistence, self-test review and destination behavior. The documented narrow Spanish scrolling and fixture-icon limitation do not justify restoring footer buttons or adding new confirmation ceremony. No wider qualification or baseline POT-placeholder repair is requested. This report is committed locally on the same branch; nothing is pushed or merged.
