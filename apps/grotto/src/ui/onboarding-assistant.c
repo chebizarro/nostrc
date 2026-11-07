@@ -111,6 +111,7 @@ static void navigation(OnboardingAssistant *self) {
       self->state == ONBOARDING_TEST_FAILED ? _("_Finish with Warning") :
       self->state == ONBOARDING_CONNECT ? _("_Open Connected Apps") :
       self->state == ONBOARDING_BACKUP ? _("_Confirm Backup") : _("_Get Started"));
+  gtk_window_set_default_widget(GTK_WINDOW(self), gtk_widget_get_visible(GTK_WIDGET(self->btn_next)) ? GTK_WIDGET(self->btn_next) : NULL);
   gtk_widget_set_sensitive(GTK_WIDGET(self->seed_written_down), self->backup_presented && !self->busy);
   gtk_widget_set_sensitive(GTK_WIDGET(self->btn_copy_seed), self->backup_presented && !self->busy);
   gtk_widget_set_sensitive(GTK_WIDGET(self->btn_backup_retry), !self->busy);
@@ -465,7 +466,6 @@ static void onboarding_assistant_class_init(OnboardingAssistantClass *klass) {
 }
 static void onboarding_assistant_init(OnboardingAssistant *self) {
   gtk_widget_init_template(GTK_WIDGET(self));
-  gtk_window_set_default_widget(GTK_WINDOW(self), GTK_WIDGET(self->btn_next));
   g_signal_connect_object(gn_session_manager_get_default(), "session-locked", G_CALLBACK(clipboard_locked), self, 0);
   g_autoptr(GtkEntryBuffer) input = gn_secure_entry_buffer_new();
   gtk_entry_set_buffer(self->text_import_data, input);

@@ -54,7 +54,7 @@ template $OnboardingAssistant: Adw.Window {
           tag: "create"; title: _("Create an Identity");
           Adw.PreferencesPage {
             description: _("Your new key is saved in the system keyring. Next, check that it works and save a recovery phrase.");
-            Adw.PreferencesGroup { Adw.EntryRow entry_profile_name { title: _("Name on This Device"); } }
+            Adw.PreferencesGroup { Adw.EntryRow entry_profile_name { title: _("Name on This Device"); activates-default: true; } }
           }
         }
         Adw.NavigationPage {
@@ -62,13 +62,13 @@ template $OnboardingAssistant: Adw.Window {
           Adw.PreferencesPage {
             description: _("Enter your secret key, encrypted backup, or recovery phrase.");
             Adw.PreferencesGroup {
-              Adw.EntryRow entry_import_label { title: _("Name on This Device"); }
+              Adw.EntryRow entry_import_label { title: _("Name on This Device"); activates-default: true; }
               Adw.PreferencesRow {
                 Box {
                   orientation: vertical; spacing: 6;
                   margin-start: 12; margin-end: 12; margin-top: 12; margin-bottom: 12;
                   Label { label: _("Key or Recovery Phrase"); xalign: 0; }
-                  Entry text_import_data { visibility: false; enable-undo: false; accessibility { label: _("Key or Recovery Phrase"); } }
+                  Entry text_import_data { visibility: false; enable-undo: false; activates-default: true; accessibility { label: _("Key or Recovery Phrase"); } }
                 }
               }
             }

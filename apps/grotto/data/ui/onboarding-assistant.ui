@@ -143,6 +143,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                             <child>
                               <object class="AdwEntryRow" id="entry_profile_name">
                                 <property name="title" translatable="yes">Name on This Device</property>
+                                <property name="activates-default">true</property>
                               </object>
                             </child>
                           </object>
@@ -163,6 +164,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                             <child>
                               <object class="AdwEntryRow" id="entry_import_label">
                                 <property name="title" translatable="yes">Name on This Device</property>
+                                <property name="activates-default">true</property>
                               </object>
                             </child>
                             <child>
@@ -185,6 +187,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                       <object class="GtkEntry" id="text_import_data">
                                         <property name="visibility">false</property>
                                         <property name="enable-undo">false</property>
+                                        <property name="activates-default">true</property>
                                         <accessibility>
                                           <property name="label" translatable="yes">Key or Recovery Phrase</property>
                                         </accessibility>

@@ -41,6 +41,7 @@ static guint64 revision = 12, expires_at;
 static GVariant *permission_rows;
 static gboolean force_conflict, scoped_saved_before_cleanup, fail_permission_read, conflict_cleanup, pending_request;
 static guint permission_attempts, permission_conflicts, seed_exports, encrypted_exports, pairing_creates;
+static guint identity_creates, identity_imports;
 static gboolean pairing_listening;
 static const gchar *row_text(GVariant *row, const gchar *key) { const gchar *value = ""; g_variant_lookup(row, key, "&s", &value); return value; }
 static gboolean contains_permission(const gchar *identity, const gchar *decision) {
@@ -73,10 +74,19 @@ static void wait_for_frames(GtkWidget *widget, guint count) {
 }
 static void wait_frames(GtkWidget *widget) { wait_for_frames(widget, 3); }
 #ifdef GROTTO_TEST_XDOTOOL
-static void send_key(SignerWindow *window, const char *key) {
+static void focus_window(GtkWindow *window) {
+  WAIT(gtk_widget_get_mapped(GTK_WIDGET(window)));
   GdkSurface *surface = gtk_native_get_surface(GTK_NATIVE(window)); g_assert_true(GDK_IS_X11_SURFACE(surface));
   g_autofree char *id = g_strdup_printf("%lu", gdk_x11_surface_get_xid(surface));
-  char *argv[] = {GROTTO_TEST_XDOTOOL, "windowfocus", id, "key", "--clearmodifiers", "--delay", "0", (char *)key, NULL};
+  char *argv[] = {GROTTO_TEST_XDOTOOL, "windowfocus", "--sync", id, NULL};
+  g_autoptr(GError) error = NULL; gint status;
+  g_assert_true(g_spawn_sync(NULL, argv, NULL, G_SPAWN_DEFAULT, NULL, NULL, NULL, NULL, &status, &error));
+  g_assert_no_error(error); g_assert_true(g_spawn_check_wait_status(status, &error)); g_assert_no_error(error);
+  WAIT(gtk_window_is_active(window));
+}
+static void send_key(GtkWindow *window, const char *key) {
+  focus_window(window);
+  char *argv[] = {GROTTO_TEST_XDOTOOL, "key", "--clearmodifiers", "--delay", "0", (char *)key, NULL};
   g_autoptr(GError) error = NULL; gint status;
   g_assert_true(g_spawn_sync(NULL, argv, NULL, G_SPAWN_DEFAULT, NULL, NULL, NULL, NULL, &status, &error));
   g_assert_no_error(error); g_assert_true(g_spawn_check_wait_status(status, &error)); g_assert_no_error(error);
@@ -110,14 +120,17 @@ static void scroll_about_with_wheel(SignerWindow *window, graphene_point_t caret
   wait_frames(GTK_WIDGET(window));
 }
 #endif
-static void return_from_input(SignerWindow *window, GtkWidget *input) {
+static void return_from_input(GtkWindow *window, GtkWidget *input) {
+#ifdef GROTTO_TEST_XDOTOOL
+  focus_window(window);
+#endif
   if (GN_IS_SECURE_ENTRY(input)) g_assert_true(gn_secure_entry_grab_focus_entry(GN_SECURE_ENTRY(input)));
   else g_assert_true(gtk_widget_grab_focus(input));
   wait_frames(GTK_WIDGET(window));
   GtkWidget *focus = gtk_root_get_focus(GTK_ROOT(window)); g_assert_nonnull(focus);
   g_assert_true(focus == input || gtk_widget_is_ancestor(focus, input));
 #ifdef GROTTO_TEST_XDOTOOL
-  send_key(window, "Return");
+  send_key(GTK_WINDOW(window), "Return");
 #else
   gtk_widget_activate_default(input);
   wait_frames(GTK_WIDGET(window));
@@ -218,7 +231,8 @@ static GVariant *pending_metadata(void) {
 }
 static void call(GDBusConnection *bus, const gchar *sender, const gchar *path, const gchar *interface, const gchar *method, GVariant *args, GDBusMethodInvocation *inv, gpointer data) {
   (void)bus; (void)sender; (void)path; (void)interface; (void)args; (void)data;
-  if (!strcmp(method, "StoreKeyWithMnemonic")) { g_dbus_method_invocation_return_value(inv, g_variant_new("(s)", npub)); return; }
+  if (!strcmp(method, "StoreKeyWithMnemonic")) { identity_creates++; g_dbus_method_invocation_return_value(inv, g_variant_new("(s)", npub)); return; }
+  if (!strcmp(method, "ImportIdentity")) { identity_imports++; g_dbus_method_invocation_return_value(inv, g_variant_new("(s)", npub)); return; }
   if (!strcmp(method, "SelfTestIdentity")) { g_assert_null(layout_self_test); layout_self_test = g_object_ref(inv); return; }
   if (!strcmp(method, "CancelIdentitySelfTest")) { g_dbus_method_invocation_return_value(inv, NULL); return; }
   if (!strcmp(method, "SetClientTrust")) {
@@ -509,7 +523,7 @@ static void layout_activate(GApplication *application, gpointer data) {
   g_assert_cmpstr(adw_preferences_row_get_title(ADW_PREFERENCES_ROW(other)), ==, "Observer");
   g_assert_true(gtk_widget_grab_focus(other));
 #ifdef GROTTO_TEST_XDOTOOL
-  send_key(window, "Return");
+  send_key(GTK_WINDOW(window), "Return");
 #else
   g_signal_emit_by_name(other_list, "row-activated", other);
 #endif
@@ -518,7 +532,7 @@ static void layout_activate(GApplication *application, gpointer data) {
   GtkWidget *pinned_key = GTK_WIDGET(gtk_widget_get_template_child(pinned_panel, GROTTO_TYPE_IDENTITY_PANEL, "key_row"));
   g_assert_cmpstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(pinned_key)), ==, watch_npub);
 #ifdef GROTTO_TEST_XDOTOOL
-  send_key(window, "alt+Left");
+  send_key(GTK_WINDOW(window), "alt+Left");
 #else
   g_assert_true(adw_navigation_view_pop(root_navigation));
 #endif
@@ -585,10 +599,10 @@ static void layout_activate(GApplication *application, gpointer data) {
   GtkWidget *custom = find_editor_control(GTK_WIDGET(policy), GTK_TYPE_ENTRY);
   g_assert_nonnull(custom); gtk_editable_set_text(GTK_EDITABLE(custom), "65536");
   g_assert_false(gtk_widget_is_sensitive(policy_save));
-  return_from_input(window, custom);
+  return_from_input(GTK_WINDOW(window), custom);
   g_assert_true(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)) == policy);
   gtk_editable_set_text(GTK_EDITABLE(custom), ""); g_assert_true(gtk_widget_is_sensitive(policy_save));
-  return_from_input(window, custom);
+  return_from_input(GTK_WINDOW(window), custom);
   WAIT(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)) == NULL);
   g_auto(GStrv) saved_kinds = g_settings_get_strv(policy_settings, "require-confirmation-kinds");
   g_assert_cmpuint(g_strv_length(saved_kinds), ==, kind_count - 1);
@@ -610,7 +624,7 @@ static void layout_activate(GApplication *application, gpointer data) {
   GtkWidget *days = find_editor_control(GTK_WIDGET(retention), ADW_TYPE_SPIN_ROW); g_assert_nonnull(days);
   adw_spin_row_set_value(ADW_SPIN_ROW(days), retention_before == 1 ? 2 : 1);
 #ifdef GROTTO_TEST_XDOTOOL
-  send_key(window, "Escape");
+  send_key(GTK_WINDOW(window), "Escape");
 #else
   adw_dialog_close(retention);
 #endif
@@ -623,7 +637,7 @@ static void layout_activate(GApplication *application, gpointer data) {
   GtkWidget *spin = find_editor_control(days, GTK_TYPE_SPIN_BUTTON); g_assert_nonnull(spin);
   g_autofree gchar *typed_days = g_strdup_printf("%d", retention_after);
   gtk_editable_set_text(GTK_EDITABLE(spin), typed_days);
-  return_from_input(window, spin);
+  return_from_input(GTK_WINDOW(window), spin);
   WAIT(!adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)));
   g_assert_cmpint(g_settings_get_int(policy_settings, "log-retention-days"), ==, retention_after);
   g_settings_set_int(policy_settings, "log-retention-days", retention_before);
@@ -681,7 +695,7 @@ static void layout_activate(GApplication *application, gpointer data) {
     WAIT(gtk_widget_get_visible(backup_row)); g_assert_cmpuint(seed_exports, ==, 0);
     g_assert_true(gtk_widget_grab_focus(backup_row));
 #ifdef GROTTO_TEST_XDOTOOL
-    send_key(window, "Return");
+    send_key(GTK_WINDOW(window), "Return");
 #else
     g_signal_emit_by_name(backup_row, "activated"); wait_frames(GTK_WIDGET(window));
 #endif
@@ -696,7 +710,7 @@ static void layout_activate(GApplication *application, gpointer data) {
     snapshot(GTK_WIDGET(window), dark ? "backup-360-dark" : "backup-360-light");
     gtk_window_set_default_size(GTK_WINDOW(window), 920, 640); snapshot(GTK_WIDGET(window), dark ? "backup-dark" : "backup-light");
 #ifdef GROTTO_TEST_XDOTOOL
-    send_key(window, "alt+Left");
+    send_key(GTK_WINDOW(window), "alt+Left");
 #else
     g_assert_true(gtk_widget_activate_action(backup, "navigation.pop", NULL)); wait_frames(GTK_WIDGET(window));
 #endif
@@ -709,12 +723,12 @@ static void layout_activate(GApplication *application, gpointer data) {
     g_assert_cmpint(gtk_widget_get_direction(backup_row), ==, GTK_TEXT_DIR_RTL);
     g_assert_true(gtk_widget_grab_focus(identity_copy)); wait_frames(GTK_WIDGET(window)); assert_focus_bounds(window);
 #ifdef GROTTO_TEST_XDOTOOL
-    send_key(window, "Tab"); assert_focus_bounds(window);
+    send_key(GTK_WINDOW(window), "Tab"); assert_focus_bounds(window);
 #endif
     snapshot(GTK_WIDGET(window), dark ? "identity-360-rtl-dark" : "identity-360-rtl-light");
     g_assert_true(gtk_widget_grab_focus(backup_row));
 #ifdef GROTTO_TEST_XDOTOOL
-    send_key(window, "Return");
+    send_key(GTK_WINDOW(window), "Return");
 #else
     g_signal_emit_by_name(backup_row, "activated"); wait_frames(GTK_WIDGET(window));
 #endif
@@ -725,7 +739,7 @@ static void layout_activate(GApplication *application, gpointer data) {
     WAIT(gtk_widget_is_sensitive(phrase_row)); g_assert_true(gtk_widget_grab_focus(phrase_row)); assert_focus_bounds(window);
     snapshot(GTK_WIDGET(window), dark ? "backup-360-rtl-dark" : "backup-360-rtl-light");
 #ifdef GROTTO_TEST_XDOTOOL
-    send_key(window, "alt+Right");
+    send_key(GTK_WINDOW(window), "alt+Right");
 #else
     g_assert_true(gtk_widget_activate_action(backup, "navigation.pop", NULL)); wait_frames(GTK_WIDGET(window));
 #endif
@@ -740,7 +754,7 @@ static void layout_activate(GApplication *application, gpointer data) {
     GtkWidget *app_row = NULL; WAIT((app_row = find_row(GTK_WIDGET(apps), "Jank")));
     g_assert_true(gtk_widget_grab_focus(app_row));
 #ifdef GROTTO_TEST_XDOTOOL
-    send_key(window, "Return");
+    send_key(GTK_WINDOW(window), "Return");
 #else
     g_signal_emit_by_name(app_row, "activated"); wait_frames(GTK_WIDGET(window));
 #endif
@@ -939,7 +953,7 @@ static void layout_activate(GApplication *application, gpointer data) {
     gtk_widget_set_default_direction(GTK_TEXT_DIR_RTL); gtk_widget_set_direction(GTK_WIDGET(window), GTK_TEXT_DIR_RTL);
     g_assert_true(gtk_widget_grab_focus(permission)); wait_frames(GTK_WIDGET(window)); assert_focus_bounds(window);
 #ifdef GROTTO_TEST_XDOTOOL
-    send_key(window, "Return");
+    send_key(GTK_WINDOW(window), "Return");
 #else
     g_signal_emit_by_name(permission, "activated");
 #endif
@@ -947,7 +961,7 @@ static void layout_activate(GApplication *application, gpointer data) {
     g_assert_cmpstr(adw_navigation_page_get_title(adw_navigation_view_get_visible_page(permissions_nav)), ==, P_("Permissions"));
     g_assert_cmpint(gtk_widget_get_direction(detail), ==, GTK_TEXT_DIR_RTL);
 #ifdef GROTTO_TEST_XDOTOOL
-    send_key(window, "Tab"); assert_visible_focus(window); assert_focus_bounds(window);
+    send_key(GTK_WINDOW(window), "Tab"); assert_visible_focus(window); assert_focus_bounds(window);
 #endif
     /* A toast close button can legitimately receive Tab focus and pause its
      * timeout. Return focus to the permission being inspected before capture. */
@@ -955,13 +969,13 @@ static void layout_activate(GApplication *application, gpointer data) {
     g_assert_true(gtk_widget_grab_focus(rtl_permission)); wait_frames(GTK_WIDGET(window)); assert_focus_bounds(window);
     snapshot(GTK_WIDGET(window), dark ? "permissions-360-rtl-dark" : "permissions-360-rtl-light");
 #ifdef GROTTO_TEST_XDOTOOL
-    send_key(window, "alt+Right");
+    send_key(GTK_WINDOW(window), "alt+Right");
 #else
     g_assert_true(adw_navigation_view_pop(permissions_nav));
 #endif
     g_assert_true(gtk_root_get_focus(GTK_ROOT(window)) == permission); assert_focus_bounds(window);
 #ifdef GROTTO_TEST_XDOTOOL
-    send_key(window, "alt+Right");
+    send_key(GTK_WINDOW(window), "alt+Right");
 #else
     g_assert_true(adw_navigation_view_pop(nav));
 #endif
@@ -980,14 +994,14 @@ static void layout_activate(GApplication *application, gpointer data) {
       g_assert_nonnull(input); g_assert_true(gtk_widget_grab_focus(input));
       gtk_editable_set_text(GTK_EDITABLE(input), "اختبار طويل لاتجاه النص — keyboard input"); wait_frames(GTK_WIDGET(window)); assert_focus_bounds(window);
 #ifdef GROTTO_TEST_XDOTOOL
-      send_key(window, "ctrl+a"); send_key(window, "BackSpace");
+      send_key(GTK_WINDOW(window), "ctrl+a"); send_key(GTK_WINDOW(window), "BackSpace");
       g_assert_cmpstr(gtk_editable_get_text(GTK_EDITABLE(input)), ==, "");
 #else
       gtk_editable_set_text(GTK_EDITABLE(input), "");
 #endif
 #ifdef GROTTO_TEST_XDOTOOL
-      send_key(window, "Tab"); assert_visible_focus(window); assert_focus_bounds(window);
-      send_key(window, "shift+Tab"); assert_visible_focus(window); assert_focus_bounds(window);
+      send_key(GTK_WINDOW(window), "Tab"); assert_visible_focus(window); assert_focus_bounds(window);
+      send_key(GTK_WINDOW(window), "shift+Tab"); assert_visible_focus(window); assert_focus_bounds(window);
 #endif
       g_autofree char *rtl_name = g_strdup_printf("%s-360-rtl-%s", names[i], dark ? "dark" : "light"); snapshot(GTK_WIDGET(window), rtl_name);
       gtk_widget_set_default_direction(GTK_TEXT_DIR_LTR); gtk_widget_set_direction(GTK_WIDGET(window), GTK_TEXT_DIR_LTR);
@@ -1096,14 +1110,14 @@ static void layout_activate(GApplication *application, gpointer data) {
     wait_for_frames(GTK_WIDGET(window), 30);
     g_assert_cmpint(gtk_widget_get_width(GTK_WIDGET(window)), ==, profile_widths[i]);
     gtk_text_buffer_set_text(profile_buffer, biography->str, -1);
-    g_assert_true(gtk_widget_grab_focus(GTK_WIDGET(profile_about))); send_key(window, "ctrl+End");
+    g_assert_true(gtk_widget_grab_focus(GTK_WIDGET(profile_about))); send_key(GTK_WINDOW(window), "ctrl+End");
     wait_for_frames(GTK_WIDGET(window), 30);
     g_assert_cmpint(gtk_widget_get_height(GTK_WIDGET(profile_about)), >, gtk_widget_get_height(GTK_WIDGET(profile_scroll)));
     assert_about_caret_visible(profile_about, window);
     g_assert_cmpfloat(gtk_adjustment_get_value(profile_adjustment), >, 0);
-    send_key(window, "a"); wait_for_frames(GTK_WIDGET(window), 30);
+    send_key(GTK_WINDOW(window), "a"); wait_for_frames(GTK_WIDGET(window), 30);
     assert_about_caret_visible(profile_about, window);
-    send_key(window, "Return"); wait_for_frames(GTK_WIDGET(window), 30);
+    send_key(GTK_WINDOW(window), "Return"); wait_for_frames(GTK_WIDGET(window), 30);
     g_assert_cmpint(gtk_text_buffer_get_line_count(profile_buffer), ==, 82);
     assert_about_caret_visible(profile_about, window);
     g_assert_true(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)) == profile_dialog);
@@ -1111,7 +1125,7 @@ static void layout_activate(GApplication *application, gpointer data) {
     snapshot(GTK_WIDGET(window), end_capture);
     /* Leave the field, scroll its retained end caret out of view, then use
      * actual backward keyboard traversal to re-enter it without moving the mark. */
-    send_key(window, "Tab"); wait_for_frames(GTK_WIDGET(window), 30);
+    send_key(GTK_WINDOW(window), "Tab"); wait_for_frames(GTK_WIDGET(window), 30);
     g_assert_true(gtk_root_get_focus(GTK_ROOT(window)) != GTK_WIDGET(profile_about));
     gtk_adjustment_set_value(profile_adjustment, gtk_adjustment_get_lower(profile_adjustment));
     wait_for_frames(GTK_WIDGET(window), 30);
@@ -1122,12 +1136,12 @@ static void layout_activate(GApplication *application, gpointer data) {
     graphene_rect_t clip;
     g_assert_true(gtk_widget_compute_bounds(gtk_scrolled_window_get_child(profile_scroll), GTK_WIDGET(window), &clip));
     g_assert_cmpfloat(offscreen.y, >, clip.origin.y + clip.size.height);
-    send_key(window, "shift+Tab"); wait_for_frames(GTK_WIDGET(window), 30);
+    send_key(GTK_WINDOW(window), "shift+Tab"); wait_for_frames(GTK_WIDGET(window), 30);
     g_assert_true(gtk_root_get_focus(GTK_ROOT(window)) == GTK_WIDGET(profile_about));
     assert_about_caret_visible(profile_about, window);
     g_autofree char *focus_capture = g_strdup_printf("profile-about-focus-reentry-%d", profile_widths[i]);
     snapshot(GTK_WIDGET(window), focus_capture);
-    send_key(window, "ctrl+Home"); wait_for_frames(GTK_WIDGET(window), 30);
+    send_key(GTK_WINDOW(window), "ctrl+Home"); wait_for_frames(GTK_WIDGET(window), 30);
     graphene_point_t caret = assert_about_caret_visible(profile_about, window);
     double before_wheel = gtk_adjustment_get_value(profile_adjustment);
     scroll_about_with_wheel(window, caret); wait_for_frames(GTK_WIDGET(window), 30);
@@ -1137,11 +1151,11 @@ static void layout_activate(GApplication *application, gpointer data) {
   g_object_set(profile_gtk_settings, "gtk-enable-animations", profile_animations, NULL);
   gtk_text_buffer_set_text(profile_buffer, original_about, -1);
   gtk_window_set_default_size(GTK_WINDOW(window), 360 + profile_inset, 640); wait_frames(GTK_WIDGET(window));
-  g_assert_true(gtk_widget_grab_focus(GTK_WIDGET(profile_about))); send_key(window, "Tab");
+  g_assert_true(gtk_widget_grab_focus(GTK_WIDGET(profile_about))); send_key(GTK_WINDOW(window), "Tab");
   GtkWidget *after_about = gtk_root_get_focus(GTK_ROOT(window));
   g_assert_nonnull(after_about); g_assert_true(after_about != GTK_WIDGET(profile_about));
   g_assert_false(gtk_widget_is_ancestor(after_about, GTK_WIDGET(profile_about)));
-  g_assert_true(gtk_widget_grab_focus(GTK_WIDGET(profile_about))); send_key(window, "shift+Tab");
+  g_assert_true(gtk_widget_grab_focus(GTK_WIDGET(profile_about))); send_key(GTK_WINDOW(window), "shift+Tab");
   after_about = gtk_root_get_focus(GTK_ROOT(window));
   g_assert_nonnull(after_about); g_assert_true(after_about != GTK_WIDGET(profile_about));
   g_assert_false(gtk_widget_is_ancestor(after_about, GTK_WIDGET(profile_about)));
@@ -1150,7 +1164,7 @@ static void layout_activate(GApplication *application, gpointer data) {
   g_assert_cmpstr(after_tab, ==, original_about);
   gtk_text_buffer_set_text(profile_buffer, "Discard this draft", -1);
   GtkWidget *discard_row = find_row(GTK_WIDGET(profile_dialog), P_("Discard Local Changes"));
-  g_assert_true(gtk_widget_grab_focus(discard_row)); send_key(window, "Return");
+  g_assert_true(gtk_widget_grab_focus(discard_row)); send_key(GTK_WINDOW(window), "Return");
   gtk_text_buffer_get_bounds(profile_buffer, &start, &end);
   g_autofree char *after_discard = gtk_text_buffer_get_text(profile_buffer, &start, &end, FALSE);
   g_assert_cmpstr(after_discard, ==, original_about);
@@ -1225,11 +1239,11 @@ static void layout_activate(GApplication *application, gpointer data) {
   GtkWidget *secure_entry = find_editor_control(GTK_WIDGET(passphrase_dialog), GN_TYPE_SECURE_ENTRY); g_assert_nonnull(secure_entry);
   GtkWidget *passphrase_focus = gtk_root_get_focus(GTK_ROOT(window));
   g_assert_nonnull(passphrase_focus); g_assert_true(gtk_widget_is_ancestor(passphrase_focus, secure_entry));
-  return_from_input(window, secure_entry);
+  return_from_input(GTK_WINDOW(window), secure_entry);
   g_assert_cmpuint(encrypted_exports, ==, 0);
   g_assert_true(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)) == passphrase_dialog);
   gn_secure_entry_set_text(GN_SECURE_ENTRY(secure_entry), "disposable passphrase"); g_assert_true(gtk_widget_is_sensitive(show_qr));
-  return_from_input(window, secure_entry);
+  return_from_input(GTK_WINDOW(window), secure_entry);
   WAIT(encrypted_exports == 1);
   WAIT(SHEET_IS_QR_DISPLAY(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window))));
   wait_frames(GTK_WIDGET(window));
@@ -1295,6 +1309,19 @@ static void layout_activate(GApplication *application, gpointer data) {
   GtkWidget *clipboard_review = find_button(GTK_WIDGET(clipboard_preview), _("_Review"));
   assert_header_control(clipboard_review, TRUE); assert_header_control(find_button(GTK_WIDGET(clipboard_preview), _("_Cancel")), FALSE);
   g_assert_false(gtk_widget_is_sensitive(clipboard_review)); assert_header_fits(clipboard_review, window);
+  GtkDropDown *identity_picker = GTK_DROP_DOWN(find_editor_control(GTK_WIDGET(clipboard_preview), GTK_TYPE_DROP_DOWN));
+  WAIT(gtk_drop_down_get_model(identity_picker) && g_list_model_get_n_items(gtk_drop_down_get_model(identity_picker)) == 1);
+  gtk_drop_down_set_selected(identity_picker, 0);
+  snapshot(GTK_WIDGET(window), "clipboard-selected-identity-360");
+  g_assert_true(gtk_widget_is_sensitive(clipboard_review));
+  g_assert_cmpstr(gtk_string_object_get_string(GTK_STRING_OBJECT(gtk_drop_down_get_selected_item(identity_picker))), ==, npub);
+  GtkWidget *identity_label = find_label_containing(GTK_WIDGET(identity_picker), npub);
+  g_assert_nonnull(identity_label);
+  g_assert_cmpstr(gtk_widget_get_tooltip_text(identity_label), ==, npub);
+  int preview_minimum;
+  gtk_widget_measure(GTK_WIDGET(clipboard_preview), GTK_ORIENTATION_HORIZONTAL, -1, &preview_minimum, NULL, NULL, NULL);
+  g_assert_cmpint(preview_minimum, <=, 360);
+  assert_pairing_size(clipboard_preview, window);
   GtkWidget *details = find_editor_control(GTK_WIDGET(clipboard_preview), GTK_TYPE_EXPANDER);
   gtk_expander_set_expanded(GTK_EXPANDER(details), TRUE);
   snapshot(GTK_WIDGET(window), "clipboard-link-details-360"); assert_pairing_size(clipboard_preview, window);
@@ -1450,6 +1477,73 @@ static void remaining_surfaces(void) {
     gtk_widget_set_default_direction(GTK_TEXT_DIR_LTR);
   }
 }
+static void assistant_input_keyboard_activate(GApplication *application, gpointer data) {
+  (void)data;
+  /* Keep this scenario's modality separate from other test applications. */
+  g_autoptr(GtkWindowGroup) group = gtk_window_group_new();
+  const char *inputs[] = {"entry_profile_name", "entry_import_label", "text_import_data"};
+  for (guint running = 0; running < 2; running++) for (guint mode = 0; mode < G_N_ELEMENTS(inputs); mode++) {
+    GtkWindow *parent = NULL;
+    OnboardingAssistant *setup;
+    if (running) {
+      parent = GTK_WINDOW(adw_application_window_new(GTK_APPLICATION(application))); g_object_ref_sink(parent);
+      gtk_window_group_add_window(group, parent); gtk_window_present(parent);
+      onboarding_assistant_present(parent);
+      setup = g_object_ref(g_object_get_data(G_OBJECT(parent), "grotto-onboarding-assistant"));
+      gtk_window_group_add_window(group, GTK_WINDOW(setup));
+    } else {
+      setup = onboarding_assistant_new(); g_object_ref_sink(setup);
+      gtk_window_set_application(GTK_WINDOW(setup), GTK_APPLICATION(application));
+      gtk_window_group_add_window(group, GTK_WINDOW(setup)); gtk_window_present(GTK_WINDOW(setup));
+      WAIT(gtk_widget_is_sensitive(setup_child(setup, "btn_next")));
+    }
+    WAIT(gtk_widget_get_mapped(GTK_WIDGET(setup))); wait_frames(GTK_WIDGET(setup));
+    if (!running) g_signal_emit_by_name(setup_child(setup, "btn_next"), "clicked");
+    GtkWidget *choice = setup_child(setup, mode ? "choose_import" : "choose_create");
+    WAIT(gtk_widget_is_sensitive(choice)); g_signal_emit_by_name(choice, "activated");
+    wait_frames(GTK_WIDGET(setup));
+    if (mode) gtk_editable_set_text(GTK_EDITABLE(setup_child(setup, "text_import_data")),
+        "0000000000000000000000000000000000000000000000000000000000000001");
+    GtkWidget *input = setup_child(setup, inputs[mode]);
+    if (ADW_IS_ENTRY_ROW(input)) {
+      gtk_editable_set_text(GTK_EDITABLE(input), "Keyboard Identity");
+      g_assert_true(adw_entry_row_get_activates_default(ADW_ENTRY_ROW(input)));
+    } else g_assert_true(gtk_entry_get_activates_default(GTK_ENTRY(input)));
+    g_assert_true(gtk_widget_is_sensitive(setup_child(setup, "btn_next")));
+    guint creates_before = identity_creates, imports_before = identity_imports;
+    g_assert_true(gtk_window_get_default_widget(GTK_WINDOW(setup)) == setup_child(setup, "btn_next"));
+    g_test_message("Return input %s, running=%u", inputs[mode], running);
+    return_from_input(GTK_WINDOW(setup), input);
+    WAIT(layout_self_test != NULL);
+    g_assert_cmpuint(identity_creates, ==, creates_before + (mode == 0));
+    g_assert_cmpuint(identity_imports, ==, imports_before + (mode != 0));
+    g_dbus_method_invocation_return_value(layout_self_test, g_variant_new("(s)", "denied"));
+    g_clear_object(&layout_self_test);
+    WAIT(onboarding_assistant_get_state(setup) == ONBOARDING_TEST_FAILED);
+    gtk_menu_button_popup(GTK_MENU_BUTTON(setup_child(setup, "finish_menu")));
+    WAIT(gtk_widget_get_mapped(setup_child(setup, "btn_skip")));
+    g_autoptr(GHashTable) keys = g_hash_table_new(g_direct_hash, g_direct_equal);
+    collect_dialog_mnemonics(GTK_WIDGET(setup), keys);
+    gboolean spanish = !g_strcmp0(g_getenv("G10_TEST_LANGUAGE"), "es");
+    g_assert_true(g_hash_table_contains(keys, GUINT_TO_POINTER(spanish ? 'a' : 'f')));
+    g_assert_true(g_hash_table_contains(keys, GUINT_TO_POINTER(spanish ? 'f' : 'l')));
+    gtk_menu_button_popdown(GTK_MENU_BUTTON(setup_child(setup, "finish_menu")));
+    gtk_window_destroy(GTK_WINDOW(setup)); g_object_unref(setup);
+    if (parent) {
+      WAIT(g_object_get_data(G_OBJECT(parent), "grotto-onboarding-assistant") == NULL);
+      gtk_window_destroy(parent); g_object_unref(parent);
+    }
+  }
+  g_application_quit(application);
+}
+static void assistant_input_keyboard(void) {
+  guint apps_gone = 0;
+  g_autoptr(AdwApplication) app = adw_application_new("org.nostr.Grotto.AssistantKeyboardTest", G_APPLICATION_NON_UNIQUE);
+  g_object_weak_ref(G_OBJECT(app), finalised, &apps_gone);
+  g_signal_connect(app, "activate", G_CALLBACK(assistant_input_keyboard_activate), NULL);
+  g_assert_cmpint(g_application_run(G_APPLICATION(app), 0, NULL), ==, 0);
+  g_clear_object(&app); WAIT(apps_gone == 1);
+}
 typedef struct {
   AdwApplication *app;
   SignerWindow *window;
@@ -1515,9 +1609,9 @@ static void create_link_keyboard_activate(GApplication *application, gpointer da
   WAIT(adw_combo_row_get_model(identity) != NULL);
   gtk_editable_set_text(GTK_EDITABLE(name), "Keyboard App");
   g_assert_false(gtk_widget_is_sensitive(submit));
-  return_from_input(window, name); g_assert_cmpuint(pairing_creates, ==, before);
+  return_from_input(GTK_WINDOW(window), name); g_assert_cmpuint(pairing_creates, ==, before);
   adw_combo_row_set_selected(identity, 0); WAIT(gtk_widget_is_sensitive(submit));
-  return_from_input(window, name); WAIT(pairing_creates > before); g_assert_cmpuint(pairing_creates, ==, before + 1);
+  return_from_input(GTK_WINDOW(window), name); WAIT(pairing_creates > before); g_assert_cmpuint(pairing_creates, ==, before + 1);
   WAIT(gtk_widget_is_sensitive(submit)); /* the fixture returns an explicit error, never a fake link */
   g_test_message("Create Link Return reached the control service");
   pairing_listening = FALSE;
@@ -1529,9 +1623,9 @@ static void create_link_keyboard_activate(GApplication *application, gpointer da
   GtkWidget *entry = find_editor_control(GTK_WIDGET(paste), GTK_TYPE_ENTRY); g_assert_nonnull(entry);
   GtkWidget *preview_button = find_button(GTK_WIDGET(paste), _("_Preview")); assert_header_control(preview_button, TRUE);
   gtk_editable_set_text(GTK_EDITABLE(entry), "not a connection link"); g_assert_false(gtk_widget_is_sensitive(preview_button));
-  return_from_input(window, entry); g_assert_true(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)) == paste);
+  return_from_input(GTK_WINDOW(window), entry); g_assert_true(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)) == paste);
   gtk_editable_set_text(GTK_EDITABLE(entry), "nostrconnect://79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798?relay=wss%3A%2F%2Frelay.example&secret=fixture&name=Example%20App");
-  g_assert_true(gtk_widget_is_sensitive(preview_button)); return_from_input(window, entry);
+  g_assert_true(gtk_widget_is_sensitive(preview_button)); return_from_input(GTK_WINDOW(window), entry);
   WAIT(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)) != paste);
   wait_frames(GTK_WIDGET(window));
   g_test_message("Paste Return opened the connection preview");
@@ -1563,7 +1657,7 @@ static void backup_file_keyboard_activate(GApplication *application, gpointer da
   GtkWidget *focus = gtk_root_get_focus(GTK_ROOT(window)); g_assert_nonnull(focus);
   g_assert_true(gtk_widget_is_ancestor(focus, entry));
   guint before = encrypted_exports;
-  gn_secure_entry_set_text(GN_SECURE_ENTRY(entry), "disposable passphrase"); return_from_input(window, entry);
+  gn_secure_entry_set_text(GN_SECURE_ENTRY(entry), "disposable passphrase"); return_from_input(GTK_WINDOW(window), entry);
   g_autoptr(GtkWindow) chooser = NULL; WAIT((chooser = find_file_chooser()) != NULL);
   g_assert_cmpuint(encrypted_exports, ==, before);
   g_assert_true(GTK_IS_DIALOG(chooser)); gtk_dialog_response(GTK_DIALOG(chooser), GTK_RESPONSE_CANCEL);
@@ -1636,8 +1730,12 @@ int main(int argc, char **argv) {
   g_test_add_func("/signer/layout/remaining-surfaces", remaining_surfaces);
   g_test_add_func("/signer/layout/first-run-connect-destination", first_run_connect_destination);
   g_test_add_func("/signer/layout/create-link-keyboard", create_link_keyboard);
-  g_test_add_func("/signer/layout/backup-file-keyboard", backup_file_keyboard); int result = g_test_run();
+  g_test_add_func("/signer/layout/backup-file-keyboard", backup_file_keyboard);
+  g_test_add_func("/signer/layout/assistant-input-keyboard", assistant_input_keyboard); int result = g_test_run();
   bunker_test_relay_free(profile_relay);
-  accounts_store_free(accounts_store_get_default()); settings_manager_free(settings_manager_get_default());
-  g_dbus_connection_unregister_object(server, registration); g_dbus_connection_unregister_object(server, inventory); nostrc_test_bus_down(bus); g_variant_unref(permission_rows); g_free(npub); return result;
+  accounts_store_free(accounts_store_get_default());
+  g_dbus_connection_unregister_object(server, registration); g_dbus_connection_unregister_object(server, inventory); nostrc_test_bus_down(bus);
+  /* Inventory callbacks drained by bus shutdown still borrow these settings. */
+  settings_manager_free(settings_manager_get_default());
+  g_variant_unref(permission_rows); g_free(npub); return result;
 }
