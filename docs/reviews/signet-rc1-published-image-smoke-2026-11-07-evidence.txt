@@ -1,0 +1,948 @@
+Signet published rc.1 smoke — actual selected receipts, UTC 2026-11-07.
+Known secrets and bunker URIs redacted. Repeated initial readiness HTTP failures condensed.
+
+===== attestation-summary.json =====
+{
+  "exit": 0,
+  "subject": [
+    {
+      "name": "ghcr.io/chebizarro/nostrc-signet",
+      "digest": {
+        "sha256": "6aff3456f7926cab6ab61d3335ba77ea06b549377da36bc74fb8a235295fe1ef"
+      }
+    }
+  ],
+  "certificate": {
+    "subjectAlternativeName": "https://github.com/chebizarro/nostrc/.github/workflows/signet-release.yml@refs/tags/signet-v0.8.0-rc.1",
+    "sourceRepositoryDigest": "de2a408766773369407bbd5ef831ccc53f0f1727",
+    "runInvocationURI": "https://github.com/chebizarro/nostrc/actions/runs/42363870599/attempts/1",
+    "runnerEnvironment": "github-hosted"
+  },
+  "verifiedTimestamps": [
+    {
+      "type": "Tlog",
+      "uri": "https://rekor.sigstore.dev",
+      "timestamp": "2026-11-07T02:31:32-08:00"
+    }
+  ],
+  "receipt_mtime_utc": "2026-11-07T10:57:39.956617+00:00"
+}
+
+===== cloud-init.log =====
+Warning: Permanently added '104.236.215.230' (ED25519) to the list of known hosts.
+[cloud-init wait dots omitted]status: done
+extended_status: done
+boot_status_code: enabled-by-generator
+last_update: Thu, 01 Jan 1970 00:03:19 +0000
+detail: DataSourceConfigDrive [net,ver=2][source=/dev/vdb]
+errors: []
+recoverable_errors: {}
+2026-11-07T11:05:06Z
+cat: /etc/signet-volume-id: Permission denied
+cat: /etc/signet-volume-uuid: Permission denied
+TARGET      SOURCE   FSTYPE OPTIONS
+/srv/signet /dev/sda ext4   rw,nosuid,nodev,relatime,discard
+28.5.1
+Docker Compose version v2.40.3
+
+===== start1.log =====
+2026-11-07T11:05:49Z
+SYSTEMD_START_EXIT=0
+2026-11-07T11:05:52Z
+curl: (7) Failed to connect to 127.0.0.1 port 8080 after 0 ms: Couldn't connect to server
+[repeated HTTP 503 while waiting for readiness]
+{"ready":true,"detail":{"provisioner_writeback_failed":false}}READY_EXIT=0
+State  Recv-Q Send-Q Local Address:Port Peer Address:PortProcess
+LISTEN 0      4096   127.0.0.53%lo:53        0.0.0.0:*    users:(("systemd-resolve",pid=704,fd=15))
+LISTEN 0      4096      127.0.0.54:53        0.0.0.0:*    users:(("systemd-resolve",pid=704,fd=17))
+LISTEN 0      4096       127.0.0.1:8080      0.0.0.0:*    users:(("signetd",pid=10645,fd=7))
+LISTEN 0      4096         0.0.0.0:22        0.0.0.0:*    users:(("sshd",pid=1388,fd=3),("systemd",pid=1,fd=198))
+LISTEN 0      4096            [::]:22           [::]:*    users:(("sshd",pid=1388,fd=4),("systemd",pid=1,fd=199))
+9411d446-da9a-11f1-8944-c234aeb68f7e
+c9a638bb-ab25-4872-b24d-641f9262b055
+
+===== status1.log =====
+2026-11-07T11:08:11Z
+[pool] cleanup worker thread started
+[pool] cleanup_worker: STARTED
+[pool] redial connected: wss://nos.lol
+[simplepool] subscribe fire failed on wss://relay.nostr.band (will retry on connect): subscription or connection is NULL
+[simplepool] subscribe fire failed on wss://relay.nostr.band (will retry on connect): subscription or connection is NULL
+[pool] redial connected: wss://relay.nostr.band
+[RELAY_POOL] Subscription 1 received 0 events before EOSE
+[RELAY_POOL] Subscription 3 received 0 events before EOSE
+[RELAY_POOL] Subscription 5 received 0 events before EOSE
+[pool] shutting down cleanup worker...
+[pool] cleanup_worker: EXITING
+[pool] cleanup worker shutdown complete
+[pool] cancelling 0 registered subscriptions...
+[pool] subscription registry freed
+Reply received:
+{"jsonrpc":"2.0","result":{"db_open":true,"agents":0,"relays_connected":true},"id":"00065fadbe8fafb4"}
+2026-11-07T11:08:12Z
+STATUS_EXIT=0
+
+===== provision-agent.log =====
+2026-11-07T11:08:24Z
+[pool] cleanup worker thread started
+[pool] cleanup_worker: STARTED
+[pool] redial connected: wss://nos.lol
+[simplepool] subscribe fire failed on wss://relay.nostr.band (will retry on connect): subscription or connection is NULL
+[simplepool] subscribe fire failed on wss://relay.nostr.band (will retry on connect): subscription or connection is NULL
+[pool] redial connected: wss://relay.nostr.band
+[RELAY_POOL] Subscription 1 received 1 events before EOSE
+[RELAY_POOL] Subscription 3 received 1 events before EOSE
+[RELAY_POOL] Subscription 5 received 1 events before EOSE
+[pool] shutting down cleanup worker...
+[pool] cleanup_worker: EXITING
+[pool] cleanup worker shutdown complete
+[pool] cancelling 0 registered subscriptions...
+[pool] subscription registry freed
+agent_id: smoke-agent
+pubkey: 35c593072ccb284bc8954427404d5429161f8989871ab0685178e7f18f86ef47
+bunker_uri: [redacted; use reissue-connect --out <file>]
+2026-11-07T11:08:25Z
+PROVISION_EXIT=0
+
+===== audit1.txt =====
+2026-11-07T11:08:49Z
+1
+1|1794049705|2026-11-07 11:08:25|mgmt_provision_agent|smoke-agent|{"decision":"allow","reason":"provisioned"}
+agent_count|1
+
+===== metrics-before.txt =====
+# HELP signet_provisioner_writeback_failures_total Failed provisioner config writes.
+# TYPE signet_provisioner_writeback_failures_total counter
+signet_provisioner_writeback_failures_total 0
+# HELP signet_up Whether signet is up.
+# TYPE signet_up gauge
+signet_up 1
+# HELP signet_uptime_seconds Daemon uptime.
+# TYPE signet_uptime_seconds gauge
+signet_uptime_seconds 138
+# HELP signet_bootstrap_total Bootstrap attempts.
+# TYPE signet_bootstrap_total counter
+signet_bootstrap_total 0
+# HELP signet_auth_total Auth attempts by result.
+# TYPE signet_auth_total counter
+signet_auth_total{result="ok"} 0
+signet_auth_total{result="denied"} 0
+signet_auth_total{result="error"} 0
+# HELP signet_sign_total Signing operations.
+# TYPE signet_sign_total counter
+signet_sign_total 0
+# HELP signet_nip46_reply_ack_total NIP-46 reply publication outcomes per relay.
+# TYPE signet_nip46_reply_ack_total counter
+signet_nip46_reply_ack_total{result="accept"} 0
+signet_nip46_reply_ack_total{result="reject"} 0
+signet_nip46_reply_ack_total{result="timeout"} 0
+signet_nip46_reply_ack_total{result="transport-aborted"} 0
+# HELP signet_revoke_total Revocations.
+# TYPE signet_revoke_total counter
+signet_revoke_total 0
+# HELP signet_connection_denied_total Connections denied at transport limits.
+# TYPE signet_connection_denied_total counter
+signet_connection_denied_total{transport="nip5l"} 0
+signet_connection_denied_total{transport="ssh_agent"} 0
+# HELP signet_fleet_sync_last_timestamp Fleet sync time.
+# TYPE signet_fleet_sync_last_timestamp gauge
+signet_fleet_sync_last_timestamp 1794049690
+# HELP signet_active_sessions Current sessions.
+# TYPE signet_active_sessions gauge
+signet_active_sessions 0
+# HELP signet_active_leases Current credential leases.
+# TYPE signet_active_leases gauge
+signet_active_leases 0
+# HELP signet_agents_active Active agents.
+# TYPE signet_agents_active gauge
+signet_agents_active 0
+# HELP signet_relays_connected Connected relays.
+# TYPE signet_relays_connected gauge
+signet_relays_connected 2
+
+===== metrics-after-provision.txt =====
+# HELP signet_provisioner_writeback_failures_total Failed provisioner config writes.
+# TYPE signet_provisioner_writeback_failures_total counter
+signet_provisioner_writeback_failures_total 0
+# HELP signet_up Whether signet is up.
+# TYPE signet_up gauge
+signet_up 1
+# HELP signet_uptime_seconds Daemon uptime.
+# TYPE signet_uptime_seconds gauge
+signet_uptime_seconds 155
+# HELP signet_bootstrap_total Bootstrap attempts.
+# TYPE signet_bootstrap_total counter
+signet_bootstrap_total 0
+# HELP signet_auth_total Auth attempts by result.
+# TYPE signet_auth_total counter
+signet_auth_total{result="ok"} 0
+signet_auth_total{result="denied"} 0
+signet_auth_total{result="error"} 0
+# HELP signet_sign_total Signing operations.
+# TYPE signet_sign_total counter
+signet_sign_total 0
+# HELP signet_nip46_reply_ack_total NIP-46 reply publication outcomes per relay.
+# TYPE signet_nip46_reply_ack_total counter
+signet_nip46_reply_ack_total{result="accept"} 0
+signet_nip46_reply_ack_total{result="reject"} 0
+signet_nip46_reply_ack_total{result="timeout"} 0
+signet_nip46_reply_ack_total{result="transport-aborted"} 0
+# HELP signet_revoke_total Revocations.
+# TYPE signet_revoke_total counter
+signet_revoke_total 0
+# HELP signet_connection_denied_total Connections denied at transport limits.
+# TYPE signet_connection_denied_total counter
+signet_connection_denied_total{transport="nip5l"} 0
+signet_connection_denied_total{transport="ssh_agent"} 0
+# HELP signet_fleet_sync_last_timestamp Fleet sync time.
+# TYPE signet_fleet_sync_last_timestamp gauge
+signet_fleet_sync_last_timestamp 1794049708
+# HELP signet_active_sessions Current sessions.
+# TYPE signet_active_sessions gauge
+signet_active_sessions 0
+# HELP signet_active_leases Current credential leases.
+# TYPE signet_active_leases gauge
+signet_active_leases 0
+# HELP signet_agents_active Active agents.
+# TYPE signet_agents_active gauge
+signet_agents_active 1
+# HELP signet_relays_connected Connected relays.
+# TYPE signet_relays_connected gauge
+signet_relays_connected 2
+
+===== reissue.log =====
+2026-11-07T11:08:49Z
+[pool] cleanup worker thread started
+[pool] cleanup_worker: STARTED
+[pool] redial connected: wss://nos.lol
+[simplepool] subscribe fire failed on wss://relay.nostr.band (will retry on connect): subscription or connection is NULL
+[simplepool] subscribe fire failed on wss://relay.nostr.band (will retry on connect): subscription or connection is NULL
+[pool] redial connected: wss://relay.nostr.band
+[RELAY_POOL] Subscription 1 received 2 events before EOSE
+[RELAY_POOL] Subscription 3 received 2 events before EOSE
+[RELAY_POOL] Subscription 5 received 2 events before EOSE
+[pool] shutting down cleanup worker...
+[pool] cleanup_worker: EXITING
+[pool] cleanup worker shutdown complete
+[pool] cancelling 0 registered subscriptions...
+[pool] subscription registry freed
+agent_id: smoke-agent
+user_pubkey: 35c593072ccb284bc8954427404d5429161f8989871ab0685178e7f18f86ef47
+bunker_pubkey: 09298cf789c8e08369b0f50c6d2b7da511e0f798aff2f8963b0eb5491e1da48a
+connect_secret: written to /work/agent-secret
+REISSUE_EXIT=0
+
+===== policy.log =====
+2026-11-07T11:08:52Z
+[pool] cleanup worker thread started
+[pool] cleanup_worker: STARTED
+[pool] redial connected: wss://nos.lol
+[simplepool] subscribe fire failed on wss://relay.nostr.band (will retry on connect): subscription or connection is NULL
+[simplepool] subscribe fire failed on wss://relay.nostr.band (will retry on connect): subscription or connection is NULL
+[pool] redial connected: wss://relay.nostr.band
+[RELAY_POOL] Subscription 1 received 3 events before EOSE
+[RELAY_POOL] Subscription 3 received 3 events before EOSE
+[RELAY_POOL] Subscription 5 received 3 events before EOSE
+[pool] shutting down cleanup worker...
+[pool] cleanup_worker: EXITING
+[pool] cleanup worker shutdown complete
+[pool] cancelling 0 registered subscriptions...
+[pool] subscription registry freed
+Reply received:
+{"jsonrpc":"2.0","result":{"default":"deny","allow_clients":["23457e444ded9f3edf381b66f133a7d2e4fd131c27a64c40cde405e3a3ec64f6"],"allow_methods":["connect","get_public_key","sign_event","nip44_encrypt"],"allow_kinds":[1],"deny_methods":["nip44_decrypt"]},"id":"00065fadc0fd9528"}
+POLICY_EXIT=0
+
+===== pair.log =====
+2026-11-07T11:09:03Z
+[nip46] client_connect: parsed bunker URI, 2 relays:
+  relay[0]: wss://nos.lol
+  relay[1]: wss://relay.nostr.band
+[pool] cleanup worker thread started
+[pool] cleanup_worker: STARTED
+[nip46] client_start: persistent pool started with 2 relay(s)
+[nip46] connect: building request
+[nip46] connect: request id = d5a17c6a6903b26ad0b4addb8cba6204367f25a616bde8f38f513b538b5ca698
+[nip46] connect: publishing via persistent pool (2 relay(s))
+[RELAY_POOL] Subscription 1 received 0 events before EOSE
+[nip46] connect: req=d5a17c6a6903b26ad0b4addb8cba6204367f25a616bde8f38f513b538b5ca698 accepted by wss://nos.lol
+[nip46] persistent_cb: received response from 09298cf789c8e08369b0f50c6d2b7da511e0f798aff2f8963b0eb5491e1da48a
+[nip46] connect: req=d5a17c6a6903b26ad0b4addb8cba6204367f25a616bde8f38f513b538b5ca698 no OK from wss://relay.nostr.band within 2s (continuing): timed out waiting for relay OK for event 0f4ad1355caf454c6f91a457da723a676f169b6d6db5d09f579f4445e42477a3
+[nip46] connect: req=d5a17c6a6903b26ad0b4addb8cba6204367f25a616bde8f38f513b538b5ca698 waiting for response via persistent subscription (timeout=30000 ms)
+[nip46] connect: SUCCESS - result: ack
+[nip46] nip44_encrypt: building request
+[nip46] nip44_encrypt: request id = 38e0f28315c749237e8bff059082e72cbefd220ce164d1711b85fa8cd2958f64
+[nip46] nip44_encrypt: publishing via persistent pool (2 relay(s))
+[nip46] nip44_encrypt: req=38e0f28315c749237e8bff059082e72cbefd220ce164d1711b85fa8cd2958f64 accepted by wss://nos.lol
+[nip46] persistent_cb: received response from 09298cf789c8e08369b0f50c6d2b7da511e0f798aff2f8963b0eb5491e1da48a
+[nip46] nip44_encrypt: req=38e0f28315c749237e8bff059082e72cbefd220ce164d1711b85fa8cd2958f64 no OK from wss://relay.nostr.band within 2s (continuing): timed out waiting for relay OK for event 0acc6a9ce72b55a429436e2c790cee599c4d2a22a0782956461c5e7dab3cad30
+[nip46] nip44_encrypt: req=38e0f28315c749237e8bff059082e72cbefd220ce164d1711b85fa8cd2958f64 waiting for response via persistent subscription (timeout=30000 ms)
+[nip46] nip44_encrypt: SUCCESS - result: AnGnZE0RLqWIn38I037yZes+vBe9loYhMznPH3XQacPIqB7gha
+[nip46] sign_event: building request
+[nip46] sign_event: request id = bf832f04af8f70dbcf377c5138f558dad96a059d68fc47f3127a3306b0f3d6fd
+[nip46] sign_event: publishing via persistent pool (2 relay(s))
+[nip46] sign_event: req=bf832f04af8f70dbcf377c5138f558dad96a059d68fc47f3127a3306b0f3d6fd accepted by wss://nos.lol
+[nip46] persistent_cb: received response from 09298cf789c8e08369b0f50c6d2b7da511e0f798aff2f8963b0eb5491e1da48a
+[nip46] sign_event: req=bf832f04af8f70dbcf377c5138f558dad96a059d68fc47f3127a3306b0f3d6fd no OK from wss://relay.nostr.band within 2s (continuing): timed out waiting for relay OK for event 01a7924a25f67187f2efbacb104de97615471b726585cdf8a2282824bcfcbcb3
+[nip46] sign_event: req=bf832f04af8f70dbcf377c5138f558dad96a059d68fc47f3127a3306b0f3d6fd waiting for response via persistent subscription (timeout=30000 ms)
+[nip46] sign_event: SUCCESS - result: {"id":"fc68dbba0c2d078ff02029b6558e1c811259b9cef7f
+[pool] shutting down cleanup worker...
+[pool] cleanup_worker: EXITING
+[pool] cleanup worker shutdown complete
+[pool] cancelling 0 registered subscriptions...
+[pool] subscription registry freed
+[nip46] client_stop: persistent pool stopped
+[nip46] client_stop: persistent pool stopped
+signed-event-id=fc68dbba0c2d078ff02029b6558e1c811259b9cef7f245375512c0a779a8241d
+2026-11-07T11:09:10Z
+PAIR_EXIT=0
+
+===== sign.log =====
+2026-11-07T11:09:29Z
+[nip46] client_connect: parsed bunker URI, 2 relays:
+  relay[0]: wss://nos.lol
+  relay[1]: wss://relay.nostr.band
+[pool] cleanup worker thread started
+[pool] cleanup_worker: STARTED
+[nip46] client_start: persistent pool started with 2 relay(s)
+[nip46] nip44_encrypt: building request
+[nip46] nip44_encrypt: request id = 3cd90b46978d455a7f0be7b9d55324617e148b70a7581f2e25e0173b90c0c0ee
+[nip46] nip44_encrypt: publishing via persistent pool (2 relay(s))
+[nip46] persistent_cb: received response from 09298cf789c8e08369b0f50c6d2b7da511e0f798aff2f8963b0eb5491e1da48a
+[RELAY_POOL] Subscription 1 received 3 events before EOSE
+[nip46] persistent_cb: received response from 09298cf789c8e08369b0f50c6d2b7da511e0f798aff2f8963b0eb5491e1da48a
+[nip46] nip44_encrypt: req=3cd90b46978d455a7f0be7b9d55324617e148b70a7581f2e25e0173b90c0c0ee accepted by wss://nos.lol
+[nip46] persistent_cb: received response from 09298cf789c8e08369b0f50c6d2b7da511e0f798aff2f8963b0eb5491e1da48a
+[nip46] persistent_cb: received response from 09298cf789c8e08369b0f50c6d2b7da511e0f798aff2f8963b0eb5491e1da48a
+[nip46] nip44_encrypt: req=3cd90b46978d455a7f0be7b9d55324617e148b70a7581f2e25e0173b90c0c0ee no OK from wss://relay.nostr.band within 2s (continuing): timed out waiting for relay OK for event 7c10621967ee85a01d2e2892e7cf8e73c7bb3d694f29fd2471f04cbbd9fc3990
+[nip46] nip44_encrypt: req=3cd90b46978d455a7f0be7b9d55324617e148b70a7581f2e25e0173b90c0c0ee waiting for response via persistent subscription (timeout=30000 ms)
+[nip46] nip44_encrypt: SUCCESS - result: AkEUWUKd40+Pqqp17Vz1D7P3Tlp0F7c7NpI2euHJywxgGxivG/
+[nip46] sign_event: building request
+[nip46] sign_event: request id = ea32ca3e2df46d28e8716cd9a94b0da0660490b27da2d7ff46c52ee818b3ba73
+[nip46] sign_event: publishing via persistent pool (2 relay(s))
+[nip46] sign_event: req=ea32ca3e2df46d28e8716cd9a94b0da0660490b27da2d7ff46c52ee818b3ba73 accepted by wss://nos.lol
+[nip46] persistent_cb: received response from 09298cf789c8e08369b0f50c6d2b7da511e0f798aff2f8963b0eb5491e1da48a
+[nip46] sign_event: req=ea32ca3e2df46d28e8716cd9a94b0da0660490b27da2d7ff46c52ee818b3ba73 no OK from wss://relay.nostr.band within 2s (continuing): timed out waiting for relay OK for event e573338685d2a711f0c4455bd86dd8eec6b695ff841e3e5a2751fe28e951f5f6
+[nip46] sign_event: req=ea32ca3e2df46d28e8716cd9a94b0da0660490b27da2d7ff46c52ee818b3ba73 waiting for response via persistent subscription (timeout=30000 ms)
+[nip46] sign_event: SUCCESS - result: {"id":"2724aad24e240d5b5718b69e8c266adf594fc5eb1c6
+[pool] shutting down cleanup worker...
+[pool] cleanup_worker: EXITING
+[pool] cleanup worker shutdown complete
+[pool] cancelling 0 registered subscriptions...
+[pool] subscription registry freed
+[nip46] client_stop: persistent pool stopped
+[nip46] client_stop: persistent pool stopped
+signed-event-id=2724aad24e240d5b5718b69e8c266adf594fc5eb1c6e932bc935e3a9003618e1
+2026-11-07T11:09:34Z
+sign_EXIT=0
+
+===== deny.log =====
+2026-11-07T11:09:35Z
+[nip46] client_connect: parsed bunker URI, 2 relays:
+  relay[0]: wss://nos.lol
+  relay[1]: wss://relay.nostr.band
+[pool] cleanup worker thread started
+[pool] cleanup_worker: STARTED
+[nip46] client_start: persistent pool started with 2 relay(s)
+[nip46] nip44_encrypt: building request
+[nip46] nip44_encrypt: request id = abce58aaf35f125db6a73e5d2893a5a5a2c0e0e7efc514e7a5a6b665f53c7f08
+[nip46] nip44_encrypt: publishing via persistent pool (2 relay(s))
+[nip46] persistent_cb: received response from 09298cf789c8e08369b0f50c6d2b7da511e0f798aff2f8963b0eb5491e1da48a
+[nip46] persistent_cb: received response from 09298cf789c8e08369b0f50c6d2b7da511e0f798aff2f8963b0eb5491e1da48a
+[RELAY_POOL] Subscription 1 received 5 events before EOSE
+[nip46] persistent_cb: received response from 09298cf789c8e08369b0f50c6d2b7da511e0f798aff2f8963b0eb5491e1da48a
+[nip46] persistent_cb: received response from 09298cf789c8e08369b0f50c6d2b7da511e0f798aff2f8963b0eb5491e1da48a
+[nip46] persistent_cb: received response from 09298cf789c8e08369b0f50c6d2b7da511e0f798aff2f8963b0eb5491e1da48a
+[nip46] nip44_encrypt: req=abce58aaf35f125db6a73e5d2893a5a5a2c0e0e7efc514e7a5a6b665f53c7f08 accepted by wss://nos.lol
+[nip46] persistent_cb: received response from 09298cf789c8e08369b0f50c6d2b7da511e0f798aff2f8963b0eb5491e1da48a
+[nip46] nip44_encrypt: req=abce58aaf35f125db6a73e5d2893a5a5a2c0e0e7efc514e7a5a6b665f53c7f08 no OK from wss://relay.nostr.band within 2s (continuing): timed out waiting for relay OK for event ca0217e36032f7fc52f21cbb589f8645223f3dbebd02cc26e6f17b332856ef57
+[nip46] nip44_encrypt: req=abce58aaf35f125db6a73e5d2893a5a5a2c0e0e7efc514e7a5a6b665f53c7f08 waiting for response via persistent subscription (timeout=30000 ms)
+[nip46] nip44_encrypt: SUCCESS - result: AqhqGn9kMmAae89uQSITpROkGF9D0NFtWmETBp3pzSWkXGd5wG
+[nip46] nip44_decrypt: building request
+[nip46] nip44_decrypt: request id = 49407b56e3c83cf1370b94546e302a78338499e2d4d8346a6819ba0c1eb4bea9
+[nip46] nip44_decrypt: publishing via persistent pool (2 relay(s))
+[nip46] nip44_decrypt: req=49407b56e3c83cf1370b94546e302a78338499e2d4d8346a6819ba0c1eb4bea9 accepted by wss://nos.lol
+[nip46] persistent_cb: received response from 09298cf789c8e08369b0f50c6d2b7da511e0f798aff2f8963b0eb5491e1da48a
+[nip46] nip44_decrypt: req=49407b56e3c83cf1370b94546e302a78338499e2d4d8346a6819ba0c1eb4bea9 no OK from wss://relay.nostr.band within 2s (continuing): timed out waiting for relay OK for event da14be46608a9222829d91ba87dee38edf547a18e547d2b8cac6e16c7734c0d8
+[nip46] nip44_decrypt: req=49407b56e3c83cf1370b94546e302a78338499e2d4d8346a6819ba0c1eb4bea9 waiting for response via persistent subscription (timeout=30000 ms)
+[nip46] nip44_decrypt: received error response: policy.deny.method
+[pool] shutting down cleanup worker...
+[pool] cleanup_worker: EXITING
+[pool] cleanup worker shutdown complete
+[pool] cancelling 0 registered subscriptions...
+[pool] subscription registry freed
+[nip46] client_stop: persistent pool stopped
+[nip46] client_stop: persistent pool stopped
+policy: authenticated refusal
+2026-11-07T11:09:40Z
+deny_EXIT=0
+
+===== restart-request.log =====
+2026-11-07T11:09:53Z
+2026-11-07T11:09:54Z
+9cef80185bde92b36712d025da9200319ad72b1a8fbfc6def55382508478d230  /opt/signet/config/signet.conf
+Job for signet-compose.service failed because the control process exited with error code.
+See "systemctl status signet-compose.service" and "journalctl -xeu signet-compose.service" for details.
+RESTART_COMMAND_EXIT=1
+2026-11-07T11:09:56Z
+2026-11-07T11:09:54+00:00 signet-smoke systemd[1]: Stopping signet-compose.service - Signet digest-pinned Compose deployment...
+2026-11-07T11:09:54+00:00 signet-smoke python3[11528]:  Container signet-signetd-1  Stopping
+2026-11-07T11:09:55+00:00 signet-smoke python3[10600]: signetd-1  | [pool] shutting down cleanup worker...
+2026-11-07T11:09:55+00:00 signet-smoke python3[10600]: signetd-1  | [pool] cleanup_worker: EXITING
+2026-11-07T11:09:55+00:00 signet-smoke python3[10600]: signetd-1  | [pool] cleanup worker shutdown complete
+2026-11-07T11:09:55+00:00 signet-smoke python3[10600]: signetd-1  | [pool] cancelling 0 registered subscriptions...
+2026-11-07T11:09:55+00:00 signet-smoke python3[10600]: signetd-1  | [pool] subscription registry freed
+2026-11-07T11:09:55+00:00 signet-smoke python3[11528]:  Container signet-signetd-1  Stopped
+2026-11-07T11:09:55+00:00 signet-smoke python3[11528]:  Container signet-signetd-1  Removing
+2026-11-07T11:09:55+00:00 signet-smoke python3[10600]: [32B blob data]
+2026-11-07T11:09:55+00:00 signet-smoke python3[10600]: Aborting on container exit...
+2026-11-07T11:09:55+00:00 signet-smoke python3[11528]:  Container signet-signetd-1  Removed
+2026-11-07T11:09:55+00:00 signet-smoke python3[10559]: signet deployment refused: supervised container exited; systemd will enforce restart quarantine
+2026-11-07T11:09:55+00:00 signet-smoke systemd[1]: signet-compose.service: Main process exited, code=exited, status=1/FAILURE
+2026-11-07T11:09:55+00:00 signet-smoke systemd[1]: signet-compose.service: Failed with result 'exit-code'.
+2026-11-07T11:09:55+00:00 signet-smoke systemd[1]: Stopped signet-compose.service - Signet digest-pinned Compose deployment.
+2026-11-07T11:09:55+00:00 signet-smoke systemd[1]: signet-compose.service: Consumed 2.451s CPU time, 36.9M memory peak, 0B memory swap peak.
+2026-11-07T11:09:55+00:00 signet-smoke systemd[1]: Starting signet-compose.service - Signet digest-pinned Compose deployment...
+2026-11-07T11:09:56+00:00 signet-smoke preflight.sh[11585]: signet deployment refused: restart refused: 270s remain in stop quarantine
+2026-11-07T11:09:56+00:00 signet-smoke systemd[1]: signet-compose.service: Control process exited, code=exited, status=1/FAILURE
+2026-11-07T11:09:56+00:00 signet-smoke systemd[1]: signet-compose.service: Failed with result 'exit-code'.
+2026-11-07T11:09:56+00:00 signet-smoke systemd[1]: Failed to start signet-compose.service - Signet digest-pinned Compose deployment.
+
+===== restart-ready.log =====
+{"ready":true,"detail":{"provisioner_writeback_failed":false}}2026-11-07T11:16:52Z
+RESTART_READY_EXIT=0
+
+===== restart-sign.log =====
+2026-11-07T11:16:52Z
+[nip46] client_connect: parsed bunker URI, 2 relays:
+  relay[0]: wss://nos.lol
+  relay[1]: wss://relay.nostr.band
+[pool] cleanup worker thread started
+[pool] cleanup_worker: STARTED
+[nip46] client_start: persistent pool started with 2 relay(s)
+[nip46] nip44_encrypt: building request
+[nip46] nip44_encrypt: request id = c75f5f832755b534ad3848a19546823564a77f160d4ccd41dc10c6f7ccdb95c5
+[nip46] nip44_encrypt: publishing via persistent pool (2 relay(s))
+[RELAY_POOL] Subscription 1 received 0 events before EOSE
+[nip46] nip44_encrypt: req=c75f5f832755b534ad3848a19546823564a77f160d4ccd41dc10c6f7ccdb95c5 accepted by wss://nos.lol
+[nip46] persistent_cb: received response from 09298cf789c8e08369b0f50c6d2b7da511e0f798aff2f8963b0eb5491e1da48a
+[nip46] nip44_encrypt: req=c75f5f832755b534ad3848a19546823564a77f160d4ccd41dc10c6f7ccdb95c5 no OK from wss://relay.nostr.band within 2s (continuing): timed out waiting for relay OK for event 5db04695dd3ba8bc3d7a41448b5ed59ca2cdd0f1cd1e03873e19e0d0760dd619
+[nip46] nip44_encrypt: req=c75f5f832755b534ad3848a19546823564a77f160d4ccd41dc10c6f7ccdb95c5 waiting for response via persistent subscription (timeout=30000 ms)
+[nip46] nip44_encrypt: SUCCESS - result: At3A4nW3k9fARYzAz1I+Q0RzuBW2xnPphZ3+CItWCI/fGy/Ey0
+[nip46] sign_event: building request
+[nip46] sign_event: request id = 99a458c40f191c98b2f671f38b5fdd68232d632a56bce22f8d19f5b7d436648c
+[nip46] sign_event: publishing via persistent pool (2 relay(s))
+[nip46] sign_event: req=99a458c40f191c98b2f671f38b5fdd68232d632a56bce22f8d19f5b7d436648c accepted by wss://nos.lol
+[nip46] persistent_cb: received response from 09298cf789c8e08369b0f50c6d2b7da511e0f798aff2f8963b0eb5491e1da48a
+[nip46] sign_event: req=99a458c40f191c98b2f671f38b5fdd68232d632a56bce22f8d19f5b7d436648c no OK from wss://relay.nostr.band within 2s (continuing): timed out waiting for relay OK for event 7643b83fee5564d02b393c6e07cbfa3356d59cebc4e1544bc412284a937f8a39
+[nip46] sign_event: req=99a458c40f191c98b2f671f38b5fdd68232d632a56bce22f8d19f5b7d436648c waiting for response via persistent subscription (timeout=30000 ms)
+[nip46] sign_event: SUCCESS - result: {"id":"28cbf85c13f45c6a5eb6899762d74cc5261d2355321
+[pool] shutting down cleanup worker...
+[pool] cleanup_worker: EXITING
+[pool] cleanup worker shutdown complete
+[pool] cancelling 0 registered subscriptions...
+[pool] subscription registry freed
+[nip46] client_stop: persistent pool stopped
+[nip46] client_stop: persistent pool stopped
+signed-event-id=28cbf85c13f45c6a5eb6899762d74cc5261d2355321c448cce2d40e9c259e324
+2026-11-07T11:16:58Z
+RESTART_SIGN_EXIT=0
+
+===== status2.log =====
+2026-11-07T11:16:58Z
+[pool] cleanup worker thread started
+[pool] cleanup_worker: STARTED
+[pool] redial connected: wss://nos.lol
+[simplepool] subscribe fire failed on wss://relay.nostr.band (will retry on connect): subscription or connection is NULL
+[simplepool] subscribe fire failed on wss://relay.nostr.band (will retry on connect): subscription or connection is NULL
+[pool] redial connected: wss://relay.nostr.band
+[simplepool] (re)subscribed on wss://relay.nostr.band
+[RELAY_POOL] Subscription 1 received 4 events before EOSE
+[RELAY_POOL] Subscription 3 received 4 events before EOSE
+[RELAY_POOL] Subscription 6 received 4 events before EOSE
+[pool] shutting down cleanup worker...
+[pool] cleanup_worker: EXITING
+[pool] cleanup worker shutdown complete
+[pool] cancelling 0 registered subscriptions...
+[pool] subscription registry freed
+Reply received:
+{"jsonrpc":"2.0","result":{"db_open":true,"agents":1,"relays_connected":true},"id":"00065fadddf6fac9"}
+2026-11-07T11:16:59Z
+STATUS2_EXIT=0
+
+===== after-restart.txt =====
+2026-11-07T11:17:12Z
+1
+1|1794049705|2026-11-07 11:08:25|mgmt_provision_agent|smoke-agent|{"decision":"allow","reason":"provisioned"}
+2|1794049731|2026-11-07 11:08:51|mgmt_reissue_connect|smoke-agent|{"decision":"allow","reason":"connect_reissued"}
+3|1794049733|2026-11-07 11:08:53|mgmt_set_policy|smoke-agent|{"decision":"allow","reason":"policy_set"}
+4|1794050209|2026-11-07 11:16:49|mgmt_history_dropped|98b9a9167b2fce02d93d9ed0cacdd0705f81acd0f97218859061bb27a94656cb|{"decision":"deny","reason":"before_live_boundary"}
+5|1794050209|2026-11-07 11:16:49|mgmt_history_dropped|859848ead4122fe63bad09945dda973131ad6ee185b3aa6ab66b6a755271a2fd|{"decision":"deny","reason":"before_live_boundary"}
+6|1794050209|2026-11-07 11:16:49|mgmt_history_dropped|1736bf5a781c0733d2e6c1293a6a63ba0e0d3f6f8d08c16cd995c356518c32c9|{"decision":"deny","reason":"before_live_boundary"}
+7|1794050209|2026-11-07 11:16:49|mgmt_history_dropped|102171fd8a0467881c025396f030d334c57689658bbdbdb054f122d83a0b2e8c|{"decision":"deny","reason":"before_live_boundary"}
+agent_count|1
+AUDIT_EXIT=0
+9cef80185bde92b36712d025da9200319ad72b1a8fbfc6def55382508478d230  /opt/signet/config/signet.conf
+State  Recv-Q Send-Q Local Address:Port Peer Address:PortProcess
+LISTEN 0      4096   127.0.0.53%lo:53        0.0.0.0:*    users:(("systemd-resolve",pid=704,fd=15))
+LISTEN 0      4096      127.0.0.54:53        0.0.0.0:*    users:(("systemd-resolve",pid=704,fd=17))
+LISTEN 0      4096       127.0.0.1:8080      0.0.0.0:*    users:(("signetd",pid=11938,fd=7))
+LISTEN 0      4096         0.0.0.0:22        0.0.0.0:*    users:(("sshd",pid=1388,fd=3),("systemd",pid=1,fd=198))
+LISTEN 0      4096            [::]:22           [::]:*    users:(("sshd",pid=1388,fd=4),("systemd",pid=1,fd=199))
+# HELP signet_provisioner_writeback_failures_total Failed provisioner config writes.
+# TYPE signet_provisioner_writeback_failures_total counter
+signet_provisioner_writeback_failures_total 0
+# HELP signet_up Whether signet is up.
+# TYPE signet_up gauge
+signet_up 1
+# HELP signet_uptime_seconds Daemon uptime.
+# TYPE signet_uptime_seconds gauge
+signet_uptime_seconds 159
+# HELP signet_bootstrap_total Bootstrap attempts.
+# TYPE signet_bootstrap_total counter
+signet_bootstrap_total 0
+# HELP signet_auth_total Auth attempts by result.
+# TYPE signet_auth_total counter
+signet_auth_total{result="ok"} 2
+signet_auth_total{result="denied"} 0
+signet_auth_total{result="error"} 0
+# HELP signet_sign_total Signing operations.
+# TYPE signet_sign_total counter
+signet_sign_total 1
+# HELP signet_nip46_reply_ack_total NIP-46 reply publication outcomes per relay.
+# TYPE signet_nip46_reply_ack_total counter
+signet_nip46_reply_ack_total{result="accept"} 2
+signet_nip46_reply_ack_total{result="reject"} 0
+signet_nip46_reply_ack_total{result="timeout"} 0
+signet_nip46_reply_ack_total{result="transport-aborted"} 0
+# HELP signet_revoke_total Revocations.
+# TYPE signet_revoke_total counter
+signet_revoke_total 0
+# HELP signet_connection_denied_total Connections denied at transport limits.
+# TYPE signet_connection_denied_total counter
+signet_connection_denied_total{transport="nip5l"} 0
+signet_connection_denied_total{transport="ssh_agent"} 0
+# HELP signet_fleet_sync_last_timestamp Fleet sync time.
+# TYPE signet_fleet_sync_last_timestamp gauge
+signet_fleet_sync_last_timestamp 1794050232
+# HELP signet_active_sessions Current sessions.
+# TYPE signet_active_sessions gauge
+signet_active_sessions 0
+# HELP signet_active_leases Current credential leases.
+# TYPE signet_active_leases gauge
+signet_active_leases 0
+# HELP signet_agents_active Active agents.
+# TYPE signet_agents_active gauge
+signet_agents_active 1
+# HELP signet_relays_connected Connected relays.
+# TYPE signet_relays_connected gauge
+signet_relays_connected 2
+
+===== revoke.log =====
+2026-11-07T11:17:14Z
+[pool] cleanup worker thread started
+[pool] cleanup_worker: STARTED
+[pool] redial connected: wss://nos.lol
+[simplepool] subscribe fire failed on wss://relay.nostr.band (will retry on connect): subscription or connection is NULL
+[simplepool] subscribe fire failed on wss://relay.nostr.band (will retry on connect): subscription or connection is NULL
+[pool] redial connected: wss://relay.nostr.band
+[RELAY_POOL] Subscription 1 received 5 events before EOSE
+[RELAY_POOL] Subscription 3 received 5 events before EOSE
+[RELAY_POOL] Subscription 5 received 5 events before EOSE
+[pool] shutting down cleanup worker...
+[pool] cleanup_worker: EXITING
+[pool] cleanup worker shutdown complete
+[pool] cancelling 0 registered subscriptions...
+[pool] subscription registry freed
+Reply received:
+{"jsonrpc":"2.0","result":{"ok":true,"request_id":"00065faddeea2ca0","code":"client_revoked","message":"client binding revoked"},"id":"00065faddeea2ca0"}
+2026-11-07T11:17:16Z
+REVOKE_EXIT=0
+
+===== revoked.log =====
+2026-11-07T11:17:16Z
+[nip46] client_connect: parsed bunker URI, 2 relays:
+  relay[0]: wss://nos.lol
+  relay[1]: wss://relay.nostr.band
+[pool] cleanup worker thread started
+[pool] cleanup_worker: STARTED
+[nip46] client_start: persistent pool started with 2 relay(s)
+[nip46] nip44_encrypt: building request
+[nip46] nip44_encrypt: request id = 02035447af9949ff9f64c7532cd8e976656fc3d88fb11650cb4b73bf05796171
+[nip46] nip44_encrypt: publishing via persistent pool (2 relay(s))
+[nip46] persistent_cb: received response from 09298cf789c8e08369b0f50c6d2b7da511e0f798aff2f8963b0eb5491e1da48a
+[RELAY_POOL] Subscription 1 received 2 events before EOSE
+[nip46] persistent_cb: received response from 09298cf789c8e08369b0f50c6d2b7da511e0f798aff2f8963b0eb5491e1da48a
+[nip46] nip44_encrypt: req=02035447af9949ff9f64c7532cd8e976656fc3d88fb11650cb4b73bf05796171 accepted by wss://nos.lol
+[nip46] persistent_cb: received response from 09298cf789c8e08369b0f50c6d2b7da511e0f798aff2f8963b0eb5491e1da48a
+[nip46] nip44_encrypt: req=02035447af9949ff9f64c7532cd8e976656fc3d88fb11650cb4b73bf05796171 no OK from wss://relay.nostr.band within 2s (continuing): timed out waiting for relay OK for event ab0d4918759f587142014f321f1b94b64e3f8180de8086ccd46f93b107d09997
+[nip46] nip44_encrypt: req=02035447af9949ff9f64c7532cd8e976656fc3d88fb11650cb4b73bf05796171 waiting for response via persistent subscription (timeout=30000 ms)
+[nip46] nip44_encrypt: received error response: client has no active NIP-46 session
+[pool] shutting down cleanup worker...
+[pool] cleanup_worker: EXITING
+[pool] cleanup worker shutdown complete
+[pool] cancelling 0 registered subscriptions...
+[pool] subscription registry freed
+[nip46] client_stop: persistent pool stopped
+[nip46] client_stop: persistent pool stopped
+revocation: authenticated refusal of previously allowed encryption
+2026-11-07T11:17:19Z
+REVOKED_PROOF_EXIT=0
+
+===== final-host.txt =====
+2026-11-07T11:17:34Z
+1
+1|1794049705|2026-11-07 11:08:25|mgmt_provision_agent|smoke-agent|{"decision":"allow","reason":"provisioned"}
+2|1794049731|2026-11-07 11:08:51|mgmt_reissue_connect|smoke-agent|{"decision":"allow","reason":"connect_reissued"}
+3|1794049733|2026-11-07 11:08:53|mgmt_set_policy|smoke-agent|{"decision":"allow","reason":"policy_set"}
+4|1794050209|2026-11-07 11:16:49|mgmt_history_dropped|98b9a9167b2fce02d93d9ed0cacdd0705f81acd0f97218859061bb27a94656cb|{"decision":"deny","reason":"before_live_boundary"}
+5|1794050209|2026-11-07 11:16:49|mgmt_history_dropped|859848ead4122fe63bad09945dda973131ad6ee185b3aa6ab66b6a755271a2fd|{"decision":"deny","reason":"before_live_boundary"}
+6|1794050209|2026-11-07 11:16:49|mgmt_history_dropped|1736bf5a781c0733d2e6c1293a6a63ba0e0d3f6f8d08c16cd995c356518c32c9|{"decision":"deny","reason":"before_live_boundary"}
+7|1794050209|2026-11-07 11:16:49|mgmt_history_dropped|102171fd8a0467881c025396f030d334c57689658bbdbdb054f122d83a0b2e8c|{"decision":"deny","reason":"before_live_boundary"}
+8|1794050235|2026-11-07 11:17:15|mgmt_revoke_client|8468729aedfb515e6cdb9743a6e9abb8e013534494010907300450e466fbc856|{"decision":"allow","reason":"client_revoked"}
+agent_count|1
+AUDIT_EXIT=0
+{"ready":true,"detail":{"provisioner_writeback_failed":false}}
+# HELP signet_provisioner_writeback_failures_total Failed provisioner config writes.
+# TYPE signet_provisioner_writeback_failures_total counter
+signet_provisioner_writeback_failures_total 0
+# HELP signet_up Whether signet is up.
+# TYPE signet_up gauge
+signet_up 1
+# HELP signet_uptime_seconds Daemon uptime.
+# TYPE signet_uptime_seconds gauge
+signet_uptime_seconds 182
+# HELP signet_bootstrap_total Bootstrap attempts.
+# TYPE signet_bootstrap_total counter
+signet_bootstrap_total 0
+# HELP signet_auth_total Auth attempts by result.
+# TYPE signet_auth_total counter
+signet_auth_total{result="ok"} 2
+signet_auth_total{result="denied"} 1
+signet_auth_total{result="error"} 0
+# HELP signet_sign_total Signing operations.
+# TYPE signet_sign_total counter
+signet_sign_total 1
+# HELP signet_nip46_reply_ack_total NIP-46 reply publication outcomes per relay.
+# TYPE signet_nip46_reply_ack_total counter
+signet_nip46_reply_ack_total{result="accept"} 3
+signet_nip46_reply_ack_total{result="reject"} 0
+signet_nip46_reply_ack_total{result="timeout"} 0
+signet_nip46_reply_ack_total{result="transport-aborted"} 0
+# HELP signet_revoke_total Revocations.
+# TYPE signet_revoke_total counter
+signet_revoke_total 0
+# HELP signet_connection_denied_total Connections denied at transport limits.
+# TYPE signet_connection_denied_total counter
+signet_connection_denied_total{transport="nip5l"} 0
+signet_connection_denied_total{transport="ssh_agent"} 0
+# HELP signet_fleet_sync_last_timestamp Fleet sync time.
+# TYPE signet_fleet_sync_last_timestamp gauge
+signet_fleet_sync_last_timestamp 1794050255
+# HELP signet_active_sessions Current sessions.
+# TYPE signet_active_sessions gauge
+signet_active_sessions 0
+# HELP signet_active_leases Current credential leases.
+# TYPE signet_active_leases gauge
+signet_active_leases 0
+# HELP signet_agents_active Active agents.
+# TYPE signet_agents_active gauge
+signet_agents_active 1
+# HELP signet_relays_connected Connected relays.
+# TYPE signet_relays_connected gauge
+signet_relays_connected 2
+signet deployment refused: previous daemon has no stop receipt on this boot; investigate before restart
+FINAL_PREFLIGHT_EXIT=1
+Audit log integrity: OK
+Total entries: 8
+VERIFY_AUDIT_EXIT=0
+9cef80185bde92b36712d025da9200319ad72b1a8fbfc6def55382508478d230  /opt/signet/config/signet.conf
+relays = wss://nos.lol;wss://relay.nostr.band;
+
+===== journal-complete.txt =====
+2026-11-07T11:05:51+00:00 signet-smoke systemd[1]: Starting signet-compose.service - Signet digest-pinned Compose deployment...
+2026-11-07T11:05:52+00:00 signet-smoke systemd[1]: Started signet-compose.service - Signet digest-pinned Compose deployment.
+2026-11-07T11:05:52+00:00 signet-smoke python3[10600]:  Container signet-signetd-1  Creating
+2026-11-07T11:05:52+00:00 signet-smoke python3[10600]:  Container signet-signetd-1  Created
+2026-11-07T11:05:52+00:00 signet-smoke python3[10600]: Attaching to signetd-1
+2026-11-07T11:05:53+00:00 signet-smoke python3[10600]: signetd-1  | ** Message: 11:05:53.077: [signetd] mlockall(MCL_CURRENT|MCL_FUTURE) OK ? all pages locked
+2026-11-07T11:05:53+00:00 signet-smoke python3[10600]: signetd-1  | ** Message: 11:05:53.302: [signetd] seeded persisted provisioner policy from legacy configuration
+2026-11-07T11:05:53+00:00 signet-smoke python3[10600]: signetd-1  | ** Message: 11:05:53.303: [signetd] policy store: loaded 0 identities from /data/policies.conf
+2026-11-07T11:05:53+00:00 signet-smoke python3[10600]: signetd-1  | [pool] cleanup worker thread started
+2026-11-07T11:05:53+00:00 signet-smoke python3[10600]: signetd-1  | [pool] cleanup_worker: STARTED
+2026-11-07T11:05:53+00:00 signet-smoke python3[10600]: signetd-1  | [pool] redial connected: wss://nos.lol
+2026-11-07T11:05:53+00:00 signet-smoke python3[10600]: signetd-1  | [pool] redial connected: wss://relay.nostr.band
+2026-11-07T11:05:53+00:00 signet-smoke python3[10600]: signetd-1  | ** Message: 11:05:53.636: [signetd] NIP-11: wss://nos.lol ? name="nos.lol" software=git+https://github.com/hoytech/strfry.git/1.1.3 NIPs=[1,2,4,9,11,28,40,45,70]
+2026-11-07T11:05:53+00:00 signet-smoke python3[10600]: signetd-1  | ** Message: 11:05:53.636: [signetd] NIP-11: wss://nos.lol max_message_length=131072
+2026-11-07T11:05:58+00:00 signet-smoke python3[10600]: signetd-1  | [RECONNECT] Connection lost to wss://relay.nostr.band, attempt 1, waiting 1227ms
+2026-11-07T11:06:04+00:00 signet-smoke python3[10600]: signetd-1  | [RECONNECT] Connection lost to wss://relay.nostr.band, attempt 2, waiting 1764ms
+2026-11-07T11:06:11+00:00 signet-smoke python3[10600]: signetd-1  | [RECONNECT] Connection lost to wss://relay.nostr.band, attempt 3, waiting 4615ms
+2026-11-07T11:06:21+00:00 signet-smoke python3[10600]: signetd-1  | [RECONNECT] Connection lost to wss://relay.nostr.band, attempt 4, waiting 9853ms
+2026-11-07T11:06:35+00:00 signet-smoke python3[10600]: signetd-1  | [RECONNECT] Connection lost to wss://relay.nostr.band, attempt 5, waiting 12680ms
+2026-11-07T11:06:53+00:00 signet-smoke python3[10600]: signetd-1  | [RECONNECT] Connection lost to wss://relay.nostr.band, attempt 6, waiting 31040ms
+2026-11-07T11:07:29+00:00 signet-smoke python3[10600]: signetd-1  | [RECONNECT] Connection lost to wss://relay.nostr.band, attempt 7, waiting 72707ms
+2026-11-07T11:08:08+00:00 signet-smoke python3[10600]: signetd-1  | ** Message: 11:08:08.854: [signetd] NIP-11: wss://relay.nostr.band ? no information document available
+2026-11-07T11:08:08+00:00 signet-smoke python3[10600]: signetd-1  | [simplepool] subscribe fire failed on wss://relay.nostr.band (will retry on connect): subscription or connection is NULL
+2026-11-07T11:08:08+00:00 signet-smoke python3[10600]: signetd-1  | ** Message: 11:08:08.866: [signetd] subscribed to canonical management kinds on relay pool (p-tag=09298cf789c8e08369b0f50c6d2b7da511e0f798aff2f8963b0eb5491e1da48a)
+2026-11-07T11:08:08+00:00 signet-smoke python3[10600]: signetd-1  | ** Message: 11:08:08.870: [signetd] entering event-driven main loop
+2026-11-07T11:08:08+00:00 signet-smoke python3[10600]: signetd-1  | [simplepool] subscribe fire failed on wss://relay.nostr.band (will retry on connect): subscription or connection is NULL
+2026-11-07T11:08:08+00:00 signet-smoke python3[10600]: signetd-1  | [RELAY_POOL] Subscription 1 received 0 events before EOSE
+2026-11-07T11:08:08+00:00 signet-smoke python3[10600]: signetd-1  | [RELAY_POOL] Subscription 3 received 0 events before EOSE
+2026-11-07T11:08:42+00:00 signet-smoke python3[10600]: signetd-1  | [simplepool] (re)subscribed on wss://relay.nostr.band
+2026-11-07T11:08:47+00:00 signet-smoke python3[10600]: signetd-1  | [RECONNECT] Connection lost to wss://relay.nostr.band, attempt 8, waiting 113088ms
+2026-11-07T11:09:04+00:00 signet-smoke python3[10600]: signetd-1  | ** Message: 11:09:04.320: [signetd] nip46-reply-ack relay=0 result=accept
+2026-11-07T11:09:06+00:00 signet-smoke python3[10600]: signetd-1  | ** Message: 11:09:06.625: [signetd] nip46-reply-ack relay=0 result=accept
+2026-11-07T11:09:08+00:00 signet-smoke python3[10600]: signetd-1  | ** Message: 11:09:08.873: [signetd] nip46-reply-ack relay=0 result=accept
+2026-11-07T11:09:30+00:00 signet-smoke python3[10600]: signetd-1  | ** Message: 11:09:30.902: [signetd] nip46-reply-ack relay=0 result=accept
+2026-11-07T11:09:33+00:00 signet-smoke python3[10600]: signetd-1  | ** Message: 11:09:33.125: [signetd] nip46-reply-ack relay=0 result=accept
+2026-11-07T11:09:36+00:00 signet-smoke python3[10600]: signetd-1  | ** Message: 11:09:36.217: [signetd] nip46-reply-ack relay=0 result=accept
+2026-11-07T11:09:38+00:00 signet-smoke python3[10600]: signetd-1  | ** Message: 11:09:38.610: [signetd] nip46-reply-ack relay=0 result=accept
+2026-11-07T11:09:54+00:00 signet-smoke systemd[1]: Stopping signet-compose.service - Signet digest-pinned Compose deployment...
+2026-11-07T11:09:54+00:00 signet-smoke python3[11528]:  Container signet-signetd-1  Stopping
+2026-11-07T11:09:55+00:00 signet-smoke python3[10600]: signetd-1  | [pool] shutting down cleanup worker...
+2026-11-07T11:09:55+00:00 signet-smoke python3[10600]: signetd-1  | [pool] cleanup_worker: EXITING
+2026-11-07T11:09:55+00:00 signet-smoke python3[10600]: signetd-1  | [pool] cleanup worker shutdown complete
+2026-11-07T11:09:55+00:00 signet-smoke python3[10600]: signetd-1  | [pool] cancelling 0 registered subscriptions...
+2026-11-07T11:09:55+00:00 signet-smoke python3[10600]: signetd-1  | [pool] subscription registry freed
+2026-11-07T11:09:55+00:00 signet-smoke python3[11528]:  Container signet-signetd-1  Stopped
+2026-11-07T11:09:55+00:00 signet-smoke python3[11528]:  Container signet-signetd-1  Removing
+2026-11-07T11:09:55+00:00 signet-smoke python3[10600]: [32B blob data]
+2026-11-07T11:09:55+00:00 signet-smoke python3[10600]: Aborting on container exit...
+2026-11-07T11:09:55+00:00 signet-smoke python3[11528]:  Container signet-signetd-1  Removed
+2026-11-07T11:09:55+00:00 signet-smoke python3[10559]: signet deployment refused: supervised container exited; systemd will enforce restart quarantine
+2026-11-07T11:09:55+00:00 signet-smoke systemd[1]: signet-compose.service: Main process exited, code=exited, status=1/FAILURE
+2026-11-07T11:09:55+00:00 signet-smoke systemd[1]: signet-compose.service: Failed with result 'exit-code'.
+2026-11-07T11:09:55+00:00 signet-smoke systemd[1]: Stopped signet-compose.service - Signet digest-pinned Compose deployment.
+2026-11-07T11:09:55+00:00 signet-smoke systemd[1]: signet-compose.service: Consumed 2.451s CPU time, 36.9M memory peak, 0B memory swap peak.
+2026-11-07T11:09:55+00:00 signet-smoke systemd[1]: Starting signet-compose.service - Signet digest-pinned Compose deployment...
+2026-11-07T11:09:56+00:00 signet-smoke preflight.sh[11585]: signet deployment refused: restart refused: 270s remain in stop quarantine
+2026-11-07T11:09:56+00:00 signet-smoke systemd[1]: signet-compose.service: Control process exited, code=exited, status=1/FAILURE
+2026-11-07T11:09:56+00:00 signet-smoke systemd[1]: signet-compose.service: Failed with result 'exit-code'.
+2026-11-07T11:09:56+00:00 signet-smoke systemd[1]: Failed to start signet-compose.service - Signet digest-pinned Compose deployment.
+2026-11-07T11:14:31+00:00 signet-smoke systemd[1]: signet-compose.service: Scheduled restart job, restart counter is at 1.
+2026-11-07T11:14:32+00:00 signet-smoke systemd[1]: Starting signet-compose.service - Signet digest-pinned Compose deployment...
+2026-11-07T11:14:32+00:00 signet-smoke systemd[1]: Started signet-compose.service - Signet digest-pinned Compose deployment.
+2026-11-07T11:14:33+00:00 signet-smoke python3[11893]:  Container signet-signetd-1  Creating
+2026-11-07T11:14:33+00:00 signet-smoke python3[11893]:  Container signet-signetd-1  Created
+2026-11-07T11:14:33+00:00 signet-smoke python3[11893]: Attaching to signetd-1
+2026-11-07T11:14:33+00:00 signet-smoke python3[11893]: signetd-1  | ** Message: 11:14:33.628: [signetd] mlockall(MCL_CURRENT|MCL_FUTURE) OK ? all pages locked
+2026-11-07T11:14:33+00:00 signet-smoke python3[11893]: signetd-1  | ** Message: 11:14:33.785: [signetd] policy store: loaded 1 identities from /data/policies.conf
+2026-11-07T11:14:33+00:00 signet-smoke python3[11893]: signetd-1  | [pool] cleanup worker thread started
+2026-11-07T11:14:33+00:00 signet-smoke python3[11893]: signetd-1  | [pool] cleanup_worker: STARTED
+2026-11-07T11:14:33+00:00 signet-smoke python3[11893]: signetd-1  | [pool] redial connected: wss://nos.lol
+2026-11-07T11:14:33+00:00 signet-smoke python3[11893]: signetd-1  | [pool] redial connected: wss://relay.nostr.band
+2026-11-07T11:14:34+00:00 signet-smoke python3[11893]: signetd-1  | ** Message: 11:14:34.159: [signetd] NIP-11: wss://nos.lol ? name="nos.lol" software=git+https://github.com/hoytech/strfry.git/1.1.3 NIPs=[1,2,4,9,11,28,40,45,70]
+2026-11-07T11:14:34+00:00 signet-smoke python3[11893]: signetd-1  | ** Message: 11:14:34.161: [signetd] NIP-11: wss://nos.lol max_message_length=131072
+2026-11-07T11:14:38+00:00 signet-smoke python3[11893]: signetd-1  | [RECONNECT] Connection lost to wss://relay.nostr.band, attempt 1, waiting 753ms
+2026-11-07T11:14:44+00:00 signet-smoke python3[11893]: signetd-1  | [RECONNECT] Connection lost to wss://relay.nostr.band, attempt 2, waiting 1738ms
+2026-11-07T11:14:51+00:00 signet-smoke python3[11893]: signetd-1  | [RECONNECT] Connection lost to wss://relay.nostr.band, attempt 3, waiting 4332ms
+2026-11-07T11:15:00+00:00 signet-smoke python3[11893]: signetd-1  | [RECONNECT] Connection lost to wss://relay.nostr.band, attempt 4, waiting 7207ms
+2026-11-07T11:15:13+00:00 signet-smoke python3[11893]: signetd-1  | [RECONNECT] Connection lost to wss://relay.nostr.band, attempt 5, waiting 17154ms
+2026-11-07T11:15:35+00:00 signet-smoke python3[11893]: signetd-1  | [RECONNECT] Connection lost to wss://relay.nostr.band, attempt 6, waiting 32153ms
+2026-11-07T11:16:12+00:00 signet-smoke python3[11893]: signetd-1  | [RECONNECT] Connection lost to wss://relay.nostr.band, attempt 7, waiting 77699ms
+2026-11-07T11:16:49+00:00 signet-smoke python3[11893]: signetd-1  | ** Message: 11:16:49.046: [signetd] NIP-11: wss://relay.nostr.band ? no information document available
+2026-11-07T11:16:49+00:00 signet-smoke python3[11893]: signetd-1  | [simplepool] subscribe fire failed on wss://relay.nostr.band (will retry on connect): subscription or connection is NULL
+2026-11-07T11:16:49+00:00 signet-smoke python3[11893]: signetd-1  | ** Message: 11:16:49.058: [signetd] subscribed to canonical management kinds on relay pool (p-tag=09298cf789c8e08369b0f50c6d2b7da511e0f798aff2f8963b0eb5491e1da48a)
+2026-11-07T11:16:49+00:00 signet-smoke python3[11893]: signetd-1  | ** Message: 11:16:49.059: [signetd] entering event-driven main loop
+2026-11-07T11:16:49+00:00 signet-smoke python3[11893]: signetd-1  | [simplepool] subscribe fire failed on wss://relay.nostr.band (will retry on connect): subscription or connection is NULL
+2026-11-07T11:16:49+00:00 signet-smoke python3[11893]: signetd-1  | [RELAY_POOL] Subscription 1 received 4 events before EOSE
+2026-11-07T11:16:49+00:00 signet-smoke python3[11893]: signetd-1  | [RELAY_POOL] Subscription 3 received 4 events before EOSE
+2026-11-07T11:16:54+00:00 signet-smoke python3[11893]: signetd-1  | ** Message: 11:16:54.085: [signetd] nip46-reply-ack relay=0 result=accept
+2026-11-07T11:16:56+00:00 signet-smoke python3[11893]: signetd-1  | ** Message: 11:16:56.145: [signetd] nip46-reply-ack relay=0 result=accept
+2026-11-07T11:17:17+00:00 signet-smoke python3[11893]: signetd-1  | ** Message: 11:17:17.102: [signetd] nip46-reply-ack relay=0 result=accept
+2026-11-07T11:17:30+00:00 signet-smoke python3[11893]: signetd-1  | [simplepool] (re)subscribed on wss://relay.nostr.band
+2026-11-07T11:17:35+00:00 signet-smoke python3[11893]: signetd-1  | [RECONNECT] Connection lost to wss://relay.nostr.band, attempt 8, waiting 145600ms
+
+===== operational-audit.jsonl =====
+{"ts":1794049553,"ts_us":79471,"type":"startup","type_id":1,"data":{"ts":1794049553,"component":"signetd","action":"startup","version":"0.8.0","config_path":"/etc/signet/signet.conf"}}
+{"ts":1794049744,"ts_us":184421,"type":"policy_decision","type_id":3,"data":{"client_pubkey":"23457e444ded9f3edf381b66f133a7d2e4fd131c27a64c40cde405e3a3ec64f6","identity":"smoke-agent","method":"connect","decision":"allow","reason":"policy.allow.match"}}
+{"ts":1794049744,"ts_us":187667,"type":"sign_request","type_id":5,"data":{"ts":1794049744,"component":"nip46","identity":"smoke-agent","client_pubkey":"23457e444ded9f3edf381b66f133a7d2e4fd131c27a64c40cde405e3a3ec64f6","outer_event_id":"0f4ad1355caf454c6f91a457da723a676f169b6d6db5d09f579f4445e42477a3","request_id":"d5a17c6a6903b26ad0b4addb8cba6204367f25a616bde8f38f513b538b5ca698","method":"connect","decision":"allow","reason_code":"policy.allow.match","status":"ok","code":"ok"}}
+{"ts":1794049746,"ts_us":512290,"type":"policy_decision","type_id":3,"data":{"client_pubkey":"23457e444ded9f3edf381b66f133a7d2e4fd131c27a64c40cde405e3a3ec64f6","identity":"smoke-agent","method":"nip44_encrypt","decision":"allow","reason":"policy.allow.match"}}
+{"ts":1794049746,"ts_us":522843,"type":"sign_request","type_id":5,"data":{"ts":1794049746,"component":"nip46","identity":"smoke-agent","client_pubkey":"23457e444ded9f3edf381b66f133a7d2e4fd131c27a64c40cde405e3a3ec64f6","outer_event_id":"0acc6a9ce72b55a429436e2c790cee599c4d2a22a0782956461c5e7dab3cad30","request_id":"38e0f28315c749237e8bff059082e72cbefd220ce164d1711b85fa8cd2958f64","method":"nip44_encrypt","decision":"allow","reason_code":"policy.allow.match","status":"ok","code":"ok"}}
+{"ts":1794049748,"ts_us":716845,"type":"policy_decision","type_id":3,"data":{"client_pubkey":"23457e444ded9f3edf381b66f133a7d2e4fd131c27a64c40cde405e3a3ec64f6","identity":"smoke-agent","method":"sign_event","event_kind":1,"decision":"allow","reason":"policy.allow.match"}}
+{"ts":1794049748,"ts_us":723936,"type":"sign_request","type_id":5,"data":{"ts":1794049748,"component":"nip46","identity":"smoke-agent","client_pubkey":"23457e444ded9f3edf381b66f133a7d2e4fd131c27a64c40cde405e3a3ec64f6","outer_event_id":"01a7924a25f67187f2efbacb104de97615471b726585cdf8a2282824bcfcbcb3","request_id":"bf832f04af8f70dbcf377c5138f558dad96a059d68fc47f3127a3306b0f3d6fd","method":"sign_event","event_kind":1,"decision":"allow","reason_code":"policy.allow.match","status":"ok","code":"ok"}}
+{"ts":1794049770,"ts_us":727724,"type":"policy_decision","type_id":3,"data":{"client_pubkey":"23457e444ded9f3edf381b66f133a7d2e4fd131c27a64c40cde405e3a3ec64f6","identity":"smoke-agent","method":"nip44_encrypt","decision":"allow","reason":"policy.allow.match"}}
+{"ts":1794049770,"ts_us":738972,"type":"sign_request","type_id":5,"data":{"ts":1794049770,"component":"nip46","identity":"smoke-agent","client_pubkey":"23457e444ded9f3edf381b66f133a7d2e4fd131c27a64c40cde405e3a3ec64f6","outer_event_id":"7c10621967ee85a01d2e2892e7cf8e73c7bb3d694f29fd2471f04cbbd9fc3990","request_id":"3cd90b46978d455a7f0be7b9d55324617e148b70a7581f2e25e0173b90c0c0ee","method":"nip44_encrypt","decision":"allow","reason_code":"policy.allow.match","status":"ok","code":"ok"}}
+{"ts":1794049773,"ts_us":7570,"type":"policy_decision","type_id":3,"data":{"client_pubkey":"23457e444ded9f3edf381b66f133a7d2e4fd131c27a64c40cde405e3a3ec64f6","identity":"smoke-agent","method":"sign_event","event_kind":1,"decision":"allow","reason":"policy.allow.match"}}
+{"ts":1794049773,"ts_us":15830,"type":"sign_request","type_id":5,"data":{"ts":1794049773,"component":"nip46","identity":"smoke-agent","client_pubkey":"23457e444ded9f3edf381b66f133a7d2e4fd131c27a64c40cde405e3a3ec64f6","outer_event_id":"e573338685d2a711f0c4455bd86dd8eec6b695ff841e3e5a2751fe28e951f5f6","request_id":"ea32ca3e2df46d28e8716cd9a94b0da0660490b27da2d7ff46c52ee818b3ba73","method":"sign_event","event_kind":1,"decision":"allow","reason_code":"policy.allow.match","status":"ok","code":"ok"}}
+{"ts":1794049776,"ts_us":111230,"type":"policy_decision","type_id":3,"data":{"client_pubkey":"23457e444ded9f3edf381b66f133a7d2e4fd131c27a64c40cde405e3a3ec64f6","identity":"smoke-agent","method":"nip44_encrypt","decision":"allow","reason":"policy.allow.match"}}
+{"ts":1794049776,"ts_us":115736,"type":"sign_request","type_id":5,"data":{"ts":1794049776,"component":"nip46","identity":"smoke-agent","client_pubkey":"23457e444ded9f3edf381b66f133a7d2e4fd131c27a64c40cde405e3a3ec64f6","outer_event_id":"ca0217e36032f7fc52f21cbb589f8645223f3dbebd02cc26e6f17b332856ef57","request_id":"abce58aaf35f125db6a73e5d2893a5a5a2c0e0e7efc514e7a5a6b665f53c7f08","method":"nip44_encrypt","decision":"allow","reason_code":"policy.allow.match","status":"ok","code":"ok"}}
+{"ts":1794049778,"ts_us":417221,"type":"policy_decision","type_id":3,"data":{"client_pubkey":"23457e444ded9f3edf381b66f133a7d2e4fd131c27a64c40cde405e3a3ec64f6","identity":"smoke-agent","method":"nip44_decrypt","decision":"deny","reason":"policy.deny.method"}}
+{"ts":1794049778,"ts_us":426262,"type":"sign_request","type_id":5,"data":{"ts":1794049778,"component":"nip46","identity":"smoke-agent","client_pubkey":"23457e444ded9f3edf381b66f133a7d2e4fd131c27a64c40cde405e3a3ec64f6","outer_event_id":"da14be46608a9222829d91ba87dee38edf547a18e547d2b8cac6e16c7734c0d8","request_id":"49407b56e3c83cf1370b94546e302a78338499e2d4d8346a6819ba0c1eb4bea9","method":"nip44_decrypt","decision":"deny","reason_code":"policy.deny.method","status":"error","code":"policy_denied"}}
+{"ts":1794049795,"ts_us":3566,"type":"shutdown","type_id":2,"data":{"ts":1794049795,"component":"signetd","action":"shutdown","version":"0.8.0","config_path":"/etc/signet/signet.conf"}}
+{"ts":1794050073,"ts_us":630997,"type":"startup","type_id":1,"data":{"ts":1794050073,"component":"signetd","action":"startup","version":"0.8.0","config_path":"/etc/signet/signet.conf"}}
+{"ts":1794050213,"ts_us":958821,"type":"policy_decision","type_id":3,"data":{"client_pubkey":"23457e444ded9f3edf381b66f133a7d2e4fd131c27a64c40cde405e3a3ec64f6","identity":"smoke-agent","method":"nip44_encrypt","decision":"allow","reason":"policy.allow.match"}}
+{"ts":1794050213,"ts_us":963213,"type":"sign_request","type_id":5,"data":{"ts":1794050213,"component":"nip46","identity":"smoke-agent","client_pubkey":"23457e444ded9f3edf381b66f133a7d2e4fd131c27a64c40cde405e3a3ec64f6","outer_event_id":"5db04695dd3ba8bc3d7a41448b5ed59ca2cdd0f1cd1e03873e19e0d0760dd619","request_id":"c75f5f832755b534ad3848a19546823564a77f160d4ccd41dc10c6f7ccdb95c5","method":"nip44_encrypt","decision":"allow","reason_code":"policy.allow.match","status":"ok","code":"ok"}}
+{"ts":1794050216,"ts_us":36789,"type":"policy_decision","type_id":3,"data":{"client_pubkey":"23457e444ded9f3edf381b66f133a7d2e4fd131c27a64c40cde405e3a3ec64f6","identity":"smoke-agent","method":"sign_event","event_kind":1,"decision":"allow","reason":"policy.allow.match"}}
+{"ts":1794050216,"ts_us":41360,"type":"sign_request","type_id":5,"data":{"ts":1794050216,"component":"nip46","identity":"smoke-agent","client_pubkey":"23457e444ded9f3edf381b66f133a7d2e4fd131c27a64c40cde405e3a3ec64f6","outer_event_id":"7643b83fee5564d02b393c6e07cbfa3356d59cebc4e1544bc412284a937f8a39","request_id":"99a458c40f191c98b2f671f38b5fdd68232d632a56bce22f8d19f5b7d436648c","method":"sign_event","event_kind":1,"decision":"allow","reason_code":"policy.allow.match","status":"ok","code":"ok"}}
+{"ts":1794050237,"ts_us":2599,"type":"sign_request","type_id":5,"data":{"ts":1794050237,"component":"nip46","identity":"default","client_pubkey":"23457e444ded9f3edf381b66f133a7d2e4fd131c27a64c40cde405e3a3ec64f6","outer_event_id":"ab0d4918759f587142014f321f1b94b64e3f8180de8086ccd46f93b107d09997","request_id":"02035447af9949ff9f64c7532cd8e976656fc3d88fb11650cb4b73bf05796171","method":"nip44_encrypt","decision":"deny","reason_code":"policy_engine_missing","status":"error","code":"not_connected"}}
+
+===== destruction.txt =====
+2026-11-07T11:17:55.535160+00:00 doctl compute droplet delete 616854303 --force exit=0
+2026-11-07T11:18:08.949623+00:00 doctl compute volume delete 9411d446-da9a-11f1-8944-c234aeb68f7e --force exit=0
+2026-11-07T11:18:09.329262+00:00 doctl compute firewall delete da9b13e0-5c85-4114-a36a-09289be0a444 --force exit=0
+2026-11-07T11:18:09.772986+00:00 doctl compute ssh-key delete 60691110 --force exit=0
+2026-11-07T11:18:10.126787+00:00 doctl compute tag delete signet-smoke --force exit=0
+2026-11-07T11:18:10.900191+00:00 doctl compute droplet list --output json | task-resource-filter []
+2026-11-07T11:18:11.593111+00:00 doctl compute volume list --output json | task-resource-filter [{"id": "9411d446-da9a-11f1-8944-c234aeb68f7e", "region": {"slug": "nyc3", "name": "New York 3", "sizes": ["s-1vcpu-512mb-10gb", "s-1vcpu-1gb", "s-1vcpu-1gb-amd", "s-1vcpu-1gb-intel", "s-1vcpu-1gb-35gb-intel", "s-1vcpu-2gb", "s-1vcpu-2gb-amd", "s-1vcpu-2gb-intel", "s-1vcpu-2gb-70gb-intel", "s-2vcpu-2gb", "s-2vcpu-2gb-amd", "s-2vcpu-2gb-intel", "s-2vcpu-2gb-90gb-intel", "s-2vcpu-4gb", "s-2vcpu-4gb-amd", "s-2vcpu-4gb-intel", "s-2vcpu-4gb-120gb-intel", "s-2vcpu-8gb-amd", "s-2vcpu-8gb-160gb-intel", "s-4vcpu-8gb", "s-4vcpu-8gb-amd", "s-4vcpu-8gb-intel", "s-4vcpu-8gb-240gb-intel", "s-4vcpu-16gb-amd", "s-4vcpu-16gb-320gb-intel", "s-8vcpu-16gb", "s-8vcpu-16gb-amd", "s-8vcpu-16gb-intel", "s-8vcpu-16gb-480gb-intel", "s-8vcpu-32gb-amd", "s-8vcpu-32gb-640gb-intel"], "features": ["backups", "ipv6", "metadata", "install_agent", "storage", "image_transfer"]}, "name": "signet-smoke-data", "size_gigabytes": 20, "description": "", "droplet_ids": [616854303], "created_at": "2026-11-07T11:01:26Z", "filesystem_type": "", "filesystem_label": "", "tags": []}]
+Traceback (most recent call last):
+  File "/tmp/signet-smoke-20261107.FgzrUa/destroy.py", line 20, in <module>
+    assert not found,kind+' resources remain'
+           ^^^^^^^^^
+AssertionError: volume resources remain
+
+===== destruction-verified.txt =====
+2026-11-07T11:18:48.177042+00:00 doctl compute droplet list --output json | task-resource-filter []
+2026-11-07T11:18:48.620611+00:00 doctl compute volume list --output json | task-resource-filter []
+2026-11-07T11:18:48.950757+00:00 doctl compute firewall list --output json | task-resource-filter []
+2026-11-07T11:18:49.299788+00:00 doctl compute ssh-key list --output json | task-resource-filter []
+2026-11-07T11:18:49.299864+00:00 ALL_TASK_CLOUD_RESOURCES_ABSENT
+
+===== audit1-unsupported-option.txt =====
+2026-11-07T11:08:27Z
+sqlcipher: Error: unknown option: -readonly
+Use -help for a list of options.
+
+===== direct-relay.txt =====
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+
+  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0
+  0     0    0     0    0     0      0      0 --:--:--  0:00:01 --:--:--     0
+  0     0    0     0    0     0      0      0 --:--:--  0:00:02 --:--:--     0
+  0     0    0     0    0     0      0      0 --:--:--  0:00:03 --:--:--     0
+  0     0    0     0    0     0      0      0 --:--:--  0:00:04 --:--:--     0
+  0     0    0     0    0     0      0      0 --:--:--  0:00:05 --:--:--     0
+  0     0    0     0    0     0      0      0 --:--:--  0:00:06 --:--:--     0
+  0     0    0     0    0     0      0      0 --:--:--  0:00:07 --:--:--     0
+  0     0    0     0    0     0      0      0 --:--:--  0:00:08 --:--:--     0
+curl: (28) Connection timed out after 8004 milliseconds
+
+===== tunnel-nos-test.txt =====
+HTTP/1.1 200 OK
+Server: nginx/1.24.0 (Ubuntu)
+Date: Sat, 07 Nov 2026 11:03:09 GMT
+Content-Type: text/html
+Content-Length: 6430
+Connection: keep-alive
+Access-Control-Allow-Origin: *
+
+
+===== tunnel-band-test.txt =====
+curl: (28) Connection timed out after 15001 milliseconds
+
+===== install-host.log (final 55 lines, install command exit 0) =====
+ 6a7123e61b56 Pull complete
+ 32c502018a16 Extracting [========>                                          ]  32.77kB/201.1kB
+ 32c502018a16 Extracting [==================================================>]  201.1kB/201.1kB
+ 32c502018a16 Pull complete
+ 5f80a3243824 Extracting [==================================================>]  2.466kB/2.466kB
+ 5f80a3243824 Extracting [==================================================>]  2.466kB/2.466kB
+ 5f80a3243824 Pull complete
+ 4f4fb700ef54 Extracting [==================================================>]      32B/32B
+ 4f4fb700ef54 Extracting [==================================================>]      32B/32B
+ 4f4fb700ef54 Pull complete
+ 97ac7d6bfaea Extracting [=========================>                         ]  32.77kB/65.16kB
+ 97ac7d6bfaea Extracting [==================================================>]  65.16kB/65.16kB
+ 97ac7d6bfaea Pull complete
+ 8ab208334fc6 Extracting [==================================================>]  4.547kB/4.547kB
+ 8ab208334fc6 Extracting [==================================================>]  4.547kB/4.547kB
+ 8ab208334fc6 Pull complete
+ 40422ff682d9 Extracting [==================================================>]  4.094kB/4.094kB
+ 40422ff682d9 Extracting [==================================================>]  4.094kB/4.094kB
+ 40422ff682d9 Pull complete
+ signetd Pulled
+2026-11-07T11:05:21Z
+{
+  "schema_version": 1,
+  "source_commit": "de2a408766773369407bbd5ef831ccc53f0f1727",
+  "component_version": "0.8.0",
+  "images": {
+    "default": "ghcr.io/chebizarro/nostrc-signet@sha256:6aff3456f7926cab6ab61d3335ba77ea06b549377da36bc74fb8a235295fe1ef",
+    "passkeys": "ghcr.io/chebizarro/nostrc-signet@sha256:d3896a746fafd3ad734139d2800e23803195e84c685da3df4a42a54e03527732",
+    "caddy": "caddy:2.10.2@sha256:c3d7ee5d2b11f9dc54f947f68a734c84e9c9666c92c88a7f30b9cba5da182adb"
+  },
+  "packages": {
+    "docker": "5:28.5.1-1~ubuntu.24.04~noble",
+    "compose": "2.40.3-1~ubuntu.24.04~noble",
+    "containerd": "1.7.28-1~ubuntu.24.04~noble"
+  },
+  "volume": {
+    "id": "9411d446-da9a-11f1-8944-c234aeb68f7e",
+    "filesystem_uuid": "c9a638bb-ab25-4872-b24d-641f9262b055",
+    "name": "signet-smoke-data"
+  },
+  "profiles": [],
+  "config": {
+    "revision": "nostrc-44q4r",
+    "sha256": "9cef80185bde92b36712d025da9200319ad72b1a8fbfc6def55382508478d230"
+  },
+  "public_identifiers": {
+    "bunker": "09298cf789c8e08369b0f50c6d2b7da511e0f798aff2f8963b0eb5491e1da48a",
+    "provisioners": [
+      "8468729aedfb515e6cdb9743a6e9abb8e013534494010907300450e466fbc856"
+    ]
+  },
+  "last_successful_backup": null,
+  "upgrade": null
+}
+["ghcr.io/chebizarro/nostrc-signet@sha256:6aff3456f7926cab6ab61d3335ba77ea06b549377da36bc74fb8a235295fe1ef"] {"org.opencontainers.image.created":"2026-11-07T10:30:11Z","org.opencontainers.image.licenses":"MIT","org.opencontainers.image.revision":"de2a408766773369407bbd5ef831ccc53f0f1727","org.opencontainers.image.source":"https://github.com/chebizarro/nostrc","org.opencontainers.image.version":"0.8.0-rc.1"}
+
+===== ephemeral audit query driver (key value never logged) =====
+import pathlib,subprocess
+key=pathlib.Path('/opt/signet/secrets/db.key').read_text().strip()
+assert len(key)==64 and all(c in '0123456789abcdef' for c in key)
+cid=subprocess.check_output(['docker','ps','-q','--filter','label=com.docker.compose.service=signetd'],text=True).strip()
+sql="PRAGMA key = '"+key+"';\nPRAGMA query_only=ON; PRAGMA query_only;\nSELECT id,ts,datetime(ts,'unixepoch'),operation,agent_id,detail FROM audit_log ORDER BY id;\nSELECT 'agent_count',count(*) FROM agents;\n"
+r=subprocess.run(['docker','exec','-i',cid,'sqlcipher','/data/signet.db'],input=sql,text=True,capture_output=True)
+print(r.stdout,end='');print(r.stderr,end='');raise SystemExit(r.returncode)
+
+===== ephemeral resource adapter =====
+#!/usr/bin/env python3
+import subprocess,sys,json,os,datetime,pathlib
+args=[{'signet':'signet-smoke','signet-fw':'signet-smoke-fw'}.get(x,x) for x in sys.argv[1:]]
+if args[:3]==['compute','volume','create'] and '--help' not in args: args += ['--tag','signet-smoke']
+r=subprocess.run(['/opt/homebrew/bin/doctl']+args,capture_output=True)
+sys.stdout.buffer.write(r.stdout); sys.stderr.buffer.write(r.stderr)
+if r.returncode==0 and len(args)>2 and args[2] in ('create','import') and '--help' not in args:
+ try:
+  data=json.loads(r.stdout); data=data if isinstance(data,list) else [data]
+  for item in data:
+   entry={'kind':args[1],'id':item.get('id'),'name':item.get('name'),'time':datetime.datetime.now(datetime.timezone.utc).isoformat()}
+   with open(os.environ['SMOKE_DIR']+'/resources.jsonl','a') as f:f.write(json.dumps(entry)+'\n')
+   subprocess.run(['bd','update','nostrc-44q4r','--append-notes','CREATED '+json.dumps(entry)],stdout=sys.stderr,check=True)
+ except (ValueError,TypeError): pass
+sys.exit(r.returncode)
+
+===== destruction driver (initial stale-volume assertion retained above) =====
+import pathlib,subprocess,json,datetime,time
+p=pathlib.Path(__file__).parent
+resources=[json.loads(x) for x in (p/'resources.jsonl').read_text().splitlines()]
+def now():return datetime.datetime.now(datetime.timezone.utc).isoformat()
+def run(args):
+ r=subprocess.run(['/opt/homebrew/bin/doctl']+args,capture_output=True,text=True)
+ print(now(),'doctl',' '.join(args),'exit='+str(r.returncode),r.stdout.strip(),r.stderr.strip(),flush=True)
+ if r.returncode:raise SystemExit(r.returncode)
+ return r
+for kind in ['droplet','volume','firewall','ssh-key']:
+ item=next(x for x in resources if x['kind']==kind)
+ run(['compute',kind,'delete',str(item['id']),'--force'])
+ if kind=='droplet':time.sleep(12)
+run(['compute','tag','delete','signet-smoke','--force'])
+for kind in ['droplet','volume','firewall','ssh-key']:
+ raw=subprocess.check_output(['/opt/homebrew/bin/doctl','compute',kind,'list','--output','json'],text=True)
+ ids={str(x['id']) for x in resources if x['kind']==kind}
+ found=[x for x in json.loads(raw) if str(x.get('id')) in ids or x.get('name','').startswith('signet-smoke') or 'signet-smoke' in x.get('tags',[])]
+ print(now(),'doctl compute '+kind+' list --output json | task-resource-filter',json.dumps(found),flush=True)
+ assert not found,kind+' resources remain'
+print(now(),'ALL_TASK_CLOUD_RESOURCES_ABSENT',flush=True)
+
+===== local cleanup =====
+Exit request sent.
+signet-smoke-client
+signet-smoke-ref
+signet-smoke
+Untagged: ghcr.io/chebizarro/nostrc-signet@sha256:6aff3456f7926cab6ab61d3335ba77ea06b549377da36bc74fb8a235295fe1ef
+Deleted: sha256:6aff3456f7926cab6ab61d3335ba77ea06b549377da36bc74fb8a235295fe1ef
+2026-11-07T11:21:21Z
+KNOWN_SECRET_SCAN_PASS before deletion
+2026-11-07T11:21:53.357051+00:00 LOCAL_PRIVATE_DIRECTORY_AND_POINTER_ABSENT; all throwaway keys/build inputs removed
