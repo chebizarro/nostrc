@@ -16,10 +16,14 @@ install=${CRAFT_PART_INSTALL:?run from snapcraft}
 # --no-deps: PyGObject comes from python3-gi (a pip build needs girepository).
 python3 -m pip install --break-system-packages -q --no-deps blueprint-compiler==0.22.2
 
-# Resolve imported libraries against the same prefix as GTK. The GNOME SDK's
-# GLib .pc files can name /usr, otherwise CMake mixes host GLib with SDK GTK.
-scripts/ci/configure-release.sh build \
-  -DCMAKE_PREFIX_PATH="$(pkg-config --variable=prefix gtk4)" \
+# The GNOME SDK's GLib .pc files name /usr. Re-root CMake's library search
+# into that SDK first, with host fallback for dependencies absent from it.
+gtk_prefix=$(pkg-config --variable=prefix gtk4)
+set -- "-DCMAKE_PREFIX_PATH=$gtk_prefix"
+if [ "$gtk_prefix" != /usr ]; then
+  set -- "$@" "-DCMAKE_FIND_ROOT_PATH=${gtk_prefix%/usr}" -DCMAKE_FIND_ROOT_PATH_MODE_PROGRAM=NEVER
+fi
+scripts/ci/configure-release.sh build "$@" \
   -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib -DNOSTR_USE_SYSTEM_NSYNC=OFF
 if [ "$mode" = daemon ]; then
   cmake --build build -j"$(nproc)" --target grotto-daemon

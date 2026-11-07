@@ -65,14 +65,9 @@ modules:
     buildsystem: simple
     build-commands:
       - scripts/ci/configure-release.sh build -DCMAKE_INSTALL_PREFIX=/app -DCMAKE_INSTALL_LIBDIR=lib
-      - cmake --build build --target grotto grotto-daemon -j
-      - cmake --install build/gnome/grotto-panels
-      - install -Dm755 build/apps/grotto/grotto /app/bin/grotto
-      - install -Dm755 build/apps/grotto/grotto-daemon /app/bin/grotto-daemon
-      - install -Dm644 apps/grotto/data/org.nostr.Grotto.desktop /app/share/applications/org.nostr.Grotto.desktop
-      - install -Dm644 apps/grotto/data/org.nostr.Grotto.metainfo.xml /app/share/metainfo/org.nostr.Grotto.metainfo.xml
-      - for sz in 16 24 32 48 64 128 256 512; do install -Dm644 apps/grotto/data/icons/hicolor/${sz}x${sz}/apps/org.nostr.Grotto.png /app/share/icons/hicolor/${sz}x${sz}/apps/org.nostr.Grotto.png; done
-      - install -Dm644 apps/grotto/data/org.nostr.Grotto.gschema.xml /app/share/glib-2.0/schemas/org.nostr.Grotto.gschema.xml
+      - cmake --build build --target apps/grotto/all -j
+      # Install the app subtree, including panels, private DSOs, locales and RPATHs.
+      - cmake --install build/apps/grotto
       - glib-compile-schemas /app/share/glib-2.0/schemas/
       # D-Bus service file (Flatpak-specific with /app/bin path)
       - install -Dm644 apps/grotto/flatpak/org.nostr.Signer.service /app/share/dbus-1/services/org.nostr.Signer.service
