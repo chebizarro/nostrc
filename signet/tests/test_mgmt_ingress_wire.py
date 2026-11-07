@@ -10,12 +10,34 @@ import tempfile
 from test_relay_pool_wire import Relay
 
 
+def record_req(subscriptions, sid):
+    # Reconnect can re-fire old REQs after the newly installed required REQ.
+    # Only a previously unseen ID advances the fixture's live destination.
+    if sid not in subscriptions:
+        subscriptions.append(sid)
+    return subscriptions[-1]
+
+
+def test_req_replay_order():
+    for replay in [('old-a', 'old-b', 'current'),
+                   ('current', 'old-a', 'old-b'),
+                   ('old-b', 'current', 'old-a')]:
+        subscriptions = []
+        assert record_req(subscriptions, 'old-a') == 'old-a'
+        assert record_req(subscriptions, 'old-b') == 'old-b'
+        for sid in replay:
+            current = record_req(subscriptions, sid)
+        assert current == 'current', (replay, subscriptions)
+        assert subscriptions == ['old-a', 'old-b', 'current']
+
+
 def run(binary, isolate, reconnect=False):
     with tempfile.TemporaryDirectory(prefix='signet-ingress-') as tmp:
         fixtures = Path(tmp) / 'history.json'
         state = {'requests': 0, 'sid': None, 'old_sid': None,
                  'live': 0, 'connections': 0, 'late_sent': False}
         current_socket = None
+        subscriptions = []
 
         def handle(relay, frame):
             nonlocal current_socket
@@ -29,7 +51,7 @@ def run(binary, isolate, reconnect=False):
                 # Startup and reconnect can re-fire existing REQs as well as
                 # install the pool's new required subscription. Each sees the
                 # same history for this connection, deduplicated by event id.
-                state['sid'] = frame[1]
+                state['sid'] = record_req(subscriptions, frame[1])
                 if state['old_sid'] is None:
                     state['old_sid'] = frame[1]
                 history = json.loads(fixtures.read_text())
@@ -79,6 +101,7 @@ def run(binary, isolate, reconnect=False):
 
 
 if __name__ == '__main__':
+    test_req_replay_order()
     run(sys.argv[1], isolate=True)
     run(sys.argv[1], isolate=False)
     run(sys.argv[1], isolate=True, reconnect=True)
