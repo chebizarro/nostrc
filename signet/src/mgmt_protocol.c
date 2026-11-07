@@ -1212,12 +1212,13 @@ static char *signet_mgmt_contextvm_error_json(int code, const char *message,
   return s;
 }
 
-int signet_mgmt_handler_handle_intent(SignetMgmtHandler *h,
+static int signet_mgmt_handle_intent(SignetMgmtHandler *h,
                                       const char *event_pubkey_hex,
                                       const char *content_json,
                                       const char *event_id_hex,
                                       int64_t event_created_at,
-                                      int64_t now) {
+                                      int64_t now,
+                                      bool direct) {
   if (!h) return -1;
 
   SignetMgmtOp op = SIGNET_MGMT_OP_UNKNOWN;
@@ -1277,6 +1278,24 @@ int signet_mgmt_handler_handle_intent(SignetMgmtHandler *h,
     goto out;
   }
 
+  /* Direct kind-25910 content is relay-readable. Default deny keeps new
+   * methods private too; delivery is excluded even though it is not a
+   * credential mutation. Never echo request params in the refusal. */
+  if (direct && op != SIGNET_MGMT_OP_GET_STATUS &&
+      op != SIGNET_MGMT_OP_LIST_AGENTS && op != SIGNET_MGMT_OP_LIST_CLIENTS &&
+      op != SIGNET_MGMT_OP_LIST_CREDENTIALS &&
+      op != SIGNET_MGMT_OP_INSPECT_CREDENTIAL) {
+    signet_mgmt_refusal_audit(h, "mgmt_direct_refused", event_pubkey_hex,
+                              NULL, "gift_wrap_required", NULL, NULL, now);
+    char *err = signet_mgmt_contextvm_error_json(
+        -32003, "this method requires encrypted gift-wrap transport",
+        "gift_wrap_required", rpc_id);
+    signet_mgmt_publish_ack(h, event_pubkey_hex, err, event_id_hex, now,
+                            SIGNET_MGMT_REPLY_CONTEXTVM, rpc_id);
+    g_free(err);
+    goto out;
+  }
+
   {
     char *encrypted = NULL;
     uint8_t sk[32], pk[32];
@@ -1302,6 +1321,23 @@ out:
   }
   if (rpc_id) json_node_unref(rpc_id);
   return rc;
+}
+
+int signet_mgmt_handler_handle_intent(SignetMgmtHandler *h,
+                                      const char *sender, const char *content,
+                                      const char *event_id, int64_t created_at,
+                                      int64_t now) {
+  return signet_mgmt_handle_intent(h, sender, content, event_id, created_at,
+                                  now, false);
+}
+
+int signet_mgmt_handler_handle_direct_intent(SignetMgmtHandler *h,
+                                             const char *sender,
+                                             const char *content,
+                                             const char *event_id,
+                                             int64_t created_at, int64_t now) {
+  return signet_mgmt_handle_intent(h, sender, content, event_id, created_at,
+                                  now, true);
 }
 
 int signet_mgmt_handler_handle_gift_wrap(SignetMgmtHandler *h,

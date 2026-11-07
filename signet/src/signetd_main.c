@@ -562,7 +562,7 @@ static void signet_on_relay_event(const SignetRelayEventView *ev, void *user_dat
   if (ev->kind == CAS_INTENT && ctx->mgmt) {
     if (signet_now_unix() < ctx->mgmt_accept_after) return;
     if (!signet_relay_pool_is_subscribed(ctx->relays)) return;
-    (void)signet_mgmt_handler_handle_intent(ctx->mgmt,
+    (void)signet_mgmt_handler_handle_direct_intent(ctx->mgmt,
                                             ev->pubkey_hex ? ev->pubkey_hex : "",
                                             ev->content ? ev->content : "",
                                             ev->event_id_hex ? ev->event_id_hex : "",

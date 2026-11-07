@@ -16,6 +16,11 @@
 #include "signet/mgmt_protocol.h"
 #include "signet/replay_cache.h"
 #include "signet/store.h"
+#include "signet/store_audit.h"
+#include <nostr-event.h>
+#include <nostr/nip17/nip17.h>
+#include <sqlite3.h>
+#include <time.h>
 #include "signet/audit_logger.h"
 
 #include <nostr-keys.h>
@@ -324,6 +329,78 @@ static void test_writer_management_requires_provisioner(void) {
   printf("test_writer_management_requires_provisioner: PASS\n");
 }
 
+static void test_direct_ingress_requires_gift_wrap(void) {
+  Fixture f;
+  fixture_setup(&f, true);
+  int64_t now = time(NULL);
+  char agent_sk[65], agent_pk[65];
+  gen_keypair_hex(agent_sk, agent_pk);
+  char *rpc = g_strdup_printf(
+      "{\"jsonrpc\":\"2.0\",\"id\":\"adopt\","
+      "\"method\":\"agent/adopt-existing\",\"params\":{"
+      "\"agent_id\":\"private-agent\",\"agent_nsec\":\"%s\"}}", agent_sk);
+  SignetStore *store = signet_key_store_get_store(f.ks);
+  CHECK(signet_mgmt_handler_handle_direct_intent(f.mgmt, f.prov_pk_hex,
+      rpc, "direct-adopt", now, now) == -1);
+  SignetAgentRecord rec = {0};
+  CHECK(signet_store_get_agent(store, "private-agent", &rec) != 0);
+  signet_agent_record_clear(&rec);
+
+  const char *methods[] = {"agent/restore-existing", "credential/create",
+      "credential/import", "credential/rotate", "agent/revoke",
+      "credential/deliver"};
+  for (size_t i = 0; i < G_N_ELEMENTS(methods); i++) {
+    char *direct = g_strdup_printf(
+        "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"%s\","
+        "\"params\":{\"agent_nsec\":\"%s\",\"payload_b64\":\"PRIVATE-PAYLOAD\"}}",
+        methods[i], agent_sk);
+    CHECK(signet_mgmt_handler_handle_direct_intent(f.mgmt, f.prov_pk_hex,
+        direct, "direct-other", now, now) == -1);
+    sodium_memzero(direct, strlen(direct));
+    g_free(direct);
+  }
+  sqlite3_stmt *stmt = NULL;
+  CHECK(sqlite3_prepare_v2(signet_store_get_db(store),
+      "SELECT detail FROM audit_log WHERE operation='mgmt_direct_refused'",
+      -1, &stmt, NULL) == SQLITE_OK);
+  int rows = 0;
+  while (sqlite3_step(stmt) == SQLITE_ROW) {
+    const char *detail = (const char *)sqlite3_column_text(stmt, 0);
+    CHECK(detail && strstr(detail, "gift_wrap_required"));
+    CHECK(!strstr(detail, agent_sk) && !strstr(detail, "PRIVATE-PAYLOAD"));
+    rows++;
+  }
+  sqlite3_finalize(stmt);
+  CHECK(rows == 7);
+  CHECK(signet_audit_verify_chain(store, 0, 0, NULL) == 0);
+
+  /* Exercise the real authenticated unwrap, not just the inner dispatcher. */
+  NostrEvent *gift = nostr_nip17_wrap_dm(f.prov_sk_hex, f.bunker_pk_hex, rpc);
+  CHECK(gift);
+  char *json = nostr_event_serialize_compact(gift);
+  CHECK(json);
+  CHECK(signet_mgmt_handler_handle_gift_wrap(f.mgmt, json, "wrapped-adopt",
+      time(NULL)) == 0);
+  CHECK(signet_store_get_agent(store, "private-agent", &rec) == 0);
+  uint8_t expected_sk[32];
+  CHECK(hex_to_bytes(agent_sk, expected_sk, sizeof(expected_sk)) == 0);
+  CHECK(rec.secret_key_len == sizeof(expected_sk));
+  CHECK(sodium_memcmp(rec.secret_key, expected_sk, sizeof(expected_sk)) == 0);
+  sodium_memzero(expected_sk, sizeof(expected_sk));
+  signet_agent_record_clear(&rec);
+  free(json);
+  nostr_event_free(gift);
+  sodium_memzero(rpc, strlen(rpc));
+  g_free(rpc);
+  sodium_memzero(agent_sk, sizeof(agent_sk));
+
+  CHECK(signet_mgmt_handler_handle_direct_intent(f.mgmt, f.prov_pk_hex,
+      "{\"jsonrpc\":\"2.0\",\"id\":\"list\",\"method\":\"agent/list\",\"params\":{}}",
+      "direct-list", now, now) == 0);
+  fixture_teardown(&f);
+  printf("test_direct_ingress_requires_gift_wrap: PASS\n");
+}
+
 int main(void) {
   if (sodium_init() < 0) {
     fprintf(stderr, "sodium_init failed\n");
@@ -335,6 +412,7 @@ int main(void) {
   test_replayed_reissue_mints_once();
   test_missing_event_id_fails_closed();
   test_writer_management_requires_provisioner();
+  test_direct_ingress_requires_gift_wrap();
 
   printf("All management replay tests passed.\n");
   return 0;

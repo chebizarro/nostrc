@@ -402,7 +402,7 @@ int signet_mgmt_handler_set_relay_urls(SignetMgmtHandler *h,
 
 /* Execute an already-normalized ContextVM request. This lower-level entry
  * point exists for transport-independent tests; relay callers use
- * signet_mgmt_handler_handle_intent(). The request is treated as created at
+ * the direct-intent or gift-wrap entrypoint below. The request is treated as created at
  * @now for the replay window. */
 int signet_mgmt_handler_handle_request(SignetMgmtHandler *h,
                                        const char *event_pubkey_hex,
@@ -411,9 +411,10 @@ int signet_mgmt_handler_handle_request(SignetMgmtHandler *h,
                                        const char *event_id_hex,
                                        int64_t now);
 
-/* Handle a Cascadia ContextVM kind-25910 JSON-RPC management intent.
- * Plain kind-25910 events are accepted for test/local compatibility; kind-1059
- * gift-wrap callers should pass the unwrapped 25910 JSON as content_json, the
+/* Handle an authenticated, confidential ContextVM JSON-RPC intent (or a
+ * transport-independent test). NOT for relay-readable kind-25910 events;
+ * those must use handle_direct_intent(). Gift-wrap callers pass the
+ * unwrapped 25910 JSON as content_json, the
  * inner sender pubkey as event_pubkey_hex, and the rumor's created_at (which,
  * unlike the gift wrap's, is the sender's real, seal-authenticated time) as
  * event_created_at. With a replay cache attached, a request whose
@@ -425,6 +426,16 @@ int signet_mgmt_handler_handle_intent(SignetMgmtHandler *h,
                                       const char *event_id_hex,
                                       int64_t event_created_at,
                                       int64_t now);
+
+/* Relay-readable kind-25910 ingress. Only agent/get-status, agent/list,
+ * agent/list-clients, credential/list and credential/inspect are allowed.
+ * Other known methods are refused and audited with gift_wrap_required. */
+int signet_mgmt_handler_handle_direct_intent(SignetMgmtHandler *h,
+                                             const char *event_pubkey_hex,
+                                             const char *content_json,
+                                             const char *event_id_hex,
+                                             int64_t event_created_at,
+                                             int64_t now);
 
 /* Handle a kind-1059 gift-wrapped management intent addressed to the bunker:
  * unwrap it with the bunker key, authenticate the seal author as the

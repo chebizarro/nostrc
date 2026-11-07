@@ -1521,6 +1521,20 @@ static void test_contextvm_reply_shapes(void) {
   setup(&f);
   ReplyCapture cap = {0};
   signet_mgmt_handler_set_reply_hook(f.mgmt, capture_reply, &cap);
+  CHECK(signet_mgmt_handler_handle_direct_intent(f.mgmt, f.provisioner_pk,
+      "{\"jsonrpc\":\"2.0\",\"id\":\"direct-secret\",\"method\":\"credential/create\","
+      "\"params\":{\"payload_b64\":\"PRIVATE-PAYLOAD\",\"label\":\"PRIVATE-LABEL\"}}",
+      "direct-secret", 2000000000, 2000000000) == -1);
+  CHECK(cap.count == 1 && g_strcmp0(cap.recipient, f.provisioner_pk) == 0);
+  CHECK(!strstr(cap.reply, "PRIVATE-PAYLOAD") && !strstr(cap.reply, "PRIVATE-LABEL"));
+  JsonNode *direct = json_from_string(cap.reply, NULL);
+  CHECK(direct && JSON_NODE_HOLDS_OBJECT(direct));
+  CHECK(g_strcmp0(error_data(direct), "gift_wrap_required") == 0);
+  CHECK(g_strcmp0(json_object_get_string_member(json_node_get_object(direct), "id"),
+                  "direct-secret") == 0);
+  CHECK(json_object_get_int_member(json_object_get_object_member(
+      json_node_get_object(direct), "error"), "code") == -32003);
+  json_node_unref(direct);
   char requester_sk[65], requester_pk[65];
   keypair(requester_sk, requester_pk);
   sodium_memzero(requester_sk, sizeof(requester_sk));
