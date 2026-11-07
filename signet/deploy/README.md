@@ -83,6 +83,9 @@ Only after the mount succeeds are `state` and `backups` created. This deliberate
 avoids a second `fs_setup` that might destroy an existing recovery volume.
 Inspect `cloud-init status --long`, `/etc/signet-volume-{id,uuid}`, `findmnt`,
 `docker version`, `docker compose version`, and `dpkg-query -W do-agent` over SSH.
+Ubuntu 24.04 has no `awscli` apt candidate. Cloud-init installs the pinned
+`AWSCLI_VERSION` into `/opt/signet-tools/awscli` using `python3-venv` and exposes
+its root-owned launcher at `/usr/local/bin/aws`; verify `aws --version` too.
 `--enable-monitoring` installs the DO agent; its absence requires owner repair.
 The Signet unit and backup timer remain disabled until custody is ready.
 

@@ -27,6 +27,13 @@ for unit in (here.parent / 'systemd').iterdir():
 files.append({'path': '/etc/signet-volume-id', 'owner': 'root:root', 'permissions': '0600', 'content': volume_id + '\n'})
 script = '''#!/bin/bash
 set -euo pipefail
+# Ubuntu 24.04 does not ship an awscli apt candidate. Isolate the pinned CLI
+# from system Python; ops.py finds this root-owned launcher via /usr/local/bin.
+install -d -m 0755 /opt/signet-tools
+python3 -m venv /opt/signet-tools/awscli
+/opt/signet-tools/awscli/bin/pip install --disable-pip-version-check awscli==AWSCLI_PIN
+ln -sfn /opt/signet-tools/awscli/bin/aws /usr/local/bin/aws
+aws --version
 install -d -m 0755 /etc/apt/keyrings
 curl --fail --silent --show-error https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
 test "$(gpg --show-keys --with-colons /etc/apt/keyrings/docker.asc | awk -F: '$1=="fpr" {print $10; exit}')" = 9DC858229FC7DD38854AE2D88D81803C0EBFCD88
@@ -59,7 +66,7 @@ systemctl daemon-reload
 # Deliberately disabled until keys, manifest and pinned images are installed.
 systemctl disable signet-compose.service signet-backup.timer
 '''
-for token, value in [('DOCKER_PIN', pins['DOCKER_VERSION']), ('COMPOSE_PIN', pins['COMPOSE_VERSION']),
+for token, value in [('AWSCLI_PIN', pins['AWSCLI_VERSION']), ('DOCKER_PIN', pins['DOCKER_VERSION']), ('COMPOSE_PIN', pins['COMPOSE_VERSION']),
                      ('CONTAINERD_PIN', pins['CONTAINERD_VERSION']), ('VOLUME_NAME', volume)]:
     script = script.replace(token, shlex.quote(value))
 files.append({'path': '/root/signet-host-init.sh', 'owner': 'root:root', 'permissions': '0700', 'content': script})
