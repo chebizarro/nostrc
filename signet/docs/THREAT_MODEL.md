@@ -11,7 +11,10 @@ bootstrap ships packaged but disabled; MCP is a stub, not shipped or in this
 release's audit surface. See the [deployment plan](../../docs/plans/signet-production-deployment-2026-11-06.md#8-w2--relay-correctness-and-security-audit)
 and [runbook](../deploy/README.md). W1/W2 corrections specified there require
 entrypoint and deployed-image verification; references to their 0.8.0 contract
-below are not evidence that those checks ran.
+below are not evidence that those checks ran. The merged-code security review
+([2026-11-06](../../docs/reviews/signet-production-security-review-2026-11-06.md))
+found no critical/high issue; its accepted residuals are stated below by
+finding id (SR-nn).
 
 ## 1. Assets
 
@@ -53,7 +56,11 @@ In scope:
   custody must all hold. A policy-authorized operation is not human approval.
 - **A9 — Unauthorized network sender**: probes management and floods refusals;
   authentication/authorization, bounded replay caches and refusal budgets limit
-  access, not all relay/network denial of service.
+  access, not all relay/network denial of service. NIP-46 replay ids are
+  marked before decryption/binding in a cache that evicts its oldest id when
+  full, so a flood of validly signed events can re-admit a redelivered request
+  inside the skew window; the reply stays encrypted to the original client
+  (SR-07).
 - **A10 — Compromised delivery-grant requester**: can obtain the granting
   owner's credentials and scoped metadata, not general provisioner/signing
   authority. Owner/requester deny entries override the grant.
@@ -62,7 +69,10 @@ In scope:
   contract binds numeric loopback addresses and trusts one `https` header only
   from a configured trusted peer. Under host networking, loopback trust
   separates **on-box from off-box only**: any local process can forge that
-  header. This limitation is accepted; HTTP stays disabled at launch.
+  header. This limitation is accepted; HTTP stays disabled at launch. The
+  bootstrap challenge store is unbounded (SR-04) and `/bootstrap` releases the
+  agent's connect secret on a bearer token plus pubkey *equality*, not proof of
+  possession (SR-05); both must be fixed before the profile is enabled.
 - **A12 — Image/config downgrade and operator secret mistakes**: wrong image,
   plaintext build, stale policy/config, argv/env leakage or writable authority
   misconfiguration. Digest pinning, provenance, encrypted-mode refusal,
@@ -75,7 +85,9 @@ In scope:
   compromises those credentials. Headless UP is asserted after policy, not a
   physical touch; UV-required requests default-deny unless explicitly opted in.
   Launch uses one instance/PSK, no cross-instance sync. UHID is experimental,
-  local Linux-host functionality, not a remote browser authenticator.
+  local Linux-host functionality, not a remote browser authenticator. The
+  virtual device has no per-caller authorization: any local process able to
+  open its hidraw node acts as the configured identity (SR-06).
 
 Out of scope (accepted):
 
@@ -189,7 +201,9 @@ Mutations reach the store only through the ContextVM management handler:
 - **Confidentiality is transport-dependent**: the supported gift-wrapped
   kind-1059 route encrypts content and authenticates the seal author. Direct
   kind-25910 ingress can parse readable JSON-RPC content; authorization does
-  not make that content confidential. Do not send secrets over direct ingress.
+  not make that content confidential. Do not send secrets over direct ingress:
+  the handler currently still executes secret-bearing methods (adopt/restore,
+  credential create/import/rotate) received that way (SR-01).
   `test_plaintext_mutation_rejected` covers a particular rejected input path,
   not universal rejection of plaintext management mutations. Reply encryption
   failures must not fall back to plaintext.
@@ -207,14 +221,19 @@ Mutations reach the store only through the ContextVM management handler:
   can fill that class's cache and have its requests refused until their ids
   expire (2 * skew); they cannot evict another class's cached ids. Caches are
   RAM-only and keyed by delivered event id, not durable logical-operation id.
-  Rewrapping or re-signing can repeat a logical mutation; JSON-RPC ids only
-  correlate replies. On restart the daemon resubscribes up to 49 hours back.
-  A request processed shortly before stopping can execute again after a short
-  restart while its authenticated timestamp still passes the 120-second skew.
-  **Any deliberate stop must keep the daemon down ≥150 seconds before restart**
-  (default skew + margin); online daily backup avoids a daily restart. Abrupt
-  restart/crash remains a replay risk, and changing skew requires reassessing
-  this rule. It is not durable exactly-once protection.
+  Rewrapping (by the original sender, SR-03) or re-signing can repeat a
+  logical mutation; JSON-RPC ids only correlate replies. On restart the daemon
+  resubscribes up to 49 hours back. A request processed shortly before
+  stopping can execute again after a short restart while its authenticated
+  timestamp still passes the 120-second skew. **Every start must follow at
+  least 270 seconds of downtime** (2 × 120 s skew + margin, so future-dated
+  requests inside the skew are covered). The deployment enforces this on every
+  supported start path — systemd start/`Restart=on-failure` (`RestartSec=275s`),
+  `release.sh`/restore, and unclean reboot (uptime ≥ 270 s) — and preflight
+  bounds `[replay] skew_seconds` to ≤ 120. A manual `docker compose up` or
+  `docker start` bypasses it, and across a clean reboot only wall time is
+  compared (SR-02). Online daily backup avoids a daily restart. Changing skew
+  requires reassessing this rule. It is not durable exactly-once protection.
 - **Lost replies**: enqueue success, relay ACK and recipient receipt differ.
   Rejection/no ACK may republish an already-signed reply to another relay, not
   re-sign or re-execute the request (the W2 contract). A client timeout does not
@@ -296,7 +315,7 @@ Known residual gaps (accepted, documented):
   The database roundtrip test is not a fresh-host recovery drill.
 - Launch daily backup is online through the isolated ops service, contingent
   on the concurrent-writer consistency test. If that gate fails, adopt offline
-  backup with the ≥150-second stop rule. Restore is always offline; targets
+  backup with the ≥270-second stop rule. Restore is always offline; targets
   RPO 24 h / RTO 60 min require an actual restore drill, not source inspection.
 - It is keyed by an **independent** `SIGNET_BACKUP_KEY` (≥ 32 bytes of key
   material enforced; weak keys refused). The master key never leaves the host
