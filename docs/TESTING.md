@@ -340,6 +340,81 @@ This prevents flaky failures in CI sanitizer jobs where execution is 5-10× slow
 
 ---
 
+## Signet packaging and live acceptance
+
+Use [Signet's runbook](../signet/deploy/README.md) and
+[deployment plan §13/§14](plans/signet-production-deployment-2026-11-06.md#14-verification-planned-not-executed)
+for the release scope. The following are explicit entry points, not a claim
+that packaging, live enrollment or Droplet acceptance has passed.
+
+```bash
+cmake -S . -B build-signet-prod -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DSIGNET_ENABLE=ON -DBUILD_TESTING=ON -DSIGNET_USE_SQLCIPHER=ON \
+  -DSIGNET_ENABLE_PASSKEYS=ON -DSIGNET_ENABLE_TEST_HOOKS=OFF
+cmake --build build-signet-prod --target signetd signetctl
+# Build the registered test targets before executing the suite:
+cmake --build build-signet-prod
+ctest --test-dir build-signet-prod/signet/tests --output-on-failure
+
+meson setup build-signet-meson-sqlite signet \
+  -Dnostrc_build_dir=../build-signet-prod -Dsignet_enable_tests=true
+meson test -C build-signet-meson-sqlite --print-errorlogs
+meson setup build-signet-meson-sqlcipher signet \
+  -Dnostrc_build_dir=../build-signet-prod -Dsignet_use_sqlcipher=true \
+  -Dsignet_enable_passkeys=true -Dsignet_enable_tests=true
+meson test -C build-signet-meson-sqlcipher --print-errorlogs
+bash signet/tests/check_test_parity.sh
+
+# Explicit image checks, not pre-push hook work:
+docker build --target test --build-arg SIGNET_PASSKEYS=OFF -f signet/Dockerfile .
+docker build --target test --build-arg SIGNET_PASSKEYS=ON -f signet/Dockerfile .
+docker build --build-arg SIGNET_PASSKEYS=OFF -t signet:test -f signet/Dockerfile .
+docker build --build-arg SIGNET_PASSKEYS=ON -t signet:test-passkeys -f signet/Dockerfile .
+```
+
+Retain passkeys-OFF and plain-SQLite compatibility configurations too; skips on
+plain SQLite are not SQLCipher custody evidence. Missing required capabilities
+must fail visibly. Candidate W1/W2 entry points include `test_http_listen.c`,
+`test_http_routes.c`, `test_secret_input.c`, `test_daemon_startup.sh`,
+`test_signetctl_credentials.sh`, `test_config_reload.c`, `test_key_store.c`,
+`test_backup_restore.c`, `test_relay_pool_protocol.c` and
+`test_relay_pool_ok_lifetime.c`. Registration/availability must be checked in the
+candidate tree; names in a plan are not passing tests.
+
+Packaging/live entry points added by the release work are
+`signet/tests/test_deployment_smoke.sh` and
+`signet/tests/integration/test_production_roundtrip.sh`, with the reference
+client under `signet/tests/integration/`. Follow each script's actual help and
+required inputs from the selected release; do not infer that a missing script
+or skipped prerequisite passed. Exercise the candidate image and launch relays:
+pair, policy-permitted sign, denied operation, daemon/client restart reconnect,
+client revocation and writer owner/non-owner behavior. A local helper test is
+not this end-to-end evidence.
+
+The existing nostr-homed live test is CTest `homed_broker_login_nip46_live`
+(label `live;manual`). From a build configured with nostr-homed and its tests:
+
+```bash
+NH_NIP46_LIVE=1 NH_NIP46_LIVE_CONFIG=/secure/login-bundle.conf \
+  ctest --test-dir build/gnome/nostr-homed \
+  -R '^homed_broker_login_nip46_live$' --output-on-failure
+```
+
+The protected bundle contains the bunker URI and fresh client key; see
+[login-kind grant and historical 2026-09-21 proof](../signet/docs/GRANT_LOGIN_KIND.md#historical-live-proof-2026-09-21).
+No `/auth` session is part of this launch path. The old proof is not a rerun.
+For programmatic passkeys, use `fido_interop_external` and
+[the external verifier](../signet/tests/phase0/README.md). Linux UHID and
+`live_dbus_interop_manual` are separate opt-in host checks, not baseline proof.
+
+On the disposable Droplet, additionally verify actual loopback binds and
+off-host IPv4 refusal, limits/capabilities, volume-identity refusal, online
+concurrent-writer backup consistency, fresh-host restore and schema-aware
+rollback. Any deliberate stop waits ≥150 seconds before restart. IPv6 stays
+disabled at launch; `[::1]` parser/bind tests do not prove off-host v6 isolation.
+Report commands and observed outcomes; neither plan-only selection nor local
+container evidence establishes hosted/release acceptance.
+
 ## Build & Run
 
 These are explicit component/manual build examples, not the default pre-push

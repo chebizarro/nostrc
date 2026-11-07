@@ -115,6 +115,13 @@ static SignetCacheEntry *signet_cache_entry_new(const uint8_t *sk, int64_t loade
   return e;
 }
 
+static char *signet_cache_id_new(const char *agent_id) {
+  size_t len = strlen(agent_id) + 1;
+  char *id = g_try_malloc(len);
+  if (id) memcpy(id, agent_id, len);
+  return id;
+}
+
 static void signet_cache_entry_free(gpointer p) {
   if (!p) return;
   SignetCacheEntry *e = (SignetCacheEntry *)p;
@@ -263,20 +270,35 @@ SignetKeyStore *signet_key_store_new(SignetAuditLogger *audit,
     if (ks->store) {
       char **ids = NULL;
       size_t count = 0;
-      if (signet_store_list_agents(ks->store, &ids, &count) == 0) {
-        int64_t now = (int64_t)time(NULL);
-        for (size_t i = 0; i < count; i++) {
-          SignetAgentRecord rec;
-          memset(&rec, 0, sizeof(rec));
-          if (signet_store_get_agent(ks->store, ids[i], &rec) == 0) {
-            SignetCacheEntry *entry = signet_cache_entry_new(rec.secret_key, now);
-            if (entry) {
-              g_hash_table_replace(ks->cache, g_strdup(ids[i]), entry);
-            }
-            signet_agent_record_clear(&rec);
-          }
+      bool loaded = signet_store_list_agents(ks->store, &ids, &count) == 0;
+      int64_t now = (int64_t)time(NULL);
+      for (size_t i = 0; loaded && i < count; i++) {
+        SignetAgentRecord rec = {0};
+        SignetAgentMeta meta = {0};
+        SignetCacheEntry *entry = NULL;
+        char *id = NULL;
+        loaded = signet_store_get_agent(ks->store, ids[i], &rec) == 0 &&
+                 rec.secret_key && rec.secret_key_len == 32;
+        if (loaded) {
+          entry = signet_cache_entry_new(rec.secret_key, now);
+          id = signet_cache_id_new(ids[i]);
+          loaded = entry && id && signet_store_get_agent_meta(ks->store, ids[i], &meta) == 0 &&
+                   (!meta.pubkey || !meta.pubkey[0] ||
+                    g_ascii_strcasecmp(entry->pubkey_hex, meta.pubkey) == 0);
         }
-        signet_store_free_agent_ids(ids, count);
+        signet_agent_record_clear(&rec);
+        signet_agent_meta_clear(&meta);
+        if (loaded) g_hash_table_replace(ks->cache, id, entry);
+        else {
+          signet_cache_entry_free(entry);
+          g_free(id);
+        }
+      }
+      signet_store_free_agent_ids(ids, count);
+      if (!loaded) {
+        g_warning("[signet] cannot load complete persistent key store");
+        signet_key_store_free(ks);
+        return NULL;
       }
     }
   }
@@ -587,7 +609,12 @@ int signet_key_store_provision_agent(SignetKeyStore *ks,
   int rc = -1;
   int64_t now = (int64_t)time(NULL);
 
-  /* Store in SQLCipher (with connect_secret + pubkey + provenance). */
+  SignetCacheEntry *entry = signet_cache_entry_new(sk_raw, now);
+  char *cache_id = signet_cache_id_new(agent_id);
+  if (!entry || !cache_id || (!ks->store &&
+      !signet_cache_set_pending_secret(ks, entry, connect_secret))) goto provision_done;
+
+  /* Prepare before durable mutation; lock order is key store -> SQLite. */
   if (ks->store) {
     rc = signet_store_put_agent_ex(ks->store, agent_id, sk_raw, 32, connect_secret,
                                    pk_hex, "provisioned", now);
@@ -597,24 +624,16 @@ int signet_key_store_provision_agent(SignetKeyStore *ks,
   }
 
   if (rc == 0 || !ks->store) {
-    /* Add to hot cache. */
-    SignetCacheEntry *entry = signet_cache_entry_new(sk_raw, now);
-    /* Cache-only: the hot cache is the only place the pending pairing
-     * secret can live; keep its digest so the bunker URI handed out below
-     * can actually pair. */
-    if (entry && !ks->store && !signet_cache_set_pending_secret(ks, entry, connect_secret)) {
-      signet_cache_entry_free(entry);
-      entry = NULL;
-    }
-    if (entry) {
-      signet_ephemeral_bindings_drop_agent(ks, agent_id);
-      g_hash_table_replace(ks->cache, g_strdup(agent_id), entry);
-      rc = 0;
-    } else {
-      rc = -1;
-    }
+    signet_ephemeral_bindings_drop_agent(ks, agent_id);
+    g_hash_table_replace(ks->cache, cache_id, entry);
+    entry = NULL;
+    cache_id = NULL;
+    rc = 0;
   }
 
+provision_done:
+  signet_cache_entry_free(entry);
+  g_free(cache_id);
   g_mutex_unlock(&ks->mu);
 
   if (rc == 0) {
@@ -707,6 +726,8 @@ SignetAdoptResult signet_key_store_adopt_agent(SignetKeyStore *ks,
   int64_t now = (int64_t)time(NULL);
   int rc = -1;
   bool exists = false;
+  SignetCacheEntry *entry = NULL;
+  char *cache_id = NULL;
 
   g_mutex_lock(&ks->mu);
 
@@ -738,6 +759,11 @@ SignetAdoptResult signet_key_store_adopt_agent(SignetKeyStore *ks,
     if (in_use) { result = SIGNET_ADOPT_ERR_PUBKEY_EXISTS; goto done; }
   }
 
+  entry = signet_cache_entry_new(secret_key, now);
+  cache_id = signet_cache_id_new(agent_id);
+  if (!entry || !cache_id || (!ks->store &&
+      !signet_cache_set_pending_secret(ks, entry, connect_secret))) goto done;
+
   /* Store the externally supplied key in the same encrypted path as provisioned
    * agents, tagged provenance=adopted. */
   if (ks->store) {
@@ -759,20 +785,11 @@ SignetAdoptResult signet_key_store_adopt_agent(SignetKeyStore *ks,
     }
   }
   if (rc == 0 || !ks->store) {
-    SignetCacheEntry *entry = signet_cache_entry_new(secret_key, now);
-    /* Cache-only: keep the pending pairing secret's digest on the entry,
-     * unique across agents like the store's connect_secret column. */
-    if (entry && !ks->store && !signet_cache_set_pending_secret(ks, entry, connect_secret)) {
-      signet_cache_entry_free(entry);
-      entry = NULL;
-    }
-    if (entry) {
-      signet_ephemeral_bindings_drop_agent(ks, agent_id);
-      g_hash_table_replace(ks->cache, g_strdup(agent_id), entry);
-      rc = 0;
-    } else {
-      rc = -1;
-    }
+    signet_ephemeral_bindings_drop_agent(ks, agent_id);
+    g_hash_table_replace(ks->cache, cache_id, entry);
+    cache_id = NULL;
+    entry = NULL;
+    rc = 0;
   }
   if (rc != 0) { result = SIGNET_ADOPT_ERR_INTERNAL; goto done; }
 
@@ -797,6 +814,8 @@ SignetAdoptResult signet_key_store_adopt_agent(SignetKeyStore *ks,
   }
 
 done:
+  signet_cache_entry_free(entry);
+  g_free(cache_id);
   g_mutex_unlock(&ks->mu);
   if (connect_secret) {
     sodium_memzero(connect_secret, strlen(connect_secret));
@@ -831,6 +850,7 @@ SignetAdoptResult signet_key_store_restore_agent(SignetKeyStore *ks,
 
   SignetAdoptResult result = SIGNET_ADOPT_ERR_INTERNAL;
   SignetCacheEntry *replacement = NULL;
+  char *cache_id = NULL;
   g_mutex_lock(&ks->mu);
 
   bool exists = g_hash_table_contains(ks->cache, agent_id);
@@ -853,7 +873,8 @@ SignetAdoptResult signet_key_store_restore_agent(SignetKeyStore *ks,
   /* Prepare the fallible mlock-backed cache entry before changing SQL state.
    * Once the durable update succeeds, the cache swap itself is infallible. */
   replacement = signet_cache_entry_new(secret_key, (int64_t)time(NULL));
-  if (!replacement) goto done;
+  cache_id = signet_cache_id_new(agent_id);
+  if (!replacement || !cache_id) goto done;
 
   if (ks->store) {
     int rc = signet_store_restore_agent_key(
@@ -879,12 +900,14 @@ SignetAdoptResult signet_key_store_restore_agent(SignetKeyStore *ks,
              sizeof(replacement->connect_secret_hash));
   }
   signet_ephemeral_bindings_drop_agent(ks, agent_id);
-  g_hash_table_replace(ks->cache, g_strdup(agent_id), replacement);
+  g_hash_table_replace(ks->cache, cache_id, replacement);
+  cache_id = NULL;
   replacement = NULL;
   g_strlcpy(out_pubkey_hex, pk_hex, 65);
   result = SIGNET_ADOPT_OK;
 
 done:
+  g_free(cache_id);
   if (replacement) signet_cache_entry_free(replacement);
   g_mutex_unlock(&ks->mu);
   free(pk_hex);
@@ -1448,6 +1471,10 @@ int signet_key_store_rotate_agent(SignetKeyStore *ks,
   int rc = -1;
   int64_t now = (int64_t)time(NULL);
 
+  SignetCacheEntry *entry = signet_cache_entry_new(sk_raw, now);
+  char *cache_id = signet_cache_id_new(agent_id);
+  if (!entry || !cache_id) goto rotate_done;
+
   /* Replace in SQLCipher (connect_secret = NULL for rotated keys). Record the
    * new pubkey + provenance so rotated agents stay visible to pubkey-collision
    * checks (adopt-existing) and their new identity is tracked. */
@@ -1460,18 +1487,16 @@ int signet_key_store_rotate_agent(SignetKeyStore *ks,
   }
 
   if (rc == 0 || !ks->store) {
-    /* Replace in hot cache. Like the store row (connect_secret = NULL), the
-     * new entry has no pending secret: re-pairing takes reissue-connect. */
-    SignetCacheEntry *entry = signet_cache_entry_new(sk_raw, now);
-    if (entry) {
-      signet_ephemeral_bindings_drop_agent(ks, agent_id);
-      g_hash_table_replace(ks->cache, g_strdup(agent_id), entry);
-      rc = 0;
-    } else {
-      rc = -1;
-    }
+    signet_ephemeral_bindings_drop_agent(ks, agent_id);
+    g_hash_table_replace(ks->cache, cache_id, entry);
+    cache_id = NULL;
+    entry = NULL;
+    rc = 0;
   }
 
+rotate_done:
+  signet_cache_entry_free(entry);
+  g_free(cache_id);
   g_mutex_unlock(&ks->mu);
 
   if (rc == 0) {

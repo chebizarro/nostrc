@@ -18,6 +18,14 @@
 #include "signet/relay_pool.h"
 #include "signet/signet_config.h"
 #include "signet/store.h"
+#include "signet/key_store.h"
+#include "signet/mgmt_protocol.h"
+#include "signet/health_server.h"
+#include "nostr-event.h"
+#include "nostr-keys.h"
+#include "nostr/nip17/nip17.h"
+#include <sodium.h>
+#include <sys/stat.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -58,6 +66,7 @@ static void write_file(const char *path, const char *contents) {
             err ? err->message : "?");
     abort();
   }
+  CHECK(g_chmod(path, 0600) == 0);
 }
 
 static char *read_file(const char *path) {
@@ -589,6 +598,144 @@ static void test_restart_only_keys_warned_not_applied(void) {
   printf("PASS\n");
 }
 
+static unsigned int signed_request_id;
+static int signed_provisioner_request(SignetMgmtHandler *handler, const char *sk,
+                                      const char *method, const char *target) {
+  char *bunker_pk = nostr_key_get_public(BUNKER_SK);
+  char *plain = g_strdup_printf("{\"jsonrpc\":\"2.0\",\"id\":\"w1-%u\",\"method\":\"%s\",\"params\":{\"provisioner_pubkey\":\"%s\"}}",
+                                ++signed_request_id, method, target);
+  NostrEvent *event = nostr_nip17_wrap_dm(sk, bunker_pk, plain);
+  CHECK(event);
+  char *json = nostr_event_serialize_compact(event);
+  CHECK(json);
+  char event_id[65]; snprintf(event_id, sizeof(event_id), "%064x", signed_request_id);
+  int rc = signet_mgmt_handler_handle_gift_wrap(handler, json, event_id, time(NULL));
+  sodium_memzero(plain, strlen(plain)); g_free(plain);
+  free(json); free(bunker_pk); nostr_event_free(event);
+  return rc;
+}
+
+static void count_env_warning(const gchar *domain, GLogLevelFlags level,
+                               const gchar *message, gpointer data) {
+  (void)domain; (void)level;
+  if (strstr(message, "SIGNET_PROVISIONER_PUBKEYS") && strstr(message, "D2"))
+    ++*(unsigned int *)data;
+}
+
+static void test_signed_d2_writeback(void) {
+  const char *sk_a = "2222222222222222222222222222222222222222222222222222222222222222";
+  const char *sk_b = "3333333333333333333333333333333333333333333333333333333333333333";
+  char *a = nostr_key_get_public(sk_a), *b = nostr_key_get_public(sk_b);
+  CHECK(a && b);
+  char *path = tmp_path("signed-d2.conf");
+  char *dbpath = tmp_path("signed-d2.db");
+  char *seed = g_strdup_printf("%s,%s", a, b);
+  write_config(path, "wss://127.0.0.1:1", seed);
+  SignetConfig live;
+  CHECK(signet_config_load(path, &live) == 0);
+  SignetKeyStoreConfig kc = {.db_path = dbpath, .master_key = MASTER_KEY};
+  SignetKeyStore *keys = signet_key_store_new(NULL, &kc);
+  CHECK(keys);
+  const char *seeds[] = {a, b};
+  char *bunker_pk = nostr_key_get_public(BUNKER_SK);
+  SignetMgmtHandlerConfig mc = {.provisioner_pubkeys = seeds, .n_provisioner_pubkeys = 2,
+    .bunker_secret_key_hex = BUNKER_SK, .bunker_pubkey_hex = bunker_pk};
+  SignetMgmtHandler *handler = signet_mgmt_handler_new(keys, NULL, NULL, NULL, &mc);
+  CHECK(handler);
+  CHECK(signet_mgmt_handler_enable_replay(handler, 120) == 0);
+  signet_mgmt_handler_set_config_path(handler, path);
+  SignetStore *store = signet_key_store_get_store(keys);
+  SignetReloadCtx ctx = {.config_path = path, .live = &live, .store = store, .mgmt = handler};
+  bool adopted = false;
+  CHECK(signet_config_reload_adopt_persisted(&ctx, time(NULL), &adopted) == 0 && adopted);
+  CHECK(signed_provisioner_request(handler, sk_a, "config/grant-provisioner", PK_C) == 0);
+  CHECK(config_lists_provisioner(path, PK_C));
+  SignetReloadReport report;
+  CHECK(signet_config_reload_apply(&ctx, time(NULL), &report) == 0);
+  CHECK(signet_store_is_provisioner(store, PK_C));
+  CHECK(signed_provisioner_request(handler, sk_a, "config/revoke-provisioner", b) == 0);
+  CHECK(!config_lists_provisioner(path, b));
+  gchar *contents = read_file(path);
+  gchar *edit = g_strconcat(contents, "\n# unrelated operator edit\n", NULL);
+  write_file(path, edit); set_mtime(path, time(NULL) + 5);
+  g_free(contents); g_free(edit);
+  CHECK(signet_config_reload_apply(&ctx, time(NULL), &report) == 0);
+  CHECK(!signet_store_is_provisioner(store, b));
+  CHECK(signed_provisioner_request(handler, sk_b, "config/grant-provisioner", PK_B) != 0);
+  CHECK(!signet_store_is_provisioner(store, PK_B));
+  unsigned int warnings = 0;
+  guint log_handler = g_log_set_handler(NULL, G_LOG_LEVEL_WARNING, count_env_warning, &warnings);
+  char *env_keys = g_strdup_printf("%s,%s,%s", a, b, PK_C);
+  g_setenv("SIGNET_PROVISIONER_PUBKEYS", env_keys, TRUE);
+  g_setenv("SIGNET_REQUIRE_ENCRYPTED_DB", "true", TRUE);
+  SignetConfig env_cfg;
+  CHECK(signet_config_load(path, &env_cfg) == 0);
+  CHECK(warnings == 1);
+  signet_config_clear(&env_cfg);
+  g_log_remove_handler(NULL, log_handler);
+  CHECK(signet_config_reload_apply(&ctx, time(NULL), &report) == 0);
+  CHECK(report.provisioners.refused_resurrect == 1);
+  CHECK(report.provisioner_writeback_failed);
+  CHECK(signed_provisioner_request(handler, sk_b, "config/grant-provisioner", PK_B) != 0);
+  CHECK(!signet_store_is_provisioner(store, PK_B));
+  g_unsetenv("SIGNET_PROVISIONER_PUBKEYS"); g_unsetenv("SIGNET_REQUIRE_ENCRYPTED_DB");
+  g_free(env_keys);
+  contents = read_file(path);
+  edit = g_strconcat(contents, "\n[bootstrap]\nrequire_tls=false\ntrusted_proxy_cidrs=invalid-cidr\n", NULL);
+  write_file(path, edit); g_free(edit);
+  CHECK(signet_config_load(path, &env_cfg) != 0);
+  edit = g_strconcat(contents, "\n[bootstrap]\nrequire_tls=false\ntrusted_proxy_cidrs=192.0.2.0/24\n", NULL);
+  write_file(path, edit); g_free(edit); g_free(contents);
+  CHECK(signet_config_reload_apply(&ctx, time(NULL), &report) == 0);
+  CHECK(report.restart_only_changed >= 2);
+  CHECK(live.bootstrap_require_tls);
+  CHECK(live.n_bootstrap_trusted_proxy_cidrs == 2);
+  CHECK(strcmp(live.bootstrap_trusted_proxy_cidrs[0], "127.0.0.0/8") == 0);
+  /* Restart and intentionally empty persisted set: remove the final authorities
+   * through signed management requests, then reopen the real store. */
+  CHECK(signed_provisioner_request(handler, sk_a, "config/revoke-provisioner", PK_C) == 0);
+  CHECK(signed_provisioner_request(handler, sk_a, "config/revoke-provisioner", a) == 0);
+  signet_mgmt_handler_free(handler); signet_key_store_free(keys);
+  keys = signet_key_store_new(NULL, &kc); CHECK(keys);
+  store = signet_key_store_get_store(keys); ctx.store = store; ctx.mgmt = NULL;
+  CHECK(signet_config_reload_adopt_persisted(&ctx, time(NULL), &adopted) == 0);
+  CHECK(signet_config_reload_apply(&ctx, time(NULL), &report) == 0);
+  CHECK(!signet_store_is_provisioner(store, a));
+  CHECK(!signet_store_is_provisioner(store, b));
+  signet_key_store_free(keys); signet_config_clear(&live);
+  unlink(path); unlink(dbpath); g_free(path); g_free(dbpath); g_free(seed);
+  free(a); free(b); free(bunker_pk);
+  printf("signed D2 grant/revoke/reload/restart/empty: PASS\n");
+}
+
+static void test_adoption_write_failure_retries(void) {
+  char *dir = tmp_path("readonly"); CHECK(g_mkdir(dir, 0700) == 0);
+  char *path = g_build_filename(dir, "signet.conf", NULL);
+  write_config(path, "wss://127.0.0.1:1", PK_A "," PK_B);
+  char *dbpath = NULL; SignetStore *store = open_store(&dbpath);
+  const char *seed[] = {PK_A};
+  CHECK(signet_store_seed_provisioners(store, seed, 1, time(NULL)) == 0);
+  SignetReloadCtx ctx = {.config_path = path, .store = store};
+  bool adopted = true;
+  CHECK(g_chmod(dir, 0500) == 0);
+  if (geteuid() == 0) CHECK(seteuid(65534) == 0);
+  int before = g_atomic_int_get(&g_signet_metrics.provisioner_writeback_failures);
+  CHECK(signet_config_reload_adopt_persisted(&ctx, time(NULL), &adopted) != 0);
+  CHECK(!adopted);
+  if (geteuid() == 65534) CHECK(seteuid(0) == 0);
+  CHECK(signet_store_policy_state_is_marked(store, "provisioner_desired_state") == 0);
+  CHECK(g_atomic_int_get(&g_signet_metrics.provisioner_writeback_failures) == before + 1);
+  CHECK(g_atomic_int_get(&g_signet_metrics.provisioner_writeback_failed));
+  CHECK(g_chmod(dir, 0700) == 0);
+  CHECK(signet_config_reload_adopt_persisted(&ctx, time(NULL), &adopted) == 0 && adopted);
+  CHECK(signet_store_policy_state_is_marked(store, "provisioner_desired_state") == 1);
+  CHECK(!config_lists_provisioner(path, PK_B));
+  CHECK(!g_atomic_int_get(&g_signet_metrics.provisioner_writeback_failed));
+  signet_store_close(store); unlink(dbpath); g_free(dbpath);
+  unlink(path); rmdir(dir); g_free(path); g_free(dir);
+  printf("adoption write failure and retry: PASS\n");
+}
+
 /* --------------------------------- main ---------------------------------- */
 
 int main(void) {
@@ -610,6 +757,8 @@ int main(void) {
   g_setenv("SIGNET_BUNKER_NSEC_FILE", nsec_path, TRUE);
 
   printf("test_config_reload:\n");
+  test_adoption_write_failure_retries();
+  test_signed_d2_writeback();
   test_invalid_candidate_retains_last_valid();
   test_subscriptions_survive_relay_change();
   test_unreachable_relay_does_not_block_reload();

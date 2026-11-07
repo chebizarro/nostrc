@@ -61,6 +61,9 @@ typedef struct {
   const char *bunker_pubkey_hex;
   const char *const *relay_urls;
   size_t n_relay_urls;
+  bool require_tls;
+  const char *const *trusted_proxy_cidrs;
+  size_t n_trusted_proxy_cidrs;
 } SignetBootstrapServerConfig;
 
 /* Create bootstrap server. Returns NULL on OOM. */
@@ -99,6 +102,9 @@ void signet_bootstrap_server_free(SignetBootstrapServer *bs);
  * Since: 1.0
  */
 int signet_bootstrap_server_start(SignetBootstrapServer *bs);
+
+/* Actual bound socket port, or zero when stopped/unavailable. */
+uint16_t signet_bootstrap_server_bound_port(SignetBootstrapServer *bs);
 
 /* Stop listener. Safe to call multiple times. */
 /**

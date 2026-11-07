@@ -6,6 +6,9 @@
  * Secrets are ONLY loaded from env vars; never from config files.
  */
 
+#include "http_listen.h"
+#include "secret_input.h"
+#include <sodium.h>
 #include "signet/signet_config.h"
 
 #include <stdlib.h>
@@ -229,6 +232,8 @@ void signet_config_init(SignetConfig *cfg) {
 
   cfg->log_level = SIGNET_LOG_INFO;
   cfg->health_port = 8080;
+  cfg->bootstrap_require_tls = true;
+  cfg->bootstrap_trusted_proxy_cidrs = signet_parse_csv("127.0.0.0/8,::1/128", &cfg->n_bootstrap_trusted_proxy_cidrs);
 
   signet_strlcpy(cfg->db_path, "/data/signet.db", sizeof(cfg->db_path));
 
@@ -276,12 +281,14 @@ void signet_config_clear(SignetConfig *cfg) {
   cfg->uid_map_uids = NULL;
   cfg->n_uid_map = 0;
 
+  signet_free_strv(cfg->bootstrap_trusted_proxy_cidrs, cfg->n_bootstrap_trusted_proxy_cidrs);
+
   /* Wipe sensitive fields. */
   secure_wipe(cfg->remote_signer_secret_key_hex, sizeof(cfg->remote_signer_secret_key_hex));
   secure_wipe(cfg->passkeys_sync_key, sizeof(cfg->passkeys_sync_key));
   secure_wipe(cfg->passkeys_sync_psk, sizeof(cfg->passkeys_sync_psk));
 
-  signet_config_init(cfg);
+  memset(cfg, 0, sizeof(*cfg));
 }
 
 /* ----------------------------- file loader -------------------------------- */
@@ -377,6 +384,15 @@ static void signet_config_load_keyfile(GKeyFile *kf, SignetConfig *cfg) {
   if (g_key_file_has_key(kf, "bootstrap", "port", NULL))
     cfg->bootstrap_port = g_key_file_get_integer(kf, "bootstrap", "port", NULL);
 
+  if (g_key_file_has_key(kf, "bootstrap", "require_tls", NULL))
+    cfg->bootstrap_require_tls = g_key_file_get_boolean(kf, "bootstrap", "require_tls", NULL);
+  val = g_key_file_get_string(kf, "bootstrap", "trusted_proxy_cidrs", NULL);
+  if (val) {
+    signet_free_strv(cfg->bootstrap_trusted_proxy_cidrs, cfg->n_bootstrap_trusted_proxy_cidrs);
+    cfg->bootstrap_trusted_proxy_cidrs = signet_parse_csv(val, &cfg->n_bootstrap_trusted_proxy_cidrs);
+    g_free(val);
+  }
+
   /* [dbus] */
   if (g_key_file_has_key(kf, "dbus", "unix_enabled", NULL))
     cfg->dbus_unix_enabled = g_key_file_get_boolean(kf, "dbus", "unix_enabled", NULL);
@@ -450,6 +466,22 @@ static void signet_config_load_keyfile(GKeyFile *kf, SignetConfig *cfg) {
 static int signet_config_apply_env(SignetConfig *cfg) {
   const char *val = NULL;
 
+  val = g_getenv("SIGNET_BOOTSTRAP_REQUIRE_TLS");
+  if (val) {
+    if (g_ascii_strcasecmp(val, "true") == 0 || strcmp(val, "1") == 0 ||
+        g_ascii_strcasecmp(val, "yes") == 0 || g_ascii_strcasecmp(val, "on") == 0)
+      cfg->bootstrap_require_tls = true;
+    else if (g_ascii_strcasecmp(val, "false") == 0 || strcmp(val, "0") == 0 ||
+             g_ascii_strcasecmp(val, "no") == 0 || g_ascii_strcasecmp(val, "off") == 0)
+      cfg->bootstrap_require_tls = false;
+    else return -1;
+  }
+  val = g_getenv("SIGNET_BOOTSTRAP_TRUSTED_PROXY_CIDRS");
+  if (val) {
+    signet_free_strv(cfg->bootstrap_trusted_proxy_cidrs, cfg->n_bootstrap_trusted_proxy_cidrs);
+    cfg->bootstrap_trusted_proxy_cidrs = signet_parse_csv(val, &cfg->n_bootstrap_trusted_proxy_cidrs);
+  }
+
   /* Non-secret overrides */
   val = g_getenv("SIGNET_LOG_LEVEL");
   if (val) cfg->log_level = signet_parse_log_level(val);
@@ -490,28 +522,19 @@ static int signet_config_apply_env(SignetConfig *cfg) {
 
   const char *bunker_nsec_file = g_getenv("SIGNET_BUNKER_NSEC_FILE");
   gchar *bunker_nsec = NULL;
-  gsize bunker_nsec_len = 0;
   if (bunker_nsec_file && bunker_nsec_file[0]) {
-    if (!g_file_get_contents(bunker_nsec_file, &bunker_nsec,
-                             &bunker_nsec_len, NULL) ||
-        bunker_nsec_len > 4096) {
-      g_critical("[signet] cannot read valid SIGNET_BUNKER_NSEC_FILE");
-      if (bunker_nsec) {
-        secure_wipe(bunker_nsec, bunker_nsec_len);
-        g_free(bunker_nsec);
-      }
-      signet_config_clear(cfg);
+    if (signet_secret_input_file(bunker_nsec_file, &bunker_nsec) != 0) {
+      g_critical("[signet] cannot read protected SIGNET_BUNKER_NSEC_FILE");
       return -1;
     }
-    g_strstrip(bunker_nsec);
     val = bunker_nsec;
     if (g_ascii_strncasecmp(val, "nsec1", 5) == 0) {
-      uint8_t sk[32];
+      uint8_t sk[32] = {0};
       if (nostr_nip19_decode_nsec(val, sk) == 0) {
         signet_bytes_to_hex(sk, 32, cfg->remote_signer_secret_key_hex,
                             sizeof(cfg->remote_signer_secret_key_hex));
-        secure_wipe(sk, 32);
       }
+      secure_wipe(sk, sizeof(sk));
     } else if (signet_is_hex(val, 64)) {
       signet_strlcpy(cfg->remote_signer_secret_key_hex, val,
                      sizeof(cfg->remote_signer_secret_key_hex));
@@ -525,8 +548,7 @@ static int signet_config_apply_env(SignetConfig *cfg) {
         free(pub);
       }
     }
-    secure_wipe(bunker_nsec, bunker_nsec_len);
-    g_free(bunker_nsec);
+    sodium_free(bunker_nsec);
   }
 
   /* SIGNET_BUNKER_PUBKEY (npub or 64-hex): address the bunker without its nsec.
@@ -603,17 +625,49 @@ int signet_config_load(const char *path, SignetConfig *out_cfg) {
     GError *err = NULL;
 
     if (g_key_file_load_from_file(kf, path, G_KEY_FILE_NONE, &err)) {
+      if (g_key_file_has_key(kf, "bootstrap", "require_tls", NULL)) {
+        (void)g_key_file_get_boolean(kf, "bootstrap", "require_tls", &err);
+        if (err) {
+          g_printerr("signet: cannot load config '%s' (invalid bootstrap TLS boolean)\n", path);
+          g_clear_error(&err);
+          g_key_file_free(kf);
+          signet_config_clear(out_cfg);
+          return -1;
+        }
+      }
       signet_config_load_keyfile(kf, out_cfg);
     } else {
-      /* File missing or parse error — proceed with defaults + env. */
-      if (err) g_error_free(err);
+      /* Never print GKeyFile's parse error: it can contain secret values. */
+      g_printerr("signet: cannot load config '%s' (%s)\n", path,
+                 err && err->domain == G_KEY_FILE_ERROR ? "invalid INI" : "unreadable file");
+      g_clear_error(&err);
+      g_key_file_free(kf);
+      signet_config_clear(out_cfg);
+      return -1;
     }
 
     g_key_file_free(kf);
   }
 
   /* Environment variables always override. */
-  if (signet_config_apply_env(out_cfg) != 0) return -1;
+  if (signet_config_apply_env(out_cfg) != 0) {
+    signet_config_clear(out_cfg);
+    return -1;
+  }
+  if (path && path[0] && signet_config_provisioners_from_env()) {
+    const char *required = g_getenv("SIGNET_REQUIRE_ENCRYPTED_DB");
+    if (required && (g_ascii_strcasecmp(required, "true") == 0 || strcmp(required, "1") == 0 ||
+                     g_ascii_strcasecmp(required, "yes") == 0 || g_ascii_strcasecmp(required, "on") == 0))
+      g_warning("SIGNET_PROVISIONER_PUBKEYS overrides the config file and prevents D2 write-back convergence");
+  }
+  for (size_t i = 0; i < out_cfg->n_bootstrap_trusted_proxy_cidrs; i++) {
+    SignetHttpCidr mask;
+    if (signet_http_cidr_parse(out_cfg->bootstrap_trusted_proxy_cidrs[i], &mask)) {
+      g_printerr("signet: invalid bootstrap trusted proxy CIDR\n");
+      signet_config_clear(out_cfg);
+      return -1;
+    }
+  }
   signet_config_resolve_passkey_psk(out_cfg);
 
   return 0;

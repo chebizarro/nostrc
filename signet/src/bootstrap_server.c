@@ -31,12 +31,17 @@
 #include <json-glib/json-glib.h>
 #include <microhttpd.h>
 #include <sodium.h>
+#include <arpa/inet.h>
+#include "http_listen.h"
 
 /* Max POST body size (8 KiB — bootstrap tokens and auth events are small). */
 #define MAX_POST_SIZE 8192
 
 struct SignetBootstrapServer {
   char *listen;
+  SignetHttpListen address;
+  SignetHttpCidr *proxy_masks;
+  size_t n_proxy_masks;
   struct MHD_Daemon *mhd;
   SignetKeyStore *keys;
   SignetStore *store;
@@ -60,33 +65,35 @@ static int64_t signet_now_unix(void) {
   return (int64_t)time(NULL);
 }
 
-static bool signet_bootstrap_tls_required_from_env(void) {
-  const char *v = g_getenv("SIGNET_BOOTSTRAP_REQUIRE_TLS");
-  if (!v || !v[0]) return true;
-  if (g_ascii_strcasecmp(v, "0") == 0 ||
-      g_ascii_strcasecmp(v, "false") == 0 ||
-      g_ascii_strcasecmp(v, "no") == 0 ||
-      g_ascii_strcasecmp(v, "off") == 0) {
-    return false;
+typedef struct {
+  unsigned int count;
+  bool https;
+} ForwardedProto;
+
+static enum MHD_Result forwarded_proto(void *cls, enum MHD_ValueKind kind,
+                                       const char *key, const char *value) {
+  (void)kind;
+  ForwardedProto *proto = cls;
+  if (key && g_ascii_strcasecmp(key, "X-Forwarded-Proto") == 0) {
+    proto->count++;
+    char *trimmed = g_strdup(value ? value : "");
+    g_strstrip(trimmed);
+    proto->https = g_ascii_strcasecmp(trimmed, "https") == 0;
+    g_free(trimmed);
   }
-  return true;
+  return MHD_YES;
 }
 
-static bool signet_bootstrap_is_tls(struct MHD_Connection *conn) {
-  const char *xfp = MHD_lookup_connection_value(conn, MHD_HEADER_KIND, "X-Forwarded-Proto");
-  if (!xfp || !xfp[0]) return false;
-
-  while (*xfp && g_ascii_isspace(*xfp)) xfp++;
-
-  char proto[16];
-  size_t i = 0;
-  while (xfp[i] && xfp[i] != ',' && !g_ascii_isspace(xfp[i]) && i < sizeof(proto) - 1) {
-    proto[i] = xfp[i];
-    i++;
-  }
-  proto[i] = '\0';
-
-  return g_ascii_strcasecmp(proto, "https") == 0;
+static bool signet_bootstrap_is_tls(SignetBootstrapServer *bs, struct MHD_Connection *conn) {
+  const union MHD_ConnectionInfo *info = MHD_get_connection_info(conn, MHD_CONNECTION_INFO_CLIENT_ADDRESS);
+  if (!info || !info->client_addr) return false;
+  bool trusted = false;
+  for (size_t i = 0; i < bs->n_proxy_masks; i++)
+    if (signet_http_cidr_matches(&bs->proxy_masks[i], info->client_addr)) trusted = true;
+  if (!trusted) return false;
+  ForwardedProto proto = {0};
+  MHD_get_connection_values(conn, MHD_HEADER_KIND, forwarded_proto, &proto);
+  return proto.count == 1 && proto.https;
 }
 
 /* ----------------------------- JSON helpers ------------------------------- */
@@ -432,6 +439,12 @@ signet_bootstrap_handler(void *cls,
 
   PostCtx *pc = (PostCtx *)*con_cls;
 
+  /* Reject before accumulating an untrusted request body. */
+  if (bs->require_tls && !signet_bootstrap_is_tls(bs, connection)) {
+    return send_json(connection, MHD_HTTP_FORBIDDEN,
+                     json_error("trusted TLS proxy required"));
+  }
+
   /* Accumulate POST body. */
   if (*upload_data_size > 0) {
     size_t needed = pc->len + *upload_data_size;
@@ -452,10 +465,6 @@ signet_bootstrap_handler(void *cls,
   }
 
   /* POST body fully received — dispatch. */
-  if (bs->require_tls && !signet_bootstrap_is_tls(connection)) {
-    return send_json(connection, MHD_HTTP_FORBIDDEN,
-                     json_error("TLS required (set X-Forwarded-Proto: https)"));
-  }
 
   /* GET /challenge */
   if (strcmp(method, "GET") == 0 && strcmp(url, "/challenge") == 0) {
@@ -494,12 +503,17 @@ static void signet_post_ctx_free(void *cls,
 /* ------------------------------ public API -------------------------------- */
 
 SignetBootstrapServer *signet_bootstrap_server_new(const SignetBootstrapServerConfig *cfg) {
-  if (!cfg || !cfg->listen || !cfg->keys || !cfg->store || !cfg->challenges)
+  if (!cfg || !cfg->listen || !cfg->keys || !cfg->store || !cfg->challenges ||
+      (cfg->n_trusted_proxy_cidrs && !cfg->trusted_proxy_cidrs))
     return NULL;
 
   SignetBootstrapServer *bs = (SignetBootstrapServer *)calloc(1, sizeof(*bs));
   if (!bs) return NULL;
 
+  if (signet_http_listen_parse(cfg->listen, &bs->address) != 0) {
+    free(bs);
+    return NULL;
+  }
   bs->listen = g_strdup(cfg->listen);
   bs->keys = cfg->keys;
   bs->store = cfg->store;
@@ -507,7 +521,15 @@ SignetBootstrapServer *signet_bootstrap_server_new(const SignetBootstrapServerCo
   bs->audit = cfg->audit;
   bs->fleet = cfg->fleet;
   bs->bunker_pubkey_hex = g_strdup(cfg->bunker_pubkey_hex);
-  bs->require_tls = signet_bootstrap_tls_required_from_env();
+  bs->require_tls = cfg->require_tls;
+  bs->n_proxy_masks = cfg->n_trusted_proxy_cidrs;
+  bs->proxy_masks = g_new0(SignetHttpCidr, bs->n_proxy_masks);
+  for (size_t i = 0; i < bs->n_proxy_masks; i++) {
+    if (signet_http_cidr_parse(cfg->trusted_proxy_cidrs[i], &bs->proxy_masks[i])) {
+      signet_bootstrap_server_free(bs);
+      return NULL;
+    }
+  }
 
   /* Copy relay URLs. */
   if (cfg->relay_urls && cfg->n_relay_urls > 0) {
@@ -524,6 +546,7 @@ void signet_bootstrap_server_free(SignetBootstrapServer *bs) {
   if (!bs) return;
   signet_bootstrap_server_stop(bs);
   g_free(bs->listen);
+  g_free(bs->proxy_masks);
   g_free(bs->bunker_pubkey_hex);
   if (bs->relay_urls) {
     for (size_t i = 0; i < bs->n_relay_urls; i++)
@@ -540,25 +563,28 @@ int signet_bootstrap_server_start(SignetBootstrapServer *bs) {
     g_warning("bootstrap TLS enforcement is disabled; set SIGNET_BOOTSTRAP_REQUIRE_TLS=true in production");
   }
 
-  const char *colon = strrchr(bs->listen, ':');
-  if (!colon || colon[1] == '\0') return -1;
-
-  errno = 0;
-  char *end = NULL;
-  unsigned long parsed = strtoul(colon + 1, &end, 10);
-  if (errno != 0 || end == colon + 1 || *end != '\0' || parsed > 65535UL)
-    return -1;
-  unsigned int port = (unsigned int)parsed;
-
   bs->mhd = MHD_start_daemon(
-      MHD_USE_INTERNAL_POLLING_THREAD | MHD_USE_ERROR_LOG,
-      (uint16_t)port,
+      MHD_USE_INTERNAL_POLLING_THREAD | MHD_USE_ERROR_LOG |
+          (bs->address.family == AF_INET6 ? MHD_USE_IPv6 : 0),
+      0,
       NULL, NULL,
       signet_bootstrap_handler, bs,
+      MHD_OPTION_SOCK_ADDR, (struct sockaddr *)&bs->address.address,
       MHD_OPTION_NOTIFY_COMPLETED, signet_post_ctx_free, bs,
       MHD_OPTION_END);
 
   return bs->mhd ? 0 : -1;
+}
+
+uint16_t signet_bootstrap_server_bound_port(SignetBootstrapServer *bs) {
+  if (!bs || !bs->mhd) return 0;
+  const union MHD_DaemonInfo *info = MHD_get_daemon_info(bs->mhd, MHD_DAEMON_INFO_LISTEN_FD);
+  struct sockaddr_storage addr;
+  socklen_t len = sizeof(addr);
+  if (!info || getsockname(info->listen_fd, (struct sockaddr *)&addr, &len)) return 0;
+  return ntohs(addr.ss_family == AF_INET
+      ? ((struct sockaddr_in *)&addr)->sin_port
+      : ((struct sockaddr_in6 *)&addr)->sin6_port);
 }
 
 void signet_bootstrap_server_stop(SignetBootstrapServer *bs) {

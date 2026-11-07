@@ -257,9 +257,8 @@ static void test_checked_port_parsing(void) {
       .challenges = (struct SignetChallengeStore *)1,
     };
     SignetBootstrapServer *bootstrap = signet_bootstrap_server_new(&bootstrap_cfg);
-    CHECK(bootstrap != NULL);
-    CHECK(signet_bootstrap_server_start(bootstrap) == -1);
-    signet_bootstrap_server_free(bootstrap);
+    /* Numeric-address validation now happens at construction, before MHD. */
+    CHECK(bootstrap == NULL);
   }
 }
 

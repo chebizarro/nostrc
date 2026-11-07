@@ -745,7 +745,73 @@ static void test_writer_transfer_serializes_with_sign(void) {
   printf("test_writer_transfer_serializes_with_sign: PASS\n");
 }
 
-int main(void) {
+static bool fail_cache_alloc;
+void *signet_key_store_cache_alloc(size_t size) {
+  return fail_cache_alloc ? NULL : sodium_malloc(size);
+}
+
+static void test_prepare_before_commit(void) {
+  char *path = NULL;
+  SignetKeyStore *ks = open_test_ks(&path);
+  char original[65], out[65];
+  CHECK(signet_key_store_provision_agent(ks, "existing", NULL, NULL, 0,
+                                        original, sizeof(original), NULL) == 0);
+  strcpy(out, "unchanged");
+  fail_cache_alloc = true;
+  CHECK(signet_key_store_provision_agent(ks, "new", NULL, NULL, 0,
+                                        out, sizeof(out), NULL) != 0);
+  CHECK(strcmp(out, "unchanged") == 0);
+  SignetAgentRecord rec = {0};
+  CHECK(signet_store_get_agent(signet_key_store_get_store(ks), "new", &rec) == 1);
+  uint8_t secret[32]; memset(secret, 0x42, sizeof(secret));
+  CHECK(signet_key_store_adopt_agent(ks, "adopt", secret, NULL, NULL,
+        NULL, NULL, 0, out, NULL) == SIGNET_ADOPT_ERR_INTERNAL);
+  CHECK(strcmp(out, "unchanged") == 0);
+  CHECK(signet_store_get_agent(signet_key_store_get_store(ks), "adopt", &rec) == 1);
+  CHECK(signet_key_store_rotate_agent(ks, "existing", out, sizeof(out)) != 0);
+  CHECK(strcmp(out, "unchanged") == 0);
+  fail_cache_alloc = false;
+  CHECK(signet_key_store_get_agent_pubkey(ks, "existing", out, sizeof(out)));
+  CHECK(strcmp(out, original) == 0);
+  SignetAgentMeta meta = {0};
+  CHECK(signet_store_get_agent_meta(signet_key_store_get_store(ks), "existing", &meta) == 0);
+  CHECK(strcmp(meta.pubkey, original) == 0);
+  signet_agent_meta_clear(&meta);
+  signet_key_store_free(ks);
+  SignetKeyStoreConfig cfg = {.db_path = path, .master_key = MASTER_KEY};
+  fail_cache_alloc = true;
+  CHECK(signet_key_store_new(NULL, &cfg) == NULL);
+  fail_cache_alloc = false;
+  ks = signet_key_store_new(NULL, &cfg);
+  CHECK(ks);
+  CHECK(signet_key_store_get_agent_pubkey(ks, "existing", out, sizeof(out)));
+  CHECK(strcmp(out, original) == 0);
+  signet_key_store_free(ks);
+  sqlite3 *db = open_test_db(path);
+  CHECK(sqlite3_exec(db, "UPDATE agents SET encrypted_nsec=x'00' WHERE agent_id='existing';",
+                     NULL, NULL, NULL) == SQLITE_OK);
+  sqlite3_close(db);
+  CHECK(signet_key_store_new(NULL, &cfg) == NULL);
+  unlink(path); g_free(path);
+}
+
+int main(int argc, char **argv) {
+  if (argc == 3 && strcmp(argv[1], "--cli-fixture") == 0) {
+    SignetKeyStoreConfig cfg = {.db_path = argv[2], .master_key = MASTER_KEY};
+    SignetKeyStore *ks = signet_key_store_new(NULL, &cfg);
+    CHECK(ks);
+    char pk[65];
+    CHECK(signet_key_store_provision_agent(ks, "corrupt", NULL, NULL, 0, pk, sizeof(pk), NULL) == 0);
+    signet_key_store_free(ks);
+    sqlite3 *db = open_test_db(argv[2]);
+    CHECK(sqlite3_exec(db,
+      "UPDATE agents SET encrypted_nsec=x'00';"
+      "INSERT INTO audit_log(ts,agent_id,operation,prev_hash,entry_hash) "
+      "VALUES(1,'corrupt','fixture','invalid','invalid');", NULL, NULL, NULL) == SQLITE_OK);
+    sqlite3_close(db);
+    return 0;
+  }
+  test_prepare_before_commit();
   CHECK(sodium_init() >= 0);
 
   test_null_safety();
