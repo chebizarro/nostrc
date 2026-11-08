@@ -487,11 +487,15 @@ static void test_cancel_backlog(void) {
 static void test_retained_notify(void) {
     Observations o;
     NostrSubscription *sub = nostr_subscription_ref(setup(&o, 0, "EOSE"));
+    /* The retained sub also retains its relay. Its derived contexts borrow
+     * this root, so keep the root alive until the relay workers have exited. */
+    GoContext *context = go_context_ref(o.context);
     teardown(&o); /* retained subscription owns the wake channel, never a pool pointer */
     enqueue_event(sub, 1);
     enqueue_boundary(sub, "EOSE");
     enqueue_boundary(sub, "CLOSED");
     nostr_subscription_unref(sub);
+    go_context_unref(context);
 }
 
 static void test_public_channels(void) {

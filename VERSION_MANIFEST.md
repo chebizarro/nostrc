@@ -86,6 +86,18 @@ files already declare a version.
   assessments remain the highest applicable change in this integration wave;
   Signet's real-wire test now independently checks the C reply's canonical id.
 
+### libnostr subscription ordered-state initialization (nostrc-0rn31)
+
+- **PATCH-class correction, folded into unreleased libnostr 2.3.0.** Initialize
+  all private ordered-delivery state before the constructor starts its lifecycle
+  watcher, including for ordinary subscriptions. No new public API/ABI or wire
+  change; the existing unreleased MINOR wave remains the highest applicable bump.
+  The authoritative CMake source and Declared version remain 2.3.0; release
+  columns are unchanged.
+- **Signet, libhanami and Groundhog: no bump.** These downstream consumers have
+  no owned shipped-artifact change; they receive the corrected libnostr dependency.
+  Allocator-poison regressions and fixture lifetime/leak repairs do not ship.
+
 ### libnostr producer-ordered admission boundary
 
 - **libnostr 2.2.0 → 2.3.0: MINOR.** Add the ABI-preserving callback live-boundary
