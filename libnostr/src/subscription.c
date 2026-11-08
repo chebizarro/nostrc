@@ -197,6 +197,19 @@ NostrSubscription *nostr_subscription_new(NostrRelay *relay, NostrFilters *filte
     sub->priv->replay_boundary_events = NULL;
     sub->priv->owns_filters = false;
 
+    /* Ordered delivery is opt-in, but ordinary shutdown also reads the wake
+     * channel. Initialize the entire state before publishing to the watcher. */
+    sub->priv->ordered_notify = NULL;
+    sub->priv->ordered_enqueued = 0;
+    sub->priv->ordered_consumed = 0;
+    sub->priv->ordered_generation = 0;
+    sub->priv->ordered_generation_start = 0;
+    sub->priv->ordered_eose_position = 0;
+    sub->priv->ordered_eose_time = 0;
+    sub->priv->ordered_eose_pending = false;
+    sub->priv->ordered_closed_position = 0;
+    sub->priv->ordered_closed_pending = false;
+
     // Initialize queue metrics (nostrc-sjv)
     QueueMetrics *m = &sub->priv->metrics;
     atomic_store(&m->events_enqueued, 0);

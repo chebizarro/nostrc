@@ -164,8 +164,9 @@ static void gift_at(Fixture *f,const char *sk,const char *req,int64_t at,int64_t
   NostrEvent *rumor=nostr_nip17_create_rumor(pk,f->bunker_pk,req,at);CHECK(rumor);free(pk);
   NostrEvent *seal=nostr_nip17_create_seal(rumor,sk,f->bunker_pk);CHECK(seal);
   NostrEvent *event=nostr_nip17_create_gift_wrap(seal,f->bunker_pk);CHECK(event);char *json=nostr_event_serialize_compact(event);CHECK(json);
-  SignetRelayEventView view={.kind=1059,.event_json=json,.event_id_hex=nostr_event_get_id(event),.live_since=live_since};
-  (void)signet_mgmt_handler_handle_relay_event(f->mgmt,&view,time(NULL));free(json);nostr_event_free(event);nostr_event_free(seal);nostr_event_free(rumor);
+  char *event_id=nostr_event_get_id(event);CHECK(event_id);
+  SignetRelayEventView view={.kind=1059,.event_json=json,.event_id_hex=event_id,.live_since=live_since};
+  (void)signet_mgmt_handler_handle_relay_event(f->mgmt,&view,time(NULL));free(event_id);free(json);nostr_event_free(event);nostr_event_free(seal);nostr_event_free(rumor);
 }
 static void gift(Fixture *f,const char *sk,const char *req) {gift_at(f,sk,req,time(NULL),time(NULL)-1);}
 static void test_authenticated_ingress(void) {

@@ -414,6 +414,21 @@ if(LIBNOSTR_BUILD_TESTS)
   add_test(NAME libnostr_subscription_dispatch COMMAND test_subscription_dispatch)
   set_tests_properties(libnostr_subscription_dispatch PROPERTIES TIMEOUT 60)
 
+  # Deterministically poison private malloc storage before the real constructor.
+  add_executable(test_subscription_initialization tests/test_subscription_initialization.c)
+  target_link_libraries(test_subscription_initialization PRIVATE ${_nostr_internal_test_lib} Threads::Threads)
+  target_include_directories(test_subscription_initialization PRIVATE include src)
+  if(COMMAND apply_sanitizers)
+    apply_sanitizers(test_subscription_initialization)
+  endif()
+  foreach(_case direct prepared shutdown)
+    add_test(NAME libnostr_subscription_initialization_${_case} COMMAND test_subscription_initialization ${_case})
+    set_tests_properties(libnostr_subscription_initialization_${_case} PROPERTIES TIMEOUT 30)
+    if(COMMAND nostrc_describe_test)
+      nostrc_describe_test(libnostr_subscription_initialization_${_case} OWNER libnostr TARGETS test_subscription_initialization)
+    endif()
+  endforeach()
+
   # Native producers + deterministic consumer barriers and real pool worker; no sleeps/network.
   add_executable(test_simplepool_drain tests/test_simplepool_drain.c)
   target_link_libraries(test_simplepool_drain PRIVATE ${_nostr_internal_test_lib} Threads::Threads)
