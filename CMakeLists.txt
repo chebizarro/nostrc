@@ -44,9 +44,12 @@ if(APPLE)
   set(_openssl_found FALSE)
 
   # Build candidate list from Homebrew (dynamic prefix) and MacPorts
-  set(_openssl_candidates "")
+  include(NostrcMacOSOpenSSL)
+  nostrc_macos_lws_openssl_root(_lws_openssl_root)
+  set(_openssl_candidates "${_lws_openssl_root}")
   if(_brew_prefix)
     list(APPEND _openssl_candidates
+      "${_brew_prefix}/opt/openssl@4"
       "${_brew_prefix}/opt/openssl@3"
       "${_brew_prefix}/opt/openssl@1.1"
       "${_brew_prefix}/opt/openssl")
@@ -82,6 +85,20 @@ endif()
 # This creates OpenSSL::SSL and OpenSSL::Crypto imported targets that can be
 # used by all subdirectories without needing individual find_package calls.
 find_package(OpenSSL REQUIRED)
+if(APPLE AND _lws_openssl_root)
+  file(REAL_PATH "${_lws_openssl_root}/lib" _lws_openssl_libdir)
+  file(REAL_PATH "${OPENSSL_SSL_LIBRARY}" _nostrc_ssl_library)
+  get_filename_component(_nostrc_ssl_libdir "${_nostrc_ssl_library}" DIRECTORY)
+  if(NOT _nostrc_ssl_libdir STREQUAL _lws_openssl_libdir)
+    message(FATAL_ERROR "OpenSSL ABI mismatch: libwebsockets uses ${_lws_openssl_root}, "
+      "but libnostr resolves ${OPENSSL_SSL_LIBRARY}. Clear the OpenSSL CMake cache "
+      "and configure against the matching libwebsockets/OpenSSL installation.")
+  endif()
+  unset(_lws_openssl_root)
+  unset(_lws_openssl_libdir)
+  unset(_nostrc_ssl_library)
+  unset(_nostrc_ssl_libdir)
+endif()
 if(OpenSSL_FOUND)
   message(STATUS "Found OpenSSL ${OPENSSL_VERSION} at ${OPENSSL_INCLUDE_DIR}")
   message(STATUS "  OpenSSL::SSL library: ${OPENSSL_SSL_LIBRARY}")

@@ -34,7 +34,6 @@ gio_dep = dependency('gio-2.0', version: '>= 2.80')
 adwaita_dep = dependency('libadwaita-1', version: '>= 1.5')
 panels_dep = dependency('grotto-panels-0', version: '>= 0.1.0')
 json_glib_dep = dependency('json-glib-1.0')
-profile_deps = [dependency('nostr-publish'), dependency('bud02'), dependency('libsoup-3.0')]
 native_camera_required = host_machine.system() == 'linux'
 qrencode_dep = dependency('libqrencode', required: native_camera_required)
 zbar_dep = dependency('zbar', required: native_camera_required)
@@ -52,6 +51,16 @@ if cmake_build_dir == ''
   cmake_build_dir = fs.parent(fs.parent(meson.current_source_dir())) / 'build'
 endif
 cmake_configuration = get_option('cmake_configuration')
+publish_link_dir = cmake_build_dir / 'apps/libnostr-publish'
+if cmake_configuration != ''
+  publish_link_dir = publish_link_dir / cmake_configuration
+endif
+publish_link_export = publish_link_dir / 'nostr-publish-build-tree.pc'
+if not fs.is_file(publish_link_export)
+  error('Required CMake publish link export missing: ' + publish_link_export +
+    '; configure and build the nostr-publish target first')
+endif
+profile_deps = [dependency(publish_link_export, method: 'pkg-config'), dependency('libsoup-3.0'), dependency('libcrypto')]
 nostr_gobject_link_dir = cmake_build_dir / 'nostr-gobject'
 if cmake_configuration != ''
   nostr_gobject_link_dir = nostr_gobject_link_dir / cmake_configuration
@@ -113,6 +122,7 @@ libnostr_inc = include_directories(
 )
 libgo_inc = include_directories('../../libgo/include', cmake_build_dir / 'libgo/include')
 nips_inc = [include_directories(
+  '../../nips/bud02/include',
   '../../nips/nip01/include',
   '../../nips/nip02/include',
   '../../nips/nip04/include',
@@ -144,7 +154,7 @@ nips_inc = [include_directories(
   '../../nips/nip94/include',
   '../../gnome/common',
 )]
-foreach nip : ['nip01', 'nip02', 'nip04', 'nip05', 'nip06', 'nip10', 'nip11', 'nip17', 'nip19', 'nip29', 'nip31', 'nip34', 'nip42', 'nip44', 'nip45', 'nip46', 'nip47', 'nip49', 'nip50', 'nip51', 'nip52', 'nip53', 'nip54', 'nip55l', 'nip5f', 'nip77', 'nip86', 'nip94']
+foreach nip : ['bud02', 'nip01', 'nip02', 'nip04', 'nip05', 'nip06', 'nip10', 'nip11', 'nip17', 'nip19', 'nip29', 'nip31', 'nip34', 'nip42', 'nip44', 'nip45', 'nip46', 'nip47', 'nip49', 'nip50', 'nip51', 'nip52', 'nip53', 'nip54', 'nip55l', 'nip5f', 'nip77', 'nip86', 'nip94']
   export_inc = cmake_build_dir / 'nips' / nip / 'include'
   if fs.is_dir(export_inc)
     nips_inc += [include_directories(export_inc)]

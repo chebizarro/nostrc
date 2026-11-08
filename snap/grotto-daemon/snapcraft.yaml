@@ -27,6 +27,7 @@ parts:
       - build-essential
       - cmake
       - ninja-build
+      - gettext
       - pkg-config
       - git
       - python3-pip
@@ -45,6 +46,9 @@ parts:
       - libsecp256k1-dev
       - libsodium-dev
       - libcurl4-openssl-dev
+      - libzbar-dev
+      - libgstreamer1.0-dev
+      - libgstreamer-plugins-base1.0-dev
       - libxml2-dev
       - librsvg2-dev
       - libgdk-pixbuf-2.0-dev
