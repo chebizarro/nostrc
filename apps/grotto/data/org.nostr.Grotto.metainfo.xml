@@ -66,9 +66,14 @@
   <content_rating type="oars-1.1" />
 
   <releases>
-    <release version="0.1.1-alpha1" type="development" date="2026-11-07">
+    <release version="0.1.1-alpha1" type="development" date="2026-11-08">
       <description>
-        <p>Fix the alternate Meson frontend's Groundhog executable-side link closure.</p>
+        <p>First pre-release of Grotto, a Nostr signer for the desktop.</p>
+        <ul>
+          <li>Create and import identities, manage encrypted backups, and review signing requests without sharing private keys with client apps</li>
+          <li>Approve a local app's declared operations together, with per-app permissions and activity history</li>
+          <li>Pair remote signing clients using connection links or QR codes</li>
+        </ul>
       </description>
     </release>
     <release version="0.1.0" type="development" date="2026-10-14">

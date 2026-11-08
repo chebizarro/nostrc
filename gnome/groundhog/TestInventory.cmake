@@ -122,6 +122,10 @@ _gh_describe(groundhog-two-instance-remote-acceptance test-groundhog-two-instanc
 if(TEST groundhog-packaging-version)
   nostrc_describe_test(groundhog-packaging-version OWNER packaging.groundhog version.contract
     INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/cmake/CheckPackagingVersion.cmake"
+      "${CMAKE_SOURCE_DIR}/cmake/CheckDesktopMetadata.cmake"
+      "${CMAKE_CURRENT_SOURCE_DIR}/data/org.nostr.Groundhog.metainfo.xml"
+      "${CMAKE_CURRENT_SOURCE_DIR}/data/org.nostr.Groundhog.desktop.in"
+      "${CMAKE_CURRENT_BINARY_DIR}/org.nostr.Groundhog.desktop"
       "${CMAKE_SOURCE_DIR}/flake.nix"
       "${CMAKE_SOURCE_DIR}/packaging/archlinux/groundhog/PKGBUILD"
       "${CMAKE_SOURCE_DIR}/packaging/rpm/groundhog.spec"

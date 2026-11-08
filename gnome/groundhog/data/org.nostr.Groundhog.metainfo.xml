@@ -79,6 +79,15 @@
     <content_attribute id="social-chat">intense</content_attribute>
   </content_rating>
   <releases>
+    <release version="0.12.1-alpha8" type="development" date="2026-11-08">
+      <description>
+        <p>Groundhog now declares all the operations it needs when connecting an account to Grotto, so they can be reviewed and approved once instead of request by request.</p>
+        <ul>
+          <li>More reliable remote signer setup and clearer failures when a signing request cannot be prepared</li>
+          <li>Updated Blossom attachment authentication for compatible file servers</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.12.0" type="development" date="2026-10-04">
       <description>
         <p>First alpha. Encrypted groups are available by default; the signer app that keeps your key is now called Grotto.</p>

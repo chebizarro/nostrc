@@ -4,9 +4,10 @@
 name: grotto
 base: core24
 version: 0.1.1-alpha1
-summary: Grotto, a Nostr signer (GTK)
-description: |
-  Grotto securely authorizes Nostr app requests (NIP-55L, NIP-46).
+# Keep the explicit version in lockstep with GROTTO_VERSION_FULL. AppStream
+# supplies the listing title, summary and description from the installed file.
+adopt-info: app
+icon: apps/grotto/data/icons/hicolor/256x256/apps/org.nostr.Grotto.png
 
 grade: stable
 confinement: strict
@@ -24,6 +25,7 @@ parts:
   app:
     plugin: nil
     source: .
+    parse-info: [usr/share/metainfo/org.nostr.Grotto.metainfo.xml]
     build-packages:
       - build-essential
       - cmake
