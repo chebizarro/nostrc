@@ -79,6 +79,11 @@
     <content_attribute id="social-chat">intense</content_attribute>
   </content_rating>
   <releases>
+    <release version="0.12.1-alpha9" type="development" date="2026-11-08">
+      <description>
+        <p>Group chats on relays that require sign-in now load messages from other members.</p>
+      </description>
+    </release>
     <release version="0.12.1-alpha8" type="development" date="2026-11-08">
       <description>
         <p>Groundhog now declares all the operations it needs when connecting an account to Grotto, so they can be reviewed and approved once instead of request by request.</p>
