@@ -1,14 +1,14 @@
 cmake_minimum_required(VERSION 3.16)
 project(groundhog VERSION 0.12.1 LANGUAGES C)
 
-# The pre-release label testers see (About, --version): "alpha8" makes
-# GROUNDHOG_VERSION_FULL "0.12.1-alpha8"; empty for a final release. Bump it
+# The pre-release label testers see (About, --version): "alpha9" makes
+# GROUNDHOG_VERSION_FULL "0.12.1-alpha9"; empty for a final release. Bump it
 # with flake.nix (desktopVersion), packaging/archlinux/groundhog/PKGBUILD
 # (_version), packaging/rpm/groundhog.spec (upstream_version, Release) and
 # packaging/debian-desktop/changelog: the groundhog-packaging-version test
 # checks they agree, and the release workflow refuses a groundhog-v* tag that
 # does not equal GROUNDHOG_VERSION_FULL.
-set(GROUNDHOG_PRERELEASE "alpha8")
+set(GROUNDHOG_PRERELEASE "alpha9")
 set(GROUNDHOG_VERSION_FULL "${PROJECT_VERSION}")
 if (GROUNDHOG_PRERELEASE)
   string(APPEND GROUNDHOG_VERSION_FULL "-${GROUNDHOG_PRERELEASE}")

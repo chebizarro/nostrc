@@ -22,7 +22,7 @@ files already declare a version.
 | libnostr | `libnostr/` | 2.2.0 | Unreleased | — | `libnostr/CMakeLists.txt` |
 | libjson (libnostr-json) | `libjson/` | 2.0.0 | Unreleased | — | `libjson/CMakeLists.txt` (`declare_component_version`) |
 | libgo | `libgo/` | 0.2.0 | Unreleased | — | `libgo/CMakeLists.txt` |
-| nostr-gobject | `nostr-gobject/` | 3.0.1 | Unreleased | — | `nostr-gobject/CMakeLists.txt`, `nostr-gobject/meson.build` |
+| nostr-gobject | `nostr-gobject/` | 3.0.2 | Unreleased | — | `nostr-gobject/CMakeLists.txt`, `nostr-gobject/meson.build` |
 | nostr-gtk | `nostr-gtk/` | 2.0.0 | Unreleased | — | `nostr-gtk/CMakeLists.txt`, `nostr-gtk/meson.build`; nostrc-0cfsg.32's PATCH-class correction was folded into the earlier unreleased 1.2.0 wave, before the nostrc-er4fz.10 phase C 2.0.0 ABI change |
 | libmarmot | `libmarmot/` | 0.14.0 | Unreleased | — | `libmarmot/CMakeLists.txt`, `libmarmot/meson.build` |
 | marmot-gobject | `marmot-gobject/` | 1.5.1 | Unreleased | — | `marmot-gobject/CMakeLists.txt`, `marmot-gobject/meson.build` |
@@ -552,6 +552,13 @@ release columns or tags are changed. NIP-47/49 GLib implementations include
   gnostr has no independent bump for this dependency wiring.
 
 ## Recorded version decisions
+
+- nostrc-n08qx: nostr-gobject PATCH 3.0.1 -> 3.0.2. `gnostr_subscription_fire()`
+  no longer refuses a REQ because a relay's NIP-11 document advertises
+  `auth_required`, which blocked the authenticated retry and any sign-in on
+  relays that challenge only in answer to a REQ. Groundhog picks up the fix;
+  its base version stays 0.12.1 and its tester label moves to alpha9. No tags
+  or release-column changes.
 
 - nostrc-er4fz.10 phase D1 (B2 consumer regression): nostr-seal PATCH
   0.1.2 -> 0.1.3. Phase B2 made `nips/nip49/include/nostr/nip49/nip49.h`

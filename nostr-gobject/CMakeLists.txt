@@ -15,7 +15,7 @@ option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" 
 # ── Version metadata ─────────────────────────────────────────────────
 set(NOSTR_GOBJECT_MAJOR_VERSION 3)
 set(NOSTR_GOBJECT_MINOR_VERSION 0)
-set(NOSTR_GOBJECT_MICRO_VERSION 1)
+set(NOSTR_GOBJECT_MICRO_VERSION 2)
 declare_component_version(NOSTR_GOBJECT
   ${NOSTR_GOBJECT_MAJOR_VERSION}
   ${NOSTR_GOBJECT_MINOR_VERSION}

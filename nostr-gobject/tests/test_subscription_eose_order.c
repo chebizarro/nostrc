@@ -28,6 +28,10 @@
  * are emitted in order, then "closed" with the overflow reason (no EOSE),
  * and the relay receives a CLOSE.
  *
+ * nostrc-n08qx: a relay whose NIP-11 document advertises auth_required still
+ * receives the REQ once that document is cached: only the relay decides, and
+ * its NIP-42 challenge may come only in answer to a REQ.
+ *
  * SPDX-License-Identifier: MIT
  */
 #include <nostr-gobject-1.0/nostr_relay.h>
@@ -186,6 +190,7 @@ typedef struct {
   SoupServer *server;
   GPtrArray *connections; /* SoupWebsocketConnection, relay thread only */
   GPtrArray *stored;      /* signed event JSON, immutable once started */
+  const gchar *nip11_json; /* served over HTTP when set */
   gchar *url;
   GMutex lock;
   GCond ready;
@@ -242,6 +247,20 @@ on_relay_socket(SoupServer *server G_GNUC_UNUSED, SoupServerMessage *msg G_GNUC_
   g_signal_connect(connection, "message", G_CALLBACK(on_relay_message), relay);
 }
 
+static void
+on_relay_http(SoupServer *server G_GNUC_UNUSED, SoupServerMessage *msg,
+              const char *path G_GNUC_UNUSED, GHashTable *query G_GNUC_UNUSED, gpointer data)
+{
+  BurstRelay *relay = data;
+  /* This handler also sees the upgrade; answering it would refuse the socket. */
+  if (soup_message_headers_header_contains(soup_server_message_get_request_headers(msg),
+                                           "Upgrade", "websocket"))
+    return;
+  soup_server_message_set_status(msg, SOUP_STATUS_OK, NULL);
+  soup_server_message_set_response(msg, "application/nostr+json", SOUP_MEMORY_STATIC,
+                                   relay->nip11_json, strlen(relay->nip11_json));
+}
+
 static gpointer
 relay_thread(gpointer data)
 {
@@ -250,6 +269,8 @@ relay_thread(gpointer data)
   relay->server = soup_server_new(NULL, NULL);
   soup_server_add_websocket_handler(relay->server, "/", NULL, NULL, on_relay_socket,
                                     relay, NULL);
+  if (relay->nip11_json)
+    soup_server_add_handler(relay->server, "/", on_relay_http, relay, NULL);
   g_autoptr(GError) error = NULL;
   g_assert_true(soup_server_listen_local(relay->server, 0, SOUP_SERVER_LISTEN_IPV4_ONLY,
                                          &error));
@@ -668,6 +689,50 @@ test_bounded_backfill_keeps_newest(void)
   g_array_unref(indices);
 }
 
+static void
+test_fire_reaches_auth_required_relay(void)
+{
+  BurstRelay server = {
+    .stored = g_ptr_array_new(),
+    .nip11_json = "{\"name\":\"auth\",\"limitation\":{\"auth_required\":true}}",
+  };
+  relay_start(&server);
+  GNostrRelay *relay = connect_relay(&server);
+
+  gboolean timed_out = FALSE;
+  guint bound = g_timeout_add_seconds(WAIT_BOUND_S, on_bound, &timed_out);
+  while (!gnostr_relay_get_nip11_info(relay) && !timed_out)
+    g_main_context_iteration(NULL, TRUE);
+  g_assert_false(timed_out);
+  g_source_remove(bound);
+
+  Round round = {0};
+  GNostrSubscription *sub = gnostr_subscription_new(relay, kind1_filters());
+  g_assert_nonnull(sub);
+  g_signal_connect(sub, "event", G_CALLBACK(on_event), &round);
+  g_signal_connect(sub, "eose", G_CALLBACK(on_eose), &round);
+  g_signal_connect(sub, "closed", G_CALLBACK(on_closed), &round);
+  g_autoptr(GError) error = NULL;
+  g_assert_true(gnostr_subscription_fire(sub, &error));
+  g_assert_no_error(error);
+
+  bound = g_timeout_add_seconds(WAIT_BOUND_S, on_bound, &timed_out);
+  while (!round.eose && !round.closed && !timed_out)
+    g_main_context_iteration(NULL, TRUE);
+  g_assert_false(timed_out);
+  g_source_remove(bound);
+  g_assert_true(round.eose);
+  g_assert_cmpuint(g_atomic_int_get(&server.reqs), ==, 1);
+
+  g_signal_handlers_disconnect_by_data(sub, &round);
+  gnostr_subscription_close(sub);
+  g_object_unref(sub);
+  gnostr_relay_disconnect(relay);
+  g_object_unref(relay);
+  relay_stop(&server);
+  g_ptr_array_unref(server.stored);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -686,5 +751,7 @@ main(int argc, char **argv)
                   test_lossless_flood_byte_ceiling);
   g_test_add_func("/nostr-gobject/subscription/bounded-backfill-keeps-newest",
                   test_bounded_backfill_keeps_newest);
+  g_test_add_func("/nostr-gobject/subscription/fire-reaches-auth-required-relay",
+                  test_fire_reaches_auth_required_relay);
   return g_test_run();
 }
