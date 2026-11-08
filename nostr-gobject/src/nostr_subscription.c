@@ -960,12 +960,10 @@ gnostr_subscription_fire(GNostrSubscription *self, GError **error)
         if (nip11 && nip11->limitation) {
             RelayLimitationDocument *lim = nip11->limitation;
 
-            if (lim->auth_required) {
-                g_set_error(error, NOSTR_ERROR, NOSTR_ERROR_AUTH_REQUIRED,
-                            "relay %s requires NIP-42 authentication",
-                            gnostr_relay_get_url(self->relay));
-                return FALSE;
-            }
+            /* auth_required is not refused here (nostrc-n08qx): NIP-11 only
+             * advertises it. The relay enforces it with CLOSED "auth-required:"
+             * and may send its NIP-42 challenge only in answer to a REQ, so
+             * refusing the REQ would also refuse the sign-in and its retry. */
             if (lim->payment_required) {
                 g_set_error(error, NOSTR_ERROR, NOSTR_ERROR_PAYMENT_REQUIRED,
                             "relay %s requires payment",

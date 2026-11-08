@@ -5,19 +5,19 @@
 # it includes the nostrdb and nsync submodules, which GitHub's tag archives
 # leave out. To build from a checkout:
 #
-#   scripts/make-desktop-source-archive.sh 0.12.1-alpha8 ~/rpmbuild/SOURCES
+#   scripts/make-desktop-source-archive.sh 0.12.1-alpha9 ~/rpmbuild/SOURCES
 #   rpmbuild -ba packaging/rpm/groundhog.spec
 #
 # nsync: Fedora has no nsync package (nostrc-dd5y); the copy in third_party/
 # is linked statically and declared as bundled. `--with system_nsync` uses a
 # packaged one instead.
 
-%global upstream_version 0.12.1-alpha8
+%global upstream_version 0.12.1-alpha9
 %bcond_with system_nsync
 
 Name:           groundhog
 Version:        0.12.1
-Release:        0.8.alpha8%{?dist}
+Release:        0.9.alpha9%{?dist}
 Summary:        Private messaging on Nostr for GNOME (alpha)
 License:        MIT
 URL:            https://github.com/chebizarro/nostrc
@@ -191,6 +191,9 @@ appstream-util validate-relax --nonet %{buildroot}%{_metainfodir}/org.nostr.Grou
 %doc %{_datadir}/doc/grotto/examples/*.conf.example
 
 %changelog
+* Sun Nov 08 2026 Biz <chebizarro@protonmail.com> - 0.12.1-0.9.alpha9
+- Group chats on relays that advertise auth_required load after sign-in.
+
 * Tue Oct 27 2026 Biz <chebizarro@protonmail.com> - 0.12.1-0.8.alpha8
 - Release the owned account-signer event ID after Blossom upload validation.
 

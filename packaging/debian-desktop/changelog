@@ -1,3 +1,9 @@
+groundhog (0.12.1~alpha9-1) unstable; urgency=medium
+
+  * Group chats on relays that advertise auth_required load after sign-in.
+
+ -- Biz <chebizarro@protonmail.com>  Sun, 08 Nov 2026 12:00:00 +0000
+
 groundhog (0.12.1~alpha8-1) unstable; urgency=medium
 
   * Release the owned account-signer event ID after Blossom upload validation.
