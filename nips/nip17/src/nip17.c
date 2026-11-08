@@ -93,7 +93,8 @@ NostrEvent *nostr_nip17_create_rumor(const char *sender_pubkey_hex,
 
     nostr_event_set_tags(rumor, tags);
 
-    /* Rumor is NOT signed - sig remains NULL */
+    /* The caller may still add tags before assigning its id. create_seal()
+     * supplies the canonical wire id without mutating this unsigned template. */
     return rumor;
 }
 
@@ -107,8 +108,17 @@ NostrEvent *nostr_nip17_create_seal(NostrEvent *rumor,
     int64_t seal_at = 0;
     if (get_randomized_time(&seal_at) != 0) return NULL;
 
-    /* Serialize rumor to JSON */
-    char *rumor_json = nostr_event_serialize_compact(rumor);
+    /* Accept an unsigned in-memory template, but never emit an id-less rumor
+     * or silently replace a mismatched declared id. Borrow the canonical id
+     * for serialization without mutating the caller's event/ownership. */
+    char canonical_id[65];
+    if (rumor->sig || (rumor->id
+            ? nostr_event_validate_id(rumor, canonical_id)
+            : nostr_event_compute_id(rumor, canonical_id)) != NOSTR_EVENT_VALIDATION_OK)
+        return NULL;
+    NostrEvent wire_rumor = *rumor;
+    wire_rumor.id = canonical_id;
+    char *rumor_json = nostr_event_serialize_compact(&wire_rumor);
     if (!rumor_json) return NULL;
 
     /* Convert keys to binary for NIP-44 */
@@ -458,12 +468,9 @@ NostrEvent *nostr_nip17_unwrap_seal(NostrEvent *seal,
     }
     free(json);
 
-    /* Rumors are intentionally unsigned. Bind a declared id when present;
-     * otherwise prove that a canonical identity can be computed for callers. */
-    char canonical_id[65];
-    NostrEventValidationStatus status = rumor->id
-        ? nostr_event_validate_id(rumor, canonical_id)
-        : nostr_event_compute_id(rumor, canonical_id);
+    /* A wire rumor must declare its canonical identity. Computing an absent
+     * id locally would hide malformed output from independent peers. */
+    NostrEventValidationStatus status = nostr_event_validate_id(rumor, NULL);
     if (status != NOSTR_EVENT_VALIDATION_OK) {
         nostr_event_free(rumor);
         return NULL;

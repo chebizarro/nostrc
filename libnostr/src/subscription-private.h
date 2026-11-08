@@ -95,6 +95,21 @@ typedef struct _SubscriptionPrivate {
      * Actual free happens when refcount drops to 0. */
     _Atomic int refcount;
 
+    /* SimplePool's sole consumer uses producer positions, not queue depth.
+     * Public EVENT/EOSE/CLOSED channels and their payload ownership are unchanged.
+     * All fields below are guarded by sub_mutex. The retained wake channel holds
+     * no pool pointer and may safely outlive the pool while a sub is retained. */
+    GoChannel *ordered_notify;
+    uint64_t ordered_enqueued;
+    uint64_t ordered_consumed;
+    uint64_t ordered_generation;
+    uint64_t ordered_generation_start;
+    uint64_t ordered_eose_position;
+    int64_t ordered_eose_time;
+    bool ordered_eose_pending;
+    uint64_t ordered_closed_position;
+    bool ordered_closed_pending;
+
     LongAdder *stored_event_counter;
 
     nsync_mu sub_mutex;
@@ -121,6 +136,24 @@ struct NostrSubscription *nostr_subscription_new(NostrRelay *relay, NostrFilters
 void *nostr_subscription_start(void *arg);
 void nostr_subscription_dispatch_event(struct NostrSubscription *sub, NostrEvent *event);
 void nostr_subscription_dispatch_eose(struct NostrSubscription *sub);
+
+/* Internal ordered consumption for SimplePool only. One consumer per managed
+ * subscription; direct channel users retain the existing public channel API. */
+typedef enum {
+    NOSTR_ORDERED_NONE, NOSTR_ORDERED_EVENT, NOSTR_ORDERED_EOSE,
+    NOSTR_ORDERED_CLOSED, NOSTR_ORDERED_STOP
+} NostrOrderedKind;
+typedef struct {
+    NostrEvent *event; /* transferred on EVENT */
+    char *reason;     /* transferred on CLOSED */
+    uint64_t generation;
+    int64_t live_since; /* producer EOSE time, zero for history/retired frames */
+} NostrOrderedDelivery;
+bool nostr_subscription_enable_ordered(struct NostrSubscription *sub, GoChannel *notify);
+NostrOrderedKind nostr_subscription_next_ordered(struct NostrSubscription *sub,
+                                                NostrOrderedDelivery *delivery);
+int64_t nostr_subscription_ordered_live_since(struct NostrSubscription *sub,
+                                             uint64_t generation, int64_t since);
 int64_t nostr_subscription_prepare_refire(struct NostrSubscription *sub);
 void nostr_subscription_dispatch_closed(struct NostrSubscription *sub, const char *reason);
 bool nostr_subscription_refire_since(struct NostrSubscription *sub, int64_t since, Error **err);

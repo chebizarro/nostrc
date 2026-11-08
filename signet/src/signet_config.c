@@ -296,6 +296,11 @@ void signet_config_clear(SignetConfig *cfg) {
 static void signet_config_load_keyfile(GKeyFile *kf, SignetConfig *cfg) {
   gchar *val = NULL;
 
+  val = g_key_file_get_string(kf, "backend_admission", "authority_id", NULL);
+  if (val) { signet_strlcpy(cfg->backend_authority_id, val, sizeof(cfg->backend_authority_id)); g_free(val); }
+  val = g_key_file_get_string(kf, "backend_admission", "operator_pubkey", NULL);
+  if (val) { signet_strlcpy(cfg->backend_operator_pubkey, val, sizeof(cfg->backend_operator_pubkey)); g_free(val); }
+
   /* [server] */
   val = g_key_file_get_string(kf, "server", "log_level", NULL);
   if (val) { cfg->log_level = signet_parse_log_level(val); g_free(val); }
@@ -482,6 +487,11 @@ static int signet_config_apply_env(SignetConfig *cfg) {
     cfg->bootstrap_trusted_proxy_cidrs = signet_parse_csv(val, &cfg->n_bootstrap_trusted_proxy_cidrs);
   }
 
+  val = g_getenv("SIGNET_BACKEND_AUTHORITY_ID");
+  if (val) signet_strlcpy(cfg->backend_authority_id, val, sizeof(cfg->backend_authority_id));
+  val = g_getenv("SIGNET_BACKEND_OPERATOR_PUBKEY");
+  if (val) signet_strlcpy(cfg->backend_operator_pubkey, val, sizeof(cfg->backend_operator_pubkey));
+
   /* Non-secret overrides */
   val = g_getenv("SIGNET_LOG_LEVEL");
   if (val) cfg->log_level = signet_parse_log_level(val);
@@ -667,6 +677,13 @@ int signet_config_load(const char *path, SignetConfig *out_cfg) {
       signet_config_clear(out_cfg);
       return -1;
     }
+  }
+  if ((out_cfg->backend_authority_id[0] || out_cfg->backend_operator_pubkey[0]) &&
+      (!g_regex_match_simple("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", out_cfg->backend_authority_id, 0, 0) ||
+       !g_regex_match_simple("^[0-9a-f]{64}$", out_cfg->backend_operator_pubkey, 0, 0))) {
+    g_printerr("signet: backend admission requires canonical authority_id and operator_pubkey pins\n");
+    signet_config_clear(out_cfg);
+    return -1;
   }
   signet_config_resolve_passkey_psk(out_cfg);
 

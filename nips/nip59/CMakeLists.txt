@@ -1,6 +1,6 @@
 include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcVisibility.cmake")
 
-project(nip59 VERSION 0.2.0 LANGUAGES C)
+project(nip59 VERSION 0.2.1 LANGUAGES C)
 
 # Gift-wrap timestamps come from OpenSSL's CSPRNG (RAND_bytes).
 find_package(OpenSSL REQUIRED)

@@ -22,6 +22,7 @@
  */
 
 #include "signet/store.h"
+#include "signet/backend_admission.h"
 #include "store_passkeys_schema.h"
 
 #include <stdlib.h>
@@ -918,6 +919,11 @@ writer_schema_done:
   }
 
   store->open = true;
+  if (signet_backend_admission_validate_store(store) != 0) {
+    g_critical("[signet] inconsistent backend admission history; refusing store open");
+    signet_store_close(store);
+    return NULL;
+  }
   return store;
 }
 

@@ -258,6 +258,9 @@ typedef struct {
   const char *bunker_pubkey_hex;       /* for addressing */
   const char *const *relay_urls;       /* relay URLs for bunker:// URIs */
   size_t n_relay_urls;
+  /* Both nonempty to enable the separate backend authority. Public pins. */
+  const char *backend_authority_id;
+  const char *backend_operator_pubkey;
 } SignetMgmtHandlerConfig;
 
 /* Create a management handler. */

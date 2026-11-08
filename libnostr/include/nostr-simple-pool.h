@@ -280,6 +280,10 @@ NOSTR_API void nostr_simple_pool_set_event_middleware(NostrSimplePool *pool,
  * The pointer expires on return; do not retain it. NostrIncomingEvent ABI is
  * unchanged. This lets callers scope admission to their current subscription. */
 NOSTR_API const struct NostrSubscription *nostr_simple_pool_get_callback_subscription(NostrSimplePool *pool);
+/* Producer-observed EOSE time for the current single-event/subscription
+ * callback, or zero for history, a retired REQ, cancellation, or no callback.
+ * No public channel/payload layout or ownership change. Since: 2.3. */
+NOSTR_API int64_t nostr_simple_pool_get_callback_live_since(NostrSimplePool *pool);
 NOSTR_API void nostr_simple_pool_set_event_middleware_ex(NostrSimplePool *pool,
                                                void (*cb)(NostrIncomingEvent *, void *),
                                                void *user_data);

@@ -19,7 +19,7 @@ files already declare a version.
 
 | Component | Path | Declared version | Latest release | Release tag | Authoritative version source(s) |
 | --- | --- | --- | --- | --- | --- |
-| libnostr | `libnostr/` | 2.2.0 | Unreleased | — | `libnostr/CMakeLists.txt` |
+| libnostr | `libnostr/` | 2.3.0 | Unreleased | — | `libnostr/CMakeLists.txt` |
 | libjson (libnostr-json) | `libjson/` | 2.0.0 | Unreleased | — | `libjson/CMakeLists.txt` (`declare_component_version`) |
 | libgo | `libgo/` | 0.2.0 | Unreleased | — | `libgo/CMakeLists.txt` |
 | nostr-gobject | `nostr-gobject/` | 3.0.1 | Unreleased | — | `nostr-gobject/CMakeLists.txt`, `nostr-gobject/meson.build` |
@@ -46,13 +46,13 @@ files already declare a version.
 | vaultctl | `tools/vaultctl/` | 0.3.1 | Unreleased | — | `tools/vaultctl/CMakeLists.txt` (`declare_component_version`), `tools/vaultctl/main.c` (`--version`) |
 | libvault | `libvault/` | 0.7.0 | Unreleased | — | `libvault/CMakeLists.txt` (`declare_component_version`) |
 | libblossom | `libblossom/` | 0.3.2 | Unreleased | — | `libblossom/CMakeLists.txt` (`declare_component_version`) |
-| nip59 (NIP-59 gift-wrap core) | `nips/nip59/` | 0.2.0 | Unreleased | — | `nips/nip59/CMakeLists.txt` (`project(nip59 VERSION ...)`, mirrored into `declare_component_version`; installed static archive and .pc, existing OBJECT target retained) |
+| nip59 (NIP-59 gift-wrap core) | `nips/nip59/` | 0.2.1 | Unreleased | — | `nips/nip59/CMakeLists.txt` (`project(nip59 VERSION ...)`, mirrored into `declare_component_version`; installed static archive and .pc, existing OBJECT target retained) |
 | bud02 (Blossom authorization codec) | `nips/bud02/` | 0.1.1 | Unreleased | — | `nips/bud02/CMakeLists.txt` (`declare_component_version`) |
 | nip34 (NIP-34 git events) | `nips/nip34/` | 0.2.0 | Unreleased | — | `nips/nip34/CMakeLists.txt` (`declare_component_version`; SONAME `libnip34.so.0`) |
 | nip-communikeys | `nips/nip-communikeys/` | 3.0.0 | Unreleased | — | `nips/nip-communikeys/CMakeLists.txt` (`NIP_COMMUNIKEYS_VERSION`) |
 | nip55l (Linux signer) | `nips/nip55l/` | 0.8.0 | Unreleased | — | `nips/nip55l/include/nostr/nip55l/signer_ops.h` (`NOSTR_NIP55L_VERSION_*`) |
 | nostr-seal | `gnome/nostr-seal/` | 0.1.3 (format nsealed v1) | Unreleased | — | `gnome/nostr-seal/src/main.c` (`NOSTR_SEAL_VERSION`), `gnome/nostr-seal/include/nostr-seal.h` (`NSEAL_FORMAT_VERSION`) |
-| signet | `signet/` | 0.8.0 | 0.8.0-rc.1 | `signet-v0.8.0-rc.1` | `signet/meson.build`, `signet/src/signetd_main.c` (`SIGNET_VERSION`), `signet/src/signetctl_main.c` (`SIGNETCTL_VERSION`), `signet/CMakeLists.txt` (`project VERSION`) |
+| signet | `signet/` | 0.9.0 | 0.8.0-rc.1 | `signet-v0.8.0-rc.1` | `signet/meson.build`, `signet/src/signetd_main.c` (`SIGNET_VERSION`), `signet/src/signetctl_main.c` (`SIGNETCTL_VERSION`), `signet/CMakeLists.txt` (`project VERSION`) |
 
 
 ### libnostr callback API and client TLS hardening (nostrc-a7p6i, nostrc-86xt, nostrc-mk7v1.3)
@@ -68,6 +68,41 @@ files already declare a version.
   Release tag remain unchanged because no tag is published here.
 - Signet retains the coordinated unreleased **0.8.0 MINOR** version below; this
   integration version assessment does not add another Signet bump.
+
+### Canonical unsigned rumor identity correction
+
+- **nip59 0.2.0 → 0.2.1: PATCH.** Correct wire serialization to always include a
+  canonical inner id. Valid unsigned in-memory templates still need no stored id
+  and are not mutated; supplied ids must match. Received signed payloads still
+  require a valid signature. Wire unwrap refuses missing/mismatched ids and
+  signature-bearing malformed rumors. No valid caller
+  contract or layout changes; the authoritative CMake version and Declared version
+  agree. No release/tag is published.
+- **nip17: no numeric bump.** This OBJECT component is unversioned and has no
+  authoritative numeric source. Rumor templates retain their existing mutable,
+  id-optional ownership; seal serialization now declares the canonical wire id,
+  and unwrap requires that declared identity.
+- **signet 0.9.0 / libnostr 2.3.0 retained.** Their existing unreleased MINOR
+  assessments remain the highest applicable change in this integration wave;
+  Signet's real-wire test now independently checks the C reply's canonical id.
+
+### libnostr producer-ordered admission boundary
+
+- **libnostr 2.2.0 → 2.3.0: MINOR.** Add the ABI-preserving callback live-boundary
+  accessor. SimplePool consumes producer-position EVENT/EOSE/CLOSED fences,
+  including boundaries published during a bounded drain; reconnect retires old
+  callback generations. Public channels and payload ownership remain unchanged.
+  The CMake version source and Declared version agree; no release/tag is claimed.
+
+### Signet independent backend admission
+
+- **signet 0.8.0 → 0.9.0: MINOR.** Additive private backend admission wire,
+  durable non-expiring storage and explicit authority/operator configuration.
+  CMake, Meson and both CLI version macros agree; published release/tag columns
+  remain unchanged. Existing credential grants and NIP-46 writer APIs are unchanged.
+  libnostr's additive boundary API and nip59's wire correction are assessed
+  separately above. Other components are build prerequisites only and receive
+  no version bump.
 
 ### Signet first-deployment interfaces (nostrc-mk7v1.6)
 

@@ -14,7 +14,7 @@
 #   set -Dnostrc_build_dir=../build (default) and ensure those libs are present.
 
 project('signet', 'c',
-  version: '0.8.0',
+  version: '0.9.0',
   default_options: [
     'c_std=c11',
     'warning_level=2',
@@ -261,6 +261,7 @@ signet_core_sources = files(
   'src/store_tokens.c',
   'src/store_secrets.c',
   'src/store_leases.c',
+  'src/backend_admission.c',
   'src/store_audit.c',
   'src/nostr_auth.c',
   'src/capability.c',

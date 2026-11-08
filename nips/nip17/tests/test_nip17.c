@@ -8,6 +8,8 @@
 #undef NDEBUG
 
 #include "nostr/nip17/nip17.h"
+#include "nostr/nip44/nip44.h"
+#include "nostr-utils.h"
 #include "nostr-event.h"
 #include "nostr-keys.h"
 #include "nostr-kinds.h"
@@ -68,6 +70,79 @@ static void test_create_rumor(void) {
 
     nostr_event_free(rumor);
     printf("  OK: rumor created correctly\n");
+}
+
+/* SHA256 of the literal NIP-01 [0,pubkey,time,kind,tags,content] array,
+ * independently generated with Python stdlib JSON/UTF-8 + hashlib. Includes
+ * escaping and non-ASCII text so a self-consistent C-only roundtrip is not proof. */
+static void test_rumor_canonical_vector(void) {
+    const char *sender = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+    const char *recipient = "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5";
+    const char *expected = "d922a259cc1853e89f58da35e906d5759d20ac7141c90d40b304f0d358803692";
+    NostrEvent *rumor = nostr_nip17_create_rumor(sender, recipient,
+        "quote:\" slash:\\ tab:\t line:\n snowman:☃", 1700000000);
+    assert(rumor && !rumor->id && !rumor->sig);
+    /* Public test-vector scalars only, never fixture/production key inputs. */
+    const char *sender_sk = "0000000000000000000000000000000000000000000000000000000000000001";
+    const char *recipient_sk = "0000000000000000000000000000000000000000000000000000000000000002";
+    NostrEvent *seal = nostr_nip17_create_seal(rumor, sender_sk, recipient);
+    assert(seal && !rumor->id); /* template ownership is unchanged */
+    NostrEvent *opened = nostr_nip17_unwrap_seal(seal, recipient_sk);
+    assert(opened && opened->id && strcmp(opened->id, expected) == 0 && !opened->sig);
+    assert(nostr_event_validate_id(opened, NULL) == NOSTR_EVENT_VALIDATION_OK);
+    char *wire = nostr_event_serialize_compact(opened);
+    assert(wire && strstr(wire, expected) && !strstr(wire, "\"sig\""));
+    free(wire);
+    nostr_event_free(opened);
+    nostr_event_free(seal);
+    nostr_event_free(rumor);
+    printf("  OK: independent canonical unsigned rumor vector\n");
+}
+
+static void test_rumor_identity_refusals(void) {
+    for (int variant = 0; variant < 4; variant++) {
+        NostrEvent *rumor = nostr_nip17_create_rumor(ALICE_PK, BOB_PK, "identity", 1700000000);
+        assert(rumor && !rumor->id);
+        rumor->id = nostr_event_get_id(rumor);
+        assert(rumor->id);
+        NostrEvent *seal = nostr_nip17_create_seal(rumor, ALICE_SK, BOB_PK);
+        assert(seal);
+        if (variant == 0) { free(rumor->id); rumor->id = NULL; }
+        if (variant == 1) { free(rumor->id); rumor->id = strdup("0000000000000000000000000000000000000000000000000000000000000000"); }
+        if (variant == 2) nostr_event_set_content(rumor, "tampered after hashing");
+        if (variant == 3) assert(nostr_event_sign(rumor, ALICE_SK) == 0);
+        if (variant == 0) {
+            /* Caller templates keep their ownership, but emitted wire is complete. */
+            NostrEvent *normalized = nostr_nip17_create_seal(rumor, ALICE_SK, BOB_PK);
+            assert(normalized && !rumor->id);
+            NostrEvent *valid = nostr_nip17_unwrap_seal(normalized, BOB_SK);
+            assert(valid && valid->id && !valid->sig);
+            assert(nostr_event_validate_id(valid, NULL) == NOSTR_EVENT_VALIDATION_OK);
+            nostr_event_free(valid);
+            nostr_event_free(normalized);
+        } else {
+            assert(nostr_nip17_create_seal(rumor, ALICE_SK, BOB_PK) == NULL);
+        }
+        /* A real authenticated seal cannot bless missing/zero/stale IDs or a
+         * signed inner event. Construct the bad plaintext below the honest API. */
+        char *json = nostr_event_serialize_compact(rumor);
+        assert(json);
+        uint8_t sender[32], recipient[32];
+        assert(nostr_hex2bin(sender, ALICE_SK, sizeof(sender)));
+        assert(nostr_hex2bin(recipient, BOB_PK, sizeof(recipient)));
+        char *encrypted = NULL;
+        assert(nostr_nip44_encrypt_v2(sender, recipient, (const uint8_t *)json,
+                                     strlen(json), &encrypted) == 0 && encrypted);
+        memset(sender, 0, sizeof(sender));
+        nostr_event_set_content(seal, encrypted);
+        assert(nostr_event_sign(seal, ALICE_SK) == 0);
+        assert(nostr_nip17_unwrap_seal(seal, BOB_SK) == NULL);
+        free(json);
+        free(encrypted);
+        nostr_event_free(rumor);
+        nostr_event_free(seal);
+    }
+    printf("  OK: malformed rumor identities and signed rumors refused\n");
 }
 
 static void test_create_seal(void) {
@@ -478,6 +553,8 @@ int main(void) {
 
     /* Gift wrap tests */
     test_create_rumor();
+    test_rumor_canonical_vector();
+    test_rumor_identity_refusals();
     test_create_seal();
     test_create_gift_wrap();
     test_wrap_dm_convenience();

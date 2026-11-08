@@ -28,7 +28,8 @@ extern "C" {
  * @created_at: timestamp (use 0 for current time)
  *
  * Creates an unsigned kind 14 rumor event containing the DM content.
- * The rumor is NOT signed - it will be wrapped in a seal.
+ * The rumor has no signature. Callers may add tags before computing its id;
+ * create_seal() supplies the canonical wire id without mutating the template.
  *
  * Returns: (transfer full) (nullable): new rumor event, or NULL on error
  */
@@ -39,7 +40,7 @@ NOSTR_NIP17_API NostrEvent *nostr_nip17_create_rumor(const char *sender_pubkey_h
 
 /**
  * nostr_nip17_create_seal:
- * @rumor: (transfer none): unsigned rumor event
+ * @rumor: (transfer none): unsigned rumor event; a supplied id must match
  * @sender_sk_hex: sender's private key (64 hex chars)
  * @recipient_pubkey_hex: recipient's public key (64 hex chars)
  *

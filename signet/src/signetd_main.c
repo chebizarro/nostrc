@@ -101,7 +101,7 @@ static int signetd_subscribe_mgmt_kinds(SignetRelayPool *relays,
 #include <glib-unix.h>
 #include <json-glib/json-glib.h>
 
-#define SIGNET_VERSION "0.8.0"
+#define SIGNET_VERSION "0.9.0"
 #define SIGNET_NIP46_KIND_CIPHERTEXT 24133
 
 static volatile sig_atomic_t g_shutdown_requested = 0;
@@ -907,12 +907,18 @@ int main(int argc, char **argv) {
   SignetMgmtHandlerConfig mgmt_cfg = {
     .provisioner_pubkeys = (const char *const *)cfg.provisioner_pubkeys,
     .n_provisioner_pubkeys = cfg.n_provisioner_pubkeys,
+    .backend_authority_id = cfg.backend_authority_id,
+    .backend_operator_pubkey = cfg.backend_operator_pubkey,
     .bunker_secret_key_hex = cfg.remote_signer_secret_key_hex,
     .bunker_pubkey_hex = cfg.remote_signer_pubkey_hex,
     .relay_urls = (const char *const *)cfg.relays,
     .n_relay_urls = cfg.n_relays,
   };
   SignetMgmtHandler *mgmt = signet_mgmt_handler_new(keys, relays, audit, store, &mgmt_cfg);
+  if (!mgmt) {
+    g_critical("[signetd] management/admission authority initialization failed");
+    return 1;
+  }
   dctx.mgmt = mgmt;
 
   /* Runtime grants/revocations must be mirrored back into the config file.

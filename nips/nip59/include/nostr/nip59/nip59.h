@@ -76,7 +76,10 @@ NOSTR_NIP59_API int nostr_nip59_randomize_timestamp(int64_t base_time, uint32_t 
  *
  * Wraps any event in a kind-1059 gift wrap for private transmission.
  * The wrapped event is NIP-44 encrypted to the recipient using an ephemeral key.
- * The timestamp is randomized for metadata protection.
+ * The timestamp is randomized for metadata protection. A missing unsigned
+ * template id is computed for the wire without mutating @inner_event. Supplied
+ * ids must match. Signed payloads retain their signature for receiver validation;
+ * incomplete signed payloads are not converted into unsigned rumors.
  *
  * Steps:
  * 1. Serialize inner_event to JSON
@@ -114,7 +117,8 @@ NOSTR_NIP59_API NostrEvent *nostr_nip59_wrap_with_key(NostrEvent *inner_event,
  * @recipient_sk_hex: recipient's secret key (64 hex chars)
  *
  * Decrypts a gift wrap and extracts the wrapped event.
- * Does NOT validate the inner event's signature (it may be unsigned like rumors).
+ * Requires the inner event's declared canonical id. Signed inner events also
+ * require a valid signature; unsigned rumors must omit the signature field.
  *
  * Steps:
  * 1. Verify gift_wrap is kind 1059

@@ -133,6 +133,8 @@ signet_add_test_executable(test_db_migration)             # plaintext -> SQLCiph
 signet_add_test_executable(test_adopt_existing)
 signet_add_test_executable(test_reissue_connect)
 signet_add_test_executable(test_mgmt_replay)
+signet_add_test_executable(test_backend_admission)
+signet_add_test_executable(backend_admission_fixture backend_admission_fixture.c)
 signet_add_test_executable(test_pubkey_backfill)          # legacy agents.pubkey backfill
 signet_add_test_executable(test_reissue_self_service)
 signet_add_test_executable(test_client_bindings)          # persistent NIP-46 bindings
@@ -289,6 +291,7 @@ add_test(NAME db_migration COMMAND test_db_migration)
 add_test(NAME adopt_existing COMMAND test_adopt_existing)
 add_test(NAME reissue_connect COMMAND test_reissue_connect)
 add_test(NAME mgmt_replay COMMAND test_mgmt_replay)
+add_test(NAME backend_admission COMMAND test_backend_admission)
 add_test(NAME pubkey_backfill COMMAND test_pubkey_backfill)
 add_test(NAME reissue_self_service COMMAND test_reissue_self_service)
 add_test(NAME client_bindings COMMAND test_client_bindings)
@@ -359,6 +362,18 @@ if(COMMAND nostrc_describe_test)
            "${CMAKE_CURRENT_SOURCE_DIR}/test_relay_pool_wire.py")
 endif()
 # End management ingress boundary block.
+
+# A real daemon, ordinary local relay and crypto-only disposable peer. No hooks.
+add_test(NAME backend_admission_daemon COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/test_backend_admission_daemon.py
+  $<TARGET_FILE:signetd> $<TARGET_FILE:backend_admission_fixture>)
+set_tests_properties(backend_admission_daemon PROPERTIES TIMEOUT 45)
+if(COMMAND nostrc_describe_test)
+  nostrc_describe_test(backend_admission_daemon OWNER signet TARGETS signetd backend_admission_fixture
+    INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/test_backend_admission_daemon.py"
+           "${CMAKE_CURRENT_SOURCE_DIR}/backend_admission_fixture.c"
+           "${CMAKE_CURRENT_SOURCE_DIR}/test_relay_pool_wire.py")
+endif()
 
 # Private HOME/XDG_* and NOSTRC_TEST_ISOLATION for every test above
 # (nostrc-wqn0u). Must stay last, after every add_test() in this directory.

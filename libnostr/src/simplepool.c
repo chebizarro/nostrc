@@ -10,6 +10,7 @@
  * relay-private.h is a libnostr/src-local header, same as this file. */
 #include "relay-private.h"
 #include "nostr-subscription.h"
+#include "subscription-private.h"
 #include "channel.h"
 #include "context.h"
 #include "select.h"
@@ -447,24 +448,39 @@ static unsigned pool_recovery_window(NostrSimplePool *pool) {
 }
 static _Thread_local NostrSimplePool *middleware_pool;
 static _Thread_local NostrSubscription *middleware_subscription;
+static _Thread_local uint64_t middleware_generation;
+static _Thread_local int64_t middleware_live_since;
 
 const struct NostrSubscription *nostr_simple_pool_get_callback_subscription(NostrSimplePool *pool) {
     return pool && pool == middleware_pool ? middleware_subscription : NULL;
 }
 
+int64_t nostr_simple_pool_get_callback_live_since(NostrSimplePool *pool) {
+    if (!pool || pool != middleware_pool || !middleware_subscription) return 0;
+    return nostr_subscription_ordered_live_since(middleware_subscription,
+        middleware_generation, middleware_live_since);
+}
+
 static void pool_subscription_notify(NostrSimplePool *pool, NostrRelay *relay,
                                      NostrSubscription *sub,
-                                     const char *state, const char *reason) {
+                                     const char *state, const char *reason,
+                                     const NostrOrderedDelivery *delivery) {
     NostrSimplePool *previous_pool = middleware_pool;
     NostrSubscription *previous_sub = middleware_subscription;
+    uint64_t previous_generation = middleware_generation;
+    int64_t previous_since = middleware_live_since;
     middleware_pool = pool;
     middleware_subscription = sub;
+    middleware_generation = delivery->generation;
+    middleware_live_since = delivery->live_since;
     pthread_mutex_lock(&observer_mutex);
     for (PoolObserver *o = observers; o; o = o->next)
         if (o->pool == pool) { o->callback(relay, state, reason, o->data); break; }
     pthread_mutex_unlock(&observer_mutex);
     middleware_pool = previous_pool;
     middleware_subscription = previous_sub;
+    middleware_generation = previous_generation;
+    middleware_live_since = previous_since;
 }
 
 void nostr_simple_pool_set_event_middleware(NostrSimplePool *pool,
@@ -1067,10 +1083,13 @@ static int pool_seen(NostrSimplePool *pool, const char *id) {
 typedef struct {
     NostrIncomingEvent incoming;
     NostrSubscription *subscription; /* borrowed until this batch is delivered */
+    uint64_t generation;
+    int64_t live_since;
 } PoolIncomingEvent;
 
 static int batch_add(PoolIncomingEvent **batch, size_t *len, size_t *cap,
-                     NostrEvent *ev, NostrRelay *relay, NostrSubscription *sub) {
+                     NostrEvent *ev, NostrRelay *relay, NostrSubscription *sub,
+                     const NostrOrderedDelivery *delivery) {
     if (*len == *cap) {
         size_t new_cap = *cap ? *cap * 2 : 64;
         PoolIncomingEvent *nb = realloc(*batch, new_cap * sizeof(PoolIncomingEvent));
@@ -1079,7 +1098,8 @@ static int batch_add(PoolIncomingEvent **batch, size_t *len, size_t *cap,
         *cap = new_cap;
     }
     (*batch)[(*len)++] = (PoolIncomingEvent){
-        .incoming = {.event = ev, .relay = relay}, .subscription = sub };
+        .incoming = {.event = ev, .relay = relay}, .subscription = sub,
+        .generation = delivery->generation, .live_since = delivery->live_since };
     return 1;
 }
 
@@ -1110,8 +1130,12 @@ static void pool_deliver_batch(NostrSimplePool *pool, PoolIncomingEvent *batch,
         for (size_t i = 0; i < *len; i++) {
             NostrSimplePool *previous_pool = middleware_pool;
             NostrSubscription *previous_sub = middleware_subscription;
+            uint64_t previous_generation = middleware_generation;
+            int64_t previous_since = middleware_live_since;
             middleware_pool = pool;
             middleware_subscription = batch[i].subscription;
+            middleware_generation = batch[i].generation;
+            middleware_live_since = batch[i].live_since;
             if (pool->event_middleware_ex)
                 pool->event_middleware_ex(&batch[i].incoming, pool->event_middleware_data);
             else if (pool->event_middleware)
@@ -1120,51 +1144,24 @@ static void pool_deliver_batch(NostrSimplePool *pool, PoolIncomingEvent *batch,
                 nostr_event_free(batch[i].incoming.event);
             middleware_pool = previous_pool;
             middleware_subscription = previous_sub;
+            middleware_generation = previous_generation;
+            middleware_live_since = previous_since;
         }
     }
     *len = 0;
 }
 
 static void pool_collect_event(NostrSimplePool *pool, NostrSubscription *sub,
-                                NostrEvent *ev, PoolIncomingEvent **batch,
-                                size_t *len, size_t *cap) {
+                                const NostrOrderedDelivery *delivery,
+                                PoolIncomingEvent **batch, size_t *len, size_t *cap) {
+    NostrEvent *ev = delivery->event;
     char *eid = nostr_event_get_id(ev);
     int seen = pool_seen(pool, eid);
     free(eid);
     if (!seen && (pool->event_middleware_ex || pool->event_middleware || pool->batch_middleware)
-        && batch_add(batch, len, cap, ev, nostr_subscription_get_relay(sub), sub))
+        && batch_add(batch, len, cap, ev, nostr_subscription_get_relay(sub), sub, delivery))
         return;
     nostr_event_free(ev);
-}
-
-static void pool_drain_events(NostrSimplePool *pool, NostrSubscription *sub,
-                               size_t budget, PoolIncomingEvent **batch,
-                               size_t *len, size_t *cap) {
-    GoChannel *ch = nostr_subscription_get_events_channel(sub);
-    void *msg = NULL;
-    /* Check the budget BEFORE receiving: every received event is owned here. */
-    while (ch && budget > 0 && go_channel_try_receive(ch, &msg) == 0) {
-        budget--;
-        if (msg) pool_collect_event(pool, sub, msg, batch, len, cap);
-        msg = NULL;
-    }
-}
-
-/* Drain the finite FIFO backlog after observing a protocol boundary. All
- * preceding wire EVENTs have already been enqueued by the reader. Snapshot
- * depth under the channel lock (the ring-mode size is lock-protected), so live
- * traffic arriving after EOSE cannot indefinitely postpone the notification.
- * In MPMC mode the atomic depth can include a reserved live slot; an empty
- * receive can only truncate that later tail, not the published stored prefix. */
-static void pool_drain_boundary_events(NostrSimplePool *pool, NostrSubscription *sub,
-                                       PoolIncomingEvent **batch, size_t *len,
-                                       size_t *cap) {
-    GoChannel *ch = nostr_subscription_get_events_channel(sub);
-    if (!ch) return;
-    nsync_mu_lock(&ch->mutex);
-    size_t queued = go_channel_get_depth(ch);
-    nsync_mu_unlock(&ch->mutex);
-    pool_drain_events(pool, sub, queued, batch, len, cap);
 }
 
 /* Helper: remove subscription at index j from pool->subs (caller holds pool_mutex). */
@@ -1175,59 +1172,39 @@ static void pool_remove_sub_locked(NostrSimplePool *pool, size_t j) {
     if (pool->subs_count == 0) { free(pool->subs); pool->subs = NULL; }
 }
 
-/* Helper: greedy-drain events from all subscriptions (non-blocking).
- * Also handles CLOSED and EOSE signals. */
+/* Every receive consults producer-position fences under the producer mutex.
+ * This is also required in an already-running bounded drain: a later EOSE may
+ * precede the next EVENT even though it was absent at the start of this pass. */
 static void pool_drain_all(NostrSimplePool *pool,
-                           NostrSubscription **subs, size_t count,
+                           NostrSubscription **subs, size_t count, size_t budget,
                            PoolIncomingEvent **batch, size_t *batch_len,
                            size_t *batch_cap) {
-    const int spin_limit = 256;
-
     for (size_t i = 0; i < count; i++) {
         NostrSubscription *sub = subs[i];
         if (!sub) continue;
-
-        /* Sample boundaries BEFORE events. The relay reader queues preceding
-         * EVENTs first, so an observed boundary requires a full drain. A boundary
-         * arriving after this sample waits for the next pass; never prune based
-         * on a boundary sampled after a bounded/empty EVENT drain. */
-        GoChannel *ch_closed = nostr_subscription_get_closed_channel(sub);
-        GoChannel *ch_eose = nostr_subscription_get_eose_channel(sub);
-        void *closed_msg = NULL;
-        bool closed = ch_closed && go_channel_try_receive(ch_closed, &closed_msg) == 0;
-        bool eose = !closed && ch_eose && go_channel_try_receive(ch_eose, NULL) == 0;
-        if (closed || eose)
-            pool_drain_boundary_events(pool, sub, batch, batch_len, batch_cap);
-        else
-            pool_drain_events(pool, sub, (size_t)spin_limit, batch, batch_len, batch_cap);
-        if (closed || eose) pool_deliver_batch(pool, *batch, batch_len);
-
-        /* --- CLOSED signal: prune subscription --- */
-        if (closed) {
-            pool_subscription_notify(pool, nostr_subscription_get_relay(sub), sub, "CLOSED", closed_msg);
-            free(closed_msg);
-            pthread_mutex_lock(&pool->pool_mutex);
-            for (size_t j = 0; j < pool->subs_count; j++) {
-                if (pool->subs[j] == sub) {
-                    nostr_subscription_close(sub, NULL);
-                    nostr_subscription_free(sub);
-                    pool_remove_sub_locked(pool, j);
-                    subs[i] = NULL; /* mark stale in local snapshot */
-                    break;
-                }
+        size_t remaining = budget;
+        while (remaining) {
+            NostrOrderedDelivery delivery;
+            NostrOrderedKind kind = nostr_subscription_next_ordered(sub, &delivery);
+            if (kind == NOSTR_ORDERED_NONE || kind == NOSTR_ORDERED_STOP) break;
+            if (kind == NOSTR_ORDERED_EVENT) {
+                remaining--;
+                pool_collect_event(pool, sub, &delivery, batch, batch_len, batch_cap);
+                continue;
             }
-            pthread_mutex_unlock(&pool->pool_mutex);
-            continue; /* sub freed, skip EOSE check */
-        }
-
-        /* --- EOSE signal: optionally auto-unsubscribe --- */
-        if (eose) {
-            pool_subscription_notify(pool, nostr_subscription_get_relay(sub), sub, "EOSE", NULL);
-            if (pool->auto_unsub_on_eose) {
+            pool_deliver_batch(pool, *batch, batch_len);
+            if (kind == NOSTR_ORDERED_EOSE)
+                pool_subscription_notify(pool, nostr_subscription_get_relay(sub), sub,
+                                         "EOSE", NULL, &delivery);
+            else
+                pool_subscription_notify(pool, nostr_subscription_get_relay(sub), sub,
+                                         "CLOSED", delivery.reason, &delivery);
+            free(delivery.reason);
+            if (kind == NOSTR_ORDERED_CLOSED || pool->auto_unsub_on_eose) {
                 pthread_mutex_lock(&pool->pool_mutex);
                 for (size_t j = 0; j < pool->subs_count; j++) {
                     if (pool->subs[j] == sub) {
-                        nostr_subscription_unsubscribe(sub);
+                        if (kind == NOSTR_ORDERED_EOSE) nostr_subscription_unsubscribe(sub);
                         nostr_subscription_close(sub, NULL);
                         nostr_subscription_free(sub);
                         pool_remove_sub_locked(pool, j);
@@ -1236,8 +1213,13 @@ static void pool_drain_all(NostrSimplePool *pool,
                     }
                 }
                 pthread_mutex_unlock(&pool->pool_mutex);
+                break;
             }
         }
+        /* A bounded drain leaves a known accepted backlog, not a timer poll.
+         * Re-signal once so fairness does not strand data after coalesced wakes. */
+        if (!remaining && subs[i] && pool->wake_ch)
+            (void)go_channel_try_send(pool->wake_ch, NULL);
     }
 }
 
@@ -1260,10 +1242,7 @@ static void pool_drain_stopped(NostrSimplePool *pool) {
     }
     PoolIncomingEvent *batch = NULL;
     size_t len = 0, cap = 0;
-    pool_drain_all(pool, subs, count, &batch, &len, &cap);
-    for (size_t i = 0; i < count; i++) {
-        if (subs[i]) pool_drain_events(pool, subs[i], SIZE_MAX, &batch, &len, &cap);
-    }
+    pool_drain_all(pool, subs, count, SIZE_MAX, &batch, &len, &cap);
     pool_deliver_batch(pool, batch, &len);
     free(batch);
     free(subs);
@@ -1272,7 +1251,7 @@ static void pool_drain_stopped(NostrSimplePool *pool) {
 /* Each subscription outlives the pool's replaceable reconnect template.
  * Own its snapshot until the last subscription reference is released, including
  * references held by an in-flight relay refire. Called with pool_mutex held. */
-static NostrSubscription *pool_prepare_subscription(NostrRelay *relay,
+static NostrSubscription *pool_prepare_subscription(NostrSimplePool *pool, NostrRelay *relay,
                                                    const NostrFilters *filters) {
     if (!filters) return NULL;
     NostrFilters *owned = nostr_filters_new();
@@ -1297,6 +1276,10 @@ static NostrSubscription *pool_prepare_subscription(NostrRelay *relay,
         return NULL;
     }
     nostr_subscription_set_filters(sub, owned);
+    if (!nostr_subscription_enable_ordered(sub, pool->wake_ch)) {
+        nostr_subscription_free(sub);
+        return NULL;
+    }
     return sub;
 }
 
@@ -1326,7 +1309,7 @@ static void pool_reconcile_subs(NostrSimplePool *pool) {
             }
         }
         if (has_sub) continue;
-        NostrSubscription *sub = pool_prepare_subscription(relay, pool->filters_shared);
+        NostrSubscription *sub = pool_prepare_subscription(pool, relay, pool->filters_shared);
         if (!sub) continue;
         nostr_subscription_set_duplicate_delivery(sub, !pool->dedup_unique);
         nostr_subscription_set_recovery_window(sub, pool_recovery_window(pool));
@@ -1358,17 +1341,11 @@ static void pool_reconcile_subs(NostrSimplePool *pool) {
 void *simple_pool_thread_func(void *arg) {
     NostrSimplePool *pool = (NostrSimplePool *)arg;
 
-    /* Timeout-audit: Event-driven worker loop using go_select.
-     *
-     * Instead of polling all subscription channels with try_receive + usleep,
-     * we build a go_select case array covering:
-     *   - The pool's wake_ch (signals new subs added or stop requested)
-     *   - Every subscription's events channel
-     *
-     * go_select blocks until at least one channel has data, then we do a
-     * greedy non-blocking drain of ALL channels before blocking again.
-     * A 200ms timeout ensures we rescan for new/removed subscriptions
-     * even if nothing signals the wake channel (safety net). */
+    /* EVENT/EOSE/CLOSED producers and pool lifecycle changes share a retained,
+     * coalesced wake channel. Payloads stay in their public channels; the
+     * ordered receiver checks producer fences before every EVENT receive.
+     * The existing 200ms deadline is only for reconnect reconciliation, not
+     * an EOSE substitute or a history/live admission boundary. */
 
     while (atomic_load_explicit(&pool->running, memory_order_acquire)) {
         /* 1. Snapshot subscriptions under lock */
@@ -1382,53 +1359,12 @@ void *simple_pool_thread_func(void *arg) {
         }
         pthread_mutex_unlock(&pool->pool_mutex);
 
-        /* 2. Build select case array: wake_ch + one events channel per sub.
-         * Max cases = 1 (wake) + local_count (events channels). */
-        size_t max_cases = 1 + (local_subs ? local_count : 0);
-        GoSelectCase *cases = calloc(max_cases, sizeof(GoSelectCase));
-        size_t n_cases = 0;
-
-        /* Case 0: wake channel — always present */
-        void *wake_val = NULL;
+        /* Producers signal this retained wake channel after publishing an EVENT
+         * or protocol fence. Never let select consume a raw EVENT ahead of EOSE. */
         if (pool->wake_ch) {
-            cases[n_cases].op = GO_SELECT_RECEIVE;
-            cases[n_cases].chan = pool->wake_ch;
-            cases[n_cases].recv_buf = &wake_val;
-            n_cases++;
+            GoSelectCase wake_case = { .op = GO_SELECT_RECEIVE, .chan = pool->wake_ch };
+            go_select_timeout(&wake_case, 1, 200);
         }
-
-        /* Remaining cases: one events channel per subscription */
-        void **recv_bufs = NULL;
-        if (local_subs && local_count > 0) {
-            recv_bufs = calloc(local_count, sizeof(void *));
-            for (size_t i = 0; i < local_count; i++) {
-                if (!local_subs[i]) continue;
-                GoChannel *ch = nostr_subscription_get_events_channel(local_subs[i]);
-                if (!ch) continue;
-                cases[n_cases].op = GO_SELECT_RECEIVE;
-                cases[n_cases].chan = ch;
-                cases[n_cases].recv_buf = &recv_bufs[i];
-                n_cases++;
-            }
-        }
-
-        /* 3. Block until any channel has data (200ms timeout as safety net).
-         * n_cases is always >= 1 because wake_ch is always present. */
-        if (n_cases > 0) {
-            go_select_timeout(cases, n_cases, 200);
-        } else {
-            /* Defensive: wake_ch should always be present, making n_cases >= 1.
-             * If we somehow get here, wait on wake_ch directly instead of usleep. */
-            if (pool->wake_ch) {
-                GoSelectCase wake_case = { .op = GO_SELECT_RECEIVE, .chan = pool->wake_ch };
-                go_select_timeout(&wake_case, 1, 200);
-            }
-            /* If wake_ch is NULL (shouldn't happen), the loop will spin but
-             * pool->running check below will eventually exit. */
-        }
-
-        /* Even on stop, select may already have received an EVENT. Process it
-         * before exiting; freeing recv_bufs here would discard that event. */
 
         /* 5. Drain wake channel (consume any pending wake signals) */
         if (pool->wake_ch) {
@@ -1441,23 +1377,12 @@ void *simple_pool_thread_func(void *arg) {
         if (atomic_load_explicit(&pool->running, memory_order_acquire))
             pool_reconcile_subs(pool);
 
-        /* 6. Greedy drain ALL subscription channels (events + closed + eose) */
+        /* Bounded ordered drain of every snapshotted subscription. */
         PoolIncomingEvent *batch = NULL;
         size_t batch_len = 0, batch_cap = 0;
 
         if (local_subs && local_count > 0) {
-            /* If select returned a specific event, process it first */
-            if (recv_bufs) {
-                for (size_t i = 0; i < local_count; i++) {
-                    if (!recv_bufs[i] || !local_subs[i]) continue;
-                    pool_collect_event(pool, local_subs[i], recv_bufs[i],
-                                       &batch, &batch_len, &batch_cap);
-                    recv_bufs[i] = NULL;
-                }
-            }
-
-            /* Now greedy-drain everything else */
-            pool_drain_all(pool, local_subs, local_count,
+            pool_drain_all(pool, local_subs, local_count, 256,
                            &batch, &batch_len, &batch_cap);
         }
 
@@ -1465,8 +1390,6 @@ void *simple_pool_thread_func(void *arg) {
         pool_deliver_batch(pool, batch, &batch_len);
 
         free(batch);
-        free(cases);
-        free(recv_bufs);
         free(local_subs);
     }
 
@@ -1619,7 +1542,7 @@ static void pool_subscribe_impl(NostrSimplePool *pool, const char **urls,
     for (size_t i = 0; i < pool->relay_count; i++) {
         NostrRelay *relay = pool->relays[i];
         if (!relay) continue;
-        NostrSubscription *sub = pool_prepare_subscription(relay, pool->filters_shared);
+        NostrSubscription *sub = pool_prepare_subscription(pool, relay, pool->filters_shared);
         if (!sub) continue;
         nostr_subscription_set_duplicate_delivery(sub, !pool->dedup_unique);
         nostr_subscription_set_recovery_window(sub, pool_recovery_window(pool));
@@ -1704,44 +1627,46 @@ void nostr_simple_pool_query_single(NostrSimplePool *pool, const char **urls, si
         NostrSubscription *sub = nostr_relay_prepare_subscription(relay, NULL, fs);
         if (!sub) { nostr_filters_free(fs); continue; }
         nostr_subscription_set_filters(sub, fs);
+        GoChannel *notify = go_channel_create(1);
+        if (!notify || !nostr_subscription_enable_ordered(sub, notify)) {
+            if (notify) go_channel_unref(notify);
+            nostr_subscription_free(sub);
+            continue;
+        }
         Error *err = NULL;
         if (!nostr_subscription_fire(sub, &err)) {
             if (err) free_error(err);
             nostr_subscription_close(sub, NULL);
             nostr_subscription_free(sub);
+            go_channel_close(notify);
+            go_channel_unref(notify);
             continue;
         }
 
-        // nostrc-9o1: Wait for first event or EOSE/CLOSED using proper signals, not timeouts
-        GoChannel *ch_ev = nostr_subscription_get_events_channel(sub);
-        GoChannel *ch_eose = nostr_subscription_get_eose_channel(sub);
-        GoChannel *ch_closed = nostr_subscription_get_closed_channel(sub);
-
-        void *selected_event = NULL, *closed_reason = NULL;
-        GoSelectCase cases[] = {
-            { .op = GO_SELECT_RECEIVE, .chan = ch_ev, .recv_buf = &selected_event },
-            { .op = GO_SELECT_RECEIVE, .chan = ch_eose },
-            { .op = GO_SELECT_RECEIVE, .chan = ch_closed, .recv_buf = &closed_reason },
-        };
-        int result = go_select(cases, 3);
+        /* Same ordered primitive as the persistent worker. Waiting consumes a
+         * coalesced wake only, never an EVENT ahead of its producer EOSE fence. */
+        NostrOrderedDelivery delivery;
+        NostrOrderedKind kind;
+        while ((kind = nostr_subscription_next_ordered(sub, &delivery)) == NOSTR_ORDERED_NONE) {
+            GoSelectCase ready = { .op = GO_SELECT_RECEIVE, .chan = notify };
+            go_select(&ready, 1);
+        }
         PoolIncomingEvent *batch = NULL;
         size_t len = 0, cap = 0;
-        /* select already received this event; a second receive loses it. */
-        if (selected_event)
-            pool_collect_event(pool, sub, selected_event, &batch, &len, &cap);
-        if (result == 1 || result == 2) {
-            /* A selected boundary does not imply an empty EVENT channel. */
-            pool_drain_boundary_events(pool, sub, &batch, &len, &cap);
-        }
+        if (kind == NOSTR_ORDERED_EVENT)
+            pool_collect_event(pool, sub, &delivery, &batch, &len, &cap);
         pool_deliver_batch(pool, batch, &len);
         free(batch);
-        if (result == 1 || result == 2)
-            pool_subscription_notify(pool, relay, sub, result == 1 ? "EOSE" : "CLOSED", closed_reason);
-        free(closed_reason);
+        if (kind == NOSTR_ORDERED_EOSE || kind == NOSTR_ORDERED_CLOSED)
+            pool_subscription_notify(pool, relay, sub,
+                kind == NOSTR_ORDERED_EOSE ? "EOSE" : "CLOSED", delivery.reason, &delivery);
+        free(delivery.reason);
 
         // Close/free ephemeral subscription
         nostr_subscription_close(sub, NULL);
         nostr_subscription_free(sub);
+        go_channel_close(notify);
+        go_channel_unref(notify);
         // fs freed by sub free via nostr_subscription_set_filters ownership
     }
 }

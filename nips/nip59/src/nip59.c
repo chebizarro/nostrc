@@ -140,8 +140,19 @@ NostrEvent *nostr_nip59_wrap_with_key(NostrEvent *inner_event,
     char *eph_sk_hex = NULL;
     char *eph_pk_hex = NULL;
 
-    /* Serialize inner event to JSON */
-    inner_json = nostr_event_serialize_compact(inner_event);
+    /* A template may omit its id in memory, never on the wire. A supplied id
+     * must match; signed payloads retain their signature for receiver validation.
+     * Do not turn an incomplete signed payload into an unsigned rumor. The
+     * shallow view borrows all fields and leaves caller ownership intact. */
+    if (inner_event->sig && (!inner_event->id || !*inner_event->sig)) goto out;
+    char canonical_id[65];
+    NostrEventValidationStatus identity = inner_event->id
+        ? nostr_event_validate_id(inner_event, canonical_id)
+        : nostr_event_compute_id(inner_event, canonical_id);
+    if (identity != NOSTR_EVENT_VALIDATION_OK) goto out;
+    NostrEvent wire_event = *inner_event;
+    wire_event.id = canonical_id;
+    inner_json = nostr_event_serialize_compact(&wire_event);
     if (!inner_json) goto out;
 
     /* Encrypt with NIP-44 */
@@ -298,10 +309,9 @@ NostrEvent *nostr_nip59_unwrap_with_key(NostrEvent *gift_wrap,
 
     if (signed_inner) {
         status = nostr_event_validate(inner_event, canonical_id);
-    } else if (inner_event->id) {
-        status = nostr_event_validate_id(inner_event, canonical_id);
     } else {
-        status = nostr_event_compute_id(inner_event, canonical_id);
+        /* Unsigned wire events still require a declared canonical id. */
+        status = nostr_event_validate_id(inner_event, canonical_id);
     }
     if (status != NOSTR_EVENT_VALIDATION_OK)
         goto out;

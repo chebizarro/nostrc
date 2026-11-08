@@ -138,6 +138,8 @@ void nostr_subscription_report_peak_usage(uint32_t peak_depth, uint32_t capacity
     }
 }
 
+static void ordered_wake_locked(NostrSubscription *sub);
+
 /* Get current time in microseconds */
 static inline int64_t get_time_us(void) {
     struct timeval tv;
@@ -341,6 +343,7 @@ static void subscription_destroy(NostrSubscription *sub) {
     free(sub->priv->id);
     free(sub->priv->seen_cursor_events);
     free(sub->priv->replay_boundary_events);
+    if (sub->priv->ordered_notify) go_channel_unref(sub->priv->ordered_notify);
     go_wait_group_destroy(&sub->priv->wg);
     free(sub->priv);
 
@@ -423,6 +426,8 @@ void *nostr_subscription_start(void *arg) {
     if (!atomic_exchange(&sub->priv->events_channel_closed, true)) {
         go_channel_close(sub->events);
     }
+    if (sub->priv->ordered_notify)
+        (void)go_channel_try_send(sub->priv->ordered_notify, NULL);
 
     // Unlock the mutex after the events channel is closed
     nsync_mu_unlock(&sub->priv->sub_mutex);
@@ -463,7 +468,7 @@ void nostr_subscription_dispatch_event(NostrSubscription *sub, NostrEvent *event
      * The relay may replay the cursor second after a reconnect, including an
      * ID already delivered before the disconnect. */
     nsync_mu_lock(&sub->priv->sub_mutex);
-    if (atomic_load(&sub->priv->live)) {
+    if (atomic_load(&sub->priv->live) && !atomic_load(&sub->priv->closed)) {
         /* nostrc-hmp: Capture fields BEFORE the send. On successful
          * try_send, ownership transfers to the consumer, which may pop
          * and free the event on another thread immediately — touching
@@ -510,6 +515,10 @@ void nostr_subscription_dispatch_event(NostrSubscription *sub, NostrEvent *event
             int64_t now_us = get_time_us();
             atomic_fetch_add(&m->events_enqueued, 1);
             atomic_store(&m->last_enqueue_time_us, now_us);
+            if (sub->priv->ordered_notify) {
+                sub->priv->ordered_enqueued++;
+                ordered_wake_locked(sub);
+            }
 
             if (track) {
                 if (ev_created_at > cursor) {
@@ -591,9 +600,91 @@ int64_t nostr_subscription_prepare_refire(NostrSubscription *sub) {
     sub->priv->replay_boundary_events = NULL;
     sub->priv->replay_boundary_created_at = cursor;
     atomic_store(&sub->priv->eosed, false);
+    if (sub->priv->ordered_notify) {
+        sub->priv->ordered_generation++;
+        sub->priv->ordered_generation_start = sub->priv->ordered_enqueued;
+        sub->priv->ordered_eose_pending = false;
+        sub->priv->ordered_eose_time = 0;
+        ordered_wake_locked(sub);
+    }
     sub->priv->match = nostr_filters_match;
     nsync_mu_unlock(&sub->priv->sub_mutex);
     return cursor;
+}
+
+/* Wake only; the accepted-event counter and producer fences carry ordering.
+ * A full wake channel is already ready. No event/control payload is discarded. */
+static void ordered_wake_locked(NostrSubscription *sub) {
+    if (sub->priv->ordered_notify)
+        (void)go_channel_try_send(sub->priv->ordered_notify, NULL);
+}
+
+bool nostr_subscription_enable_ordered(NostrSubscription *sub, GoChannel *notify) {
+    if (!sub || !sub->priv || !notify) return false;
+    nsync_mu_lock(&sub->priv->sub_mutex);
+    bool valid = !sub->priv->ordered_notify && !atomic_load(&sub->priv->live) &&
+                 atomic_load(&sub->priv->metrics.events_enqueued) == 0;
+    if (valid) {
+        go_channel_ref(notify);
+        sub->priv->ordered_notify = notify;
+        sub->priv->ordered_generation = 1;
+    }
+    nsync_mu_unlock(&sub->priv->sub_mutex);
+    return valid;
+}
+
+NostrOrderedKind nostr_subscription_next_ordered(NostrSubscription *sub,
+                                                 NostrOrderedDelivery *out) {
+    if (!sub || !sub->priv || !out) return NOSTR_ORDERED_NONE;
+    memset(out, 0, sizeof(*out));
+    SubscriptionPrivate *p = sub->priv;
+    nsync_mu_lock(&p->sub_mutex);
+    NostrOrderedKind kind = NOSTR_ORDERED_NONE;
+    if (!p->ordered_notify) goto done;
+    out->generation = p->ordered_generation;
+    if (p->ordered_eose_pending && p->ordered_consumed >= p->ordered_eose_position) {
+        p->ordered_eose_pending = false;
+        /* The legacy signal may coalesce reconnect EOSEs; retire its finite
+         * notification backlog, not any EVENTs, under the producer mutex. */
+        while (go_channel_try_receive(sub->end_of_stored_events, NULL) == 0) {}
+        out->live_since = p->ordered_eose_time;
+        kind = NOSTR_ORDERED_EOSE;
+    } else if (p->ordered_closed_pending && p->ordered_consumed >= p->ordered_closed_position) {
+        p->ordered_closed_pending = false;
+        void *reason = NULL;
+        (void)go_channel_try_receive(sub->closed_reason, &reason);
+        out->reason = reason;
+        kind = NOSTR_ORDERED_CLOSED;
+    } else {
+        void *event = NULL;
+        if (go_channel_try_receive(sub->events, &event) == 0 && event) {
+            p->ordered_consumed++;
+            out->event = event;
+            if (p->ordered_consumed <= p->ordered_generation_start)
+                out->generation = 0; /* accepted before this REQ refired */
+            else if (p->ordered_eose_time > 0 &&
+                     p->ordered_consumed > p->ordered_eose_position)
+                out->live_since = p->ordered_eose_time;
+            kind = NOSTR_ORDERED_EVENT;
+        } else if (atomic_load(&p->events_channel_closed)) {
+            kind = NOSTR_ORDERED_STOP;
+        }
+    }
+done:
+    nsync_mu_unlock(&p->sub_mutex);
+    return kind;
+}
+
+int64_t nostr_subscription_ordered_live_since(NostrSubscription *sub,
+                                              uint64_t generation, int64_t since) {
+    if (!sub || !sub->priv || !generation || since <= 0) return 0;
+    SubscriptionPrivate *p = sub->priv;
+    nsync_mu_lock(&p->sub_mutex);
+    bool current = generation == p->ordered_generation &&
+        since == p->ordered_eose_time && atomic_load(&p->eosed) &&
+        atomic_load(&p->live) && !atomic_load(&p->closed);
+    nsync_mu_unlock(&p->sub_mutex);
+    return current ? since : 0;
 }
 
 void nostr_subscription_dispatch_eose(NostrSubscription *sub) {
@@ -607,8 +698,14 @@ void nostr_subscription_dispatch_eose(NostrSubscription *sub) {
                 sub->priv ? sub->priv->counter : -1);
     }
 
-    // Change the match behavior and signal the end of stored events
-    if (atomic_exchange(&sub->priv->eosed, true) == false) {
+    // Change the match behavior and signal the end of stored events.
+    nsync_mu_lock(&sub->priv->sub_mutex);
+    if (!atomic_load(&sub->priv->closed) && atomic_exchange(&sub->priv->eosed, true) == false) {
+        if (sub->priv->ordered_notify) {
+            sub->priv->ordered_eose_position = sub->priv->ordered_enqueued;
+            sub->priv->ordered_eose_time = (int64_t)time(NULL);
+            sub->priv->ordered_eose_pending = true;
+        }
         sub->priv->match = nostr_filters_match_ignoring_timestamp;
 
         // nostrc-dkx: Log event count before EOSE for debugging relay response sizes
@@ -633,6 +730,7 @@ void nostr_subscription_dispatch_eose(NostrSubscription *sub) {
                         sub->priv->id ? sub->priv->id : "null");
             }
         }
+        ordered_wake_locked(sub);
         if (getenv("NOSTR_DEBUG_SHUTDOWN")) {
             fprintf(stderr, "[sub %s] dispatch_eose: signaled EOSE\n", sub->priv->id);
         }
@@ -641,14 +739,21 @@ void nostr_subscription_dispatch_eose(NostrSubscription *sub) {
             fprintf(stderr, "[EOSE_DUP] sid=%s already eosed, ignoring\n", sub->priv->id ? sub->priv->id : "null");
         }
     }
+    nsync_mu_unlock(&sub->priv->sub_mutex);
 }
 
 void nostr_subscription_dispatch_closed(NostrSubscription *sub, const char *reason) {
     if (!sub || !reason)
         return;
 
-    // Set the closed flag and dispatch the reason
+    // Serialize this producer fence with EVENT/EOSE/refire publication.
+    nsync_mu_lock(&sub->priv->sub_mutex);
     if (atomic_exchange(&sub->priv->closed, true) == false) {
+        if (sub->priv->ordered_notify) {
+            sub->priv->ordered_closed_position = sub->priv->ordered_enqueued;
+            sub->priv->ordered_closed_pending = true;
+            ordered_wake_locked(sub);
+        }
         // Make a copy of the reason string to avoid use-after-free
         char *reason_copy = strdup(reason);
         if (!reason_copy) {
@@ -656,6 +761,7 @@ void nostr_subscription_dispatch_closed(NostrSubscription *sub, const char *reas
             if (getenv("NOSTR_DEBUG_SHUTDOWN")) {
                 fprintf(stderr, "[sub %s] dispatch_closed: OOM copying reason\n", sub->priv->id);
             }
+            nsync_mu_unlock(&sub->priv->sub_mutex);
             return;
         }
         
@@ -673,6 +779,7 @@ void nostr_subscription_dispatch_closed(NostrSubscription *sub, const char *reas
             fprintf(stderr, "[sub %s] dispatch_closed: reason='%s'\n", sub->priv->id, reason ? reason : "");
         }
     }
+    nsync_mu_unlock(&sub->priv->sub_mutex);
 }
 
 void nostr_subscription_unsubscribe(NostrSubscription *sub) {

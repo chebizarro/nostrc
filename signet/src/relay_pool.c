@@ -48,6 +48,7 @@ struct SignetRelayPool {
   GHashTable *sources;      /* source ID -> GSource, owns references */
   uint64_t watch_serial;
   SignetReplyAckStats reply_acks;
+  unsigned live_diag_budget; /* mutex-held, fixed nonsecret codes only */
   SignetSubscriptionCallback on_subscription;
   void *subscription_data;
 
@@ -112,6 +113,12 @@ typedef struct {
 /* Forward declarations — defined after public API section */
 static NostrFilters *signet_relay_pool_build_filters_locked(SignetRelayPool *rp);
 static int64_t relay_live_since(SignetRelayPool *rp, NostrRelay *relay);
+/* Caller holds rp->mu; only fixed internal codes, never relay/request data. */
+static void live_wire_diag_locked(SignetRelayPool *rp,const char *code) {
+  if(!rp->live_diag_budget)return;
+  rp->live_diag_budget--;
+  g_message("[signetd] management-live: %s",code);
+}
 
 /* ----------------------- event middleware bridge -------------------------- */
 
@@ -680,6 +687,13 @@ static void subscription_changed(NostrRelay *relay, const char *state,
   g_mutex_lock(&rp->mu);
   RelayState *s = g_hash_table_lookup(rp->relay_states, relay);
   const NostrSubscription *source = nostr_simple_pool_get_callback_subscription(rp->pool);
+  if(!strcmp(state,"EOSE")) {
+    if(!s)live_wire_diag_locked(rp,"eose_state_missing");
+    else if(!source)live_wire_diag_locked(rp,"eose_source_missing");
+    else if(!nostr_subscription_is_eosed(source))live_wire_diag_locked(rp,"eose_not_marked");
+    else if(!nostr_relay_is_connected(relay))live_wire_diag_locked(rp,"eose_not_connected");
+    else live_wire_diag_locked(rp,"eose_boundary_ready");
+  }
   if (s && source && !rp->stopping && !rp->disposing) {
     g_mutex_lock(&s->mu);
     gboolean closed = nostr_subscription_is_closed(source);
@@ -695,9 +709,11 @@ static void subscription_changed(NostrRelay *relay, const char *state,
      * this callback; drop its boundary with it. */
     if (closed) {
       g_hash_table_remove(s->boundaries, source);
-    } else if (nostr_subscription_is_eosed(source) && nostr_relay_is_connected(relay)) {
+    } else if (!strcmp(state,"EOSE") && nostr_subscription_is_eosed(source) &&
+               nostr_relay_is_connected(relay) &&
+               nostr_simple_pool_get_callback_live_since(rp->pool)>0) {
       gint64 *at = g_new(gint64, 1);
-      *at = time(NULL);
+      *at = nostr_simple_pool_get_callback_live_since(rp->pool);
       /* The key owns a reference so the address cannot be reused by another
        * REQ while its boundary exists; a replacement releases the extra ref. */
       g_hash_table_insert(s->boundaries,
@@ -740,15 +756,23 @@ static int64_t relay_live_since(SignetRelayPool *rp, NostrRelay *relay) {
   g_mutex_lock(&rp->mu);
   const NostrSubscription *subscription = nostr_simple_pool_get_callback_subscription(rp->pool);
   RelayState *s = g_hash_table_lookup(rp->relay_states, relay);
+  int64_t wire_since=nostr_simple_pool_get_callback_live_since(rp->pool);
+  const char *refusal="source_pool_stopping";
+  if(!s)refusal="source_state_missing";
+  else if(!subscription)refusal="source_subscription_missing";
   if (s && subscription && !rp->stopping && !rp->disposing) {
     g_mutex_lock(&s->mu);
     const gint64 *at = g_hash_table_lookup(s->boundaries, subscription);
-    if (at && !s->auth_pending &&
-        !nostr_subscription_is_closed(subscription) &&
-        nostr_subscription_is_eosed(subscription) &&
-        nostr_relay_is_connected(relay)) since = *at;
+    if(!wire_since)refusal="source_history_or_retired";
+    else if(!at||*at!=wire_since)refusal="source_boundary_missing";
+    else if(s->auth_pending)refusal="source_auth_pending";
+    else if(nostr_subscription_is_closed(subscription))refusal="source_closed";
+    else if(!nostr_subscription_is_eosed(subscription))refusal="source_not_eosed";
+    else if(!nostr_relay_is_connected(relay))refusal="source_disconnected";
+    else since=wire_since;
     g_mutex_unlock(&s->mu);
   }
+  if(!since)live_wire_diag_locked(rp,refusal);
   g_mutex_unlock(&rp->mu);
   return since;
 }
@@ -776,6 +800,7 @@ SignetRelayPool *signet_relay_pool_new(const SignetRelayPoolConfig *cfg) {
   g_mutex_init(&rp->reconfig_mu);
   g_cond_init(&rp->reconfig_cond);
 
+  rp->live_diag_budget = 32;
   rp->on_event = cfg->on_event;
   rp->user_data = cfg->user_data;
 

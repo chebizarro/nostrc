@@ -141,6 +141,11 @@ typedef enum {
  * Since: 1.0
  */
 typedef struct {
+  /* --- [backend_admission] --- Public immutable independent-authority pins.
+   * Empty disables admission. Both are required when either is supplied. */
+  char backend_authority_id[SIGNET_MAX_STR];
+  char backend_operator_pubkey[SIGNET_MAX_STR];
+
   /* --- [server] --- */
   SignetLogLevel log_level;
   int health_port;                /* 0 = disabled */

@@ -45,6 +45,13 @@
 # it shadows the file, defeats write-back and is older than every revocation.
 # See deploy/README.md for preflight and observable write-back failures.
 
+# Independent backend authority: both public pins required. Disabled by default.
+# Storage must NOT be cloned with gateway disks. Pins are immutable/restart-only.
+# [backend_admission]
+# authority_id = 11111111-1111-1111-1111-111111111111
+# operator_pubkey = <64 lowercase hex public key>
+# Env: SIGNET_BACKEND_AUTHORITY_ID and SIGNET_BACKEND_OPERATOR_PUBKEY.
+
 [server]
 log_level = info
 health_port = 8080

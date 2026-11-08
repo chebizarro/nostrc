@@ -55,6 +55,10 @@ static size_t reload_warn_restart_only(const SignetConfig *live,
                                        const SignetConfig *cand) {
   size_t n = 0;
 
+  /* Independent authority identity cannot move during a live session. */
+  n += reload_warn_str("[backend_admission] authority_id", live->backend_authority_id, cand->backend_authority_id);
+  n += reload_warn_str("[backend_admission] operator_pubkey", live->backend_operator_pubkey, cand->backend_operator_pubkey);
+
   /* Durable storage bindings. */
   n += reload_warn_str("[store] db_path", live->db_path, cand->db_path);
   n += reload_warn_str("[audit] path", live->audit_path, cand->audit_path);

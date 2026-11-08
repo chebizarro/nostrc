@@ -213,6 +213,22 @@ test_reissue_connect = executable('test_reissue_connect',
   install: false,
 )
 
+backend_admission_fixture = executable('backend_admission_fixture',
+  'backend_admission_fixture.c',
+  link_with: signet_core,
+  include_directories: signet_includes,
+  dependencies: signet_deps + [in_tree_dep],
+  install: false,
+)
+
+test_backend_admission = executable('test_backend_admission',
+  'test_backend_admission.c',
+  link_with: signet_core,
+  include_directories: signet_includes,
+  dependencies: signet_deps + [in_tree_dep],
+  install: false,
+)
+
 test_mgmt_replay = executable('test_mgmt_replay',
   'test_mgmt_replay.c',
   link_with: signet_core,
@@ -342,6 +358,7 @@ test('db_migration', test_db_migration)
 test('adopt_existing', test_adopt_existing)
 test('reissue_connect', test_reissue_connect)
 test('mgmt_replay', test_mgmt_replay)
+test('backend_admission', test_backend_admission)
 test('pubkey_backfill', test_pubkey_backfill)
 test('reissue_self_service', test_reissue_self_service)
 test('client_bindings', test_client_bindings)
@@ -418,4 +435,10 @@ test('mgmt_ingress_wire', find_program('python3'),
   depends: test_mgmt_replay,
   timeout: 30,
 )
-# End management ingress boundary block.
+  # End management ingress boundary block.
+  test('backend_admission_daemon', find_program('python3'),
+    args: [meson.current_source_dir() / 'test_backend_admission_daemon.py',
+           signetd_exe.full_path(), backend_admission_fixture.full_path()],
+    depends: [signetd_exe, backend_admission_fixture],
+    timeout: 45,
+  )

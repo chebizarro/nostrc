@@ -8,6 +8,7 @@
  */
 
 #include "signet/mgmt_protocol.h"
+#include "signet/backend_admission.h"
 #include "signet/health_server.h"
 #include "signet/cascadia.h"
 #include "signet/key_store.h"
@@ -506,6 +507,8 @@ struct SignetMgmtHandler {
   guint64 audit_suppressed;
 
   SignetStore *provisioner_store; /* borrowed through key store */
+  SignetBackendAdmission *backend; /* owned, separate from credential/writer APIs */
+  gint wire_diag_budget; /* bounded fixed-code diagnostics, no request data */
 
   char *bunker_sk_hex;
   char *bunker_pk_hex;
@@ -590,6 +593,7 @@ SignetMgmtHandler *signet_mgmt_handler_new(SignetKeyStore *keys,
   h->requester_burst = SIGNET_MGMT_REQUESTER_BURST;
   h->requester_per_second = SIGNET_MGMT_REQUESTER_PER_MINUTE / 60.0;
   h->audit_tokens = SIGNET_MGMT_REFUSAL_AUDIT_BURST;
+  g_atomic_int_set(&h->wire_diag_budget,64);
 
   h->provisioner_store = keys ? signet_key_store_get_store(keys) : NULL;
   if (h->provisioner_store && cfg->provisioner_pubkeys &&
@@ -599,6 +603,16 @@ SignetMgmtHandler *signet_mgmt_handler_new(SignetKeyStore *keys,
           cfg->n_provisioner_pubkeys, (int64_t)time(NULL)) < 0) {
     signet_mgmt_handler_free(h);
     return NULL;
+  }
+
+  if ((cfg->backend_authority_id && cfg->backend_authority_id[0]) ||
+      (cfg->backend_operator_pubkey && cfg->backend_operator_pubkey[0])) {
+    h->backend = signet_backend_admission_new(h->provisioner_store,
+        cfg->backend_authority_id, cfg->backend_operator_pubkey);
+    if (!h->backend) {
+      signet_mgmt_handler_free(h);
+      return NULL;
+    }
   }
 
   if (cfg->bunker_secret_key_hex) {
@@ -631,6 +645,7 @@ void signet_mgmt_handler_free(SignetMgmtHandler *h) {
     sodium_free(h->bunker_sk_hex);
   }
   g_free(h->bunker_pk_hex);
+  signet_backend_admission_free(h->backend);
   for (size_t i = 0; i < h->n_relay_urls; i++) g_free(h->relay_urls[i]);
   g_free(h->relay_urls);
   g_free(h->config_path);
@@ -839,6 +854,32 @@ void signet_mgmt_handler_set_policy_registry(
   h->cap_policy = policy;
 }
 
+/* Only fixed internal literals may reach this bounded diagnostic. Never pass
+ * event bodies, ciphertext, identifiers, keys, config values or error text. */
+static void signet_mgmt_wire_diag(SignetMgmtHandler *h,const char *code) {
+  if(!h)return;
+  gint remaining=g_atomic_int_get(&h->wire_diag_budget);
+  while(remaining>0) {
+    if(g_atomic_int_compare_and_exchange(&h->wire_diag_budget,remaining,remaining-1)) {
+      g_message("[signetd] management-wire: %s",code);
+      return;
+    }
+    remaining=g_atomic_int_get(&h->wire_diag_budget);
+  }
+}
+static void signet_mgmt_gift_refusal_diag(SignetMgmtHandler *h,NostrEvent *gift) {
+  if(!h||g_atomic_int_get(&h->wire_diag_budget)<=0)return;
+  if(!nostr_nip17_validate_gift_wrap(gift)) {
+    signet_mgmt_wire_diag(h,"gift_validation_refused");return;
+  }
+  NostrEvent *seal=nostr_nip17_unwrap_gift_wrap(gift,h->bunker_sk_hex);
+  if(!seal) {signet_mgmt_wire_diag(h,"gift_outer_open_refused");return;}
+  NostrEvent *rumor=nostr_nip17_unwrap_seal(seal,h->bunker_sk_hex);
+  if(!rumor)signet_mgmt_wire_diag(h,"gift_rumor_open_refused");
+  else signet_mgmt_wire_diag(h,"gift_sender_or_content_refused");
+  nostr_event_free(rumor);nostr_event_free(seal);
+}
+
 /* Convert an internal ack to a JSON-RPC response. rpc_id, when given, is the
  * request's own JSON-RPC id and is echoed verbatim (string or integer);
  * otherwise the ack's string request_id is used. */
@@ -891,18 +932,19 @@ static void signet_mgmt_publish_contextvm_reply(SignetMgmtHandler *h,
                                                 const JsonNode *rpc_id) {
   if (!h || !h->relays || !h->bunker_sk_hex || !recipient_pubkey_hex || !ack_content) return;
   char *jsonrpc = signet_mgmt_ack_to_jsonrpc(ack_content, rpc_id);
-  if (!jsonrpc) return;
+  if (!jsonrpc) {signet_mgmt_wire_diag(h,"reply_normalize_refused");return;}
   NostrEvent *gift = nostr_nip17_wrap_dm(h->bunker_sk_hex, recipient_pubkey_hex, jsonrpc);
   /* jsonrpc may embed a fresh connect_secret / bunker URI — wipe before free. */
   secure_wipe(jsonrpc, strlen(jsonrpc));
   g_free(jsonrpc);
-  if (!gift) return;
+  if (!gift) {signet_mgmt_wire_diag(h,"reply_wrap_refused");return;}
   char *event_json = nostr_event_serialize_compact(gift);
   nostr_event_free(gift);
   if (event_json) {
-    (void)signet_relay_pool_publish_event_json(h->relays, event_json);
+    int published=signet_relay_pool_publish_event_json(h->relays,event_json);
+    signet_mgmt_wire_diag(h,published==0?"reply_queued":"reply_publish_refused");
     free(event_json);
-  }
+  } else signet_mgmt_wire_diag(h,"reply_serialize_refused");
 }
 
 typedef enum {
@@ -931,7 +973,10 @@ static void signet_mgmt_publish_ack(SignetMgmtHandler *h,
     }
   }
 #endif
-  if (!h || !h->relays || !h->bunker_sk_hex || !ack_content) return;
+  if (!h || !h->relays || !h->bunker_sk_hex || !ack_content) {
+    if(reply_transport==SIGNET_MGMT_REPLY_CONTEXTVM)signet_mgmt_wire_diag(h,"reply_unavailable");
+    return;
+  }
 
   if (reply_transport == SIGNET_MGMT_REPLY_CONTEXTVM) {
     signet_mgmt_publish_contextvm_reply(h, recipient_pubkey_hex, ack_content,
@@ -1221,6 +1266,10 @@ static int signet_mgmt_handle_intent(SignetMgmtHandler *h,
                                       bool direct) {
   if (!h) return -1;
 
+  /* Only the successfully opened gift-wrap branch below can dispatch backend
+   * authority. Direct and normalized entrypoints cannot impersonate it. */
+  if (signet_backend_admission_request(content_json)) return -1;
+
   SignetMgmtOp op = SIGNET_MGMT_OP_UNKNOWN;
   JsonNode *rpc_id = NULL;
   char *params_json =
@@ -1357,21 +1406,39 @@ static int signet_mgmt_handle_gift_wrap_since(SignetMgmtHandler *h,
      * the gift wrap's is randomized by NIP-59. */
     if (nostr_nip17_decrypt_dm_ex(gw, h->bunker_sk_hex, &inner, &sender,
                                   &rumor_at) == 0 && inner) {
+      signet_mgmt_wire_diag(h,"gift_opened");
       if (live_since > 0 && rumor_at < live_since) {
+        signet_mgmt_wire_diag(h,"gift_before_live");
         signet_mgmt_refusal_audit(h, "mgmt_history_dropped", sender, NULL,
                                   "before_live_boundary", NULL, NULL, now);
+      } else if (signet_backend_admission_request(inner)) {
+        /* Timestamp bounds reject stale/future transport envelopes, never expire
+         * durable admission state. Semantic command/op IDs survive rewrapping. */
+        if (rumor_at > 0 && now >= 0 && rumor_at >= now - 300 &&
+            rumor_at <= now + 300) {
+          bool denied = h->deny && sender && signet_deny_list_contains(h->deny, sender);
+          char *reply = signet_backend_admission_dispatch(h->backend, sender, inner, denied);
+          if (reply) {
+            signet_mgmt_wire_diag(h,"backend_reply_ready");
+            signet_mgmt_publish_ack(h, sender, reply, event_id_hex, now,
+                                    SIGNET_MGMT_REPLY_CONTEXTVM, NULL);
+            g_free(reply);
+            rc = 0;
+          } else signet_mgmt_wire_diag(h,"backend_reply_missing");
+        } else signet_mgmt_wire_diag(h,"backend_rumor_time_refused");
       } else {
+        signet_mgmt_wire_diag(h,"gift_not_backend");
         rc = signet_mgmt_handler_handle_intent(h, sender ? sender : "", inner,
                                                event_id_hex ? event_id_hex : "",
                                                rumor_at, now);
       }
-    }
+    } else signet_mgmt_gift_refusal_diag(h,gw);
     if (inner) {
       secure_wipe(inner, strlen(inner));
       free(inner);
     }
     free(sender);
-  }
+  } else signet_mgmt_wire_diag(h,"gift_parse_refused");
   nostr_event_free(gw);
   return rc;
 }
@@ -1387,8 +1454,10 @@ int signet_mgmt_handler_handle_relay_event(SignetMgmtHandler *h,
                                            int64_t now) {
   if (!h || !ev || (ev->kind != CAS_INTENT && ev->kind != NIP59_GIFT_WRAP))
     return -1;
+  if(ev->kind==NIP59_GIFT_WRAP)signet_mgmt_wire_diag(h,"gift_ingress");
   if (ev->live_since <= 0 ||
       (ev->kind == CAS_INTENT && ev->created_at < ev->live_since)) {
+    signet_mgmt_wire_diag(h,"gift_not_live");
     signet_mgmt_refusal_audit(h, "mgmt_history_dropped", ev->pubkey_hex,
                               NULL, "before_live_boundary", NULL, NULL, now);
     return -1;

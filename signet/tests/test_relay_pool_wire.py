@@ -58,6 +58,12 @@ class Relay:
             head = b''
             while not head.endswith(b'\r\n\r\n'):
                 head += self.exact(1)
+            if b'sec-websocket-key:' not in head.lower():
+                # signetd probes the actual local relay before WebSocket startup.
+                body = b'{"name":"signet-wire-fixture","supported_nips":[1,11,59]}'
+                self.sock.sendall(b'HTTP/1.1 200 OK\r\nContent-Type: application/nostr+json\r\nContent-Length: ' +
+                                  str(len(body)).encode() + b'\r\nConnection: close\r\n\r\n' + body)
+                return
             key = next(line.split(b':', 1)[1].strip() for line in head.split(b'\r\n')
                        if line.lower().startswith(b'sec-websocket-key:'))
             accept = base64.b64encode(hashlib.sha1(key + b'258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest())

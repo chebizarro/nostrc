@@ -249,6 +249,46 @@ static void test_wrap_unsigned_event(void) {
     printf("  OK: unsigned event wrapped correctly\n");
 }
 
+static void test_unsigned_wire_identity(void) {
+    NostrEvent *inner = create_test_event(ALICE_PK, "unsigned identity");
+    assert(inner && !inner->id && !inner->sig);
+    NostrEvent *gift = nostr_nip59_wrap(inner, BOB_PK, NULL);
+    assert(gift && !inner->id); /* producer must not mutate caller ownership */
+    NostrEvent *opened = nostr_nip59_unwrap(gift, BOB_SK);
+    assert(opened && opened->id && !opened->sig);
+    assert(nostr_event_validate_id(opened, NULL) == NOSTR_EVENT_VALIDATION_OK);
+    nostr_event_free(opened);
+    nostr_event_free(gift);
+
+    /* Authenticated outer events cannot make malformed unsigned wire valid. */
+    for (int variant = 0; variant < 4; variant++) {
+        free(inner->id);
+        inner->id = nostr_event_get_id(inner);
+        assert(inner->id);
+        if (variant == 0) { free(inner->id); inner->id = NULL; }
+        if (variant == 1) { free(inner->id); inner->id = strdup("0000000000000000000000000000000000000000000000000000000000000000"); }
+        if (variant == 2) nostr_event_set_content(inner, "tampered after hashing");
+        if (variant == 3) nostr_event_set_sig(inner, ""); /* unsigned means no sig field */
+        if (variant != 0) assert(nostr_nip59_wrap(inner, BOB_PK, NULL) == NULL);
+        char *json = nostr_event_serialize_compact(inner);
+        assert(json);
+        if (variant == 3) {
+            /* Compact serialization omits an empty in-memory sig; explicitly
+             * exercise the forbidden wire field rather than signing it. */
+            size_t len = strlen(json);
+            json = realloc(json, len + 11);
+            assert(json);
+            strcpy(json + len - 1, ",\"sig\":\"\"}");
+        }
+        gift = wrap_raw_json_for_test(json);
+        assert(gift && nostr_nip59_unwrap(gift, BOB_SK) == NULL);
+        nostr_event_free(gift);
+        free(json);
+    }
+    nostr_event_free(inner);
+    printf("  OK: canonical unsigned wire identity and invalid-ID refusals\n");
+}
+
 static void test_wrap_signed_event(void) {
     printf("Testing wrapping signed event...\n");
 
@@ -631,6 +671,7 @@ int main(void) {
 
     /* Wrap tests */
     test_wrap_unsigned_event();
+    test_unsigned_wire_identity();
     test_wrap_signed_event();
     test_wrap_with_provided_key();
     test_wrap_different_kinds();
