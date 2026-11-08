@@ -204,13 +204,6 @@ jobs:
           done
           # Exact dependencies fail closed; never skip symbols or widen suppressions.
           sudo apt-get install -y --no-install-recommends --no-remove "$@"
-      - name: Save apt package downloads even after failure
-        if: always() && steps.apt-cache.outputs.key != '' && steps.apt-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: /var/cache/nostrc-apt/archives/*.deb
-          key: ${{ steps.apt-cache.outputs.key }}${{ job.status != 'success' && format('-partial-{0}-{1}-{2}', github.run_id, github.run_attempt, strategy.job-index || 0) || '' }}
-
       - name: Build an instrumented unmodified GLib for TSan only
         if: matrix.mode == 'tsan'
         run: |
@@ -348,6 +341,17 @@ jobs:
           FORBID_PATTERN: '\*\*\*Skipped|Not Run'
           TAIL_LINES: all
         run: bash scripts/linux-gate-smoke.sh
+      - name: Build and install panels runtime and SDK
+        if: matrix.mode == 'native' && (steps.gate.outputs.affected != 'true' || steps.selection.outputs.grotto_frontend == 'true' || steps.selection.outputs.grotto_package == 'true')
+        run: |
+          mkdir -p /tmp/grotto-panels-package/source/gnome
+          cp -a gnome/grotto-panels /tmp/grotto-panels-package/source/gnome/
+          cp -a cmake /tmp/grotto-panels-package/source/
+          cp -a gnome/grotto-panels/packaging/debian /tmp/grotto-panels-package/source/debian
+          (cd /tmp/grotto-panels-package/source && dpkg-buildpackage -b -us -uc -j2)
+          mkdir -p build/panel-packages
+          cp /tmp/grotto-panels-package/libgrotto-panels-0-*.deb build/panel-packages/
+          sudo apt-get install -y --no-install-recommends --no-remove "$PWD"/build/panel-packages/*.deb
       - name: Build the alternate GUI frontend
         if: matrix.mode == 'native' && (steps.gate.outputs.affected != 'true' || steps.selection.outputs.grotto_frontend == 'true')
         run: |
@@ -374,6 +378,13 @@ jobs:
         run: |
           # Private-bus GJS unit, not live GNOME Shell acceptance.
           sh gnome/nostr-shell-extension/tests/run-signer.sh
+      - name: Save apt package downloads even after failure
+        if: always() && steps.apt-cache.outputs.key != '' && steps.apt-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /var/cache/nostrc-apt/archives/*.deb
+          key: ${{ steps.apt-cache.outputs.key }}${{ job.status != 'success' && format('-partial-{0}-{1}-{2}', github.run_id, github.run_attempt, strategy.job-index || 0) || '' }}
+
       - name: Upload evidence (including failures and real-template screenshots)
         if: always()
         uses: actions/upload-artifact@v4
@@ -396,5 +407,6 @@ jobs:
             build/Testing/Temporary/LastTest.log
             build/baseline/
             build/packages/
+            build/panel-packages/
             build/screenshots/
           if-no-files-found: warn

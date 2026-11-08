@@ -1,5 +1,5 @@
 #!/bin/sh
-# Build the groundhog and grotto Arch packages from a release source archive.
+# Build panels first, then groundhog and grotto, from one release source archive.
 # Shared by the x86_64 (archlinux) and aarch64 (Arch Linux ARM) jobs of
 # .github/workflows/groundhog-release.yml, and runnable by hand in either
 # container:
@@ -23,6 +23,17 @@ pacman -Syu --noconfirm --needed base-devel sudo xorg-server-xvfb dbus >/dev/nul
 id build >/dev/null 2>&1 || useradd -m build
 echo 'build ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/build
 
+panels=/home/build/panels
+rm -rf "$panels" && mkdir -p "$panels"
+tar -xzf "$archive" -C "$panels" "groundhog-${version}/gnome/grotto-panels/packaging/archlinux/PKGBUILD"
+mv "$panels/groundhog-${version}/gnome/grotto-panels/packaging/archlinux/PKGBUILD" "$panels/"
+rm -rf "$panels/groundhog-${version}"
+cp "$archive" "$panels/"
+sed -i "s/^_version=.*/_version=${version}/" "$panels/PKGBUILD"
+chown -R build "$panels"
+su build -c "cd $panels && PKGDEST=$panels PKGEXT=.pkg.tar.zst makepkg -s --noconfirm"
+pacman -U --noconfirm "$panels"/*.pkg.tar.zst
+
 work=/home/build/pkg
 rm -rf "$work" && mkdir -p "$work"
 tar -xzf "$archive" -C "$work" "groundhog-${version}/packaging/archlinux/groundhog/PKGBUILD"
@@ -37,4 +48,4 @@ chown -R build "$work"
 # Arch Linux ARM's makepkg.conf defaults to .pkg.tar.xz; ship .zst on both.
 su build -c "cd $work && PKGDEST=$work PKGEXT=.pkg.tar.zst makepkg -s --noconfirm"
 mkdir -p "$out"
-cp "$work"/*.pkg.tar.zst "$out/"
+cp "$panels"/*.pkg.tar.zst "$work"/*.pkg.tar.zst "$out/"

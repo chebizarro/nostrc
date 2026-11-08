@@ -409,6 +409,16 @@ static void request_received(GNostrNip46Bunker *bunker, NostrNip46BunkerRequest 
       claimed_name = g_strdup(text);
     }
   }
+  prune(s);
+  g_autofree gchar *rpc_join = g_strdup_printf("%s:%s", client, rpc->id);
+  g_autofree gchar *key = g_compute_checksum_for_string(G_CHECKSUM_SHA256, rpc_join, -1);
+  GChecksum *hash = g_checksum_new(G_CHECKSUM_SHA256);
+  g_checksum_update(hash, (const guchar *)rpc->method, strlen(rpc->method) + 1);
+  for (gsize i = 0; i < rpc->n_params; i++) {
+    if (!rpc->params[i]) { g_checksum_free(hash); REJECT("invalid_params"); }
+    g_checksum_update(hash, (const guchar *)rpc->params[i], strlen(rpc->params[i]) + 1);
+  }
+  g_autofree gchar *digest = g_strdup(g_checksum_get_string(hash)); g_checksum_free(hash);
   gboolean is_paired = paired(s, client, &identity);
   if (!strcmp(rpc->method, "connect")) {
     if (!rpc->params || g_strcmp0(rpc->params[0], s->transport_pubkey)) REJECT("invalid_transport");
@@ -428,6 +438,9 @@ static void request_received(GNostrNip46Bunker *bunker, NostrNip46BunkerRequest 
       w->request = nostr_nip46_bunker_request_ref(request); w->identity = g_strdup(pending_identity);
       g_ptr_array_add(s->pairing_waiters, w); pairing_status_changed(s); return;
     }
+    /* Pairing later must not turn rejected historical requests into key use. */
+    if (!g_key_file_has_group(s->seen, key) &&
+        !remember_seen(s, event_id, key, digest, created)) REJECT("replay_store_unavailable");
     REJECT("not_paired");
   }
   if (!identity || !*identity) { g_free(identity); identity = g_strdup(s->identity_npub); }
@@ -457,16 +470,6 @@ static void request_received(GNostrNip46Bunker *bunker, NostrNip46BunkerRequest 
   if (!signer_permissions_reload(signer_approval_service_permissions(approval), NULL)) REJECT("policy_unavailable");
   guint64 generation = signer_approval_service_generation(approval);
   guint64 revision = signer_permissions_revision(signer_approval_service_permissions(approval));
-  prune(s);
-  g_autofree gchar *rpc_join = g_strdup_printf("%s:%s", client, rpc->id);
-  g_autofree gchar *key = g_compute_checksum_for_string(G_CHECKSUM_SHA256, rpc_join, -1);
-  GChecksum *hash = g_checksum_new(G_CHECKSUM_SHA256);
-  g_checksum_update(hash, (const guchar *)rpc->method, strlen(rpc->method) + 1);
-  for (gsize i = 0; i < rpc->n_params; i++) {
-    if (!rpc->params[i]) { g_checksum_free(hash); REJECT("invalid_params"); }
-    g_checksum_update(hash, (const guchar *)rpc->params[i], strlen(rpc->params[i]) + 1);
-  }
-  g_autofree gchar *digest = g_strdup(g_checksum_get_string(hash)); g_checksum_free(hash);
   const gchar *pinned_identity = methods[index].op == SIGNER_GATE_PING || methods[index].op == SIGNER_GATE_GET_RELAYS ? NULL : identity;
   Rpc *r = g_hash_table_lookup(s->rpcs, key);
   if (r) {

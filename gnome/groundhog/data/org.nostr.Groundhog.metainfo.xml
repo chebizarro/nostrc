@@ -53,6 +53,20 @@
     <color type="primary" scheme_preference="light">#99c1f1</color>
     <color type="primary" scheme_preference="dark">#1a5fb4</color>
   </branding>
+  <screenshots>
+    <screenshot type="default">
+      <caption>Keep private conversations together</caption>
+      <image type="source" width="1120" height="830">https://raw.githubusercontent.com/chebizarro/nostrc/848765d029b53f2f5563d23d6f33425b1189ef7c/gnome/groundhog/data/screenshots/store/conversation-light.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Control notifications and web content</caption>
+      <image type="source" width="1120" height="830">https://raw.githubusercontent.com/chebizarro/nostrc/848765d029b53f2f5563d23d6f33425b1189ef7c/gnome/groundhog/data/screenshots/store/preferences-light.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Review conversation privacy in dark appearance</caption>
+      <image type="source" width="1120" height="830">https://raw.githubusercontent.com/chebizarro/nostrc/848765d029b53f2f5563d23d6f33425b1189ef7c/gnome/groundhog/data/screenshots/store/conversation-info-dark.png</image>
+    </screenshot>
+  </screenshots>
   <requires>
     <display_length compare="ge">360</display_length>
   </requires>
@@ -65,6 +79,15 @@
     <content_attribute id="social-chat">intense</content_attribute>
   </content_rating>
   <releases>
+    <release version="0.12.1-alpha8" type="development" date="2026-11-08">
+      <description>
+        <p>Groundhog now declares all the operations it needs when connecting an account to Grotto, so they can be reviewed and approved once instead of request by request.</p>
+        <ul>
+          <li>More reliable remote signer setup and clearer failures when a signing request cannot be prepared</li>
+          <li>Updated Blossom attachment authentication for compatible file servers</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.12.0" type="development" date="2026-10-04">
       <description>
         <p>First alpha. Encrypted groups are available by default; the signer app that keeps your key is now called Grotto.</p>

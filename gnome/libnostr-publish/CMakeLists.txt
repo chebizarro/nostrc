@@ -62,6 +62,19 @@ target_link_libraries(nostr-publish
   PRIVATE PkgConfig::NP_SOUP PkgConfig::NP_JSONGLIB
 )
 
+# Private build-tree contract for the Meson GUI; never resolves an unrelated
+# installed runtime or rewrites the installable pkg-config metadata.
+set(_np_build_pc "${CMAKE_CURRENT_BINARY_DIR}/nostr-publish-build-tree.pc")
+if(CMAKE_CONFIGURATION_TYPES)
+  set(_np_build_pc "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/nostr-publish-build-tree.pc")
+endif()
+set(_np_build_libs "\"$<TARGET_LINKER_FILE:nostr-publish>\"")
+if(UNIX)
+  string(APPEND _np_build_libs " -Wl,-rpath,\"$<TARGET_FILE_DIR:nostr-publish>\"")
+endif()
+file(GENERATE OUTPUT "${_np_build_pc}" CONTENT
+"Name: nostr-publish-build-tree\nDescription: nostr-publish in this CMake build tree\nVersion: ${NOSTR_PUBLISH_VERSION}\nLibs: ${_np_build_libs}\nCflags: -I\"${CMAKE_CURRENT_SOURCE_DIR}/include\"\nRequires: glib-2.0 gobject-2.0 gio-2.0\n")
+
 # --- Install rules ---
 
 configure_file(nostr-publish.pc.in

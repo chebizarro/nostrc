@@ -196,7 +196,8 @@ void nostr_publish_session_relay_query(NostrPublishSessionRelay *self,
  * start a socket-activated relay that is not running (its bus name has no
  * owner and no D-Bus activation file exists). Best effort.
  *
- * Returns: TRUE if the connection was accepted.
+ * Returns: TRUE if the connection was accepted; FALSE if unavailable, including
+ * platforms without Unix socket activation.
  */
 NOSTR_PUBLISH_API
 gboolean nostr_publish_session_relay_nudge(const gchar *socket_path);

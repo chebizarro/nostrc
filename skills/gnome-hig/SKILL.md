@@ -263,8 +263,8 @@ Adaptive (`guidelines/adaptive.md`)
 
 ## nostrc specifics
 
-- GTK apps: `apps/gnostr` (client), `apps/grotto` (signer, formerly
-  gnostr-signer), `gnome/groundhog` (messaging), `gnome/nostr-settings`,
+- GTK apps: `apps/gnostr` (client), `apps/grotto` (signer),
+  `gnome/groundhog` (messaging), `gnome/nostr-settings`,
   `gnome/nostr-share`, and the shared `nostr-gtk` widget library. UI lives in
   `data/ui/*.ui` and Blueprint `*.blp` files alongside C sources; app CSS in
   `apps/gnostr/data/ui/styles/gnostr.css` and `gnome/groundhog/data/style.css`.

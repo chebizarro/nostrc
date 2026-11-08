@@ -31125,17 +31125,17 @@
       "matrix_source": "",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "944092c38de83d60e5c50483c7117b21de36e2c1a73a4406db2408f178bde91a",
+      "source_sha256": "38c8b8ae3f4e882766e35991dc8977d8e5a76cb6e6a52cd1bd288f7c12017dba",
       "unsupported_reason": "BP Python driver command, parameter sweep, generated report and artifact contracts have no exact logical command memberships; current hosted configure failure remains unresolved.",
-      "workflow_sha256": "fdd3dc2e3d79646f40cf202e7b24f4c214cf32639c63709a8899d6c249644517"
+      "workflow_sha256": "e10d91605bd7cc2a613abf0c3d3bae5048078d6dc1826ee5f83458fa4bd33bd1"
     },
     ".github/workflows/bp-matrix.yml:bp-matrix": {
       "matrix_source": "",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "4ab9f904d25e2130a03b1036435fffbd1d3dc8de14422ba7ae97743509ee4d29",
+      "source_sha256": "cfc6349e07fcf3eacca6852a32fbcab4b04dea1d502ece4133047b2ac73280ee",
       "unsupported_reason": "BP Python driver command, parameter sweep, generated report and artifact contracts have no exact logical command memberships; current hosted configure failure remains unresolved.",
-      "workflow_sha256": "ea8b8f128c87c27514bbdaea09b50eb1984b423b6e7fd92db6fd5b35e9d4d088"
+      "workflow_sha256": "43f404d674317746ee90f12b96ad0e5e7f63ed307e52c3c3e688f94e9ee20919"
     },
     ".github/workflows/dependency-broad.yml:core": {
       "matrix_source": "",
@@ -31410,9 +31410,9 @@
         "grotto.linux.asan_ubsan"
       ],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "4f426d830d81b306628e601bde476422de19d2032236eb50e8db1b7dc46cf4c7",
+      "source_sha256": "48b5a79ef6bc45a4d6b5bcb6307eaa51bb73d3623b93e40ea68b42bf0f2d5334",
       "unsupported_reason": "Only fixed ubuntu-24.04 native/ASan configure and signer CTest selection projections are authored, with fresh Linux/aarch64 name-surface evidence (not x86_64 acceptance). Native uses the complete regex, including aliases and registered conditionals. Authored build2/test1 is supported. Default-all selector build attestation/coverage (.34), full audits/nonmember admission, native Go/nak baseline/quarantine, Meson/deb/shell extension steps, ubuntu-latest and TSan instrumented-GLib/nsync/linkage/advisory execution remain unsupported. No whole-job parity or nonmember approval is implied.",
-      "workflow_sha256": "6a005ad0523603ac1b9b2f3c9a4402a4cae0f36d81c3651618ec23f8755cab05",
+      "workflow_sha256": "1dae155a458ad5c10c6188e1954342220ccece46001ef3cefdcb0bbef3da4530",
       "unimplemented_variants": [
         {
           "runner": "ubuntu-latest",
@@ -31488,23 +31488,23 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "bbd6a332b9f292902fabd35f58bf8a8674b70e350434118f8b77a316d8dc6718",
       "unsupported_reason": "Dynamic fuzz target selection, target-specific seed corpus, libFuzzer execution and coverage artifact union are not modeled as exact command contracts; hosted configure failures remain visible.",
-      "workflow_sha256": "0e51fb6cced824225544f24732fcf42d521cd26a586eb051169918a99e7a550a"
+      "workflow_sha256": "30aeb40b83f314dbf341592ac9508d3cc56076b1bd55a5d9c2621508dd896c92"
     },
     ".github/workflows/grotto-fuzz.yml:fuzz-test": {
       "matrix_source": "matrix:\n        target: ${{ fromJSON(needs.select-fuzz.outputs.targets) }}",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "89e53d3db953a2a41459f16410d3689cc549488b5b1d5a00455ab7b6a7b95eca",
+      "source_sha256": "99e4f41983366c47dde70eeaa40048ed1a03a5be210d746840d24f4b222e8e0c",
       "unsupported_reason": "Dynamic fuzz target selection, target-specific seed corpus, libFuzzer execution and coverage artifact union are not modeled as exact command contracts; hosted configure failures remain visible.",
-      "workflow_sha256": "0e51fb6cced824225544f24732fcf42d521cd26a586eb051169918a99e7a550a"
+      "workflow_sha256": "30aeb40b83f314dbf341592ac9508d3cc56076b1bd55a5d9c2621508dd896c92"
     },
     ".github/workflows/grotto-fuzz.yml:coverage-report": {
       "matrix_source": "",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "97985d792a3b92dabdc9698202ae64de683e627a70ad14255d9f262c42af6df1",
+      "source_sha256": "47e76bfa31993d9c3bb5de43cba52a8de4eb8283aa8972deb48e0a191235825f",
       "unsupported_reason": "Dynamic fuzz target selection, target-specific seed corpus, libFuzzer execution and coverage artifact union are not modeled as exact command contracts; hosted configure failures remain visible.",
-      "workflow_sha256": "0e51fb6cced824225544f24732fcf42d521cd26a586eb051169918a99e7a550a"
+      "workflow_sha256": "30aeb40b83f314dbf341592ac9508d3cc56076b1bd55a5d9c2621508dd896c92"
     },
     ".github/workflows/groundhog-ci.yml:groundhog": {
       "matrix_source": "",
@@ -31533,7 +31533,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "da2e52a73062792e1ddbaba9a917cf2083e67855170d1af62044450e58c44719",
       "unsupported_reason": "groundhog-release:identity identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
-      "workflow_sha256": "797efa48e0e22136d7e7aa937687db44f769f2388b950213a978df11dc6e6f8e"
+      "workflow_sha256": "a4b1bc4512e143e977bc92c6c848823bb0e0720f43b75f57cf349381c0a5ee63"
     },
     ".github/workflows/groundhog-release.yml:validation": {
       "matrix_source": "",
@@ -31541,7 +31541,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "722572b7cdb010c34b64e43d62e9e87acec11be6e48ab6cb76da17d290ecf5e6",
       "unsupported_reason": "groundhog-release:validation identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
-      "workflow_sha256": "797efa48e0e22136d7e7aa937687db44f769f2388b950213a978df11dc6e6f8e"
+      "workflow_sha256": "a4b1bc4512e143e977bc92c6c848823bb0e0720f43b75f57cf349381c0a5ee63"
     },
     ".github/workflows/groundhog-release.yml:source": {
       "matrix_source": "",
@@ -31549,31 +31549,31 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "fa364540320a32d45836f8c29d0b6816126695b6079cf4bcb89cfe6dd915b052",
       "unsupported_reason": "groundhog-release:source identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
-      "workflow_sha256": "797efa48e0e22136d7e7aa937687db44f769f2388b950213a978df11dc6e6f8e"
+      "workflow_sha256": "a4b1bc4512e143e977bc92c6c848823bb0e0720f43b75f57cf349381c0a5ee63"
     },
     ".github/workflows/groundhog-release.yml:deb": {
       "matrix_source": "matrix:\n        # One deb per release: library names differ (libsecp256k1-1 on\n        # 24.04, -2 on Debian 13, newer on 26.04), so a 24.04 build does\n        # not install elsewhere. The version carries the distribution;\n        # dpkg names the file _amd64 or _arm64.\n        distro:\n          - { image: 'ubuntu:24.04', name: 'Ubuntu 24.04', tag: ubuntu24.04 }\n          - { image: 'ubuntu:26.04', name: 'Ubuntu 26.04', tag: ubuntu26.04 }\n          - { image: 'debian:13',    name: 'Debian 13',    tag: debian13 }\n        arch: [x86_64, aarch64]\n        include:\n          - { arch: x86_64,  runner: ubuntu-24.04 }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "f2d995462254873c0e28cc45ebdbc3ca3e8df813390177621f32b2c2e2a0b684",
+      "source_sha256": "a29bd82ca3bf1dd07c9b246a8719cfeca5f94acaf787554f687d8e6efc83bbf1",
       "unsupported_reason": "groundhog-release:deb identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
-      "workflow_sha256": "797efa48e0e22136d7e7aa937687db44f769f2388b950213a978df11dc6e6f8e"
+      "workflow_sha256": "a4b1bc4512e143e977bc92c6c848823bb0e0720f43b75f57cf349381c0a5ee63"
     },
     ".github/workflows/groundhog-release.yml:rpm": {
       "matrix_source": "matrix:\n        include:\n          - { arch: x86_64,  runner: ubuntu-24.04 }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "64948c6ac67e9ffe50d4a506878f1de49ddc21f6c66f6eb9681fdc8e8e9dbe4c",
+      "source_sha256": "1b122e1903b0156c4e2405836509c3d3335ece6aabec7ef6181aa4d38e1d509b",
       "unsupported_reason": "groundhog-release:rpm identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
-      "workflow_sha256": "797efa48e0e22136d7e7aa937687db44f769f2388b950213a978df11dc6e6f8e"
+      "workflow_sha256": "a4b1bc4512e143e977bc92c6c848823bb0e0720f43b75f57cf349381c0a5ee63"
     },
     ".github/workflows/groundhog-release.yml:arch": {
       "matrix_source": "matrix:\n        include:\n          - { arch: x86_64, runner: ubuntu-24.04, image: 'archlinux:latest' }\n          # The official archlinux image is x86_64 only. Arch Linux ARM is\n          # what Linux-on-Android setups run (Termux proot-distro archlinux,\n          # chroots), so the aarch64 package is built on an Arch Linux ARM\n          # root: menci/archlinuxarm is rebuilt daily from the official\n          # ArchLinuxARM-aarch64 rootfs with the archlinuxarm keyring\n          # initialised. Pinned by digest; bump it deliberately.\n          - arch: aarch64\n            runner: ubuntu-24.04-arm\n            image: 'menci/archlinuxarm@sha256:57ed42430d3d3f22beb2983de1aa23396b27fcf33ebf5dd781947cdc1038a640'",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "3c5dc4e05eca2bd8af8e07e759201d5f4fda46955567f7cd5438d230fb042c71",
+      "source_sha256": "6a5fee219e59e8d20c8400e1174ebfa2b86785928b033e926762eddb34a70f2e",
       "unsupported_reason": "groundhog-release:arch identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
-      "workflow_sha256": "797efa48e0e22136d7e7aa937687db44f769f2388b950213a978df11dc6e6f8e"
+      "workflow_sha256": "a4b1bc4512e143e977bc92c6c848823bb0e0720f43b75f57cf349381c0a5ee63"
     },
     ".github/workflows/groundhog-release.yml:flatpak": {
       "matrix_source": "matrix:\n        include:\n          - { arch: x86_64,  runner: ubuntu-24.04 }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
@@ -31581,7 +31581,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "8421c3efce07286ebfc7e88284e3563babd3d24e4ee001191b4ade423c6516fa",
       "unsupported_reason": "groundhog-release:flatpak identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
-      "workflow_sha256": "797efa48e0e22136d7e7aa937687db44f769f2388b950213a978df11dc6e6f8e"
+      "workflow_sha256": "a4b1bc4512e143e977bc92c6c848823bb0e0720f43b75f57cf349381c0a5ee63"
     },
     ".github/workflows/groundhog-release.yml:nix": {
       "matrix_source": "matrix:\n        include:\n          - { system: x86_64-linux,  runner: ubuntu-24.04 }\n          - { system: aarch64-linux, runner: ubuntu-24.04-arm }",
@@ -31589,7 +31589,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "dc3ec6503c329aacaee1f864e6dc22e2ca8e00ca27608ff3e735ff39d638cb3f",
       "unsupported_reason": "groundhog-release:nix identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
-      "workflow_sha256": "797efa48e0e22136d7e7aa937687db44f769f2388b950213a978df11dc6e6f8e"
+      "workflow_sha256": "a4b1bc4512e143e977bc92c6c848823bb0e0720f43b75f57cf349381c0a5ee63"
     },
     ".github/workflows/groundhog-release.yml:release-aggregate": {
       "matrix_source": "",
@@ -31597,7 +31597,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "36e2b8e04e82122e7b69cadb662d2376089297d38f762398897543d197e62e98",
       "unsupported_reason": "groundhog-release:release-aggregate identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
-      "workflow_sha256": "797efa48e0e22136d7e7aa937687db44f769f2388b950213a978df11dc6e6f8e"
+      "workflow_sha256": "a4b1bc4512e143e977bc92c6c848823bb0e0720f43b75f57cf349381c0a5ee63"
     },
     ".github/workflows/groundhog-release.yml:release": {
       "matrix_source": "",
@@ -31605,7 +31605,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "c9dbe4fcb59118f40a909bce63a1f68b13df322940d88905da052ca4e5edf87b",
       "unsupported_reason": "groundhog-release:release identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
-      "workflow_sha256": "797efa48e0e22136d7e7aa937687db44f769f2388b950213a978df11dc6e6f8e"
+      "workflow_sha256": "a4b1bc4512e143e977bc92c6c848823bb0e0720f43b75f57cf349381c0a5ee63"
     },
     ".github/workflows/libgo-ci.yml:build-and-test": {
       "matrix_source": "matrix:\n        os: [ubuntu-latest, macos-latest]\n        # tsan keeps the default TSAN configuration (single-lock ring);\n        # tsan_mpmc keeps the MPMC slot protocol every other build ships, so\n        # the lock-free channel paths get ThreadSanitizer coverage too\n        # (nostrc-75rv review F8).\n        sanitizer: [asan_ubsan, tsan, tsan_mpmc]",
@@ -31841,9 +31841,9 @@
       "matrix_source": "matrix:\n        passkeys: [ 'OFF', 'ON' ]\n        sqlcipher: [ 'OFF', 'ON' ]\n        build_type: [ 'Debug' ]\n        include:\n          # Exercise binding-race and forced-secret regressions in one test\n          # build; the Release configuration below keeps hooks disabled.\n          - passkeys: 'ON'\n            sqlcipher: 'OFF'\n            build_type: 'Debug'\n            test_hooks: 'ON'\n          # fp-52iq: assurance comes from running tests the way the project is\n          # shipped. Release optimizes signet_core and defines NDEBUG, so cover\n          # the shipped configuration too instead of testing Debug only.\n          - passkeys: 'ON'\n            sqlcipher: 'ON'\n            build_type: 'Release'",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "cf444e9ad1dab91bd64038562f1a65b8617a011905a11716c63f4304cc217cd9",
+      "source_sha256": "5d7c4d91a926cc23dfd95541afe4336810994a2adb223af07a0436d7a35da2dd",
       "unsupported_reason": "Five passkeys/sqlcipher/hooks/build-type Meson variants and daemon/control smoke lack distinct exact profile/membership/runtime contracts.",
-      "workflow_sha256": "3b67b62be8732a44f5f1335ee5c2a7581d90399de6d248f9979a35564df6b771"
+      "workflow_sha256": "862cefcb0bb728e76b7b9f30ddc345b064e132b17518eef3c69cb867e29b0835"
     },
     ".github/workflows/static-checks.yml:static-checks": {
       "matrix_source": "",
@@ -32115,7 +32115,7 @@
       "unsupported_reason": "Manual broad validation routes to reusable families and is not an independent execution profile or publisher attestation.",
       "matrix_source": "",
       "source_sha256": "eac4bdb9262da2fb5159ed8729f8ca69dfa3fea3b80ed9bfcd13ba21167c1e72",
-      "workflow_sha256": "797efa48e0e22136d7e7aa937687db44f769f2388b950213a978df11dc6e6f8e"
+      "workflow_sha256": "a4b1bc4512e143e977bc92c6c848823bb0e0720f43b75f57cf349381c0a5ee63"
     },
     ".github/workflows/nip55l-libsecret-ci.yml:signer-consumers": {
       "profiles": [],

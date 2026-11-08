@@ -42,7 +42,7 @@ jobs:
             libcurl4-openssl-dev libsoup-3.0-dev libjson-glib-dev libxml2-dev \
             libgtk-4-dev libadwaita-1-dev libsecret-1-dev libpeas-2-dev libqrencode-dev libzbar-dev \
             libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
-            gettext python3 python3-pip python3-gi curl ca-certificates xz-utils
+            gettext xdotool python3 python3-pip python3-gi curl ca-certificates xz-utils
 
       - name: Save apt package downloads even after failure
         if: always() && steps.apt-cache.outputs.key != '' && steps.apt-cache.outputs.cache-hit != 'true'
