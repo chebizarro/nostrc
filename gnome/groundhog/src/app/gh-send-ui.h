@@ -111,5 +111,24 @@ void gh_send_ui_add_delegate(GhWindow *window, const GhSendUiDelegate *delegate,
 /* Evaluates the composer's reason again (the delegate's state changed). */
 void gh_send_ui_refresh(GhWindow *window);
 
+/* ---- NIP-37 draft synchronization (gh-draft-sync.h, nostrc-9lwl7.8) ----------------
+ * The window side: the composer's room for the cadence, remote revisions
+ * applied as programmatic updates, and the status line under the entry.
+ * Nothing here publishes; GhDraftSync owns that. */
+typedef struct {
+  /* The composer shows room_key (NULL: none); after leaving a room. */
+  void (*shown)(const gchar *room_key, gpointer data);
+} GhSendUiDraftHooks;
+void gh_send_ui_set_draft_hooks(GhWindow *window, const GhSendUiDraftHooks *hooks, gpointer data);
+/* A remote revision for room_key (text NULL: cleared): when the composer
+ * shows that room its text is replaced without a draft-changed emission and
+ * the saved-draft memory follows, so a later identical edit is not dropped;
+ * a room not listed by the model is opened (in memory) so it shows up. */
+void gh_send_ui_apply_remote_draft(GhWindow *window, const gchar *room_key, const gchar *text);
+/* Whether the composer shows room_key and has keyboard focus. */
+gboolean gh_send_ui_composer_focused(GhWindow *window, const gchar *room_key);
+/* The draft status line (NULL: none). */
+void gh_send_ui_set_draft_status(GhWindow *window, const gchar *status);
+
 G_END_DECLS
 #endif

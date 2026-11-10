@@ -1391,6 +1391,16 @@ gh_nip46_session_call_async(GhNip46Session *self, const gchar *method,
                                  GCancellable *cancellable,
                                  GAsyncReadyCallback callback, gpointer user_data)
 {
+  gh_nip46_session_call_full_async(self, method, params, n_params, FALSE, cancellable,
+                                   callback, user_data);
+}
+
+void
+gh_nip46_session_call_full_async(GhNip46Session *self, const gchar *method,
+                                      const gchar *const *params, gsize n_params,
+                                      gboolean background, GCancellable *cancellable,
+                                      GAsyncReadyCallback callback, gpointer user_data)
+{
   g_return_if_fail(GH_IS_NIP46_SESSION(self));
   GTask *task = g_task_new(self, cancellable, callback, user_data);
   g_task_set_check_cancellable(task, FALSE);
@@ -1404,7 +1414,9 @@ gh_nip46_session_call_async(GhNip46Session *self, const gchar *method,
       GH_NIP46_SESSION_ERROR_INVALID_INPUT, "Invalid signer request");
     g_object_unref(task); return;
   }
-  gboolean interactive = interactive_method(method);
+  /* The user's own requests take the interactive lane; automatic work (a
+   * draft revision) the bulk lane, even when its method is sign_event. */
+  gboolean interactive = interactive_method(method) && !background;
   if (g_queue_get_length(interactive ? &self->interactive : &self->bulk) >=
       (interactive ? MAX_INTERACTIVE : MAX_BULK)) {
     g_task_return_new_error(task, GH_NIP46_SESSION_ERROR,

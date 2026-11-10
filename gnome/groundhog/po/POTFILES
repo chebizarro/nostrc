@@ -49,6 +49,7 @@ src/app/gh-attachment-ui.c
 src/app/gh-background.c
 src/app/gh-background.h
 src/app/gh-conversation.c
+src/app/gh-draft-sync.c
 src/app/gh-inbox-setup.c
 src/app/gh-message-status.c
 src/app/gh-message.c

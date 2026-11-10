@@ -1,4 +1,5 @@
 #include "gh-store-conversations.h"
+#include "gh-store-drafts.h"
 
 #include "gh-conversation-private.h"
 
@@ -9,6 +10,9 @@
 #include <unistd.h>
 
 #include <sqlite3.h>
+
+enum { SIGNAL_DRAFT_CHANGED, N_SIGNALS };
+static guint signals[N_SIGNALS];
 
 /* The legacy GhNip17Seen file (gh-nip17-inbox.c). */
 #define SEEN_MAGIC "groundhog-nip17-seen 1 "
@@ -991,7 +995,16 @@ gh_store_conversations_set_draft(GhStoreConversations *self, const gchar *room_i
                                                GH_STORE_REQUEST_ACCEPTED, &id, error)) ||
       !gh_store_set_draft(store, id, draft, error))
     goto fail;
-  return gh_store_commit(store, error);
+  /* The sync revision moves with the text, in the same transaction (plan
+   * §3.7 "Write path"): a saved text is a new dirty revision, an emptied one
+   * a tombstone. The signal after the commit only wakes the scheduler. */
+  if (draft ? !gh_store_drafts_touch(store, id, error)
+            : !gh_store_drafts_clear(store, id, gh_clock_get_unix(gh_store_get_clock(store)), error))
+    goto fail;
+  if (!gh_store_commit(store, error))
+    return FALSE;
+  g_signal_emit(self, signals[SIGNAL_DRAFT_CHANGED], 0, room_id);
+  return TRUE;
 fail:
   gh_store_rollback(store);
   return FALSE;
@@ -1011,6 +1024,7 @@ gh_store_conversations_forget(GhStoreConversations *self, const gchar *room_id,
   g_autoptr(GhConversationStore) model = g_weak_ref_get(&self->model);
   if (model && g_strcmp0(gh_conversation_store_get_account(model), self->account) == 0)
     gh_conversation_store_remove(model, room_id);
+  g_signal_emit(self, signals[SIGNAL_DRAFT_CHANGED], 0, room_id);
   return TRUE;
 }
 
@@ -1882,6 +1896,11 @@ static void
 gh_store_conversations_class_init(GhStoreConversationsClass *klass)
 {
   G_OBJECT_CLASS(klass)->finalize = gh_store_conversations_finalize;
+  /* After a committed draft save, clear or forget of a room (its id): the
+   * draft synchronization scheduler wakes on it (gh-draft-sync.h). */
+  signals[SIGNAL_DRAFT_CHANGED] =
+    g_signal_new("draft-changed", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL,
+                 NULL, G_TYPE_NONE, 1, G_TYPE_STRING);
 }
 
 static void

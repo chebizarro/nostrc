@@ -44,6 +44,8 @@ typedef struct {
   /* Other sending engines: G20b relay groups, qp24.13 encrypted groups. */
   SendDelegate delegates[MAX_DELEGATES];
   guint n_delegates;
+  GhSendUiDraftHooks draft_hooks; /* NIP-37 draft sync (nostrc-9lwl7.8) */
+  gpointer draft_hooks_data;
 } GhSendUi;
 
 static void update_reason(GhSendUi *ui);
@@ -479,6 +481,8 @@ on_view_conversation(GhComposer *composer)
   update_timer(ui);
   update_reason(ui);
   gh_composer_revalidate(ui->composer);
+  if (ui->draft_hooks.shown)
+    ui->draft_hooks.shown(ui->draft_room, ui->draft_hooks_data);
 }
 
 /* ---- why sending is unavailable ---------------------------------------------------- */
@@ -948,6 +952,72 @@ gh_send_ui_add_delegate(GhWindow *window, const GhSendUiDelegate *delegate, gpoi
   if (slot == ui->n_delegates)
     ui->n_delegates++;
   delegates_changed(ui);
+}
+
+void
+gh_send_ui_set_draft_hooks(GhWindow *window, const GhSendUiDraftHooks *hooks, gpointer data)
+{
+  g_return_if_fail(GH_IS_WINDOW(window));
+  GhSendUi *ui = g_object_get_data(G_OBJECT(window), SEND_UI_DATA);
+  if (!ui)
+    return;
+  ui->draft_hooks = hooks ? *hooks : (GhSendUiDraftHooks) { 0 };
+  ui->draft_hooks_data = hooks ? data : NULL;
+  if (ui->draft_hooks.shown)
+    ui->draft_hooks.shown(ui->draft_room, ui->draft_hooks_data);
+}
+
+void
+gh_send_ui_apply_remote_draft(GhWindow *window, const gchar *room_key, const gchar *text)
+{
+  g_return_if_fail(GH_IS_WINDOW(window));
+  g_return_if_fail(room_key != NULL);
+  GhSendUi *ui = g_object_get_data(G_OBJECT(window), SEND_UI_DATA);
+  if (!ui)
+    return;
+  if (text && !*text)
+    text = NULL;
+  if (!gh_conversation_store_lookup(ui->model, room_key)) {
+    /* A draft written elsewhere for a room this device has not listed:
+     * the room's other participants (or the account itself). */
+    g_auto(GStrv) members = g_strsplit(room_key, ",", -1);
+    g_autoptr(GStrvBuilder) peers = g_strv_builder_new();
+    const gchar *account = gh_conversation_store_get_account(ui->model);
+    for (guint i = 0; members[i]; i++)
+      if (g_strv_length(members) == 1 || g_strcmp0(members[i], account))
+        g_strv_builder_add(peers, members[i]);
+    g_auto(GStrv) list = g_strv_builder_end(peers);
+    g_autoptr(GError) error = NULL;
+    if (!gh_conversation_store_open_room(ui->model, (const gchar *const *) list, &error))
+      g_message("Groundhog could not list a conversation with a synced draft: %s", error->message);
+  }
+  if (!ui->draft_room || g_strcmp0(ui->draft_room, room_key))
+    return; /* not shown: the store already holds it for when it is */
+  /* A programmatic update: no draft-changed, and the saved-draft memory
+   * follows so a later edit back to this text is still saved. */
+  gh_composer_set_text(ui->composer, text);
+  g_free(ui->draft_saved);
+  ui->draft_saved = g_strdup(text);
+}
+
+gboolean
+gh_send_ui_composer_focused(GhWindow *window, const gchar *room_key)
+{
+  g_return_val_if_fail(GH_IS_WINDOW(window), FALSE);
+  GhSendUi *ui = g_object_get_data(G_OBJECT(window), SEND_UI_DATA);
+  if (!ui || !ui->draft_room || g_strcmp0(ui->draft_room, room_key))
+    return FALSE;
+  GtkWidget *focus = gtk_root_get_focus(GTK_ROOT(window));
+  return focus && gtk_widget_is_ancestor(focus, GTK_WIDGET(ui->composer));
+}
+
+void
+gh_send_ui_set_draft_status(GhWindow *window, const gchar *status)
+{
+  g_return_if_fail(GH_IS_WINDOW(window));
+  GhSendUi *ui = g_object_get_data(G_OBJECT(window), SEND_UI_DATA);
+  if (ui)
+    gh_composer_set_status(ui->composer, status);
 }
 
 void

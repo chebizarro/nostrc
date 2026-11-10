@@ -194,7 +194,7 @@ begin_encrypt(GTask *task)
   }
   if (!build->flow_id) build->flow_id = g_uuid_string_random();
   GhSignerContext context = {"Encrypt and sign encrypted messages for this room, including your own copy.",
-    "nip17-room-send", build->flow_id, build->n_recipients + 1};
+    "nip17-room-send", build->flow_id, build->n_recipients + 1, FALSE};
   gh_account_controller_nip44_encrypt_with_context_async(
     accounts, build->rumor_json, destination(build), build->no_self_copy ? NULL : &context,
     g_task_get_cancellable(task), encrypt_done, task);
@@ -251,7 +251,7 @@ encrypt_done(GObject *source, GAsyncResult *result, gpointer data)
   }
   GhAccountController *accounts = g_task_get_source_object(task);
   GhSignerContext context = {"Sign encrypted messages for this room, including your own copy.",
-    "nip17-room-send", build->flow_id, build->n_recipients + 1};
+    "nip17-room-send", build->flow_id, build->n_recipients + 1, FALSE};
   gh_account_controller_sign_with_context_async(
     accounts, unsigned_json, build->no_self_copy ? NULL : &context,
     g_task_get_cancellable(task), sign_done, task);

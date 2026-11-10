@@ -16,6 +16,7 @@ struct _GhComposer {
   /* Template children. */
   GtkStack *composer_stack;
   GtkLabel *error_label;
+  GtkLabel *status_label; /* draft sync status (nostrc-9lwl7.8) */
   GtkButton *attach_button;
   GtkButton *voice_button;
   GtkButton *poll_button;
@@ -1083,6 +1084,7 @@ gh_composer_class_init(GhComposerClass *klass)
                                               "/org/nostr/Groundhog/ui/gh-composer.ui");
   gtk_widget_class_bind_template_child(widget_class, GhComposer, composer_stack);
   gtk_widget_class_bind_template_child(widget_class, GhComposer, error_label);
+  gtk_widget_class_bind_template_child(widget_class, GhComposer, status_label);
   gtk_widget_class_bind_template_child(widget_class, GhComposer, attach_button);
   gtk_widget_class_bind_template_child(widget_class, GhComposer, voice_button);
   gtk_widget_class_bind_template_child(widget_class, GhComposer, poll_button);
@@ -1315,6 +1317,23 @@ gh_composer_get_error(GhComposer *self)
 {
   g_return_val_if_fail(GH_IS_COMPOSER(self), NULL);
   return self->too_long ? gtk_label_get_text(self->error_label) : self->error;
+}
+
+void
+gh_composer_set_status(GhComposer *self, const gchar *status)
+{
+  g_return_if_fail(GH_IS_COMPOSER(self));
+  gboolean shown = status && *status;
+  gtk_label_set_text(self->status_label, shown ? status : "");
+  gtk_widget_set_visible(GTK_WIDGET(self->status_label), shown);
+}
+
+const gchar *
+gh_composer_get_status(GhComposer *self)
+{
+  g_return_val_if_fail(GH_IS_COMPOSER(self), NULL);
+  return gtk_widget_get_visible(GTK_WIDGET(self->status_label))
+           ? gtk_label_get_text(self->status_label) : NULL;
 }
 
 void

@@ -118,6 +118,10 @@ void gh_composer_revalidate(GhComposer *self);
  * send; NULL clears it. The next edit clears it too. */
 void gh_composer_set_error(GhComposer *self, const gchar *message);
 const gchar *gh_composer_get_error(GhComposer *self);
+/* A quiet status line under the entry (draft synchronization, gh-send-ui.h:
+ * "Saved on This Device · Waiting for Signer"); NULL or "" hides it. */
+void gh_composer_set_status(GhComposer *self, const gchar *status);
+const gchar *gh_composer_get_status(GhComposer *self);
 
 void gh_composer_set_disabled_reason(GhComposer *self, const gchar *reason);
 const gchar *gh_composer_get_disabled_reason(GhComposer *self);

@@ -106,6 +106,14 @@ void gh_nip46_session_call_async(GhNip46Session *self, const gchar *method,
                                  const gchar *const *params, gsize n_params,
                                  GCancellable *cancellable,
                                  GAsyncReadyCallback callback, gpointer user_data);
+/* As call_async; with background the request takes the bulk lane even for
+ * an interactive method (sign_event of an automatic draft revision,
+ * nostrc-9lwl7.8), so it waits behind the user's own requests and is bounded
+ * by the bulk queue, never the interactive one. */
+void gh_nip46_session_call_full_async(GhNip46Session *self, const gchar *method,
+                                      const gchar *const *params, gsize n_params,
+                                      gboolean background, GCancellable *cancellable,
+                                      GAsyncReadyCallback callback, gpointer user_data);
 gchar *gh_nip46_session_call_finish(GhNip46Session *self, GAsyncResult *result,
                                     GError **error);
 /* Pairing returns the hex pubkey of the user, which may differ from the

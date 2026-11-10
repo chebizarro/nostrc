@@ -1123,6 +1123,24 @@ test_drafts(void)
   DraftWait saved = { &f.s, bob_room, "Draft for Bob" };
   gh_test_spin_until(draft_stored, &saved); /* the 1 s debounce */
 
+  /* A revision synced from another device (nostrc-9lwl7.8): a programmatic
+   * update that reports no draft change, after which the saved-draft memory
+   * follows it, so typing the earlier text again is still saved. */
+  gh_send_ui_apply_remote_draft(f.s.window, bob_room, "Draft from elsewhere");
+  assert_composer_text(composer, "Draft from elsewhere");
+  g_assert_false(gh_composer_get_draft_pending(composer));
+  g_assert_true(gh_send_ui_composer_focused(f.s.window, bob_room));
+  g_assert_false(gh_send_ui_composer_focused(f.s.window, carol_room));
+  g_assert_true(gh_store_conversations_set_draft(gh_account_store_get_conversations(f.s.store),
+                                                 bob_room, NULL, NULL));
+  gh_send_ui_apply_remote_draft(f.s.window, bob_room, NULL);
+  assert_composer_text(composer, "");
+  g_assert_false(gh_composer_get_draft_pending(composer));
+  stack_type(composer, "Draft for Bob"); /* the same text as before the remote clear */
+  gh_test_spin_until(draft_stored, &saved);
+  gh_send_ui_apply_remote_draft(f.s.window, carol_room, "For Carol, elsewhere");
+  assert_composer_text(composer, "Draft for Bob"); /* another room: nothing shown changes */
+
   stack_type(composer, " (more)");
   send_stack_select(&f.s, carol); /* saved at once on the switch */
   g_autofree gchar *bob_draft = send_stack_draft(&f.s, bob_room);

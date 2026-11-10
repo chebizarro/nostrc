@@ -407,7 +407,7 @@ start_call(GhSigner *self, Operation op, const gchar *input, const gchar *peer,
       op == OP_ENCRYPT ? "nip44_encrypt" :
       op == OP_DECRYPT ? "nip44_decrypt" : "nip04_decrypt";
     gh_signer_nip46_call_async(self->backend.remote, method, input, peer,
-                               p->cancel, backend_done, p);
+                               context && context->background, p->cancel, backend_done, p);
   } else if (op == OP_SIGN) {
     gh_signer_nip55l_sign_with_context_async(self->backend.local, input, context, p->cancel, backend_done, p);
   } else if (op == OP_ENCRYPT) {

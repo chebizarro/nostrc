@@ -157,7 +157,7 @@ enum {
 };
 static GParamSpec *item_props[ITEM_N_PROPS];
 
-enum { SIGNAL_ITEM_ADDED, SIGNAL_ITEM_REMOVED, N_SIGNALS };
+enum { SIGNAL_ITEM_ADDED, SIGNAL_ITEM_REMOVED, SIGNAL_ENQUEUED, N_SIGNALS };
 static guint signals[N_SIGNALS];
 
 G_DEFINE_FINAL_TYPE(GhOutboxItem, gh_outbox_item, G_TYPE_OBJECT)
@@ -2126,6 +2126,7 @@ send_room_message(GhOutbox *self, const gchar *const *recipients, const gchar *c
     return NULL;
   /* T-enqueue is durable: from here on the message is the outbox's, and
    * this call must not report a failure (a resend would duplicate it). */
+  g_signal_emit(self, signals[SIGNAL_ENQUEUED], 0);
   GhStoreOutboxEntry *entry = g_new0(GhStoreOutboxEntry, 1);
   entry->id = outbox_id;
   entry->conversation_id = conversation_id;
@@ -2227,6 +2228,7 @@ gh_outbox_send_reaction_room(GhOutbox *self, const gchar *const *recipients,
   }
   if (!gh_store_commit(self->store, error))
     return NULL;
+  g_signal_emit(self, signals[SIGNAL_ENQUEUED], 0);
   GhStoreOutboxEntry *entry = g_new0(GhStoreOutboxEntry, 1);
   entry->id = outbox_id;
   entry->conversation_id = conversation_id;
@@ -2289,6 +2291,7 @@ gh_outbox_send_deletion_room(GhOutbox *self, const gchar *const *recipients,
   }
   if (!gh_store_commit(self->store, error))
     return NULL;
+  g_signal_emit(self, signals[SIGNAL_ENQUEUED], 0);
   GhStoreOutboxEntry *entry = g_new0(GhStoreOutboxEntry, 1);
   entry->id = outbox_id;
   entry->conversation_id = conversation_id;
@@ -2861,6 +2864,12 @@ gh_outbox_class_init(GhOutboxClass *klass)
   signals[SIGNAL_ITEM_REMOVED] =
     g_signal_new("item-removed", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL,
                  NULL, G_TYPE_NONE, 1, GH_TYPE_OUTBOX_ITEM);
+  /* After every committed T-enqueue (message, reaction or deletion request):
+   * the draft synchronization scheduler wakes on it (gh-draft-sync.h), since
+   * a chat enqueue cleared the room's draft in that transaction. */
+  signals[SIGNAL_ENQUEUED] =
+    g_signal_new("enqueued", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL,
+                 NULL, G_TYPE_NONE, 0);
 }
 
 static void

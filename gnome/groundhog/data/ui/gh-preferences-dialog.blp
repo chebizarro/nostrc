@@ -776,7 +776,7 @@ Adw.AlertDialog clear_attachments_dialog {
 // Confirmation for prefs.delete-all: the account store's forget (ST-8).
 Adw.AlertDialog delete_all_dialog {
   heading: _("Delete All Messages on This Device?");
-  body: _("Every message, draft and conversation of this account is deleted from this device, and Groundhog signs out of the account here. Your key stays in Grotto, and Gnostr isn't affected.\n\nCopies stay on relays and on other people's devices. Private messages can be downloaded again from your relays with your key; encrypted group history can't.");
+  body: _("Every message, draft and conversation of this account is deleted from this device, and Groundhog signs out of the account here. Your key stays in Grotto, and Gnostr isn't affected.\n\nCopies stay on relays and on other people's devices. Private messages can be downloaded again from your relays with your key; encrypted group history can't. Drafts synced to your private relays stay there until they expire.");
   default-response: "cancel";
   close-response: "cancel";
 

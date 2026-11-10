@@ -1353,6 +1353,15 @@ log_status(GObject *object, GParamSpec *pspec, gpointer data)
 /* T-enqueue before any signer call, T-seal before any publish, per-relay
  * T-outcome, SENT once each recipient has one relay's OK, EPHEMERAL AUTH on
  * a recipient relay that demands it (the account never signs an AUTH). */
+/* "enqueued" after every committed T-enqueue (the draft sync scheduler's
+ * wake, nostrc-9lwl7.8). */
+static void
+count_enqueued(GhOutbox *outbox, gpointer data)
+{
+  (void) outbox;
+  (*(guint *) data)++;
+}
+
 static void
 test_send_happy_path(void)
 {
@@ -1361,6 +1370,8 @@ test_send_happy_path(void)
   settle_own(&f, ALICE_INBOX, NULL);
   fixture_outbox(&f);
   g_assert_true(gh_outbox_is_active(f.outbox));
+  guint enqueued = 0;
+  g_signal_connect(f.outbox, "enqueued", G_CALLBACK(count_enqueued), &enqueued);
   gint64 conversation = 0;
   g_autofree gchar *key = strcmp(hex_alice, hex_bob) < 0
     ? g_strconcat(hex_alice, ",", hex_bob, NULL) : g_strconcat(hex_bob, ",", hex_alice, NULL);
@@ -1370,6 +1381,7 @@ test_send_happy_path(void)
 
   StatusLog log = { g_ptr_array_new() };
   g_autoptr(GhOutboxItem) item = send_text(&f, hex_bob, "hello bob");
+  g_assert_cmpuint(enqueued, ==, 1); /* after the commit, before any signing */
   g_assert_cmpint(gh_outbox_item_get_state(item), ==, GH_STORE_OUTBOX_QUEUED);
   g_signal_connect(item, "notify::status", G_CALLBACK(log_status), &log);
   g_assert_true(gh_outbox_item_get_can_retry(item) == FALSE);
@@ -2535,14 +2547,18 @@ test_reaction_same_second_toggle(void)
   const gchar *recipients[] = { hex_bob, NULL };
   const gchar *target = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
   g_autoptr(GError) error = NULL;
+  guint enqueued = 0;
+  g_signal_connect(f.outbox, "enqueued", G_CALLBACK(count_enqueued), &enqueued);
   g_autofree gchar *first = gh_outbox_send_reaction_room(
     f.outbox, recipients, "+", target, "14", &error);
   g_assert_no_error(error);
   g_assert_nonnull(first);
+  g_assert_cmpuint(enqueued, ==, 1);
   g_autofree gchar *deletion = gh_outbox_send_deletion_room(
     f.outbox, recipients, first, &error);
   g_assert_no_error(error);
   g_assert_nonnull(deletion);
+  g_assert_cmpuint(enqueued, ==, 2); /* reactions and deletion requests wake it too */
   g_autofree gchar *again = gh_outbox_send_reaction_room(
     f.outbox, recipients, "+", target, "14", &error);
   g_assert_no_error(error);

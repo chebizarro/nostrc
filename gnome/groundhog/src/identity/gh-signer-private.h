@@ -39,8 +39,10 @@ gboolean gh_signer_nip55l_declare_finish(GAsyncResult *result, GError **error);
 
 GhNip46Signer *gh_signer_nip46_new(GhNip46Session *session);
 void gh_signer_nip46_free(GhNip46Signer *signer);
+/* background: the session's bulk lane even for an interactive method
+ * (GhSignerContext.background). */
 void gh_signer_nip46_call_async(GhNip46Signer *signer, const gchar *method,
-                                const gchar *input, const gchar *peer,
+                                const gchar *input, const gchar *peer, gboolean background,
                                 GCancellable *cancel, GAsyncReadyCallback cb, gpointer data);
 gchar *gh_signer_nip46_call_finish(GhNip46Signer *signer, GAsyncResult *result,
                                     GError **error);
