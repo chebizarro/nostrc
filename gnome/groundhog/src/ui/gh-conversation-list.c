@@ -549,11 +549,49 @@ gh_conversation_list_set_picture_consent(GhWindow *window, gconstpointer backend
     gh_picture_cache_set_consent(list->pictures, backend, data);
 }
 
+void
+gh_conversation_list_set_picture_policy(GhWindow *window, const GhPicturePolicy *policy,
+                                        gpointer data)
+{
+  GhConversationList *list = list_of(window);
+  if (list && list->pictures)
+    gh_picture_cache_set_policy(list->pictures, policy, data);
+}
+
+void
+gh_conversation_list_picture_policy_changed(GhWindow *window)
+{
+  GhConversationList *list = list_of(window);
+  if (list && list->pictures)
+    gh_picture_cache_policy_changed(list->pictures, NULL);
+}
+
 GhPictureCache *
 gh_conversation_list_get_picture_cache(GhWindow *window)
 {
   GhConversationList *list = list_of(window);
   return list ? list->pictures : NULL;
+}
+
+/* The Message Requests page's identity source (D3): the window's picture
+ * decision and the cache's follow answer, under the picture switch. */
+static GdkTexture *
+requests_picture(gpointer data, const gchar *pubkey)
+{
+  return gh_conversation_list_get_picture(GH_WINDOW(data), pubkey);
+}
+
+static gboolean
+requests_followed(gpointer data, const gchar *pubkey)
+{
+  GhConversationList *list = list_of(GH_WINDOW(data));
+  return list && list->pictures && gh_picture_cache_is_followed(list->pictures, pubkey);
+}
+
+static void
+on_requests_pictures_changed(GhRequestsView *view)
+{
+  gh_requests_view_refresh(view);
 }
 
 GdkTexture *
@@ -685,6 +723,10 @@ gh_conversation_list_attach(GhWindow *window, GhConversationStore *store, GSetti
   {
     g_autoptr(GhWebContent) web = gh_web_content_new(settings, NULL, NULL);
     list->pictures = gh_picture_cache_new(web);
+    /* The master switch (load-profile-pictures): off means no picture on any
+     * surface of this window, and turning it off revokes everything. */
+    if (settings)
+      gh_picture_cache_bind_settings(list->pictures, settings);
     gh_conversation_view_set_picture_cache(list->view, G_OBJECT(list->pictures));
   }
   gh_content_page_set_view(list->content, GTK_WIDGET(list->view));
@@ -693,6 +735,16 @@ gh_conversation_list_attach(GhWindow *window, GhConversationStore *store, GSetti
                       "requests");
   g_signal_connect_object(list->requests_view, "accepted", G_CALLBACK(on_request_accepted),
                           window, G_CONNECT_SWAPPED);
+  {
+    static const GhRequestsIdentity identity = { requests_picture, requests_followed };
+    gh_requests_view_set_identity(list->requests_view, &identity, window, NULL);
+    g_signal_connect_object(list->pictures, "picture-changed",
+                            G_CALLBACK(on_requests_pictures_changed), list->requests_view,
+                            G_CONNECT_SWAPPED);
+    g_signal_connect_object(list->pictures, "policy-changed",
+                            G_CALLBACK(on_requests_pictures_changed), list->requests_view,
+                            G_CONNECT_SWAPPED);
+  }
 
   if (settings) {
     g_autoptr(GSettingsSchema) schema = NULL;

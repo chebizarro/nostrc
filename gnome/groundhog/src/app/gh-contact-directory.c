@@ -27,8 +27,17 @@
 #define MAX_DEADLINE_S      120
 #define MAX_NAME_CHARS      64
 #define MAX_NIP05_BYTES     128
+#define PICTURES_KEY        "load-profile-pictures" /* the follow exception's master switch */
 
 enum { SOURCE_PENDING, SOURCE_EOSE, SOURCE_FAILED };
+
+/* What one lookup asks for. An accepted contact's inbox list and kind 0 go
+ * together; a followed-only contact gets its kind 0 alone (D3 grants
+ * nothing else); the send path asks for the inbox list, with kind 0 only
+ * for an accepted contact, never through following (PD-12). */
+typedef enum { LOOKUP_INBOX, LOOKUP_BOTH, LOOKUP_PROFILE } Lookup;
+#define LOOKUP_ASKS_INBOX(kinds)   ((kinds) != LOOKUP_PROFILE)
+#define LOOKUP_ASKS_PROFILE(kinds) ((kinds) != LOOKUP_INBOX)
 
 typedef struct _Fetch Fetch;
 
@@ -47,7 +56,9 @@ typedef struct {
   gchar *nip05;             /* cleaned claimed NIP-05, or NULL */
   gint64 inbox_checked;     /* unix s of the last answered lookup of each; 0 never */
   gint64 profile_checked;
-  gboolean accepted;
+  gboolean accepted;        /* a peer of an accepted DM, or an own identity */
+  gboolean surfaced;        /* a peer of any room, requests and groups included */
+  gboolean was_eligible;    /* eligible() at the end of the last rescan */
   Fetch *fetch;             /* the lookup in flight for it (borrowed) */
   guint soon;               /* GhClock id of a single refresh, 0 none */
 } Contact;
@@ -57,7 +68,7 @@ struct _Fetch {
   GhContactDirectory *owner;
   guint64 generation;
   GPtrArray *authors;          /* lowercase hex */
-  gboolean profiles;           /* kind 0 too (accepted contacts only) */
+  Lookup kinds;                /* what the REQ asks for */
   GhRelayScope *scope;
   GHashTable *sources;         /* url -> SOURCE_* */
   guint deadline;              /* GhClock id */
@@ -93,12 +104,28 @@ struct _GhContactDirectory {
   guint64 generation;            /* 0: no active account */
   gchar *account;
   GHashTable *contacts;          /* pubkey -> Contact */
+  GHashTable *follows;           /* the account's followed pubkeys (lowercase hex) */
+  GHashTable *roster;            /* group rosters' pubkeys (lowercase hex): surfaced */
+  gboolean pictures_on;          /* load-profile-pictures: the follow exception applies */
   GPtrArray *fetches;            /* Fetch in flight */
   guint run_timer;
   gint64 run_at;
   guint batch_timer;
-  GQueue batches;                /* GPtrArray of pubkeys still to ask in this run */
+  GQueue batches;                /* Batch: pubkeys still to ask in this run */
 };
+
+/* One batch of a run: at most 10 authors asked for the same kinds. */
+typedef struct {
+  GPtrArray *pubkeys;
+  Lookup kinds;
+} Batch;
+
+static void
+batch_free(Batch *batch)
+{
+  g_ptr_array_unref(batch->pubkeys);
+  g_free(batch);
+}
 
 enum { SIGNAL_PROFILE_CHANGED, N_SIGNALS };
 static guint signals[N_SIGNALS];
@@ -110,8 +137,19 @@ G_DEFINE_FINAL_TYPE_WITH_CODE(GhContactDirectory, gh_contact_directory, G_TYPE_O
                                                     gh_contact_directory_resolver_init))
 
 static void fetch_abort(Fetch *fetch);
-static Fetch *fetch_new(GhContactDirectory *self, GPtrArray *authors, gboolean profiles);
+static Fetch *fetch_new(GhContactDirectory *self, GPtrArray *authors, Lookup kinds);
 static void rescan(GhContactDirectory *self, gboolean initial, gboolean accept_transition);
+
+/* Profile eligibility (plan §3.6): accepted, or followed and surfaced while
+ * load-profile-pictures is on. It grants the kind-0 lookup and its display
+ * only; acceptance stays what it is. */
+static gboolean
+eligible(GhContactDirectory *self, const Contact *contact)
+{
+  return contact->accepted ||
+         (contact->surfaced && self->pictures_on &&
+          g_hash_table_contains(self->follows, contact->pubkey));
+}
 
 /* ---- small helpers ----------------------------------------------------------- */
 
@@ -304,7 +342,7 @@ contact_cancel_soon(GhContactDirectory *self, Contact *contact)
   gh_clock_source_remove(self->clock, id);
 }
 
-/* Drops what nobody needs: not accepted, nothing cached, nothing pending. */
+/* Drops what nobody needs: not eligible, nothing cached, nothing pending. */
 static void
 prune(GhContactDirectory *self)
 {
@@ -313,8 +351,8 @@ prune(GhContactDirectory *self)
   g_hash_table_iter_init(&iter, self->contacts);
   while (g_hash_table_iter_next(&iter, NULL, &value)) {
     Contact *contact = value;
-    if (!contact->accepted && !contact->inbox_id && !contact->profile_id && !contact->fetch &&
-        !contact->soon)
+    if (!eligible(self, contact) && !contact->inbox_id && !contact->profile_id &&
+        !contact->fetch && !contact->soon)
       g_hash_table_iter_remove(&iter);
   }
 }
@@ -473,8 +511,10 @@ persist(GhContactDirectory *self, Fetch *fetch, gboolean answered, gint64 now)
   }
   for (guint i = 0; answered && i < fetch->authors->len; i++) {
     const gchar *pubkey = g_ptr_array_index(fetch->authors, i);
-    if (!gh_store_directory_touch(store, pubkey, KIND_DM_INBOX, now, &error) ||
-        (fetch->profiles && !gh_store_directory_touch(store, pubkey, KIND_PROFILE, now, &error)))
+    if ((LOOKUP_ASKS_INBOX(fetch->kinds) &&
+         !gh_store_directory_touch(store, pubkey, KIND_DM_INBOX, now, &error)) ||
+        (LOOKUP_ASKS_PROFILE(fetch->kinds) &&
+         !gh_store_directory_touch(store, pubkey, KIND_PROFILE, now, &error)))
       goto rollback;
   }
   if (gh_store_commit(store, &error))
@@ -512,14 +552,24 @@ schedule_run_within(GhContactDirectory *self, gint64 min_s, gint64 max_s)
   schedule_run(self, now_s(self) + gh_clock_random_range(self->clock, min_s, max_s));
 }
 
+/* What a run asks for a contact: both for an accepted one, its kind 0
+ * alone for a followed one (D3). */
+static Lookup
+contact_lookup(const Contact *contact)
+{
+  return contact->accepted ? LOOKUP_BOTH : LOOKUP_PROFILE;
+}
+
 static gboolean
 contact_due(GhContactDirectory *self, Contact *contact)
 {
-  return contact->accepted && !contact->fetch &&
-         (stale(self, contact->inbox_checked) || stale(self, contact->profile_checked));
+  if (contact->fetch || !eligible(self, contact))
+    return FALSE;
+  return stale(self, contact->profile_checked) ||
+         (contact->accepted && stale(self, contact->inbox_checked));
 }
 
-/* The next run: when the next accepted contact turns stale, plus U(2, 30) min. */
+/* The next run: when the next eligible contact turns stale, plus U(2, 30) min. */
 static void
 plan_next_run(GhContactDirectory *self)
 {
@@ -529,10 +579,11 @@ plan_next_run(GhContactDirectory *self)
   g_hash_table_iter_init(&iter, self->contacts);
   while (g_hash_table_iter_next(&iter, NULL, &value)) {
     Contact *contact = value;
-    if (!contact->accepted)
+    if (!eligible(self, contact))
       continue;
-    gint64 due = contact->fetch ? now + FRESH_S
-                                : MIN(contact->inbox_checked, contact->profile_checked) + FRESH_S;
+    gint64 checked = contact->accepted ? MIN(contact->inbox_checked, contact->profile_checked)
+                                       : contact->profile_checked;
+    gint64 due = contact->fetch ? now + FRESH_S : checked + FRESH_S;
     earliest = MIN(earliest, due);
   }
   if (earliest == G_MAXINT64)
@@ -547,16 +598,17 @@ static gboolean on_batch(gpointer data);
 static void
 next_batch(GhContactDirectory *self)
 {
-  GPtrArray *batch;
+  Batch *batch;
   while ((batch = g_queue_pop_head(&self->batches))) {
     g_autoptr(GPtrArray) authors = g_ptr_array_new_with_free_func(g_free);
-    for (guint i = 0; i < batch->len; i++) {
-      Contact *contact = g_hash_table_lookup(self->contacts, g_ptr_array_index(batch, i));
-      if (contact && contact_due(self, contact))
+    for (guint i = 0; i < batch->pubkeys->len; i++) {
+      Contact *contact = g_hash_table_lookup(self->contacts, g_ptr_array_index(batch->pubkeys, i));
+      if (contact && contact_due(self, contact) && contact_lookup(contact) == batch->kinds)
         g_ptr_array_add(authors, g_strdup(contact->pubkey));
     }
-    g_ptr_array_unref(batch);
-    if (authors->len && fetch_new(self, authors, TRUE))
+    Lookup kinds = batch->kinds;
+    batch_free(batch);
+    if (authors->len && fetch_new(self, authors, kinds))
       break;
   }
   if (!g_queue_is_empty(&self->batches)) {
@@ -577,7 +629,29 @@ on_batch(gpointer data)
   return G_SOURCE_REMOVE;
 }
 
-/* A run: every due accepted contact, in random order, in batches of <= 10. */
+/* Shuffles due (Fisher-Yates from the GhClock) into batches of <= 10 for kinds. */
+static void
+queue_batches(GhContactDirectory *self, GPtrArray *due, Lookup kinds)
+{
+  for (guint i = due->len; i > 1; i--) {
+    guint j = gh_clock_random_uniform(self->clock, i);
+    gpointer tmp = due->pdata[i - 1];
+    due->pdata[i - 1] = due->pdata[j];
+    due->pdata[j] = tmp;
+  }
+  for (guint i = 0; i < due->len; i += BATCH_MAX) {
+    Batch *batch = g_new0(Batch, 1);
+    batch->kinds = kinds;
+    batch->pubkeys = g_ptr_array_new_with_free_func(g_free);
+    for (guint j = i; j < MIN(due->len, i + BATCH_MAX); j++)
+      g_ptr_array_add(batch->pubkeys, g_strdup(g_ptr_array_index(due, j)));
+    g_queue_push_tail(&self->batches, batch);
+  }
+}
+
+/* A run: every due eligible contact, in random order, in batches of <= 10;
+ * accepted contacts (inbox list and kind 0) and followed-only ones (kind 0
+ * alone) in separate batches, so a REQ never asks more than D3 grants. */
 static gboolean
 on_run(gpointer data)
 {
@@ -585,25 +659,18 @@ on_run(gpointer data)
   self->run_timer = 0;
   if (!self->store || !self->generation || self->batch_timer)
     return G_SOURCE_REMOVE;
-  g_autoptr(GPtrArray) due = g_ptr_array_new();
+  g_autoptr(GPtrArray) due_both = g_ptr_array_new();
+  g_autoptr(GPtrArray) due_profile = g_ptr_array_new();
   GHashTableIter iter;
   gpointer value;
   g_hash_table_iter_init(&iter, self->contacts);
-  while (g_hash_table_iter_next(&iter, NULL, &value))
-    if (contact_due(self, value))
-      g_ptr_array_add(due, ((Contact *)value)->pubkey);
-  for (guint i = due->len; i > 1; i--) { /* Fisher-Yates from the GhClock */
-    guint j = gh_clock_random_uniform(self->clock, i);
-    gpointer tmp = due->pdata[i - 1];
-    due->pdata[i - 1] = due->pdata[j];
-    due->pdata[j] = tmp;
+  while (g_hash_table_iter_next(&iter, NULL, &value)) {
+    Contact *contact = value;
+    if (contact_due(self, contact))
+      g_ptr_array_add(contact->accepted ? due_both : due_profile, contact->pubkey);
   }
-  for (guint i = 0; i < due->len; i += BATCH_MAX) {
-    GPtrArray *batch = g_ptr_array_new_with_free_func(g_free);
-    for (guint j = i; j < MIN(due->len, i + BATCH_MAX); j++)
-      g_ptr_array_add(batch, g_strdup(g_ptr_array_index(due, j)));
-    g_queue_push_tail(&self->batches, batch);
-  }
+  queue_batches(self, due_both, LOOKUP_BOTH);
+  queue_batches(self, due_profile, LOOKUP_PROFILE);
   next_batch(self);
   return G_SOURCE_REMOVE;
 }
@@ -633,13 +700,20 @@ on_soon(gpointer data)
   if (!contact->fetch && self->generation) {
     g_autoptr(GPtrArray) authors = g_ptr_array_new_with_free_func(g_free);
     g_ptr_array_add(authors, g_strdup(contact->pubkey));
-    fetch_new(self, authors, contact->accepted);
+    /* An accepted contact: both. A followed one: its kind 0, and the inbox
+     * list it already has when that is what went stale (S2). Nobody
+     * else's kind 0; their inbox list only (a stale one used for a send). */
+    Lookup kinds = contact->accepted ? LOOKUP_BOTH
+                 : !eligible(self, contact) ? LOOKUP_INBOX
+                 : contact->inbox_id ? LOOKUP_BOTH : LOOKUP_PROFILE;
+    fetch_new(self, authors, kinds);
   }
   return G_SOURCE_REMOVE;
 }
 
 /* One contact on its own after U(min, max) s: an accepted request (its
- * name), or a stale inbox list just used for a send (S2). */
+ * name), a followed sender that just surfaced (D3), or a stale inbox list
+ * just used for a send (S2). */
 static void
 schedule_soon(GhContactDirectory *self, Contact *contact)
 {
@@ -664,9 +738,9 @@ stop_schedule(GhContactDirectory *self)
     gh_clock_source_remove(self->clock, self->batch_timer);
     self->batch_timer = 0;
   }
-  GPtrArray *batch;
+  Batch *batch;
   while ((batch = g_queue_pop_head(&self->batches)))
-    g_ptr_array_unref(batch);
+    batch_free(batch);
   GHashTableIter iter;
   gpointer value;
   g_hash_table_iter_init(&iter, self->contacts);
@@ -804,8 +878,9 @@ fetch_complete(gpointer data)
     Contact *contact = g_hash_table_lookup(self->contacts, g_ptr_array_index(fetch->authors, i));
     if (!contact)
       continue;
-    contact->inbox_checked = now;
-    if (fetch->profiles)
+    if (LOOKUP_ASKS_INBOX(fetch->kinds))
+      contact->inbox_checked = now;
+    if (LOOKUP_ASKS_PROFILE(fetch->kinds))
       contact->profile_checked = now;
   }
   if (self->store && (answered || g_hash_table_size(fetch->admitted)))
@@ -835,7 +910,7 @@ fetch_complete(gpointer data)
     gh_inbox_resolver_emit_changed(GH_INBOX_RESOLVER(self), g_ptr_array_index(inbox_changed, i));
   for (guint i = 0; i < profile_changed->len; i++) {
     Contact *contact = g_hash_table_lookup(self->contacts, g_ptr_array_index(profile_changed, i));
-    if (contact && contact->accepted)
+    if (contact && eligible(self, contact))
       g_signal_emit(self, signals[SIGNAL_PROFILE_CHANGED], 0, contact->pubkey);
   }
   /* No source answered a refresh: try again at the next run, not before
@@ -893,8 +968,9 @@ fetch_admit(Fetch *fetch, const GhRelayUpdate *update)
   Contact *contact = fetch_has_author(fetch, pubkey)
     ? g_hash_table_lookup(fetch->owner->contacts, pubkey) : NULL;
   /* Someone else's event, another kind, or a kind 0 nobody may ask for. */
-  if (contact && (kind == KIND_DM_INBOX ||
-                  (kind == KIND_PROFILE && fetch->profiles && contact->accepted)) &&
+  if (contact && ((kind == KIND_DM_INBOX && LOOKUP_ASKS_INBOX(fetch->kinds)) ||
+                  (kind == KIND_PROFILE && LOOKUP_ASKS_PROFILE(fetch->kinds) &&
+                   eligible(fetch->owner, contact))) &&
       contact_offer(fetch->owner, contact, event, update->event_json, id, fetch))
     g_hash_table_add(fetch->admitted, g_strdup_printf("%s/%d", pubkey, kind));
   nostr_event_free(event);
@@ -945,7 +1021,7 @@ on_deadline(gpointer data)
 }
 
 static NostrFilters *
-lookup_filters(GPtrArray *authors, gboolean profiles)
+lookup_filters(GPtrArray *authors, Lookup kinds)
 {
   NostrFilters *filters = nostr_filters_new();
   NostrFilter *filter = nostr_filter_new();
@@ -958,8 +1034,11 @@ lookup_filters(GPtrArray *authors, gboolean profiles)
   }
   const int both[] = { KIND_PROFILE, KIND_DM_INBOX };
   const int inbox_only[] = { KIND_DM_INBOX };
-  if (profiles)
+  const int profile_only[] = { KIND_PROFILE };
+  if (kinds == LOOKUP_BOTH)
     nostr_filter_set_kinds(filter, both, G_N_ELEMENTS(both));
+  else if (kinds == LOOKUP_PROFILE)
+    nostr_filter_set_kinds(filter, profile_only, G_N_ELEMENTS(profile_only));
   else
     nostr_filter_set_kinds(filter, inbox_only, G_N_ELEMENTS(inbox_only));
   nostr_filter_set_authors(filter, (const char *const *)authors->pdata, authors->len);
@@ -977,7 +1056,7 @@ lookup_filters(GPtrArray *authors, gboolean profiles)
  * the user adopted them as discovery relays in onboarding, with that
  * disclosed. NULL when there is no usable source. */
 static Fetch *
-fetch_new(GhContactDirectory *self, GPtrArray *authors, gboolean profiles)
+fetch_new(GhContactDirectory *self, GPtrArray *authors, Lookup kinds)
 {
   g_autoptr(GPtrArray) urls = g_ptr_array_new_with_free_func(g_free);
   g_auto(GStrv) discovery = g_settings_get_strv(self->settings, "discovery-relays");
@@ -987,13 +1066,13 @@ fetch_new(GhContactDirectory *self, GPtrArray *authors, gboolean profiles)
       g_ptr_array_add(urls, g_strdup(discovery[i]));
   if (!urls->len || !authors->len || !self->generation)
     return NULL;
-  NostrFilters *filters = lookup_filters(authors, profiles);
+  NostrFilters *filters = lookup_filters(authors, kinds);
   if (!filters)
     return NULL;
   Fetch *fetch = g_new0(Fetch, 1);
   fetch->owner = self;
   fetch->generation = self->generation;
-  fetch->profiles = profiles;
+  fetch->kinds = kinds;
   fetch->authors = g_ptr_array_new_with_free_func(g_free);
   for (guint i = 0; i < authors->len; i++)
     g_ptr_array_add(fetch->authors, g_strdup(g_ptr_array_index(authors, i)));
@@ -1110,6 +1189,7 @@ accept_own_profile(GhContactDirectory *self, GHashTable *before,
   /* Own identities are not contact-acceptance transitions. A new identity
    * joins the near-term own-profile lookup, not a contact lookup. */
   g_hash_table_add(before, own->pubkey);
+  own->was_eligible = TRUE;
   if (self->store && !initial && !was_accepted && !own->profile_json)
     schedule_soon(self, own);
 }
@@ -1125,27 +1205,41 @@ schedule_uncached_own_profile(GhContactDirectory *self, const gchar *pubkey)
 /* The accepted set: peers of the account's NIP-17 rooms that are not
  * requests. A contact accepted by an explicit accept (or reply) is refreshed
  * alone soon; one that appears accepted otherwise joins a run no sooner than
- * U(2, 30) min away; the initial set waits for the first run (S1). */
+ * U(2, 30) min away; the initial set waits for the first run (S1).
+ * The surfaced set: peers of every room (requests and group rosters too).
+ * A followed one is eligible for its kind 0 while load-profile-pictures is
+ * on (D3), and a newly eligible one is refreshed alone soon, so a followed
+ * sender's request shows its name and picture without waiting for a run. */
 static void
 rescan(GhContactDirectory *self, gboolean initial, gboolean accept_transition)
 {
   if (!self->generation)
     return;
+  /* What was eligible after the last rescan: the inputs (rooms, the follow
+   * list, the switch) may already have changed by now. */
   g_autoptr(GHashTable) before = g_hash_table_new(g_str_hash, g_str_equal);
   GHashTableIter iter;
   gpointer value;
   g_hash_table_iter_init(&iter, self->contacts);
   while (g_hash_table_iter_next(&iter, NULL, &value)) {
     Contact *contact = value;
-    if (contact->accepted)
+    if (contact->was_eligible)
       g_hash_table_add(before, contact->pubkey);
     contact->accepted = FALSE;
+    contact->surfaced = FALSE;
   }
   if (self->model && g_strcmp0(gh_conversation_store_get_account(self->model), self->account) == 0) {
     guint n = g_list_model_get_n_items(G_LIST_MODEL(self->model));
     for (guint i = 0; i < n; i++) {
       g_autoptr(GhConversation) room = g_list_model_get_item(G_LIST_MODEL(self->model), i);
       GhConversationBackend backend = gh_conversation_get_backend(room);
+      /* Everyone in any room is surfaced (group rosters below): the follow
+       * exception reaches them and nobody else (never the whole follow
+       * list, PD-12). */
+      const gchar *const *peers = gh_conversation_get_peers(room);
+      for (guint p = 0; peers && peers[p]; p++)
+        if (hex64(peers[p]))
+          contact_ensure(self, peers[p])->surfaced = TRUE;
       /* NIP-17 conversations and Marmot DMs both contribute accepted contacts.
        * Marmot DMs (is_direct) are the WN DM shape; their peers are contacts
        * the same way NIP-17 peers are. Non-DM MLS groups don't: the person
@@ -1166,12 +1260,17 @@ rescan(GhContactDirectory *self, gboolean initial, gboolean accept_transition)
       }
       if (gh_conversation_get_is_request(room))
         continue;
-      const gchar *const *peers = gh_conversation_get_peers(room);
       for (guint p = 0; peers && peers[p]; p++)
         if (hex64(peers[p]))
           contact_ensure(self, peers[p])->accepted = TRUE;
     }
   }
+  GHashTableIter roster;
+  gpointer member;
+  g_hash_table_iter_init(&roster, self->roster);
+  while (g_hash_table_iter_next(&roster, &member, NULL))
+    if (g_strcmp0(member, self->account) != 0)
+      contact_ensure(self, member)->surfaced = TRUE;
   /* Every listed signer identity is the owner's own profile, including
    * inactive Grotto and NIP-46 accounts. Their kind 0 supplies the switcher
    * names and picture URLs. Use the same discovery-relay path as the active
@@ -1191,20 +1290,44 @@ rescan(GhContactDirectory *self, gboolean initial, gboolean accept_transition)
   while (g_hash_table_iter_next(&iter, NULL, &value)) {
     Contact *contact = value;
     gboolean was = g_hash_table_contains(before, contact->pubkey);
-    if (was == contact->accepted)
+    gboolean now = eligible(self, contact);
+    if (was == now)
       continue;
     if (contact->name || contact->nip05 || contact->profile_json)
       g_ptr_array_add(shown, g_strdup(contact->pubkey));
-    if (!contact->accepted || initial)
+    if (!now) {
+      /* Follow-derived work ends with the eligibility: the pending single
+       * lookup of a contact with nothing else to refresh, and a kind-0-only
+       * lookup in flight. The send path's lookups (an inbox list, waiters)
+       * stay; a kind 0 they bring is refused at admission. */
+      if (!contact->accepted) {
+        if (!contact->inbox_id)
+          contact_cancel_soon(self, contact);
+        if (contact->fetch && contact->fetch->kinds == LOOKUP_PROFILE &&
+            !contact->fetch->waiters->len)
+          fetch_abort(contact->fetch);
+      }
       continue;
-    if (accept_transition)
+    }
+    if (initial)
+      continue;
+    if (!contact->accepted) {
+      /* A followed sender surfacing (or followed anew): its cached kind 0
+       * serves while fresh; otherwise it is looked up alone, soon. */
+      if (stale(self, contact->profile_checked))
+        schedule_soon(self, contact);
+    } else if (accept_transition) {
       schedule_soon(self, contact);
-    else
+    } else {
       join_run = TRUE;
+    }
   }
   if (join_run)
     schedule_run_within(self, RUN_MIN_S, RUN_MAX_S);
   prune(self);
+  g_hash_table_iter_init(&iter, self->contacts);
+  while (g_hash_table_iter_next(&iter, NULL, &value))
+    ((Contact *)value)->was_eligible = eligible(self, value);
   for (guint i = 0; i < shown->len; i++)
     g_signal_emit(self, signals[SIGNAL_PROFILE_CHANGED], 0, g_ptr_array_index(shown, i));
 }
@@ -1225,7 +1348,7 @@ gh_contact_directory_set_conversations(GhContactDirectory *self,
   rescan(self, FALSE, FALSE);
 }
 
-/* Accepted contacts with cached profile data that the UI may show. */
+/* Eligible contacts with cached profile data that the UI may show. */
 static void
 collect_shown(GhContactDirectory *self, GHashTable *shown)
 {
@@ -1234,9 +1357,56 @@ collect_shown(GhContactDirectory *self, GHashTable *shown)
   g_hash_table_iter_init(&iter, self->contacts);
   while (g_hash_table_iter_next(&iter, NULL, &value)) {
     Contact *contact = value;
-    if (contact->accepted && (contact->name || contact->nip05 || contact->profile_json))
+    if (eligible(self, contact) && (contact->name || contact->nip05 || contact->profile_json))
       g_hash_table_add(shown, g_strdup(contact->pubkey));
   }
+}
+
+void
+gh_contact_directory_set_follows(GhContactDirectory *self, const gchar *const *pubkeys)
+{
+  g_return_if_fail(GH_IS_CONTACT_DIRECTORY(self));
+  g_hash_table_remove_all(self->follows);
+  for (guint i = 0; pubkeys && pubkeys[i]; i++)
+    if (hex64(pubkeys[i]))
+      g_hash_table_add(self->follows, g_ascii_strdown(pubkeys[i], -1));
+  /* Eligibility may have changed either way: newly followed surfaced
+   * contacts are looked up soon; unfollowed ones stop being shown (and
+   * "profile-changed" says so, from rescan). */
+  rescan(self, FALSE, FALSE);
+}
+
+void
+gh_contact_directory_set_roster(GhContactDirectory *self, const gchar *const *pubkeys)
+{
+  g_return_if_fail(GH_IS_CONTACT_DIRECTORY(self));
+  g_hash_table_remove_all(self->roster);
+  for (guint i = 0; pubkeys && pubkeys[i]; i++)
+    if (hex64(pubkeys[i]))
+      g_hash_table_add(self->roster, g_ascii_strdown(pubkeys[i], -1));
+  rescan(self, FALSE, FALSE);
+}
+
+gboolean
+gh_contact_directory_is_followed(GhContactDirectory *self, const gchar *pubkey)
+{
+  g_return_val_if_fail(GH_IS_CONTACT_DIRECTORY(self), FALSE);
+  if (!pubkey || !self->pictures_on)
+    return FALSE;
+  g_autofree gchar *key = g_ascii_strdown(pubkey, -1);
+  return g_hash_table_contains(self->follows, key);
+}
+
+static void
+on_pictures_setting(GSettings *settings, const gchar *key, gpointer data)
+{
+  (void)key;
+  GhContactDirectory *self = data;
+  gboolean on = g_settings_get_boolean(settings, PICTURES_KEY);
+  if (on == self->pictures_on)
+    return;
+  self->pictures_on = on;
+  rescan(self, FALSE, FALSE);
 }
 
 gboolean
@@ -1293,28 +1463,33 @@ gh_contact_directory_set_deadline(GhContactDirectory *self, guint seconds)
 
 /* ---- display --------------------------------------------------------------------- */
 
+/* The contact whose cached kind 0 may be shown (eligible), or NULL. */
 static Contact *
-accepted_contact(GhContactDirectory *self, const gchar *pubkey)
+shown_contact(GhContactDirectory *self, const gchar *pubkey)
 {
   if (!pubkey)
     return NULL;
   g_autofree gchar *key = g_ascii_strdown(pubkey, -1);
   Contact *contact = g_hash_table_lookup(self->contacts, key);
-  return contact && contact->accepted ? contact : NULL;
+  return contact && eligible(self, contact) ? contact : NULL;
 }
 
 gboolean
 gh_contact_directory_is_accepted(GhContactDirectory *self, const gchar *pubkey)
 {
   g_return_val_if_fail(GH_IS_CONTACT_DIRECTORY(self), FALSE);
-  return accepted_contact(self, pubkey) != NULL;
+  if (!pubkey)
+    return FALSE;
+  g_autofree gchar *key = g_ascii_strdown(pubkey, -1);
+  Contact *contact = g_hash_table_lookup(self->contacts, key);
+  return contact && contact->accepted;
 }
 
 const gchar *
 gh_contact_directory_get_display_name(GhContactDirectory *self, const gchar *pubkey)
 {
   g_return_val_if_fail(GH_IS_CONTACT_DIRECTORY(self), NULL);
-  Contact *contact = accepted_contact(self, pubkey);
+  Contact *contact = shown_contact(self, pubkey);
   return contact ? contact->name : NULL;
 }
 
@@ -1322,14 +1497,15 @@ const gchar *
 gh_contact_directory_get_nip05(GhContactDirectory *self, const gchar *pubkey)
 {
   g_return_val_if_fail(GH_IS_CONTACT_DIRECTORY(self), NULL);
-  Contact *contact = accepted_contact(self, pubkey);
+  Contact *contact = shown_contact(self, pubkey);
   return contact ? contact->nip05 : NULL;
 }
 
 gchar *
 gh_contact_directory_dup_picture_uri(GhContactDirectory *self, const gchar *pubkey)
 {
-  Contact *contact = accepted_contact(self, pubkey);
+  g_return_val_if_fail(GH_IS_CONTACT_DIRECTORY(self), NULL);
+  Contact *contact = shown_contact(self, pubkey);
   if (!contact || !contact->profile_json) return NULL;
   g_autofree gchar *content = json_string(contact->profile_json, "content");
   if (!content) return NULL;
@@ -1407,12 +1583,13 @@ directory_resolve_async(GhInboxResolver *resolver, const gchar *pubkey_hex,
     return;
   }
   /* The first contact with this recipient, whom the user chose: one lookup
-   * the send waits for (its name only if already accepted, PT-8). */
+   * the send waits for (its name only if already accepted, PT-8; following
+   * never adds a kind 0 to the send path, PD-12). */
   Fetch *fetch = contact ? contact->fetch : NULL;
   if (!fetch) {
     g_autoptr(GPtrArray) authors = g_ptr_array_new_with_free_func(g_free);
     g_ptr_array_add(authors, g_strdup(key));
-    fetch = fetch_new(self, authors, contact && contact->accepted);
+    fetch = fetch_new(self, authors, contact && contact->accepted ? LOOKUP_BOTH : LOOKUP_INBOX);
   }
   if (!fetch) {
     GhInboxResult *result = g_new0(GhInboxResult, 1);
@@ -1506,6 +1683,9 @@ gh_contact_directory_new(const GhContactDirectoryConfig *config)
   }
   g_signal_connect_object(self->accounts, "changed", G_CALLBACK(sync_account), self,
                           G_CONNECT_SWAPPED);
+  self->pictures_on = g_settings_get_boolean(self->settings, PICTURES_KEY);
+  g_signal_connect_object(self->settings, "changed::" PICTURES_KEY,
+                          G_CALLBACK(on_pictures_setting), self, 0);
   sync_account(self);
   return self;
 }
@@ -1530,6 +1710,8 @@ gh_contact_directory_dispose(GObject *object)
   if (self->accounts)
     g_signal_handlers_disconnect_by_data(self->accounts, self);
   g_clear_object(&self->accounts);
+  if (self->settings)
+    g_signal_handlers_disconnect_by_data(self->settings, self);
   g_clear_object(&self->settings);
   g_hash_table_remove_all(self->contacts);
   G_OBJECT_CLASS(gh_contact_directory_parent_class)->dispose(object);
@@ -1540,6 +1722,8 @@ gh_contact_directory_finalize(GObject *object)
 {
   GhContactDirectory *self = GH_CONTACT_DIRECTORY(object);
   g_hash_table_unref(self->contacts);
+  g_hash_table_unref(self->follows);
+  g_hash_table_unref(self->roster);
   g_ptr_array_unref(self->fetches);
   g_clear_pointer(&self->clock, gh_clock_unref);
   g_free(self->account);
@@ -1562,6 +1746,8 @@ gh_contact_directory_init(GhContactDirectory *self)
 {
   self->deadline_s = DEFAULT_DEADLINE_S;
   self->contacts = g_hash_table_new_full(g_str_hash, g_str_equal, NULL, contact_free);
+  self->follows = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  self->roster = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   self->fetches = g_ptr_array_new();
   g_queue_init(&self->batches);
 }

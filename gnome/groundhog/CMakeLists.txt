@@ -786,6 +786,18 @@ if (BUILD_TESTING AND TARGET groundhog-account AND EXISTS ${GROUNDHOG_GNOSTR_SCH
     add_test(NAME groundhog-conversation-list COMMAND test-groundhog-conversation-list)
     set_tests_properties(groundhog-conversation-list PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60
       ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
+    # The profile-picture policy (plan groundhog-social-lists §3.6, D2): the
+    # master switch off fetches nothing on any surface, follow removal and the
+    # hide seam revoke at once, a same-URI stale completion is ignored, two
+    # windows revoke together from the preference. Recording HTTP transport,
+    # fake consent and policy; no display.
+    add_executable(test-groundhog-picture-cache tests/ui/test_picture_cache.c)
+    target_link_libraries(test-groundhog-picture-cache PRIVATE groundhog-conversation-ui)
+    target_compile_options(test-groundhog-picture-cache PRIVATE -Wall -Wextra -Werror)
+    add_dependencies(test-groundhog-picture-cache groundhog-test-schemas)
+    add_test(NAME groundhog-picture-cache COMMAND test-groundhog-picture-cache)
+    set_tests_properties(groundhog-picture-cache PROPERTIES TIMEOUT 60
+      ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
   endif()
   # --- end G11 ---
 endif()

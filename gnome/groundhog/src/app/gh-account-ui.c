@@ -141,10 +141,9 @@ account_row_new(GhAccountUi *ui, const GhIdentityInfo *info, gboolean active)
   gtk_widget_set_margin_end(box, 12);
   AdwAvatar *avatar = ADW_AVATAR(adw_avatar_new(36, title, TRUE));
 #if GROUNDHOG_HAVE_INBOX
+  /* Own identities are eligible under the master switch by the cache's
+   * policy (gh_picture_cache_set_own in update()), never by consent. */
   if (pubkey && ui->picture_cache) {
-    if (g_settings_get_boolean(ui->settings, "load-profile-pictures") &&
-        !gh_picture_cache_is_allowed(ui->picture_cache, pubkey))
-      gh_picture_cache_allow(ui->picture_cache, pubkey);
     GdkTexture *picture = gh_conversation_list_get_picture(GH_WINDOW(ui->window), pubkey);
     if (picture)
       adw_avatar_set_custom_image(avatar, GDK_PAINTABLE(picture));
@@ -537,6 +536,21 @@ update(GhAccountUi *ui)
     ui->picture_cache = cache;
     g_signal_connect_object(cache, "picture-changed", G_CALLBACK(on_window_state_source),
                             ui->window, G_CONNECT_SWAPPED);
+    g_signal_connect_object(cache, "policy-changed", G_CALLBACK(on_window_state_source),
+                            ui->window, G_CONNECT_SWAPPED);
+  }
+  if (cache) {
+    /* Every listed identity's picture (the switcher, Preferences, own
+     * messages) is eligible without consent, under the master switch. */
+    g_autoptr(GPtrArray) own = g_ptr_array_new_with_free_func(g_free);
+    for (guint i = 0; identities && i < identities->len; i++) {
+      const GhIdentityInfo *info = g_ptr_array_index(identities, i);
+      gchar *pubkey = gh_identity_pubkey_hex(info->npub);
+      if (pubkey)
+        g_ptr_array_add(own, pubkey);
+    }
+    g_ptr_array_add(own, NULL);
+    gh_picture_cache_set_own(cache, (const gchar *const *)own->pdata);
   }
 #endif
   rebuild_accounts(ui, identities, active, active_backend);

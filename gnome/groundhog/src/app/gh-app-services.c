@@ -528,6 +528,154 @@ store_key_teardown(GhAppServices *self)
   dispose_object(&self->store_key);
 }
 
+#if GROUNDHOG_HAVE_INBOX
+/* ---- profile-picture policy (owner decisions D2/D3, plan §3.6) ----------------
+ * Every window's picture cache asks here whether the account follows a
+ * pubkey (the follow list, read only while load-profile-pictures is on) or
+ * hides it (Stage 6: the hide policy; nobody is hidden until it lands).
+ * Following never writes consent and never accepts a request. */
+static gboolean
+picture_policy_is_followed(gpointer data, const gchar *pubkey)
+{
+#if GROUNDHOG_HAVE_SOCIAL_LISTS
+  GhAppServices *self = data;
+  return self->social_lists && gh_social_lists_is_followed(self->social_lists, pubkey);
+#else
+  (void)data; (void)pubkey;
+  return FALSE;
+#endif
+}
+
+static gboolean
+picture_policy_is_hidden(gpointer data, const gchar *pubkey)
+{
+  (void)data; (void)pubkey;
+  return FALSE; /* Stage 6 injects the hide policy here */
+}
+
+static const GhPicturePolicy picture_policy = {
+  picture_policy_is_followed, picture_policy_is_hidden
+};
+#endif
+
+#if GROUNDHOG_HAVE_OUTBOX && (GROUNDHOG_HAVE_GROUP_UI || GROUNDHOG_HAVE_MLS_UI)
+/* ---- group rosters surfaced for the directory (plan §3.6) ----------------------
+ * Members and admins of joined NIP-29 groups and members of active MLS
+ * groups are surfaced like conversation peers: a followed one may be looked
+ * up (its kind 0 only). The services live beside the outbox per open
+ * store; their models and each room's roster signals re-feed the directory. */
+#if GROUNDHOG_HAVE_GROUP_UI
+static GhNip29Service *group_ui_service(gpointer data);
+#endif
+#if GROUNDHOG_HAVE_MLS_UI
+static GhMlsService *mls_ui_service(gpointer data);
+#endif
+static void rosters_sync(GhAppServices *self);
+
+/* Connected swapped: every roster signal, whatever its arguments. */
+static void
+on_roster_changed(GhAppServices *self)
+{
+  rosters_sync(self);
+}
+
+static void
+roster_watch(GhAppServices *self, gpointer object, const gchar *first, const gchar *second)
+{
+  if (g_signal_handler_find(object, G_SIGNAL_MATCH_FUNC | G_SIGNAL_MATCH_DATA, 0, 0, NULL,
+                            on_roster_changed, self))
+    return;
+  g_signal_connect_swapped(object, first, G_CALLBACK(on_roster_changed), self);
+  if (second)
+    g_signal_connect_swapped(object, second, G_CALLBACK(on_roster_changed), self);
+}
+
+static void
+rosters_sync(GhAppServices *self)
+{
+  GhContactDirectory *directory = gh_app_outbox_get_directory(self->outbox);
+  if (!directory)
+    return;
+  g_autoptr(GPtrArray) roster = g_ptr_array_new_with_free_func(g_free);
+#if GROUNDHOG_HAVE_GROUP_UI
+  GListModel *rooms = (GListModel *)group_ui_service(self);
+  if (rooms) {
+    roster_watch(self, rooms, "items-changed", NULL);
+    guint n = g_list_model_get_n_items(rooms);
+    for (guint i = 0; i < n; i++) {
+      g_autoptr(GhNip29Room) room = g_list_model_get_item(rooms, i);
+      roster_watch(self, room, "group-changed", "notify::join-state");
+      const GhNip29Group *group = gh_nip29_room_get_group(room);
+      if (!group || gh_nip29_room_get_join_state(room) != GH_NIP29_JOIN_MEMBER)
+        continue;
+      g_auto(GStrv) members = NULL;
+      gh_nip29_group_dup_members(group, &members);
+      for (guint m = 0; members && members[m]; m++)
+        g_ptr_array_add(roster, g_strdup(members[m]));
+      g_autoptr(GPtrArray) admins = gh_nip29_group_dup_admins(group);
+      for (guint a = 0; admins && a < admins->len; a++)
+        g_ptr_array_add(roster, g_strdup(((GhNip29Admin *)g_ptr_array_index(admins, a))->pubkey));
+    }
+  }
+#endif
+#if GROUNDHOG_HAVE_MLS_UI
+  GListModel *groups = (GListModel *)mls_ui_service(self);
+  if (groups) {
+    roster_watch(self, groups, "items-changed", NULL);
+    guint n = g_list_model_get_n_items(groups);
+    for (guint i = 0; i < n; i++) {
+      g_autoptr(GhMlsGroup) group = g_list_model_get_item(groups, i);
+      roster_watch(self, group, "members-changed", "notify::active");
+      if (!gh_mls_group_get_active(group))
+        continue;
+      g_auto(GStrv) members = gh_mls_group_dup_members(group);
+      for (guint m = 0; members && members[m]; m++)
+        g_ptr_array_add(roster, g_strdup(members[m]));
+    }
+  }
+#endif
+  g_ptr_array_add(roster, NULL);
+  gh_contact_directory_set_roster(directory, (const gchar *const *)roster->pdata);
+}
+#endif
+
+#if GROUNDHOG_HAVE_SOCIAL_LISTS
+/* Kind 3 is read only while load-profile-pictures is on, from the discovery
+ * relays plus the account's write relays (PD-12: never from the send path,
+ * never the whole list's kind 0). */
+static void
+sync_follow_reads(GSettings *settings, const gchar *key, gpointer data)
+{
+  (void)key;
+  GhAppServices *self = data;
+  g_auto(GStrv) discovery = g_settings_get_strv(settings, "discovery-relays");
+  gh_social_lists_set_follow_reads(self->social_lists,
+                                   g_settings_get_boolean(settings, "load-profile-pictures"),
+                                   (const gchar *const *)discovery);
+}
+
+/* The follow set changed: the directory's eligibility and every window's
+ * picture decision follow. */
+static void
+on_follows_changed(GhSocialLists *lists, gpointer data)
+{
+  GhAppServices *self = data;
+#if GROUNDHOG_HAVE_OUTBOX
+  GhContactDirectory *directory = gh_app_outbox_get_directory(self->outbox);
+  if (directory)
+    gh_contact_directory_set_follows(directory, gh_social_lists_get_follows(lists));
+#else
+  (void)lists;
+#endif
+#if GROUNDHOG_HAVE_INBOX
+  for (GList *w = gtk_application_get_windows(GTK_APPLICATION(g_application_get_default()));
+       w; w = w->next)
+    if (GH_IS_WINDOW(w->data))
+      gh_conversation_list_picture_policy_changed(GH_WINDOW(w->data));
+#endif
+}
+#endif
+
 static gboolean
 account_store_init(GhAppServices *self, GError **error)
 {
@@ -547,6 +695,12 @@ account_store_init(GhAppServices *self, GError **error)
   self->social_lists = gh_social_lists_new(NULL);
   GhListAdapterNetwork list_network = { .accounts = self->accounts };
   gh_social_lists_set_network(self->social_lists, &list_network, self->relays);
+  g_signal_connect(self->social_lists, "follows-changed", G_CALLBACK(on_follows_changed), self);
+  g_signal_connect(self->settings, "changed::load-profile-pictures",
+                   G_CALLBACK(sync_follow_reads), self);
+  g_signal_connect(self->settings, "changed::discovery-relays",
+                   G_CALLBACK(sync_follow_reads), self);
+  sync_follow_reads(self->settings, NULL, self);
 #if GROUNDHOG_HAVE_OUTBOX
   gh_app_outbox_set_social_lists(self->outbox, self->social_lists);
 #endif
@@ -554,6 +708,10 @@ account_store_init(GhAppServices *self, GError **error)
   self->account_store = gh_account_store_new(&config);
 #if GROUNDHOG_HAVE_SOCIAL_LISTS
   gh_social_lists_attach_store(self->social_lists, self->account_store);
+#endif
+#if GROUNDHOG_HAVE_OUTBOX && (GROUNDHOG_HAVE_GROUP_UI || GROUNDHOG_HAVE_MLS_UI)
+  /* The group services come and go with the open store. */
+  g_signal_connect_swapped(self->account_store, "changed", G_CALLBACK(on_roster_changed), self);
 #endif
   return TRUE;
 }
@@ -563,7 +721,12 @@ account_store_init(GhAppServices *self, GError **error)
 static void
 account_store_teardown(GhAppServices *self)
 {
+#if GROUNDHOG_HAVE_OUTBOX && (GROUNDHOG_HAVE_GROUP_UI || GROUNDHOG_HAVE_MLS_UI)
+  g_signal_handlers_disconnect_by_func(self->account_store, on_roster_changed, self);
+#endif
 #if GROUNDHOG_HAVE_SOCIAL_LISTS
+  g_signal_handlers_disconnect_by_func(self->settings, sync_follow_reads, self);
+  g_signal_handlers_disconnect_by_func(self->social_lists, on_follows_changed, self);
 #if GROUNDHOG_HAVE_OUTBOX
   gh_app_outbox_set_social_lists(self->outbox, NULL);
 #endif
@@ -1348,13 +1511,9 @@ sync_preferences_account(GhAccountController *accounts, gpointer dialog)
 #endif
   gh_preferences_dialog_set_account(GH_PREFERENCES_DIALOG(dialog), npub, label);
 #if GROUNDHOG_HAVE_INBOX
+  /* The account's own picture is eligible by the cache's policy (the
+   * switcher feeds it the identities), never by a consent written here. */
   GtkWindow *window = self ? gtk_application_get_active_window(self->app) : NULL;
-  if (pubkey && GH_IS_WINDOW(window) &&
-      g_settings_get_boolean(self->settings, "load-profile-pictures")) {
-    GhPictureCache *cache = gh_conversation_list_get_picture_cache(GH_WINDOW(window));
-    if (cache && !gh_picture_cache_is_allowed(cache, pubkey))
-      gh_picture_cache_allow(cache, pubkey);
-  }
   GdkTexture *picture = pubkey && GH_IS_WINDOW(window)
     ? gh_conversation_list_get_picture(GH_WINDOW(window), pubkey) : NULL;
   gh_preferences_dialog_set_account_picture(GH_PREFERENCES_DIALOG(dialog),
@@ -2398,6 +2557,10 @@ gh_app_services_attach_window(GhAppServices *self, GhWindow *window)
                       ? gh_account_store_get_store(self->account_store) : NULL;
     picture_consent_sync(open);
   }
+  gh_conversation_list_set_picture_policy(window, &picture_policy, self);
+#if GROUNDHOG_HAVE_OUTBOX && (GROUNDHOG_HAVE_GROUP_UI || GROUNDHOG_HAVE_MLS_UI)
+  rosters_sync(self);
+#endif
   gh_inbox_status_attach(gh_window_get_status(window), self->inbox, self->relays);
 #endif
 #if GROUNDHOG_HAVE_ACCOUNTS && GROUNDHOG_HAVE_TOR

@@ -1436,6 +1436,24 @@ gh_new_message_page_update_picture(GhNewMessagePage *self, const gchar *pubkey)
   }
 }
 
+/* The cache's policy changed (the master switch, the follow list): every
+ * row asks for its picture again. */
+static void
+on_pictures_policy_changed(GObject *cache, GhNewMessagePage *self)
+{
+  (void)cache;
+  if (!self->config.picture)
+    return;
+  GListStore *stores[] = { self->suggestions, self->recipients, self->people_items };
+  for (guint s = 0; s < G_N_ELEMENTS(stores); s++) {
+    guint n = g_list_model_get_n_items(G_LIST_MODEL(stores[s]));
+    for (guint i = 0; i < n; i++) {
+      g_autoptr(GhNewMessageItem) item = g_list_model_get_item(G_LIST_MODEL(stores[s]), i);
+      item_set_picture(item, self->config.picture(self->config.picture_data, item->pubkey));
+    }
+  }
+}
+
 GListModel *
 gh_new_message_page_get_suggestions(GhNewMessagePage *self)
 {
@@ -1676,10 +1694,13 @@ open_panel(Attachment *attachment, const GhNewMessageConfig *config, const gchar
     gh_new_message_page_add_recipient(page, recipient);
   g_signal_connect(page, "conversation-started", G_CALLBACK(on_started), attachment);
   GhPictureCache *pictures = gh_conversation_list_get_picture_cache(window);
-  if (pictures)
+  if (pictures) {
     g_signal_connect_object(pictures, "picture-changed",
                             G_CALLBACK(gh_new_message_page_update_picture), page,
                             G_CONNECT_SWAPPED);
+    g_signal_connect_object(pictures, "policy-changed",
+                            G_CALLBACK(on_pictures_policy_changed), page, 0);
+  }
   gh_sidebar_page_push_panel(sidebar, ADW_NAVIGATION_PAGE(page));
   gh_new_message_page_focus_entry(page);
   return page;
