@@ -1,0 +1,8 @@
+#!/bin/sh
+# Hide only SQLCipher; all other module and pkg-config capability queries work.
+for arg do
+  case "$arg" in
+    sqlcipher|'sqlcipher '*|'sqlcipher>'*|'sqlcipher<'*|'sqlcipher='*) exit 1 ;;
+  esac
+done
+exec "${REAL_PKG_CONFIG:-pkg-config}" "$@"

@@ -1,6 +1,8 @@
 #include "gh-emoji.h"
+#if GROUNDHOG_HAVE_SOCIAL_LISTS
 #include "gh-social-lists.h"
 #include "nostr-kinds.h"
+#endif
 #include <glib/gi18n.h>
 
 void
@@ -15,6 +17,7 @@ GPtrArray *
 gh_emoji_catalog(GhSocialLists *lists)
 {
   GPtrArray *sets = g_ptr_array_new_with_free_func((GDestroyNotify)gh_emoji_set_free);
+#if GROUNDHOG_HAVE_SOCIAL_LISTS
   GNostrListService *service = lists ? gh_social_lists_get_service(lists) : NULL;
   if (!service) return sets;
   for (guint pass = 0; pass < 2; pass++) {
@@ -45,5 +48,8 @@ gh_emoji_catalog(GhSocialLists *lists)
       else gh_emoji_set_free(set);
     }
   }
+#else
+  (void)lists;
+#endif
   return sets;
 }

@@ -1,5 +1,5 @@
-/* Every literal icon referenced by the current Blueprint/C sources must be
- * bundled or explicitly supplied by GTK itself. Runs without a display. */
+/* Every literal icon referenced by Blueprint/C sources and compiled UI resources
+ * must be bundled or supplied by GTK itself. Runs without a display. */
 #include <gio/gio.h>
 #include <glib.h>
 #include <string.h>
@@ -19,12 +19,9 @@ static const char *const GTK_BUILTINS[] = {
 };
 
 static void
-collect_file(const gchar *path, GRegex *pattern, GHashTable *names)
+collect_source(const gchar *source, GRegex *pattern, GHashTable *names)
 {
-  g_autofree gchar *source = NULL;
   g_autoptr(GError) error = NULL;
-  g_assert_true(g_file_get_contents(path, &source, NULL, &error));
-  g_assert_no_error(error);
   GMatchInfo *matches = NULL;
   g_regex_match(pattern, source, 0, &matches);
   while (g_match_info_matches(matches)) {
@@ -34,6 +31,43 @@ collect_file(const gchar *path, GRegex *pattern, GHashTable *names)
     g_assert_no_error(error);
   }
   g_match_info_free(matches);
+}
+
+static void
+collect_file(const gchar *path, GRegex *pattern, GHashTable *names)
+{
+  g_autofree gchar *source = NULL;
+  g_autoptr(GError) error = NULL;
+  g_assert_true(g_file_get_contents(path, &source, NULL, &error));
+  g_assert_no_error(error);
+  collect_source(source, pattern, names);
+}
+
+static void
+collect_ui_resources(GHashTable *names)
+{
+  const gchar *prefix = "/org/nostr/Groundhog/ui";
+  g_autoptr(GError) error = NULL;
+  g_auto(GStrv) children = g_resources_enumerate_children(prefix,
+    G_RESOURCE_LOOKUP_FLAGS_NONE, &error);
+  g_assert_no_error(error);
+  g_assert_nonnull(children);
+  g_assert_true(g_strv_contains((const gchar *const *)children, "gh-drafts-page.ui"));
+  g_autoptr(GRegex) pattern = g_regex_new(
+    "<property name=\"icon-name\">([^<]+)</property>", 0, 0, &error);
+  g_assert_no_error(error);
+  for (guint i = 0; children[i]; i++) {
+    if (!g_str_has_suffix(children[i], ".ui")) continue;
+    g_autofree gchar *path = g_strconcat(prefix, "/", children[i], NULL);
+    g_autoptr(GBytes) bytes = g_resources_lookup_data(path,
+      G_RESOURCE_LOOKUP_FLAGS_NONE, &error);
+    g_assert_no_error(error);
+    g_assert_nonnull(bytes);
+    gsize size = 0;
+    const gchar *data = g_bytes_get_data(bytes, &size);
+    g_autofree gchar *source = g_strndup(data, size);
+    collect_source(source, pattern, names);
+  }
 }
 
 static void
@@ -72,6 +106,7 @@ referenced_icons(void)
   g_assert_no_error(error);
   g_autofree gchar *src = g_build_filename(GROUNDHOG_SOURCE_DIR, "src", "ui", NULL);
   collect_dir(src, ".c", c_names, names);
+  collect_ui_resources(names);
   return names;
 }
 
@@ -88,6 +123,7 @@ test_icon_resources(void)
 {
   g_autoptr(GHashTable) names = referenced_icons();
   g_assert_cmpuint(g_hash_table_size(names), >, 35);
+  gboolean all_found = TRUE;
   GHashTableIter iter;
   gpointer key;
   g_hash_table_iter_init(&iter, names);
@@ -101,8 +137,9 @@ test_icon_resources(void)
                                           NULL, NULL, &error);
     if (!found)
       g_test_message("unresolved icon %s (missing resource %s)", name, path);
-    g_assert_true(found);
+    all_found &= found;
   }
+  g_assert_true(all_found);
 }
 
 static void

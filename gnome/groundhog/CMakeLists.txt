@@ -2040,7 +2040,8 @@ if (TARGET nostr AND TARGET nip19)
 endif()
 if (TARGET groundhog-recipient AND TARGET PkgConfig::GROUNDHOG_NET_DEPS)
   message(STATUS "Groundhog NIP-05 lookup: enabled")
-  add_library(groundhog-net STATIC src/net/gh-net-http.c src/net/gh-net-tls.c src/net/gh-nip05.c)
+  add_library(groundhog-net STATIC src/net/gh-net-http.c src/net/gh-net-tls.c src/net/gh-nip05.c
+    src/net/gh-nip11.c)
   target_include_directories(groundhog-net PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/net)
   target_link_libraries(groundhog-net PUBLIC groundhog-recipient PkgConfig::GROUNDHOG_NET_DEPS)
   target_compile_options(groundhog-net PRIVATE -Wall -Wextra -Werror)
@@ -2206,7 +2207,6 @@ endif()
 if (TARGET groundhog-nip29 AND TARGET groundhog-store AND TARGET groundhog-auth-policy AND
     TARGET groundhog-conversations AND TARGET groundhog-net AND TARGET groundhog-account-relays)
   message(STATUS "Groundhog NIP-29 service: enabled")
-  target_sources(groundhog-net PRIVATE src/net/gh-nip11.c)
   # gh-nip29-group-list.c: the account's NIP-51 kind-10009 group list
   # (nostrc-90jof), encrypted to itself, read and written on its own 10002
   # write relays and discovery-relays; restores groups only when asked.
@@ -3969,9 +3969,9 @@ foreach(_consumer IN LISTS _emoji_consumers)
     target_link_libraries(${_consumer} PRIVATE groundhog-emoji-codec)
   endif()
 endforeach()
-# Emoji UI needs the account-backed lists and consent-gated web loader. Refuse
-# incomplete Groundhog builds explicitly rather than link nonexistent targets.
-foreach(_emoji_dependency groundhog-conversations groundhog-conversation-ui groundhog-social-lists groundhog-web-content)
+# Inline emoji and Unicode reactions work without the optional account store;
+# only the saved custom-emoji catalog needs account-backed social lists.
+foreach(_emoji_dependency groundhog-conversations groundhog-conversation-ui groundhog-web-content)
   if(NOT TARGET ${_emoji_dependency})
     message(FATAL_ERROR "Groundhog custom emoji requires ${_emoji_dependency}; enable Groundhog account/store, NIP-17 and network dependencies")
   endif()
@@ -3979,12 +3979,18 @@ endforeach()
 target_link_libraries(groundhog-conversations PUBLIC groundhog-emoji-codec)
 add_library(groundhog-emoji-ui STATIC src/ui/gh-emoji-images.c src/ui/gh-emoji-catalog.c
   src/ui/gh-reaction-picker.c)
-target_link_libraries(groundhog-emoji-ui PUBLIC groundhog-emoji-codec groundhog-social-lists
+target_link_libraries(groundhog-emoji-ui PUBLIC groundhog-emoji-codec
   groundhog-web-content groundhog-conversations)
+if(TARGET groundhog-social-lists)
+  target_link_libraries(groundhog-emoji-ui PUBLIC groundhog-social-lists)
+  target_compile_definitions(groundhog-emoji-ui PUBLIC GROUNDHOG_HAVE_SOCIAL_LISTS=1)
+else()
+  target_compile_definitions(groundhog-emoji-ui PUBLIC GROUNDHOG_HAVE_SOCIAL_LISTS=0)
+endif()
 target_compile_options(groundhog-emoji-ui PRIVATE -Wall -Wextra -Werror)
 target_link_libraries(groundhog-ui PUBLIC groundhog-emoji-ui)
 target_link_libraries(groundhog-conversation-ui PUBLIC groundhog-emoji-ui)
-if(BUILD_TESTING)
+if(BUILD_TESTING AND TARGET groundhog-store-conversations AND TARGET groundhog-social-lists)
   add_executable(test-groundhog-emoji tests/ui/test_emoji.c src/app/gh-nip17-envelope.c ${GROUNDHOG_RESOURCE_C})
   target_include_directories(test-groundhog-emoji PRIVATE ${CMAKE_SOURCE_DIR}/tests/common)
   target_link_libraries(test-groundhog-emoji PRIVATE groundhog-conversation-ui groundhog-store-conversations
@@ -4070,5 +4076,18 @@ if (BUILD_TESTING)
   endif()
 endif()
 # --- end test isolation ---
+
+# Build this directory's executables and their prerequisites with any generator,
+# not unrelated root tests or maintenance targets (such as POT extraction).
+if(BUILD_TESTING)
+  get_property(_groundhog_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+  add_custom_target(groundhog-test-build)
+  foreach(_target IN LISTS _groundhog_targets)
+    get_target_property(_type ${_target} TYPE)
+    if(_type STREQUAL "EXECUTABLE")
+      add_dependencies(groundhog-test-build ${_target})
+    endif()
+  endforeach()
+endif()
 
 include("${CMAKE_CURRENT_SOURCE_DIR}/TestInventory.cmake")

@@ -67,7 +67,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     </child>
                     <child>
                       <object class="AdwStatusPage" id="empty">
-                        <property name="icon-name">document-edit-symbolic</property>
+                        <property name="icon-name">text-x-generic-symbolic</property>
                         <property name="title" translatable="yes">No Conflict Copies</property>
                         <property name="description" translatable="yes">A draft synced from another device replaces the text here only while it is not being written</property>
                         <style>
