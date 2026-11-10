@@ -759,7 +759,7 @@ test_draft_timer_and_emoji(void)
     GTK_MENU_BUTTON(template_child(composer, GH_TYPE_COMPOSER, "emoji_button"));
   g_assert_null(gtk_menu_button_get_popover(emoji_button));
   gtk_menu_button_popup(emoji_button);
-  GtkEmojiChooser *chooser = GTK_EMOJI_CHOOSER(gtk_menu_button_get_popover(emoji_button));
+  GtkPopover *chooser = gtk_menu_button_get_popover(emoji_button);
   g_assert_nonnull(chooser);
   g_signal_emit_by_name(chooser, "emoji-picked", "🦫");
   g_autofree gchar *text = text_of(composer);
@@ -1422,8 +1422,10 @@ fake_reason(GhConversation *conversation, gpointer data)
 }
 
 static gboolean
-fake_send(GhConversation *conversation, const gchar *text, gpointer data, GError **error)
+fake_send(GhConversation *conversation, const gchar *text, GPtrArray *emoji_tags,
+          gpointer data, GError **error)
 {
+  (void)emoji_tags;
   (void)conversation;
   (void)error;
   FakeEngine *engine = data;

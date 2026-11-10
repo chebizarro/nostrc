@@ -5,6 +5,7 @@
 #include "gh-signer.h"
 #include "nostr-event.h"
 #include "nostr-tag.h"
+#include "gh-emoji.h"
 #include "nostr/nip17/nip17.h"
 #include "nostr/nip59/nip59.h"
 #include "secure_buf.h"
@@ -607,6 +608,17 @@ gh_nip17_rumor_new_room(const gchar *sender_pubkey_hex, const gchar *const *reci
     return NULL;
   return rumor_new(sender, (const gchar *const *)room, content, created_at, expires_at,
                    out_rumor_id, error);
+}
+
+gchar *
+gh_nip17_rumor_new_room_with_tags(const gchar *sender, const gchar *const *recipients,
+                                   const gchar *content, GPtrArray *tags,
+                                   gint64 created_at, gint64 expires_at,
+                                   gchar **out_id, GError **error)
+{
+  g_autofree gchar *json = gh_nip17_rumor_new_room(sender, recipients, content,
+                                                  created_at, expires_at, NULL, error);
+  return json ? gh_emoji_tag_event(json, tags, out_id, error) : NULL;
 }
 
 gchar *

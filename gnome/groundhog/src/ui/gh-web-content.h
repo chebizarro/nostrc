@@ -3,7 +3,7 @@
 #include <gtk/gtk.h>
 #include "gh-net-http.h"
 G_BEGIN_DECLS
-typedef enum { GH_WEB_PREVIEW, GH_WEB_IMAGE, GH_WEB_PICTURE, GH_WEB_OG_IMAGE,
+typedef enum { GH_WEB_PREVIEW, GH_WEB_IMAGE, GH_WEB_PICTURE, GH_WEB_OG_IMAGE, GH_WEB_EMOJI,
                GH_WEB_N_KINDS } GhWebKind;
 const gchar *gh_web_content_setting(GhWebKind kind);
 typedef struct {

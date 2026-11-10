@@ -23,5 +23,9 @@ gboolean gh_public_post_snapshot_matches_signed(const GhPublicPostSnapshot *snap
 void gh_public_post_snapshot_free(GhPublicPostSnapshot *snapshot);
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(GhPublicPostSnapshot, gh_public_post_snapshot_free)
 
+GhPublicPostSnapshot *gh_public_post_snapshot_new_with_tags(const GhPublicNote *original,
+    const GnNostrReference *reference, gboolean quote, const gchar *comment,
+    const gchar *account_pubkey, gint64 created_at, const gchar *const *write_relays,
+    GPtrArray *emoji_tags, GError **error);
 G_END_DECLS
 #endif

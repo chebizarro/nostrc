@@ -1,4 +1,5 @@
 #include "gh-conversation-view.h"
+#include "gh-emoji.h"
 #include "gh-conversation-private.h"
 #include "gh-link-policy.h"
 #include "gh-display-name.h"
@@ -803,6 +804,7 @@ struct _GhConversationView {
   GHashTable *allowed_senders; /* kind + sender, for the open conversation only */
   GhPictureCache *pictures;    /* nullable: per-contact consent and textures, app-wide */
   guint64 web_generation;
+  GhSocialLists *emoji_lists;
   GHashTable *previews;    /* rumor id -> Preview */
   GCancellable *cancellable;
   GhLinkPreviewFetch fetch;
@@ -3279,8 +3281,27 @@ action_react(GtkWidget *widget, const char *name, GVariant *parameter)
   GhMessage *message = gh_conversation_lookup_message(self->conversation, rumor_id);
   if (!message)
     return;
-  self->react_func(self->conversation, message, emoji, add, self->react_data);
+  self->react_func(self->conversation, message, emoji, add, NULL, self->react_data);
 }
+
+void
+gh_conversation_view_react_custom(GhConversationView *self, GhMessage *message,
+                                  const gchar *emoji, GPtrArray *tags)
+{
+  if (!self->react_func || !gh_conversation_view_can_ask(self) || !message ||
+      gh_conversation_get_is_request(self->conversation) ||
+      gh_conversation_lookup_message(self->conversation, gh_message_get_rumor_id(message)) != message)
+    return;
+  self->react_func(self->conversation, message, emoji, TRUE, tags, self->react_data);
+}
+
+void gh_conversation_view_set_emoji_source(GhConversationView *self, GhSocialLists *lists)
+{
+  g_set_object(&self->emoji_lists, lists);
+}
+GhSocialLists *gh_conversation_view_get_emoji_source(GhConversationView *self) { return self->emoji_lists; }
+GSettings *gh_conversation_view_get_emoji_settings(GhConversationView *self) { return self->settings; }
+GhWebContent *gh_conversation_view_get_emoji_web(GhConversationView *self) { return self->web; }
 
 gboolean
 gh_conversation_view_scroll_to_message(GhConversationView *self, const gchar *rumor_id)
@@ -3557,6 +3578,7 @@ gh_conversation_view_dispose(GObject *object)
   gh_conversation_view_set_delivery_report_func(self, NULL, NULL, NULL);
   gh_conversation_view_set_link_preview_fetcher(self, NULL, NULL, NULL, NULL);
   gh_conversation_view_set_reaction_func(self, NULL, NULL, NULL);
+  g_clear_object(&self->emoji_lists);
   gh_conversation_view_set_delete_func(self, NULL, NULL, NULL);
   gh_conversation_view_set_can_ask_func(self, NULL, NULL, NULL);
   g_clear_pointer(&self->pending_delete, g_free);

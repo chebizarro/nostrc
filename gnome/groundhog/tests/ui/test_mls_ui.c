@@ -43,6 +43,7 @@
 #include "gh-mls-new-group-page.h"
 #include "gh-test-escape.h"
 #include "gh-mls-ui.h"
+#include "gh-emoji.h"
 #include "gh-message-row.h"
 #include "gh-nip29-service.h"
 #include "gh-shell.h"
@@ -1460,13 +1461,39 @@ test_gui_new_group(void)
   g_autofree gchar *reason = delegate->reason(conversation, data);
   g_assert_null(reason);
   g_autoptr(GError) error = NULL;
-  g_assert_true(delegate->send(conversation, "Hello, Book Club", data, &error));
+  g_autoptr(GPtrArray) emoji_tags = gh_emoji_tags_new();
+  const gchar *emoji_tag[] = { "emoji", "test-face", "https://example.com/face.png", NULL };
+  g_ptr_array_add(emoji_tags, g_strdupv((gchar **)emoji_tag));
+  g_assert_true(delegate->send(conversation, "Hello, Book Club :test-face:", emoji_tags, data, &error));
   g_assert_no_error(error);
-  GhMessage *mine = find_message(alice, room, "Hello, Book Club");
+  GhMessage *mine = find_message(alice, room, "Hello, Book Club :test-face:");
   g_assert_nonnull(mine);
   g_assert_true(gh_message_is_self(mine));
-  MessageWait delivered = { alice, room, "Hello, Book Club" };
+  g_autoptr(GPtrArray) sent_tags = gh_emoji_parse(gh_message_get_rumor_json(mine));
+  g_assert_cmpuint(sent_tags->len, ==, 1);
+  g_assert_cmpstr(((gchar **)g_ptr_array_index(sent_tags, 0))[2], ==, "https://example.com/face.png");
+  MessageWait delivered = { alice, room, "Hello, Book Club :test-face:" };
   spin_until(sent, &delivered, "the message sent");
+  g_assert_true(gh_mls_service_send_reaction_with_tags(alice->service, ga,
+    gh_message_get_rumor_id(mine), gh_message_get_sender(mine), "9", ":test-face:", emoji_tags, &error));
+  g_assert_no_error(error);
+  g_autoptr(GArray) queued_ids = gh_store_outbox_list_unfinished(alice->store, GH_STORE_BACKEND_MLS, &error);
+  g_assert_no_error(error);
+  gboolean found_emoji_reaction = FALSE;
+  for (guint i = 0; i < queued_ids->len; i++) {
+    g_autoptr(GhStoreOutboxEntry) entry = gh_store_outbox_load(alice->store, g_array_index(queued_ids, gint64, i), &error);
+    g_assert_no_error(error);
+    NostrEvent *event = nostr_event_new();
+    g_assert_cmpint(nostr_event_deserialize_compact(event, entry->rumor_json, NULL), ==, 1);
+    if (nostr_event_get_kind(event) == 7) {
+      g_autoptr(GPtrArray) actual = gh_emoji_parse(entry->rumor_json);
+      g_assert_cmpuint(actual->len, ==, 1);
+      g_assert_cmpstr(nostr_event_get_content(event), ==, ":test-face:");
+      found_emoji_reaction = TRUE;
+    }
+    nostr_event_free(event);
+  }
+  g_assert_true(found_emoji_reaction);
 
   /* Bob: the invitation waits in "Group Invitations"; nothing is joined. */
   spin_until(has_invite, bob, "Bob's invitation");
@@ -1498,7 +1525,7 @@ test_gui_new_group(void)
    * invitations panel. */
   g_assert_cmpint(gh_mls_group_get_adopted(gb), ==, GH_MLS_ADOPTED_KEY_PACKAGES);
   wait_live(gb);
-  wait_message(bob, room, "Hello, Book Club");
+  wait_message(bob, room, "Hello, Book Club :test-face:");
 
   /* Bob is shown the group; Bob answers, Alice reads it. */
   GhConversation *bob_conversation = gh_conversation_store_lookup(bob->model, room);
@@ -2263,7 +2290,7 @@ test_gui_group_info(void)
   g_autofree gchar *carol_reason = carol_delegate->reason(carol_conversation, carol_data);
   g_assert_cmpstr(carol_reason, ==, removed_reason);
   g_autoptr(GError) carol_error = NULL;
-  g_assert_false(carol_delegate->send(carol_conversation, "still here", carol_data,
+  g_assert_false(carol_delegate->send(carol_conversation, "still here", NULL, carol_data,
                                       &carol_error));
   g_assert_cmpstr(carol_error->message, ==,
                   "You were removed from this group, so the message was not sent. It is kept "

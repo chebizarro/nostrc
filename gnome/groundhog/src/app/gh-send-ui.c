@@ -609,9 +609,10 @@ on_send(GhComposer *composer, const gchar *text, gpointer data)
 {
   GhSendUi *ui = data;
   const SendDelegate *delegate = delegate_of(ui, ui->shown);
+  g_autoptr(GPtrArray) emoji_tags = gh_composer_dup_emoji_tags(composer);
   if (delegate) {
     g_autoptr(GError) error = NULL;
-    if (!delegate->delegate.send(ui->shown, text, delegate->data, &error)) {
+    if (!delegate->delegate.send(ui->shown, text, emoji_tags, delegate->data, &error)) {
       gh_composer_set_error(composer, error ? error->message
                                             : _("This message can't be sent right now. It is "
                                                 "kept here."));
@@ -629,7 +630,7 @@ on_send(GhComposer *composer, const gchar *text, gpointer data)
    * rumor for everyone in the room (W17). Its "item-added" already showed
    * and bound the message. */
   g_autoptr(GhOutboxItem) item =
-    gh_outbox_send_room(ui->outbox, (const gchar *const *)recipients, text, &error);
+    gh_outbox_send_room_with_tags(ui->outbox, (const gchar *const *)recipients, text, emoji_tags, &error);
   if (!item) {
     g_message("Groundhog could not queue a message: %s", error->message);
     gh_composer_set_error(composer, send_error(error));

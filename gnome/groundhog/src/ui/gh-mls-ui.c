@@ -377,7 +377,8 @@ delegate_reason(GhConversation *conversation, gpointer data)
 }
 
 static gboolean
-delegate_send(GhConversation *conversation, const gchar *text, gpointer data, GError **error)
+delegate_send(GhConversation *conversation, const gchar *text, GPtrArray *emoji_tags,
+              gpointer data, GError **error)
 {
   MlsUi *ui = data;
   GhMlsService *service = current(ui);
@@ -391,7 +392,7 @@ delegate_send(GhConversation *conversation, const gchar *text, gpointer data, GE
   g_autoptr(GError) local = NULL;
   /* One transaction (the message row, the ratchet step, the sealed 445)
    * before anything is published; the service lists the message at once. */
-  g_autoptr(GhMessage) message = gh_mls_service_send(service, group, text, &local);
+  g_autoptr(GhMessage) message = gh_mls_service_send_with_tags(service, group, text, emoji_tags, &local);
   if (message)
     return TRUE;
   g_message("Groundhog could not send to an encrypted group: %s", local->message);

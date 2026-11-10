@@ -3,6 +3,8 @@
 
 #include <adwaita.h>
 
+#include "gh-emoji.h"
+#include "gh-web-content.h"
 G_BEGIN_DECLS
 
 /* The bound the composer applies until its owner sets a length function: the
@@ -195,5 +197,8 @@ void gh_composer_set_mention_members(GhComposer *self, const gchar *room_id,
 void gh_composer_set_can_create_poll(GhComposer *self, gboolean can_create_poll);
 gboolean gh_composer_get_can_create_poll(GhComposer *self);
 
+GPtrArray *gh_composer_dup_emoji_tags(GhComposer *self);
+void gh_composer_set_emoji_source(GhComposer *self, GhSocialLists *lists,
+    GSettings *settings, GhWebContent *web);
 G_END_DECLS
 #endif

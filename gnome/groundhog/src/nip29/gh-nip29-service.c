@@ -1,4 +1,5 @@
 #include "gh-nip29-service.h"
+#include "gh-emoji.h"
 #include "gh-relay-deny-policy.h"
 #include "gh-diagnostics.h"
 
@@ -2141,13 +2142,21 @@ GhNip29Op *
 gh_nip29_service_send(GhNip29Service *self, GhNip29Room *room, const gchar *text,
                       GError **error)
 {
+  return gh_nip29_service_send_with_tags(self, room, text, NULL, error);
+}
+
+GhNip29Op *
+gh_nip29_service_send_with_tags(GhNip29Service *self, GhNip29Room *room, const gchar *text,
+                                GPtrArray *tags, GError **error)
+{
   g_return_val_if_fail(GH_IS_NIP29_SERVICE(self), NULL);
   if (!can_send_chat(self, room, error))
     return NULL;
   GhNip29TemplateContext context;
   room_context(room, &context);
   g_autofree gchar *chat = gh_nip29_template_chat(room->key, &context, text, error);
-  return chat ? enqueue_chat(self, room, chat, error) : NULL;
+  g_autofree gchar *tagged = chat ? gh_emoji_tag_event(chat, tags, NULL, error) : NULL;
+  return tagged ? enqueue_chat(self, room, tagged, error) : NULL;
 }
 
 GhNip29Op *
@@ -2183,13 +2192,13 @@ gh_nip29_service_cast_poll_vote(GhNip29Service *self, GhNip29Room *room,
 }
 
 GhNip29Op *
-gh_nip29_service_send_reaction(GhNip29Service *self, GhNip29Room *room,
+gh_nip29_service_send_reaction_with_tags(GhNip29Service *self, GhNip29Room *room,
                                const gchar *target_event_id,
                                const gchar *target_pubkey,
                                const gchar *target_kind_str,
                                const gchar *emoji,
                                GhReactionStore *reactions,
-                               GError **error)
+                               GPtrArray *tags, GError **error)
 {
   g_return_val_if_fail(GH_IS_NIP29_SERVICE(self), NULL);
   if (!check_room(self, room, error))
@@ -2204,6 +2213,11 @@ gh_nip29_service_send_reaction(GhNip29Service *self, GhNip29Room *room,
   room_context(room, &context);
   g_autofree gchar *reaction_json = gh_nip29_template_reaction(
     room->key, &context, target_event_id, target_pubkey, target_kind_str, emoji, error);
+  if (reaction_json && tags && tags->len) {
+    gchar *tagged = gh_emoji_tag_event(reaction_json, tags, NULL, error);
+    g_free(reaction_json);
+    reaction_json = tagged;
+  }
   GhNip29Op *op = reaction_json ? room_enqueue(room, reaction_json, error) : NULL;
   if (!op)
     return NULL;
@@ -2226,6 +2240,15 @@ gh_nip29_service_send_reaction(GhNip29Service *self, GhNip29Room *room,
       nostr_event_free(event);
   }
   return op;
+}
+
+GhNip29Op *
+gh_nip29_service_send_reaction(GhNip29Service *self, GhNip29Room *room,
+    const gchar *target, const gchar *pubkey, const gchar *kind, const gchar *emoji,
+    GhReactionStore *reactions, GError **error)
+{
+  return gh_nip29_service_send_reaction_with_tags(self, room, target, pubkey, kind,
+                                                 emoji, reactions, NULL, error);
 }
 
 /* W26 slice B review fix (F2): kind-5 NIP-09 author deletion for a NIP-29

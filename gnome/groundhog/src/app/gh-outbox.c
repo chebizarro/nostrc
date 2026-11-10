@@ -1,4 +1,5 @@
 #include "gh-outbox.h"
+#include "gh-emoji.h"
 #include "gh-relay-deny-policy.h"
 #include "gh-auth-policy.h"
 #include "gh-expiry.h"
@@ -2018,7 +2019,7 @@ gh_outbox_send(GhOutbox *self, const gchar *recipient_pubkey_hex, const gchar *c
  * way (gh-nip17-envelope.h). */
 static gchar *
 room_rumor_new(GhOutbox *self, const gchar *const *recipients, const gchar *content,
-               const GhNip17File *file, const gchar *poll_event_json,
+               const GhNip17File *file, const gchar *poll_event_json, GPtrArray *emoji_tags,
                gint64 created_at, gint64 expires_at,
                gchar **out_rumor_id, GError **error)
 {
@@ -2027,7 +2028,7 @@ room_rumor_new(GhOutbox *self, const gchar *const *recipients, const gchar *cont
                                         created_at, expires_at, out_rumor_id, error);
   return file ? gh_nip17_rumor_new_file_room(self->account, recipients, file, created_at,
                                              expires_at, out_rumor_id, error)
-              : gh_nip17_rumor_new_room(self->account, recipients, content, created_at,
+              : gh_nip17_rumor_new_room_with_tags(self->account, recipients, content, emoji_tags, created_at,
                                         expires_at, out_rumor_id, error);
 }
 
@@ -2037,7 +2038,7 @@ room_rumor_new(GhOutbox *self, const gchar *const *recipients, const gchar *cont
 static GhOutboxItem *
 send_room_message(GhOutbox *self, const gchar *const *recipients, const gchar *content,
                   const GhNip17File *file, const gchar *poll_event_json,
-                  GError **error)
+                  GPtrArray *emoji_tags, GError **error)
 {
   g_return_val_if_fail(GH_IS_OUTBOX(self), NULL);
   if (!self->generation) {
@@ -2068,7 +2069,7 @@ send_room_message(GhOutbox *self, const gchar *const *recipients, const gchar *c
    * recipients. */
   g_autofree gchar *rumor_id = NULL;
   const gint64 created_at = now_unix(self);
-  g_autofree gchar *rumor = room_rumor_new(self, recipients, content, file, poll_event_json,
+  g_autofree gchar *rumor = room_rumor_new(self, recipients, content, file, poll_event_json, emoji_tags,
                                            created_at, 0, &rumor_id, error);
   if (!rumor)
     return NULL;
@@ -2095,7 +2096,7 @@ send_room_message(GhOutbox *self, const gchar *const *recipients, const gchar *c
   if (expires_at) {
     g_clear_pointer(&rumor_id, g_free);
     g_free(rumor);
-    rumor = room_rumor_new(self, recipients, content, file, poll_event_json,
+    rumor = room_rumor_new(self, recipients, content, file, poll_event_json, emoji_tags,
                            created_at, expires_at, &rumor_id, error);
     if (rumor && strlen(rumor) > MAX_RUMOR_JSON) {
       g_clear_pointer(&rumor, g_free);
@@ -2150,14 +2151,14 @@ GhOutboxItem *
 gh_outbox_send_room(GhOutbox *self, const gchar *const *recipients, const gchar *content,
                     GError **error)
 {
-  return send_room_message(self, recipients, content, NULL, NULL, error);
+  return send_room_message(self, recipients, content, NULL, NULL, NULL, error);
 }
 
 GhOutboxItem *
 gh_outbox_send_poll_event_room(GhOutbox *self, const gchar *const *recipients,
                                    const gchar *poll_event_json, GError **error)
 {
-  return send_room_message(self, recipients, NULL, NULL, poll_event_json, error);
+  return send_room_message(self, recipients, NULL, NULL, poll_event_json, NULL, error);
 }
 
 GhOutboxItem *
@@ -2177,17 +2178,33 @@ gh_outbox_send_file_room(GhOutbox *self, const gchar *const *recipients,
                         "A file message needs a complete encrypted file");
     return NULL;
   }
-  return send_room_message(self, recipients, NULL, file, NULL, error);
+  return send_room_message(self, recipients, NULL, file, NULL, NULL, error);
 }
 
 /* W26 slice B (nostrc-191r): send a kind-7 NIP-25 reaction through the
  * outbox's seal pipeline. Unlike send_room_message, no GhMessage local
  * echo (GhMessage rejects kind 7) and no SIGNAL_ITEM_ADDED (the send-ui
  * tracks chat messages, not reactions). Returns the reaction's rumor id. */
+GhOutboxItem *
+gh_outbox_send_room_with_tags(GhOutbox *self, const gchar *const *recipients,
+                              const gchar *content, GPtrArray *tags, GError **error)
+{
+  return send_room_message(self, recipients, content, NULL, NULL, tags, error);
+}
+
 gchar *
 gh_outbox_send_reaction_room(GhOutbox *self, const gchar *const *recipients,
                              const gchar *emoji, const gchar *target_rumor_id,
                              const gchar *target_kind_str, GError **error)
+{
+  return gh_outbox_send_reaction_room_with_tags(self, recipients, emoji, target_rumor_id,
+                                                target_kind_str, NULL, error);
+}
+
+gchar *
+gh_outbox_send_reaction_room_with_tags(GhOutbox *self, const gchar *const *recipients,
+                             const gchar *emoji, const gchar *target_rumor_id,
+                             const gchar *target_kind_str, GPtrArray *tags, GError **error)
 {
   g_return_val_if_fail(GH_IS_OUTBOX(self), NULL);
   if (!self->generation) {
@@ -2202,6 +2219,13 @@ gh_outbox_send_reaction_room(GhOutbox *self, const gchar *const *recipients,
     created_at, &rumor_id, error);
   if (!rumor)
     return NULL;
+  if (tags && tags->len) {
+    g_clear_pointer(&rumor_id, g_free);
+    gchar *tagged = gh_emoji_tag_event(rumor, tags, &rumor_id, error);
+    g_free(rumor);
+    rumor = tagged;
+    if (!rumor) return NULL;
+  }
   g_autofree gchar *key = nip17_backend_key(self->account, recipients);
   g_autofree gchar *op_id = gh_store_new_op_id();
   gint64 conversation_id = 0, outbox_id = 0, message_id = 0;

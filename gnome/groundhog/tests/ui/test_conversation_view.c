@@ -4576,8 +4576,9 @@ typedef struct {
 
 static void
 capture_react(GhConversation *conversation, GhMessage *target, const gchar *emoji,
-              gboolean add, gpointer data)
+              gboolean add, GPtrArray *emoji_tags, gpointer data)
 {
+  (void)emoji_tags;
   ReactCall *call = data;
   g_assert_cmpstr(gh_conversation_get_room_id(conversation), ==,
                   gh_message_get_room_id(target));

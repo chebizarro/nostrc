@@ -408,7 +408,11 @@ public_action(GhConversationView *view, const gchar *action, const gchar *uri,
   if (!note) return;
   AdwDialog *dialog = gh_public_post_dialog_new(self->accounts, self->relays, note,
                                                 uri, g_str_equal(action, "quote"));
-  if (dialog) adw_dialog_present(dialog, GTK_WIDGET(view));
+  if (dialog) {
+    gh_public_post_dialog_set_emoji_source(dialog, gh_conversation_view_get_emoji_source(view),
+      gh_conversation_view_get_emoji_settings(view), gh_conversation_view_get_emoji_web(view));
+    adw_dialog_present(dialog, GTK_WIDGET(view));
+  }
 }
 
 /* GnNostrReferenceResolver (nostrc-8xfib.6): the shared reference card reads

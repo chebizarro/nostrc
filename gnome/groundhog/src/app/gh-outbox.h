@@ -269,5 +269,10 @@ gboolean gh_outbox_delete(GhOutbox *self, gint64 outbox_id, GError **error);
  * rumor and wraps) when it expires (gh-expiry.h "purged"). */
 void gh_outbox_prune(GhOutbox *self);
 
+GhOutboxItem *gh_outbox_send_room_with_tags(GhOutbox *self, const gchar *const *recipients,
+    const gchar *content, GPtrArray *tags, GError **error);
+gchar *gh_outbox_send_reaction_room_with_tags(GhOutbox *self, const gchar *const *recipients,
+    const gchar *emoji, const gchar *target_rumor_id, const gchar *target_kind_str,
+    GPtrArray *tags, GError **error);
 G_END_DECLS
 #endif

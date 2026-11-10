@@ -1,4 +1,5 @@
 #include "gh-public-note-post.h"
+#include "gh-emoji.h"
 #include "gh-relay-scope.h"
 #include <nostr-event.h>
 #include <string.h>
@@ -74,6 +75,16 @@ gh_public_post_snapshot_new(const GhPublicNote *original,
     const gchar *account_pubkey, gint64 created_at,
     const gchar *const *write_relays, GError **error)
 {
+  return gh_public_post_snapshot_new_with_tags(original, reference, quote, comment,
+    account_pubkey, created_at, write_relays, NULL, error);
+}
+
+GhPublicPostSnapshot *
+gh_public_post_snapshot_new_with_tags(const GhPublicNote *original,
+    const GnNostrReference *reference, gboolean quote, const gchar *comment,
+    const gchar *account_pubkey, gint64 created_at,
+    const gchar *const *write_relays, GPtrArray *emoji_tags, GError **error)
+{
   g_return_val_if_fail(error == NULL || *error == NULL, NULL);
   if (!reference_matches(reference, original) || !hex64(account_pubkey) || created_at <= 0) {
     invalid(error, "A verified public note and active account are required");
@@ -122,6 +133,11 @@ gh_public_post_snapshot_new(const GhPublicNote *original,
   }
   nostr_event_set_pubkey(event, account_pubkey);
   nostr_event_set_created_at(event, created_at);
+  g_autoptr(GPtrArray) used = gh_emoji_tags_for_text(emoji_tags, quote ? comment : NULL);
+  if (!gh_emoji_append(event, used, error)) {
+    nostr_event_free(event);
+    return NULL;
+  }
   gchar *json = nostr_event_serialize_compact(event);
   nostr_event_free(event);
   if (!json) {

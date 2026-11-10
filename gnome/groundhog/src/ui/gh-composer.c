@@ -1,4 +1,6 @@
 #include "gh-composer.h"
+#include "gh-reaction-picker.h"
+#include "gh-social-lists.h"
 #include "gh-unparent.h"
 #include "../app/gh-test-async-control.h"
 #include "gh-display-name.h"
@@ -29,7 +31,12 @@ struct _GhComposer {
   GtkTextView *text_view;
   GtkLabel *placeholder;
   GtkMenuButton *emoji_button;
-  GtkEmojiChooser *emoji_chooser; /* owned by emoji_button; NULL until first opened */
+  GhReactionPicker *emoji_chooser;
+  GhSocialLists *emoji_lists;
+  GhWebContent *emoji_web;
+  GSettings *emoji_settings;
+  GPtrArray *emoji_tags;
+  guint64 emoji_generation;
   GtkButton *send_button;
   GtkLabel *disabled_reason;
   GtkButton *disabled_button;
@@ -560,12 +567,62 @@ on_emoji_picked(GhComposer *self, const gchar *emoji)
  * is made, so the button makes it only when first opened (nostrc-boq9.5):
  * that work no longer competes with opening the first conversation. */
 static void
+on_custom_emoji(GhReactionPicker *picker, const gchar *emoji, GPtrArray *tags, GhComposer *self)
+{
+  (void)picker;
+  if (!self->emoji_tags) self->emoji_tags = gh_emoji_tags_new();
+  for (guint i = 0; i < tags->len; i++) {
+    gchar **tag = g_ptr_array_index(tags, i);
+    for (guint j = self->emoji_tags->len; j > 0; j--) {
+      gchar **old = g_ptr_array_index(self->emoji_tags, j - 1);
+      if (!g_strcmp0(old[1], tag[1])) g_ptr_array_remove_index(self->emoji_tags, j - 1);
+    }
+    g_ptr_array_add(self->emoji_tags, g_strdupv(tag));
+  }
+  on_emoji_picked(self, emoji);
+}
+
+GPtrArray *
+gh_composer_dup_emoji_tags(GhComposer *self)
+{
+  g_autofree gchar *text = gh_composer_dup_text(self);
+  return gh_emoji_tags_for_text(self->emoji_tags, text);
+}
+
+static void
+emoji_source_changed(GhComposer *self)
+{
+  guint64 generation = self->emoji_lists ? gh_social_lists_get_generation(self->emoji_lists) : 0;
+  if (generation != self->emoji_generation) {
+    g_clear_pointer(&self->emoji_tags, g_ptr_array_unref);
+    self->emoji_generation = generation;
+  }
+}
+
+void
+gh_composer_set_emoji_source(GhComposer *self, GhSocialLists *lists, GSettings *settings,
+                             GhWebContent *web)
+{
+  if (self->emoji_lists) g_signal_handlers_disconnect_by_data(self->emoji_lists, self);
+  if (self->emoji_lists != lists) g_clear_pointer(&self->emoji_tags, g_ptr_array_unref);
+  g_set_object(&self->emoji_lists, lists);
+  g_set_object(&self->emoji_settings, settings);
+  g_set_object(&self->emoji_web, web);
+  emoji_source_changed(self);
+  if (lists) g_signal_connect_swapped(lists, "changed", G_CALLBACK(emoji_source_changed), self);
+  if (self->emoji_chooser) gh_reaction_picker_set_emoji_source(self->emoji_chooser, lists, settings, web);
+}
+
+static void
 create_emoji_chooser(GtkMenuButton *button, gpointer data)
 {
   GhComposer *self = data;
   if (self->emoji_chooser)
     return;
-  self->emoji_chooser = GTK_EMOJI_CHOOSER(gtk_emoji_chooser_new());
+  self->emoji_chooser = GH_REACTION_PICKER(gh_reaction_picker_new());
+  gh_reaction_picker_set_emoji_source(self->emoji_chooser, self->emoji_lists,
+                                     self->emoji_settings, self->emoji_web);
+  g_signal_connect(self->emoji_chooser, "custom-emoji-picked", G_CALLBACK(on_custom_emoji), self);
   g_signal_connect_swapped(self->emoji_chooser, "emoji-picked", G_CALLBACK(on_emoji_picked),
                            self);
   gtk_menu_button_set_popover(button, GTK_WIDGET(self->emoji_chooser));
@@ -991,6 +1048,12 @@ gh_composer_dispose(GObject *object)
     self->mention_list = NULL;
   }
   GH_COMPOSER(object)->emoji_chooser = NULL;
+  GhComposer *emoji_self = GH_COMPOSER(object);
+  if (emoji_self->emoji_lists) g_signal_handlers_disconnect_by_data(emoji_self->emoji_lists, emoji_self);
+  g_clear_object(&emoji_self->emoji_lists);
+  g_clear_object(&emoji_self->emoji_web);
+  g_clear_object(&emoji_self->emoji_settings);
+  g_clear_pointer(&emoji_self->emoji_tags, g_ptr_array_unref);
   gtk_widget_dispose_template(GTK_WIDGET(object), GH_TYPE_COMPOSER);
   G_OBJECT_CLASS(gh_composer_parent_class)->dispose(object);
 }
@@ -1205,6 +1268,7 @@ gh_composer_dup_text(GhComposer *self)
 void
 gh_composer_set_text(GhComposer *self, const gchar *text)
 {
+  g_clear_pointer(&self->emoji_tags, g_ptr_array_unref);
   g_return_if_fail(GH_IS_COMPOSER(self));
   replace_text(self, text);
 }

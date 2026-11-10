@@ -30,6 +30,10 @@ endfunction()
 
 _gh_describe(groundhog-report test-groundhog-report groundhog.unclassified
   INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/src/store/gh-store-schema.c")
+_gh_describe(groundhog-emoji test-groundhog-emoji groundhog.unclassified REQUIRES display private_bus
+  INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/src/app/gh-emoji.c"
+         "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/gh-emoji-images.c"
+         "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/gh-emoji-catalog.c")
 _gh_describe(groundhog-report-ui test-groundhog-report-ui groundhog.unclassified REQUIRES display
   INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/data/ui/gh-report-dialog.blp")
 _gh_describe(groundhog-store-social test-groundhog-store-social groundhog.store

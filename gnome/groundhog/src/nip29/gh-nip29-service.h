@@ -339,5 +339,10 @@ gboolean gh_nip29_service_reset_latest(GhNip29Service *self, GhConversation *con
  * charter ST-9) and its room. G_IO_ERROR_INVALID_ARGUMENT otherwise. */
 gboolean gh_nip29_service_forget(GhNip29Service *self, GhNip29Room *room, GError **error);
 
+GhNip29Op *gh_nip29_service_send_with_tags(GhNip29Service *self, GhNip29Room *room,
+    const gchar *text, GPtrArray *tags, GError **error);
+GhNip29Op *gh_nip29_service_send_reaction_with_tags(GhNip29Service *self, GhNip29Room *room,
+    const gchar *target, const gchar *pubkey, const gchar *kind, const gchar *emoji,
+    GhReactionStore *reactions, GPtrArray *tags, GError **error);
 G_END_DECLS
 #endif
