@@ -3,6 +3,7 @@
 #endif
 
 #include "gh-store.h"
+#include "gh-store-drafts.h"
 #include "gh-profile-guard.h"
 
 #include <dirent.h>
@@ -3486,6 +3487,11 @@ enqueue_locked(GhStore *store, const GhStoreOutgoing *o, gint64 now,
   if (!store_step_done(store, stmt, "Clearing a draft", error))
     goto fail;
   g_clear_pointer(&stmt, sqlite3_finalize);
+  /* The cleared draft's sync tombstone and the blank events its known
+   * identifiers are owed (plan §3.7 "Atomic clear at send") commit with the
+   * message or not at all. */
+  if (chat && !gh_store_drafts_clear(store, o->conversation_id, now, error))
+    return FALSE;
   STORE_CUT("enqueue", "draft");
   return TRUE;
 
@@ -4386,6 +4392,10 @@ gh_store_forget_conversation(GhStore *store, gint64 conversation_id, GError **er
         "read_seq = 0, reply_read_at = NULL, reply_read_id = NULL, timer_changed_at = 0, "
         "pinned_rank = NULL, last_activity = 0 WHERE id = ?1",
         conversation_id, now, error))
+    goto fail;
+  /* The forgotten draft's sync tombstone and blank events, on the same terms
+   * as the clear at send (plan §3.7 "Forgetting a conversation"). */
+  if (!gh_store_drafts_clear(store, conversation_id, now, error))
     goto fail;
   STORE_CUT("forget", "conversation");
   if (!store_commit(store, error))

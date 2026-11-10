@@ -44,6 +44,11 @@ G_BEGIN_DECLS
 #ifndef GROUNDHOG_HAVE_ADOPTED_KEY_PACKAGES
 #define GROUNDHOG_HAVE_ADOPTED_KEY_PACKAGES 0
 #endif
+/* NIP-37 draft synchronization (src/app/gh-draft-sync.c), beside the
+ * account's social lists; nostrc-9lwl7.8. */
+#ifndef GROUNDHOG_HAVE_DRAFT_SYNC
+#define GROUNDHOG_HAVE_DRAFT_SYNC 0
+#endif
 
 /* G09: network modes and the Tor transport (src/net/gh-net-session.c and
  * gh-relay-net.c, installed by gh-app-services.c before any connection). */

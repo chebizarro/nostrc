@@ -100,6 +100,55 @@ static void test_bounds(void)
   gh_store_close(store);
 }
 
+/* Puts an open store back to schema @version by inverting every later
+ * migration (its CREATE TABLE/INDEX and ADD COLUMN statements, newest
+ * first and each in reverse) and trimming the migration log, so the
+ * reopen below migrates from a genuine older schema whatever stages have
+ * appended since (nostrc-bicnk). Data statements (INSERT/UPDATE) need no
+ * inverse: their tables or columns go with them. */
+static gchar *
+sql_name(const gchar *at)
+{
+  const gchar *end = at;
+  while (*end && (g_ascii_isalnum(*end) || *end == '_')) end++;
+  return g_strndup(at, end - at);
+}
+static void downgrade(GhStore *store, gint version)
+{
+  gsize n = 0;
+  const GhStoreMigration *migrations = gh_store_schema_get_migrations(&n);
+  g_autoptr(GString) sql = g_string_new(NULL);
+  for (gsize i = n; i > 0; i--) {
+    if (migrations[i - 1].version <= version) continue;
+    g_auto(GStrv) statements = g_strsplit(migrations[i - 1].sql, ";", -1);
+    for (guint j = g_strv_length(statements); j > 0; j--) {
+      const gchar *s = g_strstrip(statements[j - 1]);
+      if (g_str_has_prefix(s, "CREATE TABLE ")) {
+        g_autofree gchar *name = sql_name(s + strlen("CREATE TABLE "));
+        g_string_append_printf(sql, "DROP TABLE IF EXISTS %s;", name);
+      } else if (g_str_has_prefix(s, "CREATE INDEX ")) {
+        g_autofree gchar *name = sql_name(s + strlen("CREATE INDEX "));
+        g_string_append_printf(sql, "DROP INDEX IF EXISTS %s;", name);
+      } else if (g_str_has_prefix(s, "ALTER TABLE ")) {
+        g_autofree gchar *table = sql_name(s + strlen("ALTER TABLE "));
+        const gchar *add = strstr(s, " ADD COLUMN ");
+        g_assert_nonnull(add); /* the only ALTER the schema uses */
+        g_autofree gchar *column = sql_name(add + strlen(" ADD COLUMN "));
+        g_string_append_printf(sql, "ALTER TABLE %s DROP COLUMN %s;", table, column);
+      } else if (*s)
+        g_assert_true(g_str_has_prefix(s, "INSERT ") || g_str_has_prefix(s, "UPDATE ") ||
+                      g_str_has_prefix(s, "DELETE "));
+    }
+  }
+  g_string_append_printf(sql, "DELETE FROM schema_migrations WHERE version > %d; PRAGMA user_version = %d;",
+                         version, version);
+  GError *error = NULL;
+  g_assert_true(gh_store_exec(store, sql->str, &error));
+  g_assert_no_error(error);
+  g_assert_cmpint(scalar(store, "PRAGMA user_version"), ==, version);
+  g_assert_cmpint(scalar(store, "SELECT count(*) FROM schema_migrations"), ==, version);
+}
+
 static void test_migration_reopen(void)
 {
   GError *error = NULL;
@@ -114,16 +163,13 @@ static void test_migration_reopen(void)
   GhStoreSocialPreferences prefs;
   g_assert_true(gh_store_social_get_preferences(store, &prefs, &error));
   g_assert_false(prefs.sync_enabled); g_assert_true(prefs.blossom_imported);
-  g_assert_true(gh_store_exec(store,
-    "DROP TABLE social_preferences; DROP TABLE social_documents; DROP TABLE social_edits;"
-    "DROP TABLE social_removals; DROP TABLE social_publications; DROP TABLE social_follows;"
-    "DROP TABLE social_mutes; DROP TABLE social_servers;"
-    "DELETE FROM schema_migrations WHERE version=11; PRAGMA user_version=10;", &error));
+  downgrade(store, 10);
+  g_assert_cmpint(scalar(store, "SELECT count(*) FROM sqlite_master WHERE name = 'social_preferences'"), ==, 0);
   gh_store_close(store);
   store = gh_store_open_with_key(&config, key, uuid, GH_STORE_OPEN_NONE, &error);
   g_assert_no_error(error); g_assert_nonnull(store);
-  g_assert_cmpint(scalar(store, "PRAGMA user_version"), ==, 11);
-  g_assert_cmpint(scalar(store, "SELECT count(*) FROM schema_migrations"), ==, 11);
+  g_assert_cmpint(scalar(store, "PRAGMA user_version"), ==, GH_STORE_SCHEMA_VERSION);
+  g_assert_cmpint(scalar(store, "SELECT count(*) FROM schema_migrations"), ==, GH_STORE_SCHEMA_VERSION);
   g_assert_true(gh_store_social_get_preferences(store, &prefs, &error));
   g_assert_false(prefs.sync_enabled); g_assert_false(prefs.blossom_imported);
   g_autoptr(GhSocialLists) owner = bind(store);

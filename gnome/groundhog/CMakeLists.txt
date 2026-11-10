@@ -68,7 +68,7 @@ set(GROUNDHOG_BLUEPRINTS
   gh-mls-member-row gh-mls-group-info-dialog gh-mls-invite-row gh-mls-invites-page
   gh-blocked-page gh-blocked-row gh-conversation-menu
   gh-attachment-card gh-attachment-sheet gh-create-poll-dialog
-  gh-voice-bubble gh-lists-page gh-list-editor-page gh-hidden-page)
+  gh-voice-bubble gh-lists-page gh-list-editor-page gh-hidden-page gh-drafts-page)
 set(GROUNDHOG_BLUEPRINT_MIN_VERSION 0.12.0)
 include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/Blueprint.cmake)
 set(GROUNDHOG_BLUEPRINT_COMPILER "")
@@ -1160,7 +1160,8 @@ if (TARGET PkgConfig::GROUNDHOG_SQLCIPHER AND TARGET PkgConfig::GROUNDHOG_STORE_
   message(STATUS "Groundhog store: enabled (pkg-config sqlcipher "
                  "${GROUNDHOG_SQLCIPHER_VERSION})")
   set(GROUNDHOG_STORE_SOURCES
-    src/store/gh-store.c src/store/gh-store-schema.c src/store/gh-clock.c)
+    src/store/gh-store.c src/store/gh-store-schema.c src/store/gh-store-drafts.c
+    src/store/gh-clock.c)
 
   # ST-4: one SQLite implementation, SQLCipher, per process. The linked
   # target records libsqlcipher as its first DT_NEEDED entry (kept even under
@@ -1335,6 +1336,20 @@ if (TARGET groundhog-store AND TARGET groundhog-conversations)
       groundhog-store-testhooks groundhog-conversations)
     target_compile_options(test-groundhog-store-conversations PRIVATE -Wall -Wextra -Werror)
     groundhog_store_link_sqlcipher_first(test-groundhog-store-conversations)
+    # Schema v13 draft-sync state beside conversations.draft (nostrc-9lwl7.8):
+    # revision and tombstone hooks in the setter, enqueue and forget
+    # transactions, identifiers, remote revisions, publications, conflicts.
+    add_executable(test-groundhog-store-drafts tests/store/test_store_drafts.c
+      src/store/gh-store-conversations.c src/store/gh-store-reactions.c)
+    target_include_directories(test-groundhog-store-drafts PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/store)
+    target_link_libraries(test-groundhog-store-drafts PRIVATE
+      groundhog-store-testhooks groundhog-conversations)
+    target_compile_options(test-groundhog-store-drafts PRIVATE -Wall -Wextra -Werror)
+    groundhog_store_link_sqlcipher_first(test-groundhog-store-drafts)
+    add_test(NAME groundhog-store-drafts COMMAND test-groundhog-store-drafts)
+    set_tests_properties(groundhog-store-drafts PROPERTIES TIMEOUT 120
+      ENVIRONMENT "G_DEBUG=fatal-criticals")
     add_test(NAME groundhog-store-conversations COMMAND test-groundhog-store-conversations)
     set_tests_properties(groundhog-store-conversations PROPERTIES TIMEOUT 120
       ENVIRONMENT "G_DEBUG=fatal-criticals")
@@ -1612,7 +1627,7 @@ target_link_libraries(groundhog-lists-ui PUBLIC groundhog-ui nostr_gobject nip19
 target_compile_options(groundhog-lists-ui PRIVATE -Wall -Wextra -Werror)
 
 add_library(groundhog-preferences STATIC src/ui/gh-preferences-dialog.c
-  src/ui/gh-agents-page.c)
+  src/ui/gh-agents-page.c src/ui/gh-drafts-page.c)
 target_include_directories(groundhog-preferences PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/ui)
 target_link_libraries(groundhog-preferences PUBLIC groundhog-ui groundhog-diagnostics groundhog-lists-ui groundhog-relay)
 target_compile_options(groundhog-preferences PRIVATE -Wall -Wextra -Werror)
@@ -2402,8 +2417,11 @@ if (TARGET groundhog-store-marmot AND TARGET groundhog-dm-inbox AND
       ${CMAKE_CURRENT_SOURCE_DIR}/src/app ${CMAKE_CURRENT_SOURCE_DIR}/src/identity
       ${CMAKE_CURRENT_SOURCE_DIR}/src/mls ${CMAKE_CURRENT_SOURCE_DIR}/src/store
       ${CMAKE_CURRENT_SOURCE_DIR}/src/relay)
+    # gh-mls-service.h reaches gh-store-social.h and nostr-gobject's list
+    # service since the social lists landed (nostrc-q0uu5).
     target_link_libraries(test-groundhog-two-instance-acceptance PRIVATE
-      nostrc-test-bus nostr nip19 nostr_nip44_core marmot PkgConfig::GROUNDHOG_RELAY_WIRE_TEST PkgConfig::GROUNDHOG_GIO)
+      nostrc-test-bus nostr nip19 nostr_nip44_core marmot groundhog-store-social
+      PkgConfig::GROUNDHOG_RELAY_WIRE_TEST PkgConfig::GROUNDHOG_GIO)
     target_compile_options(test-groundhog-two-instance-acceptance PRIVATE -Wall -Wextra -Werror)
     add_dependencies(test-groundhog-two-instance-acceptance groundhog groundhog-test-schemas)
     if (UNIX AND NOT APPLE)
@@ -2427,7 +2445,7 @@ if (TARGET groundhog-store-marmot AND TARGET groundhog-dm-inbox AND
       ${CMAKE_CURRENT_SOURCE_DIR}/src/mls ${CMAKE_CURRENT_SOURCE_DIR}/src/store
       ${CMAKE_CURRENT_SOURCE_DIR}/src/relay)
     target_link_libraries(test-groundhog-two-instance-remote-acceptance PRIVATE
-      nostrc-test-bus nostr nip19 nostr_nip44_core nostr_nip46_core marmot
+      nostrc-test-bus nostr nip19 nostr_nip44_core nostr_nip46_core marmot groundhog-store-social
       PkgConfig::GROUNDHOG_RELAY_WIRE_TEST PkgConfig::GROUNDHOG_GIO)
     target_compile_options(test-groundhog-two-instance-remote-acceptance PRIVATE -Wall -Wextra -Werror)
     target_compile_definitions(test-groundhog-two-instance-remote-acceptance PRIVATE GH_TEST_REMOTE_VARIANT=1)
@@ -3787,6 +3805,42 @@ if(TARGET groundhog-account-store)
   add_library(groundhog-social-lists-backend STATIC src/app/gh-social-lists-backend.c src/ui/gh-hide-account.c)
   target_link_libraries(groundhog-social-lists-backend PUBLIC groundhog-social-lists groundhog-lists-ui)
   target_compile_options(groundhog-social-lists-backend PRIVATE -Wall -Wextra -Werror)
+  # NIP-37 draft synchronization beside the social lists (nostrc-9lwl7.8):
+  # the pure nip37 codec, the draft-sync store state and the conversations
+  # delegate whose "draft-changed" wakes it.
+  if(TARGET nostr_nip37_core AND TARGET groundhog-store-conversations)
+    add_library(groundhog-draft-sync STATIC src/app/gh-draft-sync.c)
+    target_link_libraries(groundhog-draft-sync PUBLIC groundhog-social-lists
+      groundhog-store-conversations nostr_nip37_core)
+    target_compile_options(groundhog-draft-sync PRIVATE -Wall -Wextra -Werror)
+    # The Drafts page's backend (Preferences › Messages › Drafts).
+    add_library(groundhog-draft-sync-backend STATIC src/app/gh-draft-sync-backend.c)
+    target_link_libraries(groundhog-draft-sync-backend PUBLIC groundhog-draft-sync groundhog-preferences nip19)
+    target_compile_options(groundhog-draft-sync-backend PRIVATE -Wall -Wextra -Werror)
+    target_link_libraries(groundhog PRIVATE groundhog-draft-sync groundhog-draft-sync-backend)
+    target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_DRAFT_SYNC=1)
+    if(BUILD_TESTING AND TARGET nostrc-test-bus)
+      # Two service instances over one in-test relay: opaque identifiers,
+      # private relays only, cadence and the NIP-46 lane, atomic clear and
+      # forget tombstones, enable-time reconciliation, import rules.
+      # --gui adds the Drafts preferences page over the same devices.
+      add_executable(test-groundhog-draft-sync tests/app/test_draft_sync.c ${GROUNDHOG_RESOURCE_C})
+      target_include_directories(test-groundhog-draft-sync PRIVATE ${CMAKE_SOURCE_DIR}/tests/common
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/app)
+      target_link_libraries(test-groundhog-draft-sync PRIVATE groundhog-draft-sync
+        groundhog-draft-sync-backend groundhog-preferences nostrc-test-bus)
+      target_compile_options(test-groundhog-draft-sync PRIVATE -Wall -Wextra -Werror)
+      groundhog_store_link_sqlcipher_first(test-groundhog-draft-sync)
+      add_dependencies(test-groundhog-draft-sync groundhog-test-schemas)
+      add_test(NAME groundhog-draft-sync COMMAND test-groundhog-draft-sync)
+      add_test(NAME groundhog-draft-sync-gui COMMAND test-groundhog-draft-sync --gui)
+      set_tests_properties(groundhog-draft-sync-gui PROPERTIES SKIP_RETURN_CODE 77)
+      set_tests_properties(groundhog-draft-sync groundhog-draft-sync-gui PROPERTIES TIMEOUT 120
+        ENVIRONMENT "G_DEBUG=fatal-criticals;GSETTINGS_BACKEND=memory;GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS}")
+    endif()
+  else()
+    target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_DRAFT_SYNC=0)
+  endif()
   target_link_libraries(groundhog PRIVATE groundhog-social-lists-backend)
   if(TARGET test-groundhog-preferences)
     target_link_libraries(test-groundhog-preferences PRIVATE groundhog-social-lists-backend)

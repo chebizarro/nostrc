@@ -48,6 +48,11 @@ gboolean gh_signer_select(GhSigner *signer, const gchar *npub, GError **error);
 typedef struct {
   const gchar *reason, *purpose, *flow_id;
   guint flow_size; /* total destination envelopes, including self-copy */
+  /* Automatic work the user did not just ask for (an encrypted draft
+   * revision, nostrc-9lwl7.8): a remote NIP-46 signer queues it on its bulk
+   * lane behind nothing of the user's own, so it can never delay a message
+   * the user is sending. Grotto ignores the hint. */
+  gboolean background;
 } GhSignerContext;
 /* Context is copied at submission; remote/legacy signers retain existing behavior. */
 void gh_signer_sign_with_context_async(GhSigner *signer, const gchar *unsigned_event,
