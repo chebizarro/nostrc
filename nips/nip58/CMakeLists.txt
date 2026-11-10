@@ -1,6 +1,8 @@
 include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcVisibility.cmake")
 
 project(nip58)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(JANSSON REQUIRED IMPORTED_TARGET jansson)
 
 add_library(nip58 OBJECT
     src/nip58.c)
@@ -12,7 +14,7 @@ target_include_directories(nip58
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_SOURCE_DIR}/libnostr/include)
 
-target_link_libraries(nip58 PUBLIC nostr)
+target_link_libraries(nip58 PUBLIC nostr PkgConfig::JANSSON)
 
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/
         DESTINATION include)

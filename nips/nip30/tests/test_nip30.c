@@ -146,7 +146,29 @@ static void test_invalid_inputs(void) {
     assert(nostr_nip30_add_emoji(NULL, "x", "y") == -EINVAL);
 }
 
+static void test_full_emoji_tags(void) {
+    const char *set = "30030:1111111111111111111111111111111111111111111111111111111111111111:set:with:colons";
+    NostrEvent *ev = nostr_event_new(); assert(ev);
+    assert(!nostr_nip30_add_emoji_full(ev, "happy-cat_2", "https://example.org/cat.png", set));
+    NostrNip30EmojiTag out[1]; size_t n;
+    assert(!nostr_nip30_parse_full(ev, out, 1, &n) && n == 1);
+    assert(!strcmp(out[0].shortcode, "happy-cat_2") && !strcmp(out[0].set_address, set));
+    NostrTag *t = nostr_tags_get(nostr_event_get_tags(ev), 0);
+    assert(nostr_tag_size(t) == 4 && !strcmp(nostr_tag_get(t, 3), set));
+    assert(nostr_nip30_parse_full(ev, NULL, 0, &n) == -ENOSPC && n == 1);
+    NostrNip30Match match[1];
+    assert(!nostr_nip30_find_all(":happy-cat_2:", match, 1, &n) && n == 1 && match[0].name_len == 11);
+    assert(nostr_nip30_add_emoji_full(ev, "has space", "https://example.org/cat.png", NULL) < 0);
+    assert(nostr_nip30_add_emoji_full(ev, "cat", "javascript:bad", NULL) < 0);
+    assert(nostr_nip30_add_emoji_full(ev, "cat", "https:///bad", NULL) < 0);
+    assert(nostr_nip30_add_emoji_full(ev, "cat", "https://example.org/bad\nurl", NULL) < 0);
+    assert(nostr_nip30_add_emoji_full(ev, "cat", "https://example.org/cat.png", "30008:bad:set") < 0);
+    assert(nostr_tags_size(nostr_event_get_tags(ev)) == 1);
+    nostr_event_free(ev);
+}
+
 int main(void) {
+    test_full_emoji_tags();
     test_parse_emoji_tags();
     test_get_url();
     test_find_all();

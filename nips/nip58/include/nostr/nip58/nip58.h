@@ -23,7 +23,9 @@ extern "C" {
 
 #define NOSTR_NIP58_KIND_BADGE_DEFINITION 30009
 #define NOSTR_NIP58_KIND_BADGE_AWARD      8
-#define NOSTR_NIP58_KIND_PROFILE_BADGES   30008
+#define NOSTR_NIP58_KIND_PROFILE_BADGES   30008 /* deprecated compatibility name */
+#define NOSTR_NIP58_KIND_PROFILE_BADGE_LIST 10008
+#define NOSTR_NIP58_KIND_BADGE_SETS       30008
 
 /* ============== Badge Definition (kind 30009) ============== */
 
@@ -195,6 +197,20 @@ NOSTR_NIP58_API bool nostr_nip58_validate_profile_badges(const NostrEvent *ev);
 NOSTR_NIP58_API int nostr_nip58_create_profile_badges(NostrEvent *ev,
                                        const NostrNip58ProfileBadge *badges,
                                        size_t n_badges);
+
+/* Canonical codecs, additive to the legacy 30008 functions above. All parsed
+ * strings borrow the source event. No signature verification or fetching occurs.
+ * Pair parsing ignores unmatched/nonconsecutive tags, never bridges metadata.
+ * Insufficient output capacity returns -ENOSPC and reports the full count. */
+NOSTR_NIP58_API int nostr_nip58_parse_profile_badge_list(const NostrEvent *ev, NostrNip58ProfileBadge *entries, size_t max_entries, size_t *out_count);
+NOSTR_NIP58_API int nostr_nip58_profile_badge_sets(const NostrEvent *ev, const char **addresses, size_t capacity, size_t *out_count);
+NOSTR_NIP58_API NostrEvent *nostr_nip58_build_profile_badge_list(const char *author, int64_t created_at, const NostrNip58ProfileBadge *badges, size_t count, const char *const *sets, size_t set_count);
+NOSTR_NIP58_API int nostr_nip58_parse_badge_set(const NostrEvent *ev, NostrNip58ProfileBadge *entries, size_t max_entries, size_t *out_count);
+NOSTR_NIP58_API NostrEvent *nostr_nip58_build_badge_set(const char *author, int64_t created_at, const char *identifier, const char *title, const NostrNip58ProfileBadge *badges, size_t count);
+/* A valid canonical event wins even when it contains zero pairs. */
+NOSTR_NIP58_API const NostrEvent *nostr_nip58_select_profile_badges(const NostrEvent *canonical, const NostrEvent *legacy);
+/* Relationship only: callers separately authenticate all three source events. */
+NOSTR_NIP58_API bool nostr_nip58_validate_relationship(const NostrNip58ProfileBadge *pair, const NostrEvent *award, const NostrEvent *definition, const char *recipient);
 
 #ifdef __cplusplus
 }

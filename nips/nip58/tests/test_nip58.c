@@ -309,7 +309,65 @@ static void test_invalid_inputs(void) {
     assert(nostr_nip58_create_award(NULL, "a", pks, 1) == -EINVAL);
 }
 
+#define ISSUER "1111111111111111111111111111111111111111111111111111111111111111"
+#define RECIPIENT "2222222222222222222222222222222222222222222222222222222222222222"
+#define AWARD "3333333333333333333333333333333333333333333333333333333333333333"
+static void test_canonical_and_sets(void) {
+    assert(NOSTR_NIP58_KIND_PROFILE_BADGES == 30008);
+    assert(NOSTR_NIP58_KIND_PROFILE_BADGE_LIST == 10008);
+    assert(NOSTR_NIP58_KIND_BADGE_SETS == 30008);
+    NostrNip58ProfileBadge badge = {"30009:" ISSUER ":badge:with:colons", AWARD, ""};
+    const char *sets[] = {"30008:" RECIPIENT ":collection"};
+    NostrEvent *ev = nostr_nip58_build_profile_badge_list(RECIPIENT, 5, &badge, 1, sets, 1);
+    assert(ev && nostr_event_get_kind(ev) == 10008);
+    NostrNip58ProfileBadge out[2]; size_t n;
+    assert(!nostr_nip58_parse_profile_badge_list(ev, out, 2, &n) && n == 1);
+    assert(!strcmp(out[0].badge_ref, badge.badge_ref) && !strcmp(out[0].award_relay, ""));
+    const char *refs[1];
+    assert(!nostr_nip58_profile_badge_sets(ev, refs, 1, &n) && n == 1 && !strcmp(refs[0], sets[0]));
+    assert(nostr_nip58_parse_profile_badge_list(ev, NULL, 0, &n) == -ENOSPC && n == 1);
+    /* An intervening extension breaks a pair, as does a set reference. */
+    NostrTags *tags = nostr_event_get_tags(ev);
+    nostr_tags_append(tags, nostr_tag_new("a", badge.badge_ref, NULL));
+    nostr_tags_append(tags, nostr_tag_new("future", "metadata", NULL));
+    nostr_tags_append(tags, nostr_tag_new("e", AWARD, NULL));
+    assert(!nostr_nip58_parse_profile_badge_list(ev, out, 2, &n) && n == 1);
+    NostrEvent *legacy = nostr_event_new();
+    assert(!nostr_nip58_create_profile_badges(legacy, &badge, 1));
+    NostrEvent *empty = nostr_nip58_build_profile_badge_list(RECIPIENT, 6, NULL, 0, NULL, 0);
+    assert(empty && nostr_nip58_select_profile_badges(empty, legacy) == empty);
+    assert(!nostr_nip58_parse_profile_badge_list(empty, NULL, 0, &n) && n == 0);
+    assert(nostr_nip58_select_profile_badges(NULL, legacy) == legacy);
+    NostrEvent *set = nostr_nip58_build_badge_set(RECIPIENT, 7, "collection", "Title", &badge, 1);
+    assert(set && nostr_event_get_kind(set) == 30008);
+    assert(!nostr_nip58_parse_badge_set(set, out, 2, &n) && n == 1);
+    assert(nostr_nip58_parse_profile_badge_list(set, out, 2, &n) < 0);
+    nostr_event_free(set); nostr_event_free(empty); nostr_event_free(legacy); nostr_event_free(ev);
+}
+static void test_relationship(void) {
+    NostrNip58ProfileBadge pair = {"30009:" ISSUER ":badge:with:colons", AWARD, NULL};
+    NostrEvent *award = nostr_event_new(), *def = nostr_event_new(); assert(award && def);
+    const char *recipients[] = {RECIPIENT};
+    assert(!nostr_nip58_create_award(award, pair.badge_ref, recipients, 1));
+    nostr_event_set_pubkey(award, ISSUER);
+    char *award_id = nostr_event_get_id(award); assert(award_id); pair.award_id = award_id;
+    NostrNip58BadgeDef metadata = {.identifier = "badge:with:colons"};
+    assert(!nostr_nip58_create_definition(def, &metadata)); nostr_event_set_pubkey(def, ISSUER);
+    assert(nostr_nip58_validate_relationship(&pair, award, def, RECIPIENT));
+    assert(!nostr_nip58_validate_relationship(&pair, award, def, ISSUER));
+    nostr_event_set_pubkey(award, RECIPIENT);
+    assert(!nostr_nip58_validate_relationship(&pair, award, def, RECIPIENT));
+    nostr_event_set_pubkey(award, ISSUER); nostr_event_set_content(award, "altered");
+    assert(!nostr_nip58_validate_relationship(&pair, award, def, RECIPIENT));
+    nostr_event_set_content(award, "");
+    nostr_tag_set(nostr_tags_get(nostr_event_get_tags(def), 0), 1, "different");
+    assert(!nostr_nip58_validate_relationship(&pair, award, def, RECIPIENT));
+    free(award_id); nostr_event_free(award); nostr_event_free(def);
+}
+
 int main(void) {
+    test_canonical_and_sets();
+    test_relationship();
     test_parse_definition();
     test_parse_definition_minimal();
     test_parse_definition_no_d_tag();

@@ -3,10 +3,13 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
+#include "nostr-kinds.h"
+#include "../../codec-internal.h"
 
-/* Word character: a-z A-Z 0-9 _ */
+/* NIP-30 shortcodes are ASCII, independent of the process locale. */
 static inline bool is_word_char(char c) {
-    return isalnum((unsigned char)c) || c == '_';
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+           (c >= '0' && c <= '9') || c == '_' || c == '-';
 }
 
 int nostr_nip30_parse(const NostrEvent *ev, NostrNip30Emoji *entries,
@@ -24,11 +27,11 @@ int nostr_nip30_parse(const NostrEvent *ev, NostrNip30Emoji *entries,
         NostrTag *t = nostr_tags_get(tags, i);
         if (!t || nostr_tag_size(t) < 3) continue;
 
-        const char *k = nostr_tag_get(t, 0);
+        const char *k = codec_field(t, 0);
         if (!k || strcmp(k, "emoji") != 0) continue;
 
-        const char *name = nostr_tag_get(t, 1);
-        const char *url = nostr_tag_get(t, 2);
+        const char *name = codec_field(t, 1);
+        const char *url = codec_field(t, 2);
         if (!name || !url || *name == '\0' || *url == '\0') continue;
 
         entries[count].shortcode = name;
@@ -52,7 +55,7 @@ size_t nostr_nip30_count(const NostrEvent *ev) {
     for (size_t i = 0; i < n; ++i) {
         NostrTag *t = nostr_tags_get(tags, i);
         if (!t || nostr_tag_size(t) < 3) continue;
-        const char *k = nostr_tag_get(t, 0);
+        const char *k = codec_field(t, 0);
         if (k && strcmp(k, "emoji") == 0) ++count;
     }
     return count;
@@ -69,12 +72,12 @@ const char *nostr_nip30_get_url(const NostrEvent *ev, const char *shortcode) {
         NostrTag *t = nostr_tags_get(tags, i);
         if (!t || nostr_tag_size(t) < 3) continue;
 
-        const char *k = nostr_tag_get(t, 0);
+        const char *k = codec_field(t, 0);
         if (!k || strcmp(k, "emoji") != 0) continue;
 
-        const char *name = nostr_tag_get(t, 1);
+        const char *name = codec_field(t, 1);
         if (name && strcmp(name, shortcode) == 0)
-            return nostr_tag_get(t, 2);
+            return codec_field(t, 2);
     }
     return NULL;
 }
@@ -194,11 +197,56 @@ char *nostr_nip30_replace_all(const char *content,
     return out;
 }
 
+bool nostr_nip30_valid_shortcode(const char *s) {
+    if (!s || !*s) return false;
+    for (; *s; s++) if (!is_word_char(*s)) return false;
+    return true;
+}
+bool nostr_nip30_valid_image_url(const char *url) { return codec_url(url, false); }
+static bool valid_set(const char *s) {
+    int kind;
+    return !s || (codec_address(s, &kind, NULL, NULL) && kind == NOSTR_KIND_EMOJI_SETS);
+}
+int nostr_nip30_parse_full(const NostrEvent *ev, NostrNip30EmojiTag *entries, size_t max, size_t *count) {
+    if (!ev || !count || (max && !entries)) return -EINVAL;
+    *count = 0;
+    NostrTags *tags = nostr_event_get_tags(ev);
+    for (size_t i = 0; i < nostr_tags_size(tags); i++) {
+        NostrTag *t = nostr_tags_get(tags, i);
+        const char *key = codec_field(t, 0), *name = codec_field(t, 1),
+                   *url = codec_field(t, 2), *set = codec_field(t, 3);
+        if (!key || strcmp(key, "emoji") || !nostr_nip30_valid_shortcode(name) ||
+            !nostr_nip30_valid_image_url(url) || !valid_set(set)) continue;
+        (*count)++;
+    }
+    if (*count > max) return -ENOSPC;
+    size_t n = 0;
+    for (size_t i = 0; i < nostr_tags_size(tags); i++) {
+        NostrTag *t = nostr_tags_get(tags, i);
+        const char *key = codec_field(t, 0), *name = codec_field(t, 1),
+                   *url = codec_field(t, 2), *set = codec_field(t, 3);
+        if (!key || strcmp(key, "emoji") || !nostr_nip30_valid_shortcode(name) ||
+            !nostr_nip30_valid_image_url(url) || !valid_set(set)) continue;
+        entries[n++] = (NostrNip30EmojiTag){name, url, set};
+    }
+    return 0;
+}
+int nostr_nip30_add_emoji_full(NostrEvent *ev, const char *name, const char *url, const char *set) {
+    if (!ev || !nostr_nip30_valid_shortcode(name) || !nostr_nip30_valid_image_url(url) || !valid_set(set)) return -EINVAL;
+    NostrTags *tags = nostr_event_get_tags(ev);
+    bool fresh = !tags;
+    if (fresh) tags = nostr_tags_new(0);
+    if (!tags) return -ENOMEM;
+    const char *fields[] = {"emoji", name, url, set};
+    int rc = codec_tag_append(tags, fields, set ? 4 : 3);
+    if (fresh) {
+        if (rc) nostr_tags_free(tags);
+        else nostr_event_set_tags(ev, tags);
+    }
+    return rc;
+}
+
 int nostr_nip30_add_emoji(NostrEvent *ev, const char *shortcode,
                            const char *url) {
-    if (!ev || !shortcode || !url) return -EINVAL;
-
-    NostrTags *tags = (NostrTags *)nostr_event_get_tags(ev);
-    nostr_tags_append(tags, nostr_tag_new("emoji", shortcode, url, NULL));
-    return 0;
+    return nostr_nip30_add_emoji_full(ev, shortcode, url, NULL);
 }

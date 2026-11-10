@@ -26,6 +26,81 @@
 extern "C" {
 #endif
 
+/* ---- Lossless synchronous codecs ---- */
+
+/* No cryptography, signing or I/O. Pointer results are owned unless documented
+ * borrowed; NULL results set errno. Mutations return negative errno and leave
+ * the document unchanged on failure. Legacy structs below remain ABI-stable. */
+typedef struct NostrListDocument NostrListDocument;
+typedef struct NostrListTag NostrListTag;
+typedef struct NostrListSchema NostrListSchema;
+typedef enum {
+    NOSTR_LIST_PRIVATE_EMPTY,
+    NOSTR_LIST_PRIVATE_ENCRYPTED_NIP44,
+    NOSTR_LIST_PRIVATE_LEGACY_NIP04,
+    NOSTR_LIST_PRIVATE_DECODED,
+    NOSTR_LIST_PRIVATE_UNREADABLE
+} NostrListPrivateState;
+typedef enum {
+    NOSTR_LIST_ITEM_INVALID = -1,
+    NOSTR_LIST_ITEM_VALID = 0,
+    NOSTR_LIST_ITEM_EXTENSION = 1
+} NostrListItemValidation;
+typedef enum {
+    NOSTR_LIST_PRIVACY_OPTIONAL,
+    NOSTR_LIST_PRIVACY_PUBLIC,
+    NOSTR_LIST_PRIVACY_PRIVATE
+} NostrListPrivacy;
+
+#define NOSTR_LIST_MAX_EVENT_BYTES (128u * 1024u)
+#define NOSTR_LIST_MAX_FOLLOW_BYTES (1024u * 1024u)
+#define NOSTR_LIST_MAX_TAGS 4096u
+#define NOSTR_LIST_MAX_FOLLOW_TAGS 16384u
+#define NOSTR_LIST_MAX_FIELDS 32u
+#define NOSTR_LIST_MAX_FIELD_BYTES (16u * 1024u)
+#define NOSTR_LIST_MAX_IDENTIFIER_BYTES 256u
+#define NOSTR_LIST_MAX_PRIVATE_BYTES 60000u
+
+NOSTR_NIP51_API NostrListTag *nostr_nip51_tag_new(const char *const *fields, size_t count);
+NOSTR_NIP51_API void nostr_nip51_tag_free(NostrListTag *tag);
+NOSTR_NIP51_API size_t nostr_nip51_tag_size(const NostrListTag *tag);
+/* Borrowed; NULL is absent, "" is present and empty. */
+NOSTR_NIP51_API const char *nostr_nip51_tag_field(const NostrListTag *tag, size_t field);
+NOSTR_NIP51_API const NostrListSchema *nostr_nip51_schema_lookup(int kind);
+NOSTR_NIP51_API size_t nostr_nip51_schema_count(void);
+NOSTR_NIP51_API const NostrListSchema *nostr_nip51_schema_at(size_t index);
+NOSTR_NIP51_API int nostr_nip51_schema_kind(const NostrListSchema *schema);
+NOSTR_NIP51_API bool nostr_nip51_schema_requires_identifier(const NostrListSchema *schema);
+NOSTR_NIP51_API bool nostr_nip51_schema_read_only(const NostrListSchema *schema);
+NOSTR_NIP51_API NostrListPrivacy nostr_nip51_schema_privacy(const NostrListSchema *schema);
+/* Space-separated known item names; metadata remains in the public tag vector. */
+NOSTR_NIP51_API const char *nostr_nip51_schema_items(const NostrListSchema *schema);
+NOSTR_NIP51_API const char *nostr_nip51_schema_metadata(const NostrListSchema *schema);
+NOSTR_NIP51_API NostrListItemValidation nostr_nip51_validate_item(const NostrListSchema *schema, const NostrListTag *tag);
+NOSTR_NIP51_API NostrListDocument *nostr_nip51_document_new(int kind, const char *identifier);
+NOSTR_NIP51_API NostrListDocument *nostr_nip51_document_parse_event(const NostrEvent *event);
+NOSTR_NIP51_API void nostr_nip51_document_free(NostrListDocument *document);
+NOSTR_NIP51_API int nostr_nip51_document_kind(const NostrListDocument *document);
+NOSTR_NIP51_API const char *nostr_nip51_document_identifier(const NostrListDocument *document);
+NOSTR_NIP51_API bool nostr_nip51_document_deprecated(const NostrListDocument *document);
+NOSTR_NIP51_API size_t nostr_nip51_document_tag_count(const NostrListDocument *document, bool private_tags);
+NOSTR_NIP51_API const NostrListTag *nostr_nip51_document_tag(const NostrListDocument *document, bool private_tags, size_t index);
+/* Copies the tag; insertion appends. Replace/remove address an occurrence. */
+NOSTR_NIP51_API int nostr_nip51_document_append(NostrListDocument *document, bool private_tag, const NostrListTag *tag);
+NOSTR_NIP51_API int nostr_nip51_document_replace(NostrListDocument *document, bool private_tag, size_t index, const NostrListTag *tag);
+NOSTR_NIP51_API int nostr_nip51_document_remove(NostrListDocument *document, bool private_tag, size_t index);
+NOSTR_NIP51_API NostrListPrivateState nostr_nip51_document_private_state(const NostrListDocument *document);
+/* Marks a failed external decryption without clearing retained private tags. */
+NOSTR_NIP51_API void nostr_nip51_document_mark_unreadable(NostrListDocument *document);
+/* Atomically replaces the private vector; length is bytes, no embedded NUL. */
+NOSTR_NIP51_API int nostr_nip51_document_parse_private_tags(NostrListDocument *document, const char *plaintext, size_t length);
+NOSTR_NIP51_API char *nostr_nip51_document_serialize_private_tags(const NostrListDocument *document);
+NOSTR_NIP51_API int nostr_nip51_document_validate(const NostrListDocument *document);
+/* encrypted_content must be supplied after decoding/editing private tags. NULL
+ * preserves untouched source ciphertext. Unreadable and read-only documents
+ * cannot be built. Unknown extension tags are preserved, never filtered. */
+NOSTR_NIP51_API NostrEvent *nostr_nip51_document_build_unsigned(const NostrListDocument *document, const char *author, int64_t created_at, const char *encrypted_content);
+
 /* ---- Data Structures ---- */
 
 /**
@@ -56,6 +131,10 @@ typedef struct {
 } NostrList;
 
 /* ---- Memory Management ---- */
+
+/* Legacy void mutators set errno and invalidate the builder on any failure:
+ * discard/free it; all subsequent create_* calls fail rather than publishing
+ * a shortened replacement. The document API above offers atomic mutations. */
 
 /**
  * nostr_nip51_list_new:
@@ -251,6 +330,9 @@ NOSTR_NIP51_API NostrEvent *nostr_nip51_create_list(int kind, NostrList *list, c
  * Parses a list event and extracts all entries.
  * If @sk_hex is provided, attempts to decrypt private entries.
  * If @sk_hex is NULL, only public entries are returned.
+ * Decryption failure returns NULL, never a partial public list. Tags that cannot
+ * fit the legacy three-field representation return NULL/ENOTSUP; use the
+ * lossless document API for extension tags and full positional fields.
  *
  * Returns: (transfer full) (nullable): parsed list, or NULL on error
  */

@@ -1,0 +1,16 @@
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcVisibility.cmake")
+project(nip56 C)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(JANSSON REQUIRED IMPORTED_TARGET jansson)
+add_library(nostr_nip56_core OBJECT src/nip56.c)
+nostrc_library_visibility(nostr_nip56_core NOSTR_NIP56_API
+  nostr/nip56/export.h "${CMAKE_INSTALL_INCLUDEDIR}/nostr/nip56")
+target_include_directories(nostr_nip56_core PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_SOURCE_DIR}/libnostr/include)
+target_link_libraries(nostr_nip56_core PUBLIC nostr PkgConfig::JANSSON)
+install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+if(BUILD_TESTING)
+  add_executable(test_nip56 tests/test_nip56.c)
+  target_link_libraries(test_nip56 PRIVATE nostr_nip56_core)
+  add_test(NAME test_nip56 COMMAND test_nip56)
+endif()
