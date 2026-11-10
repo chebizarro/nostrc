@@ -3,10 +3,10 @@
 #include <gtk/gtk.h>
 #include "gh-net-http.h"
 G_BEGIN_DECLS
-/* GH_WEB_BADGE: NIP-58 badge artwork (image/thumb of a verified definition),
- * under Load Remote Images like inline images; text-only badges never need
- * it (plan §3.12, nostrc-9lwl7.13). */
-typedef enum { GH_WEB_PREVIEW, GH_WEB_IMAGE, GH_WEB_PICTURE, GH_WEB_OG_IMAGE, GH_WEB_BADGE,
+/* Emoji and verified badge artwork share Load Remote Images; neither is
+ * fetched without explicit consent (plan §3.11–3.12). */
+typedef enum { GH_WEB_PREVIEW, GH_WEB_IMAGE, GH_WEB_PICTURE, GH_WEB_OG_IMAGE,
+               GH_WEB_EMOJI, GH_WEB_BADGE,
                GH_WEB_N_KINDS } GhWebKind;
 const gchar *gh_web_content_setting(GhWebKind kind);
 typedef struct {

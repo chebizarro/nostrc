@@ -20,6 +20,7 @@
 #endif
 #endif
 #include "gh-app-services.h"
+#include "gh-composer.h"
 #include "gh-diagnostics.h"
 
 #if GROUNDHOG_HAVE_ACCOUNTS
@@ -177,10 +178,10 @@ struct _GhAppServices {
   GhSocialLists *social_lists;
 #if GROUNDHOG_HAVE_DRAFT_SYNC
   GhDraftSync *draft_sync; /* NIP-37 drafts beside the lists (nostrc-9lwl7.8) */
+#endif
 #if GROUNDHOG_HAVE_BADGES
   GhBadgeService *badges; /* NIP-58 badges over the lists (nostrc-9lwl7.13) */
   GhBadgesBackend badges_backend;
-#endif
 #endif
 #endif
   GSimpleAction *store_actions[4];
@@ -1087,7 +1088,7 @@ expiry_teardown(GhAppServices *self)
  * view. The store follows the account store lifecycle (created on open,
  * freed on close). */
 #if GROUNDHOG_HAVE_INBOX && GROUNDHOG_HAVE_OUTBOX
-static void on_react(GhConversation *, GhMessage *, const gchar *, gboolean, gpointer);
+static void on_react(GhConversation *, GhMessage *, const gchar *, gboolean, GPtrArray *, gpointer);
 static gboolean on_delete_message(GhConversation *, GhMessage *, gboolean, gpointer, GError **);
 
 static void
@@ -1178,7 +1179,7 @@ on_delete_request(const gchar *room_id, const gchar *rumor_id, const gchar *auth
 
 static void
 on_react(GhConversation *conversation, GhMessage *target, const gchar *emoji,
-         gboolean add, gpointer user_data)
+         gboolean add, GPtrArray *emoji_tags, gpointer user_data)
 {
   GhAppServices *self = user_data;
   GhReactionStore *reactions = gh_app_outbox_get_reactions(self->outbox);
@@ -1238,7 +1239,7 @@ on_react(GhConversation *conversation, GhMessage *target, const gchar *emoji,
     GhReactionSummary *summary = gh_reaction_store_lookup(reactions, target_id);
     if (summary && gh_reaction_summary_own_reaction_id(summary, emoji)) {
       /* Recurse with add=FALSE to trigger the removal path. */
-      on_react(conversation, target, emoji, FALSE, user_data);
+      on_react(conversation, target, emoji, FALSE, NULL, user_data);
       return;
     }
   }
@@ -1251,8 +1252,8 @@ on_react(GhConversation *conversation, GhMessage *target, const gchar *emoji,
     GhOutbox *outbox = outbox_obj2 ? GH_OUTBOX(outbox_obj2) : NULL;
     if (outbox && recipients) {
       g_autofree gchar *rumor_id =
-        gh_outbox_send_reaction_room(outbox, recipients, emoji, target_id,
-                                     target_kind_str, NULL);
+        gh_outbox_send_reaction_room_with_tags(outbox, recipients, emoji, target_id,
+                                     target_kind_str, emoji_tags, NULL);
       if (rumor_id && reactions) {
         const gchar *account = gh_conversation_store_get_account(self->conversations);
         g_autoptr(GhReaction) reaction =
@@ -1269,9 +1270,9 @@ on_react(GhConversation *conversation, GhMessage *target, const gchar *emoji,
     if (GH_IS_NIP29_SERVICE(service_obj)) {
       GhNip29Room *room = gh_nip29_service_lookup_room(GH_NIP29_SERVICE(service_obj), room_id);
       if (room)
-        gh_nip29_service_send_reaction(GH_NIP29_SERVICE(service_obj), room,
+        gh_nip29_service_send_reaction_with_tags(GH_NIP29_SERVICE(service_obj), room,
                                        target_id, target_pubkey, target_kind_str,
-                                       emoji, reactions, NULL);
+                                       emoji, reactions, emoji_tags, NULL);
     }
     break;
   }
@@ -1280,9 +1281,9 @@ on_react(GhConversation *conversation, GhMessage *target, const gchar *emoji,
     if (GH_IS_MLS_SERVICE(service_obj)) {
       GhMlsGroup *group = gh_mls_service_lookup(GH_MLS_SERVICE(service_obj), room_id);
       if (group)
-        gh_mls_service_send_reaction(GH_MLS_SERVICE(service_obj), group,
+        gh_mls_service_send_reaction_with_tags(GH_MLS_SERVICE(service_obj), group,
                                      target_id, target_pubkey, target_kind_str,
-                                     emoji, NULL);
+                                     emoji, emoji_tags, NULL);
     }
     break;
   }
@@ -2876,6 +2877,10 @@ gh_app_services_attach_window(GhAppServices *self, GhWindow *window)
                                              on_react, self, NULL);
       gh_conversation_view_set_delete_func(GH_CONVERSATION_VIEW(view),
                                            on_delete_message, self, NULL);
+      gh_conversation_view_set_emoji_source(GH_CONVERSATION_VIEW(view), self->social_lists);
+      gh_composer_set_emoji_source(GH_COMPOSER(gh_content_page_get_composer(content)),
+        self->social_lists, self->settings,
+        gh_conversation_view_get_emoji_web(GH_CONVERSATION_VIEW(view)));
     }
   }
 #if GROUNDHOG_HAVE_ATTACHMENTS

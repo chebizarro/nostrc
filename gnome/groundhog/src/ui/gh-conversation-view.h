@@ -117,7 +117,7 @@ void gh_conversation_view_set_reaction_store(GhConversationView *self,
 typedef void (*GhConversationViewReactFunc)(GhConversation *conversation,
                                             GhMessage *target,
                                             const gchar *emoji,
-                                            gboolean add,
+                                            gboolean add, GPtrArray *emoji_tags,
                                             gpointer user_data);
 void gh_conversation_view_set_reaction_func(GhConversationView *self,
                                             GhConversationViewReactFunc func,
@@ -382,5 +382,12 @@ void gh_conversation_view_set_row_enricher(GhConversationView *self,
  * Invokes the registered enricher, if any. */
 void gh_conversation_view_enrich_row(GhConversationView *self, GhMessageRow *row);
 
+typedef struct _GhSocialLists GhSocialLists;
+void gh_conversation_view_set_emoji_source(GhConversationView *self, GhSocialLists *lists);
+GhSocialLists *gh_conversation_view_get_emoji_source(GhConversationView *self);
+GSettings *gh_conversation_view_get_emoji_settings(GhConversationView *self);
+GhWebContent *gh_conversation_view_get_emoji_web(GhConversationView *self);
+void gh_conversation_view_react_custom(GhConversationView *self, GhMessage *message,
+    const gchar *emoji, GPtrArray *tags);
 G_END_DECLS
 #endif

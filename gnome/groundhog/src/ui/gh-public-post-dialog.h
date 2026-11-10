@@ -6,6 +6,8 @@
 #include "gh-account-relays.h"
 #include "gh-store-public-notes.h"
 
+#include "gh-emoji.h"
+#include "gh-web-content.h"
 G_BEGIN_DECLS
 
 /* A public action only for a locally verified event. Each dialog freezes its
@@ -14,5 +16,7 @@ AdwDialog *gh_public_post_dialog_new(GhAccountController *accounts,
     GhAccountRelays *relays, const GhPublicNote *original,
     const gchar *reference_uri, gboolean quote);
 
+void gh_public_post_dialog_set_emoji_source(AdwDialog *dialog, GhSocialLists *lists,
+    GSettings *settings, GhWebContent *web);
 G_END_DECLS
 #endif

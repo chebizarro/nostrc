@@ -36,6 +36,7 @@
 #include "gh-group-join-page.h"
 #include "gh-group-restore-dialog.h"
 #include "gh-group-ui.h"
+#include "gh-emoji.h"
 #include "gh-account-relays.h"
 #include "gh-nip29-group-list.h"
 #if GH_TEST_HAVE_NEW_MESSAGE
@@ -1676,11 +1677,17 @@ test_gui_window(void)
   g_assert_true(delegate->handles(conversation, data));
   g_assert_null(delegate->reason(conversation, data));
   g_autoptr(GError) error = NULL;
-  g_assert_true(delegate->send(conversation, "from the composer", data, &error));
+  g_autoptr(GPtrArray) emoji_tags = gh_emoji_tags_new();
+  const gchar *emoji_tag[] = { "emoji", "test-face", "https://example.com/face.png", NULL };
+  g_ptr_array_add(emoji_tags, g_strdupv((gchar **)emoji_tag));
+  g_assert_true(delegate->send(conversation, "from the composer :test-face:", emoji_tags, data, &error));
   g_assert_no_error(error);
   guint n = g_list_model_get_n_items(G_LIST_MODEL(conversation));
   g_autoptr(GhMessage) sent = g_list_model_get_item(G_LIST_MODEL(conversation), n - 1);
   g_assert_true(gh_message_is_self(sent));
+  g_autoptr(GPtrArray) sent_tags = gh_emoji_parse(gh_message_get_rumor_json(sent));
+  g_assert_cmpuint(sent_tags->len, ==, 1);
+  g_assert_cmpstr(((gchar **)g_ptr_array_index(sent_tags, 0))[2], ==, "https://example.com/face.png");
   g_autoptr(GhNip29Op) op = gh_group_find_message_op(f.service, gh_message_get_rumor_id(sent));
   wait_op(op, GH_NIP29_OP_ACCEPTED);
   g_autoptr(GhDeliveryReport) report = delegate->report(sent, data);
@@ -1689,6 +1696,20 @@ test_gui_window(void)
   GhDeliveryTarget *target = g_ptr_array_index(report->targets, 0);
   g_assert_cmpstr(target->relay_url, ==, relay.url);
   g_assert_true(target->accepted);
+  g_autoptr(GhNip29Op) reaction = gh_nip29_service_send_reaction_with_tags(f.service, room,
+    gh_message_get_rumor_id(sent), gh_message_get_sender(sent), "9", ":test-face:", NULL, emoji_tags, &error);
+  g_assert_no_error(error); g_assert_nonnull(reaction);
+  wait_op(reaction, GH_NIP29_OP_ACCEPTED);
+  gboolean found_emoji_reaction = FALSE;
+  for (guint i = 0; i < relay.events->len; i++) {
+    NostrEvent *event = g_ptr_array_index(relay.events, i);
+    if (nostr_event_get_kind(event) != 7 || g_strcmp0(nostr_event_get_content(event), ":test-face:")) continue;
+    g_autofree gchar *json = nostr_event_serialize_compact(event);
+    g_autoptr(GPtrArray) actual = gh_emoji_parse(json);
+    g_assert_cmpuint(actual->len, ==, 1);
+    found_emoji_reaction = TRUE;
+  }
+  g_assert_true(found_emoji_reaction);
 
   /* Group Info for the shown group (the conversation-info group handler). */
   g_assert_true(gh_window_open_item(window, conversation));

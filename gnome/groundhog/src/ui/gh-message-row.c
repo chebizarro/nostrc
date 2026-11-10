@@ -1,4 +1,5 @@
 #include "gh-message-row.h"
+#include "gh-emoji-images.h"
 #include "gh-report-dialog.h"
 #include "gh-unparent.h"
 #include "gh-conversation-open-probe-private.h"
@@ -47,6 +48,8 @@ struct _GhMessageRow {
   GtkLabel *reply_label;
   GtkBox *bubble;
   GtkLabel *body_label;
+  GhEmojiImages *emoji_images;
+  GhMessage *emoji_message; /* identity only; the row owns message */
   /* After body_label, built on first use: a body with a Markdown table is
    * laid out as blocks; body_label shows the text before the first table,
    * this box the tables (grids of cells) and the text after them. */
@@ -1239,6 +1242,40 @@ refresh_preview_uri(GhMessageRow *self)
 }
 
 static void
+emoji_artwork_changed(GhEmojiImages *images, GhMessageRow *self)
+{
+  gboolean artwork = gh_emoji_images_has_artwork(images);
+  gtk_widget_set_visible(GTK_WIDGET(self->body_label), !artwork);
+  sync_body_blocks_visible(self);
+}
+
+static void
+update_emoji(GhMessageRow *self, gboolean show_body)
+{
+  GhConversation *conversation = self->view ? gh_conversation_view_get_conversation(self->view) : NULL;
+  gboolean allowed = show_body && conversation && self->message && !self->undecryptable &&
+    !gh_message_get_withdrawn(self->message) && !gh_conversation_get_is_request(conversation);
+  if (self->emoji_images && (!allowed || self->emoji_message != self->message)) {
+    g_signal_handlers_disconnect_by_data(self->emoji_images, self);
+    gtk_box_remove(self->bubble, GTK_WIDGET(self->emoji_images));
+    self->emoji_images = NULL;
+    self->emoji_message = NULL;
+  }
+  if (!allowed) return;
+  if (!self->emoji_images) {
+    g_autoptr(GPtrArray) parsed = gh_emoji_parse(gh_message_get_rumor_json(self->message));
+    g_autoptr(GPtrArray) tags = gh_emoji_tags_for_text(parsed, gh_message_get_content(self->message));
+    if (!tags->len) return;
+    self->emoji_images = GH_EMOJI_IMAGES(gh_emoji_images_new(tags, gh_message_get_content(self->message),
+      gh_conversation_view_get_emoji_settings(self->view), gh_conversation_view_get_emoji_web(self->view)));
+    self->emoji_message = self->message;
+    gtk_box_insert_child_after(self->bubble, GTK_WIDGET(self->emoji_images), GTK_WIDGET(self->body_label));
+    g_signal_connect(self->emoji_images, "changed", G_CALLBACK(emoji_artwork_changed), self);
+  }
+  emoji_artwork_changed(self->emoji_images, self);
+}
+
+static void
 update_all(GhMessageRow *self)
 {
   GhMessage *message = self->message;
@@ -1428,6 +1465,7 @@ update_all(GhMessageRow *self)
   update_preview(self);
   update_reference(self);
   update_summary(self);
+  update_emoji(self, show_body);
 }
 
 /* ---- reactions ------------------------------------------------------------------ */
@@ -1464,12 +1502,20 @@ on_emoji_picked(GhReactionPicker *picker, const gchar *emoji, GhMessageRow *self
 }
 
 static void
+on_custom_emoji_picked(GhReactionPicker *picker, const gchar *emoji, GPtrArray *tags, GhMessageRow *self)
+{
+  (void)picker;
+  if (self->view) gh_conversation_view_react_custom(self->view, self->message, emoji, tags);
+}
+
+static void
 ensure_picker(GhMessageRow *self)
 {
   if (!self->picker) {
     self->picker = GH_REACTION_PICKER(gh_reaction_picker_new());
     gtk_widget_set_parent(GTK_WIDGET(self->picker), GTK_WIDGET(self->bubble));
     g_signal_connect(self->picker, "emoji-picked", G_CALLBACK(on_emoji_picked), self);
+    g_signal_connect(self->picker, "custom-emoji-picked", G_CALLBACK(on_custom_emoji_picked), self);
   }
 }
 
@@ -1479,6 +1525,9 @@ show_picker(GhMessageRow *self, gdouble x, gdouble y)
   if (!can_react(self))
     return;
   ensure_picker(self);
+  if (self->view) gh_reaction_picker_set_emoji_source(self->picker,
+    gh_conversation_view_get_emoji_source(self->view), gh_conversation_view_get_emoji_settings(self->view),
+    gh_conversation_view_get_emoji_web(self->view));
   if (x >= 0 && y >= 0) {
     GdkRectangle rect = { (int)x, (int)y, 1, 1 };
     gtk_popover_set_pointing_to(GTK_POPOVER(self->picker), &rect);
@@ -2191,6 +2240,12 @@ gh_message_row_dispose(GObject *object)
   }
   /* The extra cards are the slot's children: they go with the template. */
   g_clear_pointer(&self->extra_cards, g_ptr_array_unref);
+  if (self->emoji_images) {
+    g_signal_handlers_disconnect_by_data(self->emoji_images, self);
+    gtk_box_remove(self->bubble, GTK_WIDGET(self->emoji_images));
+    self->emoji_images = NULL;
+    self->emoji_message = NULL;
+  }
   gtk_widget_dispose_template(GTK_WIDGET(object), GH_TYPE_MESSAGE_ROW);
   G_OBJECT_CLASS(gh_message_row_parent_class)->dispose(object);
 #ifdef GROUNDHOG_CONVERSATION_OPEN_PROBE

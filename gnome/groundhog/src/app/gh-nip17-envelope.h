@@ -221,5 +221,8 @@ GhNip17Envelope *gh_nip17_envelope_build_finish(GAsyncResult *result,
                                                   GError **error);
 void gh_nip17_envelope_free(GhNip17Envelope *envelope);
 
+gchar *gh_nip17_rumor_new_room_with_tags(const gchar *sender, const gchar *const *recipients,
+    const gchar *content, GPtrArray *tags, gint64 created_at, gint64 expires_at,
+    gchar **out_id, GError **error);
 G_END_DECLS
 #endif

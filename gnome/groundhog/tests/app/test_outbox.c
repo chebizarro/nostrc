@@ -14,6 +14,7 @@
  * bound to the subprocess's lifetime, so no daemon outlives a test. */
 #include "crash-harness.h"
 #include "gh-outbox.h"
+#include "gh-emoji.h"
 #include "gh-relay-deny-policy.h"
 #include "gh-reaction-store.h"
 #include "gh-auth-policy.h"
@@ -2539,6 +2540,40 @@ test_cancel_and_delete(void)
 }
 
 static void
+test_custom_emoji_payloads(void)
+{
+  Fixture f;
+  fixture_up(&f, NULL, NULL);
+  fixture_outbox(&f);
+  fake_monitor_set_available(f.network, FALSE);
+  const gchar *recipients[] = { hex_bob, NULL };
+  g_autoptr(GPtrArray) tags = gh_emoji_tags_new();
+  const gchar *tag[] = { "emoji", "test-face", "https://example.com/face.png", NULL };
+  g_ptr_array_add(tags, g_strdupv((gchar **)tag));
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GhOutboxItem) item = gh_outbox_send_room_with_tags(f.outbox, recipients,
+    "hello :test-face:", tags, &error);
+  g_assert_no_error(error); g_assert_nonnull(item);
+  g_autofree gchar *reaction = gh_outbox_send_reaction_room_with_tags(f.outbox, recipients,
+    ":test-face:", gh_outbox_item_get_rumor_id(item), "14", tags, &error);
+  g_assert_no_error(error); g_assert_nonnull(reaction);
+  g_autoptr(GArray) ids = gh_store_outbox_list_unfinished(f.store, GH_STORE_BACKEND_NIP17, &error);
+  g_assert_no_error(error); g_assert_cmpuint(ids->len, ==, 2);
+  for (guint i = 0; i < ids->len; i++) {
+    g_autoptr(GhStoreOutboxEntry) entry = gh_store_outbox_load(f.store, g_array_index(ids, gint64, i), &error);
+    g_assert_no_error(error);
+    g_autoptr(GPtrArray) actual = gh_emoji_parse(entry->rumor_json);
+    g_assert_cmpuint(actual->len, ==, 1);
+    g_assert_cmpstr(((gchar **)g_ptr_array_index(actual, 0))[2], ==, tag[2]);
+    NostrEvent *event = nostr_event_new();
+    g_assert_cmpint(nostr_event_deserialize_compact(event, entry->rumor_json, NULL), ==, 1);
+    g_assert_cmpint(nostr_event_validate_id(event, NULL), ==, NOSTR_EVENT_VALIDATION_OK);
+    nostr_event_free(event);
+  }
+  fixture_down(&f);
+}
+
+static void
 test_reaction_same_second_toggle(void)
 {
   Fixture f;
@@ -3058,6 +3093,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/outbox/no-inbox-retry", test_no_inbox_and_retry);
   g_test_add_func("/groundhog/outbox/signer-refusal", test_signer_refusal_and_retry);
   g_test_add_func("/groundhog/outbox/cancel-delete", test_cancel_and_delete);
+  g_test_add_func("/groundhog/outbox/custom-emoji-payloads", test_custom_emoji_payloads);
   g_test_add_func("/groundhog/outbox/reaction-same-second-toggle",
                   test_reaction_same_second_toggle);
   g_test_add_func("/groundhog/outbox/restore-skips-reaction-rows",

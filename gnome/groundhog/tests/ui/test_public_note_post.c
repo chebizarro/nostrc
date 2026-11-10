@@ -1,4 +1,5 @@
 #include "gh-public-note-post.h"
+#include "gh-emoji.h"
 #include "gh-relay-publish.h"
 #include <nostr-event.h>
 #include <nostr-gobject-1.0/nostr_relay.h>
@@ -123,6 +124,15 @@ test_repost_quote_snapshot(void)
   g_assert_cmpstr(nostr_tag_get(nostr_tags_get(tags, 0), 0), ==, "q");
   g_assert_cmpstr(nostr_tag_get(nostr_tags_get(tags, 0), 1), ==, note->id);
   nostr_event_free(event);
+  g_autoptr(GPtrArray) emoji_tags = gh_emoji_tags_new();
+  const gchar *emoji_tag[] = { "emoji", "test-face", "https://example.com/face.png", NULL };
+  g_ptr_array_add(emoji_tags, g_strdupv((gchar **)emoji_tag));
+  g_autoptr(GhPublicPostSnapshot) custom = gh_public_post_snapshot_new_with_tags(
+    note, &ref, TRUE, "Worth reading :test-face:", account, 1700000003, write, emoji_tags, &error);
+  g_assert_no_error(error); g_assert_nonnull(custom);
+  g_autoptr(GPtrArray) actual = gh_emoji_parse(custom->unsigned_json);
+  g_assert_cmpuint(actual->len, ==, 1);
+  g_assert_cmpstr(((gchar **)g_ptr_array_index(actual, 0))[2], ==, emoji_tag[2]);
   g_assert_cmpuint(gnostr_relay_get_type(), ==, relay_type);
   g_assert_cmpuint(g_type_from_name("GNostrRelay"), ==, relay_type);
 }

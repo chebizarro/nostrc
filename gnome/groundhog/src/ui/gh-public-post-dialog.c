@@ -1,4 +1,5 @@
 #include "gh-public-post-dialog.h"
+#include "gh-reaction-picker.h"
 #include "gh-public-note-post.h"
 #include "gh-auth-policy.h"
 #include "gh-identity.h"
@@ -194,8 +195,9 @@ review(GtkButton *button, GhPublicPostDialog *self)
   g_autofree gchar *comment = quote_text(self);
   g_autoptr(GError) error = NULL;
   g_clear_pointer(&self->reviewed, gh_public_post_snapshot_free);
-  self->reviewed = gh_public_post_snapshot_new(self->original, self->reference,
-    self->quote, comment, account, g_get_real_time() / G_USEC_PER_SEC, urls, &error);
+  self->reviewed = gh_public_post_snapshot_new_with_tags(self->original, self->reference,
+    self->quote, comment, account, g_get_real_time() / G_USEC_PER_SEC, urls,
+    g_object_get_data(G_OBJECT(self), "emoji-tags"), &error);
   if (!self->reviewed) {
     gtk_label_set_text(self->status, error ? error->message : _("Could not build the public post."));
     return;
@@ -293,6 +295,51 @@ gh_public_post_dialog_init(GhPublicPostDialog *self)
   adw_toolbar_view_set_content(toolbar, box);
   adw_dialog_set_child(ADW_DIALOG(self), GTK_WIDGET(toolbar));
   g_signal_connect(self->review_button, "clicked", G_CALLBACK(review), self);
+}
+
+static void
+public_emoji_picked(GhReactionPicker *picker, const gchar *emoji, GPtrArray *tags,
+                    GhPublicPostDialog *self)
+{
+  (void)picker;
+  GPtrArray *selected = g_object_get_data(G_OBJECT(self), "emoji-tags");
+  if (!selected) {
+    selected = gh_emoji_tags_new();
+    g_object_set_data_full(G_OBJECT(self), "emoji-tags", selected, (GDestroyNotify)g_ptr_array_unref);
+  }
+  for (guint i = 0; tags && i < tags->len; i++) {
+    gchar **tag = g_ptr_array_index(tags, i);
+    for (guint j = selected->len; j > 0; j--) {
+      gchar **old = g_ptr_array_index(selected, j - 1);
+      if (g_str_equal(old[1], tag[1])) g_ptr_array_remove_index(selected, j - 1);
+    }
+    g_ptr_array_add(selected, g_strdupv(tag));
+  }
+  gtk_text_buffer_insert_at_cursor(gtk_text_view_get_buffer(self->quote_view), emoji, -1);
+}
+static void
+public_unicode_picked(GhReactionPicker *picker, const gchar *emoji, GhPublicPostDialog *self)
+{
+  public_emoji_picked(picker, emoji, NULL, self);
+}
+
+void
+gh_public_post_dialog_set_emoji_source(AdwDialog *dialog, GhSocialLists *lists,
+                                      GSettings *settings, GhWebContent *web)
+{
+  GhPublicPostDialog *self = (GhPublicPostDialog *)dialog;
+  if (!self->quote) return;
+  GtkWidget *button = gtk_menu_button_new();
+  gtk_menu_button_set_icon_name(GTK_MENU_BUTTON(button), "face-smile-symbolic");
+  gtk_widget_set_tooltip_text(button, _("Insert Emoji"));
+  gtk_widget_set_halign(button, GTK_ALIGN_START);
+  GtkWidget *picker = gh_reaction_picker_new();
+  gh_reaction_picker_set_emoji_source(GH_REACTION_PICKER(picker), lists, settings, web);
+  g_signal_connect(picker, "custom-emoji-picked", G_CALLBACK(public_emoji_picked), self);
+  g_signal_connect(picker, "emoji-picked", G_CALLBACK(public_unicode_picked), self);
+  gtk_menu_button_set_popover(GTK_MENU_BUTTON(button), picker);
+  GtkWidget *box = gtk_widget_get_parent(GTK_WIDGET(self->review_button));
+  gtk_box_insert_child_after(GTK_BOX(box), button, gtk_widget_get_prev_sibling(GTK_WIDGET(self->review_button)));
 }
 
 AdwDialog *

@@ -1043,5 +1043,10 @@ gboolean gh_mls_service_load_newer(GhMlsService *self, GhConversation *conversat
 gboolean gh_mls_service_reset_latest(GhMlsService *self, GhConversation *conversation,
                                      GError **error);
 
+GhMessage *gh_mls_service_send_with_tags(GhMlsService *self, GhMlsGroup *group,
+    const gchar *text, GPtrArray *tags, GError **error);
+gboolean gh_mls_service_send_reaction_with_tags(GhMlsService *self, GhMlsGroup *group,
+    const gchar *target, const gchar *pubkey, const gchar *kind, const gchar *emoji,
+    GPtrArray *tags, GError **error);
 G_END_DECLS
 #endif

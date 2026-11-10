@@ -91,7 +91,7 @@ typedef struct {
   /* Why sending is unavailable, or NULL when it is (transfer full). */
   gchar *(*reason)(GhConversation *conversation, gpointer data);
   /* Queues text; FALSE with a user-facing error (it stays in the composer). */
-  gboolean (*send)(GhConversation *conversation, const gchar *text, gpointer data,
+  gboolean (*send)(GhConversation *conversation, const gchar *text, GPtrArray *emoji_tags, gpointer data,
                    GError **error);
   /* The user's Retry of an own message; FALSE with error. */
   gboolean (*retry)(GhMessage *message, gpointer data, GError **error);

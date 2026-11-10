@@ -270,7 +270,8 @@ delegate_reason(GhConversation *conversation, gpointer data)
 }
 
 static gboolean
-delegate_send(GhConversation *conversation, const gchar *text, gpointer data, GError **error)
+delegate_send(GhConversation *conversation, const gchar *text, GPtrArray *emoji_tags,
+              gpointer data, GError **error)
 {
   GhNip29Service *service = current(data);
   g_autoptr(GhNip29Room) room = service ? gh_nip29_service_lookup_room(
@@ -284,7 +285,7 @@ delegate_send(GhConversation *conversation, const gchar *text, gpointer data, GE
   }
   g_autoptr(GError) local = NULL;
   /* T-enqueue before any signer call; the service lists the message at once. */
-  g_autoptr(GhNip29Op) op = gh_nip29_service_send(service, room, text, &local);
+  g_autoptr(GhNip29Op) op = gh_nip29_service_send_with_tags(service, room, text, emoji_tags, &local);
   if (op)
     return TRUE;
   g_message("Groundhog could not queue a group message: %s", local->message);

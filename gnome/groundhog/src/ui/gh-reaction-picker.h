@@ -4,6 +4,8 @@
 #include <adwaita.h>
 #include "gh-reaction.h"
 
+#include "gh-emoji.h"
+#include "gh-web-content.h"
 G_BEGIN_DECLS
 
 /* A quick-reaction picker (GNOME HIG, chart §7.4): shown in a popover on
@@ -22,5 +24,7 @@ GtkWidget *gh_reaction_picker_new(void);
 
 /* Signal: "emoji-picked" (emoji: string) — the user chose an emoji. */
 
+void gh_reaction_picker_set_emoji_source(GhReactionPicker *self, GhSocialLists *lists,
+    GSettings *settings, GhWebContent *web);
 G_END_DECLS
 #endif

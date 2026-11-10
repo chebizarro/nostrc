@@ -1,4 +1,5 @@
 #include "gh-mls-service.h"
+#include "gh-emoji.h"
 #include <sqlite3.h>
 
 #include "gh-agent-event.h"
@@ -5627,7 +5628,7 @@ imeta_tags_valid(GPtrArray *tags)
 
 static GhMessage *
 send_inner(GhMlsService *self, GhMlsGroup *group, const gchar *text, GPtrArray *imeta_tags,
-           guint64 source_epoch, GError **error)
+           guint64 source_epoch, GPtrArray *emoji_tags, GError **error)
 {
   g_return_val_if_fail(GH_IS_MLS_SERVICE(self), NULL);
   if (!check_running(self, error))
@@ -5648,6 +5649,12 @@ send_inner(GhMlsService *self, GhMlsGroup *group, const gchar *text, GPtrArray *
   }
   g_autofree gchar *inner_id = NULL;
   g_autofree gchar *inner = inner_event_new(self, group, text, imeta_tags, &inner_id);
+  if (inner && emoji_tags && emoji_tags->len) {
+    g_clear_pointer(&inner_id, g_free);
+    gchar *tagged = gh_emoji_tag_event(inner, emoji_tags, &inner_id, error);
+    g_free(inner);
+    inner = tagged;
+  }
   g_autoptr(GhMessage) message = inner ? gh_message_new_from_mls(self->account, group->gid_hex,
                                                                  inner, error) : NULL;
   if (!message)
@@ -5749,7 +5756,14 @@ GhMessage *
 gh_mls_service_send(GhMlsService *self, GhMlsGroup *group, const gchar *text,
                     GError **error)
 {
-  return send_inner(self, group, text, NULL, 0, error);
+  return send_inner(self, group, text, NULL, 0, NULL, error);
+}
+
+GhMessage *
+gh_mls_service_send_with_tags(GhMlsService *self, GhMlsGroup *group, const gchar *text,
+                              GPtrArray *tags, GError **error)
+{
+  return send_inner(self, group, text, NULL, 0, tags, error);
 }
 
 GhMessage *
@@ -5760,7 +5774,7 @@ gh_mls_service_send_with_imeta(GhMlsService *self, GhMlsGroup *group, const gcha
     g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "No files to send");
     return NULL;
   }
-  return send_inner(self, group, caption ? caption : "", imeta_tags, source_epoch, error);
+  return send_inner(self, group, caption ? caption : "", imeta_tags, source_epoch, NULL, error);
 }
 
 /* W26 slice B (nostrc-191r): build a kind-7 reaction inner event, compute
@@ -5912,11 +5926,11 @@ gh_mls_service_set_reaction_store(GhMlsService *self, GhReactionStore *store)
 }
 
 gboolean
-gh_mls_service_send_reaction(GhMlsService *self, GhMlsGroup *group,
+gh_mls_service_send_reaction_with_tags(GhMlsService *self, GhMlsGroup *group,
                              const gchar *target_event_id,
                              const gchar *target_pubkey,
                              const gchar *target_kind_str,
-                             const gchar *emoji, GError **error)
+                             const gchar *emoji, GPtrArray *tags, GError **error)
 {
   g_return_val_if_fail(GH_IS_MLS_SERVICE(self), FALSE);
   if (!check_running(self, error))
@@ -5942,6 +5956,13 @@ gh_mls_service_send_reaction(GhMlsService *self, GhMlsGroup *group,
                         "Could not build reaction inner event");
     return FALSE;
   }
+  if (tags && tags->len) {
+    g_clear_pointer(&inner_id, g_free);
+    gchar *tagged = gh_emoji_tag_event(inner, tags, &inner_id, error);
+    g_free(inner);
+    inner = tagged;
+    if (!inner) return FALSE;
+  }
   if (!send_request(self, group, 7, inner, inner_id, emoji, error))
     return FALSE;
   /* Local echo: the reaction store admits it for immediate display. */
@@ -5954,6 +5975,15 @@ gh_mls_service_send_reaction(GhMlsService *self, GhMlsGroup *group,
       gh_reaction_store_admit(self->reactions, reaction, NULL);
   }
   return TRUE;
+}
+
+gboolean
+gh_mls_service_send_reaction(GhMlsService *self, GhMlsGroup *group,
+    const gchar *target, const gchar *pubkey, const gchar *kind, const gchar *emoji,
+    GError **error)
+{
+  return gh_mls_service_send_reaction_with_tags(self, group, target, pubkey, kind,
+                                               emoji, NULL, error);
 }
 
 gboolean

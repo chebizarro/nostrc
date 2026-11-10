@@ -1250,7 +1250,7 @@ if (TARGET groundhog-public-notes AND TARGET groundhog-relay AND TARGET nostr_gt
   add_library(groundhog-public-note-post STATIC src/ui/gh-public-note-post.c)
   target_include_directories(groundhog-public-note-post PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/ui)
   target_link_libraries(groundhog-public-note-post PUBLIC
-    groundhog-public-notes groundhog-relay NostrGtk::Portable)
+    groundhog-public-notes groundhog-relay groundhog-emoji-codec NostrGtk::Portable)
   target_compile_options(groundhog-public-note-post PRIVATE -Wall -Wextra -Werror)
   if (BUILD_TESTING)
     add_executable(test-groundhog-public-note-post tests/ui/test_public_note_post.c)
@@ -1512,7 +1512,7 @@ endif()
 if (TARGET groundhog-conversation-ui)
   target_sources(groundhog-conversation-ui PRIVATE src/ui/gh-conversation-view.c
     src/ui/gh-message-row.c src/ui/gh-delivery-indicator.c
-    src/ui/gh-reaction-bar.c src/ui/gh-reaction-picker.c)
+    src/ui/gh-reaction-bar.c)
   target_link_libraries(groundhog-conversation-ui PUBLIC groundhog-link-policy)
   # Bubbles, runs, day separators, delivery indicator and details, links,
   # previews behind consent, scrolling, paging, expiry and the §7.15 states
@@ -3579,8 +3579,13 @@ endif()
 # W29 consent-gated web content: shared HTTP policy, built-in image decoder.
 if (TARGET groundhog-conversation-ui AND TARGET groundhog-net)
   pkg_check_modules(GROUNDHOG_WEB_XML REQUIRED IMPORTED_TARGET libxml-2.0)
-  target_sources(groundhog-conversation-ui PRIVATE src/ui/gh-web-content.c src/ui/gh-picture-cache.c
-                 src/media/gh-metadata-strip.c)
+  add_library(groundhog-web-content STATIC src/ui/gh-web-content.c src/media/gh-metadata-strip.c)
+  target_include_directories(groundhog-web-content PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/media)
+  target_link_libraries(groundhog-web-content PUBLIC groundhog-net groundhog-link-policy NostrGtk::Portable)
+  target_compile_options(groundhog-web-content PRIVATE -Wall -Wextra -Werror)
+  target_sources(groundhog-conversation-ui PRIVATE src/ui/gh-picture-cache.c)
+  target_link_libraries(groundhog-conversation-ui PUBLIC groundhog-web-content)
   target_include_directories(groundhog-conversation-ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/media)
   target_link_libraries(groundhog-conversation-ui PUBLIC groundhog-net PkgConfig::GROUNDHOG_WEB_XML)
 endif()
@@ -3946,6 +3951,42 @@ if(TARGET groundhog-account-store)
   endif()
 else()
   target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_SOCIAL_LISTS=0)
+endif()
+
+# Stage 10a: shared NIP-30 construction and explicitly consented artwork.
+if(NOT TARGET nip30)
+  message(FATAL_ERROR "Groundhog custom emoji requires ENABLE_NIP30=ON")
+endif()
+add_library(groundhog-emoji-codec STATIC src/app/gh-emoji.c)
+target_include_directories(groundhog-emoji-codec PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/app)
+target_link_libraries(groundhog-emoji-codec PUBLIC nip30 nostr PkgConfig::GROUNDHOG_DEPS)
+target_compile_options(groundhog-emoji-codec PRIVATE -Wall -Wextra -Werror)
+# Emoji UI needs the account-backed lists and consent-gated web loader. Refuse
+# incomplete Groundhog builds explicitly rather than link nonexistent targets.
+foreach(_emoji_dependency groundhog-conversations groundhog-conversation-ui groundhog-social-lists groundhog-web-content)
+  if(NOT TARGET ${_emoji_dependency})
+    message(FATAL_ERROR "Groundhog custom emoji requires ${_emoji_dependency}; enable Groundhog account/store, NIP-17 and network dependencies")
+  endif()
+endforeach()
+target_link_libraries(groundhog-conversations PUBLIC groundhog-emoji-codec)
+add_library(groundhog-emoji-ui STATIC src/ui/gh-emoji-images.c src/ui/gh-emoji-catalog.c
+  src/ui/gh-reaction-picker.c)
+target_link_libraries(groundhog-emoji-ui PUBLIC groundhog-emoji-codec groundhog-social-lists
+  groundhog-web-content groundhog-conversations)
+target_compile_options(groundhog-emoji-ui PRIVATE -Wall -Wextra -Werror)
+target_link_libraries(groundhog-ui PUBLIC groundhog-emoji-ui)
+target_link_libraries(groundhog-conversation-ui PUBLIC groundhog-emoji-ui)
+if(BUILD_TESTING)
+  add_executable(test-groundhog-emoji tests/ui/test_emoji.c src/app/gh-nip17-envelope.c ${GROUNDHOG_RESOURCE_C})
+  target_include_directories(test-groundhog-emoji PRIVATE ${CMAKE_SOURCE_DIR}/tests/common)
+  target_link_libraries(test-groundhog-emoji PRIVATE groundhog-conversation-ui groundhog-store-conversations
+    nostr_nip17_core nostr_nip59_core nostrc-test-bus)
+  target_compile_options(test-groundhog-emoji PRIVATE -Wall -Wextra -Werror)
+  add_dependencies(test-groundhog-emoji groundhog-test-schemas)
+  groundhog_store_link_sqlcipher_first(test-groundhog-emoji)
+  add_test(NAME groundhog-emoji COMMAND test-groundhog-emoji)
+  set_tests_properties(groundhog-emoji PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120
+    ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
 endif()
 
 # Stage 6: the account hide policy is shared by every admission backend.

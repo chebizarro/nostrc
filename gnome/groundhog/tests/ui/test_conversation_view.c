@@ -4576,8 +4576,9 @@ typedef struct {
 
 static void
 capture_react(GhConversation *conversation, GhMessage *target, const gchar *emoji,
-              gboolean add, gpointer data)
+              gboolean add, GPtrArray *emoji_tags, gpointer data)
 {
+  (void)emoji_tags;
   ReactCall *call = data;
   g_assert_cmpstr(gh_conversation_get_room_id(conversation), ==,
                   gh_message_get_room_id(target));
@@ -5798,7 +5799,8 @@ test_bubble_delete(Fixture *f, gconstpointer data)
   g_autofree gchar *own_id = g_strdup(gh_message_get_rumor_id(own));
   g_autofree gchar *incoming_id = g_strdup(gh_message_get_rumor_id(incoming));
 
-  /* Own (sent) messages: for me or for everyone; others': for me only. */
+  /* Own messages offer both delete choices but no Hide/Report actions (§3.10).
+   * Incoming messages keep account actions alongside Delete for Me (§3.13). */
   GtkPopover *menu = open_menu(row_for(f->view, own));
   g_autofree gchar *own_labels = menu_labels(menu);
   g_assert_cmpstr(own_labels, ==,
@@ -5806,7 +5808,8 @@ test_bubble_delete(Fixture *f, gconstpointer data)
   close_popover(menu);
   menu = open_menu(row_for(f->view, incoming));
   g_autofree gchar *incoming_labels = menu_labels(menu);
-  g_assert_cmpstr(incoming_labels, ==, "Copy _Message|Add _Reaction…|_Delete for Me…");
+  g_assert_cmpstr(incoming_labels, ==,
+                  "Copy _Message|Add _Reaction…|_Delete for Me…|_Hide Account…|_Report Account…");
   close_popover(menu);
   g_assert_true(gh_conversation_view_can_delete_message(f->view, own, TRUE));
   g_assert_false(gh_conversation_view_can_delete_message(f->view, incoming, TRUE));
@@ -5846,11 +5849,12 @@ test_bubble_delete(Fixture *f, gconstpointer data)
                              own_id, FALSE);
   g_assert_false(dialog_presented(view_child(f->view, "delete_dialog")));
 
-  /* Without a delete callback nothing offers Delete. */
+  /* Without a delete callback, Hide/Report remain available on incoming messages. */
   gh_conversation_view_set_delete_func(f->view, NULL, NULL, NULL);
   menu = open_menu(row_for(f->view, keep));
   g_autofree gchar *none = menu_labels(menu);
-  g_assert_cmpstr(none, ==, "Copy _Message|Add _Reaction…");
+  g_assert_cmpstr(none, ==,
+                  "Copy _Message|Add _Reaction…|_Hide Account…|_Report Account…");
   close_popover(menu);
   g_free(call.rumor_id);
 }
@@ -6007,11 +6011,15 @@ test_group_delete(Fixture *f, gconstpointer data)
   GtkPopover *menu = open_menu(row_for(f->view, own));
   g_autofree gchar *own_labels = menu_labels(menu);
   g_assert_nonnull(strstr(own_labels, "|_Delete for Me…|Delete for _Everyone…"));
+  g_assert_null(strstr(own_labels, "_Hide Account"));
+  g_assert_null(strstr(own_labels, "_Report Account"));
+  g_assert_null(strstr(own_labels, "_Report Message"));
   maybe_save_deletion_png(f, GTK_WIDGET(menu), mls ? "mls-menu" : "nip29-menu");
   close_popover(menu);
   menu = open_menu(row_for(f->view, incoming));
   g_autofree gchar *incoming_labels = menu_labels(menu);
-  g_assert_true(g_str_has_suffix(incoming_labels, "|_Delete for Me…"));
+  g_assert_true(g_str_has_suffix(incoming_labels,
+    "|_Delete for Me…|_Hide Account…|_Report Account…"));
   close_popover(menu);
   g_assert_true(gh_conversation_view_can_delete_message(f->view, own, TRUE));
   g_assert_false(gh_conversation_view_can_delete_message(f->view, incoming, TRUE));
