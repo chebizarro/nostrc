@@ -11,6 +11,12 @@ if(TEST "test_nostr_gobject_vault")
   nostrc_add_test_owners("test_nostr_gobject_vault" OWNER libvault libporthome libblossom nip59)
 endif()
 
+foreach(_test list_service mute_list_compat)
+  if(TEST "test_nostr_gobject_${_test}")
+    nostrc_add_test_owners("test_nostr_gobject_${_test}" OWNER nip51 nip44)
+  endif()
+endforeach()
+
 # Exact registration/input relationships retained from the ab5 production audit.
 if(TEST "test_nostr_gobject_event")
   nostrc_add_test_owners("test_nostr_gobject_event" OWNER nip06 nip11 nip46 nip49 nip55l relayd)

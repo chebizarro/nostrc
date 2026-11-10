@@ -1,1561 +1,433 @@
-/**
- * NIP-51 Mute List Service Implementation
- *
- * Manages mute lists (kind 10000) for filtering content.
- * Uses the nip51 library for parsing and creating list events.
- * Supports private mute entries via NIP-44 encryption.
- */
-
 #include "gnostr-mute-list.h"
+#include "gnostr-list-private.h"
+#include "gnostr-list-gnostr-adapter.h"
 #include "gnostr-relays.h"
-#include "nostr-error.h"
-#include <glib.h>
+#include "nostr-kinds.h"
 #include <string.h>
-#include <time.h>
-#include <nostr-gobject-1.0/nostr_json.h>
-#include "nostr-event.h"
-#include "nostr-tag.h"
 
-#ifndef GNOSTR_MUTE_LIST_TEST_ONLY
-#include "gnostr-app-bridge.h"
-#include "gnostr-signer-bridge.h"
-#include <nostr-gobject-1.0/nostr_utils.h>  /* gnostr_ensure_hex_pubkey */
-#include "signer_proxy.h" /* gdbus-codegen — in nostr-gobject binary dir */
-#include "json.h"
-#include "nostr-filter.h"
-#include "nostr-event.h"
-#include <nostr-gobject-1.0/nostr_relay.h>
-#include <nostr-gobject-1.0/nostr_pool.h>
-#endif
-
-/* Kind 10000 = Mute List per NIP-51 */
-#define MUTE_LIST_KIND 10000
-
-/* ---- Internal Data Structure ---- */
-
-typedef struct {
-    char *value;
-    gboolean is_private;
-} MuteEntry;
-
-static void mute_entry_free(gpointer data) {
-    MuteEntry *e = (MuteEntry *)data;
-    if (e) {
-        g_free(e->value);
-        g_free(e);
-    }
-}
-
-static MuteEntry *mute_entry_new(const char *value, gboolean is_private) {
-    MuteEntry *e = g_new0(MuteEntry, 1);
-    e->value = g_strdup(value);
-    e->is_private = is_private;
-    return e;
-}
-
+/* The ABI remains an opaque singleton. Lookup strings are interned for its
+ * lifetime because the legacy accessors return borrowed strings in an owned
+ * container. All lookup/projection changes are serialized by lock. */
 struct _GNostrMuteList {
-    /* Hash tables for O(1) lookup: key = value, value = MuteEntry */
-    GHashTable *muted_pubkeys;   /* "p" tags */
-    GHashTable *muted_events;    /* "e" tags */
-    GHashTable *muted_hashtags;  /* "t" tags */
-    GHashTable *muted_words;     /* "word" tags */
-
-    /* State */
-    gboolean dirty;              /* Has unsaved changes */
-    gint64 last_event_time;      /* created_at of last loaded event */
-    char *user_pubkey;           /* Current user's pubkey (for fetching) */
-
-    /* Thread safety */
-    GMutex lock;
+  gatomicrefcount refs;
+  GMutex lock;
+  GMainContext *context;
+  GThread *thread;
+  gboolean closed, dirty;
+  guint64 generation;
+  guint pending;
+  gint64 last_time;
+  char *account;
+  char **relays;
+  NostrListDocument *projection;
+  GHashTable *interned;
+  GHashTable *index[4];
+  GNostrListService *service;
+  gpointer fetch;
 };
-
-/* Singleton instance */
-static GNostrMuteList *s_default_instance = NULL;
-static GMutex s_init_lock;
-
-/* ---- Internal Helpers ---- */
-
-static void mute_list_clear(GNostrMuteList *self) {
-    g_hash_table_remove_all(self->muted_pubkeys);
-    g_hash_table_remove_all(self->muted_events);
-    g_hash_table_remove_all(self->muted_hashtags);
-    g_hash_table_remove_all(self->muted_words);
-    self->dirty = FALSE;
-    self->last_event_time = 0;
+static GNostrMuteList *singleton;
+static GMutex singleton_lock;
+static const char *tag_names[] = {"p", "word", "t", "e"};
+static const char *local_account = "0000000000000000000000000000000000000000000000000000000000000000";
+static GNostrMuteList *facade_ref(GNostrMuteList *s) { g_atomic_ref_count_inc(&s->refs); return s; }
+static void facade_unref(gpointer data) {
+  GNostrMuteList *s = data; if (!g_atomic_ref_count_dec(&s->refs)) return;
+  g_clear_object(&s->service); nostr_nip51_document_free(s->projection);
+  for (guint i = 0; i < 4; i++) g_hash_table_unref(s->index[i]);
+  g_hash_table_unref(s->interned); g_free(s->account); g_strfreev(s->relays);
+  g_main_context_unref(s->context); g_mutex_clear(&s->lock); g_free(s);
 }
-
-static gboolean str_in_hashtable(GHashTable *ht, const char *key) {
-    if (!key || !ht) return FALSE;
-    return g_hash_table_contains(ht, key);
+static void post(GNostrMuteList *s, GSourceFunc fn, gpointer data, GDestroyNotify destroy) {
+  GSource *source = g_idle_source_new(); g_source_set_callback(source, fn, data, destroy);
+  g_source_attach(source, s->context); g_source_unref(source);
 }
-
-/* Case-insensitive word match check */
-static gboolean content_contains_word(const char *content, const char *word) {
-    if (!content || !word || !*word) return FALSE;
-
-    gchar *lower_content = g_utf8_strdown(content, -1);
-    gchar *lower_word = g_utf8_strdown(word, -1);
-
-    /* Simple substring match - could be enhanced with word boundary checks */
-    gboolean found = (strstr(lower_content, lower_word) != NULL);
-
-    g_free(lower_content);
-    g_free(lower_word);
-    return found;
+static char *normalized(guint index, const char *value) {
+  if (!value || !g_utf8_validate(value, -1, NULL)) return NULL;
+  if (index == 2 && *value == '#') value++;
+  return index == 0 || index == 3 ? g_ascii_strdown(value, -1) : g_utf8_strdown(value, -1);
 }
-
-/* ---- Public API Implementation ---- */
-
+static void rebuild_locked(GNostrMuteList *s, const NostrListDocument *codec) {
+  NostrListDocument *copy = list_codec_copy(codec); if (!copy) return;
+  nostr_nip51_document_free(s->projection); s->projection = copy;
+  for (guint i = 0; i < 4; i++) g_hash_table_remove_all(s->index[i]);
+  for (int p = 0; p < 2; p++) for (size_t i = 0; i < nostr_nip51_document_tag_count(codec, p); i++) {
+    const NostrListTag *tag = nostr_nip51_document_tag(codec, p, i);
+    for (guint k = 0; k < 4; k++) if (!g_strcmp0(tag_names[k], nostr_nip51_tag_field(tag, 0))) {
+      char *key = normalized(k, nostr_nip51_tag_field(tag, 1)); if (!key || !*key) { g_free(key); continue; }
+      gpointer stable = g_hash_table_lookup(s->interned, key);
+      if (!stable) { stable = key; g_hash_table_add(s->interned, key); } else g_free(key);
+      g_hash_table_insert(s->index[k], stable, GINT_TO_POINTER(p + 1));
+    }
+  }
+}
+static GPtrArray *replacement_operations(const NostrListDocument *from, const NostrListDocument *to) {
+  GPtrArray *ops = g_ptr_array_new_with_free_func((GDestroyNotify)gnostr_list_operation_unref);
+  for (int p = 0; p < 2; p++) {
+    for (size_t i = 0; i < nostr_nip51_document_tag_count(from, p); i++)
+      g_ptr_array_add(ops, gnostr_list_operation_remove(p, nostr_nip51_document_tag(from, p, i), G_MAXUINT));
+    for (size_t i = 0; i < nostr_nip51_document_tag_count(to, p); i++)
+      g_ptr_array_add(ops, gnostr_list_operation_append(p, nostr_nip51_document_tag(to, p, i)));
+  }
+  return ops;
+}
+static gboolean replace_service(GNostrListService *service, const NostrListDocument *to) {
+  GNostrListDocument *current = gnostr_list_service_lookup(service, NOSTR_KIND_MUTE_LIST, "");
+  if (!current) return FALSE;
+  GPtrArray *ops = replacement_operations(current->codec, to);
+  GNostrListDocument *saved = gnostr_list_service_apply(service, NOSTR_KIND_MUTE_LIST, "", current->revision, ops, NULL);
+  gboolean ok = saved != NULL; g_clear_object(&saved); g_object_unref(current); g_ptr_array_unref(ops); return ok;
+}
+static void on_document(GNostrListService *service, GNostrListDocument *doc, GNostrMuteList *s) {
+  g_mutex_lock(&s->lock);
+  if (!s->closed && s->service == service && !s->pending && !s->fetch) {
+    rebuild_locked(s, doc->codec); s->dirty = doc->dirty; s->last_time = MAX(s->last_time, doc->created_at);
+  }
+  g_mutex_unlock(&s->lock);
+}
+static gboolean create_service(GNostrMuteList *s, const char *account, const char *const *relays) {
+  GNostrListService *next = list_gnostr_service_new(account, s->generation);
+  GNostrListReadPlanEntry plan = {.kind = NOSTR_KIND_MUTE_LIST, .identifier = "", .sources = relays, .targets = relays,
+    .read_purpose = "mute-list-read", .publish_purpose = "mute-list-publish",
+    .publish_policy = GNOSTR_LIST_EXPLICIT_ONLY, .required_sources = GNOSTR_LIST_SOURCES_ALL};
+  if (!next || !gnostr_list_service_start(next, &plan, 1, NULL)) {
+    if (next) { gnostr_list_service_close(next); g_object_unref(next); } return FALSE;
+  }
+  g_mutex_lock(&s->lock); GNostrListService *old = s->service; s->service = next; g_mutex_unlock(&s->lock);
+  if (old) { g_signal_handlers_disconnect_by_data(old, s); gnostr_list_service_close(old); g_object_unref(old); }
+  g_signal_connect(next, "document-changed", G_CALLBACK(on_document), s); return TRUE;
+}
 GNostrMuteList *gnostr_mute_list_get_default(void) {
-    g_mutex_lock(&s_init_lock);
-    if (!s_default_instance) {
-        s_default_instance = g_new0(GNostrMuteList, 1);
-        g_mutex_init(&s_default_instance->lock);
-        s_default_instance->muted_pubkeys = g_hash_table_new_full(
-            g_str_hash, g_str_equal, NULL, mute_entry_free);
-        s_default_instance->muted_events = g_hash_table_new_full(
-            g_str_hash, g_str_equal, NULL, mute_entry_free);
-        s_default_instance->muted_hashtags = g_hash_table_new_full(
-            g_str_hash, g_str_equal, NULL, mute_entry_free);
-        s_default_instance->muted_words = g_hash_table_new_full(
-            g_str_hash, g_str_equal, NULL, mute_entry_free);
-        s_default_instance->dirty = FALSE;
-        s_default_instance->last_event_time = 0;
-        s_default_instance->user_pubkey = NULL;
-    }
-    g_mutex_unlock(&s_init_lock);
-    return s_default_instance;
+  g_mutex_lock(&singleton_lock);
+  if (!singleton) {
+    GNostrMuteList *s = g_new0(GNostrMuteList, 1); g_atomic_ref_count_init(&s->refs); g_mutex_init(&s->lock);
+    s->context = g_main_context_ref_thread_default(); s->thread = g_thread_self(); s->generation = 1;
+    s->projection = nostr_nip51_document_new(NOSTR_KIND_MUTE_LIST, NULL);
+    s->interned = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+    for (guint i = 0; i < 4; i++) s->index[i] = g_hash_table_new(g_str_hash, g_str_equal);
+    singleton = s;
+    create_service(s, local_account, NULL);
+  }
+  GNostrMuteList *result = singleton; g_mutex_unlock(&singleton_lock); return result;
 }
-
+static gboolean close_dispatch(gpointer data);
+static void fetch_check(GNostrMuteList *s);
 void gnostr_mute_list_shutdown(void) {
-    g_mutex_lock(&s_init_lock);
-    if (s_default_instance) {
-        g_mutex_lock(&s_default_instance->lock);
-        g_hash_table_destroy(s_default_instance->muted_pubkeys);
-        g_hash_table_destroy(s_default_instance->muted_events);
-        g_hash_table_destroy(s_default_instance->muted_hashtags);
-        g_hash_table_destroy(s_default_instance->muted_words);
-        g_free(s_default_instance->user_pubkey);
-        g_mutex_unlock(&s_default_instance->lock);
-        g_mutex_clear(&s_default_instance->lock);
-        g_free(s_default_instance);
-        s_default_instance = NULL;
-    }
-    g_mutex_unlock(&s_init_lock);
+  g_mutex_lock(&singleton_lock); GNostrMuteList *s = singleton; singleton = NULL;
+  if (s) {
+    g_mutex_lock(&s->lock); s->closed = TRUE; s->generation++; g_mutex_unlock(&s->lock);
+    if (g_thread_self() == s->thread) close_dispatch(s);
+    else post(s, close_dispatch, facade_ref(s), facade_unref);
+    facade_unref(s);
+  }
+  g_mutex_unlock(&singleton_lock);
 }
-
-gboolean gnostr_mute_list_load_from_json(GNostrMuteList *self,
-                                          const char *event_json) {
-    if (!self || !event_json) return FALSE;
-
-    g_mutex_lock(&self->lock);
-
-    /* Parse event using NostrEvent API */
-    NostrEvent *event = nostr_event_new();
-    int parse_rc = nostr_event_deserialize_compact(event, event_json, NULL);
-    if (parse_rc != 1) {
-        g_warning("mute_list: failed to parse event JSON");
-        nostr_event_free(event);
-        g_mutex_unlock(&self->lock);
-        return FALSE;
-    }
-
-    /* Verify kind */
-    int kind = nostr_event_get_kind(event);
-    if (kind != MUTE_LIST_KIND) {
-        g_warning("mute_list: not a kind 10000 event");
-        nostr_event_free(event);
-        g_mutex_unlock(&self->lock);
-        return FALSE;
-    }
-
-    /* Check if this is newer than what we have */
-    gint64 event_time = nostr_event_get_created_at(event);
-    if (event_time <= self->last_event_time) {
-        g_debug("mute_list: ignoring older event (have=%lld, got=%lld)",
-                (long long)self->last_event_time, (long long)event_time);
-        nostr_event_free(event);
-        g_mutex_unlock(&self->lock);
-        return TRUE; /* Not an error, just older data */
-    }
-
-    /* Clear existing data and load new */
-    mute_list_clear(self);
-    self->last_event_time = event_time;
-
-    /* Parse tags using NostrTags API */
-    NostrTags *tags = (NostrTags *)nostr_event_get_tags(event);
-    if (tags) {
-        size_t tag_count = nostr_tags_size(tags);
-        for (size_t idx = 0; idx < tag_count; idx++) {
-            NostrTag *tag = nostr_tags_get(tags, idx);
-            if (!tag || nostr_tag_size(tag) < 2) continue;
-
-            const char *tag_name = nostr_tag_get(tag, 0);
-            const char *value = nostr_tag_get(tag, 1);
-            if (!tag_name || !value) continue;
-
-            MuteEntry *entry = mute_entry_new(value, FALSE);
-
-            if (strcmp(tag_name, "p") == 0) {
-                g_hash_table_insert(self->muted_pubkeys, entry->value, entry);
-                g_debug("mute_list: loaded pubkey %s", value);
-            } else if (strcmp(tag_name, "e") == 0) {
-                g_hash_table_insert(self->muted_events, entry->value, entry);
-                g_debug("mute_list: loaded event %s", value);
-            } else if (strcmp(tag_name, "t") == 0) {
-                g_hash_table_insert(self->muted_hashtags, entry->value, entry);
-                g_debug("mute_list: loaded hashtag %s", value);
-            } else if (strcmp(tag_name, "word") == 0) {
-                g_hash_table_insert(self->muted_words, entry->value, entry);
-                g_debug("mute_list: loaded word %s", value);
-            } else {
-                mute_entry_free(entry);
-            }
-        }
-    }
-
-    /* Private entries are handled via decrypt_private_entries_async() in
-     * on_mute_list_query_done() after loading. This function only parses
-     * public entries from tags. See nostrc-nluo for NIP-44 implementation. */
-
-    nostr_event_free(event);
-    g_mutex_unlock(&self->lock);
-
-    g_message("mute_list: loaded %u pubkeys, %u events, %u hashtags, %u words",
-              g_hash_table_size(self->muted_pubkeys),
-              g_hash_table_size(self->muted_events),
-              g_hash_table_size(self->muted_hashtags),
-              g_hash_table_size(self->muted_words));
-
-    return TRUE;
+typedef struct { GNostrMuteList *s; guint64 generation; GPtrArray *ops; NostrListDocument *replace; gint64 imported_time; } Mutation;
+static void mutation_free(gpointer data) {
+  Mutation *m = data; g_clear_pointer(&m->ops, g_ptr_array_unref); nostr_nip51_document_free(m->replace); facade_unref(m->s); g_free(m);
 }
-
-/* Merge entries from JSON without clearing existing data (for UNION strategy) */
-static gboolean mute_list_merge_from_json(GNostrMuteList *self,
-                                           const char *event_json,
-                                           gint64 *out_event_time) {
-    if (!self || !event_json) return FALSE;
-
-    g_mutex_lock(&self->lock);
-
-    NostrEvent *event = nostr_event_new();
-    int parse_rc = nostr_event_deserialize_compact(event, event_json, NULL);
-    if (parse_rc != 1) {
-        nostr_event_free(event);
-        g_mutex_unlock(&self->lock);
-        return FALSE;
-    }
-
-    int kind = nostr_event_get_kind(event);
-    if (kind != MUTE_LIST_KIND) {
-        nostr_event_free(event);
-        g_mutex_unlock(&self->lock);
-        return FALSE;
-    }
-
-    gint64 event_time = nostr_event_get_created_at(event);
-    if (out_event_time) *out_event_time = event_time;
-
-    /* Update timestamp if newer */
-    if (event_time > self->last_event_time) {
-        self->last_event_time = event_time;
-    }
-
-    /* Merge tags - add items that don't already exist */
-    NostrTags *tags = (NostrTags *)nostr_event_get_tags(event);
-    if (tags) {
-        size_t tag_count = nostr_tags_size(tags);
-        guint added = 0;
-        for (size_t idx = 0; idx < tag_count; idx++) {
-            NostrTag *tag = nostr_tags_get(tags, idx);
-            if (!tag || nostr_tag_size(tag) < 2) continue;
-
-            const char *tag_name = nostr_tag_get(tag, 0);
-            const char *value = nostr_tag_get(tag, 1);
-            if (!tag_name || !value) continue;
-
-            MuteEntry *entry = mute_entry_new(value, FALSE);
-            gboolean inserted = FALSE;
-
-            if (strcmp(tag_name, "p") == 0 && !g_hash_table_contains(self->muted_pubkeys, value)) {
-                g_hash_table_insert(self->muted_pubkeys, entry->value, entry);
-                inserted = TRUE;
-            } else if (strcmp(tag_name, "e") == 0 && !g_hash_table_contains(self->muted_events, value)) {
-                g_hash_table_insert(self->muted_events, entry->value, entry);
-                inserted = TRUE;
-            } else if (strcmp(tag_name, "t") == 0 && !g_hash_table_contains(self->muted_hashtags, value)) {
-                g_hash_table_insert(self->muted_hashtags, entry->value, entry);
-                inserted = TRUE;
-            } else if (strcmp(tag_name, "word") == 0 && !g_hash_table_contains(self->muted_words, value)) {
-                g_hash_table_insert(self->muted_words, entry->value, entry);
-                inserted = TRUE;
-            }
-
-            if (inserted) {
-                added++;
-            } else {
-                mute_entry_free(entry);
-            }
-        }
-        g_debug("mute_list: merged %u new entries", added);
-    }
-
-    nostr_event_free(event);
-    g_mutex_unlock(&self->lock);
-    return TRUE;
+static gboolean mutation_dispatch(gpointer data) {
+  Mutation *m = data; GNostrMuteList *s = m->s;
+  g_mutex_lock(&s->lock); gboolean active = !s->closed && s->generation == m->generation;
+  GNostrListService *service = active ? g_object_ref(s->service) : NULL; g_mutex_unlock(&s->lock);
+  if (!service) return G_SOURCE_REMOVE;
+  gboolean ok;
+  if (m->replace) ok = replace_service(service, m->replace);
+  else {
+    GNostrListDocument *doc = gnostr_list_service_lookup(service, NOSTR_KIND_MUTE_LIST, "");
+    GNostrListDocument *saved = doc ? gnostr_list_service_apply(service, NOSTR_KIND_MUTE_LIST, "", doc->revision, m->ops, NULL) : NULL;
+    ok = saved != NULL; g_clear_object(&saved); g_clear_object(&doc);
+  }
+  g_mutex_lock(&s->lock); if (s->pending) s->pending--; g_mutex_unlock(&s->lock);
+  GNostrListDocument *doc = gnostr_list_service_lookup(service, NOSTR_KIND_MUTE_LIST, "");
+  if (doc) { on_document(service, doc, s); g_object_unref(doc); }
+  if (m->replace && ok) { g_mutex_lock(&s->lock); if (!s->pending) s->dirty = FALSE; s->last_time = m->imported_time; g_mutex_unlock(&s->lock); }
+  fetch_check(s);
+  if (!ok) g_warning("Mute list local edit could not be committed");
+  g_object_unref(service); return G_SOURCE_REMOVE;
 }
-
-gint64 gnostr_mute_list_get_last_event_time(GNostrMuteList *self) {
-    if (!self) return 0;
-    g_mutex_lock(&self->lock);
-    gint64 time = self->last_event_time;
-    g_mutex_unlock(&self->lock);
-    return time;
+static void queue_mutation(GNostrMuteList *s, Mutation *m) {
+  m->s = facade_ref(s); m->generation = s->generation; s->pending++;
+  /* Attach while locked so worker mutations cannot reorder the service edits. */
+  post(s, mutation_dispatch, m, mutation_free);
 }
-
-/* ---- Async Fetch Implementation ---- */
-
-typedef struct {
-    GNostrMuteList *mute_list;
-    GNostrMuteListFetchCallback callback;
-    gpointer user_data;
-    char *pubkey_hex;
-    GNostrMuteListMergeStrategy strategy;
-} FetchContext;
-
-static void fetch_context_free(FetchContext *ctx) {
-    if (ctx) {
-        g_free(ctx->pubkey_hex);
-        g_free(ctx);
-    }
+gboolean gnostr_mute_list_load_from_json(GNostrMuteList *s, const char *json) {
+  if (!s || !json || strlen(json) > NOSTR_LIST_MAX_EVENT_BYTES) return FALSE;
+  NostrEvent *ev = nostr_event_new();
+  gboolean ok = nostr_event_deserialize_compact(ev, json, NULL) == 1 && nostr_event_get_kind(ev) == NOSTR_KIND_MUTE_LIST;
+  NostrListDocument *codec = ok ? nostr_nip51_document_parse_event(ev) : NULL;
+  ok = codec && !nostr_nip51_document_validate(codec) &&
+    nostr_nip51_document_private_state(codec) == NOSTR_LIST_PRIVATE_EMPTY;
+  if (ok) {
+    Mutation *m = g_new0(Mutation, 1); m->replace = codec; m->imported_time = nostr_event_get_created_at(ev); codec = NULL;
+    g_mutex_lock(&s->lock);
+    if (!s->closed) { rebuild_locked(s, m->replace); s->dirty = FALSE; s->last_time = nostr_event_get_created_at(ev); queue_mutation(s, m); }
+    else { nostr_nip51_document_free(m->replace); g_free(m); ok = FALSE; }
+    g_mutex_unlock(&s->lock);
+  }
+  nostr_nip51_document_free(codec); nostr_event_free(ev); return ok;
 }
-
-#ifndef GNOSTR_MUTE_LIST_TEST_ONLY
-
-/* Context for private entry decryption */
-typedef struct {
-    GNostrMuteList *mute_list;
-    char *encrypted_content;
-    char *user_pubkey;
-} DecryptPrivateContext;
-
-static void decrypt_private_ctx_free(DecryptPrivateContext *ctx) {
-    if (ctx) {
-        g_free(ctx->encrypted_content);
-        g_free(ctx->user_pubkey);
-        g_free(ctx);
-    }
-}
-
-/* Callback context for parsing private entries */
-typedef struct {
-    GNostrMuteList *self;
-} PrivateEntriesCtx;
-
-/* Callback for iterating private entry tags */
-static gboolean parse_private_entry_cb(gsize idx, const gchar *element_json, gpointer user_data) {
-    (void)idx;
-    PrivateEntriesCtx *ctx = (PrivateEntriesCtx *)user_data;
-    GNostrMuteList *self = ctx->self;
-
-    /* Each element is a tag array like ["p", "pubkey"] */
-    if (!gnostr_json_is_array_str(element_json)) return true;
-
-    size_t tag_len = 0;
-    tag_len = gnostr_json_get_array_length(element_json, NULL, NULL);
-    if (tag_len < 0 || tag_len < 2) {
-        return true;
-    }
-
-    char *tag_name = NULL;
-    char *value = NULL;
-    /* Get tag name (index 0) and value (index 1) from the root array */
-    tag_name = gnostr_json_get_array_string(element_json, NULL, 0, NULL);
-    if (!tag_name) {
-        return true;
-    }
-    value = gnostr_json_get_array_string(element_json, NULL, 1, NULL);
-    if (!value) {
-        free(tag_name);
-        return true;
-    }
-
-    MuteEntry *entry = mute_entry_new(value, TRUE);  /* is_private = TRUE */
-
-    if (strcmp(tag_name, "p") == 0) {
-        if (!g_hash_table_contains(self->muted_pubkeys, value)) {
-            g_hash_table_insert(self->muted_pubkeys, entry->value, entry);
-            g_debug("mute_list: loaded private pubkey %s", value);
-        } else {
-            mute_entry_free(entry);
-        }
-    } else if (strcmp(tag_name, "e") == 0) {
-        if (!g_hash_table_contains(self->muted_events, value)) {
-            g_hash_table_insert(self->muted_events, entry->value, entry);
-            g_debug("mute_list: loaded private event %s", value);
-        } else {
-            mute_entry_free(entry);
-        }
-    } else if (strcmp(tag_name, "t") == 0) {
-        if (!g_hash_table_contains(self->muted_hashtags, value)) {
-            g_hash_table_insert(self->muted_hashtags, entry->value, entry);
-            g_debug("mute_list: loaded private hashtag %s", value);
-        } else {
-            mute_entry_free(entry);
-        }
-    } else if (strcmp(tag_name, "word") == 0) {
-        gchar *lower_word = g_utf8_strdown(value, -1);
-        if (!g_hash_table_contains(self->muted_words, lower_word)) {
-            mute_entry_free(entry);
-            entry = mute_entry_new(lower_word, TRUE);
-            g_hash_table_insert(self->muted_words, entry->value, entry);
-            g_debug("mute_list: loaded private word '%s'", lower_word);
-        } else {
-            mute_entry_free(entry);
-        }
-        g_free(lower_word);
-    } else {
-        mute_entry_free(entry);
-    }
-
-    free(tag_name);
-    free(value);
-    return true;  /* Continue iteration */
-}
-
-/* Parse decrypted private entries (JSON array of tags) */
-static void parse_private_entries(GNostrMuteList *self, const char *decrypted_json) {
-    if (!self || !decrypted_json || !*decrypted_json) return;
-
-    /* Validate that it's an array */
-    if (!gnostr_json_is_array_str(decrypted_json)) {
-        g_warning("mute_list: decrypted content is not an array");
-        return;
-    }
-
-    g_mutex_lock(&self->lock);
-
-    /* Iterate over root array using callback */
-    PrivateEntriesCtx ctx = { .self = self };
-    gnostr_json_array_foreach_root(decrypted_json, parse_private_entry_cb, &ctx);
-
-    g_mutex_unlock(&self->lock);
-
-    g_message("mute_list: parsed private entries");
-}
-
-/* Callback when private entries are decrypted */
-static void on_private_entries_decrypted(GObject *source, GAsyncResult *res, gpointer user_data) {
-    DecryptPrivateContext *ctx = (DecryptPrivateContext *)user_data;
-    if (!ctx) return;
-
-    NostrOrgNostrSigner *proxy = NOSTR_ORG_NOSTR_SIGNER(source);
-    g_autoptr(GError) error = NULL;
-    char *decrypted_json = NULL;
-
-    gboolean ok = nostr_org_nostr_signer_call_nip44_decrypt_finish(
-        proxy, &decrypted_json, res, &error);
-
-    if (!ok || !decrypted_json || !*decrypted_json) {
-        /* Not an error - just means no private entries or decryption failed */
-        g_debug("mute_list: no private entries to decrypt or decryption failed: %s",
-                error ? error->message : "empty result");
-        decrypt_private_ctx_free(ctx);
-        return;
-    }
-
-    g_debug("mute_list: decrypted private entries: %.100s...", decrypted_json);
-    parse_private_entries(ctx->mute_list, decrypted_json);
-
-    g_free(decrypted_json);
-    decrypt_private_ctx_free(ctx);
-}
-
-/* Decrypt private mute entries from event content */
-static void decrypt_private_entries_async(GNostrMuteList *self,
-                                           const char *encrypted_content,
-                                           const char *user_pubkey) {
-    if (!self || !encrypted_content || !*encrypted_content || !user_pubkey) return;
-
-    g_autoptr(GError) error = NULL;
-    NostrOrgNostrSigner *proxy = gnostr_signer_bridge_proxy_get(&error);
-    if (!proxy) {
-        g_debug("mute_list: cannot decrypt private entries - signer not available: %s",
-                error ? error->message : "unknown");
-        return;
-    }
-
-    DecryptPrivateContext *ctx = g_new0(DecryptPrivateContext, 1);
-    ctx->mute_list = self;
-    ctx->encrypted_content = g_strdup(encrypted_content);
-    ctx->user_pubkey = g_strdup(user_pubkey);
-
-    /* NIP-44 decrypt: for mute list, we encrypt to ourselves */
-    nostr_org_nostr_signer_call_nip44_decrypt(
-        proxy,
-        encrypted_content,
-        user_pubkey,      /* peer pubkey = self (encrypted to self) */
-        user_pubkey,      /* identity = current user */
-        NULL,             /* GCancellable */
-        on_private_entries_decrypted,
-        ctx);
-}
-
-/* Callback when relay query completes */
-static void on_mute_list_query_done(GObject *source, GAsyncResult *res, gpointer user_data) {
-    FetchContext *ctx = (FetchContext *)user_data;
-    if (!ctx) return;
-
-    g_autoptr(GError) err = NULL;
-    GPtrArray *results = gnostr_pool_query_finish(
-        GNOSTR_POOL(source), res, &err);
-
-    if (err) {
-        if (!g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
-            g_warning("mute_list: query failed: %s", err->message);
-        }
-        if (ctx->callback) {
-            ctx->callback(ctx->mute_list, FALSE, ctx->user_data);
-        }
-        fetch_context_free(ctx);
-        return;
-    }
-
-    gboolean success = FALSE;
-    gint64 newest_created_at = 0;
-    const char *newest_event_json = NULL;
-    char *encrypted_content = NULL;  /* owned copy */
-
-    /* Find the newest mute list event using NostrEvent API */
-    if (results && results->len > 0) {
-        for (guint i = 0; i < results->len; i++) {
-            const char *json_str = g_ptr_array_index(results, i);
-
-            NostrEvent *event = nostr_event_new();
-            int parse_rc = nostr_event_deserialize_compact(event, json_str, NULL);
-            if (parse_rc != 1) {
-                nostr_event_free(event);
-                continue;
-            }
-
-            /* Verify kind */
-            int kind = nostr_event_get_kind(event);
-            if (kind != MUTE_LIST_KIND) {
-                nostr_event_free(event);
-                continue;
-            }
-
-            /* Check timestamp */
-            gint64 event_time = nostr_event_get_created_at(event);
-
-            if (event_time > newest_created_at) {
-                newest_created_at = event_time;
-                newest_event_json = json_str;
-
-                /* Get encrypted content for private entries */
-                const char *content_str = nostr_event_get_content(event);
-                g_free(encrypted_content);
-                encrypted_content = (content_str && *content_str) ? g_strdup(content_str) : NULL;
-            }
-            nostr_event_free(event);
-        }
-    }
-
-    /* Apply merge strategy */
-    if (newest_event_json) {
-        gint64 local_time = gnostr_mute_list_get_last_event_time(ctx->mute_list);
-
-        switch (ctx->strategy) {
-        case GNOSTR_MUTE_LIST_MERGE_LOCAL_WINS:
-            /* Keep local if it exists and has data */
-            if (local_time > 0) {
-                g_debug("mute_list: LOCAL_WINS - keeping local data (time=%lld)", (long long)local_time);
-                success = TRUE;
-            } else {
-                /* No local data, load remote */
-                success = gnostr_mute_list_load_from_json(ctx->mute_list, newest_event_json);
-            }
-            break;
-
-        case GNOSTR_MUTE_LIST_MERGE_LATEST:
-            /* Compare timestamps */
-            if (newest_created_at > local_time) {
-                g_debug("mute_list: LATEST - using remote (remote=%lld > local=%lld)",
-                        (long long)newest_created_at, (long long)local_time);
-                success = gnostr_mute_list_load_from_json(ctx->mute_list, newest_event_json);
-            } else {
-                g_debug("mute_list: LATEST - keeping local (local=%lld >= remote=%lld)",
-                        (long long)local_time, (long long)newest_created_at);
-                success = TRUE;
-            }
-            break;
-
-        case GNOSTR_MUTE_LIST_MERGE_UNION:
-            /* Merge without clearing - add new items */
-            g_debug("mute_list: UNION - merging remote into local");
-            success = mute_list_merge_from_json(ctx->mute_list, newest_event_json, NULL);
-            break;
-
-        case GNOSTR_MUTE_LIST_MERGE_REMOTE_WINS:
-        default:
-            /* Replace local with remote (original behavior) */
-            g_debug("mute_list: REMOTE_WINS - replacing local with remote");
-            success = gnostr_mute_list_load_from_json(ctx->mute_list, newest_event_json);
-            break;
-        }
-
-        /* Decrypt private entries if we loaded/merged remote data */
-        if (success && encrypted_content && *encrypted_content &&
-            ctx->strategy != GNOSTR_MUTE_LIST_MERGE_LOCAL_WINS) {
-            decrypt_private_entries_async(ctx->mute_list, encrypted_content, ctx->pubkey_hex);
-        }
-    }
-
-    g_free(encrypted_content);
-    if (results) g_ptr_array_unref(results);
-
-    if (ctx->callback) {
-        ctx->callback(ctx->mute_list, success, ctx->user_data);
-    }
-
-    fetch_context_free(ctx);
-}
-
-/* Static pool for mute list operations */
-static GNostrPool *s_mute_list_pool = NULL;
-
-#endif /* GNOSTR_MUTE_LIST_TEST_ONLY */
-
-void gnostr_mute_list_fetch_async(GNostrMuteList *self,
-                                   const char *pubkey_hex,
-                                   const char * const *relays,
-                                   GNostrMuteListFetchCallback callback,
-                                   gpointer user_data) {
-    if (!self || !pubkey_hex) {
-        if (callback) callback(self, FALSE, user_data);
-        return;
-    }
-
-    g_mutex_lock(&self->lock);
-    g_free(self->user_pubkey);
-    self->user_pubkey = g_strdup(pubkey_hex);
-    g_mutex_unlock(&self->lock);
-
-#ifdef GNOSTR_MUTE_LIST_TEST_ONLY
-    (void)relays;
-    g_message("mute_list: fetch requested for pubkey %s (test mode - stub)", pubkey_hex);
-    if (callback) callback(self, TRUE, user_data);
-#else
-    FetchContext *ctx = g_new0(FetchContext, 1);
-    ctx->mute_list = self;
-    ctx->callback = callback;
-    ctx->user_data = user_data;
-    ctx->pubkey_hex = g_strdup(pubkey_hex);
-    ctx->strategy = GNOSTR_MUTE_LIST_MERGE_REMOTE_WINS;  /* Default: replace local */
-
-    /* Build filter for kind 10000 by author */
-    NostrFilter *filter = nostr_filter_new();
-    int kinds[1] = { MUTE_LIST_KIND };
-    nostr_filter_set_kinds(filter, kinds, 1);
-    const char *authors[1] = { pubkey_hex };
-    nostr_filter_set_authors(filter, authors, 1);
-    nostr_filter_set_limit(filter, 5);  /* Get a few to find newest */
-
-    /* Get relay URLs */
-    GPtrArray *relay_arr = g_ptr_array_new_with_free_func(g_free);
-
-    if (relays && relays[0]) {
-        /* Use provided relays */
-        for (const char * const *r = relays; *r; r++) {
-            g_ptr_array_add(relay_arr, g_strdup(*r));
-        }
-    } else {
-        /* Fall back to configured relays */
-        gnostr_load_relays_into(relay_arr);
-    }
-
-    const char **urls = g_new0(const char*, relay_arr->len + 1);
-    for (guint i = 0; i < relay_arr->len; i++) {
-        urls[i] = g_ptr_array_index(relay_arr, i);
-    }
-
-    /* Use static pool */
-    if (!s_mute_list_pool) {
-        s_mute_list_pool = gnostr_pool_new();
-    }
-
-    g_message("mute_list: fetching kind %d for pubkey %.8s from %u relays",
-              MUTE_LIST_KIND, pubkey_hex, relay_arr->len);
-
-        gnostr_pool_sync_relays(s_mute_list_pool, (const gchar **)urls, relay_arr->len);
-    {
-      NostrFilters *_qf = nostr_filters_new();
-      nostr_filters_add(_qf, filter);
-      gnostr_pool_query_async(s_mute_list_pool, _qf, NULL, /* cancellable */
-        on_mute_list_query_done, ctx);
-    }
-
-    g_free(urls);
-    g_ptr_array_unref(relay_arr);
-    nostr_filter_free(filter);
-#endif
-}
-
-void gnostr_mute_list_fetch_with_strategy_async(GNostrMuteList *self,
-                                                 const char *pubkey_hex,
-                                                 const char * const *relays,
-                                                 GNostrMuteListMergeStrategy strategy,
-                                                 GNostrMuteListFetchCallback callback,
-                                                 gpointer user_data) {
-    if (!self || !pubkey_hex) {
-        if (callback) callback(self, FALSE, user_data);
-        return;
-    }
-
-    g_mutex_lock(&self->lock);
-    g_free(self->user_pubkey);
-    self->user_pubkey = g_strdup(pubkey_hex);
-    g_mutex_unlock(&self->lock);
-
-#ifdef GNOSTR_MUTE_LIST_TEST_ONLY
-    (void)relays;
-    (void)strategy;
-    g_message("mute_list: fetch with strategy requested for pubkey %s (test mode - stub)", pubkey_hex);
-    if (callback) callback(self, TRUE, user_data);
-#else
-    FetchContext *ctx = g_new0(FetchContext, 1);
-    ctx->mute_list = self;
-    ctx->callback = callback;
-    ctx->user_data = user_data;
-    ctx->pubkey_hex = g_strdup(pubkey_hex);
-    ctx->strategy = strategy;
-
-    /* Build filter for kind 10000 by author */
-    NostrFilter *filter = nostr_filter_new();
-    int kinds[1] = { MUTE_LIST_KIND };
-    nostr_filter_set_kinds(filter, kinds, 1);
-    const char *authors[1] = { pubkey_hex };
-    nostr_filter_set_authors(filter, authors, 1);
-    nostr_filter_set_limit(filter, 5);  /* Get a few to find newest */
-
-    /* Get relay URLs */
-    GPtrArray *relay_arr = g_ptr_array_new_with_free_func(g_free);
-
-    if (relays && relays[0]) {
-        for (const char * const *r = relays; *r; r++) {
-            g_ptr_array_add(relay_arr, g_strdup(*r));
-        }
-    } else {
-        gnostr_load_relays_into(relay_arr);
-    }
-
-    const char **urls = g_new0(const char*, relay_arr->len + 1);
-    for (guint i = 0; i < relay_arr->len; i++) {
-        urls[i] = g_ptr_array_index(relay_arr, i);
-    }
-
-    if (!s_mute_list_pool) {
-        s_mute_list_pool = gnostr_pool_new();
-    }
-
-    g_message("mute_list: fetching kind %d for pubkey %.8s from %u relays (strategy=%d)",
-              MUTE_LIST_KIND, pubkey_hex, relay_arr->len, strategy);
-
-        gnostr_pool_sync_relays(s_mute_list_pool, (const gchar **)urls, relay_arr->len);
-    {
-      NostrFilters *_qf = nostr_filters_new();
-      nostr_filters_add(_qf, filter);
-      gnostr_pool_query_async(s_mute_list_pool, _qf, NULL, on_mute_list_query_done, ctx);
-    }
-
-    g_free(urls);
-    g_ptr_array_unref(relay_arr);
-    nostr_filter_free(filter);
-#endif
-}
-
-/* ---- Query Functions ---- */
-
-gboolean gnostr_mute_list_is_pubkey_muted(GNostrMuteList *self,
-                                           const char *pubkey_hex) {
-    if (!self || !pubkey_hex) return FALSE;
-    /* nostrc-akyz: defensively normalize npub/nprofile to hex */
-    g_autofree gchar *hex = gnostr_ensure_hex_pubkey(pubkey_hex);
-    if (!hex) return FALSE;
-    g_mutex_lock(&self->lock);
-    gboolean result = str_in_hashtable(self->muted_pubkeys, hex);
-    g_mutex_unlock(&self->lock);
-    return result;
-}
-
-gboolean gnostr_mute_list_is_event_muted(GNostrMuteList *self,
-                                          const char *event_id_hex) {
-    if (!self || !event_id_hex) return FALSE;
-    g_mutex_lock(&self->lock);
-    gboolean result = str_in_hashtable(self->muted_events, event_id_hex);
-    g_mutex_unlock(&self->lock);
-    return result;
-}
-
-gboolean gnostr_mute_list_is_hashtag_muted(GNostrMuteList *self,
-                                            const char *hashtag) {
-    if (!self || !hashtag) return FALSE;
-    g_mutex_lock(&self->lock);
-    /* Normalize: strip leading # if present */
-    const char *tag = hashtag;
-    if (tag[0] == '#') tag++;
-    gboolean result = str_in_hashtable(self->muted_hashtags, tag);
-    g_mutex_unlock(&self->lock);
-    return result;
-}
-
-gboolean gnostr_mute_list_contains_muted_word(GNostrMuteList *self,
-                                               const char *content) {
-    if (!self || !content) return FALSE;
-
-    g_mutex_lock(&self->lock);
-    gboolean found = FALSE;
-
-    GHashTableIter iter;
-    gpointer key, value;
-    g_hash_table_iter_init(&iter, self->muted_words);
-    while (g_hash_table_iter_next(&iter, &key, &value)) {
-        const char *word = (const char *)key;
-        if (content_contains_word(content, word)) {
-            found = TRUE;
-            break;
-        }
-    }
-
-    g_mutex_unlock(&self->lock);
-    return found;
-}
-
-gboolean gnostr_mute_list_should_hide_event(GNostrMuteList *self,
-                                             const char *event_json) {
-    if (!self || !event_json) return FALSE;
-
-    /* Parse event using NostrEvent API */
-    NostrEvent *event = nostr_event_new();
-    int parse_rc = nostr_event_deserialize_compact(event, event_json, NULL);
-    if (parse_rc != 1) {
-        nostr_event_free(event);
-        return FALSE;
-    }
-
-    gboolean hide = FALSE;
-
-    /* Check author pubkey */
-    const char *pubkey = nostr_event_get_pubkey(event);
-    if (pubkey && gnostr_mute_list_is_pubkey_muted(self, pubkey)) {
-        hide = TRUE;
-        goto done;
-    }
-
-    /* Check event id */
-    char *id = nostr_event_get_id(event);
-    if (id && gnostr_mute_list_is_event_muted(self, id)) {
-        free(id);
-        hide = TRUE;
-        goto done;
-    }
-    free(id);
-
-    /* Check content for muted words */
-    const char *content = nostr_event_get_content(event);
-    if (content && gnostr_mute_list_contains_muted_word(self, content)) {
-        hide = TRUE;
-        goto done;
-    }
-
-    /* Check hashtags in tags using NostrTags API */
-    NostrTags *tags = (NostrTags *)nostr_event_get_tags(event);
-    if (tags) {
-        size_t tag_count = nostr_tags_size(tags);
-        for (size_t idx = 0; idx < tag_count; idx++) {
-            NostrTag *tag = nostr_tags_get(tags, idx);
-            if (!tag || nostr_tag_size(tag) < 2) continue;
-            const char *tag_name = nostr_tag_get(tag, 0);
-            const char *value = nostr_tag_get(tag, 1);
-            if (tag_name && strcmp(tag_name, "t") == 0 && value) {
-                if (gnostr_mute_list_is_hashtag_muted(self, value)) {
-                    hide = TRUE;
-                    goto done;
-                }
-            }
-        }
-    }
-
+static void mutate(GNostrMuteList *s, guint k, const char *value, gboolean private_tag, gboolean remove) {
+  if (!s) return;
+  char *key = normalized(k, value); if (!key || !*key) { g_free(key); return; }
+  const char *fields[] = {tag_names[k], key}; NostrListTag *tag = nostr_nip51_tag_new(fields, 2);
+  if (!tag || nostr_nip51_validate_item(nostr_nip51_schema_lookup(NOSTR_KIND_MUTE_LIST), tag) == NOSTR_LIST_ITEM_INVALID) { nostr_nip51_tag_free(tag); g_free(key); return; }
+  g_mutex_lock(&s->lock);
+  if (s->closed || (!remove && g_hash_table_contains(s->index[k], key)) || (remove && !g_hash_table_contains(s->index[k], key))) goto done;
+  Mutation *m = g_new0(Mutation, 1); m->ops = g_ptr_array_new_with_free_func((GDestroyNotify)gnostr_list_operation_unref);
+  if (!remove) g_ptr_array_add(m->ops, gnostr_list_operation_append(private_tag, tag));
+  else for (int p = 0; p < 2; p++) for (size_t i = 0; i < nostr_nip51_document_tag_count(s->projection, p); i++) {
+    const NostrListTag *t = nostr_nip51_document_tag(s->projection, p, i);
+    char *candidate = normalized(k, nostr_nip51_tag_field(t, 1));
+    if (!g_strcmp0(nostr_nip51_tag_field(t, 0), tag_names[k]) && !g_strcmp0(candidate, key))
+      g_ptr_array_add(m->ops, gnostr_list_operation_remove(p, t, G_MAXUINT));
+    g_free(candidate);
+  }
+  NostrListDocument *next = list_codec_copy(s->projection);
+  gboolean ok = next != NULL;
+  for (guint i = 0; ok && i < m->ops->len; i++) ok = list_operation_apply(next, m->ops->pdata[i], NULL);
+  if (ok) { rebuild_locked(s, next); s->dirty = TRUE; queue_mutation(s, m); }
+  else { g_ptr_array_unref(m->ops); g_free(m); }
+  nostr_nip51_document_free(next);
 done:
-    nostr_event_free(event);
-    return hide;
+  g_mutex_unlock(&s->lock); nostr_nip51_tag_free(tag); g_free(key);
 }
-
-/* ---- Modification Functions ---- */
-
-void gnostr_mute_list_add_pubkey(GNostrMuteList *self,
-                                  const char *pubkey_hex,
-                                  gboolean is_private) {
-    /* nostrc-akyz: defensively normalize npub/nprofile to hex */
-    g_autofree gchar *hex = NULL;
-    if (pubkey_hex && strlen(pubkey_hex) != 64) {
-      hex = gnostr_ensure_hex_pubkey(pubkey_hex);
-      pubkey_hex = hex;
-    }
-    if (!self || !pubkey_hex || strlen(pubkey_hex) != 64) return;
-
-    g_mutex_lock(&self->lock);
-    if (!g_hash_table_contains(self->muted_pubkeys, pubkey_hex)) {
-        MuteEntry *entry = mute_entry_new(pubkey_hex, is_private);
-        g_hash_table_insert(self->muted_pubkeys, entry->value, entry);
-        self->dirty = TRUE;
-        g_message("mute_list: added pubkey %s (private=%d)", pubkey_hex, is_private);
-    }
-    g_mutex_unlock(&self->lock);
+#define MUTATORS(name, k) \
+void gnostr_mute_list_add_##name(GNostrMuteList *s, const char *v, gboolean p) { mutate(s, k, v, p, FALSE); } \
+void gnostr_mute_list_remove_##name(GNostrMuteList *s, const char *v) { mutate(s, k, v, FALSE, TRUE); }
+MUTATORS(pubkey, 0)
+MUTATORS(word, 1)
+MUTATORS(hashtag, 2)
+MUTATORS(event, 3)
+static gboolean query(GNostrMuteList *s, guint k, const char *v) {
+  if (!s) return FALSE; char *key = normalized(k, v); if (!key) return FALSE;
+  g_mutex_lock(&s->lock); gboolean result = !s->closed && g_hash_table_contains(s->index[k], key); g_mutex_unlock(&s->lock); g_free(key); return result;
 }
-
-void gnostr_mute_list_remove_pubkey(GNostrMuteList *self,
-                                     const char *pubkey_hex) {
-    if (!self || !pubkey_hex) return;
-    /* nostrc-akyz: defensively normalize npub/nprofile to hex */
-    g_autofree gchar *hex = gnostr_ensure_hex_pubkey(pubkey_hex);
-    if (!hex) return;
-    pubkey_hex = hex;
-
-    g_mutex_lock(&self->lock);
-    if (g_hash_table_remove(self->muted_pubkeys, pubkey_hex)) {
-        self->dirty = TRUE;
-        g_message("mute_list: removed pubkey %s", pubkey_hex);
-    }
-    g_mutex_unlock(&self->lock);
+gboolean gnostr_mute_list_is_pubkey_muted(GNostrMuteList *s, const char *v) { return query(s, 0, v); }
+gboolean gnostr_mute_list_is_hashtag_muted(GNostrMuteList *s, const char *v) { return query(s, 2, v); }
+gboolean gnostr_mute_list_is_event_muted(GNostrMuteList *s, const char *v) { return query(s, 3, v); }
+gboolean gnostr_mute_list_contains_muted_word(GNostrMuteList *s, const char *content) {
+  if (!s || !content || !g_utf8_validate(content, -1, NULL)) return FALSE;
+  char *lower = g_utf8_strdown(content, -1); gboolean result = FALSE;
+  g_mutex_lock(&s->lock); GHashTableIter it; gpointer word; g_hash_table_iter_init(&it, s->index[1]);
+  while (!s->closed && g_hash_table_iter_next(&it, &word, NULL)) if (strstr(lower, word)) { result = TRUE; break; }
+  g_mutex_unlock(&s->lock); g_free(lower); return result;
 }
-
-void gnostr_mute_list_add_word(GNostrMuteList *self,
-                                const char *word,
-                                gboolean is_private) {
-    if (!self || !word || !*word) return;
-
-    gchar *lower_word = g_utf8_strdown(word, -1);
-
-    g_mutex_lock(&self->lock);
-    if (!g_hash_table_contains(self->muted_words, lower_word)) {
-        MuteEntry *entry = mute_entry_new(lower_word, is_private);
-        g_hash_table_insert(self->muted_words, entry->value, entry);
-        self->dirty = TRUE;
-        g_message("mute_list: added word '%s' (private=%d)", lower_word, is_private);
+gboolean gnostr_mute_list_should_hide_event(GNostrMuteList *s, const char *json) {
+  if (!s || !json) return FALSE;
+  json_t *j = json_loads(json, JSON_REJECT_DUPLICATES, NULL);
+  char *author = normalized(0, json_string_value(json_object_get(j, "pubkey")));
+  char *id = normalized(3, json_string_value(json_object_get(j, "id")));
+  char *content = normalized(1, json_string_value(json_object_get(j, "content")));
+  g_mutex_lock(&s->lock);
+  gboolean hide = !s->closed && ((author && g_hash_table_contains(s->index[0], author)) ||
+    (id && g_hash_table_contains(s->index[3], id)));
+  GHashTableIter it; gpointer word; g_hash_table_iter_init(&it, s->index[1]);
+  while (!s->closed && !hide && content && g_hash_table_iter_next(&it, &word, NULL)) hide = strstr(content, word) != NULL;
+  json_t *tags = json_object_get(j, "tags");
+  for (size_t i = 0; !s->closed && !hide && i < json_array_size(tags); i++) {
+    json_t *t = json_array_get(tags, i);
+    if (!g_strcmp0(json_string_value(json_array_get(t, 0)), "t")) {
+      char *tag = normalized(2, json_string_value(json_array_get(t, 1)));
+      hide = tag && g_hash_table_contains(s->index[2], tag); g_free(tag);
     }
-    g_mutex_unlock(&self->lock);
-
-    g_free(lower_word);
+  }
+  g_mutex_unlock(&s->lock); g_free(author); g_free(id); g_free(content);
+  json_decref(j); return hide;
 }
-
-void gnostr_mute_list_remove_word(GNostrMuteList *self,
-                                   const char *word) {
-    if (!self || !word) return;
-
-    gchar *lower_word = g_utf8_strdown(word, -1);
-
-    g_mutex_lock(&self->lock);
-    if (g_hash_table_remove(self->muted_words, lower_word)) {
-        self->dirty = TRUE;
-        g_message("mute_list: removed word '%s'", lower_word);
-    }
-    g_mutex_unlock(&self->lock);
-
-    g_free(lower_word);
+static const char **values(GNostrMuteList *s, guint k, size_t *count) {
+  if (count) *count = 0; if (!s) return NULL;
+  g_mutex_lock(&s->lock); guint n = s->closed ? 0 : g_hash_table_size(s->index[k]);
+  const char **v = g_new0(const char *, n + 1); GHashTableIter it; gpointer key; guint i = 0;
+  g_hash_table_iter_init(&it, s->index[k]); while (i < n && g_hash_table_iter_next(&it, &key, NULL)) v[i++] = key;
+  if (count) *count = n; g_mutex_unlock(&s->lock); return v;
 }
-
-void gnostr_mute_list_add_hashtag(GNostrMuteList *self,
-                                   const char *hashtag,
-                                   gboolean is_private) {
-    if (!self || !hashtag || !*hashtag) return;
-
-    /* Strip leading # if present */
-    const char *tag = hashtag;
-    if (tag[0] == '#') tag++;
-
-    gchar *lower_tag = g_utf8_strdown(tag, -1);
-
-    g_mutex_lock(&self->lock);
-    if (!g_hash_table_contains(self->muted_hashtags, lower_tag)) {
-        MuteEntry *entry = mute_entry_new(lower_tag, is_private);
-        g_hash_table_insert(self->muted_hashtags, entry->value, entry);
-        self->dirty = TRUE;
-        g_message("mute_list: added hashtag '%s' (private=%d)", lower_tag, is_private);
-    }
-    g_mutex_unlock(&self->lock);
-
-    g_free(lower_tag);
+const char **gnostr_mute_list_get_pubkeys(GNostrMuteList *s, size_t *n) { return values(s, 0, n); }
+const char **gnostr_mute_list_get_words(GNostrMuteList *s, size_t *n) { return values(s, 1, n); }
+const char **gnostr_mute_list_get_hashtags(GNostrMuteList *s, size_t *n) { return values(s, 2, n); }
+const char **gnostr_mute_list_get_events(GNostrMuteList *s, size_t *n) { return values(s, 3, n); }
+gboolean gnostr_mute_list_is_dirty(GNostrMuteList *s) { if (!s) return FALSE; g_mutex_lock(&s->lock); gboolean dirty = s->dirty; g_mutex_unlock(&s->lock); return dirty; }
+gint64 gnostr_mute_list_get_last_event_time(GNostrMuteList *s) { if (!s) return 0; g_mutex_lock(&s->lock); gint64 at = s->last_time; g_mutex_unlock(&s->lock); return at; }
+GNostrListService *gnostr_mute_list_get_service(GNostrMuteList *s) {
+  if (!s) return NULL; g_mutex_lock(&s->lock); GNostrListService *service = s->service ? g_object_ref(s->service) : NULL; g_mutex_unlock(&s->lock); return service;
 }
-
-void gnostr_mute_list_remove_hashtag(GNostrMuteList *self,
-                                      const char *hashtag) {
-    if (!self || !hashtag) return;
-
-    const char *tag = hashtag;
-    if (tag[0] == '#') tag++;
-
-    gchar *lower_tag = g_utf8_strdown(tag, -1);
-
-    g_mutex_lock(&self->lock);
-    if (g_hash_table_remove(self->muted_hashtags, lower_tag)) {
-        self->dirty = TRUE;
-        g_message("mute_list: removed hashtag '%s'", lower_tag);
-    }
-    g_mutex_unlock(&self->lock);
-
-    g_free(lower_tag);
-}
-
-void gnostr_mute_list_add_event(GNostrMuteList *self,
-                                 const char *event_id_hex,
-                                 gboolean is_private) {
-    if (!self || !event_id_hex || strlen(event_id_hex) != 64) return;
-
-    g_mutex_lock(&self->lock);
-    if (!g_hash_table_contains(self->muted_events, event_id_hex)) {
-        MuteEntry *entry = mute_entry_new(event_id_hex, is_private);
-        g_hash_table_insert(self->muted_events, entry->value, entry);
-        self->dirty = TRUE;
-        g_message("mute_list: added event %s (private=%d)", event_id_hex, is_private);
-    }
-    g_mutex_unlock(&self->lock);
-}
-
-void gnostr_mute_list_remove_event(GNostrMuteList *self,
-                                    const char *event_id_hex) {
-    if (!self || !event_id_hex) return;
-
-    g_mutex_lock(&self->lock);
-    if (g_hash_table_remove(self->muted_events, event_id_hex)) {
-        self->dirty = TRUE;
-        g_message("mute_list: removed event %s", event_id_hex);
-    }
-    g_mutex_unlock(&self->lock);
-}
-
-/* ---- Save Implementation ---- */
 
 typedef struct {
-    GNostrMuteList *mute_list;
-    GNostrMuteListSaveCallback callback;
-    gpointer user_data;
-    char *event_json;
-    char *private_tags_json;  /* JSON array of private tags for encryption */
-    char *user_pubkey;
-} SaveContext;
-
-static void save_context_free(SaveContext *ctx) {
-    if (ctx) {
-        g_free(ctx->event_json);
-        g_free(ctx->private_tags_json);
-        g_free(ctx->user_pubkey);
-        g_free(ctx);
-    }
+  GNostrMuteList *s;
+  char *account;
+  char **relays;
+  GNostrMuteListMergeStrategy strategy;
+  GNostrMuteListFetchCallback callback;
+  gpointer user_data;
+  NostrListDocument *local;
+  gint64 local_time;
+  guint64 generation;
+  gulong handler, cancel_handler;
+  GCancellable *cancel;
+} Fetch;
+static void fetch_complete(Fetch *f, gboolean success) {
+  GNostrMuteList *s = f->s;
+  if (f->handler) g_signal_handler_disconnect(s->service, f->handler);
+  if (f->cancel_handler) g_cancellable_disconnect(f->cancel, f->cancel_handler);
+  g_clear_object(&f->cancel);
+  g_mutex_lock(&s->lock); if (s->fetch == f) s->fetch = NULL; g_mutex_unlock(&s->lock);
+  if (f->callback) f->callback(s, success, f->user_data);
+  nostr_nip51_document_free(f->local); g_free(f->account); g_strfreev(f->relays); facade_unref(s); g_free(f);
 }
-
-#ifndef GNOSTR_MUTE_LIST_TEST_ONLY
-
-static void mute_list_publish_done(guint success_count, guint fail_count, gpointer user_data);
-
-/* Publish signed event to relays */
-static void publish_to_relays(SaveContext *ctx, const char *signed_event_json) {
-    /* Parse the signed event */
-    NostrEvent *event = nostr_event_new();
-    int parse_rc = nostr_event_deserialize_compact(event, signed_event_json, NULL);
-    if (parse_rc != 1) {
-        g_warning("mute_list: failed to parse signed event");
-        if (ctx->callback) {
-            ctx->callback(ctx->mute_list, FALSE, "Failed to parse signed event", ctx->user_data);
-        }
-        nostr_event_free(event);
-        save_context_free(ctx);
-        return;
-    }
-
-    /* Publish to relays asynchronously (hq-gflmf) */
-    GPtrArray *relay_urls = g_ptr_array_new_with_free_func(g_free);
-    gnostr_load_relays_into(relay_urls);
-
-    gnostr_app_bridge_publish_to_relays_async(event, relay_urls,
-        mute_list_publish_done, ctx);
-    /* event + relay_urls ownership transferred; ctx freed in callback */
+static gboolean tag_present(const NostrListDocument *d, int p, const NostrListTag *t) {
+  for (size_t i = 0; i < nostr_nip51_document_tag_count(d, p); i++) {
+    const NostrListTag *other = nostr_nip51_document_tag(d, p, i);
+    if (nostr_nip51_tag_size(t) != nostr_nip51_tag_size(other)) continue;
+    gboolean equal = TRUE;
+    for (size_t j = 0; j < nostr_nip51_tag_size(t); j++) equal &= !g_strcmp0(nostr_nip51_tag_field(t, j), nostr_nip51_tag_field(other, j));
+    if (equal) return TRUE;
+  }
+  return FALSE;
 }
-
-static void
-mute_list_publish_done(guint success_count, guint fail_count, gpointer user_data)
-{
-    SaveContext *ctx = (SaveContext *)user_data;
-
-    if (success_count > 0) {
-        g_mutex_lock(&ctx->mute_list->lock);
-        ctx->mute_list->dirty = FALSE;
-        ctx->mute_list->last_event_time = (gint64)time(NULL);
-        g_mutex_unlock(&ctx->mute_list->lock);
+static void fetch_state(GNostrListService *service, Fetch *f) {
+  GNostrMuteList *s = f->s;
+  if (s->closed || f->generation != s->generation) { fetch_complete(f, FALSE); return; }
+  g_mutex_lock(&s->lock); gboolean pending = s->pending > 0; g_mutex_unlock(&s->lock); if (pending) return;
+  GNostrListDocument *doc = gnostr_list_service_lookup(service, NOSTR_KIND_MUTE_LIST, ""); if (!doc) return;
+  json_t *sources = json_loads(doc->sources, 0, NULL); guint eose = 0, terminal = 0;
+  for (guint i = 0; f->relays && f->relays[i]; i++) {
+    int state = json_integer_value(json_object_get(sources, f->relays[i])) - 1;
+    if (state == GNOSTR_LIST_EOSE) eose++;
+    if (state == GNOSTR_LIST_EOSE || state == GNOSTR_LIST_CLOSED || state == GNOSTR_LIST_AUTH_REQUIRED || state == GNOSTR_LIST_ERROR || state == GNOSTR_LIST_DISCONNECTED) terminal++;
+  }
+  json_decref(sources);
+  GNostrListState state = gnostr_list_service_get_state(service, NOSTR_KIND_MUTE_LIST, "");
+  if (terminal != g_strv_length(f->relays) || state == GNOSTR_LIST_READING) { g_object_unref(doc); return; }
+  gboolean success = eose > 0 && state != GNOSTR_LIST_UNREADABLE && doc->event_id != NULL;
+  if (eose && !doc->event_id && state != GNOSTR_LIST_UNREADABLE) {
+    g_mutex_lock(&s->lock); NostrListDocument *local = list_codec_copy(s->projection); g_mutex_unlock(&s->lock);
+    g_signal_handler_disconnect(service, f->handler); f->handler = 0;
+    replace_service(service, local); nostr_nip51_document_free(local);
+  }
+  if (success) {
+    g_mutex_lock(&s->lock); nostr_nip51_document_free(f->local); f->local = list_codec_copy(s->projection); f->local_time = s->last_time; g_mutex_unlock(&s->lock);
+    NostrListDocument *chosen = NULL;
+    gboolean keep = (f->strategy == GNOSTR_MUTE_LIST_MERGE_LOCAL_WINS &&
+      (f->local_time > 0 || nostr_nip51_document_tag_count(f->local, FALSE) || nostr_nip51_document_tag_count(f->local, TRUE))) ||
+      (f->strategy == GNOSTR_MUTE_LIST_MERGE_LATEST && f->local_time >= doc->created_at);
+    if (keep) chosen = list_codec_copy(f->local);
+    else if (f->strategy == GNOSTR_MUTE_LIST_MERGE_UNION) {
+      chosen = list_codec_copy(doc->codec);
+      for (int p = 0; p < 2; p++) for (size_t i = 0; i < nostr_nip51_document_tag_count(f->local, p); i++) {
+        const NostrListTag *t = nostr_nip51_document_tag(f->local, p, i);
+        if (!tag_present(chosen, p, t) && nostr_nip51_document_append(chosen, p, t)) success = FALSE;
+      }
     }
-
-    if (ctx->callback) {
-        if (success_count > 0) {
-            ctx->callback(ctx->mute_list, TRUE, NULL, ctx->user_data);
-        } else {
-            ctx->callback(ctx->mute_list, FALSE, "Failed to publish to any relay", ctx->user_data);
-        }
-    }
-
-    g_message("mute_list: published to %u relays, failed %u", success_count, fail_count);
-    save_context_free(ctx);
+    /* Disconnect before applying compatibility edits: apply emits state-changed. */
+    g_signal_handler_disconnect(service, f->handler); f->handler = 0;
+    if (chosen && success) success = replace_service(service, chosen);
+    nostr_nip51_document_free(chosen);
+    g_object_unref(doc); doc = gnostr_list_service_lookup(service, NOSTR_KIND_MUTE_LIST, "");
+    g_mutex_lock(&s->lock); if (success) { rebuild_locked(s, doc->codec); s->dirty = doc->dirty; s->last_time = keep ? f->local_time : doc->created_at; } g_mutex_unlock(&s->lock);
+  }
+  g_object_unref(doc); fetch_complete(f, success);
 }
-
-#endif /* GNOSTR_MUTE_LIST_TEST_ONLY */
-
-static void on_mute_list_sign_complete(GObject *source, GAsyncResult *res, gpointer user_data) {
-    SaveContext *ctx = (SaveContext *)user_data;
-    (void)source;
-    if (!ctx) return;
-
-    g_autoptr(GError) error = NULL;
-    char *signed_event_json = NULL;
-
-    gboolean ok = gnostr_signer_bridge_sign_event_finish(res, &signed_event_json, &error);
-
-    if (!ok || !signed_event_json) {
-        g_warning("mute_list: signing failed: %s", error ? error->message : "unknown error");
-        if (ctx->callback) {
-            ctx->callback(ctx->mute_list, FALSE,
-                         error ? error->message : "Signing failed",
-                         ctx->user_data);
-        }
-        save_context_free(ctx);
-        return;
-    }
-
-    g_message("mute_list: signed event successfully");
-
-#ifdef GNOSTR_MUTE_LIST_TEST_ONLY
-    /* In test mode, just mark as saved */
-    g_mutex_lock(&ctx->mute_list->lock);
-    ctx->mute_list->dirty = FALSE;
-    ctx->mute_list->last_event_time = (gint64)time(NULL);
-    g_mutex_unlock(&ctx->mute_list->lock);
-
-    if (ctx->callback) {
-        ctx->callback(ctx->mute_list, TRUE, NULL, ctx->user_data);
-    }
-    g_free(signed_event_json);
-    save_context_free(ctx);
-#else
-    /* Publish to relays */
-    publish_to_relays(ctx, signed_event_json);
-    g_free(signed_event_json);
-#endif
+static void fetch_check(GNostrMuteList *s) { if (s->fetch && ((Fetch *)s->fetch)->handler) fetch_state(s->service, s->fetch); }
+typedef struct { GNostrMuteList *s; guint64 generation; } FetchCancel;
+static void fetch_cancel_free(gpointer data) { FetchCancel *c = data; facade_unref(c->s); g_free(c); }
+static gboolean fetch_cancel_dispatch(gpointer data) {
+  FetchCancel *c = data; GNostrMuteList *s = c->s; Fetch *f = s->fetch;
+  if (!f || f->generation != c->generation) return G_SOURCE_REMOVE;
+  if (f->handler) { g_signal_handler_disconnect(s->service, f->handler); f->handler = 0; }
+  GNostrListReadPlanEntry plan = {.kind = NOSTR_KIND_MUTE_LIST, .identifier = "", .targets = (const char *const *)s->relays,
+    .publish_policy = GNOSTR_LIST_EXPLICIT_ONLY, .required_sources = GNOSTR_LIST_SOURCES_ALL};
+  gnostr_list_service_update_read_plan(s->service, &plan, 1, NULL);
+  g_mutex_lock(&s->lock); s->generation++; s->pending = 0; NostrListDocument *local = list_codec_copy(s->projection); g_mutex_unlock(&s->lock);
+  replace_service(s->service, local); nostr_nip51_document_free(local);
+  fetch_complete(f, FALSE); return G_SOURCE_REMOVE;
 }
-
-/* Helper to build JSON array of private tags using GNostrJsonBuilder */
-static char *build_private_tags_json(GNostrMuteList *self) {
-    GNostrJsonBuilder *builder = gnostr_json_builder_new();
-    GHashTableIter iter;
-    gpointer key, value;
-    int tag_count = 0;
-
-    gnostr_json_builder_begin_array(builder);
-
-    /* Add private pubkeys */
-    g_hash_table_iter_init(&iter, self->muted_pubkeys);
-    while (g_hash_table_iter_next(&iter, &key, &value)) {
-        MuteEntry *entry = (MuteEntry *)value;
-        if (entry->is_private) {
-            gnostr_json_builder_begin_array(builder);
-            gnostr_json_builder_add_string(builder, "p");
-            gnostr_json_builder_add_string(builder, entry->value);
-            gnostr_json_builder_end_array(builder);
-            tag_count++;
-        }
-    }
-
-    /* Add private events */
-    g_hash_table_iter_init(&iter, self->muted_events);
-    while (g_hash_table_iter_next(&iter, &key, &value)) {
-        MuteEntry *entry = (MuteEntry *)value;
-        if (entry->is_private) {
-            gnostr_json_builder_begin_array(builder);
-            gnostr_json_builder_add_string(builder, "e");
-            gnostr_json_builder_add_string(builder, entry->value);
-            gnostr_json_builder_end_array(builder);
-            tag_count++;
-        }
-    }
-
-    /* Add private hashtags */
-    g_hash_table_iter_init(&iter, self->muted_hashtags);
-    while (g_hash_table_iter_next(&iter, &key, &value)) {
-        MuteEntry *entry = (MuteEntry *)value;
-        if (entry->is_private) {
-            gnostr_json_builder_begin_array(builder);
-            gnostr_json_builder_add_string(builder, "t");
-            gnostr_json_builder_add_string(builder, entry->value);
-            gnostr_json_builder_end_array(builder);
-            tag_count++;
-        }
-    }
-
-    /* Add private words */
-    g_hash_table_iter_init(&iter, self->muted_words);
-    while (g_hash_table_iter_next(&iter, &key, &value)) {
-        MuteEntry *entry = (MuteEntry *)value;
-        if (entry->is_private) {
-            gnostr_json_builder_begin_array(builder);
-            gnostr_json_builder_add_string(builder, "word");
-            gnostr_json_builder_add_string(builder, entry->value);
-            gnostr_json_builder_end_array(builder);
-            tag_count++;
-        }
-    }
-
-    gnostr_json_builder_end_array(builder);
-
-    /* Return NULL if no private tags */
-    if (tag_count == 0) {
-        g_object_unref(builder);
-        return NULL;
-    }
-
-    char *result = gnostr_json_builder_finish(builder);
-    g_object_unref(builder);
-    return result;
+static void fetch_cancelled(GCancellable *cancel, gpointer data) {
+  (void)cancel; FetchCancel *c = data; FetchCancel *copy = g_new0(FetchCancel, 1);
+  copy->s = facade_ref(c->s); copy->generation = c->generation;
+  post(c->s, fetch_cancel_dispatch, copy, fetch_cancel_free);
 }
-
-/* Forward declaration */
-static void proceed_to_sign(SaveContext *ctx, const char *encrypted_content);
-
-/* Callback when private tags are encrypted */
-static void on_private_tags_encrypted(GObject *source, GAsyncResult *res, gpointer user_data) {
-    SaveContext *ctx = (SaveContext *)user_data;
-    if (!ctx) return;
-
-    NostrOrgNostrSigner *proxy = NOSTR_ORG_NOSTR_SIGNER(source);
-    g_autoptr(GError) error = NULL;
-    char *encrypted_content = NULL;
-
-    gboolean ok = nostr_org_nostr_signer_call_nip44_encrypt_finish(
-        proxy, &encrypted_content, res, &error);
-
-    if (!ok || !encrypted_content) {
-        g_warning("mute_list: failed to encrypt private entries: %s",
-                  error ? error->message : "unknown");
-        /* Proceed without private entries - still save public ones */
-        proceed_to_sign(ctx, "");
-        return;
-    }
-
-    g_debug("mute_list: encrypted private entries");
-    proceed_to_sign(ctx, encrypted_content);
-    g_free(encrypted_content);
+static gboolean fetch_dispatch(gpointer data) {
+  Fetch *f = data; GNostrMuteList *s = f->s;
+  if (s->fetch) fetch_complete(s->fetch, FALSE);
+  g_mutex_lock(&s->lock);
+  if (s->closed || (f->cancel && g_cancellable_is_cancelled(f->cancel))) { g_mutex_unlock(&s->lock); fetch_complete(f, FALSE); return G_SOURCE_REMOVE; }
+  f->local = list_codec_copy(s->projection); f->local_time = s->last_time;
+  /* A different account never inherits a previous account's session edits. */
+  if (s->account && g_strcmp0(s->account, f->account)) {
+    nostr_nip51_document_free(f->local); f->local = nostr_nip51_document_new(NOSTR_KIND_MUTE_LIST, NULL); f->local_time = 0;
+    rebuild_locked(s, f->local); s->dirty = FALSE; s->last_time = 0;
+  }
+  s->generation++; f->generation = s->generation; s->pending = 0; s->fetch = f;
+  g_mutex_unlock(&s->lock);
+  if (!create_service(s, f->account, (const char *const *)f->relays)) { fetch_complete(f, FALSE); return G_SOURCE_REMOVE; }
+  g_mutex_lock(&s->lock); g_free(s->account); s->account = g_strdup(f->account); g_strfreev(s->relays); s->relays = g_strdupv(f->relays); g_mutex_unlock(&s->lock);
+  f->handler = g_signal_connect(s->service, "state-changed", G_CALLBACK(fetch_state), f);
+  if (f->cancel) {
+    FetchCancel *c = g_new0(FetchCancel, 1); c->s = facade_ref(s); c->generation = f->generation;
+    f->cancel_handler = g_cancellable_connect(f->cancel, G_CALLBACK(fetch_cancelled), c, fetch_cancel_free);
+  }
+  if (!f->relays || !f->relays[0]) fetch_complete(f, FALSE);
+  return G_SOURCE_REMOVE;
 }
-
-/* Build and sign the event with given content */
-static void proceed_to_sign(SaveContext *ctx, const char *encrypted_content) {
-    /* Check if signer service is available (via registered bridge — nostrc-ecrx) */
-    if (!gnostr_signer_bridge_is_available()) {
-        if (ctx->callback) ctx->callback(ctx->mute_list, FALSE, "Signer not available", ctx->user_data);
-        save_context_free(ctx);
-        return;
-    }
-
-    g_mutex_lock(&ctx->mute_list->lock);
-
-    /* Build the public tags using NostrTags API */
-    NostrTags *tags = nostr_tags_new(0);
-    GHashTableIter iter;
-    gpointer key, value;
-
-    /* Add public pubkeys */
-    g_hash_table_iter_init(&iter, ctx->mute_list->muted_pubkeys);
-    while (g_hash_table_iter_next(&iter, &key, &value)) {
-        MuteEntry *entry = (MuteEntry *)value;
-        if (!entry->is_private) {
-            NostrTag *tag = nostr_tag_new("p", entry->value, NULL);
-            nostr_tags_append(tags, tag);
-        }
-    }
-
-    /* Add public events */
-    g_hash_table_iter_init(&iter, ctx->mute_list->muted_events);
-    while (g_hash_table_iter_next(&iter, &key, &value)) {
-        MuteEntry *entry = (MuteEntry *)value;
-        if (!entry->is_private) {
-            NostrTag *tag = nostr_tag_new("e", entry->value, NULL);
-            nostr_tags_append(tags, tag);
-        }
-    }
-
-    /* Add public hashtags */
-    g_hash_table_iter_init(&iter, ctx->mute_list->muted_hashtags);
-    while (g_hash_table_iter_next(&iter, &key, &value)) {
-        MuteEntry *entry = (MuteEntry *)value;
-        if (!entry->is_private) {
-            NostrTag *tag = nostr_tag_new("t", entry->value, NULL);
-            nostr_tags_append(tags, tag);
-        }
-    }
-
-    /* Add public words */
-    g_hash_table_iter_init(&iter, ctx->mute_list->muted_words);
-    while (g_hash_table_iter_next(&iter, &key, &value)) {
-        MuteEntry *entry = (MuteEntry *)value;
-        if (!entry->is_private) {
-            NostrTag *tag = nostr_tag_new("word", entry->value, NULL);
-            nostr_tags_append(tags, tag);
-        }
-    }
-
-    g_mutex_unlock(&ctx->mute_list->lock);
-
-    /* Build unsigned event using NostrEvent API */
-    NostrEvent *event = nostr_event_new();
-    nostr_event_set_kind(event, MUTE_LIST_KIND);
-    nostr_event_set_created_at(event, (int64_t)time(NULL));
-    nostr_event_set_content(event, encrypted_content ? encrypted_content : "");
-    nostr_event_set_tags(event, tags);  /* Takes ownership of tags */
-
-    char *event_json = nostr_event_serialize_compact(event);
-    nostr_event_free(event);
-
-    if (!event_json) {
-        if (ctx->callback) ctx->callback(ctx->mute_list, FALSE, "Failed to build event JSON", ctx->user_data);
-        save_context_free(ctx);
-        return;
-    }
-
-    g_message("mute_list: requesting signature for event");
-    g_free(ctx->event_json);
-    ctx->event_json = event_json;
-
-    /* Call unified signer service via bridge (uses NIP-46 or NIP-55L based on
-     * login method). Higher layer supplies the implementation. */
-    gnostr_signer_bridge_sign_event_async(
-        event_json,
-        NULL,      /* cancellable */
-        on_mute_list_sign_complete,
-        ctx
-    );
+static void fetch_start(GNostrMuteList *s, const char *account, const char *const *relays,
+  GNostrMuteListMergeStrategy strategy, GCancellable *cancel, GNostrMuteListFetchCallback cb, gpointer data) {
+  gboolean valid_account = account && strlen(account) == 64;
+  for (guint i = 0; valid_account && i < 64; i++) valid_account = g_ascii_isxdigit(account[i]);
+  if (!s || !valid_account || strategy < GNOSTR_MUTE_LIST_MERGE_REMOTE_WINS || strategy > GNOSTR_MUTE_LIST_MERGE_LATEST) { if (cb) cb(s, FALSE, data); return; }
+  Fetch *f = g_new0(Fetch, 1); f->s = facade_ref(s); f->account = g_ascii_strdown(account, -1); f->strategy = strategy; f->callback = cb; f->user_data = data; f->cancel = cancel ? g_object_ref(cancel) : NULL;
+  if (relays) f->relays = g_strdupv((char **)relays);
+  else { GPtrArray *v = g_ptr_array_new(); gnostr_load_relays_into(v); g_ptr_array_add(v, NULL); f->relays = (char **)g_ptr_array_free(v, FALSE); }
+  gboolean valid_relays = g_strv_length(f->relays) <= 16;
+  for (guint i = 0; valid_relays && f->relays[i]; i++) {
+    valid_relays = *f->relays[i] && strlen(f->relays[i]) <= 4096;
+    for (guint j = 0; valid_relays && j < i; j++) valid_relays = strcmp(f->relays[i], f->relays[j]) != 0;
+  }
+  if (!valid_relays) { fetch_complete(f, FALSE); return; }
+  post(s, fetch_dispatch, f, NULL);
 }
-
-void gnostr_mute_list_save_async(GNostrMuteList *self,
-                                  GNostrMuteListSaveCallback callback,
-                                  gpointer user_data) {
-    if (!self) {
-        if (callback) callback(self, FALSE, "Invalid mute list", user_data);
-        return;
-    }
-
-    /* Check if signer service is available (via registered bridge — nostrc-ecrx) */
-    if (!gnostr_signer_bridge_is_available()) {
-        if (callback) callback(self, FALSE, "Signer not available", user_data);
-        return;
-    }
-
-    /* Create save context */
-    SaveContext *ctx = g_new0(SaveContext, 1);
-    ctx->mute_list = self;
-    ctx->callback = callback;
-    ctx->user_data = user_data;
-
-    /* Get user pubkey for encryption */
-    g_mutex_lock(&self->lock);
-    ctx->user_pubkey = g_strdup(self->user_pubkey);
-
-    /* Build private tags JSON */
-    ctx->private_tags_json = build_private_tags_json(self);
-    g_mutex_unlock(&self->lock);
-
-    /* Note: Private entry encryption still uses the D-Bus proxy directly
-     * because the unified signer service doesn't yet support NIP-44 encrypt.
-     * This is a separate issue to address in a future task. */
-    g_autoptr(GError) proxy_err = NULL;
-    NostrOrgNostrSigner *proxy = gnostr_signer_bridge_proxy_get(&proxy_err);
-
-    /* If there are private entries and we have user pubkey and proxy, encrypt them first */
-    if (ctx->private_tags_json && ctx->user_pubkey && proxy) {
-        g_message("mute_list: encrypting private entries");
-        nostr_org_nostr_signer_call_nip44_encrypt(
-            proxy,
-            ctx->private_tags_json,
-            ctx->user_pubkey,  /* encrypt to self */
-            ctx->user_pubkey,  /* identity = current user */
-            NULL,              /* GCancellable */
-            on_private_tags_encrypted,
-            ctx
-        );
-    } else {
-        /* No private entries or no pubkey/proxy - proceed directly to sign */
-        proceed_to_sign(ctx, "");
-    }
+void gnostr_mute_list_fetch_with_strategy_async(GNostrMuteList *s, const char *account, const char *const *relays,
+  GNostrMuteListMergeStrategy strategy, GNostrMuteListFetchCallback cb, gpointer data) { fetch_start(s, account, relays, strategy, NULL, cb, data); }
+void gnostr_mute_list_fetch_async(GNostrMuteList *s, const char *a, const char *const *r, GNostrMuteListFetchCallback cb, gpointer data) { gnostr_mute_list_fetch_with_strategy_async(s, a, r, GNOSTR_MUTE_LIST_MERGE_REMOTE_WINS, cb, data); }
+static gboolean close_dispatch(gpointer data) {
+  GNostrMuteList *s = data;
+  if (s->fetch) fetch_complete(s->fetch, FALSE);
+  if (s->service) { g_signal_handlers_disconnect_by_data(s->service, s); gnostr_list_service_close(s->service); }
+  return G_SOURCE_REMOVE;
 }
-
-/* ---- Accessors ---- */
-
-const char **gnostr_mute_list_get_pubkeys(GNostrMuteList *self, size_t *count) {
-    if (!self || !count) {
-        if (count) *count = 0;
-        return NULL;
-    }
-
-    g_mutex_lock(&self->lock);
-    guint n = g_hash_table_size(self->muted_pubkeys);
-    const char **result = g_new0(const char *, n + 1);
-
-    GHashTableIter iter;
-    gpointer key, value;
-    size_t i = 0;
-    g_hash_table_iter_init(&iter, self->muted_pubkeys);
-    while (g_hash_table_iter_next(&iter, &key, &value)) {
-        result[i++] = (const char *)key;
-    }
-    *count = n;
-    g_mutex_unlock(&self->lock);
-
-    return result;
+typedef struct { GNostrMuteList *s; GNostrMuteListSaveCallback cb; gpointer data; GTask *task; guint64 generation; } Save;
+static void save_complete(Save *save, gboolean success, const char *message) {
+  if (save->cb) save->cb(save->s, success, message, save->data);
+  if (save->task) { if (success) g_task_return_boolean(save->task, TRUE); else g_task_return_new_error(save->task, G_IO_ERROR, G_IO_ERROR_FAILED, "%s", message ? message : "Mute list publication failed"); g_object_unref(save->task); }
+  facade_unref(save->s); g_free(save);
 }
-
-const char **gnostr_mute_list_get_words(GNostrMuteList *self, size_t *count) {
-    if (!self || !count) {
-        if (count) *count = 0;
-        return NULL;
-    }
-
-    g_mutex_lock(&self->lock);
-    guint n = g_hash_table_size(self->muted_words);
-    const char **result = g_new0(const char *, n + 1);
-
-    GHashTableIter iter;
-    gpointer key, value;
-    size_t i = 0;
-    g_hash_table_iter_init(&iter, self->muted_words);
-    while (g_hash_table_iter_next(&iter, &key, &value)) {
-        result[i++] = (const char *)key;
-    }
-    *count = n;
-    g_mutex_unlock(&self->lock);
-
-    return result;
+static void saved(GObject *source, GAsyncResult *res, gpointer data) {
+  Save *save = data; GError *error = NULL; GVariant *outcomes = gnostr_list_service_publish_finish(GNOSTR_LIST_SERVICE(source), res, &error);
+  gboolean accepted = FALSE;
+  if (outcomes) { GVariantIter it; const char *target; gint outcome; g_variant_iter_init(&it, outcomes); while (g_variant_iter_next(&it, "{&si}", &target, &outcome)) accepted |= outcome == GNOSTR_LIST_ACCEPTED || outcome == GNOSTR_LIST_DUPLICATE; }
+  g_mutex_lock(&save->s->lock); gboolean current = !save->s->closed && save->generation == save->s->generation; g_mutex_unlock(&save->s->lock);
+  save_complete(save, current && accepted, error ? "Mute list publication failed" : (accepted ? NULL : "No relay accepted the mute list"));
+  g_clear_error(&error); g_clear_pointer(&outcomes, g_variant_unref);
 }
-
-const char **gnostr_mute_list_get_hashtags(GNostrMuteList *self, size_t *count) {
-    if (!self || !count) {
-        if (count) *count = 0;
-        return NULL;
-    }
-
-    g_mutex_lock(&self->lock);
-    guint n = g_hash_table_size(self->muted_hashtags);
-    const char **result = g_new0(const char *, n + 1);
-
-    GHashTableIter iter;
-    gpointer key, value;
-    size_t i = 0;
-    g_hash_table_iter_init(&iter, self->muted_hashtags);
-    while (g_hash_table_iter_next(&iter, &key, &value)) {
-        result[i++] = (const char *)key;
-    }
-    *count = n;
-    g_mutex_unlock(&self->lock);
-
-    return result;
+static gboolean save_dispatch(gpointer data) {
+  Save *save = data; GNostrMuteList *s = save->s;
+  g_mutex_lock(&s->lock); gboolean active = !s->closed && s->account && s->relays && s->relays[0]; save->generation = s->generation; g_mutex_unlock(&s->lock);
+  if (!active) { save_complete(save, FALSE, "Fetch and bind an account with relay destinations before saving"); return G_SOURCE_REMOVE; }
+  gnostr_list_service_publish_async(s->service, NOSTR_KIND_MUTE_LIST, "",
+    GNOSTR_LIST_APPROVE_PRIVATE | GNOSTR_LIST_APPROVE_PUBLIC | GNOSTR_LIST_APPROVE_PARTIAL,
+    save->task ? g_task_get_cancellable(save->task) : NULL, saved, save);
+  return G_SOURCE_REMOVE;
 }
-
-const char **gnostr_mute_list_get_events(GNostrMuteList *self, size_t *count) {
-    if (!self || !count) {
-        if (count) *count = 0;
-        return NULL;
-    }
-
-    g_mutex_lock(&self->lock);
-    guint n = g_hash_table_size(self->muted_events);
-    const char **result = g_new0(const char *, n + 1);
-
-    GHashTableIter iter;
-    gpointer key, value;
-    size_t i = 0;
-    g_hash_table_iter_init(&iter, self->muted_events);
-    while (g_hash_table_iter_next(&iter, &key, &value)) {
-        result[i++] = (const char *)key;
-    }
-    *count = n;
-    g_mutex_unlock(&self->lock);
-
-    return result;
+void gnostr_mute_list_save_async(GNostrMuteList *s, GNostrMuteListSaveCallback cb, gpointer data) {
+  if (!s) { if (cb) cb(s, FALSE, "Invalid mute list", data); return; }
+  Save *save = g_new0(Save, 1); save->s = facade_ref(s); save->cb = cb; save->data = data; post(s, save_dispatch, save, NULL);
 }
-
-gboolean gnostr_mute_list_is_dirty(GNostrMuteList *self) {
-    if (!self) return FALSE;
-    g_mutex_lock(&self->lock);
-    gboolean result = self->dirty;
-    g_mutex_unlock(&self->lock);
-    return result;
+static void fetched_task(GNostrMuteList *s, gboolean ok, gpointer data) { (void)s; GTask *task = data; if (ok) g_task_return_boolean(task, TRUE); else g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED, "Mute list discovery incomplete"); g_object_unref(task); }
+void gnostr_mute_list_fetch_gtask_async(GNostrMuteList *s, const char *account, const char *const *relays, GCancellable *cancel, GAsyncReadyCallback cb, gpointer data) {
+  GTask *task = g_task_new(NULL, cancel, cb, data); fetch_start(s, account, relays, GNOSTR_MUTE_LIST_MERGE_REMOTE_WINS, cancel, fetched_task, task);
 }
-
-/* ============== GTask-based Async API (R3: GIR-friendly) ============== */
-
-/* Bridge callback: adapts old fetch callback to GTask completion */
-static void fetch_gtask_bridge_cb(GNostrMuteList *self,
-                                   gboolean success,
-                                   gpointer user_data) {
-    GTask *task = G_TASK(user_data);
-    if (success) {
-        g_task_return_boolean(task, TRUE);
-    } else {
-        g_task_return_new_error(task, NOSTR_ERROR, NOSTR_ERROR_RELAY_ERROR,
-                                "Mute list fetch failed");
-    }
-    g_object_unref(task);
+gboolean gnostr_mute_list_fetch_gtask_finish(GNostrMuteList *s, GAsyncResult *result, GError **error) { (void)s; return g_task_propagate_boolean(G_TASK(result), error); }
+void gnostr_mute_list_save_gtask_async(GNostrMuteList *s, GCancellable *cancel, GAsyncReadyCallback cb, gpointer data) {
+  GTask *task = g_task_new(NULL, cancel, cb, data);
+  if (!s) { g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "Invalid mute list"); g_object_unref(task); return; }
+  Save *save = g_new0(Save, 1); save->s = facade_ref(s); save->task = task; post(s, save_dispatch, save, NULL);
 }
-
-void gnostr_mute_list_fetch_gtask_async(GNostrMuteList *self,
-                                         const char *pubkey_hex,
-                                         const char * const *relays,
-                                         GCancellable *cancellable,
-                                         GAsyncReadyCallback callback,
-                                         gpointer user_data) {
-    GTask *task = g_task_new(NULL, cancellable, callback, user_data);
-    gnostr_mute_list_fetch_async(self, pubkey_hex, relays,
-                                  fetch_gtask_bridge_cb, task);
-}
-
-gboolean gnostr_mute_list_fetch_gtask_finish(GNostrMuteList *self,
-                                              GAsyncResult *result,
-                                              GError **error) {
-    (void)self;
-    return g_task_propagate_boolean(G_TASK(result), error);
-}
-
-/* Bridge callback: adapts old save callback to GTask completion */
-static void save_gtask_bridge_cb(GNostrMuteList *self,
-                                  gboolean success,
-                                  const char *error_msg,
-                                  gpointer user_data) {
-    (void)self;
-    GTask *task = G_TASK(user_data);
-    if (success) {
-        g_task_return_boolean(task, TRUE);
-    } else {
-        g_task_return_new_error(task, NOSTR_ERROR, NOSTR_ERROR_RELAY_ERROR,
-                                "%s", error_msg ? error_msg : "Mute list save failed");
-    }
-    g_object_unref(task);
-}
-
-void gnostr_mute_list_save_gtask_async(GNostrMuteList *self,
-                                        GCancellable *cancellable,
-                                        GAsyncReadyCallback callback,
-                                        gpointer user_data) {
-    GTask *task = g_task_new(NULL, cancellable, callback, user_data);
-    gnostr_mute_list_save_async(self, save_gtask_bridge_cb, task);
-}
-
-gboolean gnostr_mute_list_save_gtask_finish(GNostrMuteList *self,
-                                             GAsyncResult *result,
-                                             GError **error) {
-    (void)self;
-    return g_task_propagate_boolean(G_TASK(result), error);
-}
+gboolean gnostr_mute_list_save_gtask_finish(GNostrMuteList *s, GAsyncResult *result, GError **error) { (void)s; return g_task_propagate_boolean(G_TASK(result), error); }

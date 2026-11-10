@@ -116,6 +116,9 @@ set(NOSTR_GOBJECT_SOURCES
   src/gnostr-identity.c
   src/gnostr-relays.c
   src/gnostr-mute-list.c
+  src/gnostr-list-document.c
+  src/gnostr-list-service.c
+  src/gnostr-list-gnostr-adapter.c
   src/gnostr-sync-service.c
   src/gnostr-signer-bridge.c
   src/gnostr-app-bridge.c
@@ -164,6 +167,8 @@ set(NOSTR_GOBJECT_HEADERS
   include/nostr-gobject-1.0/gnostr-identity.h
   include/nostr-gobject-1.0/gnostr-relays.h
   include/nostr-gobject-1.0/gnostr-mute-list.h
+  include/nostr-gobject-1.0/gnostr-list-document.h
+  include/nostr-gobject-1.0/gnostr-list-service.h
   include/nostr-gobject-1.0/gnostr-sync-service.h
   include/nostr-gobject-1.0/gnostr-signer-bridge.h
   include/nostr-gobject-1.0/gnostr-app-bridge.h
@@ -278,6 +283,23 @@ foreach(_nip nip04 nip06 nip11 nip19
   endif()
 endforeach()
 
+# NIP-51 is an OBJECT library. Own its codec objects here, but leave its
+# libnostr dependency on the existing executable-side archive contract. Merely
+# linking the OBJECT target transitively would not deliver its objects to static
+# consumers; linking its complete closure into the DSO duplicates libnostr on ELF.
+if(TARGET nostr_nip51_core)
+  target_sources(nostr_gobject PRIVATE $<TARGET_OBJECTS:nostr_nip51_core>)
+  target_include_directories(nostr_gobject PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/nips/nip51/include>
+    $<BUILD_INTERFACE:${CMAKE_BINARY_DIR}/nips/nip51/include>)
+else()
+  find_path(NOSTR_GOBJECT_NIP51_INCLUDE_DIR nostr/nip51/nip51.h REQUIRED)
+  target_include_directories(nostr_gobject PUBLIC ${NOSTR_GOBJECT_NIP51_INCLUDE_DIR})
+  message(FATAL_ERROR "Building nostr-gobject requires the NIP-51 codec object target; enable ENABLE_NIP51")
+endif()
+pkg_check_modules(LIST_JANSSON REQUIRED IMPORTED_TARGET jansson)
+target_link_libraries(nostr_gobject PUBLIC PkgConfig::LIST_JANSSON)
+
 # nostrdb for storage_ndb.c
 target_include_directories(nostr_gobject PRIVATE
   ${CMAKE_SOURCE_DIR}/third_party/nostrdb/src
@@ -372,6 +394,20 @@ if(NOT CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   add_custom_target(nostr-gobject-build-tree-pc ALL DEPENDS nostr_gobject_link_contract)
 endif()
 
+if(BUILD_TESTING)
+  foreach(_test list_service mute_list_compat)
+    add_executable(test_nostr_gobject_${_test} tests/test_${_test}.c)
+    target_link_libraries(test_nostr_gobject_${_test} PRIVATE nostrc::gobject_executable)
+    if(_test STREQUAL "mute_list_compat")
+      pkg_check_modules(LIST_TEST_SOUP REQUIRED IMPORTED_TARGET libsoup-3.0)
+      target_link_libraries(test_nostr_gobject_${_test} PRIVATE PkgConfig::LIST_TEST_SOUP)
+    endif()
+    apply_sanitizers(test_nostr_gobject_${_test})
+    add_test(NAME test_nostr_gobject_${_test} COMMAND test_nostr_gobject_${_test})
+    set_tests_properties(test_nostr_gobject_${_test} PROPERTIES TIMEOUT 30)
+  endforeach()
+endif()
+
 # ── GObject Introspection ────────────────────────────────────────────
 option(NOSTR_GOBJECT_ENABLE_GIR "Generate GNostr-1.0 GIR and typelib" OFF)
 
@@ -464,11 +500,13 @@ if(NOSTR_GOBJECT_ENABLE_GIR)
           --library-path $<TARGET_FILE_DIR:${_gir_lib_dep}>
           --library-path ${CMAKE_BINARY_DIR}/libnostr
           --library-path ${CMAKE_BINARY_DIR}/libjson
-          --pkg glib-2.0 --pkg gobject-2.0 --pkg gio-2.0
+          --pkg glib-2.0 --pkg gobject-2.0 --pkg gio-2.0 --pkg jansson
           -I ${CMAKE_CURRENT_SOURCE_DIR}/include/nostr-gobject-1.0
           -I ${CMAKE_CURRENT_BINARY_DIR}
           -I ${CMAKE_CURRENT_BINARY_DIR}/include
           -I ${CMAKE_SOURCE_DIR}/libnostr/include
+          -I ${CMAKE_SOURCE_DIR}/nips/nip51/include
+          -I ${CMAKE_BINARY_DIR}/nips/nip51/include
           -I ${CMAKE_BINARY_DIR}/libnostr/generated
           -I ${CMAKE_BINARY_DIR}/libnostr/include
           -I ${CMAKE_BINARY_DIR}/libjson/include
@@ -510,7 +548,44 @@ if(NOSTR_GOBJECT_ENABLE_GIR)
 endif()
 
 # ── pkg-config ───────────────────────────────────────────────────────
-file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/nostr-gobject-1.0.pc"
+# Publish the same archive closure for installed executable consumers. In ELF
+# shared builds it belongs on the executable link, not inside the GObject DSO.
+set(_gobject_installed_archives "")
+foreach(_dep IN LISTS _nostr_gobject_archives)
+  if(TARGET ${_dep})
+    get_target_property(_dep_type ${_dep} TYPE)
+    if(_dep_type MATCHES "^(STATIC|SHARED)_LIBRARY$")
+      string(APPEND _gobject_installed_archives " -l$<TARGET_FILE_BASE_NAME:${_dep}>")
+      get_target_property(_imported ${_dep} IMPORTED)
+      if(NOT _imported)
+        get_target_property(_real ${_dep} ALIASED_TARGET)
+        if(NOT _real)
+          set(_real ${_dep})
+        endif()
+        install(TARGETS ${_real} ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+          LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
+      endif()
+    endif()
+  else()
+    string(APPEND _gobject_installed_archives " ${_dep}")
+  endif()
+endforeach()
+set(_gobject_installed_requires "openssl libsecp256k1 libwebsockets jansson libcurl")
+if(LIBSODIUM_FOUND)
+  string(APPEND _gobject_installed_requires " libsodium")
+endif()
+if(JSON_GLIB_FOUND)
+  string(APPEND _gobject_installed_requires " json-glib-1.0")
+endif()
+set(_gobject_installed_link "")
+set(_gobject_installed_public_requires "")
+set(_gobject_installed_private "${_gobject_installed_archives}")
+if(NOSTRC_ARCHIVES_FROM_EXECUTABLE)
+  set(_gobject_installed_link " -Wl,--no-as-needed -Wl,--start-group${_gobject_installed_archives} -Wl,--end-group -pthread")
+  set(_gobject_installed_public_requires "${_gobject_installed_requires}")
+  set(_gobject_installed_private "")
+endif()
+file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/nostr-gobject-1.0.pc" CONTENT
 "prefix=${CMAKE_INSTALL_PREFIX}
 exec_prefix=\${prefix}
 libdir=\${exec_prefix}/${CMAKE_INSTALL_LIBDIR}
@@ -519,10 +594,11 @@ includedir=\${prefix}/${CMAKE_INSTALL_INCLUDEDIR}
 Name: nostr-gobject-1.0
 Description: GObject wrapper for libnostr — Nostr protocol library
 Version: ${NOSTR_GOBJECT_VERSION}
-Requires: glib-2.0 gobject-2.0 gio-2.0 blossom >= 0.2.0 vault >= 0.1.0
-Requires.private: openssl libsecp256k1
-Libs: -L\${libdir} -lnostr-gobject-1.0
-Cflags: -I\${includedir}/nostr-gobject-1.0
+Requires: glib-2.0 gobject-2.0 gio-2.0 blossom >= 0.2.0 vault >= 0.1.0 ${_gobject_installed_public_requires}
+Requires.private: ${_gobject_installed_requires}
+Libs: -L\${libdir} -lnostr-gobject-1.0${_gobject_installed_link}
+Libs.private: ${_gobject_installed_private} -pthread
+Cflags: -I\${includedir} -I\${includedir}/nostr-gobject-1.0
 ")
 
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/nostr-gobject-1.0.pc"
