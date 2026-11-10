@@ -693,6 +693,11 @@ static void peer_done(GObject *source, GAsyncResult *result, gpointer data) {
 }
 static void run_gui_peer(Fixture *f, const char *mode, const char *principal, const char *expected) {
   g_autoptr(GSubprocessLauncher) launcher = g_subprocess_launcher_new(G_SUBPROCESS_FLAGS_STDERR_MERGE);
+#ifdef GROTTO_GUI_LSAN_OPTIONS
+  /* Only this GTK child renders fonts; keep the private-bus coordinator and
+   * every application/fixture allocation under unsuppressed leak checks. */
+  g_subprocess_launcher_setenv(launcher, "LSAN_OPTIONS", GROTTO_GUI_LSAN_OPTIONS, TRUE);
+#endif
   g_autofree char *log = g_build_filename(nostrc_test_bus_get_dir(f->bus), "presentation-peer.log", NULL);
   g_subprocess_launcher_set_stdout_file_path(launcher, log);
   g_autoptr(GError) error = NULL;

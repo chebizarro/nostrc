@@ -170,7 +170,20 @@ static void lifecycle_regressions(GDBusConnection *bus, GrottoApprovalController
   }
 }
 static void run_room_flow(GDBusConnection *bus, gboolean gui) {
-  guint subscription = g_dbus_connection_signal_subscribe(bus, "org.nostr.Signer", "org.nostr.Signer",
+  /* Pending content is unicast to the verified approver-name owner. The GUI
+   * peer must own it on its own connection, not on the coordinator's bus. */
+  g_autoptr(GVariant) owned = g_dbus_connection_call_sync(bus, "org.freedesktop.DBus",
+      "/org/freedesktop/DBus", "org.freedesktop.DBus", "RequestName",
+      g_variant_new("(su)", "org.nostr.Grotto", 0u), G_VARIANT_TYPE("(u)"), 0, 5000, NULL, NULL);
+  g_assert_nonnull(owned);
+  guint32 name_result = 0; g_variant_get(owned, "(u)", &name_result);
+  g_assert_cmpuint(name_result, ==, 1);
+  g_autoptr(GVariant) signer_owner = g_dbus_connection_call_sync(bus, "org.freedesktop.DBus",
+      "/org/freedesktop/DBus", "org.freedesktop.DBus", "GetNameOwner",
+      g_variant_new("(s)", "org.nostr.Signer"), G_VARIANT_TYPE("(s)"), 0, 5000, NULL, NULL);
+  g_assert_nonnull(signer_owner);
+  const gchar *sender_owner = NULL; g_variant_get(signer_owner, "(&s)", &sender_owner);
+  guint subscription = g_dbus_connection_signal_subscribe(bus, sender_owner, "org.nostr.Signer",
       "ApprovalRequested", "/org/nostr/signer", NULL, 0, prompt, NULL, NULL);
   g_autofree gchar *sender = nostr_key_get_public(secret);
   guint8 bytes[32];
@@ -193,6 +206,24 @@ static void run_room_flow(GDBusConnection *bus, gboolean gui) {
   if (gui) g_assert_true(g_application_register(app, NULL, NULL));
 #endif
   g_autoptr(GrottoApprovalController) controller = grotto_approval_controller_new(app, bus);
+  /* Account binding first declares its broad optional permissions. Explicitly
+   * decline that separate request: this test proves room consent is ephemeral,
+   * not that a declaration grant silently authorizes the room operation. */
+  WAIT(ready(controller) && prompts > 0);
+  g_assert_cmpuint(prompts, ==, 1);
+  g_autoptr(GrottoApprovalRequest) declaration =
+      g_list_model_get_item(grotto_approval_controller_get_pending(controller), 0);
+  const gchar *declaration_operation = NULL;
+  g_assert_true(g_variant_lookup(grotto_approval_request_get_info(declaration),
+      "operation", "&s", &declaration_operation));
+  g_assert_cmpstr(declaration_operation, ==, "permissions");
+  Decision decline = {0};
+  grotto_approval_controller_decide_async(controller, grotto_approval_request_get_id(declaration),
+      FALSE, FALSE, 0, NULL, decided, &decline);
+  WAIT(decline.done);
+  g_assert_no_error(decline.error); g_assert_true(decline.ok);
+  WAIT(g_list_model_get_n_items(grotto_approval_controller_get_pending(controller)) == 0);
+  prompts = 0;
   const gchar *keys[] = {
     "0000000000000000000000000000000000000000000000000000000000000002",
     "0000000000000000000000000000000000000000000000000000000000000003",
@@ -204,7 +235,9 @@ static void run_room_flow(GDBusConnection *bus, gboolean gui) {
   g_assert_nonnull(rumor);
   Envelope result = {0};
   gh_nip17_envelope_seal_room_async(accounts, rumor, NULL, NULL, envelope_done, &result);
-  WAIT(ready(controller) || result.done);
+  /* Snapshot readiness and the independently subscribed prompt can arrive in
+   * either order. Observe both before asserting the single-prompt contract. */
+  WAIT((ready(controller) && prompts > 0) || result.done);
   g_assert_false(result.done);
   g_assert_cmpuint(prompts, ==, 1);
   g_autoptr(GrottoApprovalRequest) request =
@@ -241,6 +274,17 @@ static void run_room_flow(GDBusConnection *bus, gboolean gui) {
     g_assert_cmpuint(g_list_length(windows), ==, 1);
     AdwDialog *dialog = adw_window_get_visible_dialog(ADW_WINDOW(windows->data));
     g_assert_true(GNOSTR_IS_APPROVAL_DIALOG(dialog));
+    AdwComboRow *choice = ADW_COMBO_ROW(gtk_widget_get_template_child(GTK_WIDGET(dialog),
+        GNOSTR_TYPE_APPROVAL_DIALOG, "permission_choice"));
+    GtkWidget *flow_group = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(dialog),
+        GNOSTR_TYPE_APPROVAL_DIALOG, "group_flow"));
+    g_assert_nonnull(choice); g_assert_nonnull(flow_group);
+    gboolean flow_selected = FALSE;
+    for (guint i = 0; i < g_list_model_get_n_items(adw_combo_row_get_model(choice)); i++) {
+      adw_combo_row_set_selected(choice, i);
+      if (gtk_widget_get_visible(flow_group)) { flow_selected = TRUE; break; }
+    }
+    g_assert_true(flow_selected);
     GtkCheckButton *encrypt = GTK_CHECK_BUTTON(gtk_widget_get_template_child(GTK_WIDGET(dialog),
         GNOSTR_TYPE_APPROVAL_DIALOG, "chk_flow_encrypt"));
     GtkCheckButton *seals = GTK_CHECK_BUTTON(gtk_widget_get_template_child(GTK_WIDGET(dialog),
@@ -344,10 +388,6 @@ int main(int argc, char **argv) {
   g_assert_cmpint(g_mkdir(config, 0700), ==, 0);
   g_setenv("XDG_CONFIG_HOME", config, TRUE);
   GDBusConnection *bus = nostrc_test_bus_connect(test_bus);
-  g_autoptr(GVariant) owned = g_dbus_connection_call_sync(bus, "org.freedesktop.DBus",
-      "/org/freedesktop/DBus", "org.freedesktop.DBus", "RequestName",
-      g_variant_new("(su)", "org.nostr.Grotto", 0), NULL, 0, 5000, NULL, NULL);
-  g_assert_nonnull(owned);
   gboolean started = FALSE;
   guint watch = g_bus_watch_name_on_connection(bus, "org.nostr.Signer", 0, owner_seen, NULL, &started, NULL);
   const gchar *command[] = {argv[1], NULL};

@@ -259,7 +259,7 @@ static void desktop_call(GDBusConnection *bus, const char *sender, const char *p
     d->infos++;
     if (d->policy_review_test && d->valid_request) {
       g_autoptr(GVariant) row = desktop_request(d);
-      g_dbus_method_invocation_return_value(inv, g_variant_new("(@a{sv})", g_variant_ref(row)));
+      g_dbus_method_invocation_return_value(inv, g_variant_new("(@a{sv})", row));
       return;
     }
     g_dbus_method_invocation_return_dbus_error(inv, "org.nostr.Signer.Error.NotFound",

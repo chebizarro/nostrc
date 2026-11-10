@@ -871,6 +871,7 @@ if (BUILD_TESTING)
   # The packaging files name the same version as GROUNDHOG_VERSION_FULL.
   add_test(NAME groundhog-packaging-version
     COMMAND ${CMAKE_COMMAND} -DVERSION=${GROUNDHOG_VERSION_FULL} -DROOT=${CMAKE_SOURCE_DIR}
+            -DDESKTOP=${CMAKE_CURRENT_BINARY_DIR}/org.nostr.Groundhog.desktop
             -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/CheckPackagingVersion.cmake)
   add_test(NAME groundhog-launch COMMAND groundhog --smoke)
   # Memory settings: the smoke never reads a real account, so it contacts no
