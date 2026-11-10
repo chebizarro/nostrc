@@ -327,7 +327,8 @@ test_remote_and_accept(void)
   g_autofree gchar *gone = get_draft(&f, ROOM);
   g_assert_null(gone);
   g_autoptr(GhStoreDraftState) s3 = state(&f, ROOM);
-  g_assert_cmpint(s3->cleared_at, ==, T0 + 3);
+  g_assert_cmpstr(s3->last_event_id, ==, "e3"); g_assert_cmpint(s3->last_created_at, ==, T0 + 3);
+  g_assert_cmpint(s3->cleared_at, ==, 0); /* ordered like any revision, not a local cutoff */
   /* A local edit, then acceptance of its revision and of a stale one. */
   set_draft(&f, ROOM, "local");
   g_autofree gchar *d = NULL;

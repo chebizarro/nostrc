@@ -76,6 +76,15 @@ json_strv(const gchar *const *values)
   return g_string_free(out, FALSE);
 }
 
+/* One JSON string, as json_strv() writes it. */
+static gchar *
+json_string(const gchar *value)
+{
+  const gchar *values[] = { value, NULL };
+  g_autofree gchar *array = json_strv(values);
+  return g_strndup(array + 1, strlen(array) - 2);
+}
+
 /* Parses what json_strv() writes (and any JSON array of strings whose
  * escapes are the simple ones). Anything else yields an empty array. */
 static GStrv
@@ -215,9 +224,12 @@ gh_store_drafts_touch(GhStore *store, gint64 conversation_id, GError **error)
   return run(store, stmt, error);
 }
 
-static gboolean
-queue_blank(GhStore *store, const gchar *room_key, const gchar *d, gint64 revision, GError **error)
+gboolean
+gh_store_drafts_queue_blank(GhStore *store, const gchar *room_key, const gchar *d, gint64 revision,
+                            GError **error)
 {
+  g_return_val_if_fail(store != NULL, FALSE);
+  g_return_val_if_fail(room_key != NULL && d != NULL, FALSE);
   sqlite3_stmt *stmt = prepare(store,
     "INSERT OR REPLACE INTO draft_publications(room_key, d, local_revision, event_json, "
     "targets_json, outcomes_json, state) VALUES (?1, ?2, ?3, '', '[]', '{}', 0)", error);
@@ -259,10 +271,11 @@ gh_store_drafts_clear(GhStore *store, gint64 conversation_id, gint64 now, GError
   g_autoptr(GhStoreDraftState) after = gh_store_drafts_get(store, room_key, error);
   if (!after)
     return FALSE;
-  if (state->draft_d && !queue_blank(store, room_key, state->draft_d, after->local_revision, error))
+  if (state->draft_d &&
+      !gh_store_drafts_queue_blank(store, room_key, state->draft_d, after->local_revision, error))
     return FALSE;
   for (guint i = 0; state->aliases[i]; i++)
-    if (!queue_blank(store, room_key, state->aliases[i], after->local_revision, error))
+    if (!gh_store_drafts_queue_blank(store, room_key, state->aliases[i], after->local_revision, error))
       return FALSE;
   return TRUE;
 }
@@ -321,7 +334,7 @@ gh_store_drafts_find_room(GhStore *store, const gchar *identifier, GError **erro
     error);
   if (!stmt)
     return NULL;
-  g_autofree gchar *quoted = g_strdup_printf("\"%s\"", identifier);
+  g_autofree gchar *quoted = json_string(identifier); /* as aliases_json stores it */
   if (!bind_text(stmt, 1, identifier) || !bind_text(stmt, 2, quoted)) {
     bind_failed(store, stmt, error);
     return NULL;
@@ -557,18 +570,19 @@ gh_store_drafts_apply_remote(GhStore *store, const gchar *room_key, const gchar 
         goto fail;
     }
   }
+  /* A remote clear is ordered like any revision (NIP-01, with the id as
+   * tie-break) through last_event_id/last_created_at; cleared_at is the
+   * local clear's cutoff only. */
   sqlite3_stmt *stmt = prepare(store,
-    "INSERT INTO draft_sync_state(room_key, last_event_id, last_created_at, expires_at, cleared_at) "
-    "VALUES (?1, ?2, ?3, ?4, ?5) "
+    "INSERT INTO draft_sync_state(room_key, last_event_id, last_created_at, expires_at) "
+    "VALUES (?1, ?2, ?3, ?4) "
     "ON CONFLICT(room_key) DO UPDATE SET last_event_id = ?2, last_created_at = ?3, "
-    "expires_at = MAX(expires_at, ?4), cleared_at = MAX(cleared_at, ?5)", error);
+    "expires_at = MAX(expires_at, ?4)", error);
   if (!stmt)
     goto fail;
-  gint64 cleared = apply_text && !text ? created_at : 0;
   if (!bind_text(stmt, 1, room_key) || !bind_text(stmt, 2, event_id) ||
       sqlite3_bind_int64(stmt, 3, created_at) != SQLITE_OK ||
-      sqlite3_bind_int64(stmt, 4, expires_at) != SQLITE_OK ||
-      sqlite3_bind_int64(stmt, 5, cleared) != SQLITE_OK) {
+      sqlite3_bind_int64(stmt, 4, expires_at) != SQLITE_OK) {
     bind_failed(store, stmt, error);
     goto fail;
   }
@@ -645,9 +659,15 @@ gh_store_drafts_accept(GhStore *store, const gchar *room_key, const gchar *d,
     return FALSE;
   if (!gh_store_drafts_delete_publication(store, room_key, d, error))
     goto fail;
+  /* Only the room's current local revision settles it, and only when the
+   * accepted event is still the newest known (a remote revision recorded
+   * meanwhile keeps the room dirty, so the local text is republished after
+   * it; NIP-01 ordering never moves backwards). */
   sqlite3_stmt *stmt = prepare(store,
     "UPDATE draft_sync_state SET dirty = 0, last_event_id = ?3, last_created_at = ?4, "
-    "expires_at = ?5 WHERE room_key = ?1 AND local_revision = ?2", error);
+    "expires_at = ?5 WHERE room_key = ?1 AND local_revision = ?2 AND "
+    "(?4 > last_created_at OR (?4 = last_created_at AND (last_event_id IS NULL OR ?3 < last_event_id)))",
+    error);
   if (!stmt)
     goto fail;
   if (!bind_text(stmt, 1, room_key) || sqlite3_bind_int64(stmt, 2, local_revision) != SQLITE_OK ||

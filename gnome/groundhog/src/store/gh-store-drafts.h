@@ -128,6 +128,11 @@ gboolean gh_store_drafts_apply_remote(GhStore *store, const gchar *room_key, con
 
 /* ---- Publications ---------------------------------------------------------------------- */
 
+/* A blank owed for (room, d) at local_revision (state QUEUED): what the clear
+ * hooks record for every known identifier, and what an accepted new head
+ * records for the room's aliases, so the obligation survives a restart. */
+gboolean gh_store_drafts_queue_blank(GhStore *store, const gchar *room_key, const gchar *d,
+                                     gint64 local_revision, GError **error);
 /* The signed event for (room, d) at local_revision, replacing a queued blank
  * or an older event; targets are the kind-10013 relays it goes to. */
 gboolean gh_store_drafts_save_publication(GhStore *store, const gchar *room_key, const gchar *d,
