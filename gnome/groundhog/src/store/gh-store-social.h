@@ -34,6 +34,17 @@ gchar *gh_store_social_load(GhStore *store, gint kind, const gchar *identifier, 
  * decoded_json retains the engine's versioned replay state losslessly. */
 gboolean gh_store_social_commit(GhStore *store, GNostrListDocument *snapshot,
                                  const gchar *state_json, GError **error);
+/* social_event_cache (schema v14): verified immutable public events kept for
+ * offline display (badge lists, awards and definitions). identifier is the
+ * addressable d, "" otherwise. put replaces an equal id. get: owned JSON or
+ * NULL without error when absent. find: owned JSON strings, newest first;
+ * author or identifier NULL matches any. */
+gboolean gh_store_social_cache_put(GhStore *store, const gchar *event_id, gint kind,
+                                   const gchar *author, const gchar *identifier,
+                                   const gchar *event_json, gint64 now, GError **error);
+gchar *gh_store_social_cache_get(GhStore *store, const gchar *event_id, GError **error);
+GPtrArray *gh_store_social_cache_find(GhStore *store, gint kind, const gchar *author,
+                                      const gchar *identifier, GError **error);
 
 G_END_DECLS
 #endif

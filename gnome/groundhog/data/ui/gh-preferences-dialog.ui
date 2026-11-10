@@ -812,6 +812,19 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 </child>
               </object>
             </child>
+            <child>
+              <object class="AdwActionRow" id="badges_row">
+                <property name="title" translatable="yes">Profile Badges</property>
+                <property name="subtitle" translatable="yes">Choose which awarded badges your profile shows; publishing is a separate step</property>
+                <property name="visible">false</property>
+                <property name="activatable">true</property>
+                <child type="suffix">
+                  <object class="GtkImage">
+                    <property name="icon-name">go-next-symbolic</property>
+                  </object>
+                </child>
+              </object>
+            </child>
           </object>
         </child>
         <child>

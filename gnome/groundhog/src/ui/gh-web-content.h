@@ -3,7 +3,10 @@
 #include <gtk/gtk.h>
 #include "gh-net-http.h"
 G_BEGIN_DECLS
-typedef enum { GH_WEB_PREVIEW, GH_WEB_IMAGE, GH_WEB_PICTURE, GH_WEB_OG_IMAGE, GH_WEB_EMOJI,
+/* Emoji and verified badge artwork share Load Remote Images; neither is
+ * fetched without explicit consent (plan §3.11–3.12). */
+typedef enum { GH_WEB_PREVIEW, GH_WEB_IMAGE, GH_WEB_PICTURE, GH_WEB_OG_IMAGE,
+               GH_WEB_EMOJI, GH_WEB_BADGE,
                GH_WEB_N_KINDS } GhWebKind;
 const gchar *gh_web_content_setting(GhWebKind kind);
 typedef struct {

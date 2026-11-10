@@ -5,6 +5,7 @@
 #include "gh-agents-page.h"
 #include "gh-lists-page.h"
 #include "gh-drafts-page.h"
+#include "gh-badges-page.h"
 
 G_BEGIN_DECLS
 
@@ -143,6 +144,9 @@ void gh_preferences_dialog_set_social_backend(GhPreferencesDialog *self, const G
 /* Messages › Drafts (gh-drafts-page.h), copied with an owned reference to
  * backend->owner; NULL hides the row. Replacement dismisses open pages. */
 void gh_preferences_dialog_set_drafts_backend(GhPreferencesDialog *self, const GhDraftsBackend *backend);
+/* Account › Profile Badges (gh-badges-page.h), copied with an owned reference
+ * to backend->owner; NULL hides the row. Replacement dismisses open pages. */
+void gh_preferences_dialog_set_badges_backend(GhPreferencesDialog *self, const GhBadgesBackend *backend);
 
 /* Whether key's row is live in this build: TRUE when it has every feature it
  * needs (a key no feature governs always has); FALSE for a key without a

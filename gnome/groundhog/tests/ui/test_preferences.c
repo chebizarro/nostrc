@@ -1758,6 +1758,266 @@ test_npub_qr_texture(void)
   g_assert_cmpint(gdk_texture_get_width(texture), >, 100);
 }
 
+/* ---- Account › Profile Badges (plan §3.12, nostrc-9lwl7.13) -------------------- */
+
+/* A backend owner with the "changed" signal the page listens to. */
+typedef struct { GObject parent; } FakeBadges;
+typedef struct { GObjectClass parent; } FakeBadgesClass;
+static GType fake_badges_get_type(void);
+G_DEFINE_TYPE(FakeBadges, fake_badges, G_TYPE_OBJECT)
+static void fake_badges_init(FakeBadges *self) { (void)self; }
+static void
+fake_badges_class_init(FakeBadgesClass *klass)
+{
+  g_signal_new("changed", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL, G_TYPE_NONE, 0);
+}
+static struct {
+  guint64 generation;
+  guint publishes, lookups, artwork, saves;
+  gboolean artwork_on;
+  GPtrArray *selection; /* GhBadge */
+} fake_badges;
+static GhBadge *
+fake_badge(const gchar *identifier, const gchar *name, const gchar *image)
+{
+  GhBadge *b = g_new0(GhBadge, 1);
+  b->issuer = g_strdup("79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798");
+  b->identifier = g_strdup(identifier); b->name = g_strdup(name); b->image_url = g_strdup(image);
+  b->address = g_strdup_printf("30009:%s:%s", b->issuer, identifier);
+  b->award_id = g_strdup("1111111111111111111111111111111111111111111111111111111111111111");
+  b->verified = TRUE;
+  return b;
+}
+static GPtrArray *
+fake_badges_copy(GPtrArray *from)
+{
+  GPtrArray *copy = g_ptr_array_new_with_free_func((GDestroyNotify)gh_badge_free);
+  for (guint i = 0; from && i < from->len; i++) g_ptr_array_add(copy, gh_badge_copy(from->pdata[i]));
+  return copy;
+}
+static guint64 fb_generation(GObject *o) { (void)o; return fake_badges.generation; }
+static const gchar *fb_account(GObject *o) { (void)o; return "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"; }
+static GPtrArray *
+fb_awards(GObject *o)
+{
+  (void)o;
+  GPtrArray *awards = g_ptr_array_new_with_free_func((GDestroyNotify)gh_badge_free);
+  g_ptr_array_add(awards, fake_badge("gold", "Gold Star", "https://img.test.invalid/gold.png"));
+  g_ptr_array_add(awards, fake_badge("silver", "Silver <b>Star</b>", NULL));
+  return awards;
+}
+static GPtrArray *
+fb_selection(GObject *o, GhBadgeSelectionSource *source, GError **error)
+{
+  (void)o; (void)error;
+  if (source) *source = GH_BADGE_SELECTION_LOCAL;
+  return fake_badges_copy(fake_badges.selection);
+}
+static gboolean
+fb_set_selection(GObject *o, GPtrArray *badges, GError **error)
+{
+  (void)o; (void)error;
+  fake_badges.saves++;
+  g_clear_pointer(&fake_badges.selection, g_ptr_array_unref);
+  fake_badges.selection = fake_badges_copy(badges);
+  return TRUE;
+}
+static GStrv fb_targets(GObject *o) { (void)o; return g_strsplit("wss://write-a.test.invalid wss://write-b.test.invalid", " ", -1); }
+static GStrv fb_sources(GObject *o) { (void)o; return g_strsplit("wss://discovery.test.invalid", " ", -1); }
+static void
+fb_publish(GObject *o, GCancellable *cancel, GAsyncReadyCallback callback, gpointer data)
+{
+  fake_badges.publishes++;
+  GTask *task = g_task_new(o, cancel, callback, data);
+  g_task_return_boolean(task, TRUE); g_object_unref(task);
+}
+static gboolean fb_publish_finish(GObject *o, GAsyncResult *r, GError **e) { (void)o; return g_task_propagate_boolean(G_TASK(r), e); }
+static void
+fb_lookup(GObject *o, const gchar *pubkey, const gchar *const *approved, GCancellable *cancel,
+          GAsyncReadyCallback callback, gpointer data)
+{
+  (void)approved;
+  g_assert_cmpstr(pubkey, ==, fb_account(o));
+  fake_badges.lookups++;
+  GTask *task = g_task_new(o, cancel, callback, data);
+  g_task_return_boolean(task, TRUE); g_object_unref(task);
+}
+static gboolean fb_lookup_finish(GObject *o, GAsyncResult *r, GError **e) { (void)o; return g_task_propagate_boolean(G_TASK(r), e); }
+static gboolean fb_artwork_enabled(GObject *o) { (void)o; return fake_badges.artwork_on; }
+static void
+fb_artwork(GObject *o, const gchar *url, GCancellable *cancel, GAsyncReadyCallback callback, gpointer data)
+{
+  g_assert_cmpstr(url, ==, "https://img.test.invalid/gold.png");
+  fake_badges.artwork++;
+  GTask *task = g_task_new(o, cancel, callback, data);
+  g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "malformed artwork"); g_object_unref(task);
+}
+static GdkTexture *fb_artwork_finish(GObject *o, GAsyncResult *r, GError **e) { (void)o; return g_task_propagate_pointer(G_TASK(r), e); }
+static GtkWidget *
+find_type(GtkWidget *widget, GType type)
+{
+  if (g_type_is_a(G_OBJECT_TYPE(widget), type)) return widget;
+  for (GtkWidget *c = gtk_widget_get_first_child(widget); c; c = gtk_widget_get_next_sibling(c)) {
+    GtkWidget *found = find_type(c, type);
+    if (found) return found;
+  }
+  return NULL;
+}
+static GtkWidget *
+find_button_label(GtkWidget *widget, const char *label)
+{
+  if (GTK_IS_BUTTON(widget) && g_strcmp0(gtk_button_get_label(GTK_BUTTON(widget)), label) == 0) return widget;
+  for (GtkWidget *c = gtk_widget_get_first_child(widget); c; c = gtk_widget_get_next_sibling(c)) {
+    GtkWidget *found = find_button_label(c, label);
+    if (found) return found;
+  }
+  return NULL;
+}
+typedef struct { GtkWidget *root; GType type; } TypeWait;
+static gboolean type_found(gpointer data) { TypeWait *w = data; return find_type(w->root, w->type) != NULL; }
+/* The mapped alert dialog with heading under root, or NULL. */
+static AdwAlertDialog *
+find_alert_heading(GtkWidget *widget, const gchar *heading)
+{
+  if (ADW_IS_ALERT_DIALOG(widget) && gtk_widget_get_mapped(widget) &&
+      !g_strcmp0(adw_alert_dialog_get_heading(ADW_ALERT_DIALOG(widget)), heading))
+    return ADW_ALERT_DIALOG(widget);
+  for (GtkWidget *c = gtk_widget_get_first_child(widget); c; c = gtk_widget_get_next_sibling(c)) {
+    AdwAlertDialog *found = find_alert_heading(c, heading);
+    if (found) return found;
+  }
+  return NULL;
+}
+typedef struct { GtkWidget *root; const gchar *heading; } AlertWait;
+static gboolean badge_alert_shown(gpointer data) { AlertWait *w = data; return find_alert_heading(w->root, w->heading) != NULL; }
+static gboolean badge_alert_gone(gpointer data) { AlertWait *w = data; return find_alert_heading(w->root, w->heading) == NULL; }
+
+/* The row shows with a backend and pushes the page; choosing is saved
+ * locally while publishing and looking up each ask first; artwork is never
+ * requested without Load Remote Images, and a malformed answer leaves the
+ * text row as it is. */
+static void
+test_badges_page(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  memset(&fake_badges, 0, sizeof fake_badges);
+  fake_badges.generation = 1;
+  fake_badges.selection = g_ptr_array_new_with_free_func((GDestroyNotify)gh_badge_free);
+  g_ptr_array_add(fake_badges.selection, fake_badge("gold", "Gold Star", "https://img.test.invalid/gold.png"));
+  GhBadge *unchecked = fake_badge("mystery", NULL, NULL);
+  unchecked->verified = FALSE; /* chosen on another device; chain never seen here */
+  g_ptr_array_add(fake_badges.selection, unchecked);
+  g_autoptr(GObject) owner = g_object_new(fake_badges_get_type(), NULL);
+  GhBadgesBackend backend = {
+    .owner = owner, .generation = fb_generation, .account = fb_account, .awards = fb_awards,
+    .selection = fb_selection, .set_selection = fb_set_selection, .dup_targets = fb_targets,
+    .dup_sources = fb_sources, .publish_async = fb_publish, .publish_finish = fb_publish_finish,
+    .lookup_async = fb_lookup, .lookup_finish = fb_lookup_finish, .artwork_enabled = fb_artwork_enabled,
+    .artwork_async = fb_artwork, .artwork_finish = fb_artwork_finish,
+  };
+  GtkWidget *row = child(f, "badges_row");
+  g_assert_false(gtk_widget_get_visible(row));
+  gh_preferences_dialog_set_badges_backend(f->dialog, &backend);
+  g_assert_true(gtk_widget_get_visible(row));
+  g_assert_cmpstr(adw_preferences_row_get_title(ADW_PREFERENCES_ROW(row)), ==, "Profile Badges");
+  present(f, 960, 640);
+  adw_preferences_dialog_set_visible_page_name(ADW_PREFERENCES_DIALOG(f->dialog), "account");
+  g_signal_emit_by_name(row, "activated");
+  TypeWait wait = { GTK_WIDGET(f->dialog), GH_TYPE_BADGES_PAGE };
+  spin_until(type_found, &wait);
+  GtkWidget *page = find_type(GTK_WIDGET(f->dialog), GH_TYPE_BADGES_PAGE);
+  /* The chosen badge and the other award, as text (never markup), each
+   * "Awarded by" its issuer, no artwork request while the switch is off. */
+  GtkWidget *gold = find_row_title(page, "Gold Star");
+  g_assert_nonnull(gold);
+  g_assert_false(adw_preferences_row_get_use_markup(ADW_PREFERENCES_ROW(gold)));
+  g_assert_true(g_str_has_prefix(adw_action_row_get_subtitle(ADW_ACTION_ROW(gold)), "Awarded by npub1"));
+  GtkWidget *silver = find_row_title(page, "Silver <b>Star</b>");
+  g_assert_nonnull(silver);
+  g_assert_false(adw_preferences_row_get_use_markup(ADW_PREFERENCES_ROW(silver)));
+  /* An unverified choice is shown by its identifier and never attributed. */
+  GtkWidget *mystery = find_row_title(page, "mystery");
+  g_assert_nonnull(mystery);
+  g_assert_null(strstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(mystery)), "Awarded by"));
+  g_assert_nonnull(strstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(mystery)), "Not checked yet"));
+  g_assert_cmpuint(fake_badges.artwork, ==, 0);
+  /* Adding saves locally: no publication. */
+  GtkWidget *add = find_type(silver, GTK_TYPE_BUTTON); /* its one suffix button */
+  g_assert_nonnull(add);
+  g_assert_cmpstr(gtk_widget_get_tooltip_text(add), ==, "Show on Profile");
+  g_signal_emit_by_name(add, "clicked");
+  drain_idle();
+  g_assert_cmpuint(fake_badges.saves, ==, 1);
+  g_assert_cmpuint(fake_badges.selection->len, ==, 3);
+  g_assert_cmpuint(fake_badges.publishes, ==, 0);
+  /* Publishing asks first; Cancel publishes nothing. */
+  GtkWidget *publish = find_button_label(page, "_Publish Profile Badges…");
+  g_assert_nonnull(publish);
+  g_signal_emit_by_name(publish, "clicked");
+  AlertWait publish_wait = { GTK_WIDGET(f->window), "Publish Profile Badges?" };
+  spin_until(badge_alert_shown, &publish_wait);
+  AdwAlertDialog *dialog = find_alert_heading(GTK_WIDGET(f->window), "Publish Profile Badges?");
+  g_assert_cmpstr(adw_alert_dialog_get_default_response(dialog), ==, "cancel");
+  g_assert_nonnull(strstr(adw_alert_dialog_get_body(dialog), "wss://write-a.test.invalid"));
+  g_assert_cmpuint(fake_badges.publishes, ==, 0);
+  g_signal_emit_by_name(dialog, "response", "cancel");
+  adw_dialog_force_close(ADW_DIALOG(dialog)); /* the button does this itself */
+  spin_until(badge_alert_gone, &publish_wait);
+  g_assert_cmpuint(fake_badges.publishes, ==, 0);
+  g_signal_emit_by_name(publish, "clicked");
+  spin_until(badge_alert_shown, &publish_wait);
+  dialog = find_alert_heading(GTK_WIDGET(f->window), "Publish Profile Badges?");
+  g_signal_emit_by_name(dialog, "response", "publish");
+  adw_dialog_force_close(ADW_DIALOG(dialog)); /* the button does this itself */
+  spin_until(badge_alert_gone, &publish_wait);
+  drain_idle(); /* the backend's completion, which ends the page's busy state */
+  g_assert_cmpuint(fake_badges.publishes, ==, 1);
+  g_assert_true(gtk_widget_get_sensitive(publish));
+  /* Looking up asks too. */
+  GtkWidget *lookup = find_button_label(page, "_Look Up Awards…");
+  g_assert_nonnull(lookup);
+  g_signal_emit_by_name(lookup, "clicked");
+  AlertWait lookup_wait = { GTK_WIDGET(f->window), "Look Up Awards?" };
+  spin_until(badge_alert_shown, &lookup_wait);
+  dialog = find_alert_heading(GTK_WIDGET(f->window), "Look Up Awards?");
+  g_assert_nonnull(strstr(adw_alert_dialog_get_body(dialog), "wss://discovery.test.invalid"));
+  g_assert_cmpuint(fake_badges.lookups, ==, 0);
+  g_signal_emit_by_name(dialog, "response", "lookup");
+  adw_dialog_force_close(ADW_DIALOG(dialog)); /* the button does this itself */
+  spin_until(badge_alert_gone, &lookup_wait);
+  drain_idle();
+  g_assert_cmpuint(fake_badges.lookups, ==, 1);
+  /* A chosen row's one menu button: Remove, then it is offered again. */
+  GtkWidget *chosen = find_row_title(page, "Silver <b>Star</b>");
+  g_assert_nonnull(chosen);
+  g_assert_true(gtk_widget_activate_action(chosen, "badges.remove", "u", 2u));
+  drain_idle();
+  g_assert_cmpuint(fake_badges.saves, ==, 2);
+  g_assert_cmpuint(fake_badges.selection->len, ==, 2);
+  g_assert_true(gtk_widget_activate_action(page, "badges.move-down", "u", 1u)); /* nowhere to go */
+  drain_idle();
+  g_assert_cmpuint(fake_badges.saves, ==, 2);
+  g_assert_true(gtk_widget_activate_action(page, "badges.move-up", "u", 1u));
+  drain_idle();
+  g_assert_cmpuint(fake_badges.saves, ==, 3);
+  g_assert_cmpstr(((GhBadge *)fake_badges.selection->pdata[0])->identifier, ==, "mystery");
+  /* With the switch on, the artwork of each badge with an address is asked
+   * for once; its malformed answer leaves the text row. */
+  fake_badges.artwork_on = TRUE;
+  g_signal_emit_by_name(owner, "changed");
+  drain_idle();
+  g_assert_cmpuint(fake_badges.artwork, ==, 1);
+  g_assert_nonnull(find_row_title(page, "Gold Star"));
+  /* Another account: the page goes. */
+  fake_badges.generation = 2;
+  g_signal_emit_by_name(owner, "changed");
+  drain_idle();
+  g_assert_null(find_type(GTK_WIDGET(f->dialog), GH_TYPE_BADGES_PAGE));
+  gh_preferences_dialog_set_badges_backend(f->dialog, NULL);
+  g_assert_false(gtk_widget_get_visible(row));
+  g_clear_pointer(&fake_badges.selection, g_ptr_array_unref);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -1808,6 +2068,7 @@ main(int argc, char **argv)
   ADD("relay-controls", test_relay_controls, all);
   ADD("delete-all-runs-forget", test_delete_all_runs_forget, build);
   ADD("delete-all-outlives-dialog", test_delete_all_outlives_dialog, build);
+  ADD("badges-page", test_badges_page, build);
   ADD("minimum-size-layout", test_minimum_size_layout, build);
   ADD("minimum-size-layout-every-feature", test_minimum_size_layout, all);
   ADD("screenshots", test_screenshots, build);

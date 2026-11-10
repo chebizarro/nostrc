@@ -17,7 +17,8 @@ const gchar *
 gh_web_content_setting(GhWebKind kind)
 {
   static const gchar *keys[] = { "link-previews", "load-remote-images", "load-profile-pictures",
-                                 "load-remote-images", "load-remote-images" };
+                                 "load-remote-images", "load-remote-images", "load-remote-images" };
+  G_STATIC_ASSERT(G_N_ELEMENTS(keys) == GH_WEB_N_KINDS);
   g_return_val_if_fail(kind < GH_WEB_N_KINDS, NULL);
   return keys[kind];
 }

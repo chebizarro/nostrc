@@ -72,6 +72,7 @@ src/ui/gh-add-contact-page.c
 src/ui/gh-agents-page.c
 src/ui/gh-attachment-card.c
 src/ui/gh-attachment-sheet.c
+src/ui/gh-badges-page.c
 src/ui/gh-blocked-page.c
 src/ui/gh-drafts-page.c
 src/ui/gh-composer.c

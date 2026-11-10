@@ -9,6 +9,10 @@
 #include "gh-social-lists-backend.h"
 #include "gh-hide-account.h"
 #include "gh-report-dialog.h"
+#if GROUNDHOG_HAVE_BADGES
+#include "gh-badge-service.h"
+#include "gh-badges-page.h"
+#endif
 #include "gh-relay-deny-policy.h"
 #if GROUNDHOG_HAVE_DRAFT_SYNC
 #include "gh-draft-sync.h"
@@ -174,6 +178,10 @@ struct _GhAppServices {
   GhSocialLists *social_lists;
 #if GROUNDHOG_HAVE_DRAFT_SYNC
   GhDraftSync *draft_sync; /* NIP-37 drafts beside the lists (nostrc-9lwl7.8) */
+#endif
+#if GROUNDHOG_HAVE_BADGES
+  GhBadgeService *badges; /* NIP-58 badges over the lists (nostrc-9lwl7.13) */
+  GhBadgesBackend badges_backend;
 #endif
 #endif
   GSimpleAction *store_actions[4];
@@ -827,6 +835,12 @@ account_store_init(GhAppServices *self, GError **error)
   g_autoptr(GhReportService) reports = gh_report_service_new(self->social_lists,
       self->account_store, &list_network, NULL);
   gh_report_dialog_install(self->app, reports, self->social_lists, report_public_room, self);
+#if GROUNDHOG_HAVE_BADGES
+  self->badges = gh_badge_service_new(self->social_lists, self->account_store, &list_network,
+                                      self->settings);
+  self->badges_backend = gh_badge_service_backend(self->badges);
+  gh_badges_ui_install(self->app, &self->badges_backend);
+#endif
 #endif
 #if GROUNDHOG_HAVE_OUTBOX && (GROUNDHOG_HAVE_GROUP_UI || GROUNDHOG_HAVE_MLS_UI)
   /* The group services come and go with the open store. */
@@ -844,6 +858,10 @@ account_store_teardown(GhAppServices *self)
   g_signal_handlers_disconnect_by_func(self->account_store, on_roster_changed, self);
 #endif
 #if GROUNDHOG_HAVE_SOCIAL_LISTS
+#if GROUNDHOG_HAVE_BADGES
+  gh_badges_ui_uninstall(self->app);
+  gh_badge_service_close(self->badges);
+#endif
   gh_report_dialog_uninstall(self->app);
   gh_hide_account_uninstall(self->app);
   g_signal_handlers_disconnect_by_func(self->settings, sync_follow_reads, self);
@@ -862,6 +880,10 @@ account_store_teardown(GhAppServices *self)
 #if GROUNDHOG_HAVE_SOCIAL_LISTS
 #if GROUNDHOG_HAVE_DRAFT_SYNC
   dispose_object(&self->draft_sync);
+#endif
+#if GROUNDHOG_HAVE_BADGES
+  dispose_object(&self->badges);
+  self->badges_backend = (GhBadgesBackend){ 0 };
 #endif
   dispose_object(&self->social_lists);
 #endif
@@ -1528,6 +1550,9 @@ conversation_info_services(GhConversationInfoServices *services, gpointer data)
   services->notifier = self->notifier;
   services->profile = conversation_info_profile;
   services->profile_data = self;
+#if GROUNDHOG_HAVE_BADGES
+  services->badges = self->badges ? &self->badges_backend : NULL;
+#endif
   return TRUE;
 }
 #endif
@@ -2166,6 +2191,10 @@ present_preferences(GhAppServices *self, const gchar *page)
 #if GROUNDHOG_HAVE_DRAFT_SYNC
   GhDraftsBackend drafts_backend = gh_draft_sync_backend(self->draft_sync);
   gh_preferences_dialog_set_drafts_backend(dialog, &drafts_backend);
+#endif
+#if GROUNDHOG_HAVE_BADGES
+  if (self->badges)
+    gh_preferences_dialog_set_badges_backend(dialog, &self->badges_backend);
 #endif
 #endif
   gh_preferences_dialog_set_forget_func(dialog, preferences_forget_async,

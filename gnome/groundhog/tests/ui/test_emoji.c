@@ -76,6 +76,7 @@ static GBytes *finish(gpointer data, GAsyncResult *result, GError **error)
 static const GhHttpTransport transport = {get, finish};
 static void test_no_fetch(void)
 {
+  g_assert_cmpstr(gh_web_content_setting(GH_WEB_EMOJI), ==, "load-remote-images");
   fetches = 0;
   g_autoptr(GSettings) settings = g_settings_new("org.nostr.Groundhog");
   g_settings_set_boolean(settings, "load-remote-images", TRUE);

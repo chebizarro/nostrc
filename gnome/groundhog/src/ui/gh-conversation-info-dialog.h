@@ -5,6 +5,7 @@
 #include "gh-conversation-store.h"
 #include "gh-store.h"
 #include "gh-window.h"
+#include "gh-badge-types.h"
 
 G_BEGIN_DECLS
 
@@ -77,6 +78,11 @@ typedef struct {
   GhConversationInfoProfileFunc profile; /* nullable */
   gpointer profile_data;
   struct _GhPictureCache *pictures; /* optional per-window live eligibility */
+  /* Optional (plan §3.12): each person's cached verified badges ("Awarded
+   * by …"), copied with an owned reference to owner, and Look Up Badges… in
+   * their menu (app.look-up-badges) for an accepted conversation; a Message
+   * Request never offers a lookup. Reads are cached and offline. */
+  const GhBadgesBackend *badges;
 } GhConversationInfoServices;
 
 #define GH_TYPE_CONVERSATION_INFO_DIALOG (gh_conversation_info_dialog_get_type())
