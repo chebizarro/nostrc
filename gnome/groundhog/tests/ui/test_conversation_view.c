@@ -5101,11 +5101,32 @@ owner_click(Fixture *f, GhMessage *message, const gchar *name)
   click(widget);
 }
 
+typedef struct { Fixture *f; GhMessage *page; GhMessage *image; } OwnerLoadedWait;
+
+static gboolean
+owner_loaded_rows(gpointer data)
+{
+  OwnerLoadedWait *wait = data;
+  GtkWidget *page = item_for(wait->f->view, wait->page);
+  GtkWidget *image = item_for(wait->f->view, wait->image);
+  return page && image &&
+    !gh_conversation_open_probe_scroll_pending(wait->f->view) &&
+    shown(row_child(item_row(page), "og_card")) &&
+    shown(row_child(item_row(page), "og_image")) &&
+    shown(row_child(item_row(image), "remote_image"));
+}
+
 static void
 owner_shows_loaded(Fixture *f, GhMessage *page, GhMessage *image, guint asked, OwnerWeb *web)
 {
   AdwAlertDialog *dialog = view_child(f->view, "preview_dialog");
   drain_idle();
+  /* Cached consent/content survives a conversation switch, but GTK can
+   * still be rebinding rows and the render worker rediscovering their URLs.
+   * Wait for queued positioning too, before the next explicit scroll.
+   * An idle drain (or an earlier row_visible check) is not that boundary. */
+  OwnerLoadedWait ready = { f, page, image };
+  spin_until(owner_loaded_rows, &ready);
   g_assert_false(dialog_presented(dialog));
   g_assert_cmpuint(web->asked->len, ==, asked);
   GhMessageRow *row = row_for(f->view, page);
@@ -5204,10 +5225,11 @@ test_owner_remembered_consent(Fixture *f, G_GNUC_UNUSED gconstpointer data)
   owner_to_latest(f, page);
   owner_shows_loaded(f, page, image, 4, &web);
 
-  /* Recycled: scrolled far up (the rows go to other messages) and back. */
+  /* Recycled: scrolled far up (the rows go to other messages) and back.
+   * Leave sticky-bottom before requesting GTK's new list anchor. */
   GtkListView *list = gh_conversation_view_get_message_list(f->view);
-  gtk_list_view_scroll_to(list, 0, GTK_LIST_SCROLL_NONE, NULL);
   gtk_adjustment_set_value(vadjustment(f->view), 0);
+  gtk_list_view_scroll_to(list, 0, GTK_LIST_SCROLL_NONE, NULL);
   spin_until(scrolled_up, f->view);
   spin_until(item_gone, &page_visible);
   owner_to_latest(f, page);
