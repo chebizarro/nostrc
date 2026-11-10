@@ -336,7 +336,7 @@ static void history(GSimpleAction *action, GVariant *parameter, gpointer data)
   if (!rows || !rows->len) gtk_box_append(GTK_BOX(box), gtk_label_new(error ? error->message : _("No reports on this device")));
   for (guint i = 0; rows && i < rows->len; i++) {
     GhStoreReport *r = g_ptr_array_index(rows, i);
-    g_autofree gchar *title = g_strdup_printf(_("Review Report %" G_GINT64_FORMAT), r->id);
+    g_autofree gchar *title = g_strdup_printf(_("Review Report %lld"), (long long)r->id);
     GtkWidget *button = gtk_button_new_with_label(title);
     gtk_actionable_set_action_name(GTK_ACTIONABLE(button), "app.review-report");
     gtk_actionable_set_action_target_value(GTK_ACTIONABLE(button), g_variant_new("(sx)", gh_social_lists_get_account(ui->lists), r->id));

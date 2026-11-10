@@ -7,7 +7,6 @@
 #include "gh-conversation-view.h"
 #include "gh-conversation-store.h"
 #include "nostrc-test-gdk-frame.h"
-#include "nostrc-test-bus.h"
 #include <string.h>
 #include <json.h>
 void groundhog_register_resource(void);
@@ -225,18 +224,13 @@ int main(int argc, char **argv)
 {
   g_test_init(&argc, &argv, NULL);
   nostrc_test_tolerate_gdk_frame_warning();
-  if (!nostrc_test_bus_available()) return 77;
-  NostrcTestBus *bus = nostrc_test_bus_new(NOSTRC_TEST_BUS_FLAGS_NONE);
-  nostrc_test_bus_up(bus);
-  if (!gtk_init_check()) { nostrc_test_bus_down(bus); return 77; }
+  if (!gtk_init_check()) return 77;
   adw_init(); nostr_json_init(); groundhog_register_resource();
-  nostrc_test_bus_add_func("/emoji/nip17-tags", test_tags);
-  nostrc_test_bus_add_func("/emoji/length-cap", test_length);
-  nostrc_test_bus_add_func("/emoji/artwork-consent-and-fallback", test_artwork);
-  nostrc_test_bus_add_func("/emoji/picker-composer", test_picker_composer);
-  nostrc_test_bus_add_func("/privacy/emoji/requests-never-load", test_requests);
-  nostrc_test_bus_add_func("/privacy/emoji/no-default-fetch", test_no_fetch);
-  int result = g_test_run();
-  nostrc_test_bus_down(bus);
-  return result;
+  g_test_add_func("/emoji/nip17-tags", test_tags);
+  g_test_add_func("/emoji/length-cap", test_length);
+  g_test_add_func("/emoji/artwork-consent-and-fallback", test_artwork);
+  g_test_add_func("/emoji/picker-composer", test_picker_composer);
+  g_test_add_func("/privacy/emoji/requests-never-load", test_requests);
+  g_test_add_func("/privacy/emoji/no-default-fetch", test_no_fetch);
+  return g_test_run();
 }

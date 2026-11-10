@@ -18,7 +18,7 @@ struct _GhListEditorPage {
   GtkSingleSelection *selection;
   GtkStringList *rows, *types;
   gboolean updating;
-  GtkButton *publish_list;
+  GtkButton *publish_list, *retry_list;
   GCancellable *publication;
   GNostrListDocument *approval_snapshot;
   GNostrListApproval approval;
@@ -129,10 +129,23 @@ sync_status(GhListEditorPage *self)
     state == GNOSTR_LIST_FAILED ? _("Not Synced — Retry After Checking Your Signer and Relays") :
     _("Saved on This Device");
   gtk_label_set_text(self->status, text);
+  gtk_widget_set_visible(GTK_WIDGET(self->retry_list), sync &&
+    (state == GNOSTR_LIST_PARTIAL || state == GNOSTR_LIST_FAILED ||
+     state == GNOSTR_LIST_UNREADABLE || state == GNOSTR_LIST_WAITING_FOR_SIGNER));
   gtk_button_set_label(self->publish_list, state == GNOSTR_LIST_PARTIAL ?
     _("Publish Local Version _Anyway…") : _("_Publish…"));
   gtk_widget_set_visible(GTK_WIDGET(self->publish_list), sync && state != GNOSTR_LIST_PUBLISHING &&
     state != GNOSTR_LIST_UNREADABLE && state != GNOSTR_LIST_WAITING_FOR_DEPENDENCY);
+}
+
+static void
+retry_clicked(GtkButton *button, GhListEditorPage *self)
+{
+  (void)button;
+  if (!current(self, NULL)) return;
+  gnostr_list_service_retry(self->backend.service(self->backend.owner),
+    gnostr_list_document_get_kind(self->snapshot), gnostr_list_document_get_identifier(self->snapshot));
+  sync_status(self);
 }
 
 static void
@@ -582,7 +595,7 @@ gh_list_editor_page_class_init(GhListEditorPageClass *klass)
   CHILD(status); CHILD(metadata); CHILD(title_row); CHILD(description_row); CHILD(image_row);
   CHILD(value_row); CHILD(extra_row); CHILD(raw_row); CHILD(tag_type); CHILD(private_row);
   CHILD(entries); CHILD(save_metadata); CHILD(save_entry); CHILD(new_entry);
-  CHILD(move_up); CHILD(move_down); CHILD(remove_entry); CHILD(export_list); CHILD(publish_list);
+  CHILD(move_up); CHILD(move_down); CHILD(remove_entry); CHILD(export_list); CHILD(publish_list); CHILD(retry_list);
 #undef CHILD
 }
 
@@ -614,6 +627,7 @@ gh_list_editor_page_init(GhListEditorPage *self)
   g_signal_connect(self->remove_entry, "clicked", G_CALLBACK(reorder), self);
   g_signal_connect(self->export_list, "clicked", G_CALLBACK(export_list), self);
   g_signal_connect(self->publish_list, "clicked", G_CALLBACK(publish_clicked), self);
+  g_signal_connect(self->retry_list, "clicked", G_CALLBACK(retry_clicked), self);
 }
 
 GhListEditorPage *

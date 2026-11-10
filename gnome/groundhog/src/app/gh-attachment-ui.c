@@ -5,7 +5,9 @@
 #include "gh-composer.h"
 #include "gh-conversation-view.h"
 #include "gh-nip17-envelope.h"
+#if GROUNDHOG_HAVE_MLS_UI
 #include "gh-mls-service.h"
+#endif
 #include "gh-outbox.h"
 #include "gh-preferences-dialog.h"
 
@@ -355,10 +357,12 @@ upload_done(GhAttachmentUi *ui, Offer *offer, const GhNip17File *file, gboolean 
   if (!file && !group_sent) {
     if (g_error_matches(upload_error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
       gh_attachment_sheet_show_preview(offer->sheet, NULL);
+#if GROUNDHOG_HAVE_MLS_UI
     } else if (g_error_matches(upload_error, GH_MLS_SERVICE_ERROR,
                                GH_MLS_SERVICE_ERROR_SERVERS_CHANGED) &&
                refresh_changed_policy(ui, offer, TRUE)) {
       /* An epoch retry found a new policy: the refreshed sheet needs Send. */
+#endif
     } else if (g_error_matches(upload_error, GH_BLOSSOM_ERROR, GH_BLOSSOM_ERROR_AUTH_REQUIRED) &&
                server && !gh_attachments_get_consent(ui->attachments, server)) {
       /* Charter §6 step 4: the account signs only with this server's consent. */

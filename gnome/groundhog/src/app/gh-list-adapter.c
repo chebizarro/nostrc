@@ -349,7 +349,8 @@ scope_update(GhRelayScope *scope, const GhRelayUpdate *update, gpointer data)
     gnostr_list_service_notify(sub->service, sub->serial, sub->kind, sub->identifier,
                                update->url, GNOSTR_LIST_RECONNECTED, NULL);
   gnostr_list_service_notify(sub->service, sub->serial, sub->kind, sub->identifier,
-                             update->url, type, update->event_json);
+                             update->url, type,
+                             type == GNOSTR_LIST_EVENT ? update->event_json : update->detail);
 }
 static gpointer
 open_subscription(gpointer data, GNostrListService *service, const char *account,

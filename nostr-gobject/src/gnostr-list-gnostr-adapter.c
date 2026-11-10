@@ -52,7 +52,7 @@ static void read_notify(AppRead *r, GNostrListReadNotification type, const char 
 }
 static void read_event(GNostrSubscription *sub, const char *json, AppRead *r) { (void)sub; read_notify(r, GNOSTR_LIST_EVENT, json); }
 static void read_eose(GNostrSubscription *sub, AppRead *r) { (void)sub; read_notify(r, GNOSTR_LIST_EOSE, NULL); }
-static void read_closed(GNostrSubscription *sub, const char *reason, AppRead *r) { (void)sub; (void)reason; read_notify(r, GNOSTR_LIST_CLOSED, NULL); }
+static void read_closed(GNostrSubscription *sub, const char *reason, AppRead *r) { (void)sub; read_notify(r, GNOSTR_LIST_CLOSED, reason); }
 static void read_auth(GNostrRelay *relay, const char *challenge, AppRead *r) {
   (void)relay; (void)challenge;
   /* No blanket account AUTH permission: an AUTH-only source is explicitly
@@ -82,7 +82,7 @@ static void read_subscribe(AppRead *r) {
   g_signal_connect(r->sub, "eose", G_CALLBACK(read_eose), r);
   g_signal_connect(r->sub, "closed", G_CALLBACK(read_closed), r);
   GError *error = NULL;
-  if (!gnostr_subscription_fire(r->sub, &error)) read_notify(r, GNOSTR_LIST_ERROR, NULL);
+  if (!gnostr_subscription_fire(r->sub, &error)) read_notify(r, GNOSTR_LIST_ERROR, error ? error->message : NULL);
   g_clear_error(&error);
 }
 static void read_connected(GObject *source, GAsyncResult *res, gpointer data) {
@@ -90,7 +90,7 @@ static void read_connected(GObject *source, GAsyncResult *res, gpointer data) {
   gboolean ok = gnostr_relay_connect_finish(GNOSTR_RELAY(source), res, &error);
   if (!r->closed) {
     if (ok) { r->failures = 0; r->connected_once = TRUE; read_notify(r, GNOSTR_LIST_RECONNECTED, NULL); read_subscribe(r); }
-    else read_notify(r, GNOSTR_LIST_ERROR, NULL);
+    else read_notify(r, GNOSTR_LIST_ERROR, error ? error->message : NULL);
   }
   g_clear_error(&error); read_unref(r);
 }

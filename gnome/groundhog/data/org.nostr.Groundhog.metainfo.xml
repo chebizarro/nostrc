@@ -79,6 +79,14 @@
     <content_attribute id="social-chat">intense</content_attribute>
   </content_rating>
   <releases>
+    <release version="0.13.0" date="2026-11-10">
+      <description>
+        <p>Account lists, opt-in encrypted draft synchronization, public reports,
+        custom emoji and profile badges. Profile pictures remain off by default.</p>
+        <p>The encrypted account store upgrades to schema v14. Older versions
+        require a pre-upgrade backup; they cannot open an upgraded store.</p>
+      </description>
+    </release>
     <release version="0.12.1-alpha8" type="development" date="2026-11-08">
       <description>
         <p>Groundhog now declares all the operations it needs when connecting an account to Grotto, so they can be reviewed and approved once instead of request by request.</p>

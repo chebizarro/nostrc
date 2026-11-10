@@ -1,3 +1,11 @@
+groundhog (0.13.0-1) unstable; urgency=medium
+
+  * Integrate account social lists, encrypted draft sync, reports, emoji and badges.
+  * Upgrade the encrypted account store to schema v14; older binaries require
+    restoration of a pre-upgrade backup rather than opening the newer store.
+
+ -- Biz <chebizarro@protonmail.com>  Tue, 10 Nov 2026 09:20:00 -0800
+
 groundhog (0.12.1~alpha8-1) unstable; urgency=medium
 
   * Release the owned account-signer event ID after Blossom upload validation.

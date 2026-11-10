@@ -37,11 +37,26 @@ set_status(GhHiddenPage *self, const gchar *message)
   gtk_label_set_text(self->status, message ? message : "");
   gtk_widget_set_visible(GTK_WIDGET(self->status), message && *message);
 }
+static gboolean
+finish_confirmation_close(GtkWidget *dialog, GdkFrameClock *clock, gpointer data)
+{
+  (void)clock;
+  (void)data;
+  adw_dialog_force_close(ADW_DIALOG(dialog));
+  return gtk_widget_get_parent(dialog) != NULL;
+}
+
 static void
 close_confirmation(GhHiddenPage *self)
 {
   if (self->confirmation) {
     g_signal_handlers_disconnect_by_data(self->confirmation, self);
+    GtkWidget *dialog = GTK_WIDGET(self->confirmation);
+    gtk_widget_set_sensitive(dialog, FALSE);
+    gtk_widget_set_opacity(dialog, 0);
+    /* AdwDialog 1.5 opens on later map ticks. Keep the close pending until
+     * its host removes it, including when invalidated before the first frame. */
+    gtk_widget_add_tick_callback(dialog, finish_confirmation_close, NULL, NULL);
     adw_dialog_force_close(ADW_DIALOG(self->confirmation));
     g_clear_object(&self->confirmation);
   }

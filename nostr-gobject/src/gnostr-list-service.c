@@ -887,7 +887,8 @@ static gboolean notification_dispatch(gpointer data) {
   else {
     /* Duplicate EOSE is idempotent. Reconnect resets only that source's boundary. */
     json_object_set_new(d->sources, n->source, json_integer(n->type + 1));
-    refresh(s, d, NULL); wake(s);
+    refresh(s, d, (n->type == GNOSTR_LIST_CLOSED || n->type == GNOSTR_LIST_ERROR) ? n->payload : NULL);
+    wake(s);
   }
   return G_SOURCE_REMOVE;
 }
@@ -924,8 +925,17 @@ void gnostr_list_service_retry(GNostrListService *s, int kind, const char *id) {
   g_return_if_fail(owner(s)); ListSlot *d = find_slot(s, kind, id);
   if (!valid(s) || !d) return;
   gboolean reopen = d->subscription_failed;
+  for (guint i = 0; d->plan.sources && d->plan.sources[i]; i++) {
+    gint state = json_integer_value(json_object_get(d->sources, d->plan.sources[i]));
+    if (state == GNOSTR_LIST_CLOSED + 1 || state == GNOSTR_LIST_ERROR + 1) reopen = TRUE;
+  }
   d->failed = d->waiting = FALSE; d->retry_signed = d->signed_json != NULL;
   if (reopen && !d->plan.waiting_for_dependency && s->adapter.open_subscription && valid(s)) {
+    if (d->subscription) {
+      gpointer sub = d->subscription; d->subscription = NULL;
+      s->adapter.close_subscription(s->data, sub);
+    }
+    d->read_serial = ++s->read_serial; /* Ignore late frames from the retired REQ. */
     json_object_clear(d->sources);
     d->subscription = s->adapter.open_subscription(s->data, s, s->account, s->generation, d->read_serial, &d->plan, NULL);
     d->subscription_failed = !d->subscription; d->failed = d->subscription_failed;

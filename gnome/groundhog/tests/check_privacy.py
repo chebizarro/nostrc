@@ -146,11 +146,12 @@ RULES = (
     "message-status", "log-ids",
     "relay-suggestions",
     "app-id", "preference-consumers", "diagnostics-allowlist", "issue-services",
-    "private-report-evidence", "exceptions",
+    "private-report-evidence", "social-signer-boundary", "private-sync-destinations", "exceptions",
 )
 # Rules whose findings EXCEPTIONS can never waive.
 UNWAIVABLE = {"gsettings-allowlist", "app-id", "message-status", "relay-suggestions",
-              "diagnostics-allowlist", "signer-control-class", "private-report-evidence", "exceptions"}
+              "diagnostics-allowlist", "signer-control-class", "private-report-evidence",
+              "social-signer-boundary", "private-sync-destinations", "exceptions"}
 
 # (rule, path relative to GROUNDHOG_DIR, exact reported match) -> justification.
 EXCEPTIONS = {
@@ -253,7 +254,7 @@ GSETTINGS = {
     "retention-days": Key("i", "0"),  # D10: keep forever
     "default-disappearing-seconds": Key("i", "0"),
     "enter-sends": Key("b", "true"),
-    "blossom-servers": Key("as", "[]"),  # D6: attachments off until chosen
+    "blossom-servers": Key("as", "[]"),  # Deprecated: one-time account migration/rollback only
     # Window state: no content, no identifiers.
     "window-width": Key("i", "900"),
     "window-height": Key("i", "600"),
@@ -337,9 +338,6 @@ ACCOUNT_PURPOSE_FILES = {
                                "probe never authenticates",
     "src/nip29/gh-nip29-service.": "NIP-29 group relays: the one group relay's live REQ",
     "src/nip29/gh-nip29-outbox.": "NIP-29 group relays: publish to exactly the group's relay",
-    "src/nip29/gh-nip29-group-list.": "own list publish (the account's NIP-51 kind-10009 group "
-                                      "list, private items only, nostrc-90jof) on its own 10002 "
-                                      "write and discovery relays only; never a group relay",
     "src/mls/gh-mls-service.": "own list publish (the account's KeyPackage, kind 30443) on its "
                                "own 10002 write and 10050 inbox relays only; group relays, "
                                "lookups and Welcome wraps are ephemeral",
@@ -1043,6 +1041,30 @@ def check_issue_services(tree):
     return found
 
 
+def check_social_boundaries(tree):
+    """Static tripwires supplement the runtime signer and destination tests."""
+    services = ("src/app/gh-social-lists.", "src/app/gh-list-adapter.",
+                "src/app/gh-draft-sync.", "src/app/gh-report-service.",
+                "src/app/gh-badge-service.")
+    raw_keys = re.compile(r"\b(?:nostr_event_sign|nostr_key_\w+|nostr_nip44_(?:encrypt|decrypt)\w*)\b")
+    found = []
+    for rel in tree.files("src", suffixes={".c", ".h"}):
+        if not rel.startswith(services):
+            continue
+        _, _, code = tree.views(rel)
+        found += find_all("social-signer-boundary", rel, code, raw_keys,
+                          lambda s: f"{s}: account social operations use the generation-guarded signer")
+        if rel == "src/app/gh-draft-sync.c":
+            found += find_all("private-sync-destinations", rel, code,
+                              re.compile(r"\b(?:gh_account_relays_get_\w+|g_settings_get_strv)\b"),
+                              lambda s: f"{s}: drafts must not select write, inbox or discovery fallbacks")
+            if not re.search(r"gnostr_list_service_lookup\s*\([^,]+,\s*NOSTR_KIND_PRIVATE_RELAY_LIST\s*,", code):
+                found.append(Violation("private-sync-destinations", rel, 0,
+                                       "draft destinations must come from the account's kind-10013 list",
+                                       "private-relay-list"))
+    return found
+
+
 def check_private_reports(tree):
     """Supplement runtime wire assertions: account builder has no evidence input.
 
@@ -1073,7 +1095,7 @@ def check(root, exceptions=None):
     raw = (check_url_literals(tree) + check_gsettings(tree) + check_blueprint(tree)
            + check_sources(tree) + check_message_status(tree) + check_relay_suggestions(tree)
            + check_app_id(tree) + check_preference_consumers(tree) + check_diagnostics(tree)
-           + check_issue_services(tree) + check_private_reports(tree))
+           + check_issue_services(tree) + check_private_reports(tree) + check_social_boundaries(tree))
     used, found = set(), []
     for violation in raw:
         key = (violation.rule, violation.path, violation.match)
@@ -1121,6 +1143,10 @@ def render_schema(keys=GSETTINGS):
 def clean_tree():
     """A minimal tree that passes every rule, with near misses each rule must ignore."""
     return {
+        "src/app/gh-draft-sync.c": (
+            "void targets(void) { gnostr_list_service_lookup(service, NOSTR_KIND_PRIVATE_RELAY_LIST, \"\"); }\n"
+            "void sign(void) { gh_account_controller_sign_with_context_async(accounts, context); }\n"
+            "/* No nostr_event_sign or gh_account_relays_get_write_relays here. */\n"),
         "src/app/gh-report-service.c": (
             "char *gh_report_build_account(void) { return build(account, target, NULL, category, explanation, now, error); }\n"),
         "src/ui/gh-issue-adapters.c": (
@@ -1375,6 +1401,18 @@ Mutation = namedtuple("Mutation", "name expect edits exceptions", defaults=(None
 URL = "wss://relay.example.org"
 M = Mutation
 MUTATIONS = [
+    M("social-raw-sign", {"social-signer-boundary"},
+      [append("src/app/gh-list-adapter.c", "void sign(void) { nostr_event_sign(event, key); }\n")]),
+    M("social-raw-encrypt", {"social-signer-boundary"},
+      [append("src/app/gh-draft-sync.c", "void encrypt(void) { nostr_nip44_encrypt(key, peer, text); }\n")]),
+    M("draft-write-fallback", {"private-sync-destinations"},
+      [append("src/app/gh-draft-sync.c", "void fallback(void) { gh_account_relays_get_write_relays(relays); }\n")]),
+    M("draft-discovery-fallback", {"private-sync-destinations"},
+      [append("src/app/gh-draft-sync.c", "void fallback(void) { g_settings_get_strv(settings, key); }\n")]),
+    M("draft-wrong-list", {"private-sync-destinations"},
+      [replace("src/app/gh-draft-sync.c", "NOSTR_KIND_PRIVATE_RELAY_LIST", "NOSTR_KIND_DM_RELAY_LIST")]),
+    M("group-list-stale-account-auth", {"auth-policy"},
+      [append("src/nip29/gh-nip29-group-list.c", "static const int p = GH_AUTH_PURPOSE_OWN_LIST_PUBLISH;\n")]),
     M("report-private-evidence", {"private-report-evidence"},
       [replace("src/app/gh-report-service.c", "build(account, target, NULL,", "build(account, target, rumor_id,")]),
     M("report-message-copy", {"private-report-evidence"},

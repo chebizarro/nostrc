@@ -125,7 +125,7 @@
     <key name="discovery-relays" type="as">
       <default>[]</default>
       <summary>Relays that locate the active account's relay lists</summary>
-      <description>ws:// or wss:// relays asked for the selected account's own signed NIP-65 (kind 10002) and NIP-17 inbox (kind 10050) relay lists. Empty by default: Groundhog contacts no relay until one is configured.</description>
+      <description>Configured discovery relays locate the account's signed relay lists and private group list, and its follow list only while profile pictures are enabled. Contact profiles and explicitly requested badge lookups also use discovery connections. Draft payloads use only account private-sync relays, never these relays as a fallback. Empty by default: Groundhog contacts no relay until one is configured.</description>
     </key>
 
     <!-- Account & Storage / Account -->
@@ -172,8 +172,8 @@
     </key>
     <key name="blossom-servers" type="as">
       <default>[]</default>
-      <summary>Attachment servers</summary>
-      <description>Blossom servers that store encrypted attachments, tried in this order. Empty by default: nothing is uploaded until you choose a server, which Groundhog asks for when you first send a file.</description>
+      <summary>Legacy attachment servers</summary>
+      <description>Deprecated migration and rollback input. Each pre-v11 account imports this ordered list once into its encrypted store without publishing it. Current uploads use the account's Attachment Servers, not this global setting. Fresh accounts start with no servers.</description>
     </key>
     <!-- === end Preferences (§7.11) === -->
 

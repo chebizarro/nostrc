@@ -1,14 +1,14 @@
 cmake_minimum_required(VERSION 3.16)
-project(groundhog VERSION 0.12.1 LANGUAGES C)
+project(groundhog VERSION 0.13.0 LANGUAGES C)
 
-# The pre-release label testers see (About, --version): "alpha8" makes
-# GROUNDHOG_VERSION_FULL "0.12.1-alpha8"; empty for a final release. Bump it
+# The optional pre-release label testers see (About, --version), appended to
+# the numeric base; empty gives GROUNDHOG_VERSION_FULL "0.13.0". Bump it
 # with flake.nix (desktopVersion), packaging/archlinux/groundhog/PKGBUILD
 # (_version), packaging/rpm/groundhog.spec (upstream_version, Release) and
 # packaging/debian-desktop/changelog: the groundhog-packaging-version test
 # checks they agree, and the release workflow refuses a groundhog-v* tag that
 # does not equal GROUNDHOG_VERSION_FULL.
-set(GROUNDHOG_PRERELEASE "alpha8")
+set(GROUNDHOG_PRERELEASE "")
 set(GROUNDHOG_VERSION_FULL "${PROJECT_VERSION}")
 if (GROUNDHOG_PRERELEASE)
   string(APPEND GROUNDHOG_VERSION_FULL "-${GROUNDHOG_PRERELEASE}")
@@ -3961,6 +3961,14 @@ add_library(groundhog-emoji-codec STATIC src/app/gh-emoji.c)
 target_include_directories(groundhog-emoji-codec PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/app)
 target_link_libraries(groundhog-emoji-codec PUBLIC nip30 nostr PkgConfig::GROUNDHOG_DEPS)
 target_compile_options(groundhog-emoji-codec PRIVATE -Wall -Wextra -Werror)
+# Standalone envelope consumers do not all link groundhog-conversations.
+get_property(_emoji_consumers DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+foreach(_consumer IN LISTS _emoji_consumers)
+  get_target_property(_sources ${_consumer} SOURCES)
+  if(_sources MATCHES "gh-nip17-envelope\\.c")
+    target_link_libraries(${_consumer} PRIVATE groundhog-emoji-codec)
+  endif()
+endforeach()
 # Emoji UI needs the account-backed lists and consent-gated web loader. Refuse
 # incomplete Groundhog builds explicitly rather than link nonexistent targets.
 foreach(_emoji_dependency groundhog-conversations groundhog-conversation-ui groundhog-social-lists groundhog-web-content)

@@ -539,9 +539,11 @@ on_update(GhRelayScope *scope, const GhRelayUpdate *update, gpointer data)
   switch (update->notice) {
   case GH_RELAY_NOTICE_EVENT: admit(l, update->event_json); return;
   case GH_RELAY_NOTICE_EOSE:
-    if (status == SOURCE_PENDING) status = SOURCE_ANSWERED; break;
+    if (status == SOURCE_PENDING) status = SOURCE_ANSWERED;
+    break;
   case GH_RELAY_NOTICE_CLOSED: case GH_RELAY_NOTICE_ERROR:
-    if (status == SOURCE_PENDING) status = SOURCE_FAILED; break;
+    if (status == SOURCE_PENDING) status = SOURCE_FAILED;
+    break;
   default: return;
   }
   g_hash_table_insert(l->pending, g_strdup(update->url), GUINT_TO_POINTER(status));

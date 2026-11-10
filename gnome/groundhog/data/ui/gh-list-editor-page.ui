@@ -37,6 +37,14 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                       </object>
                     </child>
                     <child>
+                      <object class="GtkButton" id="retry_list">
+                        <property name="label" translatable="yes">_Retry Sync</property>
+                        <property name="use-underline">true</property>
+                        <property name="halign">2</property>
+                        <property name="visible">false</property>
+                      </object>
+                    </child>
+                    <child>
                       <object class="GtkButton" id="publish_list">
                         <property name="label" translatable="yes">_Publish…</property>
                         <property name="use-underline">true</property>
