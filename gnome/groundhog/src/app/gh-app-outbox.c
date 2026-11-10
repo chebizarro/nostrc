@@ -28,6 +28,7 @@
 
 struct _GhAppOutbox {
   GhAccountController *accounts;
+  GhSocialLists *social_lists; /* borrowed */
   GhAccountRelays *account_relays;
   GhInboxResolver *inboxes;
   GhContactDirectory *directory; /* when inboxes is the one made here */
@@ -55,6 +56,12 @@ struct _GhAppOutbox {
   GhAppOutboxDeleteFunc delete_func;      /* received NIP-09 requests for messages */
   gpointer delete_data;
 };
+
+void
+gh_app_outbox_set_social_lists(GhAppOutbox *self, GhSocialLists *lists)
+{
+  self->social_lists = lists;
+}
 
 GhAppOutbox *
 gh_app_outbox_new(const GhAppOutboxConfig *config)
@@ -183,6 +190,7 @@ bind_nip29(GhAppOutbox *self, GhStore *store, GObject *outbox)
       .account_relays = self->account_relays,
       .settings = self->settings,
       .service = service,
+      .social_lists = self->social_lists,
     };
     self->nip29_list = G_OBJECT(gh_nip29_group_list_new(&list));
   }

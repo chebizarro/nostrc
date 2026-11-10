@@ -321,6 +321,8 @@ AUTH_POLICY_SOURCE = "src/app/gh-auth-policy.c"
 # entry here; lookups and the contact directory never get one.
 ACCOUNT_PURPOSE_FILES = {
     "src/app/gh-auth-policy.": "the purposes' definition",
+    "src/app/gh-list-adapter.": "own private list publish on explicit plan targets; private-sync "
+                               "AUTH only after checking current account 10013 destinations",
     "src/app/gh-dm-inbox.": "own inbox read, on the account's own 10050 relays only",
     "src/app/gh-outbox.": "the self-copy (and a note to self) on the own 10050 relays",
     "src/app/gh-dm-send.": "the self-copy (and a note to self) on the own 10050 relays",
@@ -367,7 +369,9 @@ URL_AUTH_RE = re.compile(r"\bgh_relay_(?:scope|publish)_set_url_auth\b")
 SIGNER_CONTROL_RE = re.compile(r"\bgh_relay_(?:scope|publish)_set_signer_control\b")
 AUTH_SETTER_RE = re.compile(r"\b(?:" + "|".join(sorted(AUTH_SETTERS)) + r")\b")
 ACCOUNT_PURPOSE_RE = re.compile(
-    r"\bGH_AUTH_PURPOSE_(?:OWN_INBOX_READ|OWN_LIST_PUBLISH|SELF_WRAP|GROUP)\b")
+    r"\bGH_AUTH_PURPOSE_(?:OWN_INBOX_READ|OWN_LIST_PUBLISH|SELF_WRAP|GROUP|OWN_PRIVATE_SYNC_(?:READ|PUBLISH))\b")
+PRIVATE_SYNC_PURPOSE_RE = re.compile(r"\bGH_AUTH_PURPOSE_OWN_PRIVATE_SYNC_(?:READ|PUBLISH)\b")
+PRIVATE_SYNC_PURPOSE_FILES = ("src/app/gh-auth-policy.", "src/app/gh-list-adapter.")
 KIND_10002_RE = re.compile(r"\b10002\b|\b\w*KIND_RELAY_LIST\w*|(?i:\b\w*nip_?65\w*)")
 LOG_CALL_RE = re.compile(
     r"\bg_(?:debug|info|message|warning|critical|error|print|printerr|log)\s*\(")
@@ -650,6 +654,9 @@ def check_sources(tree):
                     continue  # declaration/definition, never another caller
                 found.append(Violation("signer-control-class", rel, line_of(code, match.start()),
                     "Only GhNip46Session may exclude a connection from account relay denial", match.group()))
+        if not rel.startswith(PRIVATE_SYNC_PURPOSE_FILES):
+            found += find_all("auth-policy", rel, code, PRIVATE_SYNC_PURPOSE_RE,
+                              lambda s: f"{s}: account AUTH is restricted to current own 10013 destinations")
         found += check_log_ids(rel, code)
     return found
 
@@ -1496,6 +1503,10 @@ MUTATIONS = [
               "  return gh_relay_publish_set_url_auth(p, u, GH_RELAY_AUTH_EPHEMERAL, NULL);\n}\n")]),
     M("auth-policy-scope-bypass", {"auth-policy"},
       [append("src/app/gh-inbox-lookup.c", "static void *f = (void *)gh_relay_scope_set_url_auth;\n")]),
+    M("auth-policy-directory-private-sync-read", {"auth-policy"},
+      [append("src/app/gh-contact-directory.c", "static const int p = GH_AUTH_PURPOSE_OWN_PRIVATE_SYNC_READ;\n")]),
+    M("auth-policy-outbox-private-sync-publish", {"auth-policy"},
+      [append("src/app/gh-outbox.c", "static const int p = GH_AUTH_PURPOSE_OWN_PRIVATE_SYNC_PUBLISH;\n")]),
     M("auth-policy-directory-self-wrap", {"auth-policy"},
       [append("src/app/gh-contact-directory.c", "static const int purpose = GH_AUTH_PURPOSE_SELF_WRAP;\n")]),
     M("auth-policy-lookup-own-inbox", {"auth-policy"},

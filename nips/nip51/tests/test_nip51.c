@@ -442,6 +442,12 @@ static void test_lossless(void) {
     nostr_nip51_document_mark_unreadable(parsed);
     assert(!nostr_nip51_document_build_unsigned(parsed, TEST_PK, 1, ""));
     nostr_nip51_document_free(parsed); nostr_event_free(roundtrip);
+    /* Base64 NIP-44 payloads can contain the letters iv by chance. Only
+     * the NIP-04 query marker selects the legacy decryptor. */
+    nostr_event_set_content(ev, "Anip44ivpayload");
+    parsed = nostr_nip51_document_parse_event(ev);
+    assert(parsed && nostr_nip51_document_private_state(parsed) == NOSTR_LIST_PRIVATE_ENCRYPTED_NIP44);
+    nostr_nip51_document_free(parsed);
     nostr_event_set_content(ev, "legacy?iv=123");
     parsed = nostr_nip51_document_parse_event(ev);
     assert(parsed && nostr_nip51_document_private_state(parsed) == NOSTR_LIST_PRIVATE_LEGACY_NIP04);

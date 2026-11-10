@@ -289,6 +289,22 @@ template $GhPreferencesDialog: Adw.PreferencesDialog {
           ]
         }
 
+        ListBox server_publish_list {
+          visible: false;
+          selection-mode: none;
+          styles ["boxed-list"]
+          Adw.ActionRow server_publish_row {
+            title: _("Public Server List");
+            subtitle: _("Share this account’s attachment server URLs on its write relays. Private sync does not publish them.");
+            [suffix]
+            Button server_publish_button {
+              label: _("_Publish Server List…");
+              use-underline: true;
+              valign: center;
+            }
+          }
+        }
+
         // Shown with gh_preferences_dialog_set_attachments().
         ListBox attachment_info_list {
           visible: false;
@@ -665,10 +681,17 @@ template $GhPreferencesDialog: Adw.PreferencesDialog {
       visible: false;
       Adw.SwitchRow social_sync_row {
         title: _("Sync Drafts and Lists");
-        subtitle: _("Off — synchronization is not available in this version yet. Lists stay on this device; public publication requires separate approval.");
+        subtitle: _("Synchronize encrypted drafts and private list entries. Relays see your account, event kind and time. Public publication needs separate approval; accepted events cannot be recalled.");
         active: false;
         sensitive: false;
       }
+      Adw.ActionRow social_import_row {
+          title: _("Review Hidden Items…");
+          subtitle: _("Apply the hidden accounts and content rules from your other devices");
+          visible: false;
+          activatable: true;
+          [suffix] Image { icon-name: "go-next-symbolic"; }
+        }
       Adw.ActionRow social_lists_row {
         title: _("Lists and Sets");
         subtitle: _("Manage local lists without a signer or network connection");

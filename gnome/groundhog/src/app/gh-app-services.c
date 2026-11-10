@@ -563,9 +563,17 @@ account_store_init(GhAppServices *self, GError **error)
     .outbox_data = self->outbox,
 #endif
   };
+#if GROUNDHOG_HAVE_SOCIAL_LISTS
+  self->social_lists = gh_social_lists_new_with_settings(NULL, self->settings);
+  GhListAdapterNetwork list_network = { .accounts = self->accounts };
+  gh_social_lists_set_network(self->social_lists, &list_network, self->relays);
+#if GROUNDHOG_HAVE_OUTBOX
+  gh_app_outbox_set_social_lists(self->outbox, self->social_lists);
+#endif
+#endif
   self->account_store = gh_account_store_new(&config);
 #if GROUNDHOG_HAVE_SOCIAL_LISTS
-  self->social_lists = gh_social_lists_new_with_settings(self->account_store, self->settings);
+  gh_social_lists_attach_store(self->social_lists, self->account_store);
 #endif
   return TRUE;
 }
@@ -576,9 +584,15 @@ static void
 account_store_teardown(GhAppServices *self)
 {
 #if GROUNDHOG_HAVE_SOCIAL_LISTS
-  dispose_object(&self->social_lists);
+#if GROUNDHOG_HAVE_OUTBOX
+  gh_app_outbox_set_social_lists(self->outbox, NULL);
+#endif
+  gh_social_lists_close(self->social_lists);
 #endif
   dispose_object(&self->account_store);
+#if GROUNDHOG_HAVE_SOCIAL_LISTS
+  dispose_object(&self->social_lists);
+#endif
 }
 
 /* The store banners' buttons (GH_STATUS_ACTION_STORE_*). */
