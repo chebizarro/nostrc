@@ -78,7 +78,7 @@ NOSTR_NIP30_API const char *nostr_nip30_get_url(const NostrEvent *ev, const char
  * @out_count: (out): number of matches found
  *
  * Finds all :shortcode: patterns in content.
- * Shortcode names are word characters (a-z, A-Z, 0-9, _).
+ * Shortcode names contain ASCII a-z, A-Z, 0-9, underscores and hyphens.
  *
  * Returns: 0 on success, negative errno on error
  */
@@ -124,6 +124,17 @@ NOSTR_NIP30_API char *nostr_nip30_replace_all(const char *content,
  */
 NOSTR_NIP30_API int nostr_nip30_add_emoji(NostrEvent *ev, const char *shortcode,
                            const char *url);
+
+/* Additive full-tag view; the legacy NostrNip30Emoji layout is unchanged. */
+typedef struct {
+    const char *shortcode;
+    const char *url;
+    const char *set_address; /* Borrowed, NULL when absent; empty is invalid. */
+} NostrNip30EmojiTag;
+NOSTR_NIP30_API bool nostr_nip30_valid_shortcode(const char *shortcode);
+NOSTR_NIP30_API bool nostr_nip30_valid_image_url(const char *url);
+NOSTR_NIP30_API int nostr_nip30_parse_full(const NostrEvent *ev, NostrNip30EmojiTag *entries, size_t max_entries, size_t *out_count);
+NOSTR_NIP30_API int nostr_nip30_add_emoji_full(NostrEvent *ev, const char *shortcode, const char *url, const char *set_address);
 
 #ifdef __cplusplus
 }

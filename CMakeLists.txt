@@ -408,6 +408,11 @@ if(BUILD_LIBHANAMI)
   set(ENABLE_NIP34 ON CACHE BOOL "Enable nip34 (required by libhanami)" FORCE)
   set(ENABLE_NIP11 ON CACHE BOOL "Enable nip11 (required by libhanami)" FORCE)
 endif()
+# Declare before dependency resolution on a fresh configure.
+option(BUILD_GROUNDHOG "Build the Groundhog messaging app shell" OFF)
+if(BUILD_GROUNDHOG)
+  set(ENABLE_NIP02 ON CACHE BOOL "Enable nip02 (required by Groundhog)" FORCE)
+endif()
 # Groundhog's NIP-29 groups (qp24.12.2) need nips/nip29: register it here like
 # any NIP so it is added once, with the global flags, instead of by Groundhog.
 if(BUILD_GROUNDHOG)
@@ -429,7 +434,6 @@ endif()
 option(BUILD_NOSTR_GOBJECT "Build nostr-gobject GObject wrapper" ON)
 # Groundhog and nostr_gtk_portable must use one runtime GObject type registry.
 # Keep the ordinary static/shared policy for builds without Groundhog.
-option(BUILD_GROUNDHOG "Build the Groundhog messaging app shell" OFF)
 set(NOSTR_GOBJECT_BUILD_SHARED ${BUILD_GROUNDHOG})
 
 # One libnostr per process (nostrc-0y5t6). libnostr, libgo, the NIP libraries,

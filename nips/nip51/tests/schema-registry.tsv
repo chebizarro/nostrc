@@ -1,0 +1,33 @@
+# NIP-51 table from docs/nips at db5fe3de8c5d1443b634c9bbf66ecb004f337057.
+# Additional kinds 10992/31992 and read-only 3/10002 follow the supplied Stage 1 plan.
+# kind | known item names | typed reference constraints
+3|p|pubkey, optional relay, optional petname; read-only
+10002|r|relay, optional read/write marker; read-only
+10000|p t word e|pubkey, hashtag, word, thread
+10001|e|kind 1
+10003|e a r t|legacy URL/hashtag support retained
+10006|relay|relay URL
+10008|a e|30009/8 pairs; 30008 sets
+10009|group r|id, relay, optional name; relay
+10013|relay|private only
+10030|emoji a|shortcode, URL, optional 30030 set; 30030
+10050|relay|public
+10063|server|ordered, public, empty content
+10992|a|31992
+30000|p|pubkey
+30001|e a r t|deprecated pin/bookmark/communities
+30002|relay|relay URL
+30003|e a r t|1/30023, legacy URL/hashtag support retained
+30004|a e|30023/1
+30005|e|21
+30006|e|20
+30007|p|canonical decimal d
+30008|a e|30009/8 pairs
+30015|t|hashtag
+30030|emoji|shortcode, URL, optional set address
+30063|e a|1063/software application
+30267|a|software application
+31924|a|calendar event
+39089|p|pubkey
+39092|p|pubkey
+31992|command title description arg s|d required; arg name/type/required-or-optional/label/choices

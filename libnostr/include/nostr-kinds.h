@@ -51,6 +51,7 @@
 
 /* Voice */
 #define NOSTR_KIND_VOICE                         1222
+#define NOSTR_KIND_DRAFT_CHECKPOINT              1234
 #define NOSTR_KIND_VOICE_COMMENT                 1244
 
 #define NOSTR_KIND_LIVE_CHAT_MESSAGE             1311
@@ -112,8 +113,10 @@
 #define NOSTR_KIND_PUBLIC_CHAT_LIST              10005
 #define NOSTR_KIND_BLOCKED_RELAY_LIST            10006
 #define NOSTR_KIND_SEARCH_RELAY_LIST             10007
+#define NOSTR_KIND_PROFILE_BADGE_LIST            10008
 #define NOSTR_KIND_SIMPLE_GROUP_LIST             10009
 #define NOSTR_KIND_FAVORITE_RELAYS               10012
+#define NOSTR_KIND_PRIVATE_RELAY_LIST            10013
 #define NOSTR_KIND_INTEREST_LIST                 10015
 #define NOSTR_KIND_NUTZAP_INFO                   10019
 #define NOSTR_KIND_EMOJI_LIST                    10030
@@ -123,6 +126,7 @@
 #define NOSTR_KIND_FILE_STORAGE_SERVER_LIST      10096
 #define NOSTR_KIND_GOOD_WIKI_AUTHOR_LIST         10101
 #define NOSTR_KIND_GOOD_WIKI_RELAY_LIST          10102
+#define NOSTR_KIND_SLASH_COMMAND_LIST            10992
 
 /* NIP-47: Wallet Connect */
 #define NOSTR_KIND_NWC_WALLET_INFO               13194
@@ -143,8 +147,10 @@
 #define NOSTR_KIND_BOOKMARK_SETS                 30003
 #define NOSTR_KIND_CURATED_SETS                  30004
 #define NOSTR_KIND_CURATED_VIDEO_SETS            30005
+#define NOSTR_KIND_CURATED_PICTURE_SETS          30006
 #define NOSTR_KIND_MUTE_SETS                     30007
-#define NOSTR_KIND_PROFILE_BADGES                30008
+#define NOSTR_KIND_PROFILE_BADGES                30008 /* deprecated legacy name */
+#define NOSTR_KIND_BADGE_SETS                    30008
 #define NOSTR_KIND_BADGE_DEFINITION              30009
 #define NOSTR_KIND_INTEREST_SETS                 30015
 #define NOSTR_KIND_STALL_DEFINITION              30017
@@ -158,6 +164,7 @@
 #define NOSTR_KIND_MODULAR_ARTICLE_CONTENT       30041
 #define NOSTR_KIND_RELEASE_ARTIFACT_SETS         30063
 #define NOSTR_KIND_APPLICATION_SPECIFIC_DATA     30078
+#define NOSTR_KIND_APP_CURATION_SETS             30267
 #define NOSTR_KIND_LIVE_EVENT                    30311
 #define NOSTR_KIND_USER_STATUSES                 30315
 #define NOSTR_KIND_CLASSIFIED_LISTING            30402
@@ -166,6 +173,7 @@
 #define NOSTR_KIND_REPOSITORY_STATE              30618
 #define NOSTR_KIND_WIKI_ARTICLE                  30818
 #define NOSTR_KIND_REDIRECTS                     30819
+#define NOSTR_KIND_DRAFT_WRAP                    31234
 #define NOSTR_KIND_FEED                          31890
 #define NOSTR_KIND_DATE_CALENDAR_EVENT           31922
 #define NOSTR_KIND_TIME_CALENDAR_EVENT           31923
@@ -174,6 +182,9 @@
 #define NOSTR_KIND_RELAY_REVIEW                  31987
 #define NOSTR_KIND_HANDLER_RECOMMENDATION        31989
 #define NOSTR_KIND_HANDLER_INFORMATION           31990
+#define NOSTR_KIND_SLASH_COMMAND_DEFINITION      31992
+#define NOSTR_KIND_STARTER_PACK                  39089
+#define NOSTR_KIND_MEDIA_STARTER_PACK            39092
 #define NOSTR_KIND_VIDEO_EVENT                   34235
 #define NOSTR_KIND_SHORT_VIDEO_EVENT             34236
 #define NOSTR_KIND_VIDEO_VIEW_EVENT              34237
