@@ -12,6 +12,7 @@
 #include <gio/gio.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include "gnostr-list-service.h"
 
 G_BEGIN_DECLS
 
@@ -44,8 +45,11 @@ NOSTR_GOBJECT_API void gnostr_mute_list_shutdown(void);
  * @self: mute list instance
  * @event_json: JSON string of kind 10000 event
  *
- * Parses a kind 10000 mute list event and caches entries.
- * This is for loading from local storage or relay response.
+ * Imports a decoded/public kind 10000 cache document. This legacy local import
+ * accepts unsigned cache JSON; it does not label that data a verified revision.
+ * Encrypted revisions must use fetch, which authenticates and decrypts them
+ * through the backing service. An encrypted local import fails without clearing
+ * the last usable projection.
  *
  * Returns: TRUE on success
  */
@@ -405,14 +409,19 @@ NOSTR_GOBJECT_API gboolean gnostr_mute_list_save_gtask_finish(GNostrMuteList *se
                                              GAsyncResult *result,
                                              GError **error);
 
-/* ---- Signals ---- */
-
 /**
- * "changed" signal
+ * gnostr_mute_list_get_service:
+ * @self: mute list instance
  *
- * Emitted when the mute list is modified locally or loaded from relays.
- * Connect to update UI filtering.
+ * Returns the current account-scoped backing service. The opaque facade is not
+ * a GObject and has no changed signal. Connect to the service's document-changed
+ * signal instead; fetch rebinding replaces the service. Mutations are serialized
+ * to its owner context, while synchronous queries use a mutex-protected snapshot.
+ * Pending edits/removal records in Gnostr are session-only, not disk storage.
+ *
+ * Returns: (transfer full) (nullable): the backing service
  */
+NOSTR_GOBJECT_API GNostrListService *gnostr_mute_list_get_service(GNostrMuteList *self);
 
 G_END_DECLS
 

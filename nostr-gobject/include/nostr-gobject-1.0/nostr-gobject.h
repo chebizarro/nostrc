@@ -19,6 +19,8 @@
 
 #include "gn-blossom-client.h"
 #include "gn-vault.h"
+#include "gnostr-list-document.h"
+#include "gnostr-list-service.h"
 
 /* Core GObject wrappers (G-prefixed, no core header conflicts) */
 #include "nostr_event.h"
