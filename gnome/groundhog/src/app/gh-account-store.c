@@ -64,7 +64,8 @@ struct _GhAccountStore {
   GQueue shreds;                  /* Op (OP_SHRED) waiting their turn */
 };
 
-enum { SIGNAL_CHANGED, SIGNAL_STORE_OPENING, SIGNAL_STORE_CLOSED, N_SIGNALS };
+enum { SIGNAL_CHANGED, SIGNAL_STORE_OPENING, SIGNAL_STORE_BOUND, SIGNAL_STORE_CLOSING,
+       SIGNAL_STORE_CLOSED, N_SIGNALS };
 static guint signals[N_SIGNALS];
 
 G_DEFINE_FINAL_TYPE(GhAccountStore, gh_account_store, G_TYPE_OBJECT)
@@ -231,6 +232,8 @@ close_store(GhAccountStore *self, GhStore *store)
 static void
 unbind_store(GhAccountStore *self)
 {
+  if (self->store)
+    g_signal_emit(self, signals[SIGNAL_STORE_CLOSING], 0);
   set_remote_storage_ready(self, FALSE);
   if (self->inbox)
     gh_dm_inbox_clear_storage(self->inbox);
@@ -313,6 +316,7 @@ bind_store(GhAccountStore *self, GhStore *store, gboolean corrupt)
   g_autoptr(GError) error = NULL;
   gboolean ephemeral = gh_store_is_ephemeral(store);
   self->store = store;
+  g_signal_emit(self, signals[SIGNAL_STORE_BOUND], 0);
   self->conversations = gh_store_conversations_new(store);
   if (!corrupt && !ephemeral)
     import_legacy(self);
@@ -955,6 +959,10 @@ gh_account_store_class_init(GhAccountStoreClass *klass)
   signals[SIGNAL_STORE_OPENING] = g_signal_new("store-opening", G_TYPE_FROM_CLASS(klass),
                                                G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
                                                G_TYPE_NONE, 1, G_TYPE_STRING);
+  signals[SIGNAL_STORE_BOUND] = g_signal_new("store-bound", G_TYPE_FROM_CLASS(klass),
+    G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL, G_TYPE_NONE, 0);
+  signals[SIGNAL_STORE_CLOSING] = g_signal_new("store-closing", G_TYPE_FROM_CLASS(klass),
+    G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL, G_TYPE_NONE, 0);
   signals[SIGNAL_STORE_CLOSED] = g_signal_new("store-closed", G_TYPE_FROM_CLASS(klass),
                                               G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
                                               G_TYPE_NONE, 1, G_TYPE_STRING);

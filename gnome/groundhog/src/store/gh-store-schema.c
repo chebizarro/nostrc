@@ -426,6 +426,32 @@ static const gchar schema_v10[] =
   "CREATE INDEX public_notes_address ON public_notes(kind, pubkey, dtag, created_at DESC, id);"
   "CREATE INDEX public_notes_age ON public_notes(stored_at);";
 
+/* Account-local social state. Index keys containing a NUL use BLOBs. */
+static const gchar schema_v11[] =
+  "CREATE TABLE social_preferences (id INTEGER PRIMARY KEY CHECK(id=1),"
+  " sync_enabled INTEGER NOT NULL DEFAULT 0 CHECK(sync_enabled IN (0,1)),"
+  " blossom_imported INTEGER NOT NULL DEFAULT 0, visibility_revision TEXT NOT NULL DEFAULT '');"
+  "INSERT INTO social_preferences(id) VALUES(1);"
+  "CREATE TABLE social_documents (kind INTEGER NOT NULL, identifier TEXT NOT NULL DEFAULT '',"
+  " event_id TEXT, created_at INTEGER NOT NULL DEFAULT 0, event_json TEXT, decoded_json TEXT,"
+  " private_state INTEGER NOT NULL DEFAULT 0, local_revision INTEGER NOT NULL DEFAULT 0,"
+  " dirty INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(kind,identifier)) WITHOUT ROWID;"
+  "CREATE TABLE social_edits (sequence INTEGER PRIMARY KEY, kind INTEGER NOT NULL,"
+  " identifier TEXT NOT NULL DEFAULT '', base_event_id TEXT, operation_json TEXT NOT NULL);"
+  "CREATE INDEX social_edits_document ON social_edits(kind,identifier,sequence);"
+  "CREATE TABLE social_removals (kind INTEGER NOT NULL, identifier TEXT NOT NULL DEFAULT '',"
+  " entry_key BLOB NOT NULL, removed_at INTEGER NOT NULL, local_revision INTEGER NOT NULL,"
+  " PRIMARY KEY(kind,identifier,entry_key)) WITHOUT ROWID;"
+  "CREATE TABLE social_publications (id INTEGER PRIMARY KEY, kind INTEGER NOT NULL,"
+  " identifier TEXT NOT NULL DEFAULT '', local_revision INTEGER NOT NULL, event_json TEXT NOT NULL,"
+  " targets_json TEXT NOT NULL, outcomes_json TEXT NOT NULL, state INTEGER NOT NULL DEFAULT 0,"
+  " next_attempt_at INTEGER NOT NULL DEFAULT 0);"
+  "CREATE TABLE social_follows (pubkey TEXT PRIMARY KEY, relay_hint TEXT, petname TEXT,"
+  " position INTEGER NOT NULL) WITHOUT ROWID;"
+  "CREATE TABLE social_mutes (entry_key BLOB PRIMARY KEY, tag_name TEXT NOT NULL, value TEXT NOT NULL,"
+  " position INTEGER NOT NULL, is_private INTEGER NOT NULL) WITHOUT ROWID;"
+  "CREATE TABLE social_servers (url TEXT PRIMARY KEY, position INTEGER NOT NULL) WITHOUT ROWID;";
+
 static const GhStoreMigration migrations[] = {
   { 1, "Groundhog store schema v1 (privacy charter §3.3)", schema_v1 },
   { 2, "MLS state for libmarmot's MarmotStorage (charter §3.9, G23)", schema_v2 },
@@ -437,6 +463,7 @@ static const GhStoreMigration migrations[] = {
   { 8, "Bounded pending reactions and deletion tombstones (W28, nostrc-r41l)", schema_v8 },
   { 9, "Profile-picture consent per contact (W32)", schema_v9 },
   { 10, "Verified public-note cache for explicit repost and quote references (B2)", schema_v10 },
+  { 11, "Account-local social lists and preferences", schema_v11 },
 };
 
 G_STATIC_ASSERT(G_N_ELEMENTS(migrations) == GH_STORE_SCHEMA_VERSION);

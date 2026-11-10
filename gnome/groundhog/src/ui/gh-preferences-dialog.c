@@ -42,6 +42,12 @@ typedef struct {
 struct _GhPreferencesDialog {
   AdwPreferencesDialog parent_instance;
 
+  GhListsBackend social;
+  guint64 social_generation;
+  gboolean social_syncing;
+  AdwPreferencesGroup *social_group;
+  AdwSwitchRow *social_sync_row;
+  AdwActionRow *social_lists_row;
   AdwSwitchRow *notifications_row;
   AdwComboRow *notification_privacy_row;
   AdwSwitchRow *sound_row;
@@ -1697,10 +1703,72 @@ gh_preferences_dialog_get_property(GObject *object, guint prop_id, GValue *value
 }
 
 static void
+social_changed(GObject *owner, GhPreferencesDialog *self)
+{
+  (void)owner;
+  if (self->disposed || !self->social.owner)
+    return;
+  guint64 generation = self->social.generation(self->social.owner);
+  if (generation != self->social_generation) {
+    adw_dialog_force_close(ADW_DIALOG(self));
+    gtk_widget_set_sensitive(GTK_WIDGET(self->social_lists_row), FALSE);
+    return;
+  }
+  self->social_syncing = TRUE;
+  adw_switch_row_set_active(self->social_sync_row, self->social.get_sync(self->social.owner));
+  gtk_widget_set_sensitive(GTK_WIDGET(self->social_sync_row), self->social.sync_available);
+  gtk_widget_set_sensitive(GTK_WIDGET(self->social_lists_row), self->social.service(self->social.owner) != NULL);
+  self->social_syncing = FALSE;
+}
+
+static void
+social_sync_changed(GObject *row, GParamSpec *pspec, GhPreferencesDialog *self)
+{
+  (void)row; (void)pspec;
+  if (self->social_syncing || !self->social.owner)
+    return;
+  g_autoptr(GError) error = NULL;
+  if (!self->social.set_sync(self->social.owner, adw_switch_row_get_active(self->social_sync_row), &error))
+    adw_action_row_set_subtitle(ADW_ACTION_ROW(self->social_sync_row), _("Not changed — check account storage or synchronization availability"));
+  social_changed(self->social.owner, self);
+}
+
+static void
+social_lists_open(AdwActionRow *row, GhPreferencesDialog *self)
+{
+  (void)row;
+  if (self->social.owner && self->social_generation == self->social.generation(self->social.owner) &&
+      self->social.service(self->social.owner))
+    adw_preferences_dialog_push_subpage(ADW_PREFERENCES_DIALOG(self),
+      ADW_NAVIGATION_PAGE(gh_lists_page_new(&self->social)));
+}
+
+void
+gh_preferences_dialog_set_social_backend(GhPreferencesDialog *self, const GhListsBackend *backend)
+{
+  if (self->social.owner) {
+    g_signal_handlers_disconnect_by_data(self->social.owner, self);
+    adw_dialog_force_close(ADW_DIALOG(self));
+  }
+  g_clear_object(&self->social.owner);
+  self->social = backend ? *backend : (GhListsBackend){0};
+  if (backend) {
+    self->social.owner = g_object_ref(backend->owner);
+    self->social_generation = backend->generation(backend->owner);
+    g_signal_connect(self->social.owner, "changed", G_CALLBACK(social_changed), self);
+    social_changed(self->social.owner, self);
+  }
+  gtk_widget_set_visible(GTK_WIDGET(self->social_group), backend != NULL);
+}
+
+static void
 gh_preferences_dialog_dispose(GObject *object)
 {
   GhPreferencesDialog *self = GH_PREFERENCES_DIALOG(object);
   self->disposed = TRUE;
+  if (self->social.owner)
+    g_signal_handlers_disconnect_by_data(self->social.owner, self);
+  g_clear_object(&self->social.owner);
   if (self->settings_changed) {
     g_signal_handler_disconnect(self->settings, self->settings_changed);
     self->settings_changed = 0;
@@ -1802,6 +1870,9 @@ gh_preferences_dialog_class_init(GhPreferencesDialogClass *klass)
   gtk_widget_class_set_template_from_resource(widget_class,
                                               "/org/nostr/Groundhog/ui/gh-preferences-dialog.ui");
 #define BIND(name) gtk_widget_class_bind_template_child(widget_class, GhPreferencesDialog, name)
+  BIND(social_group);
+  BIND(social_sync_row);
+  BIND(social_lists_row);
   BIND(notifications_row);
   BIND(notification_privacy_row);
   BIND(sound_row);
@@ -1869,6 +1940,8 @@ static void
 gh_preferences_dialog_init(GhPreferencesDialog *self)
 {
   gtk_widget_init_template(GTK_WIDGET(self));
+  g_signal_connect(self->social_sync_row, "notify::active", G_CALLBACK(social_sync_changed), self);
+  g_signal_connect(self->social_lists_row, "activated", G_CALLBACK(social_lists_open), self);
   gh_agents_page_populate(self->agents_page);
   self->key_widgets = g_hash_table_new(g_str_hash, g_str_equal);
   self->bindings = g_ptr_array_new_with_free_func(binding_free);

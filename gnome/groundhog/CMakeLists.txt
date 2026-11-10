@@ -68,7 +68,7 @@ set(GROUNDHOG_BLUEPRINTS
   gh-mls-member-row gh-mls-group-info-dialog gh-mls-invite-row gh-mls-invites-page
   gh-blocked-page gh-blocked-row gh-conversation-menu
   gh-attachment-card gh-attachment-sheet gh-create-poll-dialog
-  gh-voice-bubble)
+  gh-voice-bubble gh-lists-page gh-list-editor-page)
 set(GROUNDHOG_BLUEPRINT_MIN_VERSION 0.12.0)
 include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/Blueprint.cmake)
 set(GROUNDHOG_BLUEPRINT_COMPILER "")
@@ -1594,10 +1594,15 @@ endif()
 # is the one list of what the build performs, flipped one line per feature (G09
 # Tor, G13 composer, G16 notifications, ...), and tests/check_privacy.py
 # requires a consumer for every row it leaves live.
+add_library(groundhog-lists-ui STATIC src/ui/gh-lists-page.c src/ui/gh-list-editor-page.c)
+target_include_directories(groundhog-lists-ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/ui)
+target_link_libraries(groundhog-lists-ui PUBLIC groundhog-ui nostr_gobject)
+target_compile_options(groundhog-lists-ui PRIVATE -Wall -Wextra -Werror)
+
 add_library(groundhog-preferences STATIC src/ui/gh-preferences-dialog.c
   src/ui/gh-agents-page.c)
 target_include_directories(groundhog-preferences PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/ui)
-target_link_libraries(groundhog-preferences PUBLIC groundhog-ui groundhog-diagnostics)
+target_link_libraries(groundhog-preferences PUBLIC groundhog-ui groundhog-diagnostics groundhog-lists-ui)
 target_compile_options(groundhog-preferences PRIVATE -Wall -Wextra -Werror)
 target_link_libraries(groundhog PRIVATE groundhog-preferences)
 if (BUILD_TESTING)
@@ -3740,6 +3745,46 @@ foreach(_groundhog_target IN LISTS _groundhog_targets)
     nostrc_internal_visibility(${_groundhog_target})
   endif()
 endforeach()
+
+# Stage 3: account-local social storage. No transport/signer adapters are linked.
+if(TARGET groundhog-account-store)
+  add_library(groundhog-store-social STATIC src/store/gh-store-social.c)
+  target_link_libraries(groundhog-store-social PUBLIC groundhog-store nostr_gobject)
+  target_include_directories(groundhog-store-social PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/store)
+  target_compile_options(groundhog-store-social PRIVATE -Wall -Wextra -Werror)
+  add_library(groundhog-social-lists STATIC src/app/gh-social-lists.c src/app/gh-list-adapter.c)
+  target_link_libraries(groundhog-social-lists PUBLIC groundhog-store-social groundhog-account-store)
+  target_compile_options(groundhog-social-lists PRIVATE -Wall -Wextra -Werror)
+  add_library(groundhog-social-lists-backend STATIC src/app/gh-social-lists-backend.c)
+  target_link_libraries(groundhog-social-lists-backend PUBLIC groundhog-social-lists groundhog-lists-ui)
+  target_compile_options(groundhog-social-lists-backend PRIVATE -Wall -Wextra -Werror)
+  target_link_libraries(groundhog PRIVATE groundhog-social-lists-backend)
+  if(TARGET test-groundhog-account-store)
+    target_link_libraries(test-groundhog-account-store PRIVATE groundhog-social-lists)
+  endif()
+  target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_SOCIAL_LISTS=1)
+  if(BUILD_TESTING)
+    foreach(pair "store-social|store/test_store_social.c" "social-lists|app/test_social_lists.c" "lists-ui|ui/test_lists.c")
+      string(REPLACE "|" ";" parts "${pair}")
+      list(GET parts 0 name)
+      list(GET parts 1 source)
+      add_executable(test-groundhog-${name} tests/${source})
+      target_link_libraries(test-groundhog-${name} PRIVATE groundhog-social-lists)
+      target_compile_options(test-groundhog-${name} PRIVATE -Wall -Wextra -Werror)
+      groundhog_store_link_sqlcipher_first(test-groundhog-${name})
+      add_test(NAME groundhog-${name} COMMAND test-groundhog-${name})
+      set_tests_properties(groundhog-${name} PROPERTIES TIMEOUT 120
+        ENVIRONMENT "G_DEBUG=fatal-criticals;GSETTINGS_BACKEND=memory;GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS}")
+    endforeach()
+    target_sources(test-groundhog-lists-ui PRIVATE ${GROUNDHOG_RESOURCE_C})
+    target_link_libraries(test-groundhog-lists-ui PRIVATE groundhog-social-lists-backend groundhog-preferences)
+    target_include_directories(test-groundhog-lists-ui PRIVATE ${CMAKE_SOURCE_DIR}/tests/common)
+    add_dependencies(test-groundhog-lists-ui groundhog-test-schemas)
+    set_tests_properties(groundhog-lists-ui PROPERTIES SKIP_RETURN_CODE 77)
+  endif()
+else()
+  target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_SOCIAL_LISTS=0)
+endif()
 
 # --- test isolation (nostrc-ttvxv) ---
 # A test-key account once got a store under the developer's real

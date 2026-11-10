@@ -620,6 +620,23 @@ template $GhPreferencesDialog: Adw.PreferencesDialog {
       }
     }
 
+    Adw.PreferencesGroup social_group {
+      title: _("Lists and Synchronization");
+      visible: false;
+      Adw.SwitchRow social_sync_row {
+        title: _("Sync Drafts and Lists");
+        subtitle: _("Off — synchronization is not available in this version yet. Lists stay on this device; public publication requires separate approval.");
+        active: false;
+        sensitive: false;
+      }
+      Adw.ActionRow social_lists_row {
+        title: _("Lists and Sets");
+        subtitle: _("Manage local lists without a signer or network connection");
+        activatable: true;
+        [suffix] Image { icon-name: "go-next-symbolic"; }
+      }
+    }
+
     Adw.PreferencesGroup {
       title: _("Background");
 

@@ -3,6 +3,7 @@
 
 #include <adwaita.h>
 #include "gh-agents-page.h"
+#include "gh-lists-page.h"
 
 G_BEGIN_DECLS
 
@@ -134,6 +135,10 @@ typedef GhPreferencesForgetResult (*GhPreferencesForgetFinishFunc)(GObject *targ
  * (gh_features_for_preferences() in the application). */
 GhPreferencesDialog *gh_preferences_dialog_new(GSettings *settings,
                                                GhPreferencesFeatures features);
+
+/* Account-local backend, copied with an owned reference to backend->owner.
+ * No GSettings binding. Replacement dismisses open pages; NULL detaches it. */
+void gh_preferences_dialog_set_social_backend(GhPreferencesDialog *self, const GhListsBackend *backend);
 
 /* Whether key's row is live in this build: TRUE when it has every feature it
  * needs (a key no feature governs always has); FALSE for a key without a

@@ -645,6 +645,32 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
           </object>
         </child>
         <child>
+          <object class="AdwPreferencesGroup" id="social_group">
+            <property name="title" translatable="yes">Lists and Synchronization</property>
+            <property name="visible">false</property>
+            <child>
+              <object class="AdwSwitchRow" id="social_sync_row">
+                <property name="title" translatable="yes">Sync Drafts and Lists</property>
+                <property name="subtitle" translatable="yes">Off — synchronization is not available in this version yet. Lists stay on this device; public publication requires separate approval.</property>
+                <property name="active">false</property>
+                <property name="sensitive">false</property>
+              </object>
+            </child>
+            <child>
+              <object class="AdwActionRow" id="social_lists_row">
+                <property name="title" translatable="yes">Lists and Sets</property>
+                <property name="subtitle" translatable="yes">Manage local lists without a signer or network connection</property>
+                <property name="activatable">true</property>
+                <child type="suffix">
+                  <object class="GtkImage">
+                    <property name="icon-name">go-next-symbolic</property>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
           <object class="AdwPreferencesGroup">
             <property name="title" translatable="yes">Background</property>
             <child>

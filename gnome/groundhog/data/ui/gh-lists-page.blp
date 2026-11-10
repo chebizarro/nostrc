@@ -1,0 +1,51 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $GhListsPage : Adw.NavigationPage {
+  title: _("Lists and Sets");
+  tag: "lists";
+  child: Adw.ToolbarView {
+    [top] Adw.HeaderBar {}
+    content: ScrolledWindow {
+      hscrollbar-policy: never;
+      Adw.Clamp {
+        maximum-size: 680;
+        tightening-threshold: 480;
+        Box {
+          orientation: vertical;
+          spacing: 18;
+          margin-start: 18;
+          margin-end: 18;
+          margin-top: 18;
+          margin-bottom: 24;
+          Label status {
+            label: _("Lists are saved on this device. Sync and publication are not available in this version yet.");
+            wrap: true;
+            xalign: 0;
+            accessible-role: status;
+          }
+          ListView documents {
+            single-click-activate: true;
+            styles ["boxed-list"]
+            accessibility { label: _("Saved lists and sets"); }
+          }
+          Adw.PreferencesGroup {
+            title: _("New List or Set");
+            description: _("Choose a kind and a unique address. Slash commands are stored as definitions only and are never executed.");
+            Adw.ComboRow kind_row { title: _("List kind"); }
+            Adw.EntryRow identifier_row { title: _("_Identifier"); use-underline: true; }
+            Adw.EntryRow title_row { title: _("_Title"); use-underline: true; }
+          }
+          Button create_list {
+            label: _("_Create List");
+            use-underline: true;
+            halign: end;
+            sensitive: false;
+            styles ["suggested-action"]
+          }
+          Button import_list { label: _("_Import JSON…"); use-underline: true; halign: start; }
+        }
+      }
+    };
+  };
+}
