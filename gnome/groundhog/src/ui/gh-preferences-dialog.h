@@ -4,6 +4,7 @@
 #include <adwaita.h>
 #include "gh-agents-page.h"
 #include "gh-lists-page.h"
+#include "gh-drafts-page.h"
 
 G_BEGIN_DECLS
 
@@ -139,6 +140,9 @@ GhPreferencesDialog *gh_preferences_dialog_new(GSettings *settings,
 /* Account-local backend, copied with an owned reference to backend->owner.
  * No GSettings binding. Replacement dismisses open pages; NULL detaches it. */
 void gh_preferences_dialog_set_social_backend(GhPreferencesDialog *self, const GhListsBackend *backend);
+/* Messages › Drafts (gh-drafts-page.h), copied with an owned reference to
+ * backend->owner; NULL hides the row. Replacement dismisses open pages. */
+void gh_preferences_dialog_set_drafts_backend(GhPreferencesDialog *self, const GhDraftsBackend *backend);
 
 /* Whether key's row is live in this build: TRUE when it has every feature it
  * needs (a key no feature governs always has); FALSE for a key without a

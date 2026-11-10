@@ -118,6 +118,8 @@ void gh_send_ui_refresh(GhWindow *window);
 typedef struct {
   /* The composer shows room_key (NULL: none); after leaving a room. */
   void (*shown)(const gchar *room_key, gpointer data);
+  /* The user asked to retry a stopped or failed sync (the status's Retry). */
+  void (*retry)(gpointer data);
 } GhSendUiDraftHooks;
 void gh_send_ui_set_draft_hooks(GhWindow *window, const GhSendUiDraftHooks *hooks, gpointer data);
 /* A remote revision for room_key (text NULL: cleared): when the composer
@@ -127,8 +129,9 @@ void gh_send_ui_set_draft_hooks(GhWindow *window, const GhSendUiDraftHooks *hook
 void gh_send_ui_apply_remote_draft(GhWindow *window, const gchar *room_key, const gchar *text);
 /* Whether the composer shows room_key and has keyboard focus. */
 gboolean gh_send_ui_composer_focused(GhWindow *window, const gchar *room_key);
-/* The draft status line (NULL: none). */
-void gh_send_ui_set_draft_status(GhWindow *window, const gchar *status);
+/* The draft status line (NULL: none), with a Retry button when the sync
+ * stopped or failed (can_retry), which calls the hooks' retry. */
+void gh_send_ui_set_draft_status(GhWindow *window, const gchar *status, gboolean can_retry);
 
 G_END_DECLS
 #endif

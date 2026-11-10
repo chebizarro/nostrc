@@ -95,6 +95,28 @@ void gh_draft_sync_retry(GhDraftSync *self);
 /* NULL while nothing needs saying; otherwise "Choose a Private Relay to Sync
  * Drafts", "Saved on This Device · Waiting for Signer", ... */
 const gchar *gh_draft_sync_get_status(GhDraftSync *self);
+/* Whether the status names a stopped or failed sync that Retry resumes (a
+ * signer that declined or is unavailable, a relay failure). */
+gboolean gh_draft_sync_can_retry(GhDraftSync *self);
+/* The sync switch is on and the store can sync (targets may still be missing). */
+gboolean gh_draft_sync_is_enabled(GhDraftSync *self);
+guint64 gh_draft_sync_get_generation(GhDraftSync *self);
+/* The bound account's public key (hex), or NULL. */
+const gchar *gh_draft_sync_get_account(GhDraftSync *self);
+
+/* ---- Conflict copies (Preferences › Messages › Drafts) ------------------------------
+ * The text a newer remote revision displaced (or the local text kept at
+ * enable time). Every change emits "changed". Array of GhStoreDraftConflict,
+ * newest first; empty when not bound. */
+GPtrArray *gh_draft_sync_list_conflicts(GhDraftSync *self, GError **error);
+/* Puts a copy back as the room's draft (a new local revision, so it syncs as
+ * the newest) and into the composer when the room is shown; a different
+ * local text it replaces becomes a conflict copy in turn. */
+gboolean gh_draft_sync_restore_conflict(GhDraftSync *self, gint64 id, GError **error);
+gboolean gh_draft_sync_discard_conflict(GhDraftSync *self, gint64 id, GError **error);
+/* Undo of a discard: the text is kept again (under a new id). */
+gboolean gh_draft_sync_keep_conflict(GhDraftSync *self, const gchar *room_key, const gchar *text,
+                                     GError **error);
 /* Import state of this binding: every relay reached EOSE; revisions
  * decrypted; events that could not be imported (bound, undecryptable). */
 void gh_draft_sync_get_import_state(GhDraftSync *self, gboolean *out_complete,

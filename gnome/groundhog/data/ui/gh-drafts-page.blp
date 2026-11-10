@@ -1,0 +1,78 @@
+using Gtk 4.0;
+using Adw 1;
+
+// Preferences › Messages › Drafts (nostrc-9lwl7.8): the synchronization
+// status with Retry when it stopped, and the conflict copies as a boxed
+// list whose rows (title: the text; subtitle: the people and when it was
+// kept; Restore and Discard at the end) are built from C.
+template $GhDraftsPage : Adw.NavigationPage {
+  title: _("Drafts");
+  tag: "drafts";
+
+  child: Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {}
+
+    content: ScrolledWindow {
+      hscrollbar-policy: never;
+
+      Adw.Clamp {
+        maximum-size: 680;
+        tightening-threshold: 480;
+
+        Box {
+          orientation: vertical;
+          spacing: 24;
+          margin-start: 18;
+          margin-end: 18;
+          margin-top: 18;
+          margin-bottom: 24;
+
+          Adw.PreferencesGroup {
+            title: _("Synchronization");
+
+            Adw.ActionRow sync_row {
+              title: _("Status");
+              subtitle-selectable: true;
+
+              [suffix]
+              Button retry_button {
+                visible: false;
+                valign: center;
+                label: _("_Retry");
+                use-underline: true;
+              }
+            }
+          }
+
+          Adw.PreferencesGroup conflicts_group {
+            title: _("Conflict Copies");
+            description: _("Text that a newer draft from another device replaced, or that was kept here when one arrived while you were writing. Restore puts a copy back into its conversation; any text it replaces is kept here in turn.");
+
+            ListBox conflicts_list {
+              selection-mode: none;
+
+              styles [
+                "boxed-list",
+              ]
+
+              accessibility {
+                label: _("Conflict copies");
+              }
+            }
+          }
+
+          Adw.StatusPage empty {
+            icon-name: "document-edit-symbolic";
+            title: _("No Conflict Copies");
+            description: _("A draft synced from another device replaces the text here only while it is not being written");
+
+            styles [
+              "compact",
+            ]
+          }
+        }
+      }
+    };
+  };
+}

@@ -219,6 +219,24 @@ template $GhPreferencesDialog: Adw.PreferencesDialog {
       }
     }
 
+    // Drafts synced to the account's private relays (nostrc-9lwl7.8): the
+    // page shows the synchronization status and the conflict copies; the
+    // row's subtitle is set from C. Shown only with an account store.
+    Adw.PreferencesGroup drafts_group {
+      visible: false;
+      title: _("Drafts");
+
+      Adw.ActionRow drafts_row {
+        title: _("Synced Drafts");
+        activatable: true;
+
+        [suffix]
+        Image {
+          icon-name: "go-next-symbolic";
+        }
+      }
+    }
+
     Adw.PreferencesGroup {
       title: _("History");
 

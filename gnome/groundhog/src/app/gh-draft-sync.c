@@ -1708,6 +1708,125 @@ gh_draft_sync_is_active(GhDraftSync *self)
   return active(self);
 }
 
+gboolean
+gh_draft_sync_is_enabled(GhDraftSync *self)
+{
+  g_return_val_if_fail(GH_IS_DRAFT_SYNC(self), FALSE);
+  return sync_enabled(self);
+}
+
+guint64
+gh_draft_sync_get_generation(GhDraftSync *self)
+{
+  g_return_val_if_fail(GH_IS_DRAFT_SYNC(self), 0);
+  return self->store ? self->generation : 0;
+}
+
+const gchar *
+gh_draft_sync_get_account(GhDraftSync *self)
+{
+  g_return_val_if_fail(GH_IS_DRAFT_SYNC(self), NULL);
+  return self->account;
+}
+
+gboolean
+gh_draft_sync_can_retry(GhDraftSync *self)
+{
+  g_return_val_if_fail(GH_IS_DRAFT_SYNC(self), FALSE);
+  if (!active(self))
+    return FALSE;
+  if (self->signer_waiting || self->failure)
+    return TRUE;
+  GHashTableIter iter;
+  gpointer value;
+  g_hash_table_iter_init(&iter, self->rooms);
+  while (g_hash_table_iter_next(&iter, NULL, &value))
+    if (((Room *) value)->denied_revision)
+      return TRUE;
+  return FALSE;
+}
+
+/* ---- conflict copies ------------------------------------------------------------------- */
+
+static gboolean
+check_bound(GhDraftSync *self, GError **error)
+{
+  if (bound(self))
+    return TRUE;
+  g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_CLOSED, "Account storage is not open");
+  return FALSE;
+}
+
+GPtrArray *
+gh_draft_sync_list_conflicts(GhDraftSync *self, GError **error)
+{
+  g_return_val_if_fail(GH_IS_DRAFT_SYNC(self), NULL);
+  if (!bound(self))
+    return g_ptr_array_new_with_free_func((GDestroyNotify) gh_store_draft_conflict_free);
+  return gh_store_drafts_list_conflicts(self->store, NULL, error);
+}
+
+gboolean
+gh_draft_sync_discard_conflict(GhDraftSync *self, gint64 id, GError **error)
+{
+  g_return_val_if_fail(GH_IS_DRAFT_SYNC(self), FALSE);
+  if (!check_bound(self, error) || !gh_store_drafts_delete_conflict(self->store, id, error))
+    return FALSE;
+  g_signal_emit(self, signals[SIGNAL_CHANGED], 0);
+  return TRUE;
+}
+
+gboolean
+gh_draft_sync_keep_conflict(GhDraftSync *self, const gchar *room_key, const gchar *text,
+                            GError **error)
+{
+  g_return_val_if_fail(GH_IS_DRAFT_SYNC(self), FALSE);
+  g_return_val_if_fail(room_key != NULL && text != NULL, FALSE);
+  if (!check_bound(self, error) ||
+      !gh_store_drafts_add_conflict(self->store, room_key, text, NULL, now_unix(self), error))
+    return FALSE;
+  g_signal_emit(self, signals[SIGNAL_CHANGED], 0);
+  return TRUE;
+}
+
+gboolean
+gh_draft_sync_restore_conflict(GhDraftSync *self, gint64 id, GError **error)
+{
+  g_return_val_if_fail(GH_IS_DRAFT_SYNC(self), FALSE);
+  if (!check_bound(self, error))
+    return FALSE;
+  if (!self->conversations) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
+                        "Drafts cannot be restored without the conversation store");
+    return FALSE;
+  }
+  g_autoptr(GPtrArray) conflicts = gh_store_drafts_list_conflicts(self->store, NULL, error);
+  if (!conflicts)
+    return FALSE;
+  GhStoreDraftConflict *found = NULL;
+  for (guint i = 0; i < conflicts->len && !found; i++)
+    if (((GhStoreDraftConflict *) conflicts->pdata[i])->id == id)
+      found = conflicts->pdata[i];
+  if (!found) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND, "No such draft copy");
+    return FALSE;
+  }
+  /* The text it replaces is kept in turn, so nothing written is lost. */
+  g_autofree gchar *local = NULL;
+  if (!gh_store_drafts_get_room(self->store, found->room_key, NULL, NULL, &local, error))
+    return FALSE;
+  if (local && *local && g_strcmp0(local, found->text) &&
+      !gh_store_drafts_add_conflict(self->store, found->room_key, local, NULL, now_unix(self), error))
+    return FALSE;
+  /* A local edit: a new dirty revision that syncs as the newest. */
+  if (!gh_store_conversations_set_draft(self->conversations, found->room_key, found->text, error) ||
+      !gh_store_drafts_delete_conflict(self->store, id, error))
+    return FALSE;
+  apply_to_window(self, found->room_key, found->text);
+  g_signal_emit(self, signals[SIGNAL_CHANGED], 0);
+  return TRUE;
+}
+
 GhDraftSync *
 gh_draft_sync_new(GhSocialLists *social)
 {

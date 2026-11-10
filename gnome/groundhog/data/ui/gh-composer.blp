@@ -41,18 +41,35 @@ template $GhComposer: Widget {
         }
 
         // Draft synchronization status (nostrc-9lwl7.8), e.g. "Saved on
-        // This Device · Waiting for Signer"; set from C, hidden when empty.
-        Label status_label {
+        // This Device · Waiting for Signer", with Retry when the sync
+        // stopped; both set from C, hidden when empty.
+        Box status_row {
           visible: false;
-          wrap: true;
-          wrap-mode: word_char;
-          xalign: 0;
+          spacing: 6;
 
-          styles [
-            "caption",
-            "dim-label",
-            "groundhog-composer-status",
-          ]
+          Label status_label {
+            wrap: true;
+            wrap-mode: word_char;
+            xalign: 0;
+            hexpand: true;
+            valign: center;
+
+            styles [
+              "caption",
+              "dim-label",
+              "groundhog-composer-status",
+            ]
+          }
+
+          Button status_button {
+            visible: false;
+            valign: center;
+            use-underline: true;
+
+            styles [
+              "flat",
+            ]
+          }
         }
 
         Box edit_row {

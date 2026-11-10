@@ -242,6 +242,23 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
           </object>
         </child>
         <child>
+          <object class="AdwPreferencesGroup" id="drafts_group">
+            <property name="visible">false</property>
+            <property name="title" translatable="yes">Drafts</property>
+            <child>
+              <object class="AdwActionRow" id="drafts_row">
+                <property name="title" translatable="yes">Synced Drafts</property>
+                <property name="activatable">true</property>
+                <child type="suffix">
+                  <object class="GtkImage">
+                    <property name="icon-name">go-next-symbolic</property>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
           <object class="AdwPreferencesGroup">
             <property name="title" translatable="yes">History</property>
             <child>

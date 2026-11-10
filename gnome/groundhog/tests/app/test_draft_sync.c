@@ -8,7 +8,11 @@
  * is a bounded main-context spin on a condition, and every timer of the
  * service runs on the fake clock. */
 #include "gh-draft-sync.h"
+#include "gh-draft-sync-backend.h"
+#include "gh-preferences-dialog.h"
 #include "gh-test-signer.h"
+#include "nostrc-test-gdk-frame.h"
+void groundhog_register_resource(void);
 #include <glib/gstdio.h>
 #include <jansson.h>
 #include <nostr-kinds.h>
@@ -1191,20 +1195,178 @@ test_switch_off_and_on(void)
   device_down(&a);
 }
 
+/* ---- the Drafts preferences page (--gui) ------------------------------------------- */
+
+static GtkWidget *
+find_by_type(GtkWidget *widget, GType type)
+{
+  if (G_TYPE_CHECK_INSTANCE_TYPE(widget, type)) return widget;
+  for (GtkWidget *child = gtk_widget_get_first_child(widget); child; child = gtk_widget_get_next_sibling(child)) {
+    GtkWidget *found = find_by_type(child, type);
+    if (found) return found;
+  }
+  return NULL;
+}
+/* The first button under widget with that icon (the row's Discard). */
+static GtkWidget *
+find_icon_button(GtkWidget *widget, const gchar *icon)
+{
+  if (GTK_IS_BUTTON(widget) && !g_strcmp0(gtk_button_get_icon_name(GTK_BUTTON(widget)), icon)) return widget;
+  for (GtkWidget *child = gtk_widget_get_first_child(widget); child; child = gtk_widget_get_next_sibling(child)) {
+    GtkWidget *found = find_icon_button(child, icon);
+    if (found) return found;
+  }
+  return NULL;
+}
+typedef struct { Device *d; guint count; } ConflictCount;
+static gboolean
+conflicts_are(gpointer data)
+{
+  ConflictCount *want = data;
+  g_autoptr(GPtrArray) list = gh_draft_sync_list_conflicts(want->d->sync, NULL);
+  return list && list->len == want->count;
+}
+static guint
+rows_of(GtkListBox *list)
+{
+  guint n = 0;
+  for (GtkWidget *c = gtk_widget_get_first_child(GTK_WIDGET(list)); c; c = gtk_widget_get_next_sibling(c)) n++;
+  return n;
+}
+static gboolean page_pushed(gpointer data) { return find_by_type(data, GH_TYPE_DRAFTS_PAGE) != NULL; }
+static gboolean
+status_declined(gpointer data)
+{
+  return !g_strcmp0(gh_draft_sync_get_status(((Device *) data)->sync), "Saved on This Device · Signer Declined");
+}
+
+/* Preferences › Messages › Drafts: the row counts the copies; the page lists
+ * them with Restore (back into the conversation, the displaced text kept in
+ * turn) and Discard (undone by keeping it again); Retry resumes a sync the
+ * signer declined. */
+static void
+test_drafts_page(void)
+{
+  relay_reset();
+  Device a; device_up_synced(&a);
+  gh_test_spin_until(import_complete, &a);
+  settle();
+  set_draft(&a, room, "typed here");
+  const gchar *d1 = "1111111111111111111111111111111111111111111111111111111111111111";
+  g_autofree gchar *theirs = remote_draft(d1, PEER, "typed elsewhere", T0 + 3, NULL);
+  feed(theirs);
+  ConflictCount one = { &a, 1 };
+  gh_test_spin_until(conflicts_are, &one);
+
+  GhPreferencesDialog *prefs = g_object_ref_sink(gh_preferences_dialog_new(a.settings, 0));
+  GhDraftsBackend backend = gh_draft_sync_backend(a.sync);
+  gh_preferences_dialog_set_drafts_backend(prefs, &backend);
+  GtkWindow *window = GTK_WINDOW(adw_window_new());
+  gtk_window_set_default_size(window, 920, 640); gtk_window_present(window);
+  adw_dialog_present(ADW_DIALOG(prefs), GTK_WIDGET(window));
+  adw_preferences_dialog_set_visible_page_name(ADW_PREFERENCES_DIALOG(prefs), "messages");
+  GtkWidget *row = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(prefs), GH_TYPE_PREFERENCES_DIALOG, "drafts_row"));
+  GtkWidget *group = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(prefs), GH_TYPE_PREFERENCES_DIALOG, "drafts_group"));
+  g_assert_true(gtk_widget_get_visible(group));
+  g_assert_cmpstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(row)), ==, "1 conflict copy");
+  g_signal_emit_by_name(row, "activated");
+  gh_test_spin_until(page_pushed, prefs);
+  GtkWidget *page = find_by_type(GTK_WIDGET(prefs), GH_TYPE_DRAFTS_PAGE);
+  GtkListBox *list = GTK_LIST_BOX(gtk_widget_get_template_child(page, GH_TYPE_DRAFTS_PAGE, "conflicts_list"));
+  GtkWidget *empty = GTK_WIDGET(gtk_widget_get_template_child(page, GH_TYPE_DRAFTS_PAGE, "empty"));
+  GtkWidget *retry = GTK_WIDGET(gtk_widget_get_template_child(page, GH_TYPE_DRAFTS_PAGE, "retry_button"));
+  g_assert_cmpuint(rows_of(list), ==, 1);
+  g_assert_false(gtk_widget_get_visible(empty));
+  g_assert_false(gtk_widget_get_visible(retry));
+  GtkListBoxRow *first = gtk_list_box_get_row_at_index(list, 0);
+  g_assert_cmpstr(adw_preferences_row_get_title(ADW_PREFERENCES_ROW(first)), ==, "typed elsewhere");
+  g_assert_false(adw_preferences_row_get_use_markup(ADW_PREFERENCES_ROW(first)));
+  g_assert_nonnull(strstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(first)), "npub1"));
+
+  /* Restore: the copy becomes the draft (and the composer's text); the text
+   * it replaced is kept in turn. */
+  guint applied = a.applied->len;
+  g_signal_emit_by_name(adw_action_row_get_activatable_widget(ADW_ACTION_ROW(first)), "clicked");
+  drain();
+  g_autofree gchar *restored = get_draft(&a, room);
+  g_assert_cmpstr(restored, ==, "typed elsewhere");
+  assert_applied(&a, applied, room, "typed elsewhere");
+  g_assert_cmpuint(rows_of(list), ==, 1);
+  first = gtk_list_box_get_row_at_index(list, 0);
+  g_assert_cmpstr(adw_preferences_row_get_title(ADW_PREFERENCES_ROW(first)), ==, "typed here");
+  g_assert_cmpstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(row)), ==, "1 conflict copy");
+
+  /* Discard, then its Undo's path. */
+  GtkWidget *discard = find_icon_button(GTK_WIDGET(first), "user-trash-symbolic");
+  g_assert_nonnull(discard);
+  g_signal_emit_by_name(discard, "clicked");
+  drain();
+  g_assert_cmpuint(rows_of(list), ==, 0);
+  g_assert_true(gtk_widget_get_visible(empty));
+  g_assert_cmpstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(row)), ==, "Up to date");
+  g_autoptr(GError) error = NULL;
+  g_assert_true(backend.keep(backend.owner, room, "typed here", &error)); g_assert_no_error(error);
+  drain();
+  g_assert_cmpuint(rows_of(list), ==, 1);
+
+  /* A declined signature stops the sync; the page's Retry resumes it. */
+  settle();
+  signer.deny = TRUE;
+  set_draft(&a, room, "declined");
+  advance(&a, GH_DRAFT_SYNC_LOCAL_DELAY_SECONDS);
+  gh_test_spin_until(status_declined, &a);
+  drain();
+  g_assert_true(gtk_widget_get_visible(retry));
+  g_assert_cmpstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(row)), ==, "Saved on This Device · Signer Declined");
+  signer.deny = FALSE;
+  guint before = drafts_written();
+  g_signal_emit_by_name(retry, "clicked");
+  await_drafts(before + 1);
+  DraftWait wait = { &a, room, "declined" };
+  gh_test_spin_until(room_clean, &wait);
+  drain();
+  g_assert_false(gtk_widget_get_visible(retry));
+  g_assert_null(gh_draft_sync_get_status(a.sync));
+
+  adw_dialog_force_close(ADW_DIALOG(prefs)); gtk_window_destroy(window); g_object_unref(prefs); drain();
+  device_down(&a);
+}
+
 int
 main(int argc, char **argv)
 {
+  gboolean gui = argc > 1 && !g_strcmp0(argv[1], "--gui");
+  if (gui) { argv[1] = NULL; argc = 1; }
   g_test_init(&argc, &argv, NULL);
   account = gh_test_pub(1); npub = gh_test_npub(1); other_npub = gh_test_npub(2);
   room = g_strdup_printf("%s,%s", account, PEER);
   room2 = g_strdup_printf("%s,%s", account, PEER2);
-  gh_test_bus_up(&bus);
+  if (gui) {
+    nostrc_test_tolerate_gdk_frame_warning();
+    if (!gtk_init_check()) {
+      g_free(account); g_free(npub); g_free(other_npub); g_free(room); g_free(room2);
+      return 77;
+    }
+    adw_init();
+    g_object_set(gtk_settings_get_default(), "gtk-enable-animations", FALSE, NULL);
+    groundhog_register_resource();
+    gh_test_bus_up_beside_gtk(&bus);
+  } else
+    gh_test_bus_up(&bus);
   gh_test_signer_up(&bus, &signer);
   /* The account's NIP-65 write relay, found on the discovery relay. */
   NostrTags *tags = nostr_tags_new(0);
   nostr_tags_append(tags, nostr_tag_new("r", WRITE_A, "write", NULL));
   seed = sign_json(NOSTR_KIND_RELAY_LIST_METADATA, T0 - 60, tags, "");
   relay_reset();
+  if (gui) {
+    g_test_add_func("/groundhog/draft-sync-gui/drafts-page", test_drafts_page);
+    gint gui_result = g_test_run();
+    gh_test_signer_down(&bus, &signer);
+    gh_test_bus_down(&bus);
+    g_free(seed); g_free(account); g_free(npub); g_free(other_npub); g_free(room); g_free(room2);
+    return gui_result;
+  }
   g_test_add_func("/privacy/drafts/opaque-identifiers", test_opaque_identifiers);
   g_test_add_func("/privacy/drafts/private-relays-only", test_private_relays_only);
   g_test_add_func("/groundhog/draft-sync/cadence", test_cadence);

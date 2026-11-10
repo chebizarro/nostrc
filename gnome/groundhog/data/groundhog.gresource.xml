@@ -87,6 +87,7 @@
     <file>ui/gh-shortcuts-window.ui</file>
     <file>ui/gh-preferences-dialog.ui</file>
     <file>ui/gh-lists-page.ui</file>
+    <file>ui/gh-drafts-page.ui</file>
     <file>ui/gh-list-editor-page.ui</file>
     <file>ui/gh-hidden-page.ui</file>
     <file>ui/gh-composer.ui</file>

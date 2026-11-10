@@ -38,16 +38,33 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                   </object>
                 </child>
                 <child>
-                  <object class="GtkLabel" id="status_label">
+                  <object class="GtkBox" id="status_row">
                     <property name="visible">false</property>
-                    <property name="wrap">true</property>
-                    <property name="wrap-mode">2</property>
-                    <property name="xalign">0</property>
-                    <style>
-                      <class name="caption"/>
-                      <class name="dim-label"/>
-                      <class name="groundhog-composer-status"/>
-                    </style>
+                    <property name="spacing">6</property>
+                    <child>
+                      <object class="GtkLabel" id="status_label">
+                        <property name="wrap">true</property>
+                        <property name="wrap-mode">2</property>
+                        <property name="xalign">0</property>
+                        <property name="hexpand">true</property>
+                        <property name="valign">3</property>
+                        <style>
+                          <class name="caption"/>
+                          <class name="dim-label"/>
+                          <class name="groundhog-composer-status"/>
+                        </style>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkButton" id="status_button">
+                        <property name="visible">false</property>
+                        <property name="valign">3</property>
+                        <property name="use-underline">true</property>
+                        <style>
+                          <class name="flat"/>
+                        </style>
+                      </object>
+                    </child>
                   </object>
                 </child>
                 <child>

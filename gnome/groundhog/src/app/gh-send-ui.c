@@ -40,6 +40,7 @@ typedef struct {
   gchar *draft_saved;         /* the stored draft, as far as this knows */
   gchar *no_inbox_rumor;      /* the shown room's newest own message if "Can't send" */
   GSimpleAction *check_inbox;
+  GSimpleAction *retry_sync;  /* the draft status's Retry (nostrc-9lwl7.8) */
   gboolean updating;          /* in update_reason() (a lookup can re-enter it) */
   /* Other sending engines: G20b relay groups, qp24.13 encrypted groups. */
   SendDelegate delegates[MAX_DELEGATES];
@@ -85,6 +86,7 @@ send_ui_free(gpointer data)
   g_clear_object(&ui->inbox);
   g_clear_object(&ui->settings);
   g_clear_object(&ui->check_inbox);
+  g_clear_object(&ui->retry_sync);
   g_free(ui->draft_room);
   g_free(ui->draft_saved);
   g_free(ui->no_inbox_rumor);
@@ -826,6 +828,15 @@ on_unlock_requested(GhComposer *composer)
   gh_dm_inbox_unlock(ui->inbox);
 }
 
+static void
+on_retry_draft_sync(GSimpleAction *action, GVariant *parameter, gpointer data)
+{
+  (void) action; (void) parameter;
+  GhSendUi *ui = data;
+  if (ui->draft_hooks.retry)
+    ui->draft_hooks.retry(ui->draft_hooks_data);
+}
+
 /* ---- public -------------------------------------------------------------------------- */
 
 void
@@ -863,6 +874,10 @@ gh_send_ui_attach(GhWindow *window, const GhSendUiConfig *config)
   g_simple_action_set_enabled(ui->check_inbox, FALSE);
   g_signal_connect(ui->check_inbox, "activate", G_CALLBACK(on_check_inbox), ui);
   g_action_map_add_action(G_ACTION_MAP(group), G_ACTION(ui->check_inbox));
+  ui->retry_sync = g_simple_action_new("retry-draft-sync", NULL);
+  g_simple_action_set_enabled(ui->retry_sync, FALSE);
+  g_signal_connect(ui->retry_sync, "activate", G_CALLBACK(on_retry_draft_sync), ui);
+  g_action_map_add_action(G_ACTION_MAP(group), G_ACTION(ui->retry_sync));
   gtk_widget_insert_action_group(GTK_WIDGET(window), "send", G_ACTION_GROUP(group));
 
   if (ui->settings) {
@@ -1012,12 +1027,16 @@ gh_send_ui_composer_focused(GhWindow *window, const gchar *room_key)
 }
 
 void
-gh_send_ui_set_draft_status(GhWindow *window, const gchar *status)
+gh_send_ui_set_draft_status(GhWindow *window, const gchar *status, gboolean can_retry)
 {
   g_return_if_fail(GH_IS_WINDOW(window));
   GhSendUi *ui = g_object_get_data(G_OBJECT(window), SEND_UI_DATA);
-  if (ui)
-    gh_composer_set_status(ui->composer, status);
+  if (!ui)
+    return;
+  gboolean retry = can_retry && status && *status && ui->draft_hooks.retry;
+  gh_composer_set_status(ui->composer, status);
+  gh_composer_set_status_action(ui->composer, retry ? _("_Retry") : NULL, "send.retry-draft-sync");
+  g_simple_action_set_enabled(ui->retry_sync, retry);
 }
 
 void
