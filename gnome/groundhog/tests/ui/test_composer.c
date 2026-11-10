@@ -2541,6 +2541,9 @@ main(int argc, char **argv)
     g_printerr("groundhog-composer test skipped: dbus-daemon is not installed\n");
     return 77;
   }
+  /* Relay I/O is mocked: keep the outbox online even on an offline host.
+   * Select the monitor before GTK or the send stack can cache the default. */
+  g_setenv("GIO_USE_NETWORK_MONITOR", "base", TRUE);
   g_autofree gchar *xdg = test_env_up();
   if (!stack_gtk_and_bus_up(&bus)) {
     g_printerr("groundhog-composer test skipped: no graphical display\n");
