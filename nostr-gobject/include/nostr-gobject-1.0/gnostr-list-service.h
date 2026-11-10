@@ -90,6 +90,12 @@ typedef struct {
   GVariant *(*publish_finish)(gpointer data, GAsyncResult *result, GError **error);
   GPtrArray *(*derive_operations)(gpointer data, GNostrListDocument *snapshot, GError **error);
   gint64 (*now)(gpointer data);
+  /* Optional replacement for commit. The immutable, post-edit snapshot and
+   * versioned replay state must commit together, including derived indexes.
+   * No document-changed signal is emitted if this returns FALSE. The snapshot
+   * is borrowed only for this call; it has not yet been installed in the model. */
+  gboolean (*commit_snapshot)(gpointer data, GNostrListDocument *snapshot,
+                              const char *state_json, GError **error);
 } GNostrListAdapter;
 
 /* All calls except notify() are owner-thread-only. Signals: document-changed
@@ -115,7 +121,8 @@ NOSTR_GOBJECT_API GNostrListDocument *gnostr_list_service_lookup(GNostrListServi
  * @kind: document kind
  * @identifier: address identifier, or empty string
  * @expected_local_revision: optimistic concurrency token
- * @operations: (element-type GNostrListOperation) (transfer none): edits in order
+ * @operations: (element-type GNostrListOperation) (transfer none): edits in order;
+ *   empty saves a new local identity without scheduling an empty publication
  * @error: return location for a commit or validation error
  * Returns: (transfer full) (nullable): the committed immutable snapshot
  */

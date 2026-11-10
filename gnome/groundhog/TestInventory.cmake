@@ -28,6 +28,14 @@ function(_gh_describe name target owner)
   endif()
 endfunction()
 
+_gh_describe(groundhog-store-social test-groundhog-store-social groundhog.store
+  INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/src/store/gh-store-schema.c")
+_gh_describe(groundhog-social-lists test-groundhog-social-lists groundhog.unclassified)
+_gh_describe(groundhog-lists-ui test-groundhog-lists-ui groundhog.unclassified REQUIRES display
+  INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/data/ui/gh-lists-page.blp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/data/ui/gh-list-editor-page.blp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/data/ui/gh-preferences-dialog.blp")
+
 # Additional runtime paths are taken from registration commands and compile
 # definitions in CMakeLists.txt (not inferred from execution names).
 _gh_describe(groundhog-about test-groundhog-about groundhog.shell_ui)

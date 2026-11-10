@@ -12,6 +12,8 @@
  * GTK (which keeps its session connection); it exits 77 without a display. */
 #include "account-store-outbox.h"
 #include "gh-account-store.h"
+#include "gh-social-lists.h"
+#include <nostr-kinds.h>
 #include "gh-app-outbox.h"
 #include "gh-reaction-store.h"
 #include "gh-conversation-list.h"
@@ -851,6 +853,46 @@ reply_remote_decrypt(Fixture *f, guint count)
   bunker_reply(&f->bunker, response);
   free(response);
   nostr_nip46_request_free(&request);
+}
+
+static void
+social_closing(GhAccountStore *store, GhSocialLists *social)
+{
+  g_assert_null(gh_social_lists_get_service(social));
+  g_assert_nonnull(gh_account_store_get_store(store));
+  g_autoptr(GError) error = NULL;
+  g_assert_true(gh_store_exec(gh_account_store_get_store(store), "SELECT 1", &error));
+  g_assert_no_error(error);
+}
+
+static void
+test_social_account_teardown(void)
+{
+  Fixture f = {0};
+  fixture_up(&f, 1);
+  stack_up(&f);
+  g_autoptr(GhSocialLists) social = gh_social_lists_new(f.store);
+  g_signal_connect(f.store, "store-closing", G_CALLBACK(social_closing), social);
+  g_assert_cmpint(settle(&f), ==, GH_ACCOUNT_STORE_OPEN);
+  g_assert_nonnull(gh_social_lists_get_service(social));
+  g_autoptr(GNostrListService) old = g_object_ref(gh_social_lists_get_service(social));
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GNostrListDocument) doc = gh_social_lists_ensure(social, NOSTR_KIND_INTEREST_SETS, "local", &error);
+  const gchar *tag[] = { "t", "local" };
+  g_autoptr(GPtrArray) ops = g_ptr_array_new_with_free_func((GDestroyNotify)gnostr_list_operation_unref);
+  g_ptr_array_add(ops, gnostr_list_operation_new(GNOSTR_LIST_EDIT_APPEND, TRUE, tag, 2, 0, 0));
+  g_autoptr(GNostrListDocument) saved = gh_social_lists_apply(social, NOSTR_KIND_INTEREST_SETS, "local", 0, ops, &error);
+  g_assert_no_error(error); g_assert_nonnull(saved);
+  g_assert_true(gh_account_controller_select(f.accounts, npub[2], &error));
+  g_assert_no_error(error);
+  g_assert_cmpint(settle(&f), ==, GH_ACCOUNT_STORE_OPEN);
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(gh_social_lists_get_service(social))), ==, 0);
+  g_assert_null(gnostr_list_service_apply(old, NOSTR_KIND_INTEREST_SETS, "local", 1, ops, &error));
+  g_assert_error(error, G_IO_ERROR, G_IO_ERROR_CLOSED); g_clear_error(&error);
+  /* Teardown follows GhAppServices: close the social owner before the store. */
+  g_signal_handlers_disconnect_by_func(f.store, social_closing, social);
+  g_clear_object(&social);
+  fixture_down(&f);
 }
 
 static void
@@ -2597,6 +2639,7 @@ main(int argc, char **argv)
     gh_test_remove_tree(xdg_root);
     return status;
   }
+  g_test_add_func("/privacy/social/account-teardown", test_social_account_teardown);
   g_test_add_func("/groundhog/account-store/status-mapping", test_status_mapping);
   g_test_add_func("/groundhog/account-store/open-receive-restore", test_open_receive_restore);
   g_test_add_func("/groundhog/account-store/remote-cache-gate-offline-restart",

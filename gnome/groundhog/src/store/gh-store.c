@@ -1463,6 +1463,9 @@ store_create_schema(GhStore *store, GError **error)
   if (!store_migrate(store, 0, "create", error))
     goto fail;
   STORE_CUT("create", "schema");
+  /* Only upgraded accounts need the one-time legacy destination import. */
+  if (!gh_store_exec(store, "UPDATE social_preferences SET blossom_imported=1 WHERE id=1", error))
+    goto fail;
   if (!store_set_meta(store, "account_pubkey", store->account_pubkey, error) ||
       !store_set_meta(store, "store_id", store->store_id, error) ||
       !store_set_meta(store, "created_at", created_at, error))

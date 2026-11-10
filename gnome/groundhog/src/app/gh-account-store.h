@@ -117,7 +117,10 @@ G_DECLARE_FINAL_TYPE(GhAccountStore, gh_account_store, GH, ACCOUNT_STORE, GObjec
 
 /* Signals: "changed" whenever the state, the error or the open store
  * changes; "store-opening" (account pubkey hex) right before a store is
- * opened; "store-closed" (account pubkey hex) right after one closed. */
+ * opened; "store-bound" before any per-store outbox is made; "store-closing"
+ * before consumers or storage are released (P7); "store-closed" (account pubkey
+ * hex) right after one closed. Store-bound/closing have no arguments; synchronous
+ * consumers may borrow get_store() only between those signals. */
 GhAccountStore *gh_account_store_new(const GhAccountStoreConfig *config);
 
 GhAccountStoreState gh_account_store_get_state(GhAccountStore *self);

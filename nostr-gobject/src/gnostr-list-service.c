@@ -132,7 +132,7 @@ static gpointer model_item(GListModel *model, guint position) {
 }
 static void list_model_init(GListModelInterface *iface) { iface->get_item_type = model_type; iface->get_n_items = model_count; iface->get_item = model_item; }
 GNostrListService *gnostr_list_service_new(const char *account, guint64 generation, const GNostrListAdapter *a, gpointer data, GDestroyNotify destroy) {
-  if (!account || strlen(account) != 64 || !a || !a->generation_valid || !a->load || !a->commit) return NULL;
+  if (!account || strlen(account) != 64 || !a || !a->generation_valid || !a->load || (!a->commit && !a->commit_snapshot)) return NULL;
   for (guint i = 0; i < 64; i++) if (!g_ascii_isxdigit(account[i]) || g_ascii_isupper(account[i])) return NULL;
   GNostrListService *s = g_object_new(GNOSTR_TYPE_LIST_SERVICE, NULL);
   s->account = g_strdup(account); s->generation = generation; s->adapter = *a; s->data = data; s->destroy = destroy;
@@ -225,7 +225,23 @@ static gboolean persist(GNostrListService *s, ListSlot *d, GError **error) {
   gsize bytes = wire ? strlen(wire) : 0, total = bytes;
   for (guint i = 0; i < s->slots->len; i++) { ListSlot *other = s->slots->pdata[i]; if (other != d) total += other->stored_bytes; }
   if (!wire || total > 32u * 1024u * 1024u) { free(wire); return list_fail(error, G_IO_ERROR_NO_SPACE, "List account state exceeds storage bound"); }
-  gboolean ok = s->adapter.commit(s->data, d->plan.kind, d->plan.identifier, wire, error);
+  gboolean ok;
+  if (s->adapter.commit_snapshot) {
+    NostrListDocument *codec = projection(d, d->operations, error);
+    if (!codec) { free(wire); return FALSE; }
+    GNostrListDocument *snapshot = list_snapshot_new(s->account, codec);
+    nostr_nip51_document_free(codec);
+    snapshot->event_id = g_strdup(d->base_id);
+    snapshot->source_json = g_strdup(d->base_json);
+    snapshot->created_at = d->base_time;
+    snapshot->revision = d->revision;
+    snapshot->dirty = d->operations->len > 0;
+    if (d->unreadable) nostr_nip51_document_mark_unreadable(snapshot->codec);
+    ok = s->adapter.commit_snapshot(s->data, snapshot, wire, error);
+    g_object_unref(snapshot);
+  } else {
+    ok = s->adapter.commit(s->data, d->plan.kind, d->plan.identifier, wire, error);
+  }
   if (ok) d->stored_bytes = bytes;
   free(wire); return ok;
 }
@@ -384,7 +400,16 @@ GNostrListDocument *gnostr_list_service_apply(GNostrListService *s, int kind, co
   if (!valid(s) || !d || !d->active) { list_fail(error, G_IO_ERROR_CLOSED, "List service is inactive"); return NULL; }
   if (d->plan.publish_policy == GNOSTR_LIST_READ_ONLY || nostr_nip51_schema_read_only(nostr_nip51_schema_lookup(kind))) { list_fail(error, G_IO_ERROR_PERMISSION_DENIED, "List is read only"); return NULL; }
   if (d->revision != expected) { list_fail(error, G_IO_ERROR_WRONG_ETAG, "List local revision changed"); return NULL; }
-  if (!operations || !operations->len) return g_object_ref(d->snapshot);
+  if (!operations || !operations->len) {
+    /* An explicit save may create an empty local identity. This is not a
+     * remote deletion or permission to publish an empty replacement. */
+    if (!d->revision && !d->base_json) {
+      d->revision = 1;
+      if (!persist(s, d, error)) { d->revision = 0; return NULL; }
+      refresh(s, d, NULL);
+    }
+    return g_object_ref(d->snapshot);
+  }
   if (operations->len + d->operations->len > NOSTR_LIST_MAX_TAGS || d->revision == G_MAXINT64) { list_fail(error, G_IO_ERROR_NO_SPACE, "Too many pending list operations"); return NULL; }
   GPtrArray *next = g_ptr_array_new_with_free_func((GDestroyNotify)gnostr_list_operation_unref);
   for (guint i = 0; i < d->operations->len; i++) g_ptr_array_add(next, gnostr_list_operation_ref(d->operations->pdata[i]));

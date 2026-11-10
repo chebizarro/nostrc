@@ -1,0 +1,84 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $GhListEditorPage : Adw.NavigationPage {
+  title: _("Edit List");
+  Adw.ToolbarView {
+    [top] Adw.HeaderBar {}
+    content: ScrolledWindow {
+      hscrollbar-policy: never;
+      Adw.Clamp {
+        maximum-size: 680;
+        tightening-threshold: 480;
+        Box {
+          orientation: vertical;
+          spacing: 18;
+          margin-start: 18;
+          margin-end: 18;
+          margin-top: 18;
+          margin-bottom: 24;
+          Label status {
+            label: _("Saved on This Device");
+            wrap: true;
+            xalign: 0;
+            accessible-role: status;
+          }
+          Adw.PreferencesGroup metadata {
+            title: _("List Details");
+            Adw.EntryRow title_row { title: _("_Title"); use-underline: true; }
+            Adw.EntryRow description_row { title: _("_Description"); use-underline: true; }
+            Adw.EntryRow image_row { title: _("_Image URL"); use-underline: true; }
+          }
+          Button save_metadata {
+            label: _("Save _Details");
+            use-underline: true;
+            halign: end;
+          }
+          Adw.PreferencesGroup {
+            title: _("Entries");
+            description: _("Select an entry to edit it. Changes stay on this device; nothing is published.");
+            ListView entries {
+              single-click-activate: true;
+              styles ["boxed-list"]
+              accessibility { label: _("List entries"); }
+            }
+          }
+          Box {
+            spacing: 6;
+            homogeneous: true;
+            Button move_up { label: _("Move _Up"); use-underline: true; sensitive: false; }
+            Button move_down { label: _("Move _Down"); use-underline: true; sensitive: false; }
+            Button remove_entry { label: _("_Remove"); use-underline: true; sensitive: false; }
+          }
+          Adw.PreferencesGroup {
+            title: _("Entry");
+            Adw.ComboRow tag_type { title: _("Tag type"); }
+            Adw.EntryRow value_row { title: _("_Value"); use-underline: true; }
+            Adw.EntryRow extra_row { title: _("Additional fields (JSON array)"); text: "[]"; }
+            Adw.SwitchRow private_row {
+              title: _("Private Entry");
+              subtitle: _("Public entries are included in plain text when exported. Publication always requires separate approval.");
+              active: true;
+            }
+            Adw.ExpanderRow {
+              title: _("Raw Tag Array");
+              subtitle: _("Preserves unknown tags, empty fields, and trailing values");
+              Adw.EntryRow raw_row { title: _("Tag array (JSON)"); }
+            }
+          }
+          Box {
+            spacing: 6;
+            homogeneous: true;
+            Button new_entry { label: _("_New Entry"); use-underline: true; }
+            Button save_entry {
+              label: _("_Save Entry");
+              use-underline: true;
+              styles ["suggested-action"]
+            }
+          }
+          Button export_list { label: _("_Export JSON…"); use-underline: true; halign: start; }
+        }
+      }
+    };
+  }
+}

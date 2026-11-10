@@ -5,6 +5,9 @@
 #if GROUNDHOG_HAVE_ISSUE
 #include "gh-issue-adapters.h"
 #endif
+#if GROUNDHOG_HAVE_SOCIAL_LISTS
+#include "gh-social-lists-backend.h"
+#endif
 #include "gh-app-services.h"
 #include "gh-diagnostics.h"
 
@@ -159,6 +162,9 @@ struct _GhAppServices {
 #if GROUNDHOG_HAVE_ACCOUNT_STORE
   GhStoreKey *store_key;
   GhAccountStore *account_store;
+#if GROUNDHOG_HAVE_SOCIAL_LISTS
+  GhSocialLists *social_lists;
+#endif
   GSimpleAction *store_actions[4];
 #endif
 #if GROUNDHOG_HAVE_EXPIRY
@@ -538,6 +544,9 @@ account_store_init(GhAppServices *self, GError **error)
 #endif
   };
   self->account_store = gh_account_store_new(&config);
+#if GROUNDHOG_HAVE_SOCIAL_LISTS
+  self->social_lists = gh_social_lists_new(self->account_store);
+#endif
   return TRUE;
 }
 
@@ -546,6 +555,9 @@ account_store_init(GhAppServices *self, GError **error)
 static void
 account_store_teardown(GhAppServices *self)
 {
+#if GROUNDHOG_HAVE_SOCIAL_LISTS
+  dispose_object(&self->social_lists);
+#endif
   dispose_object(&self->account_store);
 }
 
@@ -1839,6 +1851,10 @@ present_preferences(GhAppServices *self, const gchar *page)
                           dialog, 0);
 #endif
 #if GROUNDHOG_HAVE_ACCOUNT_STORE
+#if GROUNDHOG_HAVE_SOCIAL_LISTS
+  GhListsBackend social_backend = gh_social_lists_backend(self->social_lists);
+  gh_preferences_dialog_set_social_backend(dialog, &social_backend);
+#endif
   gh_preferences_dialog_set_forget_func(dialog, preferences_forget_async,
                                         preferences_forget_finish,
                                         G_OBJECT(self->account_store));
