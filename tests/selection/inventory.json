@@ -31784,9 +31784,9 @@
         "groundhog.mdk011"
       ],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "0fe80bce16902102db6b023b67afab62bd1c00b06311048e581f81dbefc6204d",
+      "source_sha256": "9f06d28a459453c784ab32cae60a7d81fbe336d776a3de1569252d08b66254d3",
       "unsupported_reason": "Ordinary and live MDK011 registrations are separate diagnostic profiles. Ordinary selection does not claim live Docker lifecycle coverage; the dedicated live lane preserves docker/display/private_bus and visibly refuses without guarded custody. Full legacy job union, runtime/header audits and original image custody remain unaccepted.",
-      "workflow_sha256": "17d0427bbea0f8233d46c525a46e62953b89364e909d608a4bb2934062b0e4fc"
+      "workflow_sha256": "c2666086c6eacd4e0645f8a641c160396006988e02f5d5eb5e1bcbe1f6f6cee7"
     },
     ".github/workflows/groundhog-ci.yml:groundhog-sanitizers": {
       "matrix_source": "",
@@ -31796,7 +31796,7 @@
       "coverage_gap": "groundhog_sanitizer_execution_contract",
       "source_sha256": "acb721546bb6a8072ab7bc872d37e6bff0aa3f3367c26f7f5d5a9c66542f08a4",
       "unsupported_reason": "Ordinary Groundhog suite/MDK011 application configuration is authored but full registration/runtime/header closure and Docker image custody remain unaccepted.",
-      "workflow_sha256": "17d0427bbea0f8233d46c525a46e62953b89364e909d608a4bb2934062b0e4fc"
+      "workflow_sha256": "c2666086c6eacd4e0645f8a641c160396006988e02f5d5eb5e1bcbe1f6f6cee7"
     },
     ".github/workflows/groundhog-release.yml:identity": {
       "matrix_source": "",
@@ -32378,7 +32378,7 @@
       "unsupported_reason": "The selected sanitizer runner executes affected checks; it is not unrestricted legacy sanitizer union or native attested profile acceptance.",
       "matrix_source": "",
       "source_sha256": "06bff5c2079ff3ccb9b398c782058d1760f83662f199bee37a81237ddad4e04a",
-      "workflow_sha256": "17d0427bbea0f8233d46c525a46e62953b89364e909d608a4bb2934062b0e4fc"
+      "workflow_sha256": "c2666086c6eacd4e0645f8a641c160396006988e02f5d5eb5e1bcbe1f6f6cee7"
     },
     ".github/workflows/groundhog-release.yml:manual-broad": {
       "profiles": [],

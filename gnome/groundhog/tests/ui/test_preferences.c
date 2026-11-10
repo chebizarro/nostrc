@@ -22,9 +22,11 @@
  */
 #include "gh-features.h"
 #include "gh-preferences-dialog.h"
+#if GROUNDHOG_HAVE_SOCIAL_LISTS
 #include "gh-social-lists-backend.h"
 #include "gh-relay-deny-policy.h"
 #include <nostr-kinds.h>
+#endif
 #include "gh-qr-code.h"
 #include "gh-window.h"
 
@@ -97,8 +99,10 @@ static const char *const switch_keys[] = {
 typedef struct {
   GSettings *settings;
   GhPreferencesDialog *dialog;
+#if GROUNDHOG_HAVE_SOCIAL_LISTS
   GhStore *store;
   GhSocialLists *social;
+#endif
   GtkWindow *window; /* only when a case presents the dialog */
 } Fixture;
 
@@ -120,6 +124,7 @@ fixture_setup(Fixture *f, gconstpointer data)
   f->settings = g_settings_new(SCHEMA_ID);
   reset_all(f->settings);
   f->dialog = g_object_ref_sink(gh_preferences_dialog_new(f->settings, GPOINTER_TO_UINT(data)));
+#if GROUNDHOG_HAVE_SOCIAL_LISTS
   g_autoptr(GError) error = NULL;
   f->store = gh_store_open_ephemeral("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", NULL, &error);
   g_assert_no_error(error);
@@ -128,6 +133,7 @@ fixture_setup(Fixture *f, gconstpointer data)
   g_assert_no_error(error);
   GhListsBackend backend = gh_social_lists_backend(f->social);
   gh_preferences_dialog_set_social_backend(f->dialog, &backend);
+#endif
 }
 
 static void
@@ -140,9 +146,11 @@ fixture_teardown(Fixture *f, gconstpointer data)
     drain_idle();
   }
   g_clear_object(&f->dialog);
+#if GROUNDHOG_HAVE_SOCIAL_LISTS
   gh_social_lists_close(f->social);
   g_clear_object(&f->social);
   gh_store_close(f->store);
+#endif
   reset_all(f->settings);
   g_clear_object(&f->settings);
 }
@@ -627,7 +635,10 @@ find_tooltip_button(GtkWidget *widget, const char *tooltip)
 static void
 assert_strv(Fixture *f, const char *key, const char *const *want)
 {
-  g_auto(GStrv) have = !strcmp(key, "blossom-servers") ? gh_social_lists_dup_servers(f->social, NULL) :
+  g_auto(GStrv) have =
+#if GROUNDHOG_HAVE_SOCIAL_LISTS
+    !strcmp(key, "blossom-servers") ? gh_social_lists_dup_servers(f->social, NULL) :
+#endif
     g_settings_get_strv(f->settings, key);
   if (!g_strv_equal((const char *const *)have, want)) {
     g_autofree char *joined = g_strjoinv(" ", have);
@@ -654,12 +665,14 @@ static const ListCase list_cases[] = {
       "wss://relay.example.com/?token=1", "wss://relay.example.com/#x", "",
       "wss://relay.example.com", /* a duplicate of good_out */
       NULL } },
+#if GROUNDHOG_HAVE_SOCIAL_LISTS
   { "blossom-servers", "blossom_entry", "blossom_error", "blossom_list",
     "https://Blossom.Example.com/", "https://blossom.example.com",
     "https://files.example.org:8443/media",
     { "wss://blossom.example.com", "http://blossom.example.com", "http://127.0.0.1:3000",
       "https://user:pw@blossom.example.com", "blossom.example.com", "https://",
       "https://blossom.example.com?x=1", "", "https://BLOSSOM.example.com/", NULL } },
+#endif
 };
 
 static void
@@ -708,8 +721,11 @@ test_url_lists_bind_both_ways(Fixture *f, gconstpointer data)
 
     /* key -> rows */
     const char *const replaced[] = { lc->second, lc->good_out, NULL };
+#if GROUNDHOG_HAVE_SOCIAL_LISTS
     if (!strcmp(lc->key, "blossom-servers")) g_assert_true(gh_social_lists_set_servers(f->social, replaced, NULL));
-    else g_settings_set_strv(f->settings, lc->key, replaced);
+    else
+#endif
+      g_settings_set_strv(f->settings, lc->key, replaced);
     drain_idle();
     g_assert_cmpuint(n_rows(list), ==, 2);
     g_assert_cmpstr(row_title(list, 0), ==, lc->second);
@@ -734,24 +750,34 @@ test_url_lists_bind_both_ways(Fixture *f, gconstpointer data)
       g_strv_builder_add(builder, url);
     }
     g_auto(GStrv) full = g_strv_builder_end(builder);
+#if GROUNDHOG_HAVE_SOCIAL_LISTS
     if (!strcmp(lc->key, "blossom-servers")) g_assert_true(gh_social_lists_set_servers(f->social, (const char *const *)full, NULL));
-    else g_settings_set_strv(f->settings, lc->key, (const char *const *)full);
+    else
+#endif
+      g_settings_set_strv(f->settings, lc->key, (const char *const *)full);
     drain_idle();
     g_assert_cmpuint(n_rows(list), ==, 16);
     gtk_editable_set_text(GTK_EDITABLE(entry), lc->second);
     g_signal_emit_by_name(entry, "apply");
     drain_idle();
     g_assert_true(gtk_widget_get_visible(error));
-    g_auto(GStrv) after = !strcmp(lc->key, "blossom-servers") ? gh_social_lists_dup_servers(f->social, NULL) :
+    g_auto(GStrv) after =
+#if GROUNDHOG_HAVE_SOCIAL_LISTS
+      !strcmp(lc->key, "blossom-servers") ? gh_social_lists_dup_servers(f->social, NULL) :
+#endif
       g_settings_get_strv(f->settings, lc->key);
     g_assert_cmpuint(g_strv_length(after), ==, 16);
+#if GROUNDHOG_HAVE_SOCIAL_LISTS
     if (!strcmp(lc->key, "blossom-servers")) g_assert_true(gh_social_lists_set_servers(f->social, NULL, NULL));
-    else g_settings_reset(f->settings, lc->key);
+    else
+#endif
+      g_settings_reset(f->settings, lc->key);
     drain_idle();
     g_assert_cmpuint(n_rows(list), ==, 0);
   }
 }
 
+#if GROUNDHOG_HAVE_SOCIAL_LISTS
 static void
 test_account_url_policy(Fixture *f, gconstpointer data)
 {
@@ -787,6 +813,8 @@ test_account_url_policy(Fixture *f, gconstpointer data)
   g_assert_true(gh_relay_deny_policy_check(2, url, FALSE, NULL)); /* stale editor cannot edit next account */
   gh_social_lists_close(f->social); gh_store_close(other);
 }
+
+#endif
 
 static void
 test_url_rules(void)
@@ -2066,7 +2094,9 @@ main(int argc, char **argv)
   ADD("tor-hidden-without-g09", test_tor_hidden_without_g09, no_tor);
   ADD("tor-with-g09", test_tor_with_g09, all);
   ADD("url-lists-bind-both-ways", test_url_lists_bind_both_ways, no_tor);
+#if GROUNDHOG_HAVE_SOCIAL_LISTS
   ADD("account-relay-denial-and-servers", test_account_url_policy, no_tor);
+#endif
   ADD("account-rows", test_account_rows, build);
   ADD("key-package-row", test_key_package_row, all);
   ADD("key-package-row-no-feature", test_key_package_row,

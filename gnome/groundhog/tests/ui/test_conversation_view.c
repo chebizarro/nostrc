@@ -5809,7 +5809,11 @@ test_bubble_delete(Fixture *f, gconstpointer data)
   menu = open_menu(row_for(f->view, incoming));
   g_autofree gchar *incoming_labels = menu_labels(menu);
   g_assert_cmpstr(incoming_labels, ==,
-                  "Copy _Message|Add _Reaction…|_Delete for Me…|_Hide Account…|_Report Account…");
+                  "Copy _Message|Add _Reaction…|_Delete for Me…"
+#if GROUNDHOG_HAVE_SOCIAL_LISTS
+                  "|_Hide Account…|_Report Account…"
+#endif
+  );
   close_popover(menu);
   g_assert_true(gh_conversation_view_can_delete_message(f->view, own, TRUE));
   g_assert_false(gh_conversation_view_can_delete_message(f->view, incoming, TRUE));
@@ -5854,7 +5858,11 @@ test_bubble_delete(Fixture *f, gconstpointer data)
   menu = open_menu(row_for(f->view, keep));
   g_autofree gchar *none = menu_labels(menu);
   g_assert_cmpstr(none, ==,
-                  "Copy _Message|Add _Reaction…|_Hide Account…|_Report Account…");
+                  "Copy _Message|Add _Reaction…"
+#if GROUNDHOG_HAVE_SOCIAL_LISTS
+                  "|_Hide Account…|_Report Account…"
+#endif
+  );
   close_popover(menu);
   g_free(call.rumor_id);
 }
@@ -6019,7 +6027,11 @@ test_group_delete(Fixture *f, gconstpointer data)
   menu = open_menu(row_for(f->view, incoming));
   g_autofree gchar *incoming_labels = menu_labels(menu);
   g_assert_true(g_str_has_suffix(incoming_labels,
-    "|_Delete for Me…|_Hide Account…|_Report Account…"));
+    "|_Delete for Me…"
+#if GROUNDHOG_HAVE_SOCIAL_LISTS
+    "|_Hide Account…|_Report Account…"
+#endif
+  ));
   close_popover(menu);
   g_assert_true(gh_conversation_view_can_delete_message(f->view, own, TRUE));
   g_assert_false(gh_conversation_view_can_delete_message(f->view, incoming, TRUE));

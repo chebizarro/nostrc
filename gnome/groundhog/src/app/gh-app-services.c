@@ -2724,13 +2724,17 @@ gh_app_services_attach_window(GhAppServices *self, GhWindow *window)
 #if GROUNDHOG_HAVE_ACCOUNT_STORE
   gh_conversation_list_set_message_search_source(window, search_stored_messages, self, NULL);
 #endif
+#if GROUNDHOG_HAVE_ATTACHMENTS
   {
     GhAccountStoreState state = gh_account_store_get_state(self->account_store);
     GhStore *open = state == GH_ACCOUNT_STORE_OPEN || state == GH_ACCOUNT_STORE_EPHEMERAL
                       ? gh_account_store_get_store(self->account_store) : NULL;
     picture_consent_sync(open);
   }
+#endif
+#if GROUNDHOG_HAVE_ACCOUNT_STORE
   gh_conversation_list_set_picture_policy(window, &picture_policy, self);
+#endif
 #if GROUNDHOG_HAVE_OUTBOX && (GROUNDHOG_HAVE_GROUP_UI || GROUNDHOG_HAVE_MLS_UI)
   rosters_sync(self);
 #endif

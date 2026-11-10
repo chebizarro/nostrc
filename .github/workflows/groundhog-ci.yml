@@ -275,17 +275,22 @@ jobs:
       - name: Install nak for the NIP-46 interop test
         # groundhog-nip46-nak pairs Groundhog's NIP-46 session with a real
         # `nak bunker`; without nak it skips, and this job allows no skips.
-        if: steps.selection.outputs.affected != 'true' || steps.selection.outputs.needs_nak == 'true'
         uses: actions/setup-go@v5
         with:
           go-version: '1.24'
           cache: false
       - name: Build nak
-        if: steps.selection.outputs.affected != 'true' || steps.selection.outputs.needs_nak == 'true'
         run: |
           go install github.com/fiatjaf/nak@v0.19.7
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
           "$(go env GOPATH)/bin/nak" --version
+      - name: Compile and test Groundhog without SQLCipher
+        env:
+          GROUNDHOG_NO_STORE_REQUIRE_NO_SKIPS: '1'
+        run: |
+          dbus-run-session -- xvfb-run -a -s '-screen 0 1280x800x24' \
+            scripts/test-groundhog-no-store.sh build-no-store -G Ninja
+
       - name: Run selected checks under a controlled display
         if: steps.selection.outputs.affected == 'true'
         run: |

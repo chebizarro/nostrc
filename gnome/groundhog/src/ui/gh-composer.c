@@ -1,6 +1,8 @@
 #include "gh-composer.h"
 #include "gh-reaction-picker.h"
+#if GROUNDHOG_HAVE_SOCIAL_LISTS
 #include "gh-social-lists.h"
+#endif
 #include "gh-unparent.h"
 #include "../app/gh-test-async-control.h"
 #include "gh-display-name.h"
@@ -592,7 +594,11 @@ gh_composer_dup_emoji_tags(GhComposer *self)
 static void
 emoji_source_changed(GhComposer *self)
 {
+#if GROUNDHOG_HAVE_SOCIAL_LISTS
   guint64 generation = self->emoji_lists ? gh_social_lists_get_generation(self->emoji_lists) : 0;
+#else
+  guint64 generation = 0;
+#endif
   if (generation != self->emoji_generation) {
     g_clear_pointer(&self->emoji_tags, g_ptr_array_unref);
     self->emoji_generation = generation;
