@@ -18,6 +18,7 @@ struct _GhRequestsView {
   GtkLabel *message_label;
   GtkLabel *privacy_label;
   GtkButton *block_button;
+  GtkButton *hide_button;
   GtkButton *delete_button;
   GtkButton *accept_button;
   AdwAlertDialog *delete_dialog;
@@ -89,6 +90,10 @@ update_actions(GhRequestsView *self)
   gtk_widget_action_set_enabled(GTK_WIDGET(self), "requests.accept", shown);
   gtk_widget_action_set_enabled(GTK_WIDGET(self), "requests.delete", shown && self->has_backend);
   gtk_widget_action_set_enabled(GTK_WIDGET(self), "requests.block", shown && self->has_backend);
+  const gchar *const *peers = shown ? gh_conversation_get_peers(self->request) : NULL;
+  gboolean single = peers && peers[0] && !peers[1];
+  gtk_widget_action_set_enabled(GTK_WIDGET(self), "requests.hide-account", single);
+  gtk_widget_set_visible(GTK_WIDGET(self->hide_button), single);
   /* Every unavailable control says why, in place (charter §7.1). */
   const gchar *why = _("Needs private message storage on this device");
   gtk_widget_set_tooltip_text(GTK_WIDGET(self->delete_button),
@@ -135,7 +140,8 @@ update(GhRequestsView *self)
   g_autofree gchar *count = older
     ? g_strdup_printf(ngettext("More than %u message", "More than %u messages", n), n)
     : g_strdup_printf(ngettext("%u message", "%u messages", n), n);
-  gtk_label_set_text(self->count_label, count);
+  gtk_label_set_text(self->count_label, gh_conversation_get_visibility_updating(request)
+    ? _("Updating Hidden Messages…") : count);
 
   adw_preferences_group_set_title(self->message_group,
                                   older ? _("Earliest Loaded Message") : _("First Message"));
@@ -159,6 +165,19 @@ on_display_name_changed(GhRequestsView *self, const gchar *pubkey)
   const gchar *const *peers = gh_conversation_get_peers(self->request);
   if (peers && g_strv_contains(peers, pubkey))
     update(self);
+}
+
+static void
+on_hide_account(GtkWidget *widget, const char *name, GVariant *parameter)
+{
+  (void)name; (void)parameter;
+  GhRequestsView *self = GH_REQUESTS_VIEW(widget);
+  if (!self->request)
+    return;
+  const gchar *const *peers = gh_conversation_get_peers(self->request);
+  if (peers && peers[0] && !peers[1])
+    gtk_widget_activate_action(widget, "app.hide-account", "(ss)",
+      gh_conversation_get_account(self->request), peers[0]);
 }
 
 static void
@@ -425,6 +444,7 @@ gh_requests_view_class_init(GhRequestsViewClass *klass)
   gtk_widget_class_bind_template_child(widget_class, GhRequestsView, message_label);
   gtk_widget_class_bind_template_child(widget_class, GhRequestsView, privacy_label);
   gtk_widget_class_bind_template_child(widget_class, GhRequestsView, block_button);
+  gtk_widget_class_bind_template_child(widget_class, GhRequestsView, hide_button);
   gtk_widget_class_bind_template_child(widget_class, GhRequestsView, delete_button);
   gtk_widget_class_bind_template_child(widget_class, GhRequestsView, accept_button);
   gtk_widget_class_bind_template_child(widget_class, GhRequestsView, delete_dialog);
@@ -432,6 +452,7 @@ gh_requests_view_class_init(GhRequestsViewClass *klass)
   gtk_widget_class_install_action(widget_class, "requests.accept", NULL, on_accept);
   gtk_widget_class_install_action(widget_class, "requests.delete", NULL, on_delete);
   gtk_widget_class_install_action(widget_class, "requests.block", NULL, on_block);
+  gtk_widget_class_install_action(widget_class, "requests.hide-account", NULL, on_hide_account);
 }
 
 static void

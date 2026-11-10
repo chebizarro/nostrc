@@ -480,6 +480,7 @@ gh_group_ui_show_info(GhWindow *window, GhConversation *conversation, gpointer u
     .service = service,
     .display_name = ui->display_name,
     .names_data = ui->names_data,
+    .pictures = gh_conversation_list_get_picture_cache(window),
   };
   GhGroupInfoDialog *dialog = gh_group_info_dialog_new(room, &config);
   adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(window));

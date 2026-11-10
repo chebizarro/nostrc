@@ -452,6 +452,20 @@ static const gchar schema_v11[] =
   " position INTEGER NOT NULL, is_private INTEGER NOT NULL) WITHOUT ROWID;"
   "CREATE TABLE social_servers (url TEXT PRIMARY KEY, position INTEGER NOT NULL) WITHOUT ROWID;";
 
+/* Separate the content-derived bit from the author bit so removing a p entry
+ * can use the sender index without rescanning retained plaintext. */
+static const gchar schema_v12[] =
+  "ALTER TABLE messages ADD COLUMN social_hidden INTEGER NOT NULL DEFAULT 0;"
+  "ALTER TABLE messages ADD COLUMN social_content_hidden INTEGER NOT NULL DEFAULT 0;"
+  "ALTER TABLE messages ADD COLUMN social_subject TEXT;"
+  "UPDATE messages SET social_subject=(SELECT json_extract(t.value,'$[1]') "
+  "FROM json_each(messages.raw_json,'$.tags') t WHERE json_extract(t.value,'$[0]')='subject' LIMIT 1) "
+  "WHERE json_valid(raw_json) AND conversation_id IN (SELECT id FROM conversations WHERE backend=1);"
+  "CREATE INDEX messages_visible_page ON messages(conversation_id, social_hidden, created_at, backend_msg_id);"
+  "CREATE INDEX messages_sender ON messages(sender_pubkey);"
+  "CREATE TABLE social_visibility_work(epoch INTEGER NOT NULL, message_id INTEGER NOT NULL,"
+  " hidden INTEGER NOT NULL, PRIMARY KEY(epoch,message_id)) WITHOUT ROWID;";
+
 static const GhStoreMigration migrations[] = {
   { 1, "Groundhog store schema v1 (privacy charter §3.3)", schema_v1 },
   { 2, "MLS state for libmarmot's MarmotStorage (charter §3.9, G23)", schema_v2 },
@@ -464,6 +478,7 @@ static const GhStoreMigration migrations[] = {
   { 9, "Profile-picture consent per contact (W32)", schema_v9 },
   { 10, "Verified public-note cache for explicit repost and quote references (B2)", schema_v10 },
   { 11, "Account-local social lists and preferences", schema_v11 },
+  { 12, "Retained hidden history and visibility projection", schema_v12 },
 };
 
 G_STATIC_ASSERT(G_N_ELEMENTS(migrations) == GH_STORE_SCHEMA_VERSION);

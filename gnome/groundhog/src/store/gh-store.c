@@ -61,6 +61,7 @@ struct _GhStore {
   const gchar *txn_label; /* cut-point prefix of the outermost transaction */
   gboolean read_only;     /* failed quick_check, opened with ALLOW_CORRUPT */
   gboolean ephemeral;
+  gboolean visibility_updating; /* mask search until the active epoch is published */
   gboolean registered;    /* holds the in-process registry entry for dir */
   gboolean checkpointed_once;
   gint64 last_checkpoint; /* monotonic us of the last purge checkpoint */
@@ -2299,6 +2300,12 @@ gh_store_find_conversation(GhStore *store, GhStoreBackend backend,
   return TRUE;
 }
 
+void
+gh_store_set_visibility_updating(GhStore *store, gboolean updating)
+{
+  store->visibility_updating = !!updating;
+}
+
 gboolean
 gh_store_search_message_rooms(GhStore *store, const gchar *query,
                               GHashTable **out_rooms, GError **error)
@@ -2312,14 +2319,14 @@ gh_store_search_message_rooms(GhStore *store, const gchar *query,
     return FALSE;
   }
   GHashTable *rooms = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
-  if (!*query) {
+  if (!*query || store->visibility_updating) {
     *out_rooms = rooms;
     return TRUE;
   }
   sqlite3_stmt *stmt = store_prepare(store,
     "SELECT DISTINCT c.backend, c.backend_key FROM messages m "
     "JOIN conversations c ON c.id = m.conversation_id "
-    "WHERE m.body IS NOT NULL AND instr(lower(m.body), lower(?1)) > 0 "
+    "WHERE m.social_hidden = 0 AND m.body IS NOT NULL AND instr(lower(m.body), lower(?1)) > 0 "
     "AND (m.expires_at IS NULL OR m.expires_at = 0 OR m.expires_at > ?2)", error);
   if (!stmt)
     goto fail;
@@ -2706,7 +2713,7 @@ gh_store_read_state_update(GhStore *store, gint64 conversation_id, GhStoreReadMo
   }
   ok = ok && read_exec(store,
     "UPDATE conversations SET unread_count = (SELECT count(*) FROM messages m WHERE "
-    "m.conversation_id = conversations.id AND m.direction = 0 "
+    "m.conversation_id = conversations.id AND m.direction = 0 AND m.social_hidden = 0 "
     "AND NOT (conversations.backend = 3 AND m.kind BETWEEN 1200 AND 1202) AND NOT "
     READ_BY("m", "conversations") ") WHERE id = ?1", conversation_id, 0, 0, error);
   if (!ok || !out_unread)
@@ -3166,8 +3173,8 @@ admit_locked(GhStore *store, const GhStoreMessage *m, gint64 now,
   gint64 conversation_id = 0;
   gint64 forgotten_before = 0;
   /* Agent stream/activity chrome is durable, but not sidebar activity. */
-  gint64 activity_at = m->backend == GH_STORE_BACKEND_MLS &&
-    m->kind >= 1200 && m->kind <= 1202 ? 0 : m->created_at;
+  gint64 activity_at = m->social_hidden || (m->backend == GH_STORE_BACKEND_MLS &&
+    m->kind >= 1200 && m->kind <= 1202) ? 0 : m->created_at;
 
   if (m->wrap_id && !seen_insert(store, GH_STORE_SEEN_WRAP, m->wrap_id, now, NULL, error))
     return FALSE;
@@ -3179,6 +3186,10 @@ admit_locked(GhStore *store, const GhStoreMessage *m, gint64 now,
   /* Seen before (stored, purged or forgotten): never store it again. */
   if (!fresh) {
     *result = GH_STORE_ADMIT_DUPLICATE;
+    return TRUE;
+  }
+  if (m->drop) {
+    *result = GH_STORE_ADMIT_HIDDEN;
     return TRUE;
   }
   /* Its author asked to delete it before it came (nostrc-419wf). */
@@ -3208,8 +3219,8 @@ admit_locked(GhStore *store, const GhStoreMessage *m, gint64 now,
 
   stmt = store_prepare(store,
     "INSERT INTO messages (conversation_id, backend_msg_id, sender_pubkey, kind, "
-    "created_at, received_at, direction, body, raw_json, reply_to, expires_at, mls_epoch) "
-    "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12) "
+    "created_at, received_at, direction, body, raw_json, reply_to, expires_at, mls_epoch, social_hidden, social_content_hidden, social_subject) "
+    "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?13, ?14) "
     "ON CONFLICT (conversation_id, backend_msg_id) DO NOTHING", error);
   if (!stmt)
     return FALSE;
@@ -3226,6 +3237,8 @@ admit_locked(GhStore *store, const GhStoreMessage *m, gint64 now,
   BIND(bind_int64_or_null(stmt, 11, m->expires_at));
   BIND(m->has_mls_epoch ? sqlite3_bind_int64(stmt, 12, (gint64)m->mls_epoch)
                         : sqlite3_bind_null(stmt, 12));
+  BIND(sqlite3_bind_int(stmt, 13, m->social_hidden));
+  BIND(bind_text(stmt, 14, m->title));
   if (!store_step_done(store, stmt, "Storing a message", error))
     goto fail;
   g_clear_pointer(&stmt, sqlite3_finalize);
@@ -3239,12 +3252,13 @@ admit_locked(GhStore *store, const GhStoreMessage *m, gint64 now,
     return FALSE;
   STORE_CUT("admit", "message");
 
+  if (!m->social_hidden) {
   /* The title follows the newest stored message (this one is already in),
    * however late older ones arrive through backfill. */
   stmt = store_prepare(store,
     "UPDATE conversations SET unread_count = unread_count + ?1, "
     "title = CASE WHEN ?2 IS NOT NULL AND ?3 >= (SELECT max(created_at) FROM messages "
-    "WHERE conversation_id = ?4) THEN ?2 ELSE title END, "
+    "WHERE conversation_id = ?4 AND social_hidden = 0) THEN ?2 ELSE title END, "
     "last_activity = MAX(last_activity, ?3) WHERE id = ?4", error);
   if (!stmt)
     return FALSE;
@@ -3256,6 +3270,7 @@ admit_locked(GhStore *store, const GhStoreMessage *m, gint64 now,
   if (!store_step_done(store, stmt, "Updating a conversation", error))
     goto fail;
   g_clear_pointer(&stmt, sqlite3_finalize);
+  }
   STORE_CUT("admit", "conversation-updated");
 
   if (m->participants && m->participants[0]) {
@@ -4193,7 +4208,7 @@ purge_read_state(GhStore *store, gint64 now, gint64 cutoff, GError **error)
          purge_exec(store,
            "UPDATE conversations SET unread_count = ("
            "SELECT count(*) FROM messages m WHERE m.conversation_id = conversations.id "
-           "AND m.direction = 0 AND NOT " PURGE_DOOMED("m") " "
+           "AND m.direction = 0 AND m.social_hidden = 0 AND NOT " PURGE_DOOMED("m") " "
            "AND NOT (conversations.backend = 3 AND m.kind BETWEEN 1200 AND 1202) "
            "AND NOT " READ_BY("m", "conversations") ") "
            "WHERE id IN (SELECT d.conversation_id FROM messages d WHERE " PURGE_DOOMED("d") ") "
@@ -4263,7 +4278,7 @@ gh_store_purge_full(GhStore *store, gint64 retention_cutoff, GPtrArray **out_pur
       !gh_store_exec(store,
         "UPDATE conversations SET unread_count = MIN(unread_count, "
         "(SELECT count(*) FROM messages m WHERE m.conversation_id = conversations.id "
-        "AND m.direction = 0 "
+        "AND m.direction = 0 AND m.social_hidden = 0 "
         "AND NOT (conversations.backend = 3 AND m.kind BETWEEN 1200 AND 1202))) "
         "WHERE unread_count > 0", error))
     goto fail;
@@ -4438,7 +4453,7 @@ gh_store_delete_message(GhStore *store, GhStoreBackend backend, const gchar *bac
       !store_exec_id(store,
         "UPDATE conversations SET unread_count = ("
         "SELECT count(*) FROM messages m WHERE m.conversation_id = conversations.id "
-        "AND m.direction = 0 AND m.id <> ?1 "
+        "AND m.direction = 0 AND m.social_hidden = 0 AND m.id <> ?1 "
         "AND NOT (conversations.backend = 3 AND m.kind BETWEEN 1200 AND 1202) "
         "AND NOT " READ_BY("m", "conversations") ") "
         "WHERE id = (SELECT conversation_id FROM messages WHERE id = ?1) "

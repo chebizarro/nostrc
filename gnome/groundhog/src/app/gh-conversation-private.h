@@ -5,6 +5,8 @@
 
 G_BEGIN_DECLS
 
+void gh_conversation_set_visibility_updating(GhConversation *self, gboolean updating);
+
 /* Store-only: the conversation of message's room for its account. */
 GhConversation *gh_conversation_new_for_message(GhMessage *message);
 /* Store-only: an empty, accepted room the user opened (G18: New Message,
@@ -149,6 +151,7 @@ GhConversation *gh_conversation_store_restore(GhConversationStore *self,
                                               const GhConversationState *state);
 /* Store-layer only: unlists a room (forget conversation). TRUE when listed. */
 gboolean gh_conversation_store_remove(GhConversationStore *self, const gchar *room_id);
+void gh_conversation_store_restore_empty(GhConversationStore *self, GhConversation *conversation);
 
 /* ---- Group rooms: NIP-29 (G20a) and MLS (nostrc-qp24.13) ---------------------
  * The main delegate (gh_conversation_store_set_account()) persists NIP-17

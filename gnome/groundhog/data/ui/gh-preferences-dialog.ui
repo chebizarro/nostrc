@@ -154,6 +154,23 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
           </object>
         </child>
         <child>
+          <object class="AdwPreferencesGroup" id="hidden_group">
+            <property name="visible">false</property>
+            <child>
+              <object class="AdwActionRow" id="hidden_row">
+                <property name="title" translatable="yes">Hidden Accounts and Content</property>
+                <property name="subtitle" translatable="yes">Hide accounts, words, hashtags and message threads</property>
+                <property name="activatable">true</property>
+                <child type="suffix">
+                  <object class="GtkImage">
+                    <property name="icon-name">go-next-symbolic</property>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
           <object class="AdwPreferencesGroup" id="blocked_group">
             <property name="visible">false</property>
             <child>
@@ -246,7 +263,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
         </child>
         <child>
           <object class="AdwPreferencesGroup" id="attachments_group">
-            <property name="title" translatable="yes">Attachments</property>
+            <property name="title" translatable="yes">Account Attachment Servers</property>
             <child>
               <object class="GtkBox">
                 <property name="orientation">1</property>
@@ -298,6 +315,28 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                       <class name="error"/>
                       <class name="caption"/>
                     </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkListBox" id="server_publish_list">
+                    <property name="visible">false</property>
+                    <property name="selection-mode">0</property>
+                    <style>
+                      <class name="boxed-list"/>
+                    </style>
+                    <child>
+                      <object class="AdwActionRow" id="server_publish_row">
+                        <property name="title" translatable="yes">Public Server List</property>
+                        <property name="subtitle" translatable="yes">Share this account’s attachment server URLs on its write relays. Private sync does not publish them.</property>
+                        <child type="suffix">
+                          <object class="GtkButton" id="server_publish_button">
+                            <property name="label" translatable="yes">_Publish Server List…</property>
+                            <property name="use-underline">true</property>
+                            <property name="valign">3</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
                   </object>
                 </child>
                 <child>
@@ -491,6 +530,68 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
           </object>
         </child>
         <child>
+          <object class="AdwPreferencesGroup" id="blocked_relays_group">
+            <property name="title" translatable="yes">Blocked Relays</property>
+            <property name="description" translatable="yes">Block application traffic to these relay addresses for this account. Signer-control connections are excluded so a remote signer can undo the change. Edits stay local; this does not change anyone’s signed relay list.</property>
+            <property name="visible">false</property>
+            <child>
+              <object class="GtkBox">
+                <property name="orientation">1</property>
+                <property name="spacing">12</property>
+                <child>
+                  <object class="GtkListBox" id="blocked_relays_list">
+                    <property name="selection-mode">0</property>
+                    <style>
+                      <class name="boxed-list"/>
+                    </style>
+                    <accessibility>
+                      <property name="label" translatable="yes">Blocked relays</property>
+                    </accessibility>
+                    <child type="placeholder">
+                      <object class="GtkLabel">
+                        <property name="label" translatable="yes">No blocked relays</property>
+                        <property name="margin-top">12</property>
+                        <property name="margin-bottom">12</property>
+                        <property name="margin-start">12</property>
+                        <property name="margin-end">12</property>
+                        <style>
+                          <class name="dim-label"/>
+                        </style>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkListBox">
+                    <property name="selection-mode">0</property>
+                    <style>
+                      <class name="boxed-list"/>
+                    </style>
+                    <child>
+                      <object class="AdwEntryRow" id="blocked_relays_entry">
+                        <property name="title" translatable="yes">Block relay</property>
+                        <property name="show-apply-button">true</property>
+                        <property name="input-purpose">5</property>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="blocked_relays_error">
+                    <property name="visible">false</property>
+                    <property name="wrap">true</property>
+                    <property name="xalign">0</property>
+                    <style>
+                      <class name="error"/>
+                      <class name="caption"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
           <object class="AdwPreferencesGroup">
             <property name="title" translatable="yes">Discovery Relays</property>
             <property name="description" translatable="yes">Relays Groundhog uses to look people up. Kept on this device only; not published anywhere.</property>
@@ -651,9 +752,22 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             <child>
               <object class="AdwSwitchRow" id="social_sync_row">
                 <property name="title" translatable="yes">Sync Drafts and Lists</property>
-                <property name="subtitle" translatable="yes">Off — synchronization is not available in this version yet. Lists stay on this device; public publication requires separate approval.</property>
+                <property name="subtitle" translatable="yes">Synchronize encrypted drafts and private list entries. Relays see your account, event kind and time. Public publication needs separate approval; accepted events cannot be recalled.</property>
                 <property name="active">false</property>
                 <property name="sensitive">false</property>
+              </object>
+            </child>
+            <child>
+              <object class="AdwActionRow" id="social_import_row">
+                <property name="title" translatable="yes">Review Hidden Items…</property>
+                <property name="subtitle" translatable="yes">Apply the hidden accounts and content rules from your other devices</property>
+                <property name="visible">false</property>
+                <property name="activatable">true</property>
+                <child type="suffix">
+                  <object class="GtkImage">
+                    <property name="icon-name">go-next-symbolic</property>
+                  </object>
+                </child>
               </object>
             </child>
             <child>

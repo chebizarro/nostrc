@@ -1,4 +1,5 @@
 #include "gh-preferences-dialog.h"
+#include "gh-hidden-page.h"
 #include "gh-qr-code.h"
 #include "gh-diagnostics.h"
 #include "gh-agents-page.h"
@@ -51,6 +52,8 @@ struct _GhPreferencesDialog {
   AdwPreferencesGroup *social_group;
   AdwSwitchRow *social_sync_row;
   AdwActionRow *social_lists_row;
+  AdwPreferencesGroup *hidden_group;
+  AdwActionRow *hidden_row;
   AdwActionRow *social_import_row;
   AdwAlertDialog *social_import_dialog;
   GtkWidget *server_publish_list;
@@ -1814,12 +1817,14 @@ social_changed(GObject *owner, GhPreferencesDialog *self)
     if (self->server_publication) g_cancellable_cancel(self->server_publication);
     adw_dialog_force_close(ADW_DIALOG(self));
     gtk_widget_set_sensitive(GTK_WIDGET(self->social_lists_row), FALSE);
+    gtk_widget_set_sensitive(GTK_WIDGET(self->hidden_row), FALSE);
     return;
   }
   self->social_syncing = TRUE;
   adw_switch_row_set_active(self->social_sync_row, self->social.get_sync(self->social.owner));
   gtk_widget_set_sensitive(GTK_WIDGET(self->social_sync_row), self->social.sync_available);
   gtk_widget_set_sensitive(GTK_WIDGET(self->social_lists_row), self->social.service(self->social.owner) != NULL);
+  gtk_widget_set_sensitive(GTK_WIDGET(self->hidden_row), self->social.service(self->social.owner) != NULL);
   self->social_syncing = FALSE;
   g_auto(GStrv) targets = self->social.dup_public_targets ? self->social.dup_public_targets(self->social.owner) : NULL;
   gtk_widget_set_visible(self->server_publish_list, self->social.dup_public_targets != NULL);
@@ -2010,6 +2015,16 @@ social_lists_open(AdwActionRow *row, GhPreferencesDialog *self)
       ADW_NAVIGATION_PAGE(gh_lists_page_new(&self->social)));
 }
 
+static void
+hidden_open(AdwActionRow *row, GhPreferencesDialog *self)
+{
+  (void)row;
+  if (self->social.owner && self->social_generation == self->social.generation(self->social.owner) &&
+      self->social.service(self->social.owner))
+    adw_preferences_dialog_push_subpage(ADW_PREFERENCES_DIALOG(self),
+      ADW_NAVIGATION_PAGE(gh_hidden_page_new(&self->social)));
+}
+
 void
 gh_preferences_dialog_set_social_backend(GhPreferencesDialog *self, const GhListsBackend *backend)
 {
@@ -2030,6 +2045,7 @@ gh_preferences_dialog_set_social_backend(GhPreferencesDialog *self, const GhList
     social_changed(self->social.owner, self);
   }
   gtk_widget_set_visible(GTK_WIDGET(self->social_group), backend != NULL);
+  gtk_widget_set_visible(GTK_WIDGET(self->hidden_group), backend != NULL);
   gtk_widget_set_visible(GTK_WIDGET(self->blocked_relays_group), backend != NULL);
   gtk_widget_set_visible(self->server_publish_list, backend && backend->dup_public_targets);
 }
@@ -2156,6 +2172,8 @@ gh_preferences_dialog_class_init(GhPreferencesDialogClass *klass)
   BIND(server_publish_row);
   BIND(server_publish_button);
   BIND(social_lists_row);
+  BIND(hidden_group);
+  BIND(hidden_row);
   BIND(social_import_row);
   BIND(notifications_row);
   BIND(notification_privacy_row);
@@ -2231,6 +2249,7 @@ gh_preferences_dialog_init(GhPreferencesDialog *self)
   g_signal_connect(self->social_sync_row, "notify::active", G_CALLBACK(social_sync_changed), self);
   g_signal_connect(self->server_publish_button, "clicked", G_CALLBACK(server_publish_open), self);
   g_signal_connect(self->social_lists_row, "activated", G_CALLBACK(social_lists_open), self);
+  g_signal_connect(self->hidden_row, "activated", G_CALLBACK(hidden_open), self);
   g_signal_connect(self->social_import_row, "activated", G_CALLBACK(social_import_open), self);
   gh_agents_page_populate(self->agents_page);
   self->key_widgets = g_hash_table_new(g_str_hash, g_str_equal);

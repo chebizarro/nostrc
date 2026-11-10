@@ -260,6 +260,30 @@ delegate_delete_event_inner(gpointer data, const gchar *rid, const gchar *sender
 }
 
 static gboolean
+reaction_visible(GhStoreReactions *self, GhReaction *reaction, GError **error)
+{
+  sqlite3 *db = gh_store_get_db(self->store);
+  sqlite3_stmt *stmt = NULL;
+  int rc = sqlite3_prepare_v2(db,
+    "SELECT 1 FROM messages m JOIN conversations c ON c.id=m.conversation_id "
+    "WHERE " CONVERSATION_ROOM_SQL "=?1 AND m.backend_msg_id=?2 AND m.social_hidden=0 "
+    "AND (?3=?4 OR NOT EXISTS (SELECT 1 FROM social_mutes s WHERE s.tag_name='p' AND s.value=?3))",
+    -1, &stmt, NULL);
+  if (!sql_error(db, rc, "prepare reaction visibility", error))
+    return FALSE;
+  sqlite3_bind_text(stmt, 1, gh_reaction_get_room_id(reaction), -1, SQLITE_STATIC);
+  sqlite3_bind_text(stmt, 2, gh_reaction_get_target_rumor_id(reaction), -1, SQLITE_STATIC);
+  sqlite3_bind_text(stmt, 3, gh_reaction_get_sender(reaction), -1, SQLITE_STATIC);
+  sqlite3_bind_text(stmt, 4, gh_store_get_account_pubkey(self->store), -1, SQLITE_STATIC);
+  rc = sqlite3_step(stmt);
+  sqlite3_finalize(stmt);
+  if (rc == SQLITE_ROW)
+    return TRUE;
+  sql_error(db, rc, "read reaction visibility", error);
+  return FALSE;
+}
+
+static gboolean
 delegate_admit(gpointer data, GhReaction *reaction, GError **error)
 {
   GhStoreReactions *self = data;
@@ -274,7 +298,7 @@ delegate_admit(gpointer data, GhReaction *reaction, GError **error)
   }
   if (!gh_store_commit(self->store, error))
     return FALSE;
-  return admitted;
+  return admitted && reaction_visible(self, reaction, error);
 }
 
 static gboolean
@@ -355,11 +379,18 @@ delegate_remove_by_sender(gpointer data, const gchar *target_rumor_id,
   return TRUE;
 }
 
+static gboolean
+delegate_reload(gpointer data, GhReactionStore *model, GError **error)
+{
+  return gh_store_reactions_attach(data, model, error);
+}
+
 static const GhReactionDelegate store_delegate = {
   .admit = delegate_admit,
   .remove = delegate_remove,
   .remove_by_sender = delegate_remove_by_sender,
   .delete_event = delegate_delete_event,
+  .reload = delegate_reload,
 };
 
 gboolean
@@ -428,6 +459,7 @@ gh_store_reactions_attach(GhStoreReactions *self, GhReactionStore *model, GError
   }
 
   gh_reaction_store_set_account(model, account, &store_delegate, self, NULL);
+  gh_reaction_store_clear_projection(model);
 
   /* Load stored reactions. */
   sqlite3 *db = gh_store_get_db(self->store);
@@ -440,7 +472,9 @@ gh_store_reactions_attach(GhStoreReactions *self, GhReactionStore *model, GError
     "r.created_at, r.room_id FROM reactions r "
     "JOIN conversations c ON c.id = r.conversation_id "
     "JOIN messages m ON m.conversation_id = c.id AND m.backend_msg_id = r.target_msg_id "
-    "WHERE " CONVERSATION_ROOM_SQL " = r.room_id "
+    "WHERE " CONVERSATION_ROOM_SQL " = r.room_id AND m.social_hidden=0 "
+    "AND (r.sender_pubkey=?1 OR NOT EXISTS (SELECT 1 FROM social_mutes s "
+    "WHERE s.tag_name='p' AND s.value=r.sender_pubkey)) "
     "ORDER BY r.created_at ASC, r.reaction_msg_id ASC",
     -1, &stmt, NULL);
   if (rc != SQLITE_OK) {
@@ -452,6 +486,7 @@ gh_store_reactions_attach(GhStoreReactions *self, GhReactionStore *model, GError
    * does not issue redundant INSERT OR IGNORE statements for every stored
    * reaction. The reactions are already persisted. */
   gh_reaction_store_suspend_delegate(model);
+  sqlite3_bind_text(stmt, 1, account, -1, SQLITE_STATIC);
 
   while (sqlite3_step(stmt) == SQLITE_ROW) {
     const gchar *target_msg_id = (const gchar *)sqlite3_column_text(stmt, 0);

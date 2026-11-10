@@ -199,6 +199,11 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
     </section>
     <section>
       <item>
+        <attribute name="label" translatable="yes">_Hide Account…</attribute>
+        <attribute name="action">win.hide-shown-account</attribute>
+        <attribute name="hidden-when">action-disabled</attribute>
+      </item>
+      <item>
         <attribute name="label" translatable="yes">_Delete Conversation…</attribute>
         <attribute name="action">win.delete-shown-conversation</attribute>
         <attribute name="hidden-when">action-disabled</attribute>

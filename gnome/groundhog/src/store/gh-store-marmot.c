@@ -1414,6 +1414,25 @@ out:
   return txn_end(self, err);
 }
 
+gboolean
+gh_store_marmot_decline_hidden_welcome(MarmotStorage *storage,
+                                      const guint8 wrapper_id[32],
+                                      const guint8 welcome_id[32],
+                                      gint64 processed_at, GError **error)
+{
+  MarmotError result = storage->save_processed_welcome(storage->ctx, wrapper_id, welcome_id,
+    processed_at, MARMOT_WELCOME_STATE_DECLINED, NULL);
+  if (result == MARMOT_OK)
+    return TRUE;
+  GError *failure = gh_store_marmot_take_error(storage);
+  if (failure)
+    g_propagate_error(error, failure);
+  else
+    g_set_error_literal(error, GH_STORE_ERROR, GH_STORE_ERROR_FAILED,
+                        "Could not record a declined invitation");
+  return FALSE;
+}
+
 /* ---- Key package info ------------------------------------------------------------- */
 
 static MarmotError

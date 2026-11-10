@@ -316,8 +316,10 @@ bind_store(GhAccountStore *self, GhStore *store, gboolean corrupt)
   g_autoptr(GError) error = NULL;
   gboolean ephemeral = gh_store_is_ephemeral(store);
   self->store = store;
-  g_signal_emit(self, signals[SIGNAL_STORE_BOUND], 0);
   self->conversations = gh_store_conversations_new(store);
+  /* Social state binds before restoration/network startup, sharing the exact
+   * policy which attach() installs with the persistence delegate. */
+  g_signal_emit(self, signals[SIGNAL_STORE_BOUND], 0);
   if (!corrupt && !ephemeral)
     import_legacy(self);
   gboolean restored = gh_store_conversations_attach(self->conversations, self->model, 0,

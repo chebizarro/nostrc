@@ -38,6 +38,7 @@
 #include "gh-mls-copy.h"
 #include "gh-mls-group-info-dialog.h"
 #include "gh-mls-invitee-picker.h"
+#include "test-avatar-cache.h"
 #include "gh-mls-invites-page.h"
 #include "gh-mls-new-group-page.h"
 #include "gh-test-escape.h"
@@ -2101,6 +2102,63 @@ self_remove_settled(gpointer data)
 }
 
 static void
+test_gui_contact_pictures(void)
+{
+  World w;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  wait_published(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE];
+  accept_contact(alice, BOB);
+  accept_contact(alice, CAROL);
+  GhMlsGroup *group = create_group(alice, "Pictures", (const guint[]){ BOB }, 1);
+  join(&w.apps[BOB], ALICE);
+  GhWindow *window = app_window(alice, NULL);
+  g_autoptr(GhPictureCache) pictures = gh_test_avatar_cache(hex[BOB]);
+  gh_picture_cache_allow(pictures, hex[CAROL]);
+  gboolean hidden = FALSE;
+  const GhPicturePolicy policy = { .is_hidden = gh_test_avatar_hidden };
+  gh_picture_cache_set_policy(pictures, &policy, &hidden);
+  GhMlsUiContext context = { .service = alice->service, .accounts = alice->accounts,
+    .model = alice->model, .settings = alice->settings, .pictures = pictures };
+  GhMlsGroupInfoDialog *info = g_object_ref_sink(gh_mls_group_info_dialog_new(group, &context));
+  adw_dialog_present(ADW_DIALOG(info), GTK_WIDGET(window));
+  spin_until(gh_test_dialog_shown, info, "member pictures shown");
+  AdwAvatar *member = gh_test_avatar_with_picture(GTK_WIDGET(info),
+    GDK_PAINTABLE(gh_picture_cache_get_for(pictures, hex[BOB])));
+  g_assert_nonnull(member);
+  g_object_ref(member);
+  gtk_widget_activate_action(GTK_WIDGET(info), "mls-group.add-members", NULL);
+  GhMlsInviteePicker *picker = gh_mls_group_info_dialog_get_add_picker(info);
+  GtkWidget *row = GTK_WIDGET(gh_mls_invitee_picker_get_row(picker, hex[CAROL]));
+  g_assert_nonnull(row);
+  AdwAvatar *invitee = gh_test_avatar_with_picture(row,
+    GDK_PAINTABLE(gh_picture_cache_get_for(pictures, hex[CAROL])));
+  g_assert_nonnull(invitee);
+  g_object_ref(invitee);
+  hidden = TRUE;
+  gh_picture_cache_policy_changed(pictures, NULL);
+  g_assert_null(adw_avatar_get_custom_image(member));
+  g_assert_null(adw_avatar_get_custom_image(invitee));
+  hidden = FALSE;
+  gh_picture_cache_policy_changed(pictures, NULL);
+  while (gh_picture_cache_is_loading(pictures, "https://pictures.test.invalid/avatar.png"))
+    g_main_context_iteration(NULL, TRUE);
+  g_assert_nonnull(adw_avatar_get_custom_image(member));
+  g_assert_nonnull(adw_avatar_get_custom_image(invitee));
+  gh_picture_cache_set_master(pictures, FALSE);
+  g_assert_null(adw_avatar_get_custom_image(member));
+  g_assert_null(adw_avatar_get_custom_image(invitee));
+  g_object_unref(member);
+  g_object_unref(invitee);
+  adw_dialog_force_close(ADW_DIALOG(info));
+  g_object_unref(info);
+  gtk_window_destroy(GTK_WINDOW(window));
+  drain();
+  world_down(&w);
+}
+
+static void
 test_gui_group_info(void)
 {
   World w;
@@ -3273,6 +3331,7 @@ main(int argc, char **argv)
     g_test_add_func("/groundhog/mls-ui-gui/refused-invitation", test_gui_refused_invitation);
     g_test_add_func("/groundhog/mls-ui-gui/remove-old-keys", test_gui_remove_old_keys);
     g_test_add_func("/groundhog/mls-ui-gui/group-info", test_gui_group_info);
+    g_test_add_func("/groundhog/mls-ui-gui/contact-pictures", test_gui_contact_pictures);
     g_test_add_func("/groundhog/mls-ui-gui/left-group-delete", test_gui_left_group_delete);
     g_test_add_func("/groundhog/mls-ui-gui/group-files", test_gui_group_files);
 #if GH_MLS_SERVICE_ACCOUNT_PROOF

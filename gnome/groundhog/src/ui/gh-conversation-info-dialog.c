@@ -1,4 +1,6 @@
 #include "gh-conversation-info-dialog.h"
+#include "gh-picture-cache.h"
+#include "gh-conversation-list.h"
 #include "gh-qr-code.h"
 #include "gh-conversation-actions.h"
 #include "gh-conversation-view.h"
@@ -158,6 +160,7 @@ struct _GhConversationInfoDialog {
   GtkMenuButton *mute_button;
   AdwComboRow *timer_row;
   AdwActionRow *block_row;
+  AdwActionRow *hide_row;
   AdwActionRow *forget_row;
   AdwPreferencesGroup *their_group;
   AdwActionRow *their_key_row;
@@ -633,6 +636,19 @@ action_show_key_qr(GtkWidget *widget, const char *name, GVariant *parameter)
 }
 
 static void
+action_hide_account(GtkWidget *widget, const char *name, GVariant *parameter)
+{
+  (void)name; (void)parameter;
+  GhConversationInfoDialog *self = GH_CONVERSATION_INFO_DIALOG(widget);
+  if (!self->model || !self->conversation)
+    return;
+  const gchar *const *peers = gh_conversation_get_peers(self->conversation);
+  if (peers && peers[0] && !peers[1])
+    gtk_widget_activate_action(widget, "app.hide-account", "(ss)",
+      gh_conversation_get_account(self->conversation), peers[0]);
+}
+
+static void
 on_person_activated(GhConversationInfoPerson *person, GhConversationInfoDialog *self)
 {
   gtk_widget_activate_action(GTK_WIDGET(self), "info.verify", "s", person->pubkey);
@@ -661,6 +677,8 @@ fill(GhConversationInfoDialog *self, const GhConversationInfoServices *services)
     if (services->profile)
       services->profile(peers[i], &profile, services->profile_data);
     GhConversationInfoPerson *person = person_new(peers[i], profile.name, profile.nip05, profile.picture);
+    if (services->pictures)
+      gh_picture_cache_bind_avatar(services->pictures, person->avatar, peers[i]);
     g_signal_connect_object(person, "activated", G_CALLBACK(on_person_activated), self, 0);
     adw_preferences_group_add(self->people_group, GTK_WIDGET(person));
     g_ptr_array_add(self->people, person);
@@ -720,6 +738,8 @@ fill(GhConversationInfoDialog *self, const GhConversationInfoServices *services)
                  "have their copies, and encrypted copies may remain on relays."));
   adw_alert_dialog_set_body(self->forget_dialog, forget_body);
 
+  gtk_widget_set_visible(GTK_WIDGET(self->hide_row), n_peers == 1);
+  gtk_widget_action_set_enabled(GTK_WIDGET(self), "info.hide-account", n_peers == 1);
   gboolean stored = self->conversations != NULL;
   gtk_widget_set_sensitive(GTK_WIDGET(self->block_row), stored);
   gtk_widget_set_sensitive(GTK_WIDGET(self->forget_row), stored);
@@ -820,6 +840,7 @@ gh_conversation_info_dialog_class_init(GhConversationInfoDialogClass *klass)
   BIND(mute_button);
   BIND(timer_row);
   BIND(block_row);
+  BIND(hide_row);
   BIND(forget_row);
   BIND(their_group);
   BIND(their_key_row);
@@ -846,6 +867,7 @@ gh_conversation_info_dialog_class_init(GhConversationInfoDialogClass *klass)
   gtk_widget_class_install_action(widget_class, "info.mute", "s", action_mute);
   gtk_widget_class_install_action(widget_class, "info.unmute", NULL, action_unmute);
   gtk_widget_class_install_action(widget_class, "info.block", NULL, action_block);
+  gtk_widget_class_install_action(widget_class, "info.hide-account", NULL, action_hide_account);
   gtk_widget_class_install_action(widget_class, "info.forget", NULL, action_forget);
 }
 
@@ -951,6 +973,8 @@ on_conversation_info(GSimpleAction *action, GVariant *parameter, gpointer data)
       gh_conversation_store_lookup(services.model, gh_conversation_get_room_id(conversation)) !=
         conversation)
     return;
+  if (!services.pictures)
+    services.pictures = gh_conversation_list_get_picture_cache(attach->window);
   GhConversationInfoDialog *dialog = gh_conversation_info_dialog_new(conversation, &services);
   adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(attach->window));
 }

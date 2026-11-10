@@ -10,6 +10,10 @@
  * GSettings key in the memory backend. No display, no network. Waits
  * iterate the main context; nothing sleeps. */
 #include "gh-picture-cache.h"
+#if GH_TEST_SOCIAL_POLICY
+#include "gh-social-lists.h"
+#include <nostr-kinds.h>
+#endif
 
 #include <string.h>
 
@@ -466,12 +470,90 @@ test_own_identities(void)
   fixture_down(&f);
 }
 
+#if GH_TEST_SOCIAL_POLICY
+static gchar *
+identity_uri(const gchar *pubkey, gpointer source)
+{
+  (void)pubkey;
+  guint n = GPOINTER_TO_UINT(g_object_get_data(source, "lookups"));
+  g_object_set_data(source, "lookups", GUINT_TO_POINTER(n + 1));
+  return g_strdup(URI_A);
+}
+static gboolean
+social_hidden(gpointer data, const gchar *pubkey)
+{
+  return gh_social_lists_is_hidden(GH_SOCIAL_LISTS(data), pubkey);
+}
+static void
+social_policy_changed(GhSocialLists *owner, GhPictureCache *cache)
+{
+  (void)owner;
+  gh_picture_cache_policy_changed(cache, NULL);
+}
+static void
+test_social_hidden_policy(void)
+{
+  Fixture f;
+  fixture_up(&f, TRUE);
+  g_autoptr(GhSocialLists) owner = gh_social_lists_new(NULL);
+  g_autoptr(GhPictureCache) cache = cache_new(&f);
+  g_autoptr(GObject) source = g_object_new(G_TYPE_OBJECT, NULL);
+  const GhPicturePolicy policy = { .is_hidden = social_hidden };
+  gh_picture_cache_set_policy(cache, &policy, owner);
+  gh_picture_cache_set_uri_source(cache, identity_uri, source);
+  g_signal_connect_object(owner, "hide-policy-changed", G_CALLBACK(social_policy_changed), cache, 0);
+  gh_picture_cache_allow(cache, B);
+  g_assert_null(gh_picture_cache_get_for(cache, B)); /* unloaded policy refuses even consent */
+  g_assert_cmpuint(GPOINTER_TO_UINT(g_object_get_data(source, "lookups")), ==, 0);
+  GError *error = NULL;
+  GhStore *store = gh_store_open_ephemeral(A, NULL, &error);
+  g_assert_true(gh_social_lists_bind_store(owner, store, 1, &error));
+  g_assert_null(gh_picture_cache_get_for(cache, B));
+  g_assert_cmpuint(get_count(&f.http), ==, 1);
+  g_autoptr(GBytes) png = one_pixel_png();
+  http_answer(&f.http, 0, png);
+  g_assert_nonnull(gh_picture_cache_get_for(cache, B));
+  guint changes = f.policy_changes;
+  guint lookups = GPOINTER_TO_UINT(g_object_get_data(source, "lookups"));
+  g_assert_true(gh_social_lists_hide_account(owner, B, &error));
+  g_assert_cmpuint(f.policy_changes, >, changes);
+  g_assert_null(gh_picture_cache_get_for(cache, B));
+  g_assert_cmpuint(GPOINTER_TO_UINT(g_object_get_data(source, "lookups")), ==, lookups);
+  g_assert_true(gh_picture_cache_has_consent(cache, B));
+  g_assert_cmpuint(get_count(&f.http), ==, 1);
+  g_autoptr(GNostrListDocument) doc = gh_social_lists_ensure(owner, NOSTR_KIND_MUTE_LIST, "", &error);
+  const NostrListTag *tag = nostr_nip51_document_tag(gnostr_list_document_get_codec(doc), TRUE, 0);
+  g_autoptr(GPtrArray) ops = g_ptr_array_new_with_free_func((GDestroyNotify)gnostr_list_operation_unref);
+  g_ptr_array_add(ops, gnostr_list_operation_remove(TRUE, tag, 0));
+  g_autoptr(GNostrListDocument) saved = gh_social_lists_apply(owner, NOSTR_KIND_MUTE_LIST, "",
+    gnostr_list_document_get_local_revision(doc), ops, &error);
+  g_assert_nonnull(saved);
+  g_assert_true(gh_picture_cache_is_allowed(cache, B));
+  g_assert_null(gh_picture_cache_get_for(cache, B));
+  g_assert_cmpuint(get_count(&f.http), ==, 2);
+  http_answer(&f.http, 1, png);
+  g_assert_nonnull(gh_picture_cache_get_for(cache, B));
+  gh_social_lists_close(owner);
+  g_assert_null(gh_picture_cache_get_for(cache, B));
+  gh_picture_cache_close(cache);
+  g_assert_cmpuint(f.consent.clears, ==, 0); /* ending a window never revokes stored consent */
+  gh_picture_cache_set_master(cache, TRUE);
+  g_assert_false(gh_picture_cache_is_allowed(cache, B));
+  g_assert_no_error(error);
+  gh_store_close(store);
+  fixture_down(&f);
+}
+#endif
+
 int
 main(int argc, char **argv)
 {
   g_test_init(&argc, &argv, NULL);
   g_test_add_func("/privacy/avatars/master-off-all-surfaces", test_master_off_all_surfaces);
   g_test_add_func("/groundhog/picture-cache/follow-removal", test_follow_removal);
+#if GH_TEST_SOCIAL_POLICY
+  g_test_add_func("/groundhog/picture-cache/social-hidden-policy", test_social_hidden_policy);
+#endif
   g_test_add_func("/groundhog/picture-cache/same-uri-stale-completion",
                   test_same_uri_stale_completion);
   g_test_add_func("/groundhog/picture-cache/multi-window-revocation",

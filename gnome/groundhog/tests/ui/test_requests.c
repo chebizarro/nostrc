@@ -886,6 +886,47 @@ test_gui_requests_view(void)
 }
 
 static void
+record_hide(GSimpleAction *action, GVariant *parameter, GVariant **target)
+{
+  (void)action;
+  g_clear_pointer(target, g_variant_unref);
+  *target = g_variant_ref(parameter);
+}
+
+static void
+test_gui_hide_account(void)
+{
+  Fixture f;
+  fixture_up(&f, TRUE);
+  const Person *peer = &people[0];
+  deliver(&f, peer, FALSE, T0 - 300, "hello", NULL);
+  attach_window(&f, FALSE);
+  g_autoptr(GSimpleActionGroup) actions = g_simple_action_group_new();
+  g_autoptr(GSimpleAction) hide = g_simple_action_new("hide-account", G_VARIANT_TYPE("(ss)"));
+  g_autoptr(GVariant) target = NULL;
+  g_signal_connect(hide, "activate", G_CALLBACK(record_hide), &target);
+  g_action_map_add_action(G_ACTION_MAP(actions), G_ACTION(hide));
+  gtk_widget_insert_action_group(GTK_WIDGET(f.window), "app", G_ACTION_GROUP(actions));
+  GhConversation *room = room_of(&f, peer);
+  g_assert_true(gh_window_open_item(f.window, room));
+  GhRequestsView *view = requests_view(&f);
+  GtkWidget *hide_button = template_child(view, GH_TYPE_REQUESTS_VIEW, "hide_button");
+  g_assert_true(gtk_widget_get_visible(hide_button));
+  g_signal_emit_by_name(hide_button, "clicked");
+  g_assert_nonnull(target);
+  const gchar *account, *sender;
+  g_variant_get(target, "(&s&s)", &account, &sender);
+  g_assert_cmpstr(account, ==, hex_alice);
+  g_assert_cmpstr(sender, ==, peer->pk);
+  g_assert_true(gh_conversation_get_is_request(room));
+  g_assert_true(room_of(&f, peer) == room);
+  g_assert_false(blocked(&f, peer));
+  g_assert_null(gh_requests_view_get_confirmation(view)); /* Block remains separate */
+  gtk_widget_insert_action_group(GTK_WIDGET(f.window), "app", NULL);
+  fixture_down(&f);
+}
+
+static void
 test_gui_requests_without_storage(void)
 {
   Fixture f;
@@ -1997,6 +2038,7 @@ main(int argc, char **argv)
   if (gui) {
     g_test_add_func("/groundhog/requests/gui/requests-view", test_gui_requests_view);
     g_test_add_func("/groundhog/requests/gui/without-storage", test_gui_requests_without_storage);
+    g_test_add_func("/groundhog/requests/gui/hide-account", test_gui_hide_account);
     g_test_add_func("/groundhog/requests/gui/pt8-accept", test_gui_pt8_accept);
     g_test_add_func("/groundhog/requests/gui/followed-request", test_gui_followed_request);
     g_test_add_func("/groundhog/requests/gui/new-message-consent", test_gui_new_message_consent);

@@ -30,6 +30,7 @@ typedef struct {
    * Dialogs reference the source; reads are synchronous and generation-safe. */
   GObject *server_source;
   GStrv (*dup_account_servers)(GObject *source);
+  struct _GhPictureCache *pictures; /* optional per-window contact picture decision */
 } GhMlsUiContext;
 
 G_END_DECLS

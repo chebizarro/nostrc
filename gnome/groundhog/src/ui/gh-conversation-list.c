@@ -60,6 +60,8 @@ static void
 list_free(gpointer data)
 {
   GhConversationList *list = data;
+  if (list->pictures)
+    gh_picture_cache_close(list->pictures);
   g_clear_handle_id(&list->load_idle, g_source_remove);
   g_clear_handle_id(&list->navigate_idle, g_source_remove);
   g_clear_handle_id(&list->target_idle, g_source_remove);

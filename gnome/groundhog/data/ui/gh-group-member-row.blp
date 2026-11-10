@@ -47,6 +47,13 @@ template $GhGroupMemberRow: Adw.ActionRow {
 menu member_menu {
   section {
     item {
+      label: _("_Hide Account…");
+      action: "member.hide-account";
+      hidden-when: "action-disabled";
+    }
+  }
+  section {
+    item {
       label: _("_Change Role…");
       action: "member.change-role";
       hidden-when: "action-disabled";

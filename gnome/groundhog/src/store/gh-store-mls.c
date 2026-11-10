@@ -223,7 +223,7 @@ delegate_has_rumor(gpointer data, const gchar *message_id)
 /* T-admit of one decrypted group message (see the header). */
 static gboolean
 delegate_admit(gpointer data, GhMessage *message, const gchar *wrap_id,
-               GhConversationCommit *commit, GError **error)
+               GhMessageDisposition disposition, GhConversationCommit *commit, GError **error)
 {
   GhStoreMls *self = data;
   if (!check_open(self, error))
@@ -248,7 +248,9 @@ delegate_admit(gpointer data, GhMessage *message, const gchar *wrap_id,
     .body = gh_message_get_content(message),
     .raw_json = gh_message_get_rumor_json(message),
     .expires_at = gh_message_get_expires_at(message),
-    .unread = !own && !gh_agent_event_is_kind(gh_message_get_kind(message)),
+    .unread = !own && disposition == GH_MESSAGE_INCLUDE && !gh_agent_event_is_kind(gh_message_get_kind(message)),
+    .social_hidden = disposition == GH_MESSAGE_HIDE_RETAIN,
+    .drop = disposition == GH_MESSAGE_DROP,
     .request_state = GH_STORE_REQUEST_ACCEPTED,
     .has_mls_epoch = has_epoch,
     .mls_epoch = epoch,
@@ -262,6 +264,7 @@ delegate_admit(gpointer data, GhMessage *message, const gchar *wrap_id,
   if (!gh_store_admit(store, &m, &result, &row, error) ||
       !lookup_room(store, room_id, &found, &conversation_id, error))
     goto fail;
+  commit->duplicate = result == GH_STORE_ADMIT_DUPLICATE;
   /* A duplicate may still be stored (a send stored its message first). */
   if (found && result == GH_STORE_ADMIT_DUPLICATE &&
       !message_row(store, conversation_id, m.backend_msg_id, &row, error))
@@ -275,10 +278,12 @@ delegate_admit(gpointer data, GhMessage *message, const gchar *wrap_id,
                            : GH_STORE_READ_RECOUNT;
     gint64 seq = 0;
     if (!gh_store_message_seq(store, row, &seq, error) ||
-        !gh_store_read_state_update(store, conversation_id, move, row, seq, &commit->unread,
-                                    error))
+        (disposition == GH_MESSAGE_INCLUDE &&
+         !gh_store_read_state_update(store, conversation_id, move, row, seq, &commit->unread,
+                                     error)))
       goto fail;
     commit->seq = seq;
+    commit->hidden = commit->hidden || disposition != GH_MESSAGE_INCLUDE;
   } else {
     commit->hidden = TRUE; /* seen only: expired, forgotten room, purged */
   }
@@ -325,12 +330,19 @@ delegate_reset_latest(gpointer data, GhConversation *conversation, GError **erro
   return gh_store_mls_reset_latest(data, conversation, error);
 }
 
+static gboolean
+delegate_reload(gpointer data, GhConversationStore *model, GError **error)
+{
+  return gh_store_mls_attach(data, model, 0, error);
+}
+
 static const GhConversationDelegate mls_delegate = {
   .has_wrap = delegate_has_wrap,
   .has_rumor = delegate_has_rumor,
   .admit = delegate_admit,
   .mark_read = delegate_mark_read,
   .reset_latest = delegate_reset_latest,
+  .reload = delegate_reload,
 };
 
 /* ---- Restore ------------------------------------------------------------------------ */
@@ -369,7 +381,7 @@ restore_room(GhStoreMls *self, GhConversationStore *model, gint64 conversation_i
   }
   stmt = prepare(store,
     "SELECT created_at, backend_msg_id, raw_json, expires_at, seq, mls_epoch FROM messages "
-    "WHERE conversation_id = ?1 AND kind IN (?6, ?7, ?8, 1201, 1202) "
+    "WHERE conversation_id = ?1 AND social_hidden = 0 AND kind IN (?6, ?7, ?8, 1201, 1202) "
     "AND (?2 = 0 OR created_at < ?3 OR "
     "(created_at = ?3 AND backend_msg_id < ?4)) "
     "ORDER BY created_at DESC, backend_msg_id DESC LIMIT ?5", error);
@@ -438,8 +450,13 @@ restore_room(GhStoreMls *self, GhConversationStore *model, gint64 conversation_i
     }
   } while (!conversation && messages->len == 0 && more);
   g_clear_pointer(&stmt, sqlite3_finalize);
-  if (!conversation && messages->len == 0)
-    goto done;
+  if (!conversation && messages->len == 0) {
+    GhConversation *existing = gh_conversation_store_lookup(model, room_id);
+    if (existing)
+      gh_conversation_window_clear(existing);
+    else
+      gh_conversation_store_ensure_group(model, room_id, NULL);
+  }
 
   stmt = prepare(store, "SELECT title, pinned_rank FROM conversations WHERE id = ?1", error);
   if (!stmt)
@@ -481,7 +498,6 @@ restore_room(GhStoreMls *self, GhConversationStore *model, gint64 conversation_i
   if (listed)
     gh_conversation_window_enable(listed);
   *out_listed = messages->len;
-done:
   g_free(cursor.id);
   gh_store_read_state_clear(&read);
   return TRUE;
@@ -542,7 +558,7 @@ gh_store_mls_attach(GhStoreMls *self, GhConversationStore *model, guint page_siz
   for (guint i = 0; i < ids->len; i++) {
     guint listed = 0;
     if (!restore_room(self, model, g_array_index(ids, gint64, i), g_ptr_array_index(groups, i),
-                      NULL, limit, FALSE, &listed, error))
+                      NULL, limit, TRUE, &listed, error))
       return FALSE;
   }
   return TRUE;
@@ -613,7 +629,7 @@ gh_store_mls_load_newer(GhStoreMls *self, GhConversation *conversation, guint li
   g_autoptr(GPtrArray) messages = g_ptr_array_new_with_free_func(g_object_unref);
   sqlite3_stmt *stmt = prepare(store,
     "SELECT raw_json, expires_at, seq, mls_epoch FROM messages "
-    "WHERE conversation_id = ?1 AND kind IN (?4, ?5, ?6, 1201, 1202) "
+    "WHERE conversation_id = ?1 AND social_hidden = 0 AND kind IN (?4, ?5, ?6, 1201, 1202) "
     "AND (created_at > ?2 OR (created_at = ?2 AND backend_msg_id > ?3)) "
     "ORDER BY created_at ASC, backend_msg_id ASC", error);
   if (!stmt)

@@ -740,6 +740,7 @@ typedef enum {
 struct _GhConversationView {
   AdwBreakpointBin parent_instance;
   AdwBanner *banner;
+  AdwBanner *visibility_banner;
   GtkScrolledWindow *scroller;
   GtkListView *message_list;
   GtkWidget *loading_box;
@@ -1797,6 +1798,13 @@ leave_conversation_previews(GhConversationView *self)
   g_clear_pointer(&self->pending_link, g_free);
 }
 
+static void
+sync_visibility(GhConversationView *self)
+{
+  adw_banner_set_revealed(self->visibility_banner,
+    self->conversation && gh_conversation_get_visibility_updating(self->conversation));
+}
+
 void
 gh_conversation_view_set_conversation(GhConversationView *self, GhConversation *conversation)
 {
@@ -1847,6 +1855,7 @@ gh_conversation_view_set_conversation(GhConversationView *self, GhConversation *
   self->seen_newer_arrivals = 0;
   self->open_scroll = OPEN_NONE;
   g_set_object(&self->conversation, conversation);
+  sync_visibility(self);
   const gchar *account = conversation ? gh_conversation_get_account(conversation) : NULL;
   if (g_strcmp0(self->render_account, account) != 0) {
     render_cache_reset(self);
@@ -1862,6 +1871,8 @@ gh_conversation_view_set_conversation(GhConversationView *self, GhConversation *
 
   if (conversation) {
     gh_conversation_window_set_active(conversation, TRUE);
+    g_signal_connect_object(conversation, "notify::visibility-updating", G_CALLBACK(sync_visibility),
+                            self, G_CONNECT_SWAPPED);
     self->timeline = timeline_new(G_LIST_MODEL(conversation), is_multi_party(conversation),
                                   self->reactions);
 #ifdef GROUNDHOG_CONVERSATION_OPEN_PROBE
@@ -3634,6 +3645,7 @@ gh_conversation_view_class_init(GhConversationViewClass *klass)
   gtk_widget_class_bind_template_child(widget_class, GhConversationView, scroller);
   gtk_widget_class_bind_template_child(widget_class, GhConversationView, message_list);
   gtk_widget_class_bind_template_child(widget_class, GhConversationView, loading_box);
+  gtk_widget_class_bind_template_child(widget_class, GhConversationView, visibility_banner);
   gtk_widget_class_bind_template_child(widget_class, GhConversationView, jump_button);
   gtk_widget_class_bind_template_child(widget_class, GhConversationView, jump_count);
   gtk_widget_class_bind_template_child(widget_class, GhConversationView, locked_row);

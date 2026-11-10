@@ -1,4 +1,5 @@
 #include "gh-picture-cache.h"
+#include "gh-display-name.h"
 
 #define MASTER_KEY "load-profile-pictures"
 
@@ -20,7 +21,10 @@ struct _GhPictureCache {
   gpointer policy_data;
   GSettings *settings;
   gboolean master;
+  gboolean closed;
   GhWebContent *web;
+  GhPictureUriFunc uri_func;
+  GObject *uri_source;
   GHashTable *by_uri;      /* uri -> Entry */
   GHashTable *allowed;     /* explicit consent: pubkey (lowercase) -> 1 */
   GHashTable *own;         /* own identities: pubkey (lowercase) -> 1 */
@@ -81,7 +85,7 @@ save_allow(GhPictureCache *self, const gchar *pubkey)
 static gboolean
 eligible(GhPictureCache *self, const gchar *key)
 {
-  if (!self->master)
+  if (self->closed || !self->master)
     return FALSE;
   if (self->policy.is_hidden && self->policy.is_hidden(self->policy_data, key))
     return FALSE;
@@ -186,6 +190,86 @@ drop_entries(GhPictureCache *self)
 }
 
 void
+gh_picture_cache_set_uri_source(GhPictureCache *self, GhPictureUriFunc func, GObject *source)
+{
+  g_return_if_fail(GH_IS_PICTURE_CACHE(self));
+  if (self->uri_func == func && self->uri_source == source)
+    return;
+  g_autoptr(GHashTable) who = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  collect_known(self, who);
+  drop_entries(self);
+  self->uri_func = func;
+  g_set_object(&self->uri_source, source);
+  emit_changed(self, who, TRUE);
+}
+
+GdkTexture *
+gh_picture_cache_get_for(GhPictureCache *self, const gchar *pubkey)
+{
+  if (!gh_picture_cache_is_allowed(self, pubkey) || !self->uri_func)
+    return NULL;
+  g_autofree gchar *uri = self->uri_func(pubkey, self->uri_source);
+  return gh_picture_cache_get(self, pubkey, uri);
+}
+
+typedef struct {
+  GhPictureCache *cache;
+  AdwAvatar *avatar; /* owns this binding */
+  gchar *pubkey;
+} AvatarBinding;
+#define AVATAR_BINDING "gh-picture-cache-avatar"
+
+static void
+avatar_refresh(AdwAvatar *avatar)
+{
+  AvatarBinding *binding = g_object_get_data(G_OBJECT(avatar), AVATAR_BINDING);
+  if (!binding)
+    return;
+  GdkTexture *texture = gh_picture_cache_get_for(binding->cache, binding->pubkey);
+  adw_avatar_set_custom_image(avatar, texture ? GDK_PAINTABLE(texture) : NULL);
+}
+static void
+avatar_policy_changed(GhPictureCache *cache, AdwAvatar *avatar)
+{
+  (void)cache;
+  avatar_refresh(avatar);
+}
+static void
+avatar_picture_changed(GObject *source, const gchar *pubkey, AdwAvatar *avatar)
+{
+  (void)source;
+  AvatarBinding *binding = g_object_get_data(G_OBJECT(avatar), AVATAR_BINDING);
+  if (binding && (!pubkey || !g_strcmp0(pubkey, binding->pubkey)))
+    avatar_refresh(avatar);
+}
+static void
+avatar_binding_free(gpointer data)
+{
+  AvatarBinding *binding = data;
+  g_signal_handlers_disconnect_by_data(binding->cache, binding->avatar);
+  g_signal_handlers_disconnect_by_data(gh_display_name_get_notifier(), binding->avatar);
+  g_object_unref(binding->cache);
+  g_free(binding->pubkey);
+  g_free(binding);
+}
+void
+gh_picture_cache_bind_avatar(GhPictureCache *self, AdwAvatar *avatar, const gchar *pubkey)
+{
+  g_return_if_fail(GH_IS_PICTURE_CACHE(self));
+  g_return_if_fail(ADW_IS_AVATAR(avatar));
+  g_return_if_fail(pubkey != NULL);
+  AvatarBinding *binding = g_new0(AvatarBinding, 1);
+  binding->cache = g_object_ref(self);
+  binding->avatar = avatar;
+  binding->pubkey = lower(pubkey);
+  g_object_set_data_full(G_OBJECT(avatar), AVATAR_BINDING, binding, avatar_binding_free);
+  g_signal_connect_object(self, "picture-changed", G_CALLBACK(avatar_picture_changed), avatar, 0);
+  g_signal_connect_object(self, "policy-changed", G_CALLBACK(avatar_policy_changed), avatar, 0);
+  g_signal_connect_object(gh_display_name_get_notifier(), "changed", G_CALLBACK(avatar_picture_changed), avatar, 0);
+  avatar_refresh(avatar);
+}
+
+void
 gh_picture_cache_revoke_all(GhPictureCache *self)
 {
   g_return_if_fail(GH_IS_PICTURE_CACHE(self));
@@ -205,6 +289,8 @@ void
 gh_picture_cache_set_master(GhPictureCache *self, gboolean enabled)
 {
   g_return_if_fail(GH_IS_PICTURE_CACHE(self));
+  if (self->closed)
+    return;
   enabled = !!enabled;
   if (self->master == enabled)
     return;
@@ -408,16 +494,40 @@ gh_picture_cache_has_failed(GhPictureCache *self, const gchar *uri)
 }
 
 static void
-gh_picture_cache_dispose(GObject *object)
+close_cache(GhPictureCache *self, gboolean notify)
 {
-  GhPictureCache *self = GH_PICTURE_CACHE(object);
+  if (self->closed)
+    return;
+  g_autoptr(GHashTable) who = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  collect_known(self, who);
+  self->closed = TRUE;
+  self->master = FALSE;
+  self->policy = (GhPicturePolicy){ 0 };
+  self->policy_data = NULL;
+  self->has_consent = FALSE;
+  self->consent_data = NULL;
   drop_entries(self);
   if (self->settings)
     g_signal_handlers_disconnect_by_data(self->settings, self);
   g_clear_object(&self->settings);
   g_clear_object(&self->web);
-  self->has_consent = FALSE;
-  self->policy = (GhPicturePolicy){ 0 };
+  g_clear_object(&self->uri_source);
+  self->uri_func = NULL;
+  if (notify)
+    emit_changed(self, who, TRUE);
+}
+
+void
+gh_picture_cache_close(GhPictureCache *self)
+{
+  g_return_if_fail(GH_IS_PICTURE_CACHE(self));
+  close_cache(self, TRUE);
+}
+
+static void
+gh_picture_cache_dispose(GObject *object)
+{
+  close_cache(GH_PICTURE_CACHE(object), FALSE);
   G_OBJECT_CLASS(gh_picture_cache_parent_class)->dispose(object);
 }
 

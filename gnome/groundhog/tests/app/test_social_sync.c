@@ -2,6 +2,7 @@
  * storage, Groundhog adapter and list service. No helper substitutes for OK
  * or EOSE. The group-list suite separately exercises the real wire transport. */
 #include "gh-social-lists.h"
+#include "gh-message-policy.h"
 #include "gh-social-lists-backend.h"
 #include "gh-identity.h"
 #include "gh-preferences-dialog.h"
@@ -329,6 +330,18 @@ static gboolean hide_applied(gpointer data)
   g_autoptr(GNostrListDocument) snapshot = gnostr_list_service_lookup(gh_social_lists_get_service(f->social), NOSTR_KIND_MUTE_LIST, "");
   return nostr_nip51_document_tag_count(gnostr_list_document_get_codec(snapshot), TRUE) == 2;
 }
+static void assert_import_policy(Fixture *f, gboolean applied)
+{
+  g_autofree gchar *sender = gh_test_pub(2);
+  g_autofree gchar *wire = g_strdup_printf("{\"pubkey\":\"%s\",\"kind\":14,\"created_at\":123,\"content\":\"test incoming content\",\"tags\":[[\"p\",\"%s\"]]}", sender, account);
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GhMessage) message = gh_message_new_from_rumor(account, wire, &error);
+  GhMessageDisposition disposition;
+  g_assert_nonnull(message);
+  g_assert_true(gh_message_policy_classify(gh_social_lists_get_message_policy(f->social), message, &disposition, &error));
+  g_assert_cmpint(disposition, ==, applied ? GH_MESSAGE_HIDE_RETAIN : GH_MESSAGE_INCLUDE);
+  g_assert_no_error(error);
+}
 static void test_first_import(gconstpointer data)
 {
   gboolean accept = GPOINTER_TO_INT(data);
@@ -340,11 +353,13 @@ static void test_first_import(gconstpointer data)
   guint accounts = 0, items = 0;
   g_assert_true(gh_social_lists_get_pending_import(f.social, &accounts, &items));
   g_assert_cmpuint(accounts, ==, 1); g_assert_cmpuint(items, ==, 1); g_assert_false(hide_applied(&f));
+  assert_import_policy(&f, FALSE);
   g_autoptr(GError) error = NULL;
   g_assert_true(gh_social_lists_confirm_import(f.social, accept, &error)); g_assert_no_error(error);
   if (accept) gh_test_spin_until(hide_applied, &f); else drain();
   g_assert_true(gh_social_lists_get_sync_enabled(f.social));
   g_assert_cmpint(hide_applied(&f), ==, accept);
+  assert_import_policy(&f, accept);
   gh_social_lists_close(f.social);
   for (guint i = 0; i < f.sent->len; i++) g_assert_true(((Write *)f.sent->pdata[i])->closed);
   gh_test_release(g_steal_pointer(&f.social)); drain();
@@ -355,6 +370,25 @@ static void test_first_import(gconstpointer data)
     append(&f, NOSTR_KIND_BLOCKED_RELAY_LIST, TRUE, "relay", "wss://blocked.test.invalid");
     eose(&f, NOSTR_KIND_BLOCKED_RELAY_LIST, 2); gh_test_spin_until(sent, &f); accept_writes(&f);
   }
+  teardown(&f);
+}
+static void test_projection_keeps_sync_warning(void)
+{
+  Fixture f; setup(&f); enabled(&f, TRUE);
+  g_autofree gchar *wire = remote_hide();
+  Read *read = read_for(&f, NOSTR_KIND_MUTE_LIST, writes[0]);
+  gh_relay_scope_event(read->scope, read->url, wire);
+  eose(&f, NOSTR_KIND_MUTE_LIST, 3);
+  gh_test_spin_until(import_pending, &f);
+  g_autoptr(GError) error = NULL;
+  g_assert_true(gh_social_lists_confirm_import(f.social, FALSE, &error));
+  g_assert_cmpstr(gh_social_lists_get_error(f.social), ==, "Hidden items are not synced");
+  append(&f, NOSTR_KIND_MUTE_LIST, TRUE, "word", "local phrase");
+  GhMessagePolicy *policy = gh_social_lists_get_message_policy(f.social);
+  while (gh_message_policy_is_updating(policy)) g_main_context_iteration(NULL, TRUE);
+  g_assert_null(gh_social_lists_get_visibility_error(f.social));
+  g_assert_cmpstr(gh_social_lists_get_error(f.social), ==, "Hidden items are not synced");
+  g_assert_no_error(error);
   teardown(&f);
 }
 static void test_public_import_blocks_local_publish(void)
@@ -759,7 +793,8 @@ int main(int argc, char **argv)
   g_test_add_func("/privacy/avatars/no-follow-read-while-off", test_follow_reads_gated);
   g_test_add_func("/privacy/social/publication-needs-confirmation", test_public_and_partial);
   g_test_add_func("/privacy/social/server-list-explicit-public-post", test_server_list_explicit);
-  g_test_add_func("/groundhog/social-sync/own-hide-echo", test_own_hide_echo);
+    g_test_add_func("/groundhog/social-sync/own-hide-echo", test_own_hide_echo);
+    g_test_add_func("/groundhog/social-sync/projection-keeps-sync-warning", test_projection_keeps_sync_warning);
   g_test_add_func("/groundhog/social-sync/public-import-blocks-local-publish", test_public_import_blocks_local_publish);
   g_test_add_data_func("/groundhog/social-sync/first-import-accept", GINT_TO_POINTER(TRUE), test_first_import);
   g_test_add_data_func("/groundhog/social-sync/first-import-decline", GINT_TO_POINTER(FALSE), test_first_import);

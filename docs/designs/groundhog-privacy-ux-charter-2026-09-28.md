@@ -1130,6 +1130,17 @@ Each page is reachable again from Preferences. The window stays usable at 360×2
   - The confirm page shows the avatar (initials), the name and the npub in 4-character groups (monospace), plus the inbox status (checking / ready / "hasn't set up private messaging"). Button: [Start Conversation].
   - Multi-recipient uses `GtkFlowBox` chips, up to 10 (NIP-17). Beyond 10: "For larger groups, create an encrypted group."
 - **Requests.** Each request shows the npub (no profile fetch), the message count and the first message. Actions: Accept (moves to contacts, allows a profile fetch), Delete (forget plus tombstone), Block (local block list). Nothing is published.
+- **Hiding, muting and blocking are separate.** Hide Account is offered alongside, never instead of, Block; Request Block still blocks and forgets. Neither hiding nor blocking accepts a request. Hidden Accounts and Content is a separate Privacy page; Blocked Conversations remains npub-only.
+
+  | Action | Effect |
+  |---|---|
+  | Mute Notifications | Local per-conversation notification silence; messages remain visible and stored |
+  | Hide Account | Kind-10000 `p`: new incoming application payloads are discarded after authenticated protocol processing, with seen identities retained; existing history is retained but hidden across backends |
+  | Hidden Content | Kind-10000 `word`, `t` and explicit `e` root/reply threads: retained, reversibly hidden history; no preview, search result, unread badge, reaction chip or notification while hidden |
+  | Block Conversation | Existing local room block and Undo behavior, independent of the author's other conversations |
+  | Public Report | Separate explicitly approved publication; hiding never creates a report |
+
+  Removing a hide entry reveals only retained history, never discarded arrivals. Projection does not move read markers or change membership, group names, timers, room blocks or drafts. MLS commits and legitimate ownership-checked deletions still apply; a hidden inviter's Welcome is recorded as processed/declined without joining or surfacing it. Content reindexing masks all message text, previews and unread badges with **Updating Hidden Messages…** until the current epoch commits. Unhiding never replays notifications.
 - **New Group** chooser (two activatable rows in a `.boxed-list`):
   - "Encrypted Group": "Only members can read messages. Ask people to use a compatible Marmot format; some app versions cannot join."
   - "Relay Group": "Hosted on a relay you choose. The relay's operators can read messages."

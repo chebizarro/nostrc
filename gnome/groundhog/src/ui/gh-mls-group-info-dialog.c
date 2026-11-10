@@ -1,4 +1,5 @@
 #include "gh-mls-group-info-dialog.h"
+#include "gh-picture-cache.h"
 #include "../app/gh-test-async-control.h"
 
 #include "gh-mls-attachments.h"
@@ -26,6 +27,7 @@ struct _GhMlsMemberRow {
   gchar *pubkey;
   GhMlsRole role;
   GhMlsMemberIdentity identity;
+  gboolean removable;
 };
 
 G_DEFINE_FINAL_TYPE(GhMlsMemberRow, gh_mls_member_row, ADW_TYPE_ACTION_ROW)
@@ -37,6 +39,14 @@ member_remove(GtkWidget *widget, const gchar *action, GVariant *parameter)
   (void)parameter;
   GhMlsMemberRow *self = GH_MLS_MEMBER_ROW(widget);
   gtk_widget_activate_action(widget, "mls-group.remove", "s", self->pubkey);
+}
+
+static void
+member_hide_account(GtkWidget *widget, const gchar *action, GVariant *parameter)
+{
+  (void)action; (void)parameter;
+  GhMlsMemberRow *self = GH_MLS_MEMBER_ROW(widget);
+  gtk_widget_activate_action(widget, "mls-group.hide-account", "s", self->pubkey);
 }
 
 static void
@@ -69,6 +79,7 @@ gh_mls_member_row_class_init(GhMlsMemberRowClass *klass)
   gtk_widget_class_bind_template_child(widget_class, GhMlsMemberRow, remove_button);
   gtk_widget_class_install_action(widget_class, "member.remove", NULL, member_remove);
   gtk_widget_class_install_action(widget_class, "member.verify", NULL, member_verify);
+  gtk_widget_class_install_action(widget_class, "member.hide-account", NULL, member_hide_account);
 }
 
 static void
@@ -88,6 +99,7 @@ member_row_new(const gchar *pubkey, const gchar *name, gboolean is_you, GhMlsRol
 {
   GhMlsMemberRow *self = g_object_new(GH_TYPE_MLS_MEMBER_ROW, NULL);
   self->pubkey = g_strdup(pubkey);
+  self->removable = removable;
   self->role = role;
   self->identity = identity;
   g_autofree gchar *npub = gh_recipient_npub_short(pubkey);
@@ -121,13 +133,10 @@ member_row_new(const gchar *pubkey, const gchar *name, gboolean is_you, GhMlsRol
   const gchar *badge = gh_mls_role_copy(role);
   gtk_label_set_text(self->role_badge, badge ? badge : "");
   gtk_widget_set_visible(GTK_WIDGET(self->role_badge), badge != NULL);
-  gtk_widget_set_visible(self->remove_button, removable);
+  gtk_widget_set_visible(self->remove_button, !is_you || removable);
+  gtk_widget_action_set_enabled(GTK_WIDGET(self), "member.hide-account", !is_you);
   gtk_widget_action_set_enabled(GTK_WIDGET(self), "member.remove", removable);
-  if (removable) {
-    g_autofree gchar *label = g_strdup_printf(_("Remove %s from Group"), shown);
-    gtk_accessible_update_property(GTK_ACCESSIBLE(self->remove_button),
-                                   GTK_ACCESSIBLE_PROPERTY_LABEL, label, -1);
-  }
+
   return self;
 }
 
@@ -461,6 +470,8 @@ sync_members(GhMlsGroupInfoDialog *self)
                                            adder_name && *adder_name ? adder_name : adder_npub,
                                            self_added,
                                            !you && gh_mls_group_get_active(self->group));
+      if (self->context.pictures)
+        gh_picture_cache_bind_avatar(self->context.pictures, row->avatar, row->pubkey);
       adw_preferences_group_add(self->members_group, GTK_WIDGET(row));
       g_ptr_array_add(self->member_rows, row);
     }
@@ -1184,6 +1195,7 @@ gh_mls_group_info_dialog_new(GhMlsGroup *group, const GhMlsUiContext *context)
   GhMlsGroupInfoDialog *self = g_object_new(GH_TYPE_MLS_GROUP_INFO_DIALOG, NULL);
   self->group = g_object_ref(group);
   self->context = *context;
+  if (context->pictures) self->context.pictures = g_object_ref(context->pictures);
   if (context->server_source) self->context.server_source = g_object_ref(context->server_source);
   self->context.default_relays = NULL;
   self->files = context->files ? g_object_ref(context->files) : NULL;
@@ -1252,7 +1264,7 @@ gh_mls_group_info_dialog_get_member(GhMlsGroupInfoDialog *self, const gchar *pub
     if (g_strcmp0(row->pubkey, pubkey) != 0)
       continue;
     if (removable)
-      *removable = gtk_widget_get_visible(row->remove_button);
+      *removable = row->removable;
     return gtk_label_get_text(row->role_badge);
   }
   return NULL;
@@ -1358,6 +1370,7 @@ gh_mls_group_info_dialog_dispose(GObject *object)
   g_clear_object(&self->context.model);
   g_clear_object(&self->context.settings);
   g_clear_object(&self->context.server_source);
+  g_clear_object(&self->context.pictures);
   if (self->picture_op)
     g_cancellable_cancel(self->picture_op);
   g_clear_object(&self->picture_op);
@@ -1380,6 +1393,16 @@ gh_mls_group_info_dialog_finalize(GObject *object)
   g_free(self->offered_mime);
   g_strfreev(self->offered_hosts);
   G_OBJECT_CLASS(gh_mls_group_info_dialog_parent_class)->finalize(object);
+}
+
+static void
+action_hide_account(GtkWidget *widget, const gchar *action, GVariant *parameter)
+{
+  (void)action;
+  GhMlsGroupInfoDialog *self = GH_MLS_GROUP_INFO_DIALOG(widget);
+  if (self->context.service)
+    gtk_widget_activate_action(widget, "app.hide-account", "(ss)",
+      gh_mls_service_get_account(self->context.service), g_variant_get_string(parameter, NULL));
 }
 
 static void
@@ -1433,6 +1456,7 @@ gh_mls_group_info_dialog_class_init(GhMlsGroupInfoDialogClass *klass)
                                   action_add_members);
   gtk_widget_class_install_action(widget_class, "mls-group.save-add", NULL, action_save_add);
   gtk_widget_class_install_action(widget_class, "mls-group.remove", "s", action_remove);
+  gtk_widget_class_install_action(widget_class, "mls-group.hide-account", "s", action_hide_account);
   gtk_widget_class_install_action(widget_class, "mls-group.verify", "s", action_verify);
   gtk_widget_class_install_action(widget_class, "mls-group.rename", NULL, action_rename);
   gtk_widget_class_install_action(widget_class, "mls-group.save-rename", NULL,

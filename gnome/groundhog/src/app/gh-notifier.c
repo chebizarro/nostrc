@@ -24,7 +24,8 @@ typedef struct {
   gchar *room_id;
   GhConversation *conversation;
   GPtrArray *messages;  /* GhMessage, in message order */
-  gboolean fresh;       /* a message arrived since this room was last sent */
+  gboolean fresh;       /* at least one not-yet-notified retained message */
+  GHashTable *fresh_messages; /* ids whose arrival can still trigger an alert */
   guint expiry;         /* GhClock timeout: the earliest expires_at among them */
   gint64 expiry_at;
 } Room;
@@ -160,6 +161,7 @@ room_free(gpointer data)
   if (room->expiry)
     gh_clock_source_remove(room->self->clock, room->expiry);
   g_ptr_array_unref(room->messages);
+  g_hash_table_unref(room->fresh_messages);
   g_object_unref(room->conversation);
   g_free(room->room_id);
   g_free(room);
@@ -167,12 +169,32 @@ room_free(gpointer data)
 
 static Slot *slot_get(GhNotifier *self, const gchar *id);
 static void schedule(GhNotifier *self, Slot *slot);
+static void withdraw_slot(GhNotifier *self, Slot *slot);
+
+static gboolean
+message_allowed(GhNotifier *self, GhMessage *message)
+{
+#if GROUNDHOG_HAVE_MESSAGE_POLICY
+  GhMessagePolicy *policy = gh_conversation_store_get_policy(self->model);
+  if (!policy)
+    return TRUE;
+  GhMessageDisposition disposition;
+  return gh_message_policy_classify(policy, message, &disposition, NULL) &&
+         disposition == GH_MESSAGE_INCLUDE;
+#else
+  (void)self;
+  (void)message;
+  return TRUE; /* no account hide feature without encrypted storage */
+#endif
+}
 
 /* Read, accepted (its messages move to their own id), or a message purged
  * from it. */
 static void
 on_room_changed(GhNotifier *self)
 {
+  if (gh_conversation_store_is_restoring_visibility(self->model))
+    return;
   refresh(self, FALSE);
   GHashTableIter iter;
   Room *room;
@@ -197,6 +219,7 @@ room_get(GhNotifier *self, GhConversation *conversation)
   room->room_id = g_strdup(room_id);
   room->conversation = g_object_ref(conversation);
   room->messages = g_ptr_array_new_with_free_func(g_object_unref);
+  room->fresh_messages = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   g_signal_connect_swapped(conversation, "notify::unread-count", G_CALLBACK(on_room_changed),
                            self);
   g_signal_connect_swapped(conversation, "notify::is-request", G_CALLBACK(on_room_changed),
@@ -268,16 +291,26 @@ room_prune(GhNotifier *self, Room *room, gboolean ask_store)
       room->conversation == self->visible)
     return FALSE; /* forgotten, another account's, or on screen */
   gint64 now = now_unix(self);
-  for (guint i = 0; i < room->messages->len; i++) {
+  for (guint i = room->messages->len; i-- > 0;) {
     GhMessage *message = g_ptr_array_index(room->messages, i);
     gint64 expires = gh_message_get_expires_at(message);
-    if ((expires > 0 && expires <= now) ||
-        !gh_conversation_lookup_message(room->conversation, gh_message_get_rumor_id(message)))
-      return FALSE; /* expired or purged: never keep what named it */
+    if (!message_allowed(self, message) || (expires > 0 && expires <= now) ||
+        (!gh_conversation_store_get_visibility_updating(self->model) &&
+         !gh_conversation_lookup_message(room->conversation, gh_message_get_rumor_id(message)))) {
+      g_autofree gchar *id = slot_id_for(self, room, level_of(self));
+      Slot *slot = g_hash_table_lookup(self->slots, id);
+      if (slot)
+        withdraw_slot(self, slot);
+      g_hash_table_remove(room->fresh_messages, gh_message_get_rumor_id(message));
+      g_ptr_array_remove_index(room->messages, i);
+    }
   }
   for (guint i = room->messages->len; i-- > 0;)
-    if (!gh_conversation_is_unread(room->conversation, g_ptr_array_index(room->messages, i)))
+    if (!gh_conversation_is_unread(room->conversation, g_ptr_array_index(room->messages, i))) {
+      g_hash_table_remove(room->fresh_messages, gh_message_get_rumor_id(room->messages->pdata[i]));
       g_ptr_array_remove_index(room->messages, i);
+    }
+  room->fresh = g_hash_table_size(room->fresh_messages) > 0;
   if (room->messages->len == 0)
     return FALSE;
   return !ask_store || room_allowed(self, room);
@@ -520,6 +553,8 @@ maybe_sound(GhNotifier *self)
 static void
 flush(GhNotifier *self, Slot *slot)
 {
+  if (gh_conversation_store_get_visibility_updating(self->model))
+    return; /* defer fresh arrivals until thread/content visibility is complete */
   refresh(self, TRUE);
   if (!self->app || !enabled(self))
     return;
@@ -536,8 +571,11 @@ flush(GhNotifier *self, Slot *slot)
     return;
   g_autoptr(GNotification) notification = build(self, level, slot->id, rooms, total);
   g_application_send_notification(self->app, slot->id, notification);
-  for (guint i = 0; i < rooms->len; i++)
-    ((Room *)g_ptr_array_index(rooms, i))->fresh = FALSE;
+  for (guint i = 0; i < rooms->len; i++) {
+    Room *room = rooms->pdata[i];
+    room->fresh = FALSE;
+    g_hash_table_remove_all(room->fresh_messages);
+  }
   slot->shown = TRUE;
   slot->last_sent = gh_clock_get_monotonic_time(self->clock);
   maybe_sound(self);
@@ -659,7 +697,8 @@ on_message_added(GhNotifier *self, GhConversation *conversation, GhMessage *mess
 {
   sync_account(self);
   if (!self->account || g_strcmp0(gh_message_get_account(message), self->account) != 0 ||
-      !enabled(self) || gh_message_is_self(message) || conversation == self->visible)
+      !enabled(self) || gh_message_is_self(message) || conversation == self->visible ||
+      !message_allowed(self, message))
     return;
   /* Old history: written before the last-seen marker (N1). What came while
    * Groundhog was not receiving but after it is new, and coalesces like
@@ -675,6 +714,7 @@ on_message_added(GhNotifier *self, GhConversation *conversation, GhMessage *mess
          gh_message_compare(g_ptr_array_index(room->messages, position - 1), message) > 0)
     position--;
   g_ptr_array_insert(room->messages, position, g_object_ref(message));
+  g_hash_table_add(room->fresh_messages, g_strdup(gh_message_get_rumor_id(message)));
   room->fresh = TRUE;
   room_arm_expiry(self, room);
   g_autofree gchar *id = slot_id_for(self, room, level_of(self));
@@ -690,8 +730,27 @@ on_account(GhNotifier *self)
 static void
 on_model_changed(GhNotifier *self)
 {
+  if (gh_conversation_store_is_restoring_visibility(self->model))
+    return;
   if (g_hash_table_size(self->rooms))
     refresh(self, FALSE);
+}
+
+static void
+on_visibility_updating(GhNotifier *self)
+{
+  gboolean updating = gh_conversation_store_get_visibility_updating(self->model);
+  if (!updating)
+    refresh(self, FALSE);
+  GHashTableIter iter;
+  Slot *slot;
+  g_hash_table_iter_init(&iter, self->slots);
+  while (g_hash_table_iter_next(&iter, NULL, (gpointer *)&slot)) {
+    if (updating)
+      withdraw_slot(self, slot);
+    else
+      schedule(self, slot); /* fresh IDs only; never replay an already-sent alert */
+  }
 }
 
 static void
@@ -922,6 +981,9 @@ gh_notifier_new(GApplication *app, const GhNotifierConfig *config)
   g_signal_connect_swapped(self->model, "message-added", G_CALLBACK(on_message_added), self);
   g_signal_connect_swapped(self->model, "notify::account", G_CALLBACK(on_account), self);
   g_signal_connect_swapped(self->model, "items-changed", G_CALLBACK(on_model_changed), self);
+  g_signal_connect_swapped(self->model, "policy-changed", G_CALLBACK(on_model_changed), self);
+  g_signal_connect_swapped(self->model, "visibility-changed", G_CALLBACK(on_model_changed), self);
+  g_signal_connect_swapped(self->model, "notify::visibility-updating", G_CALLBACK(on_visibility_updating), self);
   g_signal_connect_swapped(self->settings, "changed::" KEY_ENABLED,
                            G_CALLBACK(on_enabled_changed), self);
   g_signal_connect_swapped(self->settings, "changed::" KEY_PRIVACY,
@@ -956,6 +1018,34 @@ gh_notifier_get_visible_conversation(GhNotifier *self)
 {
   g_return_val_if_fail(GH_IS_NOTIFIER(self), NULL);
   return self->visible;
+}
+
+void
+gh_notifier_withdraw_message(GhNotifier *self, const gchar *message_id)
+{
+  g_return_if_fail(GH_IS_NOTIFIER(self));
+  GHashTableIter iter;
+  Room *room;
+  g_hash_table_iter_init(&iter, self->rooms);
+  while (g_hash_table_iter_next(&iter, NULL, (gpointer *)&room)) {
+    for (guint i = room->messages->len; i-- > 0;) {
+      GhMessage *message = room->messages->pdata[i];
+      if (g_strcmp0(gh_message_get_rumor_id(message), message_id))
+        continue;
+      g_autofree gchar *id = slot_id_for(self, room, level_of(self));
+      Slot *slot = g_hash_table_lookup(self->slots, id);
+      if (slot)
+        withdraw_slot(self, slot);
+      g_hash_table_remove(room->fresh_messages, gh_message_get_rumor_id(message));
+      g_ptr_array_remove_index(room->messages, i);
+    }
+    room->fresh = g_hash_table_size(room->fresh_messages) > 0;
+    if (!room->messages->len)
+      g_hash_table_iter_remove(&iter);
+    else
+      room_arm_expiry(self, room);
+  }
+  withdraw_empty(self);
 }
 
 void

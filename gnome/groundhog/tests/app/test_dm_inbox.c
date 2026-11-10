@@ -7,6 +7,10 @@
 #include "gh-status.h"
 #include "gh-nip17-inbox.h"
 #include "gh-nip04-inbox.h"
+#if GROUNDHOG_HAVE_MESSAGE_POLICY
+#include "gh-store-conversations.h"
+#include <sqlite3.h>
+#endif
 #include "gh-message.h"
 #include "gh-signer.h"
 #include "gh-test-signer.h"
@@ -1964,6 +1968,72 @@ test_nip04_read_only(void)
   fixture_down(&f);
 }
 
+#if GROUNDHOG_HAVE_MESSAGE_POLICY
+typedef struct { GhConversationStore *model; const gchar *id; } SocialWrapWait;
+static gboolean
+social_wrap_seen(gpointer data)
+{
+  SocialWrapWait *wait = data;
+  return gh_conversation_store_has_wrap(wait->model, wait->id);
+}
+static void
+test_nip04_hide_policy(void)
+{
+  Fixture f = { 0 };
+  fixture_up(&f);
+  f.signer.nip04_decrypt = nip04_decrypt;
+  go_live(&f);
+  GError *error = NULL;
+  GhStore *store = gh_store_open_ephemeral(hex[2], NULL, &error);
+  g_assert_no_error(error);
+  g_autoptr(GhStoreConversations) messages = gh_store_conversations_new(store);
+  g_assert_true(gh_store_conversations_attach(messages, f.store, 0, &error));
+  GhMessagePolicy *policy = gh_conversation_store_get_policy(f.store);
+  g_autofree gchar *hide = g_strdup_printf("INSERT INTO social_mutes(entry_key,tag_name,value,position,is_private) VALUES('p','p','%s',0,1)", hex[1]);
+  g_assert_true(gh_store_exec(store, hide, &error));
+  g_assert_true(gh_message_policy_refresh(policy, &error));
+  GhNip04Inbox *legacy = gh_nip04_inbox_new(f.accounts, f.relays, f.store, f.inbox,
+                                          &recorder_transport, &f.rec);
+  publish_list(&f, 2, 10002, HOME, NULL);
+  gh_test_spin_until(legacy_open, &f);
+  gint64 now = g_get_real_time() / G_USEC_PER_SEC;
+  g_autofree gchar *drop_id = NULL;
+  g_autofree gchar *drop = craft_nip04(1, 2, now - 2, "discarded legacy payload", &drop_id);
+  gh_relay_scope_event(legacy_req(&f, FALSE)->scope, HOME, drop);
+  SocialWrapWait seen = { f.store, drop_id };
+  gh_test_spin_until(social_wrap_seen, &seen);
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(f.store)), ==, 0);
+  g_assert_true(gh_store_exec(store, "DELETE FROM social_mutes; INSERT INTO social_mutes(entry_key,tag_name,value,position,is_private) VALUES('word','word','quiet',0,1)", &error));
+  g_assert_true(gh_message_policy_refresh(policy, &error));
+  while (gh_message_policy_is_updating(policy)) g_main_context_iteration(NULL, TRUE);
+  g_autofree gchar *retained_id = NULL;
+  g_autofree gchar *retained = craft_nip04(1, 2, now - 1, "quiet legacy payload", &retained_id);
+  gh_relay_scope_event(legacy_req(&f, FALSE)->scope, HOME, retained);
+  seen.id = retained_id;
+  gh_test_spin_until(social_wrap_seen, &seen);
+  sqlite3_stmt *stmt = NULL;
+  g_assert_cmpint(sqlite3_prepare_v2(gh_store_get_db(store), "SELECT count(*),sum(social_hidden) FROM messages", -1, &stmt, NULL), ==, SQLITE_OK);
+  g_assert_cmpint(sqlite3_step(stmt), ==, SQLITE_ROW);
+  g_assert_cmpint(sqlite3_column_int(stmt, 0), ==, 1);
+  g_assert_cmpint(sqlite3_column_int(stmt, 1), ==, 1);
+  sqlite3_finalize(stmt);
+  g_assert_true(gh_store_exec(store, "DELETE FROM social_mutes", &error));
+  g_assert_true(gh_message_policy_refresh(policy, &error));
+  while (gh_message_policy_is_updating(policy)) g_main_context_iteration(NULL, TRUE);
+  g_autoptr(GhConversation) room = g_list_model_get_item(G_LIST_MODEL(f.store), 0);
+  g_assert_nonnull(room);
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(room)), ==, 1);
+  g_autoptr(GhMessage) restored = g_list_model_get_item(G_LIST_MODEL(room), 0);
+  g_assert_true(gh_message_get_legacy_nip04(restored));
+  g_assert_cmpstr(gh_message_get_content(restored), ==, "quiet legacy payload");
+  g_assert_no_error(error);
+  gh_test_release(legacy);
+  fixture_down(&f);
+  gh_store_conversations_close(messages);
+  gh_store_close(store);
+}
+#endif
+
 int
 main(int argc, char **argv)
 {
@@ -1995,6 +2065,9 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/dm-inbox/rejected-not-reprompted", test_rejected_not_reprompted);
   g_test_add_func("/groundhog/dm-inbox/auth-own-inbox", test_auth_own_inbox);
   g_test_add_func("/groundhog/dm-inbox/nip04-read-only", test_nip04_read_only);
+#if GROUNDHOG_HAVE_MESSAGE_POLICY
+  g_test_add_func("/groundhog/dm-inbox/nip04-hide-policy", test_nip04_hide_policy);
+#endif
   g_test_add_func("/groundhog/dm-inbox/auth-one-prompt-per-relay",
                   test_auth_one_prompt_per_relay);
   int status = g_test_run();

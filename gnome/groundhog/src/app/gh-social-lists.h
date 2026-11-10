@@ -1,6 +1,7 @@
 #ifndef GH_SOCIAL_LISTS_H
 #define GH_SOCIAL_LISTS_H
 #include "gh-account-store.h"
+#include "gh-message-policy.h"
 #include "gh-store-social.h"
 #include "gh-list-adapter.h"
 #include "gh-account-relays.h"
@@ -48,6 +49,7 @@ const gchar *const *gh_social_lists_get_follows(GhSocialLists *self);
 GNostrListService *gh_social_lists_get_service(GhSocialLists *self); /* borrowed */
 guint64 gh_social_lists_get_generation(GhSocialLists *self);
 const gchar *gh_social_lists_get_error(GhSocialLists *self);
+const gchar *gh_social_lists_get_visibility_error(GhSocialLists *self);
 gboolean gh_social_lists_get_sync_enabled(GhSocialLists *self);
 gboolean gh_social_lists_set_sync_enabled(GhSocialLists *self, gboolean enabled, GError **error);
 /* Registers a local identity with no sources or targets. Returning a new
@@ -61,5 +63,12 @@ GNostrListDocument *gh_social_lists_apply(GhSocialLists *self, gint kind, const 
 gchar *gh_social_lists_export(GNostrListDocument *snapshot);
 GNostrListDocument *gh_social_lists_import(GhSocialLists *self, const gchar *json,
                                           GError **error);
+GhMessagePolicy *gh_social_lists_get_message_policy(GhSocialLists *self);
+/* Picture eligibility fails closed until the account policy is loaded. */
+gboolean gh_social_lists_is_hidden(GhSocialLists *self, const gchar *pubkey);
+gboolean gh_social_lists_retry_visibility(GhSocialLists *self, GError **error);
+const gchar *gh_social_lists_get_account(GhSocialLists *self);
+gboolean gh_social_lists_hide_account(GhSocialLists *self, const gchar *pubkey, GError **error);
+
 G_END_DECLS
 #endif

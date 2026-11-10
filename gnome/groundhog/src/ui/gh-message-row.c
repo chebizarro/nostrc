@@ -1576,6 +1576,12 @@ build_menu(GhMessageRow *self)
     append_targeted(remove, _("Delete for _Everyone…"), "conversation.delete-message",
                     g_variant_new("(sb)", rumor, TRUE));
   append_section(menu, remove);
+  if (!gh_message_is_self(self->message)) {
+    GMenu *hide = g_menu_new();
+    append_targeted(hide, _("_Hide Account…"), "app.hide-account",
+      g_variant_new("(ss)", gh_message_get_account(self->message), gh_message_get_sender(self->message)));
+    append_section(menu, hide);
+  }
   return G_MENU_MODEL(menu);
 }
 

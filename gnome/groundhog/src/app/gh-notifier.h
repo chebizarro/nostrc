@@ -158,6 +158,9 @@ GhConversation *gh_notifier_get_visible_conversation(GhNotifier *self);
 /* Withdraws what is shown for @room_id and drops its pending messages: for
  * a mute, a block or a purge of its messages. Later messages are notified
  * as usual (room_state decides). */
+/* Withdraw the aggregate that named this message, keeping other pending
+ * messages in mixed/group notifications; never replay an alert on unhide. */
+void gh_notifier_withdraw_message(GhNotifier *self, const gchar *message_id);
 void gh_notifier_withdraw_conversation(GhNotifier *self, const gchar *room_id);
 
 /* Whether the active account's store is locked (charter §3.4). */

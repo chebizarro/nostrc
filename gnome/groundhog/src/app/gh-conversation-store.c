@@ -22,6 +22,11 @@ struct _GhConversationStore {
   gpointer delegate_data;
   GDestroyNotify delegate_destroy;
   gboolean has_delegate;
+  GhMessagePolicy *policy;
+  gboolean visibility_updating;
+  gboolean restoring_visibility;
+  GHashTable *explicit_rooms;
+  GPtrArray *epoch_arrivals; /* included arrivals, never restored history */
   /* Group rooms: their backend's own delegate, never the main one
    * (index GROUP_NIP29: NIP-29, G20a; GROUP_MLS: MLS, qp24.13). */
   GroupDelegate groups[N_GROUP_BACKENDS];
@@ -29,10 +34,10 @@ struct _GhConversationStore {
   guint64 next_seq;
 };
 
-enum { SIGNAL_MESSAGE_ADDED, SIGNAL_MESSAGE_COMMITTED, N_SIGNALS };
+enum { SIGNAL_MESSAGE_ADDED, SIGNAL_MESSAGE_COMMITTED, SIGNAL_POLICY_CHANGED, SIGNAL_VISIBILITY_CHANGED, N_SIGNALS };
 static guint signals[N_SIGNALS];
 
-enum { PROP_0, PROP_ACCOUNT, N_PROPS };
+enum { PROP_0, PROP_ACCOUNT, PROP_VISIBILITY_UPDATING, N_PROPS };
 static GParamSpec *props[N_PROPS];
 
 static void gh_conversation_store_list_model_init(GListModelInterface *iface);
@@ -117,6 +122,13 @@ clear_delegate(GhConversationStore *self)
   self->delegate_data = NULL;
   self->delegate_destroy = NULL;
   self->has_delegate = FALSE;
+  if (self->policy) {
+    g_signal_handlers_disconnect_by_data(self->policy, self);
+#if GROUNDHOG_HAVE_MESSAGE_POLICY
+    gh_message_policy_set_model(self->policy, NULL);
+#endif
+    g_clear_object(&self->policy);
+  }
   if (destroy)
     destroy(data);
 }
@@ -177,6 +189,15 @@ detach_conversations(GPtrArray *conversations)
     gh_conversation_set_store(g_ptr_array_index(conversations, i), NULL);
 }
 
+#if GROUNDHOG_HAVE_MESSAGE_POLICY
+static void
+policy_changed(GhMessagePolicy *policy, GhConversationStore *self)
+{
+  (void)policy;
+  g_signal_emit(self, signals[SIGNAL_POLICY_CHANGED], 0);
+}
+#endif
+
 void
 gh_conversation_store_set_account(GhConversationStore *self, const gchar *account_pubkey,
                                   const GhConversationDelegate *delegate,
@@ -185,7 +206,18 @@ gh_conversation_store_set_account(GhConversationStore *self, const gchar *accoun
   g_return_if_fail(GH_IS_CONVERSATION_STORE(self));
   g_return_if_fail(!delegate || (delegate->has_wrap && delegate->has_rumor && delegate->admit));
   g_return_if_fail(!delegate || !delegate->is_blocked == !delegate->unblock);
+#if !GROUNDHOG_HAVE_MESSAGE_POLICY
+  g_return_if_fail(!delegate || !delegate->policy);
+#endif
+  g_autoptr(GhMessagePolicy) policy = delegate && delegate->policy ? g_object_ref(delegate->policy) : NULL;
   clear_delegate(self);
+  self->policy = g_steal_pointer(&policy);
+#if GROUNDHOG_HAVE_MESSAGE_POLICY
+  if (self->policy) {
+    gh_message_policy_set_model(self->policy, self);
+    g_signal_connect(self->policy, "changed", G_CALLBACK(policy_changed), self);
+  }
+#endif
   if (delegate) {
     self->delegate = *delegate;
     self->delegate_data = delegate_data;
@@ -194,8 +226,13 @@ gh_conversation_store_set_account(GhConversationStore *self, const gchar *accoun
   } else if (destroy) {
     destroy(delegate_data);
   }
-  if (g_strcmp0(self->account, account_pubkey) == 0)
+  if (g_strcmp0(self->account, account_pubkey) == 0) {
+    g_signal_emit(self, signals[SIGNAL_POLICY_CHANGED], 0);
     return;
+  }
+  self->visibility_updating = FALSE;
+  g_ptr_array_set_size(self->epoch_arrivals, 0);
+  g_hash_table_remove_all(self->explicit_rooms);
   clear_group_delegates(self);
   guint removed = self->conversations->len;
   g_hash_table_remove_all(self->messages);
@@ -210,6 +247,8 @@ gh_conversation_store_set_account(GhConversationStore *self, const gchar *accoun
     g_list_model_items_changed(G_LIST_MODEL(self), 0, removed, 0);
   /* After the removal: a listener sees the new account's (empty) model. */
   g_object_notify_by_pspec(G_OBJECT(self), props[PROP_ACCOUNT]);
+  g_object_notify_by_pspec(G_OBJECT(self), props[PROP_VISIBILITY_UPDATING]);
+  g_signal_emit(self, signals[SIGNAL_POLICY_CHANGED], 0);
 }
 
 const gchar *
@@ -226,6 +265,7 @@ list_new(GhConversationStore *self, GhConversation *conversation)
   g_hash_table_insert(self->rooms, (gpointer)gh_conversation_get_room_id(conversation),
                       conversation);
   gh_conversation_set_store(conversation, self);
+  gh_conversation_set_visibility_updating(conversation, self->visibility_updating);
   g_object_ref(conversation);
   guint position = insertion_point(self, conversation);
   g_ptr_array_insert(self->conversations, position, conversation);
@@ -294,6 +334,11 @@ gh_conversation_store_admit(GhConversationStore *self, GhMessage *message,
                         "Message belongs to another account");
     return GH_CONVERSATION_ADD_REJECTED;
   }
+  GhMessageDisposition disposition = GH_MESSAGE_INCLUDE;
+#if GROUNDHOG_HAVE_MESSAGE_POLICY
+  if (self->policy && !gh_message_policy_classify(self->policy, message, &disposition, error))
+    return GH_CONVERSATION_ADD_FAILED;
+#endif
   const gchar *rumor_id = gh_message_get_rumor_id(message);
   GhMessage *existing = gh_conversation_store_lookup_message(self, rumor_id);
   gpointer delegate_data = NULL;
@@ -306,12 +351,21 @@ gh_conversation_store_admit(GhConversationStore *self, GhMessage *message,
     (wrap_id && delegate && delegate->has_rumor(delegate_data, rumor_id));
   /* One commit per admission, before the model changes: a duplicate still
    * records the wrap id that carried it. */
-  GhConversationCommit commit = { FALSE, -1, -1 };
-  if (delegate && !delegate->admit(delegate_data, message, wrap_id, &commit, error))
+  GhConversationCommit commit = { .unread = -1, .seq = -1 };
+  if (delegate && !delegate->admit(delegate_data, message, wrap_id, disposition, &commit, error))
     return GH_CONVERSATION_ADD_FAILED;
+  if (!delegate && disposition != GH_MESSAGE_INCLUDE)
+    commit.hidden = TRUE;
+#if GROUNDHOG_HAVE_MESSAGE_POLICY
+  if (self->policy && disposition != GH_MESSAGE_DROP)
+    gh_message_policy_committed(self->policy, message);
+#endif
+  /* A hidden duplicate must not merge provenance or revive a loaded item. */
+  if (disposition != GH_MESSAGE_INCLUDE && commit.hidden)
+    return GH_CONVERSATION_ADD_HIDDEN;
   GhConversation *conversation = g_hash_table_lookup(self->rooms,
                                                      gh_message_get_room_id(message));
-  if (existing || known) {
+  if (existing || known || (wrap_id && commit.duplicate)) {
     if (existing)
       for (const gchar *const *url = gh_message_get_relays(message); *url; url++)
         gh_message_add_relay(existing, *url);
@@ -322,6 +376,11 @@ gh_conversation_store_admit(GhConversationStore *self, GhMessage *message,
     return GH_CONVERSATION_ADD_HIDDEN;
   /* Its place in the room's arrival order: the durable one, else ours. */
   gh_message_set_seq(message, commit.seq >= 0 ? (guint64)commit.seq : ++self->next_seq);
+  if (self->visibility_updating) {
+    g_ptr_array_add(self->epoch_arrivals, g_object_ref(message));
+    g_signal_emit(self, signals[SIGNAL_MESSAGE_COMMITTED], 0, message);
+    return GH_CONVERSATION_ADD_NEW; /* the finishing epoch restores it */
+  }
   if (conversation && gh_conversation_get_has_newer(conversation) &&
       gh_message_is_self(message) && wrap_id == NULL && delegate &&
       delegate->reset_latest) {
@@ -540,6 +599,13 @@ gh_conversation_store_restore(GhConversationStore *self, const gchar *room_id,
   return created;
 }
 
+void
+gh_conversation_store_restore_empty(GhConversationStore *self, GhConversation *conversation)
+{
+  if (!gh_conversation_store_lookup(self, gh_conversation_get_room_id(conversation)))
+    list_new(self, conversation);
+}
+
 static gint
 compare_members(gconstpointer a, gconstpointer b)
 {
@@ -618,6 +684,7 @@ gh_conversation_store_open_room(GhConversationStore *self, const gchar *const *p
   g_autofree gchar *room_id = peers_room_id(self, peers, &members, error);
   if (!room_id)
     return NULL;
+  g_hash_table_add(self->explicit_rooms, g_strdup(room_id));
   /* Starting a conversation with someone blocked unblocks it, with the
    * history it kept (G18); the delegate lists that through restore. */
   if (room_is_blocked(self, room_id) &&
@@ -732,6 +799,84 @@ gh_conversation_store_ensure_group(GhConversationStore *self, const gchar *room_
   return conversation;
 }
 
+gboolean
+gh_conversation_store_is_restoring_visibility(GhConversationStore *self)
+{
+  return self->restoring_visibility;
+}
+
+GhMessagePolicy *
+gh_conversation_store_get_policy(GhConversationStore *self)
+{
+  return self->policy;
+}
+
+gboolean
+gh_conversation_store_get_visibility_updating(GhConversationStore *self)
+{
+  return self->visibility_updating;
+}
+
+void
+gh_conversation_store_set_visibility_updating(GhConversationStore *self, gboolean updating)
+{
+  if (self->visibility_updating == !!updating)
+    return;
+  self->visibility_updating = !!updating;
+  g_hash_table_remove_all(self->messages);
+  for (guint i = 0; i < self->conversations->len; i++) {
+    GhConversation *conversation = self->conversations->pdata[i];
+    gh_conversation_set_visibility_updating(conversation, updating);
+    if (!updating)
+      index_messages(self, conversation);
+  }
+  g_object_notify_by_pspec(G_OBJECT(self), props[PROP_VISIBILITY_UPDATING]);
+  if (!updating) {
+    g_autoptr(GPtrArray) arrivals = self->epoch_arrivals;
+    self->epoch_arrivals = g_ptr_array_new_with_free_func(g_object_unref);
+    for (guint i = 0; i < arrivals->len; i++) {
+      GhMessage *message = arrivals->pdata[i];
+#if GROUNDHOG_HAVE_MESSAGE_POLICY
+      GhMessageDisposition disposition = GH_MESSAGE_INCLUDE;
+      if (self->policy && (!gh_message_policy_classify(self->policy, message, &disposition, NULL) ||
+                          disposition != GH_MESSAGE_INCLUDE))
+        continue;
+#endif
+      GhConversation *conversation = gh_conversation_store_lookup(self, gh_message_get_room_id(message));
+      if (conversation)
+        g_signal_emit(self, signals[SIGNAL_MESSAGE_ADDED], 0, conversation, message);
+    }
+  }
+}
+
+gboolean
+gh_conversation_store_refresh_visibility(GhConversationStore *self, GError **error)
+{
+  self->restoring_visibility = TRUE;
+  /* Hold callbacks/data across reattachment of the same delegate. */
+  if (self->has_delegate && self->delegate.reload &&
+      !self->delegate.reload(self->delegate_data, self, error)) {
+    self->restoring_visibility = FALSE;
+    return FALSE;
+  }
+  for (guint i = 0; i < N_GROUP_BACKENDS; i++) {
+    GroupDelegate *slot = &self->groups[i];
+    if (slot->set && slot->delegate.reload && !slot->delegate.reload(slot->data, self, error)) {
+      self->restoring_visibility = FALSE;
+      return FALSE;
+    }
+  }
+  self->restoring_visibility = FALSE;
+  g_signal_emit(self, signals[SIGNAL_VISIBILITY_CHANGED], 0);
+  return TRUE;
+}
+
+gboolean
+gh_conversation_store_is_explicitly_opened(GhConversationStore *self, const gchar *room_id)
+{
+  return g_hash_table_contains(self->explicit_rooms, room_id);
+}
+
 static void
 gh_conversation_store_finalize(GObject *object)
 {
@@ -741,6 +886,8 @@ gh_conversation_store_finalize(GObject *object)
   detach_conversations(self->conversations);
   g_hash_table_unref(self->messages);
   g_hash_table_unref(self->rooms);
+  g_hash_table_unref(self->explicit_rooms);
+  g_ptr_array_unref(self->epoch_arrivals);
   g_ptr_array_unref(self->conversations);
   g_free(self->account);
   G_OBJECT_CLASS(gh_conversation_store_parent_class)->finalize(object);
@@ -751,6 +898,9 @@ gh_conversation_store_get_property(GObject *object, guint id, GValue *value, GPa
 {
   GhConversationStore *self = GH_CONVERSATION_STORE(object);
   switch (id) {
+  case PROP_VISIBILITY_UPDATING:
+    g_value_set_boolean(value, self->visibility_updating);
+    break;
   case PROP_ACCOUNT:
     g_value_set_string(value, self->account);
     break;
@@ -768,10 +918,16 @@ gh_conversation_store_class_init(GhConversationStoreClass *klass)
   props[PROP_ACCOUNT] = g_param_spec_string("account", NULL, NULL, NULL,
                                             G_PARAM_READABLE | G_PARAM_STATIC_STRINGS |
                                             G_PARAM_EXPLICIT_NOTIFY);
+  props[PROP_VISIBILITY_UPDATING] = g_param_spec_boolean("visibility-updating", NULL, NULL, FALSE,
+    G_PARAM_READABLE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
   g_object_class_install_properties(object_class, N_PROPS, props);
   signals[SIGNAL_MESSAGE_ADDED] = g_signal_new("message-added",
     G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
     G_TYPE_NONE, 2, GH_TYPE_CONVERSATION, GH_TYPE_MESSAGE);
+  signals[SIGNAL_POLICY_CHANGED] = g_signal_new("policy-changed", G_TYPE_FROM_CLASS(klass),
+    G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL, G_TYPE_NONE, 0);
+  signals[SIGNAL_VISIBILITY_CHANGED] = g_signal_new("visibility-changed", G_TYPE_FROM_CLASS(klass),
+    G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL, G_TYPE_NONE, 0);
   signals[SIGNAL_MESSAGE_COMMITTED] = g_signal_new("message-committed",
     G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
     G_TYPE_NONE, 1, GH_TYPE_MESSAGE);
@@ -782,5 +938,7 @@ gh_conversation_store_init(GhConversationStore *self)
 {
   self->conversations = g_ptr_array_new_with_free_func(g_object_unref);
   self->rooms = g_hash_table_new(g_str_hash, g_str_equal);
+  self->explicit_rooms = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  self->epoch_arrivals = g_ptr_array_new_with_free_func(g_object_unref);
   self->messages = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
 }

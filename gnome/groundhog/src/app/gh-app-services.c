@@ -7,6 +7,7 @@
 #endif
 #if GROUNDHOG_HAVE_SOCIAL_LISTS
 #include "gh-social-lists-backend.h"
+#include "gh-hide-account.h"
 #include "gh-relay-deny-policy.h"
 #endif
 #include "gh-app-services.h"
@@ -552,7 +553,7 @@ store_key_teardown(GhAppServices *self)
 /* ---- profile-picture policy (owner decisions D2/D3, plan §3.6) ----------------
  * Every window's picture cache asks here whether the account follows a
  * pubkey (the follow list, read only while load-profile-pictures is on) or
- * hides it (Stage 6: the hide policy; nobody is hidden until it lands).
+ * hides it through the loaded account message policy.
  * Following never writes consent and never accepts a request. */
 static gboolean
 picture_policy_is_followed(gpointer data, const gchar *pubkey)
@@ -569,8 +570,13 @@ picture_policy_is_followed(gpointer data, const gchar *pubkey)
 static gboolean
 picture_policy_is_hidden(gpointer data, const gchar *pubkey)
 {
+#if GROUNDHOG_HAVE_SOCIAL_LISTS
+  GhAppServices *self = data;
+  return gh_social_lists_is_hidden(self->social_lists, pubkey);
+#else
   (void)data; (void)pubkey;
-  return FALSE; /* Stage 6 injects the hide policy here */
+  return FALSE;
+#endif
 }
 
 static const GhPicturePolicy picture_policy = {
@@ -716,6 +722,7 @@ account_store_init(GhAppServices *self, GError **error)
   GhListAdapterNetwork list_network = { .accounts = self->accounts };
   gh_social_lists_set_network(self->social_lists, &list_network, self->relays);
   g_signal_connect(self->social_lists, "follows-changed", G_CALLBACK(on_follows_changed), self);
+  g_signal_connect(self->social_lists, "hide-policy-changed", G_CALLBACK(on_follows_changed), self);
   g_signal_connect(self->settings, "changed::load-profile-pictures",
                    G_CALLBACK(sync_follow_reads), self);
   g_signal_connect(self->settings, "changed::discovery-relays",
@@ -728,6 +735,7 @@ account_store_init(GhAppServices *self, GError **error)
   self->account_store = gh_account_store_new(&config);
 #if GROUNDHOG_HAVE_SOCIAL_LISTS
   gh_social_lists_attach_store(self->social_lists, self->account_store);
+  gh_hide_account_install(self->app, self->social_lists);
 #endif
 #if GROUNDHOG_HAVE_OUTBOX && (GROUNDHOG_HAVE_GROUP_UI || GROUNDHOG_HAVE_MLS_UI)
   /* The group services come and go with the open store. */
@@ -745,6 +753,7 @@ account_store_teardown(GhAppServices *self)
   g_signal_handlers_disconnect_by_func(self->account_store, on_roster_changed, self);
 #endif
 #if GROUNDHOG_HAVE_SOCIAL_LISTS
+  gh_hide_account_uninstall(self->app);
   g_signal_handlers_disconnect_by_func(self->settings, sync_follow_reads, self);
   g_signal_handlers_disconnect_by_func(self->social_lists, on_follows_changed, self);
 #if GROUNDHOG_HAVE_OUTBOX
@@ -964,6 +973,8 @@ static void
 reactions_share(GhAppServices *self)
 {
   GhReactionStore *reactions = gh_app_outbox_get_reactions(self->outbox);
+  if (reactions)
+    gh_reaction_store_set_policy(reactions, gh_conversation_store_get_policy(self->conversations));
   for (GList *l = gtk_application_get_windows(self->app); l; l = l->next) {
     if (!GH_IS_WINDOW(l->data))
       continue;
@@ -2622,7 +2633,9 @@ gh_app_services_attach_window(GhAppServices *self, GhWindow *window)
     gh_display_name_set_resolver(display_name_resolver, directory);
     g_signal_connect(directory, "profile-changed", G_CALLBACK(relay_display_name_changed), NULL);
     gh_conversation_view_set_picture_source(GH_CONVERSATION_VIEW(gh_content_page_get_view(gh_window_get_content(window))),
-                                             directory_picture_uri, G_OBJECT(directory));
+                                           directory_picture_uri, G_OBJECT(directory));
+    gh_picture_cache_set_uri_source(gh_conversation_list_get_picture_cache(window),
+                                   directory_picture_uri, G_OBJECT(directory));
     new_message.inboxes = GH_INBOX_RESOLVER(directory);
     new_message.display_name = directory_display_name;
     new_message.claimed_nip05 = directory_claimed_nip05;

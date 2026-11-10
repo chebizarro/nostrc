@@ -366,7 +366,7 @@ class OrdinaryMediaOwnership(Project):
             statement("add_test", "NAME groundhog-media"),
             statement("set_tests_properties", "groundhog-media"),
         ]
-        self.assertEqual(len(statements), 10)
+        self.assertEqual(len(statements), 11)
         gh = self.root / "gnome/groundhog"
         gh.mkdir(parents=True)
         (gh / "TestInventory.cmake").write_bytes((ROOT / "gnome/groundhog/TestInventory.cmake").read_bytes())
@@ -423,7 +423,7 @@ nostrc_finalize_test_inventory()
         closure = r._target_closure(r._mapped_targets(tests["groundhog-media"], descriptor, realized), realized)
         actual = {v["path"] for key in closure for v in realized["targets"][key]["sources"]}
         self.assertEqual(actual, {str(self.root / "gnome/groundhog" / path) for path in self.inputs})
-        self.assertEqual(len(self.unclassified), 11)
+        self.assertEqual(len(self.unclassified), 12)
         before_build = r.check_inputs(self.inventory, realized)
         self.assertEqual({g["kind"] for g in before_build["gaps"]},
                          {"unclaimed_registration", "missing_impact_edge"})

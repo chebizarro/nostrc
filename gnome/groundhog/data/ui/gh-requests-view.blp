@@ -192,6 +192,13 @@ template $GhRequestsView: Adw.Bin {
             ]
           }
         }
+        Button hide_button {
+          label: _("_Hide Account…");
+          use-underline: true;
+          action-name: "requests.hide-account";
+          halign: center;
+          margin-bottom: 6;
+        }
       };
     }
   };
