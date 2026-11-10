@@ -171,7 +171,13 @@ static void dialog_closed(AdwDialog *dialog, gboolean *closed)
   (void)dialog;
   *closed = TRUE;
 }
-static void test_hidden_page(void)
+static gboolean confirmation_timeout(gpointer data)
+{
+  (void)data;
+  g_error("Stale Hide Account confirmation did not close");
+  return G_SOURCE_REMOVE;
+}
+static void test_hidden_page(gconstpointer data)
 {
   GError *error = NULL;
   GhStore *store = gh_store_open_ephemeral(ACCOUNT, NULL, &error);
@@ -228,16 +234,18 @@ static void test_hidden_page(void)
   g_signal_emit_by_name(value, "apply");
   AdwDialog *confirmation = adw_window_get_visible_dialog(ADW_WINDOW(window));
   g_assert_nonnull(confirmation);
-  /* Exercise a presented dialog: AdwDialog 1.5 opens on its second frame. */
-  gtk_test_widget_wait_for_draw(GTK_WIDGET(window));
-  gtk_test_widget_wait_for_draw(GTK_WIDGET(window));
+  /* Cover invalidation before, during and after presentation. */
+  for (gint i = 0; i < GPOINTER_TO_INT(data); i++)
+    gtk_test_widget_wait_for_draw(GTK_WIDGET(window));
   g_object_ref(confirmation);
   gboolean closed = FALSE;
   g_signal_connect(confirmation, "closed", G_CALLBACK(dialog_closed), &closed);
   GhStore *other = gh_store_open_ephemeral("cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", NULL, &error);
   g_assert_true(gh_social_lists_bind_store(owner, other, 2, &error));
   g_signal_emit_by_name(confirmation, "response", "hide"); /* stale callback before dismissal */
+  guint watchdog = g_timeout_add_seconds(5, confirmation_timeout, NULL);
   while (!closed) g_main_context_iteration(NULL, TRUE);
+  g_source_remove(watchdog);
   g_assert_null(adw_window_get_visible_dialog(ADW_WINDOW(window)));
   g_object_unref(confirmation);
   g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(gtk_list_view_get_model(list))), ==, 0);
@@ -258,6 +266,8 @@ int main(int argc, char **argv)
   groundhog_register_resource();
   g_test_add_func("/groundhog/lists-ui/production-editor", test_real_backend_editor);
   g_test_add_func("/groundhog/lists-ui/preferences-manager", test_preferences_manager);
-  g_test_add_func("/groundhog/lists-ui/hidden-entries-and-stale-confirmation", test_hidden_page);
+  g_test_add_data_func("/groundhog/lists-ui/hidden-entries-and-stale-confirmation", GINT_TO_POINTER(2), test_hidden_page);
+  g_test_add_data_func("/groundhog/lists-ui/hidden-confirmation-before-first-frame", GINT_TO_POINTER(0), test_hidden_page);
+  g_test_add_data_func("/groundhog/lists-ui/hidden-confirmation-during-opening", GINT_TO_POINTER(1), test_hidden_page);
   return g_test_run();
 }
