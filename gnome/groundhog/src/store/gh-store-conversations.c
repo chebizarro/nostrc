@@ -25,6 +25,7 @@ struct _GhStoreConversations {
   GhStore *store;  /* borrowed; NULL once closed */
   gchar *account;
   GWeakRef model;  /* the GhConversationStore it was attached to */
+  GhMessagePolicy *policy;
 };
 
 G_DEFINE_FINAL_TYPE(GhStoreConversations, gh_store_conversations, G_TYPE_OBJECT)
@@ -350,7 +351,7 @@ admit_blocked(GhStore *store, GhMessage *message, const gchar *wrap_id, GError *
  * seen keys and the room's read state. */
 static gboolean
 delegate_admit(gpointer data, GhMessage *message, const gchar *wrap_id,
-               GhConversationCommit *commit, GError **error)
+               GhMessageDisposition disposition, GhConversationCommit *commit, GError **error)
 {
   GhStoreConversations *self = data;
   if (!check_open(self, error))
@@ -378,7 +379,9 @@ delegate_admit(gpointer data, GhMessage *message, const gchar *wrap_id,
     .expires_at = gh_message_get_expires_at(message),
     .title = title,
     .participants = gh_message_get_participants(message),
-    .unread = !own,
+    .unread = !own && disposition == GH_MESSAGE_INCLUDE,
+    .social_hidden = disposition == GH_MESSAGE_HIDE_RETAIN,
+    .drop = disposition == GH_MESSAGE_DROP,
     .request_state = own ? GH_STORE_REQUEST_ACCEPTED : GH_STORE_REQUEST_PENDING,
   };
   GhStoreAdmitResult result = GH_STORE_ADMIT_DUPLICATE;
@@ -398,6 +401,7 @@ delegate_admit(gpointer data, GhMessage *message, const gchar *wrap_id,
   }
   if (!gh_store_admit(store, &m, &result, &message_row, error))
     goto fail;
+  commit->duplicate = result == GH_STORE_ADMIT_DUPLICATE;
   /* A duplicate may still be a stored message (e.g. the outbox stored it
    * before this local echo); otherwise it was recorded as seen only. */
   if (result == GH_STORE_ADMIT_DUPLICATE &&
@@ -406,8 +410,9 @@ delegate_admit(gpointer data, GhMessage *message, const gchar *wrap_id,
   if (message_row > 0) {
     gint64 seq = 0;
     if (!gh_store_message_seq(store, message_row, &seq, error) ||
-        !admit_read_state(store, room_id, message_row, seq, message, wrap_id,
-                          result == GH_STORE_ADMIT_STORED, &commit->unread, error))
+        (disposition == GH_MESSAGE_INCLUDE &&
+         !admit_read_state(store, room_id, message_row, seq, message, wrap_id,
+                           result == GH_STORE_ADMIT_STORED, &commit->unread, error)))
       goto fail;
     commit->seq = seq;
     /* Someone else's message in a blocked room returned above. An own one
@@ -417,7 +422,7 @@ delegate_admit(gpointer data, GhMessage *message, const gchar *wrap_id,
     gboolean blocked = FALSE;
     if (!room_blocked(store, room_id, &blocked, error))
       goto fail;
-    commit->hidden = blocked;
+    commit->hidden = blocked || disposition != GH_MESSAGE_INCLUDE;
   } else {
     commit->hidden = TRUE; /* seen only: expired, forgotten room, purged */
   }
@@ -437,7 +442,7 @@ room_message_row(GhStore *store, gint64 conversation_id, GhMessage *message, gbo
   *out_row = 0;
   static const char *const queries[] = {
     "SELECT id FROM messages WHERE conversation_id = ?1 AND backend_msg_id = ?2",
-    "SELECT id FROM messages WHERE conversation_id = ?1 "
+    "SELECT id FROM messages WHERE conversation_id = ?1 AND social_hidden = 0 "
     "ORDER BY created_at DESC, backend_msg_id DESC LIMIT 1",
   };
   sqlite3_stmt *stmt = NULL;
@@ -564,6 +569,12 @@ delegate_reset_latest(gpointer data, GhConversation *conversation, GError **erro
   return gh_store_conversations_reset_latest(data, conversation, error);
 }
 
+static gboolean
+delegate_reload(gpointer data, GhConversationStore *model, GError **error)
+{
+  return gh_store_conversations_attach(data, model, 0, error);
+}
+
 static const GhConversationDelegate store_delegate = {
   .has_wrap = delegate_has_wrap,
   .has_rumor = delegate_has_rumor,
@@ -576,6 +587,7 @@ static const GhConversationDelegate store_delegate = {
   .unblock = delegate_unblock,
   .mark_unread = delegate_mark_unread,
   .reset_latest = delegate_reset_latest,
+  .reload = delegate_reload,
 };
 
 /* ---- Restore ------------------------------------------------------------------------ */
@@ -682,7 +694,7 @@ restore_room(GhStoreConversations *self, GhConversationStore *model, gint64 conv
   RoomState state = { 0 };
   sqlite3_stmt *stmt = prepare(store,
     "SELECT created_at, backend_msg_id, raw_json, expires_at, seq FROM messages "
-    "WHERE conversation_id = ?1 AND " NOT_CHAT_ROW " AND (?2 = 0 OR created_at < ?3 OR "
+    "WHERE conversation_id = ?1 AND social_hidden = 0 AND " NOT_CHAT_ROW " AND (?2 = 0 OR created_at < ?3 OR "
     "(created_at = ?3 AND backend_msg_id < ?4)) "
     "ORDER BY created_at DESC, backend_msg_id DESC LIMIT ?5", error);
   if (!stmt)
@@ -729,9 +741,25 @@ restore_room(GhStoreConversations *self, GhConversationStore *model, gint64 conv
   g_clear_pointer(&stmt, sqlite3_finalize);
 
   if (!conversation && messages->len == 0) {
-    place_clear(&cursor);
-    *out_listed = 0;
-    return TRUE; /* nothing listable */
+    g_autofree gchar *draft = NULL;
+    if (!gh_store_get_draft(store, conversation_id, &draft, error))
+      goto fail;
+    GhConversation *existing = gh_conversation_store_lookup(model, room_id);
+    if (existing && !draft && !gh_conversation_store_is_explicitly_opened(model, room_id))
+      gh_conversation_store_remove(model, room_id);
+    else if (existing)
+      gh_conversation_window_clear(existing);
+    if (!draft && !gh_conversation_store_is_explicitly_opened(model, room_id)) {
+      place_clear(&cursor);
+      *out_listed = 0;
+      return TRUE;
+    }
+    if (!existing) {
+      g_auto(GStrv) members = g_strsplit(room_id, ",", -1);
+      g_autoptr(GhConversation) empty = gh_conversation_new_for_room(self->account,
+        (const gchar *const *)members, 0);
+      gh_conversation_store_restore_empty(model, empty);
+    }
   }
   if (!load_room_state(store, conversation_id, &state, error))
     goto fail;
@@ -768,7 +796,20 @@ gh_store_conversations_attach(GhStoreConversations *self, GhConversationStore *m
   GhStore *store = self->store;
   guint limit = page_size ? MIN(page_size, GH_STORE_CONVERSATIONS_MAX_PAGE_SIZE)
                           : GH_STORE_CONVERSATIONS_PAGE_SIZE;
-  gh_conversation_store_set_account(model, self->account, &store_delegate,
+  if (!self->policy) {
+    self->policy = gh_message_policy_new(self->account);
+  }
+  if (!gh_message_policy_is_loaded(self->policy) && !gh_message_policy_load(self->policy, store, error)) {
+    GhConversationDelegate failed = store_delegate;
+    failed.policy = self->policy;
+    gh_conversation_store_set_account(model, self->account, &failed,
+                                      g_object_ref(self), g_object_unref);
+    g_weak_ref_set(&self->model, model);
+    return FALSE;
+  }
+  GhConversationDelegate delegate = store_delegate;
+  delegate.policy = self->policy;
+  gh_conversation_store_set_account(model, self->account, &delegate,
                                     g_object_ref(self), g_object_unref);
   g_weak_ref_set(&self->model, model);
 
@@ -776,7 +817,7 @@ gh_store_conversations_attach(GhStoreConversations *self, GhConversationStore *m
   g_autoptr(GPtrArray) rooms = g_ptr_array_new_with_free_func(g_free);
   sqlite3_stmt *stmt = prepare(store,
     "SELECT id, backend_key FROM conversations c WHERE backend = 1 AND request_state != 2 AND "
-    "EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = c.id) "
+    "(EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = c.id) OR c.draft IS NOT NULL) "
     "ORDER BY last_activity DESC, backend_key", error);
   if (!stmt)
     return FALSE;
@@ -796,7 +837,7 @@ gh_store_conversations_attach(GhStoreConversations *self, GhConversationStore *m
   for (guint i = 0; i < ids->len; i++) {
     guint listed = 0;
     if (!restore_room(self, model, g_array_index(ids, gint64, i),
-                      g_ptr_array_index(rooms, i), NULL, limit, FALSE, &listed, error))
+                      g_ptr_array_index(rooms, i), NULL, limit, TRUE, &listed, error))
       return FALSE;
   }
   return TRUE;
@@ -876,7 +917,7 @@ gh_store_conversations_load_newer(GhStoreConversations *self, GhConversation *co
   GhStore *store = self->store;
   g_autoptr(GPtrArray) messages = g_ptr_array_new_with_free_func(g_object_unref);
   sqlite3_stmt *stmt = prepare(store,
-    "SELECT raw_json, expires_at, seq FROM messages WHERE conversation_id = ?1 "
+    "SELECT raw_json, expires_at, seq FROM messages WHERE conversation_id = ?1 AND social_hidden = 0 "
     "AND " NOT_CHAT_ROW " AND (created_at > ?2 OR (created_at = ?2 AND backend_msg_id > ?3)) "
     "ORDER BY created_at ASC, backend_msg_id ASC", error);
   if (!stmt)
@@ -1101,7 +1142,7 @@ refresh_title(GhStoreConversations *self, gint64 conversation_id, gboolean *out_
   GhStore *store = self->store;
   g_autofree gchar *title = NULL;
   sqlite3_stmt *stmt = prepare(store,
-    "SELECT raw_json FROM messages WHERE conversation_id = ?1 AND "
+    "SELECT raw_json FROM messages WHERE conversation_id = ?1 AND social_hidden = 0 AND "
     "instr(raw_json, '\"subject\"') > 0 ORDER BY created_at DESC, backend_msg_id DESC", error);
   if (!stmt)
     return FALSE;
@@ -1142,7 +1183,7 @@ room_has_messages(GhStore *store, gint64 conversation_id, gint64 created_at, con
 {
   *out_exists = FALSE;
   sqlite3_stmt *stmt = prepare(store,
-    "SELECT EXISTS (SELECT 1 FROM messages WHERE conversation_id = ?1 AND "
+    "SELECT EXISTS (SELECT 1 FROM messages WHERE conversation_id = ?1 AND social_hidden = 0 AND "
     "(?3 IS NULL OR (created_at, backend_msg_id) < (?2, ?3)))", error);
   if (!stmt)
     return FALSE;
@@ -1499,15 +1540,21 @@ gh_store_conversations_get_notify_state(GhStoreConversations *self, const gchar 
   g_return_val_if_fail(GH_IS_STORE_CONVERSATIONS(self), FALSE);
   g_return_val_if_fail(out_state != NULL, FALSE);
   *out_state = (GhStoreNotifyState){ 0 };
-  if (!check_open(self, error) || !check_room(self, room_id, error))
+  if (!check_open(self, error))
+    return FALSE;
+  g_autofree gchar *group_hex = NULL;
+  GhStoreBackend backend = gh_message_mls_room_split(room_id, &group_hex) ? GH_STORE_BACKEND_MLS :
+    gh_message_nip29_room_split(room_id, NULL, NULL) ? GH_STORE_BACKEND_NIP29 : GH_STORE_BACKEND_NIP17;
+  if (backend == GH_STORE_BACKEND_NIP17 && !check_room(self, room_id, error))
     return FALSE;
   GhStore *store = self->store;
   sqlite3_stmt *stmt = prepare(store,
     "SELECT muted_until, request_state FROM conversations "
-    "WHERE backend = 1 AND backend_key = ?1", error);
+    "WHERE backend = ?2 AND backend_key = ?1", error);
   if (!stmt)
     return FALSE;
-  BIND(bind_text(stmt, 1, room_id));
+  BIND(bind_text(stmt, 1, group_hex ? group_hex : room_id));
+  BIND(sqlite3_bind_int(stmt, 2, backend));
   gboolean found = FALSE;
   gboolean ok = step_row(store, stmt, &found, "Reading a conversation's notification state",
                          error);
@@ -1864,6 +1911,12 @@ fail:
   return FALSE;
 }
 
+GhMessagePolicy *
+gh_store_conversations_get_policy(GhStoreConversations *self)
+{
+  return self->policy;
+}
+
 /* ---- Object ------------------------------------------------------------------------------ */
 
 GhStoreConversations *
@@ -1873,6 +1926,7 @@ gh_store_conversations_new(GhStore *store)
   GhStoreConversations *self = g_object_new(GH_TYPE_STORE_CONVERSATIONS, NULL);
   self->store = store;
   self->account = g_strdup(gh_store_get_account_pubkey(store));
+  self->policy = gh_message_policy_new(self->account);
   return self;
 }
 
@@ -1880,6 +1934,8 @@ void
 gh_store_conversations_close(GhStoreConversations *self)
 {
   g_return_if_fail(GH_IS_STORE_CONVERSATIONS(self));
+  if (self->policy)
+    gh_message_policy_close(self->policy);
   self->store = NULL;
 }
 
@@ -1887,6 +1943,9 @@ static void
 gh_store_conversations_finalize(GObject *object)
 {
   GhStoreConversations *self = GH_STORE_CONVERSATIONS(object);
+  if (self->policy)
+    gh_message_policy_close(self->policy);
+  g_clear_object(&self->policy);
   g_weak_ref_clear(&self->model);
   g_free(self->account);
   G_OBJECT_CLASS(gh_store_conversations_parent_class)->finalize(object);

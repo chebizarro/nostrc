@@ -1,9 +1,13 @@
 #include "gh-social-lists.h"
 #include "gh-list-adapter.h"
+#include "gh-message-policy.h"
 #include "gh-relay-deny-policy.h"
+#include "gh-relay-scope.h"
 #include <jansson.h>
 #include <string.h>
 #include <nostr-kinds.h>
+
+#define MAX_FOLLOW_SOURCES 16 /* the relay scope's bound */
 
 struct _GhSocialLists {
   GObject parent_instance;
@@ -19,14 +23,23 @@ struct _GhSocialLists {
   GhStore *store;
   GhListAdapter *adapter; /* owned by service; revoked before service release */
   GNostrListService *service;
+  GhMessagePolicy *message_policy;
   guint64 generation;
   gboolean sync_enabled;
   gchar *error;
+  gchar *visibility_error;
+  /* Follows (kind 3): read only while enabled, from discovery plus write relays. */
+  gboolean follows_enabled;
+  GStrv discovery;
+  GStrv follow_sources;    /* the union handed to the read plan */
+  GHashTable *follows;     /* pubkey (lowercase hex) -> 1, from the kind-3 snapshot */
+  GStrv follow_list;       /* the same, sorted, for gh_social_lists_get_follows */
 };
 G_DEFINE_TYPE(GhSocialLists, gh_social_lists, G_TYPE_OBJECT)
-enum { CHANGED, DOCUMENT_CHANGED, SYNC_STATE_CHANGED, N_SIGNALS };
+enum { CHANGED, DOCUMENT_CHANGED, SYNC_STATE_CHANGED, FOLLOWS_CHANGED, HIDE_POLICY_CHANGED, N_SIGNALS };
 static guint signals[N_SIGNALS];
 static gboolean update_plan(GhSocialLists *self, GError **error);
+static void rebuild_follows(GhSocialLists *self, gboolean force);
 
 void
 gh_social_lists_close(GhSocialLists *self)
@@ -40,6 +53,11 @@ gh_social_lists_close(GhSocialLists *self)
     g_clear_object(&self->service);
   }
   self->adapter = NULL;
+  if (self->message_policy) {
+    g_signal_handlers_disconnect_by_data(self->message_policy, self);
+    gh_message_policy_close(self->message_policy);
+  }
+  g_clear_object(&self->message_policy);
   self->store = NULL;
   self->generation = 0;
   self->sync_enabled = FALSE;
@@ -47,8 +65,27 @@ gh_social_lists_close(GhSocialLists *self)
   self->group_derive = NULL;
   self->group_data = NULL;
   g_clear_pointer(&self->error, g_free);
+  g_clear_pointer(&self->visibility_error, g_free);
+  g_signal_emit(self, signals[HIDE_POLICY_CHANGED], 0);
+  rebuild_follows(self, FALSE); /* nothing of the old account's follows survives */
   g_signal_emit(self, signals[CHANGED], 0);
   g_signal_emit(self, signals[SYNC_STATE_CHANGED], 0);
+}
+
+static void
+hide_policy_changed(GhMessagePolicy *policy, GhSocialLists *self)
+{
+  (void)policy;
+  g_signal_emit(self, signals[HIDE_POLICY_CHANGED], 0);
+}
+
+static void
+policy_progress(GhMessagePolicy *policy, GhSocialLists *self)
+{
+  g_free(self->visibility_error);
+  self->visibility_error = g_strdup(gh_message_policy_get_error(policy));
+  hide_policy_changed(policy, self);
+  g_signal_emit(self, signals[CHANGED], 0);
 }
 
 static void
@@ -73,10 +110,137 @@ static void
 document_changed(GNostrListService *service, GNostrListDocument *snapshot, GhSocialLists *self)
 {
   (void)service;
+  if (gnostr_list_document_get_kind(snapshot) == NOSTR_KIND_MUTE_LIST && self->message_policy) {
+    g_autoptr(GError) error = NULL;
+    if (!gh_message_policy_refresh(self->message_policy, &error)) {
+      g_free(self->visibility_error);
+      self->visibility_error = g_strdup("Hidden messages could not be updated");
+    }
+  }
+  if (gnostr_list_document_get_kind(snapshot) == NOSTR_KIND_FOLLOW_LIST &&
+      !*gnostr_list_document_get_identifier(snapshot))
+    rebuild_follows(self, FALSE);
   if (gnostr_list_document_get_kind(snapshot) == NOSTR_KIND_BLOCKED_RELAY_LIST)
     update_deny_policy(self, snapshot);
   g_signal_emit(self, signals[DOCUMENT_CHANGED], 0, snapshot);
   g_signal_emit(self, signals[CHANGED], 0);
+}
+
+/* ---- follows (NIP-02) -------------------------------------------------------- */
+
+static gboolean
+hex64(const gchar *value)
+{
+  if (!value || strlen(value) != 64)
+    return FALSE;
+  for (const gchar *p = value; *p; p++)
+    if (!g_ascii_isxdigit(*p))
+      return FALSE;
+  return TRUE;
+}
+
+/* Discovery relays plus the account's NIP-65 write relays, validated,
+ * deduplicated, at most 16, for the kind-3 read; NULL when none. */
+static GStrv
+follow_sources(GhSocialLists *self, const gchar *const *write)
+{
+  GPtrArray *urls = g_ptr_array_new_with_free_func(g_free);
+  const gchar *const *sets[] = { (const gchar *const *)self->discovery, write };
+  for (guint s = 0; s < G_N_ELEMENTS(sets); s++)
+    for (guint i = 0; sets[s] && sets[s][i] && urls->len < MAX_FOLLOW_SOURCES; i++)
+      if (gh_relay_url_validate(sets[s][i], NULL) &&
+          !g_ptr_array_find_with_equal_func(urls, sets[s][i], g_str_equal, NULL))
+        g_ptr_array_add(urls, g_strdup(sets[s][i]));
+  if (!urls->len) {
+    g_ptr_array_unref(urls);
+    return NULL;
+  }
+  g_ptr_array_add(urls, NULL);
+  return (GStrv)g_ptr_array_free(urls, FALSE);
+}
+
+static gint
+compare_strings(gconstpointer a, gconstpointer b)
+{
+  return strcmp(*(const gchar *const *)a, *(const gchar *const *)b);
+}
+
+/* The followed set from the kind-3 snapshot's public p tags (the engine
+ * admitted it: the account's own, NIP-01 newest). "follows-changed" when
+ * the answers changed (or force). */
+static void
+rebuild_follows(GhSocialLists *self, gboolean force)
+{
+  g_autoptr(GHashTable) next = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  g_autoptr(GNostrListDocument) snapshot = self->service
+    ? gnostr_list_service_lookup(self->service, NOSTR_KIND_FOLLOW_LIST, "") : NULL;
+  const NostrListDocument *codec = snapshot ? gnostr_list_document_get_codec(snapshot) : NULL;
+  for (gsize i = 0; codec && i < nostr_nip51_document_tag_count(codec, FALSE); i++) {
+    const NostrListTag *tag = nostr_nip51_document_tag(codec, FALSE, i);
+    const gchar *name = nostr_nip51_tag_field(tag, 0), *value = nostr_nip51_tag_field(tag, 1);
+    if (!name || strcmp(name, "p") || !hex64(value))
+      continue;
+    g_hash_table_add(next, g_ascii_strdown(value, -1));
+  }
+  gboolean same = !force && g_hash_table_size(next) == g_hash_table_size(self->follows);
+  GHashTableIter iter;
+  gpointer key;
+  g_hash_table_iter_init(&iter, next);
+  while (same && g_hash_table_iter_next(&iter, &key, NULL))
+    same = g_hash_table_contains(self->follows, key);
+  if (same)
+    return;
+  g_hash_table_unref(self->follows);
+  self->follows = g_steal_pointer(&next);
+  GPtrArray *list = g_ptr_array_new_with_free_func(g_free);
+  g_hash_table_iter_init(&iter, self->follows);
+  while (g_hash_table_iter_next(&iter, &key, NULL))
+    g_ptr_array_add(list, g_strdup(key));
+  g_ptr_array_sort(list, compare_strings);
+  g_ptr_array_add(list, NULL);
+  g_clear_pointer(&self->follow_list, g_strfreev);
+  self->follow_list = (GStrv)g_ptr_array_free(list, FALSE);
+  g_signal_emit(self, signals[FOLLOWS_CHANGED], 0);
+}
+
+void
+gh_social_lists_set_follow_reads(GhSocialLists *self, gboolean enabled,
+                                 const gchar *const *discovery_relays)
+{
+  g_return_if_fail(GH_IS_SOCIAL_LISTS(self));
+  enabled = !!enabled;
+  gboolean was = self->follows_enabled;
+  self->follows_enabled = enabled;
+  g_clear_pointer(&self->discovery, g_strfreev);
+  self->discovery = g_strdupv((gchar **)discovery_relays);
+  g_autoptr(GError) error = NULL;
+  if (!update_plan(self, &error)) {
+    g_free(self->error);
+    self->error = g_strdup("Account list relay plan could not be updated");
+  }
+  /* Off: the set is kept but unused; on: it applies again. Either way the
+   * answers changed for everyone followed. */
+  if (was != enabled && g_hash_table_size(self->follows))
+    g_signal_emit(self, signals[FOLLOWS_CHANGED], 0);
+}
+
+gboolean
+gh_social_lists_is_followed(GhSocialLists *self, const gchar *pubkey)
+{
+  g_return_val_if_fail(GH_IS_SOCIAL_LISTS(self), FALSE);
+  if (!self->follows_enabled || !pubkey)
+    return FALSE;
+  g_autofree gchar *key = g_ascii_strdown(pubkey, -1);
+  return g_hash_table_contains(self->follows, key);
+}
+
+const gchar *const *
+gh_social_lists_get_follows(GhSocialLists *self)
+{
+  static const gchar *const none[] = { NULL };
+  g_return_val_if_fail(GH_IS_SOCIAL_LISTS(self), none);
+  return self->follows_enabled && self->follow_list ? (const gchar *const *)self->follow_list
+                                                      : none;
 }
 
 static void
@@ -111,7 +275,7 @@ update_plan(GhSocialLists *self, GError **error)
   }
   const gint kinds[] = { NOSTR_KIND_MUTE_LIST, NOSTR_KIND_BLOCKED_RELAY_LIST,
     NOSTR_KIND_PRIVATE_RELAY_LIST, NOSTR_KIND_EMOJI_LIST, NOSTR_KIND_SLASH_COMMAND_LIST,
-    NOSTR_KIND_SIMPLE_GROUP_LIST };
+    NOSTR_KIND_SIMPLE_GROUP_LIST, NOSTR_KIND_FOLLOW_LIST };
   for (guint k = 0; self->network.accounts && k < G_N_ELEMENTS(kinds); k++) {
     gboolean found = FALSE;
     for (guint i = 0; i < n; i++) if (entries[i].kind == kinds[k] && !*entries[i].identifier) found = TRUE;
@@ -127,6 +291,9 @@ update_plan(GhSocialLists *self, GError **error)
     gh_account_relays_get_generation(self->relays) == self->generation &&
     gh_account_relays_get_state(self->relays) != GH_ACCOUNT_RELAYS_DISCOVERING;
   const gchar *const *write = ready ? gh_account_relays_get_write_relays(self->relays) : NULL;
+  g_clear_pointer(&self->follow_sources, g_strfreev);
+  if (self->follows_enabled && ready)
+    self->follow_sources = follow_sources(self, write);
   g_auto(GStrv) public_targets = gh_social_lists_dup_public_targets(self);
   for (guint i = 0; i < n; i++) {
     GNostrListReadPlanEntry *entry = &entries[i];
@@ -140,6 +307,13 @@ update_plan(GhSocialLists *self, GError **error)
       entry->publish_policy = GNOSTR_LIST_AUTO_ALWAYS;
       entry->sources = entry->targets = (const gchar *const *)self->group_urls;
       entry->waiting_for_dependency = self->group_waiting || !self->group_derive;
+    } else if (entry->kind == NOSTR_KIND_FOLLOW_LIST && !*entry->identifier) {
+      /* Read-only (never published), only while load-profile-pictures is
+       * on, from discovery plus write relays (plan §3.6, PD-12). */
+      entry->publish_policy = GNOSTR_LIST_READ_ONLY;
+      entry->sources = (const gchar *const *)self->follow_sources;
+      entry->targets = NULL;
+      entry->waiting_for_dependency = !self->follows_enabled || !ready || !self->follow_sources;
     } else if (entry->kind == NOSTR_KIND_MUTE_LIST && gh_list_adapter_hide_unsynced(self->adapter)) {
       entry->publish_policy = GNOSTR_LIST_EXPLICIT_ONLY;
     } else if (self->sync_enabled) {
@@ -243,6 +417,18 @@ gh_social_lists_bind_store(GhSocialLists *self, GhStore *store, guint64 generati
   self->store = store;
   self->generation = generation;
   self->sync_enabled = preferences.sync_enabled;
+  GhStoreConversations *conversations = self->account_store ?
+    gh_account_store_get_conversations(self->account_store) : NULL;
+  GhMessagePolicy *policy = conversations ? gh_store_conversations_get_policy(conversations) : NULL;
+  self->message_policy = policy ? g_object_ref(policy) : gh_message_policy_new(gh_store_get_account_pubkey(store));
+  if (!gh_message_policy_is_loaded(self->message_policy) &&
+      !gh_message_policy_load(self->message_policy, store, error)) {
+    gh_social_lists_close(self);
+    goto fail;
+  }
+  g_signal_connect(self->message_policy, "changed", G_CALLBACK(hide_policy_changed), self);
+  g_signal_connect(self->message_policy, "failed", G_CALLBACK(policy_progress), self);
+  g_signal_connect(self->message_policy, "projected", G_CALLBACK(policy_progress), self);
   self->adapter = gh_list_adapter_new(store, generation);
   if (self->network.accounts) gh_list_adapter_set_network(self->adapter, &self->network);
   self->service = gnostr_list_service_new(gh_store_get_account_pubkey(store), generation,
@@ -263,6 +449,8 @@ gh_social_lists_bind_store(GhSocialLists *self, GhStore *store, guint64 generati
   g_signal_connect_swapped(self->service, "state-changed", G_CALLBACK(document_state_changed), self);
   if (!update_plan(self, error)) { gh_social_lists_close(self); goto fail; }
   gnostr_list_service_set_private_sync_enabled(self->service, self->sync_enabled);
+  rebuild_follows(self, FALSE); /* the persisted kind 3, if any */
+  g_signal_emit(self, signals[HIDE_POLICY_CHANGED], 0);
   g_signal_emit(self, signals[CHANGED], 0);
   g_signal_emit(self, signals[SYNC_STATE_CHANGED], 0);
   return TRUE;
@@ -300,22 +488,40 @@ gh_social_lists_dispose(GObject *object)
   if (self->relays) g_signal_handlers_disconnect_by_data(self->relays, self);
   g_clear_object(&self->relays);
   gh_list_adapter_network_clear(&self->network);
+  g_clear_pointer(&self->discovery, g_strfreev);
+  g_clear_pointer(&self->follow_sources, g_strfreev);
+  g_clear_pointer(&self->follow_list, g_strfreev);
   G_OBJECT_CLASS(gh_social_lists_parent_class)->dispose(object);
+}
+
+static void
+gh_social_lists_finalize(GObject *object)
+{
+  GhSocialLists *self = GH_SOCIAL_LISTS(object);
+  g_hash_table_unref(self->follows);
+  G_OBJECT_CLASS(gh_social_lists_parent_class)->finalize(object);
 }
 
 static void
 gh_social_lists_class_init(GhSocialListsClass *klass)
 {
   G_OBJECT_CLASS(klass)->dispose = gh_social_lists_dispose;
+  signals[HIDE_POLICY_CHANGED] = g_signal_new("hide-policy-changed", G_TYPE_FROM_CLASS(klass),
+    G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL, G_TYPE_NONE, 0);
+  G_OBJECT_CLASS(klass)->finalize = gh_social_lists_finalize;
   signals[CHANGED] = g_signal_new("changed", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST,
     0, NULL, NULL, NULL, G_TYPE_NONE, 0);
+  signals[FOLLOWS_CHANGED] = g_signal_new("follows-changed", G_TYPE_FROM_CLASS(klass),
+    G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL, G_TYPE_NONE, 0);
   signals[DOCUMENT_CHANGED] = g_signal_new("document-changed", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST,
     0, NULL, NULL, NULL, G_TYPE_NONE, 1, GNOSTR_TYPE_LIST_DOCUMENT);
   signals[SYNC_STATE_CHANGED] = g_signal_new("sync-state-changed", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST,
     0, NULL, NULL, NULL, G_TYPE_NONE, 0);
 }
-static void gh_social_lists_init(GhSocialLists *self)
+static void
+gh_social_lists_init(GhSocialLists *self)
 {
+  self->follows = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   self->deny_policy = g_object_ref(gh_relay_deny_policy_get_default());
   gh_relay_deny_policy_revoke(self->deny_policy);
 }
@@ -390,8 +596,26 @@ gh_social_lists_set_servers(GhSocialLists *self, const gchar *const *servers, GE
 }
 
 GNostrListService *gh_social_lists_get_service(GhSocialLists *self) { return self->service; }
+GhMessagePolicy *gh_social_lists_get_message_policy(GhSocialLists *self) { return self->message_policy; }
+gboolean gh_social_lists_is_hidden(GhSocialLists *self, const gchar *pubkey)
+{
+  return !gh_message_policy_is_loaded(self->message_policy) ||
+    gh_message_policy_hides_author(self->message_policy, pubkey);
+}
+gboolean gh_social_lists_retry_visibility(GhSocialLists *self, GError **error)
+{
+  if (!self->message_policy) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_CLOSED, "Account hide policy is not open");
+    return FALSE;
+  }
+  gboolean ok = gh_message_policy_refresh(self->message_policy, error);
+  policy_progress(self->message_policy, self);
+  return ok;
+}
 guint64 gh_social_lists_get_generation(GhSocialLists *self) { return self->generation; }
-const gchar *gh_social_lists_get_error(GhSocialLists *self) { return self->error; }
+const gchar *gh_social_lists_get_error(GhSocialLists *self)
+{ return self->visibility_error ? self->visibility_error : self->error; }
+const gchar *gh_social_lists_get_visibility_error(GhSocialLists *self) { return self->visibility_error; }
 gboolean gh_social_lists_get_sync_enabled(GhSocialLists *self) { return self->sync_enabled; }
 
 gboolean
@@ -452,6 +676,47 @@ gh_social_lists_apply(GhSocialLists *self, gint kind, const gchar *identifier, g
     return NULL;
   }
   return gnostr_list_service_apply(self->service, kind, identifier, revision, operations, error);
+}
+
+const gchar *
+gh_social_lists_get_account(GhSocialLists *self)
+{
+  return self->store ? gh_store_get_account_pubkey(self->store) : NULL;
+}
+
+gboolean
+gh_social_lists_hide_account(GhSocialLists *self, const gchar *pubkey, GError **error)
+{
+  gboolean valid = pubkey && strlen(pubkey) == 64;
+  for (guint i = 0; valid && i < 64; i++)
+    valid = g_ascii_isxdigit(pubkey[i]);
+  if (!valid) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "An account needs a 64-character public key");
+    return FALSE;
+  }
+  g_autofree gchar *lower = g_ascii_strdown(pubkey, -1);
+  if (!g_strcmp0(lower, gh_social_lists_get_account(self))) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "The active account cannot hide itself");
+    return FALSE;
+  }
+  g_autoptr(GNostrListDocument) doc = gh_social_lists_ensure(self, NOSTR_KIND_MUTE_LIST, "", error);
+  if (!doc)
+    return FALSE;
+  const NostrListDocument *codec = gnostr_list_document_get_codec(doc);
+  for (guint p = 0; p < 2; p++)
+    for (gsize i = 0; i < nostr_nip51_document_tag_count(codec, p); i++) {
+      const NostrListTag *tag = nostr_nip51_document_tag(codec, p, i);
+      if (!g_strcmp0(nostr_nip51_tag_field(tag, 0), "p") &&
+          nostr_nip51_tag_field(tag, 1) &&
+          !g_ascii_strcasecmp(nostr_nip51_tag_field(tag, 1), lower))
+        return TRUE;
+    }
+  const gchar *fields[] = { "p", lower };
+  g_autoptr(GPtrArray) operations = g_ptr_array_new_with_free_func((GDestroyNotify)gnostr_list_operation_unref);
+  g_ptr_array_add(operations, gnostr_list_operation_new(GNOSTR_LIST_EDIT_APPEND, TRUE, fields, 2, 0, 0));
+  g_autoptr(GNostrListDocument) saved = gh_social_lists_apply(self, NOSTR_KIND_MUTE_LIST, "",
+    gnostr_list_document_get_local_revision(doc), operations, error);
+  return saved != NULL;
 }
 
 gchar *

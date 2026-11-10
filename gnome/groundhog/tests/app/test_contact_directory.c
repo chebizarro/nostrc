@@ -116,6 +116,7 @@ typedef struct {
   gchar *url;
   GPtrArray *authors;
   gboolean profiles; /* kind 0 asked for */
+  gboolean inbox;    /* kind 10050 asked for */
   gboolean closed;
   GPtrArray *auth;
   guint resubscribes;
@@ -154,14 +155,13 @@ rec_open(GhRelayScope *scope, const gchar *url, const NostrFilters *filters, gpo
   const NostrFilter *filter = &filters->filters[0];
   for (size_t i = 0; i < nostr_filter_authors_len(filter); i++)
     g_ptr_array_add(req->authors, g_strdup(nostr_filter_authors_get(filter, i)));
-  gboolean inbox = FALSE;
   for (size_t i = 0; i < nostr_filter_kinds_len(filter); i++) {
     int kind = nostr_filter_kinds_get(filter, i);
     g_assert_true(kind == 0 || kind == 10050); /* nothing else is ever asked for */
     req->profiles |= kind == 0;
-    inbox |= kind == 10050;
+    req->inbox |= kind == 10050;
   }
-  g_assert_true(inbox);
+  g_assert_true(req->inbox || req->profiles);
   /* Discovery relays only (PD-12). */
   g_assert_true(g_str_equal(url, DISC_A) || g_str_equal(url, DISC_B));
   g_ptr_array_add(rec->reqs, req);
@@ -798,6 +798,148 @@ test_pt8_requests(void)
   fixture_down(&f);
 }
 
+/* ---- follow-gated lookups (plan §3.6, D2/D3, PD-12) -------------------------------- */
+
+/* Following grants the kind-0 lookup and its display to surfaced peers
+ * only, and only while load-profile-pictures is on. A followed request
+ * sender is looked up alone, soon, and shown by name while its room stays
+ * a request; a followed account nobody talks to is never asked for; a
+ * followed sender whose relays are needed for a send gets its 10050 only;
+ * unfollowing or the switch off stops the display at once, announced. */
+static void
+test_follow_gated(void)
+{
+  Fixture f;
+  fixture_up(&f, FALSE);
+  const Person *xavier = &people[0], *yvonne = &people[1], *zed = &people[2];
+  g_settings_set_boolean(f.settings, "load-profile-pictures", FALSE);
+  GhConversation *request = room_with(&f, xavier, FALSE, T0 - 100); /* followed sender */
+  room_with(&f, yvonne, FALSE, T0 - 90);                            /* a stranger */
+  const gchar *follows[] = { xavier->pk, zed->pk, NULL };             /* zed: never surfaced */
+  gh_contact_directory_set_follows(f.dir, follows);
+  bind_store(&f);
+  /* The switch off: following grants nothing, the first run asks nobody. */
+  g_assert_false(gh_contact_directory_is_followed(f.dir, xavier->pk));
+  g_assert_false(gh_contact_directory_is_accepted(f.dir, xavier->pk));
+  advance_to_next(&f);
+  g_assert_cmpuint(f.rec.reqs->len, ==, 0);
+
+  /* On: the followed, surfaced sender alone, within 5-60 s, kind 0 included. */
+  gint64 on_at = gh_clock_get_unix(f.clock);
+  g_settings_set_boolean(f.settings, "load-profile-pictures", TRUE);
+  g_assert_true(gh_contact_directory_is_followed(f.dir, xavier->pk));
+  g_assert_false(gh_contact_directory_is_accepted(f.dir, xavier->pk));
+  advance_to_next(&f);
+  g_assert_cmpuint(f.rec.reqs->len, ==, 2);
+  Req *named = req_at(&f, 0);
+  g_assert_cmpint(named->opened_at - on_at, >=, 5);
+  g_assert_cmpint(named->opened_at - on_at, <=, 60);
+  g_assert_true(named->profiles);
+  g_assert_false(named->inbox); /* kind 0 alone: following grants nothing else */
+  g_assert_cmpuint(named->authors->len, ==, 1);
+  g_assert_true(req_asks(named, xavier->pk));
+  g_ptr_array_set_size(f.profiles, 0);
+  g_autofree gchar *name = profile(xavier, T0 - 50,
+    "{\"name\":\"Xavier\",\"picture\":\"https://pictures.test.invalid/x.png\"}");
+  answer(named, name, NULL);
+  answer(req_at(&f, 1), NULL);
+  drain();
+  g_assert_cmpstr(gh_contact_directory_get_display_name(f.dir, xavier->pk), ==, "Xavier");
+  g_autofree gchar *picture = gh_contact_directory_dup_picture_uri(f.dir, xavier->pk);
+  g_assert_cmpstr(picture, ==, "https://pictures.test.invalid/x.png");
+  g_assert_cmpuint(f.profiles->len, ==, 1);
+  g_assert_cmpstr(g_ptr_array_index(f.profiles, 0), ==, xavier->pk);
+  /* Still a request: not accepted, and its title stays the request's own. */
+  g_assert_true(gh_conversation_get_is_request(request));
+  g_assert_false(gh_contact_directory_is_accepted(f.dir, xavier->pk));
+  g_autofree gchar *no_title = gh_contact_directory_dup_conversation_title(f.dir, request);
+  g_assert_null(no_title);
+
+  /* Unfollowed: not shown any more, announced; followed again: shown from
+   * the fresh cache with no new REQ. */
+  g_ptr_array_set_size(f.profiles, 0);
+  const gchar *only_zed[] = { zed->pk, NULL };
+  gh_contact_directory_set_follows(f.dir, only_zed);
+  g_assert_null(gh_contact_directory_get_display_name(f.dir, xavier->pk));
+  g_assert_cmpuint(f.profiles->len, ==, 1);
+  g_assert_cmpstr(g_ptr_array_index(f.profiles, 0), ==, xavier->pk);
+  guint before = f.rec.reqs->len;
+  gh_contact_directory_set_follows(f.dir, follows);
+  g_assert_cmpstr(gh_contact_directory_get_display_name(f.dir, xavier->pk), ==, "Xavier");
+  drain();
+  g_assert_cmpuint(f.rec.reqs->len, ==, before);
+
+  /* A send to zed (followed, not surfaced): the 10050 only, no kind 0 (PD-12). */
+  Resolved r = { 0 };
+  resolve_start(&f, zed->pk, &r, NULL);
+  drain();
+  g_assert_cmpuint(f.rec.reqs->len, ==, before + 2);
+  g_assert_false(req_at(&f, before)->profiles);
+  g_assert_true(req_at(&f, before)->inbox);
+  g_assert_true(req_asks(req_at(&f, before), zed->pk));
+  g_autofree gchar *list = inbox_list(zed, T0 - 50, R1, NULL);
+  answer(req_at(&f, before), list, NULL);
+  answer(req_at(&f, before + 1), NULL);
+  gh_test_spin_until(is_done, &r);
+  g_assert_cmpint(r.result->status, ==, GH_INBOX_FOUND);
+  resolved_clear(&r);
+
+  /* The switch off again: nothing shown, announced, and the next days'
+   * timers ask for nobody (with nobody eligible there may be no run at
+   * all); yvonne, the stranger, was never asked for. */
+  g_ptr_array_set_size(f.profiles, 0);
+  g_settings_set_boolean(f.settings, "load-profile-pictures", FALSE);
+  g_assert_null(gh_contact_directory_get_display_name(f.dir, xavier->pk));
+  g_assert_cmpuint(f.profiles->len, ==, 1);
+  before = f.rec.reqs->len;
+  for (guint i = 0; i < 3 && gh_clock_fake_get_next_deadline(f.clock) >= 0; i++) {
+    advance_to_next(&f);
+    for (guint j = before; j < f.rec.reqs->len; j++) {
+      g_assert_false(req_asks(req_at(&f, j), xavier->pk));
+      answer(req_at(&f, j), NULL);
+    }
+    before = f.rec.reqs->len;
+  }
+  for (guint i = 0; i < f.rec.reqs->len; i++)
+    g_assert_false(req_asks(req_at(&f, i), yvonne->pk));
+  fixture_down(&f);
+}
+
+/* A followed account listed in a joined group's roster is surfaced the same
+ * way: its kind 0 alone, soon; out of every roster it is not shown. */
+static void
+test_roster_surfaced(void)
+{
+  Fixture f;
+  fixture_up(&f, TRUE);
+  const Person *zed = &people[2];
+  g_settings_set_boolean(f.settings, "load-profile-pictures", TRUE);
+  const gchar *follows[] = { zed->pk, NULL };
+  gh_contact_directory_set_follows(f.dir, follows);
+  advance_to_next(&f); /* the first run: nobody surfaced, nobody asked */
+  g_assert_cmpuint(f.rec.reqs->len, ==, 0);
+  gh_contact_directory_set_roster(f.dir, follows);
+  advance_to_next(&f);
+  g_assert_cmpuint(f.rec.reqs->len, ==, 2);
+  Req *named = req_at(&f, 0);
+  g_assert_true(named->profiles);
+  g_assert_false(named->inbox);
+  g_assert_cmpuint(named->authors->len, ==, 1);
+  g_assert_true(req_asks(named, zed->pk));
+  g_autofree gchar *name = profile(zed, T0 - 50, "{\"name\":\"Zed\"}");
+  answer(named, name, NULL);
+  answer(req_at(&f, 1), NULL);
+  drain();
+  g_assert_cmpstr(gh_contact_directory_get_display_name(f.dir, zed->pk), ==, "Zed");
+  g_assert_false(gh_contact_directory_is_accepted(f.dir, zed->pk));
+  g_ptr_array_set_size(f.profiles, 0);
+  gh_contact_directory_set_roster(f.dir, NULL);
+  g_assert_null(gh_contact_directory_get_display_name(f.dir, zed->pk));
+  g_assert_cmpuint(f.profiles->len, ==, 1);
+  g_assert_cmpstr(g_ptr_array_index(f.profiles, 0), ==, zed->pk);
+  fixture_down(&f);
+}
+
 /* ---- conversation titles (nostrc-qp24.66) ----------------------------------------- */
 
 static void
@@ -1054,6 +1196,8 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/contact-directory/nt11-cache", test_nt11_cache);
   g_test_add_func("/groundhog/contact-directory/nt12-startup", test_nt12_startup);
   g_test_add_func("/groundhog/contact-directory/pt8-requests", test_pt8_requests);
+  g_test_add_func("/groundhog/contact-directory/follow-gated", test_follow_gated);
+  g_test_add_func("/groundhog/contact-directory/roster-surfaced", test_roster_surfaced);
   g_test_add_func("/groundhog/contact-directory/conversation-titles", test_conversation_titles);
   g_test_add_func("/groundhog/contact-directory/forged-and-stale", test_forged_and_stale);
   g_test_add_func("/groundhog/contact-directory/restore", test_restore);

@@ -10,6 +10,7 @@ gboolean gh_reaction_summary_remove(GhReactionSummary *self, const gchar *reacti
 struct _GhReactionStore {
   GObject parent_instance;
   gchar *account_pubkey;
+  GhMessagePolicy *policy;
 
   /* target_rumor_id → GhReactionSummary (owned). */
   GHashTable *summaries;
@@ -50,6 +51,7 @@ static void
 gh_reaction_store_finalize(GObject *object)
 {
   GhReactionStore *self = GH_REACTION_STORE(object);
+  gh_reaction_store_set_policy(self, NULL);
   clear_delegate(self);
   g_free(self->account_pubkey);
   g_hash_table_unref(self->summaries);
@@ -98,6 +100,7 @@ gh_reaction_store_set_account(GhReactionStore *self,
   g_return_if_fail(GH_IS_REACTION_STORE(self));
 
   if (g_strcmp0(self->account_pubkey, account_pubkey) != 0) {
+    gh_reaction_store_set_policy(self, NULL);
     g_hash_table_remove_all(self->summaries);
     g_hash_table_remove_all(self->reaction_to_target);
     g_hash_table_remove_all(self->reaction_to_sender);
@@ -134,6 +137,53 @@ gh_reaction_store_resume_delegate(GhReactionStore *self)
   self->suspended_data = NULL;
 }
 
+void
+gh_reaction_store_clear_projection(GhReactionStore *self)
+{
+  g_autoptr(GPtrArray) ids = g_ptr_array_new_with_free_func(g_free);
+  GHashTableIter it;
+  gpointer key;
+  g_hash_table_iter_init(&it, self->reaction_to_target);
+  while (g_hash_table_iter_next(&it, &key, NULL))
+    g_ptr_array_add(ids, g_strdup(key));
+  gh_reaction_store_suspend_delegate(self);
+  for (guint i = 0; i < ids->len; i++)
+    gh_reaction_store_remove(self, ids->pdata[i], NULL);
+  gh_reaction_store_resume_delegate(self);
+}
+
+static void
+policy_changed(GhMessagePolicy *policy, GhReactionStore *self)
+{
+  (void)policy;
+  gh_reaction_store_clear_projection(self);
+}
+
+static void
+policy_projected(GhMessagePolicy *policy, GhReactionStore *self)
+{
+  (void)policy;
+  if (self->delegate && self->delegate->reload) {
+    g_autoptr(GError) error = NULL;
+    if (!self->delegate->reload(self->delegate_data, self, &error))
+      gh_reaction_store_clear_projection(self);
+  }
+}
+
+void
+gh_reaction_store_set_policy(GhReactionStore *self, GhMessagePolicy *policy)
+{
+  if (self->policy == policy)
+    return;
+  if (self->policy)
+    g_signal_handlers_disconnect_by_data(self->policy, self);
+  g_set_object(&self->policy, policy);
+  if (policy) {
+    g_signal_connect(policy, "changed", G_CALLBACK(policy_changed), self);
+    g_signal_connect(policy, "projected", G_CALLBACK(policy_projected), self);
+  }
+}
+
 static GhReactionSummary *
 ensure_summary(GhReactionStore *self, const gchar *target_rumor_id)
 {
@@ -163,6 +213,13 @@ gh_reaction_store_admit(GhReactionStore *self, GhReaction *reaction, GError **er
     if (!self->delegate->admit(self->delegate_data, reaction, error))
       return FALSE;
   }
+
+#if GROUNDHOG_HAVE_MESSAGE_POLICY
+  if (self->policy && (!gh_message_policy_is_loaded(self->policy) ||
+      gh_message_policy_is_updating(self->policy) ||
+      gh_message_policy_hides_author(self->policy, gh_reaction_get_sender(reaction))))
+    return FALSE;
+#endif
 
   /* In-memory model. */
   GhReactionSummary *summary = ensure_summary(self, tid);

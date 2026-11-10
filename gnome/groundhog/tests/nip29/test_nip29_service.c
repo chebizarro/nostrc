@@ -17,6 +17,7 @@
 #include "gh-relay-deny-policy.h"
 #include "gh-nip29-template.h"
 #include "gh-store-nip29.h"
+#include "gh-store-conversations.h"
 #include "gh-store-reactions.h"
 #include "gh-reaction-store.h"
 #include "gh-conversation-private.h"
@@ -2197,6 +2198,63 @@ test_delete_messages(void)
   nip29_relay_clear(&relay);
 }
 
+typedef struct { GhStore *store; const gchar *id; } HiddenSeen;
+static gboolean
+hidden_event_seen(gpointer data)
+{
+  HiddenSeen *wait = data;
+  gboolean seen = FALSE;
+  GError *error = NULL;
+  g_assert_true(gh_store_seen_contains(wait->store, GH_STORE_SEEN_NIP29_EVENT, wait->id, &seen, &error));
+  g_assert_no_error(error);
+  return seen;
+}
+
+static void
+test_hide_admission(void)
+{
+  Fixture f;
+  fixture_up(&f);
+  g_autoptr(GhStoreConversations) messages = gh_store_conversations_new(f.store);
+  GError *error = NULL;
+  g_assert_true(gh_store_conversations_attach(messages, f.model, 0, &error));
+  GhMessagePolicy *policy = gh_conversation_store_get_policy(f.model);
+  Nip29Relay relay;
+  nip29_relay_init(&relay);
+  Nip29TestGroup *group = nip29_add_group(&relay, "hide-test", "Retained group name");
+  nip29_set_member(&relay, group, hex_alice, NULL);
+  nip29_set_member(&relay, group, hex_bob, NULL);
+  g_autoptr(GhNip29Room) room = join(&f, &relay, "hide-test", NULL);
+  wait_join(room, GH_NIP29_JOIN_MEMBER);
+  wait_read(room, GH_NIP29_READ_LIVE);
+  g_autofree gchar *hide = g_strdup_printf("INSERT INTO social_mutes(entry_key,tag_name,value,position,is_private) VALUES('p','p','%s',0,1)", hex_bob);
+  g_assert_true(gh_store_exec(f.store, hide, &error));
+  g_assert_true(gh_message_policy_refresh(policy, &error));
+  NostrEvent *drop = live_post(&relay, KEY_BOB, "hide-test", "discarded payload");
+  g_autofree gchar *drop_id = nostr_event_get_id(drop);
+  HiddenSeen seen = { f.store, drop_id };
+  gh_test_spin_until(hidden_event_seen, &seen);
+  g_assert_false(stored_messages_reached(&(StoredMessagesWait){ f.store, gh_nip29_room_get_room_id(room), 1 }));
+  g_assert_true(gh_store_exec(f.store, "DELETE FROM social_mutes; INSERT INTO social_mutes(entry_key,tag_name,value,position,is_private) VALUES('word','word','quiet',0,1)", &error));
+  g_assert_true(gh_message_policy_refresh(policy, &error));
+  while (gh_message_policy_is_updating(policy)) g_main_context_iteration(NULL, TRUE);
+  live_post(&relay, KEY_BOB, "hide-test", "quiet retained payload");
+  wait_stored(f.store, gh_nip29_room_get_room_id(room), 1);
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(room_conversation(&f, room))), ==, 0);
+  g_assert_true(gh_store_exec(f.store, "DELETE FROM social_mutes", &error));
+  g_assert_true(gh_message_policy_refresh(policy, &error));
+  while (gh_message_policy_is_updating(policy)) g_main_context_iteration(NULL, TRUE);
+  GhConversation *conversation = room_conversation(&f, room);
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(conversation)), ==, 1);
+  g_autoptr(GhMessage) restored = g_list_model_get_item(G_LIST_MODEL(conversation), 0);
+  g_assert_cmpstr(gh_message_get_content(restored), ==, "quiet retained payload");
+  g_assert_cmpstr(gh_nip29_room_get_name(room), ==, "Retained group name");
+  g_assert_no_error(error);
+  gh_store_conversations_close(messages);
+  fixture_down(&f);
+  nip29_relay_clear(&relay);
+}
+
 static void
 test_nip11_local_denial(void)
 {
@@ -2269,6 +2327,7 @@ main(int argc, char **argv)
                   test_incomplete_backfill_holds_cursor);
   g_test_add_func("/groundhog/nip29-service/leave-and-removed", test_leave_and_removed);
   g_test_add_func("/groundhog/nip29-service/delete-messages", test_delete_messages);
+  g_test_add_func("/groundhog/nip29-service/hide-admission", test_hide_admission);
   g_test_add_func("/groundhog/nip29-service/nip11-local-denial", test_nip11_local_denial);
   gint rc = g_test_run();
   gh_test_bus_down(&shared_bus);

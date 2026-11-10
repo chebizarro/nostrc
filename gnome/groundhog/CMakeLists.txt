@@ -68,7 +68,7 @@ set(GROUNDHOG_BLUEPRINTS
   gh-mls-member-row gh-mls-group-info-dialog gh-mls-invite-row gh-mls-invites-page
   gh-blocked-page gh-blocked-row gh-conversation-menu
   gh-attachment-card gh-attachment-sheet gh-create-poll-dialog
-  gh-voice-bubble gh-lists-page gh-list-editor-page)
+  gh-voice-bubble gh-lists-page gh-list-editor-page gh-hidden-page)
 set(GROUNDHOG_BLUEPRINT_MIN_VERSION 0.12.0)
 include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/Blueprint.cmake)
 set(GROUNDHOG_BLUEPRINT_COMPILER "")
@@ -785,6 +785,18 @@ if (BUILD_TESTING AND TARGET groundhog-account AND EXISTS ${GROUNDHOG_GNOSTR_SCH
     add_dependencies(test-groundhog-conversation-list groundhog-test-schemas)
     add_test(NAME groundhog-conversation-list COMMAND test-groundhog-conversation-list)
     set_tests_properties(groundhog-conversation-list PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60
+      ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
+    # The profile-picture policy (plan groundhog-social-lists §3.6, D2): the
+    # master switch off fetches nothing on any surface, follow removal and the
+    # hide seam revoke at once, a same-URI stale completion is ignored, two
+    # windows revoke together from the preference. Recording HTTP transport,
+    # fake consent and policy; no display.
+    add_executable(test-groundhog-picture-cache tests/ui/test_picture_cache.c)
+    target_link_libraries(test-groundhog-picture-cache PRIVATE groundhog-conversation-ui)
+    target_compile_options(test-groundhog-picture-cache PRIVATE -Wall -Wextra -Werror)
+    add_dependencies(test-groundhog-picture-cache groundhog-test-schemas)
+    add_test(NAME groundhog-picture-cache COMMAND test-groundhog-picture-cache)
+    set_tests_properties(groundhog-picture-cache PROPERTIES TIMEOUT 60
       ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
   endif()
   # --- end G11 ---
@@ -1609,9 +1621,9 @@ endif()
 # is the one list of what the build performs, flipped one line per feature (G09
 # Tor, G13 composer, G16 notifications, ...), and tests/check_privacy.py
 # requires a consumer for every row it leaves live.
-add_library(groundhog-lists-ui STATIC src/ui/gh-lists-page.c src/ui/gh-list-editor-page.c)
+add_library(groundhog-lists-ui STATIC src/ui/gh-lists-page.c src/ui/gh-list-editor-page.c src/ui/gh-hidden-page.c)
 target_include_directories(groundhog-lists-ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/ui)
-target_link_libraries(groundhog-lists-ui PUBLIC groundhog-ui nostr_gobject)
+target_link_libraries(groundhog-lists-ui PUBLIC groundhog-ui nostr_gobject nip19)
 target_compile_options(groundhog-lists-ui PRIVATE -Wall -Wextra -Werror)
 
 add_library(groundhog-preferences STATIC src/ui/gh-preferences-dialog.c
@@ -3787,7 +3799,7 @@ if(TARGET groundhog-account-store)
     endif()
   endforeach()
   target_compile_options(groundhog-social-lists PRIVATE -Wall -Wextra -Werror)
-  add_library(groundhog-social-lists-backend STATIC src/app/gh-social-lists-backend.c)
+  add_library(groundhog-social-lists-backend STATIC src/app/gh-social-lists-backend.c src/ui/gh-hide-account.c)
   target_link_libraries(groundhog-social-lists-backend PUBLIC groundhog-social-lists groundhog-lists-ui)
   target_compile_options(groundhog-social-lists-backend PRIVATE -Wall -Wextra -Werror)
   # NIP-37 draft synchronization beside the social lists (nostrc-9lwl7.8):
@@ -3867,6 +3879,38 @@ if(TARGET groundhog-account-store)
   endif()
 else()
   target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_SOCIAL_LISTS=0)
+endif()
+
+# Stage 6: the account hide policy is shared by every admission backend.
+if(TARGET groundhog-store AND TARGET groundhog-conversations)
+  target_sources(groundhog-conversations PRIVATE src/app/gh-message-policy.c)
+  target_compile_definitions(groundhog-conversations PUBLIC GROUNDHOG_HAVE_MESSAGE_POLICY=1)
+  pkg_check_modules(GROUNDHOG_POLICY_JSON REQUIRED IMPORTED_TARGET jansson)
+  target_link_libraries(groundhog-conversations PUBLIC groundhog-store PkgConfig::GROUNDHOG_POLICY_JSON)
+  if(BUILD_TESTING AND TARGET groundhog-store-conversations)
+    if(TARGET test-groundhog-picture-cache AND TARGET groundhog-social-lists)
+      target_link_libraries(test-groundhog-picture-cache PRIVATE groundhog-social-lists)
+      target_compile_definitions(test-groundhog-picture-cache PRIVATE GH_TEST_SOCIAL_POLICY=1)
+      groundhog_store_link_sqlcipher_first(test-groundhog-picture-cache)
+    endif()
+    foreach(consumer test-groundhog-dm-inbox test-groundhog-nip29-service)
+      if(TARGET ${consumer})
+        target_link_libraries(${consumer} PRIVATE groundhog-store-conversations)
+      endif()
+    endforeach()
+    if(TARGET groundhog-social-lists AND TARGET groundhog-nip29-service AND TARGET groundhog-mls-service)
+      add_executable(test-groundhog-message-policy tests/app/test_message_policy.c)
+      target_link_libraries(test-groundhog-message-policy PRIVATE groundhog-store-conversations
+        groundhog-social-lists groundhog-nip29-service groundhog-mls-service)
+      target_compile_options(test-groundhog-message-policy PRIVATE -Wall -Wextra -Werror)
+      groundhog_store_link_sqlcipher_first(test-groundhog-message-policy)
+      add_test(NAME groundhog-message-policy COMMAND test-groundhog-message-policy)
+      set_tests_properties(groundhog-message-policy PROPERTIES TIMEOUT 120
+        ENVIRONMENT "G_DEBUG=fatal-criticals;GSETTINGS_BACKEND=memory;GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS}")
+    endif()
+  endif()
+elseif(TARGET groundhog-conversations)
+  target_compile_definitions(groundhog-conversations PUBLIC GROUNDHOG_HAVE_MESSAGE_POLICY=0)
 endif()
 
 # --- test isolation (nostrc-ttvxv) ---

@@ -38,6 +38,7 @@ data/ui/gh-onboarding-view.blp
 data/ui/gh-preferences-dialog.blp
 data/ui/gh-lists-page.blp
 data/ui/gh-list-editor-page.blp
+data/ui/gh-hidden-page.blp
 data/ui/gh-recipient-chip.blp
 data/ui/gh-requests-view.blp
 data/ui/gh-shortcuts-window.blp
@@ -101,6 +102,8 @@ src/ui/gh-poll-ui.c
 src/ui/gh-preferences-dialog.c
 src/ui/gh-lists-page.c
 src/ui/gh-list-editor-page.c
+src/ui/gh-hidden-page.c
+src/ui/gh-hide-account.c
 src/ui/gh-privacy-summary.c
 src/ui/gh-public-note-ui.c
 src/ui/gh-public-post-dialog.c

@@ -80,6 +80,17 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                               </object>
                             </child>
                             <child>
+                              <object class="GtkLabel" id="follow_label">
+                                <property name="visible">false</property>
+                                <property name="label" translatable="yes">You follow this account</property>
+                                <property name="wrap">true</property>
+                                <property name="justify">2</property>
+                                <style>
+                                  <class name="dim-label"/>
+                                </style>
+                              </object>
+                            </child>
+                            <child>
                               <object class="GtkLabel" id="count_label">
                                 <property name="wrap">true</property>
                                 <property name="justify">2</property>
@@ -178,6 +189,15 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         </style>
                       </object>
                     </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkButton" id="hide_button">
+                    <property name="label" translatable="yes">_Hide Account…</property>
+                    <property name="use-underline">true</property>
+                    <property name="action-name">requests.hide-account</property>
+                    <property name="halign">3</property>
+                    <property name="margin-bottom">6</property>
                   </object>
                 </child>
               </object>

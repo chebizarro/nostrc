@@ -76,6 +76,7 @@ typedef struct {
   struct _GhNotifier *notifier; /* nullable */
   GhConversationInfoProfileFunc profile; /* nullable */
   gpointer profile_data;
+  struct _GhPictureCache *pictures; /* optional per-window live eligibility */
 } GhConversationInfoServices;
 
 #define GH_TYPE_CONVERSATION_INFO_DIALOG (gh_conversation_info_dialog_get_type())

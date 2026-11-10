@@ -55,6 +55,7 @@ typedef struct {
   GhNip29Service *service;      /* required: the room's service */
   GhGroupNameFunc display_name; /* nullable */
   gpointer names_data;
+  struct _GhPictureCache *pictures; /* optional per-window contact picture decision */
 } GhGroupInfoConfig;
 
 #define GH_TYPE_GROUP_INFO_DIALOG (gh_group_info_dialog_get_type())

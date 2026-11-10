@@ -455,6 +455,18 @@ shown_private(MenuAttach *attach)
 }
 
 static void
+on_hide_shown(GSimpleAction *action, GVariant *parameter, gpointer data)
+{
+  (void)action; (void)parameter;
+  MenuAttach *attach = data;
+  GhConversation *conversation = shown_private(attach);
+  const gchar *const *peers = conversation ? gh_conversation_get_peers(conversation) : NULL;
+  if (peers && peers[0] && !peers[1])
+    gtk_widget_activate_action(GTK_WIDGET(attach->window), "app.hide-account", "(ss)",
+      gh_conversation_get_account(conversation), peers[0]);
+}
+
+static void
 set_enabled(MenuAttach *attach, const gchar *name, gboolean enabled)
 {
   GAction *action = g_action_map_lookup_action(G_ACTION_MAP(attach->window), name);
@@ -479,6 +491,8 @@ sync_header_now(MenuAttach *attach)
   set_enabled(attach, "mute-shown-conversation", conversation != NULL);
   set_enabled(attach, "disappearing-shown-conversation", conversation != NULL);
   set_enabled(attach, "delete-shown-conversation", conversation != NULL);
+  const gchar *const *peers = conversation ? gh_conversation_get_peers(conversation) : NULL;
+  set_enabled(attach, "hide-shown-account", peers && peers[0] && !peers[1]);
   set_enabled(attach, "rename-shown-group", group != NULL);
   gtk_widget_set_visible(gh_content_page_get_menu_button(gh_window_get_content(attach->window)),
                          conversation != NULL || group != NULL);
@@ -612,6 +626,7 @@ gh_conversation_menu_attach(GhWindow *window, GhConversationInfoServicesFunc ser
     { "disappearing-shown-conversation", on_shown, NULL, NULL, NULL, { 0 } },
     { "delete-shown-conversation", on_shown, NULL, NULL, NULL, { 0 } },
     { "rename-shown-group", on_rename_group, NULL, NULL, NULL, { 0 } },
+    { "hide-shown-account", on_hide_shown, NULL, NULL, NULL, { 0 } },
   };
   g_action_map_add_action_entries(G_ACTION_MAP(window), entries, G_N_ELEMENTS(entries), attach);
   /* The header menu follows the shown conversation. */

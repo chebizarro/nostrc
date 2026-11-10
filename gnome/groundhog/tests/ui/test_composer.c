@@ -1129,6 +1129,10 @@ test_drafts(void)
   gh_send_ui_apply_remote_draft(f.s.window, bob_room, "Draft from elsewhere");
   assert_composer_text(composer, "Draft from elsewhere");
   g_assert_false(gh_composer_get_draft_pending(composer));
+  /* The focus query: the shown room with the keyboard focus in the composer,
+   * and never another room. */
+  gtk_widget_grab_focus(GTK_WIDGET(gh_composer_get_text_view(composer)));
+  gh_test_run_until_idle();
   g_assert_true(gh_send_ui_composer_focused(f.s.window, bob_room));
   g_assert_false(gh_send_ui_composer_focused(f.s.window, carol_room));
   g_assert_true(gh_store_conversations_set_draft(gh_account_store_get_conversations(f.s.store),

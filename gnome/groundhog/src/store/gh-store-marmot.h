@@ -158,5 +158,12 @@ void gh_store_marmot_refused_welcome_free(GhStoreMarmotRefusedWelcome *welcome);
 /* Oldest first; NULL with error on a storage failure. */
 GPtrArray *gh_store_marmot_list_refused_welcomes(MarmotStorage *storage, GError **error);
 
+/* Authenticated gift-wrap from a hidden inviter: processed/declined only,
+ * never retain a pending invitation or join the group. Caller owns T-admit. */
+gboolean gh_store_marmot_decline_hidden_welcome(MarmotStorage *storage,
+                                                const guint8 wrapper_id[32],
+                                                const guint8 welcome_id[32],
+                                                gint64 processed_at, GError **error);
+
 G_END_DECLS
 #endif

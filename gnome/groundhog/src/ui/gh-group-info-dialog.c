@@ -1,4 +1,5 @@
 #include "gh-group-info-dialog.h"
+#include "gh-picture-cache.h"
 
 #include "gh-group-copy.h"
 #include "gh-privacy-summary.h"
@@ -31,6 +32,14 @@ member_change_role(GtkWidget *widget, const gchar *action, GVariant *parameter)
 }
 
 static void
+member_hide_account(GtkWidget *widget, const gchar *action, GVariant *parameter)
+{
+  (void)action; (void)parameter;
+  GhGroupMemberRow *self = GH_GROUP_MEMBER_ROW(widget);
+  gtk_widget_activate_action(widget, "group.hide-account", "s", self->pubkey);
+}
+
+static void
 member_remove(GtkWidget *widget, const gchar *action, GVariant *parameter)
 {
   (void)action;
@@ -58,6 +67,7 @@ gh_group_member_row_class_init(GhGroupMemberRowClass *klass)
   gtk_widget_class_bind_template_child(widget_class, GhGroupMemberRow, menu_button);
   gtk_widget_class_install_action(widget_class, "member.change-role", NULL, member_change_role);
   gtk_widget_class_install_action(widget_class, "member.remove", NULL, member_remove);
+  gtk_widget_class_install_action(widget_class, "member.hide-account", NULL, member_hide_account);
 }
 
 static void
@@ -97,7 +107,8 @@ member_row_new(const gchar *pubkey, const gchar *name, gboolean is_you,
   gtk_accessible_update_property(GTK_ACCESSIBLE(self), GTK_ACCESSIBLE_PROPERTY_LABEL, label, -1);
   gtk_widget_action_set_enabled(GTK_WIDGET(self), "member.change-role", can_change_role);
   gtk_widget_action_set_enabled(GTK_WIDGET(self), "member.remove", can_remove);
-  gtk_widget_set_visible(GTK_WIDGET(self->menu_button), can_change_role || can_remove);
+  gtk_widget_action_set_enabled(GTK_WIDGET(self), "member.hide-account", !is_you);
+  gtk_widget_set_visible(GTK_WIDGET(self->menu_button), !is_you || can_change_role || can_remove);
   return self;
 }
 
@@ -167,6 +178,7 @@ struct _GhGroupInfoDialog {
   GhNip29Room *room;
   GhGroupNameFunc display_name;
   gpointer names_data;
+  GhPictureCache *pictures;
   GPtrArray *member_rows;  /* GtkWidget, in members_group */
   GPtrArray *role_rows;    /* AdwActionRow, in roles_group */
   GPtrArray *role_checks;  /* GtkCheckButton, parallel to role_rows */
@@ -328,6 +340,8 @@ sync_members(GhGroupInfoDialog *self)
                                            (const gchar *const *)admin->roles,
                                            !you && role_gate != GH_GROUP_GATE_HIDDEN,
                                            !you && remove_gate != GH_GROUP_GATE_HIDDEN);
+    if (self->pictures)
+      gh_picture_cache_bind_avatar(self->pictures, row->avatar, row->pubkey);
     adw_preferences_group_add(self->members_group, GTK_WIDGET(row));
     g_ptr_array_add(self->member_rows, row);
   }
@@ -339,6 +353,8 @@ sync_members(GhGroupInfoDialog *self)
     GhGroupMemberRow *row = member_row_new(members[i], display_name(self, members[i]), you, NULL,
                                            !you && role_gate != GH_GROUP_GATE_HIDDEN,
                                            !you && remove_gate != GH_GROUP_GATE_HIDDEN);
+    if (self->pictures)
+      gh_picture_cache_bind_avatar(self->pictures, row->avatar, row->pubkey);
     adw_preferences_group_add(self->members_group, GTK_WIDGET(row));
     g_ptr_array_add(self->member_rows, row);
   }
@@ -871,6 +887,7 @@ gh_group_info_dialog_new(GhNip29Room *room, const GhGroupInfoConfig *config)
   g_object_weak_ref(G_OBJECT(self->service), on_service_gone, self);
   self->display_name = config->display_name;
   self->names_data = config->names_data;
+  self->pictures = config->pictures ? g_object_ref(config->pictures) : NULL;
   g_signal_connect_object(room, "notify", G_CALLBACK(sync_all), self, G_CONNECT_SWAPPED);
   g_signal_connect_object(room, "group-changed", G_CALLBACK(sync_all), self, G_CONNECT_SWAPPED);
   g_signal_connect_object(self->service, "items-changed", G_CALLBACK(on_rooms_changed), self, 0);
@@ -908,6 +925,7 @@ gh_group_info_dialog_dispose(GObject *object)
     g_hash_table_remove_all(self->pending);
   gtk_widget_dispose_template(GTK_WIDGET(object), GH_TYPE_GROUP_INFO_DIALOG);
   g_clear_object(&self->room);
+  g_clear_object(&self->pictures);
   G_OBJECT_CLASS(gh_group_info_dialog_parent_class)->dispose(object);
 }
 
@@ -930,6 +948,16 @@ static void
 on_add_activated(GhGroupInfoDialog *self)
 {
   gtk_widget_activate_action(GTK_WIDGET(self), "group.save-member", NULL);
+}
+
+static void
+action_hide_account(GtkWidget *widget, const gchar *action, GVariant *parameter)
+{
+  (void)action;
+  GhGroupInfoDialog *self = GH_GROUP_INFO_DIALOG(widget);
+  if (self->service)
+    gtk_widget_activate_action(widget, "app.hide-account", "(ss)",
+      gh_nip29_service_get_account(self->service), g_variant_get_string(parameter, NULL));
 }
 
 static void
@@ -985,6 +1013,7 @@ gh_group_info_dialog_class_init(GhGroupInfoDialogClass *klass)
   gtk_widget_class_install_action(widget_class, "group.change-role", "s", action_change_role);
   gtk_widget_class_install_action(widget_class, "group.save-role", NULL, action_save_role);
   gtk_widget_class_install_action(widget_class, "group.remove", "s", action_remove);
+  gtk_widget_class_install_action(widget_class, "group.hide-account", "s", action_hide_account);
   gtk_widget_class_install_action(widget_class, "group.edit", NULL, action_edit);
   gtk_widget_class_install_action(widget_class, "group.save-edit", NULL, action_save_edit);
   gtk_widget_class_install_action(widget_class, "group.create-invite", NULL,

@@ -83,6 +83,7 @@ context_of(MlsUi *ui, GhMlsUiContext *context)
   context->settings = ui->settings;
   context->display_name = ui->display_name;
   context->names_data = ui->names_data;
+  context->pictures = gh_conversation_list_get_picture_cache(ui->window);
   context->lookup_deadline = ui->lookup_deadline;
   context->files = ui->files;
   context->server_source = ui->server_source;

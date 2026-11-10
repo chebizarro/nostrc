@@ -2,8 +2,11 @@
 #define GH_CONVERSATION_STORE_H
 
 #include "gh-conversation.h"
+#include "gh-message-policy.h"
 
 G_BEGIN_DECLS
+
+typedef struct _GhConversationStore GhConversationStore;
 
 typedef enum {
   GH_CONVERSATION_ADD_REJECTED,  /* another account's message, or no account */
@@ -31,6 +34,7 @@ typedef struct {
    * nostrc-qp24.75), or -1 when the delegate keeps none: the model then
    * numbers it itself (gh_message_get_seq()). */
   gint64 seq;
+  gboolean duplicate; /* backend-scoped identity already seen (MLS included) */
 } GhConversationCommit;
 
 /* Persistence delegate: where admitted messages and the NIP-17 seen keys
@@ -71,7 +75,7 @@ typedef struct {
   gboolean (*has_wrap)(gpointer data, const gchar *wrap_id);
   gboolean (*has_rumor)(gpointer data, const gchar *rumor_id);
   gboolean (*admit)(gpointer data, GhMessage *message, const gchar *wrap_id,
-                    GhConversationCommit *commit, GError **error);
+                    GhMessageDisposition disposition, GhConversationCommit *commit, GError **error);
   gboolean (*has_rejected)(gpointer data, const gchar *wrap_id);
   gboolean (*add_rejected)(gpointer data, const gchar *wrap_id, GError **error);
   gboolean (*mark_read)(gpointer data, GhConversation *conversation,
@@ -83,6 +87,10 @@ typedef struct {
                           GhMessage *first_unread, GError **error);
   /* Recent-page recenter after an own local send in older history. */
   gboolean (*reset_latest)(gpointer data, GhConversation *conversation, GError **error);
+  /* Installed atomically with this delegate by set_account(); ref'd by model.
+   * An account-bound, unloaded policy fails admission before any seen mutation. */
+  GhMessagePolicy *policy;
+  gboolean (*reload)(gpointer data, GhConversationStore *model, GError **error);
 } GhConversationDelegate;
 
 #define GH_TYPE_CONVERSATION_STORE (gh_conversation_store_get_type())
@@ -110,6 +118,13 @@ void gh_conversation_store_set_account(GhConversationStore *self,
 /* The bound account; the read-only "account" property notifies each change,
  * after the previous account's rooms were removed. */
 const gchar *gh_conversation_store_get_account(GhConversationStore *self);
+GhMessagePolicy *gh_conversation_store_get_policy(GhConversationStore *self);
+gboolean gh_conversation_store_get_visibility_updating(GhConversationStore *self);
+gboolean gh_conversation_store_is_restoring_visibility(GhConversationStore *self);
+/* Policy coordinator only; reload never emits message-added or replays alerts. */
+void gh_conversation_store_set_visibility_updating(GhConversationStore *self, gboolean updating);
+gboolean gh_conversation_store_refresh_visibility(GhConversationStore *self, GError **error);
+gboolean gh_conversation_store_is_explicitly_opened(GhConversationStore *self, const gchar *room_id);
 
 /* The single admission call, for inbound messages (with the verified wrap id
  * that carried them) and the sender's local echo (wrap_id NULL) alike:

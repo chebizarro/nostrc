@@ -145,6 +145,16 @@ template $GhPreferencesDialog: Adw.PreferencesDialog {
       }
     }
 
+    Adw.PreferencesGroup hidden_group {
+      visible: false;
+      Adw.ActionRow hidden_row {
+        title: _("Hidden Accounts and Content");
+        subtitle: _("Hide accounts, words, hashtags and message threads");
+        activatable: true;
+        [suffix] Image { icon-name: "go-next-symbolic"; }
+      }
+    }
+
     // Shown when the account's encrypted store can list its blocks
     // (gh_blocked_page_attach(), nostrc-qp24.72).
     Adw.PreferencesGroup blocked_group {

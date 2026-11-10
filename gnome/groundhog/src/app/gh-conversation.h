@@ -5,6 +5,10 @@
 
 G_BEGIN_DECLS
 
+/* Retained-history projection masks text and badges without moving read state. */
+typedef struct _GhConversation GhConversation;
+gboolean gh_conversation_get_visibility_updating(GhConversation *self);
+
 /* Values match the charter's store schema (§3.3 conversations.backend). */
 typedef enum {
   GH_CONVERSATION_BACKEND_NIP17 = 1,

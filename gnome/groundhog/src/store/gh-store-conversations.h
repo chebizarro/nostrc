@@ -270,5 +270,8 @@ gboolean gh_store_conversations_import_seen_file(GhStoreConversations *self,
 /* Detaches from the store; see "Lifetime" above. Idempotent. */
 void gh_store_conversations_close(GhStoreConversations *self);
 
+/* The policy installed atomically with the durable delegate; borrowed. */
+GhMessagePolicy *gh_store_conversations_get_policy(GhStoreConversations *self);
+
 G_END_DECLS
 #endif

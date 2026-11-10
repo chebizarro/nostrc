@@ -25,6 +25,14 @@ static GNostrListDocument *import(GObject *owner, const gchar *json, GError **er
 {
   return gh_social_lists_import(GH_SOCIAL_LISTS(owner), json, error);
 }
+static const gchar *visibility_error(GObject *owner)
+{
+  return gh_social_lists_get_visibility_error(GH_SOCIAL_LISTS(owner));
+}
+static gboolean retry_visibility(GObject *owner, GError **error)
+{
+  return gh_social_lists_retry_visibility(GH_SOCIAL_LISTS(owner), error);
+}
 static gboolean pending_import(GObject *owner, guint *accounts, guint *items)
 { return gh_social_lists_get_pending_import(GH_SOCIAL_LISTS(owner), accounts, items); }
 static const gchar *import_revision(GObject *owner)
@@ -44,5 +52,6 @@ GhListsBackend gh_social_lists_backend(GhSocialLists *self)
     .confirm_import = confirm_import, .sync_error = sync_error,
     .dup_public_targets = public_targets,
     .ensure = ensure, .apply = apply, .import = import, .export = gh_social_lists_export,
+    .visibility_error = visibility_error, .retry_visibility = retry_visibility,
   };
 }

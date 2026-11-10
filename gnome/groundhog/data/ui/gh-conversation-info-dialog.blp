@@ -136,6 +136,19 @@ template $GhConversationInfoDialog: Adw.Dialog {
             }
 
             Adw.PreferencesGroup actions_group {
+              Adw.ActionRow hide_row {
+                title: _("Hide Account");
+                subtitle: _("Stop saving new messages from this account across conversations");
+                activatable-widget: hide_button;
+                [suffix]
+                Button hide_button {
+                  label: _("_Hide Account…");
+                  use-underline: true;
+                  valign: center;
+                  action-name: "info.hide-account";
+                }
+              }
+
               Adw.ActionRow block_row {
                 title: _("Block");
                 use-markup: false;

@@ -665,12 +665,12 @@ fake_has_rumor(gpointer data, const gchar *rumor_id)
 
 static gboolean
 fake_admit(gpointer data, GhMessage *message, const gchar *wrap_id,
-           GhConversationCommit *commit, GError **error)
+           GhMessageDisposition disposition, GhConversationCommit *commit, GError **error)
 {
   FakeDelegate *fake = data;
   g_assert_false(commit->hidden);
   g_assert_cmpint(commit->unread, ==, -1);
-  commit->hidden = fake->hide;
+  commit->hidden = fake->hide || disposition != GH_MESSAGE_INCLUDE;
   g_ptr_array_add(fake->admits, g_strdup_printf("%s %s", gh_message_get_rumor_id(message),
                                                 wrap_id ? wrap_id : "-"));
   if (fake->fail) {

@@ -2,8 +2,11 @@
 #define GH_REACTION_STORE_H
 
 #include "gh-reaction.h"
+#include "gh-message-policy.h"
 
 G_BEGIN_DECLS
+
+typedef struct _GhReactionStore GhReactionStore;
 
 /* Persistence delegate: where reactions live durably. The store calls
  * admit() before the model changes; a durable delegate may open a nested
@@ -20,6 +23,7 @@ typedef struct {
   gboolean (*delete_event)(gpointer data, const gchar *reaction_rumor_id,
                            const gchar *sender_pubkey, const gchar *room_id,
                            GError **error);
+  gboolean (*reload)(gpointer data, GhReactionStore *model, GError **error);
 } GhReactionDelegate;
 
 #define GH_TYPE_REACTION_STORE (gh_reaction_store_get_type())
@@ -29,6 +33,9 @@ G_DECLARE_FINAL_TYPE(GhReactionStore, gh_reaction_store, GH, REACTION_STORE, GOb
  * Uses the main context only. The store and model are borrowed: dispose
  * the reaction store before closing the store. */
 GhReactionStore *gh_reaction_store_new(void);
+void gh_reaction_store_set_policy(GhReactionStore *self, GhMessagePolicy *policy);
+/* Clears chips without deleting durable rows; live summary objects survive. */
+void gh_reaction_store_clear_projection(GhReactionStore *self);
 
 /* Binds to account_pubkey (lowercase hex) or to none (NULL). A different
  * account clears everything. The delegate persists reactions; NULL for

@@ -34,6 +34,9 @@ _gh_describe(groundhog-store-drafts test-groundhog-store-drafts groundhog.store
   INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/src/store/gh-store-schema.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/store/gh-store-drafts.c")
 _gh_describe(groundhog-social-lists test-groundhog-social-lists groundhog.unclassified)
+_gh_describe(groundhog-message-policy test-groundhog-message-policy groundhog.store
+  INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/src/store/gh-store-schema.c")
+_gh_describe(groundhog-picture-cache test-groundhog-picture-cache groundhog.unclassified)
 _gh_describe(groundhog-social-sync test-groundhog-social-sync groundhog.unclassified REQUIRES private_bus)
 _gh_describe(groundhog-draft-sync test-groundhog-draft-sync groundhog.unclassified REQUIRES private_bus
   INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/src/app/gh-draft-sync.c"
@@ -42,6 +45,7 @@ _gh_describe(groundhog-social-sync-gui test-groundhog-social-sync groundhog.uncl
 _gh_describe(groundhog-lists-ui test-groundhog-lists-ui groundhog.unclassified REQUIRES display
   INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/data/ui/gh-lists-page.blp"
     "${CMAKE_CURRENT_SOURCE_DIR}/data/ui/gh-list-editor-page.blp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/data/ui/gh-hidden-page.blp"
     "${CMAKE_CURRENT_SOURCE_DIR}/data/ui/gh-preferences-dialog.blp")
 
 # Additional runtime paths are taken from registration commands and compile

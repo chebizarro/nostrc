@@ -60,19 +60,34 @@ template $GhMlsMemberRow: Adw.ActionRow {
   }
 
   [suffix]
-  Button remove_button {
+  MenuButton remove_button {
     visible: false;
     valign: center;
-    icon-name: "list-remove-symbolic";
-    tooltip-text: _("Remove from Group");
-    action-name: "member.remove";
+    icon-name: "view-more-symbolic";
+    tooltip-text: _("Member Actions");
+    menu-model: member_menu;
 
     accessibility {
-      label: _("Remove from Group");
+      label: _("Member Actions");
     }
 
     styles [
       "flat",
     ]
+  }
+}
+
+menu member_menu {
+  section {
+    item {
+      label: _("_Hide Account…");
+      action: "member.hide-account";
+      hidden-when: "action-disabled";
+    }
+    item {
+      label: _("_Remove from Group…");
+      action: "member.remove";
+      hidden-when: "action-disabled";
+    }
   }
 }

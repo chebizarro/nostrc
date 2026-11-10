@@ -18,6 +18,7 @@
  * also renders the dialog to <dir>/groundhog-g19-*.png. */
 #include "gh-conversation-actions.h"
 #include "gh-conversation-info-dialog.h"
+#include "test-avatar-cache.h"
 #include "gh-conversation-private.h"
 #include "gh-conversation-list.h"
 #include "gh-conversation-view.h"
@@ -827,6 +828,81 @@ confirm(Gui *g, const char *action, const char *alert_name, const char *label)
   drain_idle();
 }
 
+static void
+record_hide(GSimpleAction *action, GVariant *parameter, GVariant **target)
+{
+  (void)action;
+  g_clear_pointer(target, g_variant_unref);
+  *target = g_variant_ref(parameter);
+}
+
+static void
+test_gui_avatar_revocation(void)
+{
+  Gui g = { 0 };
+  account_init(&g.account);
+  GhConversation *conversation = receive(&g.account, PEER[0], T0 - 60, "hello");
+  gui_window(&g, 900, 760, conversation);
+  g_autoptr(GhPictureCache) cache = gh_test_avatar_cache(PEER[0]);
+  gboolean hidden = FALSE;
+  const GhPicturePolicy policy = { .is_hidden = gh_test_avatar_hidden };
+  gh_picture_cache_set_policy(cache, &policy, &hidden);
+  GhConversationInfoServices services = services_of(&g.account);
+  services.pictures = cache;
+  g.dialog = g_object_ref_sink(gh_conversation_info_dialog_new(conversation, &services));
+  g_signal_connect(g.dialog, "closed", G_CALLBACK(on_closed), &g);
+  adw_dialog_present(ADW_DIALOG(g.dialog), GTK_WIDGET(g.window));
+  spin_until(gh_test_dialog_shown, g.dialog);
+  GdkPaintable *picture = GDK_PAINTABLE(gh_picture_cache_get_for(cache, PEER[0]));
+  AdwAvatar *avatar = gh_test_avatar_with_picture(GTK_WIDGET(g.dialog), picture);
+  g_assert_nonnull(avatar);
+  g_object_ref(avatar);
+  hidden = TRUE;
+  gh_picture_cache_policy_changed(cache, PEER[0]);
+  g_assert_null(adw_avatar_get_custom_image(avatar));
+  g_assert_false(g.closed); /* revocation updates the still-open dialog */
+  hidden = FALSE;
+  gh_picture_cache_policy_changed(cache, PEER[0]);
+  while (gh_picture_cache_is_loading(cache, "https://pictures.test.invalid/avatar.png"))
+    g_main_context_iteration(NULL, TRUE);
+  g_assert_nonnull(adw_avatar_get_custom_image(avatar));
+  gh_picture_cache_set_master(cache, FALSE);
+  g_assert_null(adw_avatar_get_custom_image(avatar));
+  g_object_unref(avatar);
+  gui_close(&g);
+  account_clear(&g.account);
+}
+
+static void
+test_gui_hide_account(void)
+{
+  Gui g = { 0 };
+  account_init(&g.account);
+  GhConversation *conversation = receive(&g.account, PEER[0], T0 - 60, "hello");
+  gui_window(&g, 900, 760, conversation);
+  g_autoptr(GSimpleActionGroup) actions = g_simple_action_group_new();
+  g_autoptr(GSimpleAction) hide = g_simple_action_new("hide-account", G_VARIANT_TYPE("(ss)"));
+  g_autoptr(GVariant) target = NULL;
+  g_signal_connect(hide, "activate", G_CALLBACK(record_hide), &target);
+  g_action_map_add_action(G_ACTION_MAP(actions), G_ACTION(hide));
+  gtk_widget_insert_action_group(GTK_WIDGET(g.window), "app", G_ACTION_GROUP(actions));
+  gui_open(&g, conversation);
+  g_assert_true(gtk_widget_get_visible(child(&g, "hide_row")));
+  g_assert_true(gtk_widget_get_visible(child(&g, "block_row")));
+  gboolean was_request = gh_conversation_get_is_request(conversation);
+  g_assert_true(gtk_widget_activate_action(GTK_WIDGET(g.dialog), "info.hide-account", NULL));
+  g_assert_nonnull(target);
+  const gchar *account, *peer;
+  g_variant_get(target, "(&s&s)", &account, &peer);
+  g_assert_cmpstr(account, ==, ACCOUNT);
+  g_assert_cmpstr(peer, ==, PEER[0]);
+  g_assert_cmpint(gh_conversation_get_is_request(conversation), ==, was_request);
+  g_assert_nonnull(gh_conversation_store_lookup(g.account.model, gh_conversation_get_room_id(conversation)));
+  gtk_widget_insert_action_group(GTK_WIDGET(g.window), "app", NULL);
+  gui_close(&g);
+  account_clear(&g.account);
+}
+
 /* ST-9 via the UI: Forget on This Device through its confirmation. */
 static void
 test_gui_forget(void)
@@ -1518,6 +1594,8 @@ main(int argc, char **argv)
     g_test_add_func("/groundhog/conversation-info-gui/st9-forget", test_gui_forget);
     g_test_add_func("/groundhog/conversation-info-gui/mute-in-database", test_gui_mute);
     g_test_add_func("/groundhog/conversation-info-gui/block", test_gui_block);
+    g_test_add_func("/groundhog/conversation-info-gui/hide-account", test_gui_hide_account);
+    g_test_add_func("/groundhog/conversation-info-gui/avatar-revocation", test_gui_avatar_revocation);
     g_test_add_func("/groundhog/conversation-info-gui/verify", test_gui_verify);
     g_test_add_func("/groundhog/conversation-info-gui/timer", test_gui_timer);
     g_test_add_func("/groundhog/conversation-info-gui/privacy-and-markup",
