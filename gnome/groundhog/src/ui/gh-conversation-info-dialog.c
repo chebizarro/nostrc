@@ -93,10 +93,27 @@ gh_conversation_info_person_init(GhConversationInfoPerson *self)
   gtk_widget_init_template(GTK_WIDGET(self));
 }
 
-/* The row's text: the name, then the short npub, the claimed NIP-05 and the
- * local verification record. */
+/* "<name> · Awarded by npub1…" per cached verified badge (plan §3.12): from
+ * the backend's cache only, nothing is looked up here; never "verified". */
 static void
-person_update(GhConversationInfoPerson *self, gboolean verified)
+append_badges(GString *subtitle, const GhBadgesBackend *badges, const gchar *pubkey)
+{
+  g_autoptr(GPtrArray) list = badges->owner ? badges->badges(badges->owner, pubkey) : NULL;
+  for (guint i = 0; list && i < list->len; i++) {
+    GhBadge *badge = g_ptr_array_index(list, i);
+    g_autofree gchar *issuer = npub_of(badge->issuer, TRUE);
+    if (subtitle->len)
+      g_string_append_c(subtitle, '\n');
+    /* TRANSLATORS: a badge's name, then who issued it. */
+    g_string_append_printf(subtitle, _("%s · Awarded by %s"),
+                           badge->name && *badge->name ? badge->name : badge->identifier, issuer);
+  }
+}
+
+/* The row's text: the name, then the short npub, the claimed NIP-05, the
+ * local verification record and the cached badges. */
+static void
+person_update(GhConversationInfoPerson *self, gboolean verified, const GhBadgesBackend *badges)
 {
   g_autofree gchar *short_npub = npub_of(self->pubkey, TRUE);
   adw_preferences_row_set_title(ADW_PREFERENCES_ROW(self), self->name ? self->name : short_npub);
@@ -113,12 +130,15 @@ person_update(GhConversationInfoPerson *self, gboolean verified)
       g_string_append_c(subtitle, '\n');
     g_string_append(subtitle, _("You marked this key verified"));
   }
+  if (badges)
+    append_badges(subtitle, badges, self->pubkey);
   adw_action_row_set_subtitle(ADW_ACTION_ROW(self), subtitle->str);
   gtk_widget_set_visible(GTK_WIDGET(self->verified_icon), verified);
 }
 
 static GhConversationInfoPerson *
-person_new(const gchar *account, const gchar *pubkey, const gchar *name, const gchar *nip05, GdkPaintable *picture)
+person_new(const gchar *account, const gchar *pubkey, const gchar *name, const gchar *nip05, GdkPaintable *picture,
+           gboolean lookup_badges)
 {
   GhConversationInfoPerson *self = g_object_new(GH_TYPE_CONVERSATION_INFO_PERSON, NULL);
   self->pubkey = g_strdup(pubkey);
@@ -134,6 +154,13 @@ person_new(const gchar *account, const gchar *pubkey, const gchar *name, const g
   for (guint i = 0; i < G_N_ELEMENTS(actions); i++) {
     g_autoptr(GMenuItem) item = g_menu_item_new(labels[i], NULL);
     g_menu_item_set_action_and_target_value(item, actions[i], g_variant_new("(ss)", account, pubkey));
+    g_menu_append_item(menu, item);
+  }
+  /* Never for a Message Request (PD-8): a stranger's badges are not looked
+   * up before you accept them. */
+  if (lookup_badges) {
+    g_autoptr(GMenuItem) item = g_menu_item_new(_("Look Up _Badges…"), NULL);
+    g_menu_item_set_action_and_target_value(item, "app.look-up-badges", g_variant_new("(ss)", account, pubkey));
     g_menu_append_item(menu, item);
   }
   gtk_menu_button_set_menu_model(self->account_menu, G_MENU_MODEL(menu));
@@ -201,6 +228,7 @@ struct _GhConversationInfoDialog {
   GPtrArray *people;     /* GhConversationInfoPerson, not owned (rows of people_group) */
   gchar *verify_pubkey;  /* whom the verify page shows */
   gboolean syncing_timer;
+  GhBadgesBackend badges; /* owner NULL without one (plan §3.12) */
 };
 
 G_DEFINE_FINAL_TYPE(GhConversationInfoDialog, gh_conversation_info_dialog, ADW_TYPE_DIALOG)
@@ -269,6 +297,16 @@ detach(GhConversationInfoDialog *self)
   g_clear_object(&self->conversations);
   g_clear_object(&self->expiry);
   self->store = NULL;
+}
+
+/* A lookup finished (or the account changed): the people's cached badges. */
+static void
+on_badges_changed(GhConversationInfoDialog *self)
+{
+  for (guint i = 0; i < self->people->len; i++) {
+    GhConversationInfoPerson *person = g_ptr_array_index(self->people, i);
+    person_update(person, verified_at(self, person->pubkey) > 0, &self->badges);
+  }
 }
 
 static void
@@ -539,7 +577,7 @@ sync_verified(GhConversationInfoDialog *self)
   }
   GhConversationInfoPerson *person = find_person(self, self->verify_pubkey);
   if (person)
-    person_update(person, at > 0);
+    person_update(person, at > 0, self->badges.owner ? &self->badges : NULL);
 }
 
 static void
@@ -688,13 +726,14 @@ fill(GhConversationInfoDialog *self, const GhConversationInfoServices *services)
     GhConversationInfoProfile profile = { 0 };
     if (services->profile)
       services->profile(peers[i], &profile, services->profile_data);
-    GhConversationInfoPerson *person = person_new(gh_conversation_get_account(self->conversation), peers[i], profile.name, profile.nip05, profile.picture);
+    GhConversationInfoPerson *person = person_new(gh_conversation_get_account(self->conversation), peers[i], profile.name, profile.nip05, profile.picture,
+                                                  self->badges.owner && !gh_conversation_get_is_request(self->conversation));
     if (services->pictures)
       gh_picture_cache_bind_avatar(services->pictures, person->avatar, peers[i]);
     g_signal_connect_object(person, "activated", G_CALLBACK(on_person_activated), self, 0);
     adw_preferences_group_add(self->people_group, GTK_WIDGET(person));
     g_ptr_array_add(self->people, person);
-    person_update(person, verified_at(self, peers[i]) > 0);
+    person_update(person, verified_at(self, peers[i]) > 0, self->badges.owner ? &self->badges : NULL);
   }
   gtk_widget_set_visible(GTK_WIDGET(self->people_group), n_peers > 0);
 
@@ -783,6 +822,11 @@ gh_conversation_info_dialog_new(GhConversation *conversation,
   self->store = services->store;
   self->expiry = services->expiry ? g_object_ref(services->expiry) : NULL;
   self->notifier = services->notifier ? g_object_ref(services->notifier) : NULL;
+  if (services->badges && services->badges->owner) {
+    self->badges = *services->badges;
+    self->badges.owner = g_object_ref(services->badges->owner);
+    g_signal_connect_swapped(self->badges.owner, "changed", G_CALLBACK(on_badges_changed), self);
+  }
   g_signal_connect_swapped(self->model, "items-changed", G_CALLBACK(on_model_changed), self);
   fill(self, services);
   return self;
@@ -807,6 +851,9 @@ gh_conversation_info_dialog_dispose(GObject *object)
 {
   GhConversationInfoDialog *self = GH_CONVERSATION_INFO_DIALOG(object);
   detach(self);
+  if (self->badges.owner)
+    g_signal_handlers_disconnect_by_data(self->badges.owner, self);
+  g_clear_object(&self->badges.owner);
   if (self->block_dialog)
     g_signal_handlers_disconnect_by_data(self->block_dialog, self);
   if (self->forget_dialog)

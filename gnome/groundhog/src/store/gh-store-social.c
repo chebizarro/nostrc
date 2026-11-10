@@ -407,3 +407,67 @@ rollback:
   gh_store_rollback(store);
   return FALSE;
 }
+
+/* ---- social_event_cache (schema v14; badges, nostrc-9lwl7.13) ---- */
+
+gboolean
+gh_store_social_cache_put(GhStore *store, const gchar *event_id, gint kind, const gchar *author,
+                          const gchar *identifier, const gchar *event_json, gint64 now,
+                          GError **error)
+{
+  sqlite3_stmt *stmt = prepare(store,
+    "INSERT OR REPLACE INTO social_event_cache(event_id,kind,author,identifier,event_json,stored_at)"
+    " VALUES(?,?,?,?,?,?)", error);
+  if (!stmt)
+    return FALSE;
+  sqlite3_bind_text(stmt, 1, event_id, -1, SQLITE_TRANSIENT);
+  sqlite3_bind_int(stmt, 2, kind);
+  sqlite3_bind_text(stmt, 3, author, -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 4, identifier ? identifier : "", -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 5, event_json, -1, SQLITE_TRANSIENT);
+  sqlite3_bind_int64(stmt, 6, now);
+  return run(store, stmt, error);
+}
+
+gchar *
+gh_store_social_cache_get(GhStore *store, const gchar *event_id, GError **error)
+{
+  sqlite3_stmt *stmt = prepare(store, "SELECT event_json FROM social_event_cache WHERE event_id=?", error);
+  if (!stmt)
+    return NULL;
+  sqlite3_bind_text(stmt, 1, event_id, -1, SQLITE_TRANSIENT);
+  gint rc = sqlite3_step(stmt);
+  gchar *json = rc == SQLITE_ROW ? g_strdup((const gchar *)sqlite3_column_text(stmt, 0)) : NULL;
+  sqlite3_finalize(stmt);
+  if (rc != SQLITE_ROW && rc != SQLITE_DONE)
+    gh_store_set_sqlite_error(store, rc, "Reading the social event cache", error);
+  return json;
+}
+
+GPtrArray *
+gh_store_social_cache_find(GhStore *store, gint kind, const gchar *author, const gchar *identifier,
+                           GError **error)
+{
+  sqlite3_stmt *stmt = prepare(store,
+    "SELECT event_json FROM social_event_cache WHERE kind=?1 AND (?2 IS NULL OR author=?2)"
+    " AND (?3 IS NULL OR identifier=?3)"
+    " ORDER BY stored_at DESC, event_id ASC", error);
+  if (!stmt)
+    return NULL;
+  sqlite3_bind_int(stmt, 1, kind);
+  if (author)
+    sqlite3_bind_text(stmt, 2, author, -1, SQLITE_TRANSIENT);
+  if (identifier)
+    sqlite3_bind_text(stmt, 3, identifier, -1, SQLITE_TRANSIENT);
+  GPtrArray *rows = g_ptr_array_new_with_free_func(g_free);
+  gint rc;
+  while ((rc = sqlite3_step(stmt)) == SQLITE_ROW)
+    g_ptr_array_add(rows, g_strdup((const gchar *)sqlite3_column_text(stmt, 0)));
+  sqlite3_finalize(stmt);
+  if (rc != SQLITE_DONE) {
+    gh_store_set_sqlite_error(store, rc, "Reading the social event cache", error);
+    g_ptr_array_unref(rows);
+    return NULL;
+  }
+  return rows;
+}

@@ -903,6 +903,108 @@ test_gui_hide_account(void)
   account_clear(&g.account);
 }
 
+/* ---- badges (plan §3.12, nostrc-9lwl7.13) ---- */
+
+typedef struct { GObject parent; } FakeBadges;
+typedef struct { GObjectClass parent; } FakeBadgesClass;
+static GType fake_badges_get_type(void);
+G_DEFINE_TYPE(FakeBadges, fake_badges, G_TYPE_OBJECT)
+static void fake_badges_init(FakeBadges *self) { (void)self; }
+static void
+fake_badges_class_init(FakeBadgesClass *klass)
+{
+  g_signal_new("changed", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL, G_TYPE_NONE, 0);
+}
+static const gchar *fake_badge_name;
+static guint64 fake_badges_generation(GObject *o) { (void)o; return 1; }
+/* Cached only: a lookup is never started by the dialog. */
+static GPtrArray *
+fake_badges_badges(GObject *o, const gchar *pubkey)
+{
+  (void)o;
+  if (g_strcmp0(pubkey, PEER[0]) || !fake_badge_name) return NULL;
+  GPtrArray *badges = g_ptr_array_new_with_free_func((GDestroyNotify)gh_badge_free);
+  GhBadge *b = g_new0(GhBadge, 1);
+  b->issuer = g_strdup(PEER[1]); b->identifier = g_strdup("gold"); b->name = g_strdup(fake_badge_name);
+  b->address = g_strdup_printf("30009:%s:gold", PEER[1]);
+  b->award_id = g_strdup("1111111111111111111111111111111111111111111111111111111111111111");
+  g_ptr_array_add(badges, b);
+  return badges;
+}
+static gboolean
+menu_has(GMenuModel *menu, const gchar *label)
+{
+  for (gint i = 0; i < g_menu_model_get_n_items(menu); i++) {
+    g_autofree gchar *text = NULL;
+    if (g_menu_model_get_item_attribute(menu, i, "label", "s", &text) && !g_strcmp0(text, label)) return TRUE;
+  }
+  return FALSE;
+}
+static GMenuModel *
+person_menu(AdwActionRow *person)
+{
+  GObject *button = gtk_widget_get_template_child(GTK_WIDGET(person), G_OBJECT_TYPE(person), "account_menu");
+  g_assert_true(GTK_IS_MENU_BUTTON(button));
+  return gtk_menu_button_get_menu_model(GTK_MENU_BUTTON(button));
+}
+
+/* A person's cached verified badges read "Awarded by…" (never "verified"),
+ * follow the backend's "changed", and Look Up Badges… is offered for an
+ * accepted conversation only: a Message Request never looks anyone up. */
+static void
+test_gui_badges(void)
+{
+  Gui g = { 0 };
+  account_init(&g.account);
+  g_autoptr(GObject) owner = g_object_new(fake_badges_get_type(), NULL);
+  GhBadgesBackend backend = { .owner = owner, .generation = fake_badges_generation, .badges = fake_badges_badges };
+  fake_badge_name = "Gold <b>Star</b>";
+  GhConversation *conversation = receive(&g.account, PEER[0], T0 - 60, "hello");
+  gh_conversation_accept(conversation);
+  gui_window(&g, 900, 760, conversation);
+  GhConversationInfoServices services = services_of(&g.account);
+  services.badges = &backend;
+  g.closed = FALSE;
+  g.dialog = g_object_ref_sink(gh_conversation_info_dialog_new(conversation, &services));
+  g_signal_connect(g.dialog, "closed", G_CALLBACK(on_closed), &g);
+  adw_dialog_present(ADW_DIALOG(g.dialog), GTK_WIDGET(g.window));
+  spin_until(gh_test_dialog_shown, g.dialog);
+  drain_idle();
+  AdwActionRow *person = find_row(GTK_WIDGET(child(&g, "people_group")), "GhConversationInfoPerson", NULL);
+  g_assert_nonnull(person);
+  const gchar *subtitle = adw_action_row_get_subtitle(person);
+  g_assert_nonnull(strstr(subtitle, "Gold <b>Star</b> · Awarded by npub1"));
+  g_assert_null(strstr(subtitle, "erified identity"));
+  g_assert_false(adw_preferences_row_get_use_markup(ADW_PREFERENCES_ROW(person)));
+  g_assert_true(menu_has(person_menu(person), "Look Up _Badges…"));
+  /* A later lookup's result (the owner's "changed") shows at once. */
+  fake_badge_name = "Platinum";
+  g_signal_emit_by_name(owner, "changed");
+  subtitle = adw_action_row_get_subtitle(person);
+  g_assert_nonnull(strstr(subtitle, "Platinum · Awarded by npub1"));
+  g_assert_null(strstr(subtitle, "Gold"));
+  gui_close(&g);
+  /* A Message Request: no lookup offered. */
+  GhConversation *request = receive(&g.account, PEER[1], T0 - 30, "hi");
+  g_assert_true(gh_conversation_get_is_request(request));
+  gui_window(&g, 900, 760, request);
+  services = services_of(&g.account);
+  services.badges = &backend;
+  g.closed = FALSE;
+  g.dialog = g_object_ref_sink(gh_conversation_info_dialog_new(request, &services));
+  g_signal_connect(g.dialog, "closed", G_CALLBACK(on_closed), &g);
+  adw_dialog_present(ADW_DIALOG(g.dialog), GTK_WIDGET(g.window));
+  spin_until(gh_test_dialog_shown, g.dialog);
+  drain_idle();
+  person = find_row(GTK_WIDGET(child(&g, "people_group")), "GhConversationInfoPerson", NULL);
+  g_assert_nonnull(person);
+  g_assert_false(menu_has(person_menu(person), "Look Up _Badges…"));
+  g_assert_true(menu_has(person_menu(person), "_Report Account…"));
+  gui_close(&g);
+  fake_badge_name = NULL;
+  account_clear(&g.account);
+}
+
 /* ST-9 via the UI: Forget on This Device through its confirmation. */
 static void
 test_gui_forget(void)
@@ -1595,6 +1697,7 @@ main(int argc, char **argv)
     g_test_add_func("/groundhog/conversation-info-gui/mute-in-database", test_gui_mute);
     g_test_add_func("/groundhog/conversation-info-gui/block", test_gui_block);
     g_test_add_func("/groundhog/conversation-info-gui/hide-account", test_gui_hide_account);
+    g_test_add_func("/groundhog/conversation-info-gui/badges", test_gui_badges);
     g_test_add_func("/groundhog/conversation-info-gui/avatar-revocation", test_gui_avatar_revocation);
     g_test_add_func("/groundhog/conversation-info-gui/verify", test_gui_verify);
     g_test_add_func("/groundhog/conversation-info-gui/timer", test_gui_timer);
