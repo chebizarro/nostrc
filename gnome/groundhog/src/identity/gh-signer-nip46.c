@@ -24,13 +24,13 @@ gh_signer_nip46_free(GhNip46Signer *self)
 
 void
 gh_signer_nip46_call_async(GhNip46Signer *self, const gchar *method,
-                                const gchar *input, const gchar *peer,
+                                const gchar *input, const gchar *peer, gboolean background,
                                 GCancellable *cancel, GAsyncReadyCallback cb, gpointer data)
 {
   g_return_if_fail(self != NULL);
   const gchar *params[2] = { peer ? peer : input, peer ? input : NULL };
-  gh_nip46_session_call_async(self->session, method, params, peer ? 2 : 1,
-                              cancel, cb, data);
+  gh_nip46_session_call_full_async(self->session, method, params, peer ? 2 : 1, background,
+                                   cancel, cb, data);
 }
 
 /* The session messages are user-facing and keep the sanitised text of the

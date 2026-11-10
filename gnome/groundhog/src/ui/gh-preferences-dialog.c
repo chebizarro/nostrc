@@ -49,6 +49,10 @@ struct _GhPreferencesDialog {
   GhListsBackend social;
   guint64 social_generation;
   gboolean social_syncing;
+  GhDraftsBackend drafts; /* NIP-37 drafts (nostrc-9lwl7.8); owner NULL without one */
+  guint64 drafts_generation;
+  AdwPreferencesGroup *drafts_group;
+  AdwActionRow *drafts_row;
   AdwPreferencesGroup *social_group;
   AdwSwitchRow *social_sync_row;
   AdwActionRow *social_lists_row;
@@ -2016,6 +2020,45 @@ social_lists_open(AdwActionRow *row, GhPreferencesDialog *self)
 }
 
 static void
+drafts_changed(GObject *owner, GhPreferencesDialog *self)
+{
+  (void)owner;
+  if (self->disposed || !self->drafts.owner) return;
+  g_autofree gchar *subtitle = gh_drafts_page_describe(&self->drafts);
+  adw_action_row_set_subtitle(self->drafts_row, subtitle);
+  gtk_widget_set_sensitive(GTK_WIDGET(self->drafts_row),
+                           self->drafts.generation(self->drafts.owner) != 0);
+}
+
+static void
+drafts_open(AdwActionRow *row, GhPreferencesDialog *self)
+{
+  (void)row;
+  if (self->drafts.owner && self->drafts_generation == self->drafts.generation(self->drafts.owner) &&
+      self->drafts_generation != 0)
+    adw_preferences_dialog_push_subpage(ADW_PREFERENCES_DIALOG(self),
+      ADW_NAVIGATION_PAGE(gh_drafts_page_new(&self->drafts)));
+}
+
+void
+gh_preferences_dialog_set_drafts_backend(GhPreferencesDialog *self, const GhDraftsBackend *backend)
+{
+  if (self->drafts.owner) {
+    g_signal_handlers_disconnect_by_data(self->drafts.owner, self);
+    adw_dialog_force_close(ADW_DIALOG(self));
+  }
+  g_clear_object(&self->drafts.owner);
+  self->drafts = backend ? *backend : (GhDraftsBackend){0};
+  if (backend) {
+    self->drafts.owner = g_object_ref(backend->owner);
+    self->drafts_generation = backend->generation(backend->owner);
+    g_signal_connect(self->drafts.owner, "changed", G_CALLBACK(drafts_changed), self);
+    drafts_changed(self->drafts.owner, self);
+  }
+  gtk_widget_set_visible(GTK_WIDGET(self->drafts_group), backend != NULL);
+}
+
+static void
 hidden_open(AdwActionRow *row, GhPreferencesDialog *self)
 {
   (void)row;
@@ -2065,6 +2108,9 @@ gh_preferences_dialog_dispose(GObject *object)
   if (self->social.owner)
     g_signal_handlers_disconnect_by_data(self->social.owner, self);
   g_clear_object(&self->social.owner);
+  if (self->drafts.owner)
+    g_signal_handlers_disconnect_by_data(self->drafts.owner, self);
+  g_clear_object(&self->drafts.owner);
   if (self->settings_changed) {
     g_signal_handler_disconnect(self->settings, self->settings_changed);
     self->settings_changed = 0;
@@ -2172,6 +2218,8 @@ gh_preferences_dialog_class_init(GhPreferencesDialogClass *klass)
   BIND(server_publish_row);
   BIND(server_publish_button);
   BIND(social_lists_row);
+  BIND(drafts_group);
+  BIND(drafts_row);
   BIND(hidden_group);
   BIND(hidden_row);
   BIND(social_import_row);
@@ -2250,6 +2298,7 @@ gh_preferences_dialog_init(GhPreferencesDialog *self)
   g_signal_connect(self->server_publish_button, "clicked", G_CALLBACK(server_publish_open), self);
   g_signal_connect(self->social_lists_row, "activated", G_CALLBACK(social_lists_open), self);
   g_signal_connect(self->hidden_row, "activated", G_CALLBACK(hidden_open), self);
+  g_signal_connect(self->drafts_row, "activated", G_CALLBACK(drafts_open), self);
   g_signal_connect(self->social_import_row, "activated", G_CALLBACK(social_import_open), self);
   gh_agents_page_populate(self->agents_page);
   self->key_widgets = g_hash_table_new(g_str_hash, g_str_equal);

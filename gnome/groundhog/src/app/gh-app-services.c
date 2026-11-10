@@ -10,6 +10,10 @@
 #include "gh-hide-account.h"
 #include "gh-report-dialog.h"
 #include "gh-relay-deny-policy.h"
+#if GROUNDHOG_HAVE_DRAFT_SYNC
+#include "gh-draft-sync.h"
+#include "gh-draft-sync-backend.h"
+#endif
 #endif
 #include "gh-app-services.h"
 #include "gh-diagnostics.h"
@@ -167,6 +171,9 @@ struct _GhAppServices {
   GhAccountStore *account_store;
 #if GROUNDHOG_HAVE_SOCIAL_LISTS
   GhSocialLists *social_lists;
+#if GROUNDHOG_HAVE_DRAFT_SYNC
+  GhDraftSync *draft_sync; /* NIP-37 drafts beside the lists (nostrc-9lwl7.8) */
+#endif
 #endif
   GSimpleAction *store_actions[4];
 #endif
@@ -550,6 +557,58 @@ store_key_teardown(GhAppServices *self)
   dispose_object(&self->store_key);
 }
 
+#if GROUNDHOG_HAVE_SOCIAL_LISTS && GROUNDHOG_HAVE_DRAFT_SYNC && GROUNDHOG_HAVE_INBOX && GROUNDHOG_HAVE_OUTBOX
+/* The window side of draft synchronization (gh-send-ui.h): every window
+ * with the send UI sees the same remote revisions and status. */
+static gboolean
+draft_sync_composer_focused(const gchar *room_key, gpointer data)
+{
+  GhAppServices *self = data;
+  for (GList *l = gtk_application_get_windows(self->app); l; l = l->next)
+    if (GH_IS_WINDOW(l->data) && gh_send_ui_composer_focused(GH_WINDOW(l->data), room_key))
+      return TRUE;
+  return FALSE;
+}
+
+static void
+draft_sync_apply(const gchar *room_key, const gchar *text, gpointer data)
+{
+  GhAppServices *self = data;
+  for (GList *l = gtk_application_get_windows(self->app); l; l = l->next)
+    if (GH_IS_WINDOW(l->data))
+      gh_send_ui_apply_remote_draft(GH_WINDOW(l->data), room_key, text);
+}
+
+static void
+draft_sync_changed(GhDraftSync *sync, GhAppServices *self)
+{
+  for (GList *l = gtk_application_get_windows(self->app); l; l = l->next)
+    if (GH_IS_WINDOW(l->data))
+      gh_send_ui_set_draft_status(GH_WINDOW(l->data), gh_draft_sync_get_status(sync),
+                                  gh_draft_sync_can_retry(sync));
+}
+
+static void
+draft_sync_shown(const gchar *room_key, gpointer data)
+{
+  GhAppServices *self = data;
+  gh_draft_sync_set_shown_room(self->draft_sync, room_key);
+}
+
+static void
+draft_sync_retry(gpointer data)
+{
+  GhAppServices *self = data;
+  gh_draft_sync_retry(self->draft_sync);
+}
+#elif GROUNDHOG_HAVE_SOCIAL_LISTS && GROUNDHOG_HAVE_DRAFT_SYNC
+static gboolean draft_sync_composer_focused(const gchar *room_key, gpointer data)
+{ (void) room_key; (void) data; return FALSE; }
+static void draft_sync_apply(const gchar *room_key, const gchar *text, gpointer data)
+{ (void) room_key; (void) text; (void) data; }
+static void draft_sync_changed(GhDraftSync *sync, GhAppServices *self) { (void) sync; (void) self; }
+#endif
+
 #if GROUNDHOG_HAVE_INBOX
 /* ---- profile-picture policy (owner decisions D2/D3, plan §3.6) ----------------
  * Every window's picture cache asks here whether the account follows a
@@ -749,10 +808,20 @@ account_store_init(GhAppServices *self, GError **error)
 #if GROUNDHOG_HAVE_OUTBOX
   gh_app_outbox_set_social_lists(self->outbox, self->social_lists);
 #endif
+#if GROUNDHOG_HAVE_DRAFT_SYNC
+  self->draft_sync = gh_draft_sync_new(self->social_lists);
+  gh_draft_sync_set_network(self->draft_sync, &list_network);
+  GhDraftSyncApplier applier = { draft_sync_composer_focused, draft_sync_apply };
+  gh_draft_sync_set_applier(self->draft_sync, &applier, self);
+  g_signal_connect(self->draft_sync, "changed", G_CALLBACK(draft_sync_changed), self);
+#endif
 #endif
   self->account_store = gh_account_store_new(&config);
 #if GROUNDHOG_HAVE_SOCIAL_LISTS
   gh_social_lists_attach_store(self->social_lists, self->account_store);
+#if GROUNDHOG_HAVE_DRAFT_SYNC
+  gh_draft_sync_attach_store(self->draft_sync, self->account_store);
+#endif
   gh_hide_account_install(self->app, self->social_lists);
   g_autoptr(GhReportService) reports = gh_report_service_new(self->social_lists,
       self->account_store, &list_network, NULL);
@@ -781,10 +850,18 @@ account_store_teardown(GhAppServices *self)
 #if GROUNDHOG_HAVE_OUTBOX
   gh_app_outbox_set_social_lists(self->outbox, NULL);
 #endif
+#if GROUNDHOG_HAVE_DRAFT_SYNC
+  /* Drafts stop before the lists they read relays from, and both before
+   * the store closes (P7). */
+  gh_draft_sync_close(self->draft_sync);
+#endif
   gh_social_lists_close(self->social_lists);
 #endif
   dispose_object(&self->account_store);
 #if GROUNDHOG_HAVE_SOCIAL_LISTS
+#if GROUNDHOG_HAVE_DRAFT_SYNC
+  dispose_object(&self->draft_sync);
+#endif
   dispose_object(&self->social_lists);
 #endif
 }
@@ -2085,6 +2162,10 @@ present_preferences(GhAppServices *self, const gchar *page)
 #if GROUNDHOG_HAVE_SOCIAL_LISTS
   GhListsBackend social_backend = gh_social_lists_backend(self->social_lists);
   gh_preferences_dialog_set_social_backend(dialog, &social_backend);
+#if GROUNDHOG_HAVE_DRAFT_SYNC
+  GhDraftsBackend drafts_backend = gh_draft_sync_backend(self->draft_sync);
+  gh_preferences_dialog_set_drafts_backend(dialog, &drafts_backend);
+#endif
 #endif
   gh_preferences_dialog_set_forget_func(dialog, preferences_forget_async,
                                         preferences_forget_finish,
@@ -2724,6 +2805,14 @@ gh_app_services_attach_window(GhAppServices *self, GhWindow *window)
 #endif
   };
   gh_send_ui_attach(window, &send);
+#if GROUNDHOG_HAVE_SOCIAL_LISTS && GROUNDHOG_HAVE_DRAFT_SYNC
+  if (self->draft_sync) {
+    GhSendUiDraftHooks draft_hooks = { draft_sync_shown, draft_sync_retry };
+    gh_send_ui_set_draft_hooks(window, &draft_hooks, self);
+    gh_send_ui_set_draft_status(window, gh_draft_sync_get_status(self->draft_sync),
+                                gh_draft_sync_can_retry(self->draft_sync));
+  }
+#endif
 #if GROUNDHOG_HAVE_PUBLIC_NOTES
   GhPublicNoteUiConfig public_notes = {
     .accounts = self->accounts,

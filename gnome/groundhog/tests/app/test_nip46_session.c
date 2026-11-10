@@ -159,6 +159,41 @@ test_wrong_author_and_cancel(void)
   bunker_clear(&bunker);
 }
 
+/* A background request (an automatic draft revision, nostrc-9lwl7.8) takes
+ * the bulk lane even for sign_event: a full interactive lane refuses the
+ * user's 65th request at once, while the background one is queued. */
+#define INTERACTIVE_LANE 64 /* MAX_INTERACTIVE in gh-nip46-session.c */
+static void
+test_background_lane(void)
+{
+  TestBunker bunker;
+  g_autoptr(GhNip46Session) session = new_session(&bunker);
+  gh_nip46_session_start(session);
+  bunker_eose(&bunker);
+  Await queued[INTERACTIVE_LANE] = { { 0 } };
+  Await refused = { 0 }, background = { 0 };
+  for (guint i = 0; i < INTERACTIVE_LANE; i++)
+    gh_nip46_session_call_async(session, "sign_event", NULL, 0, NULL, call_done, &queued[i]);
+  gh_nip46_session_call_async(session, "sign_event", NULL, 0, NULL, call_done, &refused);
+  gh_nip46_session_call_full_async(session, "sign_event", NULL, 0, TRUE, NULL, call_done,
+                                   &background);
+  until(await_done, &refused);
+  g_assert_error(refused.error, GH_NIP46_SESSION_ERROR, GH_NIP46_SESSION_ERROR_UNAVAILABLE);
+  g_clear_error(&refused.error);
+  while (g_main_context_iteration(NULL, FALSE)) {}
+  g_assert_false(background.done); /* accepted on the bulk lane, awaiting the signer */
+  gh_nip46_session_cancel(session);
+  until(await_done, &background);
+  g_assert_error(background.error, GH_NIP46_SESSION_ERROR, GH_NIP46_SESSION_ERROR_CANCELLED);
+  g_clear_error(&background.error);
+  for (guint i = 0; i < INTERACTIVE_LANE; i++) {
+    until(await_done, &queued[i]);
+    g_clear_error(&queued[i].error);
+    g_free(queued[i].result);
+  }
+  bunker_clear(&bunker);
+}
+
 static void
 test_late_replies_after_teardown(void)
 {
@@ -825,6 +860,7 @@ main(int argc, char **argv)
   g_test_init(&argc, &argv, NULL);
   g_test_add_func("/groundhog/nip46/request-wire-eose", test_request_wire_and_eose);
   g_test_add_func("/groundhog/nip46/wrong-author-cancel", test_wrong_author_and_cancel);
+  g_test_add_func("/groundhog/nip46/background-lane", test_background_lane);
   g_test_add_func("/groundhog/nip46/late-reply-after-teardown", test_late_replies_after_teardown);
   g_test_add_func("/groundhog/nip46/late-pair-reply-after-cancel", test_late_pair_reply_after_cancel);
   g_test_add_func("/groundhog/nip46/auth-url", test_auth_url_same_id);

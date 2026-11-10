@@ -323,6 +323,9 @@ ACCOUNT_PURPOSE_FILES = {
     "src/app/gh-auth-policy.": "the purposes' definition",
     "src/app/gh-list-adapter.": "own private list publish on explicit plan targets; private-sync "
                                "AUTH only after checking current account 10013 destinations",
+    "src/app/gh-draft-sync.": "NIP-37 draft read/publish (OWN_PRIVATE_SYNC_READ/PUBLISH) only on "
+                             "the current, unblocked kind-10013 relays of the account; never a "
+                             "write, inbox or discovery relay (nostrc-9lwl7.8)",
     "src/app/gh-dm-inbox.": "own inbox read, on the account's own 10050 relays only",
     "src/app/gh-outbox.": "the self-copy (and a note to self) on the own 10050 relays",
     "src/app/gh-dm-send.": "the self-copy (and a note to self) on the own 10050 relays",
@@ -371,7 +374,8 @@ AUTH_SETTER_RE = re.compile(r"\b(?:" + "|".join(sorted(AUTH_SETTERS)) + r")\b")
 ACCOUNT_PURPOSE_RE = re.compile(
     r"\bGH_AUTH_PURPOSE_(?:OWN_INBOX_READ|OWN_LIST_PUBLISH|SELF_WRAP|GROUP|OWN_PRIVATE_SYNC_(?:READ|PUBLISH))\b")
 PRIVATE_SYNC_PURPOSE_RE = re.compile(r"\bGH_AUTH_PURPOSE_OWN_PRIVATE_SYNC_(?:READ|PUBLISH)\b")
-PRIVATE_SYNC_PURPOSE_FILES = ("src/app/gh-auth-policy.", "src/app/gh-list-adapter.")
+PRIVATE_SYNC_PURPOSE_FILES = ("src/app/gh-auth-policy.", "src/app/gh-list-adapter.",
+                              "src/app/gh-draft-sync.")
 KIND_10002_RE = re.compile(r"\b10002\b|\b\w*KIND_RELAY_LIST\w*|(?i:\b\w*nip_?65\w*)")
 LOG_CALL_RE = re.compile(
     r"\bg_(?:debug|info|message|warning|critical|error|print|printerr|log)\s*\(")

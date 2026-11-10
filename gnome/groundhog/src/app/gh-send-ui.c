@@ -40,10 +40,13 @@ typedef struct {
   gchar *draft_saved;         /* the stored draft, as far as this knows */
   gchar *no_inbox_rumor;      /* the shown room's newest own message if "Can't send" */
   GSimpleAction *check_inbox;
+  GSimpleAction *retry_sync;  /* the draft status's Retry (nostrc-9lwl7.8) */
   gboolean updating;          /* in update_reason() (a lookup can re-enter it) */
   /* Other sending engines: G20b relay groups, qp24.13 encrypted groups. */
   SendDelegate delegates[MAX_DELEGATES];
   guint n_delegates;
+  GhSendUiDraftHooks draft_hooks; /* NIP-37 draft sync (nostrc-9lwl7.8) */
+  gpointer draft_hooks_data;
 } GhSendUi;
 
 static void update_reason(GhSendUi *ui);
@@ -83,6 +86,7 @@ send_ui_free(gpointer data)
   g_clear_object(&ui->inbox);
   g_clear_object(&ui->settings);
   g_clear_object(&ui->check_inbox);
+  g_clear_object(&ui->retry_sync);
   g_free(ui->draft_room);
   g_free(ui->draft_saved);
   g_free(ui->no_inbox_rumor);
@@ -479,6 +483,8 @@ on_view_conversation(GhComposer *composer)
   update_timer(ui);
   update_reason(ui);
   gh_composer_revalidate(ui->composer);
+  if (ui->draft_hooks.shown)
+    ui->draft_hooks.shown(ui->draft_room, ui->draft_hooks_data);
 }
 
 /* ---- why sending is unavailable ---------------------------------------------------- */
@@ -822,6 +828,15 @@ on_unlock_requested(GhComposer *composer)
   gh_dm_inbox_unlock(ui->inbox);
 }
 
+static void
+on_retry_draft_sync(GSimpleAction *action, GVariant *parameter, gpointer data)
+{
+  (void) action; (void) parameter;
+  GhSendUi *ui = data;
+  if (ui->draft_hooks.retry)
+    ui->draft_hooks.retry(ui->draft_hooks_data);
+}
+
 /* ---- public -------------------------------------------------------------------------- */
 
 void
@@ -859,6 +874,10 @@ gh_send_ui_attach(GhWindow *window, const GhSendUiConfig *config)
   g_simple_action_set_enabled(ui->check_inbox, FALSE);
   g_signal_connect(ui->check_inbox, "activate", G_CALLBACK(on_check_inbox), ui);
   g_action_map_add_action(G_ACTION_MAP(group), G_ACTION(ui->check_inbox));
+  ui->retry_sync = g_simple_action_new("retry-draft-sync", NULL);
+  g_simple_action_set_enabled(ui->retry_sync, FALSE);
+  g_signal_connect(ui->retry_sync, "activate", G_CALLBACK(on_retry_draft_sync), ui);
+  g_action_map_add_action(G_ACTION_MAP(group), G_ACTION(ui->retry_sync));
   gtk_widget_insert_action_group(GTK_WIDGET(window), "send", G_ACTION_GROUP(group));
 
   if (ui->settings) {
@@ -948,6 +967,76 @@ gh_send_ui_add_delegate(GhWindow *window, const GhSendUiDelegate *delegate, gpoi
   if (slot == ui->n_delegates)
     ui->n_delegates++;
   delegates_changed(ui);
+}
+
+void
+gh_send_ui_set_draft_hooks(GhWindow *window, const GhSendUiDraftHooks *hooks, gpointer data)
+{
+  g_return_if_fail(GH_IS_WINDOW(window));
+  GhSendUi *ui = g_object_get_data(G_OBJECT(window), SEND_UI_DATA);
+  if (!ui)
+    return;
+  ui->draft_hooks = hooks ? *hooks : (GhSendUiDraftHooks) { 0 };
+  ui->draft_hooks_data = hooks ? data : NULL;
+  if (ui->draft_hooks.shown)
+    ui->draft_hooks.shown(ui->draft_room, ui->draft_hooks_data);
+}
+
+void
+gh_send_ui_apply_remote_draft(GhWindow *window, const gchar *room_key, const gchar *text)
+{
+  g_return_if_fail(GH_IS_WINDOW(window));
+  g_return_if_fail(room_key != NULL);
+  GhSendUi *ui = g_object_get_data(G_OBJECT(window), SEND_UI_DATA);
+  if (!ui)
+    return;
+  if (text && !*text)
+    text = NULL;
+  if (!gh_conversation_store_lookup(ui->model, room_key)) {
+    /* A draft written elsewhere for a room this device has not listed:
+     * the room's other participants (or the account itself). */
+    g_auto(GStrv) members = g_strsplit(room_key, ",", -1);
+    g_autoptr(GStrvBuilder) peers = g_strv_builder_new();
+    const gchar *account = gh_conversation_store_get_account(ui->model);
+    for (guint i = 0; members[i]; i++)
+      if (g_strv_length(members) == 1 || g_strcmp0(members[i], account))
+        g_strv_builder_add(peers, members[i]);
+    g_auto(GStrv) list = g_strv_builder_end(peers);
+    g_autoptr(GError) error = NULL;
+    if (!gh_conversation_store_open_room(ui->model, (const gchar *const *) list, &error))
+      g_message("Groundhog could not list a conversation with a synced draft: %s", error->message);
+  }
+  if (!ui->draft_room || g_strcmp0(ui->draft_room, room_key))
+    return; /* not shown: the store already holds it for when it is */
+  /* A programmatic update: no draft-changed, and the saved-draft memory
+   * follows so a later edit back to this text is still saved. */
+  gh_composer_set_text(ui->composer, text);
+  g_free(ui->draft_saved);
+  ui->draft_saved = g_strdup(text);
+}
+
+gboolean
+gh_send_ui_composer_focused(GhWindow *window, const gchar *room_key)
+{
+  g_return_val_if_fail(GH_IS_WINDOW(window), FALSE);
+  GhSendUi *ui = g_object_get_data(G_OBJECT(window), SEND_UI_DATA);
+  if (!ui || !ui->draft_room || g_strcmp0(ui->draft_room, room_key))
+    return FALSE;
+  GtkWidget *focus = gtk_root_get_focus(GTK_ROOT(window));
+  return focus && gtk_widget_is_ancestor(focus, GTK_WIDGET(ui->composer));
+}
+
+void
+gh_send_ui_set_draft_status(GhWindow *window, const gchar *status, gboolean can_retry)
+{
+  g_return_if_fail(GH_IS_WINDOW(window));
+  GhSendUi *ui = g_object_get_data(G_OBJECT(window), SEND_UI_DATA);
+  if (!ui)
+    return;
+  gboolean retry = can_retry && status && *status && ui->draft_hooks.retry;
+  gh_composer_set_status(ui->composer, status);
+  gh_composer_set_status_action(ui->composer, retry ? _("_Retry") : NULL, "send.retry-draft-sync");
+  g_simple_action_set_enabled(ui->retry_sync, retry);
 }
 
 void

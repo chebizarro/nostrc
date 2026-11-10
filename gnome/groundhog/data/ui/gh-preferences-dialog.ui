@@ -255,6 +255,23 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
           </object>
         </child>
         <child>
+          <object class="AdwPreferencesGroup" id="drafts_group">
+            <property name="visible">false</property>
+            <property name="title" translatable="yes">Drafts</property>
+            <child>
+              <object class="AdwActionRow" id="drafts_row">
+                <property name="title" translatable="yes">Synced Drafts</property>
+                <property name="activatable">true</property>
+                <child type="suffix">
+                  <object class="GtkImage">
+                    <property name="icon-name">go-next-symbolic</property>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
           <object class="AdwPreferencesGroup">
             <property name="title" translatable="yes">History</property>
             <child>
@@ -872,7 +889,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
     <property name="heading" translatable="yes">Delete All Messages on This Device?</property>
     <property name="body" translatable="yes">Every message, draft and conversation of this account is deleted from this device, and Groundhog signs out of the account here. Your key stays in Grotto, and Gnostr isn't affected.
 
-Copies stay on relays and on other people's devices. Private messages can be downloaded again from your relays with your key; encrypted group history can't.</property>
+Copies stay on relays and on other people's devices. Private messages can be downloaded again from your relays with your key; encrypted group history can't. Drafts synced to your private relays stay there until they expire.</property>
     <property name="default-response">cancel</property>
     <property name="close-response">cancel</property>
     <responses>

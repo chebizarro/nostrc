@@ -7,6 +7,7 @@ data/ui/gh-add-contact-page.blp
 data/ui/gh-attachment-card.blp
 data/ui/gh-attachment-sheet.blp
 data/ui/gh-blocked-page.blp
+data/ui/gh-drafts-page.blp
 data/ui/gh-blocked-row.blp
 data/ui/gh-composer.blp
 data/ui/gh-content-page.blp
@@ -51,6 +52,7 @@ src/app/gh-attachment-ui.c
 src/app/gh-background.c
 src/app/gh-background.h
 src/app/gh-conversation.c
+src/app/gh-draft-sync.c
 src/app/gh-inbox-setup.c
 src/app/gh-message-status.c
 src/app/gh-message.c
@@ -71,6 +73,7 @@ src/ui/gh-agents-page.c
 src/ui/gh-attachment-card.c
 src/ui/gh-attachment-sheet.c
 src/ui/gh-blocked-page.c
+src/ui/gh-drafts-page.c
 src/ui/gh-composer.c
 src/ui/gh-conversation-info-dialog.c
 src/ui/gh-conversation-list.c

@@ -104,7 +104,7 @@ static void lifecycle_regressions(GDBusConnection *bus, GrottoApprovalController
     GhSigner *signer, const gchar *seal, const gchar *sender) {
   for (guint mode = 0; mode < 4; mode++) {
     g_autofree gchar *id = g_strdup_printf("lifecycle-%u", mode);
-    GhSignerContext context = {"Review bounded encrypted signing", "nip17-room-send", id, 3};
+    GhSignerContext context = {"Review bounded encrypted signing", "nip17-room-send", id, 3, FALSE};
     guint before = prompts;
     Decision first = {0}, consent = {0};
     gh_signer_sign_with_context_async(signer, seal, &context, NULL, signer_done, &first);
@@ -326,7 +326,7 @@ static void run_room_flow(GDBusConnection *bus, gboolean gui) {
    * borrow the exhausted send's consent or restart its first-arrival clock. */
   GhSigner *signer = gh_signer_new(bus, npub, NULL);
   g_assert_nonnull(signer);
-  GhSignerContext context = {"Sign an extra encrypted message", "nip17-room-send", flow_id, size};
+  GhSignerContext context = {"Sign an extra encrypted message", "nip17-room-send", flow_id, size, FALSE};
   g_autofree gchar *seal = g_strdup_printf("{\"kind\":%u,\"pubkey\":\"%s\",\"created_at\":1,\"tags\":[],\"content\":\"encrypted\"}", NOSTR_KIND_SEAL, sender);
   Decision extra = {0}, denial = {0};
   gh_signer_sign_with_context_async(signer, seal, &context, NULL, signer_done, &extra);
