@@ -45,6 +45,7 @@ struct _GhConversationInfoPerson {
   GtkImage *verified_icon;
   GtkButton *copy_button;
   GtkButton *qr_button;
+  GtkMenuButton *account_menu;
   gchar *pubkey;
   gchar *npub;
   gchar *name;
@@ -83,6 +84,7 @@ gh_conversation_info_person_class_init(GhConversationInfoPersonClass *klass)
   gtk_widget_class_bind_template_child(widget_class, GhConversationInfoPerson, verified_icon);
   gtk_widget_class_bind_template_child(widget_class, GhConversationInfoPerson, copy_button);
   gtk_widget_class_bind_template_child(widget_class, GhConversationInfoPerson, qr_button);
+  gtk_widget_class_bind_template_child(widget_class, GhConversationInfoPerson, account_menu);
 }
 
 static void
@@ -116,7 +118,7 @@ person_update(GhConversationInfoPerson *self, gboolean verified)
 }
 
 static GhConversationInfoPerson *
-person_new(const gchar *pubkey, const gchar *name, const gchar *nip05, GdkPaintable *picture)
+person_new(const gchar *account, const gchar *pubkey, const gchar *name, const gchar *nip05, GdkPaintable *picture)
 {
   GhConversationInfoPerson *self = g_object_new(GH_TYPE_CONVERSATION_INFO_PERSON, NULL);
   self->pubkey = g_strdup(pubkey);
@@ -126,6 +128,16 @@ person_new(const gchar *pubkey, const gchar *name, const gchar *nip05, GdkPainta
   self->nip05 = nip05 && *nip05 ? g_strdup(nip05) : NULL;
   gtk_actionable_set_action_target(GTK_ACTIONABLE(self->copy_button), "s", self->npub);
   gtk_actionable_set_action_target(GTK_ACTIONABLE(self->qr_button), "s", self->npub);
+  g_autoptr(GMenu) menu = g_menu_new();
+  const gchar *labels[] = { _("_Hide Account…"), _("_Report Account…") };
+  const gchar *actions[] = { "app.hide-account", "app.report-account" };
+  for (guint i = 0; i < G_N_ELEMENTS(actions); i++) {
+    g_autoptr(GMenuItem) item = g_menu_item_new(labels[i], NULL);
+    g_menu_item_set_action_and_target_value(item, actions[i], g_variant_new("(ss)", account, pubkey));
+    g_menu_append_item(menu, item);
+  }
+  gtk_menu_button_set_menu_model(self->account_menu, G_MENU_MODEL(menu));
+  gtk_widget_set_visible(GTK_WIDGET(self->account_menu), g_strcmp0(account, pubkey) != 0);
   return self;
 }
 
@@ -676,7 +688,7 @@ fill(GhConversationInfoDialog *self, const GhConversationInfoServices *services)
     GhConversationInfoProfile profile = { 0 };
     if (services->profile)
       services->profile(peers[i], &profile, services->profile_data);
-    GhConversationInfoPerson *person = person_new(peers[i], profile.name, profile.nip05, profile.picture);
+    GhConversationInfoPerson *person = person_new(gh_conversation_get_account(self->conversation), peers[i], profile.name, profile.nip05, profile.picture);
     if (services->pictures)
       gh_picture_cache_bind_avatar(services->pictures, person->avatar, peers[i]);
     g_signal_connect_object(person, "activated", G_CALLBACK(on_person_activated), self, 0);

@@ -89,6 +89,7 @@
     <file>ui/gh-lists-page.ui</file>
     <file>ui/gh-list-editor-page.ui</file>
     <file>ui/gh-hidden-page.ui</file>
+    <file>ui/gh-report-dialog.ui</file>
     <file>ui/gh-composer.ui</file>
     <file>ui/gh-requests-view.ui</file>
     <file>ui/gh-new-message-page.ui</file>

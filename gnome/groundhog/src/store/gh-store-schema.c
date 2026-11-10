@@ -466,6 +466,15 @@ static const gchar schema_v12[] =
   "CREATE TABLE social_visibility_work(epoch INTEGER NOT NULL, message_id INTEGER NOT NULL,"
   " hidden INTEGER NOT NULL, PRIMARY KEY(epoch,message_id)) WITHOUT ROWID;";
 
+/* Stage 9: schema v13 is supplied by the independently landing draft stage. */
+static const gchar schema_v14[] =
+  "CREATE TABLE report_publications(id INTEGER PRIMARY KEY, unsigned_json TEXT NOT NULL,"
+  " signed_json TEXT, targets_json TEXT NOT NULL, outcomes_json TEXT NOT NULL, state TEXT NOT NULL,"
+  " created_at INTEGER NOT NULL, next_attempt_at INTEGER NOT NULL DEFAULT 0);"
+  "CREATE TABLE social_event_cache(event_id TEXT PRIMARY KEY, kind INTEGER NOT NULL,"
+  " author TEXT NOT NULL, identifier TEXT NOT NULL DEFAULT '', event_json TEXT NOT NULL,"
+  " stored_at INTEGER NOT NULL) WITHOUT ROWID;";
+
 static const GhStoreMigration migrations[] = {
   { 1, "Groundhog store schema v1 (privacy charter §3.3)", schema_v1 },
   { 2, "MLS state for libmarmot's MarmotStorage (charter §3.9, G23)", schema_v2 },
@@ -479,9 +488,11 @@ static const GhStoreMigration migrations[] = {
   { 10, "Verified public-note cache for explicit repost and quote references (B2)", schema_v10 },
   { 11, "Account-local social lists and preferences", schema_v11 },
   { 12, "Retained hidden history and visibility projection", schema_v12 },
+  { 14, "Explicit public reports and social event cache", schema_v14 },
 };
 
-G_STATIC_ASSERT(G_N_ELEMENTS(migrations) == GH_STORE_SCHEMA_VERSION);
+/* Stage 8 must supply migration 13 before release integration. */
+G_STATIC_ASSERT(G_N_ELEMENTS(migrations) == GH_STORE_SCHEMA_VERSION - 1);
 
 const GhStoreMigration *
 gh_store_schema_get_migrations(gsize *n_migrations)

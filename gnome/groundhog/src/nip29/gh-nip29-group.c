@@ -1,5 +1,15 @@
 #include "gh-nip29-group.h"
 
+gboolean
+gh_nip29_group_is_known_public(const GhNip29Group *group)
+{
+  GhNip29Metadata *metadata = group ? gh_nip29_group_dup_metadata(group) : NULL;
+  gboolean public = metadata && !metadata->is_private;
+  gh_nip29_metadata_free(metadata);
+  return public;
+}
+
+
 #include <nostr-kinds.h>
 #include <stdlib.h>
 #include <string.h>

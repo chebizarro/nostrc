@@ -8,6 +8,7 @@
 #if GROUNDHOG_HAVE_SOCIAL_LISTS
 #include "gh-social-lists-backend.h"
 #include "gh-hide-account.h"
+#include "gh-report-dialog.h"
 #include "gh-relay-deny-policy.h"
 #endif
 #include "gh-app-services.h"
@@ -702,6 +703,23 @@ on_follows_changed(GhSocialLists *lists, gpointer data)
 }
 #endif
 
+#if GROUNDHOG_HAVE_SOCIAL_LISTS
+static gboolean
+report_public_room(gpointer data, const gchar *room_id)
+{
+#if GROUNDHOG_HAVE_OUTBOX && GROUNDHOG_HAVE_GROUP_UI
+  GhAppServices *self = data;
+  GObject *service = gh_app_outbox_get_nip29_service(self->outbox);
+  GhNip29Room *room = GH_IS_NIP29_SERVICE(service)
+      ? gh_nip29_service_lookup_room(GH_NIP29_SERVICE(service), room_id) : NULL;
+  return room && gh_nip29_group_is_known_public(gh_nip29_room_get_group(room));
+#else
+  (void)data; (void)room_id;
+  return FALSE;
+#endif
+}
+#endif
+
 static gboolean
 account_store_init(GhAppServices *self, GError **error)
 {
@@ -736,6 +754,9 @@ account_store_init(GhAppServices *self, GError **error)
 #if GROUNDHOG_HAVE_SOCIAL_LISTS
   gh_social_lists_attach_store(self->social_lists, self->account_store);
   gh_hide_account_install(self->app, self->social_lists);
+  g_autoptr(GhReportService) reports = gh_report_service_new(self->social_lists,
+      self->account_store, &list_network, NULL);
+  gh_report_dialog_install(self->app, reports, self->social_lists, report_public_room, self);
 #endif
 #if GROUNDHOG_HAVE_OUTBOX && (GROUNDHOG_HAVE_GROUP_UI || GROUNDHOG_HAVE_MLS_UI)
   /* The group services come and go with the open store. */
@@ -753,6 +774,7 @@ account_store_teardown(GhAppServices *self)
   g_signal_handlers_disconnect_by_func(self->account_store, on_roster_changed, self);
 #endif
 #if GROUNDHOG_HAVE_SOCIAL_LISTS
+  gh_report_dialog_uninstall(self->app);
   gh_hide_account_uninstall(self->app);
   g_signal_handlers_disconnect_by_func(self->settings, sync_follow_reads, self);
   g_signal_handlers_disconnect_by_func(self->social_lists, on_follows_changed, self);

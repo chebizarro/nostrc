@@ -1,6 +1,11 @@
 using Gtk 4.0;
 using Adw 1;
 
+menu request_sender_menu {
+  item { label: _("_Hide Account…"); action: "requests.hide-account"; }
+  item { label: _("_Report Account…"); action: "requests.report-account"; }
+}
+
 // Message Requests (charter §7.9, PD-8, PT-8, §8.2 G18): the content page for
 // a request chosen in the sidebar's Message Requests list (the list itself is
 // the sidebar's requests mode). A request shows its sender's npub (no profile
@@ -192,10 +197,9 @@ template $GhRequestsView: Adw.Bin {
             ]
           }
         }
-        Button hide_button {
-          label: _("_Hide Account…");
-          use-underline: true;
-          action-name: "requests.hide-account";
+        MenuButton hide_button {
+          label: _("Sender Actions");
+          menu-model: request_sender_menu;
           halign: center;
           margin-bottom: 6;
         }

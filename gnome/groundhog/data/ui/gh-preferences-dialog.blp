@@ -153,6 +153,13 @@ template $GhPreferencesDialog: Adw.PreferencesDialog {
         activatable: true;
         [suffix] Image { icon-name: "go-next-symbolic"; }
       }
+      Adw.ActionRow reports_row {
+        title: _("Reports");
+        subtitle: _("Review public reports and retry individual destinations");
+        activatable: true;
+        action-name: "app.reports";
+        [suffix] Image { icon-name: "go-next-symbolic"; }
+      }
     }
 
     // Shown when the account's encrypted store can list its blocks

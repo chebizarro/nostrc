@@ -75,6 +75,11 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
         <attribute name="hidden-when">action-disabled</attribute>
       </item>
       <item>
+        <attribute name="label" translatable="yes">_Report Account…</attribute>
+        <attribute name="action">member.report-account</attribute>
+        <attribute name="hidden-when">action-disabled</attribute>
+      </item>
+      <item>
         <attribute name="label" translatable="yes">_Remove from Group…</attribute>
         <attribute name="action">member.remove</attribute>
         <attribute name="hidden-when">action-disabled</attribute>

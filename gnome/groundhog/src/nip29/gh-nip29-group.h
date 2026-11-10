@@ -156,6 +156,8 @@ gboolean gh_nip29_metadata_supports_kind(const GhNip29Metadata *metadata,
 
 /* NULL until a relay-signed 39000 is admitted. */
 GhNip29Metadata *gh_nip29_group_dup_metadata(const GhNip29Group *group);
+/* No metadata is unknown, never public (is_private defaults to FALSE). */
+gboolean gh_nip29_group_is_known_public(const GhNip29Group *group);
 
 /* ---- kind:39001 admins and kind:39003 roles ----------------------------- */
 

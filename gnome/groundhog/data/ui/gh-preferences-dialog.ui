@@ -168,6 +168,19 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 </child>
               </object>
             </child>
+            <child>
+              <object class="AdwActionRow" id="reports_row">
+                <property name="title" translatable="yes">Reports</property>
+                <property name="subtitle" translatable="yes">Review public reports and retry individual destinations</property>
+                <property name="activatable">true</property>
+                <property name="action-name">app.reports</property>
+                <child type="suffix">
+                  <object class="GtkImage">
+                    <property name="icon-name">go-next-symbolic</property>
+                  </object>
+                </child>
+              </object>
+            </child>
           </object>
         </child>
         <child>
