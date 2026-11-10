@@ -1,0 +1,27 @@
+# Maintainer: Biz <chebizarro@protonmail.com>
+# Runtime and SDK built from the same release archive as the desktop consumers.
+pkgname=grotto-panels
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Public-metadata GTK management panel runtime and SDK'
+arch=('x86_64' 'aarch64')
+url='https://github.com/chebizarro/nostrc'
+license=('MIT')
+depends=('gtk4>=4.14' 'libadwaita>=1.5')
+makedepends=('cmake' 'ninja' 'pkgconf' 'gettext' 'glib2-devel')
+_version=0.12.1-alpha8
+source=("groundhog-${_version}.tar.gz::https://github.com/chebizarro/nostrc/releases/download/groundhog-v${_version}/groundhog-${_version}.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+  cmake -S "groundhog-${_version}/gnome/grotto-panels" -B build -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF \
+    -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib
+  cmake --build build
+}
+
+package() {
+  DESTDIR="$pkgdir" cmake --install build
+  install -Dm644 "groundhog-${_version}/gnome/grotto-panels/LICENSE" \
+    "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

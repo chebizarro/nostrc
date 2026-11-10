@@ -4,9 +4,15 @@
 name: grotto-daemon
 base: core24
 version: 0.1.1-alpha1
-summary: Grotto Daemon
+title: Grotto Daemon
+summary: Background Nostr signing service without a graphical interface
 description: |
-  Background daemon for Grotto to handle signing and IPC.
+  Grotto Daemon handles Nostr signing, encryption and decryption requests
+  through NIP-55L and explicitly configured NIP-46 remote signing. This
+  package contains only the background service, not the Grotto identity
+  manager or graphical approval interface. Sandboxed signer packages are
+  experimental; use the native Linux package for desktop integration.
+icon: apps/grotto/data/icons/hicolor/256x256/apps/org.nostr.Grotto.png
 
 grade: stable
 confinement: strict
@@ -27,6 +33,7 @@ parts:
       - build-essential
       - cmake
       - ninja-build
+      - gettext
       - pkg-config
       - git
       - python3-pip
@@ -45,6 +52,9 @@ parts:
       - libsecp256k1-dev
       - libsodium-dev
       - libcurl4-openssl-dev
+      - libzbar-dev
+      - libgstreamer1.0-dev
+      - libgstreamer-plugins-base1.0-dev
       - libxml2-dev
       - librsvg2-dev
       - libgdk-pixbuf-2.0-dev

@@ -50,29 +50,30 @@
 
   <screenshots>
     <screenshot type="default">
-      <caption>Identity and backup status in the Settings-style window</caption>
-      <image>https://raw.githubusercontent.com/chebizarro/nostrc/master/apps/grotto/data/screenshots/identity-light.png</image>
+      <caption>Manage your Nostr identity and public profile</caption>
+      <image type="source" width="1120" height="830">https://raw.githubusercontent.com/chebizarro/nostrc/848765d029b53f2f5563d23d6f33425b1189ef7c/apps/grotto/data/screenshots/store/identity-light.png</image>
     </screenshot>
     <screenshot>
-      <caption>Connected Apps and waiting requests</caption>
-      <image>https://raw.githubusercontent.com/chebizarro/nostrc/master/apps/grotto/data/screenshots/inbox-light.png</image>
+      <caption>Manage connected apps and signing permissions</caption>
+      <image type="source" width="1120" height="830">https://raw.githubusercontent.com/chebizarro/nostrc/848765d029b53f2f5563d23d6f33425b1189ef7c/apps/grotto/data/screenshots/store/connected-apps-light.png</image>
     </screenshot>
     <screenshot>
-      <caption>Client permissions in the real application templates</caption>
-      <image>https://raw.githubusercontent.com/chebizarro/nostrc/master/apps/grotto/data/screenshots/permissions-light.png</image>
-    </screenshot>
-    <screenshot>
-      <caption>Preferences in dark appearance</caption>
-      <image>https://raw.githubusercontent.com/chebizarro/nostrc/master/apps/grotto/data/screenshots/settings-dark.png</image>
+      <caption>Choose privacy and signing preferences in dark appearance</caption>
+      <image type="source" width="1120" height="830">https://raw.githubusercontent.com/chebizarro/nostrc/848765d029b53f2f5563d23d6f33425b1189ef7c/apps/grotto/data/screenshots/store/preferences-dark.png</image>
     </screenshot>
   </screenshots>
 
   <content_rating type="oars-1.1" />
 
   <releases>
-    <release version="0.1.1-alpha1" type="development" date="2026-11-07">
+    <release version="0.1.1-alpha1" type="development" date="2026-11-08">
       <description>
-        <p>Fix the alternate Meson frontend's Groundhog executable-side link closure.</p>
+        <p>First pre-release of Grotto, a Nostr signer for the desktop.</p>
+        <ul>
+          <li>Create and import identities, manage encrypted backups, and review signing requests without sharing private keys with client apps</li>
+          <li>Approve a local app's declared operations together, with per-app permissions and activity history</li>
+          <li>Pair remote signing clients using connection links or QR codes</li>
+        </ul>
       </description>
     </release>
     <release version="0.1.0" type="development" date="2026-10-14">

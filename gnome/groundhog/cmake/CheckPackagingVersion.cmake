@@ -1,7 +1,7 @@
 # Checks that every Groundhog packaging file names VERSION (CMake's
 # GROUNDHOG_VERSION_FULL, e.g. 0.12.0-alpha8), so About, --version, the
 # release tag and the packages cannot drift apart.
-#   cmake -DVERSION=<version> -DROOT=<repo root> -P CheckPackagingVersion.cmake
+#   cmake -DVERSION=<version> -DROOT=<repo root> -DDESKTOP=<built desktop file> -P CheckPackagingVersion.cmake
 if (NOT VERSION OR NOT ROOT)
   message(FATAL_ERROR "usage: cmake -DVERSION=... -DROOT=... -P CheckPackagingVersion.cmake")
 endif()
@@ -31,4 +31,10 @@ expect(packaging/debian-desktop/changelog "^groundhog \\(${DEB_VERSION}-[0-9]+\\
 if (failed)
   message(FATAL_ERROR "packaging files disagree with GROUNDHOG_VERSION_FULL=${VERSION}")
 endif()
+include("${ROOT}/cmake/CheckDesktopMetadata.cmake")
+if(NOT DESKTOP)
+  message(FATAL_ERROR "Set DESKTOP to the built org.nostr.Groundhog.desktop (build groundhog-i18n first)")
+endif()
+check_desktop_metadata("${ROOT}/gnome/groundhog/data/org.nostr.Groundhog.metainfo.xml"
+  "${DESKTOP}" "${VERSION}")
 message(STATUS "packaging files name ${VERSION}")

@@ -156,6 +156,17 @@ jobs:
           apt-get update -qq
           apt-get install -y -qq devscripts equivs git ca-certificates xvfb dbus >/dev/null
           tar -xzf src/groundhog-*.tar.gz
+          # Build the public panels provider from the exact same source artifact.
+          mkdir panels-build
+          tar -xzf src/groundhog-*.tar.gz -C panels-build --strip-components=1
+          (
+            cd panels-build
+            rm -rf debian && cp -r gnome/grotto-panels/packaging/debian debian
+            sed -i "1s/(\([^)]*\))/(\1~${{ matrix.distro.tag }})/" debian/changelog
+            mk-build-deps -i -r -t 'apt-get -y -qq' debian/control
+            dpkg-buildpackage -b -us -uc
+          )
+          apt-get install -y -qq ./libgrotto-panels-0-*.deb
           cd groundhog-*/
           # The archive carries the headless stack's debian/; the desktop
           # recipe replaces it (scripts/build-desktop-deb.sh does the same).
@@ -203,8 +214,14 @@ jobs:
           set -eux
           dnf install -y -q rpm-build rpmdevtools dnf-plugins-core xorg-x11-server-Xvfb dbus-daemon patch
           tar -xzf src/groundhog-*.tar.gz
-          dnf builddep -y -q groundhog-*/packaging/rpm/groundhog.spec
           rpmdev-setuptree
+          panels_spec=$(echo groundhog-*/gnome/grotto-panels/packaging/rpm/grotto-panels.spec)
+          dnf builddep -y -q "$panels_spec"
+          tar -czf ~/rpmbuild/SOURCES/grotto-panels-0.1.0.tar.gz \
+            --transform="s/^groundhog-${UPSTREAM_VERSION}/grotto-panels-0.1.0/" groundhog-*/
+          rpmbuild -ba "$panels_spec"
+          dnf install -y -q ~/rpmbuild/RPMS/*/grotto-panels-*.rpm
+          dnf builddep -y -q groundhog-*/packaging/rpm/groundhog.spec
           cp src/groundhog-*.tar.gz ~/rpmbuild/SOURCES/
           # The spec names the archive by its pinned release; a branch build
           # (workflow_dispatch) carries a 0.0.0-<sha> version instead. Point
@@ -216,7 +233,7 @@ jobs:
       - name: Install and launch
         run: |
           set -eux
-          dnf install -y -q dist/groundhog-0*.rpm dist/grotto-0*.rpm
+          dnf install -y -q dist/*.rpm
           groundhog --version
           xvfb-run -a dbus-run-session -- groundhog --smoke
       - uses: actions/upload-artifact@v4
@@ -244,6 +261,12 @@ jobs:
             runner: ubuntu-24.04-arm
             image: 'menci/archlinuxarm@sha256:57ed42430d3d3f22beb2983de1aa23396b27fcf33ebf5dd781947cdc1038a640'
     steps:
+      - name: Install checkout prerequisite
+        run: |
+          # Match the helper's container download policy before its first use.
+          grep -q '^DisableSandbox' /etc/pacman.conf ||
+            sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf
+          pacman -Syu --noconfirm --needed git
       - uses: actions/checkout@v4
         with:
           sparse-checkout: scripts/ci
@@ -261,7 +284,7 @@ jobs:
       - name: Install and launch
         run: |
           set -eux
-          pacman -U --noconfirm dist/groundhog-0*.pkg.tar.zst dist/grotto-0*.pkg.tar.zst
+          pacman -U --noconfirm dist/*.pkg.tar.zst
           groundhog --version
           xvfb-run -a dbus-run-session -- groundhog --smoke
       - uses: actions/upload-artifact@v4

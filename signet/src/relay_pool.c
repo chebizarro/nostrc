@@ -849,18 +849,11 @@ SignetRelayPool *signet_relay_pool_new(const SignetRelayPoolConfig *cfg) {
 
     for (size_t i = 0; i < cfg->n_relays; i++) {
       rp->urls[i] = g_strdup(cfg->relays[i] ? cfg->relays[i] : "");
-      /* fp-1r0k: register, do not dial. This runs on signetd's startup path
-       * before the main loop exists, and the blocking variant spent up to 30s
-       * per unreachable relay here -- delaying every listener the daemon is
-       * supposed to be bringing up. libnostr's redial worker connects them in
-       * the background and keeps retrying (fp-ieg8). */
-      nostr_simple_pool_ensure_relay_async(rp->pool, rp->urls[i]);
     }
   }
 
-  /* Register NIP-42 auth callback on each relay */
-  signet_relay_pool_register_auth(rp);
-
+  /* Construction must not start the redial worker on configured URLs:
+   * listener validation can still fail before start() owns network lifetime. */
   rp->started = FALSE;
   return rp;
 }
@@ -957,6 +950,8 @@ int signet_relay_pool_start(SignetRelayPool *rp) {
 
   if (rp->disposing || rp->stop_source) { g_mutex_unlock(&rp->mu); return -1; }
   rp->stopping = FALSE;
+  for (size_t i = 0; i < rp->n_urls; i++)
+    nostr_simple_pool_ensure_relay_async(rp->pool, rp->urls[i]);
   signet_relay_pool_register_auth(rp);
   nostr_simple_pool_set_subscription_callback(rp->pool, subscription_changed, rp);
   nostr_simple_pool_start(rp->pool);
