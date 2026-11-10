@@ -827,6 +827,44 @@ confirm(Gui *g, const char *action, const char *alert_name, const char *label)
   drain_idle();
 }
 
+static void
+record_hide(GSimpleAction *action, GVariant *parameter, GVariant **target)
+{
+  (void)action;
+  g_clear_pointer(target, g_variant_unref);
+  *target = g_variant_ref(parameter);
+}
+
+static void
+test_gui_hide_account(void)
+{
+  Gui g = { 0 };
+  account_init(&g.account);
+  GhConversation *conversation = receive(&g.account, PEER[0], T0 - 60, "hello");
+  gui_window(&g, 900, 760, conversation);
+  g_autoptr(GSimpleActionGroup) actions = g_simple_action_group_new();
+  g_autoptr(GSimpleAction) hide = g_simple_action_new("hide-account", G_VARIANT_TYPE("(ss)"));
+  g_autoptr(GVariant) target = NULL;
+  g_signal_connect(hide, "activate", G_CALLBACK(record_hide), &target);
+  g_action_map_add_action(G_ACTION_MAP(actions), G_ACTION(hide));
+  gtk_widget_insert_action_group(GTK_WIDGET(g.window), "app", G_ACTION_GROUP(actions));
+  gui_open(&g, conversation);
+  g_assert_true(gtk_widget_get_visible(child(&g, "hide_row")));
+  g_assert_true(gtk_widget_get_visible(child(&g, "block_row")));
+  gboolean was_request = gh_conversation_get_is_request(conversation);
+  g_assert_true(gtk_widget_activate_action(GTK_WIDGET(g.dialog), "info.hide-account", NULL));
+  g_assert_nonnull(target);
+  const gchar *account, *peer;
+  g_variant_get(target, "(&s&s)", &account, &peer);
+  g_assert_cmpstr(account, ==, ACCOUNT);
+  g_assert_cmpstr(peer, ==, PEER[0]);
+  g_assert_cmpint(gh_conversation_get_is_request(conversation), ==, was_request);
+  g_assert_nonnull(gh_conversation_store_lookup(g.account.model, gh_conversation_get_room_id(conversation)));
+  gtk_widget_insert_action_group(GTK_WIDGET(g.window), "app", NULL);
+  gui_close(&g);
+  account_clear(&g.account);
+}
+
 /* ST-9 via the UI: Forget on This Device through its confirmation. */
 static void
 test_gui_forget(void)
@@ -1518,6 +1556,7 @@ main(int argc, char **argv)
     g_test_add_func("/groundhog/conversation-info-gui/st9-forget", test_gui_forget);
     g_test_add_func("/groundhog/conversation-info-gui/mute-in-database", test_gui_mute);
     g_test_add_func("/groundhog/conversation-info-gui/block", test_gui_block);
+    g_test_add_func("/groundhog/conversation-info-gui/hide-account", test_gui_hide_account);
     g_test_add_func("/groundhog/conversation-info-gui/verify", test_gui_verify);
     g_test_add_func("/groundhog/conversation-info-gui/timer", test_gui_timer);
     g_test_add_func("/groundhog/conversation-info-gui/privacy-and-markup",

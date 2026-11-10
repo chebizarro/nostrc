@@ -820,8 +820,11 @@ test_restart_restores(void)
 
   fixture_restart(&f);
   g_autofree gchar *after = model_snapshot(f.model);
-  g_assert_cmpstr(after, ==, before);
-  g_assert_null(room(&f, as)); /* a draft alone lists nothing */
+  /* Stage 6 keeps rooms with drafts even when no message is visible. Existing
+   * message rooms restore unchanged; the draft-only room sorts after them. */
+  g_assert_true(g_str_has_prefix(after, before));
+  g_assert_cmpuint(n_items(f.model), ==, 5);
+  assert_room(&f, as, 0, 0, FALSE);
   g_autofree gchar *draft_ap = draft_of(&f, ap);
   g_autofree gchar *draft_as = draft_of(&f, as);
   g_autofree gchar *draft_ar = draft_of(&f, ar);
@@ -857,7 +860,7 @@ test_restart_restores(void)
   g_autofree gchar *restored = model_snapshot(f.model);
   g_assert_cmpstr(restored, ==, later);
   g_autofree gchar *order2 = room_order(f.model);
-  g_autofree gchar *expected_order2 = g_strjoin("|", apq, aq, ar, ap, NULL);
+  g_autofree gchar *expected_order2 = g_strjoin("|", apq, aq, ar, ap, as, NULL);
   g_assert_cmpstr(order2, ==, expected_order2);
   assert_store_consistent(f.store);
   fixture_clear(&f);

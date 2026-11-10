@@ -145,6 +145,21 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         <child>
                           <object class="AdwPreferencesGroup" id="actions_group">
                             <child>
+                              <object class="AdwActionRow" id="hide_row">
+                                <property name="title" translatable="yes">Hide Account</property>
+                                <property name="subtitle" translatable="yes">Stop saving new messages from this account across conversations</property>
+                                <property name="activatable-widget">hide_button</property>
+                                <child type="suffix">
+                                  <object class="GtkButton" id="hide_button">
+                                    <property name="label" translatable="yes">_Hide Account…</property>
+                                    <property name="use-underline">true</property>
+                                    <property name="valign">3</property>
+                                    <property name="action-name">info.hide-account</property>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            <child>
                               <object class="AdwActionRow" id="block_row">
                                 <property name="title" translatable="yes">Block</property>
                                 <property name="use-markup">false</property>

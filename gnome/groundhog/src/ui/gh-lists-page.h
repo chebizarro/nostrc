@@ -17,6 +17,8 @@ typedef struct {
   gboolean (*get_sync)(GObject *owner);
   gboolean (*set_sync)(GObject *owner, gboolean enabled, GError **error);
   gboolean sync_available;
+  const gchar *(*visibility_error)(GObject *owner);
+  gboolean (*retry_visibility)(GObject *owner, GError **error);
 } GhListsBackend;
 
 #define GH_TYPE_LISTS_PAGE (gh_lists_page_get_type())

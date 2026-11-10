@@ -52,14 +52,14 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
       </object>
     </child>
     <child type="suffix">
-      <object class="GtkButton" id="remove_button">
+      <object class="GtkMenuButton" id="remove_button">
         <property name="visible">false</property>
         <property name="valign">3</property>
-        <property name="icon-name">list-remove-symbolic</property>
-        <property name="tooltip-text" translatable="yes">Remove from Group</property>
-        <property name="action-name">member.remove</property>
+        <property name="icon-name">view-more-symbolic</property>
+        <property name="tooltip-text" translatable="yes">Member Actions</property>
+        <property name="menu-model">member_menu</property>
         <accessibility>
-          <property name="label" translatable="yes">Remove from Group</property>
+          <property name="label" translatable="yes">Member Actions</property>
         </accessibility>
         <style>
           <class name="flat"/>
@@ -67,4 +67,18 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
       </object>
     </child>
   </template>
+  <menu id="member_menu">
+    <section>
+      <item>
+        <attribute name="label" translatable="yes">_Hide Account…</attribute>
+        <attribute name="action">member.hide-account</attribute>
+        <attribute name="hidden-when">action-disabled</attribute>
+      </item>
+      <item>
+        <attribute name="label" translatable="yes">_Remove from Group…</attribute>
+        <attribute name="action">member.remove</attribute>
+        <attribute name="hidden-when">action-disabled</attribute>
+      </item>
+    </section>
+  </menu>
 </interface>

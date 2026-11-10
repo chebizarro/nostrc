@@ -281,6 +281,7 @@ update(GhConversationRow *self)
    * the subject it carries is only secondary text, before any preview. */
   const gchar *title = gh_conversation_get_title(conversation);
   guint unread = gh_conversation_get_unread_count(conversation);
+  gboolean updating = gh_conversation_get_visibility_updating(conversation);
   gboolean request = gh_conversation_get_is_request(conversation);
   gboolean pinned = gh_conversation_get_pinned(conversation);
   const gchar *subject = request ? gh_conversation_get_subject(conversation) : NULL;
@@ -333,8 +334,8 @@ update(GhConversationRow *self)
   gtk_label_set_text(self->time_label, time);
   gtk_label_set_text(self->preview_label, secondary);
   gtk_widget_set_visible(GTK_WIDGET(self->request_label), request);
-  gtk_widget_set_visible(GTK_WIDGET(self->unread_badge), unread > 0);
-  if (unread > 0) {
+  gtk_widget_set_visible(GTK_WIDGET(self->unread_badge), unread > 0 && !updating);
+  if (unread > 0 && !updating) {
     g_autofree gchar *count = unread > 99 ? g_strdup("99+") : g_strdup_printf("%u", unread);
     gtk_label_set_text(self->unread_badge, count);
     gtk_widget_add_css_class(GTK_WIDGET(self->title_label), "groundhog-unread");
@@ -352,7 +353,7 @@ update(GhConversationRow *self)
   if (subject)
     /* TRANSLATORS: a message request's subject, read out after its sender. */
     g_ptr_array_add(parts, g_strdup_printf(_("Subject: %s"), subject));
-  if (unread > 0)
+  if (unread > 0 && !updating)
     g_ptr_array_add(parts, g_strdup_printf(g_dngettext(NULL, "%u unread", "%u unread", unread),
                                            unread));
   if (*time)

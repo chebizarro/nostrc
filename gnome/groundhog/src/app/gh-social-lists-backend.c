@@ -25,11 +25,21 @@ static GNostrListDocument *import(GObject *owner, const gchar *json, GError **er
 {
   return gh_social_lists_import(GH_SOCIAL_LISTS(owner), json, error);
 }
+static const gchar *visibility_error(GObject *owner)
+{
+  GhMessagePolicy *policy = gh_social_lists_get_message_policy(GH_SOCIAL_LISTS(owner));
+  return policy ? gh_message_policy_get_error(policy) : NULL;
+}
+static gboolean retry_visibility(GObject *owner, GError **error)
+{
+  return gh_social_lists_retry_visibility(GH_SOCIAL_LISTS(owner), error);
+}
 GhListsBackend gh_social_lists_backend(GhSocialLists *self)
 {
   return (GhListsBackend){
     .owner = G_OBJECT(self), .generation = generation, .service = service,
     .get_sync = get_sync, .set_sync = set_sync, .sync_available = FALSE,
     .ensure = ensure, .apply = apply, .import = import, .export = gh_social_lists_export,
+    .visibility_error = visibility_error, .retry_visibility = retry_visibility,
   };
 }

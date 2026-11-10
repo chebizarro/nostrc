@@ -1,5 +1,6 @@
 #include "gh-social-lists-backend.h"
 #include "gh-list-editor-page.h"
+#include "gh-hidden-page.h"
 #include "gh-preferences-dialog.h"
 #include "nostrc-test-gdk-frame.h"
 #include <nostr-kinds.h>
@@ -125,6 +126,9 @@ static void test_preferences_manager(void)
   GtkWidget *row = child(GTK_WIDGET(prefs), GH_TYPE_PREFERENCES_DIALOG, "social_sync_row");
   g_assert_false(adw_switch_row_get_active(ADW_SWITCH_ROW(row)));
   g_assert_false(gtk_widget_get_sensitive(row));
+  g_assert_true(gtk_widget_get_visible(child(GTK_WIDGET(prefs), GH_TYPE_PREFERENCES_DIALOG, "hidden_group")));
+  g_assert_nonnull(child(GTK_WIDGET(prefs), GH_TYPE_PREFERENCES_DIALOG, "blocked_row"));
+  g_assert_cmpstr(adw_preferences_row_get_title(ADW_PREFERENCES_ROW(child(GTK_WIDGET(prefs), GH_TYPE_PREFERENCES_DIALOG, "hidden_row"))), ==, "Hidden Accounts and Content");
   /* Even programmatic activation cannot bypass the store-backed backend. */
   adw_switch_row_set_active(ADW_SWITCH_ROW(row), TRUE);
   g_assert_false(adw_switch_row_get_active(ADW_SWITCH_ROW(row)));
@@ -161,6 +165,77 @@ static void test_preferences_manager(void)
   gh_store_close(store);
 }
 
+static void test_hidden_page(void)
+{
+  GError *error = NULL;
+  GhStore *store = gh_store_open_ephemeral(ACCOUNT, NULL, &error);
+  g_assert_no_error(error);
+  g_autoptr(GhSocialLists) owner = gh_social_lists_new(NULL);
+  g_assert_true(gh_social_lists_bind_store(owner, store, 1, &error));
+  GhListsBackend backend = gh_social_lists_backend(owner);
+  GhHiddenPage *page = g_object_ref_sink(gh_hidden_page_new(&backend));
+  GtkWindow *window = GTK_WINDOW(adw_window_new());
+  adw_window_set_content(ADW_WINDOW(window), GTK_WIDGET(page));
+  gtk_window_set_default_size(window, 360, 640);
+  present(window);
+  AdwComboRow *kind = ADW_COMBO_ROW(child(GTK_WIDGET(page), GH_TYPE_HIDDEN_PAGE, "kind_row"));
+  GtkWidget *value = child(GTK_WIDGET(page), GH_TYPE_HIDDEN_PAGE, "value_row");
+  GtkListView *list = GTK_LIST_VIEW(child(GTK_WIDGET(page), GH_TYPE_HIDDEN_PAGE, "list"));
+  adw_combo_row_set_selected(kind, 1);
+  gtk_editable_set_text(GTK_EDITABLE(value), "quiet");
+  g_signal_emit_by_name(value, "apply");
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(gtk_list_view_get_model(list))), ==, 1);
+  adw_combo_row_set_selected(kind, 2);
+  gtk_editable_set_text(GTK_EDITABLE(value), "#Quiet");
+  g_signal_emit_by_name(value, "apply");
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(gtk_list_view_get_model(list))), ==, 2);
+  present(window);
+  GtkWidget *remove = find_type(GTK_WIDGET(list), GTK_TYPE_BUTTON);
+  g_assert_nonnull(remove);
+  g_signal_emit_by_name(remove, "clicked");
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(gtk_list_view_get_model(list))), ==, 1);
+  g_assert_true(gh_store_exec(store, "CREATE TRIGGER reject_hidden BEFORE UPDATE ON social_documents BEGIN SELECT RAISE(ABORT,'injected'); END", &error));
+  adw_combo_row_set_selected(kind, 1);
+  gtk_editable_set_text(GTK_EDITABLE(value), "not saved");
+  gtk_widget_grab_focus(value);
+  g_signal_emit_by_name(value, "apply");
+  g_assert_cmpstr(gtk_editable_get_text(GTK_EDITABLE(value)), ==, "not saved");
+  g_assert_true(gtk_widget_get_visible(child(GTK_WIDGET(page), GH_TYPE_HIDDEN_PAGE, "status")));
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(gtk_list_view_get_model(list))), ==, 1);
+  g_assert_true(gh_store_exec(store, "DROP TRIGGER reject_hidden", &error));
+  g_assert_true(gh_store_exec(store, "CREATE TRIGGER reject_projection BEFORE UPDATE OF visibility_revision ON social_preferences BEGIN SELECT RAISE(ABORT,'injected'); END", &error));
+  gtk_editable_set_text(GTK_EDITABLE(value), "retry projection");
+  g_signal_emit_by_name(value, "apply");
+  GhMessagePolicy *policy = gh_social_lists_get_message_policy(owner);
+  while (!gh_message_policy_get_error(policy)) g_main_context_iteration(NULL, TRUE);
+  GtkWidget *retry = child(GTK_WIDGET(page), GH_TYPE_HIDDEN_PAGE, "retry_button");
+  g_assert_true(gtk_widget_get_visible(retry));
+  g_assert_nonnull(gh_social_lists_get_error(owner));
+  g_assert_true(gtk_widget_get_visible(child(GTK_WIDGET(page), GH_TYPE_HIDDEN_PAGE, "status")));
+  g_assert_true(gh_store_exec(store, "DROP TRIGGER reject_projection", &error));
+  g_signal_emit_by_name(retry, "clicked");
+  while (gh_message_policy_is_updating(policy)) g_main_context_iteration(NULL, TRUE);
+  g_assert_false(gtk_widget_get_visible(retry));
+  g_assert_null(gh_social_lists_get_error(owner));
+  adw_combo_row_set_selected(kind, 0);
+  gtk_editable_set_text(GTK_EDITABLE(value), "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+  g_signal_emit_by_name(value, "apply");
+  AdwDialog *confirmation = adw_window_get_visible_dialog(ADW_WINDOW(window));
+  g_assert_nonnull(confirmation);
+  g_object_ref(confirmation);
+  GhStore *other = gh_store_open_ephemeral("cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", NULL, &error);
+  g_assert_true(gh_social_lists_bind_store(owner, other, 2, &error));
+  g_assert_null(adw_window_get_visible_dialog(ADW_WINDOW(window)));
+  g_signal_emit_by_name(confirmation, "response", "hide");
+  g_object_unref(confirmation);
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(gtk_list_view_get_model(list))), ==, 0);
+  g_assert_no_error(error);
+  gh_social_lists_close(owner);
+  gtk_window_destroy(window);
+  g_object_unref(page);
+  gh_store_close(other); gh_store_close(store);
+}
+
 int main(int argc, char **argv)
 {
   g_test_init(&argc, &argv, NULL);
@@ -171,5 +246,6 @@ int main(int argc, char **argv)
   groundhog_register_resource();
   g_test_add_func("/groundhog/lists-ui/production-editor", test_real_backend_editor);
   g_test_add_func("/groundhog/lists-ui/preferences-manager", test_preferences_manager);
+  g_test_add_func("/groundhog/lists-ui/hidden-entries-and-stale-confirmation", test_hidden_page);
   return g_test_run();
 }

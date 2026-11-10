@@ -1128,6 +1128,65 @@ test_no7_mute_storage(void)
   gh_store_close(store);
 }
 
+static void
+test_mixed_message_withdrawal(void)
+{
+  Fixture f;
+  fixture_up(&f, "preview", FALSE);
+  GError *error = NULL;
+  GhStore *store = gh_store_open_ephemeral(ACCOUNT_A, f.clock, &error);
+  g_assert_no_error(error);
+  f.conversations = gh_store_conversations_new(store);
+  g_assert_true(gh_store_conversations_attach(f.conversations, f.model, 0, &error));
+  open_room(&f, PEER[0], PEER[1]);
+  GhConversation *room = receive(&f, PEER[0], PEER[1], "remove this pending message");
+  g_autoptr(GhMessage) remove = g_list_model_get_item(G_LIST_MODEL(room), 1);
+  receive(&f, PEER[1], PEER[0], "keep this pending message");
+  gh_notifier_withdraw_message(f.notifier, gh_message_get_rumor_id(remove));
+  settle(&f);
+  const gchar *id = GH_NOTIFIER_ID_CONVERSATION_PREFIX "1";
+  g_assert_nonnull(strstr(field(shown(id), "body"), "keep this pending message"));
+  g_assert_cmpuint(fake_gtk_notifications_count(fake, TRUE, NULL), ==, 1);
+
+  /* A new message becomes hidden between creation and the scheduled send.
+   * Removing it must not re-alert the older retained member of the burst. */
+  receive(&f, PEER[0], PEER[1], "secret pending message");
+  g_assert_true(gh_store_exec(store,
+    "INSERT INTO social_mutes(entry_key,tag_name,value,position,is_private) VALUES('word','word','secret',0,1)", &error));
+  GhMessagePolicy *policy = gh_conversation_store_get_policy(f.model);
+  g_assert_true(gh_message_policy_refresh(policy, &error));
+  while (gh_message_policy_is_updating(policy)) {
+    g_assert_null(gh_message_policy_get_error(policy));
+    g_main_context_iteration(NULL, TRUE);
+  }
+  advance_ms(&f, GH_NOTIFIER_UPDATE_INTERVAL_MS);
+  g_assert_cmpuint(fake_gtk_notifications_count(fake, TRUE, NULL), ==, 1);
+  g_assert_true(gh_store_exec(store, "DELETE FROM social_mutes", &error));
+  g_assert_true(gh_message_policy_refresh(policy, &error));
+  while (gh_message_policy_is_updating(policy)) g_main_context_iteration(NULL, TRUE);
+  advance_ms(&f, GH_NOTIFIER_UPDATE_INTERVAL_MS);
+  g_assert_cmpuint(fake_gtk_notifications_count(fake, TRUE, NULL), ==, 1);
+  receive(&f, PEER[1], PEER[0], "new visible message");
+  settle(&f);
+  g_assert_nonnull(strstr(field(shown(id), "body"), "new visible message"));
+  g_assert_cmpuint(fake_gtk_notifications_count(fake, TRUE, NULL), ==, 2);
+  g_assert_true(gh_store_exec(store,
+    "INSERT INTO social_mutes(entry_key,tag_name,value,position,is_private) VALUES('word','word','skip',0,1)", &error));
+  g_assert_true(gh_message_policy_refresh(policy, &error));
+  g_assert_true(gh_message_policy_is_updating(policy));
+  gh_clock_fake_advance(f.clock, G_USEC_PER_SEC);
+  receive(&f, PEER[1], PEER[0], "fresh during projection");
+  while (gh_message_policy_is_updating(policy)) g_main_context_iteration(NULL, TRUE);
+  advance_ms(&f, GH_NOTIFIER_UPDATE_INTERVAL_MS);
+  g_assert_nonnull(strstr(field(shown(id), "body"), "fresh during projection"));
+  g_assert_cmpuint(fake_gtk_notifications_count(fake, TRUE, NULL), ==, 3);
+  g_assert_no_error(error);
+  gh_store_conversations_close(f.conversations);
+  gh_conversation_store_set_account(f.model, NULL, NULL, NULL, NULL);
+  fixture_down(&f);
+  gh_store_close(store);
+}
+
 /* ---- NO-8 category and priority ------------------------------------------------------------- */
 
 /* The category, as GLib's freedesktop backend hands it to a notification
@@ -1443,6 +1502,7 @@ main(int argc, char **argv)
   nostrc_test_bus_add_func("/groundhog/notifier/no5-withdrawal", test_no5_withdrawal);
   nostrc_test_bus_add_func("/groundhog/notifier/no6-stale", test_no6_stale);
   nostrc_test_bus_add_func("/groundhog/notifier/no7-mute-storage", test_no7_mute_storage);
+  nostrc_test_bus_add_func("/groundhog/notifier/mixed-message-withdrawal-no-replay", test_mixed_message_withdrawal);
   nostrc_test_bus_add_func("/groundhog/notifier/no8-category-priority",
                            test_no8_category_priority);
   nostrc_test_bus_add_func("/groundhog/notifier/no11-locked-notice", test_no11_locked_notice);

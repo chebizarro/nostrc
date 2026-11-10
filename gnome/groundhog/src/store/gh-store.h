@@ -360,6 +360,8 @@ gboolean gh_store_find_conversation(GhStore *store, GhStoreBackend backend,
 /* Search decrypted message bodies in the open encrypted store, including
  * messages outside the currently listed page. The returned set contains
  * "<backend>:<backend_key>" keys and belongs to the caller. */
+/* Owner-context visibility projection; search stays masked even after a failed epoch. */
+void gh_store_set_visibility_updating(GhStore *store, gboolean updating);
 gboolean gh_store_search_message_rooms(GhStore *store, const gchar *query,
                                        GHashTable **out_rooms, GError **error);
 /* NULL or "" clears the draft. */
@@ -523,6 +525,8 @@ typedef struct {
   const gchar *title;                /* NULL keeps the current title */
   const gchar *const *participants;  /* NULL-terminated pubkeys, or NULL */
   gboolean unread;                   /* counts towards unread_count (IN only) */
+  gboolean social_hidden;            /* retain without room-derived effects */
+  gboolean drop;                     /* seen identities only; never store payload */
   GhStoreRequestState request_state; /* only when this creates the conversation */
   /* MLS only (schema v5, W25): the source epoch libmarmot authenticated for
    * this inner event (MarmotMessageResult.app_msg.epoch, never a tag), so its
@@ -540,7 +544,8 @@ typedef enum {
   GH_STORE_ADMIT_DUPLICATE,  /* message id already seen; new wrap id recorded */
   GH_STORE_ADMIT_FORGOTTEN,  /* older than the conversation's forgotten_before */
   GH_STORE_ADMIT_EXPIRED,    /* expired on arrival (EX-4) */
-  GH_STORE_ADMIT_DELETED     /* its author's deletion request came first (nostrc-419wf) */
+  GH_STORE_ADMIT_DELETED,    /* its author's deletion request came first (nostrc-419wf) */
+  GH_STORE_ADMIT_HIDDEN      /* author policy: seen only */
 } GhStoreAdmitResult;
 
 /* T-admit: records the wrap id and message id in `seen`, and stores the
@@ -820,7 +825,7 @@ gboolean gh_store_checkpoint(GhStore *store, GError **error);
  * Ordered, append-only migrations; each runs in one transaction that also
  * records it in schema_migrations and sets PRAGMA user_version. A store with
  * a higher user_version is refused (NEWER_SCHEMA). */
-#define GH_STORE_SCHEMA_VERSION 11
+#define GH_STORE_SCHEMA_VERSION 12
 
 typedef struct {
   gint version;

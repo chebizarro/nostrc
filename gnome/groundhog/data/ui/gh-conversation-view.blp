@@ -30,6 +30,13 @@ template $GhConversationView: Adw.BreakpointBin {
       use-markup: false;
     }
 
+    [top]
+    Adw.Banner visibility_banner {
+      title: _("Updating Hidden Messages…");
+      revealed: false;
+      use-markup: false;
+    }
+
     content: Overlay {
       child: ScrolledWindow scroller {
         hscrollbar-policy: never;

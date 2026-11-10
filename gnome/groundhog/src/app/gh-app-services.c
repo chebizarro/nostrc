@@ -7,6 +7,7 @@
 #endif
 #if GROUNDHOG_HAVE_SOCIAL_LISTS
 #include "gh-social-lists-backend.h"
+#include "gh-hide-account.h"
 #endif
 #include "gh-app-services.h"
 #include "gh-diagnostics.h"
@@ -546,6 +547,7 @@ account_store_init(GhAppServices *self, GError **error)
   self->account_store = gh_account_store_new(&config);
 #if GROUNDHOG_HAVE_SOCIAL_LISTS
   self->social_lists = gh_social_lists_new(self->account_store);
+  gh_hide_account_install(self->app, self->social_lists);
 #endif
   return TRUE;
 }
@@ -556,6 +558,7 @@ static void
 account_store_teardown(GhAppServices *self)
 {
 #if GROUNDHOG_HAVE_SOCIAL_LISTS
+  gh_hide_account_uninstall(self->app);
   dispose_object(&self->social_lists);
 #endif
   dispose_object(&self->account_store);
@@ -767,6 +770,8 @@ static void
 reactions_share(GhAppServices *self)
 {
   GhReactionStore *reactions = gh_app_outbox_get_reactions(self->outbox);
+  if (reactions)
+    gh_reaction_store_set_policy(reactions, gh_conversation_store_get_policy(self->conversations));
   for (GList *l = gtk_application_get_windows(self->app); l; l = l->next) {
     if (!GH_IS_WINDOW(l->data))
       continue;

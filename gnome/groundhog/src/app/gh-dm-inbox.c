@@ -338,6 +338,7 @@ pump(GhDmInbox *self)
 typedef struct {
   GHashTable *wraps;     /* wrap ids of this process's admissions */
   GHashTable *rumors;    /* their rumor ids */
+  GHashTable *retained;  /* hidden content kept for this memory-only session */
   GhNip17Seen *rejected; /* <state_dir>/<acct>.seen; only "x" is ever written */
 } MemorySeen;
 
@@ -347,6 +348,7 @@ memory_seen_free(gpointer data)
   MemorySeen *seen = data;
   g_hash_table_unref(seen->wraps);
   g_hash_table_unref(seen->rumors);
+  g_clear_pointer(&seen->retained, g_hash_table_unref);
   gh_nip17_seen_free(seen->rejected);
   g_free(seen);
 }
@@ -378,14 +380,20 @@ memory_add_rejected(gpointer data, const gchar *wrap_id, GError **error)
 
 static gboolean
 memory_admit(gpointer data, GhMessage *message, const gchar *wrap_id,
-             GhConversationCommit *commit, GError **error)
+             GhMessageDisposition disposition, GhConversationCommit *commit, GError **error)
 {
   MemorySeen *seen = data;
   (void)error;
   /* Messages live in memory only here: one already expired on arrival is
    * recorded as seen and never shown (charter §3.7, EX-4). */
   gint64 expires_at = gh_message_get_expires_at(message);
-  commit->hidden = expires_at > 0 && expires_at <= now_seconds();
+  gboolean expired = expires_at > 0 && expires_at <= now_seconds();
+  commit->hidden = expired || disposition != GH_MESSAGE_INCLUDE;
+  if (!expired && disposition == GH_MESSAGE_HIDE_RETAIN) {
+    if (!seen->retained)
+      seen->retained = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_object_unref);
+    g_hash_table_replace(seen->retained, g_strdup(gh_message_get_rumor_id(message)), g_object_ref(message));
+  }
   if (!wrap_id)
     return TRUE; /* a local echo; its self-copy wrap is recorded on arrival */
   g_hash_table_add(seen->wraps, g_strdup(wrap_id));

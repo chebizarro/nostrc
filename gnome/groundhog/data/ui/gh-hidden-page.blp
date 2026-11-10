@@ -1,0 +1,61 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $GhHiddenPage: Adw.NavigationPage {
+  title: _("Hidden Accounts and Content");
+  tag: "hidden-content";
+  child: Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {}
+    content: Adw.Clamp {
+      maximum-size: 720;
+      margin-start: 12;
+      margin-end: 12;
+      child: Box {
+        orientation: vertical;
+        spacing: 12;
+        Label {
+          label: _("Hiding an account stops saving its new messages. Existing history and matching words, hashtags and message threads are retained. Removing an entry shows retained history, but cannot recover discarded messages. Notification mutes and conversation blocks are separate.");
+          wrap: true;
+          xalign: 0;
+        }
+        Adw.PreferencesGroup {
+          Adw.ComboRow kind_row {
+            title: _("Content Type");
+          }
+          Adw.EntryRow value_row {
+            title: _("Account Public Key");
+            show-apply-button: true;
+            apply => $on_add();
+          }
+        }
+        Label status {
+          wrap: true;
+          xalign: 0;
+          visible: false;
+          accessible-role: status;
+        }
+        Button retry_button {
+          label: _("_Retry Hidden Messages");
+          use-underline: true;
+          halign: start;
+          visible: false;
+          clicked => $retry_clicked() swapped;
+        }
+        Label empty_label {
+          label: _("No Hidden Accounts or Content");
+          focusable: true;
+          styles ["heading"]
+        }
+        ScrolledWindow {
+          vexpand: true;
+          hscrollbar-policy: never;
+          child: ListView list {
+            single-click-activate: false;
+            accessibility { label: _("Hidden accounts and content"); }
+          };
+        }
+      };
+    };
+  };
+}

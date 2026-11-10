@@ -76,6 +76,7 @@ struct _GhConversation {
   GhConversationStore *store; /* persists read state and acceptance; not a ref */
   GhConversationBackend backend;
   gboolean is_direct;
+  gboolean visibility_updating;
 };
 
 enum {
@@ -96,6 +97,7 @@ enum {
   PROP_HAS_NEWER,
   PROP_NEWER_ARRIVALS,
   PROP_HISTORY_PARTIAL,
+  PROP_VISIBILITY_UPDATING,
   N_PROPS
 };
 static GParamSpec *props[N_PROPS];
@@ -122,6 +124,35 @@ gh_conversation_backend_get_type(void)
   return type;
 }
 
+static void
+visible_items_changed(GhConversation *self, guint at, guint removed, guint added)
+{
+  if (!self->visibility_updating)
+    g_list_model_items_changed(G_LIST_MODEL(self), at, removed, added);
+}
+
+void
+gh_conversation_set_visibility_updating(GhConversation *self, gboolean updating)
+{
+  if (self->visibility_updating == !!updating)
+    return;
+  guint n = self->messages->len;
+  self->visibility_updating = !!updating;
+  if (n)
+    g_list_model_items_changed(G_LIST_MODEL(self), 0, updating ? n : 0, updating ? 0 : n);
+  g_object_notify_by_pspec(G_OBJECT(self), props[PROP_VISIBILITY_UPDATING]);
+  g_object_notify_by_pspec(G_OBJECT(self), props[PROP_PREVIEW]);
+  g_object_notify_by_pspec(G_OBJECT(self), props[PROP_SUBJECT]);
+  g_object_notify_by_pspec(G_OBJECT(self), props[PROP_TITLE]);
+  g_object_notify_by_pspec(G_OBJECT(self), props[PROP_UNREAD_COUNT]);
+}
+
+gboolean
+gh_conversation_get_visibility_updating(GhConversation *self)
+{
+  return self->visibility_updating;
+}
+
 static GType
 list_get_item_type(GListModel *model)
 {
@@ -132,14 +163,15 @@ list_get_item_type(GListModel *model)
 static guint
 list_get_n_items(GListModel *model)
 {
-  return GH_CONVERSATION(model)->messages->len;
+  GhConversation *self = GH_CONVERSATION(model);
+  return self->visibility_updating ? 0 : self->messages->len;
 }
 
 static gpointer
 list_get_item(GListModel *model, guint position)
 {
   GhConversation *self = GH_CONVERSATION(model);
-  if (position >= self->messages->len)
+  if (self->visibility_updating || position >= self->messages->len)
     return NULL;
   return g_object_ref(g_ptr_array_index(self->messages, position));
 }
@@ -535,7 +567,7 @@ gh_conversation_insert(GhConversation *self, GhMessage *message, gboolean delive
   gboolean newest = g_strcmp0(gh_message_get_rumor_id(message), self->latest_id) == 0;
 
   g_object_freeze_notify(G_OBJECT(self));
-  g_list_model_items_changed(G_LIST_MODEL(self), position, 0, 1);
+  visible_items_changed(self, position, 0, 1);
   if (subject_changed)
     g_object_notify_by_pspec(G_OBJECT(self), props[PROP_SUBJECT]);
   if (g_strcmp0(old_title, gh_conversation_get_title(self)) != 0)
@@ -601,7 +633,7 @@ gh_conversation_remove(GhConversation *self, const gchar *rumor_id)
   }
 
   g_object_freeze_notify(G_OBJECT(self));
-  g_list_model_items_changed(G_LIST_MODEL(self), position, 1, 0);
+  visible_items_changed(self, position, 1, 0);
   if (g_strcmp0(old_subject, gh_conversation_get_subject(self)) != 0) {
     g_object_notify_by_pspec(G_OBJECT(self), props[PROP_SUBJECT]);
     g_object_notify_by_pspec(G_OBJECT(self), props[PROP_TITLE]);
@@ -654,7 +686,7 @@ gh_conversation_restore(GhConversation *self, GPtrArray *messages,
       gh_conversation_window_trim(self, self->window_active && older_page,
                                   window_limit - GH_CONVERSATION_WINDOW_PAGE);
     guint position = place_message(self, message);
-    g_list_model_items_changed(G_LIST_MODEL(self), position, 0, 1);
+    visible_items_changed(self, position, 0, 1);
   }
   /* A request accepted in memory stays accepted even if persisting it failed. */
   self->accepted = self->accepted || state->accepted;
@@ -828,7 +860,7 @@ gh_conversation_window_trim(GhConversation *self, gboolean keep_older, guint lim
       g_hash_table_remove(self->by_id, gh_message_get_rumor_id(message));
       g_ptr_array_remove_index(self->messages, start);
     }
-    g_list_model_items_changed(G_LIST_MODEL(self), start, count, 0);
+    visible_items_changed(self, start, count, 0);
   }
   if (keep_older) {
     gh_conversation_window_set_has_newer(self, TRUE);
@@ -887,7 +919,7 @@ gh_conversation_window_add_newer(GhConversation *self, GPtrArray *messages,
     guint position = place_message(self, message);
     if (is_unread(self, message) && !in_seen(self, message) && self->unread_older)
       self->unread_older--;
-    g_list_model_items_changed(G_LIST_MODEL(self), position, 0, 1);
+    visible_items_changed(self, position, 0, 1);
   }
   gh_conversation_window_set_has_newer(self, has_newer);
   update_unread(self);
@@ -903,7 +935,7 @@ gh_conversation_window_clear(GhConversation *self)
   g_hash_table_remove_all(self->by_id);
   g_ptr_array_set_size(self->messages, 0);
   if (n)
-    g_list_model_items_changed(G_LIST_MODEL(self), 0, n, 0);
+    visible_items_changed(self, 0, n, 0);
   self->subject_source = NULL;
   self->latest_activity = 0;
   g_clear_pointer(&self->latest_id, g_free);
@@ -999,6 +1031,8 @@ const gchar *
 gh_conversation_get_subject(GhConversation *self)
 {
   g_return_val_if_fail(GH_IS_CONVERSATION(self), NULL);
+  if (self->visibility_updating && self->backend == GH_CONVERSATION_BACKEND_NIP17)
+    return NULL;
   /* Loaded messages are the newest ones, so a loaded subject is never older
    * than the stored name of the unloaded history. */
   const gchar *subject = self->has_newer ? self->stored_subject :
@@ -1034,6 +1068,9 @@ void
 gh_conversation_mark_read(GhConversation *self)
 {
   g_return_if_fail(GH_IS_CONVERSATION(self));
+  if (self->visibility_updating ||
+      (self->store && gh_conversation_store_is_restoring_visibility(self->store)))
+    return;
   if (self->messages->len == 0)
     return;
   GhMessage *first = g_ptr_array_index(self->messages, 0);
@@ -1320,7 +1357,7 @@ const gchar *
 gh_conversation_get_preview(GhConversation *self)
 {
   g_return_val_if_fail(GH_IS_CONVERSATION(self), NULL);
-  return self->preview;
+  return self->visibility_updating ? _("Updating Hidden Messages…") : self->preview;
 }
 
 gboolean
@@ -1375,8 +1412,11 @@ gh_conversation_get_property(GObject *object, guint id, GValue *value, GParamSpe
   case PROP_TITLE:
     g_value_set_string(value, gh_conversation_get_title(self));
     break;
+  case PROP_VISIBILITY_UPDATING:
+    g_value_set_boolean(value, self->visibility_updating);
+    break;
   case PROP_PREVIEW:
-    g_value_set_string(value, self->preview);
+    g_value_set_string(value, gh_conversation_get_preview(self));
     break;
   case PROP_IS_REQUEST:
     g_value_set_boolean(value, gh_conversation_get_is_request(self));
@@ -1479,6 +1519,8 @@ gh_conversation_class_init(GhConversationClass *klass)
   props[PROP_TIMER_CHANGED_AT] = g_param_spec_int64("timer-changed-at", NULL, NULL,
     0, G_MAXINT64, 0, G_PARAM_READABLE | G_PARAM_EXPLICIT_NOTIFY | G_PARAM_STATIC_STRINGS);
   props[PROP_IS_DIRECT] = g_param_spec_boolean("is-direct", NULL, NULL, FALSE,
+    G_PARAM_READABLE | G_PARAM_EXPLICIT_NOTIFY | G_PARAM_STATIC_STRINGS);
+  props[PROP_VISIBILITY_UPDATING] = g_param_spec_boolean("visibility-updating", NULL, NULL, FALSE,
     G_PARAM_READABLE | G_PARAM_EXPLICIT_NOTIFY | G_PARAM_STATIC_STRINGS);
   g_object_class_install_properties(object_class, N_PROPS, props);
 }

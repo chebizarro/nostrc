@@ -1,4 +1,5 @@
 #include "gh-mls-service.h"
+#include <sqlite3.h>
 
 #include "gh-agent-event.h"
 #include "gh-auth-policy.h"
@@ -2754,6 +2755,7 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, gboo
   g_autoptr(GPtrArray) deleted = g_ptr_array_new_with_free_func(g_free);
 
   if (err == MARMOT_OK && result.type == MARMOT_RESULT_APPLICATION_MESSAGE) {
+    gboolean application_visible = TRUE;
     g_autoptr(GError) bad = NULL;
     g_autoptr(GhMessage) message =
       gh_message_new_from_mls(self->account, group->gid_hex, result.app_msg.inner_event_json,
@@ -2778,6 +2780,7 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, gboo
         gh_message_add_relay(message, url);
       GhConversationAddResult added =
         gh_conversation_store_admit(self->conversations, message, envelope_id, &error);
+      application_visible = added != GH_CONVERSATION_ADD_HIDDEN;
       if (added == GH_CONVERSATION_ADD_FAILED || added == GH_CONVERSATION_ADD_REJECTED) {
         /* Not stored: nothing of it may be (its ratchet step included). */
         g_message("Groundhog could not store an encrypted group message: %s",
@@ -2787,8 +2790,8 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, gboo
         return EVENT_OTHER;
       }
     }
-    /* NIP-88 polls (nostrc-a36s): track poll definitions and votes. */
-    if (message) {
+    /* The ratchet always advances; only visible definitions/votes affect UI. */
+    if (message && application_visible) {
       gint inner_kind = gh_message_get_kind(message);
       if (inner_kind == GH_MLS_POLL_KIND) {
         g_autoptr(GError) poll_err = NULL;
@@ -6537,9 +6540,27 @@ welcome_sink(gpointer data, const GhNip17Message *welcome, const gchar *relay_ur
     g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "Bad wrap id");
     return FALSE;
   }
+  GhMessagePolicy *policy = gh_conversation_store_get_policy(self->conversations);
+  if (policy && !gh_message_policy_is_loaded(policy)) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_INITIALIZED,
+                        "Account hide policy is not loaded");
+    return FALSE;
+  }
   drop_stale_error(self);
   if (!gh_store_begin(self->store, error))
     return FALSE;
+  if (policy && gh_message_policy_hides_author(policy, welcome->sender_pubkey)) {
+    guint8 rumor[32];
+    if (!nostr_hex2bin(rumor, welcome->rumor_id, sizeof rumor) ||
+        !gh_store_marmot_decline_hidden_welcome(self->storage, wrapper, rumor, now_s(self), error) ||
+        !gh_store_seen_add(self->store, GH_STORE_SEEN_WRAP, welcome->wrap_id, error) ||
+        !gh_store_seen_add(self->store, GH_STORE_SEEN_RUMOR, welcome->rumor_id, error) ||
+        !gh_store_commit(self->store, error)) {
+      gh_store_rollback(self->store);
+      return FALSE;
+    }
+    return TRUE; /* no invitation, group join or notification */
+  }
   MarmotWelcome *stored = NULL;
   MarmotError err = marmot_process_welcome(self->marmot, wrapper, welcome->rumor_json, &stored);
   marmot_welcome_free(stored);
@@ -9663,6 +9684,38 @@ on_verified_only_changed(GSettings *settings, gchar *key, gpointer data)
   }
 }
 
+static void
+hide_policy_changed(GhConversationStore *model, GhMlsService *self)
+{
+  (void)model;
+  g_hash_table_remove_all(self->polls);
+}
+
+static void
+visible_polls_changed(GhConversationStore *model, GhMlsService *self)
+{
+  (void)model;
+  if (!self->store)
+    return;
+  sqlite3_stmt *stmt = NULL;
+  if (sqlite3_prepare_v2(gh_store_get_db(self->store),
+      "SELECT c.backend_key,m.raw_json FROM messages m JOIN conversations c ON c.id=m.conversation_id "
+      "WHERE c.backend=3 AND m.social_hidden=0 AND m.kind IN (?1,?2) "
+      "ORDER BY CASE WHEN m.kind=?1 THEN 0 ELSE 1 END,m.created_at,m.backend_msg_id",
+      -1, &stmt, NULL) != SQLITE_OK)
+    return;
+  sqlite3_bind_int(stmt, 1, GH_MLS_POLL_KIND);
+  sqlite3_bind_int(stmt, 2, GH_MLS_POLL_VOTE_KIND);
+  while (sqlite3_step(stmt) == SQLITE_ROW) {
+    const gchar *gid = (const gchar *)sqlite3_column_text(stmt, 0);
+    g_autoptr(GhMessage) message = gh_message_new_from_mls(self->account, gid,
+      (const gchar *)sqlite3_column_text(stmt, 1), NULL);
+    if (message)
+      gh_mls_service_rebuild_poll_from_stored(self, gid, message);
+  }
+  sqlite3_finalize(stmt);
+}
+
 GhMlsService *
 gh_mls_service_new(const GhMlsServiceConfig *config, GError **error)
 {
@@ -9710,6 +9763,8 @@ gh_mls_service_new(const GhMlsServiceConfig *config, GError **error)
   self->backfill_quiet_us = (gint64)GH_MLS_SERVICE_BACKFILL_QUIET_S * G_USEC_PER_SEC;
   self->pending_shown_us = (gint64)GH_MLS_SERVICE_PENDING_SHOWN_S * G_USEC_PER_SEC;
   self->conversations = g_object_ref(config->conversations);
+  g_signal_connect_object(self->conversations, "policy-changed", G_CALLBACK(hide_policy_changed), self, 0);
+  g_signal_connect_object(self->conversations, "visibility-changed", G_CALLBACK(visible_polls_changed), self, 0);
   self->reactions = config->reactions ? g_object_ref(config->reactions) : NULL;
   self->account_relays = config->account_relays ? g_object_ref(config->account_relays) : NULL;
   self->inboxes = config->inboxes ? g_object_ref(config->inboxes) : NULL;
@@ -10069,6 +10124,11 @@ gh_mls_service_rebuild_poll_from_stored(GhMlsService *self,
   g_return_if_fail(group_id_hex != NULL);
   g_return_if_fail(GH_IS_MESSAGE(message));
 
+  GhMessagePolicy *policy = gh_conversation_store_get_policy(self->conversations);
+  GhMessageDisposition disposition;
+  if (policy && (!gh_message_policy_classify(policy, message, &disposition, NULL) ||
+                 disposition != GH_MESSAGE_INCLUDE))
+    return;
   gint kind = gh_message_get_kind(message);
   const gchar *raw = gh_message_get_rumor_json(message);
   if (!raw) return;

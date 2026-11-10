@@ -1,6 +1,7 @@
 #ifndef GH_SOCIAL_LISTS_H
 #define GH_SOCIAL_LISTS_H
 #include "gh-account-store.h"
+#include "gh-message-policy.h"
 #include "gh-store-social.h"
 G_BEGIN_DECLS
 #define GH_TYPE_SOCIAL_LISTS (gh_social_lists_get_type())
@@ -30,5 +31,10 @@ GNostrListDocument *gh_social_lists_apply(GhSocialLists *self, gint kind, const 
 gchar *gh_social_lists_export(GNostrListDocument *snapshot);
 GNostrListDocument *gh_social_lists_import(GhSocialLists *self, const gchar *json,
                                           GError **error);
+GhMessagePolicy *gh_social_lists_get_message_policy(GhSocialLists *self);
+gboolean gh_social_lists_retry_visibility(GhSocialLists *self, GError **error);
+const gchar *gh_social_lists_get_account(GhSocialLists *self);
+gboolean gh_social_lists_hide_account(GhSocialLists *self, const gchar *pubkey, GError **error);
+
 G_END_DECLS
 #endif

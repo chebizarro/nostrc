@@ -4732,6 +4732,122 @@ test_leave_failed(void)
   world_down(&w);
 }
 
+static gint64
+social_scalar(App *app, const gchar *sql)
+{
+  sqlite3_stmt *stmt = NULL;
+  g_assert_cmpint(sqlite3_prepare_v2(gh_store_get_db(app->store), sql, -1, &stmt, NULL), ==, SQLITE_OK);
+  g_assert_cmpint(sqlite3_step(stmt), ==, SQLITE_ROW);
+  gint64 value = sqlite3_column_int64(stmt, 0);
+  sqlite3_finalize(stmt);
+  return value;
+}
+
+static void
+social_hide(App *app, const gchar *name, const gchar *value)
+{
+  GError *error = NULL;
+  g_assert_true(gh_store_exec(app->store, "DELETE FROM social_mutes", &error));
+  if (name) {
+    sqlite3_stmt *stmt = NULL;
+    g_assert_cmpint(sqlite3_prepare_v2(gh_store_get_db(app->store),
+      "INSERT INTO social_mutes(entry_key,tag_name,value,position,is_private) VALUES(?1,?1,?2,0,1)",
+      -1, &stmt, NULL), ==, SQLITE_OK);
+    sqlite3_bind_text(stmt, 1, name, -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, value, -1, SQLITE_STATIC);
+    g_assert_cmpint(sqlite3_step(stmt), ==, SQLITE_DONE);
+    sqlite3_finalize(stmt);
+  }
+  GhMessagePolicy *policy = gh_conversation_store_get_policy(app->model);
+  g_assert_nonnull(policy);
+  g_assert_true(gh_message_policy_refresh(policy, &error));
+  g_assert_no_error(error);
+  while (gh_message_policy_is_updating(policy)) {
+    g_assert_null(gh_message_policy_get_error(policy));
+    g_main_context_iteration(NULL, TRUE);
+  }
+}
+
+static gboolean
+social_welcome_declined(gpointer data)
+{
+  return social_scalar(data, "SELECT count(*) FROM mls_processed_welcomes WHERE state=2") > 0;
+}
+
+static void
+test_hidden_inviter(void)
+{
+  World w;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  accept_contact(alice, BOB);
+  social_hide(bob, "p", hex[ALICE]);
+  GhMlsGroup *group = create_group(alice, "No hidden invitation", (const guint[]){ BOB }, 1);
+  spin_until(social_welcome_declined, bob, "hidden Welcome processed as declined");
+  g_assert_cmpuint(bob->invites, ==, 0);
+  g_autoptr(GPtrArray) invites = gh_mls_service_list_invites(bob->service, NULL);
+  g_assert_cmpuint(invites->len, ==, 0);
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(bob->service)), ==, 0);
+  g_assert_cmpint(social_scalar(bob, "SELECT count(*) FROM mls_welcomes"), ==, 0);
+  g_assert_cmpint(social_scalar(bob, "SELECT count(*) FROM seen WHERE ns=1"), >, 0);
+  social_hide(bob, NULL, NULL);
+  drain();
+  g_assert_cmpuint(bob->invites, ==, 0);
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(bob->service)), ==, 0);
+  g_assert_nonnull(group); /* borrowed from Alice's service */
+  world_down(&w);
+}
+
+typedef struct { App *app; gint64 before; } SocialProcessed;
+static gboolean
+social_processed(gpointer data)
+{
+  SocialProcessed *wait = data;
+  return social_scalar(wait->app, "SELECT count(*) FROM mls_processed_messages") > wait->before;
+}
+
+static void
+test_hide_preserves_ratchet_and_commits(void)
+{
+  World w;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  accept_contact(alice, BOB);
+  GhMlsGroup *ga = create_group(alice, "Hide test", (const guint[]){ BOB }, 1);
+  GhMlsGroup *gb = join(bob, ALICE);
+  const gchar *room = gh_mls_group_get_room_id(ga);
+  social_hide(bob, "p", hex[ALICE]);
+  SocialProcessed dropped = { bob, social_scalar(bob, "SELECT count(*) FROM mls_processed_messages") };
+  send_text(alice, ga, "discarded by author policy");
+  spin_until(social_processed, &dropped, "hidden application ratchet step");
+  g_assert_null(find_message(bob, room, "discarded by author policy"));
+  g_assert_cmpint(social_scalar(bob, "SELECT count(*) FROM messages WHERE body='discarded by author policy'"), ==, 0);
+  guint64 epoch = gh_mls_group_get_epoch(gb);
+  OpWait changed = { 0 };
+  gh_mls_service_update_metadata_async(alice->service, ga, "Control still advances", NULL, NULL, on_changed, &changed);
+  change(alice, &changed);
+  NameWait name = { gb, "Control still advances" };
+  spin_until(name_is, &name, "hidden author's metadata Commit");
+  g_assert_cmpuint(gh_mls_group_get_epoch(gb), >, epoch);
+  social_hide(bob, NULL, NULL);
+  send_text(alice, ga, "readable after dropped generation");
+  wait_message(bob, room, "readable after dropped generation");
+  g_assert_null(find_message(bob, room, "discarded by author policy"));
+  social_hide(bob, "word", "quiet");
+  SocialProcessed retained = { bob, social_scalar(bob, "SELECT count(*) FROM mls_processed_messages") };
+  send_text(alice, ga, "quiet retained payload");
+  spin_until(social_processed, &retained, "retained hidden application ratchet step");
+  g_assert_null(find_message(bob, room, "quiet retained payload"));
+  g_assert_cmpint(social_scalar(bob, "SELECT count(*) FROM messages WHERE body='quiet retained payload' AND social_hidden=1"), ==, 1);
+  social_hide(bob, NULL, NULL);
+  g_assert_nonnull(find_message(bob, room, "quiet retained payload"));
+  world_down(&w);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -4837,6 +4953,8 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/mls-service/unproven-invitee",
                   test_unproven_invitee);
 #endif
+  g_test_add_func("/groundhog/mls-service/hidden-inviter-declined", test_hidden_inviter);
+  g_test_add_func("/groundhog/mls-service/hide-preserves-ratchet-and-commits", test_hide_preserves_ratchet_and_commits);
   gint rc = g_test_run();
   mls_world_finish();
   return rc;

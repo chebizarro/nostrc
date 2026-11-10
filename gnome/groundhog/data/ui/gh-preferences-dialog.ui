@@ -154,6 +154,23 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
           </object>
         </child>
         <child>
+          <object class="AdwPreferencesGroup" id="hidden_group">
+            <property name="visible">false</property>
+            <child>
+              <object class="AdwActionRow" id="hidden_row">
+                <property name="title" translatable="yes">Hidden Accounts and Content</property>
+                <property name="subtitle" translatable="yes">Hide accounts, words, hashtags and message threads</property>
+                <property name="activatable">true</property>
+                <child type="suffix">
+                  <object class="GtkImage">
+                    <property name="icon-name">go-next-symbolic</property>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
           <object class="AdwPreferencesGroup" id="blocked_group">
             <property name="visible">false</property>
             <child>

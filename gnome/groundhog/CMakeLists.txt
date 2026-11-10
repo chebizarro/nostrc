@@ -68,7 +68,7 @@ set(GROUNDHOG_BLUEPRINTS
   gh-mls-member-row gh-mls-group-info-dialog gh-mls-invite-row gh-mls-invites-page
   gh-blocked-page gh-blocked-row gh-conversation-menu
   gh-attachment-card gh-attachment-sheet gh-create-poll-dialog
-  gh-voice-bubble gh-lists-page gh-list-editor-page)
+  gh-voice-bubble gh-lists-page gh-list-editor-page gh-hidden-page)
 set(GROUNDHOG_BLUEPRINT_MIN_VERSION 0.12.0)
 include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/Blueprint.cmake)
 set(GROUNDHOG_BLUEPRINT_COMPILER "")
@@ -1594,9 +1594,9 @@ endif()
 # is the one list of what the build performs, flipped one line per feature (G09
 # Tor, G13 composer, G16 notifications, ...), and tests/check_privacy.py
 # requires a consumer for every row it leaves live.
-add_library(groundhog-lists-ui STATIC src/ui/gh-lists-page.c src/ui/gh-list-editor-page.c)
+add_library(groundhog-lists-ui STATIC src/ui/gh-lists-page.c src/ui/gh-list-editor-page.c src/ui/gh-hidden-page.c)
 target_include_directories(groundhog-lists-ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/ui)
-target_link_libraries(groundhog-lists-ui PUBLIC groundhog-ui nostr_gobject)
+target_link_libraries(groundhog-lists-ui PUBLIC groundhog-ui nostr_gobject nip19)
 target_compile_options(groundhog-lists-ui PRIVATE -Wall -Wextra -Werror)
 
 add_library(groundhog-preferences STATIC src/ui/gh-preferences-dialog.c
@@ -3755,7 +3755,7 @@ if(TARGET groundhog-account-store)
   add_library(groundhog-social-lists STATIC src/app/gh-social-lists.c src/app/gh-list-adapter.c)
   target_link_libraries(groundhog-social-lists PUBLIC groundhog-store-social groundhog-account-store)
   target_compile_options(groundhog-social-lists PRIVATE -Wall -Wextra -Werror)
-  add_library(groundhog-social-lists-backend STATIC src/app/gh-social-lists-backend.c)
+  add_library(groundhog-social-lists-backend STATIC src/app/gh-social-lists-backend.c src/ui/gh-hide-account.c)
   target_link_libraries(groundhog-social-lists-backend PUBLIC groundhog-social-lists groundhog-lists-ui)
   target_compile_options(groundhog-social-lists-backend PRIVATE -Wall -Wextra -Werror)
   target_link_libraries(groundhog PRIVATE groundhog-social-lists-backend)
@@ -3784,6 +3784,33 @@ if(TARGET groundhog-account-store)
   endif()
 else()
   target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_SOCIAL_LISTS=0)
+endif()
+
+# Stage 6: the account hide policy is shared by every admission backend.
+if(TARGET groundhog-store AND TARGET groundhog-conversations)
+  target_sources(groundhog-conversations PRIVATE src/app/gh-message-policy.c)
+  target_compile_definitions(groundhog-conversations PUBLIC GROUNDHOG_HAVE_MESSAGE_POLICY=1)
+  pkg_check_modules(GROUNDHOG_POLICY_JSON REQUIRED IMPORTED_TARGET jansson)
+  target_link_libraries(groundhog-conversations PUBLIC groundhog-store PkgConfig::GROUNDHOG_POLICY_JSON)
+  if(BUILD_TESTING AND TARGET groundhog-store-conversations)
+    foreach(consumer test-groundhog-dm-inbox test-groundhog-nip29-service)
+      if(TARGET ${consumer})
+        target_link_libraries(${consumer} PRIVATE groundhog-store-conversations)
+      endif()
+    endforeach()
+    if(TARGET groundhog-social-lists AND TARGET groundhog-nip29-service AND TARGET groundhog-mls-service)
+      add_executable(test-groundhog-message-policy tests/app/test_message_policy.c)
+      target_link_libraries(test-groundhog-message-policy PRIVATE groundhog-store-conversations
+        groundhog-social-lists groundhog-nip29-service groundhog-mls-service)
+      target_compile_options(test-groundhog-message-policy PRIVATE -Wall -Wextra -Werror)
+      groundhog_store_link_sqlcipher_first(test-groundhog-message-policy)
+      add_test(NAME groundhog-message-policy COMMAND test-groundhog-message-policy)
+      set_tests_properties(groundhog-message-policy PROPERTIES TIMEOUT 120
+        ENVIRONMENT "G_DEBUG=fatal-criticals;GSETTINGS_BACKEND=memory;GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS}")
+    endif()
+  endif()
+elseif(TARGET groundhog-conversations)
+  target_compile_definitions(groundhog-conversations PUBLIC GROUNDHOG_HAVE_MESSAGE_POLICY=0)
 endif()
 
 # --- test isolation (nostrc-ttvxv) ---
