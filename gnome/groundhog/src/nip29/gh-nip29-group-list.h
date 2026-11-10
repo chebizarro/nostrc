@@ -4,6 +4,7 @@
 #include "gh-account-relays.h"
 #include "gh-nip29-service.h"
 #include "gh-relay-publish.h"
+#include "gh-social-lists.h"
 
 G_BEGIN_DECLS
 
@@ -58,7 +59,8 @@ G_BEGIN_DECLS
  * Emits "changed" when the state or the restorable groups change.
  */
 
-#define GH_NIP29_GROUP_LIST_KIND 10009
+#include <nostr-kinds.h>
+#define GH_NIP29_GROUP_LIST_KIND NOSTR_KIND_SIMPLE_GROUP_LIST
 #define GH_NIP29_GROUP_LIST_MAX_RELAYS 16
 
 typedef enum {
@@ -86,6 +88,7 @@ typedef struct {
   GhAccountRelays *account_relays; /* required: own 10002 write relays */
   GSettings *settings;             /* required: discovery-relays */
   GhNip29Service *service;         /* required: the store's groups; borrowed weakly */
+  GhSocialLists *social_lists;     /* shared account service; NULL: session-only compatibility */
   /* NULL: gnostr relays with NIP-42 (the application). */
   const GhRelayTransport *scope_transport;
   const GhRelayAuthTransport *scope_auth_transport;

@@ -176,9 +176,9 @@ Where this charter tightens the plan, the tightening is called out and the plan 
 
   *(KC-4, NT-7, PT-4b.)*
 - **P6 Verify the signer.** Before the first call each session, check that the `org.nostr.Signer` name owner has our UID and (Linux) an executable path in the signer's installed set. Otherwise show "Nostr Signer could not be verified" and send no request. This is weak against a same-user attacker (A4) but blocks name squatting. *(NT-13.)*
-- **P7 One account at a time.** Switching tears down every socket, RPC, notification and decrypted model of the old account before the next one opens (existing invariant). *(PT-6.)*
-- **P8 Local-only signals.** Read state, pins, mutes, drafts and blocks are never published. *(PT-1.)*
-- **P9 Explain every exception.** Each opt-in that increases exposure shows a one-sentence explanation of who learns what.
+- **P7 One account at a time.** Switching tears down every socket, RPC, notification and decrypted model of the old account before the next one opens (existing invariant). List subscriptions, signer work and pending publications cancel before the account store closes. *(PT-6.)*
+- **P8 Local-only signals and opt-in sync.** Read state, pins, notification mutes and room blocks remain local. Drafts and supported private list entries may synchronize only with the SQLCipher-backed per-account **Sync Drafts and Lists** preference, off by default. Public publication requires separate approval; this switch never authorizes it. Kind 10009 retains the automatic private publication authorized below. *(PT-1; `/privacy/social/default-no-sync`, `/privacy/social/publication-needs-confirmation`.)*
+- **P9 Explain every exception.** Each opt-in that increases exposure shows a one-sentence explanation of who learns what. List relays see the account author, kind, timestamp and padded ciphertext size, not the private entries. Private-relay AUTH reveals the account to current kind-10013 destinations. Public badges/server lists and reports need separate disclosure, including the account relationship a report reveals. Disabling sync cancels unsent work but cannot recall events already accepted by a relay.
 - **P10 No network telemetry.** No crash reporter, analytics endpoint or automatic
   diagnostic upload exists. Off by default, Groundhog may collect only local,
   typed, sanitized daily operational aggregates. The user can clear them or
@@ -649,6 +649,10 @@ A self-copy failure never changes the status. It adds the secondary note "Not sa
 | Own inbox read (`1059 #p=me`) | own 10050 | account (on challenge) | live REQ, per account generation | `acct/inbox` |
 | Own list discovery (10002/10050 authored by me; existing `GhAccountRelays`) | `discovery-relays`; before a relay list is published, also its publish targets, right before and right after signing (`GhRelayListSetup`, nostrc-0bdg) | none, or ephemeral | live, per generation | `acct/self-discovery` |
 | Own list publish (10050, 10002, KeyPackage 30443) | 10050 and 10002: own write + inbox relays + `discovery-relays`; KeyPackage 30443: own 10002 write-capable relays only (amended, see below) | account (on challenge) | per publish | random |
+| Private list read (10000, 10006, 10013, 10030, 10992 and known sets/definitions) | own NIP-65 write relays only; no fallback | ephemeral, `OWN_LIST_DISCOVERY` | live REQ while sync enabled, per generation | random per document |
+| Private list publish | same own write relays; 10013 also goes here | account, `OWN_LIST_PUBLISH` | per publish while sync enabled | random |
+| Private draft sync read/publish | current account kind-10013 relays only; no fallback | account, `OWN_PRIVATE_SYNC_READ` / `OWN_PRIVATE_SYNC_PUBLISH` | per generation / per publish, separate sockets | random |
+| Public lists (10008, 10063, public sets) | own NIP-65 write relays | ephemeral, `PUBLIC_POST` on explicitly confirmed publication | separate sockets | random |
 | Contact directory (others' 10050, kind 0) | `discovery-relays` (+ that contact's 10002 write relays if set) | none, or ephemeral | per batch | random per batch |
 | DM recipient wrap / Welcome wrap | recipient's 10050 | **ephemeral only** | per publish | random per publish |
 | DM self wrap | own 10050 | account (on challenge) | per publish, separate socket | random |
@@ -668,7 +672,9 @@ A self-copy failure never changes the status. It adds the secondary note "Not sa
 
 ### 4.4 NIP-42 AUTH exposure policy (`GhAuthPolicy`)
 
-- **R1.** Never sign kind 22242 with the account key for a connection whose purpose is not own inbox, own list publish, own self-copy publish, or NIP-29 group. AUTH as the account on a recipient's inbox relay would tie your identity to the gift wrap you just published and undo NIP-59's ephemeral outer key.
+The shared list service replaces the kind-10009 parser and publication implementation; its automatic private publication remains independent of the sync switch, with the same all-source boundary and explicit Restore Groups. Other private lists use a majority (at least one) of EOSE sources; below that threshold only a separate **Publish Local Version Anyway…** approval may publish. First import of a remote kind-10000 hide list requires confirmation of the account/item counts before it affects admission. Declining leaves that list unsynced without disabling other lists. Lists without configured write relays show **Needs a Relay List** and contact no fallback.
+
+- **R1.** Never sign kind 22242 with the account key for a connection whose purpose is not own inbox, own list publish, own self-copy publish, NIP-29 group, or private-sync read/publication on the active account's current kind-10013 destinations. AUTH as the account on a recipient's inbox relay would tie your identity to the gift wrap you just published and undo NIP-59's ephemeral outer key.
 - **R2.** Ephemeral AUTH keys are fresh per connection, generated in process, never reused, and zeroized when the socket closes.
 - **R3.** The AUTH event binds `relay` to the exact normalized URL and `challenge` to the received value. `created_at` is now (not randomized; NIP-42 requires recency).
 - **R4.** Account AUTH requires the current generation. A stale challenge callback sends nothing. The Relay Status UI shows "Signed in as you" on those relays.

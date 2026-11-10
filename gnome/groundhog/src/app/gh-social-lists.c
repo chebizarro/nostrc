@@ -7,6 +7,12 @@
 struct _GhSocialLists {
   GObject parent_instance;
   GhAccountStore *account_store;
+  GhListAdapterNetwork network;
+  GhAccountRelays *relays;
+  GStrv group_urls;
+  gboolean group_waiting;
+  GhListDeriveFunc group_derive;
+  gpointer group_data;
   GhStore *store;
   GhListAdapter *adapter; /* owned by service; revoked before service release */
   GNostrListService *service;
@@ -17,6 +23,7 @@ struct _GhSocialLists {
 G_DEFINE_TYPE(GhSocialLists, gh_social_lists, G_TYPE_OBJECT)
 enum { CHANGED, DOCUMENT_CHANGED, SYNC_STATE_CHANGED, N_SIGNALS };
 static guint signals[N_SIGNALS];
+static gboolean update_plan(GhSocialLists *self, GError **error);
 
 void
 gh_social_lists_close(GhSocialLists *self)
@@ -32,6 +39,9 @@ gh_social_lists_close(GhSocialLists *self)
   self->store = NULL;
   self->generation = 0;
   self->sync_enabled = FALSE;
+  g_clear_pointer(&self->group_urls, g_strfreev);
+  self->group_derive = NULL;
+  self->group_data = NULL;
   g_clear_pointer(&self->error, g_free);
   g_signal_emit(self, signals[CHANGED], 0);
   g_signal_emit(self, signals[SYNC_STATE_CHANGED], 0);
@@ -45,15 +55,140 @@ document_changed(GNostrListService *service, GNostrListDocument *snapshot, GhSoc
   g_signal_emit(self, signals[CHANGED], 0);
 }
 
+static void
+document_state_changed(GhSocialLists *self)
+{
+  g_signal_emit(self, signals[SYNC_STATE_CHANGED], 0);
+}
+
 static GNostrListReadPlanEntry
 local_plan(gint kind, const gchar *identifier)
 {
   const NostrListSchema *schema = nostr_nip51_schema_lookup(kind);
   return (GNostrListReadPlanEntry){
     .kind = kind, .identifier = identifier,
+    .read_purpose = "own-list-discovery", .publish_purpose = "own-list-publish",
     .publish_policy = nostr_nip51_schema_read_only(schema) ? GNOSTR_LIST_READ_ONLY : GNOSTR_LIST_EXPLICIT_ONLY,
     .required_sources = kind == NOSTR_KIND_SIMPLE_GROUP_LIST ? GNOSTR_LIST_SOURCES_ALL : GNOSTR_LIST_SOURCES_MAJORITY,
   };
+}
+
+static gboolean
+update_plan(GhSocialLists *self, GError **error)
+{
+  if (!self->service) return TRUE;
+  GNostrListReadPlanEntry entries[256];
+  g_autoptr(GPtrArray) snapshots = g_ptr_array_new_with_free_func(g_object_unref);
+  guint n = g_list_model_get_n_items(G_LIST_MODEL(self->service));
+  for (guint i = 0; i < n; i++) {
+    GNostrListDocument *snapshot = g_list_model_get_item(G_LIST_MODEL(self->service), i);
+    g_ptr_array_add(snapshots, snapshot);
+    entries[i] = local_plan(gnostr_list_document_get_kind(snapshot), gnostr_list_document_get_identifier(snapshot));
+  }
+  const gint kinds[] = { NOSTR_KIND_MUTE_LIST, NOSTR_KIND_BLOCKED_RELAY_LIST,
+    NOSTR_KIND_PRIVATE_RELAY_LIST, NOSTR_KIND_EMOJI_LIST, NOSTR_KIND_SLASH_COMMAND_LIST,
+    NOSTR_KIND_SIMPLE_GROUP_LIST };
+  for (guint k = 0; self->network.accounts && k < G_N_ELEMENTS(kinds); k++) {
+    gboolean found = FALSE;
+    for (guint i = 0; i < n; i++) if (entries[i].kind == kinds[k] && !*entries[i].identifier) found = TRUE;
+    if (!found) {
+      if (n == G_N_ELEMENTS(entries)) {
+        g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NO_SPACE, "Too many account list documents");
+        return FALSE;
+      }
+      entries[n++] = local_plan(kinds[k], "");
+    }
+  }
+  gboolean ready = self->relays && self->network.accounts &&
+    gh_account_relays_get_generation(self->relays) == self->generation &&
+    gh_account_relays_get_state(self->relays) != GH_ACCOUNT_RELAYS_DISCOVERING;
+  const gchar *const *write = ready ? gh_account_relays_get_write_relays(self->relays) : NULL;
+  for (guint i = 0; i < n; i++) {
+    GNostrListReadPlanEntry *entry = &entries[i];
+    if (entry->kind == NOSTR_KIND_SIMPLE_GROUP_LIST) {
+      entry->publish_policy = GNOSTR_LIST_AUTO_ALWAYS;
+      entry->sources = entry->targets = (const gchar *const *)self->group_urls;
+      entry->waiting_for_dependency = self->group_waiting || !self->group_derive;
+    } else if (entry->kind == NOSTR_KIND_MUTE_LIST && gh_list_adapter_hide_unsynced(self->adapter)) {
+      entry->publish_policy = GNOSTR_LIST_EXPLICIT_ONLY;
+    } else if (self->sync_enabled) {
+      const NostrListSchema *schema = nostr_nip51_schema_lookup(entry->kind);
+      if (!nostr_nip51_schema_read_only(schema) && entry->kind != NOSTR_KIND_PROFILE_BADGE_LIST &&
+          entry->kind != NOSTR_KIND_BLOSSOM_SERVER_LIST)
+        entry->publish_policy = GNOSTR_LIST_AUTO_WHEN_SYNC_ENABLED;
+      entry->sources = entry->targets = write;
+      entry->waiting_for_dependency = !ready;
+      if (entry->publish_policy == GNOSTR_LIST_EXPLICIT_ONLY) entry->publish_purpose = "public-post";
+    }
+  }
+  if (!gnostr_list_service_update_read_plan(self->service, entries, n, error)) return FALSE;
+  /* Save a local baseline so a declined first import can persist its decision
+   * without ever storing the proposed remote projection as usable state. */
+  g_autoptr(GNostrListDocument) hide = gnostr_list_service_lookup(self->service, NOSTR_KIND_MUTE_LIST, "");
+  if (hide && !gnostr_list_document_get_local_revision(hide)) {
+    g_autoptr(GPtrArray) empty = g_ptr_array_new();
+    g_autoptr(GNostrListDocument) saved = gnostr_list_service_apply(self->service, NOSTR_KIND_MUTE_LIST, "", 0, empty, error);
+    if (!saved) return FALSE;
+  }
+  g_clear_pointer(&self->error, g_free);
+  if (self->sync_enabled && ready && (!write || !write[0])) self->error = g_strdup("Needs a Relay List");
+  else if (self->sync_enabled && gh_list_adapter_hide_unsynced(self->adapter)) self->error = g_strdup("Hidden items are not synced");
+  return TRUE;
+}
+static void
+relays_changed(GhAccountRelays *relays, GhSocialLists *self)
+{
+  (void)relays;
+  g_autoptr(GError) error = NULL;
+  if (!update_plan(self, &error)) {
+    g_free(self->error);
+    self->error = g_strdup("Account list relay plan could not be updated");
+  }
+  g_signal_emit(self, signals[SYNC_STATE_CHANGED], 0);
+}
+void
+gh_social_lists_set_network(GhSocialLists *self, const GhListAdapterNetwork *network, GhAccountRelays *relays)
+{
+  g_return_if_fail(!self->service);
+  if (self->relays) g_signal_handlers_disconnect_by_data(self->relays, self);
+  g_set_object(&self->relays, relays);
+  gh_list_adapter_network_clear(&self->network);
+  gh_list_adapter_network_copy(&self->network, network);
+  if (relays) g_signal_connect(relays, "changed", G_CALLBACK(relays_changed), self);
+}
+GhListAdapter *gh_social_lists_get_adapter(GhSocialLists *self) { return self->adapter; }
+void
+gh_social_lists_configure_groups(GhSocialLists *self, const gchar *const *urls, gboolean waiting,
+                                GhListDeriveFunc derive, gpointer data)
+{
+  self->group_derive = derive; self->group_data = data;
+  self->group_waiting = waiting;
+  g_clear_pointer(&self->group_urls, g_strfreev);
+  self->group_urls = g_strdupv((gchar **)urls);
+  if (self->adapter) gh_list_adapter_set_derive(self->adapter, derive, data);
+  g_autoptr(GError) error = NULL;
+  if (!update_plan(self, &error)) {
+    g_free(self->error); self->error = g_strdup("Account group list plan could not be updated");
+  }
+}
+gboolean
+gh_social_lists_get_pending_import(GhSocialLists *self, guint *accounts, guint *items)
+{
+  return self->sync_enabled && self->adapter && gh_list_adapter_get_import(self->adapter, accounts, items);
+}
+const gchar *gh_social_lists_get_pending_import_id(GhSocialLists *self)
+{ return self->adapter ? gh_list_adapter_get_import_id(self->adapter) : NULL; }
+gboolean
+gh_social_lists_confirm_import(GhSocialLists *self, gboolean accept, GError **error)
+{
+  if (!self->sync_enabled) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED, "Private synchronization is off");
+    return FALSE;
+  }
+  if (!self->adapter || !gh_list_adapter_confirm_import(self->adapter, self->service, accept, error)) return FALSE;
+  if (!accept && !update_plan(self, error)) return FALSE;
+  g_signal_emit(self, signals[SYNC_STATE_CHANGED], 0);
+  return TRUE;
 }
 
 gboolean
@@ -72,8 +207,10 @@ gh_social_lists_bind_store(GhSocialLists *self, GhStore *store, guint64 generati
   self->generation = generation;
   self->sync_enabled = preferences.sync_enabled;
   self->adapter = gh_list_adapter_new(store, generation);
+  if (self->network.accounts) gh_list_adapter_set_network(self->adapter, &self->network);
   self->service = gnostr_list_service_new(gh_store_get_account_pubkey(store), generation,
     gh_list_adapter_get_callbacks(), self->adapter, (GDestroyNotify)gh_list_adapter_free);
+  gh_list_adapter_bind_service(self->adapter, self->service);
   GNostrListReadPlanEntry entries[256];
   for (guint i = 0; i < identities->len; i++) {
     GhStoreSocialIdentity *id = identities->pdata[i];
@@ -84,6 +221,9 @@ gh_social_lists_bind_store(GhSocialLists *self, GhStore *store, guint64 generati
     goto fail;
   }
   g_signal_connect(self->service, "document-changed", G_CALLBACK(document_changed), self);
+  g_signal_connect_swapped(self->service, "state-changed", G_CALLBACK(document_state_changed), self);
+  if (!update_plan(self, error)) { gh_social_lists_close(self); goto fail; }
+  gnostr_list_service_set_private_sync_enabled(self->service, self->sync_enabled);
   g_signal_emit(self, signals[CHANGED], 0);
   g_signal_emit(self, signals[SYNC_STATE_CHANGED], 0);
   return TRUE;
@@ -116,6 +256,9 @@ gh_social_lists_dispose(GObject *object)
     g_signal_handlers_disconnect_by_data(self->account_store, self);
   gh_social_lists_close(self);
   g_clear_object(&self->account_store);
+  if (self->relays) g_signal_handlers_disconnect_by_data(self->relays, self);
+  g_clear_object(&self->relays);
+  gh_list_adapter_network_clear(&self->network);
   G_OBJECT_CLASS(gh_social_lists_parent_class)->dispose(object);
 }
 
@@ -136,6 +279,14 @@ GhSocialLists *
 gh_social_lists_new(GhAccountStore *account_store)
 {
   GhSocialLists *self = g_object_new(GH_TYPE_SOCIAL_LISTS, NULL);
+  gh_social_lists_attach_store(self, account_store);
+  return self;
+}
+
+void
+gh_social_lists_attach_store(GhSocialLists *self, GhAccountStore *account_store)
+{
+  g_return_if_fail(self->account_store == NULL);
   if (account_store) {
     self->account_store = g_object_ref(account_store);
     g_signal_connect(account_store, "store-bound", G_CALLBACK(store_bound), self);
@@ -143,7 +294,6 @@ gh_social_lists_new(GhAccountStore *account_store)
     if (gh_account_store_get_store(account_store))
       store_bound(account_store, self);
   }
-  return self;
 }
 
 GNostrListService *gh_social_lists_get_service(GhSocialLists *self) { return self->service; }
@@ -154,18 +304,19 @@ gboolean gh_social_lists_get_sync_enabled(GhSocialLists *self) { return self->sy
 gboolean
 gh_social_lists_set_sync_enabled(GhSocialLists *self, gboolean enabled, GError **error)
 {
-  if (enabled) {
-    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED, "Synchronization is not available in this version yet");
-    return FALSE;
-  }
   if (!self->store) {
     g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_CLOSED, "Account storage is not open");
     return FALSE;
   }
-  if (!gh_store_social_set_sync_enabled(self->store, FALSE, error))
+  if (enabled && (!self->network.accounts || !self->relays || (gh_store_is_ephemeral(self->store) || gh_store_is_read_only(self->store)))) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED, "Synchronization needs a writable account store and signer");
     return FALSE;
-  self->sync_enabled = FALSE;
-  gnostr_list_service_set_private_sync_enabled(self->service, FALSE);
+  }
+  if (!gh_store_social_set_sync_enabled(self->store, enabled, error))
+    return FALSE;
+  self->sync_enabled = enabled;
+  gnostr_list_service_set_private_sync_enabled(self->service, enabled);
+  if (!update_plan(self, error)) return FALSE;
   g_signal_emit(self, signals[SYNC_STATE_CHANGED], 0);
   return TRUE;
 }
@@ -195,6 +346,7 @@ gh_social_lists_ensure(GhSocialLists *self, gint kind, const gchar *identifier, 
   entries[n] = local_plan(kind, identifier);
   gboolean ok = gnostr_list_service_update_read_plan(self->service, entries, n + 1, error);
   g_ptr_array_unref(snapshots);
+  if (ok) ok = update_plan(self, error);
   return ok ? gnostr_list_service_lookup(self->service, kind, identifier) : NULL;
 }
 

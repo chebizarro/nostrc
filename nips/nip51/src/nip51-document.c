@@ -175,7 +175,7 @@ NostrListDocument *nostr_nip51_document_parse_event(const NostrEvent *ev) {
     }
     d->state = !*content || kind == NOSTR_KIND_FOLLOW_LIST || kind == NOSTR_KIND_RELAY_LIST_METADATA ||
         kind == NOSTR_KIND_USER_SERVER_LIST || kind == NOSTR_KIND_RELEASE_ARTIFACT_SETS ? NOSTR_LIST_PRIVATE_EMPTY :
-        strstr(content, "iv") ? NOSTR_LIST_PRIVATE_LEGACY_NIP04 : NOSTR_LIST_PRIVATE_ENCRYPTED_NIP44;
+        strstr(content, "?iv=") ? NOSTR_LIST_PRIVATE_LEGACY_NIP04 : NOSTR_LIST_PRIVATE_ENCRYPTED_NIP44;
     return d;
 fail:
     nostr_nip51_document_free(d); return NULL;

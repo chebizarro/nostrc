@@ -2,13 +2,24 @@
 #define GH_SOCIAL_LISTS_H
 #include "gh-account-store.h"
 #include "gh-store-social.h"
+#include "gh-list-adapter.h"
+#include "gh-account-relays.h"
 G_BEGIN_DECLS
 #define GH_TYPE_SOCIAL_LISTS (gh_social_lists_get_type())
 G_DECLARE_FINAL_TYPE(GhSocialLists, gh_social_lists, GH, SOCIAL_LISTS, GObject)
 /* Owned by GhAppServices. Main-context only. Signals: changed (),
  * sync-state-changed (), plus document-changed (GNostrListDocument).
- * No network or signer is installed in this local-only stage. */
+ * First hide-list import is exposed by get_pending_import(), never applied silently. */
 GhSocialLists *gh_social_lists_new(GhAccountStore *account_store);
+void gh_social_lists_attach_store(GhSocialLists *self, GhAccountStore *account_store);
+void gh_social_lists_set_network(GhSocialLists *self, const GhListAdapterNetwork *network,
+                                 GhAccountRelays *relays);
+GhListAdapter *gh_social_lists_get_adapter(GhSocialLists *self);
+void gh_social_lists_configure_groups(GhSocialLists *self, const gchar *const *urls,
+                                      gboolean waiting, GhListDeriveFunc derive, gpointer data);
+gboolean gh_social_lists_get_pending_import(GhSocialLists *self, guint *accounts, guint *items);
+const gchar *gh_social_lists_get_pending_import_id(GhSocialLists *self);
+gboolean gh_social_lists_confirm_import(GhSocialLists *self, gboolean accept, GError **error);
 /* Explicit binding seam for session stores and tests; account_store may be NULL
  * at construction. The caller must close this binding before closing store. */
 gboolean gh_social_lists_bind_store(GhSocialLists *self, GhStore *store, guint64 generation,

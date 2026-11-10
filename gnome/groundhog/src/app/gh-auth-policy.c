@@ -15,7 +15,7 @@ static guint signals[N_SIGNALS];
 
 G_DEFINE_FINAL_TYPE(GhAuthPolicy, gh_auth_policy, G_TYPE_OBJECT)
 
-/* Charter §4.3, "AUTH identity" column; R1 lists the four ACCOUNT rows. */
+/* Charter §4.3, "AUTH identity" column and R1's account-purpose allowlist. */
 static const struct {
   const gchar *name;
   GhRelayAuthMode mode;
@@ -28,7 +28,9 @@ static const struct {
   [GH_AUTH_PURPOSE_SELF_WRAP] = { "self-wrap", GH_RELAY_AUTH_ACCOUNT },
   [GH_AUTH_PURPOSE_GROUP] = { "group", GH_RELAY_AUTH_ACCOUNT },
     [GH_AUTH_PURPOSE_MLS_ROUTING] = { "mls-routing", GH_RELAY_AUTH_EPHEMERAL },
-    [GH_AUTH_PURPOSE_PUBLIC_POST] = { "public-post", GH_RELAY_AUTH_EPHEMERAL },
+  [GH_AUTH_PURPOSE_PUBLIC_POST] = { "public-post", GH_RELAY_AUTH_EPHEMERAL },
+  [GH_AUTH_PURPOSE_OWN_PRIVATE_SYNC_READ] = { "own-private-sync-read", GH_RELAY_AUTH_ACCOUNT },
+  [GH_AUTH_PURPOSE_OWN_PRIVATE_SYNC_PUBLISH] = { "own-private-sync-publish", GH_RELAY_AUTH_ACCOUNT },
 };
 
 GhRelayAuthMode
