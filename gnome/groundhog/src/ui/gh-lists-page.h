@@ -21,6 +21,7 @@ typedef struct {
   const gchar *(*import_revision)(GObject *owner);
   gboolean (*confirm_import)(GObject *owner, gboolean accept, GError **error);
   const gchar *(*sync_error)(GObject *owner);
+  GStrv (*dup_public_targets)(GObject *owner); /* optional: exact NIP-65 write targets */
 } GhListsBackend;
 
 #define GH_TYPE_LISTS_PAGE (gh_lists_page_get_type())

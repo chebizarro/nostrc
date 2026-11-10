@@ -60,7 +60,7 @@ G_BEGIN_DECLS
 #define GH_ATTACHMENTS_HELD_MAX (64 * 1024 * 1024)
 
 typedef struct {
-  GSettings *settings;                 /* nullable: blossom-servers, network-mode */
+  GSettings *settings;                 /* nullable: network-mode */
   GhNetHttp *http;                     /* required: the app's (a reference is kept) */
   /* The account signer (gh_account_controller_sign_with_cancellable_async()
    * and _finish() in the application), for consented servers only;
@@ -68,6 +68,9 @@ typedef struct {
   GhBlossomSignAsyncFunc sign_async;
   GhBlossomSignFinishFunc sign_finish;
   gpointer sign_data;
+  GObject *server_source; /* optional, referenced: generation-aware account source */
+  GStrv (*dup_account_servers)(GObject *source);
+  gboolean (*save_account_servers)(GObject *source, const gchar *const *servers, GError **error);
 } GhAttachmentsConfig;
 
 #define GH_TYPE_ATTACHMENTS (gh_attachments_get_type())

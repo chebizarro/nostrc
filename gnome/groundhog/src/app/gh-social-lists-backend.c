@@ -33,6 +33,8 @@ static gboolean confirm_import(GObject *owner, gboolean accept, GError **error)
 { return gh_social_lists_confirm_import(GH_SOCIAL_LISTS(owner), accept, error); }
 static const gchar *sync_error(GObject *owner)
 { return gh_social_lists_get_error(GH_SOCIAL_LISTS(owner)); }
+static GStrv public_targets(GObject *owner)
+{ return gh_social_lists_dup_public_targets(GH_SOCIAL_LISTS(owner)); }
 GhListsBackend gh_social_lists_backend(GhSocialLists *self)
 {
   return (GhListsBackend){
@@ -40,6 +42,7 @@ GhListsBackend gh_social_lists_backend(GhSocialLists *self)
     .get_sync = get_sync, .set_sync = set_sync, .sync_available = TRUE,
     .pending_import = pending_import, .import_revision = import_revision,
     .confirm_import = confirm_import, .sync_error = sync_error,
+    .dup_public_targets = public_targets,
     .ensure = ensure, .apply = apply, .import = import, .export = gh_social_lists_export,
   };
 }

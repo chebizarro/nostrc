@@ -4,6 +4,7 @@
 #include "gh-social-lists.h"
 #include "gh-social-lists-backend.h"
 #include "gh-preferences-dialog.h"
+#include "gh-relay-deny-policy.h"
 #include "gh-test-signer.h"
 #include "nostrc-test-gdk-frame.h"
 void groundhog_register_resource(void);
@@ -16,7 +17,7 @@ static GhTestBus bus;
 static gchar *account, *npub, *other_npub;
 static const gchar *writes[] = { "wss://write-a.test.invalid", "wss://write-b.test.invalid", "wss://write-c.test.invalid", NULL };
 typedef struct { GhRelayScope *scope; gchar *url; gint kind; gboolean closed; gchar *filter; } Read;
-typedef struct { GhRelayPublish *publish; gchar *url, *json, *id; gint kind; gboolean closed; } Write;
+typedef struct { GhRelayPublish *publish; gchar *url, *json, *id, *auth_id, *auth_pubkey; gint kind; gboolean closed; guint resends; } Write;
 typedef struct {
   GhTestSigner signer;
   GSettings *settings;
@@ -42,7 +43,7 @@ static void remove_tree(const gchar *path)
   } else g_unlink(path);
 }
 static void read_free(gpointer p) { Read *r = p; g_free(r->url); g_free(r->filter); g_free(r); }
-static void write_free(gpointer p) { Write *w = p; g_free(w->url); g_free(w->json); g_free(w->id); g_free(w); }
+static void write_free(gpointer p) { Write *w = p; g_free(w->url); g_free(w->json); g_free(w->id); g_free(w->auth_id); g_free(w->auth_pubkey); g_free(w); }
 static gpointer read_open(GhRelayScope *scope, const gchar *url, const NostrFilters *filters, gpointer data, GError **error)
 {
   (void)error;
@@ -70,6 +71,21 @@ static gpointer write_open(GhRelayPublish *publish, const gchar *url, const gcha
   return w;
 }
 static void write_close(gpointer handle, gpointer data) { (void)data; ((Write *)handle)->closed = TRUE; }
+static gboolean write_auth(gpointer handle, const gchar *json, gpointer data, GError **error)
+{
+  (void)data; (void)error;
+  Write *w = handle;
+  NostrEvent *event = nostr_event_new();
+  g_assert_cmpint(nostr_event_deserialize_signed(event, json, NULL), ==, NOSTR_EVENT_VALIDATION_OK);
+  g_assert_cmpint(nostr_event_get_kind(event), ==, NOSTR_KIND_CLIENT_AUTHENTICATION);
+  g_free(w->auth_id); w->auth_id = nostr_event_get_id(event);
+  g_free(w->auth_pubkey); w->auth_pubkey = g_strdup(nostr_event_get_pubkey(event));
+  nostr_event_free(event);
+  return TRUE;
+}
+static gboolean write_resend(gpointer handle, gpointer data, GError **error)
+{ (void)data; (void)error; ((Write *)handle)->resends++; return TRUE; }
+static const GhRelayPublishAuthTransport write_auth_transport = { write_auth, write_resend };
 static const GhRelayTransport read_transport = { read_open, read_close };
 static const GhRelayPublishTransport write_transport = { write_open, write_close };
 static gchar *event_json(gint kind, gint64 at, NostrTags *tags, const gchar *content)
@@ -83,7 +99,7 @@ static gchar *event_json(gint kind, gint64 at, NostrTags *tags, const gchar *con
   gchar *json = g_strdup(raw); free(raw); nostr_event_free(event);
   return json;
 }
-static gchar *encrypt(const gchar *plain)
+static gchar *encrypt_private(const gchar *plain)
 {
   guint8 secret[32], pubkey[32]; char *cipher = NULL;
   g_assert_true(nostr_hex2bin(secret, gh_test_secret[1], 32));
@@ -117,7 +133,8 @@ static void bind(Fixture *f)
 {
   f->social = gh_social_lists_new(NULL);
   GhListAdapterNetwork network = { .accounts = f->accounts, .scope_transport = &read_transport,
-    .scope_data = f, .publish_transport = &write_transport, .publish_data = f, .publish_deadline = 10 };
+    .scope_data = f, .publish_transport = &write_transport, .publish_auth_transport = &write_auth_transport,
+    .publish_data = f, .publish_deadline = 10 };
   gh_social_lists_set_network(f->social, &network, f->relays);
   g_autoptr(GError) error = NULL;
   g_assert_true(gh_social_lists_bind_store(f->social, f->store,
@@ -244,7 +261,7 @@ static void test_own_hide_echo(void)
 static gchar *remote_hide(void)
 {
   g_autofree gchar *plain = g_strdup_printf("[[\"p\",\"%s\"],[\"word\",\"test\"]]", account);
-  g_autofree gchar *cipher = encrypt(plain);
+  g_autofree gchar *cipher = encrypt_private(plain);
   return event_json(NOSTR_KIND_MUTE_LIST, g_get_real_time()/G_USEC_PER_SEC - 10, nostr_tags_new(0), cipher);
 }
 static gboolean import_pending(gpointer data) { return gh_social_lists_get_pending_import(((Fixture *)data)->social, NULL, NULL); }
@@ -326,6 +343,53 @@ static void test_public_and_partial(void)
   g_assert_no_error(r.error); g_assert_nonnull(r.outcomes); g_variant_unref(r.outcomes);
   teardown(&f);
 }
+static gboolean auth_sent(gpointer data) { return ((Write *)data)->auth_pubkey != NULL; }
+static void test_server_list_explicit(void)
+{
+  Fixture f; setup(&f);
+  const gchar *servers[] = { "https://first.test.invalid", "https://second.test.invalid", NULL };
+  guint calls = f.signer.calls;
+  g_autoptr(GError) error = NULL;
+  g_assert_true(gh_social_lists_set_servers(f.social, servers, &error)); g_assert_no_error(error);
+  enabled(&f, TRUE); eose(&f, NOSTR_KIND_BLOSSOM_SERVER_LIST, 3);
+  gh_test_signer_assert_no_calls_since(&f.signer, calls);
+  g_assert_cmpuint(f.sent->len, ==, 0); /* the sync switch never authorizes 10063 */
+  enabled(&f, FALSE);
+  Result result = {0};
+  GNostrListService *service = gh_social_lists_get_service(f.social);
+  gnostr_list_service_publish_async(service, NOSTR_KIND_BLOSSOM_SERVER_LIST, "", GNOSTR_LIST_APPROVE_PARTIAL, NULL, published, &result);
+  gh_test_spin_until(finished, &result);
+  g_assert_error(result.error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED); g_clear_error(&result.error);
+  g_assert_cmpuint(f.sent->len, ==, 0);
+  result.done = FALSE;
+  gnostr_list_service_publish_async(service, NOSTR_KIND_BLOSSOM_SERVER_LIST, "",
+    GNOSTR_LIST_APPROVE_PUBLIC | GNOSTR_LIST_APPROVE_PARTIAL, NULL, published, &result);
+  gh_test_spin_until(sent, &f);
+  for (guint i = 0; i < f.sent->len; i++) {
+    Write *w = f.sent->pdata[i];
+    g_assert_cmpint(w->kind, ==, NOSTR_KIND_BLOSSOM_SERVER_LIST);
+    g_assert_cmpstr(w->url, ==, writes[i]);
+    json_t *event = json_loads(w->json, 0, NULL);
+    g_assert_cmpstr(json_string_value(json_object_get(event, "content")), ==, "");
+    json_t *tags = json_object_get(event, "tags");
+    g_assert_cmpstr(json_string_value(json_array_get(json_array_get(tags, 0), 1)), ==, servers[0]);
+    g_assert_cmpstr(json_string_value(json_array_get(json_array_get(tags, 1), 1)), ==, servers[1]);
+    json_decref(event);
+  }
+  Write *w = f.sent->pdata[0];
+  calls = f.signer.calls;
+  gh_relay_publish_auth_challenge(w->publish, w->url, "public-server-list");
+  gh_relay_publish_ok(w->publish, w->url, w->id, FALSE, "auth-required: sign in");
+  gh_test_spin_until(auth_sent, w);
+  g_assert_cmpstr(w->auth_pubkey, !=, account); /* PUBLIC_POST, never OWN_LIST_PUBLISH */
+  gh_test_signer_assert_no_calls_since(&f.signer, calls);
+  gh_relay_publish_ok(w->publish, w->url, w->auth_id, TRUE, "");
+  g_assert_cmpuint(w->resends, ==, 1);
+  accept_writes(&f); gh_test_spin_until(finished, &result);
+  g_assert_no_error(result.error); g_assert_nonnull(result.outcomes); g_variant_unref(result.outcomes);
+  teardown(&f);
+}
+
 static gboolean unreadable(gpointer data)
 {
   return gnostr_list_service_get_state(gh_social_lists_get_service(((Fixture *)data)->social), NOSTR_KIND_BLOCKED_RELAY_LIST, "") == GNOSTR_LIST_UNREADABLE;
@@ -434,7 +498,7 @@ static void test_private_auth_destinations(void)
   Fixture f; setup(&f); enabled(&f, TRUE);
   const gchar *private[] = { "wss://private.test.invalid", NULL };
   append(&f, NOSTR_KIND_PRIVATE_RELAY_LIST, TRUE, "relay", private[0]);
-  g_autofree gchar *cipher = encrypt("{\"kind\":14,\"content\":\"draft\"}");
+  g_autofree gchar *cipher = encrypt_private("{\"kind\":14,\"content\":\"draft\"}");
   NostrTags *tags = nostr_tags_new(0);
   nostr_tags_append(tags, nostr_tag_new("d", "opaque-fixture", NULL));
   nostr_tags_append(tags, nostr_tag_new("k", "14", NULL));
@@ -477,6 +541,100 @@ static GtkWidget *find_alert(GtkWidget *widget)
   return NULL;
 }
 static gboolean alert_shown(gpointer data) { return find_alert(data) != NULL; }
+static void set_write_relays(Fixture *f, const gchar *const *urls)
+{
+  NostrTags *tags = nostr_tags_new(0);
+  for (guint i = 0; urls && urls[i]; i++) nostr_tags_append(tags, nostr_tag_new("r", urls[i], "write", NULL));
+  g_autofree gchar *wire = event_json(NOSTR_KIND_RELAY_LIST_METADATA, g_get_real_time()/G_USEC_PER_SEC, tags, "");
+  Read *r = read_for(f, NOSTR_KIND_RELAY_LIST_METADATA, "wss://discovery.test.invalid");
+  gh_relay_scope_event(r->scope, r->url, wire);
+  drain();
+}
+static void test_preferences_server_publish(gconstpointer data)
+{
+  gint mode = GPOINTER_TO_INT(data); /* cancel, publish, edit, target change, account close, no targets */
+  Fixture f; setup(&f);
+  const gchar *servers[] = { "https://first.test.invalid", "https://second.test.invalid", NULL };
+  g_autoptr(GError) error = NULL;
+  g_assert_true(gh_social_lists_set_servers(f.social, servers, &error)); g_assert_no_error(error);
+  if (mode == 5) set_write_relays(&f, NULL);
+  GhListsBackend backend = gh_social_lists_backend(f.social);
+  GhPreferencesDialog *prefs = g_object_ref_sink(gh_preferences_dialog_new(f.settings, GH_PREFERENCES_FEATURE_ATTACHMENTS));
+  gh_preferences_dialog_set_social_backend(prefs, &backend);
+  GtkWindow *window = GTK_WINDOW(adw_window_new());
+  gtk_window_set_default_size(window, 920, 640); gtk_window_present(window);
+  adw_dialog_present(ADW_DIALOG(prefs), GTK_WIDGET(window));
+  adw_preferences_dialog_set_visible_page_name(ADW_PREFERENCES_DIALOG(prefs), "messages");
+  GtkWidget *button = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(prefs), GH_TYPE_PREFERENCES_DIALOG, "server_publish_button"));
+  GtkWidget *row = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(prefs), GH_TYPE_PREFERENCES_DIALOG, "server_publish_row"));
+  guint calls = f.signer.calls;
+  g_assert_cmpint(gtk_widget_get_sensitive(button), ==, mode != 5);
+  g_signal_emit_by_name(button, "clicked");
+  if (mode != 5) {
+    gh_test_spin_until(alert_shown, window);
+    AdwAlertDialog *dialog = g_object_ref(ADW_ALERT_DIALOG(find_alert(GTK_WIDGET(window))));
+    g_assert_cmpstr(adw_alert_dialog_get_heading(dialog), ==, "Publish Server List?");
+    g_assert_cmpstr(adw_alert_dialog_get_default_response(dialog), ==, "cancel");
+    const gchar *body = adw_alert_dialog_get_body(dialog);
+    g_assert_nonnull(strstr(body, "may replace relay changes not checked"));
+    g_assert_nonnull(strstr(body, servers[0])); g_assert_nonnull(strstr(body, servers[1]));
+    g_assert_true(strstr(body, servers[0]) < strstr(body, servers[1]));
+    for (guint i = 0; writes[i]; i++) g_assert_nonnull(strstr(body, writes[i]));
+    gh_test_signer_assert_no_calls_since(&f.signer, calls);
+    g_assert_cmpuint(f.sent->len, ==, 0); /* opening the preview is not permission */
+    if (mode == 2) {
+      const gchar *changed[] = { "https://changed.test.invalid", NULL };
+      g_assert_true(gh_social_lists_set_servers(f.social, changed, &error)); g_assert_no_error(error);
+    } else if (mode == 3) {
+      const gchar *changed[] = { "wss://changed-write.test.invalid", NULL };
+      set_write_relays(&f, changed);
+    } else if (mode == 4) gh_social_lists_close(f.social);
+    g_signal_emit_by_name(dialog, "response", mode == 0 ? "cancel" : "publish");
+    adw_dialog_force_close(ADW_DIALOG(dialog)); g_object_unref(dialog);
+    if (mode == 1) {
+      gh_test_spin_until(sent, &f);
+      g_assert_false(gh_social_lists_get_sync_enabled(f.social));
+      for (guint i = 0; i < f.sent->len; i++) g_assert_cmpint(((Write *)f.sent->pdata[i])->kind, ==, NOSTR_KIND_BLOSSOM_SERVER_LIST);
+      accept_writes(&f);
+      g_assert_nonnull(strstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(row)), "Published —"));
+    } else if (mode == 2 || mode == 3) {
+      g_assert_nonnull(strstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(row)), "changed"));
+    }
+  } else g_assert_null(find_alert(GTK_WIDGET(window)));
+  if (mode != 1) {
+    drain(); g_assert_cmpuint(f.sent->len, ==, 0);
+    gh_test_signer_assert_no_calls_since(&f.signer, calls);
+  }
+  adw_dialog_force_close(ADW_DIALOG(prefs)); gtk_window_destroy(window); g_object_unref(prefs); drain();
+  teardown(&f);
+}
+static void test_preferences_blocked_sync(void)
+{
+  Fixture f; setup(&f);
+  GhListsBackend backend = gh_social_lists_backend(f.social);
+  GhPreferencesDialog *prefs = g_object_ref_sink(gh_preferences_dialog_new(f.settings, 0));
+  gh_preferences_dialog_set_social_backend(prefs, &backend);
+  GtkWindow *window = GTK_WINDOW(adw_window_new());
+  gtk_window_present(window); adw_dialog_present(ADW_DIALOG(prefs), GTK_WIDGET(window));
+  GtkWidget *entry = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(prefs), GH_TYPE_PREFERENCES_DIALOG, "blocked_relays_entry"));
+  gtk_editable_set_text(GTK_EDITABLE(entry), "wss://blocked-editor.test.invalid/path");
+  g_signal_emit_by_name(entry, "apply"); drain();
+  g_assert_cmpuint(f.sent->len, ==, 0);
+  g_assert_false(gh_relay_deny_policy_check(gh_social_lists_get_generation(f.social), "wss://blocked-editor.test.invalid/path", FALSE, NULL));
+  GtkWidget *sync = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(prefs), GH_TYPE_PREFERENCES_DIALOG, "social_sync_row"));
+  adw_switch_row_set_active(ADW_SWITCH_ROW(sync), TRUE);
+  eose(&f, NOSTR_KIND_BLOCKED_RELAY_LIST, 2); gh_test_spin_until(sent, &f);
+  for (guint i = 0; i < f.sent->len; i++) {
+    Write *w = f.sent->pdata[i];
+    g_assert_cmpint(w->kind, ==, NOSTR_KIND_BLOCKED_RELAY_LIST);
+    g_assert_true(g_strv_contains(writes, w->url));
+    g_assert_null(strstr(w->json, "blocked-editor.test.invalid"));
+  }
+  accept_writes(&f);
+  adw_dialog_force_close(ADW_DIALOG(prefs)); gtk_window_destroy(window); g_object_unref(prefs); drain();
+  teardown(&f);
+}
+
 static void test_preferences_import(gconstpointer data)
 {
   gboolean accept = GPOINTER_TO_INT(data);
@@ -529,11 +687,19 @@ int main(int argc, char **argv)
     gh_test_bus_up_beside_gtk(&bus);
   } else gh_test_bus_up(&bus);
   if (gui) {
+    g_test_add_data_func("/groundhog/social-sync-gui/server-publish-cancel", GINT_TO_POINTER(0), test_preferences_server_publish);
+    g_test_add_data_func("/groundhog/social-sync-gui/server-publish-approved", GINT_TO_POINTER(1), test_preferences_server_publish);
+    g_test_add_data_func("/groundhog/social-sync-gui/server-publish-stale-list", GINT_TO_POINTER(2), test_preferences_server_publish);
+    g_test_add_data_func("/groundhog/social-sync-gui/server-publish-stale-targets", GINT_TO_POINTER(3), test_preferences_server_publish);
+    g_test_add_data_func("/groundhog/social-sync-gui/server-publish-account-close", GINT_TO_POINTER(4), test_preferences_server_publish);
+    g_test_add_data_func("/groundhog/social-sync-gui/server-publish-no-targets", GINT_TO_POINTER(5), test_preferences_server_publish);
+    g_test_add_func("/groundhog/social-sync-gui/blocked-editor-sync", test_preferences_blocked_sync);
     g_test_add_data_func("/groundhog/social-sync-gui/import-accept", GINT_TO_POINTER(TRUE), test_preferences_import);
     g_test_add_data_func("/groundhog/social-sync-gui/import-decline", GINT_TO_POINTER(FALSE), test_preferences_import);
   } else {
   g_test_add_func("/privacy/social/default-no-sync", test_default_majority);
   g_test_add_func("/privacy/social/publication-needs-confirmation", test_public_and_partial);
+  g_test_add_func("/privacy/social/server-list-explicit-public-post", test_server_list_explicit);
   g_test_add_func("/groundhog/social-sync/own-hide-echo", test_own_hide_echo);
   g_test_add_func("/groundhog/social-sync/public-import-blocks-local-publish", test_public_import_blocks_local_publish);
   g_test_add_data_func("/groundhog/social-sync/first-import-accept", GINT_TO_POINTER(TRUE), test_first_import);

@@ -352,10 +352,8 @@ action_update_media(GtkWidget *widget, const gchar *action, GVariant *parameter)
   GhMlsGroupInfoDialog *self = GH_MLS_GROUP_INFO_DIALOG(widget);
   if (!can_manage(self))
     return;
-  GSettings *settings = self->context.settings;
-  if (!settings)
-    return;
-  g_auto(GStrv) servers = g_settings_get_strv(settings, "blossom-servers");
+  g_auto(GStrv) servers = self->context.server_source && self->context.dup_account_servers
+    ? self->context.dup_account_servers(self->context.server_source) : NULL;
   guint n = servers ? g_strv_length(servers) : 0;
   if (n == 0) {
     toast(self, _("No Blossom servers configured in your settings"));
@@ -1186,6 +1184,7 @@ gh_mls_group_info_dialog_new(GhMlsGroup *group, const GhMlsUiContext *context)
   GhMlsGroupInfoDialog *self = g_object_new(GH_TYPE_MLS_GROUP_INFO_DIALOG, NULL);
   self->group = g_object_ref(group);
   self->context = *context;
+  if (context->server_source) self->context.server_source = g_object_ref(context->server_source);
   self->context.default_relays = NULL;
   self->files = context->files ? g_object_ref(context->files) : NULL;
   self->context.files = NULL;
@@ -1358,6 +1357,7 @@ gh_mls_group_info_dialog_dispose(GObject *object)
   g_clear_object(&self->context.accounts);
   g_clear_object(&self->context.model);
   g_clear_object(&self->context.settings);
+  g_clear_object(&self->context.server_source);
   if (self->picture_op)
     g_cancellable_cancel(self->picture_op);
   g_clear_object(&self->picture_op);

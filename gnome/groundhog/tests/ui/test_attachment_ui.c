@@ -29,6 +29,8 @@
 #include "socks5-fixture.h"
 #include "gh-attachment-card.h"
 #include "gh-attachment-ui.h"
+#include "gh-social-lists.h"
+#include "gh-social-lists-backend.h"
 #if GROUNDHOG_TEST_MLS_FILES
 #include "gh-mls-attachment-ui.h"
 #endif
@@ -341,6 +343,7 @@ typedef struct {
   BlossomFixture *blossom;
   GhNetHttp *http;
   GhAttachments *attachments;
+  GhSocialLists *social;
   gchar *server;        /* the fixture, normalized */
   gchar *saved;         /* Save As writes here (the Save dialog's choice) */
   guint save_asked;
@@ -403,15 +406,29 @@ save_target(const gchar *suggested_name, gpointer data)
 
 /* The stack, its GhAttachments (as gh-app-services.c makes it) and the
  * window with the attachment UI. servers: the fixture (TRUE) or none. */
+static GStrv fixture_account_servers(GObject *owner)
+{
+  return gh_social_lists_dup_servers(GH_SOCIAL_LISTS(owner), NULL);
+}
+static gboolean fixture_save_servers(GObject *owner, const gchar *const *servers, GError **error)
+{
+  return gh_social_lists_set_servers(GH_SOCIAL_LISTS(owner), servers, error);
+}
+static gboolean fixture_set_servers(GhSocialLists *social, const gchar *const *servers)
+{
+  return gh_social_lists_set_servers(social, servers, NULL);
+}
+
 static void
 fixture_up(Fixture *f, gboolean with_server)
 {
   send_stack_up(&f->s);
   g_assert_cmpint(gh_account_store_get_state(f->s.store), ==, GH_ACCOUNT_STORE_OPEN);
   own_inbox_list(f);
+  f->social = gh_social_lists_new_with_settings(f->s.store, f->s.settings);
   if (with_server) {
     const gchar *servers[] = { blossom_fixture_url(f->blossom), NULL };
-    g_settings_set_strv(f->s.settings, "blossom-servers", servers);
+    g_assert_true(fixture_set_servers(f->social, servers));
   }
   f->http = gh_net_http_new(f->s.settings);
   GhAttachmentsConfig config = {
@@ -420,6 +437,9 @@ fixture_up(Fixture *f, gboolean with_server)
     .sign_async = sign_async,
     .sign_finish = gh_account_controller_sign_finish,
     .sign_data = f->s.accounts,
+    .server_source = G_OBJECT(f->social),
+    .dup_account_servers = fixture_account_servers,
+    .save_account_servers = fixture_save_servers,
   };
   f->attachments = gh_attachments_new(&config);
   gh_attachments_set_allow_private_hosts(f->attachments, TRUE); /* the loopback fixture */
@@ -451,6 +471,8 @@ fixture_clear(Fixture *f)
     g_object_run_dispose(G_OBJECT(f->attachments));
   }
   g_clear_object(&f->attachments);
+  if (f->social) gh_social_lists_close(f->social);
+  g_clear_object(&f->social);
   g_clear_object(&f->http);
   if (f->s.accounts) {
     send_stack_down(&f->s);
@@ -909,14 +931,14 @@ test_first_use_server(void)
   gtk_widget_activate_action(GTK_WIDGET(sheet), "sheet.use-server", NULL);
   g_assert_cmpstr(gh_attachment_sheet_get_page(sheet), ==, "servers");
   g_assert_nonnull(gh_attachment_sheet_get_error(sheet));
-  g_auto(GStrv) none = g_settings_get_strv(f.s.settings, "blossom-servers");
+  g_auto(GStrv) none = gh_social_lists_dup_servers(f.social, NULL);
   g_assert_cmpuint(g_strv_length(none), ==, 0);
   /* Editing clears the error in place. */
   gtk_editable_set_text(GTK_EDITABLE(entry), "HTTPS://Files.Example.com/");
   g_assert_null(gh_attachment_sheet_get_error(sheet));
   gtk_widget_activate_action(GTK_WIDGET(sheet), "sheet.use-server", NULL);
   wait_page(&f, "preview");
-  g_auto(GStrv) chosen = g_settings_get_strv(f.s.settings, "blossom-servers");
+  g_auto(GStrv) chosen = gh_social_lists_dup_servers(f.social, NULL);
   g_assert_cmpstr(chosen[0], ==, "https://files.example.com");
   g_assert_null(chosen[1]);
   g_assert_nonnull(strstr(gh_attachment_sheet_get_server_note(sheet), "files.example.com"));
@@ -942,19 +964,19 @@ test_suggested_encrypted_media_servers(void)
   send_stack_select(&f.s, bob);
   g_autoptr(GBytes) jpeg = make_jpeg(8 * 1024, 3);
   for (guint selected = 0; selected < G_N_ELEMENTS(hosts); selected++) {
-    g_assert_true(g_settings_set_strv(f.s.settings, "blossom-servers", NULL));
+    g_assert_true(fixture_set_servers(f.social, NULL));
     gh_attachment_ui_offer_bytes(f.s.window, jpeg, "photo.jpg", "image/jpeg");
     GhAttachmentSheet *sheet = wait_page(&f, "servers");
     g_assert_true(label_with(GTK_WIDGET(sheet), "White Noise uses these servers for encrypted media."));
     g_assert_true(label_with(GTK_WIDGET(sheet), "The chosen server sees your IP address"));
     for (guint i = 0; i < G_N_ELEMENTS(hosts); i++)
       g_assert_nonnull(button_labeled(GTK_WIDGET(sheet), hosts[i]));
-    g_auto(GStrv) before = g_settings_get_strv(f.s.settings, "blossom-servers");
+    g_auto(GStrv) before = gh_social_lists_dup_servers(f.social, NULL);
     g_assert_cmpuint(g_strv_length(before), ==, 0);
     g_assert_cmpuint(blossom_fixture_count(f.blossom, NULL), ==, 0);
     g_signal_emit_by_name(button_labeled(GTK_WIDGET(sheet), hosts[selected]), "clicked");
     wait_page(&f, "preview");
-    g_auto(GStrv) after = g_settings_get_strv(f.s.settings, "blossom-servers");
+    g_auto(GStrv) after = gh_social_lists_dup_servers(f.social, NULL);
     g_autofree gchar *expected = g_strdup_printf("https://%s", hosts[selected]);
     g_assert_cmpstr(after[0], ==, expected);
     g_assert_null(after[1]);
@@ -989,7 +1011,7 @@ test_first_use_suggested_send(void)
     g_strdup_printf("http://" FIRST_USE_ONION ":%u", blossom_fixture_port(f.blossom));
   GhConversation *bob = receive_text(&f, "Hi");
   send_stack_select(&f.s, bob);
-  g_auto(GStrv) empty = g_settings_get_strv(f.s.settings, "blossom-servers");
+  g_auto(GStrv) empty = gh_social_lists_dup_servers(f.social, NULL);
   g_assert_null(empty[0]);
   g_autoptr(GBytes) png = make_png(200);
   gh_attachment_ui_offer_bytes(f.s.window, png, "photo.png", "image/png");
@@ -998,12 +1020,12 @@ test_first_use_suggested_send(void)
   g_assert_cmpuint(blossom_fixture_count(f.blossom, NULL), ==, 0);
   g_signal_emit_by_name(button_labeled(GTK_WIDGET(sheet), "Fixture server"), "clicked");
   wait_page(&f, "preview");
-  g_auto(GStrv) chosen = g_settings_get_strv(f.s.settings, "blossom-servers");
+  g_auto(GStrv) chosen = gh_social_lists_dup_servers(f.social, NULL);
   g_assert_cmpstr(chosen[0], ==, server);
   g_assert_null(chosen[1]);
   g_assert_cmpuint(blossom_fixture_count(f.blossom, NULL), ==, 0);
   /* Model a lagging settings writer after the sheet accepted the choice. */
-  g_assert_true(g_settings_set_strv(f.s.settings, "blossom-servers", NULL));
+  g_assert_true(fixture_set_servers(f.social, NULL));
   gtk_widget_activate_action(GTK_WIDGET(sheet), "sheet.send", NULL);
   gh_test_spin_until(sheet_closed, &f);
   g_assert_cmpuint(blossom_fixture_count(f.blossom, "PUT"), ==, 1);
@@ -1027,7 +1049,7 @@ test_live_server_choice(void)
   /* A setting delivered to the UI later than an already-created client's
    * snapshot must still be the one used for this send. */
   const gchar *chosen[] = { blossom_fixture_url(f.blossom), NULL };
-  g_assert_true(g_settings_set_strv(f.s.settings, "blossom-servers", chosen));
+  g_assert_true(fixture_set_servers(f.social, chosen));
   const gchar *stale[] = { NULL };
   gh_blossom_client_set_servers(gh_attachments_get_client(f.attachments), stale);
   gh_attachment_sheet_show_preview(sheet, NULL);
@@ -1039,7 +1061,7 @@ test_live_server_choice(void)
   g_auto(GStrv) still_stale = gh_blossom_client_dup_servers(client);
   g_assert_null(still_stale[0]); /* this upload never touched the shared override */
   gh_blossom_client_set_servers(client, NULL);
-  g_assert_true(g_settings_set_strv(f.s.settings, "blossom-servers", chosen));
+  g_assert_true(fixture_set_servers(f.social, chosen));
   g_auto(GStrv) after = gh_blossom_client_dup_servers(client);
   g_assert_cmpstr(after[0], ==, blossom_fixture_url(f.blossom));
   fixture_clear(&f);
@@ -1063,7 +1085,7 @@ test_opaque_server_refusal(void)
                            "Files are encrypted on this device before upload. The server receives "
                            "unreadable bytes, not the original file's type."));
   const gchar *chosen[] = { blossom_fixture_url(f.blossom), NULL };
-  g_assert_true(g_settings_set_strv(f.s.settings, "blossom-servers", chosen));
+  g_assert_true(fixture_set_servers(f.social, chosen));
   gh_attachment_sheet_show_preview(sheet, NULL);
   gtk_widget_activate_action(GTK_WIDGET(sheet), "sheet.send", NULL);
   wait_page(&f, "sending");
@@ -1200,7 +1222,7 @@ test_preferences(void)
   fixture_init(&f);
   fixture_up(&f, TRUE);
   const gchar *servers[] = { blossom_fixture_url(f.blossom), "https://second.example.com", NULL };
-  g_settings_set_strv(f.s.settings, "blossom-servers", servers);
+  fixture_set_servers(f.social, servers);
   GhConversation *bob = receive_text(&f, "A file for the cache");
   g_autoptr(GBytes) png = make_png(20);
   g_autoptr(GhNip17File) file = upload_file(&f, png);
@@ -1216,6 +1238,8 @@ test_preferences(void)
 
   GhPreferencesDialog *dialog = gh_preferences_dialog_new(f.s.settings,
                                                           GH_PREFERENCES_FEATURES_ALL);
+  GhListsBackend social = gh_social_lists_backend(f.social);
+  gh_preferences_dialog_set_social_backend(dialog, &social);
   static const GhPreferencesAttachments funcs = {
     .max_file_size = GH_BLOSSOM_MAX_FILE_SIZE,
     .get_cache_size = prefs_cache_size,
@@ -1247,7 +1271,7 @@ test_preferences(void)
   assert_accessible_label(down, down_label);
   g_signal_emit_by_name(down, "clicked");
   gh_test_run_until_idle();
-  g_auto(GStrv) swapped = g_settings_get_strv(f.s.settings, "blossom-servers");
+  g_auto(GStrv) swapped = gh_social_lists_dup_servers(f.social, NULL);
   g_assert_cmpstr(swapped[0], ==, servers[1]);
   g_assert_cmpstr(swapped[1], ==, servers[0]);
 
@@ -2206,7 +2230,7 @@ test_group_first_use_suggested_send(void)
                                                        gh_message_get_room_id(message));
   g_assert_nonnull(group);
   send_stack_select(&f.s, group);
-  g_auto(GStrv) empty = g_settings_get_strv(f.s.settings, "blossom-servers");
+  g_auto(GStrv) empty = gh_social_lists_dup_servers(f.social, NULL);
   g_assert_null(empty[0]);
   g_autoptr(GBytes) png = make_png(200);
   gh_attachment_ui_offer_bytes(f.s.window, png, "photo.png", "image/png");
@@ -2215,7 +2239,7 @@ test_group_first_use_suggested_send(void)
   g_signal_emit_by_name(button_labeled(GTK_WIDGET(sheet), "Fixture server"), "clicked");
   wait_page(&f, "preview");
   g_assert_cmpuint(blossom_fixture_count(f.blossom, NULL), ==, 0);
-  g_assert_true(g_settings_set_strv(f.s.settings, "blossom-servers", NULL));
+  g_assert_true(fixture_set_servers(f.social, NULL));
   gtk_widget_activate_action(GTK_WIDGET(sheet), "sheet.send", NULL);
   gh_test_spin_until(sheet_closed, &f);
   g_assert_cmpuint(stub.sends, ==, 1);
@@ -2244,7 +2268,7 @@ test_group_policy_overrides_selected_server(void)
   const gchar *selected_url = blossom_fixture_url(selected);
   const gchar *account_servers[] = { selected_url, NULL };
   const gchar *policy_servers[] = { policy_url, NULL };
-  g_assert_true(g_settings_set_strv(f.s.settings, "blossom-servers", account_servers));
+  g_assert_true(fixture_set_servers(f.social, account_servers));
   StubGroups stub = { .upload_attachments = f.attachments,
                       .policy_servers = g_strdupv((gchar **)policy_servers) };
   gh_attachment_ui_set_groups(f.s.window, &stub_groups, &stub, NULL);
@@ -2391,6 +2415,23 @@ test_env_up(void)
   return root;
 }
 
+static void
+test_unusable_destinations_choose_server(void)
+{
+  Fixture f;
+  fixture_init(&f); fixture_up(&f, FALSE);
+  GhConversation *bob = receive_text(&f, "Synthetic attachment request");
+  send_stack_select(&f.s, bob);
+  g_assert_true(gh_store_exec(gh_account_store_get_store(f.s.store),
+    "INSERT INTO social_servers(url,position) VALUES('wss://not-a-blossom.example',0),('not a URL',1)", NULL));
+  g_autoptr(GBytes) jpeg = make_jpeg(8192, 3);
+  gh_attachment_ui_offer_bytes(f.s.window, jpeg, "photo.jpg", "image/jpeg");
+  GhAttachmentSheet *sheet = wait_page(&f, "servers");
+  g_assert_nonnull(sheet);
+  g_assert_cmpuint(blossom_fixture_count(f.blossom, NULL), ==, 0);
+  fixture_clear(&f);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -2440,6 +2481,7 @@ main(int argc, char **argv)
   ADD("mls-delegate-attach", test_mls_delegate_attach);
 #endif
 #undef ADD
+  g_test_add_func("/groundhog/attachment-ui/unusable-destinations-chooser", test_unusable_destinations_choose_server);
   int status = g_test_run();
   stack_keys_clear();
   gh_test_signer_down(&bus, &signer);

@@ -14,6 +14,7 @@
  * bound to the subprocess's lifetime, so no daemon outlives a test. */
 #include "crash-harness.h"
 #include "gh-outbox.h"
+#include "gh-relay-deny-policy.h"
 #include "gh-reaction-store.h"
 #include "gh-auth-policy.h"
 #include "gh-nip17-envelope.h"
@@ -2901,6 +2902,106 @@ test_wire_approval_outlives_deadline(void)
 }
 #endif
 
+static void
+test_all_relays_denied_recovery(void)
+{
+  Fixture f;
+  fixture_up(&f, NULL, NULL);
+  settle_own(&f, ALICE_INBOX, NULL);
+  guint64 generation = gh_account_controller_get_generation(f.accounts);
+  GhRelayDenyPolicy *policy = gh_relay_deny_policy_get_default();
+  const gchar *denied[] = { BOB_A, BOB_B, ALICE_INBOX, NULL };
+  gh_relay_deny_policy_bind(policy, generation, denied);
+  fixture_outbox(&f);
+  g_autoptr(GhOutboxItem) item = send_text(&f, hex_bob, "queued by local relay policy");
+  wait_status(item, GH_MESSAGE_STATUS_BLOCKED_BY_LOCAL_POLICY);
+  drain();
+  g_assert_cmpint(gh_outbox_item_get_state(item), ==, GH_STORE_OUTBOX_WAITING_RETRY);
+  g_assert_cmpuint(f.transport.opens->len, ==, 0);
+  g_assert_cmpuint(f.mock.calls, ==, 4);
+  g_autoptr(GhStoreOutboxEntry) blocked = load_entry(&f, gh_outbox_item_get_outbox_id(item));
+  GhStoreOutboxEvent *wrap = entry_event(blocked, GH_STORE_OUTBOX_ROLE_RECIPIENT_WRAP);
+  g_assert_cmpuint(blocked->attempts, ==, 0);
+  g_assert_cmpuint(wrap->targets->len, ==, 2); /* actual signed destinations preserved */
+  g_assert_cmpint(event_target(wrap, BOB_A)->outcome, ==, GH_RELAY_PUBLISH_BLOCKED_BY_LOCAL_POLICY);
+  g_assert_cmpuint(event_target(wrap, BOB_A)->attempts, ==, 0);
+  g_assert_cmpuint(event_target(wrap, BOB_B)->attempts, ==, 0);
+  g_assert_nonnull(strstr(gh_outbox_item_get_label(item), "Message Relays Are Blocked"));
+  script(&f.transport, BOB_A, ANSWER_OK, TRUE, "");
+  const gchar *remaining[] = { BOB_B, ALICE_INBOX, NULL };
+  gh_relay_deny_policy_bind(policy, generation, remaining);
+  wait_status(item, GH_MESSAGE_STATUS_SENT);
+  drain();
+  g_assert_cmpuint(count_opens(&f.transport, hex_bob, BOB_A), ==, 1);
+  g_assert_cmpstr(last_open(&f.transport, hex_bob, BOB_A)->event_json, ==, wrap->event_json);
+  g_assert_cmpuint(f.mock.calls, ==, 4); /* never re-sealed */
+  script(&f.transport, BOB_B, ANSWER_OK, TRUE, "");
+  script(&f.transport, ALICE_INBOX, ANSWER_OK, TRUE, "");
+  gh_relay_deny_policy_bind(policy, generation, NULL);
+  gh_test_spin_until(state_settled, item);
+  g_assert_cmpuint(count_opens(&f.transport, hex_bob, BOB_A), ==, 1); /* accepted stays accepted */
+  g_assert_cmpuint(count_opens(&f.transport, hex_bob, BOB_B), ==, 1);
+  g_assert_cmpstr(last_open(&f.transport, hex_bob, BOB_B)->event_json, ==, wrap->event_json);
+  g_autoptr(GhStoreOutboxEntry) after = load_entry(&f, blocked->id);
+  GhStoreOutboxEvent *same = entry_event(after, GH_STORE_OUTBOX_ROLE_RECIPIENT_WRAP);
+  g_assert_cmpstr(same->event_id, ==, wrap->event_id);
+  g_assert_cmpstr(same->event_json, ==, wrap->event_json);
+  g_assert_cmpuint(f.mock.calls, ==, 4);
+  fixture_down(&f);
+}
+
+static void
+test_policy_recovery_limits(gconstpointer data)
+{
+  gboolean expired = GPOINTER_TO_INT(data);
+  Fixture f;
+  fixture_up(&f, NULL, NULL);
+  settle_own(&f, ALICE_INBOX, NULL);
+  guint64 generation = gh_account_controller_get_generation(f.accounts);
+  GhRelayDenyPolicy *policy = gh_relay_deny_policy_get_default();
+  const gchar *denied[] = { BOB_A, ALICE_INBOX, NULL };
+  gh_relay_deny_policy_bind(policy, generation, denied);
+  script(&f.transport, BOB_B, ANSWER_OK, FALSE, expired ? "rate-limited: wait" : "error: retry");
+  fixture_outbox(&f);
+  g_autoptr(GhOutboxItem) item = send_text(&f, hex_bob, "mixed policy and network failure");
+  wait_opens(&f, 1); gh_test_spin_until(round_over, item);
+  if (expired) {
+    advance_seconds(&f, 73 * 3600);
+    g_assert_cmpint(gh_outbox_item_get_state(item), ==, GH_STORE_OUTBOX_WAITING_RETRY);
+  } else {
+    for (guint i = 2; i <= 3; i++) {
+      advance_to_next(&f); wait_opens(&f, i); gh_test_spin_until(round_over, item);
+    }
+  }
+  guint attempts = count_opens(&f.transport, hex_bob, BOB_B);
+  gint64 id = gh_outbox_item_get_outbox_id(item);
+  g_autoptr(GhStoreOutboxEntry) before = load_entry(&f, id);
+  GhStoreOutboxEvent *wrap = entry_event(before, GH_STORE_OUTBOX_ROLE_RECIPIENT_WRAP);
+  g_assert_cmpint(event_target(wrap, BOB_A)->outcome, ==, GH_RELAY_PUBLISH_BLOCKED_BY_LOCAL_POLICY);
+  if (expired) {
+    /* Recover an older durable NEEDS_ATTENTION row too, through production
+     * restore rather than mutating a live Msg. */
+    g_clear_object(&item);
+    gh_test_release(f.outbox); f.outbox = NULL;
+    GhStoreOutboxUpdate update = { .state = GH_STORE_OUTBOX_NEEDS_ATTENTION,
+      .last_error = "retry-window-over" };
+    g_assert_true(gh_store_outbox_update(f.store, id, &update, NULL));
+    fixture_outbox(&f);
+    item = gh_outbox_lookup(f.outbox, id);
+    g_assert_nonnull(item);
+  }
+  script(&f.transport, BOB_A, ANSWER_OK, TRUE, "");
+  const gchar *remaining[] = { ALICE_INBOX, NULL };
+  gh_relay_deny_policy_bind(policy, generation, remaining);
+  wait_status(item, GH_MESSAGE_STATUS_SENT); drain();
+  g_assert_cmpuint(count_opens(&f.transport, hex_bob, BOB_A), ==, 1);
+  g_assert_cmpuint(count_opens(&f.transport, hex_bob, BOB_B), ==, attempts);
+  g_assert_cmpstr(last_open(&f.transport, hex_bob, BOB_A)->event_json, ==, wrap->event_json);
+  g_assert_cmpuint(f.mock.calls, ==, 4);
+  fixture_down(&f);
+  gh_relay_deny_policy_bind(policy, generation, NULL);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -2955,6 +3056,9 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/outbox/wire-approval-outlives-deadline",
                   test_wire_approval_outlives_deadline);
 #endif
+  g_test_add_func("/groundhog/outbox/all-relays-denied-same-wrap-recovery", test_all_relays_denied_recovery);
+  g_test_add_data_func("/groundhog/outbox/policy-unblock-preserves-terminal-target", GINT_TO_POINTER(FALSE), test_policy_recovery_limits);
+  g_test_add_data_func("/groundhog/outbox/policy-unblock-after-mixed-timeout-restore", GINT_TO_POINTER(TRUE), test_policy_recovery_limits);
   int result = g_test_run();
   if (!g_test_subprocess())
     gh_test_bus_down(&shared_bus);

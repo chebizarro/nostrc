@@ -21,6 +21,12 @@ GPtrArray *gh_store_social_list(GhStore *store, GError **error);
 gboolean gh_store_social_get_preferences(GhStore *store, GhStoreSocialPreferences *out,
                                           GError **error);
 gboolean gh_store_social_set_sync_enabled(GhStore *store, gboolean enabled, GError **error);
+/* One-time, local-only import for migrated stores. The canonical document,
+ * ordered derived servers and import marker commit together. Existing account
+ * destinations (including an intentionally empty document) are never replaced. */
+gboolean gh_store_social_import_blossom_legacy(GhStore *store, const gchar *const *urls,
+                                               GError **error);
+GStrv gh_store_social_dup_servers(GhStore *store, GError **error);
 /* Replay state returned by GNostrListService. Owned; NULL without error = absent. */
 gchar *gh_store_social_load(GhStore *store, gint kind, const gchar *identifier, GError **error);
 /* Top-level transaction only: state, pending operations, removals and derived

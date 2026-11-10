@@ -233,7 +233,7 @@ template $GhPreferencesDialog: Adw.PreferencesDialog {
     // (what a server learns, for this build) and the rows' text are set from
     // C; without the feature the list is shown and not editable.
     Adw.PreferencesGroup attachments_group {
-      title: _("Attachments");
+      title: _("Account Attachment Servers");
 
       Box {
         orientation: vertical;
@@ -287,6 +287,22 @@ template $GhPreferencesDialog: Adw.PreferencesDialog {
             "error",
             "caption",
           ]
+        }
+
+        ListBox server_publish_list {
+          visible: false;
+          selection-mode: none;
+          styles ["boxed-list"]
+          Adw.ActionRow server_publish_row {
+            title: _("Public Server List");
+            subtitle: _("Share this account’s attachment server URLs on its write relays. Private sync does not publish them.");
+            [suffix]
+            Button server_publish_button {
+              label: _("_Publish Server List…");
+              use-underline: true;
+              valign: center;
+            }
+          }
         }
 
         // Shown with gh_preferences_dialog_set_attachments().
@@ -463,6 +479,46 @@ template $GhPreferencesDialog: Adw.PreferencesDialog {
           halign: start;
           action-name: "prefs.change-relays";
           styles ["pill"]
+        }
+      }
+    }
+
+    Adw.PreferencesGroup blocked_relays_group {
+      title: _("Blocked Relays");
+      description: _("Block application traffic to these relay addresses for this account. Signer-control connections are excluded so a remote signer can undo the change. Edits stay local; this does not change anyone’s signed relay list.");
+      visible: false;
+
+      Box {
+        orientation: vertical;
+        spacing: 12;
+        ListBox blocked_relays_list {
+          selection-mode: none;
+          styles ["boxed-list"]
+          accessibility { label: _("Blocked relays"); }
+          [placeholder]
+          Label {
+            label: _("No blocked relays");
+            margin-top: 12;
+            margin-bottom: 12;
+            margin-start: 12;
+            margin-end: 12;
+            styles ["dim-label"]
+          }
+        }
+        ListBox {
+          selection-mode: none;
+          styles ["boxed-list"]
+          Adw.EntryRow blocked_relays_entry {
+            title: _("Block relay");
+            show-apply-button: true;
+            input-purpose: url;
+          }
+        }
+        Label blocked_relays_error {
+          visible: false;
+          wrap: true;
+          xalign: 0;
+          styles ["error", "caption"]
         }
       }
     }
