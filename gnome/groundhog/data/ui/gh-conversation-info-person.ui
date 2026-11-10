@@ -49,6 +49,16 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
       </object>
     </child>
     <child type="suffix">
+      <object class="GtkMenuButton" id="account_menu">
+        <property name="icon-name">view-more-symbolic</property>
+        <property name="tooltip-text" translatable="yes">Account Actions</property>
+        <property name="valign">3</property>
+        <style>
+          <class name="flat"/>
+        </style>
+      </object>
+    </child>
+    <child type="suffix">
       <object class="GtkImage">
         <property name="icon-name">go-next-symbolic</property>
         <property name="accessible-role">43</property>

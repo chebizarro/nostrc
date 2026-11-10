@@ -1,4 +1,5 @@
 #include "gh-message-row.h"
+#include "gh-report-dialog.h"
 #include "gh-unparent.h"
 #include "gh-conversation-open-probe-private.h"
 #include "gh-display-name.h"
@@ -1580,6 +1581,13 @@ build_menu(GhMessageRow *self)
     GMenu *hide = g_menu_new();
     append_targeted(hide, _("_Hide Account…"), "app.hide-account",
       g_variant_new("(ss)", gh_message_get_account(self->message), gh_message_get_sender(self->message)));
+    if (gh_report_dialog_message_is_public(GTK_WIDGET(self), self->message))
+      append_targeted(hide, _("_Report Message…"), "app.report-public-message",
+        g_variant_new("(ssss)", gh_message_get_account(self->message), gh_message_get_sender(self->message),
+          gh_message_get_room_id(self->message), gh_message_get_rumor_json(self->message)));
+    else
+      append_targeted(hide, _("_Report Account…"), "app.report-account",
+        g_variant_new("(ss)", gh_message_get_account(self->message), gh_message_get_sender(self->message)));
     append_section(menu, hide);
   }
   return G_MENU_MODEL(menu);

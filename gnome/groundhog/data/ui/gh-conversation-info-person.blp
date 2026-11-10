@@ -56,6 +56,14 @@ template $GhConversationInfoPerson: Adw.ActionRow {
   }
 
   [suffix]
+  MenuButton account_menu {
+    icon-name: "view-more-symbolic";
+    tooltip-text: _("Account Actions");
+    valign: center;
+    styles ["flat"]
+  }
+
+  [suffix]
   Image {
     icon-name: "go-next-symbolic";
     accessible-role: presentation;

@@ -36,7 +36,8 @@ member_hide_account(GtkWidget *widget, const gchar *action, GVariant *parameter)
 {
   (void)action; (void)parameter;
   GhGroupMemberRow *self = GH_GROUP_MEMBER_ROW(widget);
-  gtk_widget_activate_action(widget, "group.hide-account", "s", self->pubkey);
+  gtk_widget_activate_action(widget, g_str_has_suffix(action, "report-account")
+      ? "group.report-account" : "group.hide-account", "s", self->pubkey);
 }
 
 static void
@@ -68,6 +69,7 @@ gh_group_member_row_class_init(GhGroupMemberRowClass *klass)
   gtk_widget_class_install_action(widget_class, "member.change-role", NULL, member_change_role);
   gtk_widget_class_install_action(widget_class, "member.remove", NULL, member_remove);
   gtk_widget_class_install_action(widget_class, "member.hide-account", NULL, member_hide_account);
+  gtk_widget_class_install_action(widget_class, "member.report-account", NULL, member_hide_account);
 }
 
 static void
@@ -108,6 +110,7 @@ member_row_new(const gchar *pubkey, const gchar *name, gboolean is_you,
   gtk_widget_action_set_enabled(GTK_WIDGET(self), "member.change-role", can_change_role);
   gtk_widget_action_set_enabled(GTK_WIDGET(self), "member.remove", can_remove);
   gtk_widget_action_set_enabled(GTK_WIDGET(self), "member.hide-account", !is_you);
+  gtk_widget_action_set_enabled(GTK_WIDGET(self), "member.report-account", !is_you);
   gtk_widget_set_visible(GTK_WIDGET(self->menu_button), !is_you || can_change_role || can_remove);
   return self;
 }
@@ -956,7 +959,8 @@ action_hide_account(GtkWidget *widget, const gchar *action, GVariant *parameter)
   (void)action;
   GhGroupInfoDialog *self = GH_GROUP_INFO_DIALOG(widget);
   if (self->service)
-    gtk_widget_activate_action(widget, "app.hide-account", "(ss)",
+    gtk_widget_activate_action(widget, g_str_has_suffix(action, "report-account")
+        ? "app.report-account" : "app.hide-account", "(ss)",
       gh_nip29_service_get_account(self->service), g_variant_get_string(parameter, NULL));
 }
 
@@ -1014,6 +1018,7 @@ gh_group_info_dialog_class_init(GhGroupInfoDialogClass *klass)
   gtk_widget_class_install_action(widget_class, "group.save-role", NULL, action_save_role);
   gtk_widget_class_install_action(widget_class, "group.remove", "s", action_remove);
   gtk_widget_class_install_action(widget_class, "group.hide-account", "s", action_hide_account);
+  gtk_widget_class_install_action(widget_class, "group.report-account", "s", action_hide_account);
   gtk_widget_class_install_action(widget_class, "group.edit", NULL, action_edit);
   gtk_widget_class_install_action(widget_class, "group.save-edit", NULL, action_save_edit);
   gtk_widget_class_install_action(widget_class, "group.create-invite", NULL,

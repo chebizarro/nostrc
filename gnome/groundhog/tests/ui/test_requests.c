@@ -912,7 +912,8 @@ test_gui_hide_account(void)
   GhRequestsView *view = requests_view(&f);
   GtkWidget *hide_button = template_child(view, GH_TYPE_REQUESTS_VIEW, "hide_button");
   g_assert_true(gtk_widget_get_visible(hide_button));
-  g_signal_emit_by_name(hide_button, "clicked");
+    g_assert_true(GTK_IS_MENU_BUTTON(hide_button));
+    g_assert_true(gtk_widget_activate_action(GTK_WIDGET(view), "requests.hide-account", NULL));
   g_assert_nonnull(target);
   const gchar *account, *sender;
   g_variant_get(target, "(&s&s)", &account, &sender);

@@ -41,6 +41,7 @@ data/ui/gh-lists-page.blp
 data/ui/gh-list-editor-page.blp
 data/ui/gh-hidden-page.blp
 data/ui/gh-recipient-chip.blp
+data/ui/gh-report-dialog.blp
 data/ui/gh-requests-view.blp
 data/ui/gh-shortcuts-window.blp
 data/ui/gh-sidebar-page.blp
@@ -112,6 +113,7 @@ src/ui/gh-public-post-dialog.c
 src/ui/gh-qr-code.c
 src/ui/gh-reaction-bar.c
 src/ui/gh-reaction-picker.c
+src/ui/gh-report-dialog.c
 src/ui/gh-requests-view.c
 src/ui/gh-status.c
 src/ui/gh-store-status.c

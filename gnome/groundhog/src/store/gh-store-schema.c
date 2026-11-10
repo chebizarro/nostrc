@@ -491,6 +491,15 @@ static const gchar schema_v13[] =
   " source_event_id TEXT, saved_at INTEGER NOT NULL);"
   "CREATE INDEX draft_conflicts_room ON draft_conflicts(room_key, saved_at);";
 
+/* Explicitly approved NIP-56 publications and the shared social event cache. */
+static const gchar schema_v14[] =
+  "CREATE TABLE report_publications(id INTEGER PRIMARY KEY, unsigned_json TEXT NOT NULL,"
+  " signed_json TEXT, targets_json TEXT NOT NULL, outcomes_json TEXT NOT NULL, state TEXT NOT NULL,"
+  " created_at INTEGER NOT NULL, next_attempt_at INTEGER NOT NULL DEFAULT 0);"
+  "CREATE TABLE social_event_cache(event_id TEXT PRIMARY KEY, kind INTEGER NOT NULL,"
+  " author TEXT NOT NULL, identifier TEXT NOT NULL DEFAULT '', event_json TEXT NOT NULL,"
+  " stored_at INTEGER NOT NULL) WITHOUT ROWID;";
+
 static const GhStoreMigration migrations[] = {
   { 1, "Groundhog store schema v1 (privacy charter §3.3)", schema_v1 },
   { 2, "MLS state for libmarmot's MarmotStorage (charter §3.9, G23)", schema_v2 },
@@ -505,6 +514,7 @@ static const GhStoreMigration migrations[] = {
   { 11, "Account-local social lists and preferences", schema_v11 },
   { 12, "Retained hidden history and visibility projection", schema_v12 },
   { 13, "NIP-37 draft synchronization state, publications and conflicts (nostrc-9lwl7.8)", schema_v13 },
+  { 14, "Explicit public reports and social event cache", schema_v14 },
 };
 
 G_STATIC_ASSERT(G_N_ELEMENTS(migrations) == GH_STORE_SCHEMA_VERSION);

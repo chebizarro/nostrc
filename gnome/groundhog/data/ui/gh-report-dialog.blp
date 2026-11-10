@@ -1,0 +1,45 @@
+using Gtk 4.0;
+using Adw 1;
+template $GhReportDialog : Adw.Dialog {
+  title: _("Report Account");
+  content-width: 520;
+  content-height: 640;
+  Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {
+      show-start-title-buttons: false;
+      show-end-title-buttons: false;
+      [start]
+      Button cancel_button { label: _("_Cancel"); use-underline: true; }
+      [end]
+      Button publish_button { label: _("_Publish Report"); use-underline: true; styles ["suggested-action"] }
+    }
+    content: ScrolledWindow {
+      hscrollbar-policy: never;
+      Adw.Clamp {
+        maximum-size: 480;
+        Box {
+          orientation: vertical;
+          spacing: 18;
+          margin-start: 18; margin-end: 18; margin-top: 18; margin-bottom: 18;
+          Label { label: _("This report is public. It links your reporting identity to the reported account. Reports accepted by a relay cannot be recalled. Private message evidence is never attached automatically."); wrap: true; xalign: 0; }
+          Label identity_label { selectable: true; wrap: true; wrap-mode: word_char; xalign: 0; }
+          Adw.PreferencesGroup {
+            Adw.ComboRow category_row { title: _("Category"); }
+            Adw.EntryRow explanation_row { title: _("Explanation (optional)"); }
+            Adw.SwitchRow hide_row { title: _("Also Hide This Account"); subtitle: _("Save a separate local hide entry before publishing. Hiding remains in effect if publication fails."); active: false; subtitle-lines: 0; }
+          }
+          Adw.PreferencesGroup {
+            title: _("Public Tags");
+            Label tags_label { selectable: true; wrap: true; wrap-mode: word_char; xalign: 0; }
+          }
+          Adw.PreferencesGroup {
+            title: _("Destinations");
+            Box targets_box { orientation: vertical; spacing: 6; }
+          }
+          Label status_label { selectable: true; wrap: true; wrap-mode: word_char; xalign: 0; accessible-role: status; }
+        }
+      }
+    };
+  }
+}

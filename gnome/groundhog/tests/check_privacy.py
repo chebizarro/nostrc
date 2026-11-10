@@ -146,11 +146,11 @@ RULES = (
     "message-status", "log-ids",
     "relay-suggestions",
     "app-id", "preference-consumers", "diagnostics-allowlist", "issue-services",
-    "exceptions",
+    "private-report-evidence", "exceptions",
 )
 # Rules whose findings EXCEPTIONS can never waive.
 UNWAIVABLE = {"gsettings-allowlist", "app-id", "message-status", "relay-suggestions",
-              "diagnostics-allowlist", "signer-control-class", "exceptions"}
+              "diagnostics-allowlist", "signer-control-class", "private-report-evidence", "exceptions"}
 
 # (rule, path relative to GROUNDHOG_DIR, exact reported match) -> justification.
 EXCEPTIONS = {
@@ -1043,6 +1043,29 @@ def check_issue_services(tree):
     return found
 
 
+def check_private_reports(tree):
+    """Supplement runtime wire assertions: account builder has no evidence input.
+
+    The public NIP-29 builder is deliberately separate. Neither private message
+    accessors nor local raw-key signing belong in the report service.
+    """
+    rel = "src/app/gh-report-service.c"
+    if rel not in tree.files("src", suffixes={".c"}):
+        return []
+    _, _, code = tree.views(rel)
+    rule = "private-report-evidence"
+    found = find_all(rule, rel, code,
+                     re.compile(r"\b(?:gh_message_get_\w+|nostr_event_sign|nostr_key_\w+)\s*\("),
+                     lambda s: f"{s}: reports must not collect private evidence or use raw keys")
+    account = re.search(r"\bgh_report_build_account\s*\([^)]*\)\s*\{([^}]+)\}", code)
+    if not account or not re.fullmatch(
+            r"\s*return\s+build\(account,\s*target,\s*NULL,\s*category,\s*explanation,\s*now,\s*error\);\s*",
+            account.group(1)):
+        found.append(Violation(rule, rel, 0,
+                               "account reports must build typed p only, with no evidence input", "account-builder"))
+    return found
+
+
 def check(root, exceptions=None):
     """Return the violations in the Groundhog tree at `root`."""
     exceptions = EXCEPTIONS if exceptions is None else exceptions
@@ -1050,7 +1073,7 @@ def check(root, exceptions=None):
     raw = (check_url_literals(tree) + check_gsettings(tree) + check_blueprint(tree)
            + check_sources(tree) + check_message_status(tree) + check_relay_suggestions(tree)
            + check_app_id(tree) + check_preference_consumers(tree) + check_diagnostics(tree)
-           + check_issue_services(tree))
+           + check_issue_services(tree) + check_private_reports(tree))
     used, found = set(), []
     for violation in raw:
         key = (violation.rule, violation.path, violation.match)
@@ -1098,6 +1121,8 @@ def render_schema(keys=GSETTINGS):
 def clean_tree():
     """A minimal tree that passes every rule, with near misses each rule must ignore."""
     return {
+        "src/app/gh-report-service.c": (
+            "char *gh_report_build_account(void) { return build(account, target, NULL, category, explanation, now, error); }\n"),
         "src/ui/gh-issue-adapters.c": (
             "#include \"gh-issue-adapters.h\"\n"
             "/* No GnIssueUploaderInterface here: only GhIssueUploader uploads. */\n"
@@ -1350,6 +1375,10 @@ Mutation = namedtuple("Mutation", "name expect edits exceptions", defaults=(None
 URL = "wss://relay.example.org"
 M = Mutation
 MUTATIONS = [
+    M("report-private-evidence", {"private-report-evidence"},
+      [replace("src/app/gh-report-service.c", "build(account, target, NULL,", "build(account, target, rumor_id,")]),
+    M("report-message-copy", {"private-report-evidence"},
+      [append("src/app/gh-report-service.c", "void evidence(void) { gh_message_get_content(message); }\n")]),
     M("signer-control-scope-exclusion", {"signer-control-class"},
       [append("src/app/gh-inbox-lookup.c", 'void bad(void *s) { gh_relay_scope_set_signer_control(s); }\n')]),
     M("signer-control-publish-exclusion", {"signer-control-class"},

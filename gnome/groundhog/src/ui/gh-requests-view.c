@@ -18,7 +18,7 @@ struct _GhRequestsView {
   GtkLabel *message_label;
   GtkLabel *privacy_label;
   GtkButton *block_button;
-  GtkButton *hide_button;
+  GtkMenuButton *hide_button;
   GtkButton *delete_button;
   GtkButton *accept_button;
   AdwAlertDialog *delete_dialog;
@@ -93,6 +93,7 @@ update_actions(GhRequestsView *self)
   const gchar *const *peers = shown ? gh_conversation_get_peers(self->request) : NULL;
   gboolean single = peers && peers[0] && !peers[1];
   gtk_widget_action_set_enabled(GTK_WIDGET(self), "requests.hide-account", single);
+  gtk_widget_action_set_enabled(GTK_WIDGET(self), "requests.report-account", single);
   gtk_widget_set_visible(GTK_WIDGET(self->hide_button), single);
   /* Every unavailable control says why, in place (charter §7.1). */
   const gchar *why = _("Needs private message storage on this device");
@@ -176,7 +177,8 @@ on_hide_account(GtkWidget *widget, const char *name, GVariant *parameter)
     return;
   const gchar *const *peers = gh_conversation_get_peers(self->request);
   if (peers && peers[0] && !peers[1])
-    gtk_widget_activate_action(widget, "app.hide-account", "(ss)",
+    gtk_widget_activate_action(widget, g_str_has_suffix(name, "report-account")
+        ? "app.report-account" : "app.hide-account", "(ss)",
       gh_conversation_get_account(self->request), peers[0]);
 }
 
@@ -453,6 +455,7 @@ gh_requests_view_class_init(GhRequestsViewClass *klass)
   gtk_widget_class_install_action(widget_class, "requests.delete", NULL, on_delete);
   gtk_widget_class_install_action(widget_class, "requests.block", NULL, on_block);
   gtk_widget_class_install_action(widget_class, "requests.hide-account", NULL, on_hide_account);
+  gtk_widget_class_install_action(widget_class, "requests.report-account", NULL, on_hide_account);
 }
 
 static void
