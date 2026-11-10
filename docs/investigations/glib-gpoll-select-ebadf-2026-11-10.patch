@@ -1,0 +1,181 @@
+From 7ab80377dd952dc04a9e466aa7971598fcd4b784 Mon Sep 17 00:00:00 2001
+From: Biz <chebizarro@gmail.com>
+Date: Tue, 10 Nov 2026 13:43:53 -0800
+Subject: [PATCH] gpoll: Report invalid descriptors in the select fallback
+
+When select() fails with EBADF, probe each non-negative descriptor with
+fcntl(F_GETFD) and report G_IO_NVAL on invalid entries instead of failing
+the whole poll. Clear the other revents and count entries, including
+duplicates, without retrying select(). Preserve EBADF if no invalid
+descriptor remains, and use the common heap-storage cleanup.
+
+Add Unix regressions for invalid descriptors with stack and heap fd_sets,
+duplicate entries, stale revents and negative descriptors, and for delivery
+through a watching main-context source with fatal warnings enabled.
+
+Closes: https://gitlab.gnome.org/GNOME/glib/-/issues/2644
+---
+ glib/gpoll.c            | 22 +++++++++++++++++++++-
+ glib/tests/mainloop.c   | 38 ++++++++++++++++++++++++++++++++++++++
+ glib/tests/poll-fdset.c | 41 +++++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 100 insertions(+), 1 deletion(-)
+
+diff --git a/glib/gpoll.c b/glib/gpoll.c
+index eb4d257..6b65bb7 100644
+--- a/glib/gpoll.c
++++ b/glib/gpoll.c
+@@ -539,6 +539,7 @@ cleanup:
+  * Copyright (C) 1994, 1996, 1997 Free Software Foundation, Inc.
+  */
+ 
++#include <fcntl.h>
+ #include <string.h> /* for bzero on BSD systems */
+ 
+ #ifdef HAVE_SYS_SELECT_H
+@@ -615,7 +616,26 @@ g_poll (GPollFD *fds,
+ 
+   ready = select (maxfd + 1, rset, wset, xset,
+                   timeout == -1 ? NULL : &tv);
+-  if (ready > 0)
++  if (ready == -1 && errno == EBADF)
++    {
++      int n_invalid = 0;
++
++      /* Unlike poll(), select() fails the whole set for an invalid fd. */
++      for (f = fds; f < f_end; ++f)
++        {
++          f->revents = 0;
++          if (f->fd >= 0 && fcntl (f->fd, F_GETFD) == -1 && errno == EBADF)
++            {
++              f->revents = G_IO_NVAL;
++              n_invalid++;
++            }
++        }
++
++      /* An fd may have been reused since select() failed. */
++      ready = n_invalid > 0 ? n_invalid : -1;
++      errno = EBADF;
++    }
++  else if (ready > 0)
+     for (f = fds; f < f_end; ++f)
+       {
+         f->revents = 0;
+diff --git a/glib/tests/mainloop.c b/glib/tests/mainloop.c
+index 28f67d1..747fa5e 100644
+--- a/glib/tests/mainloop.c
++++ b/glib/tests/mainloop.c
+@@ -1566,6 +1566,43 @@ read_bytes (gint         fd,
+ }
+ 
+ #ifdef G_OS_UNIX
++static gboolean
++invalid_fd_cb (gint         fd,
++               GIOCondition condition,
++               gpointer     user_data)
++{
++  gboolean *dispatched = user_data;
++
++  g_assert_cmpint (condition, ==, G_IO_NVAL);
++  *dispatched = TRUE;
++
++  return G_SOURCE_REMOVE;
++}
++
++static void
++test_unix_fd_invalid (void)
++{
++  GMainContext *context;
++  GSource *source;
++  gint fds[2];
++  gboolean dispatched = FALSE;
++
++  g_assert_no_errno (pipe (fds));
++  context = g_main_context_new ();
++  source = g_unix_fd_source_new (fds[0], G_IO_IN);
++  g_source_set_callback (source, G_SOURCE_FUNC (invalid_fd_cb), &dispatched, NULL);
++  g_source_attach (source, context);
++
++  g_assert_no_errno (close (fds[0]));
++  g_assert_true (g_main_context_iteration (context, FALSE));
++  g_assert_true (dispatched);
++  g_assert_true (g_source_is_destroyed (source));
++
++  g_source_unref (source);
++  g_main_context_unref (context);
++  g_assert_no_errno (close (fds[1]));
++}
++
+ static void
+ test_unix_fd (void)
+ {
+@@ -3002,6 +3039,7 @@ main (int argc, char *argv[])
+   g_test_add_func ("/mainloop/null-default-context", test_null_default_context);
+ #ifdef G_OS_UNIX
+   g_test_add_func ("/mainloop/unix-fd", test_unix_fd);
++  g_test_add_func ("/mainloop/unix-fd-invalid", test_unix_fd_invalid);
+   g_test_add_func ("/mainloop/unix-fd-source", test_unix_fd_source);
+   g_test_add_func ("/mainloop/source-unix-fd-api", test_source_unix_fd_api);
+   g_test_add_func ("/mainloop/wait", test_mainloop_wait);
+diff --git a/glib/tests/poll-fdset.c b/glib/tests/poll-fdset.c
+index 229c3ec..f48be9b 100644
+--- a/glib/tests/poll-fdset.c
++++ b/glib/tests/poll-fdset.c
+@@ -73,6 +73,43 @@ test_high_fd_poll (void)
+   close (pipefd[1]);
+ }
+ 
++static void
++test_invalid_fd_poll (gconstpointer user_data)
++{
++  gboolean high = GPOINTER_TO_INT (user_data);
++  int pipefd[2];
++  int fd;
++  GPollFD fds[5];
++
++  g_assert_no_errno (pipe (pipefd));
++  fd = fcntl (pipefd[0], F_DUPFD, high ? FD_SETSIZE + 32 : 0);
++  if (fd == -1 && high && (errno == EMFILE || errno == ENFILE || errno == EINVAL))
++    {
++      close (pipefd[0]);
++      close (pipefd[1]);
++      g_test_skip ("Unable to allocate descriptor beyond FD_SETSIZE");
++      return;
++    }
++  g_assert_cmpint (fd, >=, 0);
++  g_assert_no_errno (close (fd));
++
++  fds[0] = (GPollFD) { pipefd[0], G_IO_IN, G_IO_IN };
++  fds[1] = (GPollFD) { fd, G_IO_IN, G_IO_IN };
++  fds[2] = (GPollFD) { fd, G_IO_OUT, G_IO_OUT };
++  fds[3] = (GPollFD) { fd, 0, G_IO_IN };
++  fds[4] = (GPollFD) { -1, G_IO_IN, G_IO_IN };
++
++  g_assert_cmpint (g_poll (fds, G_N_ELEMENTS (fds), 0), ==, 3);
++  g_assert_cmpint (fds[0].revents, ==, 0);
++  g_assert_cmpint (fds[1].revents, ==, G_IO_NVAL);
++  g_assert_cmpint (fds[2].revents, ==, G_IO_NVAL);
++  g_assert_cmpint (fds[3].revents, ==, G_IO_NVAL);
++  g_assert_cmpint (fds[4].revents, ==, 0);
++
++  g_assert_no_errno (close (pipefd[0]));
++  g_assert_no_errno (close (pipefd[1]));
++}
++
+ #endif /* !G_OS_WIN32 */
+ 
+ int
+@@ -81,5 +118,9 @@ main (int argc,
+ {
+   g_test_init (&argc, &argv, NULL);
+   g_test_add_func ("/glib/poll/high-fd", test_high_fd_poll);
++#ifndef G_OS_WIN32
++  g_test_add_data_func ("/glib/poll/invalid-fd", GINT_TO_POINTER (FALSE), test_invalid_fd_poll);
++  g_test_add_data_func ("/glib/poll/invalid-high-fd", GINT_TO_POINTER (TRUE), test_invalid_fd_poll);
++#endif
+   return g_test_run ();
+ }
+
+base-commit: 107dde15d2961a7080f8d58ca27707d69df2d819
+-- 
+2.54.0
+
