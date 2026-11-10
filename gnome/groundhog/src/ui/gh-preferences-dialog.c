@@ -48,6 +48,9 @@ struct _GhPreferencesDialog {
   AdwPreferencesGroup *social_group;
   AdwSwitchRow *social_sync_row;
   AdwActionRow *social_lists_row;
+  AdwActionRow *social_import_row;
+  AdwAlertDialog *social_import_dialog;
+  gchar *social_import_revision;
   AdwSwitchRow *notifications_row;
   AdwComboRow *notification_privacy_row;
   AdwSwitchRow *sound_row;
@@ -1710,6 +1713,7 @@ social_changed(GObject *owner, GhPreferencesDialog *self)
     return;
   guint64 generation = self->social.generation(self->social.owner);
   if (generation != self->social_generation) {
+    if (self->social_import_dialog) adw_dialog_force_close(ADW_DIALOG(self->social_import_dialog));
     adw_dialog_force_close(ADW_DIALOG(self));
     gtk_widget_set_sensitive(GTK_WIDGET(self->social_lists_row), FALSE);
     return;
@@ -1719,6 +1723,50 @@ social_changed(GObject *owner, GhPreferencesDialog *self)
   gtk_widget_set_sensitive(GTK_WIDGET(self->social_sync_row), self->social.sync_available);
   gtk_widget_set_sensitive(GTK_WIDGET(self->social_lists_row), self->social.service(self->social.owner) != NULL);
   self->social_syncing = FALSE;
+  guint accounts = 0, items = 0;
+  gboolean pending = self->social.pending_import && self->social.pending_import(self->social.owner, &accounts, &items);
+  gtk_widget_set_visible(GTK_WIDGET(self->social_import_row), pending);
+  if (pending) {
+    g_autofree gchar *summary = g_strdup_printf(_("%u accounts and %u content rules — not applied yet"), accounts, items);
+    adw_action_row_set_subtitle(self->social_import_row, summary);
+  }
+  const gchar *error = self->social.sync_error ? self->social.sync_error(self->social.owner) : NULL;
+  adw_action_row_set_subtitle(ADW_ACTION_ROW(self->social_sync_row), error ? error :
+    _("Synchronize encrypted drafts and private list entries. Relays see your account, event kind and time. Public publication needs separate approval; accepted events cannot be recalled."));
+}
+
+static void
+social_import_response(AdwAlertDialog *dialog, const gchar *response, GhPreferencesDialog *self)
+{
+  (void)dialog;
+  g_clear_weak_pointer(&self->social_import_dialog);
+  if (!self->disposed && self->social.owner && self->social_import_revision &&
+      self->social_generation == self->social.generation(self->social.owner) &&
+      !g_strcmp0(self->social_import_revision, self->social.import_revision(self->social.owner))) {
+    g_autoptr(GError) error = NULL;
+    if (!self->social.confirm_import(self->social.owner, !g_strcmp0(response, "apply"), &error))
+      adw_action_row_set_subtitle(self->social_import_row, _("Not changed — check account storage"));
+    social_changed(self->social.owner, self);
+  }
+  g_clear_pointer(&self->social_import_revision, g_free);
+}
+static void
+social_import_open(AdwActionRow *row, GhPreferencesDialog *self)
+{
+  (void)row;
+  guint accounts = 0, items = 0;
+  if (self->social_import_dialog || !self->social.owner || !self->social.pending_import ||
+      self->social_generation != self->social.generation(self->social.owner) ||
+      !self->social.pending_import(self->social.owner, &accounts, &items)) return;
+  g_autofree gchar *body = g_strdup_printf(_("This list hides %u accounts and %u content rules. New messages from hidden accounts will be discarded and cannot be recovered. Declining keeps this list unsynced; other lists still sync."), accounts, items);
+  self->social_import_revision = g_strdup(self->social.import_revision(self->social.owner));
+  AdwAlertDialog *dialog = ADW_ALERT_DIALOG(adw_alert_dialog_new(_("Apply Hidden Items?"), body));
+  g_set_weak_pointer(&self->social_import_dialog, dialog);
+  adw_alert_dialog_add_responses(self->social_import_dialog, "cancel", _("Keep Unsynced"), "apply", _("Apply"), NULL);
+  adw_alert_dialog_set_response_appearance(self->social_import_dialog, "apply", ADW_RESPONSE_DESTRUCTIVE);
+  adw_alert_dialog_set_close_response(self->social_import_dialog, "cancel");
+  g_signal_connect_object(self->social_import_dialog, "response", G_CALLBACK(social_import_response), self, 0);
+  adw_dialog_present(ADW_DIALOG(self->social_import_dialog), GTK_WIDGET(self));
 }
 
 static void
@@ -1756,6 +1804,8 @@ gh_preferences_dialog_set_social_backend(GhPreferencesDialog *self, const GhList
     self->social.owner = g_object_ref(backend->owner);
     self->social_generation = backend->generation(backend->owner);
     g_signal_connect(self->social.owner, "changed", G_CALLBACK(social_changed), self);
+    if (g_signal_lookup("sync-state-changed", G_OBJECT_TYPE(self->social.owner)))
+      g_signal_connect(self->social.owner, "sync-state-changed", G_CALLBACK(social_changed), self);
     social_changed(self->social.owner, self);
   }
   gtk_widget_set_visible(GTK_WIDGET(self->social_group), backend != NULL);
@@ -1766,6 +1816,9 @@ gh_preferences_dialog_dispose(GObject *object)
 {
   GhPreferencesDialog *self = GH_PREFERENCES_DIALOG(object);
   self->disposed = TRUE;
+  if (self->social_import_dialog) adw_dialog_force_close(ADW_DIALOG(self->social_import_dialog));
+  g_clear_weak_pointer(&self->social_import_dialog);
+  g_clear_pointer(&self->social_import_revision, g_free);
   if (self->social.owner)
     g_signal_handlers_disconnect_by_data(self->social.owner, self);
   g_clear_object(&self->social.owner);
@@ -1873,6 +1926,7 @@ gh_preferences_dialog_class_init(GhPreferencesDialogClass *klass)
   BIND(social_group);
   BIND(social_sync_row);
   BIND(social_lists_row);
+  BIND(social_import_row);
   BIND(notifications_row);
   BIND(notification_privacy_row);
   BIND(sound_row);
@@ -1942,6 +1996,7 @@ gh_preferences_dialog_init(GhPreferencesDialog *self)
   gtk_widget_init_template(GTK_WIDGET(self));
   g_signal_connect(self->social_sync_row, "notify::active", G_CALLBACK(social_sync_changed), self);
   g_signal_connect(self->social_lists_row, "activated", G_CALLBACK(social_lists_open), self);
+  g_signal_connect(self->social_import_row, "activated", G_CALLBACK(social_import_open), self);
   gh_agents_page_populate(self->agents_page);
   self->key_widgets = g_hash_table_new(g_str_hash, g_str_equal);
   self->bindings = g_ptr_array_new_with_free_func(binding_free);

@@ -18,6 +18,10 @@ struct _GhListEditorPage {
   GtkSingleSelection *selection;
   GtkStringList *rows, *types;
   gboolean updating;
+  GtkButton *publish_list;
+  GCancellable *publication;
+  GNostrListDocument *approval_snapshot;
+  GNostrListApproval approval;
   AdwDialog *transient;
 };
 G_DEFINE_TYPE(GhListEditorPage, gh_list_editor_page, ADW_TYPE_NAVIGATION_PAGE)
@@ -108,6 +112,30 @@ bind_row(GtkSignalListItemFactory *factory, GtkListItem *item, gpointer data)
 }
 
 static void
+sync_status(GhListEditorPage *self)
+{
+  GNostrListService *service = self->backend.service(self->backend.owner);
+  if (!service) return;
+  GNostrListState state = gnostr_list_service_get_state(service,
+    gnostr_list_document_get_kind(self->snapshot), gnostr_list_document_get_identifier(self->snapshot));
+  gboolean sync = self->backend.get_sync && self->backend.get_sync(self->backend.owner);
+  const gchar *text = !sync ? _("Saved on This Device · Sync Off") :
+    state == GNOSTR_LIST_SYNCED ? _("Synced") :
+    state == GNOSTR_LIST_PUBLISHING ? _("Publishing…") :
+    state == GNOSTR_LIST_UNREADABLE ? _("Cannot decrypt the remote list — local entries retained") :
+    state == GNOSTR_LIST_PARTIAL ? _("Some relays have not answered — automatic publication is paused") :
+    state == GNOSTR_LIST_WAITING_FOR_SIGNER ? _("Waiting for Signer") :
+    state == GNOSTR_LIST_READING ? _("Reading Lists…") :
+    state == GNOSTR_LIST_FAILED ? _("Not Synced — Retry After Checking Your Signer and Relays") :
+    _("Saved on This Device");
+  gtk_label_set_text(self->status, text);
+  gtk_button_set_label(self->publish_list, state == GNOSTR_LIST_PARTIAL ?
+    _("Publish Local Version _Anyway…") : _("_Publish…"));
+  gtk_widget_set_visible(GTK_WIDGET(self->publish_list), sync && state != GNOSTR_LIST_PUBLISHING &&
+    state != GNOSTR_LIST_UNREADABLE && state != GNOSTR_LIST_WAITING_FOR_DEPENDENCY);
+}
+
+static void
 refresh(GhListEditorPage *self)
 {
   self->updating = TRUE;
@@ -142,7 +170,7 @@ refresh(GhListEditorPage *self)
   gtk_widget_set_sensitive(GTK_WIDGET(self->move_up), FALSE);
   gtk_widget_set_sensitive(GTK_WIDGET(self->move_down), FALSE);
   gtk_widget_set_sensitive(GTK_WIDGET(self->remove_entry), FALSE);
-  gtk_label_set_text(self->status, _("Saved on This Device · Sync Off"));
+  sync_status(self);
   self->updating = FALSE;
 }
 
@@ -447,11 +475,73 @@ export_list(GtkButton *button, GhListEditorPage *self)
 }
 
 static void
+publish_done(GObject *source, GAsyncResult *result, gpointer data)
+{
+  GhListEditorPage *self = data;
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GVariant) outcomes = gnostr_list_service_publish_finish(GNOSTR_LIST_SERVICE(source), result, &error);
+  g_clear_object(&self->publication);
+  if (current(self, NULL)) {
+    sync_status(self);
+    if (!outcomes) gtk_label_set_text(self->status, _("Not Published — Check the List, Signer and Relays"));
+  }
+  g_object_unref(self);
+}
+static void
+publish_response(AdwAlertDialog *dialog, const gchar *response, GhListEditorPage *self)
+{
+  (void)dialog;
+  if (g_strcmp0(response, "publish") || !current(self, NULL)) {
+    g_clear_object(&self->approval_snapshot);
+    return;
+  }
+  GNostrListService *service = self->backend.service(self->backend.owner);
+  g_autoptr(GNostrListDocument) snapshot = gnostr_list_service_lookup(service,
+    gnostr_list_document_get_kind(self->approval_snapshot), gnostr_list_document_get_identifier(self->approval_snapshot));
+  if (!snapshot || gnostr_list_document_get_local_revision(snapshot) != gnostr_list_document_get_local_revision(self->approval_snapshot) ||
+      g_strcmp0(gnostr_list_document_get_event_id(snapshot), gnostr_list_document_get_event_id(self->approval_snapshot))) {
+    gtk_label_set_text(self->status, _("List changed — reopen it before publishing"));
+    goto done;
+  }
+  self->publication = g_cancellable_new();
+  gnostr_list_service_publish_async(service, gnostr_list_document_get_kind(snapshot),
+    gnostr_list_document_get_identifier(snapshot), self->approval, self->publication, publish_done, g_object_ref(self));
+ done:
+  g_clear_object(&self->approval_snapshot);
+}
+static void
+publish_clicked(GtkButton *button, GhListEditorPage *self)
+{
+  (void)button;
+  if (self->transient || self->publication || !current(self, NULL)) return;
+  GNostrListService *service = self->backend.service(self->backend.owner);
+  GNostrListState state = gnostr_list_service_get_state(service,
+    gnostr_list_document_get_kind(self->snapshot), gnostr_list_document_get_identifier(self->snapshot));
+  self->approval_snapshot = g_object_ref(self->snapshot);
+  self->approval = GNOSTR_LIST_APPROVE_PRIVATE | GNOSTR_LIST_APPROVE_PUBLIC;
+  gboolean partial = state == GNOSTR_LIST_PARTIAL;
+  if (partial) self->approval |= GNOSTR_LIST_APPROVE_PARTIAL;
+  AdwAlertDialog *dialog = ADW_ALERT_DIALOG(adw_alert_dialog_new(
+    partial ? _("Publish Local Version Anyway?") : _("Publish This List?"),
+    partial ? _("Some relays have not answered, so this may replace unseen changes. Public entries and list details will be visible to anyone. Private entries stay encrypted. Accepted publications cannot be recalled.") :
+      _("Public entries and list details will be visible to anyone. Private entries stay encrypted. Relays see your account and publication time; accepted publications cannot be recalled.")));
+  adw_alert_dialog_add_responses(dialog, "cancel", _("Cancel"), "publish", _("Publish"), NULL);
+  adw_alert_dialog_set_close_response(dialog, "cancel");
+  adw_alert_dialog_set_response_appearance(dialog, "publish", ADW_RESPONSE_DESTRUCTIVE);
+  g_signal_connect_object(dialog, "response", G_CALLBACK(publish_response), self, 0);
+  g_set_weak_pointer(&self->transient, ADW_DIALOG(dialog));
+  adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(self));
+}
+
+static void
 backend_changed(GObject *owner, GhListEditorPage *self)
 {
   (void)owner;
-  if (self->generation == self->backend.generation(self->backend.owner))
+  if (self->generation == self->backend.generation(self->backend.owner)) {
+    sync_status(self);
     return;
+  }
+  if (self->publication) g_cancellable_cancel(self->publication);
   if (self->transient)
     adw_dialog_force_close(self->transient);
   gtk_widget_set_sensitive(GTK_WIDGET(self), FALSE);
@@ -472,6 +562,9 @@ gh_list_editor_page_dispose(GObject *object)
     g_signal_handlers_disconnect_by_data(self->backend.owner, self);
   g_clear_object(&self->backend.owner);
   g_clear_object(&self->snapshot);
+  g_clear_object(&self->approval_snapshot);
+  if (self->publication) g_cancellable_cancel(self->publication);
+  g_clear_object(&self->publication);
   gtk_widget_dispose_template(GTK_WIDGET(self), GH_TYPE_LIST_EDITOR_PAGE);
   g_clear_object(&self->selection);
   g_clear_object(&self->rows);
@@ -489,7 +582,7 @@ gh_list_editor_page_class_init(GhListEditorPageClass *klass)
   CHILD(status); CHILD(metadata); CHILD(title_row); CHILD(description_row); CHILD(image_row);
   CHILD(value_row); CHILD(extra_row); CHILD(raw_row); CHILD(tag_type); CHILD(private_row);
   CHILD(entries); CHILD(save_metadata); CHILD(save_entry); CHILD(new_entry);
-  CHILD(move_up); CHILD(move_down); CHILD(remove_entry); CHILD(export_list);
+  CHILD(move_up); CHILD(move_down); CHILD(remove_entry); CHILD(export_list); CHILD(publish_list);
 #undef CHILD
 }
 
@@ -520,6 +613,7 @@ gh_list_editor_page_init(GhListEditorPage *self)
   g_signal_connect(self->move_down, "clicked", G_CALLBACK(reorder), self);
   g_signal_connect(self->remove_entry, "clicked", G_CALLBACK(reorder), self);
   g_signal_connect(self->export_list, "clicked", G_CALLBACK(export_list), self);
+  g_signal_connect(self->publish_list, "clicked", G_CALLBACK(publish_clicked), self);
 }
 
 GhListEditorPage *
@@ -540,6 +634,8 @@ gh_list_editor_page_new(const GhListsBackend *backend, GNostrListDocument *snaps
   gtk_widget_set_visible(GTK_WIDGET(self->metadata), nostr_nip51_schema_requires_identifier(schema));
   gtk_widget_set_visible(GTK_WIDGET(self->save_metadata), nostr_nip51_schema_requires_identifier(schema));
   g_signal_connect(self->backend.owner, "changed", G_CALLBACK(backend_changed), self);
+  if (g_signal_lookup("sync-state-changed", G_OBJECT_TYPE(self->backend.owner)))
+    g_signal_connect(self->backend.owner, "sync-state-changed", G_CALLBACK(backend_changed), self);
   refresh(self);
   return self;
 }

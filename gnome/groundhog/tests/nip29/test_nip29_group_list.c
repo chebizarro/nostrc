@@ -273,6 +273,7 @@ typedef struct {
   FakeMonitor *network;
   GhNip29Service *service;
   GhNip29GroupList *list;
+  GhSocialLists *social;
   Nip29Relay group;   /* the NIP-29 group relay */
   Nip29Relay disc;    /* discovery relay: holds the account's 10002 */
   Nip29Relay write;   /* the 10002's write relay */
@@ -346,12 +347,21 @@ device_up(Fixture *f)
   };
   f->service = gh_nip29_service_new(&config, &error);
   g_assert_no_error(error);
+  /* As GhAppServices binds social lists before GhAppOutbox builds the projection. */
+  f->social = gh_social_lists_new(NULL);
+  GhListAdapterNetwork network = { .accounts = f->accounts, .publish_deadline = 10 };
+  gh_social_lists_set_network(f->social, &network, f->relays);
+  g_assert_true(gh_social_lists_bind_store(f->social, f->store,
+    gh_account_controller_get_generation(f->accounts), &error));
+  g_assert_no_error(error);
+  g_assert_false(gh_social_lists_get_sync_enabled(f->social));
   /* As gh-app-outbox.c makes it beside the service. */
   GhNip29GroupListConfig list = {
     .accounts = f->accounts,
     .account_relays = f->relays,
     .settings = f->settings,
     .service = f->service,
+    .social_lists = f->social,
     .publish_deadline = 10,
   };
   f->list = gh_nip29_group_list_new(&list);
@@ -362,6 +372,8 @@ static void
 device_down(Fixture *f)
 {
   gh_test_release(g_steal_pointer(&f->list));
+  gh_social_lists_close(f->social);
+  gh_test_release(g_steal_pointer(&f->social));
   gh_test_release(g_steal_pointer(&f->service));
   g_clear_object(&f->model);
   gh_store_close(g_steal_pointer(&f->store));

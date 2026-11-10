@@ -336,7 +336,9 @@ test_decide(void)
     [GH_AUTH_PURPOSE_SELF_WRAP] = GH_RELAY_AUTH_ACCOUNT,
     [GH_AUTH_PURPOSE_GROUP] = GH_RELAY_AUTH_ACCOUNT,
       [GH_AUTH_PURPOSE_MLS_ROUTING] = GH_RELAY_AUTH_EPHEMERAL,
-      [GH_AUTH_PURPOSE_PUBLIC_POST] = GH_RELAY_AUTH_EPHEMERAL,
+    [GH_AUTH_PURPOSE_PUBLIC_POST] = GH_RELAY_AUTH_EPHEMERAL,
+    [GH_AUTH_PURPOSE_OWN_PRIVATE_SYNC_READ] = GH_RELAY_AUTH_ACCOUNT,
+    [GH_AUTH_PURPOSE_OWN_PRIVATE_SYNC_PUBLISH] = GH_RELAY_AUTH_ACCOUNT,
   };
   for (guint p = 0; p < GH_AUTH_N_PURPOSES; p++) {
     g_assert_cmpint(gh_auth_policy_decide(p), ==, expected[p]);
@@ -349,7 +351,7 @@ test_decide(void)
 }
 
 /* NT-1 + NT-2: a challenge on every purpose, on a REQ and on an EVENT
- * connection each. Account-signed 22242 only for the four R1 purposes, the
+ * connection each. Account-signed 22242 only for the six R1 purposes, the
  * signer asked exactly once for each of those connections and never for the
  * others, and a different ephemeral key on every other connection. */
 static void
@@ -395,9 +397,9 @@ test_matrix(void)
       }
     }
   }
-  g_assert_cmpuint(account_connections, ==, 8);
+  g_assert_cmpuint(account_connections, ==, 12);
   g_assert_cmpuint(g_hash_table_size(ephemeral), ==, 10);
-  g_assert_cmpuint(f.mock.calls, ==, 8);
+  g_assert_cmpuint(f.mock.calls, ==, 12);
   fixture_down(&f);
 }
 

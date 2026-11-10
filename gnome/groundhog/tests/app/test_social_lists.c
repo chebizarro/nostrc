@@ -20,10 +20,6 @@ static void test_local_account_isolation(void)
   g_autoptr(GhSocialLists) owner = gh_social_lists_new(NULL);
   g_assert_true(gh_social_lists_bind_store(owner, a, 1, &error));
   g_assert_no_error(error);
-  const GNostrListAdapter *adapter = gh_list_adapter_get_callbacks();
-  g_assert_null(adapter->open_subscription); g_assert_null(adapter->sign_async);
-  g_assert_null(adapter->encrypt_async); g_assert_null(adapter->decrypt_async);
-  g_assert_null(adapter->publish_async);
   g_assert_false(gh_social_lists_get_sync_enabled(owner));
   g_assert_false(gh_social_lists_set_sync_enabled(owner, TRUE, &error));
   g_assert_error(error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED); g_clear_error(&error);

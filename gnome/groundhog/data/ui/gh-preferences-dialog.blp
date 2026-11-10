@@ -625,10 +625,17 @@ template $GhPreferencesDialog: Adw.PreferencesDialog {
       visible: false;
       Adw.SwitchRow social_sync_row {
         title: _("Sync Drafts and Lists");
-        subtitle: _("Off — synchronization is not available in this version yet. Lists stay on this device; public publication requires separate approval.");
+        subtitle: _("Synchronize encrypted drafts and private list entries. Relays see your account, event kind and time. Public publication needs separate approval; accepted events cannot be recalled.");
         active: false;
         sensitive: false;
       }
+      Adw.ActionRow social_import_row {
+          title: _("Review Hidden Items…");
+          subtitle: _("Apply the hidden accounts and content rules from your other devices");
+          visible: false;
+          activatable: true;
+          [suffix] Image { icon-name: "go-next-symbolic"; }
+        }
       Adw.ActionRow social_lists_row {
         title: _("Lists and Sets");
         subtitle: _("Manage local lists without a signer or network connection");

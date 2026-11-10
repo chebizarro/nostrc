@@ -15,7 +15,7 @@ typedef struct {
   NostrListDocument *base;
   char *base_json, *base_id, *blocked_json, *blocked_id;
   gint64 base_time, blocked_time;
-  guint64 revision, remote_serial;
+  guint64 revision, remote_serial, read_serial, policy_serial;
   GPtrArray *operations;
   GNostrListDocument *snapshot;
   json_t *sources, *outcomes;
@@ -348,6 +348,18 @@ static gboolean plan_valid(const GNostrListReadPlanEntry *p) {
   }
   return ok;
 }
+static gboolean same_urls(const char *const *a, const char *const *b) {
+  guint n = strv_len(a); if (n != strv_len(b)) return FALSE;
+  for (guint i = 0; i < n; i++) if (g_strcmp0(a[i], b[i])) return FALSE;
+  return TRUE;
+}
+static gboolean same_plan(const GNostrListReadPlanEntry *a, const GNostrListReadPlanEntry *b) {
+  return a->kind == b->kind && !g_strcmp0(a->identifier, b->identifier) &&
+    same_urls(a->sources, b->sources) && same_urls(a->targets, b->targets) &&
+    !g_strcmp0(a->read_purpose, b->read_purpose) && !g_strcmp0(a->publish_purpose, b->publish_purpose) &&
+    a->publish_policy == b->publish_policy && a->required_sources == b->required_sources &&
+    a->waiting_for_dependency == b->waiting_for_dependency;
+}
 gboolean gnostr_list_service_update_read_plan(GNostrListService *s, const GNostrListReadPlanEntry *entries, gsize count, GError **error) {
   g_return_val_if_fail(owner(s), FALSE);
   if (!valid(s)) return list_fail(error, G_IO_ERROR_CANCELLED, "List account generation revoked");
@@ -358,10 +370,17 @@ gboolean gnostr_list_service_update_read_plan(GNostrListService *s, const GNostr
       return list_fail(error, G_IO_ERROR_INVALID_ARGUMENT, "Duplicate list address");
   }
   s->read_serial++; s->policy_serial++;
-  for (guint i = 0; i < s->slots->len; i++) { ListSlot *d = s->slots->pdata[i]; close_slot(s, d); d->active = FALSE; }
+  g_autoptr(GHashTable) preserved = g_hash_table_new(g_direct_hash, g_direct_equal);
+  for (guint i = 0; i < s->slots->len; i++) {
+    ListSlot *d = s->slots->pdata[i];
+    for (gsize j = 0; d->active && j < count; j++)
+      if (!d->subscription_failed && same_plan(&d->plan, &entries[j])) { g_hash_table_add(preserved, d); break; }
+    if (!g_hash_table_contains(preserved, d)) { close_slot(s, d); d->active = FALSE; }
+  }
   gboolean success = TRUE;
   for (gsize i = 0; i < count && valid(s); i++) {
     ListSlot *d = find_slot(s, entries[i].kind, entries[i].identifier);
+    if (d && g_hash_table_contains(preserved, d)) { refresh(s, d, d->failed ? "List adapter failed" : NULL); continue; }
     if (!d) {
       d = g_new0(ListSlot, 1); plan_copy(&d->plan, &entries[i]);
       d->operations = g_ptr_array_new_with_free_func((GDestroyNotify)gnostr_list_operation_unref);
@@ -371,7 +390,8 @@ gboolean gnostr_list_service_update_read_plan(GNostrListService *s, const GNostr
       d->snapshot = list_snapshot_new(s->account, d->base);
       g_ptr_array_add(s->slots, d); g_list_model_items_changed(G_LIST_MODEL(s), s->slots->len - 1, 0, 1);
     } else { plan_clear(&d->plan); plan_copy(&d->plan, &entries[i]); }
-    d->active = TRUE; json_object_clear(d->sources);
+    d->active = TRUE; d->read_serial = s->read_serial; d->policy_serial = s->policy_serial;
+    json_object_clear(d->sources);
     if (!d->loaded) {
       d->loaded = TRUE;
       GError *load_error = NULL;
@@ -435,16 +455,16 @@ static void work_free(ListWork *w) {
 }
 static ListWork *work_new(GNostrListService *s, ListSlot *d, WorkType type) {
   ListWork *w = g_new0(ListWork, 1); w->service = g_object_ref(s); w->slot = d; w->type = type;
-  w->revision = d->revision; w->base_id = g_strdup(d->base_id); w->read_serial = s->read_serial;
-  w->remote_serial = d->remote_serial; w->policy_serial = s->policy_serial;
+  w->revision = d->revision; w->base_id = g_strdup(d->base_id); w->read_serial = d->read_serial;
+  w->remote_serial = d->remote_serial; w->policy_serial = d->policy_serial;
   w->cancel = g_cancellable_new(); g_ptr_array_add(s->works, w); return w;
 }
 static gboolean work_valid(ListWork *w) {
   GNostrListService *s = w->service; ListSlot *d = w->slot;
-  return valid(s) && d->active && !g_cancellable_is_cancelled(w->cancel) && w->read_serial == s->read_serial &&
+  return valid(s) && d->active && !g_cancellable_is_cancelled(w->cancel) && w->read_serial == d->read_serial &&
     (w->type == WORK_DECRYPT ? w->remote_serial == d->remote_serial :
      w->revision == d->revision && w->remote_serial == d->remote_serial && !d->blocked_id &&
-     w->policy_serial == s->policy_serial && !g_strcmp0(w->base_id, d->base_id));
+     w->policy_serial == d->policy_serial && !g_strcmp0(w->base_id, d->base_id));
 }
 static void work_end(ListWork *w, GError *error) {
   GNostrListService *s = w->service; ListSlot *d = w->slot;
@@ -493,9 +513,18 @@ static void publish_fail(ListWork *w, GError *error, gboolean waiting) {
 }
 static void install_remote(GNostrListService *s, ListSlot *d, NostrListDocument *codec, const char *wire, const char *id, gint64 at, guint included) {
   NostrListDocument *old_base = d->base;
+  /* AUTO_ALWAYS is reserved for the room-derived kind-10009 projection.
+   * Its timestamp-sensitive removals must be re-derived against a new head,
+   * not replayed as unconditional removals of a later join on another device. */
+  GPtrArray *derived_old = NULL;
+  if (s->adapter.derive_operations && d->plan.publish_policy == GNOSTR_LIST_AUTO_ALWAYS) {
+    derived_old = d->operations;
+    d->operations = g_ptr_array_new_with_free_func((GDestroyNotify)gnostr_list_operation_unref);
+    included = 0;
+  }
   guint old_included = d->included_operations; d->included_operations = included;
   char *old_json = d->base_json, *old_id = d->base_id;
-  gint64 old_time = d->base_time, old_blocked_time = d->blocked_time;
+  gint64 old_time = d->base_time;
   char *old_blocked_json = d->blocked_json, *old_blocked_id = d->blocked_id;
   d->blocked_json = d->blocked_id = NULL; d->blocked_time = 0;
   d->base = codec; d->base_json = g_strdup(wire); d->base_id = g_strdup(id); d->base_time = at;
@@ -506,12 +535,19 @@ static void install_remote(GNostrListService *s, ListSlot *d, NostrListDocument 
   if (!ok) {
     nostr_nip51_document_free(d->base); g_free(d->base_json); g_free(d->base_id);
     d->base = old_base; d->base_json = old_json; d->base_id = old_id; d->base_time = old_time;
-    d->blocked_json = old_blocked_json; d->blocked_id = old_blocked_id; d->blocked_time = old_blocked_time;
+    /* A verified head refused by storage/policy is still newer than the
+     * usable projection. Keep it blocked so a later local edit cannot clear
+     * failed and publish over an unapproved first import (also public-only
+     * events, which did not pass through the decrypt queue). */
+    g_free(old_blocked_json); g_free(old_blocked_id);
+    d->blocked_json = g_strdup(wire); d->blocked_id = g_strdup(id); d->blocked_time = at;
     d->included_operations = old_included;
+    if (derived_old) { g_ptr_array_unref(d->operations); d->operations = derived_old; }
     d->failed = TRUE;
   } else {
     nostr_nip51_document_free(old_base); g_free(old_json); g_free(old_id);
     d->unreadable = d->waiting = d->failed = FALSE;
+    if (derived_old) g_ptr_array_unref(derived_old);
     g_free(old_blocked_json); g_free(old_blocked_id);
   }
   g_clear_error(&error); refresh(s, d, ok ? NULL : "Cannot commit remote list"); wake(s);
@@ -746,7 +782,9 @@ static gboolean allowed(GNostrListService *s, ListSlot *d, GNostrListApproval ap
       !strv_len(d->plan.targets) || (!sources_ready(d) && !(approval & GNOSTR_LIST_APPROVE_PARTIAL))) return FALSE;
   for (guint i = 0; i < d->operations->len; i++) {
     GNostrListOperation *op = d->operations->pdata[i];
-    if (!(approval & (op->private_tag ? GNOSTR_LIST_APPROVE_PRIVATE : GNOSTR_LIST_APPROVE_PUBLIC))) return FALSE;
+    gboolean group_removal = s->adapter.derive_operations &&
+      d->plan.publish_policy == GNOSTR_LIST_AUTO_ALWAYS && op->type == LIST_REMOVE;
+    if (!group_removal && !(approval & (op->private_tag ? GNOSTR_LIST_APPROVE_PRIVATE : GNOSTR_LIST_APPROVE_PUBLIC))) return FALSE;
   }
   return TRUE;
 }
@@ -843,7 +881,8 @@ static void notification_free(gpointer data) {
 }
 static gboolean notification_dispatch(gpointer data) {
   Notification *n = data; GNostrListService *s = n->s; ListSlot *d = find_slot(s, n->kind, n->id);
-  if (!valid(s) || n->serial != s->read_serial || !d || !d->active || !contains(d->plan.sources, n->source)) return G_SOURCE_REMOVE;
+  if (!valid(s) || !d || !d->active ||
+      (n->serial != d->read_serial && n->serial != s->read_serial) || !contains(d->plan.sources, n->source)) return G_SOURCE_REMOVE;
   if (n->type == GNOSTR_LIST_EVENT) accept_event(s, d, n->payload, FALSE);
   else {
     /* Duplicate EOSE is idempotent. Reconnect resets only that source's boundary. */
@@ -872,6 +911,7 @@ void gnostr_list_service_set_private_sync_enabled(GNostrListService *s, gboolean
   s->sync_enabled = !!enabled; s->policy_serial++;
   for (guint i = 0; valid(s) && i < s->slots->len; i++) {
     ListSlot *d = s->slots->pdata[i];
+    if (d->plan.publish_policy != GNOSTR_LIST_AUTO_ALWAYS) d->policy_serial = s->policy_serial;
     if (d->plan.publish_policy != GNOSTR_LIST_AUTO_ALWAYS && d->pipeline) g_cancellable_cancel(((ListWork *)d->pipeline)->cancel);
     if (!enabled && d->plan.publish_policy != GNOSTR_LIST_AUTO_ALWAYS && d->signed_json) {
       clear_signed(d); GError *error = NULL; if (!persist(s, d, &error)) d->failed = TRUE; g_clear_error(&error);
@@ -887,7 +927,7 @@ void gnostr_list_service_retry(GNostrListService *s, int kind, const char *id) {
   d->failed = d->waiting = FALSE; d->retry_signed = d->signed_json != NULL;
   if (reopen && !d->plan.waiting_for_dependency && s->adapter.open_subscription && valid(s)) {
     json_object_clear(d->sources);
-    d->subscription = s->adapter.open_subscription(s->data, s, s->account, s->generation, s->read_serial, &d->plan, NULL);
+    d->subscription = s->adapter.open_subscription(s->data, s, s->account, s->generation, d->read_serial, &d->plan, NULL);
     d->subscription_failed = !d->subscription; d->failed = d->subscription_failed;
     refresh(s, d, d->failed ? "List subscription unavailable" : NULL);
   }
