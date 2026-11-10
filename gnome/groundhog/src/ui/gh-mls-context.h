@@ -26,6 +26,10 @@ typedef struct {
   /* Nullable (W25): the window's encrypted-group files, for the group
    * picture (gh-mls-attachments.h); NULL: Group Info shows no picture. */
   struct _GhMlsAttachments *files;
+  /* Account destination source, independent of optional attachment support.
+   * Dialogs reference the source; reads are synchronous and generation-safe. */
+  GObject *server_source;
+  GStrv (*dup_account_servers)(GObject *source);
 } GhMlsUiContext;
 
 G_END_DECLS

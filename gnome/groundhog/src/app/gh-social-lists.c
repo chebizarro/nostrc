@@ -1,5 +1,6 @@
 #include "gh-social-lists.h"
 #include "gh-list-adapter.h"
+#include "gh-relay-deny-policy.h"
 #include "gh-relay-scope.h"
 #include <jansson.h>
 #include <string.h>
@@ -10,6 +11,8 @@
 struct _GhSocialLists {
   GObject parent_instance;
   GhAccountStore *account_store;
+  GSettings *legacy_settings;
+  GhRelayDenyPolicy *deny_policy;
   GhListAdapterNetwork network;
   GhAccountRelays *relays;
   GStrv group_urls;
@@ -38,6 +41,7 @@ static void rebuild_follows(GhSocialLists *self, gboolean force);
 void
 gh_social_lists_close(GhSocialLists *self)
 {
+  if (self->deny_policy) gh_relay_deny_policy_revoke(self->deny_policy);
   if (self->adapter)
     gh_list_adapter_revoke(self->adapter);
   if (self->service) {
@@ -59,12 +63,32 @@ gh_social_lists_close(GhSocialLists *self)
 }
 
 static void
+update_deny_policy(GhSocialLists *self, GNostrListDocument *snapshot)
+{
+  g_autoptr(GPtrArray) urls = g_ptr_array_new_with_free_func(g_free);
+  const NostrListDocument *codec = snapshot ? gnostr_list_document_get_codec(snapshot) : NULL;
+  for (guint p = 0; codec && p < 2; p++) {
+    for (gsize i = 0; i < nostr_nip51_document_tag_count(codec, p); i++) {
+      const NostrListTag *tag = nostr_nip51_document_tag(codec, p, i);
+      if (!g_strcmp0(nostr_nip51_tag_field(tag, 0), "relay")) {
+        gchar *url = gh_relay_deny_policy_normalize(nostr_nip51_tag_field(tag, 1));
+        if (url) g_ptr_array_add(urls, url);
+      }
+    }
+  }
+  g_ptr_array_add(urls, NULL);
+  gh_relay_deny_policy_bind(self->deny_policy, self->generation, (const gchar *const *)urls->pdata);
+}
+
+static void
 document_changed(GNostrListService *service, GNostrListDocument *snapshot, GhSocialLists *self)
 {
   (void)service;
   if (gnostr_list_document_get_kind(snapshot) == NOSTR_KIND_FOLLOW_LIST &&
       !*gnostr_list_document_get_identifier(snapshot))
     rebuild_follows(self, FALSE);
+  if (gnostr_list_document_get_kind(snapshot) == NOSTR_KIND_BLOCKED_RELAY_LIST)
+    update_deny_policy(self, snapshot);
   g_signal_emit(self, signals[DOCUMENT_CHANGED], 0, snapshot);
   g_signal_emit(self, signals[CHANGED], 0);
 }
@@ -237,9 +261,16 @@ update_plan(GhSocialLists *self, GError **error)
   g_clear_pointer(&self->follow_sources, g_strfreev);
   if (self->follows_enabled && ready)
     self->follow_sources = follow_sources(self, write);
+  g_auto(GStrv) public_targets = gh_social_lists_dup_public_targets(self);
   for (guint i = 0; i < n; i++) {
     GNostrListReadPlanEntry *entry = &entries[i];
-    if (entry->kind == NOSTR_KIND_SIMPLE_GROUP_LIST) {
+    if (entry->kind == NOSTR_KIND_BLOSSOM_SERVER_LIST || entry->kind == NOSTR_KIND_PROFILE_BADGE_LIST) {
+      entry->publish_policy = GNOSTR_LIST_EXPLICIT_ONLY;
+      entry->publish_purpose = "public-post";
+      entry->targets = (const gchar *const *)public_targets;
+      entry->sources = self->sync_enabled ? write : NULL;
+      entry->waiting_for_dependency = self->network.accounts && !ready;
+    } else if (entry->kind == NOSTR_KIND_SIMPLE_GROUP_LIST) {
       entry->publish_policy = GNOSTR_LIST_AUTO_ALWAYS;
       entry->sources = entry->targets = (const gchar *const *)self->group_urls;
       entry->waiting_for_dependency = self->group_waiting || !self->group_derive;
@@ -336,10 +367,16 @@ gboolean
 gh_social_lists_bind_store(GhSocialLists *self, GhStore *store, guint64 generation, GError **error)
 {
   gh_social_lists_close(self);
-  g_autoptr(GPtrArray) identities = gh_store_social_list(store, error);
+  g_autoptr(GPtrArray) identities = NULL;
+  g_autoptr(GNostrListDocument) denied = NULL;
   GhStoreSocialPreferences preferences;
-  if (!identities || !gh_store_social_get_preferences(store, &preferences, error))
-    goto fail;
+  if (!gh_store_social_get_preferences(store, &preferences, error)) goto fail;
+  if (!preferences.blossom_imported && !gh_store_is_read_only(store)) {
+    g_auto(GStrv) legacy = self->legacy_settings ? g_settings_get_strv(self->legacy_settings, "blossom-servers") : NULL;
+    if (!gh_store_social_import_blossom_legacy(store, (const gchar *const *)legacy, error)) goto fail;
+  }
+  identities = gh_store_social_list(store, error);
+  if (!identities) goto fail;
   if (identities->len > 256) {
     g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NO_SPACE, "Too many account list documents");
     goto fail;
@@ -361,6 +398,8 @@ gh_social_lists_bind_store(GhSocialLists *self, GhStore *store, guint64 generati
     gh_social_lists_close(self);
     goto fail;
   }
+  denied = gnostr_list_service_lookup(self->service, NOSTR_KIND_BLOCKED_RELAY_LIST, "");
+  update_deny_policy(self, denied);
   g_signal_connect(self->service, "document-changed", G_CALLBACK(document_changed), self);
   g_signal_connect_swapped(self->service, "state-changed", G_CALLBACK(document_state_changed), self);
   if (!update_plan(self, error)) { gh_social_lists_close(self); goto fail; }
@@ -398,6 +437,8 @@ gh_social_lists_dispose(GObject *object)
     g_signal_handlers_disconnect_by_data(self->account_store, self);
   gh_social_lists_close(self);
   g_clear_object(&self->account_store);
+  g_clear_object(&self->legacy_settings);
+  g_clear_object(&self->deny_policy);
   if (self->relays) g_signal_handlers_disconnect_by_data(self->relays, self);
   g_clear_object(&self->relays);
   gh_list_adapter_network_clear(&self->network);
@@ -433,12 +474,21 @@ static void
 gh_social_lists_init(GhSocialLists *self)
 {
   self->follows = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  self->deny_policy = g_object_ref(gh_relay_deny_policy_get_default());
+  gh_relay_deny_policy_revoke(self->deny_policy);
 }
 
 GhSocialLists *
 gh_social_lists_new(GhAccountStore *account_store)
 {
+  return gh_social_lists_new_with_settings(account_store, NULL);
+}
+
+GhSocialLists *
+gh_social_lists_new_with_settings(GhAccountStore *account_store, GSettings *legacy_settings)
+{
   GhSocialLists *self = g_object_new(GH_TYPE_SOCIAL_LISTS, NULL);
+  if (legacy_settings) self->legacy_settings = g_object_ref(legacy_settings);
   gh_social_lists_attach_store(self, account_store);
   return self;
 }
@@ -454,6 +504,47 @@ gh_social_lists_attach_store(GhSocialLists *self, GhAccountStore *account_store)
     if (gh_account_store_get_store(account_store))
       store_bound(account_store, self);
   }
+}
+
+GStrv
+gh_social_lists_dup_public_targets(GhSocialLists *self)
+{
+  gboolean ready = self->store && !gh_store_is_read_only(self->store) &&
+    !gh_store_is_ephemeral(self->store) && self->relays && self->network.accounts &&
+    gh_account_relays_get_generation(self->relays) == self->generation &&
+    gh_account_relays_get_state(self->relays) != GH_ACCOUNT_RELAYS_DISCOVERING;
+  return ready ? g_strdupv((gchar **)gh_account_relays_get_write_relays(self->relays)) : g_new0(gchar *, 1);
+}
+
+GStrv gh_social_lists_dup_servers(GhSocialLists *self, GError **error)
+{
+  return self->store ? gh_store_social_dup_servers(self->store, error) : g_new0(gchar *, 1);
+}
+
+gboolean
+gh_social_lists_set_servers(GhSocialLists *self, const gchar *const *servers, GError **error)
+{
+  g_autoptr(GNostrListDocument) snapshot = gh_social_lists_ensure(self, NOSTR_KIND_BLOSSOM_SERVER_LIST, "", error);
+  if (!snapshot) return FALSE;
+  g_autoptr(GPtrArray) ops = g_ptr_array_new_with_free_func((GDestroyNotify)gnostr_list_operation_unref);
+  const NostrListDocument *codec = gnostr_list_document_get_codec(snapshot);
+  for (gsize i = 0; i < nostr_nip51_document_tag_count(codec, FALSE); i++) {
+    const NostrListTag *tag = nostr_nip51_document_tag(codec, FALSE, i);
+    if (!g_strcmp0(nostr_nip51_tag_field(tag, 0), "server"))
+      g_ptr_array_add(ops, gnostr_list_operation_remove(FALSE, tag, G_MAXUINT));
+  }
+  for (guint i = 0; servers && servers[i]; i++) {
+    const gchar *fields[] = { "server", servers[i] };
+    GNostrListOperation *op = gnostr_list_operation_new(GNOSTR_LIST_EDIT_APPEND, FALSE, fields, 2, 0, 0);
+    if (!op) {
+      g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "Invalid attachment server");
+      return FALSE;
+    }
+    g_ptr_array_add(ops, op);
+  }
+  g_autoptr(GNostrListDocument) saved = gh_social_lists_apply(self, NOSTR_KIND_BLOSSOM_SERVER_LIST, "",
+    gnostr_list_document_get_local_revision(snapshot), ops, error);
+  return saved != NULL;
 }
 
 GNostrListService *gh_social_lists_get_service(GhSocialLists *self) { return self->service; }

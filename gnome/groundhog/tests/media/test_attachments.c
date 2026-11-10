@@ -16,6 +16,7 @@
 #include "gh-store-blossom.h"
 #include "gh-store-media.h"
 #include "blossom-fixture.h"
+#include "server-source-fixture.h"
 #include "../gh-test-port.h"
 
 #include <errno.h>
@@ -243,6 +244,9 @@ fixture_up(Fixture *f, gboolean with_signer)
   f->http = gh_net_http_new(f->settings);
   fake_signer_init(&f->signer);
   GhAttachmentsConfig config = {
+    .server_source = G_OBJECT(f->settings),
+    .dup_account_servers = gh_test_server_source_dup,
+    .save_account_servers = gh_test_server_source_save,
     .settings = f->settings,
     .http = f->http,
     .sign_async = with_signer ? fake_sign_async : NULL,

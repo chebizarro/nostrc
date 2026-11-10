@@ -7,6 +7,7 @@
 #endif
 #if GROUNDHOG_HAVE_SOCIAL_LISTS
 #include "gh-social-lists-backend.h"
+#include "gh-relay-deny-policy.h"
 #endif
 #include "gh-app-services.h"
 #include "gh-diagnostics.h"
@@ -211,11 +212,30 @@ dispose_object(gpointer object_ptr)
 }
 
 #if GROUNDHOG_HAVE_ACCOUNTS
+#if GROUNDHOG_HAVE_SOCIAL_LISTS && (GROUNDHOG_HAVE_ATTACHMENTS || GROUNDHOG_HAVE_MLS_UI)
+static GStrv
+account_attachment_servers(GObject *owner)
+{
+  return gh_social_lists_dup_servers(GH_SOCIAL_LISTS(owner), NULL);
+}
+#if GROUNDHOG_HAVE_ATTACHMENTS
+static gboolean
+save_attachment_servers(GObject *owner, const gchar *const *servers, GError **error)
+{
+  return gh_social_lists_set_servers(GH_SOCIAL_LISTS(owner), servers, error);
+}
+#endif
+#endif
+
 static gboolean
 settings_init(GhAppServices *self, GError **error)
 {
   (void)error;
   self->settings = g_settings_new(GROUNDHOG_APP_ID);
+#if GROUNDHOG_HAVE_SOCIAL_LISTS
+  /* Account relay discovery may start before the asynchronous store opens. */
+  gh_relay_deny_policy_revoke(gh_relay_deny_policy_get_default());
+#endif
   return TRUE;
 }
 
@@ -692,7 +712,7 @@ account_store_init(GhAppServices *self, GError **error)
 #endif
   };
 #if GROUNDHOG_HAVE_SOCIAL_LISTS
-  self->social_lists = gh_social_lists_new(NULL);
+  self->social_lists = gh_social_lists_new_with_settings(NULL, self->settings);
   GhListAdapterNetwork list_network = { .accounts = self->accounts };
   gh_social_lists_set_network(self->social_lists, &list_network, self->relays);
   g_signal_connect(self->social_lists, "follows-changed", G_CALLBACK(on_follows_changed), self);
@@ -1231,6 +1251,11 @@ attachments_init(GhAppServices *self, GError **error)
     .sign_async = attachments_sign_async,
     .sign_finish = gh_account_controller_sign_finish,
     .sign_data = self->accounts,
+#if GROUNDHOG_HAVE_SOCIAL_LISTS
+    .server_source = G_OBJECT(self->social_lists),
+    .dup_account_servers = account_attachment_servers,
+    .save_account_servers = save_attachment_servers,
+#endif
   };
   self->attachments = gh_attachments_new(&config);
 #if GROUNDHOG_HAVE_MLS_FILES
@@ -2753,6 +2778,10 @@ gh_app_services_attach_window(GhAppServices *self, GhWindow *window)
       .display_name = group_ui_name,
       .names_data = self,
       .account_relays = self->relays,
+#if GROUNDHOG_HAVE_SOCIAL_LISTS
+      .server_source = G_OBJECT(self->social_lists),
+      .dup_account_servers = account_attachment_servers,
+#endif
 #if GROUNDHOG_HAVE_MLS_FILES
       .files = self->mls_files,
 #endif

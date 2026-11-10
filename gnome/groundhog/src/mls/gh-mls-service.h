@@ -14,6 +14,7 @@
 #include "gh-dm-inbox.h"
 #include "gh-inbox-resolver.h"
 #include "gh-store.h"
+#include "gh-store-social.h"
 
 G_BEGIN_DECLS
 

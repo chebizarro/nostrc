@@ -10,8 +10,15 @@ G_DECLARE_FINAL_TYPE(GhSocialLists, gh_social_lists, GH, SOCIAL_LISTS, GObject)
 /* Owned by GhAppServices. Main-context only. Signals: changed (),
  * sync-state-changed (), follows-changed (), plus document-changed
  * (GNostrListDocument).
+ * Local relay denial and attachment destinations apply before networking.
  * First hide-list import is exposed by get_pending_import(), never applied silently. */
 GhSocialLists *gh_social_lists_new(GhAccountStore *account_store);
+GhSocialLists *gh_social_lists_new_with_settings(GhAccountStore *account_store, GSettings *legacy_settings);
+GStrv gh_social_lists_dup_servers(GhSocialLists *self, GError **error);
+/* Current NIP-65 write targets for an explicit public disclosure; no fallback. */
+GStrv gh_social_lists_dup_public_targets(GhSocialLists *self);
+gboolean gh_social_lists_set_servers(GhSocialLists *self, const gchar *const *servers, GError **error);
+
 void gh_social_lists_attach_store(GhSocialLists *self, GhAccountStore *account_store);
 void gh_social_lists_set_network(GhSocialLists *self, const GhListAdapterNetwork *network,
                                  GhAccountRelays *relays);

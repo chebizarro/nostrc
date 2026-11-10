@@ -52,6 +52,7 @@
 #include "mdk-peer.h"
 #include "gh-reaction-store.h"
 #include "blossom-fixture.h"
+#include "../media/server-source-fixture.h"
 #include "gh-attachments.h"
 #include "gh-mls-attachments.h"
 
@@ -1543,7 +1544,9 @@ test_white_noise_media(void)
   g_settings_set_strv(settings, "blossom-servers", servers);
   g_settings_set_string(settings, "network-mode", "none");
   g_autoptr(GhNetHttp) http = gh_net_http_new(settings);
-  GhAttachmentsConfig config = { .settings = settings, .http = http };
+  GhAttachmentsConfig config = { .settings = settings, .http = http,
+    .server_source = G_OBJECT(settings), .dup_account_servers = gh_test_server_source_dup,
+    .save_account_servers = gh_test_server_source_save };
   GhAttachments *attachments = gh_attachments_new(&config);
   gh_attachments_set_allow_private_hosts(attachments, TRUE);
   gh_attachments_set_store(attachments, alice->store);
@@ -1719,7 +1722,9 @@ test_media_policy(void)
   g_settings_set_strv(dl_settings, "blossom-servers", servers);
   g_settings_set_string(dl_settings, "network-mode", "none");
   g_autoptr(GhNetHttp) http = gh_net_http_new(dl_settings);
-  GhAttachmentsConfig config = { .settings = dl_settings, .http = http };
+  GhAttachmentsConfig config = { .settings = dl_settings, .http = http,
+    .server_source = G_OBJECT(dl_settings), .dup_account_servers = gh_test_server_source_dup,
+    .save_account_servers = gh_test_server_source_save };
   GhAttachments *attachments = gh_attachments_new(&config);
   gh_attachments_set_allow_private_hosts(attachments, TRUE);
   gh_attachments_set_store(attachments, alice->store);
@@ -1792,7 +1797,9 @@ test_white_noise_voice(void)
   g_settings_set_strv(settings, "blossom-servers", servers);
   g_settings_set_string(settings, "network-mode", "none");
   g_autoptr(GhNetHttp) http = gh_net_http_new(settings);
-  GhAttachmentsConfig config = { .settings = settings, .http = http };
+  GhAttachmentsConfig config = { .settings = settings, .http = http,
+    .server_source = G_OBJECT(settings), .dup_account_servers = gh_test_server_source_dup,
+    .save_account_servers = gh_test_server_source_save };
   GhAttachments *attachments = gh_attachments_new(&config);
   gh_attachments_set_allow_private_hosts(attachments, TRUE);
   gh_attachments_set_store(attachments, alice->store);

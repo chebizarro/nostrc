@@ -23,6 +23,9 @@ struct _GhAttachments {
   GhBlossomSignAsyncFunc sign_async;
   GhBlossomSignFinishFunc sign_finish;
   gpointer sign_data;
+  GObject *server_source;
+  GStrv (*dup_account_servers)(GObject *source);
+  gboolean (*save_account_servers)(GObject *source, const gchar *const *servers, GError **error);
   gboolean allow_private_hosts; /* tests only */
   guint64 held_max;             /* GH_ATTACHMENTS_HELD_MAX, lower in tests */
 
@@ -256,6 +259,9 @@ gh_attachments_set_store(GhAttachments *self, GhStore *store)
   self->generation++;
   if (store) {
     self->client = gh_blossom_client_new(self->settings, self->http);
+    if (self->server_source)
+      gh_blossom_client_set_server_source(self->client, self->server_source,
+        self->dup_account_servers, self->save_account_servers);
     if (self->allow_private_hosts)
       gh_blossom_client_set_allow_private_hosts(self->client, TRUE);
     const gchar *account = gh_store_get_account_pubkey(store);
@@ -650,6 +656,9 @@ gh_attachments_new(const GhAttachmentsConfig *config)
   self->sign_async = config->sign_async;
   self->sign_finish = config->sign_finish;
   self->sign_data = config->sign_data;
+  self->server_source = config->server_source ? g_object_ref(config->server_source) : NULL;
+  self->dup_account_servers = config->dup_account_servers;
+  self->save_account_servers = config->save_account_servers;
   return self;
 }
 
@@ -671,6 +680,7 @@ gh_attachments_finalize(GObject *object)
   GhAttachments *self = GH_ATTACHMENTS(object);
   g_clear_pointer(&self->entries, g_hash_table_unref);
   g_clear_object(&self->settings);
+  g_clear_object(&self->server_source);
   g_clear_object(&self->http);
   G_OBJECT_CLASS(gh_attachments_parent_class)->finalize(object);
 }

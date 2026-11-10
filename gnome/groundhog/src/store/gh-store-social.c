@@ -90,6 +90,92 @@ gh_store_social_get_preferences(GhStore *store, GhStoreSocialPreferences *out, G
   return fail(error, GH_STORE_ERROR_CORRUPT, "Account social preferences are unavailable");
 }
 
+GStrv
+gh_store_social_dup_servers(GhStore *store, GError **error)
+{
+  sqlite3_stmt *stmt = prepare(store, "SELECT url FROM social_servers ORDER BY position,url", error);
+  if (!stmt) return NULL;
+  g_autoptr(GStrvBuilder) builder = g_strv_builder_new();
+  gint rc;
+  while ((rc = sqlite3_step(stmt)) == SQLITE_ROW)
+    g_strv_builder_add(builder, (const gchar *)sqlite3_column_text(stmt, 0));
+  sqlite3_finalize(stmt);
+  if (rc != SQLITE_DONE) {
+    gh_store_set_sqlite_error(store, rc, "Reading account attachment servers", error);
+    return NULL;
+  }
+  return g_strv_builder_end(builder);
+}
+
+static gboolean
+import_generation_valid(gpointer data, const gchar *account, guint64 generation)
+{
+  return generation == 1 && !g_strcmp0(account, gh_store_get_account_pubkey(data));
+}
+static gchar *import_load(gpointer data, gint kind, const gchar *identifier, GError **error)
+{
+  return gh_store_social_load(data, kind, identifier, error);
+}
+
+static gboolean
+import_commit(gpointer data, GNostrListDocument *snapshot, const gchar *state, GError **error)
+{
+  return gh_store_social_commit(data, snapshot, state, error);
+}
+
+gboolean
+gh_store_social_import_blossom_legacy(GhStore *store, const gchar *const *urls, GError **error)
+{
+  GhStoreSocialPreferences prefs;
+  if (!gh_store_social_get_preferences(store, &prefs, error)) return FALSE;
+  if (prefs.blossom_imported) return TRUE;
+  if (!writable(store, error)) return FALSE;
+  sqlite3_stmt *stmt = prepare(store,
+    "SELECT EXISTS(SELECT 1 FROM social_documents WHERE kind=?1) OR EXISTS(SELECT 1 FROM social_servers)", error);
+  if (!stmt) return FALSE;
+  sqlite3_bind_int(stmt, 1, NOSTR_KIND_BLOSSOM_SERVER_LIST);
+  gint rc = sqlite3_step(stmt);
+  gboolean existing = rc == SQLITE_ROW && sqlite3_column_int(stmt, 0);
+  sqlite3_finalize(stmt);
+  if (rc != SQLITE_ROW)
+    return gh_store_set_sqlite_error(store, rc, "Checking legacy server import", error);
+  if (existing) {
+    if (!gh_store_begin_named(store, "blossom-import", error)) return FALSE;
+    if (!gh_store_exec(store, "UPDATE social_preferences SET blossom_imported=1 WHERE id=1", error)) {
+      gh_store_rollback(store);
+      return FALSE;
+    }
+    return gh_store_commit(store, error);
+  }
+  /* Use the shared engine to produce its replay state, never manufacture JSON
+   * that pretends to be an engine snapshot. No signer or transport is installed. */
+  const GNostrListAdapter adapter = { .generation_valid = import_generation_valid,
+    .load = import_load, .commit_snapshot = import_commit };
+  g_autoptr(GNostrListService) service = gnostr_list_service_new(
+    gh_store_get_account_pubkey(store), 1, &adapter, store, NULL);
+  const GNostrListReadPlanEntry plan = { .kind = NOSTR_KIND_BLOSSOM_SERVER_LIST,
+    .identifier = "", .publish_policy = GNOSTR_LIST_EXPLICIT_ONLY };
+  if (!gnostr_list_service_start(service, &plan, 1, error)) {
+    gnostr_list_service_close(service);
+    return FALSE;
+  }
+  g_autoptr(GPtrArray) ops = g_ptr_array_new_with_free_func((GDestroyNotify)gnostr_list_operation_unref);
+  for (guint i = 0; urls && urls[i]; i++) {
+    const gchar *fields[] = { "server", urls[i] };
+    GNostrListOperation *op = gnostr_list_operation_new(GNOSTR_LIST_EDIT_APPEND, FALSE, fields, 2, 0, 0);
+    if (!op) {
+      gnostr_list_service_close(service);
+      return fail(error, GH_STORE_ERROR_INVALID, "Invalid legacy attachment server");
+    }
+    g_ptr_array_add(ops, op);
+  }
+  g_autoptr(GNostrListDocument) saved = gnostr_list_service_apply(service,
+    NOSTR_KIND_BLOSSOM_SERVER_LIST, "", 0, ops, error);
+  /* A queued engine wake must not retain a usable borrowed store. */
+  gnostr_list_service_close(service);
+  return saved != NULL;
+}
+
 gboolean
 gh_store_social_set_sync_enabled(GhStore *store, gboolean enabled, GError **error)
 {
@@ -311,6 +397,9 @@ gh_store_social_commit(GhStore *store, GNostrListDocument *snapshot, const gchar
     fail(error, GH_STORE_ERROR_FULL, "Account list storage limit reached");
     goto rollback;
   }
+  if (gnostr_list_document_get_kind(snapshot) == NOSTR_KIND_BLOSSOM_SERVER_LIST &&
+      !gh_store_exec(store, "UPDATE social_preferences SET blossom_imported=1 WHERE id=1", error))
+    goto rollback;
   json_decref(state);
   return gh_store_commit(store, error);
 rollback:

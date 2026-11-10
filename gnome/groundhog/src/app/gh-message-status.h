@@ -25,7 +25,8 @@ typedef enum {
   GH_MESSAGE_STATUS_RETRYING,             /* none reached, transient failures (outbox) */
   GH_MESSAGE_STATUS_NOT_SENT,             /* all terminal, or needs attention */
   GH_MESSAGE_STATUS_CANNOT_SEND_NO_INBOX, /* a recipient has no kind-10050 */
-  GH_MESSAGE_STATUS_CANCELLED
+  GH_MESSAGE_STATUS_CANCELLED,
+  GH_MESSAGE_STATUS_BLOCKED_BY_LOCAL_POLICY
 } GhMessageStatus;
 
 /* The enum GType, e.g. for GhMessage:status (gh-message.h). GhOutboxItem:status
@@ -57,7 +58,8 @@ typedef enum {
   GH_TARGET_CLASS_ACCEPTED,  /* relay-local OK true, or "duplicate:" (it has the id) */
   GH_TARGET_CLASS_TRANSIENT, /* retried with backoff */
   GH_TARGET_CLASS_RESUMABLE, /* cancelled by an account switch or quit; not an attempt */
-  GH_TARGET_CLASS_TERMINAL   /* never retried automatically */
+  GH_TARGET_CLASS_TERMINAL,  /* never retried automatically */
+  GH_TARGET_CLASS_BLOCKED_BY_LOCAL_POLICY /* recover on policy change, no network attempt */
 } GhTargetClass;
 
 /* "error:" and prefix-less refusals are transient this many times, then terminal. */

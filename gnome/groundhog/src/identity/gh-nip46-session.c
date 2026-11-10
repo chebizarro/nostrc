@@ -519,6 +519,7 @@ start_publish(GhNip46Session *self, Pending *p, const gchar *event)
       GH_NIP46_SESSION_ERROR_UNAVAILABLE, "Could not prepare signer request"));
     return;
   }
+  gh_relay_publish_set_signer_control(publish);
   if (self->publish_auth.send_auth)
     gh_relay_publish_set_auth_transport(publish, &self->publish_auth);
   gh_relay_publish_set_account_signer(publish, self->auth_signer, NULL);
@@ -784,6 +785,7 @@ send_oneway(GhNip46Session *self, const gchar *peer, const gchar *plaintext)
     gh_relay_publish_new(self->generation, event, NULL, NULL, NULL, NULL);
   free(event);
   if (!publish) return;
+  gh_relay_publish_set_signer_control(publish);
   if (self->publish_auth.send_auth)
     gh_relay_publish_set_auth_transport(publish, &self->publish_auth);
   gh_relay_publish_set_account_signer(publish, self->auth_signer, NULL);
@@ -1294,6 +1296,7 @@ gh_nip46_session_start(GhNip46Session *self)
   self->scope = self->scope_transport.open ? gh_relay_scope_new_with_transport(
     self->generation, filters, &self->scope_transport, self->transport_data,
     scope_update, self) : gh_relay_scope_new(self->generation, filters, scope_update, self);
+  gh_relay_scope_set_signer_control(self->scope);
   if (self->scope_auth.send_auth) gh_relay_scope_set_auth_transport(self->scope, &self->scope_auth);
   self->auth_signer = gh_relay_auth_signer_new(self->generation, NULL,
     self->client_pubkey, sign_auth_async, sign_auth_finish, self, NULL);

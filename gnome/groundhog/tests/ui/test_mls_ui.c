@@ -50,6 +50,32 @@
 #include "gh-recipient.h"
 #include "gh-privacy-summary.h"
 #include "mls-world.h"
+#include <sqlite3.h>
+
+static GStrv fixture_server_snapshot(GObject *source)
+{
+  GhStore *store = g_object_get_data(source, "gh-test-server-store");
+  return store ? gh_store_social_dup_servers(store, NULL) : g_new0(gchar *, 1);
+}
+
+static void
+set_account_servers(App *app, const gchar *const *servers)
+{
+  g_assert_true(gh_store_begin(app->store, NULL));
+  g_assert_true(gh_store_exec(app->store, "DELETE FROM social_servers", NULL));
+  sqlite3_stmt *stmt = NULL;
+  g_assert_cmpint(sqlite3_prepare_v2(gh_store_get_db(app->store),
+    "INSERT INTO social_servers(url,position) VALUES(?1,?2)", -1, &stmt, NULL), ==, SQLITE_OK);
+  for (guint i = 0; servers && servers[i]; i++) {
+    sqlite3_bind_text(stmt, 1, servers[i], -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(stmt, 2, i);
+    g_assert_cmpint(sqlite3_step(stmt), ==, SQLITE_DONE);
+    sqlite3_reset(stmt);
+  }
+  sqlite3_finalize(stmt);
+  g_assert_true(gh_store_commit(app->store, NULL));
+  g_object_set_data(G_OBJECT(app->settings), "gh-test-server-store", app->store);
+}
 #include "blossom-fixture.h"
 #include "gh-attachment-card.h"
 #include "nostrc-test-gdk-frame.h"
@@ -566,7 +592,7 @@ test_view_model(void)
    * carries those servers as the 0x800b media policy, so admins can set a
    * group picture and members know where to fetch attachments. */
   const gchar *blossom[] = { "https://blossom.example.com/", NULL };
-  g_settings_set_strv(alice->settings, "blossom-servers", blossom);
+  set_account_servers(alice, blossom);
   GhMlsGroup *gm = create_group(alice, "Media", (const guint[]){ BOB }, 1);
   MarmotGroupComponents mc;
   memset(&mc, 0, sizeof mc);
@@ -578,7 +604,7 @@ test_view_model(void)
   g_assert_cmpstr(mc.media_policy.default_blob_endpoints[0].locator_kind, ==,
                   MARMOT_MEDIA_LOCATOR_BLOSSOM_V1);
   marmot_group_components_clear(&mc);
-  g_settings_reset(alice->settings, "blossom-servers");
+  set_account_servers(alice, NULL);
   join(bob, ALICE);  /* accept the Media invite so it does not interfere */
 
   /* Roles: the creator is the Owner; a second admin is an Admin. */
@@ -823,6 +849,8 @@ app_window(App *app, GhNip29Service *nip29)
     .service = app_service,
     .service_data = app,
     .account_relays = app->relays,
+    .server_source = G_OBJECT(app->settings),
+    .dup_account_servers = fixture_server_snapshot,
     .lookup_deadline = 20,
     .files = window_files,
   };
@@ -1363,7 +1391,7 @@ test_gui_new_group(void)
 
   /* With a server: the notice names it. */
   const gchar *srv[] = { "https://blossom.example.com", NULL };
-  g_settings_set_strv(alice->settings, "blossom-servers", srv);
+  set_account_servers(alice, srv);
   /* Re-sync by toggling selection (sync_create → sync_media_notice). */
   gh_mls_invitee_picker_set_selected(picker, hex[BOB], FALSE);
   gh_mls_invitee_picker_set_selected(picker, hex[BOB], TRUE);
@@ -1371,7 +1399,7 @@ test_gui_new_group(void)
   spin_until(reason_cleared, page, "ready with servers set");
   g_assert_nonnull(gh_mls_new_group_page_get_media_notice(page));
   g_assert_nonnull(strstr(gh_mls_new_group_page_get_media_notice(page), "1 server"));
-  g_settings_reset(alice->settings, "blossom-servers");
+  set_account_servers(alice, NULL);
   gh_mls_invitee_picker_set_selected(picker, hex[BOB], FALSE);
   gh_mls_invitee_picker_set_selected(picker, hex[BOB], TRUE);
   wait_pick(picker, hex[BOB], GROUNDHOG_READY);
@@ -1380,13 +1408,13 @@ test_gui_new_group(void)
   /* A configured account server must not be presented as a group policy
    * when the selected invitees require a legacy group. */
   const gchar *srv[] = { "https://blossom.example.com", NULL };
-  g_settings_set_strv(alice->settings, "blossom-servers", srv);
+  set_account_servers(alice, srv);
   gh_mls_invitee_picker_set_selected(picker, hex[BOB], FALSE);
   gh_mls_invitee_picker_set_selected(picker, hex[BOB], TRUE);
   wait_pick(picker, hex[BOB], GROUNDHOG_READY);
   spin_until(reason_cleared, page, "ready with legacy server setting");
   g_assert_null(gh_mls_new_group_page_get_media_notice(page));
-  g_settings_reset(alice->settings, "blossom-servers");
+  set_account_servers(alice, NULL);
 #endif
 
   gtk_widget_activate_action(GTK_WIDGET(page), "mls-new.create", NULL);
@@ -1987,6 +2015,8 @@ test_gui_flag_new_group(void)
     .service = app_service,
     .service_data = alice,
     .account_relays = alice->relays,
+    .server_source = G_OBJECT(alice->settings),
+    .dup_account_servers = fixture_server_snapshot,
   };
   gboolean attached = gh_mls_ui_attach_if_enabled(window, &mls);
   g_assert_true(attached);
@@ -2132,7 +2162,7 @@ test_gui_group_info(void)
   /* Closing Group Info while its media-policy Commit awaits an OK must
    * release the dialog; the later completion must not touch its widgets. */
   const gchar *servers[] = { "https://files.example.invalid", NULL };
-  g_settings_set_strv(alice->settings, "blossom-servers", servers);
+  set_account_servers(alice, servers);
   w.g.hold_oks = TRUE;
   gtk_widget_activate_action(GTK_WIDGET(info), "mls-group.update-media", NULL);
   g_assert_cmpuint(gh_mls_group_info_dialog_get_pending(info), ==, 1);
@@ -2144,7 +2174,7 @@ test_gui_group_info(void)
   g_assert_null(closed_info);
   wire_relay_release_oks(&w.g);
   drain();
-  g_settings_reset(alice->settings, "blossom-servers");
+  set_account_servers(alice, NULL);
   info = show_info(window, conversation);
 
   /* Remove Carol, after the confirmation naming what it does. */
@@ -2521,7 +2551,7 @@ test_gui_new_group_formats(void)
                              "relay.remove", NULL);
   GhMlsInviteePicker *picker = gh_mls_new_group_page_get_picker(page);
   const gchar *servers[] = { "https://blossom.example.com", NULL };
-  g_settings_set_strv(alice->settings, "blossom-servers", servers);
+  set_account_servers(alice, servers);
 
   /* Carol alone: the older format, said, and Create runs. */
   gh_mls_invitee_picker_set_selected(picker, hex[CAROL], TRUE);
@@ -2793,7 +2823,6 @@ test_gui_group_files(void)
   g_autoptr(GSettingsBackend) backend = g_memory_settings_backend_new();
   g_autoptr(GSettings) settings = g_settings_new_with_backend("org.nostr.Groundhog", backend);
   const gchar *servers[] = { blossom_fixture_url(blossom), NULL };
-  g_settings_set_strv(settings, "blossom-servers", servers);
   g_settings_set_string(settings, "network-mode", "none");
   g_autoptr(GhNetHttp) http = gh_net_http_new(settings);
   GhAttachmentsConfig config = { .settings = settings, .http = http };
@@ -2803,6 +2832,8 @@ test_gui_group_files(void)
   gh_attachments_set_allow_private_hosts(attachments_b, TRUE);
   gh_attachments_set_store(attachments_a, alice->store);
   gh_attachments_set_store(attachments_b, bob->store);
+  gh_blossom_client_set_servers(gh_attachments_get_client(attachments_a), servers);
+  gh_blossom_client_set_servers(gh_attachments_get_client(attachments_b), servers);
   GhMlsAttachments *files_a = gh_mls_attachments_new(attachments_a);
   GhMlsAttachments *files_b = gh_mls_attachments_new(attachments_b);
   gh_mls_attachments_set_service(files_a, alice->service);

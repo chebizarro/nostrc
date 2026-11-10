@@ -1,4 +1,5 @@
 #include "gh-outbox.h"
+#include "gh-relay-deny-policy.h"
 #include "gh-auth-policy.h"
 #include "gh-expiry.h"
 #include "gh-identity.h"
@@ -84,6 +85,7 @@ struct _Msg {
   gboolean in_round;         /* a publish round is running */
   gboolean starting;         /* inside round_publish: do not end the round yet */
   gboolean manual;           /* this round is the user's Retry */
+  gboolean policy_resuming;  /* only newly allowed policy-blocked targets, not a user Retry */
   gboolean targets_fresh;    /* the target lists were read in this session */
   /* The resolver reported a changed list for the recipient (S2 background
    * refresh) that this message has not re-read yet: one more round adds the
@@ -103,6 +105,7 @@ struct _GhOutbox {
   gulong inboxes_handler;
   GhAuthPolicy *policy;      /* the accounts' NIP-42 identity policy */
   gulong policy_handler;
+  gulong deny_handler;
   GhDmSender *sender;
   GNetworkMonitor *network;
   GhRelayPublishTransport transport;
@@ -248,9 +251,14 @@ target_class(const GhStoreOutboxTarget *target)
 /* Whether a round publishes to this target: everything not accepted and not
  * terminal; a user's Retry also takes "error:" given up by count. */
 static gboolean
-target_due(const GhStoreOutboxTarget *target, gboolean manual)
+target_due(const GhStoreOutboxTarget *target, gboolean manual, Msg *msg)
 {
-  switch (target_class(target)) {
+  GhTargetClass klass = target_class(target);
+  if (klass == GH_TARGET_CLASS_BLOCKED_BY_LOCAL_POLICY)
+    return gh_relay_deny_policy_check(msg->outbox->generation, target->relay_url, FALSE, NULL);
+  if (msg->policy_resuming && !manual)
+    return FALSE; /* policy recovery never widens an ordinary network retry */
+  switch (klass) {
   case GH_TARGET_CLASS_PENDING:
   case GH_TARGET_CLASS_RESUMABLE:
   case GH_TARGET_CLASS_TRANSIENT:
@@ -258,6 +266,7 @@ target_due(const GhStoreOutboxTarget *target, gboolean manual)
   case GH_TARGET_CLASS_TERMINAL:
     return manual && !gh_target_is_final_refusal((GhRelayPublishOutcome) target->outcome,
                                                  target_prefix(target));
+  case GH_TARGET_CLASS_BLOCKED_BY_LOCAL_POLICY:
   case GH_TARGET_CLASS_ACCEPTED:
   default:
     return FALSE;
@@ -288,7 +297,7 @@ static gboolean
 leg_has_due(const Leg *leg, gboolean manual)
 {
   for (guint i = 0; leg->event->event_json && i < leg->event->targets->len; i++)
-    if (target_due(g_ptr_array_index(leg->event->targets, i), manual))
+    if (target_due(g_ptr_array_index(leg->event->targets, i), manual, leg->msg))
       return TRUE;
   return FALSE;
 }
@@ -451,7 +460,16 @@ recipient_class(Msg *msg, const GhStoreOutboxEvent *event)
   if (event_targetless(event))
     return msg_inbox_absent(msg, event->target_pubkey) ? GH_TARGET_CLASS_TERMINAL
                                                        : GH_TARGET_CLASS_TRANSIENT;
-  return event_class(event);
+  GhTargetClass klass = event_class(event);
+  if (klass != GH_TARGET_CLASS_ACCEPTED) {
+    for (guint i = 0; i < event->targets->len; i++) {
+      GhStoreOutboxTarget *target = event->targets->pdata[i];
+      if (target->outcome == GH_RELAY_PUBLISH_BLOCKED_BY_LOCAL_POLICY &&
+          gh_relay_deny_policy_check(msg->outbox->generation, target->relay_url, FALSE, NULL))
+        return GH_TARGET_CLASS_PENDING;
+    }
+  }
+  return klass;
 }
 
 /* Whether every recipient's wrap was accepted by at least one relay. */
@@ -557,6 +575,8 @@ detail_for(Msg *msg, GhMessageStatus status)
     return g_strdup_printf(tr(N_("Accepted for %u of %u recipients.")), reached, recipients);
   case GH_MESSAGE_STATUS_RETRYING:
     return g_strdup(tr(N_("Not sent yet. Groundhog will try again automatically.")));
+  case GH_MESSAGE_STATUS_BLOCKED_BY_LOCAL_POLICY:
+    return g_strdup(gh_message_status_get_accessible_description(status));
   case GH_MESSAGE_STATUS_NOT_SENT:
     return detail_not_sent(msg);
   case GH_MESSAGE_STATUS_CANNOT_SEND_NO_INBOX:
@@ -1228,7 +1248,8 @@ on_publish_update(GhRelayPublish *publish, const GhRelayPublishResult *result, g
   GhStoreOutboxTarget *target = event_target(leg->event, result->url);
   if (!msg->dropped && leg->publish == publish && target) {
     /* T-outcome. CANCELLED never arrives here: a cancelled publish is silent. */
-    record_outcome(msg, leg, target, result->outcome, result->prefix, result->message, TRUE);
+    record_outcome(msg, leg, target, result->outcome, result->prefix, result->message,
+                   result->outcome != GH_RELAY_PUBLISH_BLOCKED_BY_LOCAL_POLICY);
     if (!msg->dropped)
       item_refresh(msg);
   }
@@ -1256,7 +1277,7 @@ leg_fail(Leg *leg, const gchar *why)
 {
   for (guint i = 0; i < leg->event->targets->len && !leg->msg->dropped; i++) {
     GhStoreOutboxTarget *target = g_ptr_array_index(leg->event->targets, i);
-    if (target_due(target, leg->msg->manual))
+    if (target_due(target, leg->msg->manual, leg->msg))
       record_outcome(leg->msg, leg, target, GH_RELAY_PUBLISH_REJECTED,
                      GH_RELAY_OK_PREFIX_INVALID, why, TRUE);
   }
@@ -1312,7 +1333,7 @@ leg_start(Leg *leg)
   guint added = 0;
   for (guint i = 0; i < leg->event->targets->len; i++) {
     GhStoreOutboxTarget *target = g_ptr_array_index(leg->event->targets, i);
-    if (!target_due(target, msg->manual))
+    if (!target_due(target, msg->manual, msg))
       continue;
     g_autoptr(GError) url_error = NULL;
     if (!gh_relay_publish_add_url(publish, target->relay_url, &url_error)) {
@@ -1342,10 +1363,52 @@ leg_start(Leg *leg)
   }
   for (guint i = 0; i < leg->event->targets->len && !msg->dropped; i++) {
     GhStoreOutboxTarget *target = g_ptr_array_index(leg->event->targets, i);
-    if (target_due(target, msg->manual))
+    if (target_due(target, msg->manual, msg))
       record_outcome(msg, leg, target, GH_RELAY_PUBLISH_CONNECTION_FAILED,
                      GH_RELAY_OK_PREFIX_NONE, error ? error->message : NULL, TRUE);
   }
+}
+
+static gboolean
+msg_has_blocked(Msg *msg)
+{
+  for (guint i = 0; i < msg->entry->events->len; i++) {
+    GhStoreOutboxEvent *event = msg->entry->events->pdata[i];
+    for (guint j = 0; j < event->targets->len; j++) {
+      GhStoreOutboxTarget *target = event->targets->pdata[j];
+      if (target->outcome == GH_RELAY_PUBLISH_BLOCKED_BY_LOCAL_POLICY) return TRUE;
+    }
+  }
+  return FALSE;
+}
+
+/* Preserve accepted outcomes, policy reasons and immutable wrap bytes.
+ * Only unblocked policy refusals regain eligibility, without a network attempt. */
+static void
+reconcile_policy(Msg *msg)
+{
+  gboolean resumable = FALSE;
+  msg->policy_resuming = FALSE;
+  for (guint i = 0; i < msg->legs->len && !msg->dropped; i++) {
+    Leg *leg = msg->legs->pdata[i];
+    for (guint j = 0; j < leg->event->targets->len && !msg->dropped; j++) {
+      GhStoreOutboxTarget *target = leg->event->targets->pdata[j];
+      gboolean allowed = gh_relay_deny_policy_check(msg->outbox->generation, target->relay_url, FALSE, NULL);
+      if (!allowed && target_due(target, msg->manual, msg))
+        record_outcome(msg, leg, target, GH_RELAY_PUBLISH_BLOCKED_BY_LOCAL_POLICY,
+                       GH_RELAY_OK_PREFIX_NONE, GH_RELAY_DENY_MESSAGE, FALSE);
+      else if (allowed && target->outcome == GH_RELAY_PUBLISH_BLOCKED_BY_LOCAL_POLICY)
+        resumable = TRUE; /* retain the durable reason until a real network outcome */
+    }
+  }
+  msg->policy_resuming = resumable;
+}
+
+static void
+wait_for_policy(Msg *msg)
+{
+  if (msg_persist(msg, GH_STORE_OUTBOX_WAITING_RETRY, 0, FALSE, "blocked-by-local-policy"))
+    item_refresh(msg);
 }
 
 static void
@@ -1354,6 +1417,7 @@ round_end(Msg *msg)
   GhOutbox *self = msg->outbox;
   msg->in_round = FALSE;
   msg->manual = FALSE;
+  msg->policy_resuming = FALSE;
   gint64 now = now_unix(self);
   if (msg->inbox_changed && now < deadline(msg->entry)) {
     /* The recipient's list changed during this round (S2): read it again
@@ -1369,14 +1433,17 @@ round_end(Msg *msg)
     /* Nothing left to try automatically. Settled only if every recipient
      * has it; otherwise the user decides (Retry reaches "error:" relays,
      * and looks up again a recipient without message relays). */
-    if (!all_recipients_reached(msg))
+    if (msg_has_blocked(msg)) {
+      wait_for_policy(msg);
+    } else if (!all_recipients_reached(msg))
       give_up(msg, REASON_REFUSED);
     else if (msg_persist(msg, GH_STORE_OUTBOX_SETTLED, 0, FALSE, NULL))
       item_refresh(msg);
     return;
   }
   if (now >= deadline(msg->entry)) {
-    give_up(msg, REASON_TIMED_OUT);
+    if (msg_has_blocked(msg)) wait_for_policy(msg);
+    else give_up(msg, REASON_TIMED_OUT);
     return;
   }
   gint64 delay = backoff_after(self->clock, msg->entry->attempts); /* one draw: MIN() repeats */
@@ -1438,7 +1505,9 @@ round_publish(Msg *msg)
 {
   /* A round interrupted by a switch or crash (still PUBLISHING) resumes
    * without counting another attempt: nobody answered it. */
-  gboolean count = msg->entry->state != GH_STORE_OUTBOX_PUBLISHING;
+  reconcile_policy(msg);
+  if (msg->dropped) return;
+  gboolean count = msg->entry->state != GH_STORE_OUTBOX_PUBLISHING && msg_has_due(msg, msg->manual);
   if (!msg_persist(msg, GH_STORE_OUTBOX_PUBLISHING, 0, count, NULL)) {
     msg->in_round = FALSE;
     return;
@@ -1624,12 +1693,18 @@ msg_eval(Msg *msg)
   switch (entry->state) {
   case GH_STORE_OUTBOX_SETTLED:
   case GH_STORE_OUTBOX_CANCELLED:
-  case GH_STORE_OUTBOX_NEEDS_ATTENTION:
     return;
   default:
     break;
   }
   msg_ref(msg);
+  if (msg_sealed(msg)) reconcile_policy(msg);
+  if (msg->dropped) { msg_unref(msg); return; }
+  if (entry->state == GH_STORE_OUTBOX_NEEDS_ATTENTION) {
+    if (!msg->policy_resuming || !msg_persist(msg, GH_STORE_OUTBOX_WAITING_RETRY, 0, FALSE, NULL)) {
+      msg_unref(msg); return;
+    }
+  }
   if (!msg_sealed(msg)) {
     eval_unsealed(msg);
   } else if (msg->in_round) {
@@ -1640,12 +1715,14 @@ msg_eval(Msg *msg)
     /* A recipient without message relays is looked up again on a retry
      * (automatic while its lookup failed, the user's when it had none). */
     gboolean lookup = msg_lookup_pending(msg) || (msg->manual && msg_has_targetless(msg));
-    if (entry->state == GH_STORE_OUTBOX_WAITING_RETRY && entry->next_attempt_at > now)
+    if (!msg->policy_resuming && entry->state == GH_STORE_OUTBOX_WAITING_RETRY && entry->next_attempt_at > now)
       msg_schedule(msg, entry->next_attempt_at);
     else if (!msg_has_due(msg, msg->manual) && !msg->inbox_changed && !lookup)
       round_end(msg); /* everything answered already (e.g. before a crash) */
-    else if (entry->attempts > 0 && now >= deadline(entry) && !msg->manual)
-      give_up(msg, REASON_TIMED_OUT);
+    else if (entry->attempts > 0 && now >= deadline(entry) && !msg->manual && !msg->policy_resuming) {
+      if (msg_has_blocked(msg)) wait_for_policy(msg);
+      else give_up(msg, REASON_TIMED_OUT);
+    }
     else
       round_begin(msg);
   }
@@ -1824,6 +1901,20 @@ load_msg(GhOutbox *self, gint64 outbox_id, GError **error)
   return dropped ? NULL : msg;
 }
 
+static void
+on_deny_policy_changed(GhRelayDenyPolicy *policy, GhOutbox *self)
+{
+  (void)policy;
+  if (!running(self)) return;
+  GHashTableIter iter;
+  gpointer value;
+  g_hash_table_iter_init(&iter, self->messages);
+  while (g_hash_table_iter_next(&iter, NULL, &value)) {
+    Msg *msg = value;
+    if (msg_sealed(msg)) msg_queue_eval(msg);
+  }
+}
+
 GhOutbox *
 gh_outbox_new(const GhOutboxConfig *config, GError **error)
 {
@@ -1875,6 +1966,8 @@ gh_outbox_new(const GhOutboxConfig *config, GError **error)
                                            G_CALLBACK(on_inbox_changed), self);
   self->policy_handler = g_signal_connect(self->policy, "account-state-changed",
                                           G_CALLBACK(on_account_state_changed), self);
+  self->deny_handler = g_signal_connect(gh_relay_deny_policy_get_default(), "changed",
+                                        G_CALLBACK(on_deny_policy_changed), self);
   update_activity(self);
   return g_steal_pointer(&self);
 }
@@ -2730,6 +2823,10 @@ gh_outbox_dispose(GObject *object)
   if (self->policy_handler) {
     g_signal_handler_disconnect(self->policy, self->policy_handler);
     self->policy_handler = 0;
+  }
+  if (self->deny_handler) {
+    g_signal_handler_disconnect(gh_relay_deny_policy_get_default(), self->deny_handler);
+    self->deny_handler = 0;
   }
   g_clear_object(&self->policy);
   self->generation = 0;

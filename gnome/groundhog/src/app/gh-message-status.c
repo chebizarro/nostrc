@@ -45,6 +45,9 @@ static const StatusCopy status_copy[] = {
   [GH_MESSAGE_STATUS_CANNOT_SEND_NO_INBOX] = {
     N_("Can't send"), "action-unavailable-symbolic",
     N_("Can't send. The recipient hasn't set up private messaging yet.") },
+  [GH_MESSAGE_STATUS_BLOCKED_BY_LOCAL_POLICY] = {
+    N_("Not Sent — All of This Account’s Message Relays Are Blocked"), "action-unavailable-symbolic",
+    N_("Not sent. All of this account’s message relays are blocked by your local policy. Unblock a destination in Preferences to send the queued message.") },
   [GH_MESSAGE_STATUS_CANCELLED] = {
     N_("Cancelled"), "edit-delete-symbolic",
     N_("Cancelled before it was sent.") },
@@ -115,6 +118,7 @@ gh_message_status_get_type(void)
       { GH_MESSAGE_STATUS_CANNOT_SEND_NO_INBOX, "GH_MESSAGE_STATUS_CANNOT_SEND_NO_INBOX",
         "cannot-send-no-inbox" },
       { GH_MESSAGE_STATUS_CANCELLED, "GH_MESSAGE_STATUS_CANCELLED", "cancelled" },
+      { GH_MESSAGE_STATUS_BLOCKED_BY_LOCAL_POLICY, "GH_MESSAGE_STATUS_BLOCKED_BY_LOCAL_POLICY", "blocked-by-local-policy" },
       { 0, NULL, NULL }
     };
     g_once_init_leave(&type, g_enum_register_static(
@@ -155,6 +159,8 @@ GhTargetClass
 gh_target_classify(GhRelayPublishOutcome outcome, GhRelayOkPrefix prefix, guint attempts)
 {
   switch (outcome) {
+  case GH_RELAY_PUBLISH_BLOCKED_BY_LOCAL_POLICY:
+    return GH_TARGET_CLASS_BLOCKED_BY_LOCAL_POLICY;
   case GH_RELAY_PUBLISH_PENDING:
     return GH_TARGET_CLASS_PENDING;
   case GH_RELAY_PUBLISH_ACCEPTED:
@@ -187,6 +193,7 @@ gh_target_class_combine(const GhTargetClass *targets, gsize n_targets)
 {
   gboolean pending = FALSE;
   gboolean transient = FALSE;
+  gsize blocked = 0;
   for (gsize i = 0; i < n_targets; i++) {
     switch (targets[i]) {
     case GH_TARGET_CLASS_ACCEPTED:
@@ -198,10 +205,15 @@ gh_target_class_combine(const GhTargetClass *targets, gsize n_targets)
     case GH_TARGET_CLASS_TRANSIENT:
       transient = TRUE;
       break;
+    case GH_TARGET_CLASS_BLOCKED_BY_LOCAL_POLICY:
+      blocked++;
+      break;
     case GH_TARGET_CLASS_TERMINAL:
       break;
     }
   }
+  if (n_targets > 0 && blocked == n_targets)
+    return GH_TARGET_CLASS_BLOCKED_BY_LOCAL_POLICY;
   if (pending)
     return GH_TARGET_CLASS_PENDING;
   return transient ? GH_TARGET_CLASS_TRANSIENT : GH_TARGET_CLASS_TERMINAL;
@@ -232,7 +244,7 @@ gh_message_status_derive(const GhMessageStatusInput *input)
   if (input->phase == GH_MESSAGE_PHASE_UNSEALED)
     return derive_unsealed(input);
 
-  gsize reached = 0;
+  gsize reached = 0, blocked = 0;
   gboolean pending = FALSE;
   gboolean transient = FALSE;
   for (gsize i = 0; i < input->n_recipients; i++) {
@@ -247,10 +259,15 @@ gh_message_status_derive(const GhMessageStatusInput *input)
     case GH_TARGET_CLASS_TRANSIENT:
       transient = TRUE;
       break;
+    case GH_TARGET_CLASS_BLOCKED_BY_LOCAL_POLICY:
+      blocked++;
+      break;
     case GH_TARGET_CLASS_TERMINAL:
       break;
     }
   }
+  if (input->n_recipients > 0 && blocked == input->n_recipients)
+    return GH_MESSAGE_STATUS_BLOCKED_BY_LOCAL_POLICY;
   if (input->n_recipients > 0 && reached == input->n_recipients)
     return GH_MESSAGE_STATUS_SENT;
   if (reached > 0)
@@ -269,7 +286,7 @@ gh_message_status_derive(const GhMessageStatusInput *input)
 gboolean
 gh_message_status_self_copy_missing(GhTargetClass self_copy, gboolean gave_up)
 {
-  return self_copy == GH_TARGET_CLASS_TERMINAL ||
+  return self_copy == GH_TARGET_CLASS_TERMINAL || self_copy == GH_TARGET_CLASS_BLOCKED_BY_LOCAL_POLICY ||
          (gave_up && self_copy != GH_TARGET_CLASS_ACCEPTED);
 }
 
@@ -293,6 +310,8 @@ gh_message_status_describe_target(GhRelayPublishOutcome outcome, GhRelayOkPrefix
     return tr(N_("This relay requires sign-in."));
   case GH_RELAY_PUBLISH_CONNECTION_FAILED:
     return tr(N_("Couldn't reach this relay."));
+  case GH_RELAY_PUBLISH_BLOCKED_BY_LOCAL_POLICY:
+    return tr(N_("Blocked by your local relay policy. No network attempt was made."));
   case GH_RELAY_PUBLISH_CANCELLED:
     return tr(N_("Paused before this relay answered."));
   case GH_RELAY_PUBLISH_REJECTED:
