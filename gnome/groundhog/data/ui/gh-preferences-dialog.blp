@@ -733,6 +733,14 @@ template $GhPreferencesDialog: Adw.PreferencesDialog {
         activatable: true;
         [suffix] Image { icon-name: "go-next-symbolic"; }
       }
+      // Shown by gh_preferences_dialog_set_badges_backend() (plan §3.12).
+      Adw.ActionRow badges_row {
+        title: _("Profile Badges");
+        subtitle: _("Choose which awarded badges your profile shows; publishing is a separate step");
+        visible: false;
+        activatable: true;
+        [suffix] Image { icon-name: "go-next-symbolic"; }
+      }
     }
 
     Adw.PreferencesGroup {

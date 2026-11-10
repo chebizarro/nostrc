@@ -32,6 +32,8 @@ _gh_describe(groundhog-report test-groundhog-report groundhog.unclassified
   INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/src/store/gh-store-schema.c")
 _gh_describe(groundhog-report-ui test-groundhog-report-ui groundhog.unclassified REQUIRES display
   INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/data/ui/gh-report-dialog.blp")
+_gh_describe(groundhog-badges test-groundhog-badges groundhog.unclassified REQUIRES private_bus
+  INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/src/store/gh-store-schema.c")
 _gh_describe(groundhog-store-social test-groundhog-store-social groundhog.store
   INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/src/store/gh-store-schema.c")
 _gh_describe(groundhog-store-drafts test-groundhog-store-drafts groundhog.store

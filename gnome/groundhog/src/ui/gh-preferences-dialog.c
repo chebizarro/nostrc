@@ -53,6 +53,9 @@ struct _GhPreferencesDialog {
   guint64 drafts_generation;
   AdwPreferencesGroup *drafts_group;
   AdwActionRow *drafts_row;
+  GhBadgesBackend badges; /* NIP-58 badges (nostrc-9lwl7.13); owner NULL without one */
+  guint64 badges_generation;
+  AdwActionRow *badges_row;
   AdwPreferencesGroup *social_group;
   AdwSwitchRow *social_sync_row;
   AdwActionRow *social_lists_row;
@@ -2059,6 +2062,43 @@ gh_preferences_dialog_set_drafts_backend(GhPreferencesDialog *self, const GhDraf
 }
 
 static void
+badges_open(AdwActionRow *row, GhPreferencesDialog *self)
+{
+  (void)row;
+  if (self->badges.owner && self->badges_generation == self->badges.generation(self->badges.owner) &&
+      self->badges_generation != 0)
+    adw_preferences_dialog_push_subpage(ADW_PREFERENCES_DIALOG(self),
+      ADW_NAVIGATION_PAGE(gh_badges_page_new(&self->badges)));
+}
+
+static void
+badges_changed(GObject *owner, GhPreferencesDialog *self)
+{
+  (void)owner;
+  if (self->disposed || !self->badges.owner) return;
+  gtk_widget_set_sensitive(GTK_WIDGET(self->badges_row),
+                           self->badges.generation(self->badges.owner) != 0);
+}
+
+void
+gh_preferences_dialog_set_badges_backend(GhPreferencesDialog *self, const GhBadgesBackend *backend)
+{
+  if (self->badges.owner) {
+    g_signal_handlers_disconnect_by_data(self->badges.owner, self);
+    adw_dialog_force_close(ADW_DIALOG(self));
+  }
+  g_clear_object(&self->badges.owner);
+  self->badges = backend ? *backend : (GhBadgesBackend){0};
+  if (backend) {
+    self->badges.owner = g_object_ref(backend->owner);
+    self->badges_generation = backend->generation(backend->owner);
+    g_signal_connect(self->badges.owner, "changed", G_CALLBACK(badges_changed), self);
+    badges_changed(self->badges.owner, self);
+  }
+  gtk_widget_set_visible(GTK_WIDGET(self->badges_row), backend != NULL);
+}
+
+static void
 hidden_open(AdwActionRow *row, GhPreferencesDialog *self)
 {
   (void)row;
@@ -2111,6 +2151,9 @@ gh_preferences_dialog_dispose(GObject *object)
   if (self->drafts.owner)
     g_signal_handlers_disconnect_by_data(self->drafts.owner, self);
   g_clear_object(&self->drafts.owner);
+  if (self->badges.owner)
+    g_signal_handlers_disconnect_by_data(self->badges.owner, self);
+  g_clear_object(&self->badges.owner);
   if (self->settings_changed) {
     g_signal_handler_disconnect(self->settings, self->settings_changed);
     self->settings_changed = 0;
@@ -2220,6 +2263,7 @@ gh_preferences_dialog_class_init(GhPreferencesDialogClass *klass)
   BIND(social_lists_row);
   BIND(drafts_group);
   BIND(drafts_row);
+  BIND(badges_row);
   BIND(hidden_group);
   BIND(hidden_row);
   BIND(social_import_row);
@@ -2299,6 +2343,7 @@ gh_preferences_dialog_init(GhPreferencesDialog *self)
   g_signal_connect(self->social_lists_row, "activated", G_CALLBACK(social_lists_open), self);
   g_signal_connect(self->hidden_row, "activated", G_CALLBACK(hidden_open), self);
   g_signal_connect(self->drafts_row, "activated", G_CALLBACK(drafts_open), self);
+  g_signal_connect(self->badges_row, "activated", G_CALLBACK(badges_open), self);
   g_signal_connect(self->social_import_row, "activated", G_CALLBACK(social_import_open), self);
   gh_agents_page_populate(self->agents_page);
   self->key_widgets = g_hash_table_new(g_str_hash, g_str_equal);

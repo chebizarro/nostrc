@@ -49,6 +49,11 @@ G_BEGIN_DECLS
 #ifndef GROUNDHOG_HAVE_DRAFT_SYNC
 #define GROUNDHOG_HAVE_DRAFT_SYNC 0
 #endif
+/* NIP-58 badges (src/app/gh-badge-service.c) over the account's social
+ * lists; nostrc-9lwl7.13. */
+#ifndef GROUNDHOG_HAVE_BADGES
+#define GROUNDHOG_HAVE_BADGES 0
+#endif
 
 /* G09: network modes and the Tor transport (src/net/gh-net-session.c and
  * gh-relay-net.c, installed by gh-app-services.c before any connection). */

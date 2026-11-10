@@ -1627,7 +1627,7 @@ target_link_libraries(groundhog-lists-ui PUBLIC groundhog-ui nostr_gobject nip19
 target_compile_options(groundhog-lists-ui PRIVATE -Wall -Wextra -Werror)
 
 add_library(groundhog-preferences STATIC src/ui/gh-preferences-dialog.c
-  src/ui/gh-agents-page.c src/ui/gh-drafts-page.c)
+  src/ui/gh-agents-page.c src/ui/gh-drafts-page.c src/ui/gh-badges-page.c)
 target_include_directories(groundhog-preferences PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/ui)
 target_link_libraries(groundhog-preferences PUBLIC groundhog-ui groundhog-diagnostics groundhog-lists-ui groundhog-relay)
 target_compile_options(groundhog-preferences PRIVATE -Wall -Wextra -Werror)
@@ -3827,6 +3827,36 @@ if(TARGET groundhog-account-store)
   add_test(NAME groundhog-report-ui COMMAND test-groundhog-report-ui)
   set_tests_properties(groundhog-report-ui PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60
     ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
+  endif()
+  # Stage 10b (nostrc-9lwl7.13): NIP-58 badges. The service verifies every
+  # award chain before display, caches the verified events, keeps the own
+  # kind-10008 selection in the shared list service and publishes it only on
+  # explicit request; artwork is a GH_WEB_BADGE fetch under Load Remote
+  # Images. The page and its backend table live in groundhog-preferences.
+  if(TARGET groundhog-conversation-ui AND TARGET groundhog-net)
+    add_library(groundhog-badges STATIC src/app/gh-badge-service.c)
+    target_link_libraries(groundhog-badges PUBLIC groundhog-social-lists groundhog-conversation-ui nip58)
+    target_compile_options(groundhog-badges PRIVATE -Wall -Wextra -Werror)
+    target_link_libraries(groundhog PRIVATE groundhog-badges)
+    target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_BADGES=1)
+    if(BUILD_TESTING AND TARGET nostrc-test-bus)
+      # Forged chains, unmatched pairs, award author ≠ issuer, recipient
+      # missing, relay hints needing approval, no default artwork fetch,
+      # explicit publication, legacy-to-canonical, empty canonical wins,
+      # offline cache; over the real signer, store and list service.
+      add_executable(test-groundhog-badges tests/app/test_badges.c)
+      target_include_directories(test-groundhog-badges PRIVATE ${CMAKE_SOURCE_DIR}/tests/common
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/app)
+      target_link_libraries(test-groundhog-badges PRIVATE groundhog-badges nostrc-test-bus)
+      target_compile_options(test-groundhog-badges PRIVATE -Wall -Wextra -Werror)
+      groundhog_store_link_sqlcipher_first(test-groundhog-badges)
+      add_dependencies(test-groundhog-badges groundhog-test-schemas)
+      add_test(NAME groundhog-badges COMMAND test-groundhog-badges)
+      set_tests_properties(groundhog-badges PROPERTIES TIMEOUT 120
+        ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
+    endif()
+  else()
+    target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_BADGES=0)
   endif()
   add_library(groundhog-social-lists-backend STATIC src/app/gh-social-lists-backend.c src/ui/gh-hide-account.c)
   target_link_libraries(groundhog-social-lists-backend PUBLIC groundhog-social-lists groundhog-lists-ui)
