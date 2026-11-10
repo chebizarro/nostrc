@@ -13,6 +13,7 @@
 #include "mls-world.h"
 
 #include "blossom-fixture.h"
+#include "../media/server-source-fixture.h"
 #include "gh-attachments.h"
 #include "gh-mls-attachments.h"
 #include "gh-mls-imeta.h"
@@ -99,7 +100,9 @@ files_up(Files *x, App *app, const gchar *server, Socks5Fixture *tor)
   if (tor)
     g_settings_set_string(x->settings, "tor-socks-address", socks5_fixture_address(tor));
   x->http = gh_net_http_new(x->settings);
-  GhAttachmentsConfig config = { .settings = x->settings, .http = x->http };
+  GhAttachmentsConfig config = { .settings = x->settings, .http = x->http,
+    .server_source = G_OBJECT(x->settings), .dup_account_servers = gh_test_server_source_dup,
+    .save_account_servers = gh_test_server_source_save };
   x->attachments = gh_attachments_new(&config);
   /* The fixture is on loopback, which real downloads may not reach. */
   gh_attachments_set_allow_private_hosts(x->attachments, TRUE);

@@ -7,8 +7,11 @@ G_BEGIN_DECLS
 G_DECLARE_FINAL_TYPE(GhSocialLists, gh_social_lists, GH, SOCIAL_LISTS, GObject)
 /* Owned by GhAppServices. Main-context only. Signals: changed (),
  * sync-state-changed (), plus document-changed (GNostrListDocument).
- * No network or signer is installed in this local-only stage. */
+ * Local relay denial and attachment destinations apply before networking. */
 GhSocialLists *gh_social_lists_new(GhAccountStore *account_store);
+GhSocialLists *gh_social_lists_new_with_settings(GhAccountStore *account_store, GSettings *legacy_settings);
+GStrv gh_social_lists_dup_servers(GhSocialLists *self, GError **error);
+gboolean gh_social_lists_set_servers(GhSocialLists *self, const gchar *const *servers, GError **error);
 /* Explicit binding seam for session stores and tests; account_store may be NULL
  * at construction. The caller must close this binding before closing store. */
 gboolean gh_social_lists_bind_store(GhSocialLists *self, GhStore *store, guint64 generation,

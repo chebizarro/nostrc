@@ -12,6 +12,8 @@
 #include "gh-nip05.h"
 #include "gh-nip11.h"
 #include "gh-relay-net.h"
+#include "gh-relay-deny-policy.h"
+#include "gh-nip46-session.h"
 #include "gh-relay-soup.h"
 #include "socks5-fixture.h"
 #include "wire-relay.h"
@@ -1644,6 +1646,108 @@ test_public_enumerator(void)
   g_resolver_set_default(previous);
 }
 
+static void
+test_local_relay_denial(void)
+{
+  GhRelayDenyPolicy *policy = gh_relay_deny_policy_get_default();
+  gh_relay_deny_policy_bind(policy, 3, NULL);
+  Socks5Fixture *socks = socks5_fixture_new();
+  GhNetSession *session = install_session(GH_NET_MODE_TOR, socks5_fixture_address(socks));
+  WireRelay relay = { .serve = TRUE, .hold_oks = TRUE };
+  relay_init(&relay);
+  g_autofree gchar *url = onion_url("ws", url_port(relay.url), "/relay");
+  ScopeSeen seen = {0};
+  GhRelayScope *scope = open_scope(3, url, &seen);
+  wait_for_count(&seen.eoses, 1);
+  PublishSeen sent = {0};
+  GhRelayPublish *publish = start_publish(url, "held before policy change", &sent);
+  wait_for_count(&relay.events, 1);
+  NostrFilters *filters = any_filters();
+  g_autoptr(GError) error = NULL;
+  gpointer sh = gh_relay_net_transport.open(scope, url, filters, NULL, &error);
+  g_autofree gchar *json = signed_json("raw boundary handle");
+  gpointer ph = gh_relay_net_publish_transport.open(publish, url, json, NULL, &error);
+  g_assert_no_error(error); g_assert_nonnull(sh); g_assert_nonnull(ph);
+  wait_for_count(&relay.reqs, 2); wait_for_count(&relay.events, 2);
+  const gchar *denied[] = { url, NULL };
+  gh_relay_deny_policy_bind(policy, 3, denied);
+  g_assert_false(gh_relay_net_auth_transport.send_auth(sh, "{}", NULL, &error));
+  g_assert_error(error, GH_RELAY_DENY_ERROR, 1); g_clear_error(&error);
+  g_assert_false(gh_relay_net_write_transport.send_event(sh, json, NULL, &error));
+  g_assert_error(error, GH_RELAY_DENY_ERROR, 1); g_clear_error(&error);
+  gh_relay_net_auth_transport.resubscribe(sh, NULL);
+  g_assert_false(gh_relay_net_publish_auth_transport.send_auth(ph, "{}", NULL, &error));
+  g_assert_error(error, GH_RELAY_DENY_ERROR, 1); g_clear_error(&error);
+  g_assert_false(gh_relay_net_publish_auth_transport.resend(ph, NULL, &error));
+  g_assert_error(error, GH_RELAY_DENY_ERROR, 1);
+  wait_at_least(&relay.closed_sockets, 4);
+  wait_for_count(&sent.done, 1);
+  g_assert_cmpint(sent.outcome, ==, GH_RELAY_PUBLISH_BLOCKED_BY_LOCAL_POLICY);
+  guint requests = socks5_fixture_requests(socks)->len;
+  gh_net_session_set_mode(session, GH_NET_MODE_NONE, NULL);
+  while (g_main_context_iteration(NULL, FALSE)) { }
+  g_assert_cmpuint(socks5_fixture_requests(socks)->len, ==, requests);
+  g_assert_cmpuint(relay.reqs, ==, 2); g_assert_cmpuint(relay.events, ==, 2);
+  gh_relay_net_transport.close(sh, NULL);
+  gh_relay_net_publish_transport.close(ph, NULL);
+  nostr_filters_free(filters);
+  gh_relay_scope_cancel(scope); gh_relay_scope_unref(scope);
+  gh_relay_publish_unref(publish);
+  relay_clear(&relay); uninstall_session(session); socks5_fixture_free(socks);
+  g_free(seen.last_error); g_free(sent.message);
+  gh_relay_deny_policy_bind(policy, 3, NULL);
+}
+
+static gboolean signer_listening(gpointer data) { return gh_nip46_session_is_listening(data); }
+static void signer_call_finished(GObject *source, GAsyncResult *result, gpointer data)
+{
+  Fetched *f = data;
+  f->value = gh_nip46_session_call_finish(GH_NIP46_SESSION(source), result, &f->error);
+  f->done = TRUE;
+}
+static void
+test_real_nip46_exclusion(void)
+{
+  Socks5Fixture *socks = socks5_fixture_new();
+  GhNetSession *session = install_session(GH_NET_MODE_TOR, socks5_fixture_address(socks));
+  WireRelay relay = { .serve = TRUE, .require_auth = TRUE };
+  relay_init(&relay);
+  g_autofree gchar *url = onion_url("ws", url_port(relay.url), "/relay");
+  /* AUTH must bind the advertised proxy-side endpoint, not the listener URL. */
+  g_free(relay.url); relay.url = g_strdup(url);
+  const gchar *relays[] = { url, NULL };
+  GhRelayDenyPolicy *policy = gh_relay_deny_policy_get_default();
+  gh_relay_deny_policy_bind(policy, 3, relays);
+  g_autoptr(GError) error = NULL;
+  /* A real session sets its class internally. A custom scope without a write
+   * half forces the real request's publish fallback too; no test sets a class. */
+  g_autoptr(GhNip46Session) signer = gh_nip46_session_new(SECRET,
+    "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5", relays,
+    &gh_relay_net_transport, &gh_relay_net_auth_transport,
+    &gh_relay_net_publish_transport, &gh_relay_net_publish_auth_transport, NULL, &error);
+  g_assert_no_error(error); g_assert_nonnull(signer);
+  gh_nip46_session_start(signer);
+  spin_until(signer_listening, signer);
+  g_assert_cmpuint(relay.auth_ok, ==, 1);
+  Fetched reply = {0};
+  gh_nip46_session_call_async(signer, "get_public_key", NULL, 0, NULL, signer_call_finished, &reply);
+  wait_for_count(&relay.events, 1); /* only the authenticated resend is stored */
+  g_assert_cmpuint(relay.refused_events, ==, 1);
+  g_assert_cmpuint(relay.auth_ok, ==, 2);
+  ScopeSeen app = {0};
+  GhRelayScope *scope = open_scope(3, url, &app);
+  wait_for_count(&app.errors, 1);
+  g_assert_cmpstr(app.last_error, ==, GH_RELAY_DENY_MESSAGE);
+  gh_relay_deny_policy_revoke(policy);
+  g_assert_false(gh_relay_deny_policy_check(3, url, FALSE, NULL));
+  gh_nip46_session_cancel(signer);
+  spin_until(fetched_done, &reply); g_assert_nonnull(reply.error); fetched_clear(&reply);
+  gh_relay_scope_cancel(scope); gh_relay_scope_unref(scope);
+  g_free(app.last_error);
+  relay_clear(&relay); uninstall_session(session); socks5_fixture_free(socks);
+  gh_relay_deny_policy_bind(policy, 3, NULL);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -1665,6 +1769,8 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/net/public-address", test_public_address);
   g_test_add_func("/groundhog/net/public-only", test_public_only);
   g_test_add_func("/groundhog/net/public-enumerator", test_public_enumerator);
+  g_test_add_func("/groundhog/net/local-relay-denial", test_local_relay_denial);
+  g_test_add_func("/groundhog/net/real-nip46-signer-control-exclusion", test_real_nip46_exclusion);
   int status = g_test_run();
   g_ptr_array_unref(dns_names);
   return status;

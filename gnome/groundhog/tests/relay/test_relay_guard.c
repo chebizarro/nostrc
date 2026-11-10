@@ -8,6 +8,8 @@
  *    on 127.0.0.1 that must never be dialled in Tor mode; leaving Tor mode
  *    dials it at once, so the tripwire is shown to work. */
 #include "gh-relay-guard.h"
+#include "gh-relay-deny-policy.h"
+#include "gh-nip46-session.h"
 
 #include <gio/gio.h>
 #include <nostr-event.h>
@@ -145,6 +147,8 @@ start_publish(const gchar *url, PublishSeen *seen)
 typedef struct {
   GPtrArray *opened; /* URLs the guard let through */
   guint closed;
+  GhRelayScope *last_scope;
+  GhRelayPublish *last_publish;
 } Direct;
 
 static Direct direct;
@@ -153,7 +157,7 @@ static gpointer
 direct_open(GhRelayScope *scope, const gchar *url, const NostrFilters *filters,
             gpointer data, GError **error)
 {
-  (void)scope;
+  direct.last_scope = scope;
   (void)filters;
   (void)data;
   (void)error;
@@ -165,7 +169,7 @@ static gpointer
 direct_publish_open(GhRelayPublish *publish, const gchar *url, const gchar *event_json,
                     gpointer data, GError **error)
 {
-  (void)publish;
+  direct.last_publish = publish;
   (void)event_json;
   (void)data;
   (void)error;
@@ -435,6 +439,122 @@ test_tripwire(void)
   g_free(published.message);
 }
 
+static void
+test_local_denial(void)
+{
+  GhRelayDenyPolicy *policy = gh_relay_deny_policy_get_default();
+  gh_relay_deny_policy_bind(policy, 1, NULL);
+  direct_install();
+  g_autoptr(GSettings) settings = g_settings_new("org.nostr.Groundhog");
+  g_settings_set_string(settings, "network-mode", "none");
+  gh_relay_guard_install(settings);
+  ScopeSeen seen;
+  scope_seen_init(&seen);
+  GhRelayScope *scope = gh_relay_scope_new(1, any_filters(), on_scope, &seen);
+  g_assert_true(gh_relay_scope_add_url(scope, WEB, NULL));
+  g_assert_true(gh_relay_scope_add_url(scope, "wss://relay.example.org/other", NULL));
+  gh_relay_scope_start(scope);
+  PublishSeen published = {0};
+  GhRelayPublish *publish = start_publish(WEB, &published);
+  g_assert_cmpuint(direct.opened->len, ==, 3);
+  const gchar *denied[] = { "wss://RELAY.example.org:443", NULL };
+  gh_relay_deny_policy_bind(policy, 1, denied);
+  /* Closure is synchronous on the owner context, before reconnect sources. */
+  g_assert_cmpuint(direct.closed, ==, 2);
+  drain();
+  g_assert_cmpuint(published.done, ==, 1);
+  g_assert_cmpint(published.outcome, ==, GH_RELAY_PUBLISH_BLOCKED_BY_LOCAL_POLICY);
+  g_assert_cmpuint(seen.errors, ==, 1);
+  g_assert_cmpuint(direct.opened->len, ==, 3); /* another path remains live */
+
+  PublishSeen refused = {0};
+  GhRelayPublish *blocked = start_publish(WEB, &refused);
+  g_assert_cmpint(refused.outcome, ==, GH_RELAY_PUBLISH_BLOCKED_BY_LOCAL_POLICY);
+  g_assert_cmpuint(direct.opened->len, ==, 3);
+  gh_relay_publish_unref(blocked);
+  gh_relay_deny_policy_bind(policy, 1, NULL);
+  drain();
+  g_assert_cmpuint(direct.opened->len, ==, 4); /* live scope resumes; publish never repeats */
+
+  /* Exercise each write boundary on a real guard handle, after revocation
+   * and before the queued notification has run. No underlying write may run. */
+  g_autoptr(GError) error = NULL;
+  NostrFilters *filters = any_filters();
+  gpointer sh = gh_relay_guard_transport.open(scope, WEB, filters, NULL, &error);
+  gpointer ph = gh_relay_guard_publish_transport.open(publish, WEB, "{}", NULL, &error);
+  g_assert_no_error(error);
+  g_assert_nonnull(sh);
+  g_assert_nonnull(ph);
+  gh_relay_deny_policy_bind(policy, 1, denied);
+  g_assert_false(gh_relay_guard_auth_transport.send_auth(sh, "{}", NULL, &error));
+  g_assert_error(error, GH_RELAY_DENY_ERROR, 1); g_clear_error(&error);
+  g_assert_false(gh_relay_guard_write_transport.send_event(sh, "{}", NULL, &error));
+  g_assert_error(error, GH_RELAY_DENY_ERROR, 1); g_clear_error(&error);
+  gh_relay_guard_auth_transport.resubscribe(sh, NULL);
+  g_assert_false(gh_relay_guard_publish_auth_transport.send_auth(ph, "{}", NULL, &error));
+  g_assert_error(error, GH_RELAY_DENY_ERROR, 1); g_clear_error(&error);
+  g_assert_false(gh_relay_guard_publish_auth_transport.resend(ph, NULL, &error));
+  g_assert_error(error, GH_RELAY_DENY_ERROR, 1);
+  gh_relay_guard_transport.close(sh, NULL);
+  gh_relay_guard_publish_transport.close(ph, NULL);
+  nostr_filters_free(filters);
+  gh_relay_scope_cancel(scope);
+  gh_relay_scope_unref(scope);
+  gh_relay_publish_unref(publish);
+  drain();
+  gh_relay_guard_install(NULL);
+  direct_uninstall();
+  g_hash_table_unref(seen.last_error);
+  g_free(published.message); g_free(refused.message);
+  gh_relay_deny_policy_bind(policy, 1, NULL);
+  g_assert_false(gh_relay_deny_policy_check(2, WEB, FALSE, NULL));
+  gh_relay_deny_policy_revoke(policy);
+  g_assert_false(gh_relay_deny_policy_check(1, WEB, FALSE, NULL));
+  gh_relay_deny_policy_bind(policy, 1, NULL);
+}
+
+static void
+signer_call_finished(GObject *source, GAsyncResult *result, gpointer data)
+{
+  g_autoptr(GError) error = NULL;
+  g_autofree gchar *reply = gh_nip46_session_call_finish(GH_NIP46_SESSION(source), result, &error);
+  g_assert_null(reply); g_assert_nonnull(error);
+  (*(guint *)data)++;
+}
+static void
+test_real_signer_exclusion(void)
+{
+  direct_install();
+  g_autoptr(GSettings) settings = g_settings_new("org.nostr.Groundhog");
+  g_settings_set_string(settings, "network-mode", "none");
+  gh_relay_guard_install(settings);
+  const gchar *urls[] = { WEB, NULL };
+  GhRelayDenyPolicy *policy = gh_relay_deny_policy_get_default();
+  gh_relay_deny_policy_bind(policy, 1, urls);
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GhNip46Session) signer = gh_nip46_session_new(SECRET,
+    "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5", urls,
+    &gh_relay_guard_transport, &gh_relay_guard_auth_transport,
+    &gh_relay_guard_publish_transport, &gh_relay_guard_publish_auth_transport, NULL, &error);
+  g_assert_no_error(error);
+  gh_nip46_session_start(signer);
+  g_assert_cmpuint(direct.opened->len, ==, 1);
+  g_assert_true(gh_relay_scope_is_signer_control(direct.last_scope));
+  gh_relay_scope_eose(direct.last_scope, WEB);
+  g_assert_true(gh_nip46_session_is_listening(signer));
+  guint completed = 0;
+  gh_nip46_session_call_async(signer, "get_public_key", NULL, 0, NULL, signer_call_finished, &completed);
+  wait_at_least(&direct.opened->len, 2);
+  g_assert_true(gh_relay_publish_is_signer_control(direct.last_publish));
+  g_assert_false(gh_relay_deny_policy_check(1, WEB, FALSE, NULL));
+  gh_nip46_session_cancel(signer);
+  wait_at_least(&completed, 1);
+  drain();
+  gh_relay_guard_install(NULL);
+  direct_uninstall();
+  gh_relay_deny_policy_bind(policy, 1, NULL);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -443,5 +563,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/relay-guard/tor-refuses", test_tor_refuses);
   g_test_add_func("/groundhog/relay-guard/uninstalled-refuses", test_uninstalled_refuses);
   g_test_add_func("/groundhog/relay-guard/tripwire", test_tripwire);
+  g_test_add_func("/groundhog/relay-guard/local-denial", test_local_denial);
+  g_test_add_func("/groundhog/relay-guard/real-nip46-signer-control-exclusion", test_real_signer_exclusion);
   return g_test_run();
 }

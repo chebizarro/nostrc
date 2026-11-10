@@ -67,6 +67,8 @@ static (§8.2 G01, §7.2, §7.11, PT-1, PT-4c, PT-9, PT-11):
                         in the relay layer or GhAccountAuth, sets account AUTH
                         directly, so every account sign-in shares the
                         policy's one signer per generation. (§4.4 R1, R6)
+  signer-control-class  Only GhNip46Session calls the signer-control setters;
+                        application traffic cannot bypass account relay denial.
   message-status        GhMessageStatus has no DELIVERED, READ or SEEN value.
                         (PD-1, PT-1)
   log-ids               No log call in src/** (g_debug, g_info, g_message,
@@ -140,6 +142,7 @@ RULES = (
     "tls-resumption",
     "no-gdk-pixbuf", "no-tmp-cache", "nip17-publish-relays", "nip17-no-10002",
     "lookup-sources", "account-auth-purpose", "auth-policy", "account-auth-setter",
+    "signer-control-class",
     "message-status", "log-ids",
     "relay-suggestions",
     "app-id", "preference-consumers", "diagnostics-allowlist", "issue-services",
@@ -147,7 +150,7 @@ RULES = (
 )
 # Rules whose findings EXCEPTIONS can never waive.
 UNWAIVABLE = {"gsettings-allowlist", "app-id", "message-status", "relay-suggestions",
-              "diagnostics-allowlist", "exceptions"}
+              "diagnostics-allowlist", "signer-control-class", "exceptions"}
 
 # (rule, path relative to GROUNDHOG_DIR, exact reported match) -> justification.
 EXCEPTIONS = {
@@ -361,6 +364,7 @@ ACCOUNT_AUTH_RE = re.compile(
     r"\bGH_RELAY_AUTH_ACCOUNT\b|\bgh_relay_(?:scope|publish)_set_account_signer\b"
     r"|\bgh_account_auth_\w+|\bGhAccountAuth\w*")
 URL_AUTH_RE = re.compile(r"\bgh_relay_(?:scope|publish)_set_url_auth\b")
+SIGNER_CONTROL_RE = re.compile(r"\bgh_relay_(?:scope|publish)_set_signer_control\b")
 AUTH_SETTER_RE = re.compile(r"\b(?:" + "|".join(sorted(AUTH_SETTERS)) + r")\b")
 ACCOUNT_PURPOSE_RE = re.compile(
     r"\bGH_AUTH_PURPOSE_(?:OWN_INBOX_READ|OWN_LIST_PUBLISH|SELF_WRAP|GROUP)\b")
@@ -639,6 +643,13 @@ def check_sources(tree):
                               lambda s: f"{s} signs in as the account: only for a purpose "
                                         "§4.4 R1 allows; add the file to ACCOUNT_PURPOSE_FILES "
                                         "with its §4.3 purpose")
+        if rel != NIP46_CLIENT_AUTH_SOURCE:
+            for match in SIGNER_CONTROL_RE.finditer(code):
+                owner = "src/relay/gh-relay-" + ("scope" if "scope" in match.group() else "publish")
+                if rel in (owner + ".c", owner + ".h") and re.search(r"\bvoid\s*$", code[:match.start()]):
+                    continue  # declaration/definition, never another caller
+                found.append(Violation("signer-control-class", rel, line_of(code, match.start()),
+                    "Only GhNip46Session may exclude a connection from account relay denial", match.group()))
         found += check_log_ids(rel, code)
     return found
 
@@ -1328,6 +1339,10 @@ Mutation = namedtuple("Mutation", "name expect edits exceptions", defaults=(None
 URL = "wss://relay.example.org"
 M = Mutation
 MUTATIONS = [
+    M("signer-control-scope-exclusion", {"signer-control-class"},
+      [append("src/app/gh-inbox-lookup.c", 'void bad(void *s) { gh_relay_scope_set_signer_control(s); }\n')]),
+    M("signer-control-publish-exclusion", {"signer-control-class"},
+      [append("src/app/gh-dm-send.c", 'void bad(void *p) { gh_relay_publish_set_signer_control(p); }\n')]),
     M("url-c-literal", {"url-literal"},
       [append("src/app/gh-dm-send.c", f'static const char *fallback = "{URL}";\n')]),
     M("url-c-format", {"url-literal"},

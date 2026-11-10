@@ -3,6 +3,7 @@
  * GhNetHttp to the local Blossom fixture. Only loopback is contacted. */
 
 #include "blossom-fixture.h"
+#include "../media/server-source-fixture.h"
 #include "gh-attachment.h"
 #include "gh-mls-media.h"
 #include "gh-mls-media-private.h"
@@ -83,6 +84,7 @@ fixture_up(Fixture *f)
   g_settings_set_strv(f->settings, "blossom-servers", servers);
   f->http = gh_net_http_new(f->settings);
   f->client = gh_blossom_client_new(f->settings, f->http);
+  gh_test_client_server_source(f->client, f->settings);
   /* The fixture is on loopback, which real downloads may not reach. */
   gh_blossom_client_set_allow_private_hosts(f->client, TRUE);
   f->storage = marmot_storage_memory_new();

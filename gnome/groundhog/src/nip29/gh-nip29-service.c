@@ -1,4 +1,5 @@
 #include "gh-nip29-service.h"
+#include "gh-relay-deny-policy.h"
 #include "gh-diagnostics.h"
 
 #include "gh-auth-policy.h"
@@ -1098,6 +1099,7 @@ relay_ensure_key(Relay *relay, gboolean force)
     gh_clock_source_remove(self->clock, relay->key_retry);
     relay->key_retry = 0;
   }
+  if (!gh_relay_deny_policy_check(self->generation, relay->url, FALSE, NULL)) { relay->key_state = GH_NIP29_RELAY_KEY_UNAVAILABLE; g_message("Groundhog NIP-11: %s", GH_RELAY_DENY_MESSAGE); return; }
   KeyCall *call = g_new0(KeyCall, 1);
   call->service = g_object_ref(self);
   call->url = g_strdup(relay->url);

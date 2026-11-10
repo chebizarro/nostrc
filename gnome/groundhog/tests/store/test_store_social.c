@@ -147,11 +147,54 @@ static void test_migration_reopen(void)
   g_rmdir(accounts); g_rmdir(groundhog); g_rmdir(dir);
 }
 
+static void test_legacy_servers(void)
+{
+  GError *error = NULL;
+  GhStore *a = open_memory();
+  GhStore *b = gh_store_open_ephemeral("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", NULL, &error);
+  g_assert_no_error(error);
+  const gchar *legacy[] = { "https://second.example", "https://first.example/media", NULL };
+  g_assert_true(gh_store_social_import_blossom_legacy(a, legacy, &error));
+  g_auto(GStrv) fresh = gh_store_social_dup_servers(a, &error);
+  g_assert_no_error(error); g_assert_null(fresh[0]); /* fresh v11 never imports */
+  g_assert_true(gh_store_exec(a, "UPDATE social_preferences SET blossom_imported=0; CREATE TRIGGER fail_import BEFORE UPDATE ON social_preferences BEGIN SELECT RAISE(ABORT,'injected'); END", &error));
+  g_assert_false(gh_store_social_import_blossom_legacy(a, legacy, &error));
+  g_assert_nonnull(error); g_clear_error(&error);
+  g_assert_cmpint(scalar(a, "SELECT count(*) FROM social_documents"), ==, 0);
+  g_assert_cmpint(scalar(a, "SELECT count(*) FROM social_servers"), ==, 0);
+  g_assert_cmpint(scalar(a, "SELECT blossom_imported FROM social_preferences"), ==, 0);
+  g_assert_true(gh_store_exec(a, "DROP TRIGGER fail_import", &error));
+  g_assert_true(gh_store_social_import_blossom_legacy(a, legacy, &error));
+  g_auto(GStrv) imported = gh_store_social_dup_servers(a, &error);
+  g_assert_no_error(error); g_assert_cmpstr(imported[0], ==, legacy[0]);
+  g_assert_cmpstr(imported[1], ==, legacy[1]); g_assert_null(imported[2]);
+  g_assert_cmpint(scalar(a, "SELECT blossom_imported FROM social_preferences"), ==, 1);
+  g_assert_cmpint(scalar(a, "SELECT count(*) FROM social_publications"), ==, 0);
+  const gchar *later[] = { "https://later.example", NULL };
+  g_assert_true(gh_store_social_import_blossom_legacy(a, later, &error));
+  g_auto(GStrv) unchanged = gh_store_social_dup_servers(a, &error);
+  g_assert_cmpstr(unchanged[0], ==, legacy[0]);
+  g_assert_true(gh_store_exec(b, "UPDATE social_preferences SET blossom_imported=0", &error));
+  g_assert_true(gh_store_social_import_blossom_legacy(b, later, &error));
+  g_auto(GStrv) other = gh_store_social_dup_servers(b, &error);
+  g_assert_no_error(error); g_assert_cmpstr(other[0], ==, later[0]); g_assert_null(other[1]);
+  g_autoptr(GhSocialLists) owner = bind(a);
+  const gchar *empty[] = { NULL };
+  g_assert_true(gh_social_lists_set_servers(owner, empty, &error));
+  g_assert_true(gh_store_exec(a, "UPDATE social_preferences SET blossom_imported=0", &error));
+  g_assert_true(gh_store_social_import_blossom_legacy(a, later, &error));
+  g_auto(GStrv) cleared = gh_store_social_dup_servers(a, &error);
+  g_assert_no_error(error); g_assert_null(cleared[0]); /* an explicit empty list wins */
+  gh_social_lists_close(owner); gh_store_close(a); gh_store_close(b);
+  while (g_main_context_iteration(NULL, FALSE)) { } /* no import callback may borrow a closed store */
+}
+
 int main(int argc, char **argv)
 {
   g_test_init(&argc, &argv, NULL);
   g_test_add_func("/groundhog/store-social/indexes-rollback", test_indexes_rollback);
   g_test_add_func("/groundhog/store-social/bounds", test_bounds);
   g_test_add_func("/groundhog/store-social/v10-migration-reopen", test_migration_reopen);
+  g_test_add_func("/groundhog/store-social/legacy-servers-per-account-atomic", test_legacy_servers);
   return g_test_run();
 }

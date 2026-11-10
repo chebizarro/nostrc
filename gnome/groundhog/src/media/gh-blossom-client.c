@@ -14,9 +14,11 @@ G_DEFINE_QUARK(gh-blossom-error-quark, gh_blossom_error)
 
 struct _GhBlossomClient {
   GObject parent_instance;
-  GSettings *settings;
   GhNetHttp *http;
   GStrv servers_override;
+  GObject *servers_owner;
+  GStrv (*dup_account_servers)(GObject *owner);
+  gboolean (*save_account_servers)(GObject *owner, const gchar *const *servers, GError **error);
   gchar *account_pubkey;
   GhBlossomSignAsyncFunc sign_async;
   GhBlossomSignFinishFunc sign_finish;
@@ -88,26 +90,53 @@ gh_blossom_client_normalize_server(const gchar *server, gchar **out_host)
   return normalize_server(server, out_host);
 }
 
+static GStrv
+nonblank_servers(const gchar *const *configured)
+{
+  g_autoptr(GStrvBuilder) builder = g_strv_builder_new();
+  for (guint i = 0; configured && configured[i]; i++) {
+    g_autofree gchar *stripped = g_strstrip(g_strdup(configured[i]));
+    if (*stripped) g_strv_builder_add(builder, stripped);
+  }
+  return g_strv_builder_end(builder);
+}
+
+GStrv
+gh_blossom_client_dup_account_servers(GhBlossomClient *self)
+{
+  g_return_val_if_fail(GH_IS_BLOSSOM_CLIENT(self), NULL);
+  g_auto(GStrv) configured = self->servers_owner && self->dup_account_servers
+    ? self->dup_account_servers(self->servers_owner) : NULL;
+  return nonblank_servers((const gchar *const *)configured);
+}
+
 GStrv
 gh_blossom_client_dup_servers(GhBlossomClient *self)
 {
   g_return_val_if_fail(GH_IS_BLOSSOM_CLIENT(self), NULL);
-  g_auto(GStrv) configured = NULL;
-  if (self->servers_override)
-    configured = g_strdupv(self->servers_override);
-  else if (self->settings) {
-    g_autoptr(GSettingsSchema) schema = NULL;
-    g_object_get(self->settings, "settings-schema", &schema, NULL);
-    if (schema && g_settings_schema_has_key(schema, "blossom-servers"))
-      configured = g_settings_get_strv(self->settings, "blossom-servers");
+  return self->servers_override ? nonblank_servers((const gchar *const *)self->servers_override) :
+    gh_blossom_client_dup_account_servers(self);
+}
+
+void
+gh_blossom_client_set_server_source(GhBlossomClient *self, GObject *owner,
+  GStrv (*dup)(GObject *), gboolean (*save)(GObject *, const gchar *const *, GError **))
+{
+  g_return_if_fail(GH_IS_BLOSSOM_CLIENT(self));
+  g_return_if_fail(!owner || (G_IS_OBJECT(owner) && dup && save));
+  g_set_object(&self->servers_owner, owner);
+  self->dup_account_servers = owner ? dup : NULL;
+  self->save_account_servers = owner ? save : NULL;
+}
+
+gboolean
+gh_blossom_client_save_servers(GhBlossomClient *self, const gchar *const *servers, GError **error)
+{
+  if (!self->servers_owner || !self->save_account_servers) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_INITIALIZED, "Account attachment server storage is not open");
+    return FALSE;
   }
-  g_autoptr(GStrvBuilder) builder = g_strv_builder_new();
-  for (guint i = 0; configured && configured[i]; i++) {
-    g_autofree gchar *stripped = g_strstrip(g_strdup(configured[i]));
-    if (*stripped)
-      g_strv_builder_add(builder, stripped);
-  }
-  return g_strv_builder_end(builder);
+  return self->save_account_servers(self->servers_owner, servers, error);
 }
 
 void
@@ -928,7 +957,6 @@ gh_blossom_client_new(GSettings *settings, GhNetHttp *http)
   g_return_val_if_fail(!settings || G_IS_SETTINGS(settings), NULL);
   g_return_val_if_fail(GH_IS_NET_HTTP(http), NULL);
   GhBlossomClient *self = g_object_new(GH_TYPE_BLOSSOM_CLIENT, NULL);
-  self->settings = settings ? g_object_ref(settings) : NULL;
   self->http = g_object_ref(http);
   return self;
 }
@@ -942,7 +970,6 @@ gh_blossom_client_dispose(GObject *object)
   self->sign_async = NULL;
   self->sign_destroy = NULL;
   self->sign_data = NULL;
-  g_clear_object(&self->settings);
   g_clear_object(&self->http);
   G_OBJECT_CLASS(gh_blossom_client_parent_class)->dispose(object);
 }
@@ -952,6 +979,7 @@ gh_blossom_client_finalize(GObject *object)
 {
   GhBlossomClient *self = GH_BLOSSOM_CLIENT(object);
   g_strfreev(self->servers_override);
+  g_clear_object(&self->servers_owner);
   g_free(self->account_pubkey);
   g_hash_table_unref(self->consent);
   G_OBJECT_CLASS(gh_blossom_client_parent_class)->finalize(object);

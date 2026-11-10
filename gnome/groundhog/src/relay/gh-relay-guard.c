@@ -1,4 +1,5 @@
 #include "gh-relay-guard.h"
+#include "gh-relay-deny-policy.h"
 
 #include <string.h>
 
@@ -17,12 +18,14 @@ typedef struct {
   const GhRelayPublishAuthTransport *direct_publish_auth;
   gpointer inner;              /* the direct connection's handle, or NULL */
   gboolean reported;           /* the scope has been told about this refusal */
+  gboolean policy_closed;      /* closed synchronously; notification still owed */
   gboolean closed;             /* owning context */
 } GuardHandle;
 
 static GMutex lock;          /* installed, changed_handler, registry, direct_* */
 static GSettings *installed;
 static gulong changed_handler;
+static gulong policy_handler;
 static GPtrArray *registry;  /* GuardHandle, borrowed; live until closed */
 static gint refusing = 1;    /* atomic; nothing installed refuses */
 
@@ -156,6 +159,15 @@ unregister(GuardHandle *handle)
   g_mutex_unlock(&lock);
 }
 
+static gboolean
+policy_allowed(GuardHandle *handle, GError **error)
+{
+  return gh_relay_deny_policy_check(
+    handle->publish_side ? gh_relay_publish_get_generation(handle->publish) : gh_relay_scope_get_generation(handle->scope),
+    handle->url,
+    handle->publish_side ? gh_relay_publish_is_signer_control(handle->publish) : gh_relay_scope_is_signer_control(handle->scope), error);
+}
+
 /* On the owning context: bring the handle in line with the current mode. */
 static gboolean
 rebuild(gpointer data)
@@ -163,8 +175,21 @@ rebuild(gpointer data)
   GuardHandle *handle = data;
   if (handle->closed)
     return G_SOURCE_REMOVE;
-  if (g_atomic_int_get(&refusing)) {
+  gboolean denied = !policy_allowed(handle, NULL);
+  if (handle->policy_closed && !handle->publish_side) {
+    handle->policy_closed = FALSE;
+    gh_relay_scope_notice(handle->scope, handle->url, GH_RELAY_NOTICE_DISCONNECTED, NULL, FALSE, NULL);
+    if (handle->closed) return G_SOURCE_REMOVE;
+  }
+  if (handle->publish_side && handle->policy_closed) denied = TRUE;
+  const gchar *reason = denied ? GH_RELAY_DENY_MESSAGE : GH_RELAY_GUARD_REFUSED_MESSAGE;
+  if (denied || g_atomic_int_get(&refusing)) {
     if (handle->publish_side) {
+      if (denied) {
+        close_inner(handle);
+        gh_relay_publish_blocked(handle->publish, handle->url);
+        return G_SOURCE_REMOVE;
+      }
       /* Only a publish opened in an allowed mode is registered. */
       if (handle->inner) {
         close_inner(handle);
@@ -182,7 +207,7 @@ rebuild(gpointer data)
     if (!handle->reported) {
       handle->reported = TRUE;
       gh_relay_scope_notice(handle->scope, handle->url, GH_RELAY_NOTICE_ERROR, NULL, FALSE,
-                            GH_RELAY_GUARD_REFUSED_MESSAGE);
+                            reason);
     }
     return G_SOURCE_REMOVE;
   }
@@ -202,7 +227,7 @@ static void
 queue_rebuild(GuardHandle *handle)
 {
   GSource *source = g_idle_source_new();
-  g_source_set_priority(source, G_PRIORITY_DEFAULT);
+  g_source_set_priority(source, G_PRIORITY_HIGH);
   g_source_set_callback(source, rebuild, guard_ref(handle), guard_unref);
   g_source_attach(source, handle->context);
   g_source_unref(source);
@@ -227,6 +252,28 @@ on_mode_changed(GSettings *settings, const gchar *key, gpointer data)
     queue_rebuild(g_ptr_array_index(handles, i));
 }
 
+static void
+on_policy_changed(GhRelayDenyPolicy *policy, gpointer data)
+{
+  (void)policy;
+  (void)data;
+  g_autoptr(GPtrArray) handles = g_ptr_array_new_with_free_func(guard_unref);
+  g_mutex_lock(&lock);
+  for (guint i = 0; registry && i < registry->len; i++)
+    g_ptr_array_add(handles, guard_ref(registry->pdata[i]));
+  g_mutex_unlock(&lock);
+  for (guint i = 0; i < handles->len; i++) {
+    GuardHandle *handle = handles->pdata[i];
+    GMainContext *current = g_main_context_get_thread_default();
+    if ((current ? current : g_main_context_default()) == handle->context &&
+        !handle->closed && !policy_allowed(handle, NULL)) {
+      handle->policy_closed |= handle->inner != NULL;
+      close_inner(handle);
+    }
+    queue_rebuild(handle);
+  }
+}
+
 void
 gh_relay_guard_install(GSettings *settings)
 {
@@ -249,6 +296,9 @@ gh_relay_guard_install(GSettings *settings)
     on_mode_changed(settings, "network-mode", NULL); /* reads it: notifications follow */
   else
     g_atomic_int_set(&refusing, 1);
+  GhRelayDenyPolicy *policy = gh_relay_deny_policy_get_default();
+  if (policy_handler) g_signal_handler_disconnect(policy, policy_handler);
+  policy_handler = settings ? g_signal_connect(policy, "changed", G_CALLBACK(on_policy_changed), NULL) : 0;
   gh_relay_scope_set_default_transport(settings ? &gh_relay_guard_transport : NULL,
                                        settings ? &gh_relay_guard_auth_transport : NULL, NULL);
   gh_relay_scope_set_default_write_transport(settings ? &gh_relay_guard_write_transport : NULL);
@@ -294,7 +344,7 @@ guard_scope_open(GhRelayScope *scope, const gchar *url, const NostrFilters *filt
     return NULL;
   handle->scope = scope;
   handle->filters = filters;
-  if (g_atomic_int_get(&refusing)) {
+  if (!policy_allowed(handle, NULL) || g_atomic_int_get(&refusing)) {
     /* Kept, so the URL connects if the user picks another mode; the
      * refusal is reported on the owning context, after open returns. */
     queue_rebuild(handle);
@@ -315,6 +365,7 @@ guard_scope_send_auth(gpointer data, const gchar *json, gpointer transport_data,
 {
   (void)transport_data;
   GuardHandle *handle = data;
+  if (!policy_allowed(handle, error)) return FALSE;
   if (!handle->inner || !handle->direct_auth || !handle->direct_auth->send_auth) {
     g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_CONNECTED, "relay not connected");
     return FALSE;
@@ -329,6 +380,7 @@ guard_scope_send_event(gpointer data, const gchar *json, gpointer transport_data
 {
   (void)transport_data;
   GuardHandle *handle = data;
+  if (!policy_allowed(handle, error)) return FALSE;
   if (!handle->inner || handle->direct != &gh_relay_gnostr_transport) {
     g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_CONNECTED, "relay not connected");
     return FALSE;
@@ -341,7 +393,7 @@ guard_scope_resubscribe(gpointer data, gpointer transport_data)
 {
   (void)transport_data;
   GuardHandle *handle = data;
-  if (handle->inner && handle->direct_auth && handle->direct_auth->resubscribe)
+  if (policy_allowed(handle, NULL) && handle->inner && handle->direct_auth && handle->direct_auth->resubscribe)
     handle->direct_auth->resubscribe(handle->inner, NULL);
 }
 
@@ -358,6 +410,11 @@ guard_publish_open(GhRelayPublish *publish, const gchar *url, const gchar *event
   handle->publish_side = TRUE;
   handle->publish = publish;
   handle->event_json = g_strdup(event_json);
+  if (!policy_allowed(handle, error)) {
+    unregister(handle);
+    guard_unref(handle);
+    return NULL;
+  }
   if (g_atomic_int_get(&refusing)) {
     set_refused_error(error);
     unregister(handle);
@@ -379,6 +436,7 @@ guard_publish_send_auth(gpointer data, const gchar *json, gpointer transport_dat
 {
   (void)transport_data;
   GuardHandle *handle = data;
+  if (!policy_allowed(handle, error)) return FALSE;
   if (!handle->inner || !handle->direct_publish_auth ||
       !handle->direct_publish_auth->send_auth) {
     g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_CONNECTED, "relay not connected");
@@ -392,6 +450,7 @@ guard_publish_resend(gpointer data, gpointer transport_data, GError **error)
 {
   (void)transport_data;
   GuardHandle *handle = data;
+  if (!policy_allowed(handle, error)) return FALSE;
   if (!handle->inner || !handle->direct_publish_auth || !handle->direct_publish_auth->resend) {
     g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_CONNECTED, "relay not connected");
     return FALSE;

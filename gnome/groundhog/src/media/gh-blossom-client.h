@@ -15,7 +15,7 @@ G_BEGIN_DECLS
  * or TLS resumption all hold. Only ciphertext passes through here, except a file the user chose
  * to publish with a public issue (gh_blossom_client_upload_public_async()).
  *
- * Servers (D6). The blossom-servers setting, empty by default: with no
+ * Servers (D6). The injected account server snapshot, empty by default: with no
  * server, an upload fails with GH_BLOSSOM_ERROR_NO_SERVER before anything is
  * contacted. Servers are tried in order; the first that accepts the file and
  * answers with a matching descriptor (sha256 and size) is used, and the file
@@ -85,8 +85,8 @@ typedef gchar *(*GhBlossomSignFinishFunc)(GAsyncResult *result, GError **error);
 #define GH_TYPE_BLOSSOM_CLIENT (gh_blossom_client_get_type())
 G_DECLARE_FINAL_TYPE(GhBlossomClient, gh_blossom_client, GH, BLOSSOM_CLIENT, GObject)
 
-/* settings (nullable) supplies blossom-servers, read at each upload; http is
- * the app's GhNetHttp (a reference is kept). */
+/* settings supplies network policy only; http is the app's GhNetHttp.
+ * Destinations come exclusively from the account source installed below. */
 GhBlossomClient *gh_blossom_client_new(GSettings *settings, GhNetHttp *http);
 
 /* The form in which servers are compared, and consents kept (G22,
@@ -96,10 +96,18 @@ GhBlossomClient *gh_blossom_client_new(GSettings *settings, GhNetHttp *http);
  * host. */
 gchar *gh_blossom_client_normalize_server(const gchar *server, gchar **out_host);
 
-/* The configured servers (a copy): the override if set, else blossom-servers,
- * without blanks. */
+/* The account's configured servers (a copy), or the explicit test override.
+ * No source means an empty list; never read the deprecated global setting. */
 GStrv gh_blossom_client_dup_servers(GhBlossomClient *self);
-/* Replaces the servers read from settings (NULL: back to the settings). */
+/* Authoritative source for UI disclosures/choices, unaffected by an explicit
+ * client override or an older transfer's snapshot. */
+GStrv gh_blossom_client_dup_account_servers(GhBlossomClient *self);
+/* Owner is referenced. Callbacks read/save the active account's encrypted
+ * destination document; they must return no destinations after teardown. */
+void gh_blossom_client_set_server_source(GhBlossomClient *self, GObject *owner,
+  GStrv (*dup)(GObject *), gboolean (*save)(GObject *, const gchar *const *, GError **));
+gboolean gh_blossom_client_save_servers(GhBlossomClient *self, const gchar *const *servers, GError **error);
+/* Explicit override (tests); NULL restores the account source. */
 void gh_blossom_client_set_servers(GhBlossomClient *self, const gchar *const *servers);
 
 /* The account signer (NULL sign_async: none) and the account pubkey it signs
@@ -150,7 +158,7 @@ gchar *gh_blossom_client_upload_finish(GhBlossomClient *self, GAsyncResult *resu
  * upload_key (copied into locked memory, wiped when done) that may replace
  * or delete it, as MDK uploads it. The authorization is signed with that
  * key, never the account's (no consent applies), and the servers are the
- * given list (the group's own media servers), not blossom-servers. Those
+ * given list (the group's own media servers), not account destinations. Those
  * are someone else's choice, so they get the download rule (W25 review M1):
  * a server whose host is not public (loopback, private, link-local, local
  * names; gh_blossom_client_dup_public_servers()) is never contacted, and the
