@@ -75,6 +75,8 @@ src/ui/gh-attachment-sheet.c
 src/ui/gh-badges-page.c
 src/ui/gh-blocked-page.c
 src/ui/gh-drafts-page.c
+src/ui/gh-emoji-catalog.c
+src/ui/gh-emoji-images.c
 src/ui/gh-composer.c
 src/ui/gh-conversation-info-dialog.c
 src/ui/gh-conversation-list.c

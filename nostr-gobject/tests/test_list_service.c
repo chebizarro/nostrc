@@ -147,6 +147,29 @@ static void test_partial_frames(void) {
   g_assert_cmpuint(b.sign_count, ==, 0); g_assert_cmpint(gnostr_list_service_get_state(s, p.kind, ""), ==, GNOSTR_LIST_PARTIAL);
   notify(s, p.kind, "", 1, GNOSTR_LIST_EOSE, NULL); g_assert_cmpuint(b.publish_count, ==, 1); end(s, &b);
 }
+static void test_terminal_subscription_retry(void) {
+  const GNostrListReadNotification failures[] = {GNOSTR_LIST_CLOSED, GNOSTR_LIST_ERROR};
+  for (guint i = 0; i < G_N_ELEMENTS(failures); i++) {
+    Backend b; backend_init(&b);
+    GNostrListReadPlanEntry p = plan(NOSTR_KIND_MUTE_LIST, GNOSTR_LIST_AUTO_WHEN_SYNC_ENABLED);
+    GNostrListService *s = service_new(&b, &p);
+    gnostr_list_service_set_private_sync_enabled(s, TRUE);
+    g_object_unref(apply_word(s, p.kind, "", "private", TRUE));
+    guint64 old = gnostr_list_service_get_read_serial(s);
+    notify(s, p.kind, "", 0, failures[i], "restricted: test refusal");
+    g_autoptr(GNostrListDocument) failed = gnostr_list_service_lookup(s, p.kind, "");
+    g_assert_cmpstr(gnostr_list_document_get_error(failed), ==, "restricted: test refusal");
+    gnostr_list_service_retry(s, p.kind, ""); pump();
+    g_assert_cmpuint(b.opens, ==, 2);
+    g_assert_cmpuint(b.closes, ==, 1);
+    gnostr_list_service_notify(s, old, p.kind, "", urls[0], GNOSTR_LIST_EOSE, NULL);
+    gnostr_list_service_notify(s, old, p.kind, "", urls[1], GNOSTR_LIST_EOSE, NULL); pump();
+    g_assert_cmpuint(b.sign_count, ==, 0); /* a retired subscription cannot complete catch-up */
+    eose(s, p.kind);
+    g_assert_cmpuint(b.publish_count, ==, 1);
+    end(s, &b);
+  }
+}
 static void test_read_only_and_dependency(void) {
   Backend b; backend_init(&b); GNostrListReadPlanEntry p = plan(NOSTR_KIND_FOLLOW_LIST, GNOSTR_LIST_READ_ONLY); p.waiting_for_dependency = TRUE; GNostrListService *s = service_new(&b, &p);
   g_assert_cmpuint(b.opens, ==, 0); guint64 old = gnostr_list_service_get_read_serial(s); p.waiting_for_dependency = FALSE;
@@ -297,6 +320,7 @@ int main(int argc, char **argv) {
   g_test_add_func("/list-service/unreadable-invalidates-sign", test_unreadable_invalidates_sign);
   g_test_add_func("/list-service/private-resume-rebase", test_private_resume_rebase);
   g_test_add_func("/list-service/open-retry-auto-always-resume", test_open_retry_auto_always_resume);
+  g_test_add_func("/list-service/terminal-subscription-retry", test_terminal_subscription_retry);
   g_test_add_func("/list-service/occurrence-move", test_occurrence_move);
   g_test_add_func("/list-service/oversized-remote", test_oversized_remote);
   g_test_add_func("/list-service/explicit-visibility-resume-targets", test_explicit_visibility_and_resume_targets);

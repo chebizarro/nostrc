@@ -13,21 +13,31 @@ that linked undocumented symbols, and requires rebuilding those consumers.
 No release tag is published by this change; all other components have no
 B1-owned shipped artifact change and no B1 bump.
 
-As of 2026-08-10, the repository has no component-specific release tags.
-Consequently, every component below is currently unreleased even where its build
-files already declare a version.
+Release columns below record published component tags, not planned releases.
+Declared versions may be newer than the latest published tag.
+
+Social-list release integration (`nostrc-9lwl7.11`): Groundhog 0.12.1 → 0.13.0
+(MINOR: lists, drafts, reports, emoji and badges; SQLCipher schema v14 is not
+readable by older binaries—restore a pre-upgrade backup to roll back),
+nostr-gobject 3.0.1 → 3.1.0 (additive list APIs and compatible mute facade;
+SONAME remains 3), libnostr 2.3.0 → 2.4.0 (additive public kind constants),
+and gnostr 0.2.0 → 0.2.1 (PATCH: facade privacy/logging correction).
+NIP-30/51/58 additions retain their Unversioned convention; new NIP-37/56
+are also Unversioned. Test/checker/documentation changes have no separate
+component bump. No release tag is published by this integration, so Latest
+release and Release tag remain unchanged.
 
 | Component | Path | Declared version | Latest release | Release tag | Authoritative version source(s) |
 | --- | --- | --- | --- | --- | --- |
-| libnostr | `libnostr/` | 2.3.0 | Unreleased | — | `libnostr/CMakeLists.txt` |
+| libnostr | `libnostr/` | 2.4.0 | Unreleased | — | `libnostr/CMakeLists.txt` |
 | libjson (libnostr-json) | `libjson/` | 2.0.0 | Unreleased | — | `libjson/CMakeLists.txt` (`declare_component_version`) |
 | libgo | `libgo/` | 0.2.0 | Unreleased | — | `libgo/CMakeLists.txt` |
-| nostr-gobject | `nostr-gobject/` | 3.0.1 | Unreleased | — | `nostr-gobject/CMakeLists.txt`, `nostr-gobject/meson.build` |
+| nostr-gobject | `nostr-gobject/` | 3.1.0 | Unreleased | — | `nostr-gobject/CMakeLists.txt`, `nostr-gobject/meson.build` |
 | nostr-gtk | `nostr-gtk/` | 2.0.0 | Unreleased | — | `nostr-gtk/CMakeLists.txt`, `nostr-gtk/meson.build`; nostrc-0cfsg.32's PATCH-class correction was folded into the earlier unreleased 1.2.0 wave, before the nostrc-er4fz.10 phase C 2.0.0 ABI change |
 | libmarmot | `libmarmot/` | 0.14.0 | Unreleased | — | `libmarmot/CMakeLists.txt`, `libmarmot/meson.build` |
 | marmot-gobject | `marmot-gobject/` | 1.5.1 | Unreleased | — | `marmot-gobject/CMakeLists.txt`, `marmot-gobject/meson.build` |
-| gnostr | `apps/gnostr/` | 0.2.0 | 0.1.0-preview | `gnostr-v0.1.0-preview` | `apps/gnostr/CMakeLists.txt`; nostrc-0cfsg.28/.32: PATCH-class shipped UI/build corrections folded into intended final base 0.1.0, not artifact-free changes; actual published tag `gnostr-v0.1.0-preview` points to `e8d875745`, whose source also declares 0.1.0; no final 0.1.0 tag exists, so retain the existing unreleased wave and release columns |
-| groundhog | `gnome/groundhog/` | 0.12.1 | 0.12.1-alpha8 (pre-release, 2026-11-07) | `groundhog-v0.12.1-alpha8` | `gnome/groundhog/CMakeLists.txt` |
+| gnostr | `apps/gnostr/` | 0.2.1 | 0.1.0-preview | `gnostr-v0.1.0-preview` | `apps/gnostr/CMakeLists.txt`; nostrc-0cfsg.28/.32: PATCH-class shipped UI/build corrections folded into intended final base 0.1.0, not artifact-free changes; actual published tag `gnostr-v0.1.0-preview` points to `e8d875745`, whose source also declares 0.1.0; no final 0.1.0 tag exists, so retain the existing unreleased wave and release columns |
+| groundhog | `gnome/groundhog/` | 0.13.0 | 0.12.1-alpha8 (pre-release, 2026-11-07) | `groundhog-v0.12.1-alpha8` | `gnome/groundhog/CMakeLists.txt` |
 | nostr-settings | `gnome/nostr-settings/` | 0.1.0 | Unreleased | — | `gnome/nostr-settings/CMakeLists.txt` (`NOSTR_SETTINGS_VERSION`), `gnome/nostr-settings/meson.build` (`project` version); W6 adds the previously missing manifest row, not a release; nostrc-u6v55.30 folds local CLI version/help and standalone Debian packaging corrections into unreleased 0.1.0 (no release/tag change); Debian 0.4.0-2 retains legacy bundle upgrade ordering |
 | nostr-share | `gnome/nostr-share/` | 0.1.0 | Unreleased | — | `gnome/nostr-share/CMakeLists.txt` (`NOSTR_SHARE_VERSION`) |
 | nostr-homed | `gnome/nostr-homed/` | 0.9.0 | Unreleased | — | `gnome/nostr-homed/CMakeLists.txt`, `gnome/nostr-homed/meson.build`, `gnome/nostr-homed/nostr-homed.pc.in`; nostrc-h10m.10: MINOR 0.7.1 → 0.8.0 for opt-in require-encrypted policy, additive at_rest status and provisioning/PAM/panel warnings. libporthome was unchanged for h10m.10; detection and UI are homed-owned. h10m.12 version decisions follow below. |
@@ -550,6 +560,7 @@ export headers are still part of the owning package's build contract.
 | `nip30` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip30/CMakeLists.txt` |
 | `nip31` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip31/CMakeLists.txt` |
 | `nip34` | 0.2.0 | MINOR 0.1.0 -> 0.2.0; `declare_component_version`; `nips/nip34/CMakeLists.txt` |
+| `nip37` | Unversioned | New signer-independent draft/checkpoint codecs; no standalone numeric version; `nips/nip37/CMakeLists.txt` |
 | `nip39` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip39/CMakeLists.txt` |
 | `nip40` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip40/CMakeLists.txt` |
 | `nip42` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip42/CMakeLists.txt` |
@@ -565,6 +576,7 @@ export headers are still part of the owning package's build contract.
 | `nip54` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip54/CMakeLists.txt` |
 | `nip55l` | 0.8.0 | MINOR 0.7.0 -> 0.8.0; `include/nostr/nip55l/signer_ops.h` (core + GLib + private service closure); `nips/nip55l/CMakeLists.txt` |
 | `nip57` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip57/CMakeLists.txt` |
+| `nip56` | Unversioned | New signer-independent report codec; no standalone numeric version; `nips/nip56/CMakeLists.txt` |
 | `nip58` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip58/CMakeLists.txt` |
 | `nip59` | 0.2.0 | MINOR 0.1.0 -> 0.2.0; `project` + generated component version; `nips/nip59/CMakeLists.txt` |
 | `nip5f` | Unversioned | No numeric bump: no authoritative version; incompatible hidden export boundary; `nips/nip5f/CMakeLists.txt` |

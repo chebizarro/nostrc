@@ -23,6 +23,12 @@ template $GhListEditorPage : Adw.NavigationPage {
             xalign: 0;
             accessible-role: status;
           }
+          Button retry_list {
+            label: _("_Retry Sync");
+            use-underline: true;
+            halign: end;
+            visible: false;
+          }
           Button publish_list {
             label: _("_Publish…");
             use-underline: true;

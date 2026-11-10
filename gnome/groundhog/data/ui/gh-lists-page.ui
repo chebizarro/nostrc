@@ -31,7 +31,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     <property name="margin-bottom">24</property>
                     <child>
                       <object class="GtkLabel" id="status">
-                        <property name="label" translatable="yes">Lists are saved on this device. Sync and publication are not available in this version yet.</property>
+                        <property name="label" translatable="yes">Lists are saved on this device. Private entries may sync when enabled; public changes need separate approval.</property>
                         <property name="wrap">true</property>
                         <property name="xalign">0</property>
                         <property name="accessible-role">61</property>

@@ -1156,6 +1156,11 @@ test_download_rebinding(void)
   aimed->url = g_strdup_printf("https://" REBIND_HOST ":%u/%s", port, file->x);
   gh_blossom_client_set_allow_private_hosts(f.client, FALSE);
   download(&f, NULL, aimed, &r, NULL);
+  if (g_error_matches(r.error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED)) {
+    g_assert_cmpuint(accepted, ==, 0);
+    g_test_skip(r.error->message); /* Private TLS needs OpenSSL-backed libcurl. */
+    goto out;
+  }
   g_assert_error(r.error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED);
   g_assert_cmpuint(resolver->lookups, >, 0); /* resolved when connecting */
   drain();
@@ -1165,6 +1170,7 @@ test_download_rebinding(void)
   download(&f, NULL, aimed, &r, NULL);
   g_assert_nonnull(r.error); /* no TLS there */
   spin_until(at_least_one, &accepted);
+out:
   result_clear(&r);
 
   g_signal_handlers_disconnect_by_data(listener, &accepted);

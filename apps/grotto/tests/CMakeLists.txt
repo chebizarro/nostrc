@@ -583,8 +583,8 @@ if (TARGET grotto-daemon AND "NIP55L_TEST_TRUST_ENV=1" IN_LIST _nip55l_definitio
       "${CMAKE_SOURCE_DIR}/gnome/groundhog/src/app/gh-nip17-envelope.c"
       "${CMAKE_SOURCE_DIR}/gnome/groundhog/src/app/gh-nip17-inbox.c"
       "${CMAKE_SOURCE_DIR}/gnome/groundhog/src/app/gh-nip17-file.c")
-    target_link_libraries(test-room-flow PRIVATE grotto_approval_test_core groundhog-account
-      nostrc-test-bus nostr_nip17_core nostr_nip59_core ${SIGNER_TEST_LIBS})
+      target_link_libraries(test-room-flow PRIVATE grotto_approval_test_core groundhog-account
+        groundhog-emoji-codec nostrc-test-bus nostr_nip17_core nostr_nip59_core ${SIGNER_TEST_LIBS})
     target_link_directories(test-room-flow PRIVATE ${SIGNER_TEST_LINK_DIRS})
     target_compile_options(test-room-flow PRIVATE -Wall -Wextra -Werror)
     add_dependencies(test-room-flow grotto-daemon room-flow-schemas)

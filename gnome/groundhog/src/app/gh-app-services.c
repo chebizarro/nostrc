@@ -1218,12 +1218,14 @@ on_react(GhConversation *conversation, GhMessage *target, const gchar *emoji,
       break;
     }
     case GH_CONVERSATION_BACKEND_MLS: {
+#if GROUNDHOG_HAVE_MLS_UI
       GObject *service_obj = gh_app_outbox_get_mls_service(self->outbox);
       if (GH_IS_MLS_SERVICE(service_obj)) {
         GhMlsGroup *group = gh_mls_service_lookup(GH_MLS_SERVICE(service_obj), room_id);
         if (group)
           gh_mls_service_send_deletion(GH_MLS_SERVICE(service_obj), group, reaction_id, NULL);
       }
+#endif
       break;
     }
     default:
@@ -1277,6 +1279,7 @@ on_react(GhConversation *conversation, GhMessage *target, const gchar *emoji,
     break;
   }
   case GH_CONVERSATION_BACKEND_MLS: {
+#if GROUNDHOG_HAVE_MLS_UI
     GObject *service_obj = gh_app_outbox_get_mls_service(self->outbox);
     if (GH_IS_MLS_SERVICE(service_obj)) {
       GhMlsGroup *group = gh_mls_service_lookup(GH_MLS_SERVICE(service_obj), room_id);
@@ -1285,6 +1288,7 @@ on_react(GhConversation *conversation, GhMessage *target, const gchar *emoji,
                                      target_id, target_pubkey, target_kind_str,
                                      emoji, emoji_tags, NULL);
     }
+#endif
     break;
   }
   default:

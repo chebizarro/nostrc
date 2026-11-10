@@ -166,6 +166,11 @@ static void test_preferences_manager(void)
   gh_store_close(store);
 }
 
+static void dialog_closed(AdwDialog *dialog, gboolean *closed)
+{
+  (void)dialog;
+  *closed = TRUE;
+}
 static void test_hidden_page(void)
 {
   GError *error = NULL;
@@ -223,11 +228,17 @@ static void test_hidden_page(void)
   g_signal_emit_by_name(value, "apply");
   AdwDialog *confirmation = adw_window_get_visible_dialog(ADW_WINDOW(window));
   g_assert_nonnull(confirmation);
+  /* Exercise a presented dialog: AdwDialog 1.5 opens on its second frame. */
+  gtk_test_widget_wait_for_draw(GTK_WIDGET(window));
+  gtk_test_widget_wait_for_draw(GTK_WIDGET(window));
   g_object_ref(confirmation);
+  gboolean closed = FALSE;
+  g_signal_connect(confirmation, "closed", G_CALLBACK(dialog_closed), &closed);
   GhStore *other = gh_store_open_ephemeral("cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", NULL, &error);
   g_assert_true(gh_social_lists_bind_store(owner, other, 2, &error));
+  g_signal_emit_by_name(confirmation, "response", "hide"); /* stale callback before dismissal */
+  while (!closed) g_main_context_iteration(NULL, TRUE);
   g_assert_null(adw_window_get_visible_dialog(ADW_WINDOW(window)));
-  g_signal_emit_by_name(confirmation, "response", "hide");
   g_object_unref(confirmation);
   g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(gtk_list_view_get_model(list))), ==, 0);
   g_assert_no_error(error);

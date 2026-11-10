@@ -1956,19 +1956,27 @@ test_badges_page(Fixture *f, gconstpointer data)
   g_signal_emit_by_name(publish, "clicked");
   AlertWait publish_wait = { GTK_WIDGET(f->window), "Publish Profile Badges?" };
   spin_until(badge_alert_shown, &publish_wait);
+  /* AdwDialog 1.5 opens its sheet on the second frame after mapping. */
+  gtk_test_widget_wait_for_draw(GTK_WIDGET(f->window));
+  gtk_test_widget_wait_for_draw(GTK_WIDGET(f->window));
   AdwAlertDialog *dialog = find_alert_heading(GTK_WIDGET(f->window), "Publish Profile Badges?");
   g_assert_cmpstr(adw_alert_dialog_get_default_response(dialog), ==, "cancel");
   g_assert_nonnull(strstr(adw_alert_dialog_get_body(dialog), "wss://write-a.test.invalid"));
   g_assert_cmpuint(fake_badges.publishes, ==, 0);
-  g_signal_emit_by_name(dialog, "response", "cancel");
-  adw_dialog_force_close(ADW_DIALOG(dialog)); /* the button does this itself */
+  GtkWidget *cancel_button = find_button_label(GTK_WIDGET(dialog), "_Cancel");
+  g_assert_nonnull(cancel_button);
+  g_signal_emit_by_name(cancel_button, "clicked");
   spin_until(badge_alert_gone, &publish_wait);
   g_assert_cmpuint(fake_badges.publishes, ==, 0);
   g_signal_emit_by_name(publish, "clicked");
   spin_until(badge_alert_shown, &publish_wait);
+  /* AdwDialog 1.5 opens its sheet on the second frame after mapping. */
+  gtk_test_widget_wait_for_draw(GTK_WIDGET(f->window));
+  gtk_test_widget_wait_for_draw(GTK_WIDGET(f->window));
   dialog = find_alert_heading(GTK_WIDGET(f->window), "Publish Profile Badges?");
-  g_signal_emit_by_name(dialog, "response", "publish");
-  adw_dialog_force_close(ADW_DIALOG(dialog)); /* the button does this itself */
+  GtkWidget *publish_button = find_button_label(GTK_WIDGET(dialog), "_Publish");
+  g_assert_nonnull(publish_button);
+  g_signal_emit_by_name(publish_button, "clicked");
   spin_until(badge_alert_gone, &publish_wait);
   drain_idle(); /* the backend's completion, which ends the page's busy state */
   g_assert_cmpuint(fake_badges.publishes, ==, 1);
@@ -1979,11 +1987,14 @@ test_badges_page(Fixture *f, gconstpointer data)
   g_signal_emit_by_name(lookup, "clicked");
   AlertWait lookup_wait = { GTK_WIDGET(f->window), "Look Up Awards?" };
   spin_until(badge_alert_shown, &lookup_wait);
+  gtk_test_widget_wait_for_draw(GTK_WIDGET(f->window));
+  gtk_test_widget_wait_for_draw(GTK_WIDGET(f->window));
   dialog = find_alert_heading(GTK_WIDGET(f->window), "Look Up Awards?");
   g_assert_nonnull(strstr(adw_alert_dialog_get_body(dialog), "wss://discovery.test.invalid"));
   g_assert_cmpuint(fake_badges.lookups, ==, 0);
-  g_signal_emit_by_name(dialog, "response", "lookup");
-  adw_dialog_force_close(ADW_DIALOG(dialog)); /* the button does this itself */
+  GtkWidget *lookup_button = find_button_label(GTK_WIDGET(dialog), "_Look Up");
+  g_assert_nonnull(lookup_button);
+  g_signal_emit_by_name(lookup_button, "clicked");
   spin_until(badge_alert_gone, &lookup_wait);
   drain_idle();
   g_assert_cmpuint(fake_badges.lookups, ==, 1);

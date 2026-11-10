@@ -4,6 +4,7 @@
 #include "gh-social-lists.h"
 #include "gh-message-policy.h"
 #include "gh-social-lists-backend.h"
+#include "gh-list-editor-page.h"
 #include "gh-identity.h"
 #include "gh-preferences-dialog.h"
 #include "gh-relay-deny-policy.h"
@@ -218,6 +219,37 @@ static void accept_writes(Fixture *f)
     if (!w->closed) gh_relay_publish_ok(w->publish, w->url, w->id, TRUE, "");
   }
   drain();
+}
+static void test_closed_retry(gconstpointer gui)
+{
+  Fixture f; setup(&f);
+  enabled(&f, TRUE);
+  append(&f, NOSTR_KIND_MUTE_LIST, TRUE, "word", "quiet");
+  Read *retired = read_for(&f, NOSTR_KIND_MUTE_LIST, writes[0]);
+  gh_relay_scope_notice(retired->scope, retired->url, GH_RELAY_NOTICE_CLOSED,
+                        NULL, FALSE, "restricted: test refusal");
+  drain();
+  GNostrListService *service = gh_social_lists_get_service(f.social);
+  g_autoptr(GNostrListDocument) failed = gnostr_list_service_lookup(service, NOSTR_KIND_MUTE_LIST, "");
+  g_assert_cmpstr(gnostr_list_document_get_error(failed), ==, "restricted: test refusal");
+  g_autoptr(GhListEditorPage) editor = NULL;
+  if (GPOINTER_TO_INT(gui)) {
+    GhListsBackend backend = gh_social_lists_backend(f.social);
+    editor = g_object_ref_sink(gh_list_editor_page_new(&backend, failed));
+    GtkWidget *retry = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(editor),
+      GH_TYPE_LIST_EDITOR_PAGE, "retry_list"));
+    g_assert_true(gtk_widget_get_visible(retry));
+    g_signal_emit_by_name(retry, "clicked");
+  } else gnostr_list_service_retry(service, NOSTR_KIND_MUTE_LIST, "");
+  drain();
+  g_assert_true(retired->closed);
+  g_assert_true(read_for(&f, NOSTR_KIND_MUTE_LIST, writes[0]) != retired);
+  g_assert_cmpuint(f.sent->len, ==, 0);
+  eose(&f, NOSTR_KIND_MUTE_LIST, 3);
+  gh_test_spin_until(sent, &f);
+  accept_writes(&f);
+  g_clear_object(&editor);
+  teardown(&f);
 }
 static void count_follows(GhSocialLists *lists, guint *count) { (void)lists; (*count)++; }
 /* Kind 3 (plan §3.6, PD-12): read only while load-profile-pictures is on,
@@ -779,6 +811,7 @@ int main(int argc, char **argv)
     gh_test_bus_up_beside_gtk(&bus);
   } else gh_test_bus_up(&bus);
   if (gui) {
+    g_test_add_data_func("/groundhog/social-sync-gui/closed-retry-button", GINT_TO_POINTER(TRUE), test_closed_retry);
     g_test_add_data_func("/groundhog/social-sync-gui/server-publish-cancel", GINT_TO_POINTER(0), test_preferences_server_publish);
     g_test_add_data_func("/groundhog/social-sync-gui/server-publish-approved", GINT_TO_POINTER(1), test_preferences_server_publish);
     g_test_add_data_func("/groundhog/social-sync-gui/server-publish-stale-list", GINT_TO_POINTER(2), test_preferences_server_publish);
@@ -800,6 +833,7 @@ int main(int argc, char **argv)
   g_test_add_data_func("/groundhog/social-sync/first-import-decline", GINT_TO_POINTER(FALSE), test_first_import);
   g_test_add_func("/groundhog/social-sync/unreadable", test_unreadable);
   g_test_add_func("/privacy/social/account-teardown", test_account_teardown);
+  g_test_add_data_func("/groundhog/social-sync/closed-retry", GINT_TO_POINTER(FALSE), test_closed_retry);
   g_test_add_func("/groundhog/social-sync/restart-resume", test_restart_resume);
   g_test_add_func("/groundhog/social-sync/disable-pending-publish", test_disable_pending_publish);
   g_test_add_func("/groundhog/social-sync/groups-all-sources-switch-off", test_groups_all_sources);

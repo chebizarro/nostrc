@@ -191,6 +191,13 @@ writes_of(gint kind, const gchar *url)
   }
   return result;
 }
+static Write *
+write_at(guint index)
+{
+  g_autoptr(GPtrArray) writes = writes_of(NOSTR_KIND_DRAFT_WRAP, NULL);
+  g_assert_cmpuint(index, <, writes->len);
+  return writes->pdata[index]; /* Borrowed from relay.writes. */
+}
 static guint drafts_written(void) { g_autoptr(GPtrArray) w = writes_of(NOSTR_KIND_DRAFT_WRAP, NULL); return w->len; }
 static gboolean
 all_writes_answered(gpointer data)
@@ -200,17 +207,20 @@ all_writes_answered(gpointer data)
     if (!((Write *) relay.writes->pdata[i])->answered) return FALSE;
   return TRUE;
 }
-/* Lets the list service finish what the sync switch started (its signatures
- * and publications), so a later signer-call count is the drafts' alone. */
-static void
-settle(void)
+static gboolean
+private_list_synced(gpointer data)
 {
-  guint before;
-  do {
-    before = relay.writes->len;
-    gh_test_spin_until(all_writes_answered, NULL);
-    drain();
-  } while (relay.writes->len != before);
+  GNostrListService *service = gh_social_lists_get_service(data);
+  return gnostr_list_service_get_state(service, NOSTR_KIND_PRIVATE_RELAY_LIST, "") == GNOSTR_LIST_SYNCED;
+}
+/* Wait for the publication's terminal state, not an instant with no new
+ * writes: a signer D-Bus reply may still be in flight before the first write. */
+static void
+settle(GhSocialLists *social)
+{
+  gh_test_spin_until(private_list_synced, social);
+  gh_test_spin_until(all_writes_answered, NULL);
+  drain();
 }
 static Read *
 read_for(gint kind, const gchar *url)
@@ -679,7 +689,7 @@ test_cadence(void)
   relay_reset();
   Device a; device_up_synced(&a);
   gh_test_spin_until(import_complete, &a);
-  settle();
+  settle(a.social);
   gh_draft_sync_set_shown_room(a.sync, room);
   guint calls = signer.calls;
   set_draft(&a, room, "one");
@@ -694,9 +704,9 @@ test_cadence(void)
   await_drafts(1);
   DraftWait wait = { &a, room, "one two" };
   gh_test_spin_until(room_clean, &wait);
-  g_autofree gchar *first_id = g_strdup(((Write *) writes_of(NOSTR_KIND_DRAFT_WRAP, NULL)->pdata[0])->id);
+  g_autofree gchar *first_id = g_strdup(((Write *) write_at(0))->id);
   /* An edit right after: the rate limit, not the debounce, decides. */
-  settle();
+  settle(a.social);
   calls = signer.calls;
   set_draft(&a, room, "one two three");
   advance(&a, GH_DRAFT_SYNC_LOCAL_DELAY_SECONDS);
@@ -706,7 +716,7 @@ test_cadence(void)
   await_drafts(2);
   /* Leaving the room publishes the latest saved revision at once, but not a
    * second one inside the rate limit. */
-  settle();
+  settle(a.social);
   calls = signer.calls;
   set_draft(&a, room, "leaving");
   gh_draft_sync_set_shown_room(a.sync, room2);
@@ -717,13 +727,15 @@ test_cadence(void)
   await_drafts(3);
   g_autoptr(GPtrArray) writes = writes_of(NOSTR_KIND_DRAFT_WRAP, NULL);
   gint64 previous = 0;
+  json_t *first = parse_write(writes->pdata[0]);
   for (guint i = 0; i < writes->len; i++) {
     json_t *root = parse_write(writes->pdata[i]);
     gint64 at = json_integer_value(json_object_get(root, "created_at"));
     g_assert_cmpint(at, >, previous); previous = at; /* every revision supersedes the last */
-    g_assert_cmpstr(tag_value(root, "d"), ==, tag_value(parse_write(writes->pdata[0]), "d"));
+    g_assert_cmpstr(tag_value(root, "d"), ==, tag_value(first, "d"));
     json_decref(root);
   }
+  json_decref(first);
   g_assert_cmpstr(((Write *) writes->pdata[0])->id, ==, first_id);
   device_down(&a);
 }
@@ -801,7 +813,7 @@ test_two_devices_converge(void)
   gh_draft_sync_wake(a.sync);
   advance(&a, GH_DRAFT_SYNC_RATE_SECONDS);
   await_drafts(3);
-  Write *blank = ((Write *) writes_of(NOSTR_KIND_DRAFT_WRAP, NULL)->pdata[2]);
+  Write *blank = ((Write *) write_at(2));
   json_t *root = parse_write(blank);
   g_assert_cmpstr(json_string_value(json_object_get(root, "content")), ==, "");
   g_assert_cmpstr(tag_value(root, "k"), ==, "14");
@@ -948,7 +960,7 @@ test_import_rules(void)
   /* The local revision then supersedes the remote one (created_at + 1). */
   advance(&a, GH_DRAFT_SYNC_LOCAL_DELAY_SECONDS);
   await_drafts(1);
-  Write *w = writes_of(NOSTR_KIND_DRAFT_WRAP, NULL)->pdata[0];
+  Write *w = write_at(0);
   json_t *root = parse_write(w);
   g_assert_cmpstr(tag_value(root, "d"), ==, d1); /* the identifier learned from the relay */
   g_assert_cmpint(json_integer_value(json_object_get(root, "created_at")), >, T0 + 3);
@@ -1034,7 +1046,7 @@ test_enable_reconciliation(void)
   g_assert_cmpuint(a.applied->len, ==, 1);
   relay_eose(NOSTR_KIND_DRAFT_WRAP, PRIVATE_A);
   await_drafts(1);
-  json_t *root = parse_write(writes_of(NOSTR_KIND_DRAFT_WRAP, NULL)->pdata[0]);
+  json_t *root = parse_write(write_at(0));
   g_assert_cmpstr(tag_value(root, "d"), !=, d); /* room2, a fresh identifier */
   json_decref(root);
   DraftWait second = { &a, room2, "only here" };
@@ -1061,7 +1073,7 @@ test_forget(void)
   g_assert_true(gh_store_conversations_forget(a.conversations, room, &error));
   g_assert_no_error(error);
   await_drafts(2);
-  json_t *root = parse_write(writes_of(NOSTR_KIND_DRAFT_WRAP, NULL)->pdata[1]);
+  json_t *root = parse_write(write_at(1));
   g_assert_cmpstr(json_string_value(json_object_get(root, "content")), ==, "");
   g_assert_cmpstr(tag_value(root, "d"), ==, d);
   json_decref(root);
@@ -1111,18 +1123,18 @@ test_offline_restart_and_switch(void)
   relay_reset();
   Device a; device_up_synced(&a);
   gh_test_spin_until(import_complete, &a);
-  settle();
+  settle(a.social);
   relay.fail_writes = TRUE; /* the private relay is unreachable */
   set_draft(&a, room, "offline");
   advance(&a, GH_DRAFT_SYNC_LOCAL_DELAY_SECONDS);
   await_drafts(1);
-  Write *w = writes_of(NOSTR_KIND_DRAFT_WRAP, NULL)->pdata[0];
+  Write *w = write_at(0);
   g_autofree gchar *signed_json = g_strdup(w->json);
   gh_test_spin_until(status_saved_locally, &a);
   guint calls = signer.calls;
   advance(&a, GH_DRAFT_SYNC_RETRY_SECONDS);
   await_drafts(2);
-  g_assert_cmpstr(((Write *) writes_of(NOSTR_KIND_DRAFT_WRAP, NULL)->pdata[1])->json, ==, signed_json);
+  g_assert_cmpstr(((Write *) write_at(1))->json, ==, signed_json);
   gh_test_spin_until(status_saved_locally, &a);
   gh_test_signer_assert_no_calls_since(&signer, calls);
   /* A restart resends the same stored event, again without the signer. */
@@ -1132,14 +1144,14 @@ test_offline_restart_and_switch(void)
   gh_test_spin_until(import_complete, &a);
   calls = signer.calls;
   await_drafts(3);
-  g_assert_cmpstr(((Write *) writes_of(NOSTR_KIND_DRAFT_WRAP, NULL)->pdata[2])->json, ==, signed_json);
+  g_assert_cmpstr(((Write *) write_at(2))->json, ==, signed_json);
   gh_test_spin_until(status_saved_locally, &a);
   gh_test_signer_assert_no_calls_since(&signer, calls);
   /* Reachable again: accepted, the room is clean, nothing further is sent. */
   relay.fail_writes = FALSE;
   advance(&a, GH_DRAFT_SYNC_RETRY_SECONDS);
   await_drafts(4);
-  g_assert_cmpstr(((Write *) writes_of(NOSTR_KIND_DRAFT_WRAP, NULL)->pdata[3])->json, ==, signed_json);
+  g_assert_cmpstr(((Write *) write_at(3))->json, ==, signed_json);
   DraftWait wait = { &a, room, "offline" };
   gh_test_spin_until(room_clean, &wait);
   g_assert_null(gh_draft_sync_get_status(a.sync));
@@ -1188,7 +1200,7 @@ test_switch_off_and_on(void)
   enable(&a, TRUE);
   gh_test_spin_until(import_complete, &a);
   await_drafts(2);
-  json_t *root = parse_write(writes_of(NOSTR_KIND_DRAFT_WRAP, NULL)->pdata[1]);
+  json_t *root = parse_write(write_at(1));
   g_assert_cmpstr(json_string_value(json_object_get(root, "content")), ==, "");
   g_assert_cmpstr(tag_value(root, "d"), ==, d);
   json_decref(root);
@@ -1250,7 +1262,7 @@ test_drafts_page(void)
   relay_reset();
   Device a; device_up_synced(&a);
   gh_test_spin_until(import_complete, &a);
-  settle();
+  settle(a.social);
   set_draft(&a, room, "typed here");
   const gchar *d1 = "1111111111111111111111111111111111111111111111111111111111111111";
   g_autofree gchar *theirs = remote_draft(d1, PEER, "typed elsewhere", T0 + 3, NULL);
@@ -1310,7 +1322,7 @@ test_drafts_page(void)
   g_assert_cmpuint(rows_of(list), ==, 1);
 
   /* A declined signature stops the sync; the page's Retry resumes it. */
-  settle();
+  settle(a.social);
   signer.deny = TRUE;
   set_draft(&a, room, "declined");
   advance(&a, GH_DRAFT_SYNC_LOCAL_DELAY_SECONDS);
