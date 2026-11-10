@@ -1544,10 +1544,12 @@
       "cost": "ordinary",
       "ctest_tests": {
         "core.macos.asan": [
-          "test_nip51"
+          "test_nip51",
+          "test_nip51_failures"
         ],
         "core.linux.asan": [
-          "test_nip51"
+          "test_nip51",
+          "test_nip51_failures"
         ]
       },
       "expected_outcome": "pass",
@@ -1563,7 +1565,9 @@
         "core.linux.asan"
       ],
       "requirement": "blocking",
-      "runtime_inputs": []
+      "runtime_inputs": [
+        "{source}/nips/nip51/tests/schema-registry.tsv"
+      ]
     },
     "root.asan.nip55l": {
       "build_targets": [],
@@ -6348,7 +6352,11 @@
         "version.contract",
         "benchmarks",
         "marmot.vector_inputs",
-        "relayd.async_storage_api"
+        "relayd.async_storage_api",
+        "nip37",
+        "nip37.test_inputs",
+        "nip56",
+        "nip56.test_inputs"
       ],
       "profiles": [
         "core.linux"
@@ -6512,7 +6520,11 @@
         "benchmarks",
         "gnostr",
         "marmot.vector_inputs",
-        "relayd.async_storage_api"
+        "relayd.async_storage_api",
+        "nip37",
+        "nip37.test_inputs",
+        "nip56",
+        "nip56.test_inputs"
       ],
       "profiles": [
         "groundhog.linux"
@@ -6676,7 +6688,11 @@
         "benchmarks",
         "gnostr",
         "marmot.vector_inputs",
-        "relayd.async_storage_api"
+        "relayd.async_storage_api",
+        "nip37",
+        "nip37.test_inputs",
+        "nip56",
+        "nip56.test_inputs"
       ],
       "profiles": [
         "grotto.linux"
@@ -15264,28 +15280,37 @@
       "expected_outcome": "pass",
       "ctest_tests": {
         "groundhog.linux": [
-          "test_nip51"
+          "test_nip51",
+          "test_nip51_failures"
         ],
         "grotto.linux": [
-          "test_nip51"
+          "test_nip51",
+          "test_nip51_failures"
         ],
         "core.linux": [
-          "test_nip51"
+          "test_nip51",
+          "test_nip51_failures"
         ],
         "grotto.linux.asan_ubsan": [
-          "test_nip51"
+          "test_nip51",
+          "test_nip51_failures"
         ],
         "groundhog.mdk08": [
-          "test_nip51"
+          "test_nip51",
+          "test_nip51_failures"
         ],
         "groundhog.mdk011": [
-          "test_nip51"
+          "test_nip51",
+          "test_nip51_failures"
         ]
       },
       "build_targets": [
-        "test_nip51"
+        "test_nip51",
+        "test_nip51_failures"
       ],
-      "runtime_inputs": []
+      "runtime_inputs": [
+        "{source}/nips/nip51/tests/schema-registry.tsv"
+      ]
     },
     "supported.nips.nip55l": {
       "nodes": [
@@ -21485,6 +21510,150 @@
         "test_porthome_head"
       ],
       "runtime_inputs": []
+    },
+    "supported.nips.nip37": {
+      "nodes": [
+        "execution.core",
+        "execution.grotto",
+        "execution.groundhog",
+        "nip37",
+        "nip37.test_inputs"
+      ],
+      "profiles": [
+        "core.linux",
+        "grotto.linux",
+        "grotto.linux.asan_ubsan",
+        "groundhog.linux",
+        "groundhog.mdk011",
+        "groundhog.mdk08"
+      ],
+      "kind": "ctest",
+      "cost": "ordinary",
+      "requirement": "blocking",
+      "expected_outcome": "pass",
+      "ctest_tests": {
+        "core.linux": [
+          "test_nip37"
+        ],
+        "grotto.linux": [
+          "test_nip37"
+        ],
+        "grotto.linux.asan_ubsan": [
+          "test_nip37"
+        ],
+        "groundhog.linux": [
+          "test_nip37"
+        ],
+        "groundhog.mdk011": [
+          "test_nip37"
+        ],
+        "groundhog.mdk08": [
+          "test_nip37"
+        ]
+      },
+      "build_targets": [
+        "test_nip37"
+      ],
+      "runtime_inputs": []
+    },
+    "root.asan.nip37": {
+      "build_targets": [
+        "test_nip37"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": [
+          "test_nip37"
+        ],
+        "core.linux.asan": [
+          "test_nip37"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.core",
+        "nip37",
+        "nip37.test_inputs"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "supported.nips.nip56": {
+      "nodes": [
+        "execution.core",
+        "execution.grotto",
+        "execution.groundhog",
+        "nip56",
+        "nip56.test_inputs"
+      ],
+      "profiles": [
+        "core.linux",
+        "grotto.linux",
+        "grotto.linux.asan_ubsan",
+        "groundhog.linux",
+        "groundhog.mdk011",
+        "groundhog.mdk08"
+      ],
+      "kind": "ctest",
+      "cost": "ordinary",
+      "requirement": "blocking",
+      "expected_outcome": "pass",
+      "ctest_tests": {
+        "core.linux": [
+          "test_nip56"
+        ],
+        "grotto.linux": [
+          "test_nip56"
+        ],
+        "grotto.linux.asan_ubsan": [
+          "test_nip56"
+        ],
+        "groundhog.linux": [
+          "test_nip56"
+        ],
+        "groundhog.mdk011": [
+          "test_nip56"
+        ],
+        "groundhog.mdk08": [
+          "test_nip56"
+        ]
+      },
+      "build_targets": [
+        "test_nip56"
+      ],
+      "runtime_inputs": []
+    },
+    "root.asan.nip56": {
+      "build_targets": [
+        "test_nip56"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": [
+          "test_nip56"
+        ],
+        "core.linux.asan": [
+          "test_nip56"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.core",
+        "nip56",
+        "nip56.test_inputs"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
     }
   },
   "coverage_gaps": [
@@ -24345,6 +24514,40 @@
         "libporthome/tests"
       ],
       "rationale": "Public API test inputs select package checks, not production consumers."
+    },
+    "nip37": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "nip37",
+      "owner_paths": [
+        "nips/nip37"
+      ],
+      "rationale": "Pure portable codec links libnostr; no crypto, signer or transport dependency."
+    },
+    "nip37.test_inputs": {
+      "depends_on": [],
+      "id": "nip37.test_inputs",
+      "owner_paths": [
+        "nips/nip37/tests"
+      ]
+    },
+    "nip56": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "nip56",
+      "owner_paths": [
+        "nips/nip56"
+      ],
+      "rationale": "Pure portable codec links libnostr; no crypto, signer or transport dependency."
+    },
+    "nip56.test_inputs": {
+      "depends_on": [],
+      "id": "nip56.test_inputs",
+      "owner_paths": [
+        "nips/nip56/tests"
+      ]
     }
   },
   "path_rules": [
@@ -29265,6 +29468,74 @@
         "libvault"
       ],
       "reason": "Shared installed package dispatcher is configured by all three libraries; select their real consumers without unknown-path broad fallback."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip37"
+      ],
+      "prefix": "nips/nip37",
+      "reason": "Portable codec ownership; reverse impact selects consumers without prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip37.test_inputs"
+      ],
+      "prefix": "nips/nip37/tests",
+      "reason": "Portable codec ownership; reverse impact selects consumers without prerequisite tests."
+    },
+    {
+      "prefix": "nips/nip37/TestInventory.cmake",
+      "nodes": [
+        "selection.contract"
+      ],
+      "effect": "global",
+      "reason": "Authored CTest ownership metadata changes require broad selection validation."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip56"
+      ],
+      "prefix": "nips/nip56",
+      "reason": "Portable codec ownership; reverse impact selects consumers without prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip56.test_inputs"
+      ],
+      "prefix": "nips/nip56/tests",
+      "reason": "Portable codec ownership; reverse impact selects consumers without prerequisite tests."
+    },
+    {
+      "prefix": "nips/nip56/TestInventory.cmake",
+      "nodes": [
+        "selection.contract"
+      ],
+      "effect": "global",
+      "reason": "Authored CTest ownership metadata changes require broad selection validation."
+    },
+    {
+      "effect": "global",
+      "exact": "nips/NipOptions.cmake.in",
+      "nodes": [
+        "build.global"
+      ],
+      "reason": "Canonical source of shared NIP options and dependency ordering."
+    },
+    {
+      "effect": "impact",
+      "exact": "nips/codec-internal.h",
+      "nodes": [
+        "nip30",
+        "nip37",
+        "nip51",
+        "nip56",
+        "nip58"
+      ],
+      "reason": "Checked tag, address, JSON and unsigned-event helpers shared only by these codecs."
     }
   ],
   "profiles": {
