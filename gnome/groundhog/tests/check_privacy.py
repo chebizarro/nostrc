@@ -67,6 +67,8 @@ static (§8.2 G01, §7.2, §7.11, PT-1, PT-4c, PT-9, PT-11):
                         in the relay layer or GhAccountAuth, sets account AUTH
                         directly, so every account sign-in shares the
                         policy's one signer per generation. (§4.4 R1, R6)
+  signer-control-class  Only GhNip46Session calls the signer-control setters;
+                        application traffic cannot bypass account relay denial.
   message-status        GhMessageStatus has no DELIVERED, READ or SEEN value.
                         (PD-1, PT-1)
   log-ids               No log call in src/** (g_debug, g_info, g_message,
@@ -140,6 +142,7 @@ RULES = (
     "tls-resumption",
     "no-gdk-pixbuf", "no-tmp-cache", "nip17-publish-relays", "nip17-no-10002",
     "lookup-sources", "account-auth-purpose", "auth-policy", "account-auth-setter",
+    "signer-control-class",
     "message-status", "log-ids",
     "relay-suggestions",
     "app-id", "preference-consumers", "diagnostics-allowlist", "issue-services",
@@ -147,7 +150,7 @@ RULES = (
 )
 # Rules whose findings EXCEPTIONS can never waive.
 UNWAIVABLE = {"gsettings-allowlist", "app-id", "message-status", "relay-suggestions",
-              "diagnostics-allowlist", "exceptions"}
+              "diagnostics-allowlist", "signer-control-class", "exceptions"}
 
 # (rule, path relative to GROUNDHOG_DIR, exact reported match) -> justification.
 EXCEPTIONS = {
@@ -318,6 +321,8 @@ AUTH_POLICY_SOURCE = "src/app/gh-auth-policy.c"
 # entry here; lookups and the contact directory never get one.
 ACCOUNT_PURPOSE_FILES = {
     "src/app/gh-auth-policy.": "the purposes' definition",
+    "src/app/gh-list-adapter.": "own private list publish on explicit plan targets; private-sync "
+                               "AUTH only after checking current account 10013 destinations",
     "src/app/gh-dm-inbox.": "own inbox read, on the account's own 10050 relays only",
     "src/app/gh-outbox.": "the self-copy (and a note to self) on the own 10050 relays",
     "src/app/gh-dm-send.": "the self-copy (and a note to self) on the own 10050 relays",
@@ -361,9 +366,12 @@ ACCOUNT_AUTH_RE = re.compile(
     r"\bGH_RELAY_AUTH_ACCOUNT\b|\bgh_relay_(?:scope|publish)_set_account_signer\b"
     r"|\bgh_account_auth_\w+|\bGhAccountAuth\w*")
 URL_AUTH_RE = re.compile(r"\bgh_relay_(?:scope|publish)_set_url_auth\b")
+SIGNER_CONTROL_RE = re.compile(r"\bgh_relay_(?:scope|publish)_set_signer_control\b")
 AUTH_SETTER_RE = re.compile(r"\b(?:" + "|".join(sorted(AUTH_SETTERS)) + r")\b")
 ACCOUNT_PURPOSE_RE = re.compile(
-    r"\bGH_AUTH_PURPOSE_(?:OWN_INBOX_READ|OWN_LIST_PUBLISH|SELF_WRAP|GROUP)\b")
+    r"\bGH_AUTH_PURPOSE_(?:OWN_INBOX_READ|OWN_LIST_PUBLISH|SELF_WRAP|GROUP|OWN_PRIVATE_SYNC_(?:READ|PUBLISH))\b")
+PRIVATE_SYNC_PURPOSE_RE = re.compile(r"\bGH_AUTH_PURPOSE_OWN_PRIVATE_SYNC_(?:READ|PUBLISH)\b")
+PRIVATE_SYNC_PURPOSE_FILES = ("src/app/gh-auth-policy.", "src/app/gh-list-adapter.")
 KIND_10002_RE = re.compile(r"\b10002\b|\b\w*KIND_RELAY_LIST\w*|(?i:\b\w*nip_?65\w*)")
 LOG_CALL_RE = re.compile(
     r"\bg_(?:debug|info|message|warning|critical|error|print|printerr|log)\s*\(")
@@ -639,6 +647,16 @@ def check_sources(tree):
                               lambda s: f"{s} signs in as the account: only for a purpose "
                                         "§4.4 R1 allows; add the file to ACCOUNT_PURPOSE_FILES "
                                         "with its §4.3 purpose")
+        if rel != NIP46_CLIENT_AUTH_SOURCE:
+            for match in SIGNER_CONTROL_RE.finditer(code):
+                owner = "src/relay/gh-relay-" + ("scope" if "scope" in match.group() else "publish")
+                if rel in (owner + ".c", owner + ".h") and re.search(r"\bvoid\s*$", code[:match.start()]):
+                    continue  # declaration/definition, never another caller
+                found.append(Violation("signer-control-class", rel, line_of(code, match.start()),
+                    "Only GhNip46Session may exclude a connection from account relay denial", match.group()))
+        if not rel.startswith(PRIVATE_SYNC_PURPOSE_FILES):
+            found += find_all("auth-policy", rel, code, PRIVATE_SYNC_PURPOSE_RE,
+                              lambda s: f"{s}: account AUTH is restricted to current own 10013 destinations")
         found += check_log_ids(rel, code)
     return found
 
@@ -1328,6 +1346,10 @@ Mutation = namedtuple("Mutation", "name expect edits exceptions", defaults=(None
 URL = "wss://relay.example.org"
 M = Mutation
 MUTATIONS = [
+    M("signer-control-scope-exclusion", {"signer-control-class"},
+      [append("src/app/gh-inbox-lookup.c", 'void bad(void *s) { gh_relay_scope_set_signer_control(s); }\n')]),
+    M("signer-control-publish-exclusion", {"signer-control-class"},
+      [append("src/app/gh-dm-send.c", 'void bad(void *p) { gh_relay_publish_set_signer_control(p); }\n')]),
     M("url-c-literal", {"url-literal"},
       [append("src/app/gh-dm-send.c", f'static const char *fallback = "{URL}";\n')]),
     M("url-c-format", {"url-literal"},
@@ -1481,6 +1503,10 @@ MUTATIONS = [
               "  return gh_relay_publish_set_url_auth(p, u, GH_RELAY_AUTH_EPHEMERAL, NULL);\n}\n")]),
     M("auth-policy-scope-bypass", {"auth-policy"},
       [append("src/app/gh-inbox-lookup.c", "static void *f = (void *)gh_relay_scope_set_url_auth;\n")]),
+    M("auth-policy-directory-private-sync-read", {"auth-policy"},
+      [append("src/app/gh-contact-directory.c", "static const int p = GH_AUTH_PURPOSE_OWN_PRIVATE_SYNC_READ;\n")]),
+    M("auth-policy-outbox-private-sync-publish", {"auth-policy"},
+      [append("src/app/gh-outbox.c", "static const int p = GH_AUTH_PURPOSE_OWN_PRIVATE_SYNC_PUBLISH;\n")]),
     M("auth-policy-directory-self-wrap", {"auth-policy"},
       [append("src/app/gh-contact-directory.c", "static const int purpose = GH_AUTH_PURPOSE_SELF_WRAP;\n")]),
     M("auth-policy-lookup-own-inbox", {"auth-policy"},

@@ -14,6 +14,7 @@
  * deadlines are failure bounds only. */
 #include "gh-nip11.h"
 #include "gh-nip29-service.h"
+#include "gh-relay-deny-policy.h"
 #include "gh-nip29-template.h"
 #include "gh-store-nip29.h"
 #include "gh-store-conversations.h"
@@ -2254,6 +2255,32 @@ test_hide_admission(void)
   nip29_relay_clear(&relay);
 }
 
+static void
+test_nip11_local_denial(void)
+{
+  Fixture f;
+  fixture_up(&f);
+  Nip29Relay relay;
+  nip29_relay_init(&relay);
+  nip29_add_group(&relay, "denied", "Denied key fetch");
+  const gchar *denied[] = { relay.url, NULL };
+  GhRelayDenyPolicy *policy = gh_relay_deny_policy_get_default();
+  guint64 generation = gh_account_controller_get_generation(f.accounts);
+  gh_relay_deny_policy_bind(policy, generation, denied);
+  /* Deliberately leave the test's real direct relay transport installed: this
+   * isolates the NIP-11 gate from the independently tested socket boundary. */
+  g_autoptr(GhNip29Room) room = join(&f, &relay, "denied", NULL);
+  wait_read(room, GH_NIP29_READ_LIVE);
+  drain();
+  g_assert_cmpuint(relay.nip11_gets, ==, 0);
+  g_assert_null(gh_nip29_room_get_group(room));
+  gh_relay_deny_policy_bind(policy, generation, NULL);
+  restart(&f);
+  wait_count(&relay.nip11_gets, 1); /* positive control: the same endpoint is usable */
+  fixture_down(&f);
+  nip29_relay_clear(&relay);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -2301,6 +2328,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/nip29-service/leave-and-removed", test_leave_and_removed);
   g_test_add_func("/groundhog/nip29-service/delete-messages", test_delete_messages);
   g_test_add_func("/groundhog/nip29-service/hide-admission", test_hide_admission);
+  g_test_add_func("/groundhog/nip29-service/nip11-local-denial", test_nip11_local_denial);
   gint rc = g_test_run();
   gh_test_bus_down(&shared_bus);
   g_free(hex_alice);

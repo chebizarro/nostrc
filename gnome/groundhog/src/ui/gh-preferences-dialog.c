@@ -3,9 +3,11 @@
 #include "gh-qr-code.h"
 #include "gh-diagnostics.h"
 #include "gh-agents-page.h"
+#include "gh-relay-deny-policy.h"
 
 #include <glib/gi18n.h>
 #include <string.h>
+#include <nostr-kinds.h>
 
 /* A relay scope takes at most 16 URLs (gh-relay-scope.h); the attachment
  * server list gets the same bound. */
@@ -38,6 +40,7 @@ typedef struct {
   GtkStringList *urls;        /* BINDING_LIST: the key's value, bound to list */
   gchar *(*normalize)(const gchar *text, gboolean allow_onion, GError **error);
   gboolean ordered;           /* BINDING_LIST: rows move up and down (attachment servers) */
+  gint social_kind;           /* account-local URL document, not GSettings */
 } Binding;
 
 struct _GhPreferencesDialog {
@@ -51,6 +54,14 @@ struct _GhPreferencesDialog {
   AdwActionRow *social_lists_row;
   AdwPreferencesGroup *hidden_group;
   AdwActionRow *hidden_row;
+  AdwActionRow *social_import_row;
+  AdwAlertDialog *social_import_dialog;
+  GtkWidget *server_publish_list;
+  AdwActionRow *server_publish_row;
+  GtkButton *server_publish_button;
+  AdwAlertDialog *server_publish_dialog;
+  GCancellable *server_publication;
+  gchar *social_import_revision;
   AdwSwitchRow *notifications_row;
   AdwComboRow *notification_privacy_row;
   AdwSwitchRow *sound_row;
@@ -79,6 +90,11 @@ struct _GhPreferencesDialog {
   GtkListBox *discovery_list;
   AdwEntryRow *discovery_entry;
   GtkLabel *discovery_error;
+  AdwPreferencesGroup *blocked_relays_group;
+  GtkListBox *blocked_relays_list;
+  AdwEntryRow *blocked_relays_entry;
+  GtkLabel *blocked_relays_error;
+  Binding *blocked_relays_binding;
   GtkWidget *key_package_group;
   AdwActionRow *key_package_row;
   GtkWidget *key_package_setup;
@@ -463,6 +479,15 @@ duration_label(GVariant *value)
 /* ---- URL lists ---------------------------------------------------------------------- */
 
 /* The list rules shared by both editors and gh_preferences_server_list_add(). */
+static gchar *
+normalize_blocked_relay(const gchar *text, gboolean allow_onion, GError **error)
+{
+  g_autofree gchar *validated = gh_preferences_normalize_relay_url(text, allow_onion, error);
+  if (!validated) return NULL;
+  g_autofree gchar *trimmed = g_strstrip(g_strdup(text));
+  return gh_relay_deny_policy_normalize(trimmed);
+}
+
 static GStrv
 url_list_add(const gchar *const *current, const gchar *text,
              gchar *(*normalize)(const gchar *, gboolean, GError **), gboolean allow_onion,
@@ -527,13 +552,83 @@ gh_preferences_server_list_move(const gchar *const *servers, guint index, gint d
   return moved;
 }
 
+static void list_sync(Binding *binding);
+
+static gboolean
+binding_editable(Binding *binding)
+{
+  GhPreferencesDialog *self = binding->self;
+  if (!binding->social_kind) return key_available(self, binding->key);
+  return self->social.owner && self->social_generation == self->social.generation(self->social.owner) &&
+    self->social.service(self->social.owner) &&
+    (binding->social_kind != NOSTR_KIND_BLOSSOM_SERVER_LIST ||
+     (self->features & GH_PREFERENCES_FEATURE_ATTACHMENTS));
+}
+
+static GStrv
+list_get_urls(Binding *binding)
+{
+  GhPreferencesDialog *self = binding->self;
+  if (!binding->social_kind) return g_settings_get_strv(self->settings, binding->key);
+  g_autoptr(GStrvBuilder) builder = g_strv_builder_new();
+  if (binding_editable(binding)) {
+    g_autoptr(GNostrListDocument) doc = gnostr_list_service_lookup(
+      self->social.service(self->social.owner), binding->social_kind, "");
+    const NostrListDocument *codec = doc ? gnostr_list_document_get_codec(doc) : NULL;
+    const gchar *name = binding->social_kind == NOSTR_KIND_BLOSSOM_SERVER_LIST ? "server" : "relay";
+    for (guint p = 0; codec && p < 2; p++) {
+      for (gsize i = 0; i < nostr_nip51_document_tag_count(codec, p); i++) {
+        const NostrListTag *tag = nostr_nip51_document_tag(codec, p, i);
+        const gchar *value = nostr_nip51_tag_field(tag, 1);
+        if (value && !g_strcmp0(nostr_nip51_tag_field(tag, 0), name)) g_strv_builder_add(builder, value);
+      }
+    }
+  }
+  return g_strv_builder_end(builder);
+}
+
+static gboolean
+list_set_urls(Binding *binding, const gchar *const *urls)
+{
+  GhPreferencesDialog *self = binding->self;
+  g_autoptr(GError) error = NULL;
+  if (!binding->social_kind) return g_settings_set_strv(self->settings, binding->key, urls);
+  if (!binding_editable(binding)) {
+    show_entry_error(binding, _("Open this account's message storage to edit this list"));
+    return FALSE;
+  }
+  g_autoptr(GNostrListDocument) doc = self->social.ensure(self->social.owner, binding->social_kind, "", &error);
+  g_autoptr(GPtrArray) ops = g_ptr_array_new_with_free_func((GDestroyNotify)gnostr_list_operation_unref);
+  if (doc) {
+    const NostrListDocument *codec = gnostr_list_document_get_codec(doc);
+    const gchar *name = binding->social_kind == NOSTR_KIND_BLOSSOM_SERVER_LIST ? "server" : "relay";
+    for (guint p = 0; p < 2; p++) {
+      for (gsize i = 0; i < nostr_nip51_document_tag_count(codec, p); i++) {
+        const NostrListTag *tag = nostr_nip51_document_tag(codec, p, i);
+        if (!g_strcmp0(nostr_nip51_tag_field(tag, 0), name))
+          g_ptr_array_add(ops, gnostr_list_operation_remove(p, tag, G_MAXUINT));
+      }
+    }
+    for (guint i = 0; urls && urls[i]; i++) {
+      const gchar *fields[] = { name, urls[i] };
+      g_ptr_array_add(ops, gnostr_list_operation_new(GNOSTR_LIST_EDIT_APPEND,
+        binding->social_kind != NOSTR_KIND_BLOSSOM_SERVER_LIST, fields, 2, 0, 0));
+    }
+    g_autoptr(GNostrListDocument) saved = self->social.apply(self->social.owner, binding->social_kind, "",
+      gnostr_list_document_get_local_revision(doc), ops, &error);
+    if (saved) { list_sync(binding); return TRUE; }
+  }
+  show_entry_error(binding, error ? error->message : _("This list could not be saved"));
+  return FALSE;
+}
+
 static void
 on_remove_url(GtkButton *button, Binding *binding)
 {
   const gchar *url = g_object_get_data(G_OBJECT(button), "gh-url");
-  g_auto(GStrv) current = g_settings_get_strv(binding->self->settings, binding->key);
+  g_auto(GStrv) current = list_get_urls(binding);
   g_auto(GStrv) urls = gh_preferences_server_list_remove((const gchar *const *)current, url);
-  g_settings_set_strv(binding->self->settings, binding->key, (const gchar *const *)urls);
+  list_set_urls(binding, (const gchar *const *)urls);
 }
 
 /* The position of url in the key's list, or -1. */
@@ -551,13 +646,13 @@ on_move_url(GtkButton *button, Binding *binding)
 {
   const gchar *url = g_object_get_data(G_OBJECT(button), "gh-url");
   gint delta = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(button), "gh-delta"));
-  g_auto(GStrv) current = g_settings_get_strv(binding->self->settings, binding->key);
+  g_auto(GStrv) current = list_get_urls(binding);
   gint index = url_index(url, current);
   if (index < 0)
     return;
   g_auto(GStrv) urls = gh_preferences_server_list_move((const gchar *const *)current,
                                                        (guint)index, delta);
-  g_settings_set_strv(binding->self->settings, binding->key, (const gchar *const *)urls);
+  list_set_urls(binding, (const gchar *const *)urls);
   /* The rows are made again: keyboard focus follows the moved server. */
   GtkListBoxRow *row = gtk_list_box_get_row_at_index(binding->list, index + delta);
   if (row)
@@ -605,7 +700,7 @@ create_url_row(gpointer item, gpointer data)
   adw_preferences_row_set_use_markup(ADW_PREFERENCES_ROW(row), FALSE);
   adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), url);
   adw_preferences_row_set_title_selectable(ADW_PREFERENCES_ROW(row), TRUE);
-  gboolean editable = key_available(self, binding->key);
+  gboolean editable = binding_editable(binding);
 
   if (binding->ordered && editable) {
     /* Attachment servers are tried in this order (G22). */
@@ -655,7 +750,7 @@ create_url_row(gpointer item, gpointer data)
 static void
 list_sync_full(Binding *binding, gboolean force)
 {
-  g_auto(GStrv) urls = g_settings_get_strv(binding->self->settings, binding->key);
+  g_auto(GStrv) urls = list_get_urls(binding);
   GListModel *model = G_LIST_MODEL(binding->urls);
   guint n = g_list_model_get_n_items(model);
   gboolean same = n == g_strv_length(urls);
@@ -676,7 +771,7 @@ on_list_apply(AdwEntryRow *entry, Binding *binding)
 {
   g_autoptr(GError) error = NULL;
   GhPreferencesDialog *self = binding->self;
-  g_auto(GStrv) current = g_settings_get_strv(self->settings, binding->key);
+  g_auto(GStrv) current = list_get_urls(binding);
   g_auto(GStrv) urls =
     url_list_add((const gchar *const *)current, gtk_editable_get_text(GTK_EDITABLE(entry)),
                  binding->normalize, (self->features & GH_PREFERENCES_FEATURE_TOR) != 0, &error);
@@ -684,7 +779,7 @@ on_list_apply(AdwEntryRow *entry, Binding *binding)
     show_entry_error(binding, error->message);
     return;
   }
-  if (!g_settings_set_strv(self->settings, binding->key, (const gchar *const *)urls)) {
+  if (!list_set_urls(binding, (const gchar *const *)urls)) {
     show_entry_error(binding, _("This setting can't be changed"));
     return;
   }
@@ -710,6 +805,8 @@ bind_list(GhPreferencesDialog *self, const gchar *key, GtkListBox *list, AdwEntr
   binding->error = error;
   binding->normalize = normalize;
   binding->ordered = ordered;
+  binding->social_kind = !strcmp(key, "blossom-servers") ? NOSTR_KIND_BLOSSOM_SERVER_LIST :
+    !strcmp(key, "blocked-relays") ? NOSTR_KIND_BLOCKED_RELAY_LIST : 0;
   binding->urls = gtk_string_list_new(NULL);
   gtk_list_box_bind_model(list, G_LIST_MODEL(binding->urls), create_url_row, binding, NULL);
   list_sync(binding);
@@ -717,7 +814,7 @@ bind_list(GhPreferencesDialog *self, const gchar *key, GtkListBox *list, AdwEntr
   g_signal_connect(entry, "changed", G_CALLBACK(on_entry_changed), binding);
   /* Without its feature the list shows what is stored and nothing edits it
    * (its group says why). */
-  if (!key_available(self, key)) {
+  if (!binding_editable(binding)) {
     gtk_widget_set_sensitive(GTK_WIDGET(list), FALSE);
     gtk_widget_set_visible(GTK_WIDGET(entry), FALSE);
   }
@@ -1650,6 +1747,8 @@ gh_preferences_dialog_constructed(GObject *object)
   bind_address(self, "tor-socks-address", self->tor_address_row, self->tor_address_error);
   bind_list(self, "discovery-relays", self->discovery_list, self->discovery_entry,
             self->discovery_error, gh_preferences_normalize_relay_url, FALSE);
+  self->blocked_relays_binding = bind_list(self, "blocked-relays", self->blocked_relays_list,
+    self->blocked_relays_entry, self->blocked_relays_error, normalize_blocked_relay, FALSE);
   self->blossom_binding = bind_list(self, "blossom-servers", self->blossom_list,
                                     self->blossom_entry, self->blossom_error,
                                     gh_preferences_normalize_server_url, TRUE);
@@ -1713,6 +1812,9 @@ social_changed(GObject *owner, GhPreferencesDialog *self)
     return;
   guint64 generation = self->social.generation(self->social.owner);
   if (generation != self->social_generation) {
+    if (self->social_import_dialog) adw_dialog_force_close(ADW_DIALOG(self->social_import_dialog));
+    if (self->server_publish_dialog) adw_dialog_force_close(ADW_DIALOG(self->server_publish_dialog));
+    if (self->server_publication) g_cancellable_cancel(self->server_publication);
     adw_dialog_force_close(ADW_DIALOG(self));
     gtk_widget_set_sensitive(GTK_WIDGET(self->social_lists_row), FALSE);
     gtk_widget_set_sensitive(GTK_WIDGET(self->hidden_row), FALSE);
@@ -1724,6 +1826,171 @@ social_changed(GObject *owner, GhPreferencesDialog *self)
   gtk_widget_set_sensitive(GTK_WIDGET(self->social_lists_row), self->social.service(self->social.owner) != NULL);
   gtk_widget_set_sensitive(GTK_WIDGET(self->hidden_row), self->social.service(self->social.owner) != NULL);
   self->social_syncing = FALSE;
+  g_auto(GStrv) targets = self->social.dup_public_targets ? self->social.dup_public_targets(self->social.owner) : NULL;
+  gtk_widget_set_visible(self->server_publish_list, self->social.dup_public_targets != NULL);
+  gtk_widget_set_sensitive(GTK_WIDGET(self->server_publish_button), targets && targets[0] && !self->server_publication);
+  if (!targets || !targets[0])
+    adw_action_row_set_subtitle(self->server_publish_row, _("Needs a writable account and a relay list — no fallback relays are used"));
+  Binding *account_lists[] = { self->blossom_binding, self->blocked_relays_binding };
+  for (guint i = 0; i < G_N_ELEMENTS(account_lists); i++) {
+    Binding *binding = account_lists[i];
+    if (!binding) continue;
+    gboolean editable = binding_editable(binding);
+    gtk_widget_set_sensitive(GTK_WIDGET(binding->list), editable);
+    gtk_widget_set_visible(GTK_WIDGET(binding->entry), editable);
+    list_sync(binding);
+  }
+  guint accounts = 0, items = 0;
+  gboolean pending = self->social.pending_import && self->social.pending_import(self->social.owner, &accounts, &items);
+  gtk_widget_set_visible(GTK_WIDGET(self->social_import_row), pending);
+  if (pending) {
+    g_autofree gchar *summary = g_strdup_printf(_("%u accounts and %u content rules — not applied yet"), accounts, items);
+    adw_action_row_set_subtitle(self->social_import_row, summary);
+  }
+  const gchar *error = self->social.sync_error ? self->social.sync_error(self->social.owner) : NULL;
+  adw_action_row_set_subtitle(ADW_ACTION_ROW(self->social_sync_row), error ? error :
+    _("Synchronize encrypted drafts and private list entries. Relays see your account, event kind and time. Public publication needs separate approval; accepted events cannot be recalled."));
+}
+
+typedef struct {
+  GNostrListDocument *snapshot;
+  GStrv targets;
+} ServerApproval;
+
+static void
+server_approval_free(gpointer data)
+{
+  ServerApproval *approval = data;
+  g_object_unref(approval->snapshot);
+  g_strfreev(approval->targets);
+  g_free(approval);
+}
+
+static void
+server_publish_done(GObject *source, GAsyncResult *result, gpointer data)
+{
+  GhPreferencesDialog *self = data;
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GVariant) outcomes = gnostr_list_service_publish_finish(GNOSTR_LIST_SERVICE(source), result, &error);
+  g_clear_object(&self->server_publication);
+  if (!self->disposed && self->social.owner && self->social_generation == self->social.generation(self->social.owner)) {
+    guint accepted = 0, total = 0;
+    GVariantIter iter;
+    const gchar *url;
+    gint outcome;
+    if (outcomes) {
+      g_variant_iter_init(&iter, outcomes);
+      while (g_variant_iter_next(&iter, "{&si}", &url, &outcome)) {
+        total++;
+        if (outcome == GNOSTR_LIST_ACCEPTED || outcome == GNOSTR_LIST_DUPLICATE) accepted++;
+      }
+    }
+    social_changed(self->social.owner, self);
+    adw_action_row_set_subtitle(self->server_publish_row,
+      accepted && accepted == total ? _("Published — the server URLs are public") :
+      accepted ? _("Partly Published — some relays did not accept the list") :
+      _("Not Published — check the list, signer and relays"));
+  }
+  g_object_unref(self);
+}
+
+static void
+server_publish_response(AdwAlertDialog *dialog, const gchar *response, GhPreferencesDialog *self)
+{
+  g_clear_weak_pointer(&self->server_publish_dialog);
+  if (g_strcmp0(response, "publish") || self->disposed || !self->social.owner ||
+      self->social_generation != self->social.generation(self->social.owner)) return;
+  ServerApproval *approval = g_object_get_data(G_OBJECT(dialog), "server-approval");
+  GNostrListService *service = self->social.service(self->social.owner);
+  g_autoptr(GNostrListDocument) current = service ? gnostr_list_service_lookup(service, NOSTR_KIND_BLOSSOM_SERVER_LIST, "") : NULL;
+  g_auto(GStrv) targets = self->social.dup_public_targets(self->social.owner);
+  if (!current || !targets || !targets[0] || !g_strv_equal((const gchar *const *)targets, (const gchar *const *)approval->targets) ||
+      gnostr_list_document_get_local_revision(current) != gnostr_list_document_get_local_revision(approval->snapshot) ||
+      g_strcmp0(gnostr_list_document_get_event_id(current), gnostr_list_document_get_event_id(approval->snapshot))) {
+    adw_action_row_set_subtitle(self->server_publish_row, _("List or relays changed — review them again before publishing"));
+    return;
+  }
+  self->server_publication = g_cancellable_new();
+  gtk_widget_set_sensitive(GTK_WIDGET(self->server_publish_button), FALSE);
+  gnostr_list_service_publish_async(service, NOSTR_KIND_BLOSSOM_SERVER_LIST, "",
+    GNOSTR_LIST_APPROVE_PUBLIC | GNOSTR_LIST_APPROVE_PARTIAL, self->server_publication, server_publish_done, g_object_ref(self));
+}
+
+static void
+server_publish_open(GtkButton *button, GhPreferencesDialog *self)
+{
+  (void)button;
+  if (self->disposed || self->server_publish_dialog || self->server_publication || !self->social.owner ||
+      !self->social.dup_public_targets || self->social_generation != self->social.generation(self->social.owner)) return;
+  g_auto(GStrv) targets = self->social.dup_public_targets(self->social.owner);
+  if (!targets || !targets[0]) return;
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GNostrListDocument) snapshot = self->social.ensure(self->social.owner, NOSTR_KIND_BLOSSOM_SERVER_LIST, "", &error);
+  if (!snapshot) return;
+  g_autoptr(GString) body = g_string_new(_("These attachment server URLs will be public, linked to this account. Publishing may replace relay changes not checked on this device. Accepted publications cannot be recalled.\n\nServer URLs:\n"));
+  const NostrListDocument *codec = gnostr_list_document_get_codec(snapshot);
+  guint count = 0;
+  for (gsize i = 0; i < nostr_nip51_document_tag_count(codec, FALSE); i++) {
+    const NostrListTag *tag = nostr_nip51_document_tag(codec, FALSE, i);
+    if (g_strcmp0(nostr_nip51_tag_field(tag, 0), "server")) continue;
+    const gchar *url = nostr_nip51_tag_field(tag, 1);
+    g_autofree gchar *normalized = gh_preferences_normalize_server_url(url, TRUE, &error);
+    if (!normalized) {
+      adw_action_row_set_subtitle(self->server_publish_row, _("Not Published — check the attachment server addresses"));
+      return;
+    }
+    g_string_append_printf(body, "%s\n", url);
+    count++;
+  }
+  if (!count) g_string_append(body, _("No attachment servers\n"));
+  g_string_append(body, _("\nPublish to these NIP-65 write relays:\n"));
+  for (guint i = 0; targets[i]; i++) g_string_append_printf(body, "%s\n", targets[i]);
+  AdwAlertDialog *dialog = ADW_ALERT_DIALOG(adw_alert_dialog_new(_("Publish Server List?"), body->str));
+  ServerApproval *approval = g_new0(ServerApproval, 1);
+  approval->snapshot = g_object_ref(snapshot);
+  approval->targets = g_steal_pointer(&targets);
+  g_object_set_data_full(G_OBJECT(dialog), "server-approval", approval, server_approval_free);
+  adw_alert_dialog_add_responses(dialog, "cancel", _("Cancel"), "publish", _("Publish Server List"), NULL);
+  adw_alert_dialog_set_default_response(dialog, "cancel");
+  adw_alert_dialog_set_close_response(dialog, "cancel");
+  adw_alert_dialog_set_response_appearance(dialog, "publish", ADW_RESPONSE_DESTRUCTIVE);
+  g_set_weak_pointer(&self->server_publish_dialog, dialog);
+  g_signal_connect_object(dialog, "response", G_CALLBACK(server_publish_response), self, 0);
+  adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(self));
+}
+
+static void
+social_import_response(AdwAlertDialog *dialog, const gchar *response, GhPreferencesDialog *self)
+{
+  (void)dialog;
+  g_clear_weak_pointer(&self->social_import_dialog);
+  if (!self->disposed && self->social.owner && self->social_import_revision &&
+      self->social_generation == self->social.generation(self->social.owner) &&
+      !g_strcmp0(self->social_import_revision, self->social.import_revision(self->social.owner))) {
+    g_autoptr(GError) error = NULL;
+    if (!self->social.confirm_import(self->social.owner, !g_strcmp0(response, "apply"), &error))
+      adw_action_row_set_subtitle(self->social_import_row, _("Not changed — check account storage"));
+    social_changed(self->social.owner, self);
+  }
+  g_clear_pointer(&self->social_import_revision, g_free);
+}
+static void
+social_import_open(AdwActionRow *row, GhPreferencesDialog *self)
+{
+  (void)row;
+  guint accounts = 0, items = 0;
+  if (self->social_import_dialog || !self->social.owner || !self->social.pending_import ||
+      self->social_generation != self->social.generation(self->social.owner) ||
+      !self->social.pending_import(self->social.owner, &accounts, &items)) return;
+  g_autofree gchar *body = g_strdup_printf(_("This list hides %u accounts and %u content rules. New messages from hidden accounts will be discarded and cannot be recovered. Declining keeps this list unsynced; other lists still sync."), accounts, items);
+  self->social_import_revision = g_strdup(self->social.import_revision(self->social.owner));
+  AdwAlertDialog *dialog = ADW_ALERT_DIALOG(adw_alert_dialog_new(_("Apply Hidden Items?"), body));
+  g_set_weak_pointer(&self->social_import_dialog, dialog);
+  adw_alert_dialog_add_responses(self->social_import_dialog, "cancel", _("Keep Unsynced"), "apply", _("Apply"), NULL);
+  adw_alert_dialog_set_response_appearance(self->social_import_dialog, "apply", ADW_RESPONSE_DESTRUCTIVE);
+  adw_alert_dialog_set_close_response(self->social_import_dialog, "cancel");
+  g_signal_connect_object(self->social_import_dialog, "response", G_CALLBACK(social_import_response), self, 0);
+  adw_dialog_present(ADW_DIALOG(self->social_import_dialog), GTK_WIDGET(self));
 }
 
 static void
@@ -1761,6 +2028,8 @@ hidden_open(AdwActionRow *row, GhPreferencesDialog *self)
 void
 gh_preferences_dialog_set_social_backend(GhPreferencesDialog *self, const GhListsBackend *backend)
 {
+  if (self->server_publish_dialog) adw_dialog_force_close(ADW_DIALOG(self->server_publish_dialog));
+  if (self->server_publication) g_cancellable_cancel(self->server_publication);
   if (self->social.owner) {
     g_signal_handlers_disconnect_by_data(self->social.owner, self);
     adw_dialog_force_close(ADW_DIALOG(self));
@@ -1771,10 +2040,14 @@ gh_preferences_dialog_set_social_backend(GhPreferencesDialog *self, const GhList
     self->social.owner = g_object_ref(backend->owner);
     self->social_generation = backend->generation(backend->owner);
     g_signal_connect(self->social.owner, "changed", G_CALLBACK(social_changed), self);
+    if (g_signal_lookup("sync-state-changed", G_OBJECT_TYPE(self->social.owner)))
+      g_signal_connect(self->social.owner, "sync-state-changed", G_CALLBACK(social_changed), self);
     social_changed(self->social.owner, self);
   }
   gtk_widget_set_visible(GTK_WIDGET(self->social_group), backend != NULL);
   gtk_widget_set_visible(GTK_WIDGET(self->hidden_group), backend != NULL);
+  gtk_widget_set_visible(GTK_WIDGET(self->blocked_relays_group), backend != NULL);
+  gtk_widget_set_visible(self->server_publish_list, backend && backend->dup_public_targets);
 }
 
 static void
@@ -1782,6 +2055,13 @@ gh_preferences_dialog_dispose(GObject *object)
 {
   GhPreferencesDialog *self = GH_PREFERENCES_DIALOG(object);
   self->disposed = TRUE;
+  if (self->server_publication) g_cancellable_cancel(self->server_publication);
+  g_clear_object(&self->server_publication);
+  if (self->server_publish_dialog) adw_dialog_force_close(ADW_DIALOG(self->server_publish_dialog));
+  g_clear_weak_pointer(&self->server_publish_dialog);
+  if (self->social_import_dialog) adw_dialog_force_close(ADW_DIALOG(self->social_import_dialog));
+  g_clear_weak_pointer(&self->social_import_dialog);
+  g_clear_pointer(&self->social_import_revision, g_free);
   if (self->social.owner)
     g_signal_handlers_disconnect_by_data(self->social.owner, self);
   g_clear_object(&self->social.owner);
@@ -1888,9 +2168,13 @@ gh_preferences_dialog_class_init(GhPreferencesDialogClass *klass)
 #define BIND(name) gtk_widget_class_bind_template_child(widget_class, GhPreferencesDialog, name)
   BIND(social_group);
   BIND(social_sync_row);
+  BIND(server_publish_list);
+  BIND(server_publish_row);
+  BIND(server_publish_button);
   BIND(social_lists_row);
   BIND(hidden_group);
   BIND(hidden_row);
+  BIND(social_import_row);
   BIND(notifications_row);
   BIND(notification_privacy_row);
   BIND(sound_row);
@@ -1923,6 +2207,10 @@ gh_preferences_dialog_class_init(GhPreferencesDialogClass *klass)
   BIND(key_package_row);
   BIND(key_package_setup);
   BIND(attachments_group);
+  BIND(blocked_relays_group);
+  BIND(blocked_relays_list);
+  BIND(blocked_relays_entry);
+  BIND(blocked_relays_error);
   BIND(blossom_list);
   BIND(blossom_entry);
   BIND(blossom_error);
@@ -1959,8 +2247,10 @@ gh_preferences_dialog_init(GhPreferencesDialog *self)
 {
   gtk_widget_init_template(GTK_WIDGET(self));
   g_signal_connect(self->social_sync_row, "notify::active", G_CALLBACK(social_sync_changed), self);
+  g_signal_connect(self->server_publish_button, "clicked", G_CALLBACK(server_publish_open), self);
   g_signal_connect(self->social_lists_row, "activated", G_CALLBACK(social_lists_open), self);
   g_signal_connect(self->hidden_row, "activated", G_CALLBACK(hidden_open), self);
+  g_signal_connect(self->social_import_row, "activated", G_CALLBACK(social_import_open), self);
   gh_agents_page_populate(self->agents_page);
   self->key_widgets = g_hash_table_new(g_str_hash, g_str_equal);
   self->bindings = g_ptr_array_new_with_free_func(binding_free);

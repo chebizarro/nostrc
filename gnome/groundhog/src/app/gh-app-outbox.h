@@ -35,6 +35,9 @@ typedef struct _GhAppOutbox GhAppOutbox;
 
 GhAppOutbox *gh_app_outbox_new(const GhAppOutboxConfig *config);
 void gh_app_outbox_free(GhAppOutbox *self);
+typedef struct _GhSocialLists GhSocialLists;
+/* Borrowed; set before the first store bind. GhAppServices owns it. */
+void gh_app_outbox_set_social_lists(GhAppOutbox *self, GhSocialLists *lists);
 
 /* A GhAccountStoreOutboxFunc (gh-account-store.h): a new GhOutbox over
  * store; user_data is the GhAppOutbox. */

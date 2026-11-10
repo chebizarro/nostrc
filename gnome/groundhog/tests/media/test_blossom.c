@@ -9,6 +9,7 @@
 #include "gh-store-media.h"
 #include "blossom-fixture.h"
 #include "gh-attachments.h"
+#include "gh-social-lists.h"
 #include "canary-scan.h"
 #include "socks5-fixture.h"
 #include "../gh-test-port.h"
@@ -209,9 +210,9 @@ fixture_up(Fixture *f, const gchar *mode)
   g_settings_set_string(f->settings, "network-mode", mode);
   f->blossom = blossom_fixture_new();
   const gchar *servers[] = { blossom_fixture_url(f->blossom), NULL };
-  g_settings_set_strv(f->settings, "blossom-servers", servers);
   f->http = gh_net_http_new(f->settings);
   f->client = gh_blossom_client_new(f->settings, f->http);
+  gh_blossom_client_set_servers(f->client, servers);
   /* The fixture is on loopback, which real downloads may not reach. */
   gh_blossom_client_set_allow_private_hosts(f->client, TRUE);
 }
@@ -352,7 +353,7 @@ test_no_server(void)
 {
   Fixture f;
   fixture_up(&f, "none");
-  g_settings_set_strv(f.settings, "blossom-servers", NULL);
+  gh_blossom_client_set_servers(f.client, NULL);
   g_autoptr(GBytes) jpeg = make_jpeg(4096);
   Result r = { 0 };
   upload(&f, jpeg, &r, NULL);
@@ -360,7 +361,7 @@ test_no_server(void)
   g_assert_cmpuint(blossom_fixture_count(f.blossom, NULL), ==, 0);
   /* Blank entries are no servers either. */
   const gchar *blank[] = { "", "  ", NULL };
-  g_settings_set_strv(f.settings, "blossom-servers", blank);
+  gh_blossom_client_set_servers(f.client, blank);
   upload(&f, jpeg, &r, NULL);
   g_assert_error(r.error, GH_BLOSSOM_ERROR, GH_BLOSSOM_ERROR_NO_SERVER);
   g_assert_cmpuint(blossom_fixture_count(f.blossom, NULL), ==, 0);
@@ -693,7 +694,7 @@ test_at6_upload_auth_key(void)
   fixture_up(&f, "none");
   BlossomFixture *second = blossom_fixture_new();
   const gchar *servers[] = { blossom_fixture_url(f.blossom), blossom_fixture_url(second), NULL };
-  g_settings_set_strv(f.settings, "blossom-servers", servers);
+  gh_blossom_client_set_servers(f.client, servers);
   FakeSigner signer;
   fake_signer_init(&signer);
   gh_blossom_client_set_account_signer(f.client, signer.pubkey, fake_sign_async,
@@ -892,7 +893,7 @@ test_at9_tor(void)
   g_settings_set_string(f.settings, "tor-socks-address", socks5_fixture_address(socks));
   g_autofree gchar *onion = g_strdup_printf("http://" ONION ":%u", blossom_fixture_port(f.blossom));
   const gchar *servers[] = { onion, NULL };
-  g_settings_set_strv(f.settings, "blossom-servers", servers);
+  gh_blossom_client_set_servers(f.client, servers);
   g_autoptr(GBytes) jpeg = make_jpeg(32 * 1024);
   Result r = { 0 };
   upload(&f, jpeg, &r, NULL);
@@ -929,7 +930,7 @@ test_at9_tor(void)
   /* Tor mode with the proxy gone: fails closed, never direct. */
   g_settings_set_string(f.settings, "network-mode", "tor");
   const gchar *direct[] = { blossom_fixture_url(f.blossom), NULL };
-  g_settings_set_strv(f.settings, "blossom-servers", direct);
+  gh_blossom_client_set_servers(f.client, direct);
   socks5_fixture_set_refuse(socks, TRUE);
   upload(&f, jpeg, &r, NULL);
   g_assert_nonnull(r.error);
@@ -1279,6 +1280,60 @@ remove_tree(const gchar *path)
   g_rmdir(path);
 }
 
+static GStrv account_servers(GObject *owner)
+{
+  return gh_social_lists_dup_servers(GH_SOCIAL_LISTS(owner), NULL);
+}
+static gboolean save_servers(GObject *owner, const gchar *const *servers, GError **error)
+{
+  return gh_social_lists_set_servers(GH_SOCIAL_LISTS(owner), servers, error);
+}
+static void
+test_account_server_source(void)
+{
+  Fixture f;
+  fixture_up(&f, "none");
+  gh_blossom_client_set_servers(f.client, NULL);
+  const gchar *legacy[] = { blossom_fixture_url(f.blossom), NULL };
+  g_settings_set_strv(f.settings, "blossom-servers", legacy);
+  g_autoptr(GBytes) jpeg = make_jpeg(4096);
+  Result r = {0};
+  upload(&f, jpeg, &r, NULL);
+  g_assert_error(r.error, GH_BLOSSOM_ERROR, GH_BLOSSOM_ERROR_NO_SERVER);
+  g_assert_cmpuint(blossom_fixture_count(f.blossom, NULL), ==, 0); /* global key is not a source */
+  result_clear(&r);
+  GhStore *store = fixture_store(&f);
+  g_assert_true(gh_store_exec(store, "UPDATE social_preferences SET blossom_imported=0", NULL));
+  g_autoptr(GhSocialLists) social = gh_social_lists_new_with_settings(NULL, f.settings);
+  g_assert_true(gh_social_lists_bind_store(social, store, 1, NULL));
+  gh_blossom_client_set_server_source(f.client, G_OBJECT(social), account_servers, save_servers);
+  const gchar *changed_global[] = { "https://must-not-be-contacted.invalid", NULL };
+  g_settings_set_strv(f.settings, "blossom-servers", changed_global);
+  upload(&f, jpeg, &r, NULL);
+  g_assert_no_error(r.error); g_assert_nonnull(r.file);
+  guint requests = blossom_fixture_count(f.blossom, NULL);
+  g_assert_cmpuint(requests, >, 0);
+  result_clear(&r);
+  g_assert_true(gh_blossom_client_save_servers(f.client, NULL, NULL));
+  upload(&f, jpeg, &r, NULL);
+  g_assert_error(r.error, GH_BLOSSOM_ERROR, GH_BLOSSOM_ERROR_NO_SERVER);
+  g_assert_cmpuint(blossom_fixture_count(f.blossom, NULL), ==, requests);
+  result_clear(&r);
+  GhStore *other = gh_store_open_ephemeral(alice, NULL, NULL);
+  g_assert_true(gh_social_lists_bind_store(social, other, 2, NULL));
+  g_auto(GStrv) fresh = gh_blossom_client_dup_servers(f.client);
+  g_assert_null(fresh[0]); /* a fresh account never inherits the legacy setting */
+  g_assert_true(gh_store_exec(other, "UPDATE social_preferences SET blossom_imported=0", NULL));
+  g_settings_set_strv(f.settings, "blossom-servers", legacy);
+  g_assert_true(gh_social_lists_bind_store(social, other, 3, NULL));
+  g_auto(GStrv) migrated = gh_blossom_client_dup_servers(f.client);
+  g_assert_cmpstr(migrated[0], ==, legacy[0]);
+  gh_social_lists_close(social); gh_store_close(other);
+  g_auto(GStrv) closed = gh_blossom_client_dup_servers(f.client);
+  g_assert_null(closed[0]);
+  fixture_down(&f);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -1319,6 +1374,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/blossom/download-rebinding", test_download_rebinding);
   g_test_add_func("/groundhog/blossom/keyed-upload-rebinding", test_keyed_upload_rebinding);
   g_test_add_func("/groundhog/blossom/local-network-upload", test_local_network_upload);
+  g_test_add_func("/groundhog/blossom/account-server-source-legacy-import", test_account_server_source);
   int status = g_test_run();
   canary_log_capture_uninstall();
   remove_tree(root);

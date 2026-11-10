@@ -1,4 +1,5 @@
 #include "gh-mls-invitee-picker.h"
+#include "gh-picture-cache.h"
 
 #include "gh-mls-copy.h"
 #include "gh-recipient.h"
@@ -369,6 +370,7 @@ clear_context(GhMlsInviteePicker *self)
   g_clear_object(&self->context.accounts);
   g_clear_object(&self->context.model);
   g_clear_object(&self->context.settings);
+  g_clear_object(&self->context.pictures);
   memset(&self->context, 0, sizeof self->context);
 }
 
@@ -430,6 +432,7 @@ gh_mls_invitee_picker_setup(GhMlsInviteePicker *self, const GhMlsUiContext *cont
   clear_rows(self);
   clear_context(self);
   self->context = *context;
+  if (context->pictures) g_object_ref(context->pictures);
   self->context.default_relays = NULL;   /* not the picker's */
   if (context->service)
     g_object_ref(context->service);
@@ -454,6 +457,8 @@ gh_mls_invitee_picker_setup(GhMlsInviteePicker *self, const GhMlsUiContext *cont
     const gchar *title = row->named ? name : row->npub_short;
     adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), title);
     adw_avatar_set_text(row->avatar, title);
+    if (context->pictures)
+      gh_picture_cache_bind_avatar(context->pictures, row->avatar, row->pubkey);
     gtk_accessible_update_property(GTK_ACCESSIBLE(row->check), GTK_ACCESSIBLE_PROPERTY_LABEL,
                                    title, -1);
     row_sync(row);

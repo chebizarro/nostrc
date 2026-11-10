@@ -1,4 +1,5 @@
 #include "gh-group-info-dialog.h"
+#include "gh-picture-cache.h"
 
 #include "gh-group-copy.h"
 #include "gh-privacy-summary.h"
@@ -177,6 +178,7 @@ struct _GhGroupInfoDialog {
   GhNip29Room *room;
   GhGroupNameFunc display_name;
   gpointer names_data;
+  GhPictureCache *pictures;
   GPtrArray *member_rows;  /* GtkWidget, in members_group */
   GPtrArray *role_rows;    /* AdwActionRow, in roles_group */
   GPtrArray *role_checks;  /* GtkCheckButton, parallel to role_rows */
@@ -338,6 +340,8 @@ sync_members(GhGroupInfoDialog *self)
                                            (const gchar *const *)admin->roles,
                                            !you && role_gate != GH_GROUP_GATE_HIDDEN,
                                            !you && remove_gate != GH_GROUP_GATE_HIDDEN);
+    if (self->pictures)
+      gh_picture_cache_bind_avatar(self->pictures, row->avatar, row->pubkey);
     adw_preferences_group_add(self->members_group, GTK_WIDGET(row));
     g_ptr_array_add(self->member_rows, row);
   }
@@ -349,6 +353,8 @@ sync_members(GhGroupInfoDialog *self)
     GhGroupMemberRow *row = member_row_new(members[i], display_name(self, members[i]), you, NULL,
                                            !you && role_gate != GH_GROUP_GATE_HIDDEN,
                                            !you && remove_gate != GH_GROUP_GATE_HIDDEN);
+    if (self->pictures)
+      gh_picture_cache_bind_avatar(self->pictures, row->avatar, row->pubkey);
     adw_preferences_group_add(self->members_group, GTK_WIDGET(row));
     g_ptr_array_add(self->member_rows, row);
   }
@@ -881,6 +887,7 @@ gh_group_info_dialog_new(GhNip29Room *room, const GhGroupInfoConfig *config)
   g_object_weak_ref(G_OBJECT(self->service), on_service_gone, self);
   self->display_name = config->display_name;
   self->names_data = config->names_data;
+  self->pictures = config->pictures ? g_object_ref(config->pictures) : NULL;
   g_signal_connect_object(room, "notify", G_CALLBACK(sync_all), self, G_CONNECT_SWAPPED);
   g_signal_connect_object(room, "group-changed", G_CALLBACK(sync_all), self, G_CONNECT_SWAPPED);
   g_signal_connect_object(self->service, "items-changed", G_CALLBACK(on_rooms_changed), self, 0);
@@ -918,6 +925,7 @@ gh_group_info_dialog_dispose(GObject *object)
     g_hash_table_remove_all(self->pending);
   gtk_widget_dispose_template(GTK_WIDGET(object), GH_TYPE_GROUP_INFO_DIALOG);
   g_clear_object(&self->room);
+  g_clear_object(&self->pictures);
   G_OBJECT_CLASS(gh_group_info_dialog_parent_class)->dispose(object);
 }
 

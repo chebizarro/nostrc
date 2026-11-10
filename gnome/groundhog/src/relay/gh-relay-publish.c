@@ -1,6 +1,7 @@
 #include "gh-relay-publish.h"
 #include "gh-diagnostics.h"
 #include "gh-relay-scope.h"
+#include "gh-relay-deny-policy.h"
 
 #include <gio/gio.h>
 #include <nostr-event.h>
@@ -54,7 +55,15 @@ struct _GhRelayPublish {
   gboolean started;
   gboolean cancelled;
   gboolean completed;
+  gboolean signer_control;
 };
+
+void gh_relay_publish_set_signer_control(GhRelayPublish *publish)
+{
+  g_return_if_fail(publish && !publish->started);
+  publish->signer_control = TRUE;
+}
+gboolean gh_relay_publish_is_signer_control(const GhRelayPublish *publish) { return publish->signer_control; }
 
 /* gh_relay_publish_new()'s transport (gh_relay_publish_set_default_transport()). */
 static GMutex default_lock;
@@ -476,6 +485,7 @@ finish_endpoint(GhRelayPublish *publish, GhPublishEndpoint *endpoint,
                                   GH_DIAGNOSTIC_EVENT_CONNECT_FAILED,
                                   GH_DIAGNOSTIC_RESULT_RETRY);
     break;
+  case GH_RELAY_PUBLISH_BLOCKED_BY_LOCAL_POLICY: publish->summary.blocked_by_local_policy++; break;
   case GH_RELAY_PUBLISH_PENDING:
   case GH_RELAY_PUBLISH_CANCELLED: g_assert_not_reached();
   }
@@ -575,7 +585,10 @@ on_auth_signed(gpointer owner, const gchar *signed_json, const gchar *event_id,
   g_strlcpy(endpoint->auth_event_id, event_id, sizeof endpoint->auth_event_id);
   if (!publish->auth_transport.send_auth(endpoint->handle, signed_json,
                                          publish->transport_data, &send_error)) {
-    fail_auth(publish, endpoint, send_error ? send_error->message : "AUTH not sent");
+    if (g_error_matches(send_error, GH_RELAY_DENY_ERROR, 1))
+      gh_relay_publish_blocked(publish, endpoint->url);
+    else
+      fail_auth(publish, endpoint, send_error ? send_error->message : "AUTH not sent");
     return;
   }
   /* The relay's turn again: its OK for the AUTH, then for the re-sent EVENT. */
@@ -658,6 +671,10 @@ open_endpoint(GhRelayPublish *publish, GhPublishEndpoint *endpoint)
                                             publish->event_json,
                                             publish->transport_data, &error);
   if (!handle) {
+    if (g_error_matches(error, GH_RELAY_DENY_ERROR, 1)) {
+      gh_relay_publish_blocked(publish, endpoint->url);
+      return;
+    }
     if (maybe_retry(publish, endpoint))
       return;
     finish_endpoint(publish, endpoint, GH_RELAY_PUBLISH_CONNECTION_FAILED,
@@ -736,7 +753,9 @@ gh_relay_publish_ok(GhRelayPublish *publish, const gchar *url,
     g_autoptr(GError) error = NULL;
     if (!publish->auth_transport.resend(endpoint->handle, publish->transport_data,
                                         &error))
-      finish_endpoint(publish, endpoint, GH_RELAY_PUBLISH_CONNECTION_FAILED,
+      finish_endpoint(publish, endpoint,
+                      g_error_matches(error, GH_RELAY_DENY_ERROR, 1) ?
+                        GH_RELAY_PUBLISH_BLOCKED_BY_LOCAL_POLICY : GH_RELAY_PUBLISH_CONNECTION_FAILED,
                       GH_RELAY_OK_PREFIX_NONE,
                       error ? error->message : "EVENT re-send failed");
     return;
@@ -781,6 +800,15 @@ gh_relay_publish_failed(GhRelayPublish *publish, const gchar *url,
     finish_endpoint(publish, endpoint, GH_RELAY_PUBLISH_CONNECTION_FAILED,
                     GH_RELAY_OK_PREFIX_NONE,
                     detail ? detail : "relay connection failed");
+}
+
+void
+gh_relay_publish_blocked(GhRelayPublish *publish, const gchar *url)
+{
+  GhPublishEndpoint *endpoint = pending_endpoint(publish, url);
+  if (endpoint)
+    finish_endpoint(publish, endpoint, GH_RELAY_PUBLISH_BLOCKED_BY_LOCAL_POLICY,
+                    GH_RELAY_OK_PREFIX_NONE, GH_RELAY_DENY_MESSAGE);
 }
 
 void

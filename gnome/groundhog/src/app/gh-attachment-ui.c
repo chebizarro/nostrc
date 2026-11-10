@@ -215,8 +215,14 @@ update_can_attach(GhAttachmentUi *ui)
 static GStrv
 servers(GhAttachmentUi *ui)
 {
-  GStrv list = ui->settings ? g_settings_get_strv(ui->settings, "blossom-servers") : NULL;
-  return list ? list : g_new0(gchar *, 1);
+  GhBlossomClient *client = gh_attachments_get_client(ui->attachments);
+  g_auto(GStrv) list = client ? gh_blossom_client_dup_account_servers(client) : NULL;
+  g_autoptr(GStrvBuilder) usable = g_strv_builder_new();
+  for (guint i = 0; list && list[i]; i++) {
+    g_autofree gchar *url = gh_blossom_client_normalize_server(list[i], NULL);
+    if (url) g_strv_builder_add(usable, url);
+  }
+  return g_strv_builder_end(usable);
 }
 
 static GStrv
@@ -531,9 +537,9 @@ on_sheet_server(GhAttachmentSheet *sheet, const gchar *text, GtkWidget *window)
     gh_attachment_sheet_show_servers(sheet, error->message);
     return;
   }
-  if (list && (!ui->settings ||
-               !g_settings_set_strv(ui->settings, "blossom-servers", (const gchar *const *)list))) {
-    gh_attachment_sheet_show_servers(sheet, _("This setting can't be changed"));
+  if (list && !gh_blossom_client_save_servers(gh_attachments_get_client(ui->attachments),
+                                              (const gchar *const *)list, &error)) {
+    gh_attachment_sheet_show_servers(sheet, error ? error->message : _("This setting can't be changed"));
     return;
   }
   /* The user selected this host for this offer. Persistence is for future

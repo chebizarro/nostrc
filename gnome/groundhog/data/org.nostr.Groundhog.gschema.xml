@@ -65,7 +65,7 @@
     <key name="load-profile-pictures" type="b">
       <default>false</default>
       <summary>Load profile pictures</summary>
-      <description>Off by default: ask before each requested item. An explicit allow can remember consent only for the open conversation, until you leave it. Turning this off revokes that consent and cancels pending loads. Turning it on alone does not grant consent or fetch anything. Web hosts learn your IP address unless you use Tor. Attachments and NIP-05 lookups always need their own action.</description>
+      <description>Off by default: nothing is fetched. On: the pictures of accounts you follow and of your own accounts load without asking (your follow list is read from your discovery and write relays only while this is on); anyone else needs an explicit allow, remembered per contact in your encrypted storage. Turning this off revokes every allow and cancels pending loads. Turning it on alone fetches nothing for anyone else. Web hosts learn your IP address unless you use Tor. Attachments and NIP-05 lookups always need their own action.</description>
     </key>
 
     <!-- Privacy / Conversations -->

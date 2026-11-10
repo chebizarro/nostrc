@@ -4,6 +4,7 @@
  * spins the main context until a condition holds; nothing sleeps. */
 #include "gh-issue-uploader.h"
 #include "blossom-fixture.h"
+#include "../media/server-source-fixture.h"
 #include "socks5-fixture.h"
 #include "../gh-test-port.h"
 
@@ -118,6 +119,7 @@ fixture_up(Fixture *f, const gchar *mode)
   g_settings_set_strv(f->settings, "blossom-servers", servers);
   f->http = gh_net_http_new(f->settings);
   f->client = gh_blossom_client_new(f->settings, f->http);
+  gh_test_client_server_source(f->client, f->settings);
   /* The fixture is on loopback, which a public issue's server may not be. */
   gh_blossom_client_set_allow_private_hosts(f->client, TRUE);
 }

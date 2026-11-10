@@ -59,6 +59,7 @@
 #include "wire-relay.h"
 #if GROUNDHOG_TEST_ATTACHMENTS
 #include "blossom-fixture.h"
+#include "../media/server-source-fixture.h"
 #include "gh-attachment.h"
 #include "gh-store-media.h"
 #endif
@@ -2183,6 +2184,8 @@ test_at5_attachments(void)
   GhNetHttp *bob_http = gh_net_http_new(w.bob.settings);
   GhBlossomClient *alice_media = gh_blossom_client_new(w.alice.settings, alice_http);
   GhBlossomClient *bob_media = gh_blossom_client_new(w.bob.settings, bob_http);
+  gh_test_client_server_source(alice_media, w.alice.settings);
+  gh_test_client_server_source(bob_media, w.bob.settings);
   gh_blossom_client_set_allow_private_hosts(bob_media, TRUE); /* the loopback fixture */
 
   const gchar *canary = world_canary(&w, "at5-file", FALSE);

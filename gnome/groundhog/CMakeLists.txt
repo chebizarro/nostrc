@@ -323,7 +323,7 @@ if (TARGET nostr_gobject AND TARGET nostr)
     src/relay/gh-relay-scope.c src/relay/gh-relay-gnostr.c
     src/relay/gh-relay-publish.c src/relay/gh-relay-publish-gnostr.c
     src/relay/gh-relay-auth.c src/relay/gh-relay-gnostr-write.c
-    src/relay/gh-relay-guard.c)
+    src/relay/gh-relay-guard.c src/relay/gh-relay-deny-policy.c)
   target_include_directories(groundhog-relay PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/relay)
   target_link_libraries(groundhog-relay PUBLIC nostr_gobject nostr groundhog-diagnostics)
@@ -785,6 +785,18 @@ if (BUILD_TESTING AND TARGET groundhog-account AND EXISTS ${GROUNDHOG_GNOSTR_SCH
     add_dependencies(test-groundhog-conversation-list groundhog-test-schemas)
     add_test(NAME groundhog-conversation-list COMMAND test-groundhog-conversation-list)
     set_tests_properties(groundhog-conversation-list PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60
+      ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
+    # The profile-picture policy (plan groundhog-social-lists §3.6, D2): the
+    # master switch off fetches nothing on any surface, follow removal and the
+    # hide seam revoke at once, a same-URI stale completion is ignored, two
+    # windows revoke together from the preference. Recording HTTP transport,
+    # fake consent and policy; no display.
+    add_executable(test-groundhog-picture-cache tests/ui/test_picture_cache.c)
+    target_link_libraries(test-groundhog-picture-cache PRIVATE groundhog-conversation-ui)
+    target_compile_options(test-groundhog-picture-cache PRIVATE -Wall -Wextra -Werror)
+    add_dependencies(test-groundhog-picture-cache groundhog-test-schemas)
+    add_test(NAME groundhog-picture-cache COMMAND test-groundhog-picture-cache)
+    set_tests_properties(groundhog-picture-cache PROPERTIES TIMEOUT 60
       ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
   endif()
   # --- end G11 ---
@@ -1602,7 +1614,7 @@ target_compile_options(groundhog-lists-ui PRIVATE -Wall -Wextra -Werror)
 add_library(groundhog-preferences STATIC src/ui/gh-preferences-dialog.c
   src/ui/gh-agents-page.c)
 target_include_directories(groundhog-preferences PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/ui)
-target_link_libraries(groundhog-preferences PUBLIC groundhog-ui groundhog-diagnostics groundhog-lists-ui)
+target_link_libraries(groundhog-preferences PUBLIC groundhog-ui groundhog-diagnostics groundhog-lists-ui groundhog-relay)
 target_compile_options(groundhog-preferences PRIVATE -Wall -Wextra -Werror)
 target_link_libraries(groundhog PRIVATE groundhog-preferences)
 if (BUILD_TESTING)
@@ -2771,6 +2783,7 @@ if (TARGET groundhog-net AND TARGET groundhog-relay AND NOT GROUNDHOG_WITHOUT_TO
     # that must never be dialled, and a GResolver that records every local DNS
     # lookup (there must be none for a relay or NIP-05 host in Tor mode).
     add_executable(test-groundhog-net tests/net/test_relay_soup.c tests/net/socks5-fixture.c)
+    target_link_libraries(test-groundhog-net PRIVATE groundhog-nip46-session)
     target_include_directories(test-groundhog-net PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/net ${CMAKE_CURRENT_SOURCE_DIR}/tests/relay)
     target_link_libraries(test-groundhog-net PRIVATE groundhog-net-relay)
@@ -2859,7 +2872,7 @@ endif()
 # must never dial.
 if (BUILD_TESTING AND TARGET groundhog-relay AND TARGET groundhog-test-schemas)
   add_executable(test-groundhog-relay-guard tests/relay/test_relay_guard.c)
-  target_link_libraries(test-groundhog-relay-guard PRIVATE groundhog-relay)
+  target_link_libraries(test-groundhog-relay-guard PRIVATE groundhog-relay groundhog-nip46-session)
   target_compile_options(test-groundhog-relay-guard PRIVATE -Wall -Wextra -Werror)
   add_dependencies(test-groundhog-relay-guard groundhog-test-schemas)
   add_test(NAME groundhog-relay-guard COMMAND test-groundhog-relay-guard)
@@ -3746,19 +3759,45 @@ foreach(_groundhog_target IN LISTS _groundhog_targets)
   endif()
 endforeach()
 
-# Stage 3: account-local social storage. No transport/signer adapters are linked.
-if(TARGET groundhog-account-store)
+# Account-local social storage is also consumed by MLS without the UI owner.
+if(TARGET groundhog-store AND TARGET nostr_gobject)
   add_library(groundhog-store-social STATIC src/store/gh-store-social.c)
   target_link_libraries(groundhog-store-social PUBLIC groundhog-store nostr_gobject)
   target_include_directories(groundhog-store-social PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/store)
+  # Instrumented fixtures compile these production sources directly too.
+  get_property(_social_consumers DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+  foreach(_consumer IN LISTS _social_consumers)
+    get_target_property(_sources ${_consumer} SOURCES)
+    if("src/mls/gh-mls-service.c" IN_LIST _sources)
+      target_link_libraries(${_consumer} PUBLIC groundhog-store-social)
+    endif()
+  endforeach()
   target_compile_options(groundhog-store-social PRIVATE -Wall -Wextra -Werror)
+endif()
+if(TARGET groundhog-account-store)
   add_library(groundhog-social-lists STATIC src/app/gh-social-lists.c src/app/gh-list-adapter.c)
-  target_link_libraries(groundhog-social-lists PUBLIC groundhog-store-social groundhog-account-store)
+  target_link_libraries(groundhog-social-lists PUBLIC groundhog-store-social groundhog-account-store
+    groundhog-relay groundhog-auth-policy groundhog-account-relays)
+  foreach(_group_target groundhog-nip29-service test-groundhog-nip29-service test-groundhog-nip29-group-list)
+    if(TARGET ${_group_target})
+      target_link_libraries(${_group_target} PUBLIC groundhog-social-lists)
+    endif()
+  endforeach()
   target_compile_options(groundhog-social-lists PRIVATE -Wall -Wextra -Werror)
   add_library(groundhog-social-lists-backend STATIC src/app/gh-social-lists-backend.c src/ui/gh-hide-account.c)
   target_link_libraries(groundhog-social-lists-backend PUBLIC groundhog-social-lists groundhog-lists-ui)
   target_compile_options(groundhog-social-lists-backend PRIVATE -Wall -Wextra -Werror)
   target_link_libraries(groundhog PRIVATE groundhog-social-lists-backend)
+  if(TARGET test-groundhog-preferences)
+    target_link_libraries(test-groundhog-preferences PRIVATE groundhog-social-lists-backend)
+    groundhog_store_link_sqlcipher_first(test-groundhog-preferences)
+  endif()
+  if(TARGET test-groundhog-blossom)
+    target_link_libraries(test-groundhog-blossom PRIVATE groundhog-social-lists)
+  endif()
+  if(TARGET test-groundhog-attachment-ui)
+    target_link_libraries(test-groundhog-attachment-ui PRIVATE groundhog-social-lists-backend)
+  endif()
   if(TARGET test-groundhog-account-store)
     target_link_libraries(test-groundhog-account-store PRIVATE groundhog-social-lists)
   endif()
@@ -3776,6 +3815,19 @@ if(TARGET groundhog-account-store)
       set_tests_properties(groundhog-${name} PROPERTIES TIMEOUT 120
         ENVIRONMENT "G_DEBUG=fatal-criticals;GSETTINGS_BACKEND=memory;GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS}")
     endforeach()
+    add_executable(test-groundhog-social-sync tests/app/test_social_sync.c)
+    target_include_directories(test-groundhog-social-sync PRIVATE ${CMAKE_SOURCE_DIR}/tests/common
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/app)
+    target_link_libraries(test-groundhog-social-sync PRIVATE groundhog-social-lists-backend groundhog-preferences nostrc-test-bus)
+    target_sources(test-groundhog-social-sync PRIVATE ${GROUNDHOG_RESOURCE_C})
+    target_compile_options(test-groundhog-social-sync PRIVATE -Wall -Wextra -Werror)
+    groundhog_store_link_sqlcipher_first(test-groundhog-social-sync)
+    add_dependencies(test-groundhog-social-sync groundhog-test-schemas)
+    add_test(NAME groundhog-social-sync COMMAND test-groundhog-social-sync)
+    add_test(NAME groundhog-social-sync-gui COMMAND test-groundhog-social-sync --gui)
+    set_tests_properties(groundhog-social-sync-gui PROPERTIES SKIP_RETURN_CODE 77)
+    set_tests_properties(groundhog-social-sync groundhog-social-sync-gui PROPERTIES TIMEOUT 120
+      ENVIRONMENT "G_DEBUG=fatal-criticals;GSETTINGS_BACKEND=memory;GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS}")
     target_sources(test-groundhog-lists-ui PRIVATE ${GROUNDHOG_RESOURCE_C})
     target_link_libraries(test-groundhog-lists-ui PRIVATE groundhog-social-lists-backend groundhog-preferences)
     target_include_directories(test-groundhog-lists-ui PRIVATE ${CMAKE_SOURCE_DIR}/tests/common)
@@ -3793,6 +3845,11 @@ if(TARGET groundhog-store AND TARGET groundhog-conversations)
   pkg_check_modules(GROUNDHOG_POLICY_JSON REQUIRED IMPORTED_TARGET jansson)
   target_link_libraries(groundhog-conversations PUBLIC groundhog-store PkgConfig::GROUNDHOG_POLICY_JSON)
   if(BUILD_TESTING AND TARGET groundhog-store-conversations)
+    if(TARGET test-groundhog-picture-cache AND TARGET groundhog-social-lists)
+      target_link_libraries(test-groundhog-picture-cache PRIVATE groundhog-social-lists)
+      target_compile_definitions(test-groundhog-picture-cache PRIVATE GH_TEST_SOCIAL_POLICY=1)
+      groundhog_store_link_sqlcipher_first(test-groundhog-picture-cache)
+    endif()
     foreach(consumer test-groundhog-dm-inbox test-groundhog-nip29-service)
       if(TARGET ${consumer})
         target_link_libraries(${consumer} PRIVATE groundhog-store-conversations)

@@ -44,6 +44,7 @@
 #include "gh-contact-directory.h"
 #include "gh-conversation-list.h"
 #include "gh-conversation-view.h"
+#include "gh-display-name.h"
 #include "gh-new-message-page.h"
 #include "gh-recipient.h"
 #include "gh-requests-view.h"
@@ -657,6 +658,57 @@ test_pt8_until_accept(void)
   fixture_down(&f);
 }
 
+/* ---- /privacy/avatars/followed-request-quarantine (D3, PD-8 as amended) ------------- */
+
+/* A request from a sender the account follows, with profile pictures on: its
+ * kind 0 is asked for alone, soon, on the discovery relays, and the cached
+ * name is shown; the room stays a request (not accepted, persisted as such),
+ * nobody else's request is ever asked for, and the switch off hides the
+ * name again. */
+static void
+test_followed_request_quarantine(void)
+{
+  Fixture f;
+  fixture_up(&f, TRUE);
+  const Person *x = &people[6], *y = &people[7];
+  g_settings_set_boolean(f.settings, "load-profile-pictures", TRUE);
+  deliver(&f, x, FALSE, T0 - 300, "followed", NULL);
+  deliver(&f, y, FALSE, T0 - 300, "stranger", NULL);
+  const gchar *follows[] = { x->pk, NULL };
+  gh_contact_directory_set_follows(f.dir, follows);
+  g_assert_true(gh_contact_directory_is_followed(f.dir, x->pk));
+  g_assert_false(gh_contact_directory_is_accepted(f.dir, x->pk));
+  /* The single lookup, within a minute. */
+  gint64 next = gh_clock_fake_get_next_deadline(f.clock);
+  g_assert_cmpint(next, >=, 0);
+  gh_clock_fake_advance(f.clock, MAX(next - gh_clock_get_monotonic_time(f.clock), 0));
+  drain();
+  g_assert_cmpuint(reqs_naming(&f.rec, x->pk, TRUE), ==, 2); /* both discovery relays */
+  g_assert_cmpuint(reqs_naming(&f.rec, y->pk, FALSE), ==, 0);
+  for (guint i = 0; i < f.rec.reqs->len; i++)
+    g_assert_cmpuint(((Req *)g_ptr_array_index(f.rec.reqs, i))->authors->len, ==, 1);
+  g_autofree gchar *kind0 = signed_by(x->sk, 0, T0 - 50, NULL, "{\"name\":\"Xavier\"}");
+  answer_all(&f.rec, kind0);
+  drain();
+  g_assert_cmpstr(gh_contact_directory_get_display_name(f.dir, x->pk), ==, "Xavier");
+  /* Quarantined all the same. */
+  g_assert_true(gh_conversation_get_is_request(room_of(&f, x)));
+  g_assert_false(gh_contact_directory_is_accepted(f.dir, x->pk));
+  run_directory_for(&f, 2 * 86400);
+  g_assert_true(gh_conversation_get_is_request(room_of(&f, x)));
+  g_assert_cmpuint(reqs_naming(&f.rec, y->pk, FALSE), ==, 0);
+  reopen(&f);
+  g_assert_true(gh_conversation_get_is_request(room_of(&f, x)));
+  /* The switch off: the name goes, and the lookups stop. */
+  g_settings_set_boolean(f.settings, "load-profile-pictures", FALSE);
+  g_assert_null(gh_contact_directory_get_display_name(f.dir, x->pk));
+  guint before = f.rec.reqs->len;
+  run_directory_for(&f, 2 * 86400);
+  for (guint i = before; i < f.rec.reqs->len; i++)
+    g_assert_false(req_asks(g_ptr_array_index(f.rec.reqs, i), x->pk));
+  fixture_down(&f);
+}
+
 /* ---- GUI helpers ---------------------------------------------------------------------- */
 
 static gpointer
@@ -937,6 +989,90 @@ test_gui_pt8_accept(void)
   /* Persisted by the delegate. */
   reopen(&f);
   g_assert_false(gh_conversation_get_is_request(room_of(&f, x)));
+  fixture_down(&f);
+}
+
+/* ---- GUI: a followed sender's request (D3) --------------------------------------- */
+
+static gboolean
+dir_followed(gpointer data, const gchar *pubkey)
+{
+  return gh_contact_directory_is_followed(data, pubkey);
+}
+
+static const gchar *
+dir_resolver(const gchar *pubkey, gpointer data)
+{
+  return gh_contact_directory_get_display_name(data, pubkey);
+}
+
+static void
+dir_profile_changed(GObject *directory, const gchar *pubkey, gpointer data)
+{
+  (void)directory; (void)data;
+  gh_display_name_changed(pubkey);
+}
+
+/* The Message Requests page for a sender the account follows, with profile
+ * pictures on: "You follow this account", the cached name as its title
+ * once the single soon lookup answers, the privacy caption saying so, and
+ * still a request with Accept the way in; the switch off takes the label
+ * and the name away. Wired as gh-app-services.c wires it: the directory
+ * names people and answers the window's picture policy. */
+static void
+test_gui_followed_request(void)
+{
+  Fixture f;
+  fixture_up(&f, TRUE);
+  const Person *x = &people[8];
+  g_settings_set_boolean(f.settings, "load-profile-pictures", TRUE);
+  deliver(&f, x, FALSE, T0 - 300, "hello", NULL);
+  attach_window(&f, TRUE);
+  gh_display_name_set_resolver(dir_resolver, f.dir);
+  g_signal_connect(f.dir, "profile-changed", G_CALLBACK(dir_profile_changed), NULL);
+  static const GhPicturePolicy policy = { dir_followed, NULL };
+  gh_conversation_list_set_picture_policy(f.window, &policy, f.dir);
+  GhRequestsView *view = requests_view(&f);
+  g_assert_true(gh_window_open_item(f.window, room_of(&f, x)));
+  GtkWidget *follow = template_child(view, GH_TYPE_REQUESTS_VIEW, "follow_label");
+  g_assert_false(gtk_widget_get_visible(follow));
+  g_autofree gchar *short_npub = gh_recipient_npub_short(x->pk);
+  g_assert_cmpstr(label_text(view, GH_TYPE_REQUESTS_VIEW, "title_label"), ==, short_npub);
+
+  const gchar *follows[] = { x->pk, NULL };
+  gh_contact_directory_set_follows(f.dir, follows);
+  gh_conversation_list_picture_policy_changed(f.window);
+  drain();
+  g_assert_true(gtk_widget_get_visible(follow));
+  g_assert_cmpstr(gtk_label_get_text(GTK_LABEL(follow)), ==, "You follow this account");
+  /* Its kind 0, alone, soon; then the name titles the page. */
+  gint64 next = gh_clock_fake_get_next_deadline(f.clock);
+  g_assert_cmpint(next, >=, 0);
+  gh_clock_fake_advance(f.clock, MAX(next - gh_clock_get_monotonic_time(f.clock), 0));
+  drain();
+  g_assert_cmpuint(reqs_naming(&f.rec, x->pk, TRUE), ==, 2);
+  g_autofree gchar *kind0 = signed_by(x->sk, 0, T0 - 50, NULL, "{\"name\":\"Xavier\"}");
+  answer_all(&f.rec, kind0);
+  drain();
+  g_assert_cmpstr(label_text(view, GH_TYPE_REQUESTS_VIEW, "title_label"), ==, "Xavier");
+  g_assert_nonnull(strstr(label_text(view, GH_TYPE_REQUESTS_VIEW, "privacy_label"), "follow"));
+  g_autofree gchar *grouped = gh_recipient_npub_grouped(x->pk);
+  g_assert_cmpstr(label_text(view, GH_TYPE_REQUESTS_VIEW, "npub_label"), ==, grouped);
+  /* Still a request, on the Requests page, Accept the way in. */
+  g_assert_true(gh_conversation_get_is_request(room_of(&f, x)));
+  g_assert_false(gh_contact_directory_is_accepted(f.dir, x->pk));
+  g_assert_true(gh_requests_view_get_request(view) == room_of(&f, x));
+  g_assert_cmpstr(gtk_stack_get_visible_child_name(
+    gh_content_page_get_stack(gh_window_get_content(f.window))), ==, "requests");
+  g_assert_true(gtk_widget_get_sensitive(template_child(view, GH_TYPE_REQUESTS_VIEW, "accept_button")));
+  /* The switch off: the label and the name go. */
+  g_settings_set_boolean(f.settings, "load-profile-pictures", FALSE);
+  drain();
+  g_assert_false(gtk_widget_get_visible(follow));
+  g_assert_cmpstr(label_text(view, GH_TYPE_REQUESTS_VIEW, "title_label"), ==, short_npub);
+  g_assert_null(strstr(label_text(view, GH_TYPE_REQUESTS_VIEW, "privacy_label"), "follow"));
+  g_signal_handlers_disconnect_by_func(f.dir, dir_profile_changed, NULL);
+  gh_display_name_set_resolver(NULL, NULL);
   fixture_down(&f);
 }
 
@@ -1904,6 +2040,7 @@ main(int argc, char **argv)
     g_test_add_func("/groundhog/requests/gui/without-storage", test_gui_requests_without_storage);
     g_test_add_func("/groundhog/requests/gui/hide-account", test_gui_hide_account);
     g_test_add_func("/groundhog/requests/gui/pt8-accept", test_gui_pt8_accept);
+    g_test_add_func("/groundhog/requests/gui/followed-request", test_gui_followed_request);
     g_test_add_func("/groundhog/requests/gui/new-message-consent", test_gui_new_message_consent);
     g_test_add_func("/groundhog/requests/gui/new-message-limit", test_gui_new_message_limit);
     g_test_add_func("/groundhog/requests/gui/new-message-refusals-and-note-to-self",
@@ -1918,6 +2055,8 @@ main(int argc, char **argv)
     g_test_add_func("/groundhog/requests/accept-delete-block-persist",
                     test_accept_delete_block_persist);
     g_test_add_func("/groundhog/requests/pt8-until-accept", test_pt8_until_accept);
+    g_test_add_func("/privacy/avatars/followed-request-quarantine",
+                    test_followed_request_quarantine);
     g_test_add_func("/groundhog/requests/replayed-self-copy-keeps-block",
                     test_replayed_self_copy_keeps_block);
   }

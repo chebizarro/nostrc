@@ -32,6 +32,7 @@
 #include "nostrc-test-gdk-frame.h"
 #include "gh-group-copy.h"
 #include "gh-group-info-dialog.h"
+#include "test-avatar-cache.h"
 #include "gh-group-join-page.h"
 #include "gh-group-restore-dialog.h"
 #include "gh-group-ui.h"
@@ -1425,7 +1426,8 @@ test_gui_group_info(void)
   gh_test_spin_until(admins_known, admin);
   gh_test_spin_until(admins_known, member);
   GtkWindow *window = test_window();
-  GhGroupInfoConfig config = { .service = f.service, .display_name = bob_name };
+  g_autoptr(GhPictureCache) pictures = gh_test_avatar_cache(hex_bob);
+  GhGroupInfoConfig config = { .service = f.service, .display_name = bob_name, .pictures = pictures };
 
   /* The admin (no role policy: the relay decides). */
   GhGroupInfoDialog *dialog = g_object_ref_sink(gh_group_info_dialog_new(admin, &config));
@@ -1450,6 +1452,20 @@ test_gui_group_info(void)
   GtkWidget *bob = member_row(GTK_WIDGET(dialog), "<b>Bob</b>");
   g_assert_true(visible_of(bob, g_type_from_name("GhGroupMemberRow"), "menu_button"));
   g_assert_true(gtk_widget_is_sensitive(bob));
+  AdwAvatar *portrait = gh_test_avatar_with_picture(bob,
+    GDK_PAINTABLE(gh_picture_cache_get_for(pictures, hex_bob)));
+  g_assert_nonnull(portrait);
+  gboolean hidden = TRUE;
+  const GhPicturePolicy picture_policy = { .is_hidden = gh_test_avatar_hidden };
+  gh_picture_cache_set_policy(pictures, &picture_policy, &hidden);
+  g_assert_null(adw_avatar_get_custom_image(portrait));
+  hidden = FALSE;
+  gh_picture_cache_policy_changed(pictures, hex_bob);
+  while (gh_picture_cache_is_loading(pictures, "https://pictures.test.invalid/avatar.png"))
+    g_main_context_iteration(NULL, TRUE);
+  g_assert_nonnull(adw_avatar_get_custom_image(portrait));
+  gh_picture_cache_set_master(pictures, FALSE);
+  g_assert_null(adw_avatar_get_custom_image(portrait));
 
   /* Invite code: sent, accepted by the relay, shown as a link. */
   g_assert_true(gtk_widget_activate_action(GTK_WIDGET(dialog), "group.create-invite", NULL));
@@ -1466,7 +1482,7 @@ test_gui_group_info(void)
   adw_dialog_force_close(ADW_DIALOG(dialog));
   g_object_unref(dialog);
 
-  /* A member: nothing to manage, no member menus. */
+  /* A member: no admin operations; Hide Account remains a distinct local action. */
   dialog = g_object_ref_sink(gh_group_info_dialog_new(member, &config));
   gboolean closed = FALSE;
   g_signal_connect(dialog, "closed", G_CALLBACK(on_closed), &closed);
@@ -1476,7 +1492,7 @@ test_gui_group_info(void)
   g_assert_false(visible_of(dialog, GH_TYPE_GROUP_INFO_DIALOG, "add_member_button"));
   bob = member_row(GTK_WIDGET(dialog), "<b>Bob</b>");
   g_assert_nonnull(bob);
-  g_assert_false(visible_of(bob, g_type_from_name("GhGroupMemberRow"), "menu_button"));
+  g_assert_true(visible_of(bob, g_type_from_name("GhGroupMemberRow"), "menu_button"));
   g_assert_false(gtk_widget_activate_action(GTK_WIDGET(dialog), "group.edit", NULL) &&
                  gtk_widget_get_visible(GTK_WIDGET(child_of(dialog, GH_TYPE_GROUP_INFO_DIALOG,
                                                             "edit_row"))));

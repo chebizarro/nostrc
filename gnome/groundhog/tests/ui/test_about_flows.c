@@ -15,6 +15,7 @@
 #include "../relay/wire-relay.h"
 #if GH_ISSUE_UPLOADS
 #include "blossom-fixture.h"
+#include "../media/server-source-fixture.h"
 #endif
 
 #define OWNER "cdee943cbb19c51ab847a66d5d774373aa9f63d287246bb59b0827fa5e637400"
@@ -319,6 +320,7 @@ test_issue_consent(gconstpointer data)
     g_settings_set_strv(settings, "blossom-servers", servers);
     http = gh_net_http_new(settings);
     client = gh_blossom_client_new(settings, http);
+    gh_test_client_server_source(client, settings);
     blossom = client;
   }
 #endif
@@ -759,6 +761,7 @@ test_issue_lookup(void)
   g_settings_set_strv(settings, "blossom-servers", servers);
   g_autoptr(GhNetHttp) http = gh_net_http_new(settings);
   g_autoptr(GhBlossomClient) client = gh_blossom_client_new(settings, http);
+  gh_test_client_server_source(client, settings);
   gh_blossom_client_set_account_signer(client, pk, never_sign, never_sign_finish, NULL, NULL);
   dialog = gh_issue_dialog_new(accounts, settings, client, NULL, NULL);
   gn_nip34_issue_view_present(dialog, GTK_WIDGET(window));
@@ -897,6 +900,7 @@ test_issue_upload_retry(void)
   g_settings_set_strv(settings, "blossom-servers", servers);
   g_autoptr(GhNetHttp) http = gh_net_http_new(settings);
   g_autoptr(GhBlossomClient) client = gh_blossom_client_new(settings, http);
+  gh_test_client_server_source(client, settings);
   /* The fixture is on loopback, which a public issue's server may not be. */
   gh_blossom_client_set_allow_private_hosts(client, TRUE);
   char *secret = nostr_key_generate_private();

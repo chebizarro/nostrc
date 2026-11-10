@@ -1,5 +1,6 @@
 #include "gh-requests-view.h"
 
+#include "gh-display-name.h"
 #include "gh-recipient.h"
 
 #include <glib/gi18n.h>
@@ -10,10 +11,12 @@ struct _GhRequestsView {
   AdwAvatar *avatar;
   GtkLabel *title_label;
   GtkLabel *npub_label;
+  GtkLabel *follow_label;
   GtkLabel *count_label;
   AdwPreferencesGroup *message_group;
   GtkLabel *subject_label;
   GtkLabel *message_label;
+  GtkLabel *privacy_label;
   GtkButton *block_button;
   GtkButton *hide_button;
   GtkButton *delete_button;
@@ -25,6 +28,9 @@ struct _GhRequestsView {
   gboolean has_backend;
   gpointer backend_data;
   GDestroyNotify backend_destroy;
+  GhRequestsIdentity identity;     /* copied; NULL callbacks: npub only */
+  gpointer identity_data;
+  GDestroyNotify identity_destroy;
   AdwAlertDialog *confirmation;  /* delete_dialog or block_dialog while shown */
   GhConversation *confirm_request; /* the request it was shown for */
 };
@@ -105,11 +111,29 @@ update(GhRequestsView *self)
     return;
   }
   GhConversation *request = self->request;
-  const gchar *title = gh_conversation_get_title(request);
+  /* A followed sender (D3): its cached, cleaned name (the directory shows a
+   * request sender's name only then), the window's picture decision and
+   * the label, for a request from one person. The request stays
+   * quarantined: its room keeps its npub title (PT-8). */
+  const gchar *const *peers = gh_conversation_get_peers(request);
+  const gchar *sender = peers && peers[0] && !peers[1] ? peers[0] : NULL;
+  gboolean followed = sender && self->identity.is_followed &&
+                      self->identity.is_followed(self->identity_data, sender);
+  /* Anyone else keeps the npub title and the neutral avatar, whatever is
+   * cached about them elsewhere (PT-8). */
+  const gchar *name = followed ? gh_display_name_lookup(sender) : NULL;
+  const gchar *title = name ? name : gh_conversation_get_title(request);
   gtk_label_set_text(self->title_label, title);
   adw_avatar_set_text(self->avatar, title);
   g_autofree gchar *npubs = grouped_npubs(request);
   gtk_label_set_text(self->npub_label, npubs);
+  GdkTexture *picture = followed && self->identity.picture
+    ? self->identity.picture(self->identity_data, sender) : NULL;
+  adw_avatar_set_custom_image(self->avatar, picture ? GDK_PAINTABLE(picture) : NULL);
+  gtk_widget_set_visible(GTK_WIDGET(self->follow_label), followed);
+  gtk_label_set_text(self->privacy_label, followed
+    ? _("Because you follow this account, Groundhog looked up its name and picture on your discovery relays. Accepting moves the conversation to your list and lets Groundhog ask for their message relays. Nothing is sent to them until you reply.")
+    : _("Groundhog hasn't looked up who this is. Accepting moves the conversation to your list and lets Groundhog ask your discovery relays for their name and message relays. Nothing is sent to them until you reply."));
 
   guint n = g_list_model_get_n_items(G_LIST_MODEL(request));
   gboolean older = gh_conversation_get_has_older(request);
@@ -129,6 +153,18 @@ update(GhRequestsView *self)
   g_autofree gchar *body = bounded(text);
   gtk_label_set_text(self->message_label, body);
   gtk_stack_set_visible_child_name(self->stack, "request");
+}
+
+/* A cached name arrived or went (the directory, through the app): the
+ * shown request's sender may now be named, or not any more. */
+static void
+on_display_name_changed(GhRequestsView *self, const gchar *pubkey)
+{
+  if (!self->request || !pubkey)
+    return;
+  const gchar *const *peers = gh_conversation_get_peers(self->request);
+  if (peers && g_strv_contains(peers, pubkey))
+    update(self);
 }
 
 static void
@@ -202,6 +238,28 @@ gh_requests_view_set_backend(GhRequestsView *self, const GhRequestsBackend *back
   if (!backend && destroy)
     destroy(data);
   update_actions(self);
+}
+
+void
+gh_requests_view_set_identity(GhRequestsView *self, const GhRequestsIdentity *identity,
+                              gpointer data, GDestroyNotify destroy)
+{
+  g_return_if_fail(GH_IS_REQUESTS_VIEW(self));
+  if (self->identity_destroy)
+    self->identity_destroy(self->identity_data);
+  self->identity = identity ? *identity : (GhRequestsIdentity){ 0 };
+  self->identity_data = identity ? data : NULL;
+  self->identity_destroy = identity ? destroy : NULL;
+  if (!identity && destroy)
+    destroy(data);
+  update(self);
+}
+
+void
+gh_requests_view_refresh(GhRequestsView *self)
+{
+  g_return_if_fail(GH_IS_REQUESTS_VIEW(self));
+  update(self);
 }
 
 AdwAlertDialog *
@@ -347,6 +405,10 @@ gh_requests_view_dispose(GObject *object)
     g_signal_handlers_disconnect_by_data(self->request, self);
   g_clear_object(&self->request);
   gh_requests_view_set_backend(self, NULL, NULL, NULL);
+  if (self->identity_destroy)
+    self->identity_destroy(self->identity_data);
+  self->identity = (GhRequestsIdentity){ 0 };
+  self->identity_destroy = NULL;
   /* stack is both the bin's child and a bound template child: detach it
    * here, or dispose_template would unparent it behind AdwBin's back. */
   adw_bin_set_child(ADW_BIN(self), NULL);
@@ -375,10 +437,12 @@ gh_requests_view_class_init(GhRequestsViewClass *klass)
   gtk_widget_class_bind_template_child(widget_class, GhRequestsView, avatar);
   gtk_widget_class_bind_template_child(widget_class, GhRequestsView, title_label);
   gtk_widget_class_bind_template_child(widget_class, GhRequestsView, npub_label);
+  gtk_widget_class_bind_template_child(widget_class, GhRequestsView, follow_label);
   gtk_widget_class_bind_template_child(widget_class, GhRequestsView, count_label);
   gtk_widget_class_bind_template_child(widget_class, GhRequestsView, message_group);
   gtk_widget_class_bind_template_child(widget_class, GhRequestsView, subject_label);
   gtk_widget_class_bind_template_child(widget_class, GhRequestsView, message_label);
+  gtk_widget_class_bind_template_child(widget_class, GhRequestsView, privacy_label);
   gtk_widget_class_bind_template_child(widget_class, GhRequestsView, block_button);
   gtk_widget_class_bind_template_child(widget_class, GhRequestsView, hide_button);
   gtk_widget_class_bind_template_child(widget_class, GhRequestsView, delete_button);
@@ -398,5 +462,7 @@ gh_requests_view_init(GhRequestsView *self)
   AdwAlertDialog *dialogs[] = { self->delete_dialog, self->block_dialog };
   for (guint i = 0; i < G_N_ELEMENTS(dialogs); i++)
     g_signal_connect(dialogs[i], "response", G_CALLBACK(on_confirmed), self);
+  g_signal_connect_object(gh_display_name_get_notifier(), "changed",
+                          G_CALLBACK(on_display_name_changed), self, G_CONNECT_SWAPPED);
   update(self);
 }

@@ -63,6 +63,8 @@ typedef struct {
   /* Nullable (W25): the window's encrypted-group files; Group Info shows
    * and changes the group picture with it. */
   struct _GhMlsAttachments *files;
+  GObject *server_source; /* optional, referenced: active account destinations */
+  GStrv (*dup_account_servers)(GObject *source);
 } GhMlsUiConfig;
 
 /* After gh_conversation_list_attach(), gh_send_ui_attach() and

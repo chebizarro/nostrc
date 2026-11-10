@@ -2633,6 +2633,15 @@ on_cache_picture_changed(GhPictureCache *cache, const gchar *pubkey, GhConversat
     g_signal_emit(self, signals[SIGNAL_PREVIEW_CHANGED], 0, NULL);
 }
 
+/* The cache's policy changed (the master switch, the follow list, the own
+ * identities, the hide policy): every row asks for its sender again. */
+static void
+on_cache_policy_changed(GhPictureCache *cache, GhConversationView *self)
+{
+  (void)cache;
+  g_signal_emit(self, signals[SIGNAL_PREVIEW_CHANGED], 0, NULL);
+}
+
 void
 gh_conversation_view_set_picture_cache(GhConversationView *self, GObject *cache)
 {
@@ -2641,9 +2650,12 @@ gh_conversation_view_set_picture_cache(GhConversationView *self, GObject *cache)
     g_signal_handlers_disconnect_by_data(self->pictures, self);
   GhPictureCache *pictures = cache ? GH_PICTURE_CACHE(cache) : NULL;
   g_set_object(&self->pictures, pictures);
-  if (self->pictures)
+  if (self->pictures) {
     g_signal_connect_object(self->pictures, "picture-changed",
                             G_CALLBACK(on_cache_picture_changed), self, 0);
+    g_signal_connect_object(self->pictures, "policy-changed",
+                            G_CALLBACK(on_cache_policy_changed), self, 0);
+  }
 }
 
 /* A picture through the shared cache: the texture now, or a fetch with
@@ -2728,10 +2740,9 @@ gh_conversation_view_auto_load(GhConversationView *self, GhMessage *message, GhW
     return;
   g_autofree gchar *sender_key = g_strdup_printf("%u:%s", kind, gh_message_get_sender(message));
   gboolean loaded_already = loaded_texture_for(self, kind, uri) != NULL;
-  /* Your own picture needs no asking (W33, owner): it is allowed once. */
-  if (kind == GH_WEB_PICTURE && self->pictures && gh_message_is_self(message) &&
-      !gh_picture_cache_is_allowed(self->pictures, gh_message_get_sender(message)))
-    gh_picture_cache_allow(self->pictures, gh_message_get_sender(message));
+  /* Your own picture needs no asking (W33, owner), nor does a followed
+   * sender's (D2): the cache's policy says so (gh_picture_cache_set_own,
+   * set_policy); nothing here writes consent for them. */
   gboolean by_cache = kind == GH_WEB_PICTURE && self->pictures &&
                       gh_picture_cache_is_allowed(self->pictures, gh_message_get_sender(message));
   if (!loaded_already && !by_cache && !g_hash_table_contains(self->allowed_senders, sender_key))

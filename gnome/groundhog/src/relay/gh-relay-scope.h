@@ -104,6 +104,10 @@ gh_relay_page_threshold(guint limit)
 }
 
 typedef struct _GhRelayScope GhRelayScope;
+/* Credential-only NIP-46 transport. Internal: set only by GhNip46Session,
+ * before start; never inferred from AUTH mode or relay URL. */
+void gh_relay_scope_set_signer_control(GhRelayScope *scope);
+gboolean gh_relay_scope_is_signer_control(const GhRelayScope *scope);
 
 typedef enum {
   GH_RELAY_NOTICE_EVENT,

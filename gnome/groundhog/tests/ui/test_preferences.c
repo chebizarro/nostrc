@@ -22,6 +22,9 @@
  */
 #include "gh-features.h"
 #include "gh-preferences-dialog.h"
+#include "gh-social-lists-backend.h"
+#include "gh-relay-deny-policy.h"
+#include <nostr-kinds.h>
 #include "gh-qr-code.h"
 #include "gh-window.h"
 
@@ -94,6 +97,8 @@ static const char *const switch_keys[] = {
 typedef struct {
   GSettings *settings;
   GhPreferencesDialog *dialog;
+  GhStore *store;
+  GhSocialLists *social;
   GtkWindow *window; /* only when a case presents the dialog */
 } Fixture;
 
@@ -115,6 +120,14 @@ fixture_setup(Fixture *f, gconstpointer data)
   f->settings = g_settings_new(SCHEMA_ID);
   reset_all(f->settings);
   f->dialog = g_object_ref_sink(gh_preferences_dialog_new(f->settings, GPOINTER_TO_UINT(data)));
+  g_autoptr(GError) error = NULL;
+  f->store = gh_store_open_ephemeral("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", NULL, &error);
+  g_assert_no_error(error);
+  f->social = gh_social_lists_new(NULL);
+  g_assert_true(gh_social_lists_bind_store(f->social, f->store, 1, &error));
+  g_assert_no_error(error);
+  GhListsBackend backend = gh_social_lists_backend(f->social);
+  gh_preferences_dialog_set_social_backend(f->dialog, &backend);
 }
 
 static void
@@ -127,6 +140,9 @@ fixture_teardown(Fixture *f, gconstpointer data)
     drain_idle();
   }
   g_clear_object(&f->dialog);
+  gh_social_lists_close(f->social);
+  g_clear_object(&f->social);
+  gh_store_close(f->store);
   reset_all(f->settings);
   g_clear_object(&f->settings);
 }
@@ -609,9 +625,10 @@ find_tooltip_button(GtkWidget *widget, const char *tooltip)
 }
 
 static void
-assert_strv(GSettings *settings, const char *key, const char *const *want)
+assert_strv(Fixture *f, const char *key, const char *const *want)
 {
-  g_auto(GStrv) have = g_settings_get_strv(settings, key);
+  g_auto(GStrv) have = !strcmp(key, "blossom-servers") ? gh_social_lists_dup_servers(f->social, NULL) :
+    g_settings_get_strv(f->settings, key);
   if (!g_strv_equal((const char *const *)have, want)) {
     g_autofree char *joined = g_strjoinv(" ", have);
     g_error("%s is [%s]", key, joined);
@@ -663,7 +680,7 @@ test_url_lists_bind_both_ways(Fixture *f, gconstpointer data)
     gtk_editable_set_text(GTK_EDITABLE(entry), lc->good_in);
     g_signal_emit_by_name(entry, "apply");
     drain_idle();
-    assert_strv(f->settings, lc->key, (const char *const[]){ lc->good_out, NULL });
+    assert_strv(f, lc->key, (const char *const[]){ lc->good_out, NULL });
     g_assert_cmpstr(gtk_editable_get_text(GTK_EDITABLE(entry)), ==, "");
     g_assert_false(gtk_widget_get_visible(error));
     g_assert_cmpuint(n_rows(list), ==, 1);
@@ -674,7 +691,7 @@ test_url_lists_bind_both_ways(Fixture *f, gconstpointer data)
       gtk_editable_set_text(GTK_EDITABLE(entry), lc->bad[i]);
       g_signal_emit_by_name(entry, "apply");
       drain_idle();
-      assert_strv(f->settings, lc->key, (const char *const[]){ lc->good_out, NULL });
+      assert_strv(f, lc->key, (const char *const[]){ lc->good_out, NULL });
       if (!gtk_widget_get_visible(error))
         g_error("%s accepted \"%s\"", lc->key, lc->bad[i]);
       g_assert_nonnull(gtk_label_get_text(GTK_LABEL(error)));
@@ -686,12 +703,13 @@ test_url_lists_bind_both_ways(Fixture *f, gconstpointer data)
     g_assert_false(gtk_widget_get_visible(error));
     g_signal_emit_by_name(entry, "apply");
     drain_idle();
-    assert_strv(f->settings, lc->key, (const char *const[]){ lc->good_out, lc->second, NULL });
+    assert_strv(f, lc->key, (const char *const[]){ lc->good_out, lc->second, NULL });
     g_assert_cmpuint(n_rows(list), ==, 2);
 
     /* key -> rows */
     const char *const replaced[] = { lc->second, lc->good_out, NULL };
-    g_settings_set_strv(f->settings, lc->key, replaced);
+    if (!strcmp(lc->key, "blossom-servers")) g_assert_true(gh_social_lists_set_servers(f->social, replaced, NULL));
+    else g_settings_set_strv(f->settings, lc->key, replaced);
     drain_idle();
     g_assert_cmpuint(n_rows(list), ==, 2);
     g_assert_cmpstr(row_title(list, 0), ==, lc->second);
@@ -706,7 +724,7 @@ test_url_lists_bind_both_ways(Fixture *f, gconstpointer data)
                                         label);
     g_signal_emit_by_name(remove, "clicked");
     drain_idle();
-    assert_strv(f->settings, lc->key, (const char *const[]){ lc->good_out, NULL });
+    assert_strv(f, lc->key, (const char *const[]){ lc->good_out, NULL });
     g_assert_cmpuint(n_rows(list), ==, 1);
 
     /* At most 16. */
@@ -716,19 +734,58 @@ test_url_lists_bind_both_ways(Fixture *f, gconstpointer data)
       g_strv_builder_add(builder, url);
     }
     g_auto(GStrv) full = g_strv_builder_end(builder);
-    g_settings_set_strv(f->settings, lc->key, (const char *const *)full);
+    if (!strcmp(lc->key, "blossom-servers")) g_assert_true(gh_social_lists_set_servers(f->social, (const char *const *)full, NULL));
+    else g_settings_set_strv(f->settings, lc->key, (const char *const *)full);
     drain_idle();
     g_assert_cmpuint(n_rows(list), ==, 16);
     gtk_editable_set_text(GTK_EDITABLE(entry), lc->second);
     g_signal_emit_by_name(entry, "apply");
     drain_idle();
     g_assert_true(gtk_widget_get_visible(error));
-    g_auto(GStrv) after = g_settings_get_strv(f->settings, lc->key);
+    g_auto(GStrv) after = !strcmp(lc->key, "blossom-servers") ? gh_social_lists_dup_servers(f->social, NULL) :
+      g_settings_get_strv(f->settings, lc->key);
     g_assert_cmpuint(g_strv_length(after), ==, 16);
-    g_settings_reset(f->settings, lc->key);
+    if (!strcmp(lc->key, "blossom-servers")) g_assert_true(gh_social_lists_set_servers(f->social, NULL, NULL));
+    else g_settings_reset(f->settings, lc->key);
     drain_idle();
     g_assert_cmpuint(n_rows(list), ==, 0);
   }
+}
+
+static void
+test_account_url_policy(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  AdwEntryRow *entry = child(f, "blocked_relays_entry");
+  GtkListBox *list = child(f, "blocked_relays_list");
+  const gchar *url = "wss://relay.example.com/private/";
+  gtk_editable_set_text(GTK_EDITABLE(entry), "wss://RELAY.example.com:443/private/");
+  g_signal_emit_by_name(entry, "apply"); drain_idle();
+  g_assert_cmpuint(n_rows(list), ==, 1);
+  g_assert_false(gh_relay_deny_policy_check(1, url, FALSE, NULL));
+  g_assert_true(gh_relay_deny_policy_check(1, "wss://relay.example.com/private", FALSE, NULL));
+  g_assert_true(gh_relay_deny_policy_check(1, "wss://relay.example.com/other", FALSE, NULL));
+  g_autoptr(GNostrListDocument) denied = gh_social_lists_ensure(f->social, NOSTR_KIND_BLOCKED_RELAY_LIST, "", NULL);
+  g_assert_cmpuint(nostr_nip51_document_tag_count(gnostr_list_document_get_codec(denied), TRUE), ==, 1);
+  GtkWidget *remove = find_tooltip_button(GTK_WIDGET(gtk_list_box_get_row_at_index(list, 0)), "Remove");
+  g_signal_emit_by_name(remove, "clicked"); drain_idle();
+  g_assert_true(gh_relay_deny_policy_check(1, url, FALSE, NULL));
+  const gchar *legacy[] = { "https://legacy.example", NULL };
+  g_settings_set_strv(f->settings, "blossom-servers", legacy);
+  drain_idle();
+  g_assert_cmpuint(n_rows(child(f, "blossom_list")), ==, 0); /* no runtime global read */
+  gtk_editable_set_text(GTK_EDITABLE(child(f, "blossom_entry")), "https://account.example");
+  g_signal_emit_by_name(child(f, "blossom_entry"), "apply"); drain_idle();
+  g_auto(GStrv) account = gh_social_lists_dup_servers(f->social, NULL);
+  g_assert_cmpstr(account[0], ==, "https://account.example");
+  g_auto(GStrv) unchanged = g_settings_get_strv(f->settings, "blossom-servers");
+  g_assert_cmpstr(unchanged[0], ==, legacy[0]); /* account edits never mutate rollback input */
+  GhStore *other = gh_store_open_ephemeral("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", NULL, NULL);
+  g_assert_true(gh_social_lists_bind_store(f->social, other, 2, NULL));
+  gtk_editable_set_text(GTK_EDITABLE(entry), url);
+  g_signal_emit_by_name(entry, "apply");
+  g_assert_true(gh_relay_deny_policy_check(2, url, FALSE, NULL)); /* stale editor cannot edit next account */
+  gh_social_lists_close(f->social); gh_store_close(other);
 }
 
 static void
@@ -1738,6 +1795,7 @@ main(int argc, char **argv)
   ADD("tor-hidden-without-g09", test_tor_hidden_without_g09, no_tor);
   ADD("tor-with-g09", test_tor_with_g09, all);
   ADD("url-lists-bind-both-ways", test_url_lists_bind_both_ways, no_tor);
+  ADD("account-relay-denial-and-servers", test_account_url_policy, no_tor);
   ADD("account-rows", test_account_rows, build);
   ADD("key-package-row", test_key_package_row, all);
   ADD("key-package-row-no-feature", test_key_package_row,

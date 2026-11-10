@@ -23,6 +23,12 @@ template $GhListEditorPage : Adw.NavigationPage {
             xalign: 0;
             accessible-role: status;
           }
+          Button publish_list {
+            label: _("_Publish…");
+            use-underline: true;
+            halign: end;
+            visible: false;
+          }
           Adw.PreferencesGroup metadata {
             title: _("List Details");
             Adw.EntryRow title_row { title: _("_Title"); use-underline: true; }
@@ -36,7 +42,7 @@ template $GhListEditorPage : Adw.NavigationPage {
           }
           Adw.PreferencesGroup {
             title: _("Entries");
-            description: _("Select an entry to edit it. Changes stay on this device; nothing is published.");
+            description: _("Changes are saved on this device. Private entries may sync when enabled; public changes need separate approval.");
             ListView entries {
               single-click-activate: true;
               styles ["boxed-list"]
@@ -57,7 +63,7 @@ template $GhListEditorPage : Adw.NavigationPage {
             Adw.EntryRow extra_row { title: _("Additional fields (JSON array)"); text: "[]"; }
             Adw.SwitchRow private_row {
               title: _("Private Entry");
-              subtitle: _("Public entries are included in plain text when exported. Publication always requires separate approval.");
+              subtitle: _("Public entries are included in plain text when exported or published. Public publication needs separate approval.");
               active: true;
             }
             Adw.ExpanderRow {

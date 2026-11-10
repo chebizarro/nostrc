@@ -65,6 +65,9 @@ G_BEGIN_DECLS
  */
 
 typedef struct _GhRelayPublish GhRelayPublish;
+/* Internal credential-only class, set only by GhNip46Session before start. */
+void gh_relay_publish_set_signer_control(GhRelayPublish *publish);
+gboolean gh_relay_publish_is_signer_control(const GhRelayPublish *publish);
 
 typedef enum {
   GH_RELAY_PUBLISH_PENDING = 0,      /* not yet terminal (never in a callback) */
@@ -73,7 +76,8 @@ typedef enum {
   GH_RELAY_PUBLISH_AUTH_REQUIRED,    /* OK false "auth-required:" and no
                                       * successful authenticated re-send */
   GH_RELAY_PUBLISH_CONNECTION_FAILED,
-  GH_RELAY_PUBLISH_CANCELLED         /* only via get_outcome after cancel */
+  GH_RELAY_PUBLISH_CANCELLED,        /* only via get_outcome after cancel */
+  GH_RELAY_PUBLISH_BLOCKED_BY_LOCAL_POLICY
 } GhRelayPublishOutcome;
 
 /* NIP-01 / NIP-42 machine-readable OK message prefix. It is reported for any
@@ -105,6 +109,7 @@ typedef struct {
   guint rejected;
   guint auth_required;
   guint connection_failed;
+  guint blocked_by_local_policy;
   gboolean any_accepted;   /* at least one relay-local OK true */
   gboolean all_failed;     /* no relay accepted the event */
 } GhRelayPublishSummary;
@@ -241,6 +246,7 @@ void gh_relay_publish_ok(GhRelayPublish *publish, const gchar *url,
                          const gchar *message);
 void gh_relay_publish_failed(GhRelayPublish *publish, const gchar *url,
                              const gchar *detail);
+void gh_relay_publish_blocked(GhRelayPublish *publish, const gchar *url);
 /* A NIP-42 challenge on url's connection. */
 void gh_relay_publish_auth_challenge(GhRelayPublish *publish, const gchar *url,
                                      const gchar *challenge);

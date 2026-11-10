@@ -64,6 +64,7 @@ struct _GhRelayScope {
   gchar *isolation;            /* Tor stream isolation label */
   gboolean started;
   gboolean cancelled;
+  gboolean signer_control;
   /* Backfill paging (nostrc-cpwf); page_limit 0: off. */
   guint page_limit;
   guint max_pages;
@@ -270,6 +271,14 @@ gh_relay_scope_send_event(GhRelayScope *scope, const gchar *url,
   return scope->write_transport.send_event(endpoint->handle, signed_event_json,
                                            scope->transport_data, error);
 }
+
+void
+gh_relay_scope_set_signer_control(GhRelayScope *scope)
+{
+  g_return_if_fail(scope && !scope->started);
+  scope->signer_control = TRUE;
+}
+gboolean gh_relay_scope_is_signer_control(const GhRelayScope *scope) { return scope->signer_control; }
 
 void
 gh_relay_scope_set_isolation(GhRelayScope *scope, const gchar *isolation)
@@ -674,6 +683,7 @@ start_page(GhRelayScope *scope, GhEndpoint *endpoint)
                                                          scope->transport_data,
                                                          on_page_update, endpoint);
   page->auth_transport = scope->auth_transport;
+  page->signer_control = scope->signer_control;
   g_free(page->isolation);
   page->isolation = g_strdup(scope->isolation);
   if (scope->signer)

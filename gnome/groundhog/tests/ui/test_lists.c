@@ -125,11 +125,12 @@ static void test_preferences_manager(void)
   gh_preferences_dialog_set_social_backend(prefs, &backend);
   GtkWidget *row = child(GTK_WIDGET(prefs), GH_TYPE_PREFERENCES_DIALOG, "social_sync_row");
   g_assert_false(adw_switch_row_get_active(ADW_SWITCH_ROW(row)));
-  g_assert_false(gtk_widget_get_sensitive(row));
+  g_assert_true(gtk_widget_get_sensitive(row));
   g_assert_true(gtk_widget_get_visible(child(GTK_WIDGET(prefs), GH_TYPE_PREFERENCES_DIALOG, "hidden_group")));
   g_assert_nonnull(child(GTK_WIDGET(prefs), GH_TYPE_PREFERENCES_DIALOG, "blocked_row"));
   g_assert_cmpstr(adw_preferences_row_get_title(ADW_PREFERENCES_ROW(child(GTK_WIDGET(prefs), GH_TYPE_PREFERENCES_DIALOG, "hidden_row"))), ==, "Hidden Accounts and Content");
-  /* Even programmatic activation cannot bypass the store-backed backend. */
+  /* The switch is enabled in S4, but an ephemeral store without an account
+   * signer still cannot opt into network synchronization. */
   adw_switch_row_set_active(ADW_SWITCH_ROW(row), TRUE);
   g_assert_false(adw_switch_row_get_active(ADW_SWITCH_ROW(row)));
   g_assert_false(gh_social_lists_get_sync_enabled(owner));

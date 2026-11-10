@@ -20,9 +20,18 @@ G_BEGIN_DECLS
  * of the account that is not a message request (the conversation model set
  * with gh_contact_directory_set_conversations()). With own_profile enabled,
  * every listed signer identity is also accepted as the owner's own profile.
- * Only accepted contacts are ever refreshed, and only their kind 0 is ever
- * asked for (PT-8): a request's sender is looked up for nothing until it is
- * accepted. Replying to a request is sending, which accepts it.
+ * A contact's kind 0 is asked for and shown only while it is eligible:
+ *
+ *   accepted OR (followed AND surfaced AND load-profile-pictures)
+ *
+ * where followed means listed in the account's follow list
+ * (gh_contact_directory_set_follows(); NIP-02, owner decisions D2/D3) and
+ * surfaced means a peer of any room of the model, requests and group
+ * rosters included. The follow exception grants the kind-0 lookup and its
+ * display only: it never accepts a request, and the whole follow list is
+ * never looked up (PD-12). Otherwise a request's sender is looked up for
+ * nothing until it is accepted (PT-8, PD-8). Replying to a request is
+ * sending, which accepts it.
  *
  * Cache. With the account's encrypted store bound
  * (gh_contact_directory_set_store()), the newest admitted signed event per
@@ -60,8 +69,10 @@ G_BEGIN_DECLS
  * never), in random order, in batches of at most 10 authors on fresh scopes
  * spaced U(10, 120) s apart; the next run is due when the next entry turns
  * stale, plus U(2, 30) min. Accepting a request refreshes that contact alone
- * after U(5, 60) s; a contact that newly appears accepted waits for a run no
- * sooner than U(2, 30) min away. Every delay and draw comes from the GhClock.
+ * after U(5, 60) s, as does a followed sender that newly surfaces (D3: its
+ * request shows its name without waiting for a run); a contact that newly
+ * appears accepted otherwise waits for a run no sooner than U(2, 30) min
+ * away. Every delay and draw comes from the GhClock.
  *
  * Generation. Everything belongs to the active account's generation: a
  * switch cancels every lookup (pending resolves finish with
@@ -101,10 +112,23 @@ gboolean gh_contact_directory_set_store(GhContactDirectory *self, GhStore *store
 /* Failure bound for a silent source, in seconds (default 15, 1..120). */
 void gh_contact_directory_set_deadline(GhContactDirectory *self, guint seconds);
 
-/* Whether pubkey (hex) is an accepted contact of the account. */
+/* The account's followed pubkeys (hex; NULL or empty: none), replacing the
+ * previous set: the follow list as read while load-profile-pictures is on.
+ * Newly eligible surfaced contacts are refreshed alone soon; contacts no
+ * longer eligible stop being shown ("profile-changed" says so). */
+void gh_contact_directory_set_follows(GhContactDirectory *self, const gchar *const *pubkeys);
+/* Whether pubkey (hex) is followed, under load-profile-pictures (off: FALSE). */
+gboolean gh_contact_directory_is_followed(GhContactDirectory *self, const gchar *pubkey);
+/* Peers surfaced outside the conversation model: the joined groups' rosters
+ * (NIP-29 members and admins, MLS members; hex), replacing the previous
+ * set (NULL or empty: none). Surfaced only, never accepted. */
+void gh_contact_directory_set_roster(GhContactDirectory *self, const gchar *const *pubkeys);
+
+/* Whether pubkey (hex) is an accepted contact of the account (following
+ * never makes one). */
 gboolean gh_contact_directory_is_accepted(GhContactDirectory *self, const gchar *pubkey);
 /* The cached kind-0 display name / claimed (unverified) NIP-05 address of an
- * accepted contact, cleaned for display; NULL when unknown or not accepted.
+ * eligible contact, cleaned for display; NULL when unknown or not eligible.
  * Borrowed until the next "profile-changed" for pubkey. */
 const gchar *gh_contact_directory_get_display_name(GhContactDirectory *self,
                                                    const gchar *pubkey);

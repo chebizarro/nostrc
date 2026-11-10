@@ -1,4 +1,5 @@
 #include "gh-mls-group-info-dialog.h"
+#include "gh-picture-cache.h"
 #include "../app/gh-test-async-control.h"
 
 #include "gh-mls-attachments.h"
@@ -26,6 +27,7 @@ struct _GhMlsMemberRow {
   gchar *pubkey;
   GhMlsRole role;
   GhMlsMemberIdentity identity;
+  gboolean removable;
 };
 
 G_DEFINE_FINAL_TYPE(GhMlsMemberRow, gh_mls_member_row, ADW_TYPE_ACTION_ROW)
@@ -97,6 +99,7 @@ member_row_new(const gchar *pubkey, const gchar *name, gboolean is_you, GhMlsRol
 {
   GhMlsMemberRow *self = g_object_new(GH_TYPE_MLS_MEMBER_ROW, NULL);
   self->pubkey = g_strdup(pubkey);
+  self->removable = removable;
   self->role = role;
   self->identity = identity;
   g_autofree gchar *npub = gh_recipient_npub_short(pubkey);
@@ -358,10 +361,8 @@ action_update_media(GtkWidget *widget, const gchar *action, GVariant *parameter)
   GhMlsGroupInfoDialog *self = GH_MLS_GROUP_INFO_DIALOG(widget);
   if (!can_manage(self))
     return;
-  GSettings *settings = self->context.settings;
-  if (!settings)
-    return;
-  g_auto(GStrv) servers = g_settings_get_strv(settings, "blossom-servers");
+  g_auto(GStrv) servers = self->context.server_source && self->context.dup_account_servers
+    ? self->context.dup_account_servers(self->context.server_source) : NULL;
   guint n = servers ? g_strv_length(servers) : 0;
   if (n == 0) {
     toast(self, _("No Blossom servers configured in your settings"));
@@ -469,6 +470,8 @@ sync_members(GhMlsGroupInfoDialog *self)
                                            adder_name && *adder_name ? adder_name : adder_npub,
                                            self_added,
                                            !you && gh_mls_group_get_active(self->group));
+      if (self->context.pictures)
+        gh_picture_cache_bind_avatar(self->context.pictures, row->avatar, row->pubkey);
       adw_preferences_group_add(self->members_group, GTK_WIDGET(row));
       g_ptr_array_add(self->member_rows, row);
     }
@@ -1192,6 +1195,8 @@ gh_mls_group_info_dialog_new(GhMlsGroup *group, const GhMlsUiContext *context)
   GhMlsGroupInfoDialog *self = g_object_new(GH_TYPE_MLS_GROUP_INFO_DIALOG, NULL);
   self->group = g_object_ref(group);
   self->context = *context;
+  if (context->pictures) self->context.pictures = g_object_ref(context->pictures);
+  if (context->server_source) self->context.server_source = g_object_ref(context->server_source);
   self->context.default_relays = NULL;
   self->files = context->files ? g_object_ref(context->files) : NULL;
   self->context.files = NULL;
@@ -1259,7 +1264,7 @@ gh_mls_group_info_dialog_get_member(GhMlsGroupInfoDialog *self, const gchar *pub
     if (g_strcmp0(row->pubkey, pubkey) != 0)
       continue;
     if (removable)
-      *removable = gtk_widget_get_visible(row->remove_button);
+      *removable = row->removable;
     return gtk_label_get_text(row->role_badge);
   }
   return NULL;
@@ -1364,6 +1369,8 @@ gh_mls_group_info_dialog_dispose(GObject *object)
   g_clear_object(&self->context.accounts);
   g_clear_object(&self->context.model);
   g_clear_object(&self->context.settings);
+  g_clear_object(&self->context.server_source);
+  g_clear_object(&self->context.pictures);
   if (self->picture_op)
     g_cancellable_cancel(self->picture_op);
   g_clear_object(&self->picture_op);

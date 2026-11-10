@@ -51,6 +51,12 @@ typedef gboolean (*GhConversationListLoadOlder)(GhConversation *conversation, GE
  * encrypted store, through the app; NULL when no account is open). */
 void gh_conversation_list_set_picture_consent(GhWindow *window, gconstpointer backend,
                                               gpointer data);
+/* The account policy of the window's cache (followed, hidden; copied), and
+ * the notice that its answers changed (the follow list, the hide policy):
+ * every surface of the window asks again. */
+void gh_conversation_list_set_picture_policy(GhWindow *window, const GhPicturePolicy *policy,
+                                             gpointer data);
+void gh_conversation_list_picture_policy_changed(GhWindow *window);
 /* The loaded, consented profile picture of pubkey, or NULL (borrowed). */
 GdkTexture *gh_conversation_list_get_picture(GhWindow *window, const gchar *pubkey);
 /* Borrowed cache, for UI that needs to refresh when a picture finishes loading. */

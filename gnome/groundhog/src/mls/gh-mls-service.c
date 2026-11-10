@@ -4878,7 +4878,7 @@ create_group_now(GTask *task)
    * (privacy charter D6).  The commit is merged locally before anyone sees
    * the group -- the Add (below) is the first published event. */
   if (err == MARMOT_OK && op->adopted && self->settings) {
-    g_auto(GStrv) servers = g_settings_get_strv(self->settings, "blossom-servers");
+    g_auto(GStrv) servers = gh_store_social_dup_servers(self->store, NULL);
     guint n_servers = servers ? g_strv_length(servers) : 0;
     if (n_servers > 0) {
       g_autofree MarmotMediaBlobEndpoint *eps = g_new0(MarmotMediaBlobEndpoint, n_servers);

@@ -160,8 +160,8 @@ sync_media_notice(GhMlsNewGroupPage *self)
     gtk_widget_set_visible(GTK_WIDGET(self->media_row), FALSE);
     return;
   }
-  GSettings *settings = self->context.settings;
-  g_auto(GStrv) servers = settings ? g_settings_get_strv(settings, "blossom-servers") : NULL;
+  g_auto(GStrv) servers = self->context.server_source && self->context.dup_account_servers
+    ? self->context.dup_account_servers(self->context.server_source) : NULL;
   guint n = servers ? g_strv_length(servers) : 0;
   if (n == 0) {
     adw_preferences_row_set_title(ADW_PREFERENCES_ROW(self->media_row),
@@ -538,6 +538,8 @@ gh_mls_new_group_page_new(const GhMlsUiContext *context)
   g_return_val_if_fail(GH_IS_CONVERSATION_STORE(context->model), NULL);
   GhMlsNewGroupPage *self = g_object_new(GH_TYPE_MLS_NEW_GROUP_PAGE, NULL);
   self->context = *context;
+  if (context->pictures) self->context.pictures = g_object_ref(context->pictures);
+  if (context->server_source) self->context.server_source = g_object_ref(context->server_source);
   self->context.default_relays = NULL;
   g_object_ref(context->service);
   g_object_ref(context->accounts);
@@ -643,6 +645,8 @@ gh_mls_new_group_page_dispose(GObject *object)
   g_clear_object(&self->context.accounts);
   g_clear_object(&self->context.model);
   g_clear_object(&self->context.settings);
+  g_clear_object(&self->context.server_source);
+  g_clear_object(&self->context.pictures);
   gtk_widget_dispose_template(GTK_WIDGET(object), GH_TYPE_MLS_NEW_GROUP_PAGE);
   G_OBJECT_CLASS(gh_mls_new_group_page_parent_class)->dispose(object);
 }

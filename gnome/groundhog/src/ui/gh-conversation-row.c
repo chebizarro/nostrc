@@ -427,6 +427,14 @@ on_picture_changed(GhPictureCache *cache, const gchar *pubkey, GhConversationRow
   if (self->conversation) update(self);
 }
 
+/* The master switch, the follow list or the hide policy changed: ask again. */
+static void
+on_policy_changed(GhPictureCache *cache, GhConversationRow *self)
+{
+  (void)cache;
+  if (self->conversation) update(self);
+}
+
 void
 gh_conversation_row_set_picture_cache(GhConversationRow *self, GObject *cache,
                                       GhConversationRowPictureUri uri, gpointer data)
@@ -438,9 +446,12 @@ gh_conversation_row_set_picture_cache(GhConversationRow *self, GObject *cache,
   g_set_object(&self->pictures, pictures);
   self->picture_uri = uri;
   self->picture_data = data;
-  if (self->pictures)
+  if (self->pictures) {
     g_signal_connect_object(self->pictures, "picture-changed", G_CALLBACK(on_picture_changed),
                             self, 0);
+    g_signal_connect_object(self->pictures, "policy-changed", G_CALLBACK(on_policy_changed),
+                            self, 0);
+  }
   if (self->conversation) update(self);
 }
 

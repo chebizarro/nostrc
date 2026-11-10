@@ -35,6 +35,8 @@ typedef struct {
   GhAccountRelays *account_relays;
   guint lookup_deadline;
   GhMlsAttachments *files;  /* nullable (W25): the group picture */
+  GObject *server_source;
+  GStrv (*dup_account_servers)(GObject *source);
   GSimpleAction *invites_action;
   GhMlsService *watched;   /* weak */
   GhMlsGroup *shown;       /* the shown conversation's group (ref), or NULL */
@@ -81,8 +83,11 @@ context_of(MlsUi *ui, GhMlsUiContext *context)
   context->settings = ui->settings;
   context->display_name = ui->display_name;
   context->names_data = ui->names_data;
+  context->pictures = gh_conversation_list_get_picture_cache(ui->window);
   context->lookup_deadline = ui->lookup_deadline;
   context->files = ui->files;
+  context->server_source = ui->server_source;
+  context->dup_account_servers = ui->dup_account_servers;
   context->default_relays = ui->account_relays
     ? gh_account_relays_get_write_relays(ui->account_relays) : NULL;
 }
@@ -669,6 +674,7 @@ mls_ui_free(gpointer data)
   g_clear_object(&ui->settings);
   g_clear_object(&ui->account_relays);
   g_clear_object(&ui->files);
+  g_clear_object(&ui->server_source);
   g_free(ui);
 }
 
@@ -692,6 +698,8 @@ gh_mls_ui_attach(GhWindow *window, const GhMlsUiConfig *config)
   ui->account_relays = config->account_relays ? g_object_ref(config->account_relays) : NULL;
   ui->lookup_deadline = config->lookup_deadline;
   ui->files = config->files ? g_object_ref(config->files) : NULL;
+  ui->server_source = config->server_source ? g_object_ref(config->server_source) : NULL;
+  ui->dup_account_servers = config->dup_account_servers;
   g_object_set_data_full(G_OBJECT(window), MLS_UI_DATA, ui, mls_ui_free);
 
   ui->invites_action = g_simple_action_new("group-invitations", NULL);

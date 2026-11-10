@@ -1,5 +1,6 @@
 #include "gh-relay-net.h"
 #include "gh-relay-soup.h"
+#include "gh-relay-deny-policy.h"
 
 typedef struct {
   gint refs;
@@ -15,11 +16,13 @@ typedef struct {
   gboolean inner_soup;         /* inner is a gh-relay-soup handle */
   guint64 serial;              /* the session serial inner was opened in */
   gboolean closed;             /* owning context */
+  gboolean policy_closed;      /* synchronous close awaiting owner notification */
 } NetHandle;
 
 static GMutex lock;            /* installed, registry */
 static GhNetSession *installed;
 static gulong changed_handler;
+static gulong policy_handler;
 static GPtrArray *registry;    /* NetHandle, borrowed; live until closed */
 
 static NetHandle *
@@ -75,13 +78,22 @@ close_inner(NetHandle *handle)
   }
 }
 
+static gboolean
+policy_allowed(NetHandle *handle, GError **error)
+{
+  return gh_relay_deny_policy_check(
+    handle->publish_side ? gh_relay_publish_get_generation(handle->publish) : gh_relay_scope_get_generation(handle->scope),
+    handle->url,
+    handle->publish_side ? gh_relay_publish_is_signer_control(handle->publish) : gh_relay_scope_is_signer_control(handle->scope), error);
+}
+
 /* Opens the connection for the session's current mode, or refuses. */
 static gboolean
 open_inner(NetHandle *handle, GError **error)
 {
   GhNetMode mode = gh_net_session_get_mode(handle->session);
   handle->serial = gh_net_session_get_serial(handle->session);
-  if (!gh_net_relay_url_allowed(mode, handle->url, error))
+  if (!policy_allowed(handle, error) || !gh_net_relay_url_allowed(mode, handle->url, error))
     return FALSE;
   if (mode != GH_NET_MODE_TOR) {
     handle->inner_soup = FALSE;
@@ -120,8 +132,26 @@ static gboolean
 rebuild(gpointer data)
 {
   NetHandle *handle = data;
-  if (handle->closed ||
-      (handle->inner && handle->serial == gh_net_session_get_serial(handle->session)))
+  if (handle->closed)
+    return G_SOURCE_REMOVE;
+  if (!policy_allowed(handle, NULL) || (handle->publish_side && handle->policy_closed)) {
+    handle->policy_closed = FALSE;
+    close_inner(handle);
+    if (handle->publish_side)
+      gh_relay_publish_blocked(handle->publish, handle->url);
+    else {
+      gh_relay_scope_notice(handle->scope, handle->url, GH_RELAY_NOTICE_DISCONNECTED, NULL, FALSE, NULL);
+      if (!handle->closed)
+        gh_relay_scope_notice(handle->scope, handle->url, GH_RELAY_NOTICE_ERROR, NULL, FALSE, GH_RELAY_DENY_MESSAGE);
+    }
+    return G_SOURCE_REMOVE;
+  }
+  if (handle->policy_closed && !handle->publish_side) {
+    handle->policy_closed = FALSE;
+    gh_relay_scope_notice(handle->scope, handle->url, GH_RELAY_NOTICE_DISCONNECTED, NULL, FALSE, NULL);
+    if (handle->closed) return G_SOURCE_REMOVE;
+  }
+  if (handle->inner && handle->serial == gh_net_session_get_serial(handle->session))
     return G_SOURCE_REMOVE;
   close_inner(handle);
   if (handle->publish_side) {
@@ -169,6 +199,30 @@ on_session_changed(GhNetSession *session, gpointer data)
   }
 }
 
+static void
+on_policy_changed(GhRelayDenyPolicy *policy, gpointer data)
+{
+  (void)policy;
+  (void)data;
+  g_autoptr(GPtrArray) handles = g_ptr_array_new_with_free_func(net_unref);
+  g_mutex_lock(&lock);
+  for (guint i = 0; registry && i < registry->len; i++)
+    g_ptr_array_add(handles, net_ref(registry->pdata[i]));
+  g_mutex_unlock(&lock);
+  for (guint i = 0; i < handles->len; i++) {
+    NetHandle *handle = handles->pdata[i];
+    if (on_owner_context(handle) && !handle->closed && !policy_allowed(handle, NULL)) {
+      handle->policy_closed |= handle->inner != NULL;
+      close_inner(handle);
+    }
+    GSource *source = g_idle_source_new();
+    g_source_set_priority(source, G_PRIORITY_HIGH);
+    g_source_set_callback(source, rebuild, net_ref(handle), net_unref);
+    g_source_attach(source, handle->context);
+    g_source_unref(source);
+  }
+}
+
 void
 gh_relay_net_install(GhNetSession *session)
 {
@@ -193,6 +247,9 @@ gh_relay_net_install(GhNetSession *session)
   gh_relay_publish_set_default_transport(session ? &gh_relay_net_publish_transport : NULL,
                                          session ? &gh_relay_net_publish_auth_transport : NULL,
                                          NULL);
+  GhRelayDenyPolicy *policy = gh_relay_deny_policy_get_default();
+  if (policy_handler) g_signal_handler_disconnect(policy, policy_handler);
+  policy_handler = session ? g_signal_connect(policy, "changed", G_CALLBACK(on_policy_changed), NULL) : 0;
   gh_net_session_set_default(session);
 }
 
@@ -256,6 +313,14 @@ net_scope_open(GhRelayScope *scope, const gchar *url, const NostrFilters *filter
     return NULL;
   handle->scope = scope;
   handle->filters = filters;
+  if (!policy_allowed(handle, NULL)) {
+    register_or_drop(handle, TRUE);
+    GSource *source = g_idle_source_new();
+    g_source_set_callback(source, rebuild, net_ref(handle), net_unref);
+    g_source_attach(source, handle->context);
+    g_source_unref(source);
+    return handle;
+  }
   return register_or_drop(handle, open_inner(handle, error));
 }
 
@@ -264,6 +329,7 @@ net_scope_send_auth(gpointer data, const gchar *json, gpointer transport_data, G
 {
   (void)transport_data;
   NetHandle *handle = data;
+  if (!policy_allowed(handle, error)) return FALSE;
   if (!handle->inner) {
     g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_CONNECTED, "relay not connected");
     return FALSE;
@@ -278,6 +344,7 @@ net_scope_send_event(gpointer data, const gchar *json, gpointer transport_data, 
 {
   (void)transport_data;
   NetHandle *handle = data;
+  if (!policy_allowed(handle, error)) return FALSE;
   if (!handle->inner) {
     g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_CONNECTED, "relay not connected");
     return FALSE;
@@ -292,7 +359,7 @@ net_scope_resubscribe(gpointer data, gpointer transport_data)
 {
   (void)transport_data;
   NetHandle *handle = data;
-  if (!handle->inner)
+  if (!policy_allowed(handle, NULL) || !handle->inner)
     return;
   if (handle->inner_soup)
     gh_relay_soup_scope_resubscribe(handle->inner);
@@ -321,6 +388,7 @@ net_publish_send_auth(gpointer data, const gchar *json, gpointer transport_data,
 {
   (void)transport_data;
   NetHandle *handle = data;
+  if (!policy_allowed(handle, error)) return FALSE;
   if (!handle->inner) {
     g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_CONNECTED, "relay not connected");
     return FALSE;
@@ -335,6 +403,7 @@ net_publish_resend(gpointer data, gpointer transport_data, GError **error)
 {
   (void)transport_data;
   NetHandle *handle = data;
+  if (!policy_allowed(handle, error)) return FALSE;
   if (!handle->inner) {
     g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_CONNECTED, "relay not connected");
     return FALSE;

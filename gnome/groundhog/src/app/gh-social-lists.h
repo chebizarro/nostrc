@@ -3,21 +3,53 @@
 #include "gh-account-store.h"
 #include "gh-message-policy.h"
 #include "gh-store-social.h"
+#include "gh-list-adapter.h"
+#include "gh-account-relays.h"
 G_BEGIN_DECLS
 #define GH_TYPE_SOCIAL_LISTS (gh_social_lists_get_type())
 G_DECLARE_FINAL_TYPE(GhSocialLists, gh_social_lists, GH, SOCIAL_LISTS, GObject)
 /* Owned by GhAppServices. Main-context only. Signals: changed (),
- * sync-state-changed (), plus document-changed (GNostrListDocument).
- * No network or signer is installed in this local-only stage. */
+ * sync-state-changed (), follows-changed (), plus document-changed
+ * (GNostrListDocument).
+ * Local relay denial and attachment destinations apply before networking.
+ * First hide-list import is exposed by get_pending_import(), never applied silently. */
 GhSocialLists *gh_social_lists_new(GhAccountStore *account_store);
+GhSocialLists *gh_social_lists_new_with_settings(GhAccountStore *account_store, GSettings *legacy_settings);
+GStrv gh_social_lists_dup_servers(GhSocialLists *self, GError **error);
+/* Current NIP-65 write targets for an explicit public disclosure; no fallback. */
+GStrv gh_social_lists_dup_public_targets(GhSocialLists *self);
+gboolean gh_social_lists_set_servers(GhSocialLists *self, const gchar *const *servers, GError **error);
+
+void gh_social_lists_attach_store(GhSocialLists *self, GhAccountStore *account_store);
+void gh_social_lists_set_network(GhSocialLists *self, const GhListAdapterNetwork *network,
+                                 GhAccountRelays *relays);
+GhListAdapter *gh_social_lists_get_adapter(GhSocialLists *self);
+void gh_social_lists_configure_groups(GhSocialLists *self, const gchar *const *urls,
+                                      gboolean waiting, GhListDeriveFunc derive, gpointer data);
+gboolean gh_social_lists_get_pending_import(GhSocialLists *self, guint *accounts, guint *items);
+const gchar *gh_social_lists_get_pending_import_id(GhSocialLists *self);
+gboolean gh_social_lists_confirm_import(GhSocialLists *self, gboolean accept, GError **error);
 /* Explicit binding seam for session stores and tests; account_store may be NULL
  * at construction. The caller must close this binding before closing store. */
 gboolean gh_social_lists_bind_store(GhSocialLists *self, GhStore *store, guint64 generation,
                                      GError **error);
 void gh_social_lists_close(GhSocialLists *self);
+/* Follows (NIP-02, plan §3.6, charter PD-12): the account's kind 3 is read
+ * only while load-profile-pictures is on (enabled), from discovery_relays
+ * plus the account's NIP-65 write relays, at most 16, under own-list
+ * discovery (ephemeral AUTH); it is never published. Off: no request, and
+ * the persisted set stays stored but unused (is_followed is FALSE, the list
+ * empty). "follows-changed" follows every change of the answers. */
+void gh_social_lists_set_follow_reads(GhSocialLists *self, gboolean enabled,
+                                      const gchar *const *discovery_relays);
+gboolean gh_social_lists_is_followed(GhSocialLists *self, const gchar *pubkey);
+/* The followed pubkeys (hex, lowercase), NULL-terminated; borrowed until the
+ * next "follows-changed". */
+const gchar *const *gh_social_lists_get_follows(GhSocialLists *self);
 GNostrListService *gh_social_lists_get_service(GhSocialLists *self); /* borrowed */
 guint64 gh_social_lists_get_generation(GhSocialLists *self);
 const gchar *gh_social_lists_get_error(GhSocialLists *self);
+const gchar *gh_social_lists_get_visibility_error(GhSocialLists *self);
 gboolean gh_social_lists_get_sync_enabled(GhSocialLists *self);
 gboolean gh_social_lists_set_sync_enabled(GhSocialLists *self, gboolean enabled, GError **error);
 /* Registers a local identity with no sources or targets. Returning a new
@@ -32,6 +64,8 @@ gchar *gh_social_lists_export(GNostrListDocument *snapshot);
 GNostrListDocument *gh_social_lists_import(GhSocialLists *self, const gchar *json,
                                           GError **error);
 GhMessagePolicy *gh_social_lists_get_message_policy(GhSocialLists *self);
+/* Picture eligibility fails closed until the account policy is loaded. */
+gboolean gh_social_lists_is_hidden(GhSocialLists *self, const gchar *pubkey);
 gboolean gh_social_lists_retry_visibility(GhSocialLists *self, GError **error);
 const gchar *gh_social_lists_get_account(GhSocialLists *self);
 gboolean gh_social_lists_hide_account(GhSocialLists *self, const gchar *pubkey, GError **error);

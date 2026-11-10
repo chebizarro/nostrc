@@ -26,10 +26,14 @@ G_BEGIN_DECLS
  *   GROUP                 ACCOUNT    a NIP-29 group relay
  *   MLS_ROUTING           EPHEMERAL  MLS kind-445 routing relays
  *   PUBLIC_POST           EPHEMERAL  public repost/quote on own NIP-65 write relays
+ *   OWN_PRIVATE_SYNC_READ ACCOUNT    encrypted drafts on current own 10013 relays
+ *   OWN_PRIVATE_SYNC_PUBLISH ACCOUNT encrypted drafts on current own 10013 relays
  *
  * Rules (§4.4):
  *  - R1: the account signs a kind-22242 event only for OWN_INBOX_READ,
- *    OWN_LIST_PUBLISH, SELF_WRAP and GROUP. Everything else is EPHEMERAL: a
+ *    OWN_LIST_PUBLISH, SELF_WRAP, GROUP and the two OWN_PRIVATE_SYNC purposes.
+ *    Private-sync callers guarantee current account kind-10013 destinations,
+ *    on separate sockets; no write-relay or discovery fallback. Everything else is EPHEMERAL: a
  *    fresh key per connection from the relay layer
  *    (gh_relay_auth_sign_ephemeral(); R2, never reused, wiped once signed).
  *    AUTH is lazy either way (gh-relay-auth.h): nothing is signed unless the
@@ -74,6 +78,8 @@ typedef enum {
   GH_AUTH_PURPOSE_GROUP,
   GH_AUTH_PURPOSE_MLS_ROUTING,
   GH_AUTH_PURPOSE_PUBLIC_POST,
+  GH_AUTH_PURPOSE_OWN_PRIVATE_SYNC_READ,
+  GH_AUTH_PURPOSE_OWN_PRIVATE_SYNC_PUBLISH,
   GH_AUTH_N_PURPOSES
 } GhAuthPurpose;
 

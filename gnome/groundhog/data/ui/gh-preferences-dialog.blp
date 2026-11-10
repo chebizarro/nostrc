@@ -243,7 +243,7 @@ template $GhPreferencesDialog: Adw.PreferencesDialog {
     // (what a server learns, for this build) and the rows' text are set from
     // C; without the feature the list is shown and not editable.
     Adw.PreferencesGroup attachments_group {
-      title: _("Attachments");
+      title: _("Account Attachment Servers");
 
       Box {
         orientation: vertical;
@@ -297,6 +297,22 @@ template $GhPreferencesDialog: Adw.PreferencesDialog {
             "error",
             "caption",
           ]
+        }
+
+        ListBox server_publish_list {
+          visible: false;
+          selection-mode: none;
+          styles ["boxed-list"]
+          Adw.ActionRow server_publish_row {
+            title: _("Public Server List");
+            subtitle: _("Share this account’s attachment server URLs on its write relays. Private sync does not publish them.");
+            [suffix]
+            Button server_publish_button {
+              label: _("_Publish Server List…");
+              use-underline: true;
+              valign: center;
+            }
+          }
         }
 
         // Shown with gh_preferences_dialog_set_attachments().
@@ -477,6 +493,46 @@ template $GhPreferencesDialog: Adw.PreferencesDialog {
       }
     }
 
+    Adw.PreferencesGroup blocked_relays_group {
+      title: _("Blocked Relays");
+      description: _("Block application traffic to these relay addresses for this account. Signer-control connections are excluded so a remote signer can undo the change. Edits stay local; this does not change anyone’s signed relay list.");
+      visible: false;
+
+      Box {
+        orientation: vertical;
+        spacing: 12;
+        ListBox blocked_relays_list {
+          selection-mode: none;
+          styles ["boxed-list"]
+          accessibility { label: _("Blocked relays"); }
+          [placeholder]
+          Label {
+            label: _("No blocked relays");
+            margin-top: 12;
+            margin-bottom: 12;
+            margin-start: 12;
+            margin-end: 12;
+            styles ["dim-label"]
+          }
+        }
+        ListBox {
+          selection-mode: none;
+          styles ["boxed-list"]
+          Adw.EntryRow blocked_relays_entry {
+            title: _("Block relay");
+            show-apply-button: true;
+            input-purpose: url;
+          }
+        }
+        Label blocked_relays_error {
+          visible: false;
+          wrap: true;
+          xalign: 0;
+          styles ["error", "caption"]
+        }
+      }
+    }
+
     Adw.PreferencesGroup {
       title: _("Discovery Relays");
       description: _("Relays Groundhog uses to look people up. Kept on this device only; not published anywhere.");
@@ -635,10 +691,17 @@ template $GhPreferencesDialog: Adw.PreferencesDialog {
       visible: false;
       Adw.SwitchRow social_sync_row {
         title: _("Sync Drafts and Lists");
-        subtitle: _("Off — synchronization is not available in this version yet. Lists stay on this device; public publication requires separate approval.");
+        subtitle: _("Synchronize encrypted drafts and private list entries. Relays see your account, event kind and time. Public publication needs separate approval; accepted events cannot be recalled.");
         active: false;
         sensitive: false;
       }
+      Adw.ActionRow social_import_row {
+          title: _("Review Hidden Items…");
+          subtitle: _("Apply the hidden accounts and content rules from your other devices");
+          visible: false;
+          activatable: true;
+          [suffix] Image { icon-name: "go-next-symbolic"; }
+        }
       Adw.ActionRow social_lists_row {
         title: _("Lists and Sets");
         subtitle: _("Manage local lists without a signer or network connection");

@@ -1,4 +1,6 @@
 #include "gh-conversation-info-dialog.h"
+#include "gh-picture-cache.h"
+#include "gh-conversation-list.h"
 #include "gh-qr-code.h"
 #include "gh-conversation-actions.h"
 #include "gh-conversation-view.h"
@@ -675,6 +677,8 @@ fill(GhConversationInfoDialog *self, const GhConversationInfoServices *services)
     if (services->profile)
       services->profile(peers[i], &profile, services->profile_data);
     GhConversationInfoPerson *person = person_new(peers[i], profile.name, profile.nip05, profile.picture);
+    if (services->pictures)
+      gh_picture_cache_bind_avatar(services->pictures, person->avatar, peers[i]);
     g_signal_connect_object(person, "activated", G_CALLBACK(on_person_activated), self, 0);
     adw_preferences_group_add(self->people_group, GTK_WIDGET(person));
     g_ptr_array_add(self->people, person);
@@ -969,6 +973,8 @@ on_conversation_info(GSimpleAction *action, GVariant *parameter, gpointer data)
       gh_conversation_store_lookup(services.model, gh_conversation_get_room_id(conversation)) !=
         conversation)
     return;
+  if (!services.pictures)
+    services.pictures = gh_conversation_list_get_picture_cache(attach->window);
   GhConversationInfoDialog *dialog = gh_conversation_info_dialog_new(conversation, &services);
   adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(attach->window));
 }

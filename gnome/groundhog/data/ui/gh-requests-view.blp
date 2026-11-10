@@ -4,9 +4,11 @@ using Adw 1;
 // Message Requests (charter §7.9, PD-8, PT-8, §8.2 G18): the content page for
 // a request chosen in the sidebar's Message Requests list (the list itself is
 // the sidebar's requests mode). A request shows its sender's npub (no profile
-// is fetched before Accept), how many messages it holds and its first message
-// as plain, selectable text: no markup, no links to open and nothing loaded
-// from the web. Accept, Delete and Block run the "requests.*" actions of
+// is fetched before Accept, unless the account follows the sender and profile
+// pictures are on: then the cached name and picture and "You follow this
+// account", D3; the request stays a request), how many messages it holds and
+// its first message as plain, selectable text: no markup, no links to open
+// and nothing loaded from the web. Accept, Delete and Block run the "requests.*" actions of
 // gh-requests-view.c; Delete and Block confirm first (delete_dialog,
 // block_dialog below). Nothing here publishes anything, and the sender is
 // never told. Block is per conversation: the same person writing from
@@ -51,7 +53,9 @@ template $GhRequestsView: Adw.Bin {
               margin-start: 12;
               margin-end: 12;
 
-              // Initials would come from an npub: a neutral avatar instead.
+              // Initials would come from an npub: a neutral avatar instead. A
+              // followed sender's picture, when the window's cache shows it,
+              // comes from C (custom-image).
               Adw.Avatar avatar {
                 size: 64;
                 show-initials: false;
@@ -78,6 +82,18 @@ template $GhRequestsView: Adw.Bin {
 
                 styles [
                   "monospace",
+                  "dim-label",
+                ]
+              }
+
+              // Shown for a followed sender only (D3), under the picture switch.
+              Label follow_label {
+                visible: false;
+                label: _("You follow this account");
+                wrap: true;
+                justify: center;
+
+                styles [
                   "dim-label",
                 ]
               }
