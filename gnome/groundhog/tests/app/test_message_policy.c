@@ -195,6 +195,10 @@ test_matching(Fixture *f, gconstpointer unused)
   g_autoptr(GhMessage) url = message(1, "https://example.com/secret caption", 503, NULL);
   g_assert_true(gh_message_policy_classify(f->policy, url, &d, &error));
   g_assert_cmpint(d, ==, GH_MESSAGE_INCLUDE);
+  g_autoptr(GhMessage) subject = message(1, "ordinary body", 505,
+    "[\"subject\",\"Secret subject\"]");
+  g_assert_true(gh_message_policy_classify(f->policy, subject, &d, &error));
+  g_assert_cmpint(d, ==, GH_MESSAGE_HIDE_RETAIN);
   policy(f, "t", "quiet", TRUE);
   g_autoptr(GhMessage) boundary = message(1, "#quietly", 504, NULL);
   g_assert_true(gh_message_policy_classify(f->policy, boundary, &d, &error));

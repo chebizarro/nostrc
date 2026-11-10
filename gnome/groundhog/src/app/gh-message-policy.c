@@ -276,7 +276,8 @@ application_text(json_t *event)
     const gchar *name = json_string_value(json_array_get(tag, 0));
     const gchar *value = json_string_value(json_array_get(tag, 1));
     if (name && value
-        && (!strcmp(name, "caption") || (kind == GH_NIP17_FILE_KIND && !strcmp(name, "alt")))) {
+        && (!strcmp(name, "subject") || !strcmp(name, "caption") ||
+         (kind == GH_NIP17_FILE_KIND && !strcmp(name, "alt")))) {
       g_string_append_c(text, ' ');
       g_string_append(text, value);
     }
