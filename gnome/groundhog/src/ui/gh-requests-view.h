@@ -10,9 +10,12 @@ G_BEGIN_DECLS
 /*
  * GhRequestsView (privacy charter §7.9, PD-8, PT-8, §8.2 G18): the content
  * page for one message request (data/ui/gh-requests-view.blp). It shows the
- * sender's npub (never a fetched profile), the message count and the first
- * message as plain text (no markup, no links, nothing from the web), and
- * offers:
+ * sender's npub, the message count and the first message as plain text (no
+ * markup, no links, nothing from the web). No profile is fetched for a
+ * request, except (owner decision D3, PD-8 as amended) a sender the account
+ * follows while profile pictures are on: the identity source then supplies
+ * the cached picture and the page says "You follow this account". The
+ * request stays a request: nothing else changes. It offers:
  *   - Accept: gh_conversation_accept() (persisted by the store's delegate);
  *     the contact directory then looks up the sender's name and inbox (G10).
  *     "accepted" (GhConversation) is emitted so the window can open it.
@@ -35,6 +38,14 @@ typedef struct {
   gboolean (*block)(gpointer data, GhConversation *request, GError **error);
 } GhRequestsBackend;
 
+/* The sender's identity beyond its npub: the window's picture decision
+ * (borrowed texture, or NULL) and whether the account follows it under the
+ * picture switch. Either may be NULL. */
+typedef struct {
+  GdkTexture *(*picture)(gpointer data, const gchar *pubkey);
+  gboolean (*is_followed)(gpointer data, const gchar *pubkey);
+} GhRequestsIdentity;
+
 #define GH_TYPE_REQUESTS_VIEW (gh_requests_view_get_type())
 G_DECLARE_FINAL_TYPE(GhRequestsView, gh_requests_view, GH, REQUESTS_VIEW, AdwBin)
 
@@ -49,6 +60,13 @@ GhConversation *gh_requests_view_get_request(GhRequestsView *self);
  * when replaced or when the view is disposed. */
 void gh_requests_view_set_backend(GhRequestsView *self, const GhRequestsBackend *backend,
                                   gpointer data, GDestroyNotify destroy);
+
+/* identity NULL: npub only. destroy releases data when replaced or when the
+ * view is disposed. gh_requests_view_refresh() asks it again (a picture
+ * arrived, the follow list or the switch changed). */
+void gh_requests_view_set_identity(GhRequestsView *self, const GhRequestsIdentity *identity,
+                                   gpointer data, GDestroyNotify destroy);
+void gh_requests_view_refresh(GhRequestsView *self);
 
 /* The confirmation dialog shown for Delete or Block, if any (tests); NULL
  * once it was answered or dismissed. */

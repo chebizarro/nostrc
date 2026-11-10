@@ -1,9 +1,12 @@
 #include "gh-social-lists.h"
 #include "gh-list-adapter.h"
 #include "gh-relay-deny-policy.h"
+#include "gh-relay-scope.h"
 #include <jansson.h>
 #include <string.h>
 #include <nostr-kinds.h>
+
+#define MAX_FOLLOW_SOURCES 16 /* the relay scope's bound */
 
 struct _GhSocialLists {
   GObject parent_instance;
@@ -22,11 +25,18 @@ struct _GhSocialLists {
   guint64 generation;
   gboolean sync_enabled;
   gchar *error;
+  /* Follows (kind 3): read only while enabled, from discovery plus write relays. */
+  gboolean follows_enabled;
+  GStrv discovery;
+  GStrv follow_sources;    /* the union handed to the read plan */
+  GHashTable *follows;     /* pubkey (lowercase hex) -> 1, from the kind-3 snapshot */
+  GStrv follow_list;       /* the same, sorted, for gh_social_lists_get_follows */
 };
 G_DEFINE_TYPE(GhSocialLists, gh_social_lists, G_TYPE_OBJECT)
-enum { CHANGED, DOCUMENT_CHANGED, SYNC_STATE_CHANGED, N_SIGNALS };
+enum { CHANGED, DOCUMENT_CHANGED, SYNC_STATE_CHANGED, FOLLOWS_CHANGED, N_SIGNALS };
 static guint signals[N_SIGNALS];
 static gboolean update_plan(GhSocialLists *self, GError **error);
+static void rebuild_follows(GhSocialLists *self, gboolean force);
 
 void
 gh_social_lists_close(GhSocialLists *self)
@@ -47,6 +57,7 @@ gh_social_lists_close(GhSocialLists *self)
   self->group_derive = NULL;
   self->group_data = NULL;
   g_clear_pointer(&self->error, g_free);
+  rebuild_follows(self, FALSE); /* nothing of the old account's follows survives */
   g_signal_emit(self, signals[CHANGED], 0);
   g_signal_emit(self, signals[SYNC_STATE_CHANGED], 0);
 }
@@ -73,10 +84,130 @@ static void
 document_changed(GNostrListService *service, GNostrListDocument *snapshot, GhSocialLists *self)
 {
   (void)service;
+  if (gnostr_list_document_get_kind(snapshot) == NOSTR_KIND_FOLLOW_LIST &&
+      !*gnostr_list_document_get_identifier(snapshot))
+    rebuild_follows(self, FALSE);
   if (gnostr_list_document_get_kind(snapshot) == NOSTR_KIND_BLOCKED_RELAY_LIST)
     update_deny_policy(self, snapshot);
   g_signal_emit(self, signals[DOCUMENT_CHANGED], 0, snapshot);
   g_signal_emit(self, signals[CHANGED], 0);
+}
+
+/* ---- follows (NIP-02) -------------------------------------------------------- */
+
+static gboolean
+hex64(const gchar *value)
+{
+  if (!value || strlen(value) != 64)
+    return FALSE;
+  for (const gchar *p = value; *p; p++)
+    if (!g_ascii_isxdigit(*p))
+      return FALSE;
+  return TRUE;
+}
+
+/* Discovery relays plus the account's NIP-65 write relays, validated,
+ * deduplicated, at most 16, for the kind-3 read; NULL when none. */
+static GStrv
+follow_sources(GhSocialLists *self, const gchar *const *write)
+{
+  GPtrArray *urls = g_ptr_array_new_with_free_func(g_free);
+  const gchar *const *sets[] = { (const gchar *const *)self->discovery, write };
+  for (guint s = 0; s < G_N_ELEMENTS(sets); s++)
+    for (guint i = 0; sets[s] && sets[s][i] && urls->len < MAX_FOLLOW_SOURCES; i++)
+      if (gh_relay_url_validate(sets[s][i], NULL) &&
+          !g_ptr_array_find_with_equal_func(urls, sets[s][i], g_str_equal, NULL))
+        g_ptr_array_add(urls, g_strdup(sets[s][i]));
+  if (!urls->len) {
+    g_ptr_array_unref(urls);
+    return NULL;
+  }
+  g_ptr_array_add(urls, NULL);
+  return (GStrv)g_ptr_array_free(urls, FALSE);
+}
+
+static gint
+compare_strings(gconstpointer a, gconstpointer b)
+{
+  return strcmp(*(const gchar *const *)a, *(const gchar *const *)b);
+}
+
+/* The followed set from the kind-3 snapshot's public p tags (the engine
+ * admitted it: the account's own, NIP-01 newest). "follows-changed" when
+ * the answers changed (or force). */
+static void
+rebuild_follows(GhSocialLists *self, gboolean force)
+{
+  g_autoptr(GHashTable) next = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  g_autoptr(GNostrListDocument) snapshot = self->service
+    ? gnostr_list_service_lookup(self->service, NOSTR_KIND_FOLLOW_LIST, "") : NULL;
+  const NostrListDocument *codec = snapshot ? gnostr_list_document_get_codec(snapshot) : NULL;
+  for (gsize i = 0; codec && i < nostr_nip51_document_tag_count(codec, FALSE); i++) {
+    const NostrListTag *tag = nostr_nip51_document_tag(codec, FALSE, i);
+    const gchar *name = nostr_nip51_tag_field(tag, 0), *value = nostr_nip51_tag_field(tag, 1);
+    if (!name || strcmp(name, "p") || !hex64(value))
+      continue;
+    g_hash_table_add(next, g_ascii_strdown(value, -1));
+  }
+  gboolean same = !force && g_hash_table_size(next) == g_hash_table_size(self->follows);
+  GHashTableIter iter;
+  gpointer key;
+  g_hash_table_iter_init(&iter, next);
+  while (same && g_hash_table_iter_next(&iter, &key, NULL))
+    same = g_hash_table_contains(self->follows, key);
+  if (same)
+    return;
+  g_hash_table_unref(self->follows);
+  self->follows = g_steal_pointer(&next);
+  GPtrArray *list = g_ptr_array_new_with_free_func(g_free);
+  g_hash_table_iter_init(&iter, self->follows);
+  while (g_hash_table_iter_next(&iter, &key, NULL))
+    g_ptr_array_add(list, g_strdup(key));
+  g_ptr_array_sort(list, compare_strings);
+  g_ptr_array_add(list, NULL);
+  g_clear_pointer(&self->follow_list, g_strfreev);
+  self->follow_list = (GStrv)g_ptr_array_free(list, FALSE);
+  g_signal_emit(self, signals[FOLLOWS_CHANGED], 0);
+}
+
+void
+gh_social_lists_set_follow_reads(GhSocialLists *self, gboolean enabled,
+                                 const gchar *const *discovery_relays)
+{
+  g_return_if_fail(GH_IS_SOCIAL_LISTS(self));
+  enabled = !!enabled;
+  gboolean was = self->follows_enabled;
+  self->follows_enabled = enabled;
+  g_clear_pointer(&self->discovery, g_strfreev);
+  self->discovery = g_strdupv((gchar **)discovery_relays);
+  g_autoptr(GError) error = NULL;
+  if (!update_plan(self, &error)) {
+    g_free(self->error);
+    self->error = g_strdup("Account list relay plan could not be updated");
+  }
+  /* Off: the set is kept but unused; on: it applies again. Either way the
+   * answers changed for everyone followed. */
+  if (was != enabled && g_hash_table_size(self->follows))
+    g_signal_emit(self, signals[FOLLOWS_CHANGED], 0);
+}
+
+gboolean
+gh_social_lists_is_followed(GhSocialLists *self, const gchar *pubkey)
+{
+  g_return_val_if_fail(GH_IS_SOCIAL_LISTS(self), FALSE);
+  if (!self->follows_enabled || !pubkey)
+    return FALSE;
+  g_autofree gchar *key = g_ascii_strdown(pubkey, -1);
+  return g_hash_table_contains(self->follows, key);
+}
+
+const gchar *const *
+gh_social_lists_get_follows(GhSocialLists *self)
+{
+  static const gchar *const none[] = { NULL };
+  g_return_val_if_fail(GH_IS_SOCIAL_LISTS(self), none);
+  return self->follows_enabled && self->follow_list ? (const gchar *const *)self->follow_list
+                                                      : none;
 }
 
 static void
@@ -111,7 +242,7 @@ update_plan(GhSocialLists *self, GError **error)
   }
   const gint kinds[] = { NOSTR_KIND_MUTE_LIST, NOSTR_KIND_BLOCKED_RELAY_LIST,
     NOSTR_KIND_PRIVATE_RELAY_LIST, NOSTR_KIND_EMOJI_LIST, NOSTR_KIND_SLASH_COMMAND_LIST,
-    NOSTR_KIND_SIMPLE_GROUP_LIST };
+    NOSTR_KIND_SIMPLE_GROUP_LIST, NOSTR_KIND_FOLLOW_LIST };
   for (guint k = 0; self->network.accounts && k < G_N_ELEMENTS(kinds); k++) {
     gboolean found = FALSE;
     for (guint i = 0; i < n; i++) if (entries[i].kind == kinds[k] && !*entries[i].identifier) found = TRUE;
@@ -127,6 +258,9 @@ update_plan(GhSocialLists *self, GError **error)
     gh_account_relays_get_generation(self->relays) == self->generation &&
     gh_account_relays_get_state(self->relays) != GH_ACCOUNT_RELAYS_DISCOVERING;
   const gchar *const *write = ready ? gh_account_relays_get_write_relays(self->relays) : NULL;
+  g_clear_pointer(&self->follow_sources, g_strfreev);
+  if (self->follows_enabled && ready)
+    self->follow_sources = follow_sources(self, write);
   g_auto(GStrv) public_targets = gh_social_lists_dup_public_targets(self);
   for (guint i = 0; i < n; i++) {
     GNostrListReadPlanEntry *entry = &entries[i];
@@ -140,6 +274,13 @@ update_plan(GhSocialLists *self, GError **error)
       entry->publish_policy = GNOSTR_LIST_AUTO_ALWAYS;
       entry->sources = entry->targets = (const gchar *const *)self->group_urls;
       entry->waiting_for_dependency = self->group_waiting || !self->group_derive;
+    } else if (entry->kind == NOSTR_KIND_FOLLOW_LIST && !*entry->identifier) {
+      /* Read-only (never published), only while load-profile-pictures is
+       * on, from discovery plus write relays (plan §3.6, PD-12). */
+      entry->publish_policy = GNOSTR_LIST_READ_ONLY;
+      entry->sources = (const gchar *const *)self->follow_sources;
+      entry->targets = NULL;
+      entry->waiting_for_dependency = !self->follows_enabled || !ready || !self->follow_sources;
     } else if (entry->kind == NOSTR_KIND_MUTE_LIST && gh_list_adapter_hide_unsynced(self->adapter)) {
       entry->publish_policy = GNOSTR_LIST_EXPLICIT_ONLY;
     } else if (self->sync_enabled) {
@@ -263,6 +404,7 @@ gh_social_lists_bind_store(GhSocialLists *self, GhStore *store, guint64 generati
   g_signal_connect_swapped(self->service, "state-changed", G_CALLBACK(document_state_changed), self);
   if (!update_plan(self, error)) { gh_social_lists_close(self); goto fail; }
   gnostr_list_service_set_private_sync_enabled(self->service, self->sync_enabled);
+  rebuild_follows(self, FALSE); /* the persisted kind 3, if any */
   g_signal_emit(self, signals[CHANGED], 0);
   g_signal_emit(self, signals[SYNC_STATE_CHANGED], 0);
   return TRUE;
@@ -300,22 +442,38 @@ gh_social_lists_dispose(GObject *object)
   if (self->relays) g_signal_handlers_disconnect_by_data(self->relays, self);
   g_clear_object(&self->relays);
   gh_list_adapter_network_clear(&self->network);
+  g_clear_pointer(&self->discovery, g_strfreev);
+  g_clear_pointer(&self->follow_sources, g_strfreev);
+  g_clear_pointer(&self->follow_list, g_strfreev);
   G_OBJECT_CLASS(gh_social_lists_parent_class)->dispose(object);
+}
+
+static void
+gh_social_lists_finalize(GObject *object)
+{
+  GhSocialLists *self = GH_SOCIAL_LISTS(object);
+  g_hash_table_unref(self->follows);
+  G_OBJECT_CLASS(gh_social_lists_parent_class)->finalize(object);
 }
 
 static void
 gh_social_lists_class_init(GhSocialListsClass *klass)
 {
   G_OBJECT_CLASS(klass)->dispose = gh_social_lists_dispose;
+  G_OBJECT_CLASS(klass)->finalize = gh_social_lists_finalize;
   signals[CHANGED] = g_signal_new("changed", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST,
     0, NULL, NULL, NULL, G_TYPE_NONE, 0);
+  signals[FOLLOWS_CHANGED] = g_signal_new("follows-changed", G_TYPE_FROM_CLASS(klass),
+    G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL, G_TYPE_NONE, 0);
   signals[DOCUMENT_CHANGED] = g_signal_new("document-changed", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST,
     0, NULL, NULL, NULL, G_TYPE_NONE, 1, GNOSTR_TYPE_LIST_DOCUMENT);
   signals[SYNC_STATE_CHANGED] = g_signal_new("sync-state-changed", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST,
     0, NULL, NULL, NULL, G_TYPE_NONE, 0);
 }
-static void gh_social_lists_init(GhSocialLists *self)
+static void
+gh_social_lists_init(GhSocialLists *self)
 {
+  self->follows = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   self->deny_policy = g_object_ref(gh_relay_deny_policy_get_default());
   gh_relay_deny_policy_revoke(self->deny_policy);
 }

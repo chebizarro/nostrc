@@ -8,7 +8,8 @@ G_BEGIN_DECLS
 #define GH_TYPE_SOCIAL_LISTS (gh_social_lists_get_type())
 G_DECLARE_FINAL_TYPE(GhSocialLists, gh_social_lists, GH, SOCIAL_LISTS, GObject)
 /* Owned by GhAppServices. Main-context only. Signals: changed (),
- * sync-state-changed (), plus document-changed (GNostrListDocument).
+ * sync-state-changed (), follows-changed (), plus document-changed
+ * (GNostrListDocument).
  * Local relay denial and attachment destinations apply before networking.
  * First hide-list import is exposed by get_pending_import(), never applied silently. */
 GhSocialLists *gh_social_lists_new(GhAccountStore *account_store);
@@ -32,6 +33,18 @@ gboolean gh_social_lists_confirm_import(GhSocialLists *self, gboolean accept, GE
 gboolean gh_social_lists_bind_store(GhSocialLists *self, GhStore *store, guint64 generation,
                                      GError **error);
 void gh_social_lists_close(GhSocialLists *self);
+/* Follows (NIP-02, plan §3.6, charter PD-12): the account's kind 3 is read
+ * only while load-profile-pictures is on (enabled), from discovery_relays
+ * plus the account's NIP-65 write relays, at most 16, under own-list
+ * discovery (ephemeral AUTH); it is never published. Off: no request, and
+ * the persisted set stays stored but unused (is_followed is FALSE, the list
+ * empty). "follows-changed" follows every change of the answers. */
+void gh_social_lists_set_follow_reads(GhSocialLists *self, gboolean enabled,
+                                      const gchar *const *discovery_relays);
+gboolean gh_social_lists_is_followed(GhSocialLists *self, const gchar *pubkey);
+/* The followed pubkeys (hex, lowercase), NULL-terminated; borrowed until the
+ * next "follows-changed". */
+const gchar *const *gh_social_lists_get_follows(GhSocialLists *self);
 GNostrListService *gh_social_lists_get_service(GhSocialLists *self); /* borrowed */
 guint64 gh_social_lists_get_generation(GhSocialLists *self);
 const gchar *gh_social_lists_get_error(GhSocialLists *self);

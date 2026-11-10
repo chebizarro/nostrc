@@ -31,6 +31,7 @@ endfunction()
 _gh_describe(groundhog-store-social test-groundhog-store-social groundhog.store
   INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/src/store/gh-store-schema.c")
 _gh_describe(groundhog-social-lists test-groundhog-social-lists groundhog.unclassified)
+_gh_describe(groundhog-picture-cache test-groundhog-picture-cache groundhog.unclassified)
 _gh_describe(groundhog-social-sync test-groundhog-social-sync groundhog.unclassified REQUIRES private_bus)
 _gh_describe(groundhog-social-sync-gui test-groundhog-social-sync groundhog.unclassified REQUIRES display private_bus)
 _gh_describe(groundhog-lists-ui test-groundhog-lists-ui groundhog.unclassified REQUIRES display

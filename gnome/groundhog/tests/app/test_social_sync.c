@@ -3,6 +3,7 @@
  * or EOSE. The group-list suite separately exercises the real wire transport. */
 #include "gh-social-lists.h"
 #include "gh-social-lists-backend.h"
+#include "gh-identity.h"
 #include "gh-preferences-dialog.h"
 #include "gh-relay-deny-policy.h"
 #include "gh-test-signer.h"
@@ -99,6 +100,7 @@ static gchar *event_json(gint kind, gint64 at, NostrTags *tags, const gchar *con
   gchar *json = g_strdup(raw); free(raw); nostr_event_free(event);
   return json;
 }
+/* Not "encrypt": Darwin's <unistd.h> declares encrypt(char *, int). */
 static gchar *encrypt_private(const gchar *plain)
 {
   guint8 secret[32], pubkey[32]; char *cipher = NULL;
@@ -215,6 +217,62 @@ static void accept_writes(Fixture *f)
     if (!w->closed) gh_relay_publish_ok(w->publish, w->url, w->id, TRUE, "");
   }
   drain();
+}
+static void count_follows(GhSocialLists *lists, guint *count) { (void)lists; (*count)++; }
+/* Kind 3 (plan §3.6, PD-12): read only while load-profile-pictures is on,
+ * from the discovery relays plus the write relays, never published; the
+ * derived follow set is kept but unused while the switch is off. */
+static void test_follow_reads_gated(void)
+{
+  Fixture f; setup(&f);
+  const gchar *discovery[] = { "wss://discovery.test.invalid", NULL };
+  g_autofree gchar *other = gh_identity_pubkey_hex(other_npub);
+  guint changed = 0;
+  g_signal_connect(f.social, "follows-changed", G_CALLBACK(count_follows), &changed);
+  /* Off (the default), even with sync on: no kind-3 read. */
+  gh_social_lists_set_follow_reads(f.social, FALSE, discovery); drain();
+  enabled(&f, TRUE);
+  for (guint i = 0; i < f.reads->len; i++)
+    g_assert_cmpint(((Read *)f.reads->pdata[i])->kind, !=, NOSTR_KIND_FOLLOW_LIST);
+  g_assert_false(gh_social_lists_is_followed(f.social, other));
+  g_assert_null(gh_social_lists_get_follows(f.social)[0]);
+  /* On: one read per source, discovery plus the three write relays. */
+  gh_social_lists_set_follow_reads(f.social, TRUE, discovery); drain();
+  Read *disc = read_for(&f, NOSTR_KIND_FOLLOW_LIST, discovery[0]);
+  g_assert_nonnull(strstr(disc->filter, account));
+  g_assert_nonnull(strstr(disc->filter, "\"kinds\":[3]"));
+  for (guint i = 0; writes[i]; i++) read_for(&f, NOSTR_KIND_FOLLOW_LIST, writes[i]);
+  /* The signed list arrives: its p tags (relay hint and petname preserved
+   * in the document, not used here) become the follow set. */
+  NostrTags *tags = nostr_tags_new(0);
+  nostr_tags_append(tags, nostr_tag_new("p", other, "wss://hint.test.invalid", "friend", NULL));
+  g_autofree gchar *list = event_json(NOSTR_KIND_FOLLOW_LIST, g_get_real_time() / G_USEC_PER_SEC - 30, tags, "");
+  gh_relay_scope_event(disc->scope, disc->url, list); gh_relay_scope_eose(disc->scope, disc->url);
+  for (guint i = 0; writes[i]; i++) {
+    Read *r = read_for(&f, NOSTR_KIND_FOLLOW_LIST, writes[i]);
+    gh_relay_scope_eose(r->scope, r->url);
+  }
+  drain();
+  g_assert_cmpuint(changed, >=, 1);
+  g_assert_true(gh_social_lists_is_followed(f.social, other));
+  g_assert_false(gh_social_lists_is_followed(f.social, account));
+  const gchar *const *follows = gh_social_lists_get_follows(f.social);
+  g_assert_cmpstr(follows[0], ==, other); g_assert_null(follows[1]);
+  g_assert_cmpuint(f.sent->len, ==, 0); /* never published */
+  /* Off again: the set is kept but unused, and the reads close. */
+  changed = 0;
+  gh_social_lists_set_follow_reads(f.social, FALSE, discovery); drain();
+  g_assert_cmpuint(changed, ==, 1);
+  g_assert_false(gh_social_lists_is_followed(f.social, other));
+  g_assert_null(gh_social_lists_get_follows(f.social)[0]);
+  for (guint i = 0; i < f.reads->len; i++) {
+    Read *r = f.reads->pdata[i];
+    if (r->kind == NOSTR_KIND_FOLLOW_LIST) g_assert_true(r->closed);
+  }
+  /* On once more: usable at once, from the store, before any relay answers. */
+  gh_social_lists_set_follow_reads(f.social, TRUE, discovery); drain();
+  g_assert_true(gh_social_lists_is_followed(f.social, other));
+  teardown(&f);
 }
 static void test_default_majority(void)
 {
@@ -698,6 +756,7 @@ int main(int argc, char **argv)
     g_test_add_data_func("/groundhog/social-sync-gui/import-decline", GINT_TO_POINTER(FALSE), test_preferences_import);
   } else {
   g_test_add_func("/privacy/social/default-no-sync", test_default_majority);
+  g_test_add_func("/privacy/avatars/no-follow-read-while-off", test_follow_reads_gated);
   g_test_add_func("/privacy/social/publication-needs-confirmation", test_public_and_partial);
   g_test_add_func("/privacy/social/server-list-explicit-public-post", test_server_list_explicit);
   g_test_add_func("/groundhog/social-sync/own-hide-echo", test_own_hide_echo);
