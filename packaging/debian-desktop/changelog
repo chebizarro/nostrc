@@ -1,3 +1,9 @@
+groundhog (0.13.1-1) unstable; urgency=medium
+
+  * Close private signer connections on their owning context before releasing them.
+
+ -- Biz <chebizarro@protonmail.com>  Tue, 10 Nov 2026 14:15:00 -0800
+
 groundhog (0.13.0-1) unstable; urgency=medium
 
   * Integrate account social lists, encrypted draft sync, reports, emoji and badges.

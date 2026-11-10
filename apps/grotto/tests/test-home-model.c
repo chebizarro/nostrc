@@ -135,7 +135,7 @@ static void inventory_signal_refresh(void) {
   accounts_store_disconnect_changed(as, handler);
 }
 int main(int argc, char **argv) {
-  g_test_init(&argc, &argv, NULL); nostrc_test_bus_tolerate_ebadf();
+  g_test_init(&argc, &argv, NULL);
   NostrcTestBus *bus = nostrc_test_bus_new(NOSTRC_TEST_BUS_FLAGS_NONE); nostrc_test_bus_up(bus);
   server = nostrc_test_bus_connect(bus);
   GDBusNodeInfo *info = g_dbus_node_info_new_for_xml("<node><interface name='org.nostr.Signer'><method name='ListIdentities'><arg type='as' direction='out'/></method></interface></node>", NULL);

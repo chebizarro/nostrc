@@ -324,8 +324,26 @@ wait_for_done(Await *wait)
   while (!wait->done) g_main_context_iteration(NULL, TRUE);
 }
 
+static gpointer
+cancel_on_worker(gpointer data)
+{
+  g_cancellable_cancel(data);
+  return NULL;
+}
+
 static void
-test_cancel(void)
+sender_vanished(GDBusConnection *connection, const gchar *sender, const gchar *path,
+                const gchar *interface, const gchar *signal, GVariant *parameters, gpointer data)
+{
+  (void)connection; (void)sender; (void)path; (void)interface; (void)signal;
+  const gchar *name, *old_owner, *new_owner;
+  g_variant_get(parameters, "(&s&s&s)", &name, &old_owner, &new_owner);
+  (void)name; (void)old_owner;
+  if (!*new_owner) *(gboolean *)data = TRUE;
+}
+
+static void
+test_cancel(gconstpointer from_worker)
 {
   mode = MOCK_HOLD;
   GhSigner *signer = gh_signer_new(client, npub_one, NULL);
@@ -335,11 +353,31 @@ test_cancel(void)
   gh_signer_sign_async(signer, request, cancel, finished, &wait);
   wait_for_held_call();
   g_autofree gchar *abandoned_sender = g_strdup(last_sender);
-  g_cancellable_cancel(cancel);
+  gboolean sender_gone = FALSE;
+  guint watch = g_dbus_connection_signal_subscribe(client, "org.freedesktop.DBus",
+    "org.freedesktop.DBus", "NameOwnerChanged", "/org/freedesktop/DBus", abandoned_sender,
+    G_DBUS_SIGNAL_FLAGS_NONE, sender_vanished, &sender_gone, NULL);
+  /* The round trip also orders AddMatch before cancellation's disconnect. */
+  g_autoptr(GVariant) owned = g_dbus_connection_call_sync(client, "org.freedesktop.DBus",
+    "/org/freedesktop/DBus", "org.freedesktop.DBus", "NameHasOwner",
+    g_variant_new("(s)", abandoned_sender), G_VARIANT_TYPE("(b)"),
+    G_DBUS_CALL_FLAGS_NONE, -1, NULL, NULL);
+  g_assert_nonnull(owned);
+  gboolean has_owner;
+  g_variant_get(owned, "(b)", &has_owner);
+  g_assert_true(has_owner);
+  if (GPOINTER_TO_INT(from_worker)) {
+    GThread *worker = g_thread_new("cancel-signer", cancel_on_worker, cancel);
+    g_thread_join(worker);
+  } else {
+    g_cancellable_cancel(cancel);
+  }
   g_main_loop_run(wait.loop);
   g_assert_error(wait.error, GH_SIGNER_ERROR, GH_SIGNER_ERROR_CANCELLED);
   g_assert_null(wait.value);
   g_clear_error(&wait.error);
+  while (!sender_gone) g_main_context_iteration(NULL, TRUE);
+  g_dbus_connection_signal_unsubscribe(client, watch);
   release_held_call();
   mode = MOCK_OK;
   gh_signer_sign_async(signer, request, NULL, finished, &wait);
@@ -695,7 +733,8 @@ main(int argc, char **argv)
                   test_sign_approval_timeout_denied_text);
   g_test_add_func("/groundhog/signer/no-approval-agent", test_sign_no_agent);
   g_test_add_func("/groundhog/signer/identity-changed", test_sign_identity_changed);
-  g_test_add_func("/groundhog/signer/cancel", test_cancel);
+  g_test_add_data_func("/groundhog/signer/cancel", GINT_TO_POINTER(FALSE), test_cancel);
+  g_test_add_data_func("/groundhog/signer/cancel-from-worker", GINT_TO_POINTER(TRUE), test_cancel);
   g_test_add_func("/groundhog/signer/switch-cancels", test_switch_cancels);
   g_test_add_func("/groundhog/signer/concurrent-cancel", test_concurrent_cancel);
   g_test_add_func("/groundhog/signer/concurrent-switch", test_concurrent_switch);

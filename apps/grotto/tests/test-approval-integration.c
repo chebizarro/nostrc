@@ -1081,7 +1081,6 @@ int main(int argc, char **argv) {
   g_unsetenv("NOSTR_SIGNER_TOKEN");
   g_test_init(&argc, &argv, NULL);
   nostr_json_init();
-  nostrc_test_bus_tolerate_ebadf();
 #ifndef __APPLE__
   if (worker) {
     /* GTK/Adwaita have process-global bus proxies. Run the GUI in a short-lived

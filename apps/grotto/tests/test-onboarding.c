@@ -834,7 +834,7 @@ int main(int argc, char **argv) {
 #ifdef __APPLE__
   if (g_getenv("GNOSTR_SKIP_UI_TESTS")) return 77;
 #endif
-  g_test_init(&argc, &argv, NULL); nostrc_test_tolerate_gdk_frame_warning(); nostrc_test_bus_tolerate_ebadf();
+  g_test_init(&argc, &argv, NULL); nostrc_test_tolerate_gdk_frame_warning();
   /* Portal integration is tested separately; its global settings proxy must
    * not attach to either the outer gate bus or this mock signer's bus. */
   g_setenv("ADW_DISABLE_PORTAL", "1", TRUE);

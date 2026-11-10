@@ -185,7 +185,6 @@ static void reconciled(GrottoApprovalController *s, gboolean success, gpointer d
 }
 static void setup(Fixture *f, gconstpointer data) {
   (void)data;
-  nostrc_test_bus_tolerate_ebadf();
   f->bus = nostrc_test_bus_new(NOSTRC_TEST_BUS_FLAGS_NONE);
   nostrc_test_bus_up(f->bus);
   f->server = nostrc_test_bus_connect(f->bus);

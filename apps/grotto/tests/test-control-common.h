@@ -35,7 +35,7 @@ static void observe(gpointer data, GVariant *row) {
   if (!strcmp(state, "PENDING")) g_ptr_array_add(f->pending, g_variant_ref(row)); else f->finished++;
 }
 static void fixture_setup(ControlFixture *f, gconstpointer data) {
-  (void)data; nostrc_test_bus_tolerate_ebadf();
+  (void)data;
   f->bus = nostrc_test_bus_new(NOSTRC_TEST_BUS_FLAGS_NONE); nostrc_test_bus_up(f->bus);
   f->server = nostrc_test_bus_connect(f->bus); f->client = nostrc_test_bus_connect(f->bus);
   f->approval = signer_approval_service_new(NULL);

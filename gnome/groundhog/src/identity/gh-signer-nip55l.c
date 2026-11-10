@@ -44,6 +44,7 @@ struct _Pending {
   GCancellable *caller;
   GMutex bus_lock; /* caller cancellation may arrive from another thread */
   gboolean revoked;
+  gboolean close_started; /* guarded by bus_lock */
   gulong caller_handler;
   guint generation;
   Operation op;
@@ -108,19 +109,115 @@ gh_signer_nip55l_new(GDBusConnection *bus, const gchar *selected_npub, GError **
   return signer;
 }
 
+typedef struct {
+  GDBusConnection *bus;
+  GMainContext *context;
+  gulong closed_handler;
+  gboolean finished;
+  gboolean closed;
+  gboolean cleanup_queued;
+} PrivateClose;
+
+static void
+post_close_source(PrivateClose *close, GSourceFunc callback)
+{
+  GSource *source = g_idle_source_new();
+  g_source_set_priority(source, G_PRIORITY_DEFAULT);
+  g_source_set_callback(source, callback, close, NULL);
+  g_source_attach(source, close->context);
+  g_source_unref(source);
+}
+
+static gboolean
+private_close_free(gpointer data)
+{
+  PrivateClose *close = data;
+  if (close->closed_handler)
+    g_signal_handler_disconnect(close->bus, close->closed_handler);
+  g_object_unref(close->bus);
+  g_main_context_unref(close->context);
+  g_free(close);
+  return G_SOURCE_REMOVE;
+}
+
+static void
+private_close_maybe_finished(PrivateClose *close)
+{
+  if (close->finished && close->closed && !close->cleanup_queued) {
+    close->cleanup_queued = TRUE;
+    post_close_source(close, private_close_free);
+  }
+}
+
+static void
+private_closed(GDBusConnection *bus, gboolean remote, GError *error, gpointer data)
+{
+  (void)bus; (void)remote; (void)error;
+  PrivateClose *close = data;
+  close->closed = TRUE;
+  private_close_maybe_finished(close);
+}
+
+static void
+private_close_finished(GObject *source, GAsyncResult *result, gpointer data)
+{
+  PrivateClose *close = data;
+  g_autoptr(GError) error = NULL;
+  if (!g_dbus_connection_close_finish(G_DBUS_CONNECTION(source), result, &error) &&
+      !g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CLOSED))
+    g_warning("Cannot close private signer connection: %s", error->message);
+  close->finished = TRUE;
+  private_close_maybe_finished(close);
+}
+
+static gboolean
+private_close_start(gpointer data)
+{
+  PrivateClose *close = data;
+  if (g_dbus_connection_is_closed(close->bus))
+    return private_close_free(close);
+  close->closed_handler = g_signal_connect(close->bus, "closed", G_CALLBACK(private_closed), close);
+  g_dbus_connection_close(close->bus, NULL, private_close_finished, close);
+  return G_SOURCE_REMOVE;
+}
+
+static void
+close_private(GDBusConnection *bus, GMainContext *context)
+{
+  PrivateClose *close = g_new0(PrivateClose, 1);
+  close->bus = g_object_ref(bus);
+  close->context = g_main_context_ref(context);
+  /* Caller cancellation can run on another thread. Start on the connection's
+   * owning context and retain it through close_finish AND closed dispatch,
+   * so last-unref cannot race its GIO read-source cancellation. */
+  post_close_source(close, private_close_start);
+}
+
+static void
+close_pending_bus(Pending *p)
+{
+  g_mutex_lock(&p->bus_lock);
+  GDBusConnection *bus = NULL;
+  if (p->bus && !p->close_started) {
+    p->close_started = TRUE;
+    bus = g_object_ref(p->bus);
+  }
+  g_mutex_unlock(&p->bus_lock);
+  if (bus) {
+    close_private(bus, g_task_get_context(p->task));
+    g_object_unref(bus);
+  }
+}
+
 static void
 cancel_pending(Pending *p)
 {
-  /* Cancellation alone abandons only the reply. Closing this operation's
-   * sender also revokes its service-side approval without affecting peers. */
+  /* Revoking this operation's private sender must not affect its peers. */
   g_mutex_lock(&p->bus_lock);
   p->revoked = TRUE;
-  GDBusConnection *bus = p->bus ? g_object_ref(p->bus) : NULL;
   g_mutex_unlock(&p->bus_lock);
+  close_pending_bus(p);
   g_cancellable_cancel(p->cancel);
-  if (bus && !g_dbus_connection_is_closed(bus))
-    g_dbus_connection_close(bus, NULL, NULL, NULL);
-  g_clear_object(&bus);
 }
 
 void
@@ -335,8 +432,7 @@ call_done(GObject *source, GAsyncResult *result, gpointer data)
     else
       g_task_return_pointer(p->task, g_strdup(value), g_free);
   }
-  if (!g_dbus_connection_is_closed(p->bus))
-    g_dbus_connection_close(p->bus, NULL, NULL, NULL);
+  close_pending_bus(p);
   pending_free(p);
 }
 
@@ -415,7 +511,7 @@ connection_done(GObject *source, GAsyncResult *result, gpointer data)
   GDBusConnection *bus = g_dbus_connection_new_for_address_finish(result, &error);
   if (g_cancellable_is_cancelled(p->cancel) || p->generation != signer->generation) {
     if (bus) {
-      g_dbus_connection_close(bus, NULL, NULL, NULL);
+      close_private(bus, g_task_get_context(p->task));
       g_object_unref(bus);
     }
     g_ptr_array_remove(signer->pending, p);
@@ -427,7 +523,7 @@ connection_done(GObject *source, GAsyncResult *result, gpointer data)
   if (!bus || g_strcmp0(g_dbus_connection_get_guid(bus),
                         g_dbus_connection_get_guid(signer->bus)) != 0) {
     if (bus) {
-      g_dbus_connection_close(bus, NULL, NULL, NULL);
+      close_private(bus, g_task_get_context(p->task));
       g_object_unref(bus);
     }
     g_ptr_array_remove(signer->pending, p);
@@ -439,7 +535,7 @@ connection_done(GObject *source, GAsyncResult *result, gpointer data)
   g_mutex_lock(&p->bus_lock);
   if (p->revoked) {
     g_mutex_unlock(&p->bus_lock);
-    g_dbus_connection_close(bus, NULL, NULL, NULL);
+    close_private(bus, g_task_get_context(p->task));
     g_object_unref(bus);
     g_ptr_array_remove(signer->pending, p);
     fail_pending(p, g_error_new_literal(GH_SIGNER_ERROR, GH_SIGNER_ERROR_CANCELLED,
@@ -474,7 +570,7 @@ send_call(Pending *p, gboolean wrapped)
     g_ptr_array_remove(p->signer->pending, p);
     fail_pending(p, g_error_new_literal(GH_SIGNER_ERROR, GH_SIGNER_ERROR_CANCELLED,
                                         "Signer operation cancelled"));
-    if (!g_dbus_connection_is_closed(p->bus)) g_dbus_connection_close(p->bus, NULL, NULL, NULL);
+    close_pending_bus(p);
     pending_free(p); return;
   }
   const gchar *method = operation_method(p->op, p->named);

@@ -1910,7 +1910,7 @@ int main(int argc, char **argv) {
   }
   g_test_init(&argc, &argv, NULL); nostrc_test_tolerate_gdk_frame_warning();
   /* GTK can open a session connection through GVfs; establish test custody first. */
-  nostrc_test_bus_tolerate_ebadf(); NostrcTestBus *bus = nostrc_test_bus_new(NOSTRC_TEST_BUS_FLAGS_NONE); nostrc_test_bus_up(bus); server = nostrc_test_bus_connect(bus);
+  NostrcTestBus *bus = nostrc_test_bus_new(NOSTRC_TEST_BUS_FLAGS_NONE); nostrc_test_bus_up(bus); server = nostrc_test_bus_connect(bus);
   if (!gtk_init_check()) { nostrc_test_bus_down(bus); g_print("1..0 # SKIP GTK display unavailable\n"); return 77; }
   adw_init();
   /* Resolve the shipped app icon even in an uninstalled container build. */

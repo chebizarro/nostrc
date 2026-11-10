@@ -652,7 +652,7 @@ static void crop_picker_cancel(SignerWindow *window, AdwDialog *editor) {
 #endif
 static void profile_activate(GApplication *application, gpointer data) {
   (void)data; AdwApplication *app = ADW_APPLICATION(application);
-  nostrc_test_bus_tolerate_ebadf(); NostrcTestBus *bus = private_bus;
+  NostrcTestBus *bus = private_bus;
   GDBusConnection *connection = nostrc_test_bus_connect(bus);
   const char *sk = "0000000000000000000000000000000000000000000000000000000000000001";
   g_autofree char *hex = nostr_key_get_public(sk); guint8 pk[32];

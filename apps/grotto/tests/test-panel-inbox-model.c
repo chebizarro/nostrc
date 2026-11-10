@@ -88,7 +88,7 @@ static void panel_inbox(void) {
   grotto_home_model_stop(model); g_assert_null(grotto_home_model_status(model)); g_assert_null(grotto_home_model_proxy(model));
 }
 int main(int argc, char **argv) {
-  g_test_init(&argc, &argv, NULL); nostrc_test_bus_tolerate_ebadf(); NostrcTestBus *bus = nostrc_test_bus_new(NOSTRC_TEST_BUS_FLAGS_NONE); nostrc_test_bus_up(bus); server = nostrc_test_bus_connect(bus);
+  g_test_init(&argc, &argv, NULL); NostrcTestBus *bus = nostrc_test_bus_new(NOSTRC_TEST_BUS_FLAGS_NONE); nostrc_test_bus_up(bus); server = nostrc_test_bus_connect(bus);
   g_autoptr(GDBusNodeInfo) node = g_dbus_node_info_new_for_xml("<node><interface name='org.nostr.Grotto.Control1'><method name='GetStatus'><arg type='a{sv}' direction='out'/></method><method name='ListClients'><arg type='aa{sv}' direction='out'/></method><method name='ListRequests'><arg type='aa{sv}' direction='out'/></method><method name='ListActivity'><arg type='t' direction='in'/><arg type='u' direction='in'/><arg type='aa{sv}' direction='out'/></method><signal name='StatusChanged'><arg type='t'/></signal><signal name='RequestsChanged'><arg type='t'/></signal><signal name='ClientsChanged'><arg type='t'/></signal><signal name='ActivityChanged'><arg type='t'/></signal></interface></node>", NULL);
   const GDBusInterfaceVTable vtable = {call, NULL, NULL, {0}};
   guint registration = g_dbus_connection_register_object(server, "/org/nostr/signer/grotto", node->interfaces[0], &vtable, NULL, NULL, NULL); g_assert_cmpuint(registration, >, 0); name("RequestName");
