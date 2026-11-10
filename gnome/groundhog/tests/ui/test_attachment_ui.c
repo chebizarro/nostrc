@@ -2435,6 +2435,10 @@ test_unusable_destinations_choose_server(void)
 int
 main(int argc, char **argv)
 {
+  /* Relay I/O is recorded and Blossom runs on loopback. Host routing must not
+   * park this fixture's outbox offline (e.g. a network-isolated container).
+   * Select the monitor before GTK can initialize GIO's default singleton. */
+  g_setenv("GIO_USE_NETWORK_MONITOR", "base", TRUE);
   if (!nostrc_test_bus_available()) {
     g_printerr("groundhog-attachment-ui test skipped: dbus-daemon is not installed\n");
     return 77;
