@@ -1,6 +1,6 @@
 #include "nostr/nip56/nip56.h"
 #include "nostr-kinds.h"
-#include "../../codec-internal.h"
+#include "codec-internal.h"
 
 static const char *const categories[] = {"nudity", "malware", "profanity", "illegal", "spam", "impersonation", "other"};
 const char *nostr_nip56_category_name(NostrNip56Category c) {

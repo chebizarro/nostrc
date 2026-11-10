@@ -14,6 +14,7 @@ target_include_directories(nip58
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_SOURCE_DIR}/libnostr/include)
 
+target_include_directories(nip58 PRIVATE ${CMAKE_SOURCE_DIR}/nips)
 target_link_libraries(nip58 PUBLIC nostr PkgConfig::JANSSON)
 
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/

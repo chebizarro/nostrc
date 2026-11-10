@@ -1,7 +1,7 @@
 #include "nostr/nip51/nip51.h"
 #include "nostr-kinds.h"
 #include "json.h"
-#include "../../codec-internal.h"
+#include "codec-internal.h"
 
 struct NostrListTag { size_t count; char **fields; size_t bytes; };
 struct NostrListDocument {

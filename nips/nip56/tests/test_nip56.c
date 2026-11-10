@@ -1,7 +1,7 @@
 #include "nostr/nip56/nip56.h"
 #include "nostr-kinds.h"
 #include "json.h"
-#include "../../codec-internal.h"
+#include "codec-internal.h"
 #include <assert.h>
 #include <stdio.h>
 #define PK "1111111111111111111111111111111111111111111111111111111111111111"

@@ -1,6 +1,6 @@
 #include "nostr/nip51/nip51.h"
 #include "nostr-kinds.h"
-#include "../../codec-internal.h"
+#include "codec-internal.h"
 
 struct NostrListSchema { int kind; bool identifier, read_only; NostrListPrivacy privacy; const char *items; };
 #define OPTIONAL NOSTR_LIST_PRIVACY_OPTIONAL

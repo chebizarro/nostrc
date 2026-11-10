@@ -7,10 +7,12 @@ nostrc_library_visibility(nostr_nip37_core NOSTR_NIP37_API
   nostr/nip37/export.h "${CMAKE_INSTALL_INCLUDEDIR}/nostr/nip37")
 target_include_directories(nostr_nip37_core PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_SOURCE_DIR}/libnostr/include)
+target_include_directories(nostr_nip37_core PRIVATE ${CMAKE_SOURCE_DIR}/nips)
 target_link_libraries(nostr_nip37_core PUBLIC nostr PkgConfig::JANSSON)
 install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 if(BUILD_TESTING)
   add_executable(test_nip37 tests/test_nip37.c)
+  target_include_directories(test_nip37 PRIVATE ${CMAKE_SOURCE_DIR}/nips)
   target_link_libraries(test_nip37 PRIVATE nostr_nip37_core)
   add_test(NAME test_nip37 COMMAND test_nip37)
 endif()

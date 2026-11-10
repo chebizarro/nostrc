@@ -2,7 +2,7 @@
 #include <errno.h>
 #include <string.h>
 #include "nostr-kinds.h"
-#include "../../codec-internal.h"
+#include "codec-internal.h"
 
 static bool address_kind(const char *s, int expected) {
     int kind;

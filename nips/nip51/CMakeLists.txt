@@ -20,6 +20,8 @@ target_include_directories(nostr_nip51_core
         ${CMAKE_SOURCE_DIR}/nips/nip44/include
 )
 
+target_include_directories(nostr_nip51_core PRIVATE ${CMAKE_SOURCE_DIR}/nips)
+
 target_link_libraries(nostr_nip51_core
     PUBLIC
         nostr
@@ -38,6 +40,7 @@ if(BUILD_TESTING)
     target_compile_definitions(test_nip51 PRIVATE
       NIP51_SCHEMA_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/schema-registry.tsv")
     target_include_directories(test_nip51 PRIVATE
+        ${CMAKE_SOURCE_DIR}/nips
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_SOURCE_DIR}/libnostr/include
         ${CMAKE_SOURCE_DIR}/nips/nip44/include
@@ -60,6 +63,7 @@ if(BUILD_TESTING)
       target_compile_options(test_nip51_failures PRIVATE -include "${CMAKE_CURRENT_SOURCE_DIR}/tests/faults.h")
     endif()
     target_include_directories(test_nip51_failures PRIVATE
+      ${CMAKE_SOURCE_DIR}/nips
       ${CMAKE_CURRENT_SOURCE_DIR}/include
       ${CMAKE_CURRENT_BINARY_DIR}/include
       ${CMAKE_SOURCE_DIR}/nips/nip44/include)

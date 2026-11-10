@@ -1,6 +1,6 @@
 #include "nostr/nip37/nip37.h"
 #include "nostr-kinds.h"
-#include "../../codec-internal.h"
+#include "codec-internal.h"
 #include <stdio.h>
 
 int nostr_nip37_parse_envelope(const NostrEvent *ev, NostrNip37Envelope *out) {

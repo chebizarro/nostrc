@@ -9,7 +9,7 @@
 #include "nostr-keys.h"
 #include "nostr-kinds.h"
 #include "json.h"
-#include "../../codec-internal.h"
+#include "codec-internal.h"
 #define PK1 "1111111111111111111111111111111111111111111111111111111111111111"
 #define PK2 "2222222222222222222222222222222222222222222222222222222222222222"
 

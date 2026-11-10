@@ -1,7 +1,7 @@
 #include "nostr/nip37/nip37.h"
 #include "nostr-kinds.h"
 #include "json.h"
-#include "../../codec-internal.h"
+#include "codec-internal.h"
 #include <assert.h>
 #include <stdio.h>
 

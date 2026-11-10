@@ -4,7 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "nostr-kinds.h"
-#include "../../codec-internal.h"
+#include "codec-internal.h"
 
 /* NIP-30 shortcodes are ASCII, independent of the process locale. */
 static inline bool is_word_char(char c) {

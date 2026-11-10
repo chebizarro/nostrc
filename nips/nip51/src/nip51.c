@@ -3,7 +3,7 @@
 #include "nostr-kinds.h"
 #include "nostr-keys.h"
 #include "nostr-utils.h"
-#include "../../codec-internal.h"
+#include "codec-internal.h"
 #include <time.h>
 
 NostrList *nostr_nip51_list_new(void) {
