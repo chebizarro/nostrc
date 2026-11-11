@@ -127,10 +127,11 @@ static int add_relay(char ***items, size_t *n, const char *encoded) {
     for (size_t i = 0; i < *n; i++) {
         if (!strcmp((*items)[i], relay)) { free(relay); return -1; }
     }
-    char **next = realloc(*items, (*n + 1u) * sizeof(*next));
+    char **next = realloc(*items, (*n + 2u) * sizeof(*next));
     if (!next) { free(relay); return -1; }
     *items = next;
     (*items)[(*n)++] = relay;
+    (*items)[*n] = NULL;
     return 0;
 }
 

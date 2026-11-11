@@ -201,10 +201,11 @@ network_mode(GhNip46PairDialog *self)
 }
 
 static gchar **
-validate_relays(GhNip46PairDialog *self, const gchar * const *input, GError **error)
+validate_relays(GhNip46PairDialog *self, const gchar * const *input,
+                gsize n_input, GError **error)
 {
   g_autoptr(GPtrArray) urls = g_ptr_array_new_with_free_func(g_free);
-  for (guint i = 0; input && input[i]; i++) {
+  for (gsize i = 0; input && i < n_input; i++) {
     g_autofree gchar *normalized = normalize_relay(input[i], network_mode(self), error);
     if (!normalized) return NULL;
     if (!g_ptr_array_find_with_equal_func(urls, normalized,
@@ -229,8 +230,8 @@ qr_relays(GhNip46PairDialog *self, GError **error)
   g_autoptr(GPtrArray) nonempty = g_ptr_array_new();
   for (guint i = 0; parts[i]; i++)
     if (*parts[i]) g_ptr_array_add(nonempty, parts[i]);
-  g_ptr_array_add(nonempty, NULL);
-  return validate_relays(self, (const gchar *const *)nonempty->pdata, error);
+  return validate_relays(self, (const gchar *const *)nonempty->pdata,
+                         nonempty->len, error);
 }
 
 static void
@@ -624,7 +625,8 @@ on_bunker_changed(GtkEditable *entry, gpointer data)
     return;
   }
   g_autoptr(GError) error = NULL;
-  g_auto(GStrv) relays = validate_relays(self, (const gchar *const *)parsed.relays, &error);
+  g_auto(GStrv) relays = validate_relays(self, (const gchar *const *)parsed.relays,
+                                              parsed.n_relays, &error);
   if (relays) {
     g_autofree gchar *details = g_strdup_printf(_("Signer %.12s… via %u relay(s)"),
       parsed.remote_signer_pubkey_hex, (guint)g_strv_length(relays));
@@ -651,7 +653,8 @@ start_bunker(GhNip46PairDialog *self)
     return;
   }
   g_autoptr(GError) error = NULL;
-  g_auto(GStrv) relays = validate_relays(self, (const gchar *const *)parsed.relays, &error);
+  g_auto(GStrv) relays = validate_relays(self, (const gchar *const *)parsed.relays,
+                                              parsed.n_relays, &error);
   if (!relays) {
     nostr_nip46_uri_bunker_free(&parsed);
     show_error(self, error ? error->message : _("Invalid bunker relays."));
