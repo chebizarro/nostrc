@@ -9,6 +9,16 @@
 #include <string.h>
 #include <nostr-kinds.h>
 
+/* Calls (nostrc-mqrgk.5): the ICE URL rules and the TURN credential store
+ * exist only in the GStreamer WebRTC build (cmake/GroundhogCallMedia.cmake);
+ * without them the Calls page is hidden and its rows gated. */
+#ifndef GROUNDHOG_HAVE_CALLS
+#define GROUNDHOG_HAVE_CALLS 0
+#endif
+#if GROUNDHOG_HAVE_CALLS
+#include "gh-call-settings.h"
+#endif
+
 /* A relay scope takes at most 16 URLs (gh-relay-scope.h); the attachment
  * server list gets the same bound. */
 #define GH_PREFERENCES_MAX_URLS 16
@@ -39,9 +49,20 @@ typedef struct {
   GtkListBox *list;           /* BINDING_LIST */
   GtkStringList *urls;        /* BINDING_LIST: the key's value, bound to list */
   gchar *(*normalize)(const gchar *text, gboolean allow_onion, GError **error);
+  gboolean (*validate)(const gchar *text, GError **error); /* BINDING_ADDRESS */
   gboolean ordered;           /* BINDING_LIST: rows move up and down (attachment servers) */
   gint social_kind;           /* account-local URL document, not GSettings */
 } Binding;
+
+/* Whether a TURN credential is saved for the configured server and username
+ * (Calls, nostrc-mqrgk.5): the secret store is asked whenever either changes. */
+typedef enum {
+  GH_PREFERENCES_CREDENTIAL_NEED_SERVER, /* no server or username yet: nothing to look up */
+  GH_PREFERENCES_CREDENTIAL_CHECKING,
+  GH_PREFERENCES_CREDENTIAL_SAVED,
+  GH_PREFERENCES_CREDENTIAL_MISSING,     /* the store answered: none for this pair */
+  GH_PREFERENCES_CREDENTIAL_UNAVAILABLE, /* no store answered (credential_error says) */
+} GhPreferencesCredential;
 
 struct _GhPreferencesDialog {
   AdwPreferencesDialog parent_instance;
@@ -125,6 +146,24 @@ struct _GhPreferencesDialog {
   AdwAlertDialog *clear_diagnostics_dialog;
   AdwPreferencesGroup *delete_group;
   AdwAlertDialog *delete_all_dialog;
+  /* Calls (nostrc-mqrgk.5). */
+  AdwPreferencesPage *calls_page;
+  AdwSwitchRow *calls_from_unaccepted_row;
+  GtkLabel *calls_tor_note;
+  GtkLabel *calls_network_note;
+  GtkListBox *stun_list;
+  AdwEntryRow *stun_entry;
+  GtkLabel *stun_error;
+  AdwEntryRow *turn_url_row;
+  AdwEntryRow *turn_username_row;
+  AdwEntryRow *turn_password_row;
+  AdwActionRow *turn_credential_row;
+  AdwSwitchRow *relay_only_row;
+  GtkLabel *turn_error;
+  GhPreferencesCredential credential;
+  gchar *credential_error;
+  GCancellable *credential_lookup; /* the pending lookup, cancelled on dispose or a new one */
+  GCancellable *credential_store;  /* the pending store, cancelled on dispose */
 
   GSettings *settings;
   GhPreferencesFeatures features;
@@ -191,6 +230,13 @@ static const struct {
   { "only-join-verified-mls-groups", GH_PREFERENCES_FEATURE_ENCRYPTED_GROUPS },
   { "mls-legacy-key-packages",
     GH_PREFERENCES_FEATURE_ENCRYPTED_GROUPS | GH_PREFERENCES_FEATURE_ADOPTED_KEY_PACKAGES },
+  /* The Calls page (nostrc-mqrgk.5): src/media/gh-call-media.c reads the
+   * call-* keys and src/app/gh-call-service.c allow-calls-from-unaccepted. */
+  { "allow-calls-from-unaccepted", GH_PREFERENCES_FEATURE_CALLS },
+  { "call-stun-servers", GH_PREFERENCES_FEATURE_CALLS },
+  { "call-turn-url", GH_PREFERENCES_FEATURE_CALLS },
+  { "call-turn-username", GH_PREFERENCES_FEATURE_CALLS },
+  { "call-relay-only", GH_PREFERENCES_FEATURE_CALLS },
 };
 
 static gboolean
@@ -238,6 +284,9 @@ static const struct {
   { "launch-on-login", G_STRUCT_OFFSET(GhPreferencesDialog, launch_on_login_row) },
   { "diagnostics-enabled", G_STRUCT_OFFSET(GhPreferencesDialog, diagnostics_row) },
   { "allow-local-network", G_STRUCT_OFFSET(GhPreferencesDialog, allow_local_network_row) },
+  { "allow-calls-from-unaccepted",
+    G_STRUCT_OFFSET(GhPreferencesDialog, calls_from_unaccepted_row) },
+  { "call-relay-only", G_STRUCT_OFFSET(GhPreferencesDialog, relay_only_row) },
 };
 
 /* ---- URL rules ---------------------------------------------------------------- */
@@ -333,27 +382,40 @@ entry_set_text_quietly(AdwEntryRow *entry, const gchar *text)
   adw_entry_row_set_show_apply_button(entry, TRUE);
 }
 
+/* The error of an apply-button entry, in place: the label below it and the
+ * entry's error style and accessible description. */
+static void
+entry_show_error(AdwEntryRow *entry, GtkLabel *error, const gchar *message)
+{
+  gtk_label_set_text(error, message);
+  gtk_widget_set_visible(GTK_WIDGET(error), TRUE);
+  gtk_widget_add_css_class(GTK_WIDGET(entry), "error");
+  gtk_accessible_update_property(GTK_ACCESSIBLE(entry), GTK_ACCESSIBLE_PROPERTY_DESCRIPTION,
+                                 message, -1);
+  gtk_accessible_announce(GTK_ACCESSIBLE(entry), message,
+                          GTK_ACCESSIBLE_ANNOUNCEMENT_PRIORITY_MEDIUM);
+}
+
+static void
+entry_clear_error(AdwEntryRow *entry, GtkLabel *error)
+{
+  if (!gtk_widget_get_visible(GTK_WIDGET(error)))
+    return;
+  gtk_widget_set_visible(GTK_WIDGET(error), FALSE);
+  gtk_widget_remove_css_class(GTK_WIDGET(entry), "error");
+  gtk_accessible_reset_property(GTK_ACCESSIBLE(entry), GTK_ACCESSIBLE_PROPERTY_DESCRIPTION);
+}
+
 static void
 show_entry_error(Binding *binding, const gchar *message)
 {
-  gtk_label_set_text(binding->error, message);
-  gtk_widget_set_visible(GTK_WIDGET(binding->error), TRUE);
-  gtk_widget_add_css_class(GTK_WIDGET(binding->entry), "error");
-  gtk_accessible_update_property(GTK_ACCESSIBLE(binding->entry),
-                                 GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, message, -1);
-  gtk_accessible_announce(GTK_ACCESSIBLE(binding->entry), message,
-                          GTK_ACCESSIBLE_ANNOUNCEMENT_PRIORITY_MEDIUM);
+  entry_show_error(binding->entry, binding->error, message);
 }
 
 static void
 clear_entry_error(Binding *binding)
 {
-  if (!gtk_widget_get_visible(GTK_WIDGET(binding->error)))
-    return;
-  gtk_widget_set_visible(GTK_WIDGET(binding->error), FALSE);
-  gtk_widget_remove_css_class(GTK_WIDGET(binding->entry), "error");
-  gtk_accessible_reset_property(GTK_ACCESSIBLE(binding->entry),
-                                GTK_ACCESSIBLE_PROPERTY_DESCRIPTION);
+  entry_clear_error(binding->entry, binding->error);
 }
 
 static void
@@ -843,7 +905,7 @@ on_address_apply(AdwEntryRow *entry, Binding *binding)
 {
   g_autoptr(GError) error = NULL;
   g_autofree gchar *address = g_strstrip(g_strdup(gtk_editable_get_text(GTK_EDITABLE(entry))));
-  if (!gh_preferences_validate_socks_address(address, &error)) {
+  if (!binding->validate(address, &error)) {
     show_entry_error(binding, error->message);
     return;
   }
@@ -851,12 +913,24 @@ on_address_apply(AdwEntryRow *entry, Binding *binding)
     show_entry_error(binding, _("This setting can't be changed"));
 }
 
+/* validate decides what the entry may store (a translated
+ * G_IO_ERROR_INVALID_ARGUMENT otherwise). A row whose feature is missing
+ * shows the stored value, binds nothing and is insensitive. */
 static void
-bind_address(GhPreferencesDialog *self, const gchar *key, AdwEntryRow *entry, GtkLabel *error)
+bind_address(GhPreferencesDialog *self, const gchar *key, AdwEntryRow *entry, GtkLabel *error,
+             gboolean (*validate)(const gchar *text, GError **error))
 {
+  if (!key_available(self, key)) {
+    g_hash_table_insert(self->key_widgets, (gpointer)key, entry);
+    g_autofree gchar *address = g_settings_get_string(self->settings, key);
+    entry_set_text_quietly(entry, address);
+    gtk_widget_set_sensitive(GTK_WIDGET(entry), FALSE);
+    return;
+  }
   Binding *binding = add_binding(self, BINDING_ADDRESS, key, GTK_WIDGET(entry));
   binding->entry = entry;
   binding->error = error;
+  binding->validate = validate;
   address_sync(binding);
   g_signal_connect(entry, "apply", G_CALLBACK(on_address_apply), binding);
   g_signal_connect(entry, "changed", G_CALLBACK(on_entry_changed), binding);
@@ -919,6 +993,279 @@ sync_network(GhPreferencesDialog *self)
     break;
   }
   adw_action_row_set_subtitle(self->tor_status_row, subtitle);
+}
+
+/* ---- calls (nostrc-mqrgk.5) ------------------------------------------------------ */
+
+/* The STUN and TURN rows store only URLs without credentials, decided by
+ * gh-call-media's own rule (gh_call_ice_url_validate(), no DNS, no socket);
+ * the messages here say what the rule wants. Without the calls build the
+ * rows are gated, so these only ever refuse. */
+static gboolean
+ice_url_valid(const gchar *url, gboolean turn)
+{
+#if GROUNDHOG_HAVE_CALLS
+  return gh_call_ice_url_validate(url, turn, NULL);
+#else
+  (void)url;
+  (void)turn;
+  return FALSE;
+#endif
+}
+
+static gchar *
+normalize_stun_url(const gchar *text, gboolean allow_onion, GError **error)
+{
+  (void)allow_onion;
+  g_autofree gchar *url = g_strstrip(g_strdup(text ? text : ""));
+  if (!ice_url_valid(url, FALSE)) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                        GROUNDHOG_HAVE_CALLS
+                          ? _("Enter a stun:// address with a host and port, without a "
+                              "username, password, path or fragment")
+                          : _(NOT_AVAILABLE));
+    return NULL;
+  }
+  return g_steal_pointer(&url);
+}
+
+/* Empty clears the server; anything else must be a credential-free turn://
+ * or turns:// URL. */
+static gboolean
+validate_turn_url(const gchar *text, GError **error)
+{
+  if (!*text || ice_url_valid(text, TRUE))
+    return TRUE;
+  g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                      GROUNDHOG_HAVE_CALLS
+                        ? _("Enter a turn:// or turns:// address with a host and port, without "
+                            "a username, password, path or fragment; only ?transport=udp or "
+                            "?transport=tcp may follow")
+                        : _(NOT_AVAILABLE));
+  return FALSE;
+}
+
+/* Any username, trimmed (on_address_apply strips it); empty clears it. */
+static gboolean
+validate_turn_username(const gchar *text, GError **error)
+{
+  (void)text;
+  (void)error;
+  return TRUE;
+}
+
+/* Calls need the TURN server, username and a saved credential before every
+ * call can be relayed: gh-call-media refuses relay-only without them rather
+ * than falling back to a direct connection, so the switch says so and is
+ * insensitive until then (it stays usable to turn off a stored on). The
+ * page also says, for the network mode, that Tor has no calls (charter
+ * §4.2: WebRTC bypasses Tor) and what Allow Local Network changes. */
+static void
+sync_calls(GhPreferencesDialog *self)
+{
+  if (self->disposed || !(self->features & GH_PREFERENCES_FEATURE_CALLS))
+    return;
+  g_autofree gchar *mode = g_settings_get_string(self->settings, "network-mode");
+  gboolean direct = g_str_equal(mode, "system") || g_str_equal(mode, "none");
+  gtk_widget_set_visible(GTK_WIDGET(self->calls_tor_note), !direct);
+  gtk_widget_set_visible(GTK_WIDGET(self->calls_network_note), direct);
+  gboolean local = g_settings_get_boolean(self->settings, "allow-local-network");
+  gtk_label_set_text(self->calls_network_note,
+    local ? _("Allow Local Network is on: a call may share your local network addresses "
+              "with the other person and contact theirs. Your STUN and TURN servers, and "
+              "the other person unless every call is relayed, learn your IP address.")
+          : _("Allow Local Network is off: calls still work, but Groundhog never shares "
+              "your local network addresses with the other person and never contacts "
+              "theirs. Your STUN and TURN servers, and the other person unless every call "
+              "is relayed, learn your IP address."));
+
+  g_autofree gchar *url = g_settings_get_string(self->settings, "call-turn-url");
+  g_autofree gchar *username = g_settings_get_string(self->settings, "call-turn-username");
+  g_autofree gchar *status = NULL;
+  switch (self->credential) {
+  case GH_PREFERENCES_CREDENTIAL_NEED_SERVER:
+    status = g_strdup(_("Enter the server address and username first"));
+    break;
+  case GH_PREFERENCES_CREDENTIAL_CHECKING:
+    status = g_strdup(_("Checking…"));
+    break;
+  case GH_PREFERENCES_CREDENTIAL_SAVED:
+    status = g_strdup_printf(_("Saved for %s at %s"), username, url);
+    break;
+  case GH_PREFERENCES_CREDENTIAL_MISSING:
+    status = g_strdup_printf(_("None saved for %s at %s"), username, url);
+    break;
+  case GH_PREFERENCES_CREDENTIAL_UNAVAILABLE:
+  default:
+#ifdef __APPLE__
+    status = g_strdup_printf(_("Can't be saved on macOS yet: Groundhog doesn't use the "
+                               "Keychain for call credentials, and no secret service "
+                               "answered (%s)"),
+                             self->credential_error ? self->credential_error : "");
+#else
+    status = g_strdup_printf(_("Can't be saved: no secret service answered (%s)"),
+                             self->credential_error ? self->credential_error : "");
+#endif
+    break;
+  }
+  adw_action_row_set_subtitle(self->turn_credential_row, status);
+
+  gboolean ready = self->credential == GH_PREFERENCES_CREDENTIAL_SAVED;
+  gboolean on = adw_switch_row_get_active(self->relay_only_row);
+  gtk_widget_set_sensitive(GTK_WIDGET(self->relay_only_row), ready || on);
+  adw_action_row_set_subtitle(ADW_ACTION_ROW(self->relay_only_row),
+    ready ? _("Sends audio and video only through your TURN server, so the other person "
+              "never learns your IP address")
+    : on  ? _("On, but calls can't connect until a TURN server, username and credential "
+              "are saved: Groundhog never falls back to a direct connection")
+          : _("Needs a TURN server, username and saved credential first"));
+}
+
+#if GROUNDHOG_HAVE_CALLS
+typedef struct {
+  GhPreferencesDialog *self; /* borrowed: unused once cancel is cancelled */
+  GCancellable *cancel;
+} CredentialOp;
+
+static CredentialOp *
+credential_op_new(GhPreferencesDialog *self, GCancellable **slot)
+{
+  if (*slot)
+    g_cancellable_cancel(*slot);
+  g_clear_object(slot);
+  *slot = g_cancellable_new();
+  CredentialOp *op = g_new0(CredentialOp, 1);
+  op->self = self;
+  op->cancel = g_object_ref(*slot);
+  return op;
+}
+
+/* TRUE when the dialog is gone or asked again: nothing to touch. */
+static gboolean
+credential_op_done(CredentialOp *op)
+{
+  gboolean stale = g_cancellable_is_cancelled(op->cancel);
+  g_object_unref(op->cancel);
+  g_free(op);
+  return stale;
+}
+
+static void
+credential_lookup_done(GObject *source, GAsyncResult *result, gpointer data)
+{
+  (void)source;
+  CredentialOp *op = data;
+  GhPreferencesDialog *self = op->self;
+  if (credential_op_done(op))
+    return;
+  g_autoptr(GError) error = NULL;
+  gchar *password = gh_call_turn_password_lookup_finish(result, &error);
+  g_clear_pointer(&self->credential_error, g_free);
+  if (password) {
+    gh_call_turn_password_free(password); /* only whether one exists is of interest */
+    self->credential = GH_PREFERENCES_CREDENTIAL_SAVED;
+  } else if (g_error_matches(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND)) {
+    self->credential = GH_PREFERENCES_CREDENTIAL_MISSING;
+  } else {
+    self->credential = GH_PREFERENCES_CREDENTIAL_UNAVAILABLE;
+    self->credential_error = g_strdup(error ? error->message : "");
+  }
+  g_clear_object(&self->credential_lookup);
+  sync_calls(self);
+}
+#endif
+
+/* Asks the secret store whether a credential exists for the configured
+ * server and username (never with an empty one); the answer sets the status
+ * row and the relay switch. */
+static void
+credential_refresh(GhPreferencesDialog *self)
+{
+  if (self->disposed || !(self->features & GH_PREFERENCES_FEATURE_CALLS))
+    return;
+  g_autofree gchar *url = g_settings_get_string(self->settings, "call-turn-url");
+  g_autofree gchar *username = g_settings_get_string(self->settings, "call-turn-username");
+  if (self->credential_lookup)
+    g_cancellable_cancel(self->credential_lookup);
+  g_clear_object(&self->credential_lookup);
+  if (!*url || !*username) {
+    self->credential = GH_PREFERENCES_CREDENTIAL_NEED_SERVER;
+    sync_calls(self);
+    return;
+  }
+#if GROUNDHOG_HAVE_CALLS
+  self->credential = GH_PREFERENCES_CREDENTIAL_CHECKING;
+  sync_calls(self);
+  CredentialOp *op = credential_op_new(self, &self->credential_lookup);
+  gh_call_turn_password_lookup_async(url, username, op->cancel, credential_lookup_done, op);
+#else
+  self->credential = GH_PREFERENCES_CREDENTIAL_UNAVAILABLE;
+  g_clear_pointer(&self->credential_error, g_free);
+  self->credential_error = g_strdup(_(NOT_AVAILABLE));
+  sync_calls(self);
+#endif
+}
+
+#if GROUNDHOG_HAVE_CALLS
+static void
+turn_password_stored(GObject *source, GAsyncResult *result, gpointer data)
+{
+  (void)source;
+  CredentialOp *op = data;
+  GhPreferencesDialog *self = op->self;
+  if (credential_op_done(op))
+    return;
+  g_clear_object(&self->credential_store);
+  g_autoptr(GError) error = NULL;
+  if (!gh_call_turn_password_store_finish(result, &error)) {
+    g_autofree gchar *message =
+      g_strdup_printf(_("The credential couldn't be saved: %s"), error ? error->message : "");
+    entry_show_error(self->turn_password_row, self->turn_error, message);
+    return;
+  }
+  entry_set_text_quietly(self->turn_password_row, "");
+  const gchar *message = _("Credential saved");
+  g_free(self->last_toast);
+  self->last_toast = g_strdup(message);
+  adw_preferences_dialog_add_toast(ADW_PREFERENCES_DIALOG(self), adw_toast_new(message));
+  credential_refresh(self);
+}
+#endif
+
+/* The credential goes to the platform secret store for the configured
+ * server and username (gh-call-settings.h), never to a key; it is cleared
+ * from the row once saved and never shown again. */
+static void
+on_turn_password_apply(AdwEntryRow *entry, GhPreferencesDialog *self)
+{
+  g_autofree gchar *url = g_settings_get_string(self->settings, "call-turn-url");
+  g_autofree gchar *username = g_settings_get_string(self->settings, "call-turn-username");
+  const gchar *password = gtk_editable_get_text(GTK_EDITABLE(entry));
+  if (!(self->features & GH_PREFERENCES_FEATURE_CALLS)) {
+    entry_show_error(entry, self->turn_error, _(NOT_AVAILABLE));
+    return;
+  }
+  if (!*url || !*username) {
+    entry_show_error(entry, self->turn_error,
+                     _("Enter and apply the server address and username first"));
+    return;
+  }
+  if (!*password) {
+    entry_show_error(entry, self->turn_error, _("Enter the credential to save"));
+    return;
+  }
+#if GROUNDHOG_HAVE_CALLS
+  CredentialOp *op = credential_op_new(self, &self->credential_store);
+  gh_call_turn_password_store_async(url, username, password, op->cancel, turn_password_stored, op);
+#else
+  entry_show_error(entry, self->turn_error, _(NOT_AVAILABLE));
+#endif
+}
+
+static void
+on_turn_password_changed(GtkEditable *editable, GhPreferencesDialog *self)
+{
+  entry_clear_error(ADW_ENTRY_ROW(editable), self->turn_error);
 }
 
 /* Network › Encrypted Groups (nostrc-f8a5, nostrc-0bdg): whether people can
@@ -1401,6 +1748,11 @@ on_settings_changed(GSettings *settings, const gchar *key, GhPreferencesDialog *
   }
   if (g_str_equal(key, "network-mode") || g_str_equal(key, "tor-socks-address"))
     sync_network(self);
+  if (g_str_equal(key, "call-turn-url") || g_str_equal(key, "call-turn-username"))
+    credential_refresh(self);
+  else if (g_str_equal(key, "network-mode") || g_str_equal(key, "allow-local-network") ||
+           g_str_equal(key, "call-relay-only"))
+    sync_calls(self);
 }
 
 static void
@@ -1751,7 +2103,29 @@ gh_preferences_dialog_constructed(GObject *object)
   bind_choice(self, self->default_dm_protocol_row, "default-dm-protocol", dm_protocols,
               G_N_ELEMENTS(dm_protocols), unsupported_label);
 
-  bind_address(self, "tor-socks-address", self->tor_address_row, self->tor_address_error);
+  bind_address(self, "tor-socks-address", self->tor_address_row, self->tor_address_error,
+               gh_preferences_validate_socks_address);
+  /* Calls (nostrc-mqrgk.5). The STUN list keeps the order the backend uses
+   * (the first entry); the TURN rows store the server and username, the
+   * credential goes to the secret store on apply (on_turn_password_apply). */
+  bind_list(self, "call-stun-servers", self->stun_list, self->stun_entry, self->stun_error,
+            normalize_stun_url, TRUE);
+  bind_address(self, "call-turn-url", self->turn_url_row, self->turn_error, validate_turn_url);
+  bind_address(self, "call-turn-username", self->turn_username_row, self->turn_error,
+               validate_turn_username);
+  if (!(self->features & GH_PREFERENCES_FEATURE_CALLS)) {
+    /* No fake support: the page goes (its rows stay gated for the key
+     * table), from the view switcher too. */
+    gtk_widget_set_sensitive(GTK_WIDGET(self->turn_password_row), FALSE);
+    gtk_widget_set_sensitive(GTK_WIDGET(self->turn_credential_row), FALSE);
+    adw_action_row_set_subtitle(self->turn_credential_row, _(NOT_AVAILABLE));
+    gtk_widget_set_visible(GTK_WIDGET(self->calls_page), FALSE);
+    GtkWidget *stack = gtk_widget_get_ancestor(GTK_WIDGET(self->calls_page), ADW_TYPE_VIEW_STACK);
+    AdwViewStackPage *page =
+      stack ? adw_view_stack_get_page(ADW_VIEW_STACK(stack), GTK_WIDGET(self->calls_page)) : NULL;
+    if (page)
+      adw_view_stack_page_set_visible(page, FALSE);
+  }
   bind_list(self, "discovery-relays", self->discovery_list, self->discovery_entry,
             self->discovery_error, gh_preferences_normalize_relay_url, FALSE);
   self->blocked_relays_binding = bind_list(self, "blocked-relays", self->blocked_relays_list,
@@ -1775,6 +2149,7 @@ gh_preferences_dialog_constructed(GObject *object)
   sync_copy(self);
   sync_delete(self);
   sync_attachment_rows(self);
+  credential_refresh(self); /* also sync_calls() */
 }
 
 static void
@@ -2158,6 +2533,12 @@ gh_preferences_dialog_dispose(GObject *object)
     g_signal_handler_disconnect(self->settings, self->settings_changed);
     self->settings_changed = 0;
   }
+  /* A late secret-store completion must find its cancellable cancelled and
+   * never touch the dialog (credential_lookup_done, turn_password_stored). */
+  if (self->credential_lookup) g_cancellable_cancel(self->credential_lookup);
+  g_clear_object(&self->credential_lookup);
+  if (self->credential_store) g_cancellable_cancel(self->credential_store);
+  g_clear_object(&self->credential_store);
   if (self->delete_all_dialog)
     g_signal_handlers_disconnect_by_func(self->delete_all_dialog, on_delete_all_response, self);
   if (self->clear_attachments_dialog)
@@ -2174,6 +2555,8 @@ gh_preferences_dialog_dispose(GObject *object)
     gtk_list_box_bind_model(self->discovery_list, NULL, NULL, NULL, NULL);
   if (self->blossom_list)
     gtk_list_box_bind_model(self->blossom_list, NULL, NULL, NULL, NULL);
+  if (self->stun_list)
+    gtk_list_box_bind_model(self->stun_list, NULL, NULL, NULL, NULL);
   gtk_widget_dispose_template(GTK_WIDGET(self), GH_TYPE_PREFERENCES_DIALOG);
   self->blossom_binding = NULL;
   g_clear_pointer(&self->bindings, g_ptr_array_unref);
@@ -2194,6 +2577,7 @@ gh_preferences_dialog_finalize(GObject *object)
   g_clear_object(&self->settings);
   g_free(self->account_npub);
   g_free(self->last_toast);
+  g_free(self->credential_error);
   G_OBJECT_CLASS(gh_preferences_dialog_parent_class)->finalize(object);
 }
 
@@ -2321,6 +2705,19 @@ gh_preferences_dialog_class_init(GhPreferencesDialogClass *klass)
   BIND(clear_diagnostics_dialog);
   BIND(delete_group);
   BIND(delete_all_dialog);
+  BIND(calls_page);
+  BIND(calls_from_unaccepted_row);
+  BIND(calls_tor_note);
+  BIND(calls_network_note);
+  BIND(stun_list);
+  BIND(stun_entry);
+  BIND(stun_error);
+  BIND(turn_url_row);
+  BIND(turn_username_row);
+  BIND(turn_password_row);
+  BIND(turn_credential_row);
+  BIND(relay_only_row);
+  BIND(turn_error);
   BIND(agents_page);
   BIND(published_relays_group);
   BIND(inbox_relays_group);
@@ -2345,6 +2742,9 @@ gh_preferences_dialog_init(GhPreferencesDialog *self)
   g_signal_connect(self->drafts_row, "activated", G_CALLBACK(drafts_open), self);
   g_signal_connect(self->badges_row, "activated", G_CALLBACK(badges_open), self);
   g_signal_connect(self->social_import_row, "activated", G_CALLBACK(social_import_open), self);
+  g_signal_connect(self->turn_password_row, "apply", G_CALLBACK(on_turn_password_apply), self);
+  g_signal_connect(self->turn_password_row, "changed", G_CALLBACK(on_turn_password_changed),
+                   self);
   gh_agents_page_populate(self->agents_page);
   self->key_widgets = g_hash_table_new(g_str_hash, g_str_equal);
   self->bindings = g_ptr_array_new_with_free_func(binding_free);

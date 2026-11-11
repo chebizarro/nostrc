@@ -22,6 +22,10 @@ G_BEGIN_DECLS
  *   Messages  enter-sends, default-disappearing-seconds, retention-days,
  *             blossom-servers (the Attachments group, G22)
  *   Network   network-mode, tor-socks-address, discovery-relays
+ *   Calls     allow-calls-from-unaccepted, call-stun-servers, call-turn-url,
+ *             call-turn-username, call-relay-only (nostrc-mqrgk.5); the TURN
+ *             credential goes to the platform secret store through
+ *             gh-call-settings.h and never to a key
  *   Account   run-in-background
  *
  * Switches follow their key directly. A choice row shows the key's value; a
@@ -58,6 +62,13 @@ G_BEGIN_DECLS
  *                     what Tor hides and what it doesn't (§2.2 surface 5),
  *                     with the Tor address and the Tor status
  *                     (gh_preferences_dialog_set_tor_status())
+ *   CALLS             the whole Calls page (GROUNDHOG_HAVE_CALLS, the
+ *                     GStreamer WebRTC build): without it the page is hidden
+ *                     and its rows are gated. With it the page says that Tor
+ *                     mode has no calls, what Allow Local Network changes, and
+ *                     whether a TURN credential is saved; "Relay Every Call"
+ *                     is insensitive until a TURN server, username and saved
+ *                     credential exist (gh-call-media rejects it otherwise)
  *
  * The application passes gh_features_for_preferences() (src/app/gh-features.h),
  * the one list of what this build performs; tests/check_privacy.py requires a
@@ -103,8 +114,9 @@ typedef enum {
   /* The adopted-profile KeyPackage producer (nostrc-lf62): only then is the
    * older format a choice, so without it that switch isn't shown at all. */
   GH_PREFERENCES_FEATURE_ADOPTED_KEY_PACKAGES = 1 << 10,
+  GH_PREFERENCES_FEATURE_CALLS            = 1 << 11, /* NIP-AC calls (nostrc-mqrgk) */
 } GhPreferencesFeatures;
-#define GH_PREFERENCES_FEATURES_ALL ((GhPreferencesFeatures)((1 << 11) - 1))
+#define GH_PREFERENCES_FEATURES_ALL ((GhPreferencesFeatures)((1 << 12) - 1))
 
 /* Whether Tor answers at tor-socks-address (the app's network session). */
 typedef enum {
@@ -205,8 +217,9 @@ void gh_preferences_dialog_set_forget_func(GhPreferencesDialog *self,
                                            GhPreferencesForgetFinishFunc forget_finish,
                                            GObject *target);
 
-/* The widget bound to a preference key: its row, or for discovery-relays and
- * blossom-servers the list of their entries. NULL for other keys. */
+/* The widget bound to a preference key: its row, or for discovery-relays,
+ * blossom-servers and call-stun-servers the list of their entries. NULL for
+ * other keys. */
 GtkWidget *gh_preferences_dialog_get_key_widget(GhPreferencesDialog *self, const gchar *key);
 
 /* The text of the last deletion result toast (NULL before one), for tests. */

@@ -87,6 +87,9 @@ static const char *const preference_keys[] = {
   "default-disappearing-seconds", "enter-sends",
   "blossom-servers", "only-join-verified-mls-groups", "mls-legacy-key-packages",
   "default-dm-protocol",
+  /* Calls (nostrc-mqrgk.5); the page itself is tests/ui/test_call_preferences.c. */
+  "allow-calls-from-unaccepted", "call-stun-servers", "call-turn-url", "call-turn-username",
+  "call-relay-only",
 };
 
 static const char *const switch_keys[] = {
@@ -94,6 +97,7 @@ static const char *const switch_keys[] = {
   "load-profile-pictures", "filter-unknown-senders", "show-message-previews", "enter-sends",
   "run-in-background", "launch-on-login", "diagnostics-enabled", "allow-local-network",
   "only-join-verified-mls-groups", "mls-legacy-key-packages",
+  "allow-calls-from-unaccepted", "call-relay-only",
 };
 
 typedef struct {
@@ -1427,12 +1431,19 @@ assert_gated(Fixture *f, const char *key)
     g_assert_false(gtk_widget_get_visible(widget));
     return;
   }
-  if (g_str_equal(key, "blossom-servers")) {
+  if (g_str_equal(key, "blossom-servers") || g_str_equal(key, "call-stun-servers")) {
     g_assert_false(gtk_widget_get_sensitive(widget));
-    g_assert_false(gtk_widget_get_visible(child(f, "blossom_entry")));
+    g_assert_false(gtk_widget_get_visible(
+      child(f, g_str_equal(key, "blossom-servers") ? "blossom_entry" : "stun_entry")));
     return;
   }
   g_assert_false(gtk_widget_get_sensitive(widget));
+  /* The TURN entries have no subtitle; their page is hidden with them. */
+  if (g_str_equal(key, "call-turn-url") || g_str_equal(key, "call-turn-username")) {
+    g_assert_true(ADW_IS_ENTRY_ROW(widget));
+    g_assert_false(gtk_widget_get_visible(child(f, "calls_page")));
+    return;
+  }
   /* The older-format switch is not shown at all without the adopted
    * producer: that format is then the only one (review N4). */
   if (g_str_equal(key, "mls-legacy-key-packages")) {
@@ -1505,6 +1516,11 @@ test_gated_rows_this_build(Fixture *f, gconstpointer data)
     { "only-join-verified-mls-groups", GH_FEATURE_ENCRYPTED_GROUPS },
     { "mls-legacy-key-packages", GH_FEATURE_ENCRYPTED_GROUPS && GH_FEATURE_ADOPTED_KEY_PACKAGES },
     { "default-dm-protocol", TRUE },
+    { "allow-calls-from-unaccepted", GH_FEATURE_CALLS },
+    { "call-stun-servers", GH_FEATURE_CALLS },
+    { "call-turn-url", GH_FEATURE_CALLS },
+    { "call-turn-username", GH_FEATURE_CALLS },
+    { "call-relay-only", GH_FEATURE_CALLS },
   };
   G_STATIC_ASSERT(G_N_ELEMENTS(expect) == G_N_ELEMENTS(preference_keys));
   present(f, 800, 700);
@@ -1541,6 +1557,8 @@ test_gated_rows_none(Fixture *f, gconstpointer data)
     "link-previews", "load-profile-pictures", "filter-unknown-senders", "tor-socks-address",
     "retention-days", "default-disappearing-seconds", "enter-sends", "blossom-servers",
     "only-join-verified-mls-groups", "mls-legacy-key-packages",
+    "allow-calls-from-unaccepted", "call-stun-servers", "call-turn-url", "call-turn-username",
+    "call-relay-only",
   };
   present(f, 800, 700);
   for (guint i = 0; i < G_N_ELEMENTS(gated); i++)
@@ -1647,7 +1665,7 @@ static void
 test_minimum_size_layout(Fixture *f, gconstpointer data)
 {
   (void)data;
-  static const char *const pages[] = { "privacy", "messages", "network", "account" };
+  static const char *const pages[] = { "privacy", "messages", "network", "calls", "account" };
   gh_preferences_dialog_set_account(f->dialog, NPUB, "Alice");
   present(f, 360, 294);
   for (guint i = 0; i < G_N_ELEMENTS(pages); i++) {
@@ -1757,7 +1775,7 @@ test_screenshots(Fixture *f, gconstpointer data)
     { ADW_COLOR_SCHEME_FORCE_LIGHT, "light" },
     { ADW_COLOR_SCHEME_FORCE_DARK, "dark" },
   };
-  static const char *const pages[] = { "privacy", "messages", "network", "account" };
+  static const char *const pages[] = { "privacy", "messages", "network", "calls", "account" };
   const char *const relays[] = { "wss://relay.example.com", NULL };
   g_settings_set_strv(f->settings, "discovery-relays", relays);
   for (guint s = 0; s < G_N_ELEMENTS(schemes); s++) {

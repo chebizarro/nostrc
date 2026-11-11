@@ -648,6 +648,173 @@ template $GhPreferencesDialog: Adw.PreferencesDialog {
     }
   }
 
+  // Calls (nostrc-mqrgk.5): NIP-AC voice and video calls. Each row is bound
+  // in C to its org.nostr.Groundhog key; the TURN credential goes to the
+  // platform secret store (src/media/gh-call-settings.h), never to a key. C
+  // hides the page and gates its rows while the build lacks calls, and sets
+  // the Tor, local-network, credential and relay copy for the current state.
+  Adw.PreferencesPage calls_page {
+    name: "calls";
+    title: _("Calls");
+    icon-name: "call-start-symbolic";
+
+    Adw.PreferencesGroup {
+      title: _("Incoming Calls");
+
+      Adw.SwitchRow calls_from_unaccepted_row {
+        title: _("Ring for Message Requests");
+        subtitle: _("Lets people you haven't accepted ring you. When off, their calls are kept as missed-call requests without ringing. Hidden people never ring.");
+      }
+    }
+
+    Adw.PreferencesGroup {
+      title: _("Connection");
+      description: _("Audio and video travel directly between you and the other person, or through a TURN server you set up, never through relays. Relays see only encrypted call events.");
+
+      // Tor mode has no calls (charter §4.2: WebRTC's UDP, STUN and TURN
+      // sockets bypass Tor); shown from C with the network mode.
+      Label calls_tor_note {
+        label: _("Calls aren't available in Tor mode: their audio and video would bypass Tor and reveal your IP address.");
+        visible: false;
+        wrap: true;
+        xalign: 0;
+
+        styles [
+          "warning",
+          "caption",
+        ]
+      }
+
+      // Outside Tor mode: what Allow Local Network changes for calls and who
+      // learns the IP address; set from C.
+      Label calls_network_note {
+        wrap: true;
+        xalign: 0;
+
+        styles [
+          "dim-label",
+          "caption",
+        ]
+      }
+    }
+
+    Adw.PreferencesGroup {
+      title: _("STUN Servers");
+      description: _("When a call starts, Groundhog asks the first server for its public address; the others are kept for you to reorder. A STUN server learns your IP address and when you call. An empty list uses none.");
+
+      Box {
+        orientation: vertical;
+        spacing: 12;
+
+        ListBox stun_list {
+          selection-mode: none;
+
+          styles [
+            "boxed-list",
+          ]
+
+          accessibility {
+            label: _("STUN servers");
+          }
+
+          [placeholder]
+          Label {
+            label: _("No STUN servers");
+            margin-top: 12;
+            margin-bottom: 12;
+            margin-start: 12;
+            margin-end: 12;
+
+            styles [
+              "dim-label",
+            ]
+          }
+        }
+
+        ListBox {
+          selection-mode: none;
+
+          styles [
+            "boxed-list",
+          ]
+
+          Adw.EntryRow stun_entry {
+            title: _("Add STUN Server");
+            show-apply-button: true;
+            input-purpose: url;
+
+            accessibility {
+              description: _("A stun:// address with a host and port, without credentials");
+            }
+          }
+        }
+
+        Label stun_error {
+          visible: false;
+          wrap: true;
+          xalign: 0;
+
+          styles [
+            "error",
+            "caption",
+          ]
+        }
+      }
+    }
+
+    Adw.PreferencesGroup {
+      title: _("TURN Server");
+      description: _("A TURN server relays a call when a direct connection isn't possible. It learns your IP address and when you call. Groundhog sets none up and ships no credentials for anyone's server; enter your own.");
+
+      Adw.EntryRow turn_url_row {
+        title: _("Server Address");
+        show-apply-button: true;
+        input-purpose: url;
+
+        accessibility {
+          description: _("A turn:// or turns:// address with a host and port, without credentials; ?transport=udp or ?transport=tcp may follow");
+        }
+      }
+
+      Adw.EntryRow turn_username_row {
+        title: _("Username");
+        show-apply-button: true;
+      }
+
+      Adw.PasswordEntryRow turn_password_row {
+        title: _("Credential");
+        show-apply-button: true;
+
+        accessibility {
+          description: _("Saved in your system's secret store for this server and username, and never shown again");
+        }
+      }
+
+      // Whether a credential is saved for the server and username; set from C.
+      Adw.ActionRow turn_credential_row {
+        title: _("Saved Credential");
+        subtitle-selectable: true;
+      }
+
+      // Insensitive until a server, username and saved credential exist; its
+      // subtitle is set from C.
+      Adw.SwitchRow relay_only_row {
+        title: _("Relay Every Call");
+      }
+
+      Label turn_error {
+        visible: false;
+        wrap: true;
+        xalign: 0;
+
+        styles [
+          "error",
+          "caption",
+        ]
+      }
+    }
+  }
+
   Adw.PreferencesPage account_page {
     name: "account";
     title: _("Account");

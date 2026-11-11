@@ -54,6 +54,13 @@ G_BEGIN_DECLS
 #ifndef GROUNDHOG_HAVE_BADGES
 #define GROUNDHOG_HAVE_BADGES 0
 #endif
+/* NIP-AC calls (nostrc-mqrgk): the GStreamer WebRTC build
+ * (cmake/GroundhogCalls.cmake sets GROUNDHOG_HAVE_CALLS); src/media/
+ * gh-call-media.c reads the call-* keys, src/app/gh-call-service.c
+ * allow-calls-from-unaccepted. */
+#ifndef GROUNDHOG_HAVE_CALLS
+#define GROUNDHOG_HAVE_CALLS 0
+#endif
 
 /* G09: network modes and the Tor transport (src/net/gh-net-session.c and
  * gh-relay-net.c, installed by gh-app-services.c before any connection). */
@@ -85,6 +92,8 @@ G_BEGIN_DECLS
 #define GROUNDHOG_HAVE_MLS_UI 1
 #endif
 #define GH_FEATURE_ENCRYPTED_GROUPS GROUNDHOG_HAVE_MLS_UI
+/* Preferences › Calls (nostrc-mqrgk.5): the whole page follows the build. */
+#define GH_FEATURE_CALLS            GROUNDHOG_HAVE_CALLS
 
 static inline GhPreferencesFeatures
 gh_features_for_preferences(void)
@@ -99,7 +108,8 @@ gh_features_for_preferences(void)
          (GH_FEATURE_ATTACHMENTS ? GH_PREFERENCES_FEATURE_ATTACHMENTS : 0) |
          (GH_FEATURE_EXPIRY ? GH_PREFERENCES_FEATURE_EXPIRY : 0) |
          (GH_FEATURE_ENCRYPTED_GROUPS ? GH_PREFERENCES_FEATURE_ENCRYPTED_GROUPS : 0) |
-         (GH_FEATURE_ADOPTED_KEY_PACKAGES ? GH_PREFERENCES_FEATURE_ADOPTED_KEY_PACKAGES : 0);
+         (GH_FEATURE_ADOPTED_KEY_PACKAGES ? GH_PREFERENCES_FEATURE_ADOPTED_KEY_PACKAGES : 0) |
+         (GH_FEATURE_CALLS ? GH_PREFERENCES_FEATURE_CALLS : 0);
 }
 
 G_END_DECLS

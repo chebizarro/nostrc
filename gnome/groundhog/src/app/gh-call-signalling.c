@@ -6,7 +6,11 @@
 #include <nostr/nip59/nip59.h>
 #include <nostr-kinds.h>
 #include <nostr-tag.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 /* Every asynchronous leg owns its job; cancellation removes the queue's
  * ownership but cannot free a job underneath a late signer completion. */
@@ -38,9 +42,55 @@ struct _GhCallSignalling {
   GQueue queue, incoming;
   guint64 generation;
   gchar *pubkey;
+  gchar *trace_path; /* GROUNDHOG_CALL_TRACE at construction; NULL: no trace */
   gboolean decrypting, stopped, paused;
 };
 G_DEFINE_TYPE(GhCallSignalling, gh_call_signalling, G_TYPE_OBJECT)
+
+/* Interop capture (docs/groundhog-call-interop-runbook.md): with
+ * GROUNDHOG_CALL_TRACE=<file> in the environment when the service starts,
+ * every validated inner call event (25050-25055: SDP offers and answers, ICE
+ * candidates, hangups and rejects) is appended to that file as one JSON
+ * line, {"ts":<unix microseconds>,"dir":"out"|"in","event":<signed inner
+ * event>}, after it was signed (out) or decrypted and validated (in). Unset,
+ * the default, nothing is written and nothing else changes. The file holds
+ * decrypted SDP with addresses: for the owner's own test runs only, so it
+ * is created readable by this user only (0600, as gh-diagnostics.c keeps
+ * its files) and never through a symbolic link; a path that already exists
+ * as anything but a regular file of this user with no group or other
+ * permissions is refused, with one warning, and tracing stays off for the
+ * rest of the session rather than appending plaintext to it. */
+static void trace(GhCallSignalling *self, const gchar *direction, const gchar *inner_json)
+{
+  if (!self->trace_path) return;
+  struct stat st;
+  const gchar *refused = NULL;
+  int fd = open(self->trace_path, O_WRONLY | O_CREAT | O_APPEND | O_NOFOLLOW | O_CLOEXEC, 0600);
+  if (fd < 0) refused = errno == ELOOP ? "it is a symbolic link" : g_strerror(errno);
+  else if (fstat(fd, &st) < 0) refused = g_strerror(errno);
+  else if (!S_ISREG(st.st_mode)) refused = "it is not a regular file";
+  else if (st.st_uid != getuid()) refused = "it is not owned by you";
+  else if (st.st_mode & 077) refused = "it is readable or writable by others";
+  if (refused) {
+    g_warning("GROUNDHOG_CALL_TRACE: cannot append to %s: %s; call tracing is off for this session",
+              self->trace_path, refused);
+    if (fd >= 0) close(fd);
+    g_clear_pointer(&self->trace_path, g_free);
+    return;
+  }
+  g_autofree gchar *line = g_strdup_printf("{\"ts\":%" G_GINT64_FORMAT ",\"dir\":\"%s\",\"event\":%s}\n",
+                                           g_get_real_time(), direction, inner_json);
+  for (const gchar *p = line, *end = line + strlen(line); p < end;) {
+    ssize_t n = write(fd, p, (size_t)(end - p));
+    if (n < 0 && errno == EINTR) continue;
+    if (n <= 0) {
+      g_warning("GROUNDHOG_CALL_TRACE: cannot append to %s: %s", self->trace_path, g_strerror(errno));
+      break;
+    }
+    p += n;
+  }
+  close(fd);
+}
 
 static void pump(GhCallSignalling *self);
 static void receive_next(GhCallSignalling *self);
@@ -238,6 +288,7 @@ static void signed_done(GObject *source, GAsyncResult *result, gpointer data)
   if (!current(s) || !valid) finish(s, FALSE);
   else {
     s->signed_json = g_steal_pointer(&json);
+    trace(s->owner, "out", s->signed_json);
     if (s->kind == NOSTR_KIND_CALL_ANSWER || s->kind == NOSTR_KIND_CALL_REJECT) {
       Send *copy = job_new(s->owner, s->peer, s->id, s->kind);
       copy->self_copy = TRUE;
@@ -297,6 +348,7 @@ static void decrypted(GObject *source, GAsyncResult *result, gpointer data)
   if (!self->stopped && r->generation == self->generation) {
     NostrEvent *inner = plain ? gh_call_event_parse(plain, NULL, g_get_real_time()/G_USEC_PER_SEC, NULL) : NULL;
     if (inner) {
+      trace(self, "in", plain);
       g_signal_emit_by_name(self, "event", plain); nostr_event_free(inner);
     }
     self->decrypting = FALSE; receive_next(self);
@@ -403,7 +455,7 @@ static void dispose(GObject *object)
 static void finalize(GObject *object)
 {
   GhCallSignalling *self = GH_CALL_SIGNALLING(object);
-  g_ptr_array_unref(self->jobs); g_free(self->pubkey);
+  g_ptr_array_unref(self->jobs); g_free(self->pubkey); g_free(self->trace_path);
   G_OBJECT_CLASS(gh_call_signalling_parent_class)->finalize(object);
 }
 static void gh_call_signalling_init(GhCallSignalling *self)
@@ -423,6 +475,8 @@ GhCallSignalling *gh_call_signalling_new(GhAccountController *accounts, GhAccoun
   GhCallSignalling *self = g_object_new(GH_TYPE_CALL_SIGNALLING, NULL);
   self->accounts = g_object_ref(accounts); self->relays = g_object_ref(relays);
   self->resolver = g_object_ref(resolver); self->settings = g_object_ref(settings);
+  const gchar *trace_path = g_getenv("GROUNDHOG_CALL_TRACE");
+  if (trace_path && *trace_path) self->trace_path = g_strdup(trace_path);
   g_signal_connect(accounts, "changed", G_CALLBACK(changed), self);
   g_signal_connect(relays, "changed", G_CALLBACK(changed), self);
   g_signal_connect(gh_relay_deny_policy_get_default(), "changed", G_CALLBACK(deny_changed), self);
