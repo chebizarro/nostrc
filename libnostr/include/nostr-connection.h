@@ -25,6 +25,15 @@ typedef struct _NostrConnection {
 
 /* Canonical API */
 NOSTR_API NostrConnection *nostr_connection_new(const char *url);
+/* Cancellation interrupts queued request waits. A dependency call already in
+ * progress retains its inputs until the service thread acknowledges it. */
+NOSTR_API NostrConnection *nostr_connection_new_with_context(const char *url, GoContext *cancel);
+/* Nonblocking: wakes handshake and channel waiters without freeing conn. */
+NOSTR_API void nostr_connection_interrupt(NostrConnection *conn);
+/* Initialize exit ordering without opening a socket. Terminal shutdown must
+ * follow relay-owner drainage; it joins LWS before OpenSSL's atexit cleanup. */
+NOSTR_API void nostr_connection_runtime_init(void);
+NOSTR_API void nostr_connection_shutdown(void);
 NOSTR_API void nostr_connection_close(NostrConnection *conn);
 NOSTR_API void nostr_connection_write_message(NostrConnection *conn, GoContext *ctx, char *message, Error **err);
 NOSTR_API void nostr_connection_read_message(NostrConnection *conn, GoContext *ctx, char *buffer, size_t buffer_size, Error **err);

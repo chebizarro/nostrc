@@ -119,6 +119,7 @@ target_link_libraries(test_relay_unsubscribe PRIVATE nostr_internal_test ${NSYNC
 target_link_libraries(test_connection_shutdown_order PRIVATE nostr_internal_test ${NSYNC_LIB} OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIBRARIES})
 target_link_libraries(test_connection_idle_writable PRIVATE libnostr ${NSYNC_LIB} nostr_json OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIBRARIES})
 target_link_libraries(test_connection_writable_rearm PRIVATE libnostr ${NSYNC_LIB} nostr_json OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIBRARIES})
+target_include_directories(test_connection_idle_writable PRIVATE ${CMAKE_SOURCE_DIR}/libnostr/src)
 target_include_directories(test_connection_writable_rearm PRIVATE ${CMAKE_SOURCE_DIR}/libnostr/src)
 target_link_libraries(test_connection_tls_no_resumption PRIVATE nostr_internal_test ${NSYNC_LIB} OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIBRARIES})
 target_include_directories(test_connection_tls_no_resumption PRIVATE ${CMAKE_SOURCE_DIR}/libnostr/src)

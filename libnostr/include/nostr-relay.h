@@ -93,6 +93,10 @@ NOSTR_API void        nostr_relay_unref(NostrRelay *relay);
  * Returns: success
  */
 NOSTR_API bool        nostr_relay_connect(NostrRelay *relay, Error **err);
+NOSTR_API bool        nostr_relay_connect_with_context(NostrRelay *relay, GoContext *cancel, Error **err);
+/* Terminal nonblocking stop request. Drain/free off the main thread. Dials
+ * admitted earlier cannot publish after this call. */
+NOSTR_API void        nostr_relay_request_close(NostrRelay *relay);
 
 /**
  * nostr_relay_disconnect:
@@ -104,6 +108,10 @@ NOSTR_API void        nostr_relay_disconnect(NostrRelay *relay);
  * nostr_relay_close:
  * @relay: (nullable): relay
  * @err: (out) (optional) (nullable): error out param
+ *
+ * Ends this relay's lifetime: its context and write queues are cancelled/closed.
+ * Construct a new relay to dial again. Automatic reconnect on a live relay is
+ * unaffected. An already admitted dial cannot publish after close.
  *
  * Returns: success
  */
@@ -214,6 +222,9 @@ NOSTR_API bool        nostr_relay_is_established(NostrRelay *relay);
  * TLS or upgrade error, closed) or @timeout_ms passes -> false with @err set.
  * The relay's own reconnect loop is left alone either way. */
 NOSTR_API bool        nostr_relay_wait_established(NostrRelay *relay, uint32_t timeout_ms, Error **err);
+NOSTR_API bool        nostr_relay_wait_established_with_context(NostrRelay *relay,
+                                                            uint32_t timeout_ms,
+                                                            GoContext *cancel, Error **err);
 
 /**
  * nostr_relay_enable_debug_raw:

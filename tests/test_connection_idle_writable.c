@@ -31,6 +31,7 @@
 
 #include "go.h"
 #include "nostr-connection.h"
+#include "connection-private.h" /* fixture owns the socket and both channels */
 #include "error.h"
 
 /* assert() is compiled out in Release (NDEBUG) builds; use an unconditional
@@ -206,7 +207,7 @@ int main(void) {
            "writable_pending leaked: fallback sweep kept arming POLLOUT after drain");
 
     /* --- Teardown --- */
-    nostr_connection_close(conn);
+    nostr_connection_release(conn);
     atomic_store(&g_srv_stop, 1);
     lws_cancel_service(g_srv_ctx);
     pthread_join(srv, NULL);

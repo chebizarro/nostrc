@@ -4,6 +4,7 @@
 #define NOSTR_CONNECT_RESULT_TIMEOUT_MS 30000U
 
 #include "../include/rate_limiter.h"
+#include "nostr-connection.h"
 #include "nsync.h"
 #include <libwebsockets.h>
 #include <pthread.h>
@@ -42,6 +43,7 @@ struct _NostrConnectionPrivate {
      * broadcast on every change. */
     int handshake;
     nsync_cv handshake_cv;
+    GoChannel *handshake_done; /* closed on outcome; allows cancellable select */
     /* WebSocket message reassembly buffer for fragmented frames (nostrc-8zpc) */
     char *rx_reassembly_buf;	/* Dynamically allocated reassembly buffer */
     size_t rx_reassembly_len;	/* Current bytes accumulated */
@@ -57,6 +59,8 @@ struct _NostrConnectionPrivate {
 
 struct _NostrConnection;
 int nostr_connection_wait_handshake(struct _NostrConnection *conn, uint32_t timeout_ms);
+int nostr_connection_wait_handshake_with_context(struct _NostrConnection *conn,
+                                                uint32_t timeout_ms, GoContext *cancel);
 
 // Struct to hold WebSocket message
 typedef struct WebSocketMessage {

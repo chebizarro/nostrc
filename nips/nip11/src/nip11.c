@@ -230,13 +230,39 @@ static RelayInformationDocument *parse_json_to_doc(const char *json, const char 
     return info;
 }
 
-RelayInformationDocument* nostr_nip11_fetch_info(const char *url) {
-    if (!url) return NULL;
+typedef struct {
+    bool (*cancelled)(void *);
+    void *data;
+} FetchCancellation;
+
+static int fetch_progress(void *data, curl_off_t total, curl_off_t now,
+                          curl_off_t upload_total, curl_off_t upload_now) {
+    (void)total; (void)now; (void)upload_total; (void)upload_now;
+    FetchCancellation *cancel = data;
+    return cancel->cancelled && cancel->cancelled(cancel->data);
+}
+
+RelayInformationDocument* nostr_nip11_fetch_info_cancellable(
+    const char *url, bool (*cancelled)(void *), void *user_data) {
+    if (!url || (cancelled && cancelled(user_data))) return NULL;
+    /* NOSIGNAL cannot bound a synchronous resolver. Do not start an unbounded
+     * optional metadata fetch on such builds. */
+    if (!(curl_version_info(CURLVERSION_NOW)->features & CURL_VERSION_ASYNCHDNS)) {
+        fprintf(stderr, "NIP-11 fetch requires libcurl asynchronous DNS support\n");
+        return NULL;
+    }
+    FetchCancellation cancellation = { cancelled, user_data };
     CURL *curl = curl_easy_init();
     if (!curl) return NULL;
 
     MemoryStruct chunk = {0};
     curl_easy_setopt(curl, CURLOPT_URL, url);
+    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, 3000L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, 10000L);
+    curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+    curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, fetch_progress);
+    curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &cancellation);
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)&chunk);
@@ -248,7 +274,7 @@ RelayInformationDocument* nostr_nip11_fetch_info(const char *url) {
 
     RelayInformationDocument *info = NULL;
     CURLcode res = curl_easy_perform(curl);
-    if (res == CURLE_OK && chunk.data) {
+    if (res == CURLE_OK && chunk.data && !(cancelled && cancelled(user_data))) {
         info = parse_json_to_doc(chunk.data, url);
     }
 
@@ -256,6 +282,10 @@ RelayInformationDocument* nostr_nip11_fetch_info(const char *url) {
     curl_easy_cleanup(curl);
     free(chunk.data);
     return info;
+}
+
+RelayInformationDocument* nostr_nip11_fetch_info(const char *url) {
+    return nostr_nip11_fetch_info_cancellable(url, NULL, NULL);
 }
 
 RelayInformationDocument* nostr_nip11_parse_info(const char *json) {
