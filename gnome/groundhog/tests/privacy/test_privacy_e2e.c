@@ -156,8 +156,11 @@ tripwire_down(Tripwire *wire)
 {
   g_signal_handlers_disconnect_by_data(wire->service, wire);
   g_socket_service_stop(wire->service);
+  /* Complete accept cancellation before invalidating its polled fd. */
+  while (g_main_context_iteration(NULL, FALSE));
   g_socket_listener_close(G_SOCKET_LISTENER(wire->service));
   g_clear_object(&wire->service);
+  while (g_main_context_iteration(NULL, FALSE));
 }
 
 static gchar *

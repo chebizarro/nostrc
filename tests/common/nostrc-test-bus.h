@@ -1,5 +1,5 @@
-/* nostrc-test-bus.h — a private D-Bus bus for GLib tests that can neither
- * abort on macOS nor outlive the test. Use it instead of GTestDBus.
+/* nostrc-test-bus.h — a private D-Bus bus with ordered GIO teardown,
+ * bound to the test process's lifetime. Use it instead of GTestDBus.
  *
  * Why not GTestDBus (nostrc-doif, nostrc-ic36, nostrc-qp24.8.5):
  *
@@ -34,36 +34,27 @@
  *    DBUS_SESSION_BUS_ADDRESS and one session-bus connection (the GLib
  *    singleton that g_bus_get() returns) is held until nostrc_test_bus_down(),
  *    so libraries never connect and disconnect it per call.
- *  - The test never closes a connection to a live bus. nostrc_test_bus_down()
- *    stops the daemon first; each connection then only sees its peer vanish
- *    (a failed read, which is clean on every platform) and is released once
- *    it reports itself closed.
+ *  - nostrc_test_bus_down() closes every owned connection while the daemon
+ *    is still alive. Socket I/O is shut down first, keeping the descriptor
+ *    valid until EOF completes GIO's read source. It then dispatches close
+ *    completion and "closed" on the owning context before releasing refs,
+ *    and only then stops the daemons. Warnings remain fatal.
  *
  * Rules for tests:
  *
- *  - Get bus connections from nostrc_test_bus_connect() (or g_bus_get() in
- *    session mode). Never g_dbus_connection_close() them and never drop the
- *    last reference while the bus is up; the bus owns them.
- *  - Prefer one bus per test binary (up before g_test_run(), down after),
- *    with every test case registered through nostrc_test_bus_add_func() (see
- *    the next rule). A bus per test case also works, but the session-bus
- *    singleton must not be referenced from anywhere else across cases:
- *    nostrc_test_bus_up() fails if a stale one from an earlier bus is still
- *    alive.
- *  - Code under test that closes its own connections still exercises the
- *    GDBus close path. On macOS that can produce one transient
- *    "poll(2) failed due to: Bad file descriptor" warning per close (Linux's
- *    poll() reports POLLNVAL instead and GLib stays silent), so on macOS at
- *    most NOSTRC_TEST_BUS_EBADF_TOLERANCE (64) of exactly that GLib warning
- *    per test case are logged but not fatal. This wraps the default log
- *    handler and installs g_test_log_set_fatal_handler(); a test must not
- *    install its own. GTest clears that handler before every test case, so
- *    it is armed per case: by nostrc_test_bus_up() for a bus brought up
- *    inside the case, and by nostrc_test_bus_add_func() (or a call to
- *    nostrc_test_bus_tolerate_ebadf() at the start of the case, e.g. from a
- *    fixture setup) for a bus brought up before g_test_run(). Other
- *    platforms keep the warning fatal. tests/common/nostrc-test-bus-selftest.c
- *    checks all of this.
+ *  - nostrc_test_bus_connect() returns a borrowed connection owned by the
+ *    helper: do not close or unref it. In session mode g_bus_get_sync() and
+ *    g_bus_get_finish() return owned references: unref those normally before
+ *    down(), but do not close the shared session connection.
+ *  - Prefer one bus per test binary (up before g_test_run(), down after).
+ *    A bus per test case also works, but the session-bus singleton must not
+ *    be referenced from anywhere else across cases: nostrc_test_bus_up()
+ *    fails if a stale one from an earlier bus is still alive.
+ *  - Stop creating connections before down(). Contexts owned by running
+ *    worker threads must remain serviced until down() completes. Unowned
+ *    contexts (including those of stopped workers) are driven by down().
+ *  - Code under test owns its private connections and their teardown. This
+ *    helper does not mask warnings from that code or from GLib.
  *
  * Typical use:
  *
@@ -91,9 +82,6 @@
 G_BEGIN_DECLS
 
 typedef struct _NostrcTestBus NostrcTestBus;
-
-/* EBADF warnings forgiven per test case on macOS (see the rules above). */
-#define NOSTRC_TEST_BUS_EBADF_TOLERANCE 64
 
 typedef enum {
   NOSTRC_TEST_BUS_FLAGS_NONE = 0,
@@ -146,20 +134,13 @@ GSubprocess *nostrc_test_bus_spawn_supervised(NostrcTestBus *bus, const gchar *l
 /* Prints a log from the bus directory to stderr (for failure diagnostics). */
 void nostrc_test_bus_dump_log(NostrcTestBus *bus, const gchar *log_name);
 
-/* Arms the macOS EBADF tolerance (see the rules above) for the test case
- * running now, with a fresh count; a no-op on other platforms. Call it at
- * the start of each case of a binary whose bus outlives its cases, unless
- * the case was added with nostrc_test_bus_add_func(). */
-void nostrc_test_bus_tolerate_ebadf(void);
-
-/* g_test_add_func(), with nostrc_test_bus_tolerate_ebadf() run first in the
- * test case. */
+/* Compatibility spelling for g_test_add_func(); no log/fatal-handler changes. */
 void nostrc_test_bus_add_func(const gchar *testpath, GTestFunc test_func);
 
-/* Flushes every connection the bus owns, stops all supervised daemons and
- * the bus, waits (bounded) until those connections report closed, releases
- * them and frees bus. In session mode it unsets DBUS_SESSION_BUS_ADDRESS
- * again, as g_test_dbus_down() does. */
+/* Flushes and explicitly closes owned connections, dispatches close and
+ * closed on their owning contexts, releases them, then stops all supervised
+ * daemons and frees bus. Fails on a stuck close or leaked session singleton.
+ * In session mode it unsets DBUS_SESSION_BUS_ADDRESS again. */
 void nostrc_test_bus_down(NostrcTestBus *bus);
 
 G_END_DECLS

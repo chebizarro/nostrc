@@ -368,7 +368,7 @@ int main(int argc, char **argv) {
   g_assert_cmpstr(g_getenv("NOSTRC_TEST_ISOLATION"), ==, "1");
   if (!nostrc_test_bus_available()) return 77;
   g_test_init(&argc, &argv, NULL);
-  nostr_json_init(); nostrc_test_bus_tolerate_ebadf();
+  nostr_json_init();
   g_setenv("NOSTR_SIGNER_TEST_APPROVERS", argv[0], TRUE);
   g_setenv("NOSTR_SIGNER_SECKEY_HEX", secret, TRUE);
   /* The private daemon is D-Bus only: never inherit an ambient NIP-5F endpoint

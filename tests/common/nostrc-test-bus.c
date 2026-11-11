@@ -11,7 +11,55 @@
 #include <glib-unix.h>
 #include <glib/gstdio.h>
 #include <string.h>
+#include <sys/socket.h>
 #include <unistd.h>
+
+typedef struct _CloseJob CloseJob;
+typedef struct {
+  GDBusConnection *connection;
+  GMainContext *context;
+  gulong closed_handler;
+  gboolean closed;
+  CloseJob *closing;
+} TestConnection;
+
+static void maybe_finish_close(CloseJob *job);
+static void request_close(CloseJob *job);
+
+static void
+connection_closed(GDBusConnection *connection, gboolean remote, GError *error, gpointer data)
+{
+  (void)connection;
+  (void)remote;
+  (void)error;
+  TestConnection *owned = data;
+  owned->closed = TRUE;
+  if (owned->closing) {
+    request_close(owned->closing);
+    maybe_finish_close(owned->closing);
+  }
+}
+
+static TestConnection *
+track_connection(GDBusConnection *connection)
+{
+  TestConnection *owned = g_new0(TestConnection, 1);
+  owned->connection = connection; /* takes the reference */
+  owned->context = g_main_context_ref_thread_default();
+  owned->closed_handler = g_signal_connect(connection, "closed", G_CALLBACK(connection_closed), owned);
+  return owned;
+}
+
+static void
+free_connection(gpointer data)
+{
+  TestConnection *owned = data;
+  if (owned->closed_handler)
+    g_signal_handler_disconnect(owned->connection, owned->closed_handler);
+  g_object_unref(owned->connection);
+  g_main_context_unref(owned->context);
+  g_free(owned);
+}
 
 struct _NostrcTestBus {
   NostrcTestBusFlags flags;
@@ -25,7 +73,7 @@ struct _NostrcTestBus {
   GPtrArray *supervisors;   /* GSubprocess; [0] runs the bus */
   GDBusConnection *session; /* the session singleton, session mode only */
   GMutex lock;
-  GPtrArray *connections;   /* GDBusConnection, guarded by lock */
+  GPtrArray *connections;   /* TestConnection, guarded by lock */
   gboolean up;
 };
 
@@ -56,94 +104,14 @@ static const gchar LIFELINE_SH[] =
   "read -r _ <&3\n"
   "stop_child\n";
 
-/* Seconds nostrc_test_bus_down() waits for connections to notice the bus
- * stopped; a failure bound, never a source of progress. */
+/* Seconds allowed for asynchronous close and finalization; a failure bound,
+ * never a source of progress. */
 #define NOSTRC_TEST_BUS_CLOSE_TIMEOUT 20
-
-#ifdef __APPLE__
-/* ---- The macOS select() EBADF race in code under test ----------------------
- *
- * The test's own teardown never closes a live connection, but code under test
- * may (Groundhog's GhSigner closes one private connection per signer call to
- * revoke its approval). GLib's select()-based poll on macOS then reports
- * EBADF for one iteration, until the cancelled read source is dispatched
- * and removed; Linux's poll() reports POLLNVAL for that fd instead, which
- * GLib handles silently. Only the warning's being fatal in tests makes it an
- * abort. So exactly that GLib warning is logged as a plain warning and not
- * treated as fatal, a bounded number of times per test case: repeated EBADF
- * would mean a closed fd stuck in the poll set, a real bug, and is fatal
- * again. GTest clears the fatal handler before every test case, so it is
- * armed again (and the count reset) by nostrc_test_bus_tolerate_ebadf(),
- * which nostrc_test_bus_up() and nostrc_test_bus_add_func() call. The bound
- * is NOSTRC_TEST_BUS_EBADF_TOLERANCE. */
-static gint ebadf_tolerated;
-
-static gboolean
-is_select_ebadf(const gchar *domain, const gchar *message)
-{
-  return g_strcmp0(domain, "GLib") == 0 && message != NULL &&
-         g_str_has_prefix(message, "poll(2) failed due to: Bad file descriptor");
-}
-
-/* The default log handler before ours (g_test_init() installs gtest's). */
-static GLogFunc previous_default_handler;
-
-/* g_logv() calls the log handler first and then asks the fatal handler, so
- * the handler counts and the fatal handler only reads the count. */
-static void
-log_forgiven_as_warning(const gchar *domain, GLogLevelFlags level, const gchar *message,
-                        gpointer data)
-{
-  /* A forgiven EBADF goes out as an ordinary warning, not "Bail out!";
-   * every other message reaches the previous handler unchanged. */
-  if (is_select_ebadf(domain, message) &&
-      g_atomic_int_add(&ebadf_tolerated, 1) < NOSTRC_TEST_BUS_EBADF_TOLERANCE)
-    level &= ~G_LOG_FLAG_FATAL;
-  previous_default_handler(domain, level, message, data);
-}
-
-static gboolean
-fatal_unless_forgiven(const gchar *domain, GLogLevelFlags level, const gchar *message,
-                      gpointer data)
-{
-  (void)level;
-  (void)data;
-  return !(is_select_ebadf(domain, message) &&
-           g_atomic_int_get(&ebadf_tolerated) <= NOSTRC_TEST_BUS_EBADF_TOLERANCE);
-}
-
-#endif
-
-void
-nostrc_test_bus_tolerate_ebadf(void)
-{
-#ifdef __APPLE__
-  static gsize installed;
-  /* The default handler wrap is process-wide and stays. */
-  if (g_once_init_enter(&installed)) {
-    previous_default_handler = g_log_set_default_handler(log_forgiven_as_warning, NULL);
-    g_once_init_leave(&installed, 1);
-  }
-  /* The fatal handler lasts only until the next test case starts. */
-  g_atomic_int_set(&ebadf_tolerated, 0);
-  g_test_log_set_fatal_handler(fatal_unless_forgiven, NULL);
-#endif
-}
-
-static void
-run_tolerant(gconstpointer data)
-{
-  nostrc_test_bus_tolerate_ebadf();
-  (*(const GTestFunc *)data)();
-}
 
 void
 nostrc_test_bus_add_func(const gchar *testpath, GTestFunc test_func)
 {
-  g_return_if_fail(testpath != NULL && test_func != NULL);
-  GTestFunc *boxed = g_new(GTestFunc, 1);
-  *boxed = test_func;
-  g_test_add_data_func_full(testpath, boxed, run_tolerant, g_free);
+  g_test_add_func(testpath, test_func);
 }
 
 gboolean
@@ -162,7 +130,7 @@ nostrc_test_bus_new(NostrcTestBusFlags flags)
   bus->flags = flags;
   bus->service_dirs = g_ptr_array_new_with_free_func(g_free);
   bus->supervisors = g_ptr_array_new_with_free_func(g_object_unref);
-  bus->connections = g_ptr_array_new_with_free_func(g_object_unref);
+  bus->connections = g_ptr_array_new_with_free_func(free_connection);
   bus->lifeline = bus->lifeline_read = bus->done = -1;
   g_mutex_init(&bus->lock);
   return bus;
@@ -257,8 +225,6 @@ nostrc_test_bus_up(NostrcTestBus *bus)
 {
   g_return_if_fail(bus != NULL && !bus->up);
   GError *error = NULL;
-  /* For the test case running now (see nostrc_test_bus_tolerate_ebadf()). */
-  nostrc_test_bus_tolerate_ebadf();
   g_autofree gchar *daemon = g_find_program_in_path("dbus-daemon");
   if (!daemon)
     g_error("nostrc-test-bus: dbus-daemon is not installed "
@@ -324,6 +290,7 @@ nostrc_test_bus_up(NostrcTestBus *bus)
       (guid && g_strcmp0(g_dbus_connection_get_guid(bus->session), guid) != 0))
     g_error("nostrc-test-bus: the session-bus connection belongs to another bus; something "
             "still references a session connection made before this bus came up");
+  g_ptr_array_add(bus->connections, track_connection(g_object_ref(bus->session)));
   /* Services this bus activates are on it too; dbus-daemon gives them
    * DBUS_SESSION_BUS_ADDRESS, this adds the marker. */
   GVariantBuilder env;
@@ -363,7 +330,7 @@ nostrc_test_bus_connect(NostrcTestBus *bus)
   if (!connection)
     g_error("nostrc-test-bus: cannot connect to %s: %s", bus->address, error->message);
   g_mutex_lock(&bus->lock);
-  g_ptr_array_add(bus->connections, connection);
+  g_ptr_array_add(bus->connections, track_connection(connection));
   g_mutex_unlock(&bus->lock);
   return connection;
 }
@@ -389,13 +356,101 @@ nostrc_test_bus_dump_log(NostrcTestBus *bus, const gchar *log_name)
     g_printerr("--- %s ---\n%s\n", log_name, contents);
 }
 
-static gboolean
-all_closed(GPtrArray *connections)
+static void
+post_idle(GMainContext *context, GSourceFunc callback, gpointer data)
 {
-  for (guint i = 0; i < connections->len; i++)
-    if (!g_dbus_connection_is_closed(g_ptr_array_index(connections, i)))
-      return FALSE;
-  return TRUE;
+  GSource *source = g_idle_source_new();
+  g_source_set_callback(source, callback, data, NULL);
+  g_source_attach(source, context);
+  g_source_unref(source);
+}
+
+struct _CloseJob {
+  TestConnection *owned;
+  GMainContext *teardown_context;
+  gboolean requested; /* owning context only */
+  gboolean finished; /* owning context only */
+  gboolean queued;   /* owning context only */
+  gboolean done;     /* teardown context only */
+};
+
+static gboolean
+close_dispatched(gpointer data)
+{
+  ((CloseJob *)data)->done = TRUE;
+  return G_SOURCE_REMOVE;
+}
+
+static gboolean
+close_unwound(gpointer data)
+{
+  CloseJob *job = data;
+  TestConnection *owned = job->owned;
+  g_signal_handler_disconnect(owned->connection, owned->closed_handler);
+  owned->closed_handler = 0;
+  owned->closing = NULL;
+  /* Do not touch job after posting: the teardown thread may release it. */
+  post_idle(job->teardown_context, close_dispatched, job);
+  return G_SOURCE_REMOVE;
+}
+
+static void
+maybe_finish_close(CloseJob *job)
+{
+  if (job->finished && job->owned->closed && !job->queued) {
+    job->queued = TRUE;
+    /* Neither close_finish() nor is_closed alone proves that the owning
+     * context has dispatched the pending closed emission. Unwind it too. */
+    post_idle(job->owned->context, close_unwound, job);
+  }
+}
+
+static void
+close_finished(GObject *source, GAsyncResult *result, gpointer data)
+{
+  CloseJob *job = data;
+  g_autoptr(GError) error = NULL;
+  if (!g_dbus_connection_close_finish(G_DBUS_CONNECTION(source), result, &error) &&
+      !g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CLOSED))
+    g_error("nostrc-test-bus: closing a connection: %s", error->message);
+  job->finished = TRUE;
+  maybe_finish_close(job);
+}
+
+static void
+request_close(CloseJob *job)
+{
+  if (job->requested) return;
+  job->requested = TRUE;
+  g_dbus_connection_close(job->owned->connection, NULL, close_finished, job);
+}
+
+static gboolean
+start_close(gpointer data)
+{
+  CloseJob *job = data;
+  TestConnection *owned = job->owned;
+  owned->closing = job;
+  GIOStream *stream = g_dbus_connection_get_stream(owned->connection);
+  if (owned->closed || g_dbus_connection_is_closed(owned->connection) ||
+      !G_IS_SOCKET_CONNECTION(stream)) {
+    request_close(job);
+  } else {
+    /* Keep the fd valid while EOF completes GDBus's socket read source.
+     * close_async alone can close it before read cancellation dispatches
+     * inside GIO's private worker context (macOS select then gets EBADF).
+     * The closed signal requests the final close only after that read ends. */
+    GSocket *socket = g_socket_connection_get_socket(G_SOCKET_CONNECTION(stream));
+    /* GSocket itself is not thread-safe; its I/O runs in GDBus's worker.
+     * The retained connection owns this fd until we request close below. */
+    gint result;
+    do {
+      result = shutdown(g_socket_get_fd(socket), SHUT_RDWR);
+    } while (result < 0 && errno == EINTR);
+    if (result < 0 && errno != ENOTCONN)
+      g_error("nostrc-test-bus: shutting down a connection: %s", g_strerror(errno));
+  }
+  return G_SOURCE_REMOVE;
 }
 
 static gboolean
@@ -405,11 +460,71 @@ flag_expired(gpointer data)
   return G_SOURCE_REMOVE;
 }
 
-static gboolean
-keep_polling(gpointer data)
+static GSource *
+close_deadline(GMainContext *context, gboolean *expired)
 {
-  (void)data;
-  return G_SOURCE_CONTINUE;
+  GSource *source = g_timeout_source_new_seconds(NOSTRC_TEST_BUS_CLOSE_TIMEOUT);
+  g_source_set_callback(source, flag_expired, expired, NULL);
+  g_source_attach(source, context);
+  return source;
+}
+
+static void
+close_connection(TestConnection *owned, GMainContext *teardown_context)
+{
+  CloseJob *job = g_new0(CloseJob, 1);
+  job->owned = owned;
+  job->teardown_context = teardown_context;
+  /* A stopped worker's context can be driven here. A running worker keeps
+   * servicing its own context; completion is handed back without sharing
+   * mutable flags across threads. */
+  gboolean acquired = g_main_context_acquire(owned->context);
+  if (acquired)
+    g_main_context_push_thread_default(owned->context);
+  gboolean expired = FALSE;
+  GSource *deadline = close_deadline(acquired ? owned->context : teardown_context, &expired);
+  post_idle(owned->context, start_close, job);
+  while (!job->done && !expired) {
+    if (acquired && owned->context != teardown_context) {
+      while (g_main_context_iteration(teardown_context, FALSE))
+        ;
+      if (!job->done)
+        g_main_context_iteration(owned->context, TRUE);
+    } else {
+      g_main_context_iteration(teardown_context, TRUE);
+    }
+  }
+  if (expired)
+    g_error("nostrc-test-bus: connection close/closed dispatch did not complete within %d s",
+            NOSTRC_TEST_BUS_CLOSE_TIMEOUT);
+  g_source_destroy(deadline);
+  g_source_unref(deadline);
+  if (acquired) {
+    g_main_context_pop_thread_default(owned->context);
+    g_main_context_release(owned->context);
+  }
+  g_free(job);
+}
+
+typedef struct {
+  GMainContext *context;
+  gboolean finalized;
+} SessionFinalization;
+
+static gboolean
+session_finalized(gpointer data)
+{
+  ((SessionFinalization *)data)->finalized = TRUE;
+  return G_SOURCE_REMOVE;
+}
+
+static void
+session_gone(gpointer data, GObject *object)
+{
+  (void)object;
+  SessionFinalization *state = data;
+  /* Last unref can happen on a GTask worker after its callback returned. */
+  post_idle(state->context, session_finalized, state);
 }
 
 void
@@ -420,17 +535,36 @@ nostrc_test_bus_down(NostrcTestBus *bus)
   g_mutex_lock(&bus->lock);
   GPtrArray *connections = g_steal_pointer(&bus->connections);
   g_mutex_unlock(&bus->lock);
-  gpointer session = bus->session;
+  g_autoptr(GMainContext) context = g_main_context_ref_thread_default();
+  SessionFinalization *session = g_new0(SessionFinalization, 1);
+  session->context = context;
+  session->finalized = bus->session == NULL;
   if (bus->session) {
-    g_object_add_weak_pointer(G_OBJECT(bus->session), &session);
-    g_ptr_array_add(connections, g_steal_pointer(&bus->session));
+    g_object_weak_ref(G_OBJECT(bus->session), session_gone, session);
+    g_clear_object(&bus->session); /* the tracked connection still owns it */
   }
 
-  /* Everything queued reaches the bus before it goes away; a connection
-   * the code under test already lost just reports an error here. */
-  for (guint i = 0; i < connections->len; i++)
-    g_dbus_connection_flush_sync(g_ptr_array_index(connections, i), NULL, NULL);
+  /* Keep the daemon alive until local closes, their read cancellations and
+   * closed emissions have all dispatched on the connections' own contexts. */
+  for (guint i = 0; i < connections->len; i++) {
+    TestConnection *owned = g_ptr_array_index(connections, i);
+    g_dbus_connection_flush_sync(owned->connection, NULL, NULL);
+    close_connection(owned, context);
+  }
+  g_ptr_array_unref(connections);
 
+  gboolean expired = FALSE;
+  GSource *deadline = close_deadline(context, &expired);
+  while (!session->finalized && !expired)
+    g_main_context_iteration(context, TRUE);
+  if (expired)
+    g_error("nostrc-test-bus: the session-bus connection is still referenced %d s after its "
+            "close (leaked by the code under test?)", NOSTRC_TEST_BUS_CLOSE_TIMEOUT);
+  g_source_destroy(deadline);
+  g_source_unref(deadline);
+  g_free(session);
+
+  /* Only now may supervisors stop daemons and remove the bus directories. */
   /* The supervisors read EOF and stop their daemons; the bus's supervisor
    * then removes the directory once the others have exited. */
   close(bus->lifeline);
@@ -444,30 +578,6 @@ nostrc_test_bus_down(NostrcTestBus *bus)
   close(bus->lifeline_read);
   bus->lifeline_read = -1;
 
-  /* Every connection now sees its peer vanish (a failed read, not a local
-   * close) and only then is released. The flag flips on the GDBus worker
-   * thread and connections made on other threads signal other contexts, so
-   * a short tick keeps re-checking it. */
-  gboolean expired = FALSE;
-  guint deadline = g_timeout_add_seconds(NOSTRC_TEST_BUS_CLOSE_TIMEOUT, flag_expired, &expired);
-  guint tick = g_timeout_add(10, keep_polling, NULL);
-  while (!all_closed(connections) && !expired)
-    g_main_context_iteration(NULL, TRUE);
-  if (expired)
-    g_error("nostrc-test-bus: a connection did not notice the bus stop within %d s",
-            NOSTRC_TEST_BUS_CLOSE_TIMEOUT);
-  g_ptr_array_unref(connections);
-  /* GLib keeps the session singleton only as a weak ref: once its pending
-   * "closed" emission has run it is finalized, and the next bus (or
-   * g_bus_get()) gets a fresh one. Like g_test_dbus_down(), fail if the code
-   * under test still holds it. */
-  while (session && !expired)
-    g_main_context_iteration(NULL, TRUE);
-  g_source_remove(tick);
-  if (expired)
-    g_error("nostrc-test-bus: the session-bus connection is still referenced %d s after its "
-            "bus stopped (leaked by the code under test?)", NOSTRC_TEST_BUS_CLOSE_TIMEOUT);
-  g_source_remove(deadline);
   if (!(bus->flags & NOSTRC_TEST_BUS_FLAGS_NOT_SESSION)) {
     g_unsetenv("DBUS_SESSION_BUS_ADDRESS");
     g_unsetenv(NOSTRC_TEST_BUS_ADDRESS_ENV);

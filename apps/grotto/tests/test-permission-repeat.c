@@ -187,7 +187,7 @@ int main(int argc, char **argv) {
   g_setenv("NOSTR_SIGNER_TEST_APPROVERS", argv[0], TRUE);
   g_setenv("NOSTR_SIGNER_SECKEY_HEX", "0000000000000000000000000000000000000000000000000000000000000001", TRUE);
   g_unsetenv("NOSTR_SIGNER_ENDPOINT"); g_unsetenv("NOSTR_SIGNER_SOCK"); g_unsetenv("NOSTR_SIGNER_TOKEN");
-  g_test_init(&argc, &argv, NULL); nostr_json_init(); nostrc_test_bus_tolerate_ebadf();
+  g_test_init(&argc, &argv, NULL); nostr_json_init();
   bus = nostrc_test_bus_new(NOSTRC_TEST_BUS_FLAGS_NONE); nostrc_test_bus_up(bus);
   g_autofree gchar *config = g_build_filename(nostrc_test_bus_get_dir(bus), "config", NULL);
   g_assert_cmpint(g_mkdir(config, 0700), ==, 0); g_setenv("XDG_CONFIG_HOME", config, TRUE);

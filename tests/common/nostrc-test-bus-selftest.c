@@ -1,20 +1,4 @@
-/* nostrc-test-bus-selftest.c — the macOS EBADF tolerance of
- * nostrc-test-bus.h, as the tests that use it see it.
- *
- * GTest clears g_test_log_set_fatal_handler() before every test case, so the
- * tolerance must be armed per case (W13 review, non-blocking #1). Here one
- * bus is up before g_test_run(), as the header recommends, and the warning
- * GLib's select()-based poll logs on macOS is emitted directly (same domain
- * and text), so every case is deterministic:
- *
- *  - macOS: two consecutive cases added with nostrc_test_bus_add_func() each
- *    survive one; two cases that each bring a bus up themselves survive one
- *    too; a case survives NOSTRC_TEST_BUS_EBADF_TOLERANCE of them, and one
- *    more aborts; any other message stays fatal.
- *  - elsewhere: the warning stays fatal (Linux poll() never logs it).
- *
- * Aborting cases run in a g_test_trap_subprocess() child.
- *
+/* Ordered GIO teardown and fatal-warning negative controls.
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 #include "nostrc-test-bus.h"
@@ -22,94 +6,166 @@
 #define EBADF_MESSAGE "poll(2) failed due to: Bad file descriptor."
 
 static void
-emit_ebadf(guint count)
-{
-  for (guint i = 0; i < count; i++)
-    g_log("GLib", G_LOG_LEVEL_WARNING, "%s", EBADF_MESSAGE);
-}
-
-/* Runs the current test path in a child and expects it to abort on a
- * warning carrying needle. */
-static void
-assert_child_aborts(const gchar *needle)
+assert_child_aborts(void)
 {
   g_test_trap_subprocess(NULL, 0, G_TEST_SUBPROCESS_DEFAULT);
   g_test_trap_assert_failed();
-  g_autofree gchar *pattern = g_strdup_printf("*%s*", needle);
-  g_test_trap_assert_stderr(pattern);
+  g_test_trap_assert_stderr("*Bad file descriptor*");
 }
 
-#ifdef __APPLE__
 static void
-test_first_case(void)
+test_warning_fatal(void)
 {
-  emit_ebadf(1);
+  if (g_test_subprocess()) {
+    g_log("GLib", G_LOG_LEVEL_WARNING, "%s", EBADF_MESSAGE);
+    return;
+  }
+  assert_child_aborts();
 }
 
-/* The review's failing probe: the second case after a bus that came up
- * before g_test_run(). */
 static void
-test_second_case(void)
-{
-  emit_ebadf(1);
-}
-
-/* A bus brought up inside the case arms the case itself, in every case. */
-static void
-test_bus_in_case(void)
+test_warning_after_up(void)
 {
   NostrcTestBus *bus = nostrc_test_bus_new(NOSTRC_TEST_BUS_FLAGS_NOT_SESSION);
   nostrc_test_bus_up(bus);
-  emit_ebadf(1);
+  test_warning_fatal();
   nostrc_test_bus_down(bus);
 }
 
-/* Bounded per case: the limit passes, one more aborts. */
 static void
-test_bound(void)
+locally_closed(GDBusConnection *connection, gboolean remote, GError *error, gpointer data)
 {
-  if (g_test_subprocess()) {
-    emit_ebadf(NOSTRC_TEST_BUS_EBADF_TOLERANCE + 1);
-    return;
-  }
-  emit_ebadf(NOSTRC_TEST_BUS_EBADF_TOLERANCE);
-  assert_child_aborts("Bad file descriptor");
+  g_assert_true(g_dbus_connection_is_closed(connection));
+  (void)remote;
+  (void)error; /* Local socket shutdown is observed as EOF by GDBus. */
+  (*(guint *)data)++;
 }
 
-/* Exactly that GLib warning: another poll error, or the same text from
- * another domain, is fatal. */
+typedef struct {
+  GDBusConnection *observer;
+  guint closed;
+} CloseWatch;
+
 static void
-test_other_warning(void)
+closed_before_daemon(GDBusConnection *connection, gboolean remote, GError *error, gpointer data)
 {
-  if (g_test_subprocess()) {
-    g_log("GLib", G_LOG_LEVEL_WARNING, "poll(2) failed due to: Invalid argument.");
-    return;
-  }
-  assert_child_aborts("Invalid argument");
+  CloseWatch *watch = data;
+  locally_closed(connection, remote, error, &watch->closed);
+  /* An independent connection must still reach the real daemon when each
+   * observed close dispatches. Daemon-first teardown cannot satisfy this. */
+  g_autoptr(GError) call_error = NULL;
+  g_autoptr(GVariant) reply = g_dbus_connection_call_sync(watch->observer,
+    "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "GetId",
+    NULL, G_VARIANT_TYPE("(s)"), G_DBUS_CALL_FLAGS_NONE, -1, NULL, &call_error);
+  g_assert_no_error(call_error);
+  g_assert_nonnull(reply);
 }
 
 static void
-test_other_domain(void)
+test_local_close(void)
 {
-  if (g_test_subprocess()) {
-    g_log("GLib-GIO", G_LOG_LEVEL_WARNING, "%s", EBADF_MESSAGE);
-    return;
+  NostrcTestBus *bus = nostrc_test_bus_new(NOSTRC_TEST_BUS_FLAGS_NOT_SESSION);
+  nostrc_test_bus_up(bus);
+  CloseWatch watch = {0};
+  for (guint i = 0; i < 2; i++) {
+    GDBusConnection *connection = nostrc_test_bus_connect(bus);
+    g_signal_connect(connection, "closed", G_CALLBACK(closed_before_daemon), &watch);
   }
-  assert_child_aborts("Bad file descriptor");
+  /* Tracked last, so it stays connected through the two observed closes. */
+  watch.observer = nostrc_test_bus_connect(bus);
+  nostrc_test_bus_down(bus);
+  g_assert_cmpuint(watch.closed, ==, 2);
 }
-#else
-/* Nothing is forgiven off macOS. */
+
 static void
-test_fatal_elsewhere(void)
+test_thread_default(void)
 {
-  if (g_test_subprocess()) {
-    nostrc_test_bus_tolerate_ebadf();
-    emit_ebadf(1);
-    return;
-  }
-  assert_child_aborts("Bad file descriptor");
+  g_autoptr(GMainContext) context = g_main_context_new();
+  g_main_context_push_thread_default(context);
+  test_local_close();
+  g_main_context_pop_thread_default(context);
 }
-#endif
+
+typedef struct {
+  NostrcTestBus *bus;
+  GMainContext *context;
+  GMainLoop *loop;
+  GMutex lock;
+  GCond ready;
+  gboolean started;
+  gboolean running;
+  guint closed;
+} Worker;
+
+static gboolean
+worker_ready(gpointer data)
+{
+  Worker *worker = data;
+  g_mutex_lock(&worker->lock);
+  worker->started = TRUE;
+  g_cond_signal(&worker->ready);
+  g_mutex_unlock(&worker->lock);
+  return G_SOURCE_REMOVE;
+}
+
+static gpointer
+worker_run(gpointer data)
+{
+  Worker *worker = data;
+  g_main_context_push_thread_default(worker->context);
+  GDBusConnection *connection = nostrc_test_bus_connect(worker->bus);
+  g_signal_connect(connection, "closed", G_CALLBACK(locally_closed), &worker->closed);
+  if (worker->running) {
+    GSource *source = g_idle_source_new();
+    g_source_set_callback(source, worker_ready, worker, NULL);
+    g_source_attach(source, worker->context);
+    g_source_unref(source);
+    g_main_loop_run(worker->loop);
+  } else {
+    worker_ready(worker);
+  }
+  g_main_context_pop_thread_default(worker->context);
+  return NULL;
+}
+
+static void
+test_worker(gconstpointer data)
+{
+  Worker worker = { .running = GPOINTER_TO_INT(data) };
+  g_mutex_init(&worker.lock);
+  g_cond_init(&worker.ready);
+  worker.context = g_main_context_new();
+  worker.loop = g_main_loop_new(worker.context, FALSE);
+  worker.bus = nostrc_test_bus_new(NOSTRC_TEST_BUS_FLAGS_NOT_SESSION);
+  nostrc_test_bus_up(worker.bus);
+  GThread *thread = g_thread_new("bus-owner", worker_run, &worker);
+  g_mutex_lock(&worker.lock);
+  while (!worker.started)
+    g_cond_wait(&worker.ready, &worker.lock);
+  g_mutex_unlock(&worker.lock);
+  if (!worker.running)
+    g_thread_join(thread);
+  nostrc_test_bus_down(worker.bus);
+  if (worker.running) {
+    g_main_loop_quit(worker.loop);
+    g_thread_join(thread);
+  }
+  g_assert_cmpuint(worker.closed, ==, 1);
+  g_main_loop_unref(worker.loop);
+  g_main_context_unref(worker.context);
+  g_cond_clear(&worker.ready);
+  g_mutex_clear(&worker.lock);
+}
+
+static void
+test_session_restart(void)
+{
+  for (guint i = 0; i < 2; i++) {
+    NostrcTestBus *bus = nostrc_test_bus_new(NOSTRC_TEST_BUS_FLAGS_NONE);
+    nostrc_test_bus_up(bus);
+    nostrc_test_bus_down(bus);
+  }
+}
 
 int
 main(int argc, char **argv)
@@ -119,20 +175,13 @@ main(int argc, char **argv)
     g_printerr("nostrc-test-bus-selftest needs dbus-daemon\n");
     return 1;
   }
-  NostrcTestBus *bus = nostrc_test_bus_new(NOSTRC_TEST_BUS_FLAGS_NONE);
-  nostrc_test_bus_up(bus);
-#ifdef __APPLE__
-  nostrc_test_bus_add_func("/nostrc-test-bus/ebadf/first-case", test_first_case);
-  nostrc_test_bus_add_func("/nostrc-test-bus/ebadf/second-case", test_second_case);
-  g_test_add_func("/nostrc-test-bus/ebadf/bus-in-case", test_bus_in_case);
-  g_test_add_func("/nostrc-test-bus/ebadf/bus-in-another-case", test_bus_in_case);
-  nostrc_test_bus_add_func("/nostrc-test-bus/ebadf/bound", test_bound);
-  nostrc_test_bus_add_func("/nostrc-test-bus/ebadf/other-warning", test_other_warning);
-  nostrc_test_bus_add_func("/nostrc-test-bus/ebadf/other-domain", test_other_domain);
-#else
-  nostrc_test_bus_add_func("/nostrc-test-bus/ebadf/fatal-elsewhere", test_fatal_elsewhere);
-#endif
-  int status = g_test_run();
-  nostrc_test_bus_down(bus);
-  return status;
+  nostrc_test_bus_add_func("/nostrc-test-bus/ebadf/first-case-fatal", test_warning_fatal);
+  nostrc_test_bus_add_func("/nostrc-test-bus/ebadf/second-case-fatal", test_warning_fatal);
+  g_test_add_func("/nostrc-test-bus/ebadf/after-up-fatal", test_warning_after_up);
+  g_test_add_func("/nostrc-test-bus/close/before-daemon", test_local_close);
+  g_test_add_func("/nostrc-test-bus/close/thread-default", test_thread_default);
+  g_test_add_data_func("/nostrc-test-bus/close/running-worker", GINT_TO_POINTER(TRUE), test_worker);
+  g_test_add_data_func("/nostrc-test-bus/close/stopped-worker", GINT_TO_POINTER(FALSE), test_worker);
+  g_test_add_func("/nostrc-test-bus/close/session-restart", test_session_restart);
+  return g_test_run();
 }

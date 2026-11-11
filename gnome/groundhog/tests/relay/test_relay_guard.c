@@ -388,8 +388,12 @@ tripwire_clear(Tripwire *tripwire)
 {
   g_signal_handlers_disconnect_by_data(tripwire->service, tripwire);
   g_socket_service_stop(tripwire->service);
+  /* stop() cancels accept asynchronously. Dispatch its socket source before
+   * close() invalidates the fd in macOS GLib's select()-based poll set. */
+  drain();
   g_socket_listener_close(G_SOCKET_LISTENER(tripwire->service));
   g_clear_object(&tripwire->service);
+  drain();
 }
 
 /* The real GNostrRelay transport behind the guard. In Tor mode neither a

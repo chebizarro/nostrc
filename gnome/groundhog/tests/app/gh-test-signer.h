@@ -172,8 +172,7 @@ gh_test_bus_up_beside_gtk(GhTestBus *fixture)
   g_setenv("DBUS_SESSION_BUS_ADDRESS", nostrc_test_bus_get_address(fixture->bus), TRUE);
 }
 
-/* Stops the bus; the connections only see it vanish (see
- * nostrc_test_bus_down()). */
+/* Closes and drains owned connections before stopping the private bus. */
 static G_GNUC_UNUSED void
 gh_test_bus_down(GhTestBus *fixture)
 {
