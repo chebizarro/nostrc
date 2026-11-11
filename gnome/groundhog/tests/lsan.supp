@@ -72,6 +72,9 @@ leak:gtk_shortcut_label_rebuild
 # Source check: fixed in GTK 4.24.0, not 4.22.0. Its retained-widget allocation
 # stacks contain only generic GtkBuilder/GObject constructors, not the faulty
 # reference operation; no broad constructor suppression is authorized here.
+# test_onboarding.c instead maps the fixture and settles its queued focus before
+# synthetic page changes; clearing focus only at teardown is too late. Remove
+# that workaround once the tested GTK has the fix and no such retention.
 
 # libadwaita 1.5.0-1ubuntu2 (Ubuntu 24.04): breakpoint size allocation saves
 # a snapshot in old_node; breakpoint_changed_tick_cb overwrites it without an
