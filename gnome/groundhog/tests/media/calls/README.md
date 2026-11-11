@@ -131,12 +131,18 @@ Settings, owned by this backend (the Preferences page is separate work):
 
 libnice supports one active STUN endpoint; the first configured entry is used.
 The ordered list is retained for user choice, **not automatic STUN failover**.
-TURN credentials use the asynchronous `gh_call_turn_password_*` APIs and the
-platform Secret Service, keyed by exact URL and username. They are not stored
-in GSettings, logs or call history. This implementation does not access the
-macOS login keychain; a Secret Service is required on that development platform.
-Native TURN Keychain storage is tracked as `nostrc-zrvr8`; the existing store-key
-and NIP-46 abstractions have purpose-specific schemas and cannot store TURN passwords.
+TURN credentials use the asynchronous `gh_call_turn_password_*` lookup, store
+and delete APIs, keyed by exact URL and username. Native macOS Keychain storage
+(`nostrc-zrvr8`) uses a dedicated `org.nostr.Groundhog.CallTurn` generic-password
+service with the default application ACL and iCloud synchronization disabled;
+Linux uses Secret Service. macOS smoke builds configured with
+`GROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service` use Secret Service too.
+Credentials are not stored in GSettings, logs or call history. Preferences shows
+saved, missing or unavailable status and enables relay-only after a credential
+is saved; locked or denied Keychain access is reported as an error. Native tests
+use an explicitly referenced temporary Keychain and verify that the developer's
+default Keychain and search list are unchanged. Store-key and NIP-46 credentials
+retain their separate, purpose-specific schemas.
 Do not enable GStreamer protocol debugging for owner calls: upstream debugging
 can expose SDP or credential-bearing TURN URLs.
 
@@ -185,8 +191,16 @@ it does not re-enter the UI context or leave refresh sources alive.
 Video is offered VP8 first, then H.264 constrained-baseline `42e01f`/`42e032`.
 Negotiation precedes attaching the selected video encoder, otherwise webrtcbin
 intersects the offer with an already-running VP8 encoder and loses the fallback.
-OpenH264 provides both H.264 encoding and decoding. The independent Ubuntu
-`avdec_h264` leak is tracked as `nostrc-mazyq`; no LSan suppression is used.
+OpenH264 provides both H.264 encoding and decoding through explicitly named
+`openh264enc`/`openh264dec` elements; `webrtcbin` delivers RTP, not decoded video,
+and this path never uses `decodebin` or decoder ranks. If the OpenH264 or H.264
+RTP/parser plugins cannot load, offers contain only VP8 and an H.264-only peer
+gets an explicit `H.264 unavailable` error; Opus/VP8 calls remain available.
+The Ubuntu `avdec_h264` leak (`nostrc-mazyq`) is one `AVPacket` per decoded frame in
+Ubuntu 24.04's **gst-libav 1.24.1** (core/base/bad are 1.24.2). Upstream fixed it
+in gst-libav 1.24.2; Ubuntu noble never updated the package. See
+[the investigation](../../../../../docs/investigations/gst-libav-avpacket-leak-2026-11-11.md).
+No LSan suppression is used.
 
 ## Concrete transport checks
 
@@ -199,7 +213,14 @@ ctest --test-dir build-calls-asan \
   -R '^groundhog-call-media' --output-on-failure
 ```
 
-The in-process test covers actual Opus/VP8 and constrained-baseline H.264,
+The in-process test covers actual Opus/VP8 and constrained-baseline H.264.
+`/call-media/h264-fallback` decodes at least 300 frames **per peer** through the
+production receive path and asserts both factories are `openh264dec`, even with
+`avdec_h264` promoted above primary rank. Without the OpenH264/H.264 RTP elements
+it skips, or fails when `GROUNDHOG_CALL_TEST_REQUIRE_RUNTIME=1` (as in the CI
+image). `/call-media/missing-h264` removes the
+real decoder factory, proves VP8 loopback still works and is the only advertised
+video codec, and checks the named error for an H.264-only offer. It also covers
 voice-to-video upgrade, pending teardown, default-off configuration, SDP/trickle
 private/mDNS rejection and address scrubbing, injected libnice learned/selected
 private-address notifications and terminal teardown, texture delivery, and injected device removal/replacement using

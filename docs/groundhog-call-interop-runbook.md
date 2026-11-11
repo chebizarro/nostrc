@@ -82,7 +82,10 @@ the wire format changed.
   server you have an account on.
 - **Codecs.** Opus for audio; video is offered VP8 first, then H.264
   constrained baseline (`42e01f`/`42e032`). A peer that strips VP8 still
-  negotiates H.264.
+  negotiates H.264 when GStreamer's OpenH264 elements (`openh264enc`/`openh264dec`)
+  are installed. Without them, e.g. the Flatpak Platform 51 runtime, Groundhog
+  offers only VP8 and fails an H.264-only peer with "H.264 unavailable"; record
+  which build you tested.
 - **Echo cancellation.** A speaker route needs GStreamer's `webrtcdsp` and
   `webrtcechoprobe`; without them Groundhog refuses the call rather than
   degrade. Use a headset if your build lacks them, and record which.
