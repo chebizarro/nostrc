@@ -1,6 +1,7 @@
 #include "gh-call-media.h"
 #include "gh-call-capabilities.h"
 #include "gh-call-settings.h"
+#include "gh-call-ice-policy.h"
 #include <gst/sdp/sdp.h>
 #include <stdio.h>
 static gboolean force_h264;
@@ -24,6 +25,7 @@ static GstDevice *microphone(void) {
 GhCallMedia *gh_call_media_new_test(GSettings *settings);
 void gh_call_media_test_received(GhCallMedia *, gint *, gint *);
 void gh_call_media_test_remove_device(GhCallMedia *, GstDevice *);
+void gh_call_media_test_learn_private(GhCallMedia *, gboolean);
 static GhCallMediaBackendInterface *iface(GhCallMedia *m) {
   return GH_CALL_MEDIA_BACKEND_GET_IFACE(m);
 }
@@ -162,13 +164,8 @@ static void policy(void)
   g_autoptr(GSettings) s = settings();
   g_autoptr(GhCallMedia) m = gh_call_media_new_test(s);
   GError *error = NULL;
-  g_assert_false(iface(m)->configure(GH_CALL_MEDIA_BACKEND(m), FALSE, &error));
-  g_assert_error(error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED); g_clear_error(&error);
-  GAsyncResult *blocked = NULL;
-  iface(m)->create_local_async(GH_CALL_MEDIA_BACKEND(m), GH_CALL_VIDEO, FALSE, NULL, done, &blocked);
-  while (!blocked) g_main_context_iteration(NULL, TRUE);
-  g_assert_null(iface(m)->create_local_finish(GH_CALL_MEDIA_BACKEND(m), blocked, &error));
-  g_assert_error(error, G_IO_ERROR, G_IO_ERROR_CLOSED); g_clear_error(&error); g_object_unref(blocked);
+  g_assert_true(iface(m)->configure(GH_CALL_MEDIA_BACKEND(m), FALSE, &error));
+  g_assert_no_error(error);
   g_assert_false(iface(m)->add_remote_ice(GH_CALL_MEDIA_BACKEND(m),
       "candidate:1 1 UDP 1 127.0.0.1 1234 typ host", "audio0", 0, &error));
   g_clear_error(&error);
@@ -196,6 +193,84 @@ static void policy(void)
   g_clear_error(&error);
   g_assert_true(gh_call_ice_url_validate("turns://example.org:5349?transport=tcp", TRUE, &error));
   g_assert_no_error(error);
+}
+static void expected_policy_failure(GhCallMedia *m, gint state, gpointer data)
+{
+  (void)m;
+  if (state == GH_CALL_MEDIA_FAILED) *(gboolean *)data = TRUE;
+}
+static void learned_private(void)
+{
+  for (guint selected = 0; selected < 2; selected++) {
+    g_autoptr(GSettings) s = settings();
+    g_autoptr(GhCallMedia) m = gh_call_media_new_test(s);
+    GError *error = NULL;
+    g_assert_true(iface(m)->configure(GH_CALL_MEDIA_BACKEND(m), FALSE, &error));
+    g_assert_no_error(error);
+    g_autofree gchar *offer = local(m, GH_CALL_VOICE, FALSE);
+    g_assert_null(strstr(offer, "typ host"));
+    gboolean failed = FALSE;
+    g_signal_connect(m, "connection-state", G_CALLBACK(expected_policy_failure), &failed);
+    /* Inject the libnice notification, not a claim of pre-check packet filtering. */
+    gh_call_media_test_learn_private(m, selected);
+    while (!failed) g_main_context_iteration(NULL, TRUE);
+    g_assert_false(iface(m)->configure(GH_CALL_MEDIA_BACKEND(m), FALSE, &error));
+    g_assert_error(error, G_IO_ERROR, G_IO_ERROR_CLOSED); g_clear_error(&error);
+  }
+}
+static void no_local_candidates(void)
+{
+  g_autoptr(GSettings) s = settings();
+  g_autoptr(GhCallMedia) m = gh_call_media_new_test(s);
+  GError *error = NULL;
+  g_assert_true(iface(m)->configure(GH_CALL_MEDIA_BACKEND(m), FALSE, &error));
+  g_assert_no_error(error);
+  const gchar *blocked[] = { "10.1.2.3", "172.16.0.1", "192.168.1.1", "127.0.0.1",
+      "169.254.1.2", "100.64.1.2", "100.127.255.254", "::1", "fe80::1", "fc00::1", "fd12::1",
+      "::ffff:192.168.1.1", "64:ff9b::c0a8:101", "2002:c0a8:101::1", "device.local", "DEVICE.LOCAL.",
+      "example.org", "0.0.0.0", "224.0.0.1", "198.18.0.1" };
+  const gchar *types[] = { "host", "srflx", "prflx", "relay" };
+  for (guint t = 0; t < G_N_ELEMENTS(types); t++) {
+    for (guint i = 0; i < G_N_ELEMENTS(blocked); i++) {
+      g_autofree gchar *candidate = g_strdup_printf("candidate:1 1 UDP 1 %s 1234 typ %s", blocked[i], types[t]);
+      g_assert_false(iface(m)->add_remote_ice(GH_CALL_MEDIA_BACKEND(m), candidate, "audio0", 0, &error));
+      g_assert_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT); g_clear_error(&error);
+      /* Both session-level and media-level attributes pass the same gate. */
+      for (guint session = 0; session < 2; session++) {
+        const gchar *media = "m=audio 9 UDP/TLS/RTP/SAVPF 96\r\na=rtpmap:96 OPUS/48000/2\r\n";
+        g_autofree gchar *sdp = g_strdup_printf("v=0\r\no=- 1 1 IN IP4 0.0.0.0\r\ns=-\r\nt=0 0\r\n%sa=%s\r\n%s",
+            session ? "" : media, candidate, session ? media : "");
+        GAsyncResult *result = NULL;
+        iface(m)->apply_remote_async(GH_CALL_MEDIA_BACKEND(m), sdp, TRUE, NULL, done, &result);
+        while (!result) g_main_context_iteration(NULL, TRUE);
+        g_assert_false(iface(m)->apply_remote_finish(GH_CALL_MEDIA_BACKEND(m), result, &error));
+        g_assert_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT);
+        g_clear_error(&error); g_object_unref(result);
+      }
+    }
+  }
+  g_assert_false(iface(m)->add_remote_ice(GH_CALL_MEDIA_BACKEND(m),
+      "candidate:1 1 UDP 1 192.0.2.1 1234 typ host", "audio0", 0, &error));
+  g_clear_error(&error);
+  g_assert_true(iface(m)->add_remote_ice(GH_CALL_MEDIA_BACKEND(m),
+      "candidate:1 1 UDP 1 192.0.2.1 1234 typ srflx raddr 0.0.0.0 rport 0", "audio0", 0, &error));
+  g_assert_no_error(error);
+  g_assert_true(gh_call_ice_address_allowed("2606:4700:4700::1111"));
+  const gchar *raw = "v=0\r\no=- 1 1 IN IP4 192.168.1.1\r\ns=-\r\nt=0 0\r\n"
+      "a=candidate:1 1 UDP 1 device.local 1234 typ host\r\n"
+      "m=audio 9 UDP/TLS/RTP/SAVPF 96\r\nc=IN IP4 192.168.1.1\r\n"
+      "a=rtcp:1234 IN IP4 192.168.1.1\r\na=remote-candidates:1 192.168.1.1 1234\r\n"
+      "a=candidate:2 1 UDP 1 192.168.1.1 1234 typ host\r\n"
+      "a=candidate:3 1 UDP 1 192.0.2.1 1234 typ srflx raddr 192.168.1.1 rport 1234\r\n"
+      "a=candidate:4 1 UDP 1 192.0.2.1 1235 typ relay raddr fd00::1 rport 1235\r\n";
+  GstSDPMessage *message = NULL;
+  g_assert_cmpint(gst_sdp_message_new_from_text(raw, &message), ==, GST_SDP_OK);
+  g_autofree gchar *wire = gh_call_ice_sdp_for_peer(message, FALSE, FALSE);
+  g_assert_null(strstr(wire, "192.168.")); g_assert_null(strstr(wire, "fd00:"));
+  g_assert_null(strstr(wire, ".local")); g_assert_null(strstr(wire, "typ host"));
+  g_assert_nonnull(strstr(wire, "typ srflx raddr 0.0.0.0 rport 0"));
+  g_assert_nonnull(strstr(wire, "typ relay raddr 0.0.0.0 rport 0"));
+  gst_sdp_message_free(message);
 }
 static void cancel_pending(void)
 {
@@ -235,7 +310,17 @@ static void process_state(GhCallMedia *m, gint value, gpointer data) {
 }
 static void process_ice(GhCallMedia *m, const gchar *candidate, const gchar *mid, guint line, gpointer data) {
   (void)m; (void)data;
-  if (g_getenv("GH_CALL_TEST_TURN")) g_assert_nonnull(strstr(candidate, " typ relay"));
+  if (g_getenv("GH_CALL_TEST_TURN") && !g_getenv("GH_CALL_TEST_ALL_CANDIDATES"))
+    g_assert_nonnull(strstr(candidate, " typ relay"));
+  if (g_getenv("GH_CALL_TEST_NO_LOCAL")) {
+    g_assert_null(strstr(candidate, " typ host"));
+    g_assert_null(strstr(candidate, ".local"));
+    gboolean relay_only = !g_getenv("GH_CALL_TEST_ALL_CANDIDATES");
+    g_assert_true(gh_call_ice_candidate_allowed(candidate, FALSE, relay_only));
+    g_autofree gchar *scrubbed = gh_call_ice_candidate_for_peer(candidate, FALSE, relay_only);
+    g_assert_cmpstr(candidate, ==, scrubbed);
+    g_assert_nonnull(strstr(candidate, " raddr 0.0.0.0 rport 0"));
+  }
   g_autofree gchar *c = g_base64_encode((const guchar *)candidate, strlen(candidate));
   g_autofree gchar *id = g_base64_encode((const guchar *)mid, strlen(mid));
   g_print("MSG ICE %u %s %s\n", line, id, c); fflush(stdout);
@@ -244,6 +329,15 @@ static void process_local_done(GObject *source, GAsyncResult *result, gpointer d
   ProcessPeer *peer = data; GError *error = NULL;
   g_autofree gchar *sdp = iface(peer->media)->create_local_finish(GH_CALL_MEDIA_BACKEND(source), result, &error);
   g_assert_no_error(error);
+  if (g_getenv("GH_CALL_TEST_NO_LOCAL")) {
+    GstSDPMessage *message = NULL;
+    g_assert_cmpint(gst_sdp_message_new_from_text(sdp, &message), ==, GST_SDP_OK);
+    g_autofree gchar *scrubbed = gh_call_ice_sdp_for_peer(message, FALSE,
+        !g_getenv("GH_CALL_TEST_ALL_CANDIDATES"));
+    g_assert_cmpstr(sdp, ==, scrubbed);
+    g_assert_null(strstr(sdp, " typ host"));
+    gst_sdp_message_free(message);
+  }
   g_autofree gchar *encoded = g_base64_encode((const guchar *)sdp, strlen(sdp));
   g_print("MSG %s %u %s\n", peer->answering ? "ANSWER" : "OFFER", peer->type, encoded); fflush(stdout);
 }
@@ -297,17 +391,19 @@ static int process_peer(gboolean caller)
   g_autoptr(GSettings) s = settings();
   if (g_getenv("GH_CALL_TEST_TURN")) {
     GAsyncResult *result = NULL; GError *error = NULL;
-    const gchar *url = "turn://127.0.0.1:3478";
+    const gchar *url = g_getenv("GH_CALL_TEST_TURN_URL");
+    if (!url) url = "turn://127.0.0.1:3478";
     gh_call_turn_password_store_async(url, "gh-voice-media", "disposable-test-only", NULL, done, &result);
     while (!result) g_main_context_iteration(NULL, TRUE);
     g_assert_true(gh_call_turn_password_store_finish(result, &error)); g_assert_no_error(error); g_object_unref(result);
     g_settings_set_string(s, "call-turn-url", url);
     g_settings_set_string(s, "call-turn-username", "gh-voice-media");
-    g_settings_set_boolean(s, "call-relay-only", TRUE);
+    g_settings_set_boolean(s, "call-relay-only", !g_getenv("GH_CALL_TEST_ALL_CANDIDATES"));
   }
   ProcessPeer peer = { .caller = caller, .loop = g_main_loop_new(NULL, FALSE), .media = gh_call_media_new_test(s) };
   GError *error = NULL;
-  g_assert_true(iface(peer.media)->configure(GH_CALL_MEDIA_BACKEND(peer.media), TRUE, &error)); g_assert_no_error(error);
+  g_assert_true(iface(peer.media)->configure(GH_CALL_MEDIA_BACKEND(peer.media),
+      !g_getenv("GH_CALL_TEST_NO_LOCAL"), &error)); g_assert_no_error(error);
   g_signal_connect(peer.media, "local-ice", G_CALLBACK(process_ice), &peer);
   g_signal_connect(peer.media, "connection-state", G_CALLBACK(process_state), &peer);
   g_signal_connect(gh_call_media_get_remote_video(peer.media), "invalidate-contents", G_CALLBACK(process_frame), &peer);
@@ -337,6 +433,8 @@ int main(int argc, char **argv)
   }
   guint timeout = g_timeout_add_seconds(45, deadline, NULL);
   g_test_add_func("/call-media/policy", policy);
+  g_test_add_func("/call-media/no-local-candidates", no_local_candidates);
+  g_test_add_func("/call-media/learned-private", learned_private);
   g_test_add_func("/call-media/loopback-upgrade", loopback);
   g_test_add_func("/call-media/teardown-pending", cancel_pending);
   g_test_add_func("/call-media/h264-fallback", h264_loopback);

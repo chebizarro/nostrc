@@ -114,17 +114,49 @@ TURN credentials use the asynchronous `gh_call_turn_password_*` APIs and the
 platform Secret Service, keyed by exact URL and username. They are not stored
 in GSettings, logs or call history. This implementation does not access the
 macOS login keychain; a Secret Service is required on that development platform.
+Native TURN Keychain storage is tracked as `nostrc-zrvr8`; the existing store-key
+and NIP-46 abstractions have purpose-specific schemas and cannot store TURN passwords.
 Do not enable GStreamer protocol debugging for owner calls: upstream debugging
 can expose SDP or credential-bearing TURN URLs.
 
-`configure(FALSE)` fails **before creating a pipeline**: libnice's relay policy
-still gathers local base sockets, so filtering signalled host candidates alone
-cannot implement the stronger no-host-gathering consent requirement. A call
-therefore requires explicit local-network consent, even when relay-only is set.
-With consent, relay-only configures the native ICE relay policy and admits only
-relay candidates in both SDP and trickle ICE. Missing TURN configuration or
-credentials is an error, never a direct fallback. Tor blocking and policy-change
-notifications belong to the service. Reconfiguration of an active/pending backend
+`configure(FALSE)` succeeds with the default local-network setting. This policy
+constrains **peer disclosure and destinations, not binding/gathering local sockets**:
+
+- Outgoing SDP and trickle discard host candidates (including mDNS), and candidates
+  with non-public connection addresses; related `raddr`/`rport` become `0.0.0.0`/`0`.
+  The SDP wire copy also blanks origin, connection and RTCP addresses and omits
+  `remote-candidates`. Native local descriptions remain intact inside webrtcbin.
+- Incoming SDP and trickle reject host candidates and non-public connection
+  addresses, including private, loopback, link-local, CGNAT, ULA and mDNS names.
+  Only numeric addresses are accepted without local-network permission; IPv6
+  transition/special-use prefixes are conservatively excluded too. Rejected
+  candidates never reach libnice or the pre-description candidate buffer.
+- UPnP is disabled. Before gathering, handlers are attached to libnice's
+  `new-remote-candidate-full` and `new-selected-pair-full`. A forbidden learned
+  address latches a policy failure, suppresses further peer/state signals, and
+  queues terminal call teardown on the owning main context. The pipeline stops
+  before ICE is released; removing a stream inside the callback is unsafe while
+  webrtcbin and queued libnice callbacks still own its component.
+
+**Residual peer-reflexive limitation:** libnice 0.1.21 queues these notifications
+while processing a check, then emits them after unlocking. Its public API has no
+pre-check admission veto. A peer with the ICE credentials may elicit an initial
+STUN response to a local source and may briefly establish/nominate a pair before
+the owning context processes the terminal teardown. Zero packets or zero transient nomination
+cannot be guaranteed by this backend. See upstream
+[`conncheck.c`](https://github.com/libnice/libnice/blob/0.1.21/agent/conncheck.c)
+(`discovery_learn_remote_peer_reflexive_candidate`, `priv_reply_to_conn_check`)
+and [`agent.c`](https://github.com/libnice/libnice/blob/0.1.21/agent/agent.c)
+(`agent_unlock_and_emit`). Closing this residual needs an upstream pre-check
+filter or an OS-level packet policy, not merely signalling candidate filtering.
+This policy is not an OS sandbox for administrator-configured STUN/TURN endpoints
+or arbitrary local routing/NAT translation.
+
+Relay-only is independent of local-network permission: it configures native ICE
+relay policy and admits only relay candidates in SDP/trickle. It does not grant
+permission for private relay addresses. Missing TURN configuration or credentials
+is an error, never a direct fallback. Tor blocking and policy-change notifications
+belong to the service. Reconfiguration of an active/pending backend
 tears it down and requires a new instance. Teardown waits for libnice's TURN
 allocation close completion on a private context before releasing its agent;
 it does not re-enter the UI context or leave refresh sources alive.
@@ -146,8 +178,9 @@ ASAN_OPTIONS=detect_leaks=1 ctest --test-dir build-calls-asan \
 ```
 
 The in-process test covers actual Opus/VP8 and constrained-baseline H.264,
-voice-to-video upgrade, pending teardown, candidate rejection and fail-closed
-configuration, texture delivery, and injected device removal/replacement using
+voice-to-video upgrade, pending teardown, default-off configuration, SDP/trickle
+private/mDNS rejection and address scrubbing, injected libnice learned/selected
+private-address notifications and terminal teardown, texture delivery, and injected device removal/replacement using
 the production handler. The two-process test uses pipes only for SDP/ICE;
 media crosses real ICE/DTLS-SRTP sockets. Deadlines are failure bounds; no sleep
 is used as evidence of connectivity. Device fixtures do not establish physical
@@ -163,6 +196,33 @@ GSETTINGS_SCHEMA_DIR="$PWD/build-calls-asan/call-schemas" \
 dbus-run-session -- sh gnome/groundhog/tests/media/calls/turn_session.sh \
   "$PWD/build-calls-asan/test-groundhog-call-media"
 ```
+
+To exercise **local-network off**, give only the disposable container `NET_ADMIN`,
+install its dependencies, attach a task-owned **internal** Docker network (libnice
+needs a non-loopback interface), disconnect its external Docker network, then run:
+
+```sh
+# Inside the isolated disposable container, as root:
+ip addr add 192.0.2.1/32 dev lo
+GH_CALL_TEST_NO_LOCAL=1 GH_CALL_TEST_TURN_ADDRESS=192.0.2.1 \
+GH_CALL_TEST_PRIVATE_BUS=1 ASAN_OPTIONS=detect_leaks=1 GSETTINGS_BACKEND=memory \
+GSETTINGS_SCHEMA_DIR="$PWD/build-calls-asan/call-schemas" \
+dbus-run-session -- sh gnome/groundhog/tests/media/calls/turn_session.sh \
+  "$PWD/build-calls-asan/test-groundhog-call-media"
+```
+
+The TURN address is routed only to this container's loopback. The same production
+address filter is used, with no test bypass. Both processes negotiate voice,
+upgrade to video, assert clean SDP/trickle and decode at least ten audio/video
+buffers over real TURN. This is relay coverage, not a public-STUN srflx/NAT test.
+
+Also run with `GH_CALL_TEST_ALL_CANDIDATES=1` to disable native relay-only and
+exercise Groundhog's host-candidate filter on live gathering. For that fixture,
+create the internal Docker network with `--subnet 192.0.2.0/24 --gateway 192.0.2.254`
+and attach the container with `--ip 192.0.2.2`, retaining the TURN loopback alias.
+There is no external route. The public-classified fixture interface avoids a
+private peer-reflexive address from a direct check into coturn; real Internet
+NAT behavior is not simulated. No production filter is relaxed for the fixture.
 
 The fixture waits for bus ownership and coturn's listener-ready event, removes
 its private keyring and TURN state, and has no third-party TURN credentials.

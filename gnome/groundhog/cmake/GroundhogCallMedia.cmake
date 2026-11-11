@@ -10,6 +10,7 @@ if(GROUNDHOG_CALLS_AVAILABLE)
     gtk4 gio-2.0 gstreamer-app-1.0 gstreamer-video-1.0 libsecret-1)
   add_library(groundhog-call-media STATIC
     "${_gh_calls_root}/src/media/gh-call-media.c"
+    "${_gh_calls_root}/src/media/gh-call-ice-policy.c"
     "${_gh_calls_root}/src/media/gh-call-paintable.c"
     "${_gh_calls_root}/src/media/gh-call-settings.c")
   target_include_directories(groundhog-call-media PUBLIC "${_gh_calls_root}/src/media")

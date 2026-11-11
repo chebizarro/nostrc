@@ -8,11 +8,15 @@ import sys
 import tempfile
 import time
 
+# For the no-local policy test, assign TEST-NET-1 to loopback in a disposable,
+# network-isolated container. No production-policy bypass or public server.
+address = os.environ.get("GH_CALL_TEST_TURN_ADDRESS", "127.0.0.1")
+os.environ["GH_CALL_TEST_TURN_URL"] = "turn://" + address + ":3478"
 with tempfile.TemporaryDirectory(prefix="gh-voice-media-turn-") as directory:
     command = ["turnserver", "--no-cli", "--no-tls", "--no-dtls", "--fingerprint",
                "--lt-cred-mech", "--realm=gh-voice-media",
-               "--user=gh-voice-media:disposable-test-only", "--listening-ip=127.0.0.1",
-               "--relay-ip=127.0.0.1", "--allow-loopback-peers", "--no-multicast-peers",
+               "--user=gh-voice-media:disposable-test-only", "--listening-ip=" + address,
+               "--relay-ip=" + address, "--allow-loopback-peers", "--no-multicast-peers",
                "--listening-port=3478", "--min-port=49160", "--max-port=49200",
                "--relay-threads=1", "--log-file=stdout", "--simple-log", "-v",
                "--pidfile=" + directory + "/turn.pid", "--userdb=" + directory + "/turn.db"]

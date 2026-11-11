@@ -192,7 +192,7 @@
     </key>
     <key name="call-relay-only" type="b">
       <default>false</default><summary>Use only TURN relay candidates for calls</summary>
-      <description>Requires a configured TURN server and a credential in the platform secret store. This does not provide Tor routing or disable host socket gathering.</description>
+      <description>Requires a configured TURN server and a credential in the platform secret store. Only relay candidates are exchanged. This works with Allow Local Network off: host candidates are withheld, related addresses are hidden, and non-public peer addresses are rejected. Local socket gathering is permitted. This does not provide Tor routing.</description>
     </key>
     <!-- End call media ICE settings. -->
 

@@ -2,6 +2,7 @@
 #include "gh-call-capabilities.h"
 #include "gh-call-settings.h"
 #include "gh-call-paintable.h"
+#include "gh-call-ice-policy.h"
 #include <gst/webrtc/webrtc.h>
 #include <gst/sdp/sdp.h>
 #include <nice.h>
@@ -32,6 +33,7 @@ struct _GhCallMedia {
   GTask *pending;
   NiceAgent *nice;
   gint received_audio, received_video;
+  gint policy_violation;
 };
 static void backend_init(GhCallMediaBackendInterface *iface);
 G_DEFINE_TYPE_WITH_CODE(GhCallMedia, gh_call_media, G_TYPE_OBJECT,
@@ -56,17 +58,7 @@ static gboolean fail(GError **error, GIOErrorEnum code, const gchar *message)
 /* Candidates are untrusted signalling, including candidates embedded in SDP. */
 static gboolean candidate_allowed(GhCallMedia *self, const gchar *candidate)
 {
-  if (!candidate || strlen(candidate) > 4096 || strchr(candidate, '\r') || strchr(candidate, '\n')) return FALSE;
-  const gchar *p = g_str_has_prefix(candidate, "a=") ? candidate + 2 : candidate;
-  if (!g_str_has_prefix(p, "candidate:")) return FALSE;
-  g_auto(GStrv) fields = g_strsplit(p, " ", -1);
-  guint n = g_strv_length(fields);
-  if (n < 8 || g_strcmp0(fields[6], "typ")) return FALSE;
-  const gchar *type = fields[7];
-  if (self->relay_only) return g_str_equal(type, "relay");
-  if (!self->allow_local && g_str_equal(type, "host")) return FALSE;
-  return g_str_equal(type, "host") || g_str_equal(type, "srflx") ||
-         g_str_equal(type, "prflx") || g_str_equal(type, "relay");
+  return gh_call_ice_candidate_allowed(candidate, self->allow_local, self->relay_only);
 }
 static gboolean sdp_allowed(GhCallMedia *self, const GstSDPMessage *sdp)
 {
@@ -101,11 +93,16 @@ static gboolean configure(GhCallMediaBackend *backend, gboolean allow_local, GEr
   self->configured = FALSE;
   self->allow_local = allow_local;
   self->relay_only = g_settings_get_boolean(self->settings, "call-relay-only");
-  /* libnice's force-relay hides local candidates but still gathers base host
-   * sockets. It is NOT an implementation of no-local-network consent. */
-  if (!allow_local)
-    return fail(error, G_IO_ERROR_NOT_SUPPORTED,
-        "Calls require local-network consent: this ICE backend cannot disable host gathering");
+  /* The policy constrains peer disclosure and destinations, not local binding.
+   * SDP/trickle filters are always installed; libnice guards are installed
+   * before the pipeline can gather or check candidates. */
+  if (!allow_local) {
+    gpointer klass = g_type_class_ref(NICE_TYPE_AGENT);
+    gboolean guards = g_signal_lookup("new-remote-candidate-full", NICE_TYPE_AGENT) &&
+        g_signal_lookup("new-selected-pair-full", NICE_TYPE_AGENT);
+    g_type_class_unref(klass);
+    if (!guards) return fail(error, G_IO_ERROR_NOT_SUPPORTED, "ICE runtime lacks remote address policy hooks");
+  }
   g_auto(GStrv) stun = g_settings_get_strv(self->settings, "call-stun-servers");
   for (guint i = 0; stun[i]; i++)
     if (!gh_call_ice_url_validate(stun[i], FALSE, error)) return FALSE;
@@ -127,13 +124,15 @@ static gboolean emit_ice(gpointer data)
 {
   LocalIce *i = data;
   GhCallMedia *self = i->self;
-  if (self->stopped || !candidate_allowed(self, i->candidate)) return G_SOURCE_REMOVE;
+  if (self->stopped || g_atomic_int_get(&self->policy_violation)) return G_SOURCE_REMOVE;
+  g_autofree gchar *wire = gh_call_ice_candidate_for_peer(i->candidate, self->allow_local, self->relay_only);
+  if (!wire) return G_SOURCE_REMOVE;
   GstWebRTCSessionDescription *sdp = NULL;
   g_object_get(self->rtc, "local-description", &sdp, NULL);
   const gchar *mid = NULL;
   if (sdp && i->line < gst_sdp_message_medias_len(sdp->sdp))
     mid = gst_sdp_media_get_attribute_val(gst_sdp_message_get_media(sdp->sdp, i->line), "mid");
-  if (mid) g_signal_emit_by_name(self, "local-ice", i->candidate, mid, i->line);
+  if (mid) g_signal_emit_by_name(self, "local-ice", wire, mid, i->line);
   if (sdp) gst_webrtc_session_description_free(sdp);
   return G_SOURCE_REMOVE;
 }
@@ -145,10 +144,40 @@ static void on_ice(GstElement *rtc, guint line, gchar *candidate, gpointer data)
   i->self = g_object_ref(self); i->line = line; i->candidate = g_strdup(candidate);
   post(self, emit_ice, i, local_ice_free);
 }
+static gboolean policy_failed(gpointer data)
+{
+  GhCallMedia *self = data;
+  if (!self->stopped) {
+    g_signal_emit_by_name(self, "connection-state", GH_CALL_MEDIA_FAILED);
+    teardown(GH_CALL_MEDIA_BACKEND(self));
+  }
+  return G_SOURCE_REMOVE;
+}
+static void guard_remote_candidate(NiceAgent *agent, NiceCandidate *candidate, gpointer data)
+{
+  GhCallMedia *self = data;
+  if (self->allow_local) return;
+  gchar address[NICE_ADDRESS_STRING_LEN];
+  nice_address_to_string(&candidate->addr, address);
+  if (gh_call_ice_address_allowed(address)) return;
+  if (!g_atomic_int_compare_and_exchange(&self->policy_violation, 0, 1)) return;
+  (void)agent;
+  /* libnice emits this AFTER processing the check. There is no public
+   * pre-check veto. Do not remove its stream here: webrtcbin still owns it
+   * and queued libnice/GStreamer callbacks would access a deleted component.
+   * Stop the pipeline before releasing ICE, on the owning context. */
+  post(self, policy_failed, g_object_ref(self), g_object_unref);
+}
+static void guard_selected_pair(NiceAgent *agent, guint stream, guint component,
+    NiceCandidate *local, NiceCandidate *remote, gpointer data)
+{
+  (void)stream; (void)component; (void)local;
+  guard_remote_candidate(agent, remote, data);
+}
 static gboolean emit_state(gpointer data)
 {
   GhCallMedia *self = data;
-  if (self->stopped) return G_SOURCE_REMOVE;
+  if (self->stopped || g_atomic_int_get(&self->policy_violation)) return G_SOURCE_REMOVE;
   GstWebRTCPeerConnectionState state;
   g_object_get(self->rtc, "connection-state", &state, NULL);
   GhCallMediaState mapped = GH_CALL_MEDIA_CONNECTING;
@@ -356,6 +385,10 @@ static gboolean build_pipeline(GhCallMedia *self, const gchar *password, GError 
   g_clear_object(&ice);
   if (!self->nice) return fail(error, G_IO_ERROR_NOT_SUPPORTED, "This ICE implementation cannot release TURN allocations safely");
   g_object_set(self->nice, "upnp", FALSE, NULL);
+  if (!self->allow_local) {
+    g_signal_connect(self->nice, "new-remote-candidate-full", G_CALLBACK(guard_remote_candidate), self);
+    g_signal_connect(self->nice, "new-selected-pair-full", G_CALLBACK(guard_selected_pair), self);
+  }
   g_object_set(self->rtc, "bundle-policy", GST_WEBRTC_BUNDLE_POLICY_MAX_BUNDLE,
       "ice-transport-policy", self->relay_only ? GST_WEBRTC_ICE_TRANSPORT_POLICY_RELAY : GST_WEBRTC_ICE_TRANSPORT_POLICY_ALL, NULL);
   if (self->stun && !self->relay_only) g_object_set(self->rtc, "stun-server", self->stun, NULL);
@@ -472,12 +505,13 @@ static gboolean promise_complete(gpointer data)
   GhCallMedia *self = g_task_get_source_object(task);
   Operation *op = g_task_get_task_data(task);
   if (self->pending != task || self->stopped) return G_SOURCE_REMOVE;
+  if (g_atomic_int_get(&self->policy_violation)) return policy_failed(self);
   if (g_task_get_cancellable(task) && g_cancellable_is_cancelled(g_task_get_cancellable(task))) {
     teardown(GH_CALL_MEDIA_BACKEND(self)); return G_SOURCE_REMOVE;
   }
   if (c->error) { complete_error(task, g_steal_pointer(&c->error)); return G_SOURCE_REMOVE; }
   if (op->stage == OP_CREATE) {
-    if (!c->description || !sdp_allowed(self, c->description->sdp)) {
+    if (!c->description) {
       complete_error(task, g_error_new_literal(G_IO_ERROR, G_IO_ERROR_FAILED, "Cannot create policy-compliant SDP"));
       return G_SOURCE_REMOVE;
     }
@@ -506,7 +540,10 @@ static gboolean promise_complete(gpointer data)
     g_task_return_boolean(task, TRUE);
   } else {
     if (op->answer) self->remote_offer = FALSE;
-    g_task_return_pointer(task, gst_sdp_message_as_text(op->description->sdp), g_free);
+    /* Keep the native local description intact for ICE; only the wire copy
+     * loses host candidates and related/base addresses. */
+    g_task_return_pointer(task, gh_call_ice_sdp_for_peer(op->description->sdp,
+        self->allow_local, self->relay_only), g_free);
   }
   return G_SOURCE_REMOVE;
 }
@@ -694,7 +731,8 @@ static gboolean add_ice(GhCallMediaBackend *backend, const gchar *candidate,
                         const gchar *mid, guint line, GError **error)
 {
   GhCallMedia *self = GH_CALL_MEDIA(backend);
-  if (self->stopped || !self->configured) return fail(error, G_IO_ERROR_CLOSED, "Call media is not available");
+  if (self->stopped || !self->configured || g_atomic_int_get(&self->policy_violation))
+    return fail(error, G_IO_ERROR_CLOSED, "Call media is not available");
   if (!candidate_allowed(self, candidate) || !mid || strlen(mid) > 256 || line > 16)
     return fail(error, G_IO_ERROR_INVALID_ARGUMENT, "Invalid or policy-forbidden ICE candidate");
   if (!self->remote_ready) {
@@ -726,6 +764,7 @@ static void teardown(GhCallMediaBackend *backend)
   if (self->stopped) return;
   self->stopped = TRUE;
   if (self->rtc) g_signal_handlers_disconnect_by_data(self->rtc, self);
+  if (self->nice) g_signal_handlers_disconnect_by_data(self->nice, self);
   clear_source(&self->bus_source);
   if (self->pipeline) gst_element_set_state(self->pipeline, GST_STATE_NULL);
   if (self->nice) {
@@ -931,6 +970,16 @@ void gh_call_media_test_remove_device(GhCallMedia *self, GstDevice *device)
 {
   GstMessage *message = gst_message_new_device_removed(GST_OBJECT(self->pipeline), device);
   device_message(NULL, message, self); gst_message_unref(message);
+}
+void gh_call_media_test_learn_private(GhCallMedia *self, gboolean selected)
+{
+  NiceCandidate *remote = nice_candidate_new(NICE_CANDIDATE_TYPE_PEER_REFLEXIVE);
+  remote->stream_id = 1; remote->component_id = 1;
+  nice_address_set_from_string(&remote->addr, "192.168.1.1");
+  nice_address_set_port(&remote->addr, 1234);
+  if (selected) g_signal_emit_by_name(self->nice, "new-selected-pair-full", 1u, 1u, remote, remote);
+  else g_signal_emit_by_name(self->nice, "new-remote-candidate-full", remote);
+  nice_candidate_free(remote);
 }
 void gh_call_media_test_received(GhCallMedia *self, gint *audio, gint *video)
 {
