@@ -1,0 +1,40 @@
+# Concrete call media, kept separate from the packaging/runtime capability gate.
+pkg_check_modules(GH_CALL_GIO REQUIRED IMPORTED_TARGET gio-2.0)
+add_library(groundhog-call-media-backend STATIC "${_gh_calls_root}/src/media/gh-call-media-backend.c")
+target_link_libraries(groundhog-call-media-backend PUBLIC PkgConfig::GH_CALL_GIO)
+if(TARGET groundhog)
+  target_link_libraries(groundhog PRIVATE groundhog-call-media-backend)
+endif()
+if(GROUNDHOG_CALLS_AVAILABLE)
+  pkg_check_modules(GH_CALL_MEDIA REQUIRED IMPORTED_TARGET
+    gtk4 gio-2.0 gstreamer-app-1.0 gstreamer-video-1.0 libsecret-1)
+  add_library(groundhog-call-media STATIC
+    "${_gh_calls_root}/src/media/gh-call-media.c"
+    "${_gh_calls_root}/src/media/gh-call-ice-policy.c"
+    "${_gh_calls_root}/src/media/gh-call-paintable.c"
+    "${_gh_calls_root}/src/media/gh-call-settings.c")
+  target_include_directories(groundhog-call-media PUBLIC "${_gh_calls_root}/src/media")
+  target_link_libraries(groundhog-call-media PUBLIC groundhog-call-media-backend groundhog-call-capabilities PkgConfig::GH_CALL_MEDIA)
+  target_compile_definitions(groundhog-call-media PRIVATE GST_USE_UNSTABLE_API)
+  target_compile_options(groundhog-call-media PRIVATE -Wall -Wextra -Werror)
+  if(TARGET groundhog)
+    target_link_libraries(groundhog PRIVATE groundhog-call-media)
+  endif()
+  if(BUILD_TESTING)
+    add_executable(test-groundhog-call-media "${_gh_calls_root}/tests/media/test_call_media.c")
+    target_link_libraries(test-groundhog-call-media PRIVATE groundhog-call-media)
+    target_compile_options(test-groundhog-call-media PRIVATE -Wall -Wextra -Werror)
+    find_program(GH_CALL_GLIB_COMPILE_SCHEMAS glib-compile-schemas REQUIRED)
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/call-schemas")
+    configure_file("${_gh_calls_root}/data/org.nostr.Groundhog.gschema.xml"
+      "${CMAKE_CURRENT_BINARY_DIR}/call-schemas/org.nostr.Groundhog.gschema.xml" COPYONLY)
+    execute_process(COMMAND "${GH_CALL_GLIB_COMPILE_SCHEMAS}" --strict
+      "${CMAKE_CURRENT_BINARY_DIR}/call-schemas" COMMAND_ERROR_IS_FATAL ANY)
+    add_test(NAME groundhog-call-media COMMAND test-groundhog-call-media)
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    add_test(NAME groundhog-call-media-two-process COMMAND "${Python3_EXECUTABLE}"
+      "${_gh_calls_root}/tests/media/calls/two_process.py" "$<TARGET_FILE:test-groundhog-call-media>")
+    set_tests_properties(groundhog-call-media groundhog-call-media-two-process PROPERTIES TIMEOUT 60
+      ENVIRONMENT "GSETTINGS_BACKEND=memory;GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR}/call-schemas")
+  endif()
+endif()

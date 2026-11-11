@@ -257,6 +257,11 @@ GSETTINGS = {
     "default-disappearing-seconds": Key("i", "0"),
     "enter-sends": Key("b", "true"),
     "blossom-servers": Key("as", "[]"),  # Deprecated: one-time account migration/rollback only
+    # Call media server preferences. TURN credentials are never settings.
+    "call-stun-servers": Key("as", "['stun://stun.cloudflare.com:3478', 'stun://stun.l.google.com:19302']"),
+    "call-turn-url": Key("s", "''"),
+    "call-turn-username": Key("s", "''"),
+    "call-relay-only": Key("b", "false"),
     # Window state: no content, no identifiers.
     "window-width": Key("i", "900"),
     "window-height": Key("i", "600"),

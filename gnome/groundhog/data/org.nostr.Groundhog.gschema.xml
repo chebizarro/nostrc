@@ -182,6 +182,25 @@
     </key>
     <!-- === end Preferences (§7.11) === -->
 
+    <!-- Call media ICE settings (credentials live only in Secret Service). -->
+    <key name="call-stun-servers" type="as">
+      <default>['stun://stun.cloudflare.com:3478', 'stun://stun.l.google.com:19302']</default>
+      <summary>Call STUN servers</summary>
+      <description>Ordered STUN server URLs without credentials. The libnice backend uses the first entry; an empty list disables STUN.</description>
+    </key>
+    <key name="call-turn-url" type="s">
+      <default>''</default><summary>Call TURN server</summary>
+      <description>A turn:// or turns:// URL without credentials. No third-party TURN service is enabled by default.</description>
+    </key>
+    <key name="call-turn-username" type="s">
+      <default>''</default><summary>Call TURN username</summary>
+    </key>
+    <key name="call-relay-only" type="b">
+      <default>false</default><summary>Use only TURN relay candidates for calls</summary>
+      <description>Requires a configured TURN server and a credential in the platform secret store. Only relay candidates are exchanged. This works with Allow Local Network off: host candidates are withheld, related addresses are hidden, and non-public peer addresses are rejected. Local socket gathering is permitted. This does not provide Tor routing.</description>
+    </key>
+    <!-- End call media ICE settings. -->
+
     <key name="window-width" type="i"><default>900</default><summary>Window width</summary></key>
     <key name="window-height" type="i"><default>600</default><summary>Window height</summary></key>
     <key name="window-maximized" type="b"><default>false</default><summary>Window maximized</summary></key>
