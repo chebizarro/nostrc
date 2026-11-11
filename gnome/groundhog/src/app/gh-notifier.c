@@ -1,5 +1,11 @@
 #include "gh-notifier.h"
 #include "gh-display-name.h"
+#ifndef GH_NOTIFIER_CALLS
+#define GH_NOTIFIER_CALLS 0
+#endif
+#if GH_NOTIFIER_CALLS
+#include "gh-call-service.h"
+#endif
 
 #include <glib/gi18n.h>
 #include <nostr-utils.h>
@@ -71,9 +77,19 @@ struct _GhNotifier {
   GhWindow *window;         /* weak */
   GhSidebarPage *sidebar;   /* weak: the window's, which it clears before "destroy" */
   AdwNavigationSplitView *split; /* weak */
+  gboolean (*do_not_disturb)(gpointer data);
+  gpointer do_not_disturb_data;
+  GObject *calls;           /* the GhCallService */
+  GObject *ringing_call;    /* the GhCall whose notification shows */
+  gchar *ringing_id;        /* its notification id */
+  gboolean ringing;         /* the ringer */
+  guint ring_timer;         /* GhClock timeout: the ring bound */
+  gint64 ring_until;        /* monotonic µs: when the ringer stops at the latest */
+  GPtrArray *missed_ids;    /* missed-call notification ids shown */
 };
 
-enum { SIGNAL_OPEN_CONVERSATION, SIGNAL_STALE_ACTIVATION, SIGNAL_PLAY_SOUND, N_SIGNALS };
+enum { SIGNAL_OPEN_CONVERSATION, SIGNAL_STALE_ACTIVATION, SIGNAL_PLAY_SOUND,
+       SIGNAL_ANSWER_CALL, SIGNAL_RINGER, N_SIGNALS };
 static guint signals[N_SIGNALS];
 
 G_DEFINE_FINAL_TYPE(GhNotifier, gh_notifier, G_TYPE_OBJECT)
@@ -409,6 +425,11 @@ clear_shown(GhNotifier *self)
     withdraw_slot(self, slot);
   g_hash_table_remove_all(self->slots);
   g_hash_table_remove_all(self->rooms);
+  if (self->missed_ids) {
+    for (guint i = 0; self->app && i < self->missed_ids->len; i++)
+      g_application_withdraw_notification(self->app, self->missed_ids->pdata[i]);
+    g_ptr_array_set_size(self->missed_ids, 0);
+  }
 }
 
 /* ---- content ---------------------------------------------------------------------- */
@@ -877,6 +898,233 @@ on_window_destroy(GhNotifier *self)
   update_notice(self);
 }
 
+/* ---- calls (nostrc-mqrgk.7) ------------------------------------------------------ */
+
+static const gchar *const CALL_ACTIONS[] = { "call-answer", "call-answer-video", "call-decline" };
+
+static void
+set_ringer(GhNotifier *self, gboolean on)
+{
+  if (!on && self->ring_timer) {
+    gh_clock_source_remove(self->clock, self->ring_timer);
+    self->ring_timer = 0;
+  }
+  if (self->ringing == on)
+    return;
+  self->ringing = on;
+  g_signal_emit(self, signals[SIGNAL_RINGER], 0, on);
+}
+
+#if GH_NOTIFIER_CALLS
+/* The accepted one-to-one private conversation with peer, or NULL. */
+static GhConversation *
+call_conversation(GhNotifier *self, const gchar *peer)
+{
+  GListModel *model = G_LIST_MODEL(self->model);
+  for (guint i = 0; i < g_list_model_get_n_items(model); i++) {
+    g_autoptr(GhConversation) c = g_list_model_get_item(model, i);
+    const gchar *const *peers = gh_conversation_get_peers(c);
+    if (gh_conversation_get_backend(c) == GH_CONVERSATION_BACKEND_NIP17 &&
+        !gh_conversation_get_is_request(c) && peers && peers[0] && !peers[1] &&
+        g_strcmp0(peers[0], peer) == 0)
+      return c; /* the model keeps a reference */
+  }
+  return NULL;
+}
+
+/* The caller's name, only when the level allows it and they are accepted. */
+static const gchar *
+call_name(GhNotifier *self, GhCall *call)
+{
+  if (level_of(self) == LEVEL_HIDDEN)
+    return NULL;
+  GhConversation *conversation = call_conversation(self, gh_call_get_peer(call));
+  return conversation ? gh_conversation_get_title(conversation) : NULL;
+}
+
+static void
+withdraw_ringing(GhNotifier *self)
+{
+  if (self->ringing_id && self->app)
+    g_application_withdraw_notification(self->app, self->ringing_id);
+  g_clear_pointer(&self->ringing_id, g_free);
+  g_clear_object(&self->ringing_call);
+  set_ringer(self, FALSE);
+}
+
+static gboolean ring_bound(gpointer data);
+
+static void
+arm_ring_bound(GhNotifier *self)
+{
+  gint64 left = self->ring_until - gh_clock_get_monotonic_time(self->clock);
+  self->ring_timer = gh_clock_timeout_add(self->clock, (guint64)MAX(left, 0) / 1000 + 1,
+                                          ring_bound, self, NULL);
+}
+
+/* The clock may clamp a long interval: re-check the deadline. */
+static gboolean
+ring_bound(gpointer data)
+{
+  GhNotifier *self = data;
+  self->ring_timer = 0;
+  if (gh_clock_get_monotonic_time(self->clock) < self->ring_until)
+    arm_ring_bound(self);
+  else
+    set_ringer(self, FALSE);
+  return G_SOURCE_REMOVE;
+}
+
+static void
+on_incoming_ring(GObject *service, GhCall *call, GhNotifier *self)
+{
+  (void)service;
+  withdraw_ringing(self);
+  if (!self->app)
+    return;
+  gboolean video = gh_call_get_call_type(call) == GH_CALL_VIDEO;
+  const gchar *id = gh_call_get_id(call);
+  if (notice_allowed(self)) {
+    g_autoptr(GNotification) n = g_notification_new(video ? _("Incoming Video Call")
+                                                           : _("Incoming Call"));
+    const gchar *name = call_name(self, call);
+    if (name) {
+      g_autofree gchar *body = g_strdup_printf(video ? _("%s is calling with video")
+                                                     : _("%s is calling"), name);
+      g_notification_set_body(n, body);
+    }
+    g_notification_set_category(n, GH_NOTIFIER_CALL_CATEGORY);
+    g_notification_set_priority(n, G_NOTIFICATION_PRIORITY_HIGH);
+    g_notification_add_button_with_target_value(n, _("Decline"), "app.call-decline",
+                                                g_variant_new_string(id));
+    g_notification_add_button_with_target_value(n, _("Answer"), "app.call-answer",
+                                                g_variant_new_string(id));
+    if (video)
+      g_notification_add_button_with_target_value(n, _("Answer With Video"),
+                                                  "app.call-answer-video", g_variant_new_string(id));
+    self->ringing_id = g_strconcat(GH_NOTIFIER_ID_CALL_PREFIX, id, NULL);
+    g_application_send_notification(self->app, self->ringing_id, n);
+  }
+  self->ringing_call = g_object_ref(G_OBJECT(call));
+  if (!self->do_not_disturb || !self->do_not_disturb(self->do_not_disturb_data)) {
+    set_ringer(self, TRUE);
+    self->ring_until = gh_clock_get_monotonic_time(self->clock) +
+                       (gint64)GH_NOTIFIER_RING_SECONDS * G_USEC_PER_SEC;
+    arm_ring_bound(self);
+  }
+}
+
+static void
+on_call_state(GObject *service, GhCall *call, GhNotifier *self)
+{
+  (void)service;
+  if (G_OBJECT(call) == self->ringing_call && gh_call_get_state(call) != GH_CALL_RINGING)
+    withdraw_ringing(self);
+}
+
+static void
+on_missed_call(GObject *service, GhCall *call, GhNotifier *self)
+{
+  (void)service;
+  if (G_OBJECT(call) == self->ringing_call)
+    withdraw_ringing(self);
+  if (!self->app || !notice_allowed(self))
+    return;
+  g_autoptr(GNotification) n = g_notification_new(_("Missed Call"));
+  GhConversation *conversation = call_conversation(self, gh_call_get_peer(call));
+  const gchar *name = call_name(self, call);
+  if (name) {
+    g_autofree gchar *body = g_strdup_printf(_("From %s"), name);
+    g_notification_set_body(n, body);
+  } else if (!conversation && level_of(self) != LEVEL_HIDDEN) {
+    g_notification_set_body(n, _("From a message request"));
+  }
+  if (conversation)
+    g_notification_set_default_action_and_target_value(n, "app." GH_NOTIFIER_ACTION,
+      g_variant_new("(tx)", self->generation,
+                    (gint64)number_of(self, gh_conversation_get_room_id(conversation))));
+  g_notification_set_category(n, GH_NOTIFIER_MISSED_CATEGORY);
+  g_notification_set_priority(n, G_NOTIFICATION_PRIORITY_NORMAL);
+  gchar *id = g_strconcat(GH_NOTIFIER_ID_MISSED_PREFIX, gh_call_get_id(call), NULL);
+  g_application_send_notification(self->app, id, n);
+  g_ptr_array_add(self->missed_ids, id);
+}
+
+static void
+on_call_action(GSimpleAction *action, GVariant *target, gpointer data)
+{
+  GhNotifier *self = data;
+  const gchar *name = g_action_get_name(G_ACTION(action));
+  const gchar *id = g_variant_get_string(target, NULL);
+  GhCallService *service = self->calls ? GH_CALL_SERVICE(self->calls) : NULL;
+  GhCall *call = service ? gh_call_service_get_current(service) : NULL;
+  if (!call || g_strcmp0(gh_call_get_id(call), id) != 0 ||
+      gh_call_get_state(call) != GH_CALL_RINGING) {
+    /* A stale button (another call, or one already over). */
+    if (self->app) {
+      g_autofree gchar *stale = g_strconcat(GH_NOTIFIER_ID_CALL_PREFIX, id, NULL);
+      g_application_withdraw_notification(self->app, stale);
+    }
+    return;
+  }
+  if (g_str_equal(name, "call-decline")) {
+    gh_call_service_decline(service);
+    return;
+  }
+  gboolean video = g_str_equal(name, "call-answer-video");
+  g_object_ref(self);
+  g_object_ref(call);
+  if (self->app)
+    g_application_activate(self->app); /* the window comes up first */
+  gboolean handled = FALSE;
+  g_signal_emit(self, signals[SIGNAL_ANSWER_CALL], 0, call, video, &handled);
+  if (!handled && gh_call_get_state(call) == GH_CALL_RINGING &&
+      (video || gh_call_get_call_type(call) == GH_CALL_VOICE))
+    gh_call_service_answer(service, NULL);
+  g_object_unref(call);
+  g_object_unref(self);
+}
+#endif
+
+void
+gh_notifier_set_call_service(GhNotifier *self, GObject *service)
+{
+  g_return_if_fail(GH_IS_NOTIFIER(self));
+#if GH_NOTIFIER_CALLS
+  g_return_if_fail(service == NULL || GH_IS_CALL_SERVICE(service));
+  if (self->calls == service)
+    return;
+  if (self->calls) {
+    g_signal_handlers_disconnect_by_data(self->calls, self);
+    withdraw_ringing(self);
+    for (guint i = 0; self->app && i < G_N_ELEMENTS(CALL_ACTIONS); i++)
+      g_action_map_remove_action(G_ACTION_MAP(self->app), CALL_ACTIONS[i]);
+  }
+  g_set_object(&self->calls, service);
+  if (!service)
+    return;
+  g_signal_connect(service, "incoming-ring", G_CALLBACK(on_incoming_ring), self);
+  g_signal_connect(service, "state-changed", G_CALLBACK(on_call_state), self);
+  g_signal_connect(service, "missed-call", G_CALLBACK(on_missed_call), self);
+  for (guint i = 0; self->app && i < G_N_ELEMENTS(CALL_ACTIONS); i++) {
+    g_autoptr(GSimpleAction) action = g_simple_action_new(CALL_ACTIONS[i], G_VARIANT_TYPE_STRING);
+    g_signal_connect(action, "activate", G_CALLBACK(on_call_action), self);
+    g_action_map_add_action(G_ACTION_MAP(self->app), G_ACTION(action));
+  }
+  /* GSettings reports a change only for keys read since connecting. */
+  (void)level_of(self);
+#else
+  (void)service;
+#endif
+}
+
+gboolean
+gh_notifier_get_ringing(GhNotifier *self)
+{
+  g_return_val_if_fail(GH_IS_NOTIFIER(self), FALSE);
+  return self->ringing;
+}
+
 /* ---- GObject ------------------------------------------------------------------------- */
 
 static void
@@ -884,6 +1132,8 @@ gh_notifier_dispose(GObject *object)
 {
   GhNotifier *self = GH_NOTIFIER(object);
   detach_window(self);
+  gh_notifier_set_call_service(self, NULL);
+  set_ringer(self, FALSE);
   if (self->model)
     g_signal_handlers_disconnect_by_data(self->model, self);
   if (self->settings)
@@ -911,6 +1161,7 @@ gh_notifier_finalize(GObject *object)
   g_hash_table_unref(self->number_rooms);
   g_hash_table_unref(self->stale);
   g_queue_clear(&self->stale_order);
+  g_ptr_array_unref(self->missed_ids);
   g_clear_object(&self->action);
   g_clear_object(&self->settings);
   g_clear_object(&self->model);
@@ -934,6 +1185,11 @@ gh_notifier_class_init(GhNotifierClass *klass)
   signals[SIGNAL_PLAY_SOUND] = g_signal_new_class_handler("play-sound",
     G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, G_CALLBACK(real_play_sound),
     NULL, NULL, NULL, G_TYPE_NONE, 0);
+  signals[SIGNAL_ANSWER_CALL] = g_signal_new("answer-call", G_TYPE_FROM_CLASS(klass),
+    G_SIGNAL_RUN_LAST, 0, g_signal_accumulator_true_handled, NULL, NULL,
+    G_TYPE_BOOLEAN, 2, G_TYPE_OBJECT, G_TYPE_BOOLEAN);
+  signals[SIGNAL_RINGER] = g_signal_new("ringer", G_TYPE_FROM_CLASS(klass),
+    G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL, G_TYPE_NONE, 1, G_TYPE_BOOLEAN);
 }
 
 static void
@@ -947,6 +1203,7 @@ gh_notifier_init(GhNotifier *self)
   g_queue_init(&self->stale_order);
   self->next_number = 1;
   self->last_sound = NEVER;
+  self->missed_ids = g_ptr_array_new_with_free_func(g_free);
 }
 
 /* ---- public ------------------------------------------------------------------------------ */
@@ -971,6 +1228,8 @@ gh_notifier_new(GApplication *app, const GhNotifierConfig *config)
   self->session_start = now_unix(self);
   self->last_seen = config->last_seen;
   self->last_seen_data = config->last_seen_data;
+  self->do_not_disturb = config->do_not_disturb;
+  self->do_not_disturb_data = config->do_not_disturb_data;
   sync_since(self);
 
   self->action = g_simple_action_new(GH_NOTIFIER_ACTION, G_VARIANT_TYPE("(tx)"));

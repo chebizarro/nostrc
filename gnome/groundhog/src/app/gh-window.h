@@ -79,7 +79,8 @@ void gh_window_close_panels(GhWindow *self);
 
 /* Adds app.quit and binds every accelerator of the shortcuts window to its
  * action on app (Ctrl+F, Alt+Up/Down and Ctrl+Page Up/Down, Ctrl+N, Ctrl+?,
- * Ctrl+, for app.preferences, which gh-app-services.c adds, Ctrl+W, Ctrl+Q).
+ * Ctrl+, for app.preferences, which gh-app-services.c adds, Ctrl+W, Ctrl+Q,
+ * and Shift+Ctrl+M/O/H for the call controls gh-call-ui.c installs).
  * Call once, from the application's startup. */
 void gh_window_setup_application(GtkApplication *app);
 

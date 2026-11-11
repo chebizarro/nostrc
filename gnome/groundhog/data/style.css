@@ -438,3 +438,14 @@ flowbox.groundhog-recipient-chips > flowboxchild {
 .groundhog-agent-event label {
   font-style: italic;
 }
+
+/* The in-call page (gh-call-view.blp, nostrc-mqrgk.8): large round controls
+ * that fit four in a 360px window, and the local preview's rounded frame. */
+.groundhog-call-controls button.circular {
+  min-width: 56px;
+  min-height: 56px;
+}
+
+.groundhog-call-preview {
+  border-radius: 12px;
+}

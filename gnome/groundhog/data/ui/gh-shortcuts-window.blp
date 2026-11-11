@@ -75,5 +75,25 @@ ShortcutsWindow help_overlay {
         accelerator: "<Shift>F10 Menu";
       }
     }
+
+    // During a call (gh-call-ui.c, nostrc-mqrgk.8).
+    ShortcutsGroup {
+      title: C_("shortcut window", "Calls");
+
+      ShortcutsShortcut {
+        title: C_("shortcut window", "Mute or Unmute Microphone");
+        accelerator: "<Control><Shift>m";
+      }
+
+      ShortcutsShortcut {
+        title: C_("shortcut window", "Turn Camera On or Off");
+        accelerator: "<Control><Shift>o";
+      }
+
+      ShortcutsShortcut {
+        title: C_("shortcut window", "End Call");
+        accelerator: "<Control><Shift>h";
+      }
+    }
   }
 }

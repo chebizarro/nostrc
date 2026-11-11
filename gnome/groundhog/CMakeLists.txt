@@ -68,7 +68,7 @@ set(GROUNDHOG_BLUEPRINTS
   gh-mls-member-row gh-mls-group-info-dialog gh-mls-invite-row gh-mls-invites-page
   gh-blocked-page gh-blocked-row gh-conversation-menu
   gh-attachment-card gh-attachment-sheet gh-create-poll-dialog
-  gh-voice-bubble gh-lists-page gh-list-editor-page gh-hidden-page gh-drafts-page gh-report-dialog)
+  gh-voice-bubble gh-call-view gh-lists-page gh-list-editor-page gh-hidden-page gh-drafts-page gh-report-dialog)
 set(GROUNDHOG_BLUEPRINT_MIN_VERSION 0.12.0)
 include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/Blueprint.cmake)
 set(GROUNDHOG_BLUEPRINT_COMPILER "")
@@ -186,6 +186,13 @@ add_custom_command(
           ${GROUNDHOG_DATA}/icons/scalable/actions/network-server-symbolic.svg
           ${GROUNDHOG_DATA}/icons/scalable/actions/system-search-symbolic.svg
           ${GROUNDHOG_DATA}/icons/scalable/actions/view-conceal-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/call-start-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/call-stop-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/camera-video-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/camera-disabled-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/microphone-disabled-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/audio-input-microphone-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/audio-speakers-symbolic.svg
           ${GROUNDHOG_UI_FILES}
   VERBATIM)
 
@@ -4097,6 +4104,52 @@ if(TARGET groundhog-account-relays AND TARGET groundhog-conversations AND
   endif()
 endif()
 # --- end NIP-AC signalling/state machine ---
+
+# --- Calls UI (nostrc-mqrgk.7, nostrc-mqrgk.8) ---
+# The call buttons, the in-call page and window behaviour (gh-call-ui.c,
+# gh-call-view.c), the production media runtime that finally installs the
+# GhCallService media factory (gh-call-runtime.c: capability probe, headset
+# choice, GhCallMedia controls, ringer) and the notifier's call alerts.
+if(TARGET groundhog-calls AND TARGET groundhog-conversation-ui)
+  add_library(groundhog-call-ui STATIC src/app/gh-call-ui.c src/ui/gh-call-view.c)
+  target_link_libraries(groundhog-call-ui PUBLIC groundhog-calls groundhog-conversation-ui)
+  target_compile_options(groundhog-call-ui PRIVATE -Wall -Wextra -Werror)
+  add_library(groundhog-call-runtime STATIC src/media/gh-call-runtime.c)
+  target_include_directories(groundhog-call-runtime PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/media)
+  target_link_libraries(groundhog-call-runtime PUBLIC groundhog-call-ui groundhog-call-capabilities)
+  if(GROUNDHOG_CALLS_AVAILABLE)
+    target_link_libraries(groundhog-call-runtime PUBLIC groundhog-call-media)
+  endif()
+  target_compile_options(groundhog-call-runtime PRIVATE -Wall -Wextra -Werror)
+  target_link_libraries(groundhog PRIVATE groundhog-call-runtime)
+  target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_CALL_UI=1)
+  if(TARGET groundhog-notifier)
+    target_link_libraries(groundhog-notifier PUBLIC groundhog-calls)
+    target_compile_definitions(groundhog-notifier PRIVATE GH_NOTIFIER_CALLS=1)
+    if(TARGET test-groundhog-notifier)
+      # The call notification, ringer and missed calls on the fake desktop.
+      target_sources(test-groundhog-notifier PRIVATE tests/app/fake-call-media.c)
+      target_compile_definitions(test-groundhog-notifier PRIVATE GH_NOTIFIER_CALLS=1)
+    endif()
+  endif()
+  if(BUILD_TESTING AND TARGET groundhog-test-schemas AND TARGET groundhog-notifier)
+    # Through the real GhCallService with the fake media backend: buttons and
+    # their gating, outgoing/incoming/declined/busy/hang-up/elsewhere/request
+    # flows, labels, 360px, window close, and the call notification. Needs a
+    # display, so it self-skips (77) like the other GUI tests.
+    add_executable(test-groundhog-call-ui tests/ui/test_call_ui.c tests/app/fake-call-media.c
+                   tests/app/fake-gtk-notifications.c)
+    target_include_directories(test-groundhog-call-ui PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/app
+                               ${CMAKE_SOURCE_DIR}/tests/common)
+    target_link_libraries(test-groundhog-call-ui PRIVATE groundhog-call-ui groundhog-notifier nostrc-test-bus)
+    target_compile_options(test-groundhog-call-ui PRIVATE -Wall -Wextra -Werror)
+    add_dependencies(test-groundhog-call-ui groundhog-test-schemas)
+    add_test(NAME groundhog-call-ui COMMAND test-groundhog-call-ui)
+    set_tests_properties(groundhog-call-ui PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120
+      ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
+  endif()
+endif()
+# --- end Calls UI ---
 
 # --- test isolation (nostrc-ttvxv) ---
 # A test-key account once got a store under the developer's real

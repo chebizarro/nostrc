@@ -1,0 +1,257 @@
+using Gtk 4.0;
+using Adw 1;
+
+// The in-call page (nostrc-mqrgk.8): a page of the window's root stack,
+// driven by gh-call-ui.c through gh-call-view.c. Peer, call state, the remote
+// video and the local preview, and the controls of the current state: Decline,
+// Answer and Answer With Video while it rings; Mute, Camera, Switch to Video,
+// Devices and End Call during the call. Every control is an icon button with a
+// tooltip and an accessible label; Mute and Camera change both with their
+// state. Back returns to the conversations and leaves the call running (the
+// windows's Return to Call banner comes back here). Below 400sp the avatar,
+// the preview and the spacing shrink so the page works in a 360x294 window.
+template $GhCallView: Adw.BreakpointBin {
+  width-request: 300;
+  height-request: 250;
+
+  child: Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {
+      [start]
+      Button back_button {
+        icon-name: "go-previous-symbolic";
+        tooltip-text: _("Back to Conversations");
+        action-name: "win.call-leave-view";
+
+        accessibility {
+          label: _("Back to Conversations");
+        }
+      }
+
+      title-widget: Adw.WindowTitle window_title {
+        title: _("Call");
+      };
+    }
+
+    content: Overlay {
+      child: Picture remote_video {
+        visible: false;
+        content-fit: cover;
+        hexpand: true;
+        vexpand: true;
+
+        accessibility {
+          label: _("Video From the Other Person");
+        }
+      };
+
+      [overlay]
+      Box info_box {
+        orientation: vertical;
+        halign: center;
+        valign: center;
+        spacing: 12;
+        margin-start: 12;
+        margin-end: 12;
+
+        Adw.Avatar avatar {
+          size: 128;
+          show-initials: true;
+          halign: center;
+        }
+
+        // Plain text: it names a person.
+        Label name_label {
+          wrap: true;
+          wrap-mode: word_char;
+          justify: center;
+          lines: 2;
+          ellipsize: end;
+
+          styles [
+            "title-1",
+          ]
+        }
+
+        Label status_label {
+          wrap: true;
+          justify: center;
+
+          styles [
+            "dim-label",
+          ]
+        }
+      }
+
+      [overlay]
+      Picture local_preview {
+        visible: false;
+        halign: end;
+        valign: start;
+        margin-top: 12;
+        margin-end: 12;
+        width-request: 160;
+        height-request: 120;
+        content-fit: cover;
+
+        styles [
+          "groundhog-call-preview",
+        ]
+
+        accessibility {
+          label: _("Your Camera");
+        }
+      }
+    };
+
+    [bottom]
+    Box controls {
+      halign: center;
+      spacing: 18;
+      margin-top: 12;
+      margin-bottom: 18;
+      margin-start: 12;
+      margin-end: 12;
+
+      styles [
+        "groundhog-call-controls",
+      ]
+
+      ToggleButton mute_button {
+        icon-name: "audio-input-microphone-symbolic";
+        tooltip-text: _("Mute Microphone");
+        action-name: "win.call-toggle-mute";
+
+        styles [
+          "circular",
+        ]
+
+        accessibility {
+          label: _("Mute Microphone");
+        }
+      }
+
+      ToggleButton camera_button {
+        icon-name: "camera-video-symbolic";
+        tooltip-text: _("Turn Off Camera");
+        action-name: "win.call-toggle-camera";
+
+        styles [
+          "circular",
+        ]
+
+        accessibility {
+          label: _("Turn Off Camera");
+        }
+      }
+
+      Button switch_video_button {
+        icon-name: "camera-video-symbolic";
+        tooltip-text: _("Switch to Video");
+        action-name: "win.call-switch-video";
+
+        styles [
+          "circular",
+        ]
+
+        accessibility {
+          label: _("Switch to Video");
+        }
+      }
+
+      MenuButton devices_button {
+        icon-name: "audio-speakers-symbolic";
+        tooltip-text: _("Audio and Video Devices");
+
+        popover: Popover devices_popover {
+          child: Box devices_box {
+            orientation: vertical;
+            spacing: 6;
+            margin-top: 6;
+            margin-bottom: 6;
+            margin-start: 6;
+            margin-end: 6;
+          };
+        };
+
+        styles [
+          "circular",
+        ]
+
+        accessibility {
+          label: _("Audio and Video Devices");
+        }
+      }
+
+      Button decline_button {
+        icon-name: "call-stop-symbolic";
+        tooltip-text: _("Decline");
+        action-name: "win.call-decline";
+
+        styles [
+          "circular",
+          "destructive-action",
+        ]
+
+        accessibility {
+          label: _("Decline");
+        }
+      }
+
+      Button answer_video_button {
+        icon-name: "camera-video-symbolic";
+        tooltip-text: _("Answer With Video");
+        action-name: "win.call-answer-video";
+
+        styles [
+          "circular",
+        ]
+
+        accessibility {
+          label: _("Answer With Video");
+        }
+      }
+
+      Button answer_button {
+        icon-name: "call-start-symbolic";
+        tooltip-text: _("Answer");
+        action-name: "win.call-answer";
+
+        styles [
+          "circular",
+          "suggested-action",
+        ]
+
+        accessibility {
+          label: _("Answer");
+        }
+      }
+
+      Button hang_up_button {
+        icon-name: "call-stop-symbolic";
+        tooltip-text: _("End Call");
+        action-name: "win.call-hang-up";
+
+        styles [
+          "circular",
+          "destructive-action",
+        ]
+
+        accessibility {
+          label: _("End Call");
+        }
+      }
+    }
+  };
+
+  Adw.Breakpoint {
+    condition ("max-width: 400sp")
+
+    setters {
+      avatar.size: 96;
+      local_preview.width-request: 90;
+      local_preview.height-request: 120;
+      controls.spacing: 12;
+    }
+  }
+}

@@ -54,7 +54,12 @@ static void iface_init(GhCallMediaBackendInterface *iface)
   iface->apply_remote_finish = remote_finish; iface->add_remote_ice = ice; iface->teardown = teardown;
 }
 static void gh_fake_call_media_init(GhFakeCallMedia *self) { (void)self; }
-static void gh_fake_call_media_class_init(GhFakeCallMediaClass *klass) { (void)klass; }
+/* As GhCallMedia: an unplugged device (GObject with "device-class"). */
+static void gh_fake_call_media_class_init(GhFakeCallMediaClass *klass)
+{
+  g_signal_new("device-removed", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
+               G_TYPE_NONE, 1, G_TYPE_OBJECT);
+}
 GhCallMediaBackend *gh_fake_call_media_factory(gpointer data, GError **error)
 {
   (void)error;

@@ -149,12 +149,23 @@
 #include "gh-call-service.h"
 #include "gh-inbox-lookup.h"
 #endif
+#ifndef GROUNDHOG_HAVE_CALL_UI
+#define GROUNDHOG_HAVE_CALL_UI 0
+#endif
+#define GH_APP_CALL_UI (GH_APP_CALLS && GROUNDHOG_HAVE_CALL_UI)
+#if GH_APP_CALL_UI
+#include "gh-call-runtime.h"
+#include "gh-call-ui.h"
+#endif
 
 #define GROUNDHOG_APP_ID "org.nostr.Groundhog"
 
 struct _GhAppServices {
 #if GH_APP_CALLS
   GhCallService *calls;
+#endif
+#if GH_APP_CALL_UI
+  GhCallRuntime *call_runtime; /* the media factory, probe and ringer */
 #endif
   GhNip04Inbox *nip04;  /* W33: older NIP-04 DMs, read-only */
   GtkApplication *app; /* borrowed: owns the process's services */
@@ -1502,6 +1513,24 @@ sync_notifier_locked(GhAppServices *self)
                                                  GH_ACCOUNT_STORE_LOCKED);
 }
 
+#if GH_APP_CALL_UI
+/* GNOME's Do Not Disturb: org.gnome.desktop.notifications show-banners off.
+ * Unknown elsewhere (another desktop, a sandbox without host settings): the
+ * ringer then rings. */
+static gboolean
+notifier_do_not_disturb(gpointer data)
+{
+  (void)data;
+  GSettingsSchemaSource *source = g_settings_schema_source_get_default();
+  g_autoptr(GSettingsSchema) schema = source
+    ? g_settings_schema_source_lookup(source, "org.gnome.desktop.notifications", TRUE) : NULL;
+  if (!schema || !g_settings_schema_has_key(schema, "show-banners"))
+    return FALSE;
+  g_autoptr(GSettings) desktop = g_settings_new_full(schema, NULL, NULL);
+  return !g_settings_get_boolean(desktop, "show-banners");
+}
+#endif
+
 static gboolean
 notifier_init(GhAppServices *self, GError **error)
 {
@@ -1514,7 +1543,18 @@ notifier_init(GhAppServices *self, GError **error)
     .last_seen = notifier_last_seen,
     .last_seen_data = self->account_store,
   };
+#if GH_APP_CALL_UI
+  config.do_not_disturb = notifier_do_not_disturb;
+  config.do_not_disturb_data = self;
+#endif
   self->notifier = gh_notifier_new(G_APPLICATION(self->app), &config);
+#if GH_APP_CALL_UI
+  if (self->calls) {
+    gh_notifier_set_call_service(self->notifier, G_OBJECT(self->calls));
+    g_signal_connect_swapped(self->notifier, "ringer", G_CALLBACK(gh_call_runtime_set_ringing),
+                             self->call_runtime);
+  }
+#endif
   g_signal_connect_swapped(self->account_store, "changed", G_CALLBACK(sync_notifier_locked),
                            self);
   sync_notifier_locked(self);
@@ -2621,13 +2661,43 @@ static gboolean calls_init(GhAppServices *self, GError **error)
   g_autoptr(GhNetSession) network = gh_net_session_dup_default();
   if (!network) network = gh_net_session_new(self->settings);
   self->calls = gh_call_service_new(signalling, self->conversations, self->settings, network);
+#if GH_APP_CALL_UI
+  /* Without this factory calls are always unavailable (nostrc-mqrgk.8). */
+  self->call_runtime = gh_call_runtime_new(self->settings);
+  gh_call_runtime_install(self->call_runtime, self->calls);
+#endif
   return TRUE;
 }
 static void calls_teardown(GhAppServices *self)
 {
   if (self->calls) gh_call_service_stop(self->calls);
   g_clear_object(&self->calls);
+#if GH_APP_CALL_UI
+  if (self->call_runtime) g_object_run_dispose(G_OBJECT(self->call_runtime));
+  g_clear_object(&self->call_runtime);
+#endif
 }
+
+#if GH_APP_CALL_UI
+static GhCallUiMedia call_ui_probe(gpointer data, gchar **reason)
+{ return gh_call_runtime_probe(((GhAppServices *)data)->call_runtime, reason); }
+static GListModel *call_ui_outputs(gpointer data)
+{ return gh_call_runtime_get_outputs(((GhAppServices *)data)->call_runtime); }
+static gboolean call_ui_choose_headset(gpointer data, GObject *output, GError **error)
+{ return gh_call_runtime_choose_headset(((GhAppServices *)data)->call_runtime, output, error); }
+static void call_ui_next_camera(gpointer data, gboolean enabled)
+{ gh_call_runtime_set_next_camera(((GhAppServices *)data)->call_runtime, enabled); }
+/* run-in-background: closing the window then keeps the call (gh-background.h). */
+static gboolean call_ui_keeps_running(gpointer data)
+{
+#if GROUNDHOG_HAVE_BACKGROUND
+  GhBackground *background = gh_background_get_for_application(G_APPLICATION(((GhAppServices *)data)->app));
+  return background && gh_background_get_enabled(background);
+#else
+  (void)data; return FALSE;
+#endif
+}
+#endif
 #endif
 
 typedef struct {
@@ -3002,6 +3072,26 @@ gh_app_services_attach_window(GhAppServices *self, GhWindow *window)
 #if GROUNDHOG_HAVE_CONVERSATION_INFO
   gh_conversation_info_set_group_handler(window, gh_group_ui_show_info, NULL);
 #endif
+#endif
+#if GH_APP_CALL_UI
+  /* Calls (nostrc-mqrgk.8): after the conversation list set the view. */
+  if (self->calls) {
+    GhCallUiConfig calls = {
+      .service = self->calls,
+      .conversations = self->conversations,
+      .ops = gh_call_runtime_get_media_ops(),
+      .probe = call_ui_probe,
+      .headset_outputs = call_ui_outputs,
+      .choose_headset = call_ui_choose_headset,
+      .set_next_camera = call_ui_next_camera,
+      .keeps_running = call_ui_keeps_running,
+#if GROUNDHOG_HAVE_NOTIFIER
+      .notifier = G_OBJECT(self->notifier),
+#endif
+      .data = self,
+    };
+    gh_call_ui_attach(window, &calls);
+  }
 #endif
 }
 

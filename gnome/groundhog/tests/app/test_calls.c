@@ -224,6 +224,52 @@ static void privacy(Fixture *f, gconstpointer data)
   g_assert_cmpint(gh_call_get_end_reason(c), ==, GH_CALL_END_PRIVACY);
   g_assert_null(gh_call_service_place(f->service, peer, GH_CALL_VOICE, NULL));
 }
+static void avail_count(GhCallService *s, gpointer data) { (void)s; (*(guint *)data)++; }
+static void media_reconnect(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  GhCall *c = gh_call_service_place(f->service, peer, GH_CALL_VOICE, NULL); g_assert_nonnull(c); drain();
+  g_assert_true(gh_call_get_media(c) == GH_CALL_MEDIA_BACKEND(f->media));
+  g_assert_cmpint(gh_call_get_connected_time(c), ==, 0);
+  g_autofree gchar *answer = event(1, me, gh_call_get_id(c), NOSTR_KIND_CALL_ANSWER, SDP, now);
+  gh_call_service_receive(f->service, answer, now); drain();
+  g_signal_emit_by_name(f->media, "connection-state", GH_CALL_MEDIA_CONNECTED);
+  gint64 connected = gh_call_get_connected_time(c); g_assert_cmpint(connected, >, 0);
+  g_signal_emit_by_name(f->media, "connection-state", GH_CALL_MEDIA_DISCONNECTED);
+  g_assert_cmpint(gh_call_get_state(c), ==, GH_CALL_ACTIVE); g_assert_true(gh_call_get_reconnecting(c));
+  g_signal_emit_by_name(f->media, "connection-state", GH_CALL_MEDIA_CONNECTED);
+  g_assert_false(gh_call_get_reconnecting(c)); g_assert_cmpint(gh_call_get_connected_time(c), ==, connected);
+  g_signal_emit_by_name(f->media, "connection-state", GH_CALL_MEDIA_DISCONNECTED);
+  gint64 t = g_get_real_time()/G_USEC_PER_SEC;
+  gh_call_service_expire(f->service, t + GH_CALL_RECONNECT_SECONDS - 2);
+  g_assert_cmpint(gh_call_get_state(c), ==, GH_CALL_ACTIVE);
+  guint before = f->sent->len;
+  gh_call_service_expire(f->service, t + GH_CALL_RECONNECT_SECONDS + 1);
+  g_assert_cmpint(gh_call_get_end_reason(c), ==, GH_CALL_END_MEDIA_FAILED);
+  g_assert_false(gh_call_get_reconnecting(c)); g_assert_true(f->media->torn_down);
+  g_assert_cmpuint(f->sent->len, ==, before + 1);
+  g_assert_cmpint(g_array_index(f->sent, int, before), ==, NOSTR_KIND_CALL_HANGUP);
+}
+static void availability(Fixture *f, gconstpointer data)
+{
+  (void)data; guint changes = 0; g_autoptr(GError) error = NULL;
+  g_signal_connect(f->service, "availability-changed", G_CALLBACK(avail_count), &changes);
+  g_assert_true(gh_call_service_check_available(f->service, NULL));
+  gh_call_service_set_media_factory(f->service, NULL, NULL, NULL); g_assert_cmpuint(changes, ==, 1);
+  g_assert_false(gh_call_service_check_available(f->service, &error));
+  g_assert_error(error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED); g_clear_error(&error);
+  gh_call_service_set_media_factory(f->service, gh_fake_call_media_factory, &f->media, NULL);
+  gh_net_session_set_mode(f->network, GH_NET_MODE_TOR, "127.0.0.1:9050"); g_assert_cmpuint(changes, >=, 3);
+  g_assert_false(gh_call_service_check_available(f->service, &error));
+  g_assert_error(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED); g_clear_error(&error);
+  g_assert_null(gh_call_service_place(f->service, peer, GH_CALL_VOICE, &error));
+  g_assert_error(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED); g_clear_error(&error);
+  gh_net_session_set_mode(f->network, GH_NET_MODE_SYSTEM, NULL);
+  g_assert_true(gh_call_service_check_available(f->service, NULL));
+  guint before = changes; gh_call_service_bind(f->service, NULL); g_assert_cmpuint(changes, ==, before + 1);
+  g_assert_false(gh_call_service_check_available(f->service, &error));
+  g_assert_error(error, G_IO_ERROR, G_IO_ERROR_NOT_INITIALIZED);
+}
 static void codec(void)
 {
   NostrEvent *e = gh_call_event_parse(NIPAC_INNER_JSON, me, 1700000000, NULL); g_assert_nonnull(e);
@@ -288,6 +334,7 @@ int main(int argc, char **argv)
   TEST("/calls/outgoing-upgrade", outgoing); TEST("/calls/busy-timeout", busy_timeout);
   TEST("/calls/stale-unknown-self-answer", stale_unknown_elsewhere);
   TEST("/calls/account-switch-pending-sdp", switch_cancel); TEST("/calls/tor-policy", privacy);
+  TEST("/calls/media-accessor-reconnect", media_reconnect); TEST("/calls/availability", availability);
   gh_test_register_call_transport();
   int rc = g_test_run(); g_free(me); g_free(peer); g_object_unref(vectors); return rc;
 }

@@ -32,6 +32,10 @@ _gh_describe(groundhog-calls test-groundhog-calls groundhog.unclassified REQUIRE
   INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/nipac-nospeak.json"
     "${CMAKE_SOURCE_DIR}/nips/nip59/tests/nipac_wire_vector.h")
 
+# Calls UI (nostrc-mqrgk.7/.8): the window's call UI over the real service.
+_gh_describe(groundhog-call-ui test-groundhog-call-ui groundhog.unclassified REQUIRES display
+  INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/data/ui/gh-call-view.blp")
+
 _gh_describe(groundhog-report test-groundhog-report groundhog.unclassified
   INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/src/store/gh-store-schema.c")
 _gh_describe(groundhog-emoji test-groundhog-emoji groundhog.unclassified REQUIRES display private_bus

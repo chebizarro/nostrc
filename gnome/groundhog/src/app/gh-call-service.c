@@ -12,9 +12,9 @@ struct _GhCall {
   GhCallMediaBackend *media;
   GCancellable *cancel;
   GQueue remote_ice, local_ice;
-  gboolean remote_ready, negotiating, waiting_answer;
+  gboolean remote_ready, negotiating, waiting_answer, reconnecting;
   int local_kind;
-  gint64 deadline;
+  gint64 deadline, connected_time;
 };
 G_DEFINE_TYPE(GhCall, gh_call, G_TYPE_OBJECT)
 static void call_finalize(GObject *object)
@@ -38,6 +38,9 @@ GhCallType gh_call_get_call_type(GhCall *c) { return c->type; }
 GhCallDirection gh_call_get_direction(GhCall *c) { return c->direction; }
 GhCallState gh_call_get_state(GhCall *c) { return c->state; }
 GhCallEndReason gh_call_get_end_reason(GhCall *c) { return c->reason; }
+GhCallMediaBackend *gh_call_get_media(GhCall *c) { return c->media; }
+gboolean gh_call_get_reconnecting(GhCall *c) { return c->reconnecting; }
+gint64 gh_call_get_connected_time(GhCall *c) { return c->connected_time; }
 
 struct _GhCallService {
   GObject parent_instance;
@@ -65,7 +68,7 @@ static void changed(GhCallService *self, GhCall *c)
 static void end_call(GhCallService *self, GhCall *c, GhCallEndReason reason)
 {
   if (c->state == GH_CALL_ENDED) return;
-  c->state = GH_CALL_ENDED; c->reason = reason;
+  c->state = GH_CALL_ENDED; c->reason = reason; c->reconnecting = FALSE;
   g_cancellable_cancel(c->cancel);
   if (c->media) {
     g_signal_handlers_disconnect_by_data(c->media, self);
@@ -85,10 +88,13 @@ static gboolean send_event(GhCallService *self, GhCall *c, int kind, const gchar
 }
 static gboolean available(GhCallService *self, GError **error)
 {
-  if (self->stopped || !self->pubkey || !self->network ||
-      gh_net_session_get_mode(self->network) == GH_NET_MODE_TOR) {
+  if (self->stopped || !self->pubkey || !self->network) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_INITIALIZED,
+                         "Calls are unavailable without an account"); return FALSE;
+  }
+  if (gh_net_session_get_mode(self->network) == GH_NET_MODE_TOR) {
     g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED,
-                         "Calls are unavailable without an account or in Tor mode"); return FALSE;
+                         "Calls are unavailable in Tor mode"); return FALSE;
   }
   return TRUE;
 }
@@ -217,8 +223,16 @@ static void connection_state(GhCallMediaBackend *media, int state, gpointer data
 {
   GhCallService *self = data; GhCall *c = self->current;
   if (!c || c->media != media || c->state == GH_CALL_ENDED) return;
-  if (state == GH_CALL_MEDIA_CONNECTED) { c->state = GH_CALL_ACTIVE; changed(self, c); }
-  else if (state == GH_CALL_MEDIA_FAILED || state == GH_CALL_MEDIA_DISCONNECTED) {
+  if (state == GH_CALL_MEDIA_CONNECTED) {
+    if (!c->connected_time) c->connected_time = g_get_monotonic_time();
+    c->state = GH_CALL_ACTIVE; c->reconnecting = FALSE; changed(self, c);
+  } else if (state == GH_CALL_MEDIA_DISCONNECTED && c->state == GH_CALL_ACTIVE) {
+    /* ICE "disconnected" is often transient; FAILED or the bound ends it. */
+    if (!c->reconnecting) {
+      c->reconnecting = TRUE; c->deadline = g_get_real_time()/G_USEC_PER_SEC + GH_CALL_RECONNECT_SECONDS;
+      changed(self, c);
+    }
+  } else if (state == GH_CALL_MEDIA_FAILED || state == GH_CALL_MEDIA_DISCONNECTED) {
     end_call(self, c, GH_CALL_END_MEDIA_FAILED); send_event(self, c, NOSTR_KIND_CALL_HANGUP, "failed");
   }
 }
@@ -375,6 +389,9 @@ void gh_call_service_expire(GhCallService *self, gint64 now)
     end_call(self, c, GH_CALL_END_TIMEOUT);
     send_event(self, c, NOSTR_KIND_CALL_HANGUP, "timeout");
     if (incoming) g_signal_emit_by_name(self, "missed-call", c);
+  } else if (c && c->state == GH_CALL_ACTIVE && c->reconnecting && now >= c->deadline) {
+    end_call(self, c, GH_CALL_END_MEDIA_FAILED);
+    send_event(self, c, NOSTR_KIND_CALL_HANGUP, "failed");
   }
 }
 static gboolean tick(gpointer data)
@@ -387,6 +404,7 @@ void gh_call_service_bind(GhCallService *self, const gchar *pubkey)
   g_queue_clear(&self->call_order); g_hash_table_remove_all(self->calls);
   g_queue_clear_full(&self->seen_order, g_free); g_hash_table_remove_all(self->seen);
   g_free(self->pubkey); self->pubkey = g_strdup(pubkey);
+  g_signal_emit_by_name(self, "availability-changed");
 }
 static void on_event(GhCallSignalling *s, const gchar *json, gpointer data)
 { (void)s; gh_call_service_receive(data, json, g_get_real_time()/G_USEC_PER_SEC); }
@@ -401,6 +419,7 @@ static void on_failure(GhCallSignalling *s, const gchar *id, gpointer data)
 static void privacy_changed(GObject *source, gpointer data)
 {
   (void)source; GhCallService *self = data; GhCall *c = self->current;
+  g_signal_emit_by_name(self, "availability-changed");
   if (!c || c->state == GH_CALL_ENDED) return;
   if (!available(self, NULL) || hidden(self, c->peer)) end_call(self, c, GH_CALL_END_PRIVACY);
   else if (c->media && !GH_CALL_MEDIA_BACKEND_GET_IFACE(c->media)->configure(c->media,
@@ -443,6 +462,7 @@ static void gh_call_service_class_init(GhCallServiceClass *klass)
   const gchar *signals[] = { "incoming-ring", "missed-call", "state-changed" };
   for (guint i = 0; i < G_N_ELEMENTS(signals); i++)
     g_signal_new(signals[i], G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL, G_TYPE_NONE, 1, GH_TYPE_CALL);
+  g_signal_new("availability-changed", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL, G_TYPE_NONE, 0);
   g_signal_new("send", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
                 G_TYPE_NONE, 5, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_INT, G_TYPE_INT, G_TYPE_STRING);
 }
@@ -468,5 +488,14 @@ void gh_call_service_set_media_factory(GhCallService *self, GhCallMediaFactory f
   g_return_if_fail(!self->current || self->current->state == GH_CALL_ENDED);
   if (self->factory_destroy) self->factory_destroy(self->factory_data);
   self->factory = factory; self->factory_data = data; self->factory_destroy = destroy;
+  g_signal_emit_by_name(self, "availability-changed");
 }
 GhCall *gh_call_service_get_current(GhCallService *self) { return self->current; }
+gboolean gh_call_service_check_available(GhCallService *self, GError **error)
+{
+  if (!available(self, error)) return FALSE;
+  if (!self->factory) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED, "No call media backend is installed"); return FALSE;
+  }
+  return TRUE;
+}

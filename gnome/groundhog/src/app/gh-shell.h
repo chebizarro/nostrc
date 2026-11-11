@@ -37,6 +37,9 @@ void gh_sidebar_page_set_title(GhSidebarPage *self, const gchar *title);
 GtkStack *gh_sidebar_page_get_stack(GhSidebarPage *self);
 GtkListView *gh_sidebar_page_get_list(GhSidebarPage *self);
 AdwBanner *gh_sidebar_page_get_banner(GhSidebarPage *self);
+/* The ongoing-call banner ("Return to Call", win.call-show), driven by
+ * gh-call-ui.c; hidden until then. */
+AdwBanner *gh_sidebar_page_get_call_banner(GhSidebarPage *self);
 
 /* For builds without account support, where the onboarding flow cannot run:
  * adds the "onboarding" page (onboarding_unavailable in
@@ -145,6 +148,11 @@ void gh_content_page_set_title(GhContentPage *self, const gchar *title,
  * private conversation. */
 GtkWidget *gh_content_page_get_menu_button(GhContentPage *self);
 GhComposer *gh_content_page_get_composer(GhContentPage *self);
+/* The header's Start Voice Call / Start Video Call buttons (win.call-voice,
+ * win.call-video) and the ongoing-call banner: hidden until gh-call-ui.c
+ * (nostrc-mqrgk.8) shows them. */
+GtkWidget *gh_content_page_get_call_button(GhContentPage *self, gboolean video);
+AdwBanner *gh_content_page_get_call_banner(GhContentPage *self);
 
 G_END_DECLS
 #endif

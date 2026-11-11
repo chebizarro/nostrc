@@ -81,6 +81,14 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     <property name="use-markup">false</property>
                   </object>
                 </child>
+                <child type="top">
+                  <object class="AdwBanner" id="call_banner">
+                    <property name="revealed">false</property>
+                    <property name="use-markup">false</property>
+                    <property name="button-label" translatable="yes">_Return to Call</property>
+                    <property name="action-name">win.call-show</property>
+                  </object>
+                </child>
                 <property name="content">
                   <object class="GtkStack" id="stack">
                     <accessibility>
