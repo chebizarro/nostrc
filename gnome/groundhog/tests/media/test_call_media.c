@@ -5,6 +5,7 @@
 #include <gst/sdp/sdp.h>
 #include <stdio.h>
 static gboolean force_h264;
+static gboolean without_h264;
 static gboolean use_cancellable;
 static gboolean initial_video;
 typedef struct { GstDevice parent; } TestMicrophone;
@@ -24,6 +25,7 @@ static GstDevice *microphone(void) {
 /* Internal harness, never used by the application. */
 GhCallMedia *gh_call_media_new_test(GSettings *settings);
 void gh_call_media_test_received(GhCallMedia *, gint *, gint *);
+gchar *gh_call_media_test_video_decoder(GhCallMedia *);
 void gh_call_media_test_remove_device(GhCallMedia *, GstDevice *);
 void gh_call_media_test_learn_private(GhCallMedia *, gboolean);
 static GhCallMediaBackendInterface *iface(GhCallMedia *m) {
@@ -71,6 +73,7 @@ static GSettings *settings(void)
 static void exchange(GhCallMedia *a, GhCallMedia *b, GhCallType type)
 {
   g_autofree gchar *offer = local(a, type, FALSE);
+  if (type == GH_CALL_VIDEO && without_h264) g_assert_null(strstr(offer, "H264/90000"));
   if (type == GH_CALL_VIDEO && force_h264) {
     GstSDPMessage *message = NULL;
     g_assert_cmpint(gst_sdp_message_new_from_text(offer, &message), ==, GST_SDP_OK);
@@ -111,10 +114,16 @@ static void loopback(void)
   if (!initial_video) exchange(a, b, GH_CALL_VOICE);
   exchange(a, b, GH_CALL_VIDEO);
   gint aa, av, ba, bv;
+  gint video_frames = force_h264 ? 300 : 10;
   do {
     g_main_context_iteration(NULL, TRUE);
     gh_call_media_test_received(a, &aa, &av); gh_call_media_test_received(b, &ba, &bv);
-  } while (aa < 10 || av < 10 || ba < 10 || bv < 10);
+  } while (aa < 10 || av < video_frames || ba < 10 || bv < video_frames);
+  g_autofree gchar *decoder_a = gh_call_media_test_video_decoder(a);
+  g_autofree gchar *decoder_b = gh_call_media_test_video_decoder(b);
+  g_assert_cmpstr(decoder_a, ==, force_h264 ? "openh264dec" : "vp8dec");
+  g_assert_cmpstr(decoder_b, ==, force_h264 ? "openh264dec" : "vp8dec");
+  g_test_message("receive decoders A=%s B=%s", decoder_a, decoder_b);
   g_assert_cmpint(gdk_paintable_get_intrinsic_width(gh_call_media_get_remote_video(a)), >, 0);
   g_print("decoded A audio=%d video=%d; B audio=%d video=%d\n", aa, av, ba, bv);
   gh_call_media_set_muted(a, TRUE); gh_call_media_set_muted(a, FALSE);
@@ -141,7 +150,60 @@ static void loopback(void)
   a_dead = a == NULL; b_dead = b == NULL;
   g_assert_true(a_dead); g_assert_true(b_dead);
 }
-static void h264_loopback(void) { force_h264 = TRUE; loopback(); force_h264 = FALSE; }
+static void h264_loopback(void)
+{
+  /* H.264 is optional (e.g. Platform 51 without OpenH264); CI requires it. */
+  const gchar *h264[] = { "openh264enc", "h264parse", "rtph264pay", "rtph264depay", "openh264dec", NULL };
+  for (guint i = 0; h264[i]; i++) {
+    GstElementFactory *factory = gst_element_factory_find(h264[i]);
+    if (factory) { gst_object_unref(factory); continue; }
+    if (!g_strcmp0(g_getenv("GROUNDHOG_CALL_TEST_REQUIRE_RUNTIME"), "1"))
+      g_test_fail_printf("REQUIRED RUNTIME MISSING: H.264 calls need %s", h264[i]);
+    else
+      g_test_skip_printf("H.264 unavailable without %s; /call-media/missing-h264 covers VP8-only calls", h264[i]);
+    return;
+  }
+  GstElementFactory *avdec = gst_element_factory_find("avdec_h264");
+  guint rank = avdec ? gst_plugin_feature_get_rank(GST_PLUGIN_FEATURE(avdec)) : 0;
+  if (avdec) gst_plugin_feature_set_rank(GST_PLUGIN_FEATURE(avdec), GST_RANK_PRIMARY + 1000);
+  force_h264 = TRUE; loopback(); force_h264 = FALSE;
+  if (avdec) {
+    gst_plugin_feature_set_rank(GST_PLUGIN_FEATURE(avdec), rank);
+    gst_object_unref(avdec);
+  }
+}
+static void missing_h264(void)
+{
+  GstRegistry *registry = gst_registry_get();
+  GstElementFactory *decoder = gst_element_factory_find("openh264dec");
+  if (decoder) {
+    /* Load before removal: loading openh264enc must not register it again. */
+    GstPluginFeature *loaded = gst_plugin_feature_load(GST_PLUGIN_FEATURE(decoder));
+    gst_object_unref(decoder);
+    g_assert_nonnull(loaded);
+    decoder = GST_ELEMENT_FACTORY(loaded);
+    gst_registry_remove_feature(registry, loaded);
+  }
+  without_h264 = TRUE; loopback(); without_h264 = FALSE;
+  g_autoptr(GSettings) s = settings();
+  g_autoptr(GhCallMedia) m = gh_call_media_new_test(s);
+  GError *error = NULL; GAsyncResult *result = NULL;
+  g_assert_true(iface(m)->configure(GH_CALL_MEDIA_BACKEND(m), TRUE, &error)); g_assert_no_error(error);
+  iface(m)->apply_remote_async(GH_CALL_MEDIA_BACKEND(m),
+      "v=0\r\no=- 1 1 IN IP4 0.0.0.0\r\ns=-\r\nt=0 0\r\n"
+      "m=audio 9 UDP/TLS/RTP/SAVPF 96\r\na=rtpmap:96 OPUS/48000/2\r\n"
+      "m=video 9 UDP/TLS/RTP/SAVPF 98\r\na=rtpmap:98 H264/90000\r\n"
+      "a=fmtp:98 packetization-mode=1;profile-level-id=42e01f\r\n", TRUE, NULL, done, &result);
+  while (!result) g_main_context_iteration(NULL, TRUE);
+  g_assert_false(iface(m)->apply_remote_finish(GH_CALL_MEDIA_BACKEND(m), result, &error));
+  g_assert_error(error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED);
+  g_assert_nonnull(strstr(error->message, "H.264 unavailable"));
+  g_clear_error(&error); g_object_unref(result);
+  if (decoder) {
+    g_assert_true(gst_registry_add_feature(registry, GST_PLUGIN_FEATURE(decoder)));
+    gst_object_unref(decoder);
+  }
+}
 static void video_establish(void) { initial_video = TRUE; loopback(); initial_video = FALSE; }
 static void reject_high_profile(void)
 {
@@ -437,6 +499,7 @@ int main(int argc, char **argv)
   g_test_add_func("/call-media/loopback-upgrade", loopback);
   g_test_add_func("/call-media/teardown-pending", cancel_pending);
   g_test_add_func("/call-media/h264-fallback", h264_loopback);
+  g_test_add_func("/call-media/missing-h264", missing_h264);
   g_test_add_func("/call-media/cancellable", cancelled_operation);
   g_test_add_func("/call-media/video-establish", video_establish);
   g_test_add_func("/call-media/reject-high-profile", reject_high_profile);
