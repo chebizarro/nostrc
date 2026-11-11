@@ -1,0 +1,30 @@
+# nostrc-swjdk: consume relation values even without an AT context.
+# GTK's pointer-list relation values transfer their lists to this function.
+# Early return loses mnemonic/shortcut-label lists on non-accessible widgets
+# (e.g. AdwActionRow during template construction), and with GTK_A11Y=none.
+# Keep the existing ownership contract; only publishing requires a context.
+# GtkWindow also overwrites an owned queued focus widget on repeated focus
+# changes before after-paint. g_set_object releases the previous reference.
+# Zero-context hunks avoid whitespace-only patch context; source is SHA-pinned.
+--- a/gtk/gtkaccessible.c
++++ b/gtk/gtkaccessible.c
+@@ -700,2 +699,0 @@
+-  if (context == NULL)
+-    return;
+@@ -720 +718,2 @@
+-      gtk_at_context_set_accessible_relation (context, relation, real_value);
++      if (context != NULL)
++        gtk_at_context_set_accessible_relation (context, relation, real_value);
+@@ -726,2 +725,5 @@
+-  gtk_at_context_update (context);
+-  g_object_unref (context);
++  if (context != NULL)
++    {
++      gtk_at_context_update (context);
++      g_object_unref (context);
++    }
+--- a/gtk/gtkwindow.c
++++ b/gtk/gtkwindow.c
+@@ -5216 +5216 @@
+-      priv->move_focus_widget = g_object_ref (widget);
++      g_set_object (&priv->move_focus_widget, widget);

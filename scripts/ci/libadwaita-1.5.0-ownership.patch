@@ -1,0 +1,15 @@
+# nostrc-swjdk: actual per-operation libadwaita 1.5.0 leaks, never suppressed.
+# The breakpoint tick fix is present in upstream 1.5.5; also release a saved
+# node when disposing before that tick. Free the legal section's owned string.
+# Zero-context hunks avoid whitespace-only patch context; source is SHA-pinned.
+--- a/src/adw-breakpoint-bin.c
++++ b/src/adw-breakpoint-bin.c
+@@ -269 +269 @@
+-  priv->old_node = NULL;
++  g_clear_pointer (&priv->old_node, gsk_render_node_unref);
+@@ -506,0 +507 @@
++  g_clear_pointer (&priv->old_node, gsk_render_node_unref);
+--- a/src/adw-about-dialog.c
++++ b/src/adw-about-dialog.c
+@@ -349,0 +350 @@
++  g_free (section->copyright);

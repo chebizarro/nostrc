@@ -532,8 +532,11 @@ def validate_phase_profile(profile):
         return
     fields = {"GH_SAN_CONFIGURE", "GH_SAN_CONFIGURE_ENV", "GH_SAN_BUILD_ENV", "GH_SAN_ENV",
               "GH_SAN_TARGETS", "GH_SAN_TESTS", "GH_SAN_TEST_JOBS", "GH_SAN_SKIP_PATTERN"}
-    if not isinstance(compat, dict) or set(compat) != fields or "phase_environments" not in profile:
+    if (not isinstance(compat, dict) or set(compat) not in (fields, fields | {"GH_SAN_DISPLAY_WRAP"})
+            or "phase_environments" not in profile):
         raise RealizationError("invalid sanitizer_compatibility contract fields/phases")
+    if compat.get("GH_SAN_DISPLAY_WRAP", "0") not in ("0", "1"):
+        raise RealizationError("invalid sanitizer_compatibility display/bus policy")
     if compat["GH_SAN_CONFIGURE"] != args:
         raise RealizationError("sanitizer_compatibility configure disagreement")
     for phase, field in zip(PHASES, ("GH_SAN_CONFIGURE_ENV", "GH_SAN_BUILD_ENV", "GH_SAN_ENV")):

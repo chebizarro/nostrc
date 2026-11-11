@@ -21,27 +21,104 @@
   },
   "checks": {
     "grotto.settings.host": {
-      "nodes": ["gnome.nostr_settings", "grotto.daemon", "grotto.gui", "grotto.panels", "nip55l.glib"],
-      "profiles": ["grotto.settings.host.linux"],
-      "kind": "ctest", "cost": "ordinary", "requirement": "blocking", "expected_outcome": "pass",
-      "ctest_tests": {"grotto.settings.host.linux": ["nostr-settings-cli", "nostr-settings/panel-mount", "nostr-settings-config", "nostr-settings-lists", "nostr-settings-nip11", "nostr-settings-relay_stats", "nostr-settings-systemd", "nostr-settings-wallet", "nostr-settings-identity", "signer/clients", "signer/activity", "signer/approval-integration", "grotto-panels/smoke-host", "grotto-panels/profile-panel", "grotto-panels/management-panels", "grotto-panels/no-secrets", "grotto-panels/control1-service"]},
-      "build_targets": ["nostr-settings", "grotto", "test-nostr-settings-panel-mount", "test-nostr-settings-config", "test-nostr-settings-lists", "test-nostr-settings-nip11", "test-nostr-settings-relay_stats", "test-nostr-settings-systemd", "test-nostr-settings-wallet", "test-nostr-settings-identity", "test-clients", "test-activity", "test-approval-integration", "test-grotto-panels-smoke", "test-grotto-panels-admission", "test-grotto-panels-control1"],
-      "runtime_inputs": ["{source}/apps/grotto/data/org.nostr.Grotto.Control1.xml"],
-      "requires": ["display", "private_bus"]
-    },
-    "grotto.panels": {
-      "nodes": ["grotto.panels", "testing.common_inputs"],
-      "profiles": ["grotto.panels.linux", "grotto.linux"],
+      "nodes": [
+        "gnome.nostr_settings",
+        "grotto.daemon",
+        "grotto.gui",
+        "grotto.panels",
+        "nip55l.glib"
+      ],
+      "profiles": [
+        "grotto.settings.host.linux"
+      ],
       "kind": "ctest",
       "cost": "ordinary",
       "requirement": "blocking",
       "expected_outcome": "pass",
       "ctest_tests": {
-        "grotto.panels.linux": ["grotto-panels/smoke-host", "grotto-panels/profile-panel", "grotto-panels/management-panels", "grotto-panels/no-secrets", "grotto-panels/control1-service"],
-        "grotto.linux": ["grotto-panels/smoke-host", "grotto-panels/profile-panel", "grotto-panels/management-panels", "grotto-panels/no-secrets", "grotto-panels/control1-service"]
+        "grotto.settings.host.linux": [
+          "nostr-settings-cli",
+          "nostr-settings/panel-mount",
+          "nostr-settings-config",
+          "nostr-settings-lists",
+          "nostr-settings-nip11",
+          "nostr-settings-relay_stats",
+          "nostr-settings-systemd",
+          "nostr-settings-wallet",
+          "nostr-settings-identity",
+          "signer/clients",
+          "signer/activity",
+          "signer/approval-integration",
+          "grotto-panels/smoke-host",
+          "grotto-panels/profile-panel",
+          "grotto-panels/management-panels",
+          "grotto-panels/no-secrets",
+          "grotto-panels/control1-service"
+        ]
       },
-      "build_targets": ["test-grotto-panels-smoke", "test-grotto-panels-control1", "test-grotto-panels-admission"],
-      "runtime_inputs": ["{source}/apps/grotto/data/org.nostr.Grotto.Control1.xml"],
+      "build_targets": [
+        "nostr-settings",
+        "grotto",
+        "test-nostr-settings-panel-mount",
+        "test-nostr-settings-config",
+        "test-nostr-settings-lists",
+        "test-nostr-settings-nip11",
+        "test-nostr-settings-relay_stats",
+        "test-nostr-settings-systemd",
+        "test-nostr-settings-wallet",
+        "test-nostr-settings-identity",
+        "test-clients",
+        "test-activity",
+        "test-approval-integration",
+        "test-grotto-panels-smoke",
+        "test-grotto-panels-admission",
+        "test-grotto-panels-control1"
+      ],
+      "runtime_inputs": [
+        "{source}/apps/grotto/data/org.nostr.Grotto.Control1.xml"
+      ],
+      "requires": [
+        "display",
+        "private_bus"
+      ]
+    },
+    "grotto.panels": {
+      "nodes": [
+        "grotto.panels",
+        "testing.common_inputs"
+      ],
+      "profiles": [
+        "grotto.panels.linux",
+        "grotto.linux"
+      ],
+      "kind": "ctest",
+      "cost": "ordinary",
+      "requirement": "blocking",
+      "expected_outcome": "pass",
+      "ctest_tests": {
+        "grotto.panels.linux": [
+          "grotto-panels/smoke-host",
+          "grotto-panels/profile-panel",
+          "grotto-panels/management-panels",
+          "grotto-panels/no-secrets",
+          "grotto-panels/control1-service"
+        ],
+        "grotto.linux": [
+          "grotto-panels/smoke-host",
+          "grotto-panels/profile-panel",
+          "grotto-panels/management-panels",
+          "grotto-panels/no-secrets",
+          "grotto-panels/control1-service"
+        ]
+      },
+      "build_targets": [
+        "test-grotto-panels-smoke",
+        "test-grotto-panels-control1",
+        "test-grotto-panels-admission"
+      ],
+      "runtime_inputs": [
+        "{source}/apps/grotto/data/org.nostr.Grotto.Control1.xml"
+      ],
       "requires": []
     },
     "supported.apps.gnostr.blossom": {
@@ -6771,6 +6848,9 @@
         "groundhog.linux": [
           "groundhog-about",
           "groundhog-about-gui"
+        ],
+        "groundhog.linux.sanitizers": [
+          "groundhog-about-gui"
         ]
       },
       "expected_outcome": "pass",
@@ -6815,7 +6895,8 @@
         "vendor.nostrdb"
       ],
       "profiles": [
-        "groundhog.linux"
+        "groundhog.linux",
+        "groundhog.linux.sanitizers"
       ],
       "requirement": "blocking",
       "runtime_inputs": [],
@@ -7087,6 +7168,9 @@
       "ctest_tests": {
         "groundhog.linux": [
           "groundhog-mls-ui-gui"
+        ],
+        "groundhog.linux.sanitizers": [
+          "groundhog-mls-ui-gui"
         ]
       },
       "expected_outcome": "pass",
@@ -7117,7 +7201,8 @@
         "testing.framework"
       ],
       "profiles": [
-        "groundhog.linux"
+        "groundhog.linux",
+        "groundhog.linux.sanitizers"
       ],
       "requirement": "blocking",
       "runtime_inputs": [],
@@ -7165,6 +7250,9 @@
       "ctest_tests": {
         "groundhog.linux": [
           "groundhog-poll-ui"
+        ],
+        "groundhog.linux.sanitizers": [
+          "groundhog-poll-ui"
         ]
       },
       "expected_outcome": "pass",
@@ -7195,7 +7283,8 @@
         "testing.framework"
       ],
       "profiles": [
-        "groundhog.linux"
+        "groundhog.linux",
+        "groundhog.linux.sanitizers"
       ],
       "requirement": "blocking",
       "runtime_inputs": [],
@@ -7213,6 +7302,9 @@
       "cost": "ordinary",
       "ctest_tests": {
         "groundhog.linux": [
+          "groundhog-shell"
+        ],
+        "groundhog.linux.sanitizers": [
           "groundhog-shell"
         ]
       },
@@ -7250,7 +7342,8 @@
         "vendor.nostrdb"
       ],
       "profiles": [
-        "groundhog.linux"
+        "groundhog.linux",
+        "groundhog.linux.sanitizers"
       ],
       "requirement": "blocking",
       "runtime_inputs": [],
@@ -9070,7 +9163,8 @@
         "grotto.linux",
         "groundhog.linux",
         "groundhog.mdk011",
-        "groundhog.mdk08"
+        "groundhog.mdk08",
+        "groundhog.linux.sanitizers"
       ],
       "kind": "ctest",
       "cost": "ordinary",
@@ -9087,6 +9181,9 @@
           "groundhog-account-store-gui"
         ],
         "groundhog.mdk011": [
+          "groundhog-account-store-gui"
+        ],
+        "groundhog.linux.sanitizers": [
           "groundhog-account-store-gui"
         ]
       },
@@ -9128,7 +9225,8 @@
         "grotto.linux",
         "groundhog.linux",
         "groundhog.mdk011",
-        "groundhog.mdk08"
+        "groundhog.mdk08",
+        "groundhog.linux.sanitizers"
       ],
       "kind": "ctest",
       "cost": "ordinary",
@@ -9145,6 +9243,9 @@
           "groundhog-account-ui"
         ],
         "groundhog.mdk011": [
+          "groundhog-account-ui"
+        ],
+        "groundhog.linux.sanitizers": [
           "groundhog-account-ui"
         ]
       },
@@ -9282,7 +9383,8 @@
         "grotto.linux",
         "groundhog.linux",
         "groundhog.mdk011",
-        "groundhog.mdk08"
+        "groundhog.mdk08",
+        "groundhog.linux.sanitizers"
       ],
       "kind": "ctest",
       "cost": "ordinary",
@@ -9299,6 +9401,9 @@
           "groundhog-attachment-ui"
         ],
         "groundhog.mdk011": [
+          "groundhog-attachment-ui"
+        ],
+        "groundhog.linux.sanitizers": [
           "groundhog-attachment-ui"
         ]
       },
@@ -9389,7 +9494,8 @@
         "grotto.linux",
         "groundhog.linux",
         "groundhog.mdk011",
-        "groundhog.mdk08"
+        "groundhog.mdk08",
+        "groundhog.linux.sanitizers"
       ],
       "kind": "ctest",
       "cost": "ordinary",
@@ -9406,6 +9512,9 @@
           "groundhog-background-gui"
         ],
         "groundhog.mdk011": [
+          "groundhog-background-gui"
+        ],
+        "groundhog.linux.sanitizers": [
           "groundhog-background-gui"
         ]
       },
@@ -9503,7 +9612,8 @@
         "grotto.linux",
         "groundhog.linux",
         "groundhog.mdk011",
-        "groundhog.mdk08"
+        "groundhog.mdk08",
+        "groundhog.linux.sanitizers"
       ],
       "kind": "ctest",
       "cost": "ordinary",
@@ -9520,6 +9630,9 @@
           "groundhog-bus-probe"
         ],
         "groundhog.mdk011": [
+          "groundhog-bus-probe"
+        ],
+        "groundhog.linux.sanitizers": [
           "groundhog-bus-probe"
         ]
       },
@@ -9564,7 +9677,8 @@
         "grotto.linux",
         "groundhog.linux",
         "groundhog.mdk011",
-        "groundhog.mdk08"
+        "groundhog.mdk08",
+        "groundhog.linux.sanitizers"
       ],
       "kind": "ctest",
       "cost": "ordinary",
@@ -9581,6 +9695,9 @@
           "groundhog-composer"
         ],
         "groundhog.mdk011": [
+          "groundhog-composer"
+        ],
+        "groundhog.linux.sanitizers": [
           "groundhog-composer"
         ]
       },
@@ -10193,7 +10310,8 @@
         "grotto.linux",
         "groundhog.linux",
         "groundhog.mdk011",
-        "groundhog.mdk08"
+        "groundhog.mdk08",
+        "groundhog.linux.sanitizers"
       ],
       "kind": "ctest",
       "cost": "ordinary",
@@ -10210,6 +10328,9 @@
           "groundhog-conversation-info-gui"
         ],
         "groundhog.mdk011": [
+          "groundhog-conversation-info-gui"
+        ],
+        "groundhog.linux.sanitizers": [
           "groundhog-conversation-info-gui"
         ]
       },
@@ -10251,7 +10372,8 @@
         "grotto.linux",
         "groundhog.linux",
         "groundhog.mdk011",
-        "groundhog.mdk08"
+        "groundhog.mdk08",
+        "groundhog.linux.sanitizers"
       ],
       "kind": "ctest",
       "cost": "ordinary",
@@ -10268,6 +10390,9 @@
           "groundhog-conversation-list"
         ],
         "groundhog.mdk011": [
+          "groundhog-conversation-list"
+        ],
+        "groundhog.linux.sanitizers": [
           "groundhog-conversation-list"
         ]
       },
@@ -10358,7 +10483,8 @@
         "grotto.linux",
         "groundhog.linux",
         "groundhog.mdk011",
-        "groundhog.mdk08"
+        "groundhog.mdk08",
+        "groundhog.linux.sanitizers"
       ],
       "kind": "ctest",
       "cost": "ordinary",
@@ -10375,6 +10501,9 @@
           "groundhog-conversation-menu-gui"
         ],
         "groundhog.mdk011": [
+          "groundhog-conversation-menu-gui"
+        ],
+        "groundhog.linux.sanitizers": [
           "groundhog-conversation-menu-gui"
         ]
       },
@@ -10416,7 +10545,8 @@
         "grotto.linux",
         "groundhog.linux",
         "groundhog.mdk011",
-        "groundhog.mdk08"
+        "groundhog.mdk08",
+        "groundhog.linux.sanitizers"
       ],
       "kind": "ctest",
       "cost": "ordinary",
@@ -10433,6 +10563,9 @@
           "groundhog-conversation-view"
         ],
         "groundhog.mdk011": [
+          "groundhog-conversation-view"
+        ],
+        "groundhog.linux.sanitizers": [
           "groundhog-conversation-view"
         ]
       },
@@ -10618,7 +10751,8 @@
         "grotto.linux",
         "groundhog.linux",
         "groundhog.mdk011",
-        "groundhog.mdk08"
+        "groundhog.mdk08",
+        "groundhog.linux.sanitizers"
       ],
       "kind": "ctest",
       "cost": "ordinary",
@@ -10635,6 +10769,9 @@
           "groundhog-e2e-dm"
         ],
         "groundhog.mdk011": [
+          "groundhog-e2e-dm"
+        ],
+        "groundhog.linux.sanitizers": [
           "groundhog-e2e-dm"
         ]
       },
@@ -10814,7 +10951,8 @@
         "grotto.linux",
         "groundhog.linux",
         "groundhog.mdk011",
-        "groundhog.mdk08"
+        "groundhog.mdk08",
+        "groundhog.linux.sanitizers"
       ],
       "kind": "ctest",
       "cost": "ordinary",
@@ -10831,6 +10969,9 @@
           "groundhog-launch"
         ],
         "groundhog.mdk011": [
+          "groundhog-launch"
+        ],
+        "groundhog.linux.sanitizers": [
           "groundhog-launch"
         ]
       },
@@ -10922,7 +11063,8 @@
         "grotto.linux",
         "groundhog.linux",
         "groundhog.mdk011",
-        "groundhog.mdk08"
+        "groundhog.mdk08",
+        "groundhog.linux.sanitizers"
       ],
       "kind": "ctest",
       "cost": "ordinary",
@@ -10939,6 +11081,9 @@
           "groundhog-group-ui-gui"
         ],
         "groundhog.mdk011": [
+          "groundhog-group-ui-gui"
+        ],
+        "groundhog.linux.sanitizers": [
           "groundhog-group-ui-gui"
         ]
       },
@@ -11823,7 +11968,8 @@
         "grotto.linux",
         "groundhog.linux",
         "groundhog.mdk011",
-        "groundhog.mdk08"
+        "groundhog.mdk08",
+        "groundhog.linux.sanitizers"
       ],
       "kind": "ctest",
       "cost": "ordinary",
@@ -11840,6 +11986,9 @@
           "groundhog-nip46-pair-dialog"
         ],
         "groundhog.mdk011": [
+          "groundhog-nip46-pair-dialog"
+        ],
+        "groundhog.linux.sanitizers": [
           "groundhog-nip46-pair-dialog"
         ]
       },
@@ -12040,7 +12189,8 @@
         "grotto.linux",
         "groundhog.linux",
         "groundhog.mdk011",
-        "groundhog.mdk08"
+        "groundhog.mdk08",
+        "groundhog.linux.sanitizers"
       ],
       "kind": "ctest",
       "cost": "ordinary",
@@ -12057,6 +12207,9 @@
           "groundhog-notifier-gui"
         ],
         "groundhog.mdk011": [
+          "groundhog-notifier-gui"
+        ],
+        "groundhog.linux.sanitizers": [
           "groundhog-notifier-gui"
         ]
       },
@@ -12099,7 +12252,8 @@
         "grotto.linux",
         "groundhog.linux",
         "groundhog.mdk011",
-        "groundhog.mdk08"
+        "groundhog.mdk08",
+        "groundhog.linux.sanitizers"
       ],
       "kind": "ctest",
       "cost": "ordinary",
@@ -12116,6 +12270,9 @@
           "groundhog-onboarding"
         ],
         "groundhog.mdk011": [
+          "groundhog-onboarding"
+        ],
+        "groundhog.linux.sanitizers": [
           "groundhog-onboarding"
         ]
       },
@@ -12252,7 +12409,8 @@
         "grotto.linux",
         "groundhog.linux",
         "groundhog.mdk011",
-        "groundhog.mdk08"
+        "groundhog.mdk08",
+        "groundhog.linux.sanitizers"
       ],
       "kind": "ctest",
       "cost": "ordinary",
@@ -12269,6 +12427,9 @@
           "groundhog-preferences"
         ],
         "groundhog.mdk011": [
+          "groundhog-preferences"
+        ],
+        "groundhog.linux.sanitizers": [
           "groundhog-preferences"
         ]
       },
@@ -12826,7 +12987,8 @@
         "grotto.linux",
         "groundhog.linux",
         "groundhog.mdk011",
-        "groundhog.mdk08"
+        "groundhog.mdk08",
+        "groundhog.linux.sanitizers"
       ],
       "kind": "ctest",
       "cost": "ordinary",
@@ -12843,6 +13005,9 @@
           "groundhog-requests-gui"
         ],
         "groundhog.mdk011": [
+          "groundhog-requests-gui"
+        ],
+        "groundhog.linux.sanitizers": [
           "groundhog-requests-gui"
         ]
       },
@@ -13100,7 +13265,8 @@
         "grotto.linux",
         "groundhog.linux",
         "groundhog.mdk011",
-        "groundhog.mdk08"
+        "groundhog.mdk08",
+        "groundhog.linux.sanitizers"
       ],
       "kind": "ctest",
       "cost": "ordinary",
@@ -13117,6 +13283,9 @@
           "groundhog-two-instance"
         ],
         "groundhog.mdk011": [
+          "groundhog-two-instance"
+        ],
+        "groundhog.linux.sanitizers": [
           "groundhog-two-instance"
         ]
       },
@@ -13235,7 +13404,8 @@
         "grotto.linux",
         "groundhog.linux",
         "groundhog.mdk011",
-        "groundhog.mdk08"
+        "groundhog.mdk08",
+        "groundhog.linux.sanitizers"
       ],
       "kind": "ctest",
       "cost": "ordinary",
@@ -13252,6 +13422,9 @@
           "groundhog-voice-ui"
         ],
         "groundhog.mdk011": [
+          "groundhog-voice-ui"
+        ],
+        "groundhog.linux.sanitizers": [
           "groundhog-voice-ui"
         ]
       },
@@ -20358,17 +20531,28 @@
       "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     },
     "signet.deployment_contract": {
-      "nodes": ["signet"],
-      "profiles": ["core.linux", "groundhog.mdk08"],
+      "nodes": [
+        "signet"
+      ],
+      "profiles": [
+        "core.linux",
+        "groundhog.mdk08"
+      ],
       "kind": "ctest",
       "cost": "ordinary",
       "requirement": "blocking",
       "expected_outcome": "pass",
       "ctest_tests": {
-        "core.linux": ["deployment_contract"],
-        "groundhog.mdk08": ["deployment_contract"]
+        "core.linux": [
+          "deployment_contract"
+        ],
+        "groundhog.mdk08": [
+          "deployment_contract"
+        ]
       },
-      "requires": ["python3_jsonschema"],
+      "requires": [
+        "python3_jsonschema"
+      ],
       "runtime_inputs": [],
       "build_targets": []
     },
@@ -21654,6 +21838,327 @@
       ],
       "requirement": "blocking",
       "runtime_inputs": []
+    },
+    "sanitizer.groundhog_draft_sync_gui": {
+      "build_targets": [
+        "test-groundhog-draft-sync"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-draft-sync-gui"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.gresource_inputs",
+        "groundhog.relay",
+        "groundhog.resources",
+        "groundhog.shell_ui",
+        "groundhog.unclassified",
+        "libgo",
+        "libjson",
+        "libnostr",
+        "libnostr.metrics_header",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nip34",
+        "nip44",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nip55l.dbus_contract",
+        "nostr.gobject",
+        "nostr.gtk",
+        "nostrdb",
+        "relayd",
+        "relayd.async_storage_api",
+        "shared.tests",
+        "testing.common_inputs",
+        "testing.framework",
+        "vendor.nostrdb"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": [],
+      "requires": [
+        "display",
+        "private_bus"
+      ],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
+    },
+    "sanitizer.groundhog_emoji": {
+      "build_targets": [
+        "test-groundhog-emoji"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-emoji"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.gresource_inputs",
+        "groundhog.relay",
+        "groundhog.resources",
+        "groundhog.shell_ui",
+        "groundhog.unclassified",
+        "libgo",
+        "libjson",
+        "libnostr",
+        "libnostr.metrics_header",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nip34",
+        "nip44",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nip55l.dbus_contract",
+        "nostr.gobject",
+        "nostr.gtk",
+        "nostrdb",
+        "relayd",
+        "relayd.async_storage_api",
+        "shared.tests",
+        "testing.common_inputs",
+        "testing.framework",
+        "vendor.nostrdb"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": [],
+      "requires": [
+        "display",
+        "private_bus"
+      ],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
+    },
+    "groundhog.gtk_lsan": {
+      "build_targets": [
+        "test-groundhog-gtk-lsan"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux": [
+          "groundhog-gtk-lsan"
+        ],
+        "groundhog.linux.sanitizers": [
+          "groundhog-gtk-lsan"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.unclassified",
+        "testing.common_inputs",
+        "testing.framework"
+      ],
+      "profiles": [
+        "groundhog.linux",
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": [],
+      "requires": [
+        "display"
+      ]
+    },
+    "sanitizer.groundhog_lists_ui": {
+      "build_targets": [
+        "test-groundhog-lists-ui"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-lists-ui"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.gresource_inputs",
+        "groundhog.relay",
+        "groundhog.resources",
+        "groundhog.shell_ui",
+        "groundhog.unclassified",
+        "libgo",
+        "libjson",
+        "libnostr",
+        "libnostr.metrics_header",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nip34",
+        "nip44",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nip55l.dbus_contract",
+        "nostr.gobject",
+        "nostr.gtk",
+        "nostrdb",
+        "relayd",
+        "relayd.async_storage_api",
+        "shared.tests",
+        "testing.common_inputs",
+        "testing.framework",
+        "vendor.nostrdb"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": [],
+      "requires": [
+        "display",
+        "private_bus"
+      ],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
+    },
+    "sanitizer.groundhog_report_ui": {
+      "build_targets": [
+        "test-groundhog-report-ui"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-report-ui"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.gresource_inputs",
+        "groundhog.relay",
+        "groundhog.resources",
+        "groundhog.shell_ui",
+        "groundhog.unclassified",
+        "libgo",
+        "libjson",
+        "libnostr",
+        "libnostr.metrics_header",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nip34",
+        "nip44",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nip55l.dbus_contract",
+        "nostr.gobject",
+        "nostr.gtk",
+        "nostrdb",
+        "relayd",
+        "relayd.async_storage_api",
+        "shared.tests",
+        "testing.common_inputs",
+        "testing.framework",
+        "vendor.nostrdb"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": [],
+      "requires": [
+        "display",
+        "private_bus"
+      ],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
+    },
+    "sanitizer.groundhog_social_sync_gui": {
+      "build_targets": [
+        "test-groundhog-social-sync"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-social-sync-gui"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.gresource_inputs",
+        "groundhog.relay",
+        "groundhog.resources",
+        "groundhog.shell_ui",
+        "groundhog.unclassified",
+        "libgo",
+        "libjson",
+        "libnostr",
+        "libnostr.metrics_header",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nip34",
+        "nip44",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nip55l.dbus_contract",
+        "nostr.gobject",
+        "nostr.gtk",
+        "nostrdb",
+        "relayd",
+        "relayd.async_storage_api",
+        "shared.tests",
+        "testing.common_inputs",
+        "testing.framework",
+        "vendor.nostrdb"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": [],
+      "requires": [
+        "display",
+        "private_bus"
+      ],
+      "build_only_nodes": [
+        "nip55l",
+        "nip55l.dbus_contract"
+      ],
+      "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
     }
   },
   "coverage_gaps": [
@@ -22171,7 +22676,11 @@
     "grotto.panels": {
       "id": "grotto.panels",
       "depends_on": [],
-      "owner_paths": ["gnome/grotto-panels", "apps/grotto/src/grotto-panels-control1-service.c", "apps/grotto/src/grotto-panels-control1-service.h"]
+      "owner_paths": [
+        "gnome/grotto-panels",
+        "apps/grotto/src/grotto-panels-control1-service.c",
+        "apps/grotto/src/grotto-panels-control1-service.h"
+      ]
     },
     "gnostr.blossom": {
       "id": "gnostr.blossom",
@@ -24562,19 +25071,27 @@
     {
       "prefix": "gnome/grotto-panels",
       "effect": "impact",
-      "nodes": ["grotto.panels"],
+      "nodes": [
+        "grotto.panels"
+      ],
       "reason": "New isolated panel component: boundary, private-bus adapter and level-1 smoke host."
     },
     {
       "exact": "apps/grotto/src/grotto-panels-control1-service.c",
       "effect": "impact",
-      "nodes": ["grotto.panels", "grotto.gui"],
+      "nodes": [
+        "grotto.panels",
+        "grotto.gui"
+      ],
       "reason": "Host-owned injected adapter; test the production source on a private bus."
     },
     {
       "exact": "apps/grotto/src/grotto-panels-control1-service.h",
       "effect": "impact",
-      "nodes": ["grotto.panels", "grotto.gui"],
+      "nodes": [
+        "grotto.panels",
+        "grotto.gui"
+      ],
       "reason": "Host-owned injected adapter contract."
     },
     {
@@ -29536,16 +30053,72 @@
         "nip58"
       ],
       "reason": "Checked tag, address, JSON and unsigned-event helpers shared only by these codecs."
+    },
+    {
+      "effect": "impact",
+      "exact": "scripts/install-groundhog-ci-gtk.sh",
+      "nodes": [
+        "execution.groundhog",
+        "execution.grotto"
+      ],
+      "reason": "CI-only GTK/libadwaita ownership fixes used by the shared Linux GUI image."
+    },
+    {
+      "effect": "impact",
+      "exact": "scripts/ci/gtk-4.14.5-relation-ownership.patch",
+      "nodes": [
+        "execution.groundhog",
+        "execution.grotto"
+      ],
+      "reason": "CI-only GTK/libadwaita ownership fixes used by the shared Linux GUI image."
+    },
+    {
+      "effect": "impact",
+      "exact": "scripts/ci/libadwaita-1.5.0-ownership.patch",
+      "nodes": [
+        "execution.groundhog",
+        "execution.grotto"
+      ],
+      "reason": "CI-only GTK/libadwaita ownership fixes used by the shared Linux GUI image."
     }
   ],
   "profiles": {
     "grotto.settings.host.linux": {
-      "platform": "linux", "architecture": "any", "compiler": "gcc", "build_type": "Debug",
-      "instrumentation": "none", "source_dir": ".",
-      "configure_args": ["-G", "Ninja", "-DCMAKE_BUILD_TYPE=Debug", "-DBUILD_TESTING=ON", "-DBUILD_SIGNER_TESTS=ON", "-DBUILD_APPS=ON", "-DBUILD_GNOSTR_APP=OFF", "-DBUILD_GROUNDHOG=OFF", "-DBUILD_RELAYD=OFF", "-DSIGNET_ENABLE=OFF", "-DENABLE_NOSTR_SETTINGS=ON", "-DENABLE_TCP_IPC=ON", "-DNIP55L_TEST_TRUST_ENV=ON", "-DNIP55L_SECRET_BACKEND=libsecret", "-DGROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service"],
-      "environment": {"GTK_A11Y": "test"}, "capabilities": ["display", "private_bus"],
-      "setup": "gnome/nostr-settings/README.md", "local_availability": "host_or_container",
-      "parallelism": 1, "build_parallelism": 4, "timeout_seconds": 1200
+      "platform": "linux",
+      "architecture": "any",
+      "compiler": "gcc",
+      "build_type": "Debug",
+      "instrumentation": "none",
+      "source_dir": ".",
+      "configure_args": [
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Debug",
+        "-DBUILD_TESTING=ON",
+        "-DBUILD_SIGNER_TESTS=ON",
+        "-DBUILD_APPS=ON",
+        "-DBUILD_GNOSTR_APP=OFF",
+        "-DBUILD_GROUNDHOG=OFF",
+        "-DBUILD_RELAYD=OFF",
+        "-DSIGNET_ENABLE=OFF",
+        "-DENABLE_NOSTR_SETTINGS=ON",
+        "-DENABLE_TCP_IPC=ON",
+        "-DNIP55L_TEST_TRUST_ENV=ON",
+        "-DNIP55L_SECRET_BACKEND=libsecret",
+        "-DGROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service"
+      ],
+      "environment": {
+        "GTK_A11Y": "test"
+      },
+      "capabilities": [
+        "display",
+        "private_bus"
+      ],
+      "setup": "gnome/nostr-settings/README.md",
+      "local_availability": "host_or_container",
+      "parallelism": 1,
+      "build_parallelism": 4,
+      "timeout_seconds": 1200
     },
     "grotto.panels.linux": {
       "platform": "linux",
@@ -29554,7 +30127,12 @@
       "build_type": "Debug",
       "instrumentation": "none",
       "source_dir": "gnome/grotto-panels",
-      "configure_args": ["-G", "Ninja", "-DCMAKE_BUILD_TYPE=Debug", "-DBUILD_TESTING=ON"],
+      "configure_args": [
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Debug",
+        "-DBUILD_TESTING=ON"
+      ],
       "environment": {},
       "capabilities": [],
       "setup": "gnome/grotto-panels/README.md",
@@ -30149,10 +30727,18 @@
       ],
       "environment": {},
       "phase_environments": {
-        "configure": {},
-        "build": {},
+        "configure": {
+          "PKG_CONFIG_PATH": "/opt/groundhog-ci-gtk/lib/pkgconfig",
+          "LD_LIBRARY_PATH": "/opt/groundhog-ci-gtk/lib"
+        },
+        "build": {
+          "PKG_CONFIG_PATH": "/opt/groundhog-ci-gtk/lib/pkgconfig",
+          "LD_LIBRARY_PATH": "/opt/groundhog-ci-gtk/lib"
+        },
         "test": {
-          "GROUNDHOG_SANITIZER_TESTS": "groundhog-identity groundhog-account groundhog-account-relays groundhog-dm-send groundhog-relay groundhog-relay-wire groundhog-relay-publish groundhog-relay-publish-wire groundhog-nip29 groundhog-conversations groundhog-dm-inbox groundhog-store-key groundhog-store-key-keyring groundhog-secret-service-sessions groundhog-nip46-credentials-keyring groundhog-store groundhog-store-sqlite groundhog-store-marmot groundhog-store-conversations groundhog-outbox groundhog-account-store groundhog-link-policy groundhog-background groundhog-notifier groundhog-inbox-setup groundhog-expiry groundhog-auth-policy groundhog-contact-directory groundhog-reactions groundhog-reaction-send groundhog-privacy-e2e groundhog-new-message groundhog-requests groundhog-privacy-summary groundhog-conversation-info groundhog-nip29-service groundhog-mls-service groundhog-privacy-mls groundhog-mls-kp-lifecycle groundhog-mls-kp-lifecycle-adopted groundhog-net groundhog-tls-resumption groundhog-group-ui groundhog-mls-ui groundhog-conversation-menu groundhog-multi-send groundhog-media groundhog-blossom groundhog-media-purge groundhog-relay-guard groundhog-media-cache-binding groundhog-attachments groundhog-mls-media groundhog-mls-files groundhog-mls-poll groundhog-voice groundhog-icons groundhog-message-reply groundhog-two-instance-acceptance nostrc-test-bus-selftest test_relay_teardown_leaks test_connection_recv_drain",
+          "PKG_CONFIG_PATH": "/opt/groundhog-ci-gtk/lib/pkgconfig",
+          "LD_LIBRARY_PATH": "/opt/groundhog-ci-gtk/lib",
+          "GROUNDHOG_SANITIZER_TESTS": "groundhog-identity groundhog-account groundhog-account-relays groundhog-dm-send groundhog-relay groundhog-relay-wire groundhog-relay-publish groundhog-relay-publish-wire groundhog-nip29 groundhog-conversations groundhog-dm-inbox groundhog-store-key groundhog-store-key-keyring groundhog-secret-service-sessions groundhog-nip46-credentials-keyring groundhog-store groundhog-store-sqlite groundhog-store-marmot groundhog-store-conversations groundhog-outbox groundhog-account-store groundhog-link-policy groundhog-background groundhog-notifier groundhog-inbox-setup groundhog-expiry groundhog-auth-policy groundhog-contact-directory groundhog-reactions groundhog-reaction-send groundhog-privacy-e2e groundhog-new-message groundhog-requests groundhog-privacy-summary groundhog-conversation-info groundhog-nip29-service groundhog-mls-service groundhog-privacy-mls groundhog-mls-kp-lifecycle groundhog-mls-kp-lifecycle-adopted groundhog-net groundhog-tls-resumption groundhog-group-ui groundhog-mls-ui groundhog-conversation-menu groundhog-multi-send groundhog-media groundhog-blossom groundhog-media-purge groundhog-relay-guard groundhog-media-cache-binding groundhog-attachments groundhog-mls-media groundhog-mls-files groundhog-mls-poll groundhog-voice groundhog-icons groundhog-message-reply groundhog-two-instance-acceptance groundhog-shell groundhog-account-ui groundhog-conversation-list groundhog-launch groundhog-bus-probe groundhog-two-instance groundhog-account-store-gui groundhog-conversation-view groundhog-background-gui groundhog-about-gui groundhog-preferences groundhog-onboarding groundhog-notifier-gui groundhog-composer groundhog-e2e-dm groundhog-requests-gui groundhog-conversation-info-gui groundhog-group-ui-gui groundhog-mls-ui-gui groundhog-conversation-menu-gui groundhog-voice-ui groundhog-attachment-ui groundhog-nip46-pair-dialog groundhog-report-ui groundhog-draft-sync-gui groundhog-lists-ui groundhog-social-sync-gui groundhog-emoji groundhog-poll-ui groundhog-gtk-lsan nostrc-test-bus-selftest test_relay_teardown_leaks test_connection_recv_drain",
           "ASAN_OPTIONS": "detect_leaks=1:halt_on_error=1:verify_asan_link_order=0",
           "UBSAN_OPTIONS": "print_stacktrace=1:halt_on_error=1",
           "G_SLICE": "always-malloc",
@@ -30168,30 +30754,100 @@
       "source_dir": ".",
       "timeout_seconds": 2700,
       "sanitizer_compatibility": {
-        "GH_SAN_BUILD_ENV": [],
-        "GH_SAN_CONFIGURE": [
-          "-G",
-          "Ninja",
-          "-DCMAKE_BUILD_TYPE=Debug",
-          "-DBUILD_TESTING=ON",
-          "-DBUILD_GROUNDHOG=ON",
-          "-DBUILD_NOSTR_GOBJECT=ON",
-          "-DBUILD_NOSTR_GTK=ON",
-          "-DBUILD_APPS=OFF",
-          "-DBUILD_RELAYD=OFF",
-          "-DSIGNET_ENABLE=OFF",
-          "-DGNOSTR_ENABLE_ASAN=ON",
-          "-DGNOSTR_ENABLE_UBSAN=ON"
+        "GH_SAN_TESTS": [
+          "groundhog-identity",
+          "groundhog-account",
+          "groundhog-account-relays",
+          "groundhog-dm-send",
+          "groundhog-relay",
+          "groundhog-relay-wire",
+          "groundhog-relay-publish",
+          "groundhog-relay-publish-wire",
+          "groundhog-nip29",
+          "groundhog-conversations",
+          "groundhog-dm-inbox",
+          "groundhog-store-key",
+          "groundhog-store-key-keyring",
+          "groundhog-secret-service-sessions",
+          "groundhog-nip46-credentials-keyring",
+          "groundhog-store",
+          "groundhog-store-sqlite",
+          "groundhog-store-marmot",
+          "groundhog-store-conversations",
+          "groundhog-outbox",
+          "groundhog-account-store",
+          "groundhog-link-policy",
+          "groundhog-background",
+          "groundhog-notifier",
+          "groundhog-inbox-setup",
+          "groundhog-expiry",
+          "groundhog-auth-policy",
+          "groundhog-contact-directory",
+          "groundhog-reactions",
+          "groundhog-reaction-send",
+          "groundhog-privacy-e2e",
+          "groundhog-new-message",
+          "groundhog-requests",
+          "groundhog-privacy-summary",
+          "groundhog-conversation-info",
+          "groundhog-nip29-service",
+          "groundhog-mls-service",
+          "groundhog-privacy-mls",
+          "groundhog-mls-kp-lifecycle",
+          "groundhog-mls-kp-lifecycle-adopted",
+          "groundhog-net",
+          "groundhog-tls-resumption",
+          "groundhog-group-ui",
+          "groundhog-mls-ui",
+          "groundhog-conversation-menu",
+          "groundhog-multi-send",
+          "groundhog-media",
+          "groundhog-blossom",
+          "groundhog-media-purge",
+          "groundhog-relay-guard",
+          "groundhog-media-cache-binding",
+          "groundhog-attachments",
+          "groundhog-mls-media",
+          "groundhog-mls-files",
+          "groundhog-mls-poll",
+          "groundhog-voice",
+          "groundhog-icons",
+          "groundhog-message-reply",
+          "groundhog-two-instance-acceptance",
+          "groundhog-shell",
+          "groundhog-account-ui",
+          "groundhog-conversation-list",
+          "groundhog-launch",
+          "groundhog-bus-probe",
+          "groundhog-two-instance",
+          "groundhog-account-store-gui",
+          "groundhog-conversation-view",
+          "groundhog-background-gui",
+          "groundhog-about-gui",
+          "groundhog-preferences",
+          "groundhog-onboarding",
+          "groundhog-notifier-gui",
+          "groundhog-composer",
+          "groundhog-e2e-dm",
+          "groundhog-requests-gui",
+          "groundhog-conversation-info-gui",
+          "groundhog-group-ui-gui",
+          "groundhog-mls-ui-gui",
+          "groundhog-conversation-menu-gui",
+          "groundhog-voice-ui",
+          "groundhog-attachment-ui",
+          "groundhog-nip46-pair-dialog",
+          "groundhog-report-ui",
+          "groundhog-draft-sync-gui",
+          "groundhog-lists-ui",
+          "groundhog-social-sync-gui",
+          "groundhog-emoji",
+          "groundhog-poll-ui",
+          "groundhog-gtk-lsan",
+          "nostrc-test-bus-selftest",
+          "test_relay_teardown_leaks",
+          "test_connection_recv_drain"
         ],
-        "GH_SAN_CONFIGURE_ENV": [],
-        "GH_SAN_ENV": [
-          "GROUNDHOG_SANITIZER_TESTS=groundhog-identity groundhog-account groundhog-account-relays groundhog-dm-send groundhog-relay groundhog-relay-wire groundhog-relay-publish groundhog-relay-publish-wire groundhog-nip29 groundhog-conversations groundhog-dm-inbox groundhog-store-key groundhog-store-key-keyring groundhog-secret-service-sessions groundhog-nip46-credentials-keyring groundhog-store groundhog-store-sqlite groundhog-store-marmot groundhog-store-conversations groundhog-outbox groundhog-account-store groundhog-link-policy groundhog-background groundhog-notifier groundhog-inbox-setup groundhog-expiry groundhog-auth-policy groundhog-contact-directory groundhog-reactions groundhog-reaction-send groundhog-privacy-e2e groundhog-new-message groundhog-requests groundhog-privacy-summary groundhog-conversation-info groundhog-nip29-service groundhog-mls-service groundhog-privacy-mls groundhog-mls-kp-lifecycle groundhog-mls-kp-lifecycle-adopted groundhog-net groundhog-tls-resumption groundhog-group-ui groundhog-mls-ui groundhog-conversation-menu groundhog-multi-send groundhog-media groundhog-blossom groundhog-media-purge groundhog-relay-guard groundhog-media-cache-binding groundhog-attachments groundhog-mls-media groundhog-mls-files groundhog-mls-poll groundhog-voice groundhog-icons groundhog-message-reply groundhog-two-instance-acceptance nostrc-test-bus-selftest test_relay_teardown_leaks test_connection_recv_drain",
-          "ASAN_OPTIONS=detect_leaks=1:halt_on_error=1:verify_asan_link_order=0",
-          "UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1",
-          "G_SLICE=always-malloc",
-          "LSAN_OPTIONS=suppressions={source_root}/gnome/groundhog/tests/lsan.supp:print_suppressions=1"
-        ],
-        "GH_SAN_SKIP_PATTERN": "\\*\\*\\*Skipped|Not Run",
         "GH_SAN_TARGETS": [
           "groundhog",
           "test-groundhog-identity",
@@ -30253,75 +30909,65 @@
           "test-groundhog-icons",
           "test-groundhog-message-reply",
           "test-groundhog-two-instance-acceptance",
+          "test-groundhog-shell",
+          "test-groundhog-account-ui",
+          "test-groundhog-conversation-list",
+          "test-groundhog-bus-probe",
+          "test-groundhog-two-instance",
+          "test-groundhog-conversation-view",
+          "test-groundhog-about",
+          "test-groundhog-preferences",
+          "test-groundhog-onboarding",
+          "test-groundhog-composer",
+          "test-groundhog-e2e-dm",
+          "test-groundhog-voice-ui",
+          "test-groundhog-attachment-ui",
+          "test-groundhog-nip46-pair-dialog",
+          "test-groundhog-report-ui",
+          "test-groundhog-draft-sync",
+          "test-groundhog-lists-ui",
+          "test-groundhog-social-sync",
+          "test-groundhog-emoji",
+          "test-groundhog-poll-ui",
+          "test-groundhog-gtk-lsan",
           "nostrc-test-bus-selftest",
           "test_relay_teardown_leaks",
           "test_connection_recv_drain"
         ],
-        "GH_SAN_TESTS": [
-          "groundhog-identity",
-          "groundhog-account",
-          "groundhog-account-relays",
-          "groundhog-dm-send",
-          "groundhog-relay",
-          "groundhog-relay-wire",
-          "groundhog-relay-publish",
-          "groundhog-relay-publish-wire",
-          "groundhog-nip29",
-          "groundhog-conversations",
-          "groundhog-dm-inbox",
-          "groundhog-store-key",
-          "groundhog-store-key-keyring",
-          "groundhog-secret-service-sessions",
-          "groundhog-nip46-credentials-keyring",
-          "groundhog-store",
-          "groundhog-store-sqlite",
-          "groundhog-store-marmot",
-          "groundhog-store-conversations",
-          "groundhog-outbox",
-          "groundhog-account-store",
-          "groundhog-link-policy",
-          "groundhog-background",
-          "groundhog-notifier",
-          "groundhog-inbox-setup",
-          "groundhog-expiry",
-          "groundhog-auth-policy",
-          "groundhog-contact-directory",
-          "groundhog-reactions",
-          "groundhog-reaction-send",
-          "groundhog-privacy-e2e",
-          "groundhog-new-message",
-          "groundhog-requests",
-          "groundhog-privacy-summary",
-          "groundhog-conversation-info",
-          "groundhog-nip29-service",
-          "groundhog-mls-service",
-          "groundhog-privacy-mls",
-          "groundhog-mls-kp-lifecycle",
-          "groundhog-mls-kp-lifecycle-adopted",
-          "groundhog-net",
-          "groundhog-tls-resumption",
-          "groundhog-group-ui",
-          "groundhog-mls-ui",
-          "groundhog-conversation-menu",
-          "groundhog-multi-send",
-          "groundhog-media",
-          "groundhog-blossom",
-          "groundhog-media-purge",
-          "groundhog-relay-guard",
-          "groundhog-media-cache-binding",
-          "groundhog-attachments",
-          "groundhog-mls-media",
-          "groundhog-mls-files",
-          "groundhog-mls-poll",
-          "groundhog-voice",
-          "groundhog-icons",
-          "groundhog-message-reply",
-          "groundhog-two-instance-acceptance",
-          "nostrc-test-bus-selftest",
-          "test_relay_teardown_leaks",
-          "test_connection_recv_drain"
+        "GH_SAN_CONFIGURE": [
+          "-G",
+          "Ninja",
+          "-DCMAKE_BUILD_TYPE=Debug",
+          "-DBUILD_TESTING=ON",
+          "-DBUILD_GROUNDHOG=ON",
+          "-DBUILD_NOSTR_GOBJECT=ON",
+          "-DBUILD_NOSTR_GTK=ON",
+          "-DBUILD_APPS=OFF",
+          "-DBUILD_RELAYD=OFF",
+          "-DSIGNET_ENABLE=OFF",
+          "-DGNOSTR_ENABLE_ASAN=ON",
+          "-DGNOSTR_ENABLE_UBSAN=ON"
         ],
-        "GH_SAN_TEST_JOBS": "2"
+        "GH_SAN_CONFIGURE_ENV": [
+          "PKG_CONFIG_PATH=/opt/groundhog-ci-gtk/lib/pkgconfig",
+          "LD_LIBRARY_PATH=/opt/groundhog-ci-gtk/lib"
+        ],
+        "GH_SAN_BUILD_ENV": [
+          "PKG_CONFIG_PATH=/opt/groundhog-ci-gtk/lib/pkgconfig",
+          "LD_LIBRARY_PATH=/opt/groundhog-ci-gtk/lib"
+        ],
+        "GH_SAN_ENV": [
+          "PKG_CONFIG_PATH=/opt/groundhog-ci-gtk/lib/pkgconfig",
+          "LD_LIBRARY_PATH=/opt/groundhog-ci-gtk/lib",
+          "GROUNDHOG_SANITIZER_TESTS=groundhog-identity groundhog-account groundhog-account-relays groundhog-dm-send groundhog-relay groundhog-relay-wire groundhog-relay-publish groundhog-relay-publish-wire groundhog-nip29 groundhog-conversations groundhog-dm-inbox groundhog-store-key groundhog-store-key-keyring groundhog-secret-service-sessions groundhog-nip46-credentials-keyring groundhog-store groundhog-store-sqlite groundhog-store-marmot groundhog-store-conversations groundhog-outbox groundhog-account-store groundhog-link-policy groundhog-background groundhog-notifier groundhog-inbox-setup groundhog-expiry groundhog-auth-policy groundhog-contact-directory groundhog-reactions groundhog-reaction-send groundhog-privacy-e2e groundhog-new-message groundhog-requests groundhog-privacy-summary groundhog-conversation-info groundhog-nip29-service groundhog-mls-service groundhog-privacy-mls groundhog-mls-kp-lifecycle groundhog-mls-kp-lifecycle-adopted groundhog-net groundhog-tls-resumption groundhog-group-ui groundhog-mls-ui groundhog-conversation-menu groundhog-multi-send groundhog-media groundhog-blossom groundhog-media-purge groundhog-relay-guard groundhog-media-cache-binding groundhog-attachments groundhog-mls-media groundhog-mls-files groundhog-mls-poll groundhog-voice groundhog-icons groundhog-message-reply groundhog-two-instance-acceptance groundhog-shell groundhog-account-ui groundhog-conversation-list groundhog-launch groundhog-bus-probe groundhog-two-instance groundhog-account-store-gui groundhog-conversation-view groundhog-background-gui groundhog-about-gui groundhog-preferences groundhog-onboarding groundhog-notifier-gui groundhog-composer groundhog-e2e-dm groundhog-requests-gui groundhog-conversation-info-gui groundhog-group-ui-gui groundhog-mls-ui-gui groundhog-conversation-menu-gui groundhog-voice-ui groundhog-attachment-ui groundhog-nip46-pair-dialog groundhog-report-ui groundhog-draft-sync-gui groundhog-lists-ui groundhog-social-sync-gui groundhog-emoji groundhog-poll-ui groundhog-gtk-lsan nostrc-test-bus-selftest test_relay_teardown_leaks test_connection_recv_drain",
+          "ASAN_OPTIONS=detect_leaks=1:halt_on_error=1:verify_asan_link_order=0",
+          "UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1",
+          "G_SLICE=always-malloc",
+          "LSAN_OPTIONS=suppressions={source_root}/gnome/groundhog/tests/lsan.supp:print_suppressions=1"
+        ],
+        "GH_SAN_SKIP_PATTERN": "\\*\\*\\*Skipped|Not Run",
+        "GH_SAN_TEST_JOBS": "2",
+        "GH_SAN_DISPLAY_WRAP": "1"
       }
     },
     "core.linux": {
@@ -30949,10 +31595,22 @@
       "package_jobs": [],
       "publisher": "none",
       "version_sources": [
-        {"path": "gnome/grotto-panels/CMakeLists.txt", "pattern": "project\\(grotto-panels VERSION ([0-9.]+)"},
-        {"path": "gnome/grotto-panels/meson.build", "pattern": "(?m)^project\\('grotto-panels', 'c', version: '([0-9.]+)'"},
-        {"path": "gnome/grotto-panels/packaging/debian/changelog", "pattern": "(?m)^grotto-panels \\(([0-9.]+)-1\\)"},
-        {"path": "gnome/grotto-panels/packaging/rpm/grotto-panels.spec", "pattern": "(?m)^Version:\\s+([0-9.]+)"}
+        {
+          "path": "gnome/grotto-panels/CMakeLists.txt",
+          "pattern": "project\\(grotto-panels VERSION ([0-9.]+)"
+        },
+        {
+          "path": "gnome/grotto-panels/meson.build",
+          "pattern": "(?m)^project\\('grotto-panels', 'c', version: '([0-9.]+)'"
+        },
+        {
+          "path": "gnome/grotto-panels/packaging/debian/changelog",
+          "pattern": "(?m)^grotto-panels \\(([0-9.]+)-1\\)"
+        },
+        {
+          "path": "gnome/grotto-panels/packaging/rpm/grotto-panels.spec",
+          "pattern": "(?m)^Version:\\s+([0-9.]+)"
+        }
       ]
     },
     "porthome-sys": {
@@ -31786,7 +32444,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "9f06d28a459453c784ab32cae60a7d81fbe336d776a3de1569252d08b66254d3",
       "unsupported_reason": "Ordinary and live MDK011 registrations are separate diagnostic profiles. Ordinary selection does not claim live Docker lifecycle coverage; the dedicated live lane preserves docker/display/private_bus and visibly refuses without guarded custody. Full legacy job union, runtime/header audits and original image custody remain unaccepted.",
-      "workflow_sha256": "c2666086c6eacd4e0645f8a641c160396006988e02f5d5eb5e1bcbe1f6f6cee7"
+      "workflow_sha256": "614aa54fd0c5e8a4bc142b2509e127dff40864e3ea954f97b33cdcdfac4e3b07"
     },
     ".github/workflows/groundhog-ci.yml:groundhog-sanitizers": {
       "matrix_source": "",
@@ -31794,9 +32452,9 @@
         "groundhog.linux.sanitizers"
       ],
       "coverage_gap": "groundhog_sanitizer_execution_contract",
-      "source_sha256": "acb721546bb6a8072ab7bc872d37e6bff0aa3f3367c26f7f5d5a9c66542f08a4",
+      "source_sha256": "579490b83f698f48e873760e854d78acb9626d7798d14fe396278a0782cff9dd",
       "unsupported_reason": "Ordinary Groundhog suite/MDK011 application configuration is authored but full registration/runtime/header closure and Docker image custody remain unaccepted.",
-      "workflow_sha256": "c2666086c6eacd4e0645f8a641c160396006988e02f5d5eb5e1bcbe1f6f6cee7"
+      "workflow_sha256": "614aa54fd0c5e8a4bc142b2509e127dff40864e3ea954f97b33cdcdfac4e3b07"
     },
     ".github/workflows/groundhog-release.yml:identity": {
       "matrix_source": "",
@@ -32377,8 +33035,8 @@
       "coverage_gap": "workflow_profile_union",
       "unsupported_reason": "The selected sanitizer runner executes affected checks; it is not unrestricted legacy sanitizer union or native attested profile acceptance.",
       "matrix_source": "",
-      "source_sha256": "06bff5c2079ff3ccb9b398c782058d1760f83662f199bee37a81237ddad4e04a",
-      "workflow_sha256": "c2666086c6eacd4e0645f8a641c160396006988e02f5d5eb5e1bcbe1f6f6cee7"
+      "source_sha256": "a437c24cfbd4d1f4c694fc9be2451192f34bd5b8d8901689aaab006c0bbe66c3",
+      "workflow_sha256": "614aa54fd0c5e8a4bc142b2509e127dff40864e3ea954f97b33cdcdfac4e3b07"
     },
     ".github/workflows/groundhog-release.yml:manual-broad": {
       "profiles": [],
@@ -32431,432 +33089,7 @@
   },
   "schema_version": 1,
   "test_overrides": [],
-  "diagnostic_nonmembers": {
-    "groundhog.linux.sanitizers": {
-      "schema_version": 1,
-      "profile_hash": "ff79f86c1ec4088763da9d78203f1fc75453c30a1236c5fbad842e8c3e2c98c6",
-      "registrations": [
-        "GoChannelCloseTest",
-        "GoChannelIncremental",
-        "GoChannelMpmcSlotTest",
-        "GoChannelStressTest",
-        "GoChannelTest",
-        "GoContextCancelTest",
-        "GoContextStressTest",
-        "GoContextTimeoutTest",
-        "GoErrorTest",
-        "GoFiberBasicTest",
-        "GoFiberBasicTestW4",
-        "GoFiberChanExtTest",
-        "GoFiberChanExtTestW4",
-        "GoFiberChanTest",
-        "GoFiberChanTestW4",
-        "GoFiberContextTest",
-        "GoFiberIoDeadlockTest",
-        "GoFiberIoDeadlockTestW4",
-        "GoFiberIoTest",
-        "GoFiberIoTimeoutTest",
-        "GoFiberIoTimeoutTestW4",
-        "GoFiberStarvationTest",
-        "GoFiberStarvationTestW4",
-        "GoHashMapTest2",
-        "GoIntArrayTest",
-        "GoLongAdderStressTest",
-        "GoRefPtrTest",
-        "GoSelectCancelTest",
-        "GoSelectClosedTest",
-        "GoSelectMultiTest",
-        "GoSelectTest",
-        "GoStringArrayTest",
-        "GoTickerTest",
-        "GoWaitGroupTest",
-        "MockRelayIntegration",
-        "MockRelayServerBasic",
-        "MockRelayUnit",
-        "Nip46MockRelay",
-        "Nip46QRSocket",
-        "SignerIntegration",
-        "TestHarnessExample",
-        "concurrency_channels",
-        "concurrency_subscription_shutdown",
-        "concurrency_subscription_shutdown_asan",
-        "glib_async_integration",
-        "groundhog-about",
-        "groundhog-about-gui",
-        "groundhog-account-backends",
-        "groundhog-account-remote-switch",
-        "groundhog-account-store-gui",
-        "groundhog-account-ui",
-        "groundhog-agent-events",
-        "groundhog-agents-page",
-        "groundhog-attachment-ui",
-        "groundhog-background-desktop",
-        "groundhog-background-gui",
-        "groundhog-blueprint",
-        "groundhog-bus-probe",
-        "groundhog-composer",
-        "groundhog-conversation-info-gui",
-        "groundhog-conversation-list",
-        "groundhog-conversation-menu-gui",
-        "groundhog-conversation-view",
-        "groundhog-data",
-        "groundhog-desktop",
-        "groundhog-diagnostics",
-        "groundhog-e2e-dm",
-        "groundhog-gdk-frame-tolerance",
-        "groundhog-group-ui-gui",
-        "groundhog-i18n",
-        "groundhog-issue-uploader",
-        "groundhog-launch",
-        "groundhog-metainfo",
-        "groundhog-metainfo-merged",
-        "groundhog-mls-remote",
-        "groundhog-mls-ui-gui",
-        "groundhog-nip29-group-list",
-        "groundhog-nip46-credentials-list",
-        "groundhog-nip46-inbox-nak",
-        "groundhog-nip46-nak",
-        "groundhog-nip46-pair-dialog",
-        "groundhog-nip46-pair-nak",
-        "groundhog-nip46-session",
-        "groundhog-nip46-wire",
-        "groundhog-notifier-gui",
-        "groundhog-onboarding",
-        "groundhog-packaging-version",
-        "groundhog-poll-ui",
-        "groundhog-portable-singleton",
-        "groundhog-potfiles",
-        "groundhog-preferences",
-        "groundhog-privacy-static",
-        "groundhog-profile-guard",
-        "groundhog-public-note-post",
-        "groundhog-remote-feature-matrix",
-        "groundhog-requests-gui",
-        "groundhog-resource",
-        "groundhog-schema",
-        "groundhog-shell",
-        "groundhog-signer-nip46",
-        "groundhog-status-notifier",
-        "groundhog-two-instance",
-        "groundhog-two-instance-remote-acceptance",
-        "groundhog-update-handoff",
-        "groundhog-version",
-        "groundhog-voice-ui",
-        "libnostr_connection_teardown_stress",
-        "libnostr_core_audit",
-        "libnostr_crypto_audit",
-        "libnostr_event_validation",
-        "libnostr_filter_limit_zero",
-        "libnostr_misc_audit",
-        "libnostr_networking_audit",
-        "libnostr_parsing_audit",
-        "libnostr_reconnect_same_second",
-        "libnostr_relay_callback_lifetime",
-        "libnostr_relay_write_unsent",
-        "libnostr_store_txn_audit",
-        "libnostr_subscription_dispatch",
-        "marmot_gobject_test",
-        "marmot_test_adopted",
-        "marmot_test_adopted_commits",
-        "marmot_test_app_data_update",
-        "marmot_test_commits",
-        "marmot_test_extension",
-        "marmot_test_interop",
-        "marmot_test_kp_lifecycle",
-        "marmot_test_kp_profile",
-        "marmot_test_large_commit_bound",
-        "marmot_test_media",
-        "marmot_test_mls_crypto",
-        "marmot_test_mls_framing",
-        "marmot_test_mls_group",
-        "marmot_test_mls_key_package",
-        "marmot_test_mls_key_schedule",
-        "marmot_test_mls_key_schedule_vectors",
-        "marmot_test_mls_tls",
-        "marmot_test_mls_tree",
-        "marmot_test_mls_tree_vectors",
-        "marmot_test_mls_welcome",
-        "marmot_test_protocol",
-        "marmot_test_ratchet_persist",
-        "marmot_test_rfc9420_vectors",
-        "marmot_test_storage",
-        "marmot_test_storage_contract",
-        "marmot_test_types",
-        "nip55l_approval_service",
-        "nip55l_cache_concurrency",
-        "nip55l_dbus_contract",
-        "nip55l_dbus_contract_fail_teardown",
-        "nip55l_fake_secret_service_contract",
-        "nip55l_getrelays",
-        "nip55l_keyring_schema",
-        "nip55l_nip44_b64",
-        "nip55l_profile_guard",
-        "nip55l_selector_safety",
-        "nip55l_sign_event_json",
-        "nostr_gtk_portable_media_lint",
-        "nostr_gtk_portable_media_lint_selftest",
-        "nostr_gtk_portable_potfiles",
-        "profile_fetch_simulation",
-        "profile_fetch_stress",
-        "signer/permissions",
-        "signer/trust-tiers",
-        "test-bud02-auth",
-        "test-hanami-blossom-batch",
-        "test-hanami-blossom-client",
-        "test-hanami-blossom-content-type",
-        "test-hanami-blossom-shim",
-        "test-hanami-blossom-shim-auto",
-        "test-hanami-config",
-        "test-hanami-grasp",
-        "test-hanami-index",
-        "test-hanami-integration",
-        "test-hanami-nostr",
-        "test-hanami-odb-backend",
-        "test-hanami-refdb-backend",
-        "test-hanami-server-capability-probe-shim",
-        "test-hanami-transport",
-        "test-hanami-types",
-        "test-nip34",
-        "test_connection_idle_writable",
-        "test_connection_shutdown_order",
-        "test_connection_tls_no_resumption",
-        "test_connection_writable_rearm",
-        "test_envelope",
-        "test_envelope_fallback",
-        "test_envelope_parse",
-        "test_event_canonical",
-        "test_event_priority",
-        "test_filters_move_semantics",
-        "test_fuzz_envelope_roundtrip",
-        "test_fuzz_filter_parse",
-        "test_interop",
-        "test_json_envelope",
-        "test_json_event",
-        "test_json_event_fuzzlite",
-        "test_json_filter",
-        "test_json_filter_fuzzlite",
-        "test_json_filter_robust",
-        "test_json_filter_tags",
-        "test_json_int_array",
-        "test_json_parse",
-        "test_json_raw",
-        "test_ndb_empty",
-        "test_ndb_integration",
-        "test_ndb_ordering",
-        "test_ndb_perf",
-        "test_ndb_session_e2e",
-        "test_ndb_tie_break",
-        "test_neg_bound",
-        "test_neg_fingerprint",
-        "test_neg_message",
-        "test_neg_session",
-        "test_neg_session_caps",
-        "test_neg_session_need",
-        "test_neg_session_synth",
-        "test_neg_varint",
-        "test_nip04_aead",
-        "test_nip04_error_uniformity",
-        "test_nip04_secure_roundtrip",
-        "test_nip04_strict",
-        "test_nip05_parse",
-        "test_nip05_resolve_json_errors",
-        "test_nip05_resolve_json_names",
-        "test_nip05_resolve_json_relays",
-        "test_nip06",
-        "test_nip11",
-        "test_nip14",
-        "test_nip17",
-        "test_nip19",
-        "test_nip19_tlv",
-        "test_nip21",
-        "test_nip22",
-        "test_nip23",
-        "test_nip24",
-        "test_nip25",
-        "test_nip27",
-        "test_nip28",
-        "test_nip29",
-        "test_nip30",
-        "test_nip39",
-        "test_nip40",
-        "test_nip44_convkey",
-        "test_nip44_roundtrip",
-        "test_nip44_vectors",
-        "test_nip46_async_api",
-        "test_nip46_bunker_connect_auth",
-        "test_nip46_bunker_nip44",
-        "test_nip46_bunker_reply",
-        "test_nip46_bunker_roundtrip",
-        "test_nip46_bunker_sign_event_acl_deny",
-        "test_nip46_bunker_sign_event_cb",
-        "test_nip46_bunker_sign_event_real",
-        "test_nip46_bunker_uri_issue",
-        "test_nip46_c1_hardening",
-        "test_nip46_caller_hardening",
-        "test_nip46_client_api",
-        "test_nip46_client_connect",
-        "test_nip46_client_connect_edge",
-        "test_nip46_e2e_mock",
-        "test_nip46_encryption_detection",
-        "test_nip46_envelope_build",
-        "test_nip46_glib_lifetime",
-        "test_nip46_msg",
-        "test_nip46_msg_comprehensive",
-        "test_nip46_nostrconnect_qr_login",
-        "test_nip46_pending_lifetime",
-        "test_nip46_relay_lifecycle",
-        "test_nip46_request_lifecycle",
-        "test_nip46_response_validation",
-        "test_nip46_rpc_flow_mock",
-        "test_nip46_session_management",
-        "test_nip46_signed_response_admission",
-        "test_nip46_transport_modes",
-        "test_nip46_uri",
-        "test_nip46_uri_comprehensive",
-        "test_nip47_nwc_crypto",
-        "test_nip47_nwc_envelope",
-        "test_nip47_nwc_info",
-        "test_nip47_nwc_session",
-        "test_nip47_nwc_uri",
-        "test_nip47_spec_source",
-        "test_nip49_negative",
-        "test_nip49_payload",
-        "test_nip49_roundtrip",
-        "test_nip49_spec_source",
-        "test_nip49_vectors",
-        "test_nip51",
-        "test_nip57",
-        "test_nip58",
-        "test_nip59",
-        "test_nip59_rng_failure",
-        "test_nip5f_loopback",
-        "test_nip5f_negative_env",
-        "test_nip5f_tcp",
-        "test_nip60",
-        "test_nip61",
-        "test_nip70",
-        "test_nip73",
-        "test_nip75",
-        "test_nip86_policy",
-        "test_nip92",
-        "test_nip98",
-        "test_nip99",
-        "test_nipb0",
-        "test_nostr",
-        "test_nostr_gobject_event",
-        "test_nostr_gobject_integ_event_flow",
-        "test_nostr_gobject_lifecycle_leaks",
-        "test_nostr_gobject_main_thread_latency",
-        "test_nostr_gobject_nip19",
-        "test_nostr_gobject_profile_provider_conflict_resolution",
-        "test_nostr_gobject_profile_provider_lru",
-        "test_nostr_gobject_profile_service_batching",
-        "test_nostr_gobject_relay_connect",
-        "test_nostr_gobject_relay_teardown",
-        "test_nostr_gobject_store_contract",
-        "test_nostr_gobject_subscription_eose_order",
-        "test_nostr_gtk_bind_latency_budget",
-        "test_nostr_gtk_bind_latency_perf",
-        "test_nostr_gtk_content_parser",
-        "test_nostr_gtk_markdown_pango",
-        "test_nostr_gtk_media",
-        "test_nostr_gtk_nip34_issue_model",
-        "test_nostr_gtk_nip34_issue_view",
-        "test_nostr_gtk_og_metadata",
-        "test_nostr_gtk_og_preview_card",
-        "test_nostr_gtk_portable",
-        "test_nostr_gtk_portable_i18n",
-        "test_nostr_gtk_reference_card",
-        "test_nostr_gtk_standalone_core",
-        "test_otel_consumer",
-        "test_otel_encoding",
-        "test_otel_producer",
-        "test_otel_replay",
-        "test_otel_roundtrip",
-        "test_pool_redial",
-        "test_relay",
-        "test_relay_shutdown",
-        "test_relay_unsubscribe",
-        "test_roundtrip",
-        "test_schema",
-        "test_subscription_backpressure",
-        "test_subscription_backpressure_long",
-        "test_subscription_blocking_depth",
-        "test_subscription_lifecycle"
-      ],
-      "required_closure": [
-        "groundhog-account",
-        "groundhog-account-relays",
-        "groundhog-account-store",
-        "groundhog-attachments",
-        "groundhog-auth-policy",
-        "groundhog-background",
-        "groundhog-blossom",
-        "groundhog-contact-directory",
-        "groundhog-conversation-info",
-        "groundhog-conversation-menu",
-        "groundhog-conversations",
-        "groundhog-dm-inbox",
-        "groundhog-dm-send",
-        "groundhog-expiry",
-        "groundhog-group-ui",
-        "groundhog-icons",
-        "groundhog-identity",
-        "groundhog-inbox-setup",
-        "groundhog-link-policy",
-        "groundhog-media",
-        "groundhog-media-cache-binding",
-        "groundhog-media-purge",
-        "groundhog-message-reply",
-        "groundhog-mls-files",
-        "groundhog-mls-kp-lifecycle",
-        "groundhog-mls-kp-lifecycle-adopted",
-        "groundhog-mls-media",
-        "groundhog-mls-poll",
-        "groundhog-mls-service",
-        "groundhog-mls-ui",
-        "groundhog-multi-send",
-        "groundhog-net",
-        "groundhog-new-message",
-        "groundhog-nip29",
-        "groundhog-nip29-service",
-        "groundhog-nip46-credentials-keyring",
-        "groundhog-notifier",
-        "groundhog-outbox",
-        "groundhog-privacy-e2e",
-        "groundhog-privacy-mls",
-        "groundhog-privacy-summary",
-        "groundhog-reaction-send",
-        "groundhog-reactions",
-        "groundhog-relay",
-        "groundhog-relay-guard",
-        "groundhog-relay-publish",
-        "groundhog-relay-publish-wire",
-        "groundhog-relay-wire",
-        "groundhog-requests",
-        "groundhog-secret-service-sessions",
-        "groundhog-store",
-        "groundhog-store-conversations",
-        "groundhog-store-key",
-        "groundhog-store-key-keyring",
-        "groundhog-store-marmot",
-        "groundhog-store-sqlite",
-        "groundhog-test-gst-registry",
-        "groundhog-test-homes",
-        "groundhog-tls-resumption",
-        "groundhog-two-instance-acceptance",
-        "groundhog-voice",
-        "nip55l-test-homes",
-        "nostrc-test-bus-selftest",
-        "test_connection_recv_drain",
-        "test_relay_teardown_leaks"
-      ],
-      "review": {
-        "source_sha": "8d052ca8440eba453f951b62f0c799853980c266",
-        "post_audit_sha256": "4e65b90e07c0fd26fae54fa6815e156f71643c723f386ebeb3abe36c73aa8436"
-      }
-    }
-  },
+  "diagnostic_nonmembers": {},
   "diagnostic_nonmember_subsets": {
     "groundhog.linux": {
       "candidate_contract_hash": "2f4632d4d10aaa65e3236516dd0b1f567408347604bd13fdda2b5ab841daa932",

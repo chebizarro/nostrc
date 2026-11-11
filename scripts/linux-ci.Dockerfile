@@ -94,6 +94,15 @@ RUN set -eu; \
     done; \
     apt-get install -y --no-install-recommends --no-remove "$@"; \
     rm -rf /var/lib/apt/lists/*
+# Build with scripts/ as the Docker context. These are real dependency fixes,
+# not LSan exceptions: see nostrc-swjdk and the source-pinned shared installer.
+RUN apt-get update && apt-get install -y --no-install-recommends sassc \
+ && rm -rf /var/lib/apt/lists/*
+COPY install-groundhog-ci-gtk.sh /opt/groundhog-ci-installer/install-groundhog-ci-gtk.sh
+COPY ci/gtk-4.14.5-relation-ownership.patch ci/libadwaita-1.5.0-ownership.patch /opt/groundhog-ci-installer/ci/
+RUN bash /opt/groundhog-ci-installer/install-groundhog-ci-gtk.sh
+ENV PKG_CONFIG_PATH=/opt/groundhog-ci-gtk/lib/pkgconfig
+ENV LD_LIBRARY_PATH=/opt/groundhog-ci-gtk/lib
 # /gate-lock: scripts/linux-gate.sh mounts a volume there whose lock lets one
 # gate test run (smoke or sanitizer) at a time.
 RUN useradd -m -u 1001 ci && install -d -o ci -g ci /build /work /gate-lock

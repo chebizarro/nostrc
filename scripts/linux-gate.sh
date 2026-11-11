@@ -198,7 +198,8 @@ trap cleanup_owned EXIT
 trap 'run_status=cancelled; exit 130' INT TERM
 
 echo "==> $GATE ($ARCH): preparing image $IMAGE (the first build takes a few minutes)"
-docker build -q --platform "linux/$ARCH" --iidfile "$RUN_STATE/image.id" -t "$IMAGE" - < "$SCRIPTS/linux-ci.Dockerfile" >/dev/null &
+docker build -q --platform "linux/$ARCH" --iidfile "$RUN_STATE/image.id" -t "$IMAGE" \
+  -f "$SCRIPTS/linux-ci.Dockerfile" "$SCRIPTS" >/dev/null &
 build_pid=$!
 status=0
 wait "$build_pid" || status=$?
@@ -356,10 +357,10 @@ if [ "$MODE" = sanitizers ]; then
   fi
   # The job'"'"'s ASAN/UBSAN/LSAN options, for ctest and every test it starts.
   export "${GH_SAN_ENV[@]}"
-  # No display (the job has none), CI'"'"'s default timeout and parallelism,
+  # CI display/bus policy, default timeout and parallelism,
   # each failed test'"'"'s whole output, the job'"'"'s skip check, and no rerun past
   # a sanitizer report.
-  export TEST_REGEX DISPLAY_WRAP=0 CTEST_TIMEOUT= TAIL_LINES=all \
+  export TEST_REGEX DISPLAY_WRAP="$GH_SAN_DISPLAY_WRAP" CTEST_TIMEOUT= TAIL_LINES=all \
     FORBID_PATTERN="$GH_SAN_SKIP_PATTERN" SANITIZER_REPORTS=block \
     GATE SUITE="sanitizer tests" JOBS="${SANITIZER_TEST_JOBS:-$GH_SAN_TEST_JOBS}"
   # Alone: after the host'"'"'s build, and with no Linux build running (fd 7,

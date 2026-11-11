@@ -395,16 +395,18 @@ jobs:
           if-no-files-found: ignore
 
   groundhog-sanitizers:
-    # nostrc-qp24.15.2: the display-free Groundhog tests, the G24 privacy
-    # harness among them, under AddressSanitizer with leak detection and
+    # Groundhog service AND widget tests, including the G24 privacy harness,
+    # under AddressSanitizer with leak detection and
     # UndefinedBehaviorSanitizer; any report fails its test. A leak of a
     # library outside Groundhog that Groundhog cannot free is suppressed in
     # gnome/groundhog/tests/lsan.supp, each entry naming its bead; a leak in
-    # Groundhog code is fixed instead. The widget tests stay in the job above.
+    # Groundhog code is fixed instead. Widget tests run here too (nostrc-4bi6r).
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     if: ${{ !inputs.affected }}
     env:
+      PKG_CONFIG_PATH: /opt/groundhog-ci-gtk/lib/pkgconfig
+      LD_LIBRARY_PATH: /opt/groundhog-ci-gtk/lib
       GROUNDHOG_SANITIZER_TESTS: >-
         groundhog-identity groundhog-account groundhog-account-relays groundhog-dm-send
         groundhog-relay groundhog-relay-wire groundhog-relay-publish groundhog-relay-publish-wire
@@ -427,6 +429,15 @@ jobs:
         groundhog-media-cache-binding groundhog-attachments groundhog-mls-media
         groundhog-mls-files groundhog-mls-poll groundhog-voice
         groundhog-icons groundhog-message-reply groundhog-two-instance-acceptance
+        groundhog-shell groundhog-account-ui groundhog-conversation-list
+        groundhog-launch groundhog-bus-probe groundhog-two-instance
+        groundhog-account-store-gui groundhog-conversation-view groundhog-background-gui
+        groundhog-about-gui groundhog-preferences groundhog-onboarding groundhog-notifier-gui
+        groundhog-composer groundhog-e2e-dm groundhog-requests-gui groundhog-conversation-info-gui
+        groundhog-group-ui-gui groundhog-mls-ui-gui groundhog-conversation-menu-gui
+        groundhog-voice-ui groundhog-attachment-ui groundhog-nip46-pair-dialog
+        groundhog-report-ui groundhog-draft-sync-gui groundhog-lists-ui
+        groundhog-social-sync-gui groundhog-emoji groundhog-poll-ui groundhog-gtk-lsan
         nostrc-test-bus-selftest test_relay_teardown_leaks test_connection_recv_drain
     steps:
       - name: Checkout with submodules
@@ -469,6 +480,21 @@ jobs:
           sudo dpkg-deb --extract /tmp/libsecret-dbgsym.ddeb /
           rm /tmp/libsecret-dbgsym.ddeb
 
+      - name: Install symbolized CI-only GUI ownership fixes
+        run: |
+          sudo apt-get install -y --no-install-recommends meson sassc patch ubuntu-dbgsym-keyring
+          for suite in noble noble-updates noble-proposed; do
+            echo "deb [signed-by=/usr/share/keyrings/ubuntu-dbgsym-keyring.gpg] http://ddebs.ubuntu.com $suite main universe"
+          done | sudo tee /etc/apt/sources.list.d/groundhog-ddebs.list
+          sudo apt-get update
+          symbols=()
+          for package in libfontconfig1 libpangoft2-1.0-0; do
+            version="$(dpkg-query -W -f='${Version}' "$package")"
+            symbols+=("$package-dbgsym=$version")
+          done
+          sudo apt-get install -y --no-install-recommends --no-remove "${symbols[@]}"
+          sudo bash scripts/install-groundhog-ci-gtk.sh
+
       - name: Save apt package downloads even after failure
         if: always() && steps.apt-cache.outputs.key != '' && steps.apt-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
@@ -484,12 +510,12 @@ jobs:
             -DBUILD_APPS=OFF -DBUILD_RELAYD=OFF -DSIGNET_ENABLE=OFF \
             -DGNOSTR_ENABLE_ASAN=ON -DGNOSTR_ENABLE_UBSAN=ON
 
-      - name: Build the display-free tests
+      - name: Build the service and widget tests
         run: |
           # groundhog itself: groundhog-background and groundhog-store-sqlite run it.
           targets=(groundhog)
           for test in $GROUNDHOG_SANITIZER_TESTS; do
-            case "$test" in groundhog-*) targets+=("test-$test") ;; *) targets+=("$test") ;; esac
+            case "$test" in groundhog-launch) targets+=(groundhog) ;; groundhog-*-gui) targets+=("test-${test%-gui}") ;; groundhog-*) targets+=("test-$test") ;; *) targets+=("$test") ;; esac
           done
           cmake --build build-asan --parallel 2 --target "${targets[@]}"
 
@@ -525,7 +551,8 @@ jobs:
             echo 'The sanitizer test set is incomplete' >&2
             exit 1
           fi
-          ctest --test-dir build-asan --parallel 2 --output-on-failure --no-tests=error \
+          dbus-run-session -- xvfb-run -a -s "-screen 0 1280x800x24" \
+            ctest --test-dir build-asan --parallel 2 --output-on-failure --no-tests=error \
             --output-junit "$PWD/build-asan/groundhog-asan-ctest.xml" \
             -R "$regex" | tee build-asan/groundhog-asan-ctest.log
           if grep -Eq '\*\*\*Skipped|Not Run' build-asan/groundhog-asan-ctest.log; then
@@ -548,6 +575,9 @@ jobs:
   groundhog-selected-sanitizers:
     # Keep the ordinary broad recipe below parser-readable for local adapters.
     # This job executes the same sanitizer policy with the shared selected checks.
+    env:
+      PKG_CONFIG_PATH: /opt/groundhog-ci-gtk/lib/pkgconfig
+      LD_LIBRARY_PATH: /opt/groundhog-ci-gtk/lib
     if: inputs.affected
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -594,6 +624,21 @@ jobs:
             --output /tmp/libsecret-dbgsym.ddeb
           sudo dpkg-deb --extract /tmp/libsecret-dbgsym.ddeb /
           rm /tmp/libsecret-dbgsym.ddeb
+
+      - name: Install symbolized CI-only GUI ownership fixes
+        run: |
+          sudo apt-get install -y --no-install-recommends meson sassc patch ubuntu-dbgsym-keyring
+          for suite in noble noble-updates noble-proposed; do
+            echo "deb [signed-by=/usr/share/keyrings/ubuntu-dbgsym-keyring.gpg] http://ddebs.ubuntu.com $suite main universe"
+          done | sudo tee /etc/apt/sources.list.d/groundhog-ddebs.list
+          sudo apt-get update
+          symbols=()
+          for package in libfontconfig1 libpangoft2-1.0-0; do
+            version="$(dpkg-query -W -f='${Version}' "$package")"
+            symbols+=("$package-dbgsym=$version")
+          done
+          sudo apt-get install -y --no-install-recommends --no-remove "${symbols[@]}"
+          sudo bash scripts/install-groundhog-ci-gtk.sh
       - name: Save apt package downloads even after failure
         if: always() && steps.apt-cache.outputs.key != '' && steps.apt-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
@@ -619,7 +664,8 @@ jobs:
           G_SLICE: 'always-malloc'
         run: |
           export LSAN_OPTIONS="suppressions=$PWD/gnome/groundhog/tests/lsan.supp:print_suppressions=1"
-          python3 scripts/ci-selected-execution.py run --profile groundhog.linux.sanitizers \
+          dbus-run-session -- xvfb-run -a -s "-screen 0 1280x800x24" \
+            python3 scripts/ci-selected-execution.py run --profile groundhog.linux.sanitizers \
             --build build-asan --plan "$RUNNER_TEMP/ci-selection/plan.json"
       - name: Upload selected sanitizer evidence including failures
         if: always()
