@@ -1666,7 +1666,7 @@ test_calls_withdrawal(void)
   g_assert_cmpstr(field(m, "title"), ==, "Missed Call");
   g_autofree gchar *from = g_strdup_printf("From %s", gh_conversation_get_title(c.room));
   g_assert_cmpstr(field(m, "body"), ==, from);
-  target_of(missed); /* opens the conversation */
+  g_variant_unref(target_of(missed)); /* opens the conversation */
 
   /* No answer within the ring timeout. */
   id = offer(&c, 1, GH_CALL_VOICE);

@@ -253,7 +253,7 @@ static void media_reconnect(Fixture *f, gconstpointer data)
 static void availability(Fixture *f, gconstpointer data)
 {
   (void)data; guint changes = 0; g_autoptr(GError) error = NULL;
-  g_signal_connect(f->service, "availability-changed", G_CALLBACK(avail_count), &changes);
+  gulong handler = g_signal_connect(f->service, "availability-changed", G_CALLBACK(avail_count), &changes);
   g_assert_true(gh_call_service_check_available(f->service, NULL));
   gh_call_service_set_media_factory(f->service, NULL, NULL, NULL); g_assert_cmpuint(changes, ==, 1);
   g_assert_false(gh_call_service_check_available(f->service, &error));
@@ -269,6 +269,7 @@ static void availability(Fixture *f, gconstpointer data)
   guint before = changes; gh_call_service_bind(f->service, NULL); g_assert_cmpuint(changes, ==, before + 1);
   g_assert_false(gh_call_service_check_available(f->service, &error));
   g_assert_error(error, G_IO_ERROR, G_IO_ERROR_NOT_INITIALIZED);
+  g_signal_handler_disconnect(f->service, handler);
 }
 static void codec(void)
 {
