@@ -14,3 +14,29 @@
 # libsecret-specific function is static and requires matching debug symbols.
 # Revisit when libsecret fixes this ownership error.
 leak:secret_collection_signal
+
+# nostrc-4bi6r / nostrc-ydtdf: Ubuntu Noble Pango 1.52.1 / Fontconfig 2.15.0
+# process-exit font-map/config caches, using matching distro debug symbols.
+# Repeated standalone AdwWindow + entry/button render/destroy (1 vs 100)
+# retained 51,756 bytes / 1,786 allocations in both runs, not per-window growth.
+# pangofc-fontmap.c:47-87 describes the font-map's pattern/fontset/font caches;
+# match_in_thread (905) stores FcFontSetMatch in PangoFcPatterns.match, and
+# load_fontset (2437) populates those cached fontsets/patterns. Reuses Grotto's
+# source-proven exceptions; no allocation in Groundhog or its fixtures is exempt.
+leak:match_in_thread
+leak:pango_fc_font_map_load_fontset
+# fcxml.c:3112: default-configuration patterns appended by FcParsePattern.
+# A standalone mnemonic-button create/destroy control retained the same
+# 320 bytes / 3 allocations for 1 and 100 buttons (with the test AT backend).
+leak:FcParsePattern
+# The fallback-font path is lazy: pangofc-fontmap.c:1256 renders a match and
+# interns it in the same font-map cache via pango_fc_font_map_new_font, then
+# destroys the temporary pattern. A repeated mixed-script/emoji render control
+# with the three exceptions above retained exactly 31,877 bytes / 757 allocations
+# for BOTH 1 and 100 windows. Only this library frame, not FcFontRenderPrepare.
+leak:pango_fc_fontset_load_next_font
+# Source: https://github.com/GNOME/pango/blob/1.52.1/pango/pangofc-fontmap.c
+#         https://github.com/fontconfig/fontconfig/blob/2.15.0/src/fcxml.c
+# Revisit these exceptions on dependency updates. GTK mnemonic/shortcut lists,
+# libadwaita render nodes and legal-section strings are per-operation leaks,
+# NOT caches, and must never be added as suppressions here.
