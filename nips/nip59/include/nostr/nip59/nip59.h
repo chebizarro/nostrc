@@ -14,6 +14,8 @@
  *
  * This is a general-purpose protocol that can wrap any event type.
  * NIP-17 uses this for private DMs (rumor -> seal -> gift wrap).
+ * Kind-selecting APIs also support kind 21059 for NIP-AC, with a current
+ * timestamp and the signed call event directly encrypted (no kind-13 seal).
  */
 
 #include <stdbool.h>
@@ -112,6 +114,43 @@ NOSTR_NIP59_API NostrEvent *nostr_nip59_wrap_with_key(NostrEvent *inner_event,
                                        const uint8_t ephemeral_sk_bin[32]);
 
 /**
+ * nostr_nip59_wrap_kind:
+ * @inner_event: (transfer none): signed event or unsigned rumor to wrap
+ * @recipient_pubkey_hex: recipient's public key (64 hex chars)
+ * @outer_kind: NOSTR_KIND_GIFT_WRAP (1059) or NOSTR_KIND_EPHEMERAL_GIFT_WRAP (21059)
+ * @ephemeral_sk_hex: (nullable): one-use ephemeral key, or NULL to generate
+ *
+ * Like nostr_nip59_wrap, but selects the outer kind. Kind 1059 retains the
+ * randomized timestamp; kind 21059 uses the current time, as in NIP-AC.
+ * The inner event is encrypted directly, without adding a seal or changing
+ * its timestamp, canonical id or signature. Signature validation of signed
+ * inner events occurs on unwrap, as with nostr_nip59_wrap.
+ *
+ * Returns: (transfer full) (nullable): signed gift wrap, or NULL on error
+ * (including an unsupported outer kind)
+ */
+NOSTR_NIP59_API NostrEvent *nostr_nip59_wrap_kind(NostrEvent *inner_event,
+                              const char *recipient_pubkey_hex,
+                              int outer_kind,
+                              const char *ephemeral_sk_hex);
+
+/**
+ * nostr_nip59_wrap_kind_with_key:
+ * @inner_event: (transfer none): event to wrap
+ * @recipient_pubkey_hex: recipient's public key (64 hex chars)
+ * @outer_kind: 1059 or 21059
+ * @ephemeral_sk_bin: (array fixed-size=32): one-use ephemeral secret key
+ *
+ * Like nostr_nip59_wrap_kind but accepts a binary key.
+ *
+ * Returns: (transfer full) (nullable): signed gift wrap, or NULL on error
+ */
+NOSTR_NIP59_API NostrEvent *nostr_nip59_wrap_kind_with_key(NostrEvent *inner_event,
+                                       const char *recipient_pubkey_hex,
+                                       int outer_kind,
+                                       const uint8_t ephemeral_sk_bin[32]);
+
+/**
  * nostr_nip59_unwrap:
  * @gift_wrap: (transfer none): gift wrap event (kind 1059)
  * @recipient_sk_hex: recipient's secret key (64 hex chars)
@@ -144,6 +183,35 @@ NOSTR_NIP59_API NostrEvent *nostr_nip59_unwrap_with_key(NostrEvent *gift_wrap,
                                          const uint8_t recipient_sk_bin[32]);
 
 /**
+ * nostr_nip59_unwrap_kind:
+ * @gift_wrap: (transfer none): gift wrap event
+ * @recipient_sk_hex: recipient's secret key (64 hex chars)
+ * @expected_kind: 1059 or 21059; must match the outer event exactly
+ *
+ * Like nostr_nip59_unwrap, including canonical id and signature validation,
+ * but requires the selected outer kind. Does not unwrap an additional seal.
+ *
+ * Returns: (transfer full) (nullable): inner event, or NULL on error
+ */
+NOSTR_NIP59_API NostrEvent *nostr_nip59_unwrap_kind(NostrEvent *gift_wrap,
+                                const char *recipient_sk_hex,
+                                int expected_kind);
+
+/**
+ * nostr_nip59_unwrap_kind_with_key:
+ * @gift_wrap: (transfer none): gift wrap event
+ * @recipient_sk_bin: (array fixed-size=32): recipient's secret key
+ * @expected_kind: 1059 or 21059; must match the outer event exactly
+ *
+ * Like nostr_nip59_unwrap_kind but accepts a binary key.
+ *
+ * Returns: (transfer full) (nullable): inner event, or NULL on error
+ */
+NOSTR_NIP59_API NostrEvent *nostr_nip59_unwrap_kind_with_key(NostrEvent *gift_wrap,
+                                         const uint8_t recipient_sk_bin[32],
+                                         int expected_kind);
+
+/**
  * nostr_nip59_validate_gift_wrap:
  * @gift_wrap: (transfer none): gift wrap event to validate
  *
@@ -156,6 +224,19 @@ NOSTR_NIP59_API NostrEvent *nostr_nip59_unwrap_with_key(NostrEvent *gift_wrap,
  * Returns: true if structurally valid
  */
 NOSTR_NIP59_API bool nostr_nip59_validate_gift_wrap(NostrEvent *gift_wrap);
+
+/**
+ * nostr_nip59_validate_gift_wrap_kind:
+ * @gift_wrap: (transfer none): gift wrap event to validate
+ * @expected_kind: 1059 or 21059; must match the outer event exactly
+ *
+ * Like nostr_nip59_validate_gift_wrap, but requires the selected outer kind.
+ * Existing kind-1059 entry points never accept kind 21059 implicitly.
+ *
+ * Returns: true if structurally valid, with a canonical id and valid signature
+ */
+NOSTR_NIP59_API bool nostr_nip59_validate_gift_wrap_kind(NostrEvent *gift_wrap,
+                                                       int expected_kind);
 
 /**
  * nostr_nip59_get_recipient:

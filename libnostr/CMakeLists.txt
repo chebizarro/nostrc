@@ -5,7 +5,7 @@ if(NOT COMMAND declare_component_version)
   include("${CMAKE_CURRENT_LIST_DIR}/../cmake/VersionHelpers.cmake")
 endif()
 option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" ON)
-declare_component_version(NOSTR 2 4 0)
+declare_component_version(NOSTR 2 5 0)
 
 # Core Nostr library. Provides event types, relays, subscriptions, filters, and utils.
 find_library(NSYNC_LIB nsync REQUIRED)
