@@ -6,7 +6,11 @@
 #include <nostr/nip59/nip59.h>
 #include <nostr-kinds.h>
 #include <nostr-tag.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 /* Every asynchronous leg owns its job; cancellation removes the queue's
  * ownership but cannot free a job underneath a late signer completion. */
@@ -50,15 +54,42 @@ G_DEFINE_TYPE(GhCallSignalling, gh_call_signalling, G_TYPE_OBJECT)
  * line, {"ts":<unix microseconds>,"dir":"out"|"in","event":<signed inner
  * event>}, after it was signed (out) or decrypted and validated (in). Unset,
  * the default, nothing is written and nothing else changes. The file holds
- * decrypted SDP with addresses: for the owner's own test runs only. */
+ * decrypted SDP with addresses: for the owner's own test runs only, so it
+ * is created readable by this user only (0600, as gh-diagnostics.c keeps
+ * its files) and never through a symbolic link; a path that already exists
+ * as anything but a regular file of this user with no group or other
+ * permissions is refused, with one warning, and tracing stays off for the
+ * rest of the session rather than appending plaintext to it. */
 static void trace(GhCallSignalling *self, const gchar *direction, const gchar *inner_json)
 {
   if (!self->trace_path) return;
-  FILE *file = fopen(self->trace_path, "a");
-  if (!file) { g_warning("GROUNDHOG_CALL_TRACE: cannot append to %s", self->trace_path); return; }
-  fprintf(file, "{\"ts\":%" G_GINT64_FORMAT ",\"dir\":\"%s\",\"event\":%s}\n",
-          g_get_real_time(), direction, inner_json);
-  fclose(file);
+  struct stat st;
+  const gchar *refused = NULL;
+  int fd = open(self->trace_path, O_WRONLY | O_CREAT | O_APPEND | O_NOFOLLOW | O_CLOEXEC, 0600);
+  if (fd < 0) refused = errno == ELOOP ? "it is a symbolic link" : g_strerror(errno);
+  else if (fstat(fd, &st) < 0) refused = g_strerror(errno);
+  else if (!S_ISREG(st.st_mode)) refused = "it is not a regular file";
+  else if (st.st_uid != getuid()) refused = "it is not owned by you";
+  else if (st.st_mode & 077) refused = "it is readable or writable by others";
+  if (refused) {
+    g_warning("GROUNDHOG_CALL_TRACE: cannot append to %s: %s; call tracing is off for this session",
+              self->trace_path, refused);
+    if (fd >= 0) close(fd);
+    g_clear_pointer(&self->trace_path, g_free);
+    return;
+  }
+  g_autofree gchar *line = g_strdup_printf("{\"ts\":%" G_GINT64_FORMAT ",\"dir\":\"%s\",\"event\":%s}\n",
+                                           g_get_real_time(), direction, inner_json);
+  for (const gchar *p = line, *end = line + strlen(line); p < end;) {
+    ssize_t n = write(fd, p, (size_t)(end - p));
+    if (n < 0 && errno == EINTR) continue;
+    if (n <= 0) {
+      g_warning("GROUNDHOG_CALL_TRACE: cannot append to %s: %s", self->trace_path, g_strerror(errno));
+      break;
+    }
+    p += n;
+  }
+  close(fd);
 }
 
 static void pump(GhCallSignalling *self);
