@@ -2190,50 +2190,65 @@ static const gchar *const v2_tables[] = {
   "mls_snapshot_rows",
 };
 
-/* Turns a fresh store back into what schema v1 created (a store from before
- * G23), with MLS state in v1's mls_kv. */
+/* Build an old store from its append-only migrations. Do not reverse-migrate
+ * a current store: later tables and columns would otherwise have to be undone
+ * here after every schema bump. */
+static void
+make_committed_store(const TestAccount *account, guint version, const gchar *rows)
+{
+  g_assert_cmpint(g_mkdir_with_parents(g_get_user_data_dir(), 0700), ==, 0);
+  g_autoptr(GError) error = NULL;
+  g_autofree gchar *dir = gh_store_account_dir_path(NULL, account->pubkey, &error);
+  g_assert_no_error(error);
+  g_assert_nonnull(dir);
+  g_assert_cmpint(g_mkdir_with_parents(dir, 0700), ==, 0);
+  g_autofree gchar *path = g_build_filename(dir, "store.db", NULL);
+  sqlite3 *db = NULL;
+  g_assert_cmpint(sqlite3_open_v2(path, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, NULL),
+                  ==, SQLITE_OK);
+  g_assert_cmpint(g_chmod(path, 0600), ==, 0);
+  gsize key_size = 0;
+  const guint8 *key = g_bytes_get_data(account->key, &key_size);
+  g_assert_cmpuint(key_size, ==, GH_STORE_KEY_SIZE);
+  char key_spec[2 + 2 * GH_STORE_KEY_SIZE + 2];
+  key_spec[0] = 'x';
+  key_spec[1] = '\'';
+  sodium_bin2hex(key_spec + 2, 2 * GH_STORE_KEY_SIZE + 1, key, GH_STORE_KEY_SIZE);
+  key_spec[2 + 2 * GH_STORE_KEY_SIZE] = '\'';
+  key_spec[3 + 2 * GH_STORE_KEY_SIZE] = '\0';
+  g_assert_cmpint(sqlite3_key_v2(db, "main", key_spec, strlen(key_spec)), ==, SQLITE_OK);
+  sodium_memzero(key_spec, sizeof key_spec);
+
+  gsize n_migrations = 0;
+  const GhStoreMigration *migrations = gh_store_schema_get_migrations(&n_migrations);
+  g_assert_cmpuint(version, >, 0);
+  g_assert_cmpuint(n_migrations, >, version);
+  g_assert_cmpint(sqlite3_exec(db, "BEGIN IMMEDIATE", NULL, NULL, NULL), ==, SQLITE_OK);
+  for (guint i = 0; i < version; i++) {
+    g_assert_cmpint(migrations[i].version, ==, (gint)i + 1);
+    g_assert_cmpint(sqlite3_exec(db, migrations[i].sql, NULL, NULL, NULL), ==, SQLITE_OK);
+    char *record = sqlite3_mprintf(
+      "INSERT INTO schema_migrations (version, applied_at, description) "
+      "VALUES (%d, 1, %Q)", migrations[i].version, migrations[i].description);
+    g_assert_cmpint(sqlite3_exec(db, record, NULL, NULL, NULL), ==, SQLITE_OK);
+    sqlite3_free(record);
+  }
+  char *seed = sqlite3_mprintf(
+    "INSERT INTO meta (key,value) VALUES ('account_pubkey',%Q),('store_id',%Q),"
+    "('created_at','1');PRAGMA user_version=%u;", account->pubkey, account->store_id, version);
+  g_assert_cmpint(sqlite3_exec(db, seed, NULL, NULL, NULL), ==, SQLITE_OK);
+  sqlite3_free(seed);
+  g_assert_cmpint(sqlite3_exec(db, rows, NULL, NULL, NULL), ==, SQLITE_OK);
+  g_assert_cmpint(sqlite3_exec(db, "COMMIT", NULL, NULL, NULL), ==, SQLITE_OK);
+  g_assert_cmpint(sqlite3_close(db), ==, SQLITE_OK);
+}
+
 static void
 make_v1_store(const TestAccount *account)
 {
-  GhStore *store = store_open(account, NULL);
-  MarmotStorage *s = storage_new(store);
-  assert_marmot_ok(s->mls_store(s->ctx, "kp_slot", (const uint8_t *) "owner", 5,
-                                (const uint8_t *) "v1 state", 8));
-  marmot_storage_free(s);
-  for (guint i = 0; i < G_N_ELEMENTS(v2_tables); i++) {
-    g_autofree gchar *sql = g_strdup_printf("DROP TABLE %s", v2_tables[i]);
-    sql_exec(store, sql);
-  }
-  /* Later migrations are undone too: v3 (G19) added contacts.verified_at;
-   * v4 (W18) the arrival order, read, timer and inbox columns and two
-   * triggers; v5 (W25) the MLS source epoch, attachment identities and
-   * group pictures; v9 (W32) the picture consent column. */
-  sql_exec(store, "DROP TABLE public_notes"); /* v10 (B2) */
-  sql_exec(store, "DROP TABLE reaction_tombstones");
-  sql_exec(store, "DROP TABLE pending_reactions");
-  sql_exec(store, "DROP INDEX conversations_by_backend_key");
-  sql_exec(store, "DROP TABLE reactions");
-  sql_exec(store, "DROP TABLE group_images");
-  sql_exec(store, "DROP TABLE message_media");
-  sql_exec(store, "ALTER TABLE messages DROP COLUMN mls_epoch");
-  sql_exec(store, "ALTER TABLE contacts DROP COLUMN verified_at");
-  sql_exec(store, "ALTER TABLE contacts DROP COLUMN picture_allowed_at"); /* v9 (W32) */
-  static const gchar *const v4_undo[] = {
-    "DROP TRIGGER messages_admit_seq",
-    "DROP TRIGGER messages_keep_read_marker",
-    "ALTER TABLE messages DROP COLUMN seq",
-    "ALTER TABLE conversations DROP COLUMN admit_seq",
-    "ALTER TABLE conversations DROP COLUMN read_seq",
-    "ALTER TABLE conversations DROP COLUMN reply_read_at",
-    "ALTER TABLE conversations DROP COLUMN reply_read_id",
-    "ALTER TABLE conversations DROP COLUMN timer_changed_at",
-    "ALTER TABLE outbox_events DROP COLUMN no_inbox",
-  };
-  for (guint i = 0; i < G_N_ELEMENTS(v4_undo); i++)
-    sql_exec(store, v4_undo[i]);
-  sql_exec(store, "DELETE FROM schema_migrations WHERE version >= 2");
-  sql_exec(store, "PRAGMA user_version = 1");
-  gh_store_close(store);
+  make_committed_store(account, 1,
+    "INSERT INTO mls_kv (label,key,value) VALUES "
+    "('kp_slot',CAST('owner' AS BLOB),CAST('v1 state' AS BLOB));");
 }
 
 static void
@@ -2268,7 +2283,7 @@ test_migration_v1_to_v2(void)
 {
   TestAccount account;
   test_account_init(&account, ACCOUNT_A);
-  g_assert_cmpint(GH_STORE_SCHEMA_VERSION, ==, 10);
+  g_assert_cmpint(GH_STORE_SCHEMA_VERSION, >, 1);
   make_v1_store(&account);
   assert_migrated(&account);
   /* Reopening does not migrate again. */
@@ -2285,7 +2300,6 @@ test_migration_v6_scrubs_messages(void)
 {
   TestAccount account;
   test_account_init(&account, ACCOUNT_A);
-  GhStore *store = store_open(&account, NULL);
   gchar inner_id[65] = { 0 };
   g_autofree gchar *inner = inner_event_of("a plaintext row from schema 5", inner_id);
   char *rows = sqlite3_mprintf(
@@ -2299,21 +2313,10 @@ test_migration_v6_scrubs_messages(void)
     "0303030303030303030303030303030303030303030303030303030303030303",
     "3333333333333333333333333333333333333333333333333333333333333333",
     "0404040404040404040404040404040404040404040404040404040404040404");
-  sql_exec(store, rows);
+  make_committed_store(&account, 5, rows);
   sqlite3_free(rows);
-  /* Back to schema 5. */
-  sql_exec(store, "ALTER TABLE contacts DROP COLUMN picture_allowed_at"); /* v9 (W32) */
-  sql_exec(store, "DROP INDEX mls_messages_by_epoch");
-  sql_exec(store, "DROP TABLE public_notes"); /* v10 (B2) */
-  sql_exec(store, "DROP TABLE reaction_tombstones");
-  sql_exec(store, "DROP TABLE pending_reactions");
-  sql_exec(store, "DROP INDEX conversations_by_backend_key");
-  sql_exec(store, "DROP TABLE reactions");
-  sql_exec(store, "DELETE FROM schema_migrations WHERE version >= 6");
-  sql_exec(store, "PRAGMA user_version = 5");
-  gh_store_close(store);
 
-  store = store_open_flags(&account, NULL, GH_STORE_OPEN_NONE);
+  GhStore *store = store_open_flags(&account, NULL, GH_STORE_OPEN_NONE);
   g_assert_cmpint(sql_int(store, "PRAGMA user_version"), ==, GH_STORE_SCHEMA_VERSION);
   g_autofree gchar *kept = sql_text(store, "SELECT content FROM mls_messages WHERE "
                                            "id = x'0101010101010101010101010101010101010101010101"
@@ -2332,57 +2335,12 @@ test_migration_v6_scrubs_messages(void)
 static void
 make_committed_v7_store(const TestAccount *account)
 {
-  /* Build the file directly from the append-only migrations that shipped in
-   * v7. No v8 store is ever created or reverse-migrated for this fixture. */
-  g_assert_cmpint(g_mkdir_with_parents(g_get_user_data_dir(), 0700), ==, 0);
-  g_autoptr(GError) error = NULL;
-  g_autofree gchar *dir = gh_store_account_dir_path(NULL, account->pubkey, &error);
-  g_assert_no_error(error);
-  g_assert_nonnull(dir);
-  g_assert_cmpint(g_mkdir_with_parents(dir, 0700), ==, 0);
-  g_autofree gchar *path = g_build_filename(dir, "store.db", NULL);
-  sqlite3 *db = NULL;
-  g_assert_cmpint(sqlite3_open_v2(path, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, NULL),
-                  ==, SQLITE_OK);
-  g_assert_cmpint(g_chmod(path, 0600), ==, 0);
-  gsize key_size = 0;
-  const guint8 *key = g_bytes_get_data(account->key, &key_size);
-  g_assert_cmpuint(key_size, ==, GH_STORE_KEY_SIZE);
-  char key_spec[2 + 2 * GH_STORE_KEY_SIZE + 2];
-  key_spec[0] = 'x';
-  key_spec[1] = '\'';
-  sodium_bin2hex(key_spec + 2, 2 * GH_STORE_KEY_SIZE + 1, key, GH_STORE_KEY_SIZE);
-  key_spec[2 + 2 * GH_STORE_KEY_SIZE] = '\'';
-  key_spec[3 + 2 * GH_STORE_KEY_SIZE] = '\0';
-  g_assert_cmpint(sqlite3_key_v2(db, "main", key_spec, strlen(key_spec)), ==, SQLITE_OK);
-  sodium_memzero(key_spec, sizeof key_spec);
-
-  gsize n_migrations = 0;
-  const GhStoreMigration *migrations = gh_store_schema_get_migrations(&n_migrations);
-  g_assert_cmpuint(n_migrations, >=, 8);
-  g_assert_cmpint(sqlite3_exec(db, "BEGIN IMMEDIATE", NULL, NULL, NULL), ==, SQLITE_OK);
-  for (guint i = 0; i < 7; i++) {
-    g_assert_cmpint(migrations[i].version, ==, (gint)i + 1);
-    g_assert_cmpint(sqlite3_exec(db, migrations[i].sql, NULL, NULL, NULL), ==, SQLITE_OK);
-    char *record = sqlite3_mprintf(
-      "INSERT INTO schema_migrations (version, applied_at, description) "
-      "VALUES (%d, 1, %Q)", migrations[i].version, migrations[i].description);
-    g_assert_cmpint(sqlite3_exec(db, record, NULL, NULL, NULL), ==, SQLITE_OK);
-    sqlite3_free(record);
-  }
-  char *seed = sqlite3_mprintf(
-    "INSERT INTO meta (key,value) VALUES ('account_pubkey',%Q),('store_id',%Q),"
-    "('created_at','1');"
+  make_committed_store(account, 7,
     "INSERT INTO conversations (id,backend,backend_key,created_at,last_activity) "
     "VALUES (12345,1,'migration-room',1,1);"
     "INSERT INTO reactions (conversation_id,target_msg_id,reaction_msg_id,sender_pubkey,"
     "emoji,created_at,room_id) VALUES "
-    "(12345,'old-target','old-reaction','old-sender','+',1,'migration-room');"
-    "PRAGMA user_version=7;", account->pubkey, account->store_id);
-  g_assert_cmpint(sqlite3_exec(db, seed, NULL, NULL, NULL), ==, SQLITE_OK);
-  sqlite3_free(seed);
-  g_assert_cmpint(sqlite3_exec(db, "COMMIT", NULL, NULL, NULL), ==, SQLITE_OK);
-  g_assert_cmpint(sqlite3_close(db), ==, SQLITE_OK);
+    "(12345,'old-target','old-reaction','old-sender','+',1,'migration-room');");
 }
 
 static void
