@@ -366,6 +366,16 @@ window_up(Fixture *f)
   gh_inbox_status_attach(gh_window_get_status(f->window), f->inbox, f->relays);
   GhInboxSetupConfig config = config_of(f);
   f->view = gh_onboarding_attach(f->window, &config);
+  /* Ubuntu 24.04 GTK 4.14.5+ds-0ubuntu0.10 overwrites queued focus refs
+   * during synthetic page changes on an unmapped fixture. Settle that queue
+   * through a visible focus target before driving the UI; teardown is too late.
+   * Remove once the tested GTK contains
+   * https://github.com/GNOME/gtk/commit/a6e1c8a57e523fcf734d5b81a5e1d49c70457f4b
+   * and this fixture has no GTK focus retention without it (nostrc-swjdk). */
+  GtkWindow *window = GTK_WINDOW(f->window);
+  gtk_window_present(window);
+  gtk_widget_child_focus(GTK_WIDGET(window), GTK_DIR_TAB_FORWARD);
+  gtk_window_set_focus(window, NULL);
 }
 
 static void

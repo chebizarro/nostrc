@@ -25,6 +25,7 @@ MODULES = (
     "test_cmake_inventory_compat",
     "test_local_selective_delivery",
     "test_workflow_defaults",
+    "test_groundhog_gui_sanitizers",
     "test_ci_selected_execution",
     "test_ordinary_gate_wiring",
     "test_closeout_producers",

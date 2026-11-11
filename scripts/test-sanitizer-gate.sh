@@ -17,7 +17,7 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 config() {
     python3 "$helper" config --workflow "$1" --source-root /work/src > "$tmp/config.sh"
     GH_SAN_TESTS=() GH_SAN_TARGETS=() GH_SAN_CONFIGURE=() GH_SAN_ENV=() GH_SAN_SKIP_PATTERN=""
-    GH_SAN_CONFIGURE_ENV=() GH_SAN_BUILD_ENV=()
+    GH_SAN_CONFIGURE_ENV=() GH_SAN_BUILD_ENV=() GH_SAN_DISPLAY_WRAP=""
     # shellcheck disable=SC1091
     . "$tmp/config.sh"
 }
@@ -38,12 +38,23 @@ has test_connection_recv_drain "${GH_SAN_TESTS[@]}" || fail "the last (non-groun
 [ "${GH_SAN_TARGETS[0]}" = groundhog ] || fail "groundhog is not built first"
 has test-groundhog-mls-service "${GH_SAN_TARGETS[@]}" || fail "groundhog-* not mapped to test-*"
 has test_connection_recv_drain "${GH_SAN_TARGETS[@]}" || fail "other tests not kept as targets"
-[ "${#GH_SAN_TARGETS[@]}" -eq $((${#GH_SAN_TESTS[@]} + 1)) ] || fail "target count"
+expected_targets=(groundhog)
+for test in "${GH_SAN_TESTS[@]}"; do
+    case "$test" in
+        groundhog-launch) expected_targets+=(groundhog) ;;
+        groundhog-*-gui) expected_targets+=("test-${test%-gui}") ;;
+        groundhog-*) expected_targets+=("test-$test") ;;
+        *) expected_targets+=("$test") ;;
+    esac
+done
+[ "$(printf '%s\n' "${GH_SAN_TARGETS[@]}" | sort)" = \
+  "$(printf '%s\n' "${expected_targets[@]}" | sort -u)" ] || fail "real executable target mapping"
+[ "$GH_SAN_DISPLAY_WRAP" = 1 ] || fail "GUI display/bus policy"
 [ "${GH_SAN_CONFIGURE[0]} ${GH_SAN_CONFIGURE[1]}" = "-G Ninja" ] || fail "configure starts ${GH_SAN_CONFIGURE[*]}"
 for flag in -DGNOSTR_ENABLE_ASAN=ON -DGNOSTR_ENABLE_UBSAN=ON -DBUILD_GROUNDHOG=ON -DBUILD_APPS=OFF; do
     has "$flag" "${GH_SAN_CONFIGURE[@]}" || fail "configure lacks $flag"
 done
-has ASAN_OPTIONS=detect_leaks=1:halt_on_error=1:verify_asan_link_order=0 "${GH_SAN_ENV[@]}" ||
+has ASAN_OPTIONS=detect_leaks=1:halt_on_error=1:verify_asan_link_order=0:malloc_context_size=64 "${GH_SAN_ENV[@]}" ||
     fail "ASAN_OPTIONS not read: ${GH_SAN_ENV[*]}"
 has UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 "${GH_SAN_ENV[@]}" || fail "UBSAN_OPTIONS not read"
 has G_SLICE=always-malloc "${GH_SAN_ENV[@]}" || fail "G_SLICE not read"
@@ -66,7 +77,7 @@ has -DNEW_FLAG=1 "${GH_SAN_CONFIGURE[@]}" || fail "an added configure flag was n
 mutate 's/halt_on_error=1:verify_asan_link_order=0/halt_on_error=1:verify_asan_link_order=0:x=1/' \
     > "$tmp/opt.yml"
 config "$tmp/opt.yml"
-has ASAN_OPTIONS=detect_leaks=1:halt_on_error=1:verify_asan_link_order=0:x=1 "${GH_SAN_ENV[@]}" ||
+has ASAN_OPTIONS=detect_leaks=1:halt_on_error=1:verify_asan_link_order=0:x=1:malloc_context_size=64 "${GH_SAN_ENV[@]}" ||
     fail "a changed ASAN option was not read"
 mutate 's/^( *)(export LSAN_OPTIONS=)/$1export G_DEBUG=fatal-criticals\n$1$2/' > "$tmp/export.yml"
 config "$tmp/export.yml"
@@ -92,7 +103,7 @@ perl -0pe 's/\njobs:\n/\nenv:\n  ASAN_OPTIONS: detect_leaks=0\n  NOSTRC_WF: on\n
 config "$tmp/wf-env.yml"
 has NOSTRC_WF=on "${GH_SAN_ENV[@]}" || fail "workflow env did not reach the tests"
 has NOSTRC_WF=on "${GH_SAN_CONFIGURE_ENV[@]}" || fail "workflow env did not reach configure"
-has ASAN_OPTIONS=detect_leaks=1:halt_on_error=1:verify_asan_link_order=0 "${GH_SAN_ENV[@]}" ||
+has ASAN_OPTIONS=detect_leaks=1:halt_on_error=1:verify_asan_link_order=0:malloc_context_size=64 "${GH_SAN_ENV[@]}" ||
     fail "the test step's ASAN_OPTIONS did not override the workflow's"
 has ASAN_OPTIONS=detect_leaks=0 "${GH_SAN_CONFIGURE_ENV[@]}" || fail "workflow env missing at configure"
 # The configure step's CC and CFLAGS reach configure, and only configure.
@@ -137,7 +148,7 @@ rejects job-matrix 's/^(  groundhog-sanitizers:)$/$1\n    strategy:\n      matri
 rejects runs-on 'BEGIN { undef $/ } s/(\n  groundhog-sanitizers:\n(?: +#[^\n]*\n)*)    runs-on: ubuntu-24.04/$1    runs-on: ubuntu-26.04/' "runs on 'ubuntu-26.04'"
 rejects test-workdir 's/^(      - name: Run them under the sanitizers)$/$1\n        working-directory: build-asan/' 'test step has working-directory'
 rejects configure-shell 's/^(      - name: Configure with ASAN and UBSAN)$/$1\n        shell: sh/' 'configure step has shell'
-rejects build-if 's/^(      - name: Build the display-free tests)$/$1\n        if: false/' 'build step has if'
+rejects build-if 's/^(      - name: Build the service and widget tests)$/$1\n        if: false/' 'build step has if'
 rejects env-expression 's/^( +G_SLICE: )always-malloc$/$1\${{ vars.SLICE }}/' 'not a plain value'
 rejects github-env 's/^(          cmake -S \. -B build-asan)/          echo CC=clang >> "\$GITHUB_ENV"\n$1/' 'writes \$GITHUB_ENV'
 if python3 "$helper" config --workflow "$tmp/none.yml" > /dev/null 2>&1; then

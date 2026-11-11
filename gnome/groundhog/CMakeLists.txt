@@ -251,6 +251,13 @@ if (BUILD_TESTING)
     ENVIRONMENT "G_DEBUG=fatal-criticals,fatal-warnings")
 
 
+  add_executable(test-groundhog-gtk-lsan tests/ui/test_gtk_lsan.c)
+  target_include_directories(test-groundhog-gtk-lsan PRIVATE ${CMAKE_SOURCE_DIR}/tests/common)
+  target_compile_options(test-groundhog-gtk-lsan PRIVATE -Wall -Wextra -Werror)
+  target_link_libraries(test-groundhog-gtk-lsan PRIVATE PkgConfig::GROUNDHOG_DEPS)
+  add_test(NAME groundhog-gtk-lsan COMMAND test-groundhog-gtk-lsan)
+  set_tests_properties(groundhog-gtk-lsan PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 20)
+
   # Layout/accessibility check for the shell templates: instantiates the
   # compiled GhWindow/GhSidebarPage/GhContentPage from the GResource (no
   # GSettings or signer). It needs a GTK display connection, so it self-skips

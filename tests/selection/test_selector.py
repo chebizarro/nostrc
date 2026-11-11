@@ -193,6 +193,18 @@ class PolicyTests(unittest.TestCase):
         self.assertNotIn("grotto.permissions.repeat",
                          plan(p, paths=("apps/relayd/src/relay_ingress.c",))["selected_checks"])
 
+    def test_investigation_patch_draft_has_explicit_conservative_broadening(self):
+        p = s.load_inventory(ROOT / "tests/selection/inventory.json")
+        path = "docs/investigations/glib-gpoll-select-ebadf-2026-11-10.patch"
+        classified = s.classify(p, path)
+        self.assertEqual((classified["effect"], classified["nodes"], classified["unclassified"]),
+                         ("global", ["build.global"], False))
+        self.assertEqual(plan(p, paths=(path,))["effective_mode"], "broad")
+        # The whitespace exception for upstream drafts is not a blanket
+        # non-execution exemption for investigation inputs or executable probes.
+        for unrelated in ("docs/investigations/unknown.patch", "docs/investigations/run.sh"):
+            self.assertTrue(s.classify(p, unrelated)["unclassified"])
+
     def test_inventory_covers_all_tracked_paths_or_explicit_broadening(self):
         p = s.load_inventory(ROOT / "tests/selection/inventory.json")
         import os

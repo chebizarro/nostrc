@@ -196,7 +196,8 @@ relay_message(SoupWebsocketConnection *connection, SoupWebsocketDataType type,
   relay->event = nostr_event_new();
   g_assert_cmpint(nostr_event_deserialize_compact(relay->event, json, NULL), ==, 1);
   g_assert_true(nostr_event_check_signature(relay->event));
-  g_autofree char *ok = g_strdup_printf("[\"OK\",\"%s\",true,\"\"]", nostr_event_get_id(relay->event));
+  g_autofree char *id = nostr_event_get_id(relay->event);
+  g_autofree char *ok = g_strdup_printf("[\"OK\",\"%s\",true,\"\"]", id);
   soup_websocket_connection_send_text(connection, ok);
 }
 

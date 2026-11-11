@@ -615,10 +615,13 @@ static void
 fixture_teardown(Fixture *f, gconstpointer data)
 {
   (void)data;
-  g_clear_object(&f->pending);
   gpointer weak = f->store;
   g_object_add_weak_pointer(G_OBJECT(f->store), &weak);
   gtk_window_destroy(f->window);
+  if (f->pending) {
+    answer_fetch(f, NULL, NULL);
+    drain_idle();
+  }
   g_object_unref(f->store);
   spin_until(is_null, &weak);
   g_settings_reset(f->settings, "link-previews");
@@ -1288,7 +1291,8 @@ test_reference_card(Fixture *f, gconstpointer data)
   resolver->local_json = g_strdup(original);
   gh_conversation_view_references_changed(f->view);
   g_assert_cmpint(card_state(row), ==, GN_NOSTR_REFERENCE_CARD_FETCHING);
-  g_task_return_pointer(resolver->pending, g_strdup(original), g_free);
+  g_autoptr(GTask) pending = g_steal_pointer(&resolver->pending);
+  g_task_return_pointer(pending, g_strdup(original), g_free);
   drain_idle();
   g_assert_cmpint(card_state(row), ==, GN_NOSTR_REFERENCE_CARD_RESOLVED);
   g_assert_true(shown(row_child(row, "reference_actions")));

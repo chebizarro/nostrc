@@ -273,7 +273,7 @@ def _step(steps, needle, what):
 BUILD_SHAPE = [
     r"targets=\((?P<initial>[^)]*)\)",
     r'for test in \$%s; do' % TESTS_VAR,
-    r'case "\$test" in groundhog-\*\) targets\+=\("test-\$test"\) ;; \*\) targets\+=\("\$test"\) ;; esac',
+    r'case "\$test" in (groundhog-launch\) targets\+=\(groundhog\) ;; )?(groundhog-\*-gui\) targets\+=\("test-\$\{test%-gui\}"\) ;; )?groundhog-\*\) targets\+=\("test-\$test"\) ;; \*\) targets\+=\("\$test"\) ;; esac',
     r"done",
     r'cmake --build (?P<dir>\S+) --parallel \d+ --target "\$\{targets\[@\]\}"',
 ]
@@ -373,7 +373,17 @@ def job_config(text, source_root):
         if "dir" in m.groupdict() and m.group("dir") != build_dir:
             raise WorkflowError("the build step builds %s, configure makes %s"
                                 % (m.group("dir"), build_dir))
-    targets = initial + [("test-" + t) if t.startswith("groundhog-") else t for t in tests]
+    gui_targets = 'groundhog-*-gui)' in build_step["run"]
+    launch_target = 'groundhog-launch)' in build_step["run"]
+    targets = list(initial)
+    for test in tests:
+        if launch_target and test == "groundhog-launch":
+            targets.append("groundhog")
+        elif test.startswith("groundhog-"):
+            targets.append("test-" + (test.removesuffix("-gui") if gui_targets else test))
+        else:
+            targets.append(test)
+    targets = list(dict.fromkeys(targets))
 
     # Test run: the step's env, its exports, its ctest options, its skip check.
     run_step = _step(steps, "ctest", "test")
@@ -393,8 +403,17 @@ def job_config(text, source_root):
     if 'read -ra tests <<< "$%s"' % TESTS_VAR not in script or \
             "regex=\"^($(IFS='|'; echo \"${tests[*]}\"))\\$\"" not in script:
         raise WorkflowError("the test step no longer selects exactly %s" % TESTS_VAR)
-    ctest = [c for c in _commands(script) if c.startswith("ctest --test-dir %s " % build_dir)
-             and " -N " not in c]
+    display_prefix = r'^dbus-run-session -- xvfb-run -a -s "-screen 0 1280x800x24"\s+'
+    ctest = []
+    display_wrap = "0"
+    for command in _commands(script):
+        wrapped = re.match(display_prefix, command)
+        candidate = command[wrapped.end():] if wrapped else command
+        if re.match(r"[A-Za-z_]\w*=\S*\s+ctest\b", candidate):
+            raise WorkflowError("the test step sets a variable the gate does not read: " + command)
+        if candidate.startswith("ctest --test-dir %s " % build_dir) and " -N " not in candidate:
+            ctest.append(candidate)
+            display_wrap = "1" if wrapped else "0"
     if len(ctest) != 1:
         raise WorkflowError("expected one ctest run of %s in the test step, found %r"
                             % (build_dir, ctest))
@@ -429,6 +448,7 @@ def job_config(text, source_root):
         "GH_SAN_ENV": pairs(env),
         "GH_SAN_SKIP_PATTERN": skip.group(1),
         "GH_SAN_TEST_JOBS": test_jobs,
+        "GH_SAN_DISPLAY_WRAP": display_wrap,
     }
 
 
@@ -509,8 +529,11 @@ def shared_config(policy, profile_id, source_root):
         raise WorkflowError("unsupported shared sanitizer metadata type")
     config = expand(config)
     arrays = {"GH_SAN_TESTS", "GH_SAN_TARGETS", "GH_SAN_CONFIGURE", "GH_SAN_CONFIGURE_ENV", "GH_SAN_BUILD_ENV", "GH_SAN_ENV"}
-    if not isinstance(config, dict) or set(config) != arrays | {"GH_SAN_SKIP_PATTERN", "GH_SAN_TEST_JOBS"}:
+    fields = arrays | {"GH_SAN_SKIP_PATTERN", "GH_SAN_TEST_JOBS"}
+    if not isinstance(config, dict) or set(config) not in (fields, fields | {"GH_SAN_DISPLAY_WRAP"}):
         raise WorkflowError("shared sanitizer config has missing/unsupported fields")
+    if config.get("GH_SAN_DISPLAY_WRAP", "0") not in ("0", "1"):
+        raise WorkflowError("shared sanitizer display/bus policy is invalid")
     for name in arrays:
         if not isinstance(config[name], list) or not all(isinstance(x, str) and x for x in config[name]):
             raise WorkflowError("shared sanitizer config requires string argv: " + name)

@@ -1476,8 +1476,8 @@ test_gui_group_info(void)
   g_assert_cmpuint(club->invites->len, ==, 1);
 
   /* Remove Bob, confirmed: the relay removes him. */
-  confirm(window, dialog, "group.remove", g_variant_new_string(hex_bob), "remove_dialog",
-          "_Remove");
+  g_autoptr(GVariant) remove_member = g_variant_ref_sink(g_variant_new_string(hex_bob));
+  confirm(window, dialog, "group.remove", remove_member, "remove_dialog", "_Remove");
   RelayMemberWait dropped = { club->members, hex_bob };
   gh_test_spin_until(relay_dropped, &dropped);
   adw_dialog_force_close(ADW_DIALOG(dialog));
