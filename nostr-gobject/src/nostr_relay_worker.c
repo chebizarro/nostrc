@@ -257,5 +257,7 @@ gnostr_relay_workers_shutdown(void)
         g_source_destroy(source);
         g_source_unref(source);
     }
-    nostr_connection_shutdown();
+    /* The shared LWS engine also serves non-GObject core users. Its own
+     * atexit handler runs next, or the application stops it after those
+     * remaining service owners have drained. */
 }

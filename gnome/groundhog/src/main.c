@@ -7,6 +7,7 @@
 #include "gh-app-services.h"
 #if GROUNDHOG_HAVE_RELAYS
 #include <nostr-gobject-1.0/nostr_relay.h>
+#include <nostr-connection.h>
 #endif
 #include "gh-i18n.h"
 #if defined(GH_MLS_TEST_HOOKS) && GROUNDHOG_HAVE_MLS
@@ -320,6 +321,11 @@ app_shutdown(GApplication *app, gpointer user_data)
   gnostr_relay_workers_shutdown();
 #endif
   g_clear_pointer(&app_services, gh_app_services_free);
+#if GROUNDHOG_HAVE_RELAYS
+  /* NIP-46 and other core-only service owners must stop before their shared
+   * transport. The GObject callbacks above have already retired. */
+  nostr_connection_shutdown();
+#endif
 }
 
 /* SIGTERM (the session ending, `kill`) and SIGINT run the normal shutdown:
