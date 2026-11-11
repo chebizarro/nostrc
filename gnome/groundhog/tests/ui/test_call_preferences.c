@@ -597,10 +597,8 @@ test_credential_saved(Fixture *f, gconstpointer data)
 static int
 child_main(int argc, char **argv)
 {
-#ifdef __APPLE__
-  /* As send-stack.h: GTK's macOS accessibility backend cannot announce. */
-  g_setenv("GTK_A11Y", "none", FALSE);
-#endif
+  /* The private session bus has no accessibility bus service. */
+  g_setenv("GTK_A11Y", "none", TRUE);
   if (!gtk_init_check()) {
     g_printerr("groundhog-call-preferences test skipped: no graphical display\n");
     return 77;
