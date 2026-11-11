@@ -23,6 +23,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
     gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
     gstreamer1.0-plugins-bad gstreamer1.0-libav \
+    # Calls: WebRTC/SDP headers and libnice's separate ICE plugin
+    libgstreamer-plugins-bad1.0-dev libnice-dev gstreamer1.0-nice \
     # gnostr-appimage.yml (Gnostr, grotto, nostr-gtk)
     libpeas-2-dev librsvg2-dev libgdk-pixbuf-2.0-dev \
     # signet-ci.yml
@@ -57,9 +59,11 @@ RUN version="$(dpkg-query -W -f='${Version}' libsecret-1-0)" \
 # so the en@pseudo catalog tests (nostrc-gofet.10) need one to run.
 RUN localedef -i en_US -f UTF-8 en_US.UTF-8
 # Fail the image build if partial runtime plugins would crash or disable voice.
-RUN for element in appsrc appsink decodebin audioconvert audioresample \
+RUN set -eu; for element in appsrc appsink decodebin audioconvert audioresample \
     scaletempo autoaudiosrc autoaudiosink level opusenc opusdec oggmux \
-    oggdemux qtdemux avdec_aac; do gst-inspect-1.0 "$element" >/dev/null; done
+    oggdemux qtdemux avdec_aac webrtcbin nicesrc nicesink dtlssrtpenc dtlssrtpdec \
+    srtpenc srtpdec rtpbin rtpopuspay rtpopusdepay rtpvp8pay rtpvp8depay \
+    vp8enc vp8dec videoconvert queue; do gst-inspect-1.0 "$element" >/dev/null; done
 # Native Grotto/Settings package verification uses the debhelper toolchain.
 # check-linux-ci-packages.py also checks the Settings recipe's Build-Depends;
 # build/install libgrotto-panels-0-dev from this tree before its package test.

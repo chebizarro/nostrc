@@ -20,7 +20,7 @@ license=('MIT')
 makedepends=(
   'cmake' 'ninja' 'pkgconf' 'python' 'gettext' 'grotto-panels>=0.1.0'
   'glib2' 'glib2-devel' 'gtk4' 'libadwaita' 'json-glib' 'libsoup3' 'libsecret'
-  'sqlcipher' 'libxml2' 'gstreamer' 'gst-plugins-base-libs'
+  'sqlcipher' 'libxml2' 'gstreamer' 'gst-plugins-base-libs' 'gst-plugins-bad-libs' 'libnice'
   'openssl' 'libsecp256k1' 'libsodium' 'jansson' 'libwebsockets'
   'curl' 'qrencode' 'zbar'
 )
@@ -37,6 +37,7 @@ build() {
     -DCMAKE_INSTALL_LIBDIR=lib \
     -DBUILD_GROUNDHOG=ON \
     -DGROUNDHOG_PACKAGE_CHANNEL=arch \
+    -DGROUNDHOG_ENABLE_CALLS=ON \
     -DBUILD_APPS=ON \
     -DBUILD_GNOSTR_APP=OFF \
     -DBUILD_NATIVE_HOST=OFF \
@@ -57,13 +58,12 @@ package_groundhog() {
   depends=(
     'glib2' 'gtk4' 'libadwaita' 'json-glib' 'libsoup3' 'libsecret'
     'sqlcipher' 'libxml2' 'gstreamer' 'gst-plugins-base-libs' 'gst-plugins-base'
-    'gst-plugins-good' 'openssl' 'libsecp256k1' 'libsodium' 'jansson'
+    'gst-plugins-good' 'gst-plugins-bad' 'libnice' 'openssl' 'libsecp256k1' 'libsodium' 'jansson'
     'libwebsockets' 'curl' 'qrencode' 'hicolor-icon-theme'
   )
   optdepends=(
     'grotto: local Grotto-backed accounts (not needed for remote signers)'
     'gnome-keyring: keeps the database key (any Secret Service provider works)'
-    'gst-plugins-bad: voice messages recorded by other apps (AAC)'
     'gst-libav: voice messages recorded by other apps (AAC)'
     'tor: connect to relays through Tor'
     'webp-pixbuf-loader: profile pictures and images in WebP'

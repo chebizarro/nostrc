@@ -3444,6 +3444,8 @@ else()
   endif()
 endif()
 # --- end W27 voice messages ---
+# Optional call-stack capability gate; no signalling or call UI yet.
+include(cmake/GroundhogCalls.cmake)
 # --- W18 messaging polish (nostrc-qp24.75, .83, .84, .86, yp69, 9cho, lff5) ---
 #  - GhDmSender spaces a room's wraps on a GhClock (charter §4.5 S4 on the
 #    direct path, nostrc-yp69): every executable that compiles gh-dm-send.c
