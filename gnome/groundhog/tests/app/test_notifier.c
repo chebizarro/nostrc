@@ -23,6 +23,12 @@
 #include "nostr/nip19/nip19.h"
 #include <nostr-gtk-1.0/gn-nostr-reference.h>
 #include "../ui/gh-test-active.h"
+#if GH_NOTIFIER_CALLS
+#include "fake-call-media.h"
+#include "gh-call-service.h"
+#include "gh-test-signer.h"
+#include <nostr-kinds.h>
+#endif
 
 #include <adwaita.h>
 #include <stdlib.h>
@@ -114,6 +120,8 @@ typedef struct {
   GArray *sounds;                    /* gint64 monotonic */
   gint64 last_seen;                  /* the last-seen marker offered (N1); 0 none */
   guint last_seen_asked;
+  gboolean dnd;                      /* the desktop's Do Not Disturb */
+  GArray *ringer;                    /* gboolean: each "ringer" emission */
 } Fixture;
 
 static gint64
@@ -181,6 +189,19 @@ on_sound(GhNotifier *notifier, Fixture *f)
   g_array_append_val(f->sounds, now);
 }
 
+static gboolean
+do_not_disturb(gpointer data)
+{
+  return ((Fixture *)data)->dnd;
+}
+
+static void
+on_ringer(GhNotifier *notifier, gboolean on, Fixture *f)
+{
+  (void)notifier;
+  g_array_append_val(f->ringer, on);
+}
+
 static GhNotifier *
 notifier_new(Fixture *f)
 {
@@ -192,8 +213,11 @@ notifier_new(Fixture *f)
     .room_state_data = f,
     .last_seen = last_seen,
     .last_seen_data = f,
+    .do_not_disturb = do_not_disturb,
+    .do_not_disturb_data = f,
   };
   GhNotifier *notifier = gh_notifier_new(f->app, &config);
+  g_signal_connect(notifier, "ringer", G_CALLBACK(on_ringer), f);
   g_signal_connect(notifier, "open-conversation", G_CALLBACK(on_open), f);
   g_signal_connect(notifier, "stale-activation", G_CALLBACK(on_stale), f);
   g_signal_connect(notifier, "play-sound", G_CALLBACK(on_sound), f);
@@ -221,6 +245,7 @@ fixture_up(Fixture *f, const gchar *level, gboolean bind)
   f->opened = g_ptr_array_new_with_free_func(g_object_unref);
   f->stale = g_ptr_array_new_with_free_func(g_free);
   f->sounds = g_array_new(FALSE, FALSE, sizeof(gint64));
+  f->ringer = g_array_new(FALSE, FALSE, sizeof(gboolean));
   f->model = gh_conversation_store_new();
   f->notifier = notifier_new(f);
   /* The session starts when the model binds the account (at T0). */
@@ -278,8 +303,8 @@ assert_common(void)
   GPtrArray *calls = fake_gtk_notifications_get_calls(fake);
   for (guint i = 0; i < calls->len; i++) {
     FakeNotificationCall *call = g_ptr_array_index(calls, i);
-    if (!call->added)
-      continue;
+    if (!call->added || g_str_has_prefix(call->id, GH_NOTIFIER_ID_CALL_PREFIX))
+      continue; /* a ringing call: high priority with buttons (test_calls_*) */
     const gchar *priority = NULL;
     g_assert_true(g_variant_lookup(call->notification, "priority", "&s", &priority));
     g_assert_cmpstr(priority, ==, "normal");
@@ -315,6 +340,7 @@ fixture_down(Fixture *f)
   g_ptr_array_unref(f->opened);
   g_ptr_array_unref(f->stale);
   g_array_unref(f->sounds);
+  g_array_unref(f->ringer);
   fake_gtk_notifications_set_clock(fake, NULL);
   fake_gtk_notifications_clear(fake);
   g_clear_pointer(&f->clock, gh_clock_unref);
@@ -1428,6 +1454,311 @@ test_gui_open_and_stale(void)
 /* Two runs (two CTest entries), as in test_background.c: the default on the
  * shared private bus without GTK, and --gui with a display and no private
  * bus. */
+/* ---- calls (nostrc-mqrgk.7) ----------------------------------------------------- */
+
+#if GH_NOTIFIER_CALLS
+typedef struct {
+  Fixture f;
+  gchar *me, *peer, *stranger;
+  GhNetSession *network;
+  GhCallService *service;
+  GhFakeCallMedia *media;
+  GhConversation *room;
+} CallFixture;
+
+static void
+calls_up(CallFixture *c, const gchar *level)
+{
+  memset(c, 0, sizeof *c);
+  fixture_up(&c->f, level, FALSE);
+  c->me = gh_test_pub(2);
+  c->peer = gh_test_pub(1);
+  c->stranger = gh_test_pub(3);
+  gh_conversation_store_set_account(c->f.model, c->me, NULL, NULL, NULL);
+  const gchar *peers[] = { c->peer, NULL };
+  c->room = gh_conversation_store_open_room(c->f.model, peers, NULL);
+  g_assert_false(gh_conversation_get_is_request(c->room));
+  c->network = gh_net_session_new(NULL);
+  c->service = gh_call_service_new(NULL, c->f.model, c->f.settings, c->network);
+  gh_call_service_bind(c->service, c->me);
+  gh_call_service_set_media_factory(c->service, gh_fake_call_media_factory, &c->media, NULL);
+  gh_notifier_set_call_service(c->f.notifier, G_OBJECT(c->service));
+  for (guint i = 0; i < 3; i++)
+    g_assert_nonnull(g_action_map_lookup_action(G_ACTION_MAP(c->f.app),
+      (const gchar *[]){ "call-answer", "call-answer-video", "call-decline" }[i]));
+}
+
+static void
+calls_down(CallFixture *c)
+{
+  gh_call_service_stop(c->service);
+  sync_calls(&c->f);
+  /* Detaching removes the call actions and withdraws a ringing call. */
+  gh_notifier_set_call_service(c->f.notifier, NULL);
+  g_assert_null(g_action_map_lookup_action(G_ACTION_MAP(c->f.app), "call-answer"));
+  g_assert_false(gh_notifier_get_ringing(c->f.notifier));
+  fixture_down(&c->f);
+  g_clear_object(&c->service);
+  g_clear_object(&c->media);
+  g_clear_object(&c->network);
+  g_free(c->me); g_free(c->peer); g_free(c->stranger);
+}
+
+static const gchar *
+offer(CallFixture *c, guint key, GhCallType type)
+{
+  static guint serial;
+  static gchar id[40];
+  g_snprintf(id, sizeof id, "423e4567-e89b-12d3-a456-42661%07u", ++serial);
+  gint64 now = g_get_real_time() / G_USEC_PER_SEC;
+  g_autofree gchar *author = gh_test_pub(key);
+  NostrEvent *e = gh_call_event_new(author, c->me, id, NOSTR_KIND_CALL_OFFER, type,
+                                    "v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n", now);
+  g_assert_cmpint(nostr_event_sign(e, gh_test_secret[key]), ==, 0);
+  g_autofree gchar *json = nostr_event_serialize_compact(e);
+  nostr_event_free(e);
+  gh_call_service_receive(c->service, json, now);
+  sync_calls(&c->f);
+  return id;
+}
+
+static void
+signal_call(CallFixture *c, guint key, const gchar *to, const gchar *id, int kind)
+{
+  gint64 now = g_get_real_time() / G_USEC_PER_SEC;
+  g_autofree gchar *author = gh_test_pub(key);
+  NostrEvent *e = gh_call_event_new(author, to, id, kind, GH_CALL_VOICE,
+                                    "v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n", now);
+  g_assert_cmpint(nostr_event_sign(e, gh_test_secret[key]), ==, 0);
+  g_autofree gchar *json = nostr_event_serialize_compact(e);
+  nostr_event_free(e);
+  gh_call_service_receive(c->service, json, now);
+  sync_calls(&c->f);
+}
+
+static gchar *
+call_id_of(const gchar *call_id)
+{
+  return g_strconcat(GH_NOTIFIER_ID_CALL_PREFIX, call_id, NULL);
+}
+
+/* The labels and actions of a notification's buttons. */
+static gchar *
+buttons_of(GVariant *notification)
+{
+  g_autoptr(GVariant) buttons = g_variant_lookup_value(notification, "buttons", G_VARIANT_TYPE("aa{sv}"));
+  g_autoptr(GString) out = g_string_new(NULL);
+  for (gsize i = 0; buttons && i < g_variant_n_children(buttons); i++) {
+    g_autoptr(GVariant) b = g_variant_get_child_value(buttons, i);
+    const gchar *label = NULL, *action = NULL;
+    g_variant_lookup(b, "label", "&s", &label);
+    g_variant_lookup(b, "action", "&s", &action);
+    g_string_append_printf(out, "%s%s=%s", i ? "," : "", label, action);
+  }
+  return g_string_free(g_steal_pointer(&out), FALSE);
+}
+
+static gboolean
+ringing(CallFixture *c)
+{
+  return gh_notifier_get_ringing(c->f.notifier);
+}
+
+static void
+activate_call_action(CallFixture *c, const gchar *action, const gchar *call_id)
+{
+  g_action_group_activate_action(G_ACTION_GROUP(c->f.app), action, g_variant_new_string(call_id));
+  sync_calls(&c->f);
+}
+
+/* One notification per offer, Answer/Decline that work with no window, and
+ * hidden content names nobody. */
+static void
+test_calls_offer_hidden(void)
+{
+  CallFixture c;
+  calls_up(&c, "hidden");
+  const gchar *id = offer(&c, 1, GH_CALL_VOICE);
+  g_autofree gchar *nid = call_id_of(id);
+  g_assert_cmpuint(fake_gtk_notifications_count(fake, TRUE, NULL), ==, 1);
+  GVariant *n = shown(nid);
+  g_assert_cmpstr(field(n, "title"), ==, "Incoming Call");
+  g_assert_null(field(n, "body"));
+  g_assert_cmpstr(field(n, "priority"), ==, "high");
+  g_autofree gchar *buttons = buttons_of(n);
+  g_assert_cmpstr(buttons, ==, "Decline=app.call-decline,Answer=app.call-answer");
+  g_assert_true(ringing(&c));
+  g_autofree gchar *npub = npub_of(c.peer, FALSE);
+  g_autofree gchar *head = g_strndup(npub, 15);
+  const gchar *const secrets[] = { c.peer, head, gh_conversation_get_title(c.room), NULL };
+  assert_payloads_hide(secrets);
+
+  /* Decline, with no window: the call ends, the notification and ringer go. */
+  activate_call_action(&c, "call-decline", id);
+  GhCall *call = gh_call_service_get_current(c.service);
+  g_assert_cmpint(gh_call_get_end_reason(call), ==, GH_CALL_END_DECLINED);
+  g_assert_null(shown(nid));
+  g_assert_false(ringing(&c));
+  g_assert_cmpuint(c.f.activations, ==, 0);
+
+  /* Answer, with no window (background delivery): the application is
+   * activated first, and the unhandled answer is the notifier's own. */
+  id = offer(&c, 1, GH_CALL_VOICE);
+  g_free(nid);
+  nid = call_id_of(id);
+  g_assert_nonnull(shown(nid));
+  activate_call_action(&c, "call-answer", id);
+  call = gh_call_service_get_current(c.service);
+  g_assert_cmpuint(c.f.activations, ==, 1);
+  g_assert_cmpint(gh_call_get_state(call), ==, GH_CALL_CONNECTING);
+  g_assert_cmpuint(c.media->answers, ==, 1);
+  g_assert_null(shown(nid));
+  g_assert_false(ringing(&c));
+  /* A stale button does nothing but withdraw. */
+  activate_call_action(&c, "call-decline", id);
+  g_assert_cmpint(gh_call_get_state(call), ==, GH_CALL_CONNECTING);
+  calls_down(&c);
+}
+
+/* Sender level names an accepted caller; a video offer adds its button. */
+static void
+test_calls_sender_video(void)
+{
+  CallFixture c;
+  calls_up(&c, "sender");
+  const gchar *id = offer(&c, 1, GH_CALL_VIDEO);
+  g_autofree gchar *nid = call_id_of(id);
+  GVariant *n = shown(nid);
+  g_assert_cmpstr(field(n, "title"), ==, "Incoming Video Call");
+  g_autofree gchar *body = g_strdup_printf("%s is calling with video", gh_conversation_get_title(c.room));
+  g_assert_cmpstr(field(n, "body"), ==, body);
+  g_autofree gchar *buttons = buttons_of(n);
+  g_assert_cmpstr(buttons, ==, "Decline=app.call-decline,Answer=app.call-answer,"
+                               "Answer With Video=app.call-answer-video");
+  /* A voice answer to a video offer needs a window's camera choice: an
+   * unhandled one does not answer. */
+  activate_call_action(&c, "call-answer", id);
+  GhCall *call = gh_call_service_get_current(c.service);
+  g_assert_cmpint(gh_call_get_state(call), ==, GH_CALL_RINGING);
+  g_assert_nonnull(shown(nid));
+  activate_call_action(&c, "call-answer-video", id);
+  g_assert_cmpint(gh_call_get_state(call), ==, GH_CALL_CONNECTING);
+  g_assert_null(shown(nid));
+  calls_down(&c);
+}
+
+/* Hang-up, timeout and answered elsewhere all withdraw it and stop the
+ * ringer; the first two leave a missed call. */
+static void
+test_calls_withdrawal(void)
+{
+  CallFixture c;
+  calls_up(&c, "sender");
+  /* The caller hangs up. */
+  const gchar *id = offer(&c, 1, GH_CALL_VOICE);
+  g_autofree gchar *nid = call_id_of(id);
+  g_assert_true(ringing(&c));
+  signal_call(&c, 1, c.me, id, NOSTR_KIND_CALL_HANGUP);
+  g_assert_null(shown(nid));
+  g_assert_false(ringing(&c));
+  g_autofree gchar *missed = g_strconcat(GH_NOTIFIER_ID_MISSED_PREFIX, id, NULL);
+  GVariant *m = shown(missed);
+  g_assert_cmpstr(field(m, "title"), ==, "Missed Call");
+  g_autofree gchar *from = g_strdup_printf("From %s", gh_conversation_get_title(c.room));
+  g_assert_cmpstr(field(m, "body"), ==, from);
+  target_of(missed); /* opens the conversation */
+
+  /* No answer within the ring timeout. */
+  id = offer(&c, 1, GH_CALL_VOICE);
+  g_free(nid);
+  nid = call_id_of(id);
+  gh_call_service_expire(c.service, g_get_real_time() / G_USEC_PER_SEC + 61);
+  sync_calls(&c.f);
+  g_assert_null(shown(nid));
+  g_assert_false(ringing(&c));
+  g_free(missed);
+  missed = g_strconcat(GH_NOTIFIER_ID_MISSED_PREFIX, id, NULL);
+  g_assert_nonnull(shown(missed));
+
+  /* Answered on another device of this account (its self-addressed answer). */
+  id = offer(&c, 1, GH_CALL_VOICE);
+  g_free(nid);
+  nid = call_id_of(id);
+  signal_call(&c, 2, c.peer, id, NOSTR_KIND_CALL_ANSWER);
+  g_assert_cmpint(gh_call_get_end_reason(gh_call_service_get_current(c.service)), ==,
+                  GH_CALL_END_ELSEWHERE);
+  g_assert_null(shown(nid));
+  g_assert_false(ringing(&c));
+  g_free(missed);
+  missed = g_strconcat(GH_NOTIFIER_ID_MISSED_PREFIX, id, NULL);
+  g_assert_null(shown(missed)); /* handled, not missed */
+
+  /* Busy: a second offer while one rings is rejected and never shown
+   * (from someone allowed to ring; a request would be a missed request). */
+  g_settings_set_boolean(c.f.settings, "allow-calls-from-unaccepted", TRUE);
+  id = offer(&c, 1, GH_CALL_VOICE);
+  guint before = fake_gtk_notifications_count(fake, TRUE, NULL);
+  offer(&c, 3, GH_CALL_VOICE);
+  g_assert_cmpuint(fake_gtk_notifications_count(fake, TRUE, NULL), ==, before);
+  g_settings_reset(c.f.settings, "allow-calls-from-unaccepted");
+  calls_down(&c);
+}
+
+/* The ringer: at most GH_NOTIFIER_RING_SECONDS, never in Do Not Disturb. */
+static void
+test_calls_ringer(void)
+{
+  CallFixture c;
+  calls_up(&c, "hidden");
+  const gchar *id = offer(&c, 1, GH_CALL_VOICE);
+  g_autofree gchar *nid = call_id_of(id);
+  g_assert_true(ringing(&c));
+  advance_ms(&c.f, (GH_NOTIFIER_RING_SECONDS - 1) * 1000);
+  g_assert_true(ringing(&c));
+  advance_ms(&c.f, 2000);
+  g_assert_false(ringing(&c));
+  g_assert_nonnull(shown(nid)); /* still ringing on screen until the call ends */
+  g_assert_cmpuint(c.f.ringer->len, ==, 2);
+  gh_call_service_decline(c.service);
+  sync_calls(&c.f);
+
+  c.f.dnd = TRUE;
+  id = offer(&c, 1, GH_CALL_VOICE);
+  g_free(nid);
+  nid = call_id_of(id);
+  g_assert_nonnull(shown(nid));
+  g_assert_false(ringing(&c));
+  g_assert_cmpuint(c.f.ringer->len, ==, 2);
+  calls_down(&c);
+}
+
+/* A message request does not ring: one missed call that names nobody. */
+static void
+test_calls_request(void)
+{
+  CallFixture c;
+  calls_up(&c, "sender");
+  const gchar *id = offer(&c, 3, GH_CALL_VOICE);
+  g_autofree gchar *nid = call_id_of(id);
+  g_autofree gchar *missed = g_strconcat(GH_NOTIFIER_ID_MISSED_PREFIX, id, NULL);
+  g_assert_null(shown(nid));
+  g_assert_false(ringing(&c));
+  GVariant *m = shown(missed);
+  g_assert_cmpstr(field(m, "title"), ==, "Missed Call");
+  g_assert_cmpstr(field(m, "body"), ==, "From a message request");
+  g_assert_null(field(m, "default-action"));
+  g_autofree gchar *npub = npub_of(c.stranger, FALSE);
+  g_autofree gchar *head = g_strndup(npub, 15);
+  const gchar *const secrets[] = { c.stranger, head, NULL };
+  assert_payloads_hide(secrets);
+  /* The account switch withdraws missed calls with the rest. */
+  gh_conversation_store_set_account(c.f.model, NULL, NULL, NULL, NULL);
+  sync_calls(&c.f);
+  g_assert_null(shown(missed));
+  calls_down(&c);
+}
+#endif
+
 int
 main(int argc, char **argv)
 {
@@ -1510,6 +1841,13 @@ main(int argc, char **argv)
                            test_no11_default_settings);
   nostrc_test_bus_add_func("/groundhog/notifier/read-by-arrival", test_read_by_arrival);
   nostrc_test_bus_add_func("/groundhog/notifier/backfill", test_backfill);
+#if GH_NOTIFIER_CALLS
+  nostrc_test_bus_add_func("/groundhog/notifier/calls-offer-hidden", test_calls_offer_hidden);
+  nostrc_test_bus_add_func("/groundhog/notifier/calls-sender-video", test_calls_sender_video);
+  nostrc_test_bus_add_func("/groundhog/notifier/calls-withdrawal", test_calls_withdrawal);
+  nostrc_test_bus_add_func("/groundhog/notifier/calls-ringer", test_calls_ringer);
+  nostrc_test_bus_add_func("/groundhog/notifier/calls-request", test_calls_request);
+#endif
   status = g_test_run();
   fake_gtk_notifications_free(fake);
   nostrc_test_bus_down(bus);

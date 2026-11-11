@@ -92,6 +92,38 @@ G_BEGIN_DECLS
  * (off until onboarding asks, PD-9); only a user's explicit "off" (a user
  * value of false) keeps it back (charter §5.3 B4).
  *
+ * Calls (nostrc-mqrgk.7), with gh_notifier_set_call_service():
+ *   - An incoming ring ("incoming-ring") is one notification per call, id
+ *     GH_NOTIFIER_ID_CALL_PREFIX + the call id: title "Incoming Call" or
+ *     "Incoming Video Call", priority high, category GH_NOTIFIER_CALL_CATEGORY,
+ *     buttons Decline, Answer and (a video offer) Answer With Video
+ *     (app.call-decline, app.call-answer, app.call-answer-video, each with
+ *     the call id as target). The body names the caller ("Alice is calling")
+ *     only at the sender and preview levels and only for an accepted
+ *     conversation; hidden content and message requests name nobody. It is
+ *     withdrawn as soon as the call leaves RINGING: answered here or on
+ *     another device, declined, hung up, timed out or ended.
+ *   - The ringer: "ringer" (boolean) goes TRUE with the notification and
+ *     FALSE on any state change of the call or GH_NOTIFIER_RING_SECONDS
+ *     later, whichever is first. It never goes TRUE while do_not_disturb()
+ *     says so (the notification still shows).
+ *   - A missed call ("missed-call", including a message request that does
+ *     not ring) is a "Missed Call" notification (GH_NOTIFIER_ID_MISSED_PREFIX
+ *     + the call id, category GH_NOTIFIER_MISSED_CATEGORY): the caller's
+ *     name as above, "From a message request" for a request, nothing at the
+ *     hidden level. Its default action opens an accepted caller's
+ *     conversation. Withdrawn like message notifications (account switch,
+ *     level change, notifications off).
+ *   - Calls are notified like the locked-store notice: unless the user turned
+ *     notifications off. The service already drops hidden authors.
+ *   - Answer activates the application first, then emits "answer-call"
+ *     (GhCall, gboolean video; returns TRUE when handled): a window's call
+ *     UI (gh-call-ui.h) answers with its headset and camera choices. Unhandled,
+ *     the notifier answers itself when the answer matches the offer. Decline
+ *     declines without opening a window, so both work with the window closed
+ *     while background delivery keeps the process running.
+ * Nothing about calls is stored: the service keeps recent calls in memory.
+ *
  * GTK-free apart from the window glue; used on the main context.
  */
 
@@ -103,6 +135,11 @@ G_BEGIN_DECLS
 #define GH_NOTIFIER_UPDATE_INTERVAL_MS 2000
 #define GH_NOTIFIER_SOUND_INTERVAL_MS 10000
 #define GH_NOTIFIER_PREVIEW_MAX 120
+#define GH_NOTIFIER_ID_CALL_PREFIX "call-"
+#define GH_NOTIFIER_ID_MISSED_PREFIX "missed-call-"
+#define GH_NOTIFIER_CALL_CATEGORY "call.incoming"
+#define GH_NOTIFIER_MISSED_CATEGORY "call.unanswered"
+#define GH_NOTIFIER_RING_SECONDS 60
 /* Seconds before the last-seen marker a message still counts as new: the
  * inbox's clock slack (gh-dm-inbox.h GH_DM_INBOX_WRAP_SKEW's hour), for
  * sender clocks and relay latency. */
@@ -136,6 +173,9 @@ typedef struct {
   GhNotifierLastSeenFunc last_seen;    /* nullable: no marker, so only what is
                                         * written after binding is notified */
   gpointer last_seen_data;
+  /* nullable: the desktop's Do Not Disturb, asked before ringing. */
+  gboolean (*do_not_disturb)(gpointer data);
+  gpointer do_not_disturb_data;
 } GhNotifierConfig;
 
 #define GH_TYPE_NOTIFIER (gh_notifier_get_type())
@@ -171,6 +211,12 @@ void gh_notifier_set_store_locked(GhNotifier *self, gboolean locked);
  * "open-conversation" and "stale-activation" handlers. Released with the
  * window. */
 void gh_notifier_attach_window(GhNotifier *self, GhWindow *window);
+
+/* Follows a GhCallService (see "Calls" above); NULL stops. Adds the call
+ * actions to the application. A no-op in a build without call signalling. */
+void gh_notifier_set_call_service(GhNotifier *self, GObject *service);
+/* Whether the ringer is on now (tests). */
+gboolean gh_notifier_get_ringing(GhNotifier *self);
 
 G_END_DECLS
 #endif

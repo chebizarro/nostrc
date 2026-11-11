@@ -68,7 +68,7 @@ set(GROUNDHOG_BLUEPRINTS
   gh-mls-member-row gh-mls-group-info-dialog gh-mls-invite-row gh-mls-invites-page
   gh-blocked-page gh-blocked-row gh-conversation-menu
   gh-attachment-card gh-attachment-sheet gh-create-poll-dialog
-  gh-voice-bubble gh-lists-page gh-list-editor-page gh-hidden-page gh-drafts-page gh-report-dialog)
+  gh-voice-bubble gh-call-view gh-lists-page gh-list-editor-page gh-hidden-page gh-drafts-page gh-report-dialog)
 set(GROUNDHOG_BLUEPRINT_MIN_VERSION 0.12.0)
 include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/Blueprint.cmake)
 set(GROUNDHOG_BLUEPRINT_COMPILER "")
@@ -186,6 +186,13 @@ add_custom_command(
           ${GROUNDHOG_DATA}/icons/scalable/actions/network-server-symbolic.svg
           ${GROUNDHOG_DATA}/icons/scalable/actions/system-search-symbolic.svg
           ${GROUNDHOG_DATA}/icons/scalable/actions/view-conceal-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/call-start-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/call-stop-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/camera-video-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/camera-disabled-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/microphone-disabled-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/audio-input-microphone-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/audio-speakers-symbolic.svg
           ${GROUNDHOG_UI_FILES}
   VERBATIM)
 
@@ -4068,6 +4075,19 @@ if(TARGET groundhog-account-relays AND TARGET groundhog-conversations AND
   endif()
 endif()
 # --- end NIP-AC signalling/state machine ---
+
+# --- Calls UI (nostrc-mqrgk.7, nostrc-mqrgk.8) ---
+# The notifier's call alerts follow the GhCallService (gh-notifier.h "Calls").
+if(TARGET groundhog-calls AND TARGET groundhog-notifier)
+  target_link_libraries(groundhog-notifier PUBLIC groundhog-calls)
+  target_compile_definitions(groundhog-notifier PRIVATE GH_NOTIFIER_CALLS=1)
+  if(TARGET test-groundhog-notifier)
+    # The call notification, ringer and missed calls on the fake desktop.
+    target_sources(test-groundhog-notifier PRIVATE tests/app/fake-call-media.c)
+    target_compile_definitions(test-groundhog-notifier PRIVATE GH_NOTIFIER_CALLS=1)
+  endif()
+endif()
+# --- end Calls UI ---
 
 # --- test isolation (nostrc-ttvxv) ---
 # A test-key account once got a store under the developer's real
