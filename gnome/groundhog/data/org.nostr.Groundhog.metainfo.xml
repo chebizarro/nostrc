@@ -79,11 +79,6 @@
     <content_attribute id="social-chat">intense</content_attribute>
   </content_rating>
   <releases>
-    <release version="0.13.1" date="2026-11-10">
-      <description>
-        <p>Fix a memory-safety error when pasting a remote signer's bunker link.</p>
-      </description>
-    </release>
     <release version="0.13.0" date="2026-11-10">
       <description>
         <p>Account lists, opt-in encrypted draft synchronization, public reports,

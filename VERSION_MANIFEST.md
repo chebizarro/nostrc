@@ -27,11 +27,11 @@ are also Unversioned. Test/checker/documentation changes have no separate
 component bump. No release tag is published by this integration, so Latest
 release and Release tag remain unchanged.
 
-NIP-46 relay-array memory safety (`nostrc-33n89`): PATCH bumps nip46
-0.2.0 → 0.2.1 and Groundhog 0.13.0 → 0.13.1. Parsed relay arrays now carry a
-trailing NULL, and pairing validation uses the explicit count. No wire format,
-ABI, relay-limit policy or published release/tag changes; other components are
-unchanged.
+NIP-46 relay-array memory safety (`nostrc-33n89`): PATCH-class fixes fold into
+unreleased nip46 0.2.0 and Groundhog 0.13.0 without a second version bump.
+Parsed relay arrays now carry a trailing NULL, and pairing validation uses the
+explicit count. No wire format, ABI, relay-limit policy or published release/tag
+changes; other components are unchanged.
 
 | Component | Path | Declared version | Latest release | Release tag | Authoritative version source(s) |
 | --- | --- | --- | --- | --- | --- |
@@ -43,7 +43,7 @@ unchanged.
 | libmarmot | `libmarmot/` | 0.14.0 | Unreleased | — | `libmarmot/CMakeLists.txt`, `libmarmot/meson.build` |
 | marmot-gobject | `marmot-gobject/` | 1.5.1 | Unreleased | — | `marmot-gobject/CMakeLists.txt`, `marmot-gobject/meson.build` |
 | gnostr | `apps/gnostr/` | 0.2.1 | 0.1.0-preview | `gnostr-v0.1.0-preview` | `apps/gnostr/CMakeLists.txt`; nostrc-0cfsg.28/.32: PATCH-class shipped UI/build corrections folded into intended final base 0.1.0, not artifact-free changes; actual published tag `gnostr-v0.1.0-preview` points to `e8d875745`, whose source also declares 0.1.0; no final 0.1.0 tag exists, so retain the existing unreleased wave and release columns |
-| groundhog | `gnome/groundhog/` | 0.13.1 | 0.12.1-alpha8 (pre-release, 2026-11-07) | `groundhog-v0.12.1-alpha8` | `gnome/groundhog/CMakeLists.txt`; duplicate package values: `flake.nix` (desktopVersion), `packaging/archlinux/groundhog/PKGBUILD` (_version), `packaging/rpm/groundhog.spec` (upstream_version, Version), `packaging/debian-desktop/changelog`, `gnome/groundhog/data/org.nostr.Groundhog.metainfo.xml` (newest release); nostrc-5aaq1: no bump: lands in unreleased 0.13.0 |
+| groundhog | `gnome/groundhog/` | 0.13.0 | 0.12.1-alpha8 (pre-release, 2026-11-07) | `groundhog-v0.12.1-alpha8` | `gnome/groundhog/CMakeLists.txt`; duplicate package values: `flake.nix` (desktopVersion), `packaging/archlinux/groundhog/PKGBUILD` (_version), `packaging/rpm/groundhog.spec` (upstream_version, Version), `packaging/debian-desktop/changelog`, `gnome/groundhog/data/org.nostr.Groundhog.metainfo.xml` (newest release); nostrc-5aaq1: no bump: lands in unreleased 0.13.0; nostrc-33n89: no bump: lands in unreleased 0.13.0 |
 | nostr-settings | `gnome/nostr-settings/` | 0.1.0 | Unreleased | — | `gnome/nostr-settings/CMakeLists.txt` (`NOSTR_SETTINGS_VERSION`), `gnome/nostr-settings/meson.build` (`project` version); W6 adds the previously missing manifest row, not a release; nostrc-u6v55.30 folds local CLI version/help and standalone Debian packaging corrections into unreleased 0.1.0 (no release/tag change); Debian 0.4.0-2 retains legacy bundle upgrade ordering |
 | nostr-share | `gnome/nostr-share/` | 0.1.0 | Unreleased | — | `gnome/nostr-share/CMakeLists.txt` (`NOSTR_SHARE_VERSION`) |
 | nostr-homed | `gnome/nostr-homed/` | 0.9.0 | Unreleased | — | `gnome/nostr-homed/CMakeLists.txt`, `gnome/nostr-homed/meson.build`, `gnome/nostr-homed/nostr-homed.pc.in`; nostrc-h10m.10: MINOR 0.7.1 → 0.8.0 for opt-in require-encrypted policy, additive at_rest status and provisioning/PAM/panel warnings. libporthome was unchanged for h10m.10; detection and UI are homed-owned. h10m.12 version decisions follow below. |
@@ -51,7 +51,7 @@ unchanged.
 | Grotto | `apps/grotto/` | 0.1.1 | 0.1.1-alpha1 (pre-release, 2026-11-07) | `grotto-v0.1.1-alpha1` | `apps/grotto/CMakeLists.txt` (`project` VERSION 0.1.1 + `GROTTO_PRERELEASE` → `GROTTO_VERSION_FULL`), `apps/grotto/meson.build` (`project` full version); About, CLI and daemon consume the full build version; duplicate package values: `apps/grotto/data/org.nostr.Grotto.metainfo.xml`, `apps/grotto/packaging/debian/changelog` (0.1.1~alpha1), `apps/grotto/packaging/rpm/grotto.spec` (upstream_version, Version, Release), `apps/grotto/packaging/archlinux/PKGBUILD` (_version), `flake.nix` (Grotto version), `apps/grotto/packaging/macos/create-dmg.sh`, `apps/grotto/packaging/windows/grotto.nsi`, `apps/grotto/packaging/windows/build-msys2.sh`, `snap/grotto/snapcraft.yaml`, `snap/grotto-daemon/snapcraft.yaml`; macOS Info.plist and this declaration use numeric base 0.1.1; Debian manuals are generated from `GROTTO_VERSION_FULL` using `apps/grotto/packaging/debian/grotto{,-daemon}.1.in`. nostrc-u6v55.74: owner-selected full prerelease **0.1.1-alpha1**, tagged `grotto-v0.1.1-alpha1` on 2026-11-07 (first Grotto pre-release); PATCH-class version/packaging corrections folded into this unreleased wave; grotto-panels stays 0.1.0 (no shipped change). |
 | nostr-signer-webext-host | `apps/grotto/native-host/` | 0.2.0 | Unreleased | — | `apps/grotto/native-host/CMakeLists.txt` (`NMH_VERSION`), `apps/grotto/native-host/main_native_host.c` (standalone fallback) |
 | Nostr Shell extension | `gnome/nostr-shell-extension/` | 0.5.0 | Unreleased | — | `gnome/nostr-shell-extension/metadata.json` (`version-name`) |
-| NIP-46 client/provider | `nips/nip46/` | 0.2.1 | Unreleased | — | `nips/nip46/CMakeLists.txt` (`declare_component_version(nip46 ...)`; owns core and optional GLib client/bunker layer) |
+| NIP-46 client/provider | `nips/nip46/` | 0.2.0 | Unreleased | — | `nips/nip46/CMakeLists.txt` (`declare_component_version(nip46 ...)`; owns core and optional GLib client/bunker layer); nostrc-33n89: no bump: lands in unreleased 0.2.0 |
 | nip19 (NIP-19 codec) | `nips/nip19/` | 0.2.0 | Unreleased | — | `nips/nip19/CMakeLists.txt` (`declare_component_version`; SONAME `libnip19.so.0`) |
 | libhanami | `libhanami/` | 0.8.0 | Unreleased | — | `libhanami/CMakeLists.txt` (`HANAMI_VERSION_*`) |
 | libporthome | `libporthome/` | 0.7.1 | Unreleased | — | `libporthome/CMakeLists.txt` (`declare_component_version`); SV-A7 (nostrc-v04jd.5): PATCH for specific fail-closed `PORTHOME_ERR_EPOCH` from the PCS v1 manifest decoder for v2 nodes/nonzero chunk epochs; no wire change. libvault, libhanami and nostr-homed: no bump (unchanged callers/artifacts). |

@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.16)
-project(groundhog VERSION 0.13.1 LANGUAGES C)
+project(groundhog VERSION 0.13.0 LANGUAGES C)
 
 # The optional pre-release label testers see (About, --version), appended to
-# the numeric base; empty gives GROUNDHOG_VERSION_FULL "0.13.1". Bump it
+# the numeric base; empty gives GROUNDHOG_VERSION_FULL "0.13.0". Bump it
 # with flake.nix (desktopVersion), packaging/archlinux/groundhog/PKGBUILD
 # (_version), packaging/rpm/groundhog.spec (upstream_version, Release) and
 # packaging/debian-desktop/changelog: the groundhog-packaging-version test

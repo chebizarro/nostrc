@@ -1,9 +1,3 @@
-groundhog (0.13.1-1) unstable; urgency=medium
-
-  * Fix the relay-array overread when pasting a NIP-46 bunker link.
-
- -- Biz <chebizarro@protonmail.com>  Tue, 10 Nov 2026 12:00:00 -0800
-
 groundhog (0.13.0-1) unstable; urgency=medium
 
   * Integrate account social lists, encrypted draft sync, reports, emoji and badges.
