@@ -10,6 +10,8 @@
 #include <nostr-kinds.h>
 #include <nostr-tag.h>
 #include <json-glib/json-glib.h>
+#include <glib/gstdio.h>
+#include <unistd.h>
 
 static const gchar *GOOD = "wss://inbox.test.invalid";
 static const gchar *BAD = "wss://denied.test.invalid";
@@ -265,8 +267,70 @@ static void fallback_and_reject(Network *n, gconstpointer data)
   g_assert_cmpuint(n->published->len, >, 0);
   g_assert_cmpint(gh_call_get_end_reason(gh_call_service_get_current(n->service)), ==, GH_CALL_END_SIGNALLING_FAILED);
 }
+/* GROUNDHOG_CALL_TRACE (the interop runbook's capture): set when the
+ * signalling starts, every signed event of the roundtrip (the offer, then
+ * any ICE candidate the media produced) and the decrypted answer are
+ * appended as one JSON line each; the duplicate delivery is deduplicated
+ * before decryption, so it leaves no line. Unset (every other case here),
+ * the variable is absent and nothing is written. */
+static gchar *trace_path;
+static void setup_traced(Network *n, gconstpointer data)
+{
+  g_autoptr(GError) error = NULL;
+  int fd = g_file_open_tmp("gh-call-trace-XXXXXX", &trace_path, &error);
+  g_assert_no_error(error); close(fd);
+  g_setenv("GROUNDHOG_CALL_TRACE", trace_path, TRUE);
+  setup(n, data);
+}
+static void teardown_traced(Network *n, gconstpointer data)
+{
+  teardown(n, data);
+  g_unsetenv("GROUNDHOG_CALL_TRACE");
+  g_unlink(trace_path); g_clear_pointer(&trace_path, g_free);
+}
+static void trace_roundtrip(Network *n, gconstpointer data)
+{
+  g_assert_null(g_getenv("GROUNDHOG_CALL_TRACE_UNSET_CHECK"));
+  roundtrip(n, data);
+  g_autofree gchar *contents = NULL;
+  g_assert_true(g_file_get_contents(trace_path, &contents, NULL, NULL));
+  g_auto(GStrv) lines = g_strsplit(contents, "\n", -1);
+  guint count = 0, offers = 0, answers = 0, others = 0;
+  gint64 previous = 0;
+  for (guint i = 0; lines[i]; i++) {
+    if (!*lines[i]) continue;
+    g_autoptr(JsonParser) parser = json_parser_new();
+    g_assert_true(json_parser_load_from_data(parser, lines[i], -1, NULL));
+    JsonObject *line = json_node_get_object(json_parser_get_root(parser));
+    gint64 ts = json_object_get_int_member(line, "ts");
+    g_assert_cmpint(ts, >=, previous); previous = ts;
+    JsonObject *event = json_object_get_object_member(line, "event");
+    g_assert_nonnull(event);
+    const gchar *dir = json_object_get_string_member(line, "dir");
+    gint64 kind = json_object_get_int_member(event, "kind");
+    g_assert_cmpstr(json_object_get_string_member(event, "content"), !=, "");
+    g_assert_true(json_object_has_member(event, "sig"));
+    if (count == 0) { g_assert_cmpstr(dir, ==, "out"); g_assert_cmpint(kind, ==, NOSTR_KIND_CALL_OFFER); }
+    if (kind == NOSTR_KIND_CALL_OFFER) { g_assert_cmpstr(dir, ==, "out"); offers++; }
+    else if (kind == NOSTR_KIND_CALL_ANSWER) { g_assert_cmpstr(dir, ==, "in"); answers++; }
+    else { g_assert_cmpstr(dir, ==, "out"); g_assert_cmpint(kind, ==, NOSTR_KIND_CALL_ICE_CANDIDATE); others++; }
+    count++;
+  }
+  g_test_message("trace lines: %u (offers %u, answers %u, candidates %u)", count, offers, answers, others);
+  g_assert_cmpuint(offers, ==, 1);
+  g_assert_cmpuint(answers, ==, 1);
+  g_assert_cmpuint(count, ==, offers + answers + others);
+}
+static void untraced_roundtrip(Network *n, gconstpointer data)
+{
+  g_assert_null(g_getenv("GROUNDHOG_CALL_TRACE"));
+  roundtrip(n, data);
+  g_assert_null(trace_path);
+}
 void gh_test_register_call_transport(void)
 {
+  g_test_add("/calls/transport/trace-env-off-by-default", Network, NULL, setup, untraced_roundtrip, teardown);
+  g_test_add("/calls/transport/trace-env-captures-both-directions", Network, NULL, setup_traced, trace_roundtrip, teardown_traced);
   g_test_add("/calls/transport/deny-pending-and-subscribe", Network, NULL, setup, deny_pending, teardown);
   g_test_add("/calls/transport/closed-status", Network, NULL, setup, closed_status, teardown);
   g_test_add("/calls/transport/self-reject-signed-once", Network, NULL, setup, self_wrap, teardown);
