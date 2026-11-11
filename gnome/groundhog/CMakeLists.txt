@@ -3448,6 +3448,35 @@ endif()
 include(cmake/GroundhogCalls.cmake)
 # Concrete voice/video backend and its focused transport tests.
 include(cmake/GroundhogCallMedia.cmake)
+# --- Preferences › Calls (nostrc-mqrgk.5) ---
+# The Calls page validates ICE URLs and saves the TURN credential through
+# gh-call-settings (groundhog-call-media), so the dialog links it when the
+# build has calls; that link also defines GROUNDHOG_HAVE_CALLS for the dialog
+# and, transitively, for every test of groundhog-preferences (gh-features.h
+# gates the page with it). Without calls the page is hidden and its rows are
+# gated, and this block adds nothing to the dialog.
+if (GROUNDHOG_CALLS_AVAILABLE)
+  target_link_libraries(groundhog-preferences PUBLIC groundhog-call-media)
+endif()
+if (BUILD_TESTING AND TARGET test-groundhog-preferences)
+  # The Calls page: hidden and gated without the feature; with it the STUN
+  # list and TURN rows follow their keys and the ICE URL rules, the relay
+  # switch needs a saved credential, the Tor and local-network notes follow
+  # the network settings, and a credential apply reaches a Secret Service
+  # (tests/app/test_secret_service.py on the private test bus, as the
+  # two-instance acceptance test runs it): saved, found again, and the
+  # relay switch unlocked. Needs a display: self-skips (77) without one.
+  add_executable(test-groundhog-call-preferences tests/ui/test_call_preferences.c)
+  target_link_libraries(test-groundhog-call-preferences PRIVATE groundhog-preferences nostrc-test-bus)
+  target_include_directories(test-groundhog-call-preferences PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/common ${CMAKE_CURRENT_SOURCE_DIR}/tests/app)
+  target_compile_options(test-groundhog-call-preferences PRIVATE -Wall -Wextra -Werror)
+  add_dependencies(test-groundhog-call-preferences groundhog-schema)
+  add_test(NAME groundhog-call-preferences COMMAND test-groundhog-call-preferences)
+  set_tests_properties(groundhog-call-preferences PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120
+    ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals;SECRET_SERVICE_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/tests/app/test_secret_service.py;SECRET_SERVICE_PYTHON=${Python3_EXECUTABLE}")
+endif()
+# --- end Preferences › Calls ---
 # --- W18 messaging polish (nostrc-qp24.75, .83, .84, .86, yp69, 9cho, lff5) ---
 #  - GhDmSender spaces a room's wraps on a GhClock (charter §4.5 S4 on the
 #    direct path, nostrc-yp69): every executable that compiles gh-dm-send.c

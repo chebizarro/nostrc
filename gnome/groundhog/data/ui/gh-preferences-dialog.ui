@@ -713,6 +713,169 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
       </object>
     </child>
     <child>
+      <object class="AdwPreferencesPage" id="calls_page">
+        <property name="name">calls</property>
+        <property name="title" translatable="yes">Calls</property>
+        <property name="icon-name">call-start-symbolic</property>
+        <child>
+          <object class="AdwPreferencesGroup">
+            <property name="title" translatable="yes">Incoming Calls</property>
+            <child>
+              <object class="AdwSwitchRow" id="calls_from_unaccepted_row">
+                <property name="title" translatable="yes">Ring for Message Requests</property>
+                <property name="subtitle" translatable="yes">Lets people you haven't accepted ring you. When off, their calls are kept as missed-call requests without ringing. Hidden people never ring.</property>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="AdwPreferencesGroup">
+            <property name="title" translatable="yes">Connection</property>
+            <property name="description" translatable="yes">Audio and video travel directly between you and the other person, or through a TURN server you set up, never through relays. Relays see only encrypted call events.</property>
+            <child>
+              <object class="GtkLabel" id="calls_tor_note">
+                <property name="label" translatable="yes">Calls aren't available in Tor mode: their audio and video would bypass Tor and reveal your IP address.</property>
+                <property name="visible">false</property>
+                <property name="wrap">true</property>
+                <property name="xalign">0</property>
+                <style>
+                  <class name="warning"/>
+                  <class name="caption"/>
+                </style>
+              </object>
+            </child>
+            <child>
+              <object class="GtkLabel" id="calls_network_note">
+                <property name="wrap">true</property>
+                <property name="xalign">0</property>
+                <style>
+                  <class name="dim-label"/>
+                  <class name="caption"/>
+                </style>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="AdwPreferencesGroup">
+            <property name="title" translatable="yes">STUN Servers</property>
+            <property name="description" translatable="yes">When a call starts, Groundhog asks the first server for its public address; the others are kept for you to reorder. A STUN server learns your IP address and when you call. An empty list uses none.</property>
+            <child>
+              <object class="GtkBox">
+                <property name="orientation">1</property>
+                <property name="spacing">12</property>
+                <child>
+                  <object class="GtkListBox" id="stun_list">
+                    <property name="selection-mode">0</property>
+                    <style>
+                      <class name="boxed-list"/>
+                    </style>
+                    <accessibility>
+                      <property name="label" translatable="yes">STUN servers</property>
+                    </accessibility>
+                    <child type="placeholder">
+                      <object class="GtkLabel">
+                        <property name="label" translatable="yes">No STUN servers</property>
+                        <property name="margin-top">12</property>
+                        <property name="margin-bottom">12</property>
+                        <property name="margin-start">12</property>
+                        <property name="margin-end">12</property>
+                        <style>
+                          <class name="dim-label"/>
+                        </style>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkListBox">
+                    <property name="selection-mode">0</property>
+                    <style>
+                      <class name="boxed-list"/>
+                    </style>
+                    <child>
+                      <object class="AdwEntryRow" id="stun_entry">
+                        <property name="title" translatable="yes">Add STUN Server</property>
+                        <property name="show-apply-button">true</property>
+                        <property name="input-purpose">5</property>
+                        <accessibility>
+                          <property name="description" translatable="yes">A stun:// address with a host and port, without credentials</property>
+                        </accessibility>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="stun_error">
+                    <property name="visible">false</property>
+                    <property name="wrap">true</property>
+                    <property name="xalign">0</property>
+                    <style>
+                      <class name="error"/>
+                      <class name="caption"/>
+                    </style>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="AdwPreferencesGroup">
+            <property name="title" translatable="yes">TURN Server</property>
+            <property name="description" translatable="yes">A TURN server relays a call when a direct connection isn't possible. It learns your IP address and when you call. Groundhog sets none up and ships no credentials for anyone's server; enter your own.</property>
+            <child>
+              <object class="AdwEntryRow" id="turn_url_row">
+                <property name="title" translatable="yes">Server Address</property>
+                <property name="show-apply-button">true</property>
+                <property name="input-purpose">5</property>
+                <accessibility>
+                  <property name="description" translatable="yes">A turn:// or turns:// address with a host and port, without credentials; ?transport=udp or ?transport=tcp may follow</property>
+                </accessibility>
+              </object>
+            </child>
+            <child>
+              <object class="AdwEntryRow" id="turn_username_row">
+                <property name="title" translatable="yes">Username</property>
+                <property name="show-apply-button">true</property>
+              </object>
+            </child>
+            <child>
+              <object class="AdwPasswordEntryRow" id="turn_password_row">
+                <property name="title" translatable="yes">Credential</property>
+                <property name="show-apply-button">true</property>
+                <accessibility>
+                  <property name="description" translatable="yes">Saved in your system's secret store for this server and username, and never shown again</property>
+                </accessibility>
+              </object>
+            </child>
+            <child>
+              <object class="AdwActionRow" id="turn_credential_row">
+                <property name="title" translatable="yes">Saved Credential</property>
+                <property name="subtitle-selectable">true</property>
+              </object>
+            </child>
+            <child>
+              <object class="AdwSwitchRow" id="relay_only_row">
+                <property name="title" translatable="yes">Relay Every Call</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkLabel" id="turn_error">
+                <property name="visible">false</property>
+                <property name="wrap">true</property>
+                <property name="xalign">0</property>
+                <style>
+                  <class name="error"/>
+                  <class name="caption"/>
+                </style>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+    <child>
       <object class="AdwPreferencesPage" id="account_page">
         <property name="name">account</property>
         <property name="title" translatable="yes">Account</property>

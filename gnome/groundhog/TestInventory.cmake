@@ -60,6 +60,11 @@ _gh_describe(groundhog-draft-sync-gui test-groundhog-draft-sync groundhog.unclas
     "${CMAKE_CURRENT_SOURCE_DIR}/data/ui/gh-drafts-page.blp"
     "${CMAKE_CURRENT_SOURCE_DIR}/data/ui/gh-preferences-dialog.blp")
 _gh_describe(groundhog-social-sync-gui test-groundhog-social-sync groundhog.unclassified REQUIRES display private_bus)
+# Preferences › Calls (nostrc-mqrgk.5); the dialog's page, not the media stack.
+_gh_describe(groundhog-call-preferences test-groundhog-call-preferences groundhog.unclassified REQUIRES display private_bus
+  INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/gh-preferences-dialog.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/data/ui/gh-preferences-dialog.blp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/app/test_secret_service.py")
 _gh_describe(groundhog-lists-ui test-groundhog-lists-ui groundhog.unclassified REQUIRES display
   INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/data/ui/gh-lists-page.blp"
     "${CMAKE_CURRENT_SOURCE_DIR}/data/ui/gh-list-editor-page.blp"
