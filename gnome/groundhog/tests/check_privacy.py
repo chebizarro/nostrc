@@ -242,6 +242,8 @@ GSETTINGS = {
     "default-dm-protocol": Key("s", "'marmot'", ("marmot", "nip17")),
     # §7.11 Network / Connection (§4.2).
     "allow-local-network": Key("b", "false"),
+    # §7.11 Privacy / Calls: service gate, no UI in the signalling change.
+    "allow-calls-from-unaccepted": Key("b", "false"),
     "network-mode": Key("s", "'system'", ("system", "none", "tor")),
     "tor-socks-address": Key("s", "'127.0.0.1:9050'"),
     # §7.11 Network / Relays (PD-13, PT-9: no relay before the user confirms one).
@@ -328,6 +330,8 @@ ACCOUNT_PURPOSE_FILES = {
                              "the current, unblocked kind-10013 relays of the account; never a "
                              "write, inbox or discovery relay (nostrc-9lwl7.8)",
     "src/app/gh-dm-inbox.": "own inbox read, on the account's own 10050 relays only",
+    "src/app/gh-call-signalling.": "21059 own-inbox read and answer/reject self-wraps only "
+                                   "on current own 10050; peer wraps and NIP-65 lookup use ephemeral AUTH",
     "src/app/gh-outbox.": "the self-copy (and a note to self) on the own 10050 relays",
     "src/app/gh-dm-send.": "the self-copy (and a note to self) on the own 10050 relays",
     "src/app/gh-relay-list-setup.": "own list publish (the account's kind 10002, nostrc-0bdg) "

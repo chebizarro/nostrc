@@ -4035,6 +4035,36 @@ elseif(TARGET groundhog-conversations)
   target_compile_definitions(groundhog-conversations PUBLIC GROUNDHOG_HAVE_MESSAGE_POLICY=0)
 endif()
 
+# --- NIP-AC signalling/state machine (nostrc-mqrgk.3; no WebRTC dependency) ---
+if(TARGET groundhog-account-relays AND TARGET groundhog-conversations AND
+   TARGET groundhog-net AND TARGET nostr_nip59_core)
+  add_library(groundhog-calls STATIC
+    src/app/gh-call-media-backend.c src/app/gh-call-wire.c
+    src/app/gh-call-signalling.c src/app/gh-call-service.c
+    src/app/gh-inbox-resolver.c src/app/gh-inbox-lookup.c)
+  target_include_directories(groundhog-calls PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/app)
+  target_link_libraries(groundhog-calls PUBLIC groundhog-account-relays
+    groundhog-auth-policy groundhog-conversations groundhog-net nostr_nip59_core)
+  target_compile_options(groundhog-calls PRIVATE -Wall -Wextra -Werror)
+  target_link_libraries(groundhog PRIVATE groundhog-calls)
+  target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_CALL_SIGNALLING=1)
+  if(BUILD_TESTING)
+    add_executable(test-groundhog-calls tests/app/test_calls.c tests/app/test_call_transport.c tests/app/fake-call-media.c)
+    target_link_libraries(test-groundhog-calls PRIVATE groundhog-calls nostrc-test-bus)
+    if(TARGET groundhog-store-conversations)
+      target_link_libraries(test-groundhog-calls PRIVATE groundhog-store-conversations)
+      groundhog_store_link_sqlcipher_first(test-groundhog-calls)
+    endif()
+    target_compile_options(test-groundhog-calls PRIVATE -Wall -Wextra -Werror)
+    target_compile_definitions(test-groundhog-calls PRIVATE GH_CALL_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
+    add_dependencies(test-groundhog-calls groundhog-test-schemas)
+    add_test(NAME groundhog-calls COMMAND test-groundhog-calls)
+    set_tests_properties(groundhog-calls PROPERTIES TIMEOUT 60
+      ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals,fatal-warnings")
+  endif()
+endif()
+# --- end NIP-AC signalling/state machine ---
+
 # --- test isolation (nostrc-ttvxv) ---
 # A test-key account once got a store under the developer's real
 # ~/.local/share/groundhog and an item in the login Keychain. Every Groundhog

@@ -100,6 +100,11 @@
     </key>
 
     <!-- Network / Connection -->
+    <key name="allow-calls-from-unaccepted" type="b">
+      <default>false</default>
+      <summary>Allow calls from people you have not accepted</summary>
+      <description>When disabled, calls from message requests are recorded only as missed-call requests and do not ring. Hidden authors are always ignored silently.</description>
+    </key>
     <key name="allow-local-network" type="b">
       <default>false</default>
       <summary>Allow local network</summary>
