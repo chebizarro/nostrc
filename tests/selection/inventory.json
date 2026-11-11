@@ -2253,6 +2253,26 @@
       "requirement": "blocking",
       "runtime_inputs": []
     },
+    "nostr.gobject.worker_shutdown": {
+      "build_targets": ["test_nostr_gobject_worker_shutdown"],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": ["test_nostr_gobject_worker_shutdown"],
+        "core.linux.asan": ["test_nostr_gobject_worker_shutdown"],
+        "core.linux": ["test_nostr_gobject_worker_shutdown"],
+        "grotto.linux": ["test_nostr_gobject_worker_shutdown"],
+        "grotto.linux.asan_ubsan": ["test_nostr_gobject_worker_shutdown"],
+        "groundhog.linux": ["test_nostr_gobject_worker_shutdown"],
+        "groundhog.mdk08": ["test_nostr_gobject_worker_shutdown"],
+        "groundhog.mdk011": ["test_nostr_gobject_worker_shutdown"]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": ["libnostr", "nostr.gobject", "nip11"],
+      "profiles": ["core.macos.asan", "core.linux.asan", "core.linux", "grotto.linux", "grotto.linux.asan_ubsan", "groundhog.linux", "groundhog.mdk08", "groundhog.mdk011"],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
     "root.asan.nostr.gobject": {
       "build_targets": [],
       "cost": "ordinary",

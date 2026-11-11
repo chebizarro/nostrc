@@ -447,6 +447,55 @@ static void *dial_thread(void *arg) {
     return ok ? arg : NULL;
 }
 
+typedef struct {
+    pthread_mutex_t mutex;
+    pthread_cond_t changed;
+    bool arrived;
+    bool release;
+} DialBarrier;
+
+static void hold_before_publish(NostrRelay *relay, void *data) {
+    (void)relay;
+    DialBarrier *barrier = data;
+    pthread_mutex_lock(&barrier->mutex);
+    barrier->arrived = true;
+    pthread_cond_broadcast(&barrier->changed);
+    while (!barrier->release)
+        pthread_cond_wait(&barrier->changed, &barrier->mutex);
+    pthread_mutex_unlock(&barrier->mutex);
+}
+
+static void test_close_rejects_inflight_dial(void) {
+    int base = nostr_connection_unreleased_count();
+    NostrRelay *relay = relay_for_port(srv.port);
+    DialBarrier barrier = { PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER, false, false };
+    nostr_relay_test_set_dial_hook(hold_before_publish, &barrier);
+    pthread_t thread;
+    CHECK(pthread_create(&thread, NULL, dial_thread, relay) == 0);
+    pthread_mutex_lock(&barrier.mutex);
+    while (!barrier.arrived)
+        pthread_cond_wait(&barrier.changed, &barrier.mutex);
+    pthread_mutex_unlock(&barrier.mutex);
+    /* The real dial exists but has not published. Close must fence it out. */
+    Error *err = NULL;
+    (void)nostr_relay_close(relay, &err);
+    if (err) free_error(err);
+    pthread_mutex_lock(&barrier.mutex);
+    barrier.release = true;
+    pthread_cond_broadcast(&barrier.changed);
+    pthread_mutex_unlock(&barrier.mutex);
+    void *result = NULL;
+    pthread_join(thread, &result);
+    nostr_relay_test_set_dial_hook(NULL, NULL);
+    CHECK(!result);
+    CHECK(relay->connection == NULL);
+    CHECK(nostr_connection_unreleased_count() == base);
+    nostr_relay_free(relay);
+    pthread_cond_destroy(&barrier.changed);
+    pthread_mutex_destroy(&barrier.mutex);
+    printf("  [ok] close rejects an in-flight dial before publication\n");
+}
+
 static void test_racing_dials_publish_one_connection(void) {
     int base = nostr_connection_unreleased_count();
     NostrRelay *relay = relay_for_port(srv.port);
@@ -582,6 +631,7 @@ int main(void) {
     test_destroy_frees_unread_results();
     test_contexts_are_released();
     test_set_filters_owned_by_subscription();
+    test_close_rejects_inflight_dial();
     test_racing_dials_publish_one_connection();
     test_reconnect_adopts_without_lease_wait();
     test_close_answers_writes_when_not_connected();

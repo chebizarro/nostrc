@@ -34,6 +34,7 @@ typedef void (*NostrRelayAuthCallback)(struct NostrRelay *relay,
 
 struct _NostrRelayPrivate {
     nsync_mu mutex;
+    bool closing; /* terminal admission/publication fence, guarded by mutex */
 
     GoContext *connection_context;
     CancelFunc connection_context_cancel;

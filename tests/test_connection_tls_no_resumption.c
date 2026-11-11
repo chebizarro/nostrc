@@ -417,7 +417,7 @@ int main(int argc, char **argv) {
         NostrConnection *connection = nostr_connection_new(argv[3]);
         CHECK(!connection || nostr_connection_wait_handshake(connection, 10000) != 1,
               "TLS identity verification accepted an invalid peer");
-        if (connection) nostr_connection_close(connection);
+        if (connection) nostr_connection_release(connection);
         return 0;
     }
     unsetenv("NOSTR_TEST_MODE"); /* the real network path */
@@ -505,8 +505,8 @@ int main(int argc, char **argv) {
               "hardening dropped the provider default X25519MLKEM768 group");
     printf("PASS: ClientHello TLS >=1.2, ECDHE AEAD only, provider groups preserved\n");
 
-    nostr_connection_close(a);
-    nostr_connection_close(b);
+    nostr_connection_release(a);
+    nostr_connection_release(b);
     /* New processes use independent client contexts and the same real TLS
      * fixture. A negative must reach ClientHello, not just fail DNS/connect. */
     for (int n = 0; n < 2; n++) {

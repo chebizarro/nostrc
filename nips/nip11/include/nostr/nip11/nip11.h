@@ -70,6 +70,10 @@ typedef struct RelayInformationDocument {
     char *curation;
 } RelayInformationDocument;
 
+/* Fetches are bounded to 3 seconds connecting / 10 seconds total. The optional
+ * thread-safe predicate is borrowed until return; cancellation returns NULL. */
+NOSTR_NIP11_API RelayInformationDocument* nostr_nip11_fetch_info_cancellable(
+    const char *url, bool (*cancelled)(void *), void *user_data);
 NOSTR_NIP11_API RelayInformationDocument* nostr_nip11_fetch_info(const char *url);
 NOSTR_NIP11_API RelayInformationDocument* nostr_nip11_parse_info(const char *json);
 

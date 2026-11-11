@@ -149,7 +149,7 @@ int main(void) {
     GoChannel *sc = conn->send_channel;
     if (!sc->slot_seq) {
         printf("test_connection_writable_rearm: skipped (libgo built without MPMC slots)\n");
-        nostr_connection_close(conn);
+        nostr_connection_release(conn);
         atomic_store(&g_srv_stop, 1);
         lws_cancel_service(g_srv_ctx);
         pthread_join(srv, NULL);
@@ -182,7 +182,7 @@ int main(void) {
     CHECK(ok, "queued frames stranded: CLIENT_WRITEABLE cleared writable_pending with frames queued");
     CHECK(in_order, "frames out of order");
 
-    nostr_connection_close(conn);
+    nostr_connection_release(conn);
     atomic_store(&g_srv_stop, 1);
     lws_cancel_service(g_srv_ctx);
     pthread_join(srv, NULL);
