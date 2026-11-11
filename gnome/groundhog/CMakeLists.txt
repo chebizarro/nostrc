@@ -150,6 +150,7 @@ add_custom_command(
           ${GROUNDHOG_DATA}/icons/scalable/actions/dialog-question-symbolic.svg
           ${GROUNDHOG_DATA}/icons/scalable/actions/dialog-warning-symbolic.svg
           ${GROUNDHOG_DATA}/icons/scalable/actions/document-open-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/emblem-default-symbolic.svg
           ${GROUNDHOG_DATA}/icons/scalable/actions/emblem-ok-symbolic.svg
           ${GROUNDHOG_DATA}/icons/scalable/actions/emblem-synchronizing-symbolic.svg
           ${GROUNDHOG_DATA}/icons/scalable/actions/go-bottom-symbolic.svg
