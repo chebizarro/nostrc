@@ -33,6 +33,14 @@ Parsed relay arrays now carry a trailing NULL, and pairing validation uses the
 explicit count. No wire format, ABI, relay-limit policy or published release/tag
 changes; other components are unchanged.
 
+Relay worker shutdown (`nostrc-0cfsg.36.33`): cancellation/drain fixes and additive
+shutdown/cancellable APIs fold into unreleased libnostr 2.4.0 and nostr-gobject
+3.1.0. Groundhog's private-relay disposal and post-main-loop drain fold into
+unreleased 0.13.0 (latest published base is 0.12.1). NIP-11's bounded cancellable
+fetch belongs to the unreleased libnostr/NIP wave; it has no independent declared
+release. No version or release/tag columns change; gnostr and Grotto callers are
+unchanged. No public ABI or wire-format removal.
+
 | Component | Path | Declared version | Latest release | Release tag | Authoritative version source(s) |
 | --- | --- | --- | --- | --- | --- |
 | libnostr | `libnostr/` | 2.4.0 | Unreleased | — | `libnostr/CMakeLists.txt` |

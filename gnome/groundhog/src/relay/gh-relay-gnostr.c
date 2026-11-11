@@ -185,6 +185,8 @@ retry_connect(gpointer data)
 {
   GhGnostrHandle *handle = data;
   handle->retry_source = 0;
+  if (!gnostr_relay_get_core_relay(handle->relay))
+    return G_SOURCE_REMOVE; /* terminal runtime disposal, not a failed dial */
   if (!handle->closed &&
       nostr_relay_is_established(gnostr_relay_get_core_relay(handle->relay))) {
     handle->retry_delay_seconds = 1;
@@ -264,7 +266,7 @@ on_connected(GObject *source, GAsyncResult *result, gpointer data)
   gboolean connected = gnostr_relay_connect_finish(GNOSTR_RELAY(source), result,
                                                      &error);
   handle->connect_pending = FALSE;
-  if (!handle->closed) {
+  if (!handle->closed && !g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
     if (connected ||
         nostr_relay_is_established(gnostr_relay_get_core_relay(handle->relay))) {
       handle->retry_delay_seconds = 1;
@@ -417,7 +419,10 @@ close_relay(gpointer data, gpointer user_data)
   g_cancellable_cancel(handle->cancellable);
   reset_subscription(handle);
   g_signal_handlers_disconnect_by_data(handle->relay, handle);
-  gnostr_relay_disconnect(handle->relay);
+  /* This endpoint owns a private wrapper. Dispose cancels connect AND NIP-11
+   * and transfers core cleanup to the tracked runtime, without joining on GTK.
+   * Ordinary shared-pool release deliberately does not do this. */
+  g_object_run_dispose(G_OBJECT(handle->relay));
   handle_unref(handle);
 }
 

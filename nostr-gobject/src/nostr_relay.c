@@ -24,6 +24,7 @@
 
 /* Now include GObject wrapper header */
 #include "nostr_relay.h"
+#include "nostr_relay_worker.h"
 #include <glib.h>
 #include <gio/gio.h>
 
@@ -194,6 +195,9 @@ relay_auth_handler_unref(RelayAuthHandler *handler)
 struct _GNostrRelay {
     GObject parent_instance;
     NostrRelay *relay;           /* Core libnostr relay */
+    GCancellable *shutdown_cancel;
+    GMutex core_lock; /* synchronous compatibility calls vs dispose */
+    gboolean disposed;
     gchar *url;                  /* Cached URL (construct-only) */
     /* nostrc-qp24.4.5: two views of the connection state. `state` is the
      * latest core state, stored atomically by the worker thread so readers
@@ -342,7 +346,7 @@ set_state_on_main_thread(gpointer user_data)
         /* A transition queued before an explicit disconnect is stale: the
          * disconnect already announced DISCONNECTED and must not be followed
          * by, say, an old CONNECTED. */
-        if (data->serial > __atomic_load_n(&self->state_barrier, __ATOMIC_SEQ_CST))
+        if (!self->disposed && data->serial > __atomic_load_n(&self->state_barrier, __ATOMIC_SEQ_CST))
             gnostr_relay_emit_state(self, data->new_state);
         g_object_unref(self);
     }
@@ -542,6 +546,9 @@ gnostr_relay_constructed(GObject *object)
 
     G_OBJECT_CLASS(gnostr_relay_parent_class)->constructed(object);
 
+    /* Terminal admission may reject work from a late application callback.
+     * Keep an inert wrapper: async connect reports G_IO_ERROR_CLOSED. */
+    if (self->disposed) return;
     /* Create the core relay with the URL set during construction */
     if (self->url) {
         Error *err = NULL;
@@ -585,13 +592,39 @@ gnostr_relay_constructed(GObject *object)
 /* nostrc-ws3: Background thread func for nostr_relay_free.
  * relay_free_impl calls go_wait_group_wait which blocks until
  * worker goroutines exit.  Must not run on the main thread. */
-static void
-relay_free_thread_func(GTask *task, gpointer source G_GNUC_UNUSED,
-                       gpointer task_data, GCancellable *cancel G_GNUC_UNUSED)
+static gpointer
+relay_free_thread_func(gpointer relay)
 {
-    NostrRelay *relay = (NostrRelay *)task_data;
     nostr_relay_free(relay);
-    g_task_return_boolean(task, TRUE);
+    return NULL;
+}
+
+static void
+gnostr_relay_dispose(GObject *object)
+{
+    GNostrRelay *self = GNOSTR_RELAY(object);
+    if (!self->disposed) {
+        self->disposed = TRUE;
+        g_cancellable_cancel(self->shutdown_cancel);
+#ifdef ENABLE_NIP11
+        if (self->nip11_cancellable)
+            g_cancellable_cancel(self->nip11_cancellable);
+#endif
+        g_mutex_lock(&self->core_lock);
+        NostrRelay *relay = self->relay;
+        self->relay = NULL;
+        g_mutex_unlock(&self->core_lock);
+        if (relay) {
+            nostr_relay_set_state_callback(relay, NULL, NULL);
+            nostr_relay_set_auth_callback(relay, NULL, NULL);
+            nostr_relay_set_ok_callback(relay, NULL, NULL);
+            nostr_relay_request_close(relay);
+            /* The runtime owns this reference until free/join is complete.
+             * Connect workers hold independent core refs, never a borrowed self. */
+            gnostr_relay_worker_run(relay_free_thread_func, NULL, relay);
+        }
+    }
+    G_OBJECT_CLASS(gnostr_relay_parent_class)->dispose(object);
 }
 
 static void
@@ -628,43 +661,9 @@ gnostr_relay_finalize(GObject *object)
     }
 #endif
 
-    if (self->relay) {
-        /* nostrc-flp7: detach the core callbacks first. This does not wait
-         * for a worker that is inside one of them right now: libnostr holds
-         * that registration's reference on the callback data until the call
-         * returns, so the worker reads live memory, and its g_weak_ref_get()
-         * returns NULL from here on. The callback data used to be freed here,
-         * before the callbacks were detached, and a worker already past
-         * libnostr's lock then read it after the free (message_loop ->
-         * relay_set_state -> on_core_state_changed -> g_weak_ref_get). Pending
-         * idles hold references of their own and see NULL too. */
-        nostr_relay_set_state_callback(self->relay, NULL, NULL);
-        nostr_relay_set_auth_callback(self->relay, NULL, NULL);
-        nostr_relay_set_ok_callback(self->relay, NULL, NULL);
-
-        /* nostrc-ws3: Dispatch nostr_relay_free to a background thread.
-         * relay_free_impl blocks in go_wait_group_wait() waiting for worker
-         * goroutines to exit.  If finalize runs on the GTK main thread
-         * (e.g., sync_relays → remove_relay → last unref → finalize),
-         * this blocks the main loop and freezes the app.
-         *
-         * relay_free_impl cancels the connection context and closes the
-         * connection's channels itself (nostrc-ws1), under the relay mutex.
-         * This function used to close them first by reading
-         * relay->connection without that mutex, racing message_loop's
-         * reconnect, which swaps the connection and hands the old one to the
-         * LWS thread to free (nostrc-flp7).
-         *
-         * NOTE: Do NOT call nostr_relay_close() here - it blocks waiting for
-         * workers, which would freeze the main thread. */
-        NostrRelay *relay = self->relay;
-        self->relay = NULL;
-
-        GTask *task = g_task_new(NULL, NULL, NULL, NULL);
-        g_task_set_task_data(task, relay, NULL);
-        g_task_run_in_thread(task, relay_free_thread_func);
-        g_object_unref(task);
-    }
+    gnostr_relay_worker_unregister(object);
+    g_clear_object(&self->shutdown_cancel);
+    g_mutex_clear(&self->core_lock);
 
     /* Drop the sign handler (a worker still signing holds its own ref). */
     g_clear_pointer(&self->auth_handler, relay_auth_handler_unref);
@@ -683,6 +682,7 @@ gnostr_relay_class_init(GNostrRelayClass *klass)
     object_class->set_property = gnostr_relay_set_property;
     object_class->get_property = gnostr_relay_get_property;
     object_class->constructed = gnostr_relay_constructed;
+    object_class->dispose = gnostr_relay_dispose;
     object_class->finalize = gnostr_relay_finalize;
 
     /**
@@ -912,6 +912,12 @@ gnostr_relay_init(GNostrRelay *self)
 #endif
     self->auth_handler = NULL;
     self->authenticated = FALSE;
+    g_mutex_init(&self->core_lock);
+    self->shutdown_cancel = g_cancellable_new();
+    if (!gnostr_relay_worker_register(G_OBJECT(self))) {
+        self->disposed = TRUE;
+        g_cancellable_cancel(self->shutdown_cancel);
+    }
 }
 
 /* Public API */
@@ -956,14 +962,27 @@ gboolean
 gnostr_relay_connect(GNostrRelay *self, GError **error)
 {
     g_return_val_if_fail(GNOSTR_IS_RELAY(self), FALSE);
-    g_return_val_if_fail(self->relay != NULL, FALSE);
+    if (!gnostr_relay_worker_enter()) {
+        g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_CLOSED, "Relay runtime is shut down");
+        return FALSE;
+    }
+    g_mutex_lock(&self->core_lock);
+    NostrRelay *core = self->relay ? nostr_relay_ref(self->relay) : NULL;
+    g_mutex_unlock(&self->core_lock);
+    if (!core) {
+        gnostr_relay_worker_leave();
+        g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_CLOSED, "Relay is shut down");
+        return FALSE;
+    }
 
     /* nostrc-kw9r: Shared relay may already be connected by another pool.
      * Use atomic load since this may be called from worker threads.
      * nostrc-oz77: CONNECTED is set when the dial starts; only an
      * established handshake counts. */
     if (__atomic_load_n(&self->state, __ATOMIC_SEQ_CST) == GNOSTR_RELAY_STATE_CONNECTED &&
-        nostr_relay_is_established(self->relay)) {
+        nostr_relay_is_established(core)) {
+        nostr_relay_free(core);
+        gnostr_relay_worker_leave();
         return TRUE;
     }
 
@@ -982,8 +1001,11 @@ gnostr_relay_connect(GNostrRelay *self, GError **error)
      * rather than by a publish that never gets its OK. The core relay's
      * reconnect loop keeps running for the other users of a shared relay. */
     Error *err = NULL;
-    if (nostr_relay_connect(self->relay, &err) &&
-        nostr_relay_wait_established(self->relay, GNOSTR_RELAY_HANDSHAKE_TIMEOUT_MS, &err)) {
+    gboolean connected = nostr_relay_connect(core, &err) &&
+        nostr_relay_wait_established(core, GNOSTR_RELAY_HANDSHAKE_TIMEOUT_MS, &err);
+    nostr_relay_free(core);
+    gnostr_relay_worker_leave();
+    if (connected) {
         return TRUE;
     } else {
         GError *g_err = g_error_new(NOSTR_ERROR,
@@ -1022,41 +1044,61 @@ gnostr_relay_disconnect(GNostrRelay *self)
 /* Async connect implementation */
 
 typedef struct {
-    GNostrRelay *self;
+    GTask *task;
+    NostrRelay *relay;
+    CancelContextResult cancel;
+    GCancellable *caller;
+    GCancellable *owner;
+    gulong caller_handler;
+    gulong owner_handler;
+    GError *error;
+    gboolean connected;
 } ConnectAsyncData;
 
 static void
-connect_async_data_free(ConnectAsyncData *data)
+cancel_connect(GCancellable *cancellable, gpointer user_data)
 {
-    if (data) {
-        g_object_unref(data->self);
-        g_free(data);
-    }
+    (void)cancellable;
+    ConnectAsyncData *data = user_data;
+    data->cancel.cancel(data->cancel.context);
 }
 
-static void
-connect_async_thread(GTask        *task,
-                     gpointer      source_object,
-                     gpointer      task_data G_GNUC_UNUSED,
-                     GCancellable *cancellable)
+static gpointer
+connect_async_thread(gpointer user_data)
 {
-    GNostrRelay *self = GNOSTR_RELAY(source_object);
-    g_autoptr(GError) error = NULL;
+    ConnectAsyncData *data = user_data;
+    Error *err = NULL;
+    data->connected = nostr_relay_connect_with_context(data->relay, data->cancel.context, &err) &&
+        nostr_relay_wait_established_with_context(data->relay, GNOSTR_RELAY_HANDSHAKE_TIMEOUT_MS,
+                                                  data->cancel.context, &err);
+    if (go_context_is_canceled(data->cancel.context))
+        data->error = g_error_new_literal(G_IO_ERROR, G_IO_ERROR_CANCELLED, "Relay connect cancelled");
+    else if (!data->connected)
+        data->error = g_error_new(NOSTR_ERROR, NOSTR_ERROR_CONNECTION_FAILED, "%s",
+                                  err && err->message ? err->message : "connect failed");
+    if (err) free_error(err);
+    return NULL;
+}
 
-    /* Check for cancellation */
-    if (g_cancellable_set_error_if_cancelled(cancellable, &error)) {
-        /* nostrc-blk2: Do NOT call gnostr_relay_emit_state from worker
-         * thread — it emits GObject signals that freeze GTK. State hasn't
-         * changed since we haven't called connect yet. */
-        g_task_return_error(task, g_steal_pointer(&error));
-        return;
-    }
-
-    if (gnostr_relay_connect(self, &error)) {
-        g_task_return_boolean(task, TRUE);
-    } else {
-        g_task_return_error(task, g_steal_pointer(&error));
-    }
+/* Called only after join: source-object callbacks cannot run while this worker
+ * is still allocating crypto state. Caller cancellation never closes a shared
+ * relay; only disposal/explicit disconnect stops its transport. */
+static void
+connect_async_complete(gpointer user_data)
+{
+    ConnectAsyncData *data = user_data;
+    if (data->caller_handler) g_cancellable_disconnect(data->caller, data->caller_handler);
+    if (data->owner_handler) g_cancellable_disconnect(data->owner, data->owner_handler);
+    g_clear_object(&data->caller);
+    g_clear_object(&data->owner);
+    go_context_unref(data->cancel.context);
+    nostr_relay_free(data->relay);
+    if (data->error)
+        g_task_return_error(data->task, data->error);
+    else
+        g_task_return_boolean(data->task, data->connected);
+    g_object_unref(data->task);
+    g_free(data);
 }
 
 void
@@ -1066,25 +1108,29 @@ gnostr_relay_connect_async(GNostrRelay         *self,
                            gpointer             user_data)
 {
     g_return_if_fail(GNOSTR_IS_RELAY(self));
-
-    GTask *task = g_task_new(self, cancellable, callback, user_data);
+    GTask *task = gnostr_relay_worker_task_new(G_OBJECT(self), cancellable, callback, user_data);
     g_task_set_source_tag(task, gnostr_relay_connect_async);
-
-    /* nostrc-kw9r: Shared relay may already be connected — complete immediately
-     * instead of spawning a redundant worker thread. */
-    if (self->state == GNOSTR_RELAY_STATE_CONNECTED && self->relay &&
-        nostr_relay_is_established(self->relay)) {
+    if (self->disposed || !self->relay) {
+        g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_CLOSED, "Relay is shut down");
+        g_object_unref(task);
+        return;
+    }
+    if (self->state == GNOSTR_RELAY_STATE_CONNECTED && nostr_relay_is_established(self->relay)) {
         g_task_return_boolean(task, TRUE);
         g_object_unref(task);
         return;
     }
-
     ConnectAsyncData *data = g_new0(ConnectAsyncData, 1);
-    data->self = g_object_ref(self);
-    g_task_set_task_data(task, data, (GDestroyNotify)connect_async_data_free);
-
-    g_task_run_in_thread(task, connect_async_thread);
-    g_object_unref(task);
+    data->task = task;
+    data->relay = nostr_relay_ref(self->relay);
+    data->cancel = go_context_with_cancel(NULL);
+    data->owner = g_object_ref(self->shutdown_cancel);
+    data->owner_handler = g_cancellable_connect(data->owner, G_CALLBACK(cancel_connect), data, NULL);
+    if (cancellable) {
+        data->caller = g_object_ref(cancellable);
+        data->caller_handler = g_cancellable_connect(cancellable, G_CALLBACK(cancel_connect), data, NULL);
+    }
+    gnostr_relay_worker_run(connect_async_thread, connect_async_complete, data);
 }
 
 gboolean
@@ -1355,75 +1401,66 @@ gnostr_relay_get_authenticated(GNostrRelay *self)
 #ifdef ENABLE_NIP11
 /* ---- NIP-11 Relay Information ---- */
 
-/* Data for delivering NIP-11 result on main thread */
+/* Worker inputs and delivery are independent of the wrapper's lifetime. */
 typedef struct {
-    GNostrRelay *self;
+    GWeakRef relay;
+    gchar *url;
+    GCancellable *cancel;
     RelayInformationDocument *info;
 } Nip11ResultData;
+
+static void
+nip11_result_free(gpointer user_data)
+{
+    Nip11ResultData *data = user_data;
+    g_weak_ref_clear(&data->relay);
+    g_clear_object(&data->cancel);
+    if (data->info) nostr_nip11_free_info(data->info);
+    g_free(data->url);
+    g_free(data);
+}
 
 static gboolean
 nip11_deliver_on_main_thread(gpointer user_data)
 {
     Nip11ResultData *data = user_data;
-    GNostrRelay *self = data->self;
-
-    /* Store info if we don't already have one (first fetch wins) */
-    if (self->nip11_info == NULL && data->info != NULL) {
+    g_autoptr(GNostrRelay) self = g_weak_ref_get(&data->relay);
+    /* Also validate at delivery: replacement/disposal may have happened after
+     * the fetch's final cancellation check. First successful fetch still wins. */
+    if (self && !self->disposed && !g_cancellable_is_cancelled(data->cancel) &&
+        self->nip11_cancellable == data->cancel && !self->nip11_info && data->info) {
         self->nip11_info = data->info;
-        data->info = NULL;  /* ownership transferred */
+        data->info = NULL;
         g_signal_emit(self, gnostr_relay_signals[GNOSTR_RELAY_SIGNAL_NIP11_INFO], 0);
     }
-
-    /* Clean up */
-    if (data->info)
-        nostr_nip11_free_info(data->info);
-    g_object_unref(data->self);
-    g_free(data);
     return G_SOURCE_REMOVE;
 }
 
-static void
-nip11_fetch_thread(GTask        *task,
-                   gpointer      source_object,
-                   gpointer      task_data G_GNUC_UNUSED,
-                   GCancellable *cancellable)
+static bool
+nip11_cancelled(void *cancel)
 {
-    GNostrRelay *self = GNOSTR_RELAY(source_object);
+    return g_cancellable_is_cancelled(cancel);
+}
 
-    if (g_cancellable_is_cancelled(cancellable)) {
-        g_task_return_boolean(task, FALSE);
+static gpointer
+nip11_fetch_thread(gpointer user_data)
+{
+    Nip11ResultData *data = user_data;
+    data->info = nostr_nip11_fetch_info_cancellable(data->url, nip11_cancelled, data->cancel);
+    return NULL;
+}
+
+static void
+nip11_fetch_complete(gpointer user_data)
+{
+    Nip11ResultData *data = user_data;
+    if (!data->info || g_cancellable_is_cancelled(data->cancel)) {
+        nip11_result_free(data);
         return;
     }
-
-    /* Convert wss:// URL to https:// for NIP-11 HTTP fetch */
-    g_autofree gchar *http_url = NULL;
-    if (g_str_has_prefix(self->url, "wss://")) {
-        http_url = g_strconcat("https://", self->url + 6, NULL);
-    } else if (g_str_has_prefix(self->url, "ws://")) {
-        http_url = g_strconcat("http://", self->url + 5, NULL);
-    } else {
-        http_url = g_strdup(self->url);
-    }
-
-    RelayInformationDocument *info = nostr_nip11_fetch_info(http_url);
-
-    if (g_cancellable_is_cancelled(cancellable)) {
-        if (info) nostr_nip11_free_info(info);
-        g_task_return_boolean(task, FALSE);
-        return;
-    }
-
-    if (info) {
-        /* Deliver result on main thread */
-        Nip11ResultData *data = g_new0(Nip11ResultData, 1);
-        data->self = g_object_ref(self);
-        data->info = info;
-        g_idle_add(nip11_deliver_on_main_thread, data);
-        g_task_return_boolean(task, TRUE);
-    } else {
-        g_task_return_boolean(task, FALSE);
-        g_debug("NIP-11 fetch failed for %s", self->url);
-    }
+    GSource *source = g_idle_source_new();
+    g_source_set_callback(source, nip11_deliver_on_main_thread, data, nip11_result_free);
+    gnostr_relay_worker_deliver(source);
 }
 
 void
@@ -1431,6 +1468,7 @@ gnostr_relay_fetch_nip11_async(GNostrRelay *self)
 {
     g_return_if_fail(GNOSTR_IS_RELAY(self));
     g_return_if_fail(self->url != NULL);
+    if (self->disposed) return;
 
     /* Cancel any previous in-flight fetch */
     if (self->nip11_cancellable) {
@@ -1440,10 +1478,16 @@ gnostr_relay_fetch_nip11_async(GNostrRelay *self)
 
     self->nip11_cancellable = g_cancellable_new();
 
-    GTask *task = g_task_new(self, self->nip11_cancellable, NULL, NULL);
-    g_task_set_source_tag(task, gnostr_relay_fetch_nip11_async);
-    g_task_run_in_thread(task, nip11_fetch_thread);
-    g_object_unref(task);
+    Nip11ResultData *data = g_new0(Nip11ResultData, 1);
+    g_weak_ref_init(&data->relay, self);
+    data->cancel = g_object_ref(self->nip11_cancellable);
+    if (g_str_has_prefix(self->url, "wss://"))
+        data->url = g_strconcat("https://", self->url + 6, NULL);
+    else if (g_str_has_prefix(self->url, "ws://"))
+        data->url = g_strconcat("http://", self->url + 5, NULL);
+    else
+        data->url = g_strdup(self->url);
+    gnostr_relay_worker_run(nip11_fetch_thread, nip11_fetch_complete, data);
 }
 
 const GNostrRelayNip11Info *

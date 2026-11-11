@@ -5,6 +5,9 @@
 #include <signal.h>
 
 #include "gh-app-services.h"
+#if GROUNDHOG_HAVE_RELAYS
+#include <nostr-gobject-1.0/nostr_relay.h>
+#endif
 #include "gh-i18n.h"
 #if defined(GH_MLS_TEST_HOOKS) && GROUNDHOG_HAVE_MLS
 #include "app/gh-test-control.h"
@@ -310,6 +313,11 @@ app_shutdown(GApplication *app, gpointer user_data)
     g_object_run_dispose(G_OBJECT(app_tray));
     g_clear_object(&app_tray);
   }
+#endif
+#if GROUNDHOG_HAVE_RELAYS
+  /* Drain cancellation callbacks while their services/scopes are still alive.
+   * The runtime dispatches their contexts while joining transport workers. */
+  gnostr_relay_workers_shutdown();
 #endif
   g_clear_pointer(&app_services, gh_app_services_free);
 }

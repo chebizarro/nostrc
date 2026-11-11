@@ -299,6 +299,15 @@ NOSTR_GOBJECT_API gboolean gnostr_relay_authenticate(GNostrRelay *self, GError *
  */
 NOSTR_GOBJECT_API gboolean gnostr_relay_get_authenticated(GNostrRelay *self);
 
+/* Terminal process-wide drain, called from the UI/context-owner thread while
+ * callback owners are still alive, not from a relay callback or worker. Cancels
+ * every wrapper, dispatches captured contexts until GTask callbacks retire,
+ * joins transport/cleanup workers, then stops LWS before OpenSSL cleanup.
+ * Also runs at normal exit as a backstop. No new relay work is allowed afterward;
+ * ordinary pool release must not call this. Dependency calls already executing
+ * are drained without freeing their inputs; the contexts remain responsive. */
+NOSTR_GOBJECT_API void gnostr_relay_workers_shutdown(void);
+
 G_END_DECLS
 
 #endif /* NOSTR_RELAY_H */
