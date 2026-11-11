@@ -19,7 +19,7 @@ Media, ICE policy and the TURN/relay-only contract:
 | Item | Value | Where it comes from |
 |---|---|---|
 | NIP-AC revision Groundhog implements | nostr-protocol/nips PR #2301, branch `vitorpamplona/nips:NIP-ac/AC.md`, commit `31c7a41` (2026-04-05) | investigation report, "Decision update" |
-| Kinds | 25050 offer, 25051 answer, 25052 ICE candidate, 25053 hangup, 25054 reject (`busy` for an automatic reject), 25055 renegotiate; each signed inner event wrapped in a kind 21059 ephemeral wrap, no seal | `nips/nostr-kinds.h`, `gh-call-wire.c` |
+| Kinds | 25050 offer, 25051 answer, 25052 ICE candidate, 25053 hangup, 25054 reject (`busy` for an automatic reject), 25055 renegotiate; each signed inner event wrapped in a kind 21059 ephemeral wrap, no seal | `libnostr/include/nostr-kinds.h`, `gnome/groundhog/src/app/gh-call-wire.c` |
 | Amethyst wire vector | quartz `ce558d90e70d432157cc0672762b2d4119d7f904` | `nips/nip59/tests/nipac_wire_vector.h` |
 | Nospeak wire-parity fixture | nospeak `518b7711d397d8d62bcbe9774c34300b4e33d9d4` | `gnome/groundhog/tests/fixtures/nipac-nospeak.json` |
 | Amethyst | v1.09.0 or newer (Android) | first release with 25050–25055 |
@@ -84,8 +84,8 @@ the wire format changed.
 
 ## Capturing SDP and NIP-AC events on Groundhog's side
 
-Groundhog has no call logging by default: `gh-call-media.c` deliberately
-drops GStreamer error text (it can carry SDP and credential-bearing TURN
+Groundhog has no call logging by default: `gnome/groundhog/src/media/gh-call-media.c`
+deliberately drops GStreamer error text (it can carry SDP and credential-bearing TURN
 URLs) and nothing is written to the message store. Do **not** use
 `GST_DEBUG` for owner calls (see the media README). The one capture hook is
 an environment variable read when the call service starts:
@@ -96,9 +96,14 @@ GROUNDHOG_CALL_TRACE="$HOME/gh-call-trace-$(date +%Y%m%d-%H%M).jsonl" groundhog
 flatpak run --env=GROUNDHOG_CALL_TRACE="$HOME/gh-call-trace.jsonl" org.nostr.Groundhog
 ```
 
-Unset (the default) nothing is written and nothing else changes. Set, every
-validated inner call event is appended as one JSON line, **in both
-directions**:
+Unset (the default) nothing is written and nothing else changes. Set, the
+file is created by Groundhog readable by you only (mode 0600) and never
+through a symbolic link; if the path already exists as anything but a regular
+file of yours with no group or other permissions, Groundhog warns once
+(`GROUNDHOG_CALL_TRACE: cannot append to …; call tracing is off for this
+session`) and writes nothing for the rest of that run, so start each run
+with a new file name. Every validated inner call event is appended as one
+JSON line, **in both directions**:
 
 ```json
 {"ts":1762800000123456,"dir":"out","event":{"kind":25050,"pubkey":"…","created_at":1762800000,"tags":[["p","…"],["call-id","…"],["call-type","voice"],["alt","…"]],"content":"v=0\r\n…","id":"…","sig":"…"}}
@@ -258,7 +263,8 @@ overlap mistake, not a media bug, and the two are filed differently.
 `nostrc-mqrgk.6` is closed by the owner when every cell against Amethyst and
 Nospeak (both platforms) is `pass` in a packaged build and the filled table is
 in the report, with the client versions and the PR #2301 commit recorded. Any
-captured event that differs from the pinned fixtures (`nipac-nospeak.json`,
-`nipac_wire_vector.h`) goes to `nostrc-mqrgk.3` as a new regression fixture
+captured event that differs from the pinned fixtures
+(`gnome/groundhog/tests/fixtures/nipac-nospeak.json`,
+`nips/nip59/tests/nipac_wire_vector.h`) goes to `nostrc-mqrgk.3` as a new regression fixture
 for `gh-call-service`, with the SDP body replaced by a short placeholder and
 the keys by test keys.
