@@ -5,6 +5,7 @@ import unittest
 
 from selector_support import ROOT, s
 import bud02_registration_rename_support as layer
+from groundhog_gui_sanitizer_support import historical_nonmember_policy
 
 OLD, NEW = 'test-hanami-bud02-auth', 'test-bud02-auth'
 PROFILE = 'groundhog.linux.sanitizers'
@@ -18,8 +19,18 @@ class Bud02RegistrationRename(unittest.TestCase):
         self.assertEqual(hashlib.sha256((ROOT / layer.WITNESS).read_bytes()).hexdigest(), layer.SHA256)
         self.assertEqual((layer.witness()['old'], layer.witness()['new']), (OLD, NEW))
         self.assertEqual(len(layer.witness()['paths']), 8)
-        self.assertIn(NEW, self.policy['diagnostic_nonmembers'][PROFILE]['registrations'])
-        self.assertNotIn(OLD, self.policy['diagnostic_nonmembers'][PROFILE]['registrations'])
+        # The diagnostic exemption was withdrawn when GUI tests entered coverage.
+        # Its old rename assertion remains historical, not current admission.
+        historical = historical_nonmember_policy()
+        self.assertIn(NEW, historical['diagnostic_nonmembers'][PROFILE]['registrations'])
+        self.assertNotIn(OLD, historical['diagnostic_nonmembers'][PROFILE]['registrations'])
+        self.assertEqual(self.policy['diagnostic_nonmembers'], {})
+        for path in layer.witness()['paths']:
+            if path[0] == 'diagnostic_nonmembers':
+                continue  # checked against the pinned pre-GUI contract above
+            holder, field = layer._locate(self.policy, path)
+            self.assertIn(NEW, holder[field])
+            self.assertNotIn(OLD, holder[field])
 
     def test_projection_restores_each_pinned_historical_hash(self):
         previous = layer.before_policy(self.policy)
@@ -40,7 +51,8 @@ class Bud02RegistrationRename(unittest.TestCase):
                              sorted(x for x in current[field] if x != NEW))
 
     def test_two_sided_unsorted_or_missing_lists_refuse(self):
-        names = self.policy['diagnostic_nonmembers'][PROFILE]['registrations']
+        historical = historical_nonmember_policy()
+        names = historical['diagnostic_nonmembers'][PROFILE]['registrations']
         with self.assertRaisesRegex(s.ContractError, 'one-sided'):
             layer.before_registrations(sorted(names + [OLD]))
         with self.assertRaisesRegex(s.ContractError, 'one-sided'):
@@ -48,6 +60,7 @@ class Bud02RegistrationRename(unittest.TestCase):
         with self.assertRaisesRegex(s.ContractError, 'sorted'):
             layer.before_registrations(list(reversed(names)))
         forged = copy.deepcopy(self.policy)
+        forged['diagnostic_nonmembers'] = historical['diagnostic_nonmembers']
         forged['coverage_gaps'] = [g for g in forged['coverage_gaps'] if g['id'] != 'groundhog_sanitizer_execution_contract']
         with self.assertRaisesRegex(s.ContractError, 'coverage gap'):
             layer.before_policy(forged)

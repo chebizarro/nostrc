@@ -8934,7 +8934,10 @@
         "{source}/tests/selection/test_ordinary_gate_wiring.py",
         "{source}/tests/selection/test_package_boundary_selection.py",
         "{source}/tests/selection/test_workflow_defaults.py",
-        "{source}/tests/selection/README.md"
+        "{source}/tests/selection/README.md",
+        "{source}/tests/selection/groundhog_gui_sanitizer_support.py",
+        "{source}/tests/selection/fixtures/groundhog_pre_gui_nonmembers_20261111.json",
+        "{source}/tests/selection/test_groundhog_gui_sanitizers.py"
       ],
       "working_directory": "{source}",
       "requires": [

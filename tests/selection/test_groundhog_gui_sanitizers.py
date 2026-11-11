@@ -1,8 +1,11 @@
 """Focused Groundhog GUI sanitizer recipe/adapter regression coverage."""
+import copy
 import runpy
 import unittest
 
-from selector_support import ROOT
+from selector_support import ROOT, s
+from realization_support import r
+from groundhog_gui_sanitizer_support import historical_nonmember_policy
 
 
 class GroundhogGuiSanitizers(unittest.TestCase):
@@ -29,6 +32,26 @@ class GroundhogGuiSanitizers(unittest.TestCase):
         self.assertEqual(config["GH_SAN_BUILD_ENV"], [])
         self.assertEqual(env["LSAN_OPTIONS"],
                          "suppressions=/src/gnome/groundhog/tests/lsan.supp:print_suppressions=1")
+
+    def test_withdrawn_nonmember_exemption_cannot_omit_gui_suites(self):
+        policy = s.load_inventory(ROOT / "tests/selection/inventory.json")
+        self.assertEqual(policy["diagnostic_nonmembers"], {})
+        self.assertEqual(s.diagnostic_nonmember_contracts(policy), {})
+        self.assertEqual(r._diagnostic_nonmembers(policy, {}, {}, {}), [])
+
+        historical = historical_nonmember_policy()
+        profile = "groundhog.linux.sanitizers"
+        contract = s.diagnostic_nonmember_contracts(historical)[profile]
+        current = set(self.config()["GH_SAN_TESTS"])
+        previous = set(historical["profiles"][profile]["sanitizer_compatibility"]["GH_SAN_TESTS"])
+        self.assertTrue(previous < current)
+        self.assertTrue({"groundhog-shell", "groundhog-preferences", "groundhog-conversation-view"}
+                        <= current & set(contract["registrations"]))
+        # Historical provenance is not a renewal for the expanded GUI profile.
+        stale = copy.deepcopy(policy)
+        stale["diagnostic_nonmembers"] = historical["diagnostic_nonmembers"]
+        with self.assertRaisesRegex(ValueError, "malformed/stale"):
+            s.diagnostic_nonmember_contracts(stale)
 
     def test_stock_libraries_and_context_independent_image(self):
         dockerfile = (ROOT / "scripts/linux-ci.Dockerfile").read_text()

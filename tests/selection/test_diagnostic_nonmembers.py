@@ -8,6 +8,7 @@ from unittest import mock
 from selector_support import s, change
 from realization_support import Project, ROOT, r
 import test_selection as nm
+from groundhog_gui_sanitizer_support import historical_nonmember_policy
 
 spec = importlib.util.spec_from_file_location("nonmember_adapter", ROOT / "scripts/test-plan.py")
 adapter = importlib.util.module_from_spec(spec)
@@ -315,8 +316,12 @@ nostrc_finalize_test_inventory()'''))
             with self.assertRaises(ValueError):
                 nm.diagnostic_nonmember_contracts(bad)
         checked = json.loads((ROOT / "tests/selection/inventory.json").read_text())
-        self.assertEqual(set(checked["diagnostic_nonmembers"]), {nm.NONMEMBER_PROFILE})
-        declared = checked["diagnostic_nonmembers"][nm.NONMEMBER_PROFILE]
+        self.assertEqual(checked["diagnostic_nonmembers"], {})
+        self.assertEqual(nm.diagnostic_nonmember_contracts(checked), {})
+        # nostrc-4bi6r withdrew this exemption in e55e61b7a. Keep its exact
+        # historical list/provenance assertions without renewing current authority.
+        historical = historical_nonmember_policy()
+        declared = nm.diagnostic_nonmember_contracts(historical)[nm.NONMEMBER_PROFILE]
         self.assertEqual(len(declared["registrations"]), 347)
         frozen = json.loads((ROOT / "tests/selection/fixtures/nonmember_audit_edges.json").read_text())
         # The frozen post-audit list predates the BUD-02 registration rename; reverse
@@ -325,7 +330,7 @@ nostrc_finalize_test_inventory()'''))
         self.assertEqual(before_registrations(declared["registrations"]), frozen["unclaimed_registrations"])
         self.assertEqual(declared["review"], {"source_sha": "8d052ca8440eba453f951b62f0c799853980c266",
                                               "post_audit_sha256": "4e65b90e07c0fd26fae54fa6815e156f71643c723f386ebeb3abe36c73aa8436"})
-        compat = checked["profiles"][nm.NONMEMBER_PROFILE]["sanitizer_compatibility"]
+        compat = historical["profiles"][nm.NONMEMBER_PROFILE]["sanitizer_compatibility"]
         self.assertEqual(declared["required_closure"], sorted(compat["GH_SAN_TESTS"] +
             ["groundhog-test-homes", "nip55l-test-homes", "groundhog-test-gst-registry"]))
         self.assertEqual(checked["profiles"][nm.NONMEMBER_PROFILE]["architecture"], "x86_64")
