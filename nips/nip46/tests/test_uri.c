@@ -32,10 +32,51 @@ static int test_connect_multi(void) {
     return rc;
 }
 
+static int test_relay_array_contract(void) {
+    const char *schemes[] = {"bunker", "nostrconnect"};
+    const size_t counts[] = {0, 1, 4, 5};
+    for (size_t s = 0; s < 2; s++) {
+        for (size_t c = 0; c < sizeof(counts) / sizeof(counts[0]); c++) {
+            char text[1024];
+            size_t used = (size_t)snprintf(text, sizeof(text), "%s://%064d", schemes[s], 1);
+            for (size_t i = 0; i < counts[c]; i++)
+                used += (size_t)snprintf(text + used, sizeof(text) - used,
+                    "%crelay=wss%%3A%%2F%%2Frelay%zu.example", i ? '&' : '?', i);
+            NostrNip46BunkerURI bunker = {0};
+            NostrNip46ConnectURI connect = {0};
+            int rc = s ? nostr_nip46_uri_parse_connect(text, &connect)
+                       : nostr_nip46_uri_parse_bunker(text, &bunker);
+            if (rc) return 1;
+            char **relays = s ? connect.relays : bunker.relays;
+            size_t n = s ? connect.n_relays : bunker.n_relays;
+            if (n != counts[c]) rc = 2;
+            if (!n) {
+                if (relays) rc = 3;
+            } else if (!relays) {
+                rc = 4;
+            } else {
+                for (size_t i = 0; i < n; i++) {
+                    char expected[64];
+                    snprintf(expected, sizeof(expected), "wss://relay%zu.example", i);
+                    if (!relays[i] || strcmp(relays[i], expected)) rc = 5;
+                }
+                /* ASan catches an allocation containing only n pointers. */
+                if (relays[n] != NULL) rc = 6;
+            }
+            nostr_nip46_uri_bunker_free(&bunker);
+            nostr_nip46_uri_connect_free(&connect);
+            if (bunker.relays || bunker.n_relays || connect.relays || connect.n_relays) rc = 7;
+            if (rc) return rc;
+        }
+    }
+    return 0;
+}
+
 int main(void) {
     int rc = 0;
     rc |= test_bunker_basic();
     rc |= test_connect_multi();
+    rc |= test_relay_array_contract();
     if (rc == 0) {
         printf("test_nip46_uri: OK\n");
         return 0;

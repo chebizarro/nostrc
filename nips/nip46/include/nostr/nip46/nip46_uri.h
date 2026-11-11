@@ -24,6 +24,11 @@ typedef struct {
     char *name; char *url; char *image; /* optional */
 } NostrNip46ConnectURI;
 
+/* Both parsers return relays == NULL and n_relays == 0 when no relays are
+ * present. Otherwise relays contains n_relays owned strings followed by NULL;
+ * the terminator is not included in n_relays. Release with the matching free
+ * function below. Caller-populated structs (including build_connect input)
+ * need only provide n_relays entries, not a terminator. */
 NOSTR_NIP46_API int nostr_nip46_uri_parse_bunker(const char *uri, NostrNip46BunkerURI *out);
 NOSTR_NIP46_API int nostr_nip46_uri_parse_connect(const char *uri, NostrNip46ConnectURI *out);
 

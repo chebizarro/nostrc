@@ -7,7 +7,7 @@ if(NOT COMMAND declare_component_version)
   include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/VersionHelpers.cmake")
 endif()
 # One version for the NIP-46 core and optional GLib client/bunker layer.
-declare_component_version(nip46 0 2 0)
+declare_component_version(nip46 0 2 1)
 
 set(NIP46_INC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 

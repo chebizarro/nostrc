@@ -134,6 +134,72 @@ test_qr_readiness_and_cancel(void)
   g_ptr_array_unref(recorder.handles);
 }
 
+static void
+test_bunker_relay_count(gconstpointer data)
+{
+  guint n_relays = GPOINTER_TO_UINT(data);
+  Recorder recorder = { .handles = g_ptr_array_new_with_free_func(handle_free) };
+  g_autoptr(GSettings) settings = g_settings_new("org.nostr.Groundhog");
+  g_autoptr(GhAccountController) accounts = gh_account_controller_new_full(
+    settings, NULL, empty_identities, NULL);
+  GhNip46PairConfig config = { .accounts = accounts, .settings = settings,
+    .scope_transport = &transport, .transport_data = &recorder };
+  GtkWidget *window = adw_window_new();
+  GhNip46PairDialog *dialog = gh_nip46_pair_dialog_new(&config);
+  adw_dialog_present(ADW_DIALOG(dialog), window);
+  GtkStack *stack = GTK_STACK(gtk_widget_get_template_child(GTK_WIDGET(dialog),
+    GH_TYPE_NIP46_PAIR_DIALOG, "mode_stack"));
+  gtk_stack_set_visible_child_name(stack, "bunker");
+  drain();
+  guint initial_handles = recorder.handles->len;
+  AdwEntryRow *entry = ADW_ENTRY_ROW(gtk_widget_get_template_child(GTK_WIDGET(dialog),
+    GH_TYPE_NIP46_PAIR_DIALOG, "bunker_row"));
+  GtkWidget *connect = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(dialog),
+    GH_TYPE_NIP46_PAIR_DIALOG, "connect_button"));
+  GtkLabel *details = GTK_LABEL(gtk_widget_get_template_child(GTK_WIDGET(dialog),
+    GH_TYPE_NIP46_PAIR_DIALOG, "bunker_details"));
+  GtkLabel *error = GTK_LABEL(gtk_widget_get_template_child(GTK_WIDGET(dialog),
+    GH_TYPE_NIP46_PAIR_DIALOG, "error_label"));
+  g_autoptr(GString) uri = g_string_new(NULL);
+  g_string_printf(uri, "bunker://%064d", 1);
+  for (guint i = 0; i < n_relays; i++)
+    g_string_append_printf(uri, "%crelay=wss%%3A%%2F%%2Frelay%u.example", i ? '&' : '?', i);
+  gtk_editable_set_text(GTK_EDITABLE(entry), uri->str);
+  if (n_relays <= 4) {
+    g_assert_true(gtk_widget_get_sensitive(connect));
+    g_assert_true(gtk_widget_get_visible(GTK_WIDGET(details)));
+    g_assert_false(gtk_widget_get_visible(GTK_WIDGET(error)));
+    g_autofree gchar *count = g_strdup_printf("%u relay(s)", n_relays);
+    g_assert_nonnull(strstr(gtk_label_get_text(details), count));
+    g_signal_emit_by_name(connect, "clicked");
+    drain();
+    g_assert_cmpuint(recorder.handles->len, ==, initial_handles + n_relays);
+    for (guint i = 0; i < n_relays; i++) {
+      g_autofree gchar *expected = g_strdup_printf("wss://relay%u.example", i);
+      gboolean found = FALSE;
+      for (guint j = 0; j < n_relays; j++) {
+        ScopeHandle *handle = g_ptr_array_index(recorder.handles, initial_handles + j);
+        if (g_str_equal(handle->url, expected)) found = TRUE;
+      }
+      g_assert_true(found);
+    }
+  } else {
+    g_assert_false(gtk_widget_get_sensitive(connect));
+    g_assert_false(gtk_widget_get_visible(GTK_WIDGET(details)));
+    g_assert_true(gtk_widget_get_visible(GTK_WIDGET(error)));
+    g_assert_cmpstr(gtk_label_get_text(error), ==, "Choose one to four pairing relays.");
+    /* Exercise start_bunker as well as the paste-time validator. */
+    g_signal_emit_by_name(connect, "clicked");
+    g_assert_cmpuint(recorder.handles->len, ==, initial_handles);
+    g_assert_cmpstr(gtk_label_get_text(error), ==, "Choose one to four pairing relays.");
+  }
+  adw_dialog_close(ADW_DIALOG(dialog));
+  gtk_window_destroy(GTK_WINDOW(window));
+  drain();
+  g_assert_cmpuint(recorder.closed, ==, recorder.handles->len);
+  g_ptr_array_unref(recorder.handles);
+}
+
 static gpointer
 qr_scope_open(GhRelayScope *scope, const gchar *url, const NostrFilters *filters,
               gpointer data, GError **error)
@@ -1019,6 +1085,14 @@ main(int argc, char **argv)
   nostrc_test_tolerate_gdk_frame_warning();
   g_test_add_func("/groundhog/nip46/pair-dialog/qr-readiness-and-cancel",
                   test_qr_readiness_and_cancel);
+  g_test_add_data_func("/groundhog/nip46/pair-dialog/bunker-relays-1",
+                       GUINT_TO_POINTER(1), test_bunker_relay_count);
+  g_test_add_data_func("/groundhog/nip46/pair-dialog/bunker-relays-4",
+                       GUINT_TO_POINTER(4), test_bunker_relay_count);
+  g_test_add_data_func("/groundhog/nip46/pair-dialog/bunker-relays-5",
+                       GUINT_TO_POINTER(5), test_bunker_relay_count);
+  g_test_add_data_func("/groundhog/nip46/pair-dialog/bunker-relays-6",
+                       GUINT_TO_POINTER(6), test_bunker_relay_count);
   g_test_add_func("/groundhog/nip46/pair-dialog/confirmation-cancel",
                   test_confirmation_cancel_discards_attempt);
   g_test_add_data_func("/groundhog/nip46/pair-dialog/bunker-save-select",
