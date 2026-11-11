@@ -25061,6 +25061,14 @@
   },
   "path_rules": [
     {
+      "effect": "global",
+      "exact": "docs/investigations/glib-gpoll-select-ebadf-2026-11-10.patch",
+      "nodes": [
+        "build.global"
+      ],
+      "reason": "Unapplied upstream patch draft; explicit conservative broadening, not a prose-only exclusion or execution/acceptance waiver."
+    },
+    {
       "exact": ".dockerignore",
       "effect": "impact",
       "nodes": [
