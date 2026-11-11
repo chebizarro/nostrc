@@ -266,7 +266,8 @@ on_connected(GObject *source, GAsyncResult *result, gpointer data)
   gboolean connected = gnostr_relay_connect_finish(GNOSTR_RELAY(source), result,
                                                      &error);
   handle->connect_pending = FALSE;
-  if (!handle->closed && !g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+  if (!handle->closed && gnostr_relay_get_core_relay(handle->relay) &&
+      !g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
     if (connected ||
         nostr_relay_is_established(gnostr_relay_get_core_relay(handle->relay))) {
       handle->retry_delay_seconds = 1;
