@@ -1097,15 +1097,8 @@ sync_calls(GhPreferencesDialog *self)
     break;
   case GH_PREFERENCES_CREDENTIAL_UNAVAILABLE:
   default:
-#ifdef __APPLE__
-    status = g_strdup_printf(_("Can't be saved on macOS yet: Groundhog doesn't use the "
-                               "Keychain for call credentials, and no secret service "
-                               "answered (%s)"),
+    status = g_strdup_printf(_("Credential storage unavailable: %s"),
                              self->credential_error ? self->credential_error : "");
-#else
-    status = g_strdup_printf(_("Can't be saved: no secret service answered (%s)"),
-                             self->credential_error ? self->credential_error : "");
-#endif
     break;
   }
   adw_action_row_set_subtitle(self->turn_credential_row, status);

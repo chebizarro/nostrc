@@ -8,7 +8,8 @@
  * insensitive until a credential is saved and says so (usable to turn a
  * stored on off), the Tor note replaces the local-network note in Tor mode,
  * and a credential apply refuses without a server, then reaches a Secret
- * Service (tests/app/test_secret_service.py on the private bus): saved, the
+ * Service (tests/app/test_secret_service.py on the private bus), or a native
+ * explicitly referenced temporary Keychain on macOS: saved, the
  * row cleared, the status found again and the relay switch unlocked. Needs a
  * display and dbus-daemon: it self-skips (77) without either. Waits iterate
  * the main context against a deadline; they never sleep.
@@ -24,6 +25,8 @@
 #include "nostrc-test-gdk-frame.h"
 #if GROUNDHOG_HAVE_CALLS
 #include <libsecret/secret.h>
+#include "gh-call-settings.h"
+#include "../store/turn-test-keychain.h"
 #endif
 
 #include <string.h>
@@ -421,6 +424,10 @@ test_relay_only_needs_credential(Fixture *f, gconstpointer data)
   g_test_message("credential status: %s", credential_status(f));
   g_assert_null(strstr(credential_status(f), "Saved for"));
   g_assert_false(gtk_widget_get_sensitive(GTK_WIDGET(relay)));
+#if GROUNDHOG_HAVE_CALLS
+  g_assert_nonnull(strstr(credential_status(f), "None saved for alice at"));
+#endif
+  g_assert_null(strstr(credential_status(f), "macOS yet"));
   /* A stored on (e.g. from dconf) stays reachable to turn off, and says
    * that calls can't connect. */
   g_settings_set_boolean(f->settings, "call-relay-only", TRUE);
@@ -549,7 +556,7 @@ test_credential_saved(Fixture *f, gconstpointer data)
   apply_entry(password, "");
   g_assert_true(gtk_widget_get_visible(error));
   g_assert_nonnull(strstr(gtk_label_get_text(GTK_LABEL(error)), "Enter the credential"));
-  /* The real client against the test Secret Service: saved, cleared from the
+  /* The real client against the isolated platform backend: saved, cleared from the
    * row, found again, and the relay switch unlocked. */
   apply_entry(password, "s3cret");
   g_assert_false(gtk_widget_get_visible(error));
@@ -591,6 +598,35 @@ test_credential_saved(Fixture *f, gconstpointer data)
 #endif
 }
 
+#if GROUNDHOG_HAVE_CALLS && defined(__APPLE__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+static void
+test_keychain_locked(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  present(f);
+  g_assert_cmpint(SecKeychainLock(turn_test_keychain), ==, errSecSuccess);
+  g_settings_set_string(f->settings, "call-turn-url", "turn://locked.example.net:3478");
+  g_settings_set_string(f->settings, "call-turn-username", "alice");
+  spin_until(credential_settled, f);
+  g_assert_nonnull(strstr(credential_status(f), "Credential storage unavailable"));
+  g_assert_nonnull(strstr(credential_status(f), "unlock Keychain"));
+  g_assert_false(gtk_widget_get_sensitive(child(f, "relay_only_row")));
+  AdwEntryRow *password = child(f, "turn_password_row");
+  apply_entry(password, "not-stored");
+  spin_until(toast_or_error, f);
+  g_assert_null(gh_preferences_dialog_get_last_toast(f->dialog));
+  g_assert_nonnull(strstr(gtk_label_get_text(child(f, "turn_error")), "unlock Keychain"));
+  g_assert_cmpstr(gtk_editable_get_text(GTK_EDITABLE(password)), ==, "not-stored");
+  g_assert_cmpint(SecKeychainUnlock(turn_test_keychain, 4, "test", TRUE), ==, errSecSuccess);
+  g_settings_set_string(f->settings, "call-turn-username", "bob");
+  spin_until(credential_settled, f);
+  g_assert_nonnull(strstr(credential_status(f), "None saved for bob at"));
+}
+#pragma clang diagnostic pop
+#endif
+
 #define CHILD_VARIABLE "GH_CALL_PREFERENCES_CHILD"
 
 /* The cases, on the session bus the parent exported. */
@@ -608,6 +644,9 @@ child_main(int argc, char **argv)
   g_object_set(gtk_settings_get_default(), "gtk-enable-animations", FALSE, NULL);
   g_test_init(&argc, &argv, NULL);
   nostrc_test_tolerate_gdk_frame_warning();
+#if GROUNDHOG_HAVE_CALLS && defined(__APPLE__)
+  turn_test_keychain_setup(); /* real native backend, never the login Keychain */
+#endif
   const GhPreferencesFeatures all = GH_PREFERENCES_FEATURES_ALL;
   const GhPreferencesFeatures no_calls = all & ~GH_PREFERENCES_FEATURE_CALLS;
 #define ADD(path, func, features)                                                             \
@@ -620,6 +659,9 @@ child_main(int argc, char **argv)
   ADD("relay-only-needs-credential", test_relay_only_needs_credential, all);
   ADD("network-notes", test_network_notes, all);
   ADD("credential-saved", test_credential_saved, all);
+#if GROUNDHOG_HAVE_CALLS && defined(__APPLE__)
+  ADD("keychain-locked", test_keychain_locked, all);
+#endif
 #undef ADD
   int result = g_test_run();
 #if GROUNDHOG_HAVE_CALLS
@@ -632,6 +674,7 @@ child_main(int argc, char **argv)
 int
 main(int argc, char **argv)
 {
+  g_setenv("NOSTRC_TEST_ISOLATION", "1", TRUE);
   if (g_getenv(CHILD_VARIABLE))
     return child_main(argc, argv);
   if (!nostrc_test_bus_available()) {

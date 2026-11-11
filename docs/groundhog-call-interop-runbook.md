@@ -67,8 +67,13 @@ the wire format changed.
   used. The defaults are Cloudflare then Google.
 - **TURN and relay-only.** Preferences › Calls › TURN Server takes a
   credential-free `turn://` or `turns://` address and a username; the
-  credential is saved in the platform secret store (on macOS this is not
-  implemented yet, `nostrc-zrvr8`; the page says so). "Relay Every Call"
+  credential is saved for the exact server URL and username in macOS Keychain
+  or Linux Secret Service, never in GSettings. Locked or denied storage is
+  reported rather than treated as a missing credential. macOS smoke builds
+  with `GROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service` use Secret Service
+  for TURN too; native automated tests explicitly reference a temporary Keychain
+  and check that the developer's default Keychain and search list are unchanged.
+  "Relay Every Call"
   stays insensitive until a server, username and saved credential exist.
   With it on, Groundhog emits and accepts only `typ relay` candidates and
   refuses to fall back to a direct path, so the forced-TURN cells are driven
