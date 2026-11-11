@@ -142,6 +142,8 @@ _gh_describe(groundhog-group-ui test-groundhog-group-ui groundhog.group_ui)
 _gh_describe(groundhog-group-ui-gui test-groundhog-group-ui groundhog.group_ui REQUIRES display)
 _gh_describe(groundhog-mls-media test-groundhog-mls-media groundhog.mls_media)
 _gh_describe(groundhog-mls-files test-groundhog-mls-files groundhog.mls_files)
+_gh_describe(groundhog-call-capabilities test-groundhog-call-capabilities groundhog.media)
+_gh_describe(groundhog-call-loopback test-groundhog-call-loopback groundhog.media)
 _gh_describe(groundhog-voice test-groundhog-voice groundhog.voice
   INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/media/fixtures/voice")
 _gh_describe(groundhog-voice-ui test-groundhog-voice-ui groundhog.voice REQUIRES display

@@ -12,6 +12,9 @@
 # Grotto identifies this app by its Flatpak id and asks for local approvals.
 app-id: org.nostr.Groundhog
 runtime: org.gnome.Platform
+# Platform 51 supplies WebRTC, libnice's nicesrc/nicesink, DTLS/SRTP,
+# Opus/VP8 and webrtcdsp/echoprobe; do not shadow them with bundled copies.
+# Runtime execution recipe and limits: tests/media/calls/README.md.
 runtime-version: '51'
 sdk: org.gnome.Sdk
 command: groundhog
@@ -191,6 +194,7 @@ modules:
       - -DENABLE_NIP56=ON
       - -DENABLE_NIP58=ON
       - -DGROUNDHOG_PACKAGE_CHANNEL=flatpak
+      - -DGROUNDHOG_ENABLE_CALLS=ON
       - -DBUILD_TESTING=OFF
       - -DBUILD_TESTING_FRAMEWORK=OFF
       - -DBUILD_APPS=OFF
@@ -202,6 +206,14 @@ modules:
       - groundhog-schema
     no-make-install: true
     post-install:
+      # Fail packaging rather than silently shipping a calls-disabled build.
+      # These are SDK build checks, not a substitute for Platform loopback proof.
+      - pkg-config --exists 'gstreamer-webrtc-1.0 >= 1.20' 'gstreamer-sdp-1.0 >= 1.20' nice
+      - >-
+        set -eu; for element in webrtcbin nicesrc nicesink dtlssrtpenc dtlssrtpdec
+        srtpenc srtpdec rtpbin rtpopuspay rtpopusdepay opusenc opusdec
+        rtpvp8pay rtpvp8depay vp8enc vp8dec audioconvert audioresample
+        videoconvert queue; do gst-inspect-1.0 "$element" >/dev/null; done
       - cmake --install gnome/groundhog
       # Catalogs land in /app/share/locale; flatpak-builder moves them into
       # the org.nostr.Groundhog.Locale extension (nostrc-gofet.10).
