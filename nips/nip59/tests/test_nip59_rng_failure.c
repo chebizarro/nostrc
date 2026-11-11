@@ -3,8 +3,9 @@
  *
  * This executable compiles src/nip59.c itself with
  * -DNIP59_RAND_BYTES=nip59_test_rand_bytes, so the generator behind gift-wrap
- * timestamps is the stub below. When it fails, nip59 must return an error
- * and wrap nothing; it must never fall back to the real send time.
+ * timestamps is the stub below. When it fails, kind-1059 wrapping must return
+ * an error, never falling back to the real send time. Kind 21059 deliberately
+ * uses current time and does not consult this timestamp-only stub.
  */
 
 #undef NDEBUG
@@ -83,6 +84,19 @@ static void test_generator_failure_is_an_error(const char *sender_pk,
     uint8_t eph_bin[32];
     assert(nostr_hex2bin(eph_bin, eph_sk, sizeof(eph_bin)));
     assert(nostr_nip59_wrap_with_key(inner, recipient_pk, eph_bin) == NULL);
+    assert(nostr_nip59_wrap_kind(inner, recipient_pk, NOSTR_KIND_GIFT_WRAP, eph_sk) == NULL);
+    assert(nostr_nip59_wrap_kind_with_key(inner, recipient_pk,
+                                        NOSTR_KIND_GIFT_WRAP, eph_bin) == NULL);
+
+    int calls_before = calls;
+    int64_t before = (int64_t)time(NULL);
+    NostrEvent *ephemeral = nostr_nip59_wrap_kind_with_key(inner, recipient_pk,
+                                           NOSTR_KIND_EPHEMERAL_GIFT_WRAP, eph_bin);
+    assert(ephemeral);
+    assert(calls == calls_before); /* NIP-44 still uses its real CSPRNG. */
+    assert(ephemeral->created_at >= before && ephemeral->created_at <= (int64_t)time(NULL));
+    assert(nostr_nip59_validate_gift_wrap_kind(ephemeral, NOSTR_KIND_EPHEMERAL_GIFT_WRAP));
+    nostr_event_free(ephemeral);
 
     free(eph_sk);
     free(eph_pk);

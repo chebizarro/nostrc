@@ -133,11 +133,19 @@
 
 /* Ephemeral events (20000-29999) */
 #define NOSTR_KIND_LIGHTNING_PUB_RPC             21000
+#define NOSTR_KIND_EPHEMERAL_GIFT_WRAP           21059
 #define NOSTR_KIND_CLIENT_AUTHENTICATION         22242
 #define NOSTR_KIND_NWC_WALLET_REQUEST            23194
 #define NOSTR_KIND_NWC_WALLET_RESPONSE           23195
 #define NOSTR_KIND_NOSTR_CONNECT                 24133
 #define NOSTR_KIND_BLOBS                         24242
+/* NIP-AC: WebRTC call signalling */
+#define NOSTR_KIND_CALL_OFFER                    25050
+#define NOSTR_KIND_CALL_ANSWER                   25051
+#define NOSTR_KIND_CALL_ICE_CANDIDATE            25052
+#define NOSTR_KIND_CALL_HANGUP                   25053
+#define NOSTR_KIND_CALL_REJECT                   25054
+#define NOSTR_KIND_CALL_RENEGOTIATE              25055
 #define NOSTR_KIND_HTTP_AUTH                      27235
 
 /* Addressable events (30000-39999) */

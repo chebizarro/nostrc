@@ -113,10 +113,16 @@ int nostr_nip59_randomize_timestamp(int64_t base_time, uint32_t window_seconds,
     return NIP59_OK;
 }
 
-NostrEvent *nostr_nip59_wrap_with_key(NostrEvent *inner_event,
+static bool supported_wrap_kind(int kind) {
+    return kind == NOSTR_KIND_GIFT_WRAP || kind == NOSTR_KIND_EPHEMERAL_GIFT_WRAP;
+}
+
+NostrEvent *nostr_nip59_wrap_kind_with_key(NostrEvent *inner_event,
                                        const char *recipient_pubkey_hex,
+                                       int outer_kind,
                                        const uint8_t ephemeral_sk_bin[32]) {
-    if (!inner_event || !recipient_pubkey_hex || !ephemeral_sk_bin) {
+    if (!inner_event || !recipient_pubkey_hex || !ephemeral_sk_bin ||
+        !supported_wrap_kind(outer_kind)) {
         return NULL;
     }
 
@@ -126,11 +132,14 @@ NostrEvent *nostr_nip59_wrap_with_key(NostrEvent *inner_event,
         return NULL;
     }
 
-    /* Without randomness there is nothing to hide the send time behind:
-     * refuse to wrap rather than stamp the real time. */
+    /* NIP-AC uses the current time; ordinary NIP-59 must still fail closed
+     * rather than expose the send time when timestamp randomness fails. */
     int64_t created_at = 0;
-    if (nostr_nip59_randomize_timestamp(0, 0, &created_at) != NIP59_OK) {
-        return NULL;
+    if (outer_kind == NOSTR_KIND_GIFT_WRAP) {
+        if (nostr_nip59_randomize_timestamp(0, 0, &created_at) != NIP59_OK)
+            return NULL;
+    } else {
+        created_at = get_current_time();
     }
 
     NostrEvent *result = NULL;
@@ -173,7 +182,7 @@ NostrEvent *nostr_nip59_wrap_with_key(NostrEvent *inner_event,
     gift_wrap = nostr_event_new();
     if (!gift_wrap) goto out;
 
-    nostr_event_set_kind(gift_wrap, NOSTR_KIND_GIFT_WRAP);
+    nostr_event_set_kind(gift_wrap, outer_kind);
     nostr_event_set_pubkey(gift_wrap, eph_pk_hex);
     nostr_event_set_content(gift_wrap, encrypted);
     nostr_event_set_created_at(gift_wrap, created_at);
@@ -206,10 +215,18 @@ out:
     return result;
 }
 
-NostrEvent *nostr_nip59_wrap(NostrEvent *inner_event,
+NostrEvent *nostr_nip59_wrap_with_key(NostrEvent *inner_event,
+                                       const char *recipient_pubkey_hex,
+                                       const uint8_t ephemeral_sk_bin[32]) {
+    return nostr_nip59_wrap_kind_with_key(inner_event, recipient_pubkey_hex,
+                                        NOSTR_KIND_GIFT_WRAP, ephemeral_sk_bin);
+}
+
+NostrEvent *nostr_nip59_wrap_kind(NostrEvent *inner_event,
                               const char *recipient_pubkey_hex,
+                              int outer_kind,
                               const char *ephemeral_sk_hex) {
-    if (!inner_event || !recipient_pubkey_hex) {
+    if (!inner_event || !recipient_pubkey_hex || !supported_wrap_kind(outer_kind)) {
         return NULL;
     }
 
@@ -237,7 +254,8 @@ NostrEvent *nostr_nip59_wrap(NostrEvent *inner_event,
         generated_key = true;
     }
 
-    NostrEvent *result = nostr_nip59_wrap_with_key(inner_event, recipient_pubkey_hex, eph_sk_bin);
+    NostrEvent *result = nostr_nip59_wrap_kind_with_key(inner_event, recipient_pubkey_hex,
+                                                     outer_kind, eph_sk_bin);
 
     /* Clear sensitive data */
     secure_wipe(eph_sk_bin, sizeof(eph_sk_bin));
@@ -248,14 +266,22 @@ NostrEvent *nostr_nip59_wrap(NostrEvent *inner_event,
     return result;
 }
 
-NostrEvent *nostr_nip59_unwrap_with_key(NostrEvent *gift_wrap,
-                                         const uint8_t recipient_sk_bin[32]) {
+NostrEvent *nostr_nip59_wrap(NostrEvent *inner_event,
+                              const char *recipient_pubkey_hex,
+                              const char *ephemeral_sk_hex) {
+    return nostr_nip59_wrap_kind(inner_event, recipient_pubkey_hex,
+                               NOSTR_KIND_GIFT_WRAP, ephemeral_sk_hex);
+}
+
+NostrEvent *nostr_nip59_unwrap_kind_with_key(NostrEvent *gift_wrap,
+                                         const uint8_t recipient_sk_bin[32],
+                                         int expected_kind) {
     if (!gift_wrap || !recipient_sk_bin) {
         return NULL;
     }
 
     /* Never decrypt an unauthenticated or id-mismatched outer event. */
-    if (!nostr_nip59_validate_gift_wrap(gift_wrap)) {
+    if (!nostr_nip59_validate_gift_wrap_kind(gift_wrap, expected_kind)) {
         return NULL;
     }
 
@@ -333,8 +359,15 @@ out:
     return result;
 }
 
-NostrEvent *nostr_nip59_unwrap(NostrEvent *gift_wrap,
-                                const char *recipient_sk_hex) {
+NostrEvent *nostr_nip59_unwrap_with_key(NostrEvent *gift_wrap,
+                                         const uint8_t recipient_sk_bin[32]) {
+    return nostr_nip59_unwrap_kind_with_key(gift_wrap, recipient_sk_bin,
+                                          NOSTR_KIND_GIFT_WRAP);
+}
+
+NostrEvent *nostr_nip59_unwrap_kind(NostrEvent *gift_wrap,
+                                const char *recipient_sk_hex,
+                                int expected_kind) {
     if (!gift_wrap || !recipient_sk_hex) {
         return NULL;
     }
@@ -344,7 +377,8 @@ NostrEvent *nostr_nip59_unwrap(NostrEvent *gift_wrap,
         return NULL;
     }
 
-    NostrEvent *result = nostr_nip59_unwrap_with_key(gift_wrap, recipient_sk_bin);
+    NostrEvent *result = nostr_nip59_unwrap_kind_with_key(gift_wrap, recipient_sk_bin,
+                                                       expected_kind);
 
     /* Clear sensitive data */
     secure_wipe(recipient_sk_bin, sizeof(recipient_sk_bin));
@@ -352,13 +386,18 @@ NostrEvent *nostr_nip59_unwrap(NostrEvent *gift_wrap,
     return result;
 }
 
-bool nostr_nip59_validate_gift_wrap(NostrEvent *gift_wrap) {
-    if (!gift_wrap) {
+NostrEvent *nostr_nip59_unwrap(NostrEvent *gift_wrap,
+                                const char *recipient_sk_hex) {
+    return nostr_nip59_unwrap_kind(gift_wrap, recipient_sk_hex, NOSTR_KIND_GIFT_WRAP);
+}
+
+bool nostr_nip59_validate_gift_wrap_kind(NostrEvent *gift_wrap, int expected_kind) {
+    if (!gift_wrap || !supported_wrap_kind(expected_kind)) {
         return false;
     }
 
     /* Check kind */
-    if (nostr_event_get_kind(gift_wrap) != NOSTR_KIND_GIFT_WRAP) {
+    if (nostr_event_get_kind(gift_wrap) != expected_kind) {
         return false;
     }
 
@@ -398,6 +437,10 @@ bool nostr_nip59_validate_gift_wrap(NostrEvent *gift_wrap) {
     }
 
     return true;
+}
+
+bool nostr_nip59_validate_gift_wrap(NostrEvent *gift_wrap) {
+    return nostr_nip59_validate_gift_wrap_kind(gift_wrap, NOSTR_KIND_GIFT_WRAP);
 }
 
 char *nostr_nip59_get_recipient(NostrEvent *gift_wrap) {

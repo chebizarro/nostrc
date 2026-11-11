@@ -15,6 +15,7 @@
 #include "nostr-kinds.h"
 #include "nostr-tag.h"
 #include "nostr-utils.h"
+#include "nipac_wire_vector.h"
 
 #include <assert.h>
 #include <stdbool.h>
@@ -656,6 +657,139 @@ static void test_nip17_compatibility(void) {
     printf("  OK: compatible with NIP-17 seal wrapping\n");
 }
 
+static void assert_same_signed_event(NostrEvent *expected, NostrEvent *actual) {
+    assert(actual != NULL);
+    assert(nostr_event_validate(actual, NULL) == NOSTR_EVENT_VALIDATION_OK);
+    char *expected_json = nostr_event_serialize_compact(expected);
+    char *actual_json = nostr_event_serialize_compact(actual);
+    assert(expected_json && actual_json);
+    assert(strcmp(expected_json, actual_json) == 0);
+    free(expected_json);
+    free(actual_json);
+}
+
+static void test_ephemeral_call_roundtrip(void) {
+    assert(NOSTR_KIND_EPHEMERAL_GIFT_WRAP == 21059);
+    assert(NOSTR_KIND_CALL_OFFER == 25050);
+    assert(NOSTR_KIND_CALL_ANSWER == 25051);
+    assert(NOSTR_KIND_CALL_ICE_CANDIDATE == 25052);
+    assert(NOSTR_KIND_CALL_HANGUP == 25053);
+    assert(NOSTR_KIND_CALL_REJECT == 25054);
+    assert(NOSTR_KIND_CALL_RENEGOTIATE == 25055);
+    assert(nostr_kind_is_ephemeral(NOSTR_KIND_EPHEMERAL_GIFT_WRAP));
+    assert(nostr_kind_is_ephemeral(NOSTR_KIND_CALL_RENEGOTIATE));
+
+    NostrEvent *inner = nostr_event_new();
+    assert(inner);
+    assert(nostr_event_deserialize_signed(inner, NIPAC_INNER_JSON, NULL) ==
+           NOSTR_EVENT_VALIDATION_OK);
+    char *recipient_pk = nostr_key_get_public(NIPAC_RECIPIENT_SK);
+    char *ephemeral_pk = nostr_key_get_public(NIPAC_EPHEMERAL_SK);
+    assert(recipient_pk && ephemeral_pk);
+    uint8_t recipient_sk[32], ephemeral_sk[32];
+    assert(nostr_hex2bin(recipient_sk, NIPAC_RECIPIENT_SK, 32));
+    assert(nostr_hex2bin(ephemeral_sk, NIPAC_EPHEMERAL_SK, 32));
+
+    const int kinds[] = {NOSTR_KIND_GIFT_WRAP, NOSTR_KIND_EPHEMERAL_GIFT_WRAP};
+    for (size_t i = 0; i < sizeof(kinds) / sizeof(kinds[0]); i++) {
+        int kind = kinds[i], other_kind = kinds[1 - i];
+        /* Generated key, supplied hex key and supplied binary key. */
+        for (int key_mode = 0; key_mode < 3; key_mode++) {
+            int64_t before = (int64_t)time(NULL);
+            NostrEvent *wrap = key_mode == 2
+                ? nostr_nip59_wrap_kind_with_key(inner, recipient_pk, kind, ephemeral_sk)
+                : nostr_nip59_wrap_kind(inner, recipient_pk, kind,
+                                       key_mode == 0 ? NULL : NIPAC_EPHEMERAL_SK);
+            int64_t after = (int64_t)time(NULL);
+            assert(wrap);
+            assert(nostr_event_get_kind(wrap) == kind);
+            assert(nostr_nip59_validate_gift_wrap_kind(wrap, kind));
+            assert(!nostr_nip59_validate_gift_wrap_kind(wrap, other_kind));
+            assert(nostr_nip59_is_gift_wrap(wrap) == (kind == NOSTR_KIND_GIFT_WRAP));
+            if (key_mode != 0)
+                assert(strcmp(wrap->pubkey, ephemeral_pk) == 0);
+            char *recipient = nostr_nip59_get_recipient(wrap);
+            assert(recipient && strcmp(recipient, recipient_pk) == 0);
+            free(recipient);
+            if (kind == NOSTR_KIND_EPHEMERAL_GIFT_WRAP) {
+                assert(wrap->created_at >= before && wrap->created_at <= after);
+                assert(!nostr_nip59_validate_gift_wrap(wrap));
+                assert(!nostr_nip59_unwrap(wrap, NIPAC_RECIPIENT_SK));
+                assert(!nostr_nip59_unwrap_with_key(wrap, recipient_sk));
+            } else {
+                assert(wrap->created_at >= before - 2 * 24 * 60 * 60);
+                assert(wrap->created_at < after);
+                assert(nostr_nip59_validate_gift_wrap(wrap));
+            }
+            assert(!nostr_nip59_unwrap_kind(wrap, NIPAC_RECIPIENT_SK, other_kind));
+            assert(!nostr_nip59_unwrap_kind_with_key(wrap, recipient_sk, other_kind));
+            NostrEvent *opened = nostr_nip59_unwrap_kind(wrap, NIPAC_RECIPIENT_SK, kind);
+            assert_same_signed_event(inner, opened);
+            nostr_event_free(opened);
+            opened = nostr_nip59_unwrap_kind_with_key(wrap, recipient_sk, kind);
+            assert_same_signed_event(inner, opened);
+            nostr_event_free(opened);
+            /* Kind matching alone must not bypass outer authentication. */
+            nostr_event_set_content(wrap, "tampered");
+            assert(!nostr_nip59_validate_gift_wrap_kind(wrap, kind));
+            assert(!nostr_nip59_unwrap_kind(wrap, NIPAC_RECIPIENT_SK, kind));
+            nostr_event_free(wrap);
+        }
+    }
+    assert(!nostr_nip59_wrap_kind(inner, recipient_pk, NOSTR_KIND_CALL_OFFER, NULL));
+    assert(!nostr_nip59_wrap_kind_with_key(inner, recipient_pk, -1, ephemeral_sk));
+    assert(!nostr_nip59_validate_gift_wrap_kind(inner, NOSTR_KIND_CALL_OFFER));
+    assert(!nostr_nip59_validate_gift_wrap_kind(NULL, NOSTR_KIND_EPHEMERAL_GIFT_WRAP));
+
+    /* Signed payloads must not be downgraded to unsigned rumors on 21059. */
+    inner->sig[0] = inner->sig[0] == '0' ? '1' : '0';
+    NostrEvent *wrap = nostr_nip59_wrap_kind(inner, recipient_pk,
+                                          NOSTR_KIND_EPHEMERAL_GIFT_WRAP, NULL);
+    assert(wrap && nostr_nip59_validate_gift_wrap_kind(wrap, NOSTR_KIND_EPHEMERAL_GIFT_WRAP));
+    assert(!nostr_nip59_unwrap_kind(wrap, NIPAC_RECIPIENT_SK,
+                                  NOSTR_KIND_EPHEMERAL_GIFT_WRAP));
+    nostr_event_free(wrap);
+    nostr_event_set_content(inner, "changed after signing");
+    assert(!nostr_nip59_wrap_kind(inner, recipient_pk, NOSTR_KIND_EPHEMERAL_GIFT_WRAP, NULL));
+    nostr_event_free(inner);
+    free(recipient_pk);
+    free(ephemeral_pk);
+    printf("  OK: signed call round-trips, timestamp policy and strict outer kinds\n");
+}
+
+static void test_nipac_wire_vector(void) {
+    NostrEvent *wrap = nostr_event_new();
+    NostrEvent *expected = nostr_event_new();
+    assert(wrap && expected);
+    assert(nostr_event_deserialize_signed(wrap, NIPAC_OUTER_JSON, NULL) ==
+           NOSTR_EVENT_VALIDATION_OK);
+    assert(nostr_event_deserialize_signed(expected, NIPAC_INNER_JSON, NULL) ==
+           NOSTR_EVENT_VALIDATION_OK);
+    assert(nostr_nip59_validate_gift_wrap_kind(wrap, NOSTR_KIND_EPHEMERAL_GIFT_WRAP));
+    assert(wrap->created_at == expected->created_at);
+    assert(!nostr_nip59_validate_gift_wrap(wrap));
+    NostrEvent *opened = nostr_nip59_unwrap_kind(wrap, NIPAC_RECIPIENT_SK,
+                                               NOSTR_KIND_EPHEMERAL_GIFT_WRAP);
+    assert_same_signed_event(expected, opened);
+    assert(opened->kind == NOSTR_KIND_CALL_OFFER); /* directly, not kind 13 */
+
+    /* Independently inspect the exact NIP-44 plaintext, including its sig. */
+    uint8_t recipient_sk[32], ephemeral_pk[32];
+    assert(nostr_hex2bin(recipient_sk, NIPAC_RECIPIENT_SK, 32));
+    assert(nostr_hex2bin(ephemeral_pk, wrap->pubkey, 32));
+    uint8_t *plaintext = NULL;
+    size_t plaintext_len = 0;
+    assert(nostr_nip44_decrypt_v2(recipient_sk, ephemeral_pk, wrap->content,
+                                &plaintext, &plaintext_len) == 0);
+    assert(plaintext && plaintext_len == strlen(NIPAC_INNER_JSON));
+    assert(memcmp(plaintext, NIPAC_INNER_JSON, plaintext_len) == 0);
+    free(plaintext);
+    nostr_event_free(opened);
+    nostr_event_free(expected);
+    nostr_event_free(wrap);
+    printf("  OK: hand-derived Quartz NIP-AC wire-shape vector\n");
+}
+
 int main(void) {
     printf("NIP-59 Test Suite\n");
     printf("=================\n\n");
@@ -690,6 +824,8 @@ int main(void) {
     /* Roundtrip tests */
     test_roundtrip_with_tags();
     test_timestamp_is_randomized();
+    test_ephemeral_call_roundtrip();
+    test_nipac_wire_vector();
 
     /* Compatibility tests */
     test_nip17_compatibility();
