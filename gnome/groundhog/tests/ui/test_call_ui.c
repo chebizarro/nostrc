@@ -631,7 +631,7 @@ test_headset(void)
   g_assert_true(ADW_IS_ALERT_DIALOG(dialog));
   g_assert_cmpstr(adw_alert_dialog_get_heading(ADW_ALERT_DIALOG(dialog)), ==, "Use a Headset");
   g_assert_true(adw_alert_dialog_get_response_enabled(ADW_ALERT_DIALOG(dialog), "continue"));
-  spin_until(is_mapped, dialog);
+  spin_until(gh_test_dialog_shown, dialog);
   g_signal_emit_by_name(dialog, "response", "continue");
   adw_dialog_force_close(dialog);
   drain();
@@ -663,7 +663,7 @@ test_close_window(void)
   g_assert_true(ADW_IS_ALERT_DIALOG(dialog));
   g_assert_cmpstr(adw_alert_dialog_get_heading(ADW_ALERT_DIALOG(dialog)), ==, "End Call?");
   g_assert_cmpstr(adw_alert_dialog_get_default_response(ADW_ALERT_DIALOG(dialog)), ==, "cancel");
-  spin_until(is_mapped, dialog);
+  spin_until(gh_test_dialog_shown, dialog);
   g_signal_emit_by_name(dialog, "response", "end");
   adw_dialog_force_close(dialog);
   spin_until(is_destroyed, NULL);
@@ -775,11 +775,19 @@ assert_inside(GtkWidget *widget, GtkWidget *window, gint width)
   g_assert_cmpfloat(bounds.origin.x + bounds.size.width, <=, width);
 }
 
+/* As test_shell_layout.c: wait for the narrow breakpoint, then measure the
+ * window's content (the toplevel may add decoration margins). */
 static gboolean
-width_is(gpointer data)
+collapsed(gpointer data)
 {
   F *f = data;
-  return gtk_widget_get_width(GTK_WIDGET(f->window)) == 360;
+  return adw_navigation_split_view_get_collapsed(gh_window_get_split(f->window));
+}
+
+static GtkWidget *
+content_of(F *f)
+{
+  return adw_application_window_get_content(ADW_APPLICATION_WINDOW(f->window));
 }
 
 static void
@@ -787,8 +795,9 @@ test_narrow(void)
 {
   F f;
   fixture_up(&f, 360);
-  spin_until(width_is, &f);
-  g_assert_true(adw_navigation_split_view_get_collapsed(gh_window_get_split(f.window)));
+  spin_until(collapsed, &f);
+  if (gtk_widget_get_width(content_of(&f)) > 360)
+    g_error("the 360px window's content is %d px wide", gtk_widget_get_width(content_of(&f)));
   GhCall *c = place_and_connect(&f, TRUE);
   (void)c;
   drain();
@@ -802,7 +811,7 @@ test_narrow(void)
   for (guint i = 0; i < G_N_ELEMENTS(shown); i++) {
     GtkWidget *w = control(&f, shown[i]);
     g_assert_true(gtk_widget_get_mapped(w));
-    assert_inside(w, GTK_WIDGET(f.window), 360);
+    assert_inside(w, content_of(&f), 360);
   }
   maybe_snapshot(&f, "call-ui-360-video-active.png");
   /* Narrow: the list shows the sidebar's banner when the call is left. */
@@ -817,7 +826,7 @@ test_narrow(void)
   g_assert_true(on_call_page(&f));
   drain();
   for (GhCallViewControls b = GH_CALL_VIEW_DECLINE; b <= GH_CALL_VIEW_ANSWER; b <<= 1)
-    assert_inside(control(&f, b), GTK_WIDGET(f.window), 360);
+    assert_inside(control(&f, b), content_of(&f), 360);
   maybe_snapshot(&f, "call-ui-360-ringing.png");
   gh_call_service_decline(f.service);
   fixture_down(&f);
