@@ -27,6 +27,17 @@ GhCallType gh_call_get_call_type(GhCall *call);
 GhCallDirection gh_call_get_direction(GhCall *call);
 GhCallState gh_call_get_state(GhCall *call);
 GhCallEndReason gh_call_get_end_reason(GhCall *call);
+/* The call's media backend (transfer none) for the UI's controls of the
+ * concrete backend: NULL until media starts (placing, or answering), and
+ * already torn down once the call is ENDED. */
+GhCallMediaBackend *gh_call_get_media(GhCall *call);
+/* TRUE while an ACTIVE call's media connection is interrupted. It returns to
+ * FALSE when media reconnects, or the call ends (MEDIA_FAILED) after
+ * GH_CALL_RECONNECT_SECONDS. */
+#define GH_CALL_RECONNECT_SECONDS 15
+gboolean gh_call_get_reconnecting(GhCall *call);
+/* g_get_monotonic_time() when the call first became ACTIVE, 0 before. */
+gint64 gh_call_get_connected_time(GhCall *call);
 /* GhCall emits changed () after any observable change. */
 
 #define GH_TYPE_CALL_SERVICE (gh_call_service_get_type())
@@ -40,6 +51,11 @@ void gh_call_service_set_media_factory(GhCallService *self, GhCallMediaFactory f
                                         gpointer data, GDestroyNotify destroy);
 /* Transfer none; service retains recent calls only in memory, never gh-store. */
 GhCall *gh_call_service_get_current(GhCallService *self);
+/* Whether a call could be placed now, before any peer check. Errors:
+ * G_IO_ERROR_NOT_INITIALIZED (no account, or stopped), G_IO_ERROR_PERMISSION_DENIED
+ * (Tor mode) and G_IO_ERROR_NOT_SUPPORTED (no media factory). The answer can
+ * change when "availability-changed" is emitted. */
+gboolean gh_call_service_check_available(GhCallService *self, GError **error);
 GhCall *gh_call_service_place(GhCallService *self, const gchar *peer,
                               GhCallType type, GError **error);
 gboolean gh_call_service_answer(GhCallService *self, GError **error);
@@ -53,7 +69,8 @@ void gh_call_service_stop(GhCallService *self);
 void gh_call_service_bind(GhCallService *self, const gchar *pubkey);
 void gh_call_service_receive(GhCallService *self, const gchar *signed_inner, gint64 now);
 void gh_call_service_expire(GhCallService *self, gint64 now);
-/* Signals: incoming-ring (GhCall), missed-call (GhCall), state-changed (GhCall).
+/* Signals: incoming-ring (GhCall), missed-call (GhCall), state-changed (GhCall),
+ * availability-changed () (account, network mode, settings or factory).
  * send (peer, call-id, kind, call-type, content) is diagnostic: emitted for
  * attempted sends, NOT relay acknowledgement or recipient delivery. */
 G_END_DECLS
