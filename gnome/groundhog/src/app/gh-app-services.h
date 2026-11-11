@@ -49,6 +49,8 @@ GObject *gh_app_services_get_accounts(GhAppServices *self);
 GObject *gh_app_services_get_conversations(GhAppServices *self);
 GObject *gh_app_services_get_inbox(GhAppServices *self);
 GObject *gh_app_services_get_account_store(GhAppServices *self);
+/* GhCallService, or NULL in a build without signalling. No UI is installed. */
+GObject *gh_app_services_get_calls(GhAppServices *self);
 
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(GhAppServices, gh_app_services_free)
 

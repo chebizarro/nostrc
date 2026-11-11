@@ -141,9 +141,21 @@
 #include "gh-relay-guard.h"
 #endif
 
+#ifndef GROUNDHOG_HAVE_CALL_SIGNALLING
+#define GROUNDHOG_HAVE_CALL_SIGNALLING 0
+#endif
+#define GH_APP_CALLS (GROUNDHOG_HAVE_CALL_SIGNALLING && GROUNDHOG_HAVE_RELAYS && GROUNDHOG_HAVE_INBOX)
+#if GH_APP_CALLS
+#include "gh-call-service.h"
+#include "gh-inbox-lookup.h"
+#endif
+
 #define GROUNDHOG_APP_ID "org.nostr.Groundhog"
 
 struct _GhAppServices {
+#if GH_APP_CALLS
+  GhCallService *calls;
+#endif
   GhNip04Inbox *nip04;  /* W33: older NIP-04 DMs, read-only */
   GtkApplication *app; /* borrowed: owns the process's services */
   GSettings *settings;
@@ -2598,6 +2610,26 @@ group_ui_reset_latest(GhConversation *conversation, GError **error, gpointer dat
 }
 #endif
 
+#if GH_APP_CALLS
+static gboolean calls_init(GhAppServices *self, GError **error)
+{
+  (void)error;
+  g_autoptr(GhInboxLookup) resolver = gh_inbox_lookup_new(self->accounts, self->settings, NULL, NULL);
+  gh_inbox_lookup_set_deadline(resolver, 8);
+  g_autoptr(GhCallSignalling) signalling = gh_call_signalling_new(self->accounts, self->relays,
+    GH_INBOX_RESOLVER(resolver), self->settings);
+  g_autoptr(GhNetSession) network = gh_net_session_dup_default();
+  if (!network) network = gh_net_session_new(self->settings);
+  self->calls = gh_call_service_new(signalling, self->conversations, self->settings, network);
+  return TRUE;
+}
+static void calls_teardown(GhAppServices *self)
+{
+  if (self->calls) gh_call_service_stop(self->calls);
+  g_clear_object(&self->calls);
+}
+#endif
+
 typedef struct {
   const gchar *name;
   gboolean (*init)(GhAppServices *self, GError **error);
@@ -2639,6 +2671,9 @@ static const GhAppService services[] = {
 #endif
 #if GROUNDHOG_HAVE_ATTACHMENTS
   { "attachments", attachments_init, attachments_teardown },
+#endif
+#if GH_APP_CALLS
+  { "calls", calls_init, calls_teardown },
 #endif
   { "about", about_init, about_teardown },
 #if GROUNDHOG_HAVE_ACCOUNTS
@@ -3018,6 +3053,16 @@ gh_app_services_get_account_store(GhAppServices *self)
   return G_OBJECT(self->account_store);
 #else
   return NULL;
+#endif
+}
+
+GObject *
+gh_app_services_get_calls(GhAppServices *self)
+{
+#if GH_APP_CALLS
+  return G_OBJECT(self->calls);
+#else
+  (void)self; return NULL;
 #endif
 }
 
