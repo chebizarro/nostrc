@@ -3427,6 +3427,7 @@ if (GSTREAMER_FOUND AND TARGET groundhog-media)
       add_executable(test-groundhog-voice-ui tests/ui/test_voice_ui.c
         src/ui/gh-voice-bubble.c ${GROUNDHOG_RESOURCE_C})
       target_include_directories(test-groundhog-voice-ui PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/media
         ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
         ${CMAKE_CURRENT_SOURCE_DIR}/src/media
         ${CMAKE_SOURCE_DIR}/tests/common)
