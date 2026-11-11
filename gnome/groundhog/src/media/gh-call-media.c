@@ -14,7 +14,7 @@ struct _GhCallMedia {
   GSettings *settings;
   GMainContext *context;
   gboolean configured, stopped, allow_local, relay_only, headset, muted, camera;
-  gboolean remote_ready, remote_offer, test_sources, h264;
+  gboolean remote_ready, remote_offer, test_sources, h264, h264_available;
   guint video_payload;
   GstPad *video_pad;
   GstElement *video_branch;
@@ -213,11 +213,13 @@ static void count_buffer(GstElement *identity, GstBuffer *buffer, gpointer data)
 static GstElement *create_receiver(GhCallMedia *self, gboolean audio, gboolean vp8)
 {
   GError *parse_error = NULL;
+  /* Decoders are named, never rank-selected: decodebin would choose avdec_h264,
+   * which leaks an AVPacket per frame in Ubuntu's gst-libav 1.24.1 (nostrc-mazyq). */
   GstElement *bin = gst_parse_bin_from_description(audio ?
       "queue name=receive_input ! rtpopusdepay ! opusdec ! audioconvert ! audioresample ! "
       "audio/x-raw,format=S16LE,rate=48000,channels=1 ! identity name=received" :
-      vp8 ? "queue name=receive_input ! rtpvp8depay ! vp8dec ! videoconvert ! identity name=received" :
-      "queue name=receive_input ! rtph264depay ! h264parse ! openh264dec ! videoconvert ! identity name=received",
+      vp8 ? "queue name=receive_input ! rtpvp8depay ! vp8dec name=call_video_decoder ! videoconvert ! identity name=received" :
+      "queue name=receive_input ! rtph264depay ! h264parse ! openh264dec name=call_video_decoder ! videoconvert ! identity name=received",
       FALSE, &parse_error);
   if (!bin || parse_error) {
     if (bin) gst_object_unref(bin);
@@ -277,9 +279,10 @@ static void prepare_video(GhCallMedia *self)
 {
   if (self->video_transceiver) return;
   GstCaps *preferences = self->video_preferences ? gst_caps_ref(self->video_preferences) : gst_caps_from_string(
-      "application/x-rtp,media=video,encoding-name=VP8,clock-rate=90000,payload=97;"
+      self->h264_available ? "application/x-rtp,media=video,encoding-name=VP8,clock-rate=90000,payload=97;"
       "application/x-rtp,media=video,encoding-name=H264,clock-rate=90000,payload=98,packetization-mode=(string)1,profile-level-id=(string)42e01f;"
-      "application/x-rtp,media=video,encoding-name=H264,clock-rate=90000,payload=99,packetization-mode=(string)1,profile-level-id=(string)42e032");
+      "application/x-rtp,media=video,encoding-name=H264,clock-rate=90000,payload=99,packetization-mode=(string)1,profile-level-id=(string)42e032" :
+      "application/x-rtp,media=video,encoding-name=VP8,clock-rate=90000,payload=97");
   g_signal_emit_by_name(self->rtc, "add-transceiver", GST_WEBRTC_RTP_TRANSCEIVER_DIRECTION_SENDRECV,
                         preferences, &self->video_transceiver);
   gst_caps_unref(preferences);
@@ -356,23 +359,32 @@ static gboolean add_video(GhCallMedia *self, GError **error)
   return TRUE;
 }
 
+static gboolean element_available(const gchar *name)
+{
+  GstElementFactory *factory = gst_element_factory_find(name);
+  GstPluginFeature *loaded = factory ? gst_plugin_feature_load(GST_PLUGIN_FEATURE(factory)) : NULL;
+  if (factory) gst_object_unref(factory);
+  if (!loaded) return FALSE;
+  gst_object_unref(loaded);
+  return TRUE;
+}
 static gboolean build_pipeline(GhCallMedia *self, const gchar *password, GError **error)
 {
   if (self->pipeline) return TRUE;
   if (!gh_call_capabilities_check(!self->headset, error)) return FALSE;
-  const gchar *required[] = { "appsink", "videoscale", "tee", "valve", "volume", "identity",
-    "openh264enc", "h264parse", "rtph264pay", "rtph264depay", "openh264dec", NULL };
+  const gchar *required[] = { "appsink", "videoscale", "tee", "valve", "volume", "identity", NULL };
   for (guint i = 0; required[i]; i++) {
-    GstElementFactory *factory = gst_element_factory_find(required[i]);
-    GstPluginFeature *loaded = factory ? gst_plugin_feature_load(GST_PLUGIN_FEATURE(factory)) : NULL;
-    if (factory) gst_object_unref(factory);
-    if (!loaded) {
+    if (!element_available(required[i])) {
       g_set_error(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
                   "Calls unavailable: install the GStreamer runtime plugin providing %s", required[i]);
       return FALSE;
     }
-    gst_object_unref(loaded);
   }
+  /* H.264 is optional interop: without OpenH264, offer and accept only VP8. */
+  const gchar *h264[] = { "openh264enc", "h264parse", "rtph264pay", "rtph264depay", "openh264dec", NULL };
+  self->h264_available = TRUE;
+  for (guint i = 0; h264[i]; i++)
+    if (!element_available(h264[i])) self->h264_available = FALSE;
   self->pipeline = gst_pipeline_new(NULL);
   self->rtc = gst_element_factory_make("webrtcbin", "rtc");
   gst_bin_add(GST_BIN(self->pipeline), self->rtc);
@@ -615,6 +627,11 @@ static gboolean select_remote_codecs(GhCallMedia *self, const GstSDPMessage *sdp
       gst_caps_unref(rtp); gst_object_unref(pay); gst_object_unref(filter);
     } else {
       gboolean h264 = !g_strcmp0(gst_structure_get_string(s, "encoding-name"), "H264");
+      if (h264 && !self->h264_available) {
+        gst_caps_unref(preferred);
+        return fail(error, G_IO_ERROR_NOT_SUPPORTED,
+                    "H.264 unavailable: install the GStreamer OpenH264 encoder/decoder and H.264 RTP/parser plugins, or use VP8");
+      }
       if (self->video_branch && (h264 != self->h264 || (guint)payload != self->video_payload)) {
         gst_element_set_state(self->video_branch, GST_STATE_NULL);
         GstPad *src = gst_element_get_static_pad(self->video_branch, "src");
@@ -980,6 +997,16 @@ void gh_call_media_test_learn_private(GhCallMedia *self, gboolean selected)
   if (selected) g_signal_emit_by_name(self->nice, "new-selected-pair-full", 1u, 1u, remote, remote);
   else g_signal_emit_by_name(self->nice, "new-remote-candidate-full", remote);
   nice_candidate_free(remote);
+}
+gchar *gh_call_media_test_video_decoder(GhCallMedia *self)
+{
+  if (!self->video_receive) return NULL;
+  GstElement *decoder = gst_bin_get_by_name(GST_BIN(self->video_receive), "call_video_decoder");
+  if (!decoder) return NULL;
+  GstElementFactory *factory = gst_element_get_factory(decoder);
+  gchar *name = g_strdup(gst_plugin_feature_get_name(GST_PLUGIN_FEATURE(factory)));
+  gst_object_unref(decoder);
+  return name;
 }
 void gh_call_media_test_received(GhCallMedia *self, gint *audio, gint *video)
 {
