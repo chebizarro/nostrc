@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: MIT */
-#include "gh-call-capabilities.h"
+#include "call_test_runtime.h"
 #ifdef GROUNDHOG_HAVE_CALLS
 #include <gst/gst.h>
 #endif
@@ -7,18 +7,20 @@
 int main(int argc, char **argv)
 {
   g_test_init(&argc, &argv, NULL);
-  GError *error = NULL;
 #ifdef GROUNDHOG_HAVE_CALLS
-  g_assert_true(gst_init_check(NULL, NULL, &error));
-  g_assert_no_error(error);
-  /* A package qualification must fail, not skip, if the baseline is absent. */
-  if (!gh_call_capabilities_check(FALSE, &error)) {
-    g_printerr("%s\n", error->message);
-    g_clear_error(&error);
+  GError *init_error = NULL;
+  g_assert_true(gst_init_check(NULL, NULL, &init_error));
+  g_assert_no_error(init_error);
+#endif
+  int status = gh_call_test_runtime_status();
+  if (status) {
+#ifdef GROUNDHOG_HAVE_CALLS
     gst_deinit();
-    return 1;
+#endif
+    return status;
   }
-  g_assert_no_error(error);
+#ifdef GROUNDHOG_HAVE_CALLS
+  GError *error = NULL;
   const gchar *required[] = {
     "webrtcbin", "nicesrc", "nicesink", "dtlssrtpenc", "dtlssrtpdec",
     "srtpenc", "srtpdec", "rtpbin", "rtpopuspay", "rtpopusdepay",
@@ -35,6 +37,8 @@ int main(int argc, char **argv)
     g_assert_nonnull(strstr(error->message, *name));
     g_print("missing %s: %s\n", *name, error->message);
     g_clear_error(&error);
+    g_assert_cmpint(gh_call_test_runtime_status(), ==,
+        !g_strcmp0(g_getenv("GROUNDHOG_CALL_TEST_REQUIRE_RUNTIME"), "1") ? 1 : 77);
     g_assert_true(gst_registry_add_feature(registry, GST_PLUGIN_FEATURE(factory)));
     gst_object_unref(factory);
     g_assert_true(gh_call_capabilities_check(FALSE, &error));
@@ -60,11 +64,6 @@ int main(int argc, char **argv)
     }
   }
   gst_deinit();
-#else
-  g_assert_false(gh_call_capabilities_check(FALSE, &error));
-  g_assert_nonnull(strstr(error->message, "Calls unavailable: built without"));
-  g_print("%s\n", error->message);
-  g_clear_error(&error);
 #endif
   return 0;
 }

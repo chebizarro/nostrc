@@ -8,14 +8,31 @@ or `nice` pkg-config modules disable calls without disabling voice notes or the
 rest of Groundhog. The GLib-only probe still returns an actionable unavailable
 error when compiled out.
 
+## Optional hosts versus required runtimes
+
+By default, an absent baseline call runtime returns **77** and CTest reports
+**Skipped** for all four call-media tests. This includes the two-process harness,
+which probes before launching peers. Once runtime admission succeeds, all existing
+negotiation, codec, device and teardown assertions remain hard failures.
+
+Use the single execution-time switch **`GROUNDHOG_CALL_TEST_REQUIRE_RUNTIME=1`**
+for CI and packaging qualification: missing runtime then returns **1**, not 77.
+`0` (or unset) means optional; invalid values fail. This also applies to a build
+with calls disabled. The Linux CI Dockerfile and all Groundhog CI jobs set `1`;
+the workflow installs the WebRTC headers and separate libnice plugin explicitly.
+Flatpak commands below pass it into the sandbox (host environment inheritance is
+not sufficient). Existing manifest `pkg-config`/`gst-inspect` checks remain hard
+packaging failures independently of this test switch.
+
 Run inside the target Linux environment, not merely on the build host:
 
 ```sh
 cmake -S gnome/groundhog/tests/media/calls -B build-calls -G Ninja
 # Request the target explicitly: absent development dependencies must NOT make
 # a packaging qualification appear to pass by running only the disabled stub.
-cmake --build build-calls --target test-groundhog-call-capabilities test-groundhog-call-loopback
-ctest --test-dir build-calls --output-on-failure -V
+cmake --build build-calls --target test-groundhog-call-capabilities \
+  test-groundhog-call-loopback test-groundhog-call-media
+GROUNDHOG_CALL_TEST_REQUIRE_RUNTIME=1 ctest --test-dir build-calls --output-on-failure -V
 ```
 
 The capability test removes each required factory from the real process-local
@@ -25,14 +42,16 @@ exchanges SDP and trickled ICE in process, and requires at least ten decoded raw
 audio and video buffers at each peer. It uses host ICE, DTLS-SRTP, synthetic live
 sources and fakesinks: no devices, relays, STUN/TURN services or credentials.
 The timeout is a failure bound, never a success condition. CTest also bounds
-negotiation/promise waits. Missing plugins are failures, not skips.
+negotiation/promise waits. With the required-runtime switch above, missing plugins
+are failures, not skips.
 
 To verify a deliberately disabled build:
 
 ```sh
 cmake -S gnome/groundhog/tests/media/calls -B build-calls-off -G Ninja -DGROUNDHOG_ENABLE_CALLS=OFF
 cmake --build build-calls-off
-ctest --test-dir build-calls-off --output-on-failure
+GROUNDHOG_CALL_TEST_REQUIRE_RUNTIME=0 ctest --test-dir build-calls-off --output-on-failure
+# The capability test skips (77); setting the switch to 1 instead must fail.
 ```
 
 ## Flatpak runtime check
@@ -44,9 +63,11 @@ architecture, built against compatible GStreamer/GLib versions):
 
 ```sh
 flatpak install --user flathub org.gnome.Platform//51
-flatpak run --user --filesystem="$PWD/build-calls:ro" --share=network \
+flatpak run --user --env=GROUNDHOG_CALL_TEST_REQUIRE_RUNTIME=1 \
+  --filesystem="$PWD/build-calls:ro" --share=network \
   --command="$PWD/build-calls/test-groundhog-call-capabilities" org.gnome.Platform//51
-flatpak run --user --filesystem="$PWD/build-calls:ro" --share=network \
+flatpak run --user --env=GROUNDHOG_CALL_TEST_REQUIRE_RUNTIME=1 \
+  --filesystem="$PWD/build-calls:ro" --share=network \
   --command="$PWD/build-calls/test-groundhog-call-loopback" org.gnome.Platform//51
 ```
 
@@ -173,7 +194,8 @@ OpenH264 provides both H.264 encoding and decoding. The independent Ubuntu
 cmake -S gnome/groundhog/tests/media/calls -B build-calls-asan \
   -DCMAKE_C_FLAGS='-fsanitize=address -fno-omit-frame-pointer -g'
 cmake --build build-calls-asan --target test-groundhog-call-media
-ASAN_OPTIONS=detect_leaks=1 ctest --test-dir build-calls-asan \
+GROUNDHOG_CALL_TEST_REQUIRE_RUNTIME=1 ASAN_OPTIONS=detect_leaks=1 \
+ctest --test-dir build-calls-asan \
   -R '^groundhog-call-media' --output-on-failure
 ```
 
@@ -191,6 +213,7 @@ container**, with coturn, gnome-keyring and dbus installed (never on the owner's
 session bus). Both subprocesses assert every emitted candidate is relay type:
 
 ```sh
+GROUNDHOG_CALL_TEST_REQUIRE_RUNTIME=1 \
 GH_CALL_TEST_PRIVATE_BUS=1 ASAN_OPTIONS=detect_leaks=1 GSETTINGS_BACKEND=memory \
 GSETTINGS_SCHEMA_DIR="$PWD/build-calls-asan/call-schemas" \
 dbus-run-session -- sh gnome/groundhog/tests/media/calls/turn_session.sh \
@@ -205,6 +228,7 @@ needs a non-loopback interface), disconnect its external Docker network, then ru
 # Inside the isolated disposable container, as root:
 ip addr add 192.0.2.1/32 dev lo
 GH_CALL_TEST_NO_LOCAL=1 GH_CALL_TEST_TURN_ADDRESS=192.0.2.1 \
+GROUNDHOG_CALL_TEST_REQUIRE_RUNTIME=1 \
 GH_CALL_TEST_PRIVATE_BUS=1 ASAN_OPTIONS=detect_leaks=1 GSETTINGS_BACKEND=memory \
 GSETTINGS_SCHEMA_DIR="$PWD/build-calls-asan/call-schemas" \
 dbus-run-session -- sh gnome/groundhog/tests/media/calls/turn_session.sh \

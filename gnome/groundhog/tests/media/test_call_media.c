@@ -1,5 +1,5 @@
 #include "gh-call-media.h"
-#include "gh-call-capabilities.h"
+#include "call_test_runtime.h"
 #include "gh-call-settings.h"
 #include "gh-call-ice-policy.h"
 #include <gst/sdp/sdp.h>
@@ -423,14 +423,13 @@ static int process_peer(gboolean caller)
 int main(int argc, char **argv)
 {
   gst_init(&argc, &argv);
+  int status = gh_call_test_runtime_status();
+  if (status) { gst_deinit(); return status; }
+  if (argc == 2 && !g_strcmp0(argv[1], "--check-runtime")) { gst_deinit(); return 0; }
   if (argc == 2 && g_str_has_prefix(argv[1], "--peer-")) {
     int result = process_peer(!g_strcmp0(argv[1], "--peer-offer")); gst_deinit(); return result;
   }
   g_test_init(&argc, &argv, NULL);
-  GError *error = NULL;
-  if (!gh_call_capabilities_check(FALSE, &error)) {
-    g_printerr("UNAVAILABLE: %s\n", error->message); g_clear_error(&error); gst_deinit(); return 77;
-  }
   guint timeout = g_timeout_add_seconds(45, deadline, NULL);
   g_test_add_func("/call-media/policy", policy);
   g_test_add_func("/call-media/no-local-candidates", no_local_candidates);

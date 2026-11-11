@@ -2,7 +2,7 @@
 /* Device-free packaging proof, not the application's call pipeline.
  * Two full-duplex peers, in-process SDP/trickle ICE, no STUN/TURN/signalling.
  * Success requires decoded Opus and VP8 buffers at BOTH peers. */
-#include "gh-call-capabilities.h"
+#include "call_test_runtime.h"
 #include <gst/gst.h>
 #include <gst/webrtc/webrtc.h>
 
@@ -138,12 +138,8 @@ int main(int argc, char **argv)
 {
   gst_init(&argc, &argv);
   GError *error = NULL;
-  if (!gh_call_capabilities_check(FALSE, &error)) {
-    g_printerr("%s\n", error->message);
-    g_clear_error(&error);
-    gst_deinit();
-    return 1;
-  }
+  int status = gh_call_test_runtime_status();
+  if (status) { gst_deinit(); return status; }
   Call call = {0};
   guint watches[N_PEERS];
   call.loop = g_main_loop_new(NULL, FALSE);

@@ -23,6 +23,10 @@ on:
         default: true
   workflow_dispatch:
 
+# Unlike optional developer hosts, every Linux job promises the call runtime.
+env:
+  GROUNDHOG_CALL_TEST_REQUIRE_RUNTIME: '1'
+
 # This is a focused compile/test gate, not messaging-protocol or GNOME manual
 # accessibility acceptance. Groundhog builds encrypted groups by default.
 jobs:
@@ -87,6 +91,7 @@ jobs:
             gettext desktop-file-utils appstream xvfb xauth xdotool dbus-bin at-spi2-core python3-gi \
             blueprint-compiler gnome-keyring adwaita-icon-theme librsvg2-common \
             libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+            libgstreamer-plugins-bad1.0-dev libnice-dev gstreamer1.0-nice \
             gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
             gstreamer1.0-plugins-bad gstreamer1.0-libav gdb
           # Ubuntu 24.04 ships blueprint-compiler 0.12, Groundhog's minimum;
@@ -457,6 +462,7 @@ jobs:
             libgit2-dev libsqlite3-dev libnsync-dev libsqlcipher-dev libqrencode-dev \
             gettext dbus-bin blueprint-compiler gnome-keyring xvfb xauth xdotool python3-gi curl \
             libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+            libgstreamer-plugins-bad1.0-dev libnice-dev gstreamer1.0-nice \
             gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
             gstreamer1.0-plugins-bad gstreamer1.0-libav
           # libsecret is stripped on Noble; LSan needs the matching build-id
@@ -585,6 +591,7 @@ jobs:
             libgit2-dev libsqlite3-dev libnsync-dev libsqlcipher-dev libqrencode-dev \
             gettext dbus-bin blueprint-compiler gnome-keyring xvfb xauth xdotool python3-gi curl \
             libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+            libgstreamer-plugins-bad1.0-dev libnice-dev gstreamer1.0-nice \
             gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
             gstreamer1.0-plugins-bad gstreamer1.0-libav
           version="$(dpkg-query -W -f='${Version}' libsecret-1-0)"

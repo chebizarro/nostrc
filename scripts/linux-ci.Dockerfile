@@ -9,6 +9,8 @@
 # with the workflow each is named after.
 FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive
+# The CI image promises the call runtime; absent plugins must never become skips.
+ENV GROUNDHOG_CALL_TEST_REQUIRE_RUNTIME=1
 RUN apt-get update && apt-get install -y --no-install-recommends \
     # toolchain (all workflows; clang for nostrc-ci, signet-ci, libgo-ci)
     build-essential cmake ninja-build meson pkg-config clang libclang-rt-18-dev patch \

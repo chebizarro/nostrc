@@ -22,6 +22,17 @@ message(STATUS "Groundhog calls: ${GROUNDHOG_CALLS_AVAILABLE} (option=${GROUNDHO
 if(TARGET groundhog)
   target_link_libraries(groundhog PRIVATE groundhog-call-capabilities)
 endif()
+# Call after all call tests have been registered (including the concrete backend).
+# Required environments set GROUNDHOG_CALL_TEST_REQUIRE_RUNTIME=1 at execution;
+# the same binaries then return 1 instead of 77 for a missing baseline runtime.
+function(groundhog_call_test_skip_policy)
+  foreach(_test groundhog-call-capabilities groundhog-call-loopback
+      groundhog-call-media groundhog-call-media-two-process)
+    if(TEST "${_test}")
+      set_tests_properties("${_test}" PROPERTIES SKIP_RETURN_CODE 77)
+    endif()
+  endforeach()
+endfunction()
 if(BUILD_TESTING)
   add_executable(test-groundhog-call-capabilities
     "${_gh_calls_root}/tests/media/test_call_capabilities.c")

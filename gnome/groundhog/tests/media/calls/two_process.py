@@ -8,6 +8,11 @@ import time
 
 
 def main():
+    # Decide optional-runtime skip before either peer starts. Once admitted,
+    # every child failure (including an unexpected 77) remains a failure.
+    preflight = subprocess.run([sys.argv[1], "--check-runtime"], check=False)
+    if preflight.returncode:
+        return preflight.returncode if preflight.returncode > 0 else 1
     children = []
     selector = selectors.DefaultSelector()
     ready = set()
@@ -54,4 +59,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

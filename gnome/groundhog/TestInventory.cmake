@@ -146,6 +146,7 @@ _gh_describe(groundhog-group-ui test-groundhog-group-ui groundhog.group_ui)
 _gh_describe(groundhog-group-ui-gui test-groundhog-group-ui groundhog.group_ui REQUIRES display)
 _gh_describe(groundhog-mls-media test-groundhog-mls-media groundhog.mls_media)
 _gh_describe(groundhog-mls-files test-groundhog-mls-files groundhog.mls_files)
+groundhog_call_test_skip_policy()
 _gh_describe(groundhog-call-capabilities test-groundhog-call-capabilities groundhog.media)
 _gh_describe(groundhog-call-loopback test-groundhog-call-loopback groundhog.media)
 # Concrete media backend (device-free transport and process-isolated peers).
