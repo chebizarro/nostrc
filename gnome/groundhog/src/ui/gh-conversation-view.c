@@ -852,7 +852,7 @@ struct _GhConversationView {
   gpointer enricher_data;
 };
 
-enum { PROP_0, PROP_CONVERSATION, PROP_COMPACT, PROP_SETTINGS, N_PROPS };
+enum { PROP_0, PROP_CONVERSATION, PROP_COMPACT, PROP_SETTINGS, PROP_RECIPIENT_WITHOUT_INBOX, N_PROPS };
 static GParamSpec *props[N_PROPS];
 
 enum { SIGNAL_RETRY_REQUESTED, SIGNAL_UNLOCK_REQUESTED, SIGNAL_OPEN_URI, SIGNAL_COPY_TEXT,
@@ -2808,10 +2808,20 @@ void
 gh_conversation_view_set_recipient_without_inbox(GhConversationView *self, const gchar *name)
 {
   g_return_if_fail(GH_IS_CONVERSATION_VIEW(self));
+  if (g_strcmp0(name, self->no_inbox_name) == 0)
+    return;
   gchar *copy = g_strdup(name);
   g_free(self->no_inbox_name);
   self->no_inbox_name = copy;
   sync_no_inbox(self);
+  g_object_notify_by_pspec(G_OBJECT(self), props[PROP_RECIPIENT_WITHOUT_INBOX]);
+}
+
+const gchar *
+gh_conversation_view_get_recipient_without_inbox(GhConversationView *self)
+{
+  g_return_val_if_fail(GH_IS_CONVERSATION_VIEW(self), NULL);
+  return self->no_inbox_name;
 }
 
 void
@@ -3512,6 +3522,9 @@ gh_conversation_view_get_property(GObject *object, guint id, GValue *value, GPar
   case PROP_SETTINGS:
     g_value_set_object(value, self->settings);
     break;
+  case PROP_RECIPIENT_WITHOUT_INBOX:
+    g_value_set_string(value, self->no_inbox_name);
+    break;
   default:
     G_OBJECT_WARN_INVALID_PROPERTY_ID(object, id, pspec);
   }
@@ -3635,6 +3648,8 @@ gh_conversation_view_class_init(GhConversationViewClass *klass)
     G_PARAM_READABLE | G_PARAM_EXPLICIT_NOTIFY | G_PARAM_STATIC_STRINGS);
   props[PROP_SETTINGS] = g_param_spec_object("settings", NULL, NULL, G_TYPE_SETTINGS,
     G_PARAM_READWRITE | G_PARAM_EXPLICIT_NOTIFY | G_PARAM_STATIC_STRINGS);
+  props[PROP_RECIPIENT_WITHOUT_INBOX] = g_param_spec_string("recipient-without-inbox", NULL, NULL,
+    NULL, G_PARAM_READABLE | G_PARAM_EXPLICIT_NOTIFY | G_PARAM_STATIC_STRINGS);
   g_object_class_install_properties(object_class, N_PROPS, props);
 
   signals[SIGNAL_RETRY_REQUESTED] = g_signal_new("retry-requested", G_TYPE_FROM_CLASS(klass),

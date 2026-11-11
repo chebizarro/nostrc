@@ -338,6 +338,9 @@ const gchar *gh_conversation_view_get_link_preview_site(GhConversationView *self
  * yet" (NULL hides it). */
 void gh_conversation_view_set_recipient_without_inbox(GhConversationView *self,
                                                       const gchar *name);
+/* The name set above, or NULL ("recipient-without-inbox", notified): the call
+ * buttons (gh-call-ui.h) cannot reach a recipient without a message inbox. */
+const gchar *gh_conversation_view_get_recipient_without_inbox(GhConversationView *self);
 /* The same for a room of several people where nobody has set up private
  * messaging (nostrc-lff5): "No one in this conversation has set up private
  * messaging yet" (FALSE hides it). It takes the banner's place over a name. */

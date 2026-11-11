@@ -57,6 +57,34 @@ template $GhContentPage: Adw.NavigationPage {
           }
         }
 
+        // Calls (nostrc-mqrgk.8): shown for a one-to-one private
+        // conversation by gh-call-ui.c, which installs win.call-voice and
+        // win.call-video and sets the tooltip to the reason when a call
+        // cannot be started.
+        [end]
+        Button video_call_button {
+          visible: false;
+          icon-name: "camera-video-symbolic";
+          tooltip-text: _("Start Video Call");
+          action-name: "win.call-video";
+
+          accessibility {
+            label: _("Start Video Call");
+          }
+        }
+
+        [end]
+        Button voice_call_button {
+          visible: false;
+          icon-name: "call-start-symbolic";
+          tooltip-text: _("Start Voice Call");
+          action-name: "win.call-voice";
+
+          accessibility {
+            label: _("Start Voice Call");
+          }
+        }
+
         // Conversation Info (charter §7.4, G19): shown with a conversation;
         // win.conversation-info comes from gh-conversation-info-dialog.c.
         [end]
@@ -70,6 +98,16 @@ template $GhContentPage: Adw.NavigationPage {
             label: _("Conversation Info");
           }
         }
+      }
+
+      // An ongoing call shown elsewhere (gh-call-ui.c): Return to Call.
+      // Its title can name a person: plain text, never markup.
+      [top]
+      Adw.Banner call_banner {
+        revealed: false;
+        use-markup: false;
+        button-label: _("_Return to Call");
+        action-name: "win.call-show";
       }
 
       content: Box {

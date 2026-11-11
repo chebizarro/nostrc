@@ -14,6 +14,7 @@ struct _GhSidebarPage {
   GtkSearchEntry *search_entry;
   GtkWidget *empty_new_button;
   AdwBanner *status_banner;
+  AdwBanner *call_banner;
   GtkStack *stack;
   GtkButton *requests_button;
   GtkLabel *requests_count;
@@ -312,6 +313,7 @@ gh_sidebar_page_class_init(GhSidebarPageClass *klass)
   gtk_widget_class_bind_template_child(widget_class, GhSidebarPage, search_entry);
   gtk_widget_class_bind_template_child(widget_class, GhSidebarPage, empty_new_button);
   gtk_widget_class_bind_template_child(widget_class, GhSidebarPage, status_banner);
+  gtk_widget_class_bind_template_child(widget_class, GhSidebarPage, call_banner);
   gtk_widget_class_bind_template_child(widget_class, GhSidebarPage, stack);
   gtk_widget_class_bind_template_child(widget_class, GhSidebarPage, requests_button);
   gtk_widget_class_bind_template_child(widget_class, GhSidebarPage, requests_count);
@@ -710,6 +712,9 @@ struct _GhContentPage {
   GtkLabel *subtitle_label;
   GtkButton *info_button;
   GtkWidget *menu_button;
+  GtkWidget *voice_call_button;
+  GtkWidget *video_call_button;
+  AdwBanner *call_banner;
   GtkStack *content_stack;
   AdwBin *conversation_slot;
   GhComposer *composer;
@@ -747,6 +752,9 @@ gh_content_page_class_init(GhContentPageClass *klass)
   gtk_widget_class_bind_template_child(widget_class, GhContentPage, subtitle_label);
   gtk_widget_class_bind_template_child(widget_class, GhContentPage, info_button);
   gtk_widget_class_bind_template_child(widget_class, GhContentPage, menu_button);
+  gtk_widget_class_bind_template_child(widget_class, GhContentPage, voice_call_button);
+  gtk_widget_class_bind_template_child(widget_class, GhContentPage, video_call_button);
+  gtk_widget_class_bind_template_child(widget_class, GhContentPage, call_banner);
   gtk_widget_class_bind_template_child(widget_class, GhContentPage, content_stack);
   gtk_widget_class_bind_template_child(widget_class, GhContentPage, conversation_slot);
   gtk_widget_class_bind_template_child(widget_class, GhContentPage, composer);
@@ -858,4 +866,25 @@ gh_content_page_get_composer(GhContentPage *self)
 {
   g_return_val_if_fail(GH_IS_CONTENT_PAGE(self), NULL);
   return self->composer;
+}
+
+AdwBanner *
+gh_sidebar_page_get_call_banner(GhSidebarPage *self)
+{
+  g_return_val_if_fail(GH_IS_SIDEBAR_PAGE(self), NULL);
+  return self->call_banner;
+}
+
+GtkWidget *
+gh_content_page_get_call_button(GhContentPage *self, gboolean video)
+{
+  g_return_val_if_fail(GH_IS_CONTENT_PAGE(self), NULL);
+  return video ? self->video_call_button : self->voice_call_button;
+}
+
+AdwBanner *
+gh_content_page_get_call_banner(GhContentPage *self)
+{
+  g_return_val_if_fail(GH_IS_CONTENT_PAGE(self), NULL);
+  return self->call_banner;
 }

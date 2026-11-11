@@ -56,6 +56,28 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                   </object>
                 </child>
                 <child type="end">
+                  <object class="GtkButton" id="video_call_button">
+                    <property name="visible">false</property>
+                    <property name="icon-name">camera-video-symbolic</property>
+                    <property name="tooltip-text" translatable="yes">Start Video Call</property>
+                    <property name="action-name">win.call-video</property>
+                    <accessibility>
+                      <property name="label" translatable="yes">Start Video Call</property>
+                    </accessibility>
+                  </object>
+                </child>
+                <child type="end">
+                  <object class="GtkButton" id="voice_call_button">
+                    <property name="visible">false</property>
+                    <property name="icon-name">call-start-symbolic</property>
+                    <property name="tooltip-text" translatable="yes">Start Voice Call</property>
+                    <property name="action-name">win.call-voice</property>
+                    <accessibility>
+                      <property name="label" translatable="yes">Start Voice Call</property>
+                    </accessibility>
+                  </object>
+                </child>
+                <child type="end">
                   <object class="GtkButton" id="info_button">
                     <property name="visible">false</property>
                     <property name="icon-name">help-about-symbolic</property>
@@ -66,6 +88,14 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     </accessibility>
                   </object>
                 </child>
+              </object>
+            </child>
+            <child type="top">
+              <object class="AdwBanner" id="call_banner">
+                <property name="revealed">false</property>
+                <property name="use-markup">false</property>
+                <property name="button-label" translatable="yes">_Return to Call</property>
+                <property name="action-name">win.call-show</property>
               </object>
             </child>
             <property name="content">

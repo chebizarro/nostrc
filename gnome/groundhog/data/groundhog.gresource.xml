@@ -10,6 +10,14 @@
          Non-GNOME desktops may lack the Adwaita icon theme; bundle every
          symbolic icon the app references so they always render (nostrc-9juh). -->
     <file>icons/scalable/actions/microphone-sensitivity-high-symbolic.svg</file>
+    <!-- Calls (nostrc-mqrgk.8). -->
+    <file>icons/scalable/actions/call-start-symbolic.svg</file>
+    <file>icons/scalable/actions/call-stop-symbolic.svg</file>
+    <file>icons/scalable/actions/camera-video-symbolic.svg</file>
+    <file>icons/scalable/actions/camera-disabled-symbolic.svg</file>
+    <file>icons/scalable/actions/microphone-disabled-symbolic.svg</file>
+    <file>icons/scalable/actions/audio-input-microphone-symbolic.svg</file>
+    <file>icons/scalable/actions/audio-speakers-symbolic.svg</file>
     <file>icons/scalable/actions/send-symbolic.svg</file>
     <file>icons/scalable/actions/send-symbolic-rtl.svg</file>
     <file>icons/scalable/actions/avatar-default-symbolic.svg</file>
@@ -119,6 +127,7 @@
     <file>ui/gh-attachment-sheet.ui</file>
     <file>ui/gh-create-poll-dialog.ui</file>
     <file>ui/gh-voice-bubble.ui</file>
+    <file>ui/gh-call-view.ui</file>
     <!-- Reviewed onboarding relay suggestions (charter D4, G14). -->
     <file>relay-suggestions.json</file>
     <!-- Reviewed MDK 0.11 encrypted-media server suggestions; no automatic contact. -->

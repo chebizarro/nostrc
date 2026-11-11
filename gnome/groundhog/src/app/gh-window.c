@@ -36,6 +36,10 @@ static const struct {
    * private conversation is shown. */
   { "win.conversation-info", { "<Control>i", NULL } },
   { "win.show-help-overlay", { "<Control>question", NULL } },
+  /* Installed by gh_call_ui_attach() (nostrc-mqrgk.8), enabled during a call. */
+  { "win.call-toggle-mute", { "<Control><Shift>m", NULL } },
+  { "win.call-toggle-camera", { "<Control><Shift>o", NULL } },
+  { "win.call-hang-up", { "<Control><Shift>h", NULL } },
   /* Installed by gh-app-services.c (G17), which owns the services it shows. */
   { "app.preferences", { "<Control>comma", NULL } },
   { "window.close", { "<Control>w", NULL } },

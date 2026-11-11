@@ -90,6 +90,16 @@ template $GhSidebarPage: Adw.NavigationPage {
           use-markup: false;
         }
 
+        // An ongoing call while the list shows in a narrow window
+        // (gh-call-ui.c). Plain text: it can name a person.
+        [top]
+        Adw.Banner call_banner {
+          revealed: false;
+          use-markup: false;
+          button-label: _("_Return to Call");
+          action-name: "win.call-show";
+        }
+
         // The region whose visible child changes with account and list state;
         // named so it is announced apart from the list it contains.
         content: Stack stack {
