@@ -495,7 +495,7 @@ bus_up(BusFixture *fixture, gboolean activatable)
 static void
 bus_down(BusFixture *fixture)
 {
-  /* The connections only see the bus vanish (see nostrc_test_bus_down()). */
+  /* Complete owned connection shutdown before stopping the private bus. */
   nostrc_test_bus_down(fixture->bus);
   fixture->bus = NULL;
   fixture->client = fixture->owner = NULL;

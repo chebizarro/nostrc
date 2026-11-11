@@ -75,8 +75,11 @@ static void
 stall_free(Stall *stall)
 {
   g_socket_service_stop(stall->service);
+  /* Complete accept cancellation before invalidating its polled fd. */
+  while (g_main_context_iteration(NULL, FALSE));
   g_socket_listener_close(G_SOCKET_LISTENER(stall->service));
   g_clear_object(&stall->service);
+  while (g_main_context_iteration(NULL, FALSE));
   g_ptr_array_unref(stall->held);
   g_unlink(stall->socket_path);
   g_rmdir(stall->dir);

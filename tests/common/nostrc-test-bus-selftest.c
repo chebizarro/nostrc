@@ -36,9 +36,29 @@ static void
 locally_closed(GDBusConnection *connection, gboolean remote, GError *error, gpointer data)
 {
   g_assert_true(g_dbus_connection_is_closed(connection));
-  g_assert_false(remote); /* Daemon-first teardown fails this assertion. */
-  g_assert_no_error(error);
+  (void)remote;
+  (void)error; /* Local socket shutdown is observed as EOF by GDBus. */
   (*(guint *)data)++;
+}
+
+typedef struct {
+  GDBusConnection *observer;
+  guint closed;
+} CloseWatch;
+
+static void
+closed_before_daemon(GDBusConnection *connection, gboolean remote, GError *error, gpointer data)
+{
+  CloseWatch *watch = data;
+  locally_closed(connection, remote, error, &watch->closed);
+  /* An independent connection must still reach the real daemon when each
+   * observed close dispatches. Daemon-first teardown cannot satisfy this. */
+  g_autoptr(GError) call_error = NULL;
+  g_autoptr(GVariant) reply = g_dbus_connection_call_sync(watch->observer,
+    "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "GetId",
+    NULL, G_VARIANT_TYPE("(s)"), G_DBUS_CALL_FLAGS_NONE, -1, NULL, &call_error);
+  g_assert_no_error(call_error);
+  g_assert_nonnull(reply);
 }
 
 static void
@@ -46,13 +66,15 @@ test_local_close(void)
 {
   NostrcTestBus *bus = nostrc_test_bus_new(NOSTRC_TEST_BUS_FLAGS_NOT_SESSION);
   nostrc_test_bus_up(bus);
-  guint closed = 0;
+  CloseWatch watch = {0};
   for (guint i = 0; i < 2; i++) {
     GDBusConnection *connection = nostrc_test_bus_connect(bus);
-    g_signal_connect(connection, "closed", G_CALLBACK(locally_closed), &closed);
+    g_signal_connect(connection, "closed", G_CALLBACK(closed_before_daemon), &watch);
   }
+  /* Tracked last, so it stays connected through the two observed closes. */
+  watch.observer = nostrc_test_bus_connect(bus);
   nostrc_test_bus_down(bus);
-  g_assert_cmpuint(closed, ==, 2);
+  g_assert_cmpuint(watch.closed, ==, 2);
 }
 
 static void

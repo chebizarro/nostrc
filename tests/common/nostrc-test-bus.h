@@ -34,10 +34,11 @@
  *    DBUS_SESSION_BUS_ADDRESS and one session-bus connection (the GLib
  *    singleton that g_bus_get() returns) is held until nostrc_test_bus_down(),
  *    so libraries never connect and disconnect it per call.
- *  - nostrc_test_bus_down() explicitly closes every owned connection while
- *    the daemon is still alive. It dispatches close completion and the
- *    "closed" signal on each connection's owning context before releasing
- *    references, and only then stops the daemons. Warnings remain fatal.
+ *  - nostrc_test_bus_down() closes every owned connection while the daemon
+ *    is still alive. Socket I/O is shut down first, keeping the descriptor
+ *    valid until EOF completes GIO's read source. It then dispatches close
+ *    completion and "closed" on the owning context before releasing refs,
+ *    and only then stops the daemons. Warnings remain fatal.
  *
  * Rules for tests:
  *

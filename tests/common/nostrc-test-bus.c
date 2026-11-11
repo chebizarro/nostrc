@@ -11,6 +11,7 @@
 #include <glib-unix.h>
 #include <glib/gstdio.h>
 #include <string.h>
+#include <sys/socket.h>
 #include <unistd.h>
 
 typedef struct _CloseJob CloseJob;
@@ -23,6 +24,7 @@ typedef struct {
 } TestConnection;
 
 static void maybe_finish_close(CloseJob *job);
+static void request_close(CloseJob *job);
 
 static void
 connection_closed(GDBusConnection *connection, gboolean remote, GError *error, gpointer data)
@@ -32,8 +34,10 @@ connection_closed(GDBusConnection *connection, gboolean remote, GError *error, g
   (void)error;
   TestConnection *owned = data;
   owned->closed = TRUE;
-  if (owned->closing)
+  if (owned->closing) {
+    request_close(owned->closing);
     maybe_finish_close(owned->closing);
+  }
 }
 
 static TestConnection *
@@ -364,6 +368,7 @@ post_idle(GMainContext *context, GSourceFunc callback, gpointer data)
 struct _CloseJob {
   TestConnection *owned;
   GMainContext *teardown_context;
+  gboolean requested; /* owning context only */
   gboolean finished; /* owning context only */
   gboolean queued;   /* owning context only */
   gboolean done;     /* teardown context only */
@@ -412,12 +417,39 @@ close_finished(GObject *source, GAsyncResult *result, gpointer data)
   maybe_finish_close(job);
 }
 
+static void
+request_close(CloseJob *job)
+{
+  if (job->requested) return;
+  job->requested = TRUE;
+  g_dbus_connection_close(job->owned->connection, NULL, close_finished, job);
+}
+
 static gboolean
 start_close(gpointer data)
 {
   CloseJob *job = data;
-  job->owned->closing = job;
-  g_dbus_connection_close(job->owned->connection, NULL, close_finished, job);
+  TestConnection *owned = job->owned;
+  owned->closing = job;
+  GIOStream *stream = g_dbus_connection_get_stream(owned->connection);
+  if (owned->closed || g_dbus_connection_is_closed(owned->connection) ||
+      !G_IS_SOCKET_CONNECTION(stream)) {
+    request_close(job);
+  } else {
+    /* Keep the fd valid while EOF completes GDBus's socket read source.
+     * close_async alone can close it before read cancellation dispatches
+     * inside GIO's private worker context (macOS select then gets EBADF).
+     * The closed signal requests the final close only after that read ends. */
+    GSocket *socket = g_socket_connection_get_socket(G_SOCKET_CONNECTION(stream));
+    /* GSocket itself is not thread-safe; its I/O runs in GDBus's worker.
+     * The retained connection owns this fd until we request close below. */
+    gint result;
+    do {
+      result = shutdown(g_socket_get_fd(socket), SHUT_RDWR);
+    } while (result < 0 && errno == EINTR);
+    if (result < 0 && errno != ENOTCONN)
+      g_error("nostrc-test-bus: shutting down a connection: %s", g_strerror(errno));
+  }
   return G_SOURCE_REMOVE;
 }
 

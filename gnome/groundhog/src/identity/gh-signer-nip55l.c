@@ -3,6 +3,10 @@
 #include "nostr-event.h"
 
 #include <string.h>
+#ifdef G_OS_UNIX
+#include <errno.h>
+#include <sys/socket.h>
+#endif
 
 #define SIGNER_BUS "org.nostr.Signer"
 #define SIGNER_PATH "/org/nostr/signer"
@@ -113,6 +117,7 @@ typedef struct {
   GDBusConnection *bus;
   GMainContext *context;
   gulong closed_handler;
+  gboolean requested;
   gboolean finished;
   gboolean closed;
   gboolean cleanup_queued;
@@ -149,12 +154,15 @@ private_close_maybe_finished(PrivateClose *close)
   }
 }
 
+static void private_request_close(PrivateClose *close);
+
 static void
 private_closed(GDBusConnection *bus, gboolean remote, GError *error, gpointer data)
 {
   (void)bus; (void)remote; (void)error;
   PrivateClose *close = data;
   close->closed = TRUE;
+  private_request_close(close);
   private_close_maybe_finished(close);
 }
 
@@ -170,6 +178,14 @@ private_close_finished(GObject *source, GAsyncResult *result, gpointer data)
   private_close_maybe_finished(close);
 }
 
+static void
+private_request_close(PrivateClose *close)
+{
+  if (close->requested) return;
+  close->requested = TRUE;
+  g_dbus_connection_close(close->bus, NULL, private_close_finished, close);
+}
+
 static gboolean
 private_close_start(gpointer data)
 {
@@ -177,7 +193,28 @@ private_close_start(gpointer data)
   if (g_dbus_connection_is_closed(close->bus))
     return private_close_free(close);
   close->closed_handler = g_signal_connect(close->bus, "closed", G_CALLBACK(private_closed), close);
-  g_dbus_connection_close(close->bus, NULL, private_close_finished, close);
+  GIOStream *stream = g_dbus_connection_get_stream(close->bus);
+#ifdef G_OS_UNIX
+  if (G_IS_SOCKET_CONNECTION(stream)) {
+    /* Revoke I/O without invalidating the retained connection's fd. EOF
+     * removes GIO's read source before final close. Use the kernel call:
+     * GSocket's mutable flags belong to GDBus's private worker thread. */
+    GSocket *socket = g_socket_connection_get_socket(G_SOCKET_CONNECTION(stream));
+    gint result;
+    do {
+      result = shutdown(g_socket_get_fd(socket), SHUT_RDWR);
+    } while (result < 0 && errno == EINTR);
+    if (result < 0 && errno != ENOTCONN) {
+      g_warning("Cannot shut down private signer connection: %s", g_strerror(errno));
+      private_request_close(close);
+    }
+  } else
+#else
+  (void)stream;
+#endif
+  {
+    private_request_close(close);
+  }
   return G_SOURCE_REMOVE;
 }
 
