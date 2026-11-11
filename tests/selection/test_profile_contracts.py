@@ -146,7 +146,9 @@ class SharedSanitizerContracts(unittest.TestCase):
             self.assertEqual(phases[phase], dict(value.split("=", 1) for value in config[field]))
         self.assertEqual(phases["configure"], {})
         self.assertEqual(phases["build"], {})
-        self.assertEqual(phases["test"]["ASAN_OPTIONS"], "detect_leaks=1:halt_on_error=1:verify_asan_link_order=0")
+        # 8618a9527 intentionally retained deeper allocation stacks for GUI LSan.
+        self.assertEqual(phases["test"]["ASAN_OPTIONS"],
+                         "detect_leaks=1:halt_on_error=1:verify_asan_link_order=0:malloc_context_size=64")
         self.assertIn("{source_root}", phases["test"]["LSAN_OPTIONS"])
         self.assertFalse(policy["enforcement_ready"])
 
