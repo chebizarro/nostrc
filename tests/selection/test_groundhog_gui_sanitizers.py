@@ -22,9 +22,27 @@ class GroundhogGuiSanitizers(unittest.TestCase):
         self.assertEqual(config["GH_SAN_DISPLAY_WRAP"], "1")
         env = dict(value.split("=", 1) for value in config["GH_SAN_ENV"])
         self.assertIn("detect_leaks=1", env["ASAN_OPTIONS"])
-        self.assertEqual(env["LD_LIBRARY_PATH"], "/opt/groundhog-ci-gtk/lib")
+        self.assertIn("malloc_context_size=64", env["ASAN_OPTIONS"])
+        self.assertNotIn("LD_LIBRARY_PATH", env)
+        self.assertNotIn("PKG_CONFIG_PATH", env)
+        self.assertEqual(config["GH_SAN_CONFIGURE_ENV"], [])
+        self.assertEqual(config["GH_SAN_BUILD_ENV"], [])
         self.assertEqual(env["LSAN_OPTIONS"],
                          "suppressions=/src/gnome/groundhog/tests/lsan.supp:print_suppressions=1")
+
+    def test_stock_libraries_and_context_independent_image(self):
+        dockerfile = (ROOT / "scripts/linux-ci.Dockerfile").read_text()
+        self.assertNotIn("COPY ", dockerfile)
+        self.assertNotIn("ENV LD_LIBRARY_PATH", dockerfile)
+        self.assertNotIn("ENV PKG_CONFIG_PATH", dockerfile)
+        self.assertNotIn("sassc", dockerfile)
+        self.assertIn("libadwaita-1-0", dockerfile)
+        local = (ROOT / "scripts/groundhog-linux-ci.sh").read_text()
+        gate = (ROOT / "scripts/linux-gate.sh").read_text()
+        self.assertIn('- < "$ROOT/scripts/linux-ci.Dockerfile"', local)
+        self.assertIn('- < "$SCRIPTS/linux-ci.Dockerfile"', gate)
+        self.assertNotIn("LD_LIBRARY_PATH", self.workflow)
+        self.assertNotIn("PKG_CONFIG_PATH", self.workflow)
 
     def test_gui_variants_build_their_real_shared_executable(self):
         targets = self.config()["GH_SAN_TARGETS"]
@@ -45,12 +63,16 @@ class GroundhogGuiSanitizers(unittest.TestCase):
         with self.assertRaises(self.adapter["WorkflowError"]):
             self.config(changed)
 
-    def test_no_per_operation_dependency_or_application_suppression(self):
+    def test_only_reviewed_library_function_suppressions(self):
         text = (ROOT / "gnome/groundhog/tests/lsan.supp").read_text()
         entries = {line for line in text.splitlines() if line.startswith("leak:")}
         self.assertEqual(entries, {"leak:secret_collection_signal", "leak:match_in_thread",
                                    "leak:pango_fc_font_map_load_fontset", "leak:FcParsePattern",
-                                   "leak:pango_fc_fontset_load_next_font"})
+                                   "leak:pango_fc_fontset_load_next_font",
+                                   "leak:gtk_widget_list_mnemonic_labels",
+                                   "leak:gtk_shortcut_label_rebuild",
+                                   "leak:adw_breakpoint_bin_size_allocate",
+                                   "leak:adw_about_dialog_add_legal_section"})
 
 
 if __name__ == "__main__":

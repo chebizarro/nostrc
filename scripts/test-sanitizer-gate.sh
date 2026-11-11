@@ -54,7 +54,7 @@ done
 for flag in -DGNOSTR_ENABLE_ASAN=ON -DGNOSTR_ENABLE_UBSAN=ON -DBUILD_GROUNDHOG=ON -DBUILD_APPS=OFF; do
     has "$flag" "${GH_SAN_CONFIGURE[@]}" || fail "configure lacks $flag"
 done
-has ASAN_OPTIONS=detect_leaks=1:halt_on_error=1:verify_asan_link_order=0 "${GH_SAN_ENV[@]}" ||
+has ASAN_OPTIONS=detect_leaks=1:halt_on_error=1:verify_asan_link_order=0:malloc_context_size=64 "${GH_SAN_ENV[@]}" ||
     fail "ASAN_OPTIONS not read: ${GH_SAN_ENV[*]}"
 has UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 "${GH_SAN_ENV[@]}" || fail "UBSAN_OPTIONS not read"
 has G_SLICE=always-malloc "${GH_SAN_ENV[@]}" || fail "G_SLICE not read"
@@ -77,7 +77,7 @@ has -DNEW_FLAG=1 "${GH_SAN_CONFIGURE[@]}" || fail "an added configure flag was n
 mutate 's/halt_on_error=1:verify_asan_link_order=0/halt_on_error=1:verify_asan_link_order=0:x=1/' \
     > "$tmp/opt.yml"
 config "$tmp/opt.yml"
-has ASAN_OPTIONS=detect_leaks=1:halt_on_error=1:verify_asan_link_order=0:x=1 "${GH_SAN_ENV[@]}" ||
+has ASAN_OPTIONS=detect_leaks=1:halt_on_error=1:verify_asan_link_order=0:x=1:malloc_context_size=64 "${GH_SAN_ENV[@]}" ||
     fail "a changed ASAN option was not read"
 mutate 's/^( *)(export LSAN_OPTIONS=)/$1export G_DEBUG=fatal-criticals\n$1$2/' > "$tmp/export.yml"
 config "$tmp/export.yml"
@@ -103,7 +103,7 @@ perl -0pe 's/\njobs:\n/\nenv:\n  ASAN_OPTIONS: detect_leaks=0\n  NOSTRC_WF: on\n
 config "$tmp/wf-env.yml"
 has NOSTRC_WF=on "${GH_SAN_ENV[@]}" || fail "workflow env did not reach the tests"
 has NOSTRC_WF=on "${GH_SAN_CONFIGURE_ENV[@]}" || fail "workflow env did not reach configure"
-has ASAN_OPTIONS=detect_leaks=1:halt_on_error=1:verify_asan_link_order=0 "${GH_SAN_ENV[@]}" ||
+has ASAN_OPTIONS=detect_leaks=1:halt_on_error=1:verify_asan_link_order=0:malloc_context_size=64 "${GH_SAN_ENV[@]}" ||
     fail "the test step's ASAN_OPTIONS did not override the workflow's"
 has ASAN_OPTIONS=detect_leaks=0 "${GH_SAN_CONFIGURE_ENV[@]}" || fail "workflow env missing at configure"
 # The configure step's CC and CFLAGS reach configure, and only configure.

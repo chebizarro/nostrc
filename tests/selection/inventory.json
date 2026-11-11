@@ -30053,33 +30053,6 @@
         "nip58"
       ],
       "reason": "Checked tag, address, JSON and unsigned-event helpers shared only by these codecs."
-    },
-    {
-      "effect": "impact",
-      "exact": "scripts/install-groundhog-ci-gtk.sh",
-      "nodes": [
-        "execution.groundhog",
-        "execution.grotto"
-      ],
-      "reason": "CI-only GTK/libadwaita ownership fixes used by the shared Linux GUI image."
-    },
-    {
-      "effect": "impact",
-      "exact": "scripts/ci/gtk-4.14.5-relation-ownership.patch",
-      "nodes": [
-        "execution.groundhog",
-        "execution.grotto"
-      ],
-      "reason": "CI-only GTK/libadwaita ownership fixes used by the shared Linux GUI image."
-    },
-    {
-      "effect": "impact",
-      "exact": "scripts/ci/libadwaita-1.5.0-ownership.patch",
-      "nodes": [
-        "execution.groundhog",
-        "execution.grotto"
-      ],
-      "reason": "CI-only GTK/libadwaita ownership fixes used by the shared Linux GUI image."
     }
   ],
   "profiles": {
@@ -30727,19 +30700,11 @@
       ],
       "environment": {},
       "phase_environments": {
-        "configure": {
-          "PKG_CONFIG_PATH": "/opt/groundhog-ci-gtk/lib/pkgconfig",
-          "LD_LIBRARY_PATH": "/opt/groundhog-ci-gtk/lib"
-        },
-        "build": {
-          "PKG_CONFIG_PATH": "/opt/groundhog-ci-gtk/lib/pkgconfig",
-          "LD_LIBRARY_PATH": "/opt/groundhog-ci-gtk/lib"
-        },
+        "configure": {},
+        "build": {},
         "test": {
-          "PKG_CONFIG_PATH": "/opt/groundhog-ci-gtk/lib/pkgconfig",
-          "LD_LIBRARY_PATH": "/opt/groundhog-ci-gtk/lib",
           "GROUNDHOG_SANITIZER_TESTS": "groundhog-identity groundhog-account groundhog-account-relays groundhog-dm-send groundhog-relay groundhog-relay-wire groundhog-relay-publish groundhog-relay-publish-wire groundhog-nip29 groundhog-conversations groundhog-dm-inbox groundhog-store-key groundhog-store-key-keyring groundhog-secret-service-sessions groundhog-nip46-credentials-keyring groundhog-store groundhog-store-sqlite groundhog-store-marmot groundhog-store-conversations groundhog-outbox groundhog-account-store groundhog-link-policy groundhog-background groundhog-notifier groundhog-inbox-setup groundhog-expiry groundhog-auth-policy groundhog-contact-directory groundhog-reactions groundhog-reaction-send groundhog-privacy-e2e groundhog-new-message groundhog-requests groundhog-privacy-summary groundhog-conversation-info groundhog-nip29-service groundhog-mls-service groundhog-privacy-mls groundhog-mls-kp-lifecycle groundhog-mls-kp-lifecycle-adopted groundhog-net groundhog-tls-resumption groundhog-group-ui groundhog-mls-ui groundhog-conversation-menu groundhog-multi-send groundhog-media groundhog-blossom groundhog-media-purge groundhog-relay-guard groundhog-media-cache-binding groundhog-attachments groundhog-mls-media groundhog-mls-files groundhog-mls-poll groundhog-voice groundhog-icons groundhog-message-reply groundhog-two-instance-acceptance groundhog-shell groundhog-account-ui groundhog-conversation-list groundhog-launch groundhog-bus-probe groundhog-two-instance groundhog-account-store-gui groundhog-conversation-view groundhog-background-gui groundhog-about-gui groundhog-preferences groundhog-onboarding groundhog-notifier-gui groundhog-composer groundhog-e2e-dm groundhog-requests-gui groundhog-conversation-info-gui groundhog-group-ui-gui groundhog-mls-ui-gui groundhog-conversation-menu-gui groundhog-voice-ui groundhog-attachment-ui groundhog-nip46-pair-dialog groundhog-report-ui groundhog-draft-sync-gui groundhog-lists-ui groundhog-social-sync-gui groundhog-emoji groundhog-poll-ui groundhog-gtk-lsan nostrc-test-bus-selftest test_relay_teardown_leaks test_connection_recv_drain",
-          "ASAN_OPTIONS": "detect_leaks=1:halt_on_error=1:verify_asan_link_order=0",
+          "ASAN_OPTIONS": "detect_leaks=1:halt_on_error=1:verify_asan_link_order=0:malloc_context_size=64",
           "UBSAN_OPTIONS": "print_stacktrace=1:halt_on_error=1",
           "G_SLICE": "always-malloc",
           "LSAN_OPTIONS": "suppressions={source_root}/gnome/groundhog/tests/lsan.supp:print_suppressions=1"
@@ -30948,19 +30913,11 @@
           "-DGNOSTR_ENABLE_ASAN=ON",
           "-DGNOSTR_ENABLE_UBSAN=ON"
         ],
-        "GH_SAN_CONFIGURE_ENV": [
-          "PKG_CONFIG_PATH=/opt/groundhog-ci-gtk/lib/pkgconfig",
-          "LD_LIBRARY_PATH=/opt/groundhog-ci-gtk/lib"
-        ],
-        "GH_SAN_BUILD_ENV": [
-          "PKG_CONFIG_PATH=/opt/groundhog-ci-gtk/lib/pkgconfig",
-          "LD_LIBRARY_PATH=/opt/groundhog-ci-gtk/lib"
-        ],
+        "GH_SAN_CONFIGURE_ENV": [],
+        "GH_SAN_BUILD_ENV": [],
         "GH_SAN_ENV": [
-          "PKG_CONFIG_PATH=/opt/groundhog-ci-gtk/lib/pkgconfig",
-          "LD_LIBRARY_PATH=/opt/groundhog-ci-gtk/lib",
           "GROUNDHOG_SANITIZER_TESTS=groundhog-identity groundhog-account groundhog-account-relays groundhog-dm-send groundhog-relay groundhog-relay-wire groundhog-relay-publish groundhog-relay-publish-wire groundhog-nip29 groundhog-conversations groundhog-dm-inbox groundhog-store-key groundhog-store-key-keyring groundhog-secret-service-sessions groundhog-nip46-credentials-keyring groundhog-store groundhog-store-sqlite groundhog-store-marmot groundhog-store-conversations groundhog-outbox groundhog-account-store groundhog-link-policy groundhog-background groundhog-notifier groundhog-inbox-setup groundhog-expiry groundhog-auth-policy groundhog-contact-directory groundhog-reactions groundhog-reaction-send groundhog-privacy-e2e groundhog-new-message groundhog-requests groundhog-privacy-summary groundhog-conversation-info groundhog-nip29-service groundhog-mls-service groundhog-privacy-mls groundhog-mls-kp-lifecycle groundhog-mls-kp-lifecycle-adopted groundhog-net groundhog-tls-resumption groundhog-group-ui groundhog-mls-ui groundhog-conversation-menu groundhog-multi-send groundhog-media groundhog-blossom groundhog-media-purge groundhog-relay-guard groundhog-media-cache-binding groundhog-attachments groundhog-mls-media groundhog-mls-files groundhog-mls-poll groundhog-voice groundhog-icons groundhog-message-reply groundhog-two-instance-acceptance groundhog-shell groundhog-account-ui groundhog-conversation-list groundhog-launch groundhog-bus-probe groundhog-two-instance groundhog-account-store-gui groundhog-conversation-view groundhog-background-gui groundhog-about-gui groundhog-preferences groundhog-onboarding groundhog-notifier-gui groundhog-composer groundhog-e2e-dm groundhog-requests-gui groundhog-conversation-info-gui groundhog-group-ui-gui groundhog-mls-ui-gui groundhog-conversation-menu-gui groundhog-voice-ui groundhog-attachment-ui groundhog-nip46-pair-dialog groundhog-report-ui groundhog-draft-sync-gui groundhog-lists-ui groundhog-social-sync-gui groundhog-emoji groundhog-poll-ui groundhog-gtk-lsan nostrc-test-bus-selftest test_relay_teardown_leaks test_connection_recv_drain",
-          "ASAN_OPTIONS=detect_leaks=1:halt_on_error=1:verify_asan_link_order=0",
+          "ASAN_OPTIONS=detect_leaks=1:halt_on_error=1:verify_asan_link_order=0:malloc_context_size=64",
           "UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1",
           "G_SLICE=always-malloc",
           "LSAN_OPTIONS=suppressions={source_root}/gnome/groundhog/tests/lsan.supp:print_suppressions=1"
@@ -32444,7 +32401,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "9f06d28a459453c784ab32cae60a7d81fbe336d776a3de1569252d08b66254d3",
       "unsupported_reason": "Ordinary and live MDK011 registrations are separate diagnostic profiles. Ordinary selection does not claim live Docker lifecycle coverage; the dedicated live lane preserves docker/display/private_bus and visibly refuses without guarded custody. Full legacy job union, runtime/header audits and original image custody remain unaccepted.",
-      "workflow_sha256": "614aa54fd0c5e8a4bc142b2509e127dff40864e3ea954f97b33cdcdfac4e3b07"
+      "workflow_sha256": "26325a6d94b03a74c7893f402813800ade507a381a2f450cc0ab63e49e5e33e3"
     },
     ".github/workflows/groundhog-ci.yml:groundhog-sanitizers": {
       "matrix_source": "",
@@ -32452,9 +32409,9 @@
         "groundhog.linux.sanitizers"
       ],
       "coverage_gap": "groundhog_sanitizer_execution_contract",
-      "source_sha256": "579490b83f698f48e873760e854d78acb9626d7798d14fe396278a0782cff9dd",
+      "source_sha256": "b969d2456c9ca736cfa700367aef56d5054bb925d0596a75e24ab82e6bd789c4",
       "unsupported_reason": "Ordinary Groundhog suite/MDK011 application configuration is authored but full registration/runtime/header closure and Docker image custody remain unaccepted.",
-      "workflow_sha256": "614aa54fd0c5e8a4bc142b2509e127dff40864e3ea954f97b33cdcdfac4e3b07"
+      "workflow_sha256": "26325a6d94b03a74c7893f402813800ade507a381a2f450cc0ab63e49e5e33e3"
     },
     ".github/workflows/groundhog-release.yml:identity": {
       "matrix_source": "",
@@ -33035,8 +32992,8 @@
       "coverage_gap": "workflow_profile_union",
       "unsupported_reason": "The selected sanitizer runner executes affected checks; it is not unrestricted legacy sanitizer union or native attested profile acceptance.",
       "matrix_source": "",
-      "source_sha256": "a437c24cfbd4d1f4c694fc9be2451192f34bd5b8d8901689aaab006c0bbe66c3",
-      "workflow_sha256": "614aa54fd0c5e8a4bc142b2509e127dff40864e3ea954f97b33cdcdfac4e3b07"
+      "source_sha256": "d29ad7559edbbac6c7e933278b553503ae5f6174c60b66a18a78ad18a1aa5df1",
+      "workflow_sha256": "26325a6d94b03a74c7893f402813800ade507a381a2f450cc0ab63e49e5e33e3"
     },
     ".github/workflows/groundhog-release.yml:manual-broad": {
       "profiles": [],

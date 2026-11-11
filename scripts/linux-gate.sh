@@ -198,8 +198,7 @@ trap cleanup_owned EXIT
 trap 'run_status=cancelled; exit 130' INT TERM
 
 echo "==> $GATE ($ARCH): preparing image $IMAGE (the first build takes a few minutes)"
-docker build -q --platform "linux/$ARCH" --iidfile "$RUN_STATE/image.id" -t "$IMAGE" \
-  -f "$SCRIPTS/linux-ci.Dockerfile" "$SCRIPTS" >/dev/null &
+docker build -q --platform "linux/$ARCH" --iidfile "$RUN_STATE/image.id" -t "$IMAGE" - < "$SCRIPTS/linux-ci.Dockerfile" >/dev/null &
 build_pid=$!
 status=0
 wait "$build_pid" || status=$?

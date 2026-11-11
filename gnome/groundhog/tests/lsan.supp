@@ -37,6 +37,61 @@ leak:FcParsePattern
 leak:pango_fc_fontset_load_next_font
 # Source: https://github.com/GNOME/pango/blob/1.52.1/pango/pangofc-fontmap.c
 #         https://github.com/fontconfig/fontconfig/blob/2.15.0/src/fcxml.c
-# Revisit these exceptions on dependency updates. GTK mnemonic/shortcut lists,
-# libadwaita render nodes and legal-section strings are per-operation leaks,
-# NOT caches, and must never be added as suppressions here.
+# Revisit these cache exceptions on dependency updates.
+
+# nostrc-swjdk / nostrc-4bi6r: known per-operation upstream ownership bugs,
+# NOT caches. The owner explicitly chose stock Ubuntu libraries plus these
+# exceptions instead of privately patched libraries. Keep matching debug symbols
+# installed: only named library allocation frames are exempt, never modules,
+# allocators, generic GObject constructors or Groundhog frames. Remove each
+# exception when Ubuntu ships the corresponding fix and its controls/full GUI
+# set pass with that exception removed.
+#
+# GTK 4.14.5+ds (Ubuntu 24.04): mnemonic/shortcut relation lists leak when
+# gtk_accessible_update_relation_value returns without an AT context. This
+# fires with GTK_A11Y=none, and during non-accessible AdwActionRow construction
+# even with the test AT backend. One vs 100 mnemonic buttons retained 24 vs
+# 2,400 bytes: real per-operation growth. The combined 100-cycle mnemonic,
+# shortcut and legal-section control leaked 44,700 bytes/1,900 allocations on
+# stock Noble and zero after the former ownership patches (same font exceptions).
+# GTK fixed list ownership in MR8277 (copy in collector, free in callers):
+# https://gitlab.gnome.org/GNOME/gtk/-/merge_requests/8277
+# https://github.com/GNOME/gtk/commit/3d11519f4295150267237dbf7161446a0e92ce15
+# Source check: present in GTK 4.20.0, absent in 4.14.5. Delete these two list
+# exceptions once the tested Ubuntu GTK contains that fix and controls pass.
+leak:gtk_widget_list_mnemonic_labels
+leak:gtk_shortcut_label_rebuild
+
+# GTK 4.14.5+ds-0ubuntu0.10 also overwrites the owned move_focus_widget in
+# _gtk_window_unset_focus_and_default when a focused widget is hidden and then
+# unparented before after-paint. Prior ASan object tracing + GDB refcount watch
+# identified seven retained AdwNavigationSplitView instances in onboarding.
+# This is fixed upstream (g_set_object instead of g_object_ref assignment):
+# https://gitlab.gnome.org/GNOME/gtk/-/merge_requests/9896
+# https://github.com/GNOME/gtk/commit/a6e1c8a57e523fcf734d5b81a5e1d49c70457f4b
+# Source check: fixed in GTK 4.24.0, not 4.22.0. Its retained-widget allocation
+# stacks contain only generic GtkBuilder/GObject constructors, not the faulty
+# reference operation; no broad constructor suppression is authorized here.
+
+# libadwaita 1.5.0-1ubuntu2 (Ubuntu 24.04): breakpoint size allocation saves
+# a snapshot in old_node; breakpoint_changed_tick_cb overwrites it without an
+# unref, and disposal before the tick also omits cleanup. The retained GSK nodes
+# repeat on breakpoint changes, not a renderer/process cache. The former narrow
+# source patches made the GUI suites clean without any GSK suppression.
+# Upstream tick fix is present in 1.5.5:
+# https://github.com/GNOME/libadwaita/commit/b8f11388d8a34cad7880f02b7c3b9d92c7665a45
+# Delete when Ubuntu has the node ownership fix (including teardown) and the
+# breakpoint GUI paths pass without this exception. Exempt the specific owning
+# libadwaita allocation operation, not generic GTK snapshot/GSK constructors.
+# ASan malloc_context_size=64 is required: at the default depth, requests-GUI
+# left 184 bytes/5 nodes with the owning libadwaita frame truncated from the
+# allocation stacks; deeper capture passes with this same narrow exception.
+leak:adw_breakpoint_bin_size_allocate
+
+# libadwaita 1.5.0-1ubuntu2 (Ubuntu 24.04): add_legal_section duplicates
+# copyright, but free_legal_section does not free it; repeats per legal section.
+# Upstream fix (about-dialog AND about-window):
+# https://github.com/GNOME/libadwaita/commit/6d91243bb52d81f61b4967d8ff1c610074be49a2
+# Delete when the tested distro has that free and the legal-section control
+# passes without this exception. Only the dialog API is exercised here.
+leak:adw_about_dialog_add_legal_section

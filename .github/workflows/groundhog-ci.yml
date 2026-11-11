@@ -405,8 +405,6 @@ jobs:
     timeout-minutes: 45
     if: ${{ !inputs.affected }}
     env:
-      PKG_CONFIG_PATH: /opt/groundhog-ci-gtk/lib/pkgconfig
-      LD_LIBRARY_PATH: /opt/groundhog-ci-gtk/lib
       GROUNDHOG_SANITIZER_TESTS: >-
         groundhog-identity groundhog-account groundhog-account-relays groundhog-dm-send
         groundhog-relay groundhog-relay-wire groundhog-relay-publish groundhog-relay-publish-wire
@@ -480,20 +478,30 @@ jobs:
           sudo dpkg-deb --extract /tmp/libsecret-dbgsym.ddeb /
           rm /tmp/libsecret-dbgsym.ddeb
 
-      - name: Install symbolized CI-only GUI ownership fixes
+      - name: Install matching GUI library debug symbols
         run: |
-          sudo apt-get install -y --no-install-recommends meson sassc patch ubuntu-dbgsym-keyring
+          sudo apt-get install -y --no-install-recommends ubuntu-dbgsym-keyring
           for suite in noble noble-updates noble-proposed; do
             echo "deb [signed-by=/usr/share/keyrings/ubuntu-dbgsym-keyring.gpg] http://ddebs.ubuntu.com $suite main universe"
           done | sudo tee /etc/apt/sources.list.d/groundhog-ddebs.list
           sudo apt-get update
+          # Match the stock-library image, including its symbolized GTK fallback.
+          gtk_version="$(dpkg-query -W -f='${Version}' libgtk-4-1)"
+          if ! apt-cache madison libgtk-4-1-dbgsym | grep -qF "| $gtk_version |"; then
+            gtk_version="$(apt-cache policy libgtk-4-1-dbgsym | awk '/Candidate:/ {print $2}')"
+            test -n "$gtk_version" && test "$gtk_version" != '(none)'
+            echo "WARNING: Using stock GTK $gtk_version with matching debug symbols"
+            sudo apt-get install -y --no-install-recommends --no-remove --allow-downgrades \
+              "libgtk-4-1=$gtk_version" "libgtk-4-common=$gtk_version" \
+              "libgtk-4-dev=$gtk_version" "libgtk-4-bin=$gtk_version" \
+              "gir1.2-gtk-4.0=$gtk_version" "libgtk-4-media-gstreamer=$gtk_version"
+          fi
           symbols=()
-          for package in libfontconfig1 libpangoft2-1.0-0; do
+          for package in libfontconfig1 libpangoft2-1.0-0 libgtk-4-1 libglib2.0-0t64 libadwaita-1-0; do
             version="$(dpkg-query -W -f='${Version}' "$package")"
             symbols+=("$package-dbgsym=$version")
           done
           sudo apt-get install -y --no-install-recommends --no-remove "${symbols[@]}"
-          sudo bash scripts/install-groundhog-ci-gtk.sh
 
       - name: Save apt package downloads even after failure
         if: always() && steps.apt-cache.outputs.key != '' && steps.apt-cache.outputs.cache-hit != 'true'
@@ -531,7 +539,8 @@ jobs:
           # verify_asan_link_order=0: ST-4's mutation check (groundhog-store-
           # sqlite) starts a process with plain libsqlite3 preloaded ahead of
           # the ASAN runtime on purpose.
-          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1:verify_asan_link_order=0
+          # Keep the specific libadwaita owner frame in deep GTK snapshot stacks.
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1:verify_asan_link_order=0:malloc_context_size=64
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
           G_SLICE: always-malloc
         run: |
@@ -575,9 +584,6 @@ jobs:
   groundhog-selected-sanitizers:
     # Keep the ordinary broad recipe below parser-readable for local adapters.
     # This job executes the same sanitizer policy with the shared selected checks.
-    env:
-      PKG_CONFIG_PATH: /opt/groundhog-ci-gtk/lib/pkgconfig
-      LD_LIBRARY_PATH: /opt/groundhog-ci-gtk/lib
     if: inputs.affected
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -625,20 +631,30 @@ jobs:
           sudo dpkg-deb --extract /tmp/libsecret-dbgsym.ddeb /
           rm /tmp/libsecret-dbgsym.ddeb
 
-      - name: Install symbolized CI-only GUI ownership fixes
+      - name: Install matching GUI library debug symbols
         run: |
-          sudo apt-get install -y --no-install-recommends meson sassc patch ubuntu-dbgsym-keyring
+          sudo apt-get install -y --no-install-recommends ubuntu-dbgsym-keyring
           for suite in noble noble-updates noble-proposed; do
             echo "deb [signed-by=/usr/share/keyrings/ubuntu-dbgsym-keyring.gpg] http://ddebs.ubuntu.com $suite main universe"
           done | sudo tee /etc/apt/sources.list.d/groundhog-ddebs.list
           sudo apt-get update
+          # Match the stock-library image, including its symbolized GTK fallback.
+          gtk_version="$(dpkg-query -W -f='${Version}' libgtk-4-1)"
+          if ! apt-cache madison libgtk-4-1-dbgsym | grep -qF "| $gtk_version |"; then
+            gtk_version="$(apt-cache policy libgtk-4-1-dbgsym | awk '/Candidate:/ {print $2}')"
+            test -n "$gtk_version" && test "$gtk_version" != '(none)'
+            echo "WARNING: Using stock GTK $gtk_version with matching debug symbols"
+            sudo apt-get install -y --no-install-recommends --no-remove --allow-downgrades \
+              "libgtk-4-1=$gtk_version" "libgtk-4-common=$gtk_version" \
+              "libgtk-4-dev=$gtk_version" "libgtk-4-bin=$gtk_version" \
+              "gir1.2-gtk-4.0=$gtk_version" "libgtk-4-media-gstreamer=$gtk_version"
+          fi
           symbols=()
-          for package in libfontconfig1 libpangoft2-1.0-0; do
+          for package in libfontconfig1 libpangoft2-1.0-0 libgtk-4-1 libglib2.0-0t64 libadwaita-1-0; do
             version="$(dpkg-query -W -f='${Version}' "$package")"
             symbols+=("$package-dbgsym=$version")
           done
           sudo apt-get install -y --no-install-recommends --no-remove "${symbols[@]}"
-          sudo bash scripts/install-groundhog-ci-gtk.sh
       - name: Save apt package downloads even after failure
         if: always() && steps.apt-cache.outputs.key != '' && steps.apt-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
@@ -659,7 +675,7 @@ jobs:
         run: python3 scripts/sanitizer-gate-ci.py check-inputs --build-dir build-asan
       - name: Run selected checks under the sanitizers
         env:
-          ASAN_OPTIONS: 'detect_leaks=1:halt_on_error=1:verify_asan_link_order=0'
+          ASAN_OPTIONS: 'detect_leaks=1:halt_on_error=1:verify_asan_link_order=0:malloc_context_size=64'
           UBSAN_OPTIONS: 'print_stacktrace=1:halt_on_error=1'
           G_SLICE: 'always-malloc'
         run: |

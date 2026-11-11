@@ -1,7 +1,7 @@
 /* nostrc-swjdk / nostrc-4bi6r: dependency ownership regression controls.
- * These allocations grow per widget on unpatched Noble. Only font caches may
- * be suppressed; the normal Groundhog GUI suites still exercise their real
- * accessibility backends and breakpoint/render-node teardown paths. */
+ * These allocations grow per widget on stock Noble. Its documented upstream
+ * exceptions must stay library-specific; the normal Groundhog GUI suites still
+ * exercise real accessibility and breakpoint/render-node teardown paths. */
 #include <adwaita.h>
 #include "nostrc-test-gdk-frame.h"
 

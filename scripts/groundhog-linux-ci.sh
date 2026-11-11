@@ -22,7 +22,7 @@ if [[ -n "${BUILDER:-}" ]]; then
   build=(docker buildx build --builder "$BUILDER" --load)
 fi
 "${build[@]}" -q --label "$RESOURCE_LABEL" -t "$IMAGE" \
-  -f "$ROOT/scripts/linux-ci.Dockerfile" "$ROOT/scripts" >/dev/null
+  - < "$ROOT/scripts/linux-ci.Dockerfile" >/dev/null
 docker volume create --label "$RESOURCE_LABEL" "$BUILD_VOLUME" >/dev/null
 
 if [[ "${1:-}" = --shell ]]; then

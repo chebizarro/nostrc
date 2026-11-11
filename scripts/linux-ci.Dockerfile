@@ -66,7 +66,8 @@ RUN for element in appsrc appsink decodebin audioconvert audioresample \
 RUN apt-get update && apt-get install -y --no-install-recommends debhelper dpkg-dev fakeroot lintian \
  && rm -rf /var/lib/apt/lists/*
 # Grotto's GUI-only LSan exceptions name static third-party functions, not modules
-# (nostrc-ydtdf, nostrc-ojtu3). Keep in sync with grotto-ci.yml's symbol step.
+# (nostrc-ydtdf, nostrc-ojtu3). Groundhog's upstream ownership exceptions also
+# need libadwaita symbols (nostrc-swjdk). Keep hosted GUI symbol steps in sync.
 RUN set -eu; \
     apt-get update; \
     apt-get install -y --no-install-recommends ubuntu-dbgsym-keyring ; \
@@ -87,22 +88,13 @@ RUN set -eu; \
         "gir1.2-gtk-4.0=$gtk_version" "libgtk-4-media-gstreamer=$gtk_version"; \
     fi; \
     set --; \
-    for package in libfontconfig1 libgtk-4-1 libglib2.0-0t64 libpangoft2-1.0-0; do \
+    for package in libfontconfig1 libgtk-4-1 libglib2.0-0t64 libpangoft2-1.0-0 libadwaita-1-0; do \
       version="$(dpkg-query -W -f='${Version}' "$package")"; \
       echo "Required symbols: $package-dbgsym=$version"; \
       set -- "$@" "$package-dbgsym=$version"; \
     done; \
     apt-get install -y --no-install-recommends --no-remove "$@"; \
     rm -rf /var/lib/apt/lists/*
-# Build with scripts/ as the Docker context. These are real dependency fixes,
-# not LSan exceptions: see nostrc-swjdk and the source-pinned shared installer.
-RUN apt-get update && apt-get install -y --no-install-recommends sassc \
- && rm -rf /var/lib/apt/lists/*
-COPY install-groundhog-ci-gtk.sh /opt/groundhog-ci-installer/install-groundhog-ci-gtk.sh
-COPY ci/gtk-4.14.5-relation-ownership.patch ci/libadwaita-1.5.0-ownership.patch /opt/groundhog-ci-installer/ci/
-RUN bash /opt/groundhog-ci-installer/install-groundhog-ci-gtk.sh
-ENV PKG_CONFIG_PATH=/opt/groundhog-ci-gtk/lib/pkgconfig
-ENV LD_LIBRARY_PATH=/opt/groundhog-ci-gtk/lib
 # /gate-lock: scripts/linux-gate.sh mounts a volume there whose lock lets one
 # gate test run (smoke or sanitizer) at a time.
 RUN useradd -m -u 1001 ci && install -d -o ci -g ci /build /work /gate-lock
