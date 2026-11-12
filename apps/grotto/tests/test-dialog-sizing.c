@@ -373,9 +373,20 @@ static const SizingSurface surfaces[] = {
 /* Measure the actual content, not the scroller's default minimum/natural height
  * (which is precisely the collapsed-sheet bug). Only mapped stack pages count.
  * A deliberate max-content-height remains a ceiling, not a regression. */
+static int sizing_height(GtkWidget *widget) {
+  /* measure() takes the outer width, not get_width()'s content width. The
+   * allocated-width accessor includes CSS margin/border/padding; widget
+   * margin properties are outside that allocation and must be added too. */
+  int width = gtk_widget_get_allocated_width(widget) +
+    gtk_widget_get_margin_start(widget) + gtk_widget_get_margin_end(widget);
+  int minimum = 0, natural = 0;
+  gtk_widget_measure(widget, GTK_ORIENTATION_HORIZONTAL, -1, &minimum, NULL, NULL, NULL);
+  g_assert_cmpint(width, >=, minimum);
+  gtk_widget_measure(widget, GTK_ORIENTATION_VERTICAL, width, NULL, &natural, NULL, NULL);
+  return natural;
+}
 static int sizing_natural(GtkWidget *widget) {
-  int natural = 0;
-  gtk_widget_measure(widget, GTK_ORIENTATION_VERTICAL, MAX(1, gtk_widget_get_width(widget)), NULL, &natural, NULL, NULL);
+  int natural = sizing_height(widget);
   if ((GTK_IS_REVEALER(widget) && !gtk_revealer_get_reveal_child(GTK_REVEALER(widget))) ||
       (ADW_IS_BANNER(widget) && !adw_banner_get_revealed(ADW_BANNER(widget)))) return natural;
   if (GTK_IS_SCROLLED_WINDOW(widget)) {
@@ -392,8 +403,7 @@ static int sizing_natural(GtkWidget *widget) {
   gboolean horizontal = GTK_IS_BOX(widget) && gtk_orientable_get_orientation(GTK_ORIENTABLE(widget)) == GTK_ORIENTATION_HORIZONTAL;
   for (GtkWidget *child = gtk_widget_get_first_child(widget); child; child = gtk_widget_get_next_sibling(child)) {
     if (!gtk_widget_get_mapped(child)) continue;
-    int child_natural = 0;
-    gtk_widget_measure(child, GTK_ORIENTATION_VERTICAL, MAX(1, gtk_widget_get_width(child)), NULL, &child_natural, NULL, NULL);
+    int child_natural = sizing_height(child);
     int correction = MAX(0, sizing_natural(child) - child_natural);
     extra = horizontal ? MAX(extra, correction) : extra + correction;
   }
@@ -527,6 +537,23 @@ static void dialog_sizing(void) {
   g_signal_connect(app, "activate", G_CALLBACK(sizing_activate), NULL);
   g_assert_cmpint(g_application_run(G_APPLICATION(app), 0, NULL), ==, 0);
 }
+static void sizing_measure_box(void) {
+  g_autoptr(GtkWidget) box = g_object_ref_sink(gtk_box_new(GTK_ORIENTATION_VERTICAL, 0));
+  gtk_widget_set_margin_start(box, 20); gtk_widget_set_margin_end(box, 20);
+  gtk_widget_set_margin_top(box, 7); gtk_widget_set_margin_bottom(box, 11);
+  GtkWidget *picture = gtk_picture_new();
+  gtk_widget_set_size_request(picture, 248, 60);
+  gtk_box_append(GTK_BOX(box), picture);
+  int minimum = 0;
+  gtk_widget_measure(box, GTK_ORIENTATION_HORIZONTAL, -1, &minimum, NULL, NULL, NULL);
+  g_assert_cmpint(minimum, ==, 288);
+  gtk_widget_allocate(box, 325, 100, -1, NULL);
+  g_assert_cmpint(gtk_widget_get_width(box), ==, 285);
+  /* The content is narrower than the outer minimum, but the allocation fits.
+   * Passing 285 to measure() here reproduces the fatal GTK 4.22 warning. */
+  g_assert_cmpint(sizing_natural(box), ==, 78);
+}
 void grotto_test_add_dialog_sizing(void) {
+  g_test_add_func("/signer/dialog-sizing/measure-box", sizing_measure_box);
   g_test_add_func("/signer/dialog-sizing/all-surfaces", dialog_sizing);
 }
