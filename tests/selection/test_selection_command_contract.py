@@ -57,6 +57,8 @@ SUPPORT_INPUTS = {
     "tests/TestInventory.cmake",
     "nostr-gtk/TestInventory.cmake",
     "gnome/groundhog/TestInventory.cmake",
+    "gnome/groundhog/cmake/GroundhogCalls.cmake",
+    "gnome/groundhog/cmake/GroundhogCallMedia.cmake",
     "gnome/groundhog/src/app/gh-background-autostart.h.in",
     "gnome/groundhog/data/groundhog.gresource.xml",
     "gnome/groundhog/data/org.nostr.Groundhog-autostart.desktop.in",
