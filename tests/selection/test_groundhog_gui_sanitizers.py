@@ -6,6 +6,7 @@ import unittest
 from selector_support import ROOT, s
 from realization_support import r
 from groundhog_gui_sanitizer_support import historical_nonmember_policy
+from profile_contract_support import step_script
 
 
 class GroundhogGuiSanitizers(unittest.TestCase):
@@ -66,6 +67,20 @@ class GroundhogGuiSanitizers(unittest.TestCase):
         self.assertIn('- < "$SCRIPTS/linux-ci.Dockerfile"', gate)
         self.assertNotIn("LD_LIBRARY_PATH", self.workflow)
         self.assertNotIn("PKG_CONFIG_PATH", self.workflow)
+
+    def test_hosted_gui_routes_install_the_local_accessibility_bus_service(self):
+        dockerfile = (ROOT / "scripts/linux-ci.Dockerfile").read_text()
+        self.assertIn("at-spi2-core", dockerfile.split())
+        routes = [
+            ("groundhog-ci.yml", "Install build and display dependencies"),
+            ("groundhog-ci.yml", "Install build dependencies"),
+            ("groundhog-ci.yml", "Install build dependencies and matching LSan symbols"),
+            ("dependency-worker.yml", "Install Linux profile prerequisites"),
+        ]
+        for workflow, step in routes:
+            with self.subTest(workflow=workflow, step=step):
+                text = (ROOT / ".github/workflows" / workflow).read_text()
+                self.assertIn("at-spi2-core", step_script(text, step).split())
 
     def test_gui_variants_build_their_real_shared_executable(self):
         targets = self.config()["GH_SAN_TARGETS"]
