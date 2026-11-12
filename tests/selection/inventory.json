@@ -8957,7 +8957,11 @@
         "{source}/tests/selection/README.md",
         "{source}/tests/selection/groundhog_gui_sanitizer_support.py",
         "{source}/tests/selection/fixtures/groundhog_pre_gui_nonmembers_20261111.json",
-        "{source}/tests/selection/test_groundhog_gui_sanitizers.py"
+        "{source}/tests/selection/test_groundhog_gui_sanitizers.py",
+        "{source}/tests/selection/groundhog_call_support.py",
+        "{source}/tests/selection/test_groundhog_call_selection.py",
+        "{source}/gnome/groundhog/cmake/GroundhogCalls.cmake",
+        "{source}/gnome/groundhog/cmake/GroundhogCallMedia.cmake"
       ],
       "working_directory": "{source}",
       "requires": [
@@ -22182,6 +22186,279 @@
         "nip55l.dbus_contract"
       ],
       "build_dependency_reason": "Shared compile/link prerequisites only. Runtime uses abstract GhSigner/GhAuthPolicy (or no signer); NIP55L behavior is exercised by the enrolled signer adapter/auth checks, not MLS/NIP29/voice or generic GTK suites."
+    },
+    "groundhog.calls": {
+      "build_targets": [
+        "test-groundhog-calls"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux": [
+          "groundhog-calls"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.account_relays",
+        "groundhog.conversations",
+        "groundhog.identity_auth",
+        "groundhog.net",
+        "groundhog.schema_inputs",
+        "groundhog.store",
+        "groundhog.unclassified",
+        "nip59",
+        "shared.tests",
+        "testing.common_inputs",
+        "testing.framework"
+      ],
+      "profiles": [
+        "groundhog.linux"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": [
+        "gnome/groundhog/tests/fixtures/nipac-nospeak.json",
+        "nips/nip59/tests/nipac_wire_vector.h"
+      ],
+      "requires": [
+        "private_bus"
+      ]
+    },
+    "groundhog.call_capabilities": {
+      "build_targets": [
+        "test-groundhog-call-capabilities"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux": [
+          "groundhog-call-capabilities"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.media",
+        "groundhog.unclassified",
+        "testing.framework"
+      ],
+      "profiles": [
+        "groundhog.linux"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "groundhog.call_loopback": {
+      "build_targets": [
+        "test-groundhog-call-loopback"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux": [
+          "groundhog-call-loopback"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.media",
+        "groundhog.unclassified",
+        "testing.framework"
+      ],
+      "profiles": [
+        "groundhog.linux"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "groundhog.call_media": {
+      "build_targets": [
+        "test-groundhog-call-media"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux": [
+          "groundhog-call-media"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.media",
+        "groundhog.schema_inputs",
+        "groundhog.unclassified",
+        "testing.framework"
+      ],
+      "profiles": [
+        "groundhog.linux"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": [
+        "gnome/groundhog/data/org.nostr.Groundhog.gschema.xml"
+      ]
+    },
+    "groundhog.call_media_two_process": {
+      "build_targets": [
+        "test-groundhog-call-media"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux": [
+          "groundhog-call-media-two-process"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.media",
+        "groundhog.schema_inputs",
+        "groundhog.unclassified",
+        "testing.framework"
+      ],
+      "profiles": [
+        "groundhog.linux"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": [
+        "gnome/groundhog/data/org.nostr.Groundhog.gschema.xml",
+        "gnome/groundhog/tests/media/calls/two_process.py"
+      ]
+    },
+    "groundhog.call_settings": {
+      "build_targets": [
+        "test-groundhog-call-settings"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux": [
+          "groundhog-call-settings"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.media",
+        "groundhog.unclassified",
+        "testing.common_inputs",
+        "testing.framework"
+      ],
+      "profiles": [
+        "groundhog.linux"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": [
+        "gnome/groundhog/tests/app/test_secret_service.py"
+      ],
+      "requires": [
+        "private_bus"
+      ]
+    },
+    "groundhog.call_settings_store_failure": {
+      "build_targets": [
+        "test-groundhog-call-settings-store-failure"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux": [
+          "groundhog-call-settings-store-failure"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.media",
+        "groundhog.unclassified",
+        "testing.framework"
+      ],
+      "profiles": [
+        "groundhog.linux"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "groundhog.call_ui": {
+      "build_targets": [
+        "test-groundhog-call-ui"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux": [
+          "groundhog-call-ui"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.account_relays",
+        "groundhog.conversations",
+        "groundhog.gresource_inputs",
+        "groundhog.identity_auth",
+        "groundhog.media",
+        "groundhog.net",
+        "groundhog.resources",
+        "groundhog.schema_inputs",
+        "groundhog.store",
+        "groundhog.unclassified",
+        "nip59",
+        "nostr.gtk",
+        "shared.tests",
+        "testing.common_inputs",
+        "testing.framework"
+      ],
+      "profiles": [
+        "groundhog.linux"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": [
+        "gnome/groundhog/data/ui/gh-call-view.blp"
+      ],
+      "requires": [
+        "display",
+        "private_bus"
+      ]
+    },
+    "groundhog.call_preferences": {
+      "build_targets": [
+        "test-groundhog-call-preferences"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux": [
+          "groundhog-call-preferences"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.gresource_inputs",
+        "groundhog.media",
+        "groundhog.relay",
+        "groundhog.resources",
+        "groundhog.schema_inputs",
+        "groundhog.unclassified",
+        "nostr.gtk",
+        "testing.common_inputs",
+        "testing.framework"
+      ],
+      "profiles": [
+        "groundhog.linux"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": [
+        "gnome/groundhog/tests/app/test_secret_service.py"
+      ],
+      "requires": [
+        "display",
+        "private_bus"
+      ]
     }
   },
   "coverage_gaps": [
@@ -30084,6 +30361,76 @@
         "nip58"
       ],
       "reason": "Checked tag, address, JSON and unsigned-event helpers shared only by these codecs."
+    },
+    {
+      "exact": "docs/investigations/gst-libav-avpacket-leak-2026-11-11-repro.c",
+      "effect": "global",
+      "nodes": [
+        "build.global"
+      ],
+      "reason": "Standalone GStreamer/libav leak reproducer is executable investigation input, not documentation prose; retain conservative broad validation."
+    },
+    {
+      "exact": "gnome/groundhog/cmake/GroundhogCalls.cmake",
+      "effect": "impact",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.unclassified",
+        "groundhog.media",
+        "selection.contract"
+      ],
+      "reason": "Shared call target/registration and runtime skip-policy producer; select Groundhog consumers and metadata contracts."
+    },
+    {
+      "exact": "gnome/groundhog/cmake/GroundhogCallMedia.cmake",
+      "effect": "impact",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.unclassified",
+        "groundhog.media",
+        "selection.contract"
+      ],
+      "reason": "Shared call target/registration and runtime skip-policy producer; select Groundhog consumers and metadata contracts."
+    },
+    {
+      "exact": "gnome/groundhog/tests/media/test_call_capabilities.c",
+      "effect": "impact",
+      "nodes": [
+        "groundhog.media"
+      ],
+      "reason": "Call media/capability test input shared by ordinary call registrations."
+    },
+    {
+      "exact": "gnome/groundhog/tests/media/test_call_loopback.c",
+      "effect": "impact",
+      "nodes": [
+        "groundhog.media"
+      ],
+      "reason": "Call media/capability test input shared by ordinary call registrations."
+    },
+    {
+      "exact": "gnome/groundhog/tests/media/test_call_media.c",
+      "effect": "impact",
+      "nodes": [
+        "groundhog.media"
+      ],
+      "reason": "Call media/capability test input shared by ordinary call registrations."
+    },
+    {
+      "exact": "gnome/groundhog/tests/media/call_test_runtime.h",
+      "effect": "impact",
+      "nodes": [
+        "groundhog.media"
+      ],
+      "reason": "Call media/capability test input shared by ordinary call registrations."
+    },
+    {
+      "prefix": "gnome/groundhog/tests/media/calls",
+      "effect": "impact",
+      "nodes": [
+        "groundhog.media"
+      ],
+      "reason": "Focused call-media build, process peers and TURN test helpers."
     }
   ],
   "profiles": {
@@ -30466,9 +30813,15 @@
       "build_parallelism": 2,
       "test_parallelism": 2,
       "phase_environments": {
-        "configure": {},
-        "build": {},
-        "test": {}
+        "configure": {
+          "GROUNDHOG_CALL_TEST_REQUIRE_RUNTIME": "1"
+        },
+        "build": {
+          "GROUNDHOG_CALL_TEST_REQUIRE_RUNTIME": "1"
+        },
+        "test": {
+          "GROUNDHOG_CALL_TEST_REQUIRE_RUNTIME": "1"
+        }
       }
     },
     "core.linux.asan": {
@@ -30731,14 +31084,19 @@
       ],
       "environment": {},
       "phase_environments": {
-        "configure": {},
-        "build": {},
+        "configure": {
+          "GROUNDHOG_CALL_TEST_REQUIRE_RUNTIME": "1"
+        },
+        "build": {
+          "GROUNDHOG_CALL_TEST_REQUIRE_RUNTIME": "1"
+        },
         "test": {
           "GROUNDHOG_SANITIZER_TESTS": "groundhog-identity groundhog-account groundhog-account-relays groundhog-dm-send groundhog-relay groundhog-relay-wire groundhog-relay-publish groundhog-relay-publish-wire groundhog-nip29 groundhog-conversations groundhog-dm-inbox groundhog-store-key groundhog-store-key-keyring groundhog-secret-service-sessions groundhog-nip46-credentials-keyring groundhog-store groundhog-store-sqlite groundhog-store-marmot groundhog-store-conversations groundhog-outbox groundhog-account-store groundhog-link-policy groundhog-background groundhog-notifier groundhog-inbox-setup groundhog-expiry groundhog-auth-policy groundhog-contact-directory groundhog-reactions groundhog-reaction-send groundhog-privacy-e2e groundhog-new-message groundhog-requests groundhog-privacy-summary groundhog-conversation-info groundhog-nip29-service groundhog-mls-service groundhog-privacy-mls groundhog-mls-kp-lifecycle groundhog-mls-kp-lifecycle-adopted groundhog-net groundhog-tls-resumption groundhog-group-ui groundhog-mls-ui groundhog-conversation-menu groundhog-multi-send groundhog-media groundhog-blossom groundhog-media-purge groundhog-relay-guard groundhog-media-cache-binding groundhog-attachments groundhog-mls-media groundhog-mls-files groundhog-mls-poll groundhog-voice groundhog-icons groundhog-message-reply groundhog-two-instance-acceptance groundhog-shell groundhog-account-ui groundhog-conversation-list groundhog-launch groundhog-bus-probe groundhog-two-instance groundhog-account-store-gui groundhog-conversation-view groundhog-background-gui groundhog-about-gui groundhog-preferences groundhog-onboarding groundhog-notifier-gui groundhog-composer groundhog-e2e-dm groundhog-requests-gui groundhog-conversation-info-gui groundhog-group-ui-gui groundhog-mls-ui-gui groundhog-conversation-menu-gui groundhog-voice-ui groundhog-attachment-ui groundhog-nip46-pair-dialog groundhog-report-ui groundhog-draft-sync-gui groundhog-lists-ui groundhog-social-sync-gui groundhog-emoji groundhog-poll-ui groundhog-gtk-lsan nostrc-test-bus-selftest test_relay_teardown_leaks test_connection_recv_drain",
           "ASAN_OPTIONS": "detect_leaks=1:halt_on_error=1:verify_asan_link_order=0:malloc_context_size=64",
           "UBSAN_OPTIONS": "print_stacktrace=1:halt_on_error=1",
           "G_SLICE": "always-malloc",
-          "LSAN_OPTIONS": "suppressions={source_root}/gnome/groundhog/tests/lsan.supp:print_suppressions=1"
+          "LSAN_OPTIONS": "suppressions={source_root}/gnome/groundhog/tests/lsan.supp:print_suppressions=1",
+          "GROUNDHOG_CALL_TEST_REQUIRE_RUNTIME": "1"
         }
       },
       "feature_variants": [],
@@ -30944,9 +31302,14 @@
           "-DGNOSTR_ENABLE_ASAN=ON",
           "-DGNOSTR_ENABLE_UBSAN=ON"
         ],
-        "GH_SAN_CONFIGURE_ENV": [],
-        "GH_SAN_BUILD_ENV": [],
+        "GH_SAN_CONFIGURE_ENV": [
+          "GROUNDHOG_CALL_TEST_REQUIRE_RUNTIME=1"
+        ],
+        "GH_SAN_BUILD_ENV": [
+          "GROUNDHOG_CALL_TEST_REQUIRE_RUNTIME=1"
+        ],
         "GH_SAN_ENV": [
+          "GROUNDHOG_CALL_TEST_REQUIRE_RUNTIME=1",
           "GROUNDHOG_SANITIZER_TESTS=groundhog-identity groundhog-account groundhog-account-relays groundhog-dm-send groundhog-relay groundhog-relay-wire groundhog-relay-publish groundhog-relay-publish-wire groundhog-nip29 groundhog-conversations groundhog-dm-inbox groundhog-store-key groundhog-store-key-keyring groundhog-secret-service-sessions groundhog-nip46-credentials-keyring groundhog-store groundhog-store-sqlite groundhog-store-marmot groundhog-store-conversations groundhog-outbox groundhog-account-store groundhog-link-policy groundhog-background groundhog-notifier groundhog-inbox-setup groundhog-expiry groundhog-auth-policy groundhog-contact-directory groundhog-reactions groundhog-reaction-send groundhog-privacy-e2e groundhog-new-message groundhog-requests groundhog-privacy-summary groundhog-conversation-info groundhog-nip29-service groundhog-mls-service groundhog-privacy-mls groundhog-mls-kp-lifecycle groundhog-mls-kp-lifecycle-adopted groundhog-net groundhog-tls-resumption groundhog-group-ui groundhog-mls-ui groundhog-conversation-menu groundhog-multi-send groundhog-media groundhog-blossom groundhog-media-purge groundhog-relay-guard groundhog-media-cache-binding groundhog-attachments groundhog-mls-media groundhog-mls-files groundhog-mls-poll groundhog-voice groundhog-icons groundhog-message-reply groundhog-two-instance-acceptance groundhog-shell groundhog-account-ui groundhog-conversation-list groundhog-launch groundhog-bus-probe groundhog-two-instance groundhog-account-store-gui groundhog-conversation-view groundhog-background-gui groundhog-about-gui groundhog-preferences groundhog-onboarding groundhog-notifier-gui groundhog-composer groundhog-e2e-dm groundhog-requests-gui groundhog-conversation-info-gui groundhog-group-ui-gui groundhog-mls-ui-gui groundhog-conversation-menu-gui groundhog-voice-ui groundhog-attachment-ui groundhog-nip46-pair-dialog groundhog-report-ui groundhog-draft-sync-gui groundhog-lists-ui groundhog-social-sync-gui groundhog-emoji groundhog-poll-ui groundhog-gtk-lsan nostrc-test-bus-selftest test_relay_teardown_leaks test_connection_recv_drain",
           "ASAN_OPTIONS=detect_leaks=1:halt_on_error=1:verify_asan_link_order=0:malloc_context_size=64",
           "UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1",
@@ -31193,9 +31556,15 @@
         "selection": "source_bound_dependency_plan"
       },
       "phase_environments": {
-        "configure": {},
-        "build": {},
-        "test": {}
+        "configure": {
+          "GROUNDHOG_CALL_TEST_REQUIRE_RUNTIME": "1"
+        },
+        "build": {
+          "GROUNDHOG_CALL_TEST_REQUIRE_RUNTIME": "1"
+        },
+        "test": {
+          "GROUNDHOG_CALL_TEST_REQUIRE_RUNTIME": "1"
+        }
       },
       "build_parallelism": 2,
       "test_parallelism": 2
@@ -32430,9 +32799,9 @@
         "groundhog.mdk011"
       ],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "9f06d28a459453c784ab32cae60a7d81fbe336d776a3de1569252d08b66254d3",
+      "source_sha256": "b0a2f49b6e67dc33dfd3e99bc4a8ad866a13033129ddee7291680430e44358f4",
       "unsupported_reason": "Ordinary and live MDK011 registrations are separate diagnostic profiles. Ordinary selection does not claim live Docker lifecycle coverage; the dedicated live lane preserves docker/display/private_bus and visibly refuses without guarded custody. Full legacy job union, runtime/header audits and original image custody remain unaccepted.",
-      "workflow_sha256": "26325a6d94b03a74c7893f402813800ade507a381a2f450cc0ab63e49e5e33e3"
+      "workflow_sha256": "4dbf112855c2a350d26048ee73d12a8df88cb44a593a2a31d35f10079e354b3d"
     },
     ".github/workflows/groundhog-ci.yml:groundhog-sanitizers": {
       "matrix_source": "",
@@ -32440,9 +32809,9 @@
         "groundhog.linux.sanitizers"
       ],
       "coverage_gap": "groundhog_sanitizer_execution_contract",
-      "source_sha256": "b969d2456c9ca736cfa700367aef56d5054bb925d0596a75e24ab82e6bd789c4",
+      "source_sha256": "318e9fd01f992068f723b5111af77130176a2378b980ae36398cbbcb239f331f",
       "unsupported_reason": "Ordinary Groundhog suite/MDK011 application configuration is authored but full registration/runtime/header closure and Docker image custody remain unaccepted.",
-      "workflow_sha256": "26325a6d94b03a74c7893f402813800ade507a381a2f450cc0ab63e49e5e33e3"
+      "workflow_sha256": "4dbf112855c2a350d26048ee73d12a8df88cb44a593a2a31d35f10079e354b3d"
     },
     ".github/workflows/groundhog-release.yml:identity": {
       "matrix_source": "",
@@ -33023,8 +33392,8 @@
       "coverage_gap": "workflow_profile_union",
       "unsupported_reason": "The selected sanitizer runner executes affected checks; it is not unrestricted legacy sanitizer union or native attested profile acceptance.",
       "matrix_source": "",
-      "source_sha256": "d29ad7559edbbac6c7e933278b553503ae5f6174c60b66a18a78ad18a1aa5df1",
-      "workflow_sha256": "26325a6d94b03a74c7893f402813800ade507a381a2f450cc0ab63e49e5e33e3"
+      "source_sha256": "04b6c19f8654aabd8f0a39e58eda844c0768e2b1d6fdf2669fed6f69dfaa658b",
+      "workflow_sha256": "4dbf112855c2a350d26048ee73d12a8df88cb44a593a2a31d35f10079e354b3d"
     },
     ".github/workflows/groundhog-release.yml:manual-broad": {
       "profiles": [],

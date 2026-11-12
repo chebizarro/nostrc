@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 
 from selector_support import ROOT, s
+from groundhog_call_support import call_skip_policy
 
 PROFILE = "groundhog.linux.arm64.prepared011"
 
@@ -59,7 +60,7 @@ set_property(TARGET test-groundhog-mdk011-interop PROPERTY IMPORTED_LOCATION "${
 '''
         module = ROOT / "cmake/NostrcTestInventory.cmake"
         descriptors = ROOT / "gnome/groundhog/TestInventory.cmake"
-        (root / "CMakeLists.txt").write_text(prefix + f'include("{module}")\n' + block
+        (root / "CMakeLists.txt").write_text(prefix + call_skip_policy() + f'include("{module}")\n' + block
             + f'\ninclude("{descriptors}")\nnostrc_finalize_test_inventory()\n')
         command = ["cmake", "-S", str(root), "-B", str(root / "build")]
         if native011:

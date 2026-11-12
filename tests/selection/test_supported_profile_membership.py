@@ -5,6 +5,7 @@ import unittest
 from selector_support import ROOT, change, s
 from realization_support import Project, r
 from supported_profile_support import witness
+from groundhog_call_support import call_skip_policy
 
 
 class SupportedProfileMembership(unittest.TestCase):
@@ -53,7 +54,7 @@ class SupportedCapabilityDescriptors(Project):
     def test_real_cmake_descriptor_capabilities_refuse_before_execution(self):
         # Real CMake descriptor export, not hand-filled descriptor dictionaries.
         (self.root / 'groundhog-inventory.cmake').write_bytes(
-            (ROOT / 'gnome/groundhog/TestInventory.cmake').read_bytes())
+            call_skip_policy().encode() + (ROOT / 'gnome/groundhog/TestInventory.cmake').read_bytes())
         cmake = self.root / 'CMakeLists.txt'
         text = cmake.read_text().replace('nostrc_finalize_test_inventory()', '''
 add_executable(test-groundhog-shell main.c)

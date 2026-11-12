@@ -610,8 +610,10 @@ class WorkflowWiringTests(unittest.TestCase):
         self.assertIn('-DGO_ENABLE_UBSAN=ON', root['configure_args'])
         self.assertNotEqual(root['environment']['ASAN_OPTIONS'], p['profiles']['libgo.macos.asan']['environment']['ASAN_OPTIONS'])
         sanitizer = p['profiles']['groundhog.linux.sanitizers']
-        self.assertEqual(sanitizer['phase_environments']['configure'], {})
-        self.assertEqual(sanitizer['phase_environments']['build'], {})
+        call_runtime = {'GROUNDHOG_CALL_TEST_REQUIRE_RUNTIME': '1'}
+        self.assertEqual(sanitizer['phase_environments']['configure'], call_runtime)
+        self.assertEqual(sanitizer['phase_environments']['build'], call_runtime)
+        self.assertEqual(sanitizer['phase_environments']['test']['GROUNDHOG_CALL_TEST_REQUIRE_RUNTIME'], '1')
         self.assertNotIn('ASAN_OPTIONS', sanitizer['phase_environments']['configure'])
         self.assertNotIn('ASAN_OPTIONS', sanitizer['phase_environments']['build'])
         self.assertIn('LSAN_OPTIONS', sanitizer['phase_environments']['test'])

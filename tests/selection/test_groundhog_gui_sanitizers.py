@@ -28,8 +28,10 @@ class GroundhogGuiSanitizers(unittest.TestCase):
         self.assertIn("malloc_context_size=64", env["ASAN_OPTIONS"])
         self.assertNotIn("LD_LIBRARY_PATH", env)
         self.assertNotIn("PKG_CONFIG_PATH", env)
-        self.assertEqual(config["GH_SAN_CONFIGURE_ENV"], [])
-        self.assertEqual(config["GH_SAN_BUILD_ENV"], [])
+        call_runtime = ["GROUNDHOG_CALL_TEST_REQUIRE_RUNTIME=1"]
+        self.assertEqual(config["GH_SAN_CONFIGURE_ENV"], call_runtime)
+        self.assertEqual(config["GH_SAN_BUILD_ENV"], call_runtime)
+        self.assertEqual(env["GROUNDHOG_CALL_TEST_REQUIRE_RUNTIME"], "1")
         self.assertEqual(env["LSAN_OPTIONS"],
                          "suppressions=/src/gnome/groundhog/tests/lsan.supp:print_suppressions=1")
 

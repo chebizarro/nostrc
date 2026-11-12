@@ -369,7 +369,9 @@ class OrdinaryMediaOwnership(Project):
         self.assertEqual(len(statements), 11)
         gh = self.root / "gnome/groundhog"
         gh.mkdir(parents=True)
-        (gh / "TestInventory.cmake").write_bytes((ROOT / "gnome/groundhog/TestInventory.cmake").read_bytes())
+        from groundhog_call_support import call_skip_policy
+        (gh / "TestInventory.cmake").write_bytes(
+            call_skip_policy().encode() + (ROOT / "gnome/groundhog/TestInventory.cmake").read_bytes())
         self.inputs = sorted(set(re.findall(r"(?:src|tests)/[\w/.-]+\.c", "\n".join(statements))))
         self.unclassified = []
         for path in self.inputs:
