@@ -41,6 +41,10 @@ fetch belongs to the unreleased libnostr/NIP wave; it has no independent declare
 release. No version or release/tag columns change; gnostr and Grotto callers are
 unchanged. No public ABI or wire-format removal.
 
+Windows NIP-51 linking (`nostrc-mp0p3`): the PATCH-class static annotation
+correction folds into unreleased nostr-gobject 3.1.0. NIP-51 remains Unversioned;
+other components and all version/release/tag values are unchanged.
+
 | Component | Path | Declared version | Latest release | Release tag | Authoritative version source(s) |
 | --- | --- | --- | --- | --- | --- |
 | libnostr | `libnostr/` | 2.4.0 | Unreleased | — | `libnostr/CMakeLists.txt` |
