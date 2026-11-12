@@ -47,6 +47,10 @@ and Groundhog 0.13.0 (expose pairing QR/URI only after relay EOSE). No ABI or
 wire-format changes; nip46 0.2.0 and nostr-gobject 3.1.0 are unchanged. Test-only
 regressions need no separate bump. No release/tag columns change.
 
+Windows NIP-51 linking (`nostrc-mp0p3`): the PATCH-class static annotation
+correction folds into unreleased nostr-gobject 3.1.0. NIP-51 remains Unversioned;
+other components and all version/release/tag values are unchanged.
+
 | Component | Path | Declared version | Latest release | Release tag | Authoritative version source(s) |
 | --- | --- | --- | --- | --- | --- |
 | libnostr | `libnostr/` | 2.4.0 | Unreleased | — | `libnostr/CMakeLists.txt` |

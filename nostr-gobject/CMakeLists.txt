@@ -290,6 +290,9 @@ endforeach()
 # consumers; linking its complete closure into the DSO duplicates libnostr on ELF.
 if(TARGET nostr_nip51_core)
   target_sources(nostr_gobject PRIVATE $<TARGET_OBJECTS:nostr_nip51_core>)
+  # TARGET_OBJECTS does not propagate usage requirements. The embedded codec has
+  # no DLL of its own, so wrappers and consumers must use its static annotation.
+  target_compile_definitions(nostr_gobject PUBLIC NOSTR_NIP51_CORE_STATIC_DEFINE)
   target_include_directories(nostr_gobject PUBLIC
     $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/nips/nip51/include>
     $<BUILD_INTERFACE:${CMAKE_BINARY_DIR}/nips/nip51/include>)
