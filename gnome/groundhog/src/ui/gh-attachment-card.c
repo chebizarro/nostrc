@@ -60,6 +60,9 @@ struct _GhAttachmentCard {
 enum { PROP_0, PROP_MESSAGE, PROP_INDEX, PROP_COMPACT, PROP_SUMMARY, N_PROPS };
 static GParamSpec *props[N_PROPS];
 
+static void show_status(GhAttachmentCard *self, const gchar *text,
+                        gboolean spinning, gboolean warning);
+
 G_DEFINE_FINAL_TYPE(GhAttachmentCard, gh_attachment_card, GTK_TYPE_WIDGET)
 
 static void update(GhAttachmentCard *self);
@@ -433,8 +436,14 @@ viewer_paintable(GhAttachmentTransfer *transfer, const gchar *mime)
     return GDK_PAINTABLE(g_object_ref(animation));
   GBytes *plaintext = gh_attachment_transfer_get_plaintext(transfer);
   if (plaintext && is_video(mime)) {
+    g_autoptr(GtkMediaFile) media = GTK_MEDIA_FILE(gtk_media_file_new());
+    /* This GTK backend only accepts file URIs and asserts on input streams.
+     * Do not work around it by writing decrypted attachments to disk. */
+    if (g_str_equal(G_OBJECT_TYPE_NAME(media), "GtkGstMediaFile"))
+      return NULL;
     g_autoptr(GInputStream) input = g_memory_input_stream_new_from_bytes(plaintext);
-    return GDK_PAINTABLE(gtk_media_file_new_for_input_stream(input));
+    gtk_media_file_set_input_stream(media, input);
+    return GDK_PAINTABLE(g_steal_pointer(&media));
   }
   return NULL;
 }
@@ -472,8 +481,12 @@ gh_attachment_card_open_viewer(GhAttachmentCard *self)
 {
   g_return_val_if_fail(GH_IS_ATTACHMENT_CARD(self), NULL);
   g_autoptr(GdkPaintable) shown = viewer_paintable(self->transfer, self->mime);
-  if (!shown)
+  if (!shown) {
+    if (is_video(self->mime) && self->transfer &&
+        gh_attachment_transfer_get_state(self->transfer) == GH_ATTACHMENT_STATE_READY)
+      show_status(self, _("Video playback is unavailable"), FALSE, TRUE);
     return NULL;
+  }
   /* The gallery: every file of this message that is ready to show - a
    * kind-15 message's one file, an encrypted group message's several. */
   Provider *provider = find_provider(self);

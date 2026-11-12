@@ -1530,6 +1530,7 @@ Decisions for components affected by another component's change (AGENTS.md,
 | nostrc-5aaq1: close private signer connections on their owning main context and retain them through close completion and closed delivery; drain GIO listener and test-bus teardown without EBADF suppression | groundhog | 0.13.0 | no bump: lands in unreleased 0.13.0 |
 | nostrc-csn2w: deinitialize GStreamer after voice suites finish, with a default-pool TLS teardown regression check; preserve AAC decoding through libav and its transitive libsrt dependency | groundhog | 0.13.0 | no bump: test-only lifecycle correction; unreleased 0.13.0 unchanged |
 | nostrc-ia01m: inline audio attachments reuse the in-memory voice player instead of GTK's unsupported GStreamer input-stream path; missing audio support is shown without aborting | groundhog | 0.13.0 | PATCH-class shipped bug fix folded into unreleased 0.13.0; no additional bump, public API, storage or wire-format change. |
+| nostrc-gyf23: downloaded videos report unavailable playback instead of invoking GTK's GStreamer backend with an unsupported memory stream; Save As and other media backends are unchanged | groundhog | 0.13.0 | PATCH-class crash correction folded into unreleased 0.13.0; no additional bump or plaintext-on-disk workaround. |
 
 ## Maintenance
 

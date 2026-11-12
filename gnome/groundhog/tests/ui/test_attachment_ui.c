@@ -1959,8 +1959,20 @@ test_group_gif_and_video(void)
     if (i) {
       g_assert_null(shown_picture(GTK_WIDGET(card)));
       g_assert_nonnull(card_button(GTK_WIDGET(card), "_Play Video"));
-      viewer = open_viewer(card);
-      g_assert_true(GTK_IS_MEDIA_STREAM(gn_media_viewer_get_paintable(viewer)));
+      g_autoptr(GtkMediaFile) backend = GTK_MEDIA_FILE(gtk_media_file_new());
+      if (g_str_equal(G_OBJECT_TYPE_NAME(backend), "GtkGstMediaFile")) {
+        g_assert_null(gh_attachment_card_open_viewer(card));
+        GtkWidget *status = GTK_WIDGET(gtk_widget_get_template_child(
+          GTK_WIDGET(card), GH_TYPE_ATTACHMENT_CARD, "status_box"));
+        GtkLabel *label = GTK_LABEL(gtk_widget_get_template_child(
+          GTK_WIDGET(card), GH_TYPE_ATTACHMENT_CARD, "status_label"));
+        g_assert_true(gtk_widget_get_visible(status));
+        g_assert_cmpstr(gtk_label_get_text(label), ==, "Video playback is unavailable");
+        g_assert_nonnull(card_button(GTK_WIDGET(card), "_Save As…"));
+      } else {
+        viewer = open_viewer(card);
+        g_assert_true(GTK_IS_MEDIA_STREAM(gn_media_viewer_get_paintable(viewer)));
+      }
     } else {
       GtkPicture *picture = shown_picture(GTK_WIDGET(card));
       g_assert_nonnull(picture);
@@ -1968,7 +1980,8 @@ test_group_gif_and_video(void)
       viewer = open_viewer(card);
       g_assert_true(GN_IS_ANIMATED_IMAGE(gn_media_viewer_get_paintable(viewer)));
     }
-    gtk_window_destroy(GTK_WINDOW(viewer));
+    if (viewer)
+      gtk_window_destroy(GTK_WINDOW(viewer));
     gh_attachment_ui_set_groups(f.s.window, NULL, NULL, NULL);
     fixture_clear(&f);
     g_clear_object(&stub.group);
