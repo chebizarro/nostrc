@@ -3,7 +3,7 @@
 # the whole tree, submodules included.
 name: grotto
 base: core24
-version: 0.1.1-alpha1
+version: 0.1.2-alpha1
 # Keep the explicit version in lockstep with GROTTO_VERSION_FULL. AppStream
 # supplies the listing title, summary and description from the installed file.
 adopt-info: app

@@ -1,9 +1,9 @@
 # Native Grotto; build from a complete checkout/archive with submodules.
 # Requires GTK >=4.14, libadwaita >=1.5, GLib >=2.80 (not RHEL 9/Fedora 38).
 %global app_id org.nostr.Grotto
-%global upstream_version 0.1.1-alpha1
+%global upstream_version 0.1.2-alpha1
 Name:           grotto
-Version:        0.1.1
+Version:        0.1.2
 Release:        0.1.alpha1%{?dist}
 Summary:        Nostr identity management and signing service
 License:        MIT
