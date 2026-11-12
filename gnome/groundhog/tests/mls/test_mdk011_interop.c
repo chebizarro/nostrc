@@ -51,6 +51,7 @@
 #include "mls-world.h"
 #include "mdk-peer.h"
 #include "gh-reaction-store.h"
+#include "gh-social-lists.h"
 #include "blossom-fixture.h"
 #include "../media/server-source-fixture.h"
 #include "gh-attachments.h"
@@ -1637,7 +1638,7 @@ test_white_noise_media(void)
 
 /* ---- nostrc-46k7: Groundhog creates a group with media policy, MDK uses it ------- */
 
-/* Groundhog creates the group with blossom-servers set: the group gets a
+/* Groundhog creates the group with account Blossom servers set: the group gets a
  * media policy (0x800b).  MDK joins, sends a picture using that server,
  * and Groundhog receives it.  This is the live MDK 0.11 case for the
  * consent-copy brief: the policy the admin saw at creation is the one
@@ -1659,11 +1660,16 @@ test_media_policy(void)
   g_autofree gchar *carol_kp_id = event_id_of(carol_kp);
   accept_contact(alice, CAROL);
 
-  /* Set blossom-servers BEFORE creating the group: create_group_now bakes
-   * the media policy. */
+  /* Group creation reads the account's destinations, not the legacy
+   * blossom-servers setting. Use the same setter as Preferences. */
   BlossomFixture *blossom = blossom_fixture_new();
   const gchar *servers[] = { blossom_fixture_url(blossom), NULL };
-  g_settings_set_strv(alice->settings, "blossom-servers", servers);
+  g_autoptr(GhSocialLists) social = gh_social_lists_new(NULL);
+  g_autoptr(GError) error = NULL;
+  g_assert_true(gh_social_lists_bind_store(social, alice->store, 1, &error));
+  g_assert_no_error(error);
+  g_assert_true(gh_social_lists_set_servers(social, servers, &error));
+  g_assert_no_error(error);
 
   /* Alice creates the group (adopted, with media policy). */
   const gchar *relays[] = { w.g.url, NULL };
@@ -1689,6 +1695,11 @@ test_media_policy(void)
   g_assert_cmpuint(mc.media_policy.default_blob_endpoint_count, ==, 1);
   g_assert_cmpstr(mc.media_policy.default_blob_endpoints[0].base_url, ==,
                   expected_url);
+  g_autofree uint8_t *policy_data = NULL;
+  size_t policy_len = 0;
+  g_assert_cmpint(marmot_group_media_policy_encode(&mc.media_policy, &policy_data,
+                                                 &policy_len), ==, MARMOT_OK);
+  g_autofree gchar *policy_hex = nostr_bin2hex(policy_data, policy_len);
   marmot_group_components_clear(&mc);
   spin_until(welcomes_sent, ga, "the Welcome accepted by Carol's inbox");
 
@@ -1696,6 +1707,13 @@ test_media_policy(void)
   g_autoptr(JsonObject) joined = mdk_join(&w, "carol", ALICE, carol_kp_id);
   const gchar *group = json_object_get_string_member(joined, "group");
   assert_gh_converged(ga, joined);
+
+  /* MDK received the policy in its GroupContext, independently of the
+   * explicit upload URL passed to send_media below. */
+  g_autoptr(JsonObject) context = mdk_call(&driver,
+    "\"cmd\":\"group_context\",\"peer\":\"carol\",\"group\":\"%s\"", group);
+  JsonObject *components = json_object_get_object_member(context, "components");
+  g_assert_cmpstr(json_object_get_string_member(components, "0x800b"), ==, policy_hex);
 
   /* MDK sends a picture through the policy's Blossom server. */
   g_autoptr(GBytes) photo = tiny_png();
@@ -1740,7 +1758,7 @@ test_media_policy(void)
   g_assert_true(g_bytes_equal(gh_attachment_transfer_get_plaintext(transfer), photo));
   g_assert_cmpuint(blossom_fixture_count(blossom, "GET"), ==, 1);
 
-  g_settings_reset(alice->settings, "blossom-servers");
+  gh_social_lists_close(social);
   g_object_unref(files);
   gh_attachments_set_store(attachments, NULL);
   g_object_unref(attachments);
