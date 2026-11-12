@@ -1,5 +1,8 @@
 #include "gh-attachment-card.h"
 #include "gh-message-row.h"
+#ifdef GROUNDHOG_HAVE_INLINE_AUDIO
+#include "gh-voice-bubble.h"
+#endif
 
 #include <glib/gi18n.h>
 #include <nostr-gtk-1.0/gn-animated-image.h>
@@ -50,7 +53,6 @@ struct _GhAttachmentCard {
   GhAttachmentState shown;         /* the state last shown (announcements) */
   gboolean compact;
   gchar *summary;
-  GtkMediaStream *audio_stream;
   GBytes *audio_bytes;
   GtkWidget *video_button;         /* "Play Video" for a downloaded video */
 };
@@ -578,19 +580,22 @@ update_audio(GhAttachmentCard *self)
   GtkWidget *child = gtk_widget_get_first_child(GTK_WIDGET(self->audio_slot));
   if (child)
     gtk_box_remove(self->audio_slot, child);
-  if (self->audio_stream) {
-    gtk_media_stream_pause(self->audio_stream);
-    gtk_media_file_clear(GTK_MEDIA_FILE(self->audio_stream));
-    g_clear_object(&self->audio_stream);
-  }
   g_clear_pointer(&self->audio_bytes, g_bytes_unref);
   if (plaintext) {
-    g_autoptr(GInputStream) input = g_memory_input_stream_new_from_bytes(plaintext);
-    self->audio_stream = gtk_media_file_new_for_input_stream(input);
-    self->audio_bytes = g_bytes_ref(plaintext);
-    GtkWidget *controls = gtk_media_controls_new(self->audio_stream);
+#ifdef GROUNDHOG_HAVE_INLINE_AUDIO
+    /* GTK's GStreamer media module aborts on GInputStream. Use the same
+     * appsrc-backed, memory-only player as single-file voice messages. */
+    GtkWidget *controls = gh_voice_bubble_new();
+    gh_voice_bubble_set_compact(GH_VOICE_BUBBLE(controls), self->compact);
     gtk_widget_set_size_request(controls, self->compact ? 200 : 280, -1);
     gtk_box_append(self->audio_slot, controls);
+    gh_voice_bubble_load_audio(GH_VOICE_BUBBLE(controls), plaintext);
+#else
+    GtkWidget *unavailable = gtk_label_new(_("Audio playback is unavailable"));
+    gtk_label_set_wrap(GTK_LABEL(unavailable), TRUE);
+    gtk_box_append(self->audio_slot, unavailable);
+#endif
+    self->audio_bytes = g_bytes_ref(plaintext);
   }
   gtk_widget_set_visible(GTK_WIDGET(self->audio_slot), plaintext != NULL);
 }
@@ -918,8 +923,12 @@ gh_attachment_card_set_compact(GhAttachmentCard *self, gboolean compact)
   self->compact = !!compact;
   update_preview(self);
   GtkWidget *controls = gtk_widget_get_first_child(GTK_WIDGET(self->audio_slot));
-  if (controls)
+  if (controls) {
+#ifdef GROUNDHOG_HAVE_INLINE_AUDIO
+    gh_voice_bubble_set_compact(GH_VOICE_BUBBLE(controls), self->compact);
+#endif
     gtk_widget_set_size_request(controls, self->compact ? 200 : 280, -1);
+  }
   g_object_notify_by_pspec(G_OBJECT(self), props[PROP_COMPACT]);
 }
 
@@ -992,11 +1001,6 @@ gh_attachment_card_dispose(GObject *object)
 {
   GhAttachmentCard *self = GH_ATTACHMENT_CARD(object);
   unbind_transfer(self);
-  if (self->audio_stream) {
-    gtk_media_stream_pause(self->audio_stream);
-    gtk_media_file_clear(GTK_MEDIA_FILE(self->audio_stream));
-    g_clear_object(&self->audio_stream);
-  }
   g_clear_pointer(&self->audio_bytes, g_bytes_unref);
   g_clear_object(&self->message);
   gtk_widget_dispose_template(GTK_WIDGET(object), GH_TYPE_ATTACHMENT_CARD);

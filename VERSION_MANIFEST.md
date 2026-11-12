@@ -1529,6 +1529,7 @@ Decisions for components affected by another component's change (AGENTS.md,
 | nostrc-2hmd keychain guard: build options `NIP55L_SECRET_BACKEND` (auto/libsecret/keychain) and `GROUNDHOG_STORE_KEY_DEFAULT_BACKEND` (auto/secret-service) for smoke/test builds that must not write to a developer's login Keychain; defaults unchanged; read-only keychain-configuration guard in pre-push and in the Keychain tests | nip55l, groundhog | 0.6.0, 0.12.0 | No bump: build-time options with unchanged defaults, test and tooling only |
 | nostrc-5aaq1: close private signer connections on their owning main context and retain them through close completion and closed delivery; drain GIO listener and test-bus teardown without EBADF suppression | groundhog | 0.13.0 | no bump: lands in unreleased 0.13.0 |
 | nostrc-csn2w: deinitialize GStreamer after voice suites finish, with a default-pool TLS teardown regression check; preserve AAC decoding through libav and its transitive libsrt dependency | groundhog | 0.13.0 | no bump: test-only lifecycle correction; unreleased 0.13.0 unchanged |
+| nostrc-ia01m: inline audio attachments reuse the in-memory voice player instead of GTK's unsupported GStreamer input-stream path; missing audio support is shown without aborting | groundhog | 0.13.0 | PATCH-class shipped bug fix folded into unreleased 0.13.0; no additional bump, public API, storage or wire-format change. |
 
 ## Maintenance
 

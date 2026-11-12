@@ -3404,7 +3404,6 @@ if (GSTREAMER_FOUND AND TARGET groundhog-media)
       GROUNDHOG_HAVE_VOICE=1
       GROUNDHOG_VOICE_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/media/fixtures/voice")
   endif()
-  target_sources(groundhog PRIVATE src/ui/gh-voice-bubble.c)
   target_link_libraries(groundhog PRIVATE groundhog-voice)
   if (BUILD_TESTING)
     add_executable(test-groundhog-voice tests/media/test_voice.c
@@ -3425,7 +3424,7 @@ if (GSTREAMER_FOUND AND TARGET groundhog-media)
     # lives on the groundhog executable, not a library target).
     if (TARGET groundhog-conversation-ui)
       add_executable(test-groundhog-voice-ui tests/ui/test_voice_ui.c
-        src/ui/gh-voice-bubble.c ${GROUNDHOG_RESOURCE_C})
+        ${GROUNDHOG_RESOURCE_C})
       target_include_directories(test-groundhog-voice-ui PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/media
         ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
@@ -3507,6 +3506,11 @@ endif()
 if (TARGET groundhog-conversation-ui)
   target_sources(groundhog-conversation-ui PRIVATE src/ui/gh-attachment-card.c
     src/ui/gh-attachment-sheet.c)
+  if (TARGET groundhog-voice)
+    target_sources(groundhog-conversation-ui PRIVATE src/ui/gh-voice-bubble.c)
+    target_link_libraries(groundhog-conversation-ui PUBLIC groundhog-voice)
+    target_compile_definitions(groundhog-conversation-ui PUBLIC GROUNDHOG_HAVE_INLINE_AUDIO=1)
+  endif()
 endif()
 if (TARGET groundhog-media)
   target_sources(groundhog-media PRIVATE src/media/gh-attachments.c src/store/gh-store-blossom.c)

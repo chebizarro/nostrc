@@ -29,6 +29,10 @@
 #include "socks5-fixture.h"
 #include "gh-attachment-card.h"
 #include "gh-attachment-ui.h"
+#ifdef GROUNDHOG_HAVE_INLINE_AUDIO
+#include "gh-voice-bubble.h"
+#include "../media/voice-test-gst-teardown.h"
+#endif
 #include "gh-social-lists.h"
 #include "gh-social-lists-backend.h"
 #if GROUNDHOG_TEST_MLS_FILES
@@ -1829,26 +1833,63 @@ label_with(GtkWidget *widget, const gchar *prefix)
  * asks the delegate for its transfer, fetches nothing until Download, says
  * a rejected reference, and Save As suggests the sender's name only after
  * it is made safe. */
-static GtkMediaControls *
-find_media_controls(GtkWidget *widget)
+#ifdef GROUNDHOG_HAVE_INLINE_AUDIO
+static GhVoiceBubble *
+find_inline_audio(GtkWidget *widget)
 {
-  if (GTK_IS_MEDIA_CONTROLS(widget))
-    return GTK_MEDIA_CONTROLS(widget);
+  if (GH_IS_VOICE_BUBBLE(widget))
+    return GH_VOICE_BUBBLE(widget);
   for (GtkWidget *child = gtk_widget_get_first_child(widget); child;
        child = gtk_widget_get_next_sibling(child)) {
-    GtkMediaControls *found = find_media_controls(child);
+    GhVoiceBubble *found = find_inline_audio(child);
     if (found)
       return found;
   }
   return NULL;
 }
 
-static gboolean
-media_loaded_or_failed(gpointer data)
+#endif
+
+static GBytes *
+inline_audio_fixture(void)
 {
-  GtkMediaStream *stream = data;
-  return gtk_media_stream_is_prepared(stream) || gtk_media_stream_get_error(stream) != NULL;
+  g_autofree gchar *source_dir = g_path_get_dirname(__FILE__);
+  g_autofree gchar *path = g_build_filename(source_dir, "..", "media", "fixtures",
+                                           "voice", "groundhog-opus.ogg", NULL);
+  g_autoptr(GError) error = NULL;
+  gchar *contents = NULL;
+  gsize length = 0;
+  g_assert_true(g_file_get_contents(path, &contents, &length, &error));
+  g_assert_no_error(error);
+  return g_bytes_new_take(contents, length);
 }
+
+#ifdef GROUNDHOG_HAVE_INLINE_AUDIO
+/* Observe the real attachment caller's decoder, not a separately loaded
+ * player. The signal fires after its worker has decoded PCM from the bytes. */
+static gboolean
+capture_audio_player(GSignalInvocationHint *hint, guint n_values,
+                     const GValue *values, gpointer data)
+{
+  (void)hint; (void)n_values;
+  g_set_object((GhVoicePlayer **)data, g_value_get_object(&values[0]));
+  return TRUE;
+}
+
+static gboolean
+audio_player_captured(gpointer data)
+{
+  return *(GhVoicePlayer **)data != NULL;
+}
+
+static guint
+waveform_signal(void)
+{
+  g_type_class_unref(g_type_class_ref(GH_TYPE_VOICE_PLAYER));
+  return g_signal_lookup("waveform-ready", GH_TYPE_VOICE_PLAYER);
+}
+
+#endif
 
 /* nostrc-p15n5.6: the card's attachment.view action presents the viewer. */
 static GnMediaViewer *
@@ -1959,7 +2000,9 @@ test_group_inline_image(void)
   gh_attachment_transfer_succeed(stub.transfer, png, TRUE, FALSE);
   gh_test_run_until_idle();
   g_assert_nonnull(shown_picture(GTK_WIDGET(card)));
-  g_assert_null(find_media_controls(GTK_WIDGET(card)));
+  GtkWidget *audio_slot = GTK_WIDGET(gtk_widget_get_template_child(
+    GTK_WIDGET(card), GH_TYPE_ATTACHMENT_CARD, "audio_slot"));
+  g_assert_null(gtk_widget_get_first_child(audio_slot));
   /* nostrc-p15n5.6: an encrypted group's photo opens the media viewer on
    * its decrypted bytes. */
   GdkPaintable *shown = gtk_picture_get_paintable(shown_picture(GTK_WIDGET(card)));
@@ -1974,7 +2017,7 @@ test_group_inline_image(void)
 }
 
 static void
-test_group_inline_audio(void)
+check_group_inline_audio(gboolean missing_audio)
 {
   Fixture f;
   fixture_init(&f);
@@ -2001,42 +2044,95 @@ test_group_inline_audio(void)
   send_stack_select(&f.s, group);
   GhAttachmentCard *card = card_of(&f, audio);
   g_assert_true(gh_attachment_card_get_transfer(card) == stub.transfer);
-  g_assert_null(find_media_controls(GTK_WIDGET(card)));
-  g_autofree gchar *source_dir = g_path_get_dirname(__FILE__);
-  g_autofree gchar *audio_path = g_build_filename(source_dir, "..", "media", "fixtures",
-                                                 "voice", "groundhog-opus.ogg", NULL);
-  gchar *contents = NULL;
-  gsize length = 0;
-  g_assert_true(g_file_get_contents(audio_path, &contents, &length, &error));
-  g_assert_no_error(error);
-  g_autoptr(GBytes) bytes = g_bytes_new_take(contents, length);
+#ifdef GROUNDHOG_HAVE_INLINE_AUDIO
+  g_assert_null(find_inline_audio(GTK_WIDGET(card)));
+  g_autoptr(GhVoicePlayer) player = NULL;
+  guint signal = waveform_signal();
+  gulong hook = g_signal_add_emission_hook(signal, 0, capture_audio_player, &player, NULL);
+#endif
+  g_autoptr(GBytes) bytes = inline_audio_fixture();
   gh_attachment_transfer_succeed(stub.transfer, bytes, FALSE, FALSE);
   gh_test_run_until_idle();
-  GtkMediaControls *controls = find_media_controls(GTK_WIDGET(card));
+#ifdef GROUNDHOG_HAVE_INLINE_AUDIO
+  GhVoiceBubble *controls = find_inline_audio(GTK_WIDGET(card));
   g_assert_nonnull(controls);
-  GtkMediaStream *stream = gtk_media_controls_get_media_stream(controls);
-  g_assert_nonnull(stream);
-  gh_test_spin_until(media_loaded_or_failed, stream);
-  const GError *media_error = gtk_media_stream_get_error(stream);
-  if (media_error && g_str_has_prefix(media_error->message,
-                                      "GTK could not find a media module")) {
-    /* The macOS smoke toolchain omits GTK's optional media module.  The
-     * Debian package depends on it; here the controls/lifecycle still run. */
-    g_test_message("GtkMediaFile backend unavailable: %s", media_error->message);
+  GtkWidget *player_box = GTK_WIDGET(gtk_widget_get_template_child(
+    GTK_WIDGET(controls), GH_TYPE_VOICE_BUBBLE, "player_box"));
+  GtkWidget *error_label = GTK_WIDGET(gtk_widget_get_template_child(
+    GTK_WIDGET(controls), GH_TYPE_VOICE_BUBBLE, "error_label"));
+  if (missing_audio) {
+    g_assert_false(gtk_widget_get_visible(player_box));
+    g_assert_true(gtk_widget_get_visible(error_label));
+    g_assert_nonnull(strstr(gtk_label_get_text(GTK_LABEL(error_label)), "audio support"));
+    GtkWidget *download_box = GTK_WIDGET(gtk_widget_get_template_child(
+      GTK_WIDGET(controls), GH_TYPE_VOICE_BUBBLE, "download_box"));
+    g_assert_false(gtk_widget_get_visible(download_box));
   } else {
-    g_assert_null(media_error);
-    g_assert_true(gtk_media_stream_is_prepared(stream));
-    g_assert_true(gtk_media_stream_has_audio(stream));
+    gh_test_spin_until(audio_player_captured, &player);
+    g_assert_nonnull(player);
+    g_autoptr(GhVoiceWaveform) waveform = gh_voice_player_dup_waveform(player);
+    g_assert_nonnull(waveform);
+    g_assert_cmpuint(gh_voice_waveform_get_n_samples(waveform), >, 0);
+    g_assert_true(gtk_widget_get_visible(player_box));
+    g_assert_false(gtk_widget_get_visible(error_label));
+    g_assert_true(gtk_widget_activate_action(GTK_WIDGET(controls), "voice.play", NULL));
+    g_assert_cmpint(gh_voice_player_get_state(player), ==, GH_VOICE_PLAYER_STATE_PLAYING);
+    g_assert_true(gtk_widget_activate_action(GTK_WIDGET(controls), "voice.play", NULL));
+    g_assert_cmpint(gh_voice_player_get_state(player), ==, GH_VOICE_PLAYER_STATE_PAUSED);
   }
+  g_signal_remove_emission_hook(signal, hook);
+  g_object_add_weak_pointer(G_OBJECT(controls), (gpointer *)&controls);
+#else
+  (void)missing_audio;
+  GtkWidget *slot = GTK_WIDGET(gtk_widget_get_template_child(
+    GTK_WIDGET(card), GH_TYPE_ATTACHMENT_CARD, "audio_slot"));
+  GtkWidget *unavailable = gtk_widget_get_first_child(slot);
+  g_assert_true(GTK_IS_LABEL(unavailable));
+  g_assert_cmpstr(gtk_label_get_text(GTK_LABEL(unavailable)), ==,
+                  "Audio playback is unavailable");
+#endif
   gh_attachment_transfer_reset(stub.transfer);
   gh_test_run_until_idle();
-  g_assert_null(find_media_controls(GTK_WIDGET(card)));
+#ifdef GROUNDHOG_HAVE_INLINE_AUDIO
+  g_assert_null(controls);
+  g_assert_null(find_inline_audio(GTK_WIDGET(card)));
+  if (player)
+    g_assert_cmpint(gh_voice_player_get_state(player), ==, GH_VOICE_PLAYER_STATE_STOPPED);
+#endif
 
   gh_attachment_ui_set_groups(f.s.window, NULL, NULL, NULL);
   fixture_clear(&f);
   g_clear_object(&stub.group);
   g_clear_object(&stub.transfer);
 }
+
+static void
+test_group_inline_audio(void)
+{
+  check_group_inline_audio(FALSE);
+}
+
+#ifdef GROUNDHOG_HAVE_INLINE_AUDIO
+static void
+test_group_inline_audio_missing_plugin(void)
+{
+  /* The preceding audio fixture has stopped its player. Keep a reference
+   * and restore the factory before the next test's real audio decode. */
+  gst_init(NULL, NULL);
+  GstRegistry *registry = gst_registry_get();
+  GstElementFactory *factory = gst_element_factory_find("scaletempo");
+  g_assert_nonnull(factory);
+  gst_registry_remove_feature(registry, GST_PLUGIN_FEATURE(factory));
+  g_assert_null(gst_element_factory_find("scaletempo"));
+  check_group_inline_audio(TRUE);
+  g_assert_true(gst_registry_add_feature(registry, GST_PLUGIN_FEATURE(factory)));
+  GstElementFactory *restored = gst_element_factory_find("scaletempo");
+  g_assert_true(restored == factory);
+  gst_object_unref(restored);
+  gst_object_unref(factory);
+}
+
+#endif
 
 static void
 test_group_auto_download_media(void)
@@ -2075,13 +2171,26 @@ test_group_auto_download_media(void)
     g_assert_cmpuint(stub.downloads, ==, 1);
     g_assert_cmpint(gh_attachment_transfer_get_state(stub.transfer), ==,
                     GH_ATTACHMENT_STATE_DOWNLOADING);
-    g_autoptr(GBytes) bytes = i ? g_bytes_new_static("OggS", 4) : make_png(90);
+#ifdef GROUNDHOG_HAVE_INLINE_AUDIO
+    g_autoptr(GhVoicePlayer) player = NULL;
+    guint signal = waveform_signal();
+    gulong hook = g_signal_add_emission_hook(signal, 0, capture_audio_player, &player, NULL);
+#endif
+    g_autoptr(GBytes) bytes = i ? inline_audio_fixture() : make_png(90);
     gh_attachment_transfer_succeed(stub.transfer, bytes, !i, FALSE);
     gh_test_run_until_idle();
-    if (i)
-      g_assert_nonnull(find_media_controls(GTK_WIDGET(card)));
-    else
+    if (i) {
+#ifdef GROUNDHOG_HAVE_INLINE_AUDIO
+      g_assert_nonnull(find_inline_audio(GTK_WIDGET(card)));
+      gh_test_spin_until(audio_player_captured, &player);
+      g_assert_nonnull(player);
+#endif
+    } else {
       g_assert_nonnull(shown_picture(GTK_WIDGET(card)));
+    }
+#ifdef GROUNDHOG_HAVE_INLINE_AUDIO
+    g_signal_remove_emission_hook(signal, hook);
+#endif
     g_assert_cmpuint(stub.downloads, ==, 1);
     gh_attachment_ui_set_groups(f.s.window, NULL, NULL, NULL);
     fixture_clear(&f);
@@ -2475,6 +2584,9 @@ main(int argc, char **argv)
   ADD("preferences", test_preferences);
   ADD("group-inline-image", test_group_inline_image);
   ADD("group-inline-audio", test_group_inline_audio);
+#ifdef GROUNDHOG_HAVE_INLINE_AUDIO
+  ADD("group-inline-audio-missing-plugin", test_group_inline_audio_missing_plugin);
+#endif
   ADD("group-auto-download-media", test_group_auto_download_media);
   ADD("group-gif-and-video", test_group_gif_and_video);
   ADD("group-delegate", test_group_delegate);
@@ -2491,5 +2603,8 @@ main(int argc, char **argv)
   gh_test_signer_down(&bus, &signer);
   gh_test_bus_down(&bus);
   gh_test_remove_tree(xdg_root);
+#ifdef GROUNDHOG_HAVE_INLINE_AUDIO
+  voice_test_gst_deinit();
+#endif
   return status;
 }

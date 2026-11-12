@@ -695,6 +695,9 @@ gh_voice_bubble_load_audio(GhVoiceBubble *self, GBytes *audio_bytes)
     g_clear_object(&self->player);
   }
 
+  gtk_widget_set_visible(GTK_WIDGET(self->download_box), FALSE);
+  gtk_widget_set_visible(GTK_WIDGET(self->player_box), FALSE);
+  gtk_widget_set_visible(GTK_WIDGET(self->error_label), FALSE);
   self->player = gh_voice_player_new();
   GError *error = NULL;
   if (!gh_voice_player_load(self->player, audio_bytes, NULL, &error)) {
