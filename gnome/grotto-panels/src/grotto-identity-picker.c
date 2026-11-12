@@ -105,6 +105,40 @@ static void picker_unbind(GtkSignalListItemFactory *factory, GtkListItem *item, 
   gtk_list_item_set_accessible_description(item, NULL);
   adw_avatar_set_custom_image(p->avatar, NULL);
 }
+/* AdwComboRow does not expose its selection policy. Use public model accessors
+ * on its current-item view, matching the original model rather than the popup's
+ * filtered selection. Both supported libadwaita versions use this model chain. */
+static GtkSingleSelection *identity_selection(GtkWidget *widget, GListModel *identities) {
+  if (GTK_IS_LIST_VIEW(widget)) {
+    GListModel *model = G_LIST_MODEL(gtk_list_view_get_model(GTK_LIST_VIEW(widget)));
+    if (GTK_IS_NO_SELECTION(model)) model = gtk_no_selection_get_model(GTK_NO_SELECTION(model));
+    if (GTK_IS_SELECTION_FILTER_MODEL(model))
+      model = G_LIST_MODEL(gtk_selection_filter_model_get_model(GTK_SELECTION_FILTER_MODEL(model)));
+    if (GTK_IS_SINGLE_SELECTION(model) &&
+        gtk_single_selection_get_model(GTK_SINGLE_SELECTION(model)) == identities)
+      return GTK_SINGLE_SELECTION(model);
+  }
+  for (GtkWidget *child = gtk_widget_get_first_child(widget); child; child = gtk_widget_get_next_sibling(child)) {
+    GtkSingleSelection *selection = identity_selection(child, identities);
+    if (selection) return selection;
+  }
+  return NULL;
+}
+static void selection_policy_changed(AdwComboRow *row) {
+  GListModel *model = adw_combo_row_get_model(row);
+  if (!model) return;
+  GtkSingleSelection *selection = identity_selection(GTK_WIDGET(row), model);
+  if (!selection) {
+    /* Never leave an implicit identity selected on an unsupported widget tree. */
+    adw_combo_row_set_model(row, NULL);
+    g_warning("Identity picker selection policy unavailable; identity model removed");
+    return;
+  }
+  /* GTK >= 4.16 enforces these flags for set_selected(INVALID_POSITION).
+   * Callers still choose their initial selection explicitly after set_model(). */
+  gtk_single_selection_set_autoselect(selection, FALSE);
+  gtk_single_selection_set_can_unselect(selection, TRUE);
+}
 GtkWidget *grotto_identity_picker_new(GrottoPanelsService *service) {
   g_return_val_if_fail(!service || GROTTO_PANELS_IS_SERVICE(service), NULL);
   AdwComboRow *row = ADW_COMBO_ROW(adw_combo_row_new());
@@ -116,5 +150,6 @@ GtkWidget *grotto_identity_picker_new(GrottoPanelsService *service) {
   adw_combo_row_set_factory(row, factory);
   adw_combo_row_set_list_factory(row, factory);
   g_object_unref(factory);
+  g_signal_connect(row, "notify::model", G_CALLBACK(selection_policy_changed), NULL);
   return GTK_WIDGET(row);
 }

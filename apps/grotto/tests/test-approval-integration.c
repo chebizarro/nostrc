@@ -511,6 +511,7 @@ static void live_navigation(GrottoApprovalController *controller, GApplication *
       AdwDialog *dialog = review_dialog(app);
       g_assert_nonnull(dialog);
       wait_frames(GTK_WIDGET(dialog));
+      g_assert_true(adw_dialog_get_focus(dialog) == dialog_child(dialog, "btn_deny"));
       g_assert_cmpstr(adw_preferences_row_get_title(ADW_PREFERENCES_ROW(dialog_child(dialog, "stepper"))), ==,
                       "2 of 2");
       g_assert_false(gtk_widget_get_sensitive(dialog_child(dialog, "btn_next")));
@@ -553,6 +554,7 @@ static void live_navigation(GrottoApprovalController *controller, GApplication *
   g_assert_cmpuint(results[1].done + results[2].done, ==, 0);
   g_action_group_activate_action(G_ACTION_GROUP(app), "review-request", g_variant_new_string(ids[1]));
   dialog = review_dialog(app); g_assert_nonnull(dialog); wait_frames(GTK_WIDGET(dialog));
+  g_assert_true(adw_dialog_get_focus(dialog) == dialog_child(dialog, "btn_deny"));
   choose_permission(dialog, "Always allow");
   g_signal_emit_by_name(dialog_child(dialog, "btn_next"), "clicked");
   dialog = review_dialog(app); g_assert_nonnull(dialog); wait_frames(GTK_WIDGET(dialog));
