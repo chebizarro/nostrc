@@ -361,6 +361,32 @@ static void test_relay_rejections(void) {
         bunker_service_free(service); bunker_test_relay_free(relay);
     }
 }
+static void test_shared_transport_startup(void) {
+    provision_transport();
+    BunkerService *services[8];
+    BunkerTestRelay *relay = bunker_test_relay_new();
+    const gchar *relays[] = {bunker_test_relay_url(relay), NULL};
+    guint bound = g_timeout_add_seconds(10, failure_bound, NULL);
+    /* Distinct instances share one custody key and marker, not one mutex per
+     * instance. Queue every worker before dispatching their completions. */
+    for (guint i = 0; i < G_N_ELEMENTS(services); i++) {
+        services[i] = bunker_service_new();
+        g_assert_true(bunker_service_start(services[i], relays, identity));
+    }
+    for (guint i = 0; i < G_N_ELEMENTS(services); i++) {
+        while (bunker_service_get_state(services[i]) != BUNKER_STATE_RUNNING) g_main_context_iteration(NULL, TRUE);
+        g_assert_false(bunker_service_transport_busy(services[i]));
+        g_assert_cmpstr(bunker_service_get_transport_pubkey(services[i]), ==,
+                       bunker_service_get_transport_pubkey(services[0]));
+    }
+    g_autofree gchar *marker = g_build_filename(g_get_user_config_dir(), "grotto", "bunker-transport-pubkey", NULL);
+    g_autofree gchar *pubkey = NULL;
+    g_assert_true(g_file_get_contents(marker, &pubkey, NULL, NULL));
+    g_assert_cmpstr(pubkey, ==, bunker_service_get_transport_pubkey(services[0]));
+    g_source_remove(bound);
+    for (guint i = 0; i < G_N_ELEMENTS(services); i++) bunker_service_free(services[i]);
+    bunker_test_relay_free(relay);
+}
 static void test_start_cancel(void) {
     provision_transport();
     BunkerService *service = bunker_service_new(); BunkerTestRelay *relay = bunker_test_relay_new();
@@ -402,6 +428,7 @@ int main(int argc, char **argv)
     g_test_add_func("/bunker/owner-queue-bound", test_owner_queue_bound);
     g_test_add_func("/bunker/method-ceiling", test_method_ceiling);
     g_test_add_func("/bunker/relay-rejections", test_relay_rejections);
+    g_test_add_func("/bunker/shared-transport-startup", test_shared_transport_startup);
     g_test_add_func("/bunker/start-cancel", test_start_cancel);
     g_test_add_func("/bunker/corrupt-replay", test_corrupt_replay);
     int rc = g_test_run(); nostr_json_cleanup(); return rc;
