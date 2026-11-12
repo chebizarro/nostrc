@@ -72,7 +72,8 @@ RUN set -eu; for element in appsrc appsink decodebin audioconvert audioresample 
 RUN apt-get update && apt-get install -y --no-install-recommends debhelper dpkg-dev fakeroot lintian \
  && rm -rf /var/lib/apt/lists/*
 # Grotto's GUI-only LSan exceptions name static third-party functions, not modules
-# (nostrc-ydtdf, nostrc-ojtu3). Keep in sync with grotto-ci.yml's symbol step.
+# (nostrc-ydtdf, nostrc-ojtu3). Groundhog's upstream ownership exceptions also
+# need libadwaita symbols (nostrc-swjdk). Keep hosted GUI symbol steps in sync.
 RUN set -eu; \
     apt-get update; \
     apt-get install -y --no-install-recommends ubuntu-dbgsym-keyring ; \
@@ -93,7 +94,7 @@ RUN set -eu; \
         "gir1.2-gtk-4.0=$gtk_version" "libgtk-4-media-gstreamer=$gtk_version"; \
     fi; \
     set --; \
-    for package in libfontconfig1 libgtk-4-1 libglib2.0-0t64 libpangoft2-1.0-0; do \
+    for package in libfontconfig1 libgtk-4-1 libglib2.0-0t64 libpangoft2-1.0-0 libadwaita-1-0; do \
       version="$(dpkg-query -W -f='${Version}' "$package")"; \
       echo "Required symbols: $package-dbgsym=$version"; \
       set -- "$@" "$package-dbgsym=$version"; \

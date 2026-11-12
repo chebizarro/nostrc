@@ -330,7 +330,7 @@ parse_value(GSettings *settings, const char *key, const char *text)
   GVariant *value = g_variant_parse(g_settings_schema_key_get_value_type(schema_key), text,
                                     NULL, NULL, &error);
   g_assert_no_error(error);
-  return g_variant_ref_sink(value);
+  return value;
 }
 
 static void
@@ -556,8 +556,8 @@ test_tor_with_g09(Fixture *f, gconstpointer data)
     gtk_editable_set_text(GTK_EDITABLE(tor_row), bad[i]);
     g_signal_emit_by_name(tor_row, "apply");
     drain_idle();
-    g_assert_cmpstr(g_settings_get_string(f->settings, "tor-socks-address"), ==,
-                    "127.0.0.1:9150");
+    g_autofree char *unchanged = g_settings_get_string(f->settings, "tor-socks-address");
+    g_assert_cmpstr(unchanged, ==, "127.0.0.1:9150");
     g_assert_true(gtk_widget_get_visible(error));
     g_assert_true(gtk_widget_has_css_class(tor_widget, "error"));
   }

@@ -209,6 +209,7 @@ nostr_gobject_sources = files(
   'src/nostr_event_bus.c',
   'src/nostr_keys.c',
   'src/nostr_relay.c',
+  'src/nostr_relay_worker.c',
   'src/nostr_subscription.c',
   'src/nostr_simple_pool.c',
   'src/nostr_pool.c',

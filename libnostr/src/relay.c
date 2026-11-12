@@ -516,12 +516,18 @@ bool nostr_relay_is_established(NostrRelay *relay) {
 
 /* GLib-style accessors (header: nostr-relay.h) */
 bool nostr_relay_wait_established(NostrRelay *relay, uint32_t timeout_ms, Error **err) {
+    return nostr_relay_wait_established_with_context(relay, timeout_ms, NULL, err);
+}
+
+bool nostr_relay_wait_established_with_context(NostrRelay *relay, uint32_t timeout_ms,
+                                               GoContext *cancel, Error **err) {
     if (!relay || !relay->priv) {
         if (err) *err = new_error(1, "invalid relay");
         return false;
     }
+    if (!cancel) cancel = relay->priv->connection_context;
     NostrConnection *conn = relay_connection_lease(relay);
-    int outcome = conn ? nostr_connection_wait_handshake(conn, timeout_ms) : -1;
+    int outcome = conn ? nostr_connection_wait_handshake_with_context(conn, timeout_ms, cancel) : -1;
     if (outcome == 1) {
         relay_connection_unlease(relay);
         return true;
@@ -705,6 +711,7 @@ static void relay_write_queue_drain(GoChannel *queue) {
 
 static void relay_free_impl(NostrRelay *relay) {
     if (!relay) return;
+    nostr_relay_request_close(relay);
     // Signal background loops to stop
     if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] nostr_relay_free: cancel connection context\n");
     if (relay->priv && relay->priv->connection_context_cancel) {
@@ -848,16 +855,26 @@ void nostr_relay_test_set_reconnect_hook(NostrRelayDialHook hook, void *data) {
 }
 
 bool nostr_relay_connect(NostrRelay *relay, Error **err) {
+    return nostr_relay_connect_with_context(relay, NULL, err);
+}
+
+bool nostr_relay_connect_with_context(NostrRelay *relay, GoContext *cancel, Error **err) {
     if (!relay) {
         if (err) *err = new_error(1, "relay must be initialized with a call to nostr_relay_new()");
         return false;
     }
 
+    if (!cancel) cancel = relay->priv->connection_context;
     /* nostrc-kw9r: Shared relay registry may cause multiple pools to try
      * connecting the same NostrRelay — if already connected, skip. */
     nsync_mu_lock(&relay->priv->mutex);
     bool connected = relay->connection != NULL;
+    bool closing = relay->priv->closing;
     nsync_mu_unlock(&relay->priv->mutex);
+    if (closing || (cancel && go_context_is_canceled(cancel))) {
+        if (err) *err = new_error(1, "relay connect cancelled");
+        return false;
+    }
     if (connected) {
         return true;
     }
@@ -865,7 +882,7 @@ bool nostr_relay_connect(NostrRelay *relay, Error **err) {
     /* Set state to connecting (nostrc-4du) */
     relay_set_state(relay, NOSTR_RELAY_STATE_CONNECTING);
 
-    NostrConnection *conn = nostr_connection_new(relay->url);
+    NostrConnection *conn = nostr_connection_new_with_context(relay->url, cancel);
     if (!conn) {
         relay_set_state(relay, NOSTR_RELAY_STATE_DISCONNECTED);
         if (err) *err = new_error(1, "error opening websocket to '%s'\n", relay->url);
@@ -906,25 +923,32 @@ bool nostr_relay_connect(NostrRelay *relay, Error **err) {
      * message_loop clears it on exit. */
     nsync_mu_lock(&relay->priv->mutex);
     bool lost = relay->connection != NULL;
+    closing = relay->priv->closing || (cancel && go_context_is_canceled(cancel));
     bool spawn = false;
-    if (!lost) {
+    if (!lost && !closing) {
         relay->connection = conn;
         /* Reset reconnect state on successful connection (nostrc-4du) */
         relay->priv->reconnect_attempt = 0;
         relay->priv->backoff_ms = 0;
         spawn = !relay->priv->message_loop_active;
-        if (spawn) relay->priv->message_loop_active = true;
+        if (spawn) {
+            relay->priv->message_loop_active = true;
+            /* Admission and accounting precede close's worker snapshot. */
+            go_context_ref(ctx);
+            go_context_ref(ctx);
+            go_wait_group_add(&relay->priv->workers, 2);
+        }
     }
     nsync_mu_unlock(&relay->priv->mutex);
-    if (lost) {
+    if (lost || closing) {
         free(write_arg);
         free(loop_arg);
         /* Never published: released without waiting for the winner's writer
          * (nostrc-vpha B1/N1). */
         nostr_connection_release(conn);
-        return true;
+        if (closing && err) *err = new_error(1, "relay connect cancelled");
+        return !closing;
     }
-    relay_set_state(relay, NOSTR_RELAY_STATE_CONNECTED);
     if (!spawn) {
         free(write_arg);
         free(loop_arg);
@@ -934,16 +958,14 @@ bool nostr_relay_connect(NostrRelay *relay, Error **err) {
     if (shutdown_dbg_enabled()) fprintf(stderr, "[shutdown] relay_connect: starting workers\n");
 
     /* Pre-ref for each worker (they will unref when done) */
-    go_context_ref(ctx);
-    go_context_ref(ctx);
     write_arg->relay = relay;
     write_arg->ctx = ctx;
     loop_arg->relay = relay;
     loop_arg->ctx = ctx;
 
-    go_wait_group_add(&relay->priv->workers, 2);
     go_fiber_compat(write_operations, write_arg);
     go_fiber_compat(message_loop, loop_arg);
+    relay_set_state(relay, NOSTR_RELAY_STATE_CONNECTED);
 
     return true;
 }
@@ -1208,7 +1230,7 @@ static bool relay_attempt_reconnect(NostrRelay *r) {
     relay_retire_connection(r, old_conn);
 
     /* Create new connection */
-    NostrConnection *new_conn = nostr_connection_new(r->url);
+    NostrConnection *new_conn = nostr_connection_new_with_context(r->url, r->priv->connection_context);
     if (!new_conn) {
         relay_set_state(r, NOSTR_RELAY_STATE_DISCONNECTED);
         return false;
@@ -1223,7 +1245,7 @@ static bool relay_attempt_reconnect(NostrRelay *r) {
      * that dialled meanwhile may have installed one already (nostrc-vpha):
      * keep that one, it is as new as ours. */
     nsync_mu_lock(&r->priv->mutex);
-    bool closing = go_context_is_canceled(r->priv->connection_context);
+    bool closing = r->priv->closing || go_context_is_canceled(r->priv->connection_context);
     bool adopted = !closing && r->connection != NULL;
     if (!closing && !adopted) {
         r->connection = new_conn;
@@ -1243,7 +1265,8 @@ static bool relay_attempt_reconnect(NostrRelay *r) {
     /* A dial is not a successful WebSocket upgrade. Keep the installed
      * candidate leased while waiting; close/cancel wakes this wait before
      * retiring its channels. Failed upgrades retain the backoff history. */
-    int outcome = nostr_connection_wait_handshake(candidate, NOSTR_CONNECT_RESULT_TIMEOUT_MS);
+    int outcome = nostr_connection_wait_handshake_with_context(candidate, NOSTR_CONNECT_RESULT_TIMEOUT_MS,
+                                                              r->priv->connection_context);
     struct NostrRelayCallbackSlot *slot = NULL;
     nsync_mu_lock(&r->priv->mutex);
     bool current = r->connection == candidate;
@@ -2180,12 +2203,26 @@ int64_t nostr_relay_count(NostrRelay *relay, GoContext *ctx, NostrFilter *filter
     return -1;
 }
 
+void nostr_relay_request_close(NostrRelay *r) {
+    if (!r || !r->priv) return;
+    nsync_mu_lock(&r->priv->mutex);
+    r->priv->closing = true;
+    if (r->priv->connection_context_cancel && r->priv->connection_context)
+        r->priv->connection_context_cancel(r->priv->connection_context);
+    if (r->priv->write_queue) go_channel_close(r->priv->write_queue);
+    if (r->priv->subscription_channel_close_queue) go_channel_close(r->priv->subscription_channel_close_queue);
+    if (r->priv->reconnect_now) go_channel_close(r->priv->reconnect_now);
+    if (r->connection) nostr_connection_interrupt(r->connection);
+    nsync_mu_unlock(&r->priv->mutex);
+}
+
 bool nostr_relay_close(NostrRelay *r, Error **err) {
     if (!r) {
         if (err) *err = new_error(ERR_RELAY_CLOSE_FAILED, "invalid relay");
         return false;
     }
 
+    nostr_relay_request_close(r);
     // Cancel context to wake workers and stop I/O
     nsync_mu_lock(&r->priv->mutex);
     r->priv->connection_context_cancel(r->priv->connection_context);

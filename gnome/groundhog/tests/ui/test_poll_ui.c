@@ -16,15 +16,8 @@
 
 void groundhog_register_resource(void);
 
-/* The view-only test never sends. These outbox hooks are linked by the
+/* The view-only test never sends. These outbox send hooks are linked by the
  * production poll UI but are deliberately unreachable in this fixture. */
-GObject *gh_account_store_get_outbox(GhAccountStore *store)
-{
-  (void)store;
-  g_assert_not_reached();
-  return NULL;
-}
-
 GType gh_outbox_get_type(void)
 {
   g_assert_not_reached();

@@ -150,6 +150,7 @@ add_custom_command(
           ${GROUNDHOG_DATA}/icons/scalable/actions/dialog-question-symbolic.svg
           ${GROUNDHOG_DATA}/icons/scalable/actions/dialog-warning-symbolic.svg
           ${GROUNDHOG_DATA}/icons/scalable/actions/document-open-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/emblem-default-symbolic.svg
           ${GROUNDHOG_DATA}/icons/scalable/actions/emblem-ok-symbolic.svg
           ${GROUNDHOG_DATA}/icons/scalable/actions/emblem-synchronizing-symbolic.svg
           ${GROUNDHOG_DATA}/icons/scalable/actions/go-bottom-symbolic.svg
@@ -256,6 +257,13 @@ if (BUILD_TESTING)
   set_tests_properties(groundhog-gdk-frame-tolerance PROPERTIES TIMEOUT 10
     ENVIRONMENT "G_DEBUG=fatal-criticals,fatal-warnings")
 
+
+  add_executable(test-groundhog-gtk-lsan tests/ui/test_gtk_lsan.c)
+  target_include_directories(test-groundhog-gtk-lsan PRIVATE ${CMAKE_SOURCE_DIR}/tests/common)
+  target_compile_options(test-groundhog-gtk-lsan PRIVATE -Wall -Wextra -Werror)
+  target_link_libraries(test-groundhog-gtk-lsan PRIVATE PkgConfig::GROUNDHOG_DEPS)
+  add_test(NAME groundhog-gtk-lsan COMMAND test-groundhog-gtk-lsan)
+  set_tests_properties(groundhog-gtk-lsan PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 20)
 
   # Layout/accessibility check for the shell templates: instantiates the
   # compiled GhWindow/GhSidebarPage/GhContentPage from the GResource (no
@@ -3426,6 +3434,7 @@ if (GSTREAMER_FOUND AND TARGET groundhog-media)
       add_executable(test-groundhog-voice-ui tests/ui/test_voice_ui.c
         src/ui/gh-voice-bubble.c ${GROUNDHOG_RESOURCE_C})
       target_include_directories(test-groundhog-voice-ui PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/media
         ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
         ${CMAKE_CURRENT_SOURCE_DIR}/src/media
         ${CMAKE_SOURCE_DIR}/tests/common)

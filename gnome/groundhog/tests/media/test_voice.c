@@ -6,6 +6,7 @@
 #include "gh-voice-recorder.h"
 #include "gh-voice-player.h"
 #include "canary-scan.h"
+#include "voice-test-gst-teardown.h"
 
 #include <glib/gstdio.h>
 #include <gst/gst.h>
@@ -192,7 +193,8 @@ test_player_decodes_waveform(void)
     g_assert_no_error(error);
     guint timeout = g_timeout_add_seconds(5, quit_loop, loop);
     g_main_loop_run(loop);
-    g_source_remove(timeout);
+    if (g_main_context_find_source_by_id(NULL, timeout))
+      g_source_remove(timeout);
     g_autoptr(GhVoiceWaveform) waveform = gh_voice_player_dup_waveform(player);
     g_assert_nonnull(waveform);
     g_assert_cmpuint(gh_voice_waveform_get_n_samples(waveform), >, 0);
@@ -231,9 +233,16 @@ test_player_replay_speed(void)
   g_autoptr(GBytes) audio = voice_fixture("groundhog-opus.ogg");
   g_autoptr(GhVoicePlayer) player = gh_voice_player_new();
   g_autoptr(GError) error = NULL;
+  g_autoptr(GMainLoop) loop = g_main_loop_new(NULL, FALSE);
+  g_signal_connect(player, "waveform-ready", G_CALLBACK(waveform_ready), loop);
   g_assert_true(gh_voice_player_load(player, audio, NULL, &error));
   g_assert_no_error(error);
-  g_autoptr(GMainLoop) loop = g_main_loop_new(NULL, FALSE);
+  guint waveform_timeout = g_timeout_add_seconds(5, quit_loop, loop);
+  g_main_loop_run(loop);
+  if (g_main_context_find_source_by_id(NULL, waveform_timeout))
+    g_source_remove(waveform_timeout);
+  g_autoptr(GhVoiceWaveform) waveform = gh_voice_player_dup_waveform(player);
+  g_assert_nonnull(waveform);
   PlaybackWait wait = { .loop = loop };
   g_signal_connect(player, "state-changed", G_CALLBACK(playback_state), &wait);
   g_signal_connect(player, "playback-error", G_CALLBACK(playback_error), &wait);
@@ -444,5 +453,7 @@ main(int argc, char **argv)
   g_test_add_func("/voice/recorder/crash-recovery", test_recorder_crash_recovery);
   g_test_add_func("/voice/recorder/missing-audio-support", test_recorder_missing_audio_support);
 
-  return g_test_run();
+  int result = g_test_run();
+  voice_test_gst_deinit();
+  return result;
 }

@@ -400,12 +400,12 @@ jobs:
           if-no-files-found: ignore
 
   groundhog-sanitizers:
-    # nostrc-qp24.15.2: the display-free Groundhog tests, the G24 privacy
-    # harness among them, under AddressSanitizer with leak detection and
+    # Groundhog service AND widget tests, including the G24 privacy harness,
+    # under AddressSanitizer with leak detection and
     # UndefinedBehaviorSanitizer; any report fails its test. A leak of a
     # library outside Groundhog that Groundhog cannot free is suppressed in
     # gnome/groundhog/tests/lsan.supp, each entry naming its bead; a leak in
-    # Groundhog code is fixed instead. The widget tests stay in the job above.
+    # Groundhog code is fixed instead. Widget tests run here too (nostrc-4bi6r).
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     if: ${{ !inputs.affected }}
@@ -432,6 +432,15 @@ jobs:
         groundhog-media-cache-binding groundhog-attachments groundhog-mls-media
         groundhog-mls-files groundhog-mls-poll groundhog-voice
         groundhog-icons groundhog-message-reply groundhog-two-instance-acceptance
+        groundhog-shell groundhog-account-ui groundhog-conversation-list
+        groundhog-launch groundhog-bus-probe groundhog-two-instance
+        groundhog-account-store-gui groundhog-conversation-view groundhog-background-gui
+        groundhog-about-gui groundhog-preferences groundhog-onboarding groundhog-notifier-gui
+        groundhog-composer groundhog-e2e-dm groundhog-requests-gui groundhog-conversation-info-gui
+        groundhog-group-ui-gui groundhog-mls-ui-gui groundhog-conversation-menu-gui
+        groundhog-voice-ui groundhog-attachment-ui groundhog-nip46-pair-dialog
+        groundhog-report-ui groundhog-draft-sync-gui groundhog-lists-ui
+        groundhog-social-sync-gui groundhog-emoji groundhog-poll-ui groundhog-gtk-lsan
         nostrc-test-bus-selftest test_relay_teardown_leaks test_connection_recv_drain
     steps:
       - name: Checkout with submodules
@@ -475,6 +484,31 @@ jobs:
           sudo dpkg-deb --extract /tmp/libsecret-dbgsym.ddeb /
           rm /tmp/libsecret-dbgsym.ddeb
 
+      - name: Install matching GUI library debug symbols
+        run: |
+          sudo apt-get install -y --no-install-recommends ubuntu-dbgsym-keyring
+          for suite in noble noble-updates noble-proposed; do
+            echo "deb [signed-by=/usr/share/keyrings/ubuntu-dbgsym-keyring.gpg] http://ddebs.ubuntu.com $suite main universe"
+          done | sudo tee /etc/apt/sources.list.d/groundhog-ddebs.list
+          sudo apt-get update
+          # Match the stock-library image, including its symbolized GTK fallback.
+          gtk_version="$(dpkg-query -W -f='${Version}' libgtk-4-1)"
+          if ! apt-cache madison libgtk-4-1-dbgsym | grep -qF "| $gtk_version |"; then
+            gtk_version="$(apt-cache policy libgtk-4-1-dbgsym | awk '/Candidate:/ {print $2}')"
+            test -n "$gtk_version" && test "$gtk_version" != '(none)'
+            echo "WARNING: Using stock GTK $gtk_version with matching debug symbols"
+            sudo apt-get install -y --no-install-recommends --no-remove --allow-downgrades \
+              "libgtk-4-1=$gtk_version" "libgtk-4-common=$gtk_version" \
+              "libgtk-4-dev=$gtk_version" "libgtk-4-bin=$gtk_version" \
+              "gir1.2-gtk-4.0=$gtk_version" "libgtk-4-media-gstreamer=$gtk_version"
+          fi
+          symbols=()
+          for package in libfontconfig1 libpangoft2-1.0-0 libgtk-4-1 libglib2.0-0t64 libadwaita-1-0; do
+            version="$(dpkg-query -W -f='${Version}' "$package")"
+            symbols+=("$package-dbgsym=$version")
+          done
+          sudo apt-get install -y --no-install-recommends --no-remove "${symbols[@]}"
+
       - name: Save apt package downloads even after failure
         if: always() && steps.apt-cache.outputs.key != '' && steps.apt-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
@@ -490,12 +524,12 @@ jobs:
             -DBUILD_APPS=OFF -DBUILD_RELAYD=OFF -DSIGNET_ENABLE=OFF \
             -DGNOSTR_ENABLE_ASAN=ON -DGNOSTR_ENABLE_UBSAN=ON
 
-      - name: Build the display-free tests
+      - name: Build the service and widget tests
         run: |
           # groundhog itself: groundhog-background and groundhog-store-sqlite run it.
           targets=(groundhog)
           for test in $GROUNDHOG_SANITIZER_TESTS; do
-            case "$test" in groundhog-*) targets+=("test-$test") ;; *) targets+=("$test") ;; esac
+            case "$test" in groundhog-launch) targets+=(groundhog) ;; groundhog-*-gui) targets+=("test-${test%-gui}") ;; groundhog-*) targets+=("test-$test") ;; *) targets+=("$test") ;; esac
           done
           cmake --build build-asan --parallel 2 --target "${targets[@]}"
 
@@ -511,7 +545,8 @@ jobs:
           # verify_asan_link_order=0: ST-4's mutation check (groundhog-store-
           # sqlite) starts a process with plain libsqlite3 preloaded ahead of
           # the ASAN runtime on purpose.
-          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1:verify_asan_link_order=0
+          # Keep the specific libadwaita owner frame in deep GTK snapshot stacks.
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1:verify_asan_link_order=0:malloc_context_size=64
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
           G_SLICE: always-malloc
         run: |
@@ -531,7 +566,8 @@ jobs:
             echo 'The sanitizer test set is incomplete' >&2
             exit 1
           fi
-          ctest --test-dir build-asan --parallel 2 --output-on-failure --no-tests=error \
+          dbus-run-session -- xvfb-run -a -s "-screen 0 1280x800x24" \
+            ctest --test-dir build-asan --parallel 2 --output-on-failure --no-tests=error \
             --output-junit "$PWD/build-asan/groundhog-asan-ctest.xml" \
             -R "$regex" | tee build-asan/groundhog-asan-ctest.log
           if grep -Eq '\*\*\*Skipped|Not Run' build-asan/groundhog-asan-ctest.log; then
@@ -601,6 +637,31 @@ jobs:
             --output /tmp/libsecret-dbgsym.ddeb
           sudo dpkg-deb --extract /tmp/libsecret-dbgsym.ddeb /
           rm /tmp/libsecret-dbgsym.ddeb
+
+      - name: Install matching GUI library debug symbols
+        run: |
+          sudo apt-get install -y --no-install-recommends ubuntu-dbgsym-keyring
+          for suite in noble noble-updates noble-proposed; do
+            echo "deb [signed-by=/usr/share/keyrings/ubuntu-dbgsym-keyring.gpg] http://ddebs.ubuntu.com $suite main universe"
+          done | sudo tee /etc/apt/sources.list.d/groundhog-ddebs.list
+          sudo apt-get update
+          # Match the stock-library image, including its symbolized GTK fallback.
+          gtk_version="$(dpkg-query -W -f='${Version}' libgtk-4-1)"
+          if ! apt-cache madison libgtk-4-1-dbgsym | grep -qF "| $gtk_version |"; then
+            gtk_version="$(apt-cache policy libgtk-4-1-dbgsym | awk '/Candidate:/ {print $2}')"
+            test -n "$gtk_version" && test "$gtk_version" != '(none)'
+            echo "WARNING: Using stock GTK $gtk_version with matching debug symbols"
+            sudo apt-get install -y --no-install-recommends --no-remove --allow-downgrades \
+              "libgtk-4-1=$gtk_version" "libgtk-4-common=$gtk_version" \
+              "libgtk-4-dev=$gtk_version" "libgtk-4-bin=$gtk_version" \
+              "gir1.2-gtk-4.0=$gtk_version" "libgtk-4-media-gstreamer=$gtk_version"
+          fi
+          symbols=()
+          for package in libfontconfig1 libpangoft2-1.0-0 libgtk-4-1 libglib2.0-0t64 libadwaita-1-0; do
+            version="$(dpkg-query -W -f='${Version}' "$package")"
+            symbols+=("$package-dbgsym=$version")
+          done
+          sudo apt-get install -y --no-install-recommends --no-remove "${symbols[@]}"
       - name: Save apt package downloads even after failure
         if: always() && steps.apt-cache.outputs.key != '' && steps.apt-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
@@ -621,12 +682,13 @@ jobs:
         run: python3 scripts/sanitizer-gate-ci.py check-inputs --build-dir build-asan
       - name: Run selected checks under the sanitizers
         env:
-          ASAN_OPTIONS: 'detect_leaks=1:halt_on_error=1:verify_asan_link_order=0'
+          ASAN_OPTIONS: 'detect_leaks=1:halt_on_error=1:verify_asan_link_order=0:malloc_context_size=64'
           UBSAN_OPTIONS: 'print_stacktrace=1:halt_on_error=1'
           G_SLICE: 'always-malloc'
         run: |
           export LSAN_OPTIONS="suppressions=$PWD/gnome/groundhog/tests/lsan.supp:print_suppressions=1"
-          python3 scripts/ci-selected-execution.py run --profile groundhog.linux.sanitizers \
+          dbus-run-session -- xvfb-run -a -s "-screen 0 1280x800x24" \
+            python3 scripts/ci-selected-execution.py run --profile groundhog.linux.sanitizers \
             --build build-asan --plan "$RUNNER_TEMP/ci-selection/plan.json"
       - name: Upload selected sanitizer evidence including failures
         if: always()

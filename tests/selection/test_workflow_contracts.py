@@ -612,6 +612,8 @@ class WorkflowWiringTests(unittest.TestCase):
         sanitizer = p['profiles']['groundhog.linux.sanitizers']
         self.assertEqual(sanitizer['phase_environments']['configure'], {})
         self.assertEqual(sanitizer['phase_environments']['build'], {})
+        self.assertNotIn('ASAN_OPTIONS', sanitizer['phase_environments']['configure'])
+        self.assertNotIn('ASAN_OPTIONS', sanitizer['phase_environments']['build'])
         self.assertIn('LSAN_OPTIONS', sanitizer['phase_environments']['test'])
         self.assertIn('sanitizer_compatibility', sanitizer)
 

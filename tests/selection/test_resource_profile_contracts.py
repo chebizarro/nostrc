@@ -87,7 +87,9 @@ class ResourceProfileContracts(unittest.TestCase):
             self.assertIn('nostr-gtk-resource-build', variant['all_registration_names'])
             self.assertNotIn('gnostr-resource-build', variant['all_registration_names'])
             self.assertNotIn('nostr-gtk-resource-build', variant['primary_names'])
-        self.assertEqual(set(self.policy['diagnostic_nonmembers']), {'groundhog.linux.sanitizers'})
+        # The pre-GUI exemption was withdrawn, not transferred to Grotto.
+        self.assertEqual(self.policy['diagnostic_nonmembers'], {})
+        self.assertEqual(s.diagnostic_nonmember_contracts(self.policy), {})
 
 
 if __name__ == '__main__':

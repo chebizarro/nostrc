@@ -52,7 +52,8 @@ class SanitizerSharedTests(unittest.TestCase):
         observed = json.loads(self.invoke().stdout)
         self.assertEqual(observed,ADAPTER.job_config(self.workflow.read_text(),'/source with spaces'))
         self.assertEqual(set(observed),{'GH_SAN_TESTS','GH_SAN_TARGETS','GH_SAN_CONFIGURE',
-            'GH_SAN_CONFIGURE_ENV','GH_SAN_BUILD_ENV','GH_SAN_ENV','GH_SAN_SKIP_PATTERN','GH_SAN_TEST_JOBS'})
+            'GH_SAN_CONFIGURE_ENV','GH_SAN_BUILD_ENV','GH_SAN_ENV','GH_SAN_SKIP_PATTERN','GH_SAN_TEST_JOBS',
+            'GH_SAN_DISPLAY_WRAP'})
 
     def test_each_phase_and_selection_drift_is_rejected(self):
         original = copy.deepcopy(self.policy)

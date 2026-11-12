@@ -168,6 +168,7 @@ static void conn_wsi_gone(NostrConnection *conn, struct lws *wsi) {
         /* nostrc-oz77: refused / failed before ESTABLISHED. */
         priv->handshake = -1;
         nsync_cv_broadcast(&priv->handshake_cv);
+        go_channel_close(priv->handshake_done);
     }
     /* Reset reassembly state to prevent stale partial data from
      * being prepended to the first message on reconnect. */
@@ -364,6 +365,7 @@ queue_message:;
             priv->established = 1;  /* Mark handshake complete */
             priv->handshake = 1;
             nsync_cv_broadcast(&priv->handshake_cv);
+        go_channel_close(priv->handshake_done);
             uint64_t now_us = (uint64_t)lws_now_usecs();
             priv->last_rx_ns = now_us;
             priv->rx_window_start_ns = now_us;
@@ -659,6 +661,18 @@ static const lws_retry_bo_t g_retry_bo = {
 static struct lws_context *g_lws_context = NULL;
 static pthread_t g_lws_service_thread;
 static int g_lws_running = 0;
+static int g_lws_stopping = 0;
+static pthread_once_t g_runtime_once = PTHREAD_ONCE_INIT;
+
+static void connection_runtime_init_once(void) {
+    /* Register crypto cleanup BEFORE network cleanup (atexit is LIFO). */
+    OPENSSL_init_ssl(0, NULL);
+    if (atexit(nostr_connection_shutdown) != 0) abort();
+}
+
+void nostr_connection_runtime_init(void) {
+    pthread_once(&g_runtime_once, connection_runtime_init_once);
+}
 static pthread_mutex_t g_lws_mutex = PTHREAD_MUTEX_INITIALIZER;
 static NostrConnectionPrivate *g_close_requests = NULL; /* guarded by g_lws_mutex */
 
@@ -708,6 +722,7 @@ static void priv_graveyard_reap(void) {
         if (node->death_ns <= cutoff) {
             *pp = node->next;
             free(node->priv->rx_reassembly_buf);
+            go_channel_free(node->priv->handshake_done);
             free(node->priv);
             free(node);
         } else {
@@ -1110,6 +1125,12 @@ static void parse_ws_url(const char *url, int *use_ssl, char *host, size_t host_
 }
 
 NostrConnection *nostr_connection_new(const char *url) {
+    return nostr_connection_new_with_context(url, NULL);
+}
+
+NostrConnection *nostr_connection_new_with_context(const char *url, GoContext *cancel) {
+    nostr_connection_runtime_init();
+    if (cancel && go_context_is_canceled(cancel)) return NULL;
     // Ensure global initialization runs (pulls in init.o and enables metrics auto-init)
     nostr_global_init();
 
@@ -1136,6 +1157,7 @@ NostrConnection *nostr_connection_new(const char *url) {
     atomic_store_explicit(&conn->priv->closing, 0, memory_order_relaxed);
     nsync_mu_init(&conn->priv->mutex);
     nsync_cv_init(&conn->priv->handshake_cv);
+    priv->handshake_done = go_channel_create(1);
 
     // Check for test mode: bypass real network and event loop
     const char *test_env = getenv("NOSTR_TEST_MODE");
@@ -1191,6 +1213,10 @@ NostrConnection *nostr_connection_new(const char *url) {
     context_info.pt_serv_buf_size = 32 * 1024;
 
     pthread_mutex_lock(&g_lws_mutex);
+    if (g_lws_stopping) {
+        pthread_mutex_unlock(&g_lws_mutex);
+        goto fail;
+    }
     if (!g_lws_context) {
         g_lws_context = lws_create_context(&context_info);
         if (!g_lws_context) {
@@ -1199,6 +1225,7 @@ NostrConnection *nostr_connection_new(const char *url) {
             go_channel_free(conn->recv_channel);
             go_channel_close(conn->send_channel);
             go_channel_free(conn->send_channel);
+            go_channel_free(priv->handshake_done);
             free(priv);
             free(conn);
             return NULL;
@@ -1215,6 +1242,7 @@ NostrConnection *nostr_connection_new(const char *url) {
             go_channel_free(conn->recv_channel);
             go_channel_close(conn->send_channel);
             go_channel_free(conn->send_channel);
+            go_channel_free(priv->handshake_done);
             free(priv);
             free(conn);
             return NULL;
@@ -1241,14 +1269,13 @@ NostrConnection *nostr_connection_new(const char *url) {
     if (!req->result) { connection_request_unref(req); goto fail; }
 
     connection_request_ref(req);     /* queued/service ownership */
-    GoSelectCase enqueue_case = {
-        .op = GO_SELECT_SEND,
-        .chan = g_conn_request_queue,
-        .value = req,
+    GoSelectCase enqueue_cases[2] = {
+        { .op = GO_SELECT_SEND, .chan = g_conn_request_queue, .value = req },
+        { .op = GO_SELECT_RECEIVE, .chan = cancel ? go_context_done(cancel) : NULL }
     };
-    GoSelectResult enqueue_sel = go_select_timeout(&enqueue_case, 1,
+    GoSelectResult enqueue_sel = go_select_timeout(enqueue_cases, cancel ? 2 : 1,
                                                    NOSTR_CONNECT_RESULT_TIMEOUT_MS);
-    if (enqueue_sel.selected_case < 0 || !enqueue_sel.ok) {
+    if (enqueue_sel.selected_case != 0 || !enqueue_sel.ok) {
         /* Queue full/stalled or closed (shutting down). */
         connection_request_cancel(req);
         connection_request_unref(req); /* queued/service ownership was not transferred */
@@ -1266,14 +1293,13 @@ NostrConnection *nostr_connection_new(const char *url) {
      * request cancelled; the queued/service reference keeps req/result alive
      * until the service loop either drains or skips it. */
     void *result_val = NULL;
-    GoSelectCase result_case = {
-        .op = GO_SELECT_RECEIVE,
-        .chan = req->result,
-        .recv_buf = &result_val,
+    GoSelectCase result_cases[2] = {
+        { .op = GO_SELECT_RECEIVE, .chan = req->result, .recv_buf = &result_val },
+        { .op = GO_SELECT_RECEIVE, .chan = cancel ? go_context_done(cancel) : NULL }
     };
-    GoSelectResult result_sel = go_select_timeout(&result_case, 1,
+    GoSelectResult result_sel = go_select_timeout(result_cases, cancel ? 2 : 1,
                                                   NOSTR_CONNECT_RESULT_TIMEOUT_MS);
-    if (result_sel.selected_case < 0 || !result_sel.ok) {
+    if (result_sel.selected_case != 0 || !result_sel.ok) {
         connection_request_cancel(req);
         if (connection_request_started(req)) {
             /* The service thread may already be inside lws_client_connect_via_info()
@@ -1298,9 +1324,75 @@ fail:
     /* The shared context stays up (see g_lws_context). */
     if (conn->recv_channel) { go_channel_close(conn->recv_channel); nostr_connection_recv_channel_free(conn->recv_channel); }
     if (conn->send_channel) { go_channel_close(conn->send_channel); go_channel_free(conn->send_channel); }
+    go_channel_free(priv->handshake_done);
     free(priv);
     free(conn);
     return NULL;
+}
+
+/* Terminal, never an ordinary last-socket close: some LWS plugin builds are
+ * unsafe to destroy/recreate mid-process. Call after relay owners have drained.
+ * No network thread may still run when OpenSSL performs global cleanup. */
+void nostr_connection_shutdown(void) {
+    pthread_mutex_lock(&g_lws_mutex);
+    if (g_lws_stopping) {
+        pthread_mutex_unlock(&g_lws_mutex);
+        return;
+    }
+    g_lws_stopping = 1;
+    int join = g_lws_running;
+    g_lws_running = 0;
+    if (g_lws_context) lws_cancel_service(g_lws_context);
+    pthread_mutex_unlock(&g_lws_mutex);
+    if (join) pthread_join(g_lws_service_thread, NULL);
+
+    /* With the service thread joined, its queue and WSIs are exclusively ours. */
+    ConnectionRequest *req = NULL;
+    while (g_conn_request_queue &&
+           go_channel_try_receive(g_conn_request_queue, (void **)&req) == 0) {
+        connection_request_cancel(req);
+        go_channel_send(req->result, NULL);
+        connection_request_unref(req);
+    }
+    while (g_close_requests) {
+        NostrConnectionPrivate *priv = g_close_requests;
+        g_close_requests = priv->close_next;
+        NostrConnection *conn = priv->close_conn;
+        if (priv->wsi) lws_set_opaque_user_data(priv->wsi, NULL);
+        priv->wsi = NULL;
+        conn->priv = NULL;
+        priv_close_and_unref(priv);
+        deferred_cleanup_add(conn, NULL);
+    }
+    if (g_lws_context) lws_context_destroy(g_lws_context);
+    g_lws_context = NULL;
+    if (g_conn_request_queue) {
+        go_channel_close(g_conn_request_queue);
+        go_channel_free(g_conn_request_queue);
+        g_conn_request_queue = NULL;
+    }
+    /* All callbacks/owners have drained: no grace period is needed now. */
+    while (g_deferred_cleanup_head) {
+        DeferredConn *node = g_deferred_cleanup_head;
+        g_deferred_cleanup_head = node->next;
+        if (node->priv) {
+            free(node->priv->rx_reassembly_buf);
+            go_channel_free(node->priv->handshake_done);
+            free(node->priv);
+        }
+        free(node->conn);
+        free(node);
+    }
+    pthread_mutex_lock(&g_priv_graveyard_mu);
+    while (g_priv_graveyard_head) {
+        DeferredPriv *node = g_priv_graveyard_head;
+        g_priv_graveyard_head = node->next;
+        free(node->priv->rx_reassembly_buf);
+        go_channel_free(node->priv->handshake_done);
+        free(node->priv);
+        free(node);
+    }
+    pthread_mutex_unlock(&g_priv_graveyard_mu);
 }
 
 // Coroutine for processing incoming WebSocket messages
@@ -1342,6 +1434,11 @@ void *websocket_send_coroutine(void *arg) {
  * outcome of the WebSocket handshake. Returns 1 established, -1 failed
  * (refused, TLS, upgrade, or the connection was closed), 0 timed out. */
 int nostr_connection_wait_handshake(NostrConnection *conn, uint32_t timeout_ms) {
+    return nostr_connection_wait_handshake_with_context(conn, timeout_ms, NULL);
+}
+
+int nostr_connection_wait_handshake_with_context(NostrConnection *conn,
+                                                uint32_t timeout_ms, GoContext *cancel) {
     if (!conn) return -1;
     NostrConnectionPrivate *priv = priv_try_ref(conn->priv);
     if (!priv) return -1;   /* already closing */
@@ -1349,21 +1446,35 @@ int nostr_connection_wait_handshake(NostrConnection *conn, uint32_t timeout_ms) 
         priv_unref(priv);
         return 1;
     }
-    nsync_time deadline = nsync_time_add(nsync_time_now(), nsync_time_ms(timeout_ms));
+    GoSelectCase cases[2] = {
+        { .op = GO_SELECT_RECEIVE, .chan = priv->handshake_done },
+        { .op = GO_SELECT_RECEIVE, .chan = cancel ? go_context_done(cancel) : NULL }
+    };
+    GoSelectResult selected = go_select_timeout(cases, cancel ? 2 : 1, timeout_ms);
     nsync_mu_lock(&priv->mutex);
-    while (priv->handshake == 0) {
-        if (nsync_cv_wait_with_deadline(&priv->handshake_cv, &priv->mutex,
-                                        deadline, NULL) != 0)
-            break;  /* timed out */
-    }
-    int outcome = priv->handshake;
+    int outcome = selected.selected_case == 1 ? -1 : priv->handshake;
     nsync_mu_unlock(&priv->mutex);
     priv_unref(priv);
     return outcome;
 }
 
+void nostr_connection_interrupt(NostrConnection *conn) {
+    if (!conn) return;
+    NostrConnectionPrivate *priv = conn->priv;
+    if (priv) {
+        nsync_mu_lock(&priv->mutex);
+        if (priv->handshake == 0) priv->handshake = -1;
+        go_channel_close(priv->handshake_done);
+        nsync_cv_broadcast(&priv->handshake_cv);
+        nsync_mu_unlock(&priv->mutex);
+    }
+    if (conn->recv_channel) go_channel_close(conn->recv_channel);
+    if (conn->send_channel) go_channel_close(conn->send_channel);
+}
+
 void nostr_connection_close(NostrConnection *conn) {
     if (!conn) return;
+    nostr_connection_interrupt(conn);
     NostrConnectionPrivate *priv = conn->priv;
     if (priv && atomic_exchange_explicit(&priv->closing, 1, memory_order_acq_rel)) return;
     /* Wake nostr_connection_wait_handshake(): this connection will not

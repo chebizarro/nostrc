@@ -84,6 +84,7 @@ set(NOSTR_GOBJECT_SOURCES
   src/nostr_event_bus.c
   src/nostr_keys.c
   src/nostr_relay.c
+  src/nostr_relay_worker.c
   src/nostr_subscription.c
   src/nostr_simple_pool.c
   src/nostr_pool.c
@@ -649,6 +650,14 @@ if(BUILD_TESTING)
     gn_add_gtest(test_nostr_gobject_nip19
       SOURCES tests/test_nip19.c
       LIBS nostr_gobject
+    )
+  endif()
+
+  if(ENABLE_NIP11)
+    gn_add_gtest(test_nostr_gobject_worker_shutdown
+      SOURCES tests/test_relay_worker_shutdown.c
+      LIBS nostr_gobject
+      TIMEOUT 30
     )
   endif()
 

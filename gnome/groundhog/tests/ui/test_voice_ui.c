@@ -11,6 +11,7 @@
 #include "gh-voice-bubble.h"
 #include "gh-voice-meta.h"
 #include "gh-voice-waveform.h"
+#include "voice-test-gst-teardown.h"
 
 #include "nostrc-test-gdk-frame.h"
 
@@ -416,5 +417,7 @@ main(int argc, char **argv)
   g_test_add_func("/voice-ui/composer/recording-signals", test_composer_recording_signals);
   g_test_add_func("/voice-ui/meta/quick", test_voice_meta_quick);
 
-  return g_test_run();
+  int result = g_test_run();
+  voice_test_gst_deinit();
+  return result;
 }
