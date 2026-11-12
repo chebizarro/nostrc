@@ -22422,7 +22422,11 @@
       "requires": [
         "display",
         "private_bus"
-      ]
+      ],
+      "build_only_nodes": [
+        "groundhog.identity_auth"
+      ],
+      "build_dependency_reason": "Links identity/auth implementations through groundhog-calls, but test_call_ui.c creates GhCallService with a NULL account controller and injects signed events. Identity API changes remain runtime inputs through the conversation/account-relay owners; concrete signer behavior is covered by groundhog.calls."
     },
     "groundhog.call_preferences": {
       "build_targets": [

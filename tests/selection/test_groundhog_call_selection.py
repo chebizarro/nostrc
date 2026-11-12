@@ -74,6 +74,11 @@ class GroundhogCallSelection(unittest.TestCase):
         probe = s.classify(self.policy, "docs/investigations/gst-libav-avpacket-leak-2026-11-11-repro.c")
         self.assertEqual(probe["effect"], "global")
         self.assertFalse(probe["unclassified"])
+        signer = s.make_plan(self.policy, [change("nips/nip55l/src/glib/signer_service_g.c")],
+                             head="a" * 40)
+        self.assertIn("groundhog.calls", signer["selected_checks"])
+        self.assertNotIn("groundhog.call_ui", signer["selected_checks"])
+        self.assertNotIn("groundhog.call_media", signer["selected_checks"])
 
     def test_inherited_required_runtime_is_bound_without_flattening_sanitizers(self):
         dockerfile = (ROOT / "scripts/linux-ci.Dockerfile").read_text()
