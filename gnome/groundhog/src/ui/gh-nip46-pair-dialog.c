@@ -260,7 +260,7 @@ on_ready(GhNip46Session *session, gpointer data)
 {
   GhNip46PairDialog *self = data;
   if (self->closing || self->session != session || self->state != PAIR_WAITING ||
-      !self->uri) return;
+      !self->uri || !gh_nip46_session_is_ready(session)) return;
   g_autoptr(GdkTexture) texture = gh_qr_code_texture_new(self->uri);
   if (!texture) {
     stop_attempt(self);
@@ -576,7 +576,8 @@ start_pair(GhNip46PairDialog *self, GhNip46Session *session, gchar **relays,
     gtk_editable_set_text(GTK_EDITABLE(self->uri_row), "");
     gtk_widget_set_sensitive(GTK_WIDGET(self->copy_button), FALSE);
     gtk_label_set_text(self->qr_status, _("Connecting to pairing relays…"));
-    g_signal_connect(session, "listening", G_CALLBACK(on_ready), self);
+    /* A send fallback is not proof that the relay installed our reply REQ.
+     * Expose the single-use URI only after EOSE for this session. */
     g_signal_connect(session, "ready", G_CALLBACK(on_ready), self);
     g_signal_connect(session, "offline", G_CALLBACK(on_offline), self);
   } else {
@@ -585,7 +586,7 @@ start_pair(GhNip46PairDialog *self, GhNip46Session *session, gchar **relays,
   g_signal_connect(session, "pair-progress", G_CALLBACK(on_pair_progress), self);
   gh_nip46_session_set_auth_url_handler(session, on_auth_url, self);
   gh_nip46_session_pair_async(session, self->attempt_cancel, pair_finished, g_object_ref(self));
-  if (uri && gh_nip46_session_is_listening(session)) on_ready(session, self);
+  if (uri && gh_nip46_session_is_ready(session)) on_ready(session, self);
 }
 
 static void

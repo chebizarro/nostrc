@@ -41,6 +41,12 @@ fetch belongs to the unreleased libnostr/NIP wave; it has no independent declare
 release. No version or release/tag columns change; gnostr and Grotto callers are
 unchanged. No public ABI or wire-format removal.
 
+Pairing readiness (`nostrc-otxhq`, `nostrc-bpx13`): PATCH-class corrections fold
+into unreleased libnostr 2.4.0 (preserve service-loop wakeups for queued dials)
+and Groundhog 0.13.0 (expose pairing QR/URI only after relay EOSE). No ABI or
+wire-format changes; nip46 0.2.0 and nostr-gobject 3.1.0 are unchanged. Test-only
+regressions need no separate bump. No release/tag columns change.
+
 | Component | Path | Declared version | Latest release | Release tag | Authoritative version source(s) |
 | --- | --- | --- | --- | --- | --- |
 | libnostr | `libnostr/` | 2.4.0 | Unreleased | — | `libnostr/CMakeLists.txt` |
