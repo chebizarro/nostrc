@@ -1038,12 +1038,18 @@ static void *lws_service_loop(void *arg) {
          *
          * Fix: process one request, then call lws_service() to keep
          * existing connections alive.  Pending requests are processed
-         * in subsequent iterations (~50ms apart). */
+         * in subsequent event-loop iterations. */
         if (queue) {
             ConnectionRequest *req = NULL;
             if (go_channel_try_receive(queue, (void **)&req) == 0 && req) {
                 service_loop_process_connect_request(req, ctx);
                 connection_request_unref(req); /* drop queued/service ownership */
+                /* Enqueue wakeups can coalesce. In particular, a cancelled
+                 * request creates no socket activity to wake the next dial.
+                 * lws_service() ignores its timeout argument: preserve one
+                 * wakeup after consuming work so the queue cannot strand its
+                 * remaining entries. The empty-queue iteration does not rearm. */
+                lws_cancel_service(ctx);
             }
         }
 

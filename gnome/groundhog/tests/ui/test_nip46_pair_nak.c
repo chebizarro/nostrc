@@ -479,8 +479,13 @@ pair_and_save(GhAccountController *accounts, GSettings *settings, WireRelay *rel
     status = GTK_LABEL(child(dialog, "qr_status"));
     gtk_editable_set_text(GTK_EDITABLE(child(dialog, "relay_row")), relay->url);
     g_signal_emit_by_name(child(dialog, "regenerate_button"), "clicked");
+    /* Cancel a queued local dial too: regenerated attempts must not strand
+     * the current one behind cancelled requests in the shared service loop. */
+    g_signal_emit_by_name(child(dialog, "regenerate_button"), "clicked");
+    g_assert_false(gh_nip46_pair_dialog_qr_is_visible(dialog));
     GtkEditable *uri_row = GTK_EDITABLE(child(dialog, "uri_row"));
-    WAIT_UNTIL(g_str_has_prefix(gtk_editable_get_text(uri_row), "nostrconnect://"), 10);
+    WAIT_UNTIL(gh_nip46_pair_dialog_qr_is_visible(dialog), 10);
+    g_assert_true(g_str_has_prefix(gtk_editable_get_text(uri_row), "nostrconnect://"));
     g_autofree gchar *uri = g_strdup(gtk_editable_get_text(uri_row));
     if (connect) {
       const gchar *connect_args[] = { nak, "bunker", "connect", uri, NULL };
