@@ -139,6 +139,17 @@ imports.update('''adw_combo_row_set_factory adw_combo_row_set_list_factory
  gtk_string_object_get_string gtk_string_object_get_type
  gtk_list_item_set_accessible_label gtk_list_item_set_accessible_description'''.split())
 
+# Explicit empty identity selection: UI model inspection and selection policy
+# only, with no new I/O or signing authority (nostrc-vthyc).
+imports.update('''adw_combo_row_get_model gtk_list_view_get_model gtk_list_view_get_type
+ gtk_no_selection_get_model gtk_no_selection_get_type
+ gtk_selection_filter_model_get_model gtk_selection_filter_model_get_type
+ gtk_single_selection_get_model gtk_single_selection_get_type
+ gtk_single_selection_set_autoselect gtk_single_selection_set_can_unselect'''.split())
+
+# Newer GLib headers use sized deallocation for typed object cleanup.
+imports.add('g_free_sized')
+
 # W3 Identity widget/template/model/clipboard and translation imports only.
 # Still no bus, network, filesystem, generic dispatch or secret-store imports.
 imports.update('''__cxa_atexit adw_action_row_add_prefix adw_action_row_add_suffix adw_action_row_set_subtitle_lines

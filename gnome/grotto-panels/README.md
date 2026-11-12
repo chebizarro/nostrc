@@ -179,6 +179,12 @@ generic-object carriers; only the final immutable metadata item type is allowed.
 The compiler-schema test checks **all** fields/types (including typedef aliases),
 and the closed compiled import/export surface forbids D-Bus/network/dynamic-I/O
 code in the library regardless of source layout or split string literals.
+When a legitimate UI change adds compiled imports, review each symbol and add
+only its exact name to the documented groups in `tests/test-boundaries.py`.
+Widget/model accessors, selection-policy setters and ordinary memory cleanup
+are presentation-only; do not admit a toolkit-wide prefix or generic dispatch,
+IPC, secret-store or signing entrypoints. Keep the compiled RPC and credential
+counterfactuals passing after an allow-list update.
 These are API admission/regression boundaries, not a sandbox for malicious
 native code or a universal detector of arbitrary tokens disguised as normal
 public text. RPC result bodies and remote error text never enter a panel.
