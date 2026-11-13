@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(grotto VERSION 0.1.1 LANGUAGES C)
+project(grotto VERSION 0.1.2 LANGUAGES C)
 
 # The pre-release label shown by About, --version and the daemon; empty for final.
 # Keep meson.build, data/org.nostr.Grotto.metainfo.xml, flake.nix (Grotto),

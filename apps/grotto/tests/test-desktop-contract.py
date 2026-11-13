@@ -8,6 +8,7 @@ This omission is not a claim of native macOS GUI acceptance.
 """
 import configparser
 import pathlib
+import re
 import subprocess
 import shutil
 import sys
@@ -59,9 +60,18 @@ for unproven in ('hardware wallet', 'pkcs#11', 'multisig', 'social recovery', 'd
 assert metadata.findtext("screenshots/screenshot[@type='default']/image").endswith('/identity-light.png')
 assert not list((app / 'data/screenshots').glob('home-*.png'))
 for screenshot in metadata.findall('screenshots/screenshot/image'):
-    prefix = 'https://raw.githubusercontent.com/chebizarro/nostrc/master/apps/grotto/data/screenshots/'
+    prefix = 'https://raw.githubusercontent.com/chebizarro/nostrc/'
     assert screenshot.text.startswith(prefix), screenshot.text
-    local = app / 'data/screenshots' / screenshot.text.removeprefix(prefix)
+    revision, path = screenshot.text.removeprefix(prefix).split('/', 1)
+    assert re.fullmatch(r'[0-9a-f]{40}', revision), revision
+    assert path.startswith('apps/grotto/data/screenshots/'), path
+    assert '..' not in pathlib.PurePosixPath(path).parts, path
+    # Resolve the immutable URL against real Git objects, not just a plausible
+    # SHA/path spelling. CI checks out full history for this contract.
+    subprocess.run(['git', '-C', str(root), 'cat-file', '-e', f'{revision}^{{commit}}'], check=True)
+    pinned = subprocess.check_output(['git', '-C', str(root), 'show', f'{revision}:{path}'])
+    assert pinned.startswith(b'\x89PNG\r\n\x1a\n'), screenshot.text
+    local = root / path
     assert local.is_file() and local.read_bytes().startswith(b'\x89PNG\r\n\x1a\n'), local
 assert {node.text for node in metadata.findall('provides/mediatype')} == {
     'x-scheme-handler/bunker', 'x-scheme-handler/nostrconnect', 'x-scheme-handler/grotto'}

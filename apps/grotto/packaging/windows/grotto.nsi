@@ -35,7 +35,7 @@
 ; -----------------------------------------------------------------------------
 
 !ifndef VERSION
-  !define VERSION "0.1.1-alpha1"
+  !define VERSION "0.1.2-alpha1"
 !endif
 
 !ifndef ARCH

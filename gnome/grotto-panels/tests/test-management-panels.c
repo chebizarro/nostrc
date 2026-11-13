@@ -424,6 +424,15 @@ static void identity_picker(void) {
   const char *keys[] = {key, other_key, NULL};
   g_autoptr(GtkStringList) model = gtk_string_list_new(keys);
   adw_combo_row_set_model(ADW_COMBO_ROW(picker), G_LIST_MODEL(model));
+  /* Callers must be able to require an explicit choice, including index zero. */
+  adw_combo_row_set_selected(ADW_COMBO_ROW(picker), GTK_INVALID_LIST_POSITION);
+  g_assert_cmpuint(adw_combo_row_get_selected(ADW_COMBO_ROW(picker)), ==, GTK_INVALID_LIST_POSITION);
+  g_assert_null(adw_combo_row_get_selected_item(ADW_COMBO_ROW(picker)));
+  adw_combo_row_set_selected(ADW_COMBO_ROW(picker), 1);
+  g_assert_cmpuint(adw_combo_row_get_selected(ADW_COMBO_ROW(picker)), ==, 1);
+  adw_combo_row_set_selected(ADW_COMBO_ROW(picker), GTK_INVALID_LIST_POSITION);
+  g_assert_cmpuint(adw_combo_row_get_selected(ADW_COMBO_ROW(picker)), ==, GTK_INVALID_LIST_POSITION);
+  adw_combo_row_set_selected(ADW_COMBO_ROW(picker), 0);
   GtkWidget *group = adw_preferences_group_new();
   adw_preferences_group_add(ADW_PREFERENCES_GROUP(group), picker);
   AdwWindow *window = ADW_WINDOW(adw_window_new()); g_object_ref_sink(window);

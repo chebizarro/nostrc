@@ -32,7 +32,7 @@ struct _GnostrApprovalDialog {
   GnostrApprovalCallback callback;
   gpointer user_data;
   gchar *identity, *client_pubkey, *profile_details;
-  gboolean finished, confirming, ready;
+  gboolean finished, confirming, ready, initial_focus;
   guint position, count;
 };
 G_DEFINE_FINAL_TYPE(GnostrApprovalDialog, gnostr_approval_dialog, ADW_TYPE_DIALOG)
@@ -448,10 +448,21 @@ static void finalize(GObject *object) {
   g_clear_object(&self->actions);
   G_OBJECT_CLASS(gnostr_approval_dialog_parent_class)->finalize(object);
 }
+static gboolean grab_focus(GtkWidget *widget) {
+  GnostrApprovalDialog *self = GNOSTR_APPROVAL_DIALOG(widget);
+  /* Presentation can clear the focus saved before rooting. Apply the safe
+   * initial target when AdwDialog actually focuses its mapped contents. */
+  if (self->initial_focus && gtk_widget_get_mapped(widget)) {
+    self->initial_focus = FALSE;
+    if (gtk_widget_grab_focus(GTK_WIDGET(self->btn_deny))) return TRUE;
+  }
+  return GTK_WIDGET_CLASS(gnostr_approval_dialog_parent_class)->grab_focus(widget);
+}
 static void gnostr_approval_dialog_class_init(GnostrApprovalDialogClass *klass) {
   G_OBJECT_CLASS(klass)->finalize = finalize;
   ADW_DIALOG_CLASS(klass)->closed = closed;
   GtkWidgetClass *w = GTK_WIDGET_CLASS(klass);
+  w->grab_focus = grab_focus;
   gtk_widget_class_set_template_from_resource(w, "/org/gnostr/signer/ui/approval-dialog.ui");
 #define BIND(name) gtk_widget_class_bind_template_child(w, GnostrApprovalDialog, name)
   BIND(app_avatar); BIND(header_title); BIND(label_verified);
@@ -497,6 +508,7 @@ static void gnostr_approval_dialog_init(GnostrApprovalDialog *self) {
     gtk_label_set_justify(label, GTK_JUSTIFY_CENTER);
   }
   self->ready = TRUE;
+  self->initial_focus = TRUE;
   self->actions = g_simple_action_group_new();
   self->block_operation = g_simple_action_new("block-operation", NULL);
   self->block_app = g_simple_action_new("block-app", NULL);

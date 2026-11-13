@@ -511,6 +511,7 @@ static void live_navigation(GrottoApprovalController *controller, GApplication *
       AdwDialog *dialog = review_dialog(app);
       g_assert_nonnull(dialog);
       wait_frames(GTK_WIDGET(dialog));
+      g_assert_true(adw_dialog_get_focus(dialog) == dialog_child(dialog, "btn_deny"));
       g_assert_cmpstr(adw_preferences_row_get_title(ADW_PREFERENCES_ROW(dialog_child(dialog, "stepper"))), ==,
                       "2 of 2");
       g_assert_false(gtk_widget_get_sensitive(dialog_child(dialog, "btn_next")));
@@ -553,6 +554,7 @@ static void live_navigation(GrottoApprovalController *controller, GApplication *
   g_assert_cmpuint(results[1].done + results[2].done, ==, 0);
   g_action_group_activate_action(G_ACTION_GROUP(app), "review-request", g_variant_new_string(ids[1]));
   dialog = review_dialog(app); g_assert_nonnull(dialog); wait_frames(GTK_WIDGET(dialog));
+  g_assert_true(adw_dialog_get_focus(dialog) == dialog_child(dialog, "btn_deny"));
   choose_permission(dialog, "Always allow");
   g_signal_emit_by_name(dialog_child(dialog, "btn_next"), "clicked");
   dialog = review_dialog(app); g_assert_nonnull(dialog); wait_frames(GTK_WIDGET(dialog));
@@ -590,12 +592,52 @@ static gboolean has_label(GtkWidget *widget, const char *text) {
     if (has_label(child, text)) return TRUE;
   return FALSE;
 }
+static GtkWidget *current_toast(GtkWindow *win) {
+  GtkWidget *overlay = GTK_WIDGET(
+      gtk_widget_get_template_child(GTK_WIDGET(win), TYPE_SIGNER_WINDOW, "toast_overlay"));
+  for (GtkWidget *child = gtk_widget_get_first_child(overlay); child;
+       child = gtk_widget_get_next_sibling(child))
+    if (g_str_equal(gtk_widget_get_css_name(child), "toast")) return child;
+  return NULL;
+}
+static GtkWidget *toast_dismiss_button(GtkWidget *toast) {
+  for (GtkWidget *child = gtk_widget_get_first_child(toast); child;
+       child = gtk_widget_get_next_sibling(child))
+    if (GTK_IS_BUTTON(child) &&
+        g_strcmp0(gtk_button_get_icon_name(GTK_BUTTON(child)), "window-close-symbolic") == 0) return child;
+  return NULL;
+}
+static void dismiss_toasts(GtkWindow *win) {
+  GtkWidget *toast;
+  while ((toast = current_toast(win))) {
+    g_autoptr(GtkWidget) previous = g_object_ref(toast);
+    GtkWidget *dismiss = toast_dismiss_button(toast);
+    g_assert_nonnull(dismiss);
+    g_signal_emit_by_name(dismiss, "clicked");
+    WAIT(gtk_widget_get_parent(previous) == NULL);
+  }
+}
 static gboolean stale_notice(GtkWindow *win) {
-  return has_label(GTK_WIDGET(win), "That request is no longer waiting.");
+  GtkWidget *toast = current_toast(win);
+  return toast && gtk_widget_get_mapped(toast) &&
+      has_label(toast, "That request is no longer waiting.");
 }
 
 static void stale_app_actions(GrottoApprovalController *controller, GApplication *app,
                               GDBusConnection *bus) {
+  /* Closing a review can restore focus to an earlier toast's Dismiss button.
+   * That intentionally pauses its expiry and queues subsequent notices. Exercise
+   * this state explicitly, then consume feedback as a user would, not by time. */
+  GtkWindow *win = management(app);
+  g_assert_nonnull(win);
+  signer_window_toast(SIGNER_WINDOW(win), "Earlier approval feedback");
+  WAIT(current_toast(win) && gtk_widget_get_mapped(current_toast(win)));
+  GtkWidget *dismiss = toast_dismiss_button(current_toast(win));
+  g_assert_nonnull(dismiss);
+  g_assert_true(gtk_widget_grab_focus(dismiss));
+  g_assert_true(gtk_window_get_focus(win) == dismiss);
+  dismiss_toasts(win);
+
   guint availability = 0;
   g_signal_connect(controller, "availability-changed", G_CALLBACK(availability_changed),
                    &availability);
@@ -624,6 +666,7 @@ static void stale_app_actions(GrottoApprovalController *controller, GApplication
       GtkWindow *win = management(app);
       g_assert_nonnull(win);
       signer_window_show_page(SIGNER_WINDOW(win), "settings");
+      dismiss_toasts(win);
       g_action_group_activate_action(G_ACTION_GROUP(app), deny ? "deny-request" : "review-request",
                                      g_variant_new_string("exact-stale-id"));
       WAIT(stale_notice(win));
@@ -632,6 +675,8 @@ static void stale_app_actions(GrottoApprovalController *controller, GApplication
       g_assert_cmpstr(gtk_stack_get_visible_child_name(stack), ==, "apps");
       g_assert_true(gtk_widget_get_visible(GTK_WIDGET(win)));
       g_assert_null(review_dialog(app));
+      /* Each action must produce its own notice, not match a previous label. */
+      dismiss_toasts(win);
       while (adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(win))) {
         AdwDialog *alert = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(win));
         wait_frames(GTK_WIDGET(alert));

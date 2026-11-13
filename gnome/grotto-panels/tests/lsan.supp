@@ -9,3 +9,9 @@ leak:match_in_thread
 leak:pango_fc_font_map_load_fontset
 # Parsed fontconfig patterns attached to the process default configuration.
 leak:FcParsePattern
+# nostrc-ccg7l: libadwaita 1.5.0 retains old_node on breakpoint-bin disposal.
+# Keep enough allocation frames (ASAN_OPTIONS=malloc_context_size=100) to
+# attribute the nested snapshot to this owner, never to generic GSK nodes.
+leak:adw_breakpoint_bin_snapshot
+# nostrc-ccg7l: Pango 1.57/fontconfig 2.17 family enumeration patterns.
+leak:ensure_families

@@ -5,7 +5,7 @@
 # This provides meson build support alongside the existing CMake configuration.
 
 project('grotto', 'c',
-  version: '0.1.1-alpha1',
+  version: '0.1.2-alpha1',
   default_options: [
     'c_std=gnu11',
     'warning_level=2',

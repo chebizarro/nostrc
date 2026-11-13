@@ -66,6 +66,12 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="0.1.2-alpha1" type="development" date="2026-11-12">
+      <description>
+        <p>Refresh the signing kind catalogue from the shared kind registry.</p>
+        <p>Serialize shared transport-key startup across signer service instances.</p>
+      </description>
+    </release>
     <release version="0.1.1-alpha1" type="development" date="2026-11-08">
       <description>
         <p>First pre-release of Grotto, a Nostr signer for the desktop.</p>

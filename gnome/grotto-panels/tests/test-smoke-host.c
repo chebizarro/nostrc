@@ -53,6 +53,8 @@ static void mounted(void) {
     g_object_ref_sink(window);
     gtk_window_set_default_size(GTK_WINDOW(window), narrow ? 360 : 920, 640);
     AdwNavigationSplitView *split = ADW_NAVIGATION_SPLIT_VIEW(adw_navigation_split_view_new());
+    gpointer weak_split = split;
+    g_object_add_weak_pointer(G_OBJECT(split), &weak_split);
     adw_navigation_split_view_set_sidebar(split, adw_navigation_page_new(gtk_label_new("Panels"), "Host"));
     SmokePanel *panel = g_object_new(smoke_panel_get_type(), "service", fake, NULL);
     gpointer weak = panel;
@@ -114,9 +116,14 @@ static void mounted(void) {
     grotto_panel_set_service(GROTTO_PANEL(panel), NULL);
     g_assert_true(g_cancellable_is_cancelled(old_cancel));
     g_assert_null(gtk_list_box_get_row_at_index(panel->list, 0));
+    /* libadwaita 1.5 queues changing_page_done_cb with an unowned split view.
+     * Finish that idle while the host is alive, not in the next test after
+     * destruction (nostrc-vas1b). No sleeps or deferred panel destruction. */
+    while (g_main_context_pending(NULL)) g_main_context_iteration(NULL, FALSE);
     gtk_window_destroy(GTK_WINDOW(window));
     g_object_unref(window);
     g_assert_null(weak);
+    g_assert_null(weak_split);
     g_assert_cmpuint(releases, ==, 1);
     /* Detached/destroyed views receive no late callback; service survives. */
     grotto_panels_fake_service_set_can(fake, GROTTO_PANEL_SET_CLIENT_LABEL, TRUE);

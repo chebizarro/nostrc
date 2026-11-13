@@ -66,10 +66,14 @@ static void offer_free(gpointer data) {
   g_strfreev(o->relays); g_free(o);
 }
 static void deliver_offers(BunkerService *s);
+/* Transport custody and its marker are shared across service instances,
+ * including obsolete workers still finishing after stop/free and restart. */
+static GMutex transport_mutex;
+
 struct _BunkerService {
   gint refs;
   GMainContext *context;
-  GMutex ack_mutex, transport_mutex;
+  GMutex ack_mutex;
   gboolean allow_transport_creation;
   gint transport_jobs;
   GPtrArray *ack_sources, *pairing_waiters;
@@ -118,7 +122,7 @@ static void service_unref(BunkerService *s) {
   g_strfreev(s->relays); g_strfreev(s->configured_relays); g_strfreev(s->allowed_methods); g_strfreev(s->allowed_pubkeys);
   g_hash_table_unref(s->connections); g_hash_table_unref(s->rpcs); g_hash_table_unref(s->relay_states);
   g_hash_table_unref(s->offers); g_key_file_unref(s->seen); g_main_context_unref(s->context);
-  g_ptr_array_unref(s->ack_sources); g_ptr_array_unref(s->pairing_waiters); g_mutex_clear(&s->ack_mutex); g_mutex_clear(&s->transport_mutex); g_free(s);
+  g_ptr_array_unref(s->ack_sources); g_ptr_array_unref(s->pairing_waiters); g_mutex_clear(&s->ack_mutex); g_free(s);
 }
 static gboolean contains(gchar **values, const gchar *value) {
   return values && g_strv_contains((const gchar *const *)values, value);
@@ -574,7 +578,7 @@ static void relay_state(GNostrNip46Bunker *bunker, const gchar *relay, const gch
 }
 BunkerService *bunker_service_new(void) {
   BunkerService *s = g_new0(BunkerService, 1); s->refs = 1;
-  s->context = g_main_context_ref_thread_default(); g_mutex_init(&s->ack_mutex); g_mutex_init(&s->transport_mutex);
+  s->context = g_main_context_ref_thread_default(); g_mutex_init(&s->ack_mutex);
   s->ack_sources = g_ptr_array_new_with_free_func((GDestroyNotify)g_source_unref);
   s->pairing_waiters = g_ptr_array_new_with_free_func(pairing_waiter_free);
   s->offers = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, offer_free);
@@ -618,7 +622,7 @@ static void load_transport(GTask *task, gpointer source, gpointer data, GCancell
    * replace an established endpoint, or overwrite an unavailable keyring. */
   BunkerService *s = job->service;
   g_autofree gchar *marker = g_build_filename(g_get_user_config_dir(), "grotto", "bunker-transport-pubkey", NULL);
-  g_mutex_lock(&s->transport_mutex);
+  g_mutex_lock(&transport_mutex);
   job->result = nostr_nip55l_bunker_transport_load(job->key.ptr);
   if (job->result == NOSTR_SIGNER_ERROR_NOT_FOUND && job->initialize &&
       !nostrc_profile_guard_refuses_path(marker) && !g_file_test(marker, G_FILE_TEST_EXISTS)) {
@@ -637,7 +641,7 @@ static void load_transport(GTask *task, gpointer source, gpointer data, GCancell
       job->result = NOSTR_SIGNER_ERROR_BACKEND;
     free(pubkey);
   }
-  g_mutex_unlock(&s->transport_mutex);
+  g_mutex_unlock(&transport_mutex);
   g_atomic_int_add(&s->transport_jobs, -1);
   g_task_return_boolean(task, TRUE);
 }

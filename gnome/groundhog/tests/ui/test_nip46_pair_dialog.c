@@ -77,6 +77,13 @@ drain(void)
     g_main_context_iteration(NULL, FALSE);
 }
 
+static gboolean
+readiness_window_elapsed(gpointer data)
+{
+  *(gboolean *)data = TRUE;
+  return G_SOURCE_REMOVE;
+}
+
 static void
 test_qr_readiness_and_cancel(void)
 {
@@ -91,11 +98,34 @@ test_qr_readiness_and_cancel(void)
   adw_dialog_present(ADW_DIALOG(dialog), window);
   drain();
   g_assert_cmpuint(recorder.handles->len, ==, 4);
+  /* Deliberately withhold EOSE beyond the session's 2500 ms send fallback.
+   * This is a negative observation window, not simulated relay readiness. */
+  gboolean elapsed = FALSE;
+  g_timeout_add(2600, readiness_window_elapsed, &elapsed);
+  while (!elapsed) g_main_context_iteration(NULL, TRUE);
   g_assert_false(gh_nip46_pair_dialog_qr_is_visible(dialog));
+  GtkWidget *uri_row = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(dialog),
+    GH_TYPE_NIP46_PAIR_DIALOG, "uri_row"));
+  GtkWidget *copy = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(dialog),
+    GH_TYPE_NIP46_PAIR_DIALOG, "copy_button"));
+  g_assert_cmpstr(gtk_editable_get_text(GTK_EDITABLE(uri_row)), ==, "");
+  g_assert_false(gtk_widget_get_sensitive(copy));
   ScopeHandle *first = g_ptr_array_index(recorder.handles, 0);
   gh_relay_scope_eose(first->scope, first->url);
   drain();
   g_assert_true(gh_nip46_pair_dialog_qr_is_visible(dialog));
+  g_assert_true(gtk_widget_get_sensitive(copy));
+
+  gh_relay_scope_notice(first->scope, first->url, GH_RELAY_NOTICE_DISCONNECTED,
+                        NULL, FALSE, "fixture disconnect");
+  drain();
+  g_assert_false(gh_nip46_pair_dialog_qr_is_visible(dialog));
+  g_assert_cmpstr(gtk_editable_get_text(GTK_EDITABLE(uri_row)), ==, "");
+  g_assert_false(gtk_widget_get_sensitive(copy));
+  gh_relay_scope_eose(first->scope, first->url);
+  drain();
+  g_assert_true(gh_nip46_pair_dialog_qr_is_visible(dialog));
+  g_assert_true(gtk_widget_get_sensitive(copy));
 
   GtkStack *stack = GTK_STACK(gtk_widget_get_template_child(GTK_WIDGET(dialog),
     GH_TYPE_NIP46_PAIR_DIALOG, "mode_stack"));
