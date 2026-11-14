@@ -123,3 +123,23 @@ is modified. The internal `--mutate` entrypoint is only for this private copy.
 Legacy rekey models, broader malformed corpora, future state-machine fixtures,
 C/Rust UDP interop, Linux/hosted validation and protocol implementations remain
 separately owned; see exporter gaps and `UPSTREAM.md`.
+
+
+## Tier A3 locked proto sweep
+
+`ctest --test-dir <build> -L fips-diff --output-on-failure` selects **every**
+`FipsDiff*` test (including self-test negatives) and `FipsProtoSweep`.
+`ctest --test-dir <build> -R '^FipsProtoSweep$' -V` runs only the proto exit gate.
+The latter invokes the real `fips_diff proto`, requires exactly one summary
+`proto: 20 checked, 8 skipped, 0 failed`, counts all eight SKIP lines, and requires
+each to name owner `nostrc-f12v2.4` or `nostrc-f12v2.6`. Successful process exit
+alone is not sufficient. Other families retain their own explicit skips.
+
+When Tier A4 lands a report/path-MTU codec (`nostrc-f12v2.4`) or a path
+probe/ack/close codec (`nostrc-f12v2.6`), first add its real differential checker,
+property adapter and vector-seeded harness coverage. Then run `fips_diff proto`
+and update **both** expected summary and SKIP count in `proto_sweep.cmake` in the
+same change. Each existing row moves one from skipped to checked; do not delete
+rows, relabel an unimplemented case as checked, or broaden the owner allowlist.
+Remove the SKIP allowance altogether when all eight have landed. Update the
+property test's expected vector-replay count and coverage table as applicable.

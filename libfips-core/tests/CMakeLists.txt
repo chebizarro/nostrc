@@ -358,3 +358,17 @@ add_test(NAME FipsCoreSessionTest COMMAND fips_core_session_test)
 set_tests_properties(FipsCoreSessionTest PROPERTIES TIMEOUT 30 LABELS "fips;unit")
 nostrc_describe_test(FipsCoreSessionTest OWNER libfips-core TARGETS fips_core_session_test)
 add_dependencies(fips_core_host_test fips_core_session_test)
+# Tier A3 proto properties and locked differential sweep (nostrc-82g9n.9).
+add_executable(fips_core_proto_properties_test test_proto_properties.c fakes/host.c)
+get_target_property(fips_properties_diff_definitions fips_diff COMPILE_DEFINITIONS)
+target_compile_definitions(fips_core_proto_properties_test PRIVATE ${fips_properties_diff_definitions})
+target_link_libraries(fips_core_proto_properties_test PRIVATE fips_core PkgConfig::FIPS_LINK_JANSSON)
+set_target_properties(fips_core_proto_properties_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+apply_warnings(fips_core_proto_properties_test)
+apply_sanitizers(fips_core_proto_properties_test)
+add_test(NAME FipsCoreProtoPropertiesTest COMMAND fips_core_proto_properties_test)
+set_tests_properties(FipsCoreProtoPropertiesTest PROPERTIES TIMEOUT 60 LABELS "fips;unit;proto")
+nostrc_describe_test(FipsCoreProtoPropertiesTest OWNER libfips-core TARGETS fips_core_proto_properties_test
+  INPUTS ${fsp_vector_inputs})
+add_dependencies(fips_core_host_test fips_core_proto_properties_test)

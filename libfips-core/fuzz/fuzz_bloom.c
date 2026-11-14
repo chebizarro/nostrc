@@ -21,7 +21,9 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
         CHECK(r.pos == 0 && !memcmp(&a, &before, sizeof(a)));
         CHECK(e.variant == FIPS_PROTO_MessageTooShort || e.variant == FIPS_PROTO_BadSizeClass || e.variant == FIPS_PROTO_BadBloom);
     }
-    uint8_t k = size ? data[0] : 0;
+    /* Hash count is out-of-band, not the first raw filter byte. In
+     * particular the differential filter begins with zero. */
+    uint8_t k = size && data[0] ? data[0] : FIPS_BLOOM_DEFAULT_HASH_COUNT;
     fips_bloom_filter f, original, g;
     memset(&original, 0xa5, sizeof(original)); f = original;
     fips_reader_init(&r, data, size);

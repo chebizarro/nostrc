@@ -7,6 +7,11 @@ static fips_tree_coordinate coords;
 static uint8_t encoded[FIPS_ROUTING_MAX_WIRE_SIZE];
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 {
+    if (size) {
+        fips_routing_signal_type type;
+        if (fips_routing_signal_type_from_byte(data[0], &type) &&
+            fips_routing_signal_type_to_byte(type) != data[0]) abort();
+    }
     for (unsigned kind = 0; kind < 3; ++kind) {
         fips_reader r; fips_reader_init(&r,data,size);
         fips_writer w; fips_writer_init(&w,encoded,sizeof(encoded));
