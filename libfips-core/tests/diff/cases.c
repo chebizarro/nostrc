@@ -181,10 +181,15 @@ static result check_codec(diff_context *ctx, const codec_case *c)
         diff_value *v = c->cursor;
         diff_bytes input = BYTES(v, "input_hex"), rest = BYTES(v, "rest_hex");
         fips_reader_init(&r, input.data, input.len);
-        if (fips_reader_advance(&r, (size_t)UINT(v, "advance"), &error) != FIPS_OK ||
-            fips_reader_position(&r) != UINT(v, "position") ||
-            fips_reader_remaining(&r) != UINT(v, "remaining") ||
-            !compare(ctx, rest, fips_reader_rest(&r), fips_reader_remaining(&r)) ||
+        if (fips_reader_advance(&r, (size_t)UINT(v, "advance"), &error) != FIPS_OK) {
+            diff_error(ctx, "cursor advance failed"); return FAILED;
+        }
+        /* Read the cursor state once; the checker forbids &r in nested argument lists. */
+        const uint8_t *rest_ptr = fips_reader_rest(&r);
+        size_t rest_len = fips_reader_remaining(&r);
+        if (fips_reader_position(&r) != UINT(v, "position") ||
+            rest_len != UINT(v, "remaining") ||
+            !compare(ctx, rest, rest_ptr, rest_len) ||
             strcmp(TEXT(v, "require_3"), "Ok") ||
             fips_reader_require(&r, 3, &error) != FIPS_OK ||
             fips_reader_require(&r, 4, &error) != FIPS_ERR_RANGE ||
@@ -197,9 +202,15 @@ static result check_codec(diff_context *ctx, const codec_case *c)
         if (!encoded) { diff_error(ctx, "allocation failed"); return FAILED; }
         fips_writer w;
         fips_writer_init(&w, encoded, input.len);
-        bool ok = fips_writer_write_bytes(&w, input.data, fips_reader_position(&r), &error) == FIPS_OK &&
-            fips_writer_write_bytes(&w, fips_reader_rest(&r), fips_reader_remaining(&r), &error) == FIPS_OK &&
-            compare(ctx, input, encoded, fips_writer_len(&w));
+        size_t consumed = fips_reader_position(&r);
+        rest_ptr = fips_reader_rest(&r);
+        rest_len = fips_reader_remaining(&r);
+        bool ok = fips_writer_write_bytes(&w, input.data, consumed, &error) == FIPS_OK &&
+            fips_writer_write_bytes(&w, rest_ptr, rest_len, &error) == FIPS_OK;
+        if (ok) {
+            size_t written = fips_writer_len(&w);
+            ok = compare(ctx, input, encoded, written);
+        }
         free(encoded);
         return ok ? CHECKED : FAILED;
     }
