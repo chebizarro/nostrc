@@ -115,3 +115,7 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
   set_source_files_properties(src/proto/bloom/core.c src/proto/bloom/log.c PROPERTIES
     COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off")
 endif()
+
+# FSP end-to-end session wire/core/quorum (nostrc-82g9n.8); no rekey/Noise engine.
+target_sources(fips_core PRIVATE
+  src/proto/fsp/wire.c src/proto/fsp/core.c src/proto/fsp/quorum.c)

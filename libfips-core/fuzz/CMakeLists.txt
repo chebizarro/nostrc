@@ -86,3 +86,12 @@ apply_warnings(fips_fuzz_bloom)
 apply_sanitizers(fips_fuzz_bloom)
 target_compile_options(fips_fuzz_bloom PRIVATE -fsanitize=fuzzer)
 target_link_options(fips_fuzz_bloom PRIVATE -fsanitize=fuzzer)
+
+# FSP lenient/strict session ingress, port headers and bounded quorum.
+add_executable(fips_fuzz_fsp fuzz_fsp.c)
+target_link_libraries(fips_fuzz_fsp PRIVATE fips_core)
+set_target_properties(fips_fuzz_fsp PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+apply_warnings(fips_fuzz_fsp)
+apply_sanitizers(fips_fuzz_fsp)
+target_compile_options(fips_fuzz_fsp PRIVATE -fsanitize=fuzzer)
+target_link_options(fips_fuzz_fsp PRIVATE -fsanitize=fuzzer)
