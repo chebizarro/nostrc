@@ -13,6 +13,8 @@ that linked undocumented symbols, and requires rebuilding those consumers.
 No release tag is published by this change; all other components have no
 B1-owned shipped artifact change and no B1 bump.
 
+nostrc-pwo3h.2: no bump for libfips-core; additive Noise ECDH API folds into initial 0.1.0 Unreleased; no published release/tag change.
+
 nostrc-u50yr.2: no bump for libfips-core; additive identity, NIP-19 and authentication APIs fold into initial 0.1.0 Unreleased; no published release/tag change.
 
 nostrc-u50yr.1: no bump for libfips-core; first additive public proto Error and Reader/Writer APIs fold into initial pre-release 0.1.0 Unreleased; no published release/tag change.

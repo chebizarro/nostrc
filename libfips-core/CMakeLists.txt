@@ -85,3 +85,6 @@ option(FIPS_ENABLE_BENCH "Build libfips-core micro-benchmarks (not run by ctest)
 if(FIPS_ENABLE_BENCH)
   add_subdirectory(bench)
 endif()
+
+# Noise DH: SHA-256 of shared x, using the identity context.
+target_sources(fips_core PRIVATE src/noise/ecdh.c)

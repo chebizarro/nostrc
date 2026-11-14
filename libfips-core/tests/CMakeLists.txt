@@ -110,3 +110,19 @@ set_tests_properties(FipsCoreCoordCacheTest PROPERTIES TIMEOUT 120 LABELS "fips;
 nostrc_describe_test(FipsCoreCoordCacheTest OWNER libfips-core TARGETS fips_core_coord_cache_test)
 # Keep the explicit FIPS CI build closure complete (see the host-test note above).
 add_dependencies(fips_core_host_test fips_core_coord_cache_test)
+
+# Compile the same ECDH source with hooks in this executable only. The library
+# remains uninstrumented; its separate ECDH object is not needed by this target.
+add_executable(fips_core_ecdh_test test_ecdh.c fakes/host.c ../src/noise/ecdh.c)
+target_link_libraries(fips_core_ecdh_test PRIVATE fips_core
+  PkgConfig::FIPS_CORE_SODIUM PkgConfig::FIPS_CORE_SECP256K1)
+target_compile_definitions(fips_core_ecdh_test PRIVATE FIPS_TEST_HOOKS FIPS_CORE_STATIC_DEFINE)
+set_target_properties(fips_core_ecdh_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+apply_warnings(fips_core_ecdh_test)
+apply_sanitizers(fips_core_ecdh_test)
+add_test(NAME FipsCoreEcdhTest COMMAND fips_core_ecdh_test)
+set_tests_properties(FipsCoreEcdhTest PROPERTIES TIMEOUT 10 LABELS "fips;unit")
+nostrc_describe_test(FipsCoreEcdhTest OWNER libfips-core TARGETS fips_core_ecdh_test
+  INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/ecdh_vectors.py")
+add_dependencies(fips_core_host_test fips_core_ecdh_test)
