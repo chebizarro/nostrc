@@ -4,9 +4,16 @@
 #include <stdlib.h>
 
 #include "FIPSD-version.h"
+#include "host_os.h"
 
 int main(void)
 {
+    /* Link host adapters without reading time/entropy or changing skeleton output. */
+    fips_clock clock = fipsd_host_os_clock();
+    fips_entropy entropy = fipsd_host_os_entropy();
+    (void)clock;
+    (void)entropy;
+
     if (gof_start_background(0) != 0) {
         fputs("fipsd: cannot start fiber runtime\n", stderr);
         return EXIT_FAILURE;

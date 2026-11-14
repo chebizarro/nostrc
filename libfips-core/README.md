@@ -35,8 +35,9 @@ not a working protocol implementation or a Rust FFI wrapper.
 
 - `include/fips/core.h`: public version function; generated export and version
   headers are installed alongside it.
-- `src/core.c`: version implementation only; no protocol code yet.
-- `tests/`: a CTest placeholder checking the linked library's version.
+- `include/fips/host.h`, `src/host.c`: host interfaces and time arithmetic;
+  no protocol code yet.
+- `tests/`: linked version, host-interface and byte-compatible fake tests.
 - `libfips-core.pc.in`: installed pkg-config contract, including private crypto
   requirements for static consumers.
 
@@ -49,5 +50,38 @@ flags use its shared `GO_ENABLE_*` helpers.
 
 Future protocol tests must drive real state machines with fixed entropy and
 synthetic time, checking returned actions and upstream differential vectors.
-Host-interface vtables and protocol modules are intentionally left to later
-tasks. Upstream provenance will be maintained separately in `UPSTREAM.md`.
+Protocol modules are intentionally left to later tasks. Upstream provenance
+is maintained separately in `UPSTREAM.md`.
+
+## Host interfaces and ownership
+
+`fips/host.h` mirrors the pinned Rust `EntropySource`, `Instant` and `Clock`
+traits. The host reads `fips_clock.now(ctx)` and passes copyable `fips_instant`
+values into core calls; the core never reads a clock or RNG itself. An instant
+holds two opaque words and an immutable arithmetic vtable (comparison,
+saturating difference, checked add/subtract). Only instants from one clock
+domain may be compared or combined. Duration is normalized seconds plus
+nanoseconds, retaining Rust's full `u64`-second range. `fips_deadline` caps at
+100 years, then halves an overflowing step until it fits; `fips_backoff`
+saturates its doubling factor at `UINT32_MAX`, its product at `Duration::MAX`,
+then caps the result. Neither helper reads the clock.
+
+This establishes the convention for later core APIs: caller-provided buffers
+with explicit capacities and lengths, borrowed caller-owned contexts, and
+status-code returns with out-parameters unchanged on failure. Copying a vtable
+does not transfer ownership. Retained contexts/vtables must outlive their core
+users, and callers provide synchronization. Future allocating constructors must
+provide matching explicit destroy functions; allocations must never cross
+allocator boundaries. These host interfaces allocate nothing and need no destroy.
+Required pointers, normalized durations and compatible clock domains are caller
+preconditions. Entropy fill and clock reads are infallible trait operations;
+a host unable to fulfill them must fail at its boundary, never invent a value.
+
+`fipsd/src/host_os.c` supplies `CLOCK_MONOTONIC` (including modern macOS) and
+libsodium `randombytes_buf`. Construction performs no I/O; actual entropy use
+initializes libsodium and actual clock/RNG failures terminate at the host edge.
+The skeleton main links the adapters without reading them. Test-only adapters
+in `tests/fakes/` use whole milliseconds starting at zero (advance explicitly),
+fixed bytes, and seeded SplitMix64. Seeded fills emit little-endian words and
+discard the final partial word's unused bytes on each call, just like Rust.
+They are predictable and must never be used as production entropy.
