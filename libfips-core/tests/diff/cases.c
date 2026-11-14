@@ -19,6 +19,8 @@
 #include "proto_stp.h"
 #include "proto_bloom.h"
 #include "proto_fmp.h"
+#include "proto_lookup.h"
+#include "proto_fsp.h"
 typedef struct counts { size_t checked, failed, skipped; } counts;
 static void report(diff_context *ctx, counts *n, result r, const char *owner);
 
@@ -590,15 +592,15 @@ static const proto_checker proto_checkers[] = {
     {"coords-empty", "nostrc-82g9n.1", check_coords_empty},
     {"bloom", "nostrc-82g9n.3", check_proto_bloom}, {"filter-announce", "nostrc-82g9n.3", check_proto_filter_announce},
     {"parent-declaration", "nostrc-82g9n.2", check_proto_parent_declaration}, {"tree-announce", "nostrc-82g9n.2", check_proto_tree_announce},
-    {"lookup-request", "nostrc-82g9n.5", NULL}, {"lookup-response", "nostrc-82g9n.5", NULL},
+    {"lookup-request", "nostrc-82g9n.5", check_proto_lookup_request}, {"lookup-response", "nostrc-82g9n.5", check_proto_lookup_response},
     {"sender-report", "nostrc-f12v2.4", NULL}, {"session-sender-report", "nostrc-f12v2.4", NULL},
     {"receiver-report", "nostrc-f12v2.4", NULL}, {"session-receiver-report", "nostrc-f12v2.4", NULL},
     {"path-mtu", "nostrc-f12v2.4", NULL},
     {"path-probe", "nostrc-f12v2.6", NULL}, {"path-ack", "nostrc-f12v2.6", NULL}, {"path-close", "nostrc-f12v2.6", NULL},
     {"disconnect", "nostrc-82g9n.7", check_proto_disconnect}, {"fmp-msg-1", "nostrc-82g9n.7", check_proto_fmp_msg_1},
     {"fmp-msg-2", "nostrc-82g9n.7", check_proto_fmp_msg_2}, {"fmp-encrypted", "nostrc-82g9n.7", check_proto_fmp_encrypted},
-    {"fsp-setup", "nostrc-82g9n.8", NULL}, {"fsp-ack", "nostrc-82g9n.8", NULL},
-    {"fsp-msg3", "nostrc-82g9n.8", NULL}, {"fsp-encrypted", "nostrc-82g9n.8", NULL},
+    {"fsp-setup", "nostrc-82g9n.8", check_proto_fsp_setup}, {"fsp-ack", "nostrc-82g9n.8", check_proto_fsp_ack},
+    {"fsp-msg3", "nostrc-82g9n.8", check_proto_fsp_msg3}, {"fsp-encrypted", "nostrc-82g9n.8", check_proto_fsp_encrypted},
     {"session-datagram", "nostrc-82g9n.6", check_proto_session_datagram},
     {"constants", "nostrc-82g9n.6", check_constants_case}, {"link_catalog", "nostrc-82g9n.6", check_link_catalog_case},
     {"session_catalog", "nostrc-82g9n.6", check_session_catalog_case}
