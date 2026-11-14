@@ -321,3 +321,18 @@ unmodified coordinate vector byte strings.
 
 Version decision: additive APIs fold into initial libfips-core **0.1.0
 Unreleased**; no published version/tag change.
+
+
+### Bloom port boundary (nostrc-82g9n.3)
+
+`core/src/proto/bloom/{core,wire,state,limits}.rs` maps to
+`src/proto/bloom/{core,wire,state}.c` and `include/fips/proto/bloom/`.
+The bounded bloom delivery instance in `src/proto/bloom/delivery.c` follows
+the `proto::mmp::delivery::Acks` dependency of upstream `state.rs`; it is not
+an MMP codec or runtime. C coalesces pending retries before spending another
+credit, and returns caller-buffer actions/refusal evidence instead of IO.
+The estimate's private C fdlibm logarithm is translated from Rust libm
+0.2.16 `src/math/log.rs` (FreeBSD/Sun e_log.c, notice retained), the version
+in upstream Cargo.lock; crate checksum
+`b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981`.
+The IEEE evaluation order and pinned reference bits are described in README.

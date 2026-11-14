@@ -58,3 +58,5 @@ target_sources(fips_diff PRIVATE proto_link.c)
 target_sources(fips_diff PRIVATE proto_fmp.c)
 # Orchestrator owns cases.c dispatch after merge (nostrc-82g9n.2).
 target_sources(fips_diff PRIVATE proto_stp.c)
+# Bloom and FilterAnnounce replay (nostrc-82g9n.3); coordinator wires cases.c.
+target_sources(fips_diff PRIVATE proto_bloom.c)

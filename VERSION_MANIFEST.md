@@ -107,6 +107,11 @@ other components and all version/release/tag values are unchanged.
 
 ### FIPS component skeletons (nostrc-s50dj.1)
 
+- **nostrc-82g9n.3: libfips-core stays 0.1.0, Unreleased.** Additive
+  bounded bloom reachability filters, deterministic estimate, announcement
+  codecs and sans-IO action/refusal state fold into the initial unreleased
+  API; no published version, release tag or other component changes.
+
 - **nostrc-u50yr.3: libfips-core stays 0.1.0, Unreleased.** Additive sans-IO
   utils and deterministic math APIs fold into the initial unreleased version;
   no published version, release tag or other component changes.

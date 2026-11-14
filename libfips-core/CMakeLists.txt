@@ -107,3 +107,11 @@ target_sources(fips_core PRIVATE
 # Noise SymmetricState (nostrc-pwo3h.3): ck/h chaining, HKDF over libsodium HMAC,
 # handshake-phase encrypt/decrypt-and-hash over the AEAD, split.
 target_sources(fips_core PRIVATE src/noise/symmetric.c)
+# Bloom reachability, announcement wire codecs and bounded sans-IO state (nostrc-82g9n.3).
+target_sources(fips_core PRIVATE
+  src/proto/bloom/core.c src/proto/bloom/wire.c
+  src/proto/bloom/state.c src/proto/bloom/delivery.c src/proto/bloom/log.c)
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+  set_source_files_properties(src/proto/bloom/core.c src/proto/bloom/log.c PROPERTIES
+    COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off")
+endif()

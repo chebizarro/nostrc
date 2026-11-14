@@ -419,3 +419,121 @@ handshake tasks own the remaining steps.
 
 Version decision (nostrc-pwo3h.3): additive APIs fold into **0.1.0
 Unreleased**; no published version/tag change.
+
+## Bloom reachability (nostrc-82g9n.3)
+
+`fips/proto/bloom/{core,wire,state,mod}.h` ports the pinned bloom module:
+8,192 bits (1,024 bytes), five hashes, v1 size class 1. The two base hashes
+are SHA-256 digest bytes 0..8 and 8..16 interpreted as little-endian u64s;
+index i is `(size_t)(h1 + i*h2)` (wrapping u64) modulo the bit count, with
+LSB-first packed bits. SHA-256 uses libsodium's fixed-storage hash primitive,
+without RNG, initialization or allocator calls. Custom byte-aligned filters
+up to 4,096 bytes cover all four upstream wire classes. Raw filter wire form
+has no header; its hash count is out of band. FilterAnnounce encode includes
+0x20, decode starts after it. Decode requires exactly the v1 body length,
+but permits nonzero k != 5 just as upstream does; receive policy refuses it.
+
+### Deterministic arithmetic and the log decision
+
+FPR is `fips_powi(fill, k)`, **not pow**. The estimate follows upstream's exact
+`-(m/k) * log(1 - X/m)` evaluation order. **The C log we rely on is the private
+fdlibm kernel in `src/proto/bloom/log.c`, translated from Rust libm 0.2.16
+`src/math/log.rs`**, not the platform C library's `log`. Upstream Cargo's
+`libm` default features (`arch`) remain the reference. The bounded,
+unsaturated filter guarantees a positive normal logarithm argument <= 1,
+so the kernel needs no negative/subnormal/infinite-input branches. IEEE
+binary64, nearest/ties-even, gradual underflow and no FMA/fast-math are
+required, as for `fips_powi`. The Sun permission notice is retained.
+
+This distinction matters: on the tested macOS arm64 host, platform
+`math.log` and Rust libm estimates differed for 4,592 of 73,792 unsaturated
+populations. The C kernel matched Rust libm on all 73,792. Parameter pairs
+`(bits,k)` were `(64,3)`, `(1024,5)`, `(1024,7)`, `(2048,7)`, `(4096,5)`,
+`(8192,1)`, `(8192,4)`, `(8192,5)`, `(8192,6)`, `(8192,7)`,
+`(8192,255)`, `(16384,7)`, covering upstream core/wire custom tests.
+`tests/tools/bloom_vectors.py` runs with `python3 -I`, computes the independent
+estimate with `math.log` and the identical formula, and generates
+`tests/bloom_pins.h`. The header separately pins the protocol's exact Rust
+libm bits (including populations where platform log differs). The Rust
+reference generator is `tests/tools/bloom_log_oracle.rs`; use a scratch
+Cargo project with `libm = "=0.2.16"` and default features. The Python
+`math.log` column is an approximate cross-check, not a bit-exact oracle;
+its last bits can vary across hosts. Four address-index vectors are pinned
+independently with Python hashlib SHA-256.
+
+For 8192 bits/k=5, the estimate pins include:
+
+| Set bits | FPR binary64 bits | Estimated count binary64 bits |
+|---:|---|---|
+| 0 | `0000000000000000` | `8000000000000000` (negative zero) |
+| 4480 | `3fa90b5c98000000` | `409443bf08844f4d` |
+| 4512 | `3fa9f3a229ba0000` | `40947c7cda265110` |
+| 5936 | `3fc991e79a548c00` | `40a081a54e128031` |
+| 5944 | `3fc9be22352580e0` | `40a08d4946820702` |
+
+Saturation always refuses an estimate, even with an infinite cap. Otherwise
+only FPR **above** the supplied cap refuses, leaving the result unchanged.
+
+### State, ownership and actions
+
+State borrows caller-owned peer slots, leaf slots and an action list. Sizes
+are local policy, not peer-controlled allocation requests. Capacity failures
+preserve state; no live-peer eviction is hidden. A peer slot uses roughly
+21 KiB because it holds an inbound filter and four distinct sent filters of
+up to 4 KiB each. Allocate large tables/actions off small event-loop stacks.
+Aggregation uses about 64 KiB of bounded stack scratch on 64-bit hosts.
+The caller supplies monotonic milliseconds, link receiver-report snapshots,
+peer tree/child roles and authenticated-frame readiness. Hold announces to
+unauthenticated peers. Keep peer pointers only until add/remove; feed send
+results back synchronously before processing another state change.
+
+Connect/disconnect, leaf or tree-role changes, accepted inbound replacement,
+and a responder rekey/restart trigger refresh, never periodic filter polling
+or an independent stale-filter timeout. The shell calls `refresh` on its
+send pass and `check_announce` when delivery evidence/deadlines are evaluated.
+Tree peers alone contribute to outgoing unions, with split horizon; mesh
+filters remain available for local membership queries. Batched computation
+uses per-bit multiplicities, equivalent to upstream's prefix/suffix ORs,
+and coalesces inbound bursts. It marks only changed outputs; debounce is
+500 ms and permits/restamps backwards clock readings as upstream does.
+
+SEND actions are proposals, **not** transport acceptance or delivery.
+Accepted results alone record sent history/debounce and outstanding delivery.
+Link evidence confirms every counter since the base, with reorders and
+cross-session/regressed/ambiguous reports handled as upstream. Each content
+lineage/session has three loss and one unchecked resend, 1..60 s backoff,
+120 s quiet reset, and 30 s fallback. C additionally coalesces a pending
+retry before spending another credit, so long debounce/MTU refusal cannot
+consume credits without sends. Refresh capacity preflight counts actual due
+actions, including deferred changes, and is atomic on insufficient space.
+
+Inbound FPR cap (default .20), v1 parameters and child echo checks report
+REFUSED actions without wire NACKs or changing the accepted filter/sequence.
+Echo checks inspect four distinct sent filters, require >=128 sent bits,
+and compare overlap to `fill + threshold*(1-fill)` (default threshold .8;
+>=1 or NaN disables rejection). Every refusal is observable; echo WARN is
+once per peer per 300 s, the remainder DEBUG. Send refusal carries the actual
+transport MTU and packet size, matching the 2026-11-12 upstream change
+`42c26c19`: first MTU refusal WARN once per peering, every retry still reported
+at DEBUG. A peer restart forgets sent history but preserves delivery,
+debounce and MTU warning state; removing the peer clears all of them.
+
+### Verification surfaces
+
+`test_bloom.c` ports all 93 upstream bloom core/state/wire test names and
+intents, including the delivery models, sent history and warning pacing;
+Rust's Debug-format test is adapted to its public numeric diagnostics (C
+has no Debug trait or logging API). Five additional groups cover pinned
+arithmetic/indices, exhaustive codec length/class/capacity edges, real action
+and refusal paths, refresh/bounds, and retry/action coalescing. The separate
+`test_bloom_vectors.c` loads pinned `proto.json` and requires CHECKED from
+both new `proto_bloom.c` differential entrypoints. It independently rebuilds
+seeded identities/filters and compares wire bytes and error payloads. Mutated
+population, address and sequence records fail, rather than passing on
+round-trip integrity alone. `cases.c` is unchanged: its two dispatch rows
+remain for the coordinator to wire after merge. `fips_fuzz_bloom` covers both
+codecs plus merge and no-false-negative properties; CI lists remain sibling
+owned. This is core/local evidence, not a running routing daemon claim.
+
+Version decision: additive APIs fold into **libfips-core 0.1.0 Unreleased**;
+no published version or release-tag change.
