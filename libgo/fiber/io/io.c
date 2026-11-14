@@ -300,3 +300,105 @@ int gof_accept(int fd, struct sockaddr *sa, socklen_t *slen, int timeout_ms) {
   }
 #endif
 }
+
+#if !defined(_WIN32)
+/* A single deadline covers every readiness retry, not each park separately. */
+static int wait_message_ready(int fd, int events, uint64_t deadline_ns) {
+  if (deadline_ns != 0 && now_ns() >= deadline_ns) {
+    fiber_set_errno(ETIMEDOUT);
+    return -1;
+  }
+  (void)wait_event_with_deadline(fd, events, deadline_ns);
+  if (deadline_ns != 0 && now_ns() >= deadline_ns) {
+    fiber_set_errno(ETIMEDOUT);
+    return -1;
+  }
+  return 0;
+}
+#endif
+
+ssize_t gof_recvfrom(int fd, void *buf, size_t n, int flags,
+                     struct sockaddr *sa, socklen_t *slen, int timeout_ms) {
+#if defined(_WIN32)
+  (void)fd; (void)buf; (void)n; (void)flags; (void)sa; (void)slen; (void)timeout_ms;
+  errno = ENOTSUP; return -1;
+#else
+  if (set_nonblock(fd) != 0) return -1;
+  uint64_t dl = deadline_from_ms(timeout_ms);
+  for (;;) {
+    ssize_t r = recvfrom(fd, buf, n, flags, sa, slen);
+    if (r >= 0) return r;
+    int error = fiber_get_errno();
+    if (error == EAGAIN || error == EWOULDBLOCK) {
+      if (wait_message_ready(fd, GOF_POLL_READ, dl) != 0) return -1;
+      continue;
+    }
+    fiber_set_errno(error);
+    return -1;
+  }
+#endif
+}
+
+ssize_t gof_sendto(int fd, const void *buf, size_t n, int flags,
+                   const struct sockaddr *sa, socklen_t slen, int timeout_ms) {
+#if defined(_WIN32)
+  (void)fd; (void)buf; (void)n; (void)flags; (void)sa; (void)slen; (void)timeout_ms;
+  errno = ENOTSUP; return -1;
+#else
+  if (set_nonblock(fd) != 0) return -1;
+  uint64_t dl = deadline_from_ms(timeout_ms);
+  for (;;) {
+    ssize_t r = sendto(fd, buf, n, flags, sa, slen);
+    if (r >= 0) return r;
+    int error = fiber_get_errno();
+    if (error == EAGAIN || error == EWOULDBLOCK) {
+      if (wait_message_ready(fd, GOF_POLL_WRITE, dl) != 0) return -1;
+      continue;
+    }
+    fiber_set_errno(error);
+    return -1;
+  }
+#endif
+}
+
+ssize_t gof_recvmsg(int fd, struct msghdr *msg, int flags, int timeout_ms) {
+#if defined(_WIN32)
+  (void)fd; (void)msg; (void)flags; (void)timeout_ms;
+  errno = ENOTSUP; return -1;
+#else
+  if (set_nonblock(fd) != 0) return -1;
+  uint64_t dl = deadline_from_ms(timeout_ms);
+  for (;;) {
+    ssize_t r = recvmsg(fd, msg, flags);
+    if (r >= 0) return r;
+    int error = fiber_get_errno();
+    if (error == EAGAIN || error == EWOULDBLOCK) {
+      if (wait_message_ready(fd, GOF_POLL_READ, dl) != 0) return -1;
+      continue;
+    }
+    fiber_set_errno(error);
+    return -1;
+  }
+#endif
+}
+
+ssize_t gof_sendmsg(int fd, const struct msghdr *msg, int flags, int timeout_ms) {
+#if defined(_WIN32)
+  (void)fd; (void)msg; (void)flags; (void)timeout_ms;
+  errno = ENOTSUP; return -1;
+#else
+  if (set_nonblock(fd) != 0) return -1;
+  uint64_t dl = deadline_from_ms(timeout_ms);
+  for (;;) {
+    ssize_t r = sendmsg(fd, msg, flags);
+    if (r >= 0) return r;
+    int error = fiber_get_errno();
+    if (error == EAGAIN || error == EWOULDBLOCK) {
+      if (wait_message_ready(fd, GOF_POLL_WRITE, dl) != 0) return -1;
+      continue;
+    }
+    fiber_set_errno(error);
+    return -1;
+  }
+#endif
+}

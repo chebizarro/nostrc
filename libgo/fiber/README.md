@@ -105,7 +105,26 @@ ssize_t gof_read(int fd, void *buf, size_t n);
 ssize_t gof_write(int fd, const void *buf, size_t n);
 int     gof_connect(int fd, const struct sockaddr *sa, socklen_t slen, int timeout_ms);
 int     gof_accept(int fd, struct sockaddr *sa, socklen_t *slen, int timeout_ms);
+ssize_t gof_recvfrom(int fd, void *buf, size_t n, int flags,
+                     struct sockaddr *sa, socklen_t *slen, int timeout_ms);
+ssize_t gof_sendto(int fd, const void *buf, size_t n, int flags,
+                   const struct sockaddr *sa, socklen_t slen, int timeout_ms);
+ssize_t gof_recvmsg(int fd, struct msghdr *msg, int flags, int timeout_ms);
+ssize_t gof_sendmsg(int fd, const struct msghdr *msg, int flags, int timeout_ms);
 ```
+
+The message wrappers must be called from a running fiber. They set `O_NONBLOCK`
+on the fd (and its aliases) and pass flags, addresses, iovecs and ancillary data
+through to the OS. On `EAGAIN`/`EWOULDBLOCK` they park and retry against one
+monotonic deadline: `timeout_ms < 0` waits indefinitely, `0` attempts once without
+waiting, and positive values bound readiness retries in milliseconds. Expiry
+returns `-1` with `errno = ETIMEDOUT`; other errors follow the syscall. A ready
+operation can still succeed with a zero timeout. `gof_sendto` and `gof_sendmsg`
+return after **one successful syscall**, even for a short or zero-length send;
+unlike `gof_write`, they never split a message or resend its control data.
+`gof_recvmsg` exposes the OS's `msg_flags` (including truncation) and control data,
+so callers retain the usual responsibility to inspect them and close received
+`SCM_RIGHTS` fds. The Windows implementations return `-1`/`ENOTSUP`.
 
 Each fiber tracks its current `wait_fd` / `wait_events` for O(1) waiter
 removal when a timeout fires before an I/O event.
