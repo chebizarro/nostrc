@@ -78,6 +78,7 @@ jobs:
           fi
           if [[ '${{ matrix.configuration }}' == asan_ubsan ]]; then targets+=(fips_fuzz_host fips_fuzz_codec fips_fuzz_identity fips_fuzz_aead); fi
           if [[ '${{ matrix.configuration }}' == asan_ubsan ]]; then targets+=(fips_fuzz_host fips_fuzz_codec fips_fuzz_identity fips_fuzz_coord); fi
+          if [[ '${{ matrix.configuration }}' == asan_ubsan ]]; then targets+=(fips_fuzz_host fips_fuzz_codec fips_fuzz_identity fips_fuzz_link); fi
           cmake --build build --parallel 3 --target "${targets[@]}"
       - name: Test FIPS
         shell: bash
@@ -92,6 +93,7 @@ jobs:
           mkdir -p build/corpus build/fuzz-artifacts
           for target in fips_fuzz_host fips_fuzz_codec fips_fuzz_identity fips_fuzz_aead; do
           for target in fips_fuzz_host fips_fuzz_codec fips_fuzz_identity fips_fuzz_coord; do
+          for target in fips_fuzz_host fips_fuzz_codec fips_fuzz_identity fips_fuzz_link; do
             cp -R "libfips-core/fuzz/corpus/$target" build/corpus/
             "build/libfips-core/fuzz/$target" -max_total_time=10 -timeout=5 -artifact_prefix=build/fuzz-artifacts/ "build/corpus/$target"
           done
@@ -138,6 +140,11 @@ jobs:
         run: |
           mkdir -p build/corpus build/fuzz-artifacts
           for target in fips_fuzz_host fips_fuzz_codec fips_fuzz_identity fips_fuzz_coord; do
+      - run: cmake --build build --parallel 3 --target fips_fuzz_host fips_fuzz_codec fips_fuzz_identity fips_fuzz_link
+      - name: Fuzz (60 seconds per target)
+        run: |
+          mkdir -p build/corpus build/fuzz-artifacts
+          for target in fips_fuzz_host fips_fuzz_codec fips_fuzz_identity fips_fuzz_link; do
             cp -R "libfips-core/fuzz/corpus/$target" build/corpus/
             "build/libfips-core/fuzz/$target" -max_total_time=60 -timeout=5 -artifact_prefix=build/fuzz-artifacts/ "build/corpus/$target"
           done

@@ -51,3 +51,12 @@ apply_warnings(fips_fuzz_coord)
 apply_sanitizers(fips_fuzz_coord)
 target_compile_options(fips_fuzz_coord PRIVATE -fsanitize=fuzzer)
 target_link_options(fips_fuzz_coord PRIVATE -fsanitize=fuzzer)
+# SessionDatagram body decoding, TTL hop rule and encode round trips (nostrc-82g9n.6).
+add_executable(fips_fuzz_link fuzz_link.c)
+target_link_libraries(fips_fuzz_link PRIVATE fips_core)
+set_target_properties(fips_fuzz_link PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+apply_warnings(fips_fuzz_link)
+apply_sanitizers(fips_fuzz_link)
+target_compile_options(fips_fuzz_link PRIVATE -fsanitize=fuzzer)
+target_link_options(fips_fuzz_link PRIVATE -fsanitize=fuzzer)

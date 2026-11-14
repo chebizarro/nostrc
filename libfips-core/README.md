@@ -169,6 +169,32 @@ yet; tests/diff/cases.c is intentionally unchanged.
 
 Version decision (nostrc-u50yr.3): these APIs fold into libfips-core **0.1.0
 Unreleased**, with no published version/tag change.
+## Link catalog, session datagram and framing
+
+`fips/proto/link.h` mirrors `core/src/proto/link.rs`: the `LinkMessageType`
+catalog (12 values, exact upstream bytes and names), the FSP
+`SessionMessageType` catalog (5 values, from `fsp/wire.rs`; the FSP frame codec
+is a separate task), `from_u8` returning `InvalidMessageType{byte}`, name
+helpers, and the SessionDatagram header. The C datagram is upstream's borrowed
+`SessionDatagramRef`: decode requires the 35-byte body after the msg_type byte
+(`MessageTooShort {expected: 35, got: len}` from a body-start reader) and
+borrows the rest as payload; encode reserves capacity first and so rejects
+atomically with `MessageTooLong`. TTL helpers follow `ttl_after_hop`: only a
+TTL of 2 or more survives a hop, and delivery is never TTL-gated.
+
+`fips/proto/framing.h` defines the Noise/FMP/FSP size constants by value with
+their upstream sources, `FIPS_OVERHEAD` (106, static-asserted from its parts)
+and `fips_framing_payload_limit(mtu)` =
+`mtu.saturating_sub(106).saturating_sub(4)`: zero through 110, `mtu - 110`
+above it, 1170 at 1280. `FIPS_IPV6_OVERHEAD` (77) belongs to the host IPv6
+shim, not fips-core, and is deliberately absent. `tests/diff/proto_link.c`
+carries the differential checks for the proto constants, both catalogs and
+the `session-datagram` wire case; `tests/test_link.c` replays them through the
+harness loader until `cases.c`'s per-name dispatch wires them in.
+
+Version decision (nostrc-82g9n.6): these additive APIs fold into libfips-core
+**0.1.0 Unreleased**, with no published version/tag change.
+
 ## Identity primitives
 
 `fips/identity/{mod,key,local,peer,node_addr,address,encoding,auth,prefix}.h`

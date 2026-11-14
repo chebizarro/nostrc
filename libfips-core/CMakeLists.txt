@@ -92,3 +92,6 @@ target_sources(fips_core PRIVATE src/noise/ecdh.c)
 target_sources(fips_core PRIVATE src/noise/aead.c)
 # Tree coordinate primitive and wire codec (nostrc-82g9n.1).
 target_sources(fips_core PRIVATE src/proto/coord.c)
+# Link message catalog, session datagram header and framing/path-MTU admit math
+# (nostrc-82g9n.6): size constants by value, no FMP/FSP frame codec.
+target_sources(fips_core PRIVATE src/proto/link.c src/proto/framing.c)

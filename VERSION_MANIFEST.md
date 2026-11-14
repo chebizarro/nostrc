@@ -14,6 +14,7 @@ No release tag is published by this change; all other components have no
 B1-owned shipped artifact change and no B1 bump.
 
 nostrc-pwo3h.2: no bump for libfips-core; additive Noise ECDH API folds into initial 0.1.0 Unreleased; no published release/tag change.
+nostrc-82g9n.6: no bump for libfips-core; additive link message catalog, session datagram header codec and framing/path-MTU admit-math APIs fold into initial 0.1.0 Unreleased; no published release/tag change.
 
 nostrc-u50yr.2: no bump for libfips-core; additive identity, NIP-19 and authentication APIs fold into initial 0.1.0 Unreleased; no published release/tag change.
 

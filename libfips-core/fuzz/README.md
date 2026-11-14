@@ -33,6 +33,14 @@ It checks exact truncation errors, cursor atomicity, writer round trips and
 full-capacity rejection. Use a writable copy of `corpus/fips_fuzz_codec/` and
 run the same 10-second command with target `fips_fuzz_codec`.
 
+`fips_fuzz_link` treats input as a SessionDatagram body (the bytes after the
+link msg_type). Short input must fail with exactly `MessageTooShort {35, len}`
+and leave the cursor and output untouched; accepted input must expose the
+borrowed payload at offset 35, obey the TTL hop rule, re-encode byte for byte
+behind a `0x00` type byte, be rejected atomically by a one-byte-short writer,
+and classify its first payload byte through both message-type catalogs. Use a
+writable copy of `corpus/fips_fuzz_link/` with target `fips_fuzz_link`.
+
 Pending harnesses, added when their APIs land:
 - Noise msg1/msg2 and xk1-3;
 - FMP/FSP frames;
