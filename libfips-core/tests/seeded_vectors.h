@@ -1,7 +1,7 @@
 /* First 1 KiB per seed, independently produced by Python 3 (not the C fake):
  * python3 libfips-core/tests/generate_seeded_vectors.py > libfips-core/tests/seeded_vectors.h
  * Constants and LE word order transcribed from Rust pin 6aa80504 testutil.rs.
- * nostrc-s50dj.2 will replace these provisional constants with exported vectors.
+ * Authoritative source: tests/vectors/entropy.json and entropy-*.bin (Rust exporter).
  * Split fills are tested against word-aligned offsets to check tail discard.
  */
 static const char *const expected_hex[3] = {

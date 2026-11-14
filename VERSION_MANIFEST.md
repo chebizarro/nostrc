@@ -13,6 +13,7 @@ that linked undocumented symbols, and requires rebuilding those consumers.
 No release tag is published by this change; all other components have no
 B1-owned shipped artifact change and no B1 bump.
 
+nostrc-s50dj.2: no bump for libfips-core/fipsd; tools/fips-vectors and oracle fixtures are test-only, with no shipped artifact or public contract change.
 Release columns below record published component tags, not planned releases.
 Declared versions may be newer than the latest published tag.
 
