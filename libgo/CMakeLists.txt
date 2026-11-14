@@ -726,6 +726,22 @@ apply_sanitizers(gof_bench_pingpong)
 apply_sanitizers(gof_bench_sleep)
 apply_sanitizers(gof_bench_poll_partition)
 
+# Datagram/message I/O uses the same scheduler and both native poller backends.
+add_executable(gof_test_io_datagram fiber/tests/test_io_datagram.c)
+target_link_libraries(gof_test_io_datagram PRIVATE go_fiber libgo ${NSYNC_LIB})
+apply_warnings(gof_test_io_datagram)
+apply_sanitizers(gof_test_io_datagram)
+add_test(NAME GoFiberIoDatagramTest COMMAND gof_test_io_datagram)
+add_test(NAME GoFiberIoDatagramTestW4 COMMAND gof_test_io_datagram)
+set_tests_properties(GoFiberIoDatagramTest PROPERTIES
+  TIMEOUT 15 ENVIRONMENT "GOF_NWORKERS=1")
+set_tests_properties(GoFiberIoDatagramTestW4 PROPERTIES
+  TIMEOUT 15 ENVIRONMENT "GOF_NWORKERS=4")
+if(COMMAND nostrc_describe_test)
+  nostrc_describe_test(GoFiberIoDatagramTest OWNER libgo TARGETS gof_test_io_datagram)
+  nostrc_describe_test(GoFiberIoDatagramTestW4 OWNER libgo TARGETS gof_test_io_datagram)
+endif()
+
 endif() # NOT WIN32 — skip go_fiber on Windows
 
 # These pairs mirror the actual add_test COMMANDs, including W4 executions

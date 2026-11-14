@@ -109,11 +109,32 @@ GO_FIBER_API int         gof_in_fiber(void);
  */
 GO_FIBER_API gof_fiber_t*gof_current(void);
 
+struct msghdr; /* POSIX message I/O; incomplete on Windows (ENOTSUP). */
+
 /** Fiber-friendly I/O wrappers that integrate with the netpoller. */
 GO_FIBER_API ssize_t     gof_read(int fd, void *buf, size_t n);
 GO_FIBER_API ssize_t     gof_write(int fd, const void *buf, size_t n);
 GO_FIBER_API int         gof_connect(int fd, const struct sockaddr *sa, socklen_t slen, int timeout_ms);
 GO_FIBER_API int         gof_accept(int fd, struct sockaddr *sa, socklen_t *slen, int timeout_ms);
+
+/**
+ * @brief Message I/O that parks the calling fiber on EAGAIN/EWOULDBLOCK.
+ * Sets O_NONBLOCK on fd (also affecting aliases of the same open file).
+ * timeout_ms < 0 waits indefinitely; 0 attempts once without waiting; > 0
+ * bounds readiness retries with one monotonic deadline. Expiry returns -1
+ * with errno=ETIMEDOUT. Other errors and flags follow the underlying syscall.
+ * Sends return after one successful syscall, including short or zero sends;
+ * they never split a datagram or resend ancillary data. Receives preserve
+ * source addresses, iovecs, control data and message flags as supplied by the OS.
+ * Call from a running fiber; Windows returns -1 with errno=ENOTSUP.
+ */
+GO_FIBER_API ssize_t     gof_recvfrom(int fd, void *buf, size_t n, int flags,
+                                    struct sockaddr *sa, socklen_t *slen, int timeout_ms);
+GO_FIBER_API ssize_t     gof_sendto(int fd, const void *buf, size_t n, int flags,
+                                  const struct sockaddr *sa, socklen_t slen, int timeout_ms);
+GO_FIBER_API ssize_t     gof_recvmsg(int fd, struct msghdr *msg, int flags, int timeout_ms);
+GO_FIBER_API ssize_t     gof_sendmsg(int fd, const struct msghdr *msg, int flags, int timeout_ms);
+
 
 /**
  * @brief Snapshot of fiber diagnostic information.
