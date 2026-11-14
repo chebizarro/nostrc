@@ -286,6 +286,67 @@ Built-in registration in `refptr.h`: GoRefPtr.
 Additional registrations in `go-auto-internal.h`: GoChannel, GoContext,
 GoHashMap, Error, Ticker, GoWaitGroup, IntArray, StringArray.
 
+## Snapshot Swap (GoSwap)
+
+Header: `libgo/include/swap.h` (also included by `go.h`). Added in libgo 0.3.0.
+
+```c
+GoSwap *go_swap_create(void *initial, void (*destructor)(void *));
+GoRefPtr go_swap_load(GoSwap *swap);
+bool go_swap_store(GoSwap *swap, void *value);
+void go_swap_free(GoSwap *swap);
+```
+
+A slot publishes whole immutable values for configuration reloads, peer tables,
+and routing snapshots. Many readers and multiple writers may operate on a slot.
+Loads and stores are linearizable: a reader gets one complete old or new snapshot,
+not a mixture. This is snapshot storage, not a notification channel or event queue.
+
+**Safety scheme:** load copies and retains the slot's `GoRefPtr` under a short
+`nsync_mu` lock. Store swaps the complete handle under that same lock, then drops
+its reference to the old value outside the lock. Thus the old reference cannot
+be freed between a reader's load and retain. This deliberately uses a lock on the
+acquisition path rather than an unsafe atomic-pointer/load-then-retain scheme;
+it is **not lock-free**. Reading an already acquired snapshot requires no slot
+lock. Allocation and destructors run outside the lock.
+
+- `destructor` must be non-NULL; it is called exactly once for each successfully
+  transferred non-NULL value, after its last reference is released. It may run
+  on a reader or writer thread and must be thread-safe. It may load/store a live
+  slot, but must not access a slot being freed. Destruction order is unspecified.
+- Create/store take ownership only on success. On allocation failure they return
+  NULL/false, leave ownership with the caller, and store leaves the old value
+  unchanged. NULL initial creates an empty slot; storing NULL clears it without
+  allocation. An empty load is an all-zero `GoRefPtr`, safe to release.
+- Every transferred value must have independent ownership. Never store the raw
+  pointer from a loaded snapshot, even back into the same slot. Do not mutate
+  published contents. Separate loaded handles can be used on separate threads;
+  to copy one handle, retain it while it is still owned.
+- Release each acquired reference exactly once: manually **or** via
+  `go_auto(GoRefPtr)`, not both. `go_refptr_release()` does not clear a handle
+  unless it releases the last reference.
+- Stop/join slot users before `go_swap_free()`. Free drops only the slot's
+  reference: already acquired snapshots outlive the slot. `free(NULL)` and
+  `load(NULL)` are harmless; `store(NULL, value)` fails without taking ownership.
+
+```c
+GoSwap *config = go_swap_create(NULL, free);
+if (!config) return;
+int *next = malloc(sizeof(*next));
+if (next) {
+    *next = 42;
+    if (!go_swap_store(config, next)) free(next);
+}
+{
+    go_auto(GoRefPtr) snapshot = go_swap_load(config);
+    if (snapshot.ptr) printf("config: %d\n", *(const int *)snapshot.ptr);
+}
+// After joining all threads that access config:
+go_swap_free(config);
+```
+
+Compare-and-swap, watch notifications, and lock-free reclamation are not provided.
+
 ## Hash Map
 
 Header: `libgo/include/hash_map.h`

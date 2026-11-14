@@ -27,7 +27,7 @@ if(NOT COMMAND declare_component_version)
   include("${CMAKE_CURRENT_LIST_DIR}/../cmake/VersionHelpers.cmake")
 endif()
 option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" ON)
-declare_component_version(LIBGO 0 2 0)
+declare_component_version(LIBGO 0 3 0)
 
 # Optional: enable more aggressive local optimizations for libgo
 include(CheckCCompilerFlag)
@@ -756,6 +756,19 @@ foreach(_pair
     nostrc_describe_test("${_test}" OWNER libgo TARGETS "${_target}")
   endif()
 endforeach()
+# Refcounted snapshot swap (core libgo; independent of the fiber runtime).
+target_sources(nostrgo PRIVATE src/swap.c)
+install(FILES include/swap.h DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
+add_executable(go_swap_test tests/go_swap_test.c)
+target_link_libraries(go_swap_test PRIVATE libgo)
+apply_warnings(go_swap_test)
+apply_sanitizers(go_swap_test)
+add_test(NAME GoSwapTest COMMAND go_swap_test)
+set_tests_properties(GoSwapTest PROPERTIES TIMEOUT 120)
+if(COMMAND nostrc_describe_test)
+  nostrc_describe_test(GoSwapTest OWNER libgo TARGETS go_swap_test)
+endif()
+
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   nostrc_finalize_test_inventory()
 endif()
