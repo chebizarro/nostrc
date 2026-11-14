@@ -802,12 +802,14 @@ release columns or tags are changed. NIP-47/49 GLib implementations include
   libjson and the other independently versioned components have no direct
   changes (no bump); downstream consumers receive this dependency correction
   when rebuilt. No release tags or release-column changes.
-- md-ts4: libgo's fiber runtime adds timeout-aware `gof_recvfrom`, `gof_sendto`,
-  `gof_recvmsg` and `gof_sendmsg`. Backward-compatible public functionality is
-  MINOR-class, folded into the existing unreleased libgo 0.2.0 MINOR wave;
-  no further version-source or release-column change. The separate static
-  `go_fiber` target has no independently declared component version. No libgo
-  core API, ABI or other component changes.
+- md-o74 + md-ts4 (metadesk beads): libgo MINOR 0.2.0 -> 0.3.0, one wave for two
+  backward-compatible public additions. md-o74 adds the refcounted snapshot-swap
+  primitive (`swap.h`: `go_swap_create`, `go_swap_load`, `go_swap_store`,
+  `go_swap_free`, exported from `go.h`). md-ts4 adds timeout-aware datagram and
+  message I/O to the fiber runtime (`gof_recvfrom`, `gof_sendto`, `gof_recvmsg`,
+  `gof_sendmsg`); the separate static `go_fiber` target has no independently
+  declared component version and ships under the libgo version. No ABI break,
+  no other component changes, no release-column change.
 
 - nostrc-er4fz.10 phase A: libnostr MAJOR 1.1.4 -> 2.0.0 and libjson
   MAJOR 1.0.1 -> 2.0.0; libgo MINOR 0.1.3 -> 0.2.0 (pre-1.0 breaking
