@@ -25080,9 +25080,74 @@
       "owner_paths": [
         "nips/nip56/tests"
       ]
+    },
+    "fips.core": {
+      "id": "fips.core",
+      "depends_on": [],
+      "owner_paths": [
+        "libfips-core"
+      ]
+    },
+    "fipsd": {
+      "id": "fipsd",
+      "rationale": "fipsd links fips_core, libgo/go_fiber and nostr; their changes require host compatibility tests.",
+      "depends_on": [
+        "fips.core",
+        "libgo",
+        "libnostr"
+      ],
+      "owner_paths": [
+        "fipsd"
+      ]
+    },
+    "fips.vectors": {
+      "id": "fips.vectors",
+      "depends_on": [],
+      "owner_paths": [
+        "tools/fips-vectors"
+      ]
+    },
+    "execution.fips": {
+      "id": "execution.fips",
+      "depends_on": [],
+      "owner_paths": [
+        ".github/workflows/fips-ci.yml"
+      ]
     }
   },
   "path_rules": [
+    {
+      "effect": "impact",
+      "exact": ".github/workflows/fips-ci.yml",
+      "nodes": [
+        "execution.fips"
+      ],
+      "reason": "FIPS component and sanitizer/fuzz lane ownership."
+    },
+    {
+      "effect": "impact",
+      "prefix": "tools/fips-vectors",
+      "nodes": [
+        "fips.vectors"
+      ],
+      "reason": "FIPS component and sanitizer/fuzz lane ownership."
+    },
+    {
+      "effect": "impact",
+      "prefix": "fipsd",
+      "nodes": [
+        "fipsd"
+      ],
+      "reason": "FIPS component and sanitizer/fuzz lane ownership."
+    },
+    {
+      "effect": "impact",
+      "prefix": "libfips-core",
+      "nodes": [
+        "fips.core"
+      ],
+      "reason": "FIPS component and sanitizer/fuzz lane ownership."
+    },
     {
       "effect": "global",
       "exact": "docs/investigations/glib-gpoll-select-ebadf-2026-11-10.patch",
@@ -32848,7 +32913,7 @@
       "unsupported_reason": "Ordinary affected-family orchestration and conclusions are not attested profile execution; explicit diagnostic profiles and incomplete coverage remain separate.",
       "matrix_source": "",
       "source_sha256": "9b9f33bd659654d33babd7027be13797e0999bce5b2a12c305b4cef2e43ca1fd",
-      "workflow_sha256": "15df6fc07da5e7af7733d998b39b562170a5241eda422cdedbe1dbce9d4a7845"
+      "workflow_sha256": "92f3a1f84118d67f1078aff27652f25e5559deef78f1b32c90881a9825ebbcc1"
     },
     ".github/workflows/ci-selective.yml:cheap": {
       "profiles": [],
@@ -32856,7 +32921,7 @@
       "unsupported_reason": "Ordinary affected-family orchestration and conclusions are not attested profile execution; explicit diagnostic profiles and incomplete coverage remain separate.",
       "matrix_source": "",
       "source_sha256": "bda219efcf1fc4908398f10b7aef2218a12de2445fb49f0f4d56a1ccb56bbd94",
-      "workflow_sha256": "15df6fc07da5e7af7733d998b39b562170a5241eda422cdedbe1dbce9d4a7845"
+      "workflow_sha256": "92f3a1f84118d67f1078aff27652f25e5559deef78f1b32c90881a9825ebbcc1"
     },
     ".github/workflows/ci-selective.yml:core": {
       "profiles": [],
@@ -32864,7 +32929,7 @@
       "unsupported_reason": "Ordinary affected-family orchestration and conclusions are not attested profile execution; explicit diagnostic profiles and incomplete coverage remain separate.",
       "matrix_source": "",
       "source_sha256": "60be54bd12ae0f2a4cb7479c73c5c0e7ba9c0d071f7a8ff4aa5b0b83f00f6db1",
-      "workflow_sha256": "15df6fc07da5e7af7733d998b39b562170a5241eda422cdedbe1dbce9d4a7845"
+      "workflow_sha256": "92f3a1f84118d67f1078aff27652f25e5559deef78f1b32c90881a9825ebbcc1"
     },
     ".github/workflows/ci-selective.yml:vault_syncd": {
       "profiles": [],
@@ -32872,7 +32937,7 @@
       "unsupported_reason": "Ordinary affected-family orchestration and conclusions are not attested profile execution; explicit diagnostic profiles and incomplete coverage remain separate.",
       "matrix_source": "",
       "source_sha256": "ccbd1a17f50eef4e4cb907a74d2c0eece9569eef8be28b35215e9306f5efeaf1",
-      "workflow_sha256": "15df6fc07da5e7af7733d998b39b562170a5241eda422cdedbe1dbce9d4a7845"
+      "workflow_sha256": "92f3a1f84118d67f1078aff27652f25e5559deef78f1b32c90881a9825ebbcc1"
     },
     ".github/workflows/ci-selective.yml:libgo": {
       "profiles": [],
@@ -32880,7 +32945,7 @@
       "unsupported_reason": "Ordinary affected-family orchestration and conclusions are not attested profile execution; explicit diagnostic profiles and incomplete coverage remain separate.",
       "matrix_source": "",
       "source_sha256": "344ae0f73d1c303f24e6ab2b1ec3ece5b81d7554c3085c0ff62f3e1d6c59f23f",
-      "workflow_sha256": "15df6fc07da5e7af7733d998b39b562170a5241eda422cdedbe1dbce9d4a7845"
+      "workflow_sha256": "92f3a1f84118d67f1078aff27652f25e5559deef78f1b32c90881a9825ebbcc1"
     },
     ".github/workflows/ci-selective.yml:hanami": {
       "profiles": [],
@@ -32888,7 +32953,7 @@
       "unsupported_reason": "Ordinary affected-family orchestration and conclusions are not attested profile execution; explicit diagnostic profiles and incomplete coverage remain separate.",
       "matrix_source": "",
       "source_sha256": "e7e4af540a92cdd26e0e531ca780f56ea49b6b955c3f44b86f78a25ec7211cf0",
-      "workflow_sha256": "15df6fc07da5e7af7733d998b39b562170a5241eda422cdedbe1dbce9d4a7845"
+      "workflow_sha256": "92f3a1f84118d67f1078aff27652f25e5559deef78f1b32c90881a9825ebbcc1"
     },
     ".github/workflows/ci-selective.yml:rust": {
       "profiles": [],
@@ -32896,7 +32961,7 @@
       "unsupported_reason": "Ordinary affected-family orchestration and conclusions are not attested profile execution; explicit diagnostic profiles and incomplete coverage remain separate.",
       "matrix_source": "",
       "source_sha256": "a19ed7ef86ff1766bc33da59bb7a5e77ebcf32bbabcc45d6be57b192ea5d4bc0",
-      "workflow_sha256": "15df6fc07da5e7af7733d998b39b562170a5241eda422cdedbe1dbce9d4a7845"
+      "workflow_sha256": "92f3a1f84118d67f1078aff27652f25e5559deef78f1b32c90881a9825ebbcc1"
     },
     ".github/workflows/ci-selective.yml:gi": {
       "profiles": [],
@@ -32904,7 +32969,7 @@
       "unsupported_reason": "Ordinary affected-family orchestration and conclusions are not attested profile execution; explicit diagnostic profiles and incomplete coverage remain separate.",
       "matrix_source": "",
       "source_sha256": "8e2cb206ef3319be948ddfe6de5b593dde44a0ab922f7ee58e80f71fb5a0c973",
-      "workflow_sha256": "15df6fc07da5e7af7733d998b39b562170a5241eda422cdedbe1dbce9d4a7845"
+      "workflow_sha256": "92f3a1f84118d67f1078aff27652f25e5559deef78f1b32c90881a9825ebbcc1"
     },
     ".github/workflows/ci-selective.yml:groundhog": {
       "profiles": [],
@@ -32912,7 +32977,7 @@
       "unsupported_reason": "Ordinary affected-family orchestration and conclusions are not attested profile execution; explicit diagnostic profiles and incomplete coverage remain separate.",
       "matrix_source": "",
       "source_sha256": "f16b07991e380a1d6685e789e313c93cdae4fe6e98900bca07f0cce3a5b0a1cb",
-      "workflow_sha256": "15df6fc07da5e7af7733d998b39b562170a5241eda422cdedbe1dbce9d4a7845"
+      "workflow_sha256": "92f3a1f84118d67f1078aff27652f25e5559deef78f1b32c90881a9825ebbcc1"
     },
     ".github/workflows/ci-selective.yml:grotto": {
       "profiles": [],
@@ -32920,7 +32985,7 @@
       "unsupported_reason": "Ordinary affected-family orchestration and conclusions are not attested profile execution; explicit diagnostic profiles and incomplete coverage remain separate.",
       "matrix_source": "",
       "source_sha256": "bd7c0eb4d96242a254fa4dfc794d6f9504dc2d8934d0ab37e19cb3c3bba91871",
-      "workflow_sha256": "15df6fc07da5e7af7733d998b39b562170a5241eda422cdedbe1dbce9d4a7845"
+      "workflow_sha256": "92f3a1f84118d67f1078aff27652f25e5559deef78f1b32c90881a9825ebbcc1"
     },
     ".github/workflows/ci-selective.yml:nip55l": {
       "profiles": [],
@@ -32928,7 +32993,7 @@
       "unsupported_reason": "Ordinary affected-family orchestration and conclusions are not attested profile execution; explicit diagnostic profiles and incomplete coverage remain separate.",
       "matrix_source": "",
       "source_sha256": "b097c97473c59045259caf49cb9053a4dd93367ca861585c5df75918f63c6296",
-      "workflow_sha256": "15df6fc07da5e7af7733d998b39b562170a5241eda422cdedbe1dbce9d4a7845"
+      "workflow_sha256": "92f3a1f84118d67f1078aff27652f25e5559deef78f1b32c90881a9825ebbcc1"
     },
     ".github/workflows/ci-selective.yml:homed": {
       "profiles": [],
@@ -32936,7 +33001,7 @@
       "unsupported_reason": "Ordinary affected-family orchestration and conclusions are not attested profile execution; explicit diagnostic profiles and incomplete coverage remain separate.",
       "matrix_source": "",
       "source_sha256": "36f81faa4bdf553a967c954e3db3d771f23c6d97bc79034f82fabfe50e922727",
-      "workflow_sha256": "15df6fc07da5e7af7733d998b39b562170a5241eda422cdedbe1dbce9d4a7845"
+      "workflow_sha256": "92f3a1f84118d67f1078aff27652f25e5559deef78f1b32c90881a9825ebbcc1"
     },
     ".github/workflows/ci-selective.yml:signet": {
       "profiles": [],
@@ -32944,7 +33009,7 @@
       "unsupported_reason": "Ordinary affected-family orchestration and conclusions are not attested profile execution; explicit diagnostic profiles and incomplete coverage remain separate.",
       "matrix_source": "",
       "source_sha256": "705ba95923df7a11960a560c2fcf07751da738d331aae8ac9f442c193b126496",
-      "workflow_sha256": "15df6fc07da5e7af7733d998b39b562170a5241eda422cdedbe1dbce9d4a7845"
+      "workflow_sha256": "92f3a1f84118d67f1078aff27652f25e5559deef78f1b32c90881a9825ebbcc1"
     },
     ".github/workflows/ci-selective.yml:static": {
       "profiles": [],
@@ -32952,7 +33017,7 @@
       "unsupported_reason": "Ordinary affected-family orchestration and conclusions are not attested profile execution; explicit diagnostic profiles and incomplete coverage remain separate.",
       "matrix_source": "",
       "source_sha256": "207ef530c8701739989313373c6737500037d57b74284506e1fe696a06955744",
-      "workflow_sha256": "15df6fc07da5e7af7733d998b39b562170a5241eda422cdedbe1dbce9d4a7845"
+      "workflow_sha256": "92f3a1f84118d67f1078aff27652f25e5559deef78f1b32c90881a9825ebbcc1"
     },
     ".github/workflows/ci-selective.yml:appimage": {
       "profiles": [],
@@ -32960,7 +33025,7 @@
       "unsupported_reason": "Ordinary affected-family orchestration and conclusions are not attested profile execution; explicit diagnostic profiles and incomplete coverage remain separate.",
       "matrix_source": "",
       "source_sha256": "724bcdb17d137d33086e7c12af46943164e5741ece87032648f322cfc53d33aa",
-      "workflow_sha256": "15df6fc07da5e7af7733d998b39b562170a5241eda422cdedbe1dbce9d4a7845"
+      "workflow_sha256": "92f3a1f84118d67f1078aff27652f25e5559deef78f1b32c90881a9825ebbcc1"
     },
     ".github/workflows/ci-selective.yml:windows": {
       "profiles": [],
@@ -32968,7 +33033,7 @@
       "unsupported_reason": "Ordinary affected-family orchestration and conclusions are not attested profile execution; explicit diagnostic profiles and incomplete coverage remain separate.",
       "matrix_source": "",
       "source_sha256": "2fda7772c2f19e7d0ef5bb9b49a421012ac98402847631b7a83ec858ec17620e",
-      "workflow_sha256": "15df6fc07da5e7af7733d998b39b562170a5241eda422cdedbe1dbce9d4a7845"
+      "workflow_sha256": "92f3a1f84118d67f1078aff27652f25e5559deef78f1b32c90881a9825ebbcc1"
     },
     ".github/workflows/ci-selective.yml:bp": {
       "profiles": [],
@@ -32976,7 +33041,7 @@
       "unsupported_reason": "Ordinary affected-family orchestration and conclusions are not attested profile execution; explicit diagnostic profiles and incomplete coverage remain separate.",
       "matrix_source": "",
       "source_sha256": "9b01d83ce90b7bd1fe0d9487881e1c8ee5398b1bb02b4de0377caec2e5bfcbe4",
-      "workflow_sha256": "15df6fc07da5e7af7733d998b39b562170a5241eda422cdedbe1dbce9d4a7845"
+      "workflow_sha256": "92f3a1f84118d67f1078aff27652f25e5559deef78f1b32c90881a9825ebbcc1"
     },
     ".github/workflows/ci-selective.yml:bp_extended": {
       "profiles": [],
@@ -32984,7 +33049,7 @@
       "unsupported_reason": "Ordinary affected-family orchestration and conclusions are not attested profile execution; explicit diagnostic profiles and incomplete coverage remain separate.",
       "matrix_source": "",
       "source_sha256": "0616381c9d5322bf6c2f5a5aba74afec4439c6fb2d7a37f9332169c9b330d0d6",
-      "workflow_sha256": "15df6fc07da5e7af7733d998b39b562170a5241eda422cdedbe1dbce9d4a7845"
+      "workflow_sha256": "92f3a1f84118d67f1078aff27652f25e5559deef78f1b32c90881a9825ebbcc1"
     },
     ".github/workflows/ci-selective.yml:fuzz": {
       "profiles": [],
@@ -32992,7 +33057,7 @@
       "unsupported_reason": "Ordinary affected-family orchestration and conclusions are not attested profile execution; explicit diagnostic profiles and incomplete coverage remain separate.",
       "matrix_source": "",
       "source_sha256": "e5f620685cfbc333e6a80e09a484a2dd4072fc1c0b3e135897de1bd97391dd90",
-      "workflow_sha256": "15df6fc07da5e7af7733d998b39b562170a5241eda422cdedbe1dbce9d4a7845"
+      "workflow_sha256": "92f3a1f84118d67f1078aff27652f25e5559deef78f1b32c90881a9825ebbcc1"
     },
     ".github/workflows/ci-selective.yml:mdk08": {
       "profiles": [],
@@ -33000,7 +33065,7 @@
       "unsupported_reason": "Ordinary affected-family orchestration and conclusions are not attested profile execution; explicit diagnostic profiles and incomplete coverage remain separate.",
       "matrix_source": "",
       "source_sha256": "8239fb16e52ccc8e9c895e308a09bc07a7fb00a3667d649a1cfeb8d15fcfcfcf",
-      "workflow_sha256": "15df6fc07da5e7af7733d998b39b562170a5241eda422cdedbe1dbce9d4a7845"
+      "workflow_sha256": "92f3a1f84118d67f1078aff27652f25e5559deef78f1b32c90881a9825ebbcc1"
     },
     ".github/workflows/ci-selective.yml:mdk011": {
       "profiles": [],
@@ -33008,15 +33073,15 @@
       "unsupported_reason": "Ordinary affected-family orchestration and conclusions are not attested profile execution; explicit diagnostic profiles and incomplete coverage remain separate.",
       "matrix_source": "",
       "source_sha256": "50ad4d2714d2cd63dc93a7d79514aee984957e4b9cd8fc50548a4b4c76163480",
-      "workflow_sha256": "15df6fc07da5e7af7733d998b39b562170a5241eda422cdedbe1dbce9d4a7845"
+      "workflow_sha256": "92f3a1f84118d67f1078aff27652f25e5559deef78f1b32c90881a9825ebbcc1"
     },
     ".github/workflows/ci-selective.yml:gate": {
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
       "unsupported_reason": "Ordinary affected-family orchestration and conclusions are not attested profile execution; explicit diagnostic profiles and incomplete coverage remain separate.",
       "matrix_source": "",
-      "source_sha256": "9f0eed9bb8a2baae6e46f9b64e9923e3b0c0ce4aa7e27fbc886555431b084fe3",
-      "workflow_sha256": "15df6fc07da5e7af7733d998b39b562170a5241eda422cdedbe1dbce9d4a7845"
+      "source_sha256": "d908df95d2605bfa4c3a0915ab19b59319a7362429c7d09846cf3667aefe959e",
+      "workflow_sha256": "92f3a1f84118d67f1078aff27652f25e5559deef78f1b32c90881a9825ebbcc1"
     },
     ".github/workflows/groundhog-ci.yml:groundhog-selected-sanitizers": {
       "profiles": [],
@@ -33073,6 +33138,30 @@
       "matrix_source": "",
       "source_sha256": "98b7d0ce52a6cb88c1438764aafa3373c3aa9c3531779a56509fda0cdd94d19e",
       "workflow_sha256": "d369f3dd62b30968161cbb4a81f728e5c7e4ef676d2adbac86c173fdf7f8e796"
+    },
+    ".github/workflows/ci-selective.yml:fips": {
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union",
+      "unsupported_reason": "FIPS reusable sanitizer/fuzz execution or operational dispatch; no attested profile receipt is claimed.",
+      "matrix_source": "",
+      "source_sha256": "9b17548b361d7f54d8283a754f5bc84a2dad7f3208ead7534a2a14d80d01db1b",
+      "workflow_sha256": "92f3a1f84118d67f1078aff27652f25e5559deef78f1b32c90881a9825ebbcc1"
+    },
+    ".github/workflows/fips-ci.yml:build-and-test": {
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union",
+      "unsupported_reason": "FIPS reusable sanitizer/fuzz execution or operational dispatch; no attested profile receipt is claimed.",
+      "matrix_source": "matrix:\n        os: [ubuntu-24.04, macos-latest]\n        configuration: [asan_ubsan, tsan, optimized]",
+      "source_sha256": "711c0d145047f20417a1379039f927662e9529872c49fbdb9691eb0354ffd9a4",
+      "workflow_sha256": "3f60ab8bc87cfedeab0134a71afd18a61bcc27f66c95f72c6d5224322a18f6da"
+    },
+    ".github/workflows/fips-ci.yml:nightly-fuzz": {
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union",
+      "unsupported_reason": "FIPS reusable sanitizer/fuzz execution or operational dispatch; no attested profile receipt is claimed.",
+      "matrix_source": "",
+      "source_sha256": "862a845724da169106ba257053f0b70c991f118a5c0fcad7f7451b5233de6c7c",
+      "workflow_sha256": "3f60ab8bc87cfedeab0134a71afd18a61bcc27f66c95f72c6d5224322a18f6da"
     }
   },
   "schema_version": 1,

@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.22)
 project(libfips-core C)
 
+option(FIPS_ENABLE_FUZZERS "Build clang libFuzzer harnesses" OFF)
+
 declare_component_version(fips_core 0 1 0)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(FIPS_CORE_SECP256K1 REQUIRED IMPORTED_TARGET libsecp256k1)
@@ -22,7 +24,12 @@ nostrc_library_visibility(fips_core FIPS_CORE_API fips/export.h
   "${CMAKE_INSTALL_INCLUDEDIR}/fips")
 apply_versioning(fips_core)
 apply_warnings(fips_core)
-apply_sanitizers(fips_core)
+if(GO_ENABLE_TSAN)
+  # Override inherited workspace instrumentation: threading belongs to fipsd.
+  target_compile_options(fips_core PRIVATE -fno-sanitize=thread)
+else()
+  apply_sanitizers(fips_core)
+endif()
 
 set(FIPS_CORE_PC_STATIC_CFLAGS "")
 if(NOT BUILD_SHARED_LIBS)
@@ -36,6 +43,10 @@ install(TARGETS fips_core
 install(DIRECTORY include/fips DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/libfips-core.pc"
   DESTINATION "${CMAKE_INSTALL_LIBDIR}/pkgconfig")
+
+if(FIPS_ENABLE_FUZZERS)
+  add_subdirectory(fuzz)
+endif()
 
 if(BUILD_TESTING)
   add_subdirectory(tests)
