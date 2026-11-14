@@ -65,3 +65,13 @@ target_sources(fips_diff PRIVATE proto_bloom.c)
 target_sources(fips_diff PRIVATE proto_fsp.c)
 # Coordinator owns cases.c dispatch for lookup-request/lookup-response.
 target_sources(fips_diff PRIVATE proto_lookup.c)
+
+# One selection for every differential family, including harness negatives.
+foreach(family Entropy Identity Codec Noise Proto Rekey SelfTest)
+  set_property(TEST FipsDiff${family} APPEND PROPERTY LABELS fips-diff)
+endforeach()
+add_test(NAME FipsProtoSweep COMMAND "${CMAKE_COMMAND}"
+  "-DRUNNER=$<TARGET_FILE:fips_diff>" -P "${CMAKE_CURRENT_SOURCE_DIR}/proto_sweep.cmake")
+set_tests_properties(FipsProtoSweep PROPERTIES TIMEOUT 30 LABELS "fips;diff;proto-sweep;fips-diff")
+nostrc_describe_test(FipsProtoSweep OWNER libfips-core TARGETS fips_diff
+  INPUTS ${vector_inputs} "${CMAKE_CURRENT_SOURCE_DIR}/proto_sweep.cmake")

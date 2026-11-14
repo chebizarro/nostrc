@@ -11,6 +11,11 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
     fips_fmp_encrypted_header encrypted;
     fips_proto_error error;
     fips_fmp_common_prefix_parse(data, size, &prefix);
+    if (size) {
+        fips_fmp_handshake_message_type phase; fips_fmp_disconnect_reason reason;
+        if (fips_fmp_handshake_message_type_from_byte(data[0], &phase) && (uint8_t)phase != data[0]) abort();
+        if (fips_fmp_disconnect_reason_from_byte(data[0], &reason) && (uint8_t)reason != data[0]) abort();
+    }
     uint16_t expected;
     if (size) fips_fmp_expected_payload_len(data[0] & 15, size, &expected);
     uint8_t out[UINT16_MAX + FIPS_FRAMING_FMP_ENCRYPTED_MIN_SIZE];
@@ -47,7 +52,8 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
     fips_reader r; fips_reader_init(&r, data, size); fips_fmp_disconnect d;
     if (fips_fmp_disconnect_decode(&r, &d, &error) == FIPS_OK) {
         fips_writer_init(&w, out, 2);
-        if (fips_fmp_disconnect_encode(&d, &w, &error) != FIPS_OK || w.pos != 2) abort();
+        if (fips_fmp_disconnect_encode(&d, &w, &error) != FIPS_OK || w.pos != 2 ||
+            out[0] != FIPS_LINK_Disconnect || out[1] != (uint8_t)d.reason) abort();
     }
     /* Arbitrary encoder input lengths and capacities, not just valid frames. */
     size_t cap = size ? data[0] : 0;
