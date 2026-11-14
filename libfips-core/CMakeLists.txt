@@ -127,3 +127,5 @@ target_sources(fips_core PRIVATE
 target_sources(fips_core PRIVATE
   src/proto/lookup/wire.c src/proto/lookup/state.c
   src/proto/lookup/core.c src/proto/lookup/limits.c)
+# IK/XK handshakes and transactional read-on-Fork (nostrc-pwo3h.4/.5/.6).
+target_sources(fips_core PRIVATE src/noise/handshake.c)

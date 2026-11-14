@@ -111,3 +111,12 @@ apply_warnings(fips_fuzz_lookup)
 apply_sanitizers(fips_fuzz_lookup)
 target_compile_options(fips_fuzz_lookup PRIVATE -fsanitize=fuzzer)
 target_link_options(fips_fuzz_lookup PRIVATE -fsanitize=fuzzer)
+# IK/XK arbitrary handshake ingress and immutable read-on-Fork.
+add_executable(fips_fuzz_handshake fuzz_handshake.c ../tests/fakes/host.c)
+target_link_libraries(fips_fuzz_handshake PRIVATE fips_core PkgConfig::FIPS_CORE_SODIUM)
+set_target_properties(fips_fuzz_handshake PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+apply_warnings(fips_fuzz_handshake)
+apply_sanitizers(fips_fuzz_handshake)
+target_compile_options(fips_fuzz_handshake PRIVATE -fsanitize=fuzzer)
+target_link_options(fips_fuzz_handshake PRIVATE -fsanitize=fuzzer)
