@@ -14,7 +14,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-typedef enum result { CHECKED, FAILED, SKIPPED } result;
+#include "proto_link.h" /* result, proto_case and the nostrc-82g9n.6 checks */
 typedef struct counts { size_t checked, failed, skipped; } counts;
 
 /* Family views borrow the schema-decoded C tree; all byte fields (including
@@ -44,10 +44,6 @@ typedef struct noise_case {
     diff_bytes epoch;
     diff_value *keypair_seeds, *messages, *steps, *post_handshake, *frames;
 } noise_case;
-typedef struct proto_case {
-    const char *name;
-    diff_value *record, *common_inputs, *constants;
-} proto_case;
 typedef struct rekey_case {
     const char *profile, *initial_handshake, *params_debug, *clock;
     uint64_t entropy_seed;
@@ -429,6 +425,10 @@ static result check_coords_empty(diff_context *ctx, const proto_case *c)
     if (!ok) diff_error(ctx, "empty coordinate required/optional/encoding mismatch");
     return ok ? CHECKED : FAILED;
 }
+/* nostrc-82g9n.6 adapters: the catalog/constants cases carry their value in record. */
+static result check_constants_case(diff_context *ctx, const proto_case *c) { return check_proto_constants(ctx, c->record); }
+static result check_link_catalog_case(diff_context *ctx, const proto_case *c) { return check_proto_link_catalog(ctx, c->record); }
+static result check_session_catalog_case(diff_context *ctx, const proto_case *c) { return check_proto_session_catalog(ctx, c->record); }
 typedef struct proto_checker {
     const char *name, *owner;
     result (*check)(diff_context *, const proto_case *);
@@ -447,12 +447,9 @@ static const proto_checker proto_checkers[] = {
     {"fmp-msg-2", "nostrc-82g9n.7", NULL}, {"fmp-encrypted", "nostrc-82g9n.7", NULL},
     {"fsp-setup", "nostrc-82g9n.8", NULL}, {"fsp-ack", "nostrc-82g9n.8", NULL},
     {"fsp-msg3", "nostrc-82g9n.8", NULL}, {"fsp-encrypted", "nostrc-82g9n.8", NULL},
-    {"session-datagram", "nostrc-82g9n.6", NULL},
-    /* nostrc-82g9n.6 integration hook: orchestrator will call the checks from
-     * tests/diff/proto_link.c for constants/link_catalog/session_catalog here
-     * after both branches merge. Do not count those catalogs as checked yet. */
-    {"constants", "nostrc-82g9n.6", NULL}, {"link_catalog", "nostrc-82g9n.6", NULL},
-    {"session_catalog", "nostrc-82g9n.6", NULL}
+    {"session-datagram", "nostrc-82g9n.6", check_proto_session_datagram},
+    {"constants", "nostrc-82g9n.6", check_constants_case}, {"link_catalog", "nostrc-82g9n.6", check_link_catalog_case},
+    {"session_catalog", "nostrc-82g9n.6", check_session_catalog_case}
 };
 static result check_proto(diff_context *ctx, const proto_case *c, const char **owner)
 {
