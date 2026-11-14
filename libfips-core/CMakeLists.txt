@@ -85,3 +85,6 @@ option(FIPS_ENABLE_BENCH "Build libfips-core micro-benchmarks (not run by ctest)
 if(FIPS_ENABLE_BENCH)
   add_subdirectory(bench)
 endif()
+# Link message catalog, session datagram header and framing/path-MTU admit math
+# (nostrc-82g9n.6): size constants by value, no FMP/FSP frame codec.
+target_sources(fips_core PRIVATE src/proto/link.c src/proto/framing.c)

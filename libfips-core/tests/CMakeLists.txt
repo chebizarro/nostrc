@@ -110,3 +110,23 @@ set_tests_properties(FipsCoreCoordCacheTest PROPERTIES TIMEOUT 120 LABELS "fips;
 nostrc_describe_test(FipsCoreCoordCacheTest OWNER libfips-core TARGETS fips_core_coord_cache_test)
 # Keep the explicit FIPS CI build closure complete (see the host-test note above).
 add_dependencies(fips_core_host_test fips_core_coord_cache_test)
+# Link catalog, session datagram and framing math (nostrc-82g9n.6). The test also
+# replays the pinned proto fixture through the harness loader, so it links the
+# test-only loader/schema and Jansson exactly as fips_diff does and reuses its
+# vectors/pin definitions rather than a second hand-maintained constant.
+pkg_check_modules(FIPS_LINK_JANSSON REQUIRED IMPORTED_TARGET jansson)
+add_executable(fips_core_link_test test_link.c diff/loader.c diff/schema.c diff/proto_link.c fakes/host.c)
+get_target_property(fips_link_diff_definitions fips_diff COMPILE_DEFINITIONS)
+target_compile_definitions(fips_core_link_test PRIVATE ${fips_link_diff_definitions})
+target_link_libraries(fips_core_link_test PRIVATE fips_core PkgConfig::FIPS_LINK_JANSSON OpenSSL::Crypto)
+set_target_properties(fips_core_link_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+apply_warnings(fips_core_link_test)
+apply_sanitizers(fips_core_link_test)
+add_test(NAME FipsCoreLinkTest COMMAND fips_core_link_test)
+set_tests_properties(FipsCoreLinkTest PROPERTIES TIMEOUT 30 LABELS "fips;unit")
+nostrc_describe_test(FipsCoreLinkTest OWNER libfips-core TARGETS fips_core_link_test
+  INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/vectors/proto.json"
+         "${CMAKE_CURRENT_SOURCE_DIR}/vectors/proto-session-datagram.bin"
+         "${CMAKE_CURRENT_SOURCE_DIR}/../UPSTREAM.md")
+add_dependencies(fips_core_host_test fips_core_link_test)
