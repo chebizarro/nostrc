@@ -100,3 +100,7 @@ target_sources(fips_core PRIVATE src/proto/link.c src/proto/framing.c)
 target_sources(fips_core PRIVATE
   src/proto/fmp/wire.c src/proto/fmp/core.c
   src/proto/fmp/state.c src/proto/fmp/silent.c src/proto/fmp/limits.c)
+# Spanning-tree protocol (nostrc-82g9n.2), sans-IO state + host action list.
+target_sources(fips_core PRIVATE
+  src/proto/stp/declaration.c src/proto/stp/wire.c src/proto/stp/limits.c
+  src/proto/stp/state.c src/proto/stp/core.c src/proto/stp/acks.c)

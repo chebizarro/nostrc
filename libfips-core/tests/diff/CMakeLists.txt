@@ -56,3 +56,5 @@ target_sources(fips_diff PRIVATE proto_link.c)
 
 # Per-name table registration is owned by the integration orchestrator.
 target_sources(fips_diff PRIVATE proto_fmp.c)
+# Orchestrator owns cases.c dispatch after merge (nostrc-82g9n.2).
+target_sources(fips_diff PRIVATE proto_stp.c)

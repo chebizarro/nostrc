@@ -196,3 +196,25 @@ file(GLOB fmp_vector_inputs CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/vecto
 nostrc_describe_test(FipsCoreFmpVectorsTest OWNER libfips-core TARGETS fips_core_fmp_vectors_test
   INPUTS ${fmp_vector_inputs} "${CMAKE_CURRENT_SOURCE_DIR}/../UPSTREAM.md")
 add_dependencies(fips_core_host_test fips_core_fmp_test fips_core_fmp_vectors_test)
+# Spanning-tree state, wire and regression tests (nostrc-82g9n.2).
+add_executable(fips_core_stp_test test_stp.c fakes/host.c)
+target_link_libraries(fips_core_stp_test PRIVATE fips_core)
+set_target_properties(fips_core_stp_test PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+apply_warnings(fips_core_stp_test)
+apply_sanitizers(fips_core_stp_test)
+add_test(NAME FipsCoreStpTest COMMAND fips_core_stp_test)
+set_tests_properties(FipsCoreStpTest PROPERTIES TIMEOUT 30 LABELS "fips;unit")
+nostrc_describe_test(FipsCoreStpTest OWNER libfips-core TARGETS fips_core_stp_test)
+
+add_executable(fips_core_stp_vectors_test test_stp_vectors.c diff/proto_stp.c diff/loader.c diff/schema.c fakes/host.c)
+get_target_property(fips_stp_diff_definitions fips_diff COMPILE_DEFINITIONS)
+target_compile_definitions(fips_core_stp_vectors_test PRIVATE ${fips_stp_diff_definitions})
+target_link_libraries(fips_core_stp_vectors_test PRIVATE fips_core PkgConfig::FIPS_LINK_JANSSON OpenSSL::Crypto)
+set_target_properties(fips_core_stp_vectors_test PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+apply_warnings(fips_core_stp_vectors_test)
+apply_sanitizers(fips_core_stp_vectors_test)
+add_test(NAME FipsCoreStpVectorsTest COMMAND fips_core_stp_vectors_test)
+set_tests_properties(FipsCoreStpVectorsTest PROPERTIES TIMEOUT 30 LABELS "fips;diff")
+nostrc_describe_test(FipsCoreStpVectorsTest OWNER libfips-core TARGETS fips_core_stp_vectors_test
+  INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/vectors/proto.json" "${CMAKE_CURRENT_SOURCE_DIR}/../UPSTREAM.md")
+add_dependencies(fips_core_host_test fips_core_stp_test fips_core_stp_vectors_test)
