@@ -4,6 +4,7 @@
 #include <fips/proto/coord.h>
 #include <fips/identity/local.h>
 #include <fips/noise/handshake.h>
+#include <fips/noise/session.h>
 #include <fips/identity/encoding.h>
 #include <fips/identity/auth.h>
 #include <fips/identity/address.h>
@@ -327,8 +328,7 @@ static result check_codec(diff_context *ctx, const codec_case *c)
     free(array); free(encoded);
     return ok ? CHECKED : FAILED;
 }
-/* Count every role's step and each emitted message separately; transport frames
- * remain explicit per-item skips, not claimed handshake coverage. */
+/* Count every role's step, emitted message and transport frame separately. */
 static void noise_step(diff_context *ctx, const noise_case *c, counts *n, size_t step,
                        const char *event, const fips_handshake_state *i,
                        const fips_handshake_state *r)
@@ -358,6 +358,54 @@ static void noise_message(diff_context *ctx, const noise_case *c, counts *n,
     ok &= compare(ctx, BYTES(v, "bytes"), wire, len);
     report(ctx, n, ok ? CHECKED : FAILED, NULL);
 }
+/* noise.rs tries corruption at the unused counter BEFORE the authentic frame.
+ * A frame is one check covering seal, failed open, successful open and replay. */
+static result check_noise_frame(diff_context *ctx, const diff_value *frame,
+                               fips_noise_session *initiator, fips_noise_session *responder)
+{
+    const char *direction = TEXT(frame, "direction");
+    bool forward = !strcmp(direction, "initiator_to_responder");
+    if (!forward && strcmp(direction, "responder_to_initiator")) {
+        diff_error(ctx, "unknown frame direction %s", direction); return FAILED;
+    }
+    fips_noise_session *send = forward ? initiator : responder;
+    fips_noise_session *recv = forward ? responder : initiator;
+    uint64_t counter = UINT(frame, "counter"), corrupt_counter = UINT(frame, "corrupt_counter");
+    diff_bytes ad = BYTES(frame, "aad_hex"), plain = BYTES(frame, "plaintext_hex");
+    diff_bytes sealed = BYTES(frame, "sealed"), corrupt = BYTES(frame, "corrupt_input_hex");
+    uint8_t wire[FIPS_NOISE_MAX_MESSAGE_SIZE], opened[FIPS_NOISE_MAX_MESSAGE_SIZE];
+    size_t len = SIZE_MAX;
+    if (fips_noise_session_current_send_counter(send) != counter ||
+        fips_noise_session_seal(send, ad.data, ad.len, plain.data, plain.len,
+                               wire, sizeof(wire), &len) != FIPS_NOISE_OK) {
+        diff_error(ctx, "frame seal/counter mismatch"); return FAILED;
+    }
+    bool ok = compare(ctx, sealed, wire, len);
+    fips_replay_window before = recv->replay_window;
+    len = SIZE_MAX;
+    fips_noise_status rc = fips_noise_session_open(recv, corrupt_counter, ad.data, ad.len,
+        corrupt.data, corrupt.len, opened, sizeof(opened), &len);
+    bool acceptable = fips_noise_session_check_replay(recv, corrupt_counter) == FIPS_NOISE_OK;
+    if (rc != FIPS_NOISE_DecryptionFailed || strcmp(TEXT(frame, "authentication_error"), "DecryptionFailed") ||
+        acceptable != FIELD(frame, "failed_counter_still_acceptable")->as.boolean ||
+        len != SIZE_MAX || memcmp(&before, &recv->replay_window, sizeof(before)))
+        ok = diff_error(ctx, "corrupt frame error/window/failed-counter mismatch");
+    rc = fips_noise_session_open(recv, counter, ad.data, ad.len,
+        sealed.data, sealed.len, opened, sizeof(opened), &len);
+    if (rc != FIPS_NOISE_OK) {
+        diff_error(ctx, "authentic frame rejected after failed open"); return FAILED;
+    }
+    ok &= compare(ctx, plain, opened, len);
+    ok &= compare(ctx, BYTES(frame, "opened_hex"), opened, len);
+    char replay_error[64];
+    snprintf(replay_error, sizeof(replay_error), "ReplayDetected(%" PRIu64 ")", counter);
+    len = SIZE_MAX;
+    if (fips_noise_session_open(recv, counter, ad.data, ad.len,
+        sealed.data, sealed.len, opened, sizeof(opened), &len) != FIPS_NOISE_ReplayDetected ||
+        strcmp(TEXT(frame, "replay_error"), replay_error) || len != SIZE_MAX)
+        ok = diff_error(ctx, "duplicate frame error mismatch");
+    return ok ? CHECKED : FAILED;
+}
 static void check_noise(diff_context *ctx, const noise_case *c, counts *n)
 {
     bool xk = !strcmp(c->pattern, "XK");
@@ -372,6 +420,7 @@ static void check_noise(diff_context *ctx, const noise_case *c, counts *n)
     fips_identity *keys[2] = {NULL, NULL};
     fips_handshake_state i = {0}, r = {0}, fork = {0}, before = {0};
     fips_aead_key is = {{0}}, ir = {{0}}, rs = {{0}}, rr = {{0}};
+    fips_noise_session initiator = {0}, responder = {0};
     uint8_t pub[2][33], secret[32] = {0}, wire[FIPS_NOISE_HANDSHAKE_MSG1_SIZE];
     size_t len = 0;
     ctx->error[0] = '\0';
@@ -461,6 +510,15 @@ static void check_noise(diff_context *ctx, const noise_case *c, counts *n)
         !memcmp(ipub, pub[1], 33) && !memcmp(rpub, pub[0], 33) &&
         !memcmp(ie, c->epoch.data, 8) && !memcmp(re, c->epoch.data, 8);
     report(ctx, n, ok ? CHECKED : FAILED, NULL);
+    NOISE_TRY(fips_noise_session_from_handshake(&initiator, FIPS_HANDSHAKE_INITIATOR,
+                                               &is, &ir, ih, ipub, ie));
+    NOISE_TRY(fips_noise_session_from_handshake(&responder, FIPS_HANDSHAKE_RESPONDER,
+                                               &rs, &rr, rh, rpub, re));
+    for (size_t frame = 0; frame < COUNT(c->frames); ++frame) {
+        ctx->error[0] = '\0';
+        snprintf(ctx->id, sizeof(ctx->id), "noise/%s/frames/%zu", c->pattern, frame);
+        report(ctx, n, check_noise_frame(ctx, ITEM(c->frames, frame), &initiator, &responder), NULL);
+    }
     goto done;
 failed:
     if (!ctx->error[0]) diff_error(ctx, "Noise construction/read/write/finish failed");
@@ -468,6 +526,7 @@ failed:
 done:
 #undef NOISE_TRY
     sodium_memzero(secret, sizeof(secret));
+    fips_noise_session_destroy(&initiator); fips_noise_session_destroy(&responder);
     fips_handshake_destroy(&i); fips_handshake_destroy(&r);
     fips_handshake_destroy(&fork); fips_handshake_destroy(&before);
     fips_aead_key_destroy(&is); fips_aead_key_destroy(&ir);
@@ -475,8 +534,21 @@ done:
     fips_identity_destroy(keys[0]); fips_identity_destroy(keys[1]);
     fips_identity_destroy_secp(ctx_secp);
 }
-static result check_replay(const diff_value *step, uint64_t window_size)
-{ (void)step; (void)window_size; return SKIPPED; }
+static result check_replay(diff_context *ctx, const diff_value *step, uint64_t window_size,
+                           fips_replay_window *window)
+{
+    uint64_t counter = UINT(step, "counter");
+    bool accept = fips_replay_window_check(window, counter);
+    if (accept && !fips_replay_window_mark(window, counter)) {
+        diff_error(ctx, "acceptable replay counter could not be marked"); return FAILED;
+    }
+    if (window_size != FIPS_REPLAY_WINDOW_SIZE ||
+        accept != FIELD(step, "accept")->as.boolean ||
+        fips_replay_window_highest(window) != UINT(step, "highest_after")) {
+        diff_error(ctx, "replay accept/highest/window-size mismatch"); return FAILED;
+    }
+    return CHECKED;
+}
 /* Derive the common-input addresses from the declared seeds, never parse the
  * Debug strings or assume the coords vector's addresses are the same inputs. */
 static bool check_coord_debug(diff_context *ctx, const proto_case *c,
@@ -670,17 +742,19 @@ int diff_dispatch(diff_context *ctx, const char *family, diff_value *cases)
                 FIELD(p, "keypair_seeds"), FIELD(p, "messages"), FIELD(p, "steps"), FIELD(p, "post_handshake"), FIELD(p, "frames")};
             counts before = n;
             check_noise(ctx, &c, &n);
-            for (size_t frame = 0; frame < COUNT(c.frames); ++frame) {
-                snprintf(ctx->id, sizeof(ctx->id), "noise/%s/frames", c.pattern);
-                report(ctx, &n, SKIPPED, "nostrc-pwo3h.7");
-            }
             printf("noise/%s: %zu checked, %zu skipped, %zu failed\n", c.pattern,
                 n.checked - before.checked, n.skipped - before.skipped, n.failed - before.failed);
         }
+        fips_replay_window window;
+        fips_replay_window_init(&window);
+        counts before = n;
         for (size_t i = 0; i < COUNT(replay); ++i) {
+            ctx->error[0] = '\0';
             snprintf(ctx->id, sizeof(ctx->id), "noise/replay/%zu", i);
-            report(ctx, &n, check_replay(ITEM(replay, i), UINT(cases, "replay_window_size")), "nostrc-pwo3h.7");
+            report(ctx, &n, check_replay(ctx, ITEM(replay, i), UINT(cases, "replay_window_size"), &window), NULL);
         }
+        printf("noise/replay: %zu checked, %zu skipped, %zu failed\n",
+            n.checked - before.checked, n.skipped - before.skipped, n.failed - before.failed);
     } else if (!strcmp(family, "proto")) {
         diff_value *wire = FIELD(cases, "wire_cases");
         for (size_t i = 0; i < COUNT(wire); ++i) {

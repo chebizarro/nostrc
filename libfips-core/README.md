@@ -249,8 +249,8 @@ Version decision (nostrc-u50yr.2): additive identity APIs fold into initial
 32-byte keys (explicit destroy wipes them), counter nonces (four zero bytes
 then LE u64), associated data and ciphertext followed by a 16-byte tag.
 `fips/noise/mod.h` reserves the shared Noise constants: tag 16, nonce 12,
-maximum message 65535 including tag. Handshakes/CipherState/replay policy are
-not implemented here; callers must ensure counters never repeat under a key.
+maximum message 65535 including tag. CipherState and session/replay policy are
+described below; primitive callers must ensure counters never repeat under a key.
 All calls are synchronous, with no allocations, RNG or clock in seal/open.
 Capacity/length errors preserve output; authentication failure zeroes the
 plaintext region, and failed calls leave the output length unchanged.
@@ -656,4 +656,39 @@ output preservation and destruction, wrong keys/role/pattern/progress,
 lengths/capacities, invalid host scalars, and directional split metadata.
 `FipsDiffNoise` checks each role after every exporter event, each emitted
 message and final hashes, and any non-empty exported ck. Transport frames
-and replay remain explicit per-item SKIPs owned by `nostrc-pwo3h.7`.
+and replay are checked by the session data path described below.
+
+## Noise transport sessions
+
+`noise/cipher.h`, `noise/replay.h` and `noise/session.h` complete the transport
+path. `fips_noise_session_from_handshake` consumes the two directionally split
+keys from `fips_handshake_finish`, without another split/swap, and retains the
+final hash, remote static key, startup epoch and role. All storage is inline,
+caller-owned, with no allocation, clock, RNG, locks or threads. Destroy wipes
+the entire value (including padding); typed `take_cleared` moves to a distinct
+destination and wipes the abandoned slot. Every copy has its own wipe obligation.
+
+Auto-counter seal reserves a nonce before crypto and refuses `UINT64_MAX`;
+explicit-counter open does not advance the cipher's local counter. Both support
+AAD and the existing AEAD buffer/status conventions. `open` checks the 8192-bit
+sliding replay window, authenticates, then marks ONLY on success. A corrupt
+frame cannot move or consume the window. `open_unmarked` neither checks nor
+marks replay; rekey callers check, trial-open, decide, then recheck/mark only
+on acceptance. The replay gate rejects MAX, duplicates and counters of age
+>= 8192. C's mark also safely refuses invalid inputs rather than indexing
+outside the bitmap.
+
+**Threading contract:** clones are per-worker independent cipher states; they
+do not share counters. The session's window is single-writer. The dispatcher
+serializes send-counter reservation across ALL clones of a key, and workers
+seal with those explicit counters, NEVER independently auto-sealing from the
+same snapshot. Decrypt workers authenticate; the sole window owner rechecks
+and marks only on acceptance. Lifecycle/mutation and racing reads require host
+synchronization. See `session.h` for the full ownership contract.
+
+The Noise differential family now checks both completed-handshake sessions,
+all 16 frames in each direction-pair pattern (including nonempty AAD on odd
+frames, corrupt-open/nonconsumption and duplicate rejection), and the 16-step
+replay trace: IK 31 + XK 36 + replay 16 = 83 checks, zero skips.
+Version decision (nostrc-pwo3h.7): additive APIs fold into **libfips-core 0.1.0
+Unreleased**; no published version or release-tag change.

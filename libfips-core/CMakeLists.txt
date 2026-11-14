@@ -129,3 +129,6 @@ target_sources(fips_core PRIVATE
   src/proto/lookup/core.c src/proto/lookup/limits.c)
 # IK/XK handshakes and transactional read-on-Fork (nostrc-pwo3h.4/.5/.6).
 target_sources(fips_core PRIVATE src/noise/handshake.c)
+
+# Transport ciphers, replay protection and worker key hand-outs (nostrc-pwo3h.7).
+target_sources(fips_core PRIVATE src/noise/cipher.c src/noise/replay.c src/noise/session.c)
