@@ -56,6 +56,8 @@ other components and all version/release/tag values are unchanged.
 | libnostr | `libnostr/` | 2.4.0 | Unreleased | — | `libnostr/CMakeLists.txt` |
 | libjson (libnostr-json) | `libjson/` | 2.0.0 | Unreleased | — | `libjson/CMakeLists.txt` (`declare_component_version`) |
 | libgo | `libgo/` | 0.3.0 | Unreleased | — | `libgo/CMakeLists.txt` |
+| libfips-core | `libfips-core/` | 0.1.0 | Unreleased | — | `libfips-core/CMakeLists.txt` (`declare_component_version`) |
+| fipsd | `fipsd/` | 0.1.0 | Unreleased | — | `fipsd/CMakeLists.txt` (`declare_component_version`) |
 | nostr-gobject | `nostr-gobject/` | 3.1.0 | Unreleased | — | `nostr-gobject/CMakeLists.txt`, `nostr-gobject/meson.build` |
 | nostr-gtk | `nostr-gtk/` | 2.0.0 | Unreleased | — | `nostr-gtk/CMakeLists.txt`, `nostr-gtk/meson.build`; nostrc-0cfsg.32's PATCH-class correction was folded into the earlier unreleased 1.2.0 wave, before the nostrc-er4fz.10 phase C 2.0.0 ABI change |
 | libmarmot | `libmarmot/` | 0.14.0 | Unreleased | — | `libmarmot/CMakeLists.txt`, `libmarmot/meson.build` |
@@ -88,6 +90,19 @@ other components and all version/release/tag values are unchanged.
 | nostr-seal | `gnome/nostr-seal/` | 0.1.3 (format nsealed v1) | Unreleased | — | `gnome/nostr-seal/src/main.c` (`NOSTR_SEAL_VERSION`), `gnome/nostr-seal/include/nostr-seal.h` (`NSEAL_FORMAT_VERSION`) |
 | signet | `signet/` | 0.9.0 | 0.8.0-rc.1 | `signet-v0.8.0-rc.1` | `signet/meson.build`, `signet/src/signetd_main.c` (`SIGNET_VERSION`), `signet/src/signetctl_main.c` (`SIGNETCTL_VERSION`), `signet/CMakeLists.txt` (`project VERSION`) |
 
+
+### FIPS component skeletons (nostrc-s50dj.1)
+
+- **libfips-core: initial 0.1.0, Unreleased.** New independently versioned C11
+  sans-IO library component with a public version API, static/shared CMake
+  build contract, installed headers and pkg-config metadata. No protocol
+  implementation or stable ABI is claimed yet.
+- **fipsd: initial 0.1.0, Unreleased.** New independently versioned host
+  executable component with fiber-runtime startup/shutdown and version output
+  only; operational daemon behavior is not implemented yet.
+- **libgo, libjson and libnostr: no bump.** Their artifacts and public
+  contracts are unchanged; the top-level build only adds optional consumers.
+  No release tags are created and existing release columns remain unchanged.
 
 ### libnostr callback API and client TLS hardening (nostrc-a7p6i, nostrc-86xt, nostrc-mk7v1.3)
 

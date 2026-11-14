@@ -371,6 +371,18 @@ endif()
 add_subdirectory(libgo)
 add_subdirectory(libjson)
 add_subdirectory(libnostr)
+
+# FIPS keeps pure protocol code separate from its runtime/I/O host.
+option(BUILD_FIPS "Build the FIPS protocol core and host daemon skeletons" ON)
+if(BUILD_FIPS)
+  add_subdirectory(libfips-core)
+  if(TARGET go_fiber)
+    add_subdirectory(fipsd)
+  else()
+    message(STATUS "Skipping fipsd: the go_fiber runtime is unavailable on this platform")
+  endif()
+endif()
+
 # Both backend layouts compile the same pinned vendor sources. Patch only build
 # copies so configuring never dirties the submodule (nostrc-wktgk).
 include(cmake/NostrdbPatches.cmake)

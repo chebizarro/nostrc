@@ -1,0 +1,10 @@
+execute_process(COMMAND "${FIPSD}"
+  RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error)
+if(NOT "${result}" STREQUAL "0")
+  message(FATAL_ERROR "fipsd failed (${result}): ${error}")
+endif()
+string(STRIP "${output}" output)
+set(expected "fipsd ${EXPECTED_VERSION} (libfips-core ${EXPECTED_CORE_VERSION})")
+if(NOT output STREQUAL expected)
+  message(FATAL_ERROR "Expected '${expected}', got '${output}'")
+endif()
