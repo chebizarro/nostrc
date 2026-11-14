@@ -269,3 +269,41 @@ unchanged. `fips_bench_noise_aead` uses upstream's 64/1400-byte payloads and
 16-byte AD, but measures AEAD only, not future session/replay/worker overhead.
 Version decision (nostrc-pwo3h.1): APIs fold into **0.1.0 Unreleased**; no
 published version/tag change.
+
+## Noise SymmetricState
+
+`fips/noise/symmetric.h` mirrors the `SymmetricState` of
+`core/src/noise/handshake.rs`: `ck`, `h` and the handshake-phase cipher (an
+`fips_aead_key`, its counter and `has_key`) as one caller-owned plain struct,
+so the Fork copy (`fips_symmetric_copy`) is a struct assignment and both copies
+are destroyed. `init` zero-pads a protocol name of 32 bytes or fewer and
+SHA-256 hashes a longer one (both pinned 36-byte names are hashed); `mix_hash`
+is SHA-256(h || data); `mix_key` is HKDF(ck, ikm, 2) with the second output
+keying the cipher at counter 0; `encrypt_and_hash`/`decrypt_and_hash` pass the
+bytes through without a key and otherwise seal/open with empty associated data
+(upstream wire behaviour) and hash the ciphertext; `split` is HKDF(ck, "", 2) as
+two caller-owned transport keys. A failed open has consumed its counter and
+left `h` unchanged, exactly as upstream, so a read that may fail runs on a
+copy. Length/capacity errors are `RANGE` and consume nothing; exact in-place
+calls are supported.
+
+HMAC-SHA256/HKDF-SHA256 (RFC 5869; the `hkdf` crate's semantics with empty
+info) live in the private `src/noise/hkdf.h` over libsodium's allocation-free
+`crypto_auth_hmacsha256`. NIP-44's KDF was not reused: `nostr_nip44_core` links
+libnostr, which this library excludes. Every HMAC state, PRK and derived block
+is wiped on all paths; `destroy` wipes the whole state.
+
+Tests: RFC 4231 cases 1-4 and RFC 5869 cases 1-2 through the private header;
+`init` plus the normalized `<- s` pre-message reproduce the `constructed` step
+`h` of both `noise.json` patterns (the fixture captures the hash after the
+constructors mix the responder's static key with its prefix forced to 0x02, so
+SHA-256(name) alone is not the recorded value); MixKey/MixHash/Split sequences
+pinned from `tests/tools/noise_symmetric_vectors.py` (`python3 -I`; hashlib and
+hmac, plus the checked-in affine secp256k1 reference for the seeded key); round
+trips, in-place calls, tamper/fork behaviour, split determinism and destroy
+zeroization. `post_handshake.ck` is absent from the fixture (recorded gap), so
+split has no differential check; `tests/diff/cases.c` is unchanged and the
+handshake tasks own the remaining steps.
+
+Version decision (nostrc-pwo3h.3): additive APIs fold into **0.1.0
+Unreleased**; no published version/tag change.

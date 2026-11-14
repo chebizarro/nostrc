@@ -95,3 +95,6 @@ target_sources(fips_core PRIVATE src/proto/coord.c)
 # Link message catalog, session datagram header and framing/path-MTU admit math
 # (nostrc-82g9n.6): size constants by value, no FMP/FSP frame codec.
 target_sources(fips_core PRIVATE src/proto/link.c src/proto/framing.c)
+# Noise SymmetricState (nostrc-pwo3h.3): ck/h chaining, HKDF over libsodium HMAC,
+# handshake-phase encrypt/decrypt-and-hash over the AEAD, split.
+target_sources(fips_core PRIVATE src/noise/symmetric.c)
