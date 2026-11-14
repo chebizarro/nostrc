@@ -126,3 +126,14 @@ set_tests_properties(FipsCoreEcdhTest PROPERTIES TIMEOUT 10 LABELS "fips;unit")
 nostrc_describe_test(FipsCoreEcdhTest OWNER libfips-core TARGETS fips_core_ecdh_test
   INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/ecdh_vectors.py")
 add_dependencies(fips_core_host_test fips_core_ecdh_test)
+# Noise AEAD vectors and failure atomicity (nostrc-pwo3h.1).
+add_executable(fips_core_aead_test test_aead.c)
+target_link_libraries(fips_core_aead_test PRIVATE fips_core PkgConfig::FIPS_CORE_SODIUM)
+set_target_properties(fips_core_aead_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+apply_warnings(fips_core_aead_test)
+apply_sanitizers(fips_core_aead_test)
+add_test(NAME FipsCoreAeadTest COMMAND fips_core_aead_test)
+set_tests_properties(FipsCoreAeadTest PROPERTIES TIMEOUT 10 LABELS "fips;unit")
+nostrc_describe_test(FipsCoreAeadTest OWNER libfips-core TARGETS fips_core_aead_test)
+add_dependencies(fips_core_host_test fips_core_aead_test)

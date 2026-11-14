@@ -88,3 +88,5 @@ endif()
 
 # Noise DH: SHA-256 of shared x, using the identity context.
 target_sources(fips_core PRIVATE src/noise/ecdh.c)
+# Noise AEAD (nostrc-pwo3h.1); independent of sibling Noise modules.
+target_sources(fips_core PRIVATE src/noise/aead.c)
