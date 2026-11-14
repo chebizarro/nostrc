@@ -1,6 +1,11 @@
 #include "diff.h"
 #include "../fakes/host.h"
 #include <fips/proto/codec.h>
+#include <fips/identity/local.h>
+#include <fips/identity/encoding.h>
+#include <fips/identity/auth.h>
+#include <fips/identity/address.h>
+#include <sodium.h>
 #include <secp256k1.h>
 #include <secp256k1_extrakeys.h>
 #include <inttypes.h>
@@ -121,7 +126,70 @@ static result check_entropy(diff_context *ctx, const entropy_case *c)
 
 /* Replace these dispatch bodies when their owning port lands. Returning
  * CHECKED requires real C output/error/state comparisons, not fixture integrity. */
-static result check_identity(const identity_case *c) { (void)c; return SKIPPED; }
+static result check_identity(diff_context *ctx, const identity_case *c)
+{
+    bool ok = true;
+    fips_fixed_entropy fixed = {(uint8_t)c->aux_entropy_byte};
+    fips_entropy entropy = fips_fixed_entropy_adapter(&fixed);
+    fips_secp *secp = NULL;
+    fips_identity *id = NULL;
+    uint8_t secret[32], exported[32];
+    /* Exactly support.rs seeded_keypair: fresh SplitMix64, domain XOR,
+     * four little-endian words, no hashing or reduction. Blinding is separate. */
+    fips_seeded_entropy state = {c->seed ^ UINT64_C(0x6b65797061697273)};
+    fips_entropy seeded = fips_seeded_entropy_adapter(&state);
+    seeded.fill(seeded.ctx, secret, sizeof(secret));
+    ok &= compare(ctx, c->secret, secret, sizeof(secret));
+    if (fips_identity_init_secp(entropy, &secp) != FIPS_IDENTITY_OK ||
+        fips_identity_from_secret_bytes(secp, entropy, secret, &id) != FIPS_IDENTITY_OK) {
+        diff_error(ctx, "identity construction failed"); ok = false; goto done;
+    }
+    fips_identity_export_secret(id, exported);
+    ok &= compare(ctx, c->secret, exported, sizeof(exported));
+    fips_xonly_pubkey key = fips_identity_pubkey(id), decoded;
+    fips_node_addr addr = fips_identity_node_addr(id), verified;
+    fips_ipv6_address address = fips_identity_address(id);
+    ok &= compare(ctx, c->xonly, key.bytes, sizeof(key.bytes));
+    ok &= compare(ctx, c->node_addr, addr.bytes, sizeof(addr.bytes));
+    ok &= compare(ctx, c->ipv6, address.bytes, sizeof(address.bytes));
+    char npub[64], nsec[64], ipv6[40];
+    if (fips_identity_npub(id, npub, sizeof(npub)) != FIPS_IDENTITY_OK ||
+        fips_encode_nsec(secp, secret, nsec, sizeof(nsec)) != FIPS_IDENTITY_OK ||
+        fips_ipv6_address_format(&address, ipv6, sizeof(ipv6)) != FIPS_IDENTITY_OK) {
+        diff_error(ctx, "identity encoding failed"); ok = false;
+    } else {
+        ok &= !strcmp(npub, c->npub) && !strcmp(nsec, c->nsec) && !strcmp(ipv6, c->ipv6_text);
+        if (fips_decode_npub(secp, npub, strlen(npub), &decoded) != FIPS_IDENTITY_OK ||
+            fips_decode_nsec(secp, nsec, strlen(nsec), exported) != FIPS_IDENTITY_OK) ok = false;
+        else {
+            ok &= compare(ctx, c->xonly, decoded.bytes, 32);
+            ok &= compare(ctx, c->secret, exported, 32);
+        }
+    }
+    sodium_memzero(nsec, sizeof(nsec));
+    if (c->challenge.len != 32) { ok = false; goto done; }
+    fips_auth_challenge challenge = fips_auth_challenge_from_bytes(c->challenge.data);
+    fips_auth_response response;
+    if (fips_identity_sign_challenge(id, &challenge, c->timestamp, &response) != FIPS_IDENTITY_OK) {
+        ok = false; goto done;
+    }
+    ok &= response.timestamp == c->timestamp;
+    ok &= compare(ctx, c->xonly, response.pubkey.bytes, 32);
+    ok &= compare(ctx, c->signature, response.signature, 64);
+    if (fips_auth_challenge_verify(secp, &challenge, &response, &verified) != FIPS_IDENTITY_OK) ok = false;
+    else ok &= compare(ctx, c->verified, verified.bytes, 16);
+    memset(challenge.bytes, 0, 32);
+    fips_identity_status wrong = fips_auth_challenge_verify(secp, &challenge, &response, &verified);
+    ok &= wrong == FIPS_IDENTITY_SignatureVerificationFailed &&
+          !strcmp(fips_identity_error_name(wrong), c->wrong_challenge_error);
+done:
+    sodium_memzero(secret, sizeof(secret));
+    sodium_memzero(exported, sizeof(exported));
+    fips_identity_destroy(id);
+    fips_identity_destroy_secp(secp);
+    if (!ok && !ctx->error[0]) diff_error(ctx, "identity output/error mismatch");
+    return ok ? CHECKED : FAILED;
+}
 static fips_status codec_read(const codec_case *c, fips_reader *r,
                               uint64_t *value, uint8_t *array,
                               const uint8_t **bytes, fips_proto_error *error)
@@ -295,7 +363,7 @@ int diff_dispatch(diff_context *ctx, const char *family, diff_value *cases)
                     BYTES(v, "secret_hex"), BYTES(v, "xonly_pubkey"), BYTES(v, "node_addr"), BYTES(v, "ipv6_bytes"),
                     BYTES(auth, "challenge"), BYTES(auth, "signature"), BYTES(auth, "verified_node_addr"),
                     TEXT(v, "npub"), TEXT(v, "nsec"), TEXT(v, "ipv6"), TEXT(auth, "wrong_challenge_error")};
-                report(ctx, &n, check_identity(&c), "nostrc-u50yr");
+                report(ctx, &n, check_identity(ctx, &c), "nostrc-u50yr.2");
             } else {
                 diff_value *value = FIELD(v, "value"), *bytes = FIELD(v, "bytes");
                 codec_case c = {TEXT(v, "kind"), value != NULL, value ? value->as.number : 0,

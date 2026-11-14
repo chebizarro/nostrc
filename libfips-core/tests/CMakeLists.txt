@@ -65,3 +65,15 @@ nostrc_describe_test(FipsCoreStatsHistoryTest OWNER libfips-core TARGETS fips_co
 # FIPS CI builds the established host-test entrypoint explicitly before ctest.
 # Keep these registered tests in that build closure without changing CI lanes.
 add_dependencies(fips_core_host_test fips_core_rate_limit_test fips_core_stats_history_test)
+
+# Identity behavioral ports and C ownership/bounds cases.
+add_executable(fips_core_identity_test test_identity.c fakes/host.c)
+target_link_libraries(fips_core_identity_test PRIVATE fips_core PkgConfig::FIPS_CORE_SODIUM)
+set_target_properties(fips_core_identity_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+apply_warnings(fips_core_identity_test)
+apply_sanitizers(fips_core_identity_test)
+add_test(NAME FipsCoreIdentityTest COMMAND fips_core_identity_test)
+set_tests_properties(FipsCoreIdentityTest PROPERTIES TIMEOUT 10 LABELS "fips;unit")
+nostrc_describe_test(FipsCoreIdentityTest OWNER libfips-core TARGETS fips_core_identity_test)
+add_dependencies(fips_core_host_test fips_core_identity_test)

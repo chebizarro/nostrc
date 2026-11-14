@@ -46,3 +46,6 @@ add_test(NAME FipsDiffSelfTest COMMAND "${CMAKE_COMMAND}"
 set_tests_properties(FipsDiffSelfTest PROPERTIES TIMEOUT 30 LABELS "fips;diff;negative")
 nostrc_describe_test(FipsDiffSelfTest OWNER libfips-core TARGETS fips_diff
   INPUTS ${vector_inputs} "${CMAKE_CURRENT_SOURCE_DIR}/selftest.cmake")
+
+# Identity replay wipes its explicit secret exports.
+target_link_libraries(fips_diff PRIVATE PkgConfig::FIPS_CORE_SODIUM)

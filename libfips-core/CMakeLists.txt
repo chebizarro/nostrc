@@ -65,3 +65,9 @@ endif()
 if(BUILD_TESTING)
   add_subdirectory(tests)
 endif()
+
+# Identity primitives (explicit host entropy, no hot-path allocations).
+target_sources(fips_core PRIVATE
+  src/identity/mod.c src/identity/key.c src/identity/local.c
+  src/identity/peer.c src/identity/node_addr.c src/identity/address.c
+  src/identity/encoding.c src/identity/auth.c src/identity/prefix.c)
