@@ -60,3 +60,13 @@ apply_warnings(fips_fuzz_link)
 apply_sanitizers(fips_fuzz_link)
 target_compile_options(fips_fuzz_link PRIVATE -fsanitize=fuzzer)
 target_link_options(fips_fuzz_link PRIVATE -fsanitize=fuzzer)
+
+# FMP wire codecs and the common pending/established ingress gate.
+add_executable(fips_fuzz_fmp fuzz_fmp.c)
+target_link_libraries(fips_fuzz_fmp PRIVATE fips_core)
+set_target_properties(fips_fuzz_fmp PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+apply_warnings(fips_fuzz_fmp)
+apply_sanitizers(fips_fuzz_fmp)
+target_compile_options(fips_fuzz_fmp PRIVATE -fsanitize=fuzzer)
+target_link_options(fips_fuzz_fmp PRIVATE -fsanitize=fuzzer)

@@ -168,3 +168,31 @@ nostrc_describe_test(FipsCoreLinkTest OWNER libfips-core TARGETS fips_core_link_
          "${CMAKE_CURRENT_SOURCE_DIR}/vectors/proto-session-datagram.bin"
          "${CMAKE_CURRENT_SOURCE_DIR}/../UPSTREAM.md")
 add_dependencies(fips_core_host_test fips_core_link_test)
+
+# FMP lifecycle upstream ports and C bounded-storage/ingress regressions.
+add_executable(fips_core_fmp_test test_fmp.c fakes/host.c)
+target_link_libraries(fips_core_fmp_test PRIVATE fips_core)
+set_target_properties(fips_core_fmp_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+apply_warnings(fips_core_fmp_test)
+apply_sanitizers(fips_core_fmp_test)
+add_test(NAME FipsCoreFmpTest COMMAND fips_core_fmp_test)
+set_tests_properties(FipsCoreFmpTest PROPERTIES TIMEOUT 10 LABELS "fips;unit")
+nostrc_describe_test(FipsCoreFmpTest OWNER libfips-core TARGETS fips_core_fmp_test)
+
+add_executable(fips_core_fmp_vectors_test test_fmp_vectors.c
+  diff/loader.c diff/schema.c diff/proto_fmp.c diff/proto_link.c fakes/host.c)
+get_target_property(fips_fmp_diff_definitions fips_diff COMPILE_DEFINITIONS)
+target_compile_definitions(fips_core_fmp_vectors_test PRIVATE ${fips_fmp_diff_definitions})
+target_link_libraries(fips_core_fmp_vectors_test PRIVATE
+  fips_core PkgConfig::FIPS_LINK_JANSSON OpenSSL::Crypto)
+set_target_properties(fips_core_fmp_vectors_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+apply_warnings(fips_core_fmp_vectors_test)
+apply_sanitizers(fips_core_fmp_vectors_test)
+add_test(NAME FipsCoreFmpVectorsTest COMMAND fips_core_fmp_vectors_test)
+set_tests_properties(FipsCoreFmpVectorsTest PROPERTIES TIMEOUT 30 LABELS "fips;diff")
+file(GLOB fmp_vector_inputs CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/vectors/*")
+nostrc_describe_test(FipsCoreFmpVectorsTest OWNER libfips-core TARGETS fips_core_fmp_vectors_test
+  INPUTS ${fmp_vector_inputs} "${CMAKE_CURRENT_SOURCE_DIR}/../UPSTREAM.md")
+add_dependencies(fips_core_host_test fips_core_fmp_test fips_core_fmp_vectors_test)

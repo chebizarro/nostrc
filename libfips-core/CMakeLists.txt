@@ -95,3 +95,8 @@ target_sources(fips_core PRIVATE src/proto/coord.c)
 # Link message catalog, session datagram header and framing/path-MTU admit math
 # (nostrc-82g9n.6): size constants by value, no FMP/FSP frame codec.
 target_sources(fips_core PRIVATE src/proto/link.c src/proto/framing.c)
+
+# FMP link wire/lifecycle (nostrc-82g9n.7); Noise/rekey profiles are separate.
+target_sources(fips_core PRIVATE
+  src/proto/fmp/wire.c src/proto/fmp/core.c
+  src/proto/fmp/state.c src/proto/fmp/silent.c src/proto/fmp/limits.c)
