@@ -117,7 +117,7 @@ static bool noise(diff_context *ctx, diff_value *v)
         diff_value *p = ITEM(patterns, i);
         if (!shape(ctx, p, "pattern:s entropy_seed_hex:w keypair_seeds:a startup_epoch_hex:h messages:a steps:a post_handshake:o frames:a") ||
             !elements(ctx, FIELD(p, "keypair_seeds"), 'u') ||
-            !shape(ctx, FIELD(p, "post_handshake"), "initiator_h:h responder_h:h ck:n")) return false;
+            !shape(ctx, FIELD(p, "post_handshake"), "initiator_h:h responder_h:h ck?:H")) return false;
         diff_value *messages = FIELD(p, "messages"), *steps = FIELD(p, "steps"), *frames = FIELD(p, "frames");
         for (size_t j = 0; j < COUNT(messages); ++j)
             if (!shape(ctx, ITEM(messages, j), "number:u sender:s bytes:x")) return false;

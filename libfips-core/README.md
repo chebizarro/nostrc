@@ -537,3 +537,51 @@ owned. This is core/local evidence, not a running routing daemon claim.
 
 Version decision: additive APIs fold into **libfips-core 0.1.0 Unreleased**;
 no published version or release-tag change.
+
+## Noise IK/XK handshakes and Fork
+
+`fips/noise/handshake.h` ports the pinned IK (FMP, 106/57 bytes) and XK
+(FSP, 33/57/73 bytes) state machines. Constructors borrow a blinded secp
+context and static identity, take the startup epoch and host entropy, and
+mix the even-parity responder-static pre-message. The initiator draws its
+32-byte ephemeral at write1; the responder draws at write2. The static
+identity and entropy context must outlive the state and every fork.
+
+Pattern-specific write/read entrypoints reject wrong roles, patterns and
+progress before doing work. Raw reads can advance state on failure, as in
+Rust. Retained initiator msg2 and responder XK msg3 states must use
+`fips_handshake_fork_msg2`, `fips_handshake_fork_xk2` or
+`fips_handshake_fork_xk3`: they read on a temporary copy, publish the output
+copy only on success, and leave the entire original byte-identical on both
+success and failure. Destroy the displaced original before explicitly
+committing a successful fork, and destroy every unused copy. Source and
+output must be distinct. `finish` splits the send/receive keys according to
+role, exports final h, remote static and epoch, then wipes the state. The
+caller owns the returned keys. Destroy wipes the entire struct (including
+ephemeral secret, cached es and symmetric state), not the borrowed identity.
+
+These are **pinned FIPS v1 bytes**, not a correction of upstream's security
+properties: AEAD uses empty AAD, so h is not an authenticated channel
+binding. IK msg2 repeats msg1's es, not Noise IK's se; the initiator caches
+es so an authentication-failing msg2 costs one DH (an invalid compressed key
+is rejected before DH). XK msg1 is unauthenticated. A parity-only mutation
+of an ephemeral leaves x-only DH and the encryption keys unchanged, even
+though it changes h. Do not silently change these wire properties here.
+
+`test_handshake.c` flips bit 0 at **every byte offset** in all five fixture
+messages and asserts the precise accepted set (zero-based offsets):
+
+- IK msg1, IK msg2 and XK msg2: only offset **0**, the 02/03 parity byte.
+- XK msg1: **0, 1, 2, 3, 4, 5, 8, 9, 11, 12, 13, 15, 19, 20, 22, 23,
+  27, 29, 31, 32**. These encode valid curve points; the other offsets do not.
+  Changed x-coordinates subsequently fail msg2 authentication at the initiator;
+  only the parity change retains the keys (but not matching transcript hashes).
+- XK msg3: **none**. Every mutation of encrypted static/epoch or their tags
+  in any message must fail authentication.
+
+The tests compare full original structs for every fork read, check failed
+output preservation and destruction, wrong keys/role/pattern/progress,
+lengths/capacities, invalid host scalars, and directional split metadata.
+`FipsDiffNoise` checks each role after every exporter event, each emitted
+message and final hashes, and any non-empty exported ck. Transport frames
+and replay remain explicit per-item SKIPs owned by `nostrc-pwo3h.7`.

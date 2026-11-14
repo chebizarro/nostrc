@@ -262,3 +262,24 @@ nostrc_describe_test(FipsCoreBloomVectorsTest OWNER libfips-core TARGETS fips_co
 add_dependencies(fips_core_host_test fips_core_bloom_test fips_core_bloom_vectors_test)
 # Keep the explicit FIPS CI build closure complete (transport types test was missing).
 add_dependencies(fips_core_host_test fips_core_transport_types_test)
+
+# IK/XK/Fork fixture tamper and C ownership cases (nostrc-pwo3h.4/.5/.6).
+# Compile ECDH + handshake with test hooks here, never instrument production.
+add_executable(fips_core_handshake_test test_handshake.c fakes/host.c
+  diff/loader.c diff/schema.c ../src/noise/handshake.c ../src/noise/ecdh.c)
+get_target_property(fips_handshake_diff_definitions fips_diff COMPILE_DEFINITIONS)
+target_compile_definitions(fips_core_handshake_test PRIVATE
+  ${fips_handshake_diff_definitions} FIPS_TEST_HOOKS FIPS_CORE_STATIC_DEFINE)
+target_link_libraries(fips_core_handshake_test PRIVATE fips_core
+  PkgConfig::FIPS_CORE_SODIUM PkgConfig::FIPS_CORE_SECP256K1
+  PkgConfig::FIPS_LINK_JANSSON OpenSSL::Crypto)
+set_target_properties(fips_core_handshake_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+apply_warnings(fips_core_handshake_test)
+apply_sanitizers(fips_core_handshake_test)
+add_test(NAME FipsCoreHandshakeTest COMMAND fips_core_handshake_test)
+set_tests_properties(FipsCoreHandshakeTest PROPERTIES TIMEOUT 30 LABELS "fips;unit")
+nostrc_describe_test(FipsCoreHandshakeTest OWNER libfips-core TARGETS fips_core_handshake_test
+  INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/vectors/noise.json"
+         "${CMAKE_CURRENT_SOURCE_DIR}/../UPSTREAM.md")
+add_dependencies(fips_core_host_test fips_core_handshake_test)

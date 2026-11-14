@@ -115,3 +115,6 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
   set_source_files_properties(src/proto/bloom/core.c src/proto/bloom/log.c PROPERTIES
     COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off")
 endif()
+
+# IK/XK handshakes and transactional read-on-Fork (nostrc-pwo3h.4/.5/.6).
+target_sources(fips_core PRIVATE src/noise/handshake.c)

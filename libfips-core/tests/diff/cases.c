@@ -3,6 +3,7 @@
 #include <fips/proto/codec.h>
 #include <fips/proto/coord.h>
 #include <fips/identity/local.h>
+#include <fips/noise/handshake.h>
 #include <fips/identity/encoding.h>
 #include <fips/identity/auth.h>
 #include <fips/identity/address.h>
@@ -19,6 +20,7 @@
 #include "proto_bloom.h"
 #include "proto_fmp.h"
 typedef struct counts { size_t checked, failed, skipped; } counts;
+static void report(diff_context *ctx, counts *n, result r, const char *owner);
 
 /* Family views borrow the schema-decoded C tree; all byte fields (including
  * inline hex), u64s, nullable states and arrays are already decoded losslessly.
@@ -323,7 +325,154 @@ static result check_codec(diff_context *ctx, const codec_case *c)
     free(array); free(encoded);
     return ok ? CHECKED : FAILED;
 }
-static result check_noise(const noise_case *c) { (void)c; return SKIPPED; }
+/* Count every role's step and each emitted message separately; transport frames
+ * remain explicit per-item skips, not claimed handshake coverage. */
+static void noise_step(diff_context *ctx, const noise_case *c, counts *n, size_t step,
+                       const char *event, const fips_handshake_state *i,
+                       const fips_handshake_state *r)
+{
+    const char *roles[] = {"initiator", "responder"};
+    const fips_handshake_state *states[] = {i, r};
+    diff_value *expected = ITEM(c->steps, step);
+    for (size_t role = 0; role < 2; ++role) {
+        ctx->error[0] = '\0';
+        snprintf(ctx->id, sizeof(ctx->id), "noise/%s/steps/%s/%s", c->pattern, event, roles[role]);
+        diff_value *v = FIELD(FIELD(expected, "state"), roles[role]);
+        bool ok = !strcmp(TEXT(expected, "event"), event);
+        ok &= compare(ctx, BYTES(v, "h"), fips_handshake_hash(states[role]), 32);
+        ok &= !strcmp(TEXT(v, "progress"), fips_handshake_progress_name(states[role]->progress));
+        if (!ok) diff_error(ctx, "event/hash/progress mismatch at step %zu", step);
+        report(ctx, n, ok ? CHECKED : FAILED, NULL);
+    }
+}
+static void noise_message(diff_context *ctx, const noise_case *c, counts *n,
+                          size_t index, const uint8_t *wire, size_t len)
+{
+    ctx->error[0] = '\0';
+    snprintf(ctx->id, sizeof(ctx->id), "noise/%s/messages/%zu", c->pattern, index + 1);
+    diff_value *v = ITEM(c->messages, index);
+    bool ok = UINT(v, "number") == index + 1 &&
+        !strcmp(TEXT(v, "sender"), index == 1 ? "responder" : "initiator");
+    ok &= compare(ctx, BYTES(v, "bytes"), wire, len);
+    report(ctx, n, ok ? CHECKED : FAILED, NULL);
+}
+static void check_noise(diff_context *ctx, const noise_case *c, counts *n)
+{
+    bool xk = !strcmp(c->pattern, "XK");
+    fips_fixed_entropy fixed = {0x5a};
+    fips_entropy blinding = fips_fixed_entropy_adapter(&fixed);
+    /* support.rs seeded_keypair uses an independent domain-separated stream;
+     * noise.rs shares ONE ephemeral stream, drawn by initiator write1 then
+     * responder write2. Neither construction nor context blinding consumes it. */
+    fips_seeded_entropy stream = {c->entropy_seed};
+    fips_entropy entropy = fips_seeded_entropy_adapter(&stream);
+    fips_secp *ctx_secp = NULL;
+    fips_identity *keys[2] = {NULL, NULL};
+    fips_handshake_state i = {0}, r = {0}, fork = {0}, before = {0};
+    fips_aead_key is = {{0}}, ir = {{0}}, rs = {{0}}, rr = {{0}};
+    uint8_t pub[2][33], secret[32] = {0}, wire[FIPS_NOISE_HANDSHAKE_MSG1_SIZE];
+    size_t len = 0;
+    ctx->error[0] = '\0';
+    snprintf(ctx->id, sizeof(ctx->id), "noise/%s/setup", c->pattern);
+    if ((!xk && strcmp(c->pattern, "IK")) || c->epoch.len != 8 ||
+        COUNT(c->keypair_seeds) != 2 || COUNT(c->messages) != (xk ? 3u : 2u) ||
+        COUNT(c->steps) != (xk ? 7u : 5u) ||
+        fips_identity_init_secp(blinding, &ctx_secp) != FIPS_IDENTITY_OK) goto failed;
+    for (size_t k = 0; k < 2; ++k) {
+        fips_seeded_entropy seeded = {ITEM(c->keypair_seeds, k)->as.number ^ UINT64_C(0x6b65797061697273)};
+        fips_entropy keyed = fips_seeded_entropy_adapter(&seeded);
+        keyed.fill(keyed.ctx, secret, sizeof(secret));
+        fips_identity_status rc = fips_identity_from_secret_bytes(ctx_secp, blinding, secret, &keys[k]);
+        sodium_memzero(secret, sizeof(secret));
+        if (rc != FIPS_IDENTITY_OK) goto failed;
+        fips_identity_pubkey_full(keys[k], pub[k]);
+    }
+#define NOISE_TRY(call) do { if ((call) != FIPS_NOISE_OK) goto failed; } while (0)
+    NOISE_TRY(xk ? fips_handshake_new_xk_initiator(&i, ctx_secp, keys[0], pub[1], c->epoch.data, entropy)
+                 : fips_handshake_new_initiator(&i, ctx_secp, keys[0], pub[1], c->epoch.data, entropy));
+    NOISE_TRY(xk ? fips_handshake_new_xk_responder(&r, ctx_secp, keys[1], c->epoch.data, entropy)
+                 : fips_handshake_new_responder(&r, ctx_secp, keys[1], c->epoch.data, entropy));
+    noise_step(ctx, c, n, 0, "constructed", &i, &r);
+    NOISE_TRY(xk ? fips_handshake_write_xk_message_1(&i, wire, sizeof(wire), &len)
+                 : fips_handshake_write_message_1(&i, wire, sizeof(wire), &len));
+    noise_message(ctx, c, n, 0, wire, len);
+    noise_step(ctx, c, n, 1, "initiator_write_1", &i, &r);
+    /* Feed fixture bytes to readers, independently of the writer comparison. */
+    diff_bytes msg = BYTES(ITEM(c->messages, 0), "bytes");
+    NOISE_TRY(xk ? fips_handshake_read_xk_message_1(&r, msg.data, msg.len)
+                 : fips_handshake_read_message_1(&r, msg.data, msg.len));
+    noise_step(ctx, c, n, 2, "responder_read_1", &i, &r);
+    NOISE_TRY(xk ? fips_handshake_write_xk_message_2(&r, wire, sizeof(wire), &len)
+                 : fips_handshake_write_message_2(&r, wire, sizeof(wire), &len));
+    noise_message(ctx, c, n, 1, wire, len);
+    noise_step(ctx, c, n, 3, "responder_write_2", &i, &r);
+    msg = BYTES(ITEM(c->messages, 1), "bytes");
+    fips_handshake_fork(&i, &before);
+    NOISE_TRY(xk ? fips_handshake_fork_xk2(&i, msg.data, msg.len, &fork)
+                 : fips_handshake_fork_msg2(&i, msg.data, msg.len, &fork));
+    if (memcmp(&i, &before, sizeof(i))) {
+        diff_error(ctx, "msg2 fork changed original bytes"); goto failed;
+    }
+    fips_handshake_destroy(&before);
+    fips_handshake_destroy(&i);
+    fips_handshake_fork(&fork, &i);
+    fips_handshake_destroy(&fork);
+    noise_step(ctx, c, n, 4, "initiator_read_2_on_fork", &i, &r);
+    if (xk) {
+        NOISE_TRY(fips_handshake_write_xk_message_3(&i, wire, sizeof(wire), &len));
+        noise_message(ctx, c, n, 2, wire, len);
+        noise_step(ctx, c, n, 5, "initiator_write_3", &i, &r);
+        msg = BYTES(ITEM(c->messages, 2), "bytes");
+        fips_handshake_fork(&r, &before);
+        NOISE_TRY(fips_handshake_fork_xk3(&r, msg.data, msg.len, &fork));
+        if (memcmp(&r, &before, sizeof(r))) {
+            diff_error(ctx, "msg3 fork changed original bytes"); goto failed;
+        }
+        fips_handshake_destroy(&before);
+        fips_handshake_destroy(&r);
+        fips_handshake_fork(&fork, &r);
+        fips_handshake_destroy(&fork);
+        noise_step(ctx, c, n, 6, "responder_read_3_on_fork", &i, &r);
+    }
+    const char *roles[] = {"initiator_h", "responder_h"};
+    const fips_handshake_state *states[] = {&i, &r};
+    for (size_t k = 0; k < 2; ++k) {
+        ctx->error[0] = '\0';
+        snprintf(ctx->id, sizeof(ctx->id), "noise/%s/post_handshake/%s", c->pattern, roles[k]);
+        bool ok = compare(ctx, BYTES(c->post_handshake, roles[k]), fips_handshake_hash(states[k]), 32);
+        report(ctx, n, ok ? CHECKED : FAILED, NULL);
+    }
+    diff_value *ck = FIELD(c->post_handshake, "ck");
+    if (ck && ck->type == D_BYTES && ck->as.bytes.len) {
+        snprintf(ctx->id, sizeof(ctx->id), "noise/%s/post_handshake/ck", c->pattern);
+        bool ok = compare(ctx, ck->as.bytes, i.symmetric.ck, 32);
+        ok &= compare(ctx, ck->as.bytes, r.symmetric.ck, 32);
+        report(ctx, n, ok ? CHECKED : FAILED, NULL);
+    }
+    ctx->error[0] = '\0';
+    snprintf(ctx->id, sizeof(ctx->id), "noise/%s/finish", c->pattern);
+    uint8_t ih[32], rh[32], ipub[33], rpub[33], ie[8], re[8];
+    NOISE_TRY(fips_handshake_finish(&i, &is, &ir, ih, ipub, ie));
+    NOISE_TRY(fips_handshake_finish(&r, &rs, &rr, rh, rpub, re));
+    bool ok = !memcmp(is.bytes, rr.bytes, 32) && !memcmp(ir.bytes, rs.bytes, 32) &&
+        memcmp(is.bytes, ir.bytes, 32) && !memcmp(ih, rh, 32) &&
+        !memcmp(ipub, pub[1], 33) && !memcmp(rpub, pub[0], 33) &&
+        !memcmp(ie, c->epoch.data, 8) && !memcmp(re, c->epoch.data, 8);
+    report(ctx, n, ok ? CHECKED : FAILED, NULL);
+    goto done;
+failed:
+    if (!ctx->error[0]) diff_error(ctx, "Noise construction/read/write/finish failed");
+    report(ctx, n, FAILED, NULL);
+done:
+#undef NOISE_TRY
+    sodium_memzero(secret, sizeof(secret));
+    fips_handshake_destroy(&i); fips_handshake_destroy(&r);
+    fips_handshake_destroy(&fork); fips_handshake_destroy(&before);
+    fips_aead_key_destroy(&is); fips_aead_key_destroy(&ir);
+    fips_aead_key_destroy(&rs); fips_aead_key_destroy(&rr);
+    fips_identity_destroy(keys[0]); fips_identity_destroy(keys[1]);
+    fips_identity_destroy_secp(ctx_secp);
+}
 static result check_replay(const diff_value *step, uint64_t window_size)
 { (void)step; (void)window_size; return SKIPPED; }
 /* Derive the common-input addresses from the declared seeds, never parse the
@@ -517,12 +666,18 @@ int diff_dispatch(diff_context *ctx, const char *family, diff_value *cases)
             diff_value *p = ITEM(patterns, i);
             noise_case c = {TEXT(p, "pattern"), UINT(p, "entropy_seed_hex"), BYTES(p, "startup_epoch_hex"),
                 FIELD(p, "keypair_seeds"), FIELD(p, "messages"), FIELD(p, "steps"), FIELD(p, "post_handshake"), FIELD(p, "frames")};
-            snprintf(ctx->id, sizeof(ctx->id), "noise/%s (messages/steps/frames)", c.pattern);
-            report(ctx, &n, check_noise(&c), "nostrc-pwo3h");
+            counts before = n;
+            check_noise(ctx, &c, &n);
+            for (size_t frame = 0; frame < COUNT(c.frames); ++frame) {
+                snprintf(ctx->id, sizeof(ctx->id), "noise/%s/frames", c.pattern);
+                report(ctx, &n, SKIPPED, "nostrc-pwo3h.7");
+            }
+            printf("noise/%s: %zu checked, %zu skipped, %zu failed\n", c.pattern,
+                n.checked - before.checked, n.skipped - before.skipped, n.failed - before.failed);
         }
         for (size_t i = 0; i < COUNT(replay); ++i) {
             snprintf(ctx->id, sizeof(ctx->id), "noise/replay/%zu", i);
-            report(ctx, &n, check_replay(ITEM(replay, i), UINT(cases, "replay_window_size")), "nostrc-pwo3h");
+            report(ctx, &n, check_replay(ITEM(replay, i), UINT(cases, "replay_window_size")), "nostrc-pwo3h.7");
         }
     } else if (!strcmp(family, "proto")) {
         diff_value *wire = FIELD(cases, "wire_cases");
