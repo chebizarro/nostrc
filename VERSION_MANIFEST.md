@@ -55,7 +55,7 @@ other components and all version/release/tag values are unchanged.
 | --- | --- | --- | --- | --- | --- |
 | libnostr | `libnostr/` | 2.4.0 | Unreleased | — | `libnostr/CMakeLists.txt` |
 | libjson (libnostr-json) | `libjson/` | 2.0.0 | Unreleased | — | `libjson/CMakeLists.txt` (`declare_component_version`) |
-| libgo | `libgo/` | 0.2.0 | Unreleased | — | `libgo/CMakeLists.txt` |
+| libgo | `libgo/` | 0.3.0 | Unreleased | — | `libgo/CMakeLists.txt` |
 | nostr-gobject | `nostr-gobject/` | 3.1.0 | Unreleased | — | `nostr-gobject/CMakeLists.txt`, `nostr-gobject/meson.build` |
 | nostr-gtk | `nostr-gtk/` | 2.0.0 | Unreleased | — | `nostr-gtk/CMakeLists.txt`, `nostr-gtk/meson.build`; nostrc-0cfsg.32's PATCH-class correction was folded into the earlier unreleased 1.2.0 wave, before the nostrc-er4fz.10 phase C 2.0.0 ABI change |
 | libmarmot | `libmarmot/` | 0.14.0 | Unreleased | — | `libmarmot/CMakeLists.txt`, `libmarmot/meson.build` |

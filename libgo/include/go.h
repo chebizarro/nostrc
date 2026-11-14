@@ -16,6 +16,7 @@
 #include "error.h"
 #include "select.h"
 #include "blocking_executor.h"
+#include "swap.h"
 
 // Launch a detached goroutine-like thread executing start_routine(arg).
 // Returns 0 on success, non-zero on failure.
