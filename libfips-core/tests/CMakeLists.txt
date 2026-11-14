@@ -33,3 +33,12 @@ set_tests_properties(FipsCoreCodecTest PROPERTIES TIMEOUT 10 LABELS "fips;unit")
 nostrc_describe_test(FipsCoreCodecTest OWNER libfips-core TARGETS fips_core_codec_test)
 # Keep the existing explicit FIPS CI build closure complete.
 add_dependencies(fips_core_host_test fips_core_codec_test)
+add_executable(fips_core_transport_types_test test_transport_types.c)
+target_link_libraries(fips_core_transport_types_test PRIVATE fips_core)
+set_target_properties(fips_core_transport_types_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+apply_warnings(fips_core_transport_types_test)
+apply_sanitizers(fips_core_transport_types_test)
+add_test(NAME FipsCoreTransportTypesTest COMMAND fips_core_transport_types_test)
+set_tests_properties(FipsCoreTransportTypesTest PROPERTIES TIMEOUT 10 LABELS "fips;unit")
+nostrc_describe_test(FipsCoreTransportTypesTest OWNER libfips-core TARGETS fips_core_transport_types_test)

@@ -14,6 +14,7 @@ No release tag is published by this change; all other components have no
 B1-owned shipped artifact change and no B1 bump.
 
 nostrc-u50yr.1: no bump for libfips-core; first additive public proto Error and Reader/Writer APIs fold into initial pre-release 0.1.0 Unreleased; no published release/tag change.
+nostrc-u50yr.6: no bump for libfips-core; additive transport value types and bounded POD address APIs fold into initial 0.1.0 Unreleased; no published release/tag change.
 
 nostrc-s50dj.3: no bump for libfips-core; differential harness, fixtures validation and documentation are test-only, with no shipped API/ABI or artifact change.
 
