@@ -60,3 +60,12 @@ apply_warnings(fips_fuzz_link)
 apply_sanitizers(fips_fuzz_link)
 target_compile_options(fips_fuzz_link PRIVATE -fsanitize=fuzzer)
 target_link_options(fips_fuzz_link PRIVATE -fsanitize=fuzzer)
+
+# STP signing preimage and TreeAnnounce Reader/Writer properties.
+add_executable(fips_fuzz_stp fuzz_stp.c)
+target_link_libraries(fips_fuzz_stp PRIVATE fips_core)
+set_target_properties(fips_fuzz_stp PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+apply_warnings(fips_fuzz_stp)
+apply_sanitizers(fips_fuzz_stp)
+target_compile_options(fips_fuzz_stp PRIVATE -fsanitize=fuzzer)
+target_link_options(fips_fuzz_stp PRIVATE -fsanitize=fuzzer)

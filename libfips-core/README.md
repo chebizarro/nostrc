@@ -269,3 +269,61 @@ unchanged. `fips_bench_noise_aead` uses upstream's 64/1400-byte payloads and
 16-byte AD, but measures AEAD only, not future session/replay/worker overhead.
 Version decision (nostrc-pwo3h.1): APIs fold into **0.1.0 Unreleased**; no
 published version/tag change.
+
+## Spanning tree (nostrc-82g9n.2)
+
+`fips/proto/stp/{mod,core,state,declaration,wire,limits}.h` mirror the pinned
+STP modules. `ParentDeclaration` is a public value with an optional opaque
+64-byte signature. Its only standalone encoding is the **48-byte signing
+preimage**, not a link message. `TreeAnnounce` carries that declaration and
+metadata-bearing ancestry: encode includes `0x10`, decode starts at version
+1 after the dispatcher strips it. Reader/Writer calls are transactional,
+use upstream proto errors, preserve trailing input and expose consumed bytes
+through the Reader cursor. Semantic ancestry validation is separate from
+wire parsing and from host signature/known-peer verification.
+
+`TreeState` uses caller-owned sorted peer slots; both coordinates and each
+slot retain the full existing u16 coordinate domain (~2 MiB each). Allocate
+these on the host heap or in static storage, not an event-loop stack. Slot
+capacity is a host policy, not a new protocol peer limit. Delivery-only slots
+also consume capacity; the upstream `peer_count`/`peer_ids` accessors exclude
+slots without a received declaration. Wire decoding accepts all 65535 entries;
+the action driver locally refuses that terminal depth (including a stored
+terminal-depth peer) because prepending self cannot fit. Local capacity,
+depth and sequence-exhaustion refusals preserve state/output. Low-level
+`set_parent` deliberately does not recompute; callers must check
+`recompute_coords` before signing, just as upstream separates those operations.
+
+`Stp::classify_announce`/`classify_periodic` remain pure decisions. The added
+`receive_announce`, `periodic` and `remove_peer` drivers take host instants,
+wall seconds and ranking facts, mutate core state and return a bounded
+10-entry `fips_stp_actions` value. Actions request signing, parent/root/path
+notifications with cache invalidation/backoff flags, a normal coalesced send
+(to one peer or all), forced/content-delta filter refresh, or a reasoned drop.
+They execute in order before another input. A failed signing action requires
+retaining/retrying the batch from that action, or terminating/discarding the
+state; mutation is not rolled back. No send can precede signing a newly
+mutated declaration. The host enforces its normal per-peer send cooldown and
+records actual sent counters separately: successful transport acceptance is
+not delivery confirmation.
+
+The STP-local `acks.c` adapter preserves the pinned `mmp::delivery` rule used
+by `TreeState`: receiver-report evidence, sequence lineages, per-session
+loss/unchecked budgets and bounded backoff via `proto/rate_limit`. It does not
+implement MMP wire/transport. Flap limits quantize instants against the init
+epoch, keep wall timestamps separate, and retire an expired dampening episode
+before counting switches in the next one. No clocks, entropy, I/O or allocation
+are read by any STP core entrypoint.
+
+Tests port all **89** STP declaration/state/classify/limits/wire/delivery tests
+by name, plus **12** C/action-driver tests. The other **13** upstream STP
+coordinate tests already live in `test_coord.c` and are not duplicated here.
+Explicit regressions cover loop-free recovery despite hold-down/hysteresis,
+root fallback with forced filter refresh, rejected/stale announce side-effect
+gates, accepted child-membership flips, sequence-only non-propagation,
+mid-chain propagation, echo/sign ordering and sequence exhaustion. The new
+`proto_stp` checks replay both pinned wire cases through the existing harness
+loader; `cases.c` dispatch ownership remains with the orchestrator.
+
+Version decision: these additive APIs fold into **libfips-core 0.1.0
+Unreleased**; no published release/tag change.

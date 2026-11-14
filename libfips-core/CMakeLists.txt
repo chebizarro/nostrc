@@ -95,3 +95,8 @@ target_sources(fips_core PRIVATE src/proto/coord.c)
 # Link message catalog, session datagram header and framing/path-MTU admit math
 # (nostrc-82g9n.6): size constants by value, no FMP/FSP frame codec.
 target_sources(fips_core PRIVATE src/proto/link.c src/proto/framing.c)
+
+# Spanning-tree protocol (nostrc-82g9n.2), sans-IO state + host action list.
+target_sources(fips_core PRIVATE
+  src/proto/stp/declaration.c src/proto/stp/wire.c src/proto/stp/limits.c
+  src/proto/stp/state.c src/proto/stp/core.c src/proto/stp/acks.c)
