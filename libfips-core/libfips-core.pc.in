@@ -1,0 +1,11 @@
+prefix=@CMAKE_INSTALL_PREFIX@
+exec_prefix=${prefix}
+libdir=@CMAKE_INSTALL_FULL_LIBDIR@
+includedir=@CMAKE_INSTALL_FULL_INCLUDEDIR@
+
+Name: libfips-core
+Description: Sans-IO FIPS protocol core in C
+Version: @fips_core_VERSION@
+Requires.private: libsecp256k1 libsodium libcrypto
+Libs: -L${libdir} -lfips_core
+Cflags: -I${includedir} @FIPS_CORE_PC_STATIC_CFLAGS@

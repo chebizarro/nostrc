@@ -1,0 +1,9 @@
+add_executable(fips_core_skeleton_test test_core.c)
+target_link_libraries(fips_core_skeleton_test PRIVATE fips_core)
+set_target_properties(fips_core_skeleton_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+apply_warnings(fips_core_skeleton_test)
+apply_sanitizers(fips_core_skeleton_test)
+add_test(NAME FipsCoreSkeletonTest COMMAND fips_core_skeleton_test)
+set_tests_properties(FipsCoreSkeletonTest PROPERTIES TIMEOUT 10 LABELS "fips;unit")
+nostrc_describe_test(FipsCoreSkeletonTest OWNER libfips-core TARGETS fips_core_skeleton_test)
