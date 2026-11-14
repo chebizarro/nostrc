@@ -1595,6 +1595,7 @@ Decisions for components affected by another component's change (AGENTS.md,
 | nostrc-gyf23: downloaded videos report unavailable playback instead of invoking GTK's GStreamer backend with an unsupported memory stream; Save As and other media backends are unchanged | groundhog | 0.13.0 | PATCH-class crash correction folded into unreleased 0.13.0; no additional bump or plaintext-on-disk workaround. |
 | FIPS sanitizer/fuzz CI (nostrc-s50dj.4) | libfips-core | 0.1.0 | No bump: CI/test-only fuzz scaffold and sanitizer coverage; no shipped API, ABI or behavior change. |
 | same | fipsd | 0.1.0 | No bump: CI/test-only sanitizer lanes; no shipped artifact change. |
+| Routing decisions/error signals (nostrc-82g9n.4) | libfips-core | 0.1.0 | No bump: additive routing APIs fold into the initial 0.1.0 Unreleased port; no published version or tag change. |
 
 ## Maintenance
 

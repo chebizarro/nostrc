@@ -262,3 +262,14 @@ nostrc_describe_test(FipsCoreBloomVectorsTest OWNER libfips-core TARGETS fips_co
 add_dependencies(fips_core_host_test fips_core_bloom_test fips_core_bloom_vectors_test)
 # Keep the explicit FIPS CI build closure complete (transport types test was missing).
 add_dependencies(fips_core_host_test fips_core_transport_types_test)
+
+# Routing upstream unit-test ports and C buffer/refusal regressions.
+add_executable(fips_core_routing_test test_routing.c fakes/host.c)
+target_link_libraries(fips_core_routing_test PRIVATE fips_core)
+set_target_properties(fips_core_routing_test PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+apply_warnings(fips_core_routing_test)
+apply_sanitizers(fips_core_routing_test)
+add_test(NAME FipsCoreRoutingTest COMMAND fips_core_routing_test)
+set_tests_properties(FipsCoreRoutingTest PROPERTIES TIMEOUT 30 LABELS "fips;unit")
+nostrc_describe_test(FipsCoreRoutingTest OWNER libfips-core TARGETS fips_core_routing_test)
+add_dependencies(fips_core_host_test fips_core_routing_test)

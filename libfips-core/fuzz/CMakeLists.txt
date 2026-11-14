@@ -86,3 +86,12 @@ apply_warnings(fips_fuzz_bloom)
 apply_sanitizers(fips_fuzz_bloom)
 target_compile_options(fips_fuzz_bloom PRIVATE -fsanitize=fuzzer)
 target_link_options(fips_fuzz_bloom PRIVATE -fsanitize=fuzzer)
+
+# Routing signal bodies (FSP prefix/type already dispatched).
+add_executable(fips_fuzz_routing fuzz_routing.c)
+target_link_libraries(fips_fuzz_routing PRIVATE fips_core)
+set_target_properties(fips_fuzz_routing PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+apply_warnings(fips_fuzz_routing)
+apply_sanitizers(fips_fuzz_routing)
+target_compile_options(fips_fuzz_routing PRIVATE -fsanitize=fuzzer)
+target_link_options(fips_fuzz_routing PRIVATE -fsanitize=fuzzer)

@@ -82,6 +82,8 @@ are now the authoritative regeneration source (C consumer work is s50dj.3).
 
 ## Private adapters, test hooks and gaps
 
+- Routing error signals (CoordsRequired/PathBroken/MtuExceeded) have no `proto.rs` wire vectors at the pin; routing uses upstream unit-test ports, not differential parity (nostrc-82g9n.4).
+
 - No utils/math differential vector family yet (nostrc-u50yr.3); upstream unit-test ports, SipHash reference vectors and local Rust powi pins are not harness-family parity.
 
 - No `ratelimit` or stats-history differential family yet (`nostrc-u50yr.4`).

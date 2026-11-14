@@ -115,3 +115,8 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
   set_source_files_properties(src/proto/bloom/core.c src/proto/bloom/log.c PROPERTIES
     COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off")
 endif()
+
+# Routing decision core and error signals (nostrc-82g9n.4).
+target_sources(fips_core PRIVATE
+  src/proto/routing/core.c src/proto/routing/wire.c
+  src/proto/routing/state.c src/proto/routing/limits.c)
