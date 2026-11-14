@@ -1,5 +1,6 @@
 #include "diff.h"
 #include "../fakes/host.h"
+#include <fips/proto/codec.h>
 #include <secp256k1.h>
 #include <secp256k1_extrakeys.h>
 #include <inttypes.h>
@@ -121,7 +122,128 @@ static result check_entropy(diff_context *ctx, const entropy_case *c)
 /* Replace these dispatch bodies when their owning port lands. Returning
  * CHECKED requires real C output/error/state comparisons, not fixture integrity. */
 static result check_identity(const identity_case *c) { (void)c; return SKIPPED; }
-static result check_codec(const codec_case *c) { (void)c; return SKIPPED; }
+static fips_status codec_read(const codec_case *c, fips_reader *r,
+                              uint64_t *value, uint8_t *array,
+                              const uint8_t **bytes, fips_proto_error *error)
+{
+    fips_status status;
+    if (!strcmp(c->kind, "u8")) {
+        uint8_t v;
+        status = fips_reader_read_u8(r, &v, error);
+        if (status == FIPS_OK) *value = v;
+    } else if (!strcmp(c->kind, "u16_le")) {
+        uint16_t v;
+        status = fips_reader_read_u16_le(r, &v, error);
+        if (status == FIPS_OK) *value = v;
+    } else if (!strcmp(c->kind, "u32_le")) {
+        uint32_t v;
+        status = fips_reader_read_u32_le(r, &v, error);
+        if (status == FIPS_OK) *value = v;
+    } else if (!strcmp(c->kind, "u64_le")) {
+        status = fips_reader_read_u64_le(r, value, error);
+    } else if (!strcmp(c->kind, "array")) {
+        status = fips_reader_read_array(r, array, c->bytes.len, error);
+        if (status == FIPS_OK) *bytes = array;
+    } else {
+        status = fips_reader_read_bytes(r, c->bytes.len, bytes, error);
+    }
+    return status;
+}
+
+static fips_status codec_write(const codec_case *c, fips_writer *w,
+                               fips_proto_error *error)
+{
+    if (!strcmp(c->kind, "u8")) return fips_writer_write_u8(w, (uint8_t)c->value, error);
+    if (!strcmp(c->kind, "u16_le")) return fips_writer_write_u16_le(w, (uint16_t)c->value, error);
+    if (!strcmp(c->kind, "u32_le")) return fips_writer_write_u32_le(w, (uint32_t)c->value, error);
+    if (!strcmp(c->kind, "u64_le")) return fips_writer_write_u64_le(w, c->value, error);
+    return fips_writer_write_bytes(w, c->bytes.data, c->bytes.len, error);
+}
+
+static bool codec_error(diff_context *ctx, const diff_value *expected,
+                        const fips_proto_error *actual)
+{
+    if (strcmp(TEXT(expected, "variant"), fips_proto_error_name(actual->variant)) ||
+        actual->variant != FIPS_PROTO_MessageTooShort ||
+        UINT(expected, "expected") != actual->as.message_too_short.expected ||
+        UINT(expected, "got") != actual->as.message_too_short.got) {
+        return diff_error(ctx, "error mismatch: got %s, expected %s (expected/got payload must match)",
+                          fips_proto_error_name(actual->variant), TEXT(expected, "variant"));
+    }
+    return true;
+}
+
+static result check_codec(diff_context *ctx, const codec_case *c)
+{
+    fips_reader r;
+    fips_proto_error error = {.variant = FIPS_PROTO_InvalidSignature};
+    if (c->cursor) {
+        diff_value *v = c->cursor;
+        diff_bytes input = BYTES(v, "input_hex"), rest = BYTES(v, "rest_hex");
+        fips_reader_init(&r, input.data, input.len);
+        if (fips_reader_advance(&r, (size_t)UINT(v, "advance"), &error) != FIPS_OK ||
+            fips_reader_position(&r) != UINT(v, "position") ||
+            fips_reader_remaining(&r) != UINT(v, "remaining") ||
+            !compare(ctx, rest, fips_reader_rest(&r), fips_reader_remaining(&r)) ||
+            strcmp(TEXT(v, "require_3"), "Ok") ||
+            fips_reader_require(&r, 3, &error) != FIPS_OK ||
+            fips_reader_require(&r, 4, &error) != FIPS_ERR_RANGE ||
+            !codec_error(ctx, FIELD(v, "require_4"), &error) ||
+            fips_reader_position(&r) != UINT(v, "position")) {
+            diff_error(ctx, "cursor state/require comparison failed"); return FAILED;
+        }
+        /* Re-encode the consumed prefix and borrowed rest. */
+        uint8_t *encoded = malloc(input.len ? input.len : 1);
+        if (!encoded) { diff_error(ctx, "allocation failed"); return FAILED; }
+        fips_writer w;
+        fips_writer_init(&w, encoded, input.len);
+        bool ok = fips_writer_write_bytes(&w, input.data, fips_reader_position(&r), &error) == FIPS_OK &&
+            fips_writer_write_bytes(&w, fips_reader_rest(&r), fips_reader_remaining(&r), &error) == FIPS_OK &&
+            compare(ctx, input, encoded, fips_writer_len(&w));
+        free(encoded);
+        return ok ? CHECKED : FAILED;
+    }
+    if (strcmp(c->kind, "u8") && strcmp(c->kind, "u16_le") &&
+        strcmp(c->kind, "u32_le") && strcmp(c->kind, "u64_le") &&
+        strcmp(c->kind, "array") && strcmp(c->kind, "bytes") && strcmp(c->kind, "empty")) {
+        diff_error(ctx, "unknown codec kind %s", c->kind); return FAILED;
+    }
+    uint8_t *array = malloc(c->bytes.len ? c->bytes.len : 1);
+    uint8_t *encoded = malloc(c->bytes.len ? c->bytes.len : 1);
+    if (!array || !encoded) {
+        free(array); free(encoded); diff_error(ctx, "allocation failed"); return FAILED;
+    }
+    uint64_t value = 0;
+    const uint8_t *bytes = NULL;
+    fips_reader_init(&r, c->bytes.data, c->bytes.len);
+    bool ok = codec_read(c, &r, &value, array, &bytes, &error) == FIPS_OK;
+    if (!ok) diff_error(ctx, "valid codec input rejected");
+    if (ok && (fips_reader_position(&r) != c->bytes.len || fips_reader_remaining(&r))) {
+        ok = diff_error(ctx, "decoded cursor mismatch");
+    }
+    if (ok) {
+        if (c->has_value) {
+            if (value != c->value) ok = diff_error(ctx, "decoded scalar mismatch");
+        } else ok = compare(ctx, c->bytes, bytes, c->bytes.len);
+    }
+    fips_writer w;
+    fips_writer_init(&w, encoded, c->bytes.len);
+    if (codec_write(c, &w, &error) != FIPS_OK) {
+        ok = diff_error(ctx, "encoding failed");
+    } else ok &= compare(ctx, c->bytes, encoded, fips_writer_len(&w));
+    for (size_t i = 0; i < COUNT(c->truncations); ++i) {
+        diff_value *t = ITEM(c->truncations, i);
+        diff_bytes input = BYTES(t, "input_hex");
+        fips_reader_init(&r, input.data, input.len);
+        error.variant = FIPS_PROTO_InvalidSignature;
+        if (codec_read(c, &r, &value, array, &bytes, &error) != FIPS_ERR_RANGE ||
+            !codec_error(ctx, FIELD(t, "error"), &error) || fips_reader_position(&r) != 0) {
+            ok = diff_error(ctx, "truncation %zu error/cursor mismatch", i);
+        }
+    }
+    free(array); free(encoded);
+    return ok ? CHECKED : FAILED;
+}
 static result check_noise(const noise_case *c) { (void)c; return SKIPPED; }
 static result check_replay(const diff_value *step, uint64_t window_size)
 { (void)step; (void)window_size; return SKIPPED; }
@@ -169,7 +291,7 @@ int diff_dispatch(diff_context *ctx, const char *family, diff_value *cases)
                     bytes ? bytes->as.bytes : (diff_bytes){0}, FIELD(v, "truncations"),
                     !strcmp(TEXT(v, "kind"), "cursor") ? v : NULL};
                 snprintf(ctx->id, sizeof(ctx->id), "codec/%zu/%s", i, c.kind);
-                report(ctx, &n, check_codec(&c), "nostrc-u50yr");
+                report(ctx, &n, check_codec(ctx, &c), "nostrc-u50yr");
             }
         }
     } else if (!strcmp(family, "noise")) {

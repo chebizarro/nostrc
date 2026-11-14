@@ -76,7 +76,7 @@ jobs:
           if [[ '${{ matrix.configuration }}' != tsan ]]; then
             targets+=(fips_core_skeleton_test fips_core_host_test)
           fi
-          if [[ '${{ matrix.configuration }}' == asan_ubsan ]]; then targets+=(fips_fuzz_host); fi
+          if [[ '${{ matrix.configuration }}' == asan_ubsan ]]; then targets+=(fips_fuzz_host fips_fuzz_codec); fi
           cmake --build build --parallel 3 --target "${targets[@]}"
       - name: Test FIPS
         shell: bash
@@ -89,8 +89,10 @@ jobs:
         if: matrix.configuration == 'asan_ubsan'
         run: |
           mkdir -p build/corpus build/fuzz-artifacts
-          cp -R libfips-core/fuzz/corpus/fips_fuzz_host build/corpus/
-          build/libfips-core/fuzz/fips_fuzz_host -max_total_time=10 -timeout=5 -artifact_prefix=build/fuzz-artifacts/ build/corpus/fips_fuzz_host
+          for target in fips_fuzz_host fips_fuzz_codec; do
+            cp -R "libfips-core/fuzz/corpus/$target" build/corpus/
+            "build/libfips-core/fuzz/$target" -max_total_time=10 -timeout=5 -artifact_prefix=build/fuzz-artifacts/ "build/corpus/$target"
+          done
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
@@ -124,12 +126,14 @@ jobs:
             -DBUILD_LIBHANAMI=OFF -DBUILD_LIBMARMOT=OFF -DBUILD_MARMOT_GOBJECT=OFF \
             -DBUILD_NOSTR_GOBJECT=OFF -DBUILD_NOSTR_GTK=OFF -DSIGNET_ENABLE=OFF \
             -DWITH_NOSTRDB=OFF -DLIBNOSTR_WITH_NOSTRDB=OFF
-      - run: cmake --build build --parallel 3 --target fips_fuzz_host
+      - run: cmake --build build --parallel 3 --target fips_fuzz_host fips_fuzz_codec
       - name: Fuzz (60 seconds per target)
         run: |
           mkdir -p build/corpus build/fuzz-artifacts
-          cp -R libfips-core/fuzz/corpus/fips_fuzz_host build/corpus/
-          build/libfips-core/fuzz/fips_fuzz_host -max_total_time=60 -timeout=5 -artifact_prefix=build/fuzz-artifacts/ build/corpus/fips_fuzz_host
+          for target in fips_fuzz_host fips_fuzz_codec; do
+            cp -R "libfips-core/fuzz/corpus/$target" build/corpus/
+            "build/libfips-core/fuzz/$target" -max_total_time=60 -timeout=5 -artifact_prefix=build/fuzz-artifacts/ "build/corpus/$target"
+          done
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

@@ -21,3 +21,15 @@ nostrc_describe_test(FipsCoreHostTest OWNER libfips-core TARGETS fips_core_host_
          "${CMAKE_CURRENT_SOURCE_DIR}/generate_seeded_vectors.py")
 
 add_subdirectory(diff)
+
+add_executable(fips_core_codec_test test_codec.c)
+target_link_libraries(fips_core_codec_test PRIVATE fips_core)
+set_target_properties(fips_core_codec_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+apply_warnings(fips_core_codec_test)
+apply_sanitizers(fips_core_codec_test)
+add_test(NAME FipsCoreCodecTest COMMAND fips_core_codec_test)
+set_tests_properties(FipsCoreCodecTest PROPERTIES TIMEOUT 10 LABELS "fips;unit")
+nostrc_describe_test(FipsCoreCodecTest OWNER libfips-core TARGETS fips_core_codec_test)
+# Keep the existing explicit FIPS CI build closure complete.
+add_dependencies(fips_core_host_test fips_core_codec_test)

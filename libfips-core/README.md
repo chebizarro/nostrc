@@ -3,8 +3,8 @@
 The C11, sans-IO protocol core of FIPS. This component inherits the boundary
 and rules of upstream FIPS `core/README.md`, `core/src/README.md` and
 `core/src/lib.rs`: the same protocol computation should work unchanged in a
-daemon, an application or an embedded host. This is a component skeleton,
-not a working protocol implementation or a Rust FFI wrapper.
+daemon, an application or an embedded host. This is an incremental C port,
+not a Rust FFI wrapper or a complete working protocol implementation.
 
 ## Boundary and rules
 
@@ -36,8 +36,9 @@ not a working protocol implementation or a Rust FFI wrapper.
 - `include/fips/core.h`: public version function; generated export and version
   headers are installed alongside it.
 - `include/fips/host.h`, `src/host.c`: host interfaces and time arithmetic;
-  no protocol code yet.
-- `tests/`: linked version, host-interface and byte-compatible fake tests.
+  caller-owned time and entropy.
+- `include/fips/proto/`, `src/proto/`: protocol errors and bounds-checked codec.
+- `tests/`: linked version, host-interface, codec and byte-compatible fake tests.
 - `libfips-core.pc.in`: installed pkg-config contract, including private crypto
   requirements for static consumers.
 
@@ -50,7 +51,7 @@ flags use its shared `GO_ENABLE_*` helpers.
 
 Future protocol tests must drive real state machines with fixed entropy and
 synthetic time, checking returned actions and upstream differential vectors.
-Protocol modules are intentionally left to later tasks. Upstream provenance
+Higher-level protocol modules are left to later tasks. Upstream provenance
 is maintained separately in `UPSTREAM.md`.
 
 ## Host interfaces and ownership
@@ -91,3 +92,15 @@ They are predictable and must never be used as production entropy.
 The test-only [differential harness](tests/diff/README.md) validates the pinned
 Rust fixtures and replays implemented families. Run `ctest -R '^FipsDiff' -V`
 from the build directory; explicit SKIPs are not protocol parity.
+
+## Proto codec
+
+`fips/proto/error.h` mirrors every pinned Rust proto Error variant and payload,
+including nested coordinate/bloom errors; `fips_proto_error_name()` returns the
+Rust variant name. `fips/proto/codec.h` supplies allocation-free LE Reader/Writer
+primitives. Reader borrows input and reports cumulative `MessageTooShort`
+offsets. Writer borrows a fixed-capacity destination rather than growing a Rust
+Vec, returning `MessageTooLong` on insufficient capacity. Failures preserve the
+cursor and result buffers; success preserves the optional error out-parameter.
+`advance` is checked in C, and overflowing required offsets reject with a
+saturated `SIZE_MAX` diagnostic. Byte operations have no implicit length prefix.
