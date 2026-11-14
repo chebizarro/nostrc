@@ -1,0 +1,137 @@
+name: FIPS CI
+on:
+  workflow_call:
+    inputs:
+      sha:
+        type: string
+        required: true
+      artifact_prefix:
+        type: string
+        default: ''
+  schedule:
+    - cron: '37 3 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build-and-test:
+    name: ${{ matrix.os }} • FIPS • ${{ matrix.configuration }}
+    if: github.event_name != 'schedule'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-latest]
+        configuration: [asan_ubsan, tsan, optimized]
+    env:
+      CC: clang
+      CXX: clang++
+      ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1:halt_on_error=1
+      UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+      TSAN_OPTIONS: halt_on_error=1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          ref: ${{ inputs.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify requested checkout
+        if: inputs.sha != ''
+        env:
+          REQUESTED_SHA: ${{ inputs.sha }}
+        run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake ninja-build pkg-config clang libclang-rt-18-dev libjansson-dev libsecp256k1-dev libsodium-dev libssl-dev libcurl4-openssl-dev libwebsockets-dev libglib2.0-dev libsoup-3.0-dev libnsync-dev
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install llvm cmake ninja pkg-config jansson secp256k1 libsodium openssl@3 curl libwebsockets glib libsoup@3 nsync
+          {
+            echo "CC=$(brew --prefix llvm)/bin/clang"
+            echo "CXX=$(brew --prefix llvm)/bin/clang++"
+            echo "PKG_CONFIG_PATH=$(brew --prefix openssl@3)/lib/pkgconfig:$(brew --prefix curl)/lib/pkgconfig:$(brew --prefix)/lib/pkgconfig:${PKG_CONFIG_PATH}"
+            echo "ASAN_OPTIONS=detect_leaks=0:strict_string_checks=1:halt_on_error=1"
+          } >> "$GITHUB_ENV"
+      - name: Configure
+        shell: bash
+        run: |
+          args=(-DCMAKE_BUILD_TYPE=Debug -DGO_WARNINGS_AS_ERRORS=ON)
+          case '${{ matrix.configuration }}' in
+            asan_ubsan) args+=(-DGO_ENABLE_ASAN=ON -DGO_ENABLE_UBSAN=ON -DFIPS_ENABLE_FUZZERS=ON) ;;
+            tsan) args+=(-DGO_ENABLE_TSAN=ON) ;;
+            optimized) args+=(-DCMAKE_BUILD_TYPE=Release '-DCMAKE_C_FLAGS_RELEASE=-O2 -DNDEBUG') ;;
+          esac
+          cmake -S . -B build -G Ninja "${args[@]}" \
+            -DBUILD_FIPS=ON -DBUILD_APPS=OFF -DBUILD_RELAYD=OFF \
+            -DBUILD_LIBHANAMI=OFF -DBUILD_LIBMARMOT=OFF -DBUILD_MARMOT_GOBJECT=OFF \
+            -DBUILD_NOSTR_GOBJECT=OFF -DBUILD_NOSTR_GTK=OFF -DSIGNET_ENABLE=OFF \
+            -DWITH_NOSTRDB=OFF -DLIBNOSTR_WITH_NOSTRDB=OFF
+      - name: Build FIPS targets
+        shell: bash
+        run: |
+          targets=(fipsd fipsd_host_os_test)
+          if [[ '${{ matrix.configuration }}' != tsan ]]; then
+            targets+=(fips_core_skeleton_test fips_core_host_test)
+          fi
+          if [[ '${{ matrix.configuration }}' == asan_ubsan ]]; then targets+=(fips_fuzz_host); fi
+          cmake --build build --parallel 3 --target "${targets[@]}"
+      - name: Test FIPS
+        shell: bash
+        run: |
+          args=()
+          # Core-only tests are intentionally not a threading qualification.
+          if [[ '${{ matrix.configuration }}' == tsan ]]; then args+=(-E '^FipsCore'); fi
+          ctest --test-dir build -R '^Fips' "${args[@]}" --no-tests=error --output-on-failure
+      - name: Fuzz smoke (10 seconds per target)
+        if: matrix.configuration == 'asan_ubsan'
+        run: |
+          mkdir -p build/corpus build/fuzz-artifacts
+          cp -R libfips-core/fuzz/corpus/fips_fuzz_host build/corpus/
+          build/libfips-core/fuzz/fips_fuzz_host -max_total_time=10 -timeout=5 -artifact_prefix=build/fuzz-artifacts/ build/corpus/fips_fuzz_host
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: ${{ inputs.artifact_prefix }}fips-${{ matrix.os }}-${{ matrix.configuration }}
+          path: |
+            build/Testing/Temporary/
+            build/fuzz-artifacts/
+  nightly-fuzz:
+    name: Linux • FIPS nightly fuzz (60 seconds per target)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    env:
+      CC: clang
+      CXX: clang++
+      ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1:halt_on_error=1
+      UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - name: Install dependencies (Linux)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake ninja-build pkg-config clang libclang-rt-18-dev libjansson-dev libsecp256k1-dev libsodium-dev libssl-dev libcurl4-openssl-dev libwebsockets-dev libglib2.0-dev libsoup-3.0-dev libnsync-dev
+      - name: Configure fuzzers
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+            -DGO_WARNINGS_AS_ERRORS=ON -DGO_ENABLE_ASAN=ON -DGO_ENABLE_UBSAN=ON -DFIPS_ENABLE_FUZZERS=ON \
+            -DBUILD_FIPS=ON -DBUILD_APPS=OFF -DBUILD_RELAYD=OFF \
+            -DBUILD_LIBHANAMI=OFF -DBUILD_LIBMARMOT=OFF -DBUILD_MARMOT_GOBJECT=OFF \
+            -DBUILD_NOSTR_GOBJECT=OFF -DBUILD_NOSTR_GTK=OFF -DSIGNET_ENABLE=OFF \
+            -DWITH_NOSTRDB=OFF -DLIBNOSTR_WITH_NOSTRDB=OFF
+      - run: cmake --build build --parallel 3 --target fips_fuzz_host
+      - name: Fuzz (60 seconds per target)
+        run: |
+          mkdir -p build/corpus build/fuzz-artifacts
+          cp -R libfips-core/fuzz/corpus/fips_fuzz_host build/corpus/
+          build/libfips-core/fuzz/fips_fuzz_host -max_total_time=60 -timeout=5 -artifact_prefix=build/fuzz-artifacts/ build/corpus/fips_fuzz_host
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: fips-nightly-fuzz-crashes
+          path: build/fuzz-artifacts/

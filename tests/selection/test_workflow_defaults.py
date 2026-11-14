@@ -23,6 +23,15 @@ class RepresentativeSelectionTests(unittest.TestCase):
         return ci.project(s.make_plan(policy, [change(path) for path in paths],
                                      head='a' * 40, context='ci', mode=mode))
 
+    def test_fips_paths_select_only_fips_without_broad_fallback(self):
+        for path in ('libfips-core/src/host.c', 'fipsd/src/host_os.c',
+                     'tools/fips-vectors/src/main.rs', '.github/workflows/fips-ci.yml'):
+            with self.subTest(path=path):
+                result = self.select([path])
+                self.assertFalse(result['broad'])
+                self.assertEqual(result['families'], ['fips'])
+                self.assertFalse(result['run_reference'])
+
     def test_groundhog_ui_omits_reference_mdk_core_and_libgo(self):
         self.assertTrue((ROOT / 'gnome/groundhog/data/ui/gh-window.blp').is_file())
         result = self.select(['gnome/groundhog/data/ui/gh-window.blp'])

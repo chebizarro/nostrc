@@ -28,6 +28,7 @@ MIRRORED = (
     ".github/workflows/gnostr-appimage.yml",
     ".github/workflows/signet-ci.yml",
     ".github/workflows/nostrc-ci.yml",
+    ".github/workflows/fips-ci.yml",
 )
 NOT_BUILD_DEPS = {
     "cloud-init": "signet-ci validates deployment cloud-init schema; not a build dependency",

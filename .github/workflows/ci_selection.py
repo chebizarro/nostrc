@@ -17,6 +17,7 @@ FAMILY_NODES = {
     'core': {'libnostr', 'libjson', 'libmarmot', 'marmot.gobject', 'shared.tests',
              'testing.framework', 'testkit', 'schema', 'execution.core'},
     'libgo': {'libgo', 'execution.libgo'},
+    'fips': {'fips.core', 'fipsd', 'fips.vectors', 'execution.fips'},
     'hanami': {'libhanami'},
     'rust': {'bindings.rust'},
     'gi': {'libnostr', 'nostr.gobject'},

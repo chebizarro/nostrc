@@ -1,0 +1,16 @@
+if(NOT CMAKE_C_COMPILER_ID MATCHES "Clang")
+  message(FATAL_ERROR "FIPS_ENABLE_FUZZERS requires clang/libFuzzer")
+endif()
+if(GNOSTR_ENABLE_TSAN OR GO_ENABLE_TSAN)
+  message(FATAL_ERROR "FIPS fuzzers cannot be combined with TSan")
+endif()
+# Instrument the implementation too, not only the input adapter.
+target_compile_options(fips_core PRIVATE -fsanitize=fuzzer-no-link)
+add_executable(fips_fuzz_host fuzz_host.c ../tests/fakes/host.c)
+target_link_libraries(fips_fuzz_host PRIVATE fips_core)
+set_target_properties(fips_fuzz_host PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+apply_warnings(fips_fuzz_host)
+apply_sanitizers(fips_fuzz_host)
+target_compile_options(fips_fuzz_host PRIVATE -fsanitize=fuzzer)
+target_link_options(fips_fuzz_host PRIVATE -fsanitize=fuzzer)
