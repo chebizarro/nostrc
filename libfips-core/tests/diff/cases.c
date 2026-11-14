@@ -1,6 +1,7 @@
 #include "diff.h"
 #include "../fakes/host.h"
 #include <fips/proto/codec.h>
+#include <fips/proto/coord.h>
 #include <fips/identity/local.h>
 #include <fips/identity/encoding.h>
 #include <fips/identity/auth.h>
@@ -326,7 +327,144 @@ static result check_codec(diff_context *ctx, const codec_case *c)
 static result check_noise(const noise_case *c) { (void)c; return SKIPPED; }
 static result check_replay(const diff_value *step, uint64_t window_size)
 { (void)step; (void)window_size; return SKIPPED; }
-static result check_proto(const proto_case *c) { (void)c; return SKIPPED; }
+/* Derive the common-input addresses from the declared seeds, never parse the
+ * Debug strings or assume the coords vector's addresses are the same inputs. */
+static bool check_coord_debug(diff_context *ctx, const proto_case *c,
+                              fips_tree_coordinate *scratch)
+{
+    fips_fixed_entropy fixed = {0x5a};
+    fips_entropy entropy = fips_fixed_entropy_adapter(&fixed);
+    fips_secp *secp = NULL;
+    fips_node_addr addrs[2];
+    diff_value *seeds = FIELD(c->common_inputs, "identity_seeds");
+    bool ok = COUNT(seeds) == 2;
+    if (!ok || fips_identity_init_secp(entropy, &secp) != FIPS_IDENTITY_OK)
+        return diff_error(ctx, "common coordinate identity setup failed");
+    for (size_t i = 0; i < 2; ++i) {
+        fips_seeded_entropy state = {ITEM(seeds, i)->as.number ^ UINT64_C(0x6b65797061697273)};
+        fips_entropy seeded = fips_seeded_entropy_adapter(&state);
+        uint8_t secret[32];
+        fips_identity *identity = NULL;
+        seeded.fill(seeded.ctx, secret, sizeof(secret));
+        fips_identity_status status = fips_identity_from_secret_bytes(secp, entropy, secret, &identity);
+        sodium_memzero(secret, sizeof(secret));
+        if (status != FIPS_IDENTITY_OK) { ok = false; break; }
+        addrs[i] = fips_identity_node_addr(identity);
+        fips_identity_destroy(identity);
+    }
+    fips_identity_destroy_secp(secp);
+    if (!ok) return diff_error(ctx, "common coordinate identity derivation failed");
+    char debug[128];
+    fips_tree_coordinate_root_with_meta(scratch, addrs[0], UINT64_C(0x0123456789abcdef), 1700000000);
+    if (fips_tree_coordinate_debug(scratch, debug, sizeof(debug)) != FIPS_OK ||
+        strcmp(debug, TEXT(c->common_inputs, "src_coord_debug")))
+        return diff_error(ctx, "src_coord_debug mismatch");
+    fips_node_addr dst[] = {addrs[1], addrs[0]};
+    if (fips_tree_coordinate_from_addrs(scratch, dst, 2, NULL) != FIPS_OK ||
+        fips_tree_coordinate_debug(scratch, debug, sizeof(debug)) != FIPS_OK ||
+        strcmp(debug, TEXT(c->common_inputs, "dst_coord_debug")))
+        return diff_error(ctx, "dst_coord_debug mismatch");
+    puts("PASS common_inputs.src_coord_debug / common_inputs.dst_coord_debug");
+    return true;
+}
+static result check_coords(diff_context *ctx, const proto_case *c)
+{
+    diff_bytes bytes = BYTES(c->record, "bytes");
+    diff_value *addresses = FIELD(FIELD(c->record, "input"), "addresses_hex");
+    fips_tree_coordinate *actual = malloc(sizeof(*actual)), *expected = malloc(sizeof(*expected));
+    uint8_t *encoded = malloc(bytes.len ? bytes.len : 1);
+    bool ok = actual && expected && encoded;
+    if (!ok) { diff_error(ctx, "coordinate allocation failed"); goto done; }
+    size_t count = COUNT(addresses);
+    if (!count || count > FIPS_COORD_MAX_ENTRIES) { ok = diff_error(ctx, "coordinate count out of range"); goto done; }
+    expected->len = (uint16_t)count;
+    for (size_t i = 0; i < count; ++i) {
+        diff_bytes addr = ITEM(addresses, i)->as.bytes;
+        if (addr.len != 16) { ok = diff_error(ctx, "bad input address length"); goto done; }
+        memcpy(expected->entries[i].node_addr.bytes, addr.data, 16);
+        expected->entries[i].sequence = expected->entries[i].timestamp = 0;
+    }
+    fips_reader r;
+    fips_reader_init(&r, bytes.data, bytes.len);
+    if (fips_decode_coords(&r, actual, NULL) != FIPS_OK ||
+        !fips_tree_coordinate_equal(actual, expected) ||
+        fips_tree_coordinate_depth(actual) != UINT(c->record, "decoded_depth") ||
+        fips_reader_position(&r) != UINT(c->record, "consumed")) {
+        ok = diff_error(ctx, "coordinate decode/structure/depth/consumed mismatch"); goto done;
+    }
+    fips_writer w;
+    fips_writer_init(&w, encoded, bytes.len);
+    ok = fips_encode_coords(actual, &w, NULL) == FIPS_OK && compare(ctx, bytes, encoded, fips_writer_len(&w));
+    ok &= check_coord_debug(ctx, c, expected);
+ done:
+    free(actual); free(expected); free(encoded);
+    return ok ? CHECKED : FAILED;
+}
+static result check_coords_empty(diff_context *ctx, const proto_case *c)
+{
+    diff_bytes bytes = BYTES(c->record, "bytes");
+    fips_tree_coordinate *coord = malloc(sizeof(*coord));
+    if (!coord) { diff_error(ctx, "coordinate allocation failed"); return FAILED; }
+    fips_node_addr addr = {{0}};
+    fips_tree_coordinate_root(coord, addr);
+    fips_reader r;
+    fips_reader_init(&r, bytes.data, bytes.len);
+    fips_proto_error e;
+    bool ok = fips_decode_coords(&r, coord, &e) == FIPS_ERR_RANGE &&
+        e.variant == FIPS_PROTO_Malformed && !strcmp(e.as.malformed, "coordinate with zero entries") &&
+        fips_reader_position(&r) == 0;
+    char debug[96];
+    if (ok) {
+        snprintf(debug, sizeof(debug), "Malformed(\"%s\")", e.as.malformed);
+        ok = !strcmp(debug, TEXT(FIELD(c->record, "required_error"), "debug"));
+    }
+    bool present = true;
+    ok &= fips_decode_optional_coords(&r, coord, &present, NULL) == FIPS_OK && !present &&
+        FIELD(c->record, "optional")->type == D_NULL && fips_reader_position(&r) == 2 && coord->len == 1;
+    uint8_t encoded[2];
+    fips_writer w;
+    fips_writer_init(&w, encoded, sizeof(encoded));
+    ok &= fips_encode_empty_coords(&w, NULL) == FIPS_OK && compare(ctx, bytes, encoded, fips_writer_len(&w));
+    free(coord);
+    if (!ok) diff_error(ctx, "empty coordinate required/optional/encoding mismatch");
+    return ok ? CHECKED : FAILED;
+}
+typedef struct proto_checker {
+    const char *name, *owner;
+    result (*check)(diff_context *, const proto_case *);
+} proto_checker;
+static const proto_checker proto_checkers[] = {
+    {"coords", "nostrc-82g9n.1", check_coords},
+    {"coords-empty", "nostrc-82g9n.1", check_coords_empty},
+    {"bloom", "nostrc-82g9n.3", NULL}, {"filter-announce", "nostrc-82g9n.3", NULL},
+    {"parent-declaration", "nostrc-82g9n.2", NULL}, {"tree-announce", "nostrc-82g9n.2", NULL},
+    {"lookup-request", "nostrc-82g9n.5", NULL}, {"lookup-response", "nostrc-82g9n.5", NULL},
+    {"sender-report", "nostrc-f12v2.4", NULL}, {"session-sender-report", "nostrc-f12v2.4", NULL},
+    {"receiver-report", "nostrc-f12v2.4", NULL}, {"session-receiver-report", "nostrc-f12v2.4", NULL},
+    {"path-mtu", "nostrc-f12v2.4", NULL},
+    {"path-probe", "nostrc-f12v2.6", NULL}, {"path-ack", "nostrc-f12v2.6", NULL}, {"path-close", "nostrc-f12v2.6", NULL},
+    {"disconnect", "nostrc-82g9n.7", NULL}, {"fmp-msg-1", "nostrc-82g9n.7", NULL},
+    {"fmp-msg-2", "nostrc-82g9n.7", NULL}, {"fmp-encrypted", "nostrc-82g9n.7", NULL},
+    {"fsp-setup", "nostrc-82g9n.8", NULL}, {"fsp-ack", "nostrc-82g9n.8", NULL},
+    {"fsp-msg3", "nostrc-82g9n.8", NULL}, {"fsp-encrypted", "nostrc-82g9n.8", NULL},
+    {"session-datagram", "nostrc-82g9n.6", NULL},
+    /* nostrc-82g9n.6 integration hook: orchestrator will call the checks from
+     * tests/diff/proto_link.c for constants/link_catalog/session_catalog here
+     * after both branches merge. Do not count those catalogs as checked yet. */
+    {"constants", "nostrc-82g9n.6", NULL}, {"link_catalog", "nostrc-82g9n.6", NULL},
+    {"session_catalog", "nostrc-82g9n.6", NULL}
+};
+static result check_proto(diff_context *ctx, const proto_case *c, const char **owner)
+{
+    for (size_t i = 0; i < sizeof(proto_checkers) / sizeof(proto_checkers[0]); ++i) {
+        const proto_checker *checker = &proto_checkers[i];
+        if (strcmp(checker->name, c->name)) continue;
+        *owner = checker->owner;
+        return checker->check ? checker->check(ctx, c) : SKIPPED;
+    }
+    diff_error(ctx, "missing proto dispatch for %s", c->name);
+    return FAILED;
+}
 static result check_rekey(const rekey_case *c) { (void)c; return SKIPPED; }
 
 static void report(diff_context *ctx, counts *n, result r, const char *owner)
@@ -392,13 +530,19 @@ int diff_dispatch(diff_context *ctx, const char *family, diff_value *cases)
             diff_value *v = ITEM(wire, i);
             proto_case c = {TEXT(v, "name"), v, FIELD(cases, "common_inputs"), FIELD(cases, "constants")};
             snprintf(ctx->id, sizeof(ctx->id), "proto/%s", c.name);
-            report(ctx, &n, check_proto(&c), "nostrc-82g9n");
+            const char *owner = NULL;
+            ctx->error[0] = '\0';
+            result checked = check_proto(ctx, &c, &owner);
+            report(ctx, &n, checked, owner);
         }
         const char *catalogs[] = {"link_catalog", "session_catalog", "constants"};
         for (size_t i = 0; i < 3; ++i) {
             proto_case c = {catalogs[i], FIELD(cases, catalogs[i]), FIELD(cases, "common_inputs"), FIELD(cases, "constants")};
             snprintf(ctx->id, sizeof(ctx->id), "proto/%s", c.name);
-            report(ctx, &n, check_proto(&c), "nostrc-82g9n");
+            const char *owner = NULL;
+            ctx->error[0] = '\0';
+            result checked = check_proto(ctx, &c, &owner);
+            report(ctx, &n, checked, owner);
         }
     } else if (!strcmp(family, "rekey")) {
         rekey_case c = {TEXT(cases, "profile"), TEXT(cases, "initial_handshake"), TEXT(cases, "params_debug"), TEXT(cases, "clock"),

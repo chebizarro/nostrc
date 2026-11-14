@@ -278,3 +278,46 @@ epoch and deletion-chain edges. No cache differential-vector family exists;
 
 Version decision: additive APIs fold into initial libfips-core
 **0.1.0 Unreleased**; no release/tag change.
+
+## Coordinate primitive (nostrc-82g9n.1)
+
+`proto/coord.{h,c}` mirrors `core/src/proto/coord.rs`: metadata entries,
+self-to-root paths, equality (including metadata), address-only suffix/LCA and
+ancestor routing, exact UTF-8 Debug, required/optional address-only wire fields.
+Entry wire encoding is addr(16) + sequence(u64 LE) + timestamp(u64 LE), as
+consumed by `proto/stp/wire.rs`; address-only fields omit both metadata words.
+
+There is **no upstream maximum-depth constant** and Rust constructors take an
+unbounded Vec. `decode_coords`/`decode_optional_coords` read a **u16 entry
+count**, so the complete wire-representable range is 1..65535 entries, depths
+0..65534. C's inline capacity is 65535, not the cache's guessed 80. Constructors
+reject larger paths with MessageTooLong instead of Rust encode's lossy u16
+cast; empty constructors report BadCoord(EmptyCoordinate). Required zero-count
+wire input reports Malformed("coordinate with zero entries"), optional reports
+absence; truncated fields report MessageTooShort. C preflights whole fields to
+preserve outputs and Reader/Writer cursors, with cumulative codec offsets.
+Objects are about 2 MiB; hosts must use heap/static storage, not small stacks.
+
+**Cache follow-up:** `fips_cached_coord` deliberately remains the existing
+80-entry compact placeholder. Blindly substituting the full inline type in
+`fips_cache_entry`/`fips_coord_slot` would inflate the 50,000-entry cache from
+about 140 MB to over 100 GB. Replace the placeholder in a separate storage
+change: introduce caller-owned bounded coordinate-entry arena/slices, adapt
+`src/cache/entry.c` copy/equality/access helpers and `src/cache/coord_cache.c`
+insert/update/get/visitor ownership, and port cache tests/bench to the arena.
+Define explicit capacity refusal for paths larger than host storage, rather
+than truncation or treating 80 as a protocol maximum. The placeholder entry
+is now named `fips_cached_coord_entry` solely to avoid collision with the real
+NodeAddr-typed `fips_coord_entry`; its layout and cache behavior are unchanged.
+
+All 13 behaviors in `core/src/proto/stp/tests/coordinate.rs` are ported;
+`coord.rs` has no inline unit tests at this pin. Additional C tests cover the
+u16 maximum and excess constructor lengths, every truncated byte offset,
+transactional errors, metadata entry LE encoding, suffix-vs-prefix semantics,
+and exact Debug formatting/capacity. Proto diff checks coords and coords-empty,
+plus both common Debug strings derived from common identity seeds. Other wire
+cases/catalogs remain per-owner SKIPs, not parity. Fuzz seeds are the two
+unmodified coordinate vector byte strings.
+
+Version decision: additive APIs fold into initial libfips-core **0.1.0
+Unreleased**; no published version/tag change.

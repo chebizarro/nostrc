@@ -12,21 +12,19 @@ extern "C" {
 #define FIPS_ADDRS_PER_ENTRY 16
 #define FIPS_PROBATION_SHARE_DIVISOR 32
 
-/* Coordinate storage owned by this module only until nostrc-82g9n.1 lands the
- * proto coord codec (upstream core/src/proto/coord.rs TreeCoordinate). This is
- * that type's value layout, (node_addr, sequence, timestamp) per hop from the
- * node to the root, held inline instead of in a Vec, with no codec. Upstream
- * has no depth constant: the wire count is u16, but a frame carries about
- * seventy addresses (coord_cache.rs ADDRS_PER_ENTRY note), so the inline bound
- * is a cache storage choice. 82g9n.1 should replace fips_cached_coord with
- * the real type (or a conversion) without changing the cache API shape. */
+/* Compact cache-only placeholder; the real TreeCoordinate/CoordEntry live in
+ * fips/proto/coord.h (nostrc-82g9n.1). The 80-entry bound is a cache storage
+ * policy, NOT a protocol maximum. Replacing every slot with the full u16-domain
+ * inline coordinate would inflate the default cache beyond 100 GB. See
+ * UPSTREAM.md "Coordinate primitive" for the caller-owned arena/slice migration
+ * required to remove this placeholder without changing routing semantics. */
 #define FIPS_CACHED_COORD_MAX_ENTRIES 80
-typedef struct fips_coord_entry {
+typedef struct fips_cached_coord_entry {
     uint8_t node_addr[16];
     uint64_t sequence, timestamp;
-} fips_coord_entry;
+} fips_cached_coord_entry;
 typedef struct fips_cached_coord {
-    fips_coord_entry entries[FIPS_CACHED_COORD_MAX_ENTRIES];
+    fips_cached_coord_entry entries[FIPS_CACHED_COORD_MAX_ENTRIES];
     uint16_t len; /* >= 1 for a valid coordinate; depth is len - 1 */
 } fips_cached_coord;
 /** FIPS_ERR_RANGE for count == 0 or count > FIPS_CACHED_COORD_MAX_ENTRIES

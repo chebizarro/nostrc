@@ -90,3 +90,5 @@ endif()
 target_sources(fips_core PRIVATE src/noise/ecdh.c)
 # Noise AEAD (nostrc-pwo3h.1); independent of sibling Noise modules.
 target_sources(fips_core PRIVATE src/noise/aead.c)
+# Tree coordinate primitive and wire codec (nostrc-82g9n.1).
+target_sources(fips_core PRIVATE src/proto/coord.c)
