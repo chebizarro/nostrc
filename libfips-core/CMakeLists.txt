@@ -85,3 +85,6 @@ option(FIPS_ENABLE_BENCH "Build libfips-core micro-benchmarks (not run by ctest)
 if(FIPS_ENABLE_BENCH)
   add_subdirectory(bench)
 endif()
+
+# Tree coordinate primitive and wire codec (nostrc-82g9n.1).
+target_sources(fips_core PRIVATE src/proto/coord.c)

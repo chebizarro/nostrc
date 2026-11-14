@@ -33,3 +33,12 @@ apply_warnings(fips_fuzz_identity)
 apply_sanitizers(fips_fuzz_identity)
 target_compile_options(fips_fuzz_identity PRIVATE -fsanitize=fuzzer)
 target_link_options(fips_fuzz_identity PRIVATE -fsanitize=fuzzer)
+
+add_executable(fips_fuzz_coord fuzz_coord.c)
+target_link_libraries(fips_fuzz_coord PRIVATE fips_core)
+set_target_properties(fips_fuzz_coord PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+apply_warnings(fips_fuzz_coord)
+apply_sanitizers(fips_fuzz_coord)
+target_compile_options(fips_fuzz_coord PRIVATE -fsanitize=fuzzer)
+target_link_options(fips_fuzz_coord PRIVATE -fsanitize=fuzzer)

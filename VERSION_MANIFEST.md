@@ -113,6 +113,10 @@ other components and all version/release/tag values are unchanged.
   `FIPS_ENABLE_BENCH` benchmark target fold into the initial pre-release; no
   published version or release tag changes.
 
+- **nostrc-82g9n.1: libfips-core stays 0.1.0, Unreleased.** Additive coordinate
+  types, routing helpers, Debug formatting and wire codecs fold into the initial
+  unreleased API; no published version or release-tag change.
+
 - **libfips-core: initial 0.1.0, Unreleased.** New independently versioned C11
   sans-IO library component with a public version API, static/shared CMake
   build contract, installed headers and pkg-config metadata. No protocol

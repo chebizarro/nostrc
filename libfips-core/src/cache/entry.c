@@ -23,7 +23,7 @@ bool fips_cached_coord_equal(const fips_cached_coord *a, const fips_cached_coord
 {
     if (a->len != b->len) return false;
     for (size_t i = 0; i < a->len; ++i) {
-        const fips_coord_entry *x = &a->entries[i], *y = &b->entries[i];
+        const fips_cached_coord_entry *x = &a->entries[i], *y = &b->entries[i];
         if (memcmp(x->node_addr, y->node_addr, 16) != 0 || x->sequence != y->sequence ||
             x->timestamp != y->timestamp)
             return false;

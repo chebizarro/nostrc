@@ -110,3 +110,15 @@ set_tests_properties(FipsCoreCoordCacheTest PROPERTIES TIMEOUT 120 LABELS "fips;
 nostrc_describe_test(FipsCoreCoordCacheTest OWNER libfips-core TARGETS fips_core_coord_cache_test)
 # Keep the explicit FIPS CI build closure complete (see the host-test note above).
 add_dependencies(fips_core_host_test fips_core_coord_cache_test)
+
+# Tree coordinate codec and routing helpers (nostrc-82g9n.1).
+add_executable(fips_core_coord_test test_coord.c)
+target_link_libraries(fips_core_coord_test PRIVATE fips_core)
+set_target_properties(fips_core_coord_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+apply_warnings(fips_core_coord_test)
+apply_sanitizers(fips_core_coord_test)
+add_test(NAME FipsCoreCoordTest COMMAND fips_core_coord_test)
+set_tests_properties(FipsCoreCoordTest PROPERTIES TIMEOUT 10 LABELS "fips;unit")
+nostrc_describe_test(FipsCoreCoordTest OWNER libfips-core TARGETS fips_core_coord_test)
+add_dependencies(fips_core_host_test fips_core_coord_test)

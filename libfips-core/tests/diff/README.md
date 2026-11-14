@@ -99,13 +99,14 @@ A loaded fixture is **not** a protocol pass. Unimplemented dispatchers return
 | identity | 0 | 3 | nostrc-u50yr |
 | codec | 15 | 0 | implemented proto Reader/Writer |
 | noise | 0 | 18 | nostrc-pwo3h |
-| proto | 0 | 28 | nostrc-82g9n |
+| proto | 2 | 26 | coords/coords-empty implemented; remaining owners in `proto_checkers` |
 | rekey | 0 | 1 | nostrc-f12v2 |
 
 Counting units: entropy/identity are per seed; codec includes all truncations
 within its parent case; Noise has two whole transcripts (including their frames)
 and 16 replay steps; proto has 25 wire cases, two catalogs and one constants
-case (common inputs are context); rekey has one whole FSP cycle with 16 events,
+case (both common coordinate Debug strings are verified within coords, not
+counted separately); rekey has one whole FSP cycle with 16 events,
 initial/final states and authenticated deliveries. Implementing a whole-case
 check means checking its nested assertions too, not just one output byte.
 All-SKIP families exit 0 with `0 checked, N skipped, 0 failed`, so future ports
