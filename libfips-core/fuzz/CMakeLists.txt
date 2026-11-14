@@ -86,3 +86,12 @@ apply_warnings(fips_fuzz_bloom)
 apply_sanitizers(fips_fuzz_bloom)
 target_compile_options(fips_fuzz_bloom PRIVATE -fsanitize=fuzzer)
 target_link_options(fips_fuzz_bloom PRIVATE -fsanitize=fuzzer)
+
+# Both mesh lookup codecs and proof preimage bounds.
+add_executable(fips_fuzz_lookup fuzz_lookup.c)
+target_link_libraries(fips_fuzz_lookup PRIVATE fips_core)
+set_target_properties(fips_fuzz_lookup PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+apply_warnings(fips_fuzz_lookup)
+apply_sanitizers(fips_fuzz_lookup)
+target_compile_options(fips_fuzz_lookup PRIVATE -fsanitize=fuzzer)
+target_link_options(fips_fuzz_lookup PRIVATE -fsanitize=fuzzer)

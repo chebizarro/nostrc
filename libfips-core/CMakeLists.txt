@@ -115,3 +115,8 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
   set_source_files_properties(src/proto/bloom/core.c src/proto/bloom/log.c PROPERTIES
     COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off")
 endif()
+
+# Mesh lookup codecs, bounded retry/dedup state and signing (nostrc-82g9n.5).
+target_sources(fips_core PRIVATE
+  src/proto/lookup/wire.c src/proto/lookup/state.c
+  src/proto/lookup/core.c src/proto/lookup/limits.c)

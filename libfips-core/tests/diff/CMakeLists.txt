@@ -60,3 +60,6 @@ target_sources(fips_diff PRIVATE proto_fmp.c)
 target_sources(fips_diff PRIVATE proto_stp.c)
 # Bloom and FilterAnnounce replay (nostrc-82g9n.3); coordinator wires cases.c.
 target_sources(fips_diff PRIVATE proto_bloom.c)
+
+# Coordinator owns cases.c dispatch for lookup-request/lookup-response.
+target_sources(fips_diff PRIVATE proto_lookup.c)
