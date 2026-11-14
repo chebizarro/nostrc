@@ -170,8 +170,10 @@ all rows, even where only the implementation epic is shown.
    replay cases, and host golden snapshots rather than overwriting history
    without comparison. Exported vectors alone do not prove the differential/interop
    gates.
-4. **Run differential sweep and interop.** Run all affected C/Rust comparisons
-   under ASan/UBSan, then two-node C ↔ pinned-candidate Rust UDP interop covering
+4. **Run differential sweep and interop.** Run the differential sweep:
+   `ctest -R '^FipsDiff' -V` in the build directory (see `tests/diff/README.md`).
+   Review checked/skipped counts; an all-SKIP family is not parity. Run all
+   affected C/Rust comparisons under ASan/UBSan, then two-node C ↔ pinned-candidate Rust UDP interop covering
    FMP IK, FSP XK and at least one rekey cycle. Include the legacy rekey models.
    Do not advance to another transport on vector-only evidence. Record actual
    passes, failures, skips and unavailable environments separately.
