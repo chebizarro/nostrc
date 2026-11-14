@@ -65,3 +65,25 @@ nostrc_describe_test(FipsCoreStatsHistoryTest OWNER libfips-core TARGETS fips_co
 # FIPS CI builds the established host-test entrypoint explicitly before ctest.
 # Keep these registered tests in that build closure without changing CI lanes.
 add_dependencies(fips_core_host_test fips_core_rate_limit_test fips_core_stats_history_test)
+
+# Shared utility/math ports (nostrc-u50yr.3), independent of sibling blocks.
+add_executable(fips_core_utils_test test_utils.c fakes/host.c)
+target_link_libraries(fips_core_utils_test PRIVATE fips_core)
+set_target_properties(fips_core_utils_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+apply_warnings(fips_core_utils_test)
+apply_sanitizers(fips_core_utils_test)
+add_test(NAME FipsCoreUtilsTest COMMAND fips_core_utils_test)
+set_tests_properties(FipsCoreUtilsTest PROPERTIES TIMEOUT 10 LABELS "fips;unit")
+nostrc_describe_test(FipsCoreUtilsTest OWNER libfips-core TARGETS fips_core_utils_test)
+
+add_executable(fips_core_math_test test_math.c)
+target_link_libraries(fips_core_math_test PRIVATE fips_core)
+set_target_properties(fips_core_math_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+apply_warnings(fips_core_math_test)
+apply_sanitizers(fips_core_math_test)
+add_test(NAME FipsCoreMathTest COMMAND fips_core_math_test)
+set_tests_properties(FipsCoreMathTest PROPERTIES TIMEOUT 10 LABELS "fips;unit")
+nostrc_describe_test(FipsCoreMathTest OWNER libfips-core TARGETS fips_core_math_test)
+add_dependencies(fips_core_host_test fips_core_utils_test fips_core_math_test)
