@@ -73,3 +73,8 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
   set_source_files_properties(src/proto/math.c PROPERTIES
     COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off")
 endif()
+# Identity primitives (explicit host entropy, no hot-path allocations).
+target_sources(fips_core PRIVATE
+  src/identity/mod.c src/identity/key.c src/identity/local.c
+  src/identity/peer.c src/identity/node_addr.c src/identity/address.c
+  src/identity/encoding.c src/identity/auth.c src/identity/prefix.c)

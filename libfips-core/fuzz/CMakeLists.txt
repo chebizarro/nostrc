@@ -23,3 +23,13 @@ apply_warnings(fips_fuzz_codec)
 apply_sanitizers(fips_fuzz_codec)
 target_compile_options(fips_fuzz_codec PRIVATE -fsanitize=fuzzer)
 target_link_options(fips_fuzz_codec PRIVATE -fsanitize=fuzzer)
+
+# NIP-19 identity decoding, including mixed case and canonical-form invariants.
+add_executable(fips_fuzz_identity fuzz_identity.c)
+target_link_libraries(fips_fuzz_identity PRIVATE fips_core PkgConfig::FIPS_CORE_SODIUM)
+set_target_properties(fips_fuzz_identity PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+apply_warnings(fips_fuzz_identity)
+apply_sanitizers(fips_fuzz_identity)
+target_compile_options(fips_fuzz_identity PRIVATE -fsanitize=fuzzer)
+target_link_options(fips_fuzz_identity PRIVATE -fsanitize=fuzzer)

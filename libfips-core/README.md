@@ -164,3 +164,50 @@ yet; tests/diff/cases.c is intentionally unchanged.
 
 Version decision (nostrc-u50yr.3): these APIs fold into libfips-core **0.1.0
 Unreleased**, with no published version/tag change.
+## Identity primitives
+
+`fips/identity/{mod,key,local,peer,node_addr,address,encoding,auth,prefix}.h`
+mirror upstream identity modules. `fips_identity_init_secp` creates an explicit
+context and blinds it with exactly 32 host entropy bytes; there is no global
+context or unblinded fallback. The context must outlive its identities.
+Constructors allocate opaque identity storage once; destructors wipe it with
+`sodium_memzero`. Public structs contain public information only. Explicit
+secret exports, decoded secrets and nsec output are caller-owned sensitive
+buffers and must be wiped by the caller. Signing takes 32 fresh auxiliary
+bytes from the retained host entropy adapter on every call. Invalid generated
+scalars return `InvalidSecretKey` without retrying or aborting.
+
+The address derivation has one implementation in `key.c`: NodeAddr is the
+first 16 SHA-256 bytes of the x-only key; IPv6 prepends `fd` to its first 15
+bytes. Public-only PeerKey accepts off-curve bytes; conversion validates them.
+PeerIdentity caches the full compressed public key, preserving supplied parity
+or using even parity for x-only input. Public value bytes are directly available
+for bytewise equality/ordering; validated objects must not be modified.
+
+A small local streaming bech32 codec avoids `nip19`'s transitive dependency on
+libnostr (and its runtime/host dependencies). Both decoders accept ASCII case
+variations, including mixed case, but only NIP-19 original bech32 checksums and
+zero padding. This deliberately also tightens nsec decoding to the requested
+NIP-19-only contract (upstream's November 13 fix explicitly canonicalizes npub).
+Malformed input is bounded to 1023 text bytes, with constant stack storage;
+all failure outputs remain unchanged. Encoding always emits lowercase.
+
+Signing, verification, derivation, hashing, formatting and encoding allocate
+nothing. SHA-256 uses libsodium's streaming primitive, which requires neither
+`sodium_init` nor an RNG. Authentication hashes `fips-auth-v1`, the 32 challenge
+bytes and the timestamp in big-endian order, assembled with the proto Writer.
+AuthResponse is a value, not a wire struct: upstream defines no serialization
+for it. The host owns freshness, replay and expected-peer authorization policy.
+
+`test_identity.c` ports 64 named behavioral tests from the 77 upstream tests,
+plus 7 C-specific boundary/negative groups (71 total). The 13 Rust-only tests
+not directly ported cover five Debug renderings, four From/error-source
+conversions, two global OnceBox invariants, HashSet insertion and the RAII
+ErasingKeypair guard. C uses opaque objects, explicit destruction, bytewise
+values and explicit contexts instead; status names/conversion boundaries are
+checked separately. No secret-bearing debug API or raw keypair copy is exposed.
+The identity differential family replays all three seeded fixtures, including
+the exact BIP-340 signature and the wrong-challenge error discriminant.
+
+Version decision (nostrc-u50yr.2): additive identity APIs fold into initial
+**libfips-core 0.1.0 Unreleased**; no version or release-tag change.

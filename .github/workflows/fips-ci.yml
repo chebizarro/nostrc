@@ -76,7 +76,7 @@ jobs:
           if [[ '${{ matrix.configuration }}' != tsan ]]; then
             targets+=(fips_core_skeleton_test fips_core_host_test)
           fi
-          if [[ '${{ matrix.configuration }}' == asan_ubsan ]]; then targets+=(fips_fuzz_host fips_fuzz_codec); fi
+          if [[ '${{ matrix.configuration }}' == asan_ubsan ]]; then targets+=(fips_fuzz_host fips_fuzz_codec fips_fuzz_identity); fi
           cmake --build build --parallel 3 --target "${targets[@]}"
       - name: Test FIPS
         shell: bash
@@ -89,7 +89,7 @@ jobs:
         if: matrix.configuration == 'asan_ubsan'
         run: |
           mkdir -p build/corpus build/fuzz-artifacts
-          for target in fips_fuzz_host fips_fuzz_codec; do
+          for target in fips_fuzz_host fips_fuzz_codec fips_fuzz_identity; do
             cp -R "libfips-core/fuzz/corpus/$target" build/corpus/
             "build/libfips-core/fuzz/$target" -max_total_time=10 -timeout=5 -artifact_prefix=build/fuzz-artifacts/ "build/corpus/$target"
           done
@@ -126,11 +126,11 @@ jobs:
             -DBUILD_LIBHANAMI=OFF -DBUILD_LIBMARMOT=OFF -DBUILD_MARMOT_GOBJECT=OFF \
             -DBUILD_NOSTR_GOBJECT=OFF -DBUILD_NOSTR_GTK=OFF -DSIGNET_ENABLE=OFF \
             -DWITH_NOSTRDB=OFF -DLIBNOSTR_WITH_NOSTRDB=OFF
-      - run: cmake --build build --parallel 3 --target fips_fuzz_host fips_fuzz_codec
+      - run: cmake --build build --parallel 3 --target fips_fuzz_host fips_fuzz_codec fips_fuzz_identity
       - name: Fuzz (60 seconds per target)
         run: |
           mkdir -p build/corpus build/fuzz-artifacts
-          for target in fips_fuzz_host fips_fuzz_codec; do
+          for target in fips_fuzz_host fips_fuzz_codec fips_fuzz_identity; do
             cp -R "libfips-core/fuzz/corpus/$target" build/corpus/
             "build/libfips-core/fuzz/$target" -max_total_time=60 -timeout=5 -artifact_prefix=build/fuzz-artifacts/ "build/corpus/$target"
           done
