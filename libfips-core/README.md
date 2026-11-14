@@ -269,3 +269,59 @@ unchanged. `fips_bench_noise_aead` uses upstream's 64/1400-byte payloads and
 16-byte AD, but measures AEAD only, not future session/replay/worker overhead.
 Version decision (nostrc-pwo3h.1): APIs fold into **0.1.0 Unreleased**; no
 published version/tag change.
+
+## FMP wire and lifecycle
+
+`fips/proto/fmp/{wire,core,state,silent,limits,types,mod}.h` ports the pinned
+`core/src/proto/fmp/` modules, excluding `rekey/`. Sizes come only from
+`framing.h`, with compile-time layout/Noise-size assertions in `wire.c`.
+The `*_parse` functions preserve upstream's structural Option semantics;
+`validate_frame` checks the complete envelope (including declared length).
+`receive` uses that gate for **both pending and established** ingress: a short
+frame returns only `DropFrame`, never a decrypt/dispatch action. Consumers
+must not bypass this gate on a pending-session path. After AEAD, the separate
+`receive_plaintext` event rejects lengths 0..4 before delivering a link message,
+including on the pending-session path (the November 12 short-plaintext fix).
+It does not itself authenticate, commit replay state or run rekey cutovers.
+The future rekey profile must retain that inner-header gate on pending delivery.
+The C diagnostics use
+proto Error variants; malformed `flags`/`payload_len` are static field names.
+Noise payloads and established ciphertext remain opaque. Header assembly does
+not authenticate; pass the exact 16 header bytes as AEAD associated data.
+
+Fmp itself is stateless, as upstream. Caller snapshots feed `poll_timeouts`
+(retry before teardown), `poll_resends` (borrowed msg1 and a `fips_instant`
+deadline), and `establish_inbound`/`establish_outbound` classifications. Action
+lists append into caller storage atomically or return RANGE. The host supplies
+stale/due snapshots, executes effects, and calls `record_resend` **only after a
+successful send**. Returned bytes borrow their inputs. `ConnectionState` owns
+bounded msg1/msg2 copies and pure identity/index/transport/statistics fields;
+wall times are display provenance, while idle/timeout decisions use monotonic
+instants. Noise phase/crypto and allocator ownership stay host-side. Optional
+index set/take returns the old value for explicit release/transfer rather than
+copying a future owning IndexLease.
+
+**Rekey attachment:** `IN_Rekey` hands the verified `WireOutcome` to the held
+link's future FMP rekey profile; its replacement request re-enters classification
+with `replace=true`. No rekey implementation or Noise handshake is supplied.
+
+`SilentSessions` uses caller-sized, sorted identity slots and eight ephemeral
+digests per identity, preserving replay deduplication, epoch reset/adoption,
+refusal counts, doubling/cap and horizon pruning. Full live storage returns
+RANGE: the host must treat that as a resource refusal, not permission to promote.
+Only an authenticated frame calls `heard`; unauthenticated receipt never clears
+a refusal. Time is saturated whole milliseconds from an explicit origin. C
+resend counters/exponents saturate instead of overflowing, float casts follow
+Rust saturation, and deadline overflow follows the shared host ceiling policy.
+
+`test_fmp.c` ports all 81 non-rekey upstream FMP tests by name, plus five C
+boundary groups: all truncations and per-byte mutations, atomic codec capacity
+failures, action/state bounds and extra transitions, silent-storage/digest
+bounds, and AEAD AAD integration. `test_fmp_vectors.c` calls the four new
+differential entrypoints directly (the orchestrator owns `cases.c` registration).
+Msg1/msg2 payloads come independently from `noise.json`; encrypted checks cover
+outer/inner framing with opaque ciphertext, **not** Noise or session-key parity.
+The FMP libFuzzer harness exercises all codecs and the ingress short-frame gate.
+
+Version decision (nostrc-82g9n.7): additive APIs fold into **libfips-core 0.1.0
+Unreleased**; no published version/tag change.
