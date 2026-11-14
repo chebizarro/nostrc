@@ -65,3 +65,11 @@ endif()
 if(BUILD_TESTING)
   add_subdirectory(tests)
 endif()
+
+# Shared utilities (nostrc-u50yr.3): bounded caller storage, host entropy only.
+target_sources(fips_core PRIVATE
+  src/utils/index.c src/utils/hash.c src/utils/onlink.c src/proto/math.c)
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+  set_source_files_properties(src/proto/math.c PROPERTIES
+    COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off")
+endif()

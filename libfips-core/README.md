@@ -114,3 +114,53 @@ Vec, returning `MessageTooLong` on insufficient capacity. Failures preserve the
 cursor and result buffers; success preserves the optional error out-parameter.
 `advance` is checked in C, and overflowing required offsets reject with a
 saturated `SIZE_MAX` diagnostic. Byte operations have no implicit length prefix.
+
+## Shared utilities and deterministic math
+
+`utils/index.h` wraps a 32-bit SessionIndex with LE conversion and eight-digit
+hex display. One IndexAllocator per node keeps a caller-owned sorted u32 set;
+allocation draws four bytes in one entropy fill per attempt, interpreted LE,
+with the upstream default of 100 attempts. Collision exhaustion, absent free
+and duplicate reserve are distinct results. Caller capacity is an additional
+local policy refusal, reported before drawing entropy (not random exhaustion).
+Reserve/free/clear do not draw entropy. The caller owns all storage/lifetimes.
+
+`utils/hash.h` supplies raw-byte SipHash-1-3 and an open-addressing map for
+peer-chosen byte keys. Each construction draws a fresh 128-bit key in one host
+entropy fill, split into two LE words as upstream. Never use predictable test
+entropy in production. Keys/values are borrowed; keys must stay immutable.
+Composite keys require unambiguous caller serialization; raw-byte hashes do not
+claim Rust's type-specific `Hash` framing. clear retains the secret key; deinit
+releases borrows and wipes it, without freeing caller storage.
+
+**Table decision:** libgo's GoHashMap has allocation, nsync locks and no public
+keyed-hasher hook; reusing it would violate this core's dependency/runtime
+boundary. Use a local bounded linear-probing table with byte equality and
+cached SipHash instead. Like hashbrown, power-of-two tables retain 1/8 spare
+buckets (4 buckets allow 3 entries). Upstream hashbrown grows dynamically with
+no fixed numeric entry ceiling; C requires caller storage and returns RANGE at
+its live-entry limit. The host may double storage through explicit transactional
+rehash, up to its own memory budget and checked size_t bounds. Rehash reuses
+the key and cached hashes without drawing entropy. Tombstones are reusable;
+all walks are bounded by bucket count. This is not a hashbrown layout/iteration
+compatibility claim. The randomized secret prevents a peer predicting buckets,
+including on targets without ASLR; an unkeyed default/foldhash is not suitable.
+
+`utils/onlink.h` consumes network-order IPv4/IPv6 octets, prefix lengths and
+optional interface indexes. It canonicalizes IPv4-mapped IPv6 before clamping,
+discards/counts zero-length prefixes, and answers contains/contains_on/share_link
+and read_suspect exactly as upstream. Empty and failed reads hold nothing;
+failed-read metadata is separate from read_suspect. The host, not this core,
+reads interfaces (`read_system`); constructors copy into bounded caller storage.
+
+`proto/math.h` implements the upstream multiply-then-square `powi(base,u32)`.
+Each multiply rounds to binary64, with strict floating-point source flags;
+there is no host pow call in the core. The host must preserve round-to-nearest,
+gradual-underflow IEEE arithmetic. Tests port all 20 upstream utils/math tests,
+plus 64 siphasher SipHash-1-3 reference vectors, entropy-call sequencing,
+adversarial bucket chains, storage/refusal edges and 65 pinned-Rust powi outputs
+for exponents 0..64 (base 0.5469). Utils/math has no differential harness family
+yet; tests/diff/cases.c is intentionally unchanged.
+
+Version decision (nostrc-u50yr.3): these APIs fold into libfips-core **0.1.0
+Unreleased**, with no published version/tag change.
