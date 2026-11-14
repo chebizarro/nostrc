@@ -96,6 +96,10 @@ other components and all version/release/tag values are unchanged.
 
 ### FIPS component skeletons (nostrc-s50dj.1)
 
+- **nostrc-u50yr.4: libfips-core stays 0.1.0, Unreleased.** Additive
+  sans-IO rate-limit/stats-history APIs and static math-link requirement fold
+  into the initial pre-release; no published version or release tag changes.
+
 - **libfips-core: initial 0.1.0, Unreleased.** New independently versioned C11
   sans-IO library component with a public version API, static/shared CMake
   build contract, installed headers and pkg-config metadata. No protocol

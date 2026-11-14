@@ -188,3 +188,50 @@ all rows, even where only the implementation epic is shown.
    compatibility decision, version decision and any remaining work. The
    orchestrator owns issue-status changes; do not silently move the baseline
    past failing or unavailable gates.
+
+## Node bookkeeping port (nostrc-u50yr.4)
+
+`proto/rate_limit` and `node/{rate_limit,stats_history}` now have C homes in
+`include/fips/` and `src/`. Clock-generic operations take `fips_instant now`;
+none reads a clock. Protocol millisecond intervals retain their exact integer
+parameters, with the construction instant representing millisecond zero;
+timestamps are quantized before subtraction, including sub-millisecond inputs.
+
+Mirrored limits: 4096 per-address entries, sweeps at max(1 ms, max_age/8),
+fail-open admission for unknown addresses at capacity; 100-token/10-per-second
+handshake defaults, independent established bucket with a 1-per-second floor
+and shared pending count; 300-second setup/signing idle expiry; signing
+defaults 256 burst / 32 per second; 3600 fast and 1440 slow stats samples,
+downsample every 60 pushes, peer eviction at 86400 seconds of silence.
+
+Rust's node BTreeMaps have **no fixed numeric entry capacity**: their host
+peer table / retention policy bounds the keys. C takes caller-owned sorted
+arrays with explicit capacities, never grows them, and reports FIPS_ERR_RANGE
+transactionally on a new-key capacity refusal (out/state unchanged). Normal
+idle eviction matches Rust's successful-admission / end-of-tick boundaries;
+explicit cleanup lets the host reclaim expired keys before a capacity retry.
+Sorted-array insertion moves entries but performs no allocation. Pending
+handshake guards become noncopyable-by-contract C slots with explicit,
+idempotent release on every exit and a borrowed limiter lifetime. Non-finite or
+unrepresentable token waits return FIPS_ERR_RANGE rather than Rust's panic
+for a non-finite Duration conversion. Finite waits use exact binary64
+rounding to nearest nanoseconds, ties to even, like Rust. Rates must be finite and nonnegative;
+lookup signing retains the zero/negative-burst unlimited convention.
+
+Stats queries expose the same Series fields and newest-last values through
+caller buffers; the walk hook marks NaN and both infinities as JSON null.
+Node counter decreases saturate to zero; peer decreases/absences rebaseline
+and emit NaN. Duplicate peer snapshots retain upstream slice-order pushes.
+The u64 tick counter is rebased at overflow while preserving full backfill
+and modulo-60 cadence (rather than wrapping/panicking as Rust would).
+
+All 18 tests in node/tests/rate_limit.rs, 2 in rate_limit_sign.rs, and 22 in
+stats_history.rs are ported by name, plus C capacity/eviction/error edges.
+The proto primitive has no attached upstream unit-test module at this pin;
+C adds interval, capacity, sweep and backoff boundary tests. No `ratelimit`
+or stats-history differential-vector family is provided yet: public APIs
+are reachable, but a trace schema/exporter/replay is a remaining gap, also
+listed in tools/fips-vectors/README.md. Existing diff/cases.c is unchanged.
+
+Version decision: additive APIs and static math linkage fold into initial
+libfips-core **0.1.0 Unreleased**; no release/tag change.

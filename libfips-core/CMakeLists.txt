@@ -11,6 +11,16 @@ find_package(OpenSSL REQUIRED COMPONENTS Crypto)
 
 # Follow BUILD_SHARED_LIBS, as the other nostrc libraries do.
 add_library(fips_core src/core.c src/host.c)
+
+# Proto rate-limit primitives.
+target_sources(fips_core PRIVATE src/proto/rate_limit.c)
+
+# Node bookkeeping (sans-IO, explicit host instants).
+target_sources(fips_core PRIVATE src/node/rate_limit.c src/node/stats_history.c)
+if(UNIX)
+  target_link_libraries(fips_core PRIVATE m)
+  set(FIPS_CORE_PC_MATH_LIB "-lm")
+endif()
 set_target_properties(fips_core PROPERTIES
   C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO
   COMPONENT_VERSION_HEADER_INSTALL_DIR "${CMAKE_INSTALL_INCLUDEDIR}/fips")

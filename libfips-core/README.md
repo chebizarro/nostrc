@@ -35,8 +35,13 @@ not a working protocol implementation or a Rust FFI wrapper.
 
 - `include/fips/core.h`: public version function; generated export and version
   headers are installed alongside it.
-- `include/fips/host.h`, `src/host.c`: host interfaces and time arithmetic;
-  no protocol code yet.
+- `include/fips/host.h`, `src/host.c`: host interfaces and time arithmetic.
+- `include/fips/proto/rate_limit.h`, `src/proto/rate_limit.c`: bounded
+  per-address interval gate and saturating millisecond backoff.
+- `include/fips/node/`, `src/node/`: handshake/session-setup/lookup-signing
+  budgets and dual-tier stats history, with explicit instants and caller-owned
+  bounded storage. Stats queries expose JSON-neutral Series metadata and a
+  walk hook that marks non-finite samples as null.
 - `tests/`: linked version, host-interface and byte-compatible fake tests.
 - `libfips-core.pc.in`: installed pkg-config contract, including private crypto
   requirements for static consumers.
@@ -50,8 +55,8 @@ flags use its shared `GO_ENABLE_*` helpers.
 
 Future protocol tests must drive real state machines with fixed entropy and
 synthetic time, checking returned actions and upstream differential vectors.
-Protocol modules are intentionally left to later tasks. Upstream provenance
-is maintained separately in `UPSTREAM.md`.
+The remaining wire-protocol state machines are left to later tasks. Upstream
+provenance is maintained separately in `UPSTREAM.md`.
 
 ## Host interfaces and ownership
 
