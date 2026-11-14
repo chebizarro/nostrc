@@ -537,3 +537,43 @@ owned. This is core/local evidence, not a running routing daemon claim.
 
 Version decision: additive APIs fold into **libfips-core 0.1.0 Unreleased**;
 no published version or release-tag change.
+
+## FSP session layer (nostrc-82g9n.8)
+
+`proto/fsp/{wire,core,quorum}.h` mirrors upstream `fsp/{wire,core,quorum}.rs`.
+Wire readers borrow packed address-only coordinates and opaque Noise payloads;
+no 2 MiB `TreeCoordinate` temporaries or allocation are needed. The entire u16
+coordinate-count domain is readable. Encoders reject body/Noise lengths that
+cannot be represented by u16 rather than truncating them. Shared transit
+readers remain lenient about reserved flags/trailing bytes; endpoint checks and
+strict body readers are separate. The 12-byte raw header is the AEAD AAD;
+CP coordinates lie after that header, before ciphertext, and are excluded from
+`payload_len`. The DataPacket port header is two LE u16s (IPv6 shim port 256).
+
+The stateless plans append caller-buffer `InvalidateCoords`, `DemoteCoords`,
+`TightenPathMtuLookup` and `InitiateLookup` actions atomically. The host executes
+them and retains its session/cache/MTU tables. `LinkQuorum` stores at most one
+vote per destination (quorum two), keyed by authenticated link peer, with an
+inclusive 15000 ms window and non-refreshing repeats. Caller-owned capacity
+refusal preserves state and verdict; no live votes are evicted. A positive-capacity
+pending queue drops the oldest packet when full; zero capacity rejects unchanged
+(the Rust helper unintentionally keeps one packet at a zero limit).
+
+`receive` is an endpoint envelope gate, not transit policy: it emits a checked
+handshake/encrypted/routing dispatch or `DropFrame`, never authenticated success.
+Routing bodies still require their routing decoder. `receive_plaintext` must be
+called only after AEAD/replay admission and checks short/reserved/unknown inner
+headers before delivery. DataPacket consumers decode the port header separately.
+The named XK handshake attachment (`nostrc-pwo3h.5`) consumes opaque payloads from
+setup/ack/msg3; `FspRekeyProfile` (`nostrc-f12v2.2`) owns keys, replay, K-bit epochs,
+crossing handshakes, resends, cutovers and drains. Every key path must retain the
+post-AEAD plaintext gate. FSP dispatches by SessionDatagram source address, not
+FMP's `SessionIndex`; no session-key state is faked by this port.
+
+`test_fsp.c` covers upstream non-rekey core/quorum/wire behavior plus C byte-offset,
+capacity, coordinate and port-header edges. The dedicated vector test invokes
+all four checks directly (including negative input mutations), while `cases.c`
+remains unchanged for the orchestrator's per-name registration after integration.
+Vector parity covers wire framing with independently supplied opaque XK messages,
+not the concurrent XK handshake implementation or encrypted-payload authentication.
+Version decision: these additive APIs fold into **0.1.0 Unreleased**; no bump/tag.

@@ -262,3 +262,29 @@ nostrc_describe_test(FipsCoreBloomVectorsTest OWNER libfips-core TARGETS fips_co
 add_dependencies(fips_core_host_test fips_core_bloom_test fips_core_bloom_vectors_test)
 # Keep the explicit FIPS CI build closure complete (transport types test was missing).
 add_dependencies(fips_core_host_test fips_core_transport_types_test)
+
+# FSP wire, stateless plans, bounded queues and link-quorum ports (nostrc-82g9n.8).
+add_executable(fips_core_fsp_test test_fsp.c)
+target_link_libraries(fips_core_fsp_test PRIVATE fips_core)
+set_target_properties(fips_core_fsp_test PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+apply_warnings(fips_core_fsp_test)
+apply_sanitizers(fips_core_fsp_test)
+add_test(NAME FipsCoreFspTest COMMAND fips_core_fsp_test)
+set_tests_properties(FipsCoreFspTest PROPERTIES TIMEOUT 30 LABELS "fips;unit")
+nostrc_describe_test(FipsCoreFspTest OWNER libfips-core TARGETS fips_core_fsp_test)
+
+add_executable(fips_core_fsp_vectors_test test_fsp_vectors.c
+  diff/loader.c diff/schema.c diff/proto_fsp.c fakes/host.c)
+get_target_property(fips_fsp_diff_definitions fips_diff COMPILE_DEFINITIONS)
+target_compile_definitions(fips_core_fsp_vectors_test PRIVATE ${fips_fsp_diff_definitions})
+target_link_libraries(fips_core_fsp_vectors_test PRIVATE
+  fips_core PkgConfig::FIPS_LINK_JANSSON OpenSSL::Crypto)
+set_target_properties(fips_core_fsp_vectors_test PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+apply_warnings(fips_core_fsp_vectors_test)
+apply_sanitizers(fips_core_fsp_vectors_test)
+add_test(NAME FipsCoreFspVectorsTest COMMAND fips_core_fsp_vectors_test)
+set_tests_properties(FipsCoreFspVectorsTest PROPERTIES TIMEOUT 30 LABELS "fips;diff")
+file(GLOB fsp_vector_inputs CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/vectors/*")
+nostrc_describe_test(FipsCoreFspVectorsTest OWNER libfips-core TARGETS fips_core_fsp_vectors_test
+  INPUTS ${fsp_vector_inputs} "${CMAKE_CURRENT_SOURCE_DIR}/../UPSTREAM.md")
+add_dependencies(fips_core_host_test fips_core_fsp_test fips_core_fsp_vectors_test)
