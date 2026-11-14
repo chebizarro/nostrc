@@ -161,13 +161,15 @@ all rows, even where only the implementation epic is shown.
    CHANGELOG hunk and generated checklist. A CHANGELOG-only edit also requires
    review. The watch set is a tripwire, not proof that changes elsewhere cannot
    affect wire behavior; inspect the full upstream delta too.
-3. **Regenerate oracle fixtures with `tools/fips-vectors`.** This is the planned
-   Rust vector-capture tool; use its documented invocation once available, with
-   both old and candidate trees recorded in fixture provenance. Regenerate every
+3. **Regenerate oracle fixtures with `tools/fips-vectors`.** See
+   [`tools/fips-vectors/README.md`](../tools/fips-vectors/README.md) for invocation
+   and gaps; regenerate with both old and candidate trees recorded in fixture
+   provenance. Regenerate every
    checklist family. A wire-formats change requires the full protocol sweep;
    retain rekey legacy-0.5.x cases, malformed/authentication-failure inputs,
    replay cases, and host golden snapshots rather than overwriting history
-   without comparison. Do not claim this gate passed while the tool is absent.
+   without comparison. Exported vectors alone do not prove the differential/interop
+   gates.
 4. **Run differential sweep and interop.** Run all affected C/Rust comparisons
    under ASan/UBSan, then two-node C ↔ pinned-candidate Rust UDP interop covering
    FMP IK, FSP XK and at least one rekey cycle. Include the legacy rekey models.

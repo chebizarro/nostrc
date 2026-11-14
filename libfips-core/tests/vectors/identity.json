@@ -1,0 +1,106 @@
+{
+  "cases": [
+    {
+      "auth": {
+        "aux_entropy_byte": 90,
+        "challenge": {
+          "file": "identity-0-challenge.bin",
+          "generator_version": "0.1.0",
+          "hex": "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
+          "length": 32,
+          "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+          "sha256": "fc8b64001c5fdd0f2f40fb67dae4a865a2c5bd17836676d6d5b58b7917e33717"
+        },
+        "signature": {
+          "file": "identity-0-signature.bin",
+          "generator_version": "0.1.0",
+          "hex": "5fd5a311032d05cd6e83edd13ed3881c60608e173478abcfd884f60ed168cb18d274691e62ef57ab562f332d10d9f0700ecc070318a071ac535eaf4eacf89f66",
+          "length": 64,
+          "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+          "sha256": "6bfee57a83b4ac9eab59d4e51cb5c2c30f580fd42f4419adbece7919c9c1f2a7"
+        },
+        "timestamp": 1700000000,
+        "verified_node_addr": "ba4b4bd7c8014bbcbf8e96d2688438c1",
+        "wrong_challenge_error": "SignatureVerificationFailed"
+      },
+      "ipv6": "fdba:4b4b:d7c8:14b:bcbf:8e96:d268:8438",
+      "ipv6_bytes": "fdba4b4bd7c8014bbcbf8e96d2688438",
+      "node_addr": "ba4b4bd7c8014bbcbf8e96d2688438c1",
+      "npub": "npub1lf4f7svcugm7m8vraj6zawmnf09sjdhm3hvsay3mkyu0l5d0fjjqtw43jm",
+      "nsec": "nsec10emwt78uqnunq5hunea537sea8nlgkyftrgfssukkq5xl4ltxazsqz8yda",
+      "secret_hex": "7e76e5f8fc04f93052fc9e7b48fa19e9e7f4588958d0984396b0286fd7eb3745",
+      "seed_hex": "0000000000000000",
+      "xonly_pubkey": "fa6a9f4198e237ed9d83ecb42ebb734bcb0936fb8dd90e923bb138ffd1af4ca4"
+    },
+    {
+      "auth": {
+        "aux_entropy_byte": 90,
+        "challenge": {
+          "file": "identity-1-challenge.bin",
+          "generator_version": "0.1.0",
+          "hex": "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
+          "length": 32,
+          "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+          "sha256": "fc8b64001c5fdd0f2f40fb67dae4a865a2c5bd17836676d6d5b58b7917e33717"
+        },
+        "signature": {
+          "file": "identity-1-signature.bin",
+          "generator_version": "0.1.0",
+          "hex": "6749bc69ad49642860cb0c8fb925b79a111545ed10886aa15668ab607702ab24ceeae373d8ee896fd3519053baea3d580a1140eba099d69228365a02a278a473",
+          "length": 64,
+          "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+          "sha256": "babdc28a55b9c953bcd7c00322de275d825266e43638fafc463388e2b8461a4d"
+        },
+        "timestamp": 1700000000,
+        "verified_node_addr": "6211ec193bc8733b777f443997de1665",
+        "wrong_challenge_error": "SignatureVerificationFailed"
+      },
+      "ipv6": "fd62:11ec:193b:c873:3b77:7f44:3997:de16",
+      "ipv6_bytes": "fd6211ec193bc8733b777f443997de16",
+      "node_addr": "6211ec193bc8733b777f443997de1665",
+      "npub": "npub139ctwug4hnzgrtl44gu8k99y0assgmd88t6cmqqumtr86403gvaq0a5p8m",
+      "nsec": "nsec17uncvna3q6y6znawuxd4u2ur525976hw6h7nnc4gh5w6qwrs5szsyslnse",
+      "secret_hex": "f727864fb10689a14faee19b5e2b83a2a85f6aeed5fd39e2a8bd1da03870a405",
+      "seed_hex": "0123456789abcdef",
+      "xonly_pubkey": "8970b77115bcc481aff5aa387b14a47f61046da73af58d801cdac67d55f1433a"
+    },
+    {
+      "auth": {
+        "aux_entropy_byte": 90,
+        "challenge": {
+          "file": "identity-2-challenge.bin",
+          "generator_version": "0.1.0",
+          "hex": "a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
+          "length": 32,
+          "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+          "sha256": "fc8b64001c5fdd0f2f40fb67dae4a865a2c5bd17836676d6d5b58b7917e33717"
+        },
+        "signature": {
+          "file": "identity-2-signature.bin",
+          "generator_version": "0.1.0",
+          "hex": "24b0547d3774bce319622d11ac6c185e92def1e3eecb191353071bd7b7bdec71aca663e323245c34f8bda4a21de259cc08a90ae3a3c3fbb9474f7496d0af907b",
+          "length": 64,
+          "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+          "sha256": "6466f5308b7e2ae87577eb8f7c6da797cc2c7528dc5eda21ef36b5aeb07417d2"
+        },
+        "timestamp": 1700000000,
+        "verified_node_addr": "4f0811c1ebed46a88a45efdd6b416bc0",
+        "wrong_challenge_error": "SignatureVerificationFailed"
+      },
+      "ipv6": "fd4f:811:c1eb:ed46:a88a:45ef:dd6b:416b",
+      "ipv6_bytes": "fd4f0811c1ebed46a88a45efdd6b416b",
+      "node_addr": "4f0811c1ebed46a88a45efdd6b416bc0",
+      "npub": "npub162gv4ct93gvygc5h2zvs509j8s9yeu4xav78sdac9d96dm50cxmqu7zmwq",
+      "nsec": "nsec19qcxkx0v38tkdxe3vrcs8xflmu3shhmpzjus7r595vq9aher0amsdwsky3",
+      "secret_hex": "28306b19ec89d7669b3160f103993fdf230bdf6114b90f0e85a3005edf237f77",
+      "seed_hex": "ffffffffffffffff",
+      "xonly_pubkey": "d290cae1658a1844629750990a3cb23c0a4cf2a6eb3c7837b82b4ba6ee8fc1b6"
+    }
+  ],
+  "family": "identity",
+  "gaps": [],
+  "generator": "fips-vectors",
+  "generator_version": "0.1.0",
+  "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+  "schema_version": 1
+}

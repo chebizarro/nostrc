@@ -1,0 +1,1314 @@
+{
+  "cases": {
+    "clock": "TestClock milliseconds, 0 -> 600000 then 10ms per delivered packet, then application traffic and next_wake deadlines",
+    "entropy_seed_hex": "00000072656b6579",
+    "events": [
+      {
+        "at_ms": 600000,
+        "event": 0,
+        "input": "start_now (test-hook)",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [
+          {
+            "bytes": {
+              "file": "rekey-0-0-send.bin",
+              "generator_version": "0.1.0",
+              "hex": "030200085eea36f2ff8e3d0c1b5ee4d726887525feb38b6899bd2e91b32d92051f",
+              "length": 33,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "835970f4b82437a627e75969129abbccf3827848931ebe5ea5c262e75aab22ad"
+            },
+            "kind": "Send",
+            "message_kind": "Setup",
+            "route": "Established { fallback: false }"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "cycle": "Init",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": false,
+          "last_rx_ms": 0,
+          "link_since_ms": 0,
+          "next_wake_ms": 601000,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 0
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": false,
+          "last_rx_ms": 0,
+          "link_since_ms": 0,
+          "next_wake_ms": 105000,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 0
+        }
+      },
+      {
+        "at_ms": 600010,
+        "authenticated_deliveries": [],
+        "event": 1,
+        "input": "Setup",
+        "input_hex": "030200085eea36f2ff8e3d0c1b5ee4d726887525feb38b6899bd2e91b32d92051f",
+        "node": 1,
+        "outputs": [
+          {
+            "bytes": {
+              "file": "rekey-1-0-send.bin",
+              "generator_version": "0.1.0",
+              "hex": "02e5f9e230566e2b75d500289c1799fafde802571709d0885f1ddc8985a0c79c042112b31c021e665bdd59b66307cc632f217f7b39346a2961",
+              "length": 57,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "0317bfebb6b8165f8857fec21c506f5890a194000ec41e1e93c6c1ad8316c170"
+            },
+            "kind": "Send",
+            "message_kind": "Ack",
+            "route": "Established { fallback: false }"
+          }
+        ],
+        "state_after": {
+          "candidates": 1,
+          "current": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(fa6a9f41))",
+          "k": false,
+          "last_rx_ms": 0,
+          "link_since_ms": 0,
+          "next_wake_ms": 105000,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 0
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(fa6a9f41))",
+          "k": false,
+          "last_rx_ms": 0,
+          "link_since_ms": 0,
+          "next_wake_ms": 105000,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 0
+        }
+      },
+      {
+        "at_ms": 600020,
+        "authenticated_deliveries": [],
+        "event": 2,
+        "input": "Ack",
+        "input_hex": "02e5f9e230566e2b75d500289c1799fafde802571709d0885f1ddc8985a0c79c042112b31c021e665bdd59b66307cc632f217f7b39346a2961",
+        "node": 0,
+        "outputs": [
+          {
+            "bytes": {
+              "file": "rekey-2-0-send.bin",
+              "generator_version": "0.1.0",
+              "hex": "1f09e315bdd4c351ad6489d213fb63d386ff3239f13906a904bbd3e39621de4d926c3fcce879fc16f035a25a2de3f98ad85d71153fd8beea8212cc434c7e67dcb8cb67c320c486a6a3",
+              "length": 73,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "72e5ff1d450bd3f9623e93bc705c9113eb1a2a7259c6e1a847832e62a6294b4e"
+            },
+            "kind": "Send",
+            "message_kind": "Msg3",
+            "route": "Established { fallback: false }"
+          },
+          {
+            "bytes": {
+              "file": "rekey-2-1-prompt.bin",
+              "generator_version": "0.1.0",
+              "hex": "0002060000000000000000006e08d3ececc18238d0f3b5f397e2d878539c9b0d522f",
+              "length": 34,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "51bc643993e82a80dd123c95d83c658b7081df1ff18a3487d3509b7f04e732a5"
+            },
+            "counter": 0,
+            "k": true,
+            "kind": "Prompt",
+            "plaintext_hex": "000000001400",
+            "tag": 1
+          },
+          {
+            "bytes": {
+              "file": "rekey-2-2-prompt.bin",
+              "generator_version": "0.1.0",
+              "hex": "000006000000000000000000374bf2f092d48510f5f75b18c19af1b7f03defa4c075",
+              "length": 34,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "4b519875cc1ba7241af15ea7fbc4cb904b0979fd72f7155d7804b23f0a7a169b"
+            },
+            "counter": 0,
+            "k": false,
+            "kind": "Prompt",
+            "plaintext_hex": "d42709001400",
+            "tag": 0
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "cycle": "PendI(Evidence)",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": false,
+          "last_rx_ms": 0,
+          "link_since_ms": 0,
+          "next_wake_ms": 601020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": {
+            "base_ms": 600020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 600020,
+            "tag": 1
+          },
+          "previous": null,
+          "sent": 1
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "cycle": "Init",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": false,
+          "last_rx_ms": 0,
+          "link_since_ms": 0,
+          "next_wake_ms": 601000,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 0
+        }
+      },
+      {
+        "at_ms": 600030,
+        "authenticated_deliveries": [],
+        "event": 3,
+        "input": "Msg3",
+        "input_hex": "1f09e315bdd4c351ad6489d213fb63d386ff3239f13906a904bbd3e39621de4d926c3fcce879fc16f035a25a2de3f98ad85d71153fd8beea8212cc434c7e67dcb8cb67c320c486a6a3",
+        "node": 1,
+        "outputs": [
+          {
+            "debug": "Installed { tag: EpochTag(1), role: Responder, evidence: Proof }"
+          },
+          {
+            "bytes": {
+              "file": "rekey-3-1-prompt.bin",
+              "generator_version": "0.1.0",
+              "hex": "0002060000000000000000003c1f9d862993c45fb8ab6ec95c7400ca043958770f7c",
+              "length": 34,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "355b774d4dd53a202cbe28630d85216570e37c24aafde41482b2bdbe47a30f4a"
+            },
+            "counter": 0,
+            "k": true,
+            "kind": "Prompt",
+            "plaintext_hex": "000000001400",
+            "tag": 1
+          },
+          {
+            "debug": "Rekeyed { role: Responder }"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 600030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 600030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(fa6a9f41))",
+          "k": true,
+          "last_rx_ms": 0,
+          "link_since_ms": 0,
+          "next_wake_ms": 601030,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 1
+        },
+        "state_before": {
+          "candidates": 1,
+          "current": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(fa6a9f41))",
+          "k": false,
+          "last_rx_ms": 0,
+          "link_since_ms": 0,
+          "next_wake_ms": 105000,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 0
+        }
+      },
+      {
+        "at_ms": 600040,
+        "authenticated_deliveries": [
+          {
+            "plaintext_hex": "000000001400",
+            "range": [
+              12,
+              18
+            ],
+            "slot": "Current",
+            "tag": 1
+          }
+        ],
+        "event": 4,
+        "input": "Frame",
+        "input_hex": "0002060000000000000000006e08d3ececc18238d0f3b5f397e2d878539c9b0d522f",
+        "node": 1,
+        "outputs": [
+          {
+            "debug": "Deliver { slot: Current, tag: EpochTag(1), range: 12..18 }"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 600030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 600030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(fa6a9f41))",
+          "k": true,
+          "last_rx_ms": 600040,
+          "link_since_ms": 0,
+          "next_wake_ms": 601030,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 1
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 600030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 600030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(fa6a9f41))",
+          "k": true,
+          "last_rx_ms": 0,
+          "link_since_ms": 0,
+          "next_wake_ms": 601030,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 1
+        }
+      },
+      {
+        "at_ms": 600050,
+        "authenticated_deliveries": [
+          {
+            "plaintext_hex": "d42709001400",
+            "range": [
+              12,
+              18
+            ],
+            "slot": "Previous",
+            "tag": 0
+          }
+        ],
+        "event": 5,
+        "input": "Frame",
+        "input_hex": "000006000000000000000000374bf2f092d48510f5f75b18c19af1b7f03defa4c075",
+        "node": 1,
+        "outputs": [
+          {
+            "debug": "Deliver { slot: Previous, tag: EpochTag(0), range: 12..18 }"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 600030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 600030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(fa6a9f41))",
+          "k": true,
+          "last_rx_ms": 600050,
+          "link_since_ms": 0,
+          "next_wake_ms": 601030,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 1
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 600030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 600030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(fa6a9f41))",
+          "k": true,
+          "last_rx_ms": 600040,
+          "link_since_ms": 0,
+          "next_wake_ms": 601030,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 1
+        }
+      },
+      {
+        "at_ms": 600060,
+        "authenticated_deliveries": [
+          {
+            "plaintext_hex": "000000001400",
+            "range": [
+              12,
+              18
+            ],
+            "slot": "Current",
+            "tag": 1
+          }
+        ],
+        "event": 6,
+        "input": "Frame",
+        "input_hex": "0002060000000000000000003c1f9d862993c45fb8ab6ec95c7400ca043958770f7c",
+        "node": 0,
+        "outputs": [
+          {
+            "debug": "Installed { tag: EpochTag(1), role: Initiator, evidence: Frame }"
+          },
+          {
+            "bytes": {
+              "file": "rekey-6-1-prompt.bin",
+              "generator_version": "0.1.0",
+              "hex": "000206000100000000000000352e5a98e534f129b2e9ea3dc49046f715f5aeed323f",
+              "length": 34,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "7394aee27f73d0944adafbf49c359f0dbe9a4dc25defb0fcd5313099cc438ce3"
+            },
+            "counter": 1,
+            "k": true,
+            "kind": "Prompt",
+            "plaintext_hex": "280000001400",
+            "tag": 1
+          },
+          {
+            "debug": "Rekeyed { role: Initiator }"
+          },
+          {
+            "debug": "Deliver { slot: Current, tag: EpochTag(1), range: 12..18 }"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 600020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 600060,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 600060,
+          "link_since_ms": 0,
+          "next_wake_ms": 610060,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 2
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "cycle": "PendI(Evidence)",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": false,
+          "last_rx_ms": 0,
+          "link_since_ms": 0,
+          "next_wake_ms": 601020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": {
+            "base_ms": 600020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 600020,
+            "tag": 1
+          },
+          "previous": null,
+          "sent": 1
+        }
+      },
+      {
+        "at_ms": 600070,
+        "authenticated_deliveries": [
+          {
+            "plaintext_hex": "280000001400",
+            "range": [
+              12,
+              18
+            ],
+            "slot": "Current",
+            "tag": 1
+          }
+        ],
+        "event": 7,
+        "input": "Frame",
+        "input_hex": "000206000100000000000000352e5a98e534f129b2e9ea3dc49046f715f5aeed323f",
+        "node": 1,
+        "outputs": [
+          {
+            "debug": "Deliver { slot: Current, tag: EpochTag(1), range: 12..18 }"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 600030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 600030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(fa6a9f41))",
+          "k": true,
+          "last_rx_ms": 600070,
+          "link_since_ms": 0,
+          "next_wake_ms": 601030,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 1
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 600030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 600030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(fa6a9f41))",
+          "k": true,
+          "last_rx_ms": 600050,
+          "link_since_ms": 0,
+          "next_wake_ms": 601030,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 1
+        }
+      },
+      {
+        "at_ms": 600080,
+        "event": 8,
+        "input": "Seal(DataPacket) + DataSent",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [
+          {
+            "bytes": {
+              "file": "rekey-8-application.bin",
+              "generator_version": "0.1.0",
+              "hex": "00020b000200000000000000bed8ef44e7a7ad1ec653b53102b8d0976df846540607b7e3ef2a33",
+              "length": 39,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "9a1fb84c4a6dbaadcc32f5f6fa6b240c502bf2baa4f4736bcaf26cfc62795f69"
+            },
+            "counter": 2,
+            "k": true,
+            "kind": "ApplicationFrame",
+            "plaintext_hex": "3c00000010001122334455"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 600020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 600060,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 600060,
+          "link_since_ms": 0,
+          "next_wake_ms": 610060,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 3
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 600020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 600060,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 600060,
+          "link_since_ms": 0,
+          "next_wake_ms": 610060,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 2
+        }
+      },
+      {
+        "at_ms": 600090,
+        "authenticated_deliveries": [
+          {
+            "plaintext_hex": "3c00000010001122334455",
+            "range": [
+              12,
+              23
+            ],
+            "slot": "Current",
+            "tag": 1
+          }
+        ],
+        "event": 9,
+        "input": "Frame",
+        "input_hex": "00020b000200000000000000bed8ef44e7a7ad1ec653b53102b8d0976df846540607b7e3ef2a33",
+        "node": 1,
+        "outputs": [
+          {
+            "debug": "Deliver { slot: Current, tag: EpochTag(1), range: 12..23 }"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 600030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 600030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(fa6a9f41))",
+          "k": true,
+          "last_rx_ms": 600090,
+          "link_since_ms": 0,
+          "next_wake_ms": 610090,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 1
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 600030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 600030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(fa6a9f41))",
+          "k": true,
+          "last_rx_ms": 600070,
+          "link_since_ms": 0,
+          "next_wake_ms": 601030,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 1
+        }
+      },
+      {
+        "at_ms": 600100,
+        "event": 10,
+        "input": "Seal(DataPacket) + DataSent",
+        "input_hex": null,
+        "node": 1,
+        "outputs": [
+          {
+            "bytes": {
+              "file": "rekey-10-application.bin",
+              "generator_version": "0.1.0",
+              "hex": "00020b00010000000000000089b8454f0cf82f08536421aaf8bd66edd53055d657e2e9b516657f",
+              "length": 39,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "dfeebec7cc21864e06c4ad02b63dadedc3c2b9f375374119555b6d35dd931a20"
+            },
+            "counter": 1,
+            "k": true,
+            "kind": "ApplicationFrame",
+            "plaintext_hex": "4600000010001122334455"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 600030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 600030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(fa6a9f41))",
+          "k": true,
+          "last_rx_ms": 600090,
+          "link_since_ms": 0,
+          "next_wake_ms": 610090,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 2
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 600030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 600030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(fa6a9f41))",
+          "k": true,
+          "last_rx_ms": 600090,
+          "link_since_ms": 0,
+          "next_wake_ms": 610090,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 1
+        }
+      },
+      {
+        "at_ms": 600110,
+        "authenticated_deliveries": [
+          {
+            "plaintext_hex": "4600000010001122334455",
+            "range": [
+              12,
+              23
+            ],
+            "slot": "Current",
+            "tag": 1
+          }
+        ],
+        "event": 11,
+        "input": "Frame",
+        "input_hex": "00020b00010000000000000089b8454f0cf82f08536421aaf8bd66edd53055d657e2e9b516657f",
+        "node": 0,
+        "outputs": [
+          {
+            "debug": "Deliver { slot: Current, tag: EpochTag(1), range: 12..23 }"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 600020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 600060,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 600110,
+          "link_since_ms": 0,
+          "next_wake_ms": 610060,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 3
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 600020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 600060,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 600060,
+          "link_since_ms": 0,
+          "next_wake_ms": 610060,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 3
+        }
+      },
+      {
+        "at_ms": 610060,
+        "event": 12,
+        "input": "Poll (next_wake)",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [
+          {
+            "debug": "Retired { tag: EpochTag(0) }"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 600020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 600060,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 600110,
+          "link_since_ms": 0,
+          "next_wake_ms": 705060,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 3
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 600020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 600060,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 600110,
+          "link_since_ms": 0,
+          "next_wake_ms": 610060,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 3
+        }
+      },
+      {
+        "at_ms": 610060,
+        "event": 13,
+        "input": "Poll (next_wake)",
+        "input_hex": null,
+        "node": 1,
+        "outputs": [],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 600030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 600030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(fa6a9f41))",
+          "k": true,
+          "last_rx_ms": 600090,
+          "link_since_ms": 0,
+          "next_wake_ms": 610090,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 2
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 600030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 600030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(fa6a9f41))",
+          "k": true,
+          "last_rx_ms": 600090,
+          "link_since_ms": 0,
+          "next_wake_ms": 610090,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 2
+        }
+      },
+      {
+        "at_ms": 610090,
+        "event": 14,
+        "input": "Poll (next_wake)",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 600020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 600060,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 600110,
+          "link_since_ms": 0,
+          "next_wake_ms": 705060,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 3
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 600020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 600060,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 600110,
+          "link_since_ms": 0,
+          "next_wake_ms": 705060,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 3
+        }
+      },
+      {
+        "at_ms": 610090,
+        "event": 15,
+        "input": "Poll (next_wake)",
+        "input_hex": null,
+        "node": 1,
+        "outputs": [
+          {
+            "debug": "Retired { tag: EpochTag(0) }"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 600030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 600030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(fa6a9f41))",
+          "k": true,
+          "last_rx_ms": 600090,
+          "link_since_ms": 0,
+          "next_wake_ms": 630090,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 2
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 600030,
+            "k": true,
+            "recv": "Here",
+            "role": "Responder",
+            "started_ms": 600030,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(fa6a9f41))",
+          "k": true,
+          "last_rx_ms": 600090,
+          "link_since_ms": 0,
+          "next_wake_ms": 610090,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 2
+        }
+      }
+    ],
+    "final_state": [
+      {
+        "candidates": 0,
+        "current": {
+          "base_ms": 600020,
+          "k": true,
+          "recv": "Here",
+          "role": "Initiator",
+          "started_ms": 600060,
+          "tag": 1
+        },
+        "cycle": "Idle",
+        "identity": "Proven(PeerKey(cd759a0e))",
+        "k": true,
+        "last_rx_ms": 600110,
+        "link_since_ms": 0,
+        "next_wake_ms": 705060,
+        "peer_epoch_hex": "0123456789abcdef",
+        "pending": null,
+        "previous": null,
+        "sent": 3
+      },
+      {
+        "candidates": 0,
+        "current": {
+          "base_ms": 600030,
+          "k": true,
+          "recv": "Here",
+          "role": "Responder",
+          "started_ms": 600030,
+          "tag": 1
+        },
+        "cycle": "Idle",
+        "identity": "Proven(PeerKey(fa6a9f41))",
+        "k": true,
+        "last_rx_ms": 600090,
+        "link_since_ms": 0,
+        "next_wake_ms": 630090,
+        "peer_epoch_hex": "0123456789abcdef",
+        "pending": null,
+        "previous": null,
+        "sent": 2
+      }
+    ],
+    "initial_handshake": "noise.json XK (before frame exports)",
+    "initial_state": [
+      {
+        "candidates": 0,
+        "current": {
+          "base_ms": 0,
+          "k": false,
+          "recv": "Here",
+          "role": "Initiator",
+          "started_ms": 0,
+          "tag": 0
+        },
+        "cycle": "Idle",
+        "identity": "Proven(PeerKey(cd759a0e))",
+        "k": false,
+        "last_rx_ms": 0,
+        "link_since_ms": 0,
+        "next_wake_ms": 105000,
+        "peer_epoch_hex": "0123456789abcdef",
+        "pending": null,
+        "previous": null,
+        "sent": 0
+      },
+      {
+        "candidates": 0,
+        "current": {
+          "base_ms": 0,
+          "k": false,
+          "recv": "Here",
+          "role": "Initiator",
+          "started_ms": 0,
+          "tag": 0
+        },
+        "cycle": "Idle",
+        "identity": "Proven(PeerKey(fa6a9f41))",
+        "k": false,
+        "last_rx_ms": 0,
+        "link_since_ms": 0,
+        "next_wake_ms": 105000,
+        "peer_epoch_hex": "0123456789abcdef",
+        "pending": null,
+        "previous": null,
+        "sent": 0
+      }
+    ],
+    "keypair_seeds": [
+      0,
+      1
+    ],
+    "params_debug": "Config { after: 120s, jitter: 15, messages: 65536, handshake: 30s, check: 1s, drain: 10s, retention: 120s, hold: 120s, revert: 10s, dampening: 30s, ttl: 40s, young: 5s, link_age: 30s, session_age: 10s, floor_link: 0ns, floor_session: 0ns, floor_cutover: 10s, silence: 30s, resends: 5, soft: 4611686018427387904, hard: 18446744073708503040, delay: 2s, arrival: false }",
+    "profile": "FspProfile<SeededEntropy> (Noise XK)",
+    "startup_epoch_hex": "0123456789abcdef"
+  },
+  "family": "rekey",
+  "gaps": [
+    "start_now is a test-hook that forces the initial rekey trigger; this trace validates exchange/cutover/drain, not production start-condition policy.",
+    "Legacy v0.5.0/v0.5.1, v0.5.2 and v0.5.3 models are private cfg(test)/slow-tests modules, not exported with test-hooks. Capture/interop deferred to nostrc-f12v2.3; no legacy traces are claimed.",
+    "One successful FSP cycle only; FMP and fault/loss/restart rekey traces remain future differential coverage."
+  ],
+  "generator": "fips-vectors",
+  "generator_version": "0.1.0",
+  "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+  "schema_version": 1
+}
