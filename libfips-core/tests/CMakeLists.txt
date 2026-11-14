@@ -260,3 +260,5 @@ nostrc_describe_test(FipsCoreBloomVectorsTest OWNER libfips-core TARGETS fips_co
          "${CMAKE_CURRENT_SOURCE_DIR}/vectors/proto-filter-announce.bin"
          "${CMAKE_CURRENT_SOURCE_DIR}/../UPSTREAM.md")
 add_dependencies(fips_core_host_test fips_core_bloom_test fips_core_bloom_vectors_test)
+# Keep the explicit FIPS CI build closure complete (transport types test was missing).
+add_dependencies(fips_core_host_test fips_core_transport_types_test)

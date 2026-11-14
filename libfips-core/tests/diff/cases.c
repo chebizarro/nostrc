@@ -15,6 +15,9 @@
 #include <string.h>
 
 #include "proto_link.h" /* result, proto_case and the nostrc-82g9n.6 checks */
+#include "proto_stp.h"
+#include "proto_bloom.h"
+#include "proto_fmp.h"
 typedef struct counts { size_t checked, failed, skipped; } counts;
 
 /* Family views borrow the schema-decoded C tree; all byte fields (including
@@ -436,15 +439,15 @@ typedef struct proto_checker {
 static const proto_checker proto_checkers[] = {
     {"coords", "nostrc-82g9n.1", check_coords},
     {"coords-empty", "nostrc-82g9n.1", check_coords_empty},
-    {"bloom", "nostrc-82g9n.3", NULL}, {"filter-announce", "nostrc-82g9n.3", NULL},
-    {"parent-declaration", "nostrc-82g9n.2", NULL}, {"tree-announce", "nostrc-82g9n.2", NULL},
+    {"bloom", "nostrc-82g9n.3", check_proto_bloom}, {"filter-announce", "nostrc-82g9n.3", check_proto_filter_announce},
+    {"parent-declaration", "nostrc-82g9n.2", check_proto_parent_declaration}, {"tree-announce", "nostrc-82g9n.2", check_proto_tree_announce},
     {"lookup-request", "nostrc-82g9n.5", NULL}, {"lookup-response", "nostrc-82g9n.5", NULL},
     {"sender-report", "nostrc-f12v2.4", NULL}, {"session-sender-report", "nostrc-f12v2.4", NULL},
     {"receiver-report", "nostrc-f12v2.4", NULL}, {"session-receiver-report", "nostrc-f12v2.4", NULL},
     {"path-mtu", "nostrc-f12v2.4", NULL},
     {"path-probe", "nostrc-f12v2.6", NULL}, {"path-ack", "nostrc-f12v2.6", NULL}, {"path-close", "nostrc-f12v2.6", NULL},
-    {"disconnect", "nostrc-82g9n.7", NULL}, {"fmp-msg-1", "nostrc-82g9n.7", NULL},
-    {"fmp-msg-2", "nostrc-82g9n.7", NULL}, {"fmp-encrypted", "nostrc-82g9n.7", NULL},
+    {"disconnect", "nostrc-82g9n.7", check_proto_disconnect}, {"fmp-msg-1", "nostrc-82g9n.7", check_proto_fmp_msg_1},
+    {"fmp-msg-2", "nostrc-82g9n.7", check_proto_fmp_msg_2}, {"fmp-encrypted", "nostrc-82g9n.7", check_proto_fmp_encrypted},
     {"fsp-setup", "nostrc-82g9n.8", NULL}, {"fsp-ack", "nostrc-82g9n.8", NULL},
     {"fsp-msg3", "nostrc-82g9n.8", NULL}, {"fsp-encrypted", "nostrc-82g9n.8", NULL},
     {"session-datagram", "nostrc-82g9n.6", check_proto_session_datagram},
