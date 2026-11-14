@@ -336,3 +336,15 @@ The estimate's private C fdlibm logarithm is translated from Rust libm
 in upstream Cargo.lock; crate checksum
 `b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981`.
 The IEEE evaluation order and pinned reference bits are described in README.
+
+### Routing port boundary (nostrc-82g9n.4)
+
+`core/src/proto/routing/{core,wire,state,limits}.rs` maps 1:1 to
+`src/proto/routing/{core,wire,state,limits}.c` and public headers.
+RoutingView is a borrowed active-peer snapshot plus read-only cache/congestion
+callbacks; the host retains direct/greedy-tree next-hop resolution. Coordinate
+and bloom types/codecs are shared with STP/bloom, not duplicated. Outputs use
+caller writers instead of Vec; optional decoded PathBroken coordinates borrow
+caller storage. All 49 named upstream routing tests are ported. The exporter
+has no routing error wire cases; this is unit-test parity, not differential
+routing evidence. Version remains **0.1.0 Unreleased**.

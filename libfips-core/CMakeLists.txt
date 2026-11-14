@@ -119,3 +119,7 @@ endif()
 # FSP end-to-end session wire/core/quorum (nostrc-82g9n.8); no rekey/Noise engine.
 target_sources(fips_core PRIVATE
   src/proto/fsp/wire.c src/proto/fsp/core.c src/proto/fsp/quorum.c)
+# Routing decision core and error signals (nostrc-82g9n.4).
+target_sources(fips_core PRIVATE
+  src/proto/routing/core.c src/proto/routing/wire.c
+  src/proto/routing/state.c src/proto/routing/limits.c)

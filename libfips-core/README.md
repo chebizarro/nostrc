@@ -577,3 +577,36 @@ remains unchanged for the orchestrator's per-name registration after integration
 Vector parity covers wire framing with independently supplied opaque XK messages,
 not the concurrent XK handshake implementation or encrypted-payload authentication.
 Version decision: these additive APIs fold into **0.1.0 Unreleased**; no bump/tag.
+## Routing decisions and error signals
+
+`proto/routing/{core,wire,state,limits}.h` mirrors the pinned routing module.
+`fips_select_best_candidate` borrows active peer coordinates and aggregated
+bloom filters, requires strict progress, and orders by cost, distance, address.
+A bloom miss returns None; the upstream shell's direct/greedy-tree resolution
+is outside this module. `fips_router_route` takes that resolved `NextHop`,
+delivers locally before testing TTL, otherwise applies `ttl_after_hop`, folds
+the outgoing MTU, ORs CE, and appends one encoded datagram for Forward.
+No-route and TTL-drop remain distinct outcomes. The host executes sends.
+
+Wire encoders include the FSP cleartext prefix/type; decoders take the body
+following them, refusing all reserved flag bits and trailing bytes. PathBroken
+borrows caller coordinate storage (heap/static, not a small stack); the shared
+coordinate codec discards metadata in its address-only wire form. As upstream,
+the prefix casts body length to u16; the host enforces its frame/MTU budget.
+Synthesis returns a SendError action toward the original source, with an
+Admit/AdmitAtCapacity/Suppress verdict from the shared bounded rate limiter
+(100ms interval, 10s age, 4096 entries). PathBroken synthesis deliberately
+omits cached coordinates to avoid disclosing them to an unbound source address.
+MTU and routing errors share one gate. Time is passed as `fips_instant`, never
+read; capacity refusals preserve buffers, outputs and limiter state.
+
+`test_routing.c` ports all 49 named Rust routing tests (22 core, 16 wire,
+11 limiter), plus C buffer/refusal, bloom-miss handoff and classification
+checks. Routing has no generated wire vectors at this pin; see the exporter
+gaps list. `fips_bench_routing_next_hop` measures the real borrowed selector
+versus a former allocating snapshot at 8/32/128/256 peers, eight-entry paths
+and half-reachable filters, for nostrc-f66sr.4. The baseline is a C array view,
+not Rust's HashMap/allocator; cross-language timings are not interchangeable.
+
+Version decision (nostrc-82g9n.4): these additive routing APIs fold into
+**libfips-core 0.1.0 Unreleased**; no published version/tag change.

@@ -13,3 +13,9 @@ set_target_properties(fips_bench_noise_aead PROPERTIES
   C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
 apply_warnings(fips_bench_noise_aead)
 apply_sanitizers(fips_bench_noise_aead)
+
+add_executable(fips_bench_routing_next_hop routing_next_hop.c)
+target_link_libraries(fips_bench_routing_next_hop PRIVATE fips_core)
+set_target_properties(fips_bench_routing_next_hop PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+apply_warnings(fips_bench_routing_next_hop)
+apply_sanitizers(fips_bench_routing_next_hop)
