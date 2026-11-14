@@ -39,6 +39,14 @@ not a Rust FFI wrapper or a complete working protocol implementation.
   caller-owned time and entropy.
 - `include/fips/proto/`, `src/proto/`: protocol errors and bounds-checked codec.
 - `tests/`: linked version, host-interface, codec and byte-compatible fake tests.
+- `include/fips/host.h`, `src/host.c`: host interfaces and time arithmetic.
+- `include/fips/proto/rate_limit.h`, `src/proto/rate_limit.c`: bounded
+  per-address interval gate and saturating millisecond backoff.
+- `include/fips/node/`, `src/node/`: handshake/session-setup/lookup-signing
+  budgets and dual-tier stats history, with explicit instants and caller-owned
+  bounded storage. Stats queries expose JSON-neutral Series metadata and a
+  walk hook that marks non-finite samples as null.
+- `tests/`: linked version, host-interface and byte-compatible fake tests.
 - `libfips-core.pc.in`: installed pkg-config contract, including private crypto
   requirements for static consumers.
 
@@ -53,6 +61,8 @@ Future protocol tests must drive real state machines with fixed entropy and
 synthetic time, checking returned actions and upstream differential vectors.
 Higher-level protocol modules are left to later tasks. Upstream provenance
 is maintained separately in `UPSTREAM.md`.
+The remaining wire-protocol state machines are left to later tasks. Upstream
+provenance is maintained separately in `UPSTREAM.md`.
 
 ## Host interfaces and ownership
 

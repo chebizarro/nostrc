@@ -42,3 +42,26 @@ apply_sanitizers(fips_core_transport_types_test)
 add_test(NAME FipsCoreTransportTypesTest COMMAND fips_core_transport_types_test)
 set_tests_properties(FipsCoreTransportTypesTest PROPERTIES TIMEOUT 10 LABELS "fips;unit")
 nostrc_describe_test(FipsCoreTransportTypesTest OWNER libfips-core TARGETS fips_core_transport_types_test)
+add_executable(fips_core_rate_limit_test test_rate_limit.c fakes/host.c)
+target_link_libraries(fips_core_rate_limit_test PRIVATE fips_core)
+set_target_properties(fips_core_rate_limit_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+apply_warnings(fips_core_rate_limit_test)
+apply_sanitizers(fips_core_rate_limit_test)
+add_test(NAME FipsCoreRateLimitTest COMMAND fips_core_rate_limit_test)
+set_tests_properties(FipsCoreRateLimitTest PROPERTIES TIMEOUT 10 LABELS "fips;unit")
+nostrc_describe_test(FipsCoreRateLimitTest OWNER libfips-core TARGETS fips_core_rate_limit_test)
+
+add_executable(fips_core_stats_history_test test_stats_history.c fakes/host.c)
+target_link_libraries(fips_core_stats_history_test PRIVATE fips_core)
+set_target_properties(fips_core_stats_history_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+apply_warnings(fips_core_stats_history_test)
+apply_sanitizers(fips_core_stats_history_test)
+add_test(NAME FipsCoreStatsHistoryTest COMMAND fips_core_stats_history_test)
+set_tests_properties(FipsCoreStatsHistoryTest PROPERTIES TIMEOUT 10 LABELS "fips;unit")
+nostrc_describe_test(FipsCoreStatsHistoryTest OWNER libfips-core TARGETS fips_core_stats_history_test)
+
+# FIPS CI builds the established host-test entrypoint explicitly before ctest.
+# Keep these registered tests in that build closure without changing CI lanes.
+add_dependencies(fips_core_host_test fips_core_rate_limit_test fips_core_stats_history_test)

@@ -82,6 +82,12 @@ are now the authoritative regeneration source (C consumer work is s50dj.3).
 
 ## Private adapters, test hooks and gaps
 
+- No `ratelimit` or stats-history differential family yet (`nostrc-u50yr.4`).
+  The public upstream APIs are available, but a deterministic trace schema and
+  exporter/replay family remain unimplemented. The C port uses all 20 upstream
+  node limiter tests and 22 stats-history tests plus capacity/eviction edges;
+  these are unit-test ports, not differential oracle evidence.
+
 - Upstream `core/src/testutil.rs` is **private `cfg(test)`**, not exported by
   `test-hooks`. `src/support.rs` transcribes its SplitMix64, SeededEntropy,
   FixedEntropy, seeded_keypair and millisecond TestClock adapters at the pin.

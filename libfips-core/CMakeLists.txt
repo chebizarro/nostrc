@@ -16,6 +16,15 @@ add_library(fips_core src/core.c src/host.c)
 target_sources(fips_core PRIVATE src/proto/codec.c)
 # Transport value types (sans-IO).
 target_sources(fips_core PRIVATE src/transport/types.c)
+# Proto rate-limit primitives.
+target_sources(fips_core PRIVATE src/proto/rate_limit.c)
+
+# Node bookkeeping (sans-IO, explicit host instants).
+target_sources(fips_core PRIVATE src/node/rate_limit.c src/node/stats_history.c)
+if(UNIX)
+  target_link_libraries(fips_core PRIVATE m)
+  set(FIPS_CORE_PC_MATH_LIB "-lm")
+endif()
 set_target_properties(fips_core PROPERTIES
   C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO
   COMPONENT_VERSION_HEADER_INSTALL_DIR "${CMAKE_INSTALL_INCLUDEDIR}/fips")
