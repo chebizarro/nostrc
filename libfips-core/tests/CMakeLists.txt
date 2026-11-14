@@ -19,3 +19,5 @@ set_tests_properties(FipsCoreHostTest PROPERTIES TIMEOUT 10 LABELS "fips;unit")
 nostrc_describe_test(FipsCoreHostTest OWNER libfips-core TARGETS fips_core_host_test
   INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/seeded_vectors.h"
          "${CMAKE_CURRENT_SOURCE_DIR}/generate_seeded_vectors.py")
+
+add_subdirectory(diff)

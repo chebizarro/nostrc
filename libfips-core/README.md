@@ -85,3 +85,9 @@ in `tests/fakes/` use whole milliseconds starting at zero (advance explicitly),
 fixed bytes, and seeded SplitMix64. Seeded fills emit little-endian words and
 discard the final partial word's unused bytes on each call, just like Rust.
 They are predictable and must never be used as production entropy.
+
+## Differential oracle
+
+The test-only [differential harness](tests/diff/README.md) validates the pinned
+Rust fixtures and replays implemented families. Run `ctest -R '^FipsDiff' -V`
+from the build directory; explicit SKIPs are not protocol parity.
