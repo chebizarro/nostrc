@@ -95,3 +95,12 @@ target_sources(fips_core PRIVATE src/proto/coord.c)
 # Link message catalog, session datagram header and framing/path-MTU admit math
 # (nostrc-82g9n.6): size constants by value, no FMP/FSP frame codec.
 target_sources(fips_core PRIVATE src/proto/link.c src/proto/framing.c)
+
+# Bloom reachability, announcement wire codecs and bounded sans-IO state (nostrc-82g9n.3).
+target_sources(fips_core PRIVATE
+  src/proto/bloom/core.c src/proto/bloom/wire.c
+  src/proto/bloom/state.c src/proto/bloom/delivery.c src/proto/bloom/log.c)
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+  set_source_files_properties(src/proto/bloom/core.c src/proto/bloom/log.c PROPERTIES
+    COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off")
+endif()

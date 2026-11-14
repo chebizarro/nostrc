@@ -168,3 +168,29 @@ nostrc_describe_test(FipsCoreLinkTest OWNER libfips-core TARGETS fips_core_link_
          "${CMAKE_CURRENT_SOURCE_DIR}/vectors/proto-session-datagram.bin"
          "${CMAKE_CURRENT_SOURCE_DIR}/../UPSTREAM.md")
 add_dependencies(fips_core_host_test fips_core_link_test)
+
+# Bloom filters, bounded announcement state and protocol vectors (nostrc-82g9n.3).
+add_executable(fips_core_bloom_test test_bloom.c)
+target_link_libraries(fips_core_bloom_test PRIVATE fips_core OpenSSL::Crypto)
+set_target_properties(fips_core_bloom_test PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+apply_warnings(fips_core_bloom_test)
+apply_sanitizers(fips_core_bloom_test)
+add_test(NAME FipsCoreBloomTest COMMAND fips_core_bloom_test)
+set_tests_properties(FipsCoreBloomTest PROPERTIES TIMEOUT 30 LABELS "fips;unit")
+nostrc_describe_test(FipsCoreBloomTest OWNER libfips-core TARGETS fips_core_bloom_test
+  INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/bloom_pins.h" "${CMAKE_CURRENT_SOURCE_DIR}/tools/bloom_vectors.py")
+add_executable(fips_core_bloom_vectors_test test_bloom_vectors.c diff/proto_bloom.c diff/loader.c diff/schema.c fakes/host.c)
+get_target_property(fips_bloom_diff_definitions fips_diff COMPILE_DEFINITIONS)
+target_compile_definitions(fips_core_bloom_vectors_test PRIVATE ${fips_bloom_diff_definitions})
+target_link_libraries(fips_core_bloom_vectors_test PRIVATE fips_core PkgConfig::FIPS_LINK_JANSSON OpenSSL::Crypto)
+set_target_properties(fips_core_bloom_vectors_test PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+apply_warnings(fips_core_bloom_vectors_test)
+apply_sanitizers(fips_core_bloom_vectors_test)
+add_test(NAME FipsCoreBloomVectorsTest COMMAND fips_core_bloom_vectors_test)
+set_tests_properties(FipsCoreBloomVectorsTest PROPERTIES TIMEOUT 30 LABELS "fips;unit;diff")
+nostrc_describe_test(FipsCoreBloomVectorsTest OWNER libfips-core TARGETS fips_core_bloom_vectors_test
+  INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/vectors/proto.json"
+         "${CMAKE_CURRENT_SOURCE_DIR}/vectors/proto-bloom.bin"
+         "${CMAKE_CURRENT_SOURCE_DIR}/vectors/proto-filter-announce.bin"
+         "${CMAKE_CURRENT_SOURCE_DIR}/../UPSTREAM.md")
+add_dependencies(fips_core_host_test fips_core_bloom_test fips_core_bloom_vectors_test)

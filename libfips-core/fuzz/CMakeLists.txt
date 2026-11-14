@@ -60,3 +60,12 @@ apply_warnings(fips_fuzz_link)
 apply_sanitizers(fips_fuzz_link)
 target_compile_options(fips_fuzz_link PRIVATE -fsanitize=fuzzer)
 target_link_options(fips_fuzz_link PRIVATE -fsanitize=fuzzer)
+
+# Bloom raw/announce codecs and merge invariants (nostrc-82g9n.3).
+add_executable(fips_fuzz_bloom fuzz_bloom.c)
+target_link_libraries(fips_fuzz_bloom PRIVATE fips_core)
+set_target_properties(fips_fuzz_bloom PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+apply_warnings(fips_fuzz_bloom)
+apply_sanitizers(fips_fuzz_bloom)
+target_compile_options(fips_fuzz_bloom PRIVATE -fsanitize=fuzzer)
+target_link_options(fips_fuzz_bloom PRIVATE -fsanitize=fuzzer)

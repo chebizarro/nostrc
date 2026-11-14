@@ -53,3 +53,6 @@ target_link_libraries(fips_diff PRIVATE PkgConfig::FIPS_CORE_SODIUM)
 # Proto link-catalog/session-datagram/framing checks (nostrc-82g9n.6). cases.c's
 # per-name dispatch calls into proto_link.h once both land.
 target_sources(fips_diff PRIVATE proto_link.c)
+
+# Bloom and FilterAnnounce replay (nostrc-82g9n.3); coordinator wires cases.c.
+target_sources(fips_diff PRIVATE proto_bloom.c)
