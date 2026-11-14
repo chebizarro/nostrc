@@ -85,3 +85,6 @@ option(FIPS_ENABLE_BENCH "Build libfips-core micro-benchmarks (not run by ctest)
 if(FIPS_ENABLE_BENCH)
   add_subdirectory(bench)
 endif()
+
+# Noise AEAD (nostrc-pwo3h.1); independent of sibling Noise modules.
+target_sources(fips_core PRIVATE src/noise/aead.c)

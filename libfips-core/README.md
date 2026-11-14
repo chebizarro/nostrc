@@ -216,3 +216,30 @@ the exact BIP-340 signature and the wrong-challenge error discriminant.
 
 Version decision (nostrc-u50yr.2): additive identity APIs fold into initial
 **libfips-core 0.1.0 Unreleased**; no version or release-tag change.
+
+## Noise AEAD
+
+`fips/noise/aead.h` wraps libsodium IETF ChaCha20-Poly1305 with caller-owned
+32-byte keys (explicit destroy wipes them), counter nonces (four zero bytes
+then LE u64), associated data and ciphertext followed by a 16-byte tag.
+`fips/noise/mod.h` reserves the shared Noise constants: tag 16, nonce 12,
+maximum message 65535 including tag. Handshakes/CipherState/replay policy are
+not implemented here; callers must ensure counters never repeat under a key.
+All calls are synchronous, with no allocations, RNG or clock in seal/open.
+Capacity/length errors preserve output; authentication failure zeroes the
+plaintext region, and failed calls leave the output length unchanged.
+
+Key construction calls thread-safe, idempotent `sodium_init()` lazily without
+a mutable core once flag. This requested hosted initialization is an explicit
+exception to the no-implicit-OS/entropy rule above: hosts enforcing a strict
+sans-IO boundary must initialize libsodium themselves before core entry.
+Initialized keys may be borrowed concurrently; callers synchronize lifecycle
+and destroy every explicitly owned copy.
+
+RFC 8439 section 2.8.2 (nonzero nonce prefix) tests the shared private full-nonce
+primitive; Appendix A.5 also exercises the public counter API byte for byte.
+No differential family exercises AEAD directly yet; `tests/diff/cases.c` is
+unchanged. `fips_bench_noise_aead` uses upstream's 64/1400-byte payloads and
+16-byte AD, but measures AEAD only, not future session/replay/worker overhead.
+Version decision (nostrc-pwo3h.1): APIs fold into **0.1.0 Unreleased**; no
+published version/tag change.

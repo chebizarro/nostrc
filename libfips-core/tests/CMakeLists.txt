@@ -110,3 +110,15 @@ set_tests_properties(FipsCoreCoordCacheTest PROPERTIES TIMEOUT 120 LABELS "fips;
 nostrc_describe_test(FipsCoreCoordCacheTest OWNER libfips-core TARGETS fips_core_coord_cache_test)
 # Keep the explicit FIPS CI build closure complete (see the host-test note above).
 add_dependencies(fips_core_host_test fips_core_coord_cache_test)
+
+# Noise AEAD vectors and failure atomicity (nostrc-pwo3h.1).
+add_executable(fips_core_aead_test test_aead.c)
+target_link_libraries(fips_core_aead_test PRIVATE fips_core PkgConfig::FIPS_CORE_SODIUM)
+set_target_properties(fips_core_aead_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+apply_warnings(fips_core_aead_test)
+apply_sanitizers(fips_core_aead_test)
+add_test(NAME FipsCoreAeadTest COMMAND fips_core_aead_test)
+set_tests_properties(FipsCoreAeadTest PROPERTIES TIMEOUT 10 LABELS "fips;unit")
+nostrc_describe_test(FipsCoreAeadTest OWNER libfips-core TARGETS fips_core_aead_test)
+add_dependencies(fips_core_host_test fips_core_aead_test)

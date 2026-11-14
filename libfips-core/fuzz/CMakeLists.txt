@@ -33,3 +33,13 @@ apply_warnings(fips_fuzz_identity)
 apply_sanitizers(fips_fuzz_identity)
 target_compile_options(fips_fuzz_identity PRIVATE -fsanitize=fuzzer)
 target_link_options(fips_fuzz_identity PRIVATE -fsanitize=fuzzer)
+
+# Noise AEAD arbitrary open and seal/open properties.
+add_executable(fips_fuzz_aead fuzz_aead.c)
+target_link_libraries(fips_fuzz_aead PRIVATE fips_core)
+set_target_properties(fips_fuzz_aead PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+apply_warnings(fips_fuzz_aead)
+apply_sanitizers(fips_fuzz_aead)
+target_compile_options(fips_fuzz_aead PRIVATE -fsanitize=fuzzer)
+target_link_options(fips_fuzz_aead PRIVATE -fsanitize=fuzzer)

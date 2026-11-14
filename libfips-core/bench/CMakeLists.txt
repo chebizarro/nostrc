@@ -6,3 +6,10 @@ set_target_properties(fips_bench_coord_cache PROPERTIES
   C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
 apply_warnings(fips_bench_coord_cache)
 apply_sanitizers(fips_bench_coord_cache)
+
+add_executable(fips_bench_noise_aead noise_aead.c)
+target_link_libraries(fips_bench_noise_aead PRIVATE fips_core)
+set_target_properties(fips_bench_noise_aead PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+apply_warnings(fips_bench_noise_aead)
+apply_sanitizers(fips_bench_noise_aead)

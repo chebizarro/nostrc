@@ -39,3 +39,11 @@ Pending harnesses, added when their APIs land:
 - bloom/coord/lookup/MMP messages;
 - control-socket JSON;
 - native-API line protocol.
+
+`fips_fuzz_aead` takes a zero-padded 32-byte key, LE u64 counter and one-byte
+AD length, then that many AD bytes (clamped to available input), then arbitrary
+ciphertext. It checks open rejection/zeroing and output-length atomicity,
+seal/open round trips up to the transport limit, in-place tamper rejection,
+short-capacity atomicity and key wiping. Seed `rfc-a5` authenticates through the
+public API; other seeds cover empty, short and maximum payloads. Use a writable
+copy of `corpus/fips_fuzz_aead/` with the same sanitizer command as above.
