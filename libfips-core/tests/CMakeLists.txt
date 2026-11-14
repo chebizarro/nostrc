@@ -218,3 +218,20 @@ set_tests_properties(FipsCoreStpVectorsTest PROPERTIES TIMEOUT 30 LABELS "fips;d
 nostrc_describe_test(FipsCoreStpVectorsTest OWNER libfips-core TARGETS fips_core_stp_vectors_test
   INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/vectors/proto.json" "${CMAKE_CURRENT_SOURCE_DIR}/../UPSTREAM.md")
 add_dependencies(fips_core_host_test fips_core_stp_test fips_core_stp_vectors_test)
+# Noise SymmetricState (nostrc-pwo3h.3): RFC 4231/5869 vectors through the private
+# HKDF header, both noise.json constructed-step hashes (seeded responder key via
+# the identity layer and fakes/host.c), the Python-pinned MixKey/MixHash/Split
+# sequences, round trips, tamper/fork behaviour and destroy zeroization.
+add_executable(fips_core_symmetric_test test_symmetric.c fakes/host.c)
+target_link_libraries(fips_core_symmetric_test PRIVATE fips_core PkgConfig::FIPS_CORE_SODIUM)
+set_target_properties(fips_core_symmetric_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+apply_warnings(fips_core_symmetric_test)
+apply_sanitizers(fips_core_symmetric_test)
+add_test(NAME FipsCoreSymmetricTest COMMAND fips_core_symmetric_test)
+set_tests_properties(FipsCoreSymmetricTest PROPERTIES TIMEOUT 10 LABELS "fips;unit")
+nostrc_describe_test(FipsCoreSymmetricTest OWNER libfips-core TARGETS fips_core_symmetric_test
+  INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/noise_symmetric_vectors.py"
+         "${CMAKE_CURRENT_SOURCE_DIR}/tools/ecdh_vectors.py"
+         "${CMAKE_CURRENT_SOURCE_DIR}/vectors/noise.json")
+add_dependencies(fips_core_host_test fips_core_symmetric_test)

@@ -104,3 +104,6 @@ target_sources(fips_core PRIVATE
 target_sources(fips_core PRIVATE
   src/proto/stp/declaration.c src/proto/stp/wire.c src/proto/stp/limits.c
   src/proto/stp/state.c src/proto/stp/core.c src/proto/stp/acks.c)
+# Noise SymmetricState (nostrc-pwo3h.3): ck/h chaining, HKDF over libsodium HMAC,
+# handshake-phase encrypt/decrypt-and-hash over the AEAD, split.
+target_sources(fips_core PRIVATE src/noise/symmetric.c)
