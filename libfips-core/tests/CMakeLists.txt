@@ -21,3 +21,13 @@ nostrc_describe_test(FipsCoreHostTest OWNER libfips-core TARGETS fips_core_host_
          "${CMAKE_CURRENT_SOURCE_DIR}/generate_seeded_vectors.py")
 
 add_subdirectory(diff)
+
+add_executable(fips_core_transport_types_test test_transport_types.c)
+target_link_libraries(fips_core_transport_types_test PRIVATE fips_core)
+set_target_properties(fips_core_transport_types_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+apply_warnings(fips_core_transport_types_test)
+apply_sanitizers(fips_core_transport_types_test)
+add_test(NAME FipsCoreTransportTypesTest COMMAND fips_core_transport_types_test)
+set_tests_properties(FipsCoreTransportTypesTest PROPERTIES TIMEOUT 10 LABELS "fips;unit")
+nostrc_describe_test(FipsCoreTransportTypesTest OWNER libfips-core TARGETS fips_core_transport_types_test)
