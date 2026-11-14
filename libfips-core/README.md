@@ -46,6 +46,11 @@ not a Rust FFI wrapper or a complete working protocol implementation.
   budgets and dual-tier stats history, with explicit instants and caller-owned
   bounded storage. Stats queries expose JSON-neutral Series metadata and a
   walk hook that marks non-finite samples as null.
+- `include/fips/cache/coord_cache.h`, `src/cache/`: the node-address to
+  tree-coordinate cache (hint/verified/stated writes, funded placement, LRU
+  eviction that spares live-verified entries, probation segment, TTLs) over
+  caller-owned slots and index words, with instants converted against an init
+  epoch. Coordinates are held inline pending the proto coord codec.
 - `tests/`: linked version, host-interface and byte-compatible fake tests.
 - `libfips-core.pc.in`: installed pkg-config contract, including private crypto
   requirements for static consumers.

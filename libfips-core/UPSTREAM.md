@@ -235,3 +235,46 @@ listed in tools/fips-vectors/README.md. Existing diff/cases.c is unchanged.
 
 Version decision: additive APIs and static math linkage fold into initial
 libfips-core **0.1.0 Unreleased**; no release/tag change.
+
+## Coordinate cache port (nostrc-u50yr.5)
+
+`core/src/cache/{coord_cache,entry,mod}.rs` now have C homes in
+`include/fips/cache/coord_cache.h` and `src/cache/`. Public API takes
+`fips_instant now` and converts it once against the init epoch into the
+cache-relative millisecond clock the entries record; TTLs stay plain
+`uint64_t` milliseconds so a host maps `node.cache.coord_ttl_secs` (or the
+`test-overrides` key `node.cache.test_coord_ttl_secs`) by multiplying by 1000.
+
+Mirrored by name: `DEFAULT_COORD_CACHE_SIZE` 50,000, `DEFAULT_COORD_CACHE_TTL_MS`
+and `VERIFIED_TTL_MS` 300,000, `ADDRS_PER_ENTRY` 16, `PROBATION_SHARE_DIVISOR`
+32 (probation bound `max(1, max_entries / 32)`, address bound
+`max_entries * 16`), `Funding`, `Segment`, `HintOutcome`, `Placed`,
+`CoordSource`, `CacheStats` and `CacheError`. Eviction order, the parked
+live-verified set, lazy restamping of touched keys, the per-cache insertion
+sequence as tie-breaker, probation-only eviction for unpaid writes, promotion
+charges and the stated-write exceptions follow `coord_cache.rs` line for line.
+
+Structure substitutions: the hashbrown map keyed by `KeyedHasher` becomes an
+open-addressing table over caller slots hashed with libsodium SipHash-2-4 under
+a 16-byte key drawn from the host `fips_entropy` at init (upstream SipHash-1-3;
+the hash is not wire-visible); the three `BTreeMap<(stamp, seq)>` indexes become
+binary heaps with per-slot positions. Rust's map grows for verified writes past
+`max_entries`; C takes `slot_capacity >= FIPS_COORD_CACHE_SLOTS(max_entries)`
+plus any headroom the host grants and returns `FIPS_ERR_RANGE` transactionally
+when a verified (or funded probation) write finds no free slot. `TreeCoordinate`
+is held inline as `fips_cached_coord` (entries with address, sequence and
+timestamp, at most `FIPS_CACHED_COORD_MAX_ENTRIES` = 80; upstream has no depth
+constant beyond the u16 wire count and a frame's roughly seventy addresses)
+until `nostrc-82g9n.1` lands the proto coord codec. `iter` is a visitor walk in
+slot order; upstream order is random per process and nothing may depend on it.
+The test-hooks accessors (`eviction_examined`, `segment_of`, `probation_len`,
+`stored_addrs`) are always compiled.
+
+All 66 tests in `cache/tests/coord_cache.rs`, 6 in `tests/entry.rs` and 4 in
+`tests/mod.rs` are ported by name, plus C storage/geometry, TTL-boundary,
+epoch and deletion-chain edges. No cache differential-vector family exists;
+`tests/diff/cases.c` is unchanged. `bench/coord_cache.c` ports
+`benches/coord_cache.rs` behind `FIPS_ENABLE_BENCH` (not a ctest).
+
+Version decision: additive APIs fold into initial libfips-core
+**0.1.0 Unreleased**; no release/tag change.
