@@ -1,7 +1,7 @@
 # FIPS fuzz harnesses
 
 Enable `FIPS_ENABLE_FUZZERS=ON` in a top-level clang Debug build with
-`GO_ENABLE_ASAN=ON` and `GO_ENABLE_UBSAN=ON`. Build target `fips_fuzz_host`.
+`GO_ENABLE_ASAN=ON` and `GO_ENABLE_UBSAN=ON`. Build targets `fips_fuzz_host` and `fips_fuzz_codec`.
 Run `build/libfips-core/fuzz/fips_fuzz_host -max_total_time=10 corpus/` with a
 writable copy of `libfips-core/fuzz/corpus/fips_fuzz_host/`. CI uses 10 seconds
 per PR smoke target and 60 seconds nightly. Sanitizer findings fail the job;
@@ -27,8 +27,13 @@ ordinary rejection; assert round-trip/canonicalization and state invariants for
 accepted inputs. Use deterministic entropy/clocks, no network or sleeps. Never
 turn a rejected packet into an assertion merely because it is malformed.
 
+`fips_fuzz_codec` treats input as commands selecting LE scalars, fixed arrays,
+borrowed bytes or cursor advancement; high command bits select byte counts.
+It checks exact truncation errors, cursor atomicity, writer round trips and
+full-capacity rejection. Use a writable copy of `corpus/fips_fuzz_codec/` and
+run the same 10-second command with target `fips_fuzz_codec`.
+
 Pending harnesses, added when their APIs land:
-- proto Reader/Writer;
 - Noise msg1/msg2 and xk1-3;
 - FMP/FSP frames;
 - bloom/coord/lookup/MMP messages;

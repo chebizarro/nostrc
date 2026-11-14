@@ -11,6 +11,9 @@ find_package(OpenSSL REQUIRED COMPONENTS Crypto)
 
 # Follow BUILD_SHARED_LIBS, as the other nostrc libraries do.
 add_library(fips_core src/core.c src/host.c)
+
+# Proto: bounds-checked wire primitives.
+target_sources(fips_core PRIVATE src/proto/codec.c)
 set_target_properties(fips_core PROPERTIES
   C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO
   COMPONENT_VERSION_HEADER_INSTALL_DIR "${CMAKE_INSTALL_INCLUDEDIR}/fips")

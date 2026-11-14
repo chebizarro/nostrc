@@ -97,7 +97,7 @@ A loaded fixture is **not** a protocol pass. Unimplemented dispatchers return
 | --- | ---: | ---: | --- |
 | entropy | 3 | 0 | implemented test adapters |
 | identity | 0 | 3 | nostrc-u50yr |
-| codec | 0 | 15 | nostrc-u50yr |
+| codec | 15 | 0 | implemented proto Reader/Writer |
 | noise | 0 | 18 | nostrc-pwo3h |
 | proto | 0 | 28 | nostrc-82g9n |
 | rekey | 0 | 1 | nostrc-f12v2 |

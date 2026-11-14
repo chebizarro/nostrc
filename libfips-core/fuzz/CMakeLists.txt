@@ -14,3 +14,12 @@ apply_warnings(fips_fuzz_host)
 apply_sanitizers(fips_fuzz_host)
 target_compile_options(fips_fuzz_host PRIVATE -fsanitize=fuzzer)
 target_link_options(fips_fuzz_host PRIVATE -fsanitize=fuzzer)
+
+add_executable(fips_fuzz_codec fuzz_codec.c)
+target_link_libraries(fips_fuzz_codec PRIVATE fips_core)
+set_target_properties(fips_fuzz_codec PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+apply_warnings(fips_fuzz_codec)
+apply_sanitizers(fips_fuzz_codec)
+target_compile_options(fips_fuzz_codec PRIVATE -fsanitize=fuzzer)
+target_link_options(fips_fuzz_codec PRIVATE -fsanitize=fuzzer)
