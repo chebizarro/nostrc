@@ -298,3 +298,29 @@ add_test(NAME FipsCoreRoutingTest COMMAND fips_core_routing_test)
 set_tests_properties(FipsCoreRoutingTest PROPERTIES TIMEOUT 30 LABELS "fips;unit")
 nostrc_describe_test(FipsCoreRoutingTest OWNER libfips-core TARGETS fips_core_routing_test)
 add_dependencies(fips_core_host_test fips_core_routing_test)
+# Lookup retry ladder, bounded state, signing, and isolated differential replay.
+add_executable(fips_core_lookup_test test_lookup.c fakes/host.c)
+target_link_libraries(fips_core_lookup_test PRIVATE fips_core)
+set_target_properties(fips_core_lookup_test PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+apply_warnings(fips_core_lookup_test)
+apply_sanitizers(fips_core_lookup_test)
+add_test(NAME FipsCoreLookupTest COMMAND fips_core_lookup_test)
+set_tests_properties(FipsCoreLookupTest PROPERTIES TIMEOUT 120 LABELS "fips;unit")
+nostrc_describe_test(FipsCoreLookupTest OWNER libfips-core TARGETS fips_core_lookup_test)
+
+add_executable(fips_core_lookup_vectors_test test_lookup_vectors.c
+  diff/proto_lookup.c diff/loader.c diff/schema.c fakes/host.c)
+get_target_property(fips_lookup_diff_definitions fips_diff COMPILE_DEFINITIONS)
+target_compile_definitions(fips_core_lookup_vectors_test PRIVATE ${fips_lookup_diff_definitions})
+target_link_libraries(fips_core_lookup_vectors_test PRIVATE fips_core PkgConfig::FIPS_LINK_JANSSON OpenSSL::Crypto)
+set_target_properties(fips_core_lookup_vectors_test PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+apply_warnings(fips_core_lookup_vectors_test)
+apply_sanitizers(fips_core_lookup_vectors_test)
+add_test(NAME FipsCoreLookupVectorsTest COMMAND fips_core_lookup_vectors_test)
+set_tests_properties(FipsCoreLookupVectorsTest PROPERTIES TIMEOUT 30 LABELS "fips;diff")
+nostrc_describe_test(FipsCoreLookupVectorsTest OWNER libfips-core TARGETS fips_core_lookup_vectors_test
+  INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/vectors/proto.json"
+         "${CMAKE_CURRENT_SOURCE_DIR}/vectors/proto-lookup-request.bin"
+         "${CMAKE_CURRENT_SOURCE_DIR}/vectors/proto-lookup-response.bin"
+         "${CMAKE_CURRENT_SOURCE_DIR}/../UPSTREAM.md")
+add_dependencies(fips_core_host_test fips_core_lookup_test fips_core_lookup_vectors_test)

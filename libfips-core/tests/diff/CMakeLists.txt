@@ -63,3 +63,5 @@ target_sources(fips_diff PRIVATE proto_bloom.c)
 
 # Per-name fsp rows remain orchestrator-owned in cases.c until integration.
 target_sources(fips_diff PRIVATE proto_fsp.c)
+# Coordinator owns cases.c dispatch for lookup-request/lookup-response.
+target_sources(fips_diff PRIVATE proto_lookup.c)

@@ -123,3 +123,7 @@ target_sources(fips_core PRIVATE
 target_sources(fips_core PRIVATE
   src/proto/routing/core.c src/proto/routing/wire.c
   src/proto/routing/state.c src/proto/routing/limits.c)
+# Mesh lookup codecs, bounded retry/dedup state and signing (nostrc-82g9n.5).
+target_sources(fips_core PRIVATE
+  src/proto/lookup/wire.c src/proto/lookup/state.c
+  src/proto/lookup/core.c src/proto/lookup/limits.c)
