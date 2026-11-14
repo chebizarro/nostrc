@@ -1,8 +1,7 @@
 # scripts/
 
-Operator and CI utility scripts for nostrc. This file documents
-`check-authd-dep-purity.sh`; the other scripts here are self-documenting via
-their own header comments.
+Operator and CI utility scripts for nostrc. Selected scripts are documented
+below; the others are self-documenting via their own header comments.
 
 ## `check-authd-dep-purity.sh` — the authd/pam_nostr dep-purity gate
 
@@ -124,3 +123,17 @@ This script is the **baseline scaffold** (plan Execution-Index #21a). The
 subsequent track lands, plus an installed-artifact check on the lab — is
 separate follow-up work and does not require any change to this script or
 its CMake wiring; #21b rides this test as-is.
+
+## `fips-upstream-diff.sh` — the FIPS compatibility watch set
+
+```sh
+/path/to/nostrc/scripts/fips-upstream-diff.sh -C /path/to/fips [<old-rev>] <new-rev>
+```
+
+Compares committed upstream trees read-only, reporting changed/unchanged wire
+files, the CHANGELOG hunk and affected vector families. With one revision it
+reads the baseline from [libfips-core/UPSTREAM.md](../libfips-core/UPSTREAM.md);
+`-C` defaults to the current directory. Exit 0 means no watched change, 1 means
+review/regeneration is required, and 2 means invalid usage/repository/revision.
+See that document for the pin-bump and differential/interop procedure. Requires
+Git and POSIX shell utilities; compatible with macOS Bash 3.2.
