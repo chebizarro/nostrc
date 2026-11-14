@@ -65,3 +65,16 @@ nostrc_describe_test(FipsCoreStatsHistoryTest OWNER libfips-core TARGETS fips_co
 # FIPS CI builds the established host-test entrypoint explicitly before ctest.
 # Keep these registered tests in that build closure without changing CI lanes.
 add_dependencies(fips_core_host_test fips_core_rate_limit_test fips_core_stats_history_test)
+
+add_executable(fips_core_coord_cache_test test_coord_cache.c fakes/host.c)
+target_link_libraries(fips_core_coord_cache_test PRIVATE fips_core)
+set_target_properties(fips_core_coord_cache_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+apply_warnings(fips_core_coord_cache_test)
+apply_sanitizers(fips_core_coord_cache_test)
+add_test(NAME FipsCoreCoordCacheTest COMMAND fips_core_coord_cache_test)
+# Default-capacity fills (50,000 entries) run under sanitizers.
+set_tests_properties(FipsCoreCoordCacheTest PROPERTIES TIMEOUT 120 LABELS "fips;unit")
+nostrc_describe_test(FipsCoreCoordCacheTest OWNER libfips-core TARGETS fips_core_coord_cache_test)
+# Keep the explicit FIPS CI build closure complete (see the host-test note above).
+add_dependencies(fips_core_host_test fips_core_coord_cache_test)

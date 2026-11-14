@@ -21,6 +21,9 @@ target_sources(fips_core PRIVATE src/proto/rate_limit.c)
 
 # Node bookkeeping (sans-IO, explicit host instants).
 target_sources(fips_core PRIVATE src/node/rate_limit.c src/node/stats_history.c)
+
+# Coordinate cache (sans-IO; caller-owned slots and eviction indexes).
+target_sources(fips_core PRIVATE src/cache/coord_cache.c src/cache/entry.c)
 if(UNIX)
   target_link_libraries(fips_core PRIVATE m)
   set(FIPS_CORE_PC_MATH_LIB "-lm")
@@ -64,4 +67,9 @@ endif()
 
 if(BUILD_TESTING)
   add_subdirectory(tests)
+endif()
+
+option(FIPS_ENABLE_BENCH "Build libfips-core micro-benchmarks (not run by ctest)" OFF)
+if(FIPS_ENABLE_BENCH)
+  add_subdirectory(bench)
 endif()

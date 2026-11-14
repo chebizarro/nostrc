@@ -102,6 +102,10 @@ other components and all version/release/tag values are unchanged.
 - **nostrc-u50yr.4: libfips-core stays 0.1.0, Unreleased.** Additive
   sans-IO rate-limit/stats-history APIs and static math-link requirement fold
   into the initial pre-release; no published version or release tag changes.
+- **nostrc-u50yr.5: libfips-core stays 0.1.0, Unreleased.** Additive sans-IO
+  coordinate-cache APIs (`fips/cache/coord_cache.h`) and the opt-in
+  `FIPS_ENABLE_BENCH` benchmark target fold into the initial pre-release; no
+  published version or release tag changes.
 
 - **libfips-core: initial 0.1.0, Unreleased.** New independently versioned C11
   sans-IO library component with a public version API, static/shared CMake
