@@ -825,8 +825,11 @@ test_narrow(void)
   ring(&f, 1, GH_CALL_VIDEO);
   g_assert_true(on_call_page(&f));
   drain();
-  for (GhCallViewControls b = GH_CALL_VIEW_DECLINE; b <= GH_CALL_VIEW_ANSWER; b <<= 1)
-    assert_inside(control(&f, b), content_of(&f), 360);
+  for (GhCallViewControls b = GH_CALL_VIEW_DECLINE; b <= GH_CALL_VIEW_ANSWER; b <<= 1) {
+    GtkWidget *w = control(&f, b);
+    GtkWidget *content = content_of(&f);
+    assert_inside(w, content, 360);
+  }
   maybe_snapshot(&f, "call-ui-360-ringing.png");
   gh_call_service_decline(f.service);
   fixture_down(&f);

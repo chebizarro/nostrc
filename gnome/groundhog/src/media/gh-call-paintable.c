@@ -52,11 +52,13 @@ static gboolean present(gpointer data)
     GstVideoFrame frame;
     if (gst_video_info_from_caps(&info, gst_sample_get_caps(sample)) &&
         gst_video_frame_map(&frame, &info, gst_sample_get_buffer(sample), GST_MAP_READ)) {
+      gint width = GST_VIDEO_INFO_WIDTH(&info);
+      gint height = GST_VIDEO_INFO_HEIGHT(&info);
       gsize stride = GST_VIDEO_FRAME_PLANE_STRIDE(&frame, 0);
       GBytes *bytes = g_bytes_new(GST_VIDEO_FRAME_PLANE_DATA(&frame, 0),
-                                  stride * GST_VIDEO_INFO_HEIGHT(&info));
-      GdkTexture *texture = gdk_memory_texture_new(GST_VIDEO_INFO_WIDTH(&info),
-          GST_VIDEO_INFO_HEIGHT(&info), GDK_MEMORY_R8G8B8A8, bytes, stride);
+                                  stride * height);
+      GdkTexture *texture = gdk_memory_texture_new(width,
+          height, GDK_MEMORY_R8G8B8A8, bytes, stride);
       gboolean resized = !self->texture ||
           gdk_texture_get_width(self->texture) != gdk_texture_get_width(texture) ||
           gdk_texture_get_height(self->texture) != gdk_texture_get_height(texture);
