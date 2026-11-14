@@ -120,3 +120,13 @@ apply_warnings(fips_fuzz_handshake)
 apply_sanitizers(fips_fuzz_handshake)
 target_compile_options(fips_fuzz_handshake PRIVATE -fsanitize=fuzzer)
 target_link_options(fips_fuzz_handshake PRIVATE -fsanitize=fuzzer)
+
+# Transport open/trial-open and replay-window sequences (nostrc-pwo3h.7).
+add_executable(fips_fuzz_session fuzz_session.c)
+target_link_libraries(fips_fuzz_session PRIVATE fips_core)
+set_target_properties(fips_fuzz_session PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+apply_warnings(fips_fuzz_session)
+apply_sanitizers(fips_fuzz_session)
+target_compile_options(fips_fuzz_session PRIVATE -fsanitize=fuzzer)
+target_link_options(fips_fuzz_session PRIVATE -fsanitize=fuzzer)
