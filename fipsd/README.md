@@ -20,7 +20,7 @@ never to the core.
 
 `src/config/` loads and validates YAML, publishes immutable snapshots and
 consumes the runtime's SIGHUP reload channel. Not implemented yet: the control
-socket (`9keoz.3`), transports and the node. Parsing a setting does not claim
+socket (`9keoz.3`), Tier B2 transports and node protocol handlers (`9keoz.6`). Parsing a setting does not claim
 that its owning subsystem is implemented.
 
 ### Command line (docs/reference/cli-fips.md upstream)
@@ -190,12 +190,13 @@ the process exits 1 rather than hanging.
 
 Known libgo behaviours this design works around, to be fixed upstream in libgo:
 
-- `go_fiber` has no ThreadSanitizer fiber annotations
-  (`__tsan_switch_to_fiber`). A fiber resumed on a different worker thread
-  unbalances TSan's per-thread shadow stack and TSan faults inside its own
-  runtime at worker exit (about 10% of two-worker runs; never under ASan, in
-  plain builds or with one worker). The fipsd TSan tests therefore run with
-  `FIPSD_WORKERS=1`; multi-worker migration is covered by the other lanes.
+`go_fiber` now has ThreadSanitizer fiber annotations (`nostrc-9965o`);
+runtime, peer and node tests exercise two migrating scheduler workers under TSan.
+The node native smoke exposed an older gof_read errno TLS-address cache across
+migration; its loop now uses the same worker-local errno helpers as message I/O.
+Those helpers use relaxed scalar accesses for the errno cell shared by fibers on
+one OS worker, without synchronizing unrelated application memory or suppressing
+TSan checks.
 
 - `gof_read()` without a deadline parks in 2 ms slices, so the idle signal
   fiber wakes ~500 times a second. Harmless but not free.
@@ -240,8 +241,9 @@ of a key and workers seal with those explicit counters, never auto-sealing from
 the same snapshot; decrypt workers authenticate, and the sole replay-window
 owner (the dispatcher) rechecks and marks only on acceptance; lifecycle and
 mutation need host synchronization (`libfips-core/README.md`, `session.h`).
-Later tasks plug transports, the node and the control socket in as
-`fipsd_subsystem`s in that order and stop them in reverse.
+The node's lifecycle is a `fipsd_subsystem` after configuration; the control
+subsystem can follow it, loading `node/status.h` snapshots without taking a
+node lock.
 
 ## Build and tests
 
@@ -405,6 +407,111 @@ rebind collisions, local-key ownership, tree/filter state, real AEAD/replay and
 linear lease release through the rekey seam, and concurrent immutable snapshots
 while the real runtime dispatcher processes 500 channel commands. It reuses
 `libfips-core/tests/fakes/host.c`; all clock advances are injected, no sleeps.
-TSan pins `FIPSD_WORKERS=1` for the runtime limitation described above; other
-lanes use two workers. This is host-module proof, not a network/interoperability
+Runtime, peer and node threading tests use two workers, including TSan. This is host-module proof, not a network/interoperability
 claim and not a port of upstream's multipath/settlement/node test suites.
+
+## Node lifecycle (`nostrc-9keoz.5`)
+
+```
+main: load YAML → GoSwap config → runtime start → config reload service
+                                             → node lifecycle actor
+
+actor start (fiber):
+  config snapshot → identity/epoch → sealed transport registry
+    → transport start_async (creation order, ABSENT is success)
+    → netmon → dispatcher → N crypto workers → publish substrate health
+
+actor stop (root cancellation or subsystem stop):
+  close worker inputs → dispatcher drains accepted results to EOF
+    → stop/join dispatchers → stop netmon → stop transports (reverse order)
+    → release identity/config after runtime join
+
+runtime: all tracked fibers, including binder/monitor/worker fibers,
+         must finish within its one shared shutdown grace (default 5 s)
+```
+
+`node/lifecycle.{c,h}` separates a pure event/action supervisor from its
+channel-driven fiber driver. Config/identity/registry/netmon/dispatcher failures
+are required-substrate failures; worker-pool short starts are optional, retained
+and degraded. Zero transports up is **Failed**, not ready. One or more up with
+a failed/absent configured child is **Degraded** (substrate-ready); otherwise
+**Ready**. A transport whose interface is absent stays up. Present clears absence
+and can restore Ready, but does not clear a startup/task failure. Duplicate,
+unknown and late events are inert. An exited child is never automatically
+restarted; binder tasks own rebind. Runtime loss of the last transport publishes
+Failed rather than forcing teardown. The reducer includes bounded-drain/gating
+states for later peer handlers; the production actor currently uses immediate
+reverse teardown, not an unimplemented Disconnect/drain protocol.
+
+**Bootstrap policy:** until Tier B2 registers real transports, `main` continues
+serving the config/control host with a visible Failed, **not-ready** node and a
+warning. This intentionally differs from upstream's fatal zero-transport startup;
+there is no fabricated loopback/default transport or claim of network readiness.
+Other startup health failures remain visible through the same status seam.
+`fipsd running` describes the foreground host, not node/network readiness.
+
+`node/context.{c,h}` is the borrowed per-node handle: configuration references,
+read-only identity/epoch, immutable network/peer snapshots, and the peer-command
+mailbox. Mutable peer/table/session state belongs only to the peer dispatcher;
+other actors send commands, never share mutable peers. Crypto completion handlers
+run on the node event dispatcher and must return acceptance commands to that
+owner. STP/bloom/routing/lookup handlers are deliberately left to `9keoz.6`.
+Explicit `node.identity.nsec` is decoded by the core; otherwise a secure ephemeral
+identity is generated off-scheduler. A requested persistent identity without a
+key is refused visibly (Failed), never silently replaced by an ephemeral key;
+filesystem key persistence is not implemented by this task.
+
+`node/worker_set.{c,h}` has a bounded input channel per worker and a bounded
+completion channel, round-robin nonblocking distribution and explicit ownership
+on refusal. Each owned job has its own cipher state, input/AD/output buffers,
+reserved counter and stale-result token. SEAL calls only
+`fips_cipher_state_seal_with_counter`; OPEN authenticates without replay mutation.
+The dispatcher still owns epoch validation and replay recheck/mark on acceptance.
+Every key and owned buffer is cleared on completion/discard. Partial spawn is
+reported without restart. Shutdown closes inputs but drains already accepted jobs
+even after root cancellation; the dispatcher stays alive until completion EOF.
+An unhandled/refused callback cancels the runtime but keeps draining, so a full
+completion queue cannot deadlock shutdown.
+
+`node/transport.{c,h}` is the host-internal Tier B2 registration contract: stable
+id/type/name, start_async/stop/state, per-link or default MTU, send/discover,
+connect_async/close_connection and network-change notification, plus auto-connect
+and inbound-accept policy. Instances register before the registry seals; duplicate
+ids/names, late registration and incomplete required vtables are refused. Methods
+run on fibers; start_async launches runtime-tracked binder/receiver tasks, returns
+success while absent and emits owned channel events. Network notifications wake
+the binder, which owns descriptors and detach/rebind. Lifecycle needs no
+transport-specific branches. No real network transport is implemented here.
+
+### Network monitor
+
+`node/netmon.{c,h}` opens Linux NETLINK_ROUTE with link/IPv4-address/IPv6-address
+groups, or macOS/FreeBSD PF_ROUTE. A tracked kernel fiber waits with a bounded
+`gof_recvfrom(MSG_PEEK)` (gof_read has no cancellation API), then consumes with
+`gof_read`. The wait deadline checks cancellation only; it does not close a
+subscription or schedule sampling. Wakes coalesce on a capacity-one channel.
+The monitor samples on a kernel wake or the **one-second Ticker** backstop,
+using `go_blocking_submit(getifaddrs)` so system enumeration and ticker-thread
+join never block a scheduler worker. Socket-open/stream failures retain the
+backstop. This is an interface/prefix monitor, **not** the newer upstream
+peer-route fingerprint/connected-UDP repair implementation.
+
+Presence is `IFF_UP`, never `IFF_RUNNING`. Snapshot comparison emits interface
+up/down and address-change events; disappearance also invalidates addresses.
+Enumeration/capacity/publication failures never become false interface-down
+edges. The last good snapshot is retained on read failure with an explicit
+failure event; callers must not treat retained prefixes as fresh authorization.
+`fipsd_onlink_read_system` includes loopback/down interfaces and address prefixes
+in its raw snapshot (including lo0/en0); its core `fips_onlink_*` view excludes
+loopback and down interfaces, matching upstream read_system policy. BSD embedded
+IPv6 link-local zones are normalized to interface indexes. Prefix storage belongs
+to the retained snapshot and cannot be copied without rebuilding its view.
+
+Tests in the `fipsd_tests` aggregate cover the supervisor escalation/recovery and
+no-restart table, ordered startup/reverse teardown, real node/context/transport
+registration, required-identity failure, shutdown after a refused handler with
+64 queued crypto jobs, two-worker explicit-counter seal/open/authentication failure
+and cancellation drain, injected monitor snapshots/wakes/backstop, and native
+kernel-socket opening plus an actual Ticker event. The native macOS/FreeBSD test
+cross-checks every `ifconfig -a` IP/prefix against read_system. Injected tests use
+channels and a manually driven backstop, not sleeps or timing-based completion.

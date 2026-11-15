@@ -1,0 +1,19 @@
+#include "node/transport.h"
+#include <string.h>
+int fipsd_transport_register(fipsd_transport_registry *r, fipsd_transport *t)
+{
+    if (!r || r->sealed || r->count == FIPSD_TRANSPORT_MAX || !t || !t->ops ||
+        !t->name || !t->type || !t->ops->start_async || !t->ops->stop ||
+        !t->ops->state || !t->ops->mtu || !t->ops->send) return -1;
+    for (size_t i = 0; i < r->count; ++i)
+        if (fips_transport_id_equal(r->items[i]->id, t->id) ||
+            !strcmp(r->items[i]->name, t->name)) return -1;
+    r->items[r->count++] = t;
+    return 0;
+}
+fipsd_transport *fipsd_transport_find(const fipsd_transport_registry *r, fips_transport_id id)
+{
+    for (size_t i = 0; i < r->count; ++i)
+        if (fips_transport_id_equal(r->items[i]->id, id)) return r->items[i];
+    return NULL;
+}
