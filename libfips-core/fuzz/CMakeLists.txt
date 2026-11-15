@@ -154,3 +154,13 @@ apply_warnings(fips_fuzz_rekey)
 apply_sanitizers(fips_fuzz_rekey)
 target_compile_options(fips_fuzz_rekey PRIVATE -fsanitize=fuzzer)
 target_link_options(fips_fuzz_rekey PRIVATE -fsanitize=fuzzer)
+
+# Production IK/XK profiles, actual wire envelopes and Noise session ownership.
+add_executable(fips_fuzz_rekey_profile fuzz_rekey_profile.c
+  ../tests/fakes/rekey_profile.c ../tests/fakes/host.c)
+target_link_libraries(fips_fuzz_rekey_profile PRIVATE fips_core PkgConfig::FIPS_CORE_SODIUM)
+set_target_properties(fips_fuzz_rekey_profile PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+apply_warnings(fips_fuzz_rekey_profile)
+apply_sanitizers(fips_fuzz_rekey_profile)
+target_compile_options(fips_fuzz_rekey_profile PRIVATE -fsanitize=fuzzer)
+target_link_options(fips_fuzz_rekey_profile PRIVATE -fsanitize=fuzzer)

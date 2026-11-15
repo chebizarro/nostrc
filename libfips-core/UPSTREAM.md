@@ -89,12 +89,11 @@ those shares together. Modules omitted from the assessment's table are marked
 | `core/src/proto/rekey/**` | 6,575 | `libfips-core/src/proto/rekey/…` + `include/fips/proto/rekey/…` (shared machine/params/profile hooks implemented; [API and ownership](src/proto/rekey/README.md), [test mapping](tests/REKEY.md); legacy fixtures deferred) | `nostrc-f12v2.1` shared core; `nostrc-f12v2.3` legacy; `nostrc-f66sr` verification |
 | `core/src/proto/settle/**` | 5,493 | `libfips-core/src/proto/settle/…` (port last; upstream not wired to callers yet) | `nostrc-f12v2` A4 |
 | `core/src/proto/mmp/**` | 4,160 | `libfips-core/src/proto/mmp/…` | `nostrc-f12v2` A4 |
-| `core/src/proto/fmp/**` | 2,186 | `libfips-core/src/proto/fmp/…` | `nostrc-82g9n` A3; rekey profile/session binding: `nostrc-f12v2.2` A4 |
+| `core/src/proto/fmp/**` | 2,186 | `libfips-core/src/proto/fmp/…` | `nostrc-82g9n` A3; real IK/XK profiles and bounded session binding implemented: `nostrc-f12v2.2` A4 |
 | `core/src/proto/lookup/**` | 1,752 | `libfips-core/src/proto/lookup/…` | `nostrc-82g9n` A3 |
 | `core/src/proto/stp/**` | 1,574 | `libfips-core/src/proto/stp/…` | `nostrc-82g9n` A3 |
-| `core/src/proto/fsp/**` | 1,461 | `libfips-core/src/proto/fsp/…` | `nostrc-82g9n` A3; rekey profile: `nostrc-f12v2` A4 |
 | `core/src/proto/probe/**` | 1,220 | `libfips-core/src/proto/probe/{core,state}.c`, `include/fips/proto/probe/{mod,core,state,limits}.h` | `nostrc-f12v2.5`: 30 upstream tests ported; no wire codec/differential family; host owns job registry |
-| `core/src/proto/fsp/**` | 1,461 | `libfips-core/src/proto/fsp/…` | `nostrc-82g9n` A3; rekey profile/session binding: `nostrc-f12v2.2` A4 |
+| `core/src/proto/fsp/**` | 1,461 | `libfips-core/src/proto/fsp/…` | `nostrc-82g9n` A3; real IK/XK profiles and bounded session binding implemented: `nostrc-f12v2.2` A4 |
 | `core/src/proto/probe/**` | 1,220 | `libfips-core/src/proto/probe/…` | `nostrc-f12v2` A4 |
 | `core/src/proto/bloom/**` | 1,162 | `libfips-core/src/proto/bloom/…` | `nostrc-82g9n` A3 |
 | `core/src/proto/routing/**` | 969 | `libfips-core/src/proto/routing/…` | `nostrc-82g9n` A3 |
@@ -364,3 +363,34 @@ read-only Rust algorithms at the existing pin. No pin change.
 
 Version decision: additive APIs remain **libfips-core 0.1.0 Unreleased**;
 no published version/tag change. `cases.c` dispatch remains coordinator-owned.
+
+## Rekey profiles and session binding (nostrc-f12v2.2)
+
+| Rust source at the pin | C home / contract |
+| --- | --- |
+| `core/src/proto/fmp/rekey/{mod,ik}.rs` | `include/fips/proto/fmp/rekey.h`, `src/proto/fmp/rekey.c`: real IK callbacks, authenticated node-level msg1 token and setup replay record, checked IN_Rekey attachment |
+| `core/src/proto/fsp/rekey/{mod,xk}.rs` | `include/fips/proto/fsp/rekey.h`, `src/proto/fsp/rekey.c`: real XK callbacks, strict envelope ingress, 12-byte AAD and CoordsWarmup prompt |
+| `src/node/session/{mod.rs,README.md}` | `include/fips/node/session.h`, `src/node/session.c`: caller-owned stable slots from opening through close, peer and transport/index lookups, explicit bounds/idle eviction, ordered output executor |
+| `src/peer/active.rs` link binding | Completed IK sessions may be imported/bound; no automatic FMP rotation/polling or legacy link-host replacement is enabled |
+| `tools/fips-vectors/src/rekey.rs` | `tests/diff/cases.c`: one checked trace, all 16 events, before/after/initial/final views, ordered outputs and authenticated deliveries; no SKIP |
+
+Profiles fork retained Noise state on reads and erase every temporary. The
+executor wraps XK sends with current coordinates on each send/resend, seals
+prompts immediately with their reserved bare key/counter, preserves output order,
+returns all Release leases even on send failure, and gates plaintext delivery
+for all epoch paths. No timer thread, I/O, allocation or host clock is added.
+The caller polls a due existing session before admitting a Setup, executes that
+batch (including teardown), then looks up/admit again. The table does not hide
+that ordering behind an internal side effect. Half-open accounting counts
+unproved candidates, not this node's own attempts, as upstream does.
+
+`FipsCoreRekeyProfilesTest` covers real IK/XK cycles in both roles, crossing,
+byte-identical resend ladders with loss, changing coordinates around identical
+XK bytes, cutover/drain/restart erasure and ordering, failed-send cleanup,
+immutable failed-read forks, msg1 replay proofs and bounded table/lookup/eviction.
+`fips_fuzz_rekey_profile` drives production profiles and envelopes with real
+Noise, no test hooks or stub profile. Legacy compatibility and FMP/fault/restart
+differential traces remain outside this one successful XK vector.
+
+Version decision: additive APIs fold into **libfips-core 0.1.0 Unreleased**;
+no published release or tag change. No fipsd/runtime wiring is claimed.

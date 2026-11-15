@@ -165,3 +165,7 @@ set(FIPS_REKEY_SOURCES
   src/proto/rekey/resolve.c
 )
 target_sources(fips_core PRIVATE ${FIPS_REKEY_SOURCES})
+
+# Real IK/XK rekey profiles and bounded host/session binding (nostrc-f12v2.2).
+target_sources(fips_core PRIVATE
+  src/proto/fmp/rekey.c src/proto/fsp/rekey.c src/node/session.c)
