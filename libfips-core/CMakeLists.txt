@@ -135,3 +135,13 @@ target_sources(fips_core PRIVATE src/noise/cipher.c src/noise/replay.c src/noise
 
 # Diagnostic probe stages and report vocabulary (nostrc-f12v2.5); no wire codec.
 target_sources(fips_core PRIVATE src/proto/probe/core.c src/proto/probe/state.c)
+# MMP link/session metrics, reports and delivery (nostrc-f12v2.4).
+target_sources(fips_core PRIVATE
+  src/proto/mmp/wire.c src/proto/mmp/algorithms.c src/proto/mmp/metrics.c
+  src/proto/mmp/sender.c src/proto/mmp/receiver.c src/proto/mmp/delivery.c
+  src/proto/mmp/path_mtu.c src/proto/mmp/limits.c src/proto/mmp/state.c src/proto/mmp/core.c)
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+  set_source_files_properties(src/proto/mmp/algorithms.c src/proto/mmp/metrics.c
+    src/proto/mmp/receiver.c src/proto/mmp/sender.c src/proto/mmp/path_mtu.c PROPERTIES
+    COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off")
+endif()

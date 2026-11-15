@@ -728,3 +728,78 @@ terminal idempotence and integer extremes rather than inventing a codec.
 
 Version decision (nostrc-f12v2.5): additive APIs fold into **libfips-core 0.1.0
 Unreleased**; no published version/tag change.
+## MMP metrics and reports
+
+`proto/mmp/{wire,algorithms,metrics,sender,receiver,delivery,path_mtu,limits,state,core,mod}.h`
+mirror the pinned MMP modules. All time is injected monotonic `u64` milliseconds,
+never a clock call. `Mmp` is a stateless C namespace. The snapshot planners append
+`ReapPeer`, `Heartbeat`, `SendLinkReport`, `LogLink`, `SendSessionReport` and
+`LogSession` to caller-owned action storage. Capacity refusal is atomic. Logs
+precede sends; link sends are phase-grouped SR then RR, session sends are
+per-destination SR/RR/MTU. Backoff updates OR-fold successful sends per address
+and emit in address order. The host builds reports only when driving an action,
+marks heartbeat success only after send success, and owns all I/O/registry work.
+
+Role state is public for by-value storage, read-only to callers after init.
+The session aggregate holds common roles in `roles` plus `path_mtu`. OWD windows
+clamp to 2..4096 samples, backed by caller storage with explicit capacity and
+lifetime; Acks uses caller-sized peer slots. No allocator or implicit ceiling
+peer eviction is involved. Insufficient storage preserves state and returns
+RANGE. Optional results return false and preserve the result. No pointers may
+overlap inputs/state/output, and required pointers must be valid.
+
+The five codecs preserve the upstream body/type-byte split, ignore reserved
+bytes, accept trailing bytes, and leave cursor/output unchanged on errors.
+Link SR/RR encode 48/68 bytes including type; decode starts after type and
+requires 47/67 bytes. Session SR/RR encode/decode 46/66-byte bodies; path MTU
+is a two-byte LE body. Link/session conversions copy every named field.
+
+Arithmetic keeps upstream integer jitter/SRTT, saturating interval/ECN/reorder
+fields, wrapping sender timestamps, and bit-shift send backoff. Binary64 EWMA,
+ETX, regression, goodput and burst-mean casts preserve operation order with
+`-fno-fast-math -ffp-contract=off`. No MMP function needs `powi` or libm at this
+pin. Rust float-to-integer saturation is explicit (NaN -> 0); out-of-domain
+clock deadline/log interval products saturate rather than overflow. SRTT
+samples must be nonnegative (normal wire-derived samples fit u32 milliseconds).
+The host preserves IEEE round-to-nearest and gradual underflow. Spin RTT is
+returned to the caller, never implicitly fed into timestamp-echo SRTT.
+
+`test_mmp.c` groups all 152 tests in upstream `mmp/tests/` by behavior, with
+C-specific bounded-storage, error-atomicity and delivery evidence tests. Rust's
+serde name test becomes exact C parse/name pairs; the two private
+`fresh_diff`/`dirtied` test-helper tests become complete field carry/clear
+assertions without adding a test-only product API. File mapping:
+
+| Upstream tests | Count | C groups |
+| --- | ---: | --- |
+| algorithms | 15 | algorithms, arithmetic_pins |
+| core | 29 | decisions (all predicates plus multi-peer ordering) |
+| wire | 20 | wire_codecs (all prefixes/capacities and conversion boundaries) |
+| state | 55 | modes_and_sender, receiver_cycles_and_gaps, timing_owd_reorder, metrics_cycles, reset_field_inventory |
+| path_mtu | 12 | path_mtu_flow |
+| owd_trend | 6 | timing_owd_reorder |
+| reorder_count | 2 | timing_owd_reorder |
+| etx_trend | 3 | etx_once_per_report, arithmetic_pins |
+| rekey_reset | 8 | reset_and_spin (both aggregate forms and roles) |
+| spin_rekey | 2 | reset_and_spin |
+
+`python3 -I tests/tools/mmp_reference.py` generates `tests/mmp_pins.h`; its
+`--check` mode is a CTest. The 34 binary64 sequence values and 12 integer
+SRTT/variance values were also checked against the actual pinned Rust
+algorithms (compiled read-only), including OWD **16361 us/s** and jitter
+**4626 us** for the sampled stream. ETX smoothing takes one step per accepted
+report, never on reverse refresh or stale reports. Rekey resets RX baselines
+and spin state, but carries sender state, lifetime RX totals, schedules,
+SRTT/trends, reverse delivery, report counters and session path MTU, as upstream.
+
+`FipsCoreMmpVectorsTest` directly runs all five differential checks (and rejects
+five input mutations) while `cases.c` remains coordinator-owned. The sweep gate
+now expects **25 checked / 3 skipped** and allows only `nostrc-f12v2.6`; exclude
+`FipsProtoSweep` locally until the coordinator wires the five MMP rows.
+The pre-existing STP/bloom private delivery adapters are not rewired here.
+`fips_fuzz_mmp` fuzzes all five codecs and short-buffer atomicity, seeded from
+the pinned report fixtures. Workflow lists also reserve sibling targets
+`fips_fuzz_probe` and `fips_fuzz_rekey`; those targets are not created here.
+
+Version decision (nostrc-f12v2.4): additive MMP APIs fold into **libfips-core
+0.1.0 Unreleased**; no published version/tag change.

@@ -75,3 +75,6 @@ add_test(NAME FipsProtoSweep COMMAND "${CMAKE_COMMAND}"
 set_tests_properties(FipsProtoSweep PROPERTIES TIMEOUT 30 LABELS "fips;diff;proto-sweep;fips-diff")
 nostrc_describe_test(FipsProtoSweep OWNER libfips-core TARGETS fips_diff
   INPUTS ${vector_inputs} "${CMAKE_CURRENT_SOURCE_DIR}/proto_sweep.cmake")
+
+# The orchestrator wires these five per-name rows after merge.
+target_sources(fips_diff PRIVATE proto_mmp.c)

@@ -131,8 +131,11 @@ separately owned; see exporter gaps and `UPSTREAM.md`.
 `FipsDiff*` test (including self-test negatives) and `FipsProtoSweep`.
 `ctest --test-dir <build> -R '^FipsProtoSweep$' -V` runs only the proto exit gate.
 The latter invokes the real `fips_diff proto`, requires exactly one summary
-`proto: 20 checked, 8 skipped, 0 failed`, counts all eight SKIP lines, and requires
-each to name owner `nostrc-f12v2.4` or `nostrc-f12v2.6`. Successful process exit
+`proto: 25 checked, 3 skipped, 0 failed`, counts all three SKIP lines, and requires
+each to name owner `nostrc-f12v2.6`. The MMP branch changes this integration
+expectation before coordinator-owned `cases.c` wiring; exclude this single
+meta-test on that branch. `FipsCoreMmpVectorsTest` independently proves all five
+MMP rows and rejects input mutations without changing dispatch. Successful process exit
 alone is not sufficient. Other families retain their own explicit skips.
 
 When Tier A4 lands a report/path-MTU codec (`nostrc-f12v2.4`) or a path
@@ -141,5 +144,5 @@ property adapter and vector-seeded harness coverage. Then run `fips_diff proto`
 and update **both** expected summary and SKIP count in `proto_sweep.cmake` in the
 same change. Each existing row moves one from skipped to checked; do not delete
 rows, relabel an unimplemented case as checked, or broaden the owner allowlist.
-Remove the SKIP allowance altogether when all eight have landed. Update the
+Remove the SKIP allowance altogether when the remaining three have landed. Update the
 property test's expected vector-replay count and coverage table as applicable.

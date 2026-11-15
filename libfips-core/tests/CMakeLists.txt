@@ -414,3 +414,33 @@ add_test(NAME FipsCoreProbeTest COMMAND fips_core_probe_test)
 set_tests_properties(FipsCoreProbeTest PROPERTIES TIMEOUT 30 LABELS "fips;unit")
 nostrc_describe_test(FipsCoreProbeTest OWNER libfips-core TARGETS fips_core_probe_test)
 add_dependencies(fips_core_host_test fips_core_probe_test)
+# MMP unit ports and independent per-name differential replay (nostrc-f12v2.4).
+add_executable(fips_core_mmp_test test_mmp.c)
+target_link_libraries(fips_core_mmp_test PRIVATE fips_core)
+set_target_properties(fips_core_mmp_test PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+apply_warnings(fips_core_mmp_test)
+apply_sanitizers(fips_core_mmp_test)
+add_test(NAME FipsCoreMmpTest COMMAND fips_core_mmp_test)
+set_tests_properties(FipsCoreMmpTest PROPERTIES TIMEOUT 30 LABELS "fips;unit")
+nostrc_describe_test(FipsCoreMmpTest OWNER libfips-core TARGETS fips_core_mmp_test
+  INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/mmp_reference.py")
+add_executable(fips_core_mmp_vectors_test test_mmp_vectors.c diff/proto_mmp.c
+  diff/loader.c diff/schema.c diff/proto_link.c fakes/host.c)
+get_target_property(fips_mmp_diff_definitions fips_diff COMPILE_DEFINITIONS)
+target_compile_definitions(fips_core_mmp_vectors_test PRIVATE ${fips_mmp_diff_definitions})
+target_link_libraries(fips_core_mmp_vectors_test PRIVATE fips_core PkgConfig::FIPS_LINK_JANSSON OpenSSL::Crypto)
+set_target_properties(fips_core_mmp_vectors_test PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+apply_warnings(fips_core_mmp_vectors_test)
+apply_sanitizers(fips_core_mmp_vectors_test)
+add_test(NAME FipsCoreMmpVectorsTest COMMAND fips_core_mmp_vectors_test)
+set_tests_properties(FipsCoreMmpVectorsTest PROPERTIES TIMEOUT 30 LABELS "fips;diff")
+nostrc_describe_test(FipsCoreMmpVectorsTest OWNER libfips-core TARGETS fips_core_mmp_vectors_test
+  INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/vectors/proto.json" "${CMAKE_CURRENT_SOURCE_DIR}/../UPSTREAM.md")
+add_dependencies(fips_core_host_test fips_core_mmp_test fips_core_mmp_vectors_test)
+
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+add_test(NAME FipsCoreMmpPinsTest COMMAND "${Python3_EXECUTABLE}" -I
+  "${CMAKE_CURRENT_SOURCE_DIR}/tools/mmp_reference.py" --check "${CMAKE_CURRENT_SOURCE_DIR}/mmp_pins.h")
+set_tests_properties(FipsCoreMmpPinsTest PROPERTIES TIMEOUT 10 LABELS "fips;unit")
+nostrc_describe_test(FipsCoreMmpPinsTest OWNER libfips-core
+  INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/mmp_reference.py" "${CMAKE_CURRENT_SOURCE_DIR}/mmp_pins.h")
