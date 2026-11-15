@@ -1,5 +1,6 @@
 #include "../include/libgo/fiber.h"
 #include "sched.h"
+#include "../io/netpoll.h"
 #include <errno.h>
 #include <time.h>
 #include <stdio.h>
@@ -31,6 +32,10 @@ static pthread_mutex_t bg_mutex = PTHREAD_MUTEX_INITIALIZER;
 /* Exposed to sched.c worker_main so it can observe the stop flag */
 int gof_bg_stop_requested(void) {
     return atomic_load_explicit(&bg_stop_requested, memory_order_acquire);
+}
+
+int gof_bg_running(void) {
+  return atomic_load_explicit(&bg_running, memory_order_acquire);
 }
 
 void gof_init(size_t default_stack_bytes) {
@@ -165,6 +170,8 @@ int gof_start_background(size_t default_stack_bytes) {
     return -1;
   }
 
+  /* Publish keep-alive BEFORE the first worker can see an empty scheduler. */
+  atomic_store_explicit(&bg_running, 1, memory_order_release);
   /* Launch ALL workers as background threads (unlike gof_run which uses
    * the calling thread as worker 0). */
   for (int i = 0; i < bg_nworkers; ++i) {
@@ -175,19 +182,20 @@ int gof_start_background(size_t default_stack_bytes) {
     if (rc != 0) {
       fprintf(stderr, "[gof] failed to create background worker %d: %d\n", i, rc);
       /* Clean up any already-created threads */
-      atomic_store_explicit(&bg_stop_requested, 1, memory_order_release);
+      gof_request_stop();
       for (int j = 0; j < i; ++j) {
         pthread_join(bg_worker_threads[j], NULL);
       }
       free(bg_worker_threads);
       bg_worker_threads = NULL;
       bg_nworkers = 0;
+      atomic_store_explicit(&bg_running, 0, memory_order_release);
+      atomic_store_explicit(&bg_stop_requested, 0, memory_order_release);
       pthread_mutex_unlock(&bg_mutex);
       return -1;
     }
   }
 
-  atomic_store_explicit(&bg_running, 1, memory_order_release);
   pthread_mutex_unlock(&bg_mutex);
 #if defined(GOF_DEBUG)
   fprintf(stderr, "[gof] background scheduler started with %d workers\n", bg_nworkers);
@@ -196,10 +204,9 @@ int gof_start_background(size_t default_stack_bytes) {
 }
 
 void gof_request_stop(void) {
-  atomic_store_explicit(&bg_stop_requested, 1, memory_order_release);
-  /* Signal the scheduler condition variable to wake any idle workers */
-  /* This is done via the scheduler's internal API — we need to expose it.
-   * For now, inject a NULL sentinel that workers check. */
+  if (!atomic_exchange_explicit(&bg_stop_requested, 1, memory_order_acq_rel))
+    gof_io_cancel_waiters();
+  /* Wake idle workers after publishing the stop and I/O cancellation. */
   gof_sched_wake_all();
 }
 
@@ -214,7 +221,7 @@ int gof_join_background(void) {
   int nworkers = bg_nworkers;
   bg_worker_threads = NULL;
   bg_nworkers = 0;
-  atomic_store_explicit(&bg_running, 0, memory_order_release);
+  /* Keep running set during joins: a new start must not reuse live workers. */
   pthread_mutex_unlock(&bg_mutex);
 
   /* Join threads outside the mutex to avoid blocking other callers */
@@ -222,6 +229,10 @@ int gof_join_background(void) {
     pthread_join(threads[i], NULL);
   }
   free(threads);
+  pthread_mutex_lock(&bg_mutex);
+  atomic_store_explicit(&bg_running, 0, memory_order_release);
+  atomic_store_explicit(&bg_stop_requested, 0, memory_order_release);
+  pthread_mutex_unlock(&bg_mutex);
 #if defined(GOF_DEBUG)
   fprintf(stderr, "[gof] background scheduler stopped\n");
 #endif

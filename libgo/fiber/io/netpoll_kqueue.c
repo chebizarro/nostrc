@@ -29,9 +29,9 @@ int gof_netpoll_arm(int fd, int events, uint64_t deadline_ns) {
   struct kevent kev[2];
   int n = 0;
   if (events & GOF_POLL_READ)
-    EV_SET(&kev[n++], fd, EVFILT_READ, EV_ADD | EV_ENABLE | EV_CLEAR, 0, 0, NULL);
+    EV_SET(&kev[n++], fd, EVFILT_READ, EV_ADD | EV_ENABLE | EV_ONESHOT, 0, 0, NULL);
   if (events & GOF_POLL_WRITE)
-    EV_SET(&kev[n++], fd, EVFILT_WRITE, EV_ADD | EV_ENABLE | EV_CLEAR, 0, 0, NULL);
+    EV_SET(&kev[n++], fd, EVFILT_WRITE, EV_ADD | EV_ENABLE | EV_ONESHOT, 0, 0, NULL);
   if (n == 0) return 0;
 
   return kevent(kq, kev, n, NULL, 0, NULL);

@@ -125,10 +125,36 @@ int  gof_join_background(void);
 int  gof_in_fiber(void);
 ```
 
+`gof_start_background()` keeps the worker pool alive even when there are no
+fibers. OS threads can submit work later with `go_fiber()` or `gof_spawn()`;
+no sentinel/keep-alive fiber or startup ordering workaround is needed.
+`gof_run()` instead blocks until all fibers complete and then returns, including
+when started empty. Never run the two scheduler modes concurrently.
+
+Stop submitting new work, cancel application/channel work, call
+`gof_request_stop()`, then call `gof_join_background()` from an OS thread.
+Stop wakes pending I/O with `-1` / `ECANCELED`; it does not preempt a running
+fiber or cancel arbitrary application waits. Join does not return just because
+all fibers have completed: background mode requires an explicit stop. A new
+start is rejected through the end of join; afterward the scheduler can restart
+or run in foreground mode.
+
 ### Fiber-friendly I/O
 
 Nonblocking wrappers that park the calling fiber on the netpoller and resume
-it when the fd becomes ready (or a timeout expires):
+it when the fd becomes ready (or a timeout expires). A wait without a deadline
+parks indefinitely, not in 2 ms slices. Waiters are registered under the I/O
+mutex **before** the poller is armed; readiness before the actual park is
+retained by the scheduler's RUNNABLE/PARKING → WOKEN handshake. All matching
+waiters receive a readiness edge, including peer EOF/hangup. Keep a waiting fd
+open: raw `close(fd)` from another thread is not a supported cancellation path;
+close the peer or stop/cancel the operation before closing its descriptor.
+
+The dedicated poller already uses an indefinite kernel wait. Untimed I/O now
+adds no sleep-heap entry, so idle workers also wait indefinitely. Injection,
+readiness, new deadlines and stop signal the existing worker condition variable.
+Timed operations retain one absolute monotonic deadline across retries, and
+completed/cancelled I/O removes its deadline from the heap.
 
 ```c
 ssize_t gof_read(int fd, void *buf, size_t n);
@@ -357,6 +383,8 @@ ctest --test-dir build -R "GoFiber" --output-on-failure -j4
 | `GoFiberContextTest` | 10 s | Context switch sequencing |
 | `GoFiberChanTest` | 15 s | Channel send/recv + close |
 | `GoFiberIoTest` | 10 s | Pipe I/O through netpoller |
+| `GoFiberIoIdleTestW1/W4` | 60 s | Zero resumes over 2 s idle, bounded write latency, 10k parking races, shared-fd EOF |
+| `GoFiberBackgroundLifecycleTestW1/W4` | 60 s | 50 delayed submissions into empty pools, prompt stop/join, timed and untimed I/O cancellation |
 | `GoFiberIoTimeoutTest` | 2 s (10 s on CI) | Connect timeout path |
 | `GoFiberStarvationTest` | 20 s | Fair scheduling under yield storms |
 

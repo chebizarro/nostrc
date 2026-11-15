@@ -7,6 +7,23 @@ This document explains the public API, threading/blocking/cancellation semantics
 - Threading model: All operations are thread-safe. Blocking operations wait on condition variables and wake upon state changes or cancellation.
 - Memory model: Create primitives with their constructor/init; free/destroy with the corresponding free/destroy functions. Do not free the underlying structs manually unless explicitly documented.
 
+## Fiber scheduler lifetime and I/O
+
+In **libgo 0.3.0 Unreleased**, PATCH-class fixes for `nostrc-dahcn` and
+`nostrc-3lzr1` remove periodic I/O retries and premature background worker exit.
+`gof_run()` returns when all fibers finish. `gof_start_background()` keeps its
+workers alive even with zero fibers, accepting later `go_fiber()` submissions
+until explicit `gof_request_stop()` / `gof_join_background()`. Join must finish
+before another start; foreground and background runs must not overlap.
+
+Fiber I/O without a deadline parks until readiness, peer EOF/hangup or scheduler
+stop, without the former 2 ms wakeups. Timed socket operations retain their
+absolute deadline and return `ETIMEDOUT` on expiry. Stop cancels pending I/O with
+`ECANCELED`; it is cooperative and does not preempt fibers or cancel channel and
+application waits. Keep the waiting descriptor open until its operation ends;
+raw cross-thread `close(fd)` is not cancellation. See [the fiber runtime
+README](fiber/README.md) for the lifecycle contract and regression tests.
+
 ## Fiber hook linkage
 
 `GoChannel` and `go_select` park cooperatively when called inside `go_fiber`.
