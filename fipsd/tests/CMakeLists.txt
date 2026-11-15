@@ -112,3 +112,36 @@ if(FIPSD_UPSTREAM_CONFIG_DIR)
       INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/config_golden/${_name}.txt")
   endforeach()
 endif()
+
+# Node lifecycle, bounded worker pools and platform network monitor.
+fipsd_unit_test(fipsd_node_lifecycle_test test_node_lifecycle.c)
+fipsd_unit_test(fipsd_node_workers_test test_node_workers.c)
+fipsd_unit_test(fipsd_node_netmon_test test_node_netmon.c)
+fipsd_unit_test(fipsd_node_context_test test_node_context.c)
+add_dependencies(fipsd_tests fipsd_node_lifecycle_test fipsd_node_workers_test
+  fipsd_node_netmon_test fipsd_node_context_test)
+add_test(NAME FipsdNodeLifecycleTest COMMAND fipsd_node_lifecycle_test)
+add_test(NAME FipsdNodeLifecycleFailureTest COMMAND fipsd_node_lifecycle_test failure)
+add_test(NAME FipsdNodeWorkersTest COMMAND fipsd_node_workers_test)
+add_test(NAME FipsdNodeNetmonTest COMMAND fipsd_node_netmon_test)
+add_test(NAME FipsdNodeNetmonNativeTest COMMAND fipsd_node_netmon_test native)
+add_test(NAME FipsdNodeContextTest COMMAND fipsd_node_context_test)
+add_test(NAME FipsdNodeIdentityFailureTest COMMAND fipsd_node_context_test failure)
+foreach(_node_test FipsdNodeLifecycleTest FipsdNodeLifecycleFailureTest
+    FipsdNodeWorkersTest FipsdNodeNetmonTest FipsdNodeNetmonNativeTest
+    FipsdNodeContextTest FipsdNodeIdentityFailureTest)
+  set_tests_properties(${_node_test} PROPERTIES TIMEOUT 30 LABELS "fips;node"
+    ENVIRONMENT "FIPSD_WORKERS=2")
+endforeach()
+nostrc_describe_test(FipsdNodeLifecycleTest OWNER fipsd TARGETS fipsd_node_lifecycle_test)
+nostrc_describe_test(FipsdNodeLifecycleFailureTest OWNER fipsd TARGETS fipsd_node_lifecycle_test)
+nostrc_describe_test(FipsdNodeWorkersTest OWNER fipsd TARGETS fipsd_node_workers_test)
+nostrc_describe_test(FipsdNodeNetmonTest OWNER fipsd TARGETS fipsd_node_netmon_test)
+nostrc_describe_test(FipsdNodeNetmonNativeTest OWNER fipsd TARGETS fipsd_node_netmon_test)
+nostrc_describe_test(FipsdNodeContextTest OWNER fipsd TARGETS fipsd_node_context_test)
+nostrc_describe_test(FipsdNodeIdentityFailureTest OWNER fipsd TARGETS fipsd_node_context_test)
+
+add_test(NAME FipsdNodeHandlerFailureTest COMMAND fipsd_node_context_test handler)
+set_tests_properties(FipsdNodeHandlerFailureTest PROPERTIES TIMEOUT 30 LABELS "fips;node"
+  ENVIRONMENT "FIPSD_WORKERS=2")
+nostrc_describe_test(FipsdNodeHandlerFailureTest OWNER fipsd TARGETS fipsd_node_context_test)

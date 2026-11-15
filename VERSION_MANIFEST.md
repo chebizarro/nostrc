@@ -1663,3 +1663,14 @@ sources, and update the release columns when it creates a tag.
 nostrc-9keoz.4: no bump for fipsd 0.1.0 Unreleased; peer owners, lifecycle/retry,
 bounded admission/identities/table and dispatcher snapshots fold into the initial
 unreleased host. No published release/tag change; libfips-core APIs unchanged.
+
+nostrc-9keoz.5: no bump for fipsd 0.1.0 Unreleased; node lifecycle/supervisor,
+bounded crypto worker fibers, interface monitor and internal transport registration
+fold into the initial pre-release host. No published release/tag change and no
+libfips-core public API or version change. The bootstrap host remains alive
+but reports a Failed/not-ready node without registered Tier B2 transports.
+
+nostrc-9keoz.5: libgo remains 0.3.0 Unreleased; PATCH-class errno
+TLS reacquisition plus relaxed scalar access for shared OS-worker errno cells
+fixes the native netmon TSan regression
+without an installed API change and folds into the existing unreleased version.

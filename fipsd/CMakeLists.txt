@@ -73,3 +73,8 @@ target_sources(fipsd_lib PRIVATE
   src/config/schema.c src/config/node.c src/config/transport.c
   src/config/peer.c src/config/gateway.c src/config/floors.c
   src/config/loadlog.c src/config/validate.c src/config/core.c src/config/reload.c)
+
+# Node host lifecycle and transport registration (nostrc-9keoz.5).
+target_sources(fipsd_lib PRIVATE
+  src/node/lifecycle.c src/node/context.c src/node/transport.c
+  src/node/worker_set.c src/node/netmon.c)

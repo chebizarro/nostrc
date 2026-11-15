@@ -62,6 +62,17 @@ static uint64_t deadline_from_ms(int timeout_ms) {
  * errno happens-before edges would hide real application races between fibers. */
 __attribute__((noinline, no_sanitize("thread"))) static int fiber_get_errno(void) { return errno; }
 __attribute__((noinline, no_sanitize("thread"))) static void fiber_set_errno(int e) { errno = e; }
+/* Different TSan fibers can occupy the same OS worker and hence the same
+ * errno cell. Their application memory is deliberately NOT synchronized by a
+ * fiber switch. Relaxed scalar accesses express this worker-local sharing
+ * without inventing happens-before edges between unrelated application data.
+ * libc's syscall updates occur synchronously on that worker, before the load. */
+__attribute__((noinline)) static int fiber_get_errno(void) {
+  return __atomic_load_n(&errno, __ATOMIC_RELAXED);
+}
+__attribute__((noinline)) static void fiber_set_errno(int e) {
+  __atomic_store_n(&errno, e, __ATOMIC_RELAXED);
+}
 
 /* ---------------- IO waiter registry (per-fd queues) ---------------- */
 typedef struct gof_waiter { /* single waiter node */
@@ -250,12 +261,15 @@ ssize_t gof_read(int fd, void *buf, size_t n) {
   for(;;) {
     ssize_t r = read(fd, buf, n);
     if (r >= 0) return r;
+    /* Like the message wrappers, reacquire errno on this worker after each
+     * syscall. A cached TLS address cannot survive the park below. */
     int error = fiber_get_errno();
     if (error == EAGAIN || error == EWOULDBLOCK) {
       /* Park cooperatively and retry. No explicit timeout for read(). */
       if (wait_event_with_deadline(fd, GOF_POLL_READ, 0) != 0) return -1;
       continue;
     }
+    fiber_set_errno(error);
     return -1;
   }
 #endif

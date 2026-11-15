@@ -10,6 +10,7 @@
 #include "log.h"
 #include "privilege.h"
 #include "runtime.h"
+#include "node/context.h"
 
 #define MODULE "main"
 
@@ -130,13 +131,8 @@ int main(int argc, char **argv)
     fipsd_config_service service;
     fipsd_config_service_init(&service, snapshots, opts.config_path, log, log_file);
 
-    /* Host adapters for the core (time, entropy) are linked and ready for the
-     * node subsystem; nothing reads them in the skeleton. */
-    fips_clock clock = fipsd_host_os_clock();
-    fips_entropy entropy = fipsd_host_os_entropy();
-    (void)clock;
-    (void)entropy;
-
+    fipsd_node *node = fipsd_node_create(snapshots, NULL);
+    fipsd_subsystem *node_subsystem = node ? fipsd_node_subsystem(node) : NULL;
     int code = FIPSD_EXIT_OK;
     fipsd_runtime_config cfg;
     fipsd_runtime_config_default(&cfg);
@@ -144,11 +140,18 @@ int main(int argc, char **argv)
     if (!rt) {
         FIPSD_ERROR(MODULE, "cannot allocate the runtime");
         code = FIPSD_EXIT_FAILURE;
-    } else if (fipsd_runtime_register(rt, &service.subsystem) != 0 ||
+    } else if (!node_subsystem || fipsd_runtime_register(rt, &service.subsystem) != 0 ||
+               fipsd_runtime_register(rt, node_subsystem) != 0 ||
                fipsd_runtime_start(rt) != 0) {
         FIPSD_ERROR(MODULE, "start-up failed");
         code = FIPSD_EXIT_FAILURE;
     } else {
+        GoRefPtr node_status = fipsd_node_status_load(fipsd_node_status_slot(node));
+        const fipsd_node_status *state = node_status.ptr;
+        if (!state || !state->ready)
+            FIPSD_WARN(MODULE, "node not ready (state=%d); Tier B2 transports are not registered; host remains available",
+                       state ? (int)state->state : -1);
+        go_refptr_release(&node_status);
         FIPSD_INFO(MODULE, "fipsd running");
         int status = fipsd_runtime_run(rt);
         if (status != FIPSD_RUN_OK) {
@@ -157,6 +160,7 @@ int main(int argc, char **argv)
         }
     }
     fipsd_runtime_destroy(rt);
+    fipsd_node_destroy(node);
     go_swap_free(snapshots);
     FIPSD_INFO(MODULE, "fipsd shutdown complete (exit %d)", code);
     fipsd_log_set_default(NULL);
