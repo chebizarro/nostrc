@@ -34,6 +34,7 @@ int gof_netpoll_arm(int fd, int events, uint64_t deadline_ns) {
   if (epoll_ctl(epfd, EPOLL_CTL_MOD, fd, &ev) != 0) {
     if (errno == ENOENT)
       return epoll_ctl(epfd, EPOLL_CTL_ADD, fd, &ev);
+    return -1;
   }
   return 0;
 }
@@ -48,6 +49,7 @@ int gof_netpoll_wait(int timeout_ms) {
     int events = 0;
     if (evs[i].events & EPOLLIN)  events |= GOF_POLL_READ;
     if (evs[i].events & EPOLLOUT) events |= GOF_POLL_WRITE;
+    if (evs[i].events & (EPOLLHUP | EPOLLERR)) events |= GOF_POLL_READ | GOF_POLL_WRITE;
     if (events) cb(evs[i].data.fd, events);
   }
   return n;

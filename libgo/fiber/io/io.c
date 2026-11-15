@@ -56,8 +56,12 @@ static uint64_t deadline_from_ms(int timeout_ms) {
  * caller read the new thread's (nostrc-ci). Value-capture immediately
  * after each syscall, and go through noinline helpers so every errno
  * access is evaluated on the thread that executes it. */
-__attribute__((noinline)) static int fiber_get_errno(void) { return errno; }
-__attribute__((noinline)) static void fiber_set_errno(int e) { errno = e; }
+/* errno belongs to the OS thread, not the TSan fiber. These accessors never
+ * suspend, so different fibers on one worker cannot access it concurrently.
+ * Exclude ONLY these TLS loads/stores from instrumentation; adding switch or
+ * errno happens-before edges would hide real application races between fibers. */
+__attribute__((noinline, no_sanitize("thread"))) static int fiber_get_errno(void) { return errno; }
+__attribute__((noinline, no_sanitize("thread"))) static void fiber_set_errno(int e) { errno = e; }
 
 /* ---------------- IO waiter registry (per-fd queues) ---------------- */
 typedef struct gof_waiter { /* single waiter node */
@@ -77,10 +81,10 @@ typedef struct gof_fdwait {     /* fd entry with separate read/write queues */
 static gof_fdwait *fd_buckets[FDWAIT_BUCKETS];
 static _Atomic int ready_cb_installed = 0;
 static pthread_mutex_t io_mu = PTHREAD_MUTEX_INITIALIZER;
-/* Number of registered IO waiter nodes, maintained under io_mu and read
- * lock-free by gof_io_have_waiters(). The scheduler's idle loop calls that
- * while holding S.mu, so it must not take io_mu: on_ready holds io_mu while
- * waking, and the wake takes S.mu (nostrc-bme1g review — ABBA deadlock). */
+/* Active waits, including readiness already claimed but not yet consumed.
+ * Read under S.mu without io_mu (the wake path locks in the opposite order).
+ * Counting through consumption also prevents stop from retiring a worker while
+ * on_ready has removed the last queue node but has not yet enqueued its fiber. */
 static _Atomic int g_io_waiter_count = 0;
 
 static unsigned fd_hash(int fd){ return ((unsigned)fd) & (FDWAIT_BUCKETS-1); }
@@ -95,19 +99,18 @@ static gof_fdwait* fdwait_get(int fd, int create){
   e->fd = fd; e->next = fd_buckets[h]; fd_buckets[h] = e; return e;
 }
 
-static void waiter_push(gof_waiter **head, gof_waiter **tail, gof_fiber *f){
+static int waiter_push(gof_waiter **head, gof_waiter **tail, gof_fiber *f){
   gof_waiter *w = (gof_waiter*)malloc(sizeof(*w));
-  if (!w) return;
+  if (!w) return -1;
   w->f = f;
   w->next = NULL;
   if (*tail) { (*tail)->next = w; *tail = w; }
   else { *head = *tail = w; }
-  atomic_fetch_add_explicit(&g_io_waiter_count, 1, memory_order_relaxed);
+  return 0;
 }
 
 static gof_fiber* waiter_pop(gof_waiter **head, gof_waiter **tail){
   gof_waiter *w = *head; if (!w) return NULL; *head = w->next; if (!*head) *tail = NULL; gof_fiber *f = w->f; free(w);
-  atomic_fetch_sub_explicit(&g_io_waiter_count, 1, memory_order_relaxed);
   return f;
 }
 
@@ -118,32 +121,55 @@ static void io_waiter_remove_fiber_locked(gof_fiber *f) {
   if (!e) { f->wait_fd = -1; f->wait_events = 0; return; }
   if (f->wait_events & GOF_POLL_READ) {
     gof_waiter *prev = NULL, *cur = e->rd_head;
-    while (cur) { if (cur->f == f) { if (prev) prev->next = cur->next; else e->rd_head = cur->next; if (cur == e->rd_tail) e->rd_tail = prev; free(cur); atomic_fetch_sub_explicit(&g_io_waiter_count, 1, memory_order_relaxed); break; } prev = cur; cur = cur->next; }
+    while (cur) { if (cur->f == f) { if (prev) prev->next = cur->next; else e->rd_head = cur->next; if (cur == e->rd_tail) e->rd_tail = prev; free(cur); break; } prev = cur; cur = cur->next; }
   }
   if (f->wait_events & GOF_POLL_WRITE) {
     gof_waiter *prev = NULL, *cur = e->wr_head;
-    while (cur) { if (cur->f == f) { if (prev) prev->next = cur->next; else e->wr_head = cur->next; if (cur == e->wr_tail) e->wr_tail = prev; free(cur); atomic_fetch_sub_explicit(&g_io_waiter_count, 1, memory_order_relaxed); break; } prev = cur; cur = cur->next; }
+    while (cur) { if (cur->f == f) { if (prev) prev->next = cur->next; else e->wr_head = cur->next; if (cur == e->wr_tail) e->wr_tail = prev; free(cur); break; } prev = cur; cur = cur->next; }
   }
   f->wait_fd = -1;
   f->wait_events = 0;
 }
 
-static void io_waiter_add(int fd, int events, gof_fiber *f) {
-  pthread_mutex_lock(&io_mu);
-  /* Remove any existing waiter for this fiber using its tracked fd (O(1) lookup) */
-  io_waiter_remove_fiber_locked(f);
-  gof_fdwait *e = fdwait_get(fd, 1); if (e) {
-    if (events & GOF_POLL_READ) waiter_push(&e->rd_head, &e->rd_tail, f);
-    if (events & GOF_POLL_WRITE) waiter_push(&e->wr_head, &e->wr_tail, f);
-  }
-  /* Track what this fiber is waiting on for fast removal */
-  if (f) { f->wait_fd = fd; f->wait_events = events; }
-  pthread_mutex_unlock(&io_mu);
+static int fdwait_events(gof_fdwait *e) {
+  return (e->rd_head ? GOF_POLL_READ : 0) | (e->wr_head ? GOF_POLL_WRITE : 0);
 }
 
-static void io_waiter_remove_by_fiber(gof_fiber *f) {
+/* io_mu serializes publication/arming with readiness and stop cancellation.
+ * Register first: a ready one-shot event must never find an empty queue. */
+static int io_waiter_add_and_arm(int fd, int events, uint64_t deadline_ns,
+                                 gof_fiber *f) {
+  int error = 0;
   pthread_mutex_lock(&io_mu);
-  io_waiter_remove_fiber_locked(f);
+  if (gof_bg_stop_requested()) {
+    error = ECANCELED;
+  } else {
+    gof_fdwait *e = fdwait_get(fd, 1);
+    f->wait_fd = fd;
+    f->wait_events = events;
+    if (!e || ((events & GOF_POLL_READ) && waiter_push(&e->rd_head, &e->rd_tail, f)) ||
+        ((events & GOF_POLL_WRITE) && waiter_push(&e->wr_head, &e->wr_tail, f))) {
+      error = ENOMEM;
+    } else if (gof_netpoll_arm(fd, fdwait_events(e), deadline_ns) != 0) {
+      error = fiber_get_errno();
+    }
+    if (error) io_waiter_remove_fiber_locked(f);
+    else atomic_fetch_add_explicit(&g_io_waiter_count, 1, memory_order_release);
+  }
+  pthread_mutex_unlock(&io_mu);
+  return error;
+}
+
+/* Keep registrations until their fibers consume cancellation. Workers must not
+ * retire between claiming the wake and enqueueing the cancelled I/O fiber. */
+void gof_io_cancel_waiters(void) {
+  pthread_mutex_lock(&io_mu);
+  for (unsigned i = 0; i < FDWAIT_BUCKETS; ++i) {
+    for (gof_fdwait *e = fd_buckets[i]; e; e = e->next) {
+      for (gof_waiter *w = e->rd_head; w; w = w->next) gof_sched_make_runnable(w->f);
+      for (gof_waiter *w = e->wr_head; w; w = w->next) gof_sched_make_runnable(w->f);
+    }
+  }
   pthread_mutex_unlock(&io_mu);
 }
 
@@ -154,28 +180,29 @@ int gof_io_have_waiters(void) {
   return atomic_load_explicit(&g_io_waiter_count, memory_order_acquire) > 0;
 }
 
+static void wake_queue(gof_waiter **head, gof_waiter **tail) {
+  gof_fiber *f;
+  while ((f = waiter_pop(head, tail)) != NULL) {
+    int pidx = gof_sched_current_poller_index();
+    if (pidx >= 0) gof_sched_make_runnable_from_poller(f, pidx);
+    else gof_sched_make_runnable(f);
+  }
+}
+
 static void on_ready(int fd, int events) {
-  /* Pop the waiter AND wake it under io_mu (nostrc-bme1g): a fiber resumed
-   * spuriously in between could otherwise remove its own registration,
-   * finish, and be freed before this wake touched it. Lock order
-   * io_mu -> scheduler locks; nothing takes io_mu while holding scheduler
-   * locks. */
+  /* Pop AND wake under io_mu: a timeout may otherwise resume/free the fiber
+   * before the callback touches it. Lock order remains io_mu -> scheduler. */
   pthread_mutex_lock(&io_mu);
   gof_fdwait *e = fdwait_get(fd, 0);
-  gof_fiber *f = NULL;
   if (e) {
-    if ((events & GOF_POLL_READ) && e->rd_head) {
-      f = waiter_pop(&e->rd_head, &e->rd_tail);
-    } else if ((events & GOF_POLL_WRITE) && e->wr_head) {
-      f = waiter_pop(&e->wr_head, &e->wr_tail);
-    }
-  }
-  if (f) {
-    int pidx = gof_sched_current_poller_index();
-    if (pidx >= 0) {
-      gof_sched_make_runnable_from_poller(f, pidx);
-    } else {
-      gof_sched_make_runnable(f);
+    /* An edge belongs to every matching waiter, not just the first reader.
+     * Losers of the syscall race register again before rearming. */
+    if (events & GOF_POLL_READ) wake_queue(&e->rd_head, &e->rd_tail);
+    if (events & GOF_POLL_WRITE) wake_queue(&e->wr_head, &e->wr_tail);
+    int remaining = fdwait_events(e);
+    if (remaining && gof_netpoll_arm(fd, remaining, 0) != 0) {
+      wake_queue(&e->rd_head, &e->rd_tail);
+      wake_queue(&e->wr_head, &e->wr_tail);
     }
   }
   pthread_mutex_unlock(&io_mu);
@@ -189,29 +216,30 @@ static void ensure_ready_callback(void) {
 }
 
 static int wait_event_with_deadline(int fd, int events, uint64_t deadline_ns) {
-  /* Best-effort: arm interest and cooperatively park until deadline. */
-  (void)gof_netpoll_init();
-  ensure_ready_callback();
-  (void)gof_netpoll_arm(fd, events, deadline_ns);
-  /* Register as waiter so readiness can wake us. */
   gof_fiber *self = gof_sched_current();
-  if (self) io_waiter_add(fd, events, self);
-  if (deadline_ns == 0) {
-    /* No timeout specified: park in small slices to stay responsive */
-    for(;;) {
-      uint64_t slice = now_ns() + 2 * 1000000ull; /* 2ms */
-      gof_sched_park_until(slice);
-      /* caller will re-attempt IO */
-      /* Clean waiter entry if still present to avoid leaks */
-      if (self) io_waiter_remove_by_fiber(self);
-      return 0;
-    }
-  } else {
-    /* Park until deadline. */
-    gof_sched_park_until(deadline_ns);
-    if (self) io_waiter_remove_by_fiber(self);
-    return 0;
+  if (!self) { fiber_set_errno(EINVAL); return -1; }
+  if (deadline_ns && now_ns() >= deadline_ns) {
+    fiber_set_errno(ETIMEDOUT);
+    return -1;
   }
+  ensure_ready_callback();
+  int error = io_waiter_add_and_arm(fd, events, deadline_ns, self);
+  if (error) { fiber_set_errno(error); return -1; }
+
+  /* Readiness between arm and park claims RUNNABLE/PARKING -> WOKEN;
+   * the scheduler then consumes that claim without losing the wake. */
+  if (deadline_ns) gof_sched_park_until(deadline_ns);
+  else gof_sched_block_current();
+  pthread_mutex_lock(&io_mu);
+  io_waiter_remove_fiber_locked(self);
+  atomic_fetch_sub_explicit(&g_io_waiter_count, 1, memory_order_release);
+  error = gof_bg_stop_requested() ? ECANCELED : 0;
+  pthread_mutex_unlock(&io_mu);
+  if (error == ECANCELED) gof_sched_wake_all();
+  gof_trace_on_unblock(fd, events);
+  if (!error && deadline_ns && now_ns() >= deadline_ns) error = ETIMEDOUT;
+  if (error) { fiber_set_errno(error); return -1; }
+  return 0;
 }
 
 ssize_t gof_read(int fd, void *buf, size_t n) {
@@ -222,9 +250,10 @@ ssize_t gof_read(int fd, void *buf, size_t n) {
   for(;;) {
     ssize_t r = read(fd, buf, n);
     if (r >= 0) return r;
-    if (errno == EAGAIN || errno == EWOULDBLOCK) {
+    int error = fiber_get_errno();
+    if (error == EAGAIN || error == EWOULDBLOCK) {
       /* Park cooperatively and retry. No explicit timeout for read(). */
-      (void)wait_event_with_deadline(fd, GOF_POLL_READ, 0);
+      if (wait_event_with_deadline(fd, GOF_POLL_READ, 0) != 0) return -1;
       continue;
     }
     return -1;
@@ -242,8 +271,9 @@ ssize_t gof_write(int fd, const void *buf, size_t n) {
   while (left > 0) {
     ssize_t w = write(fd, p, left);
     if (w >= 0) { left -= (size_t)w; p += w; continue; }
-    if (errno == EAGAIN || errno == EWOULDBLOCK) {
-      (void)wait_event_with_deadline(fd, GOF_POLL_WRITE, 0);
+    int error = fiber_get_errno();
+    if (error == EAGAIN || error == EWOULDBLOCK) {
+      if (wait_event_with_deadline(fd, GOF_POLL_WRITE, 0) != 0) return -1;
       continue;
     }
     return -1;
@@ -262,7 +292,7 @@ int gof_connect(int fd, const struct sockaddr *sa, socklen_t slen, int timeout_m
   if (fiber_get_errno() == EINPROGRESS) {
     uint64_t dl = deadline_from_ms(timeout_ms);
     for(;;) {
-      (void)wait_event_with_deadline(fd, GOF_POLL_WRITE, dl);
+      if (wait_event_with_deadline(fd, GOF_POLL_WRITE, dl) != 0) return -1;
       /* Check connect completion */
       int err = 0; socklen_t elen = sizeof(err);
       if (getsockopt(fd, SOL_SOCKET, SO_ERROR, (void*)&err, &elen) == 0) {
@@ -291,7 +321,7 @@ int gof_accept(int fd, struct sockaddr *sa, socklen_t *slen, int timeout_ms) {
      * correct; a later park may migrate the fiber to another thread. */
     int accept_errno = fiber_get_errno();
     if (accept_errno == EAGAIN || accept_errno == EWOULDBLOCK) {
-      (void)wait_event_with_deadline(fd, GOF_POLL_READ, dl);
+      if (wait_event_with_deadline(fd, GOF_POLL_READ, dl) != 0) return -1;
       if (dl != 0 && now_ns() >= dl) { fiber_set_errno(ETIMEDOUT); return -1; }
       continue;
     }
@@ -308,7 +338,7 @@ static int wait_message_ready(int fd, int events, uint64_t deadline_ns) {
     fiber_set_errno(ETIMEDOUT);
     return -1;
   }
-  (void)wait_event_with_deadline(fd, events, deadline_ns);
+  if (wait_event_with_deadline(fd, events, deadline_ns) != 0) return -1;
   if (deadline_ns != 0 && now_ns() >= deadline_ns) {
     fiber_set_errno(ETIMEDOUT);
     return -1;

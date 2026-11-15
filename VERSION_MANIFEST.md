@@ -5,6 +5,11 @@ covered by the versioning initiative. **Declared version** is the version in the
 build metadata; it is not evidence that a release exists. **Latest release** is
 updated only after the matching component-prefixed Git tag has been published.
 
+nostrc-dahcn / nostrc-3lzr1: libgo remains 0.3.0 Unreleased; PATCH-class
+fixes for lost I/O readiness, indefinite idle parking, stop cancellation and
+background worker keep-alive fold into the unreleased version. No numeric bump,
+new public API, or published release/tag change.
+
 nostrc-9965o / nostrc-3ulf2: libgo remains 0.3.0 Unreleased; PATCH-class
 TSan fiber lifecycle annotations and link-order-independent internal channel
 hook registration fold into the unreleased version. No numeric bump, installed

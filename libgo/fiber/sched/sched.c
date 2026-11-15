@@ -43,6 +43,7 @@ typedef struct gof_worker {
   gof_context sched_ctx;  /* scheduler context for this OS thread */
 #if GOF_TSAN
   _Atomic(void *) tsan_fiber; /* borrowed thread context; never destroy it */
+  char tsan_started; /* publishes only worker startup / OS TLS initialization */
 #endif
   /* Scheduler and fibers are distinct TSan contexts even on one OS thread.
    * Relaxed metadata accesses must not add application happens-before edges. */
@@ -456,16 +457,18 @@ static void sleepers_wake_ready(uint64_t now_ns) {
   pthread_mutex_unlock(&sleepheap.mu);
 }
 
-/* Cancel any pending sleeper entry for the given fiber. Nulls out the fiber
- * pointer; the wake path skips NULL entries. O(N) scan but under sleepheap.mu,
- * not S.mu, and cancelled entries are cleaned up lazily on wake. */
+/* Remove cancelled deadlines, not just their fiber pointers: a completed I/O
+ * wait must not keep idle workers on a stale timer (or delay stop/join). */
 static void sleepers_cancel(gof_fiber *f) {
   if (!f) return;
   pthread_mutex_lock(&sleepheap.mu);
+  size_t kept = 0;
   for (size_t i = 0; i < sleepheap.len; ++i) {
-    if (sleepheap.entries[i].f == f) {
-      sleepheap.entries[i].f = NULL;
-    }
+    if (sleepheap.entries[i].f != f) sleepheap.entries[kept++] = sleepheap.entries[i];
+  }
+  if (kept != sleepheap.len) {
+    sleepheap.len = kept;
+    for (size_t i = kept / 2; i > 0; --i) heap_sift_down(i - 1);
   }
   pthread_mutex_unlock(&sleepheap.mu);
 }
@@ -667,6 +670,9 @@ static void* worker_main(void *arg) {
   pthread_setspecific(S.worker_key, W);
 #if GOF_TSAN
   atomic_store_explicit(&W->tsan_fiber, __tsan_get_current_fiber(), memory_order_relaxed);
+  /* Fibers may predate this pthread. Publish its TLS initialization once, not
+   * application writes at each switch (which would hide inter-fiber races). */
+  __tsan_release(&W->tsan_started);
 #endif
   /* Simple loop until no runnables remain */
   for(;;) {
@@ -727,10 +733,10 @@ static void* worker_main(void *arg) {
           break; /* will drain after unlocking */
         }
         if (!have_sleepers) {
-          /* No sleepers and no inject; if no IO waiters either, exit loop.
-           * Also exit if background stop has been requested. */
-          if (gof_bg_stop_requested()) { exit_sched = 1; break; }
-          if (!gof_io_have_waiters() && !have_live) { exit_sched = 1; break; }
+          /* Empty foreground runs finish. Background workers stay alive until
+           * stop, after all claimed I/O cancellations have been consumed. */
+          if (gof_bg_stop_requested() && !gof_io_have_waiters()) { exit_sched = 1; break; }
+          if (!gof_bg_running() && !gof_io_have_waiters() && !have_live) { exit_sched = 1; break; }
           /* Otherwise, wait indefinitely for injected work */
           pthread_cond_wait(&S.cv, &S.mu);
           continue;
@@ -775,6 +781,7 @@ static void* worker_main(void *arg) {
      * between otherwise independent fibers by adding a switch HB edge. */
 #if GOF_TSAN
     __tsan_switch_to_fiber(f->tsan_fiber, __tsan_switch_to_fiber_no_sync);
+    __tsan_acquire(&W->tsan_started);
 #endif
     gof_ctx_swap(&W->sched_ctx, &f->ctx);
     /* Returned from fiber (yield/finish/block) */
@@ -788,12 +795,16 @@ static void* worker_main(void *arg) {
        * visible to wakers as BLOCKED. Wakers that claimed PARKING -> WOKEN
        * left the requeue to us; enqueuing a fiber we might still be
        * executing would corrupt its context. */
+      /* Snapshot before publishing BLOCKED: a waker can then resume/free f
+       * on another worker. The trace reports a committed, off-CPU I/O park. */
+      int wait_fd = atomic_load_explicit(&f->wait_fd, memory_order_relaxed);
+      int wait_events = atomic_load_explicit(&f->wait_events, memory_order_relaxed);
       gof_state expected = GOF_PARKING;
       if (atomic_compare_exchange_strong_explicit(&f->state, &expected, GOF_BLOCKED,
                                                   memory_order_seq_cst,
                                                   memory_order_seq_cst)) {
         /* Parked; a later waker claims BLOCKED -> RUNNABLE and enqueues. */
-        LOGF("[gof] fiber %llu blocked\n", (unsigned long long)f->id);
+        if (wait_fd >= 0) gof_trace_on_block(wait_fd, wait_events);
       } else {
         /* Claimed WOKEN between the announce and this commit: requeue. */
         goto requeue_woken;
@@ -838,6 +849,7 @@ requeue_woken:
     rq_push(f);
     atomic_store_explicit(&W->current, NULL, memory_order_relaxed);
   }
+  pthread_setspecific(S.worker_key, NULL);
   return NULL;
 }
 
@@ -954,6 +966,11 @@ void gof_sched_make_runnable(gof_fiber *f) {
 /* Partition-aware runnable enqueue: try to keep ready fiber within same poller partition. */
 void gof_sched_make_runnable_from_poller(gof_fiber *f, int poller_index) {
   if (!f) return;
+  if (!S.poll_partition_enable || S.npollers <= 0 || poller_index < 0 ||
+      poller_index >= S.nworkers) {
+    gof_sched_make_runnable(f);
+    return;
+  }
   /* Claim the wake through the shared protocol (nostrc-q9lp0), exactly as
    * gof_sched_make_runnable(). */
   int claim = fiber_wake_claim(f);
@@ -964,11 +981,6 @@ void gof_sched_make_runnable_from_poller(gof_fiber *f, int poller_index) {
   gof_worker *W = cur_worker();
   sleepers_cancel(f);
   if (W) { rq_push_to(W, f); return; }
-  int use_partition = (S.poll_partition_enable && S.npollers > 0 && poller_index >= 0);
-  if (!use_partition) {
-    gof_sched_make_runnable(f);
-    return;
-  }
   int target = -1;
   /* If affinity is enabled and falls within this partition, prefer that */
   if (S.affinity_enable && f->w_affinity >= 0 && f->w_affinity < S.nworkers) {
@@ -989,8 +1001,7 @@ void gof_sched_make_runnable_from_poller(gof_fiber *f, int poller_index) {
     pthread_mutex_unlock(&S.mu);
     return;
   }
-  /* Fallback */
-  gof_sched_make_runnable(f);
+  /* Valid poller partitions always have a worker. */
 }
 
 void gof_sched_park_until(uint64_t deadline_ns) {
@@ -1055,5 +1066,9 @@ void gof_sched_wake_all(void) {
 
 /* Weak default for gof_bg_stop_requested if api.c is not linked */
 int __attribute__((weak)) gof_bg_stop_requested(void) {
+  return 0;
+}
+
+int __attribute__((weak)) gof_bg_running(void) {
   return 0;
 }

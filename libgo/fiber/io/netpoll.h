@@ -13,6 +13,8 @@ void gof_netpoll_close(int fd);
 
 /* Returns 1 if any fibers are waiting on I/O, 0 otherwise. (Provided by io.c) */
 int  gof_io_have_waiters(void);
+/* Wake pending I/O on background stop; registrations survive until consumed. */
+void gof_io_cancel_waiters(void);
 
 /* Optional: register a callback invoked from gof_netpoll_wait when an fd becomes ready. */
 typedef void (*gof_netpoll_ready_cb)(int fd, int events);

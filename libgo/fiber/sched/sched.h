@@ -58,8 +58,10 @@ typedef struct gof_fiber {
   void      (*entry)(void*);
   void       *arg;
   int         w_affinity; /* preferred worker index for affinity (-1 if none) */
-  int         wait_fd;    /* fd this fiber is currently waiting on (-1 if none) */
-  int         wait_events;/* GOF_POLL_READ/WRITE bitmask for current wait */
+  /* Registry mutation is under io_mu; atomic metadata also permits scheduler
+   * tracing across no-sync TSan contexts without ordering application data. */
+  _Atomic int wait_fd;    /* fd this fiber is currently waiting on (-1 if none) */
+  _Atomic int wait_events;/* GOF_POLL_READ/WRITE bitmask for current wait */
 } gof_fiber;
 
 void gof_register_channel_hooks(void);
@@ -123,5 +125,6 @@ void gof_sched_wake_all(void);
 
 /* Check if background stop has been requested (provided by api.c) */
 int gof_bg_stop_requested(void);
+int gof_bg_running(void);
 
 #endif /* LIBGO_FIBER_SCHED_SCHED_H */

@@ -59,7 +59,8 @@ GO_FIBER_API void        gof_sleep_ms(uint64_t ms);
  * @brief Enter the scheduler loop. Typically called once on the main thread.
  * @note This blocks the calling thread until all fibers complete.
  *       For applications with their own event loop (e.g., GTK/GLib),
- *       use gof_start_background() instead.
+ *       use gof_start_background() instead. Do not run foreground and
+ *       background schedulers concurrently.
  */
 GO_FIBER_API void        gof_run(void);
 
@@ -70,8 +71,9 @@ GO_FIBER_API void        gof_run(void);
  * scheduler worker threads in the background, allowing the calling thread
  * to continue (e.g., to run a GTK main loop).
  *
- * The scheduler stays alive until gof_request_stop() is called or all fibers
- * complete and no I/O waiters remain.
+ * The worker pool stays alive with zero live fibers until gof_request_stop().
+ * Fibers may be submitted later from OS threads via gof_spawn()/go_fiber().
+ * After stop, join before restarting; start returns -1 while joining.
  *
  * @param default_stack_bytes Default stack size for fibers (0 = use default 256KB).
  * @return 0 on success, -1 on error (e.g., already running).
@@ -81,7 +83,10 @@ GO_FIBER_API int         gof_start_background(size_t default_stack_bytes);
 /**
  * @brief Request the fiber scheduler to stop.
  *
- * Wakes all workers so they can observe the stop flag and exit.
+ * Wakes idle workers and cancels pending fiber I/O waits with ECANCELED.
+ * This is cooperative, not preemption: running fibers must return/yield and
+ * callers must arrange cancellation of channel waits and other application work.
+ * Stop submitting work before stopping the pool.
  * Does not wait for completion — use gof_join_background() to wait.
  * Safe to call from any thread (including GTK main thread).
  */
@@ -90,8 +95,9 @@ GO_FIBER_API void        gof_request_stop(void);
 /**
  * @brief Wait for all background scheduler threads to finish.
  *
- * Blocks until all worker threads have exited. Call after gof_request_stop()
- * or after all fibers have naturally completed.
+ * Blocks until all worker threads have exited. Call from an OS thread after
+ * gof_request_stop(); zero live fibers alone does not end background mode.
+ * A successful join permits another start or a foreground gof_run().
  *
  * @return 0 on success, -1 if not running in background mode.
  */
@@ -111,7 +117,12 @@ GO_FIBER_API gof_fiber_t*gof_current(void);
 
 struct msghdr; /* POSIX message I/O; incomplete on Windows (ENOTSUP). */
 
-/** Fiber-friendly I/O wrappers that integrate with the netpoller. */
+/** Fiber-friendly I/O wrappers; call from a running fiber.
+ * No deadline means indefinite parking until readiness, peer EOF/hangup, or
+ * scheduler stop (returns -1, errno=ECANCELED), with no periodic retries.
+ * Keep fd open while a wait is pending: raw close(fd) on the waiting descriptor
+ * from another thread is not a cancellation operation. Peer close is observed.
+ */
 GO_FIBER_API ssize_t     gof_read(int fd, void *buf, size_t n);
 GO_FIBER_API ssize_t     gof_write(int fd, const void *buf, size_t n);
 GO_FIBER_API int         gof_connect(int fd, const struct sockaddr *sa, socklen_t slen, int timeout_ms);
@@ -122,7 +133,8 @@ GO_FIBER_API int         gof_accept(int fd, struct sockaddr *sa, socklen_t *slen
  * Sets O_NONBLOCK on fd (also affecting aliases of the same open file).
  * timeout_ms < 0 waits indefinitely; 0 attempts once without waiting; > 0
  * bounds readiness retries with one monotonic deadline. Expiry returns -1
- * with errno=ETIMEDOUT. Other errors and flags follow the underlying syscall.
+ * with errno=ETIMEDOUT; scheduler stop cancels a pending wait with ECANCELED.
+ * Other errors and flags follow the underlying syscall.
  * Sends return after one successful syscall, including short or zero sends;
  * they never split a datagram or resend ancillary data. Receives preserve
  * source addresses, iovecs, control data and message flags as supplied by the OS.
@@ -228,7 +240,11 @@ GO_FIBER_API int  gof_set_npollers(int n);
 /** Returns the configured number of pollers (>=1). */
 GO_FIBER_API int  gof_get_npollers(void);
 
-/** Weak trace hooks (no-op by default); attributes best-effort across compilers. */
+/** Weak trace hooks (no-op by default); attributes best-effort across compilers.
+ * on_block reports a committed I/O park on its worker; on_unblock reports an
+ * I/O wait returning (including readiness claimed before a park committed).
+ * Hooks may run concurrently; they must not yield or call fiber APIs.
+ */
 #if defined(__GNUC__) || defined(__clang__)
 GO_FIBER_API void __attribute__((weak)) gof_trace_on_switch(uint64_t old_id, uint64_t new_id);
 GO_FIBER_API void __attribute__((weak)) gof_trace_on_block(int fd, int ev);
