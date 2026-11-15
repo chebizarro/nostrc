@@ -348,3 +348,17 @@ caller writers instead of Vec; optional decoded PathBroken coordinates borrow
 caller storage. All 49 named upstream routing tests are ported. The exporter
 has no routing error wire cases; this is unit-test parity, not differential
 routing evidence. Version remains **0.1.0 Unreleased**.
+
+## MMP port (nostrc-f12v2.4)
+
+`core/src/proto/mmp/*` maps to `src/proto/mmp/` and matching public headers,
+including the pin's path-MTU notification directionality, spin restart,
+reference-relative OWD trend, saturating reorder count and once-per-report
+ETX smoothing fixes. No host handler/serde config is ported. Caller-owned
+OWD and peer storage replaces alloc collections. Tests group the 152 upstream
+MMP test cases; Rust-only introspection/serde checks are adapted as documented
+in README. Python binary64 pins are independently checked against the actual
+read-only Rust algorithms at the existing pin. No pin change.
+
+Version decision: additive APIs remain **libfips-core 0.1.0 Unreleased**;
+no published version/tag change. `cases.c` dispatch remains coordinator-owned.
