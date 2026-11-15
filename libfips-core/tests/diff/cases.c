@@ -24,6 +24,7 @@
 #include "proto_lookup.h"
 #include "proto_fsp.h"
 #include "proto_mmp.h"
+#include "proto_path.h"
 typedef struct counts { size_t checked, failed, skipped; } counts;
 static void report(diff_context *ctx, counts *n, result r, const char *owner);
 
@@ -670,7 +671,7 @@ static const proto_checker proto_checkers[] = {
     {"sender-report", "nostrc-f12v2.4", check_proto_sender_report}, {"session-sender-report", "nostrc-f12v2.4", check_proto_session_sender_report},
     {"receiver-report", "nostrc-f12v2.4", check_proto_receiver_report}, {"session-receiver-report", "nostrc-f12v2.4", check_proto_session_receiver_report},
     {"path-mtu", "nostrc-f12v2.4", check_proto_path_mtu},
-    {"path-probe", "nostrc-f12v2.6", NULL}, {"path-ack", "nostrc-f12v2.6", NULL}, {"path-close", "nostrc-f12v2.6", NULL},
+    {"path-probe", "nostrc-f12v2.6", check_proto_path_probe}, {"path-ack", "nostrc-f12v2.6", check_proto_path_ack}, {"path-close", "nostrc-f12v2.6", check_proto_path_close},
     {"disconnect", "nostrc-82g9n.7", check_proto_disconnect}, {"fmp-msg-1", "nostrc-82g9n.7", check_proto_fmp_msg_1},
     {"fmp-msg-2", "nostrc-82g9n.7", check_proto_fmp_msg_2}, {"fmp-encrypted", "nostrc-82g9n.7", check_proto_fmp_encrypted},
     {"fsp-setup", "nostrc-82g9n.8", check_proto_fsp_setup}, {"fsp-ack", "nostrc-82g9n.8", check_proto_fsp_ack},

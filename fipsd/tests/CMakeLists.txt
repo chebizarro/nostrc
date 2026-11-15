@@ -37,19 +37,9 @@ nostrc_describe_test(FipsdLogTest OWNER fipsd TARGETS fipsd_log_test)
 fipsd_unit_test(fipsd_runtime_test test_runtime.c)
 add_test(NAME FipsdRuntimeSignalsTest COMMAND fipsd_runtime_test signals)
 add_test(NAME FipsdRuntimeStartFailureTest COMMAND fipsd_runtime_test start-failure)
-# go_fiber carries no __tsan_switch_to_fiber annotations, so a fiber resumed
-# on a different worker thread unbalances TSan's per-thread shadow stack and
-# TSan itself faults at worker exit (seen in ~10% of two-worker runs; never in
-# ASan, plain or single-worker runs). Single-worker runs push and pop every
-# frame on one thread and are immune, and still exercise the main, poller,
-# blocking-executor, worker and signal-handler interactions. Multi-worker
-# migration stays covered by the ASan/UBSan and plain lanes until go_fiber
-# gains the annotations.
-if(GO_ENABLE_TSAN)
-  set(_fipsd_runtime_workers 1)
-else()
-  set(_fipsd_runtime_workers 2)
-endif()
+# go_fiber now carries ThreadSanitizer fiber annotations (nostrc-9965o), so the
+# runtime tests migrate fibers across workers under TSan too.
+set(_fipsd_runtime_workers 2)
 set_tests_properties(FipsdRuntimeSignalsTest FipsdRuntimeStartFailureTest PROPERTIES
   TIMEOUT 60 LABELS "fips;unit" ENVIRONMENT "FIPSD_WORKERS=${_fipsd_runtime_workers}")
 nostrc_describe_test(FipsdRuntimeSignalsTest OWNER fipsd TARGETS fipsd_runtime_test)
