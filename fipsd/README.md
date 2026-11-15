@@ -174,3 +174,146 @@ platforms with a `go_fiber` target (currently not Windows). `CMakeLists.txt`
 owns the component's version, 0.1.0 Unreleased. Warning flags honor nostrc's
 shared `GO_WARNINGS_AS_ERRORS`; sanitizer flags reuse its `GO_ENABLE_*`
 helpers.
+
+## Peer owners (nostrc-9keoz.4)
+
+`src/peer/active.h` is an opaque, stable-address `fipsd_active_peer`. Its public
+`fipsd_peer_info` exposes identity (including node/IPv6 addresses and public key),
+transport/address, link id/direction, lifecycle, tree declaration/ancestry, inbound
+filter/sequence, link statistics, heartbeat/heard stamps and pointer-free MMP
+metrics. `data.h` mirrors the non-secret peer record; `machine.h` owns the
+pending-leg lifecycle, never sessions or index leases. A new ActivePeer is an
+already authenticated/promoted peer (including a legacy peer without a Noise
+session), not an unauthenticated pending connection. Pending machines are separate
+and become active only after authorization, successful transport send and promotion
+feedback. Authenticated events are trusted inputs, not raw ingress parsers.
+
+The new module is linked into `fipsd_lib`; `main` still runs the bare process
+skeleton until the node/transport subsystem lands. It does not invent peers,
+read YAML, dial sockets or pretend that enqueueing a send completed a handshake.
+
+### Ownership and snapshots
+
+The transport **dispatcher fiber is the sole state writer**. Its pending machines,
+durable retry entries, local identities, admission tickets and peer table are not
+shared mutable worker objects. `dispatcher.h` supplies the runnable mailbox/deadline
+loop for the future subsystem to spawn with `fipsd_runtime_spawn`. Its bounded
+GoChannel transfers malloc-owned commands; callbacks execute effects and report
+admission refusals explicitly. Stop producers on the GoContext; join producers and
+dispatcher before destroying storage. Cancellation closes/drains the mailbox,
+including rejected/not-yet-attached insertions. Before destroying the table, the
+owner must close attached links and execute their release outputs. A live link or
+outstanding pending ticket makes destruction refuse, not silently leak a lease.
+
+The loop selects context cancellation, mailbox input and the **nearest stored
+monotonic deadline** (`go_select` when none exists, otherwise
+`go_select_timeout`). It services due deadlines even with queued commands. There
+is no periodic peer poll, raw blocking wait, sleep or per-peer OS thread.
+`FIPSD_PEER_POLL_LINK` asks the effect executor to call `link_step(Poll)` at the
+shared machine's `next_wake`, with the executor's real Env. Result/effect callbacks
+must not change table membership while a borrowed peer/action is being used.
+
+Publish after each dispatcher mutation with `fipsd_peer_table_publish`; direct
+ActivePeer consumers use `fipsd_active_peer_publish`. Publication failure is an
+explicit error. Workers/control readers load immutable GoSwap/refptr snapshots,
+release exactly once, and can retain old snapshots across removals. Snapshots
+contain no keys, owning handles, MMP storage pointers or mutable session slots.
+Free the slots only after all loaders quiesce; already loaded references survive.
+Cipher copies are **per job/worker**, obtained by dispatcher `link_seal`, with the
+separately reserved counter. Auto-seal on a clone refuses. Decrypt results return
+through the owner, which authenticates/rechecks replay through machine inputs;
+workers must not mutate the peer record or race its replay window. In particular,
+`HEARD` and its byte/wall-time accounting are authenticated results, not evidence
+that a datagram arrived from an unverified address. Heartbeat attempt and successful
+send stamps remain separate; effects mark success only after actual send success.
+
+### Rekey / session-table attachment seam
+
+`src/peer/link.h` is **host-internal**, not the public monitoring surface. It
+constructs the existing `fips_rekey` in place from an authenticated completed
+session, consumes its index lease, drives `step`, reserves send jobs, observes
+`view`/`next_wake`, and closes it. No external session-slot mutation or legacy
+`replace_session`/K-bit setters exist. The machine is never copied or moved.
+The injected profile must be FMP and Env transport must match the peer. Execute
+**every** Bind/Unbind/Delegate/Revoke/Release/output in order, then clear the
+output list on every path. Clear every reserved send job after use, even on failure.
+The Env's profile/local-key/index/tag/route backing stores must outlive their use.
+The node effect executor also applies record settlement on cutover/restart (MMP
+reset, replay baseline, responder filter invalidation); `link_step` does not run
+node policy behind the executor's back.
+
+This is the named attachment point for the concurrently written **IK profile and
+session table (`f12v2.2`)**. No replacement profile/session-table files are created
+here. XK/FSP sessions belong to that separate node table, not to a link peer;
+FSP quorum/ingress gates remain in libfips-core. Cross-transport rebinding of an
+attached link refuses BUSY until the node can close/re-attach its bindings; same
+transport address roaming updates both table keys without touching Noise state.
+
+### Bounds and admission
+
+The table owns a sorted node-address index and a bounded linear `(transport,
+opaque address bytes)` lookup; both reject duplicates. Address MAC display hints
+are not part of equality. Its explicit capacity bounds storage even when policy
+caps are zero (unlimited). No live-peer eviction occurs on capacity failure.
+Admission independently checks total and per-transport peers/links/connections;
+reserve a linear ticket **before** outbound connect (at most table-capacity
+outstanding tickets even with unlimited policy), keep it through handshake,
+then use `insert_reserved` to atomically promote it into a peer/link charge.
+Failure preserves the reservation; release it on every abandoned leg. Unknown
+transports still pay the total cap and bounded transport-slot cost; empty
+unconfigured slots are reclaimed across churn. Rebind preflights collision and
+budget limits before changing either lookup key. Tickets/owners are dispatcher-only.
+
+An ancestry update is capped at **64 entries** by the host (not by the core wire
+format) and rejects oversized input unchanged. Noise remains bounded by the core
+machine. Local `identities.h` owns multiple opaque keypairs, rejecting duplicate
+addresses/full storage without consuming the caller's key. Remove keys only once
+all local-key borrowers quiesce. It also supplies a separate bounded public-key
+prefix cache. Upstream `node/identities.rs` currently implements this cache/feed,
+not a local-key set; the future node/TUN owner attaches its feed. Likewise upstream
+`node/peer_budget.rs` is a per-authenticated-link token budget, separate from
+admission caps: `budget.h` supplies thousandth-token accounting (20/s, burst 50 for
+routing errors; earned coordinate-hint budgets can start empty). Its caller must
+retain an exhausted bucket across reconnects or until refill, rather than giving
+a reconnecting identity fresh tokens. No unbounded peer-keyed map is added.
+
+### Mirrored schedules and configuration contract
+
+These are the fields the config/node owner must translate, not a new YAML loader:
+
+| Expected input | Peer API / default |
+| --- | --- |
+| `peers[]`: identity/npub, transport, addresses, auto-connect, auto-reconnect | Validate identity with core APIs, resolve transport addresses outside fibers via the blocking executor as needed, create pending machines; do not dial from the parser. |
+| `node.retry.max_retries`, `base_interval_secs`, `max_backoff_secs` | `fipsd_peer_retry_policy`: milliseconds; upstream defaults **5, 5 s, 300 s**. Zero max retries suppresses handshake-failure retries, not enabled link-loss reconnects. |
+| handshake retransmit interval/backoff/max resends, timeout | `fipsd_peer_timing`: **1 s / 2.0 / 5 / 30 s**. Successful resends at 1, 3, 7, 15 s; timeout at 30 s wins over a coincident/late resend (next would be 31 s). Failed sends do not advance resend count. |
+| heartbeat interval, closed cooldown | `fipsd_peer_timing`: **10 s / 5 s**. Closed is terminal; the reconciler creates a new connection, not a self-redial. The cooldown stamp is diagnostic/eligibility input, not a second retry multiplier. |
+| `node.limits.max_peers`, `max_links`, `max_connections` | `fipsd_peer_caps` total plus per-transport overrides. Zero disables a policy limb, never the explicit table/transport storage bound. |
+| host table, identity-cache/local-identity and mailbox capacities | Required finite allocation bounds; no silently unbounded channels/maps. |
+
+Durable retry entries outlive individual connections: first handshake failure is
+count 1 → **10, 20, 40, 80, 160, 300, 300… seconds**; a first enabled link-loss
+reconnect is count 0 → **5 seconds**, then increments the retained count. Configured
+reconnects are unlimited; transient entries obey max retries/absolute expiry.
+Connected and suspended/draining gates cancel schedules. A taken retry parks until
+the handshake window closes, avoiding repeated dials. The future reconciler must
+retain the upstream **16 attempts per reconcile** ceiling across entries.
+The FMP silent-session guard is a separate core policy: third distinct silent
+setup → **30, 60, 120, 240, 480, 600… seconds**, with authenticated startup epoch
+changes bypassing stale-incarnation cooldown, and authenticated heard evidence
+clearing the record. Restart requires two known, differing epochs; a missing
+epoch is not a restart. Crossing/own-dial decisions delegate to FMP's existing
+cores, including the node-address tie-break, not a new host heuristic.
+
+### Verification
+
+`FipsdPeerTest` (in `fipsd_tests`) ports representative lifecycle/reconciler,
+ActivePeer, budget and identity-cache contracts: retry/cooldown boundaries,
+resend success/failure, restart epoch matrix, both crossing outcomes/own-dial,
+late authorization and loss, cap rejection/atomic promotion, table bounds and
+rebind collisions, local-key ownership, tree/filter state, real AEAD/replay and
+linear lease release through the rekey seam, and concurrent immutable snapshots
+while the real runtime dispatcher processes 500 channel commands. It reuses
+`libfips-core/tests/fakes/host.c`; all clock advances are injected, no sleeps.
+TSan pins `FIPSD_WORKERS=1` for the runtime limitation described above; other
+lanes use two workers. This is host-module proof, not a network/interoperability
+claim and not a port of upstream's multipath/settlement/node test suites.

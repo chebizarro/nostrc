@@ -1642,3 +1642,7 @@ between build systems, and two components have no explicit version source. The
 planned `scripts/tag_release.py` automation must treat this manifest as the
 release ledger, reject mismatches between the manifest and authoritative
 sources, and update the release columns when it creates a tag.
+
+nostrc-9keoz.4: no bump for fipsd 0.1.0 Unreleased; peer owners, lifecycle/retry,
+bounded admission/identities/table and dispatcher snapshots fold into the initial
+unreleased host. No published release/tag change; libfips-core APIs unchanged.
