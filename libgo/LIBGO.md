@@ -7,6 +7,23 @@ This document explains the public API, threading/blocking/cancellation semantics
 - Threading model: All operations are thread-safe. Blocking operations wait on condition variables and wake upon state changes or cancellation.
 - Memory model: Create primitives with their constructor/init; free/destroy with the corresponding free/destroy functions. Do not free the underlying structs manually unless explicitly documented.
 
+## Fiber hook linkage
+
+`GoChannel` and `go_select` park cooperatively when called inside `go_fiber`.
+Call `gof_init()` (also called by `gof_spawn()`) before running fibers. It
+registers an immutable, process-lifetime hook table with core libgo as well as
+the existing `go_register_fiber_spawn` callback. Core libgo owns the
+`gof_hook_*` dispatch symbols; no weak/strong archive override or whole-archive
+link flag is required. Linking `libgo` before `go_fiber` cannot silently select
+OS-thread waits inside fibers. Normal static-library dependency resolution
+still applies; the CMake `go_fiber` target carries its core-libgo dependency
+so single-pass linkers rescan core libgo after the fiber archive as needed.
+
+Without initialization, or on an ordinary OS thread, core channels/select keep
+their normal OS-thread blocking behavior. The hook table is an internal bridge,
+not an installed extension API; it must not be replaced or unregistered while
+fibers exist. Existing spawn registration and `go_fiber()` behavior are retained.
+
 ## Goroutine Wrapper: `go()`
 
 Header: `libgo/include/go.h`

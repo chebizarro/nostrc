@@ -1,43 +1,39 @@
 /**
  * @file fiber_hooks_stub.c
- * @brief Weak-symbol stubs for fiber hooks when fiber runtime is not linked.
+ * @brief Link-order-independent dispatch for optional fiber support.
  *
- * These return NULL / no-op so that GoChannel and go_select fall back
- * to OS-thread blocking (nsync_cv_wait) when fibers aren't available.
- *
- * When the fiber runtime IS linked, the real implementations in
- * fiber_hooks_impl.c override these via stronger symbols.
+ * Core libgo owns these symbols, even when go_fiber is linked. gof_init()
+ * publishes the real callbacks explicitly; without it we use OS threads.
  */
 #include "fiber_hooks.h"
+#include <stdatomic.h>
 
-/* On Windows/MinGW, __attribute__((weak)) doesn't work reliably with
- * static archives.  The fiber runtime is not built on Windows, so these
- * stubs must be strong symbols.  On ELF platforms the real fiber runtime
- * overrides them via stronger symbols when go_fiber is linked. */
-#if defined(_WIN32) || defined(__MINGW32__)
-#define GOF_STUB_ATTR /* strong symbol */
-#else
-#define GOF_STUB_ATTR __attribute__((weak))
-#endif
+static _Atomic(const struct go_fiber_hooks *) fiber_hooks = NULL;
 
-GOF_STUB_ATTR
+void go_register_fiber_hooks(const struct go_fiber_hooks *hooks) {
+    atomic_store_explicit(&fiber_hooks, hooks, memory_order_release);
+}
+
 gof_fiber_handle gof_hook_current(void) {
-    return NULL; /* Not in a fiber — use OS thread blocking */
+    const struct go_fiber_hooks *hooks =
+        atomic_load_explicit(&fiber_hooks, memory_order_acquire);
+    return hooks ? hooks->current() : NULL;
 }
 
-GOF_STUB_ATTR
 void gof_hook_block_current(void) {
-    /* No-op: caller should not reach here if gof_hook_current() returned NULL */
+    const struct go_fiber_hooks *hooks =
+        atomic_load_explicit(&fiber_hooks, memory_order_acquire);
+    if (hooks) hooks->block_current();
 }
 
-GOF_STUB_ATTR
 void gof_hook_block_current_until(uint64_t deadline_ns) {
-    (void)deadline_ns;
-    /* No-op: caller should not reach here if gof_hook_current() returned NULL */
+    const struct go_fiber_hooks *hooks =
+        atomic_load_explicit(&fiber_hooks, memory_order_acquire);
+    if (hooks) hooks->block_current_until(deadline_ns);
 }
 
-GOF_STUB_ATTR
 void gof_hook_make_runnable(gof_fiber_handle f) {
-    (void)f;
-    /* No-op: caller should not reach here if gof_hook_current() returned NULL */
+    const struct go_fiber_hooks *hooks =
+        atomic_load_explicit(&fiber_hooks, memory_order_acquire);
+    if (hooks) hooks->make_runnable(f);
 }

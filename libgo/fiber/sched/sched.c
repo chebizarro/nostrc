@@ -10,6 +10,9 @@
 #include <pthread.h>
 #include <stdatomic.h>
 #include "../io/netpoll.h"
+#if GOF_TSAN
+#include <sanitizer/tsan_interface.h>
+#endif
 
 /* Forward declaration for poller thread entry */
 static void* poller_main(void* arg);
@@ -38,7 +41,12 @@ static struct {
 typedef struct gof_worker {
   pthread_t   tid;
   gof_context sched_ctx;  /* scheduler context for this OS thread */
-  gof_fiber  *current;    /* currently running fiber on this worker */
+#if GOF_TSAN
+  _Atomic(void *) tsan_fiber; /* borrowed thread context; never destroy it */
+#endif
+  /* Scheduler and fibers are distinct TSan contexts even on one OS thread.
+   * Relaxed metadata accesses must not add application happens-before edges. */
+  _Atomic(gof_fiber *) current; /* currently running fiber on this worker */
   gof_node   *rq_head;     /* per-worker run queue */
   gof_node   *rq_tail;
   pthread_mutex_t rq_mu;   /* protects run queue for stealing */
@@ -310,6 +318,10 @@ static void fiber_entry_tramp(void *arg) {
   /* Switch back to scheduler */
   LOGF("[gof] fiber %llu finished, switching to scheduler\n", (unsigned long long)self->id);
   gof_worker *W = cur_worker();
+#if GOF_TSAN
+  __tsan_switch_to_fiber(atomic_load_explicit(&W->tsan_fiber, memory_order_relaxed),
+                         __tsan_switch_to_fiber_no_sync);
+#endif
   gof_ctx_swap(&self->ctx, &W->sched_ctx);
 }
 
@@ -581,6 +593,9 @@ gof_fiber* gof_fiber_create(void (*fn)(void*), void *arg, size_t stack_bytes) {
   if (gof_ctx_init_bootstrap(&f->ctx, base, size, fiber_entry_tramp, f) != 0) {
     gof_stack_free(&f->stack); free(f); return NULL;
   }
+#if GOF_TSAN
+  f->tsan_fiber = __tsan_create_fiber(0);
+#endif
   LOGF("[gof] fiber_create id=%llu stack=[%p..+%zu]\n", (unsigned long long)f->id, base, size);
   atomic_fetch_add(&S.live_fibers, 1);
   gof_introspect_register(f);
@@ -650,6 +665,9 @@ static void* worker_main(void *arg) {
   /* Set TLS for this worker */
   gof_worker *W = (gof_worker*)arg;
   pthread_setspecific(S.worker_key, W);
+#if GOF_TSAN
+  atomic_store_explicit(&W->tsan_fiber, __tsan_get_current_fiber(), memory_order_relaxed);
+#endif
   /* Simple loop until no runnables remain */
   for(;;) {
     /* Drain any cross-thread injections first */
@@ -747,12 +765,17 @@ static void* worker_main(void *arg) {
       }
       continue;
     }
-    W->current = f;
+    atomic_store_explicit(&W->current, f, memory_order_relaxed);
     /* Update fiber affinity to this worker for locality */
     if (f) f->w_affinity = W->index;
     LOGF("[gof] switch to fiber id=%llu\n", (unsigned long long)f->id);
     atomic_fetch_add_explicit(&gof_ctx_switches, 1, memory_order_relaxed);
-    /* Switch to fiber */
+    /* A context switch is not user synchronization. Queue locks and the
+     * park/wake protocol provide the actual ordering; don't hide races
+     * between otherwise independent fibers by adding a switch HB edge. */
+#if GOF_TSAN
+    __tsan_switch_to_fiber(f->tsan_fiber, __tsan_switch_to_fiber_no_sync);
+#endif
     gof_ctx_swap(&W->sched_ctx, &f->ctx);
     /* Returned from fiber (yield/finish/block) */
     pthread_mutex_lock(&W->rq_mu);
@@ -785,6 +808,10 @@ static void* worker_main(void *arg) {
     } else if (fstate == GOF_FINISHED) {
       LOGF("[gof] fiber %llu cleanup\n", (unsigned long long)f->id);
       gof_introspect_unregister(f);
+#if GOF_TSAN
+      /* Back on the worker's own TSan context before freeing the fiber. */
+      __tsan_destroy_fiber(f->tsan_fiber);
+#endif
       gof_stack_free(&f->stack);
       free(f);
       if (atomic_fetch_sub(&S.live_fibers, 1) == 1) {
@@ -801,7 +828,7 @@ static void* worker_main(void *arg) {
        * PARKING); treat as parked. */
       LOGF("[gof] fiber %llu blocked\n", (unsigned long long)f->id);
     }
-    W->current = NULL;
+    atomic_store_explicit(&W->current, NULL, memory_order_relaxed);
     continue;
 
 requeue_woken:
@@ -809,7 +836,7 @@ requeue_woken:
     sleepers_cancel(f);
     LOGF("[gof] fiber %llu woken during park; requeue\n", (unsigned long long)f->id);
     rq_push(f);
-    W->current = NULL;
+    atomic_store_explicit(&W->current, NULL, memory_order_relaxed);
   }
   return NULL;
 }
@@ -842,22 +869,26 @@ void gof_sched_run(void) {
 
 void gof_sched_yield(void) {
   gof_worker *W = cur_worker();
-  gof_fiber *self = W ? W->current : NULL;
+  gof_fiber *self = W ? atomic_load_explicit(&W->current, memory_order_relaxed) : NULL;
   if (!self) return; /* not in fiber */
   /* Mark runnable and switch to scheduler; scheduler will requeue once */
   atomic_store_explicit(&self->state, GOF_RUNNABLE, memory_order_release);
   LOGF("[gof] fiber %llu yield\n", (unsigned long long)self->id);
+#if GOF_TSAN
+  __tsan_switch_to_fiber(atomic_load_explicit(&W->tsan_fiber, memory_order_relaxed),
+                         __tsan_switch_to_fiber_no_sync);
+#endif
   gof_ctx_swap(&self->ctx, &W->sched_ctx);
 }
 
 gof_fiber* gof_sched_current(void) {
   gof_worker *W = cur_worker();
-  return W ? W->current : NULL;
+  return W ? atomic_load_explicit(&W->current, memory_order_relaxed) : NULL;
 }
 
 void gof_sched_block_current(void) {
   gof_worker *W = cur_worker();
-  gof_fiber *self = W ? W->current : NULL;
+  gof_fiber *self = W ? atomic_load_explicit(&W->current, memory_order_relaxed) : NULL;
   if (!self) return;
   /* Announce the park atomically (nostrc-q9lp0). The caller published its
    * wait (channel waiter node, IO registration, ...) before calling us, so
@@ -875,6 +906,10 @@ void gof_sched_block_current(void) {
   }
   /* Switch to scheduler without enqueuing */
   LOGF("[gof] fiber %llu block\n", (unsigned long long)self->id);
+#if GOF_TSAN
+  __tsan_switch_to_fiber(atomic_load_explicit(&W->tsan_fiber, memory_order_relaxed),
+                         __tsan_switch_to_fiber_no_sync);
+#endif
   gof_ctx_swap(&self->ctx, &W->sched_ctx);
 }
 
@@ -960,7 +995,7 @@ void gof_sched_make_runnable_from_poller(gof_fiber *f, int poller_index) {
 
 void gof_sched_park_until(uint64_t deadline_ns) {
   gof_worker *W = cur_worker();
-  gof_fiber *self = W ? W->current : NULL;
+  gof_fiber *self = W ? atomic_load_explicit(&W->current, memory_order_relaxed) : NULL;
   if (!self) return;
   /* Same claim-based protocol as gof_sched_block_current() (nostrc-q9lp0),
    * with the sleeper registered before the announce so the timer waker
@@ -978,6 +1013,10 @@ void gof_sched_park_until(uint64_t deadline_ns) {
   }
   atomic_fetch_add_explicit(&gof_parks, 1, memory_order_relaxed);
   LOGF("[gof] fiber %llu park until %llu\n", (unsigned long long)self->id, (unsigned long long)deadline_ns);
+#if GOF_TSAN
+  __tsan_switch_to_fiber(atomic_load_explicit(&W->tsan_fiber, memory_order_relaxed),
+                         __tsan_switch_to_fiber_no_sync);
+#endif
   gof_ctx_swap(&self->ctx, &W->sched_ctx);
 }
 

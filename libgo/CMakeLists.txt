@@ -581,6 +581,10 @@ else()
 endif()
 
 add_library(go_fiber STATIC ${GOF_COMMON_SOURCES})
+# Initialization registers both spawn and channel hooks in core libgo. Carry
+# that dependency even for consumers with no direct channel/select references;
+# single-pass archive linkers need core libgo after go_fiber as well.
+target_link_libraries(go_fiber PUBLIC libgo)
 target_include_directories(go_fiber PUBLIC ${GOF_PUBLIC_INC})
 nostrc_library_visibility(go_fiber GO_FIBER_API libgo/fiber-export.h "${CMAKE_INSTALL_INCLUDEDIR}/libgo")
 if(GOF_PORTABLE_CONTEXT)
@@ -608,6 +612,30 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Windows")
   target_compile_definitions(go_fiber PRIVATE GOF_NETPOLL_IOCP=1)
 endif()
+
+# Real core-channel waits, including the historically unsafe archive order.
+add_executable(go_fiber_hook_linkorder_test tests/go_fiber_hook_linkorder_test.c)
+target_link_libraries(go_fiber_hook_linkorder_test PRIVATE libgo go_fiber ${NSYNC_LIB})
+apply_warnings(go_fiber_hook_linkorder_test)
+apply_sanitizers(go_fiber_hook_linkorder_test)
+add_test(NAME GoFiberHookLinkorderTest COMMAND go_fiber_hook_linkorder_test)
+set_tests_properties(GoFiberHookLinkorderTest PROPERTIES TIMEOUT 10)
+
+# Spawn-only consumers must also resolve the registration objects, even when
+# no channel/select call pulled them out of core libgo on its first scan.
+add_executable(go_fiber_spawn_linkorder_test fiber/tests/test_basic.c)
+target_link_libraries(go_fiber_spawn_linkorder_test PRIVATE libgo go_fiber)
+apply_warnings(go_fiber_spawn_linkorder_test)
+apply_sanitizers(go_fiber_spawn_linkorder_test)
+add_test(NAME GoFiberSpawnLinkorderTest COMMAND go_fiber_spawn_linkorder_test)
+set_tests_properties(GoFiberSpawnLinkorderTest PROPERTIES TIMEOUT 10)
+
+add_executable(gof_test_tsan_migration fiber/tests/test_tsan_migration.c)
+target_link_libraries(gof_test_tsan_migration PRIVATE go_fiber libgo ${NSYNC_LIB})
+apply_warnings(gof_test_tsan_migration)
+apply_sanitizers(gof_test_tsan_migration)
+add_test(NAME GoFiberTsanMigrationTest COMMAND gof_test_tsan_migration)
+set_tests_properties(GoFiberTsanMigrationTest PROPERTIES TIMEOUT 30)
 
 # Simple unit tests for go_fiber (standalone binaries with asserts)
 add_executable(gof_test_basic fiber/tests/test_basic.c)
@@ -758,6 +786,9 @@ foreach(_pair
     "GoRefPtrTest|refptr_test" "GoHashMapTest2|hash_map_test2"
     "GoIntArrayTest|int_array_test" "GoStringArrayTest|string_array_test"
     "GoLongAdderStressTest|long_adder_stress_test"
+    "GoFiberHookLinkorderTest|go_fiber_hook_linkorder_test"
+    "GoFiberSpawnLinkorderTest|go_fiber_spawn_linkorder_test"
+    "GoFiberTsanMigrationTest|gof_test_tsan_migration"
     "GoFiberBasicTest|gof_test_basic" "GoFiberContextTest|gof_test_context"
     "GoFiberChanTest|gof_test_chan" "GoFiberChanExtTest|gof_test_chan_ext"
     "GoFiberIoTest|gof_test_io" "GoFiberIoDeadlockTest|gof_test_io_deadlock"

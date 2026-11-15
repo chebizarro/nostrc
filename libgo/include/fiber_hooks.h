@@ -6,8 +6,8 @@
  * fiber scheduler fibers instead of blocking OS threads, when called
  * from within a fiber context.
  *
- * The hooks use weak symbols so they resolve to no-ops (thread blocking)
- * when the fiber runtime is not linked.
+ * The hooks dispatch through a table registered by go_fiber during gof_init().
+ * Without registration they remain no-ops (thread blocking).
  *
  * Usage from channel.c / select.c:
  *   if (gof_hook_current() != NULL) {
@@ -32,6 +32,18 @@ extern "C" {
 
 /** Opaque fiber handle (same as gof_fiber_t from fiber.h) */
 typedef void *gof_fiber_handle;
+
+/* Internal libgo/go_fiber bridge, not an installed public API. The runtime
+ * registers one immutable, process-lifetime table before executing fibers.
+ * Publication is atomic so ordinary pthread callers may run concurrently.
+ * Replacing/unregistering the table while fibers exist is not supported. */
+struct go_fiber_hooks {
+    gof_fiber_handle (*current)(void);
+    void (*block_current)(void);
+    void (*block_current_until)(uint64_t deadline_ns);
+    void (*make_runnable)(gof_fiber_handle f);
+};
+LIBGO_API void go_register_fiber_hooks(const struct go_fiber_hooks *hooks);
 
 /**
  * @brief Get the current fiber handle, or NULL if not running in a fiber.

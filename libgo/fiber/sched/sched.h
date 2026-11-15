@@ -7,6 +7,20 @@
 #include "../stack/stack.h"
 #include "../include/libgo/fiber.h" /* for gof_sched_stats */
 
+/* Clang exposes sanitizer features through __has_feature; GCC uses
+ * __SANITIZE_THREAD__. Keep non-sanitized builds free of runtime references. */
+#if defined(__has_feature)
+# if __has_feature(thread_sanitizer)
+#  define GOF_TSAN 1
+# endif
+#endif
+#if defined(__SANITIZE_THREAD__) && !defined(GOF_TSAN)
+# define GOF_TSAN 1
+#endif
+#ifndef GOF_TSAN
+# define GOF_TSAN 0
+#endif
+
 /* Fiber lifecycle states.
  *
  * RUNNABLE  - on a run queue or executing on a worker.
@@ -37,6 +51,9 @@ typedef struct gof_fiber {
   const char *name;
   _Atomic gof_state state;
   gof_context ctx;
+#if GOF_TSAN
+  void       *tsan_fiber;
+#endif
   gof_stack   stack;
   void      (*entry)(void*);
   void       *arg;
@@ -44,6 +61,8 @@ typedef struct gof_fiber {
   int         wait_fd;    /* fd this fiber is currently waiting on (-1 if none) */
   int         wait_events;/* GOF_POLL_READ/WRITE bitmask for current wait */
 } gof_fiber;
+
+void gof_register_channel_hooks(void);
 
 void gof_sched_init(size_t default_stack_bytes);
 void gof_sched_enqueue(gof_fiber *f);
