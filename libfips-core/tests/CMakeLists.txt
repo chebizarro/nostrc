@@ -444,3 +444,24 @@ add_test(NAME FipsCoreMmpPinsTest COMMAND "${Python3_EXECUTABLE}" -I
 set_tests_properties(FipsCoreMmpPinsTest PROPERTIES TIMEOUT 10 LABELS "fips;unit")
 nostrc_describe_test(FipsCoreMmpPinsTest OWNER libfips-core
   INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/mmp_reference.py" "${CMAKE_CURRENT_SOURCE_DIR}/mmp_pins.h")
+# Shared rekey machine, deterministic profile and explicit key/lease ownership.
+# Compile the shared sources with private hooks only in this unit target.
+add_executable(fips_core_rekey_test test_rekey.c test_rekey_params.c
+  test_rekey_fmp.c test_rekey_fsp.c test_rekey_next.c test_rekey_crossing.c fakes/rekey.c fakes/host.c
+  ../src/proto/rekey/mod.c ../src/proto/rekey/machine.c ../src/proto/rekey/params.c
+  ../src/proto/rekey/profile.c ../src/proto/rekey/hooks.c ../src/proto/rekey/access.c
+  ../src/proto/rekey/candidates.c ../src/proto/rekey/cycle.c ../src/proto/rekey/epoch.c
+  ../src/proto/rekey/keys.c ../src/proto/rekey/ladder.c ../src/proto/rekey/lease.c
+  ../src/proto/rekey/proof.c ../src/proto/rekey/reason.c ../src/proto/rekey/record.c
+  ../src/proto/rekey/resolve.c)
+target_compile_definitions(fips_core_rekey_test PRIVATE FIPS_TEST_HOOKS FIPS_CORE_STATIC_DEFINE
+  FIPS_REKEY_VECTOR="${CMAKE_CURRENT_SOURCE_DIR}/vectors/rekey.json")
+target_link_libraries(fips_core_rekey_test PRIVATE fips_core PkgConfig::FIPS_CORE_SODIUM PkgConfig::FIPS_LINK_JANSSON)
+set_target_properties(fips_core_rekey_test PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+apply_warnings(fips_core_rekey_test)
+apply_sanitizers(fips_core_rekey_test)
+add_test(NAME FipsCoreRekeyTest COMMAND fips_core_rekey_test)
+set_tests_properties(FipsCoreRekeyTest PROPERTIES TIMEOUT 60 LABELS "fips;unit;rekey")
+nostrc_describe_test(FipsCoreRekeyTest OWNER libfips-core TARGETS fips_core_rekey_test
+  INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/vectors/rekey.json" "${CMAKE_CURRENT_SOURCE_DIR}/../UPSTREAM.md")
+add_dependencies(fips_core_host_test fips_core_rekey_test)

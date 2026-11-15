@@ -145,3 +145,23 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     src/proto/mmp/receiver.c src/proto/mmp/sender.c src/proto/mmp/path_mtu.c PROPERTIES
     COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off")
 endif()
+# Shared rekey machine (nostrc-f12v2.1); production profiles are separate.
+set(FIPS_REKEY_SOURCES
+  src/proto/rekey/mod.c
+  src/proto/rekey/machine.c
+  src/proto/rekey/params.c
+  src/proto/rekey/profile.c
+  src/proto/rekey/hooks.c
+  src/proto/rekey/access.c
+  src/proto/rekey/candidates.c
+  src/proto/rekey/cycle.c
+  src/proto/rekey/epoch.c
+  src/proto/rekey/keys.c
+  src/proto/rekey/ladder.c
+  src/proto/rekey/lease.c
+  src/proto/rekey/proof.c
+  src/proto/rekey/reason.c
+  src/proto/rekey/record.c
+  src/proto/rekey/resolve.c
+)
+target_sources(fips_core PRIVATE ${FIPS_REKEY_SOURCES})
