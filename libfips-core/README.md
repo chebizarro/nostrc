@@ -803,3 +803,46 @@ the pinned report fixtures. Workflow lists also reserve sibling targets
 
 Version decision (nostrc-f12v2.4): additive MMP APIs fold into **libfips-core
 0.1.0 Unreleased**; no published version/tag change.
+
+## Paths and multipath Bundle
+
+`fips/proto/path/mod.h` collects the path modules at the `UPSTREAM.md` pin.
+`PathSet` is independent of multipath enablement and can be used directly by a
+host. It stores at most eight paths, four per transport (one for BLE), in the
+caller's object. Driver slots are opaque `void *`: eviction, removal and renewal
+return ownership; the core never frees or closes a slot. Indexes can move after
+removal, so retain path IDs rather than indexes across mutations.
+
+`fips_path_bundle` is the sans-IO policy machine. It takes `fips_instant`, host
+entropy and side-effect-free transport facts. `Config.enabled` is the runtime
+gate mirrored from upstream: disabled bundles ignore multipath inputs and never
+probe/connect, but still account authentic traffic, charge authentication failures,
+roam the original path and handle transport loss. Enabled bundles send only
+capability probes until a decoded authenticated path message establishes capability.
+The capability gate requires an eligible candidate. There is no new compile-time
+gate and no daemon wiring in this port. The upstream core draft sets enabled
+true; its host design defaults `node.path.enabled` to false. A host opting into
+this API must supply its configured gate; the library is not a host opt-in.
+
+Call `account` after authentication and replay checking, before `step` with the
+decoded path message. Schedule the returned `next_wake`; do not poll on an arbitrary
+interval. Each successful `step`, `renew` or `close` resets a caller-owned output
+list and requires `FIPS_PATH_OUTPUTS_MAX` slots. Insufficient capacity changes
+nothing and consumes no entropy. Execute actions front-to-back. `Send` contains a
+value-type probe/ack/close; `fips_path_output_encode` writes its exact padded bytes
+into a host buffer. Other actions transfer slots, report state/capability/refusal,
+request connections, report proven MTUs, switch active paths or orphan the link.
+No output borrows a transient input buffer. Close is terminal and returns each
+remaining driver slot exactly once.
+
+The liveness module preserves the probe ring and late cache, RTT window/horizon,
+MMP quality/ETX math, data-held verdict cap, silence floor/recheck, discovery MTU
+ladder and upward MTU search. Selection preserves pin/role/fit/medium precedence,
+switch dwell/margin, load damping, recovery return and the two-report cost hold.
+Codec errors retain the pinned Rust variant and malformed-field strings. The
+C reader consumes the bounded message body including padding, unlike Rust's
+slice-only decoder; the output length remains the full length including type.
+
+Tests are in `test_path*.c`; direct vector replay is independent of the
+coordinator-owned dispatcher. `tests/sim.rs`, the stub-peer day runs and simulator
+export-as-vector are not ported. See `tests/PATH.md` for the coverage boundary.

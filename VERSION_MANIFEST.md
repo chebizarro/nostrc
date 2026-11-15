@@ -13,6 +13,8 @@ that linked undocumented symbols, and requires rebuilding those consumers.
 No release tag is published by this change; all other components have no
 B1-owned shipped artifact change and no B1 bump.
 
+nostrc-f12v2.6: no bump for libfips-core 0.1.0 Unreleased; additive path codecs, bounded PathSet, policy/liveness and runtime-gated Bundle action-list APIs fold into the initial unreleased version; no published release/tag change.
+
 nostrc-f12v2.5: no bump for libfips-core; additive diagnostic probe stage/action-list and snapshot APIs fold into initial 0.1.0 Unreleased; no published release/tag change.
 nostrc-f12v2.1: no bump for libfips-core 0.1.0 Unreleased; additive shared rekey machine, parameter/profile hooks and ownership APIs fold into the initial unreleased version; production profiles/session binding and legacy compatibility remain separate tasks; no published release/tag change.
 

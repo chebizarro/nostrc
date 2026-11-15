@@ -85,7 +85,7 @@ those shares together. Modules omitted from the assessment's table are marked
 
 | Rust module(s) at pin | Assessment non-test LoC | Planned C home(s) | Owning bead epic/task |
 |---|---:|---|---|
-| `core/src/proto/path/**` | 6,783 | `libfips-core/src/proto/path/…` | `nostrc-f12v2` A4 |
+| `core/src/proto/path/**` | 6,783 | `libfips-core/src/proto/path/{wire,set,params,rules,candidate,capable,select,live,machine}.c`, matching public headers | `nostrc-f12v2.6`: bounded PathSet, codecs and runtime-gated Bundle; daemon integration and simulator vector export remain separate |
 | `core/src/proto/rekey/**` | 6,575 | `libfips-core/src/proto/rekey/…` + `include/fips/proto/rekey/…` (shared machine/params/profile hooks implemented; [API and ownership](src/proto/rekey/README.md), [test mapping](tests/REKEY.md); legacy fixtures deferred) | `nostrc-f12v2.1` shared core; `nostrc-f12v2.3` legacy; `nostrc-f66sr` verification |
 | `core/src/proto/settle/**` | 5,493 | `libfips-core/src/proto/settle/…` (port last; upstream not wired to callers yet) | `nostrc-f12v2` A4 |
 | `core/src/proto/mmp/**` | 4,160 | `libfips-core/src/proto/mmp/…` | `nostrc-f12v2` A4 |
