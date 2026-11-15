@@ -57,8 +57,12 @@ FIPS_CORE_API uint64_t fips_noise_session_current_send_counter(const fips_noise_
 FIPS_CORE_API uint64_t fips_noise_session_recv_nonce(const fips_noise_session *session);
 FIPS_CORE_API fips_noise_status fips_noise_session_take_send_counter(fips_noise_session *session,
     uint64_t *out);
-/* Copies initialized key + current local counter, not a shared mutable cipher.
- * WrongState on a cleared cipher; destination is unchanged on failure. */
+/* Copies the initialized key ONLY, as upstream's bare AeadKey hand-out: the
+ * clone's local counter is pinned at the refused ceiling, so auto-seal and
+ * take_counter on a clone return NonceOverflow and can never reissue a counter
+ * this session hands out. Workers seal with explicit dispatcher-reserved
+ * counters and open with explicit wire counters. WrongState on a cleared
+ * cipher; destination is unchanged on failure. */
 FIPS_CORE_API fips_noise_status fips_noise_session_send_cipher_clone(const fips_noise_session *session,
     fips_cipher_state *out);
 FIPS_CORE_API fips_noise_status fips_noise_session_recv_cipher_clone(const fips_noise_session *session,

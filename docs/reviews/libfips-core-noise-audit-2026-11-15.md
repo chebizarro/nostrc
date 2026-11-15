@@ -1,0 +1,171 @@
+# libfips-core Noise negative tests, constant-time review and zeroization audit — 2026-11-15
+
+**Verdict: APPROVE-WITH-FIXES** for `libfips-core/src/noise/` (bead `nostrc-pwo3h.8`,
+branch `feature/fips-noise-audit` on `origin/master` `105159c0d`). One medium API
+hardening was applied; no critical or high finding. The differential oracle stays
+100% green (`FipsDiffNoise` 83 checked / 0 skipped / 0 failed), so no wire behaviour
+changed. This is the exit gate of the Noise epic and gates Tier A4 (rekey) and the
+Tier B host.
+
+## Scope and method
+
+Reviewed every line of `src/noise/{aead.c,aead_primitive.h,ecdh.c,hkdf.h,symmetric.c,
+handshake.c,cipher.c,replay.c,session.c}` and `include/fips/noise/*.h` (1,440 lines,
+seven authors), plus the identity/secp context code they borrow
+(`src/identity/{key,local,peer,mod}.c`, `internal.h`). Oracle: upstream
+`core/src/noise/*.rs` at the `UPSTREAM.md` pin `6aa80504`, its `README.md`,
+`docs/design/fips-security.md`, `docs/reference/security.md`, Noise rev 34 §5, §7.4–7.5,
+§11, and libsodium's `sodium_memzero`/`crypto_verify_*` semantics. Adversarial, not a
+port: the positive space is the differential harness; this report owns the negative
+space. Tools: clang 21 (Apple) ASan/UBSan `-Werror`, clang source coverage
+(`-fprofile-instr-generate -fcoverage-mapping`, Xcode `llvm-cov`), libFuzzer built from
+a sparse `compiler-rt/lib/fuzzer` checkout behind a disposable clang resource-dir
+overlay, and a dudect-style timing probe.
+
+## Findings
+
+Severity: critical / high / medium / low / info. "Upstream" is the pinned Rust.
+
+| ID | Severity | Location | Issue | Upstream behaviour | Resolution |
+| --- | --- | --- | --- | --- | --- |
+| N-1 | **Medium** | `src/noise/session.c:80-94` (pre-fix) | `fips_noise_session_{send,recv}_cipher_clone` copied the whole `fips_cipher_state`, counter included. A worker that called `fips_cipher_state_seal` or `take_counter` on its clone would reissue counters 0, 1, … that the session had already issued under the same key: ChaCha20-Poly1305 nonce reuse (keystream reuse, Poly1305 key recovery, forgery). Only a header contract prevented it; `test_session.c` even pinned the hazardous counter semantics ("Do NOT seal these locally reserved counters"). | `CipherState::cipher_clone()` returns a bare `AeadKey`; the type makes auto-seal impossible, the worker can only `seal(key, counter, …)` with a dispatcher-reserved counter. | **Fixed.** Clones copy the key only and pin the counter at the refused ceiling (`UINT64_MAX`), so auto-seal and `take_counter` on a clone return `NonceOverflow`; `seal_with_counter`/explicit-counter `open` are unchanged. `session.h` contract rewritten; `test_session.c` updated; regression `clone_counters()` in `test_noise_negative.c`. `fuzz_session.c` and `tests/diff` already used explicit counters and are unaffected. |
+| N-2 | Info | `src/noise/cipher.c:64-67`, `aead.c:44` | Explicit-counter open refuses `len > 65535` with `MessageTooLarge` (and insufficient `out_cap` as `MessageTooLarge`). | `CipherState::decrypt_with_counter[_and_aad]` has no upper bound: an oversized input is authenticated and fails as `DecryptionFailed` (no conforming peer seals more than 65535 bytes). | Accepted divergence, stricter than upstream; the variant differs only for input no conforming peer produces (and that the u16 FMP/FSP framing and UDP datagram limits cannot carry), no wire change. Documented in `handshake.h`/`cipher.h`; pinned by `transport_length_matrix()`. Upstream note for `nostrc-f66sr.6`. |
+| N-3 | Info | `src/noise/cipher.c:59-71`, `aead.c:40-55` | `fips_cipher_state_open` and the raw AEAD accept counter `UINT64_MAX`; only the replay window (`check`) and the senders (`take_counter`, `seal_with_counter`) refuse it. | Same: `decrypt_with_counter` does not refuse; `seal()` does not either (C `seal_with_counter` is stricter). | Parity; pinned by `nonce_overflow()` (ceiling open succeeds at the cipher layer, `ReplayDetected` at the session layer). No fix. |
+| N-4 | Info (upstream) | `src/noise/replay.c:16-18` | `fips_replay_window_mark` re-checks and returns `false` for too-old, seen or `MAX` counters, leaving the window byte-identical. | `ReplayWindow::accept` trusts the caller: for `counter <= highest` with `diff >= 8192` it indexes `bitmap[diff / 64]` out of bounds and panics; reachable through `NoiseSession::accept_replay` misuse. | C is strictly safer; keep. Upstream flaw note for `nostrc-f66sr.6`. |
+| N-5 | Info | `aead.c:30,44`, `cipher.c:27,64` | `ad_len > ULLONG_MAX` is a tautology on every supported ABI (`size_t` ≤ `unsigned long long`): dead guard around the libsodium cast. | n/a | Harmless; left as documentation of the cast. No fix (churn). |
+| N-6 | Info | `aead_primitive.h:33` | On tag failure the wrapper zeroes `len - 16` output bytes; libsodium's `crypto_aead_chacha20poly1305_ietf_decrypt_detached` already `memset(m, 0, mlen)`s on `crypto_verify_16` mismatch. | ring/RustCrypto leave "unspecified" contents. | Redundant by design: keeps the `aead.h` no-plaintext-on-failure contract independent of libsodium internals. Keep. |
+| N-7 | Info (parity) | `src/noise/symmetric.c:76-85` | A destroyed (all-zero) `fips_symmetric_state` has `has_key == false`, so `encrypt_and_hash`/`decrypt_and_hash` pass bytes through unencrypted. Unreachable from the handshake: `ready()` refuses a destroyed state before any symmetric call, and every handshake encrypt follows a `mix_key`. | Identical: `CipherState::empty()` passes plaintext through. | Pinned explicitly in `after_destroy()` so the behaviour is visible. Follow-up F-3 (optional test-hooks poison). |
+| N-8 | Info | `src/noise/handshake.c:131,140,155,162,185-187,206-208,259-261,275-277` | Offsets/lengths 33, 49, 82, 24 are literals; the `_Static_assert`s pin totals against `framing.h` but not intermediate offsets. | n/a | Readability only, wire-pinned file; deferred (F-4). |
+| N-9 | Info | `handshake.c` read paths | `InvalidPublicKey` (0 DH) and `DecryptionFailed` (1–2 DH) are timing-distinguishable to a network attacker, but only reveal whether the attacker's own ephemeral bytes are a curve point — public information. No secret-dependent branch exists before the AEAD; the AEAD tag check is `crypto_verify_16`. | Identical structure. | Documented; cost model pinned per message and region by `tamper_matrix()`. |
+| N-10 | Info | `src/identity/mod.c:28-32`, `src/noise/ecdh.c` | Context blinding (`secp256k1_context_randomize` with 32 host bytes, no unblinded fallback) protects `ec_pubkey_create` (ephemeral keygen) and Schnorr signing. `secp256k1_ecdh` runs `ecmult_const`, a constant-time ladder that does not use the context's blinding — by libsecp256k1 design. | Rust `secp256k1` `shared_secret_point` is the same ladder; its global context is randomized once. | Verdict: blinding applied where libsecp256k1 applies it; ECDH relies on `ecmult_const`. No fix. |
+| N-11 | Info (parity) | `handshake.c:196-213`, `read_xk_message_1` | A forged IK msg1 with a valid ephemeral costs the responder one DH (es) before the static fails to open; any XK msg1 with a valid point costs one DH and is accepted (no authentication at all). Unauthenticated DoS surface. | Identical; upstream `security.md` records that only handshake msg1 is unauthenticated. | Documented and pinned (XK msg1 allow-list below). Host rate limiting is the mitigation (Tier B). |
+| N-12 | Info | `src/noise/session.c:53` | `fips_noise_session_open` ignores the result of the post-authentication `mark` (`(void)`). Under the single-writer contract it cannot fail; a contract violation (mutation between check and mark) would accept a frame without recording it. | Same shape (`accept` returns nothing). | Contract documented in `session.h`: the single writer must own the whole check → open → mark and fork → validate → commit sequences, including rekey/reset/destroy; no fix. |
+| N-13 | Info | `handshake.c:343`, `finish` | `remote_static` returned to the initiator is the *configured* bytes, so an npub-derived 0x03 prefix is preserved while the responder's own serialization is 0x02; hosts must compare x-only. | Identical (`remote_static` is the configured `PublicKey`). | Pinned (`wrong_static()` parity case, `test_handshake.c:278`). |
+| N-14 | Info (upstream design) | `symmetric.c:100,123` (empty AAD), `handshake.h:103-105` | Pinned FIPS v1 passes an EMPTY associated-data field to the handshake AEAD where Noise `EncryptAndHash` uses `h`. Anything mixed only into `h` (pre-message parity, a future prologue or negotiated parameter) is therefore not authenticated and `h` is not a channel binding; the accepted 02↔03 ephemeral parity flips demonstrate the malleability. | Identical and documented upstream (`docs/reference/security.md`, "Deviation: Empty Associated Data"; `handshake.rs:53-57`). | Must not be "fixed" in C: restoring transcript binding is a versioned interoperability change. Documented in `handshake.h`; Tier B must not build an exporter/channel binding on `h`. Note for `nostrc-f66sr.6`. |
+
+A second-model review of the findings and the fix (code inlined, no worktree access) agreed the fix is sound, recalibrated N-2/N-3 from low to info, and raised the transcript-binding and single-writer caveats now recorded as N-14 and in N-12.
+
+No `memcmp`/byte-equality on any tag, key, hash or public key exists in `src/noise`
+(grep + read); authentication is libsodium's `crypto_verify_16` inside the AEAD. Every
+secret temporary is wiped on every path: HMAC states, PRK and T blocks (`hkdf.h`), the
+64-byte HKDF output in `mix_key`/`split`, the DH output and exported static scalar in
+`mix_dh`, the ECDH `x`/hash/parsed point, decrypted static and epoch, `next_h`, both split
+keys in `finish`, every handshake message buffer, every fork copy (`fork_read` destroys on
+every path), and whole structs on `destroy`/`clear_slot`/`take_cleared`.
+
+## Audit checklist
+
+| Item | Verdict | Evidence |
+| --- | --- | --- |
+| (a) constant-time comparisons | **PASS** | No `memcmp` in `src/noise`; AEAD open → `crypto_aead_chacha20poly1305_ietf_decrypt` → `crypto_verify_16`. The only equalities are pointer aliasing guards (`k1 == k2`, `slot == out`) and the public `secp256k1_ec_pubkey_parse`. `ct_probe` below. |
+| (b) zeroization on every path | **PASS** | Read above; `zeroization()` proves every secret range (ck, h, cipher key, ephemeral secret, es, remote keys, epoch, borrowed pointers) is nonzero live and zero after destroy, for a mid-handshake fork, a discarded fork, consumed `finish` keys, `take_cleared`/`clear_slot`, AEAD key and SymmetricState. `sodium_memzero` is an external libsodium call (not elidable without LTO) and the post-destroy zero checks pass under `-O0`/ASan and the `-O2` probe build. |
+| (c) IK one DH on failed msg2; invalid pubkey costs zero DH | **PASS** | `tamper_matrix()` pins the DH cost of every mutation: invalid point 0 DH on every ephemeral-carrying message; valid-point-wrong-x 1 DH; IK msg2 auth failure exactly 1 DH (es cached); IK msg1 1 DH for the static region, 2 for the epoch region; XK msg3 0 DH for the static region, 1 for the epoch. |
+| (d) nonce/counter | **PASS after N-1** | `nonce_overflow()`: refusal at `2^64-1` before sealing in cipher, session and SymmetricState (both directions, state unchanged) and mapped through the handshake (`NonceOverflow` on XK msg3 write and fork read, originals untouched). Clones cannot issue counters (N-1). `open_unmarked` takes `const` and only calls `fips_cipher_state_open`. |
+| (e) replay window | **PASS** | `replay_matrix()`: 18 highest-counter scenarios (0, 1, 63/64/65, 127/128, 8190–8193, 16383/16384, 2^32, 2^63, MAX-2, MAX-1) × probes at ±1, ±2, ±63/64/65, ±8190–8193 and +2^40 against an independent set oracle; failed marks leave every byte unchanged; far-future reset, shift by exactly 8192, counter 0 accepted once and aged out at 8192; after a failed open the counter stays acceptable (`frame_matrix()`, matching the vectors' `failed_counter_still_acceptable`). Combined word+bit shift verified equivalent to upstream's two-pass shift; no shift by 64 (the carry `>> (64u - bits)` runs only when `bits != 0`, `replay.c:31-32`). |
+| (f) length handling | **PASS** | Every handshake read requires the exact length: `length_matrix()` tries 0..65536 and `SIZE_MAX` for all five message types, raw and fork, with no DH, no entropy and byte-identical state. `MAX_MESSAGE_SIZE` enforced on seal (`len > 65519`) and open (`len > 65535`, N-2); `transport_length_matrix()` opens every length 0..65536 of a maximum frame. No overflow: every `len + 16` follows a `len > MAX - 16` check and every `len - 16` follows `len < 16`; `framing.h` constants are plain ints compared under `_Static_assert`, no `uint16_t` arithmetic in `src/noise`. |
+| (g) pubkey parsing | **PASS** | Invalid prefixes 0x00/0x01/0x04–0x07/0x82/0xff, all-zero and all-0xff remote statics are `InvalidPublicKey` with the output untouched; odd parity accepted and the pre-message is forced to 0x02 (`wrong_static()`: equal `h` for 0x02/0x03 remote); decrypted statics are parsed after the AEAD, as upstream. Blinding: N-10. |
+| (h) error-variant parity | **PASS** | All eleven `NoiseError` variants present; `WrongState` precedes length checks, which precede `InvalidPublicKey`/`DecryptionFailed`, as upstream. Divergences are all stricter: N-2 (`MessageTooLarge` on oversize open/capacity), N-3 (`seal_with_counter` refuses MAX), `WrongState` where upstream `expect`s. Network-indistinguishability: every read failure is a silent drop; timing separates only public point validity (N-9). |
+| (i) API misuse hardening | **PASS** | `after_destroy()`: every writer/reader/fork/finish on a destroyed handshake refuses (`WrongState`/`HandshakeNotComplete`) with no entropy, DH or output; double `finish`; `send == recv`; destroyed cipher and session (`WrongState`, window untouched, clones refused); unknown progress names "Invalid". Detection relies on the zeroed state failing `ready()`; no separate poison is needed. |
+| (j) `_Static_assert`s vs `framing.h` | **PASS** | `handshake.c:6-14` pins TAG, PUBKEY, EPOCH, EPOCH_ENCRYPTED, IK msg1/msg2 and XK msg1/2/3 (XK as framing expressions, since `framing.rs` defines none); `aead_primitive.h` pins key/nonce/tag against libsodium; `symmetric.c` pins protocol-name sizes, SHA-256 size and status pass-through. |
+
+## Negative tests (`libfips-core/tests/test_noise_negative.c`, `FipsCoreNoiseNegativeTest`)
+
+Compiled with `FIPS_TEST_HOOKS` (handshake, ECDH and cipher sources) and the test's own
+libsecp256k1 context as an independent point-validity oracle. Deterministic fixtures
+(seeded entropy 0x494b IK, 0x584b XK); every accepted mutation must match one explicit
+allow-list rule, otherwise the exact variant and DH count are asserted:
+
+| Message | Mutations (offset × {xor 1, xor 0x80, 0x00, 0xff}) | identity | parity (02↔03) | xk1 unauthenticated | InvalidPublicKey (0 DH) | DecryptionFailed, valid e, wrong x (1 DH) | DecryptionFailed, AEAD |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| IK msg1 (106) | 424 | 0 | 1 | — | 64 | 67 | 292 |
+| IK msg2 (57) | 228 | 0 | 1 | — | 58 | 73 | 96 |
+| XK msg1 (33) | 132 | 0 | — | **71** | 61 | — | — |
+| XK msg2 (57) | 228 | 1 | 1 | — | 63 | 67 | 96 |
+| XK msg3 (73) | 292 | 0 | — | — | — | — | 292 |
+
+The 71 accepted XK msg1 mutations are exactly the bytes the oracle parses as a point; the
+count is pinned in the test and was cross-checked by an independent pure-Python Euler's
+criterion over the printed fixture bytes (71 valid, 61 invalid, 0 identity). Each accepted
+XK msg1 is followed up: the tampered responder's msg2 authenticates at the real initiator
+only for the parity-only mutation (offset 0), fails `DecryptionFailed` after 1 DH for all
+70 x-changing ones. Every raw read runs on a copy with the snapshot proven byte-identical;
+every fork read proves the destination sentinel untouched on failure.
+
+Also covered: writer capacities 0..n-1 (`MessageTooLarge`, no entropy/DH/output) and
+n/n+1/`SIZE_MAX`; transport frames at 0/1/15/16/17/64/1000 bytes × {no AD, 3-byte AD} with
+every ciphertext, tag and AD byte × 4 mutations, counter +1/+2/+8191/+8192/+2^40 and the
+ceiling (9,927 and 9,929 rejections, plaintext range zeroed exactly, `out_len`/window
+untouched, counter still acceptable, genuine frame then opens once); wrong direction key;
+every transport length 0..65536 on open and 0..4096 ∪ every 997th ∪ boundary on seal;
+nonce overflow at all layers; wrong remote static for both patterns and both roles;
+forced DH failure (`Secp256k1`, counted, originals untouched); misuse after destroy;
+zeroization; clone counter hardening. Runtime 0.9 s under ASan/UBSan.
+
+## Coverage of `src/noise/` (clang source coverage, all `^Fips` tests)
+
+| | Lines | Regions | Branches | Functions |
+| --- | --- | --- | --- | --- |
+| Before this task | 99.03% (610/616) | 95.95% | 85.19% | 100% |
+| After (`test_noise_negative.c` + fix) | **99.35% (615/619)** | **96.76%** | **87.83%** | 100% |
+
+Remaining uncovered lines are exactly the four `sodium_init()`-failure mappings that cannot
+execute once libsodium is initialized: `aead.c:35` (`FIPS_AEAD_ERR_CRYPTO` from seal),
+`handshake.c:74,75,77` (`ERR_RANGE`/`ERR_CRYPTO`/default cases of `symmetric_status`; the
+handshake uses fixed lengths so `ERR_RANGE` is unreachable too). The `NonceOverflow`
+mapping and the `"Invalid"` progress name were previously uncovered and are now exercised.
+
+## Constant-time check (`libfips-core/tests/tools/ct_probe.c`, target `fips_core_ct_probe`)
+
+Method: dudect-style fixed-vs-random classes, interleaved pseudo-randomly, 16 opens per
+measurement (lifts samples above `clock_gettime` quantisation), slowest 1% of each class
+cropped, Welch's t-test, |t| ≥ 4.5 = distinguishable. Built standalone at `-O2` against
+`src/noise/aead.c` + libsodium 1.0.22 (no sanitizer/coverage overhead), Apple M4 Max,
+100,000 measurements per experiment, 1024-byte plaintext, 16-byte AD:
+
+| Experiment (class 0 vs class 1) | mean ns / 16 opens | t | Result |
+| --- | --- | --- | --- |
+| ciphertext byte 0 vs random ciphertext byte | 7938 / 7939 | −0.06 | indistinguishable |
+| tag byte 0 vs random tag byte | 7985 / 7976 | +1.66 | indistinguishable |
+| first ciphertext byte vs last tag byte | 8116 / 8122 | −1.12 | indistinguishable |
+| AD byte 0 vs random AD byte | 7865 / 7867 | −0.85 | indistinguishable |
+| wrong counter vs last tag byte | 7822 / 7827 | −1.74 | indistinguishable |
+| ciphertext byte 0 vs random byte anywhere | 8048 / 8053 | −1.10 | indistinguishable |
+| **control**: accept vs reject, same length | 25223 / 8252 | **+1373** | detected (probe has power) |
+
+Result: AEAD-open failure time does not depend on which byte was tampered; the only
+observable is accept-vs-reject (one ChaCha20 pass), which the response already reveals.
+Static argument for the rest of the stack: handshake reads branch only on public point
+validity and on the AEAD result (N-9); `ecmult_const` is constant time (N-10). The probe is
+built in the CI closure but deliberately not a ctest (timing is machine dependent).
+
+## Verification
+
+| Check | Result |
+| --- | --- |
+| Configure as FIPS CI: Debug, `GO_WARNINGS_AS_ERRORS=ON`, `GO_ENABLE_ASAN=ON`, `GO_ENABLE_UBSAN=ON`, `BUILD_FIPS=ON`, other components off (clang 21, macOS arm64) | PASS, no warnings |
+| `ctest -R '^Fips'` (40 tests incl. new `FipsCoreNoiseNegativeTest`, `FipsdSkeletonTest`, `FipsCoreSkeletonTest`) under `ASAN_OPTIONS=detect_leaks=0:strict_string_checks=1:halt_on_error=1`, `UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1` | **40/40 PASS** |
+| `FipsDiffNoise` | **83 checked, 0 skipped, 0 failed** |
+| `fips_fuzz_aead` 30 s, seed corpus copy, ASan/UBSan | 873,143 execs, 141 new units, 0 findings, exit 0 |
+| `fips_fuzz_handshake` 30 s | 3,116,612 execs, 13 new units, 0 findings, exit 0 |
+| `fips_fuzz_session` 30 s | 2,414,510 execs, 788 new units, 0 findings, exit 0 |
+| `fips_fuzz_identity` 30 s | 10,394,720 execs, 382 new units, 0 findings, exit 0 |
+| `fips_fuzz_session` / `fips_fuzz_handshake` 30 s each, rerun on the final committed `session.c` | 2,931,976 / 3,097,240 execs, 0 findings, exit 0 |
+| libFuzzer runtime | built from a sparse `llvm-project/compiler-rt/lib/fuzzer` checkout (`build.sh`), exposed as `libclang_rt.fuzzer_osx.a` through a disposable `-resource-dir` overlay of symlinks to Apple's runtimes; deleted afterwards |
+| `scripts/check-unsequenced-args.py --root .`, `check-gui-test-gdk-frame.py`, `check-linux-ci-packages.py`, `git diff --check` | PASS |
+| Build/runtime scratch (`/tmp/nostrc-noise-audit`), submodule (`git submodule deinit -f --all`) | removed after commit |
+
+## Version assessment
+
+`libfips-core` stays **0.1.0 Unreleased**: the N-1 clone semantics change is a
+PATCH-class correction folded into unreleased 0.1.0 (no published release or tag);
+the negative test, probe and this report are test/documentation-only. No other component
+is affected. Recorded in `VERSION_MANIFEST.md`.
+
+## Follow-ups (beads-ready)
+
+- **F-1 (for `nostrc-f66sr.6`, upstream)** — `core/src/noise/replay.rs` `ReplayWindow::accept` indexes `bitmap[diff/64]` without bounding `diff < REPLAY_WINDOW_SIZE`; a caller marking a counter older than the window panics. C refuses instead (N-4).
+- **F-2 (for `nostrc-f66sr.6`, upstream)** — `CipherState::decrypt_with_counter[_and_aad]` has no `MAX_MESSAGE_SIZE` bound, unlike `encrypt`; C refuses oversize input before authenticating (N-2).
+- **F-3 (libfips-core, optional, low)** — add a `FIPS_TEST_HOOKS`-only poison so a destroyed `fips_symmetric_state` is detected as misuse instead of acting as upstream's pass-through empty cipher (N-7).
+- **F-4 (libfips-core, info)** — replace the literal offsets 33/49/82/24 in `handshake.c` with named expressions of `FIPS_NOISE_PUBKEY_SIZE`/`TAG_SIZE`/`EPOCH_ENCRYPTED_SIZE` (N-8).
+- **F-5 (Tier A4/B design note)** — worker clones now carry no issuable counter: the dispatcher reserves with `fips_noise_session_take_send_counter` and workers seal with `fips_cipher_state_seal_with_counter`; record this in the rekey/host design when porting `core/src/proto/rekey`.
+- **F-6 (CI, optional)** — run `fips_core_ct_probe` on a quiet dedicated runner as a non-gating nightly, since wall-clock t-tests are unsuitable for shared PR runners.

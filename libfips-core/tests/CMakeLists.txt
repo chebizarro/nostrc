@@ -358,6 +358,37 @@ add_test(NAME FipsCoreSessionTest COMMAND fips_core_session_test)
 set_tests_properties(FipsCoreSessionTest PROPERTIES TIMEOUT 30 LABELS "fips;unit")
 nostrc_describe_test(FipsCoreSessionTest OWNER libfips-core TARGETS fips_core_session_test)
 add_dependencies(fips_core_host_test fips_core_session_test)
+# Noise negative space (nostrc-pwo3h.8): tamper, length, replay, nonce, wrong-key
+# and misuse matrices with exact error variants, DH cost, untouched fork originals,
+# an explicit allow-list for every accepted mutation and zeroization probes.
+# Handshake, ECDH and cipher are compiled with test hooks here (DH counter,
+# counter injection); the production library stays uninstrumented. The point
+# validity oracle is the test's own libsecp256k1 context, not the port's.
+add_executable(fips_core_noise_negative_test test_noise_negative.c fakes/host.c
+  ../src/noise/handshake.c ../src/noise/ecdh.c ../src/noise/cipher.c)
+target_compile_definitions(fips_core_noise_negative_test PRIVATE FIPS_TEST_HOOKS FIPS_CORE_STATIC_DEFINE)
+target_link_libraries(fips_core_noise_negative_test PRIVATE fips_core
+  PkgConfig::FIPS_CORE_SODIUM PkgConfig::FIPS_CORE_SECP256K1)
+set_target_properties(fips_core_noise_negative_test PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+apply_warnings(fips_core_noise_negative_test)
+apply_sanitizers(fips_core_noise_negative_test)
+add_test(NAME FipsCoreNoiseNegativeTest COMMAND fips_core_noise_negative_test)
+# Every transport length 0..MAX+1 is opened; allow for sanitizer builds.
+set_tests_properties(FipsCoreNoiseNegativeTest PROPERTIES TIMEOUT 180 LABELS "fips;unit;negative")
+nostrc_describe_test(FipsCoreNoiseNegativeTest OWNER libfips-core TARGETS fips_core_noise_negative_test)
+add_dependencies(fips_core_host_test fips_core_noise_negative_test)
+# Constant-time probe for AEAD open failures (nostrc-pwo3h.8): built in the CI
+# closure so it cannot rot, never registered with ctest because wall-clock timing
+# is machine-dependent. Run by hand: fips_core_ct_probe [measurements]; method and
+# results are in docs/reviews/libfips-core-noise-audit-2026-11-15.md.
+add_executable(fips_core_ct_probe tools/ct_probe.c)
+target_link_libraries(fips_core_ct_probe PRIVATE fips_core m)
+set_target_properties(fips_core_ct_probe PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+apply_warnings(fips_core_ct_probe)
+apply_sanitizers(fips_core_ct_probe)
+add_dependencies(fips_core_host_test fips_core_ct_probe)
 # Tier A3 proto properties and locked differential sweep (nostrc-82g9n.9).
 add_executable(fips_core_proto_properties_test test_proto_properties.c fakes/host.c)
 get_target_property(fips_properties_diff_definitions fips_diff COMPILE_DEFINITIONS)

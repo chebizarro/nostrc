@@ -77,11 +77,22 @@ uint64_t fips_noise_session_recv_nonce(const fips_noise_session *session)
 fips_noise_status fips_noise_session_take_send_counter(fips_noise_session *session, uint64_t *out)
 { return fips_cipher_state_take_counter(&session->send_cipher, out); }
 
+/* Upstream cipher_clone hands a worker a bare AeadKey: the key and NO counter.
+ * A byte copy with the counter pinned at the refused ceiling keeps that shape
+ * in C (and tolerates out == src): auto-seal and take_counter on a clone fail
+ * with NonceOverflow instead of silently reissuing counters the session already
+ * handed out under the same key (nostrc-pwo3h.8 finding N-1). */
+static void clone_cipher(const fips_cipher_state *src, fips_cipher_state *out)
+{
+    memmove(out, src, sizeof(*out));
+    out->counter = UINT64_MAX;
+}
+
 fips_noise_status fips_noise_session_send_cipher_clone(const fips_noise_session *session,
     fips_cipher_state *out)
 {
     if (!session->send_cipher.has_key) return FIPS_NOISE_WrongState;
-    memcpy(out, &session->send_cipher, sizeof(*out));
+    clone_cipher(&session->send_cipher, out);
     return FIPS_NOISE_OK;
 }
 
@@ -89,7 +100,7 @@ fips_noise_status fips_noise_session_recv_cipher_clone(const fips_noise_session 
     fips_cipher_state *out)
 {
     if (!session->recv_cipher.has_key) return FIPS_NOISE_WrongState;
-    memcpy(out, &session->recv_cipher, sizeof(*out));
+    clone_cipher(&session->recv_cipher, out);
     return FIPS_NOISE_OK;
 }
 
