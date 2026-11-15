@@ -13,6 +13,8 @@ that linked undocumented symbols, and requires rebuilding those consumers.
 No release tag is published by this change; all other components have no
 B1-owned shipped artifact change and no B1 bump.
 
+nostrc-f12v2.1: no bump for libfips-core 0.1.0 Unreleased; additive shared rekey machine, parameter/profile hooks and ownership APIs fold into the initial unreleased version; production profiles/session binding and legacy compatibility remain separate tasks; no published release/tag change.
+
 nostrc-pwo3h.8: no bump for libfips-core 0.1.0 Unreleased; PATCH-class corrections folded into unreleased 0.1.0 (worker cipher clones carry no issuable counter); Noise negative tests, constant-time probe and audit report are test/documentation-only; no published release/tag change.
 
 nostrc-pwo3h.7: no bump for libfips-core; additive CipherState, ReplayWindow and NoiseSession APIs fold into initial 0.1.0 Unreleased; no published release/tag change.

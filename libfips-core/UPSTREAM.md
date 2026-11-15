@@ -86,13 +86,13 @@ those shares together. Modules omitted from the assessment's table are marked
 | Rust module(s) at pin | Assessment non-test LoC | Planned C home(s) | Owning bead epic/task |
 |---|---:|---|---|
 | `core/src/proto/path/**` | 6,783 | `libfips-core/src/proto/path/…` | `nostrc-f12v2` A4 |
-| `core/src/proto/rekey/**` | 6,575 | `libfips-core/src/proto/rekey/…` (including legacy compatibility fixtures) | `nostrc-f12v2` A4; `nostrc-f66sr` verification |
+| `core/src/proto/rekey/**` | 6,575 | `libfips-core/src/proto/rekey/…` + `include/fips/proto/rekey/…` (shared machine/params/profile hooks implemented; [API and ownership](src/proto/rekey/README.md), [test mapping](tests/REKEY.md); legacy fixtures deferred) | `nostrc-f12v2.1` shared core; `nostrc-f12v2.3` legacy; `nostrc-f66sr` verification |
 | `core/src/proto/settle/**` | 5,493 | `libfips-core/src/proto/settle/…` (port last; upstream not wired to callers yet) | `nostrc-f12v2` A4 |
 | `core/src/proto/mmp/**` | 4,160 | `libfips-core/src/proto/mmp/…` | `nostrc-f12v2` A4 |
-| `core/src/proto/fmp/**` | 2,186 | `libfips-core/src/proto/fmp/…` | `nostrc-82g9n` A3; rekey profile: `nostrc-f12v2` A4 |
+| `core/src/proto/fmp/**` | 2,186 | `libfips-core/src/proto/fmp/…` | `nostrc-82g9n` A3; rekey profile/session binding: `nostrc-f12v2.2` A4 |
 | `core/src/proto/lookup/**` | 1,752 | `libfips-core/src/proto/lookup/…` | `nostrc-82g9n` A3 |
 | `core/src/proto/stp/**` | 1,574 | `libfips-core/src/proto/stp/…` | `nostrc-82g9n` A3 |
-| `core/src/proto/fsp/**` | 1,461 | `libfips-core/src/proto/fsp/…` | `nostrc-82g9n` A3; rekey profile: `nostrc-f12v2` A4 |
+| `core/src/proto/fsp/**` | 1,461 | `libfips-core/src/proto/fsp/…` | `nostrc-82g9n` A3; rekey profile/session binding: `nostrc-f12v2.2` A4 |
 | `core/src/proto/probe/**` | 1,220 | `libfips-core/src/proto/probe/…` | `nostrc-f12v2` A4 |
 | `core/src/proto/bloom/**` | 1,162 | `libfips-core/src/proto/bloom/…` | `nostrc-82g9n` A3 |
 | `core/src/proto/routing/**` | 969 | `libfips-core/src/proto/routing/…` | `nostrc-82g9n` A3 |
