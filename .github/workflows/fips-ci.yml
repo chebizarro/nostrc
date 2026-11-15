@@ -72,7 +72,7 @@ jobs:
       - name: Build FIPS targets
         shell: bash
         run: |
-          targets=(fipsd fipsd_host_os_test)
+          targets=(fipsd fipsd_tests)
           if [[ '${{ matrix.configuration }}' != tsan ]]; then
             targets+=(fips_core_skeleton_test fips_core_host_test)
           fi
