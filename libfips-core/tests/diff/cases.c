@@ -60,6 +60,8 @@ typedef struct rekey_case {
     uint64_t entropy_seed;
     diff_bytes epoch;
     diff_value *keypair_seeds, *initial, *events, *final;
+    const char *legacy_release;
+    bool legacy_initiates;
 } rekey_case;
 
 static bool compare(diff_context *ctx, diff_bytes expected, const unsigned char *actual, size_t len)
@@ -745,6 +747,15 @@ static bool rk_state(diff_context *ctx, const diff_value *expected, const fips_r
 static bool rk_debug(diff_context *ctx, const diff_value *v, const fips_rekey_output *o) {
     char text[256];
     switch (o->kind) {
+    case FIPS_REKEY_OUT_Bind: {
+        char tag[64];
+        if (o->has_tag) snprintf(tag, sizeof tag, "Some(EpochTag(%" PRIu64 "))", o->tag);
+        else snprintf(tag, sizeof tag, "None");
+        snprintf(text, sizeof text, "Bind { transport: TransportId(%" PRIu64 "), index: %u, tag: %s, purpose: %s }",
+            (uint64_t)o->transport, o->index, tag, (const char *[]){"Attempt", "Pending", "Current", "Previous"}[o->purpose]); break;
+    }
+    case FIPS_REKEY_OUT_Unbind:
+        snprintf(text, sizeof text, "Unbind { transport: TransportId(%" PRIu64 "), index: %u }", (uint64_t)o->transport, o->index); break;
     case FIPS_REKEY_OUT_Installed: {
         const char *evidence[] = {"Proof", "Frame", "Restart", "Assumed", "Delay", "First"};
         snprintf(text, sizeof text, "Installed { tag: EpochTag(%" PRIu64 "), role: %s, evidence: %s }",
@@ -762,45 +773,59 @@ static bool rk_debug(diff_context *ctx, const diff_value *v, const fips_rekey_ou
     return rk_text(ctx, v, "debug", text);
 }
 static bool rk_params(diff_context *ctx, const rekey_case *c) {
-    fips_rekey_config x = fips_rekey_config_fsp();
+    fips_rekey_config x = strstr(c->profile, "FmpProfile") ? fips_rekey_config_fmp() : fips_rekey_config_fsp();
     char actual[2048]; size_t n = 0;
 #define RAPP(...) do { int w = snprintf(actual + n, sizeof actual - n, __VA_ARGS__); \
     if (w < 0 || (size_t)w >= sizeof actual - n) { return false; } n += (size_t)w; } while (0)
-#define RD(field) do { if (x.field.nanos) return false; RAPP(", " #field ": %" PRIu64 "s", x.field.secs); } while (0)
+#define RD(field) do { if (x.field.nanos) return false; if (x.field.secs) { RAPP(", " #field ": %" PRIu64 "s", x.field.secs); } else { RAPP(", " #field ": 0ns"); } } while (0)
     RAPP("Config { after: %" PRIu64 "s, jitter: %u, messages: %" PRIu64, x.after.secs, x.jitter, x.messages);
     RD(handshake); RD(check); RD(drain); RD(retention); RD(hold); RD(revert); RD(dampening);
     RD(ttl); RD(young); RD(link_age); RD(session_age);
-    if (x.floor_link.secs || x.floor_link.nanos || x.floor_session.secs || x.floor_session.nanos) return false;
-    RAPP(", floor_link: 0ns, floor_session: 0ns"); RD(floor_cutover); RD(silence);
+    if (x.floor_link.nanos || x.floor_session.nanos) return false;
+    if (x.floor_link.secs) { RD(floor_link); } else { RAPP(", floor_link: 0ns"); }
+    if (x.floor_session.secs) { RD(floor_session); } else { RAPP(", floor_session: 0ns"); } RD(floor_cutover); RD(silence);
     RAPP(", resends: %u, soft: %" PRIu64 ", hard: %" PRIu64, x.resends, x.soft, x.hard);
     RD(delay); RAPP(", arrival: %s }", x.arrival ? "true" : "false");
 #undef RD
 #undef RAPP
-    return !strcmp(c->params_debug, actual) || diff_error(ctx, "FSP config mismatch");
+    return !strcmp(c->params_debug, actual) || diff_error(ctx, "rekey config mismatch");
 }
 static result check_rekey(diff_context *ctx, const rekey_case *c) {
+    const bool legacy = c->legacy_release != NULL;
+    const bool fmp = strstr(c->profile, "FmpProfile") != NULL;
+    const fips_rekey_profile *profile = fmp ? &fips_fmp_rekey_profile : &fips_fsp_rekey_profile;
+    snprintf(ctx->id, sizeof ctx->id, "%s/%s/init", legacy ? c->legacy_release : "rekey", fmp ? "fmp" : "fsp");
     rp_node *nodes = calloc(2, sizeof *nodes);
     bool ok = nodes && c->epoch.len == 8 && COUNT(c->keypair_seeds) == 2 &&
-        !strcmp(c->profile, "FspProfile<SeededEntropy> (Noise XK)") &&
-        !strcmp(c->initial_handshake, "noise.json XK (before frame exports)") && rk_params(ctx, c) &&
-        !strcmp(c->clock, "TestClock milliseconds, 0 -> 600000 then 10ms per delivered packet, then application traffic and next_wake deadlines");
-    fips_seeded_entropy entropy_state = {0x584b};
+        !strcmp(c->profile, fmp ? "FmpProfile<SeededEntropy> (Noise IK)" : "FspProfile<SeededEntropy> (Noise XK)") &&
+        !strcmp(c->initial_handshake, fmp ? "noise.json IK (before frame exports)" : "noise.json XK (before frame exports)") && rk_params(ctx, c) &&
+        !strcmp(c->clock, legacy ? "legacy model tick + current next_wake; 10ms channel latency" :
+            "TestClock milliseconds, 0 -> 600000 then 10ms per delivered packet, then application traffic and next_wake deadlines") &&
+        COUNT(c->initial) == (legacy ? 1u : 2u) && COUNT(c->final) == (legacy ? 1u : 2u);
+    fips_seeded_entropy entropy_state = {fmp ? 0x494b : 0x584b};
     fips_entropy entropy = fips_seeded_entropy_adapter(&entropy_state);
+    fips_index_allocator indices;
+    uint32_t index_storage[16];
+    fips_index_allocator_init(&indices, index_storage, 16, FIPS_INDEX_DEFAULT_MAX_ATTEMPTS, entropy);
     for (size_t k = 0; ok && k < 2; ++k)
         ok = rp_init(&nodes[k], ITEM(c->keypair_seeds, k)->as.number, entropy, c->epoch.data);
-    if (ok) ok = rp_pair(&nodes[0], &nodes[1], &fips_fsp_rekey_profile);
-    for (size_t k = 0; ok && k < 2; ++k) ok = rk_state(ctx, ITEM(c->initial, k), &nodes[k].machine);
+    if (ok) ok = rp_pair(&nodes[0], &nodes[1], profile);
+    if (ok && legacy && fmp) {
+        ok = fips_index_allocator_reserve(&indices, fips_session_index_new(10)) == FIPS_INDEX_OK;
+        nodes[0].env.indices = fips_rekey_index_source_from_allocator(&indices);
+    }
+    for (size_t k = 0; ok && k < COUNT(c->initial); ++k) ok = rk_state(ctx, ITEM(c->initial, k), &nodes[k].machine);
     entropy_state.state = c->entropy_seed;
     fips_test_clock clock = {0};
-    if (ok) ok = fips_test_clock_advance(&clock, 600000) == FIPS_OK;
+    if (ok && !legacy) ok = fips_test_clock_advance(&clock, 600000) == FIPS_OK;
     fips_clock clock_api = fips_test_clock_adapter(&clock);
     for (size_t event = 0; ok && event < COUNT(c->events); ++event) {
         diff_value *e = ITEM(c->events, event);
         uint64_t at = UINT(e, "at_ms"), who = UINT(e, "node");
-        snprintf(ctx->id, sizeof ctx->id, "rekey/event/%zu/node/%" PRIu64, event, who);
-        if (who > 1 || at < clock.millis) { ok = diff_error(ctx, "invalid trace clock/node"); break; }
+        snprintf(ctx->id, sizeof ctx->id, "%s/event/%zu/node/%" PRIu64, legacy ? c->legacy_release : "rekey", event, who);
+        if (who > (legacy ? 0u : 1u) || UINT(e, "event") != event || at < clock.millis) { ok = diff_error(ctx, "invalid trace clock/node"); break; }
         const char *label = TEXT(e, "input");
-        if (!strcmp(label, "Poll (next_wake)")) {
+        if (!legacy && !strcmp(label, "Poll (next_wake)")) {
             /* First poll in each pair advances to the actual minimum wake;
              * second is at the same instant, as rekey.rs's two-node loop. */
             if (at != clock.millis) {
@@ -808,7 +833,7 @@ static result check_rekey(diff_context *ctx, const rekey_case *c) {
                 uint64_t wake = !a.ops ? b.opaque[0] : !b.ops ? a.opaque[0] : a.opaque[0] < b.opaque[0] ? a.opaque[0] : b.opaque[0];
                 if (at != wake) { ok = diff_error(ctx, "poll not at actual next_wake"); break; }
             }
-        } else if (event && at != clock.millis + 10) { ok = diff_error(ctx, "delivery/application must advance 10ms"); break; }
+        } else if (!legacy && event && at != clock.millis + 10) { ok = diff_error(ctx, "delivery/application must advance 10ms"); break; }
         if (fips_test_clock_advance(&clock, at - clock.millis) != FIPS_OK) { ok = false; break; }
         fips_instant now = clock_api.now(clock_api.ctx);
         rp_node *n = &nodes[who];
@@ -820,17 +845,63 @@ static result check_rekey(diff_context *ctx, const rekey_case *c) {
             if (hex->as.bytes.len > sizeof input) { ok = false; break; }
             input_len = hex->as.bytes.len; memcpy(input, hex->as.bytes.data, input_len);
         }
+        if (legacy) {
+            diff_value *seed = FIELD(e, "entropy_seed_hex");
+            if (!seed || seed->type != D_UINT) { ok = diff_error(ctx, "missing legacy entropy checkpoint"); break; }
+            entropy_state.state = seed->as.number;
+        }
         rp_packet app = {0};
         bool application = !strcmp(label, "Seal(DataPacket) + DataSent");
         if (!strcmp(label, "start_now (test-hook)")) fips_rekey_start_now(&n->machine, now, &n->env, &n->out);
-        else if (application) ok = rp_data(n, at, &app);
+        else if (application) {
+            if (!legacy) ok = rp_data(n, at, &app);
+            else {
+                diff_value *outputs = FIELD(e, "outputs");
+                diff_value *v = COUNT(outputs) ? ITEM(outputs, COUNT(outputs) - 1) : NULL;
+                if (!v || !FIELD(v, "plaintext_hex")) { ok = false; break; }
+                uint8_t plain[14], seq[8];
+                fips_writer seq_writer, plain_writer;
+                fips_writer_init(&seq_writer, seq, sizeof seq);
+                fips_writer_init(&plain_writer, plain, sizeof plain);
+                diff_value *sequence = FIELD(v, "sequence");
+                if (!sequence || sequence->type != D_UINT) { ok = false; break; }
+                fips_rekey_sealed sealed = {0};
+                ok = fips_rekey_seal(&n->machine, now, &sealed) == FIPS_REKEY_SEAL_OK &&
+                    fips_writer_write_u64_le(&seq_writer, sequence->as.number, NULL) == FIPS_OK;
+                uint32_t elapsed = (uint32_t)(sealed.elapsed.secs * 1000 + sealed.elapsed.nanos / 1000000);
+                if (ok && fmp) {
+                    uint8_t payload[9] = {FIPS_LINK_SessionDatagram};
+                    memcpy(payload + 1, seq, sizeof seq);
+                    ok = fips_fmp_prepend_inner_header(elapsed, payload, sizeof payload, &plain_writer, NULL) == FIPS_OK;
+                } else if (ok) ok = fips_fsp_prepend_inner_header(elapsed, FIPS_SESSION_DataPacket, 0,
+                    seq, sizeof seq, &plain_writer, NULL) == FIPS_OK;
+                if (ok) ok = compare(ctx, BYTES(v, "plaintext_hex"), plain, fips_writer_len(&plain_writer)) &&
+                    fips_session_encode_sealed(profile, &sealed, plain, fips_writer_len(&plain_writer),
+                        app.bytes, sizeof app.bytes, &app.len) == FIPS_OK;
+                fips_rekey_sealed_clear(&sealed);
+                if (ok && !fmp) ok = fips_rekey_step(&n->machine, now,
+                    (fips_rekey_input){.kind = FIPS_REKEY_IN_DataSent}, &n->env, &n->out) == FIPS_OK;
+            }
+        }
         else {
             fips_rekey_input in = {.bytes = input, .buf = input, .len = input_len,
                 .carrier = nodes[1 - who].me, .route = 1};
+            if (fmp && !strcmp(label, "Msg1")) {
+                fips_fmp_ik_msg1 tok = {0};
+                fips_fmp_inbound_decision d = {.kind = FIPS_FMP_IN_Rekey, .peer = n->remote};
+                ok = fips_fmp_rekey_read_msg1(&n->local, input, input_len, &tok) &&
+                    fips_fmp_rekey_inbound(&n->machine, now, &d, &tok, true, true, &n->env, &n->out) == FIPS_OK;
+                fips_fmp_rekey_msg1_clear(&tok);
+                goto compared_input;
+            }
+            if (fmp && (!strcmp(label, "Msg2") || !strcmp(label, "Frame"))) {
+                ok = fips_fmp_rekey_receive(&n->machine, now, input, input_len, &n->env, &n->out) == FIPS_OK;
+                goto compared_input;
+            }
             if (!strcmp(label, "Setup")) in.kind = FIPS_REKEY_IN_Setup;
             else if (!strcmp(label, "Ack")) in.kind = FIPS_REKEY_IN_Reply;
             else if (!strcmp(label, "Msg3")) in.kind = FIPS_REKEY_IN_Final;
-            else if (!strcmp(label, "Poll (next_wake)")) in.kind = FIPS_REKEY_IN_Poll;
+            else if (!strcmp(label, "Poll (next_wake)") || !strcmp(label, "Poll (legacy schedule)")) in.kind = FIPS_REKEY_IN_Poll;
             else if (!strcmp(label, "Frame")) {
                 fips_fsp_encrypted_header h;
                 if (!fips_fsp_encrypted_header_parse(input, input_len, &h)) { ok = false; break; }
@@ -839,6 +910,7 @@ static result check_rekey(diff_context *ctx, const rekey_case *c) {
             } else { ok = diff_error(ctx, "unhandled trace input"); break; }
             ok = fips_rekey_step(&n->machine, now, in, &n->env, &n->out) == FIPS_OK;
         }
+compared_input:;
         diff_value *outputs = FIELD(e, "outputs");
         if (ok && COUNT(outputs) != n->out.count + (application ? 1u : 0u))
             ok = diff_error(ctx, "output count: expected %zu, C %zu", COUNT(outputs), n->out.count);
@@ -863,6 +935,7 @@ static result check_rekey(diff_context *ctx, const rekey_case *c) {
             } else if (o->kind == FIPS_REKEY_OUT_Release) {
                 uint32_t index;
                 ok = fips_rekey_index_lease_release(&o->lease, &index) && rk_text(ctx, v, "kind", "Release") && rk_number(ctx, v, "index", index);
+                if (ok && legacy && fmp) ok = fips_index_allocator_free(&indices, fips_session_index_new(index)) == FIPS_INDEX_OK;
             } else {
                 ok = rk_debug(ctx, v, o);
                 if (ok && o->kind == FIPS_REKEY_OUT_Deliver) {
@@ -877,7 +950,20 @@ static result check_rekey(diff_context *ctx, const rekey_case *c) {
         }
         diff_value *deliveries = FIELD(e, "authenticated_deliveries");
         if (ok && deliveries && delivery != COUNT(deliveries)) ok = diff_error(ctx, "authenticated delivery count mismatch");
-        if (ok && application) {
+        if (ok && application && legacy) {
+            diff_value *v = ITEM(outputs, n->out.count);
+            ok = rk_text(ctx, v, "kind", "ApplicationFrame") && compare(ctx, BYTES(v, "bytes"), app.bytes, app.len);
+            if (ok && fmp) {
+                fips_fmp_encrypted_header h;
+                ok = fips_fmp_encrypted_header_parse(app.bytes, app.len, &h) &&
+                    rk_number(ctx, v, "counter", h.counter) && rk_bool(ctx, v, "k", (h.flags & 1) != 0);
+            } else if (ok) {
+                fips_fsp_encrypted_header h;
+                ok = fips_fsp_encrypted_header_parse(app.bytes, app.len, &h) &&
+                    rk_number(ctx, v, "counter", h.counter) && rk_bool(ctx, v, "k", (h.flags & FIPS_FSP_FLAG_K) != 0);
+            }
+        }
+        if (ok && application && !legacy) {
             diff_value *v = ITEM(outputs, n->out.count);
             fips_fsp_encrypted_header h;
             ok = fips_fsp_encrypted_header_parse(app.bytes, app.len, &h) &&
@@ -894,9 +980,22 @@ static result check_rekey(diff_context *ctx, const rekey_case *c) {
         fips_rekey_outputs_clear(&n->out);
         if (!ok && !ctx->error[0]) diff_error(ctx, "rekey replay mismatch");
     }
-    for (size_t k = 0; ok && k < 2; ++k) ok = rk_state(ctx, ITEM(c->final, k), &nodes[k].machine);
+    for (size_t k = 0; ok && k < COUNT(c->final); ++k) ok = rk_state(ctx, ITEM(c->final, k), &nodes[k].machine);
+    if (nodes && legacy && fmp && nodes[0].machine.live) {
+        fips_rekey_outputs_clear(&nodes[0].out);
+        fips_rekey_carry carry = {0};
+        if (!fips_rekey_close_machine(&nodes[0].machine, FIPS_REKEY_CLOSE_Shutdown, &nodes[0].out, &carry)) ok = false;
+        for (size_t j = 0; j < nodes[0].out.count; ++j) if (nodes[0].out.items[j].kind == FIPS_REKEY_OUT_Release) {
+            uint32_t index;
+            if (!fips_rekey_index_lease_release(&nodes[0].out.items[j].lease, &index) ||
+                fips_index_allocator_free(&indices, fips_session_index_new(index)) != FIPS_INDEX_OK) ok = false;
+        }
+        if (fips_index_allocator_count(&indices)) ok = diff_error(ctx, "legacy replay leaked indices");
+        nodes[0].allocated = 0;
+    }
     if (nodes) { for (size_t k = 0; k < 2; ++k) rp_destroy(&nodes[k]); free(nodes); }
-    if (ok) snprintf(ctx->id, sizeof ctx->id, "rekey/fsp-cycle (%zu events)", COUNT(c->events));
+    if (ok) snprintf(ctx->id, sizeof ctx->id, "%s/%s/%s (%zu events)", legacy ? c->legacy_release : "rekey",
+        fmp ? "fmp" : "fsp", legacy && c->legacy_initiates ? "legacy-initiates" : "current-initiates", COUNT(c->events));
     return ok ? CHECKED : FAILED;
 }
 
@@ -989,9 +1088,20 @@ int diff_dispatch(diff_context *ctx, const char *family, diff_value *cases)
     } else if (!strcmp(family, "rekey")) {
         rekey_case c = {TEXT(cases, "profile"), TEXT(cases, "initial_handshake"), TEXT(cases, "params_debug"), TEXT(cases, "clock"),
             UINT(cases, "entropy_seed_hex"), BYTES(cases, "startup_epoch_hex"), FIELD(cases, "keypair_seeds"),
-            FIELD(cases, "initial_state"), FIELD(cases, "events"), FIELD(cases, "final_state")};
+            FIELD(cases, "initial_state"), FIELD(cases, "events"), FIELD(cases, "final_state"), NULL, false};
         snprintf(ctx->id, sizeof(ctx->id), "rekey/fsp-cycle (%zu events)", COUNT(c.events));
         report(ctx, &n, check_rekey(ctx, &c), "nostrc-f12v2.2");
+    }
+    if (!strcmp(family, "rekey-legacy")) {
+        for (size_t i = 0; i < COUNT(cases); ++i) {
+            diff_value *v = ITEM(cases, i);
+            rekey_case c = {TEXT(v, "profile"), TEXT(v, "initial_handshake"), TEXT(v, "params_debug"), TEXT(v, "clock"),
+                UINT(v, "entropy_seed_hex"), BYTES(v, "startup_epoch_hex"), FIELD(v, "keypair_seeds"),
+                FIELD(v, "initial_state"), FIELD(v, "events"), FIELD(v, "final_state"), TEXT(v, "legacy_release"),
+                FIELD(v, "legacy_initiates")->as.boolean};
+            ctx->error[0] = '\0';
+            report(ctx, &n, check_rekey(ctx, &c), "nostrc-f12v2.3");
+        }
     }
     if (!n.checked && !n.skipped && !n.failed) {
         ++n.failed; puts("FAIL: empty family is not differential coverage");

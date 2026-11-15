@@ -289,7 +289,7 @@ pub fn export(e: &Exporter<'_>) -> Result<()> {
         "params_debug":format!("{:?}",Config::fsp()),"clock":"TestClock milliseconds, 0 -> 600000 then 10ms per delivered packet, then application traffic and next_wake deadlines",
         "initial_state":initial,"events":trace.events,"final_state":final_states}),
         &["start_now is a test-hook that forces the initial rekey trigger; this trace validates exchange/cutover/drain, not production start-condition policy.",
-          "Legacy v0.5.0/v0.5.1, v0.5.2 and v0.5.3 models are private cfg(test)/slow-tests modules, not exported with test-hooks. Capture/interop deferred to nostrc-f12v2.3; no legacy traces are claimed.",
+          "Legacy v0.5.0/v0.5.1, v0.5.2 and v0.5.3 models are private cfg(test)/slow-tests modules. Separate rekey-legacy traces are captured by scripts/capture-legacy-rekey.sh through a pinned test-only upstream patch.",
           "One successful FSP cycle only; FMP and fault/loss/restart rekey traces remain future differential coverage."])
 }
 

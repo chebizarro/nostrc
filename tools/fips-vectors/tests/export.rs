@@ -47,14 +47,40 @@ impl Drop for Outputs {
 fn files(p: &Path) -> BTreeMap<String, Vec<u8>> {
     fs::read_dir(p)
         .unwrap()
-        .map(|e| {
-            let p = e.unwrap().path();
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.is_file())
+        .map(|p| {
             (
                 p.file_name().unwrap().to_str().unwrap().into(),
                 fs::read(p).unwrap(),
             )
         })
         .collect()
+}
+fn check_descriptors(v: &Value, all: &BTreeMap<String, Vec<u8>>, refs: &mut Vec<String>) {
+    match v {
+        Value::Array(a) => {
+            for v in a {
+                check_descriptors(v, all, refs)
+            }
+        }
+        Value::Object(o) => {
+            if let Some(file) = o.get("file") {
+                let name = file.as_str().unwrap();
+                let bytes = &all[name];
+                refs.push(name.into());
+                assert_eq!(o["pin"], "6aa80504baa0fa312b392009eea0e3e59fb6fe4c");
+                assert_eq!(o["generator_version"], env!("CARGO_PKG_VERSION"));
+                assert_eq!(o["length"], bytes.len());
+                assert_eq!(o["hex"], hex::encode(bytes));
+                assert_eq!(o["sha256"], hex::encode(fips_core::identity::sha256(bytes)));
+            }
+            for v in o.values() {
+                check_descriptors(v, all, refs)
+            }
+        }
+        _ => {}
+    }
 }
 #[test]
 fn real_cli_is_deterministic_and_matches_checked_in_oracle() {
@@ -67,38 +93,13 @@ fn real_cli_is_deterministic_and_matches_checked_in_oracle() {
         files(&root().join("libfips-core/tests/vectors")),
         "regenerate/check fixtures after intentional generator or pin changes"
     );
-    fn check(v: &Value, all: &BTreeMap<String, Vec<u8>>, refs: &mut Vec<String>) {
-        match v {
-            Value::Array(a) => {
-                for v in a {
-                    check(v, all, refs)
-                }
-            }
-            Value::Object(o) => {
-                if let Some(file) = o.get("file") {
-                    let name = file.as_str().unwrap();
-                    let bytes = &all[name];
-                    refs.push(name.into());
-                    assert_eq!(o["pin"], "6aa80504baa0fa312b392009eea0e3e59fb6fe4c");
-                    assert_eq!(o["generator_version"], env!("CARGO_PKG_VERSION"));
-                    assert_eq!(o["length"], bytes.len());
-                    assert_eq!(o["hex"], hex::encode(bytes));
-                    assert_eq!(o["sha256"], hex::encode(fips_core::identity::sha256(bytes)));
-                }
-                for v in o.values() {
-                    check(v, all, refs)
-                }
-            }
-            _ => {}
-        }
-    }
     let mut refs = Vec::new();
     for family in ["entropy", "identity", "codec", "noise", "proto", "rekey"] {
         let v: Value = serde_json::from_slice(&a[&format!("{family}.json")]).unwrap();
         assert_eq!(v["family"], family);
         assert_eq!(v["pin"], "6aa80504baa0fa312b392009eea0e3e59fb6fe4c");
         assert_eq!(v["generator_version"], env!("CARGO_PKG_VERSION"));
-        check(&v, &a, &mut refs);
+        check_descriptors(&v, &a, &mut refs);
     }
     refs.sort();
     refs.dedup();
@@ -171,4 +172,38 @@ fn fault_injection_is_rejected_before_writing() {
         assert!(String::from_utf8_lossy(&out.stderr).contains(key));
         assert!(!p.exists());
     }
+}
+
+#[test]
+fn legacy_model_fixture_matrix_is_complete_and_provenance_checked() {
+    let all = files(&root().join("libfips-core/tests/vectors/rekey-legacy"));
+    let mut refs = Vec::new();
+    let mut names = Vec::new();
+    for (release, model) in [("v050-v051", "V050"), ("v052", "V052"), ("v053", "V053")] {
+        for profile in ["fmp", "fsp"] {
+            for (role, old_first) in [("current-initiates", false), ("legacy-initiates", true)] {
+                let name = format!("{release}-{profile}-{role}.json");
+                let d: Value = serde_json::from_slice(&all[&name]).unwrap();
+                assert_eq!(d["schema_version"], 1);
+                assert_eq!(d["pin"], "6aa80504baa0fa312b392009eea0e3e59fb6fe4c");
+                assert_eq!(d["generator"], "fips-vectors");
+                assert_eq!(d["generator_version"], "0.1.0");
+                assert_eq!(d["family"], "rekey-legacy");
+                assert_eq!(d["cases"]["legacy_release"], model);
+                assert_eq!(d["cases"]["legacy_initiates"], old_first);
+                assert!(!d["cases"]["events"].as_array().unwrap().is_empty());
+                check_descriptors(&d, &all, &mut refs);
+                names.push(name);
+            }
+        }
+    }
+    refs.sort();
+    refs.dedup();
+    names.extend(refs);
+    names.sort();
+    assert_eq!(
+        names,
+        all.keys().cloned().collect::<Vec<_>>(),
+        "no orphan/missing legacy traces or sidecars"
+    );
 }

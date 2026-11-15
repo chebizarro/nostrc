@@ -1,0 +1,4841 @@
+{
+  "cases": {
+    "clock": "legacy model tick + current next_wake; 10ms channel latency",
+    "entropy_seed_hex": "00000072656b6579",
+    "events": [
+      {
+        "at_ms": 59000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b6579",
+        "event": 0,
+        "input": "Seal(DataPacket) + DataSent",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [
+          {
+            "bytes": {
+              "file": "v052-fmp-current-initiates-0-data.bin",
+              "generator_version": "0.1.0",
+              "hex": "00000d001400000000000000000000006d5f7a4039f4aac7402fa40803d9dde8b946777142b606fbe6b7323275",
+              "length": 45,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "ae22e33de37c8ec8387164bf29653dc27bd1ba441d57f38f5027380c9e56a87b"
+            },
+            "counter": 0,
+            "k": false,
+            "kind": "ApplicationFrame",
+            "plaintext_hex": "78e60000000000000000000000",
+            "sequence": 0
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": false,
+          "last_rx_ms": 0,
+          "link_since_ms": 0,
+          "next_wake_ms": 105000,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 1
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": false,
+          "last_rx_ms": 0,
+          "link_since_ms": 0,
+          "next_wake_ms": 105000,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 0
+        }
+      },
+      {
+        "at_ms": 59020,
+        "authenticated_deliveries": [
+          {
+            "plaintext_hex": "78e60000000000000000000000",
+            "range": [
+              16,
+              29
+            ],
+            "slot": "Current",
+            "tag": 0
+          }
+        ],
+        "entropy_seed_hex": "00000072656b657a",
+        "event": 1,
+        "input": "Frame",
+        "input_hex": "00000d000a00000000000000000000008939c28dc2fcd1e59281425d7a2dcdb46284a0a3a261b005346e79af9e",
+        "node": 0,
+        "outputs": [
+          {
+            "debug": "Deliver { slot: Current, tag: EpochTag(0), range: 16..29 }"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": false,
+          "last_rx_ms": 59020,
+          "link_since_ms": 0,
+          "next_wake_ms": 105000,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 1
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": false,
+          "last_rx_ms": 0,
+          "link_since_ms": 0,
+          "next_wake_ms": 105000,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 1
+        }
+      },
+      {
+        "at_ms": 60000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b657b",
+        "event": 2,
+        "input": "start_now (test-hook)",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [
+          {
+            "debug": "Bind { transport: TransportId(7), index: 729004218, tag: None, purpose: Attempt }"
+          },
+          {
+            "bytes": {
+              "file": "v052-fmp-current-initiates-2-1.bin",
+              "generator_version": "0.1.0",
+              "hex": "01006e00bab8732b022844d723c6115873642894bdb32508f1f9bf89ae4a163e39f9c5a410b602b75ad3437895beb7abcce112846bc48fcc894c7985a42f8103b20a06de1f45626b270e49c50670d74251a63f6a7af8972d3f409e7ecac842965ac381e76a7dc940d4d8cd873bd2101084af",
+              "length": 114,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "473cb5e77c5578206d28f69e3ef1536e0d1a04bb4d2e96841d507488b3c81944"
+            },
+            "kind": "Send",
+            "message_kind": "Msg1",
+            "route": "Established { fallback: false }"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "cycle": "Init",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": false,
+          "last_rx_ms": 59020,
+          "link_since_ms": 0,
+          "next_wake_ms": 61000,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 1
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": false,
+          "last_rx_ms": 59020,
+          "link_since_ms": 0,
+          "next_wake_ms": 105000,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 1
+        }
+      },
+      {
+        "at_ms": 60020,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b657c",
+        "event": 3,
+        "input": "Msg2",
+        "input_hex": "02004100c374af96bab8732b038785a4f1118e10ea8abe923b61a65db8e3677c4b7be2bdffd2f6d4f4f64a8c804db90d4f7f1f4d26f2eadeae60c4f9b9d73afe67d647f585",
+        "node": 0,
+        "outputs": [
+          {
+            "debug": "Unbind { transport: TransportId(7), index: 729004218 }"
+          },
+          {
+            "debug": "Bind { transport: TransportId(7), index: 729004218, tag: Some(EpochTag(1)), purpose: Pending }"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "cycle": "PendI(Held)",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": false,
+          "last_rx_ms": 59020,
+          "link_since_ms": 0,
+          "next_wake_ms": 60020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": {
+            "base_ms": null,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "previous": null,
+          "sent": 1
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "cycle": "Init",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": false,
+          "last_rx_ms": 59020,
+          "link_since_ms": 0,
+          "next_wake_ms": 61000,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 1
+        }
+      },
+      {
+        "at_ms": 60020,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b657d",
+        "event": 4,
+        "input": "Poll (legacy schedule)",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [
+          {
+            "debug": "Installed { tag: EpochTag(1), role: Initiator, evidence: Proof }"
+          },
+          {
+            "bytes": {
+              "file": "v052-fmp-current-initiates-4-1.bin",
+              "generator_version": "0.1.0",
+              "hex": "00010500c374af96000000000000000017094ae7c1637c4c3aa2689412b1acfca56b6e141b",
+              "length": 37,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "7c9654ab283691b758dec33034eea5a7d46d4cee8fae4cdebdfaa232b7a136fb"
+            },
+            "counter": 0,
+            "k": true,
+            "kind": "Prompt",
+            "plaintext_hex": "0000000051",
+            "tag": 1
+          },
+          {
+            "debug": "Rekeyed { role: Initiator }"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 59020,
+          "link_since_ms": 0,
+          "next_wake_ms": 61020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 1
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "cycle": "PendI(Held)",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": false,
+          "last_rx_ms": 59020,
+          "link_since_ms": 0,
+          "next_wake_ms": 60020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": {
+            "base_ms": null,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "previous": null,
+          "sent": 1
+        }
+      },
+      {
+        "at_ms": 61000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b657e",
+        "event": 5,
+        "input": "Poll (legacy schedule)",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 59020,
+          "link_since_ms": 0,
+          "next_wake_ms": 61020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 1
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 59020,
+          "link_since_ms": 0,
+          "next_wake_ms": 61020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 1
+        }
+      },
+      {
+        "at_ms": 61000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b657f",
+        "event": 6,
+        "input": "Seal(DataPacket) + DataSent",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [
+          {
+            "bytes": {
+              "file": "v052-fmp-current-initiates-6-data.bin",
+              "generator_version": "0.1.0",
+              "hex": "00010d00c374af960100000000000000eef85a725d49e5a64d716e53210046c590bff41db3c994f84f7ec39f11",
+              "length": 45,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "ed31e519cf6a299a819c4a5644d42ad89a3c84ed9042fb30aec99c7a7b43f1e4"
+            },
+            "counter": 1,
+            "k": true,
+            "kind": "ApplicationFrame",
+            "plaintext_hex": "d4030000000100000000000000",
+            "sequence": 1
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 59020,
+          "link_since_ms": 0,
+          "next_wake_ms": 61020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 2
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 59020,
+          "link_since_ms": 0,
+          "next_wake_ms": 61020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 1
+        }
+      },
+      {
+        "at_ms": 61010,
+        "authenticated_deliveries": [
+          {
+            "plaintext_hex": "48ee000051",
+            "range": [
+              16,
+              21
+            ],
+            "slot": "Current",
+            "tag": 1
+          }
+        ],
+        "entropy_seed_hex": "00000072656b6580",
+        "event": 7,
+        "input": "Frame",
+        "input_hex": "00010500bab8732b0000000000000000791f0fd3f8201e25ffaffa93f86e88123a7c2db9de",
+        "node": 0,
+        "outputs": [
+          {
+            "debug": "Deliver { slot: Current, tag: EpochTag(1), range: 16..21 }"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 61010,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 2
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 59020,
+          "link_since_ms": 0,
+          "next_wake_ms": 61020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 2
+        }
+      },
+      {
+        "at_ms": 61030,
+        "authenticated_deliveries": [
+          {
+            "plaintext_hex": "48ee0000000100000000000000",
+            "range": [
+              16,
+              29
+            ],
+            "slot": "Current",
+            "tag": 1
+          }
+        ],
+        "entropy_seed_hex": "00000072656b6581",
+        "event": 8,
+        "input": "Frame",
+        "input_hex": "00010d00bab8732b01000000000000001ab581bdce4d5016d056cd4f4ef3becd5ce67587865387df1f75457c3d",
+        "node": 0,
+        "outputs": [
+          {
+            "debug": "Deliver { slot: Current, tag: EpochTag(1), range: 16..29 }"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 61030,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 2
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 61010,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 2
+        }
+      },
+      {
+        "at_ms": 62000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b6582",
+        "event": 9,
+        "input": "Poll (legacy schedule)",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 61030,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 2
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 61030,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 2
+        }
+      },
+      {
+        "at_ms": 62000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b6583",
+        "event": 10,
+        "input": "Seal(DataPacket) + DataSent",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [
+          {
+            "bytes": {
+              "file": "v052-fmp-current-initiates-10-data.bin",
+              "generator_version": "0.1.0",
+              "hex": "00010d00c374af960200000000000000b4d33dc811985aeaa317eb1b039e14e897bd2957c8523f44f2729b593c",
+              "length": 45,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "52d391e0fcf338a14c89d58abe5c07b1856cda26de81e86f79646e66b9b73bfb"
+            },
+            "counter": 2,
+            "k": true,
+            "kind": "ApplicationFrame",
+            "plaintext_hex": "bc070000000200000000000000",
+            "sequence": 2
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 61030,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 3
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 61030,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 2
+        }
+      },
+      {
+        "at_ms": 62020,
+        "authenticated_deliveries": [
+          {
+            "plaintext_hex": "30f20000000200000000000000",
+            "range": [
+              16,
+              29
+            ],
+            "slot": "Current",
+            "tag": 1
+          }
+        ],
+        "entropy_seed_hex": "00000072656b6584",
+        "event": 11,
+        "input": "Frame",
+        "input_hex": "00010d00bab8732b0200000000000000897f259ca2a5bff7e08050cac843146b8a1a7b5ac2a3794e4088143ea6",
+        "node": 0,
+        "outputs": [
+          {
+            "debug": "Deliver { slot: Current, tag: EpochTag(1), range: 16..29 }"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 62020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 3
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 61030,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 3
+        }
+      },
+      {
+        "at_ms": 63000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b6585",
+        "event": 12,
+        "input": "Poll (legacy schedule)",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 62020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 3
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 62020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 3
+        }
+      },
+      {
+        "at_ms": 63000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b6586",
+        "event": 13,
+        "input": "Seal(DataPacket) + DataSent",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [
+          {
+            "bytes": {
+              "file": "v052-fmp-current-initiates-13-data.bin",
+              "generator_version": "0.1.0",
+              "hex": "00010d00c374af960300000000000000d71ac8410d000faab7a98531435d2f06e75204fef12d689f3a1deaf43f",
+              "length": 45,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "1b73180cabd01645fd1975b43562326632593e2ee6723d15c83495f78301852b"
+            },
+            "counter": 3,
+            "k": true,
+            "kind": "ApplicationFrame",
+            "plaintext_hex": "a40b0000000300000000000000",
+            "sequence": 3
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 62020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 4
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 62020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 3
+        }
+      },
+      {
+        "at_ms": 63020,
+        "authenticated_deliveries": [
+          {
+            "plaintext_hex": "18f60000000300000000000000",
+            "range": [
+              16,
+              29
+            ],
+            "slot": "Current",
+            "tag": 1
+          }
+        ],
+        "entropy_seed_hex": "00000072656b6587",
+        "event": 14,
+        "input": "Frame",
+        "input_hex": "00010d00bab8732b0300000000000000febac6d4dd7ee8eded1f56459159e2a5921bce3f77176ca09d7bb725f0",
+        "node": 0,
+        "outputs": [
+          {
+            "debug": "Deliver { slot: Current, tag: EpochTag(1), range: 16..29 }"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 63020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 4
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 62020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 4
+        }
+      },
+      {
+        "at_ms": 64000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b6588",
+        "event": 15,
+        "input": "Poll (legacy schedule)",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 63020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 4
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 63020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 4
+        }
+      },
+      {
+        "at_ms": 64000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b6589",
+        "event": 16,
+        "input": "Seal(DataPacket) + DataSent",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [
+          {
+            "bytes": {
+              "file": "v052-fmp-current-initiates-16-data.bin",
+              "generator_version": "0.1.0",
+              "hex": "00010d00c374af960400000000000000aaa91dca24a388f8bd5bf9295b3e9e225cafb8b11bbab98d583b18b093",
+              "length": 45,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "6dea0a198689d1f427e77060925b33adb19a15de1b8f308b544aa932a62c4159"
+            },
+            "counter": 4,
+            "k": true,
+            "kind": "ApplicationFrame",
+            "plaintext_hex": "8c0f0000000400000000000000",
+            "sequence": 4
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 63020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 5
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 63020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 4
+        }
+      },
+      {
+        "at_ms": 64020,
+        "authenticated_deliveries": [
+          {
+            "plaintext_hex": "00fa0000000400000000000000",
+            "range": [
+              16,
+              29
+            ],
+            "slot": "Current",
+            "tag": 1
+          }
+        ],
+        "entropy_seed_hex": "00000072656b658a",
+        "event": 17,
+        "input": "Frame",
+        "input_hex": "00010d00bab8732b0400000000000000f1364b72e9ea67a4f38e6b4d2862f7bc5b1876add1de3ea17eb1a2c9ab",
+        "node": 0,
+        "outputs": [
+          {
+            "debug": "Deliver { slot: Current, tag: EpochTag(1), range: 16..29 }"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 64020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 5
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 63020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 5
+        }
+      },
+      {
+        "at_ms": 65000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b658b",
+        "event": 18,
+        "input": "Poll (legacy schedule)",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 64020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 5
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 64020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 5
+        }
+      },
+      {
+        "at_ms": 65000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b658c",
+        "event": 19,
+        "input": "Seal(DataPacket) + DataSent",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [
+          {
+            "bytes": {
+              "file": "v052-fmp-current-initiates-19-data.bin",
+              "generator_version": "0.1.0",
+              "hex": "00010d00c374af960500000000000000f67c829e17164c72c381508b05b5e551b8ffe1e70182432bd2df797e5e",
+              "length": 45,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "5582d20048baff66cbb7a031771c78ca7e435f23b20f97e3a99e49113a0f0127"
+            },
+            "counter": 5,
+            "k": true,
+            "kind": "ApplicationFrame",
+            "plaintext_hex": "74130000000500000000000000",
+            "sequence": 5
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 64020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 6
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 64020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 5
+        }
+      },
+      {
+        "at_ms": 65020,
+        "authenticated_deliveries": [
+          {
+            "plaintext_hex": "e8fd0000000500000000000000",
+            "range": [
+              16,
+              29
+            ],
+            "slot": "Current",
+            "tag": 1
+          }
+        ],
+        "entropy_seed_hex": "00000072656b658d",
+        "event": 20,
+        "input": "Frame",
+        "input_hex": "00010d00bab8732b0500000000000000092ed9e0af91aac9277e2480fbeecbd21b1f1407295b1b9eb286c62534",
+        "node": 0,
+        "outputs": [
+          {
+            "debug": "Deliver { slot: Current, tag: EpochTag(1), range: 16..29 }"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 65020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 6
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 64020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 6
+        }
+      },
+      {
+        "at_ms": 66000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b658e",
+        "event": 21,
+        "input": "Poll (legacy schedule)",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 65020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 6
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 65020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 6
+        }
+      },
+      {
+        "at_ms": 66000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b658f",
+        "event": 22,
+        "input": "Seal(DataPacket) + DataSent",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [
+          {
+            "bytes": {
+              "file": "v052-fmp-current-initiates-22-data.bin",
+              "generator_version": "0.1.0",
+              "hex": "00010d00c374af960600000000000000c99f981f9fd25ca6b8a46b03315aff8f1a34a251196e4bd8fb6039386b",
+              "length": 45,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "4791d2b2cf72b89ecd7ef8fcb7544d1b0b9ef70960442ffaad3167cb1a60b8c3"
+            },
+            "counter": 6,
+            "k": true,
+            "kind": "ApplicationFrame",
+            "plaintext_hex": "5c170000000600000000000000",
+            "sequence": 6
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 65020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 7
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 65020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 6
+        }
+      },
+      {
+        "at_ms": 66020,
+        "authenticated_deliveries": [
+          {
+            "plaintext_hex": "d0010100000600000000000000",
+            "range": [
+              16,
+              29
+            ],
+            "slot": "Current",
+            "tag": 1
+          }
+        ],
+        "entropy_seed_hex": "00000072656b6590",
+        "event": 23,
+        "input": "Frame",
+        "input_hex": "00010d00bab8732b06000000000000007ad3f2d4a4de80899bdbb8c881cb974efc2b2f17c95ba3f5f325f3bcb7",
+        "node": 0,
+        "outputs": [
+          {
+            "debug": "Deliver { slot: Current, tag: EpochTag(1), range: 16..29 }"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 66020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 7
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 65020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 7
+        }
+      },
+      {
+        "at_ms": 67000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b6591",
+        "event": 24,
+        "input": "Poll (legacy schedule)",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 66020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 7
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 66020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 7
+        }
+      },
+      {
+        "at_ms": 67000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b6592",
+        "event": 25,
+        "input": "Seal(DataPacket) + DataSent",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [
+          {
+            "bytes": {
+              "file": "v052-fmp-current-initiates-25-data.bin",
+              "generator_version": "0.1.0",
+              "hex": "00010d00c374af960700000000000000e9c4f21dd075380243610a3c52ce16a847b4f404d80b775daa592688ad",
+              "length": 45,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "8e6a3118cb853ed65387ca707a4b243204cae65d656cbecbb4dffd973ec89ce0"
+            },
+            "counter": 7,
+            "k": true,
+            "kind": "ApplicationFrame",
+            "plaintext_hex": "441b0000000700000000000000",
+            "sequence": 7
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 66020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 8
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 66020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 7
+        }
+      },
+      {
+        "at_ms": 67020,
+        "authenticated_deliveries": [
+          {
+            "plaintext_hex": "b8050100000700000000000000",
+            "range": [
+              16,
+              29
+            ],
+            "slot": "Current",
+            "tag": 1
+          }
+        ],
+        "entropy_seed_hex": "00000072656b6593",
+        "event": 26,
+        "input": "Frame",
+        "input_hex": "00010d00bab8732b07000000000000001abbb6db007abad3563baac0dc8879ae47c6128d3d25fa2e936f95c802",
+        "node": 0,
+        "outputs": [
+          {
+            "debug": "Deliver { slot: Current, tag: EpochTag(1), range: 16..29 }"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 67020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 8
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 66020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 8
+        }
+      },
+      {
+        "at_ms": 68000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b6594",
+        "event": 27,
+        "input": "Poll (legacy schedule)",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 67020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 8
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 67020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 8
+        }
+      },
+      {
+        "at_ms": 68000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b6595",
+        "event": 28,
+        "input": "Seal(DataPacket) + DataSent",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [
+          {
+            "bytes": {
+              "file": "v052-fmp-current-initiates-28-data.bin",
+              "generator_version": "0.1.0",
+              "hex": "00010d00c374af960800000000000000e72658c220e3bb62b9ce62a1548cc75228604de96aee7bf29037d76973",
+              "length": 45,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "e6603963874e0aa5730321054978da360f91e32f11abb458939886da3a3539ea"
+            },
+            "counter": 8,
+            "k": true,
+            "kind": "ApplicationFrame",
+            "plaintext_hex": "2c1f0000000800000000000000",
+            "sequence": 8
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 67020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 9
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 67020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 8
+        }
+      },
+      {
+        "at_ms": 68020,
+        "authenticated_deliveries": [
+          {
+            "plaintext_hex": "a0090100000800000000000000",
+            "range": [
+              16,
+              29
+            ],
+            "slot": "Current",
+            "tag": 1
+          }
+        ],
+        "entropy_seed_hex": "00000072656b6596",
+        "event": 29,
+        "input": "Frame",
+        "input_hex": "00010d00bab8732b08000000000000006f85c9d23346a31a79b48564205973fa9fdc880d345b3da8bda0ec0dc7",
+        "node": 0,
+        "outputs": [
+          {
+            "debug": "Deliver { slot: Current, tag: EpochTag(1), range: 16..29 }"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 68020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 9
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 67020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 9
+        }
+      },
+      {
+        "at_ms": 69000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b6597",
+        "event": 30,
+        "input": "Poll (legacy schedule)",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 68020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 9
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 68020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 9
+        }
+      },
+      {
+        "at_ms": 69000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b6598",
+        "event": 31,
+        "input": "Seal(DataPacket) + DataSent",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [
+          {
+            "bytes": {
+              "file": "v052-fmp-current-initiates-31-data.bin",
+              "generator_version": "0.1.0",
+              "hex": "00010d00c374af960900000000000000a4f54e08af1ee7de40679dcaa7df68e0e285351fd8b4118c3b3d58a5c0",
+              "length": 45,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "ea42c7deb03accf073c139f010f452b34bbb97773e24c306e4eac324be4b42e4"
+            },
+            "counter": 9,
+            "k": true,
+            "kind": "ApplicationFrame",
+            "plaintext_hex": "14230000000900000000000000",
+            "sequence": 9
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 68020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 10
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 68020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 9
+        }
+      },
+      {
+        "at_ms": 69020,
+        "authenticated_deliveries": [
+          {
+            "plaintext_hex": "880d0100000900000000000000",
+            "range": [
+              16,
+              29
+            ],
+            "slot": "Current",
+            "tag": 1
+          }
+        ],
+        "entropy_seed_hex": "00000072656b6599",
+        "event": 32,
+        "input": "Frame",
+        "input_hex": "00010d00bab8732b0900000000000000deb786035204c9f6abe71858cc85932cd47ecc60d5bb0f3b4d941b7e8a",
+        "node": 0,
+        "outputs": [
+          {
+            "debug": "Deliver { slot: Current, tag: EpochTag(1), range: 16..29 }"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 69020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 10
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 68020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 10
+        }
+      },
+      {
+        "at_ms": 70000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b659a",
+        "event": 33,
+        "input": "Poll (legacy schedule)",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 69020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 10
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 69020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 10
+        }
+      },
+      {
+        "at_ms": 70000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b659b",
+        "event": 34,
+        "input": "Seal(DataPacket) + DataSent",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [
+          {
+            "bytes": {
+              "file": "v052-fmp-current-initiates-34-data.bin",
+              "generator_version": "0.1.0",
+              "hex": "00010d00c374af960a00000000000000ed2b7fd10b6062e57566169e7bc87dd1fb5a3c8065b7b4fef2e4aa3a00",
+              "length": 45,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "5ce8afcd9f79306623bfaa032e936726e2258e9de4adc5e27f4ba49fee0ff69c"
+            },
+            "counter": 10,
+            "k": true,
+            "kind": "ApplicationFrame",
+            "plaintext_hex": "fc260000000a00000000000000",
+            "sequence": 10
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 69020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 11
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 69020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 10
+        }
+      },
+      {
+        "at_ms": 70020,
+        "authenticated_deliveries": [
+          {
+            "plaintext_hex": "70110100000a00000000000000",
+            "range": [
+              16,
+              29
+            ],
+            "slot": "Current",
+            "tag": 1
+          }
+        ],
+        "entropy_seed_hex": "00000072656b659c",
+        "event": 35,
+        "input": "Frame",
+        "input_hex": "00010d00bab8732b0a00000000000000a89d5693459359591655601950b999633c3cb9c9bb839818115e8524f1",
+        "node": 0,
+        "outputs": [
+          {
+            "debug": "Deliver { slot: Current, tag: EpochTag(1), range: 16..29 }"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 70020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 11
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 69020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 11
+        }
+      },
+      {
+        "at_ms": 71000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b659d",
+        "event": 36,
+        "input": "Poll (legacy schedule)",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 70020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 11
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 70020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 11
+        }
+      },
+      {
+        "at_ms": 71000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b659e",
+        "event": 37,
+        "input": "Seal(DataPacket) + DataSent",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [
+          {
+            "bytes": {
+              "file": "v052-fmp-current-initiates-37-data.bin",
+              "generator_version": "0.1.0",
+              "hex": "00010d00c374af960b00000000000000205dc64850dca7a937e58cdbe6effeebcb0384b778b181cbbac6fc9ec5",
+              "length": 45,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "c3925bfab5f2a5a944cd80db8f3c847af77c1c388dfc308adbe2b1814f9a6003"
+            },
+            "counter": 11,
+            "k": true,
+            "kind": "ApplicationFrame",
+            "plaintext_hex": "e42a0000000b00000000000000",
+            "sequence": 11
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 70020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 12
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 70020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 11
+        }
+      },
+      {
+        "at_ms": 71010,
+        "authenticated_deliveries": [
+          {
+            "plaintext_hex": "5815010051",
+            "range": [
+              16,
+              21
+            ],
+            "slot": "Current",
+            "tag": 1
+          }
+        ],
+        "entropy_seed_hex": "00000072656b659f",
+        "event": 38,
+        "input": "Frame",
+        "input_hex": "00010500bab8732b0b00000000000000338de093a82b3abdd576cc87b6a4b3dc362fc30e71",
+        "node": 0,
+        "outputs": [
+          {
+            "debug": "Deliver { slot: Current, tag: EpochTag(1), range: 16..21 }"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 71010,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 12
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 70020,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 12
+        }
+      },
+      {
+        "at_ms": 71030,
+        "authenticated_deliveries": [
+          {
+            "plaintext_hex": "58150100000b00000000000000",
+            "range": [
+              16,
+              29
+            ],
+            "slot": "Current",
+            "tag": 1
+          }
+        ],
+        "entropy_seed_hex": "00000072656b65a0",
+        "event": 39,
+        "input": "Frame",
+        "input_hex": "00010d00bab8732b0c0000000000000084bf3fbbba85c2762d828b87ee43c551c685e35aff48f68cad03123017",
+        "node": 0,
+        "outputs": [
+          {
+            "debug": "Deliver { slot: Current, tag: EpochTag(1), range: 16..29 }"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 71030,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 12
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 71010,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 12
+        }
+      },
+      {
+        "at_ms": 71030,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b65a1",
+        "event": 40,
+        "input": "Poll (legacy schedule)",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [
+          {
+            "debug": "Unbind { transport: TransportId(7), index: 10 }"
+          },
+          {
+            "index": 10,
+            "kind": "Release"
+          },
+          {
+            "debug": "Retired { tag: EpochTag(0) }"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 71030,
+          "link_since_ms": 0,
+          "next_wake_ms": 165020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 12
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 71030,
+          "link_since_ms": 0,
+          "next_wake_ms": 71010,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": {
+            "base_ms": 0,
+            "k": false,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 0,
+            "tag": 0
+          },
+          "sent": 12
+        }
+      },
+      {
+        "at_ms": 72000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b65a2",
+        "event": 41,
+        "input": "Poll (legacy schedule)",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 71030,
+          "link_since_ms": 0,
+          "next_wake_ms": 165020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 12
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 71030,
+          "link_since_ms": 0,
+          "next_wake_ms": 165020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 12
+        }
+      },
+      {
+        "at_ms": 72000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b65a3",
+        "event": 42,
+        "input": "Seal(DataPacket) + DataSent",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [
+          {
+            "bytes": {
+              "file": "v052-fmp-current-initiates-42-data.bin",
+              "generator_version": "0.1.0",
+              "hex": "00010d00c374af960c00000000000000b6832f9ed5932302edbbb46fa27965e56adfcdb89fb55531cbba8c5070",
+              "length": 45,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "09e7d8a1f52ce7746bcab3e09102aeb2e3b497d631fbfa124232414c6b77a9ac"
+            },
+            "counter": 12,
+            "k": true,
+            "kind": "ApplicationFrame",
+            "plaintext_hex": "cc2e0000000c00000000000000",
+            "sequence": 12
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 71030,
+          "link_since_ms": 0,
+          "next_wake_ms": 165020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 13
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 71030,
+          "link_since_ms": 0,
+          "next_wake_ms": 165020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 12
+        }
+      },
+      {
+        "at_ms": 72020,
+        "authenticated_deliveries": [
+          {
+            "plaintext_hex": "40190100000c00000000000000",
+            "range": [
+              16,
+              29
+            ],
+            "slot": "Current",
+            "tag": 1
+          }
+        ],
+        "entropy_seed_hex": "00000072656b65a4",
+        "event": 43,
+        "input": "Frame",
+        "input_hex": "00010d00bab8732b0d00000000000000ecf56ced0dc696d5901763e535600b68a220c94053d100218c096fd965",
+        "node": 0,
+        "outputs": [
+          {
+            "debug": "Deliver { slot: Current, tag: EpochTag(1), range: 16..29 }"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 72020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 13
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 71030,
+          "link_since_ms": 0,
+          "next_wake_ms": 165020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 13
+        }
+      },
+      {
+        "at_ms": 73000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b65a5",
+        "event": 44,
+        "input": "Poll (legacy schedule)",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 72020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 13
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 72020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 13
+        }
+      },
+      {
+        "at_ms": 73000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b65a6",
+        "event": 45,
+        "input": "Seal(DataPacket) + DataSent",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [
+          {
+            "bytes": {
+              "file": "v052-fmp-current-initiates-45-data.bin",
+              "generator_version": "0.1.0",
+              "hex": "00010d00c374af960d00000000000000747369916bb6429571c0eee4db69676701eb8198f992445b1ece1c9a04",
+              "length": 45,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "ee53fa1318c81c8e1cb2bc55792769f4972e134ac02561f634dfe0d2e6b95f43"
+            },
+            "counter": 13,
+            "k": true,
+            "kind": "ApplicationFrame",
+            "plaintext_hex": "b4320000000d00000000000000",
+            "sequence": 13
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 72020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 14
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 72020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 13
+        }
+      },
+      {
+        "at_ms": 73020,
+        "authenticated_deliveries": [
+          {
+            "plaintext_hex": "281d0100000d00000000000000",
+            "range": [
+              16,
+              29
+            ],
+            "slot": "Current",
+            "tag": 1
+          }
+        ],
+        "entropy_seed_hex": "00000072656b65a7",
+        "event": 46,
+        "input": "Frame",
+        "input_hex": "00010d00bab8732b0e00000000000000b3fd324f244cfe2937448cffda2730e31e5b42fcdf2e74fc292e7b36be",
+        "node": 0,
+        "outputs": [
+          {
+            "debug": "Deliver { slot: Current, tag: EpochTag(1), range: 16..29 }"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 73020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 14
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 72020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 14
+        }
+      },
+      {
+        "at_ms": 74000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b65a8",
+        "event": 47,
+        "input": "Poll (legacy schedule)",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 73020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 14
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 73020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 14
+        }
+      },
+      {
+        "at_ms": 74000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b65a9",
+        "event": 48,
+        "input": "Seal(DataPacket) + DataSent",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [
+          {
+            "bytes": {
+              "file": "v052-fmp-current-initiates-48-data.bin",
+              "generator_version": "0.1.0",
+              "hex": "00010d00c374af960e00000000000000c87ac3effe453d9d7537b7d08f364a4aca77cd6f1ca3ee99bdf8e45d27",
+              "length": 45,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "f7e013d2b67b735bbc7ddcd3dbbb22af1aa35ec5bf6c17495b8570db2f57a7b3"
+            },
+            "counter": 14,
+            "k": true,
+            "kind": "ApplicationFrame",
+            "plaintext_hex": "9c360000000e00000000000000",
+            "sequence": 14
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 73020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 15
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 73020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 14
+        }
+      },
+      {
+        "at_ms": 74020,
+        "authenticated_deliveries": [
+          {
+            "plaintext_hex": "10210100000e00000000000000",
+            "range": [
+              16,
+              29
+            ],
+            "slot": "Current",
+            "tag": 1
+          }
+        ],
+        "entropy_seed_hex": "00000072656b65aa",
+        "event": 49,
+        "input": "Frame",
+        "input_hex": "00010d00bab8732b0f00000000000000f540f0fc35441f1c34f1fde6cfe900a5684711620f0ac00f1a2f9a3cee",
+        "node": 0,
+        "outputs": [
+          {
+            "debug": "Deliver { slot: Current, tag: EpochTag(1), range: 16..29 }"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 74020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 15
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 73020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 15
+        }
+      },
+      {
+        "at_ms": 75000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b65ab",
+        "event": 50,
+        "input": "Poll (legacy schedule)",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 74020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 15
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 74020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 15
+        }
+      },
+      {
+        "at_ms": 75000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b65ac",
+        "event": 51,
+        "input": "Seal(DataPacket) + DataSent",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [
+          {
+            "bytes": {
+              "file": "v052-fmp-current-initiates-51-data.bin",
+              "generator_version": "0.1.0",
+              "hex": "00010d00c374af960f000000000000009b3747b137dff287de67a294581e20a279b9cdab27a1193442cb848162",
+              "length": 45,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "c1ca7c22d3615bdce3f065662c70984abd48061fe9277eb47419a960fe6d367e"
+            },
+            "counter": 15,
+            "k": true,
+            "kind": "ApplicationFrame",
+            "plaintext_hex": "843a0000000f00000000000000",
+            "sequence": 15
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 74020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 16
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 74020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 15
+        }
+      },
+      {
+        "at_ms": 75020,
+        "authenticated_deliveries": [
+          {
+            "plaintext_hex": "f8240100000f00000000000000",
+            "range": [
+              16,
+              29
+            ],
+            "slot": "Current",
+            "tag": 1
+          }
+        ],
+        "entropy_seed_hex": "00000072656b65ad",
+        "event": 52,
+        "input": "Frame",
+        "input_hex": "00010d00bab8732b1000000000000000c5151f95f0374b7e6988300afb8ceff6cb782a309af378ea204ca0eadc",
+        "node": 0,
+        "outputs": [
+          {
+            "debug": "Deliver { slot: Current, tag: EpochTag(1), range: 16..29 }"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 75020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 16
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 74020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 16
+        }
+      },
+      {
+        "at_ms": 76000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b65ae",
+        "event": 53,
+        "input": "Poll (legacy schedule)",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 75020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 16
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 75020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 16
+        }
+      },
+      {
+        "at_ms": 76000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b65af",
+        "event": 54,
+        "input": "Seal(DataPacket) + DataSent",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [
+          {
+            "bytes": {
+              "file": "v052-fmp-current-initiates-54-data.bin",
+              "generator_version": "0.1.0",
+              "hex": "00010d00c374af9610000000000000008d0c4ba343338b838d2f2a10cd85f2d23866523c6beb8221ec7f4367e0",
+              "length": 45,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "b5be2a2ba4b659e9fe7fd217c8bb68e838cda199b4f5d47631c69854a3a80f4a"
+            },
+            "counter": 16,
+            "k": true,
+            "kind": "ApplicationFrame",
+            "plaintext_hex": "6c3e0000001000000000000000",
+            "sequence": 16
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 75020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 17
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 75020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 16
+        }
+      },
+      {
+        "at_ms": 76020,
+        "authenticated_deliveries": [
+          {
+            "plaintext_hex": "e0280100001000000000000000",
+            "range": [
+              16,
+              29
+            ],
+            "slot": "Current",
+            "tag": 1
+          }
+        ],
+        "entropy_seed_hex": "00000072656b65b0",
+        "event": 55,
+        "input": "Frame",
+        "input_hex": "00010d00bab8732b1100000000000000ca7277af065c568fb9b194c9acc77d122b42496c7b8d016204d235f00b",
+        "node": 0,
+        "outputs": [
+          {
+            "debug": "Deliver { slot: Current, tag: EpochTag(1), range: 16..29 }"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 76020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 17
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 75020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 17
+        }
+      },
+      {
+        "at_ms": 77000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b65b1",
+        "event": 56,
+        "input": "Poll (legacy schedule)",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 76020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 17
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 76020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 17
+        }
+      },
+      {
+        "at_ms": 77000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b65b2",
+        "event": 57,
+        "input": "Seal(DataPacket) + DataSent",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [
+          {
+            "bytes": {
+              "file": "v052-fmp-current-initiates-57-data.bin",
+              "generator_version": "0.1.0",
+              "hex": "00010d00c374af9611000000000000002516d0617080571f58b3dd6a95a70d4a6b065f81e6c30219597eb040a7",
+              "length": 45,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "162e98ddb8a23ea7458ee8d279e20eb3247a6abc6f9c9b8a8d65a67256eced29"
+            },
+            "counter": 17,
+            "k": true,
+            "kind": "ApplicationFrame",
+            "plaintext_hex": "54420000001100000000000000",
+            "sequence": 17
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 76020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 18
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 76020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 17
+        }
+      },
+      {
+        "at_ms": 77020,
+        "authenticated_deliveries": [
+          {
+            "plaintext_hex": "c82c0100001100000000000000",
+            "range": [
+              16,
+              29
+            ],
+            "slot": "Current",
+            "tag": 1
+          }
+        ],
+        "entropy_seed_hex": "00000072656b65b3",
+        "event": 58,
+        "input": "Frame",
+        "input_hex": "00010d00bab8732b1200000000000000aaeaee04b1216a87f2bbe5b73a2d2f74ace95aa787523a45dc0801ccf1",
+        "node": 0,
+        "outputs": [
+          {
+            "debug": "Deliver { slot: Current, tag: EpochTag(1), range: 16..29 }"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 77020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 18
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 76020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 18
+        }
+      },
+      {
+        "at_ms": 78000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b65b4",
+        "event": 59,
+        "input": "Poll (legacy schedule)",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 77020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 18
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 77020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 18
+        }
+      },
+      {
+        "at_ms": 78000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b65b5",
+        "event": 60,
+        "input": "Seal(DataPacket) + DataSent",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [
+          {
+            "bytes": {
+              "file": "v052-fmp-current-initiates-60-data.bin",
+              "generator_version": "0.1.0",
+              "hex": "00010d00c374af9612000000000000004b79802ee1b6911ac8f26da71d9346d68540d00556464ad0151d9f8ef7",
+              "length": 45,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "3dbc31b419c0c3d6bf502ca2f4bbbc28a127892a8694a5fc12e8c9b9321225b6"
+            },
+            "counter": 18,
+            "k": true,
+            "kind": "ApplicationFrame",
+            "plaintext_hex": "3c460000001200000000000000",
+            "sequence": 18
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 77020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 19
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 77020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 18
+        }
+      },
+      {
+        "at_ms": 78020,
+        "authenticated_deliveries": [
+          {
+            "plaintext_hex": "b0300100001200000000000000",
+            "range": [
+              16,
+              29
+            ],
+            "slot": "Current",
+            "tag": 1
+          }
+        ],
+        "entropy_seed_hex": "00000072656b65b6",
+        "event": 61,
+        "input": "Frame",
+        "input_hex": "00010d00bab8732b130000000000000015befb663f28f0515c41a2f2230aa1befd46a05d82778d0a666aeae5b4",
+        "node": 0,
+        "outputs": [
+          {
+            "debug": "Deliver { slot: Current, tag: EpochTag(1), range: 16..29 }"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 78020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 19
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 77020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 19
+        }
+      },
+      {
+        "at_ms": 79000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b65b7",
+        "event": 62,
+        "input": "Poll (legacy schedule)",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 78020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 19
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 78020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 19
+        }
+      },
+      {
+        "at_ms": 79000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b65b8",
+        "event": 63,
+        "input": "Seal(DataPacket) + DataSent",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [
+          {
+            "bytes": {
+              "file": "v052-fmp-current-initiates-63-data.bin",
+              "generator_version": "0.1.0",
+              "hex": "00010d00c374af96130000000000000091accca19fcd6ca7bf141cc56ded0816556f818e946482a45e889f783e",
+              "length": 45,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "ab75e186f553da884ee85796a289ea11b4f6e94ea13379bdf848f8a0adc4f55e"
+            },
+            "counter": 19,
+            "k": true,
+            "kind": "ApplicationFrame",
+            "plaintext_hex": "244a0000001300000000000000",
+            "sequence": 19
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 78020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 20
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 78020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 19
+        }
+      },
+      {
+        "at_ms": 79020,
+        "authenticated_deliveries": [
+          {
+            "plaintext_hex": "98340100001300000000000000",
+            "range": [
+              16,
+              29
+            ],
+            "slot": "Current",
+            "tag": 1
+          }
+        ],
+        "entropy_seed_hex": "00000072656b65b9",
+        "event": 64,
+        "input": "Frame",
+        "input_hex": "00010d00bab8732b14000000000000007843cece56ed9fe2da289f0779ba7cd70d60919e572d49c8ca83442601",
+        "node": 0,
+        "outputs": [
+          {
+            "debug": "Deliver { slot: Current, tag: EpochTag(1), range: 16..29 }"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 79020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 20
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 78020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 20
+        }
+      },
+      {
+        "at_ms": 80000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b65ba",
+        "event": 65,
+        "input": "Poll (legacy schedule)",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 79020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 20
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 79020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 20
+        }
+      },
+      {
+        "at_ms": 80000,
+        "authenticated_deliveries": [],
+        "entropy_seed_hex": "00000072656b65bb",
+        "event": 66,
+        "input": "Seal(DataPacket) + DataSent",
+        "input_hex": null,
+        "node": 0,
+        "outputs": [
+          {
+            "bytes": {
+              "file": "v052-fmp-current-initiates-66-data.bin",
+              "generator_version": "0.1.0",
+              "hex": "00010d00c374af961400000000000000bdd3934a19fc9715bcd62983cfa75785b43752c9100525f3a83e08e9ba",
+              "length": 45,
+              "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+              "sha256": "5b62ad3a802c0e687d5c336461969533a8b7df31ae398aec1fa18f7a4deb2013"
+            },
+            "counter": 20,
+            "k": true,
+            "kind": "ApplicationFrame",
+            "plaintext_hex": "0c4e0000001400000000000000",
+            "sequence": 20
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 79020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 21
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 79020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 20
+        }
+      },
+      {
+        "at_ms": 80020,
+        "authenticated_deliveries": [
+          {
+            "plaintext_hex": "80380100001400000000000000",
+            "range": [
+              16,
+              29
+            ],
+            "slot": "Current",
+            "tag": 1
+          }
+        ],
+        "entropy_seed_hex": "00000072656b65bc",
+        "event": 67,
+        "input": "Frame",
+        "input_hex": "00010d00bab8732b1500000000000000f52a6aed1b57ac7e1d7d7fe69507848a9732e2f9d14a55c708799a81c8",
+        "node": 0,
+        "outputs": [
+          {
+            "debug": "Deliver { slot: Current, tag: EpochTag(1), range: 16..29 }"
+          }
+        ],
+        "state_after": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 80020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 21
+        },
+        "state_before": {
+          "candidates": 0,
+          "current": {
+            "base_ms": 60020,
+            "k": true,
+            "recv": "Here",
+            "role": "Initiator",
+            "started_ms": 60020,
+            "tag": 1
+          },
+          "cycle": "Idle",
+          "identity": "Proven(PeerKey(cd759a0e))",
+          "k": true,
+          "last_rx_ms": 79020,
+          "link_since_ms": 0,
+          "next_wake_ms": 165020,
+          "peer_epoch_hex": "0123456789abcdef",
+          "pending": null,
+          "previous": null,
+          "sent": 21
+        }
+      }
+    ],
+    "final_state": [
+      {
+        "candidates": 0,
+        "current": {
+          "base_ms": 60020,
+          "k": true,
+          "recv": "Here",
+          "role": "Initiator",
+          "started_ms": 60020,
+          "tag": 1
+        },
+        "cycle": "Idle",
+        "identity": "Proven(PeerKey(cd759a0e))",
+        "k": true,
+        "last_rx_ms": 80020,
+        "link_since_ms": 0,
+        "next_wake_ms": 165020,
+        "peer_epoch_hex": "0123456789abcdef",
+        "pending": null,
+        "previous": null,
+        "sent": 21
+      }
+    ],
+    "initial_handshake": "noise.json IK (before frame exports)",
+    "initial_state": [
+      {
+        "candidates": 0,
+        "current": {
+          "base_ms": 0,
+          "k": false,
+          "recv": "Here",
+          "role": "Initiator",
+          "started_ms": 0,
+          "tag": 0
+        },
+        "cycle": "Idle",
+        "identity": "Proven(PeerKey(cd759a0e))",
+        "k": false,
+        "last_rx_ms": 0,
+        "link_since_ms": 0,
+        "next_wake_ms": 105000,
+        "peer_epoch_hex": "0123456789abcdef",
+        "pending": null,
+        "previous": null,
+        "sent": 0
+      }
+    ],
+    "keypair_seeds": [
+      0,
+      1
+    ],
+    "legacy_initiates": false,
+    "legacy_release": "V052",
+    "params_debug": "Config { after: 120s, jitter: 15, messages: 65536, handshake: 30s, check: 1s, drain: 10s, retention: 120s, hold: 120s, revert: 10s, dampening: 30s, ttl: 40s, young: 5s, link_age: 30s, session_age: 10s, floor_link: 31s, floor_session: 31s, floor_cutover: 0ns, silence: 30s, resends: 5, soft: 4611686018427387904, hard: 18446744073708503040, delay: 2s, arrival: false }",
+    "profile": "FmpProfile<SeededEntropy> (Noise IK)",
+    "startup_epoch_hex": "0123456789abcdef"
+  },
+  "family": "rekey-legacy",
+  "gaps": [
+    "Representative lossless rotations in both initiation directions; not the exhaustive legacy fault/explorer suite."
+  ],
+  "generator": "fips-vectors",
+  "generator_version": "0.1.0",
+  "pin": "6aa80504baa0fa312b392009eea0e3e59fb6fe4c",
+  "schema_version": 1
+}

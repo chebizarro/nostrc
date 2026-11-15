@@ -170,7 +170,7 @@ are not ported by this shared-core task:
 | `stub.rs` | 1 | Self-test of the Rust-only fake transport; C uses landed Noise transport tests |
 | `faults.rs` | 1 | Mutant/process fault-injection runner |
 | `sim.rs`, `explore.rs`, `regress.rs` | 7 (5+1+1) | Simulator, bounded explorer and simulator-driven historical schedules |
-| `legacy/**` | 8 | v0.5.x interoperability models/traces; `nostrc-f12v2.3` |
+| `legacy/**` | 8 | Twelve representative differential traces from the actual v0.5.x models; not the full fault/explorer suite; `nostrc-f12v2.3` |
 
 `oracles.rs` has no test functions; its simulator-only oracle framework and
 Rust test-shell internals are not shipped. The C event fuzzer is not a claim
@@ -221,3 +221,31 @@ hooks), strict envelope ingress, ordered execution, bounded loss/reorder/
 corruption, application traffic and path changes. It checks bounds, key erasure
 and index conservation after every operation. Writable fuzz corpus is always a
 copy of `fuzz/corpus/rekey_profile`, never the checked-in seeds themselves.
+
+## Legacy 0.5.x differential replay (nostrc-f12v2.3)
+
+`FipsDiffRekeyLegacy` checks **12 complete traces, 0 skipped**: four for the
+shared v0.5.0/v0.5.1 model, four for v0.5.2 and four for v0.5.3. Each model
+runs FMP/IK and FSP/XK in both rekey-initiation directions. The traces are in
+`vectors/rekey-legacy/` (792 current-node events total), generated from the
+actual pinned Rust `tests/legacy/{fmp,fsp}.rs` models, not reconstructed peers.
+See `tools/fips-vectors/README.md` for capture/provenance and regeneration.
+
+The existing `check_rekey()` FSP replay remains in place; its state/output
+comparison is extended for indexed FMP and one-current-node legacy transcripts.
+Replay uses the real C machine, real IK/XK profiles and production FMP receive /
+authenticated-msg1 ingress, with the real seeded index allocator. It compares
+every ordered output, exact Send and sealed Prompt/data bytes, authenticated
+Deliver plaintext/ranges, all event before/after views, and initial/final state.
+Release effects are returned to the allocator and close must conserve indices.
+Every missing matrix document or malformed/stale-pin/sidecar record fails before
+dispatch; no compatibility case is counted as a skip.
+
+The fixture shell establishes real Noise sessions, exchanges old-key traffic,
+forces a single rotation trigger at 60 s, then sends authenticated traffic both
+ways and follows current-node wakes and legacy ticks through cutover and drain.
+Current-node events have explicit entropy checkpoints so the replay does not
+need a second copy of the model. This is representative local byte/state parity,
+not exhaustive loss/retry/restart/first-handshake coverage, production trigger
+qualification, live deployed-node interop or hosted CI evidence. No C behaviour
+divergence was found in this matrix; no production implementation was changed.

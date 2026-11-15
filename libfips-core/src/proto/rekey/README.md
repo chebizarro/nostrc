@@ -4,7 +4,8 @@ Port of `core/src/proto/rekey/` at the pin in `libfips-core/UPSTREAM.md`.
 The upstream README is normative for transition, expiry-order, trigger, and
 ownership rules. This directory implements the shared machine. Production IK/XK profiles live
 in `fmp/rekey` and `fsp/rekey`; the bounded host binding is `node/session`.
-Legacy 0.5.x models remain separate.
+Legacy 0.5.x models remain upstream; twelve captured compatibility traces
+are replayed by `FipsDiffRekeyLegacy` (see `../../../tests/REKEY.md`).
 
 ## API and state ownership
 
@@ -121,4 +122,5 @@ For `tools/fips-vectors/src/rekey.rs` / `tests/vectors/rekey.json`:
 `check_rekey()` now executes the real `.2` profile over all 16 vector events,
 reporting one checked trace without a SKIP. Production binding and unit/fuzz
 evidence are described in `tests/REKEY.md` and `include/fips/node/session.h`.
-Legacy compatibility traces remain `.3`; unit/fuzz evidence is not legacy replay.
+Legacy compatibility traces are captured/replayed by `.3` in
+`tests/vectors/rekey-legacy/`; unit/fuzz evidence alone is not legacy replay.

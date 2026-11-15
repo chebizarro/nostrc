@@ -274,10 +274,8 @@ fail:
     return NULL;
 }
 
-diff_value *diff_load(diff_context *ctx, const char *family)
+static diff_value *load_document(diff_context *ctx, const char *family, const char *name)
 {
-    char name[64];
-    snprintf(name, sizeof(name), "%s.json", family);
     char *path = join(ctx->dir, name);
     diff_bytes raw = {0};
     bool ok = read_file(ctx, path, &raw); free(path);
@@ -313,6 +311,46 @@ diff_value *diff_load(diff_context *ctx, const char *family)
 done:
     json_decref(j);
     return v;
+}
+
+/* The pin's complete capture matrix is explicit: a missing release/profile/role
+ * must fail loading, never disappear from the checked count. Sidecars resolve
+ * relative to the same private family directory as their document. */
+diff_value *diff_load(diff_context *ctx, const char *family)
+{
+    if (strcmp(family, "rekey-legacy")) {
+        char name[64];
+        snprintf(name, sizeof name, "%s.json", family);
+        return load_document(ctx, family, name);
+    }
+    const char *root = ctx->dir;
+    char *dir = join(root, "rekey-legacy");
+    ctx->dir = dir;
+    diff_value *all = allocate(sizeof *all);
+    memset(all, 0, sizeof *all);
+    all->type = D_ARRAY;
+    all->as.children.items = allocate(12 * sizeof(diff_value *));
+    const char *releases[] = {"v050-v051", "v052", "v053"};
+    const char *profiles[] = {"fmp", "fsp"};
+    const char *roles[] = {"current-initiates", "legacy-initiates"};
+    for (size_t v = 0; v < 3; ++v) for (size_t p = 0; p < 2; ++p) for (size_t k = 0; k < 2; ++k) {
+        char name[128];
+        snprintf(name, sizeof name, "%s-%s-%s.json", releases[v], profiles[p], roles[k]);
+        diff_value *c = load_document(ctx, family, name);
+        if (!c) { diff_free(all); all = NULL; goto done; }
+        const char *release_names[] = {"V050", "V052", "V053"};
+        const char *profile_names[] = {"FmpProfile<SeededEntropy> (Noise IK)", "FspProfile<SeededEntropy> (Noise XK)"};
+        if (strcmp(TEXT(c, "legacy_release"), release_names[v]) ||
+            strcmp(TEXT(c, "profile"), profile_names[p]) || FIELD(c, "legacy_initiates")->as.boolean != (k != 0)) {
+            diff_error(ctx, "legacy matrix mismatch in %s", name);
+            diff_free(c); diff_free(all); all = NULL; goto done;
+        }
+        all->as.children.items[all->as.children.len++] = c;
+    }
+done:
+    ctx->dir = root;
+    free(dir);
+    return all;
 }
 
 /* Used only by the negative CTest, on its private COPY of entropy fixtures. */
