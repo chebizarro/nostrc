@@ -12,7 +12,9 @@
 #include "../../include/go.h"
 
 static pthread_once_t gof_once_ctrl = PTHREAD_ONCE_INIT;
-static size_t gof_init_stack_bytes = 0;
+/* pthread_once runs the initializer on its winning caller. Keep that caller's
+ * argument local: concurrent spawn/get_stats calls must not overwrite it. */
+static _Thread_local size_t gof_init_stack_bytes = 0;
 
 static void gof_do_init(void) {
   gof_sched_init(gof_init_stack_bytes);

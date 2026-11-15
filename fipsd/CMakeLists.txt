@@ -73,3 +73,11 @@ target_sources(fipsd_lib PRIVATE
   src/config/schema.c src/config/node.c src/config/transport.c
   src/config/peer.c src/config/gateway.c src/config/floors.c
   src/config/loadlog.c src/config/validate.c src/config/core.c src/config/reload.c)
+
+# Unix control protocol and immutable provider projections (nostrc-9keoz.3).
+pkg_check_modules(FIPSD_JANSSON REQUIRED IMPORTED_TARGET jansson)
+target_link_libraries(fipsd_lib PUBLIC PkgConfig::FIPSD_JANSSON)
+target_sources(fipsd_lib PRIVATE
+  src/control/control.c src/control/protocol.c src/control/queries.c)
+target_sources(fipsd_lib PRIVATE src/control/probe.c)
+target_sources(fipsd_lib PRIVATE src/control/render.c)

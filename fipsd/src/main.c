@@ -6,6 +6,7 @@
 
 #include "cli.h"
 #include "config/config.h"
+#include "control/control.h"
 #include "host_os.h"
 #include "log.h"
 #include "privilege.h"
@@ -130,6 +131,10 @@ int main(int argc, char **argv)
     fipsd_config_service service;
     fipsd_config_service_init(&service, snapshots, opts.config_path, log, log_file);
 
+    fipsd_control_service control;
+    fipsd_control_service_init(&control, snapshots, NULL);
+    bool control_enabled = fipsd_config_bool(fipsd_config_get(config, "node.control.enabled"));
+
     /* Host adapters for the core (time, entropy) are linked and ready for the
      * node subsystem; nothing reads them in the skeleton. */
     fips_clock clock = fipsd_host_os_clock();
@@ -145,6 +150,7 @@ int main(int argc, char **argv)
         FIPSD_ERROR(MODULE, "cannot allocate the runtime");
         code = FIPSD_EXIT_FAILURE;
     } else if (fipsd_runtime_register(rt, &service.subsystem) != 0 ||
+               (control_enabled && fipsd_runtime_register(rt, &control.subsystem) != 0) ||
                fipsd_runtime_start(rt) != 0) {
         FIPSD_ERROR(MODULE, "start-up failed");
         code = FIPSD_EXIT_FAILURE;
@@ -157,6 +163,7 @@ int main(int argc, char **argv)
         }
     }
     fipsd_runtime_destroy(rt);
+    fipsd_control_service_clear(&control);
     go_swap_free(snapshots);
     FIPSD_INFO(MODULE, "fipsd shutdown complete (exit %d)", code);
     fipsd_log_set_default(NULL);
