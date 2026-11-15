@@ -3,6 +3,7 @@
 #include "control/protocol.h"
 #include "runtime.h"
 #include "config/config.h"
+#include "fiber_hooks.h"
 #include <limits.h>
 
 /* Pure resolution policy. Production probes directory existence once at start;
@@ -19,7 +20,8 @@ typedef struct fipsd_control_service {
     GoSwap *configs; /* borrowed; immutable configuration snapshots */
     fipsd_control_provider provider;
     fipsd_runtime *runtime;
-    nsync_mu listener_mu; /* descriptor replacement/close; never held across I/O */
+    nsync_mu listener_mu; /* listener and accept_waiter lifetime; never held across I/O */
+    gof_fiber_handle accept_waiter; /* protected by listener_mu; cleared before fiber exit */
     int listener; /* accept fiber owns/ultimately closes it */
     int cancel_socket; /* preallocated non-listening replacement, independent of pathname */
     char path[PATH_MAX];

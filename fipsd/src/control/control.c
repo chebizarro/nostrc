@@ -256,6 +256,9 @@ static void accept_fiber(void *arg)
 {
     fipsd_control_service *s = arg;
     GoContext *ctx = fipsd_runtime_context(s->runtime);
+    nsync_mu_lock(&s->listener_mu);
+    s->accept_waiter = gof_hook_current();
+    nsync_mu_unlock(&s->listener_mu);
     while (!go_context_is_canceled(ctx)) {
         int fd = gof_accept(s->listener, NULL, NULL, -1);
         if (fd < 0) {
@@ -287,6 +290,7 @@ static void accept_fiber(void *arg)
         }
     }
     nsync_mu_lock(&s->listener_mu);
+    s->accept_waiter = NULL;
     close(s->listener); s->listener = -1;
     close(s->cancel_socket); s->cancel_socket = -1;
     nsync_mu_unlock(&s->listener_mu);
@@ -334,7 +338,14 @@ static void stop(fipsd_subsystem *subsystem, fipsd_runtime *rt)
         int rc;
         do { rc = dup2(s->cancel_socket, s->listener); } while (rc < 0 && errno == EINTR);
         if (rc < 0) FIPSD_ERROR("control", "cannot cancel listener: %s", strerror(errno));
-        else (void)fcntl(s->listener, F_SETFD, FD_CLOEXEC);
+        else {
+            (void)fcntl(s->listener, F_SETFD, FD_CLOEXEC);
+            /* dup2 removes the old poll registration without a readiness
+             * event. Wake explicitly: indefinite gof_accept no longer retries
+             * periodically. The scheduler retains a wake racing arm/park;
+             * listener_mu keeps the handle alive until this wake completes. */
+            if (s->accept_waiter) gof_hook_make_runnable(s->accept_waiter);
+        }
     }
     nsync_mu_unlock(&s->listener_mu);
 }

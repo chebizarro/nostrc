@@ -546,8 +546,9 @@ selects phase completion against the root context and deadline and shuts down
 and `gof_write` park cooperatively; Linux sends use `gof_sendmsg(MSG_NOSIGNAL)`
 because it has no `SO_NOSIGPIPE`. Filesystem/group operations run on startup's
 thread, not a scheduler worker. Shutdown replaces the listening descriptor with a preallocated non-listening
-socket (keeping the fd slot reserved, independent of its pathname),
-joins all tracked fibers and unlinks only the inode it bound. Existing live
+socket (keeping the fd slot reserved, independent of its pathname) and explicitly
+wakes the accept fiber; descriptor replacement alone does not signal the netpoller.
+It joins all tracked fibers and unlinks only the inode it bound. Existing live
 sockets are refused. **Safety difference from Rust:** stale cleanup refuses
 non-sockets, symlinks and other users' sockets rather than deleting arbitrary
 files at the configured path.
@@ -634,6 +635,7 @@ the error cannot be allocated), not sent as a partial success. Fault-injection
 and signed-boundary tests cover these paths. Shutdown tests remove and replace
 the live socket pathname while accept is parked.
 
-Version decision: additive work folds into **fipsd 0.1.0 Unreleased**, no bump
-and no release/tag change; the required libgo race correction remains in its
-unreleased 0.3.0 version (PATCH-class).
+Version decision: additive work and the PATCH-class control shutdown correction
+fold into **fipsd 0.1.0 Unreleased**; no manifest, declared version or release/tag
+change. The required libgo race correction remains in its unreleased 0.3.0
+version (PATCH-class).
