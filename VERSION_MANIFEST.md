@@ -1622,6 +1622,8 @@ Decisions for components affected by another component's change (AGENTS.md,
 | same | fipsd | 0.1.0 | No bump: CI/test-only sanitizer lanes; no shipped artifact change. |
 | Routing decisions/error signals (nostrc-82g9n.4) | libfips-core | 0.1.0 | No bump: additive routing APIs fold into the initial 0.1.0 Unreleased port; no published version or tag change. |
 
+| YAML configuration host (nostrc-9keoz.2) | fipsd | 0.1.0 | No bump: the new schema, CLI loading and conservative SIGHUP logging reload fold into initial **0.1.0 Unreleased**; no published release or tag change. libfips-core/libgo APIs and versions are unchanged. |
+
 ## Maintenance
 
 Follow the versioning policy and update procedure in `AGENTS.md`. In

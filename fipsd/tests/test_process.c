@@ -106,7 +106,7 @@ static int test_sigterm_stderr(const char *fipsd)
     CHECK(read_until(&c, "fipsd running", out, sizeof(out)) == 1);
     CHECK(strstr(out, "fipsd ") && strstr(out, " starting (libfips-core "));
     CHECK(strstr(out, "fiber runtime started: 1 worker(s)") != NULL); /* FIPSD_WORKERS=1 */
-    CHECK(strstr(out, "no configuration loaded") != NULL);
+    CHECK(strstr(out, "configuration loaded") != NULL);
     CHECK(kill(c.pid, SIGTERM) == 0);
     read_until(&c, NULL, out, sizeof(out));
     int status;
@@ -124,9 +124,32 @@ static int test_sigint_config_flag(const char *fipsd)
 {
     child c;
     char out[16384] = "";
-    CHECK(spawn(fipsd, (char *const[]){(char *)fipsd, "-c", "/etc/fips/none.yaml", NULL}, 0, &c) == 0);
+    char path[] = "/tmp/fipsd-process-config.XXXXXX";
+    int fd = mkstemp(path);
+    CHECK(fd >= 0);
+    const char yaml[] = "node: {identity: {persistent: true}}\n";
+    CHECK(write(fd, yaml, sizeof(yaml) - 1) == (ssize_t)(sizeof(yaml) - 1));
+    CHECK(close(fd) == 0);
+    CHECK(spawn(fipsd, (char *const[]){(char *)fipsd, "-c", path, NULL}, 0, &c) == 0);
     CHECK(read_until(&c, "fipsd running", out, sizeof(out)) == 1);
-    CHECK(strstr(out, "WARN  main: configuration file /etc/fips/none.yaml noted but not loaded") != NULL);
+    CHECK(strstr(out, "configuration loaded") != NULL);
+    FILE *config = fopen(path, "w");
+    CHECK(config != NULL);
+    CHECK(fputs("node: {identity: {persistent: true}, log_max_files: 7, limits: {max_peers: 999}}\n", config) >= 0);
+    CHECK(fclose(config) == 0);
+    CHECK(kill(c.pid, SIGHUP) == 0);
+    out[0] = 0;
+    CHECK(read_until(&c, "configuration reload complete", out, sizeof(out)) == 1);
+    /* Refusal warnings are replayed after the completion notification. */
+    CHECK(read_until(&c, "requires restart; keeping active value key=node.limits.max_peers", out, sizeof(out)) == 1);
+    CHECK(strstr(out, "reloaded configuration key=node.log_max_files") != NULL);
+    config = fopen(path, "w");
+    CHECK(config != NULL);
+    CHECK(fputs("node: [\n", config) >= 0 && fclose(config) == 0);
+    CHECK(kill(c.pid, SIGHUP) == 0);
+    out[0] = 0;
+    CHECK(read_until(&c, "configuration reload failed; keeping active snapshot", out, sizeof(out)) == 1);
+    CHECK(unlink(path) == 0);
     CHECK(kill(c.pid, SIGINT) == 0);
     read_until(&c, NULL, out, sizeof(out));
     int status;
@@ -180,6 +203,16 @@ static int test_log_file(const char *fipsd)
     CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 1);
     CHECK(strstr(out, "fipsd: cannot open log file ") != NULL && strstr(out, bad) != NULL);
     CHECK(strstr(out, "fipsd running") == NULL);
+
+    out[0] = 0;
+    char missing[PATH_MAX];
+    snprintf(missing, sizeof(missing), "%s/missing.yaml", dir);
+    CHECK(spawn(fipsd, (char *const[]){(char *)fipsd, "--log-file", path, "-c", missing, NULL}, 0, &c) == 0);
+    read_until(&c, NULL, out, sizeof(out));
+    CHECK(wait_exit(&c, &status) == 0);
+    CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 1);
+    CHECK(read_file(path, out, sizeof(out)) == 0);
+    CHECK(strstr(out, "Failed to load configuration from ") && strstr(out, missing));
 
     CHECK(unlink(path) == 0);
     snprintf(path, sizeof(path), "%s/logs", dir);

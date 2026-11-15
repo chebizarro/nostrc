@@ -5,6 +5,7 @@
 #include <stdlib.h>
 
 #include "cli.h"
+#include "config/config.h"
 #include "host_os.h"
 #include "log.h"
 #include "privilege.h"
@@ -12,11 +13,8 @@
 
 #define MODULE "main"
 
-/* Opens the logger: --log-file (rolled with the documented defaults until
- * the configuration supplies node.log_max_size_mb / node.log_max_files) or
- * stderr. Interim level source: FIPSD_LOG_LEVEL, until node.log_level lands
- * with the configuration loader (nostrc-9keoz.2). */
-static fipsd_log *open_logger(const fipsd_options *opts)
+/* Open --log-file before parsing so startup failures reach the requested sink. */
+static fipsd_log *open_logger(const fipsd_options *opts, fipsd_log_file **out_file)
 {
     fipsd_log_level level = FIPSD_LOG_INFO;
     const char *env_level = getenv("FIPSD_LOG_LEVEL");
@@ -26,6 +24,7 @@ static fipsd_log *open_logger(const fipsd_options *opts)
         level = FIPSD_LOG_INFO;
     }
     fipsd_log *log;
+    *out_file = NULL;
     if (opts->log_file) {
         char err[512];
         fipsd_log_file *file = fipsd_log_file_open(opts->log_file, FIPSD_LOG_DEFAULT_MAX_BYTES,
@@ -44,6 +43,7 @@ static fipsd_log *open_logger(const fipsd_options *opts)
             fputs("fipsd: cannot allocate the logger\n", stderr);
             return NULL;
         }
+        *out_file = file;
         fipsd_log_set_default(log);
         /* Logged first: an operator looking for output that is no longer on
          * stderr needs the path and the limits that govern it. */
@@ -81,7 +81,8 @@ int main(int argc, char **argv)
 
     /* The log file is opened before anything else so that every later
      * start-up error, including a configuration error, is logged there. */
-    fipsd_log *log = open_logger(&opts);
+    fipsd_log_file *log_file = NULL;
+    fipsd_log *log = open_logger(&opts, &log_file);
     if (!log)
         return FIPSD_EXIT_FAILURE;
     FIPSD_INFO(MODULE, "fipsd %s starting (libfips-core %s)", fipsd_cli_short_version(),
@@ -90,12 +91,44 @@ int main(int argc, char **argv)
     mode_t previous_umask = fipsd_privilege_set_umask();
     FIPSD_DEBUG(MODULE, "umask %04o (was %04o)", (unsigned)FIPSD_UMASK, (unsigned)previous_umask);
 
-    if (opts.config_path)
-        FIPSD_WARN(MODULE, "configuration file %s noted but not loaded: configuration parsing "
-                           "is not implemented yet (nostrc-9keoz.2)", opts.config_path);
-    else
-        FIPSD_INFO(MODULE, "no configuration loaded: configuration parsing is not implemented "
-                           "yet (nostrc-9keoz.2)");
+    fipsd_config_log held = {0};
+    fipsd_config *config = fipsd_config_load(opts.config_path, &held);
+    if (!config) {
+        fipsd_config_log_replay(&held, log);
+        FIPSD_ERROR(MODULE, "Failed to load configuration%s%s: %s",
+                    opts.config_path ? " from " : "", opts.config_path ? opts.config_path : "", held.error);
+        fipsd_config_log_clear(&held);
+        fipsd_log_set_default(NULL);
+        fipsd_log_destroy(log);
+        return FIPSD_EXIT_FAILURE;
+    }
+    const char *configured_file = fipsd_config_string(fipsd_config_get(config, "node.log_file"));
+    if (!opts.log_file && configured_file) {
+        fipsd_options configured_opts = opts;
+        configured_opts.log_file = configured_file;
+        fipsd_log_set_default(NULL);
+        fipsd_log_destroy(log);
+        log = open_logger(&configured_opts, &log_file);
+        if (!log) {
+            fipsd_config_free(config);
+            fipsd_config_log_clear(&held);
+            return FIPSD_EXIT_FAILURE;
+        }
+    }
+    fipsd_config_apply_logging(config, log, log_file);
+    fipsd_config_log_replay(&held, log);
+    fipsd_config_log_clear(&held);
+    FIPSD_INFO(MODULE, "configuration loaded");
+    GoSwap *snapshots = go_swap_create(config, fipsd_config_free);
+    if (!snapshots) {
+        fipsd_config_free(config);
+        FIPSD_ERROR(MODULE, "cannot allocate configuration snapshot");
+        fipsd_log_set_default(NULL);
+        fipsd_log_destroy(log);
+        return FIPSD_EXIT_FAILURE;
+    }
+    fipsd_config_service service;
+    fipsd_config_service_init(&service, snapshots, opts.config_path, log, log_file);
 
     /* Host adapters for the core (time, entropy) are linked and ready for the
      * node subsystem; nothing reads them in the skeleton. */
@@ -111,7 +144,8 @@ int main(int argc, char **argv)
     if (!rt) {
         FIPSD_ERROR(MODULE, "cannot allocate the runtime");
         code = FIPSD_EXIT_FAILURE;
-    } else if (fipsd_runtime_start(rt) != 0) {
+    } else if (fipsd_runtime_register(rt, &service.subsystem) != 0 ||
+               fipsd_runtime_start(rt) != 0) {
         FIPSD_ERROR(MODULE, "start-up failed");
         code = FIPSD_EXIT_FAILURE;
     } else {
@@ -123,6 +157,7 @@ int main(int argc, char **argv)
         }
     }
     fipsd_runtime_destroy(rt);
+    go_swap_free(snapshots);
     FIPSD_INFO(MODULE, "fipsd shutdown complete (exit %d)", code);
     fipsd_log_set_default(NULL);
     fipsd_log_destroy(log);

@@ -1,0 +1,16 @@
+
+nodes:
+  a:
+    docker_ip: "172.20.0.10"
+    docker_host: "gw-gateway"
+    peers: [b, c]
+
+  b:
+    docker_ip: "172.20.0.11"
+    docker_host: "gw-server"
+    peers: [a]
+
+  c:
+    docker_ip: "172.20.0.12"
+    docker_host: "gw-server-2"
+    peers: [a]

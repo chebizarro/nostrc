@@ -6,21 +6,22 @@ runtime and libnostr. Sockets, clocks, secure randomness, configuration,
 logging, signals, privileges and platform-specific work belong to this host,
 never to the core.
 
-## What exists today (process skeleton, nostrc-9keoz.1)
+## Host components
 
 | File | Role |
 | ---- | ---- |
 | `src/main.c` | Entry point: parse flags, open the log first, umask, bring the runtime up, run until a stop, map the result to an exit code. |
-| `src/cli.{c,h}` | `getopt_long` parsing of exactly the documented flags; version and help text; `fipsd_options` (`--config`, `--log-file`) captured for the configuration loader (nostrc-9keoz.2). |
+| `src/cli.{c,h}` | `getopt_long` parsing of exactly the documented flags; version and help text; `fipsd_options` (`--config`, `--log-file`) supplied to the configuration loader. |
 | `src/log.{c,h}` | Structured logging: levels, UTC timestamps, module tags, injectable sink, size-rolled file sink. |
 | `src/runtime.{c,h}` | Fiber runtime bring-up, signal fiber, root `GoContext`, reload channel, subsystem vtable, orderly bounded shutdown. |
 | `src/privilege.{c,h}` | umask, `fips` group resolution, socket/directory ownership and mode helpers, no-op privilege-drop hook. |
 | `src/host_os.{c,h}` | `fips/host.h` adapters: `CLOCK_MONOTONIC` clock, libsodium entropy. |
 | `cmake/BuildInfo.cmake` | Build-time capture of the git revision and target triple for the version strings. |
 
-Not implemented yet: YAML configuration (`9keoz.2`), the control socket
-(`9keoz.3`), transports, the node. `-c FILE` is accepted and recorded but the
-file is not read; the daemon logs that and runs the bare runtime.
+`src/config/` loads and validates YAML, publishes immutable snapshots and
+consumes the runtime's SIGHUP reload channel. Not implemented yet: the control
+socket (`9keoz.3`), transports and the node. Parsing a setting does not claim
+that its owning subsystem is implemented.
 
 ### Command line (docs/reference/cli-fips.md upstream)
 
@@ -38,8 +39,98 @@ fipsd [-c FILE] [--log-file FILE]
 | unknown flag, missing value, positional | `error: ...`, usage and `For more information, try '--help'.` on stderr. | 2 |
 | normal run | Foreground until `SIGINT`/`SIGTERM`. | 0 clean; 1 start-up failure or shutdown grace elapsed |
 
-Environment (interim, until the configuration loader lands): `FIPSD_WORKERS`
-(scheduler worker count, 1..64), `FIPSD_LOG_LEVEL` (`error|warn|info|debug|trace`).
+Environment: `FIPSD_WORKERS`
+(scheduler worker count, 1..64), `FIPSD_LOG_LEVEL` (`error|warn|info|debug|trace`, overrides `node.log_level`).
+
+### YAML configuration (`nostrc-9keoz.2`)
+
+The host links **libyaml** (`pkg-config yaml-0.1`; Debian/Ubuntu `libyaml-dev`,
+Homebrew `libyaml`). No YAML dependency or parsing is added to libfips-core.
+
+`-c FILE` reads only that file; a missing/unreadable/invalid explicit file is
+fatal (exit 1), with the reason sent to the already-open CLI `--log-file` sink
+or stderr. Without `-c`, existing files overlay in this order:
+
+1. `/etc/fips/fips.yaml`;
+2. `/usr/local/etc/fips/fips.yaml` on macOS/FreeBSD;
+3. the platform user config directory plus `fips/fips.yaml` (Linux:
+   `$XDG_CONFIG_HOME` or `~/.config`; macOS: `~/Library/Application Support`);
+4. `~/.fips.yaml`;
+5. `./fips.yaml`.
+
+Node settings layer per explicitly named key (including a later explicit
+built-in default). Identity `persistent` and DNS/TUN booleans layer only when
+named; `leaf_only: true` remains sticky, matching upstream. Each transport type
+replaces whole, nonempty peer lists replace whole, and gateway replaces whole.
+A null section leaves an earlier section alone. No files means built-in
+defaults; files which together configure no identity, transport, peers or
+gateway are refused. Empty partial files can accompany a useful one.
+
+The schema tables in `src/config/{node,transport,peer,gateway,schema}.c` cover
+all configuration reference keys (218 scalar/scalar-list paths plus record
+collections): node identity/limits/rates/retry/netmon/cache/
+lookup/rendezvous/tree/bloom/session/buffers/control/native API/MMP/ECN/rekey/path/
+logging, TUN, DNS, six transport types with named instances, peers and gateway
+(including grants and port forwards). Both deprecated discovery tables and
+Ethernet `discovery` are accepted; removed tick/rekey switches warn and do not
+change behavior. Unknown keys warn and are discarded. Enums, integer widths,
+required fields, grant authorization and cross-field constraints are checked.
+Semantic refusal/warning text follows the pinned Rust sources; YAML syntax and
+scalar-type diagnostics are libyaml/C diagnostics, **not byte-for-byte serde_yaml
+errors**. Non-finite/negative handshake refill rates are additionally refused
+because the C core's rate-limit API requires finite, nonnegative rates.
+
+Protocol floors/ceilings match `floors.rs`, including the non-mutating warnings
+for discovery resend counts and link-rekey handshake caps. Coordinate TTLs
+map to saturating milliseconds; `-DFIPSD_TEST_OVERRIDES=ON` alone honours
+`node.cache.test_coord_ttl_secs` below the 300-second floor. Ordinary builds
+recognize but ignore that key with the upstream warning. Core adapters expose
+validated rekey configs, independent handshake/setup buckets, cache sizing/TTL
+and MMP mode/window/log intervals (`fipsd_config_core_params`). No core state,
+socket or identity key is created by parsing. Secret values are redacted from
+dumps and owned scalar buffers are zeroized on release.
+
+**Deliberate policy difference:** the upstream default relay list includes a
+relay forbidden by this repository's AGENTS.md. The C defaults omit it, keeping
+`wss://nos.lol` and `wss://offchain.pub`; no banned relay is introduced in code,
+fixtures or goldens. Parsing rendezvous configuration does not connect relays.
+
+`fipsd_config`/values are opaque and read-only. `GoSwap` owns each snapshot;
+readers hold a `GoRefPtr` from `go_swap_load()` until `go_refptr_release()`.
+Snapshot contents need no application lock, but **GoSwap itself currently uses
+a short mutex for load-and-retain; it is not a lock-free API**. This task does
+not alter libgo's lifetime/reclamation contract.
+
+SIGHUP coalesces on the runtime reload channel. A tracked fiber selects reload
+or cancellation, and `go_blocking_submit` performs bounded regular-file reads
+and parsing off the scheduler. A failed reload keeps the entire last good
+snapshot. Successful reloads apply **only `node.log_level`,
+`node.log_max_size_mb`, `node.log_max_files`**; every other changed setting is
+retained and logged as requiring restart. CLI file selection/environment level
+precedence remains in effect. Log limits change under the logger's write mutex.
+Upstream `node/reloadable.rs` defines hosts/ACL resource snapshots, **not a YAML
+reloadable-key list**; upstream `fips.rs` has no SIGHUP YAML reload. Therefore
+this whitelist is an explicit C-host contract, not a claim of upstream YAML
+reload parity. Peer-list/hosts/ACL application awaits their owning subsystems.
+
+The load log captures all defaults (DEBUG), bounds/deprecations/unknown keys
+(WARN) and loaded paths (INFO) before the final logger is configured; replay
+uses the configured filter. Parser resource limits: 8 MiB regular file,
+64 nesting levels, 100000 expanded value nodes, one YAML document, no embedded
+NUL scalars or custom tags; duplicate keys are refused.
+
+Tests include complete effective golden dumps for the shipped config and all
+32 upstream testing YAMLs, with two raw templates recorded as parser refusals.
+Scenario/topology YAMLs are **not daemon configs**: parsing a partial document
+ignores their unknown root keys and dumps defaults; the file-loading entrypoint
+separately rejects configurations that configure nothing. See
+`tests/config_golden/README.md` for oracle/provenance and default checks. The
+self-contained fixture copies remove comment lines and normalize trailing blank lines only. Configure with
+`-DFIPSD_UPSTREAM_CONFIG_DIR=/absolute/read-only/fips` to also replay the original
+33 files directly. Malformed corpus replay parses every seed prefix; unit and
+real-process tests exercise SIGHUP, restart-only rejection, failed reload,
+layering, immutable retained snapshots and concurrent readers. Build the new
+tests through the existing `fipsd_tests` aggregate.
 
 ### Logging
 

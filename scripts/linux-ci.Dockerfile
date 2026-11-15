@@ -27,6 +27,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpeas-2-dev librsvg2-dev libgdk-pixbuf-2.0-dev \
     # signet-ci.yml
     libmicrohttpd-dev libcbor-dev python3-jsonschema python3-yaml \
+    # fipsd YAML configuration (fips-ci.yml: orchestrator adds libyaml-dev)
+    libyaml-dev \
     # local tooling: sources, debugging, the gate's tree sync and lock
     git python3 ca-certificates curl gdb rsync util-linux \
  && rm -rf /var/lib/apt/lists/*
