@@ -72,3 +72,15 @@ nostrc_describe_test(FipsdProcessTest OWNER fipsd TARGETS fipsd_process_test fip
 # One target that builds every fipsd test executable (for CI target lists).
 add_custom_target(fipsd_tests DEPENDS fipsd fipsd_host_os_test fipsd_cli_test
   fipsd_log_test fipsd_runtime_test fipsd_privilege_test fipsd_process_test)
+
+# Peer reducer + real dispatcher/snapshot boundary; deterministic injected clock.
+fipsd_unit_test(fipsd_peer_test test_peer.c)
+target_sources(fipsd_peer_test PRIVATE
+  test_peer_machine.c test_peer_budget.c test_peer_data.c test_peer_link.c
+  test_peer_dispatcher.c "${CMAKE_CURRENT_SOURCE_DIR}/../../libfips-core/tests/fakes/host.c")
+target_include_directories(fipsd_peer_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../../libfips-core/tests")
+add_test(NAME FipsdPeerTest COMMAND fipsd_peer_test)
+set_tests_properties(FipsdPeerTest PROPERTIES TIMEOUT 60 LABELS "fips;unit"
+  ENVIRONMENT "FIPSD_WORKERS=${_fipsd_runtime_workers}")
+nostrc_describe_test(FipsdPeerTest OWNER fipsd TARGETS fipsd_peer_test)
+add_dependencies(fipsd_tests fipsd_peer_test)

@@ -56,3 +56,8 @@ install(TARGETS fipsd RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
 if(BUILD_TESTING)
   add_subdirectory(tests)
 endif()
+
+# Peer owners and dispatcher (nostrc-9keoz.4); profiles remain in libfips-core.
+target_sources(fipsd_lib PRIVATE
+  src/peer/active.c src/peer/data.c src/peer/machine.c src/peer/budget.c
+  src/peer/identities.c src/peer/table.c src/peer/dispatcher.c)
