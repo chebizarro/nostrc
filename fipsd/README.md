@@ -21,6 +21,8 @@ never to the core.
 `src/config/` loads and validates YAML, publishes immutable snapshots and
 consumes the runtime's SIGHUP reload channel. Not implemented yet: the control
 socket (`9keoz.3`), Tier B2 transports and node protocol handlers (`9keoz.6`). Parsing a setting does not claim
+consumes the runtime's SIGHUP reload channel. `src/control/` implements the
+Unix control socket (`9keoz.3`). Not implemented yet: transports and the node. Parsing a setting does not claim
 that its owning subsystem is implemented.
 
 ### Command line (docs/reference/cli-fips.md upstream)
@@ -197,6 +199,8 @@ migration; its loop now uses the same worker-local errno helpers as message I/O.
 Those helpers use relaxed scalar accesses for the errno cell shared by fibers on
 one OS worker, without synchronizing unrelated application memory or suppressing
 TSan checks.
+- `go_fiber` carries TSan fiber annotations; concurrent-spawn arguments are
+  caller-local. Runtime/control tests retain two-worker migration coverage.
 
 - `gof_read()` without a deadline parks in 2 ms slices, so the idle signal
   fiber wakes ~500 times a second. Harmless but not free.
@@ -515,3 +519,121 @@ and cancellation drain, injected monitor snapshots/wakes/backstop, and native
 kernel-socket opening plus an actual Ticker event. The native macOS/FreeBSD test
 cross-checks every `ifconfig -a` IP/prefix against read_system. Injected tests use
 channels and a manually driven backstop, not sleeps or timing-based completion.
+
+## Unix control socket (`nostrc-9keoz.3`)
+
+The control subsystem is registered after configuration only when
+`node.control.enabled` is true. It honours `node.control.socket_path`;
+without an override, resolution is `/run/fips/control.sock` when its private
+directory exists, then `/var/run/fips/control.sock` on macOS/FreeBSD when its
+directory exists (a privileged macOS daemon also selects/creates it), then
+`$XDG_RUNTIME_DIR/fips/control.sock`, then `/tmp/fips-control.sock`.
+Configuration resolves its default against an existing XDG runtime directory.
+Startup creates missing private parents, uses the existing privilege helpers
+for private-parent `fips` 0750 and socket `fips` 0770, and never changes an
+existing shared/custom parent's ownership/mode. When the group is absent it
+logs a warning and retains the effective group, still enforcing both modes.
+A present but unassignable group is a startup error, not a silent fallback.
+
+The accept loop and each connection run as tracked fibers. One JSON request
+line in, one response line out, close; subsequent requests are not executed.
+The newline counts toward the **4096-byte** bound. Oversize input is refused
+as `read error: request too large` without an unbounded read allocation.
+Read and write each have a 5-second protocol deadline, and dispatch has a
+separate 5-second execution budget; a companion fiber
+selects phase completion against the root context and deadline and shuts down
+(but never closes/reuses) the I/O owner's descriptor. `gof_accept`, `gof_read`
+and `gof_write` park cooperatively; Linux sends use `gof_sendmsg(MSG_NOSIGNAL)`
+because it has no `SO_NOSIGPIPE`. Filesystem/group operations run on startup's
+thread, not a scheduler worker. Shutdown replaces the listening descriptor with a preallocated non-listening
+socket (keeping the fd slot reserved, independent of its pathname),
+joins all tracked fibers and unlinks only the inode it bound. Existing live
+sockets are refused. **Safety difference from Rust:** stale cleanup refuses
+non-sockets, symlinks and other users' sockets rather than deleting arbitrary
+files at the configured path.
+
+`protocol.{c,h}` uses **jansson** and emits the exact consumer envelope:
+`{"status":"ok","data":...}` or `{"status":"error","message":...}`.
+The Response struct's outer order is `status`, then `data`/`message`; nested
+maps are lexical, like upstream `serde_json::Value` without `preserve_order`.
+Malformed-input details are Jansson diagnostics, not invented serde text;
+the common error prefix and all command/required-field errors match upstream.
+As the actual Rust `serve` does, a complete JSON value followed by EOF is
+accepted even without the documented newline. Unknown top-level fields are
+ignored. Profiling-only, gateway and IPv6-adapter commands are not daemon
+commands in this default build. In particular **`reload`, `probe`,
+`show_filters` and `show_stats` are not upstream command names**; YAML reload
+remains SIGHUP, diagnostics use `probe_start/poll/cancel`, filters use
+`show_bloom`, and history uses the `show_stats_*` family.
+
+### Command/provider boundary
+
+`control/snapshot.h` defines `fipsd_control_provider`: a synchronized retained
+load of an immutable `fipsd_control_snapshot`, plus a live-command method.
+Snapshots may be published through GoSwap; their GoRefPtr is held through
+serialization. Typed status/routing/cache/connection/transport/native/history
+fields are rendered here. Conditional peer/session/link/MMP/tree/bloom/ACL
+rows and counter extensions are immutable JSON-valued **data projections**
+owned by the provider, not envelopes; they are deep-copied, never mutated or
+stolen. This intentionally keeps node dispatchers, handlers, lifecycle and
+dataplane out of this subsystem. Live-command providers receive the root context and an absolute monotonic
+execution deadline. They must enqueue to the single writer, select replies
+against cancellation/deadline and offload blocking work;
+they must not mutate a node from the connection fiber.
+
+| Commands | Implementation | No backing node provider yet |
+| --- | --- | --- |
+| `show_status` | Identity, lifecycle/counts, forwarding, history sparklines | Error `node not yet initialized`; no invented identity or mesh estimate |
+| `show_acl`, `show_tree`, `show_bloom` | Snapshot projections plus counter families | Upstream pre-first-tick seed: empty ACL strings/tables, zero tree addresses, null root npub/uptree estimates, no root claim |
+| `show_peers`, `show_sessions`, `show_links`, `show_mmp` | Immutable entity projections | Empty entity tables |
+| `show_cache`, `show_routing`, `show_identity_cache` | Cache/lookup rows, counts, counters, saturating ages | Empty/zero seed views (not configured live caches) |
+| `show_connections`, `show_transports`, `show_native_flows` | Typed rows; optional fields preserved; transport interface presence is separate from transport state | Empty tables |
+| `show_stats_list` | Actual libfips-core metric metadata and ring constants | Fully available |
+| `show_stats_history`, `show_stats_all_history`, `show_stats_peers`, `show_stats_history_all_peers` | Metric/window/granularity/peer validation, actual history queries, retained peer metadata and display ordering | Empty rings, null-padded history; per-peer query refuses an untracked peer |
+| `show_metrics` | All registry families, including discovery/lookup alias | Error `subsystem not started` until dataplane/handshake/session families are supplied |
+| `connect`, `disconnect`, `path_show`, `path_pin`, `path_unpin`, `probe_start`, `probe_poll`, `probe_cancel` | Required-parameter validation and live provider dispatch; `probe.{c,h}` renders stage reports | Error `subsystem not started` after validation; never claims a mutation succeeded |
+
+These are **20 read queries and 8 live commands**, pinned to upstream
+`6aa80504baa0fa312b392009eea0e3e59fb6fe4c`. The C-host pre-node initialization
+errors are explicit availability refusals in the upstream envelope, not a
+claim that upstream constructs a node without an identity. Once a node owner
+supplies a real identity, even its `created` state is reportable. History uses
+`fips_stats_series_walk`: **all NaN and +/-infinity values become JSON null**.
+
+### Control verification
+
+`FipsdControlTest` links the production library: independently constructed
+provider state (including the upstream `[0xAB;32]` identity), all 24 upstream
+fixtures, interface presence, optional probe fields, request limits, malformed
+JSON, missing params, unknown commands, EOF, one-request-only connections,
+24 simultaneous clients while another client is incomplete, the real read
+deadline, resolution precedence and socket/private-parent modes. Group checks
+are explicitly skipped only when the `fips` group does not exist.
+See `tests/control_golden/README.md` for fixture classification and byte-level
+canonicalization. `FipsdControlInteropTest` runs the real daemon, checks disabled
+control, and drives it with the pinned Rust client (`fipsctl show status`,
+`show peers`, `show transports`, `stats list`). Status is deliberately an
+initialization error until the node owner exists; the other three succeed.
+
+Enable the optional oracle with
+`-DFIPSD_UPSTREAM_CONTROL_DIR=/absolute/read-only/fips`, or supply
+`-DFIPSD_FIPSCTL_EXECUTABLE=/absolute/path/to/pinned/fipsctl`. The test builds
+with `cargo --locked`, writing only to the CMake binary directory's
+`fipsd/tests/cargo-control`. Missing cargo or an unconfigured upstream checkout
+is reported as CTest **skipped**, not passed. Both control tests belong to the
+`fipsd_tests` aggregate. The control concurrency test also covers concurrent
+main-thread/accept-fiber spawns under TSan: libgo's pthread_once initializer
+uses a caller-local stack-size argument, rather than racing concurrent writes
+to a global before pthread_once. Multi-worker testing is not reduced.
+
+Jansson has signed 64-bit integers: an unsigned snapshot counter above
+`INT64_MAX` is explicitly refused as `value exceeds JSON integer range`, never
+wrapped negative or rounded through a double. Failed JSON construction is
+discarded as `response construction failed` (or the connection closes if even
+the error cannot be allocated), not sent as a partial success. Fault-injection
+and signed-boundary tests cover these paths. Shutdown tests remove and replace
+the live socket pathname while accept is parked.
+
+Version decision: additive work folds into **fipsd 0.1.0 Unreleased**, no bump
+and no release/tag change; the required libgo race correction remains in its
+unreleased 0.3.0 version (PATCH-class).

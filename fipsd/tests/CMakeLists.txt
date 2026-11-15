@@ -145,3 +145,30 @@ add_test(NAME FipsdNodeHandlerFailureTest COMMAND fipsd_node_context_test handle
 set_tests_properties(FipsdNodeHandlerFailureTest PROPERTIES TIMEOUT 30 LABELS "fips;node"
   ENVIRONMENT "FIPSD_WORKERS=2")
 nostrc_describe_test(FipsdNodeHandlerFailureTest OWNER fipsd TARGETS fipsd_node_context_test)
+# Control protocol uses the production listener/dispatcher and retained provider.
+fipsd_unit_test(fipsd_control_test test_control.c)
+target_compile_definitions(fipsd_control_test PRIVATE
+  FIPSD_CONTROL_GOLDEN="${CMAKE_CURRENT_SOURCE_DIR}/control_golden"
+  FIPSD_CONTROL_TMP="${CMAKE_SOURCE_DIR}")
+add_dependencies(fipsd_tests fipsd_control_test)
+add_test(NAME FipsdControlTest COMMAND fipsd_control_test)
+set_tests_properties(FipsdControlTest PROPERTIES TIMEOUT 60 LABELS "fips;unit;control"
+  ENVIRONMENT "FIPSD_WORKERS=2")
+nostrc_describe_test(FipsdControlTest OWNER fipsd TARGETS fipsd_control_test
+  INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/control_golden")
+
+# Optional Rust interop: only cargo's target directory is writable; upstream is
+# read-only. No source checkout download or lockfile update is performed.
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+set(FIPSD_UPSTREAM_CONTROL_DIR "" CACHE PATH "Read-only pinned Rust FIPS checkout for fipsctl interop")
+set(FIPSD_FIPSCTL_EXECUTABLE "" CACHE FILEPATH "Already-built pinned Rust fipsctl (optional)")
+add_test(NAME FipsdControlInteropTest COMMAND "${Python3_EXECUTABLE}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/control_interop.py"
+  --fipsd "$<TARGET_FILE:fipsd>" --upstream "${FIPSD_UPSTREAM_CONTROL_DIR}"
+  --fipsctl "${FIPSD_FIPSCTL_EXECUTABLE}"
+  --cargo-target "${CMAKE_CURRENT_BINARY_DIR}/cargo-control"
+  --temp-root "${CMAKE_SOURCE_DIR}")
+set_tests_properties(FipsdControlInteropTest PROPERTIES TIMEOUT 300 SKIP_RETURN_CODE 77
+  LABELS "fips;control;interop")
+nostrc_describe_test(FipsdControlInteropTest OWNER fipsd TARGETS fipsd
+  INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/control_interop.py")
