@@ -175,8 +175,8 @@ are not ported by this shared-core task:
 `oracles.rs` has no test functions; its simulator-only oracle framework and
 Rust test-shell internals are not shipped. The C event fuzzer is not a claim
 of equivalence to the simulator/explorer or legacy interoperability coverage.
-Production IK/XK profile tests and the 16-event `rekey.json` replay await
-`nostrc-f12v2.2`; `check_rekey` remains the parent-owned SKIP unchanged.
+Production IK/XK profile tests and the 16-event `rekey.json` replay are now
+implemented by `nostrc-f12v2.2`; see below.
 
 ## Fuzzing and validation
 
@@ -194,3 +194,30 @@ The fake owns packet queues and executes outputs synchronously. `Release`
 returns an allocated local index, `Prompt` reserves/seals immediately, and
 `outputs_clear` destroys unretained worker clones. Any real host must provide
 those same ownership guarantees, not just discard an action list.
+
+## Production profile evidence (nostrc-f12v2.2)
+
+`FipsCoreRekeyProfilesTest` has 17 real-Noise scenarios: failed IK/XK reads on
+immutable forks; IK and XK full cycles in both initiator roles; crossed rekeys
+and lost-setup resend/backoff ladders for both; restart replacement/zeroization
+for both; current-coordinate wrapping around unchanged XK retry bytes; rewritten
+IK sender-index replay proofs; failed-send lease cleanup; table-driven first XK
+handshake/eviction; indexed table import/attempt/pending/previous/retired lookup/close; and
+oldest-idle eviction with stable-slot reuse. Every cycle
+checks cleared arena slots and lease conservation, stable session addresses and
+zeroed retired key storage. The test target recompiles only the shared machine
+with FIPS_TEST_HOOKS; profile/codec/Noise/executor/table code is production code.
+
+`FipsDiffRekey` reports **1 checked, 0 skipped, 0 failed** for the complete
+16-event trace, comparing actual initial XK sessions before any frame exports,
+all before/after/initial/final fields, each ordered action and wire byte, prompt
+and application plaintext/counter/K, and authenticated delivery slot/tag/range.
+The exporter clock and actual next-wake schedule are checked, not guessed.
+No C/vector divergence was observed while enabling the trace. One successful
+XK trace is not FMP differential, legacy interop, or fault-model equivalence.
+
+`fips_fuzz_rekey_profile` uses real IK/XK profiles, production triggers (no
+hooks), strict envelope ingress, ordered execution, bounded loss/reorder/
+corruption, application traffic and path changes. It checks bounds, key erasure
+and index conservation after every operation. Writable fuzz corpus is always a
+copy of `fuzz/corpus/rekey_profile`, never the checked-in seeds themselves.

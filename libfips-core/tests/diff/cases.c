@@ -1,5 +1,6 @@
 #include "diff.h"
 #include "../fakes/host.h"
+#include "../fakes/rekey_profile.h"
 #include <fips/proto/codec.h>
 #include <fips/proto/coord.h>
 #include <fips/identity/local.h>
@@ -689,7 +690,215 @@ static result check_proto(diff_context *ctx, const proto_case *c, const char **o
     diff_error(ctx, "missing proto dispatch for %s", c->name);
     return FAILED;
 }
-static result check_rekey(const rekey_case *c) { (void)c; return SKIPPED; }
+
+/* The rekey family is one checked trace; every state, output and authenticated
+ * delivery in all events is compared. No fixture bytes are used as C outputs. */
+static bool rk_number(diff_context *ctx, const diff_value *v, const char *key, uint64_t n) {
+    diff_value *f = FIELD(v, key);
+    return (f && f->type == D_UINT && f->as.number == n) ||
+        diff_error(ctx, "%s: expected %" PRIu64 ", C %" PRIu64, key, f ? f->as.number : 0, n);
+}
+static bool rk_text(diff_context *ctx, const diff_value *v, const char *key, const char *text) {
+    diff_value *f = FIELD(v, key);
+    return (f && f->type == D_TEXT && !strcmp(f->as.text, text)) ||
+        diff_error(ctx, "%s: expected %s, C %s", key, f && f->type == D_TEXT ? f->as.text : "(missing)", text);
+}
+static bool rk_bool(diff_context *ctx, const diff_value *v, const char *key, bool b) {
+    diff_value *f = FIELD(v, key);
+    return (f && f->type == D_BOOL && f->as.boolean == b) || diff_error(ctx, "%s boolean mismatch", key);
+}
+static bool rk_time(diff_context *ctx, const diff_value *v, const char *key, fips_instant t) {
+    diff_value *f = FIELD(v, key);
+    if (!t.ops) return (f && f->type == D_NULL) || diff_error(ctx, "%s: C absent", key);
+    return rk_number(ctx, v, key, t.opaque[0]);
+}
+static const char *rk_role(fips_rekey_role role) { return role == FIPS_REKEY_Initiator ? "Initiator" : "Responder"; }
+static const char *rk_slot(fips_rekey_slot slot) {
+    return slot == FIPS_REKEY_Current ? "Current" : slot == FIPS_REKEY_Previous ? "Previous" : "Pending";
+}
+static bool rk_epoch(diff_context *ctx, const diff_value *v, fips_rekey_epoch_view e) {
+    if (!e.present) return v->type == D_NULL || diff_error(ctx, "unexpected epoch");
+    if (v->type != D_OBJECT) return diff_error(ctx, "missing epoch");
+    return rk_number(ctx, v, "tag", e.tag) && rk_bool(ctx, v, "k", e.k) &&
+        rk_text(ctx, v, "role", rk_role(e.role)) && rk_time(ctx, v, "started_ms", e.started) &&
+        rk_time(ctx, v, "base_ms", e.base) && rk_text(ctx, v, "recv", e.recv == FIPS_REKEY_Here ? "Here" : "Delegated");
+}
+static bool rk_state(diff_context *ctx, const diff_value *expected, const fips_rekey *m) {
+    fips_rekey_view v = fips_rekey_get_view(m);
+    char identity[96], cycle[48];
+    if (v.proven) snprintf(identity, sizeof identity, "Proven(PeerKey(%02x%02x%02x%02x))",
+        v.identity.key.bytes[0], v.identity.key.bytes[1], v.identity.key.bytes[2], v.identity.key.bytes[3]);
+    else return diff_error(ctx, "trace unexpectedly unproven");
+    const char *wait = v.wait == FIPS_REKEY_WAIT_Evidence ? "Evidence" : v.wait == FIPS_REKEY_WAIT_Delay ? "Delay" : "Held";
+    if (v.cycle == FIPS_REKEY_PendI) snprintf(cycle, sizeof cycle, "PendI(%s)", wait);
+    else snprintf(cycle, sizeof cycle, "%s", v.cycle == FIPS_REKEY_Idle ? "Idle" : v.cycle == FIPS_REKEY_Init ? "Init" : "PendR");
+    diff_value *epoch = FIELD(expected, "peer_epoch_hex");
+    bool ok = v.has_peer_epoch ? epoch->type == D_BYTES && compare(ctx, epoch->as.bytes, v.peer_epoch, 8) : epoch->type == D_NULL;
+    return ok && rk_text(ctx, expected, "identity", identity) && rk_text(ctx, expected, "cycle", cycle) &&
+        rk_epoch(ctx, FIELD(expected, "current"), v.current) && rk_epoch(ctx, FIELD(expected, "previous"), v.previous) &&
+        rk_epoch(ctx, FIELD(expected, "pending"), v.pending) && rk_number(ctx, expected, "candidates", v.candidates) &&
+        rk_time(ctx, expected, "last_rx_ms", v.last_rx) && rk_time(ctx, expected, "link_since_ms", v.link_since) &&
+        rk_time(ctx, expected, "next_wake_ms", fips_rekey_next_wake(m)) && rk_bool(ctx, expected, "k", fips_rekey_k(m)) &&
+        rk_number(ctx, expected, "sent", fips_rekey_sent(m));
+}
+static bool rk_debug(diff_context *ctx, const diff_value *v, const fips_rekey_output *o) {
+    char text[256];
+    switch (o->kind) {
+    case FIPS_REKEY_OUT_Installed: {
+        const char *evidence[] = {"Proof", "Frame", "Restart", "Assumed", "Delay", "First"};
+        snprintf(text, sizeof text, "Installed { tag: EpochTag(%" PRIu64 "), role: %s, evidence: %s }",
+            o->tag, rk_role(o->role), evidence[o->evidence]); break;
+    }
+    case FIPS_REKEY_OUT_Rekeyed:
+        snprintf(text, sizeof text, "Rekeyed { role: %s }", rk_role(o->role)); break;
+    case FIPS_REKEY_OUT_Retired:
+        snprintf(text, sizeof text, "Retired { tag: EpochTag(%" PRIu64 ") }", o->tag); break;
+    case FIPS_REKEY_OUT_Deliver:
+        snprintf(text, sizeof text, "Deliver { slot: %s, tag: EpochTag(%" PRIu64 "), range: %zu..%zu }",
+            rk_slot(o->slot), o->tag, o->begin, o->end); break;
+    default: return diff_error(ctx, "unexpected trace output %u", (unsigned)o->kind);
+    }
+    return rk_text(ctx, v, "debug", text);
+}
+static bool rk_params(diff_context *ctx, const rekey_case *c) {
+    fips_rekey_config x = fips_rekey_config_fsp();
+    char actual[2048]; size_t n = 0;
+#define RAPP(...) do { int w = snprintf(actual + n, sizeof actual - n, __VA_ARGS__); \
+    if (w < 0 || (size_t)w >= sizeof actual - n) { return false; } n += (size_t)w; } while (0)
+#define RD(field) do { if (x.field.nanos) return false; RAPP(", " #field ": %" PRIu64 "s", x.field.secs); } while (0)
+    RAPP("Config { after: %" PRIu64 "s, jitter: %u, messages: %" PRIu64, x.after.secs, x.jitter, x.messages);
+    RD(handshake); RD(check); RD(drain); RD(retention); RD(hold); RD(revert); RD(dampening);
+    RD(ttl); RD(young); RD(link_age); RD(session_age);
+    if (x.floor_link.secs || x.floor_link.nanos || x.floor_session.secs || x.floor_session.nanos) return false;
+    RAPP(", floor_link: 0ns, floor_session: 0ns"); RD(floor_cutover); RD(silence);
+    RAPP(", resends: %u, soft: %" PRIu64 ", hard: %" PRIu64, x.resends, x.soft, x.hard);
+    RD(delay); RAPP(", arrival: %s }", x.arrival ? "true" : "false");
+#undef RD
+#undef RAPP
+    return !strcmp(c->params_debug, actual) || diff_error(ctx, "FSP config mismatch");
+}
+static result check_rekey(diff_context *ctx, const rekey_case *c) {
+    rp_node *nodes = calloc(2, sizeof *nodes);
+    bool ok = nodes && c->epoch.len == 8 && COUNT(c->keypair_seeds) == 2 &&
+        !strcmp(c->profile, "FspProfile<SeededEntropy> (Noise XK)") &&
+        !strcmp(c->initial_handshake, "noise.json XK (before frame exports)") && rk_params(ctx, c) &&
+        !strcmp(c->clock, "TestClock milliseconds, 0 -> 600000 then 10ms per delivered packet, then application traffic and next_wake deadlines");
+    fips_seeded_entropy entropy_state = {0x584b};
+    fips_entropy entropy = fips_seeded_entropy_adapter(&entropy_state);
+    for (size_t k = 0; ok && k < 2; ++k)
+        ok = rp_init(&nodes[k], ITEM(c->keypair_seeds, k)->as.number, entropy, c->epoch.data);
+    if (ok) ok = rp_pair(&nodes[0], &nodes[1], &fips_fsp_rekey_profile);
+    for (size_t k = 0; ok && k < 2; ++k) ok = rk_state(ctx, ITEM(c->initial, k), &nodes[k].machine);
+    entropy_state.state = c->entropy_seed;
+    fips_test_clock clock = {0};
+    if (ok) ok = fips_test_clock_advance(&clock, 600000) == FIPS_OK;
+    fips_clock clock_api = fips_test_clock_adapter(&clock);
+    for (size_t event = 0; ok && event < COUNT(c->events); ++event) {
+        diff_value *e = ITEM(c->events, event);
+        uint64_t at = UINT(e, "at_ms"), who = UINT(e, "node");
+        snprintf(ctx->id, sizeof ctx->id, "rekey/event/%zu/node/%" PRIu64, event, who);
+        if (who > 1 || at < clock.millis) { ok = diff_error(ctx, "invalid trace clock/node"); break; }
+        const char *label = TEXT(e, "input");
+        if (!strcmp(label, "Poll (next_wake)")) {
+            /* First poll in each pair advances to the actual minimum wake;
+             * second is at the same instant, as rekey.rs's two-node loop. */
+            if (at != clock.millis) {
+                fips_instant a = fips_rekey_next_wake(&nodes[0].machine), b = fips_rekey_next_wake(&nodes[1].machine);
+                uint64_t wake = !a.ops ? b.opaque[0] : !b.ops ? a.opaque[0] : a.opaque[0] < b.opaque[0] ? a.opaque[0] : b.opaque[0];
+                if (at != wake) { ok = diff_error(ctx, "poll not at actual next_wake"); break; }
+            }
+        } else if (event && at != clock.millis + 10) { ok = diff_error(ctx, "delivery/application must advance 10ms"); break; }
+        if (fips_test_clock_advance(&clock, at - clock.millis) != FIPS_OK) { ok = false; break; }
+        fips_instant now = clock_api.now(clock_api.ctx);
+        rp_node *n = &nodes[who];
+        if (!rk_state(ctx, FIELD(e, "state_before"), &n->machine)) { ok = false; break; }
+        fips_rekey_outputs_clear(&n->out);
+        uint8_t input[RP_PACKET_MAX] = {0}; size_t input_len = 0;
+        diff_value *hex = FIELD(e, "input_hex");
+        if (hex->type == D_BYTES) {
+            if (hex->as.bytes.len > sizeof input) { ok = false; break; }
+            input_len = hex->as.bytes.len; memcpy(input, hex->as.bytes.data, input_len);
+        }
+        rp_packet app = {0};
+        bool application = !strcmp(label, "Seal(DataPacket) + DataSent");
+        if (!strcmp(label, "start_now (test-hook)")) fips_rekey_start_now(&n->machine, now, &n->env, &n->out);
+        else if (application) ok = rp_data(n, at, &app);
+        else {
+            fips_rekey_input in = {.bytes = input, .buf = input, .len = input_len,
+                .carrier = nodes[1 - who].me, .route = 1};
+            if (!strcmp(label, "Setup")) in.kind = FIPS_REKEY_IN_Setup;
+            else if (!strcmp(label, "Ack")) in.kind = FIPS_REKEY_IN_Reply;
+            else if (!strcmp(label, "Msg3")) in.kind = FIPS_REKEY_IN_Final;
+            else if (!strcmp(label, "Poll (next_wake)")) in.kind = FIPS_REKEY_IN_Poll;
+            else if (!strcmp(label, "Frame")) {
+                fips_fsp_encrypted_header h;
+                if (!fips_fsp_encrypted_header_parse(input, input_len, &h)) { ok = false; break; }
+                in.kind = FIPS_REKEY_IN_Frame;
+                in.hint = (fips_rekey_frame_hint){h.counter, (h.flags & FIPS_FSP_FLAG_K) != 0, 0, FIPS_FRAMING_FSP_HEADER_SIZE};
+            } else { ok = diff_error(ctx, "unhandled trace input"); break; }
+            ok = fips_rekey_step(&n->machine, now, in, &n->env, &n->out) == FIPS_OK;
+        }
+        diff_value *outputs = FIELD(e, "outputs");
+        if (ok && COUNT(outputs) != n->out.count + (application ? 1u : 0u))
+            ok = diff_error(ctx, "output count: expected %zu, C %zu", COUNT(outputs), n->out.count);
+        size_t delivery = 0;
+        for (size_t j = 0; ok && j < n->out.count; ++j) {
+            fips_rekey_output *o = &n->out.items[j]; diff_value *v = ITEM(outputs, j);
+            if (o->kind == FIPS_REKEY_OUT_Send) {
+                const char *names[] = {"Msg1", "Msg2", "Setup", "Ack", "Msg3"};
+                const char *routes[] = {"Established { fallback: false }", "Established { fallback: true }", "Arrival"};
+                ok = rk_text(ctx, v, "kind", "Send") && rk_text(ctx, v, "message_kind", names[o->message_kind]) &&
+                    rk_text(ctx, v, "route", routes[o->route]) && compare(ctx, BYTES(v, "bytes"), o->data.msg.bytes, o->data.msg.len);
+            } else if (o->kind == FIPS_REKEY_OUT_Prompt) {
+                fips_rekey_sealed_prompt prompt = {0}; rp_packet packet = {0};
+                ok = fips_rekey_seal_prompt(&n->machine, now, o->tag, &prompt) == FIPS_REKEY_SEAL_OK;
+                if (ok) ok = fips_session_encode_sealed(n->machine.profile, &prompt.sealed, prompt.plaintext.bytes,
+                    prompt.plaintext.len, packet.bytes, sizeof packet.bytes, &packet.len) == FIPS_OK &&
+                    rk_text(ctx, v, "kind", "Prompt") && rk_number(ctx, v, "tag", o->tag) &&
+                    rk_number(ctx, v, "counter", prompt.sealed.counter) && rk_bool(ctx, v, "k", prompt.sealed.k) &&
+                    compare(ctx, BYTES(v, "plaintext_hex"), prompt.plaintext.bytes, prompt.plaintext.len) &&
+                    compare(ctx, BYTES(v, "bytes"), packet.bytes, packet.len);
+                fips_rekey_sealed_prompt_clear(&prompt);
+            } else if (o->kind == FIPS_REKEY_OUT_Release) {
+                uint32_t index;
+                ok = fips_rekey_index_lease_release(&o->lease, &index) && rk_text(ctx, v, "kind", "Release") && rk_number(ctx, v, "index", index);
+            } else {
+                ok = rk_debug(ctx, v, o);
+                if (ok && o->kind == FIPS_REKEY_OUT_Deliver) {
+                    diff_value *records = FIELD(e, "authenticated_deliveries");
+                    if (!records || delivery >= COUNT(records) || o->begin > o->end || o->end > input_len) { ok = false; break; }
+                    diff_value *d = ITEM(records, delivery++), *range = FIELD(d, "range");
+                    ok = rk_text(ctx, d, "slot", rk_slot(o->slot)) && rk_number(ctx, d, "tag", o->tag) &&
+                        ITEM(range, 0)->as.number == o->begin && ITEM(range, 1)->as.number == o->end &&
+                        compare(ctx, BYTES(d, "plaintext_hex"), input + o->begin, o->end - o->begin);
+                }
+            }
+        }
+        diff_value *deliveries = FIELD(e, "authenticated_deliveries");
+        if (ok && deliveries && delivery != COUNT(deliveries)) ok = diff_error(ctx, "authenticated delivery count mismatch");
+        if (ok && application) {
+            diff_value *v = ITEM(outputs, n->out.count);
+            fips_fsp_encrypted_header h;
+            ok = fips_fsp_encrypted_header_parse(app.bytes, app.len, &h) &&
+                rk_text(ctx, v, "kind", "ApplicationFrame") && rk_number(ctx, v, "counter", h.counter) &&
+                rk_bool(ctx, v, "k", (h.flags & FIPS_FSP_FLAG_K) != 0) && compare(ctx, BYTES(v, "bytes"), app.bytes, app.len);
+            /* Independently trial-open without marking replay, to compare the
+             * exported application plaintext as well as every ciphertext byte. */
+            uint8_t plain[RP_PACKET_MAX]; size_t plain_len = 0;
+            if (ok) ok = fips_noise_session_open_unmarked(fips_rekey_keys(&nodes[1 - who].machine, FIPS_REKEY_Current),
+                h.counter, app.bytes, 12, app.bytes + 12, app.len - 12, plain, sizeof plain, &plain_len) == FIPS_NOISE_OK &&
+                compare(ctx, BYTES(v, "plaintext_hex"), plain, plain_len);
+        }
+        if (ok) ok = rk_state(ctx, FIELD(e, "state_after"), &n->machine);
+        fips_rekey_outputs_clear(&n->out);
+        if (!ok && !ctx->error[0]) diff_error(ctx, "rekey replay mismatch");
+    }
+    for (size_t k = 0; ok && k < 2; ++k) ok = rk_state(ctx, ITEM(c->final, k), &nodes[k].machine);
+    if (nodes) { for (size_t k = 0; k < 2; ++k) rp_destroy(&nodes[k]); free(nodes); }
+    if (ok) snprintf(ctx->id, sizeof ctx->id, "rekey/fsp-cycle (%zu events)", COUNT(c->events));
+    return ok ? CHECKED : FAILED;
+}
+
 
 static void report(diff_context *ctx, counts *n, result r, const char *owner)
 {
@@ -781,7 +990,7 @@ int diff_dispatch(diff_context *ctx, const char *family, diff_value *cases)
             UINT(cases, "entropy_seed_hex"), BYTES(cases, "startup_epoch_hex"), FIELD(cases, "keypair_seeds"),
             FIELD(cases, "initial_state"), FIELD(cases, "events"), FIELD(cases, "final_state")};
         snprintf(ctx->id, sizeof(ctx->id), "rekey/fsp-cycle (%zu events)", COUNT(c.events));
-        report(ctx, &n, check_rekey(&c), "nostrc-f12v2");
+        report(ctx, &n, check_rekey(ctx, &c), "nostrc-f12v2.2");
     }
     if (!n.checked && !n.skipped && !n.failed) {
         ++n.failed; puts("FAIL: empty family is not differential coverage");
