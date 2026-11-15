@@ -692,3 +692,39 @@ frames, corrupt-open/nonconsumption and duplicate rejection), and the 16-step
 replay trace: IK 31 + XK 36 + replay 16 = 83 checks, zero skips.
 Version decision (nostrc-pwo3h.7): additive APIs fold into **libfips-core 0.1.0
 Unreleased**; no published version or release-tag change.
+
+## Diagnostic probe (not multipath path probing)
+
+`proto/probe/{core,state,limits,mod}.h` mirrors upstream `proto/probe`: Bloom,
+Discovery, Path, Session, Rtt, then Terminal. `Probe::step` takes a plain-data
+Observation with monotonic `now_ms` and replaces a fixed two-entry action list:
+InitiateLookup, OpenSession, SendWarmup, TeardownSession, Finish. The host drives
+it from its receive loop; the core performs no IO and reads no clock. Session
+ownership is acquired only at OpenSession, never regained after replacement,
+and teardown precedes Finish after the one-tick grace (cancel skips the grace).
+The host must recheck identity/adoption at teardown, and absence at open. It
+also owns the four-job registry, target claims, IDs, and 30-second reaping;
+those are not a new core registry or rate limiter. Two warmups is the entire
+allowance. RTT success requires a new counter sample, not a pre-existing SRTT.
+
+PathFacts uses the existing TreeCoordinate LCA helpers and NodeAddr/RouteClass
+values; it describes local tree distance and the selected first hop, not a
+wire-observed per-hop trace. Address-only paths retain all 65535 coordinate
+entries. Probe, PathFacts and ProbeSnapshot are about 2 MiB each: allocate them
+in caller heap/static storage, not small stacks. Snapshots and latched facts
+are independent copies, with explicit `has_*` option tags. Session error text
+is limited to 255 bytes (plus NUL); excess or embedded NUL returns RANGE with
+state/actions unchanged, never silent truncation. All arithmetic is saturating,
+including a C extension for huge tick products and teardown deadlines that
+would overflow Rust. Host snapshots are typed/trusted, not a decoder boundary.
+
+Upstream defines **no diagnostic probe wire form or serialization**. The
+0x52–0x54 PathProbe/PathAck/PathClose messages belong to `proto/path/wire.rs` and
+nostrc-f12v2.6. No exporter case exercises `proto/probe`; `test_probe.c` ports
+all 26 stage-machine and 4 path tests with TestClock, plus C boundary/name
+checks. Malformed codec byte-offset tests do not apply. `fips_fuzz_probe`
+therefore fuzzes bounded observation sequences, ownership/action invariants,
+terminal idempotence and integer extremes rather than inventing a codec.
+
+Version decision (nostrc-f12v2.5): additive APIs fold into **libfips-core 0.1.0
+Unreleased**; no published version/tag change.

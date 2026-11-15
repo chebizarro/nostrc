@@ -132,3 +132,6 @@ target_sources(fips_core PRIVATE src/noise/handshake.c)
 
 # Transport ciphers, replay protection and worker key hand-outs (nostrc-pwo3h.7).
 target_sources(fips_core PRIVATE src/noise/cipher.c src/noise/replay.c src/noise/session.c)
+
+# Diagnostic probe stages and report vocabulary (nostrc-f12v2.5); no wire codec.
+target_sources(fips_core PRIVATE src/proto/probe/core.c src/proto/probe/state.c)
