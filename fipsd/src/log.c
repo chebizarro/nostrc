@@ -380,3 +380,10 @@ void fipsd_log_file_close(fipsd_log_file *file)
     free(file->path);
     free(file);
 }
+
+void fipsd_log_file_apply_limits(fipsd_log *log, fipsd_log_file *file, uint64_t max_bytes, unsigned max_files)
+{
+    nsync_mu_lock(&log->mu);
+    fipsd_log_file_set_limits(file,max_bytes,max_files);
+    nsync_mu_unlock(&log->mu);
+}

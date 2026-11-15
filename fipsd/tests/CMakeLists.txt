@@ -72,3 +72,42 @@ nostrc_describe_test(FipsdProcessTest OWNER fipsd TARGETS fipsd_process_test fip
 # One target that builds every fipsd test executable (for CI target lists).
 add_custom_target(fipsd_tests DEPENDS fipsd fipsd_host_os_test fipsd_cli_test
   fipsd_log_test fipsd_runtime_test fipsd_privilege_test fipsd_process_test)
+
+fipsd_unit_test(fipsd_config_test test_config.c)
+add_dependencies(fipsd_tests fipsd_config_test)
+add_test(NAME FipsdConfigTest COMMAND fipsd_config_test)
+set_tests_properties(FipsdConfigTest PROPERTIES TIMEOUT 60 LABELS "fips;unit;config"
+  ENVIRONMENT "FIPSD_WORKERS=1")
+nostrc_describe_test(FipsdConfigTest OWNER fipsd TARGETS fipsd_config_test)
+file(GLOB_RECURSE _fipsd_config_fixtures CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/config_fixtures/*.yaml")
+foreach(_fixture IN LISTS _fipsd_config_fixtures)
+  file(RELATIVE_PATH _name "${CMAKE_CURRENT_SOURCE_DIR}/config_fixtures" "${_fixture}")
+  string(REPLACE "/" "_" _test_name "${_name}")
+  add_test(NAME "FipsdConfigFixture_${_test_name}" COMMAND fipsd_config_test fixture
+    "${_fixture}" "${CMAKE_CURRENT_SOURCE_DIR}/config_golden/${_name}.txt")
+  set_tests_properties("FipsdConfigFixture_${_test_name}" PROPERTIES TIMEOUT 30 LABELS "fips;unit;config")
+  nostrc_describe_test("FipsdConfigFixture_${_test_name}" OWNER fipsd TARGETS fipsd_config_test
+    INPUTS "${_fixture}" "${CMAKE_CURRENT_SOURCE_DIR}/config_golden/${_name}.txt")
+endforeach()
+file(GLOB _fipsd_config_corpus CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/config_corpus/*")
+foreach(_seed IN LISTS _fipsd_config_corpus)
+  get_filename_component(_name "${_seed}" NAME)
+  add_test(NAME "FipsdConfigCorpus_${_name}" COMMAND fipsd_config_test corpus "${_seed}")
+  set_tests_properties("FipsdConfigCorpus_${_name}" PROPERTIES TIMEOUT 30 LABELS "fips;unit;config")
+  nostrc_describe_test("FipsdConfigCorpus_${_name}" OWNER fipsd TARGETS fipsd_config_test INPUTS "${_seed}")
+endforeach()
+
+# Optional direct replay of the read-only Rust checkout, in addition to the
+# self-contained comment-stripped copies. No Rust source is built or changed.
+set(FIPSD_UPSTREAM_CONFIG_DIR "" CACHE PATH "Read-only upstream FIPS checkout for direct fixture replay")
+if(FIPSD_UPSTREAM_CONFIG_DIR)
+  foreach(_fixture IN LISTS _fipsd_config_fixtures)
+    file(RELATIVE_PATH _name "${CMAKE_CURRENT_SOURCE_DIR}/config_fixtures" "${_fixture}")
+    string(REPLACE "/" "_" _test_name "${_name}")
+    add_test(NAME "FipsdConfigUpstream_${_test_name}" COMMAND fipsd_config_test fixture
+      "${FIPSD_UPSTREAM_CONFIG_DIR}/${_name}" "${CMAKE_CURRENT_SOURCE_DIR}/config_golden/${_name}.txt")
+    set_tests_properties("FipsdConfigUpstream_${_test_name}" PROPERTIES TIMEOUT 30 LABELS "fips;unit;config;upstream")
+    nostrc_describe_test("FipsdConfigUpstream_${_test_name}" OWNER fipsd TARGETS fipsd_config_test
+      INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/config_golden/${_name}.txt")
+  endforeach()
+endif()

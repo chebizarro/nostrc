@@ -1,0 +1,66 @@
+
+scenario:
+  name: "ecn-ab-off"
+  seed: 42
+  duration_secs: 120
+
+topology:
+  algorithm: explicit
+  num_nodes: 6
+  params:
+    adjacency:
+      - [n01, n02]
+      - [n01, n03]
+      - [n02, n04]
+      - [n02, n05]
+      - [n03, n06]
+  subnet: "172.20.0.0/24"
+  ip_start: 10
+
+bandwidth:
+  enabled: true
+  tiers_mbps: [10]
+
+ingress:
+  enabled: true
+  tiers_kbps: [1000]
+  burst_bytes: 16000
+
+netem:
+  enabled: true
+  default_policy:
+    delay_ms: [10, 10]
+    jitter_ms: [0, 0]
+    loss_pct: [0, 0]
+  mutation:
+    interval_secs: {min: 9999, max: 9999}
+    fraction: 0.0
+    policies:
+      baseline:
+        delay_ms: [10, 10]
+        loss_pct: [0, 0]
+
+link_flaps:
+  enabled: false
+
+traffic:
+  enabled: true
+  max_concurrent: 4
+  interval_secs: {min: 3, max: 5}
+  duration_secs: {min: 20, max: 30}
+  parallel_streams: 4
+
+node_churn:
+  enabled: false
+
+logging:
+  rust_log: "info"
+  output_dir: "./sim-results/ecn-ab-off"
+
+fips_overrides:
+  node:
+    ecn:
+      enabled: false
+  transports:
+    udp:
+      recv_buf_size: 8192

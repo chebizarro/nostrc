@@ -108,6 +108,8 @@ fipsd_log *fipsd_log_default(void);
  */
 fipsd_log_file *fipsd_log_file_open(const char *path, uint64_t max_bytes,
                                     unsigned max_files, char *err, size_t errlen);
+/* Serializes a live limit change with logger writes. */
+void fipsd_log_file_apply_limits(fipsd_log *log, fipsd_log_file *file, uint64_t max_bytes, unsigned max_files);
 void fipsd_log_file_set_limits(fipsd_log_file *file, uint64_t max_bytes, unsigned max_files);
 const char *fipsd_log_file_path(const fipsd_log_file *file);
 uint64_t fipsd_log_file_max_bytes(const fipsd_log_file *file);

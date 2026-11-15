@@ -56,3 +56,16 @@ install(TARGETS fipsd RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
 if(BUILD_TESTING)
   add_subdirectory(tests)
 endif()
+
+# YAML belongs to the host, never libfips-core.
+pkg_check_modules(FIPSD_YAML REQUIRED IMPORTED_TARGET yaml-0.1)
+target_link_libraries(fipsd_lib PUBLIC PkgConfig::FIPSD_YAML)
+option(FIPSD_TEST_OVERRIDES "Honour test-only config lifetimes below protocol floors" OFF)
+if(FIPSD_TEST_OVERRIDES)
+  target_compile_definitions(fipsd_lib PUBLIC FIPSD_TEST_OVERRIDES=1)
+endif()
+target_sources(fipsd_lib PRIVATE
+  src/config/config.c src/config/value.c src/config/normalize.c
+  src/config/schema.c src/config/node.c src/config/transport.c
+  src/config/peer.c src/config/gateway.c src/config/floors.c
+  src/config/loadlog.c src/config/validate.c src/config/core.c src/config/reload.c)

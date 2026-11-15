@@ -1,0 +1,77 @@
+
+scenario:
+  name: "congestion-stress"
+  seed: 7
+  duration_secs: 120
+
+topology:
+  algorithm: explicit
+  num_nodes: 10
+  params:
+    adjacency:
+      - [n01, n02]
+      - [n01, n03]
+      - [n02, n04]
+      - [n02, n05]
+      - [n03, n06]
+      - [n03, n07]
+      - [n04, n08]
+      - [n05, n09]
+      - [n08, n10]
+  subnet: "172.20.0.0/24"
+  ip_start: 10
+
+bandwidth:
+  enabled: true
+  tiers_mbps: [1]
+
+ingress:
+  enabled: true
+  tiers_kbps: [1000]
+  burst_bytes: 16000
+
+netem:
+  enabled: true
+  default_policy:
+    delay_ms: [2, 5]
+    jitter_ms: [0, 1]
+    loss_pct: [5, 10]
+  mutation:
+    interval_secs: {min: 9999, max: 9999}
+    fraction: 0.0
+    policies:
+      baseline:
+        delay_ms: [2, 5]
+        loss_pct: [5, 10]
+
+link_flaps:
+  enabled: false
+
+traffic:
+  enabled: true
+  max_concurrent: 8
+  interval_secs: {min: 2, max: 5}
+  duration_secs: {min: 30, max: 60}
+  parallel_streams: 8
+
+node_churn:
+  enabled: false
+
+assertions:
+  congestion_signals:
+    min_nodes_detected: 1
+    min_nodes_ce_forwarded: 1
+    min_nodes_ce_received: 1
+
+
+logging:
+  rust_log: "info"
+  output_dir: "./sim-results"
+
+fips_overrides:
+  node:
+    ecn:
+      enabled: true
+  transports:
+    udp:
+      recv_buf_size: 4096
