@@ -154,7 +154,6 @@ int main(int argc, char **argv)
         code = FIPSD_EXIT_FAILURE;
     } else if (!node_subsystem || fipsd_runtime_register(rt, &service.subsystem) != 0 ||
                fipsd_runtime_register(rt, node_subsystem) != 0 ||
-    } else if (fipsd_runtime_register(rt, &service.subsystem) != 0 ||
                (control_enabled && fipsd_runtime_register(rt, &control.subsystem) != 0) ||
                fipsd_runtime_start(rt) != 0) {
         FIPSD_ERROR(MODULE, "start-up failed");

@@ -62,17 +62,6 @@ static uint64_t deadline_from_ms(int timeout_ms) {
  * errno happens-before edges would hide real application races between fibers. */
 __attribute__((noinline, no_sanitize("thread"))) static int fiber_get_errno(void) { return errno; }
 __attribute__((noinline, no_sanitize("thread"))) static void fiber_set_errno(int e) { errno = e; }
-/* Different TSan fibers can occupy the same OS worker and hence the same
- * errno cell. Their application memory is deliberately NOT synchronized by a
- * fiber switch. Relaxed scalar accesses express this worker-local sharing
- * without inventing happens-before edges between unrelated application data.
- * libc's syscall updates occur synchronously on that worker, before the load. */
-__attribute__((noinline)) static int fiber_get_errno(void) {
-  return __atomic_load_n(&errno, __ATOMIC_RELAXED);
-}
-__attribute__((noinline)) static void fiber_set_errno(int e) {
-  __atomic_store_n(&errno, e, __ATOMIC_RELAXED);
-}
 
 /* ---------------- IO waiter registry (per-fd queues) ---------------- */
 typedef struct gof_waiter { /* single waiter node */
