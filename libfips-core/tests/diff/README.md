@@ -131,18 +131,15 @@ separately owned; see exporter gaps and `UPSTREAM.md`.
 `FipsDiff*` test (including self-test negatives) and `FipsProtoSweep`.
 `ctest --test-dir <build> -R '^FipsProtoSweep$' -V` runs only the proto exit gate.
 The latter invokes the real `fips_diff proto`, requires exactly one summary
-`proto: 25 checked, 3 skipped, 0 failed`, counts all three SKIP lines, and requires
-each to name owner `nostrc-f12v2.6`. The MMP branch changes this integration
-expectation before coordinator-owned `cases.c` wiring; exclude this single
-meta-test on that branch. `FipsCoreMmpVectorsTest` independently proves all five
-MMP rows and rejects input mutations without changing dispatch. Successful process exit
-alone is not sufficient. Other families retain their own explicit skips.
+`proto: 28 checked, 0 skipped, 0 failed`, and rejects every SKIP line.
+The path branch changes this integration expectation before coordinator-owned
+`cases.c` wiring: **exclude only `FipsProtoSweep` locally** until the three path
+rows are wired. The unchanged dispatcher still reports 25 checked / 3 skipped.
+`FipsCorePathVectorsTest` directly calls all three new checkers, compares bytes,
+decoded fields and error payloads, and rejects an input mutation in each row.
+`FipsCoreMmpVectorsTest` independently proves the five MMP rows. Successful
+process exit alone is not sufficient; other families retain their own skips.
 
-When Tier A4 lands a report/path-MTU codec (`nostrc-f12v2.4`) or a path
-probe/ack/close codec (`nostrc-f12v2.6`), first add its real differential checker,
-property adapter and vector-seeded harness coverage. Then run `fips_diff proto`
-and update **both** expected summary and SKIP count in `proto_sweep.cmake` in the
-same change. Each existing row moves one from skipped to checked; do not delete
-rows, relabel an unimplemented case as checked, or broaden the owner allowlist.
-Remove the SKIP allowance altogether when the remaining three have landed. Update the
-property test's expected vector-replay count and coverage table as applicable.
+The coordinator registers `check_proto_path_probe`, `check_proto_path_ack` and
+`check_proto_path_close` from `proto_path.h`. Do not delete rows or relabel an
+unimplemented case as checked. No path dispatcher row is changed by this port.

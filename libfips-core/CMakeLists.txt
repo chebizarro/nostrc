@@ -169,3 +169,12 @@ target_sources(fips_core PRIVATE ${FIPS_REKEY_SOURCES})
 # Real IK/XK rekey profiles and bounded host/session binding (nostrc-f12v2.2).
 target_sources(fips_core PRIVATE
   src/proto/fmp/rekey.c src/proto/fsp/rekey.c src/node/session.c)
+# PathSet, path messages and the runtime-gated multipath Bundle (nostrc-f12v2.6).
+target_sources(fips_core PRIVATE
+  src/proto/path/wire.c src/proto/path/set.c src/proto/path/params.c
+  src/proto/path/rules.c src/proto/path/candidate.c src/proto/path/capable.c
+  src/proto/path/select.c src/proto/path/live.c src/proto/path/machine.c)
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+  set_source_files_properties(src/proto/path/select.c src/proto/path/live.c PROPERTIES
+    COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off")
+endif()

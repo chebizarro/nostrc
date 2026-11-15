@@ -78,3 +78,6 @@ nostrc_describe_test(FipsProtoSweep OWNER libfips-core TARGETS fips_diff
 
 # The orchestrator wires these five per-name rows after merge.
 target_sources(fips_diff PRIVATE proto_mmp.c)
+
+# Path rows remain orchestrator-owned; direct vector test covers them here.
+target_sources(fips_diff PRIVATE proto_path.c)
