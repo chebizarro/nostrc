@@ -20,7 +20,8 @@ ctest --test-dir /absolute/build -R '^FipsDiff' -V
 Use `-V` to see every PASS/FAIL/SKIP and the checked/skipped/failed summary,
 including successful all-SKIP families. Regular CTest hides passing test stdout.
 The tests are `FipsDiffEntropy`, `FipsDiffIdentity`, `FipsDiffCodec`,
-`FipsDiffNoise`, `FipsDiffProto`, `FipsDiffRekey`, and `FipsDiffSelfTest`.
+`FipsDiffNoise`, `FipsDiffProto`, `FipsDiffRekey`, `FipsDiffRekeyLegacy`,
+`FipsDiffRekeyLegacySelfTest`, and `FipsDiffSelfTest`.
 They have `fips;diff` labels and selection metadata. Existing FIPS CI explicit
 build targets depend on the runner, including the host-only TSan build; no
 workflow edits are needed. This does not qualify a sans-IO core for threading.
@@ -96,19 +97,31 @@ A loaded fixture is **not** a protocol pass. Unimplemented dispatchers return
 | Family | Checked today | Skipped today | Owner |
 | --- | ---: | ---: | --- |
 | entropy | 3 | 0 | implemented test adapters |
-| identity | 0 | 3 | nostrc-u50yr |
+| identity | 3 | 0 | real identity/auth primitives |
 | codec | 15 | 0 | implemented proto Reader/Writer |
-| noise | 0 | 18 | nostrc-pwo3h |
-| proto | 2 | 26 | coords/coords-empty implemented; remaining owners in `proto_checkers` |
-| rekey | 0 | 1 | nostrc-f12v2 |
+| noise | 83 | 0 | real Noise transcript steps, frames and replay windows |
+| proto | 28 | 0 | real protocol wire/catalog checks |
+| rekey | 1 | 0 | real FSP/XK cycle (nostrc-f12v2.2) |
+| rekey-legacy | 12 | 0 | FMP/IK and FSP/XK versus actual 0.5.x models (nostrc-f12v2.3) |
 
 Counting units: entropy/identity are per seed; codec includes all truncations
-within its parent case; Noise has two whole transcripts (including their frames)
-and 16 replay steps; proto has 25 wire cases, two catalogs and one constants
+within its parent case; Noise checks both transcripts, their steps and frames
+plus 16 replay steps; proto has 25 wire cases, two catalogs and one constants
 case (both common coordinate Debug strings are verified within coords, not
 counted separately); rekey has one whole FSP cycle with 16 events,
 initial/final states and authenticated deliveries. Implementing a whole-case
 check means checking its nested assertions too, not just one output byte.
+The legacy family loads the required 3-release × 2-profile × 2-role matrix from
+`rekey-legacy/` below the supplied vector root; every document is a checked case
+(792 events total), with one current-node initial/final state. Missing entries
+fail loading rather than silently reducing the count. The legacy exporter and
+pin-specific patch are documented in `tools/fips-vectors/README.md`. Replay
+extends the same `check_rekey()` and compares every event, action, wire byte,
+authenticated delivery and final state using real production C profiles.
+`FipsDiffRekeyLegacySelfTest` rejects missing documents, stale pins, corrupt
+sidecars, wrong event state and wrong final state on disposable copies. These
+representative lossless rotations are not the upstream fault/explorer suite.
+
 All-SKIP families exit 0 with `0 checked, N skipped, 0 failed`, so future ports
 can replace skips without CMake churn. Any failure exits 1. An empty family is
 not coverage and fails. These results are not an interop or Tier A parity claim.
@@ -120,7 +133,7 @@ case/offset/hex-dump diagnostics respectively. It additionally rejects wrong
 pins and sidecar lengths, and removes its temporary copy. No checked-in vector
 is modified. The internal `--mutate` entrypoint is only for this private copy.
 
-Legacy rekey models, broader malformed corpora, future state-machine fixtures,
+Broader legacy fault/explorer schedules, malformed corpora, future state-machine fixtures,
 C/Rust UDP interop, Linux/hosted validation and protocol implementations remain
 separately owned; see exporter gaps and `UPSTREAM.md`.
 

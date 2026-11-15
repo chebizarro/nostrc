@@ -43,7 +43,7 @@ are used to choose fixture values. Rekey `Poll` inputs are synthetic events at
 
 ## Format and coverage
 
-Six JSON documents have `schema_version`, full `pin`, `generator` and
+The six ordinary JSON documents and twelve `rekey-legacy/*.json` traces have `schema_version`, full `pin`, `generator` and
 `generator_version`. Every raw-byte descriptor repeats pin/version and includes
 `file`, lowercase `hex`, `length` and `sha256`. Its `.bin` sidecar is **exactly
 the protocol/entropy bytes**, without a provenance header that would alter the
@@ -61,6 +61,7 @@ not a promised Rust parser format; use typed inputs and binary/hex fields.
 | `codec` | 15 cases: u8/u16/u32/u64 little-endian zero/max/mixed-bit values, array, bytes, empty bytes and cursor/require/rest/advance. 54 short-input errors cover every truncation length of each nonempty primitive case, including cumulative-offset require. |
 | `noise` | Full IK (2 messages) and XK (3 messages), both roles' per-step progress/h and final h; seeded keypairs 0/1, one shared sequential entropy stream per pattern (IK seed 494b, XK seed 584b), fixed startup epoch `0123456789abcdef`. Eight frames **per direction per pattern** (32 total), alternating empty/nonempty AAD, opened at the peer, replay failures, corrupted frames at the correct unused counters followed by successful original frames (failed auth does not consume the counter). ReplayWindow has 16 accept/reject steps including stale/window-boundary counters. |
 | `proto` | 25 cases: coordinate/absent coordinate, bloom bits/announce, signed parent declaration/tree announce, lookup request/response, link and session sender/receiver reports, MTU notification, path probe/ack/close (52/53/54), disconnect, real IK-framed FMP msg1/msg2, real XK FSP setup/ack/msg3, authenticated FSP/FMP frames and their encapsulated session datagram. Includes decoder offsets, empty-input errors, all 12 link catalog and 5 session catalog values, core framing constants and a payload-limit example. |
+| `rekey-legacy` | Twelve real current-node versus upstream legacy-model rotations: FMP/IK and FSP/XK, each initiated by the current node and by the legacy peer, for V050 (shared 0.5.0/0.5.1 model), V052 and V053. Four traces per model, 792 total current-node events, authenticated data both ways, cutover and old-key drain. Captured separately with the test-only upstream patch below. |
 | `rekey` | One real two-peer FSP/XK rekey: established sessions from the Noise fixture, default Params::fsp, forced start, Setup/Ack/Msg3, sealed prompts, evidence-based cutover, data both ways, scheduled polls and old-key drain. 16 state-after-event records, initial/final states, actions, exact authenticated plaintext delivery assertions and raw emitted messages/frames. No loss or randomized scheduling. |
 
 Most encoded proto cases are immediately decoded and re-encoded with equality
@@ -108,12 +109,11 @@ are now the authoritative regeneration source (C consumer work is s50dj.3).
 - The Noise chaining key `SymmetricState.ck` is private with no getter at this
   pin. JSON records `ck: null` and the gap rather than inventing a value. The
   handshake hash **is** reachable and captured for both roles.
-- Legacy 0.5.x rekey models under `core/src/proto/rekey/tests/legacy` (0.5.0/0.5.1,
-  0.5.2, 0.5.3) are private test/slow-tests modules, not reachable through the
-  dependency's public/test-hook API. **`nostrc-f12v2.3` must capture/run their
-  compatibility traces** via an upstream export hook or separate test harness.
-  This exporter does not claim legacy interop. Its one successful FSP trace
-  also does not cover FMP rekey, loss/retry, restart or all rejection paths.
+- Legacy 0.5.x models remain private test/slow-tests modules, so the ordinary
+  exporter cannot call them. `scripts/capture-legacy-rekey.sh` now captures the
+  actual models through a pinned, test-only upstream patch (not a transcription
+  of their behaviour). The ordinary successful FSP trace and the legacy matrix
+  do not cover the full loss/retry/restart/first-handshake/explorer suites.
 - This is representative protocol wire coverage, not an exhaustive malformed
   corpus or the routing/probe/path/settlement state-machine differential suite.
   New cases can be added as those C port tasks land. The host IPv6 module's
@@ -124,6 +124,57 @@ are now the authoritative regeneration source (C consumer work is s50dj.3).
   established by running this tool. Those gates remain separately owned.
 
 - Diagnostic `proto/probe` has no differential family or wire codec at this pin; unit tests are its specification. `path-probe`/`path-ack`/`path-close` (0x52–0x54) are `proto/path/wire.rs` cases, owned by nostrc-f12v2.6, not probe.
+
+## Legacy capture (nostrc-f12v2.3)
+
+```sh
+# From anywhere; output must be an absolute directory under this nostrc worktree.
+/absolute/nostrc/tools/fips-vectors/scripts/capture-legacy-rekey.sh \
+  /absolute/read-only/fips /absolute/nostrc/libfips-core/tests/vectors/rekey-legacy
+```
+
+The script reads the full Cargo dependency pin and Rust toolchain (1.94.1),
+checks agreement with `UPSTREAM.md`, makes a disposable `git clone --shared`
+checkout at exactly that pin under `build-legacy-capture/`, and applies
+`upstream-patches/<full-rev>-legacy-rekey-export.patch`. It never changes the
+source checkout, registers worktrees there, or checks out its branch. The patch
+is zero-context (applied with `--unidiff-zero` at the checked exact pin) to
+avoid trailing-space context lines in the stored patch. It adds one ignored
+`slow-tests` unit test inside `tests/legacy`; the only change
+to a model is making FMP's `initiate` visible to that sibling test. No shipped
+API or model behaviour changes. The bridge calls the real `FmpPeer`/`FspPeer`
+and production `FmpIk`/`FspXk`, not copies of their rules. Existing upstream
+MIT licensing is retained in `LICENSE.upstream`.
+
+It runs the exact ignored test twice in fresh processes with
+`cargo test -p fips-core --features slow-tests,test-hooks,ring`, a worktree-local
+`CARGO_TARGET_DIR`, and an explicit `FIPS_LEGACY_EXPORT_DIR`. It requires all
+12 documents and validates every sidecar's hash/hex/length/pin/version, rejects
+orphan files, and requires both runs to be byte-identical before publishing.
+The trap removes the copied checkout, both captures and Cargo target even on
+failure. The empty `build-legacy-capture/` parent may be removed afterwards.
+Fault-injection environment variables are refused, not silently unset.
+
+Fixtures use seeded identities 0/1, the ordinary initial Noise handshake seeds
+(494b/584b), reserved initial FMP indices 10/20, default parameters and zero
+jitter. Both peers authenticate old-key traffic at 59 s, then a trigger is
+forced at 60 s (`start_now`, the model's IK initiation, or the model's XK message
+trigger). **Trigger-policy coverage is not claimed.** Deliveries advance a
+synthetic clock by 10 ms; the legacy shell ticks each second, the current node
+also polls at its next wake (or immediately for a wake made due during channel
+delivery). Data goes both ways each second through 80 s; capture asserts current
+and legacy authentication, convergence, one rotation, drain completion and no
+leaked leases. No wall-clock waits or networks select the trace.
+
+Each document keeps the `rekey.json` events/outputs/initial/final-state schema,
+with `legacy_release`, `legacy_initiates` and an `entropy_seed_hex` on every
+current-node event. Entropy is reseeded at the event boundary so C can replay
+just that node without needing to emulate the peer's entropy consumption.
+FMP uses the real index allocator. All Send/Prompt/ApplicationFrame bytes have
+provenance-stamped `.bin` sidecars; authenticated Deliver plaintext/ranges and
+ordered Bind/Unbind/Release effects are also compared. Initial/final state arrays
+contain just the current node: the legacy model is the oracle peer, **not** a
+second instance of the current machine. C replay needs no Rust runtime.
 
 ## Regeneration / pin bump
 
@@ -144,10 +195,17 @@ are now the authoritative regeneration source (C consumer work is s50dj.3).
    gap changes, then replace only the owned files in tests/vectors with the
    reviewed fresh export. Do not leave old `.bin` files behind. Never overwrite
    older compatibility evidence without comparison.
-4. Run fmt, clippy and tests above. The fixture test intentionally fails until
+4. Review/rebase the legacy export patch onto the candidate pin, retaining the
+   actual legacy models and the MIT notice. Rename the patch to the full new
+   revision and update its PIN/generator version if needed. Run the capture
+   script to a fresh worktree-local directory; its two-run comparison must pass.
+   Compare all old/new legacy JSON and sidecars before replacing fixtures, and
+   update the C loader's required matrix if upstream's release structure changes.
+   Never silently drop a legacy release/profile/role on a pin bump.
+5. Run fmt, clippy and tests above. The fixture test intentionally fails until
    checked-in fixtures match. Reassess C header agreement rather than changing
    its constants to hide drift; coordinate the separate C consumer update.
-5. Check JSON, raw files, source, Cargo.lock and provenance docs into one commit.
+6. Check JSON, raw files, source, Cargo.lock and provenance docs into one commit.
    Record the component version decision (test-only/no shipped bump), then run
    separately owned C differential and host interop gates before advancing the
    compatibility baseline. Remove this crate's `target/` after verification.

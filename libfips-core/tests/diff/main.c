@@ -6,12 +6,12 @@ int main(int argc, char **argv)
 {
     if (argc == 4 && !strcmp(argv[1], "--mutate")) return diff_mutate(argv[2], argv[3]);
     if (argc < 2 || argc > 3) {
-        fputs("usage: fips_diff <entropy|identity|codec|noise|proto|rekey> [vectors-dir]\n", stderr);
+        fputs("usage: fips_diff <entropy|identity|codec|noise|proto|rekey|rekey-legacy> [vectors-dir]\n", stderr);
         return 2;
     }
     const char *family = argv[1];
     if (strcmp(family, "entropy") && strcmp(family, "identity") && strcmp(family, "codec") &&
-        strcmp(family, "noise") && strcmp(family, "proto") && strcmp(family, "rekey")) {
+        strcmp(family, "noise") && strcmp(family, "proto") && strcmp(family, "rekey") && strcmp(family, "rekey-legacy")) {
         fprintf(stderr, "unknown family: %s\n", family); return 2;
     }
     diff_context ctx = {.dir = argc == 3 ? argv[2] : FIPS_DIFF_VECTORS, .pin = FIPS_DIFF_PIN};

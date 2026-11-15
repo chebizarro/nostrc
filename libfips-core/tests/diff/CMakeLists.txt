@@ -30,7 +30,7 @@ add_dependencies(fips_core_host_test fips_diff)
 cmake_language(DEFER DIRECTORY "${CMAKE_SOURCE_DIR}" CALL
   add_dependencies fipsd_host_os_test fips_diff)
 
-file(GLOB vector_inputs CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/../vectors/*")
+file(GLOB_RECURSE vector_inputs CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/../vectors/*")
 foreach(family Entropy Identity Codec Noise Proto Rekey)
   string(TOLOWER "${family}" lower)
   add_test(NAME FipsDiff${family} COMMAND fips_diff "${lower}")
@@ -81,3 +81,17 @@ target_sources(fips_diff PRIVATE proto_mmp.c)
 
 # Path rows remain orchestrator-owned; direct vector test covers them here.
 target_sources(fips_diff PRIVATE proto_path.c)
+
+add_test(NAME FipsDiffRekeyLegacy COMMAND fips_diff rekey-legacy)
+set_tests_properties(FipsDiffRekeyLegacy PROPERTIES TIMEOUT 15 LABELS "fips;diff;fips-diff")
+nostrc_describe_test(FipsDiffRekeyLegacy OWNER libfips-core TARGETS fips_diff
+  INPUTS ${vector_inputs} "${CMAKE_CURRENT_SOURCE_DIR}/../../UPSTREAM.md")
+
+add_test(NAME FipsDiffRekeyLegacySelfTest COMMAND "${CMAKE_COMMAND}"
+  "-DRUNNER=$<TARGET_FILE:fips_diff>"
+  "-DVECTORS=${CMAKE_CURRENT_SOURCE_DIR}/../vectors"
+  "-DTEMP=${CMAKE_CURRENT_BINARY_DIR}/legacy-self-test"
+  -P "${CMAKE_CURRENT_SOURCE_DIR}/legacy_selftest.cmake")
+set_tests_properties(FipsDiffRekeyLegacySelfTest PROPERTIES TIMEOUT 30 LABELS "fips;diff;negative;fips-diff")
+nostrc_describe_test(FipsDiffRekeyLegacySelfTest OWNER libfips-core TARGETS fips_diff
+  INPUTS ${vector_inputs} "${CMAKE_CURRENT_SOURCE_DIR}/legacy_selftest.cmake")

@@ -86,7 +86,7 @@ those shares together. Modules omitted from the assessment's table are marked
 | Rust module(s) at pin | Assessment non-test LoC | Planned C home(s) | Owning bead epic/task |
 |---|---:|---|---|
 | `core/src/proto/path/**` | 6,783 | `libfips-core/src/proto/path/{wire,set,params,rules,candidate,capable,select,live,machine}.c`, matching public headers | `nostrc-f12v2.6`: bounded PathSet, codecs and runtime-gated Bundle; daemon integration and simulator vector export remain separate |
-| `core/src/proto/rekey/**` | 6,575 | `libfips-core/src/proto/rekey/…` + `include/fips/proto/rekey/…` (shared machine/params/profile hooks implemented; [API and ownership](src/proto/rekey/README.md), [test mapping](tests/REKEY.md); legacy fixtures deferred) | `nostrc-f12v2.1` shared core; `nostrc-f12v2.3` legacy; `nostrc-f66sr` verification |
+| `core/src/proto/rekey/**` | 6,575 | `libfips-core/src/proto/rekey/…` + `include/fips/proto/rekey/…` (shared machine/params/profile hooks implemented; [API and ownership](src/proto/rekey/README.md), [test mapping](tests/REKEY.md); twelve legacy-model compatibility traces captured/replayed) | `nostrc-f12v2.1` shared core; `nostrc-f12v2.3` legacy; `nostrc-f66sr` verification |
 | `core/src/proto/settle/**` | 5,493 | `libfips-core/src/proto/settle/…` (port last; upstream not wired to callers yet) | `nostrc-f12v2` A4 |
 | `core/src/proto/mmp/**` | 4,160 | `libfips-core/src/proto/mmp/…` | `nostrc-f12v2` A4 |
 | `core/src/proto/fmp/**` | 2,186 | `libfips-core/src/proto/fmp/…` | `nostrc-82g9n` A3; real IK/XK profiles and bounded session binding implemented: `nostrc-f12v2.2` A4 |
@@ -171,6 +171,18 @@ all rows, even where only the implementation epic is shown.
    replay cases, and host golden snapshots rather than overwriting history
    without comparison. Exported vectors alone do not prove the differential/interop
    gates.
+   For legacy rekey, review/rebase
+   `tools/fips-vectors/upstream-patches/<full-rev>-legacy-rekey-export.patch`
+   onto this exact candidate pin; retain the actual upstream models and rename
+   the patch/update its PIN. Run `tools/fips-vectors/scripts/capture-legacy-rekey.sh`
+   with the read-only source repository and a fresh output directory under the
+   nostrc worktree. It applies only to a disposable copy, runs the ignored
+   `slow-tests,test-hooks` export twice, and requires identical JSON/sidecars
+   before collecting. Compare the old/new matrix (currently 12 traces: FMP/FSP,
+   both initiators, V050=0.5.0/0.5.1, V052, V053). Update the C loader's required
+   matrix on a deliberate model-structure change, never silently drop a case.
+   Run `FipsDiffRekeyLegacy` and its integrity negatives at the candidate pin;
+   remove copied upstream/target/build directories after verification.
 4. **Run differential sweep and interop.** Run the differential sweep:
    `ctest -R '^FipsDiff' -V` in the build directory (see `tests/diff/README.md`).
    Review checked/skipped counts; an all-SKIP family is not parity. Run all

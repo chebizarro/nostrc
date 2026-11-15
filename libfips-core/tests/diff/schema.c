@@ -226,7 +226,7 @@ static bool rekey(diff_context *ctx, diff_value *v)
     diff_value *events = FIELD(v, "events");
     for (size_t i = 0; i < COUNT(events); ++i) {
         diff_value *e = ITEM(events, i);
-        if (!shape(ctx, e, "event:u node:u at_ms:u input:s input_hex:H state_before:o outputs:a state_after:o authenticated_deliveries?:a") ||
+        if (!shape(ctx, e, "event:u node:u at_ms:u input:s input_hex:H state_before:o outputs:a state_after:o authenticated_deliveries?:a entropy_seed_hex?:w") ||
             !state(ctx, FIELD(e, "state_before")) || !state(ctx, FIELD(e, "state_after"))) return false;
         diff_value *outputs = FIELD(e, "outputs");
         for (size_t j = 0; j < COUNT(outputs); ++j) {
@@ -235,16 +235,16 @@ static bool rekey(diff_context *ctx, diff_value *v)
             if (!shape(ctx, o, "kind:s")) return false;
             const char *kind = TEXT(o, "kind");
             if (strcmp(kind, "Send") == 0) { if (!shape(ctx, o, "message_kind:s route:s bytes:x")) return false; }
-            else if (strcmp(kind, "Release") == 0) { if (!shape(ctx, o, "index:n")) return false; }
+            else if (strcmp(kind, "Release") == 0) { if (!shape(ctx, o, "index:U")) return false; }
             else if (strcmp(kind, "Prompt") == 0 || strcmp(kind, "ApplicationFrame") == 0) {
-                if (!shape(ctx, o, "counter:u k:b plaintext_hex:h bytes:x") ||
+                if (!shape(ctx, o, "counter:u k:b plaintext_hex:h bytes:x sequence?:u") ||
                     (strcmp(kind, "Prompt") == 0 && !shape(ctx, o, "tag:u"))) return false;
             } else return diff_error(ctx, "unknown rekey output %s", kind);
         }
         diff_value *deliveries = FIELD(e, "authenticated_deliveries");
         if (deliveries) for (size_t j = 0; j < COUNT(deliveries); ++j) {
             diff_value *d = ITEM(deliveries, j);
-            if (!shape(ctx, d, "slot:s tag:u range:a plaintext_hex:h") || !elements(ctx, FIELD(d, "range"), 'u')) return false;
+            if (!shape(ctx, d, "slot:s tag:u range:a plaintext_hex:h") || !elements(ctx, FIELD(d, "range"), 'u') || COUNT(FIELD(d, "range")) != 2) return false;
         }
     }
     return true;
@@ -255,6 +255,8 @@ bool diff_schema(diff_context *ctx, const char *family, diff_value *cases)
     if (strcmp(family, "noise") == 0) return noise(ctx, cases);
     if (strcmp(family, "proto") == 0) return proto(ctx, cases);
     if (strcmp(family, "rekey") == 0) return rekey(ctx, cases);
+    if (strcmp(family, "rekey-legacy") == 0)
+        return shape(ctx, cases, "legacy_release:s legacy_initiates:b") && rekey(ctx, cases);
     if (!type(ctx, cases, 'a', "cases")) return false;
     for (size_t i = 0; i < COUNT(cases); ++i) {
         diff_value *v = ITEM(cases, i);
