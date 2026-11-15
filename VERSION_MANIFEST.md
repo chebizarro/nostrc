@@ -35,6 +35,7 @@ nostrc-s50dj.3: no bump for libfips-core; differential harness, fixtures validat
 
 nostrc-s50dj.2: no bump for libfips-core/fipsd; tools/fips-vectors and oracle fixtures are test-only, with no shipped artifact or public contract change.
 nostrc-82g9n.9: no bump for libfips-core 0.1.0 Unreleased; proto fuzz corpora, property tests and differential sweep guards are test-only, with no shipped artifact/API/ABI change.
+nostrc-9keoz.1: no bump for fipsd 0.1.0 Unreleased; the process skeleton (CLI, logging, fiber runtime, signals, privilege helpers) folds into the initial pre-release 0.1.0; no published release/tag change.
 
 Release columns below record published component tags, not planned releases.
 Declared versions may be newer than the latest published tag.
