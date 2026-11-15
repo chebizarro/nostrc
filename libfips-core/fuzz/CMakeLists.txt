@@ -130,3 +130,12 @@ apply_warnings(fips_fuzz_session)
 apply_sanitizers(fips_fuzz_session)
 target_compile_options(fips_fuzz_session PRIVATE -fsanitize=fuzzer)
 target_link_options(fips_fuzz_session PRIVATE -fsanitize=fuzzer)
+
+# No diagnostic wire format: fuzz host observations and action-list invariants.
+add_executable(fips_fuzz_probe fuzz_probe.c)
+target_link_libraries(fips_fuzz_probe PRIVATE fips_core)
+set_target_properties(fips_fuzz_probe PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+apply_warnings(fips_fuzz_probe)
+apply_sanitizers(fips_fuzz_probe)
+target_compile_options(fips_fuzz_probe PRIVATE -fsanitize=fuzzer)
+target_link_options(fips_fuzz_probe PRIVATE -fsanitize=fuzzer)

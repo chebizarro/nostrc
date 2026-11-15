@@ -403,3 +403,14 @@ set_tests_properties(FipsCoreProtoPropertiesTest PROPERTIES TIMEOUT 60 LABELS "f
 nostrc_describe_test(FipsCoreProtoPropertiesTest OWNER libfips-core TARGETS fips_core_proto_properties_test
   INPUTS ${fsp_vector_inputs})
 add_dependencies(fips_core_host_test fips_core_proto_properties_test)
+
+# Diagnostic probe: all upstream stage/path tests with synthetic host time.
+add_executable(fips_core_probe_test test_probe.c fakes/host.c)
+target_link_libraries(fips_core_probe_test PRIVATE fips_core)
+set_target_properties(fips_core_probe_test PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+apply_warnings(fips_core_probe_test)
+apply_sanitizers(fips_core_probe_test)
+add_test(NAME FipsCoreProbeTest COMMAND fips_core_probe_test)
+set_tests_properties(FipsCoreProbeTest PROPERTIES TIMEOUT 30 LABELS "fips;unit")
+nostrc_describe_test(FipsCoreProbeTest OWNER libfips-core TARGETS fips_core_probe_test)
+add_dependencies(fips_core_host_test fips_core_probe_test)

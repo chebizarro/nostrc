@@ -93,7 +93,7 @@ those shares together. Modules omitted from the assessment's table are marked
 | `core/src/proto/lookup/**` | 1,752 | `libfips-core/src/proto/lookup/…` | `nostrc-82g9n` A3 |
 | `core/src/proto/stp/**` | 1,574 | `libfips-core/src/proto/stp/…` | `nostrc-82g9n` A3 |
 | `core/src/proto/fsp/**` | 1,461 | `libfips-core/src/proto/fsp/…` | `nostrc-82g9n` A3; rekey profile: `nostrc-f12v2` A4 |
-| `core/src/proto/probe/**` | 1,220 | `libfips-core/src/proto/probe/…` | `nostrc-f12v2` A4 |
+| `core/src/proto/probe/**` | 1,220 | `libfips-core/src/proto/probe/{core,state}.c`, `include/fips/proto/probe/{mod,core,state,limits}.h` | `nostrc-f12v2.5`: 30 upstream tests ported; no wire codec/differential family; host owns job registry |
 | `core/src/proto/bloom/**` | 1,162 | `libfips-core/src/proto/bloom/…` | `nostrc-82g9n` A3 |
 | `core/src/proto/routing/**` | 969 | `libfips-core/src/proto/routing/…` | `nostrc-82g9n` A3 |
 | `core/src/proto/{codec,error,math}.rs` | share of 1,105 (`proto/*.rs`) | `libfips-core/src/proto/{codec,error,math}.c` | `nostrc-u50yr` A1 primitives |

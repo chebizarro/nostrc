@@ -123,6 +123,8 @@ are now the authoritative regeneration source (C consumer work is s50dj.3).
 - No C differential test, sanitizer lane, hosted CI or two-node host interop is
   established by running this tool. Those gates remain separately owned.
 
+- Diagnostic `proto/probe` has no differential family or wire codec at this pin; unit tests are its specification. `path-probe`/`path-ack`/`path-close` (0x52–0x54) are `proto/path/wire.rs` cases, owned by nostrc-f12v2.6, not probe.
+
 ## Regeneration / pin bump
 
 1. Follow `libfips-core/UPSTREAM.md`'s watch-set and compatibility procedure.
