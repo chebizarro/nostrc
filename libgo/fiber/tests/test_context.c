@@ -1,22 +1,23 @@
 #include "../include/libgo/fiber.h"
 #include <assert.h>
 #include <stdio.h>
+#include <stdatomic.h>
 
 static int order[4];
-static int idx = 0;
+static atomic_int idx = 0;
 
 static void f1(void *arg) {
   (void)arg;
-  order[idx++] = 1;
+  order[atomic_fetch_add(&idx, 1)] = 1;
   gof_yield();
-  order[idx++] = 3;
+  order[atomic_fetch_add(&idx, 1)] = 3;
 }
 
 static void f2(void *arg) {
   (void)arg;
-  order[idx++] = 2;
+  order[atomic_fetch_add(&idx, 1)] = 2;
   gof_yield();
-  order[idx++] = 4;
+  order[atomic_fetch_add(&idx, 1)] = 4;
 }
 
 int main(void) {

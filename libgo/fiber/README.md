@@ -30,6 +30,36 @@ int main(void) {
 }
 ```
 
+### Core channel integration and sanitizers
+
+`gof_init()` explicitly registers the channel/select parking callbacks in
+libgo, along with the existing fiber-spawn callback. The core `gof_hook_*`
+symbols dispatch through that immutable, process-lifetime table, rather than
+relying on weak-symbol overrides. Either archive order therefore selects the
+same runtime behavior. The CMake target declares its core-libgo dependency,
+including for spawn-only consumers; raw archive links must likewise put core
+libgo after go_fiber (or repeat/group the archives) for dependency resolution.
+Pthreads outside fibers continue to use OS-thread waits.
+
+TSan builds (`-DCMAKE_BUILD_TYPE=Debug -DGO_ENABLE_TSAN=ON`) create one sanitizer
+handle per fiber, capture each worker's original handle, annotate dispatch,
+yield, blocking, timed parking and completion, and destroy finished handles on
+the scheduler stack. Switches use `__tsan_switch_to_fiber_no_sync`: switching
+alone is not application synchronization; the queue locks and wait protocols
+supply ordering. The annotations cover assembly and portable context backends.
+The portable swap wrapper must not add TSan function-entry/exit instrumentation
+between selecting the destination handle and switching stacks.
+
+`GoFiberHookLinkorderTest` links libgo first and verifies an empty core-channel
+receive releases the only worker to a sending fiber.
+`GoFiberSpawnLinkorderTest` covers a consumer without channel/select references.
+`GoFiberTsanMigrationTest` runs 64 fibers on four workers for three seconds, checks actual migration, and
+combines yield, sleep and core-channel ping-pong. Repeat teardown under TSan:
+
+```sh
+ctest --test-dir build-libgo-tsan -R '^GoFiberTsanMigrationTest$' --repeat until-fail:30 --output-on-failure
+```
+
 ## Architecture
 
 ```

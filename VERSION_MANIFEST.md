@@ -5,6 +5,11 @@ covered by the versioning initiative. **Declared version** is the version in the
 build metadata; it is not evidence that a release exists. **Latest release** is
 updated only after the matching component-prefixed Git tag has been published.
 
+nostrc-9965o / nostrc-3ulf2: libgo remains 0.3.0 Unreleased; PATCH-class
+TSan fiber lifecycle annotations and link-order-independent internal channel
+hook registration fold into the unreleased version. No numeric bump, installed
+public API change, or published release/tag change.
+
 Visibility phase B1 (`nostrc-er4fz.10`): libmarmot 0.13.0 → 0.14.0 and
 libhanami 0.4.0 → 0.5.0 are MINOR bumps. Hidden-by-default shared objects
 remove unannotated implementation symbols from their dynamic ABI; public

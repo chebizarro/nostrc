@@ -16,6 +16,7 @@ static size_t gof_init_stack_bytes = 0;
 
 static void gof_do_init(void) {
   gof_sched_init(gof_init_stack_bytes);
+  gof_register_channel_hooks();
   /* Register our spawn function with libgo so go_fiber_compat works */
   go_register_fiber_spawn(gof_spawn);
 }
