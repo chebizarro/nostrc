@@ -231,16 +231,19 @@ static int worker_clones_moves(void)
     CHECK(fips_noise_session_check_replay(&r, cb) == FIPS_NOISE_OK); /* Worker did not mark. */
     CHECK(fips_noise_session_accept_replay(&r, cb) == FIPS_NOISE_OK);
     CHECK(fips_noise_session_current_send_counter(&i) == 2);
-    CHECK(fips_cipher_state_counter(&a) == 0 && fips_cipher_state_counter(&b) == 0);
-    /* Counter copies diverge; reserving on one does not mutate the other/session.
-     * Do NOT seal these locally reserved counters: they overlap the global ones. */
-    CHECK(fips_cipher_state_take_counter(&a, &ca) == FIPS_NOISE_OK && ca == 0);
-    CHECK(fips_cipher_state_counter(&a) == 1 && fips_cipher_state_counter(&b) == 0);
+    /* A clone is a bare key (upstream cipher_clone): its counter is pinned at the
+     * refused ceiling, so it can never reissue a counter the session hands out. */
+    CHECK(fips_cipher_state_counter(&a) == UINT64_MAX && fips_cipher_state_counter(&b) == UINT64_MAX);
+    uint64_t reserved = 123; uint8_t wc[18]; size_t n = SIZE_MAX;
+    memset(wc, 0xa5, sizeof(wc));
+    CHECK(fips_cipher_state_take_counter(&a, &reserved) == FIPS_NOISE_NonceOverflow && reserved == 123);
+    CHECK(fips_cipher_state_seal(&a, NULL, 0, plain, 2, wc, sizeof(wc), &n) == FIPS_NOISE_NonceOverflow);
+    CHECK(n == SIZE_MAX && filled(wc, sizeof(wc), 0xa5) && fips_cipher_state_counter(&a) == UINT64_MAX);
     CHECK(fips_noise_session_current_send_counter(&i) == 2);
     fips_cipher_state c;
     CHECK(fips_cipher_state_take_cleared(&a, &a) == FIPS_NOISE_WrongState);
     CHECK(fips_cipher_state_take_cleared(&a, &c) == FIPS_NOISE_OK);
-    CHECK(filled(&a, sizeof(a), 0) && fips_cipher_state_counter(&c) == 1);
+    CHECK(filled(&a, sizeof(a), 0) && fips_cipher_state_counter(&c) == UINT64_MAX);
     CHECK(!memcmp(c.key.bytes, b.key.bytes, sizeof(c.key.bytes)));
     fips_cipher_state_clear_slot(&c); CHECK(filled(&c, sizeof(c), 0));
     fips_cipher_state_destroy(&b); CHECK(filled(&b, sizeof(b), 0));
