@@ -1,0 +1,131 @@
+#define _POSIX_C_SOURCE 200809L
+#define _DARWIN_C_SOURCE 1 /* mkdtemp on macOS */
+#include "privilege.h"
+
+#include <errno.h>
+#include <fcntl.h>
+#include <grp.h>
+#include <limits.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/un.h>
+#include <unistd.h>
+
+#define CHECK(expr) do { if (!(expr)) { \
+    fprintf(stderr, "%s:%d: %s (errno %s)\n", __FILE__, __LINE__, #expr, strerror(errno)); return 1; \
+} } while (0)
+
+static int mode_of(const char *path, mode_t *mode, gid_t *gid)
+{
+    struct stat st;
+    if (lstat(path, &st) != 0)
+        return -1;
+    *mode = st.st_mode;
+    *gid = st.st_gid;
+    return 0;
+}
+
+int main(void)
+{
+    char err[512];
+
+    /* umask: applied and reported. */
+    mode_t before = umask(0022);
+    umask(before);
+    CHECK(fipsd_privilege_set_umask() == before);
+    CHECK(umask(before) == FIPSD_UMASK);
+
+    /* Group lookup. */
+    gid_t gid = (gid_t)-1;
+    CHECK(fipsd_privilege_resolve_group("fipsd-no-such-group-xyz", &gid, err, sizeof(err)) == 0);
+    CHECK(fipsd_privilege_resolve_group("", &gid, err, sizeof(err)) == -1 && err[0] != '\0');
+    CHECK(fipsd_privilege_resolve_group(NULL, &gid, err, sizeof(err)) == -1);
+    gid_t fips_gid = (gid_t)-1;
+    int have_fips = fipsd_privilege_resolve_group(FIPSD_SOCKET_GROUP, &fips_gid, err, sizeof(err));
+    CHECK(have_fips >= 0);
+
+    /* Temp layout: <dir>/run/control.sock, parent 0700 to start. */
+    char tmpl[] = "/tmp/fipsd-priv.XXXXXX";
+    char *dir = mkdtemp(tmpl);
+    CHECK(dir != NULL);
+    char run[PATH_MAX], sock[PATH_MAX], link[PATH_MAX], file[PATH_MAX];
+    snprintf(run, sizeof(run), "%s/run", dir);
+    snprintf(sock, sizeof(sock), "%s/run/control.sock", dir);
+    snprintf(link, sizeof(link), "%s/run/link.sock", dir);
+    snprintf(file, sizeof(file), "%s/run/plain", dir);
+    CHECK(mkdir(run, 0700) == 0);
+
+    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    CHECK(fd >= 0);
+    struct sockaddr_un addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    CHECK(strlen(sock) < sizeof(addr.sun_path));
+    strcpy(addr.sun_path, sock);
+    CHECK(bind(fd, (struct sockaddr *)&addr, sizeof(addr)) == 0);
+
+    /* Own primary group: always permitted, so the mechanics are always tested. */
+    gid_t own = getegid();
+    mode_t mode;
+    gid_t got;
+    CHECK(fipsd_privilege_secure_private_dir(run, own, err, sizeof(err)) == 0);
+    CHECK(mode_of(run, &mode, &got) == 0 && S_ISDIR(mode));
+    CHECK((mode & 07777) == FIPSD_SOCKET_DIR_MODE && got == own);
+    CHECK(fipsd_privilege_secure_socket(sock, own, err, sizeof(err)) == 0);
+    CHECK(mode_of(sock, &mode, &got) == 0 && S_ISSOCK(mode));
+    CHECK((mode & 07777) == FIPSD_SOCKET_MODE && got == own);
+
+    /* The `fips` group, when this machine has it and we may assign it. */
+    if (have_fips == 1) {
+        int rc = fipsd_privilege_secure_socket(sock, fips_gid, err, sizeof(err));
+        if (rc == 0) {
+            CHECK(mode_of(sock, &mode, &got) == 0 && got == fips_gid);
+            CHECK(fipsd_privilege_secure_private_dir(run, fips_gid, err, sizeof(err)) == 0);
+            CHECK(mode_of(run, &mode, &got) == 0 && got == fips_gid);
+            printf("fips group %u: socket and directory assigned\n", (unsigned)fips_gid);
+        } else {
+            printf("fips group %u exists but cannot be assigned by this user (%s); "
+                   "group-assignment check skipped\n", (unsigned)fips_gid, err);
+        }
+    } else {
+        printf("no `fips` group on this machine; group-assignment check skipped\n");
+    }
+
+    /* Refusals: symlink, regular file, missing path, missing directory. */
+    CHECK(symlink(sock, link) == 0);
+    CHECK(fipsd_privilege_secure_socket(link, own, err, sizeof(err)) == -1);
+    CHECK(strstr(err, "not a socket") != NULL);
+    int pfd = open(file, O_WRONLY | O_CREAT | O_EXCL, 0600);
+    CHECK(pfd >= 0);
+    close(pfd);
+    CHECK(fipsd_privilege_secure_socket(file, own, err, sizeof(err)) == -1);
+    CHECK(strstr(err, "not a socket") != NULL);
+    CHECK(fipsd_privilege_secure_socket(file, own, NULL, 0) == -1); /* no buffer */
+    snprintf(err, sizeof(err), "%s/missing", run);
+    CHECK(fipsd_privilege_secure_socket(err, own, err, sizeof(err)) == -1);
+    CHECK(fipsd_privilege_secure_private_dir(file, own, err, sizeof(err)) == -1);
+    CHECK(fipsd_privilege_secure_private_dir(link, own, err, sizeof(err)) == -1);
+    snprintf(err, sizeof(err), "%s/missing", run);
+    CHECK(fipsd_privilege_secure_private_dir(err, own, err, sizeof(err)) == -1);
+    /* The socket itself is unchanged by the refused calls. */
+    CHECK(mode_of(sock, &mode, &got) == 0 && (mode & 07777) == FIPSD_SOCKET_MODE);
+
+    /* Drop hook: a no-op unless configured; configured is refused whole. */
+    CHECK(fipsd_privilege_drop(NULL, err, sizeof(err)) == 0);
+    fipsd_privilege_drop_config none = {NULL, NULL};
+    CHECK(fipsd_privilege_drop(&none, err, sizeof(err)) == 0 && err[0] == '\0');
+    fipsd_privilege_drop_config to_fips = {"fips", "fips"};
+    CHECK(fipsd_privilege_drop(&to_fips, err, sizeof(err)) == -1 && errno == ENOTSUP);
+    CHECK(strstr(err, "fips:fips") != NULL && strstr(err, "User=/Group=") != NULL);
+    fipsd_privilege_drop_config group_only = {NULL, "fips"};
+    CHECK(fipsd_privilege_drop(&group_only, err, sizeof(err)) == -1);
+    CHECK(strstr(err, "-:fips") != NULL);
+
+    close(fd);
+    CHECK(unlink(link) == 0 && unlink(file) == 0 && unlink(sock) == 0);
+    CHECK(rmdir(run) == 0 && rmdir(dir) == 0);
+    return 0;
+}
