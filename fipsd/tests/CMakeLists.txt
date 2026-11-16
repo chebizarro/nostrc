@@ -262,3 +262,15 @@ nostrc_describe_test(FipsdStatsTest OWNER fipsd TARGETS fipsd_stats_test)
 
 target_compile_definitions(fipsd_acl_test PRIVATE
   FIPSD_CONTROL_GOLDEN="${CMAKE_CURRENT_SOURCE_DIR}/control_golden")
+
+# Shared transport codecs, OS facts and binder state machine (Tier B2).
+fipsd_unit_test(fipsd_transport_test test_transport.c)
+add_dependencies(fipsd_tests fipsd_transport_test)
+add_test(NAME FipsdTransportTest COMMAND fipsd_transport_test)
+set_tests_properties(FipsdTransportTest PROPERTIES TIMEOUT 30 LABELS "fips;transport")
+nostrc_describe_test(FipsdTransportTest OWNER fipsd TARGETS fipsd_transport_test)
+fipsd_unit_test(fipsd_transport_watcher_test test_transport_watcher.c)
+add_dependencies(fipsd_tests fipsd_transport_watcher_test)
+add_test(NAME FipsdTransportWatcherTest COMMAND fipsd_transport_watcher_test)
+set_tests_properties(FipsdTransportWatcherTest PROPERTIES TIMEOUT 30 LABELS "fips;transport" ENVIRONMENT "FIPSD_WORKERS=2")
+nostrc_describe_test(FipsdTransportWatcherTest OWNER fipsd TARGETS fipsd_transport_watcher_test)

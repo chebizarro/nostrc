@@ -114,3 +114,9 @@ option(FIPSD_ENABLE_FUZZERS "Build fipsd parser libFuzzer targets" ${FIPS_ENABLE
 if(FIPSD_ENABLE_FUZZERS)
   add_subdirectory(fuzz)
 endif()
+
+# Tier B2 shared transport owners (nostrc-gfi8h.1).
+target_sources(fipsd_lib PRIVATE
+  src/transport/transport.c src/transport/framing.c src/transport/stream.c
+  src/transport/medium.c src/transport/presence.c src/transport/sockbuf.c
+  src/transport/watcher.c src/transport/stats_common.c src/transport/loopback.c)

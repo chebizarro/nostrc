@@ -61,6 +61,8 @@ struct fipsd_transport {
      * and valid through runtime join; binder still owns descriptors/rebinding.
      * Loopback tests may supply a fake name without touching host interfaces. */
     const char *interface_name;
+    /* Append-only shared instance; NULL for legacy/custom implementations. */
+    struct fipsd_transport_shared *shared;
 };
 typedef struct fipsd_transport_registry {
     fipsd_transport *items[FIPSD_TRANSPORT_MAX];

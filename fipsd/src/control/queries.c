@@ -184,6 +184,7 @@ static json_t *transports(const fipsd_control_snapshot *s)
             const fipsd_control_interface *f = r->interface;
             json_t *in = json_object();
             string(in, "name", f->name); string(in, "presence", f->presence); string(in, "policy", f->policy);
+            if (f->medium) string(in, "medium", f->medium);
             boolean(in, "carrier", f->carrier); integer(in, "since_secs", f->since_secs);
             integer(in, "binds", f->binds); integer(in, "failed_attempts", f->failed_attempts); set(o, "interface", in);
         }

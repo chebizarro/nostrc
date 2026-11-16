@@ -26,6 +26,7 @@ typedef struct fipsd_control_interface {
     bool carrier;
     uint64_t since_secs, binds;
     uint32_t failed_attempts;
+    const char *medium;
 } fipsd_control_interface;
 typedef struct fipsd_control_transport {
     uint32_t transport_id;

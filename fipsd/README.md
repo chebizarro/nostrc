@@ -720,7 +720,7 @@ use the named transport's ceiling, not the current proof, while ordinary traffic
 uses `fips_path_carried`'s proven-size bound. The established session stays at
 900 until its own destination notifications permit an increase.
 
-`node/transport_loopback.{c,h}` is an in-process datagram medium behind the
+`transport/loopback.{c,h}` (with the old `node/transport_loopback.h` include retained) is an in-process datagram medium behind the
 `fipsd_transport` seam: endpoints deliver owned `PACKET` events to each other's
 node channel with `go_channel_send_with_context` against the destination's root
 context, plus an optional drop filter. `main.c` does not register it.
@@ -834,8 +834,9 @@ interop unavailable/skipped); the benchmark is not included in that default.
 ### Remaining for Tier B2 and B4
 
 Tier B2: real UDP/TCP/connected receive/binder legs behind the
-transport seam, discovery, transport interface presence and native network
-interoperability/performance. No real socket dataplane or deployment proof is
+transport seam, discovery and native network interoperability/performance.
+Shared interface presence/binding is implemented below; concrete socket owners
+still have to connect their bind/unbind callbacks. No real socket dataplane or deployment proof is
 claimed by loopback tests. B4: native API and IPv6 adapter owners replacing
 `native.c`/`host_link` notices, clamp publication/MSS application to the adapter,
 configured-peer address lists into path intake and rendezvous. Admission ACLs
@@ -965,3 +966,105 @@ Version decision: additive work and the PATCH-class control shutdown correction
 fold into **fipsd 0.1.0 Unreleased**; no manifest, declared version or release/tag
 change. The required libgo race correction remains in its unreleased 0.3.0
 version (PATCH-class).
+
+## Shared transport layer (`nostrc-gfi8h.1`, Tier B2)
+
+The existing `node/transport.h` vtable, event channel and `interface_name`
+contract are unchanged. Its append-only `shared` pointer is optional for legacy
+or test drivers. Embed `fipsd_transport_shared`, initialize before registration,
+and keep it and immutable metadata alive through runtime join. There is no
+implicit UDP listener or new registration in `main.c`.
+
+| Upstream `src/transport/` | C host `src/transport/` | Responsibility |
+| --- | --- | --- |
+| `mod.rs` | `transport.{c,h}` | Shared instance state, owned event copies, bounded link table, per-link stats/MTU, generation-safe connection replacement |
+| `framing.rs` | `framing.{c,h}` | FMP prefix sizing and datagram envelope validation |
+| `stream.rs`, `framing.rs` | `stream.{c,h}`, shared link table | Incremental framing, fiber read/write, unique connection IDs and remove-own guard |
+| `medium.rs` | `medium.{c,h}` | macOS SIOCGIFMEDIA; Linux flags/wireless/ethtool and conservative sysfs classification |
+| `presence.rs` | `presence.{c,h}`, `watcher.c` | IFF_UP, separate carrier, episode age, attempts, binds, retry/churn damping |
+| `watcher.rs`, Ethernet binder in `mod.rs` | `watcher.{c,h}` + existing `node/netmon.c` | Coalesced kernel/netmon notifications, one-second backstop, sole binder ownership |
+| `sockbuf.rs` | `sockbuf.{c,h}` | Linux force/plain fallback, readback, clamp advice; no sysctl mutation |
+| `stats_common.rs` | `stats_common.{c,h}` | Atomic packet/byte counters and connection-pool occupancy |
+| `loopback.rs` / existing C loopback | `loopback.{c,h}` | Same two-node API and drop-filter behavior, shared state/events/stats |
+
+### Wire formats
+
+There is **no separate TCP/Tor length prefix**. As current upstream
+`docs/reference/wire-formats.md` specifies, the FMP prefix is
+`[version:4 | phase:4][flags:8][payload_len:16 little-endian]`.
+Established frames are `16-byte header + payload_len + 16-byte AEAD tag`;
+IK msg1 is 114 bytes (`payload_len=110`), msg2 is 69 (`payload_len=65`).
+Stream receives use a 65535-byte allocation ceiling, not the local send MTU.
+The incremental reader accepts partial prefixes/bodies and coalesced packets,
+returns one complete frame at a time, and rejects invalid version/phase/size,
+capacity exhaustion and truncated EOF. Stream prefix framing leaves flags and
+ciphertext validation to the node. Datagram boundaries are preserved unchanged;
+the validator rejects truncation, trailing bytes and malformed FMP envelopes.
+No Ethernet data/beacon wrapper or BLE framing is implemented in this task.
+
+### Binding and ownership
+
+`Stopped -> Absent -> Binding -> Present`; absence at start is success.
+A netmon event wakes a capacity-one mailbox. A one-second ticker is the backstop
+and services retry/stability deadlines. The actor reloads an immutable netmon
+snapshot (or injected facts); native getifaddrs/ioctl and ticker setup/teardown
+run on the blocking executor. Kernel event sockets remain owned by netmon.
+`IFF_UP`, not `IFF_RUNNING`, controls binding; carrier changes only diagnostics.
+Invalid reads keep the last binding. Disappearance, index/MAC replacement or
+current-generation receive-loop exit invokes unbind on the sole binder, clears
+stale links, then waits for the resource to return. Late exits from an old
+binding cannot tear down a replacement.
+
+Absence races do not increment failures. Other bind failures back off
+1/2/4/8/16/30 seconds. Bindings dying before ten seconds use the same damping;
+after three consecutive young deaths, presence announcements stay held until
+a binding survives ten seconds. Required sustained absence is logged once at
+ten seconds; optional absence does not log that error. Bind/attempt counters
+and episode age survive retries. Control rows publish `interface.carrier` and
+`interface.medium` alongside presence, policy, binds and attempts.
+
+The driver must unwind failed binds. Unbind must cancel/wake **and join** that
+generation's receive/writer tasks before closing/reusing descriptors. Raw close
+is not cancellation for parked `gof_read`/`gof_recv*`. Runtime-tracked tasks and
+root/stop channel selects provide shutdown; no timeout is used as a readiness
+signal. Stream drivers must set SO_NOSIGPIPE on macOS sockets and serialize
+writers; Linux uses MSG_NOSIGNAL. The shared table supplies remove-own identity
+checks, not a TCP pool, accept loop, queued writer or drain-task implementation.
+Those concrete stream owners belong to their transport tasks.
+
+Medium values are the existing core `fips_path_medium`; the core selector
+already prefers wired over wireless within its multiplicative switch margin.
+The shared accessor returns cached medium without I/O on the send path.
+Unknown/virtual interfaces are not guessed to be wired. The existing node
+`handlers/path.c` callback still hardcodes Ethernet as wired: replacing it with
+`fipsd_transport_medium` is a small follow-up requiring approval beyond this
+task's node-include/provider-only edit boundary. Detection, projection and the
+core preference rule are tested; live detected-medium selection is not claimed.
+
+### UDP (`gfi8h.2`) integration contract
+
+- Register its existing vtable and initialize the shared instance. `start_async`
+  starts the watcher; `network_changed` only forwards/coalesces notifications;
+  `stop` requests cancellation. The binder, not the node, owns all rebinding.
+- Implement bind/unbind and real tracked receive/send legs using
+  `gof_recvfrom/sendto/recvmsg/sendmsg`; handle readiness, pktinfo/ECN, kernel
+  drop counters and address semantics in the UDP owner. No timer polling.
+- Apply configured `recv_buf_size`/`send_buf_size` via `fipsd_sockbuf_set`
+  during off-scheduler setup (config normalization remains the authority).
+- Keep one UDP datagram per FMP frame, check MTU, deliver owned PACKET events,
+  and account successful sends/receives in shared stats. No stream prefix.
+- Preserve interface-absent startup and callback cancellation/descriptor join
+  contracts; wire discovery/connect policy and link bookkeeping as appropriate.
+- Add real socket and C/Rust network interop gates; loopback is not network proof.
+
+`FipsdTransportTest` covers unit-vector framing (upstream has no
+`tests/vectors/` transport corpus), every truncation/split/capacity offset,
+malformed prefix fields, injected ifaddrs/ioctl facts, native lo0/en0 smoke on
+macOS, real UDP sockbuf readback, medium ranking and link replacement/counters.
+`FipsdTransportWatcherTest` drives the same reducer with an injected clock and
+the actor with a real injected netmon source (absent, appears, disappears,
+new-index return), plus real socketpair fiber stream I/O. Existing two-node
+regressions now exercise the shared layer and assert provider carrier/medium
+and actual packet counters. Both new targets belong to `fipsd_tests`.
+
+Version decision: **fipsd remains 0.1.0 Unreleased**; libfips-core/libgo unchanged.
