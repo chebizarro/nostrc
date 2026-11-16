@@ -492,6 +492,7 @@ int fipsd_gw_dns_serve(fipsd_gw_dns_server *s)
         if (fipsd_gw_dns_mesh_arrival(arrival.has_ifindex, arrival.ifindex, mesh != 0, mesh, s->ipv6)) {
             FIPSD_DEBUG(MODULE, "DNS query dropped: src=%s ifindex=%u reason=mesh-interface", text, arrival.has_ifindex ? arrival.ifindex : 0);
             atomic_fetch_add(&s->dropped, 1);
+            if (s->observe) s->observe(s->observe_user, FIPSD_GW_DNS_SEEN_MESH);
             continue;
         }
         uint16_t port = from->sa_family == AF_INET6 ? ntohs(((const struct sockaddr_in6 *)from)->sin6_port)
@@ -501,6 +502,7 @@ int fipsd_gw_dns_serve(fipsd_gw_dns_server *s)
         if (outcome == FIPSD_GW_DNS_DROP || !len) {
             FIPSD_DEBUG(MODULE, "DNS datagram dropped: src=%s len=%zd reason=%s", text, n, fipsd_dns_drop_reason_str(reason));
             atomic_fetch_add(&s->dropped, 1);
+            if (s->observe) s->observe(s->observe_user, FIPSD_GW_DNS_SEEN_DROPPED);
             continue;
         }
         if (outcome == FIPSD_GW_DNS_REFUSE)
@@ -517,6 +519,7 @@ int fipsd_gw_dns_serve(fipsd_gw_dns_server *s)
         if (sent < 0) FIPSD_DEBUG(MODULE, "Failed to send DNS response: error=%s", strerror(errno));
         else if (withheld) FIPSD_DEBUG(MODULE, "DNS reply to %s withheld: reason=%s", text, withheld);
         atomic_fetch_add(&s->answered, 1);
+        if (s->observe) s->observe(s->observe_user, FIPSD_GW_DNS_SEEN_ANSWERED);
     }
     if (rc == 0) FIPSD_INFO(MODULE, "DNS resolver shutting down");
     int saved = errno;

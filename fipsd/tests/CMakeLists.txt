@@ -646,3 +646,27 @@ if(FIPS_ENABLE_BENCH)
   nostrc_describe_test(FipsdPerfLoopbackTest OWNER fipsd TARGETS fipsd fipsd_perf_native
     INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/perf_loopback.py" "${CMAKE_CURRENT_SOURCE_DIR}/udp_interop.py")
 endif()
+
+# fips-gateway (nostrc-iq1n9.3): one executable, a suite per module, each its
+# own test. The portable core runs on every platform; Linux-only cases are
+# compiled in on Linux. The root-only netns smoke is registered with the
+# executable (fipsd/CMakeLists.txt), which exists on Linux alone.
+fipsd_unit_test(fipsd_gateway_test test_gateway.c)
+target_sources(fipsd_gateway_test PRIVATE
+  test_gateway_pool.c test_gateway_conntrack.c test_gateway_state.c test_gateway_nat.c
+  test_gateway_net.c test_gateway_dns.c test_gateway_control.c test_gateway_shutdown.c)
+target_link_libraries(fipsd_gateway_test PRIVATE fipsd_gateway_core)
+target_compile_definitions(fipsd_gateway_test PRIVATE
+  "FIPSD_GATEWAY_GOLDEN_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/gateway_golden\"")
+add_dependencies(fipsd_tests fipsd_gateway_test)
+file(GLOB _fipsd_gateway_goldens CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/gateway_golden/*.json")
+foreach(_suite Pool:pool Conntrack:conntrack State:state Nat:nat Net:net Dns:dns Control:control Shutdown:shutdown)
+  string(REPLACE ":" ";" _pair "${_suite}")
+  list(GET _pair 0 _name)
+  list(GET _pair 1 _arg)
+  add_test(NAME FipsdGateway${_name}Test COMMAND fipsd_gateway_test ${_arg})
+  set_tests_properties(FipsdGateway${_name}Test PROPERTIES TIMEOUT 180 LABELS "fips;unit;gateway"
+    ENVIRONMENT "FIPSD_WORKERS=2")
+  nostrc_describe_test(FipsdGateway${_name}Test OWNER fipsd TARGETS fipsd_gateway_test
+    INPUTS ${_fipsd_gateway_goldens})
+endforeach()

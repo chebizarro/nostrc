@@ -91,13 +91,17 @@ size_t fipsd_gw_dns_respond(fipsd_gw_dns_resolver *r, const uint8_t *datagram, s
  * interface, or on an IPv6 socket that did not say where it arrived. */
 bool fipsd_gw_dns_mesh_arrival(bool has_arrival, uint32_t arrival, bool has_mesh, uint32_t mesh, bool ipv6_socket);
 
+/* What the serve loop did with one datagram, after any reply was sent. */
+typedef enum fipsd_gw_dns_seen { FIPSD_GW_DNS_SEEN_MESH, FIPSD_GW_DNS_SEEN_DROPPED, FIPSD_GW_DNS_SEEN_ANSWERED } fipsd_gw_dns_seen;
+typedef void (*fipsd_gw_dns_observe_fn)(void *user, fipsd_gw_dns_seen seen);
 typedef struct fipsd_gw_dns_server {
     int fd;
     bool ipv6, wildcard;
     char mesh_if[64];
     fipsd_gw_dns_resolver *resolver;
     atomic_bool stopping;
-    atomic_ulong answered, dropped; /* observed by tests */
+    atomic_ulong answered, dropped;
+    fipsd_gw_dns_observe_fn observe; void *observe_user; /* optional, set before serving */
 } fipsd_gw_dns_server;
 /* The server over a bound listener; the mesh interface is looked up by name
  * per query, so a daemon restart that recreates its TUN is followed. */
