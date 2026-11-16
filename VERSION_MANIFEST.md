@@ -1,5 +1,12 @@
 # Component Version Manifest
 
+nostrc-gfi8h.2: fipsd stays **0.1.0 Unreleased**; UDP sockets, authenticated
+connected-peer drains, classifier registration and additive transport counters
+fold into the initial daemon. libgo stays **0.3.0 Unreleased**: compatible
+owner-directed fd cancellation/reset, an I/O-armed trace hook and a live-scheduler
+initialization fast path fold into its unreleased runtime. libfips-core and wire formats are unchanged; no published
+release/tag change.
+
 nostrc-gfi8h.1: fipsd stays 0.1.0 Unreleased; shared transport instances, FMP framing, binder/presence, medium, socket buffers and loopback migration fold into the initial unreleased daemon. Append-only private transport metadata and control interface medium; no new wire envelope, core/libgo version or published release/tag change.
 
 nostrc-f66sr.7: PATCH-class restart-replay correction folded into fipsd 0.1.0 Unreleased (inbound restart candidates are held and the live link is evicted only after key confirmation). No public API, wire or FMP core decision change, no version bump or tag; libfips-core unchanged (documentation-only upstream finding note).

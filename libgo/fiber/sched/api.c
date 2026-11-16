@@ -13,6 +13,7 @@
 #include "../../include/go.h"
 
 static pthread_once_t gof_once_ctrl = PTHREAD_ONCE_INIT;
+static atomic_bool gof_initialized = false;
 /* pthread_once runs the initializer on its winning caller. Keep that caller's
  * argument local: concurrent spawn/get_stats calls must not overwrite it. */
 static _Thread_local size_t gof_init_stack_bytes = 0;
@@ -22,6 +23,7 @@ static void gof_do_init(void) {
   gof_register_channel_hooks();
   /* Register our spawn function with libgo so go_fiber_compat works */
   go_register_fiber_spawn(gof_spawn);
+  atomic_store_explicit(&gof_initialized, true, memory_order_release);
 }
 
 /* ── Background scheduler state ──────────────────────────────────────── */
@@ -41,6 +43,10 @@ int gof_bg_running(void) {
 }
 
 void gof_init(size_t default_stack_bytes) {
+  /* Spawn/get_stats on a live scheduler need no caller argument. Besides
+   * avoiding pthread_once overhead, this avoids mutating OS-thread TLS from
+   * different logical fibers sharing that worker after initialization. */
+  if (atomic_load_explicit(&gof_initialized, memory_order_acquire)) return;
   gof_init_stack_bytes = default_stack_bytes;
   pthread_once(&gof_once_ctrl, gof_do_init);
 }

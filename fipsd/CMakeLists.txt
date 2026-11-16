@@ -125,3 +125,7 @@ target_sources(fipsd_lib PRIVATE src/nostr/events.c src/nostr/advert.c
   src/nostr/traversal.c src/nostr/inbox.c)
 target_link_libraries(fipsd_lib PUBLIC nostr nostr_nip17_core nostr_nip59_core
   nostr_nip44_core nip40)
+
+# UDP datagrams and authenticated connected-peer drains (nostrc-gfi8h.2).
+target_sources(fipsd_lib PRIVATE src/transport/udp/udp.c src/transport/udp/io.c
+  src/transport/udp/connected.c src/transport/udp/classify.c src/transport/udp/dns.c)

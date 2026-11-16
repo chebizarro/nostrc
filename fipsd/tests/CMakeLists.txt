@@ -300,3 +300,32 @@ add_dependencies(fipsd_tests fipsd_node_restart_replay_test)
 add_test(NAME FipsdNodeRestartReplayTest COMMAND fipsd_node_restart_replay_test)
 set_tests_properties(FipsdNodeRestartReplayTest PROPERTIES TIMEOUT 60 LABELS "fips;node;acl" ENVIRONMENT "FIPSD_WORKERS=2")
 nostrc_describe_test(FipsdNodeRestartReplayTest OWNER fipsd TARGETS fipsd_node_restart_replay_test)
+
+# Re-run the complete node gate, not a reduced UDP handshake mock.
+foreach(family IN ITEMS 4 6)
+  fipsd_unit_test(fipsd_udp_two_nodes_v${family}_test test_node_two_nodes.c)
+  target_compile_definitions(fipsd_udp_two_nodes_v${family}_test PRIVATE FIPSD_TEST_UDP=1)
+  if(family EQUAL 6)
+    target_compile_definitions(fipsd_udp_two_nodes_v${family}_test PRIVATE FIPSD_TEST_UDP_V6=1)
+  endif()
+  add_dependencies(fipsd_tests fipsd_udp_two_nodes_v${family}_test)
+  add_test(NAME FipsdUdpTwoNodesV${family}Test COMMAND fipsd_udp_two_nodes_v${family}_test)
+  set_tests_properties(FipsdUdpTwoNodesV${family}Test PROPERTIES TIMEOUT 300 LABELS "fips;transport;node"
+    ENVIRONMENT "FIPSD_WORKERS=2")
+  nostrc_describe_test(FipsdUdpTwoNodesV${family}Test OWNER fipsd TARGETS fipsd_udp_two_nodes_v${family}_test)
+endforeach()
+
+fipsd_unit_test(fipsd_udp_test test_udp.c)
+add_dependencies(fipsd_tests fipsd_udp_test)
+add_test(NAME FipsdUdpTest COMMAND fipsd_udp_test)
+set_tests_properties(FipsdUdpTest PROPERTIES TIMEOUT 60 LABELS "fips;transport" ENVIRONMENT "FIPSD_WORKERS=2")
+nostrc_describe_test(FipsdUdpTest OWNER fipsd TARGETS fipsd_udp_test)
+
+set(FIPSD_UDP_INTEROP_RUST_BINARY "" CACHE FILEPATH "Optional fips daemon built from the pinned Rust source")
+add_test(NAME FipsdUdpInteropSmokeTest COMMAND fipsd_test_tmpdir_run "/r-ipv6tun.sock"
+  "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/udp_interop.py"
+  --fipsd "$<TARGET_FILE:fipsd>" --rust "${FIPSD_UDP_INTEROP_RUST_BINARY}")
+set_tests_properties(FipsdUdpInteropSmokeTest PROPERTIES TIMEOUT 90 SKIP_RETURN_CODE 77
+  LABELS "fips;transport;interop" ENVIRONMENT "FIPSD_WORKERS=2")
+nostrc_describe_test(FipsdUdpInteropSmokeTest OWNER fipsd TARGETS fipsd fipsd_test_tmpdir_run
+  INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/udp_interop.py")

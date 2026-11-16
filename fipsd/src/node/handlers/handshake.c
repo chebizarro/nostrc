@@ -293,6 +293,7 @@ static peer_rec *establish(handlers *h, const fips_peer_identity *identity, fips
     }
     link_exec_result r = {0};
     (void)hs_link_execute(h, rec, addr, NULL, 0, &r);
+    if (t->ops->authenticated) t->ops->authenticated(t, addr, direction);
     promoted(h, rec);
     return rec;
 }
@@ -320,6 +321,9 @@ static void remove_peer_carry(handlers *h, peer_rec *rec, fips_rekey_close why, 
     hs_tree_peer_removed(h, rec);
     hs_bloom_peer_removed(h, rec);
     hs_path_peer_removed(h, rec);
+    const fipsd_peer_info *info = fipsd_active_peer_info(peer);
+    fipsd_transport *transport = hs_transport(h, info->transport);
+    if (transport && transport->ops->close_connection) transport->ops->close_connection(transport, &info->addr);
     hs_session_peer_removed(h, &addr);
     fips_rekey_carry local = {0};
     fips_rekey_outputs_clear(&h->link_out);

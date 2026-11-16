@@ -4,15 +4,16 @@ bool fipsd_dp_peer_rebind(handlers *h, peer_rec *rec)
 {
     const fipsd_peer_info *info = fipsd_active_peer_info(rec->peer);
     uint16_t mtu = fipsd_dp_link_mtu(h, rec, info->transport, &info->addr);
-    /* C has no connected-UDP driver/socket to drop. Its send cache is the
-     * immutable endpoint snapshot plus the destination clamp. Discard the old
-     * path's measurement, even on a same-transport address switch. Old crypto
+    /* Discard the old path's measurement, even on a same-transport address
+     * switch. The path owner closes its old connected socket. Old crypto
      * jobs retain keys/bytes only: dispatch.c resolves the active pair afresh. */
     fipsd_dp_mtu_release(h->dataplane, &rec->addr);
     fipsd_dp_mtu_set(h->dataplane, &rec->addr, mtu);
     h->dataplane->needs_publish = true;
     hs_mark_dirty(h);
     if (!fipsd_dp_publish(h)) return false;
+    fipsd_transport *transport = hs_transport(h, info->transport);
+    if (transport && transport->ops->authenticated) transport->ops->authenticated(transport, &info->addr, info->direction);
     fipsd_dp_tighten_via(h, &rec->addr, mtu);
     hs_host_link_mtu_changed(h, mtu);
     return true;
@@ -55,6 +56,11 @@ void fipsd_dp_link_deliver(handlers *h, peer_rec *rec, fipsd_dp_packet *p, uint8
     if (p->ce) METRIC(h, congestion, ce_received);
     hs_mmp_frame_received(h, rec, p->job.counter, timestamp, p->wire_size, p->ce);
     fipsd_transport *t = hs_transport(h, p->transport);
+    if (t && t->ops->authenticated) {
+        const fipsd_peer_info *info = fipsd_active_peer_info(rec->peer);
+        if (fips_transport_id_equal(info->transport, p->transport) && fips_transport_addr_equal(&info->addr, &p->endpoint))
+            t->ops->authenticated(t, &p->endpoint, info->direction);
+    }
     if (n && t) hs_path_account(h, rec, t, &p->endpoint, p->wire_size, message[0]);
     if (n > sizeof h->msg_buf) return;
     memcpy(h->msg_buf, message, n);

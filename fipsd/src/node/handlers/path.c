@@ -75,6 +75,9 @@ static void run_outputs(handlers *h, peer_rec *rec, fips_path_outputs *out)
             break;
         }
         case FIPS_PATH_OUTPUT_Switched: {
+            const fipsd_peer_info *old = fipsd_active_peer_info(rec->peer);
+            fipsd_transport *previous = hs_transport(h, old->transport);
+            if (previous && previous->ops->close_connection) previous->ops->close_connection(previous, &old->addr);
             fipsd_peer_admission a = fipsd_peer_table_rebind(h->peers->table, &rec->addr, o->to.transport, &o->to.addr);
             if (a != FIPSD_ADMIT_OK) {
                 /* The Bundle already switched. Do not keep a live link whose

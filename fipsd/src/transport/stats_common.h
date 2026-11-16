@@ -5,6 +5,8 @@
 typedef struct fipsd_transport_stats {
     _Atomic uint64_t packets_sent, packets_recv, bytes_sent, bytes_recv;
     _Atomic uint64_t dropped, errors, inbound, outbound;
+    _Atomic uint64_t ecn_recv, ce_recv, pktinfo_recv, kernel_drops;
+    _Atomic uint64_t classifier_drops, malformed, pool_full;
 } fipsd_transport_stats;
 void fipsd_transport_stats_init(fipsd_transport_stats *);
 void fipsd_transport_stats_sent(fipsd_transport_stats *, size_t);

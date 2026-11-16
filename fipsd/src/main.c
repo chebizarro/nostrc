@@ -13,6 +13,7 @@
 #include "runtime.h"
 #include "node/context.h"
 #include "node/handlers/handlers.h"
+#include "transport/udp/udp.h"
 
 #define MODULE "main"
 
@@ -148,7 +149,11 @@ int main(int argc, char **argv)
     fipsd_node_options node_options = {0};
     if (handlers) fipsd_node_handlers_install(handlers, &node_options);
     fipsd_node *node = handlers ? fipsd_node_create(snapshots, &node_options) : NULL;
-    fipsd_subsystem *node_subsystem = node ? fipsd_node_subsystem(node) : NULL;
+    fipsd_transport *udp[FIPSD_TRANSPORT_MAX] = {0};
+    size_t udp_count = 0;
+    bool udp_ok = node && fipsd_udp_register_config(fipsd_node_transports(node), config, udp, &udp_count) == 0;
+    /* Asking for the subsystem seals the transport registry. */
+    fipsd_subsystem *node_subsystem = udp_ok ? fipsd_node_subsystem(node) : NULL;
     fipsd_control_service control;
     fipsd_control_provider provider = handlers ? fipsd_node_handlers_provider(handlers) : (fipsd_control_provider){0};
     fipsd_control_service_init(&control, snapshots, handlers ? &provider : NULL);
@@ -168,7 +173,7 @@ int main(int argc, char **argv)
     if (!rt) {
         FIPSD_ERROR(MODULE, "cannot allocate the runtime");
         code = FIPSD_EXIT_FAILURE;
-    } else if (!node_subsystem || fipsd_runtime_register(rt, &service.subsystem) != 0 ||
+    } else if (!node_subsystem || !udp_ok || fipsd_runtime_register(rt, &service.subsystem) != 0 ||
                fipsd_runtime_register(rt, node_subsystem) != 0 ||
                (control_enabled && fipsd_runtime_register(rt, &control.subsystem) != 0) ||
                fipsd_runtime_start(rt) != 0) {
@@ -178,9 +183,9 @@ int main(int argc, char **argv)
         GoRefPtr node_status = fipsd_node_status_load(fipsd_node_status_slot(node));
         const fipsd_node_status *state = node_status.ptr;
         if (!state || !state->ready)
-            FIPSD_WARN(MODULE, "node not ready (state=%d); Tier B2 transports are not registered; host remains available",
+            FIPSD_WARN(MODULE, "node not ready (state=%d); waiting for configured transports; host remains available",
                        state ? (int)state->state : -1);
-        else if (fipsd_node_handlers_dial_configured(handlers) != 0)
+        if (fipsd_node_handlers_dial_configured(handlers) != 0)
             FIPSD_WARN(MODULE, "configured peers could not be queued for dialing");
         go_refptr_release(&node_status);
         FIPSD_INFO(MODULE, "fipsd running");
@@ -193,6 +198,7 @@ int main(int argc, char **argv)
     fipsd_runtime_destroy(rt);
     fipsd_node_destroy(node);
     fipsd_node_handlers_destroy(handlers);
+    for (size_t i = 0; i < udp_count; ++i) fipsd_udp_destroy(udp[i]);
     fipsd_control_service_clear(&control);
     go_swap_free(snapshots);
     FIPSD_INFO(MODULE, "fipsd shutdown complete (exit %d)", code);

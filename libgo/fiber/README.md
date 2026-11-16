@@ -161,6 +161,8 @@ ssize_t gof_read(int fd, void *buf, size_t n);
 ssize_t gof_write(int fd, const void *buf, size_t n);
 int     gof_connect(int fd, const struct sockaddr *sa, socklen_t slen, int timeout_ms);
 int     gof_accept(int fd, struct sockaddr *sa, socklen_t *slen, int timeout_ms);
+int     gof_io_reset_fd(int fd);
+int     gof_io_cancel_fd(int fd);
 ssize_t gof_recvfrom(int fd, void *buf, size_t n, int flags,
                      struct sockaddr *sa, socklen_t *slen, int timeout_ms);
 ssize_t gof_sendto(int fd, const void *buf, size_t n, int flags,
@@ -181,6 +183,18 @@ unlike `gof_write`, they never split a message or resend its control data.
 `gof_recvmsg` exposes the OS's `msg_flags` (including truncation) and control data,
 so callers retain the usual responsibility to inspect them and close received
 `SCM_RIGHTS` fds. The Windows implementations return `-1`/`ENOTSUP`.
+
+For owner-directed teardown, prepare a newly owned fd with `gof_io_reset_fd`
+(which may fail allocation), then use `gof_io_cancel_fd` to latch `ECANCELED`
+for existing and future readiness waits. This includes cancellation between
+registration and park, without requiring socket shutdown, a live interface or
+a periodic receive timeout. Successful immediate syscalls may still finish;
+the caller checks its stop state after return. Detach the fd from new users,
+join **every** existing user, then reset the latch before closing/reusing the
+descriptor. Reset while a waiter remains queued returns `EBUSY`; readiness
+already claimed is not proof that a user has joined. Descriptor aliases are
+not tracked. The weak `gof_trace_on_io_armed` hook marks the registered/pre-park
+boundary; like the other hooks it must not yield or call fiber APIs.
 
 Each fiber tracks its current `wait_fd` / `wait_events` for O(1) waiter
 removal when a timeout fires before an I/O event.

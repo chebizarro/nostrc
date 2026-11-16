@@ -35,6 +35,9 @@ static json_t *data_of(json_t *response, const char *key)
 }
 int main(void)
 {
+#ifdef FIPSD_TEST_UDP
+    (void)fipsd_test_tmpdir(NULL);
+#endif
     fipsd_runtime_config rcfg; fipsd_runtime_config_default(&rcfg); rcfg.workers = 2; rcfg.handle_signals = false; rcfg.grace_ms = 20000;
     fipsd_runtime *rt = fipsd_runtime_create(&rcfg); assert(rt);
     fipsd_loopback_network *net = fipsd_loopback_network_create(); assert(net);
@@ -50,11 +53,23 @@ int main(void)
     assert(nt_init(&a, net, "A", "loop:a", yaml_a, &hcfg, 1));
     assert(nt_init(&b, net, "B", "loop:b", yaml_b, &hcfg, 1));
     /* Metadata-only loopback interface; no host interface is created. */
+#ifndef FIPSD_TEST_UDP
     a.transport->interface_name = "loop-test";
     b.transport->interface_name = "loop-test";
+#endif
     assert(fipsd_runtime_register(rt, fipsd_node_subsystem(a.node)) == 0);
     assert(fipsd_runtime_register(rt, fipsd_node_subsystem(b.node)) == 0);
     assert(fipsd_runtime_start(rt) == 0);
+#ifdef FIPSD_TEST_UDP
+    for (test_node *n = &a; n; n = n == &a ? &b : NULL) {
+        void *value = NULL;
+        GoSelectCase bound = {GO_SELECT_RECEIVE, fipsd_udp_bound(n->transport), NULL, &value};
+        GoSelectResult result = go_select_timeout(&bound, 1, NT_WAIT_MS);
+        assert(result.selected_case == 0 && value);
+        assert(fipsd_udp_address(n->transport, &n->udp_addr));
+        assert(fipsd_udp_connected_count(n->transport) == 0);
+    }
+#endif
     for (test_node *n = &a; n; n = n == &a ? &b : NULL) {
         GoRefPtr status = fipsd_node_status_load(fipsd_node_status_slot(n->node));
         assert(status.ptr && ((fipsd_node_status *)status.ptr)->ready);
@@ -65,6 +80,10 @@ int main(void)
     assert(fipsd_node_handlers_connect(a.h, &b.identity, (fips_transport_id){1}, b.addr) == 0);
     fipsd_node_notice *e = nt_await(&a, FIPSD_NOTICE_LINK_UP, &b.identity.node_addr, NT_WAIT_MS); assert(e); free(e);
     e = nt_await(&b, FIPSD_NOTICE_LINK_UP, &a.identity.node_addr, NT_WAIT_MS); assert(e); free(e);
+#ifdef FIPSD_TEST_UDP
+    assert(fipsd_udp_connected_count(a.transport) == 1);
+    assert(fipsd_udp_connected_count(b.transport) == 1);
+#endif
     /* 2. Spanning tree: the larger address adopts the smaller as root. */
     bool a_smaller = memcmp(a.identity.node_addr.bytes, b.identity.node_addr.bytes, 16) < 0;
     test_node *root = a_smaller ? &a : &b, *leaf = a_smaller ? &b : &a;
@@ -154,11 +173,20 @@ int main(void)
         json_decref(status);
         json_t *transports = nt_query(n, "show_transports");
         json_t *tr = json_array_get(data_of(transports, "transports"), 0);
-        json_t *iface = json_object_get(tr, "interface"), *stats = json_object_get(tr, "stats");
+        json_t *stats = json_object_get(tr, "stats");
+#ifndef FIPSD_TEST_UDP
+        json_t *iface = json_object_get(tr, "interface");
         assert(!strcmp(json_string_value(json_object_get(iface, "presence")), "present"));
         assert(!strcmp(json_string_value(json_object_get(iface, "medium")), "unknown"));
         assert(json_is_false(json_object_get(iface, "carrier")));
         assert(json_integer_value(json_object_get(iface, "binds")) == 1);
+#else
+        assert(json_integer_value(json_object_get(stats, "pktinfo_recv")) > 0);
+        printf("%s UDP: pktinfo=%lld ECN=%lld CE=%lld connected=%zu\n", n->name,
+            (long long)json_integer_value(json_object_get(stats, "pktinfo_recv")),
+            (long long)json_integer_value(json_object_get(stats, "ecn_recv")),
+            (long long)json_integer_value(json_object_get(stats, "ce_recv")), fipsd_udp_connected_count(n->transport));
+#endif
         assert(json_integer_value(json_object_get(stats, "frames_sent")) > 0);
         assert(json_integer_value(json_object_get(stats, "frames_recv")) > 0);
         json_decref(transports);
@@ -168,6 +196,10 @@ int main(void)
     assert(fipsd_node_handlers_disconnect(a.h, &b.identity.node_addr) == 0);
     e = nt_await(&a, FIPSD_NOTICE_LINK_DOWN, &b.identity.node_addr, NT_WAIT_MS); assert(e); free(e);
     e = nt_await(&b, FIPSD_NOTICE_LINK_DOWN, &a.identity.node_addr, NT_WAIT_MS); assert(e); free(e);
+#ifdef FIPSD_TEST_UDP
+    assert(fipsd_udp_connected_count(a.transport) == 0);
+    assert(fipsd_udp_connected_count(b.transport) == 0);
+#endif
     {
         json_t *peers = nt_query(&b, "show_peers");
         assert(json_array_size(data_of(peers, "peers")) == 0);
@@ -195,7 +227,11 @@ int main(void)
         printf("%s dispatcher replay_marks=%llu; off-dispatcher replay writes=%llu\n",
             n->name, (unsigned long long)marks, (unsigned long long)off);
     }
+#ifdef FIPSD_TEST_UDP
+    nt_print_trace("two-node real UDP proof");
+#else
     nt_print_trace("two-node loopback proof");
+#endif
     fipsd_runtime_destroy(rt);
     nt_destroy(&a); nt_destroy(&b);
     fipsd_loopback_network_destroy(net);

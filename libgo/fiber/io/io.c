@@ -71,6 +71,7 @@ typedef struct gof_waiter { /* single waiter node */
 
 typedef struct gof_fdwait {     /* fd entry with separate read/write queues */
   int fd;
+  int cancelled;
   gof_waiter *rd_head, *rd_tail;
   gof_waiter *wr_head, *wr_tail;
   struct gof_fdwait *next;
@@ -135,6 +136,34 @@ static int fdwait_events(gof_fdwait *e) {
   return (e->rd_head ? GOF_POLL_READ : 0) | (e->wr_head ? GOF_POLL_WRITE : 0);
 }
 
+int gof_io_reset_fd(int fd) {
+  if (fd < 0) { fiber_set_errno(EINVAL); return -1; }
+  pthread_mutex_lock(&io_mu);
+  gof_fdwait *e = fdwait_get(fd, 1);
+  int error = !e ? ENOMEM : fdwait_events(e) ? EBUSY : 0;
+  if (!error) e->cancelled = 0;
+  pthread_mutex_unlock(&io_mu);
+  if (error) { fiber_set_errno(error); return -1; }
+  return 0;
+}
+
+int gof_io_cancel_fd(int fd) {
+  if (fd < 0) { fiber_set_errno(EINVAL); return -1; }
+  pthread_mutex_lock(&io_mu);
+  gof_fdwait *e = fdwait_get(fd, 1);
+  if (e) {
+    e->cancelled = 1;
+    /* Retain queue membership until each user consumes cancellation, just
+     * like scheduler stop. A readiness wake already in flight sees the latch
+     * when it consumes its wait. */
+    for (gof_waiter *w = e->rd_head; w; w = w->next) gof_sched_make_runnable(w->f);
+    for (gof_waiter *w = e->wr_head; w; w = w->next) gof_sched_make_runnable(w->f);
+  }
+  pthread_mutex_unlock(&io_mu);
+  if (!e) { fiber_set_errno(ENOMEM); return -1; }
+  return 0;
+}
+
 /* io_mu serializes publication/arming with readiness and stop cancellation.
  * Register first: a ready one-shot event must never find an empty queue. */
 static int io_waiter_add_and_arm(int fd, int events, uint64_t deadline_ns,
@@ -145,6 +174,10 @@ static int io_waiter_add_and_arm(int fd, int events, uint64_t deadline_ns,
     error = ECANCELED;
   } else {
     gof_fdwait *e = fdwait_get(fd, 1);
+    if (e && e->cancelled) {
+      pthread_mutex_unlock(&io_mu);
+      return ECANCELED;
+    }
     f->wait_fd = fd;
     f->wait_events = events;
     if (!e || ((events & GOF_POLL_READ) && waiter_push(&e->rd_head, &e->rd_tail, f)) ||
@@ -225,6 +258,7 @@ static int wait_event_with_deadline(int fd, int events, uint64_t deadline_ns) {
   ensure_ready_callback();
   int error = io_waiter_add_and_arm(fd, events, deadline_ns, self);
   if (error) { fiber_set_errno(error); return -1; }
+  gof_trace_on_io_armed(fd, events);
 
   /* Readiness between arm and park claims RUNNABLE/PARKING -> WOKEN;
    * the scheduler then consumes that claim without losing the wake. */
@@ -233,7 +267,8 @@ static int wait_event_with_deadline(int fd, int events, uint64_t deadline_ns) {
   pthread_mutex_lock(&io_mu);
   io_waiter_remove_fiber_locked(self);
   atomic_fetch_sub_explicit(&g_io_waiter_count, 1, memory_order_release);
-  error = gof_bg_stop_requested() ? ECANCELED : 0;
+  gof_fdwait *entry = fdwait_get(fd, 0);
+  error = gof_bg_stop_requested() || (entry && entry->cancelled) ? ECANCELED : 0;
   pthread_mutex_unlock(&io_mu);
   if (error == ECANCELED) gof_sched_wake_all();
   gof_trace_on_unblock(fd, events);

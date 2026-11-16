@@ -367,8 +367,12 @@ static snap *build(handlers *h, fips_instant now)
         if (t->shared) {
             fips_link_stats stats = fipsd_transport_stats_snapshot(&t->shared->stats);
             fipsd_control_counter counts[] = {{"frames_sent", stats.packets_sent}, {"frames_recv", stats.packets_recv},
-                {"bytes_sent", stats.bytes_sent}, {"bytes_recv", stats.bytes_recv}};
-            ts[i].stats = counters_of(x, counts, sizeof counts / sizeof counts[0]);
+                {"bytes_sent", stats.bytes_sent}, {"bytes_recv", stats.bytes_recv},
+                {"ecn_recv", atomic_load(&t->shared->stats.ecn_recv)}, {"ce_recv", atomic_load(&t->shared->stats.ce_recv)},
+                {"pktinfo_recv", atomic_load(&t->shared->stats.pktinfo_recv)}, {"kernel_drops", atomic_load(&t->shared->stats.kernel_drops)},
+                {"malformed", atomic_load(&t->shared->stats.malformed)}, {"classifier_drops", atomic_load(&t->shared->stats.classifier_drops)},
+                {"pool_full", atomic_load(&t->shared->stats.pool_full)}};
+            ts[i].stats = counters_of(x, counts, !strcmp(t->type, "udp") ? sizeof counts / sizeof counts[0] : 4);
             if (t->interface_name) {
                 fipsd_presence_view v = fipsd_presence_snapshot(&t->shared->presence);
                 fipsd_control_interface *in = salloc(x, sizeof *in);
