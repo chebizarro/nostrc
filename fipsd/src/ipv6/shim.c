@@ -327,8 +327,10 @@ int fipsd_ipv6_shim_start(fipsd_ipv6_shim *s, fipsd_runtime *rt)
         if (fipsd_runtime_spawn(rt, fns[i], s) != 0) { (void)fipsd_ipv6_shim_stop(s); errno = EAGAIN; return -1; }
         ++s->fibers;
     }
+    unsigned ipv6_mtu = fipsd_ipv6_mesh_state_ipv6_mtu(&s->state);
+    unsigned mss_ceiling = fipsd_ipv6_mesh_state_ceiling(&s->state);
     FIPSD_INFO(MOD, "IPv6 shim up on %s (ipv6 mtu %u, mss ceiling %u)", fipsd_tun_name(s->cfg.tun),
-        fipsd_ipv6_mesh_state_ipv6_mtu(&s->state), fipsd_ipv6_mesh_state_ceiling(&s->state));
+        ipv6_mtu, mss_ceiling);
     if (s->cfg.firewall_scope_check) {
         fipsd_ipv6_filter_classifier *c = fipsd_ipv6_filter_query();
         fipsd_ipv6_filter_warn_scope(c, fipsd_tun_name(s->cfg.tun));
