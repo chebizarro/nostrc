@@ -135,6 +135,15 @@ void hf_finish(handshake_fixture *f)
     fips_rekey_completed_clear(&f->live); f->live = read.done;
     sodium_memzero(&read, sizeof read); free(e);
 }
+/* One established frame in, one OPEN result out. Every barrier consumes exactly
+ * the completions it caused: a token left behind by an earlier one would
+ * satisfy this wait before the frame's own result reaches the dispatcher. */
+void hf_open(handshake_fixture *f, fipsd_transport *from, const uint8_t *wire, size_t len)
+{
+    void *stale = NULL;
+    assert(go_channel_try_receive(f->completed, &stale) != 0);
+    hf_send(f, from, wire, len); hf_wait(f->completed);
+}
 void hf_heartbeat(handshake_fixture *f)
 {
     uint8_t wire[128], plain[32], hb = FIPS_LINK_Heartbeat;
@@ -144,7 +153,7 @@ void hf_heartbeat(handshake_fixture *f)
     uint64_t counter = fips_noise_session_current_send_counter(&f->live.session);
     fips_fmp_build_established_header((fips_session_index){f->live.theirs.value}, counter, 0, (uint16_t)plen, wire);
     assert(fips_noise_session_seal(&f->live.session, wire, aad, plain, plen, wire + aad, sizeof wire - aad, &len) == FIPS_NOISE_OK);
-    hf_send(f, f->client, wire, aad + len); hf_wait(f->completed);
+    hf_open(f, f->client, wire, aad + len);
 }
 void hf_policy(handshake_fixture *f, bool deny, const char *path)
 {

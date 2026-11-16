@@ -44,6 +44,7 @@ void hf_snapshot(handshake_fixture *, hf_state *);
 void hf_unchanged(const hf_state *, const hf_state *);
 void hf_start(handshake_fixture *, uint8_t epoch); /* construct fresh msg1 */
 void hf_send(handshake_fixture *, fipsd_transport *, const uint8_t *, size_t);
+void hf_open(handshake_fixture *, fipsd_transport *, const uint8_t *, size_t); /* established frame; await its OPEN result */
 fipsd_transport_event *hf_wire(handshake_fixture *, uint8_t type);
 void hf_finish(handshake_fixture *); /* read/authenticate msg2 */
 void hf_heartbeat(handshake_fixture *); /* send real AEAD, await worker result */

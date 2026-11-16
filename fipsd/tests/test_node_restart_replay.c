@@ -50,7 +50,7 @@ static void frame_at(handshake_fixture *f, fipsd_transport *from, uint32_t index
 {
     uint8_t wire[128];
     size_t len = seal_heartbeat(f, index, wire, sizeof wire);
-    hf_send(f, from, wire, len); hf_wait(f->completed);
+    hf_open(f, from, wire, len);
 }
 /* Traffic continues on the live link: one more authenticated frame delivered. */
 static void traffic(handshake_fixture *f, hf_state *live)
@@ -123,10 +123,16 @@ static void restart_confirmed(handshake_fixture *f, hf_state *live, uint8_t epoc
     confirmed(f, live, 1);
     assert(fips_transport_addr_equal(&live->info.addr, &source));
 }
-/* Two frames in flight at the candidate index. Whichever result lands first
- * confirms; the other either re-enters the ordinary path after being overtaken
- * (a third OPEN completion) or was already looked up as the promoted link's
- * index. Both orderings must deliver both frames and promote exactly once. */
+/* Two frames in flight at the candidate index. The dispatcher's own state when
+ * the second frame arrived fixes how many OPEN completions follow: a candidate
+ * still held means both frames were opened under the candidate keys, whichever
+ * result lands first confirms and the sibling overtaken by the promotion
+ * re-enters the ordinary path (a third OPEN); a link already promoted means the
+ * second frame was looked up as the new link's index directly. Both orderings
+ * must deliver both frames and promote exactly once. Wait for exactly that many
+ * completions: stopping once frames_in reads 2 could leave the trailing
+ * completion's token behind to satisfy a later barrier before its own frame's
+ * result, which is what made the following traffic() check flaky. */
 static void restart_confirmed_two_in_flight(handshake_fixture *f, hf_state *live, uint8_t epoch)
 {
     restart_answered(f, live, epoch);
@@ -134,11 +140,8 @@ static void restart_confirmed_two_in_flight(handshake_fixture *f, hf_state *live
     size_t alen = seal_heartbeat(f, f->live.theirs.value, a, sizeof a);
     size_t blen = seal_heartbeat(f, f->live.theirs.value, b, sizeof b);
     hf_send(f, f->client, a, alen); hf_send(f, f->client, b, blen);
-    hf_state now;
-    for (int completions = 0; completions < 3; ++completions) {
-        hf_wait(f->completed); hf_snapshot(f, &now);
-        if (now.frames_in == 2) break;
-    }
+    int completions = f->after.restart_pending ? 3 : 2; /* the hold was still pending when b arrived */
+    for (int i = 0; i < completions; ++i) hf_wait(f->completed);
     confirmed(f, live, 2);
 }
 int main(void)
