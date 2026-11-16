@@ -7,6 +7,10 @@
 #include "node/context.h"
 #include "node/handlers/handlers.h"
 #include "node/transport_loopback.h"
+#ifdef FIPSD_TEST_UDP
+#include "transport/udp/udp.h"
+#include "test_tmpdir.h"
+#endif
 #include "config/config.h"
 #include "control/protocol.h"
 #include "peer/table.h"
@@ -39,6 +43,7 @@ typedef struct test_node {
     fipsd_netmon_source netmon;
     fips_peer_identity identity;
     const fips_transport_addr *addr;
+    fips_transport_addr udp_addr;
 } test_node;
 typedef struct nt_trace { char lines[256][128]; size_t count; } nt_trace;
 static nt_trace nt_events;
@@ -92,9 +97,25 @@ static bool nt_init(test_node *n, fipsd_loopback_network *net, const char *name,
     fipsd_node_options options = {.workers = 2, .peer_capacity = hcfg->peer_capacity, .netmon_source = &n->netmon};
     fipsd_node_handlers_install(n->h, &options);
     n->node = fipsd_node_create(n->configs, &options);
+#ifdef FIPSD_TEST_UDP
+    (void)net; (void)address;
+    fipsd_udp_config udp; fipsd_udp_config_default(&udp);
+#ifdef FIPSD_TEST_UDP_V6
+    udp.bind_addr = "[::1]:0";
+#else
+    udp.bind_addr = "127.0.0.1:0";
+#endif
+    udp.mtu = 1280;
+    n->transport = fipsd_udp_create((fips_transport_id){transport_id}, "udp", &udp);
+#else
     n->transport = fipsd_loopback_transport_create(net, (fips_transport_id){transport_id}, "loop", address, 1280);
+#endif
     if (!n->configs || !n->h || !n->node || !n->transport) return false;
+#ifdef FIPSD_TEST_UDP
+    n->addr = &n->udp_addr;
+#else
     n->addr = fipsd_loopback_transport_address(n->transport);
+#endif
     return fipsd_transport_register(fipsd_node_transports(n->node), n->transport) == 0;
 }
 /* After the runtime started: public identity for the other node's dial. */
@@ -121,7 +142,11 @@ static void nt_destroy(test_node *n)
 {
     fipsd_node_destroy(n->node);
     fipsd_node_handlers_destroy(n->h);
+#ifdef FIPSD_TEST_UDP
+    fipsd_udp_destroy(n->transport);
+#else
     fipsd_loopback_transport_destroy(n->transport);
+#endif
     go_swap_free(n->configs);
 }
 static void nt_print_trace(const char *title)

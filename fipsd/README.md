@@ -24,6 +24,10 @@ Unix control socket (`9keoz.3`); `src/node/handlers/` implements the node
 protocol handlers (`9keoz.6`). Not implemented yet: Tier B2 network
 transports and the native host owner. The B4 TUN device owner is described below;
 the IPv6 packet shim is not implemented yet. Parsing a setting does not claim that its owning subsystem is
+protocol handlers (`9keoz.6`). `src/transport/udp/` implements real UDP and
+authenticated connected-peer drains (`gfi8h.2`). Not implemented yet: the
+other Tier B2 network transports and the native/TUN host
+owners (B4). Parsing a setting does not claim that its owning subsystem is
 implemented.
 
 ### Command line (docs/reference/cli-fips.md upstream)
@@ -469,8 +473,9 @@ reseed too; standby proofs wait for activation, and connection-oriented transpor
 use the transport MTU.
 
 This mirrors upstream `Run::switched`'s clear-old-UDP → claim → seed-MTU →
-tighten-sessions sequence. C has no per-peer connected UDP socket/drain yet: the
-equivalent send state is the immutable endpoint snapshot, destination clamp and
+tighten-sessions sequence. UDP now closes/joins the old connected socket before
+the endpoint claim and primes the new authenticated endpoint during reseeding.
+The other send state is the immutable endpoint snapshot, destination clamp and
 captured crypto job endpoint. A completion resolves ordinary traffic to the
 current active pair and checks its MTU, so jobs sealed before the switch cannot
 send to the old pair. Explicit path probes/acks/closes still use their named
@@ -856,11 +861,11 @@ interop unavailable/skipped); the benchmark is not included in that default.
 
 ### Remaining for Tier B2 and B4
 
-Tier B2: real UDP/TCP/connected receive/binder legs behind the
-transport seam, discovery and native network interoperability/performance.
-Shared interface presence/binding is implemented below; concrete socket owners
-still have to connect their bind/unbind callbacks. No real socket dataplane or deployment proof is
-claimed by loopback tests. B4: native API and IPv6 adapter owners replacing
+Tier B2: TCP and the other concrete transports, discovery and the full C/Rust
+interoperability/performance gate. UDP's real-socket two-node proof and optional
+Rust link smoke are described below; neither is deployment/performance proof.
+Shared interface presence/binding and UDP's concrete callbacks are implemented.
+B4: native API and IPv6 adapter owners replacing
 `native.c`/`host_link` notices, clamp publication/MSS application to the adapter,
 configured-peer address lists into path intake and rendezvous. Admission ACLs
 are active at the existing dial/handshake seam; they do not claim these remaining
@@ -1064,21 +1069,82 @@ Unknown/virtual interfaces are not guessed to be wired. The existing node
 task's node-include/provider-only edit boundary. Detection, projection and the
 core preference rule are tested; live detected-medium selection is not claimed.
 
-### UDP (`gfi8h.2`) integration contract
+### UDP (`gfi8h.2`)
 
-- Register its existing vtable and initialize the shared instance. `start_async`
-  starts the watcher; `network_changed` only forwards/coalesces notifications;
-  `stop` requests cancellation. The binder, not the node, owns all rebinding.
-- Implement bind/unbind and real tracked receive/send legs using
-  `gof_recvfrom/sendto/recvmsg/sendmsg`; handle readiness, pktinfo/ECN, kernel
-  drop counters and address semantics in the UDP owner. No timer polling.
-- Apply configured `recv_buf_size`/`send_buf_size` via `fipsd_sockbuf_set`
-  during off-scheduler setup (config normalization remains the authority).
-- Keep one UDP datagram per FMP frame, check MTU, deliver owned PACKET events,
-  and account successful sends/receives in shared stats. No stream prefix.
-- Preserve interface-absent startup and callback cancellation/descriptor join
-  contracts; wire discovery/connect policy and link bookkeeping as appropriate.
-- Add real socket and C/Rust network interop gates; loopback is not network proof.
+| Module under `src/transport/udp/` | Owner |
+|---|---|
+| `udp.{c,h}`, `internal.h` | Instance/config registration, watcher binding, numeric peer pool, send leases and MTU |
+| `io.{c,h}` | Socket options, interface binding, address conversion, checked pktinfo/ECN decoding and source cmsgs |
+| `connected.c` | Tracked listener/peer receive drains and cancel/join/close ownership |
+| `classify.{c,h}` | Before-start subsystem classifier registry; reserved Nostr punch prefixes never enter FMP |
+| `dns.{c,h}` | Numeric fast path and bounded 256-entry, 60-second peer-hostname cache |
+
+`main.c` registers singleton or named UDP instances **before** sealing the node
+subsystem. `bind_addr` includes its port; each instance owns one IPv4 or IPv6
+listener (IPv6-only; configure separate instances for both families). Existing
+normalized `mtu`, buffer sizes, `interface`, `outbound_only` and
+`accept_connections` settings drive the socket owner. Outbound-only binds an
+ephemeral IPv4 port and refuses fresh inbound handshakes. UDP discovery itself
+does not invent multicast peers; the node dials configured peer entries.
+
+Socket setup/close and hostname `getaddrinfo` run on the blocking executor.
+Hostname resolution here is configured-peer DNS, **not** the Tier B4 `.fips`
+DNS service. Unlike upstream's held-datagram/stale-refresh optimization, a cold
+hostname lookup awaits the executor result; numeric addresses never invoke DNS.
+The shared sockbuf helper sizes both listener and peer sockets and reports
+kernel clamping. Listener reuse options are set after bind: another listener
+cannot silently join an occupied port, but authenticated connected sockets can.
+
+Every receive uses indefinite `gof_recvmsg`, with packet and ancillary
+truncation rejected. Linux uses `IP_PKTINFO`, BSD/macOS `IP_RECVDSTADDR` plus
+`IP_RECVIF`, and IPv6 uses `IPV6_RECVPKTINFO`. ECN comes from IPv4 TOS or IPv6
+traffic class with DSCP bits masked out. Linux's cumulative `SO_RXQ_OVFL`
+counter is accumulated with wrapping deltas. `show_transports.stats` publishes
+`pktinfo_recv`, `ecn_recv`, `ce_recv`, `kernel_drops`, `malformed`,
+`classifier_drops` and `pool_full` alongside packet/byte totals. Darwin has no
+kernel UDP queue-drop ancillary counter. Listener replies select the received
+local destination via sendmsg control data; connected sends use the kernel's
+pinned source/route. One datagram is one FMP frame, without a stream prefix.
+Sends reject the configured MTU and report socket backpressure as failure.
+
+Only the node's authenticated IK/AEAD callback admits a numeric endpoint to the
+bounded connected pool (64 by default); parsing an envelope is not admission.
+Duplicate admission is idempotent; a full pool keeps using the listener.
+Connected sockets share the listener port, inherit its interface and buffers,
+and have their own tracked receive drains with identical classifier validation.
+Disconnect/path replacement removes the entry from lookup before cancellation,
+joins outstanding send leases and the drain, then closes the descriptor.
+Unexpected drain failure invalidates that binding generation, so a dead
+connected tuple cannot retain a kernel receive black hole.
+
+Absent-interface startup returns success. Netmon notifications and the shared
+watcher's backstop drive appearance/disappearance/rebind; no receive polling or
+timeout-close is used. `gof_io_cancel_fd` latches cancellation across the
+register/park race, independently of routes or interface presence. The socket
+owner joins all users, resets that latch, then closes. Raw close/shutdown is
+never used to cancel a parked receive. The added libgo trace hook exposes the
+armed/pre-park boundary for deterministic cancellation tests.
+
+`FipsdUdpTest` covers crafted v4/v6 ancillary records and truncated headers,
+real IPv4 CE marking, wildcard-listener reply source selection,
+buffer readback, permitted native loopback-interface
+binding, classifier dispatch on connected drains, malformed frame offsets,
+unauthenticated/duplicate/capped admission, drain close/reopen, and real socket
+rebinding driven by injected interface facts. Cancellation is tested before
+registration, after arming/before park (with simultaneous data readiness,
+repeated cancellation and EBUSY reset), and after committed park; no sleeps.
+`FipsdUdpTwoNodesV4Test` and `FipsdUdpTwoNodesV6Test` compile the **same complete
+proof** as `test_node_two_nodes.c`: link, tree, filters, XK session, bidirectional
+datagrams, session/link rekey, post-rekey traffic and disconnect.
+
+The optional `FipsdUdpInteropSmokeTest` skips without
+`FIPSD_UDP_INTEROP_RUST_BINARY`. With a daemon built from `libfips-core/UPSTREAM.md`
+in a scratch `CARGO_TARGET_DIR`, it launches minimal Rust/C UDP configs with a
+static C peer and requires both control sockets to report a link. It observes
+Rust's tick-published control snapshots within a bounded deadline, not a fixed
+warm-up sleep. The smoke passed locally against pin `6aa80504baa0fa312b392009eea0e3e59fb6fe4c`;
+the full interoperability gate remains `f66sr.1`. All UDP targets belong to
+`fipsd_tests`. Native macOS ARM64 sanitizer runs are not Linux/deployment proof.
 
 `FipsdTransportTest` covers unit-vector framing (upstream has no
 `tests/vectors/` transport corpus), every truncation/split/capacity offset,

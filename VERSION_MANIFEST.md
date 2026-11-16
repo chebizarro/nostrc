@@ -1,6 +1,12 @@
 # Component Version Manifest
 
 nostrc-9nxwk.1: fipsd stays 0.1.0 Unreleased; additive private TUN device/platform/syscall seams, ready-gated host lifecycle and control status fields fold into the initial unreleased daemon. libfips-core and libgo unchanged; no numeric bump, published release or tag. IPv6 shim delivery remains 9nxwk.2.
+nostrc-gfi8h.2: fipsd stays **0.1.0 Unreleased**; UDP sockets, authenticated
+connected-peer drains, classifier registration and additive transport counters
+fold into the initial daemon. libgo stays **0.3.0 Unreleased**: compatible
+owner-directed fd cancellation/reset, an I/O-armed trace hook and a live-scheduler
+initialization fast path fold into its unreleased runtime. libfips-core and wire formats are unchanged; no published
+release/tag change.
 
 nostrc-gfi8h.1: fipsd stays 0.1.0 Unreleased; shared transport instances, FMP framing, binder/presence, medium, socket buffers and loopback migration fold into the initial unreleased daemon. Append-only private transport metadata and control interface medium; no new wire envelope, core/libgo version or published release/tag change.
 

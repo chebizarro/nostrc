@@ -49,6 +49,10 @@ typedef struct fipsd_transport_ops {
     /* Dispatcher notification to binder; callback must enqueue/coalesce work,
      * not race binder-owned descriptor state. Snapshot is loaded from context. */
     void (*network_changed)(fipsd_transport *, const struct fipsd_netmon_event *);
+    /* Dispatcher-only, AFTER Noise/AEAD authentication. Datagram transports
+     * may promote a numeric endpoint into a connected socket; never called
+     * merely because an unauthenticated datagram arrived. Best effort. */
+    void (*authenticated)(fipsd_transport *, const fips_transport_addr *, fips_link_direction);
 } fipsd_transport_ops;
 struct fipsd_transport {
     const fipsd_transport_ops *ops;

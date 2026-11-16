@@ -138,3 +138,6 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
 else()
   message(FATAL_ERROR "fipsd TUN requires Linux, macOS or FreeBSD")
 endif()
+# UDP datagrams and authenticated connected-peer drains (nostrc-gfi8h.2).
+target_sources(fipsd_lib PRIVATE src/transport/udp/udp.c src/transport/udp/io.c
+  src/transport/udp/connected.c src/transport/udp/classify.c src/transport/udp/dns.c)

@@ -147,6 +147,18 @@ GO_FIBER_API ssize_t     gof_sendto(int fd, const void *buf, size_t n, int flags
 GO_FIBER_API ssize_t     gof_recvmsg(int fd, struct msghdr *msg, int flags, int timeout_ms);
 GO_FIBER_API ssize_t     gof_sendmsg(int fd, const struct msghdr *msg, int flags, int timeout_ms);
 
+/** Owner-directed readiness-wait cancellation, independent of scheduler stop.
+ * reset_fd prepares a newly owned descriptor (may fail with ENOMEM).
+ * cancel_fd latches ECANCELED for pending and future waits on that descriptor,
+ * including the race before a receive parks; it does not close/shutdown it.
+ * Successful nonblocking syscalls may still finish: callers check their stop
+ * state after return. The owner must join ALL users, then reset_fd before
+ * closing/reusing the descriptor. Never reset while a cancelled user is live.
+ * Both calls are thread/fiber-safe and never park. fd aliases are not tracked.
+ */
+GO_FIBER_API int         gof_io_reset_fd(int fd);
+GO_FIBER_API int         gof_io_cancel_fd(int fd);
+
 
 /**
  * @brief Snapshot of fiber diagnostic information.
@@ -249,10 +261,13 @@ GO_FIBER_API int  gof_get_npollers(void);
 GO_FIBER_API void __attribute__((weak)) gof_trace_on_switch(uint64_t old_id, uint64_t new_id);
 GO_FIBER_API void __attribute__((weak)) gof_trace_on_block(int fd, int ev);
 GO_FIBER_API void __attribute__((weak)) gof_trace_on_unblock(int fd, int ev);
+/* After waiter registration/arming, before the fiber announces its park. */
+GO_FIBER_API void __attribute__((weak)) gof_trace_on_io_armed(int fd, int ev);
 #else
 GO_FIBER_API void gof_trace_on_switch(uint64_t old_id, uint64_t new_id);
 GO_FIBER_API void gof_trace_on_block(int fd, int ev);
 GO_FIBER_API void gof_trace_on_unblock(int fd, int ev);
+GO_FIBER_API void gof_trace_on_io_armed(int fd, int ev);
 #endif
 
 #ifdef __cplusplus
