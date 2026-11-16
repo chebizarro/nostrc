@@ -84,6 +84,12 @@ static json_t *status(const fipsd_control_snapshot *s)
         set(sparks, fips_metrics[metrics[i]].name, a);
     }
     set(d, "sparklines", sparks);
+    if (s->tun_status) {
+        json_t *tun = json_deep_copy(s->tun_status);
+        int rc = tun ? json_object_update(d, tun) : -1;
+        json_decref(tun);
+        if (rc < 0) { json_decref(d); return NULL; }
+    }
     return fipsd_control_ok(d);
 }
 static json_t *tree(const fipsd_control_snapshot *s)

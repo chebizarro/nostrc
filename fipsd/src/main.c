@@ -13,6 +13,8 @@
 #include "runtime.h"
 #include "node/context.h"
 #include "node/handlers/handlers.h"
+#include "tun/lifecycle.h"
+#include "tun/status.h"
 
 #define MODULE "main"
 
@@ -151,6 +153,17 @@ int main(int argc, char **argv)
     fipsd_subsystem *node_subsystem = node ? fipsd_node_subsystem(node) : NULL;
     fipsd_control_service control;
     fipsd_control_provider provider = handlers ? fipsd_node_handlers_provider(handlers) : (fipsd_control_provider){0};
+    bool tun_enabled = fipsd_config_bool(fipsd_config_get(config, "tun.enabled"));
+    fipsd_tun_config tun_config = {
+        .name = fipsd_config_string(fipsd_config_get(config, "tun.name")),
+        .mtu = (uint16_t)fipsd_config_uint(fipsd_config_get(config, "tun.mtu")),
+        .transport_mtu = fipsd_tun_transport_mtu(config)};
+    fipsd_tun *tun = tun_enabled ? fipsd_tun_create(&tun_config, NULL, NULL) : NULL;
+    fipsd_tun_service tun_service;
+    if (tun) {
+        fipsd_tun_service_init(&tun_service, tun, node);
+        provider = fipsd_tun_provider(tun, provider);
+    }
     fipsd_control_service_init(&control, snapshots, handlers ? &provider : NULL);
     bool control_enabled = fipsd_config_bool(fipsd_config_get(config, "node.control.enabled"));
 
@@ -168,8 +181,9 @@ int main(int argc, char **argv)
     if (!rt) {
         FIPSD_ERROR(MODULE, "cannot allocate the runtime");
         code = FIPSD_EXIT_FAILURE;
-    } else if (!node_subsystem || fipsd_runtime_register(rt, &service.subsystem) != 0 ||
+    } else if (!node_subsystem || (tun_enabled && !tun) || fipsd_runtime_register(rt, &service.subsystem) != 0 ||
                fipsd_runtime_register(rt, node_subsystem) != 0 ||
+               (tun && fipsd_runtime_register(rt, &tun_service.subsystem) != 0) ||
                (control_enabled && fipsd_runtime_register(rt, &control.subsystem) != 0) ||
                fipsd_runtime_start(rt) != 0) {
         FIPSD_ERROR(MODULE, "start-up failed");
@@ -191,6 +205,7 @@ int main(int argc, char **argv)
         }
     }
     fipsd_runtime_destroy(rt);
+    fipsd_tun_destroy(tun);
     fipsd_node_destroy(node);
     fipsd_node_handlers_destroy(handlers);
     fipsd_control_service_clear(&control);

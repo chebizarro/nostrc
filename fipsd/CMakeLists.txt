@@ -125,3 +125,16 @@ target_sources(fipsd_lib PRIVATE src/nostr/events.c src/nostr/advert.c
   src/nostr/traversal.c src/nostr/inbox.c)
 target_link_libraries(fipsd_lib PUBLIC nostr nostr_nip17_core nostr_nip59_core
   nostr_nip44_core nip40)
+
+# Tier B4 device owner; IPv6 packet adaptation is a separate layer.
+target_sources(fipsd_lib PRIVATE src/tun/tun.c src/tun/route.c
+  src/tun/lifecycle.c src/tun/status.c)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  target_sources(fipsd_lib PRIVATE src/tun/tun_linux.c)
+elseif(APPLE)
+  target_sources(fipsd_lib PRIVATE src/tun/tun_macos.c src/tun/tun_bsd.c)
+elseif(CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
+  target_sources(fipsd_lib PRIVATE src/tun/tun_freebsd.c src/tun/tun_bsd.c)
+else()
+  message(FATAL_ERROR "fipsd TUN requires Linux, macOS or FreeBSD")
+endif()

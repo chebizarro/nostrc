@@ -66,4 +66,7 @@ GoChannel *fipsd_netmon_events(fipsd_netmon *); /* owned non-NULL malloc'd event
 GoRefPtr fipsd_netmon_snapshot(fipsd_netmon *);
 /* Native backend diagnostic, -1 when timer-only. Valid until destroy. */
 int fipsd_netmon_fd(const fipsd_netmon *);
+/* Shared native descriptor helpers; route changes use notifications=false. */
+int fipsd_network_fd_prepare(int fd);
+int fipsd_network_socket(bool notifications);
 #endif
