@@ -5,6 +5,7 @@
 #include "transport/sockbuf.h"
 #include "test_tmpdir.h"
 #include <assert.h>
+#include <pthread.h>
 #include <errno.h>
 #include <net/if.h>
 #include <stdio.h>
@@ -69,13 +70,13 @@ static void framing(void)
 }
 static unsigned fake_index(const char *name) { assert(!strcmp(name, "fake0")); return 23; }
 #ifdef __APPLE__
-typedef struct fake_ioctl { int word; bool fail, loopback; unsigned calls; } fake_ioctl;
+typedef struct fake_ioctl { int status; int word; bool fail, loopback; unsigned calls; } fake_ioctl;
 static int ioctl_fake(void *arg, int fd, unsigned long req, void *data)
 {
     (void)fd; fake_ioctl *f = arg; f->calls++;
     if (f->fail) return -1;
     if (req == SIOCGIFFLAGS) { ((struct ifreq *)data)->ifr_flags = f->loopback ? IFF_LOOPBACK : IFF_UP; return 0; }
-    assert(req == SIOCGIFMEDIA); ((struct ifmediareq *)data)->ifm_active = f->word; return 0;
+    assert(req == SIOCGIFMEDIA); ((struct ifmediareq *)data)->ifm_active = f->word; ((struct ifmediareq *)data)->ifm_status = f->status; return 0;
 }
 #endif
 static void presence_medium(void)
@@ -99,6 +100,12 @@ static void presence_medium(void)
     fake_ioctl io = {.word = 0x87};
     assert(fipsd_medium_read_ioctl("fake0", -1, ioctl_fake, &io) == FIPS_PATH_Wireless && io.calls == 2);
     io.word = 0x26; assert(fipsd_medium_read_ioctl("fake0", -1, ioctl_fake, &io) == FIPS_PATH_Wired);
+    io.status = IFM_AVALID | IFM_ACTIVE;
+    assert(fipsd_presence_carrier_ioctl("fake0", -1, ioctl_fake, &io, false));
+    io.status = IFM_AVALID;
+    assert(!fipsd_presence_carrier_ioctl("fake0", -1, ioctl_fake, &io, true));
+    io.status = 0; assert(fipsd_presence_carrier_ioctl("fake0", -1, ioctl_fake, &io, true));
+    io.fail = true; assert(fipsd_presence_carrier_ioctl("fake0", -1, ioctl_fake, &io, true));
     io.fail = true; assert(fipsd_medium_read_ioctl("fake0", -1, ioctl_fake, &io) == FIPS_PATH_Unknown);
     io.fail = false; io.loopback = true;
     assert(fipsd_medium_read_ioctl("fake0", -1, ioctl_fake, &io) == FIPS_PATH_Unknown);
@@ -148,19 +155,45 @@ static void buffers_links(void)
     assert(!fipsd_transport_link_record(&s, &a, old, 42, true, 1));
     assert(fipsd_transport_link_record(&s, &a, current, 42, true, 1));
     fipsd_transport_link link; assert(fipsd_transport_link_get(&s, &a, &link) && link.mtu == 1400 && link.stats.bytes_sent == 42);
-    assert(atomic_load(&s.stats.inbound) == 0 && atomic_load(&s.stats.outbound) == 1);
+    assert(atomic_load(&s.stats.pool_inbound) == 0 && atomic_load(&s.stats.pool_outbound) == 1);
     assert(fipsd_transport_link_remove(&s, &a, current));
-    assert(!fipsd_transport_link_remove(&s, &a, current) && atomic_load(&s.stats.outbound) == 0);
+    assert(!fipsd_transport_link_remove(&s, &a, current) && atomic_load(&s.stats.pool_outbound) == 0);
     for (unsigned i = 0; i < FIPSD_TRANSPORT_LINKS; ++i) {
         a.bytes[0] = (uint8_t)i;
         assert(fipsd_transport_link_add(&s, &a, FIPS_LINK_INBOUND, 1280, &current) == 0);
     }
     a.bytes[0] = 255; assert(fipsd_transport_link_add(&s, &a, FIPS_LINK_INBOUND, 1280, &current) == -1);
-    fipsd_transport_links_clear(&s); assert(!atomic_load(&s.stats.inbound));
+    fipsd_transport_links_clear(&s); assert(!atomic_load(&s.stats.pool_inbound));
+}
+static void *count_packets(void *arg)
+{
+    fipsd_transport_stats *s = arg;
+    for (unsigned i = 0; i < 10000; ++i) {
+        fipsd_transport_stats_sent(s, 65535); fipsd_transport_stats_recv(s, 65534);
+        fipsd_transport_stats_error(s, true); fipsd_transport_stats_error(s, false);
+    }
+    return NULL;
+}
+static void counter_storage(void)
+{
+    fipsd_transport_stats s; fipsd_transport_stats_init(&s);
+    fipsd_transport_stats_view v = fipsd_transport_stats_read(&s);
+#define ZERO(name) assert(v.name == 0);
+    FIPSD_STATS_ALL(ZERO)
+#undef ZERO
+    pthread_t workers[8];
+    for (size_t i = 0; i < 8; ++i) assert(!pthread_create(&workers[i], NULL, count_packets, &s));
+    for (size_t i = 0; i < 8; ++i) assert(!pthread_join(workers[i], NULL));
+    v = fipsd_transport_stats_read(&s);
+    assert(v.packets_sent == 80000 && v.packets_recv == 80000);
+    assert(v.bytes_sent == UINT64_C(5242800000) && v.bytes_recv == UINT64_C(5242720000));
+    assert(v.send_errors == 80000 && v.recv_errors == 80000);
+    atomic_store(&s.bytes_sent, UINT64_MAX);
+    assert(fipsd_transport_stats_read(&s).bytes_sent == UINT64_MAX);
 }
 int main(void)
 {
     (void)fipsd_test_tmpdir(NULL);
-    framing(); presence_medium(); buffers_links();
+    framing(); presence_medium(); buffers_links(); counter_storage();
     puts("shared transport codecs, presence, medium, sockbuf and links passed"); return 0;
 }

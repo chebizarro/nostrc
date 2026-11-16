@@ -49,7 +49,7 @@ static int send_frame(fipsd_transport *t, const fips_transport_addr *to, const u
     tcp_instance *u = t->user;
     if (!u->started || !to || !bytes || !to->len || to->len > 256 || go_channel_is_closed(u->stop) ||
         go_context_is_canceled(u->root)) return -1;
-    if (n > u->config.mtu) { atomic_fetch_add(&u->stats.mtu_exceeded, 1); return -1; }
+    if (n > u->config.mtu) { atomic_fetch_add(&u->shared.stats.mtu_exceeded, 1); return -1; }
     if (fipsd_datagram_frame(bytes, n, UINT16_MAX) != FIPS_OK) return -1;
     /* The node vtable is Rust's send_existing seam: the peer retry machine
      * explicitly calls connect_async before IK. Late encryption completions
@@ -58,9 +58,14 @@ static int send_frame(fipsd_transport *t, const fips_transport_addr *to, const u
     if (!frame) return -1;
     frame->len = n; memcpy(frame->bytes, bytes, n);
     nsync_mu_lock(&u->mu); tcp_conn *c = tcp_pool_find(u, to);
+    bool connected = c != NULL;
     int rc = c ? go_channel_try_send(c->queue, frame) : -1;
     nsync_mu_unlock(&u->mu);
-    if (rc) { free(frame); tcp_stats_error(u, true); atomic_fetch_add(&u->shared.stats.dropped, 1); return -1; }
+    if (rc) {
+        free(frame);
+        if (connected) tcp_stats_error(u, true);
+        atomic_fetch_add(&u->shared.diagnostics.dropped, 1); return -1;
+    }
     return 0;
 }
 static void close_connection(fipsd_transport *t, const fips_transport_addr *to)
@@ -74,7 +79,9 @@ static void close_connection(fipsd_transport *t, const fips_transport_addr *to)
     if (c) { c->closing = true; go_channel_close(c->notify_stop); go_channel_close(c->close); }
     nsync_mu_unlock(&u->mu);
 }
-static const fipsd_transport_ops ops = {.start_async = start_async, .stop = stop,
+static bool local_addr(const fipsd_transport *t, fips_transport_addr *out)
+{ return fipsd_tcp_address((fipsd_transport *)t, out); }
+static const fipsd_transport_ops ops = {.local_addr = local_addr, .start_async = start_async, .stop = stop,
     .state = fipsd_transport_shared_state, .mtu = mtu, .send = send_frame, .discover = discover,
     .connect_async = connect_async, .close_connection = close_connection, .network_changed = network_changed};
 void fipsd_tcp_config_default(fipsd_tcp_config *c)
@@ -97,7 +104,7 @@ fipsd_transport *fipsd_tcp_create(fips_transport_id id, const char *name, const 
         free(items);
     }
     tcp_instance *u = calloc(1, sizeof *u); if (!u) return NULL;
-    nsync_mu_init(&u->mu); tcp_stats_init(&u->stats); u->listener_fd = -1; u->config = *c;
+    nsync_mu_init(&u->mu); u->listener_fd = -1; u->config = *c;
     strcpy(u->name, name);
     if (c->bind_addr) { strcpy(u->bind_addr, c->bind_addr); u->config.bind_addr = u->bind_addr; }
     u->transport = (fipsd_transport){.ops = &ops, .id = id, .type = "tcp", .name = u->name,

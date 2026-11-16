@@ -51,9 +51,10 @@ static int discover(fipsd_transport *t) { (void)t; return 0; } /* configured pee
 static int send_frame(fipsd_transport *t, const fips_transport_addr *to, const uint8_t *bytes, size_t len)
 {
     udp_instance *u = t->user;
-    if (!u->started || !bytes || !len || len > u->config.mtu || go_context_is_canceled(u->root)) return -1;
+    if (!u->started || !bytes || !len || go_context_is_canceled(u->root)) return -1;
+    if (len > u->config.mtu) { atomic_fetch_add(&u->shared.stats.mtu_exceeded, 1); return -1; }
     fipsd_udp_endpoint target;
-    if (!fipsd_udp_resolve(&u->dns, to, u->bind_to.address.ss_family, &target)) return -1;
+    if (!fipsd_udp_resolve(&u->dns, to, u->bind_to.address.ss_family, &target)) { fipsd_transport_stats_error(&u->shared.stats, true); return -1; }
     fips_transport_addr numeric;
     if (!fipsd_udp_endpoint_addr(&target, &numeric)) return -1;
     fipsd_udp_packet_info source = {0};
@@ -79,7 +80,7 @@ static int send_frame(fipsd_transport *t, const fips_transport_addr *to, const u
      * stall. All bytes remain borrowed only through this single sendmsg. */
     ssize_t n = gof_sendmsg(s->fd, &m, 0, 0);
     fipsd_udp_socket_release(s);
-    if (n != (ssize_t)len) { atomic_fetch_add(&u->shared.stats.errors, 1); return -1; }
+    if (n != (ssize_t)len) { fipsd_transport_stats_error(&u->shared.stats, true); return -1; }
     fipsd_transport_stats_sent(&u->shared.stats, len); return 0;
 }
 static void authenticated(fipsd_transport *t, const fips_transport_addr *address, fips_link_direction direction)
@@ -121,8 +122,8 @@ static void authenticated(fipsd_transport *t, const fips_transport_addr *address
         if (s) {
             nsync_mu_lock(&u->mu); u->peers[slot] = s; nsync_mu_unlock(&u->mu);
             fipsd_transport_stats_pool(&u->shared.stats, direction, true);
-        } else atomic_fetch_add(&u->shared.stats.errors, 1);
-    } else if (listener && slot == u->config.peer_capacity) atomic_fetch_add(&u->shared.stats.pool_full, 1);
+        } else atomic_fetch_add(&u->shared.diagnostics.socket_errors, 1);
+    } else if (listener && slot == u->config.peer_capacity) atomic_fetch_add(&u->shared.diagnostics.pool_full, 1);
     gate_unlock(u);
 }
 static void close_connection(fipsd_transport *t, const fips_transport_addr *address)
@@ -141,7 +142,9 @@ static void close_connection(fipsd_transport *t, const fips_transport_addr *addr
     if (s) { fipsd_transport_stats_pool(&u->shared.stats, s->direction, false); fipsd_udp_socket_close(s); }
     gate_unlock(u);
 }
-static const fipsd_transport_ops ops = {.start_async = start_async, .stop = stop,
+static bool local_addr(const fipsd_transport *t, fips_transport_addr *out)
+{ return fipsd_udp_address((fipsd_transport *)t, out); }
+static const fipsd_transport_ops ops = {.local_addr = local_addr, .start_async = start_async, .stop = stop,
     .state = fipsd_transport_shared_state, .mtu = mtu, .send = send_frame, .discover = discover,
     .close_connection = close_connection, .network_changed = network_changed, .authenticated = authenticated};
 void fipsd_udp_config_default(fipsd_udp_config *c)

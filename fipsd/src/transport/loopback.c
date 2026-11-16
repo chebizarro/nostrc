@@ -48,6 +48,7 @@ static int start_async(fipsd_transport *t, fipsd_runtime *rt, const fipsd_node_c
     nsync_mu_unlock(&e->network->mu);
     fipsd_presence_facts facts = {.valid = true, .exists = true, .up = true, .medium = FIPS_PATH_Unknown};
     fipsd_presence_bound(&e->shared.presence, facts, fipsd_transport_now_ms());
+    atomic_store(&e->shared.started, true);
     atomic_store(&e->shared.state, FIPSD_TRANSPORT_BOUND);
     return 0;
 }
@@ -68,7 +69,8 @@ static int send_frame(fipsd_transport *t, const fips_transport_addr *to, const u
 {
     endpoint *e = t->user;
     fipsd_loopback_network *n = e->network;
-    if (len > e->mtu || atomic_load(&e->shared.state) != FIPSD_TRANSPORT_BOUND) return -1;
+    if (len > e->mtu) { atomic_fetch_add(&e->shared.stats.mtu_exceeded, 1); return -1; }
+    if (atomic_load(&e->shared.state) != FIPSD_TRANSPORT_BOUND) { fipsd_transport_stats_error(&e->shared.stats, true); return -1; }
     GoChannel *events = NULL; GoContext *root = NULL; fips_transport_id id = {0};
     endpoint *destination = NULL;
     fipsd_loopback_filter filter; void *user;
@@ -80,13 +82,14 @@ static int send_frame(fipsd_transport *t, const fips_transport_addr *to, const u
         }
     filter = n->filter; user = n->filter_user;
     nsync_mu_unlock(&n->mu);
-    if (!events || !root) return -1;
+    if (!events || !root) { fipsd_transport_stats_error(&e->shared.stats, true); return -1; }
     if (filter && !filter(user, &e->address, to, bytes, len)) {
-        atomic_fetch_add(&e->shared.stats.dropped, 1);
+        atomic_fetch_add(&e->shared.diagnostics.dropped, 1);
+        fipsd_transport_stats_sent(&e->shared.stats, len);
         return 0; /* A dropped datagram is a successful send, as on a lossy wire. */
     }
     if (fipsd_transport_emit(events, root, NULL, FIPSD_TRANSPORT_PACKET,
-                             id, &e->address, bytes, len) != 0) return -1;
+                             id, &e->address, bytes, len) != 0) { fipsd_transport_stats_error(&e->shared.stats, true); return -1; }
     fipsd_transport_stats_sent(&e->shared.stats, len);
     if (destination) fipsd_transport_stats_recv(&destination->shared.stats, len);
     return 0;
@@ -149,4 +152,4 @@ const fips_transport_addr *fipsd_loopback_transport_address(const fipsd_transpor
 uint64_t fipsd_loopback_transport_sent(const fipsd_transport *t)
 { return atomic_load(&((const endpoint *)t->user)->shared.stats.packets_sent); }
 uint64_t fipsd_loopback_transport_dropped(const fipsd_transport *t)
-{ return atomic_load(&((const endpoint *)t->user)->shared.stats.dropped); }
+{ return atomic_load(&((const endpoint *)t->user)->shared.diagnostics.dropped); }

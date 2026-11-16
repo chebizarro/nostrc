@@ -6,6 +6,7 @@
 void fipsd_transport_shared_init(fipsd_transport *t, fipsd_transport_shared *s, bool optional)
 {
     t->shared = s; atomic_init(&s->state, FIPSD_TRANSPORT_STOPPED);
+    atomic_init(&s->started, false); fipsd_transport_diagnostics_init(&s->diagnostics);
     fipsd_presence_init(&s->presence, optional, fipsd_transport_now_ms());
     fipsd_transport_stats_init(&s->stats); nsync_mu_init(&s->links_mu);
     memset(s->links, 0, sizeof s->links);

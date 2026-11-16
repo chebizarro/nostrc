@@ -17,7 +17,6 @@ typedef struct udp_socket {
     size_t users; /* owner.mu; send leases, never descriptor ownership */
     bool detached; /* owner.mu */
     fipsd_buffer_granted recv_grant, send_grant;
-    uint32_t last_drops;
 } udp_socket;
 typedef struct udp_route {
     fips_transport_addr peer;

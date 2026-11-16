@@ -1,6 +1,7 @@
 #include "control/protocol.h"
 #include "control/render.h"
 #include "control/counter_schema.h"
+#include "transport/stats_common.h"
 #include <fips/identity/peer.h>
 #include "host_os.h"
 #include <math.h>
@@ -172,6 +173,22 @@ static json_t *routing(const fipsd_control_snapshot *s)
     set(d, "error_signals", COUNTERS(s, errors, errors)); set(d, "congestion", COUNTERS(s, congestion, congestion));
     return d;
 }
+static json_t *transport_counters(const fipsd_control_transport *r)
+{
+    size_t n = 0;
+    const char *const *fields = fipsd_transport_stats_fields(r->type, &n);
+    if (!strcmp(str(r->type), "ethernet")) { fields = transport_fields; n = N(transport_fields); }
+    json_t *out = json_object();
+    /* Unlike extensible node metrics, a transport exports exactly its Rust
+     * snapshot's fields, including zeros and excluding host diagnostics. */
+    for (size_t i = 0; i < n; ++i) {
+        uint64_t value = 0;
+        for (size_t j = 0; j < r->stats.count; ++j)
+            if (!strcmp(fields[i], r->stats.items[j].name)) { value = r->stats.items[j].value; break; }
+        integer(out, fields[i], value);
+    }
+    return out;
+}
 static json_t *transports(const fipsd_control_snapshot *s)
 {
     json_t *a = json_array();
@@ -185,16 +202,18 @@ static json_t *transports(const fipsd_control_snapshot *s)
         if (r->tor_mode) string(o, "tor_mode", r->tor_mode);
         if (r->onion_address) string(o, "onion_address", r->onion_address);
         if (r->tor_monitoring) set(o, "tor_monitoring", json_deep_copy(r->tor_monitoring));
-        set(o, "stats", counters(r->stats, transport_fields, N(transport_fields)));
+        set(o, "stats", transport_counters(r));
         if (r->interface) {
             const fipsd_control_interface *f = r->interface;
             json_t *in = json_object();
             string(in, "name", f->name); string(in, "presence", f->presence); string(in, "policy", f->policy);
-            if (f->medium) string(in, "medium", f->medium);
             boolean(in, "carrier", f->carrier); integer(in, "since_secs", f->since_secs);
             integer(in, "binds", f->binds); integer(in, "failed_attempts", f->failed_attempts); set(o, "interface", in);
         }
-        fipsd_control_append(a, o);
+        size_t at = 0;
+        while (at < json_array_size(a) && (uint32_t)json_integer_value(
+                json_object_get(json_array_get(a, at), "transport_id")) < r->transport_id) ++at;
+        fipsd_control_render_check(json_array_insert_new(a, at, o));
     }
     return json_pack("{s:o}", "transports", a);
 }

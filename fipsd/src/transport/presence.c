@@ -5,8 +5,13 @@
 #include <net/if.h>
 #include <string.h>
 #include <time.h>
+#include <sys/ioctl.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#include <stdio.h>
 #ifdef __APPLE__
 #include <net/if_dl.h>
+#include <net/if_media.h>
 #elif defined(__linux__)
 #include <netpacket/packet.h>
 #endif
@@ -70,12 +75,38 @@ fipsd_presence_facts fipsd_presence_from_ifaddrs(const struct ifaddrs *ifs, cons
     }
     return f;
 }
+bool fipsd_presence_carrier_ioctl(const char *name, int fd, fipsd_ioctl_fn call, void *user, bool fallback)
+{
+    if (!name || !*name || strlen(name) >= IFNAMSIZ || strchr(name, '/') || !call) return fallback;
+#ifdef __APPLE__
+    struct ifmediareq req = {0}; strcpy(req.ifm_name, name);
+    if (call(user, fd, SIOCGIFMEDIA, &req) == 0 && (req.ifm_status & IFM_AVALID))
+        return (req.ifm_status & IFM_ACTIVE) != 0;
+#else
+    (void)fd; (void)user;
+#endif
+    return fallback;
+}
+static int carrier_ioctl(void *user, int fd, unsigned long request, void *arg)
+{ (void)user; return ioctl(fd, request, arg); }
 fipsd_presence_facts fipsd_presence_read(const char *name)
 {
     struct ifaddrs *ifs = NULL;
     if (!name || getifaddrs(&ifs) < 0) return (fipsd_presence_facts){0};
     fipsd_presence_facts f = fipsd_presence_from_ifaddrs(ifs, name, if_nametoindex);
     freeifaddrs(ifs);
-    if (f.exists) f.medium = fipsd_medium_read(name);
+    if (f.exists) {
+        f.medium = fipsd_medium_read(name);
+#ifdef __linux__
+        char path[256];
+        if (strlen(name) < IFNAMSIZ && !strchr(name, '/')) {
+            snprintf(path, sizeof path, "/sys/class/net/%s/carrier", name);
+            FILE *file = fopen(path, "r");
+            if (file) { unsigned carrier; if (fscanf(file, "%u", &carrier) == 1) f.carrier = carrier != 0; fclose(file); }
+        }
+#endif
+        int fd = socket(AF_INET, SOCK_DGRAM, 0);
+        if (fd >= 0) { f.carrier = fipsd_presence_carrier_ioctl(name, fd, carrier_ioctl, NULL, f.carrier); close(fd); }
+    }
     return f;
 }

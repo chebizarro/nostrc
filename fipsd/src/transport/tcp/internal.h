@@ -12,10 +12,6 @@ typedef struct tcp_instance tcp_instance;
 typedef struct tcp_conn tcp_conn;
 typedef struct tcp_endpoint { struct sockaddr_storage address; socklen_t len; } tcp_endpoint;
 typedef struct tcp_frame { size_t len; uint8_t bytes[]; } tcp_frame;
-typedef struct tcp_stats {
-    _Atomic uint64_t accepted, connected, connect_timeouts, connect_refused, send_errors, recv_errors;
-    _Atomic uint64_t rejected, source_rejected, mtu_exceeded, deadlines;
-} tcp_stats;
 struct tcp_conn {
     tcp_instance *owner;
     tcp_conn *next;
@@ -33,7 +29,6 @@ struct tcp_instance {
     fipsd_transport transport;
     fipsd_transport_shared shared;
     fipsd_tcp_config config;
-    tcp_stats stats;
     char name[128], bind_addr[257];
     fipsd_runtime *runtime;
     GoContext *root;
@@ -65,6 +60,5 @@ bool tcp_endpoint_addr(const tcp_endpoint *, fips_transport_addr *);
 bool tcp_resolve(const fips_transport_addr *, bool numeric, tcp_endpoint **, size_t *);
 fipsd_bind_result tcp_bind(void *, fipsd_runtime *, GoChannel *, const fipsd_presence_facts *, uint64_t);
 void tcp_unbind(void *, uint64_t);
-void tcp_stats_init(tcp_stats *);
 void tcp_stats_error(tcp_instance *, bool send);
 #endif

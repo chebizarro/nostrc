@@ -114,7 +114,7 @@ static void *read_facts(void *arg)
         if (f->valid && f->exists) {
             fipsd_presence_facts os = fipsd_presence_read(w->transport->interface_name);
             if (os.valid && os.index == f->index) {
-                f->medium = os.medium; f->has_mac = os.has_mac; memcpy(f->mac, os.mac, 6);
+                f->carrier = os.carrier; f->medium = os.medium; f->has_mac = os.has_mac; memcpy(f->mac, os.mac, 6);
             }
         }
     }
@@ -171,6 +171,7 @@ int fipsd_watcher_start(fipsd_watcher *w, fipsd_runtime *rt, const fipsd_node_co
         if (w->ticker) { go_blocking_submit(stop_timer, w->ticker); w->ticker = NULL; }
         atomic_store(&w->transport->shared->state, FIPSD_TRANSPORT_STOPPED); return -1;
     }
+    atomic_store(&w->transport->shared->started, true);
     w->started = true; return 0;
 }
 void fipsd_watcher_network_changed(fipsd_watcher *w, const fipsd_netmon_event *e)

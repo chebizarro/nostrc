@@ -1740,3 +1740,5 @@ registration, connection ownership and control counters fold into the initial
 daemon; no published release/tag, shared-library version or FMP wire change.
 
 nostrc-f66sr.2: fipsd stays 0.1.0 Unreleased. Multi-node UDP convergence/interoperability/opt-in soak coverage reuses the nostrc-f66sr.3 lookup-outcome API and bool wrapper, and routes its setup hint entrypoint through shared bounded coordinate intake. Additional transit and authenticated session-statement intake folds into the initial unreleased daemon (PATCH-class internal corrections). No public API, wire, CLI, configuration, release tag or numeric version change; libfips-core and libgo unchanged.
+
+nostrc-gfi8h.7: fipsd remains **0.1.0 Unreleased**. Transport statistics/output parity corrections (common upstream u64 UDP/TCP schema, loopback accounting, OS carrier facts, exact per-type counters and interface omission rules in show_transports) fold into the initial unreleased daemon. No numeric bump, published release/tag, wire-format or configuration change; libfips-core/libgo unchanged.

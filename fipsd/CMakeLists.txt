@@ -196,3 +196,6 @@ install(FILES "${CMAKE_CURRENT_BINARY_DIR}/libfipsnative.pc" DESTINATION "${CMAK
 add_subdirectory(examples)
 # Coordinate hints must precede multi-hop routing (nostrc-f66sr.2).
 target_sources(fipsd_lib PRIVATE src/node/dataplane/coord_warm.c)
+
+# Shared upstream transport control projection (nostrc-gfi8h.7).
+target_sources(fipsd_lib PRIVATE src/control/transport.c)

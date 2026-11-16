@@ -385,6 +385,41 @@ owns the component's version, 0.1.0 Unreleased. Warning flags honor nostrc's
 shared `GO_WARNINGS_AS_ERRORS`; sanitizer flags reuse its `GO_ENABLE_*`
 helpers.
 
+## Transport statistics and control parity
+
+`transport/stats_common.h` owns the upstream `u64` counter names and relaxed
+atomic storage shared by UDP, TCP and the test loopback. Packet/byte counts
+record successful wire I/O (UDP receives include classifier/malformed discards;
+TCP receives count complete frames). MTU rejection is `mtu_exceeded`, not a
+successful send or a `send_errors` increment. TCP admission counts inbound
+rejections only; `pool_inbound`/`pool_outbound` are current occupancy and return
+to zero after join. UDP `kernel_drops` is the Linux wildcard socket's cumulative
+`SO_RXQ_OVFL` value, not a sum of connected-socket or application drops; it stays
+zero on macOS. Local classifier/framing/queue diagnostics remain separate.
+
+`show_transports` uses the exact per-type upstream snapshot fields: eight for
+UDP, fifteen for TCP, and `{}` for upstream's test loopback. All applicable zero
+counters remain present; no Ethernet counters, aggregate `errors`/`dropped`, or
+local diagnostics leak into UDP/TCP output. Transport rows are ordered by id,
+use upstream lifecycle labels (`configured`, `up`, `down`, `failed`), and include
+`local_addr` only when bound. An absent interface remains a started (`up`)
+transport; presence and carrier are separate facts, and carrier never gates
+binding. The `interface` object is omitted for transports without an interface.
+Its seven upstream fields deliberately do not include OS index or detected
+medium, which remain internal presence facts for path selection.
+
+Carrier is refreshed through the existing presence/watcher notifications and
+backstop, with **no additional polling**: Linux reads
+`/sys/class/net/<interface>/carrier` (falling back to interface flags if unreadable),
+and macOS uses `SIOCGIFMEDIA`'s valid/active bits with `IFF_RUNNING` as fallback.
+Carrier-only changes update the diagnostic without tearing down the socket.
+`test_control.c` cites the upstream snapshot sources; the empty/interface goldens
+are verbatim upstream fixtures, and populated/zero UDP/TCP goldens derive their
+layout from those fixtures and their fields from upstream `udp/stats.rs` and
+`tcp/stats.rs`. Two-node UDP/TCP tests cover the real provider, and injected
+presence tests pass carrier flips through the same projection and query path.
+These initial-output parity corrections fold into **fipsd 0.1.0 Unreleased**.
+
 ## Peer owners (nostrc-9keoz.4)
 
 `src/peer/active.h` is an opaque, stable-address `fipsd_active_peer`. Its public

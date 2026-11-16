@@ -265,7 +265,18 @@ static void scenario(void *arg)
     fipsd_transport_event *reply = receive(f->events);
     assert(reply && reply->kind == FIPSD_TRANSPORT_PACKET && reply->id.value == 1);
     assert(fips_transport_addr_equal(&reply->address, &f->ba)); free(reply);
-    puts("wildcard listener: pktinfo-selected loopback reply source: ok");
+    fipsd_transport_stats_view av = fipsd_transport_stats_read(&f->a->shared->stats);
+    fipsd_transport_stats_view bv = fipsd_transport_stats_read(&f->b->shared->stats);
+    assert(av.packets_sent == 1 && av.bytes_sent == sizeof frame && av.packets_recv == 1 && av.bytes_recv == sizeof frame);
+    assert(bv.packets_sent == 1 && bv.bytes_sent == sizeof frame && bv.packets_recv == 1 && bv.bytes_recv == sizeof frame);
+    assert(!av.send_errors && !av.recv_errors && !av.mtu_exceeded && !av.kernel_drops);
+    uint8_t oversized[1358] = {0};
+    assert(f->a->ops->send(f->a, &f->ba, oversized, sizeof oversized) == -1);
+    fips_transport_addr bad; assert(fips_transport_addr_from_string("255.255.255.255:9", 17, &bad) == FIPS_OK);
+    assert(f->a->ops->send(f->a, &bad, frame, sizeof frame) == -1); /* SO_BROADCAST is intentionally disabled: real sendmsg failure */
+    av = fipsd_transport_stats_read(&f->a->shared->stats);
+    assert(av.mtu_exceeded == 1 && av.send_errors == 1 && av.packets_sent == 1 && av.bytes_sent == sizeof frame);
+    puts("wildcard listener: pktinfo-selected loopback reply source, send/recv/MTU/error accounting: ok");
     assert(fipsd_udp_connected_count(f->a) == 0 && fipsd_udp_connected_count(f->b) == 0);
     /* Merely parsing a valid envelope must never allocate a connected fd. */
     f->a->ops->authenticated(f->a, &f->ba, FIPS_LINK_OUTBOUND);
@@ -284,17 +295,20 @@ static void scenario(void *arg)
     fips_transport_addr other;
     assert(fips_transport_addr_from_string("127.0.0.1:1", 11, &other) == FIPS_OK);
     f->a->ops->authenticated(f->a, &other, FIPS_LINK_OUTBOUND);
-    assert(fipsd_udp_connected_count(f->a) == 1 && atomic_load(&f->a->shared->stats.pool_full) == 1);
+    assert(fipsd_udp_connected_count(f->a) == 1 && atomic_load(&f->a->shared->diagnostics.pool_full) == 1);
     for (size_t i = 1; i < sizeof frame; ++i) assert(f->a->ops->send(f->a, &f->ba, frame, i) == 0);
     assert(f->a->ops->send(f->a, &f->ba, (const uint8_t *)"TEST", 4) == 0);
     assert(f->a->ops->send(f->a, &f->ba, (const uint8_t *)"NPTC", 4) == 0);
     assert(f->a->ops->send(f->a, &f->ba, frame, sizeof frame) == 0);
     expect_packet(f, 2, sizeof frame); /* ordered receive barrier, never a sleep */
-    assert(atomic_load(&f->b->shared->stats.malformed) == sizeof frame);
-    assert(atomic_load(&f->b->shared->stats.classifier_drops) == 2);
-    assert(atomic_load(&f->b->shared->stats.pktinfo_recv) >= sizeof frame);
-    assert(atomic_load(&f->b->shared->stats.ecn_recv) >= sizeof frame);
-    assert(atomic_load(&f->b->shared->stats.ce_recv) >= sizeof frame);
+    bv = fipsd_transport_stats_read(&f->b->shared->stats);
+    assert(bv.packets_recv == 118 && bv.bytes_recv == 6677); /* 2 full + zero + 1..113 + two classifiers */
+    assert(!bv.recv_errors && !bv.kernel_drops);
+    assert(atomic_load(&f->b->shared->diagnostics.malformed) == sizeof frame);
+    assert(atomic_load(&f->b->shared->diagnostics.classifier_drops) == 2);
+    assert(atomic_load(&f->b->shared->diagnostics.pktinfo_recv) >= sizeof frame);
+    assert(atomic_load(&f->b->shared->diagnostics.ecn_recv) >= sizeof frame);
+    assert(atomic_load(&f->b->shared->diagnostics.ce_recv) >= sizeof frame);
     /* Close must join a drain parked on gof_recvmsg before freeing the fd.
      * A replacement then receives through its new identity, not the old one. */
     f->a->ops->close_connection(f->a, &f->ba); f->b->ops->close_connection(f->b, &f->aa);
@@ -322,6 +336,12 @@ static void scenario(void *arg)
         assert(v.binds == 2);
         puts("interface watcher: absent start -> appears/binds/receives -> disappears/joins -> reappears/rebinds/receives: ok");
     }
+    nsync_mu_lock(&a->mu);
+    assert(a->listener); int receive_fd = a->listener->fd;
+    GoChannel *receive_done = go_channel_ref(a->listener->done);
+    nsync_mu_unlock(&a->mu);
+    assert(gof_io_cancel_fd(receive_fd) == 0); (void)receive(receive_done); go_channel_unref(receive_done);
+    assert(atomic_load(&f->a->shared->stats.recv_errors) == 1);
     puts("real UDP: unauthenticated pool empty; authenticated connect, idempotence, cap, all malformed offsets counted, classifiers on connected drain, close/join/reopen: ok");
     assert(go_channel_send(f->done, f) == 0);
 }
@@ -368,5 +388,11 @@ static void lifecycle(bool can_bind)
 int main(void)
 {
     (void)fipsd_test_tmpdir(NULL);
+    fipsd_transport_stats stats; fipsd_transport_stats_init(&stats);
+    fipsd_transport_stats_kernel_drops(&stats, false, 7);
+    fipsd_transport_stats_kernel_drops(&stats, true, 100);
+    assert(atomic_load(&stats.kernel_drops) == 7);
+    fipsd_transport_stats_kernel_drops(&stats, false, 9);
+    assert(atomic_load(&stats.kernel_drops) == 9);
     ancillary(); classifier(); bool can_bind = socket_options(); lifecycle(can_bind); return 0;
 }
