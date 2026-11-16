@@ -431,6 +431,19 @@ These are tracking-ready notes, **not** reports already submitted upstream:
   msg2's keys. Report upstream: defer connection replacement to key
   confirmation/first authenticated frame, keep legitimate restart and
   retransmission semantics, and treat retired-epoch memory as supplementary.
+- **I-1 — `show_links.created_at_ms` is always 0.** Found by the C<->Rust UDP
+  interoperability gate (`fipsd/tests/udp_interop.py`, `nostrc-f66sr.1`) run
+  against the pin on loopback: the Rust daemon's `show_links` reports
+  `created_at_ms: 0` for the inbound and for the outbound UDP link while every
+  other field is populated. `src/transport/mod.rs:603` (`Link::new`) starts
+  `created_at` at 0, `set_created_at` (`:683`) is called only from a unit test
+  (`:1997`), and the control snapshot (`src/node/mod.rs:2916`,
+  `created_at_ms: link.created_at()`) publishes that 0;
+  `docs/reference/control-socket.md:120` lists the field without
+  qualification. fipsd reports the link's authenticated-at wall time
+  (`fipsd/src/node/handlers/provider.c`, `show_links`) and keeps doing so; the
+  gate does not compare the field. Report as a control-output defect (stamp
+  `created_at` when the link is promoted); no C change.
 
 ## Node bookkeeping port (nostrc-u50yr.4)
 

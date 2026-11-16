@@ -163,6 +163,14 @@ typedef struct probe_job {
     fips_probe *probe; /* heap: ~4 MiB with path facts */
     fips_probe_snapshot *report;
     uint64_t finished_ms;
+    /* probe.rs ProbeJob: the traffic baseline taken when the session this job
+     * opened was established, and the host's refusal of the core's teardown
+     * (reported as `session_left_intact`, never as a teardown that did not
+     * happen). */
+    bool has_baseline, teardown_refused;
+    uint64_t sent_at_establish, received_at_establish;
+    fips_instant last_data_at_establish;
+    fips_probe_left_intact refused_reason;
 } probe_job;
 
 typedef enum handler_command_kind {

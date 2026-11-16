@@ -18,6 +18,12 @@ static bool target_claimed(handlers *h, const fips_node_addr *target, const prob
     }
     return false;
 }
+/* probe.rs probe_session_is_ours: created by this job, as initiator, and not
+ * replaced since (a session created before the probe started is not ours). */
+static bool session_is_ours(handlers *h, const probe_job *j, const session_ext *x)
+{
+    return x && x->is_initiator && x->created.ops && j->probe->started_ms <= hs_elapsed_ms(x->created, h->origin);
+}
 static void observe(handlers *h, probe_job *j, fips_probe_observation *obs, fips_probe_next_hop_facts *hop)
 {
     memset(obs, 0, sizeof *obs);
@@ -29,7 +35,13 @@ static void observe(handlers *h, probe_job *j, fips_probe_observation *obs, fips
     session_ext *x = entry ? hs_session_ext(h, entry) : NULL;
     obs->session_present = entry != NULL;
     obs->session_established = x && x->established;
-    obs->session_is_ours = x && x->is_initiator && x->created.ops && j->probe->started_ms <= hs_elapsed_ms(x->created, h->origin);
+    obs->session_is_ours = session_is_ours(h, j, x);
+    /* Baseline for the adoption check (probe.rs): data on the session after
+     * this point means it is no longer the probe's to remove. */
+    if (obs->session_is_ours && obs->session_established && !j->has_baseline) {
+        j->has_baseline = true; j->sent_at_establish = x->sent; j->received_at_establish = x->received;
+        j->last_data_at_establish = x->last_data;
+    }
     if (x && x->mmp_live) {
         fips_mmp_metrics *m = &x->mmp.roles.metrics;
         obs->counters = (fips_probe_rtt_counters){m->reports_seen, m->rtt_samples, m->rtt_zero, m->rtt_arith_fail};
@@ -77,8 +89,19 @@ static void execute(handlers *h, probe_job *j, const fips_probe_actions *actions
         case FIPS_PROBE_TeardownSession: {
             fips_session_entry *entry = fips_session_table_by_peer(&h->sessions, j->target);
             session_ext *x = entry ? hs_session_ext(h, entry) : NULL;
-            /* Only a session this job created and still owns is torn down. */
-            if (x && x->is_initiator && fips_probe_owns_session(j->probe) && !x->sent && !x->received) {
+            /* probe.rs probe_teardown/probe_session_disowned: only a session
+             * this job created, still owns and that carried no data since it
+             * was established is torn down. Otherwise the refusal and its
+             * reason are recorded for the report; a session already gone is
+             * neither torn down nor reported as left in place. */
+            if (!entry || !x) break;
+            if (!fips_probe_owns_session(j->probe)) { j->teardown_refused = true; j->refused_reason = FIPS_PROBE_LEFT_Preexisting; break; }
+            if (!session_is_ours(h, j, x)) { j->teardown_refused = true; j->refused_reason = FIPS_PROBE_LEFT_Replaced; break; }
+            if (j->has_baseline && (x->sent != j->sent_at_establish || x->received != j->received_at_establish ||
+                    memcmp(x->last_data.opaque, j->last_data_at_establish.opaque, sizeof x->last_data.opaque) != 0)) {
+                j->teardown_refused = true; j->refused_reason = FIPS_PROBE_LEFT_AdoptedByTraffic; break;
+            }
+            {
                 fips_rekey_carry carry = {0};
                 fips_rekey_outputs_clear(&h->session_out);
                 if (fips_session_table_remove(&h->sessions, entry, FIPS_REKEY_CLOSE_Admin, &h->session_out, &carry)) {
@@ -110,6 +133,12 @@ static void drive(handlers *h, probe_job *j)
 static json_t *render(handlers *h, probe_job *j)
 {
     fips_probe_snapshot_get(j->probe, j->report);
+    /* control/probe.rs: a teardown the host refused is reported as the
+     * refusal, and the core's `torn_down` is withdrawn. */
+    if (j->teardown_refused) {
+        j->report->torn_down = false;
+        j->report->has_left_intact = true; j->report->left_intact = j->refused_reason;
+    }
     char hex[33]; (void)fips_node_addr_format(&j->target, hex, sizeof hex);
     char ipv6[64]; fips_ipv6_address a = fips_ipv6_address_from_node_addr(&j->target);
     (void)fips_ipv6_address_format(&a, ipv6, sizeof ipv6);

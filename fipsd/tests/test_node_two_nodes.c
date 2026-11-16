@@ -143,6 +143,16 @@ int main(void)
     /* 5. One rekey cycle: the K bit flips on both ends (session and link). */
     e = nt_await(&a, FIPSD_NOTICE_SESSION_REKEYED, &b.identity.node_addr, NT_WAIT_MS); assert(e && e->k); free(e);
     e = nt_await(&b, FIPSD_NOTICE_SESSION_REKEYED, &a.identity.node_addr, NT_WAIT_MS); assert(e && e->k); free(e);
+    /* Right after the cutover the previous keys are still draining: upstream's
+     * show_sessions keeps `state: established` and says so in `is_draining`
+     * (nostrc-f66sr.1 regression: C used to report a `draining` state). */
+    for (test_node *n = &a; n; n = n == &a ? &b : NULL) {
+        json_t *sessions = nt_query(n, "show_sessions");
+        json_t *row = json_array_get(data_of(sessions, "sessions"), 0);
+        assert(row && !strcmp(json_string_value(json_object_get(row, "state")), "established"));
+        assert(json_is_true(json_object_get(row, "is_draining")) && json_is_true(json_object_get(row, "current_k_bit")));
+        json_decref(sessions);
+    }
     e = nt_await(&a, FIPSD_NOTICE_LINK_REKEYED, &b.identity.node_addr, NT_WAIT_MS); assert(e && e->k); free(e);
     e = nt_await(&b, FIPSD_NOTICE_LINK_REKEYED, &a.identity.node_addr, NT_WAIT_MS); assert(e && e->k); free(e);
     /* Traffic still flows under the new epochs. */

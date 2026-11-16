@@ -348,14 +348,28 @@ add_test(NAME FipsdUdpTest COMMAND fipsd_udp_test)
 set_tests_properties(FipsdUdpTest PROPERTIES TIMEOUT 60 LABELS "fips;transport" ENVIRONMENT "FIPSD_WORKERS=2")
 nostrc_describe_test(FipsdUdpTest OWNER fipsd TARGETS fipsd_udp_test)
 
-set(FIPSD_UDP_INTEROP_RUST_BINARY "" CACHE FILEPATH "Optional fips daemon built from the pinned Rust source")
-add_test(NAME FipsdUdpInteropSmokeTest COMMAND fipsd_test_tmpdir_run "/r-ipv6tun.sock"
-  "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/udp_interop.py"
-  --fipsd "$<TARGET_FILE:fipsd>" --rust "${FIPSD_UDP_INTEROP_RUST_BINARY}")
-set_tests_properties(FipsdUdpInteropSmokeTest PROPERTIES TIMEOUT 90 SKIP_RETURN_CODE 77
-  LABELS "fips;transport;interop" ENVIRONMENT "FIPSD_WORKERS=2")
-nostrc_describe_test(FipsdUdpInteropSmokeTest OWNER fipsd TARGETS fipsd fipsd_test_tmpdir_run
-  INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/udp_interop.py")
+# C<->Rust UDP interoperability gate (nostrc-f66sr.1): one fipsd and one daemon
+# built from the libfips-core/UPSTREAM.md pin on loopback UDP, both role
+# assignments per address family (IK link, tree/filters, XK session, datagrams,
+# one session and one link rekey, clean shutdown). Skips (exit 77) without a
+# Rust daemon. No Rust source is built or changed here: supply a binary built
+# with `cargo build --locked --release --bin fips` in a scratch CARGO_TARGET_DIR.
+# The longest socket the harness binds is Rust's `-ipv6tun` status sibling.
+set(FIPSD_UDP_INTEROP_RUST_BINARY "" CACHE FILEPATH "fips daemon built from the pinned Rust source (libfips-core/UPSTREAM.md)")
+foreach(family IN ITEMS 4 6)
+  if(family EQUAL 4)
+    set(_interop_test FipsdInteropUdpTest)
+  else()
+    set(_interop_test FipsdInteropUdpV6Test)
+  endif()
+  add_test(NAME ${_interop_test} COMMAND fipsd_test_tmpdir_run "/rrust6-ipv6tun.sock"
+    "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/udp_interop.py"
+    --fipsd "$<TARGET_FILE:fipsd>" --rust "${FIPSD_UDP_INTEROP_RUST_BINARY}" --family ${family})
+  set_tests_properties(${_interop_test} PROPERTIES TIMEOUT 600 SKIP_RETURN_CODE 77
+    LABELS "fips;transport;node;interop" ENVIRONMENT "FIPSD_WORKERS=2")
+  nostrc_describe_test(${_interop_test} OWNER fipsd TARGETS fipsd fipsd_test_tmpdir_run
+    INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/udp_interop.py")
+endforeach()
 # Soup/WebSocket fixture adapted from Grotto with the FIPS gate's Jansson codec.
 pkg_check_modules(FIPSD_RELAY_TEST REQUIRED IMPORTED_TARGET libsoup-3.0)
 fipsd_unit_test(fipsd_nostr_runtime_test test_nostr_runtime.c)

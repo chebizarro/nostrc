@@ -102,6 +102,110 @@ jobs:
           path: |
             build/Testing/Temporary/
             build/fuzz-artifacts/
+  interop-udp:
+    name: ${{ matrix.os }} • FIPS • C<->Rust UDP interop
+    if: github.event_name != 'schedule'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-latest]
+    env:
+      CC: clang
+      CXX: clang++
+      ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1:halt_on_error=1
+      UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+      CARGO_TERM_COLOR: never
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          ref: ${{ inputs.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify requested checkout
+        if: inputs.sha != ''
+        env:
+          REQUESTED_SHA: ${{ inputs.sha }}
+        run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
+      # The pin lives in one place: libfips-core/UPSTREAM.md.
+      - name: Read the upstream pin
+        id: pin
+        run: |
+          pin=$(sed -n 's/^Pinned commit: .\([0-9a-f]\{40\}\).*/\1/p' libfips-core/UPSTREAM.md)
+          test -n "$pin"
+          echo "pin=$pin" >> "$GITHUB_OUTPUT"
+      - name: Check out upstream FIPS at the pin
+        uses: actions/checkout@v4
+        with:
+          repository: jmcorgan/fips
+          ref: ${{ steps.pin.outputs.pin }}
+          path: upstream-fips
+          persist-credentials: false
+      - name: Verify the upstream checkout
+        env:
+          PIN: ${{ steps.pin.outputs.pin }}
+        run: test "$(git -C upstream-fips rev-parse HEAD)" = "$PIN"
+      # The built daemon is cached on OS, architecture, pin and toolchain; a hit
+      # skips the Rust build entirely, a miss rebuilds from the pinned source.
+      - name: Restore the pinned Rust daemon
+        id: daemon
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/fips-rust-target/release/fips
+          key: fips-daemon-${{ runner.os }}-${{ runner.arch }}-${{ steps.pin.outputs.pin }}-${{ hashFiles('upstream-fips/rust-toolchain.toml') }}-v1
+      - name: Restore the cargo registry
+        if: steps.daemon.outputs.cache-hit != 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: cargo-registry-${{ runner.os }}-${{ hashFiles('upstream-fips/Cargo.lock') }}
+      - name: Build the pinned Rust daemon
+        if: steps.daemon.outputs.cache-hit != 'true'
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/fips-rust-target
+        run: |
+          channel=$(sed -n 's/^channel = "\(.*\)"/\1/p' upstream-fips/rust-toolchain.toml)
+          test -n "$channel"
+          rustup toolchain install "$channel" --profile minimal
+          cd upstream-fips
+          cargo "+$channel" build --locked --release --bin fips
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake ninja-build pkg-config clang libclang-rt-18-dev libjansson-dev libyaml-dev libsecp256k1-dev libsodium-dev libssl-dev libcurl4-openssl-dev libwebsockets-dev libglib2.0-dev libsoup-3.0-dev libnsync-dev
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install llvm cmake ninja pkg-config jansson libyaml secp256k1 libsodium openssl@3 curl libwebsockets glib libsoup@3 nsync
+          {
+            echo "CC=$(brew --prefix llvm)/bin/clang"
+            echo "CXX=$(brew --prefix llvm)/bin/clang++"
+            echo "PKG_CONFIG_PATH=$(brew --prefix openssl@3)/lib/pkgconfig:$(brew --prefix curl)/lib/pkgconfig:$(brew --prefix)/lib/pkgconfig:${PKG_CONFIG_PATH}"
+            echo "ASAN_OPTIONS=detect_leaks=0:strict_string_checks=1:halt_on_error=1"
+          } >> "$GITHUB_ENV"
+      - name: Configure (ASan/UBSan)
+        shell: bash
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DGO_WARNINGS_AS_ERRORS=ON \
+            -DGO_ENABLE_ASAN=ON -DGO_ENABLE_UBSAN=ON \
+            -DBUILD_FIPS=ON -DBUILD_APPS=OFF -DBUILD_RELAYD=OFF \
+            -DBUILD_LIBHANAMI=OFF -DBUILD_LIBMARMOT=OFF -DBUILD_MARMOT_GOBJECT=OFF \
+            -DBUILD_NOSTR_GOBJECT=OFF -DBUILD_NOSTR_GTK=OFF -DSIGNET_ENABLE=OFF \
+            -DWITH_NOSTRDB=OFF -DLIBNOSTR_WITH_NOSTRDB=OFF \
+            "-DFIPSD_UDP_INTEROP_RUST_BINARY=${RUNNER_TEMP}/fips-rust-target/release/fips"
+      - name: Build fipsd
+        run: cmake --build build --parallel 3 --target fipsd fipsd_test_tmpdir_run
+      - name: C<->Rust UDP interop (both roles, IPv4 and IPv6)
+        run: ctest --test-dir build -R '^FipsdInteropUdp' --no-tests=error --output-on-failure
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: ${{ inputs.artifact_prefix }}fips-interop-udp-${{ matrix.os }}
+          path: build/Testing/Temporary/
   nightly-fuzz:
     name: Linux • FIPS nightly fuzz (60 seconds per target)
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'

@@ -1149,14 +1149,11 @@ repeated cancellation and EBUSY reset), and after committed park; no sleeps.
 proof** as `test_node_two_nodes.c`: link, tree, filters, XK session, bidirectional
 datagrams, session/link rekey, post-rekey traffic and disconnect.
 
-The optional `FipsdUdpInteropSmokeTest` skips without
-`FIPSD_UDP_INTEROP_RUST_BINARY`. With a daemon built from `libfips-core/UPSTREAM.md`
-in a scratch `CARGO_TARGET_DIR`, it launches minimal Rust/C UDP configs with a
-static C peer and requires both control sockets to report a link. It observes
-Rust's tick-published control snapshots within a bounded deadline, not a fixed
-warm-up sleep. The smoke passed locally against pin `6aa80504baa0fa312b392009eea0e3e59fb6fe4c`;
-the full interoperability gate remains `f66sr.1`. All UDP targets belong to
-`fipsd_tests`. Native macOS ARM64 sanitizer runs are not Linux/deployment proof.
+The one-direction `FipsdUdpInteropSmokeTest` is superseded by the two-node
+C<->Rust UDP interoperability gate (`FipsdInteropUdpTest`, `FipsdInteropUdpV6Test`;
+see [C<->Rust UDP interoperability gate](#crust-udp-interoperability-gate-nostrc-f66sr1)).
+All UDP targets belong to `fipsd_tests`. Native macOS ARM64 sanitizer runs are
+not Linux/deployment proof.
 
 `FipsdTransportTest` covers unit-vector framing (upstream has no
 `tests/vectors/` transport corpus), every truncation/split/capacity offset,
@@ -1538,3 +1535,73 @@ Keep that target outside the read-only Rust checkout and delete it after the
 run. No dependency or CI workflow changes are needed. Version decision:
 **fipsd stays 0.1.0 Unreleased**; the TCP addition folds into the initial daemon,
 with no published release/tag or FMP wire-format change.
+## C<->Rust UDP interoperability gate (`nostrc-f66sr.1`)
+
+`tests/udp_interop.py` runs one `fipsd` and one `fips` daemon built from the
+`libfips-core/UPSTREAM.md` pin (`6aa80504`) on loopback UDP, once per role
+assignment (C dials Rust, then Rust dials C), for IPv4 (`FipsdInteropUdpTest`)
+and IPv6 (`FipsdInteropUdpV6Test`). Both tests report CTest **skipped** (exit 77,
+`SKIP: ...`) unless `FIPSD_UDP_INTEROP_RUST_BINARY` names the Rust daemon. Every
+step is an observation through one of the two control sockets or a daemon log,
+waited for under a deadline; the only pause is the 100 ms poll between Rust's
+tick-published control snapshots. A failure prints both daemons' complete logs
+and the harness trace. The two daemons never share configuration beyond
+`node.rekey.after_secs: 25`, `tun`/`dns` off and a loopback `transports.udp`
+bind; the Rust side also enables `node.native_api`.
+
+What each step observes, per role assignment:
+
+| Step | C side (`fipsd` control socket) | Rust side (`fips` control socket, native API) |
+|---|---|---|
+| IK link | `connect` on the initiator; `show_links[0].state == active` with the assigned direction; `show_peers[0].npub` is the Rust npub; `show_status` peer/link counts are 1 | `show_links[0].state == connected` with the complementary direction; `show_peers[0].npub` is the C npub |
+| Tree and filters | `show_tree`: both agree on `root`, one side is root at depth 0 and the other hangs at depth 1 with `parent` = the root's `my_node_addr`, `peer_tree_count 1`; `show_bloom.peer_filters[0].has_filter`; `show_peers[0].is_parent`/`is_child` match the tree | the same fields |
+| XK session | C dials: a C `probe_start` opens it (`is_initiator true`); Rust dials: Rust's first native-API write opens it (`is_initiator false`). `identity proven`, `state established` | the complementary `is_initiator`; `Session established (... XK)` in the log |
+| Datagrams | Rust->C application datagrams: `show_metrics.native.received_datagrams`/`received_bytes` equal what was written, before and after the rekey. Session traffic both ways: a C probe and a Rust probe over the live session (`rtt.samples >= 1`, `reports_seen >= 1`, session stage `skipped`/preexisting, `session_left_intact`) and the prober's `show_sessions[0].mmp.srtt_ms` | native-API `connect` (reply plus the flow descriptor over `SCM_RIGHTS`), `send` on the flow; `show_native_flows` lists the flow with matching `sent_datagrams`/`sent_bytes` |
+| Rekey | `show_sessions[0].current_k_bit` then `show_peers[0].current_k_bit` flip from the value first observed, with exactly one session throughout; then a datagram and both probes again under the new keys; no non-zero mismatch/unknown/expired/unanswered counter in `show_metrics.session`/`handshake` | the same fields |
+| Shutdown | SIGTERM -> exit 0, no sanitizer marker in the log, control socket unlinked | SIGTERM -> exit 0, control, `-ipv6tun` status and API sockets unlinked |
+
+When C dials, the C probe opens the XK session and the Rust->C datagram is sent
+once the probe's session stage has passed (the observe that records the probe's
+adoption baseline), so the probe leaves the session in place
+(`left_intact_reason: adopted_by_traffic`) instead of tearing it down; the
+harness asserts that reason.
+
+**Not verified:** a C->Rust *application* datagram. fipsd has no native datagram
+API yet (Tier B4) and TUN delivery needs privileges, so the C->Rust direction is
+proven at the session layer (the C probe's CoordsWarmup and MMP reports, which
+Rust answers with the reports the C probe measures RTT from), not with an
+application payload. Rust->C application delivery is verified end to end through
+C's `native` counters. Measured locally on macOS ARM64 (default build, pin
+`6aa80504`): 50-60 s per role assignment, dominated by the rekey waits (session
+rekey observed 13-30 s after establishment, link rekey 40-51 s after the link
+came up); all four role/family scenarios passed.
+
+Run it locally:
+
+```bash
+# Read-only pinned upstream checkout; build only into a scratch target directory.
+CARGO_TARGET_DIR=/tmp/fips-rust-target cargo build --locked --release --bin fips \
+  --manifest-path /path/to/fips/Cargo.toml          # HEAD = libfips-core/UPSTREAM.md pin
+cmake -S . -B build -G Ninja -DBUILD_FIPS=ON \
+  -DFIPSD_UDP_INTEROP_RUST_BINARY=/tmp/fips-rust-target/release/fips   # plus the usual BUILD_* switches
+cmake --build build --target fipsd fipsd_test_tmpdir_run
+ctest --test-dir build -R '^FipsdInteropUdp' --output-on-failure
+# Or one family/role by hand (the harness makes its own temp dir when FIPSD_TEST_TMPDIR is unset):
+python3 fipsd/tests/udp_interop.py --fipsd build/fipsd/fipsd \
+  --rust /tmp/fips-rust-target/release/fips --family 6 --initiator rust
+```
+
+CI runs the gate in the `interop-udp` job of `.github/workflows/fips-ci.yml` on
+ubuntu-24.04 and macos-latest: it reads the pin from `libfips-core/UPSTREAM.md`,
+checks upstream out at that commit, builds the daemon with the toolchain named by
+upstream's `rust-toolchain.toml` (`cargo build --locked --release`), caches the
+resulting binary keyed on OS, architecture, pin and toolchain, builds fipsd with
+ASan/UBSan and runs `ctest -R '^FipsdInteropUdp'`.
+
+Two fipsd corrections came out of the gate, both PATCH-class control output with
+regressions in `FipsdNodeHandlersTest` and `FipsdNodeTwoNodesTest`: a probe
+report now states the host's teardown refusal (`session_left_intact`,
+`left_intact_reason`) instead of the core's `torn_down` for a session the host
+kept, and `show_sessions.state` uses upstream's vocabulary (`established` while
+draining with `is_draining: true`; `initiating`/`awaiting_msg3` before
+establishment) instead of `draining`/`handshaking`.
