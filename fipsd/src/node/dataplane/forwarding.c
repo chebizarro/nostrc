@@ -73,6 +73,7 @@ bool fipsd_dp_route(handlers *h, const fips_session_datagram *dg, const fips_nod
         d->coord_scratch, d->route_peers, &w, &out);
     go_refptr_release(&ref);
     if (status != FIPS_OK) { fipsd_dp_reject_frame(h, FIPSD_DP_DECODE); return false; }
+    size_t metric_bytes = fips_session_datagram_encoded_len(dg) - 1;
     bool originated = !memcmp(dg->src_addr.bytes, h->me.bytes, 16);
     switch (out.kind) {
     case FIPS_ROUTE_Forward: {
@@ -86,22 +87,36 @@ bool fipsd_dp_route(handlers *h, const fips_session_datagram *dg, const fips_nod
         if (clamp && clamp < link_mtu) link_mtu = clamp;
         if (!t || len + FIPS_FRAMING_FMP_ESTABLISHED_HEADER_SIZE + (FIPS_FRAMING_FMP_INNER_HEADER_SIZE - 1) + FIPS_NOISE_TAG_SIZE > link_mtu) {
             fipsd_dp_reject_frame(h, FIPSD_DP_MTU);
+            METRIC(h, forwarding, drop_mtu_exceeded_packets); METRIC_ADD(h, forwarding, drop_mtu_exceeded_bytes, metric_bytes);
             if (exclude) fipsd_dp_route_error(h, dg, exclude, link_mtu);
             return false;
         }
         bool ok = fipsd_dp_link_send_ce(h, next, info->transport, &info->addr, h->route_buf, len, out.outgoing_ce);
-        if (!ok) { fipsd_dp_reject_frame(h, FIPSD_DP_SEND); return false; }
+        if (!ok) { fipsd_dp_reject_frame(h, FIPSD_DP_SEND); METRIC(h, forwarding, drop_send_error_packets); METRIC_ADD(h, forwarding, drop_send_error_bytes, metric_bytes); return false; }
         if (!memcmp(dg->dest_addr.bytes, out.next_hop.bytes, 16)) ++h->counters.fwd_route_direct_peer;
         else ++h->counters.fwd_route_tree_up;
-        if (originated) { ++h->counters.fwd_originated_packets; h->counters.fwd_originated_bytes += dg->payload_len; }
-        else { ++h->counters.fwd_forwarded_packets; h->counters.fwd_forwarded_bytes += dg->payload_len; }
+        if (originated) { ++h->counters.fwd_originated_packets; h->counters.fwd_originated_bytes += metric_bytes; }
+        else {
+            ++h->counters.fwd_forwarded_packets; h->counters.fwd_forwarded_bytes += metric_bytes;
+            fips_route_class cls = fips_classify_forward(&dg->dest_addr, &out.next_hop, &h->me,
+                fips_tree_state_my_coords(h->tree), hs_cache_coords(h, &dg->dest_addr, hs_now(h)), hs_tree_peer_coords(h, &out.next_hop));
+            switch (cls) {
+            case FIPS_ROUTE_TreeUp: METRIC(h, forwarding, route_tree_up); break;
+            case FIPS_ROUTE_TreeDown: METRIC(h, forwarding, route_tree_down); break;
+            case FIPS_ROUTE_TreeDownCross: METRIC(h, forwarding, route_tree_down_cross); break;
+            case FIPS_ROUTE_CrosslinkDescend: METRIC(h, forwarding, route_crosslink_descend); break;
+            case FIPS_ROUTE_CrosslinkAscend: METRIC(h, forwarding, route_crosslink_ascend); break;
+            case FIPS_ROUTE_DirectPeer: METRIC(h, forwarding, route_direct_peer); break;
+            }
+            if (out.outgoing_ce) METRIC(h, congestion, ce_forwarded);
+        }
         return true;
     }
     case FIPS_ROUTE_DeliverLocal: return false; /* endpoint path precedes route */
-    case FIPS_ROUTE_Drop: fipsd_dp_reject_frame(h, FIPSD_DP_TTL); return false;
+    case FIPS_ROUTE_Drop: fipsd_dp_reject_frame(h, FIPSD_DP_TTL); METRIC_ADD(h, forwarding, ttl_exhausted_bytes, metric_bytes); return false;
     case FIPS_ROUTE_NoRoute:
         fipsd_dp_reject_frame(h, FIPSD_DP_NO_ROUTE);
-        h->counters.fwd_drop_no_route_bytes += dg->payload_len;
+        h->counters.fwd_drop_no_route_bytes += metric_bytes;
         if (exclude) fipsd_dp_route_error(h, dg, exclude, 0);
         return false;
     }

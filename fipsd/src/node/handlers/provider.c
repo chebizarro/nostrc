@@ -85,7 +85,6 @@ static json_t *coords_json(const fips_tree_coordinate *c)
     return a;
 }
 static uint64_t wall_of(handlers *h, fips_instant at) { return at.ops ? h->wall_offset_ms + hs_elapsed_ms(at, h->origin) : 0; }
-#define COUNTER(list, n, name_, value_) do { (list)[(n)++] = (fipsd_control_counter){name_, value_}; } while (0)
 static fipsd_control_counters counters_of(snap *x, const fipsd_control_counter *items, size_t n)
 {
     fipsd_control_counter *copy = salloc(x, n * sizeof *copy);
@@ -187,16 +186,27 @@ static snap *build(handlers *h, fips_instant now)
     s->is_leaf_only = h->cfg.leaf_only; s->is_root = fips_tree_state_is_root(h->tree);
     GoRefPtr cfg = fipsd_node_config(h->ctx);
     if (cfg.ptr) s->persistent = fipsd_config_bool(fipsd_config_get(cfg.ptr, "node.identity.persistent"));
+    json_t *acl = sjson(x, fipsd_acl_status(fipsd_config_acl(cfg.ptr)));
+    s->acl.allow_file = json_string_value(json_object_get(acl, "allow_file"));
+    s->acl.deny_file = json_string_value(json_object_get(acl, "deny_file"));
+    s->acl.effective_mode = json_string_value(json_object_get(acl, "effective_mode"));
+    s->acl.default_decision = json_string_value(json_object_get(acl, "default_decision"));
+    s->acl.enforcement_active = json_is_true(json_object_get(acl, "enforcement_active"));
+    s->acl.allow_all = json_is_true(json_object_get(acl, "allow_all"));
+    s->acl.deny_all = json_is_true(json_object_get(acl, "deny_all"));
+    s->acl.allow_entries = json_object_get(acl, "allow_entries");
+    s->acl.deny_entries = json_object_get(acl, "deny_entries");
+    s->acl.allow_file_entries = json_object_get(acl, "allow_file_entries");
+    s->acl.deny_file_entries = json_object_get(acl, "deny_file_entries");
     go_refptr_release(&cfg);
-    /* Mesh size: bloom estimate of everything reachable up-tree plus us. */
-    fips_bloom_state_base_filter(&h->bloom, &h->filter_scratch);
-    if (!fips_bloom_is_empty(&h->filter_scratch)) {
-        x->has_fill = true; x->fill = fips_bloom_fill_ratio(&h->filter_scratch);
-        if (fips_bloom_estimated_count(&h->filter_scratch, FIPS_BLOOM_ACCEPT_FPR_CAP, &x->estimate)) {
-            x->has_mesh = true; x->mesh = (uint64_t)x->estimate + 1;
-        }
-        s->bloom.uptree_fill_ratio = &x->fill;
-        if (x->has_mesh) { s->bloom.uptree_estimated_count = &x->estimate; s->estimated_mesh_size = &x->mesh; }
+    /* Upstream node mesh estimate and last filter actually sent up-tree. */
+    if (hs_stats_mesh(h, &x->mesh)) { x->has_mesh = true; s->estimated_mesh_size = &x->mesh; }
+    const fips_parent_declaration *declaration = fips_tree_state_my_declaration(h->tree);
+    fips_bloom_peer *parent_filter = fips_tree_state_is_root(h->tree) ? NULL : fips_bloom_state_peer(&h->bloom, &declaration->parent_id);
+    if (parent_filter && parent_filter->sent_len) {
+        x->fill = fips_bloom_fill_ratio(&parent_filter->sent[0]); s->bloom.uptree_fill_ratio = &x->fill;
+        if (fips_bloom_estimated_count(&parent_filter->sent[0], FIPS_BLOOM_ACCEPT_FPR_CAP, &x->estimate))
+            s->bloom.uptree_estimated_count = &x->estimate;
     }
     size_t peers = 0, legs = 0, established = 0;
     json_t *counts = json_object(), *peer_rows = json_array(), *link_rows = json_array(), *mmp_peers = json_array();
@@ -399,50 +409,29 @@ static snap *build(handlers *h, fips_instant now)
     for (size_t i = 0; i < h->cfg.session_capacity; ++i) if (h->held[i].used) { ++s->pending_native_destinations; s->pending_native_datagrams += h->held[i].len; }
     s->recent_requests = h->lookup.recent_len;
     s->retries = sjson(x, json_array());
-    s->acl.allow_file = ""; s->acl.deny_file = ""; s->acl.effective_mode = "disabled"; s->acl.default_decision = "allow";
-    /* Counter families (names pinned by control/counter_schema.h). */
-    const handler_counters *c = &h->counters;
-    fipsd_control_counter buf[48]; size_t n = 0;
-    COUNTER(buf, n, "received_packets", c->fwd_received_packets); COUNTER(buf, n, "received_bytes", c->fwd_received_bytes);
-    COUNTER(buf, n, "delivered_packets", c->fwd_delivered_packets); COUNTER(buf, n, "delivered_bytes", c->fwd_delivered_bytes);
-    COUNTER(buf, n, "forwarded_packets", c->fwd_forwarded_packets); COUNTER(buf, n, "forwarded_bytes", c->fwd_forwarded_bytes);
-    COUNTER(buf, n, "originated_packets", c->fwd_originated_packets); COUNTER(buf, n, "originated_bytes", c->fwd_originated_bytes);
-    COUNTER(buf, n, "drop_no_route_packets", c->fwd_drop_no_route_packets); COUNTER(buf, n, "drop_no_route_bytes", c->fwd_drop_no_route_bytes);
-    COUNTER(buf, n, "ttl_exhausted_packets", c->fwd_ttl_exhausted_packets); COUNTER(buf, n, "decode_error_packets", c->fwd_decode_error_packets);
-    COUNTER(buf, n, "route_direct_peer", c->fwd_route_direct_peer); COUNTER(buf, n, "route_tree_up", c->fwd_route_tree_up);
-    s->forwarding = counters_of(x, buf, n); n = 0;
-    COUNTER(buf, n, "req_received", c->lookup_req_received); COUNTER(buf, n, "req_initiated", c->lookup_req_initiated);
-    COUNTER(buf, n, "req_forwarded", c->lookup_req_forwarded); COUNTER(buf, n, "req_target_is_us", c->lookup_req_target_is_us);
-    COUNTER(buf, n, "req_duplicate", c->lookup_req_duplicate); COUNTER(buf, n, "req_ttl_exhausted", c->lookup_req_ttl_exhausted);
-    COUNTER(buf, n, "req_no_tree_peer", c->lookup_req_no_tree_peer); COUNTER(buf, n, "req_sign_rate_limited", c->lookup_req_rate_limited);
-    COUNTER(buf, n, "req_backoff_suppressed", c->lookup_req_backoff_suppressed); COUNTER(buf, n, "req_bloom_miss", c->lookup_req_bloom_miss);
-    COUNTER(buf, n, "resp_received", c->lookup_resp_received); COUNTER(buf, n, "resp_accepted", c->lookup_resp_accepted);
-    COUNTER(buf, n, "resp_forwarded", c->lookup_resp_forwarded); COUNTER(buf, n, "resp_unsolicited", c->lookup_resp_unsolicited);
-    COUNTER(buf, n, "resp_proof_failed", c->lookup_resp_proof_failed); COUNTER(buf, n, "resp_timed_out", c->lookup_resp_timed_out);
-    COUNTER(buf, n, "req_decode_error", c->lookup_decode_error);
-    s->lookup = counters_of(x, buf, n); n = 0;
-    COUNTER(buf, n, "received", c->tree_received); COUNTER(buf, n, "accepted", c->tree_accepted); COUNTER(buf, n, "sent", c->tree_sent);
-    COUNTER(buf, n, "parent_switches", c->tree_switches); COUNTER(buf, n, "parent_losses", c->tree_losses);
-    COUNTER(buf, n, "stale", c->tree_dropped); COUNTER(buf, n, "outbound_sign_failed", c->tree_sign_failed); COUNTER(buf, n, "rate_limited", c->tree_rate_limited);
-    s->tree_stats = counters_of(x, buf, n); n = 0;
-    COUNTER(buf, n, "received", c->bloom_received); COUNTER(buf, n, "accepted", c->bloom_accepted); COUNTER(buf, n, "sent", c->bloom_sent);
-    COUNTER(buf, n, "invalid", c->bloom_refused); COUNTER(buf, n, "send_failed", c->bloom_send_failed);
-    s->bloom_stats = counters_of(x, buf, n); n = 0;
-    COUNTER(buf, n, "ce_received", 0); s->congestion = counters_of(x, buf, n); n = 0;
-    COUNTER(buf, n, "path_broken", 0); s->errors = counters_of(x, buf, n); n = 0;
-    COUNTER(buf, n, "received_datagrams", c->native_delivered); s->native = counters_of(x, buf, n); n = 0;
-    COUNTER(buf, n, "frames_received", c->frames_received); COUNTER(buf, n, "frames_delivered", c->frames_delivered);
-    COUNTER(buf, n, "frames_dropped", c->frames_dropped); COUNTER(buf, n, "frames_sent", c->frames_sent);
-    COUNTER(buf, n, "send_failed", c->send_failed); COUNTER(buf, n, "decrypt_failed", c->decrypt_failed); COUNTER(buf, n, "replay", c->replay);
-    s->dataplane = counters_of(x, buf, n); n = 0;
-    COUNTER(buf, n, "msg1_received", c->hs_msg1); COUNTER(buf, n, "msg2_received", c->hs_msg2); COUNTER(buf, n, "rejected", c->hs_rejected);
-    COUNTER(buf, n, "rate_limited", c->hs_rate_limited); COUNTER(buf, n, "promoted", c->hs_promoted); COUNTER(buf, n, "restarts", c->hs_restart);
-    COUNTER(buf, n, "timeouts", c->hs_timeouts); COUNTER(buf, n, "failed", c->hs_failed); COUNTER(buf, n, "cross_swap", c->hs_cross_swap); COUNTER(buf, n, "cross_keep", c->hs_cross_keep);
-    s->handshake = counters_of(x, buf, n); n = 0;
-    COUNTER(buf, n, "setup_received", c->sess_setup_received); COUNTER(buf, n, "setup_rate_limited", c->sess_setup_rate_limited);
-    COUNTER(buf, n, "established", c->sess_established); COUNTER(buf, n, "closed", c->sess_closed); COUNTER(buf, n, "rekeys", c->sess_rekeys);
-    COUNTER(buf, n, "data_in", c->sess_data_in); COUNTER(buf, n, "data_out", c->sess_data_out); COUNTER(buf, n, "decode_error", c->sess_decode_error);
-    COUNTER(buf, n, "link_rekeys_installed", c->rekey_installed); COUNTER(buf, n, "link_rekeys_abandoned", c->rekey_abandoned);
+
+    /* Complete upstream counter families from the node registry. */
+    hs_metrics_refresh(h);
+    fipsd_control_counter buf[32]; size_t n;
+    n = fipsd_metrics_snapshot(&h->metrics, FIPSD_METRICS_forwarding, buf);
+    s->forwarding = counters_of(x, buf, n);
+    n = fipsd_metrics_snapshot(&h->metrics, FIPSD_METRICS_lookup, buf);
+    s->lookup = counters_of(x, buf, n);
+    n = fipsd_metrics_snapshot(&h->metrics, FIPSD_METRICS_tree, buf);
+    s->tree_stats = counters_of(x, buf, n);
+    n = fipsd_metrics_snapshot(&h->metrics, FIPSD_METRICS_bloom, buf);
+    s->bloom_stats = counters_of(x, buf, n);
+    n = fipsd_metrics_snapshot(&h->metrics, FIPSD_METRICS_congestion, buf);
+    s->congestion = counters_of(x, buf, n);
+    n = fipsd_metrics_snapshot(&h->metrics, FIPSD_METRICS_errors, buf);
+    s->errors = counters_of(x, buf, n);
+    n = fipsd_metrics_snapshot(&h->metrics, FIPSD_METRICS_native, buf);
+    s->native = counters_of(x, buf, n);
+    n = fipsd_metrics_snapshot(&h->metrics, FIPSD_METRICS_dataplane, buf);
+    s->dataplane = counters_of(x, buf, n);
+    n = fipsd_metrics_snapshot(&h->metrics, FIPSD_METRICS_handshake, buf);
+    s->handshake = counters_of(x, buf, n);
+    n = fipsd_metrics_snapshot(&h->metrics, FIPSD_METRICS_session, buf);
     s->session = counters_of(x, buf, n);
     /* Stats history: copy the rings and re-point the peer storage. */
     fips_stats_history *hist = salloc(x, sizeof *hist);

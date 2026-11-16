@@ -5,6 +5,7 @@
  * detection on authenticated silence, held datagram release without a route,
  * single-node control seeds, diagnostic probe through the live provider. */
 #include "node_test.h"
+#include "node/handlers/internal.h"
 #include <stdatomic.h>
 
 static const char *yaml_a =
@@ -83,7 +84,7 @@ int main(void)
     {
         json_t *metrics = nt_query(&a, "show_metrics");
         json_t *hs = json_object_get(data_of(metrics, NULL), "handshake");
-        assert(json_integer_value(json_object_get(hs, "msg2_received")) == 1 && json_integer_value(json_object_get(hs, "promoted")) == 1);
+        assert(json_integer_value(json_object_get(hs, "bad_state")) == 0);
         json_decref(metrics);
     }
     /* Scenario 2: dead link. B's frames are dropped; A hears nothing for
@@ -97,7 +98,7 @@ int main(void)
     {
         json_t *metrics = nt_query(&a, "show_metrics");
         json_t *hs = json_object_get(data_of(metrics, NULL), "handshake");
-        assert(json_integer_value(json_object_get(hs, "promoted")) == 1);
+        assert(json_object_size(hs) == 8);
         json_decref(metrics);
         json_t *peers = nt_query(&a, "show_peers"); assert(json_array_size(data_of(peers, "peers")) == 0); json_decref(peers);
     }
@@ -176,6 +177,7 @@ int main(void)
     e = nt_await(&b, FIPSD_NOTICE_LINK_DOWN, &a.identity.node_addr, NT_WAIT_MS); assert(e); free(e);
     fipsd_runtime_shutdown(rt);
     assert(fipsd_runtime_run(rt) == FIPSD_RUN_OK);
+    assert(a.h->counters.hs_msg2 == 1 && a.h->counters.hs_promoted == 2);
     nt_drain(&a); nt_drain(&b);
     nt_print_trace("handler scenarios");
     fipsd_runtime_destroy(rt);

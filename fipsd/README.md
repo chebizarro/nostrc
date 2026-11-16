@@ -109,12 +109,14 @@ or cancellation, and `go_blocking_submit` performs bounded regular-file reads
 and parsing off the scheduler. A failed reload keeps the entire last good
 snapshot. Successful reloads apply **only `node.log_level`,
 `node.log_max_size_mb`, `node.log_max_files`**; every other changed setting is
-retained and logged as requiring restart. CLI file selection/environment level
+retained and logged as requiring restart. ACL/hosts resources are rebuilt in the same
+config snapshot on SIGHUP (see below); this introduces no YAML ACL keys. CLI file selection/environment level
 precedence remains in effect. Log limits change under the logger's write mutex.
 Upstream `node/reloadable.rs` defines hosts/ACL resource snapshots, **not a YAML
 reloadable-key list**; upstream `fips.rs` has no SIGHUP YAML reload. Therefore
 this whitelist is an explicit C-host contract, not a claim of upstream YAML
-reload parity. Peer-list/hosts/ACL application awaits their owning subsystems.
+reload parity. Peer-list changes still require restart; the active peer-alias base is retained
+on YAML reload. ACL/hosts file changes are applied by the config resource owner.
 
 The load log captures all defaults (DEBUG), bounds/deprecations/unknown keys
 (WARN) and loaded paths (INFO) before the final logger is configured; replay
@@ -134,6 +136,94 @@ self-contained fixture copies remove comment lines and normalize trailing blank 
 real-process tests exercise SIGHUP, restart-only rejection, failed reload,
 layering, immutable retained snapshots and concurrent readers. Build the new
 tests through the existing `fipsd_tests` aggregate.
+
+
+### Admission ACLs, metrics, history and diagnostics (`nostrc-9keoz.8`)
+
+| File | Role |
+| ---- | ---- |
+| `src/node/acl.{c,h}` | Immutable file-backed npub/alias policy, upstream allow-first decision order, sorted effective/status entries and last-good reload guards. |
+| `src/node/metrics.{c,h}` | Upstream counter vocabulary and relaxed atomic registry; typed handler/dataplane counter producers, immutable provider copies. |
+| `src/node/stats.{c,h}` | Dispatcher counters and one-second collection into existing `fips_stats_history` node/per-peer rings, with retained-peer storage growth. |
+| `src/node/diag.{c,h}` | Lowercase diagnostic hex and upstream node-wide unauthenticated-line budget (burst 10, 1/sec, saturating withheld count). |
+
+**Policy follows the checked Rust source, not a new firewall design.** There is
+no `node.acl` YAML section or configurable default-deny key. The inputs are
+`peers.allow`, `peers.deny` and `hosts` beside the platform system config:
+`/usr/local/etc/fips` on macOS/FreeBSD, `/etc/fips` on other supported Unix hosts.
+`peers[].alias` supplies the alias base; case-insensitive hosts-file aliases win
+on conflicts. ACL files take one npub or alias per line, `#` inline comments,
+and case-insensitive `ALL`. Allow matches override deny matches; unmatched peers
+are allowed. An allowlist alone does **not** imply default deny: put `ALL` in
+`peers.deny` to obtain allow-then-deny-all. Invalid lines are skipped with warnings.
+No prefix/wildcard syntax other than `ALL` is introduced.
+
+Admission gates are outbound dial (before reservation/index/DH), authenticated
+inbound IK admission (after encrypted-key recovery/classification, before index
+allocation and reply DH), and authenticated outbound IK completion (before
+promotion, catching reloads during a handshake). The existing-link rekey path
+bypasses new admission. Inbound restart teardown before the late admission gate
+is intentionally retained from upstream. There are **no session-setup or
+forwarding ACL checks**, and reload does not disconnect existing peers.
+
+`main` loads policy before publishing the initial config generation. Parsing
+YAML alone performs no ACL I/O; embedding/tests opt in with
+`fipsd_config_enable_acl` before publication and can supply isolated absolute
+resource paths. The single config service serializes SIGHUP and one-second
+resource-mtime maintenance on its blocking executor. Readers retain the config
+snapshot with `GoSwap`; dispatcher admission never reads files. Missing files
+are empty policy. Reload read/UTF-8 failures hold the last-good policy and retry;
+a clean in-place emptying of enforcing ACL files is held once before accepting
+it. Deletion and hosts-only alias removal apply immediately. Startup read faults
+start empty and retry, matching upstream's explicitly logged behavior. Automatic
+change detection uses upstream's mtime contract; timestamp-preserving edits need
+SIGHUP. No new config schema/defaults or config-golden changes are required.
+
+`show_acl` now projects actual policy. Rejection counts are upstream
+`show_metrics.handshake.bad_state`, **not an invented `show_acl` counter**.
+`show_metrics` is a documented upstream command; it exposes all 154 upstream
+uint64 counter names in the ten families below (plus the deprecated `discovery`
+alias of `lookup`). No gauges/histograms or C-only handshake progress names are
+added. Dispatcher totals and typed rejection counters feed the registry;
+control readers receive retained immutable copies after changes/maintenance,
+not pointers into mutable counters. Fields with no producer in the currently
+ported host stay zero rather than manufacturing activity from an unimplemented
+flow, TUN, cache-budget or kernel-drop owner:
+
+| Family | Upstream names | Current producer names | Names awaiting a corresponding host producer |
+| ------ | -------------- | ---------------------- | ------------------------------------------- |
+| `forwarding` | 31 | 24 | `coord_hint_changed`, `coord_hint_rejected`, `coord_hint_unfunded`, `coord_warm_foreign_root`, `coord_warm_key_mismatch`, `warm_malformed_bytes`, `warm_malformed_packets` |
+| `lookup` | 26 | 24 | `req_dedup_cache_full`, `resp_no_route` |
+| `tree` | 17 | 17 | None |
+| `bloom` | 12 | 11 | `debounce_suppressed` |
+| `congestion` | 4 | 2 | `congestion_detected`, `kernel_drop_events` |
+| `errors` | 18 | 5 | `broken_below_quorum`, `broken_demoted`, `broken_link_mismatch`, `broken_reporter_mismatch`, `emit_over_peer_budget`, `lookup_resp_mtu_below_floor`, `mtu_exceeded_below_floor`, `mtu_exceeded_uncorroborated`, `path_mtu_notif_below_floor`, `unbound_broken`, `unbound_coords`, `unbound_forged`, `unbound_mtu` |
+| `native` | 18 | 4 | `drop_arrival_queue_full`, `drop_backlog_full`, `drop_flow_queue_full`, `drop_listener_gone`, `drop_listener_not_reading`, `drop_no_port`, `drop_oversize`, `drop_peer_share`, `drop_pending_queue_full`, `drop_too_many_flows`, `flows_accepted`, `flows_closed`, `flows_expired`, `flows_opened` |
+| `dataplane` | 2 | 1 | `orphaned_index` |
+| `handshake` | 8 | 8 | None |
+| `session` | 18 | 16 | `addr_mismatch`, `half_open_full` |
+
+`show_stats_list`, `show_stats_history`, `show_stats_peers`,
+`show_stats_all_history` and `show_stats_history_all_peers` use the existing
+core rings, delta baselines, 60:1 downsampling, 24-hour peer retention and
+non-finite-to-null visitor. Collection follows upstream's forwarding-byte/packet
+basis and session-table length; node totals do not fall when a link disappears.
+Every active peer is sampled (no former 64-peer truncation), and retained storage
+grows for churn. Mesh size is the rounded cardinality of the OR-union of every
+peer's inbound filter plus self; no contributing filter means unknown.
+`show_status` sparklines read the same rings. Bloom diagnostic fields describe
+the last filter actually sent to the parent, remaining null at a root or before
+that send. Existing peers/links/MMP/tree/bloom/probe diagnostic surfaces stay
+live; **upstream has no diagnostic query command**, so none is invented.
+
+Tests include actual ACL-loader canonical replay of `show_acl.json`, all five
+existing `show_stats_*.json` goldens through a real empty history owner, fake-fed
+and concurrent registry projection, >64-peer sampling/retained churn, and a
+real two-node denied-dial/denied-inbound -> SIGHUP -> allowed link/datagram/rekey
+trace with nonempty node/peer histories. The pre-existing control corpus still
+matches byte-for-byte after its canonicalization. There is **no upstream
+`show_metrics.json` golden** in this checkout: metric names/types and feeds are
+asserted directly instead. No new golden is presented as upstream evidence.
 
 ### Logging
 
@@ -650,7 +740,7 @@ machine's 5 s `young` window) through the handler configuration, not YAML.
 `FipsdNodeHandlersTest` (`tests/test_node_handlers.c`) adapts the upstream
 handler tests (`mmp.rs` silence/heartbeat pacing, `session.rs` held-packet fate,
 `timeout.rs` stranded release) and C-host contracts: single-node control seeds,
-msg2 loss with msg1 retransmission (metrics prove one msg2 and one promotion),
+msg2 loss with msg1 retransmission (notices plus quiescent progress counters prove the receive/promotion totals),
 dead-link detection on authenticated silence, pending-connection projection and
 handshake timeout, held datagram release without a route, and the live
 `probe_start/poll`, `path_show` and `disconnect` commands through the provider.
@@ -741,14 +831,16 @@ throughput or a Rust/C performance comparison. The separate sanitizer gates
 run `ctest -R '^Fips'` (117 registered tests: 116 passes, optional Rust-control
 interop unavailable/skipped); the benchmark is not included in that default.
 
-### Remaining for `9keoz.8`, Tier B2 and B4
+### Remaining for Tier B2 and B4
 
-`9keoz.8` / Tier B2: real UDP/TCP/connected receive/binder legs behind the
+Tier B2: real UDP/TCP/connected receive/binder legs behind the
 transport seam, discovery, transport interface presence and native network
 interoperability/performance. No real socket dataplane or deployment proof is
 claimed by loopback tests. B4: native API and IPv6 adapter owners replacing
 `native.c`/`host_link` notices, clamp publication/MSS application to the adapter,
-configured-peer address lists into path intake, ACL and rendezvous.
+configured-peer address lists into path intake and rendezvous. Admission ACLs
+are active at the existing dial/handshake seam; they do not claim these remaining
+network or host adapters are implemented.
 
 ## Unix control socket (`nostrc-9keoz.3`)
 

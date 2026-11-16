@@ -37,13 +37,22 @@ void hs_bloom_filter_received(handlers *h, peer_rec *rec, const uint8_t *body, s
     fips_filter_announce *a = malloc(sizeof *a); /* 4 KiB filter: off the fiber stack */
     if (!a) return;
     fips_reader r; fips_reader_init(&r, body, len);
-    if (fips_filter_announce_decode(&r, a, NULL) != FIPS_OK) { free(a); return; }
+    if (fips_filter_announce_decode(&r, a, NULL) != FIPS_OK) { METRIC(h, bloom, decode_error); free(a); return; }
     fips_bloom_peer *p = fips_bloom_state_peer(&h->bloom, &rec->addr);
-    if (!p) { free(a); return; }
+    if (!p) { METRIC(h, bloom, unknown_peer); free(a); return; }
     uint64_t before = p->inbound_sequence; bool had = p->has_inbound;
+    if (had && a->sequence <= before) METRIC(h, bloom, stale);
     fips_bloom_actions actions = {h->bloom_actions, 0, h->cfg.peer_capacity + 1};
     if (fips_bloom_state_receive(&h->bloom, p, a, hs_now_ms(h), &actions) != FIPS_OK) { free(a); return; }
-    for (size_t i = 0; i < actions.len; ++i) if (actions.items[i].kind == FIPS_BLOOM_REFUSED) ++h->counters.bloom_refused;
+    for (size_t i = 0; i < actions.len; ++i) if (actions.items[i].kind == FIPS_BLOOM_REFUSED) {
+        ++h->counters.bloom_refused;
+        switch (actions.items[i].refusal) {
+        case FIPS_BLOOM_REFUSE_PARAMETERS: METRIC(h, bloom, non_v1); break;
+        case FIPS_BLOOM_REFUSE_FPR: METRIC(h, bloom, fill_exceeded); break;
+        case FIPS_BLOOM_REFUSE_CHILD_ECHO: METRIC(h, bloom, child_role_rejected); break;
+        default: break;
+        }
+    }
     if (p->has_inbound && (!had || p->inbound_sequence != before)) {
         ++h->counters.bloom_accepted;
         fipsd_peer_data_filter(fipsd_active_peer_data(rec->peer), &a->filter, a->sequence, hs_wall_ms(h));

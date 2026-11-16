@@ -130,7 +130,7 @@ static void free_storage(handlers *h)
     if (h->session_ext) for (size_t i = 0; i < h->cfg.session_capacity; ++i) free(h->session_ext[i].pending);
     free(h->session_ext); free(h->setup_entries);
     if (h->held) for (size_t i = 0; i < h->cfg.session_capacity; ++i) free(h->held[i].items);
-    free(h->held); free(h->history); free(h->history_peers);
+    free(h->held); free(h->history); free(h->history_peers); free(h->history_samples);
     free(h->bloom_actions); free(h->path_outputs); free(h->probe_facts);
     h->bloom_actions = NULL; h->path_outputs = NULL; h->probe_facts = NULL;
     for (size_t i = 0; i < FIPSD_HANDLERS_PROBE_JOBS; ++i) { free(h->probes[i].probe); free(h->probes[i].report); }
@@ -139,7 +139,7 @@ static void free_storage(handlers *h)
     h->bloom_peers = NULL; h->leaves = NULL; h->recent = NULL; h->pending_lookups = NULL; h->backoff_entries = NULL;
     h->forward_entries = NULL; h->sign_entries = NULL; h->request_scratch = NULL; h->response_scratch = NULL;
     h->cache_slots = NULL; h->cache_index = NULL; h->identity_entries = NULL; h->session_entries = NULL;
-    h->session_ext = NULL; h->setup_entries = NULL; h->held = NULL; h->history = NULL; h->history_peers = NULL;
+    h->session_ext = NULL; h->setup_entries = NULL; h->held = NULL; h->history = NULL; h->history_peers = NULL; h->history_samples = NULL;
     memset(h->probes, 0, sizeof h->probes);
 }
 void fipsd_node_handlers_destroy(fipsd_node_handlers *h)
@@ -203,14 +203,15 @@ static bool allocate(handlers *h)
     h->path_outputs = calloc(FIPS_PATH_OUTPUTS_MAX, sizeof(*h->path_outputs));
     h->probe_facts = calloc(1, sizeof(*h->probe_facts));
     h->history = calloc(1, sizeof(*h->history));
-    size_t hcap = cap < 64 ? cap : 64;
+    size_t hcap = cap;
+    h->history_samples = calloc(cap, sizeof(*h->history_samples));
     h->history_peers = calloc(hcap, sizeof(*h->history_peers));
     if (!h->recs || !h->legs || !h->index_map || !h->configured || !h->index_storage || !h->silent_storage ||
         !h->tree || !h->tree_peers || !h->announce_scratch || !h->coord_scratch || !h->bloom_peers || !h->leaves ||
         !h->recent || !h->pending_lookups || !h->backoff_entries || !h->forward_entries || !h->sign_entries ||
         !h->request_scratch || !h->response_scratch || !h->cache_slots || !h->cache_index || !h->identity_entries ||
         !h->session_entries || !h->session_ext || !h->setup_entries || !h->held || !h->history || !h->history_peers ||
-        !h->bloom_actions || !h->path_outputs || !h->probe_facts)
+        !h->bloom_actions || !h->path_outputs || !h->probe_facts || !h->history_samples)
         return false;
     for (size_t i = 0; i < scap; ++i) {
         h->session_ext[i].pending = calloc(h->cfg.pending_per_destination, sizeof(pending_datagram));
@@ -281,6 +282,8 @@ static bool attach(void *user, const fipsd_node_attach *a)
     memcpy(h->local.epoch, h->epoch, 8);
     h->origin = h->started_at = hs_now(h);
     h->wall_offset_ms = wall_now_ms();
+    fipsd_diag_init(&h->diag, h->origin);
+    fipsd_metrics_init(&h->metrics);
     h->next_tick = fips_deadline(h->origin, fips_duration_from_millis(h->cfg.tick_ms));
     h->next_link_id = 1;
     load_core(h);

@@ -122,6 +122,13 @@ int main(int argc, char **argv)
     fipsd_config_log_replay(&held, log);
     fipsd_config_log_clear(&held);
     FIPSD_INFO(MODULE, "configuration loaded");
+    if (!fipsd_config_enable_acl(config, NULL)) {
+        FIPSD_ERROR(MODULE, "cannot allocate ACL snapshot");
+        fipsd_config_free(config);
+        fipsd_log_set_default(NULL); fipsd_log_destroy(log);
+        if (log_file) fipsd_log_file_close(log_file);
+        return FIPSD_EXIT_FAILURE;
+    }
     GoSwap *snapshots = go_swap_create(config, fipsd_config_free);
     if (!snapshots) {
         fipsd_config_free(config);

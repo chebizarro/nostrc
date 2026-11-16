@@ -62,16 +62,17 @@ void hs_lookup_request_received(handlers *h, peer_rec *rec, const uint8_t *body,
     ++h->counters.lookup_req_received;
     fips_reader r; fips_reader_init(&r, body, len);
     fips_lookup_request *req = h->request_scratch;
-    if (fips_lookup_request_decode(&r, req, NULL) != FIPS_OK) { ++h->counters.lookup_decode_error; return; }
+    if (fips_lookup_request_decode(&r, req, NULL) != FIPS_OK) { ++h->counters.lookup_decode_error; METRIC(h, lookup, req_decode_error); return; }
     size_t peers = view(h).peer_count;
     fips_lookup_classification cls;
     if (fips_lookup_classify_request(&h->lookup, req, &rec->addr, &h->me, hs_now_ms(h), h->cfg.lookup_recent_expiry_ms,
             FIPS_MIN_RECENT_PER_PEER * 2, peers, &cls) != FIPS_OK) return;
+    if (cls.has_eviction) METRIC(h, lookup, req_dedup_evicted);
     fips_lookup_action items[FIPS_LOOKUP_MAX_FORWARD_PEERS > 64 ? 64 : FIPS_LOOKUP_MAX_FORWARD_PEERS];
     fips_lookup_action_list actions = {items, 0, sizeof items / sizeof items[0], h->lookup_bytes, sizeof h->lookup_bytes};
     switch (cls.outcome) {
-    case FIPS_REQUEST_Duplicate: ++h->counters.lookup_req_duplicate; return;
-    case FIPS_REQUEST_OwnRequestLooped: return;
+    case FIPS_REQUEST_Duplicate: ++h->counters.lookup_req_duplicate; METRIC(h, lookup, req_deduplicated); return;
+    case FIPS_REQUEST_OwnRequestLooped: METRIC(h, lookup, req_own_loopback); return;
     case FIPS_REQUEST_TtlExhausted: ++h->counters.lookup_req_ttl_exhausted; return;
     case FIPS_REQUEST_RespondAsTarget: {
         ++h->counters.lookup_req_target_is_us;
@@ -91,10 +92,11 @@ void hs_lookup_request_received(handlers *h, peer_rec *rec, const uint8_t *body,
         fips_lookup_routing_view rv = view(h);
         fips_forward_result result;
         if (fips_lookup_plan_transit_forward(&h->lookup, req, &rec->addr, &rv, hs_now_ms(h), &actions, &result) != FIPS_OK) return;
+        if (result.used_fallback) METRIC(h, lookup, req_fallback_forwarded);
         switch (result.outcome) {
         case FIPS_FORWARD_Forward: ++h->counters.lookup_req_forwarded; send_actions(h, &actions, NULL, NULL); break;
         case FIPS_FORWARD_NoPeers: ++h->counters.lookup_req_no_tree_peer; break;
-        case FIPS_FORWARD_RateLimited: ++h->counters.lookup_req_rate_limited; break;
+        case FIPS_FORWARD_RateLimited: METRIC(h, lookup, req_forward_rate_limited); break;
         case FIPS_FORWARD_TtlExhausted: ++h->counters.lookup_req_ttl_exhausted; break;
         }
         return;
@@ -106,7 +108,7 @@ void hs_lookup_response_received(handlers *h, peer_rec *rec, const uint8_t *body
     ++h->counters.lookup_resp_received;
     fips_reader r; fips_reader_init(&r, body, len);
     fips_lookup_response *resp = h->response_scratch;
-    if (fips_lookup_response_decode(&r, resp, NULL) != FIPS_OK) { ++h->counters.lookup_decode_error; return; }
+    if (fips_lookup_response_decode(&r, resp, NULL) != FIPS_OK) { ++h->counters.lookup_decode_error; METRIC(h, lookup, resp_decode_error); return; }
     const fips_peer_identity *target = NULL;
     fipsd_active_peer *direct = fipsd_peer_table_find(h->peers->table, &resp->target);
     if (direct) target = &fipsd_active_peer_info(direct)->identity;
@@ -120,7 +122,7 @@ void hs_lookup_response_received(handlers *h, peer_rec *rec, const uint8_t *body
     fips_status s = fips_lookup_handle_response(&h->lookup, resp, &rec->addr, mtu, hs_now_ms(h), h->secp, target,
         h->scratch, sizeof h->scratch, &actions, &route, &e);
     if (s != FIPS_OK) {
-        if (route.kind == FIPS_RESPONSE_Originator && !target) ++h->counters.lookup_resp_proof_failed;
+        if (route.kind == FIPS_RESPONSE_Originator && !target) METRIC(h, lookup, resp_identity_miss);
         else ++h->counters.lookup_resp_proof_failed;
         return;
     }

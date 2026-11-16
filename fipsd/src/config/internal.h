@@ -22,7 +22,7 @@ typedef struct cfg_field {
     const struct cfg_field *fields;
     const char *choices; /* | separated enum */
 } cfg_field;
-struct fipsd_config { struct fipsd_config_value *root; fipsd_config_core core; };
+struct fipsd_config { struct fipsd_config_value *root; fipsd_config_core core; struct fipsd_acl *acl; };
 struct fipsd_config_log_entry { fipsd_log_level level; char *message; };
 #define END {NULL, CFG_NULL, NULL, 0, NULL, NULL}
 #define U(n,d) {n,CFG_UINT,d,UINT64_MAX,NULL,NULL}

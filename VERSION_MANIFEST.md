@@ -1,6 +1,7 @@
 # Component Version Manifest
 
 nostrc-9keoz.12: fipsd remains 0.1.0 Unreleased; dispatcher-owned attached-link endpoint migration, dataplane reseeding and dependent-session MTU tightening fold into the initial unreleased daemon. libfips-core unchanged. No published release/tag change.
+nostrc-9keoz.8: fipsd stays 0.1.0 Unreleased; file-backed admission ACLs, immutable reload snapshots, counter registry, stats-history collection and existing control projections fold into the initial unreleased daemon. libfips-core and libgo versions unchanged. No published release/tag change.
 
 nostrc-9keoz.10: fipsd remains 0.1.0 Unreleased; interface-bound transport presence feeds the multipath Bundle, with additive internal netmon/transport metadata and loopback coverage folded into the initial unreleased daemon. libfips-core unchanged. No published release/tag change.
 nostrc-9keoz.11: no bump for fipsd 0.1.0 Unreleased; test-only short temporary paths, socket length checks and cleanup. No shipped artifact, API, ABI or wire-format change.

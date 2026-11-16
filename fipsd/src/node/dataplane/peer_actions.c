@@ -52,6 +52,7 @@ void fipsd_dp_link_deliver(handlers *h, peer_rec *rec, fipsd_dp_packet *p, uint8
     ++rec->frames_in; rec->bytes_in += p->wire_size; ++h->counters.frames_delivered;
     if (a.count) (void)hs_peer_effects(h, rec->peer, &a);
     if (!rec->used) return;
+    if (p->ce) METRIC(h, congestion, ce_received);
     hs_mmp_frame_received(h, rec, p->job.counter, timestamp, p->wire_size, p->ce);
     fipsd_transport *t = hs_transport(h, p->transport);
     if (n && t) hs_path_account(h, rec, t, &p->endpoint, p->wire_size, message[0]);
