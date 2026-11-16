@@ -19,6 +19,9 @@ typedef struct fipsd_dp_epoch {
     fips_rekey_epoch_tag tag;
     uint32_t index;
     fips_transport_id transport;
+    /* Link epochs of a multipath-enabled Bundle resolve by index from any
+     * ingress transport, mirroring hs_index_lookup; transport stays provenance. */
+    bool multipath;
     fips_cipher_state recv;
 } fipsd_dp_epoch;
 typedef struct fipsd_dp_peer {

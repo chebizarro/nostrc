@@ -64,8 +64,7 @@ peer_rec *hs_index_lookup(handlers *h, fips_rekey_transport transport, uint32_t 
         /* Resolve by index alone for a multipath Bundle, as upstream's
          * encrypted ingress does. This selects a session, not an authenticated
          * peer/path: hs_link_frame must still open and replay-check the frame. */
-        if (e->transport == transport ||
-            (rec && rec->path_live && rec->path->params.cfg.enabled)) return rec;
+        if (e->transport == transport || hs_rec_multipath(rec)) return rec;
         return NULL;
     }
     return NULL;
@@ -250,30 +249,6 @@ bool hs_link_step(handlers *h, peer_rec *rec, fips_rekey_input input, const fips
 }
 /* .7: this seam never performs packet crypto on the dispatcher. */
 bool hs_link_frame(handlers *h, peer_rec *rec, fipsd_transport *t, const fips_transport_addr *from, uint8_t *frame, size_t len)
-{
-    fips_fmp_encrypted_header header;
-    if (!fips_fmp_encrypted_header_parse(frame, len, &header)) { ++h->counters.frames_dropped; return false; }
-    link_exec_result r = {.counter = header.counter};
-    fips_rekey_input in = {.kind = FIPS_REKEY_IN_Frame, .bytes = frame, .buf = frame, .len = len,
-        .hint = {header.counter, (header.flags & FIPS_FMP_FLAG_KEY_EPOCH) != 0, header.receiver_idx.value,
-                 FIPS_FRAMING_FMP_ESTABLISHED_HEADER_SIZE}};
-    bool ok = hs_link_step(h, rec, in, from, frame, len, &r);
-    if (r.teardown) { hs_remove_peer(h, rec, FIPS_REKEY_CLOSE_Admin, false, FIPS_FMP_ProtocolError); return ok; }
-    if (!r.delivered) return ok;
-    if (r.end > len || r.begin > r.end) return false;
-    uint32_t timestamp = 0; const uint8_t *message = NULL; size_t message_len = 0;
-    if (!fips_fmp_strip_inner_header(frame + r.begin, r.end - r.begin, &timestamp, &message, &message_len)) return false;
-    ++h->counters.frames_delivered;
-    link_heard(h, rec, len);
-    if (!rec->used) return true; /* heard effects may have removed the peer */
-    hs_mmp_frame_received(h, rec, header.counter, timestamp, len, (header.flags & FIPS_FMP_FLAG_CE) != 0);
-    if (message_len) hs_path_account(h, rec, t, from, len, message[0]);
-    /* The message borrows the frame buffer; copy so nested sends can reuse it. */
-    if (message_len > sizeof h->msg_buf) return false;
-    memcpy(h->msg_buf, message, message_len);
-    hs_link_message(h, rec, t, from, timestamp, h->msg_buf, message_len);
-    return true;
-}
 { return fipsd_dp_open(h, rec, NULL, t->id, from, frame, len); }
 bool hs_link_send(handlers *h, peer_rec *rec, const uint8_t *message, size_t len)
 {
@@ -285,8 +260,6 @@ bool hs_link_send_to(handlers *h, peer_rec *rec, fips_transport_id transport, co
     return fipsd_dp_link_send(h, rec, transport, to, message, len);
 }
 void hs_link_message(handlers *h, peer_rec *rec, fipsd_transport *t, const fips_transport_addr *from, uint32_t timestamp_ms, const uint8_t *message, size_t len)
-
-void hs_link_message(handlers *h, peer_rec *rec, const fips_transport_addr *from, uint32_t timestamp_ms, const uint8_t *message, size_t len)
 {
     (void)timestamp_ms;
     if (!len) return;

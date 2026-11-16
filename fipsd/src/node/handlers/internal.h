@@ -281,6 +281,9 @@ bool hs_session_execute(handlers *h, fips_session_entry *entry, const uint8_t *i
 void hs_index_bind(handlers *h, const fips_node_addr *peer, fips_rekey_transport transport, uint32_t index);
 void hs_index_unbind(handlers *h, fips_rekey_transport transport, uint32_t index);
 peer_rec *hs_index_lookup(handlers *h, fips_rekey_transport transport, uint32_t index);
+/* A multipath-enabled Bundle resolves receive indices from any ingress transport. */
+static inline bool hs_rec_multipath(const peer_rec *rec)
+{ return rec && rec->path_live && rec->path->params.cfg.enabled; }
 void hs_index_forget_peer(handlers *h, const fips_node_addr *peer);
 void hs_link_message(handlers *h, peer_rec *rec, fipsd_transport *t, const fips_transport_addr *from, uint32_t timestamp_ms, const uint8_t *message, size_t len);
 /* tree.c */

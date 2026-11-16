@@ -48,7 +48,7 @@ static uint64_t machine_hash(uint64_t v, const fips_rekey *m)
     return v;
 }
 static void epochs(fipsd_dp_snapshot *s, const fips_rekey *m, const fips_node_addr *peer,
-                   bool session, fips_transport_id transport)
+                   bool session, fips_transport_id transport, bool multipath)
 {
     for (int slot = FIPS_REKEY_Current; slot <= FIPS_REKEY_Previous; ++slot) {
         fips_rekey_epoch_tag tag;
@@ -60,7 +60,8 @@ static void epochs(fipsd_dp_snapshot *s, const fips_rekey *m, const fips_node_ad
         const fips_rekey_epoch_view *ev = slot == FIPS_REKEY_Current ? &view.current :
             slot == FIPS_REKEY_Pending ? &view.pending : &view.previous;
         *e = (fipsd_dp_epoch){.peer = *peer, .session = session, .tag = tag, .k = ev->k,
-            .index = fips_rekey_ours(m, (fips_rekey_slot)slot).value, .transport = transport, .recv = e->recv};
+            .index = fips_rekey_ours(m, (fips_rekey_slot)slot).value, .transport = transport,
+            .multipath = multipath, .recv = e->recv};
         ++s->epoch_count;
     }
 }
@@ -83,6 +84,7 @@ bool fipsd_dp_publish(handlers *h)
         if (f) { fp = hash(fp, &f->num_bits, sizeof f->num_bits);
             fp = hash(fp, &f->hash_count, sizeof f->hash_count); fp = hash(fp, f->bits, f->num_bits / 8); }
         fp = machine_hash(fp, fipsd_active_peer_link_machine(r->peer));
+        bool multipath = hs_rec_multipath(r); fp = hash(fp, &multipath, sizeof multipath);
         uint16_t mtu = fipsd_dp_link_mtu(h, r, info->transport, &info->addr);
         fp = hash(fp, &mtu, sizeof mtu);
         double cost = hs_mmp_link_cost(h, r); fp = hash(fp, &cost, sizeof cost);
@@ -129,10 +131,10 @@ bool fipsd_dp_publish(handlers *h)
                 *copy = *f; p->filter = make_go_refptr(copy, free);
             }
         }
-        epochs(s, fipsd_active_peer_link_machine(r->peer), &r->addr, false, info->transport);
+        epochs(s, fipsd_active_peer_link_machine(r->peer), &r->addr, false, info->transport, hs_rec_multipath(r));
     }
     for (size_t i = 0; i < h->sessions.capacity; ++i) if (h->session_entries[i].occupied)
-        epochs(s, &h->session_entries[i].machine, &h->session_entries[i].peer, true, (fips_transport_id){0});
+        epochs(s, &h->session_entries[i].machine, &h->session_entries[i].peer, true, (fips_transport_id){0}, false);
     for (size_t i = 0; i < h->cache.slot_capacity; ++i) if (h->cache.slots[i].used) {
         const fips_coord_slot *c = &h->cache.slots[i];
         fipsd_dp_cached *p = &s->cache[s->cache_count++];

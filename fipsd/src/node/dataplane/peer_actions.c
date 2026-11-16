@@ -27,5 +27,7 @@ void fipsd_dp_link_deliver(handlers *h, peer_rec *rec, fipsd_dp_packet *p, uint8
         }
     }
     if (n && message[0] != FIPS_LINK_SessionDatagram) h->dataplane->needs_publish = true;
-    hs_link_message(h, rec, &p->endpoint, timestamp, h->msg_buf, n);
+    /* Path messages are attributed to the frame's ingress transport (t may be
+     * NULL if the transport vanished while the open job was in flight). */
+    hs_link_message(h, rec, t, &p->endpoint, timestamp, h->msg_buf, n);
 }

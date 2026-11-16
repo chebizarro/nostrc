@@ -109,7 +109,11 @@ static bool open_candidate(handlers *h, fipsd_dp_packet *p, size_t start)
     for (size_t i = start; i < s->epoch_count; ++i) {
         const fipsd_dp_epoch *e = &s->epochs[i];
         if (e->session != p->session || memcmp(e->peer.bytes, p->peer.bytes, 16)) continue;
-        if (!p->session && (!fips_transport_id_equal(e->transport, p->transport) || e->index != p->job.token)) continue;
+        /* Same rule as the dispatcher's hs_index_lookup: a multipath Bundle's
+         * frames may arrive on any transport; the AEAD and the dispatcher's
+         * replay check still authenticate them. Single-path peers stay strict. */
+        if (!p->session && (e->index != p->job.token ||
+            (!e->multipath && !fips_transport_id_equal(e->transport, p->transport)))) continue;
         p->candidate = i; p->tag = e->tag; p->job.key = e->recv;
         p->job.operation = FIPSD_CRYPTO_OPEN; p->job.ad = p->ad;
         p->job.ad_size = p->session ? FIPS_FRAMING_FSP_HEADER_SIZE : FIPS_FRAMING_FMP_ESTABLISHED_HEADER_SIZE;
