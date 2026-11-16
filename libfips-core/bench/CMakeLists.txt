@@ -1,21 +1,13 @@
-# Micro-benchmarks: built behind FIPS_ENABLE_BENCH, never registered with ctest.
-# Baselines for nostrc-f66sr.4; port of upstream benches/*.rs.
-add_executable(fips_bench_coord_cache coord_cache.c ../tests/fakes/host.c)
-target_link_libraries(fips_bench_coord_cache PRIVATE fips_core)
-set_target_properties(fips_bench_coord_cache PROPERTIES
-  C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
-apply_warnings(fips_bench_coord_cache)
-apply_sanitizers(fips_bench_coord_cache)
-
-add_executable(fips_bench_noise_aead noise_aead.c)
-target_link_libraries(fips_bench_noise_aead PRIVATE fips_core)
-set_target_properties(fips_bench_noise_aead PROPERTIES
-  C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
-apply_warnings(fips_bench_noise_aead)
-apply_sanitizers(fips_bench_noise_aead)
-
-add_executable(fips_bench_routing_next_hop routing_next_hop.c)
-target_link_libraries(fips_bench_routing_next_hop PRIVATE fips_core)
-set_target_properties(fips_bench_routing_next_hop PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
-apply_warnings(fips_bench_routing_next_hop)
-apply_sanitizers(fips_bench_routing_next_hop)
+# Opt-in host benchmarks, never installed or registered with ctest.
+find_package(Threads REQUIRED)
+foreach(bench IN ITEMS noise_aead routing_next_hop coord_cache transport_addr)
+  add_executable(fips_bench_${bench} ${bench}.c bench.c ../tests/fakes/host.c)
+  target_link_libraries(fips_bench_${bench} PRIVATE fips_core Threads::Threads)
+  target_compile_definitions(fips_bench_${bench} PRIVATE _POSIX_C_SOURCE=200809L)
+  set_target_properties(fips_bench_${bench} PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+  apply_warnings(fips_bench_${bench})
+  apply_sanitizers(fips_bench_${bench})
+endforeach()
+add_custom_target(fips_benches DEPENDS fips_bench_noise_aead
+  fips_bench_routing_next_hop fips_bench_coord_cache fips_bench_transport_addr)

@@ -625,3 +625,24 @@ set_tests_properties(FipsdFipsctlInteropTest PROPERTIES TIMEOUT 600 SKIP_RETURN_
 nostrc_describe_test(FipsdFipsctlInteropTest OWNER fipsd TARGETS fipsd fipsctl fipsd_test_tmpdir_run
   INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/fipsctl_interop.py" "${CMAKE_CURRENT_SOURCE_DIR}/fipsctl_e2e.py"
   "${CMAKE_CURRENT_SOURCE_DIR}/udp_interop.py")
+# Performance is explicit opt-in, not part of ordinary ctest or installed tools.
+if(FIPS_ENABLE_BENCH)
+  add_executable(fipsd_perf_native perf_native.c)
+  target_link_libraries(fipsd_perf_native PRIVATE fipsnative_static Threads::Threads)
+  set_target_properties(fipsd_perf_native PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+  apply_warnings(fipsd_perf_native)
+  apply_sanitizers(fipsd_perf_native)
+  option(FIPSD_ENABLE_PERF_TEST "Enable the loopback performance workload in ctest" OFF)
+  add_test(NAME FipsdPerfLoopbackTest
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/perf_loopback.py"
+      --fipsd "$<TARGET_FILE:fipsd>" --rust "${FIPSD_UDP_INTEROP_RUST_BINARY}"
+      --native-tool "$<TARGET_FILE:fipsd_perf_native>"
+      --work-dir "${CMAKE_CURRENT_BINARY_DIR}/perf-tmp")
+  set_tests_properties(FipsdPerfLoopbackTest PROPERTIES TIMEOUT 900 SKIP_RETURN_CODE 77
+    LABELS "fips;perf;benchmark" DISABLED TRUE)
+  if(FIPSD_ENABLE_PERF_TEST)
+    set_tests_properties(FipsdPerfLoopbackTest PROPERTIES DISABLED FALSE)
+  endif()
+  nostrc_describe_test(FipsdPerfLoopbackTest OWNER fipsd TARGETS fipsd fipsd_perf_native
+    INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/perf_loopback.py" "${CMAKE_CURRENT_SOURCE_DIR}/udp_interop.py")
+endif()
