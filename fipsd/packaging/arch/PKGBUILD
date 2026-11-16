@@ -1,0 +1,48 @@
+# Maintainer: Biz <chebizarro@protonmail.com>
+# fipsd, the nostrc C port of the FIPS mesh daemon, with libfipsnative.
+#
+# _version is the version fipsd/CMakeLists.txt declares
+# (fipsd/packaging/common/version.sh; scripts/test-release-packaging.py
+# checks they agree). The source is the release archive written by
+# scripts/make-desktop-source-archive.sh with the fipsd name, which carries
+# the submodules GitHub's tag archives leave out; a branch build rewrites
+# _version to the archive it has, as the Groundhog release does.
+
+_version=0.1.0
+pkgname=fipsd
+pkgver=${_version//-/_}
+pkgrel=1
+pkgdesc="FIPS mesh network daemon (nostrc C port) and the libfipsnative client library"
+arch=('x86_64' 'aarch64')
+url="https://github.com/chebizarro/nostrc"
+license=('MIT')
+depends=('glib2' 'libsodium' 'libyaml' 'jansson' 'libsecp256k1' 'openssl' 'libwebsockets' 'curl' 'nsync' 'systemd')
+makedepends=('cmake' 'ninja' 'pkgconf')
+optdepends=('nftables: fips-firewall.service mesh-interface baseline'
+            'systemd-resolvconf: .fips DNS routing through fips-dns.service')
+backup=('etc/fips/fips.yaml' 'etc/fips/hosts' 'etc/fips/fips.nft')
+install=fipsd.install
+source=("fipsd-${_version}.tar.gz::${url}/releases/download/fipsd-v${_version}/fipsd-${_version}.tar.gz")
+sha256sums=('SKIP')  # computed with updpkgsums at release
+
+build() {
+  cd "fipsd-${_version}"
+  # The daemon alone (libnostr with its GLib layer, no GObject/GTK), no tests
+  # (fipsd/packaging/common/cmake-args.sh is the one list every package reads).
+  cmake -S . -B build -G Ninja \
+    $(sh fipsd/packaging/common/cmake-args.sh) \
+    -DCMAKE_BUILD_TYPE=None \
+    -DCMAKE_INSTALL_PREFIX=/usr \
+    -DGO_WARNINGS_AS_ERRORS=OFF
+  cmake --build build --target fipsd/all
+}
+
+package() {
+  cd "fipsd-${_version}"
+  # The payload (binaries, units, tmpfiles/sysusers fragments, the example
+  # config and the conffiles) is declared in fipsd/CMakeLists.txt.
+  DESTDIR="$pkgdir" cmake --install build/fipsd
+  # Arch ships the live config as a backup= file, seeded from the example.
+  install -Dm0600 "$pkgdir/usr/share/fips/fips.yaml.example" "$pkgdir/etc/fips/fips.yaml"
+  install -Dm0644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

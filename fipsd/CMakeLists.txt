@@ -14,6 +14,10 @@ if(NOT _fipsd_triple_rc EQUAL 0 OR FIPSD_TARGET_TRIPLE STREQUAL "")
 endif()
 
 # Git revision for `fipsd -V`, captured at build time (see cmake/BuildInfo.cmake).
+# FIPSD_GIT_REV overrides the probe: the package recipes under packaging/
+# build an exported tree and pass the revision it came from.
+set(FIPSD_GIT_REV "" CACHE STRING
+  "Revision to embed in fipsd -V instead of probing git (exported-tree builds)")
 set(FIPSD_BUILD_INFO_DIR "${CMAKE_CURRENT_BINARY_DIR}/build-info")
 set(FIPSD_BUILD_INFO_HEADER "${FIPSD_BUILD_INFO_DIR}/fipsd_build_info.h")
 add_custom_target(fipsd_build_info
@@ -21,6 +25,7 @@ add_custom_target(fipsd_build_info
     "-DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
     "-DOUTPUT=${FIPSD_BUILD_INFO_HEADER}"
     "-DTARGET_TRIPLE=${FIPSD_TARGET_TRIPLE}"
+    "-DGIT_REV_OVERRIDE=${FIPSD_GIT_REV}"
     -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildInfo.cmake"
   BYPRODUCTS "${FIPSD_BUILD_INFO_HEADER}"
   COMMENT "fipsd: capturing git revision"
@@ -202,3 +207,80 @@ target_sources(fipsd_lib PRIVATE src/control/transport.c)
 # The .fips DNS responder (nostrc-9nxwk.3): message codec, host map with
 # mtime reload, resolver/mesh filter and the dns runtime subsystem.
 target_sources(fipsd_lib PRIVATE src/dns/msg.c src/dns/hosts.c src/dns/resolver.c src/dns/service.c)
+# Packaging payload (nostrc-iq1n9.5). Every package format under packaging/
+# (Debian, RPM, Arch, macOS .pkg) stages the daemon with
+# `cmake --install <build>/fipsd`, so what a package ships is declared here
+# once and the recipes only list it. Paths outside the prefix are the FULL
+# GNUInstallDirs values: with prefix /usr the example config lands in
+# /usr/share/fips and the conffiles in /etc/fips; with /usr/local (macOS,
+# `make install`) in /usr/local/share/fips and /usr/local/etc/fips, which
+# is where the daemon's default search order looks.
+set(FIPSD_PACKAGING_DIR "${CMAKE_CURRENT_SOURCE_DIR}/packaging")
+install(FILES "${FIPSD_PACKAGING_DIR}/common/fips.yaml" RENAME fips.yaml.example
+  DESTINATION "${CMAKE_INSTALL_DATADIR}/fips")
+# hosts and fips.nft are operator-editable: the Debian package marks /etc
+# conffiles automatically, the RPM spec uses %config(noreplace), Arch lists
+# them in backup=, and the macOS installer renames them to .default and
+# seeds the live copies only when absent.
+install(FILES "${FIPSD_PACKAGING_DIR}/common/hosts" "${FIPSD_PACKAGING_DIR}/common/fips.nft"
+  DESTINATION "${CMAKE_INSTALL_FULL_SYSCONFDIR}/fips")
+# Drop-in directory for operator nftables rules included by fips.nft; the
+# include glob in that file matches nothing cleanly when it is empty.
+install(DIRECTORY DESTINATION "${CMAKE_INSTALL_FULL_SYSCONFDIR}/fips/fips.d")
+# fipsd links libnostr-json, which libjson/ builds shared only (D-4) and the
+# desktop apps ship as a private copy beside themselves. The daemon does the
+# same: the library goes under <libdir>/fipsd and the binary carries that
+# RPATH, so the packages depend on no libnostr-json package and cannot
+# collide with the headless login stack's public one.
+set(FIPSD_PRIVATE_LIBDIR "${CMAKE_INSTALL_LIBDIR}/fipsd")
+install(TARGETS nostr_json LIBRARY DESTINATION "${FIPSD_PRIVATE_LIBDIR}" NAMELINK_SKIP)
+if(APPLE)
+  set(FIPSD_INSTALL_RPATH "@loader_path/../${FIPSD_PRIVATE_LIBDIR}")
+else()
+  set(FIPSD_INSTALL_RPATH "${CMAKE_INSTALL_FULL_LIBDIR}/fipsd")
+endif()
+set_property(TARGET fipsd APPEND PROPERTY INSTALL_RPATH "${FIPSD_INSTALL_RPATH}")
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  # systemd units are generated from packaging/systemd/*.service.in so an
+  # install to another prefix runs the binaries it installed. Relative
+  # destinations: /usr/lib/systemd/system for the packages, and
+  # /usr/local/lib/systemd/system (which systemd also reads) for a local
+  # `make install`.
+  set(FIPSD_SYSTEMD_UNIT_DIR "lib/systemd/system" CACHE PATH
+    "Where fipsd's systemd units are installed (relative to the prefix or absolute)")
+  # The fips-dns.service helpers (packaging/common/fips-dns-setup and
+  # -teardown) live under <prefix>/lib/fips, as upstream's packages place
+  # them. The unit carries ConditionPathExists on the setup script, so a
+  # build from a tree without the helpers installs a unit that is skipped
+  # (inactive, not failed) rather than one that cannot start.
+  set(FIPSD_DNS_HELPER_DIR "${CMAKE_INSTALL_PREFIX}/lib/fips")
+  foreach(_fipsd_unit fipsd fips-dns fips-firewall)
+    configure_file("${FIPSD_PACKAGING_DIR}/systemd/${_fipsd_unit}.service.in"
+      "${CMAKE_CURRENT_BINARY_DIR}/packaging/${_fipsd_unit}.service" @ONLY)
+    install(FILES "${CMAKE_CURRENT_BINARY_DIR}/packaging/${_fipsd_unit}.service"
+      DESTINATION "${FIPSD_SYSTEMD_UNIT_DIR}")
+  endforeach()
+  # /run/fips (0750 root:fips) for the control and native-API sockets, and
+  # the fips system group that gates access to them (privilege.h).
+  install(FILES "${FIPSD_PACKAGING_DIR}/common/fips.tmpfiles" RENAME fipsd.conf
+    DESTINATION lib/tmpfiles.d)
+  install(FILES "${FIPSD_PACKAGING_DIR}/common/fips.sysusers" RENAME fipsd.conf
+    DESTINATION lib/sysusers.d)
+  foreach(_fipsd_helper fips-dns-setup fips-dns-teardown)
+    if(EXISTS "${FIPSD_PACKAGING_DIR}/common/${_fipsd_helper}")
+      install(PROGRAMS "${FIPSD_PACKAGING_DIR}/common/${_fipsd_helper}" DESTINATION lib/fips)
+    endif()
+  endforeach()
+endif()
+
+# fipsctl (the control-socket client) is added to this directory by its own
+# task; install it when the target exists. Deferred to the end of this
+# directory so the check runs after every add_executable above or below.
+function(fipsd_install_optional_tools)
+  if(TARGET fipsctl)
+    set_property(TARGET fipsctl APPEND PROPERTY INSTALL_RPATH "${FIPSD_INSTALL_RPATH}")
+    install(TARGETS fipsctl RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+  endif()
+endfunction()
+cmake_language(DEFER DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" CALL fipsd_install_optional_tools)

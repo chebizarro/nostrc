@@ -1,0 +1,5 @@
+usr/include/fips-native-client.h
+usr/include/fipsnative-version.h
+usr/lib/*/libfipsnative.so
+usr/lib/*/libfipsnative.a
+usr/lib/*/pkgconfig/libfipsnative.pc

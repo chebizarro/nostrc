@@ -1,0 +1,190 @@
+#!/usr/sbin/nft -f
+#
+# ╔═══════════════════════════════════════════════════════════════════╗
+# ║              fips0 nftables policy — security baseline             ║
+# ╚═══════════════════════════════════════════════════════════════════╝
+#
+# Polices ONLY the FIPS mesh interface named by `fips_if` below —
+# every packet not arriving on it returns immediately, leaving Docker,
+# Tor, OPNsense, the host's main /etc/nftables.conf, and any other
+# firewall undisturbed.
+#
+# ─── THE MESH INTERFACE NAME ────────────────────────────────────────
+#
+# `fips_if` must equal the daemon's `tun.name` in fips.yaml (default
+# "fips0"). If you rename the TUN, change the define to match and
+# reload. Until you do, this table polices an interface that does not
+# carry mesh traffic, and every listener on the renamed TUN is
+# reachable from the mesh. The daemon logs a warning at startup when
+# the loaded table is scoped to another interface, and fipstop's
+# listening panel reports every listener as exposed.
+#
+# ─── DEFAULT POLICY ─────────────────────────────────────────────────
+#
+#   INBOUND on mesh:    DROP everything except —
+#                         • replies to outbound flows we initiated
+#                           (conntrack established/related)
+#                         • ICMPv6 echo-request (ping6 reachability)
+#                         • rules in /etc/fips/fips.d/*.nft drop-ins
+#
+#   FORWARDED from mesh (gateway port forwards):
+#                       ACCEPT, except connections refused by
+#                       rules in /etc/fips/fips.d/forward/*.nft
+#                       drop-ins
+#
+#   OUTBOUND from mesh: unrestricted
+#
+# Why default-deny: services binding to 0.0.0.0 or [::] accept
+# connections on the mesh interface by default. This baseline ensures that
+# accidental exposure of HTTP, SSH, databases, etc. through the
+# mesh is impossible without explicit operator action.
+#
+# ─── LOADING / RELOADING ────────────────────────────────────────────
+#
+# Apply this file:
+#
+#   sudo nft -f /etc/fips/fips.nft
+#
+# To make it persist across reboots, load it from your preferred
+# mechanism: a systemd unit that runs `nft -f` on start, an include
+# from /etc/nftables.conf, etc.
+#
+# Verify the loaded ruleset:
+#
+#   sudo nft list table inet fips
+#
+# ─── ADDING INBOUND ALLOWANCES ──────────────────────────────────────
+#
+# Drop a file into /etc/fips/fips.d/ ending in .nft. Each file is
+# included inline into the `inbound` chain at the marked point below.
+# Format: chain-context rule lines, one per line. For example:
+#
+#   /etc/fips/fips.d/services.nft
+#   ────────────────────────────
+#   tcp dport 22 accept
+#   tcp dport 80 accept
+#   udp dport 53 accept
+#   ip6 saddr fd97:467a::/64 tcp dport 22 accept   # SSH from one /64
+#   ip6 saddr fd97:.../128 tcp dport 8443 accept   # one specific peer
+#
+# After editing, reload:
+#
+#   sudo nft -f /etc/fips/fips.nft
+#
+# (or trigger your loading mechanism's reload).
+#
+# Source-based filtering uses the peer's mesh address (npub-derived
+# fd97:... format). To find a peer's mesh address, look in their
+# fips.pub or query the daemon.
+#
+# Note: an empty /etc/fips/fips.d/ is fine — the include glob simply
+# matches nothing and the baseline policy applies as-is.
+#
+# ─── RESTRICTING GATEWAY PORT FORWARDS ──────────────────────────────
+#
+# A fips-gateway port forward rewrites the destination to a LAN host,
+# so its traffic takes the forward hook and never reaches the
+# `inbound` chain or the drop-ins above. The `forward` chain below
+# accepts every port-forwarded connection from the mesh, unless a
+# drop-in in /etc/fips/fips.d/forward/ ending in .nft refuses it.
+# Rules there see the packet after the rewrite, so they match the
+# forward's target address and port, not its listen_port. For each
+# restricted forward, accept the allowed sources, then drop the rest:
+#
+#   /etc/fips/fips.d/forward/port-forwards.nft
+#   ──────────────────────────────────────────
+#   ip6 daddr fd12:3456::10 tcp dport 80 ip6 saddr { fd97:... } accept
+#   ip6 daddr fd12:3456::10 tcp dport 80 counter drop
+#
+# A forward with no lines stays open to the mesh. Keep each forward's
+# lines in one file: files are included in alphabetical order and the
+# first matching rule decides. Write addresses out rather than with
+# `define`, since two drop-ins defining the same name fail the whole
+# load. A missing /etc/fips/fips.d/forward/ is fine, as above.
+#
+# ─── DEBUGGING / DROP VISIBILITY ────────────────────────────────────
+#
+# To see drops in the systemd journal:
+#   1. Uncomment the `log` rule near the bottom of the inbound chain.
+#   2. Reload:  sudo nft -f /etc/fips/fips.nft
+#   3. Tail:    sudo journalctl -k -f -g "fips drop:"
+#
+# Drop counter (always on, no log):
+#   sudo nft list table inet fips
+#
+# ─── COEXISTENCE WITH OTHER NFTABLES TABLES ─────────────────────────
+#
+# This table lives in the `inet` family. Other tables you may see:
+#
+#   inet fips_gateway   — created by the fips-gateway binary when
+#                          running (separate concern from this file).
+#                          See the fips-gateway design doc for details.
+#                          Its port forwards are forwarded traffic, which
+#                          the `forward` chain in this table sees; to
+#                          restrict them, see "RESTRICTING GATEWAY PORT
+#                          FORWARDS" above.
+#
+#   ip / ip6 family     — Docker, /etc/nftables.conf, etc.
+#                          Independent of this table.
+#
+# All hook at standard filter priority (0). Order between same-family
+# same-priority tables is determined by load order, but the early-
+# return for non-mesh traffic makes both chains a no-op for anything
+# not on the mesh interface, so coexistence is safe.
+
+# The mesh interface this table polices. Must equal `tun.name`.
+define fips_if = "fips0"
+
+# ━━━ Idempotent table replacement ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+add table inet fips
+flush table inet fips
+
+table inet fips {
+
+    chain inbound {
+        type filter hook input priority 0; policy accept;
+
+        # Non-mesh traffic returns immediately — chain is a no-op
+        # for anything not arriving on the mesh interface.
+        iifname != $fips_if return
+
+        # Replies to outbound flows + related ICMPv6 errors
+        # (Packet Too Big for PMTU, Destination Unreachable, etc.)
+        ct state established,related accept
+
+        # ICMPv6 echo-request — ping6 reachability tests.
+        meta nfproto ipv6 icmpv6 type echo-request accept
+
+        # Operator-supplied allow rules from drop-in files.
+        # See "ADDING INBOUND ALLOWANCES" in the header.
+        include "/etc/fips/fips.d/*.nft"
+
+        # Optional: log drops to journal (rate-limited).
+        # Uncomment to enable, then reload via `nft -f`.
+        #
+        #log prefix "fips drop: " level info limit rate 10/minute
+
+        # Default deny on fips0 inbound. Counter visible via
+        # `nft list table inet fips`.
+        counter drop
+    }
+
+    chain forward {
+        type filter hook forward priority 0; policy accept;
+
+        # Only traffic arriving on the mesh interface.
+        iifname != $fips_if return
+
+        ct state established,related accept
+
+        # Operator-supplied port-forward restrictions from drop-in
+        # files. See "RESTRICTING GATEWAY PORT FORWARDS" in the header.
+        include "/etc/fips/fips.d/forward/*.nft"
+
+        # Port-forwarded connections the drop-ins did not refuse.
+        # Counter visible via `nft list chain inet fips forward`.
+        ct status dnat counter accept
+    }
+}
+
+# ━━━ END OF FILE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

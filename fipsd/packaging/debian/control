@@ -1,0 +1,67 @@
+Source: fipsd
+Section: net
+Priority: optional
+Maintainer: Biz <chebizarro@protonmail.com>
+Build-Depends: debhelper-compat (= 13),
+               cmake (>= 3.22),
+               ninja-build,
+               pkg-config,
+               libglib2.0-dev,
+               libsodium-dev,
+               libyaml-dev,
+               libjansson-dev,
+               libsecp256k1-dev,
+               libssl-dev,
+               libwebsockets-dev,
+               libcurl4-openssl-dev,
+               libnsync-dev
+Standards-Version: 4.6.2
+Homepage: https://github.com/chebizarro/nostrc
+Vcs-Browser: https://github.com/chebizarro/nostrc
+Vcs-Git: https://github.com/chebizarro/nostrc.git
+Rules-Requires-Root: no
+
+Package: fipsd
+Architecture: any
+Depends: ${shlibs:Depends},
+         ${misc:Depends},
+         systemd
+Recommends: nftables
+Suggests: libfipsnative-dev
+Description: FIPS mesh network daemon (C port)
+ FIPS is a distributed, decentralized network routing protocol for mesh
+ nodes connecting over arbitrary transports (UDP, TCP, and Nostr-mediated
+ rendezvous). fipsd is the nostrc C port of the daemon: encrypted
+ peer-to-peer links with automatic key management, a TUN-based IPv6 mesh
+ interface, a .fips resolver and a Unix control socket.
+ .
+ This package ships the daemon, its systemd units (fipsd, fips-dns and the
+ opt-in fips-firewall nftables baseline), the fips system group that gates
+ the control socket, and an example configuration seeded to
+ /etc/fips/fips.yaml on first install.
+
+Package: libfipsnative0
+Section: libs
+Architecture: any
+Multi-Arch: same
+Depends: ${shlibs:Depends},
+         ${misc:Depends}
+Description: client library for the fipsd native datagram API
+ libfipsnative is a plain-POSIX C client for the fipsd native datagram API:
+ programs link it to open flows over the mesh through the daemon's
+ SOCK_SEQPACKET API socket, with no dependency on the daemon's runtime
+ or protocol core.
+ .
+ This package contains the shared library.
+
+Package: libfipsnative-dev
+Section: libdevel
+Architecture: any
+Multi-Arch: same
+Depends: libfipsnative0 (= ${binary:Version}),
+         ${misc:Depends}
+Description: client library for the fipsd native datagram API (development)
+ libfipsnative is a plain-POSIX C client for the fipsd native datagram API.
+ .
+ This package contains the header, the static library and the pkg-config
+ file.

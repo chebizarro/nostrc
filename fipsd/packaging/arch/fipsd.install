@@ -1,0 +1,20 @@
+post_install() {
+    # The sysusers.d fragment creates the fips group when pacman's hook runs
+    # systemd-sysusers; the tmpfiles.d hook creates /run/fips.
+    echo ":: Edit /etc/fips/fips.yaml, then enable the daemon:"
+    echo "   systemctl enable --now fipsd.service"
+    echo ""
+    echo ":: Optional: route .fips names through the host resolver:"
+    echo "   systemctl enable --now fips-dns.service"
+    echo ""
+    echo ":: Optional: the default-deny nftables baseline for the mesh interface:"
+    echo "   systemctl enable --now fips-firewall.service"
+    echo ""
+    echo ":: Allow non-root access to the control socket (fipsctl, libfipsnative):"
+    echo "   usermod -aG fips \$USER"
+}
+
+post_upgrade() {
+    echo ":: Restart the daemon if running:"
+    echo "   systemctl restart fipsd.service"
+}

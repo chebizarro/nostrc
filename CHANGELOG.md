@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- fipsd 0.1.0 (unreleased): packaging under `fipsd/packaging/` mirroring
+  upstream fips -- Debian (`fipsd`, `libfipsnative0`, `libfipsnative-dev`),
+  RPM, Arch, generated systemd units (`fipsd`, `fips-dns`, opt-in
+  `fips-firewall` with upstream's `fips.nft`), tmpfiles/sysusers fragments
+  for `/run/fips` and the `fips` group, an example `fips.yaml`, and a macOS
+  `.pkg` with a launchd daemon. `cmake --install <build>/fipsd` now stages
+  the whole payload (config example, conffiles, units, fragments, `fipsctl`
+  and the DNS helpers when present); `FIPSD_GIT_REV` embeds the revision in
+  exported-tree builds. The `fips-packaging` workflow builds and
+  install-tests every format; `make-desktop-source-archive.sh` takes an
+  archive name; `test-release-packaging.py` checks the recipes against the
+  declared version (nostrc-iq1n9.5).
 - libvault 0.7.0: `vault_file_export_nip94` / `vault_nip94_tags_free` project
   ONE vault file for a recipient who never holds the vault (interop alignment
   §2 A2). The file is read through the authenticated chunk reader with exact

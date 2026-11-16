@@ -4,16 +4,24 @@
 # recompile on every build.
 #
 #   cmake -DSOURCE_DIR=<fipsd dir> -DOUTPUT=<header> -DTARGET_TRIPLE=<triple>
-#         -P BuildInfo.cmake
+#         [-DGIT_REV_OVERRIDE=<rev>] -P BuildInfo.cmake
 #
 # FIPSD_GIT_REV is the 10-character abbreviated HEAD hash, suffixed `-dirty`
 # when tracked files under SOURCE_DIR differ from HEAD. It is empty when no
 # git executable or repository is available (a tarball build), in which case
 # the CLI omits the `(rev ...)` part as upstream documents.
+#
+# GIT_REV_OVERRIDE, when non-empty, is used verbatim instead of probing git:
+# the package builds under fipsd/packaging compile an exported copy of the
+# tree (no .git) and pass the revision they exported from, so the packaged
+# binary still names its commit and packaging/check-deb-revision.sh can
+# compare it with the tree.
 
 set(rev "")
 find_package(Git QUIET)
-if(GIT_EXECUTABLE AND IS_DIRECTORY "${SOURCE_DIR}")
+if(GIT_REV_OVERRIDE)
+  set(rev "${GIT_REV_OVERRIDE}")
+elseif(GIT_EXECUTABLE AND IS_DIRECTORY "${SOURCE_DIR}")
   execute_process(
     COMMAND "${GIT_EXECUTABLE}" -C "${SOURCE_DIR}" rev-parse --short=10 HEAD
     RESULT_VARIABLE rc OUTPUT_VARIABLE rev
