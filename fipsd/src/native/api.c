@@ -88,6 +88,7 @@ struct fipsd_native_api {
     GoChannel *sink, *events;
     void (*before_flow_reap)(void *, uint64_t);
     void *flow_reap_user;
+    GoChannel *halt; /* closed by stop: wakes flow readers parked on the dispatcher mailbox */
     _Atomic bool stopping;
     fipsd_control_provider base;
 };
@@ -185,17 +186,14 @@ static void flow_reader_fiber(void *arg)
         event(a, FIPSD_NATIVE_EVENT_FLOW_READ, f->id, 0);
         if (len > a->max_payload) { count(a, FIPSD_METRIC_native_drop_oversize, 1); continue; }
         /* native.sent_* are counted where the dispatcher takes the datagram
-         * (session.c send_data), the host seam every native datagram crosses. */
-        int rc = -1;
-        /* A full dispatcher mailbox is back-pressure, not an error: yield to
-         * the dispatcher a bounded number of times before the datagram is
-         * dropped the way any datagram API drops under pressure. */
-        for (unsigned attempt = 0; attempt < 64; ++attempt) {
-            rc = fipsd_node_handlers_send(a->handlers, &f->key.peer, f->key.local, f->key.remote, buf, len);
-            if (rc == 0 || atomic_load(&a->stopping)) break;
-            gof_yield();
+         * (session.c send_data), the host seam every native datagram crosses.
+         * A full dispatcher mailbox is back-pressure: this reader parks on it
+         * until the dispatcher drains (or stop closes halt), so the pressure
+         * reaches the client's socket as EAGAIN instead of a drop here. */
+        if (fipsd_node_handlers_send_wait(a->handlers, &f->key.peer, f->key.local, f->key.remote, buf, len, a->halt) != 0) {
+            if (atomic_load(&a->stopping)) break;
+            FIPSD_DEBUG(MODULE, "flow %llu: outbound datagram refused by the dispatcher", (unsigned long long)f->id);
         }
-        if (rc != 0) FIPSD_DEBUG(MODULE, "flow %llu: outbound datagram dropped, dispatcher mailbox full", (unsigned long long)f->id);
     }
     sodium_memzero(buf, FIPSD_NATIVE_MAX_DATAGRAM);
     free(buf);
@@ -761,7 +759,16 @@ static void rx_fiber(void *arg)
         };
         GoSelectResult r = go_select_timeout(cases, 2, 1000);
         if (r.selected_case == 1) break;
-        if (r.selected_case == 0 && value) deliver_notice(a, value);
+        if (r.selected_case == 0 && value) {
+            deliver_notice(a, value);
+            /* Drain what the dispatcher already queued before re-registering
+             * the select: one wake delivers a burst, bounded by the sink. */
+            for (unsigned left = FIPSD_NATIVE_SINK_CAPACITY; left; --left) {
+                value = NULL;
+                if (go_channel_try_receive(a->sink, &value) != 0 || !value) break;
+                deliver_notice(a, value);
+            }
+        }
         uint64_t now = mono_ms();
         if (now - last >= 1000) { last = now; expire(a, now); }
     }
@@ -884,6 +891,10 @@ static int start(fipsd_subsystem *subsystem, fipsd_runtime *rt)
     a->secp = fipsd_node_secp(ctx);
     a->metrics = (fipsd_metrics *)fipsd_node_handlers_metrics(a->handlers);
     atomic_store(&a->stopping, false);
+    /* Fresh per start: the previous run's fibers have joined. */
+    if (a->halt) go_channel_free(a->halt);
+    a->halt = go_channel_create(1);
+    if (!a->halt) return -1;
     fipsd_node_handlers_set_native_sink(a->handlers, a->sink);
     a->listener = bind_listener(a);
     if (a->listener < 0) { FIPSD_ERROR(MODULE, "cannot bind %s: %s", a->path, strerror(errno)); fipsd_node_handlers_set_native_sink(a->handlers, NULL); return -1; }
@@ -906,6 +917,7 @@ static void stop(fipsd_subsystem *subsystem, fipsd_runtime *rt)
     (void)rt;
     fipsd_native_api *a = subsystem->user;
     atomic_store(&a->stopping, true);
+    if (a->halt) go_channel_close(a->halt);
     nsync_mu_lock(&a->listener_mu);
     if (a->listener >= 0) {
         int rc;
@@ -1046,6 +1058,7 @@ void fipsd_native_api_destroy(fipsd_native_api *a)
         while (go_channel_try_receive(a->sink, &v) == 0) fipsd_node_notice_free(v);
         go_channel_free(a->sink);
     }
+    if (a->halt) go_channel_free(a->halt);
     /* After the runtime joined, every fiber has dropped its references. */
     for (size_t i = 0; a->flows && i < a->flow_cap; ++i)
         if (a->flows[i].used) { a->flows[i].refs = 1; flow_unref_locked(a, &a->flows[i]); }

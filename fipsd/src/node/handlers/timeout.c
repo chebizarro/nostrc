@@ -4,10 +4,18 @@
  * their own next_wake are polled at it; stateless duties ride the tick. */
 #include "node/handlers/internal.h"
 
+/* A control snapshot build is expensive (arena, JSON rows, stats rings), so
+ * dirty marks that arrive in a burst are coalesced into one build at most this
+ * often; the first mark after a quiet period still publishes at once, and the
+ * dispatcher wakes exactly when the next build is allowed. State-change
+ * notices keep their own synchronous publish (hs_notice_full). */
+#define FIPSD_PUBLISH_MIN_INTERVAL_MS 50u
+
 uint64_t hs_wait_ms(handlers *h, fips_instant now)
 {
     if (!h->running) return UINT64_MAX;
     uint64_t wait = hs_until_ms(h->next_tick, now);
+    if (h->dirty) { uint64_t p = hs_until_ms(h->publish_allowed, now); if (p < wait) wait = p; }
     uint64_t w = hs_legs_wait_ms(h, now); if (w < wait) wait = w;
     w = hs_session_wait_ms(h, now); if (w < wait) wait = w;
     w = hs_path_wait_ms(h, now); if (w < wait) wait = w;
@@ -24,7 +32,10 @@ bool hs_poll(handlers *h, fips_instant now)
         do h->next_tick = fips_deadline(h->next_tick, fips_duration_from_millis(h->cfg.tick_ms));
         while (now.ops->compare(now, h->next_tick) >= 0);
     }
-    if (h->dirty) hs_publish(h, now);
+    if (h->dirty && hs_until_ms(h->publish_allowed, now) == 0) {
+        hs_publish(h, now);
+        h->publish_allowed = fips_deadline(now, fips_duration_from_millis(FIPSD_PUBLISH_MIN_INTERVAL_MS));
+    }
     return true;
 }
 void hs_tick(handlers *h, fips_instant now)

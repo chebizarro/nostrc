@@ -55,7 +55,7 @@ void hs_mmp_report_received(handlers *h, peer_rec *rec, fips_link_message_type t
     rec->has_rr = true;
     hs_bloom_rr(h, rec);
     (void)fipsd_active_peer_publish(rec->peer);
-    hs_mark_dirty(h);
+    /* Link metrics only: published from the tick, not per report. */
 }
 static bool send_report(handlers *h, peer_rec *rec, fips_mmp_link_report_kind kind)
 {
@@ -169,7 +169,7 @@ void hs_mmp_session_message(handlers *h, fips_session_entry *entry, session_ext 
             fips_mmp_path_mtu_apply_notification(&x->mmp.path_mtu, n.path_mtu, hs_now_ms(h)))
             fipsd_dp_mtu_set(h->dataplane, &entry->peer, x->mmp.path_mtu.current_mtu);
     }
-    hs_mark_dirty(h);
+    /* Session metrics only: published from the tick, not per report. */
 }
 void hs_mmp_session_tick(handlers *h, fips_instant now)
 {

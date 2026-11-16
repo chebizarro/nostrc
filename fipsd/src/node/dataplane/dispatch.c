@@ -113,6 +113,10 @@ bool fipsd_dp_result(handlers *h, const fipsd_crypto_job *j)
             fipsd_dp_link_deliver(h, rec, p, p->output + result.begin, result.end - result.begin);
         }
     }
-    hs_mark_dirty(h);
+    /* No publish per authenticated frame: state transitions (session up/down,
+     * link teardown, tree/bloom/lookup/path/rekey handlers) mark the snapshot
+     * dirty themselves; counters and link statistics are published from the
+     * tick, as upstream does. A per-packet snapshot build was the dataplane's
+     * dominant cost (nostrc-pxwaj). */
     return true;
 }

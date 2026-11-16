@@ -225,6 +225,7 @@ struct fipsd_node_handlers {
     uint32_t *index_storage;
     fips_rekey_params link_params, session_params;
     fips_instant origin, started_at, next_tick;
+    fips_instant publish_allowed; /* hs_poll coalesces dirty-driven snapshot builds until here */
     uint64_t wall_offset_ms; /* wall clock at origin */
     uint64_t next_link_id;
     /* Distinct buffers per nesting level: the inbound frame (decrypted in place),

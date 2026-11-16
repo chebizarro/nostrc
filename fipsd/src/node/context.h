@@ -37,6 +37,10 @@ typedef struct fipsd_node_attach {
 } fipsd_node_attach;
 typedef struct fipsd_node_options {
     size_t workers, queue_capacity, peer_capacity; /* zero: 2, 64, 256 */
+    /* Per-worker job queue and completion queue depth (zero: queue_capacity).
+     * The handlers raise it to their packet-pool size so the pool is the only
+     * bound on in-flight crypto and a dispatched job is never refused. */
+    size_t crypto_queue_capacity;
     const fipsd_netmon_source *netmon_source;
     /* Dispatcher-side extension seam (nostrc-9keoz.6). One fiber owns the peer
      * table, the transport/netmon/crypto event sources and the peer command
@@ -63,6 +67,10 @@ typedef struct fipsd_node_options {
      * received message is handed to command (which owns it). */
     GoChannel *commands;
     bool (*command)(void *, void *message);
+    /* Optional admission gate: while false the dispatcher leaves the command
+     * mailbox unread (its producers park on it), re-asking after every event
+     * it does service. The handlers use it for packet-pool back-pressure. */
+    bool (*command_ready)(void *);
     fips_clock clock; /* now == NULL: host monotonic clock */
     void *user;
 } fipsd_node_options;

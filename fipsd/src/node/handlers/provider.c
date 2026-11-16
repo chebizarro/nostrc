@@ -17,7 +17,9 @@ typedef struct snap {
     uint64_t mesh; double fill, estimate;
     bool has_mesh, has_fill;
 } snap;
-static void *salloc(snap *x, size_t n)
+/* Arena block the caller overwrites entirely: no zeroing (the stats-history
+ * copy is megabytes; zeroing it dominated every snapshot build). */
+static void *salloc_raw(snap *x, size_t n)
 {
     if (x->nblocks == x->cap) {
         size_t cap = x->cap ? x->cap * 2 : 64;
@@ -25,8 +27,14 @@ static void *salloc(snap *x, size_t n)
         if (!b) return NULL;
         x->blocks = b; x->cap = cap;
     }
-    void *p = calloc(1, n ? n : 1);
+    void *p = malloc(n ? n : 1);
     if (p) x->blocks[x->nblocks++] = p;
+    return p;
+}
+static void *salloc(snap *x, size_t n)
+{
+    void *p = salloc_raw(x, n);
+    if (p) memset(p, 0, n ? n : 1);
     return p;
 }
 static const char *sdup(snap *x, const char *s)
@@ -440,7 +448,7 @@ static snap *build(handlers *h, fips_instant now)
     n = fipsd_metrics_snapshot(&h->metrics, FIPSD_METRICS_session, buf);
     s->session = counters_of(x, buf, n);
     /* Stats history: copy the rings and re-point the peer storage. */
-    fips_stats_history *hist = salloc(x, sizeof *hist);
+    fips_stats_history *hist = salloc_raw(x, sizeof *hist);
     fips_peer_stats *hp = h->history->peer_capacity ? salloc(x, h->history->peer_capacity * sizeof *hp) : NULL;
     if (hist && (hp || !h->history->peer_capacity)) {
         *hist = *h->history;
