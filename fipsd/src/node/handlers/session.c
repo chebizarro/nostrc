@@ -325,7 +325,9 @@ void hs_session_message(handlers *h, fips_session_entry *entry, const uint8_t *p
         if (x) { ++x->received; x->last_data = hs_now(h); }
         ++h->counters.sess_data_in;
         fips_session_note_activity(entry, hs_now(h));
-        hs_native_deliver(h, &entry->peer, ports.src_port, ports.dst_port, fips_reader_rest(&r), fips_reader_remaining(&r));
+        const uint8_t *data = fips_reader_rest(&r);
+        size_t data_len = fips_reader_remaining(&r);
+        hs_native_deliver(h, &entry->peer, ports.src_port, ports.dst_port, data, data_len);
         return;
     }
     if (x) hs_mmp_session_message(h, entry, x, inner.msg_type, payload.data, payload.len);
