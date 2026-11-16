@@ -43,7 +43,7 @@ merge were run. References in this report are post-fix line numbers.
 | L1 | low | `fipsd/src/config/config.c:106-126` | YAML loading follows symlinks and enforces regular-file/size, not owner or mode. A readable nsec-bearing file can be exposed by deployment mistakes. | Upstream YAML read is not owner/mode enforced either; upstream key-file warnings in `src/config/mod.rs:690-733` concern its persistent identity key file, not YAML. | Operational follow-up; no incompatible config-path policy silently introduced. |
 | L2 | low | `fipsd/src/privilege.c:64-108`; `control/control.c:75-89,104-125`; `log.c:204-255` | Final-leaf checks do not secure arbitrary attacker-writable ancestor directories. Socket chmod is by name after lstat; custom/shared parents are intentionally not chmod'd. | Same filesystem/group trust boundary in control-socket reference; C stale-socket removal is stricter than upstream. | Use service-owned private parents. Custom-path race hardening requires descriptor-relative path design, not a local cosmetic check. |
 | L3 | low | `libfips-core/src/proto/rate_limit.c:67-68`; `proto/lookup/limits.c:92-108`; `proto/lookup/core.c:71-93` | Bounded caches/rate-key tables are **not uniformly fail-closed**: unseen routing-error keys can be admitted uncached; lookup forwarding/recent records evict and admit. Churn can defeat remembered per-key suppression. | Deliberate upstream availability/eviction semantics, not a newly unbounded allocation. Link-authenticated traffic still consumes processing. | Aggregate authenticated-peer work-budget follow-up; do not describe these as strict admission caps. |
-| L4 | low | `fipsd/src/node/handlers/session.c:97-129,184-190,407-411`; `handlers.c:130-132,370-374` | Pending/held/queued user plaintext is freed or length-reset without comprehensive wiping. | Host buffer ownership, separate from Noise key destruction. | Protected host follow-up; matters for allocator remnants/core dumps, not demonstrated remote readout. |
+| L4 | low | `fipsd/src/node/handlers/session.c:97-129,184-190,407-411`; `handlers.c:130-132,370-374` | Pending/held/queued user plaintext is freed or length-reset without comprehensive wiping. | Host buffer ownership, separate from Noise key destruction. | **Closed in host** (`nostrc-f66sr.10`, see Disposition — L4): every plaintext copy is wiped at the end of its owner's tenure (consume, drop-oldest, expiry, close, teardown, command and notice release); borrowed dataplane slabs keep their existing recycle wipe. Matters for allocator remnants/core dumps, not demonstrated remote readout. |
 | I1 | info | `fipsd/src/main.c:150-176` | Production entry point registers no Tier B2 transport drivers; STUN/Nostr/native socket/TUN integration is not qualified by these tests. | Upstream has those transports and their own admission limits. | No claim of complete exposure or rate-limit equivalence for absent adapters. |
 | I2 | info | `fipsd/src/config/value.c:17-25,178-192`; `node/context.c:310-327` | Owned config strings and identity material are wiped, but libyaml internal buffers/error paths, process dumps and same-uid debugging are not comprehensively protected. | Core zeroization alone is not a host-memory secrecy guarantee. | Deployment/dump/ptrace caveat; details below. |
 
@@ -209,7 +209,65 @@ ASan/UBSan 20/20 repeats with race splits from 37/43 to 51/29 executed/cancelled
 of 80 race rounds; TSan 20/20 repeats with splits from 12/68 to 16/64 (slower scheduling shifts the window toward cancellation, both outcomes in every run); full `ctest -R '^Fips'` under ASan/UBSan and under TSan each **130 tests, 0 failed** (129 passed, `FipsdControlInteropTest` skipped: Rust fipsctl not built; LSan unavailable on this Apple runtime, hence the explicit allocation counter). Warnings-as-errors Debug builds for both; direct static checkers (`check-unsequenced-args.py`, `check-gui-test-gdk-frame.py`, `check-linux-ci-packages.py`) and `git diff --check` passed.
 This is local host evidence, not hosted-CI qualification.
 
-**M7 — command cancellation/reply ownership.** In `node/handlers/handlers.c`,
+### Disposition — L4 (`nostrc-f66sr.10`)
+
+**Ownership rule.** A user datagram is copied, never shared, so every copy has
+exactly one owner that wipes it (`hs_wipe` → `sodium_memzero`, the libfips-core
+convention) at the end of its own tenure and never earlier. The rule is written
+at the `pending_datagram` definition in `node/handlers/internal.h`; the
+dispatcher/worker single-writer model is unchanged and no lock was added.
+
+| Slot | Owner | Wiped (event) | Borrowed? |
+|---|---|---|---|
+| `handler_command.payload[]` (`HCMD_SEND`) | the queued command | `command_free` on every exit: executed, refused, cancelled, enqueue failure, not-running discard, destroy drain (`COMMAND`) | no |
+| `session_ext.pending[i]` | the session's queue | each slot after `flush_pending` whether or not the send succeeded (`PENDING_CONSUMED`); the stale last slot after a drop-oldest shift (`PENDING_DROPPED`); `[0, pending_len)` in `close_entry` (idle purge, shutdown, any close) and defensively in `ext_init` (`PENDING_CLOSED`); the whole array in `free_storage` (`TEARDOWN`) | no |
+| `held[i].items[j]` (awaiting lookup) | the held queue | each slot after its replay in `hs_session_coords_resolved` (`HELD_CONSUMED`); stale last slot after drop-oldest (`HELD_DROPPED`); `[0, len)` at ladder expiry in `hs_session_tick` (`HELD_EXPIRED`); whole array in `free_storage` (`TEARDOWN`) | no |
+| `send_data` stack body, `h->session_plain` | dispatcher scratch | right after `fipsd_dp_seal` returned, which copied the plaintext into a pooled packet or refused (`SCRATCH`) | no |
+| `fipsd_node_notice` payload (`FIPSD_NOTICE_DATAGRAM`) | the notice; the consumer once dequeued | new `fipsd_node_notice_free` (header + payload) on `try_send` failure, on the destroy drain, and by consumers | no |
+| `fipsd_dp_packet.input/output/ad` | the dataplane pool; a worker from submit to completion | **not touched here**: `recycle()` already zeroes the slab when the dispatcher destroys the completed job (`dataplane/encrypted.c`, `worker_set.c`); the inbound plaintext handed to `hs_session_message` is this slab | yes: left alone while the job is live |
+
+Two lifecycle corrections fell out of applying the rule: `flush_pending` now
+wipes every queued slot even when the loop stops early (entry closed or session
+lost during the flush), and `hs_session_coords_resolved` detaches the held
+array before replaying it, so a replay that holds again (coordinates still
+unresolved) takes a fresh array instead of writing into the one being drained.
+
+**Regression.** `FipsdNodeWipeTest` (`fipsd/tests/test_node_wipe.c`, in the
+`fipsd_tests` aggregate) links its own copy of `handlers.c`/`session.c` compiled
+with `FIPSD_TEST_HOOKS` (the `fipsd_log_fault` object-library pattern; the daemon
+and `fipsd_lib` carry no seam). The seam reports each wipe after it happened,
+with the slot bytes and whether they had been non-zero. Two production nodes on
+the loopback network; ordering comes from the notice channel, a live control
+command used as a mailbox barrier and the control-cancel test's dispatcher gate
+(parking B so it cannot answer A's session setup; parking A to read its tables),
+never from sleeps, timers or heap scans. It proves: three holds each for B and a
+stranger before any route (drop-oldest wipes); link-up; with B parked, three
+sends open a session and queue (drop-oldest wipe), and on establishment the two
+pending and the two held datagrams are consumed and wiped and B receives exactly
+four intact datagrams, released with `fipsd_node_notice_free` (notice wipe); the
+stranger's hold expires as one `SEND_FAILED` of two (expiry wipe); with B parked
+again two pending datagrams and one held datagram survive to shutdown, where
+`close_all` wipes the queue before `SESSION_DOWN` and destroy wipes the held
+array (close and teardown wipes); every `HCMD_SEND` payload is wiped. For the
+borrowed slab, the scratch hook (which fires right after `fipsd_dp_seal`) finds a
+busy session packet still carrying the datagram, and after the node (and its
+worker set) is destroyed every pool slab is idle and zero. Every observed wipe
+left zero bytes; every exercised path reported a non-zero slot beforehand.
+Local evidence (this worktree, Apple clang, the CI cmake options): Debug
+warnings-as-errors builds under ASan/UBSan and under TSan; `ctest -R '^Fips'`
+under ASan/UBSan **140 tests, 0 failed** (`fipsd fipsd_tests` plus
+`fips_core_skeleton_test fips_core_host_test`; 6 skipped by their own guards such
+as `FipsdControlInteropTest` without a Rust fipsctl; `FipsdNodeWipeTest`
+19.3 s); under TSan (`-E '^FipsCore'` as CI) two full passes: **102 tests, 101 passed**
+then **102 tests, 102 passed, no ThreadSanitizer report**; `FipsdNodeWipeTest`
+21.5 s clean in both. The single first-pass failure was `FipsdTunRuntimeTest`:
+a data race between its own `read_frame` and `write_frame` fibers at `tun.c:20
+frame_set_error`, in TUN code and a test this change does not touch, passing 3/3
+on `--rerun-failed` and in the second full pass; it needs its own bead.
+Direct static checkers (`check-unsequenced-args.py`, `check-gui-test-gdk-frame.py`,
+`check-linux-ci-packages.py`) and `git diff --check` passed. Local host evidence,
+not hosted-CI qualification.
+ In `node/handlers/handlers.c`,
 make the execution-deadline contract explicit. A waiting timeout alone does not
 necessarily promise cancellation; if it is an execution deadline, carry a retained
 cancellation/deadline token into `handler_command` and check it on the dispatcher
@@ -233,8 +291,8 @@ Add deterministic destructor/slot-reuse tests, not a heap scan or timing test.
 Values below are daemon defaults or fixed limits, not promises that trusted
 embedding code cannot request larger bounded allocations. A resource cap is not
 itself a packet-rate limit. **The requested universal fail-closed checklist is
-not fully satisfied:** L3 evicts/admits; pending datagrams drop oldest; L3/L4
-remain (H1/A1/M7 closed below). No unchecked unbounded growth was found in the reviewed fixed tables.
+not fully satisfied:** L3 evicts/admits; pending datagrams drop oldest; L3
+remains (H1/A1/M7/L4 closed below). No unchecked unbounded growth was found in the reviewed fixed tables.
 
 | Resource | Cap / full policy | Who can reach it and evidence |
 |---|---|---|
@@ -247,7 +305,7 @@ remain (H1/A1/M7 closed below). No unchecked unbounded growth was found in the r
 | Bloom aggregation / STP | 256 bloom peers/leaves; 32 tree peers; action storage peer cap+1. Bloom wire filter exactly1024 bytes. Full peer/storage operations refuse. | Authenticated links; `handlers/bloom.c:7-26,44`; `handlers.c:182`; core bloom state/wire and STP decode. Large coordinate/signature-chain wire domains are still bounded and allocated off small fiber stacks. |
 | Path candidates / outputs / probes | Eight candidate slots; rejected when no free candidate. Fixed/caller-bounded path output arrays and diagnostic probe state. | Authenticated path messages and trusted control actions. `proto/path/candidate.c:5-33`, `handlers.c:203`; future sibling diag must preserve its own session/result caps. |
 | Worker queues / packet pool | Default2 workers, each queue 64 plus bounded results 64; constructor max 64 workers/capacity 65536. Packet pool 256; try-submit refuses full. Dispatcher notices/commands 64. | Raw packets may occupy pool slots before AEAD, but cannot grow it; worker completion requires generation/key validation. `node/worker_set.c:53-64`; `node/dataplane/snapshot.c:153`; `handlers.c:6-8,117-118`. |
-| Pending / held datagrams | Default 8 per destination, hard max 16; <=256 destinations, payload <=1400 bytes. Full queue drops oldest; unknown destination with no slot drops. | Local API sends, not arbitrary unauthenticated peer allocation. `handlers/internal.h:38-41`; `handlers/session.c:97-129`; expiry :407-411. Bounded but **not refuse-new** semantics; wiping L4. |
+| Pending / held datagrams | Default 8 per destination, hard max 16; <=256 destinations, payload <=1400 bytes. Full queue drops oldest; unknown destination with no slot drops. | Local API sends, not arbitrary unauthenticated peer allocation. `handlers/internal.h:38-41`; `handlers/session.c:97-129`; expiry :407-411. Bounded but **not refuse-new** semantics; slots wiped on every exit (Disposition — L4). |
 | Control connections | **32** active slots, listen backlog 128; close excess immediately before stacks. Request 4096 bytes, depth 64, one request per connection, 5-second read/execute/write budgets. | Filesystem socket/group admission, not remote network authentication; no accept token bucket upstream or here. Provider must cooperate with deadline; a hung provider holds its slot, rather than permitting unbounded replacement (M7). |
 | Log / config diagnostics | Log line 1024 bytes, bounded rotation count/configured file cap; failed rotation now drops write. Diagnostic entries 4096, each formatted in 4096 bytes. | Local config and untrusted events can trigger messages. Synchronous logger is not a per-message rate limiter; disk/CPU latency remains operational. `log.h:42`, `log.c:295-311`, `config/loadlog.c:19-20`. |
 | Stats/history and runtime registry | Core history rings 3600 fast / 1440 slow samples, caller-bounded peer storage, transactional full refusal; subsystem registry fixed `FIPSD_RUNTIME_MAX_SUBSYSTEMS`. | Trusted dispatcher/runtime, not raw network writers (`include/fips/node/stats_history.h:8-11`, `src/node/stats_history.c:168`; `fipsd/src/runtime.c:124`). Host stats/metrics integration is sibling scope, not yet approved. |
@@ -369,7 +427,7 @@ node deliberately retains its initial config ref until destruction; old nsec is
 therefore retained for the running identity, not promised erased at logging
 reload. Shutdown destroys identity/secp state, releases the retained config and
 wipes startup epoch (`node/context.c:326-327`). Worker bare keys are destroyed on
-all completion paths. L4 covers payload remnants, distinct from secret keys.
+all completion paths. Payload remnants are wiped at each owner's exit (Disposition — L4), distinct from secret keys.
 
 No mlock, process-wide core-dump disabling, or ptrace restriction is established
 by this port. Set service core limits appropriately and restrict same-uid debug
