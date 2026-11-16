@@ -49,6 +49,9 @@ int main(void)
     uint8_t retained_keys[2][32];
     assert(nt_init(&a, net, "A", "loop:a", yaml_a, &hcfg, 1));
     assert(nt_init(&b, net, "B", "loop:b", yaml_b, &hcfg, 1));
+    /* Metadata-only loopback interface; no host interface is created. */
+    a.transport->interface_name = "loop-test";
+    b.transport->interface_name = "loop-test";
     assert(fipsd_runtime_register(rt, fipsd_node_subsystem(a.node)) == 0);
     assert(fipsd_runtime_register(rt, fipsd_node_subsystem(b.node)) == 0);
     assert(fipsd_runtime_start(rt) == 0);
@@ -149,6 +152,16 @@ int main(void)
         json_t *status = nt_query(n, "show_status");
         assert(json_integer_value(data_of(status, "peer_count")) == 1 && json_integer_value(data_of(status, "session_count")) == 1);
         json_decref(status);
+        json_t *transports = nt_query(n, "show_transports");
+        json_t *tr = json_array_get(data_of(transports, "transports"), 0);
+        json_t *iface = json_object_get(tr, "interface"), *stats = json_object_get(tr, "stats");
+        assert(!strcmp(json_string_value(json_object_get(iface, "presence")), "present"));
+        assert(!strcmp(json_string_value(json_object_get(iface, "medium")), "unknown"));
+        assert(json_is_false(json_object_get(iface, "carrier")));
+        assert(json_integer_value(json_object_get(iface, "binds")) == 1);
+        assert(json_integer_value(json_object_get(stats, "frames_sent")) > 0);
+        assert(json_integer_value(json_object_get(stats, "frames_recv")) > 0);
+        json_decref(transports);
         json_t *cache = nt_query(n, "show_cache"); assert(data_of(cache, "entries")); json_decref(cache);
     }
     /* 6. Disconnect: both ends drop the link. */

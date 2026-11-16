@@ -6,6 +6,7 @@
 #include "node/handlers/internal.h"
 #include "control/counter_schema.h"
 #include "cli.h"
+#include "transport/transport.h"
 #include <unistd.h>
 
 typedef struct snap {
@@ -363,6 +364,25 @@ static snap *build(handlers *h, fips_instant now)
         fips_transport_addr none = {0};
         ts[i] = (fipsd_control_transport){.transport_id = t->id.value, .type = sdup(x, t->type), .state = transport_state_name(t->ops->state(t)),
             .name = sdup(x, t->name), .mtu = t->ops->mtu(t, &none)};
+        if (t->shared) {
+            fips_link_stats stats = fipsd_transport_stats_snapshot(&t->shared->stats);
+            fipsd_control_counter counts[] = {{"frames_sent", stats.packets_sent}, {"frames_recv", stats.packets_recv},
+                {"bytes_sent", stats.bytes_sent}, {"bytes_recv", stats.bytes_recv}};
+            ts[i].stats = counters_of(x, counts, sizeof counts / sizeof counts[0]);
+            if (t->interface_name) {
+                fipsd_presence_view v = fipsd_presence_snapshot(&t->shared->presence);
+                fipsd_control_interface *in = salloc(x, sizeof *in);
+                if (in) {
+                    uint64_t at = fipsd_transport_now_ms();
+                    *in = (fipsd_control_interface){.name = sdup(x, t->interface_name),
+                        .presence = fipsd_presence_name(v.phase), .policy = v.optional ? "optional" : "required",
+                        .carrier = v.interface.carrier, .medium = fipsd_medium_name(v.interface.medium),
+                        .since_secs = at >= v.since_ms ? (at - v.since_ms) / 1000 : 0,
+                        .binds = v.binds, .failed_attempts = v.attempts};
+                    ts[i].interface = in;
+                }
+            }
+        }
     }
     s->transports = ts; s->transports_count = ts ? tn : 0;
     /* Tree */
