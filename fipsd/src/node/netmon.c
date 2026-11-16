@@ -131,7 +131,12 @@ done:
     (void)fipsd_network_snapshot_prepare(s);
     return s;
 }
-static int open_backend(void)
+int fipsd_network_fd_prepare(int fd)
+{
+    if (fcntl(fd, F_SETFD, FD_CLOEXEC) < 0 || fcntl(fd, F_SETFL, O_NONBLOCK) < 0) return -1;
+    return 0;
+}
+int fipsd_network_socket(bool notifications)
 {
     int fd = -1;
 #if defined(__linux__)
@@ -139,12 +144,15 @@ static int open_backend(void)
     if (fd < 0) return -1;
     struct sockaddr_nl address = {0};
     address.nl_family = AF_NETLINK;
-    address.nl_groups = RTMGRP_LINK | RTMGRP_IPV4_IFADDR | RTMGRP_IPV6_IFADDR;
+    address.nl_groups = notifications ? RTMGRP_LINK | RTMGRP_IPV4_IFADDR | RTMGRP_IPV6_IFADDR : 0;
     if (bind(fd, (struct sockaddr *)&address, sizeof(address)) != 0) { close(fd); return -1; }
+    if (!notifications && connect(fd, (struct sockaddr *)&address, sizeof(address)) != 0) {
+        int error = errno; close(fd); errno = error; return -1;
+    }
 #elif defined(__APPLE__) || defined(__FreeBSD__)
-    fd = socket(PF_ROUTE, SOCK_RAW, 0);
+    fd = socket(PF_ROUTE, SOCK_RAW, notifications ? 0 : AF_INET6);
 #endif
-    if (fd >= 0 && (fcntl(fd, F_SETFD, FD_CLOEXEC) < 0 || fcntl(fd, F_SETFL, O_NONBLOCK) < 0)) {
+    if (fd >= 0 && fipsd_network_fd_prepare(fd) < 0) {
         close(fd); fd = -1;
     }
     return fd;
@@ -292,7 +300,7 @@ int fipsd_netmon_start(fipsd_netmon *m, fipsd_runtime *rt)
         m->ticker = create_ticker(1000);
         if (!m->ticker) return -1;
     }
-    if (!m->source.injected) m->fd = open_backend();
+    if (!m->source.injected) m->fd = fipsd_network_socket(true);
     if (m->fd < 0 && !m->source.injected)
         FIPSD_WARN("netmon", "kernel notification socket unavailable; using 1 s backstop");
     if (fipsd_runtime_spawn(rt, monitor, m) != 0) {

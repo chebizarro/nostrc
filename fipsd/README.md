@@ -22,8 +22,8 @@ never to the core.
 consumes the runtime's SIGHUP reload channel. `src/control/` implements the
 Unix control socket (`9keoz.3`); `src/node/handlers/` implements the node
 protocol handlers (`9keoz.6`). Not implemented yet: Tier B2 network
-transports and the native/TUN host
-owners (B4). Parsing a setting does not claim that its owning subsystem is
+transports and the native host owner. The B4 TUN device owner is described below;
+the IPv6 packet shim is not implemented yet. Parsing a setting does not claim that its owning subsystem is
 implemented.
 
 ### Command line (docs/reference/cli-fips.md upstream)
@@ -1174,3 +1174,81 @@ tests cover 256 payload round trips including u64 boundaries, optional fields,
 JSON escaping and candidate counts. Malformed/boundary, freshness, identity,
 NAT/version/endpoint, URL normalization and replay-id tests run without relay
 I/O or sleeps. This is local event-contract proof, not live relay interop.
+
+### TUN device owner (`nostrc-9nxwk.1`)
+
+`src/tun/` owns the OS device, not the IPv6-to-FIPS packet adapter. The current
+configuration keys are **top-level** `tun.enabled`, `tun.name`, `tun.mtu`
+(the upstream schema does not put them under `node`). With `tun.enabled: true`,
+`main.c` registers TUN after the node subsystem and before control. The node's
+startup barrier must report ready (including ready/degraded) and supply its
+identity before any device syscall occurs. A not-ready node leaves TUN waiting;
+a device configuration failure is visible as failed but does not kill the host.
+There is no fabricated transport readiness or automatic packet sink.
+
+One platform vtable keeps the later IPv6 shim OS-independent:
+
+- Linux: `/dev/net/tun`, `TUNSETIFF` with `IFF_TUN | IFF_NO_PI`; acknowledged
+  netlink `/128` address, MTU, up flag and `fd00::/8` main-table route changes.
+- macOS: kernel-assigned utun via `PF_SYSTEM`/`SYSPROTO_CONTROL`; IPv6 alias/MTU/
+  flags ioctls and `PF_ROUTE`. utun frames prepend/strip a **network-order**
+  four-byte `AF_INET6` (30) prefix.
+- FreeBSD: `/dev/tun` clone, kernel-reported name, `TUNSIFHEAD` (family 28),
+  IPv6 alias/MTU/flags (including clearing `ND6_IFF_IFDISABLED`), `PF_ROUTE`,
+  and destruction of the owned clone. Names on BSD/macOS are kernel assigned;
+  `tun.name` selects the Linux name only.
+
+All device/configuration/control/frame syscalls cross a per-device
+`fipsd_tun_ops` seam, with no global fake state. The default route socket and
+nonblocking/cloexec preparation reuse netmon's helpers. Control transactions run
+on the non-fiber runtime start/stop thread; packet reads/writes use
+`gof_read`/`gof_write` and park fibers. The shim must cancel and join its packet
+I/O before device teardown; closing/reusing a descriptor is **not** cancellation.
+No packet I/O fibers are started by this device-only layer.
+
+Bring-up is open → node-derived `fd || NodeAddr[0..15]` address `/128` → MTU →
+up → mesh route. Teardown reverses successful stages, closes the fd and (on
+FreeBSD) destroys the clone. Failed destruction retains the owned name/index
+and must succeed before another clone can open. Failed attempts fully unwind; `EBUSY`, absent
+`ENOENT` and disappeared `ENODEV` devices get at most three immediate attempts,
+without sleeps, takeover or deleting a foreign interface/route. Other errors
+are not retried. Unlike upstream's persistent-TUN recovery/policy-rule logic,
+this initial owner conservatively refuses existing Linux addresses/routes; it
+does not flush pre-existing network state or install Linux policy rules.
+BSD accepts an existing route only after a sequence-and-pid-matched lookup
+proves it uses this interface; a borrowed route is not removed on stop.
+
+The device MTU is `max(1280, min(tun.mtu, transport_mtu - 77))` with saturating
+subtraction, optional configured ceiling, and a 65535 maximum. The configured
+transport budget is the minimum configured transport payload MTU (1357 when
+none exists). Thus 1357 → 1280 and 1472 → 1395 before a smaller TUN ceiling.
+The **77-byte IPv6 shim overhead** is `106 + 4 + 7 - 40`; it must not replace
+core `FIPS_OVERHEAD` / ECN overhead (106/110). Paths below 1357 still expose
+IPv6's 1280 minimum and require the later shim's fragmentation/PMTU handling;
+this device task does not claim those paths can carry packets yet. References:
+upstream `docs/design/{fips-ipv6-adapter,fips-mtu}.md`.
+
+When enabled, the composed retained control provider adds upstream adapter
+`show_status` fields `tun_state`, `tun_name`, `effective_ipv6_mtu`, `host_drops`.
+This C host intentionally composes these into the daemon control reply; upstream
+serves them on a separate adapter status socket. Wire states follow upstream:
+`disabled`, `configured` (waiting), `active`, `failed`; stopped maps to disabled.
+`host_drops` is zero until there is a packet adapter; failed/not-up devices
+report `tun_name: "-"`. There is no `show_tun` command in the pinned upstream
+`control-socket.md`/adapter responder, so none is invented here. Device status
+also exposes the address, ifindex, attempts and kernel error to host callers.
+
+`9nxwk.2` builds on the device's frame API, ready-gated lifecycle and retained
+status. Compression, identity-cache lookup, fragmentation, ICMPv6/MSS, DNS,
+packet queues, per-destination PMTU and mesh delivery remain that layer's work.
+Kernel mutations need Linux `CAP_NET_ADMIN`, or root for macOS utun/FreeBSD.
+Ordinary tests use fake ops, byte fixtures and an unprivileged socketpair for
+real two-worker fiber I/O. Route fixtures expand Linux UAPI and upstream
+`ipv6tun/{bsdnet.rs,tests/bsdnet.rs}` layouts, including XNU 4-byte and FreeBSD64
+8-byte sockaddr padding, and reject stale/out-of-order BSD replies by sequence.
+The current route encoders target 64-bit little-endian host ABIs.
+
+`FipsdTunPrivilegedSmokeTest` skips with an explicit message unless
+`geteuid()==0` **and** `FIPSD_TUN_PRIVILEGED_SMOKE=1`. When explicitly enabled in
+a disposable privileged environment, it creates/configures a real device,
+pings its own address and tears it down. Do not elevate ordinary test runs.

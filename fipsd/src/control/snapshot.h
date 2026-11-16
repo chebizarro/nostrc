@@ -131,6 +131,7 @@ typedef struct fipsd_control_snapshot {
     } acl;
     fipsd_control_counters forwarding, lookup, tree_stats, bloom_stats, congestion;
     fipsd_control_counters errors, native, dataplane, handshake, session;
+    const json_t *tun_status; /* optional retained host adapter projection */
 } fipsd_control_snapshot;
 
 typedef struct fipsd_control_request_context {
