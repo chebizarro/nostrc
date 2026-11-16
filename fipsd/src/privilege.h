@@ -3,6 +3,7 @@
 
 #include <stddef.h>
 #include <sys/types.h>
+#include <grp.h>
 
 /*
  * Process privilege, umask and `fips` group handling.
@@ -36,9 +37,20 @@
 /* Applies FIPSD_UMASK; returns the previous mask. Call before any thread. */
 mode_t fipsd_privilege_set_umask(void);
 
-/* Looks a group up by name. Returns 1 and sets *gid when found, 0 when the
- * group does not exist, -1 on a lookup error (message in err). */
+/* Returns 1 with the named gid, or 0 with getegid() and one WARN naming the
+ * group when absent (0/NULL or ENOENT) or NSS fails after one immediate retry.
+ * ERANGE grows the buffer up to 1 MiB before retry/fallback. Invalid names
+ * (ASCII letter/underscore followed by letters, digits, '_', '-', '.', with
+ * optional final '$', at most 255 bytes) and allocation failures return -1
+ * with a message in err. Call during startup, not on scheduler workers. */
 int fipsd_privilege_resolve_group(const char *name, gid_t *gid, char *err, size_t errlen);
+
+/* Per-call resolver seam; same result/error convention as getgrnam_r.
+ * No process-global resolver override or cached gid. */
+typedef int (*fipsd_group_resolver)(void *ctx, const char *name, struct group *grp,
+                                  char *buf, size_t cap, struct group **result);
+int fipsd_privilege_resolve_group_with(const char *name, gid_t *gid, char *err, size_t errlen,
+                                     fipsd_group_resolver resolve, void *ctx);
 
 /* Sets the bound socket at `path` to group `gid` and FIPSD_SOCKET_MODE.
  * Refuses anything that is not a socket (symlinks included). Returns 0 or -1

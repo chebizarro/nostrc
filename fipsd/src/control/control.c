@@ -95,7 +95,6 @@ static int bind_listener(fipsd_control_service *s)
     gid_t gid = getegid();
     int group = fipsd_privilege_resolve_group(FIPSD_SOCKET_GROUP, &gid, err, sizeof(err));
     if (group < 0) { FIPSD_ERROR("control", "%s", err); return -1; }
-    if (!group) FIPSD_WARN("control", "fips group absent; retaining effective group %u", (unsigned)gid);
     if (private_parent(s->path, gid, err, sizeof(err)) != 0) {
         FIPSD_ERROR("control", "cannot secure socket parent: %s %s", err, strerror(errno)); return -1;
     }

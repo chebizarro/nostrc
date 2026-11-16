@@ -476,7 +476,7 @@ static void test_socket(const char *tmp)
     char xdg[4096], path[4096]; snprintf(xdg,sizeof(xdg),"%s/runtime",tmp); CHECK(mkdir(xdg,0700)==0);
     CHECK(setenv("XDG_RUNTIME_DIR",xdg,1)==0);
     snprintf(path,sizeof(path),"%s/runtime/fips/control.sock",tmp);
-    char yaml[8192]; snprintf(yaml,sizeof(yaml),"node:\n  control:\n    socket_path: %s\n",path);
+    char yaml[8192]; snprintf(yaml,sizeof(yaml),"node:\n  control:\n    enabled: true\n    socket_path: %s\n",path);
     fipsd_config_log log={0}; fipsd_config *config=fipsd_config_parse(yaml,strlen(yaml),&log); CHECK(config);
     fipsd_config_log_clear(&log);
     GoSwap *configs=go_swap_create(config,fipsd_config_free); CHECK(configs);
@@ -498,9 +498,10 @@ static void test_socket(const char *tmp)
     fipsd_control_service_clear(&collision);
     struct stat st; CHECK(lstat(path,&st)==0 && S_ISSOCK(st.st_mode) && (st.st_mode&0777)==0770);
     gid_t gid; char err[256]; int found=fipsd_privilege_resolve_group("fips",&gid,err,sizeof(err)); CHECK(found>=0);
-    if (found) CHECK(st.st_gid==gid); else puts("SKIP fips group assertion: group absent (mode still checked)");
+    CHECK(st.st_gid==gid);
+    if (!found) CHECK(gid==getegid());
     char parent[4096]; snprintf(parent,sizeof(parent),"%s/runtime/fips",tmp);
-    CHECK(stat(parent,&st)==0 && (st.st_mode&0777)==0750); if (found) CHECK(st.st_gid==gid);
+    CHECK(stat(parent,&st)==0 && (st.st_mode&0777)==0750 && st.st_gid==gid);
     CHECK(stat(xdg,&st)==0 && (st.st_mode&0777)==0700); /* shared ancestor unchanged */
     const char *ok="{\"status\":\"ok\",\"data\":{\"peers\":[]}}\n";
     const char *req="{\"command\":\"show_peers\"}\n";
