@@ -186,8 +186,8 @@ int main(int argc, char **argv)
     if (!rt) {
         FIPSD_ERROR(MODULE, "cannot allocate the runtime");
         code = FIPSD_EXIT_FAILURE;
-    } else if (!node_subsystem || (tun_enabled && !tun) || fipsd_runtime_register(rt, &service.subsystem) != 0 ||
-    } else if (!node_subsystem || !udp_ok || fipsd_runtime_register(rt, &service.subsystem) != 0 ||
+    } else if (!node_subsystem || !udp_ok || (tun_enabled && !tun) ||
+               fipsd_runtime_register(rt, &service.subsystem) != 0 ||
                fipsd_runtime_register(rt, node_subsystem) != 0 ||
                (tun && fipsd_runtime_register(rt, &tun_service.subsystem) != 0) ||
                (control_enabled && fipsd_runtime_register(rt, &control.subsystem) != 0) ||
