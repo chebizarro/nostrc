@@ -2,10 +2,10 @@
 # Apply a test-only bridge to a disposable checkout, never the source checkout.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../../.." && pwd -P)"
-source_repo="${1:-/Users/bizarro/Documents/Dev/fips}"
+source_repo="${1:-}"
 out="${2:-$root/libfips-core/tests/vectors/rekey-legacy}"
-if [[ $# -gt 2 || "$source_repo" != /* || "$out" != "$root"/* ]]; then
-  echo "usage: $0 [absolute-upstream-repo [absolute-output-dir-under-$root]]" >&2
+if [[ $# -lt 1 || $# -gt 4 || "$source_repo" != /* || "$out" != "$root"/* ]]; then
+  echo "usage: $0 absolute-upstream-repo [absolute-output-dir-under-$root [full-candidate-pin [absolute-reviewed-patch]]]" >&2
   exit 2
 fi
 out="$(python3 - "$root" "$out" <<'PATHCHECK'
@@ -35,11 +35,19 @@ print(pin, toolchain['toolchain']['channel'])
 CONFIG
 }
 read -r pin toolchain < <(read_config)
-patch="$root/tools/fips-vectors/upstream-patches/$pin-legacy-rekey-export.patch"
-[[ -f "$patch" ]]
+pin="${3:-$pin}"
+[[ "$pin" =~ ^[0-9a-f]{40}$ ]] || { echo 'candidate must be a full commit' >&2; exit 2; }
+patch="${4:-$root/tools/fips-vectors/upstream-patches/$pin-legacy-rekey-export.patch}"
+[[ "$patch" == /* && -f "$patch" ]] || {
+  echo "missing absolute reviewed legacy patch: $patch" >&2; exit 2;
+}
+grep -Fq "+const PIN: &str = \"$pin\";" "$patch" || {
+  echo 'review/rebase the legacy patch and update its PIN for the candidate' >&2; exit 2;
+}
 mkdir -p "$root/build-legacy-capture"
 work="$(mktemp -d "$root/build-legacy-capture/capture.XXXXXX")"
 trap 'rm -rf "$work"' EXIT HUP INT TERM
+export CARGO_HOME="${CARGO_HOME:-$work/cargo-home}"
 # A shared clone reads source objects but owns its checkout/index/refs. No fetch,
 # checkout, worktree registration or patch is ever performed in source_repo.
 git -C "$root" clone --shared --no-checkout "$source_repo" "$work/upstream"

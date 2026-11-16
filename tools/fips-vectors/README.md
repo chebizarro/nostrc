@@ -14,7 +14,8 @@ From the repository root:
 
 ```sh
 cd tools/fips-vectors
-# This directory selects rust-toolchain.toml, including when using --manifest-path.
+# Run from this directory to select rust-toolchain.toml. From elsewhere, use
+# cargo +1.94.1 <command> --manifest-path ...; --manifest-path alone does NOT select it.
 rustc --version                         # 1.94.1, matching upstream
 cargo run --locked -- export            # default: libfips-core/tests/vectors/
 cargo run --locked -- export --out /absolute/path/to/empty-output
@@ -134,7 +135,7 @@ are now the authoritative regeneration source (C consumer work is s50dj.3).
 ```
 
 The script reads the full Cargo dependency pin and Rust toolchain (1.94.1),
-checks agreement with `UPSTREAM.md`, makes a disposable `git clone --shared`
+checks agreement with `UPSTREAM.md` for the default pin, makes a disposable `git clone --shared`
 checkout at exactly that pin under `build-legacy-capture/`, and applies
 `upstream-patches/<full-rev>-legacy-rekey-export.patch`. It never changes the
 source checkout, registers worktrees there, or checks out its branch. The patch
@@ -177,6 +178,30 @@ contain just the current node: the legacy model is the oracle peer, **not** a
 second instance of the current machine. C replay needs no Rust runtime.
 
 ## Regeneration / pin bump
+
+Start with `scripts/fips-upstream-bump.sh` from the repository root (see
+`libfips-core/UPSTREAM.md` for the full clone/rehearsal/build commands). It copies
+this crate into worktree-local scratch, changes only that copy's Cargo rev,
+lockfile source and `src/main.rs` PIN, resolves candidate dependencies when the
+pin changes, exports twice, captures legacy twice, and compares all seven
+families without overwriting the baseline. `--keep` retains the reported vector
+root for the separate C sweep; otherwise scratch is removed even on failure.
+The same pin needs no source/provenance/patch rename. A future candidate needs a
+reviewed candidate-stamped legacy patch (`--legacy-patch /absolute/patch`).
+Direct capture also accepts optional third/fourth arguments: full candidate
+commit and absolute reviewed patch, without changing the committed pin.
+
+Prerequisites: Git with HTTPS access, Python **3.11+** (`tomllib`), Rustup, Cargo,
+and Rust **1.94.1** with rustfmt/clippy (`rustup toolchain install 1.94.1 --component
+rustfmt --component clippy`). Cargo is not installed by CMake; do not confuse a
+successful C build with exporter availability. Candidate toolchain/MSRV or
+private `testutil` changes require review before running. All downloaded Cargo
+sources and targets from the wrapper are scratch-local. The wrapper reports
+watch/fixture changes with exit 1, operational failures with exit 2; exit 0 is
+byte-identical export evidence, **not** C differential or host interop proof.
+A new pin changes provenance even when wire bytes do not: review the saved
+`fixtures.diff`, never dismiss binary/state differences as a pin-only update.
+
 
 1. Follow `libfips-core/UPSTREAM.md`'s watch-set and compatibility procedure.
    Preserve an export at the old pin before changing anything.

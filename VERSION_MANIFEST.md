@@ -1635,6 +1635,8 @@ Decisions for components affected by another component's change (AGENTS.md,
 
 | YAML configuration host (nostrc-9keoz.2) | fipsd | 0.1.0 | No bump: the new schema, CLI loading and conservative SIGHUP logging reload fold into initial **0.1.0 Unreleased**; no published release or tag change. libfips-core/libgo APIs and versions are unchanged. |
 
+| First upstream pin-bump rehearsal (nostrc-f66sr.6): scratch exporter/capture orchestration, runbook and upstream findings | libfips-core | 0.1.0 | No bump: test/tooling/documentation only; identical fixtures, unchanged pin and no shipped artifact, API, ABI or wire change. fipsd is untouched. |
+
 ## Maintenance
 
 Follow the versioning policy and update procedure in `AGENTS.md`. In
