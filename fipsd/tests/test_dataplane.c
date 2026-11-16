@@ -7,6 +7,8 @@
 #include "node/transport_loopback.h"
 #include <assert.h>
 #include <stdio.h>
+#include <pthread.h>
+#include <sched.h>
 
 static void forwarding(void)
 {
@@ -184,7 +186,11 @@ static void saturated_trial_retry(void)
     handlers h = {0}; fipsd_dataplane d = {.packet_count = 256}; h.dataplane = &d;
     d.packets = calloc(d.packet_count, sizeof *d.packets); assert(d.packets);
     d.current = make_go_refptr(calloc(1, sizeof(fipsd_dp_snapshot)), free); assert(d.current.ptr);
-    for (size_t i = 0; i < d.packet_count; ++i) assert(fipsd_dp_packet_take(&d));
+    for (size_t i = 0; i < d.packet_count; ++i) {
+        assert(fipsd_dp_send_ready(&d) == (i + FIPSD_DP_SEND_RESERVE < d.packet_count));
+        assert(fipsd_dp_packet_take(&d));
+        assert(atomic_load(&d.in_flight) == i + 1);
+    }
     /* Original completion is still borrowed by the node, and must not be
      * recycled/resubmitted underneath it. Full occupancy refuses the trial,
      * counts pressure and leaves the original slot/reference for its owner. */
@@ -192,6 +198,7 @@ static void saturated_trial_retry(void)
     assert(d.stats.backpressure == 1 && atomic_load(&d.packets[0].busy));
     for (size_t i = 0; i < d.packet_count; ++i) fipsd_crypto_job_destroy(&d.packets[i].job);
     for (size_t i = 0; i < d.packet_count; ++i) assert(!atomic_load(&d.packets[i].busy));
+    assert(atomic_load(&d.in_flight) == 0 && fipsd_dp_send_ready(&d));
     assert(atomic_load(d.current.ref_count) == 1);
     go_refptr_release(&d.current); free(d.packets);
 }
@@ -216,9 +223,103 @@ static void delayed_transport_consumer(void)
     fipsd_loopback_transport_destroy(a); fipsd_loopback_transport_destroy(b); fipsd_loopback_network_destroy(net);
     go_channel_unref(in_a); go_channel_unref(in_b); fipsd_runtime_destroy(rt);
 }
+/* Reuse a single slab while another thread releases it. busy=false hands all
+ * packet fields back to the dispatcher, including plane; the recycler may only
+ * access its saved dataplane pointer after publishing that handoff. */
+static void *recycle_packets(void *arg)
+{
+    GoChannel *jobs = arg; void *value;
+    while (go_channel_receive(jobs, &value) == 0) fipsd_crypto_job_destroy(value);
+    return NULL;
+}
+static void concurrent_recycle(void)
+{
+    fipsd_dataplane d = {.packet_count = 1};
+    d.packets = calloc(1, sizeof *d.packets); assert(d.packets);
+    d.current = make_go_refptr(calloc(1, sizeof(fipsd_dp_snapshot)), free); assert(d.current.ptr);
+    GoChannel *jobs = go_channel_create(1); assert(jobs);
+    pthread_t thread; assert(!pthread_create(&thread, NULL, recycle_packets, jobs));
+    for (size_t i = 0; i < 10000; ++i) {
+        fipsd_dp_packet *p;
+        while (!(p = fipsd_dp_packet_take(&d))) sched_yield();
+        assert(!go_channel_send(jobs, &p->job));
+    }
+    go_channel_close(jobs); assert(!pthread_join(thread, NULL));
+    assert(!atomic_load(&d.packets[0].busy) && atomic_load(&d.in_flight) == 0);
+    assert(atomic_load(d.current.ref_count) == 1);
+    go_channel_free(jobs); go_refptr_release(&d.current); free(d.packets);
+}
+typedef struct blocked_send { handlers *h; GoChannel *cancel, *started; int result; } blocked_send;
+static void *send_until_cancelled(void *arg)
+{
+    blocked_send *s = arg; fips_node_addr dest = {{2}};
+    assert(!go_channel_send(s->started, s));
+    s->result = fipsd_node_handlers_send_wait(s->h, &dest, 1, 2, (const uint8_t *)"blocked", 7, s->cancel);
+    return NULL;
+}
+static void cancelled_mailbox(void)
+{
+    fipsd_node_handlers_config cfg; fipsd_node_handlers_config_default(&cfg); cfg.command_capacity = 1;
+    handlers *h = fipsd_node_handlers_create(&cfg); assert(h);
+    fips_node_addr dest = {{2}};
+    assert(!fipsd_node_handlers_send_wait(h, &dest, 1, 2, NULL, 0, NULL));
+    blocked_send s = {.h = h, .cancel = go_channel_create(1), .started = go_channel_create(1)};
+    assert(s.cancel && s.started);
+    pthread_t thread; assert(!pthread_create(&thread, NULL, send_until_cancelled, &s));
+    void *v; assert(!go_channel_receive(s.started, &v) && v == &s);
+    go_channel_close(s.cancel); assert(!pthread_join(thread, NULL));
+    assert(s.result == -1 && go_channel_get_depth(h->commands) == 1);
+    go_channel_free(s.cancel); go_channel_free(s.started); fipsd_node_handlers_destroy(h);
+}
+/* Stop the real dispatcher before driving its retained handler state with an
+ * injected clock: there must still be exactly one writer. */
+static void coalesced_snapshots(void)
+{
+    fips_test_clock clock = {0};
+    fipsd_node_handlers_config cfg; fipsd_node_handlers_config_default(&cfg);
+    cfg.peer_capacity = cfg.tree_peer_capacity = cfg.session_capacity = 4; cfg.cache_entries = 8;
+    cfg.clock = fips_test_clock_adapter(&clock);
+    handlers *h = fipsd_node_handlers_create(&cfg); assert(h);
+    const char *yaml = "node: {identity: {persistent: false}}";
+    fipsd_config *config = fipsd_config_parse(yaml, strlen(yaml), NULL); assert(config);
+    GoSwap *configs = go_swap_create(config, fipsd_config_free); assert(configs);
+    fipsd_node_options o = {0}; fipsd_node_handlers_install(h, &o);
+    fipsd_node *node = fipsd_node_create(configs, &o); assert(node);
+    fipsd_runtime_config rc; fipsd_runtime_config_default(&rc); rc.handle_signals = false; rc.workers = 4;
+    fipsd_runtime *rt = fipsd_runtime_create(&rc); assert(rt);
+    assert(!fipsd_runtime_register(rt, fipsd_node_subsystem(node)) && !fipsd_runtime_start(rt));
+    fipsd_runtime_shutdown(rt); assert(fipsd_runtime_run(rt) == FIPSD_RUN_OK);
+    h->running = true; h->publish_allowed = fips_test_instant(0);
+    h->next_tick = fips_test_instant(1000);
+    uint64_t generation = h->snapshot_generation;
+    hs_mark_dirty(h); assert(hs_poll(h, fips_test_instant(0)));
+    assert(h->snapshot_generation == ++generation && !h->dirty);
+    for (uint64_t i = 1; i < 50; ++i) {
+        clock.millis = i; hs_mark_dirty(h); assert(hs_poll(h, hs_now(h)));
+        assert(h->snapshot_generation == generation && h->dirty);
+        assert(hs_wait_ms(h, hs_now(h)) == 50 - i);
+    }
+    /* A state-change notice bypasses the coalescing deadline. */
+    hs_notice(h, FIPSD_NOTICE_TREE_CHANGED, NULL, NULL, 0);
+    assert(h->snapshot_generation == ++generation && !h->dirty);
+    void *notice; assert(!go_channel_try_receive(h->notices, &notice)); fipsd_node_notice_free(notice);
+    hs_mark_dirty(h); clock.millis = 50; assert(hs_poll(h, hs_now(h)));
+    assert(h->snapshot_generation == ++generation && !h->dirty);
+    /* The actual installed command callback must inspect kind before freeing
+     * its owned command (ASan catches the previous post-free dirty check). */
+    fips_peer_identity identity = {0};
+    assert(!fipsd_node_handlers_learn_identity(h, &identity));
+    void *command; assert(!go_channel_try_receive(h->commands, &command));
+    assert(o.command(o.user, command) && h->dirty);
+    clock.millis = 100; assert(hs_poll(h, hs_now(h)));
+    assert(h->snapshot_generation == ++generation && !h->dirty);
+    h->running = false;
+    fipsd_runtime_destroy(rt); fipsd_node_destroy(node); fipsd_node_handlers_destroy(h); go_swap_free(configs);
+}
 int main(void)
 {
-    forwarding(); errors(); clamps(); backpressure_and_counters(); authenticate_then_mark(); saturated_trial_retry(); delayed_transport_consumer();
+    concurrent_recycle(); cancelled_mailbox();
+    forwarding(); errors(); clamps(); backpressure_and_counters(); authenticate_then_mark(); saturated_trial_retry(); delayed_transport_consumer(); coalesced_snapshots();
     puts("dataplane: forwarding/local/TTL/CE, reject limiter, clamp release, 4-worker unique reserved counters, bounded refusal: ok");
     return 0;
 }

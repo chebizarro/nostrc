@@ -467,16 +467,20 @@ static bool on_command(void *user, void *message)
     case HCMD_SEND: (void)hs_session_send(h, &c->node, c->src_port, c->dst_port, c->payload, c->len); break;
     case HCMD_LEARN_IDENTITY: (void)fipsd_identity_cache_put(&h->identities, c->identity, hs_wall_ms(h)); break;
     case HCMD_DIAL_CONFIGURED: (void)hs_dial_configured(h); break;
-    case HCMD_CONTROL:
-        /* Claimed above: the ticket owns the reply from here, whether or not
-         * the waiter is still there to steal it. */
-        ticket_resolve(c->ticket, hs_control_command(h, c->name, c->params));
+    case HCMD_CONTROL: {
+        /* A completed control command is a snapshot barrier, including for
+         * earlier mailbox mutations (e.g. DNS identity seeding). Publish before
+         * waking the waiter, not at the end of a coalesced dispatcher batch. */
+        json_t *reply = hs_control_command(h, c->name, c->params);
+        hs_publish(h, hs_now(h));
+        ticket_resolve(c->ticket, reply);
         break;
     }
-    command_free(c);
+    }
     /* Originated datagrams change counters only; those are published from the
      * tick. Every other command may have changed control-visible state. */
-    if (c->kind != HCMD_SEND) hs_mark_dirty(h);
+    if (c->kind != HCMD_SEND && c->kind != HCMD_CONTROL) hs_mark_dirty(h);
+    command_free(c);
     return true;
 }
 /* Dispatcher admission for the command mailbox: hold originated sends while

@@ -9,12 +9,14 @@ static bool path_message(const uint8_t *message, size_t len)
 static void recycle(fipsd_crypto_job *j)
 {
     fipsd_dp_packet *p = j->owner;
+    fipsd_dataplane *d = p->plane;
     go_refptr_release(&p->snapshot);
     sodium_memzero(p->ad, sizeof p->ad); sodium_memzero(p->input, sizeof p->input);
     sodium_memzero(p->output, sizeof p->output);
     sodium_memzero(&p->job, sizeof p->job);
     atomic_store_explicit(&p->busy, false, memory_order_release);
-    atomic_fetch_sub_explicit(&p->plane->in_flight, 1, memory_order_release);
+    /* busy=false transfers the slab: do not touch its fields after that. */
+    atomic_fetch_sub_explicit(&d->in_flight, 1, memory_order_release);
 }
 bool fipsd_dp_send_ready(const fipsd_dataplane *d)
 {
