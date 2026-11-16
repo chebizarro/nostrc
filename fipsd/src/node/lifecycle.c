@@ -130,9 +130,9 @@ static void step(fipsd_lifecycle *l, fipsd_node_event e)
             break;
         case FIPSD_NODE_GATE_PEERING:
         case FIPSD_NODE_ARM_DRAIN:
-            /* The driver has no peer protocol handlers until 9keoz.6. Do not
-             * pretend to implement Disconnect or timers here. Public actor
-             * currently accepts immediate STOP only; drain is reducer-only. */
+            /* Drain gating is reducer-only: the production actor stops with an
+             * immediate STOP and the node handlers send Disconnect to every peer
+             * while detaching on the dispatcher fiber (node/handlers/handshake.c). */
             break;
         }
     }

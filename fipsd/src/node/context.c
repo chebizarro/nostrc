@@ -32,10 +32,12 @@ struct fipsd_node {
     fipsd_lifecycle *lifecycle;
     fipsd_runtime *runtime;
     CancelContextResult dispatcher_cancel;
-    GoChannel *transport_events, *peer_done, *dispatch_stop, *dispatch_done, *workers_done;
+    GoChannel *transport_events, *dispatch_stop, *dispatch_done, *workers_done;
     size_t transport_offset, worker_child, netmon_child;
+    bool attached;
 };
 const fips_identity *fipsd_node_identity(const fipsd_node_context *c) { return c->identity; }
+const fips_secp *fipsd_node_secp(const fipsd_node_context *c) { return c->secp; }
 const uint8_t *fipsd_node_startup_epoch(const fipsd_node_context *c) { return c->epoch; }
 GoRefPtr fipsd_node_config(const fipsd_node_context *c) { return go_swap_load(c->configs); }
 GoRefPtr fipsd_node_network(const fipsd_node_context *c) { return fipsd_netmon_snapshot(c->netmon); }
@@ -100,7 +102,7 @@ static void netmon_stop(void *arg)
 static bool effects(void *arg, fipsd_active_peer *peer, const fipsd_peer_actions *actions)
 {
     (void)arg; (void)peer; (void)actions;
-    FIPSD_ERROR("node", "peer protocol effects require the 9keoz.6 handler integration");
+    FIPSD_ERROR("node", "peer protocol effects require the node handlers (node/handlers/handlers.h)");
     return false;
 }
 static void notify(fipsd_node *n, fipsd_node_event_kind kind, size_t child)
@@ -115,34 +117,43 @@ static void notify(fipsd_node *n, fipsd_node_event_kind kind, size_t child)
             fipsd_runtime_shutdown(n->runtime);
     }
 }
-static void peer_dispatch(void *arg)
-{
-    fipsd_node *n = arg;
-    if (!fipsd_peer_dispatcher_run(&n->context.peers)) {
-        FIPSD_ERROR("node", "peer dispatcher failed");
-        fipsd_runtime_shutdown(n->runtime);
-    }
-    go_channel_close(n->peer_done);
-}
 static void dispatch(void *arg)
 {
     fipsd_node *n = arg;
-    GoChannel *network = fipsd_netmon_events(n->context.netmon);
-    GoChannel *results = fipsd_worker_set_results(n->context.workers);
-    bool failed = false;
+    fipsd_node_context *c = &n->context;
+    GoChannel *network = fipsd_netmon_events(c->netmon);
+    GoChannel *results = fipsd_worker_set_results(c->workers);
+    GoChannel *inbox = c->peers.inbox, *commands = n->options.command ? n->options.commands : NULL;
+    void *user = n->options.user;
+    bool failed = false, attached = n->attached;
     for (;;) {
         void *value = NULL, *cancel = NULL;
         GoSelectCase cases[] = {
             {GO_SELECT_RECEIVE, n->dispatch_stop, NULL, &cancel},
             {GO_SELECT_RECEIVE, n->transport_events, NULL, &value},
             {GO_SELECT_RECEIVE, network, NULL, &value},
-            {GO_SELECT_RECEIVE, results, NULL, &value}};
-        int selected = go_select(cases, 4);
-        if (selected < 1) break;
-        if (!value) {
+            {GO_SELECT_RECEIVE, results, NULL, &value},
+            {GO_SELECT_RECEIVE, inbox, NULL, &value},
+            {GO_SELECT_RECEIVE, commands, NULL, &value}};
+        fips_instant now = c->peers.clock.now(c->peers.clock.ctx);
+        /* One select multiplexes every source with the nearest stored deadline:
+         * peer machines/links and the handlers' timer wheel. A failed node
+         * only drains owned work until lifecycle closes the inputs. */
+        uint64_t timeout = failed ? UINT64_MAX : fipsd_peer_dispatcher_wait_ms(&c->peers, now);
+        if (!failed && n->options.wait_ms) {
+            uint64_t w = n->options.wait_ms(user, now);
+            if (w < timeout) timeout = w;
+        }
+        int selected;
+        if (timeout == UINT64_MAX) selected = go_select(cases, 6);
+        else selected = go_select_timeout(cases, 6, timeout).selected_case;
+        if (selected == 0) break;
+        if (selected > 0 && !value) {
             /* Disabled closed channels must not create a busy select loop. */
             if (selected == 2) network = NULL;
             if (selected == 3) { results = NULL; go_channel_close(n->workers_done); }
+            if (selected == 4) inbox = NULL;
+            if (selected == 5) commands = NULL;
             continue;
         }
         if (selected == 1) {
@@ -155,7 +166,7 @@ static void dispatch(void *arg)
                     notify(n, e->kind == FIPSD_TRANSPORT_EXITED ? FIPSD_NODE_EXITED :
                         e->kind == FIPSD_TRANSPORT_BECAME_ABSENT ? FIPSD_NODE_ABSENT : FIPSD_NODE_PRESENT,
                         n->transport_offset + i);
-            } else if (!failed) failed = !n->options.transport_event || !n->options.transport_event(n->options.user, e);
+            } else if (!failed) failed = !n->options.transport_event || !n->options.transport_event(user, e);
             free(e);
         } else if (selected == 2) {
             fipsd_netmon_event *e = value;
@@ -167,13 +178,20 @@ static void dispatch(void *arg)
                 fipsd_transport *t = n->registry.items[i];
                 if (t->ops->network_changed) t->ops->network_changed(t, e);
             }
-            if (n->options.network_event) n->options.network_event(n->options.user, e);
+            if (!failed && n->options.network_event) n->options.network_event(user, e);
             free(e);
-        } else {
+        } else if (selected == 3) {
             fipsd_crypto_job *j = value;
-            if (!failed) failed = !n->options.crypto_result || !n->options.crypto_result(n->options.user, j);
+            if (!failed) failed = !n->options.crypto_result || !n->options.crypto_result(user, j);
             fipsd_crypto_job_destroy(j);
+        } else if (selected == 4) {
+            if (failed) fipsd_peer_command_discard(value);
+            else if (!fipsd_peer_dispatcher_command(&c->peers, value)) failed = true;
+        } else if (selected == 5) {
+            if (!n->options.command(user, value)) failed = true;
         }
+        if (!failed && !fipsd_peer_dispatcher_service(&c->peers)) failed = true;
+        if (!failed && n->options.poll && !n->options.poll(user, c->peers.clock.now(c->peers.clock.ctx))) failed = true;
         if (failed) {
             /* Keep draining owned work until lifecycle closes the inputs and
              * observes result EOF. A failed handler must not strand workers
@@ -181,6 +199,12 @@ static void dispatch(void *arg)
             fipsd_runtime_shutdown(n->runtime);
         }
     }
+    /* Close before drain so a racing producer either succeeds into the drain
+     * or observes closed and keeps ownership. */
+    go_channel_close(c->peers.inbox);
+    void *left = NULL;
+    while (go_channel_try_receive(c->peers.inbox, &left) == 0) fipsd_peer_command_discard(left);
+    if (attached && n->options.detach) n->options.detach(user);
     go_channel_close(n->dispatch_done);
 }
 static int dispatcher_start(void *arg, fipsd_runtime *rt)
@@ -198,14 +222,19 @@ static int dispatcher_start(void *arg, fipsd_runtime *rt)
     n->dispatcher_cancel = go_context_with_cancel(fipsd_runtime_context(rt));
     c->peers.context = n->dispatcher_cancel.context;
     if (!c->peers.table || !c->peers.context) return -1;
-    c->peers.clock = fipsd_host_os_clock(); c->peers.effects = effects;
-    if (!fipsd_peer_table_publish(c->peers.table) || fipsd_runtime_spawn(rt, peer_dispatch, n) != 0) return -1;
-    if (fipsd_runtime_spawn(rt, dispatch, n) != 0) {
-        n->dispatcher_cancel.cancel(n->dispatcher_cancel.context);
-        void *value; (void)go_channel_receive(n->peer_done, &value);
-        return -1;
+    c->peers.clock = n->options.clock.now ? n->options.clock : fipsd_host_os_clock();
+    c->peers.effects = n->options.peer_effects ? n->options.peer_effects : effects;
+    c->peers.result = n->options.peer_result; c->peers.user = n->options.user;
+    if (!fipsd_peer_table_publish(c->peers.table)) return -1;
+    /* Attach before the dispatcher fiber exists: still single-threaded here, so
+     * the handlers' first snapshot is published when start returns. */
+    if (n->options.attach) {
+        fipsd_node_attach a = {.context = c, .peers = &c->peers, .registry = &n->registry,
+            .runtime = rt, .cancel = c->peers.context};
+        if (!n->options.attach(n->options.user, &a)) { FIPSD_ERROR("node", "handler attach failed"); return -1; }
+        n->attached = true;
     }
-    return 0;
+    return fipsd_runtime_spawn(rt, dispatch, n);
 }
 static void dispatcher_stop(void *arg)
 {
@@ -214,7 +243,6 @@ static void dispatcher_stop(void *arg)
     n->dispatcher_cancel.cancel(n->dispatcher_cancel.context);
     void *value;
     (void)go_channel_receive(n->dispatch_done, &value);
-    (void)go_channel_receive(n->peer_done, &value);
 }
 static int workers_start(void *arg, fipsd_runtime *rt)
 {
@@ -247,10 +275,10 @@ fipsd_node *fipsd_node_create(GoSwap *configs, const fipsd_node_options *options
     n->context.peers.inbox = go_channel_create(n->options.queue_capacity);
     n->context.workers = fipsd_worker_set_create(n->options.workers, n->options.queue_capacity);
     n->transport_events = go_channel_create(n->options.queue_capacity);
-    n->peer_done = go_channel_create(1); n->dispatch_done = go_channel_create(1);
+    n->dispatch_done = go_channel_create(1);
     n->dispatch_stop = go_channel_create(1); n->workers_done = go_channel_create(1);
     if (!n->context.netmon || !n->context.peers.inbox || !n->context.workers || !n->transport_events ||
-        !n->peer_done || !n->dispatch_done || !n->dispatch_stop || !n->workers_done) { fipsd_node_destroy(n); return NULL; }
+        !n->dispatch_done || !n->dispatch_stop || !n->workers_done) { fipsd_node_destroy(n); return NULL; }
     return n;
 }
 fipsd_transport_registry *fipsd_node_transports(fipsd_node *n) { return &n->registry; }
@@ -292,7 +320,6 @@ void fipsd_node_destroy(fipsd_node *n)
         void *e; while (go_channel_try_receive(n->transport_events, &e) == 0) free(e);
         go_channel_unref(n->transport_events);
     }
-    if (n->peer_done) go_channel_unref(n->peer_done);
     if (n->dispatch_done) go_channel_unref(n->dispatch_done);
     if (n->dispatch_stop) go_channel_unref(n->dispatch_stop);
     if (n->workers_done) go_channel_unref(n->workers_done);

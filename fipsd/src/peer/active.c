@@ -105,6 +105,7 @@ fips_instant fipsd_active_peer_link_next_wake(const fipsd_active_peer *p)
 fips_rekey_seal_refusal fipsd_active_peer_link_seal(fipsd_active_peer *p,
     fips_instant now, fips_rekey_sealed *out)
 { return p->link_live ? fips_rekey_seal(&p->link, now, out) : FIPS_REKEY_SEAL_NotEstablished; }
+fips_rekey *fipsd_active_peer_link_machine(fipsd_active_peer *p) { return p->link_live ? &p->link : NULL; }
 fips_rekey_view fipsd_active_peer_link_view(const fipsd_active_peer *p)
 { return p->link_live ? fips_rekey_get_view(&p->link) : (fips_rekey_view){0}; }
 void fipsd_active_peer_link_close(fipsd_active_peer *p, fips_rekey_close reason,

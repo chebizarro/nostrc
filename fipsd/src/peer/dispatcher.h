@@ -29,6 +29,15 @@ typedef struct fipsd_peer_dispatcher {
     void (*result)(void *user, const fipsd_peer_command *command, fipsd_peer_admission result);
     void *user;
 } fipsd_peer_dispatcher;
+/* Reusable pieces of the loop below, for a host loop that multiplexes more
+ * sources on the same single-writer fiber (node/context.c). wait_ms returns
+ * UINT64_MAX when no peer deadline exists; command executes one owned command
+ * (including result callback and ownership cleanup); service drives every due
+ * peer and publishes the table. All three run on the owning fiber only. */
+uint64_t fipsd_peer_dispatcher_wait_ms(fipsd_peer_dispatcher *dispatcher, fips_instant now);
+bool fipsd_peer_dispatcher_command(fipsd_peer_dispatcher *dispatcher, fipsd_peer_command *command);
+bool fipsd_peer_dispatcher_service(fipsd_peer_dispatcher *dispatcher);
+void fipsd_peer_command_discard(fipsd_peer_command *command);
 /* Spawn from the subsystem with fipsd_runtime_spawn. Sole table/state writer.
  * inbox is bounded (caller chooses capacity); dispatcher owns each malloc'd
  * command after successful send, including insert on failure/shutdown. Commands

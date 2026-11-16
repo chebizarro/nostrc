@@ -85,3 +85,6 @@ target_sources(fipsd_lib PRIVATE
   src/control/control.c src/control/protocol.c src/control/queries.c)
 target_sources(fipsd_lib PRIVATE src/control/probe.c)
 target_sources(fipsd_lib PRIVATE src/control/render.c)
+
+# In-process loopback transport behind the transport seam (nostrc-9keoz.6).
+target_sources(fipsd_lib PRIVATE src/node/transport_loopback.c)
