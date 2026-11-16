@@ -31,6 +31,7 @@ fipsd_presence_facts fipsd_presence_from_snapshot(const fipsd_network_snapshot *
 /* No I/O; supports injected ifaddrs and index resolver. */
 fipsd_presence_facts fipsd_presence_from_ifaddrs(const struct ifaddrs *, const char *,
                                                unsigned (*index_of)(const char *));
+bool fipsd_presence_carrier_ioctl(const char *, int, fipsd_ioctl_fn, void *, bool fallback);
 fipsd_presence_facts fipsd_presence_read(const char *); /* blocking executor */
 uint64_t fipsd_transport_now_ms(void);
 #endif

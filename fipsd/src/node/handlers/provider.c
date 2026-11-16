@@ -7,7 +7,7 @@
 #include "control/counter_schema.h"
 #include "cli.h"
 #include "transport/transport.h"
-#include "transport/tcp/tcp.h"
+#include "control/transport.h"
 #include <unistd.h>
 
 typedef struct snap {
@@ -152,8 +152,6 @@ static const char *peer_state_name(fipsd_peer_state s)
         "active", "maintaining", "closing", "failed", "closed"};
     return (size_t)s < sizeof names / sizeof names[0] ? names[s] : "unknown";
 }
-static const char *transport_state_name(fipsd_transport_state s)
-{ return s == FIPSD_TRANSPORT_BOUND ? "bound" : s == FIPSD_TRANSPORT_ABSENT ? "absent" : s == FIPSD_TRANSPORT_FAILED ? "failed" : "stopped"; }
 static bool cache_row(void *ctx, const uint8_t addr[16], const fips_cache_entry *e)
 {
     struct { handlers *h; snap *x; fipsd_control_cache_entry *rows; size_t n, cap; } *c = ctx;
@@ -363,47 +361,16 @@ static snap *build(handlers *h, fips_instant now)
     /* Transports */
     size_t tn = h->registry ? h->registry->count : 0;
     fipsd_control_transport *ts = salloc(x, (tn + 1) * sizeof *ts);
-    for (size_t i = 0; ts && i < tn; ++i) {
+    fipsd_control_transport_view *views = salloc(x, (tn + 1) * sizeof *views);
+    for (size_t i = 0; ts && views && i < tn; ++i) {
         fipsd_transport *t = h->registry->items[i];
-        fips_transport_addr none = {0};
-        ts[i] = (fipsd_control_transport){.transport_id = t->id.value, .type = sdup(x, t->type), .state = transport_state_name(t->ops->state(t)),
-            .name = sdup(x, t->name), .mtu = t->ops->mtu(t, &none)};
-        if (t->shared) {
-            fips_link_stats stats = fipsd_transport_stats_snapshot(&t->shared->stats);
-            fipsd_control_counter counts[] = {{"frames_sent", stats.packets_sent}, {"frames_recv", stats.packets_recv},
-                {"bytes_sent", stats.bytes_sent}, {"bytes_recv", stats.bytes_recv},
-                {"ecn_recv", atomic_load(&t->shared->stats.ecn_recv)}, {"ce_recv", atomic_load(&t->shared->stats.ce_recv)},
-                {"pktinfo_recv", atomic_load(&t->shared->stats.pktinfo_recv)}, {"kernel_drops", atomic_load(&t->shared->stats.kernel_drops)},
-                {"malformed", atomic_load(&t->shared->stats.malformed)}, {"classifier_drops", atomic_load(&t->shared->stats.classifier_drops)},
-                {"pool_full", atomic_load(&t->shared->stats.pool_full)}};
-            ts[i].stats = counters_of(x, counts, !strcmp(t->type, "udp") ? sizeof counts / sizeof counts[0] : 4);
-            if (!strcmp(t->type, "tcp")) {
-                fipsd_tcp_stats_view v = fipsd_tcp_stats_snapshot(t);
-                fipsd_control_counter tcp[] = {{"frames_sent", stats.packets_sent}, {"frames_recv", stats.packets_recv},
-                    {"bytes_sent", stats.bytes_sent}, {"bytes_recv", stats.bytes_recv},
-                    {"send_errors", v.send_errors}, {"recv_errors", v.recv_errors}, {"mtu_exceeded", v.mtu_exceeded},
-                    {"connections_established", v.connections_established}, {"connections_accepted", v.connections_accepted},
-                    {"connections_rejected", v.connections_rejected}, {"source_rejected", v.source_rejected},
-                    {"connect_timeouts", v.connect_timeouts}, {"connect_refused", v.connect_refused},
-                    {"pool_inbound", v.pool_inbound}, {"pool_outbound", v.pool_outbound}};
-                ts[i].stats = counters_of(x, tcp, sizeof tcp / sizeof tcp[0]);
-            }
-            if (t->interface_name) {
-                fipsd_presence_view v = fipsd_presence_snapshot(&t->shared->presence);
-                fipsd_control_interface *in = salloc(x, sizeof *in);
-                if (in) {
-                    uint64_t at = fipsd_transport_now_ms();
-                    *in = (fipsd_control_interface){.name = sdup(x, t->interface_name),
-                        .presence = fipsd_presence_name(v.phase), .policy = v.optional ? "optional" : "required",
-                        .carrier = v.interface.carrier, .medium = fipsd_medium_name(v.interface.medium),
-                        .since_secs = at >= v.since_ms ? (at - v.since_ms) / 1000 : 0,
-                        .binds = v.binds, .failed_attempts = v.attempts};
-                    ts[i].interface = in;
-                }
-            }
-        }
+        fipsd_control_transport_read(t, fipsd_transport_now_ms(), &views[i]);
+        ts[i] = views[i].row;
+        ts[i].type = sdup(x, ts[i].type); ts[i].name = sdup(x, ts[i].name);
+        if (ts[i].local_addr) ts[i].local_addr = sdup(x, ts[i].local_addr);
+        if (ts[i].interface) views[i].interface.name = sdup(x, views[i].interface.name);
     }
-    s->transports = ts; s->transports_count = ts ? tn : 0;
+    s->transports = ts; s->transports_count = ts && views ? tn : 0;
     /* Tree */
     const fips_parent_declaration *d = fips_tree_state_my_declaration(h->tree);
     s->tree.my_node_addr = s->node_addr; s->tree.root = hex_of(x, fips_tree_state_root(h->tree));

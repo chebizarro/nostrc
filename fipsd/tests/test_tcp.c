@@ -199,6 +199,10 @@ static void scenario(void *arg)
     frame(bytes, sizeof bytes);
     assert(f->b->ops->send(f->b, &remote, bytes, sizeof bytes) == -1); /* B has 128-byte send MTU */
     assert(f->a->ops->send(f->a, &f->ba, bytes, sizeof bytes + 1) == -1);
+    fipsd_transport_stats_view av = fipsd_tcp_stats_snapshot(f->a), bv = fipsd_tcp_stats_snapshot(f->b);
+    assert(av.packets_recv == 1 && av.bytes_recv == 114 && av.mtu_exceeded == 1);
+    assert(bv.packets_recv == 1 && bv.bytes_recv == 1280 && bv.mtu_exceeded == 1);
+    assert(av.pool_outbound == 1 && bv.pool_inbound == 1 && !av.send_errors && !bv.recv_errors);
     assert(fipsd_tcp_connected_count(f->a) == 1 && fipsd_tcp_connected_count(f->b) == 1);
     tcp_instance *a = f->a->user;
     nsync_mu_lock(&a->mu); tcp_conn *active = tcp_pool_find(a, &f->ba); assert(active);
@@ -212,9 +216,13 @@ static void scenario(void *arg)
     assert(f->a->ops->connect_async(f->a, &other) == -1);
     int rejected = raw_connect(f); uint8_t byte;
     assert(gof_read(rejected, &byte, 1) <= 0); tcp_fd_close(rejected);
-    assert(atomic_load(&((tcp_instance *)f->b->user)->stats.source_rejected) == 1);
+    assert(atomic_load(&((tcp_instance *)f->b->user)->shared.stats.source_rejected) == 1);
     f->a->ops->close_connection(f->a, &f->ba); peer_removed(f);
-    puts("lifecycle: connect/read/reply, owned send, asymmetric MTU, inbound/source/outbound caps: ok");
+    bv = fipsd_tcp_stats_snapshot(f->b);
+    assert(bv.packets_sent == 1 && bv.bytes_sent == 114 && bv.connections_accepted == 1);
+    assert(bv.connections_rejected == 1 && bv.source_rejected == 1 && !bv.pool_inbound);
+    assert(!atomic_load(&f->a->shared->stats.connections_rejected));
+    puts("lifecycle: connect/read/reply, owned send, asymmetric MTU, inbound/source/outbound caps and counters: ok");
     /* Reconnect after close on a fresh four-tuple; partial/coalesced socket I/O. */
     int raw = raw_connect(f);
     assert(gof_write(raw, msg, 1) == 1 && gof_write(raw, msg + 1, 2) == 2);
@@ -224,9 +232,11 @@ static void scenario(void *arg)
     e = event(f->eb, FIPSD_TRANSPORT_PACKET); assert(e->size == 114); free(e);
     uint8_t oversize[4] = {0, 0, 255, 255}; assert(gof_write(raw, oversize, sizeof oversize) == 4);
     peer_removed(f); tcp_fd_close(raw);
-    assert(atomic_load(&f->b->shared->stats.malformed) == 1);
+    assert(atomic_load(&f->b->shared->diagnostics.malformed) == 1);
     raw = raw_connect(f); assert(gof_write(raw, msg, 3) == 3); tcp_fd_close(raw); peer_removed(f);
-    assert(atomic_load(&f->b->shared->stats.malformed) == 2);
+    assert(atomic_load(&f->b->shared->diagnostics.malformed) == 2);
+    bv = fipsd_tcp_stats_snapshot(f->b);
+    assert(bv.recv_errors == 2 && bv.packets_recv == 3 && bv.bytes_recv == 1508);
     puts("real stream: partial/coalesced frames, oversized prefix and partial EOF rejected: ok");
     /* A peer that never reads eventually backpressures the sole writer; send
      * remains bounded/nonblocking and stop must cancel the parked writer. */
@@ -235,7 +245,8 @@ static void scenario(void *arg)
     e = event(f->eb, FIPSD_TRANSPORT_PACKET); remote = e->address; free(e);
     size_t queued = 0;
     while (queued < 100000 && f->b->ops->send(f->b, &remote, msg, sizeof msg) == 0) ++queued;
-    assert(queued > 0 && queued < 100000 && atomic_load(&f->b->shared->stats.dropped) > 0);
+    assert(queued > 0 && queued < 100000 && atomic_load(&f->b->shared->diagnostics.dropped) > 0);
+    assert(atomic_load(&f->b->shared->stats.send_errors) > 0);
     /* Committed mid-read cancellation: watch this accepted socket, rather than
      * using a warm-up delay. Its reader is idle after the complete msg1. */
     tcp_instance *b = f->b->user;
@@ -249,6 +260,36 @@ static void scenario(void *arg)
     cancel_connect(f);
     assert(go_channel_send(f->done, f) == 0);
 }
+static void admission_limits(void *arg)
+{
+    fixture *f = arg; uint8_t msg[114] = {1, 0, 110, 0};
+    assert(f->dial->ops->send(f->dial, &f->ba, msg, sizeof msg) == -1);
+    assert(!atomic_load(&f->dial->shared->stats.send_errors)); /* NotConnected, not enqueue failure */
+    assert(f->a->ops->connect_async(f->a, &f->ba) == 0);
+    free(event(f->ea, FIPSD_TRANSPORT_CONNECTED));
+    assert(f->a->ops->send(f->a, &f->ba, msg, sizeof msg) == 0);
+    free(event(f->eb, FIPSD_TRANSPORT_PACKET));
+    int rejected = raw_connect(f); uint8_t byte;
+    assert(gof_read(rejected, &byte, 1) <= 0); tcp_fd_close(rejected);
+    fipsd_transport_stats_view b = fipsd_tcp_stats_snapshot(f->b);
+    assert(b.connections_rejected == 1 && b.source_rejected == 0 && b.connections_accepted == 1);
+    /* Both caps are at one: upstream's global gate wins, not the source gate. */
+    tcp_endpoint *items = NULL; size_t n = 0; assert(tcp_resolve(&f->ba, true, &items, &n));
+    tcp_endpoint reserved = items[0]; free(items);
+    if (reserved.address.ss_family == AF_INET) ((struct sockaddr_in *)&reserved.address)->sin_port = 0;
+    else ((struct sockaddr_in6 *)&reserved.address)->sin6_port = 0;
+    int fd = socket(reserved.address.ss_family, SOCK_STREAM, IPPROTO_TCP); assert(fd >= 0);
+    assert(bind(fd, (struct sockaddr *)&reserved.address, reserved.len) == 0);
+    assert(getsockname(fd, (struct sockaddr *)&reserved.address, &reserved.len) == 0);
+    fips_transport_addr refused; assert(tcp_endpoint_addr(&reserved, &refused));
+    tcp_fd_close(fd); /* a closed loopback port replies with RST on both OSes */
+    assert(f->dial->ops->connect_async(f->dial, &refused) == 0);
+    free(event(f->ed, FIPSD_TRANSPORT_DISCONNECTED)); /* real ECONNREFUSED */
+    fipsd_transport_stats_view d = fipsd_tcp_stats_snapshot(f->dial);
+    assert(d.connect_refused == 1 && !d.connect_timeouts && !d.send_errors && !d.pool_outbound);
+    puts("accounting: global-before-source gate, NotConnected, real refused connect: ok");
+    assert(go_channel_send(f->done, f) == 0);
+}
 static void deadlines(void *arg)
 {
     fixture *f = arg;
@@ -259,8 +300,8 @@ static void deadlines(void *arg)
     assert(gof_write(raw, msg, sizeof msg) == sizeof msg);
     free(event(f->eb, FIPSD_TRANSPORT_PACKET));
     peer_removed(f); tcp_fd_close(raw); /* no subsequent frame */
-    assert(atomic_load(&((tcp_instance *)f->b->user)->stats.deadlines) == 2);
-    assert(atomic_load(&((tcp_instance *)f->b->user)->stats.recv_errors) == 0);
+    assert(atomic_load(&((tcp_instance *)f->b->user)->shared.diagnostics.deadlines) == 2);
+    assert(atomic_load(&((tcp_instance *)f->b->user)->shared.stats.recv_errors) == 0);
     puts("inbound deadlines: silent first frame and post-frame idle reclaim slots without sleeps: ok");
     assert(go_channel_send(f->done, f) == 0);
 }
@@ -300,7 +341,7 @@ static void lifecycle(const char *bind_addr, unsigned mode)
     c.mtu = 1280; c.recv_buf_size = c.send_buf_size = 4096;
     f.a = fipsd_tcp_create((fips_transport_id){1}, "a", &c);
     if (mode == 1) c.first_frame_ms = c.idle_ms = 100;
-    c.mtu = 128; c.max_outbound_connections = 0; c.max_inbound_connections = c.max_inbound_per_source = 1;
+    c.mtu = 128; c.max_outbound_connections = 0; c.max_inbound_connections = mode == 3 ? 1 : 2; c.max_inbound_per_source = 1;
     f.b = fipsd_tcp_create((fips_transport_id){2}, "b", &c);
     c.bind_addr = NULL; c.max_outbound_connections = 1; f.dial = fipsd_tcp_create((fips_transport_id){3}, "dial", &c);
     assert(f.a && f.b && f.dial);
@@ -308,9 +349,9 @@ static void lifecycle(const char *bind_addr, unsigned mode)
     assert(!fipsd_runtime_register(rt, &sub) && !fipsd_runtime_start(rt));
     assert(receive(fipsd_tcp_bound(f.a)) && receive(fipsd_tcp_bound(f.b)) && receive(fipsd_tcp_bound(f.dial)));
     assert(fipsd_tcp_address(f.b, &f.ba));
-    assert(fipsd_runtime_spawn(rt, mode == 2 ? notification_pressure : mode == 1 ? deadlines : scenario, &f) == 0 && receive(f.done));
+    assert(fipsd_runtime_spawn(rt, mode == 3 ? admission_limits : mode == 2 ? notification_pressure : mode == 1 ? deadlines : scenario, &f) == 0 && receive(f.done));
     fipsd_runtime_shutdown(rt); assert(fipsd_runtime_run(rt) == FIPSD_RUN_OK);
-    assert(!atomic_load(&f.a->shared->stats.outbound) && !atomic_load(&f.b->shared->stats.inbound));
+    assert(!atomic_load(&f.a->shared->stats.pool_outbound) && !atomic_load(&f.b->shared->stats.pool_inbound));
     fipsd_runtime_destroy(rt); fipsd_tcp_destroy(f.a); fipsd_tcp_destroy(f.b); fipsd_tcp_destroy(f.dial);
     GoChannel *channels[] = {f.ea, f.eb, f.ed, f.done};
     for (size_t i = 0; i < 4; ++i) { void *v; while (go_channel_try_receive(channels[i], &v) == 0) free(v); go_channel_unref(channels[i]); }
@@ -318,5 +359,5 @@ static void lifecycle(const char *bind_addr, unsigned mode)
 int main(void)
 {
     (void)fipsd_test_tmpdir(NULL); framing(); config(); lifecycle("127.0.0.1:0", 0); lifecycle("[::1]:0", 0);
-    lifecycle("127.0.0.1:0", 1); lifecycle("127.0.0.1:0", 2); return 0;
+    lifecycle("127.0.0.1:0", 1); lifecycle("127.0.0.1:0", 2); lifecycle("127.0.0.1:0", 3); return 0;
 }

@@ -17,8 +17,10 @@ typedef struct fipsd_transport_link {
  * live here. The bounded link table is optional for datagram drivers. */
 typedef struct fipsd_transport_shared {
     _Atomic int state;
+    _Atomic bool started;
     fipsd_presence presence;
     fipsd_transport_stats stats;
+    fipsd_transport_diagnostics diagnostics;
     nsync_mu links_mu;
     fipsd_transport_link links[FIPSD_TRANSPORT_LINKS];
 } fipsd_transport_shared;

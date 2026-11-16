@@ -1,0 +1,56 @@
+{
+  "data": {
+    "transports": [
+      {
+        "mtu": 1400,
+        "name": "dial",
+        "state": "configured",
+        "stats": {
+          "bytes_recv": 4294967300,
+          "bytes_sent": 4294967298,
+          "connect_refused": 4294967310,
+          "connect_timeouts": 4294967309,
+          "connections_accepted": 4294967306,
+          "connections_established": 4294967305,
+          "connections_rejected": 4294967307,
+          "mtu_exceeded": 4294967303,
+          "packets_recv": 4294967299,
+          "packets_sent": 4294967297,
+          "pool_inbound": 4294967311,
+          "pool_outbound": 4294967312,
+          "recv_errors": 4294967302,
+          "send_errors": 4294967301,
+          "source_rejected": 4294967308
+        },
+        "transport_id": 1,
+        "type": "tcp"
+      },
+      {
+        "mtu": 1280,
+        "name": "test",
+        "state": "configured",
+        "stats": {},
+        "transport_id": 2,
+        "type": "loopback"
+      },
+      {
+        "mtu": 1357,
+        "name": "wan",
+        "state": "configured",
+        "stats": {
+          "bytes_recv": 4294967300,
+          "bytes_sent": 4294967298,
+          "kernel_drops": 4294967304,
+          "mtu_exceeded": 4294967303,
+          "packets_recv": 4294967299,
+          "packets_sent": 4294967297,
+          "recv_errors": 4294967302,
+          "send_errors": 4294967301
+        },
+        "transport_id": 3,
+        "type": "udp"
+      }
+    ]
+  },
+  "status": "ok"
+}

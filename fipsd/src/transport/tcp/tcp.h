@@ -15,11 +15,7 @@ typedef struct fipsd_tcp_config {
     uint64_t first_frame_ms, idle_ms;
     const struct fipsd_watcher_source *watcher_source;
 } fipsd_tcp_config;
-typedef struct fipsd_tcp_stats_view {
-    uint64_t send_errors, recv_errors, mtu_exceeded, connections_established,
-        connections_accepted, connections_rejected, source_rejected,
-        connect_timeouts, connect_refused, pool_inbound, pool_outbound;
-} fipsd_tcp_stats_view;
+typedef fipsd_transport_stats_view fipsd_tcp_stats_view;
 fipsd_tcp_stats_view fipsd_tcp_stats_snapshot(const fipsd_transport *);
 void fipsd_tcp_config_default(fipsd_tcp_config *);
 fipsd_transport *fipsd_tcp_create(fips_transport_id, const char *, const fipsd_tcp_config *);

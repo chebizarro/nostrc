@@ -1,4 +1,6 @@
 #include "transport/watcher.h"
+#include "control/transport.h"
+#include "control/protocol.h"
 #include "transport/stream.h"
 #include "select.h"
 #include "test_tmpdir.h"
@@ -32,9 +34,27 @@ static void unbind_fake(void *arg, uint64_t gen)
 }
 static fipsd_presence_facts up(uint32_t index)
 { return (fipsd_presence_facts){.valid = true, .exists = true, .up = true, .index = index, .medium = FIPS_PATH_Wired}; }
+static uint16_t fake_mtu(const fipsd_transport *t, const fips_transport_addr *a)
+{ (void)t; (void)a; return 1357; }
+static void carrier_query(const fipsd_transport *t, bool carrier)
+{
+    fipsd_control_transport_view view; fipsd_control_transport_read(t, 2000, &view);
+    fipsd_control_snapshot s = {.transports = &view.row, .transports_count = 1};
+    json_t *reply = fipsd_control_query(&s, "show_transports", NULL); assert(reply);
+    json_t *row = json_array_get(json_object_get(json_object_get(reply, "data"), "transports"), 0);
+    json_t *iface = json_object_get(row, "interface");
+    assert(json_boolean_value(json_object_get(iface, "carrier")) == carrier);
+    assert(!strcmp(json_string_value(json_object_get(iface, "presence")), "present"));
+    assert(!strcmp(json_string_value(json_object_get(row, "state")), "up"));
+    assert(json_integer_value(json_object_get(iface, "binds")) == 1);
+    assert(!json_object_get(iface, "index") && !json_object_get(iface, "medium"));
+    assert(json_object_size(iface) == 7);
+    json_decref(reply);
+}
 static void reducer(void)
 {
-    fixture f = {0}; fipsd_transport t = {.name = "test", .interface_name = "fake0"};
+    static const fipsd_transport_ops transport_ops = {.state = fipsd_transport_shared_state, .mtu = fake_mtu};
+    fixture f = {0}; fipsd_transport t = {.ops = &transport_ops, .type = "udp", .name = "test", .interface_name = "fake0"};
     fipsd_transport_shared s; fipsd_transport_shared_init(&t, &s, true);
     fipsd_binder_ops ops = {bind_fake, unbind_fake, &f};
     fipsd_watcher_source source = {.now_ms = fake_now, .user = &f};
@@ -53,7 +73,9 @@ static void reducer(void)
     assert(fipsd_transport_shared_state(&t) == FIPSD_TRANSPORT_BOUND);
     fipsd_presence_facts carrier = up(1); carrier.carrier = true;
     assert(fipsd_watcher_step(w, carrier, 1003) == 0);
+    carrier_query(&t, true);
     carrier.carrier = false; assert(fipsd_watcher_step(w, carrier, 1004) == 0);
+    carrier_query(&t, false);
     assert(!atomic_load(&f.unbinds));
     /* Failed snapshot must not synthesize a disappearance. */
     assert(fipsd_watcher_step(w, (fipsd_presence_facts){0}, 1005) == 0 && !atomic_load(&f.unbinds));

@@ -40,8 +40,10 @@ int tcp_pool_launch(tcp_instance *u, int fd, const fips_transport_addr *peer,
         if (c->direction == FIPS_LINK_INBOUND && tcp_same_source(&c->remote, remote)) ++from;
     if ((inbound && (u->inbound >= u->config.max_inbound_connections || from >= u->config.max_inbound_per_source)) ||
         (!inbound && u->outbound >= u->config.max_outbound_connections)) {
-        atomic_fetch_add(&u->shared.stats.pool_full, 1); atomic_fetch_add(&u->stats.rejected, 1);
-        if (inbound && from >= u->config.max_inbound_per_source) atomic_fetch_add(&u->stats.source_rejected, 1);
+        atomic_fetch_add(&u->shared.diagnostics.pool_full, 1);
+        if (inbound) atomic_fetch_add(&u->shared.stats.connections_rejected, 1);
+        if (inbound && u->inbound < u->config.max_inbound_connections &&
+            from >= u->config.max_inbound_per_source) atomic_fetch_add(&u->shared.stats.source_rejected, 1);
         goto fail;
     }
     tcp_conn *c = calloc(1, sizeof *c);

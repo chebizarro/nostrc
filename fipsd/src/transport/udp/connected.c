@@ -91,7 +91,7 @@ void fipsd_udp_receive(void *arg)
         if (n < 0) {
             if (errno == EINTR) continue;
             int error = errno;
-            atomic_fetch_add(&u->shared.stats.errors, 1);
+            fipsd_transport_stats_error(&u->shared.stats, false);
             /* recvmsg consumes these asynchronous ICMP errors. The next
              * receive parks again; a dead drain must not retain a matching
              * connected tuple and black-hole traffic indefinitely. */
@@ -104,23 +104,20 @@ void fipsd_udp_receive(void *arg)
         fips_transport_addr from;
         if ((message.msg_flags & MSG_TRUNC) || !fipsd_udp_decode_control(&message, &info) ||
             !fipsd_udp_endpoint_addr(&source, &from)) {
-            atomic_fetch_add(&u->shared.stats.malformed, 1);
-            atomic_fetch_add(&u->shared.stats.dropped, 1); continue;
+            atomic_fetch_add(&u->shared.diagnostics.malformed, 1);
+            atomic_fetch_add(&u->shared.diagnostics.dropped, 1); continue;
         }
         if (info.has_ecn) {
-            atomic_fetch_add(&u->shared.stats.ecn_recv, 1);
-            if (info.ecn == 3) atomic_fetch_add(&u->shared.stats.ce_recv, 1);
+            atomic_fetch_add(&u->shared.diagnostics.ecn_recv, 1);
+            if (info.ecn == 3) atomic_fetch_add(&u->shared.diagnostics.ce_recv, 1);
         }
-        if (info.has_destination) atomic_fetch_add(&u->shared.stats.pktinfo_recv, 1);
-        if (info.has_drops) {
-            atomic_fetch_add(&u->shared.stats.kernel_drops, (uint32_t)(info.kernel_drops - s->last_drops));
-            s->last_drops = info.kernel_drops;
-        }
+        if (info.has_destination) atomic_fetch_add(&u->shared.diagnostics.pktinfo_recv, 1);
+        if (info.has_drops) fipsd_transport_stats_kernel_drops(&u->shared.stats, s->connected, info.kernel_drops);
         if (fipsd_udp_classify_from(&u->classifiers, bytes, (size_t)n, &from) == FIPSD_UDP_DISCARD) {
-            atomic_fetch_add(&u->shared.stats.classifier_drops, 1); continue;
+            atomic_fetch_add(&u->shared.diagnostics.classifier_drops, 1); continue;
         }
         if (fipsd_datagram_frame(bytes, (size_t)n, UINT16_MAX) != FIPS_OK) {
-            atomic_fetch_add(&u->shared.stats.malformed, 1); atomic_fetch_add(&u->shared.stats.dropped, 1); continue;
+            atomic_fetch_add(&u->shared.diagnostics.malformed, 1); atomic_fetch_add(&u->shared.diagnostics.dropped, 1); continue;
         }
         /* Bounded source-selection hints only, never an authentication or
          * connected-pool admission decision. Auth comes from the node. */

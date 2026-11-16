@@ -53,6 +53,7 @@ typedef struct fipsd_transport_ops {
      * may promote a numeric endpoint into a connected socket; never called
      * merely because an unauthenticated datagram arrived. Best effort. */
     void (*authenticated)(fipsd_transport *, const fips_transport_addr *, fips_link_direction);
+    bool (*local_addr)(const fipsd_transport *, fips_transport_addr *);
 } fipsd_transport_ops;
 struct fipsd_transport {
     const fipsd_transport_ops *ops;

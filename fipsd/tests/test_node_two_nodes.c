@@ -4,6 +4,7 @@
  * session, an end-to-end datagram, one rekey cycle (K flip on both) and a
  * disconnect. Every assertion is a notice or a published control snapshot. */
 #include "node_test.h"
+#include "transport/transport.h"
 #include "node/handlers/internal.h"
 
 static const char *yaml_a =
@@ -184,28 +185,32 @@ int main(void)
         json_t *transports = nt_query(n, "show_transports");
         json_t *tr = json_array_get(data_of(transports, "transports"), 0);
         json_t *stats = json_object_get(tr, "stats");
+        assert(!strcmp(json_string_value(json_object_get(tr, "state")), "up"));
 #if !defined(FIPSD_TEST_UDP) && !defined(FIPSD_TEST_TCP)
         json_t *iface = json_object_get(tr, "interface");
         assert(!strcmp(json_string_value(json_object_get(iface, "presence")), "present"));
-        assert(!strcmp(json_string_value(json_object_get(iface, "medium")), "unknown"));
+        assert(!json_object_get(iface, "medium") && !json_object_get(iface, "index"));
         assert(json_is_false(json_object_get(iface, "carrier")));
         assert(json_integer_value(json_object_get(iface, "binds")) == 1);
-#elif defined(FIPSD_TEST_UDP)
-        assert(json_integer_value(json_object_get(stats, "pktinfo_recv")) > 0);
-        printf("%s UDP: pktinfo=%lld ECN=%lld CE=%lld connected=%zu\n", n->name,
-            (long long)json_integer_value(json_object_get(stats, "pktinfo_recv")),
-            (long long)json_integer_value(json_object_get(stats, "ecn_recv")),
-            (long long)json_integer_value(json_object_get(stats, "ce_recv")), nt_socket_count(n->transport));
+        assert(json_object_size(stats) == 0); /* upstream LiveStats::Empty */
+        fips_link_stats live = fipsd_transport_stats_snapshot(&n->transport->shared->stats);
+        assert(live.packets_sent > 0 && live.packets_recv > 0);
 #else
-        assert(!strcmp(json_string_value(json_object_get(tr, "type")), "tcp"));
+        assert(!json_object_get(tr, "interface") && json_is_string(json_object_get(tr, "local_addr")));
+        assert(json_integer_value(json_object_get(stats, "packets_sent")) > 0);
+        assert(json_integer_value(json_object_get(stats, "packets_recv")) > 0);
+        assert(json_integer_value(json_object_get(stats, "bytes_sent")) > 0);
+        assert(json_integer_value(json_object_get(stats, "bytes_recv")) > 0);
+        assert(!json_object_get(stats, "frames_sent") && !json_object_get(stats, "pktinfo_recv"));
+        assert(json_is_integer(json_object_get(stats, "send_errors")) && json_is_integer(json_object_get(stats, "recv_errors")));
+#ifdef FIPSD_TEST_UDP
+        assert(json_object_size(stats) == 8 && !json_object_get(stats, "pool_inbound"));
+#else
+        assert(json_object_size(stats) == 15 && !json_object_get(stats, "kernel_drops"));
         assert(json_integer_value(json_object_get(stats, "pool_inbound")) +
             json_integer_value(json_object_get(stats, "pool_outbound")) == 1);
-        printf("%s TCP: frames sent=%lld received=%lld connected=%zu\n", n->name,
-            (long long)json_integer_value(json_object_get(stats, "frames_sent")),
-            (long long)json_integer_value(json_object_get(stats, "frames_recv")), nt_socket_count(n->transport));
 #endif
-        assert(json_integer_value(json_object_get(stats, "frames_sent")) > 0);
-        assert(json_integer_value(json_object_get(stats, "frames_recv")) > 0);
+#endif
         json_decref(transports);
         json_t *cache = nt_query(n, "show_cache"); assert(data_of(cache, "entries")); json_decref(cache);
     }

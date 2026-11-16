@@ -3,6 +3,10 @@
 #include "test_tmpdir.h"
 #include "control/control.h"
 #include "control/probe.h"
+#include "control/transport.h"
+#include "transport/udp/udp.h"
+#include "transport/tcp/tcp.h"
+#include "transport/loopback.h"
 #include "privilege.h"
 #include "host_os.h"
 #include "node/metrics.h"
@@ -129,7 +133,8 @@ static void test_query_goldens(void)
         if (!strcmp(commands[i],"show_stats_history_all_peers")) params=json_pack("{s:s,s:s}","metric","srtt_ms","window","10s");
         compare_golden(commands[i],request(&p,commands[i],params),true);
     }
-    /* Non-empty typed interface fixture; no fixture JSON is used as state. */
+    /* Verbatim upstream src/control/snapshots/show_transports.json and
+     * show_transports_with_interface.json; no fixture JSON is used as state. */
     GoRefPtr ref=go_swap_load(slot); fipsd_control_snapshot with=*(fipsd_control_snapshot *)ref.ptr;
     fipsd_control_interface interface={.name="fips-absent-x0",.presence="absent",.policy="required"};
     fipsd_control_transport transport={.transport_id=1,.type="ethernet",.state="up",.name="lab",.mtu=1499,.interface=&interface};
@@ -147,6 +152,37 @@ static void test_query_goldens(void)
         compare_golden(fallback ? "show_status_fallback" : "show_status_composed",r,true);
     }
     go_refptr_release(&ref); go_swap_free(slot);
+}
+
+/* Derived fixtures use src/control/snapshots/show_transports{,_with_interface}.json
+ * for the envelope/map layout and src/transport/{udp,tcp}/stats.rs snapshots
+ * for counter sets. The upstream loopback uses LiveStats::Empty (mod.rs).
+ * Distinct values make renamed or cross-wired counters visible. */
+static void test_transport_goldens(void)
+{
+    fipsd_udp_config uc; fipsd_udp_config_default(&uc); uc.bind_addr = "127.0.0.1:0";
+    fipsd_tcp_config tc; fipsd_tcp_config_default(&tc); tc.bind_addr = NULL;
+    fipsd_loopback_network *net = fipsd_loopback_network_create(); CHECK(net);
+    fipsd_transport *items[] = {
+        fipsd_udp_create((fips_transport_id){3}, "wan", &uc),
+        fipsd_tcp_create((fips_transport_id){1}, "dial", &tc),
+        fipsd_loopback_transport_create(net, (fips_transport_id){2}, "test", "loop:test", 1280)
+    };
+    fipsd_control_transport_view views[3]; fipsd_control_transport rows[3];
+    fipsd_control_snapshot snapshot = {.transports = rows, .transports_count = 3};
+    for (unsigned populated = 0; populated < 2; ++populated) {
+        for (size_t i = 0; i < 3; ++i) {
+            CHECK(items[i]); uint64_t value = 0;
+#define SEED(name) atomic_store(&items[i]->shared->stats.name, populated ? UINT64_C(4294967296) + ++value : 0);
+            FIPSD_STATS_ALL(SEED)
+#undef SEED
+            fipsd_control_transport_read(items[i], 0, &views[i]); rows[i] = views[i].row;
+        }
+        compare_golden(populated ? "show_transports_udp_tcp" : "show_transports_udp_tcp_zero",
+            fipsd_control_query(&snapshot, "show_transports", NULL), true);
+    }
+    fipsd_udp_destroy(items[0]); fipsd_tcp_destroy(items[1]);
+    fipsd_loopback_transport_destroy(items[2]); fipsd_loopback_network_destroy(net);
 }
 
 static void *increment_registry(void *arg)
@@ -589,8 +625,8 @@ int main(int argc, char **argv)
     CHECK(argc==1);
     test_depth_limit();
     const char *tmp = fipsd_test_tmpdir("/runtime/fips/control.sock");
-    test_paths(tmp); test_validation(); test_render_failures(); test_query_goldens(); test_registry_and_history(); test_probe_golden(); test_path_requests();
-    CHECK(golden_count==29); printf("goldens: %u/29 (including 5 registry/history replays)\n",golden_count);
+    test_paths(tmp); test_validation(); test_render_failures(); test_query_goldens(); test_transport_goldens(); test_registry_and_history(); test_probe_golden(); test_path_requests();
+    CHECK(golden_count==31); printf("goldens: %u/31 (including 5 registry/history replays)\n",golden_count);
     test_socket(tmp); CHECK(rmdir(tmp)==0);
     puts("control: protocol bounds, JSON errors, EOF, one response, fiber concurrency, deadlines, paths and permissions passed");
     return 0;

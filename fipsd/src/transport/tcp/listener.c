@@ -136,8 +136,10 @@ static void accept_loop(void *arg)
             break;
         }
         tcp_endpoint local = {.len = sizeof local.address}; fips_transport_addr peer;
-        if (getsockname(fd, (struct sockaddr *)&local.address, &local.len) || !tcp_endpoint_addr(&remote, &peer) ||
-            tcp_pool_launch(u, fd, &peer, &remote, &local, FIPS_LINK_INBOUND)) tcp_fd_close(fd);
+        if (getsockname(fd, (struct sockaddr *)&local.address, &local.len) || !tcp_endpoint_addr(&remote, &peer)) {
+            atomic_fetch_add(&u->shared.stats.connections_rejected, 1); tcp_fd_close(fd); continue;
+        }
+        if (tcp_pool_launch(u, fd, &peer, &remote, &local, FIPS_LINK_INBOUND)) tcp_fd_close(fd);
     }
     if (!go_channel_is_closed(u->stop) && !go_context_is_canceled(u->root))
         fipsd_watcher_binding_exited(u->watcher, u->generation);

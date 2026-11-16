@@ -29,13 +29,13 @@ static bool establish(tcp_conn *c, int *error)
         *error = s.error; nsync_mu_unlock(&u->mu); return ok;
     }
     tcp_endpoint *items = NULL; size_t n = 0;
-    if (!tcp_resolve(&c->peer, false, &items, &n)) return false;
+    if (!tcp_resolve(&c->peer, false, &items, &n)) { *error = 0; return false; }
     bool ok = false;
     uint64_t deadline = fipsd_transport_now_ms() + u->config.connect_timeout_ms;
     for (size_t i = 0; i < n && !stopped(c); ++i) {
         socket_setup s = {.u = u, .fd = -1, .family = items[i].address.ss_family};
         go_blocking_submit(configure, &s);
-        if (s.result || stopped(c)) { *error = s.error; tcp_fd_close(s.fd); continue; }
+        if (s.result || stopped(c)) { *error = s.fd < 0 ? s.error : 0; tcp_fd_close(s.fd); continue; }
         nsync_mu_lock(&u->mu);
         if (stopped(c) || gof_io_reset_fd(s.fd)) { nsync_mu_unlock(&u->mu); tcp_fd_close(s.fd); break; }
         c->fd = s.fd;
@@ -70,7 +70,7 @@ static void reader(void *arg)
                 size_t n = 0; int rc = fipsd_stream_read(c->fd, buffer, UINT16_MAX, &n);
                 if (rc != 1) {
                     if (rc < 0 && !stopped(c)) {
-                        if (tcp_io_errno() == EPROTO) atomic_fetch_add(&u->shared.stats.malformed, 1);
+                        if (tcp_io_errno() == EPROTO) atomic_fetch_add(&u->shared.diagnostics.malformed, 1);
                         tcp_stats_error(u, false);
                     }
                     break;
@@ -83,10 +83,9 @@ static void reader(void *arg)
             }
             free(buffer);
         }
-    } else if (!stopped(c)) {
-        if (error == ETIMEDOUT) atomic_fetch_add(&u->stats.connect_timeouts, 1);
-        else atomic_fetch_add(&u->stats.connect_refused, 1);
-        atomic_fetch_add(&u->shared.stats.errors, 1);
+    } else if (!stopped(c) && c->direction == FIPS_LINK_OUTBOUND && error) {
+        if (error == ETIMEDOUT) atomic_fetch_add(&u->shared.stats.connect_timeouts, 1);
+        else atomic_fetch_add(&u->shared.stats.connect_refused, 1);
     }
     go_channel_close(c->reader_done);
 }
@@ -131,8 +130,8 @@ void tcp_conn_owner(void *arg)
                 }
                 nsync_mu_unlock(&u->mu);
                 if (admitted) {
-                    if (c->direction == FIPS_LINK_INBOUND) atomic_fetch_add(&u->stats.accepted, 1);
-                    else atomic_fetch_add(&u->stats.connected, 1);
+                    if (c->direction == FIPS_LINK_INBOUND) atomic_fetch_add(&u->shared.stats.connections_accepted, 1);
+                    else atomic_fetch_add(&u->shared.stats.connections_established, 1);
                     go_channel_close(c->run);
                     while (!stopped(c)) {
                         GoSelectCase cases[] = {{GO_SELECT_RECEIVE, c->stop, NULL, &v},
@@ -145,7 +144,7 @@ void tcp_conn_owner(void *arg)
                             uint64_t last = atomic_load(&c->last_frame_ms), now = fipsd_transport_now_ms();
                             uint64_t limit = last ? u->config.idle_ms : u->config.first_frame_ms;
                             uint64_t elapsed = now - (last ? last : c->accepted_ms);
-                            if (elapsed >= limit) { atomic_fetch_add(&u->stats.deadlines, 1); break; }
+                            if (elapsed >= limit) { atomic_fetch_add(&u->shared.diagnostics.deadlines, 1); break; }
                             GoSelectResult r = go_select_timeout(cases, 6, limit - elapsed);
                             selected = r.selected_case;
                             if (selected < 0) continue; /* recompute after timer or progress */
