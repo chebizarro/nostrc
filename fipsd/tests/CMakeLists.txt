@@ -202,3 +202,10 @@ add_test(NAME FipsdNodeStpAcksNoReportTest COMMAND fipsd_node_stp_acks_test no-r
 set_tests_properties(FipsdNodeStpAcksNoReportTest PROPERTIES TIMEOUT 60 LABELS "fips;node"
   ENVIRONMENT "FIPSD_WORKERS=2")
 nostrc_describe_test(FipsdNodeStpAcksNoReportTest OWNER fipsd TARGETS fipsd_node_stp_acks_test)
+# Interface presence reaches the multipath Bundle through the real dispatcher.
+fipsd_unit_test(fipsd_node_path_presence_test test_node_path_presence.c)
+add_dependencies(fipsd_tests fipsd_node_path_presence_test)
+add_test(NAME FipsdNodePathPresenceTest COMMAND fipsd_node_path_presence_test)
+set_tests_properties(FipsdNodePathPresenceTest PROPERTIES TIMEOUT 120 LABELS "fips;node"
+  ENVIRONMENT "FIPSD_WORKERS=2")
+nostrc_describe_test(FipsdNodePathPresenceTest OWNER fipsd TARGETS fipsd_node_path_presence_test)

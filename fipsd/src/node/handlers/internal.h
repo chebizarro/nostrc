@@ -280,7 +280,7 @@ void hs_index_bind(handlers *h, const fips_node_addr *peer, fips_rekey_transport
 void hs_index_unbind(handlers *h, fips_rekey_transport transport, uint32_t index);
 peer_rec *hs_index_lookup(handlers *h, fips_rekey_transport transport, uint32_t index);
 void hs_index_forget_peer(handlers *h, const fips_node_addr *peer);
-void hs_link_message(handlers *h, peer_rec *rec, const fips_transport_addr *from, uint32_t timestamp_ms, const uint8_t *message, size_t len);
+void hs_link_message(handlers *h, peer_rec *rec, fipsd_transport *t, const fips_transport_addr *from, uint32_t timestamp_ms, const uint8_t *message, size_t len);
 /* tree.c */
 bool hs_tree_init(handlers *h);
 void hs_tree_peer_added(handlers *h, peer_rec *rec);

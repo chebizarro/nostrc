@@ -77,6 +77,10 @@ static void run_outputs(handlers *h, peer_rec *rec, fips_path_outputs *out)
         case FIPS_PATH_OUTPUT_Switched: {
             ++h->counters.path_switched;
             fipsd_peer_admission a = fipsd_peer_table_rebind(h->peers->table, &rec->addr, o->to.transport, &o->to.addr);
+            /* TODO(multipath-peer-rebind follow-up): table.c refuses changing
+             * transport on an attached link. Match upstream Run::switched
+             * semantics before asserting the peer's send endpoint follows this
+             * Bundle switch; do not confuse path_show with dataplane proof. */
             if (a != FIPSD_ADMIT_OK) FIPSD_WARN(HMOD, "path switch rebind refused (%d)", (int)a);
             fipsd_node_notice n = {.kind = FIPSD_NOTICE_PATH_EVENT, .peer = rec->addr, .value = 1};
             hs_notice_full(h, &n, NULL, 0);
@@ -152,9 +156,19 @@ void hs_path_poll(handlers *h, fips_instant now)
 }
 void hs_path_network_event(handlers *h, const fipsd_netmon_event *e)
 {
-    /* Interface presence is not yet mapped to transports (binder tasks own
-     * descriptors); machines learn of departures through send failures. */
-    (void)h; (void)e;
+    if (e->kind != FIPSD_INTERFACE_UP && e->kind != FIPSD_INTERFACE_DOWN) return;
+    /* Present is transport-wide, not one address/path: the Bundle shelves
+     * candidates on departure and reoffers them on return. Like upstream
+     * path_presence, feed every linked peer, including candidate-only users. */
+    for (size_t t = 0; t < h->registry->count; ++t) {
+        fipsd_transport *transport = h->registry->items[t];
+        if (!transport->interface_name ||
+            strcmp(transport->interface_name, e->interface_name)) continue;
+        fips_path_input in = {.kind = FIPS_PATH_INPUT_Present,
+            .to = {.transport = transport->id}, .as.present = e->kind == FIPSD_INTERFACE_UP};
+        for (size_t i = 0; i < h->cfg.peer_capacity; ++i)
+            if (h->recs[i].used) step(h, &h->recs[i], &in);
+    }
 }
 static const char *state_name(fips_path_state s)
 { return s == FIPS_PATH_Probing ? "probing" : s == FIPS_PATH_Live ? "live" : s == FIPS_PATH_Suspect ? "suspect" : "dead"; }

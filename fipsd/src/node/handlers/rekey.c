@@ -19,13 +19,15 @@ void hs_env(handlers *h, fips_rekey_env *env, fips_rekey_transport transport)
         .transport = transport, .tags = &h->tags, .workers = false, .jitter_draw = jitter_draw,
         .jitter_ctx = h, .local = &h->local, .scratch = h->scratch, .scratch_capacity = sizeof h->scratch};
 }
-/* Receive-index map (upstream peers_by_index), keyed by (transport, index). */
+/* Receive-index map (upstream peers_by_index): one node-wide allocator makes
+ * the index unique. Transport is retained as binding provenance, not a second
+ * session identity (upstream rekey.rs run_link_outputs). */
 void hs_index_bind(handlers *h, const fips_node_addr *peer, fips_rekey_transport transport, uint32_t index)
 {
     index_entry *slot = NULL;
     for (size_t i = 0; i < h->index_map_capacity; ++i) {
         index_entry *e = &h->index_map[i];
-        if (e->used && e->transport == transport && e->index == index) { e->peer = *peer; return; }
+        if (e->used && e->index == index) { e->peer = *peer; return; }
         if (!e->used && !slot) slot = e;
     }
     if (slot) *slot = (index_entry){.used = true, .index = index, .transport = transport, .peer = *peer};
@@ -33,9 +35,10 @@ void hs_index_bind(handlers *h, const fips_node_addr *peer, fips_rekey_transport
 }
 void hs_index_unbind(handlers *h, fips_rekey_transport transport, uint32_t index)
 {
+    (void)transport;
     for (size_t i = 0; i < h->index_map_capacity; ++i) {
         index_entry *e = &h->index_map[i];
-        if (e->used && e->transport == transport && e->index == index) e->used = false;
+        if (e->used && e->index == index) e->used = false;
     }
 }
 void hs_index_forget_peer(handlers *h, const fips_node_addr *peer)
@@ -47,7 +50,14 @@ peer_rec *hs_index_lookup(handlers *h, fips_rekey_transport transport, uint32_t 
 {
     for (size_t i = 0; i < h->index_map_capacity; ++i) {
         index_entry *e = &h->index_map[i];
-        if (e->used && e->transport == transport && e->index == index) return hs_rec_find(h, &e->peer);
+        if (!e->used || e->index != index) continue;
+        peer_rec *rec = hs_rec_find(h, &e->peer);
+        /* Resolve by index alone for a multipath Bundle, as upstream's
+         * encrypted ingress does. This selects a session, not an authenticated
+         * peer/path: hs_link_frame must still open and replay-check the frame. */
+        if (e->transport == transport ||
+            (rec && rec->path_live && rec->path->params.cfg.enabled)) return rec;
+        return NULL;
     }
     return NULL;
 }
@@ -238,7 +248,7 @@ bool hs_link_frame(handlers *h, peer_rec *rec, fipsd_transport *t, const fips_tr
     /* The message borrows the frame buffer; copy so nested sends can reuse it. */
     if (message_len > sizeof h->msg_buf) return false;
     memcpy(h->msg_buf, message, message_len);
-    hs_link_message(h, rec, from, timestamp, h->msg_buf, message_len);
+    hs_link_message(h, rec, t, from, timestamp, h->msg_buf, message_len);
     return true;
 }
 bool hs_link_send(handlers *h, peer_rec *rec, const uint8_t *message, size_t len)
@@ -275,15 +285,15 @@ bool hs_link_send_to(handlers *h, peer_rec *rec, fips_transport_id transport, co
     if (r.teardown) hs_remove_peer(h, rec, FIPS_REKEY_CLOSE_Admin, false, FIPS_FMP_ResourceExhaustion);
     return true;
 }
-void hs_link_message(handlers *h, peer_rec *rec, const fips_transport_addr *from, uint32_t timestamp_ms, const uint8_t *message, size_t len)
+void hs_link_message(handlers *h, peer_rec *rec, fipsd_transport *t, const fips_transport_addr *from, uint32_t timestamp_ms, const uint8_t *message, size_t len)
 {
     (void)timestamp_ms;
     if (!len) return;
     fips_link_message_type type;
     if (fips_link_message_type_from_u8(message[0], &type, NULL) != FIPS_OK) { ++h->counters.frames_dropped; return; }
     const uint8_t *body = message + 1; size_t body_len = len - 1;
-    const fipsd_peer_info *info = fipsd_active_peer_info(rec->peer);
-    fipsd_transport *t = hs_transport(h, info->transport);
+    /* Path messages belong to the authenticated frame's ingress transport,
+     * not the peer's active send path (which may be a different binding). */
     switch (type) {
     case FIPS_LINK_SessionDatagram: hs_session_datagram_received(h, rec, body, body_len); break;
     case FIPS_LINK_SenderReport:

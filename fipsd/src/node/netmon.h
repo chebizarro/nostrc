@@ -11,6 +11,7 @@ typedef struct fipsd_interface {
     char name[FIPSD_INTERFACE_NAME_SIZE];
     uint32_t index;
     bool up, loopback;
+    bool carrier; /* IFF_RUNNING diagnostic only; never a presence gate. */
 } fipsd_interface;
 typedef struct fipsd_interface_address {
     uint32_t index;
@@ -42,6 +43,9 @@ typedef struct fipsd_netmon_event {
     uint32_t index;
     uint64_t generation;
     bool backstop;
+    /* Copied from the old snapshot on removal: names survive disappearance
+     * and a returning binding may have a different OS index. */
+    char interface_name[FIPSD_INTERFACE_NAME_SIZE];
 } fipsd_netmon_event;
 typedef struct fipsd_netmon_source {
     /* Optional injected wake channel and reader. Reader runs off scheduler,
