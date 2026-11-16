@@ -29,8 +29,11 @@ static void put(const char *path, const char *s)
 static json_t *data(json_t *r) { assert(r); json_t *d = json_object_get(r, "data"); assert(d); return d; }
 static void no_link(test_node *n)
 { json_t *r = nt_query(n, "show_peers"); assert(json_array_size(json_object_get(data(r), "peers")) == 0); json_decref(r); }
-int main(void)
+void test_node_acl_admission(void);
+int main(int argc, char **argv)
 {
+    (void)argv;
+    if (argc > 1) { test_node_acl_admission(); return 0; }
     const char *tmp = fipsd_test_tmpdir(NULL);
     char allow[4096], deny[4096], hosts[4096], config[4096];
     snprintf(allow, sizeof allow, "%s/peers.allow", tmp); snprintf(deny, sizeof deny, "%s/peers.deny", tmp);

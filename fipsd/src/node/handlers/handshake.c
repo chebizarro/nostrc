@@ -14,6 +14,89 @@ static fips_fmp_epoch link_epoch(peer_rec *rec)
     if (v.has_peer_epoch) memcpy(e.bytes, v.peer_epoch, 8);
     return e;
 }
+/* H1 restart admission. IK authenticates the recorded identity, not freshness,
+ * and FMP classifies any differing known epoch as a restart. A replayed msg1
+ * from an earlier epoch therefore used to evict the healthy link here. Now the
+ * candidate is held (own receive index, msg2 answered, bounded hold) and the
+ * incumbent closes only in hs_restart_result, once a frame authenticates under
+ * keys derived from our fresh msg2 ephemeral: a recording cannot produce one.
+ *
+ * Supplementary bounded memory, never a freshness oracle: forgotten or unseen
+ * recordings still have to answer a fresh msg2 before replacing a live link. */
+static void restart_remember(handlers *h, const fips_node_addr *peer, const uint8_t *value, bool epoch, fips_instant until)
+{
+    size_t i = h->retired_next++ % FIPSD_RESTART_HISTORY;
+    h->retired[i].used = true; h->retired[i].has_epoch = epoch; h->retired[i].peer = *peer; h->retired[i].until = until;
+    memset(h->retired[i].value, 0, sizeof h->retired[i].value);
+    memcpy(h->retired[i].value, value, epoch ? 8 : 32);
+}
+static bool restart_seen(const handlers *h, const fips_node_addr *peer, const fips_fmp_ik_msg1 *token, fips_instant now)
+{
+    for (size_t i = 0; i < FIPSD_RESTART_HISTORY; ++i) {
+        if (!h->retired[i].used || memcmp(h->retired[i].peer.bytes, peer->bytes, 16)) continue;
+        if (h->retired[i].until.ops && now.ops->compare(now, h->retired[i].until) >= 0) continue;
+        bool epoch = h->retired[i].has_epoch;
+        if (!memcmp(h->retired[i].value, epoch ? token->proof.epoch : token->proof.ephemeral, epoch ? 8 : 32)) return true;
+    }
+    return false;
+}
+/* An expired candidate's msg1 is refused for one more hold window, so one
+ * recording cannot re-occupy the slot the instant it lapses, yet an initiator
+ * whose own window outlives ours is challenged again rather than tombstoned. */
+static void restart_clear(handlers *h, peer_rec *rec, bool remember, fips_instant now)
+{
+    restart_candidate *c = &rec->restart;
+    if (!c->used) return;
+    if (remember)
+        restart_remember(h, &rec->addr, c->ephemeral, false,
+            fips_deadline(now, fips_duration_from_millis(h->cfg.timing.handshake_timeout_ms)));
+    if (c->lease.live) {
+        uint32_t index;
+        if (fips_rekey_index_lease_release(&c->lease, &index))
+            (void)fips_index_allocator_free(&h->indices, (fips_session_index){index});
+    }
+    fips_rekey_completed_clear(&c->done);
+    sodium_memzero(c, sizeof *c);
+    --h->restart_pending;
+}
+static bool restart_send(handlers *h, const restart_candidate *c, const fips_transport_addr *to)
+{
+    fipsd_transport *t = hs_transport(h, c->transport);
+    bool ok = t && t->ops->send(t, to, c->msg2.bytes, c->msg2.len) == 0;
+    if (ok) ++h->counters.frames_sent; else ++h->counters.send_failed;
+    return ok;
+}
+static bool restart_hold(handlers *h, peer_rec *rec, fipsd_transport *t,
+    const fips_transport_addr *from, const fips_fmp_ik_msg1 *token,
+    const uint8_t *frame, size_t len, bool replace)
+{
+    restart_candidate *c = &rec->restart;
+    fips_instant now = hs_now(h);
+    if (restart_seen(h, &rec->addr, token, now)) { ++h->counters.hs_rejected; return false; }
+    /* One candidate per live peer and max_pending node-wide. A different msg1
+     * while one is held waits for its confirmation or the hold deadline. */
+    if (c->used || h->restart_pending >= h->hs_limiter.max_pending) { ++h->counters.hs_rate_limited; return false; }
+    if (len > FIPS_REKEY_WIRE_MAX) { ++h->counters.hs_failed; return false; }
+    c->used = true; ++h->restart_pending;
+    c->transport = t->id; c->addr = *from; c->replace = replace;
+    memcpy(c->msg1.bytes, frame, len); c->msg1.len = len;
+    memcpy(c->ephemeral, token->proof.ephemeral, 32);
+    /* The hold spans the initiator's own handshake window (the same timing
+     * knob), so its identical retransmits are answered from here instead of
+     * being remembered as stale once the hold lapses. */
+    c->deadline = fips_deadline(now, fips_duration_from_millis(h->cfg.timing.handshake_timeout_ms));
+    fips_rekey_env env; hs_env(h, &env, t->id.value);
+    if (!fips_rekey_allocate(env.indices, &c->lease) ||
+        !fips_fmp_rekey_profile.msg1_answer(token, &h->local,
+            (fips_rekey_index){c->lease.index, true}, &c->done, &c->msg2)) {
+        ++h->counters.hs_failed; restart_clear(h, rec, false, now); return false;
+    }
+    c->link = (fips_link_id){h->next_link_id++};
+    /* The lease is not bound to the index map: no peer, endpoint, tree/session
+     * state, live keys, counters or replay windows change until confirmation. */
+    (void)restart_send(h, c, &c->addr); /* exact retransmits recover a failed send */
+    return true;
+}
 static bool leg_send_wrap(handlers *h, peer_rec *rec, const uint8_t *bytes, size_t len);
 static configured_peer *configured_find(handlers *h, const fips_node_addr *addr)
 {
@@ -219,6 +302,9 @@ static void remove_peer_carry(handlers *h, peer_rec *rec, fips_rekey_close why, 
                               fips_fmp_disconnect_reason reason, fips_rekey_carry *carry)
 {
     if (!rec->used) return;
+    /* Not remembered: with no incumbent left, the peer's identical retransmit
+     * must establish through the ordinary new-peer path. */
+    restart_clear(h, rec, false, hs_now(h));
     rec->disconnecting = true;
     {
         char hex[33]; (void)fips_node_addr_format(&rec->addr, hex, sizeof hex);
@@ -285,10 +371,25 @@ static bool msg1(handlers *h, fipsd_transport *t, const fips_transport_addr *fro
     if (!fips_fmp_rekey_read_msg1(&h->local, frame, len, &token)) { ++h->counters.hs_failed; goto out; }
     fips_peer_identity identity;
     if (!hs_peer_identity(h, &token.proof.remote, &identity) || !memcmp(identity.node_addr.bytes, h->me.bytes, 16)) { ++h->counters.hs_rejected; goto out; }
+    /* IK authenticates the normalized identity, not freshness. Admission must
+     * precede even same-epoch rekey/rebind and restart classification effects. */
+    if (!hs_acl_authorize(h, &identity, "inbound_handshake")) {
+        hs_notice(h, FIPSD_NOTICE_HANDSHAKE_FAILED, &identity.node_addr, NULL, 0); goto out;
+    }
     peer_rec *rec = hs_rec_find(h, &identity.node_addr);
     fips_fmp_wire_outcome wire = {.peer_identity = identity, .remote_epoch = epoch_of(token.proof.epoch),
         .their_index = {token.theirs}};
     fips_fmp_msg1_digest_of(frame, len, &wire.msg1_digest);
+    if (rec && rec->restart.used) {
+        restart_candidate *c = &rec->restart;
+        if (now.ops->compare(now, c->deadline) >= 0) restart_clear(h, rec, true, now);
+        else if (c->msg1.len == len && !memcmp(c->msg1.bytes, frame, len)) {
+            /* An exact retransmit reuses msg2/keys/index and never extends the
+             * hold; it is answered where it arrived (msg2 is no larger than msg1). */
+            ok = fips_transport_id_equal(t->id, c->transport) && restart_send(h, c, from);
+            goto out;
+        }
+    }
     fips_fmp_establish_snapshot snap = {.has_existing_peer = rec != NULL};
     if (rec) snap.existing_peer_epoch = link_epoch(rec);
     else {
@@ -315,24 +416,11 @@ static bool msg1(handlers *h, fipsd_transport *t, const fips_transport_addr *fro
         else METRIC(h, handshake, silent_backoff);
         goto out;
     }
-    fips_rekey_carry carry = {0}, *facts = NULL;
-    (void)carry;
-    if (d.kind == FIPS_FMP_IN_RestartThenPromote || d.kind == FIPS_FMP_IN_ReplaceThenPromote) {
-        ++h->counters.hs_restart;
-        if (rec) {
-            remove_peer_carry(h, rec, FIPS_REKEY_CLOSE_Restart, false, FIPS_FMP_Restart, &carry);
-            rec = NULL;
-            if (d.kind == FIPS_FMP_IN_ReplaceThenPromote) facts = &carry;
-        }
-        if (!has_ticket) has_ticket = fipsd_peer_table_reserve(h->peers->table, t->id, &ticket) == FIPSD_ADMIT_OK;
-        if (!has_ticket) { ++h->counters.hs_rejected; goto out; }
+    if (rec && (d.kind == FIPS_FMP_IN_RestartThenPromote || d.kind == FIPS_FMP_IN_ReplaceThenPromote)) {
+        ok = restart_hold(h, rec, t, from, &token, frame, len, d.kind == FIPS_FMP_IN_ReplaceThenPromote);
+        goto out;
     }
     if (!has_ticket) { ++h->counters.hs_rejected; goto out; }
-    /* Upstream late inbound ACL gate: identity is authenticated by IK msg1;
-     * before index allocation and msg2 DH, not before encrypted-key recovery. */
-    if (!hs_acl_authorize(h, &identity, "inbound_handshake")) {
-        hs_notice(h, FIPSD_NOTICE_HANDSHAKE_FAILED, &identity.node_addr, NULL, 0); goto out;
-    }
     fips_rekey_env env; hs_env(h, &env, t->id.value);
     if (!fips_rekey_allocate(env.indices, &lease)) goto out;
     fips_rekey_wire msg2 = {0};
@@ -342,11 +430,10 @@ static bool msg1(handlers *h, fipsd_transport *t, const fips_transport_addr *fro
     /* The setup record lets the link answer a retransmitted msg1 from the held
      * msg2 instead of treating it as a fresh dial. */
     fips_rekey_setup_facts fresh = {0};
-    if (!facts) facts = &fresh;
-    (void)fips_fmp_rekey_setup_record(frame, len, &msg2, &facts->record);
+    (void)fips_fmp_rekey_setup_record(frame, len, &msg2, &fresh.record);
     fips_link_id link = {h->next_link_id++};
     peer_rec *created = establish(h, &identity, t, from, link, FIPS_LINK_INBOUND, &done, &lease,
-        (fips_rekey_index){token.theirs, true}, facts, &ticket);
+        (fips_rekey_index){token.theirs, true}, &fresh, &ticket);
     if (!created) goto out;
     has_ticket = false; /* consumed by insert_reserved */
     if (!leg_send_wrap(h, created, msg2.bytes, msg2.len)) FIPSD_WARN(HMOD, "msg2 send failed; the peer's resend is answered by the link machine");
@@ -366,6 +453,128 @@ static bool leg_send_wrap(handlers *h, peer_rec *rec, const uint8_t *bytes, size
     fipsd_transport *t = hs_transport(h, info->transport);
     return t && t->ops->send(t, &info->addr, bytes, len) == 0;
 }
+/* Resolve a candidate index without ever publishing its keys as the peer's
+ * live epoch. Workers receive only a key clone; the dispatcher owns admission. */
+bool hs_restart_frame(handlers *h, fipsd_transport *t, const fips_transport_addr *from,
+    const uint8_t *frame, size_t len, const fips_fmp_encrypted_header *header)
+{
+    if (!h->restart_pending) return false;
+    for (size_t i = 0; i < h->cfg.peer_capacity; ++i) {
+        peer_rec *rec = &h->recs[i]; restart_candidate *c = &rec->restart;
+        if (!rec->used || !c->used || !c->lease.live || c->lease.index != header->receiver_idx.value) continue;
+        fips_instant now = hs_now(h);
+        if (now.ops->compare(now, c->deadline) >= 0) { restart_clear(h, rec, true, now); return true; }
+        /* Transport-strict like a single-path index lookup; the arrival address
+         * is judged by the ordinary authenticated endpoint policy after promotion. */
+        if (!fips_transport_id_equal(t->id, c->transport)) return false;
+        size_t aad = FIPS_FRAMING_FMP_ESTABLISHED_HEADER_SIZE;
+        if (len < aad + FIPS_NOISE_TAG_SIZE || len > FIPSD_DP_WIRE) return true;
+        fipsd_dp_packet *p = fipsd_dp_acquire(h);
+        if (!p) return true;
+        p->restart = true; p->peer = p->carrier = rec->addr; p->tag = c->link.value;
+        p->transport = t->id; p->endpoint = *from; p->body = aad; p->wire_size = len;
+        p->k = (header->flags & FIPS_FMP_FLAG_KEY_EPOCH) != 0;
+        p->ce = (header->flags & FIPS_FMP_FLAG_CE) != 0;
+        if (fips_noise_session_recv_cipher_clone(&c->done.session, &p->job.key) != FIPS_NOISE_OK) {
+            fipsd_crypto_job_destroy(&p->job); return true;
+        }
+        memcpy(p->ad, frame, aad); memcpy(p->input, frame + aad, len - aad);
+        p->job.operation = FIPSD_CRYPTO_OPEN; p->job.counter = header->counter; p->job.token = c->lease.index;
+        p->job.ad = p->ad; p->job.ad_size = aad; p->job.input = p->input; p->job.input_size = len - aad;
+        p->job.output = p->output + aad; p->job.capacity = FIPSD_DP_WIRE - aad;
+        p->job.worker_counts = h->dataplane->stats.opened;
+        (void)fipsd_dp_submit(h, p);
+        return true;
+    }
+    return false;
+}
+/* The eviction gate. A frame that authenticates under the candidate's keys
+ * proves the sender holds the msg1 ephemeral AND processed our fresh msg2; a
+ * recording of an earlier epoch can do neither. Only then is the incumbent
+ * closed, and the proving frame is the new link's first authenticated input. */
+bool hs_restart_result(handlers *h, const fipsd_crypto_job *j)
+{
+    fipsd_dp_packet *p = j->owner;
+    if (!h->running) { ++h->dataplane->stats.stale; return true; }
+    peer_rec *rec = hs_rec_find(h, &p->peer);
+    restart_candidate *c = rec ? &rec->restart : NULL;
+    if (!c || !c->used || c->link.value != p->tag || !c->lease.live || c->lease.index != j->token) {
+        /* A sibling frame overtaken by the confirmation now names the promoted
+         * link: re-enter the ordinary path under the published keys and replay
+         * window. The link id (p->tag) pins it to this candidate's promotion. */
+        if (rec && j->result == FIPS_NOISE_OK && fipsd_active_peer_info(rec->peer)->link.value == p->tag &&
+            hs_index_lookup(h, p->transport.value, (uint32_t)j->token) == rec &&
+            p->body <= p->wire_size && p->wire_size <= sizeof h->in_wire) {
+            memcpy(h->in_wire, p->ad, p->body); memcpy(h->in_wire + p->body, p->input, p->wire_size - p->body);
+            (void)fipsd_dp_open(h, rec, NULL, p->transport, &p->endpoint, h->in_wire, p->wire_size);
+            return true;
+        }
+        ++h->dataplane->stats.stale; return true;
+    }
+    fips_instant now = hs_now(h);
+    if (now.ops->compare(now, c->deadline) >= 0) {
+        restart_clear(h, rec, true, now); ++h->dataplane->stats.stale; return true;
+    }
+    if (j->result != FIPS_NOISE_OK) {
+        ++h->dataplane->stats.authentication_failed; fipsd_dp_reject_frame(h, FIPSD_DP_AUTH); return true;
+    }
+    if (!fips_fmp_rekey_profile.keys->fresh(&c->done.session, j->counter)) { fipsd_dp_reject_frame(h, FIPSD_DP_REPLAY); return true; }
+    /* Admission is rechecked at confirmation (A1): a reload while msg2 was in
+     * flight must not let a now-denied candidate evict the incumbent. */
+    fips_peer_identity identity = fipsd_active_peer_info(rec->peer)->identity;
+    if (!hs_acl_authorize(h, &identity, "inbound_confirmation")) {
+        hs_notice(h, FIPSD_NOTICE_HANDSHAKE_FAILED, &identity.node_addr, NULL, 0);
+        restart_clear(h, rec, false, now); return true;
+    }
+    fipsd_transport *t = hs_transport(h, c->transport);
+    if (!t) { restart_clear(h, rec, false, now); return true; }
+
+    /* Move the candidate off the incumbent before closing it; retire the epoch
+     * the peer has now proven it left behind. */
+    restart_candidate confirmed = *c;
+    sodium_memzero(c, sizeof *c); --h->restart_pending;
+    fips_fmp_epoch old_epoch = link_epoch(rec);
+    if (old_epoch.present && memcmp(old_epoch.bytes, confirmed.done.epoch, 8))
+        restart_remember(h, &rec->addr, old_epoch.bytes, true, (fips_instant){0});
+    fips_rekey_carry carry = {0};
+    remove_peer_carry(h, rec, FIPS_REKEY_CLOSE_Restart, false, FIPS_FMP_Restart, &carry);
+    rec = NULL;
+    fips_rekey_setup_facts facts = confirmed.replace ? carry : (fips_rekey_setup_facts){0};
+    /* As in msg1: the setup record answers a retransmitted msg1 from the held msg2. */
+    (void)fips_fmp_rekey_setup_record(confirmed.msg1.bytes, confirmed.msg1.len, &confirmed.msg2, &facts.record);
+    fipsd_peer_ticket ticket = {0};
+    bool reserved = fipsd_peer_table_reserve(h->peers->table, t->id, &ticket) == FIPSD_ADMIT_OK;
+    /* Established at the msg1 source, as before this change; the proving frame
+     * then carries its own arrival address through the ordinary link policy. */
+    peer_rec *created = reserved ? establish(h, &identity, t, &confirmed.addr, confirmed.link,
+        FIPS_LINK_INBOUND, &confirmed.done, &confirmed.lease, confirmed.done.theirs, &facts, &ticket) : NULL;
+    if (created) {
+        ++h->counters.hs_restart;
+        memcpy(p->output, p->ad, p->body);
+        size_t len = p->body + j->output_size;
+        uint64_t tag = 0;
+        (void)fips_rekey_tag(fipsd_active_peer_link_machine(created->peer), FIPS_REKEY_Current, &tag);
+        fips_rekey_input in = {.kind = FIPS_REKEY_IN_AuthenticatedFrame, .tag = tag,
+            .buf = p->output, .bytes = p->output, .len = len,
+            .hint = {j->counter, p->k, (uint32_t)j->token, p->body}};
+        link_exec_result result = {.counter = j->counter};
+        (void)hs_link_step(h, created, in, &p->endpoint, p->output, len, &result);
+        if (result.teardown) hs_remove_peer(h, created, FIPS_REKEY_CLOSE_Admin, false, FIPS_FMP_ProtocolError);
+        else if (result.delivered && result.begin <= result.end && result.end <= len)
+            fipsd_dp_link_deliver(h, created, p, p->output + result.begin, result.end - result.begin);
+    } else {
+        if (reserved) fipsd_peer_budget_release(&ticket);
+        ++h->counters.hs_failed;
+    }
+    if (confirmed.lease.live) {
+        uint32_t index;
+        if (fips_rekey_index_lease_release(&confirmed.lease, &index))
+            (void)fips_index_allocator_free(&h->indices, (fips_session_index){index});
+    }
+    fips_rekey_completed_clear(&confirmed.done); sodium_memzero(&confirmed, sizeof confirmed);
+    hs_mark_dirty(h);
+    return true;
+}
 static bool msg2(handlers *h, fipsd_transport *t, const fips_transport_addr *from, uint8_t *frame, size_t len)
 {
     ++h->counters.hs_msg2;
@@ -380,6 +589,9 @@ static bool msg2(handlers *h, fipsd_transport *t, const fips_transport_addr *fro
         /* A rekey reply for an established link resolves through its index. */
         peer_rec *rec = hs_index_lookup(h, t->id.value, header.receiver_idx.value);
         if (!rec) { ++h->counters.frames_dropped; METRIC(h, handshake, unknown_connection); return false; }
+        /* The indexed link already pins an authenticated identity. Refuse
+         * revoked peers before the rekey machine authenticates/transitions. */
+        if (!hs_acl_authorize(h, &fipsd_active_peer_info(rec->peer)->identity, "outbound_rekey")) return false;
         link_exec_result r = {0};
         fips_rekey_input in = {.kind = FIPS_REKEY_IN_Reply, .bytes = frame, .buf = frame, .len = len};
         bool ok = hs_link_step(h, rec, in, from, frame, len, &r);
@@ -494,6 +706,8 @@ uint64_t hs_legs_wait_ms(handlers *h, fips_instant now)
     for (size_t i = 0; i < h->cfg.peer_capacity; ++i)
         if (h->legs[i].used) wait = hs_min_wait(wait, fipsd_peer_machine_next_wake(&h->legs[i].machine), now);
     for (size_t i = 0; i < h->cfg.peer_capacity; ++i) {
+        if (h->recs[i].used && h->recs[i].restart.used)
+            wait = hs_min_wait(wait, h->recs[i].restart.deadline, now);
         configured_peer *c = &h->configured[i];
         if (c->used && c->retry.scheduled && !c->dialing) wait = hs_min_wait(wait, c->retry.after, now);
     }
@@ -501,6 +715,11 @@ uint64_t hs_legs_wait_ms(handlers *h, fips_instant now)
 }
 bool hs_legs_poll(handlers *h, fips_instant now)
 {
+    for (size_t i = 0; i < h->cfg.peer_capacity; ++i) {
+        peer_rec *rec = &h->recs[i];
+        if (rec->used && rec->restart.used && now.ops->compare(now, rec->restart.deadline) >= 0)
+            restart_clear(h, rec, true, now);
+    }
     for (size_t i = 0; i < h->cfg.peer_capacity; ++i) {
         pending_leg *leg = &h->legs[i];
         if (!leg->used) continue;

@@ -248,8 +248,12 @@ json_t *fipsd_acl_status(const fipsd_acl *a)
     return a ? json_deep_copy(a->status) : empty_status(p.allow, p.deny);
 }
 
-/* Dispatcher admission seam. Policy snapshots outlive each evaluation; no
- * pointer from a config generation escapes its retained reference. */
+/* Dispatcher admission linearizes at the retained config load below (GoSwap
+ * retains under its publication mutex). That immutable generation decides this
+ * admission, even if reload publishes during evaluation. Subsequent handshake
+ * admissions, including replies/confirmation, load anew; no policy pointer
+ * escapes the retained reference. Established traffic is not retroactively
+ * disconnected by an admission-policy reload. */
 #include "node/handlers/internal.h"
 bool hs_acl_authorize(handlers *h, const fips_peer_identity *peer, const char *context)
 {

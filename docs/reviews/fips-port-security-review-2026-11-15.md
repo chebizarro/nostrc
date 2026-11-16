@@ -31,7 +31,7 @@ merge were run. References in this report are post-fix line numbers.
 
 | ID | Severity | File:line | Issue and impact | Upstream comparison | Disposition |
 |---|---|---|---|---|---|
-| H1 | **high** | `libfips-core/src/proto/fmp/core.c:46-61`; `fipsd/src/node/handlers/handshake.c:281-335` | An authenticated but **replayed old IK msg1** with a different startup epoch can evict the current live peer before new-session liveness is proved. | Inherited: `core/src/proto/fmp/core.rs` also maps different epoch to `RestartThenPromote`; rate limiting does not establish freshness. | Protected host follow-up; high latent risk, gate before enabling network transports. |
+| H1 | **high** | `libfips-core/src/proto/fmp/core.c:46-61`; `fipsd/src/node/handlers/handshake.c:281-335` | An authenticated but **replayed old IK msg1** with a different startup epoch can evict the current live peer before new-session liveness is proved. | Inherited: `core/src/proto/fmp/core.rs` also maps different epoch to `RestartThenPromote`; rate limiting does not establish freshness. | **Closed in host** (`nostrc-f66sr.7`, see Disposition — H1): eviction now waits for a frame authenticated under the candidate's fresh msg2 keys; core/wire unchanged. |
 | A1 | medium | `fipsd/src/node/handlers/handshake.c:283-335,377-397`; `fipsd/src/node/handlers/provider.c:402` | The reviewed host has **no ACL admission enforcement**; status explicitly says disabled/default allow. This is missing policy integration, not evidence that an enabled deny policy was bypassed. ACL-dependent deployments must not assume enforcement. | Upstream security/design docs require an authenticated-identity ACL check before peer allocation/msg2, and outbound checks. | Sibling ACL work must close this; release blocker for ACL-dependent deployments. |
 | M1 | medium | `fipsd/src/control/control.c:139-145,277-299`; `control.h:10` | Unlimited accepted clients previously allocated two fibers each, despite per-request deadlines. A socket-authorized local user could exhaust memory/fds. | Upstream `src/control/mod.rs:199-212` likewise spawns per accept without a concurrent-client semaphore. | **Fixed:** 32 live connection slots, refused before channel/fiber allocation, returned only when both owners exit. |
 | M2 | medium | `fipsd/src/control/protocol.c:103-128`; `protocol.h:6` | A 4096-byte bound alone permits deeply recursive JSON parsing on a fiber stack. | Rust parser/runtime stack behavior is not a C/Jansson fiber-stack guarantee. | **Fixed:** lexical 64-container preflight outside strings before Jansson; Jansson remains the syntax authority. |
@@ -78,6 +78,90 @@ admission. Denied input must leave peer counts, indices, endpoints and packet
 send state unchanged. Add denied new-peer, denied restart, denied rebind, outbound
 deny, reload-during-handshake and resource-count regressions. This review does
 not certify the sibling's not-yet-present ACL/metrics/stats/diag implementation.
+
+### Disposition — A1 (`nostrc-f66sr.8`)
+
+The ACL added by `4aeec42da` had a late inbound gate: it followed reservation,
+restart eviction and the same-epoch rekey path. Moved it immediately after IK
+identity normalization, before all three paths. Indexed outbound rekey replies
+now also check the link's pinned identity before entering the machine; pending
+outbound IK already rechecked before transition/promotion. Manual/configured
+dials keep their pre-reservation gate. The retained GoSwap config load in
+`hs_acl_authorize` is the admission linearization point: an immutable generation
+owns that decision, and subsequent admissions load anew. Reload does not revoke
+already established traffic.
+
+`FipsdNodeAclAdmissionTest` drives production IK/AEAD through an in-process
+transport and real node dispatcher/workers. It asserts denied-new-peer,
+denied-restart and denied-rebind peer/index/binding/endpoint/key/replay/send-state
+invariance; manual/configured outbound denial; and allow-to-deny reload between
+msg1 and authenticated msg2. A denied reply reclaims only the pending outbound
+leg/lease, with no promotion or send. `FipsdAclTest` retains old/new immutable
+policies and covers npub/alias/ALL, allow-first/default-allow semantics.
+Focused ASan/UBSan: these two tests plus `FipsdNodeAclTest` **3/3 passed**.
+Full-suite sanitizer/static evidence is recorded with H1 below. This is local
+host admission evidence, not deployed transport or hosted-CI qualification.
+
+### Disposition — H1 (`nostrc-f66sr.7`)
+
+Upstream has the same weakness: `core/src/proto/fmp/core.rs` maps any differing
+known epoch to `RestartThenPromote`, and `src/node/handlers/handshake.rs` closes
+the existing connection before answering msg2, gated only by a 15-second
+idle/dampener heuristic, not by possession. The wire format and
+`fips_fmp_establish_inbound` are therefore **unchanged** (`FipsDiffRekeyLegacy`
+still pins the deployed decisions); the mitigation lives in the host, and the
+finding is recorded in `libfips-core/UPSTREAM.md` for upstream.
+
+**What gates eviction now.** In `fipsd/src/node/handlers/handshake.c`, a
+`RestartThenPromote`/`ReplaceThenPromote` decision for a live peer no longer
+calls `remove_peer_carry`. The msg1 becomes a per-peer `restart_candidate`: its
+own receive index from the shared allocator (never bound to the index map or
+published to the dataplane), msg2 answered and sent, exact retransmits
+re-answered from the hold wherever they arrive without extending it, one
+candidate per peer, `max_pending_inbound` node-wide, released at
+`handshake_timeout_ms` (the knob that also bounds the initiator's identical-msg1
+retransmits, so legitimate retransmission is answered rather than remembered as
+stale). Encrypted frames naming a candidate index on the candidate's transport
+are intercepted ahead of the index lookup (`hs_restart_frame`) and opened by the
+ordinary workers under a clone of the candidate's receive key; the dispatcher
+result (`hs_restart_result`) is the only place the incumbent is closed for a
+restart, and only when the AEAD succeeded, the counter is fresh for that
+session, the identity still passes the ACL (`inbound_confirmation`, A1 recheck)
+and the transport exists. Authentication under keys derived from our fresh msg2
+ephemeral proves the sender holds the msg1 ephemeral and processed msg2 — a
+recording of an earlier epoch can do neither. The proving frame is then the new
+link's first authenticated input (replay window marked by the dispatcher machine
+step), established at the msg1 source exactly as before, with the frame's own
+arrival address passed to the ordinary authenticated endpoint policy instead of
+being pinned before authentication; a sibling frame overtaken by the
+confirmation re-enters the ordinary path. Epochs stay opaque: no numeric
+ordering. A bounded 64-entry per-peer memory of retired epochs (the incumbent's
+epoch once a candidate confirmed) and expired-candidate ephemerals (a cooldown
+of one further hold window, not a tombstone, so an initiator whose window
+outlives ours is challenged again) refuses known-stale msg1 without a DH or a
+candidate slot; it is supplementary only, and a forgotten or never-seen
+recording still has to confirm. Dropping the incumbent while a candidate is
+pending does not remember the candidate, so the peer's identical retransmit
+establishes through the ordinary new-peer path.
+
+**Regression.** `FipsdNodeRestartReplayTest`
+(`fipsd/tests/test_node_restart_replay.c`, production node/dispatcher/workers,
+in-process loopback transport, real IK/AEAD) establishes epoch A, restarts into
+B (hold, identical msg2 for exact retransmits from the same and another
+endpoint, incumbent untouched, promotion only on the first authenticated frame,
+A's index freed), replays captured A against B (peer/index/binding/endpoint/
+key/replay-window/send state byte-identical, no promotion, traffic continues),
+restarts into C with two frames racing at the candidate index (both delivered,
+one promotion, whichever ordering the workers produce) and alternates A/B
+replays, saturates the history through 64 real expired candidates and replays A
+again (held but never promoted: a forged frame at the candidate index fails
+AEAD, a second msg1 during the hold is refused, the hold expires through the
+poll deadline and frees its index, the expired msg1 is then refused by memory,
+challenged afresh once the cooldown lapses and still never promoted), then
+proves a legitimate restart into D promotes on a confirming frame from another
+endpoint and that an allow→deny reload between msg1 and the confirming frame
+drops the candidate without touching the incumbent. Local evidence recorded in
+the task report; not hosted-CI or network transport qualification.
 
 **M7 — command cancellation/reply ownership.** In `node/handlers/handlers.c`,
 make the execution-deadline contract explicit. A waiting timeout alone does not
@@ -286,8 +370,9 @@ requirements, not proof that a compromised same-uid process cannot read memory.
 
 Peer restart epoch comparison is equality/inequality, **not monotonic freshness**
 (H1). Worker generation/key rejection protects stale completions, but cannot
-repair a replayed handshake which deliberately installs a different generation.
-ACL order is A1. Routing/path/rekey transitions preserve bounded output arrays
+repair a replayed handshake which deliberately installs a different generation;
+the host now defers that installation until a frame authenticates under the
+candidate's keys (Disposition — H1). ACL order is A1. Routing/path/rekey transitions preserve bounded output arrays
 and typed failure returns; no additional crypto primitive changes made.
 
 ## (h) Fuzzing, build hardening and verification
@@ -389,7 +474,7 @@ submodule status, so no different checkout was substituted for that review.
 |---|---|
 | Codec, utils, identity, cache | Sampled memory boundaries sound after M6; earlier Noise findings remain the crypto baseline. Caller invariants and eviction policies are explicit. |
 | STP/bloom/routing/lookup | Bounded storage; no universal flood-control pass (L3). Authenticated input can still consume CPU and churn caches. |
-| FMP/FSP/node/session/rekey/profiles | **Not release-approved:** H1 restart replay; prior N14 remains. Existing crypto/replay/limiter defenses preserved. |
+| FMP/FSP/node/session/rekey/profiles | H1 restart replay closed in the host (candidate hold + key-confirmation eviction gate); prior N14 remains. Existing crypto/replay/limiter defenses preserved. |
 | MMP/path/probe | Bounded sampled wires/state; sibling rebind/send-state work requires its own integration checks. |
 | CLI/log/privilege/config/host_os | Local medium defects fixed; launch identity/path ownership/dump policy remain deployment responsibilities. No full root sandbox/privilege drop. |
 | Control | Parser/concurrency bounds fixed; **M7 cancellation/response ownership outstanding** in protected host dispatcher. |
@@ -399,7 +484,7 @@ submodule status, so no different checkout was substituted for that review.
 **Version decision:** PATCH-class corrections fold into **libfips-core 0.1.0
 Unreleased and fipsd 0.1.0 Unreleased**, with no bump/tag/valid-wire change; recorded
 in `VERSION_MANIFEST.md`. Remaining file-ready findings above are the handoff,
-not Beads updates. Before release, close H1/A1 and M7, integrate/retest sibling
+not Beads updates. H1 and A1 are closed above; before release, close M7, integrate/retest sibling
 ACL/rebind/metrics work, run the hosted platform lanes and real transport/interop
 gates. Scratch builds, private fuzz runtime/corpus clones and temporary sockets
 are disposable; submodules must be deinitialized at session completion.

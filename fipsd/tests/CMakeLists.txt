@@ -286,3 +286,17 @@ add_test(NAME FipsdNostrEventsTest COMMAND fipsd_nostr_events_test)
 set_tests_properties(FipsdNostrEventsTest PROPERTIES TIMEOUT 60 LABELS "fips;nostr;vectors")
 nostrc_describe_test(FipsdNostrEventsTest OWNER fipsd TARGETS fipsd_nostr_events_test
   INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/../../libfips-core/tests/vectors/nostr.json")
+# A1 admission ordering through the real dispatcher, transport and IK/AEAD.
+target_sources(fipsd_node_acl_test PRIVATE test_node_acl_admission.c handshake_fixture.c)
+add_test(NAME FipsdNodeAclAdmissionTest COMMAND fipsd_node_acl_test admission)
+set_tests_properties(FipsdNodeAclAdmissionTest PROPERTIES TIMEOUT 60 LABELS "fips;node;acl" ENVIRONMENT "FIPSD_WORKERS=2")
+nostrc_describe_test(FipsdNodeAclAdmissionTest OWNER fipsd TARGETS fipsd_node_acl_test)
+
+# H1 restart replay: a captured earlier-epoch msg1 must not evict the live
+# link; eviction waits for a frame authenticated under the fresh msg2's keys.
+fipsd_unit_test(fipsd_node_restart_replay_test test_node_restart_replay.c)
+target_sources(fipsd_node_restart_replay_test PRIVATE handshake_fixture.c)
+add_dependencies(fipsd_tests fipsd_node_restart_replay_test)
+add_test(NAME FipsdNodeRestartReplayTest COMMAND fipsd_node_restart_replay_test)
+set_tests_properties(FipsdNodeRestartReplayTest PROPERTIES TIMEOUT 60 LABELS "fips;node;acl" ENVIRONMENT "FIPSD_WORKERS=2")
+nostrc_describe_test(FipsdNodeRestartReplayTest OWNER fipsd TARGETS fipsd_node_restart_replay_test)

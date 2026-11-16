@@ -60,11 +60,28 @@ typedef struct pending_leg {
     fipsd_peer_ticket ticket;
     fips_instant started;
 } pending_leg;
+/* H1: a known peer's authenticated msg1 in another startup epoch is held here
+ * instead of evicting the live link. Host-only: never a peer-table member, a
+ * published dataplane epoch or an index-map binding. One candidate per live
+ * peer, hs_limiter.max_pending node-wide, released at the hold deadline. */
+#define FIPSD_RESTART_HISTORY 64u
+typedef struct restart_candidate {
+    bool used, replace;
+    fips_rekey_completed done;   /* keys derived from our fresh msg2 ephemeral */
+    fips_rekey_index_lease lease; /* candidate receive index, unbound until confirmed */
+    fips_rekey_wire msg1, msg2;  /* exact-retransmit match, resend and setup record */
+    uint8_t ephemeral[32];
+    fips_transport_id transport;
+    fips_transport_addr addr;
+    fips_link_id link;
+    fips_instant deadline;
+} restart_candidate;
 /* Host record beside each table member (dispatcher-only). */
 typedef struct peer_rec {
     bool used, path_live, tree_pending, filter_pending, heard, disconnecting;
     fips_node_addr addr;
     fipsd_active_peer *peer;
+    restart_candidate restart;
     fips_path_bundle *path;
     fips_instant last_heard, last_tree_announce, established_at;
     uint64_t tree_sent, tree_received, frames_in, frames_out, bytes_in, bytes_out;
@@ -175,6 +192,17 @@ struct fipsd_node_handlers {
     fips_handshake_rate_limiter hs_limiter;
     fips_fmp_silent_sessions silent;
     fips_fmp_silent_record *silent_storage;
+    /* Supplementary restart memory: epochs a peer has proven it moved past and
+     * msg1 ephemerals whose hold expired unconfirmed (refused for one further
+     * hold window, then challengeable again). Bounded, overwritten in order,
+     * and never a freshness proof by itself. */
+    size_t restart_pending, retired_next;
+    struct {
+        bool used, has_epoch;
+        fips_node_addr peer;
+        uint8_t value[32]; /* opaque epoch (8 bytes) or msg1 ephemeral public key */
+        fips_instant until; /* ephemeral entries only; no ops means no expiry */
+    } retired[FIPSD_RESTART_HISTORY];
     /* Tree */
     fips_tree_state *tree;
     fips_stp_peer *tree_peers;
@@ -260,6 +288,11 @@ void hs_remove_peer(handlers *h, peer_rec *rec, fips_rekey_close why, bool notif
 void hs_close_all(handlers *h);
 bool hs_dial_configured(handlers *h);
 void hs_configured_poll(handlers *h, fips_instant now);
+/* H1 eviction gate: candidate frames use the ordinary worker pool under a
+ * clone of the candidate's keys, never the live link's; the result on the
+ * dispatcher is the only place the incumbent is closed for a restart. */
+bool hs_restart_frame(handlers *, fipsd_transport *, const fips_transport_addr *, const uint8_t *, size_t, const fips_fmp_encrypted_header *);
+bool hs_restart_result(handlers *, const fipsd_crypto_job *);
 /* rekey.c */
 typedef struct link_exec_result { bool teardown, replace, restart, delivered; size_t begin, end; uint64_t counter; } link_exec_result;
 void hs_env(handlers *h, fips_rekey_env *env, fips_rekey_transport transport);

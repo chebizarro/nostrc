@@ -162,9 +162,10 @@ Admission gates are outbound dial (before reservation/index/DH), authenticated
 inbound IK admission (after encrypted-key recovery/classification, before index
 allocation and reply DH), and authenticated outbound IK completion (before
 promotion, catching reloads during a handshake). The existing-link rekey path
-bypasses new admission. Inbound restart teardown before the late admission gate
-is intentionally retained from upstream. There are **no session-setup or
-forwarding ACL checks**, and reload does not disconnect existing peers.
+bypasses new admission. Inbound restart candidates are rechecked at key
+confirmation (`inbound_confirmation`), so a reload while msg2 is in flight
+cannot let a now-denied identity evict a live link. There are **no session-setup
+or forwarding ACL checks**, and reload does not disconnect existing peers.
 
 `main` loads policy before publishing the initial config generation. Parsing
 YAML alone performs no ACL I/O; embedding/tests opt in with
@@ -530,6 +531,28 @@ changes bypassing stale-incarnation cooldown, and authenticated heard evidence
 clearing the record. Restart requires two known, differing epochs; a missing
 epoch is not a restart. Crossing/own-dial decisions delegate to FMP's existing
 cores, including the node-address tie-break, not a new host heuristic.
+
+**Restart admission (H1, `nostrc-f66sr.7`).** FMP classifies any differing known
+epoch as a restart, and IK authenticates the recorded identity but not freshness,
+so a captured earlier-epoch msg1 would otherwise evict the live link. The wire
+format and the core decision are unchanged; the host no longer acts on the
+decision alone. A restart msg1 from a live peer becomes a **held candidate** in
+`handshake.c`: its own receive index (never bound to the index map), msg2
+answered, exact retransmits re-answered from the hold wherever they arrive, one
+candidate per peer, `max_pending_inbound` node-wide, released at
+`handshake_timeout_ms` (the same knob that bounds the initiator's identical-msg1
+retransmits). Frames at the candidate index on the candidate's transport are
+opened by the ordinary workers under a clone of the candidate's keys; **only a
+frame that authenticates under those keys closes the incumbent**
+(`hs_restart_result`), because it proves the sender holds the msg1 ephemeral and
+processed our fresh msg2 — a recording cannot. The proving frame becomes the new
+link's first authenticated input, and its arrival address is judged by the
+ordinary authenticated endpoint policy after promotion, not refused beforehand.
+A bounded 64-entry memory of retired epochs (proven left behind) and expired
+candidate ephemerals (refused for one further hold window, then challenged
+afresh) refuses known-stale msg1 cheaply; it is supplementary and never a
+freshness proof. A dropped incumbent with a candidate pending is not remembered,
+so the peer's identical retransmit establishes through the ordinary new-peer path.
 
 ### Verification
 

@@ -24,6 +24,7 @@ bool fipsd_dp_result(handlers *h, const fipsd_crypto_job *j)
 {
     if (!j->recycle || !h->dataplane) return true;
     fipsd_dp_packet *p = j->owner;
+    if (p->restart) return hs_restart_result(h, j);
     peer_rec *rec = hs_rec_find(h, &p->peer);
     fips_session_entry *entry = p->session ? fips_session_table_by_peer(&h->sessions, p->peer) : NULL;
     fips_rekey *m = p->session ? (entry ? &entry->machine : NULL) :

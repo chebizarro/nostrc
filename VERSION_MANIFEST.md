@@ -2,6 +2,8 @@
 
 nostrc-gfi8h.1: fipsd stays 0.1.0 Unreleased; shared transport instances, FMP framing, binder/presence, medium, socket buffers and loopback migration fold into the initial unreleased daemon. Append-only private transport metadata and control interface medium; no new wire envelope, core/libgo version or published release/tag change.
 
+nostrc-f66sr.7: PATCH-class restart-replay correction folded into fipsd 0.1.0 Unreleased (inbound restart candidates are held and the live link is evicted only after key confirmation). No public API, wire or FMP core decision change, no version bump or tag; libfips-core unchanged (documentation-only upstream finding note).
+nostrc-f66sr.8: PATCH-class ACL admission-order security correction folded into fipsd 0.1.0 Unreleased. No public API/wire change, version bump or tag; libfips-core unchanged.
 
 nostrc-9keoz.12: fipsd remains 0.1.0 Unreleased; dispatcher-owned attached-link endpoint migration, dataplane reseeding and dependent-session MTU tightening fold into the initial unreleased daemon. libfips-core unchanged. No published release/tag change.
 nostrc-9keoz.8: fipsd stays 0.1.0 Unreleased; file-backed admission ACLs, immutable reload snapshots, counter registry, stats-history collection and existing control projections fold into the initial unreleased daemon. libfips-core and libgo versions unchanged. No published release/tag change.
