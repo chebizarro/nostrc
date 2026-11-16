@@ -1728,3 +1728,6 @@ NIP libraries and wire versions are unchanged; no published release/tag change.
 nostrc-gfi8h.8: fipsd remains **0.1.0 Unreleased**; internal detected-medium
 path preference and dispatcher notifications fold into the initial unreleased
 artifact. No public wire/API or core semantics change; libfips-core is unchanged.
+nostrc-gfi8h.3: fipsd remains **0.1.0 Unreleased**. TCP transport, configuration
+registration, connection ownership and control counters fold into the initial
+daemon; no published release/tag, shared-library version or FMP wire change.

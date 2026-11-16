@@ -7,6 +7,7 @@
 #include "control/counter_schema.h"
 #include "cli.h"
 #include "transport/transport.h"
+#include "transport/tcp/tcp.h"
 #include <unistd.h>
 
 typedef struct snap {
@@ -373,6 +374,17 @@ static snap *build(handlers *h, fips_instant now)
                 {"malformed", atomic_load(&t->shared->stats.malformed)}, {"classifier_drops", atomic_load(&t->shared->stats.classifier_drops)},
                 {"pool_full", atomic_load(&t->shared->stats.pool_full)}};
             ts[i].stats = counters_of(x, counts, !strcmp(t->type, "udp") ? sizeof counts / sizeof counts[0] : 4);
+            if (!strcmp(t->type, "tcp")) {
+                fipsd_tcp_stats_view v = fipsd_tcp_stats_snapshot(t);
+                fipsd_control_counter tcp[] = {{"frames_sent", stats.packets_sent}, {"frames_recv", stats.packets_recv},
+                    {"bytes_sent", stats.bytes_sent}, {"bytes_recv", stats.bytes_recv},
+                    {"send_errors", v.send_errors}, {"recv_errors", v.recv_errors}, {"mtu_exceeded", v.mtu_exceeded},
+                    {"connections_established", v.connections_established}, {"connections_accepted", v.connections_accepted},
+                    {"connections_rejected", v.connections_rejected}, {"source_rejected", v.source_rejected},
+                    {"connect_timeouts", v.connect_timeouts}, {"connect_refused", v.connect_refused},
+                    {"pool_inbound", v.pool_inbound}, {"pool_outbound", v.pool_outbound}};
+                ts[i].stats = counters_of(x, tcp, sizeof tcp / sizeof tcp[0]);
+            }
             if (t->interface_name) {
                 fipsd_presence_view v = fipsd_presence_snapshot(&t->shared->presence);
                 fipsd_control_interface *in = salloc(x, sizeof *in);

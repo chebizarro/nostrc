@@ -397,3 +397,29 @@ add_test(NAME FipsdNodeWipeTest COMMAND fipsd_node_wipe_test)
 set_tests_properties(FipsdNodeWipeTest PROPERTIES TIMEOUT 300 LABELS "fips;node"
   ENVIRONMENT "FIPSD_WORKERS=2")
 nostrc_describe_test(FipsdNodeWipeTest OWNER fipsd TARGETS fipsd_node_wipe_test)
+# Real TCP v4/v6 runs of the entire node proof, including XK and datagrams.
+foreach(family IN ITEMS 4 6)
+  fipsd_unit_test(fipsd_tcp_two_nodes_v${family}_test test_node_two_nodes.c)
+  target_compile_definitions(fipsd_tcp_two_nodes_v${family}_test PRIVATE FIPSD_TEST_TCP=1)
+  if(family EQUAL 6)
+    target_compile_definitions(fipsd_tcp_two_nodes_v${family}_test PRIVATE FIPSD_TEST_TCP_V6=1)
+  endif()
+  add_dependencies(fipsd_tests fipsd_tcp_two_nodes_v${family}_test)
+  add_test(NAME FipsdTcpTwoNodesV${family}Test COMMAND fipsd_tcp_two_nodes_v${family}_test)
+  set_tests_properties(FipsdTcpTwoNodesV${family}Test PROPERTIES TIMEOUT 300 LABELS "fips;transport;node"
+    ENVIRONMENT "FIPSD_WORKERS=2")
+  nostrc_describe_test(FipsdTcpTwoNodesV${family}Test OWNER fipsd TARGETS fipsd_tcp_two_nodes_v${family}_test)
+endforeach()
+fipsd_unit_test(fipsd_tcp_test test_tcp.c)
+add_dependencies(fipsd_tests fipsd_tcp_test)
+add_test(NAME FipsdTcpTest COMMAND fipsd_tcp_test)
+set_tests_properties(FipsdTcpTest PROPERTIES TIMEOUT 90 LABELS "fips;transport" ENVIRONMENT "FIPSD_WORKERS=2")
+nostrc_describe_test(FipsdTcpTest OWNER fipsd TARGETS fipsd_tcp_test)
+set(FIPSD_TCP_INTEROP_RUST_BINARY "$ENV{FIPSD_TCP_INTEROP_RUST_BINARY}" CACHE FILEPATH "Optional pinned Rust fips daemon for TCP interop")
+add_test(NAME FipsdTcpInteropTest COMMAND fipsd_test_tmpdir_run "/control.sock"
+  "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tcp_interop.py"
+  --fipsd "$<TARGET_FILE:fipsd>" --rust "${FIPSD_TCP_INTEROP_RUST_BINARY}")
+set_tests_properties(FipsdTcpInteropTest PROPERTIES TIMEOUT 90 SKIP_RETURN_CODE 77
+  LABELS "fips;transport;interop" ENVIRONMENT "FIPSD_WORKERS=2")
+nostrc_describe_test(FipsdTcpInteropTest OWNER fipsd TARGETS fipsd fipsd_test_tmpdir_run
+  INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/tcp_interop.py")
