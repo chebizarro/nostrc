@@ -562,3 +562,27 @@ add_dependencies(fipsd_tests fipsd_coord_warm_test)
 add_test(NAME FipsdCoordWarmTest COMMAND fipsd_coord_warm_test)
 set_tests_properties(FipsdCoordWarmTest PROPERTIES TIMEOUT 30 LABELS "fips;node;multinode")
 nostrc_describe_test(FipsdCoordWarmTest OWNER fipsd TARGETS fipsd_coord_warm_test)
+
+# The .fips DNS responder (nostrc-9nxwk.3): codec vectors, host map and
+# reloader, resolver tables and loopback sockets, and the end-to-end gate
+# (a real AAAA query over UDP; the npub in show_identity_cache).
+fipsd_unit_test(fipsd_dns_msg_test test_dns_msg.c)
+fipsd_unit_test(fipsd_dns_hosts_test test_dns_hosts.c)
+fipsd_unit_test(fipsd_dns_resolver_test test_dns_resolver.c)
+fipsd_unit_test(fipsd_dns_e2e_test test_dns_e2e.c)
+add_dependencies(fipsd_tests fipsd_dns_msg_test fipsd_dns_hosts_test fipsd_dns_resolver_test fipsd_dns_e2e_test)
+add_test(NAME FipsdDnsMsgTest COMMAND fipsd_dns_msg_test)
+add_test(NAME FipsdDnsHostsTest COMMAND fipsd_dns_hosts_test)
+add_test(NAME FipsdDnsResolverTest COMMAND fipsd_dns_resolver_test)
+set_tests_properties(FipsdDnsMsgTest FipsdDnsHostsTest FipsdDnsResolverTest PROPERTIES TIMEOUT 60 LABELS "fips;unit;dns")
+add_test(NAME FipsdDnsEndToEndTest COMMAND fipsd_dns_e2e_test)
+add_test(NAME FipsdDnsEndToEndV4Test COMMAND fipsd_dns_e2e_test v4)
+add_test(NAME FipsdDnsMeshFilterTest COMMAND fipsd_dns_e2e_test mesh)
+set_tests_properties(FipsdDnsEndToEndTest FipsdDnsEndToEndV4Test FipsdDnsMeshFilterTest PROPERTIES TIMEOUT 120 LABELS "fips;node;dns"
+  ENVIRONMENT "FIPSD_WORKERS=2")
+nostrc_describe_test(FipsdDnsMsgTest OWNER fipsd TARGETS fipsd_dns_msg_test)
+nostrc_describe_test(FipsdDnsHostsTest OWNER fipsd TARGETS fipsd_dns_hosts_test)
+nostrc_describe_test(FipsdDnsResolverTest OWNER fipsd TARGETS fipsd_dns_resolver_test)
+nostrc_describe_test(FipsdDnsEndToEndTest OWNER fipsd TARGETS fipsd_dns_e2e_test)
+nostrc_describe_test(FipsdDnsEndToEndV4Test OWNER fipsd TARGETS fipsd_dns_e2e_test)
+nostrc_describe_test(FipsdDnsMeshFilterTest OWNER fipsd TARGETS fipsd_dns_e2e_test)

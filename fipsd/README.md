@@ -1941,6 +1941,138 @@ Rust peer left holding that session sends into it until its idle timeout —
 the harness opens the Rust-initiated session first, as `udp_interop.py`
 does; neither daemon adapts to a lowered interface MTU (kernel fragmentation
 carries the traffic; an asymmetric MTU is a black hole at this layer).
+## `.fips` DNS responder (`nostrc-9nxwk.3`)
+
+`src/dns/` ports the daemon's `.fips` resolver: upstream `src/dnsmsg.rs`
+(the message screen and reply builder), `src/hosts.rs` (the host map and its
+mtime-driven reloader) and `src/ipv6tun/dns.rs` with the DNS child of
+`src/ipv6tun/lifecycle.rs` (the responder and its socket), as the `dns`
+runtime subsystem. `main.c` creates it when `dns.enabled` is true (the
+default) and registers it after the TUN service, whose device it reads at
+start for the mesh-interface filter, and before the control socket. The
+configuration keys are upstream's, already in the schema: `dns.enabled`,
+`dns.bind_addr` (default `::1`), `dns.port` (default 5354; `0` binds an
+ephemeral port, which the tests use) and `dns.ttl` (default 300, clamped to
+2147483647 as `floors.c` and `fipsd_dns_clamp_ttl` both do).
+
+| Module | Upstream | Owns |
+|---|---|---|
+| `msg.{c,h}` | `dnsmsg.rs` | the 12-byte header, the 4096-byte receive bound (a datagram that fills it is dropped as possibly truncated), the screen (response, service source ports 0/7/13/17/19/37, counts that are not a query's, header-only NOTIMP/FORMERR, REFUSED with the question for a class other than IN/ANY), question parsing with no compression pointers or extended labels, 63-byte labels and 255-byte names, the reply builder (fresh header, opcode QUERY, RD/CD copied, caller AA/RA, the question byte for byte, owner pointers to it, no additional record so TC is never needed), AAAA and SOA records, `encode_query`, rcode mnemonics |
+| `hosts.{c,h}` | `hosts.rs` | hostname validation (alphanumerics and hyphens, 1-63, no leading/trailing hyphen, not `npub1…`), the lowercase host map with reverse node-address lookup, the configured peers' `alias` fields, the hosts file (`#` comments, blank lines, `hostname npub` per line, bad lines warned and skipped, non-UTF-8 content a read failure as `read_to_string`'s is), the reloader: base aliases under the file, the file re-read when its mtime changes, a failed read keeping the names last read and retried on the next check even without an mtime change, one WARN per run of failures and one INFO when a read ends it, `set_base` for a replaced peer list |
+| `resolver.{c,h}` | `ipv6tun/dns.rs` | `<label>.fips` recognition by wire labels (exactly two, the last `fips` in any case; a dot inside a label does not split it), host-map-then-npub resolution with the npub accepted in any letter case and bech32m/padded spellings refused, `answer` (AAAA with AA for a resolvable name, NODATA for any other type on it, NXDOMAIN otherwise), `handle_packet`, the mesh side (`MeshSide`/`Arrival`), `mesh_query` (by interface, or by destination/mesh-source address when the index is unknown), the reply-path table (`Routed`/`Pinned`/`Returning`/`Withheld`, strict pin on Linux only), `returns_by` over libfips-core's on-link prefixes, the dual-stack `IPV6_V6ONLY=0` + `IPV6_RECVPKTINFO` bind, `recvmsg` with PKTINFO (`fipsd_udp_decode_control`), routed/pinned (`IPV6_PKTINFO`, unspecified source, Linux)/returning (route probe + system prefix read through the blocking executor) sends |
+| `service.{c,h}` | `ipv6tun/lifecycle.rs` (`start_dns`, `run_responder`) | the subsystem: config read, bind (an invalid address or a failed bind is a WARN that leaves the host up, as upstream), the TUN's kernel device name resolved to the mesh index with the "Mesh interface index unresolved" fallback warning, one receive fiber (`gof_recvmsg`), the identity sink (`fipsd_node_handlers_learn_identity`, called **before** the reply is sent so the cache is primed when the client connects), the peer-alias base rebuilt from a replaced configuration snapshot before the next answer, the hosts-file check on each query that passed the screen only, owner-directed cancellation (`gof_io_cancel_fd`) at stop with the fiber closing the socket on its way out, and test seams (hosts path, identity sink, mesh side, an event channel, the bound address) |
+
+**Behaviour versus upstream.** Byte-for-byte on the wire for everything the
+daemon's responder sends: the screen's drop and refuse rules and their
+header-only replies, the AAAA reply exactly 28 bytes longer than the query,
+NODATA versus NXDOMAIN, the flags copied and cleared, and the SOA that the
+gateway's forwarder adds (ported with the codec; the gateway itself is not
+this task). Three deliberate parity notes. Upstream's resolver has no PTR
+handling and no per-source rate limiting, and neither is added here: a PTR
+(or any non-AAAA) query for a resolvable `.fips` name gets NODATA, a reverse
+`ip6.arpa` name is not under `fips` and gets NXDOMAIN, and admission is the
+screen's drops (service ports, a response fed back, malformed counts, the
+receive bound) plus the dispatcher's bounded command queue, which the
+identity sink never blocks on (a full queue is logged at DEBUG and the answer
+still goes out); a per-source limiter would throttle the one source every
+host query comes from, the stub resolver on loopback. `node.buffers.dns_channel`
+is accepted but unused: upstream's DNS→node channel is this daemon's handler
+command queue. The hosts file is read at `/etc/fips/hosts` on Linux and
+`/usr/local/etc/fips/hosts` on macOS/FreeBSD, the literals `acl.c` already
+uses; the hosts `stat` per query and the file read on change run inline on
+the fiber as upstream's do on its task.
+
+**Resolver integration.** `packaging/common/fips-dns-setup` and
+`fips-dns-teardown` are upstream's scripts verbatim (shellcheck-clean): the
+setup tries, in order, a systemd `dns-delegate.d` drop-in (systemd ≥ 258), a
+global `/etc/systemd/resolved.conf.d/fips.conf` drop-in (`DNS=[::1]:5354`,
+`Domains=~fips`), a dnsmasq `server=/fips/::1#5354` drop-in, then the
+NetworkManager dnsmasq plugin, records the backend in
+`/run/fips/dns-backend` and prints manual instructions when none applies;
+the teardown reverts whichever backend the state file names (or all of them)
+and removes the state file. Both are idempotent. The packaging directories
+that ship them (`debian`, `rpm`, `arch`, `systemd`) belong to the packaging
+task. On macOS there is no script: create `/etc/resolver/fips` containing
+
+```
+nameserver ::1
+port 5354
+```
+
+and `mDNSResponder` routes `*.fips` to the daemon (`scutil --dns` lists the
+resolver; `dig` bypasses it, so test with `dig AAAA <npub>.fips @::1 -p 5354`
+or `dscacheutil -q host -a name <npub>.fips`).
+
+**Tests** (`ctest -R '^FipsdDns'`, no sleeps). `FipsdDnsMsgTest` ports every
+vector of `dnsmsg.rs`'s tests (rule by rule: short, 4096/4095, response,
+service ports, counts, NOTIMP/FORMERR header-only replies, pointer/extended
+labels, 63/64-byte labels, 255/256-byte names, every truncation of a
+question, CH refused with the question, Z ignored, raw unknown qtypes, an
+OPT accepted and not echoed, the lossy text form, TTL clamp, rcode names,
+`encode_query`, the three SOA placements, every reply dropped when fed back,
+RD/CD/ID copied on error replies, the exact question echo, the AAAA parse,
+the two-question datagram bound). `FipsdDnsHostsTest` ports `hosts.rs`'s
+tests and the hosts-file cases of `tests/dns.rs` with explicit `utimensat`
+mtimes (unreadable file keeps its names and its override of a peer alias,
+retry without an mtime change, removal drops names, warn once per failed run
+and log its end, a run not ended by the mtime returning). `FipsdDnsResolverTest`
+ports the resolution, screening and `tests/dns.rs` tables: both reply-path
+tables (strict and non-strict pin), the mesh-query table, `returns_by`, the
+reflection bounds (511-byte twelve-SRV and 277-byte two-question datagrams),
+loops, header handling, the last-label-`fips` rule, the owner pointer, npub
+case variants and the bech32m/padded refusals, and the socket helpers on
+loopback (PKTINFO destination and interface, routed and returning delivery,
+a withheld reply never sent, the route probe; on Linux a pinned send to
+loopback delivered and one to a missing interface failed). `FipsdDnsEndToEndTest`
+(and `…V4Test` on `127.0.0.1`) starts a node, its handlers and the `dns`
+subsystem on `dns.port: 0`, sends a real AAAA query over a UDP socket, checks
+the derived address and the exact 28-byte growth, then issues a live provider
+command as a dispatcher barrier (the learn command the responder queued
+before replying has been applied and published when it returns) and finds
+the npub and its address in `show_identity_cache`; it also covers the hosts
+file and a configured peer alias (upper-case), NXDOMAIN, NODATA for A and
+PTR, a header-only FORMERR, a response fed back and the next query answered,
+a hot reload of the hosts file, the per-datagram event sequence, and a
+cancellation-safe shutdown within the grace period. `FipsdDnsMeshFilterTest`
+treats loopback as the mesh interface and observes the query dropped
+unanswered. The root-only network-namespace tests of `tests/dns.rs` (forged
+mesh sources through a veth pair) are not ported; the pure reply-path and
+`returns_by` tables they rest on are.
+
+**Verification (nostrc-9nxwk.3).** Out-of-tree builds with the recipe above
+(`-Werror`, clang on macOS): the ASan/UBSan tree ran `ctest -R '^Fips'` as
+173 passes and 4 environment skips (`FipsdControlInteropTest`,
+`FipsdTcpInteropTest`, the two privileged smoke tests; the three Rust-binary
+interop tests skipped and the soak is disabled), the TSan tree the same 173
+passes with zero ThreadSanitizer reports; the known `relay.c:1064` race
+(nostrc-xqwgo) did not fire. Acceptance was run for real against the daemon,
+not the tests: on macOS, `dig AAAA npub1qmc3…zel98.fips @::1 -p 5354`
+returned `NOERROR`, `aa`, one AAAA `fd00:dc7a:5def:9255:b47f:79a7:199:3d8e`
+TTL 300 (the upper-case name the same, `A` NODATA, `unknown.fips` NXDOMAIN),
+`show_identity_cache` over the control socket then listed that npub with the
+same `ipv6_addr`, and SIGTERM exited 0. On the Ubuntu 24.04 aarch64 VM
+(systemd 255, `systemd-resolved` active; the tree built with the FIPS CI
+lane's clang/`GO_WARNINGS_AS_ERRORS=ON` recipe) the six `FipsdDns*` tests
+passed, the same `dig @::1 -p 5354` answered, `sudo fips-dns-setup` chose the
+`global-drop-in` backend (`/etc/systemd/resolved.conf.d/fips.conf` with
+`DNS=[::1]:5354` and `Domains=~fips`, `/run/fips/dns-backend`,
+`resolvectl status` showing both in the Global section, `/etc/resolv.conf`
+still the `127.0.0.53` stub), after which `dig AAAA npub1qmc3…zel98.fips`
+with no server, `resolvectl query` and `getent ahostsv6` all resolved through
+systemd-resolved to the same address; `sudo fips-dns-teardown` removed the
+drop-in and the state file and `resolvectl` showed the Global section as
+before; both scripts ran twice without change. The raw
+`-DCMAKE_C_FLAGS=-Werror` recipe is clang-only: gcc 13 on the VM stops in
+untouched `libfips-core` (`-Warray-parameter` in `proto/fmp/wire.c`,
+`-Wmisleading-indentation` in `proto/path/params.c`), and on that VM the
+control subsystem refuses to start with `cannot resolve group fips:
+Input/output error` (an NSS error where macOS only warns), so the VM
+acceptance ran with `node.control.enabled: false`; neither is a DNS change.
+Static checks (`check-unsequenced-args.py`, `check-gui-test-gdk-frame.py`,
+`check-linux-ci-packages.py`, `git diff --check`, `shellcheck` on both
+scripts) passed; build directories were deleted and the submodule
+deinitialised afterwards. Version stays **0.1.0 Unreleased**.
+
 ## Native datagram API and libfipsnative (`nostrc-9nxwk.4`)
 
 `src/native/` ports upstream `src/native/{mod,registry,seqpacket,protocol,

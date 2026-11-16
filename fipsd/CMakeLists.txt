@@ -199,3 +199,6 @@ target_sources(fipsd_lib PRIVATE src/node/dataplane/coord_warm.c)
 
 # Shared upstream transport control projection (nostrc-gfi8h.7).
 target_sources(fipsd_lib PRIVATE src/control/transport.c)
+# The .fips DNS responder (nostrc-9nxwk.3): message codec, host map with
+# mtime reload, resolver/mesh filter and the dns runtime subsystem.
+target_sources(fipsd_lib PRIVATE src/dns/msg.c src/dns/hosts.c src/dns/resolver.c src/dns/service.c)
