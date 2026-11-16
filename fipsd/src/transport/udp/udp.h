@@ -24,4 +24,8 @@ size_t fipsd_udp_connected_count(fipsd_transport *);
  * caller owns successful instances, also on partial failure. */
 int fipsd_udp_register_config(fipsd_transport_registry *, const fipsd_config *,
     fipsd_transport **owned, size_t *count);
+bool fipsd_udp_register_datagram_classifier(fipsd_transport *, const char *, fipsd_udp_datagram_classifier, void *);
+/* Resolve with the transport family/cache on the blocking executor. */
+bool fipsd_udp_resolve_address(fipsd_transport *, const fips_transport_addr *, fips_transport_addr *);
+bool fipsd_udp_unregister_datagram_classifier(fipsd_transport *, const char *, void *);
 #endif

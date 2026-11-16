@@ -216,3 +216,22 @@ fipsd_nostr_status fipsd_nostr_traversal_open(const fips_identity *recipient, co
     }
     nostr_event_free(rumor); nostr_event_free(seal); return rc;
 }
+
+/* Upstream NPTC/NPTA: magic + big-endian sequence + SHA256(session)[0..16]. */
+bool fipsd_is_punch_packet(const uint8_t *p, size_t n)
+{ return n >= 4 && (!memcmp(p, "NPTC", 4) || !memcmp(p, "NPTA", 4)); }
+void fipsd_punch_build(bool ack, uint32_t seq, const char *session, uint8_t out[FIPSD_PUNCH_SIZE])
+{
+    uint8_t digest[crypto_hash_sha256_BYTES];
+    crypto_hash_sha256(digest, (const unsigned char *)session, strlen(session));
+    memcpy(out, ack ? "NPTA" : "NPTC", 4);
+    out[4] = (uint8_t)(seq >> 24); out[5] = (uint8_t)(seq >> 16);
+    out[6] = (uint8_t)(seq >> 8); out[7] = (uint8_t)seq; memcpy(out + 8, digest, 16);
+}
+bool fipsd_punch_parse(const uint8_t *p, size_t n, fipsd_punch_packet *out)
+{
+    if (n < FIPSD_PUNCH_SIZE || !fipsd_is_punch_packet(p, n)) return false;
+    fipsd_punch_packet result = {.ack = p[3] == 'A',
+        .sequence = (uint32_t)p[4] << 24 | (uint32_t)p[5] << 16 | (uint32_t)p[6] << 8 | p[7]};
+    memcpy(result.hash, p + 8, 16); *out = result; return true;
+}

@@ -34,4 +34,9 @@ fipsd_nostr_status fipsd_nostr_traversal_build(const fips_identity *identity,
 fipsd_nostr_status fipsd_nostr_traversal_open(const fips_identity *recipient,
     const NostrEvent *event, uint64_t now_ms, uint64_t ttl_ms,
     fipsd_nostr_traversal *out, fipsd_nostr_freshness *freshness);
+#define FIPSD_PUNCH_SIZE 24u
+typedef struct { bool ack; uint32_t sequence; uint8_t hash[16]; } fipsd_punch_packet;
+bool fipsd_is_punch_packet(const uint8_t *, size_t);
+void fipsd_punch_build(bool ack, uint32_t sequence, const char *session, uint8_t out[FIPSD_PUNCH_SIZE]);
+bool fipsd_punch_parse(const uint8_t *, size_t, fipsd_punch_packet *);
 #endif

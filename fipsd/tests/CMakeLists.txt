@@ -366,3 +366,15 @@ add_test(NAME FipsdNostrRuntimeTest COMMAND fipsd_nostr_runtime_test)
 set_tests_properties(FipsdNostrRuntimeTest PROPERTIES TIMEOUT 90 LABELS "fips;nostr;relay"
   ENVIRONMENT "FIPSD_WORKERS=2")
 nostrc_describe_test(FipsdNostrRuntimeTest OWNER fipsd TARGETS fipsd_nostr_runtime_test)
+
+# Traversal vectors, complete table, loopback STUN and real relay -> IK proof.
+fipsd_unit_test(fipsd_nostr_traversal_test test_nostr_traversal.c)
+target_sources(fipsd_nostr_traversal_test PRIVATE stun_fixture.c nostr_relay_fixture.c)
+target_link_libraries(fipsd_nostr_traversal_test PRIVATE PkgConfig::FIPSD_RELAY_TEST)
+add_dependencies(fipsd_tests fipsd_nostr_traversal_test)
+foreach(scenario IN ITEMS codecs states stun traverse guards)
+  add_test(NAME FipsdNostrTraversal_${scenario} COMMAND fipsd_nostr_traversal_test ${scenario})
+  set_tests_properties(FipsdNostrTraversal_${scenario} PROPERTIES TIMEOUT 90
+    LABELS "fips;nostr;traversal" ENVIRONMENT "FIPSD_WORKERS=2")
+  nostrc_describe_test(FipsdNostrTraversal_${scenario} OWNER fipsd TARGETS fipsd_nostr_traversal_test)
+endforeach()

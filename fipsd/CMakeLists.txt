@@ -145,3 +145,6 @@ target_sources(fipsd_lib PRIVATE src/transport/udp/udp.c src/transport/udp/io.c
 target_sources(fipsd_lib PRIVATE src/nostr/runtime.c src/nostr/driver.c
   src/nostr/failure_state.c src/nostr/signal_gate.c src/nostr/signal_route.c)
 target_link_libraries(fipsd_lib PUBLIC nip11)
+
+# STUN and deadline-driven traversal (nostrc-8hvs6.3).
+target_sources(fipsd_lib PRIVATE src/nostr/stun.c src/nostr/traversal_machine.c src/nostr/traversal_io.c)

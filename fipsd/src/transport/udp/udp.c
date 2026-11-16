@@ -225,3 +225,28 @@ int fipsd_udp_register_config(fipsd_transport_registry *r, const fipsd_config *c
     }
     return 0;
 }
+
+bool fipsd_udp_register_datagram_classifier(fipsd_transport *t, const char *name, fipsd_udp_datagram_classifier fn, void *user)
+{
+    udp_instance *u = t->user;
+    return !u->started && fipsd_udp_datagram_classifier_add(&u->classifiers, name, fn, user);
+}
+bool fipsd_udp_resolve_address(fipsd_transport *t, const fips_transport_addr *in, fips_transport_addr *out)
+{
+    udp_instance *u = t->user; fipsd_udp_endpoint endpoint;
+    return fipsd_udp_resolve(&u->dns, in, u->bind_to.address.ss_family, &endpoint) &&
+        fipsd_udp_endpoint_addr(&endpoint, out);
+}
+
+bool fipsd_udp_unregister_datagram_classifier(fipsd_transport *t, const char *name, void *user)
+{
+    udp_instance *u = t->user;
+    if (u->started) return false; /* no registry mutation while drains exist */
+    for (size_t i = 0; i < u->classifiers.count; ++i) {
+        fipsd_udp_classifier_entry *e = &u->classifiers.entries[i];
+        if (e->user == user && !strcmp(e->subsystem, name)) {
+            memmove(e, e + 1, (--u->classifiers.count - i) * sizeof(*e)); return true;
+        }
+    }
+    return false;
+}
