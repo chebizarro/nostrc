@@ -18,6 +18,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
+#include <stdatomic.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/time.h>
@@ -197,6 +198,45 @@ static const char *inject_line(uint64_t flow, const char *hex, unsigned repeat)
 static const char *arrive_line(const char *peer, unsigned src, unsigned dst, const char *hex)
 { snprintf(line, sizeof line, "{\"command\":\"arrive\",\"params\":{\"peer\":\"%s\",\"src_port\":%u,\"dst_port\":%u,\"data\":\"%s\"}}", peer, src, dst, hex); return line; }
 static uint64_t flow_id_of(json_t *v) { return (uint64_t)json_integer_value(data(v, "flow_id")); }
+
+/* Keep the feeder's last reference alive after the reader releases the flow. */
+typedef struct reap_barrier { _Atomic uint64_t flow; GoChannel *entered, *resume; } reap_barrier;
+static void barrier_receive(GoChannel *chan)
+{
+    void *value = NULL;
+    GoSelectCase cases[] = {{.op = GO_SELECT_RECEIVE, .chan = chan, .recv_buf = &value}};
+    GoSelectResult r = go_select_timeout(cases, 1, WAIT_MS);
+    CHECK(r.selected_case == 0 && value);
+}
+static void before_flow_reap(void *user, uint64_t flow)
+{
+    reap_barrier *b = user;
+    if (atomic_load(&b->flow) != flow) return;
+    CHECK(go_channel_send(b->entered, b) == 0);
+    barrier_receive(b->resume);
+}
+static void test_release_before_reap(api_node *a, reap_barrier *b)
+{
+    int c = raw_open(a->path), ffd;
+    json_t *v = raw_call(c, connect_line(PEER, 4242, 4243), &ffd); CHECK(is_ok(v));
+    uint64_t flow = flow_id_of(v); json_decref(v);
+    atomic_store(&b->flow, flow);
+    v = raw_call(c, stats_line(0), NULL); json_decref(expect_error(v, "ENOENT", NULL));
+    close(ffd);
+    barrier_receive(b->entered);
+    await_event(&a->events, FIPSD_NATIVE_EVENT_FLOW_RELEASED, flow, 0);
+    /* Neither connection may address a released flow, even while its feeder
+     * has not reaped it. The registry has also returned its port already. */
+    v = raw_call(c, stats_line(flow), NULL); json_decref(expect_error(v, "ENOENT", NULL));
+    v = ask(a->path, stats_line(flow), NULL); json_decref(expect_error(v, "ENOENT", NULL));
+    v = ask(a->path, inject_line(flow, "ab", 0), NULL); json_decref(expect_error(v, "ENOENT", NULL));
+    v = raw_call(c, connect_line(PEER, 4242, 4243), &ffd); CHECK(is_ok(v));
+    uint64_t next = flow_id_of(v); CHECK(next != flow); json_decref(v);
+    atomic_store(&b->flow, 0);
+    CHECK(go_channel_send(b->resume, b) == 0);
+    close(c); close(ffd);
+    await_event(&a->events, FIPSD_NATIVE_EVENT_FLOW_RELEASED, next, 0);
+}
 
 /* ---- scenarios ------------------------------------------------------------ */
 static void test_listeners_and_ports(api_node *a)
@@ -543,6 +583,10 @@ int main(void)
     api_node a, b;
     api_init(&a, net, "A", "loop:a", "1111111111111111111111111111111111111111111111111111111111111111", path_a, true, &hcfg);
     api_init(&b, net, "B", "loop:b", "2222222222222222222222222222222222222222222222222222222222222222", path_b, false, &hcfg);
+    reap_barrier barrier; atomic_init(&barrier.flow, 0);
+    barrier.entered = go_channel_create(1); barrier.resume = go_channel_create(1);
+    CHECK(barrier.entered && barrier.resume);
+    fipsd_native_api_before_flow_reap(a.api, before_flow_reap, &barrier);
     CHECK(fipsd_runtime_register(rt, fipsd_node_subsystem(a.node.node)) == 0);
     CHECK(fipsd_runtime_register(rt, fipsd_node_subsystem(b.node.node)) == 0);
     CHECK(fipsd_runtime_register(rt, fipsd_native_api_subsystem(a.api)) == 0);
@@ -553,6 +597,7 @@ int main(void)
     CHECK(fips_identity_npub(fipsd_node_identity(fipsd_node_get_context(b.node.node)), npub_b, sizeof npub_b) == FIPS_IDENTITY_OK);
     a.npub = npub_a; b.npub = npub_b;
     struct stat st; CHECK(lstat(path_a, &st) == 0 && S_ISSOCK(st.st_mode) && (st.st_mode & 0777) == 0770);
+    test_release_before_reap(&a, &barrier);
     test_listeners_and_ports(&a);
     test_refusals(&a);
     test_connect(&a);
@@ -576,6 +621,7 @@ int main(void)
     CHECK(raw_recv(c, buf, sizeof buf, NULL) == 0);
     close(lfd); close(ffd); close(c);
     fipsd_runtime_destroy(rt);
+    go_channel_free(barrier.entered); go_channel_free(barrier.resume);
     fipsd_native_api_destroy(a.api); fipsd_native_api_destroy(b.api);
     CHECK(lstat(path_a, &st) != 0 && lstat(path_b, &st) != 0);
     drain_events(&a.events); drain_events(&b.events);
