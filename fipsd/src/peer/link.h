@@ -20,6 +20,10 @@ fips_instant fipsd_active_peer_link_next_wake(const fipsd_active_peer *peer);
 fips_rekey_seal_refusal fipsd_active_peer_link_seal(fipsd_active_peer *peer,
     fips_instant now, fips_rekey_sealed *out);
 fips_rekey_view fipsd_active_peer_link_view(const fipsd_active_peer *peer);
+/* Borrowed live machine for the node's ordered output executor
+ * (fips_session_execute: prompt sealing and profile framing). NULL when no link
+ * is attached. Never copy, move or step it behind the dispatcher's back. */
+fips_rekey *fipsd_active_peer_link_machine(fipsd_active_peer *peer);
 void fipsd_active_peer_link_close(fipsd_active_peer *peer, fips_rekey_close reason,
     fips_rekey_outputs *out, fips_rekey_carry *carry);
 #endif

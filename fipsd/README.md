@@ -19,11 +19,12 @@ never to the core.
 | `cmake/BuildInfo.cmake` | Build-time capture of the git revision and target triple for the version strings. |
 
 `src/config/` loads and validates YAML, publishes immutable snapshots and
-consumes the runtime's SIGHUP reload channel. Not implemented yet: the control
-socket (`9keoz.3`), Tier B2 transports and node protocol handlers (`9keoz.6`). Parsing a setting does not claim
 consumes the runtime's SIGHUP reload channel. `src/control/` implements the
-Unix control socket (`9keoz.3`). Not implemented yet: transports and the node. Parsing a setting does not claim
-that its owning subsystem is implemented.
+Unix control socket (`9keoz.3`); `src/node/handlers/` implements the node
+protocol handlers (`9keoz.6`). Not implemented yet: Tier B2 network
+transports, the dataplane worker pool (`9keoz.7`) and the native/TUN host
+owners (B4). Parsing a setting does not claim that its owning subsystem is
+implemented.
 
 ### Command line (docs/reference/cli-fips.md upstream)
 
@@ -459,7 +460,7 @@ read-only identity/epoch, immutable network/peer snapshots, and the peer-command
 mailbox. Mutable peer/table/session state belongs only to the peer dispatcher;
 other actors send commands, never share mutable peers. Crypto completion handlers
 run on the node event dispatcher and must return acceptance commands to that
-owner. STP/bloom/routing/lookup handlers are deliberately left to `9keoz.6`.
+owner. The protocol handlers attach to that dispatcher (see below).
 Explicit `node.identity.nsec` is decoded by the core; otherwise a secure ephemeral
 identity is generated off-scheduler. A requested persistent identity without a
 key is refused visibly (Failed), never silently replaced by an ephemeral key;
@@ -519,6 +520,94 @@ and cancellation drain, injected monitor snapshots/wakes/backstop, and native
 kernel-socket opening plus an actual Ticker event. The native macOS/FreeBSD test
 cross-checks every `ifconfig -a` IP/prefix against read_system. Injected tests use
 channels and a manually driven backstop, not sleeps or timing-based completion.
+
+## Node protocol handlers (`nostrc-9keoz.6`)
+
+`src/node/handlers/` drives libfips-core's sans-IO machines from the node's
+**single dispatcher fiber**. `node/context.c`'s event loop now also performs the
+peer dispatcher's duties (`peer/dispatcher.c` exposes `wait_ms`/`command`/
+`service` for it): one `go_select` multiplexes transport events, netmon events,
+crypto results, the peer-command mailbox and the handlers' command mailbox with
+the nearest stored deadline. The handlers hook in through the `fipsd_node_options`
+seam (`attach`/`detach`/`wait_ms`/`poll`/`peer_effects`/`command`); `attach` runs
+in `dispatcher_start` before the fiber exists, so a started node always has a
+published snapshot, and `detach` runs on the fiber after the last event so links
+and sessions close with their Release outputs executed before the table is freed.
+
+| Upstream (`src/node/handlers`, `src/node`) | C file | Lines | Scope |
+| --- | --- | ---: | --- |
+| `handshake.rs` (2654), lifecycle dial/msg1 | `handshake.c` | 555 | Pending legs (`fipsd_peer_machine` + IK handshake owner), msg1 rate limit → `fips_fmp_rekey_read_msg1` → `fips_fmp_establish_inbound`, msg2 → `fips_fmp_establish_outbound`, promote/restart/replace/cross-connect, Disconnect, configured peers and durable retries |
+| `rekey.rs` (1098) | `rekey.c` | 354 | One `fips_session_executor` for link and session machines: Send/Prompt → wire, Bind/Unbind → receive-index map, Release → allocator, Installed/PeerRestarted settlement, deferred Deliver, link seal/send, encrypted frame ingress, link-message dispatch |
+| `session.rs` (3556) | `session.c` | 453 | `fips_session_table` (XK), strict FSP ingress, setup admission by the authenticated carrier, Ack/Msg3/Frame via `fips_fsp_rekey_receive`, pending/held datagrams, `fips_router_route` for origination and transit, routing signals, idle purge |
+| `tree.rs` (909) | `tree.c` | 181 | Signed announces, `fips_stp_receive_announce`/`periodic`/`remove_peer`, action execution (sign, announce, cache invalidation, backoff reset, filter refresh), per-peer announce interval, root-disagreement echo |
+| `bloom.rs` (489) | `bloom.c` | 110 | `fips_bloom_state` receive/refresh/sent, roles from the tree, delivery evidence from receiver reports |
+| `lookup.rs` (1151) | `lookup.c` | 214 | Request classification, signed target responses, transit forwarding, response verification, coordinate cache writes, retry ladder, held-datagram retry |
+| `mmp.rs` (944) + session MMP | `mmp.c` | 223 | Link sender/receiver reports and logs, SRTT-driven intervals, dead-link detection, session reports and path-MTU notifications |
+| `path.rs`/`path_intake.rs`/`path_control.rs` (2026) | `path.c` | 202 | One `fips_path_bundle` per peer: facts vtable from the registry, probe/ack/close inputs, encoded sends on the named path, endpoint switches through the table, `path_show`/`path_pin`/`path_unpin` |
+| `probe.rs` (546) | `probe.c` | 187 | Bounded diagnostic job registry over `fips_probe`, observations, actions, control rendering |
+| `timeout.rs` (766) + rx_loop tick | `timeout.c` | 79 | Timer wheel: nearest deadline over legs, sessions, paths and the maintenance tick; tick duties (tree, bloom, lookup, MMP, sessions, probes, caches, limiters, stats history) |
+| `native.rs`/`host_link.rs` (673) | `native.c` | 18 | Seams for B4: inbound datagrams become `FIPSD_NOTICE_DATAGRAM`; outbound is `fipsd_node_handlers_send` |
+| `netmon.rs` (228) | `netmon.c` | 18 | Network change → path presence seam, immediate heartbeats |
+| control `snapshot.rs`/`queries.rs` rows | `provider.c` | 540 | Immutable snapshot arena (typed rows + JSON projections with upstream field names) published via GoSwap; live commands enqueued to the dispatcher |
+| `mod.rs`/`reject.rs`/`diag.rs` plumbing | `handlers.c`, `internal.h` | 864 | Creation, storage, attach/detach, event entry points, notices, command mailbox, counters |
+
+Inbound path: transport `PACKET` → `fips_fmp_receive` gate → msg1/msg2 to
+`handshake.c`, established frames to the receive-index map → `link_step(Frame)`
+→ executor → deferred delivery → link-message dispatch by type byte
+(SessionDatagram, Sender/ReceiverReport, TreeAnnounce, FilterAnnounce,
+Lookup*, Disconnect, Heartbeat, Path*). Session datagrams for us go through
+`fips_fsp_receive` to the session machine; others through the router. Outbound:
+every link message is sealed by `fipsd_active_peer_link_seal` with its reserved
+counter, `fips_session_encode_sealed`, the transport's `send`, then `DataSent`.
+All crypto runs inline on the dispatcher behind `hs_link_send`/`hs_session_send_message`
+(the dataplane worker pool is `9keoz.7`). Each machine's output list is executed
+to completion before any nested step; deliveries are handed on afterwards.
+
+Deliberate policy notes: the receiver-index map is host state fed by Bind/
+Unbind; a link closed through `fipsd_active_peer_link_close` has its Release
+outputs executed by `hs_release_outputs` (no machine is required); a retransmitted
+IK msg1 is answered from the link's setup record rather than re-established; the
+STP delivery-ack tracking (`record_announce`/`check_announce`) is not yet fed
+(announces resend on the per-peer interval only); path interface presence is
+not mapped to transports (binder tasks own descriptors); the bloom send floor is
+the refresh pass counter.
+
+### Loopback transport and the two-node proof
+
+`node/transport_loopback.{c,h}` is an in-process datagram medium behind the
+`fipsd_transport` seam: endpoints deliver owned `PACKET` events to each other's
+node channel with `go_channel_send_with_context` against the destination's root
+context, plus an optional drop filter. `main.c` does not register it.
+
+`FipsdNodeTwoNodesTest` (`tests/test_node_two_nodes.c`): two nodes with seeded
+identities → `connect` → IK link established both ways → spanning tree converges
+(one root, depth 0/1, consistent `show_tree` on both) → filters exchanged → an
+application datagram opens an XK session and is delivered end to end, then the
+reverse direction → one session rekey and one link rekey complete (K bit true on
+both, traffic still flows) → control queries (`show_peers/sessions/links/mmp/
+routing/status/cache/bloom/tree`) read the live state → `disconnect` drops the
+link on both ends. Every assertion is a notice (`fipsd_node_handlers_notices`) or
+a published snapshot; waits are bounded channel selects, no sleeps. The proof
+lowers the rekey `after`/floor parameters (keeping the link floor above the
+machine's 5 s `young` window) through the handler configuration, not YAML.
+
+`FipsdNodeHandlersTest` (`tests/test_node_handlers.c`) adapts the upstream
+handler tests (`mmp.rs` silence/heartbeat pacing, `session.rs` held-packet fate,
+`timeout.rs` stranded release) and C-host contracts: single-node control seeds,
+msg2 loss with msg1 retransmission (metrics prove one msg2 and one promotion),
+dead-link detection on authenticated silence, pending-connection projection and
+handshake timeout, held datagram release without a route, and the live
+`probe_start/poll`, `path_show` and `disconnect` commands through the provider.
+Both run on two scheduler workers under ASan/UBSan and TSan.
+
+### Remaining for `9keoz.7`, `9keoz.8` and B4
+
+`9keoz.7`: move seal/open off the dispatcher into the worker pool behind the
+`hs_link_send`/`hs_link_frame` seams (explicit counters, Delegate/WorkerFrame
+inputs with `env.workers`). `9keoz.8`: real network transports (`connect_async`
+legs, discovery, interface presence into the path machines). B4: native API and
+IPv6 adapter owners replacing `native.c`/`host_link` notices, configured-peer
+address lists into path intake, ACL and rendezvous.
 
 ## Unix control socket (`nostrc-9keoz.3`)
 
@@ -582,7 +671,11 @@ execution deadline. They must enqueue to the single writer, select replies
 against cancellation/deadline and offload blocking work;
 they must not mutate a node from the connection fiber.
 
-| Commands | Implementation | No backing node provider yet |
+The node handlers install the provider once the node attaches (`main.c`);
+before that, or when the node fails to start (no identity), the empty seed
+views below remain the answer.
+
+| Commands | Implementation | Before the node attaches |
 | --- | --- | --- |
 | `show_status` | Identity, lifecycle/counts, forwarding, history sparklines | Error `node not yet initialized`; no invented identity or mesh estimate |
 | `show_acl`, `show_tree`, `show_bloom` | Snapshot projections plus counter families | Upstream pre-first-tick seed: empty ACL strings/tables, zero tree addresses, null root npub/uptree estimates, no root claim |

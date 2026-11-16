@@ -12,6 +12,7 @@
 #include "privilege.h"
 #include "runtime.h"
 #include "node/context.h"
+#include "node/handlers/handlers.h"
 
 #define MODULE "main"
 
@@ -132,10 +133,18 @@ int main(int argc, char **argv)
     fipsd_config_service service;
     fipsd_config_service_init(&service, snapshots, opts.config_path, log, log_file);
 
-    fipsd_node *node = fipsd_node_create(snapshots, NULL);
+    /* Protocol handlers run on the node's dispatcher fiber (nostrc-9keoz.6);
+     * the control provider reads their published snapshots. */
+    fipsd_node_handlers_config handlers_config;
+    fipsd_node_handlers_config_default(&handlers_config);
+    fipsd_node_handlers *handlers = fipsd_node_handlers_create(&handlers_config);
+    fipsd_node_options node_options = {0};
+    if (handlers) fipsd_node_handlers_install(handlers, &node_options);
+    fipsd_node *node = handlers ? fipsd_node_create(snapshots, &node_options) : NULL;
     fipsd_subsystem *node_subsystem = node ? fipsd_node_subsystem(node) : NULL;
     fipsd_control_service control;
-    fipsd_control_service_init(&control, snapshots, NULL);
+    fipsd_control_provider provider = handlers ? fipsd_node_handlers_provider(handlers) : (fipsd_control_provider){0};
+    fipsd_control_service_init(&control, snapshots, handlers ? &provider : NULL);
     bool control_enabled = fipsd_config_bool(fipsd_config_get(config, "node.control.enabled"));
 
     /* Host adapters for the core (time, entropy) are linked and ready for the
@@ -164,6 +173,8 @@ int main(int argc, char **argv)
         if (!state || !state->ready)
             FIPSD_WARN(MODULE, "node not ready (state=%d); Tier B2 transports are not registered; host remains available",
                        state ? (int)state->state : -1);
+        else if (fipsd_node_handlers_dial_configured(handlers) != 0)
+            FIPSD_WARN(MODULE, "configured peers could not be queued for dialing");
         go_refptr_release(&node_status);
         FIPSD_INFO(MODULE, "fipsd running");
         int status = fipsd_runtime_run(rt);
@@ -174,6 +185,7 @@ int main(int argc, char **argv)
     }
     fipsd_runtime_destroy(rt);
     fipsd_node_destroy(node);
+    fipsd_node_handlers_destroy(handlers);
     fipsd_control_service_clear(&control);
     go_swap_free(snapshots);
     FIPSD_INFO(MODULE, "fipsd shutdown complete (exit %d)", code);

@@ -85,3 +85,13 @@ target_sources(fipsd_lib PRIVATE
   src/control/control.c src/control/protocol.c src/control/queries.c)
 target_sources(fipsd_lib PRIVATE src/control/probe.c)
 target_sources(fipsd_lib PRIVATE src/control/render.c)
+
+# In-process loopback transport behind the transport seam (nostrc-9keoz.6).
+target_sources(fipsd_lib PRIVATE src/node/transport_loopback.c)
+# Node protocol handlers (nostrc-9keoz.6).
+target_sources(fipsd_lib PRIVATE
+  src/node/handlers/handlers.c src/node/handlers/handshake.c src/node/handlers/rekey.c
+  src/node/handlers/session.c src/node/handlers/tree.c src/node/handlers/bloom.c
+  src/node/handlers/lookup.c src/node/handlers/mmp.c src/node/handlers/path.c
+  src/node/handlers/probe.c src/node/handlers/timeout.c src/node/handlers/native.c
+  src/node/handlers/netmon.c src/node/handlers/provider.c)
