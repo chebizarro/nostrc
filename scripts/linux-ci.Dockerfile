@@ -29,6 +29,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libmicrohttpd-dev libcbor-dev python3-jsonschema python3-yaml \
     # fipsd YAML configuration (fips-ci.yml: orchestrator adds libyaml-dev)
     libyaml-dev \
+    # fips-gateway's nftables backend (optional: without it the executable
+    # is skipped; the hosted fips-ci jobs do not install it yet)
+    libnftables-dev \
     # local tooling: sources, debugging, the gate's tree sync and lock
     git python3 ca-certificates curl gdb rsync util-linux \
  && rm -rf /var/lib/apt/lists/*

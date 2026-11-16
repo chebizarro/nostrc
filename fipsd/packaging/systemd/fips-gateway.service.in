@@ -1,0 +1,38 @@
+# Generated from fipsd/packaging/systemd/fips-gateway.service.in by CMake; the
+# binary and config paths follow the install prefix. Upstream's
+# packaging/systemd/fips-gateway.service, renamed to the daemon unit here.
+#
+# The gateway is not enabled by default. Enable with:
+#   systemctl enable --now fips-gateway
+[Unit]
+Description=FIPS Outbound LAN Gateway
+Documentation=file://@CMAKE_INSTALL_FULL_DATADIR@/fips/fips.yaml.example
+After=fipsd.service
+Requires=fipsd.service
+ConditionPathExists=@CMAKE_INSTALL_FULL_SYSCONFDIR@/fips/fips.yaml
+
+[Service]
+Type=simple
+ExecStart=@CMAKE_INSTALL_FULL_BINDIR@/fips-gateway --config @CMAKE_INSTALL_FULL_SYSCONFDIR@/fips/fips.yaml
+Restart=on-failure
+RestartSec=5
+# Back off between automatic restarts: 5s, 7s, 10s, 15s, 21s, then 30s. The
+# step count is cleared by a stop then start, a restart while the unit is
+# running, or systemctl reset-failed. systemd before v254 ignores these two
+# keys and keeps the fixed 5s delay.
+RestartSteps=5
+RestartMaxDelaySec=30
+StandardOutput=journal
+StandardError=journal
+TimeoutStopSec=15
+
+# Hardening (the gateway needs CAP_NET_ADMIN for nftables, proxy NDP and the
+# pool route). The control socket lives in fipsd.service's /run/fips; the
+# pool state in /var/run/fips-gateway (tmpfs).
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=no
+
+[Install]
+WantedBy=multi-user.target
