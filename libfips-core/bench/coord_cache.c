@@ -1,6 +1,6 @@
 /* Port of upstream benches/coord_cache.rs: CoordCache::get hits and misses at
  * a small cache (1,000 entries) and at the default capacity (50,000), the
- * forwarding path's per-packet lookup. Host program: it reads a wall clock
+ * forwarding path's per-packet lookup. Host program: it reads a monotonic clock
  * and allocates; the core under test does neither. Not a ctest. */
 #include "../tests/fakes/host.h"
 #include <fips/cache/coord_cache.h>
@@ -8,10 +8,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
+#include "bench.h"
 
 #define SAMPLES 4096
-#define ITERATIONS 2000000
 
 static uint64_t seed = UINT64_C(0x123456789abcdef1);
 
@@ -25,24 +24,15 @@ static void addr(uint8_t out[16])
     }
 }
 
-static uint64_t now_ns(void)
-{
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (uint64_t)ts.tv_sec * UINT64_C(1000000000) + (uint64_t)ts.tv_nsec;
-}
-
-static double time_gets(const fips_coord_cache *cache, const uint8_t (*keys)[16],
-                        uintptr_t *sink)
+static void time_gets(const char *name, const fips_coord_cache *cache, const uint8_t (*keys)[16])
 {
     fips_instant at = fips_test_instant(2);
     size_t i = 0;
-    uint64_t start = now_ns();
-    for (long n = 0; n < ITERATIONS; ++n) {
+    BENCH(name, {
         i = (i + 1) % SAMPLES;
-        *sink += (uintptr_t)fips_coord_cache_get(cache, keys[i], at);
-    }
-    return (double)(now_ns() - start) / ITERATIONS;
+        const fips_cached_coord *result = fips_coord_cache_get(cache, keys[i], at);
+        bench_observe(result);
+    });
 }
 
 static int run(size_t n)
@@ -74,12 +64,15 @@ static int run(size_t n)
     }
     for (size_t i = 0; i < SAMPLES; ++i) memcpy(hits[i], keys[(i * 7919) % n], 16);
     for (size_t i = 0; i < SAMPLES; ++i) addr(misses[i]);
-    uintptr_t sink = 0;
-    double hit = time_gets(&cache, hits, &sink);
-    double miss = time_gets(&cache, misses, &sink);
-    printf("coord_cache/get_hit/%zu  %8.1f ns/op\n", n, hit);
-    printf("coord_cache/get_miss/%zu %8.1f ns/op\n", n, miss);
-    if (sink == 0) return 1; /* every hit returned a pointer */
+    for (size_t i = 0; i < SAMPLES; ++i) {
+        REQUIRE(fips_coord_cache_get(&cache, hits[i], fips_test_instant(2)) != NULL);
+        REQUIRE(fips_coord_cache_get(&cache, misses[i], fips_test_instant(2)) == NULL);
+    }
+    char name[80];
+    snprintf(name, sizeof(name), "coord_cache/get_hit/%zu", n);
+    time_gets(name, &cache, hits);
+    snprintf(name, sizeof(name), "coord_cache/get_miss/%zu", n);
+    time_gets(name, &cache, misses);
     free(slots);
     free(index);
     free(keys);

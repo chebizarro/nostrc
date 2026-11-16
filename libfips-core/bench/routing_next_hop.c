@@ -2,19 +2,17 @@
  * eight-entry paths, half advertise reachability plus four unrelated addrs.
  * Measures the real C selector, not a bench-local copy. Former snapshot path
  * clones only live entries (Rust Vec behavior), not C's unused coordinate
- * capacity. Counts track the baseline's explicit mallocs, not a process-global
- * allocator interposer; the real borrowed core has no allocation calls.
+ * capacity. C's real view uses arrays, whereas Rust's external bench mirrors its
+ * production HashMaps; this is not an identical-container comparison.
  * Host benchmark allocates/reads a clock; the core does neither. */
 #include <fips/proto/routing/core.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
-#define ITERATIONS 100000
+#include "bench.h"
 static fips_tree_coordinate coords[258];
 static fips_bloom_filter filters[256];
 static fips_routing_peer peers[256];
-static size_t allocs;
 static fips_node_addr addr(uint8_t tag, uint16_t i)
 { fips_node_addr a = {{0}}; a.bytes[0]=tag; a.bytes[1]=(uint8_t)i; a.bytes[2]=(uint8_t)(i>>8); return a; }
 static void coord(fips_tree_coordinate *c, fips_node_addr leaf, uint8_t tag)
@@ -24,8 +22,6 @@ static void coord(fips_tree_coordinate *c, fips_node_addr leaf, uint8_t tag)
     path[7]=addr(9,0);
     if (fips_tree_coordinate_from_addrs(c,path,8,NULL) != FIPS_OK) abort();
 }
-static uint64_t now_ns(void)
-{ struct timespec ts; clock_gettime(CLOCK_MONOTONIC,&ts); return (uint64_t)ts.tv_sec*UINT64_C(1000000000)+(uint64_t)ts.tv_nsec; }
 typedef struct former_candidate {
     fips_node_addr addr;
     fips_coord_entry *entries;
@@ -38,7 +34,7 @@ static bool former(const fips_routing_view *rv, const fips_node_addr *dest,
                    const fips_tree_coordinate *dc, const fips_tree_coordinate *mc, fips_node_addr *out)
 {
     fips_node_addr *addrs=malloc(rv->peer_count*sizeof(*addrs));
-    former_candidate *cs=malloc(rv->peer_count*sizeof(*cs)); allocs+=2;
+    former_candidate *cs=malloc(rv->peer_count*sizeof(*cs));
     if (!addrs || !cs) abort();
     for (size_t i=0; i<rv->peer_count; ++i) addrs[i]=rv->peers[i].addr;
     size_t len=0;
@@ -47,7 +43,7 @@ static bool former(const fips_routing_view *rv, const fips_node_addr *dest,
         if (!fips_bloom_contains(p->filter,dest)) continue;
         former_candidate *c=&cs[len++];
         c->addr=addrs[i]; c->cost=p->link_cost; c->len=p->coords->len;
-        c->entries=malloc(c->len*sizeof(*c->entries)); ++allocs;
+        c->entries=malloc(c->len*sizeof(*c->entries));
         if (!c->entries) abort();
         memcpy(c->entries,p->coords->entries,c->len*sizeof(*c->entries));
     }
@@ -83,15 +79,15 @@ int main(void)
         if (!former(&rv,&dest,&coords[256],&coords[257],&expected)) abort();
         if (!fips_select_best_candidate(&rv,&dest,&coords[256],&coords[257],&winner) || memcmp(expected.bytes,winner.bytes,16)) abort();
         for (unsigned mode=0; mode<2; ++mode) {
-            allocs=0; uint64_t start=now_ns(); unsigned sink=0;
-            for (unsigned j=0; j<ITERATIONS; ++j) {
+            char name[96];
+            snprintf(name, sizeof(name), "find_next_hop/%s/%zu",
+                     mode ? "current_borrowed" : "former_allocating", n);
+            BENCH(name, {
                 bool found=mode ? fips_select_best_candidate(&rv,&dest,&coords[256],&coords[257],&winner) : former(&rv,&dest,&coords[256],&coords[257],&winner);
-                if (!found) abort();
-                sink+=winner.bytes[0];
-            }
-            double ns=(double)(now_ns()-start)/ITERATIONS;
-            printf("routing_next_hop/%s/%zu survivors=%zu %.1f ns/op %.2f allocs/op sink=%u\n",
-                   mode ? "current_borrowed" : "former_allocating",n,survivors,ns,(double)allocs/ITERATIONS,sink);
+                REQUIRE(found && !memcmp(expected.bytes, winner.bytes, 16));
+                bench_observe(&winner);
+            });
+            fprintf(stderr, "%s survivors=%zu\n", name, survivors);
         }
     }
     return 0;

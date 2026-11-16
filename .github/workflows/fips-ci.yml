@@ -336,3 +336,157 @@ jobs:
         with:
           name: fips-nightly-chaos-netns
           path: build/chaos-results/
+  bench:
+    name: Linux • FIPS Release performance regression
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      CC: clang
+      CXX: clang++
+      CARGO_TERM_COLOR: never
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          ref: ${{ inputs.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify requested checkout
+        if: inputs.sha != ''
+        env:
+          REQUESTED_SHA: ${{ inputs.sha }}
+        run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
+      # The pin lives in one place: libfips-core/UPSTREAM.md.
+      - name: Read the upstream pin
+        id: pin
+        run: |
+          pin=$(sed -n 's/^Pinned commit: .\([0-9a-f]\{40\}\).*/\1/p' libfips-core/UPSTREAM.md)
+          test -n "$pin"
+          echo "pin=$pin" >> "$GITHUB_OUTPUT"
+      - name: Check out upstream FIPS at the pin
+        uses: actions/checkout@v4
+        with:
+          repository: jmcorgan/fips
+          ref: ${{ steps.pin.outputs.pin }}
+          path: upstream-fips
+          persist-credentials: false
+      - name: Verify the upstream checkout
+        env:
+          PIN: ${{ steps.pin.outputs.pin }}
+        run: test "$(git -C upstream-fips rev-parse HEAD)" = "$PIN"
+      # The built daemon is cached on OS, architecture, pin and toolchain; a hit
+      # skips the Rust build entirely, a miss rebuilds from the pinned source.
+      - name: Restore the pinned Rust daemon
+        id: daemon
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/fips-rust-target/release/fips
+          key: fips-daemon-${{ runner.os }}-${{ runner.arch }}-${{ steps.pin.outputs.pin }}-${{ hashFiles('upstream-fips/rust-toolchain.toml') }}-v1
+      - name: Restore the cargo registry
+        if: steps.daemon.outputs.cache-hit != 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: cargo-registry-${{ runner.os }}-${{ hashFiles('upstream-fips/Cargo.lock') }}
+      - name: Build the pinned Rust daemon
+        if: steps.daemon.outputs.cache-hit != 'true'
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/fips-rust-target
+        run: |
+          channel=$(sed -n 's/^channel = "\(.*\)"/\1/p' upstream-fips/rust-toolchain.toml)
+          test -n "$channel"
+          rustup toolchain install "$channel" --profile minimal
+          cd upstream-fips
+          cargo "+$channel" build --locked --release --bin fips
+      - name: Verify the Rust baseline pin
+        env:
+          PIN: ${{ steps.pin.outputs.pin }}
+        run: |
+          python3 - <<'PYBASE'
+          import json, os
+          baseline = json.load(open('fipsd/tests/perf_baseline.json'))
+          if baseline['rust_commit'] != os.environ['PIN']:
+              raise SystemExit('UPSTREAM.md differs from the immutable Rust performance baseline')
+          PYBASE
+      - name: Read the immutable C baseline revision
+        id: baseline
+        run: |
+          python3 - <<'PYBASE'
+          import json, os, re
+          baseline = json.load(open('fipsd/tests/perf_baseline.json'))
+          commit = baseline['reference_commit']
+          assert re.fullmatch(r'[0-9a-f]{40}', commit)
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
+              out.write(f'commit={commit}\n')
+          PYBASE
+      - name: Check out the C baseline
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.baseline.outputs.commit }}
+          path: perf-reference
+          submodules: recursive
+          persist-credentials: false
+      - name: Install dependencies (Linux)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake ninja-build pkg-config clang libclang-rt-18-dev libjansson-dev libyaml-dev libsecp256k1-dev libsodium-dev libssl-dev libcurl4-openssl-dev libwebsockets-dev libglib2.0-dev libsoup-3.0-dev libnsync-dev
+      - name: Apply identical test-only workload to the reference
+        # The baseline predates this harness. Never copy shipped source into it:
+        # both builds measure the same current workloads against their own core.
+        run: |
+          cp libfips-core/bench/* perf-reference/libfips-core/bench/
+          cp fipsd/tests/perf_native.c perf-reference/fipsd/tests/
+          cat >> perf-reference/fipsd/tests/CMakeLists.txt <<'CMAKE'
+          if(FIPS_ENABLE_BENCH)
+            add_executable(fipsd_perf_native perf_native.c)
+            target_link_libraries(fipsd_perf_native PRIVATE fipsnative_static Threads::Threads)
+            set_target_properties(fipsd_perf_native PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+            apply_warnings(fipsd_perf_native)
+            apply_sanitizers(fipsd_perf_native)
+          endif()
+          CMAKE
+      - name: Build candidate and reference (Release, Werror)
+        shell: bash
+        run: |
+          for source in "$PWD" "$PWD/perf-reference"; do
+            cmake -S "$source" -B "$source/build-bench" -G Ninja \
+              -DCMAKE_BUILD_TYPE=Release -DGO_WARNINGS_AS_ERRORS=ON -DFIPS_ENABLE_BENCH=ON \
+              -DBUILD_FIPS=ON -DBUILD_APPS=OFF -DBUILD_RELAYD=OFF \
+              -DBUILD_LIBHANAMI=OFF -DBUILD_LIBMARMOT=OFF -DBUILD_MARMOT_GOBJECT=OFF \
+              -DBUILD_NOSTR_GOBJECT=OFF -DBUILD_NOSTR_GTK=OFF -DSIGNET_ENABLE=OFF \
+              -DWITH_NOSTRDB=OFF -DLIBNOSTR_WITH_NOSTRDB=OFF
+            cmake --build "$source/build-bench" --parallel 3 --target fipsd fips_benches fipsd_perf_native
+          done
+      - name: Test the comparer (including injected 11 percent regression)
+        run: python3 fipsd/tests/test_perf_compare.py
+      - name: Measure three sequential runs per build
+        env:
+          BASELINE_COMMIT: ${{ steps.baseline.outputs.commit }}
+          RUST_COMMIT: ${{ steps.pin.outputs.pin }}
+        run: |
+          python3 fipsd/tests/perf_run.py --build "$PWD/perf-reference/build-bench" \
+            --rust "${{ runner.temp }}/fips-rust-target/release/fips" \
+            --source-commit "$BASELINE_COMMIT" --rust-commit "$RUST_COMMIT" \
+            --output "$PWD/bench-results/reference.json" \
+            --work-dir "${{ runner.temp }}/fips-perf"
+          python3 fipsd/tests/perf_run.py --build "$PWD/build-bench" \
+            --rust "${{ runner.temp }}/fips-rust-target/release/fips" \
+            --source-commit "$(git rev-parse HEAD)" --rust-commit "$RUST_COMMIT" \
+            --output "$PWD/bench-results/candidate.json" \
+            --work-dir "${{ runner.temp }}/fips-perf"
+      - name: Enforce the baseline's 10 percent limit
+        run: |
+          python3 fipsd/tests/perf_compare.py bench-results/candidate.json \
+            --baseline fipsd/tests/perf_baseline.json --reference bench-results/reference.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fips-bench-results
+          path: |
+            bench-results/
+            fipsd/tests/perf_baseline.json
+          if-no-files-found: error
