@@ -2,6 +2,7 @@
 #define _DARWIN_C_SOURCE 1 /* mkdtemp on macOS */
 #include "test_tmpdir.h"
 #include "privilege.h"
+#include "log.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -29,9 +30,114 @@ static int mode_of(const char *path, mode_t *mode, gid_t *gid)
     return 0;
 }
 
+typedef struct resolver_case {
+    int codes[3];
+    unsigned calls, found_at;
+    size_t caps[32];
+    int bad_name;
+} resolver_case;
+
+static int resolve_fake(void *ctx, const char *name, struct group *grp,
+                        char *buf, size_t cap, struct group **result)
+{
+    resolver_case *c = ctx;
+    unsigned i = c->calls++;
+    if (strcmp(name, "test-fips")) c->bad_name = 1;
+    if (i < 32) c->caps[i] = cap;
+    memset(buf, 0, cap);
+    *result = NULL;
+    int rc = c->codes[i < 3 ? i : 2];
+    if (!rc && c->calls == c->found_at) {
+        grp->gr_gid = 1234;
+        *result = grp;
+    }
+    return rc;
+}
+
+typedef struct warnings {
+    unsigned count;
+    char line[FIPSD_LOG_LINE_MAX];
+} warnings;
+
+static int capture_warning(void *ctx, const char *line, size_t len)
+{
+    warnings *w = ctx;
+    ++w->count;
+    snprintf(w->line, sizeof(w->line), "%.*s", (int)len, line);
+    return 0;
+}
+
+static int test_resolver(void)
+{
+    warnings w = {0};
+    fipsd_log_sink sink = {.write = capture_warning, .ctx = &w};
+    fipsd_log *log = fipsd_log_create(FIPSD_LOG_WARN, &sink);
+    CHECK(log);
+    fipsd_log_set_default(log);
+    struct {
+        int codes[3];
+        unsigned found_at, calls;
+        int outcome;
+        const char *warning;
+    } cases[] = {
+        {{0}, 1, 1, 1, NULL},
+        {{0}, 0, 1, 0, "group not found"},
+        {{ENOENT}, 0, 1, 0, "group not found"},
+        {{EIO, 0}, 2, 2, 1, NULL},
+        {{EIO, EIO}, 0, 2, 0, strerror(EIO)},
+        {{EAGAIN, EAGAIN}, 0, 2, 0, strerror(EAGAIN)},
+        {{ERANGE, ERANGE, 0}, 3, 3, 1, NULL},
+        {{EIO, ENOENT}, 0, 2, 0, "group not found"},
+        {{EINVAL}, 0, 1, -1, NULL},
+        {{ENOMEM}, 0, 1, -1, NULL},
+    };
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+        resolver_case c = {.found_at = cases[i].found_at};
+        memcpy(c.codes, cases[i].codes, sizeof(c.codes));
+        memset(&w, 0, sizeof(w));
+        char err[256] = "stale";
+        gid_t gid = (gid_t)-1;
+        CHECK(fipsd_privilege_resolve_group_with("test-fips", &gid, err, sizeof(err),
+                                                resolve_fake, &c) == cases[i].outcome);
+        CHECK(c.calls == cases[i].calls && !c.bad_name);
+        CHECK(w.count == (cases[i].warning ? 1u : 0u));
+        if (cases[i].outcome >= 0) {
+            CHECK(gid == (cases[i].outcome ? 1234 : getegid()) && !err[0]);
+        } else CHECK(err[0] && gid == (gid_t)-1);
+        if (cases[i].warning) {
+            CHECK(strstr(w.line, "WARN") && strstr(w.line, "test-fips"));
+            CHECK(strstr(w.line, cases[i].warning) && strstr(w.line, "using effective group"));
+        }
+        if (c.codes[0] == ERANGE) {
+            CHECK(c.caps[1] == c.caps[0] * 2 && c.caps[2] == c.caps[1] * 2);
+        }
+    }
+    /* Persistent ERANGE is bounded, then gets one final retry at the cap. */
+    resolver_case c = {.codes = {ERANGE, ERANGE, ERANGE}};
+    char err[256]; gid_t gid = (gid_t)-1;
+    memset(&w, 0, sizeof(w));
+    CHECK(fipsd_privilege_resolve_group_with("test-fips", &gid, err, sizeof(err),
+                                            resolve_fake, &c) == 0);
+    CHECK(c.calls >= 2 && c.calls <= 32 && gid == getegid());
+    CHECK(c.caps[c.calls - 1] == (1u << 20) && c.caps[c.calls - 2] == (1u << 20));
+    CHECK(w.count == 1 && strstr(w.line, strerror(ERANGE)));
+
+    const char *invalid[] = {NULL, "", "bad group", "bad/group", ":garbage", "-fips", "fips\n"};
+    for (size_t i = 0; i < sizeof(invalid) / sizeof(invalid[0]); ++i) {
+        c.calls = 0;
+        CHECK(fipsd_privilege_resolve_group_with(invalid[i], &gid, err, sizeof(err),
+                                                resolve_fake, &c) == -1);
+        CHECK(errno == EINVAL && err[0] && c.calls == 0);
+    }
+    fipsd_log_set_default(NULL);
+    fipsd_log_destroy(log);
+    return 0;
+}
+
 int main(void)
 {
     char err[512];
+    CHECK(test_resolver() == 0);
 
     /* umask: applied and reported. */
     mode_t before = umask(0022);
@@ -42,6 +148,7 @@ int main(void)
     /* Group lookup. */
     gid_t gid = (gid_t)-1;
     CHECK(fipsd_privilege_resolve_group("fipsd-no-such-group-xyz", &gid, err, sizeof(err)) == 0);
+    CHECK(gid == getegid() && !err[0]);
     CHECK(fipsd_privilege_resolve_group("", &gid, err, sizeof(err)) == -1 && err[0] != '\0');
     CHECK(fipsd_privilege_resolve_group(NULL, &gid, err, sizeof(err)) == -1);
     gid_t fips_gid = (gid_t)-1;

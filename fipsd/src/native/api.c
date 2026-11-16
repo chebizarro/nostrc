@@ -808,7 +808,6 @@ static int bind_listener(fipsd_native_api *a)
     gid_t gid = getegid();
     int group = fipsd_privilege_resolve_group(FIPSD_SOCKET_GROUP, &gid, err, sizeof err);
     if (group < 0) { FIPSD_ERROR(MODULE, "%s", err); return -1; }
-    if (!group) FIPSD_WARN(MODULE, "fips group absent; retaining effective group %u", (unsigned)gid);
     if (private_parent(a->path, gid, err, sizeof err) != 0) {
         FIPSD_ERROR(MODULE, "cannot secure socket parent: %s %s", err, strerror(errno)); return -1;
     }
