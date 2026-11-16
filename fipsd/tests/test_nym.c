@@ -85,8 +85,8 @@ static void config(void)
 typedef struct fixture {
     socks5_fixture proxy;
     fipsd_runtime *rt;
-    fipsd_transport *nym, *absent, *tcp;
-    GoChannel *en, *ea, *et, *done;
+    fipsd_transport *nym, *slow, *absent, *tcp;
+    GoChannel *en, *es, *ea, *et, *done;
 } fixture;
 static int start(fipsd_subsystem *sub, fipsd_runtime *rt)
 {
@@ -95,20 +95,22 @@ static int start(fipsd_subsystem *sub, fipsd_runtime *rt)
     /* Before the deferred start: nothing dials. */
     fips_transport_addr x; assert(fips_transport_addr_from_string("127.0.0.1:9", 11, &x) == FIPS_OK);
     assert(f->nym->ops->connect_async(f->nym, &x) == -1);
-    return f->nym->ops->start_async(f->nym, rt, NULL, f->en) || f->absent->ops->start_async(f->absent, rt, NULL, f->ea);
+    return f->nym->ops->start_async(f->nym, rt, NULL, f->en) || f->slow->ops->start_async(f->slow, rt, NULL, f->es) ||
+        f->absent->ops->start_async(f->absent, rt, NULL, f->ea);
 }
 static void stop(fipsd_subsystem *sub, fipsd_runtime *rt)
 {
     (void)rt; fixture *f = sub->user;
-    f->nym->ops->stop(f->nym); f->absent->ops->stop(f->absent); f->tcp->ops->stop(f->tcp);
+    f->nym->ops->stop(f->nym); f->slow->ops->stop(f->slow); f->absent->ops->stop(f->absent); f->tcp->ops->stop(f->tcp);
 }
 static void scenario(void *arg)
 {
     fixture *f = arg;
     /* Readiness: the probe reached the client; the absent one gave up after its timeout. */
-    void *v; assert(go_channel_receive(fipsd_nym_ready(f->nym), &v) != 0 || go_channel_is_closed(fipsd_nym_ready(f->nym)));
+    void *v; (void)go_channel_receive(fipsd_nym_ready(f->nym), &v); /* closed once the probe ended */
     assert(fipsd_nym_proxy_ready(f->nym));
     assert(receive(fipsd_nym_bound(f->nym)) && receive(fipsd_tcp_bound(f->tcp)));
+    (void)go_channel_receive(fipsd_nym_ready(f->slow), &v); assert(receive(fipsd_nym_bound(f->slow)));
     (void)go_channel_receive(fipsd_nym_ready(f->absent), &v);
     assert(!fipsd_nym_proxy_ready(f->absent) && receive(fipsd_nym_bound(f->absent)));
     fips_transport_addr target; assert(fipsd_tcp_address(f->tcp, &target));
@@ -144,10 +146,11 @@ static void scenario(void *arg)
     assert(f->nym->ops->connect_async(f->nym, &target) == 0);
     free(event(f->en, FIPSD_TRANSPORT_DISCONNECTED)); drained(f->nym);
     s = stats(f->nym); assert(s.socks5_errors == 2 && !s.connect_refused);
+    /* Only `slow` has a short connect deadline: a slow success elsewhere is never a timeout. */
     socks5_fixture_behave(&f->proxy, S5_STALL, 0);
-    assert(f->nym->ops->connect_async(f->nym, &target) == 0);
-    free(event(f->en, FIPSD_TRANSPORT_DISCONNECTED)); drained(f->nym);
-    assert(stats(f->nym).connect_timeouts == 1);
+    assert(f->slow->ops->connect_async(f->slow, &target) == 0);
+    free(event(f->es, FIPSD_TRANSPORT_DISCONNECTED)); drained(f->slow);
+    assert(stats(f->slow).connect_timeouts == 1 && !stats(f->slow).socks5_errors && !stats(f->nym).connect_timeouts);
     assert(go_channel_receive(f->proxy.stalled, &v) == 0);
     /* The absent client: dials fail as SOCKS5 errors until it appears. */
     assert(f->absent->ops->connect_async(f->absent, &target) == 0);
@@ -161,15 +164,17 @@ int main(void)
 {
     (void)fipsd_test_tmpdir(NULL);
     config();
-    fixture f = {.en = go_channel_create(64), .ea = go_channel_create(64), .et = go_channel_create(64), .done = go_channel_create(1)};
+    fixture f = {.en = go_channel_create(64), .es = go_channel_create(64), .ea = go_channel_create(64),
+        .et = go_channel_create(64), .done = go_channel_create(1)};
     socks5_fixture_start(&f.proxy);
-    fipsd_nym_config c; fipsd_nym_config_default(&c); c.socks5_addr = f.proxy.addr; c.connect_timeout_ms = 300;
+    fipsd_nym_config c; fipsd_nym_config_default(&c); c.socks5_addr = f.proxy.addr;
     f.nym = fipsd_nym_create((fips_transport_id){1}, "nym", &c);
-    c.socks5_addr = "127.0.0.1:1"; c.startup_timeout_secs = 0;
+    c.connect_timeout_ms = 300; f.slow = fipsd_nym_create((fips_transport_id){4}, "slow", &c);
+    c.connect_timeout_ms = 300000; c.socks5_addr = "127.0.0.1:1"; c.startup_timeout_secs = 0;
     f.absent = fipsd_nym_create((fips_transport_id){2}, "absent", &c);
     fipsd_tcp_config tc; fipsd_tcp_config_default(&tc); tc.bind_addr = "127.0.0.1:0";
     f.tcp = fipsd_tcp_create((fips_transport_id){3}, "tcp", &tc);
-    assert(f.nym && f.absent && f.tcp);
+    assert(f.nym && f.slow && f.absent && f.tcp);
     fipsd_runtime_config rc; fipsd_runtime_config_default(&rc); rc.workers = 2; rc.handle_signals = false;
     fipsd_runtime *rt = fipsd_runtime_create(&rc); assert(rt);
     fipsd_subsystem sub = {.name = "nym-test", .start = start, .stop = stop, .user = &f};
@@ -178,10 +183,10 @@ int main(void)
     fipsd_runtime_shutdown(rt); assert(fipsd_runtime_run(rt) == FIPSD_RUN_OK);
     fipsd_runtime_destroy(rt);
     assert(!stats(f.nym).pool_outbound);
-    fipsd_nym_destroy(f.nym); fipsd_nym_destroy(f.absent); fipsd_tcp_destroy(f.tcp);
+    fipsd_nym_destroy(f.nym); fipsd_nym_destroy(f.slow); fipsd_nym_destroy(f.absent); fipsd_tcp_destroy(f.tcp);
     socks5_fixture_stop(&f.proxy);
-    GoChannel *channels[] = {f.en, f.ea, f.et, f.done};
-    for (size_t i = 0; i < 4; ++i) { void *v; while (go_channel_try_receive(channels[i], &v) == 0) free(v); go_channel_unref(channels[i]); }
+    GoChannel *channels[] = {f.en, f.es, f.ea, f.et, f.done};
+    for (size_t i = 0; i < 5; ++i) { void *v; while (go_channel_try_receive(channels[i], &v) == 0) free(v); go_channel_unref(channels[i]); }
     return 0;
 }
 #endif

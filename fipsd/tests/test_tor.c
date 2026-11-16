@@ -244,7 +244,9 @@ static void dial_and_mtu(fixture *f)
 }
 static void errors(fixture *f)
 {
-    fipsd_transport *E = f->t[0], *F = f->t[1], *T = f->t[2];
+    /* E and F keep the 120 s default so a slow handshake is never a timeout;
+     * only S, the stall case, has a short connect deadline. */
+    fipsd_transport *E = f->t[0], *F = f->t[1], *T = f->t[2], *S = f->t[3];
     fips_transport_addr target = listener(T), lazy = addr_of("localhost:80");
     assert(E->ops->connect_async(E, &lazy) == -1); /* tor requires a fully qualified hostname */
     uint8_t msg[114] = {1, 0, 110, 0};
@@ -262,10 +264,11 @@ static void errors(fixture *f)
     free(event(f->e[0], FIPSD_TRANSPORT_DISCONNECTED)); drained(E);
     assert(stats(E).socks5_errors == 2);
     socks5_fixture_behave(&f->proxy, S5_STALL, 0);
-    assert(E->ops->connect_async(E, &target) == 0);
-    free(event(f->e[0], FIPSD_TRANSPORT_DISCONNECTED)); drained(E);
-    assert(stats(E).connect_timeouts == 1 && stats(E).socks5_errors == 2);
+    assert(S->ops->connect_async(S, &target) == 0);
+    free(event(f->e[3], FIPSD_TRANSPORT_DISCONNECTED)); drained(S);
+    assert(stats(S).connect_timeouts == 1 && !stats(S).socks5_errors && !stats(S).connect_refused);
     void *v; assert(go_channel_receive(f->proxy.stalled, &v) == 0);
+    assert(!stats(E).connect_timeouts && stats(E).socks5_errors == 2);
     /* An unreachable proxy is a SOCKS5 error, never the peer refusing. */
     assert(F->ops->connect_async(F, &target) == 0);
     free(event(f->e[1], FIPSD_TRANSPORT_DISCONNECTED));
@@ -286,12 +289,15 @@ static int raw_connect(const fips_transport_addr *to)
 }
 static void inbound(fixture *f)
 {
-    fipsd_transport *G = f->t[0];
-    fips_transport_addr g = listener(G);
+    /* G: max_inbound_connections 1 with the default 30 s first-frame
+     * deadline, so the held slot cannot expire under the cap check. */
+    fipsd_transport *G = f->t[0], *G2 = f->t[1];
+    fips_transport_addr g = listener(G), g2 = listener(G2);
     int held = raw_connect(&g), rejected = raw_connect(&g); uint8_t byte;
-    assert(gof_read(rejected, &byte, 1) <= 0); tcp_fd_close(rejected); /* max_inbound_connections = 1 */
-    free(event(f->e[0], FIPSD_TRANSPORT_DISCONNECTED)); /* the silent one: first-frame deadline */
-    tcp_fd_close(held); drained(G);
+    assert(gof_read(rejected, &byte, 1) <= 0); tcp_fd_close(rejected);
+    assert(stats(G).connections_rejected == 1 && stats(G).pool_inbound == 1);
+    tcp_fd_close(held);
+    free(event(f->e[0], FIPSD_TRANSPORT_DISCONNECTED)); drained(G);
     int next = raw_connect(&g);
     uint8_t msg[114] = {1, 0, 110, 0};
     assert(gof_write(next, msg, sizeof msg) == sizeof msg);
@@ -300,14 +306,19 @@ static void inbound(fixture *f)
     assert(s.connections_rejected == 1 && s.connections_accepted == 2 && s.pool_inbound == 1 && !s.recv_errors);
     tcp_fd_close(next);
     free(event(f->e[0], FIPSD_TRANSPORT_DISCONNECTED));
+    /* G2: a silent onion connection loses its slot at the first-frame deadline. */
+    int silent = raw_connect(&g2);
+    free(event(f->e[1], FIPSD_TRANSPORT_DISCONNECTED));
+    assert(gof_read(silent, &byte, 1) <= 0); tcp_fd_close(silent); drained(G2);
+    assert(atomic_load(&G2->shared->diagnostics.deadlines) == 1 && !stats(G2).recv_errors && !stats(G2).pool_inbound);
     /* Directory mode needs Tor's hostname file, holding an onion name. */
     fipsd_tor_config c = base("directory", f->proxy.addr, 1400);
     c.hostname_file = "/nonexistent/fips/hostname"; c.bind_addr = "127.0.0.1:0";
     fipsd_transport *missing = fipsd_tor_create((fips_transport_id){10}, "missing", &c); assert(missing);
     c.hostname_file = write_file("bad.hostname", "not-an-onion\n", 13);
     fipsd_transport *bad = fipsd_tor_create((fips_transport_id){11}, "bad", &c); assert(bad);
-    assert(missing->ops->start_async(missing, f->rt, NULL, f->e[1]) == -1);
-    assert(bad->ops->start_async(bad, f->rt, NULL, f->e[1]) == -1);
+    assert(missing->ops->start_async(missing, f->rt, NULL, f->e[4]) == -1);
+    assert(bad->ops->start_async(bad, f->rt, NULL, f->e[5]) == -1);
     f->t[4] = missing; f->t[5] = bad; /* destroyed after the runtime joins */
     puts("onion listener: inbound cap, first-frame deadline releases the slot, hostname file required and checked: ok");
 }
@@ -438,17 +449,20 @@ static void lifecycle(unsigned mode)
         tc.mtu = 1400; f.t[3] = fipsd_tcp_create((fips_transport_id){4}, "d", &tc);
         f.count = 4;
     } else if (mode == 1) {
-        fipsd_tor_config c = base("socks5", f.proxy.addr, 1400); c.connect_timeout_ms = 300;
+        fipsd_tor_config c = base("socks5", f.proxy.addr, 1400);
         f.t[0] = fipsd_tor_create((fips_transport_id){1}, "e", &c);
-        c.socks5_addr = "127.0.0.1:1"; f.t[1] = fipsd_tor_create((fips_transport_id){2}, "f", &c);
+        c.connect_timeout_ms = 300; f.t[3] = fipsd_tor_create((fips_transport_id){4}, "s", &c);
+        c.connect_timeout_ms = 120000; c.socks5_addr = "127.0.0.1:1"; f.t[1] = fipsd_tor_create((fips_transport_id){2}, "f", &c);
         f.t[2] = fipsd_tcp_create((fips_transport_id){3}, "t", &tc);
-        f.count = 3;
+        f.count = 4;
     } else if (mode == 2) {
         fipsd_tor_config c = base("directory", f.proxy.addr, 1400);
         c.hostname_file = write_file("g.hostname", ONION_A "\n", strlen(ONION_A) + 1); c.bind_addr = "127.0.0.1:0";
-        c.max_inbound_connections = 1; c.first_frame_ms = 200;
+        c.max_inbound_connections = 1;
         f.t[0] = fipsd_tor_create((fips_transport_id){1}, "g", &c);
-        f.t[1] = fipsd_tcp_create((fips_transport_id){2}, "h", &tc);
+        c.max_inbound_connections = 64; c.first_frame_ms = 200;
+        c.hostname_file = write_file("g2.hostname", ONION_B "\n", strlen(ONION_B) + 1);
+        f.t[1] = fipsd_tor_create((fips_transport_id){2}, "g2", &c);
         f.count = 2;
     } else {
         fipsd_tor_config c = base("socks5", f.proxy.addr, 1400);
@@ -463,7 +477,7 @@ static void lifecycle(unsigned mode)
     void *result = receive(f.done); assert(result);
     fipsd_runtime_shutdown(rt); assert(fipsd_runtime_run(rt) == FIPSD_RUN_OK);
     fipsd_runtime_destroy(rt);
-    size_t total = mode == 0 ? 4 : mode == 1 ? 3 : 6;
+    size_t total = mode <= 1 ? 4 : 6;
     for (size_t i = 0; i < total; ++i) {
         fipsd_transport *t = f.t[i]; if (!t) continue;
         assert(!atomic_load(&t->shared->stats.pool_outbound) && !atomic_load(&t->shared->stats.pool_inbound));
