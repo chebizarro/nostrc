@@ -3,6 +3,20 @@
  * with MMP-derived link costs, and the returned actions are executed in order. */
 #include "node/handlers/internal.h"
 
+/* Read accepted MMP metrics, not the raw last report: stale reports must not
+ * confirm delivery, and installing a new link epoch resets these metrics. */
+static bool link_evidence(peer_rec *rec, fips_stp_link_evidence *out)
+{
+    fips_rekey *m = fipsd_active_peer_link_machine(rec->peer);
+    fips_rekey_view v = fipsd_active_peer_link_view(rec->peer);
+    if (!m || !v.current.present) return false;
+    *out = (fips_stp_link_evidence){.epoch = v.current.tag, .next_counter = fips_rekey_sent(m)};
+    fips_mmp_peer_state *mmp = fipsd_active_peer_mmp(rec->peer);
+    if (mmp) out->has_rr = fips_mmp_metrics_rr_counters(&mmp->metrics,
+        &out->rr.highest, &out->rr.received, &out->rr.reordered);
+    return true;
+}
+
 static bool sign_declaration(handlers *h)
 {
     fips_parent_declaration *d = fips_tree_state_my_declaration_mut(h->tree);
@@ -152,9 +166,16 @@ bool hs_tree_send_announce(handlers *h, peer_rec *rec, bool force)
     a->ancestry = *fips_tree_state_my_coords(h->tree);
     fips_writer w; fips_writer_init(&w, h->tx_msg, sizeof h->tx_msg);
     if (fips_tree_announce_encode(a, &w, NULL) != FIPS_OK) return false;
+    uint64_t sequence = a->declaration.sequence;
     if (!hs_link_send(h, rec, h->tx_msg, fips_writer_len(&w))) { rec->tree_pending = true; return false; }
     rec->last_tree_announce = now; rec->tree_pending = false; ++rec->tree_sent; ++h->counters.tree_sent;
     fipsd_peer_data_tree_sent(fipsd_active_peer_data(rec->peer), hs_now_ms(h));
+    /* Like upstream, sample after the successful encrypted link send. */
+    fips_stp_link_evidence link;
+    if (link_evidence(rec, &link) &&
+        fips_tree_state_record_announce(h->tree, rec->addr, sequence,
+            link.next_counter ? link.next_counter - 1 : 0, &link, hs_now(h)) != FIPS_OK)
+        FIPSD_WARN(HMOD, "tree announce delivery tracking storage exhausted");
     return true;
 }
 void hs_tree_peer_added(handlers *h, peer_rec *rec) { (void)hs_tree_send_announce(h, rec, true); }
@@ -169,6 +190,15 @@ void hs_tree_peer_removed(handlers *h, peer_rec *rec)
 }
 void hs_tree_tick(handlers *h, fips_instant now)
 {
+    for (size_t i = 0; i < h->cfg.peer_capacity; ++i) {
+        peer_rec *rec = &h->recs[i];
+        fips_stp_link_evidence link;
+        fips_stp_resend_reason reason;
+        if (rec->used && fips_tree_state_announce_outstanding(h->tree, rec->addr) &&
+            link_evidence(rec, &link) &&
+            fips_tree_state_check_announce(h->tree, rec->addr, &link, now, &reason))
+            rec->tree_pending = true;
+    }
     for (size_t i = 0; i < h->cfg.peer_capacity; ++i)
         if (h->recs[i].used && h->recs[i].tree_pending) (void)hs_tree_send_announce(h, &h->recs[i], false);
     if (h->cfg.tree_reeval_ms && (!h->last_reeval.ops || hs_elapsed_ms(now, h->last_reeval) >= h->cfg.tree_reeval_ms)) {

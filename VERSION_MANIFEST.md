@@ -1680,3 +1680,7 @@ nostrc-9keoz.5: libgo remains 0.3.0 Unreleased; PATCH-class errno
 TLS reacquisition plus relaxed scalar access for shared OS-worker errno cells
 fixes the native netmon TSan regression
 without an installed API change and folds into the existing unreleased version.
+
+nostrc-9keoz.9: fipsd stays 0.1.0 Unreleased; internal STP delivery-ack wiring
+and regression tests fold into the initial unreleased version; no public API,
+wire format, release or tag change.

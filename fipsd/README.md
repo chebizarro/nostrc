@@ -566,10 +566,10 @@ to completion before any nested step; deliveries are handed on afterwards.
 Deliberate policy notes: the receiver-index map is host state fed by Bind/
 Unbind; a link closed through `fipsd_active_peer_link_close` has its Release
 outputs executed by `hs_release_outputs` (no machine is required); a retransmitted
-IK msg1 is answered from the link's setup record rather than re-established; the
-STP delivery-ack tracking (`record_announce`/`check_announce`) is not yet fed
-(announces resend on the per-peer interval only); path interface presence is
-not mapped to transports (binder tasks own descriptors); the bloom send floor is
+IK msg1 is answered from the link's setup record rather than re-established;
+STP announces stay outstanding until accepted MMP receiver reports confirm
+delivery, with upstream loss/unverified retry budgets and backoff; path interface
+presence is not mapped to transports (binder tasks own descriptors); the bloom send floor is
 the refresh pass counter.
 
 ### Loopback transport and the two-node proof
