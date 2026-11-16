@@ -11,7 +11,7 @@ nostrc_describe_test(FipsdCliTest OWNER fipsd TARGETS fipsd
   INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/cli.cmake")
 
 function(fipsd_unit_test target source)
-  add_executable(${target} ${source})
+  add_executable(${target} ${source} test_tmpdir.c)
   target_link_libraries(${target} PRIVATE fipsd_lib)
   set_target_properties(${target} PROPERTIES
     C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
@@ -148,8 +148,7 @@ nostrc_describe_test(FipsdNodeHandlerFailureTest OWNER fipsd TARGETS fipsd_node_
 # Control protocol uses the production listener/dispatcher and retained provider.
 fipsd_unit_test(fipsd_control_test test_control.c)
 target_compile_definitions(fipsd_control_test PRIVATE
-  FIPSD_CONTROL_GOLDEN="${CMAKE_CURRENT_SOURCE_DIR}/control_golden"
-  FIPSD_CONTROL_TMP="${CMAKE_SOURCE_DIR}")
+  FIPSD_CONTROL_GOLDEN="${CMAKE_CURRENT_SOURCE_DIR}/control_golden")
 add_dependencies(fipsd_tests fipsd_control_test)
 add_test(NAME FipsdControlTest COMMAND fipsd_control_test)
 set_tests_properties(FipsdControlTest PROPERTIES TIMEOUT 60 LABELS "fips;unit;control"
@@ -162,15 +161,17 @@ nostrc_describe_test(FipsdControlTest OWNER fipsd TARGETS fipsd_control_test
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 set(FIPSD_UPSTREAM_CONTROL_DIR "" CACHE PATH "Read-only pinned Rust FIPS checkout for fipsctl interop")
 set(FIPSD_FIPSCTL_EXECUTABLE "" CACHE FILEPATH "Already-built pinned Rust fipsctl (optional)")
-add_test(NAME FipsdControlInteropTest COMMAND "${Python3_EXECUTABLE}"
+fipsd_unit_test(fipsd_test_tmpdir_run test_tmpdir_run.c)
+add_dependencies(fipsd_tests fipsd_test_tmpdir_run)
+add_test(NAME FipsdControlInteropTest COMMAND fipsd_test_tmpdir_run "/control.sock"
+  "${Python3_EXECUTABLE}"
   "${CMAKE_CURRENT_SOURCE_DIR}/control_interop.py"
   --fipsd "$<TARGET_FILE:fipsd>" --upstream "${FIPSD_UPSTREAM_CONTROL_DIR}"
   --fipsctl "${FIPSD_FIPSCTL_EXECUTABLE}"
-  --cargo-target "${CMAKE_CURRENT_BINARY_DIR}/cargo-control"
-  --temp-root "${CMAKE_SOURCE_DIR}")
+  --cargo-target "${CMAKE_CURRENT_BINARY_DIR}/cargo-control")
 set_tests_properties(FipsdControlInteropTest PROPERTIES TIMEOUT 300 SKIP_RETURN_CODE 77
   LABELS "fips;control;interop")
-nostrc_describe_test(FipsdControlInteropTest OWNER fipsd TARGETS fipsd
+nostrc_describe_test(FipsdControlInteropTest OWNER fipsd TARGETS fipsd fipsd_test_tmpdir_run
   INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/control_interop.py")
 
 # Node protocol handlers (nostrc-9keoz.6): two-node loopback proof and the

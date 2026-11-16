@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #define _DARWIN_C_SOURCE 1 /* mkdtemp on macOS */
+#include "test_tmpdir.h"
 #include "privilege.h"
 
 #include <errno.h>
@@ -48,8 +49,7 @@ int main(void)
     CHECK(have_fips >= 0);
 
     /* Temp layout: <dir>/run/control.sock, parent 0700 to start. */
-    char tmpl[] = "/tmp/fipsd-priv.XXXXXX";
-    char *dir = mkdtemp(tmpl);
+    const char *dir = fipsd_test_tmpdir("/run/control.sock");
     CHECK(dir != NULL);
     char run[PATH_MAX], sock[PATH_MAX], link[PATH_MAX], file[PATH_MAX];
     snprintf(run, sizeof(run), "%s/run", dir);

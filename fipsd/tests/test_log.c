@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #define _DARWIN_C_SOURCE 1 /* mkdtemp on macOS */
+#include "test_tmpdir.h"
 #include "log.h"
 
 #include <errno.h>
@@ -179,8 +180,7 @@ static long write_until_bytes(fipsd_log *log, long seq, uint64_t total)
 
 static int test_rolling(void)
 {
-    char tmpl[] = "/tmp/fipsd-log-test.XXXXXX";
-    char *dir = mkdtemp(tmpl);
+    const char *dir = fipsd_test_tmpdir(NULL);
     CHECK(dir != NULL);
     char path[PATH_MAX];
     snprintf(path, sizeof(path), "%s/nested/dir/fipsd.log", dir);

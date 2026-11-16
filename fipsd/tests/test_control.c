@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #define _DARWIN_C_SOURCE 1
+#include "test_tmpdir.h"
 #include "control/control.h"
 #include "control/probe.h"
 #include "privilege.h"
@@ -448,7 +449,7 @@ static void test_socket(const char *tmp)
 }
 int main(void)
 {
-    char tmp[4096]; snprintf(tmp,sizeof(tmp),"%s/control-XXXXXX",FIPSD_CONTROL_TMP); CHECK(mkdtemp(tmp));
+    const char *tmp = fipsd_test_tmpdir("/runtime/fips/control.sock");
     test_paths(tmp); test_validation(); test_render_failures(); test_query_goldens(); test_probe_golden(); test_path_requests();
     CHECK(golden_count==24); printf("goldens: %u/24 (22 responses/compositions, 1 report, 1 request catalog)\n",golden_count);
     test_socket(tmp); CHECK(rmdir(tmp)==0);
