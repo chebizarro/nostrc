@@ -586,3 +586,42 @@ nostrc_describe_test(FipsdDnsResolverTest OWNER fipsd TARGETS fipsd_dns_resolver
 nostrc_describe_test(FipsdDnsEndToEndTest OWNER fipsd TARGETS fipsd_dns_e2e_test)
 nostrc_describe_test(FipsdDnsEndToEndV4Test OWNER fipsd TARGETS fipsd_dns_e2e_test)
 nostrc_describe_test(FipsdDnsMeshFilterTest OWNER fipsd TARGETS fipsd_dns_e2e_test)
+# fipsctl (nostrc-iq1n9.1): the C control client. Unit tests over fipsctl_lib
+# (no libgo), an end-to-end run of every documented subcommand against two
+# fipsd daemons, and the cross-implementation gate: the C fipsctl against the
+# pinned Rust daemon and the pinned Rust fipsctl against fipsd, byte-compared.
+add_executable(fipsd_fipsctl_test test_fipsctl.c test_tmpdir.c)
+target_link_libraries(fipsd_fipsctl_test PRIVATE fipsctl_lib)
+find_package(Threads REQUIRED)
+target_link_libraries(fipsd_fipsctl_test PRIVATE Threads::Threads)
+set_target_properties(fipsd_fipsctl_test PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+target_compile_definitions(fipsd_fipsctl_test PRIVATE
+  FIPSD_CONTROL_GOLDEN="${CMAKE_CURRENT_SOURCE_DIR}/control_golden")
+apply_warnings(fipsd_fipsctl_test)
+apply_sanitizers(fipsd_fipsctl_test)
+add_dependencies(fipsd_tests fipsctl fipsd_fipsctl_test)
+add_test(NAME FipsdFipsctlTest COMMAND fipsd_fipsctl_test)
+set_tests_properties(FipsdFipsctlTest PROPERTIES TIMEOUT 60 LABELS "fips;unit;control;fipsctl")
+nostrc_describe_test(FipsdFipsctlTest OWNER fipsd TARGETS fipsd_fipsctl_test
+  INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/control_golden")
+add_test(NAME FipsdFipsctlE2eTest COMMAND fipsd_test_tmpdir_run "/b-ipv6tun.sock"
+  "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/fipsctl_e2e.py"
+  --fipsd "$<TARGET_FILE:fipsd>" --fipsctl "$<TARGET_FILE:fipsctl>")
+set_tests_properties(FipsdFipsctlE2eTest PROPERTIES TIMEOUT 300 LABELS "fips;control;fipsctl"
+  ENVIRONMENT "FIPSD_WORKERS=2")
+nostrc_describe_test(FipsdFipsctlE2eTest OWNER fipsd TARGETS fipsd fipsctl fipsd_test_tmpdir_run
+  INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/fipsctl_e2e.py" "${CMAKE_CURRENT_SOURCE_DIR}/udp_interop.py")
+# Needs the Rust daemon (FIPSD_UDP_INTEROP_RUST_BINARY) and the Rust fipsctl
+# (FIPSD_FIPSCTL_EXECUTABLE, or a cargo build from FIPSD_UPSTREAM_CONTROL_DIR);
+# SKIP (77) without either.
+add_test(NAME FipsdFipsctlInteropTest COMMAND fipsd_test_tmpdir_run "/rrust-ipv6tun.sock"
+  "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/fipsctl_interop.py"
+  --fipsd "$<TARGET_FILE:fipsd>" --fipsctl "$<TARGET_FILE:fipsctl>"
+  --rust "${FIPSD_UDP_INTEROP_RUST_BINARY}" --upstream "${FIPSD_UPSTREAM_CONTROL_DIR}"
+  --rust-fipsctl "${FIPSD_FIPSCTL_EXECUTABLE}"
+  --cargo-target "${CMAKE_CURRENT_BINARY_DIR}/cargo-control")
+set_tests_properties(FipsdFipsctlInteropTest PROPERTIES TIMEOUT 600 SKIP_RETURN_CODE 77
+  LABELS "fips;control;fipsctl;interop" ENVIRONMENT "FIPSD_WORKERS=2")
+nostrc_describe_test(FipsdFipsctlInteropTest OWNER fipsd TARGETS fipsd fipsctl fipsd_test_tmpdir_run
+  INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/fipsctl_interop.py" "${CMAKE_CURRENT_SOURCE_DIR}/fipsctl_e2e.py"
+  "${CMAKE_CURRENT_SOURCE_DIR}/udp_interop.py")

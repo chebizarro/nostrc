@@ -2374,3 +2374,67 @@ it remains opt-in. These local loopback results are not Linux netns, hosted CI o
 deployment proof. The staged payload tests do not qualify the separate
 first-write-during-XK queue contract or stale established-session cache recovery
 after a cut.
+
+## fipsctl: the control client in C (`nostrc-iq1n9.1`)
+
+`fipsd/src/fipsctl/` is upstream `src/bin/fipsctl.rs` in plain POSIX C over
+jansson and libfips-core (identities, addresses, key files): no libgo and no
+`fipsd_lib`. `fipsctl_lib` holds everything but `main()`, so
+`fipsd_fipsctl_test` links the code the tool runs; the `fipsctl` executable
+installs beside `fipsd`. The command contract is upstream
+`docs/reference/cli-fipsctl.md`: `show status|peers|links|tree|sessions|bloom|mmp|cache|connections|transports|routing|identity-cache|native-flows`,
+`acl show`, `stats list|metrics|peers|history <metric> [--peer] [--window]
+[--granularity] [--plot]`, `keygen [-d DIR] [-f] [-s]`, `address [identity]
+[-k PATH]`, `connect <peer> <address> <transport>`, `disconnect <peer>`, `path
+show|pin|unpin`, `probe <target> [--json] [--timeout]`, `-s/--socket`, `-V`,
+`--version`, `-h/--help`, and `profile tick on|off|status` only behind
+`-DFIPSCTL_PROFILING=ON` (upstream `--features profiling`; a stock daemon
+answers it `unknown command`).
+
+| Module | Owns |
+| --- | --- |
+| `commands.c` | clap-shaped parsing (global options before the subcommand, per-scope `--help`, usage errors exit **1** as the reference documents; upstream's clap binary exits 2, see `libfips-core/UPSTREAM.md` I-2), version strings (`fipsctl <version> (rev <hash>)`, `--version` adds `target:`), request building, the driver. |
+| `client.c` | Default socket resolution (`/run/fips` -> `/var/run/fips` on macOS/FreeBSD -> `$XDG_RUNTIME_DIR/fips` -> `/tmp/fips-control.sock`, by existence, as `config.c` does), the IPv6 adapter's `-ipv6tun` sibling (symlinks followed first), one request/one response with 5 s deadlines and upstream's error texts, and the `show_status` composition: the adapter is asked only when the daemon leaves out `tun_state`/`tun_name`/`effective_ipv6_mtu`, with `disabled`/`-`/`0` when nobody answers. |
+| `render.c` | A serde_json-exact printer: lexical keys, 2-space pretty form, ryu's float layout (`18.0`, `1e+16`, `1e-6`), lowercase `\u00xx` control escapes, raw UTF-8; u64 tokens above `INT64_MAX` pass through jansson untouched (`fipsctl_json_load`); the `--plot` sparkline. |
+| `npub.c` | `npub1` in any letter case, hosts-file lookup (`/etc/fips/hosts`, `/usr/local/etc/fips/hosts` on macOS/FreeBSD; `hostname npub` lines, later lines win, invalid lines skipped), the `fd00::/8` connect guard, `address` from an npub, an nsec/npub file or `fips.key`/`fips.pub` in the platform key directory, and `keygen` (0600/0644, `O_NOFOLLOW`, symlink refused, secrets wiped). |
+| `path.c`, `probe.c` | The `path_*` requests checked against `control_golden/fipsctl_path_requests.json`; the probe client: start, poll every 250 ms under the daemon's budget plus 5 s (or `--timeout`), cancel on expiry, the live stage block (redrawn in place on a terminal, each row printed once as it settles elsewhere), the path/cleanup/overall sections and the closing notes, every string upstream's. |
+
+Running the documented commands end to end exposed one fipsd defect, fixed
+here: `hs_control_command` (`src/node/handlers/provider.c`) routed `path_unpin`
+through the transport lookup, so `fipsctl path unpin <peer>` always failed with
+`unknown transport`; `path_pin` read `addr` where the protocol and the client
+send `address`, so a one-path pin silently pinned the whole transport; and the
+numeric transport id `path show` prints was not resolved when it arrived as the
+string the client sends. Two daemon-side shape differences remain, recorded in
+`libfips-core/UPSTREAM.md` (I-4) and the bead rather than papered over by the
+client: fipsd's `display_name` is the short node address where upstream prefers
+the short npub, and fipsd's `path show` names a bare `transports.udp` instance
+`"udp"` where upstream reports `null` and accepts only its numeric id.
+
+Verification (`ctest -R Fipsctl`, all in `fipsd_tests`):
+
+- `FipsdFipsctlTest` (`tests/test_fipsctl.c`): parsing, requests, the 23
+  control goldens as byte oracles for the pretty printer (they are serde
+  pretty output), floats/u64/escapes, composition against fake node and
+  adapter sockets (upstream `tests/fipsctl.rs`, plus the symlink case), the
+  path fixture (`tests/fipsctl_path.rs`), identities/hosts/key files/keygen
+  (`tests/fipsctl_npub.rs` and the inline tests), the probe ceiling
+  (`tests/fipsctl_probe.rs`), every probe rendering test upstream carries, and
+  the full human report for `control_golden/probe_report.json`.
+- `FipsdFipsctlE2eTest` (`tests/fipsctl_e2e.py`): every documented subcommand
+  through the built `fipsctl` against two real fipsd daemons on loopback UDP
+  (`node.path.enabled: true`): local commands, usage errors, the adapter
+  composition over a fake status socket (directly and through a symlink),
+  the link, `path pin`/`unpin`, per-peer history, probes both ways, the
+  deterministic bloom-miss probe of an unannounced address, disconnect.
+  Event-driven waits on the control socket; no sleeps.
+- `FipsdFipsctlInteropTest` (`tests/fipsctl_interop.py`, SKIP 77 without
+  `FIPSD_UDP_INTEROP_RUST_BINARY` and a Rust `fipsctl` from
+  `FIPSD_FIPSCTL_EXECUTABLE` or a cargo build of `FIPSD_UPSTREAM_CONTROL_DIR`):
+  the C `fipsctl` against the pinned Rust daemon and the Rust `fipsctl`
+  against fipsd, every subcommand, each pair of outputs compared byte for byte
+  (or parsed and compared after redacting volatile fields where the daemon's
+  own state moved between the two reads), the unannounced-address probe
+  rendering compared with timing figures masked, `path pin`/`unpin` and
+  probes through both clients on both daemons, and keys from each client's
+  `keygen` read by the other's `address`.

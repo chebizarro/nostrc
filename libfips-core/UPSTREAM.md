@@ -445,6 +445,38 @@ These are tracking-ready notes, **not** reports already submitted upstream:
   gate does not compare the field. Report as a control-output defect (stamp
   `created_at` when the link is promoted); no C change.
 
+- **I-2 — `fipsctl` exits 2 on a usage error where its reference says 1.**
+  Found porting the client (`fipsd/src/fipsctl/`, `nostrc-iq1n9.1`).
+  `docs/reference/cli-fipsctl.md` ("Exit Codes") documents `1` for an
+  argument parse failure, but `src/bin/fipsctl.rs` parses with
+  `clap::Parser::parse`, whose usage errors exit with clap's `2`
+  (`fipsctl bogus` -> 2, verified on the pinned binary). The C client follows
+  the documented contract and exits 1; `fipsd/tests/fipsctl_interop.py`
+  prints both codes and does not compare them. Report as a doc/behaviour
+  mismatch upstream (either exit code is defensible; the reference should say
+  which).
+- **I-3 — `show_tree` can publish a `u64::MAX` field while the tree converges.**
+  Found by the same gate against the pinned Rust daemon: during the seconds
+  between link establishment and convergence its `show_tree` reply carried
+  `18446744073709551615` (a `u64::MAX` "no cost yet" sentinel). serde_json
+  reads it as a u64, but every JSON reader limited to i64 (jansson, many
+  shells' `jq` builds) refuses the whole reply. The C client carries such
+  tokens through verbatim (`fipsctl_json_load`, `FIPSCTL_U64_TAG`) rather than
+  failing the read; fipsd never emits them. Report as a control-output
+  defect: publish `null` (or omit the field) for an unmeasured cost.
+- **I-4 — probe/tree `display_name` differs between the two daemons, not the clients.**
+  Not an upstream bug, recorded so the gate's output is not misread: upstream
+  `Node::peer_display_name` prefers a hosts alias, then a configured peer
+  alias, then the peer's short npub (`npub1fu64...4eg9`) and only then the
+  short hex, while fipsd's control projections print the short hex
+  (`126ef405...`) for every peer. Both clients print what their daemon sends;
+  `fipsctl_interop.py` masks no names because each comparison is against one
+  daemon. Likewise `path show` names a bare `transports.udp` instance `"udp"`
+  in fipsd where upstream reports `transport: null` and resolves a pin only by
+  the numeric id (`resolve_transport`, `src/node/handlers/path_control.rs`);
+  the gate pins by id on both daemons and by name only where one is reported.
+  fipsd follow-ups, outside the client port.
+
 ## Node bookkeeping port (nostrc-u50yr.4)
 
 `proto/rate_limit` and `node/{rate_limit,stats_history}` now have C homes in

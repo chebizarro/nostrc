@@ -477,14 +477,20 @@ static bool parse_peer(handlers *h, const json_t *params, const char *key, fips_
     const char *npub = json_string_value(json_object_get(params, key));
     return npub && fips_peer_identity_from_npub(h->secp, npub, strlen(npub), out) == FIPS_IDENTITY_OK;
 }
+/* `transport` as fipsctl sends it: an instance name, a type, or the numeric
+ * id `path show` prints (as a string on the wire; an integer is taken too). */
 static fipsd_transport *parse_transport(handlers *h, const json_t *params)
 {
     json_t *v = json_object_get(params, "transport");
     if (!v) v = json_object_get(params, "transport_id");
+    const char *text = json_is_string(v) ? json_string_value(v) : NULL;
+    bool numeric = text && text[0] && strspn(text, "0123456789") == strlen(text) && strlen(text) <= 9;
+    unsigned long id = numeric ? strtoul(text, NULL, 10) : 0;
     for (size_t i = 0; h->registry && i < h->registry->count; ++i) {
         fipsd_transport *t = h->registry->items[i];
         if (json_is_integer(v) && (json_int_t)t->id.value == json_integer_value(v)) return t;
-        if (json_is_string(v) && (!strcmp(t->name, json_string_value(v)) || !strcmp(t->type, json_string_value(v)))) return t;
+        if (numeric && (unsigned long)t->id.value == id) return t;
+        if (text && (!strcmp(t->name, text) || !strcmp(t->type, text))) return t;
     }
     return NULL;
 }
@@ -515,11 +521,21 @@ json_t *hs_control_command(handlers *h, const char *name, const json_t *params)
     }
     if (!strcmp(name, "path_pin") || !strcmp(name, "path_unpin")) {
         if (!parse_peer(h, params, "npub", &peer)) return fipsd_control_error("invalid peer npub");
-        fipsd_transport *t = parse_transport(h, params);
-        if (!t) return fipsd_control_error("unknown transport");
-        const char *addr = json_string_value(json_object_get(params, "addr"));
-        fips_transport_addr a = {0}; bool has = addr && fips_transport_addr_from_string(addr, strlen(addr), &a) == FIPS_OK;
-        return hs_path_pin(h, &peer.node_addr, t->id, &a, has, !strcmp(name, "path_pin"));
+        bool pin = !strcmp(name, "path_pin");
+        fips_transport_id transport = {0};
+        fips_transport_addr a = {0}; bool has = false;
+        /* path_unpin carries only the peer (control-socket.md); the pin names
+         * a transport and, to pin one path, that path's `address`. */
+        if (pin) {
+            fipsd_transport *t = parse_transport(h, params);
+            if (!t) return fipsd_control_error("unknown transport");
+            transport = t->id;
+            const char *addr = json_string_value(json_object_get(params, "address"));
+            if (!addr) addr = json_string_value(json_object_get(params, "addr"));
+            has = addr && fips_transport_addr_from_string(addr, strlen(addr), &a) == FIPS_OK;
+            if (addr && !has) return fipsd_control_error("invalid address");
+        }
+        return hs_path_pin(h, &peer.node_addr, transport, &a, has, pin);
     }
     if (!strcmp(name, "probe_start")) {
         if (!parse_peer(h, params, "npub", &peer)) return fipsd_control_error("invalid peer npub");

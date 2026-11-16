@@ -284,3 +284,33 @@ function(fipsd_install_optional_tools)
   endif()
 endfunction()
 cmake_language(DEFER DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" CALL fipsd_install_optional_tools)
+# fipsctl (nostrc-iq1n9.1): the control client, plain POSIX C over jansson
+# and libfips-core (identities, addresses, key files); no libgo, no fipsd_lib.
+# Everything but main() is fipsctl_lib so the unit test links the code the
+# tool runs. Installed beside fipsd.
+declare_component_version(fipsctl 0 1 0)
+add_library(fipsctl_lib STATIC
+  src/fipsctl/commands.c src/fipsctl/client.c src/fipsctl/render.c
+  src/fipsctl/npub.c src/fipsctl/path.c src/fipsctl/probe.c)
+add_dependencies(fipsctl_lib fipsd_build_info)
+set_target_properties(fipsctl_lib PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+target_include_directories(fipsctl_lib PUBLIC
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/fipsctl" "${fipsctl_VERSION_HEADER_DIR}" "${FIPSD_BUILD_INFO_DIR}")
+target_link_libraries(fipsctl_lib PUBLIC fips_core PkgConfig::FIPSD_JANSSON PkgConfig::FIPSD_SODIUM)
+if(NOT APPLE)
+  target_compile_definitions(fipsctl_lib PUBLIC _POSIX_C_SOURCE=200809L _DEFAULT_SOURCE)
+endif()
+option(FIPSCTL_PROFILING "Carry the `profile tick` subcommand (upstream --features profiling)" OFF)
+if(FIPSCTL_PROFILING)
+  target_compile_definitions(fipsctl_lib PUBLIC FIPSCTL_PROFILING=1)
+endif()
+apply_warnings(fipsctl_lib)
+apply_sanitizers(fipsctl_lib)
+add_executable(fipsctl src/fipsctl/main.c)
+set_target_properties(fipsctl PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO POSITION_INDEPENDENT_CODE TRUE)
+target_link_libraries(fipsctl PRIVATE fipsctl_lib)
+apply_warnings(fipsctl)
+apply_sanitizers(fipsctl)
+install(TARGETS fipsctl RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
