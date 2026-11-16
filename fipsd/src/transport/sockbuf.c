@@ -1,3 +1,4 @@
+#define _DEFAULT_SOURCE 1 /* SO_RCVBUFFORCE/SO_SNDBUFFORCE on glibc */
 #include "transport/sockbuf.h"
 #include "log.h"
 #include <errno.h>

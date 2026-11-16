@@ -42,6 +42,14 @@ target_include_directories(fipsd_lib PUBLIC
 # the real implementation. The runtime also verifies this at start-up.
 target_link_libraries(fipsd_lib PUBLIC
   fips_core go_fiber libgo nostrc::nsync PkgConfig::FIPSD_SODIUM)
+# fipsd is added before the top-level CMakeLists applies its non-Apple
+# -D_POSIX_C_SOURCE=200809L, and the sources compile as strict C11, so glibc
+# would hide strnlen/strdup/clock_gettime from the files that do not define
+# the macro themselves. PUBLIC so the daemon, tests and fuzzers see the same
+# namespace as fipsd_lib; the value matches every in-file definition.
+if(NOT APPLE)
+  target_compile_definitions(fipsd_lib PUBLIC _POSIX_C_SOURCE=200809L)
+endif()
 apply_warnings(fipsd_lib)
 apply_sanitizers(fipsd_lib)
 

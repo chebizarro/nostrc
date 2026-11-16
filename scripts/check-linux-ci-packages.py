@@ -38,6 +38,10 @@ NOT_BUILD_DEPS = {
     "patchelf": "gnostr-appimage rewrites the bundle's RPATHs",
     "python3-pip": "gnostr-appimage installs blueprint-compiler 0.22 for its .ui "
                    "regeneration, which the gate disables (BLUEPRINT_COMPILER=OFF)",
+    "iproute2": "fips-ci chaos-netns runs root-only network-namespace scenarios; not a build dependency",
+    "nftables": "fips-ci chaos-netns builds the NAT routers of those scenarios; not a build dependency",
+    "iperf3": "fips-ci chaos-netns generates background load in those scenarios; not a build dependency",
+    "conntrack": "fips-ci chaos-netns reads the NAT routers' mappings as evidence; not a build dependency",
 }
 
 # Development headers alone do not provide decodebin, AAC/MP4 demux/decoder,

@@ -1,3 +1,4 @@
+#define _POSIX_C_SOURCE 200809L
 #include "node/handlers/internal.h"
 #include <stdatomic.h>
 #include <time.h>
