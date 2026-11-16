@@ -267,6 +267,23 @@ binary: SIGTERM → 0, SIGINT, `--log-file` ownership and failure → 1),
 FIPS CI lane must build it (or list the new executables) for `ctest -R
 '^Fips'` to find them. The TSan lane applies to all of them.
 
+Tests that create files or Unix sockets use `tests/test_tmpdir.h`:
+`fipsd_test_tmpdir("/runtime/fips/control.sock")` creates a private, short
+`fd-XXXXXX` directory under `$TMPDIR` (unset/empty falls back to `/tmp`). Pass
+the **longest socket suffix including its leading slash**, or `NULL` for
+file-only tests. The helper rejects a directory + suffix whose byte length
+would not leave a NUL in the platform's `sockaddr_un.sun_path` (104 bytes on
+macOS, 108 on Linux), naming the full offending path and asking for a shorter
+`TMPDIR` before any bind. Directories and remaining contents are removed at
+normal process exit without following symlinks; explicit cleanup assertions
+remain useful. Call it on the main thread before starting workers. Every
+`fipsd_unit_test` target links the helper; new socket tests must use it rather
+than source/build-rooted paths. The Python control interop test runs through
+`fipsd_test_tmpdir_run /control.sock <command> [args...]`, which supplies the
+same checked directory as `FIPSD_TEST_TMPDIR` and cleans up after the child
+(including skipped/failed children). Source paths are only for read-only
+fixtures/goldens, never temporary sockets.
+
 The top-level `BUILD_FIPS` option defaults ON. `fipsd` is configured only on
 platforms with a `go_fiber` target (currently not Windows). `CMakeLists.txt`
 owns the component's version, 0.1.0 Unreleased. Warning flags honor nostrc's

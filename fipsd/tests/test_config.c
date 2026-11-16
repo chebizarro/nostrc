@@ -1,4 +1,5 @@
 #define _POSIX_C_SOURCE 200809L
+#include "test_tmpdir.h"
 #include "config/config.h"
 #include <math.h>
 #include <pthread.h>
@@ -194,7 +195,8 @@ static void *reader(void *arg)
 }
 static int reload(void)
 {
-    char path[]="/tmp/fipsd-config.XXXXXX"; int fd=mkstemp(path); CHECK(fd>=0); close(fd);
+    const char *dir=fipsd_test_tmpdir(NULL);
+    char path[4096]; snprintf(path,sizeof(path),"%s/reload.yaml",dir);
     const char *initial="node: {identity: {persistent: true}}";
     CHECK(write_config(path,initial)==0);
     fipsd_config_log log={0}; fipsd_config *c=fipsd_config_load(path,&log); CHECK(c);
@@ -231,9 +233,10 @@ static int layers(void)
     CHECK(strstr(search[count-1],"/fips.yaml"));
     for (size_t i=0;i<count;++i) CHECK(search[i][0]=='/');
     fipsd_config_search_paths_free(search,count);
-    char a[]="/tmp/fipsd-layer-a.XXXXXX", b[]="/tmp/fipsd-layer-b.XXXXXX";
-    int fd=mkstemp(a); CHECK(fd>=0); close(fd);
-    fd=mkstemp(b); CHECK(fd>=0); close(fd);
+    const char *dir=fipsd_test_tmpdir(NULL);
+    char a[4096], b[4096];
+    snprintf(a,sizeof(a),"%s/layer-a.yaml",dir);
+    snprintf(b,sizeof(b),"%s/layer-b.yaml",dir);
     CHECK(write_config(a,"node: {identity: {persistent: true}, leaf_only: true, limits: {max_peers: 512}, log_level: trace}\ntransports: {udp: {mtu: 1472}}\ndns: {enabled: false}")==0);
     CHECK(write_config(b,"node: {leaf_only: false, limits: {max_links: 512}, log_level: info}\ntransports: {udp: {bind_addr: '127.0.0.1:2'}}\ndns: {port: 1234}")==0);
     const char *paths[]={a,b};

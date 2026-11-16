@@ -3,6 +3,7 @@
  * stop sent immediately is held until the daemon's handler is installed. */
 #define _POSIX_C_SOURCE 200809L
 #define _DARWIN_C_SOURCE 1
+#include "test_tmpdir.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -97,11 +98,11 @@ static int read_file(const char *path, char *buf, size_t cap)
     return 0;
 }
 
-static int test_sigterm_stderr(const char *fipsd)
+static int test_sigterm_stderr(const char *fipsd, const char *config)
 {
     child c;
     char out[16384] = "";
-    CHECK(spawn(fipsd, (char *const[]){(char *)fipsd, NULL}, 0, &c) == 0);
+    CHECK(spawn(fipsd, (char *const[]){(char *)fipsd, "-c", (char *)config, NULL}, 0, &c) == 0);
     /* Event: the daemon reports it is running; only then stop it. */
     CHECK(read_until(&c, "fipsd running", out, sizeof(out)) == 1);
     CHECK(strstr(out, "fipsd ") && strstr(out, " starting (libfips-core "));
@@ -120,15 +121,19 @@ static int test_sigterm_stderr(const char *fipsd)
     return 0;
 }
 
-static int test_sigint_config_flag(const char *fipsd)
+static int test_sigint_config_flag(const char *fipsd, const char *dir)
 {
     child c;
     char out[16384] = "";
-    char path[] = "/tmp/fipsd-process-config.XXXXXX";
-    int fd = mkstemp(path);
+    char path[PATH_MAX];
+    snprintf(path, sizeof(path), "%s/reload.yaml", dir);
+    int fd = open(path, O_RDWR | O_CREAT | O_EXCL, 0600);
     CHECK(fd >= 0);
-    const char yaml[] = "node: {identity: {persistent: true}}\n";
-    CHECK(write(fd, yaml, sizeof(yaml) - 1) == (ssize_t)(sizeof(yaml) - 1));
+    char yaml[PATH_MAX + 128];
+    int len = snprintf(yaml, sizeof(yaml),
+        "node: {identity: {persistent: true}, control: {socket_path: '%s/control.sock'}}\n", dir);
+    CHECK(len > 0 && (size_t)len < sizeof(yaml));
+    CHECK(write(fd, yaml, (size_t)len) == (ssize_t)len);
     CHECK(close(fd) == 0);
     CHECK(spawn(fipsd, (char *const[]){(char *)fipsd, "-c", path, NULL}, 0, &c) == 0);
     CHECK(read_until(&c, "fipsd running", out, sizeof(out)) == 1);
@@ -159,10 +164,9 @@ static int test_sigint_config_flag(const char *fipsd)
     return 0;
 }
 
-static int test_log_file(const char *fipsd)
+static int test_log_file(const char *fipsd, const char *config)
 {
-    char tmpl[] = "/tmp/fipsd-proc.XXXXXX";
-    char *dir = mkdtemp(tmpl);
+    const char *dir = fipsd_test_tmpdir(NULL);
     CHECK(dir != NULL);
     char path[PATH_MAX];
     snprintf(path, sizeof(path), "%s/logs/fipsd.log", dir);
@@ -172,7 +176,7 @@ static int test_log_file(const char *fipsd)
      * so the stop is always observed by the handler, never the default action. */
     child c;
     char out[16384] = "";
-    CHECK(spawn(fipsd, (char *const[]){(char *)fipsd, "--log-file", path, NULL}, 1, &c) == 0);
+    CHECK(spawn(fipsd, (char *const[]){(char *)fipsd, "-c", (char *)config, "--log-file", path, NULL}, 1, &c) == 0);
     CHECK(kill(c.pid, SIGTERM) == 0);
     read_until(&c, NULL, out, sizeof(out));
     int status;
@@ -197,7 +201,7 @@ static int test_log_file(const char *fipsd)
     char bad[PATH_MAX];
     snprintf(bad, sizeof(bad), "%s/logs/fipsd.log/child.log", dir);
     out[0] = '\0';
-    CHECK(spawn(fipsd, (char *const[]){(char *)fipsd, "--log-file", bad, NULL}, 0, &c) == 0);
+    CHECK(spawn(fipsd, (char *const[]){(char *)fipsd, "-c", (char *)config, "--log-file", bad, NULL}, 0, &c) == 0);
     read_until(&c, NULL, out, sizeof(out));
     CHECK(wait_exit(&c, &status) == 0);
     CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 1);
@@ -228,10 +232,17 @@ int main(int argc, char **argv)
     }
     const char *fipsd = argv[1];
     setenv("FIPSD_WORKERS", "1", 1);
-    int rc = test_sigterm_stderr(fipsd);
+    const char *dir = fipsd_test_tmpdir("/control.sock");
+    char config[PATH_MAX];
+    snprintf(config, sizeof(config), "%s/default.yaml", dir);
+    FILE *file = fopen(config, "w");
+    CHECK(file != NULL);
+    CHECK(fprintf(file, "node: {identity: {persistent: true}, control: {socket_path: '%s/control.sock'}}\n", dir) > 0);
+    CHECK(fclose(file) == 0);
+    int rc = test_sigterm_stderr(fipsd, config);
     if (rc == 0)
-        rc = test_sigint_config_flag(fipsd);
+        rc = test_sigint_config_flag(fipsd, dir);
     if (rc == 0)
-        rc = test_log_file(fipsd);
+        rc = test_log_file(fipsd, config);
     return rc;
 }
