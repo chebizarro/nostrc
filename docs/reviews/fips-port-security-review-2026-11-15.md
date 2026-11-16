@@ -79,6 +79,29 @@ send state unchanged. Add denied new-peer, denied restart, denied rebind, outbou
 deny, reload-during-handshake and resource-count regressions. This review does
 not certify the sibling's not-yet-present ACL/metrics/stats/diag implementation.
 
+### Disposition — A1 (`nostrc-f66sr.8`)
+
+The ACL added by `4aeec42da` had a late inbound gate: it followed reservation,
+restart eviction and the same-epoch rekey path. Moved it immediately after IK
+identity normalization, before all three paths. Indexed outbound rekey replies
+now also check the link's pinned identity before entering the machine; pending
+outbound IK already rechecked before transition/promotion. Manual/configured
+dials keep their pre-reservation gate. The retained GoSwap config load in
+`hs_acl_authorize` is the admission linearization point: an immutable generation
+owns that decision, and subsequent admissions load anew. Reload does not revoke
+already established traffic.
+
+`FipsdNodeAclAdmissionTest` drives production IK/AEAD through an in-process
+transport and real node dispatcher/workers. It asserts denied-new-peer,
+denied-restart and denied-rebind peer/index/binding/endpoint/key/replay/send-state
+invariance; manual/configured outbound denial; and allow-to-deny reload between
+msg1 and authenticated msg2. A denied reply reclaims only the pending outbound
+leg/lease, with no promotion or send. `FipsdAclTest` retains old/new immutable
+policies and covers npub/alias/ALL, allow-first/default-allow semantics.
+Focused ASan/UBSan: these two tests plus `FipsdNodeAclTest` **3/3 passed**.
+Full-suite sanitizer/static evidence is recorded with H1 below. This is local
+host admission evidence, not deployed transport or hosted-CI qualification.
+
 **M7 — command cancellation/reply ownership.** In `node/handlers/handlers.c`,
 make the execution-deadline contract explicit. A waiting timeout alone does not
 necessarily promise cancellation; if it is an execution deadline, carry a retained

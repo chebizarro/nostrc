@@ -1,5 +1,7 @@
 # Component Version Manifest
 
+nostrc-f66sr.8: PATCH-class ACL admission-order security correction folded into fipsd 0.1.0 Unreleased. No public API/wire change, version bump or tag; libfips-core unchanged.
+
 nostrc-9keoz.12: fipsd remains 0.1.0 Unreleased; dispatcher-owned attached-link endpoint migration, dataplane reseeding and dependent-session MTU tightening fold into the initial unreleased daemon. libfips-core unchanged. No published release/tag change.
 nostrc-9keoz.8: fipsd stays 0.1.0 Unreleased; file-backed admission ACLs, immutable reload snapshots, counter registry, stats-history collection and existing control projections fold into the initial unreleased daemon. libfips-core and libgo versions unchanged. No published release/tag change.
 

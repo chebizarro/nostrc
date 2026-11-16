@@ -285,6 +285,11 @@ static bool msg1(handlers *h, fipsd_transport *t, const fips_transport_addr *fro
     if (!fips_fmp_rekey_read_msg1(&h->local, frame, len, &token)) { ++h->counters.hs_failed; goto out; }
     fips_peer_identity identity;
     if (!hs_peer_identity(h, &token.proof.remote, &identity) || !memcmp(identity.node_addr.bytes, h->me.bytes, 16)) { ++h->counters.hs_rejected; goto out; }
+    /* IK authenticates the normalized identity, not freshness. Admission must
+     * precede even same-epoch rekey/rebind and restart classification effects. */
+    if (!hs_acl_authorize(h, &identity, "inbound_handshake")) {
+        hs_notice(h, FIPSD_NOTICE_HANDSHAKE_FAILED, &identity.node_addr, NULL, 0); goto out;
+    }
     peer_rec *rec = hs_rec_find(h, &identity.node_addr);
     fips_fmp_wire_outcome wire = {.peer_identity = identity, .remote_epoch = epoch_of(token.proof.epoch),
         .their_index = {token.theirs}};
@@ -328,11 +333,6 @@ static bool msg1(handlers *h, fipsd_transport *t, const fips_transport_addr *fro
         if (!has_ticket) { ++h->counters.hs_rejected; goto out; }
     }
     if (!has_ticket) { ++h->counters.hs_rejected; goto out; }
-    /* Upstream late inbound ACL gate: identity is authenticated by IK msg1;
-     * before index allocation and msg2 DH, not before encrypted-key recovery. */
-    if (!hs_acl_authorize(h, &identity, "inbound_handshake")) {
-        hs_notice(h, FIPSD_NOTICE_HANDSHAKE_FAILED, &identity.node_addr, NULL, 0); goto out;
-    }
     fips_rekey_env env; hs_env(h, &env, t->id.value);
     if (!fips_rekey_allocate(env.indices, &lease)) goto out;
     fips_rekey_wire msg2 = {0};
@@ -380,6 +380,9 @@ static bool msg2(handlers *h, fipsd_transport *t, const fips_transport_addr *fro
         /* A rekey reply for an established link resolves through its index. */
         peer_rec *rec = hs_index_lookup(h, t->id.value, header.receiver_idx.value);
         if (!rec) { ++h->counters.frames_dropped; METRIC(h, handshake, unknown_connection); return false; }
+        /* The indexed link already pins an authenticated identity. Refuse
+         * revoked peers before the rekey machine authenticates/transitions. */
+        if (!hs_acl_authorize(h, &fipsd_active_peer_info(rec->peer)->identity, "outbound_rekey")) return false;
         link_exec_result r = {0};
         fips_rekey_input in = {.kind = FIPS_REKEY_IN_Reply, .bytes = frame, .buf = frame, .len = len};
         bool ok = hs_link_step(h, rec, in, from, frame, len, &r);

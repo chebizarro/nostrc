@@ -262,3 +262,9 @@ nostrc_describe_test(FipsdStatsTest OWNER fipsd TARGETS fipsd_stats_test)
 
 target_compile_definitions(fipsd_acl_test PRIVATE
   FIPSD_CONTROL_GOLDEN="${CMAKE_CURRENT_SOURCE_DIR}/control_golden")
+
+# A1 admission ordering through the real dispatcher, transport and IK/AEAD.
+target_sources(fipsd_node_acl_test PRIVATE test_node_acl_admission.c handshake_fixture.c)
+add_test(NAME FipsdNodeAclAdmissionTest COMMAND fipsd_node_acl_test admission)
+set_tests_properties(FipsdNodeAclAdmissionTest PROPERTIES TIMEOUT 60 LABELS "fips;node;acl" ENVIRONMENT "FIPSD_WORKERS=2")
+nostrc_describe_test(FipsdNodeAclAdmissionTest OWNER fipsd TARGETS fipsd_node_acl_test)
