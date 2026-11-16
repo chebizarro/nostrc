@@ -698,12 +698,23 @@ static int client_socket(void)
 }
 static void send_to(served *v, int c, const uint8_t *d, size_t len)
 { CHECK(sendto(c, d, len, 0, (struct sockaddr *)&v->addr, sizeof v->addr) == (ssize_t)len); }
-/* The reply waiting on c, or 0 when none is: the server replies before it
- * reports a datagram dealt with, and loopback delivers at once. */
+/* The reply already waiting on c, or 0 when none is. The server replies
+ * before it reports a datagram dealt with, but loopback need not deliver
+ * within the send (macOS queues it for its input thread), so this proves no
+ * reply only together with a later await_reply: datagrams between one pair
+ * of sockets arrive in order, so a stray reply is what that one reads. */
 static size_t pending_reply(int c, uint8_t *out)
 {
     ssize_t r = recv(c, out, 1024, MSG_DONTWAIT);
     return r > 0 ? (size_t)r : 0;
+}
+/* The next reply on c, waiting for its delivery; 0 when none comes within
+ * a bound far beyond any loopback delivery. */
+static size_t await_reply(int c, uint8_t *out)
+{
+    struct pollfd p = {.fd = c, .events = POLLIN};
+    if (poll(&p, 1, 10000) != 1) return 0;
+    return pending_reply(c, out);
 }
 /* Every datagram is answered or dropped before the next is read; the
  * observer says when each is done, so no reply is a reply not yet sent. */
@@ -712,15 +723,17 @@ static void serve_drops_a_datagram_that_fills_its_buffer_and_answers_the_next_qu
     struct sockaddr_in6 none = no_upstream(); gw g; gw_init(&g, &none);
     served v; serve_start(&v, &g, "[::1]:0", "fipsgw-absent0");
     uint8_t *full = calloc(1, FIPSD_DNS_MAX_DATAGRAM), r[1024], q[512];
-    size_t qlen = aaaa_query(0x5001, "example.com", q);
+    /* Its own ID, so a reply to it cannot pass for the next query's. */
+    size_t qlen = aaaa_query(0x5000, "example.com", q);
     memcpy(full, q, qlen);
     int c = client_socket();
     send_to(&v, c, full, FIPSD_DNS_MAX_DATAGRAM);
     await_seen(&v, 1);
     CHECKM(v.dropped == 1 && pending_reply(c, r) == 0, "a datagram filling the buffer was answered");
+    qlen = aaaa_query(0x5001, "example.com", q);
     send_to(&v, c, q, qlen);
     await_seen(&v, 2);
-    size_t n = pending_reply(c, r);
+    size_t n = await_reply(c, r);
     CHECKM(n && rcode_of(r) == FIPSD_DNS_RCODE_REFUSED && word(r, 0) == 0x5001, "the next query is answered");
     close(c); free(full); serve_stop(&v); gw_free(&g);
 }
@@ -737,7 +750,7 @@ static void serve_drops_a_response_and_answers_the_next_query(void)
     qlen = aaaa_query(0x5102, "example.com", q);
     send_to(&v, c, q, qlen);
     await_seen(&v, 2);
-    CHECK(pending_reply(c, r) && word(r, 0) == 0x5102);
+    CHECK(await_reply(c, r) && word(r, 0) == 0x5102);
     close(c); serve_stop(&v); gw_free(&g);
 }
 static void serve_answers_an_opcode_4_query_with_a_header_only_notimp_and_then_the_next_query(void)
@@ -749,11 +762,11 @@ static void serve_answers_an_opcode_4_query_with_a_header_only_notimp_and_then_t
     size_t qlen = query(0x5201, 4 << 11, "example.com", FIPSD_DNS_TYPE_AAAA, FIPSD_DNS_CLASS_IN, q);
     send_to(&v, c, q, qlen);
     await_seen(&v, 1);
-    CHECK(pending_reply(c, r) == 12 && rcode_of(r) == FIPSD_DNS_RCODE_NOTIMP);
+    CHECK(await_reply(c, r) == 12 && rcode_of(r) == FIPSD_DNS_RCODE_NOTIMP);
     qlen = aaaa_query(0x5202, "example.com", q);
     send_to(&v, c, q, qlen);
     await_seen(&v, 2);
-    CHECK(pending_reply(c, r) && word(r, 0) == 0x5202);
+    CHECK(await_reply(c, r) && word(r, 0) == 0x5202);
     close(c); serve_stop(&v); gw_free(&g);
 }
 static void serve_drops_a_query_arriving_on_the_named_mesh_interface_and_never_forwards_it(void)
@@ -780,7 +793,7 @@ static void a_lan_query_on_a_wildcard_listener_is_still_answered_with_a_pool_add
     int c = client_socket();
     send_to(&v, c, q, qlen);
     await_seen(&v, 1);
-    size_t n = pending_reply(c, r);
+    size_t n = await_reply(c, r);
     CHECKM(v.answered == 1 && n, "a LAN query on a wildcard listener was not answered");
     pool_address(r, n);
     close(c); serve_stop(&v); upstream_stop(&u);

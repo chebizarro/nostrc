@@ -70,7 +70,8 @@ int fipsd_gw_ct_count_dump(const uint8_t *buf, size_t len, uint32_t seq, fipsd_g
 #define FIPSD_GW_IPS_SEEN_REPLY 2u
 #define FIPSD_GW_NLA_F_NESTED 0x8000u
 
-/* A conntrack querier: 0 and a read snapshot in *out, else an errno. */
+/* A conntrack querier: 0 and a read snapshot in *out, else an errno. *out
+ * need not be initialized on entry, and on error it is left empty. */
 typedef int (*fipsd_gw_ct_querier_fn)(void *user, fipsd_gw_ct_snapshot *out);
 typedef struct fipsd_gw_ct_querier { fipsd_gw_ct_querier_fn snapshot; void *user; } fipsd_gw_ct_querier;
 typedef enum fipsd_gw_ct_source { FIPSD_GW_CT_SOURCE_PROC, FIPSD_GW_CT_SOURCE_NETLINK } fipsd_gw_ct_source;

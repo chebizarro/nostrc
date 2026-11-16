@@ -260,6 +260,7 @@ fipsd_gw_read_report fipsd_gw_ct_read_log_observe(fipsd_gw_ct_read_log *log, int
 int fipsd_gw_ct_proc_snapshot(void *path, fipsd_gw_ct_snapshot *out)
 {
     const char *file = path ? (const char *)path : FIPSD_GW_CT_PROC_PATH;
+    fipsd_gw_ct_snapshot_init(out); /* every error path below clears it */
     FILE *f = fopen(file, "r");
     if (!f) return errno ? errno : EIO;
     size_t cap = 65536, len = 0; char *content = malloc(cap);
@@ -285,6 +286,7 @@ static _Atomic uint32_t next_seq = 1;
 int fipsd_gw_ct_netlink_snapshot(void *unused, fipsd_gw_ct_snapshot *out)
 {
     (void)unused;
+    fipsd_gw_ct_snapshot_init_read(out); /* every error path below clears it */
     int fd = socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, NETLINK_NETFILTER);
     if (fd < 0) return errno;
     struct sockaddr_nl local; memset(&local, 0, sizeof local); local.nl_family = AF_NETLINK;
@@ -299,7 +301,6 @@ int fipsd_gw_ct_netlink_snapshot(void *unused, fipsd_gw_ct_snapshot *out)
     request[16] = AF_INET6; /* nfgenmsg: family, version 0, res_id 0 */
     struct sockaddr_nl kernel; memset(&kernel, 0, sizeof kernel); kernel.nl_family = AF_NETLINK;
     if (sendto(fd, request, sizeof request, 0, (struct sockaddr *)&kernel, sizeof kernel) != (ssize_t)sizeof request) { int e = errno; close(fd); return e; }
-    fipsd_gw_ct_snapshot_init_read(out);
     size_t cap = 65536; uint8_t *buf = malloc(cap);
     if (!buf) { close(fd); fipsd_gw_ct_snapshot_clear(out); return ENOMEM; }
     int err = 0;

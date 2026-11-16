@@ -1176,8 +1176,23 @@ static void the_mapping_info_reports_every_live_mapping(void)
     free(info); fipsd_gw_pool_free(p);
 }
 
+/* The pool reserves its maps before it changes anything, so the insert at the
+ * end of an allocation cannot fail; a reserved map must not grow on set. */
+static void a_reserved_map_takes_the_next_key_without_growing(void)
+{
+    fipsd_gw_map m; fipsd_gw_map_init(&m, 4);
+    for (uint32_t k = 0; k < 200; ++k) {
+        CHECK(fipsd_gw_map_reserve(&m) == 0);
+        size_t cap = m.cap;
+        if (k % 3 == 2) { uint32_t gone = k - 1; CHECK(fipsd_gw_map_remove(&m, &gone)); }
+        CHECK(fipsd_gw_map_set(&m, &k, k) == 0);
+        CHECKM(m.cap == cap, "key %u grew a reserved map", k);
+    }
+    fipsd_gw_map_clear(&m);
+}
 int gw_suite_pool(void)
 {
+    RUN(a_reserved_map_takes_the_next_key_without_growing);
     RUN(pool_error_reasons_are_the_kebab_case_log_values);
     RUN(test_parse_cidr);
     RUN(test_parse_cidr_invalid);

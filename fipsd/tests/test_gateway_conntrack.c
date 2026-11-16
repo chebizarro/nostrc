@@ -191,6 +191,19 @@ static void the_proc_querier_reads_a_file_and_reports_an_absent_one(void)
     unlink(path);
     CHECK(fipsd_gw_ct_proc_snapshot(path, &s) == ENOENT);
 }
+static void the_proc_querier_fails_a_file_that_opens_but_does_not_read(void)
+{
+    /* A directory opens for reading but every read fails; the snapshot handed
+     * in is not initialized, as the start-up reads hand it. */
+    char dir[] = "/tmp/fipsgw-ct-dir-XXXXXX";
+    CHECK(mkdtemp(dir) != NULL);
+    fipsd_gw_ct_snapshot s;
+    memset(&s, 0xa5, sizeof s);
+    CHECK(fipsd_gw_ct_proc_snapshot(dir, &s) == EIO);
+    CHECK(!s.read && fipsd_gw_ct_snapshot_is_empty(&s));
+    fipsd_gw_ct_snapshot_clear(&s);
+    rmdir(dir);
+}
 
 /* ---- the netlink dump ----------------------------------------------------- */
 typedef struct buf { uint8_t b[4096]; size_t len; } buf;
@@ -346,6 +359,7 @@ int gw_suite_conntrack(void)
     RUN(conntrack_probe_reports_both_errors_when_neither_source_reads);
     RUN(a_failed_logged_read_yields_the_unread_default);
     RUN(the_proc_querier_reads_a_file_and_reports_an_absent_one);
+    RUN(the_proc_querier_fails_a_file_that_opens_but_does_not_read);
     RUN(netlink_dump_counts_an_entry_whose_original_destination_is_the_virtual_ip);
     RUN(netlink_dump_counts_an_entry_once_when_both_tuples_name_the_address);
     RUN(netlink_dump_counts_each_entry_across_several_messages_in_one_buffer);

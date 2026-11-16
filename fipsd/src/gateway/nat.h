@@ -89,10 +89,17 @@ fipsd_gw_nat *fipsd_gw_nat_new(const char *lan_interface, const char *tun_interf
 void fipsd_gw_nat_free(fipsd_gw_nat *nat);
 /* Replace the inbound forwards and rebuild. */
 int fipsd_gw_nat_set_port_forwards(fipsd_gw_nat *nat, const fipsd_gw_port_forward *forwards, size_t count, fipsd_gw_nat_error *err);
-/* Apply every command to the desired state, then rebuild once. */
+/* A failed allocation lost a change or a removal report: the desired state
+ * no longer matches what the pool was told, so the table must not be used
+ * further (upstream aborts the process on allocation failure). */
+#define FIPSD_GW_NAT_FATAL (-2)
+/* Apply every command to the desired state, then rebuild once: 0, or -1 when
+ * memory ran out (fatal as above; *out still holds what was applied and is
+ * the caller's to clear). */
 int fipsd_gw_nat_apply(fipsd_gw_nat *nat, const fipsd_gw_nat_command *commands, size_t count, fipsd_gw_nat_applied *out);
 /* Retry a refused rebuild with the latest desired state: 1 applied, 0 nothing
- * pending, -1 failed (err). Confirmed removals are appended to removed. */
+ * pending, -1 failed (err), FIPSD_GW_NAT_FATAL when memory ran out. Confirmed
+ * removals are appended to removed. */
 int fipsd_gw_nat_retry_pending(fipsd_gw_nat *nat, fipsd_gw_pairs *removed, fipsd_gw_nat_error *err);
 size_t fipsd_gw_nat_mapping_count(const fipsd_gw_nat *nat);
 bool fipsd_gw_nat_rebuild_pending(const fipsd_gw_nat *nat);
@@ -137,19 +144,24 @@ void fipsd_gw_nat_report_retry(fipsd_gw_retry_log *log, int result, const fipsd_
 
 /* ---- the worker -------------------------------------------------------- */
 typedef struct fipsd_gw_nat_driver fipsd_gw_nat_driver;
-/* Called on the worker thread once it stops applying changes, whatever the
- * cause. */
+/* Called once the worker stops applying changes without a shutdown or drop
+ * having asked it to: on the worker thread, or at once from start when the
+ * worker cannot be started. A worker that outlives a shutdown's timeout
+ * never calls it, so its target may be freed once shutdown returns. */
 typedef void (*fipsd_gw_nat_exit_fn)(void *user);
 /* Take ownership of table and start the worker. When the thread cannot be
- * started the exit callback runs at once and every submit fails. */
+ * started the exit callback runs at once and every submit fails. The worker
+ * stops by itself when apply fails or retry_pending is FIPSD_GW_NAT_FATAL. */
 fipsd_gw_nat_driver *fipsd_gw_nat_driver_start(fipsd_gw_nat_table table, fipsd_gw_nat_exit_fn on_exit, void *user);
 /* Queue one change: 0, or -1 when the worker has stopped. */
 int fipsd_gw_nat_driver_submit(fipsd_gw_nat_driver *driver, const fipsd_gw_nat_command *command);
 size_t fipsd_gw_nat_driver_mapping_count(const fipsd_gw_nat_driver *driver);
 /* Move the removals the kernel has applied into out. */
 void fipsd_gw_nat_driver_take_removed(fipsd_gw_nat_driver *driver, fipsd_gw_pairs *out);
-/* Stop and delete the table, waiting at most timeout_ms; on timeout the
- * worker is left behind (and the driver leaked to it). Frees the driver. */
+/* Stop and delete the table, waiting at most timeout_ms: 0, -1 with err, or 1
+ * when the timeout left the worker behind (with the driver leaked to it); a
+ * timeout is not an error, as upstream's, but that worker may still log.
+ * Frees the driver. */
 int fipsd_gw_nat_driver_shutdown(fipsd_gw_nat_driver *driver, unsigned timeout_ms, fipsd_gw_nat_error *err);
 /* End the worker without deleting the table (a driver dropped without a
  * shutdown), and free the driver. */

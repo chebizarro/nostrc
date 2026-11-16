@@ -525,7 +525,7 @@ static void nat_worker_applies_add_remove_and_readd_in_order(void)
     fipsd_gw_pairs_clear(&removed);
     fipsd_gw_nat_error err;
     CHECK(fipsd_gw_nat_driver_shutdown(d, 5000, &err) == 0);
-    CHECK(f.cleanups == 1 && f.destroyed && ex.calls == 1);
+    CHECKM(f.cleanups == 1 && f.destroyed && ex.calls == 0, "a requested stop is not reported as an exit");
 }
 static void queued_changes_are_applied_in_one_rebuild(void)
 {
@@ -567,7 +567,7 @@ static void stop_returns_after_the_timeout_when_the_worker_hangs(void)
     fipsd_gw_nat_driver *d = fipsd_gw_nat_driver_start(fake_of(&f), NULL, NULL);
     fipsd_gw_nat_error err;
     fipsd_gw_instant started = fipsd_gw_now();
-    CHECKM(fipsd_gw_nat_driver_shutdown(d, 200, &err) == 0, "a timeout is not an error");
+    CHECKM(fipsd_gw_nat_driver_shutdown(d, 200, &err) == 1, "a timeout is not an error, but reports the worker left behind");
     fipsd_gw_instant took = fipsd_gw_since(fipsd_gw_now(), started);
     CHECKM(took >= MILLIS(200) && took < SECS(5), "shutdown waited %llu ms", (unsigned long long)(took / 1000000u));
     /* Let the abandoned worker finish, and wait for it to let go of the table. */
@@ -581,7 +581,35 @@ static void a_dropped_driver_ends_its_worker_without_cleanup(void)
     exit_flag ex = {0}; nsync_mu_init(&ex.mu); nsync_cv_init(&ex.cv);
     fipsd_gw_nat_driver *d = fipsd_gw_nat_driver_start(fake_of(&f), on_exit_cb, &ex);
     fipsd_gw_nat_driver_drop(d);
-    CHECK(f.cleanups == 0 && f.destroyed && ex.calls == 1);
+    CHECK(f.cleanups == 0 && f.destroyed && ex.calls == 0);
+}
+/* A table whose apply runs out of memory, as the real one reports it. */
+static int failing_apply(void *self, const fipsd_gw_nat_command *c, size_t n, fipsd_gw_nat_applied *out)
+{
+    (void)c; (void)n;
+    memset(out, 0, sizeof *out);
+    fake_table *f = self;
+    nsync_mu_lock(&f->mu); f->batches++; nsync_mu_unlock(&f->mu);
+    return -1;
+}
+static void a_worker_out_of_memory_stops_and_reports_its_exit(void)
+{
+    fake_table f; fake_init(&f);
+    exit_flag ex = {0}; nsync_mu_init(&ex.mu); nsync_cv_init(&ex.cv);
+    fipsd_gw_nat_table table = fake_of(&f);
+    table.apply = failing_apply;
+    fipsd_gw_nat_driver *d = fipsd_gw_nat_driver_start(table, on_exit_cb, &ex);
+    fipsd_gw_nat_command add = {FIPSD_GW_NAT_ADD, gw_v6("fd01::1"), gw_v6("fd9a::1")};
+    CHECK(fipsd_gw_nat_driver_submit(d, &add) == 0);
+    nsync_mu_lock(&ex.mu);
+    while (!ex.calls) nsync_cv_wait(&ex.cv, &ex.mu);
+    nsync_mu_unlock(&ex.mu);
+    CHECKM(fipsd_gw_nat_driver_submit(d, &add) != 0, "a stopped worker takes no more changes");
+    fipsd_gw_nat_error err;
+    CHECK(fipsd_gw_nat_driver_shutdown(d, 5000, &err) == -1 && err.kind == FIPSD_GW_NAT_WORKER_STOPPED);
+    /* The worker is joined: every count below is final. */
+    CHECKM(ex.calls == 1, "the unasked exit is reported once");
+    CHECKM(f.cleanups == 0 && f.destroyed, "the table is left for the restart to replace");
 }
 int gw_suite_nat(void)
 {
@@ -611,5 +639,6 @@ int gw_suite_nat(void)
     RUN(a_stop_queued_behind_changes_still_runs_cleanup);
     RUN(stop_returns_after_the_timeout_when_the_worker_hangs);
     RUN(a_dropped_driver_ends_its_worker_without_cleanup);
+    RUN(a_worker_out_of_memory_stops_and_reports_its_exit);
     return 0;
 }

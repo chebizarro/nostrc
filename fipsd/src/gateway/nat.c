@@ -80,11 +80,15 @@ static bool pairs_contains(const fipsd_gw_pairs *p, const struct in6_addr *v, co
 /* Set insertion: a pair already present is not added again. */
 static int pairs_insert(fipsd_gw_pairs *p, const struct in6_addr *v, const struct in6_addr *m)
 { return pairs_contains(p, v, m) ? 0 : fipsd_gw_pairs_push(p, v, m); }
-/* Move every pair of src onto the end of dst. */
-static void pairs_take(fipsd_gw_pairs *dst, fipsd_gw_pairs *src)
+/* Move every pair of src onto the end of dst; -1 if dst could not take them
+ * all, with src left whole. */
+static int pairs_take(fipsd_gw_pairs *dst, fipsd_gw_pairs *src)
 {
-    for (size_t i = 0; i < src->len; ++i) (void)fipsd_gw_pairs_push(dst, &src->items[i].virtual_ip, &src->items[i].mesh_addr);
+    size_t had = dst->len;
+    for (size_t i = 0; i < src->len; ++i)
+        if (fipsd_gw_pairs_push(dst, &src->items[i].virtual_ip, &src->items[i].mesh_addr) != 0) { dst->len = had; return -1; }
     src->len = 0;
+    return 0;
 }
 void fipsd_gw_nat_applied_clear(fipsd_gw_nat_applied *a)
 {
@@ -102,6 +106,9 @@ struct fipsd_gw_nat {
     bool rebuild_pending;                  /* desired state not yet acknowledged */
     fipsd_gw_pairs unconfirmed;            /* removed pairs not yet acknowledged */
     fipsd_gw_pairs removed;                /* acknowledged removals not yet reported */
+    /* Sticky: a change or a removal report was lost to a failed allocation,
+     * so the desired state no longer matches what the pool was told. */
+    bool out_of_memory;
     fipsd_gw_nft_backend backend;
 };
 
@@ -308,7 +315,7 @@ static void confirm_removals(fipsd_gw_nat *nat)
         fipsd_gw_ip_pair *p = &nat->unconfirmed.items[i];
         const nat_mapping *m = find(nat, &p->virtual_ip);
         if (!m || !fipsd_gw_ip6_eq(&m->mesh_addr, &p->mesh_addr)) {
-            (void)fipsd_gw_pairs_push(&nat->removed, &p->virtual_ip, &p->mesh_addr);
+            if (fipsd_gw_pairs_push(&nat->removed, &p->virtual_ip, &p->mesh_addr) != 0) { nat->out_of_memory = true; return; }
             nat->unconfirmed.items[i] = nat->unconfirmed.items[--nat->unconfirmed.len];
         } else ++i;
     }
@@ -326,14 +333,16 @@ static void set_mapping(fipsd_gw_nat *nat, const struct in6_addr *vip, const str
 {
     nat_mapping *m = find(nat, vip);
     if (m) {
-        if (!fipsd_gw_ip6_eq(&m->mesh_addr, mesh)) (void)pairs_insert(&nat->unconfirmed, vip, &m->mesh_addr);
+        if (!fipsd_gw_ip6_eq(&m->mesh_addr, mesh) && pairs_insert(&nat->unconfirmed, vip, &m->mesh_addr) != 0) {
+            nat->out_of_memory = true; return;
+        }
         m->mesh_addr = *mesh;
         return;
     }
     if (nat->len == nat->cap) {
         size_t cap = nat->cap ? nat->cap * 2 : 16;
         nat_mapping *grown = realloc(nat->maps, cap * sizeof *grown);
-        if (!grown) return;
+        if (!grown) { nat->out_of_memory = true; return; }
         nat->maps = grown; nat->cap = cap;
     }
     nat->maps[nat->len].virtual_ip = *vip; nat->maps[nat->len].mesh_addr = *mesh; nat->len++;
@@ -346,17 +355,21 @@ static int remove_command(fipsd_gw_nat *nat, const struct in6_addr *vip, const s
 {
     nat_mapping *m = find(nat, vip);
     if (!m) {
-        if (!pairs_contains(&nat->unconfirmed, vip, mesh)) (void)fipsd_gw_pairs_push(&nat->removed, vip, mesh);
+        if (!pairs_contains(&nat->unconfirmed, vip, mesh) && fipsd_gw_pairs_push(&nat->removed, vip, mesh) != 0)
+            nat->out_of_memory = true;
         set_error(err, FIPSD_GW_NAT_RULE_NOT_FOUND, vip, NULL);
         return -1;
     }
+    if (pairs_insert(&nat->unconfirmed, vip, mesh) != 0) {
+        nat->out_of_memory = true;
+        set_error(err, FIPSD_GW_NAT_NFTABLES, vip, "out of memory");
+        return -1;
+    }
     if (!fipsd_gw_ip6_eq(&m->mesh_addr, mesh)) {
-        (void)pairs_insert(&nat->unconfirmed, vip, mesh);
         set_error(err, FIPSD_GW_NAT_RULE_NOT_FOUND, vip, NULL);
         return -1;
     }
     drop_mapping(nat, m);
-    (void)pairs_insert(&nat->unconfirmed, vip, mesh);
     return 0;
 }
 fipsd_gw_nat *fipsd_gw_nat_new(const char *lan_interface, const char *tun_interface, const struct in6_addr *pool_network,
@@ -403,14 +416,15 @@ int fipsd_gw_nat_apply(fipsd_gw_nat *nat, const fipsd_gw_nat_command *commands, 
                          added ? "Added" : "Removed", nat->len, count, elapsed_us, fipsd_gw_nat_error_text(&rebuilt, text, sizeof text));
         for (size_t i = 0; i < count; ++i) if (out->outcomes[i].kind == FIPSD_GW_NAT_OK) out->outcomes[i] = rebuilt;
     }
-    pairs_take(&out->removed, &nat->removed);
-    return 0;
+    if (pairs_take(&out->removed, &nat->removed) != 0) nat->out_of_memory = true;
+    return nat->out_of_memory ? -1 : 0;
 }
 int fipsd_gw_nat_retry_pending(fipsd_gw_nat *nat, fipsd_gw_pairs *removed, fipsd_gw_nat_error *err)
 {
     int rc = 0;
     if (nat->rebuild_pending) rc = rebuild_desired(nat, err) == 0 ? 1 : -1;
-    if (removed) pairs_take(removed, &nat->removed);
+    if (removed && pairs_take(removed, &nat->removed) != 0) nat->out_of_memory = true;
+    if (nat->out_of_memory) { set_error(err, FIPSD_GW_NAT_NFTABLES, NULL, "out of memory"); return FIPSD_GW_NAT_FATAL; }
     return rc;
 }
 int fipsd_gw_nat_cleanup(fipsd_gw_nat *nat, fipsd_gw_nat_error *err)
@@ -533,13 +547,15 @@ static void release(fipsd_gw_nat_driver *d)
     free(d->queue); fipsd_gw_pairs_clear(&d->removed);
     free(d);
 }
-static void publish(fipsd_gw_nat_driver *d, fipsd_gw_pairs *report)
+/* -1 when a removal report could not be kept: the pool would never learn of it. */
+static int publish(fipsd_gw_nat_driver *d, fipsd_gw_pairs *report)
 {
     atomic_store(&d->count, d->table.mapping_count(d->table.self));
-    if (!report->len) return;
+    if (!report->len) return 0;
     nsync_mu_lock(&d->mu);
-    pairs_take(&d->removed, report);
+    int rc = pairs_take(&d->removed, report);
     nsync_mu_unlock(&d->mu);
+    return rc;
 }
 static void finish_stop(fipsd_gw_nat_driver *d)
 {
@@ -567,31 +583,43 @@ static void *worker(void *arg)
             d->queue = NULL; d->qlen = d->qcap = 0;
             nsync_mu_unlock(&d->mu);
             fipsd_gw_nat_applied applied;
-            if (d->table.apply(d->table.self, batch, n, &applied) == 0) {
+            bool fatal = d->table.apply(d->table.self, batch, n, &applied) != 0;
+            if (!fatal) {
                 (void)fipsd_gw_nat_report_apply(&apply_log, batch, n, &applied);
-                publish(d, &applied.removed);
-                fipsd_gw_nat_applied_clear(&applied);
+                fatal = publish(d, &applied.removed) != 0;
             }
+            fipsd_gw_nat_applied_clear(&applied);
             free(batch);
-            if (stop) { finish_stop(d); nsync_mu_lock(&d->mu); break; }
+            if (fatal) FIPSD_ERROR(MODULE, "NAT worker ran out of memory applying changes; stopping it");
+            if (stop) finish_stop(d);
             nsync_mu_lock(&d->mu);
+            if (stop || fatal) break;
             continue;
         }
         if (d->stop) { nsync_mu_unlock(&d->mu); finish_stop(d); nsync_mu_lock(&d->mu); break; }
         nsync_mu_unlock(&d->mu);
         fipsd_gw_pairs report = {0}; fipsd_gw_nat_error err = {0};
         int rc = d->table.retry_pending(d->table.self, &report, &err);
-        fipsd_gw_nat_report_retry(&retry_log, rc, &err);
-        publish(d, &report);
+        bool fatal = rc == FIPSD_GW_NAT_FATAL;
+        if (!fatal) {
+            fipsd_gw_nat_report_retry(&retry_log, rc, &err);
+            fatal = publish(d, &report) != 0;
+        }
         fipsd_gw_pairs_clear(&report);
+        if (fatal) FIPSD_ERROR(MODULE, "NAT worker ran out of memory retrying pending rules; stopping it");
         next_retry = nsync_time_add(nsync_time_now(), nsync_time_ms(FIPSD_GW_NAT_RETRY_INTERVAL_MS));
         nsync_mu_lock(&d->mu);
+        if (fatal) break;
     }
     d->running = false;
+    /* Decided under the lock: a shutdown or drop that asked for this exit
+     * has stopped listening, and one that timed out may have freed the
+     * callback's target. */
+    bool unasked = !d->stop && !d->dropped;
     nsync_cv_broadcast(&d->done);
     nsync_mu_unlock(&d->mu);
     if (d->table.destroy) d->table.destroy(d->table.self);
-    if (d->on_exit) d->on_exit(d->user);
+    if (unasked && d->on_exit) d->on_exit(d->user);
     release(d);
     return NULL;
 }
@@ -652,18 +680,20 @@ int fipsd_gw_nat_driver_shutdown(fipsd_gw_nat_driver *d, unsigned timeout_ms, fi
     nsync_time deadline = nsync_time_add(nsync_time_now(), nsync_time_ms(timeout_ms));
     while (!d->stopped_ready && d->running)
         if (nsync_cv_wait_with_deadline(&d->done, &d->mu, deadline, NULL) != 0) break;
-    bool ready = d->stopped_ready;
+    bool ready = d->stopped_ready, ended = !d->running;
     int rc = d->stopped_rc;
     fipsd_gw_nat_error stopped = d->stopped_err;
     nsync_mu_unlock(&d->mu);
-    if (!ready) {
+    if (!ready && !ended) {
         FIPSD_WARN(MODULE, "NAT worker did not finish deleting the table in time: timeout_ms=%u", timeout_ms);
         if (d->has_thread) pthread_detach(d->thread);
         release(d);
-        return 0;
+        return 1;
     }
     if (d->has_thread) pthread_join(d->thread, NULL);
     release(d);
+    /* A worker that stopped by itself before taking the stop left the table. */
+    if (!ready) { set_error(err, FIPSD_GW_NAT_WORKER_STOPPED, NULL, NULL); return -1; }
     if (rc != 0 && err) *err = stopped;
     return rc;
 }

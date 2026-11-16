@@ -246,15 +246,21 @@ static fipsd_gw_mapping *slot_of(const fipsd_gw_pool *p, const fipsd_gw_map *map
 }
 static fipsd_gw_mapping *mapping_of_node(const fipsd_gw_pool *p, const fips_node_addr *node) { return slot_of(p, &p->by_node, node); }
 static fipsd_gw_mapping *mapping_of_vip(const fipsd_gw_pool *p, const struct in6_addr *vip) { return slot_of(p, &p->by_vip, vip); }
+/* Room for one more slot. It may move the slots, so no slot pointer is held
+ * across it. */
+static int slot_reserve(fipsd_gw_pool *p)
+{
+    if (p->slots_len < p->slots_cap || p->live < p->slots_len) return 0;
+    size_t cap = p->slots_cap ? p->slots_cap * 2 : 16;
+    fipsd_gw_mapping *grown = realloc(p->slots, cap * sizeof *grown);
+    if (!grown) return -1;
+    p->slots = grown; p->slots_cap = cap;
+    return 0;
+}
+/* A free slot; slot_reserve has made room for it. */
 static fipsd_gw_mapping *slot_new(fipsd_gw_pool *p)
 {
     for (size_t i = 0; i < p->slots_len; ++i) if (!p->slots[i].live) return &p->slots[i];
-    if (p->slots_len == p->slots_cap) {
-        size_t cap = p->slots_cap ? p->slots_cap * 2 : 16;
-        fipsd_gw_mapping *grown = realloc(p->slots, cap * sizeof *grown);
-        if (!grown) return NULL;
-        p->slots = grown; p->slots_cap = cap;
-    }
     return &p->slots[p->slots_len++];
 }
 static void slot_remove(fipsd_gw_pool *p, fipsd_gw_mapping *m)
@@ -327,30 +333,35 @@ static int observe_bindings(fipsd_gw_pool *p, const fipsd_gw_ct_snapshot *conntr
 }
 void fipsd_gw_pool_set_evidence(fipsd_gw_pool *p, bool available) { p->trusted = available; p->read = 0; }
 
-/* Hold a removed mapping's address until no answer can still name it. */
-static int start_releasing(fipsd_gw_pool *p, const fipsd_gw_mapping *m)
+/* Room for one more release record. */
+static int releasing_reserve(fipsd_gw_pool *p)
+{
+    if (p->releasing_len < p->releasing_cap) return 0;
+    size_t cap = p->releasing_cap ? p->releasing_cap * 2 : 16;
+    releasing *grown = realloc(p->releasing, cap * sizeof *grown);
+    if (!grown) return -1;
+    p->releasing = grown; p->releasing_cap = cap;
+    return 0;
+}
+/* Hold a removed mapping's address until no answer can still name it;
+ * releasing_reserve has made room for its record. */
+static void start_releasing(fipsd_gw_pool *p, const fipsd_gw_mapping *m)
 {
     uint32_t offset;
-    if (!addr_offset(p, &m->virtual_ip, &offset)) return 0;
+    if (!addr_offset(p, &m->virtual_ip, &offset)) return;
     fipsd_gw_instant deadline = fipsd_gw_later(m->last_answer, p->grace_secs);
     if (m->answer_deadline > deadline) deadline = m->answer_deadline;
     releasing r = {offset, m->mesh_addr, deadline, false, 0};
-    for (size_t i = 0; i < p->releasing_len; ++i) if (p->releasing[i].offset == offset) { p->releasing[i] = r; return 0; }
-    if (p->releasing_len == p->releasing_cap) {
-        size_t cap = p->releasing_cap ? p->releasing_cap * 2 : 16;
-        releasing *grown = realloc(p->releasing, cap * sizeof *grown);
-        if (!grown) return -1;
-        p->releasing = grown; p->releasing_cap = cap;
-    }
+    for (size_t i = 0; i < p->releasing_len; ++i) if (p->releasing[i].offset == offset) { p->releasing[i] = r; return; }
     p->releasing[p->releasing_len++] = r;
-    return 0;
 }
+/* releasing_reserve has made room for the victim's release record. */
 static bool evict(fipsd_gw_pool *p, fipsd_gw_mapping *m, fipsd_gw_evicted *out)
 {
     fipsd_gw_mapping copy = *m;
     slot_remove(p, m);
     p->evicted_total++;
-    (void)start_releasing(p, &copy);
+    start_releasing(p, &copy);
     char v[48], a[48];
     FIPSD_DEBUG(MODULE, "Evicted never-used mapping: virtual_ip=%s mesh_addr=%s",
                 fipsd_gw_ip6_text(&copy.virtual_ip, v, sizeof v), fipsd_gw_ip6_text(&copy.mesh_addr, a, sizeof a));
@@ -497,6 +508,10 @@ fipsd_gw_pool_error fipsd_gw_pool_allocate_at(fipsd_gw_pool *p, const fips_node_
         out->virtual_ip = existing->virtual_ip; out->is_new = false; out->ttl = answer_ttl(p, existing, now);
         return FIPSD_GW_POOL_OK;
     }
+    /* Every allocation an insertion needs, made before anything changes, so a
+     * failure leaves the pool as it was (upstream aborts instead). */
+    if (slot_reserve(p) != 0 || releasing_reserve(p) != 0 || fipsd_gw_map_reserve(&p->by_node) != 0 ||
+        fipsd_gw_map_reserve(&p->by_vip) != 0) return FIPSD_GW_POOL_EXHAUSTED;
     /* Ceiling first, so a refusal there costs no token. */
     fipsd_gw_mapping *victim = NULL;
     if (p->live >= p->ceiling) {
@@ -525,7 +540,6 @@ fipsd_gw_pool_error fipsd_gw_pool_allocate_at(fipsd_gw_pool *p, const fips_node_
     free_remove(p, offset);
     p->cursor = position + 1;
     fipsd_gw_mapping *m = slot_new(p);
-    if (!m) return FIPSD_GW_POOL_EXHAUSTED;
     memset(m, 0, sizeof *m);
     m->live = true; m->node_addr = *node_addr; offset_addr(p, offset, &m->virtual_ip); m->mesh_addr = *mesh_addr;
     snprintf(m->dns_name, sizeof m->dns_name, "%s", dns_name ? dns_name : "");
@@ -534,10 +548,9 @@ fipsd_gw_pool_error fipsd_gw_pool_allocate_at(fipsd_gw_pool *p, const fips_node_
     uint64_t life = p->ttl_secs > UINT64_MAX - p->grace_secs ? UINT64_MAX : p->ttl_secs + p->grace_secs;
     m->answer_deadline = fipsd_gw_later(now, life); m->last_answer = now;
     uint32_t index = (uint32_t)(m - p->slots);
-    if (fipsd_gw_map_set(&p->by_node, node_addr, index) != 0 || fipsd_gw_map_set(&p->by_vip, &m->virtual_ip, index) != 0) {
-        fipsd_gw_map_remove(&p->by_node, node_addr); m->live = false; free_add(p, offset);
-        return FIPSD_GW_POOL_EXHAUSTED;
-    }
+    /* Neither can fail: both maps were reserved above. */
+    (void)fipsd_gw_map_set(&p->by_node, node_addr, index);
+    (void)fipsd_gw_map_set(&p->by_vip, &m->virtual_ip, index);
     p->live++;
     char v[48], a[48];
     FIPSD_INFO(MODULE, "Allocated virtual IP: virtual_ip=%s mesh_addr=%s dns_name=%s",
@@ -592,14 +605,16 @@ int fipsd_gw_pool_tick(fipsd_gw_pool *p, fipsd_gw_instant now, const fipsd_gw_ct
                 FIPSD_DEBUG(MODULE, "Draining mapping recovered to active (traffic resumed): virtual_ip=%s sessions=%u",
                             fipsd_gw_ip6_text(&m->virtual_ip, v, sizeof v), sessions);
             } else if (m->has_drain_start && fipsd_gw_since(now, m->drain_start) > grace) {
-                /* Free: the address waits in releasing until nothing can name it. */
+                /* Free: the address waits in releasing until nothing can name it.
+                 * Its record and its removal event are secured first, so a
+                 * failure leaves the mapping for the next tick to reclaim. */
+                fipsd_gw_pool_event event = {FIPSD_GW_EVENT_MAPPING_REMOVED, m->virtual_ip, m->mesh_addr};
+                if (releasing_reserve(p) != 0 || fipsd_gw_events_push(events, &event) != 0) return -1;
                 fipsd_gw_mapping copy = *m;
                 slot_remove(p, m);
-                if (start_releasing(p, &copy) != 0) return -1;
+                start_releasing(p, &copy);
                 FIPSD_INFO(MODULE, "Reclaimed virtual IP: virtual_ip=%s mesh_addr=%s",
                            fipsd_gw_ip6_text(&copy.virtual_ip, v, sizeof v), fipsd_gw_ip6_text(&copy.mesh_addr, a, sizeof a));
-                fipsd_gw_pool_event event = {FIPSD_GW_EVENT_MAPPING_REMOVED, copy.virtual_ip, copy.mesh_addr};
-                if (fipsd_gw_events_push(events, &event) != 0) return -1;
             }
             break;
         }

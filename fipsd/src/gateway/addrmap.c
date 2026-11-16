@@ -60,13 +60,16 @@ bool fipsd_gw_map_get(const fipsd_gw_map *map, const void *key, uint32_t *value)
     return v != NULL;
 }
 bool fipsd_gw_map_contains(const fipsd_gw_map *map, const void *key) { return fipsd_gw_map_find(map, key) != NULL; }
+int fipsd_gw_map_reserve(fipsd_gw_map *map)
+{
+    if (map->cap && (map->occupied + 1) * 10 <= map->cap * 7) return 0;
+    size_t cap = map->cap ? map->cap : 16;
+    while ((map->len + 1) * 10 > cap * 7 / 2) cap *= 2; /* rehash drops tombstones */
+    return grow(map, cap);
+}
 int fipsd_gw_map_set(fipsd_gw_map *map, const void *key, uint32_t value)
 {
-    if (!map->cap || (map->occupied + 1) * 10 > map->cap * 7) {
-        size_t cap = map->cap ? map->cap : 16;
-        while ((map->len + 1) * 10 > cap * 7 / 2) cap *= 2; /* rehash drops tombstones */
-        if (grow(map, cap) != 0) return -1;
-    }
+    if (fipsd_gw_map_reserve(map) != 0) return -1;
     bool found; size_t at = probe(map, key, &found);
     if (!found) {
         if (map->slots[at] == 0) map->occupied++;

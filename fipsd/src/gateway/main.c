@@ -405,6 +405,7 @@ int main(int argc, char **argv)
     memset(&g, 0, sizeof g);
     atomic_init(&g.exit_code, EXIT_OK);
     int rc = EXIT_FAIL;
+    bool nat_left_running = false;
 
     fipsd_config_log held = {0};
     fipsd_config *config = fipsd_config_load(config_path, &held);
@@ -629,8 +630,10 @@ int main(int argc, char **argv)
     }
     if (have_final) fipsd_gw_pool_state_clear(&final_state);
     fipsd_gw_net_cleanup(&g.net);
-    if (fipsd_gw_nat_driver_shutdown(g.nat, FIPSD_GW_NAT_STOP_TIMEOUT_MS, &nerr) != 0)
+    int nat_stopped = fipsd_gw_nat_driver_shutdown(g.nat, FIPSD_GW_NAT_STOP_TIMEOUT_MS, &nerr);
+    if (nat_stopped < 0)
         FIPSD_WARN(MODULE, "Failed to clean up nftables table: error=%s", fipsd_gw_nat_error_text(&nerr, nerr_text, sizeof nerr_text));
+    nat_left_running = nat_stopped > 0;
     g.nat = NULL;
     FIPSD_INFO(MODULE, "fips-gateway shutdown complete");
     rc = atomic_load(&g.exit_code);
@@ -655,7 +658,12 @@ out_forwards:
 out_config:
     fipsd_config_free(config);
 out_log:
-    fipsd_log_set_default(NULL);
-    fipsd_log_destroy(log);
+    /* A NAT worker the shutdown left behind may still log; the exit reclaims
+     * the logger then. The fibers and the blocking executor were joined by
+     * fipsd_runtime_run, so nothing else outlives this point. */
+    if (!nat_left_running) {
+        fipsd_log_set_default(NULL);
+        fipsd_log_destroy(log);
+    }
     return rc;
 }

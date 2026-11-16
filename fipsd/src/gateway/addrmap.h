@@ -20,6 +20,9 @@ bool fipsd_gw_map_get(const fipsd_gw_map *map, const void *key, uint32_t *value)
 bool fipsd_gw_map_contains(const fipsd_gw_map *map, const void *key);
 /* Insert or replace; -1 on allocation failure. */
 int fipsd_gw_map_set(fipsd_gw_map *map, const void *key, uint32_t value);
+/* Make room for one more key: after 0, the next set cannot fail, removals in
+ * between notwithstanding (a removal never takes room). */
+int fipsd_gw_map_reserve(fipsd_gw_map *map);
 bool fipsd_gw_map_remove(fipsd_gw_map *map, const void *key);
 static inline size_t fipsd_gw_map_len(const fipsd_gw_map *map) { return map->len; }
 /* Iterate: start with *cursor == 0; each call yields the next live entry. */
