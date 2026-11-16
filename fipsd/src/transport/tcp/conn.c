@@ -28,8 +28,9 @@ static bool establish(tcp_conn *c, int *error)
         bool ok = !stopped(c) && s.result == 0 && gof_io_reset_fd(c->fd) == 0;
         *error = s.error; nsync_mu_unlock(&u->mu); return ok;
     }
+    const fipsd_stream_dialer *dialer = u->config.dialer;
     tcp_endpoint *items = NULL; size_t n = 0;
-    if (!tcp_resolve(&c->peer, false, &items, &n)) { *error = 0; return false; }
+    if (!tcp_resolve(dialer ? dialer->via : &c->peer, false, &items, &n)) { *error = dialer ? EHOSTUNREACH : 0; return false; }
     bool ok = false;
     uint64_t deadline = fipsd_transport_now_ms() + u->config.connect_timeout_ms;
     for (size_t i = 0; i < n && !stopped(c); ++i) {
@@ -44,6 +45,13 @@ static bool establish(tcp_conn *c, int *error)
         int rc = now < deadline ? gof_connect(s.fd, (const struct sockaddr *)&items[i].address,
                 items[i].len, (int)(deadline - now)) : -1;
         *error = now < deadline ? (rc ? tcp_io_errno() : 0) : ETIMEDOUT;
+        /* An unreachable proxy is a SOCKS5 failure, not the peer refusing. */
+        if (rc && dialer && *error != ETIMEDOUT) *error = EHOSTUNREACH;
+        /* Once a proxy address accepted the TCP connect its handshake answer
+         * is final, as tokio-socks: no other proxy address is tried. */
+        bool answered = !rc && dialer && !stopped(c);
+        if (answered && dialer->upgrade(dialer->user, s.fd, &c->peer, deadline, error)) rc = -1;
+        else answered = false;
         if (!rc && !stopped(c)) {
             c->remote = items[i]; c->local.len = sizeof c->local.address;
             ok = getsockname(s.fd, (struct sockaddr *)&c->local.address, &c->local.len) == 0;
@@ -52,6 +60,7 @@ static bool establish(tcp_conn *c, int *error)
         }
         nsync_mu_lock(&u->mu); c->fd = -1; nsync_mu_unlock(&u->mu);
         tcp_fd_close(s.fd);
+        if (answered) break;
     }
     free(items); return ok;
 }
@@ -85,7 +94,8 @@ static void reader(void *arg)
         }
     } else if (!stopped(c) && c->direction == FIPS_LINK_OUTBOUND && error) {
         if (error == ETIMEDOUT) atomic_fetch_add(&u->shared.stats.connect_timeouts, 1);
-        else atomic_fetch_add(&u->shared.stats.connect_refused, 1);
+        else if (!u->config.dialer || error == ECONNREFUSED) atomic_fetch_add(&u->shared.stats.connect_refused, 1);
+        else atomic_fetch_add(&u->shared.stats.socks5_errors, 1);
     }
     go_channel_close(c->reader_done);
 }

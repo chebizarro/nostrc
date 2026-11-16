@@ -12,7 +12,10 @@
 #define FIPSD_STATS_TCP_ONLY(X) \
     X(connections_established) X(connections_accepted) X(connections_rejected) \
     X(source_rejected) X(connect_timeouts) X(connect_refused) X(pool_inbound) X(pool_outbound)
-#define FIPSD_STATS_ALL(X) FIPSD_STATS_PACKET(X) FIPSD_STATS_UDP_ONLY(X) FIPSD_STATS_TCP_ONLY(X)
+/* Upstream socks5/stats.rs and tor/stats.rs: counted by the proxied (Tor,
+ * Nym) owners only; appended last so earlier counter positions are stable. */
+#define FIPSD_STATS_PROXY_ONLY(X) X(socks5_errors) X(control_errors)
+#define FIPSD_STATS_ALL(X) FIPSD_STATS_PACKET(X) FIPSD_STATS_UDP_ONLY(X) FIPSD_STATS_TCP_ONLY(X) FIPSD_STATS_PROXY_ONLY(X)
 #define FIPSD_STATS_DECLARE(name) _Atomic uint64_t name;
 typedef struct fipsd_transport_stats { FIPSD_STATS_ALL(FIPSD_STATS_DECLARE) } fipsd_transport_stats;
 #undef FIPSD_STATS_DECLARE
@@ -28,7 +31,8 @@ enum { FIPSD_TRANSPORT_STATS_COUNT = 0 FIPSD_STATS_ALL(FIPSD_STATS_COUNT) };
 #define FIPSD_STATS_DECLARE(name) _Atomic uint64_t name;
 typedef struct fipsd_transport_diagnostics { FIPSD_TRANSPORT_DIAGNOSTICS(FIPSD_STATS_DECLARE) } fipsd_transport_diagnostics;
 #undef FIPSD_STATS_DECLARE
-/* Exact output field set; loopback has Empty stats upstream. */
+/* Exact output field set per type (udp, tcp, tor, nym); loopback has Empty
+ * stats upstream. Order follows each Rust snapshot struct. */
 const char *const *fipsd_transport_stats_fields(const char *type, size_t *count);
 void fipsd_transport_stats_init(fipsd_transport_stats *);
 void fipsd_transport_diagnostics_init(fipsd_transport_diagnostics *);

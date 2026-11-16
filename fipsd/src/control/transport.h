@@ -8,7 +8,8 @@ typedef struct fipsd_control_transport_view {
     fipsd_control_transport row;
     fipsd_control_interface interface;
     fipsd_control_counter counters[FIPSD_TRANSPORT_STATS_COUNT];
-    char local_addr[300];
+    char local_addr[300], onion_address[128];
+    json_t *tor_monitoring; /* owned by the view: adopt into the snapshot or decref */
 } fipsd_control_transport_view;
 void fipsd_control_transport_read(const fipsd_transport *, uint64_t now_ms,
                                  fipsd_control_transport_view *);

@@ -368,6 +368,8 @@ static snap *build(handlers *h, fips_instant now)
         ts[i] = views[i].row;
         ts[i].type = sdup(x, ts[i].type); ts[i].name = sdup(x, ts[i].name);
         if (ts[i].local_addr) ts[i].local_addr = sdup(x, ts[i].local_addr);
+        if (ts[i].onion_address) ts[i].onion_address = sdup(x, ts[i].onion_address);
+        if (views[i].tor_monitoring) ts[i].tor_monitoring = sjson(x, views[i].tor_monitoring);
         if (ts[i].interface) views[i].interface.name = sdup(x, views[i].interface.name);
     }
     s->transports = ts; s->transports_count = ts && views ? tn : 0;
