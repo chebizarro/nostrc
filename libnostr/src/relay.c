@@ -1930,8 +1930,9 @@ char *nostr_relay_get_auth_challenge(NostrRelay *relay, uint64_t *generation) {
     return challenge;
 }
 
-void nostr_relay_auth(NostrRelay *relay, void (*sign)(NostrEvent *, Error **), Error **err) {
-    char *challenge = nostr_relay_get_auth_challenge(relay, NULL);
+static void relay_auth_impl(NostrRelay *relay, void (*sign)(NostrEvent *, Error **),
+                            uint64_t wait_ms, Error **err) {
+    char *challenge = relay ? nostr_relay_get_auth_challenge(relay, NULL) : NULL;
     if (!challenge || !sign) {
         free(challenge);
         if (err) *err = new_error(1, "no current AUTH challenge or signer");
@@ -1947,11 +1948,29 @@ void nostr_relay_auth(NostrRelay *relay, void (*sign)(NostrEvent *, Error **), E
     free(challenge);
     Error *failure = NULL;
     sign(event, &failure);
-    if (!failure && !nostr_relay_publish_and_wait(relay, event, 5000, &failure) && !failure)
-        failure = new_error(1, "AUTH rejected");
+    if (!failure) {
+        if (wait_ms == 0)
+            nostr_relay_publish(relay, event); /* OK/false still arrives via the OK callback */
+        else if (!nostr_relay_publish_and_wait(relay, event, wait_ms, &failure) && !failure)
+            failure = new_error(1, "AUTH rejected");
+    }
     nostr_event_free(event);
     if (err) *err = failure;
     else if (failure) free_error(failure);
+}
+
+void nostr_relay_auth(NostrRelay *relay, void (*sign)(NostrEvent *, Error **), Error **err) {
+    relay_auth_impl(relay, sign, 0, err);
+}
+
+bool nostr_relay_auth_wait(NostrRelay *relay, void (*sign)(NostrEvent *, Error **),
+                           uint64_t timeout_ms, Error **err) {
+    Error *failure = NULL;
+    relay_auth_impl(relay, sign, timeout_ms ? timeout_ms : 5000, &failure);
+    bool ok = failure == NULL;
+    if (err) *err = failure;
+    else if (failure) free_error(failure);
+    return ok;
 }
 
 bool nostr_relay_subscribe(NostrRelay *relay, GoContext *ctx, NostrFilters *filters, Error **err) {

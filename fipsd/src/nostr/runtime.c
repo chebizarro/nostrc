@@ -315,7 +315,7 @@ static void authenticate(fipsd_nostr_runtime *r, relay_slot *s)
     if (!challenge || s->auth_generation == generation) { free(challenge); return; }
     free(challenge); s->auth_generation = generation;
     Error *err = NULL; auth_identity = r->identity;
-    nostr_relay_auth(s->relay, sign_auth, &err); auth_identity = NULL;
+    (void)nostr_relay_auth_wait(s->relay, sign_auth, 5000, &err); auth_identity = NULL;
     if (r->driver.publish_result) r->driver.publish_result(r->driver.user, s->url, NOSTR_KIND_CLIENT_AUTHENTICATION, err == NULL);
     if (err) { FIPSD_WARN("nostr", "AUTH %s: %s", s->url, err->message); free_error(err); }
 

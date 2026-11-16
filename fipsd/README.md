@@ -1361,7 +1361,7 @@ A full mailbox fails visibly rather than manufacturing a live/empty-fetch result
 existing authenticated connection, retains/logs the CLOSED reason, and reissues
 REQ with a per-relay 1-second exponential ladder capped at five minutes; EOSE
 resets it. AUTH is taken off the reader callback onto the actor and signed with
-the FIPS identity via `nostr_relay_auth`; that helper now checks the event-ID OK
+the FIPS identity via `nostr_relay_auth_wait`; that helper checks the event-ID OK
 and frees its authentication event. Network disconnects/failed initial dials
 have one retry owner, a channel-select deadline with the same bounded ladder.
 Terminal relay objects are replaced while the pool worker is joined; retired
