@@ -1,5 +1,7 @@
 # Component Version Manifest
 
+nostrc-9keoz.6: fipsd remains 0.1.0 Unreleased; additive node protocol handlers, loopback transport, single-fiber dispatcher merge and live control provider fold into the initial unreleased daemon. libfips-core unchanged. No published release/tag change.
+
 nostrc-9keoz.3: fipsd remains 0.1.0 Unreleased; additive Unix control socket, provider projections and command protocol fold into the initial unreleased daemon. libgo remains 0.3.0 Unreleased; PATCH-class correction makes the pthread_once stack-size argument caller-local for concurrent spawns. No published release/tag change.
 
 This file is the repository-wide ledger for independently releasable components

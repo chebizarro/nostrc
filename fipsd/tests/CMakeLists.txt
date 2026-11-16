@@ -172,3 +172,18 @@ set_tests_properties(FipsdControlInteropTest PROPERTIES TIMEOUT 300 SKIP_RETURN_
   LABELS "fips;control;interop")
 nostrc_describe_test(FipsdControlInteropTest OWNER fipsd TARGETS fipsd
   INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/control_interop.py")
+
+# Node protocol handlers (nostrc-9keoz.6): two-node loopback proof and the
+# per-handler scenarios, both event-driven on two scheduler workers.
+fipsd_unit_test(fipsd_node_two_nodes_test test_node_two_nodes.c)
+add_dependencies(fipsd_tests fipsd_node_two_nodes_test)
+add_test(NAME FipsdNodeTwoNodesTest COMMAND fipsd_node_two_nodes_test)
+set_tests_properties(FipsdNodeTwoNodesTest PROPERTIES TIMEOUT 300 LABELS "fips;node"
+  ENVIRONMENT "FIPSD_WORKERS=2")
+nostrc_describe_test(FipsdNodeTwoNodesTest OWNER fipsd TARGETS fipsd_node_two_nodes_test)
+fipsd_unit_test(fipsd_node_handlers_test test_node_handlers.c)
+add_dependencies(fipsd_tests fipsd_node_handlers_test)
+add_test(NAME FipsdNodeHandlersTest COMMAND fipsd_node_handlers_test)
+set_tests_properties(FipsdNodeHandlersTest PROPERTIES TIMEOUT 300 LABELS "fips;node"
+  ENVIRONMENT "FIPSD_WORKERS=2")
+nostrc_describe_test(FipsdNodeHandlersTest OWNER fipsd TARGETS fipsd_node_handlers_test)
