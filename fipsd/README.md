@@ -1545,10 +1545,21 @@ This is C↔C loopback proof, **not NAT or Rust interoperability proof**. Upstre
 NAT lab uses explicit namespace/veth SNAT+DNAT for cone emulation, randomized
 MASQUERADE for symmetric NAT, and a same-LAN case. Those network topologies,
 C↔Rust traversal, public STUN/relays and deployment are not verified here;
-`f66sr.3` owns the formal simulated-NAT acceptance harness. `8hvs6.4` owns the
-formal protocol review.
+`f66sr.3` owns the formal simulated-NAT acceptance harness. The formal protocol review
+(`8hvs6.4`) was completed 2026-11-16: docs/reviews/fips-nostr-protocol-review-2026-11-16.md.
 
 ### Protocol-smell checklist (A–J, module and local relay tests)
+
+The formal Nostr protocol review (`8hvs6.4`) was completed 2026-11-16 — see
+[docs/reviews/fips-nostr-protocol-review-2026-11-16.md](../docs/reviews/fips-nostr-protocol-review-2026-11-16.md).
+It found no must-fix A–J protocol smell introduced by this module: every box below was verified
+against source and the upstream Rust runtime, and the three nostr test binaries build and pass
+out-of-tree under ASan/UBSan with warnings-as-errors. The report records one Medium pre-existing
+**libnostr** concurrency defect — a flaky TSan data race in the relay connect→write handoff
+(`relay.c:967`/`:1064`) that the rendezvous connect/retry churn exposes under load, which makes the
+TSan gate not reliably green and is outside the CLOSED-backoff/AUTH code in scope — plus a Low
+NIP-11 one-shot-probe follow-up (item H) and two informational notes (NOTICE surfacing; a
+documented resend-in-AwaitAnswer divergence).
 
 - [x] A: Long-lived REQ/event delivery; no periodic relay queries.
 - [x] B: History and successful fetch completion are EOSE-driven, never timer-closes.
@@ -1557,7 +1568,7 @@ formal protocol review.
 - [x] E: Kind/identifier/authors and kind/recipient/since filters; wildcard authors only for explicitly open discovery.
 - [x] F: Independent bounded signal IDs/session memory and replaceable advert idempotency, including reconnect replay; traversal adds canonical peer dedup, dual-init election, one-shot handoff and independent retained inbound/outbound quotas.
 - [x] G: Channels are owned actor/worker mailboxes, not relay polling/queue wrappers; UDP classifiers never block the receive drain.
-- [x] H: Every configured relay gets a cancellable NIP-11 probe; explicit refusal, multiple relays and authenticated retry.
+- [x] H: Every configured relay gets a cancellable NIP-11 probe; explicit refusal, multiple relays and authenticated retry. (Review follow-up: the probe is one-shot at startup and a transient fetch failure permanently excludes a relay — a documented fail-closed posture, not a change made here; see the review report under H/Finding 1.)
 - [x] I: Timers are only advert publication, reconnect backoff, reservation expiry, failed-fetch deadlines, STUN retransmissions, bounded UDP punch cadence/settle (expired send windows disarm) and failure cooldown; none substitutes for Nostr event delivery or establishes history completion.
 - [x] J: Grotto `bunker_test_relay` main-context/Soup fixture adapted to Jansson over real local WebSockets/HTTP, driven by main-context commands and channel barriers, no sleeps. Tests hold EOSE, replay duplicate history/live events across two relays, send AUTH with CLOSED, reject publishes, and exercise B6/session/freshness/failure contracts. Traversal adds a real loopback STUN server and relay-mediated two-node IK, with channel/select deadlines rather than sleeps, plus rejection/quota and late-repair/expired-cadence regressions.
 
@@ -1568,7 +1579,8 @@ sleeps/volatile service polling and was not used for these event-driven gates.
 The upstream open-discovery startup scenario seeds adverts before node startup;
 the local test preserves that shape and additionally holds EOSE before any dial
 effect is permitted. These are local native tests, not public-relay, hosted-CI,
-STUN, traversal or deployment proof. `8hvs6.4` remains the formal protocol review.
+STUN, traversal or deployment proof. The formal protocol review (`8hvs6.4`) was completed
+2026-11-16: docs/reviews/fips-nostr-protocol-review-2026-11-16.md.
 
 ## TCP transport
 
@@ -1741,4 +1753,5 @@ kept, and `show_sessions.state` uses upstream's vocabulary (`established` while
 draining with `is_draining: true`; `initiating`/`awaiting_msg3` before
 establishment) instead of `draining`/`handshaking`.
 NAT traversal or deployment proof. The new local STUN/C↔C traversal tests are
-separate evidence; `8hvs6.4` remains the formal protocol review.
+separate evidence; the formal protocol review (`8hvs6.4`) was completed 2026-11-16
+(docs/reviews/fips-nostr-protocol-review-2026-11-16.md).
