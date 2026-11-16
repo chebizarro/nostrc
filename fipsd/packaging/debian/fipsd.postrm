@@ -1,0 +1,63 @@
+#!/bin/sh
+# fipsd post-removal: drop the .fips DNS routing fips-dns-setup may have
+# written, and on purge the configuration, identity keys and group.
+set -e
+
+case "$1" in
+    remove|purge)
+        # The DNS routing fips-dns-setup writes outside the package, one
+        # file per backend it picks between, in case fips-dns-teardown did
+        # not run (prerm stops the unit only when it was active). The paths
+        # match packaging/common/fips-dns-teardown, which dpkg has already
+        # removed, so it cannot be called from here. Each resolver whose
+        # file is removed is told to drop it.
+        restart_resolved=0
+        if [ -f /etc/systemd/dns-delegate.d/fips.dns-delegate ]; then
+            rm -f /etc/systemd/dns-delegate.d/fips.dns-delegate
+            restart_resolved=1
+        fi
+        if [ -f /etc/systemd/resolved.conf.d/fips.conf ]; then
+            rm -f /etc/systemd/resolved.conf.d/fips.conf
+            restart_resolved=1
+        fi
+        if [ "$restart_resolved" = 1 ] && [ -d /run/systemd/system ] \
+            && systemctl is-active --quiet systemd-resolved.service; then
+            systemctl restart systemd-resolved \
+                || echo "fipsd: warning: could not restart systemd-resolved; restart it to drop the .fips route"
+        fi
+        if [ -f /etc/dnsmasq.d/fips.conf ]; then
+            rm -f /etc/dnsmasq.d/fips.conf
+            if [ -d /run/systemd/system ] \
+                && systemctl is-active --quiet dnsmasq.service; then
+                systemctl try-restart dnsmasq \
+                    || echo "fipsd: warning: could not restart dnsmasq; restart it to drop the .fips route"
+            fi
+        fi
+        if [ -f /etc/NetworkManager/dnsmasq.d/fips.conf ]; then
+            rm -f /etc/NetworkManager/dnsmasq.d/fips.conf
+            if [ -d /run/systemd/system ] \
+                && systemctl is-active --quiet NetworkManager.service \
+                && command -v nmcli >/dev/null 2>&1; then
+                nmcli general reload \
+                    || echo "fipsd: warning: could not reload NetworkManager; reload it to drop the .fips route"
+            fi
+        fi
+        ;;
+esac
+
+case "$1" in
+    purge)
+        # Configuration and identity keys (fips.key/fips.pub beside the
+        # config when node.identity.persistent is on), the seeded config
+        # dpkg does not know about, and the runtime directory.
+        rm -rf /etc/fips
+        rm -rf /run/fips
+        if getent group fips >/dev/null 2>&1; then
+            groupdel fips 2>/dev/null || true
+        fi
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0

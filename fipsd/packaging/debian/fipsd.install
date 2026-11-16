@@ -1,0 +1,7 @@
+usr/bin/fips*
+usr/lib/*/fipsd/
+usr/lib/systemd/system/
+usr/lib/tmpfiles.d/
+usr/lib/sysusers.d/
+usr/share/fips/
+etc/fips/

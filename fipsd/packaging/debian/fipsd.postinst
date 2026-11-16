@@ -1,0 +1,45 @@
+#!/bin/sh
+# fipsd post-install: the fips group, the seeded config, then debhelper's
+# generated snippets (sysusers, tmpfiles, unit enable/start).
+set -e
+
+case "$1" in
+    configure)
+        # Control-socket access is by membership of the fips group, so it
+        # exists before the daemon creates the socket. The sysusers.d
+        # fragment creates it too, but only where systemd-sysusers runs.
+        if ! getent group fips >/dev/null 2>&1; then
+            groupadd --system fips
+        fi
+
+        # Seed /etc/fips/fips.yaml from the shipped example only if it does
+        # not already exist. The live config is deliberately not a dpkg
+        # conffile: copy-if-absent yields to an operator- or configuration-
+        # management-rendered file and never prompts for or clobbers it. To
+        # reset to defaults remove it and reinstall, or copy the example.
+        if [ ! -e /etc/fips/fips.yaml ]; then
+            install -m 600 -o root -g root \
+                /usr/share/fips/fips.yaml.example \
+                /etc/fips/fips.yaml
+        fi
+
+        # On upgrade, reapply the firewall ruleset in place where the
+        # operator has it running: "try" leaves an inactive unit alone, so
+        # this never opts a host in, and it is a reload, not a restart --
+        # the unit's ExecStop deletes the table, and a restart would leave
+        # the mesh interface unfiltered in between. A failed reload keeps
+        # the previous ruleset loaded, so it is reported and the upgrade
+        # goes on.
+        if [ -n "$2" ] && [ -d /run/systemd/system ]; then
+            systemctl daemon-reload >/dev/null 2>&1 || true
+            if ! systemctl try-reload-or-restart fips-firewall.service; then
+                echo "fipsd: reloading fips-firewall.service failed; the ruleset loaded before the upgrade stays in force" >&2
+                echo "fipsd: check /etc/fips/fips.nft and the rules in /etc/fips/fips.d/" >&2
+            fi
+        fi
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0

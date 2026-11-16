@@ -385,6 +385,27 @@ owns the component's version, 0.1.0 Unreleased. Warning flags honor nostrc's
 shared `GO_WARNINGS_AS_ERRORS`; sanitizer flags reuse its `GO_ENABLE_*`
 helpers.
 
+## Packaging (`nostrc-iq1n9.5`)
+
+`packaging/` mirrors upstream fips's `packaging/` for the C daemon: Debian
+(`debian/`, a debhelper recipe for `fipsd`, `libfipsnative0` and
+`libfipsnative-dev`), RPM (`rpm/fipsd.spec`), Arch (`arch/PKGBUILD`), the
+systemd units (`systemd/*.service.in`), a macOS `.pkg` with a launchd daemon
+(`macos/`), and the shared assets (`common/`: the example `fips.yaml`,
+`hosts`, upstream's `fips.nft` baseline, the `fips` sysusers and `/run/fips`
+tmpfiles fragments). Everything a package ships is declared by the install
+rules at the end of `CMakeLists.txt` and staged with
+`cmake --install <build>/fipsd`; `make -C fipsd/packaging deb|rpm|pkg` builds
+each format and `.github/workflows/fips-packaging.yml` builds, installs and
+smoke-tests all of them on a `fipsd-v*` tag or by dispatch. The version is
+`declare_component_version(FIPSD ...)` here, read by
+`packaging/common/version.sh` and tagged by `scripts/tag_release.py`;
+`scripts/test-release-packaging.py` keeps the recipes in step with it.
+Details, the install behaviour of each package and the smoke scripts are in
+[packaging/README.md](packaging/README.md). The `fips-dns-setup`/`-teardown`
+helpers behind `fips-dns.service` and `fipsctl` are packaged when the tree
+has them (their own tasks); the unit is skipped, not failed, without them.
+
 ## Peer owners (nostrc-9keoz.4)
 
 `src/peer/active.h` is an opaque, stable-address `fipsd_active_peer`. Its public

@@ -1,0 +1,7 @@
+fipsd (0.1.0-1) unstable; urgency=medium
+
+  * Initial packaging of the nostrc C port of the FIPS daemon: fipsd, the
+    fipsd/fips-dns/fips-firewall units, the fips group, tmpfiles and
+    sysusers fragments, libfipsnative and its development files.
+
+ -- Biz <chebizarro@protonmail.com>  Mon, 16 Nov 2026 12:00:00 +0000

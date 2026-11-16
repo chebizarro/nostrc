@@ -3,17 +3,19 @@
 # from: every tracked file plus the nostrdb and nsync submodules, under one
 # top-level directory.
 #
-#   scripts/make-desktop-source-archive.sh VERSION [OUTPUT_DIR]
+#   scripts/make-desktop-source-archive.sh VERSION [OUTPUT_DIR] [NAME]
 #
-# Produces OUTPUT_DIR/groundhog-VERSION.tar.gz and prints its SHA-256.
-# GitHub's automatic tag archives leave submodules out, so recipes that
-# download a release (Arch, RPM, Nix) use this one instead.
+# Produces OUTPUT_DIR/NAME-VERSION.tar.gz and prints its SHA-256. NAME
+# defaults to groundhog; the fipsd packages (fipsd/packaging) pass fipsd and
+# get the same tree under fipsd-VERSION/. GitHub's automatic tag archives
+# leave submodules out, so recipes that download a release (Arch, RPM, Nix)
+# use this one instead.
 set -euo pipefail
 
-version=${1:?usage: make-desktop-source-archive.sh VERSION [OUTPUT_DIR]}
+version=${1:?usage: make-desktop-source-archive.sh VERSION [OUTPUT_DIR] [NAME]}
 root=$(cd "$(dirname "$0")/.." && pwd)
 out=${2:-$root/build-dist}
-name=groundhog-$version
+name=${3:-groundhog}-$version
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 

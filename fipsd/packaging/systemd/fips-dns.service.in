@@ -1,0 +1,20 @@
+# Generated from fipsd/packaging/systemd/fips-dns.service.in by CMake.
+#
+# Routes the .fips domain to the daemon's resolver through the host's DNS
+# backend (systemd-resolved, dnsmasq or NetworkManager). The two helpers are
+# packaging/common/fips-dns-setup and fips-dns-teardown; a package built from
+# a tree without them installs this unit skipped, not failed.
+[Unit]
+Description=Configure DNS routing for .fips domain
+After=fipsd.service
+Requires=fipsd.service
+ConditionPathExists=@FIPSD_DNS_HELPER_DIR@/fips-dns-setup
+
+[Service]
+Type=oneshot
+ExecStart=@FIPSD_DNS_HELPER_DIR@/fips-dns-setup
+ExecStop=@FIPSD_DNS_HELPER_DIR@/fips-dns-teardown
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

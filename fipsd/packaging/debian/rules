@@ -1,0 +1,61 @@
+#!/usr/bin/make -f
+# fipsd from the nostrc monorepo: the daemon, its units and libfipsnative.
+#
+# Separate from the top-level debian/ (the headless login stack) and from
+# packaging/debian-desktop (Groundhog/Grotto): the daemon builds libnostr
+# (with its GLib layer, no GObject/GTK) and nothing else from the tree, and
+# only fipsd/ is installed. Build with fipsd/packaging/debian/build-deb.sh, which places
+# this directory at the source root as debian/.
+#
+# FIPSD_GIT_REV, when set in the environment by build-deb.sh, is the
+# revision of the tree the source copy was exported from, embedded in
+# `fipsd -V`; fipsd/packaging/check-deb-revision.sh compares it.
+
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+BUILDDIR = obj-fipsd
+CMAKE_ARGS = $(shell sh fipsd/packaging/common/cmake-args.sh)
+
+%:
+	dh $@ --buildsystem=cmake+ninja --builddirectory=$(BUILDDIR)
+
+override_dh_auto_configure:
+	dh_auto_configure -- $(CMAKE_ARGS) \
+		-DCMAKE_BUILD_TYPE=RelWithDebInfo \
+		-DGO_WARNINGS_AS_ERRORS=OFF \
+		$(if $(FIPSD_GIT_REV),-DFIPSD_GIT_REV=$(FIPSD_GIT_REV))
+
+# Only the daemon's directory: the rest of the monorepo is not part of these
+# packages.
+override_dh_auto_build:
+	dh_auto_build -- fipsd/all
+
+override_dh_auto_install:
+	DESTDIR=$(CURDIR)/debian/tmp cmake --install $(BUILDDIR)/fipsd
+	# CMake fills in the unit templates; an unconfigured @VAR@ must never ship.
+	! grep -rq '@[A-Z_]*@' debian/tmp/usr/lib/systemd/system
+	test -x debian/tmp/usr/bin/fipsd
+
+override_dh_install:
+	dh_install
+	# The fips-dns.service helpers come from a sibling task; package them
+	# when the tree has them (fipsd/CMakeLists.txt installs them if present).
+	if [ -d debian/tmp/usr/lib/fips ]; then dh_install -pfipsd usr/lib/fips; fi
+
+# fipsd.service: enabled and started on install, restarted on upgrade (the
+# debhelper default). fips-dns.service: enabled, not started inside apt --
+# fips-dns-setup rewrites the host resolver, which is the operator's call or
+# the next boot's. fips-firewall.service: opt in, neither enabled nor started.
+override_dh_installsystemd:
+	dh_installsystemd -pfipsd fipsd.service
+	dh_installsystemd -pfipsd --no-start fips-dns.service
+	dh_installsystemd -pfipsd --no-enable --no-start fips-firewall.service
+
+# libnostr-json in /usr/lib/<triplet>/fipsd/ is private to the daemon (an
+# RPATH points there): no shlibs entry, no ldconfig trigger, no dependency.
+override_dh_makeshlibs:
+	dh_makeshlibs -Xlibnostr-json
+
+# The test suite needs the full tree configured with BUILD_TESTING; CI runs
+# it (fips-ci.yml), the package build does not.
+override_dh_auto_test:

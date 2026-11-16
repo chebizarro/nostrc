@@ -1,0 +1,9 @@
+# /etc/fips/fips.nft is an nftables ruleset loaded with `nft -f` by
+# fips-firewall.service; its shebang documents that and it is not run as a
+# program. Carried unchanged from upstream fips.
+fipsd: script-not-executable [etc/fips/fips.nft]
+fipsd: unusual-interpreter /usr/sbin/nft [etc/fips/fips.nft]
+# postrm restarts the host resolver after dropping the .fips routing the
+# fips-dns helpers wrote outside the package; deb-systemd-invoke has no verb
+# for another unit's restart.
+fipsd: maintainer-script-calls-systemctl *
