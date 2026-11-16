@@ -23,7 +23,7 @@ consumes the runtime's SIGHUP reload channel. `src/control/` implements the
 Unix control socket (`9keoz.3`); `src/node/handlers/` implements the node
 protocol handlers (`9keoz.6`). Not implemented yet: Tier B2 network
 transports and the native host owner. The B4 TUN device owner is described below;
-the IPv6 packet shim is not implemented yet. Parsing a setting does not claim that its owning subsystem is
+the IPv6 packet shim (`src/ipv6/`, `9nxwk.2`) runs on it. Parsing a setting does not claim that its owning subsystem is
 protocol handlers (`9keoz.6`). `src/transport/udp/` implements real UDP and
 authenticated connected-peer drains (`gfi8h.2`). Not implemented yet: the
 other Tier B2 network transports and the native/TUN host
@@ -1308,7 +1308,7 @@ When enabled, the composed retained control provider adds upstream adapter
 This C host intentionally composes these into the daemon control reply; upstream
 serves them on a separate adapter status socket. Wire states follow upstream:
 `disabled`, `configured` (waiting), `active`, `failed`; stopped maps to disabled.
-`host_drops` is zero until there is a packet adapter; failed/not-up devices
+`host_drops` counts packets the shim dropped on a full host queue; failed/not-up devices
 report `tun_name: "-"`. There is no `show_tun` command in the pinned upstream
 `control-socket.md`/adapter responder, so none is invented here. Device status
 also exposes the address, ifindex, attempts and kernel error to host callers.
@@ -1327,6 +1327,94 @@ The current route encoders target 64-bit little-endian host ABIs.
 `geteuid()==0` **and** `FIPSD_TUN_PRIVILEGED_SMOKE=1`. When explicitly enabled in
 a disposable privileged environment, it creates/configures a real device,
 pings its own address and tears it down. Do not elevate ordinary test runs.
+### IPv6 shim (`nostrc-9nxwk.2`)
+
+`src/ipv6/` is the packet adapter between the TUN device's IPv6 frames and
+the node's FSP sessions on port 256, ported from upstream `src/ipv6tun/`
+(`ipv6_shim`, `inbound`, `outbound`, `queue`, `icmp`, `icmp_rate_limit`,
+`ipv6_frag`, `exthdr`, `mss`, `tcp_mss`, `mtu`, `link`, `listening`,
+`firewall_state`; `winnet.rs` and `dns.rs` are out of scope). `main.c` creates
+one `fipsd_ipv6_shim` per enabled TUN and hands it to the TUN service, which
+starts it once the device is up and stops it, cancelling (`gof_io_cancel_fd`)
+and joining its fibers, before the device closes. Nothing in the shim blocks
+the node's dispatcher: datagrams go in through the handlers' nonblocking
+command mailbox (a full mailbox drops and counts, where upstream's reader
+thread blocks on its channel) and the node's notices are read off their
+bounded channel by the shim's own fiber.
+
+| Module | Contract |
+| --- | --- |
+| `shim.{c,h}` | Format `0x00` header compression (addresses, version and payload length stripped; traffic class, flow label, next header, hop limit kept; packets travel 33 bytes shorter) and the adapter: the reader fiber (frames → `from_tun` → datagrams, answers, hairpins), the writer fiber (bounded host queue → frames, inbound SYNs clamped), the mesh-receiver fiber (port-256 datagrams delivered, path MTU changes and routable peers learned, every other notice passed through to an optional consumer or freed). |
+| `outbound.{c,h}` | The host half as pure verdicts: not IPv6 → nothing; destination outside `fd00::/8` → Destination Unreachable; our own address → hairpin with the L4 checksum completed (macOS utun); otherwise the SYN clamp, then: a source other than ours → code 5 (source address failed policy), a prefix a key names → a datagram whatever its size, else Packet Too Big over the node-wide IPv6 MTU (1280 for a packet over 1280 on a path under it) or Destination Unreachable. `answer` turns a refusal (too big / table full / no route) into the answers owed; `can_split`/`split`/`reclamp` are the node-side steps. The C node holds datagrams opaque and has no refusal-with-payload path, so the shim's driver takes the node-side judgement itself with its replica of the node's limits before `fipsd_node_handlers_send`: a payload over the smaller of the node-wide limit and the stored path goes as fragments when it can, else the host is owed Packet Too Big. |
+| `inbound.{c,h}` | A delivery rebuilt with the sender's `fd || NodeAddr[0..15]` as source and ours as destination, CE-marked only on an ECN-capable packet (the C node's delivery carries no CE mark yet). |
+| `icmp.{c,h}`, `icmp_rate_limit.{c,h}` | RFC 4443 Destination Unreachable and Packet Too Big: never for a packet whose source is unspecified or multicast, whose destination is multicast, or that is (or cannot be shown not to be) an ICMPv6 error or Redirect behind any extension headers; a Packet Too Big's source is the packet's destination so the kernel honours it. Packet Too Big is limited per source by a token bucket (burst 10, one per 100 ms, sources dropped after 10 s or `max(10 s, 10 × interval)`; this host bounds the table at 256 sources, evicting the least recently checked). Destination Unreachable is limited by one bucket for the whole shim (burst 10, 10/s). A token is spent whether or not a queue is up. |
+| `frag.{c,h}` | Ingress fragmentation below 1280: only a well-formed packet over the path MTU and at most 1280 bytes, with no Hop-by-Hop or Routing header, whose headers through a recognised upper layer (TCP, UDP, ICMPv6, ESP, No Next Header, behind Destination Options/AH) fit the first fragment, into chunks of at least 128 bytes (IPv6 MTU ≥ 176, so never more than ten); a host-made fragment is split further under its own identification, offset and final M flag. Reassembly is the destination host kernel's, as upstream. |
+| `exthdr.{c,h}` | The RFC 8200 chain walk: steps over Hop-by-Hop, Routing, Destination Options, AH and a first Fragment header, bounds-checked; reports the upper-layer offset, whether AH/Fragment sealed it, a later fragment, or a truncated chain. |
+| `tcp_mss.{c,h}`, `mss.{c,h}` | The SYN MSS clamp behind HBH/Routing/DestOpts (nothing taken off for them, RFC 9293 §3.7.1), refused behind AH/Fragment/ESP/unknown headers and for a zero ceiling, checksum updated incrementally (RFC 1624). Per-flow ceiling `min(global, tcp_mss(path limit))`, falling back to `min(global, 1143)` (the 1280 floor) when nothing is stored or the stored limit admits no payload byte; a locally seeded sub-floor limit is honoured. |
+| `mtu.{c,h}` | `effective = transport − 77`, `mss_ceiling = effective − 60`, `ipv6_mtu(limit) = limit + 33`, `tcp_mss(limit)`; `_Static_assert`s pin 77 to `FIPS_OVERHEAD + port header − 33` and to the device's `FIPSD_TUN_IPV6_OVERHEAD`. |
+| `queue.{c,h}` | The bounded queue toward the host (`node.buffers.host_channel`, default 4096): a send never waits; a full queue drops, counts (`host_drops` in `show_status`) and logs at the first drop and each doubling; only a reader that has gone is an error. |
+| `link.{c,h}` | The link's message vocabulary (attached, synced, node MTU, path MTU, known/forgotten key, datagram, learned, refusal) and the shim's copy of the node's state: node-wide payload limit and MSS ceiling (atomics), the per-destination path table and the prefix → node-address key map (both mutex-protected, bounded). Peers are named by node address, which the C node's datagram API takes; upstream names them by x-only key. |
+| `listening.{c,h}`, `firewall_state.{c,h}` | The fipstop "Listening on fips0" panel: `/proc/net/{tcp6,udp6}` listeners (kernel word order decoded) paired with their process via `/proc/<pid>/fd`, kept when bound to `::` or the TUN address; and the read-side classifier of `nft -j list table inet fips`'s `inbound` chain (accept / drop / unknown / no_firewall, the `iifname != "<tun>" return` scope, a foreign scope warned once at bring-up on Linux). It classifies what the kernel's firewall will do; connection state and timeouts are conntrack's. |
+
+MTU and ICMP behaviour (upstream `docs/how-to/diagnose-mtu-issues.md`,
+`docs/design/fips-mtu.md`): the shim's node-wide IPv6 MTU is the configured
+transport budget less 77 (1357 → 1280, 1472 → 1395), seeded at creation; the C
+node does not yet republish a bound-transport minimum at runtime. Per-destination
+path MTU reaches the shim as a change-only `FIPSD_NOTICE_PATH_MTU` emitted by
+the dataplane's clamp table (`fipsd_dp_mtu_set`/`release`: reactive
+`MtuExceeded`, proactive `PathMtuNotification`, peer rebind, release on session
+close), stored as a payload limit per `fd00::/8` address. The notice channel
+is bounded and never blocks the dispatcher: a change it cannot take is counted
+in `notices_dropped`, left pending on the clamp and re-sent at the next set
+for that peer (each MMP notification applies one); a dropped release leaves
+the smaller limit in place until then, which only fragments or answers Packet
+Too Big more conservatively. In the daemon the shim is the notice channel's
+only consumer; tests read what it passes through. A cold flow's first
+SYN is clamped to the conservative 1143 until a path is stored; the shim does
+not re-clamp a datagram the node holds while its session is set up. An
+oversize packet to a known destination is answered Packet Too Big with the
+path's IPv6 MTU, or 1280 when the packet exceeds 1280 on a path under it, since
+a host ignores a smaller value; a packet of at most 1280 bytes on such a path
+is fragmented instead. `tcpdump` on the device sees outbound SYNs before the
+clamp and inbound SYNs after it. Keys the shim forwards to come from the
+notices that prove a peer routable (link up, session up, a datagram) and from
+`fipsd_ipv6_shim_learn` (the DNS responder's seam); nothing is forgotten on
+link or session down, since the node's identity cache still routes to it. A
+destination with no known key is answered Destination Unreachable at once; a
+known destination the node cannot reach ends in a `SEND_FAILED` notice without
+a payload, so no Unreachable is owed for it (upstream's `NoRoute` refusal
+carries the payloads).
+
+Tests (`fipsd_tests`, ASan/UBSan and TSan): `FipsdIpv6CodecTest`,
+`FipsdIpv6IcmpTest` and `FipsdIpv6FirewallTest` port every upstream unit test
+of the modules above as vector tests (MTU arithmetic at every `u16`, the MSS
+clamp against rewrite-and-recompute over 7,000 SYNs, the Packet Too Big bucket
+at exact instants on an injected nanosecond clock, every nft scope and
+classification case). `FipsdIpv6TwoNodesTest` runs two nodes over the loopback
+transport with fake devices injected through `fipsd_tun_ops` (a socketpair
+stands in for the kernel) and proves, byte for byte: a ping-sized echo across
+the mesh and back, Packet Too Big reporting 1280 for a 1400-byte packet, a
+1280-byte packet on a payload-limit-1090 path carried as 1120+216-byte
+fragments that reassemble, a SYN clamped to 1063 on the way out, a Hop-by-Hop
+packet refused fragmentation (PTB 1123), an AH-sealed SYN left unclamped, a
+truncated chain owed no answer, hairpin, off-mesh and unknown-key
+Unreachables, the listening panel's accept/drop verdicts, and the ordered
+stop. `FipsdIpv6PrivilegedSmokeTest` skips (77) unless `geteuid()==0` and
+`FIPSD_TUN_PRIVILEGED_SMOKE=1`; then it brings one node up on a real device
+with the shim, pings its own address and an unknown `fd00::/8` address, and
+checks the shim read the kernel's packets and the kernel accepted its ICMPv6
+Destination Unreachable:
+
+```sh
+sudo FIPSD_TUN_PRIVILEGED_SMOKE=1 FIPSD_WORKERS=2 ./fipsd/tests/fipsd_ipv6_privileged_test
+```
+
+A ping between two nodes on real devices needs two network namespaces (two
+TUNs in one namespace would compete for the `fd00::/8` route):
+`scripts/fipsd-ipv6-netns-smoke.sh` (Linux, root) starts two `fipsd` daemons
+in namespaces joined by a veth pair over UDP, with each other as configured
+peers and `tun.enabled: true`, pings across and runs `iperf3` when installed.
+
 ## Nostr rendezvous runtime (`nostrc-8hvs6.2`)
 
 `main.c` registers `nostr/runtime` after the node when

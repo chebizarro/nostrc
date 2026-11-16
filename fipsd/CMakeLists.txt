@@ -151,3 +151,8 @@ target_sources(fipsd_lib PRIVATE src/transport/tcp/tcp.c src/transport/tcp/liste
   src/transport/tcp/conn.c src/transport/tcp/pool.c src/transport/tcp/stats.c)
 # STUN and deadline-driven traversal (nostrc-8hvs6.3).
 target_sources(fipsd_lib PRIVATE src/nostr/stun.c src/nostr/traversal_machine.c src/nostr/traversal_io.c)
+# IPv6 shim between TUN frames and session datagrams (nostrc-9nxwk.2).
+target_sources(fipsd_lib PRIVATE
+  src/ipv6/mtu.c src/ipv6/shim.c src/ipv6/exthdr.c src/ipv6/tcp_mss.c src/ipv6/mss.c
+  src/ipv6/icmp_rate_limit.c src/ipv6/icmp.c src/ipv6/frag.c src/ipv6/queue.c src/ipv6/inbound.c
+  src/ipv6/outbound.c src/ipv6/link.c src/ipv6/listening.c src/ipv6/firewall_state.c)

@@ -15,6 +15,8 @@
 #include "node/handlers/handlers.h"
 #include "tun/lifecycle.h"
 #include "tun/status.h"
+#include "ipv6/shim.h"
+#include <fips/proto/framing.h>
 #include "transport/udp/udp.h"
 #include "transport/tcp/tcp.h"
 #include "nostr/runtime.h"
@@ -170,9 +172,20 @@ int main(int argc, char **argv)
         .transport_mtu = fipsd_tun_transport_mtu(config)};
     fipsd_tun *tun = tun_enabled ? fipsd_tun_create(&tun_config, NULL, NULL) : NULL;
     fipsd_tun_service tun_service;
+    fipsd_ipv6_shim *shim = NULL;
     if (tun) {
         fipsd_tun_service_init(&tun_service, tun, node);
         provider = fipsd_tun_provider(tun, provider);
+        /* The packet adapter between the device's frames and the node's
+         * sessions (nostrc-9nxwk.2); seeded with the configured transport
+         * budget, the device's own MTU input. */
+        uint32_t budget = tun_config.transport_mtu > UINT16_MAX ? UINT16_MAX : tun_config.transport_mtu;
+        fipsd_ipv6_shim_config shim_config = {.tun = tun, .handlers = handlers,
+            .payload_limit = fips_framing_payload_limit((uint16_t)budget),
+            .host_queue = (size_t)fipsd_config_uint(fipsd_config_get(config, "node.buffers.host_channel")),
+            .firewall_scope_check = true};
+        shim = fipsd_ipv6_shim_create(&shim_config);
+        if (shim) fipsd_tun_service_set_shim(&tun_service, shim);
     }
     fipsd_control_service_init(&control, snapshots, handlers ? &provider : NULL);
     bool control_enabled = fipsd_config_bool(fipsd_config_get(config, "node.control.enabled"));
@@ -197,7 +210,7 @@ int main(int argc, char **argv)
     if (!rt) {
         FIPSD_ERROR(MODULE, "cannot allocate the runtime");
         code = FIPSD_EXIT_FAILURE;
-    } else if (!node_subsystem || !udp_ok || !tcp_ok || (tun_enabled && !tun) ||
+    } else if (!node_subsystem || !udp_ok || !tcp_ok || (tun_enabled && !tun) || (tun && !shim) ||
                fipsd_runtime_register(rt, &service.subsystem) != 0 ||
                fipsd_runtime_register(rt, node_subsystem) != 0 ||
                (tun && fipsd_runtime_register(rt, &tun_service.subsystem) != 0) ||
@@ -223,6 +236,7 @@ int main(int argc, char **argv)
         }
     }
     fipsd_runtime_destroy(rt);
+    fipsd_ipv6_shim_destroy(shim);
     fipsd_tun_destroy(tun);
     fipsd_nostr_runtime_destroy(rendezvous);
     fipsd_node_destroy(node);

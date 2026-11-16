@@ -81,9 +81,10 @@ typedef struct fipsd_dataplane {
     size_t packet_count, next;
     fips_tree_coordinate *coord_scratch;
     fips_routing_peer *route_peers;
-    struct { bool used; fips_node_addr peer; uint16_t mtu; } *clamps;
+    struct { bool used; fips_node_addr peer; uint16_t mtu; bool notify_pending; } *clamps;
     size_t clamp_capacity;
     fipsd_dp_stats stats;
+    struct fipsd_node_handlers *owner; /* for change-only path MTU notices */
 } fipsd_dataplane;
 
 bool fipsd_dp_init(struct fipsd_node_handlers *);

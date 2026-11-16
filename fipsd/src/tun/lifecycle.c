@@ -1,5 +1,6 @@
 #include "tun/lifecycle.h"
 #include "tun/internal.h"
+#include "ipv6/shim.h"
 #include "log.h"
 #include <errno.h>
 #include <string.h>
@@ -77,20 +78,29 @@ int fipsd_tun_stop(fipsd_tun *t)
 }
 static int service_start(fipsd_subsystem *self,fipsd_runtime *rt)
 {
-    (void)rt;
     fipsd_tun_service *s=self->user;
     GoRefPtr ref=fipsd_node_status_load(fipsd_node_status_slot(s->node));
     const fipsd_node_status *status=ref.ptr;
     bool ready=status && status->ready;
     go_refptr_release(&ref);
     if (!ready) { fipsd_tun_publish(s->device,FIPSD_TUN_WAITING,0); return 0; }
-    if (fipsd_tun_start(s->device,fipsd_node_identity(fipsd_node_get_context(s->node)))<0)
+    if (fipsd_tun_start(s->device,fipsd_node_identity(fipsd_node_get_context(s->node)))<0) {
         FIPSD_WARN("tun","setup failed: %s; continuing without TUN",strerror(errno));
+        return 0;
+    }
+    if (s->shim && fipsd_ipv6_shim_start(s->shim,rt)<0) {
+        /* A device nobody reads is a black hole for the host: unwind it and
+         * show the failure, keeping the host up as a device failure does. */
+        int error=errno;
+        FIPSD_WARN("tun","IPv6 shim failed to start: %s; continuing without TUN",strerror(error));
+        (void)fipsd_tun_stop(s->device); fipsd_tun_publish(s->device,FIPSD_TUN_FAILED,error);
+    }
     return 0;
 }
 static void service_stop(fipsd_subsystem *self,fipsd_runtime *rt)
 {
     (void)rt; fipsd_tun_service *s=self->user;
+    if (s->shim && fipsd_ipv6_shim_stop(s->shim)<0) FIPSD_WARN("tun","IPv6 shim stop: %s",strerror(errno));
     if (fipsd_tun_stop(s->device)<0) FIPSD_WARN("tun","teardown failed: %s",strerror(errno));
 }
 void fipsd_tun_service_init(fipsd_tun_service *s,fipsd_tun *t,fipsd_node *node)
@@ -98,6 +108,7 @@ void fipsd_tun_service_init(fipsd_tun_service *s,fipsd_tun *t,fipsd_node *node)
     *s=(fipsd_tun_service){.device=t,.node=node};
     s->subsystem=(fipsd_subsystem){.name="tun",.start=service_start,.stop=service_stop,.user=s};
 }
+void fipsd_tun_service_set_shim(fipsd_tun_service *s,struct fipsd_ipv6_shim *shim) { s->shim=shim; }
 uint32_t fipsd_tun_transport_mtu(const fipsd_config *c)
 {
     uint32_t mtu=UINT32_MAX;

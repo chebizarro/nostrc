@@ -78,6 +78,15 @@ fipsd_tun *fipsd_tun_create(const fipsd_tun_config *cfg,const fipsd_tun_ops *ops
     fipsd_tun_publish(t,FIPSD_TUN_WAITING,0); return t;
 }
 void fipsd_tun_destroy(fipsd_tun *t) { if (t) { (void)fipsd_tun_stop(t); free(t); } }
+int fipsd_tun_fd(const fipsd_tun *t) { return t ? t->fd : -1; }
+const char *fipsd_tun_name(const fipsd_tun *t) { return t && t->name[0] ? t->name : t ? t->configured : "-"; }
+fips_ipv6_address fipsd_tun_address(const fipsd_tun *t) { return t ? t->address : (fips_ipv6_address){{0}}; }
+uint16_t fipsd_tun_effective_mtu(const fipsd_tun *t) { return t ? t->mtu : 0; }
+void fipsd_tun_set_host_drops(fipsd_tun *t, const _Atomic uint64_t *counter)
+{
+    if (!t) return;
+    nsync_mu_lock(&t->status_mu); t->host_drops = counter; nsync_mu_unlock(&t->status_mu);
+}
 int fipsd_tun_header_prepend(uint8_t family,const uint8_t *p,size_t n,uint8_t *out,size_t cap)
 {
     if (!family || n>65535 || cap<n+4 || !p || !out) { frame_set_error(EMSGSIZE); return -1; }

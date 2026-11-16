@@ -10,6 +10,7 @@ typedef struct fipsd_tun_status {
     uint32_t index;
     unsigned attempts;
     int error; /* kernel error from setup or teardown; 0 on success */
+    uint64_t host_drops; /* packets the shim dropped toward the host (full queue) */
 } fipsd_tun_status;
 fipsd_tun_status fipsd_tun_status_read(fipsd_tun *);
 json_t *fipsd_tun_status_rows(const fipsd_tun_status *);

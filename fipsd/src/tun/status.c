@@ -1,5 +1,6 @@
 #include "tun/internal.h"
 #include <fips/identity/address.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 void fipsd_tun_publish(fipsd_tun *t,fipsd_tun_state state,int error)
@@ -13,13 +14,15 @@ void fipsd_tun_publish(fipsd_tun *t,fipsd_tun_state state,int error)
 fipsd_tun_status fipsd_tun_status_read(fipsd_tun *t)
 {
     if (!t) return (fipsd_tun_status){.state=FIPSD_TUN_DISABLED};
-    nsync_mu_lock(&t->status_mu); fipsd_tun_status s=t->status; nsync_mu_unlock(&t->status_mu); return s;
+    nsync_mu_lock(&t->status_mu); fipsd_tun_status s=t->status;
+    s.host_drops=t->host_drops?atomic_load_explicit(t->host_drops,memory_order_relaxed):0;
+    nsync_mu_unlock(&t->status_mu); return s;
 }
 json_t *fipsd_tun_status_rows(const fipsd_tun_status *s)
 {
     static const char *const states[]={"disabled","configured","active","failed","disabled"};
     return json_pack("{s:s,s:s,s:i,s:I}","tun_state",states[s->state],
-        "tun_name",s->state==FIPSD_TUN_UP?s->name:"-","effective_ipv6_mtu",(int)s->mtu,"host_drops",(json_int_t)0);
+        "tun_name",s->state==FIPSD_TUN_UP?s->name:"-","effective_ipv6_mtu",(int)s->mtu,"host_drops",(json_int_t)s->host_drops);
 }
 typedef struct combined {
     fipsd_control_snapshot snapshot;
