@@ -86,6 +86,8 @@ struct fipsd_native_api {
     size_t listener_cap;
     connection *conns;
     GoChannel *sink, *events;
+    void (*before_flow_reap)(void *, uint64_t);
+    void *flow_reap_user;
     _Atomic bool stopping;
     fipsd_control_provider base;
 };
@@ -217,6 +219,7 @@ static void flow_feeder_fiber(void *arg)
         if (error != ECANCELED) FIPSD_DEBUG(MODULE, "flow %llu: write failed: %s", (unsigned long long)f->id, strerror(error));
         break;
     }
+    if (a->before_flow_reap) a->before_flow_reap(a->flow_reap_user, f->id);
     nsync_mu_lock(&a->mu);
     flow_unref_locked(a, f);
     nsync_mu_unlock(&a->mu);
@@ -502,7 +505,10 @@ static json_t *do_listen(fipsd_native_api *a, const fipsd_native_command *cmd, i
 }
 static flow_rec *flow_by_id_locked(fipsd_native_api *a, uint64_t id)
 {
-    for (size_t i = 0; i < a->flow_cap; ++i) if (a->flows[i].used && a->flows[i].id == id) return &a->flows[i];
+    /* Logical removal precedes FLOW_RELEASED; feeder/inject references may
+     * keep the storage alive, but must not keep the flow addressable. */
+    for (size_t i = 0; i < a->flow_cap; ++i)
+        if (a->flows[i].used && !a->flows[i].released && a->flows[i].id == id) return &a->flows[i];
     return NULL;
 }
 static json_t *no_such_flow(uint64_t id)
@@ -1030,6 +1036,8 @@ const char *fipsd_native_api_socket_path(const fipsd_native_api *a) { return a->
 const fipsd_native_limits *fipsd_native_api_limits(const fipsd_native_api *a) { return &a->limits; }
 uint16_t fipsd_native_api_max_payload(const fipsd_native_api *a) { return a->max_payload; }
 void fipsd_native_api_observe(fipsd_native_api *a, GoChannel *events) { a->events = events; }
+void fipsd_native_api_before_flow_reap(fipsd_native_api *a, void (*hook)(void *, uint64_t), void *user)
+{ a->before_flow_reap = hook; a->flow_reap_user = user; }
 void fipsd_native_api_destroy(fipsd_native_api *a)
 {
     if (!a) return;
