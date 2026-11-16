@@ -81,6 +81,7 @@ static bool send_data(handlers *h, fips_session_entry *entry, session_ext *x, ui
     if (fips_fsp_port_header_encode((fips_fsp_port_header){sp, dp}, &w, NULL) != FIPS_OK ||
         fips_writer_write_bytes(&w, payload, len, NULL) != FIPS_OK) return false;
     if (!hs_session_send_message(h, entry, x, FIPS_SESSION_DataPacket, body, fips_writer_len(&w))) return false;
+    METRIC(h, native, sent_datagrams); METRIC_ADD(h, native, sent_bytes, len);
     ++x->sent; ++h->counters.sess_data_out; x->last_data = hs_now(h);
     fips_session_note_activity(entry, hs_now(h));
     return true;
@@ -113,7 +114,7 @@ static void hold(handlers *h, const fips_node_addr *dest, uint16_t sp, uint16_t 
         if (h->held[i].used && !memcmp(h->held[i].dest.bytes, dest->bytes, 16)) { slot = i; break; }
         if (!h->held[i].used && slot == SIZE_MAX) slot = i;
     }
-    if (slot == SIZE_MAX) return;
+    if (slot == SIZE_MAX) { METRIC(h, session, pending_destinations_full); return; }
     if (!h->held[slot].used) {
         h->held[slot].items = h->held[slot].items ? h->held[slot].items : calloc(h->cfg.pending_per_destination, sizeof(pending_datagram));
         if (!h->held[slot].items) return;
@@ -134,6 +135,7 @@ static fips_session_entry *open_session(handlers *h, const fips_node_addr *dest)
     fips_rekey_outputs_clear(&h->session_out);
     fips_session_entry *entry = NULL;
     if (fips_session_table_open(&h->sessions, key, h->me, h->session_params, hs_now(h), &env, &h->session_out, &entry) != FIPS_OK) {
+        METRIC(h, session, table_full);
         fips_rekey_outputs_clear(&h->session_out); return NULL;
     }
     session_ext *x = ext_init(h, entry, dest, true);
@@ -217,8 +219,11 @@ static void setup_received(handlers *h, peer_rec *rec, const fips_session_datagr
         session_ext *x = hs_session_ext(h, entry);
         x->carrier = rec->addr;
         fips_rekey_outputs_clear(&h->session_out);
-        if (fips_fsp_rekey_receive(&entry->machine, hs_now(h), rec->addr, route_of(h, rec), frame, len, &env, &h->session_out) == FIPS_OK)
+        size_t held = fips_rekey_get_view(&entry->machine).candidates;
+        if (fips_fsp_rekey_receive(&entry->machine, hs_now(h), rec->addr, route_of(h, rec), frame, len, &env, &h->session_out) == FIPS_OK) {
+            if (x->established && fips_rekey_get_view(&entry->machine).candidates > held) METRIC(h, session, rekey_armed);
             (void)hs_session_execute(h, entry, frame, len);
+        }
         else fips_rekey_outputs_clear(&h->session_out);
         return;
     }
@@ -226,6 +231,7 @@ static void setup_received(handlers *h, peer_rec *rec, const fips_session_datagr
         .carrier = rec->addr, .route = route_of(h, rec)};
     fips_rekey_outputs_clear(&h->session_out);
     if (fips_session_table_answer(&h->sessions, dg->src_addr, h->me, h->session_params, hs_now(h), in, &env, &h->session_out, &entry) != FIPS_OK) {
+        METRIC(h, session, table_full);
         fips_rekey_outputs_clear(&h->session_out); return;
     }
     session_ext *x = ext_init(h, entry, &dg->src_addr, false);
@@ -240,12 +246,12 @@ void hs_session_datagram_received(handlers *h, peer_rec *rec, const uint8_t *bod
     ++h->counters.fwd_received_packets; h->counters.fwd_received_bytes += len;
     fips_reader r; fips_reader_init(&r, body, len);
     fips_session_datagram dg;
-    if (fips_session_datagram_decode(&r, &dg, NULL) != FIPS_OK) { ++h->counters.fwd_decode_error_packets; return; }
+    if (fips_session_datagram_decode(&r, &dg, NULL) != FIPS_OK) { ++h->counters.fwd_decode_error_packets; METRIC_ADD(h, forwarding, decode_error_bytes, len); return; }
     if (memcmp(dg.dest_addr.bytes, h->me.bytes, 16)) {
         (void)hs_route_datagram(h, &dg, &rec->addr, false);
         return;
     }
-    ++h->counters.fwd_delivered_packets; h->counters.fwd_delivered_bytes += dg.payload_len;
+    ++h->counters.fwd_delivered_packets; h->counters.fwd_delivered_bytes += len;
     if (dg.payload_len > sizeof h->session_frame) { ++h->counters.sess_decode_error; return; }
     memcpy(h->session_frame, dg.payload, dg.payload_len);
     uint8_t *frame = h->session_frame; size_t flen = dg.payload_len;
@@ -255,7 +261,7 @@ void hs_session_datagram_received(handlers *h, peer_rec *rec, const uint8_t *bod
     if (action.kind == FIPS_FSP_ReceiveRoutingSignal) { hs_routing_signal(h, rec, &dg.src_addr, frame, flen); return; }
     if (action.kind == FIPS_FSP_ReceiveSetup) { setup_received(h, rec, &dg, frame, flen); return; }
     fips_session_entry *entry = fips_session_table_by_peer(&h->sessions, dg.src_addr);
-    if (!entry) { ++h->counters.sess_decode_error; return; }
+    if (!entry) { ++h->counters.sess_decode_error; METRIC(h, session, unknown_session); return; }
     session_ext *x = hs_session_ext(h, entry);
     x->carrier = rec->addr;
     if (action.kind == FIPS_FSP_ReceiveEncrypted) {
@@ -303,11 +309,13 @@ void hs_routing_signal(handlers *h, peer_rec *rec, const fips_node_addr *src, co
     if (type == FIPS_ROUTING_CoordsRequired) {
         fips_coords_required m;
         if (fips_coords_required_decode(&r, &m, NULL) != FIPS_OK) return;
+        METRIC(h, errors, coords_required);
         bool cached = fipsd_identity_cache_touch(&h->identities, fips_node_addr_prefix(&m.dest_addr), hs_wall_ms(h)) != NULL;
         (void)fips_fsp_plan_coords_required_lookup(m.dest_addr, cached, &actions);
     } else if (type == FIPS_ROUTING_PathBroken) {
         fips_path_broken m;
         if (fips_path_broken_decode(&r, &m, h->coord_scratch, NULL) != FIPS_OK) return;
+        METRIC(h, errors, path_broken);
         const fips_cache_entry *e = fips_coord_cache_get_entry(&h->cache, m.dest_addr.bytes);
         bool verified = e && fips_cache_entry_is_verified(e, fips_coord_cache_millis(&h->cache, hs_now(h)));
         /* Quorum votes are keyed on the authenticated link peer, never the body. */
@@ -318,6 +326,7 @@ void hs_routing_signal(handlers *h, peer_rec *rec, const fips_node_addr *src, co
     } else {
         fips_mtu_exceeded m;
         if (fips_mtu_exceeded_decode(&r, &m, NULL) != FIPS_OK) return;
+        METRIC(h, errors, mtu_exceeded);
         const fips_cache_entry *e = fips_coord_cache_get_entry(&h->cache, m.dest_addr.bytes);
         if (e && fips_fsp_should_apply_path_mtu(e->has_path_mtu, e->path_mtu, m.mtu)) {
             (void)fips_coord_cache_insert_verified_with_path_mtu(&h->cache, m.dest_addr.bytes, &e->coords, hs_now(h), m.mtu);

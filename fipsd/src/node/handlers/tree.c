@@ -105,6 +105,7 @@ static void execute(handlers *h, const fips_stp_actions *a)
             tree_changed(h);
             break;
         case FIPS_STP_AncestryChanged:
+            METRIC(h, tree, ancestry_changed);
             if (x->invalidate_via_node) (void)fips_coord_cache_invalidate_via_node(&h->cache, x->peer.bytes);
             tree_changed(h);
             break;
@@ -114,6 +115,15 @@ static void execute(handlers *h, const fips_stp_actions *a)
             break;
         case FIPS_STP_Drop:
             ++h->counters.tree_dropped;
+            switch (x->reason) {
+            case FIPS_STP_UnknownPeer: METRIC(h, tree, unknown_peer); break;
+            case FIPS_STP_SenderMismatch: METRIC(h, tree, addr_mismatch); break;
+            case FIPS_STP_BadSignature: METRIC(h, tree, sig_failed); break;
+            case FIPS_STP_BadAncestry: METRIC(h, tree, ancestry_invalid); break;
+            case FIPS_STP_Stale: METRIC(h, tree, stale); break;
+            case FIPS_STP_Loop: METRIC(h, tree, loop_detected); break;
+            }
+            if (x->dampened) METRIC(h, tree, flap_dampened);
             if (x->dampened) FIPSD_DEBUG(HMOD, "tree announce dampened");
             break;
         }
@@ -124,7 +134,7 @@ void hs_tree_announce_received(handlers *h, peer_rec *rec, const uint8_t *body, 
     ++h->counters.tree_received;
     fips_reader r; fips_reader_init(&r, body, len);
     fips_tree_announce *a = h->announce_scratch;
-    if (fips_tree_announce_decode(&r, a, NULL) != FIPS_OK) { ++h->counters.tree_dropped; return; }
+    if (fips_tree_announce_decode(&r, a, NULL) != FIPS_OK) { ++h->counters.tree_dropped; METRIC(h, tree, decode_error); return; }
     bool verified = false;
     if (a->declaration.is_signed && !memcmp(a->declaration.node_addr.bytes, rec->addr.bytes, 16)) {
         uint8_t bytes[FIPS_PARENT_DECLARATION_SIGNING_SIZE];
@@ -167,7 +177,7 @@ bool hs_tree_send_announce(handlers *h, peer_rec *rec, bool force)
     fips_writer w; fips_writer_init(&w, h->tx_msg, sizeof h->tx_msg);
     if (fips_tree_announce_encode(a, &w, NULL) != FIPS_OK) return false;
     uint64_t sequence = a->declaration.sequence;
-    if (!hs_link_send(h, rec, h->tx_msg, fips_writer_len(&w))) { rec->tree_pending = true; return false; }
+    if (!hs_link_send(h, rec, h->tx_msg, fips_writer_len(&w))) { rec->tree_pending = true; METRIC(h, tree, send_failed); return false; }
     rec->last_tree_announce = now; rec->tree_pending = false; ++rec->tree_sent; ++h->counters.tree_sent;
     fipsd_peer_data_tree_sent(fipsd_active_peer_data(rec->peer), hs_now_ms(h));
     /* Like upstream, sample after the successful encrypted link send. */

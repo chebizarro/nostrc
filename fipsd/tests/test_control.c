@@ -5,6 +5,9 @@
 #include "control/probe.h"
 #include "privilege.h"
 #include "host_os.h"
+#include "node/metrics.h"
+#include "node/diag.h"
+#include <pthread.h>
 #include <fips/identity/local.h>
 #include <fips/identity/address.h>
 #include <fips/identity/node_addr.h>
@@ -145,6 +148,80 @@ static void test_query_goldens(void)
     }
     go_refptr_release(&ref); go_swap_free(slot);
 }
+
+static void *increment_registry(void *arg)
+{
+    fipsd_metrics *m = arg;
+    for (size_t i = 0; i < 1000; ++i) fipsd_metrics_add(m, FIPSD_METRIC_forwarding_received_packets, 1);
+    return NULL;
+}
+static void test_registry_and_history(void)
+{
+    fipsd_metrics registry; fipsd_metrics_init(&registry);
+    fipsd_control_counter rows[FIPSD_METRICS_COUNT][32];
+    fipsd_control_snapshot s = {0};
+#define FAMILY(f, member) s.member = (fipsd_control_counters){rows[FIPSD_METRICS_##f], fipsd_metrics_snapshot(&registry, FIPSD_METRICS_##f, rows[FIPSD_METRICS_##f])}
+    FAMILY(forwarding, forwarding); FAMILY(lookup, lookup); FAMILY(tree, tree_stats); FAMILY(bloom, bloom_stats);
+    FAMILY(congestion, congestion); FAMILY(errors, errors); FAMILY(native, native); FAMILY(dataplane, dataplane);
+    FAMILY(handshake, handshake); FAMILY(session, session);
+    json_t *m = fipsd_control_query(&s, "show_metrics", NULL), *d = json_object_get(m, "data"); CHECK(d);
+    CHECK(json_object_size(d) == 11 && json_object_size(json_object_get(d, "handshake")) == 8);
+    CHECK(json_object_size(json_object_get(d, "session")) == 18 && json_object_size(json_object_get(d, "dataplane")) == 2);
+    CHECK(json_equal(json_object_get(d, "lookup"), json_object_get(d, "discovery")));
+    CHECK(!json_object_get(json_object_get(d, "handshake"), "promoted")); /* internal progress, not upstream metric */
+    CHECK(json_is_integer(json_object_get(json_object_get(d, "dataplane"), "unknown_index"))); json_decref(m);
+    /* Every registry field can be fed independently and survives projection. */
+    for (size_t k = 0; k < FIPSD_METRIC_COUNT; ++k) fipsd_metrics_set(&registry, (fipsd_metric)k, 7);
+    for (size_t f = 0; f < FIPSD_METRICS_COUNT; ++f) {
+        fipsd_control_counter values[32]; size_t n = fipsd_metrics_snapshot(&registry, (fipsd_metric_family)f, values);
+        CHECK(n && n <= 32); for (size_t i = 0; i < n; ++i) CHECK(values[i].value == 7 && values[i].name);
+    }
+    pthread_t writers[4];
+    for (size_t i = 0; i < 4; ++i) CHECK(!pthread_create(&writers[i], NULL, increment_registry, &registry));
+    uint64_t before = 7;
+    for (size_t i = 0; i < 1000; ++i) { uint64_t v = fipsd_metrics_get(&registry, FIPSD_METRIC_forwarding_received_packets); CHECK(v >= before); before = v; }
+    for (size_t i = 0; i < 4; ++i) CHECK(!pthread_join(writers[i], NULL));
+    CHECK(fipsd_metrics_get(&registry, FIPSD_METRIC_forwarding_received_packets) == 4007);
+    fipsd_metrics_add(&registry, FIPSD_METRIC_handshake_bad_state, 3); FAMILY(handshake, handshake);
+    m = fipsd_control_query(&s, "show_metrics", NULL); d = json_object_get(m, "data");
+    CHECK(json_integer_value(json_object_get(json_object_get(d, "handshake"), "bad_state")) == 10); json_decref(m);
+#undef FAMILY
+    /* Real core history owner, not NULL seed fallback; canonical bytes must
+     * still match all five upstream empty-history goldens. */
+    fips_stats_history *h = calloc(1, sizeof *h); CHECK(h); fips_stats_history_init(h, NULL, 0); s.history = h;
+    compare_golden("show_stats_list", fipsd_control_query(&s, "show_stats_list", NULL), true);
+    compare_golden("show_stats_peers", fipsd_control_query(&s, "show_stats_peers", NULL), true);
+    json_t *p = json_pack("{s:s,s:s}", "metric", "mesh_size", "window", "10s");
+    compare_golden("show_stats_history", fipsd_control_query(&s, "show_stats_history", p), true); json_decref(p);
+    p = json_pack("{s:s}", "window", "10s");
+    compare_golden("show_stats_all_history", fipsd_control_query(&s, "show_stats_all_history", p), true); json_decref(p);
+    p = json_pack("{s:s,s:s}", "metric", "srtt_ms", "window", "10s");
+    compare_golden("show_stats_history_all_peers", fipsd_control_query(&s, "show_stats_history_all_peers", p), true); json_decref(p);
+    /* The visitor handles non-finite samples; the C host uses the existing
+     * rings' delta and downsampling rules without a second implementation. */
+    fips_instant now = fipsd_host_os_clock().now(NULL);
+    fips_stats_snapshot sample = {.peer_count = 3, .bytes_in_total = 100};
+    CHECK(fips_stats_history_tick(h, now, &sample, NULL, 0) == FIPS_OK);
+    for (size_t i = 1; i < 61; ++i) {
+        sample.bytes_in_total += 5;
+        CHECK(fips_stats_history_tick(h, fips_deadline(now, (fips_duration){i,0}), &sample, NULL, 0) == FIPS_OK);
+    }
+    CHECK(h->rings[FIPS_METRIC_PEER_COUNT].slow_len == 1);
+    p = json_pack("{s:s,s:s}", "metric", "bytes_in", "window", "3s");
+    m = fipsd_control_query(&s, "show_stats_history", p); json_t *values = json_object_get(json_object_get(m, "data"), "values");
+    CHECK(json_array_size(values) == 3);
+    for (size_t i = 0; i < 3; ++i) CHECK(json_real_value(json_array_get(values, i)) == 5.0);
+    json_decref(m); json_decref(p); free(h);
+    /* Node-wide unauthenticated diagnostic budget matches upstream: burst 10,
+     * refill 1/sec, and one withheld count carried to the next admitted line. */
+    fipsd_diag_budget budget; fipsd_diag_init(&budget, now); uint64_t withheld = 99;
+    for (size_t i = 0; i < 10; ++i) CHECK(fipsd_diag_admit(&budget, now, &withheld) && withheld == 0);
+    CHECK(!fipsd_diag_admit(&budget, now, &withheld));
+    CHECK(fipsd_diag_admit(&budget, fips_deadline(now, (fips_duration){1,0}), &withheld) && withheld == 1);
+    char tag[9]; const uint8_t bytes[] = {0x00,0x81,0xab,0xff}; fipsd_diag_hex(bytes, 4, tag); CHECK(!strcmp(tag, "0081abff"));
+    puts("registry: all upstream uint64 names, concurrent feeds, discovery alias, 5 canonical history goldens, deltas/downsampling, diagnostic budget: ok");
+}
+
 static void test_probe_golden(void)
 {
     fips_probe_snapshot *s=calloc(1,sizeof(*s)); CHECK(s);
@@ -450,8 +527,8 @@ static void test_socket(const char *tmp)
 int main(void)
 {
     const char *tmp = fipsd_test_tmpdir("/runtime/fips/control.sock");
-    test_paths(tmp); test_validation(); test_render_failures(); test_query_goldens(); test_probe_golden(); test_path_requests();
-    CHECK(golden_count==24); printf("goldens: %u/24 (22 responses/compositions, 1 report, 1 request catalog)\n",golden_count);
+    test_paths(tmp); test_validation(); test_render_failures(); test_query_goldens(); test_registry_and_history(); test_probe_golden(); test_path_requests();
+    CHECK(golden_count==29); printf("goldens: %u/29 (including 5 registry/history replays)\n",golden_count);
     test_socket(tmp); CHECK(rmdir(tmp)==0);
     puts("control: protocol bounds, JSON errors, EOF, one response, fiber concurrency, deadlines, paths and permissions passed");
     return 0;

@@ -7,6 +7,7 @@
 void hs_native_deliver(handlers *h, const fips_node_addr *src, uint16_t src_port, uint16_t dst_port, const uint8_t *payload, size_t len)
 {
     ++h->counters.native_delivered;
+    METRIC_ADD(h, native, received_bytes, len);
     fipsd_node_notice n = {.kind = FIPSD_NOTICE_DATAGRAM, .peer = *src, .src_port = src_port, .dst_port = dst_port};
     hs_notice_full(h, &n, payload, len);
 }

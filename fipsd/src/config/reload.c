@@ -1,4 +1,6 @@
 #include "internal.h"
+#include "node/acl.h"
+#include "select.h"
 #include <blocking_executor.h>
 #include <go.h>
 #include <math.h>
@@ -67,6 +69,7 @@ bool fipsd_config_reload(GoSwap *slot, const char *path, fipsd_config_log *log)
     bool ok=out!=NULL;
     if (out) { out->root=cfg_clone(old->root); out->core=old->core; ok=out->root!=NULL; }
     if (ok) ok=changes(out->root,old->root,next->root,"",log);
+    if (ok && old->acl) { out->acl=fipsd_acl_load(out,NULL,old->acl); ok=out->acl!=NULL; }
     if (ok) ok=go_swap_store(slot,out);
     if (!ok) { fipsd_config_free(out); cfg_error(log,"cannot publish configuration snapshot"); }
     fipsd_config_free(next);
@@ -82,6 +85,31 @@ void fipsd_config_apply_logging(const fipsd_config *c, fipsd_log *logger, fipsd_
     fipsd_log_set_level(logger,level);
     if (file) fipsd_log_file_apply_limits(logger,file,fipsd_config_log_max_bytes(c),
         (unsigned)fipsd_config_uint(fipsd_config_get(c,"node.log_max_files")));
+}
+bool fipsd_config_enable_acl(fipsd_config *c, const fipsd_acl_paths *paths)
+{
+    if (!c) return false;
+    fipsd_acl *a=fipsd_acl_load(c,paths,NULL);
+    if (!a) return false;
+    fipsd_acl_free(c->acl); c->acl=a; return true;
+}
+const fipsd_acl *fipsd_config_acl(const fipsd_config *c) { return c ? c->acl : NULL; }
+/* Regular-file mtime maintenance mirrors upstream Reloadable, never relay
+ * polling. It shares the single config writer with SIGHUP; no dispatcher I/O. */
+static void *resource_job(void *arg)
+{
+    fipsd_config_service *service=arg;
+    GoRefPtr ref=go_swap_load(service->snapshots);
+    const fipsd_config *old=ref.ptr;
+    if (old && old->acl && fipsd_acl_changed(old->acl)) {
+        fipsd_config *out=calloc(1,sizeof *out);
+        if (out) {
+            out->root=cfg_clone(old->root); out->core=old->core;
+            out->acl=fipsd_acl_load(old,NULL,old->acl);
+            if (!out->root || !out->acl || !go_swap_store(service->snapshots,out)) fipsd_config_free(out);
+        }
+    }
+    go_refptr_release(&ref); return NULL;
 }
 static void *reload_job(void *arg)
 {
@@ -109,9 +137,9 @@ static void reload_fiber(void *arg)
             {.op=GO_SELECT_RECEIVE,.chan=go_context_done(context),.recv_buf=&token},
             {.op=GO_SELECT_RECEIVE,.chan=fipsd_runtime_reload_channel(service->runtime),.recv_buf=&token}
         };
-        int selected=go_select(cases,2);
-        if (selected!=1 || go_context_is_canceled(context)) break;
-        (void)go_blocking_submit(reload_job,service);
+        GoSelectResult selected=go_select_timeout(cases,2,1000);
+        if (go_context_is_canceled(context) || selected.selected_case==0) break;
+        (void)go_blocking_submit(selected.selected_case==1 ? reload_job : resource_job,service);
     }
 }
 static int start(fipsd_subsystem *subsystem, fipsd_runtime *rt)

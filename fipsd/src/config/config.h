@@ -12,6 +12,12 @@
 #include "runtime.h"
 
 typedef struct fipsd_config fipsd_config;
+struct fipsd_acl;
+struct fipsd_acl_paths;
+/* Explicit pre-publication resource initialization. Parsing remains I/O-free.
+ * NULL paths selects upstream platform defaults. Reloads retain these paths. */
+bool fipsd_config_enable_acl(fipsd_config *, const struct fipsd_acl_paths *);
+const struct fipsd_acl *fipsd_config_acl(const fipsd_config *);
 typedef struct fipsd_config_value fipsd_config_value;
 typedef struct fipsd_config_log {
     struct fipsd_config_log_entry *entries;

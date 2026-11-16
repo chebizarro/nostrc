@@ -108,6 +108,10 @@ bool hs_leg_effects(handlers *h, pending_leg *leg, const fipsd_peer_actions *act
 bool hs_dial(handlers *h, const fips_peer_identity *peer, fips_transport_id transport, const fips_transport_addr *addr, bool configured)
 {
     if (!memcmp(peer->node_addr.bytes, h->me.bytes, 16)) return false;
+    /* Upstream OutboundConnect gate: before reserve, index allocation or DH. */
+    if (!hs_acl_authorize(h, peer, "outbound_connect")) {
+        hs_notice(h, FIPSD_NOTICE_HANDSHAKE_FAILED, &peer->node_addr, NULL, 0); return false;
+    }
     if (hs_rec_find(h, &peer->node_addr) || leg_find(h, &peer->node_addr)) return true;
     fipsd_transport *t = hs_transport(h, transport);
     if (!t) { hs_notice(h, FIPSD_NOTICE_HANDSHAKE_FAILED, &peer->node_addr, NULL, 0); return false; }
@@ -305,7 +309,12 @@ static bool msg1(handlers *h, fipsd_transport *t, const fips_transport_addr *fro
         d = fips_fmp_establish_inbound(&snap, &wire);
         if (d.kind == FIPS_FMP_IN_Rekey || d.kind == FIPS_FMP_IN_Reject) goto out;
     }
-    if (d.kind == FIPS_FMP_IN_Reject) { ++h->counters.hs_rejected; goto out; }
+    if (d.kind == FIPS_FMP_IN_Reject) {
+        ++h->counters.hs_rejected;
+        if (d.reason == FIPS_FMP_AtMaxPeers) METRIC(h, handshake, max_peers);
+        else METRIC(h, handshake, silent_backoff);
+        goto out;
+    }
     fips_rekey_carry carry = {0}, *facts = NULL;
     (void)carry;
     if (d.kind == FIPS_FMP_IN_RestartThenPromote || d.kind == FIPS_FMP_IN_ReplaceThenPromote) {
@@ -319,6 +328,11 @@ static bool msg1(handlers *h, fipsd_transport *t, const fips_transport_addr *fro
         if (!has_ticket) { ++h->counters.hs_rejected; goto out; }
     }
     if (!has_ticket) { ++h->counters.hs_rejected; goto out; }
+    /* Upstream late inbound ACL gate: identity is authenticated by IK msg1;
+     * before index allocation and msg2 DH, not before encrypted-key recovery. */
+    if (!hs_acl_authorize(h, &identity, "inbound_handshake")) {
+        hs_notice(h, FIPSD_NOTICE_HANDSHAKE_FAILED, &identity.node_addr, NULL, 0); goto out;
+    }
     fips_rekey_env env; hs_env(h, &env, t->id.value);
     if (!fips_rekey_allocate(env.indices, &lease)) goto out;
     fips_rekey_wire msg2 = {0};
@@ -365,7 +379,7 @@ static bool msg2(handlers *h, fipsd_transport *t, const fips_transport_addr *fro
     if (!leg) {
         /* A rekey reply for an established link resolves through its index. */
         peer_rec *rec = hs_index_lookup(h, t->id.value, header.receiver_idx.value);
-        if (!rec) { ++h->counters.frames_dropped; return false; }
+        if (!rec) { ++h->counters.frames_dropped; METRIC(h, handshake, unknown_connection); return false; }
         link_exec_result r = {0};
         fips_rekey_input in = {.kind = FIPS_REKEY_IN_Reply, .bytes = frame, .buf = frame, .len = len};
         bool ok = hs_link_step(h, rec, in, from, frame, len, &r);
@@ -382,6 +396,11 @@ static bool msg2(handlers *h, fipsd_transport *t, const fips_transport_addr *fro
         fips_rekey_completed_clear(&read.done); sodium_memzero(&read, sizeof read);
         handshake_failed(h, leg, false); leg_free(h, leg);
         return false;
+    }
+    /* Upstream OutboundHandshake recheck catches policy changes during IK. */
+    if (!hs_acl_authorize(h, &leg->expected, "outbound_handshake")) {
+        fips_rekey_completed_clear(&read.done); sodium_memzero(&read, sizeof read);
+        handshake_failed(h, leg, false); leg_free(h, leg); return false;
     }
     peer_rec *existing = hs_rec_find(h, &leg->expected.node_addr);
     fipsd_peer_event e = {.kind = FIPSD_PEER_MSG2_AUTHENTICATED};

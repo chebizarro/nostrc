@@ -140,6 +140,8 @@ static void effect(void *c, const fips_rekey_output *o, const uint8_t *plaintext
 {
     exec_ctx *x = c; handlers *h = x->h;
     (void)plaintext;
+    /* Registry counts typed outputs without changing machine ordering. */
+    hs_metrics_rekey(h, x->entry != NULL, o);
     if (o->kind == FIPS_REKEY_OUT_Bind || o->kind == FIPS_REKEY_OUT_Unbind ||
         o->kind == FIPS_REKEY_OUT_Installed || o->kind == FIPS_REKEY_OUT_Retired ||
         o->kind == FIPS_REKEY_OUT_Reverted || o->kind == FIPS_REKEY_OUT_PeerRestarted ||

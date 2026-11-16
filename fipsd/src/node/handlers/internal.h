@@ -7,6 +7,10 @@
 #include "host_os.h"
 #include "node/dataplane/dataplane.h"
 #include "log.h"
+#include "node/acl.h"
+#include "node/metrics.h"
+#include "node/stats.h"
+#include "node/diag.h"
 #include <fips/proto/fmp/mod.h>
 #include <fips/proto/fmp/rekey.h>
 #include <fips/proto/fsp/mod.h>
@@ -104,23 +108,7 @@ typedef struct probe_job {
     fips_probe_snapshot *report;
     uint64_t finished_ms;
 } probe_job;
-typedef struct handler_counters {
-    uint64_t hs_msg1, hs_msg2, hs_rejected, hs_rate_limited, hs_promoted, hs_restart, hs_timeouts, hs_failed, hs_cross_swap, hs_cross_keep;
-    uint64_t frames_received, frames_delivered, frames_dropped, frames_sent, send_failed, decrypt_failed, replay;
-    uint64_t tree_received, tree_accepted, tree_sent, tree_switches, tree_losses, tree_dropped, tree_sign_failed, tree_rate_limited;
-    uint64_t bloom_received, bloom_accepted, bloom_sent, bloom_refused, bloom_send_failed;
-    uint64_t lookup_req_received, lookup_req_initiated, lookup_req_forwarded, lookup_req_target_is_us, lookup_req_duplicate;
-    uint64_t lookup_req_ttl_exhausted, lookup_req_no_tree_peer, lookup_req_rate_limited, lookup_req_backoff_suppressed, lookup_req_bloom_miss;
-    uint64_t lookup_resp_received, lookup_resp_accepted, lookup_resp_forwarded, lookup_resp_unsolicited, lookup_resp_proof_failed, lookup_resp_timed_out, lookup_decode_error;
-    uint64_t fwd_received_packets, fwd_received_bytes, fwd_delivered_packets, fwd_delivered_bytes, fwd_forwarded_packets, fwd_forwarded_bytes;
-    uint64_t fwd_originated_packets, fwd_originated_bytes, fwd_drop_no_route_packets, fwd_drop_no_route_bytes, fwd_ttl_exhausted_packets, fwd_decode_error_packets;
-    uint64_t fwd_route_direct_peer, fwd_route_tree_up, fwd_route_tree_down;
-    uint64_t sess_setup_received, sess_setup_rate_limited, sess_established, sess_closed, sess_rekeys, sess_data_in, sess_data_out, sess_decode_error;
-    uint64_t mmp_sr_sent, mmp_rr_sent, mmp_sr_received, mmp_rr_received, heartbeats_sent, links_dead;
-    uint64_t rekey_installed, rekey_abandoned, rekey_rejected, rekey_restart, rekey_teardown;
-    uint64_t path_probes_in, path_acks_in, path_closes_in, path_sent, path_switched;
-    uint64_t notices_dropped, commands_refused, native_delivered;
-} handler_counters;
+
 typedef enum handler_command_kind {
     HCMD_CONNECT, HCMD_DISCONNECT, HCMD_SEND, HCMD_LEARN_IDENTITY, HCMD_DIAL_CONFIGURED,
     HCMD_CONTROL /* live control command with reply channel */
@@ -229,9 +217,12 @@ struct fipsd_node_handlers {
     uint64_t next_probe_id;
     /* Diagnostics */
     handler_counters counters;
+    fipsd_metrics metrics;
+    fipsd_diag_budget diag;
     fipsd_dataplane *dataplane; /* .7: bounded jobs + immutable routing/epoch tables */
     fips_stats_history *history;
     fips_peer_stats *history_peers;
+    fips_peer_snapshot *history_samples;
     /* Control */
     GoSwap *snapshot;
     bool dirty;
@@ -256,6 +247,7 @@ void hs_notice_full(handlers *h, const fipsd_node_notice *notice, const uint8_t 
 fipsd_transport *hs_transport(handlers *h, fips_transport_id id);
 bool hs_peer_identity(handlers *h, const fips_peer_key *key, fips_peer_identity *out);
 void hs_mark_dirty(handlers *h);
+bool hs_acl_authorize(handlers *, const fips_peer_identity *, const char *context);
 /* handshake.c */
 bool hs_handshake_frame(handlers *h, fipsd_transport *t, const fips_transport_addr *from, uint8_t *frame, size_t len, int phase);
 bool hs_dial(handlers *h, const fips_peer_identity *peer, fips_transport_id transport, const fips_transport_addr *addr, bool configured);

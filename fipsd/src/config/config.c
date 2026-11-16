@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #define _DARWIN_C_SOURCE 1
 #include "internal.h"
+#include "node/acl.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
@@ -13,7 +14,7 @@
 void fipsd_config_free(void *ptr)
 {
     fipsd_config *c=ptr;
-    if (c) { cfg_free(c->root); free(c); }
+    if (c) { fipsd_acl_free(c->acl); cfg_free(c->root); free(c); }
 }
 static bool is_dir(const char *path)
 { struct stat st; return stat(path,&st)==0 && S_ISDIR(st.st_mode); }

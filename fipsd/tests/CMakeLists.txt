@@ -229,3 +229,22 @@ if(FIPSD_DATAPLANE_BENCH_TEST)
   set_tests_properties(FipsdDataplaneThroughput PROPERTIES TIMEOUT 120 LABELS "fips;bench" ENVIRONMENT "FIPSD_WORKERS=4")
   nostrc_describe_test(FipsdDataplaneThroughput OWNER fipsd TARGETS fipsd_dataplane_throughput)
 endif()
+
+# Upstream ACL semantics and live admission/reload proof (nostrc-9keoz.8).
+fipsd_unit_test(fipsd_acl_test test_acl.c)
+fipsd_unit_test(fipsd_node_acl_test test_node_acl.c)
+add_dependencies(fipsd_tests fipsd_acl_test fipsd_node_acl_test)
+add_test(NAME FipsdAclTest COMMAND fipsd_acl_test)
+add_test(NAME FipsdNodeAclTest COMMAND fipsd_node_acl_test)
+set_tests_properties(FipsdAclTest FipsdNodeAclTest PROPERTIES TIMEOUT 120 LABELS "fips;node;acl" ENVIRONMENT "FIPSD_WORKERS=2")
+nostrc_describe_test(FipsdAclTest OWNER fipsd TARGETS fipsd_acl_test)
+nostrc_describe_test(FipsdNodeAclTest OWNER fipsd TARGETS fipsd_node_acl_test)
+
+fipsd_unit_test(fipsd_stats_test test_stats.c)
+add_dependencies(fipsd_tests fipsd_stats_test)
+add_test(NAME FipsdStatsTest COMMAND fipsd_stats_test)
+set_tests_properties(FipsdStatsTest PROPERTIES TIMEOUT 60 LABELS "fips;unit;stats")
+nostrc_describe_test(FipsdStatsTest OWNER fipsd TARGETS fipsd_stats_test)
+
+target_compile_definitions(fipsd_acl_test PRIVATE
+  FIPSD_CONTROL_GOLDEN="${CMAKE_CURRENT_SOURCE_DIR}/control_golden")
