@@ -314,3 +314,48 @@ target_link_libraries(fipsctl PRIVATE fipsctl_lib)
 apply_warnings(fipsctl)
 apply_sanitizers(fipsctl)
 install(TARGETS fipsctl RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+
+# fips-gateway (nostrc-iq1n9.3): the outbound LAN gateway. Its pool,
+# conntrack, state, NAT rendering and worker, DNS proxy, control socket and
+# shutdown modules are portable and form fipsd_gateway_core on every
+# platform, so their tests run everywhere; the executable and its libnftables
+# backend are Linux-only (nftables and proxy NDP exist nowhere else).
+# libnftables (over libnftnl/libmnl) is the C library nft itself is built on:
+# one JSON document per rebuild, sent as one netlink batch, so the rule shapes
+# are golden-testable text rather than hand-encoded netlink.
+declare_component_version(fips-gateway 0 1 0)
+add_library(fipsd_gateway_core STATIC
+  src/gateway/types.c src/gateway/addrmap.c src/gateway/pool.c src/gateway/conntrack.c
+  src/gateway/state.c src/gateway/nat.c src/gateway/net.c src/gateway/dns.c
+  src/gateway/control.c src/gateway/shutdown.c)
+set_target_properties(fipsd_gateway_core PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+target_link_libraries(fipsd_gateway_core PUBLIC fipsd_lib)
+apply_warnings(fipsd_gateway_core)
+apply_sanitizers(fipsd_gateway_core)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  option(FIPSD_BUILD_GATEWAY "Build the fips-gateway executable (Linux; needs libnftables)" ON)
+  if(FIPSD_BUILD_GATEWAY)
+    pkg_check_modules(FIPSD_NFTABLES IMPORTED_TARGET libnftables)
+    if(FIPSD_NFTABLES_FOUND)
+      add_executable(fips-gateway src/gateway/main.c src/gateway/nat_nft.c)
+      set_target_properties(fips-gateway PROPERTIES
+        C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO POSITION_INDEPENDENT_CODE TRUE)
+      target_include_directories(fips-gateway PRIVATE "${fips-gateway_VERSION_HEADER_DIR}")
+      target_link_libraries(fips-gateway PRIVATE fipsd_gateway_core PkgConfig::FIPSD_NFTABLES)
+      apply_warnings(fips-gateway)
+      apply_sanitizers(fips-gateway)
+      set_property(TARGET fips-gateway APPEND PROPERTY INSTALL_RPATH "${FIPSD_INSTALL_RPATH}")
+      install(TARGETS fips-gateway RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+      configure_file("${FIPSD_PACKAGING_DIR}/systemd/fips-gateway.service.in"
+        "${CMAKE_CURRENT_BINARY_DIR}/packaging/fips-gateway.service" @ONLY)
+      install(FILES "${CMAKE_CURRENT_BINARY_DIR}/packaging/fips-gateway.service"
+        DESTINATION "${FIPSD_SYSTEMD_UNIT_DIR}")
+      if(TARGET fipsd_tests)
+        add_dependencies(fipsd_tests fips-gateway)
+      endif()
+    else()
+      message(STATUS "fips-gateway: libnftables not found (install libnftables-dev); the gateway executable is not built")
+    endif()
+  endif()
+endif()
