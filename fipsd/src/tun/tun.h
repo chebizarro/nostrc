@@ -4,6 +4,7 @@
 #include <fips/identity/local.h>
 #include <sys/socket.h>
 #include <sys/types.h>
+#include <stdatomic.h>
 
 #define FIPSD_TUN_NAME_SIZE 16u
 /* Host compression shim budget, NOT core FIPS_OVERHEAD (106/110). */
@@ -70,5 +71,13 @@ void fipsd_tun_destroy(fipsd_tun *);
 ssize_t fipsd_tun_read(fipsd_tun *, uint8_t *, size_t);
 ssize_t fipsd_tun_write(fipsd_tun *, const uint8_t *, size_t);
 int fipsd_tun_header_prepend(uint8_t family, const uint8_t *, size_t, uint8_t *, size_t);
+/* The IPv6 shim's view of a started device: descriptor (-1 when down), kernel
+ * name, node-derived address and effective IPv6 MTU. The shim registers its
+ * host-drop counter so status reports host_drops; NULL detaches it. */
+int fipsd_tun_fd(const fipsd_tun *);
+const char *fipsd_tun_name(const fipsd_tun *);
+fips_ipv6_address fipsd_tun_address(const fipsd_tun *);
+uint16_t fipsd_tun_effective_mtu(const fipsd_tun *);
+void fipsd_tun_set_host_drops(fipsd_tun *, const _Atomic uint64_t *);
 int fipsd_tun_header_strip(uint8_t family, uint8_t *, size_t);
 #endif

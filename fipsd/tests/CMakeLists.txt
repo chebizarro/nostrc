@@ -448,3 +448,30 @@ foreach(scenario IN ITEMS codecs states stun traverse guards)
     LABELS "fips;nostr;traversal" ENVIRONMENT "FIPSD_WORKERS=2")
   nostrc_describe_test(FipsdNostrTraversal_${scenario} OWNER fipsd TARGETS fipsd_nostr_traversal_test)
 endforeach()
+# IPv6 shim (nostrc-9nxwk.2): upstream vector tests, a two-node loopback proof
+# over the TUN ops seam (fake devices on socketpairs) and an opt-in privileged
+# smoke on a real device.
+fipsd_unit_test(fipsd_ipv6_codec_test test_ipv6_codec.c)
+fipsd_unit_test(fipsd_ipv6_icmp_test test_ipv6_icmp.c)
+fipsd_unit_test(fipsd_ipv6_firewall_test test_ipv6_firewall.c)
+fipsd_unit_test(fipsd_ipv6_two_nodes_test test_ipv6_two_nodes.c)
+fipsd_unit_test(fipsd_ipv6_privileged_test test_ipv6_privileged.c)
+add_dependencies(fipsd_tests fipsd_ipv6_codec_test fipsd_ipv6_icmp_test fipsd_ipv6_firewall_test
+  fipsd_ipv6_two_nodes_test fipsd_ipv6_privileged_test)
+add_test(NAME FipsdIpv6CodecTest COMMAND fipsd_ipv6_codec_test)
+add_test(NAME FipsdIpv6IcmpTest COMMAND fipsd_ipv6_icmp_test)
+add_test(NAME FipsdIpv6FirewallTest COMMAND fipsd_ipv6_firewall_test)
+add_test(NAME FipsdIpv6TwoNodesTest COMMAND fipsd_ipv6_two_nodes_test)
+add_test(NAME FipsdIpv6PrivilegedSmokeTest COMMAND fipsd_ipv6_privileged_test)
+foreach(_ipv6_test FipsdIpv6CodecTest FipsdIpv6IcmpTest FipsdIpv6FirewallTest)
+  set_tests_properties(${_ipv6_test} PROPERTIES TIMEOUT 120 LABELS "fips;tun;ipv6")
+endforeach()
+set_tests_properties(FipsdIpv6TwoNodesTest PROPERTIES TIMEOUT 300 LABELS "fips;tun;ipv6;node"
+  ENVIRONMENT "FIPSD_WORKERS=2")
+set_tests_properties(FipsdIpv6PrivilegedSmokeTest PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77
+  LABELS "fips;tun;ipv6;privileged" ENVIRONMENT "FIPSD_WORKERS=2")
+nostrc_describe_test(FipsdIpv6CodecTest OWNER fipsd TARGETS fipsd_ipv6_codec_test)
+nostrc_describe_test(FipsdIpv6IcmpTest OWNER fipsd TARGETS fipsd_ipv6_icmp_test)
+nostrc_describe_test(FipsdIpv6FirewallTest OWNER fipsd TARGETS fipsd_ipv6_firewall_test)
+nostrc_describe_test(FipsdIpv6TwoNodesTest OWNER fipsd TARGETS fipsd_ipv6_two_nodes_test)
+nostrc_describe_test(FipsdIpv6PrivilegedSmokeTest OWNER fipsd TARGETS fipsd_ipv6_privileged_test)

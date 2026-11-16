@@ -150,7 +150,7 @@ bool fipsd_dp_init(handlers *h)
 {
     fipsd_dataplane *d = calloc(1, sizeof *d);
     if (!d) return false;
-    h->dataplane = d; d->needs_publish = true;
+    h->dataplane = d; d->needs_publish = true; d->owner = h;
     d->packet_count = 256; /* fixed bound including in-flight results and FSP trial retries */
     d->clamp_capacity = h->cfg.session_capacity + h->cfg.peer_capacity;
     d->packets = calloc(d->packet_count, sizeof *d->packets);

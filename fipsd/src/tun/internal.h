@@ -15,6 +15,7 @@ struct fipsd_tun {
     nsync_mu status_mu;
     fipsd_tun_status status;
     fipsd_control_provider base;
+    const _Atomic uint64_t *host_drops; /* the shim's queue counter, under status_mu */
 };
 void fipsd_tun_publish(fipsd_tun *, fipsd_tun_state, int);
 /* Callbacks shared by the two BSD backends. */
