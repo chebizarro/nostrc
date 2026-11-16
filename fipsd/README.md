@@ -2438,3 +2438,80 @@ Verification (`ctest -R Fipsctl`, all in `fipsd_tests`):
   rendering compared with timing figures masked, `path pin`/`unpin` and
   probes through both clients on both daemons, and keys from each client's
   `keygen` read by the other's `address`.
+
+## fips-gateway: the LAN gateway in C (`nostrc-iq1n9.3`)
+
+`fipsd/src/gateway/` is upstream `src/gateway/*` and `src/bin/fips-gateway.rs`.
+The `fips-gateway` executable runs beside `fipsd` and reads the same
+`fips.yaml` (`gateway:` block). It has two halves:
+- **Outbound.** LAN hosts resolve `<npub>.fips` through its DNS proxy (default
+  `[::1]:5365`) to a virtual IPv6 address from `gateway.pool`, and kernel
+  nftables NAT carries the flow into the mesh through `fips0`.
+- **Inbound.** `gateway.port_forwards[]` exposes LAN services on the gateway's
+  mesh address.
+
+It is Linux-only. Its portable modules (`fipsd_gateway_core`: pool,
+conntrack, state, NAT rendering and worker, net, DNS proxy, control,
+shutdown) build and are tested on every platform. `main.c` and the
+libnftables backend `nat_nft.c` build on Linux when `pkg-config` finds
+`libnftables` (`libnftables-dev`), and `-DFIPSD_BUILD_GATEWAY=OFF` skips
+them.
+
+nftables goes through **libnftables**, the library `nft` is built on, rather
+than through libnftnl/libmnl directly:
+- Each rebuild is one JSON document, sent as one netlink batch that the kernel
+  applies as one transaction, the guarantee upstream's rustables batch gives.
+- The rule shapes are golden-tested text (`tests/gateway_golden/`), and the
+  goldens load in real nftables.
+- The library does the buffer sizing and acknowledgement bookkeeping upstream
+  does by hand.
+
+The paths and limits are upstream's:
+
+| What | Value |
+| --- | --- |
+| Control socket | `/run/fips/gateway.sock` (`show_gateway`, `show_mappings`; group `fips`, `0770`) |
+| NAT table | `inet fips_gateway` |
+| Pool state | `/var/run/fips-gateway/pool.json` (tmpfs only) |
+| Pool route | `local <pool> dev lo` |
+| Mapping ceiling | 1000 live mappings |
+| New-name rate | a bucket of 50, refilled at 10/s |
+| Tick | 10 s |
+
+One case differs, because C cannot abort on an allocation failure:
+- **Pool:** it reserves before it mutates, so a failure leaves the pool as it
+  was and the query gets `SERVFAIL`.
+- **NAT manager:** a failure stops the worker, and the gateway exits 1 for its
+  restart.
+
+[`docs/fips-gateway.md`](docs/fips-gateway.md) has the rest:
+- the module map and concurrency;
+- the DNS, pool, NAT, control and shutdown behaviour;
+- the differences from upstream;
+- the deployment recipe (`deploy-gateway.md`) step by step;
+- the troubleshooting table (`troubleshoot-gateway.md`).
+
+The unit template `packaging/systemd/fips-gateway.service.in` is generated
+and installed with the executable. The packages do not ship the gateway yet:
+`packaging/common/cmake-args.sh` turns it off.
+
+Verification (`ctest -R FipsdGateway`, all in `fipsd_tests`):
+
+- Eight unit suites in `fipsd_gateway_test`, one ctest each: `Pool` (the 56
+  `pool.rs` tests), `Conntrack`, `State`, `Nat` (goldens and the worker),
+  `Net`, `Dns`, `Control`, `Shutdown`. They are free of sleeps and run under
+  ASan/UBSan and TSan.
+- `FipsdGatewayPrivilegedSmokeTest` (`tests/gateway_netns_smoke.py`): root
+  only, and it skips (77) unless `FIPSD_GATEWAY_PRIVILEGED_SMOKE=1` is set.
+  It reproduces `deploy-gateway.md` in three network namespaces:
+  - the gateway host, running fipsd A and fips-gateway;
+  - mesh node B;
+  - an unmodified LAN host.
+
+  It checks every step of the how-to:
+  - the start-up log, the pool route and the table;
+  - outbound `dig`, ping, TCP and UDP through the NAT;
+  - the control socket;
+  - the inbound forwards, with and without the mesh firewall baseline;
+  - a clean stop that removes every rule, route and NDP entry;
+  - a restart that keeps the previous run's addresses held.

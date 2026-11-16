@@ -333,8 +333,10 @@ set_target_properties(fipsd_gateway_core PROPERTIES
 target_link_libraries(fipsd_gateway_core PUBLIC fipsd_lib)
 apply_warnings(fipsd_gateway_core)
 apply_sanitizers(fipsd_gateway_core)
+# Declared everywhere so the shared package arguments can switch it off on
+# every platform; it has an effect on Linux alone.
+option(FIPSD_BUILD_GATEWAY "Build the fips-gateway executable (Linux; needs libnftables)" ON)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-  option(FIPSD_BUILD_GATEWAY "Build the fips-gateway executable (Linux; needs libnftables)" ON)
   if(FIPSD_BUILD_GATEWAY)
     pkg_check_modules(FIPSD_NFTABLES IMPORTED_TARGET libnftables)
     if(FIPSD_NFTABLES_FOUND)

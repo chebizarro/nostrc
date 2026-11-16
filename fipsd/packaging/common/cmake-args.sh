@@ -12,6 +12,9 @@
 # private copy, see fipsd/CMakeLists.txt.) libnostr keeps its GLib layer
 # (the default): the daemon's Nostr rendezvous event code uses GLib, so the
 # packages depend on libglib2.0 -- but on no GObject wrapper, GTK or libsoup.
+# fips-gateway is off until the packages carry it (its binary, unit and
+# libnftables dependency): otherwise a build host that happens to have
+# libnftables would ship it through debian/fipsd.install's usr/bin/fips*.
 set -eu
 cat <<'ARGS'
 -DBUILD_FIPS=ON
@@ -28,4 +31,5 @@ cat <<'ARGS'
 -DBUILD_TESTING=OFF
 -DBUILD_TESTING_FRAMEWORK=OFF
 -DBUILD_SHARED_LIBS=OFF
+-DFIPSD_BUILD_GATEWAY=OFF
 ARGS
