@@ -1,3 +1,5 @@
+nostrc-8hvs6.2: fipsd stays 0.1.0 Unreleased; relay-backed rendezvous, private driver/failure/gate/router surfaces and tests fold into the initial daemon. libnostr stays 2.4.0 Unreleased: MINOR-class opt-in CLOSED backoff API preserves public struct layouts and default behavior; PATCH-class AUTH OK/ownership and closing-state fixes fold into the same unreleased version. libgo stays 0.3.0 Unreleased: interruptible Ticker stop is a PATCH-class correction without layout/API change. No release/tag changes.
+
 # Component Version Manifest
 
 nostrc-9nxwk.1: fipsd stays 0.1.0 Unreleased; additive private TUN device/platform/syscall seams, ready-gated host lifecycle and control status fields fold into the initial unreleased daemon. libfips-core and libgo unchanged; no numeric bump, published release or tag. IPv6 shim delivery remains 9nxwk.2.

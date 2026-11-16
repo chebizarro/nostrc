@@ -477,7 +477,7 @@ bool nostr_relay_is_connected(NostrRelay *relay) {
     if (!relay) return false;
     nsync_mu_lock(&relay->priv->mutex);
     bool connected = false;
-    if (relay->connection && relay->connection->priv) {
+    if (!relay->priv->closing && relay->connection && relay->connection->priv) {
         nsync_mu_lock(&relay->connection->priv->mutex);
         /* In test mode, connection is always "connected" since we bypass real network */
         if (relay->connection->priv->test_mode) {
@@ -1931,25 +1931,27 @@ char *nostr_relay_get_auth_challenge(NostrRelay *relay, uint64_t *generation) {
 }
 
 void nostr_relay_auth(NostrRelay *relay, void (*sign)(NostrEvent *, Error **), Error **err) {
-
-    NostrEvent auth_event = {
-        .id = NULL,
-        .pubkey = NULL,
-        .created_at = 0,
-        .kind = NOSTR_KIND_CLIENT_AUTHENTICATION,
-        .tags = nostr_tags_new(2,
-                nostr_tag_new("challenge", relay->priv->challenge, NULL),
-                nostr_tag_new("relay", relay->url, NULL)),
-        .content = strdup(""),
-        .sig = NULL};
-    Error *sig_err = NULL;
-    sign(&auth_event, &sig_err);
-    if (sig_err) {
-        if (err) *err = sig_err;
+    char *challenge = nostr_relay_get_auth_challenge(relay, NULL);
+    if (!challenge || !sign) {
+        free(challenge);
+        if (err) *err = new_error(1, "no current AUTH challenge or signer");
         return;
     }
-    nostr_relay_publish(relay, &auth_event);
-    nostr_tags_free(auth_event.tags);
+    NostrEvent *event = nostr_event_new();
+    if (!event) { free(challenge); if (err) *err = new_error(1, "AUTH allocation failed"); return; }
+    event->kind = NOSTR_KIND_CLIENT_AUTHENTICATION;
+    event->created_at = (int64_t)time(NULL);
+    event->tags = nostr_tags_new(2, nostr_tag_new("challenge", challenge, NULL),
+        nostr_tag_new("relay", relay->url, NULL));
+    event->content = strdup("");
+    free(challenge);
+    Error *failure = NULL;
+    sign(event, &failure);
+    if (!failure && !nostr_relay_publish_and_wait(relay, event, 5000, &failure) && !failure)
+        failure = new_error(1, "AUTH rejected");
+    nostr_event_free(event);
+    if (err) *err = failure;
+    else if (failure) free_error(failure);
 }
 
 bool nostr_relay_subscribe(NostrRelay *relay, GoContext *ctx, NostrFilters *filters, Error **err) {

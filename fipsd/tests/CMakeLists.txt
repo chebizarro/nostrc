@@ -356,3 +356,13 @@ set_tests_properties(FipsdUdpInteropSmokeTest PROPERTIES TIMEOUT 90 SKIP_RETURN_
   LABELS "fips;transport;interop" ENVIRONMENT "FIPSD_WORKERS=2")
 nostrc_describe_test(FipsdUdpInteropSmokeTest OWNER fipsd TARGETS fipsd fipsd_test_tmpdir_run
   INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/udp_interop.py")
+# Soup/WebSocket fixture adapted from Grotto with the FIPS gate's Jansson codec.
+pkg_check_modules(FIPSD_RELAY_TEST REQUIRED IMPORTED_TARGET libsoup-3.0)
+fipsd_unit_test(fipsd_nostr_runtime_test test_nostr_runtime.c)
+target_sources(fipsd_nostr_runtime_test PRIVATE nostr_relay_fixture.c)
+target_link_libraries(fipsd_nostr_runtime_test PRIVATE PkgConfig::FIPSD_RELAY_TEST)
+add_dependencies(fipsd_tests fipsd_nostr_runtime_test)
+add_test(NAME FipsdNostrRuntimeTest COMMAND fipsd_nostr_runtime_test)
+set_tests_properties(FipsdNostrRuntimeTest PROPERTIES TIMEOUT 90 LABELS "fips;nostr;relay"
+  ENVIRONMENT "FIPSD_WORKERS=2")
+nostrc_describe_test(FipsdNostrRuntimeTest OWNER fipsd TARGETS fipsd_nostr_runtime_test)

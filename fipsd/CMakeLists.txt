@@ -141,3 +141,7 @@ endif()
 # UDP datagrams and authenticated connected-peer drains (nostrc-gfi8h.2).
 target_sources(fipsd_lib PRIVATE src/transport/udp/udp.c src/transport/udp/io.c
   src/transport/udp/connected.c src/transport/udp/classify.c src/transport/udp/dns.c)
+# Relay-backed rendezvous actor and node/traversal driver (nostrc-8hvs6.2).
+target_sources(fipsd_lib PRIVATE src/nostr/runtime.c src/nostr/driver.c
+  src/nostr/failure_state.c src/nostr/signal_gate.c src/nostr/signal_route.c)
+target_link_libraries(fipsd_lib PUBLIC nip11)

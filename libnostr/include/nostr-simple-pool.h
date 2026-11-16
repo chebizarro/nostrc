@@ -237,6 +237,11 @@ NOSTR_API void nostr_simple_pool_set_subscription_callback(NostrSimplePool *, No
  * admission/freshness window and durable replay guard; use unique=false when
  * retry deliveries need replies. Zero preserves default cursor recovery.
  * Returns false if the pool's private subscription registry is unavailable. */
+/* Opt-in CLOSED re-REQ backoff (not history completion): preserves the socket
+ * and its NIP-42 authentication. EOSE resets each relay's exponential ladder.
+ * Zero initial_ms preserves legacy behavior; max_ms must be >= initial_ms.
+ * Private registry state only: the public pool layout is unchanged. */
+NOSTR_API bool nostr_simple_pool_set_closed_backoff(NostrSimplePool *, unsigned initial_ms, unsigned max_ms);
 NOSTR_API bool nostr_simple_pool_set_recovery_window(NostrSimplePool *, unsigned seconds);
 NOSTR_API void nostr_simple_pool_subscribe(NostrSimplePool *pool, const char **urls, size_t url_count, NostrFilters filters, bool unique);
 /**
