@@ -437,3 +437,14 @@ set_tests_properties(FipsdTcpInteropTest PROPERTIES TIMEOUT 90 SKIP_RETURN_CODE 
   LABELS "fips;transport;interop" ENVIRONMENT "FIPSD_WORKERS=2")
 nostrc_describe_test(FipsdTcpInteropTest OWNER fipsd TARGETS fipsd fipsd_test_tmpdir_run
   INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/tcp_interop.py")
+# Traversal vectors, complete table, loopback STUN and real relay -> IK proof.
+fipsd_unit_test(fipsd_nostr_traversal_test test_nostr_traversal.c)
+target_sources(fipsd_nostr_traversal_test PRIVATE stun_fixture.c nostr_relay_fixture.c)
+target_link_libraries(fipsd_nostr_traversal_test PRIVATE PkgConfig::FIPSD_RELAY_TEST)
+add_dependencies(fipsd_tests fipsd_nostr_traversal_test)
+foreach(scenario IN ITEMS codecs states stun traverse guards)
+  add_test(NAME FipsdNostrTraversal_${scenario} COMMAND fipsd_nostr_traversal_test ${scenario})
+  set_tests_properties(FipsdNostrTraversal_${scenario} PROPERTIES TIMEOUT 90
+    LABELS "fips;nostr;traversal" ENVIRONMENT "FIPSD_WORKERS=2")
+  nostrc_describe_test(FipsdNostrTraversal_${scenario} OWNER fipsd TARGETS fipsd_nostr_traversal_test)
+endforeach()

@@ -1399,32 +1399,167 @@ though the live cache separately uses the replaceable-event ID tie-breaker.
 Only `Evicted` and `Refreshed` reset the failure streak. A deadline
 never proves absence. Signals continue on their independent channel during fetch.
 
-**Traversal landing boundary.** Offers and answers are authenticated/opened by
-the landed traversal parser; answers must match a pending offer's sender,
-session and nonce and pass its freshness gate. Incoming offers pay global and
-per-sender concurrent limits. Outgoing answer reservations have a separate bounded table (one active offer per
-recipient), so full responder replay memory cannot deny our own traversals.
-Unexpired seen sessions are never evicted to admit
-another offer: full storage refuses new offers until replay expiry. The driver
-exposes `traversal_offer`, `traversal_answer`, signal publication, session-finished
-and peer-result seams. The traversal machine, STUN observation, adopted UDP
-transport and named punch-packet classifier attachment remain `8hvs6.3` work;
-missing callbacks refuse offers, never report a successful punch. The node
-adapter advertises `udp:nat` only for an actually bound, opted-in UDP transport;
-it never advertises a wildcard bind address as a public endpoint.
+**Traversal and STUN (`8hvs6.3`).** `driver.c` attaches `traversal_io` through
+prepare/start/stop/destroy callbacks on the existing rendezvous subsystem; there
+is no second relay runtime or `main.c` registration. Its bounded command/packet
+mailboxes feed one tracked fiber. The relay actor still owns authenticated
+signal admission, publish OK, replay memory and failure/refetch policy. The
+worker owns STUN transactions, candidate plans and pure traversal machines.
+Classifiers register before UDP starts and borrow their owner through runtime
+join. Failed construction removes registrations before freeing that owner.
+
+`stun.{c,h}` implements the upstream 20-byte binding request (cookie
+`0x2112a442`, 96-bit CSPRNG transaction id), MAPPED-ADDRESS and
+XOR-MAPPED-ADDRESS for IPv4/IPv6, unknown-attribute padding and bounded decoding.
+A reply must match both the resolved server endpoint and transaction id. Declared
+lengths/truncation fail closed. The UDP transport resolves the configured server
+using its family-aware DNS cache/blocking executor; every send uses its existing
+bound listener. There is no private STUN socket and no competing receive drain.
+The same id is retransmitted at 0/500/1500 ms for the upstream 2-second traversal
+budget, plus 3500 ms for its 5-second advert budget. Production observation uses
+the advert budget once per bound transport generation, then shares that mapping
+with offers/answers; a rebind triggers a new observation. Servers are tried in
+configured order, never taken from a peer's untrusted STUN hint. Exhaustion
+leaves only opt-in local candidates and releases otherwise unusable pending
+attempts. Neither a timeout nor a failed send establishes a mapped address.
+
+Reflexive observations populate offers/answers. Adverts retain `udp:nat` and the
+configured signal/STUN hints; a concrete public endpoint is included only when
+the explicitly bound tuple equals STUN's observation. Wildcard bindings and
+NAT-translated tuples are never mislabeled as directly reachable endpoints.
+Observation completion queues a local advert refresh, not a relay query.
+`share_local_candidates: false` is the default. When enabled, interface addresses
+of the bound family/port are collected on the blocking executor. Candidate
+planning rejects zero ports, wrong families/protocols, multicast, unspecified,
+link-local and CGNAT destinations; private destinations must match an actual
+local interface prefix. Loopback is allowed only on an explicitly loopback-bound
+transport (the local integration fixture uses this). At most 32 offered local
+candidates are vetted and eight distinct targets are punched; local candidates
+precede the reflexive candidate.
+
+The UDP classifier registry now has a source-aware callback alongside its
+unchanged legacy callback. STUN/punch datagrams are copied into a bounded mailbox;
+ordinary FMP stays on the normal receiver path. `traversal.c` encodes upstream
+24-byte `NPTC`/`NPTA` packets: four-byte magic, big-endian sequence, and the first
+16 bytes of SHA-256(session id). Reserved prefixes remain discarded even with no
+rendezvous owner. Only matching-session packets from a planned IP are actionable:
+an exact endpoint wins immediately; a remapped source port waits up to 250 ms
+for an exact match. Unplanned sources are neither acknowledged nor adopted.
+The hash is a discriminator, **not authentication**.
+
+`fipsd_established_traversal` carries identity, session and the existing local/
+remote UDP tuples to `fipsd_nostr_node_driver_established`. It rechecks the local
+tuple and enqueues identity learning plus the existing node connect command.
+Noise IK still authenticates the peer; only the existing `udp.authenticated`
+callback promotes it to a connected per-peer socket. No unauthenticated punch
+allocates a connected peer. Late probes on the selected tuple are acknowledged
+until the original attempt deadline, without repeating the handoff.
+
+#### Pure traversal transition table
+
+`traversal_machine` takes explicit monotonic milliseconds, never reads a clock or
+performs I/O. Unlisted state/input combinations are inert; cancel terminates any
+nonterminal state. Upstream `traversal_machine.rs` contains cross-session
+initiator election/replay decisions, while `runtime.rs`/`traversal.rs` own the
+async session loop: this table is the C sans-I/O expression of those decisions,
+not a claim that upstream has an identical enum/table.
+
+| State | Input/guard | Next state | Effects |
+| --- | --- | --- | --- |
+| Idle | outbound offer | Await answer | Send offer, answer deadline |
+| Idle | incoming offer | Punching | Send answer, punch deadlines |
+| Await answer | accepted answer + usable plan | Punching | Arm local punch cadence |
+| Await answer | rejection / answer deadline | Cooldown | Failure, release reservation |
+| Punching / Settling | initial publish failure / rejected plan | Cooldown | Failure, release reservation |
+| Punching / Settling | late repair-publish failure | Unchanged | Answer already consumed reservation; ignore obsolete repair |
+| Punching | cadence due, before send/end deadline | Punching | Send probes to plan |
+| Punching | matching punch, exact source | Established | ACK probe, handoff once |
+| Punching | matching punch, remapped port | Settling | ACK probe, arm 250 ms settle |
+| Settling | another remapped source | Settling | ACK probe, update candidate; keep first settle deadline |
+| Settling | exact source / settle deadline | Established | ACK probe if applicable, handoff once |
+| Settling | cadence due | Settling | Send probes to plan |
+| Punching / Settling | send window elapsed | Unchanged | Disarm cadence; wait for settle/attempt deadline |
+| Punching | attempt deadline | Cooldown | Failure, release reservation |
+| Established | matching selected-source probe | Established | ACK only |
+| Established | original attempt deadline | Idle | Release retained punch state |
+| Cooldown | deadline | Idle | Retry outbound only while budget remains |
+| Any nonterminal | cancel / binding replacement | Cancelled | Release reservation |
+
+One active attempt per canonical peer is retained. When both peers initiate,
+the smaller NodeAddr's session wins; one successful offer re-send can repair an
+offer published before the peer subscribed, but only while awaiting an answer.
+Repair results are distinguished from initial publish results so an accepted
+answer overtaking a queued repair cannot cancel a healthy punch. Rejected plans
+include the nonempty reason required by the answer validator. Existing runtime
+session replay memory is not evicted to make room. Defaults match upstream: 120 s answer wait,
+10 s attempt, 2 s punch delay, 200 ms interval (minimum 20 ms), 10 s send window;
+`node.retry` is 5 retries, 5 s exponential base, 300 s cap. Five failures apply
+an 1800 s extended cooldown, also reported to the existing failure/refetch owner.
+An exhausted retry budget does not create a periodic relay fetch.
+
+#### Configuration and local evidence
+
+All keys below already belong to the configuration schema; no new YAML keys:
+
+- `node.rendezvous.nostr.stun_servers`: at most eight `stun:host:port` or
+  `host:port` entries; IPv6 hosts use brackets. Default servers remain unchanged.
+- `share_local_candidates`, `signal_ttl_secs`, `attempt_timeout_secs`,
+  `punch_start_delay_ms`, `punch_interval_ms`, `punch_duration_ms`,
+  `failure_streak_threshold`, `extended_cooldown_secs`: behavior/defaults above.
+- `open_discovery_max_pending` and `max_concurrent_incoming_offers` reserve
+  separate outbound/inbound worker quotas (nonzero sum, host ceiling 4096).
+  Retained inbound cooldown entries count against the inbound quota, never the
+  outbound reserve; existing runtime per-sender and replay limits still apply.
+- `transports.udp[.<name>].advertise_on_nostr`: opt-in per bound transport;
+  `node.rendezvous.nostr.advertise` still gates publication globally.
+- `node.retry.{max_retries,base_interval_secs,max_backoff_secs}`: bounded retry
+  policy; the base and attempt/answer lifetimes must be nonzero.
+
+`FipsdNostrTraversal_{codecs,states,stun,traverse,guards}` are in `fipsd_tests` and link
+the daemon implementation. They cover fixed upstream-layout IPv4/IPv6 vectors,
+all transition rows/cancellation/inert inputs/cooldown, reserved punch versus
+FMP classification, a real loopback STUN server (success, first-request loss,
+bounded give-up, exact source and unchanged transaction/local port), and two
+real nodes discovering adverts and exchanging offer/answer through
+`nostr_relay_fixture` before punch → IK → connected UDP. No sleep-based waits or
+mocked successful handoffs are used. Regression coverage also checks a valid
+negative answer through the relay, outbound admission with a retained inbound
+cooldown, late repair failure after answer/settle, and a scheduler jump beyond
+the last send window. The no-deadline path calls `go_select`, not
+an overflowing `go_select_timeout(UINT64_MAX)` pseudo-infinite wait. Concurrent
+relay creation uses `pthread_once` for libnostr's cached debug flag. The TUN
+runtime fixture reads errno through a post-resume accessor, matching the TUN
+implementation's fiber-migration contract; its error assertions remain intact.
+
+Local macOS/arm64 validation built the daemon and test targets with
+warnings-as-errors, including the separately selected `fips_core_skeleton_test`.
+Both complete `ctest -R '^Fips' --output-on-failure` runs (ASan+UBSan and TSan,
+halt-on-error enabled) selected 144 tests: 141 passed, zero failed, three skipped.
+The skips are `FipsdControlInteropTest` (upstream control checkout not configured),
+`FipsdTunPrivilegedSmokeTest` (not root), and `FipsdUdpInteropSmokeTest` (pinned
+Rust daemon not configured). All five traversal scenarios passed in both builds.
+The direct unsequenced-arguments, GUI GDK-frame, Linux CI-package and
+`git diff --check` static gates passed; no Beads or pre-push wrapper was run.
+
+This is C↔C loopback proof, **not NAT or Rust interoperability proof**. Upstream's
+NAT lab uses explicit namespace/veth SNAT+DNAT for cone emulation, randomized
+MASQUERADE for symmetric NAT, and a same-LAN case. Those network topologies,
+C↔Rust traversal, public STUN/relays and deployment are not verified here;
+`f66sr.3` owns the formal simulated-NAT acceptance harness. `8hvs6.4` owns the
+formal protocol review.
 
 ### Protocol-smell checklist (A–J, module and local relay tests)
 
 - [x] A: Long-lived REQ/event delivery; no periodic relay queries.
 - [x] B: History and successful fetch completion are EOSE-driven, never timer-closes.
-- [x] C: Publish OK/false, CLOSED reasons/backoff and NIP-42 challenge/OK are observed.
+- [x] C: Publish OK/false, CLOSED reasons/backoff and NIP-42 challenge/OK are observed; initial and repair publish results stay distinct across accepted-answer races.
 - [x] D: Explicit history-cache → EOSE → live effects; recovery uses a bounded freshness window; refetch uses until/limit.
 - [x] E: Kind/identifier/authors and kind/recipient/since filters; wildcard authors only for explicitly open discovery.
-- [x] F: Independent bounded signal IDs/session memory and replaceable advert idempotency, including reconnect replay.
-- [x] G: Channels are owned actor mailboxes, not relay polling/queue wrappers.
+- [x] F: Independent bounded signal IDs/session memory and replaceable advert idempotency, including reconnect replay; traversal adds canonical peer dedup, dual-init election, one-shot handoff and independent retained inbound/outbound quotas.
+- [x] G: Channels are owned actor/worker mailboxes, not relay polling/queue wrappers; UDP classifiers never block the receive drain.
 - [x] H: Every configured relay gets a cancellable NIP-11 probe; explicit refusal, multiple relays and authenticated retry.
-- [x] I: Timers are only advert publication, reconnect backoff, reservation expiry or a failed-fetch deadline; none establishes history completion.
-- [x] J: Grotto `bunker_test_relay` main-context/Soup fixture adapted to Jansson over real local WebSockets/HTTP, driven by main-context commands and channel barriers, no sleeps. Tests hold EOSE, replay duplicate history/live events across two relays, send AUTH with CLOSED, reject publishes, and exercise B6/session/freshness/failure contracts.
+- [x] I: Timers are only advert publication, reconnect backoff, reservation expiry, failed-fetch deadlines, STUN retransmissions, bounded UDP punch cadence/settle (expired send windows disarm) and failure cooldown; none substitutes for Nostr event delivery or establishes history completion.
+- [x] J: Grotto `bunker_test_relay` main-context/Soup fixture adapted to Jansson over real local WebSockets/HTTP, driven by main-context commands and channel barriers, no sleeps. Tests hold EOSE, replay duplicate history/live events across two relays, send AUTH with CLOSED, reject publishes, and exercise B6/session/freshness/failure contracts. Traversal adds a real loopback STUN server and relay-mediated two-node IK, with channel/select deadlines rather than sleeps, plus rejection/quota and late-repair/expired-cadence regressions.
 
 The fixture uses only libsoup and Jansson already present in the FIPS CI package
 lists; it does not require JSON-GLib. The older Testing mock server has startup
@@ -1605,3 +1740,5 @@ report now states the host's teardown refusal (`session_left_intact`,
 kept, and `show_sessions.state` uses upstream's vocabulary (`established` while
 draining with `is_draining: true`; `initiating`/`awaiting_msg3` before
 establishment) instead of `draining`/`handshaking`.
+NAT traversal or deployment proof. The new local STUN/C↔C traversal tests are
+separate evidence; `8hvs6.4` remains the formal protocol review.

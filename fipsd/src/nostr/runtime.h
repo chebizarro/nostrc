@@ -15,6 +15,8 @@ void fipsd_nostr_runtime_destroy(fipsd_nostr_runtime *); /* after runtime join *
 bool fipsd_nostr_runtime_track_peer(fipsd_nostr_runtime *, const char *pubkey_hex);
 bool fipsd_nostr_runtime_refetch(fipsd_nostr_runtime *, const char *pubkey_hex);
 bool fipsd_nostr_runtime_send_signal(fipsd_nostr_runtime *, const char *pubkey_hex, const fipsd_nostr_traversal *);
+bool fipsd_nostr_runtime_refresh_advert(fipsd_nostr_runtime *);
+bool fipsd_nostr_runtime_resend_signal(fipsd_nostr_runtime *, const char *, const fipsd_nostr_traversal *);
 bool fipsd_nostr_runtime_session_finished(fipsd_nostr_runtime *, const char *session_id);
 bool fipsd_nostr_runtime_peer_result(fipsd_nostr_runtime *, const char *pubkey_hex, bool success, bool mismatch);
 /* Pure B6 decision: failed/incomplete fetch, foreign/invalid result, cache full

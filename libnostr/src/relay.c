@@ -19,20 +19,21 @@
 #include "select.h"
 #include "context.h"
 #include <stdatomic.h>
+#include <pthread.h>
 #include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
+static pthread_once_t shutdown_dbg_once = PTHREAD_ONCE_INIT;
+static int shutdown_dbg_value;
+static void shutdown_dbg_init(void) {
+    const char *e = getenv("NOSTR_DEBUG_SHUTDOWN");
+    shutdown_dbg_value = (e && *e && strcmp(e, "0") != 0) ? 1 : 0;
+}
 static int shutdown_dbg_enabled(void) {
-    static int inited = 0;
-    static int enabled = 0;
-    if (!inited) {
-        const char *e = getenv("NOSTR_DEBUG_SHUTDOWN");
-        enabled = (e && *e && strcmp(e, "0") != 0) ? 1 : 0;
-        inited = 1;
-    }
-    return enabled;
+    pthread_once(&shutdown_dbg_once, shutdown_dbg_init);
+    return shutdown_dbg_value;
 }
 
 /* === Security: invalid signature tracking (per-pubkey sliding window + ban) === */

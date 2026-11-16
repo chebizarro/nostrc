@@ -149,3 +149,5 @@ target_link_libraries(fipsd_lib PUBLIC nip11)
 # TCP stream owners (nostrc-gfi8h.3), consuming the shared framing layer.
 target_sources(fipsd_lib PRIVATE src/transport/tcp/tcp.c src/transport/tcp/listener.c
   src/transport/tcp/conn.c src/transport/tcp/pool.c src/transport/tcp/stats.c)
+# STUN and deadline-driven traversal (nostrc-8hvs6.3).
+target_sources(fipsd_lib PRIVATE src/nostr/stun.c src/nostr/traversal_machine.c src/nostr/traversal_io.c)

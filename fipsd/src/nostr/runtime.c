@@ -19,7 +19,7 @@
 #define PEER_MAX 4096u
 #define RELAY_MAX (FIPSD_NOSTR_RELAYS_MAX * 2u)
 #define RETRY_MAX_MS UINT64_C(300000)
-typedef enum { EVENT, EOSE, CLOSED, AUTH, DISCONNECTED, TRACK, REFETCH, SEND, FINISH, RESULT } message_kind;
+typedef enum { EVENT, EOSE, CLOSED, AUTH, DISCONNECTED, TRACK, REFETCH, SEND, FINISH, RESULT, LOCAL_READY, RESEND } message_kind;
 typedef struct {
     message_kind kind;
     size_t relay;
@@ -519,11 +519,19 @@ static void send_signal(fipsd_nostr_runtime *r, message *m)
 {
     fipsd_nostr_traversal *p = m->signal; NostrEvent *e = NULL;
     session_slot *s = NULL;
-    if (!p->answer && !(s = reserve_session(r, p, true))) return;
+    if (!p->answer) {
+        s = m->kind == RESEND ? find_session(r->outgoing, r->outgoing_cap, p->session_id) : reserve_session(r, p, true);
+        if (!s || (m->kind == RESEND && (!s->active || !s->offer || strcmp(s->offer->nonce, p->nonce)))) {
+            if (r->driver.signal_result) r->driver.signal_result(r->driver.user, p->session_id, false, m->kind == RESEND);
+            return;
+        }
+    }
     awaiting(r);
     if (fipsd_nostr_traversal_build(r->identity, m->peer, p, wall() / 1000, r->signal_ttl, &e) != FIPSD_NOSTR_OK) {
         if (s) { free(s->offer); *s = (session_slot){0}; }
-        awaiting(r); return;
+        awaiting(r);
+        if (r->driver.signal_result) r->driver.signal_result(r->driver.user, p->session_id, false, m->kind == RESEND);
+        return;
     }
     bool accepted = false;
     peer_slot *target = peer(r, m->peer, false);
@@ -542,6 +550,7 @@ static void send_signal(fipsd_nostr_runtime *r, message *m)
     }
     nostr_event_free(e);
     if (s && !accepted) { free(s->offer); *s = (session_slot){0}; awaiting(r); }
+    if (r->driver.signal_result) r->driver.signal_result(r->driver.user, p->session_id, accepted, m->kind == RESEND);
 }
 static void process(fipsd_nostr_runtime *r, message *m)
 {
@@ -591,7 +600,8 @@ static void process(fipsd_nostr_runtime *r, message *m)
         break;
     }
     case REFETCH: start_query(r, m->peer); break;
-    case SEND: send_signal(r, m); break;
+    case SEND: case RESEND: send_signal(r, m); break;
+    case LOCAL_READY: publish_local(r, NULL); break;
     case FINISH: {
         session_slot *q = find_session(r->sessions, r->session_cap, m->reason); if (q) q->active = false;
         q = find_session(r->outgoing, r->outgoing_cap, m->reason); if (q) { free(q->offer); *q = (session_slot){0}; }
@@ -667,8 +677,10 @@ static void *run(void *user)
             {.op = GO_SELECT_RECEIVE, .chan = r->router.signals, .recv_buf = &payload},
             {.op = GO_SELECT_RECEIVE, .chan = r->ticker ? r->ticker->c : NULL}
         };
-        GoSelectResult selected = go_select_timeout(cases, sizeof(cases) / sizeof(cases[0]),
-            deadline == UINT64_MAX ? UINT64_MAX : deadline > now ? deadline - now : 0);
+        size_t count = sizeof(cases) / sizeof(cases[0]);
+        GoSelectResult selected = deadline == UINT64_MAX ?
+            (GoSelectResult){.selected_case = go_select(cases, count)} :
+            go_select_timeout(cases, count, deadline > now ? deadline - now : 0);
         if (selected.selected_case == 0) break;
         if (selected.selected_case == 1 || selected.selected_case == 2) { process(r, payload); discard(payload); }
         else if (selected.selected_case == 3) receive_signal(r, payload);
@@ -708,7 +720,11 @@ static int start(fipsd_subsystem *sub, fipsd_runtime *host)
     if (!r->cancel.context) return -1;
     if (!fipsd_signal_router_init(&r->router, r->key, mono(), fn_mul1000(r->replay))) return -1;
     r->router_ready = true;
-    if (pthread_create(&r->thread, NULL, run, r)) return -1;
+    if (r->driver.start && r->driver.start(r->driver.user, host, r->identity)) return -1;
+    if (pthread_create(&r->thread, NULL, run, r)) {
+        if (r->driver.stop) r->driver.stop(r->driver.user);
+        return -1;
+    }
     r->started = true; return 0;
 }
 static void stop(fipsd_subsystem *sub, fipsd_runtime *host)
@@ -717,6 +733,7 @@ static void stop(fipsd_subsystem *sub, fipsd_runtime *host)
     if (!r->started) return;
     r->cancel.cancel(r->cancel.context);
     pthread_join(r->thread, NULL); r->started = false;
+    if (r->driver.stop) r->driver.stop(r->driver.user);
 }
 static uint64_t setting(const fipsd_config *c, const char *name)
 {
@@ -795,6 +812,7 @@ fipsd_nostr_runtime *fipsd_nostr_runtime_create(const fipsd_config *c, const fip
         char key[65]; sodium_bin2hex(key, sizeof(key), identity.pubkey.bytes, 32);
         peer_slot *slot = peer(r, key, true); if (!slot) goto fail; slot->configured = true;
     }
+    if (r->driver.prepare && !r->driver.prepare(r->driver.user, c, r)) goto fail;
     return r;
 fail:
     fipsd_nostr_runtime_destroy(r); return NULL;
@@ -804,6 +822,7 @@ void fipsd_nostr_runtime_destroy(fipsd_nostr_runtime *r)
 {
     if (!r) return;
     if (r->started) stop(&r->subsystem, NULL);
+    if (r->driver.destroy) r->driver.destroy(r->driver.user);
     if (r->cancel.context) { r->cancel.cancel(r->cancel.context); go_context_unref(r->cancel.context); }
     if (r->router_ready) fipsd_signal_router_clear(&r->router);
     if (r->peers) for (size_t i = 0; i < r->peer_cap; ++i) free(r->peers[i].advert);
@@ -848,4 +867,14 @@ bool fipsd_nostr_runtime_session_finished(fipsd_nostr_runtime *r, const char *id
 {
     if (!id || strlen(id) > FIPSD_NOSTR_SESSION_MAX) return false;
     message *m = new_message(FINISH); if (m) memcpy(m->reason, id, strlen(id) + 1); return command(r, m);
+}
+
+bool fipsd_nostr_runtime_refresh_advert(fipsd_nostr_runtime *r)
+{ return command(r, new_message(LOCAL_READY)); }
+bool fipsd_nostr_runtime_resend_signal(fipsd_nostr_runtime *r, const char *key, const fipsd_nostr_traversal *p)
+{
+    message *m = peer_command(RESEND, key);
+    if (m && p) { m->signal = malloc(sizeof(*p)); if (m->signal) *m->signal = *p; }
+    if (!m || !m->signal) { discard(m); return false; }
+    return command(r, m);
 }

@@ -116,7 +116,7 @@ void fipsd_udp_receive(void *arg)
             atomic_fetch_add(&u->shared.stats.kernel_drops, (uint32_t)(info.kernel_drops - s->last_drops));
             s->last_drops = info.kernel_drops;
         }
-        if (fipsd_udp_classify(&u->classifiers, bytes, (size_t)n) == FIPSD_UDP_DISCARD) {
+        if (fipsd_udp_classify_from(&u->classifiers, bytes, (size_t)n, &from) == FIPSD_UDP_DISCARD) {
             atomic_fetch_add(&u->shared.stats.classifier_drops, 1); continue;
         }
         if (fipsd_datagram_frame(bytes, (size_t)n, UINT16_MAX) != FIPS_OK) {
