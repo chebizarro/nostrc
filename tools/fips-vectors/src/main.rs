@@ -1,5 +1,6 @@
 mod basic;
 mod noise;
+mod nostr;
 mod proto;
 mod rekey;
 mod support;
@@ -75,6 +76,10 @@ fn export(out: &Path) -> Result<()> {
     rekey::export(&Exporter {
         out,
         family: "rekey",
+    })?;
+    nostr::export(&Exporter {
+        out,
+        family: "nostr",
     })?;
     Ok(())
 }

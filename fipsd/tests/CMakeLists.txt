@@ -262,3 +262,16 @@ nostrc_describe_test(FipsdStatsTest OWNER fipsd TARGETS fipsd_stats_test)
 
 target_compile_definitions(fipsd_acl_test PRIVATE
   FIPSD_CONTROL_GOLDEN="${CMAKE_CURRENT_SOURCE_DIR}/control_golden")
+
+fipsd_unit_test(fipsd_nostr_events_test test_nostr_events.c)
+target_sources(fipsd_nostr_events_test PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}/../../libfips-core/tests/fakes/host.c")
+target_include_directories(fipsd_nostr_events_test PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}/../../libfips-core/tests")
+target_compile_definitions(fipsd_nostr_events_test PRIVATE
+  FIPSD_NOSTR_VECTORS="${CMAKE_CURRENT_SOURCE_DIR}/../../libfips-core/tests/vectors")
+add_dependencies(fipsd_tests fipsd_nostr_events_test)
+add_test(NAME FipsdNostrEventsTest COMMAND fipsd_nostr_events_test)
+set_tests_properties(FipsdNostrEventsTest PROPERTIES TIMEOUT 60 LABELS "fips;nostr;vectors")
+nostrc_describe_test(FipsdNostrEventsTest OWNER fipsd TARGETS fipsd_nostr_events_test
+  INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/../../libfips-core/tests/vectors/nostr.json")

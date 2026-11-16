@@ -1700,3 +1700,10 @@ nesting, YAML expansion/diagnostics and safe bounded log files) and explicit
 PIE linker checks fold into the unreleased version. Parser fuzzers, regressions,
 CI routing and the adversarial report are test/documentation-only. No published
 release/tag or valid wire format changes.
+
+nostrc-8hvs6.1: fipsd remains **0.1.0 Unreleased**; additive pure Nostr
+rendezvous event builders/parsers and bounded replay-id helpers fold into the
+initial daemon. tools/fips-vectors stays **0.1.0** (test-only oracle family,
+no shipped artifact). libnostr stays **2.4.0 Unreleased**: two additive kind
+constants fold into that unreleased MINOR; 10050 already exists. libfips-core,
+NIP libraries and wire versions are unchanged; no published release/tag change.

@@ -94,7 +94,9 @@ fn real_cli_is_deterministic_and_matches_checked_in_oracle() {
         "regenerate/check fixtures after intentional generator or pin changes"
     );
     let mut refs = Vec::new();
-    for family in ["entropy", "identity", "codec", "noise", "proto", "rekey"] {
+    for family in [
+        "entropy", "identity", "codec", "noise", "proto", "rekey", "nostr",
+    ] {
         let v: Value = serde_json::from_slice(&a[&format!("{family}.json")]).unwrap();
         assert_eq!(v["family"], family);
         assert_eq!(v["pin"], "6aa80504baa0fa312b392009eea0e3e59fb6fe4c");

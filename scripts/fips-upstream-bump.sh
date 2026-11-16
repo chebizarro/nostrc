@@ -57,7 +57,7 @@ git -C "$repo" --no-pager diff --stat "$old" "$new"
   exit 2
 }
 mkdir -p "$work/tools/fips-vectors"
-cp -R "$root/tools/fips-vectors/src" "$work/tools/fips-vectors/"
+cp -R "$root/tools/fips-vectors/"{src,fixtures} "$work/tools/fips-vectors/"
 cp "$root/tools/fips-vectors/"{Cargo.toml,Cargo.lock,rust-toolchain.toml} "$work/tools/fips-vectors/"
 # Only the scratch crate gets candidate provenance. The committed baseline stays put.
 python3 - "$work/tools/fips-vectors" "$old" "$new" <<'PY'
@@ -82,7 +82,7 @@ comparison=0
 diff -ru "$root/libfips-core/tests/vectors" "$work/a" > "$work/fixtures.diff" || comparison=$?
 [[ "$comparison" -le 1 ]] || exit 2
 if [[ "$comparison" == 0 ]]; then
-  echo 'All seven families: byte-identical to checked-in fixtures (including provenance).'
+  echo 'All eight families: byte-identical to checked-in fixtures (including provenance).'
 else
   diff -rq "$root/libfips-core/tests/vectors" "$work/a" || [[ $? == 1 ]]
   echo 'Candidate fixtures differ: review wire bytes AND provenance; do not automatically bump.'

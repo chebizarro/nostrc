@@ -114,3 +114,9 @@ option(FIPSD_ENABLE_FUZZERS "Build fipsd parser libFuzzer targets" ${FIPS_ENABLE
 if(FIPSD_ENABLE_FUZZERS)
   add_subdirectory(fuzz)
 endif()
+
+# Pure Nostr rendezvous event contracts (nostrc-8hvs6.1); no relay I/O.
+target_sources(fipsd_lib PRIVATE src/nostr/events.c src/nostr/advert.c
+  src/nostr/traversal.c src/nostr/inbox.c)
+target_link_libraries(fipsd_lib PUBLIC nostr nostr_nip17_core nostr_nip59_core
+  nostr_nip44_core nip40)
