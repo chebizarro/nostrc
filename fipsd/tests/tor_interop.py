@@ -76,13 +76,13 @@ class LogTap:
 class TorControl:
     """Minimal control-spec client: cookie AUTHENTICATE, GETINFO, async 650s."""
 
-    def __init__(self, port, cookie):
+    def __init__(self, port, password):
         self.sock = socket.create_connection(('127.0.0.1', port), timeout=30)
         self.sock.setblocking(False)
         self.sel = selectors.DefaultSelector()
         self.sel.register(self.sock, selectors.EVENT_READ)
         self.buf, self.events = b'', []
-        reply = self.command('AUTHENTICATE ' + Path(cookie).read_bytes().hex())
+        reply = self.command(f'AUTHENTICATE "{password}"')
         assert reply[-1].startswith('250'), reply
 
     def _line(self, deadline):
@@ -173,10 +173,17 @@ def launch_tor(tor, root, name, listen_port, procs):
     d = root / name
     d.mkdir(mode=0o700)
     socks, ctl = free_port(), free_port()
+    # The script authenticates with a password (tor writes its cookie file
+    # after opening the listener); fipsd's monitor uses the cookie, which
+    # exists long before fipsd starts.
+    password = os.urandom(12).hex()
+    hashed = subprocess.run([tor, '--quiet', '--hash-password', password], check=True,
+                            capture_output=True, text=True).stdout.strip().splitlines()[-1]
     torrc = d / 'torrc'
     torrc.write_text(f'''DataDirectory {d}/data
 SocksPort 127.0.0.1:{socks}
 ControlPort 127.0.0.1:{ctl}
+HashedControlPassword {hashed}
 CookieAuthentication 1
 CookieAuthFile {d}/control.authcookie
 HiddenServiceDir {d}/hs
@@ -185,7 +192,7 @@ Log notice stdout
 ''')
     tap = start([tor, '-f', str(torrc)], name, root, procs)
     tap.wait('opened control listener', 60)
-    control = TorControl(ctl, d / 'control.authcookie')
+    control = TorControl(ctl, password)
     assert control.command('SETEVENTS STATUS_CLIENT HS_DESC')[-1].startswith('250')
     return {'dir': d, 'socks': socks, 'ctl': ctl, 'listen': listen_port, 'control': control, 'tap': tap,
             'cookie': d / 'control.authcookie'}
@@ -223,6 +230,7 @@ def main():
     ap.add_argument('--fipsd', required=True)
     ap.add_argument('--rust', default='')
     ap.add_argument('--tor', default='')
+    ap.add_argument('--c-log-level', default='info')
     args = ap.parse_args()
     args.rust = args.rust or os.environ.get('FIPSD_UDP_INTEROP_RUST_BINARY', '')
     args.tor = args.tor or os.environ.get('FIPSD_TOR_BINARY', '')
@@ -259,6 +267,7 @@ transports:
             path.write_text(f'''node:
   identity: {{nsec: '{'1' * 64}', persistent: false}}
   control: {{enabled: true, socket_path: '{c_sock}'}}
+  log_level: {args.c_log_level}
 transports:
 {tor_section(c_tor)}{peers}''')
             return path
@@ -270,14 +279,21 @@ transports:
         t0 = time.monotonic()
         c = start([args.fipsd, '-c', str(c_config((rust_npub, r_tor['onion'])))], 'fipsd', root, procs)
         c.wait('link established with', LINK_SECS)
-        rust.wait('peer promoted to active', 60)
         timings['c_to_rust_link_s'] = round(time.monotonic() - t0, 1)
+        # The responder logs its promotion at debug only; its control view is
+        # tick-published, so read successive snapshots (each reply is the
+        # backpressure) until the peer shows, as tcp_interop.py does.
+        c_npub = query(c_sock, 'show_status')['npub']
+        deadline = time.monotonic() + 30
+        while not any(p.get('npub') == c_npub for p in query(r_sock, 'show_peers')['peers']):
+            assert time.monotonic() < deadline, 'Rust control never reports the C peer'
         row = next(t for t in query(c_sock, 'show_transports')['transports'] if t['type'] == 'tor')
         assert row['tor_mode'] == 'directory' and row['onion_address'] == c_tor['onion'], row
         assert row['tor_monitoring']['bootstrap'] == 100, row
         assert row['stats']['connections_established'] >= 1 and row['stats']['pool_outbound'] >= 1, row
         print('C show_transports tor row:', json.dumps(row, sort_keys=True))
-        c_npub = query(c_sock, 'show_status')['npub']
+        timings['c_dial_socks5_errors'] = row['stats']['socks5_errors']
+        timings['c_dial_connect_timeouts'] = row['stats']['connect_timeouts']
         for entry in [p for p in procs if p[0] in ('fipsd', 'rust')]:
             stop(entry, failures)
         procs[:] = [p for p in procs if p[0] not in ('fipsd', 'rust')]
@@ -292,10 +308,13 @@ transports:
         timings['rust_to_c_link_s'] = round(time.monotonic() - t0, 1)
         row = next(t for t in query(c_sock, 'show_transports')['transports'] if t['type'] == 'tor')
         assert row['stats']['connections_accepted'] >= 1 and row['stats']['pool_inbound'] >= 1, row
+        rrow = next(t for t in query(r_sock, 'show_transports')['transports'] if t['type'] == 'tor')
+        timings['rust_dial_socks5_errors'] = rrow['stats']['socks5_errors']
+        timings['rust_dial_connect_timeouts'] = rrow['stats']['connect_timeouts']
         timings['total_s'] = round(time.monotonic() - began, 1)
         print('timings:', json.dumps(timings, sort_keys=True))
         rc = 0
-    except AssertionError as e:
+    except Exception as e:  # noqa: BLE001 - report what was observed, then fail
         print('FAIL:', e)
         print('observed timings:', json.dumps(timings, sort_keys=True))
         for name, _, tap in procs:
