@@ -544,6 +544,11 @@ add_test(NAME FipsdInteropSoakTest COMMAND fipsd_test_tmpdir_run "/m4-ipv6tun.so
   --topology ring --soak-minutes 10)
 set_tests_properties(FipsdInteropSoakTest PROPERTIES TIMEOUT 1500 SKIP_RETURN_CODE 77
   LABELS "fips;node;interop;soak" ENVIRONMENT "FIPSD_WORKERS=2")
+# The shared harness drives the libfipsnative client in every mode.
+foreach(_interop_test FipsdInteropMultiTest FipsdInteropSoakTest)
+  set_tests_properties(${_interop_test} PROPERTIES ENVIRONMENT
+    "FIPSD_WORKERS=2;FIPSD_NATIVE_CLIENT_TOOL=${CMAKE_CURRENT_BINARY_DIR}/fipsd_native_client_tool;FIPSD_UDP_INTEROP_RUST_ECHO=${FIPSD_UDP_INTEROP_RUST_ECHO}")
+endforeach()
 if(NOT FIPSD_ENABLE_INTEROP_SOAK)
   set_tests_properties(FipsdInteropSoakTest PROPERTIES DISABLED TRUE)
 endif()
