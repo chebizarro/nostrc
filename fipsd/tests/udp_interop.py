@@ -665,6 +665,9 @@ def main():
                     help='seconds after link establishment for the FMP K bit to flip')
     ap.add_argument('--shutdown-timeout', type=float, default=20)
     args = ap.parse_args()
+    # CTest passes --rust "" when the cache variable is unset; the environment
+    # is the fallback so a configured tree can still opt in at run time.
+    args.rust = args.rust or os.environ.get('FIPSD_UDP_INTEROP_RUST_BINARY', '')
     if not args.rust or not Path(args.rust).is_file():
         print('SKIP: set FIPSD_UDP_INTEROP_RUST_BINARY to a fips daemon built from the libfips-core/UPSTREAM.md pin')
         return 77

@@ -355,7 +355,7 @@ nostrc_describe_test(FipsdUdpTest OWNER fipsd TARGETS fipsd_udp_test)
 # Rust daemon. No Rust source is built or changed here: supply a binary built
 # with `cargo build --locked --release --bin fips` in a scratch CARGO_TARGET_DIR.
 # The longest socket the harness binds is Rust's `-ipv6tun` status sibling.
-set(FIPSD_UDP_INTEROP_RUST_BINARY "" CACHE FILEPATH "fips daemon built from the pinned Rust source (libfips-core/UPSTREAM.md)")
+set(FIPSD_UDP_INTEROP_RUST_BINARY "$ENV{FIPSD_UDP_INTEROP_RUST_BINARY}" CACHE FILEPATH "fips daemon built from the pinned Rust source (libfips-core/UPSTREAM.md)")
 foreach(family IN ITEMS 4 6)
   if(family EQUAL 4)
     set(_interop_test FipsdInteropUdpTest)

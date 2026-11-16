@@ -48,6 +48,7 @@ def main():
     ap.add_argument('--fipsd', required=True)
     ap.add_argument('--rust', default=os.environ.get('FIPSD_TCP_INTEROP_RUST_BINARY', ''))
     args = ap.parse_args()
+    args.rust = args.rust or os.environ.get('FIPSD_TCP_INTEROP_RUST_BINARY', '')
     if not args.rust or not Path(args.rust).is_file():
         print('SKIP: set FIPSD_TCP_INTEROP_RUST_BINARY to a pinned Rust fips daemon')
         return 77
