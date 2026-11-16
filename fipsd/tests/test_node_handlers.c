@@ -6,6 +6,7 @@
  * single-node control seeds, diagnostic probe through the live provider. */
 #include "node_test.h"
 #include "node/handlers/internal.h"
+#include "host_os.h"
 #include <stdatomic.h>
 
 static const char *yaml_a =
@@ -146,6 +147,16 @@ int main(void)
     e = nt_await(&b, FIPSD_NOTICE_LINK_UP, &a.identity.node_addr, NT_WAIT_MS); assert(e); free(e);
     e = nt_await(&a, FIPSD_NOTICE_FILTER_ACCEPTED, &b.identity.node_addr, NT_WAIT_MS); assert(e); free(e);
     char npub[FIPS_NIP19_CAPACITY]; assert(fips_peer_identity_npub(&b.identity, npub, sizeof npub) == FIPS_IDENTITY_OK);
+    /* Control for the cache-warming regression below: before any session,
+     * the responder's coordinate cache holds nothing for its direct peer
+     * (direct peers are never looked up), so a later entry can only come
+     * from the setup's source coordinates. */
+    char a_hex[33]; (void)fips_node_addr_format(&a.identity.node_addr, a_hex, sizeof a_hex);
+    {
+        json_t *cache = nt_query(&b, "show_cache");
+        assert(json_array_size(data_of(cache, "entries")) == 0);
+        json_decref(cache);
+    }
     json_t *started = live(&a, "probe_start", json_pack("{s:s}", "npub", npub));
     assert(started && !strcmp(json_string_value(json_object_get(started, "status")), "ok"));
     json_int_t id = json_integer_value(json_object_get(json_object_get(started, "data"), "probe_id"));
@@ -157,6 +168,19 @@ int main(void)
      * report states the refusal, not a teardown that did not happen
      * (nostrc-f66sr.1 regression: the session used to be reported torn down). */
     e = nt_await(&b, FIPSD_NOTICE_SESSION_UP, &a.identity.node_addr, NT_WAIT_MS); assert(e); free(e);
+    /* Regression (nostrc-f66sr.3 chaos harness): the responder warms its
+     * coordinate cache from the setup's source coordinates (forwarding.rs
+     * warm_coord), so its answer can be routed to an initiator it never
+     * looked up; a direct peer is never looked up, so without the warming
+     * b's cache holds no entry for a at all. */
+    {
+        json_t *cache = nt_query(&b, "show_cache"); json_t *entries = data_of(cache, "entries");
+        bool warmed = false; size_t idx; json_t *row;
+        json_array_foreach(entries, idx, row)
+            if (!strcmp(json_string_value(json_object_get(row, "node_addr")), a_hex)) warmed = true;
+        assert(warmed);
+        json_decref(cache);
+    }
     /* The traffic baseline is taken by the observe that passes the session
      * stage, so the peer's data must land after that stage reports ok. */
     for (unsigned i = 0;; ++i) {
@@ -209,6 +233,35 @@ int main(void)
         assert(json_array_size(data_of(sessions, "sessions")) == 1);
         json_decref(sessions);
     }
+    /* Regression (nostrc-f66sr.3 chaos harness): the probe's bloom stage is
+     * told the local lookup-initiation outcome (probe.rs drive_probe_action),
+     * so a target no peer filter covers fails the stage as bloom_miss on the
+     * next poll instead of waiting out the stage budget as no_response, with
+     * no fanout reported; the later stages are not reached. */
+    fips_identity *outsider_key = NULL;
+    assert(fips_identity_generate(a.h->secp, fipsd_host_os_entropy(), &outsider_key) == FIPS_IDENTITY_OK);
+    fips_xonly_pubkey outsider_pub = fips_identity_pubkey(outsider_key);
+    fips_peer_identity outsider;
+    assert(fips_peer_identity_from_pubkey(a.h->secp, &outsider_pub, &outsider) == FIPS_IDENTITY_OK);
+    fips_identity_destroy(outsider_key);
+    char outsider_npub[FIPS_NIP19_CAPACITY];
+    assert(fips_peer_identity_npub(&outsider, outsider_npub, sizeof outsider_npub) == FIPS_IDENTITY_OK);
+    started = live(&a, "probe_start", json_pack("{s:s}", "npub", outsider_npub));
+    assert(started && !strcmp(json_string_value(json_object_get(started, "status")), "ok"));
+    id = json_integer_value(json_object_get(json_object_get(started, "data"), "probe_id"));
+    json_decref(started);
+    polled = poll_probe(&a, id);
+    report = json_object_get(json_object_get(polled, "data"), "report");
+    {
+        json_t *bloom = json_object_get(report, "bloom");
+        assert(!strcmp(json_string_value(json_object_get(report, "overall")), "failed"));
+        assert(!strcmp(json_string_value(json_object_get(bloom, "verdict")), "failed"));
+        assert(!strcmp(json_string_value(json_object_get(bloom, "reason")), "bloom_miss"));
+        assert(json_is_null(json_object_get(bloom, "fanout")));
+        assert(json_boolean_value(json_object_get(json_object_get(report, "cleanup"), "lookup_issued")));
+        assert(!strcmp(json_string_value(json_object_get(json_object_get(report, "discovery"), "reason")), "not_reached"));
+    }
+    json_decref(polled);
     json_t *unknown = live(&a, "probe_poll", json_pack("{s:I}", "probe_id", (json_int_t)999));
     assert(unknown && !strcmp(json_string_value(json_object_get(unknown, "status")), "error")); json_decref(unknown);
     json_t *shown = live(&a, "path_show", json_pack("{s:s}", "npub", npub));

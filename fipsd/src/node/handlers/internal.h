@@ -171,6 +171,12 @@ typedef struct probe_job {
     uint64_t sent_at_establish, received_at_establish;
     fips_instant last_data_at_establish;
     fips_probe_left_intact refused_reason;
+    /* probe.rs ProbeJob lookup_outcome/lookup_fanout: what InitiateLookup did,
+     * handed to the core by the next observation (taken once). Without it the
+     * bloom stage of any non-direct target can only time out as no_response. */
+    bool has_lookup_outcome, has_lookup_fanout;
+    fips_probe_lookup_outcome_kind lookup_outcome;
+    size_t lookup_fanout;
 } probe_job;
 
 typedef enum handler_command_kind {
@@ -389,6 +395,7 @@ bool hs_lookup_init(handlers *h);
 void hs_lookup_request_received(handlers *h, peer_rec *rec, const uint8_t *body, size_t len);
 void hs_lookup_response_received(handlers *h, peer_rec *rec, const uint8_t *body, size_t len);
 bool hs_lookup_initiate(handlers *h, const fips_node_addr *target);
+fips_probe_lookup_outcome_kind hs_lookup_initiate_outcome(handlers *h, const fips_node_addr *target, size_t *fanout);
 void hs_lookup_tick(handlers *h, fips_instant now);
 bool hs_cache_lookup(handlers *h, const fips_node_addr *dest, fips_node_addr *addrs, size_t capacity, size_t *count, uint16_t *path_mtu);
 const fips_tree_coordinate *hs_cache_coords(void *ctx, const fips_node_addr *dest, fips_instant now);

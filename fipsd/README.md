@@ -1843,3 +1843,62 @@ establishment) instead of `draining`/`handshaking`.
 NAT traversal or deployment proof. The new local STUN/C↔C traversal tests are
 separate evidence; the formal protocol review (`8hvs6.4`) was completed 2026-11-16
 (docs/reviews/fips-nostr-protocol-review-2026-11-16.md).
+separate evidence; `8hvs6.4` remains the formal protocol review.
+
+## Linux netns/veth chaos harness (`nostrc-f66sr.3`)
+
+`Testing/fips-chaos/` is the netns/veth subset of upstream's `testing/chaos`
+and `testing/nat` labs rebuilt on `ip netns` without Docker (its README has
+the layout and the per-scenario assertions). `run.sh` (root) drives
+`chaos.py`, which builds a topology per scenario, runs `fipsd` and, when a
+pinned Rust daemon is supplied, the `fips` daemon inside the namespaces, and
+observes everything through the control sockets, the daemons' logs, the lab
+relay/STUN logs and kernel counters under deadlines; teardown is a namespace
+sweep in `finally` plus the wrapper's trap. The daemon lifecycle and control
+helpers are imported from `tests/udp_interop.py`. Each scenario runs as `cc`
+(fipsd only) and `cr` (fipsd with the Rust daemon):
+
+| Scenario | What is asserted |
+| --- | --- |
+| `flap` | chain n1–n2–n3; n1's veth down: both ends drop the peer within the 30 s silence floor, n2–n3 re-converge; up: the configured retry re-links, the three-node tree and merged bloom filters converge, a two-hop n1→n3 probe completes (before and after) |
+| `mtu` | veth at 600 from the start: link, tree and the 1 KiB bloom announce cross (`FragCreates` rises on both sides), probe and max-payload Rust→C datagram delivered; raised to 1500 and lowered to 900 live, traffic still flows; the configured transport MTU is recorded, not asserted to adapt (neither daemon tracks interface MTU) |
+| `nat` | two nodes behind nftables `masquerade` routers (or `--nat-mode cone`), relay + STUN on a `wan` bridge: STUN from each wan tuple → adverts → signals → punch conntrack → healthy link to the peer's reflexive address, probe and datagram through both NATs; a stall names the stage |
+| `netem` | `delay 40ms 10ms loss 5% 25%` on one leg plus iperf3 UDP load: link/tree form under impairment, FMP link rekey and (cr) FSP session rekey complete, traffic flows under the new keys, no mismatch/decrypt/replay counter |
+
+CI: the `chaos-netns` job of `.github/workflows/fips-ci.yml` runs on
+`schedule`/`workflow_dispatch` on ubuntu-24.04 with the `interop-udp` pin and
+Rust-daemon cache steps, `iproute2 nftables iperf3 conntrack`, fipsd under
+ASan/UBSan and `sudo -E run.sh`; evidence is uploaded on failure.
+
+Measured on the Ubuntu 24.04 aarch64 VM (10 vCPU, clang 18, Debug, pin
+`6aa80504`): all eight runs pass. NAT traversal C↔C links in 0.5 s and C↔Rust
+in 2.1 s (the Rust side punches from a per-attempt socket, so fipsd sees it at
+`198.18.0.11:<ephemeral>`; fipsd punches from its bound `:2121`), both with a
+probe/XK session and a Rust→C datagram through both NATs; link flap: dead
+declared at 30.8/31.9 s, link back 4–5 s after `up`; netem: link rekey 41/38 s
+after link-up, session rekey 30 s (cr); MTU: 2 fragments per side at link
+set-up at MTU 600. The harness also found and this task fixed, with
+regressions in `FipsdNodeHandlersTest`:
+
+- the diagnostic probe's bloom stage never learned its lookup-initiation
+  outcome (`node/handlers/probe.c` discarded it), so any non-direct target
+  failed as `no_response` after two ticks although the lookup had resolved
+  (`hs_lookup_initiate_outcome` now reports miss/suppressed/deduplicated/
+  fanout; a target no filter covers fails as `bloom_miss` at once);
+- a responder never warmed its coordinate cache from the session setup's
+  source coordinates (upstream `forwarding.rs warm_coord`), so its msg2 to an
+  initiator two hops away was dropped `no_route` and the handshake timed out
+  (`node/handlers/session.c` now inserts the hint; `show_cache` on the
+  responder lists the initiator);
+- fipsd did not compile as strict C11 on glibc (`clock_gettime`, `strnlen`,
+  `SO_RCVBUFFORCE`): `_POSIX_C_SOURCE=200809L` on the fipsd targets and
+  `_DEFAULT_SOURCE` in `transport/sockbuf.c`, which the Linux CI jobs needed
+  to build at all.
+
+Known and recorded, not fixed here: fipsd starts a new traversal toward an
+already-connected peer on every advert refresh (`nostr/driver.c`, under
+sibling review); a C probe's teardown is local only (upstream parity), so a
+Rust peer left holding that session sends into it until its idle timeout —
+the harness opens the Rust-initiated session first, as `udp_interop.py`
+does; neither daemon adapts to a lowered interface MTU (kernel fragmentation
+carries the traffic; an asymmetric MTU is a black hole at this layer).

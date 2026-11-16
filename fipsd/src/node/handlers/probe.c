@@ -28,6 +28,8 @@ static void observe(handlers *h, probe_job *j, fips_probe_observation *obs, fips
 {
     memset(obs, 0, sizeof *obs);
     obs->now_ms = hs_now_ms(h);
+    if (j->has_lookup_outcome) { obs->has_lookup_outcome = true; obs->lookup_outcome = j->lookup_outcome; j->has_lookup_outcome = false; }
+    if (j->has_lookup_fanout) { obs->has_lookup_fanout = true; obs->lookup_fanout = j->lookup_fanout; j->has_lookup_fanout = false; }
     obs->coords_cached = fips_coord_cache_contains(&h->cache, j->target.bytes, hs_now(h));
     obs->lookup_pending = fips_lookup_pending(&h->lookup, &j->target) != NULL;
     obs->target_is_direct_peer = hs_rec_find(h, &j->target) != NULL;
@@ -76,7 +78,14 @@ static void execute(handlers *h, probe_job *j, const fips_probe_actions *actions
 {
     for (size_t i = 0; i < actions->len; ++i) {
         switch (actions->items[i]) {
-        case FIPS_PROBE_InitiateLookup: (void)hs_lookup_initiate(h, &j->target); break;
+        case FIPS_PROBE_InitiateLookup: {
+            size_t fanout = 0;
+            j->lookup_outcome = hs_lookup_initiate_outcome(h, &j->target, &fanout);
+            j->has_lookup_outcome = true;
+            j->has_lookup_fanout = j->lookup_outcome == FIPS_PROBE_LOOKUP_Sent || j->lookup_outcome == FIPS_PROBE_LOOKUP_ZeroFanout;
+            j->lookup_fanout = fanout;
+            break;
+        }
         case FIPS_PROBE_OpenSession:
             if (!fips_session_table_by_peer(&h->sessions, j->target)) (void)hs_session_open(h, &j->target);
             break;

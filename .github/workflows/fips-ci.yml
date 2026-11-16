@@ -247,3 +247,92 @@ jobs:
         with:
           name: fips-nightly-fuzz-crashes
           path: build/fuzz-artifacts/
+  chaos-netns:
+    name: Linux • FIPS nightly netns chaos (link flap, MTU, NAT traversal, netem)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    env:
+      CC: clang
+      CXX: clang++
+      ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1:halt_on_error=1
+      UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+      CARGO_TERM_COLOR: never
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+      # The pin lives in one place: libfips-core/UPSTREAM.md.
+      - name: Read the upstream pin
+        id: pin
+        run: |
+          pin=$(sed -n 's/^Pinned commit: .\([0-9a-f]\{40\}\).*/\1/p' libfips-core/UPSTREAM.md)
+          test -n "$pin"
+          echo "pin=$pin" >> "$GITHUB_OUTPUT"
+      - name: Check out upstream FIPS at the pin
+        uses: actions/checkout@v4
+        with:
+          repository: jmcorgan/fips
+          ref: ${{ steps.pin.outputs.pin }}
+          path: upstream-fips
+          persist-credentials: false
+      - name: Verify the upstream checkout
+        env:
+          PIN: ${{ steps.pin.outputs.pin }}
+        run: test "$(git -C upstream-fips rev-parse HEAD)" = "$PIN"
+      # The built daemon is cached on OS, architecture, pin and toolchain; a hit
+      # skips the Rust build entirely, a miss rebuilds from the pinned source.
+      - name: Restore the pinned Rust daemon
+        id: daemon
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/fips-rust-target/release/fips
+          key: fips-daemon-${{ runner.os }}-${{ runner.arch }}-${{ steps.pin.outputs.pin }}-${{ hashFiles('upstream-fips/rust-toolchain.toml') }}-v1
+      - name: Restore the cargo registry
+        if: steps.daemon.outputs.cache-hit != 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: cargo-registry-${{ runner.os }}-${{ hashFiles('upstream-fips/Cargo.lock') }}
+      - name: Build the pinned Rust daemon
+        if: steps.daemon.outputs.cache-hit != 'true'
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/fips-rust-target
+        run: |
+          channel=$(sed -n 's/^channel = "\(.*\)"/\1/p' upstream-fips/rust-toolchain.toml)
+          test -n "$channel"
+          rustup toolchain install "$channel" --profile minimal
+          cd upstream-fips
+          cargo "+$channel" build --locked --release --bin fips
+      - name: Install dependencies (Linux)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake ninja-build pkg-config clang libclang-rt-18-dev libjansson-dev libyaml-dev libsecp256k1-dev libsodium-dev libssl-dev libcurl4-openssl-dev libwebsockets-dev libglib2.0-dev libsoup-3.0-dev libnsync-dev
+      - name: Install the chaos lab tools (iproute2, nftables, iperf3, conntrack)
+        run: sudo apt-get install -y iproute2 nftables iperf3 conntrack
+      - name: Configure (ASan/UBSan)
+        shell: bash
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DGO_WARNINGS_AS_ERRORS=ON \
+            -DGO_ENABLE_ASAN=ON -DGO_ENABLE_UBSAN=ON \
+            -DBUILD_FIPS=ON -DBUILD_APPS=OFF -DBUILD_RELAYD=OFF \
+            -DBUILD_LIBHANAMI=OFF -DBUILD_LIBMARMOT=OFF -DBUILD_MARMOT_GOBJECT=OFF \
+            -DBUILD_NOSTR_GOBJECT=OFF -DBUILD_NOSTR_GTK=OFF -DSIGNET_ENABLE=OFF \
+            -DWITH_NOSTRDB=OFF -DLIBNOSTR_WITH_NOSTRDB=OFF
+      - name: Build fipsd
+        run: cmake --build build --parallel 3 --target fipsd
+      # Root for ip netns, nftables and tc; -E keeps the sanitizer options.
+      - name: Chaos scenarios in network namespaces (C<->C and C<->Rust)
+        env:
+          FIPSD_UDP_INTEROP_RUST_BINARY: ${{ runner.temp }}/fips-rust-target/release/fips
+        run: |
+          sudo -E env "PATH=$PATH" Testing/fips-chaos/run.sh --fipsd build/fipsd/fipsd \
+            --rust "$FIPSD_UDP_INTEROP_RUST_BINARY" --output build/chaos-results
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: fips-nightly-chaos-netns
+          path: build/chaos-results/

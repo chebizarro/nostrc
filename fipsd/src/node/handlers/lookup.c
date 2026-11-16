@@ -138,8 +138,9 @@ void hs_lookup_response_received(handlers *h, peer_rec *rec, const uint8_t *body
     case FIPS_RESPONSE_AlreadyForwarded: break;
     }
 }
-static bool send_request(handlers *h, const fips_node_addr *target, fips_pending_lookup *pending)
+static bool send_request(handlers *h, const fips_node_addr *target, fips_pending_lookup *pending, size_t *fanout)
 {
+    if (fanout) *fanout = 0;
     fips_lookup_request *req = h->request_scratch;
     memset(req, 0, sizeof *req);
     h->entropy.fill(h->entropy.ctx, (uint8_t *)&req->request_id, sizeof req->request_id);
@@ -151,27 +152,41 @@ static bool send_request(handlers *h, const fips_node_addr *target, fips_pending
     if (fips_lookup_plan_initiate(req, &rv, &actions) != FIPS_OK) return false;
     size_t sent = 0;
     send_actions(h, &actions, NULL, &sent);
+    if (fanout) *fanout = sent;
     if (sent && pending) fips_pending_lookup_record(pending, req->request_id);
     return sent > 0;
 }
-bool hs_lookup_initiate(handlers *h, const fips_node_addr *target)
+/* The initiation outcome in the probe's vocabulary (lookup.rs LookupOutcome):
+ * the diagnostic probe's bloom stage needs it, since a request answered within
+ * one tick never shows in the pending table. `fanout` is the number of tree
+ * peers the request went to (meaningful for Sent and ZeroFanout). */
+fips_probe_lookup_outcome_kind hs_lookup_initiate_outcome(handlers *h, const fips_node_addr *target, size_t *fanout)
 {
+    if (fanout) *fanout = 0;
     bool reachable = false;
     for (size_t i = 0; i < h->cfg.peer_capacity && !reachable; ++i)
         if (h->recs[i].used && hs_bloom_may_reach(h, &h->recs[i].addr, target)) reachable = true;
     fips_initiate_decision d; uint32_t failures = 0;
-    if (fips_lookup_initiate_gate(&h->lookup, target, hs_now_ms(h), reachable, &d, &failures) != FIPS_OK) return false;
+    /* The C gate alone can refuse an otherwise admissible target when the
+     * pending table is full (upstream's gate is infallible): the host declined
+     * to initiate, which is reported as suppressed, not as a lack of tree peers. */
+    if (fips_lookup_initiate_gate(&h->lookup, target, hs_now_ms(h), reachable, &d, &failures) != FIPS_OK) return FIPS_PROBE_LOOKUP_Suppressed;
     switch (d) {
-    case FIPS_INITIATE_Deduplicated: return true;
-    case FIPS_INITIATE_Suppressed: ++h->counters.lookup_req_backoff_suppressed; return false;
-    case FIPS_INITIATE_BloomMiss: ++h->counters.lookup_req_bloom_miss; return false;
+    case FIPS_INITIATE_Deduplicated: return FIPS_PROBE_LOOKUP_Deduplicated;
+    case FIPS_INITIATE_Suppressed: ++h->counters.lookup_req_backoff_suppressed; return FIPS_PROBE_LOOKUP_Suppressed;
+    case FIPS_INITIATE_BloomMiss: ++h->counters.lookup_req_bloom_miss; return FIPS_PROBE_LOOKUP_BloomMiss;
     case FIPS_INITIATE_Proceed: break;
     }
     ++h->counters.lookup_req_initiated;
     fips_pending_lookup *p = fips_lookup_pending(&h->lookup, target);
-    if (!send_request(h, target, p)) { fips_lookup_initiate_failed(&h->lookup, target, hs_now_ms(h)); return false; }
+    if (!send_request(h, target, p, fanout)) { fips_lookup_initiate_failed(&h->lookup, target, hs_now_ms(h)); return FIPS_PROBE_LOOKUP_ZeroFanout; }
     hs_mark_dirty(h);
-    return true;
+    return FIPS_PROBE_LOOKUP_Sent;
+}
+bool hs_lookup_initiate(handlers *h, const fips_node_addr *target)
+{
+    fips_probe_lookup_outcome_kind kind = hs_lookup_initiate_outcome(h, target, NULL);
+    return kind == FIPS_PROBE_LOOKUP_Sent || kind == FIPS_PROBE_LOOKUP_Deduplicated;
 }
 void hs_lookup_tick(handlers *h, fips_instant now)
 {
@@ -181,7 +196,7 @@ void hs_lookup_tick(handlers *h, fips_instant now)
     if (fips_lookup_poll_pending(&h->lookup, hs_now_ms(h), h->cfg.lookup_attempt_timeouts_secs, h->cfg.lookup_attempt_count, &out) == FIPS_OK) {
         for (size_t i = 0; i < out.retries_len; ++i) {
             fips_pending_lookup *p = fips_lookup_pending(&h->lookup, &retries[i].target);
-            (void)send_request(h, &retries[i].target, p);
+            (void)send_request(h, &retries[i].target, p, NULL);
         }
         for (size_t i = 0; i < out.timeouts_len; ++i) {
             ++h->counters.lookup_resp_timed_out;
