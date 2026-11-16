@@ -505,6 +505,20 @@ static size_t wanted;
 static bool logged_enough(fake_table *f) { return f->nlog >= wanted; }
 static bool applying(fake_table *f) { return f->in_apply; }
 static bool gone(fake_table *f) { return f->destroyed; }
+/* Hold the next apply open behind a filler change. The worker publishes the
+ * count and the removals after each apply returns, so once the held apply
+ * has started every earlier one's are published and its own are not. */
+static void hold_next_apply(fake_table *f, fipsd_gw_nat_driver *d)
+{
+    nsync_mu_lock(&f->mu); f->hold_apply = true; nsync_mu_unlock(&f->mu);
+    fipsd_gw_nat_command filler = {FIPSD_GW_NAT_ADD, gw_v6("fd01::ff"), gw_v6("fd9a::ff")};
+    CHECK(fipsd_gw_nat_driver_submit(d, &filler) == 0);
+    fake_wait(f, applying);
+}
+static void release_apply(fake_table *f)
+{
+    nsync_mu_lock(&f->mu); f->hold_apply = false; nsync_cv_broadcast(&f->cv); nsync_mu_unlock(&f->mu);
+}
 typedef struct exit_flag { nsync_mu mu; nsync_cv cv; int calls; } exit_flag;
 static void on_exit_cb(void *user) { exit_flag *e = user; nsync_mu_lock(&e->mu); e->calls++; nsync_cv_broadcast(&e->cv); nsync_mu_unlock(&e->mu); }
 
@@ -519,10 +533,12 @@ static void nat_worker_applies_add_remove_and_readd_in_order(void)
     CHECK(fipsd_gw_nat_driver_submit(d, &add) == 0 && fipsd_gw_nat_driver_submit(d, &rm) == 0 && fipsd_gw_nat_driver_submit(d, &add) == 0);
     wanted = 3; fake_wait(&f, logged_enough);
     CHECK(f.log[0].kind == FIPSD_GW_NAT_ADD && f.log[1].kind == FIPSD_GW_NAT_REMOVE && f.log[2].kind == FIPSD_GW_NAT_ADD);
+    hold_next_apply(&f, d);
     fipsd_gw_pairs removed = {0};
     fipsd_gw_nat_driver_take_removed(d, &removed);
     CHECKM(removed.len == 1, "the removal the table applied is reported");
     fipsd_gw_pairs_clear(&removed);
+    release_apply(&f);
     fipsd_gw_nat_error err;
     CHECK(fipsd_gw_nat_driver_shutdown(d, 5000, &err) == 0);
     CHECKM(f.cleanups == 1 && f.destroyed && ex.calls == 0, "a requested stop is not reported as an exit");
@@ -537,10 +553,12 @@ static void queued_changes_are_applied_in_one_rebuild(void)
     fake_wait(&f, applying);
     /* The worker is inside the first apply; these queue behind it. */
     for (int k = 2; k <= 5; ++k) { char v[32]; snprintf(v, sizeof v, "fd01::%d", k); add.virtual_ip = gw_v6(v); CHECK(fipsd_gw_nat_driver_submit(d, &add) == 0); }
-    nsync_mu_lock(&f.mu); f.hold_apply = false; nsync_cv_broadcast(&f.cv); nsync_mu_unlock(&f.mu);
+    release_apply(&f);
     wanted = 5; fake_wait(&f, logged_enough);
     CHECKM(f.batches == 2, "the four queued changes went in one rebuild (%zu batches)", f.batches);
+    hold_next_apply(&f, d);
     CHECK(fipsd_gw_nat_driver_mapping_count(d) == 5);
+    release_apply(&f);
     fipsd_gw_nat_error err;
     CHECK(fipsd_gw_nat_driver_shutdown(d, 5000, &err) == 0 && f.cleanups == 1);
 }
