@@ -109,7 +109,7 @@ void cfg_set_uint(struct fipsd_config_value *v, uint64_t n)
 { v->u = n; v->kind = CFG_UINT; }
 
 static struct fipsd_config_value *from_yaml(yaml_document_t *doc, yaml_node_t *node,
-    unsigned depth, size_t *budget, fipsd_config_log *log)
+    unsigned depth, size_t *budget, size_t *bytes, fipsd_config_log *log)
 {
     if (!node || depth > 64 || *budget == 0) {
         cfg_error(log, "YAML nesting or alias expansion limit exceeded"); return NULL;
@@ -124,6 +124,8 @@ static struct fipsd_config_value *from_yaml(yaml_document_t *doc, yaml_node_t *n
     if (node->type == YAML_SCALAR_NODE) {
         v->quoted = node->data.scalar.style != YAML_PLAIN_SCALAR_STYLE;
         size_t n = node->data.scalar.length;
+        if (n >= *bytes) { cfg_error(log, "YAML expanded scalar limit exceeded"); goto fail; }
+        *bytes -= n + 1;
         if (memchr(node->data.scalar.value, 0, n)) {
             cfg_error(log, "YAML scalar contains a NUL byte"); goto fail;
         }
@@ -133,7 +135,7 @@ static struct fipsd_config_value *from_yaml(yaml_document_t *doc, yaml_node_t *n
             (!n || !strcmp(v->text,"~") || !strcasecmp(v->text,"null"))) v->kind = CFG_NULL;
     } else if (node->type == YAML_SEQUENCE_NODE) {
         for (yaml_node_item_t *i = node->data.sequence.items.start; i < node->data.sequence.items.top; ++i) {
-            struct fipsd_config_value *item = from_yaml(doc, yaml_document_get_node(doc,*i),depth+1,budget,log);
+            struct fipsd_config_value *item = from_yaml(doc, yaml_document_get_node(doc,*i),depth+1,budget,bytes,log);
             if (!item || !append(v, NULL, item)) { cfg_free(item); goto fail; }
         }
     } else if (node->type == YAML_MAPPING_NODE) {
@@ -143,11 +145,14 @@ static struct fipsd_config_value *from_yaml(yaml_document_t *doc, yaml_node_t *n
                 memchr(k->data.scalar.value,0,k->data.scalar.length)) {
                 cfg_error(log,"YAML mapping keys must be strings of at most 255 bytes"); goto fail;
             }
+            size_t key_bytes = k->data.scalar.length + 1;
+            if (key_bytes > *bytes) { cfg_error(log, "YAML expanded scalar limit exceeded"); goto fail; }
+            *bytes -= key_bytes;
             const char *key = (const char *)k->data.scalar.value;
             if (fipsd_config_member(v,key)) {
                 cfg_error(log,"duplicate field `%s`",key); goto fail;
             }
-            struct fipsd_config_value *item = from_yaml(doc,yaml_document_get_node(doc,p->value),depth+1,budget,log);
+            struct fipsd_config_value *item = from_yaml(doc,yaml_document_get_node(doc,p->value),depth+1,budget,bytes,log);
             if (!item || !append(v,key,item)) { cfg_free(item); goto fail; }
         }
     } else { cfg_error(log,"unsupported YAML node"); goto fail; }
@@ -166,9 +171,9 @@ struct fipsd_config_value *cfg_yaml(const char *data, size_t len, fipsd_config_l
         cfg_error(log,"YAML at line %zu column %zu: %s",parser.problem_mark.line+1,
                   parser.problem_mark.column+1,parser.problem ? parser.problem : "parse error");
     } else {
-        size_t budget = 100000;
+        size_t budget = 100000, bytes = 8u * 1024u * 1024u;
         yaml_node_t *root = yaml_document_get_root_node(&doc);
-        v = root ? from_yaml(&doc,root,0,&budget,log) : cfg_new(CFG_MAP);
+        v = root ? from_yaml(&doc,root,0,&budget,&bytes,log) : cfg_new(CFG_MAP);
         /* libyaml holds plaintext scalars, including identity keys. */
         for (yaml_node_t *n = doc.nodes.start; n < doc.nodes.top; ++n)
             if (n->type == YAML_SCALAR_NODE) sodium_memzero(n->data.scalar.value,n->data.scalar.length);

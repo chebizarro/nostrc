@@ -524,8 +524,70 @@ static void test_socket(const char *tmp)
     CHECK(unlink(path)==0);
     go_swap_free(configs); CHECK(rmdir(parent)==0); CHECK(rmdir(xdg)==0);
 }
-int main(void)
+static GoChannel *cap_ready, *cap_release;
+static json_t *hold_provider(void *user, const char *name, const json_t *params,
+                              const fipsd_control_request_context *context)
 {
+    (void)user; (void)params; (void)context;
+    CHECK(!strcmp(name, "path_show"));
+    CHECK(go_channel_send(cap_ready, cap_ready) == 0);
+    void *token;
+    CHECK(go_channel_receive(cap_release, &token) == 0);
+    return fipsd_control_error("held");
+}
+static void test_connection_limit(const char *tmp)
+{
+    char path[4096], yaml[8192];
+    snprintf(path, sizeof(path), "%s/control.sock", tmp);
+    snprintf(yaml, sizeof(yaml), "node: {control: {socket_path: '%s'}}", path);
+    fipsd_config *config = fipsd_config_parse(yaml, strlen(yaml), NULL); CHECK(config);
+    GoSwap *configs = go_swap_create(config, fipsd_config_free); CHECK(configs);
+    fipsd_control_provider provider = {.command=hold_provider};
+    fipsd_control_service service; fipsd_control_service_init(&service, configs, &provider);
+    fipsd_runtime_config cfg; fipsd_runtime_config_default(&cfg); cfg.handle_signals=false; cfg.workers=2;
+    fipsd_runtime *rt=fipsd_runtime_create(&cfg); CHECK(rt);
+    cap_ready=go_channel_create(FIPSD_CONTROL_MAX_CONNECTIONS);
+    cap_release=go_channel_create(FIPSD_CONTROL_MAX_CONNECTIONS);
+    GoChannel *done=go_channel_create(FIPSD_CONTROL_MAX_CONNECTIONS);
+    CHECK(cap_ready && cap_release && done);
+    CHECK(fipsd_runtime_register(rt,&service.subsystem)==0 && fipsd_runtime_start(rt)==0);
+    const char *req="{\"command\":\"path_show\",\"params\":{\"npub\":\"hold\"}}\n";
+    client_case clients[FIPSD_CONTROL_MAX_CONNECTIONS];
+    for (size_t i=0;i<FIPSD_CONTROL_MAX_CONNECTIONS;++i) {
+        clients[i]=(client_case){.rt=rt,.path=path,.line=req,.len=strlen(req),.done=done,
+            .expected="{\"status\":\"error\",\"message\":\"held\"}\n"};
+        CHECK(fipsd_runtime_spawn(rt,client_fiber,&clients[i])==0);
+    }
+    void *token;
+    for (size_t i=0;i<FIPSD_CONTROL_MAX_CONNECTIONS;++i) CHECK(go_channel_receive(cap_ready,&token)==0);
+    CHECK(atomic_load(&service.connections)==FIPSD_CONTROL_MAX_CONNECTIONS);
+    /* A real excess accept is closed before a parser/provider/fiber is started. */
+    run_client(rt,path,"",0,false,"");
+    CHECK(atomic_load(&service.connections)==FIPSD_CONTROL_MAX_CONNECTIONS);
+    for (size_t i=0;i<FIPSD_CONTROL_MAX_CONNECTIONS;++i) CHECK(go_channel_send(cap_release,cap_release)==0);
+    for (size_t i=0;i<FIPSD_CONTROL_MAX_CONNECTIONS;++i) CHECK(go_channel_receive(done,&token)==0);
+    fipsd_runtime_shutdown(rt); CHECK(fipsd_runtime_run(rt)==FIPSD_RUN_OK);
+    CHECK(atomic_load(&service.connections)==0);
+    fipsd_runtime_destroy(rt); fipsd_control_service_clear(&service); go_swap_free(configs);
+    go_channel_free(done); go_channel_free(cap_ready); go_channel_free(cap_release);
+}
+static void test_depth_limit(void)
+{
+    char deep[2 * (FIPSD_CONTROL_MAX_DEPTH + 1)];
+    memset(deep, '[', sizeof(deep)/2); memset(deep+sizeof(deep)/2, ']', sizeof(deep)/2);
+    expect_error(fipsd_control_parse(NULL,deep,sizeof(deep)),"invalid request: nesting limit exceeded");
+    const char *s="{\"command\":\"show_peers\",\"ignored\":\"[\\\"{{\"}";
+    json_t *out=fipsd_control_parse(NULL,s,strlen(s)); CHECK(out);
+    CHECK(!strcmp(json_string_value(json_object_get(out,"status")),"ok")); json_decref(out);
+}
+int main(int argc, char **argv)
+{
+    if (argc==2 && !strcmp(argv[1],"capacity")) {
+        const char *dir=fipsd_test_tmpdir("/control.sock");
+        test_connection_limit(dir); CHECK(rmdir(dir)==0); return 0;
+    }
+    CHECK(argc==1);
+    test_depth_limit();
     const char *tmp = fipsd_test_tmpdir("/runtime/fips/control.sock");
     test_paths(tmp); test_validation(); test_render_failures(); test_query_goldens(); test_registry_and_history(); test_probe_golden(); test_path_requests();
     CHECK(golden_count==29); printf("goldens: %u/29 (including 5 registry/history replays)\n",golden_count);

@@ -139,7 +139,9 @@ typedef struct connection {
 static void release_connection(connection *c)
 {
     if (atomic_fetch_sub(&c->references, 1) != 1) return;
-    go_channel_free(c->phases); free(c);
+    go_channel_free(c->phases);
+    atomic_fetch_sub(&c->service->connections, 1);
+    free(c);
 }
 static void shutdown_connection(connection *c, int how)
 {
@@ -275,11 +277,15 @@ static void accept_fiber(void *arg)
         int one = 1;
         if (setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof(one)) < 0) { close(fd); continue; }
 #endif
+        /* Only this accept fiber increments; both owners must exit before
+         * release_connection returns the slot. Refuse before allocating stacks. */
+        if (atomic_load(&s->connections) >= FIPSD_CONTROL_MAX_CONNECTIONS) { close(fd); continue; }
         connection *c = calloc(1, sizeof(*c));
         if (!c) { close(fd); continue; }
         c->fd = fd; c->service = s; atomic_init(&c->references, 2); atomic_init(&c->read_timeout, false); atomic_init(&c->execution_timeout, false);
         c->phases = go_channel_create(3);
         if (!c->phases) { close(fd); free(c); continue; }
+        atomic_fetch_add(&s->connections, 1);
         if (fipsd_runtime_spawn(s->runtime, deadline_fiber, c) != 0) {
             close(fd); release_connection(c); release_connection(c); continue;
         }

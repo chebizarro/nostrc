@@ -1,0 +1,1 @@
+node: {identity: {nsec: "secret\0tail"}}

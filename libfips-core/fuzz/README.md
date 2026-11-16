@@ -41,8 +41,9 @@ behind a `0x00` type byte, be rejected atomically by a one-byte-short writer,
 and classify its first payload byte through both message-type catalogs. Use a
 writable copy of `corpus/fips_fuzz_link/` with target `fips_fuzz_link`.
 
-Future surfaces (not present wire codecs): MMP messages, control-socket JSON,
-and the native-API line protocol.
+Daemon parser harnesses are in `fipsd/fuzz/` (`fipsd_fuzz_control`,
+`fipsd_fuzz_config`). MMP and path codecs have their own current targets; the
+native-API line protocol remains a future surface.
 
 `fips_fuzz_aead` takes a zero-padded 32-byte key, LE u64 counter and one-byte
 AD length, then that many AD bytes (clamped to available input), then arbitrary

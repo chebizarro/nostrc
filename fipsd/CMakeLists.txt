@@ -51,6 +51,9 @@ set_target_properties(fipsd PROPERTIES
 target_link_libraries(fipsd PRIVATE fipsd_lib nostr)
 apply_warnings(fipsd)
 apply_sanitizers(fipsd)
+include(CheckPIESupported)
+check_pie_supported(LANGUAGES C)
+set_target_properties(fipsd PROPERTIES POSITION_INDEPENDENT_CODE TRUE)
 install(TARGETS fipsd RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
 
 if(BUILD_TESTING)
@@ -106,3 +109,8 @@ target_sources(fipsd_lib PRIVATE
 
 # ACL, counter registry, history sampling and diagnostic vocabulary (9keoz.8).
 target_sources(fipsd_lib PRIVATE src/node/acl.c src/node/metrics.c src/node/stats.c src/node/diag.c)
+# FIPS_ENABLE_FUZZERS also includes the daemon's untrusted parser surfaces.
+option(FIPSD_ENABLE_FUZZERS "Build fipsd parser libFuzzer targets" ${FIPS_ENABLE_FUZZERS})
+if(FIPSD_ENABLE_FUZZERS)
+  add_subdirectory(fuzz)
+endif()

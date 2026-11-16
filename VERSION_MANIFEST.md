@@ -1693,3 +1693,10 @@ wire format, release or tag change.
 
 | Snapshot dataplane/explicit-counter workers (nostrc-9keoz.7) | fipsd | 0.1.0 | No bump: internal packet worker pools and immutable routing/epoch publication fold into **0.1.0 Unreleased**; no published release/tag change. |
 | Authenticated worker completion, prompt executor seam and replay audit hook (nostrc-9keoz.7) | libfips-core | 0.1.0 | No bump: additive host interfaces fold into initial **0.1.0 Unreleased**; synchronous default executor and wire formats unchanged; no published release/tag change. |
+
+nostrc-f66sr.5: libfips-core and fipsd remain **0.1.0 Unreleased**. PATCH-class
+security corrections (routing u16 length refusal; bounded control clients/JSON
+nesting, YAML expansion/diagnostics and safe bounded log files) and explicit
+PIE linker checks fold into the unreleased version. Parser fuzzers, regressions,
+CI routing and the adversarial report are test/documentation-only. No published
+release/tag or valid wire format changes.

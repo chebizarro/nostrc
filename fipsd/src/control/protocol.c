@@ -100,11 +100,31 @@ static json_t *dispatch(const fipsd_control_provider *provider, const json_t *re
     free(msg);
     return result;
 }
+/* Bound recursion before entering Jansson on a small fiber stack. This only
+ * counts containers outside strings; Jansson still validates all JSON syntax. */
+static bool bounded_depth(const char *line, size_t len)
+{
+    size_t depth = 0;
+    bool quoted = false, escaped = false;
+    for (size_t i = 0; i < len; ++i) {
+        char c = line[i];
+        if (quoted) {
+            if (escaped) escaped = false;
+            else if (c == '\\') escaped = true;
+            else if (c == '"') quoted = false;
+        } else if (c == '"') quoted = true;
+        else if (c == '[' || c == '{') {
+            if (++depth > FIPSD_CONTROL_MAX_DEPTH) return false;
+        } else if ((c == ']' || c == '}') && depth) --depth;
+    }
+    return true;
+}
 json_t *fipsd_control_parse_context(const fipsd_control_provider *provider, const char *line, size_t len,
                                     const fipsd_control_request_context *context)
 {
     if (len > FIPSD_CONTROL_MAX_REQUEST) return fipsd_control_error("read error: request too large");
     if (!len) return fipsd_control_error("empty request");
+    if (!bounded_depth(line, len)) return fipsd_control_error("invalid request: nesting limit exceeded");
     json_error_t error;
     json_t *request = json_loadb(line, len, JSON_DECODE_ANY | JSON_REJECT_DUPLICATES, &error);
     if (!request) {

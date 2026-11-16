@@ -23,7 +23,7 @@ struct fipsd_log {
 
 /* ── sinks ─────────────────────────────────────────────────────────────── */
 
-static int write_all(int fd, const char *buf, size_t len)
+static int write_all(int fd, const char *buf, size_t len, size_t *written)
 {
     while (len > 0) {
         ssize_t n = write(fd, buf, len);
@@ -32,6 +32,8 @@ static int write_all(int fd, const char *buf, size_t len)
                 continue;
             return -1;
         }
+        if (n == 0) { errno = EIO; return -1; }
+        if (written) *written += (size_t)n;
         buf += n;
         len -= (size_t)n;
     }
@@ -41,7 +43,7 @@ static int write_all(int fd, const char *buf, size_t len)
 static int stderr_sink_write(void *ctx, const char *line, size_t len)
 {
     (void)ctx;
-    return write_all(STDERR_FILENO, line, len);
+    return write_all(STDERR_FILENO, line, len, NULL);
 }
 
 static const fipsd_log_sink stderr_sink = {stderr_sink_write, NULL, NULL};
@@ -186,7 +188,6 @@ struct fipsd_log_file {
     int fd;           /* -1 between a roll and the next write */
     uint64_t len;     /* bytes in the live file */
     uint64_t max;     /* configured cap */
-    uint64_t limit;   /* cap in force; raised after a failed roll */
     unsigned keep;
 };
 
@@ -237,7 +238,7 @@ static int mkdir_parents(const char *path)
 /* Open the live file for appending and learn its current length. */
 static int file_reopen(fipsd_log_file *file)
 {
-    int fd = open(file->path, O_WRONLY | O_APPEND | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0640);
+    int fd = open(file->path, O_WRONLY | O_APPEND | O_CREAT | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK, 0640);
     if (fd < 0)
         return -1;
     struct stat st;
@@ -246,6 +247,9 @@ static int file_reopen(fipsd_log_file *file)
         close(fd);
         errno = saved;
         return -1;
+    }
+    if (!S_ISREG(st.st_mode) || st.st_nlink != 1) {
+        close(fd); errno = EINVAL; return -1;
     }
     file->fd = fd;
     file->len = (uint64_t)st.st_size;
@@ -285,7 +289,6 @@ static int file_roll(fipsd_log_file *file)
     if (numbered(file, 1, to, sizeof(to)) != 0 || rename(file->path, to) != 0)
         return -1;
     file->len = 0;
-    file->limit = file->max;
     return 0;
 }
 
@@ -293,21 +296,18 @@ static int file_append(fipsd_log_file *file, const char *buf, size_t len)
 {
     if (file->fd < 0 && file_reopen(file) != 0)
         return -1;
-    if (write_all(file->fd, buf, len) != 0)
-        return -1;
-    file->len += len;
-    return 0;
+    size_t written = 0;
+    int rc = write_all(file->fd, buf, len, &written);
+    file->len += written; /* Account for progress even when a later write fails. */
+    return rc;
 }
 
 static int file_sink_write(void *ctx, const char *line, size_t len)
 {
     fipsd_log_file *file = ctx;
-    if (file->len > 0 && file->len + len > file->limit && file_roll(file) != 0) {
-        /* Keep the current file; try rolling again after another cap's worth. */
-        int rc = file_append(file, line, len);
-        file->limit = file->len + file->max;
-        return rc;
-    }
+    if (len > file->max) { errno = EFBIG; return -1; }
+    /* A failed rotation must not turn the disk bound into an unbounded append. */
+    if (file->len > file->max - len && file_roll(file) != 0) return -1;
     return file_append(file, line, len);
 }
 
@@ -334,7 +334,6 @@ fipsd_log_file *fipsd_log_file_open(const char *path, uint64_t max_bytes,
     file->path = strdup(path);
     file->fd = -1;
     file->max = fipsd_log_clamp_max_bytes(max_bytes);
-    file->limit = file->max;
     file->keep = fipsd_log_clamp_max_files(max_files);
     if (!file->path || mkdir_parents(path) != 0 || file_reopen(file) != 0) {
         set_err(err, errlen, "cannot open log file", path);
@@ -347,7 +346,6 @@ fipsd_log_file *fipsd_log_file_open(const char *path, uint64_t max_bytes,
 void fipsd_log_file_set_limits(fipsd_log_file *file, uint64_t max_bytes, unsigned max_files)
 {
     file->max = fipsd_log_clamp_max_bytes(max_bytes);
-    file->limit = file->max;
     file->keep = fipsd_log_clamp_max_files(max_files);
 }
 
