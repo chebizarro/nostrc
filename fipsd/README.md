@@ -1825,6 +1825,153 @@ Keep that target outside the read-only Rust checkout and delete it after the
 run. No dependency or CI workflow changes are needed. Version decision:
 **fipsd stays 0.1.0 Unreleased**; the TCP addition folds into the initial daemon,
 with no published release/tag or FMP wire-format change.
+## Tor and Nym transports (`nostrc-gfi8h.4`)
+
+Ports of upstream `src/transport/{socks5,tor,nym}` at the pin. Both are
+stream owners layered on the TCP owner above, not copies of it: the inner TCP
+instance (same id and name) keeps the pool, framing, writer queue, receive
+ceiling, deadlines and teardown, and a host-only dialer hook in `tcp/conn.c`
+dials the SOCKS5 proxy instead of the peer and then runs the handshake on the
+connected socket under the same connect deadline.
+
+### SOCKS5 client (`src/transport/socks5/`)
+
+RFC 1928 CONNECT with no-auth or RFC 1929 username/password, IPv4, IPv6 and
+domain (`.onion` included) targets, on a libgo fiber with one absolute
+deadline over every read and write. The bytes are those tokio-socks 0.5.3
+writes (`05 01 00` / `05 02 00 02` greetings, `01 ulen user plen pass`,
+`05 01 00 atyp addr port`), and replies are checked in its order: version,
+reserved byte, REP, then BND address type. Results keep tokio-socks' classes
+(REP `0x05` refused, any other REP rejected, method `0xff`, auth failure,
+protocol, I/O, timeout); owner-directed `gof_io_cancel_fd` ends a parked
+handshake. Once a proxy address accepts the TCP connect its answer is final:
+no other proxy address is tried, as in tokio-socks.
+
+### Tor (`src/transport/tor/`)
+
+```yaml
+transports:
+  tor:
+    mode: directory                  # socks5 | control_port | directory
+    socks5_addr: "127.0.0.1:9050"
+    connect_timeout_ms: 120000
+    mtu: 1400
+    control_addr: "/run/tor/control" # optional in directory mode; default in control_port mode
+    control_auth: "cookie"           # cookie | cookie:/path | password:secret
+    cookie_path: "/var/run/tor/control.authcookie"
+    max_inbound_connections: 64
+    advertised_port: 8443
+    directory_service:
+      hostname_file: "/var/lib/tor/fips/hostname"
+      bind_addr: "127.0.0.1:8444"
+```
+
+Operator flow (upstream `docs/how-to/deploy-tor-onion.md`, unchanged for the
+C daemon):
+
+1. In `torrc`: `HiddenServiceDir /var/lib/tor/fips` and
+   `HiddenServicePort 8443 127.0.0.1:8444`; reload Tor and read
+   `/var/lib/tor/fips/hostname`. For monitoring also enable a control port
+   (`ControlSocket /run/tor/control` or `ControlPort 9051`) with
+   `CookieAuthentication 1` or `HashedControlPassword`.
+2. In `fips.yaml`: `transports.tor` as above, `bind_addr` equal to the
+   `HiddenServicePort` target, `hostname_file` equal to `HiddenServiceDir` plus
+   `/hostname`, `advertised_port` equal to the virtual port.
+3. Restart fipsd: it reads the onion name, binds the listener, logs
+   `directory-mode onion service active`, and `fipsctl show transports` shows
+   `tor_mode`, `onion_address` and, with a control port, `tor_monitoring`.
+4. Peers dial `<onion>.onion:8443` with transport `tor` (a `peers[]` address or
+   `fipsctl connect <npub> <onion>.onion:8443 tor`).
+
+Behaviour, as upstream: `socks5` mode is outbound only and ignores
+`control_addr`; `control_port` mode adds the monitor and fails to start
+without it; `directory` mode adds the onion listener (the only inbound
+mode) and an optional, non-fatal monitor when `control_addr` is set; a
+`directory_service` under `socks5` mode is refused. Every dial authenticates
+as `fips` with the peer address as password, so Tor's `IsolateSOCKSAuth`
+gives each destination its own circuit. Hostnames must be fully qualified;
+`.onion` and clearnet names are resolved by Tor. REP `0x05` counts
+`connect_refused`; every other proxy failure, an unreachable proxy included,
+counts `socks5_errors`; the deadline counts `connect_timeouts`. Inbound onion
+connections take a `max_inbound_connections` slot (all arrive from the local
+Tor, so the per-source cap equals it) and keep TCP's first-frame and idle
+deadlines. Links stay up between ends configured with different `mtu`
+values (upstream 2026-11-12, `tor/tests/mtu.rs`): the send bound is the
+local `mtu`, every receive is bounded by the 65535 ceiling the TCP owner
+already uses. `show_transports` reports the 16 `TorStatsSnapshot` counters,
+no `local_addr`, and upstream's Tor-only fields.
+
+Upstream never creates onion services over the control port (no
+`ADD_ONION`, which keeps Tor's `Sandbox 1` usable), and neither does this
+port. The monitor differs from upstream's 10-second GETINFO poll by design:
+one fiber per control connection authenticates (cookie hex or quoted
+password), takes upstream's snapshot (`status/bootstrap-phase`,
+`status/circuit-established`, `traffic/read|written`, `network-liveness`,
+`version`, `dormant`; one GETINFO per key when Tor refuses the batch, a
+refused key keeping its default), then `SETEVENTS STATUS_CLIENT
+NETWORK_LIVENESS BW` and follows Tor's `650` events: bootstrap progress,
+circuit (re)established, liveness, bandwidth totals. Status events refresh
+the snapshot; nothing polls. The only timer is the one-shot 60-second
+bootstrap-stall warning. A lost or refused control connection counts
+`control_errors` and reconnects with backoff (1 s doubling to 30 s).
+
+### Nym (`src/transport/nym/`, `-DFIPSD_ENABLE_NYM=ON`)
+
+Built only with `-DFIPSD_ENABLE_NYM=ON` (default OFF); a daemon built without
+it refuses a configured `transports.nym` at start rather than ignoring it.
+Upstream's Nym is the "mixnet as proxy" pattern: outbound-only streams through
+a local `nym-socks5-client`'s SOCKS5 listener with no authentication. It has
+no websocket client protocol of its own, and this port has none. Keys:
+`socks5_addr` (default `127.0.0.1:1080`), `connect_timeout_ms` (300000), `mtu`
+(1400), `startup_timeout_secs` (120). At start a fiber probes the proxy port
+with upstream's backoff (1 s doubling to 10 s); after the timeout it starts
+anyway with a warning, and connects and sends are refused until the stream
+owner has started. No connection holds a capped slot or an inbound deadline.
+Every SOCKS5 failure, a REP `0x05` refusal included, counts `socks5_errors`,
+and `show_transports` reports the 10 `NymStatsSnapshot` counters.
+
+Local integration (not exercised here; no mixnet was used): run Nym's
+`nym-socks5-client init --id fips --provider <network-requester address>`,
+then `nym-socks5-client run --id fips` (it listens on `127.0.0.1:1080`), and
+configure `transports.nym: {socks5_addr: "127.0.0.1:1080"}` with peers at
+`{transport: nym, addr: "<host-or-ip>:<port>"}`, a FIPS TCP listener reachable
+from the network requester. Mixnet connects can take minutes, which the
+300-second default allows for.
+
+### Verification and limits
+
+`fipsd_tests` adds `FipsdSocks5Test` (tokio-socks byte vectors and live
+fiber handshakes against the loopback fake: both auth modes and every ATYP,
+auth failure, no method, refused, rejected, the deadline against a silent
+server, cancellation), `FipsdTorTest` (configuration, isolated dials to
+numeric and onion targets through the fake proxy, the onion listener, the
+four mixed-`mtu` cases, error accounting, the inbound cap and first-frame
+deadline, the control row, and the monitor against a fake control port:
+password and cookie auth, a Unix socket, the GETINFO fallback, bootstrap,
+circuit, liveness and bandwidth events, reconnect, never `ADD_ONION`),
+`FipsdTorTwoNodesTest` (the two-node proof: IK link, tree, bloom, XK session,
+datagrams, rekey and disconnect over directory-mode Tor through the fake
+proxy) and `FipsdNymTest` (both build modes). Fakes run on their own
+threads; waits are channels, I/O readiness and deadlines, never sleeps.
+
+`FipsdTorInteropTest` (`tests/tor_interop.py`) is opt-in: with
+`FIPSD_TOR_BINARY` and `FIPSD_UDP_INTEROP_RUST_BINARY` it starts two local tors
+(one per daemon), waits for each one's `BOOTSTRAP PROGRESS=100` and
+`HS_DESC UPLOADED` control events, then establishes the C<->Rust link over the
+onions in both directions; otherwise it returns SKIP (77). Recorded on macOS
+(tor 0.4.9.17, Rust rev 6aa80504ba): bootstrap 5.8 s and 9.8 s, descriptors
+uploaded at 9.8 s and 11.6 s, C->Rust link 4.7 s, Rust->C link 5.8 s, with no
+SOCKS5 errors or timeouts, 24.9 s in all. The fipsd row showed
+`tor_monitoring` from the real daemon (bootstrap 100, circuit established).
+Earlier runs on a fresh onion took 7.8 s / 110.9 s and once 164 s for the
+first dial: Tor's rendezvous timing varies.
+
+Not ported here: publishing a Tor endpoint in this node's own Nostr advert.
+The C advert publisher advertises UDP only (TCP likewise); Tor endpoints in
+received adverts are dialled through this transport. As with TCP, there is
+no separate path-priority lane. Version decision: **fipsd stays 0.1.0
+Unreleased**; the transports fold into the initial daemon.
+
 ## C<->Rust UDP interoperability gate (`nostrc-f66sr.1`)
 
 `tests/udp_interop.py` runs one `fipsd` and one `fips` daemon built from the
