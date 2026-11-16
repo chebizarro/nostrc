@@ -135,7 +135,13 @@ typedef struct fipsd_control_snapshot {
 
 typedef struct fipsd_control_request_context {
     GoContext *shutdown; /* borrowed root; select alongside the reply */
-    uint64_t deadline_ns; /* CLOCK_MONOTONIC, absolute execution deadline */
+    /* CLOCK_MONOTONIC, absolute execution deadline. Once it has passed (or
+     * shutdown fired) the waiting side returns NULL and a command the owner has
+     * not yet started must never execute afterwards: it is dropped unexecuted.
+     * A command the owner started before the waiter gave up runs to completion
+     * and its reply is delivered or released exactly once; the caller's
+     * deadline check then decides what the client sees. */
+    uint64_t deadline_ns;
 } fipsd_control_request_context;
 
 typedef struct fipsd_control_provider {
@@ -145,8 +151,10 @@ typedef struct fipsd_control_provider {
     GoRefPtr (*acquire)(void *user);
     /* Live commands run in connection fibers. Implementations must enqueue to
      * the single-writer owner and select its reply against cancellation, never
-     * mutate node state here. Return an owned response, NULL if unavailable.
-     * Any blocking work must use go_blocking_submit. */
+     * mutate node state here. Return an owned response, NULL if unavailable or
+     * if the context's execution deadline passed before the owner started the
+     * command (which then never runs). Any blocking work must use
+     * go_blocking_submit. */
     json_t *(*command)(void *user, const char *name, const json_t *params,
                        const fipsd_control_request_context *context);
 } fipsd_control_provider;

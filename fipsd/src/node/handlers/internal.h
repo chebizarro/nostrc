@@ -128,8 +128,12 @@ typedef struct probe_job {
 
 typedef enum handler_command_kind {
     HCMD_CONNECT, HCMD_DISCONNECT, HCMD_SEND, HCMD_LEARN_IDENTITY, HCMD_DIAL_CONFIGURED,
-    HCMD_CONTROL /* live control command with reply channel */
+    HCMD_CONTROL /* live control command with a shared execution ticket */
 } handler_command_kind;
+/* Shared by a queued HCMD_CONTROL and its waiting connection fiber (handlers.c).
+ * The dispatcher claims it before any state mutation; the waiter abandons it at
+ * its execution deadline or shutdown. The ticket owns the JSON reply. */
+typedef struct hs_control_ticket hs_control_ticket;
 typedef struct handler_command {
     handler_command_kind kind;
     fips_peer_identity identity;
@@ -139,7 +143,7 @@ typedef struct handler_command {
     uint16_t src_port, dst_port;
     char name[32];
     json_t *params;
-    GoChannel *reply; /* HCMD_CONTROL: capacity 1, owned by the waiting fiber */
+    hs_control_ticket *ticket; /* HCMD_CONTROL: one of the ticket's two references */
     size_t len;
     uint8_t payload[];
 } handler_command;

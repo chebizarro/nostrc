@@ -16,7 +16,7 @@ typedef struct handler_counters {
     uint64_t mmp_sr_sent, mmp_rr_sent, mmp_sr_received, mmp_rr_received, heartbeats_sent, links_dead;
     uint64_t rekey_installed, rekey_abandoned, rekey_rejected, rekey_restart, rekey_teardown;
     uint64_t path_probes_in, path_acks_in, path_closes_in, path_sent, path_switched;
-    uint64_t notices_dropped, commands_refused, native_delivered;
+    uint64_t notices_dropped, commands_refused, commands_cancelled, native_delivered;
 } handler_counters;
 struct fipsd_node_handlers;
 bool hs_stats_mesh(struct fipsd_node_handlers *, uint64_t *);
