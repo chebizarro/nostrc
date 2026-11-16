@@ -122,8 +122,9 @@ fipsd_peer_admission fipsd_peer_table_rebind(fipsd_peer_table *t, const fips_nod
     if (!p) return FIPSD_ADMIT_DUPLICATE;
     fipsd_active_peer *collision = fipsd_peer_table_endpoint(t, transport, addr);
     if (collision && collision != p) return FIPSD_ADMIT_DUPLICATE;
-    if (fipsd_active_peer_link_attached(p) &&
-        !fips_transport_id_equal(fipsd_active_peer_info(p)->transport, transport)) return FIPSD_ADMIT_BUSY;
+    /* The dispatcher owns both the link and its send endpoint. A Bundle switch
+     * moves that endpoint, not the link/keys/index leases. Collision and budget
+     * checks precede mutation, including when a link is attached. */
     size_t i = lower(t, node);
     fipsd_peer_admission result = fipsd_peer_budget_rebind(&t->entries[i].ticket, transport);
     if (result == FIPSD_ADMIT_OK) fipsd_active_peer_set_endpoint(p, transport, addr);

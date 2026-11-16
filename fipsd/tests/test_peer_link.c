@@ -98,11 +98,42 @@ int peer_link_tests(void)
     CHECK(fipsd_active_peer_link_step(p, fips_test_instant(21), frame, &env, &out) == FIPS_OK);
     CHECK(out.count == 1 && out.items[0].kind == FIPS_REKEY_OUT_Reject && out.items[0].reason == FIPS_REKEY_REASON_Replay);
     fips_rekey_outputs_clear(&out); fips_aead_key_destroy(&recv);
-    fipsd_peer_table *table = fipsd_peer_table_create(1, (fipsd_peer_caps){0}, NULL, 0); CHECK(table);
+    fipsd_transport_caps limit = {.transport = {2}, .caps = {.peers = 1, .links = 1}};
+    fipsd_peer_table *table = fipsd_peer_table_create(2, (fipsd_peer_caps){0}, &limit, 1); CHECK(table);
     CHECK(fipsd_peer_table_insert(table, p) == FIPSD_ADMIT_OK);
     CHECK(!fipsd_peer_table_destroy(table));
     fips_node_addr node = peer_id(1).node_addr;
     CHECK(fipsd_peer_table_remove(table, &node) == FIPSD_ADMIT_BUSY);
+    /* Dispatcher may move an attached link, but cannot steal another peer's
+     * pair or overdraw its transport. Refusals leave endpoint AND ticket intact. */
+    fipsd_active_peer *other = new_peer(3, 2, 9); CHECK(other);
+    CHECK(fipsd_peer_table_insert(table, other) == FIPSD_ADMIT_OK);
+    fips_transport_addr taken = peer_addr(9), fresh = peer_addr(8);
+    CHECK(fipsd_peer_table_rebind(table, &node, (fips_transport_id){2}, &taken) == FIPSD_ADMIT_DUPLICATE);
+    CHECK(fipsd_peer_table_rebind(table, &node, (fips_transport_id){2}, &fresh) == FIPSD_ADMIT_TRANSPORT);
+    CHECK(fipsd_active_peer_info(p)->transport.value == 1 && fipsd_active_peer_info(p)->addr.bytes[0] == 1);
+    fips_node_addr other_node = peer_id(3).node_addr;
+    CHECK(fipsd_peer_table_remove(table, &other_node) == FIPSD_ADMIT_OK);
+    CHECK(fipsd_peer_table_publish(table));
+    GoRefPtr before = fipsd_peer_table_snapshot_load(table);
+    fips_rekey *machine = fipsd_active_peer_link_machine(p);
+    CHECK(fipsd_peer_table_rebind(table, &node, (fips_transport_id){2}, &fresh) == FIPSD_ADMIT_OK);
+    CHECK(fipsd_peer_table_endpoint(table, (fips_transport_id){2}, &fresh) == p);
+    CHECK(fipsd_active_peer_link_machine(p) == machine && fipsd_active_peer_link_attached(p));
+    CHECK(fipsd_active_peer_link_seal(p, fips_test_instant(21), &job) == FIPS_REKEY_SEAL_OK && job.counter == 3);
+    fips_rekey_sealed_clear(&job);
+    env.transport = 2;
+    CHECK(fipsd_active_peer_link_step(p, fips_test_instant(21),
+        (fips_rekey_input){.kind = FIPS_REKEY_IN_DataSent}, &env, &out) == FIPS_OK);
+    fips_rekey_outputs_clear(&out);
+    CHECK(fipsd_peer_table_publish(table));
+    GoRefPtr after = fipsd_peer_table_snapshot_load(table);
+    CHECK(((fipsd_peer_table_snapshot *)before.ptr)->peers[0].transport.value == 1);
+    CHECK(((fipsd_peer_table_snapshot *)after.ptr)->peers[0].transport.value == 2);
+    go_refptr_release(&before); go_refptr_release(&after);
+    /* Same-transport address changes use exactly the same ownership rule. */
+    CHECK(fipsd_peer_table_rebind(table, &node, (fips_transport_id){2}, &taken) == FIPSD_ADMIT_OK);
+    CHECK(!fipsd_peer_table_endpoint(table, (fips_transport_id){2}, &fresh));
     fips_rekey_carry carry;
     fipsd_active_peer_link_close(p, FIPS_REKEY_CLOSE_Shutdown, &out, &carry);
     size_t released = 0;

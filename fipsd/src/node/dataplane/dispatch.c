@@ -52,6 +52,26 @@ bool fipsd_dp_result(handlers *h, const fipsd_crypto_job *j)
             }
         } else {
             fipsd_transport *t = hs_transport(h, p->transport);
+            /* Workers only seal bytes. Resolve ordinary traffic on the
+             * dispatcher at completion, so a job queued before a switch cannot
+             * send via its captured old pair. Path control is deliberately
+             * addressed, but a released path must not send queued probes. */
+            if (rec && !p->farewell) {
+                if (p->path_message) {
+                    if (rec->path_live && fips_path_set_find(&rec->path->set, p->transport, &p->endpoint) == SIZE_MAX) {
+                        ++h->dataplane->stats.stale; return true;
+                    }
+                } else {
+                    const fipsd_peer_info *info = fipsd_active_peer_info(rec->peer);
+                    p->transport = info->transport; p->endpoint = info->addr;
+                }
+                t = hs_transport(h, p->transport);
+                uint16_t mtu = p->path_message && t ? t->ops->mtu(t, &p->endpoint) :
+                    fipsd_dp_link_mtu(h, rec, p->transport, &p->endpoint);
+                if (len > mtu) {
+                    fipsd_dp_reject_frame(h, FIPSD_DP_MTU); return true;
+                }
+            }
             ok = t && t->ops->send(t, &p->endpoint, p->output, len) == 0;
             if (ok) {
                 ++h->counters.frames_sent;

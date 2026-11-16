@@ -50,6 +50,33 @@ static void forwarding(void)
     assert(out.kind == FIPS_ROUTE_Forward && !memcmp(out.next_hop.bytes, peer.bytes, 16));
     fips_writer_init(&w, bytes, sizeof bytes);
     assert(fipsd_dp_forward(&s, &router, &dg, &peer, false, fips_test_instant(0), scratch, view, &w, &out) == FIPS_OK && out.kind == FIPS_ROUTE_NoRoute);
+    /* Switch-time tightening uses this same outgoing route, including transit
+     * destinations. An unrelated session's inbound carrier is NOT its route. */
+    handlers *h = calloc(1, sizeof *h); assert(h);
+    fips_test_clock clock = {0}; h->clock = fips_test_clock_adapter(&clock); h->me = me;
+    fipsd_dataplane plane = {.current = {.ptr = &s}, .coord_scratch = scratch, .route_peers = view, .clamp_capacity = 3};
+    plane.clamps = calloc(3, sizeof *plane.clamps); assert(plane.clamps); h->dataplane = &plane;
+    h->sessions.capacity = 3;
+    h->session_entries = calloc(3, sizeof *h->session_entries); h->session_ext = calloc(3, sizeof *h->session_ext);
+    assert(h->session_entries && h->session_ext);
+    fips_node_addr destinations[] = {peer, remote, {{4}}};
+    for (size_t i = 0; i < 3; ++i) {
+        h->session_entries[i].occupied = true; h->session_entries[i].peer = destinations[i];
+        h->session_ext[i].used = h->session_ext[i].mmp_live = true;
+        h->session_ext[i].carrier = peer;
+        fips_mmp_path_mtu_init(&h->session_ext[i].mmp.path_mtu);
+        fips_mmp_path_mtu_seed_source_mtu(&h->session_ext[i].mmp.path_mtu, 1400);
+    }
+    fipsd_dp_mtu_set(&plane, &peer, 900); /* an already tighter destination clamp survives */
+    fipsd_dp_tighten_via(h, &peer, 1100);
+    assert(h->session_ext[0].mmp.path_mtu.current_mtu == 1100);
+    assert(h->session_ext[1].mmp.path_mtu.current_mtu == 1100);
+    assert(h->session_ext[2].mmp.path_mtu.current_mtu == 1400);
+    assert(fipsd_dp_mtu_get(&plane, &peer) == 900 && fipsd_dp_mtu_get(&plane, &remote) == 1100);
+    assert(!fipsd_dp_mtu_get(&plane, &destinations[2]));
+    fipsd_dp_tighten_via(h, &peer, 1280);
+    assert(h->session_ext[0].mmp.path_mtu.current_mtu == 1100 && h->session_ext[1].mmp.path_mtu.current_mtu == 1100);
+    free(h->session_entries); free(h->session_ext); free(plane.clamps); free(h);
     cached.expires = 0;
     assert(fipsd_dp_forward(&s, &router, &dg, NULL, false, fips_test_instant(0), scratch, view, &w, &out) == FIPS_OK && out.kind == FIPS_ROUTE_NoRoute);
     go_refptr_release(&s.my_coords); go_refptr_release(&peers[0].coords);

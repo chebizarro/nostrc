@@ -75,13 +75,19 @@ static void run_outputs(handlers *h, peer_rec *rec, fips_path_outputs *out)
             break;
         }
         case FIPS_PATH_OUTPUT_Switched: {
-            ++h->counters.path_switched;
             fipsd_peer_admission a = fipsd_peer_table_rebind(h->peers->table, &rec->addr, o->to.transport, &o->to.addr);
-            /* TODO(multipath-peer-rebind follow-up): table.c refuses changing
-             * transport on an attached link. Match upstream Run::switched
-             * semantics before asserting the peer's send endpoint follows this
-             * Bundle switch; do not confuse path_show with dataplane proof. */
-            if (a != FIPSD_ADMIT_OK) FIPSD_WARN(HMOD, "path switch rebind refused (%d)", (int)a);
+            if (a != FIPSD_ADMIT_OK) {
+                /* The Bundle already switched. Do not keep a live link whose
+                 * send pair disagrees with it (or steal another link's pair). */
+                FIPSD_WARN(HMOD, "path switch rebind refused (%d)", (int)a);
+                hs_remove_peer(h, rec, FIPS_REKEY_CLOSE_Admin, false, FIPS_FMP_ResourceExhaustion);
+                return;
+            }
+            if (!fipsd_dp_peer_rebind(h, rec)) {
+                hs_remove_peer(h, rec, FIPS_REKEY_CLOSE_Admin, false, FIPS_FMP_ResourceExhaustion);
+                return;
+            }
+            ++h->counters.path_switched;
             fipsd_node_notice n = {.kind = FIPSD_NOTICE_PATH_EVENT, .peer = rec->addr, .value = 1};
             hs_notice_full(h, &n, NULL, 0);
             hs_mark_dirty(h);
@@ -95,7 +101,18 @@ static void run_outputs(handlers *h, peer_rec *rec, fips_path_outputs *out)
         case FIPS_PATH_OUTPUT_Orphaned:
             hs_remove_peer(h, rec, FIPS_REKEY_CLOSE_LinkDead, false, FIPS_FMP_TransportFailure);
             return;
-        case FIPS_PATH_OUTPUT_Proven: hs_host_link_mtu_changed(h, (uint16_t)(o->as.mtu > UINT16_MAX ? UINT16_MAX : o->as.mtu)); break;
+        case FIPS_PATH_OUTPUT_Proven: {
+            const fipsd_peer_info *info = fipsd_active_peer_info(rec->peer);
+            fipsd_transport *t = hs_transport(h, o->to.transport);
+            /* As upstream reseed: standby proofs wait until that path becomes
+             * active; connection-oriented paths use their transport MTU. */
+            if (t && !t->ops->connect_async && fips_transport_id_equal(info->transport, o->to.transport) &&
+                fips_transport_addr_equal(&info->addr, &o->to.addr) && !fipsd_dp_peer_rebind(h, rec)) {
+                hs_remove_peer(h, rec, FIPS_REKEY_CLOSE_Admin, false, FIPS_FMP_ResourceExhaustion);
+                return;
+            }
+            break;
+        }
         default: break; /* Moved/Released driver slots are unused; state/capability notices are diagnostic */
         }
     }
