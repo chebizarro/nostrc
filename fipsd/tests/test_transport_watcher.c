@@ -15,6 +15,7 @@ typedef struct fixture {
     fipsd_bind_result result;
     uint64_t bind_delay;
     _Atomic uint64_t time, binds, unbinds, generation;
+    _Atomic int medium;
 } fixture;
 static uint64_t fake_now(void *p) { return atomic_load(&((fixture *)p)->time); }
 static fipsd_bind_result bind_fake(void *arg, fipsd_runtime *rt, GoChannel *stop,
@@ -117,7 +118,7 @@ static fipsd_presence_facts watcher_read(void *arg)
 {
     fixture *f = arg; GoRefPtr ref = fipsd_netmon_snapshot(f->netmon);
     fipsd_presence_facts facts = fipsd_presence_from_snapshot(ref.ptr, "fake0");
-    facts.medium = FIPS_PATH_Wireless; go_refptr_release(&ref); return facts;
+    facts.medium = (fips_path_medium)atomic_load(&f->medium); go_refptr_release(&ref); return facts;
 }
 static void forward(fipsd_netmon *m, fipsd_watcher *w)
 {
@@ -158,7 +159,7 @@ static void actor(void)
     GoChannel *binder_ticks = go_channel_create(1), *events = go_channel_create(8);
     assert(reads && wake && ticks && binder_ticks && events);
     fipsd_netmon_source ns = {.injected = true, .read = net_read, .user = reads, .wake = wake, .ticks = ticks};
-    fixture f = {0}; f.netmon = fipsd_netmon_create(&ns); assert(f.netmon);
+    fixture f = {.medium = FIPS_PATH_Wireless}; f.netmon = fipsd_netmon_create(&ns); assert(f.netmon);
     fipsd_transport t = {.name = "test", .interface_name = "fake0"};
     fipsd_transport_shared s; fipsd_transport_shared_init(&t, &s, false);
     fipsd_binder_ops ops = {bind_fake, unbind_fake, &f};
@@ -173,6 +174,16 @@ static void actor(void)
     assert(go_channel_send(reads, sample(true, 42)) == 0); assert(go_channel_send(wake, &f) == 0);
     forward(f.netmon, w); presence_event(events, FIPSD_TRANSPORT_BECAME_PRESENT);
     assert(fipsd_presence_snapshot(&s.presence).interface.index == 42);
+    const fips_path_medium media[] = {FIPS_PATH_Wired, FIPS_PATH_Wireless, FIPS_PATH_Unknown, FIPS_PATH_Wired};
+    for (size_t i = 0; i < sizeof media / sizeof media[0]; ++i) {
+        atomic_store(&f.medium, media[i]);
+        fipsd_netmon_event changed = {.kind = FIPSD_INTERFACE_ADDR_CHANGE, .interface_name = "fake0"};
+        fipsd_watcher_network_changed(w, &changed);
+        presence_event(events, FIPSD_TRANSPORT_MEDIUM_CHANGED);
+        assert(fipsd_transport_medium(&t) == media[i]);
+        assert(atomic_load(&f.binds) == 1 && !atomic_load(&f.unbinds));
+    }
+
     atomic_store(&f.time, 11000);
     assert(go_channel_send(reads, sample(false, 0)) == 0); assert(go_channel_send(ticks, &f) == 0);
     forward(f.netmon, w); presence_event(events, FIPSD_TRANSPORT_BECAME_ABSENT);

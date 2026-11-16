@@ -47,6 +47,7 @@ int fipsd_watcher_step(fipsd_watcher *w, fipsd_presence_facts f, uint64_t now)
     bool gone = f.valid && (!f.exists || !f.up);
     bool replaced = f.valid && w->bound && (f.index != w->binding.index ||
         (f.has_mac && w->binding.has_mac && memcmp(f.mac, w->binding.mac, 6)));
+    bool medium_changed = f.valid && f.medium != fipsd_presence_snapshot(p).interface.medium;
     if (f.valid) fipsd_presence_observe(p, f);
     if (w->bound) {
         if (gone || replaced || dead) {
@@ -62,6 +63,9 @@ int fipsd_watcher_step(fipsd_watcher *w, fipsd_presence_facts f, uint64_t now)
             w->streak = 0;
             if (!w->announced) { w->announced = true; return publish(w, true); }
         }
+        if (medium_changed && w->events)
+            return fipsd_transport_emit(w->events, fipsd_runtime_context(w->runtime), w->stop,
+                FIPSD_TRANSPORT_MEDIUM_CHANGED, w->transport->id, NULL, NULL, 0);
         return 0;
     }
     fipsd_presence_view v = fipsd_presence_snapshot(p);

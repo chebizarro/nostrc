@@ -166,7 +166,16 @@ static void dispatch(void *arg)
                     notify(n, e->kind == FIPSD_TRANSPORT_EXITED ? FIPSD_NODE_EXITED :
                         e->kind == FIPSD_TRANSPORT_BECAME_ABSENT ? FIPSD_NODE_ABSENT : FIPSD_NODE_PRESENT,
                         n->transport_offset + i);
-            } else if (!failed) failed = !n->options.transport_event || !n->options.transport_event(user, e);
+            } else if (e->kind != FIPSD_TRANSPORT_MEDIUM_CHANGED && !failed)
+                failed = !n->options.transport_event || !n->options.transport_event(user, e);
+            if (!failed && n->options.network_event &&
+                (e->kind == FIPSD_TRANSPORT_BECAME_PRESENT || e->kind == FIPSD_TRANSPORT_BECAME_ABSENT ||
+                 e->kind == FIPSD_TRANSPORT_MEDIUM_CHANGED)) {
+                fipsd_netmon_event facts = {.transport = e->id,
+                    .kind = e->kind == FIPSD_TRANSPORT_BECAME_PRESENT ? FIPSD_BINDING_UP :
+                        e->kind == FIPSD_TRANSPORT_BECAME_ABSENT ? FIPSD_BINDING_DOWN : FIPSD_BINDING_MEDIUM_CHANGED};
+                n->options.network_event(user, &facts);
+            }
             free(e);
         } else if (selected == 2) {
             fipsd_netmon_event *e = value;

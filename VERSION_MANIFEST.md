@@ -1723,3 +1723,7 @@ initial daemon. tools/fips-vectors stays **0.1.0** (test-only oracle family,
 no shipped artifact). libnostr stays **2.4.0 Unreleased**: two additive kind
 constants fold into that unreleased MINOR; 10050 already exists. libfips-core,
 NIP libraries and wire versions are unchanged; no published release/tag change.
+
+nostrc-gfi8h.8: fipsd remains **0.1.0 Unreleased**; internal detected-medium
+path preference and dispatcher notifications fold into the initial unreleased
+artifact. No public wire/API or core semantics change; libfips-core is unchanged.
