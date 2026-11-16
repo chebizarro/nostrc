@@ -416,6 +416,21 @@ These are tracking-ready notes, **not** reports already submitted upstream:
   Do not build channel binding/exporters on `h`. Restoring Noise transcript
   binding requires a **versioned upstream interoperability change**, never an
   uncoordinated C-only correction.
+- **H1 — restart replay evicts a live link before freshness is proved**
+  (`docs/reviews/fips-port-security-review-2026-11-15.md`, `nostrc-f66sr.7`).
+  Upstream `core/src/proto/fmp/core.rs` (`establish_inbound`) maps any known,
+  *different* startup epoch to `RestartThenPromote`, and
+  `src/node/handlers/handshake.rs` removes the existing connection before
+  answering msg2, gated only by an idle/dampener heuristic. IK msg1 decryption
+  authenticates the recorded static identity, not current possession: a captured
+  msg1 from an earlier epoch displaces the healthy current link, and recordings
+  from two epochs can alternate it. Epochs are opaque random values, so numeric
+  ordering is not a fix. The C core decision and wire bytes are deliberately
+  **unchanged**; fipsd holds the candidate (own index, msg2 answered, bounded,
+  one per peer) and evicts only once a frame authenticates under the fresh
+  msg2's keys. Report upstream: defer connection replacement to key
+  confirmation/first authenticated frame, keep legitimate restart and
+  retransmission semantics, and treat retired-epoch memory as supplementary.
 
 ## Node bookkeeping port (nostrc-u50yr.4)
 

@@ -20,6 +20,7 @@ bool fipsd_dp_rx(handlers *h, const fipsd_transport_event *e)
     }
     fips_fmp_encrypted_header header;
     if (!fips_fmp_encrypted_header_parse(e->bytes, e->size, &header)) return true;
+    if (hs_restart_frame(h, t, &e->address, e->bytes, e->size, &header)) return true;
     peer_rec *rec = hs_index_lookup(h, e->id.value, header.receiver_idx.value);
     if (!rec) { fipsd_dp_reject_frame(h, FIPSD_DP_UNKNOWN_INDEX); return true; }
     (void)fipsd_dp_open(h, rec, NULL, e->id, &e->address, e->bytes, e->size);

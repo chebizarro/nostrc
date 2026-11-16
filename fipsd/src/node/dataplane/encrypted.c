@@ -24,7 +24,7 @@ fipsd_dp_packet *fipsd_dp_packet_take(fipsd_dataplane *d)
                 memory_order_acquire, memory_order_relaxed)) continue;
         p->plane = d; p->snapshot = d->current; go_refptr_retain(&p->snapshot);
         p->job = (fipsd_crypto_job){.owner = p, .recycle = recycle};
-        p->session = p->ce = p->prompt = p->farewell = p->path_message = false;
+        p->session = p->ce = p->prompt = p->farewell = p->path_message = p->restart = false;
         return p;
     }
     ++d->stats.backpressure; return NULL;

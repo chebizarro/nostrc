@@ -8,8 +8,8 @@
  * uses production IK and AEAD, but deliberately controls possession, restart,
  * replay and msg2 release. No state is read across dispatcher ownership. */
 typedef struct hf_state {
-    size_t peers, indices, bindings, legs;
-    uint64_t sent, promoted, next_link;
+    size_t peers, indices, bindings, legs, restart_pending;
+    uint64_t sent, promoted, next_link, restarts, frames_in;
     fipsd_active_peer *peer;
     fipsd_peer_info info;
     fips_noise_session keys;

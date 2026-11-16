@@ -19,9 +19,10 @@ void hf_state_read(handshake_fixture *f, hf_state *s)
     for (size_t i = 0; i < h->cfg.peer_capacity; ++i) s->legs += h->legs[i].used;
     s->sent = fipsd_loopback_transport_sent(f->server);
     s->promoted = h->counters.hs_promoted; s->next_link = h->next_link_id;
+    s->restart_pending = h->restart_pending; s->restarts = h->counters.hs_restart;
     peer_rec *r = hs_rec_find(h, &f->remote.node_addr);
     if (r) {
-        s->peer = r->peer; s->info = *fipsd_active_peer_info(r->peer);
+        s->peer = r->peer; s->info = *fipsd_active_peer_info(r->peer); s->frames_in = r->frames_in;
         const fips_noise_session *keys = fips_rekey_keys(fipsd_active_peer_link_machine(r->peer), FIPS_REKEY_Current);
         assert(keys); s->keys = *keys;
     }
