@@ -24,11 +24,18 @@ Per role assignment the harness proves, in order:
    complementary `is_initiator` flags.
 4. Datagrams: Rust->C application datagrams through the Rust native datagram
    API, receipt verified by C's `native` counters (datagram and byte counts
-   equal to what was written). C->Rust session traffic through a C probe
+   equal to what was written) and by a C client over libfipsnative holding
+   the port on fipsd's native API, which prints the bytes it accepted. C->Rust
+   application datagrams: that C client answers each flow with a datagram the
+   harness reads back off the Rust flow's descriptor, and Rust's
+   `show_native_flows` `received_datagrams`/`received_bytes` confirm receipt
+   (the direction the nostrc-f66sr.1 gate could not verify). Optionally
+   (`--rust-echo`), upstream's own Rust client (the `native-echo` example
+   built from the pinned tree) holds a port on fipsd's native API and echoes
+   a datagram the Rust daemon's client sent through fipsd, closing the loop in
+   the other direction. Session traffic both ways through a C probe
    (CoordsWarmup and MMP reports over the session; Rust's session
-   `packets_recv` rises and C records RTT samples) and Rust->C through a
-   Rust probe. fipsd has no native API yet (Tier B4), so no C->Rust
-   *application* datagram exists to send; README records this boundary.
+   `packets_recv` rises and C records RTT samples) and a Rust probe.
 5. One rekey cycle each for the FSP session and the FMP link, driven by
    `node.rekey.after_secs` (25 s, so with the 15 s jitter the first session
    rekey falls 10-40 s after establishment; links apply the 45 s floor and the
@@ -37,7 +44,8 @@ Per role assignment the harness proves, in order:
    `current_k_bit`), the session count stays one, then traffic flows under
    the new keys in both directions.
 6. Clean shutdown: SIGTERM -> exit 0 for both, no sanitizer report in either
-   log, both daemons' control sockets and the Rust API socket unlinked.
+   log or in the C client's, both daemons' control sockets and both native
+   API sockets unlinked.
 
 Exit 0 on success, 77 (CTest SKIP) when no Rust daemon is supplied, 1 on
 failure with both daemons' complete logs and the last observations printed.
@@ -199,6 +207,13 @@ class NativeFlow:
         if sent != len(payload):
             raise Failure(f'short write on the native flow: {sent} of {len(payload)}')
 
+    def recv(self):
+        """One datagram off the flow's descriptor, under the socket's deadline."""
+        try:
+            return self.sock.recv(65536)
+        except socket.timeout:
+            raise Failure('no datagram arrived on the Rust native flow in time')
+
     def close(self):
         self.sock.close()
 
@@ -234,6 +249,10 @@ class Scenario:
         self.lines = []
         self.flow = None
         self.sent_payloads = []
+        self.rust_received = []  # every datagram the Rust daemon's flows received through fipsd
+        self.reply_payload = b'nostrc fipsd -> fips (rust) via libfipsnative'
+        self.tool = None
+        self.echo = None
 
     # -- infrastructure -----------------------------------------------------
     def note(self, line):
@@ -270,8 +289,8 @@ class Scenario:
     def start(self):
         af = socket.AF_INET6 if self.family == 6 else socket.AF_INET
         c_port, rust_port = reserve_port(af), reserve_port(af)
-        r_sock, r_api, c_sock = (self.root / f'r{self.tag}.sock', self.root / f'r{self.tag}a.sock',
-                                 self.root / f'c{self.tag}.sock')
+        r_sock, r_api, c_sock, c_api = (self.root / f'r{self.tag}.sock', self.root / f'r{self.tag}a.sock',
+                                        self.root / f'c{self.tag}.sock', self.root / f'c{self.tag}a.sock')
         rust_config = self.root / f'rust-{self.tag}.yaml'
         rust_config.write_text(f'''
 node:
@@ -289,6 +308,7 @@ transports:
 node:
   identity: {{nsec: '{'1' * 64}', persistent: false}}
   control: {{enabled: true, socket_path: '{c_sock}'}}
+  native_api: {{enabled: true, socket_path: '{c_api}'}}
   rekey: {{after_secs: {self.args.rekey_after_secs}}}
 tun: {{enabled: false}}
 dns: {{enabled: false}}
@@ -300,15 +320,28 @@ transports:
         c = Daemon('c', [self.args.fipsd, '-c', str(c_config)], self.env, self.root)
         self.nodes['c'] = Node('c', c, c_sock)
         self.api_path = r_api
+        self.c_api_path = c_api
         self.ports = {'rust': rust_port, 'c': c_port}
         deadline = time.monotonic() + self.args.startup_timeout
         rust.await_log('control socket listening', deadline)
         c.await_log('fipsd running', deadline)
+        c.await_log('native api socket listening', deadline)
         for node in self.nodes.values():
             status = self.wait(f'{node.name} show_status', deadline, lambda n=node: n.query('show_status'))
             node.npub, node.node_addr = status['npub'], status['node_addr']
             self.note(f'{node.name}: npub={node.npub} node_addr={node.node_addr} udp={self.host(self.ports[node.name])}')
         self.other = {'c': self.nodes['rust'], 'rust': self.nodes['c']}
+        # The C client over libfipsnative holds the port the Rust flow targets on
+        # fipsd's native API: it prints each datagram it accepts and answers it.
+        self.tool = Daemon('c-client', [self.args.native_tool, 'serve', str(c_api), str(self.args.remote_port),
+                                        self.reply_payload.hex()], self.env, self.root)
+        self.tool.await_log(f'holding port {self.args.remote_port}', deadline)
+        self.note(f'c-client (libfipsnative) holding port {self.args.remote_port} on {c_api}')
+        if self.args.rust_echo:
+            # Upstream's Rust client, unmodified, on fipsd's native API.
+            self.echo = Daemon('rust-echo', [self.args.rust_echo, str(c_api), str(self.args.echo_port)], self.env, self.root)
+            self.echo.await_log(f'holding port {self.args.echo_port}', deadline)
+            self.note(f'rust-echo (pinned fips::native::client) holding port {self.args.echo_port} on {c_api}')
 
     # -- 1. IK link -----------------------------------------------------------
     def link(self):
@@ -416,6 +449,42 @@ transports:
                           time.monotonic() + self.args.session_timeout, delivered)
         self.note(f'C native counters before={before["received_datagrams"]}/{before["received_bytes"]} '
                   f'after={after["received_datagrams"]}/{after["received_bytes"]}')
+        # The C client accepted the flow fipsd announced and read the bytes.
+        self.tool.await_log(f'received {payload.hex()}', time.monotonic() + self.args.session_timeout)
+        self.note(f'{what}: c-client accepted the flow and read {len(payload)} bytes')
+        # C->Rust: the C client's reply crosses fipsd, the wire and the Rust
+        # daemon to the Rust flow's descriptor, and Rust counts it.
+        got = self.flow.recv()
+        if got != self.reply_payload:
+            raise Failure(f'the C client\'s reply arrived as {got!r}, expected {self.reply_payload!r}')
+        self.note(f'C->Rust datagram: {len(got)} bytes from the C client read off the Rust flow')
+        self.rust_received.append(got)
+        want_in, want_in_bytes = len(self.rust_received), sum(map(len, self.rust_received))
+
+        def rust_received():
+            stats = self.nodes['rust'].query('show_native_flows')['stats']
+            if stats['received_datagrams'] < want_in:
+                raise NotYet(stats)
+            if stats['received_datagrams'] != want_in or stats['received_bytes'] != want_in_bytes:
+                raise Failure(f'Rust native stats {stats} do not match {want_in} C->Rust datagram(s)/{want_in_bytes} byte(s)')
+            return stats
+
+        stats = self.wait(f'Rust show_native_flows counts {want_in} received datagram(s) from C',
+                          time.monotonic() + self.args.session_timeout, rust_received)
+        self.note(f'Rust native stats: received {stats["received_datagrams"]}/{stats["received_bytes"]}')
+        # The C client closed the served flow; wait for fipsd to release it so
+        # the next datagram announces a fresh flow rather than landing on a
+        # half-closed one.
+        self.tool.await_log('closed', time.monotonic() + self.args.session_timeout)
+
+        def c_released():
+            flows = self.nodes['c'].query('show_native_flows')['flows']
+            held = [f for f in flows if f['local_port'] == self.args.remote_port]
+            if held:
+                raise NotYet(held)
+            return flows
+
+        self.wait('C released the served flow', time.monotonic() + self.args.session_timeout, c_released)
 
         def rust_flow_listed():
             # The flow list is Rust's tick-published view; its counters are live.
@@ -550,6 +619,22 @@ transports:
         # Session traffic in both directions over the live session.
         self.probe(c, expect_preexisting=True)
         self.probe(rust, expect_preexisting=True)
+        if self.echo:
+            # Rust daemon's client -> fipsd -> upstream's Rust client (echo) -> fipsd -> Rust daemon.
+            echo_flow = NativeFlow(self.api_path, c.npub, self.args.echo_port)
+            payload = b'echo me through the pinned rust client on fipsd'
+            echo_flow.send(payload)
+            got = echo_flow.recv()
+            echo_flow.close()
+            if got != payload:
+                raise Failure(f'the Rust echo client on fipsd returned {got!r}, expected {payload!r}')
+            self.echo.await_log(f'returned {len(payload)} bytes', time.monotonic() + self.args.session_timeout)
+            self.note(f'rust-echo on fipsd returned {len(got)} bytes to the Rust daemon\'s flow')
+            # C's native counters saw this datagram too (it was accepted by
+            # the echo client) and Rust's received the echo, so the
+            # exact-count checks must expect both.
+            self.sent_payloads.append(payload)
+            self.rust_received.append(got)
 
     # -- 5. rekey ---------------------------------------------------------------
     def rekey(self):
@@ -605,6 +690,12 @@ transports:
         failures = []
         if self.flow:
             self.flow.close()
+        for helper in (self.tool, self.echo):
+            if not helper:
+                continue
+            helper.stop(self.args.shutdown_timeout)
+            if helper.sanitizer_report():
+                failures.append(f'{helper.name} log carries a sanitizer report')
         for name in ('c', 'rust'):
             node = self.nodes.get(name)
             if not node:
@@ -620,6 +711,8 @@ transports:
                 failures.append(f'{name} left its control socket {node.control} behind')
         if hasattr(self, 'api_path') and self.api_path.exists():
             failures.append(f'rust left its native API socket {self.api_path} behind')
+        if hasattr(self, 'c_api_path') and self.c_api_path.exists():
+            failures.append(f'c left its native API socket {self.c_api_path} behind')
         return failures
 
     def run(self):
@@ -655,6 +748,11 @@ def main():
                     help='node.rekey.after_secs for both daemons: with the 15 s jitter the first session '
                          'rekey falls 10-40 s after establishment, after the probes above have finished')
     ap.add_argument('--remote-port', type=int, default=4242)
+    ap.add_argument('--native-tool', default=os.environ.get('FIPSD_NATIVE_CLIENT_TOOL', ''),
+                    help='fipsd_native_client_tool, the C client over libfipsnative (required)')
+    ap.add_argument('--rust-echo', default=os.environ.get('FIPSD_UDP_INTEROP_RUST_ECHO', ''),
+                    help='optional native-echo client built from the pinned Rust tree; runs on fipsd\'s native API')
+    ap.add_argument('--echo-port', type=int, default=4600)
     ap.add_argument('--startup-timeout', type=float, default=30)
     ap.add_argument('--link-timeout', type=float, default=30)
     ap.add_argument('--session-timeout', type=float, default=30)
@@ -671,6 +769,14 @@ def main():
     if not args.rust or not Path(args.rust).is_file():
         print('SKIP: set FIPSD_UDP_INTEROP_RUST_BINARY to a fips daemon built from the libfips-core/UPSTREAM.md pin')
         return 77
+    args.native_tool = args.native_tool or os.environ.get('FIPSD_NATIVE_CLIENT_TOOL', '')
+    if not args.native_tool or not Path(args.native_tool).is_file():
+        print('FAIL: --native-tool (FIPSD_NATIVE_CLIENT_TOOL) must name the built fipsd_native_client_tool', file=sys.stderr)
+        return 1
+    args.rust_echo = args.rust_echo or os.environ.get('FIPSD_UDP_INTEROP_RUST_ECHO', '')
+    if args.rust_echo and not Path(args.rust_echo).is_file():
+        print(f'FAIL: --rust-echo names no file: {args.rust_echo}', file=sys.stderr)
+        return 1
     root = os.environ.get('FIPSD_TEST_TMPDIR')
     if root:
         root = Path(root)

@@ -313,6 +313,8 @@ struct fipsd_node_handlers {
     bool dirty;
     GoChannel *commands, *notices;
     uint64_t snapshot_generation;
+    /* Native datagram API sink (handlers.h); loaded on every delivery. */
+    _Atomic(GoChannel *) native_sink;
 };
 
 /* handlers.c */

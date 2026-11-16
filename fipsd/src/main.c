@@ -17,6 +17,7 @@
 #include "tun/status.h"
 #include "ipv6/shim.h"
 #include <fips/proto/framing.h>
+#include "native/api.h"
 #include "transport/udp/udp.h"
 #include "transport/tcp/tcp.h"
 #include "nostr/runtime.h"
@@ -187,6 +188,11 @@ int main(int argc, char **argv)
         shim = fipsd_ipv6_shim_create(&shim_config);
         if (shim) fipsd_tun_service_set_shim(&tun_service, shim);
     }
+    /* Native datagram API (nostrc-9nxwk.4): off by default; layers its
+     * flows and listeners onto the control snapshot for show_native_flows. */
+    bool native_enabled = fipsd_config_bool(fipsd_config_get(config, "node.native_api.enabled"));
+    fipsd_native_api *native = native_enabled && node && handlers ? fipsd_native_api_create(snapshots, node, handlers) : NULL;
+    if (native) provider = fipsd_native_api_provider(native, provider);
     fipsd_control_service_init(&control, snapshots, handlers ? &provider : NULL);
     bool control_enabled = fipsd_config_bool(fipsd_config_get(config, "node.control.enabled"));
     bool nostr_enabled = fipsd_config_bool(fipsd_config_get(config, "node.rendezvous.nostr.enabled"));
@@ -214,6 +220,7 @@ int main(int argc, char **argv)
                fipsd_runtime_register(rt, &service.subsystem) != 0 ||
                fipsd_runtime_register(rt, node_subsystem) != 0 ||
                (tun && fipsd_runtime_register(rt, &tun_service.subsystem) != 0) ||
+               (native_enabled && (!native || fipsd_runtime_register(rt, fipsd_native_api_subsystem(native)) != 0)) ||
                (nostr_enabled && (!rendezvous || fipsd_runtime_register(rt, fipsd_nostr_runtime_subsystem(rendezvous)) != 0)) ||
                (control_enabled && fipsd_runtime_register(rt, &control.subsystem) != 0) ||
                fipsd_runtime_start(rt) != 0) {
@@ -237,6 +244,7 @@ int main(int argc, char **argv)
     }
     fipsd_runtime_destroy(rt);
     fipsd_ipv6_shim_destroy(shim);
+    fipsd_native_api_destroy(native);
     fipsd_tun_destroy(tun);
     fipsd_nostr_runtime_destroy(rendezvous);
     fipsd_node_destroy(node);

@@ -215,7 +215,8 @@ void hs_metrics_refresh(handlers *h)
     fipsd_metrics_set(&h->metrics, FIPSD_METRIC_bloom_sent, c->bloom_sent);
     fipsd_metrics_set(&h->metrics, FIPSD_METRIC_bloom_invalid, c->bloom_refused);
     fipsd_metrics_set(&h->metrics, FIPSD_METRIC_bloom_send_failed, c->bloom_send_failed);
-    fipsd_metrics_set(&h->metrics, FIPSD_METRIC_native_received_datagrams, c->native_delivered);
+    /* native.received_* are added at delivery (hs_native_deliver) or by the
+     * native API's own dispatch, never set from a dispatcher count. */
     fipsd_metrics_set(&h->metrics, FIPSD_METRIC_session_setup_rate_limited, c->sess_setup_rate_limited);
 }
 
