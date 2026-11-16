@@ -31,19 +31,14 @@ static session_ext *ext_init(handlers *h, fips_session_entry *entry, const fips_
         initiator, x->owd, 64) == FIPS_OK;
     return x;
 }
-/* Destination coordinates: a direct peer's tree position, else the cache. */
-/* forwarding.rs try_warm_coord_cache/warm_coord: a session setup's source
- * coordinates warm the coordinate cache as an unverified hint, so the answer
- * can be routed back to an initiator this node never looked up (one or more
- * tree hops away); a verified entry is never replaced by the hint. */
-static void warm_coords(handlers *h, const fips_node_addr *key, const fips_fsp_coords *coords)
+/* Setup return-route hint entrypoint, shared with transit coordinate intake.
+ * This is not a session-authenticated statement: existing verified coordinates
+ * are preserved, and the authenticated carrier funds bounded hint placement. */
+static void warm_coords(handlers *h, peer_rec *from, const fips_node_addr *key, const fips_fsp_coords *coords)
 {
-    if (!coords->count || coords->count > FIPS_CACHED_COORD_MAX_ENTRIES || !memcmp(key->bytes, h->me.bytes, 16)) return;
-    fips_cached_coord cc;
-    if (fips_cached_coord_from_addrs(&cc, (const uint8_t (*)[16])coords->addrs, coords->count) != FIPS_OK) return;
-    fips_hint_outcome outcome;
-    (void)fips_coord_cache_insert(&h->cache, key->bytes, &cc, hs_now(h), &outcome);
+    fipsd_dp_hint(h, from, key, *coords);
 }
+/* Destination coordinates: a direct peer's tree position, else the cache. */
 static bool dest_coords(handlers *h, const fips_node_addr *dest, session_ext *x)
 {
     const fips_tree_coordinate *c = hs_tree_peer_coords(h, dest);
@@ -268,7 +263,7 @@ static void setup_received(handlers *h, peer_rec *rec, const fips_session_datagr
     x->carrier = rec->addr;
     for (size_t i = 0; i < msg.src_coords.count; ++i) memcpy(x->dest_coords[i].bytes, msg.src_coords.addrs + 16 * i, 16);
     x->dest_count = msg.src_coords.count; x->has_dest_coords = true;
-    warm_coords(h, &dg->src_addr, &msg.src_coords);
+    warm_coords(h, rec, &dg->src_addr, &msg.src_coords);
     (void)hs_session_execute(h, entry, frame, len);
     hs_mark_dirty(h);
 }

@@ -298,6 +298,19 @@ bool hs_session_execute(handlers *h, fips_session_entry *entry, const uint8_t *i
     session_ext *ext = hs_session_ext(h, entry);
     link_exec_result r = {0};
     exec_ctx x = {.h = h, .entry = entry, .ext = ext, .result = &r};
+    /* The successful XK msg2 authenticates the session peer's coordinate
+     * statement. Store it before the executor routes msg3 and held data. */
+    bool installed = false;
+    for (size_t i = 0; i < h->session_out.count; ++i)
+        if (h->session_out.items[i].kind == FIPS_REKEY_OUT_Installed) installed = true;
+    fips_fsp_common_prefix prefix;
+    if (installed && input && fips_fsp_common_prefix_parse(input, len, &prefix) && prefix.phase == FIPS_FSP_PHASE_MSG2) {
+        fips_reader reader; fips_reader_init(&reader, input + FIPS_FRAMING_FSP_COMMON_PREFIX_SIZE,
+            len - FIPS_FRAMING_FSP_COMMON_PREFIX_SIZE);
+        fips_fsp_session_ack ack;
+        if (fips_fsp_session_ack_decode_strict(&reader, &ack, NULL) == FIPS_OK)
+            fipsd_dp_stated(h, &entry->peer, ack.src_coords);
+    }
     fips_session_executor exec = {.ctx = &x, .coords = coords, .send = send_wire, .effect = effect,
         .release = release_index, .prompt = prompt_worker, .wire = h->session_exec_wire, .capacity = sizeof h->session_exec_wire};
     fips_status s = fips_session_execute(&entry->machine, hs_now(h), &h->session_out, input, len, &exec);
@@ -316,6 +329,16 @@ bool hs_session_execute(handlers *h, fips_session_entry *entry, const uint8_t *i
         hs_mark_dirty(h);
     }
     if (r.delivered && entry->occupied && input && r.end <= len && r.begin <= r.end) {
+        /* Only after AEAD AND replay admission: plaintext CP fields at the
+         * endpoint are never accepted by the transit warming path. */
+        fips_fsp_encrypted_header header;
+        if (fips_fsp_encrypted_header_parse(input, len, &header) && fips_fsp_encrypted_header_has_coords(&header)) {
+            fips_reader reader; fips_reader_init(&reader, input + FIPS_FRAMING_FSP_HEADER_SIZE,
+                len - FIPS_FRAMING_FSP_HEADER_SIZE);
+            fips_fsp_coords src, dest;
+            if (fips_fsp_parse_encrypted_coords(&reader, &src, &dest, NULL) == FIPS_OK)
+                fipsd_dp_stated(h, &entry->peer, src);
+        }
         if (r.end - r.begin <= sizeof h->msg_buf) {
             memcpy(h->msg_buf, input + r.begin, r.end - r.begin);
             hs_session_message(h, entry, h->msg_buf, r.end - r.begin);

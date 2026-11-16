@@ -225,9 +225,11 @@ class Node:
         self.control = control_path
         self.npub = None
         self.node_addr = None
+        self.deadline = None
 
     def query(self, command, params=None):
-        return control(self.control, command, params)
+        timeout = 10 if self.deadline is None else min(10, max(0.001, self.deadline - time.monotonic()))
+        return control(self.control, command, params, timeout=timeout)
 
 
 def reserve_port(family):
@@ -270,21 +272,31 @@ class Scenario:
                 raise Failure(f'{node.name} exited with {node.daemon.proc.returncode} during the scenario')
 
     def wait(self, what, deadline, predicate):
-        """Poll `predicate` until it returns a value; NotYet/ControlError mean keep waiting."""
+        """Observe until success, within one absolute deadline including socket IO."""
         last = None
         while True:
             self.check_alive()
+            if time.monotonic() >= deadline:
+                raise Failure(f'timed out waiting for {what}; last observation: {last}')
+            for node in self.nodes.values():
+                node.deadline = deadline
             try:
                 value = predicate()
+                if time.monotonic() > deadline:
+                    raise Failure(f'{what} completed after its deadline')
                 self.note(f'ok: {what}')
                 return value
             except NotYet as e:
                 last = e.args[0] if e.args else None
             except ControlError as e:
                 last = str(e)
+            finally:
+                for node in self.nodes.values():
+                    node.deadline = None
             if time.monotonic() >= deadline:
                 raise Failure(f'timed out waiting for {what}; last observation: {last}')
-            time.sleep(POLL)
+            with next(iter(self.nodes.values())).daemon.cond:
+                next(iter(self.nodes.values())).daemon.cond.wait(min(POLL, max(0, deadline - time.monotonic())))
 
     def start(self):
         af = socket.AF_INET6 if self.family == 6 else socket.AF_INET
@@ -696,7 +708,7 @@ transports:
             helper.stop(self.args.shutdown_timeout)
             if helper.sanitizer_report():
                 failures.append(f'{helper.name} log carries a sanitizer report')
-        for name in ('c', 'rust'):
+        for name in self.nodes:
             node = self.nodes.get(name)
             if not node:
                 continue
@@ -737,12 +749,292 @@ transports:
         print('\n'.join(self.lines), flush=True)
 
 
+class MultiScenario(Scenario):
+    """Small UDP graphs, reusing the two-node lifecycle/control/diagnostic API.
+
+    Control sockets expose snapshots, not subscriptions. As in Scenario.wait,
+    bounded observation polls state; it never treats elapsed time as completion.
+    """
+
+    TREE_BOUND = 30.0  # upstream STP fallback, not an unconditional protocol guarantee
+
+    def __init__(self, args, topology, root, env):
+        super().__init__(args, args.family, 'multi', root, env)
+        self.topology = topology
+        self.tag = topology
+        self.count = 5 if topology in ('ring', 'full-mesh') else 3
+        self.edges = {(i, j) for i in range(self.count) for j in range(i + 1, self.count)
+                      if topology == 'full-mesh' or
+                      (i == 0 if topology == 'star' else j == i + 1) or
+                      (topology == 'ring' and i == 0 and j == self.count - 1)}
+        self.api_paths = {}
+        self.ports = {}
+
+    def start(self):
+        af = socket.AF_INET6 if self.family == 6 else socket.AF_INET
+        # Interleave roles: 2 C + 1 Rust for line/star, 3 C + 2 Rust for ring/mesh.
+        for i in range(self.count):
+            rust_indices = (2,) if self.topology == 'line' else (1, 3)
+            role = 'rust' if i in rust_indices else 'c'
+            name = f'{role}{i}'
+            port = reserve_port(af)
+            sock, api = self.root / f'm{i}.sock', self.root / f'a{i}.sock'
+            config = self.root / f'm{i}.yaml'
+            config.write_text(f"""
+node:
+  identity: {{nsec: '{str(i + 1) * 64}', persistent: false}}
+  control: {{enabled: true, socket_path: '{sock}'}}
+  native_api: {{enabled: {str(role == 'rust').lower()}, socket_path: '{api}'}}
+tun: {{enabled: false}}
+dns: {{enabled: false}}
+transports:
+  udp: {{bind_addr: '{self.host(port)}'}}
+""")
+            binary = self.args.rust if role == 'rust' else self.args.fipsd
+            daemon = Daemon(name, [binary, '-c', str(config)], self.env, self.root)
+            self.nodes[name] = Node(name, daemon, sock)
+            self.ports[name] = port
+            if role == 'rust':
+                self.api_paths[name] = api
+        deadline = time.monotonic() + self.args.startup_timeout
+        for node in self.nodes.values():
+            node.daemon.await_log('control socket listening' if node.name.startswith('rust') else 'fipsd running', deadline)
+            status = self.wait(f'{node.name} ready', deadline, lambda n=node: n.query('show_status'))
+            node.npub, node.node_addr = status['npub'], status['node_addr']
+        self.ordered = list(self.nodes.values())
+        self.started_at = time.monotonic()
+        for a, b in sorted(self.edges):
+            self.connect(a, b)
+
+    def connect(self, a, b):
+        target = self.ordered[b]
+        self.ordered[a].query('connect', {'npub': target.npub, 'transport': 'udp',
+                                         'address': self.host(self.ports[target.name])})
+
+    def tree_state(self, announcements=True):
+        trees = [n.query('show_tree') for n in self.ordered]
+        index = {n.node_addr: i for i, n in enumerate(self.ordered)}
+        for i, (node, tree) in enumerate(zip(self.ordered, trees)):
+            component = {i}
+            for _ in self.ordered:
+                component |= {b if a in component else a for a, b in self.edges
+                              if a in component or b in component}
+            root = min(self.ordered[j].node_addr for j in component)
+            neighbors = {self.ordered[b if a == i else a].npub for a, b in self.edges if i in (a, b)}
+            links, peers = node.query('show_links')['links'], node.query('show_peers')['peers']
+            if (len(links) != len(neighbors) or {p['npub'] for p in peers} != neighbors or
+                    any(l['state'] != ('connected' if node.name.startswith('rust') else 'active') for l in links)):
+                raise NotYet({node.name: {'links': links, 'neighbors': neighbors}})
+            for peer in tree['peers'] if announcements else ():
+                neighbor = index.get(peer['node_addr'])
+                if neighbor is None or peer.get('coords') != trees[neighbor]['my_coords']:
+                    raise NotYet({node.name: {'stale_peer_announcement': peer}})
+            coords = tree['my_coords']
+            if (tree['root'] != root or tree['is_root'] != (node.node_addr == root) or
+                    tree['depth'] >= self.count or len(coords) != tree['depth'] + 1 or
+                    coords[0] != node.node_addr or coords[-1] != root or tree['peer_tree_count'] != len(neighbors)):
+                raise NotYet({node.name: tree})
+            if tree['is_root']:
+                if tree['depth'] != 0:
+                    raise NotYet(tree)
+            else:
+                parent = index.get(tree['parent'])
+                if (parent is None or tuple(sorted((i, parent))) not in self.edges or
+                        tree['depth'] != trees[parent]['depth'] + 1 or coords[1:] != trees[parent]['my_coords']):
+                    raise NotYet({node.name: tree})
+            filters = node.query('show_bloom')['peer_filters']
+            if len(filters) != len(neighbors) or any(not f['has_filter'] for f in filters):
+                raise NotYet({node.name: filters})
+            if announcements:
+                for filt in filters:
+                    role = filt['tree_role']
+                    if role == 'none':
+                        continue
+                    expected = sum((filt['peer'] in trees[j]['my_coords']) if role == 'child'
+                                   else (node.node_addr not in trees[j]['my_coords']) for j in component)
+                    if (filt.get('estimated_count') or 0) + 0.25 < expected:
+                        raise NotYet({node.name: {'aggregate_filter_not_ready': filt, 'expected': expected}})
+        return trees
+
+    def converge(self, phase, start):
+        trees = self.wait(f'{phase}: valid component roots, parent chains, coordinates, filters',
+                          start + self.TREE_BOUND, self.tree_state)
+        self.note(f'{phase} convergence={time.monotonic() - start:.3f}s bound={self.TREE_BOUND}s')
+        return trees
+
+    def probe_pair(self, source, target, started=None):
+        started = started or source.query('probe_start', {'npub': target.npub})
+
+        def finished():
+            poll = source.query('probe_poll', {'probe_id': started['probe_id']})
+            if poll['state'] != 'done':
+                raise NotYet(poll)
+            report = poll['report']
+            rtt = report['rtt']
+            # A matching authenticated echo below the millisecond timestamp
+            # resolution proves a route, but cannot produce a positive RTT
+            # sample. Preserve every other diagnostic failure (including a
+            # report without an echo); this is not a latency benchmark.
+            quantized_echo = (rtt.get('reason') == 'sub_millisecond' and
+                              rtt['zero_samples'] > 0 and rtt['reports_seen'] > 0)
+            if (report['overall'] not in (('ok', 'partial') if quantized_echo else ('ok',)) or
+                    any(report[s]['verdict'] not in ('ok', 'skipped') for s in ('bloom', 'discovery')) or
+                    report['path']['verdict'] not in ('ok', 'skipped') or
+                    (report['path']['verdict'] == 'skipped' and report['path']['reason'] != 'direct_peer') or
+                    not report['session']['established'] or
+                    (rtt['samples'] < 1 and not quantized_echo)):
+                raise Failure(f'{source.name}->{target.name}: {json.dumps(report)}')
+            return report
+
+        return self.wait(f'{source.name}->{target.name}: bloom/address resolution, route and authenticated RTT',
+                         time.monotonic() + self.args.probe_timeout, finished)
+
+    def datagram_pair(self, source, target):
+        # Separate the session and application-delivery stages, as the
+        # existing two-node C-initiated fixture does. Do not make the route
+        # assertion depend on a one-shot native first write queued during XK.
+        started = source.query('probe_start', {'npub': target.npub})
+        def established():
+            poll = source.query('probe_poll', {'probe_id': started['probe_id']})
+            if poll['state'] != 'running':
+                raise Failure(f'probe finished before payload adoption: {poll}')
+            for node, other in ((source, target), (target, source)):
+                sessions = node.query('show_sessions')['sessions']
+                if not any(s['remote_addr'] == other.node_addr and s['state'] == 'established' and
+                           s.get('identity') == 'proven' for s in sessions):
+                    raise NotYet({node.name: sessions})
+            if poll['report']['session']['verdict'] not in ('ok', 'skipped'):
+                raise NotYet(poll)
+            return True
+        self.wait(f'{source.name}<->{target.name} authenticated session before payload',
+                  time.monotonic() + self.args.session_timeout, established)
+        payload = b'multi-node UDP application datagram'
+        before = target.query('show_metrics')['native']
+        flow = NativeFlow(self.api_paths[source.name], target.npub, self.args.remote_port)
+        try:
+            flow.send(payload)
+            def delivered():
+                now = target.query('show_metrics')['native']
+                if now['received_datagrams'] <= before['received_datagrams']:
+                    raise NotYet(now)
+                if now['received_bytes'] - before['received_bytes'] != len(payload):
+                    raise Failure(f'wrong datagram length: {now}')
+                return now
+            try:
+                self.wait(f'{source.name}->{target.name} application datagram',
+                          time.monotonic() + self.args.session_timeout, delivered)
+            except Failure:
+                for node in (source, target):
+                    for command in ('show_sessions', 'show_routing', 'show_metrics'):
+                        self.note(f'{node.name} {command}: {json.dumps(node.query(command))}')
+                raise
+        finally:
+            flow.close()
+        self.probe_pair(source, target, started)
+
+    def soak(self):
+        end = time.monotonic() + 60 * self.args.soak_minutes
+        baseline = self.tree_state()
+        previous = {}
+        link_ids = {}
+        parent_positions = [(t['parent'], t['depth']) for t in baseline]
+        parent_optimizations = 0
+        samples = 0
+        while time.monotonic() < end:
+            self.check_alive()
+            try:
+                trees = self.tree_state(announcements=False)
+            except (NotYet, ControlError) as e:
+                raise Failure(f'tree/link instability during soak: {e}') from e
+            for node, old, tree in zip(self.ordered, baseline, trees):
+                if old['root'] != tree['root']:
+                    raise Failure(f'{node.name}: root changed during soak: {old} -> {tree}')
+                links = node.query('show_links')['links']
+                signature = sorted((l['link_id'], l['direction']) for l in links)
+                if node.name in link_ids and link_ids[node.name] != signature:
+                    raise Failure(f'{node.name}: link replaced during soak')
+                link_ids[node.name] = signature
+                metrics = node.query('show_metrics')
+                counters = {f'{g}.{k}': v for g in ('tree', 'bloom', 'lookup', 'forwarding', 'handshake')
+                            for k, v in metrics[g].items() if type(v) is int}
+                for key, value in counters.items():
+                    if value < previous.get((node.name, key), 0):
+                        raise Failure(f'{node.name}: counter {key} decreased')
+                    previous[node.name, key] = value
+            positions = [(t['parent'], t['depth']) for t in trees]
+            parent_optimizations += sum(a != b for a, b in zip(parent_positions, positions))
+            parent_positions = positions
+            samples += 1
+            # Snapshot control has no push stream; wake on child log output or
+            # the next bounded observation, never infer stability from a sleep.
+            with self.ordered[0].daemon.cond:
+                self.ordered[0].daemon.cond.wait(min(POLL, max(0, end - time.monotonic())))
+        self.note(f'soak passed: {self.args.soak_minutes:g} minutes, {samples} observations, stable root/links, monotone counters, {parent_optimizations} parent optimizations')
+
+    def run(self):
+        try:
+            self.start()
+            trees = self.converge(self.topology, self.started_at)
+            parents = [(i, next(j for j, n in enumerate(self.ordered) if n.node_addr == t['parent']))
+                       for i, t in enumerate(trees) if not t['is_root']]
+            a, b = next(((i, j) for i, j in parents
+                         if self.ordered[i].name.startswith('c') != self.ordered[j].name.startswith('c')), parents[0])
+            edge = tuple(sorted((a, b)))
+
+            def cut():
+                start = time.monotonic()
+                self.ordered[a].query('disconnect', {'npub': self.ordered[b].npub})
+                self.edges.remove(edge)
+                self.converge('parent edge removed', start)
+
+            # A complete graph has no multi-hop path until an edge is removed.
+            # Cut before creating sessions: this checks cold address discovery,
+            # not recovery of stale established-session coordinates.
+            if self.topology == 'full-mesh':
+                cut()
+            routed = False
+            for i, source in enumerate(self.ordered):
+                for j, target in enumerate(self.ordered[i + 1:], i + 1):
+                    # Cross-language data adopts the session before diagnostics
+                    # so neither probe tears down the other's live data flow.
+                    if source.name.startswith('rust') != target.name.startswith('rust'):
+                        rust, c = (source, target) if source.name.startswith('rust') else (target, source)
+                        self.datagram_pair(rust, c)
+                        if (i, j) not in self.edges:
+                            routed = True
+                            self.note(f'{rust.name}->{c.name}: arrival proves >=2 UDP hops')
+                    forward = source.query('probe_start', {'npub': target.npub})
+                    reverse = target.query('probe_start', {'npub': source.npub})
+                    self.probe_pair(source, target, forward)
+                    self.probe_pair(target, source, reverse)
+            if self.topology != 'full-mesh':
+                cut()
+            start = time.monotonic()
+            self.edges.add(edge)
+            self.connect(a, b)
+            self.converge('parent edge restored', start)
+            if not routed:
+                raise Failure('scenario never proved a >=2-hop application datagram')
+            if self.args.soak_minutes:
+                self.soak()
+        finally:
+            failures = self.shutdown()
+            for path in self.api_paths.values():
+                if path.exists():
+                    failures.append(f'native API socket left behind: {path}')
+        if failures:
+            raise Failure('; '.join(failures))
+        self.note('multi-node scenario passed')
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--fipsd', required=True)
     ap.add_argument('--rust', default=os.environ.get('FIPSD_UDP_INTEROP_RUST_BINARY', ''),
                     help='fips daemon built from the libfips-core/UPSTREAM.md pin (SKIP when unset)')
     ap.add_argument('--family', type=int, choices=(4, 6), default=4)
+    ap.add_argument('--topology', choices=('line', 'star', 'ring', 'full-mesh', 'all'))
+    ap.add_argument('--soak-minutes', type=float, default=0, help='opt-in stable-tree observation period per topology')
     ap.add_argument('--initiator', choices=('c', 'rust', 'both'), default='both')
     ap.add_argument('--rekey-after-secs', type=int, default=25,
                     help='node.rekey.after_secs for both daemons: with the 15 s jitter the first session '
@@ -763,6 +1055,10 @@ def main():
                     help='seconds after link establishment for the FMP K bit to flip')
     ap.add_argument('--shutdown-timeout', type=float, default=20)
     args = ap.parse_args()
+    if args.soak_minutes < 0 or not args.soak_minutes < float('inf'):
+        ap.error('--soak-minutes must be finite and nonnegative')
+    if args.soak_minutes and not args.topology:
+        ap.error('--soak-minutes requires --topology')
     # CTest passes --rust "" when the cache variable is unset; the environment
     # is the fallback so a configured tree can still opt in at run time.
     args.rust = args.rust or os.environ.get('FIPSD_UDP_INTEROP_RUST_BINARY', '')
@@ -785,6 +1081,17 @@ def main():
         atexit.register(shutil.rmtree, root, True)
     env = dict(os.environ, FIPSD_WORKERS='2', TOKIO_WORKER_THREADS='2', NO_COLOR='1')
     env.setdefault('RUST_LOG', 'info')
+    if args.topology:
+        shapes = ('line', 'star', 'ring', 'full-mesh') if args.topology == 'all' else (args.topology,)
+        for shape in shapes:
+            scenario = MultiScenario(args, shape, root, env)
+            try:
+                scenario.run()
+            except Exception as e:  # noqa: BLE001 - preserve all daemon logs
+                scenario.dump_logs()
+                print(f'FAIL [{shape}]: {type(e).__name__}: {e}', file=sys.stderr, flush=True)
+                return 1
+        return 0
     initiators = ('c', 'rust') if args.initiator == 'both' else (args.initiator,)
     for initiator in initiators:
         scenario = Scenario(args, args.family, initiator, root, env)

@@ -194,3 +194,5 @@ install(TARGETS fipsnative fipsnative_static
   PUBLIC_HEADER DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/libfipsnative.pc" DESTINATION "${CMAKE_INSTALL_LIBDIR}/pkgconfig")
 add_subdirectory(examples)
+# Coordinate hints must precede multi-hop routing (nostrc-f66sr.2).
+target_sources(fipsd_lib PRIVATE src/node/dataplane/coord_warm.c)

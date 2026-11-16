@@ -521,3 +521,39 @@ foreach(_interop_test FipsdInteropUdpTest FipsdInteropUdpV6Test)
   set_tests_properties(${_interop_test} PROPERTIES ENVIRONMENT
     "FIPSD_WORKERS=2;FIPSD_NATIVE_CLIENT_TOOL=${CMAKE_CURRENT_BINARY_DIR}/fipsd_native_client_tool;FIPSD_UDP_INTEROP_RUST_ECHO=${FIPSD_UDP_INTEROP_RUST_ECHO}")
 endforeach()
+# nostrc-f66sr.2: small real-UDP topology gates and optional mixed-tree soak.
+fipsd_unit_test(fipsd_node_multi_test test_node_multi.c)
+add_dependencies(fipsd_tests fipsd_node_multi_test)
+foreach(topology IN ITEMS Line Star Ring FullMesh)
+  add_test(NAME FipsdNodeMulti${topology}Test COMMAND fipsd_node_multi_test ${topology})
+  set_tests_properties(FipsdNodeMulti${topology}Test PROPERTIES TIMEOUT 300
+    LABELS "fips;node;transport;multinode" ENVIRONMENT "FIPSD_WORKERS=2")
+  nostrc_describe_test(FipsdNodeMulti${topology}Test OWNER fipsd TARGETS fipsd_node_multi_test)
+endforeach()
+add_test(NAME FipsdInteropMultiTest COMMAND fipsd_test_tmpdir_run "/m4-ipv6tun.sock"
+  "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/udp_interop.py"
+  --fipsd "$<TARGET_FILE:fipsd>" --rust "${FIPSD_UDP_INTEROP_RUST_BINARY}" --topology all)
+set_tests_properties(FipsdInteropMultiTest PROPERTIES TIMEOUT 1200 SKIP_RETURN_CODE 77
+  LABELS "fips;node;interop;multinode" ENVIRONMENT "FIPSD_WORKERS=2")
+nostrc_describe_test(FipsdInteropMultiTest OWNER fipsd TARGETS fipsd fipsd_test_tmpdir_run
+  INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/udp_interop.py")
+option(FIPSD_ENABLE_INTEROP_SOAK "Enable the opt-in ten-minute mixed UDP ring soak" OFF)
+add_test(NAME FipsdInteropSoakTest COMMAND fipsd_test_tmpdir_run "/m4-ipv6tun.sock"
+  "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/udp_interop.py"
+  --fipsd "$<TARGET_FILE:fipsd>" --rust "${FIPSD_UDP_INTEROP_RUST_BINARY}"
+  --topology ring --soak-minutes 10)
+set_tests_properties(FipsdInteropSoakTest PROPERTIES TIMEOUT 1500 SKIP_RETURN_CODE 77
+  LABELS "fips;node;interop;soak" ENVIRONMENT "FIPSD_WORKERS=2")
+if(NOT FIPSD_ENABLE_INTEROP_SOAK)
+  set_tests_properties(FipsdInteropSoakTest PROPERTIES DISABLED TRUE)
+endif()
+nostrc_describe_test(FipsdInteropSoakTest OWNER fipsd TARGETS fipsd fipsd_test_tmpdir_run
+  INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/udp_interop.py")
+
+fipsd_unit_test(fipsd_coord_warm_test test_coord_warm.c)
+target_sources(fipsd_coord_warm_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../../libfips-core/tests/fakes/host.c")
+target_include_directories(fipsd_coord_warm_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../../libfips-core/tests")
+add_dependencies(fipsd_tests fipsd_coord_warm_test)
+add_test(NAME FipsdCoordWarmTest COMMAND fipsd_coord_warm_test)
+set_tests_properties(FipsdCoordWarmTest PROPERTIES TIMEOUT 30 LABELS "fips;node;multinode")
+nostrc_describe_test(FipsdCoordWarmTest OWNER fipsd TARGETS fipsd_coord_warm_test)

@@ -177,4 +177,33 @@ static void nt_print_trace(const char *title)
     for (size_t i = 0; i < nt_events.count; ++i) printf("  %s\n", nt_events.lines[i]);
     fflush(stdout);
 }
+/* Fixed small graphs shared by the multi-node tests. */
+#define NT_MAX_NODES 5
+static inline void nt_topology(bool edges[NT_MAX_NODES][NT_MAX_NODES], size_t count, const char *shape)
+{
+    assert(count >= 3 && count <= NT_MAX_NODES);
+    memset(edges, 0, sizeof(bool) * NT_MAX_NODES * NT_MAX_NODES);
+    for (size_t i = 0; i < count; ++i) for (size_t j = i + 1; j < count; ++j) {
+        bool edge = !strcmp(shape, "FullMesh") || (!strcmp(shape, "Star") ? i == 0 : j == i + 1);
+        if (!strcmp(shape, "Ring") && i == 0 && j == count - 1) edge = true;
+        edges[i][j] = edges[j][i] = edge;
+    }
+}
+/* Select across all owners, using an absolute deadline (unrelated notices
+ * cannot extend it). Snapshots are published before state-change notices. */
+static inline fipsd_node_notice *nt_next(test_node *nodes, size_t count, uint64_t deadline, size_t *owner)
+{
+    assert(count <= NT_MAX_NODES);
+    GoSelectCase cases[NT_MAX_NODES];
+    void *value = NULL;
+    for (size_t i = 0; i < count; ++i)
+        cases[i] = (GoSelectCase){GO_SELECT_RECEIVE, fipsd_node_handlers_notices(nodes[i].h), NULL, &value};
+    uint64_t now = nt_ms();
+    if (now >= deadline) return NULL;
+    GoSelectResult result = go_select_timeout(cases, count, deadline - now);
+    if (result.selected_case < 0 || (size_t)result.selected_case >= count || !value) return NULL;
+    *owner = (size_t)result.selected_case;
+    nt_record(&nodes[*owner], value);
+    return value;
+}
 #endif
