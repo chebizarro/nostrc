@@ -62,6 +62,9 @@ typedef struct fipsd_node_notice {
     uint8_t payload[];
 } fipsd_node_notice;
 GoChannel *fipsd_node_handlers_notices(fipsd_node_handlers *h);
+/* Release a notice taken from that channel. The consumer owns the plaintext of
+ * a FIPSD_NOTICE_DATAGRAM payload; this wipes it before freeing the storage. */
+void fipsd_node_notice_free(fipsd_node_notice *n);
 
 /* Commands from any thread or fiber: owned, nonblocking enqueue to the
  * dispatcher (-1 when full or not attached). Results arrive as notices. */

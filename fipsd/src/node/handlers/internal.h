@@ -94,7 +94,46 @@ typedef struct peer_rec {
     bool has_rtt;
 } peer_rec;
 typedef struct index_entry { bool used; uint32_t index; fips_rekey_transport transport; fips_node_addr peer; } index_entry;
+/* L4 (nostrc-f66sr.10) plaintext ownership. A user datagram is copied, never
+ * shared, so each copy has one owner that wipes it (hs_wipe) at the end of its
+ * own tenure and never earlier: the HCMD_SEND flexible payload until
+ * command_free; a session_ext.pending or held[].items slot until it is
+ * consumed, dropped as oldest, expired, closed with its session or freed at
+ * teardown; the dispatcher scratch (send_data's body, h->session_plain) until
+ * fipsd_dp_seal has copied it into a pooled packet; an inbound DataPacket is
+ * copied from the packet into a fipsd_node_notice its consumer releases with
+ * fipsd_node_notice_free. Borrowed, not ours: the pooled fipsd_dp_packet slab a
+ * worker holds from submit until the dispatcher destroys the completed job
+ * (only its recycle wipes it), which is also the plaintext handed to
+ * hs_session_message. Slots at or beyond pending_len/len are always zero. */
 typedef struct pending_datagram { uint16_t src_port, dst_port; size_t len; uint8_t bytes[FIPSD_HANDLERS_DATAGRAM_MAX]; } pending_datagram;
+/* Which owner finished with its plaintext copy (test observation only). */
+typedef enum fipsd_wipe_event {
+    FIPSD_WIPE_PENDING_CONSUMED, FIPSD_WIPE_PENDING_DROPPED, FIPSD_WIPE_PENDING_CLOSED,
+    FIPSD_WIPE_HELD_CONSUMED, FIPSD_WIPE_HELD_DROPPED, FIPSD_WIPE_HELD_EXPIRED,
+    FIPSD_WIPE_SCRATCH, FIPSD_WIPE_COMMAND, FIPSD_WIPE_NOTICE, FIPSD_WIPE_TEARDOWN,
+    FIPSD_WIPE_COUNT
+} fipsd_wipe_event;
+#ifdef FIPSD_TEST_HOOKS
+/* Test seam, compiled only into a test's own copy of handlers.c/session.c:
+ * observes each wipe after it happened and whether the bytes were non-zero.
+ * `h` is NULL for owners released off the dispatcher (commands, notices). */
+typedef void (*fipsd_wipe_hook)(void *user, handlers *h, fipsd_wipe_event ev, const uint8_t *bytes, size_t size, bool was_dirty);
+extern fipsd_wipe_hook fipsd_test_wipe_hook;
+extern void *fipsd_test_wipe_user;
+#endif
+static inline void hs_wipe(handlers *h, fipsd_wipe_event ev, void *bytes, size_t size)
+{
+#ifdef FIPSD_TEST_HOOKS
+    bool dirty = size && !sodium_is_zero(bytes, size);
+#endif
+    sodium_memzero(bytes, size);
+#ifdef FIPSD_TEST_HOOKS
+    if (fipsd_test_wipe_hook) fipsd_test_wipe_hook(fipsd_test_wipe_user, h, ev, bytes, size, dirty);
+#else
+    (void)h; (void)ev;
+#endif
+}
 /* Host state beside each session table entry. */
 typedef struct session_ext {
     bool used, established, mmp_live, has_dest_coords, is_initiator;

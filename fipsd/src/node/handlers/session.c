@@ -21,6 +21,8 @@ static session_ext *ext_init(handlers *h, fips_session_entry *entry, const fips_
     session_ext *x = hs_session_ext(h, entry);
     h->dataplane->needs_publish = true;
     pending_datagram *pending = x->pending; size_t cap = x->pending_capacity;
+    /* A queue left by a prior tenant of this index never survives into the new one. */
+    if (pending && x->pending_len) hs_wipe(h, FIPSD_WIPE_PENDING_CLOSED, pending, x->pending_len * sizeof *pending);
     memset(x, 0, sizeof *x);
     x->pending = pending; x->pending_capacity = cap;
     x->used = true; x->peer = *peer; x->is_initiator = initiator; x->created = hs_now(h); x->last_data = x->created;
@@ -69,6 +71,8 @@ bool hs_session_send_message(handlers *h, fips_session_entry *entry, session_ext
         fipsd_dp_seal(h, NULL, entry, &s, h->session_plain, fips_writer_len(&w), false,
             (fips_transport_id){0}, NULL, false);
     fips_rekey_sealed_clear(&s);
+    /* fipsd_dp_seal copied the plaintext into its pooled packet (or refused). */
+    hs_wipe(h, FIPSD_WIPE_SCRATCH, h->session_plain, fips_writer_len(&w));
     (void)x; /* completion owns MMP accounting and DataSent */
     if (!ok) ++h->counters.send_failed;
     return ok;
@@ -78,9 +82,11 @@ static bool send_data(handlers *h, fips_session_entry *entry, session_ext *x, ui
 {
     uint8_t body[FIPSD_HANDLERS_DATAGRAM_MAX + 4];
     fips_writer w; fips_writer_init(&w, body, sizeof body);
-    if (fips_fsp_port_header_encode((fips_fsp_port_header){sp, dp}, &w, NULL) != FIPS_OK ||
-        fips_writer_write_bytes(&w, payload, len, NULL) != FIPS_OK) return false;
-    if (!hs_session_send_message(h, entry, x, FIPS_SESSION_DataPacket, body, fips_writer_len(&w))) return false;
+    bool ok = fips_fsp_port_header_encode((fips_fsp_port_header){sp, dp}, &w, NULL) == FIPS_OK &&
+        fips_writer_write_bytes(&w, payload, len, NULL) == FIPS_OK &&
+        hs_session_send_message(h, entry, x, FIPS_SESSION_DataPacket, body, fips_writer_len(&w));
+    hs_wipe(h, FIPSD_WIPE_SCRATCH, body, fips_writer_len(&w));
+    if (!ok) return false;
     METRIC(h, native, sent_datagrams); METRIC_ADD(h, native, sent_bytes, len);
     ++x->sent; ++h->counters.sess_data_out; x->last_data = hs_now(h);
     fips_session_note_activity(entry, hs_now(h));
@@ -89,19 +95,23 @@ static bool send_data(handlers *h, fips_session_entry *entry, session_ext *x, ui
 static void flush_pending(handlers *h, fips_session_entry *entry, session_ext *x)
 {
     size_t n = x->pending_len; x->pending_len = 0;
-    for (size_t i = 0; i < n && entry->occupied && x->established; ++i) {
+    for (size_t i = 0; i < n; ++i) {
         pending_datagram *d = &x->pending[i];
-        if (!send_data(h, entry, x, d->src_port, d->dst_port, d->bytes, d->len)) {
+        if (entry->occupied && x->established &&
+            !send_data(h, entry, x, d->src_port, d->dst_port, d->bytes, d->len)) {
             fipsd_node_notice notice = {.kind = FIPSD_NOTICE_SEND_FAILED, .peer = x->peer};
             hs_notice_full(h, &notice, NULL, 0);
         }
+        hs_wipe(h, FIPSD_WIPE_PENDING_CONSUMED, d, sizeof *d); /* sent or not, its tenure is over */
     }
 }
 static void queue_pending(handlers *h, session_ext *x, uint16_t sp, uint16_t dp, const uint8_t *payload, size_t len)
 {
-    (void)h;
     if (x->pending_len == x->pending_capacity) { /* drop oldest, as push_bounded_pending */
-        memmove(x->pending, x->pending + 1, (x->pending_len - 1) * sizeof *x->pending); --x->pending_len;
+        memmove(x->pending, x->pending + 1, (x->pending_len - 1) * sizeof *x->pending);
+        /* The shift leaves a stale copy of the newest datagram in the last slot. */
+        hs_wipe(h, FIPSD_WIPE_PENDING_DROPPED, &x->pending[x->pending_len - 1], sizeof *x->pending);
+        --x->pending_len;
     }
     pending_datagram *d = &x->pending[x->pending_len++];
     d->src_port = sp; d->dst_port = dp; d->len = len;
@@ -121,7 +131,9 @@ static void hold(handlers *h, const fips_node_addr *dest, uint16_t sp, uint16_t 
         h->held[slot].used = true; h->held[slot].dest = *dest; h->held[slot].len = 0; h->held[slot].since = hs_now(h);
     }
     if (h->held[slot].len == h->cfg.pending_per_destination) {
-        memmove(h->held[slot].items, h->held[slot].items + 1, (h->held[slot].len - 1) * sizeof(pending_datagram)); --h->held[slot].len;
+        memmove(h->held[slot].items, h->held[slot].items + 1, (h->held[slot].len - 1) * sizeof(pending_datagram));
+        hs_wipe(h, FIPSD_WIPE_HELD_DROPPED, &h->held[slot].items[h->held[slot].len - 1], sizeof(pending_datagram));
+        --h->held[slot].len;
     }
     pending_datagram *d = &h->held[slot].items[h->held[slot].len++];
     d->src_port = sp; d->dst_port = dp; d->len = len;
@@ -185,11 +197,17 @@ void hs_session_coords_resolved(handlers *h, const fips_node_addr *dest)
     }
     for (size_t i = 0; i < h->cfg.session_capacity; ++i) {
         if (!h->held[i].used || memcmp(h->held[i].dest.bytes, dest->bytes, 16)) continue;
-        size_t n = h->held[i].len; h->held[i].used = false; h->held[i].len = 0;
+        /* Detach the queue first: a replay that holds again takes a fresh array
+         * (hold allocates when items is NULL) instead of the one being drained. */
+        pending_datagram *items = h->held[i].items; size_t n = h->held[i].len;
+        h->held[i].items = NULL; h->held[i].used = false; h->held[i].len = 0;
         for (size_t j = 0; j < n; ++j) {
-            pending_datagram *d = &h->held[i].items[j];
+            pending_datagram *d = &items[j];
             (void)hs_session_send(h, dest, d->src_port, d->dst_port, d->bytes, d->len);
+            hs_wipe(h, FIPSD_WIPE_HELD_CONSUMED, d, sizeof *d);
         }
+        if (!h->held[i].items) h->held[i].items = items;
+        else free(items); /* re-held meanwhile into a fresh array; this one is zero */
     }
 }
 static void setup_received(handlers *h, peer_rec *rec, const fips_session_datagram *dg, uint8_t *frame, size_t len)
@@ -361,7 +379,10 @@ static void close_entry(handlers *h, fips_session_entry *entry, fips_rekey_close
             }
     }
     fips_rekey_outputs_clear(&h->session_out);
-    if (x) { x->used = false; x->established = false; x->pending_len = 0; }
+    if (x) {
+        if (x->pending_len) hs_wipe(h, FIPSD_WIPE_PENDING_CLOSED, x->pending, x->pending_len * sizeof *x->pending);
+        x->used = false; x->established = false; x->pending_len = 0;
+    }
     ++h->counters.sess_closed;
     hs_notice(h, FIPSD_NOTICE_SESSION_DOWN, &peer, NULL, 0);
     hs_mark_dirty(h);
@@ -417,6 +438,7 @@ void hs_session_tick(handlers *h, fips_instant now)
         if (h->held[i].used && hs_elapsed_ms(now, h->held[i].since) > ladder_ms + h->cfg.timing.handshake_timeout_ms + h->cfg.tick_ms) {
             fipsd_node_notice n = {.kind = FIPSD_NOTICE_SEND_FAILED, .peer = h->held[i].dest, .value = h->held[i].len};
             hs_notice_full(h, &n, NULL, 0);
+            if (h->held[i].len) hs_wipe(h, FIPSD_WIPE_HELD_EXPIRED, h->held[i].items, h->held[i].len * sizeof(pending_datagram));
             h->held[i].used = false; h->held[i].len = 0;
         }
 }

@@ -366,3 +366,23 @@ add_test(NAME FipsdNostrRuntimeTest COMMAND fipsd_nostr_runtime_test)
 set_tests_properties(FipsdNostrRuntimeTest PROPERTIES TIMEOUT 90 LABELS "fips;nostr;relay"
   ENVIRONMENT "FIPSD_WORKERS=2")
 nostrc_describe_test(FipsdNostrRuntimeTest OWNER fipsd TARGETS fipsd_nostr_runtime_test)
+
+# L4 (nostrc-f66sr.10): queued plaintext is wiped at the end of each owner's
+# tenure. The test links its own copy of handlers.c/session.c compiled with the
+# FIPSD_TEST_HOOKS wipe seam (the fipsd_log_fault pattern); fipsd_lib and the
+# daemon carry no seam.
+add_library(fipsd_handlers_hooked OBJECT ../src/node/handlers/handlers.c ../src/node/handlers/session.c)
+target_link_libraries(fipsd_handlers_hooked PRIVATE fipsd_lib)
+target_compile_definitions(fipsd_handlers_hooked PRIVATE FIPSD_TEST_HOOKS=1)
+set_target_properties(fipsd_handlers_hooked PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+apply_warnings(fipsd_handlers_hooked)
+apply_sanitizers(fipsd_handlers_hooked)
+fipsd_unit_test(fipsd_node_wipe_test test_node_wipe.c)
+target_sources(fipsd_node_wipe_test PRIVATE $<TARGET_OBJECTS:fipsd_handlers_hooked>)
+target_compile_definitions(fipsd_node_wipe_test PRIVATE FIPSD_TEST_HOOKS=1)
+add_dependencies(fipsd_tests fipsd_node_wipe_test)
+add_test(NAME FipsdNodeWipeTest COMMAND fipsd_node_wipe_test)
+set_tests_properties(FipsdNodeWipeTest PROPERTIES TIMEOUT 300 LABELS "fips;node"
+  ENVIRONMENT "FIPSD_WORKERS=2")
+nostrc_describe_test(FipsdNodeWipeTest OWNER fipsd TARGETS fipsd_node_wipe_test)

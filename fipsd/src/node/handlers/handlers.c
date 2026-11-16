@@ -40,6 +40,16 @@ static uint64_t wall_now_ms(void)
     return (uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000;
 }
 void hs_mark_dirty(handlers *h) { h->dirty = true; }
+#ifdef FIPSD_TEST_HOOKS
+fipsd_wipe_hook fipsd_test_wipe_hook;
+void *fipsd_test_wipe_user;
+#endif
+void fipsd_node_notice_free(fipsd_node_notice *n)
+{
+    if (!n) return;
+    hs_wipe(NULL, FIPSD_WIPE_NOTICE, n, sizeof *n + n->len);
+    free(n);
+}
 fipsd_transport *hs_transport(handlers *h, fips_transport_id id)
 { return h->registry ? fipsd_transport_find(h->registry, id) : NULL; }
 bool hs_peer_identity(handlers *h, const fips_peer_key *key, fips_peer_identity *out)
@@ -85,7 +95,7 @@ void hs_notice_full(handlers *h, const fipsd_node_notice *notice, const uint8_t 
     if (!n) { ++h->counters.notices_dropped; return; }
     *n = *notice; n->len = len;
     if (len) memcpy(n->payload, payload, len);
-    if (go_channel_try_send(h->notices, n) != 0) { free(n); ++h->counters.notices_dropped; }
+    if (go_channel_try_send(h->notices, n) != 0) { fipsd_node_notice_free(n); ++h->counters.notices_dropped; }
 }
 void hs_notice(handlers *h, fipsd_notice_kind kind, const fips_node_addr *peer, const uint8_t *payload, size_t len)
 {
@@ -128,9 +138,15 @@ static void free_storage(handlers *h)
     free(h->bloom_peers); free(h->leaves); free(h->recent); free(h->pending_lookups); free(h->backoff_entries);
     free(h->forward_entries); free(h->sign_entries); free(h->request_scratch); free(h->response_scratch);
     free(h->cache_slots); free(h->cache_index); free(h->identity_entries); free(h->session_entries);
-    if (h->session_ext) for (size_t i = 0; i < h->cfg.session_capacity; ++i) free(h->session_ext[i].pending);
+    if (h->session_ext) for (size_t i = 0; i < h->cfg.session_capacity; ++i) {
+        if (h->session_ext[i].pending) hs_wipe(h, FIPSD_WIPE_TEARDOWN, h->session_ext[i].pending, h->session_ext[i].pending_capacity * sizeof(pending_datagram));
+        free(h->session_ext[i].pending);
+    }
     free(h->session_ext); free(h->setup_entries);
-    if (h->held) for (size_t i = 0; i < h->cfg.session_capacity; ++i) free(h->held[i].items);
+    if (h->held) for (size_t i = 0; i < h->cfg.session_capacity; ++i) {
+        if (h->held[i].items) hs_wipe(h, FIPSD_WIPE_TEARDOWN, h->held[i].items, h->cfg.pending_per_destination * sizeof(pending_datagram));
+        free(h->held[i].items);
+    }
     free(h->held); free(h->history); free(h->history_peers); free(h->history_samples);
     free(h->bloom_actions); free(h->path_outputs); free(h->probe_facts);
     h->bloom_actions = NULL; h->path_outputs = NULL; h->probe_facts = NULL;
@@ -156,7 +172,7 @@ void fipsd_node_handlers_destroy(fipsd_node_handlers *h)
     }
     if (h->notices) {
         void *m;
-        while (go_channel_try_receive(h->notices, &m) == 0) free(m);
+        while (go_channel_try_receive(h->notices, &m) == 0) fipsd_node_notice_free(m);
         go_channel_unref(h->notices);
     }
     go_swap_free(h->snapshot);
@@ -211,10 +227,13 @@ static void ticket_resolve(hs_control_ticket *t, json_t *response)
     atomic_store(&t->response, response);
     (void)go_channel_try_send(t->done, t);
 }
+/* Every exit of a queued command (executed, refused, cancelled, enqueue
+ * failure, shutdown drain) releases its HCMD_SEND payload here. */
 static void command_free(handler_command *c)
 {
     if (c->params) json_decref(c->params);
     ticket_unref(c->ticket);
+    if (c->len) hs_wipe(NULL, FIPSD_WIPE_COMMAND, c->payload, c->len);
     free(c);
 }
 /* A queued command that will never execute (node not running or destroyed):
