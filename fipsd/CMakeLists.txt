@@ -95,3 +95,11 @@ target_sources(fipsd_lib PRIVATE
   src/node/handlers/lookup.c src/node/handlers/mmp.c src/node/handlers/path.c
   src/node/handlers/probe.c src/node/handlers/timeout.c src/node/handlers/native.c
   src/node/handlers/netmon.c src/node/handlers/provider.c)
+
+# Snapshot dataplane and bounded packet crypto (nostrc-9keoz.7).
+target_sources(fipsd_lib PRIVATE
+  src/node/encrypt_worker.c src/node/decrypt_worker.c
+  src/node/dataplane/snapshot.c src/node/dataplane/rx_loop.c
+  src/node/dataplane/encrypted.c src/node/dataplane/forwarding.c
+  src/node/dataplane/peer_actions.c src/node/dataplane/dispatch.c
+  src/node/dataplane/reject.c src/node/dataplane/path_mtu.c)

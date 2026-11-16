@@ -210,3 +210,22 @@ add_test(NAME FipsdNodePathPresenceTest COMMAND fipsd_node_path_presence_test)
 set_tests_properties(FipsdNodePathPresenceTest PROPERTIES TIMEOUT 120 LABELS "fips;node"
   ENVIRONMENT "FIPSD_WORKERS=2")
 nostrc_describe_test(FipsdNodePathPresenceTest OWNER fipsd TARGETS fipsd_node_path_presence_test)
+# Dataplane parity decisions and four-worker counter/backpressure contracts.
+fipsd_unit_test(fipsd_dataplane_test test_dataplane.c)
+target_sources(fipsd_dataplane_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../../libfips-core/tests/fakes/host.c")
+target_include_directories(fipsd_dataplane_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../../libfips-core/tests")
+add_dependencies(fipsd_tests fipsd_dataplane_test)
+add_test(NAME FipsdDataplaneTest COMMAND fipsd_dataplane_test)
+set_tests_properties(FipsdDataplaneTest PROPERTIES TIMEOUT 60 LABELS "fips;node" ENVIRONMENT "FIPSD_WORKERS=4")
+nostrc_describe_test(FipsdDataplaneTest OWNER fipsd TARGETS fipsd_dataplane_test)
+
+# Explicit opt-in: benchmark executable is always built by the aggregate, but
+# ordinary ctest (including -R '^Fips') does not run a throughput workload.
+fipsd_unit_test(fipsd_dataplane_throughput test_dataplane_throughput.c)
+add_dependencies(fipsd_tests fipsd_dataplane_throughput)
+option(FIPSD_DATAPLANE_BENCH_TEST "Register the opt-in loopback throughput smoke" OFF)
+if(FIPSD_DATAPLANE_BENCH_TEST)
+  add_test(NAME FipsdDataplaneThroughput COMMAND fipsd_dataplane_throughput)
+  set_tests_properties(FipsdDataplaneThroughput PROPERTIES TIMEOUT 120 LABELS "fips;bench" ENVIRONMENT "FIPSD_WORKERS=4")
+  nostrc_describe_test(FipsdDataplaneThroughput OWNER fipsd TARGETS fipsd_dataplane_throughput)
+endif()

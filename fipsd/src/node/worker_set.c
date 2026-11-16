@@ -1,4 +1,5 @@
 #include "node/worker_set.h"
+#include "node/crypto_worker.h"
 #include <libgo/fiber.h>
 #include <sodium.h>
 #include <stdlib.h>
@@ -20,6 +21,13 @@ void fipsd_crypto_job_destroy(fipsd_crypto_job *j)
 {
     if (!j) return;
     fips_cipher_state_destroy(&j->key);
+    if (j->recycle) {
+        if (j->ad) sodium_memzero(j->ad, j->ad_size);
+        if (j->input) sodium_memzero(j->input, j->input_size);
+        if (j->output) sodium_memzero(j->output, j->capacity);
+        j->recycle(j);
+        return;
+    }
     if (j->ad) { sodium_memzero(j->ad, j->ad_size); free(j->ad); }
     if (j->input) { sodium_memzero(j->input, j->input_size); free(j->input); }
     if (j->output) { sodium_memzero(j->output, j->capacity); free(j->output); }
@@ -32,14 +40,9 @@ static void run(void *arg)
     while (go_channel_receive(w->in, &value) == 0) {
         fipsd_crypto_job *j = value;
         j->worker = w->index;
-        if (j->operation == FIPSD_CRYPTO_SEAL)
-            j->result = fips_cipher_state_seal_with_counter(&j->key, j->counter,
-                j->ad, j->ad_size, j->input, j->input_size,
-                j->output, j->capacity, &j->output_size);
-        else
-            j->result = fips_cipher_state_open(&j->key, j->counter,
-                j->ad, j->ad_size, j->input, j->input_size,
-                j->output, j->capacity, &j->output_size);
+        if (j->operation == FIPSD_CRYPTO_SEAL) fipsd_encrypt_worker_execute(j);
+        else fipsd_decrypt_worker_execute(j);
+        if (j->result == FIPS_NOISE_OK && j->worker_counts) atomic_fetch_add(&j->worker_counts[w->index], 1);
         fips_cipher_state_destroy(&j->key);
         if (go_channel_send(w->set->results, j) != 0) fipsd_crypto_job_destroy(j);
         gof_yield();
@@ -90,9 +93,12 @@ size_t fipsd_worker_set_live(const fipsd_worker_set *s)
 int fipsd_worker_set_dispatch(fipsd_worker_set *s, fipsd_crypto_job *j)
 {
     if (!j || (j->operation != FIPSD_CRYPTO_SEAL && j->operation != FIPSD_CRYPTO_OPEN)) return -1;
-    size_t i = s->next++ % s->count;
-    if (!atomic_load(&s->workers[i].live)) return -1;
-    return go_channel_try_send(s->workers[i].in, j);
+    size_t first = s->next++ % s->count;
+    for (size_t n = 0; n < s->count; ++n) {
+        size_t i = (first + n) % s->count;
+        if (atomic_load(&s->workers[i].live) && go_channel_try_send(s->workers[i].in, j) == 0) return 0;
+    }
+    return -1;
 }
 void fipsd_worker_set_stop(fipsd_worker_set *s)
 {

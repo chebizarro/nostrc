@@ -5,6 +5,7 @@
 #include "peer/table.h"
 #include "peer/identities.h"
 #include "host_os.h"
+#include "node/dataplane/dataplane.h"
 #include "log.h"
 #include <fips/proto/fmp/mod.h>
 #include <fips/proto/fmp/rekey.h>
@@ -228,6 +229,7 @@ struct fipsd_node_handlers {
     uint64_t next_probe_id;
     /* Diagnostics */
     handler_counters counters;
+    fipsd_dataplane *dataplane; /* .7: bounded jobs + immutable routing/epoch tables */
     fips_stats_history *history;
     fips_peer_stats *history_peers;
     /* Control */

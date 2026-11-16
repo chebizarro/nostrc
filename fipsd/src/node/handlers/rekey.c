@@ -4,6 +4,7 @@
  * PeerRestarted apply settlement, Deliver is handed to the link/session message
  * dispatch AFTER the machine's output list has been executed in full. */
 #include "node/handlers/internal.h"
+#include "fiber_hooks.h"
 
 static uint16_t jitter_draw(void *ctx, uint16_t bound)
 {
@@ -13,11 +14,19 @@ static uint16_t jitter_draw(void *ctx, uint16_t bound)
     h->entropy.fill(h->entropy.ctx, (uint8_t *)&v, sizeof v);
     return (uint16_t)(v % bound);
 }
+static void replay_mark_observed(void *ctx)
+{
+    fipsd_dataplane *d = ctx;
+    if (gof_hook_current() == d->dispatcher_fiber) atomic_fetch_add(&d->stats.replay_marks, 1);
+    else atomic_fetch_add(&d->stats.off_dispatcher_replay_marks, 1);
+}
 void hs_env(handlers *h, fips_rekey_env *env, fips_rekey_transport transport)
 {
+    if (h->dataplane && !h->dataplane->dispatcher_fiber) h->dataplane->dispatcher_fiber = gof_hook_current();
     *env = (fips_rekey_env){.indices = fips_rekey_index_source_from_allocator(&h->indices),
         .transport = transport, .tags = &h->tags, .workers = false, .jitter_draw = jitter_draw,
-        .jitter_ctx = h, .local = &h->local, .scratch = h->scratch, .scratch_capacity = sizeof h->scratch};
+        .jitter_ctx = h, .local = &h->local, .scratch = h->scratch, .scratch_capacity = sizeof h->scratch,
+        .replay_mark_observer = h->dataplane ? replay_mark_observed : NULL, .replay_mark_ctx = h->dataplane};
 }
 /* Receive-index map (upstream peers_by_index): one node-wide allocator makes
  * the index unique. Transport is retained as binding provenance, not a second
@@ -84,6 +93,7 @@ static bool coords(void *c, fips_rekey_route route, fips_rekey_route_handle hand
 static fips_status send_wire(void *c, const fips_rekey_output *o, const uint8_t *bytes, size_t len)
 {
     exec_ctx *x = c; handlers *h = x->h;
+    h->dataplane->needs_publish = true; /* handshake Send can install pending keys */
     if (x->rec) {
         const fipsd_peer_info *info = fipsd_active_peer_info(x->rec->peer);
         fipsd_transport *t = hs_transport(h, info->transport);
@@ -119,6 +129,7 @@ static void link_restarted(handlers *h, peer_rec *rec)
 {
     /* Restart settlement: stale tree/filter state is discarded and re-learned. */
     ++h->counters.rekey_restart;
+    fipsd_dp_mtu_release(h->dataplane, &rec->addr); /* peer restart releases stale clamp */
     fips_bloom_peer *bp = fips_bloom_state_peer(&h->bloom, &rec->addr);
     if (bp) fips_bloom_state_peer_restarted(&h->bloom, bp);
     fips_tree_state_remove_peer(h->tree, rec->addr);
@@ -130,6 +141,11 @@ static void effect(void *c, const fips_rekey_output *o, const uint8_t *plaintext
 {
     exec_ctx *x = c; handlers *h = x->h;
     (void)plaintext;
+    if (o->kind == FIPS_REKEY_OUT_Bind || o->kind == FIPS_REKEY_OUT_Unbind ||
+        o->kind == FIPS_REKEY_OUT_Installed || o->kind == FIPS_REKEY_OUT_Retired ||
+        o->kind == FIPS_REKEY_OUT_Reverted || o->kind == FIPS_REKEY_OUT_PeerRestarted ||
+        o->kind == FIPS_REKEY_OUT_Teardown)
+        h->dataplane->needs_publish = true;
     switch (o->kind) {
     case FIPS_REKEY_OUT_Deliver:
         if (x->result) { x->result->delivered = true; x->result->begin = o->begin; x->result->end = o->end; }
@@ -161,11 +177,29 @@ static void effect(void *c, const fips_rekey_output *o, const uint8_t *plaintext
         break;
     case FIPS_REKEY_OUT_Rekeyed: if (x->ext) ++x->ext->rekeys; ++h->counters.sess_rekeys; break;
     case FIPS_REKEY_OUT_Delegate:
-        /* No decrypt workers are registered (nostrc-9keoz.7); the clone is
-         * cleared with the output list and receive ownership stays here. */
-        FIPSD_WARN(HMOD, "unexpected Delegate output without workers"); break;
+        /* .7 jobs clone bare keys from snapshots, NEVER a replay window.
+         * env.workers stays false: replay authority remains on this dispatcher. */
+        FIPSD_WARN(HMOD, "unexpected replay-authority delegation in snapshot dataplane"); break;
     default: break;
     }
+}
+/* .7: preserve executor ordering while Prompt's packet AEAD is asynchronous.
+ * Handshake state-machine crypto remains on its single control-plane owner. */
+static fips_status prompt_worker(void *c, fips_rekey *m, fips_instant now, const fips_rekey_output *o)
+{
+    exec_ctx *x = c;
+    x->h->dataplane->needs_publish = true; /* pending prompt may be its first job */
+    fips_rekey_sealed_prompt p = {0};
+    if (fips_rekey_seal_prompt(m, now, o->tag, &p) != FIPS_REKEY_SEAL_OK) return FIPS_ERR_RANGE;
+    fips_transport_id transport = {0}; const fips_transport_addr *to = NULL;
+    if (x->rec) {
+        const fipsd_peer_info *info = fipsd_active_peer_info(x->rec->peer);
+        transport = info->transport; to = x->arrival ? x->arrival : &info->addr;
+    }
+    bool ok = fipsd_dp_seal(x->h, x->rec, x->entry, &p.sealed, p.plaintext.bytes,
+        p.plaintext.len, true, transport, to, false);
+    fips_rekey_sealed_prompt_clear(&p);
+    return ok ? FIPS_OK : FIPS_ERR_RANGE;
 }
 static void release_index(void *c, uint32_t index)
 {
@@ -202,20 +236,8 @@ bool hs_link_execute(handlers *h, peer_rec *rec, const fips_transport_addr *arri
     if (!m) { hs_release_outputs(h, &rec->addr, &h->link_out); return false; }
     exec_ctx x = {.h = h, .rec = rec, .arrival = arrival, .result = result};
     fips_session_executor exec = {.ctx = &x, .coords = coords, .send = send_wire, .effect = effect,
-        .release = release_index, .wire = h->link_exec_wire, .capacity = sizeof h->link_exec_wire};
+        .release = release_index, .prompt = prompt_worker, .wire = h->link_exec_wire, .capacity = sizeof h->link_exec_wire};
     return fips_session_execute(m, hs_now(h), &h->link_out, input, len, &exec) == FIPS_OK;
-}
-/* Heard-link accounting after an authenticated frame, then dispatch of the
- * delivered link message (type byte first). */
-static void link_heard(handlers *h, peer_rec *rec, size_t bytes)
-{
-    fipsd_peer_event e = {.kind = FIPSD_PEER_HEARD, .authenticated_bytes = bytes, .wall_ms = hs_wall_ms(h)};
-    fipsd_peer_actions a;
-    fipsd_active_peer_step(rec->peer, hs_now(h), &e, &a);
-    rec->last_heard = hs_now(h); rec->heard = true;
-    ++rec->frames_in; rec->bytes_in += bytes;
-    if (!a.count) return;
-    (void)hs_peer_effects(h, rec->peer, &a);
 }
 bool hs_link_step(handlers *h, peer_rec *rec, fips_rekey_input input, const fips_transport_addr *arrival, uint8_t *frame, size_t len, link_exec_result *result)
 {
@@ -226,6 +248,7 @@ bool hs_link_step(handlers *h, peer_rec *rec, fips_rekey_input input, const fips
     if (s != FIPS_OK) { fips_rekey_outputs_clear(&h->link_out); return false; }
     return hs_link_execute(h, rec, arrival, frame, len, result);
 }
+/* .7: this seam never performs packet crypto on the dispatcher. */
 bool hs_link_frame(handlers *h, peer_rec *rec, fipsd_transport *t, const fips_transport_addr *from, uint8_t *frame, size_t len)
 {
     fips_fmp_encrypted_header header;
@@ -251,6 +274,7 @@ bool hs_link_frame(handlers *h, peer_rec *rec, fipsd_transport *t, const fips_tr
     hs_link_message(h, rec, t, from, timestamp, h->msg_buf, message_len);
     return true;
 }
+{ return fipsd_dp_open(h, rec, NULL, t->id, from, frame, len); }
 bool hs_link_send(handlers *h, peer_rec *rec, const uint8_t *message, size_t len)
 {
     const fipsd_peer_info *info = fipsd_active_peer_info(rec->peer);
@@ -258,34 +282,11 @@ bool hs_link_send(handlers *h, peer_rec *rec, const uint8_t *message, size_t len
 }
 bool hs_link_send_to(handlers *h, peer_rec *rec, fips_transport_id transport, const fips_transport_addr *to, const uint8_t *message, size_t len)
 {
-    fipsd_transport *t = hs_transport(h, transport);
-    if (!t) return false;
-    fips_rekey_sealed s = {0};
-    fips_rekey_seal_refusal refusal = fipsd_active_peer_link_seal(rec->peer, hs_now(h), &s);
-    if (refusal != FIPS_REKEY_SEAL_OK) {
-        if (refusal == FIPS_REKEY_SEAL_Exhausted) FIPSD_WARN(HMOD, "link send counter exhausted");
-        ++h->counters.send_failed; return false;
-    }
-    uint32_t ts = (uint32_t)(s.elapsed.secs * 1000 + s.elapsed.nanos / 1000000);
-    fips_writer w; fips_writer_init(&w, h->link_plain, sizeof h->link_plain);
-    size_t n = 0;
-    bool ok = fips_fmp_prepend_inner_header(ts, message, len, &w, NULL) == FIPS_OK &&
-        fips_session_encode_sealed(&fips_fmp_rekey_profile, &s, h->link_plain, fips_writer_len(&w),
-                                   h->link_wire, sizeof h->link_wire, &n) == FIPS_OK;
-    uint64_t counter = s.counter;
-    fips_rekey_sealed_clear(&s);
-    if (ok) ok = t->ops->send(t, to, h->link_wire, n) == 0;
-    if (!ok) { ++h->counters.send_failed; return false; }
-    ++h->counters.frames_sent; ++rec->frames_out; rec->bytes_out += n;
-    fips_link_stats_record_sent(&fipsd_active_peer_data(rec->peer)->link_stats, n);
-    hs_mmp_frame_sent(h, rec, counter, ts, n);
-    /* Message accounting for the rekey trigger; its outputs run now. */
-    link_exec_result r = {0};
-    (void)hs_link_step(h, rec, (fips_rekey_input){.kind = FIPS_REKEY_IN_DataSent}, NULL, NULL, 0, &r);
-    if (r.teardown) hs_remove_peer(h, rec, FIPS_REKEY_CLOSE_Admin, false, FIPS_FMP_ResourceExhaustion);
-    return true;
+    return fipsd_dp_link_send(h, rec, transport, to, message, len);
 }
 void hs_link_message(handlers *h, peer_rec *rec, fipsd_transport *t, const fips_transport_addr *from, uint32_t timestamp_ms, const uint8_t *message, size_t len)
+
+void hs_link_message(handlers *h, peer_rec *rec, const fips_transport_addr *from, uint32_t timestamp_ms, const uint8_t *message, size_t len)
 {
     (void)timestamp_ms;
     if (!len) return;
@@ -323,7 +324,7 @@ bool hs_session_execute(handlers *h, fips_session_entry *entry, const uint8_t *i
     link_exec_result r = {0};
     exec_ctx x = {.h = h, .entry = entry, .ext = ext, .result = &r};
     fips_session_executor exec = {.ctx = &x, .coords = coords, .send = send_wire, .effect = effect,
-        .release = release_index, .wire = h->session_exec_wire, .capacity = sizeof h->session_exec_wire};
+        .release = release_index, .prompt = prompt_worker, .wire = h->session_exec_wire, .capacity = sizeof h->session_exec_wire};
     fips_status s = fips_session_execute(&entry->machine, hs_now(h), &h->session_out, input, len, &exec);
     if (x.session_installed && ext) {
         fips_rekey_view v = fips_rekey_get_view(&entry->machine);
@@ -347,12 +348,13 @@ bool hs_session_execute(handlers *h, fips_session_entry *entry, const uint8_t *i
     }
     if (x.session_teardown && entry->occupied) {
         fips_node_addr peer = entry->peer;
+        fipsd_dp_mtu_release(h->dataplane, &peer);
         fips_rekey_carry carry = {0};
         fips_rekey_outputs_clear(&h->session_out);
         if (fips_session_table_remove(&h->sessions, entry, FIPS_REKEY_CLOSE_OpeningTeardown, &h->session_out, &carry)) {
             exec_ctx y = {.h = h, .ext = ext};
             fips_session_executor exec2 = {.ctx = &y, .coords = coords, .send = send_wire, .effect = effect,
-                .release = release_index, .wire = h->session_exec_wire, .capacity = sizeof h->session_exec_wire};
+                .release = release_index, .prompt = prompt_worker, .wire = h->session_exec_wire, .capacity = sizeof h->session_exec_wire};
             (void)fips_session_execute(&entry->machine, hs_now(h), &h->session_out, NULL, 0, &exec2);
         }
         if (ext) { ext->used = false; ext->established = false; ext->pending_len = 0; }

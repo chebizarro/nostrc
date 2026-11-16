@@ -416,6 +416,25 @@ static void judge(const fips_rekey *m, fips_instant now, fips_rekey_input input,
     case FIPS_REKEY_IN_Frame:
         judge_frame(m, c, env);
         break;
+    case FIPS_REKEY_IN_AuthenticatedFrame: {
+        fips_rekey_slot slot;
+        c->reason = FIPS_REKEY_REASON_StaleTag;
+        if (!slot_of(m, input.tag, &slot)) break;
+        const fips_rekey_epoch *ep = rk_epoch_const(m, slot);
+        if (m->profile->indexed && (!ep->ids.lease.live || ep->ids.lease.index != input.hint.index)) break;
+        c->reason = FIPS_REKEY_REASON_Replay;
+        if (!m->profile->keys->fresh(ep->session, input.hint.counter)) break;
+        c->reason = FIPS_REKEY_REASON_ShortPlaintext;
+        if (!input.buf || input.hint.body > input.len) break;
+        size_t n = input.len - input.hint.body;
+        if (n < m->profile->floor || n > env->scratch_capacity) break;
+        /* Host-owned completion bytes, never a second AEAD or a worker's window. */
+        memcpy(env->scratch, input.buf + input.hint.body, n);
+        c->frame = (rk_frame_proof){slot, input.tag, input.hint.counter,
+            input.hint.k, m->profile->is_probe(env->scratch, n), n};
+        c->kind = CH_FRAME;
+        break;
+    }
     case FIPS_REKEY_IN_WorkerFrame:
     case FIPS_REKEY_IN_Delegated:
     case FIPS_REKEY_IN_Undelegated: {
@@ -909,6 +928,7 @@ static void frame(fips_rekey *m, fips_instant now, const change *c, fips_rekey_e
                   fips_rekey_outputs *out) {
     fips_rekey_epoch *ep = rk_epoch(m, c->frame.slot);
     assert(ep);
+    if (env->replay_mark_observer) env->replay_mark_observer(env->replay_mark_ctx);
     m->profile->keys->mark(ep->session, c->frame.counter);
     switch (c->frame.slot) {
     case FIPS_REKEY_Pending:

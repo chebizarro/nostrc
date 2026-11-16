@@ -88,6 +88,7 @@ static void execute(handlers *h, probe_job *j, const fips_probe_actions *actions
                     }
                 }
                 fips_rekey_outputs_clear(&h->session_out);
+                fipsd_dp_mtu_release(h->dataplane, &j->target); /* release probe-owned clamp */
                 x->used = false; x->established = false; ++h->counters.sess_closed;
             }
             break;

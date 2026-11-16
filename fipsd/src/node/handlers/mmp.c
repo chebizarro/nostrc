@@ -165,8 +165,9 @@ void hs_mmp_session_message(handlers *h, fips_session_entry *entry, session_ext 
         fips_mmp_metrics_update_reverse_delivery(&x->mmp.roles.metrics, rr.cumulative_packets_recv, rr.highest_counter);
     } else if (msg_type == FIPS_SESSION_PathMtuNotification) {
         fips_mmp_path_mtu_notification n;
-        if (fips_mmp_path_mtu_notification_decode(&r, &n, NULL) == FIPS_OK)
-            (void)fips_mmp_path_mtu_apply_notification(&x->mmp.path_mtu, n.path_mtu, hs_now_ms(h));
+        if (fips_mmp_path_mtu_notification_decode(&r, &n, NULL) == FIPS_OK &&
+            fips_mmp_path_mtu_apply_notification(&x->mmp.path_mtu, n.path_mtu, hs_now_ms(h)))
+            fipsd_dp_mtu_set(h->dataplane, &entry->peer, x->mmp.path_mtu.current_mtu);
     }
     hs_mark_dirty(h);
 }
