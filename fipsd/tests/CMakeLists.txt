@@ -187,3 +187,18 @@ add_test(NAME FipsdNodeHandlersTest COMMAND fipsd_node_handlers_test)
 set_tests_properties(FipsdNodeHandlersTest PROPERTIES TIMEOUT 300 LABELS "fips;node"
   ENVIRONMENT "FIPSD_WORKERS=2")
 nostrc_describe_test(FipsdNodeHandlersTest OWNER fipsd TARGETS fipsd_node_handlers_test)
+
+fipsd_unit_test(fipsd_node_stp_acks_test test_node_stp_acks.c)
+target_sources(fipsd_node_stp_acks_test PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}/../../libfips-core/tests/fakes/host.c")
+target_include_directories(fipsd_node_stp_acks_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../../libfips-core/tests")
+add_dependencies(fipsd_tests fipsd_node_stp_acks_test)
+add_test(NAME FipsdNodeStpAcksTest COMMAND fipsd_node_stp_acks_test)
+set_tests_properties(FipsdNodeStpAcksTest PROPERTIES TIMEOUT 60 LABELS "fips;node"
+  ENVIRONMENT "FIPSD_WORKERS=2")
+nostrc_describe_test(FipsdNodeStpAcksTest OWNER fipsd TARGETS fipsd_node_stp_acks_test)
+
+add_test(NAME FipsdNodeStpAcksNoReportTest COMMAND fipsd_node_stp_acks_test no-reports)
+set_tests_properties(FipsdNodeStpAcksNoReportTest PROPERTIES TIMEOUT 60 LABELS "fips;node"
+  ENVIRONMENT "FIPSD_WORKERS=2")
+nostrc_describe_test(FipsdNodeStpAcksNoReportTest OWNER fipsd TARGETS fipsd_node_stp_acks_test)
