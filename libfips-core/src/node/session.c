@@ -98,6 +98,11 @@ fips_status fips_session_execute(fips_rekey *m, fips_instant now, fips_rekey_out
         fips_rekey_output *o = &out->items[i];
         fips_status status = FIPS_OK;
         if (o->kind == FIPS_REKEY_OUT_Send || o->kind == FIPS_REKEY_OUT_Prompt) {
+            if (o->kind == FIPS_REKEY_OUT_Prompt && x->prompt) {
+                status = x->prompt(x->ctx, m, now, o);
+                if (status != FIPS_OK && result == FIPS_OK) result = status;
+                continue;
+            }
             size_t n = 0;
             status = o->kind == FIPS_REKEY_OUT_Send ? handshake_wire(m, o, x, &n)
                                                      : prompt_wire(m, now, o, x, &n);

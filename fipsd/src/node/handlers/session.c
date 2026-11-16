@@ -19,6 +19,7 @@ session_ext *hs_session_ext(handlers *h, const fips_session_entry *entry)
 static session_ext *ext_init(handlers *h, fips_session_entry *entry, const fips_node_addr *peer, bool initiator)
 {
     session_ext *x = hs_session_ext(h, entry);
+    h->dataplane->needs_publish = true;
     pending_datagram *pending = x->pending; size_t cap = x->pending_capacity;
     memset(x, 0, sizeof *x);
     x->pending = pending; x->pending_capacity = cap;
@@ -54,46 +55,7 @@ static fips_rekey_route_handle route_of(handlers *h, peer_rec *rec) { return rec
 
 bool hs_route_datagram(handlers *h, const fips_session_datagram *dg, const fips_node_addr *exclude, bool incoming_ce)
 {
-    fips_routing_peer peers[64]; size_t n = 0;
-    peer_rec *direct = hs_rec_find(h, &dg->dest_addr);
-    for (size_t i = 0; i < h->cfg.peer_capacity && n < 64; ++i) {
-        peer_rec *rec = &h->recs[i];
-        if (!rec->used || (exclude && !memcmp(rec->addr.bytes, exclude->bytes, 16))) continue;
-        peers[n++] = (fips_routing_peer){.addr = rec->addr, .coords = hs_tree_peer_coords(h, &rec->addr),
-            .filter = hs_bloom_peer_filter(h, &rec->addr), .link_cost = hs_mmp_link_cost(h, rec)};
-    }
-    fips_routing_view rv = {.peers = peers, .peer_count = n, .ctx = h, .cached_coords = hs_cache_coords};
-    fips_next_hop hop = {0};
-    if (direct) {
-        const fipsd_peer_info *info = fipsd_active_peer_info(direct->peer);
-        fipsd_transport *t = hs_transport(h, info->transport);
-        hop = (fips_next_hop){direct->addr, t ? t->ops->mtu(t, &info->addr) : 1280};
-    }
-    fips_writer w; fips_writer_init(&w, h->route_buf, sizeof h->route_buf);
-    fips_route_outcome out; fips_proto_error e;
-    if (fips_router_route(&h->router, dg, &h->me, incoming_ce, direct ? &hop : NULL, &rv, &w, &out, &e) != FIPS_OK) {
-        ++h->counters.fwd_decode_error_packets; return false;
-    }
-    bool originated = !memcmp(dg->src_addr.bytes, h->me.bytes, 16);
-    switch (out.kind) {
-    case FIPS_ROUTE_Forward: {
-        peer_rec *next = hs_rec_find(h, &out.next_hop);
-        if (!next) { ++h->counters.fwd_drop_no_route_packets; h->counters.fwd_drop_no_route_bytes += dg->payload_len; return false; }
-        if (direct) ++h->counters.fwd_route_direct_peer; else ++h->counters.fwd_route_tree_up;
-        bool ok = hs_link_send(h, next, h->route_buf, fips_writer_len(&w));
-        if (ok) {
-            if (originated) { ++h->counters.fwd_originated_packets; h->counters.fwd_originated_bytes += dg->payload_len; }
-            else { ++h->counters.fwd_forwarded_packets; h->counters.fwd_forwarded_bytes += dg->payload_len; }
-        }
-        return ok;
-    }
-    case FIPS_ROUTE_DeliverLocal: return false; /* callers deliver before routing */
-    case FIPS_ROUTE_Drop: ++h->counters.fwd_ttl_exhausted_packets; return false;
-    case FIPS_ROUTE_NoRoute:
-        ++h->counters.fwd_drop_no_route_packets; h->counters.fwd_drop_no_route_bytes += dg->payload_len;
-        return false;
-    }
-    return false;
+    return fipsd_dp_route(h, dg, exclude, incoming_ce);
 }
 /* Seal one session message under the current epoch and route it. */
 bool hs_session_send_message(handlers *h, fips_session_entry *entry, session_ext *x, uint8_t msg_type, const uint8_t *body, size_t len)
@@ -103,23 +65,15 @@ bool hs_session_send_message(handlers *h, fips_session_entry *entry, session_ext
     if (refusal != FIPS_REKEY_SEAL_OK) { ++h->counters.send_failed; return false; }
     uint32_t ts = (uint32_t)(s.elapsed.secs * 1000 + s.elapsed.nanos / 1000000);
     fips_writer w; fips_writer_init(&w, h->session_plain, sizeof h->session_plain);
-    size_t n = 0;
     bool ok = fips_fsp_prepend_inner_header(ts, msg_type, 0, body, len, &w, NULL) == FIPS_OK &&
-        fips_session_encode_sealed(&fips_fsp_rekey_profile, &s, h->session_plain, fips_writer_len(&w),
-                                   h->session_wire, sizeof h->session_wire, &n) == FIPS_OK;
-    uint64_t counter = s.counter;
+        fipsd_dp_seal(h, NULL, entry, &s, h->session_plain, fips_writer_len(&w), false,
+            (fips_transport_id){0}, NULL, false);
     fips_rekey_sealed_clear(&s);
-    if (!ok) { ++h->counters.send_failed; return false; }
-    fips_session_datagram dg;
-    fips_session_datagram_init(&dg, h->me, x->peer, h->session_wire, n);
-    ok = hs_route_datagram(h, &dg, NULL, false);
-    if (x->mmp_live) fips_mmp_sender_record_sent(&x->mmp.roles.sender, counter, ts, n);
-    fips_rekey_outputs_clear(&h->session_out);
-    fips_rekey_env env; hs_env(h, &env, 0);
-    if (fips_rekey_step(&entry->machine, hs_now(h), (fips_rekey_input){.kind = FIPS_REKEY_IN_DataSent}, &env, &h->session_out) == FIPS_OK)
-        (void)hs_session_execute(h, entry, NULL, 0);
+    (void)x; /* completion owns MMP accounting and DataSent */
+    if (!ok) ++h->counters.send_failed;
     return ok;
 }
+
 static bool send_data(handlers *h, fips_session_entry *entry, session_ext *x, uint16_t sp, uint16_t dp, const uint8_t *payload, size_t len)
 {
     uint8_t body[FIPSD_HANDLERS_DATAGRAM_MAX + 4];
@@ -297,12 +251,18 @@ void hs_session_datagram_received(handlers *h, peer_rec *rec, const uint8_t *bod
     uint8_t *frame = h->session_frame; size_t flen = dg.payload_len;
     fips_fsp_action action; fips_fsp_action_list list = {&action, 0, 1};
     if (fips_fsp_receive(dg.src_addr, frame, flen, &list) != FIPS_OK || action.kind == FIPS_FSP_DropFrame) { ++h->counters.sess_decode_error; return; }
+    if (action.kind != FIPS_FSP_ReceiveEncrypted) h->dataplane->needs_publish = true;
     if (action.kind == FIPS_FSP_ReceiveRoutingSignal) { hs_routing_signal(h, rec, &dg.src_addr, frame, flen); return; }
     if (action.kind == FIPS_FSP_ReceiveSetup) { setup_received(h, rec, &dg, frame, flen); return; }
     fips_session_entry *entry = fips_session_table_by_peer(&h->sessions, dg.src_addr);
     if (!entry) { ++h->counters.sess_decode_error; return; }
     session_ext *x = hs_session_ext(h, entry);
     x->carrier = rec->addr;
+    if (action.kind == FIPS_FSP_ReceiveEncrypted) {
+        const fipsd_peer_info *info = fipsd_active_peer_info(rec->peer);
+        (void)fipsd_dp_open(h, rec, entry, info->transport, &info->addr, frame, flen);
+        return;
+    }
     fips_rekey_env env; hs_env(h, &env, 0);
     fips_rekey_outputs_clear(&h->session_out);
     if (fips_fsp_rekey_receive(&entry->machine, hs_now(h), rec->addr, route_of(h, rec), frame, flen, &env, &h->session_out) == FIPS_OK)
@@ -359,8 +319,10 @@ void hs_routing_signal(handlers *h, peer_rec *rec, const fips_node_addr *src, co
         fips_mtu_exceeded m;
         if (fips_mtu_exceeded_decode(&r, &m, NULL) != FIPS_OK) return;
         const fips_cache_entry *e = fips_coord_cache_get_entry(&h->cache, m.dest_addr.bytes);
-        if (e && fips_fsp_should_apply_path_mtu(e->has_path_mtu, e->path_mtu, m.mtu))
+        if (e && fips_fsp_should_apply_path_mtu(e->has_path_mtu, e->path_mtu, m.mtu)) {
             (void)fips_coord_cache_insert_verified_with_path_mtu(&h->cache, m.dest_addr.bytes, &e->coords, hs_now(h), m.mtu);
+            fipsd_dp_mtu_set(h->dataplane, &m.dest_addr, m.mtu);
+        }
         return;
     }
     for (size_t i = 0; i < actions.len; ++i) {
@@ -377,6 +339,8 @@ static void close_entry(handlers *h, fips_session_entry *entry, fips_rekey_close
 {
     session_ext *x = hs_session_ext(h, entry);
     fips_node_addr peer = entry->peer;
+    fipsd_dp_mtu_release(h->dataplane, &peer);
+    h->dataplane->needs_publish = true;
     fips_rekey_carry carry = {0};
     fips_rekey_outputs_clear(&h->session_out);
     if (fips_session_table_remove(&h->sessions, entry, why, &h->session_out, &carry)) {
@@ -452,4 +416,4 @@ void hs_session_close_all(handlers *h)
     for (size_t i = 0; i < h->cfg.session_capacity; ++i)
         if (h->session_entries[i].occupied) close_entry(h, &h->session_entries[i], FIPS_REKEY_CLOSE_Shutdown);
 }
-void hs_session_peer_removed(handlers *h, const fips_node_addr *peer) { (void)h; (void)peer; }
+void hs_session_peer_removed(handlers *h, const fips_node_addr *peer) { fipsd_dp_mtu_release(h->dataplane, peer); }

@@ -22,7 +22,7 @@ never to the core.
 consumes the runtime's SIGHUP reload channel. `src/control/` implements the
 Unix control socket (`9keoz.3`); `src/node/handlers/` implements the node
 protocol handlers (`9keoz.6`). Not implemented yet: Tier B2 network
-transports, the dataplane worker pool (`9keoz.7`) and the native/TUN host
+transports and the native/TUN host
 owners (B4). Parsing a setting does not claim that its owning subsystem is
 implemented.
 
@@ -557,10 +557,11 @@ Inbound path: transport `PACKET` → `fips_fmp_receive` gate → msg1/msg2 to
 (SessionDatagram, Sender/ReceiverReport, TreeAnnounce, FilterAnnounce,
 Lookup*, Disconnect, Heartbeat, Path*). Session datagrams for us go through
 `fips_fsp_receive` to the session machine; others through the router. Outbound:
-every link message is sealed by `fipsd_active_peer_link_seal` with its reserved
-counter, `fips_session_encode_sealed`, the transport's `send`, then `DataSent`.
-All crypto runs inline on the dispatcher behind `hs_link_send`/`hs_session_send_message`
-(the dataplane worker pool is `9keoz.7`). Each machine's output list is executed
+every link message reserves its counter with `fipsd_active_peer_link_seal`,
+queues an explicit-counter worker seal, then sends and accounts `DataSent` on
+successful completion.
+Packet AEAD now runs in the dataplane worker pool (`9keoz.7`), including
+executor prompts; Noise handshakes remain on the control-plane dispatcher. Each machine's output list is executed
 to completion before any nested step; deliveries are handed on afterwards.
 
 Deliberate policy notes: the receiver-index map is host state fed by Bind/
@@ -600,14 +601,99 @@ handshake timeout, held datagram release without a route, and the live
 `probe_start/poll`, `path_show` and `disconnect` commands through the provider.
 Both run on two scheduler workers under ASan/UBSan and TSan.
 
-### Remaining for `9keoz.7`, `9keoz.8` and B4
+### Snapshot dataplane (`nostrc-9keoz.7`)
 
-`9keoz.7`: move seal/open off the dispatcher into the worker pool behind the
-`hs_link_send`/`hs_link_frame` seams (explicit counters, Delegate/WorkerFrame
-inputs with `env.workers`). `9keoz.8`: real network transports (`connect_async`
-legs, discovery, interface presence into the path machines). B4: native API and
-IPv6 adapter owners replacing `native.c`/`host_link` notices, configured-peer
-address lists into path intake, ACL and rendezvous.
+The production seams `hs_link_send*`, `hs_link_frame`, executor Prompt and the
+FSP encrypted datagram path use `node/dataplane/`. There is **no inline packet
+crypto fallback**. The core's default synchronous executor remains available to
+other core callers/tests, not to the installed daemon handlers. `rx_loop.c`
+classifies transport events; handshake/control work is handed to the dispatcher,
+while established frames become bounded authentication jobs. `encrypted.c`
+assembles owned jobs, `dispatch.c` validates completions, `peer_actions.c`
+performs authenticated heard/MMP/path/message effects, `forwarding.c` resolves
+next hops over immutable tables and invokes `fips_router_route`; `reject.c`
+keeps typed silent rejects and rate-limited routing/MTU signals. TTL/local
+delivery ordering, CE propagation and error synthesis remain core decisions.
+`path_mtu.c` owns the bounded destination clamp map. MMP notifications/reactive
+errors update it; session close, probe-owned teardown, peer removal and restart
+release it (including the upstream 2026-11-12 release paths). Native adapter
+publication/MSS application still belongs to its future host owner.
+
+**Ownership and replay:** the dispatcher is the only mutable peer/session,
+send-counter and replay owner. `fips_rekey_seal`/`*_seal_prompt` reserve through
+`take_send_counter` and return bare send-key clones; refused queues burn the
+reservation, never roll it back. `encrypt_worker.c` seals only at that explicit
+counter. `decrypt_worker.c` opens with an independent bare receive-key clone at
+the wire counter, without any replay state. Completion revalidates the live
+peer, tag AND key generation (tag zero can recur on a replacement machine).
+`FIPS_REKEY_IN_AuthenticatedFrame` rechecks replay on the dispatcher and uses
+the existing mark/cutover/deliver path for current, pending and previous epochs.
+`env.workers` deliberately remains false: no Delegate window/authority handoff
+is used. FSP trial retries own another slab, never resubmit a borrowed result.
+A queued Disconnect may outlive table removal; it retains its original endpoint
+and snapshot. Handshake crypto is control-plane work and is not offloaded.
+
+**Snapshots:** the dispatcher publishes an entirely owned routing/peer/session
+table through `GoSwap` after control-plane invalidation changes its topology/key
+fingerprint (not a whole-table scan on every packet), sharing
+unchanged owned coordinate/filter objects between generations. Tables contain
+transport endpoints/MTUs, bloom filters, costs, coordinates, cache expiry and
+bare current/pending/previous epoch keys, never mutable peer pointers/windows.
+Jobs pin a generation with atomic `GoRefPtr` retains. Packet readers take no
+table locks. This is NOT a claim that GoSwap is lock-free: its publication and
+load-and-retain use an internal short mutex, confined here to publication of a
+changed generation; no worker calls `go_swap_load` per packet.
+
+**Bounds:** 256 reusable packet slabs per handler set, each with independent
+2048-byte AD/input/output storage; no per-packet heap allocation is introduced
+by dataplane or worker jobs. Existing transport events/control snapshots/notices
+retain their pre-existing allocation behavior. Per-worker input and shared
+completion queues remain bounded by node options. Submission tries all live
+lanes before refusing; there is no inline fallback, unbounded backlog, timer or
+retry loop. Saturated FSP trials may drop with backpressure because the original
+borrowed completion cannot be recycled until the callback returns. All keys and
+packet buffers are wiped on recycle; snapshot keys are wiped on last release.
+Shutdown closes worker input, drains accepted results through dispatcher EOF,
+then detaches handlers, joins and frees slab/table storage.
+
+`FipsdDataplaneTest` covers direct/excluded/TTL/local/CE forwarding, MTU folding,
+shared routing-error rate limits, clamp release, four-worker unique counter
+reservations, queue/slab refusal, trial saturation, replay-free worker auth and
+delayed transport consumption after caller-buffer overwrite. Core rekey tests
+exercise duplicate/stale completions, pending cutover and previous-epoch
+acceptance. The two-node proof reports actual per-worker seal/open counters and
+a replay-mark observer compares the executing fiber with the dispatcher owner;
+zero off-dispatcher writes is asserted after runtime join.
+
+Throughput smoke (not a qualification or default ctest workload):
+
+```sh
+# Build fipsd_tests; run directly, optional datagram count (default 10000).
+build/fipsd/tests/fipsd_dataplane_throughput 10000
+# Or configure -DFIPSD_DATAPLANE_BENCH_TEST=ON, then ctest -L bench -V.
+```
+
+The optional registered test is labelled `fips;bench`; ordinary configurations
+leave it unregistered. It sends 512-byte datagrams A→B in bounded batches,
+checks every sequence exactly once and reports payload pps/decimal MB/s with
+four scheduler workers and two crypto workers per node.
+
+Recorded for `nostrc-f66sr.4` (local macOS arm64, warnings-as-errors, 10000 ×
+512-byte payloads, no loss/retry): Release smoke **818 ms, 12225 pps,
+6.259 MB/s**; ASan/UBSan smoke **5401 ms, 1852 pps, 0.948 MB/s**. These are
+single loopback smoke samples including host/notice overhead, not network
+throughput or a Rust/C performance comparison. The separate sanitizer gates
+run `ctest -R '^Fips'` (117 registered tests: 116 passes, optional Rust-control
+interop unavailable/skipped); the benchmark is not included in that default.
+
+### Remaining for `9keoz.8`, Tier B2 and B4
+
+`9keoz.8` / Tier B2: real UDP/TCP/connected receive/binder legs behind the
+transport seam, discovery, transport interface presence and native network
+interoperability/performance. No real socket dataplane or deployment proof is
+claimed by loopback tests. B4: native API and IPv6 adapter owners replacing
+`native.c`/`host_link` notices, clamp publication/MSS application to the adapter,
+configured-peer address lists into path intake, ACL and rendezvous.
 
 ## Unix control socket (`nostrc-9keoz.3`)
 

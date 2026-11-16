@@ -24,6 +24,9 @@ typedef struct fips_session_executor {
     void (*release)(void *, uint32_t index);
     uint8_t *wire;
     size_t capacity;
+    /* Optional host worker seam. Owns reservation and prompt serialization;
+     * called instead of inline packet crypto. Handshake Send remains synchronous. */
+    fips_status (*prompt)(void *, fips_rekey *, fips_instant, const fips_rekey_output *);
     fips_rekey_route_handle arrival; /* current ingress route for Send::Arrival */
 } fips_session_executor;
 FIPS_CORE_API fips_status fips_session_execute(fips_rekey *machine, fips_instant now,

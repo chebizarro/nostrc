@@ -4,6 +4,7 @@
  * session, an end-to-end datagram, one rekey cycle (K flip on both) and a
  * disconnect. Every assertion is a notice or a published control snapshot. */
 #include "node_test.h"
+#include "node/handlers/internal.h"
 
 static const char *yaml_a =
     "node: {identity: {nsec: '1111111111111111111111111111111111111111111111111111111111111111', persistent: true}, control: {enabled: false}}";
@@ -44,6 +45,8 @@ int main(void)
     fipsd_config *probe = fipsd_config_parse(yaml_a, strlen(yaml_a), NULL); assert(probe);
     fast_rekey(&hcfg, probe); fipsd_config_free(probe);
     test_node a, b;
+    GoRefPtr retained_tables[2] = {{0}, {0}};
+    uint8_t retained_keys[2][32];
     assert(nt_init(&a, net, "A", "loop:a", yaml_a, &hcfg, 1));
     assert(nt_init(&b, net, "B", "loop:b", yaml_b, &hcfg, 1));
     assert(fipsd_runtime_register(rt, fipsd_node_subsystem(a.node)) == 0);
@@ -97,6 +100,24 @@ int main(void)
     assert(fipsd_node_handlers_send(b.h, &a.identity.node_addr, 2000, 1000, reply, sizeof reply) == 0);
     e = nt_await(&a, FIPSD_NOTICE_DATAGRAM, &b.identity.node_addr, NT_WAIT_MS); assert(e);
     assert(e->len == sizeof reply && !memcmp(e->payload, reply, sizeof reply)); free(e);
+    /* A reader can retain initial peer/session tables (including tag-zero
+     * link keys) through the
+     * later cutover/removal; no borrowed mutable pointers or recycled keys. */
+    for (size_t i = 0; i < 2; ++i) {
+        test_node *n = i ? &b : &a;
+        retained_tables[i] = go_swap_load(n->h->dataplane->tables);
+        const fipsd_dp_snapshot *table = retained_tables[i].ptr;
+        assert(table && table->peer_count == 1 && table->epoch_count >= 2);
+        bool initial_session = false, zero_link = false;
+        for (size_t j = 0; j < table->epoch_count; ++j) {
+            initial_session |= table->epochs[j].session;
+            zero_link |= !table->epochs[j].session && table->epochs[j].tag == 0;
+        }
+        /* Link and FSP constructors share the node's tag source: the first
+         * FSP epoch is not necessarily zero. Both kinds must be published. */
+        assert(initial_session && zero_link);
+        memcpy(retained_keys[i], table->epochs[0].recv.key.bytes, 32);
+    }
     /* 5. One rekey cycle: the K bit flips on both ends (session and link). */
     e = nt_await(&a, FIPSD_NOTICE_SESSION_REKEYED, &b.identity.node_addr, NT_WAIT_MS); assert(e && e->k); free(e);
     e = nt_await(&b, FIPSD_NOTICE_SESSION_REKEYED, &a.identity.node_addr, NT_WAIT_MS); assert(e && e->k); free(e);
@@ -142,6 +163,25 @@ int main(void)
     fipsd_runtime_shutdown(rt);
     assert(fipsd_runtime_run(rt) == FIPSD_RUN_OK);
     nt_drain(&a); nt_drain(&b);
+    for (size_t i = 0; i < 2; ++i) {
+        const fipsd_dp_snapshot *old = retained_tables[i].ptr;
+        assert(old->peer_count == 1 && !memcmp(old->epochs[0].recv.key.bytes, retained_keys[i], 32));
+        assert(old != (i ? b.h : a.h)->dataplane->current.ptr);
+        go_refptr_release(&retained_tables[i]);
+    }
+    for (test_node *n = &a; n; n = n == &a ? &b : NULL) {
+        const fipsd_dp_stats *stats = &n->h->dataplane->stats;
+        for (size_t i = 0; i < 2; ++i) {
+            uint64_t sealed = atomic_load(&stats->sealed[i]), opened = atomic_load(&stats->opened[i]);
+            assert(sealed && opened);
+            printf("%s worker[%zu]: sealed=%llu opened=%llu\n", n->name, i,
+                (unsigned long long)sealed, (unsigned long long)opened);
+        }
+        uint64_t marks = atomic_load(&stats->replay_marks), off = atomic_load(&stats->off_dispatcher_replay_marks);
+        assert(marks > 0 && off == 0);
+        printf("%s dispatcher replay_marks=%llu; off-dispatcher replay writes=%llu\n",
+            n->name, (unsigned long long)marks, (unsigned long long)off);
+    }
     nt_print_trace("two-node loopback proof");
     fipsd_runtime_destroy(rt);
     nt_destroy(&a); nt_destroy(&b);

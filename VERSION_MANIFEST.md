@@ -1680,3 +1680,6 @@ nostrc-9keoz.5: libgo remains 0.3.0 Unreleased; PATCH-class errno
 TLS reacquisition plus relaxed scalar access for shared OS-worker errno cells
 fixes the native netmon TSan regression
 without an installed API change and folds into the existing unreleased version.
+
+| Snapshot dataplane/explicit-counter workers (nostrc-9keoz.7) | fipsd | 0.1.0 | No bump: internal packet worker pools and immutable routing/epoch publication fold into **0.1.0 Unreleased**; no published release/tag change. |
+| Authenticated worker completion, prompt executor seam and replay audit hook (nostrc-9keoz.7) | libfips-core | 0.1.0 | No bump: additive host interfaces fold into initial **0.1.0 Unreleased**; synchronous default executor and wire formats unchanged; no published release/tag change. |

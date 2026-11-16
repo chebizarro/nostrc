@@ -67,12 +67,13 @@ peer_rec *hs_rec_alloc(handlers *h, fipsd_active_peer *peer)
         memset(r, 0, sizeof(*r));
         r->path = path; r->used = true; r->peer = peer;
         r->addr = fipsd_active_peer_info(peer)->identity.node_addr;
+        h->dataplane->needs_publish = true;
         return r;
     }
     return NULL;
 }
 void hs_rec_free(handlers *h, peer_rec *rec)
-{ (void)h; rec->used = false; rec->peer = NULL; }
+{ h->dataplane->needs_publish = true; rec->used = false; rec->peer = NULL; }
 void hs_notice_full(handlers *h, const fipsd_node_notice *notice, const uint8_t *payload, size_t len)
 {
     if (!h->notices) return;
@@ -144,6 +145,7 @@ static void free_storage(handlers *h)
 void fipsd_node_handlers_destroy(fipsd_node_handlers *h)
 {
     if (!h) return;
+    fipsd_dp_destroy(h->dataplane);
     free_storage(h);
     if (h->commands) {
         void *m;
@@ -282,7 +284,7 @@ static bool attach(void *user, const fipsd_node_attach *a)
     h->next_tick = fips_deadline(h->origin, fips_duration_from_millis(h->cfg.tick_ms));
     h->next_link_id = 1;
     load_core(h);
-    if (!allocate(h)) return false;
+    if (!allocate(h) || !fipsd_dp_init(h)) return false;
     fips_index_allocator_init(&h->indices, h->index_storage, h->cfg.peer_capacity * 4, FIPS_INDEX_DEFAULT_MAX_ATTEMPTS, h->entropy);
     fips_token_bucket stranger, established;
     fips_token_bucket_init(&stranger, h->cfg.core.handshake, h->origin);
@@ -320,30 +322,8 @@ static bool on_transport_event(void *user, const fipsd_transport_event *e)
     handlers *h = user;
     fipsd_transport *t = hs_transport(h, e->id);
     if (!t || !h->running) return true;
-    if (e->kind == FIPSD_TRANSPORT_PACKET) {
-        if (e->size > FIPSD_HANDLERS_WIRE) { ++h->counters.frames_dropped; return true; }
-        memcpy(h->in_wire, e->bytes, e->size);
-        fips_fmp_conn_action action;
-        fips_fmp_action_list list = {&action, 0, 1};
-        ++h->counters.frames_received;
-        if (fips_fmp_receive((fips_link_id){0}, h->in_wire, e->size, &list) != FIPS_OK || action.kind == FIPS_FMP_DropFrame) {
-            ++h->counters.frames_dropped; return true;
-        }
-        if (action.kind == FIPS_FMP_ReceiveMsg1 || action.kind == FIPS_FMP_ReceiveMsg2) {
-            (void)hs_handshake_frame(h, t, &e->address, h->in_wire, e->size, action.kind == FIPS_FMP_ReceiveMsg1 ? 1 : 2);
-            return true;
-        }
-        fips_fmp_encrypted_header header;
-        if (!fips_fmp_encrypted_header_parse(h->in_wire, e->size, &header)) { ++h->counters.frames_dropped; return true; }
-        peer_rec *rec = hs_index_lookup(h, e->id.value, header.receiver_idx.value);
-        if (!rec) {
-            /* Unknown index: charge the arrival path and drop (upstream reject accounting). */
-            ++h->counters.frames_dropped;
-            return true;
-        }
-        (void)hs_link_frame(h, rec, t, &e->address, h->in_wire, e->size);
-        return true;
-    }
+    /* .7: packet classification and owned authentication jobs live in dataplane. */
+    if (e->kind == FIPSD_TRANSPORT_PACKET) return fipsd_dp_rx(h, e);
     if (e->kind == FIPSD_TRANSPORT_DISCOVERED) {
         for (size_t i = 0; i < h->cfg.peer_capacity; ++i) {
             configured_peer *c = &h->configured[i];
@@ -372,17 +352,21 @@ static bool on_transport_event(void *user, const fipsd_transport_event *e)
 }
 static bool on_crypto_result(void *user, const fipsd_crypto_job *job)
 {
-    /* The dataplane worker pool (nostrc-9keoz.7) returns its jobs here; this
-     * host seals and opens on the dispatcher, so a completion is unexpected. */
-    (void)job; handlers *h = user; (void)h;
-    return true;
+    return fipsd_dp_result(user, job);
 }
 static void on_network_event(void *user, const fipsd_netmon_event *e)
-{ handlers *h = user; if (h->running) hs_netmon_event(h, e); }
+{ handlers *h = user; if (h->running) { h->dataplane->needs_publish = true; hs_netmon_event(h, e); } }
 static bool peer_effects(void *user, fipsd_active_peer *peer, const fipsd_peer_actions *actions)
 { return hs_peer_effects(user, peer, actions); }
 static uint64_t wait_ms(void *user, fips_instant now) { return hs_wait_ms(user, now); }
-static bool poll(void *user, fips_instant now) { return hs_poll(user, now); }
+static bool poll(void *user, fips_instant now)
+{
+    handlers *h = user;
+    /* Catch timer-driven topology/cost/cache expiry changes, not every packet. */
+    if (hs_until_ms(h->next_tick, now) == 0 || hs_path_wait_ms(h, now) == 0)
+        h->dataplane->needs_publish = true;
+    return hs_poll(h, now) && fipsd_dp_publish(h);
+}
 static void command_free(handler_command *c)
 {
     if (c->params) json_decref(c->params);
@@ -394,6 +378,7 @@ static bool on_command(void *user, void *message)
     handlers *h = user;
     handler_command *c = message;
     if (!h->running) { command_free(c); return true; }
+    if (c->kind != HCMD_SEND) h->dataplane->needs_publish = true;
     switch (c->kind) {
     case HCMD_CONNECT: (void)hs_dial(h, &c->identity, c->transport, &c->addr, false); break;
     case HCMD_DISCONNECT: (void)hs_disconnect(h, &c->node, FIPS_FMP_Shutdown, true); break;

@@ -82,7 +82,11 @@ typedef enum fips_rekey_input_kind {
     FIPS_REKEY_IN_Open,
     FIPS_REKEY_IN_DataSent,
     FIPS_REKEY_IN_PathFacts,
-    FIPS_REKEY_IN_Poll
+    FIPS_REKEY_IN_Poll,
+    /* Trusted host completion ONLY after AEAD authentication with this tag.
+     * buf contains plaintext at hint.body; len ends at the plaintext end.
+     * The machine rechecks epoch and replay, then marks on its sole writer. */
+    FIPS_REKEY_IN_AuthenticatedFrame
 } fips_rekey_input_kind;
 typedef enum fips_rekey_intent {
     FIPS_REKEY_INTENT_Rekey,
@@ -120,6 +124,10 @@ typedef struct fips_rekey_env {
     void *local;
     uint8_t *scratch;
     size_t scratch_capacity;
+    /* Optional host audit hook, synchronously at every replay-window write.
+     * No mutation/re-entry; ctx lifetime covers this step call. */
+    void (*replay_mark_observer)(void *ctx);
+    void *replay_mark_ctx;
 } fips_rekey_env;
 typedef struct fips_rekey_setup_facts {
     uint8_t peer_epoch[8];

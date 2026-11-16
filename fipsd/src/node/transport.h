@@ -39,6 +39,9 @@ typedef struct fipsd_transport_ops {
     void (*stop)(fipsd_transport *);
     fipsd_transport_state (*state)(const fipsd_transport *);
     uint16_t (*mtu)(const fipsd_transport *, const fips_transport_addr *);
+    /* bytes/to are borrowed through return ONLY. An async/buffered transport
+     * must copy or take its own owned message before returning (packet slabs
+     * can be wiped/reused immediately). No retained caller buffer pointers. */
     int (*send)(fipsd_transport *, const fips_transport_addr *, const uint8_t *, size_t);
     int (*discover)(fipsd_transport *);
     int (*connect_async)(fipsd_transport *, const fips_transport_addr *);

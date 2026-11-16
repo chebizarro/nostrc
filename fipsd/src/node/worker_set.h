@@ -16,6 +16,10 @@ typedef struct fipsd_crypto_job {
     uint8_t *ad, *input, *output;
     size_t ad_size, input_size, capacity, output_size, worker;
     fips_noise_status result;
+    /* Optional slab return. Called after key/buffers are wiped. */
+    void (*recycle)(struct fipsd_crypto_job *);
+    void *owner;
+    _Atomic uint64_t *worker_counts; /* optional 64 lane success counters */
 } fipsd_crypto_job;
 typedef struct fipsd_worker_set fipsd_worker_set;
 fipsd_worker_set *fipsd_worker_set_create(size_t workers, size_t capacity);
