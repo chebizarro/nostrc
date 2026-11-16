@@ -55,9 +55,12 @@ static const cfg_field schema_transports_tor_directory_service[] = {
 };
 static const cfg_field schema_transports_tor[] = {
     S("mode","\"socks5\""),
+    S("socks5_addr","\"127.0.0.1:9050\""),
     U("connect_timeout_ms","120000"),
     U16("mtu","1400"),
-    S("control_addr","\"/run/tor/control\""),
+    /* Option<String> upstream: control_port mode applies /run/tor/control
+     * itself; directory mode monitors only when the operator set it. */
+    S("control_addr",NULL),
     S("control_auth","\"cookie\""),
     S("cookie_path","\"/var/run/tor/control.authcookie\""),
     Z("max_inbound_connections","64"),
@@ -68,6 +71,7 @@ static const cfg_field schema_transports_tor[] = {
     END
 };
 static const cfg_field schema_transports_nym[] = {
+    S("socks5_addr","\"127.0.0.1:1080\""),
     U("connect_timeout_ms","300000"),
     U16("mtu","1400"),
     U("startup_timeout_secs","120"),

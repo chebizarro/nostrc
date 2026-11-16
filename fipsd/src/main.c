@@ -21,6 +21,8 @@
 #include "dns/service.h"
 #include "transport/udp/udp.h"
 #include "transport/tcp/tcp.h"
+#include "transport/tor/tor.h"
+#include "transport/nym/nym.h"
 #include "nostr/runtime.h"
 
 #define MODULE "main"
@@ -163,6 +165,11 @@ int main(int argc, char **argv)
     fipsd_transport *tcp[FIPSD_TRANSPORT_MAX] = {0};
     size_t tcp_count = 0;
     bool tcp_ok = udp_ok && fipsd_tcp_register_config(fipsd_node_transports(node), config, tcp, &tcp_count) == 0;
+    /* Proxied stream owners (nostrc-gfi8h.4): Tor always, Nym when built in. */
+    fipsd_transport *tor[FIPSD_TRANSPORT_MAX] = {0}, *nym[FIPSD_TRANSPORT_MAX] = {0};
+    size_t tor_count = 0, nym_count = 0;
+    bool tor_ok = tcp_ok && fipsd_tor_register_config(fipsd_node_transports(node), config, tor, &tor_count) == 0;
+    bool nym_ok = tor_ok && fipsd_nym_register_config(fipsd_node_transports(node), config, nym, &nym_count) == 0;
     /* Asking for the subsystem seals the transport registry. */
     fipsd_subsystem *node_subsystem = udp_ok ? fipsd_node_subsystem(node) : NULL;
     fipsd_control_service control;
@@ -221,7 +228,7 @@ int main(int argc, char **argv)
     if (!rt) {
         FIPSD_ERROR(MODULE, "cannot allocate the runtime");
         code = FIPSD_EXIT_FAILURE;
-    } else if (!node_subsystem || !udp_ok || !tcp_ok || (tun_enabled && !tun) || (tun && !shim) ||
+    } else if (!node_subsystem || !udp_ok || !tcp_ok || !nym_ok || (tun_enabled && !tun) || (tun && !shim) ||
                fipsd_runtime_register(rt, &service.subsystem) != 0 ||
                fipsd_runtime_register(rt, node_subsystem) != 0 ||
                (tun && fipsd_runtime_register(rt, &tun_service.subsystem) != 0) ||
@@ -258,6 +265,8 @@ int main(int argc, char **argv)
     fipsd_node_handlers_destroy(handlers);
     for (size_t i = 0; i < udp_count; ++i) fipsd_udp_destroy(udp[i]);
     for (size_t i = 0; i < tcp_count; ++i) fipsd_tcp_destroy(tcp[i]);
+    for (size_t i = 0; i < tor_count; ++i) fipsd_tor_destroy(tor[i]);
+    for (size_t i = 0; i < nym_count; ++i) fipsd_nym_destroy(nym[i]);
     fipsd_control_service_clear(&control);
     go_swap_free(snapshots);
     FIPSD_INFO(MODULE, "fipsd shutdown complete (exit %d)", code);

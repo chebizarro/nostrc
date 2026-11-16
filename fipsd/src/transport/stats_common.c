@@ -44,8 +44,17 @@ const char *const *fipsd_transport_stats_fields(const char *type, size_t *count)
 #define NAME(name) #name,
     static const char *const udp[] = {FIPSD_STATS_PACKET(NAME) FIPSD_STATS_UDP_ONLY(NAME)};
     static const char *const tcp[] = {FIPSD_STATS_PACKET(NAME) FIPSD_STATS_TCP_ONLY(NAME)};
+    /* tor/stats.rs TorStatsSnapshot and nym/stats.rs NymStatsSnapshot, in
+     * their serialized order. */
+    static const char *const tor[] = {FIPSD_STATS_PACKET(NAME) "connections_established",
+        "connect_timeouts", "connect_refused", "socks5_errors", "connections_accepted",
+        "connections_rejected", "control_errors", "pool_inbound", "pool_outbound"};
+    static const char *const nym[] = {FIPSD_STATS_PACKET(NAME) "connections_established",
+        "connect_timeouts", "socks5_errors"};
 #undef NAME
     if (type && !strcmp(type, "udp")) { *count = sizeof udp / sizeof *udp; return udp; }
     if (type && !strcmp(type, "tcp")) { *count = sizeof tcp / sizeof *tcp; return tcp; }
+    if (type && !strcmp(type, "tor")) { *count = sizeof tor / sizeof *tor; return tor; }
+    if (type && !strcmp(type, "nym")) { *count = sizeof nym / sizeof *nym; return nym; }
     *count = 0; return NULL;
 }

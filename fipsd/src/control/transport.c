@@ -1,4 +1,6 @@
 #include "control/transport.h"
+#include "transport/tor/tor.h"
+#include <stdio.h>
 #include <string.h>
 void fipsd_control_transport_read(const fipsd_transport *t, uint64_t now,
                                  fipsd_control_transport_view *out)
@@ -15,6 +17,13 @@ void fipsd_control_transport_read(const fipsd_transport *t, uint64_t now,
         size_t n = 0;
         if (fips_transport_addr_format(&address, out->local_addr, sizeof out->local_addr, &n) == FIPS_OK)
             out->row.local_addr = out->local_addr;
+    }
+    if (fipsd_tor_is(t)) { /* upstream show_transports' Tor-only row fields */
+        out->row.tor_mode = fipsd_tor_mode(t);
+        const char *onion = fipsd_tor_onion_address(t);
+        if (onion) { snprintf(out->onion_address, sizeof out->onion_address, "%s", onion); out->row.onion_address = out->onion_address; }
+        fipsd_tor_monitoring m;
+        if (fipsd_tor_monitoring_snapshot(t, &m)) { out->tor_monitoring = fipsd_tor_monitoring_json(&m); out->row.tor_monitoring = out->tor_monitoring; }
     }
     if (!t->shared) return;
     fipsd_transport_stats_view stats = fipsd_transport_stats_read(&t->shared->stats);

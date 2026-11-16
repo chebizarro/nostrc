@@ -204,6 +204,18 @@ target_sources(fipsd_lib PRIVATE src/node/dataplane/coord_warm.c)
 
 # Shared upstream transport control projection (nostrc-gfi8h.7).
 target_sources(fipsd_lib PRIVATE src/control/transport.c)
+# SOCKS5 client, the Tor onion transport with its control-port monitor, and
+# the Nym mixnet transport behind a feature flag (nostrc-gfi8h.4). All three
+# are stream owners over src/transport/tcp through its host-only dialer hook.
+target_sources(fipsd_lib PRIVATE src/transport/socks5/socks5.c src/transport/tor/tor.c
+  src/transport/tor/onion.c src/transport/tor/control.c)
+option(FIPSD_ENABLE_NYM "Build the Nym mixnet transport (SOCKS5 through nym-socks5-client)" OFF)
+if(FIPSD_ENABLE_NYM)
+  target_sources(fipsd_lib PRIVATE src/transport/nym/nym.c)
+  target_compile_definitions(fipsd_lib PUBLIC FIPSD_ENABLE_NYM=1)
+else()
+  target_sources(fipsd_lib PRIVATE src/transport/nym/nym_disabled.c)
+endif()
 # The .fips DNS responder (nostrc-9nxwk.3): message codec, host map with
 # mtime reload, resolver/mesh filter and the dns runtime subsystem.
 target_sources(fipsd_lib PRIVATE src/dns/msg.c src/dns/hosts.c src/dns/resolver.c src/dns/service.c)
