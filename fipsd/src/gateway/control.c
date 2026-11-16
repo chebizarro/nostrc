@@ -231,9 +231,12 @@ int fipsd_gw_control_bind(fipsd_gw_control *c, const char *path, fipsd_gw_snapsh
     if (strlen(path) >= sizeof c->path) { snprintf(err, cap, "socket path too long"); errno = ENAMETOOLONG; return -1; }
     snprintf(c->path, sizeof c->path, "%s", path);
     gid_t gid = getegid();
+    /* Best-effort, as upstream's: a host without the group, or whose group
+     * database cannot answer, keeps the socket usable by its owner. */
     int group = fipsd_privilege_resolve_group(FIPSD_SOCKET_GROUP, &gid, err, cap);
-    if (group < 0) return -1;
-    if (!group) FIPSD_WARN(MODULE, "fips group absent; the gateway control socket keeps effective group %u", (unsigned)gid);
+    if (group < 0) { FIPSD_WARN(MODULE, "%s; the gateway control socket keeps effective group %u", err, (unsigned)getegid()); gid = getegid(); }
+    else if (!group) FIPSD_WARN(MODULE, "fips group absent; the gateway control socket keeps effective group %u", (unsigned)gid);
+    if (cap) err[0] = 0;
     if (secure_parent(path, gid, err, cap) != 0) return -1;
     struct sockaddr_un a;
     memset(&a, 0, sizeof a); a.sun_family = AF_UNIX;
@@ -270,7 +273,7 @@ static ssize_t io_recv(int fd, char *buf, size_t cap, uint64_t deadline)
         uint64_t now = mono_ms();
         if (now >= deadline) { errno = ETIMEDOUT; return -1; }
         int left = (int)(deadline - now);
-        if (gof_in_fiber()) {
+        if (fipsd_gw_on_fiber()) {
             ssize_t n = gof_recvfrom(fd, buf, cap, 0, NULL, NULL, left);
             if (n < 0 && errno == EINTR) continue;
             return n;
@@ -295,7 +298,7 @@ static int io_send_all(int fd, const char *data, size_t len, uint64_t deadline)
         if (now >= deadline) { errno = ETIMEDOUT; return -1; }
         int left = (int)(deadline - now);
         ssize_t n;
-        if (gof_in_fiber()) n = gof_sendto(fd, data, len, flags, NULL, 0, left);
+        if (fipsd_gw_on_fiber()) n = gof_sendto(fd, data, len, flags, NULL, 0, left);
         else {
             n = send(fd, data, len, flags);
             if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
@@ -362,12 +365,12 @@ static void conn_fiber(void *arg)
 void fipsd_gw_control_accept_loop(fipsd_gw_control *c, fipsd_gw_spawn_fn spawn, void *user)
 {
     while (!atomic_load(&c->stopping)) {
-        int fd = gof_in_fiber() ? gof_accept(c->listener, NULL, NULL, -1) : accept(c->listener, NULL, NULL);
+        int fd = fipsd_gw_on_fiber() ? gof_accept(c->listener, NULL, NULL, -1) : accept(c->listener, NULL, NULL);
         if (atomic_load(&c->stopping)) { if (fd >= 0) close(fd); break; }
         if (fd < 0) {
             if (errno == ECANCELED) break;
             if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK || errno == ECONNABORTED) {
-                if (!gof_in_fiber() && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+                if (!fipsd_gw_on_fiber() && (errno == EAGAIN || errno == EWOULDBLOCK)) {
                     struct pollfd p = {.fd = c->listener, .events = POLLIN};
                     (void)poll(&p, 1, -1);
                 }

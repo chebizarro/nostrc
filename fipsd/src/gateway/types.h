@@ -18,6 +18,13 @@ fipsd_gw_instant fipsd_gw_later(fipsd_gw_instant now, uint64_t secs);
 /* a - b, or 0 when b is later (saturating_duration_since). */
 static inline uint64_t fipsd_gw_since(fipsd_gw_instant a, fipsd_gw_instant b) { return a > b ? a - b : 0; }
 
+/* Whether the gateway's socket calls may be on a fiber. libgo's gof_in_fiber
+ * reads a thread key its scheduler creates in gof_init, and before then the
+ * key aliases whatever another library made first, so it is asked only once
+ * the gateway's runtime runs; until then every call is a plain syscall. */
+void fipsd_gw_fibers_started(void);
+bool fipsd_gw_on_fiber(void);
+
 /* Events the pool emits on state transitions. */
 typedef enum fipsd_gw_event_kind {
     FIPSD_GW_EVENT_MAPPING_CREATED, /* NAT rules should be created */

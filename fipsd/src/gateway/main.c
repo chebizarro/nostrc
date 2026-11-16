@@ -268,18 +268,20 @@ static void loop_fiber(void *arg)
             {.op = GO_SELECT_RECEIVE, .chan = g->dns_done, .recv_buf = &dns_token},
             {.op = GO_SELECT_RECEIVE, .chan = go_context_done(ctx), .recv_buf = &done_token},
         };
-        GoSelectResult r = go_select_timeout(cases, 4, UINT64_MAX);
-        if (go_context_is_canceled(ctx) || r.selected_case == 3) { free(event); break; }
-        if (r.selected_case == 0) {
+        int selected = go_select(cases, 4);
+        if (go_context_is_canceled(ctx) || selected == 3) { free(event); break; }
+        if (selected == 0) {
             /* Without the worker the gateway would answer .fips queries with
              * addresses that have no rules. */
             fail(g, "Gateway NAT worker stopped"); break;
         }
-        if (r.selected_case == 2) {
+        if (selected == 2) {
             FIPSD_ERROR(MODULE, "Gateway DNS resolver stopped: cause=%s", g->dns_cause);
             fail(g, "Gateway DNS resolver stopped"); break;
         }
-        if (r.selected_case != 1 || !r.ok || !event) break;
+        if (selected != 1) continue;
+        /* The channel closes only at shutdown, which the context reports first. */
+        if (!event) break;
         fipsd_gw_pool_event e = *(fipsd_gw_pool_event *)event;
         free(event);
         fipsd_gw_nat_command command = {e.kind == FIPSD_GW_EVENT_MAPPING_CREATED ? FIPSD_GW_NAT_ADD : FIPSD_GW_NAT_REMOVE,
@@ -293,6 +295,7 @@ static void loop_fiber(void *arg)
 static int gateway_start(fipsd_subsystem *self, fipsd_runtime *rt)
 {
     gateway *g = self->user;
+    fipsd_gw_fibers_started();
     fipsd_gw_task_begin(&g->resolver_task);
     if (fipsd_runtime_spawn(rt, dns_fiber, g) != 0) { fipsd_gw_task_end(&g->resolver_task, true); return -1; }
     if (g->control_bound && fipsd_runtime_spawn(rt, control_fiber, g) != 0)

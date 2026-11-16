@@ -4,6 +4,8 @@
 #ifdef __APPLE__
 #define _DARWIN_C_SOURCE 1
 #define __APPLE_USE_RFC_3542 1
+#else
+#define _DEFAULT_SOURCE 1
 #endif
 #include "gateway/conntrack.h"
 #include "gateway/pool.h"

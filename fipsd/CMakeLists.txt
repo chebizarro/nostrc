@@ -359,3 +359,15 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     endif()
   endif()
 endif()
+# The root-only netns smoke of the gateway (nostrc-iq1n9.3): skips (77) unless
+# run as root with FIPSD_GATEWAY_PRIVILEGED_SMOKE=1.
+if(BUILD_TESTING AND TARGET fips-gateway)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  add_test(NAME FipsdGatewayPrivilegedSmokeTest COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/gateway_netns_smoke.py"
+    --fipsd "$<TARGET_FILE:fipsd>" --gateway "$<TARGET_FILE:fips-gateway>")
+  set_tests_properties(FipsdGatewayPrivilegedSmokeTest PROPERTIES TIMEOUT 600 SKIP_RETURN_CODE 77
+    LABELS "fips;gateway;privileged")
+  nostrc_describe_test(FipsdGatewayPrivilegedSmokeTest OWNER fipsd TARGETS fipsd fips-gateway
+    INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/gateway_netns_smoke.py" "${CMAKE_CURRENT_SOURCE_DIR}/tests/udp_interop.py")
+endif()

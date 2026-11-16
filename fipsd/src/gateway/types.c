@@ -1,9 +1,15 @@
 #include "gateway/types.h"
+#include <libgo/fiber.h>
 #include <arpa/inet.h>
+#include <stdatomic.h>
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+
+static atomic_bool fibers_live;
+void fipsd_gw_fibers_started(void) { atomic_store(&fibers_live, true); }
+bool fipsd_gw_on_fiber(void) { return atomic_load(&fibers_live) && gof_in_fiber(); }
 
 fipsd_gw_instant fipsd_gw_now(void)
 {

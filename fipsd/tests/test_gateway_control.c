@@ -169,8 +169,14 @@ static void the_socket_serves_one_line_per_connection_and_keeps_the_policy(void)
     char buf[2048]; ssize_t n = read(fd, buf, sizeof buf - 1); CHECK(n > 0); buf[n] = 0; close(fd);
     CHECK(strstr(buf, "\"mappings\":[{"));
     fipsd_gw_control_stop(&s.c);
-    /* The accept on a thread waits in poll; a connection wakes it to see the stop. */
-    fd = client(path); close(fd);
+    /* Linux wakes an accept on a shut-down listener (and refuses new
+     * connections); elsewhere a connection wakes it to see the stop. */
+    fd = socket(AF_UNIX, SOCK_STREAM, 0); CHECK(fd >= 0);
+    {
+        struct sockaddr_un w; memset(&w, 0, sizeof w); w.sun_family = AF_UNIX; snprintf(w.sun_path, sizeof w.sun_path, "%s", path);
+        (void)connect(fd, (struct sockaddr *)&w, sizeof w);
+    }
+    close(fd);
     CHECK(pthread_join(s.t, NULL) == 0);
     fipsd_gw_control_clear(&s.c);
     CHECKM(stat(path, &st) != 0, "the service removed the socket it bound");

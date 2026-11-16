@@ -212,7 +212,7 @@ static ssize_t recv_until(int fd, void *buf, size_t cap, uint64_t deadline)
     for (;;) {
         uint64_t now = mono_ms();
         int left = now >= deadline ? 0 : (int)(deadline - now);
-        if (gof_in_fiber()) {
+        if (fipsd_gw_on_fiber()) {
             ssize_t n = gof_recvfrom(fd, buf, cap, 0, NULL, NULL, left);
             if (n < 0 && !left && (errno == EAGAIN || errno == EWOULDBLOCK)) errno = ETIMEDOUT;
             if (n < 0 && errno == EINTR) continue;
@@ -231,7 +231,7 @@ static ssize_t recv_until(int fd, void *buf, size_t cap, uint64_t deadline)
 }
 static ssize_t send_connected(int fd, const void *buf, size_t len)
 {
-    if (gof_in_fiber()) return gof_sendto(fd, buf, len, 0, NULL, 0, 1000);
+    if (fipsd_gw_on_fiber()) return gof_sendto(fd, buf, len, 0, NULL, 0, 1000);
     for (;;) {
         ssize_t n = send(fd, buf, len, 0);
         if (n >= 0 || errno != EINTR) return n;
