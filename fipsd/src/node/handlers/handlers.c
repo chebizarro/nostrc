@@ -1,4 +1,5 @@
 #include "node/handlers/internal.h"
+#include <stdatomic.h>
 #include <time.h>
 
 void fipsd_node_handlers_config_default(fipsd_node_handlers_config *c)
@@ -142,6 +143,7 @@ static void free_storage(handlers *h)
     h->session_ext = NULL; h->setup_entries = NULL; h->held = NULL; h->history = NULL; h->history_peers = NULL; h->history_samples = NULL;
     memset(h->probes, 0, sizeof h->probes);
 }
+static void command_discard(handler_command *c);
 void fipsd_node_handlers_destroy(fipsd_node_handlers *h)
 {
     if (!h) return;
@@ -149,12 +151,7 @@ void fipsd_node_handlers_destroy(fipsd_node_handlers *h)
     free_storage(h);
     if (h->commands) {
         void *m;
-        while (go_channel_try_receive(h->commands, &m) == 0) {
-            handler_command *c = m;
-            if (c->params) json_decref(c->params);
-            if (c->reply) go_channel_unref(c->reply);
-            free(c);
-        }
+        while (go_channel_try_receive(h->commands, &m) == 0) command_discard(m);
         go_channel_unref(h->commands);
     }
     if (h->notices) {
@@ -167,6 +164,66 @@ void fipsd_node_handlers_destroy(fipsd_node_handlers *h)
     free(h);
 }
 GoChannel *fipsd_node_handlers_notices(fipsd_node_handlers *h) { return h->notices; }
+
+/* M7 (nostrc-f66sr.9): a live control command's waiting timeout is an
+ * execution deadline. The queued command and the waiting connection fiber share
+ * one retained ticket. The dispatcher claims it before any state mutation; the
+ * waiter abandons it when its deadline or shutdown fires. Exactly one of those
+ * PENDING transitions wins: a command whose waiter already gave up is dropped
+ * unexecuted and counted, and a claimed command always delivers one signal
+ * (execution is synchronous on the dispatcher), so execution and reply stay
+ * paired. The ticket owns the JSON response until the last owner releases it;
+ * the done channel carries only a wake-up token, never ownership. */
+typedef enum ticket_state { TICKET_PENDING, TICKET_CLAIMED, TICKET_ABANDONED, TICKET_DROPPED } ticket_state;
+struct hs_control_ticket {
+    _Atomic int refs;           /* the queued command and the waiting fiber */
+    _Atomic int state;          /* ticket_state; leaves PENDING exactly once */
+    _Atomic(json_t *) response; /* owned; stolen by the waiter or released with the ticket */
+    GoChannel *done;            /* capacity 1, one signal per ticket, owned by the ticket */
+};
+static hs_control_ticket *ticket_new(void)
+{
+    hs_control_ticket *t = calloc(1, sizeof *t);
+    if (!t) return NULL;
+    t->done = go_channel_create(1);
+    if (!t->done) { free(t); return NULL; }
+    atomic_init(&t->refs, 2); atomic_init(&t->state, TICKET_PENDING); atomic_init(&t->response, NULL);
+    return t;
+}
+static void ticket_unref(hs_control_ticket *t)
+{
+    if (!t || atomic_fetch_sub(&t->refs, 1) != 1) return;
+    json_t *left = atomic_exchange(&t->response, NULL);
+    if (left) json_decref(left);
+    go_channel_unref(t->done);
+    free(t);
+}
+static bool ticket_leave_pending(hs_control_ticket *t, ticket_state to)
+{
+    int expected = TICKET_PENDING;
+    return atomic_compare_exchange_strong(&t->state, &expected, (int)to);
+}
+/* Dispatcher side, after CLAIMED or DROPPED: publish the outcome and wake the
+ * waiter. The capacity-one send cannot fail, since each ticket is resolved once
+ * and nobody else sends; the token is not owned by the channel. */
+static void ticket_resolve(hs_control_ticket *t, json_t *response)
+{
+    atomic_store(&t->response, response);
+    (void)go_channel_try_send(t->done, t);
+}
+static void command_free(handler_command *c)
+{
+    if (c->params) json_decref(c->params);
+    ticket_unref(c->ticket);
+    free(c);
+}
+/* A queued command that will never execute (node not running or destroyed):
+ * wake a still-waiting fiber with no reply before releasing the command. */
+static void command_discard(handler_command *c)
+{
+    if (c->ticket && ticket_leave_pending(c->ticket, TICKET_DROPPED)) ticket_resolve(c->ticket, NULL);
+    command_free(c);
+}
 
 static bool allocate(handlers *h)
 {
@@ -370,17 +427,18 @@ static bool poll(void *user, fips_instant now)
         h->dataplane->needs_publish = true;
     return hs_poll(h, now) && fipsd_dp_publish(h);
 }
-static void command_free(handler_command *c)
-{
-    if (c->params) json_decref(c->params);
-    if (c->reply) go_channel_unref(c->reply);
-    free(c);
-}
 static bool on_command(void *user, void *message)
 {
     handlers *h = user;
     handler_command *c = message;
-    if (!h->running) { command_free(c); return true; }
+    if (!h->running) { command_discard(c); return true; }
+    /* Execution deadline: a waiter that already gave up (timeout or shutdown)
+     * abandoned the ticket, so nothing below runs: no mutation, no publish. */
+    if (c->kind == HCMD_CONTROL && !ticket_leave_pending(c->ticket, TICKET_CLAIMED)) {
+        ++h->counters.commands_cancelled;
+        command_free(c);
+        return true;
+    }
     if (c->kind != HCMD_SEND) h->dataplane->needs_publish = true;
     switch (c->kind) {
     case HCMD_CONNECT: (void)hs_dial(h, &c->identity, c->transport, &c->addr, false); break;
@@ -388,13 +446,11 @@ static bool on_command(void *user, void *message)
     case HCMD_SEND: (void)hs_session_send(h, &c->node, c->src_port, c->dst_port, c->payload, c->len); break;
     case HCMD_LEARN_IDENTITY: (void)fipsd_identity_cache_put(&h->identities, c->identity, hs_wall_ms(h)); break;
     case HCMD_DIAL_CONFIGURED: (void)hs_dial_configured(h); break;
-    case HCMD_CONTROL: {
-        json_t *reply = hs_control_command(h, c->name, c->params);
-        /* Capacity-one reply channel owned by the waiting connection fiber; a
-         * departed waiter already unreferenced it, so try_send is enough. */
-        if (!reply || go_channel_try_send(c->reply, reply) != 0) { if (reply) json_decref(reply); }
+    case HCMD_CONTROL:
+        /* Claimed above: the ticket owns the reply from here, whether or not
+         * the waiter is still there to steal it. */
+        ticket_resolve(c->ticket, hs_control_command(h, c->name, c->params));
         break;
-    }
     }
     command_free(c);
     hs_mark_dirty(h);
@@ -466,19 +522,29 @@ json_t *hs_control_enqueue(handlers *h, const char *name, const json_t *params, 
     if (!c) return NULL;
     snprintf(c->name, sizeof c->name, "%s", name);
     c->params = params ? json_deep_copy(params) : NULL;
-    c->reply = go_channel_create(1);
-    if (!c->reply) { command_free(c); return NULL; }
-    GoChannel *reply = go_channel_ref(c->reply);
-    if (go_channel_try_send(h->commands, c) != 0) { command_free(c); go_channel_unref(reply); return NULL; }
+    /* Two references: the queued command's and this waiter's. */
+    hs_control_ticket *t = ticket_new();
+    if (!t) { command_free(c); return NULL; }
+    c->ticket = t;
+    if (go_channel_try_send(h->commands, c) != 0) { command_free(c); ticket_unref(t); return NULL; }
     struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
     uint64_t now_ns = (uint64_t)ts.tv_sec * 1000000000u + (uint64_t)ts.tv_nsec;
     uint64_t budget_ms = rc && rc->deadline_ns > now_ns ? (rc->deadline_ns - now_ns) / 1000000u : 0;
-    void *value = NULL, *cancel = NULL;
+    void *token = NULL, *cancel = NULL;
     GoSelectCase cases[] = {
-        {GO_SELECT_RECEIVE, reply, NULL, &value},
+        {GO_SELECT_RECEIVE, t->done, NULL, &token},
         {GO_SELECT_RECEIVE, rc && rc->shutdown ? go_context_done(rc->shutdown) : NULL, NULL, &cancel}};
     GoSelectResult r = go_select_timeout(cases, 2, budget_ms ? budget_ms : 1);
-    json_t *out = r.selected_case == 0 && value ? value : NULL;
-    go_channel_unref(reply);
+    if (r.selected_case != 0) {
+        /* Deadline or shutdown. If the dispatcher has not reached the command
+         * it now never will: abandoned, dropped unexecuted, counted there. */
+        if (ticket_leave_pending(t, TICKET_ABANDONED)) { ticket_unref(t); return NULL; }
+        /* Claimed (or dropped) in the same instant: the dispatcher is committed
+         * to exactly one signal, so take it rather than orphan a reply that may
+         * reflect a mutation. One bounded wait on that signal, not a poll. */
+        (void)go_channel_receive(t->done, &token);
+    }
+    json_t *out = atomic_exchange(&t->response, NULL);
+    ticket_unref(t);
     return out;
 }

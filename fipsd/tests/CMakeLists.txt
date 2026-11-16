@@ -202,6 +202,15 @@ add_test(NAME FipsdNodeHandlersTest COMMAND fipsd_node_handlers_test)
 set_tests_properties(FipsdNodeHandlersTest PROPERTIES TIMEOUT 300 LABELS "fips;node"
   ENVIRONMENT "FIPSD_WORKERS=2")
 nostrc_describe_test(FipsdNodeHandlersTest OWNER fipsd TARGETS fipsd_node_handlers_test)
+# M7 (nostrc-f66sr.9): a control command's waiting timeout is an execution
+# deadline. Production dispatcher/provider with the mailbox parked by a channel
+# gate; expired commands never mutate, replies are owned exactly once.
+fipsd_unit_test(fipsd_control_cancel_test test_control_cancel.c)
+add_dependencies(fipsd_tests fipsd_control_cancel_test)
+add_test(NAME FipsdControlCancelTest COMMAND fipsd_control_cancel_test)
+set_tests_properties(FipsdControlCancelTest PROPERTIES TIMEOUT 120 LABELS "fips;node;control"
+  ENVIRONMENT "FIPSD_WORKERS=2")
+nostrc_describe_test(FipsdControlCancelTest OWNER fipsd TARGETS fipsd_control_cancel_test)
 
 fipsd_unit_test(fipsd_node_stp_acks_test test_node_stp_acks.c)
 target_sources(fipsd_node_stp_acks_test PRIVATE

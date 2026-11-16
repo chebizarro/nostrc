@@ -39,7 +39,7 @@ merge were run. References in this report are post-fix line numbers.
 | M4 | medium | `fipsd/src/log.c:237-255`; `main.c:85-98` | Pre-config log open could block on a FIFO or append to a nonregular/multiply-linked target, including with launch privileges. | Upstream log opening is not a substitute for C descriptor type/alias validation. CLI and writable log-directory control remain trusted. | **Fixed:** nonblocking open, descriptor regular-file and single-link checks; existing final-leaf `O_NOFOLLOW` retained. |
 | M5 | medium | `fipsd/src/log.c:295-311` | Failed rotation raised the effective cap and continued appending indefinitely: configured disk bound failed open. | Inherited from `src/utils/logfile.rs:153-164` (raises limit after failed roll). | **Fixed:** refuse at the cap on rotation failure, retry later; count each successful partial append even when the subsequent write fails. No unbounded fallback. |
 | M6 | medium | `libfips-core/src/proto/routing/wire.c:68-80` | PathBroken's u16 body length silently truncated a large coordinate encoding, producing malformed frames. No buffer overrun demonstrated. | Upstream encoder also narrows the body length to u16. The C maximum-coordinate test previously pinned the lossy cast. | **Fixed:** reject body > UINT16_MAX before any writer/output mutation; valid wire unchanged. |
-| M7 | medium | `fipsd/src/node/handlers/handlers.c:376-396,460-480`; `libgo/src/channel.c:1129-1140` | Timed-out control command remains queued and may mutate state later. A reply sent to its now-unobserved capacity-one channel is not decref'd by generic channel destruction. | Host-specific command/reply lifetime; socket deadlines do not cancel queued state changes. | Protected host follow-up; no claim the timeout cancels work. |
+| M7 | medium | `fipsd/src/node/handlers/handlers.c:376-396,460-480`; `libgo/src/channel.c:1129-1140` | Timed-out control command remains queued and may mutate state later. A reply sent to its now-unobserved capacity-one channel is not decref'd by generic channel destruction. | Host-specific command/reply lifetime; socket deadlines do not cancel queued state changes. | **Closed in host** (`nostrc-f66sr.9`, see Disposition — M7): the waiting timeout is an execution deadline enforced on the dispatcher before any mutation; replies are owned by a shared ticket and freed exactly once. libgo unchanged. |
 | L1 | low | `fipsd/src/config/config.c:106-126` | YAML loading follows symlinks and enforces regular-file/size, not owner or mode. A readable nsec-bearing file can be exposed by deployment mistakes. | Upstream YAML read is not owner/mode enforced either; upstream key-file warnings in `src/config/mod.rs:690-733` concern its persistent identity key file, not YAML. | Operational follow-up; no incompatible config-path policy silently introduced. |
 | L2 | low | `fipsd/src/privilege.c:64-108`; `control/control.c:75-89,104-125`; `log.c:204-255` | Final-leaf checks do not secure arbitrary attacker-writable ancestor directories. Socket chmod is by name after lstat; custom/shared parents are intentionally not chmod'd. | Same filesystem/group trust boundary in control-socket reference; C stale-socket removal is stricter than upstream. | Use service-owned private parents. Custom-path race hardening requires descriptor-relative path design, not a local cosmetic check. |
 | L3 | low | `libfips-core/src/proto/rate_limit.c:67-68`; `proto/lookup/limits.c:92-108`; `proto/lookup/core.c:71-93` | Bounded caches/rate-key tables are **not uniformly fail-closed**: unseen routing-error keys can be admitted uncached; lookup forwarding/recent records evict and admit. Churn can defeat remembered per-key suppression. | Deliberate upstream availability/eviction semantics, not a newly unbounded allocation. Link-authenticated traffic still consumes processing. | Aggregate authenticated-peer work-budget follow-up; do not describe these as strict admission caps. |
@@ -163,6 +163,52 @@ endpoint and that an allow→deny reload between msg1 and the confirming frame
 drops the candidate without touching the incumbent. Local evidence recorded in
 the task report; not hosted-CI or network transport qualification.
 
+### Disposition — M7 (`nostrc-f66sr.9`)
+
+**Contract.** `fipsd_control_request_context.deadline_ns` is now documented and
+implemented as an *execution* deadline (`control/snapshot.h`): once it (or
+shutdown) fires, the waiting side returns NULL and a command the dispatcher has
+not yet started must never execute. A command the dispatcher started before the
+waiter gave up runs to completion and its reply is delivered or released exactly
+once; `control.c`'s existing clock check then still renders `query timeout` to the
+client, so the protocol's observable behaviour (one request per connection,
+5-second budgets, error envelope) is unchanged. `protocol.c` and `control.c` are
+untouched.
+
+**Ownership.** In `node/handlers/handlers.c` a queued `HCMD_CONTROL` and its
+waiting connection fiber share one `hs_control_ticket`: two references, an
+atomic state that leaves `PENDING` exactly once (`CLAIMED` by the dispatcher,
+`ABANDONED` by the waiter, `DROPPED` when the node is not running or is destroyed
+with the command still queued), an owned `_Atomic(json_t *)` reply and a
+capacity-one wake-up channel that carries only a non-owning token. The
+dispatcher claims **before** `needs_publish`, `hs_control_command` or
+`hs_mark_dirty`; a failed claim drops the command with no side effects and
+increments `handler_counters.commands_cancelled`. The waiter's deadline/shutdown
+path abandons; if that CAS loses because the dispatcher claimed in the same
+instant, the waiter takes the dispatcher's single committed signal (execution is
+synchronous, so it is imminent) instead of orphaning a reply that may reflect a
+mutation. The last `ticket_unref` decrefs whatever reply is still owned, so an
+abandoned response is freed exactly once and the libgo channel never holds
+ownership: no libgo change was needed (no bump). No polling loop was added.
+
+**Regression.** `FipsdControlCancelTest` (`fipsd/tests/test_control_cancel.c`,
+production node/dispatcher/provider on the real runtime) parks the dispatcher by
+sending a gate message through the handlers' own command mailbox (a channel
+barrier, never a sleep) and wraps the dispatcher's command callback to count,
+synchronously, the Jansson allocations each control command makes. It proves:
+an expired `connect` is dropped unexecuted (no leg, no snapshot row, zero reply
+allocations, counter +1); a completed `connect` creates one leg and hands over a
+single-owner reply (`refcount == 1`); 240 race rounds with 0–12 real IK dials
+queued ahead of the raced command sweep the dispatcher's arrival across the
+~1 ms select floor and hold `executed ⇔ reply ⇔ leg` and `cancelled ⇔ counted`
+every round, with both outcomes observed in every run; shutdown abandons a parked
+command and the destroy-time drain discards it unexecuted; and live Jansson
+allocations return to zero at exit (`json_set_alloc_funcs` counter). Local
+evidence (this worktree, Apple clang, same CMake options as above):
+ASan/UBSan 20/20 repeats with race splits from 37/43 to 51/29 executed/cancelled
+of 80 race rounds; TSan 20/20 repeats with splits from 12/68 to 16/64 (slower scheduling shifts the window toward cancellation, both outcomes in every run); full `ctest -R '^Fips'` under ASan/UBSan and under TSan each **130 tests, 0 failed** (129 passed, `FipsdControlInteropTest` skipped: Rust fipsctl not built; LSan unavailable on this Apple runtime, hence the explicit allocation counter). Warnings-as-errors Debug builds for both; direct static checkers (`check-unsequenced-args.py`, `check-gui-test-gdk-frame.py`, `check-linux-ci-packages.py`) and `git diff --check` passed.
+This is local host evidence, not hosted-CI qualification.
+
 **M7 — command cancellation/reply ownership.** In `node/handlers/handlers.c`,
 make the execution-deadline contract explicit. A waiting timeout alone does not
 necessarily promise cancellation; if it is an execution deadline, carry a retained
@@ -187,8 +233,8 @@ Add deterministic destructor/slot-reuse tests, not a heap scan or timing test.
 Values below are daemon defaults or fixed limits, not promises that trusted
 embedding code cannot request larger bounded allocations. A resource cap is not
 itself a packet-rate limit. **The requested universal fail-closed checklist is
-not fully satisfied:** L3 evicts/admits; pending datagrams drop oldest; H1/A1/M7
-remain. No unchecked unbounded growth was found in the reviewed fixed tables.
+not fully satisfied:** L3 evicts/admits; pending datagrams drop oldest; L3/L4
+remain (H1/A1/M7 closed below). No unchecked unbounded growth was found in the reviewed fixed tables.
 
 | Resource | Cap / full policy | Who can reach it and evidence |
 |---|---|---|
@@ -298,7 +344,9 @@ errors expose field names/paths/status, not stored nsec or traffic keys. The
 capacity regression holds 32 real provider calls at a channel barrier, confirms
 client 33 closes without dispatch, releases all owners and checks zero slots.
 The existing real-socket suite covers oversized/multiple requests and shutdown.
-M7 means an execution-timeout error does **not yet guarantee no later mutation**.
+With M7 closed, an execution-timeout error guarantees that a command the dispatcher
+had not started by the deadline never mutates state (Disposition — M7); a command it
+had already started completes, and its reply is released exactly once.
 
 ## (e) Secrets and daemon lifetime
 
@@ -356,8 +404,9 @@ requirements, not proof that a compromised same-uid process cannot read memory.
   (`fiber/src/context_portable.c:54-60`), not blanket daemon suppression.
   **Important:** CMake excludes the sans-I/O core from TSan instrumentation;
   passing its tests in the TSan build is not race evidence for the core. Daemon
-  host/workers/libgo are the threaded instrumentation target. M7 remains a logical
-  ownership defect even though the current TSan tests pass.
+  host/workers/libgo are the threaded instrumentation target. M7's ownership defect
+  was logical rather than a data race, which is why the earlier TSan runs passed; it
+  is closed in Disposition — M7 with a TSan-clean regression.
 
 ## (g) Four upstream Noise notes and protocol verdict
 
@@ -477,14 +526,14 @@ submodule status, so no different checkout was substituted for that review.
 | FMP/FSP/node/session/rekey/profiles | H1 restart replay closed in the host (candidate hold + key-confirmation eviction gate); prior N14 remains. Existing crypto/replay/limiter defenses preserved. |
 | MMP/path/probe | Bounded sampled wires/state; sibling rebind/send-state work requires its own integration checks. |
 | CLI/log/privilege/config/host_os | Local medium defects fixed; launch identity/path ownership/dump policy remain deployment responsibilities. No full root sandbox/privilege drop. |
-| Control | Parser/concurrency bounds fixed; **M7 cancellation/response ownership outstanding** in protected host dispatcher. |
+| Control | Parser/concurrency bounds fixed; M7 cancellation/response ownership closed in the host dispatcher (execution-deadline ticket; Disposition — M7). |
 | Lifecycle/worker/dataplane/concurrency | Local TSan/tests pass for reviewed tree; no snapshot UAF found. Does not certify future ACL/rebind changes or prove absence of races. |
 | Build/fuzz/CI | New parser harnesses and four CI lists added; local gates pass with explicit interop/LSan/platform limits. Hosted Linux/FreeBSD/transport evidence absent. |
 
 **Version decision:** PATCH-class corrections fold into **libfips-core 0.1.0
 Unreleased and fipsd 0.1.0 Unreleased**, with no bump/tag/valid-wire change; recorded
 in `VERSION_MANIFEST.md`. Remaining file-ready findings above are the handoff,
-not Beads updates. H1 and A1 are closed above; before release, close M7, integrate/retest sibling
+not Beads updates. H1, A1 and M7 are closed above; before release, integrate/retest sibling
 ACL/rebind/metrics work, run the hosted platform lanes and real transport/interop
 gates. Scratch builds, private fuzz runtime/corpus clones and temporary sockets
 are disposable; submodules must be deinitialized at session completion.
