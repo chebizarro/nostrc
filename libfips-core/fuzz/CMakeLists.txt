@@ -6,6 +6,8 @@ if(GNOSTR_ENABLE_TSAN OR GO_ENABLE_TSAN)
 endif()
 # Instrument the implementation too, not only the input adapter.
 target_compile_options(fips_core PRIVATE -fsanitize=fuzzer-no-link)
+# Ordinary consumers also need coverage support, but never a libFuzzer main.
+target_link_options(fips_core INTERFACE -fsanitize=fuzzer-no-link)
 add_executable(fips_fuzz_host fuzz_host.c ../tests/fakes/host.c)
 target_link_libraries(fips_fuzz_host PRIVATE fips_core)
 set_target_properties(fips_fuzz_host PROPERTIES

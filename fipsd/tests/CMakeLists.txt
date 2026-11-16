@@ -30,6 +30,16 @@ set_tests_properties(FipsdCliParseTest PROPERTIES TIMEOUT 10 LABELS "fips;unit")
 nostrc_describe_test(FipsdCliParseTest OWNER fipsd TARGETS fipsd_cli_test)
 
 fipsd_unit_test(fipsd_log_test test_log.c)
+# Compile the real logger with a test-local syscall seam for partial ENOSPC.
+# No write replacement or fault state is present in fipsd_lib/the daemon.
+add_library(fipsd_log_fault OBJECT ../src/log.c)
+target_link_libraries(fipsd_log_fault PRIVATE fipsd_lib)
+target_compile_definitions(fipsd_log_fault PRIVATE write=fipsd_log_test_write)
+set_target_properties(fipsd_log_fault PROPERTIES
+  C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+apply_warnings(fipsd_log_fault)
+apply_sanitizers(fipsd_log_fault)
+target_sources(fipsd_log_test PRIVATE $<TARGET_OBJECTS:fipsd_log_fault>)
 add_test(NAME FipsdLogTest COMMAND fipsd_log_test)
 set_tests_properties(FipsdLogTest PROPERTIES TIMEOUT 60 LABELS "fips;unit")
 nostrc_describe_test(FipsdLogTest OWNER fipsd TARGETS fipsd_log_test)
@@ -150,6 +160,10 @@ fipsd_unit_test(fipsd_control_test test_control.c)
 target_compile_definitions(fipsd_control_test PRIVATE
   FIPSD_CONTROL_GOLDEN="${CMAKE_CURRENT_SOURCE_DIR}/control_golden")
 add_dependencies(fipsd_tests fipsd_control_test)
+add_test(NAME FipsdControlCapacityTest COMMAND fipsd_control_test capacity)
+set_tests_properties(FipsdControlCapacityTest PROPERTIES TIMEOUT 30 LABELS "fips;unit;control"
+  ENVIRONMENT "FIPSD_WORKERS=2")
+nostrc_describe_test(FipsdControlCapacityTest OWNER fipsd TARGETS fipsd_control_test)
 add_test(NAME FipsdControlTest COMMAND fipsd_control_test)
 set_tests_properties(FipsdControlTest PROPERTIES TIMEOUT 60 LABELS "fips;unit;control"
   ENVIRONMENT "FIPSD_WORKERS=2")

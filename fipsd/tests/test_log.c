@@ -16,6 +16,21 @@
     fprintf(stderr, "%s:%d: %s (errno %s)\n", __FILE__, __LINE__, #expr, strerror(errno)); return 1; \
 } } while (0)
 
+/* Only the test copy of log.c redirects write here; the daemon has no hook. */
+static unsigned partial_write_step;
+ssize_t fipsd_log_test_write(int fd, const void *buf, size_t len);
+ssize_t fipsd_log_test_write(int fd, const void *buf, size_t len)
+{
+    if (partial_write_step == 1) {
+        partial_write_step = 2;
+        return write(fd, buf, len > 2 ? 2 : len);
+    }
+    if (partial_write_step == 2) {
+        partial_write_step = 3; errno = ENOSPC; return -1;
+    }
+    return write(fd, buf, len);
+}
+
 /* ── capture sink ──────────────────────────────────────────────────────── */
 
 typedef struct capture {
@@ -245,12 +260,12 @@ static int test_rolling(void)
     fipsd_log_destroy(log);
 
     /* A symlink at the path is refused. */
-    char link[PATH_MAX], target[PATH_MAX];
-    snprintf(link, sizeof(link), "%s/link.log", dir);
+    char symlink_path[PATH_MAX], target[PATH_MAX];
+    snprintf(symlink_path, sizeof(symlink_path), "%s/link.log", dir);
     snprintf(target, sizeof(target), "%s/target.log", dir);
-    CHECK(symlink(target, link) == 0);
-    CHECK(fipsd_log_file_open(link, 0, 1, err, sizeof(err)) == NULL);
-    CHECK(strstr(err, "cannot open log file") != NULL && strstr(err, link) != NULL);
+    CHECK(symlink(target, symlink_path) == 0);
+    CHECK(fipsd_log_file_open(symlink_path, 0, 1, err, sizeof(err)) == NULL);
+    CHECK(strstr(err, "cannot open log file") != NULL && strstr(err, symlink_path) != NULL);
     CHECK(!exists(dir, "target.log", NULL));
 
     /* A parent that cannot be created is an error with the path in it. */
@@ -260,6 +275,41 @@ static int test_rolling(void)
     CHECK(strstr(err, "child.log") != NULL);
     CHECK(fipsd_log_file_open("", 0, 1, err, sizeof(err)) == NULL);
 
+    /* FIFOs must never block startup, even with a reader/writer already open. */
+    char fifo[PATH_MAX]; snprintf(fifo,sizeof(fifo),"%s/fifo",dir);
+    CHECK(mkfifo(fifo,0600)==0);
+    int pipefd=open(fifo,O_RDWR|O_NONBLOCK); CHECK(pipefd>=0);
+    CHECK(fipsd_log_file_open(fifo,0,1,err,sizeof(err))==NULL);
+    CHECK(close(pipefd)==0 && unlink(fifo)==0);
+    char hard[PATH_MAX]; snprintf(hard,sizeof(hard),"%s/hard",dir);
+    CHECK(link(path,hard)==0);
+    CHECK(fipsd_log_file_open(path,0,1,err,sizeof(err))==NULL);
+    CHECK(unlink(hard)==0);
+    /* Rotation failure refuses writes at the cap, rather than extending it. */
+    char full[PATH_MAX], roll[PATH_MAX];
+    snprintf(full,sizeof(full),"%s/full",dir); snprintf(roll,sizeof(roll),"%s/full.1",dir);
+    int fd=open(full,O_CREAT|O_WRONLY,0600); CHECK(fd>=0);
+    CHECK(ftruncate(fd,(off_t)cap)==0 && close(fd)==0 && mkdir(roll,0700)==0);
+    file=fipsd_log_file_open(full,cap,1,err,sizeof(err)); CHECK(file);
+    sink=fipsd_log_file_sink(file);
+    CHECK(sink.write(sink.ctx,"x",1)<0 && sink.write(sink.ctx,"x",1)<0);
+    struct stat st; CHECK(stat(full,&st)==0 && (uint64_t)st.st_size==cap);
+    CHECK(rmdir(roll)==0); CHECK(sink.write(sink.ctx,"x",1)==0);
+    CHECK(stat(full,&st)==0 && st.st_size==1);
+    fipsd_log_file_close(file); CHECK(unlink(full)==0 && unlink(roll)==0);
+
+    /* Commit two real bytes, then inject ENOSPC: progress still counts. */
+    fd=open(full,O_CREAT|O_WRONLY,0600); CHECK(fd>=0);
+    CHECK(ftruncate(fd,(off_t)cap-4)==0 && close(fd)==0);
+    file=fipsd_log_file_open(full,cap,1,err,sizeof(err)); CHECK(file);
+    sink=fipsd_log_file_sink(file); partial_write_step=1;
+    CHECK(sink.write(sink.ctx,"abcd",4)<0 && partial_write_step==3);
+    partial_write_step=0;
+    CHECK(stat(full,&st)==0 && (uint64_t)st.st_size==cap-2);
+    CHECK(sink.write(sink.ctx,"abc",3)==0);
+    CHECK(stat(full,&st)==0 && st.st_size==3);
+    fipsd_log_file_close(file); CHECK(unlink(full)==0 && unlink(roll)==0);
+
     /* Cleanup. */
     const char *names[] = {"fipsd.log", "fipsd.log.1", "fipsd.log.2", "fipsd.log.3"};
     for (size_t i = 0; i < 4; i++) {
@@ -267,7 +317,7 @@ static int test_rolling(void)
         snprintf(p, sizeof(p), "%s/%s", nested, names[i]);
         unlink(p);
     }
-    unlink(link);
+    unlink(symlink_path);
     CHECK(rmdir(nested) == 0);
     snprintf(nested, sizeof(nested), "%s/nested", dir);
     CHECK(rmdir(nested) == 0);

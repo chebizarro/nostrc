@@ -72,6 +72,11 @@ fips_status fips_path_broken_encode(const fips_path_broken *p, fips_writer *w, f
         return FIPS_ERR_RANGE;
     }
     size_t n = fips_path_broken_encoded_len(p);
+    if (n - 4 > UINT16_MAX) {
+        if (e) *e = (fips_proto_error){.variant = FIPS_PROTO_MessageTooLong,
+            .as.message_too_long = {4u + UINT16_MAX, n}};
+        return FIPS_ERR_RANGE;
+    }
     if (room(w, n, e) != FIPS_OK) return FIPS_ERR_RANGE;
     header(w, FIPS_ROUTING_PathBroken, n - 4, &p->dest_addr, &p->reporter);
     if (p->last_known_coords) (void)fips_encode_coords(p->last_known_coords, w, NULL);

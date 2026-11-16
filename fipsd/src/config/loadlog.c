@@ -16,6 +16,7 @@ bool cfg_error(fipsd_config_log *log, const char *fmt, ...)
 void cfg_log(fipsd_config_log *log, fipsd_log_level level, const char *fmt, ...)
 {
     if (!log) return;
+    if (log->count >= 4096) { cfg_error(log, "config diagnostic limit exceeded"); return; }
     char message[4096];
     va_list ap;
     va_start(ap, fmt);

@@ -5,6 +5,9 @@
 #include "config/config.h"
 #include "fiber_hooks.h"
 #include <limits.h>
+#include <stdatomic.h>
+
+#define FIPSD_CONTROL_MAX_CONNECTIONS 32u
 
 /* Pure resolution policy. Production probes directory existence once at start;
  * tests pass observations without creating/modifying canonical system paths. */
@@ -22,6 +25,7 @@ typedef struct fipsd_control_service {
     fipsd_runtime *runtime;
     nsync_mu listener_mu; /* listener and accept_waiter lifetime; never held across I/O */
     gof_fiber_handle accept_waiter; /* protected by listener_mu; cleared before fiber exit */
+    _Atomic unsigned connections; /* includes both connection and deadline fibers */
     int listener; /* accept fiber owns/ultimately closes it */
     int cancel_socket; /* preallocated non-listening replacement, independent of pathname */
     char path[PATH_MAX];

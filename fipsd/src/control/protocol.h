@@ -2,6 +2,7 @@
 #define FIPSD_CONTROL_PROTOCOL_H
 #include "control/snapshot.h"
 #define FIPSD_CONTROL_MAX_REQUEST 4096u
+#define FIPSD_CONTROL_MAX_DEPTH 64u
 #define FIPSD_CONTROL_IO_TIMEOUT_MS 5000
 /* Owned JSON responses; caller decrefs. params/request are borrowed. */
 json_t *fipsd_control_ok(json_t *data); /* consumes data */

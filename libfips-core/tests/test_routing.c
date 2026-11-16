@@ -390,8 +390,15 @@ static void maximum_coordinate_wire_domain(void)
     fips_path_broken pb = fips_path_broken_new(dest,mine);
     fips_path_broken_with_last_coords(&pb,&coords[0]);
     fips_writer w; fips_writer_init(&w,wire,sizeof(wire));
-    OK(fips_path_broken_encode(&pb,&w,NULL)); CHECK(w.pos == sizeof(wire));
-    CHECK((uint16_t)(w.pos-4) == (uint16_t)(wire[2] | ((unsigned)wire[3]<<8)));
+    fips_proto_error e;
+    wire[0] = 0xa5;
+    CHECK(fips_path_broken_encode(&pb,&w,&e) == FIPS_ERR_RANGE);
+    CHECK(e.variant == FIPS_PROTO_MessageTooLong && w.pos == 0 && wire[0] == 0xa5);
+    coords[0].len = (UINT16_MAX - 36u) / 16u + 1u;
+    CHECK(fips_path_broken_encode(&pb,&w,&e) == FIPS_ERR_RANGE && w.pos == 0);
+    --coords[0].len;
+    OK(fips_path_broken_encode(&pb,&w,NULL)); CHECK(w.pos - 4 <= UINT16_MAX);
+    CHECK(w.pos-4 == (size_t)(wire[2] | ((unsigned)wire[3]<<8)));
     fips_reader r; fips_reader_init(&r,wire+5,w.pos-5);
     OK(fips_path_broken_decode(&r,&pb,&decoded_coords,NULL));
     CHECK(pb.last_known_coords == &decoded_coords && fips_tree_coordinate_equal(&coords[0],&decoded_coords));

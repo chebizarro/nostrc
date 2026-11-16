@@ -312,11 +312,33 @@ static int corpus(const char *path)
     }
     free(data); return 0;
 }
+static int alias_bytes(void)
+{
+    size_t scalar=128u*1024u, cap=scalar+1024;
+    char *yaml=malloc(cap); CHECK(yaml);
+    size_t n=(size_t)snprintf(yaml,cap,"anchor: &a '");
+    memset(yaml+n,'s',scalar); n+=scalar;
+    n+=(size_t)snprintf(yaml+n,cap-n,"'\nitems: [");
+    for (size_t i=0;i<65;++i) n+=(size_t)snprintf(yaml+n,cap-n,"%s*a",i ? "," : "");
+    n+=(size_t)snprintf(yaml+n,cap-n,"]\n"); CHECK(n<cap);
+    fipsd_config_log log={0};
+    fipsd_config *c=fipsd_config_parse(yaml,n,&log);
+    CHECK(!c && strstr(log.error,"expanded scalar limit"));
+    fipsd_config_log_clear(&log); free(yaml);
+    cap=150000; yaml=malloc(cap); CHECK(yaml); n=0;
+    for (unsigned i=0;i<5000;++i)
+        n+=(size_t)snprintf(yaml+n,cap-n,"unknown_%u: x\n",i);
+    CHECK(n<cap);
+    c=fipsd_config_parse(yaml,n,&log);
+    CHECK(!c && log.count==4096 && strstr(log.error,"diagnostic limit"));
+    fipsd_config_log_clear(&log); free(yaml); return 0;
+}
 int main(int argc,char **argv)
 {
     if (argc==4 && !strcmp(argv[1],"fixture")) return fixture(argv[2],argv[3]);
     if (argc==3 && !strcmp(argv[1],"corpus")) return corpus(argv[2]);
     if (argc!=1) return 2;
+    CHECK(alias_bytes()==0);
     CHECK(defaults()==0); CHECK(floors()==0); CHECK(invalid()==0); CHECK(reload()==0); CHECK(layers()==0);
     fipsd_config *c=fipsd_config_parse("{}",2,NULL); CHECK(c); fipsd_config_free(c);
     return 0;
