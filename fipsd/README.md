@@ -482,6 +482,18 @@ send to the old pair. Explicit path probes/acks/closes still use their named
 path, but completions for a path no longer held are discarded. The Bundle owns
 hold/margin/dwell and return selection; the host does not force a switch back.
 
+Path ranking reads each transport's synchronized detected-medium snapshot, not
+an OS query on the send path. The unchanged core prefers wired, then wireless,
+then BLE among known media within **1.3 times the best score**, after **2 seconds**
+of dwell and at least **2 samples**; a wireless path better by more than that
+margin wins. Unknown media retain the C transport-kind defaults (Ethernet wired,
+BLE ble, otherwise unknown). Binder presence and medium-change notifications
+rerank through the dispatcher; disappearing bindings release their paths and
+returning ones can be proved again. A lost medium hint is reranked with its kind
+fallback, without bypassing the core's ordinary score hysteresis. No new timer
+or polling loop is used. This follows upstream `68ad7164`'s detected-medium rule;
+the retained unknown-Ethernet kind fallback is the C compatibility exception.
+
 ### Bounds and admission
 
 The table owns a sorted node-address index and a bounded linear `(transport,

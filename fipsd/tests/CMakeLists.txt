@@ -366,3 +366,15 @@ add_test(NAME FipsdNostrRuntimeTest COMMAND fipsd_nostr_runtime_test)
 set_tests_properties(FipsdNostrRuntimeTest PROPERTIES TIMEOUT 90 LABELS "fips;nostr;relay"
   ENVIRONMENT "FIPSD_WORKERS=2")
 nostrc_describe_test(FipsdNostrRuntimeTest OWNER fipsd TARGETS fipsd_nostr_runtime_test)
+
+# Detected medium -> dispatcher -> Bundle selection with virtual time.
+fipsd_unit_test(fipsd_node_path_medium_test test_node_path_medium.c)
+target_sources(fipsd_node_path_medium_test PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}/../../libfips-core/tests/fakes/host.c")
+target_include_directories(fipsd_node_path_medium_test PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}/../../libfips-core/tests")
+add_dependencies(fipsd_tests fipsd_node_path_medium_test)
+add_test(NAME FipsdNodePathMediumTest COMMAND fipsd_node_path_medium_test)
+set_tests_properties(FipsdNodePathMediumTest PROPERTIES TIMEOUT 60 LABELS "fips;node;transport"
+  ENVIRONMENT "FIPSD_WORKERS=2")
+nostrc_describe_test(FipsdNodePathMediumTest OWNER fipsd TARGETS fipsd_node_path_medium_test)

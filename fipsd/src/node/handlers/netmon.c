@@ -5,10 +5,9 @@
 void hs_netmon_event(handlers *h, const fipsd_netmon_event *e)
 {
     if (e->kind == FIPSD_NETWORK_READ_FAILED) return;
-    /* Only administrative interface presence drives Present. Carrier remains
-     * diagnostic; address changes/refreshes must not release held candidates. */
-    if (e->kind == FIPSD_INTERFACE_UP || e->kind == FIPSD_INTERFACE_DOWN)
-        hs_path_network_event(h, e);
+    /* Administrative interface edges and binder facts drive path state. Carrier
+     * remains diagnostic; address changes/refreshes cannot release candidates. */
+    hs_path_network_event(h, e);
     if (e->kind == FIPSD_INTERFACE_UP || e->kind == FIPSD_INTERFACE_ADDR_CHANGE) {
         /* Peers that may have moved with the interface get an immediate liveness
          * probe through the peer machine's heartbeat rather than a timer reset. */

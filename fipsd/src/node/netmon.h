@@ -3,6 +3,7 @@
 #include "runtime.h"
 #include <swap.h>
 #include <fips/utils/onlink.h>
+#include <fips/transport/types.h>
 
 #define FIPSD_NETMON_MAX_INTERFACES 256u
 #define FIPSD_NETMON_MAX_ADDRESSES 1024u
@@ -36,7 +37,9 @@ fipsd_network_snapshot *fipsd_onlink_read_system(void);
 bool fipsd_network_snapshot_prepare(fipsd_network_snapshot *);
 typedef enum fipsd_netmon_event_kind {
     FIPSD_INTERFACE_UP, FIPSD_INTERFACE_DOWN, FIPSD_INTERFACE_ADDR_CHANGE,
-    FIPSD_NETWORK_REFRESH, FIPSD_NETWORK_READ_FAILED
+    FIPSD_NETWORK_REFRESH, FIPSD_NETWORK_READ_FAILED,
+    /* Dispatcher-forwarded binder facts, not OS interface edges. */
+    FIPSD_BINDING_UP, FIPSD_BINDING_DOWN, FIPSD_BINDING_MEDIUM_CHANGED
 } fipsd_netmon_event_kind;
 typedef struct fipsd_netmon_event {
     fipsd_netmon_event_kind kind;
@@ -46,6 +49,7 @@ typedef struct fipsd_netmon_event {
     /* Copied from the old snapshot on removal: names survive disappearance
      * and a returning binding may have a different OS index. */
     char interface_name[FIPSD_INTERFACE_NAME_SIZE];
+    fips_transport_id transport; /* binding events only; names need not be unique */
 } fipsd_netmon_event;
 typedef struct fipsd_netmon_source {
     /* Optional injected wake channel and reader. Reader runs off scheduler,

@@ -13,7 +13,7 @@ typedef enum fipsd_transport_event_kind {
     FIPSD_TRANSPORT_PACKET, FIPSD_TRANSPORT_DISCOVERED,
     FIPSD_TRANSPORT_CONNECTED, FIPSD_TRANSPORT_DISCONNECTED,
     FIPSD_TRANSPORT_BECAME_ABSENT, FIPSD_TRANSPORT_BECAME_PRESENT,
-    FIPSD_TRANSPORT_EXITED
+    FIPSD_TRANSPORT_EXITED, FIPSD_TRANSPORT_MEDIUM_CHANGED
 } fipsd_transport_event_kind;
 typedef struct fipsd_transport_event {
     fipsd_transport_event_kind kind;

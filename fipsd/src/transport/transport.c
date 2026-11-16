@@ -13,7 +13,11 @@ void fipsd_transport_shared_init(fipsd_transport *t, fipsd_transport_shared *s, 
 fipsd_transport_state fipsd_transport_shared_state(const fipsd_transport *t)
 { return (fipsd_transport_state)atomic_load(&t->shared->state); }
 fips_path_medium fipsd_transport_medium(const fipsd_transport *t)
-{ return t && t->shared ? fipsd_presence_snapshot(&t->shared->presence).interface.medium : FIPS_PATH_Unknown; }
+{
+    if (!t || !t->shared) return FIPS_PATH_Unknown;
+    fipsd_presence_view v = fipsd_presence_snapshot(&t->shared->presence);
+    return v.phase == FIPSD_PRESENT ? v.interface.medium : FIPS_PATH_Unknown;
+}
 int fipsd_transport_emit(GoChannel *events, GoContext *root, GoChannel *stop,
     fipsd_transport_event_kind kind, fips_transport_id id, const fips_transport_addr *addr,
     const uint8_t *bytes, size_t n)

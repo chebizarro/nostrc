@@ -4,6 +4,7 @@
  * next_wake; outputs are encoded path messages on the named path, endpoint
  * switches through the peer table and connection requests on the transport. */
 #include "node/handlers/internal.h"
+#include "transport/transport.h"
 
 static size_t facts_mtu(void *ctx, fips_transport_id t, const fips_transport_addr *a)
 { fipsd_transport *x = hs_transport(ctx, t); return x ? x->ops->mtu(x, a) : 0; }
@@ -11,6 +12,9 @@ static fips_path_medium facts_medium(void *ctx, fips_transport_id t, const fips_
 {
     (void)a; fipsd_transport *x = hs_transport(ctx, t);
     if (!x) return FIPS_PATH_Unknown;
+    fips_path_medium medium = fipsd_transport_medium(x);
+    if (medium != FIPS_PATH_Unknown) return medium;
+    /* Legacy/custom transports and undetected media retain kind defaults. */
     if (!strcmp(x->type, "ethernet")) return FIPS_PATH_Wired;
     if (!strcmp(x->type, "ble")) return FIPS_PATH_Ble;
     return FIPS_PATH_Unknown;
@@ -176,6 +180,18 @@ void hs_path_poll(handlers *h, fips_instant now)
 }
 void hs_path_network_event(handlers *h, const fipsd_netmon_event *e)
 {
+    if (e->kind == FIPSD_BINDING_UP || e->kind == FIPSD_BINDING_DOWN ||
+        e->kind == FIPSD_BINDING_MEDIUM_CHANGED) {
+        fips_path_input in = {.kind = e->kind == FIPSD_BINDING_MEDIUM_CHANGED ?
+            FIPS_PATH_INPUT_Poll : FIPS_PATH_INPUT_Present,
+            .to = {.transport = e->transport}, .as.present = e->kind == FIPSD_BINDING_UP};
+        /* Facts were stored before the binder queued this event. Poll here is
+         * a reducer input, not a timer: it reranks without releasing held candidates.
+         * Any resulting dwell is serviced by the Bundle's existing next_wake. */
+        for (size_t i = 0; i < h->cfg.peer_capacity; ++i)
+            if (h->recs[i].used) step(h, &h->recs[i], &in);
+        return;
+    }
     if (e->kind != FIPSD_INTERFACE_UP && e->kind != FIPSD_INTERFACE_DOWN) return;
     /* Present is transport-wide, not one address/path: the Bundle shelves
      * candidates on departure and reoffers them on return. Like upstream
