@@ -98,6 +98,7 @@ fipsd_network_snapshot *fipsd_onlink_read_system(void)
             fipsd_interface *iface = &s->interfaces[s->interface_count++];
             strcpy(iface->name, a->ifa_name); iface->index = index;
             iface->up = (a->ifa_flags & IFF_UP) != 0; /* NOT IFF_RUNNING */
+            iface->carrier = (a->ifa_flags & IFF_RUNNING) != 0;
             iface->loopback = (a->ifa_flags & IFF_LOOPBACK) != 0;
         }
         if (!a->ifa_addr || !a->ifa_netmask) continue;
@@ -177,11 +178,12 @@ static void kernel_reader(void *arg)
     }
 }
 static bool emit(fipsd_netmon *m, fipsd_netmon_event_kind kind, uint32_t index,
-                 uint64_t generation, bool backstop)
+                 uint64_t generation, bool backstop, const fipsd_interface *iface)
 {
     fipsd_netmon_event *e = malloc(sizeof(*e));
     if (!e) return false;
-    *e = (fipsd_netmon_event){kind, index, generation, backstop};
+    *e = (fipsd_netmon_event){.kind = kind, .index = index, .generation = generation, .backstop = backstop};
+    if (iface) memcpy(e->interface_name, iface->name, sizeof e->interface_name - 1);
     void *cancel = NULL;
     GoSelectCase cases[] = {
         {GO_SELECT_RECEIVE, m->stop, NULL, &cancel},
@@ -211,7 +213,7 @@ static void *read_snapshot(void *arg)
 static bool refresh(fipsd_netmon *m, bool backstop)
 {
     fipsd_network_snapshot *s = go_blocking_submit(read_snapshot, m);
-    if (!s) return emit(m, FIPSD_NETWORK_READ_FAILED, 0, 0, backstop);
+    if (!s) return emit(m, FIPSD_NETWORK_READ_FAILED, 0, 0, backstop, NULL);
     GoRefPtr old = go_swap_load(m->snapshots);
     const fipsd_network_snapshot *prev = old.ptr;
     s->generation = prev ? prev->generation + 1 : 1;
@@ -219,7 +221,7 @@ static bool refresh(fipsd_netmon *m, bool backstop)
         uint64_t gen = s->generation;
         free(s); go_refptr_release(&old);
         /* Retain last good set but emit explicit failure; never synthesize down. */
-        return emit(m, FIPSD_NETWORK_READ_FAILED, 0, gen, backstop);
+        return emit(m, FIPSD_NETWORK_READ_FAILED, 0, gen, backstop, NULL);
     }
     bool ok = go_swap_store(m->snapshots, s);
     if (!ok) { free(s); go_refptr_release(&old); return false; }
@@ -227,20 +229,20 @@ static bool refresh(fipsd_netmon *m, bool backstop)
         const fipsd_interface *cur = &s->interfaces[i];
         const fipsd_interface *was = prev ? find_interface(prev, cur->index) : NULL;
         if ((!was || !was->up) && cur->up)
-            ok = emit(m, FIPSD_INTERFACE_UP, cur->index, s->generation, backstop);
+            ok = emit(m, FIPSD_INTERFACE_UP, cur->index, s->generation, backstop, cur);
         if (was && was->up && !cur->up)
-            ok = emit(m, FIPSD_INTERFACE_DOWN, cur->index, s->generation, backstop);
+            ok = emit(m, FIPSD_INTERFACE_DOWN, cur->index, s->generation, backstop, cur);
         if (ok && (!prev || !addresses_equal(prev, s, cur->index)))
-            ok = emit(m, FIPSD_INTERFACE_ADDR_CHANGE, cur->index, s->generation, backstop);
+            ok = emit(m, FIPSD_INTERFACE_ADDR_CHANGE, cur->index, s->generation, backstop, cur);
     }
     if (prev) for (size_t i = 0; ok && i < prev->interface_count; ++i) {
         const fipsd_interface *was = &prev->interfaces[i];
         if (!find_interface(s, was->index)) {
-            if (was->up) ok = emit(m, FIPSD_INTERFACE_DOWN, was->index, s->generation, backstop);
-            if (ok) ok = emit(m, FIPSD_INTERFACE_ADDR_CHANGE, was->index, s->generation, backstop);
+            if (was->up) ok = emit(m, FIPSD_INTERFACE_DOWN, was->index, s->generation, backstop, was);
+            if (ok) ok = emit(m, FIPSD_INTERFACE_ADDR_CHANGE, was->index, s->generation, backstop, was);
         }
     }
-    if (ok) ok = emit(m, FIPSD_NETWORK_REFRESH, 0, s->generation, backstop);
+    if (ok) ok = emit(m, FIPSD_NETWORK_REFRESH, 0, s->generation, backstop, NULL);
     go_refptr_release(&old);
     return ok;
 }

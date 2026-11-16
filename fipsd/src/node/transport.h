@@ -53,6 +53,11 @@ struct fipsd_transport {
     const char *type, *name; /* borrowed stable metadata */
     bool auto_connect, accept_connections;
     void *user;
+    /* Optional interface binding, NULL for unbound transports (including
+     * loopback by default). Borrowed immutable name, set before registration
+     * and valid through runtime join; binder still owns descriptors/rebinding.
+     * Loopback tests may supply a fake name without touching host interfaces. */
+    const char *interface_name;
 };
 typedef struct fipsd_transport_registry {
     fipsd_transport *items[FIPSD_TRANSPORT_MAX];
