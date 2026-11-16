@@ -360,9 +360,31 @@ node policy behind the executor's back.
 This is the named attachment point for the concurrently written **IK profile and
 session table (`f12v2.2`)**. No replacement profile/session-table files are created
 here. XK/FSP sessions belong to that separate node table, not to a link peer;
-FSP quorum/ingress gates remain in libfips-core. Cross-transport rebinding of an
-attached link refuses BUSY until the node can close/re-attach its bindings; same
-transport address roaming updates both table keys without touching Noise state.
+FSP quorum/ingress gates remain in libfips-core. An attached link may rebind its
+send endpoint across transports or addresses **on the dispatcher only**. The
+table checks exclusive pair ownership and transfers the admission ticket before
+changing the endpoint; collision/budget refusal leaves both unchanged. Link
+identity, Noise keys, counters and index-lease provenance do not move or restart.
+Workers read owned snapshots, never these mutable records.
+
+On a Bundle `Switched` output (`nostrc-9keoz.12`), `path.c` claims the new pair,
+then `dataplane/peer_actions.c` releases the old path's MTU clamp, seeds from the
+new transport/proven path MTU and publishes the new endpoint. It lowers MMP MTU
+for every session whose **outgoing next hop** is that peer, using the production
+routing decision (not the inbound carrier); session MTUs never rise merely
+because a path switched. A refused claim/publication closes the link rather than
+leaving the Bundle and send endpoint inconsistent. Active-path `Proven` outputs
+reseed too; standby proofs wait for activation, and connection-oriented transports
+use the transport MTU.
+
+This mirrors upstream `Run::switched`'s clear-old-UDP → claim → seed-MTU →
+tighten-sessions sequence. C has no per-peer connected UDP socket/drain yet: the
+equivalent send state is the immutable endpoint snapshot, destination clamp and
+captured crypto job endpoint. A completion resolves ordinary traffic to the
+current active pair and checks its MTU, so jobs sealed before the switch cannot
+send to the old pair. Explicit path probes/acks/closes still use their named
+path, but completions for a path no longer held are discarded. The Bundle owns
+hold/margin/dwell and return selection; the host does not force a switch back.
 
 ### Bounds and admission
 
@@ -591,6 +613,22 @@ UP/DOWN maps bound transport names to Bundle presence (carrier is diagnostic,
 binders own descriptors); the bloom send floor is the refresh pass counter.
 
 ### Loopback transport and the two-node proof
+
+`FipsdNodePathPresenceTest` uses two real loopback transports and injected
+interface events. It checks the peer table and published dataplane endpoint,
+releases a retained pre-switch crypto completion (+0 frames on transport 1,
++1 on transport 2), and delivers eight application datagrams in each of two
+X-absent intervals: transport 1 must send zero frames while transport 2 sends
+at least eight. A narrower second transport tightens the established session;
+an injected stale 900-byte clamp is replaced by the new 1100-byte path seed.
+When X returns it is re-proved through real probe/ack traffic and transport 2
+remains active under the Bundle's selection rules; application traffic is
+rechecked. All observations run on the dispatcher or use atomic counters/owned
+snapshots and channel synchronization, with no sleeps or host-interface changes.
+A 900-byte proof is then raised by a real 1000-byte discovery frame/ack; probes
+use the named transport's ceiling, not the current proof, while ordinary traffic
+uses `fips_path_carried`'s proven-size bound. The established session stays at
+900 until its own destination notifications permit an increase.
 
 `node/transport_loopback.{c,h}` is an in-process datagram medium behind the
 `fipsd_transport` seam: endpoints deliver owned `PACKET` events to each other's

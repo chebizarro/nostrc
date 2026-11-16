@@ -23,6 +23,12 @@ fipsd_active_peer *fipsd_peer_table_find(fipsd_peer_table *table, const fips_nod
 fipsd_active_peer *fipsd_peer_table_endpoint(fipsd_peer_table *table,
     fips_transport_id transport, const fips_transport_addr *addr);
 fipsd_peer_admission fipsd_peer_table_remove(fipsd_peer_table *table, const fips_node_addr *addr);
+/* Dispatcher-only, including attached links: transfer the admission ticket and
+ * active send pair atomically on success; another peer's pair or exhausted
+ * transport budget refuses without changing either. Link identity, keys and
+ * index leases keep their original ownership/provenance. The caller must
+ * invalidate/reseed dataplane state and publish before subsequent sends.
+ * Readers use owned snapshots, never this mutable table or peer allocation. */
 fipsd_peer_admission fipsd_peer_table_rebind(fipsd_peer_table *table, const fips_node_addr *peer,
     fips_transport_id transport, const fips_transport_addr *addr);
 size_t fipsd_peer_table_count(const fipsd_peer_table *table);

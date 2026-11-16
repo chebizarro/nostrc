@@ -66,7 +66,7 @@ typedef struct fipsd_dp_packet {
     fips_node_addr peer, carrier;
     fips_transport_id transport;
     fips_transport_addr endpoint;
-    bool session, k, ce, prompt, farewell;
+    bool session, k, ce, prompt, farewell, path_message;
     uint64_t tag;
     uint32_t timestamp;
     size_t body, wire_size, candidate;
@@ -105,6 +105,10 @@ bool fipsd_dp_seal(struct fipsd_node_handlers *, struct peer_rec *, fips_session
 bool fipsd_dp_open(struct fipsd_node_handlers *, struct peer_rec *, fips_session_entry *,
     fips_transport_id, const fips_transport_addr *, const uint8_t *, size_t);
 void fipsd_dp_link_deliver(struct fipsd_node_handlers *, struct peer_rec *, fipsd_dp_packet *, uint8_t *, size_t);
+/* Dispatcher switch/reseed: discard the old path clamp, seed from the active
+ * pair, publish the endpoint, and only lower sessions routed through this peer. */
+bool fipsd_dp_peer_rebind(struct fipsd_node_handlers *, struct peer_rec *);
+void fipsd_dp_tighten_via(struct fipsd_node_handlers *, const fips_node_addr *, uint16_t);
 bool fipsd_dp_route(struct fipsd_node_handlers *, const fips_session_datagram *, const fips_node_addr *, bool);
 fips_status fipsd_dp_forward(const fipsd_dp_snapshot *, fips_router *, const fips_session_datagram *,
     const fips_node_addr *, bool, fips_instant, fips_tree_coordinate *, fips_routing_peer *,

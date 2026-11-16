@@ -1,5 +1,11 @@
 #include "node/handlers/internal.h"
 
+static bool path_message(const uint8_t *message, size_t len)
+{
+    return len && (message[0] == FIPS_LINK_PathProbe || message[0] == FIPS_LINK_PathAck ||
+        message[0] == FIPS_LINK_PathClose);
+}
+
 static void recycle(fipsd_crypto_job *j)
 {
     fipsd_dp_packet *p = j->owner;
@@ -18,7 +24,7 @@ fipsd_dp_packet *fipsd_dp_packet_take(fipsd_dataplane *d)
                 memory_order_acquire, memory_order_relaxed)) continue;
         p->plane = d; p->snapshot = d->current; go_refptr_retain(&p->snapshot);
         p->job = (fipsd_crypto_job){.owner = p, .recycle = recycle};
-        p->session = p->ce = p->prompt = p->farewell = false;
+        p->session = p->ce = p->prompt = p->farewell = p->path_message = false;
         return p;
     }
     ++d->stats.backpressure; return NULL;
@@ -78,6 +84,9 @@ bool fipsd_dp_seal(handlers *h, peer_rec *rec, fips_session_entry *entry,
     p->farewell = !session && !prompt &&
         fips_fmp_strip_inner_header(plain, len, &timestamp, &message, &message_len) &&
         message_len && message[0] == FIPS_LINK_Disconnect;
+    p->path_message = !session && !prompt &&
+        fips_fmp_strip_inner_header(plain, len, &timestamp, &message, &message_len) && message_len &&
+        path_message(message, message_len);
     return fipsd_dp_submit(h, p);
 refuse:
     fipsd_crypto_job_destroy(&p->job); return false;
@@ -86,8 +95,10 @@ bool fipsd_dp_link_send_ce(handlers *h, peer_rec *rec, fips_transport_id transpo
     const fips_transport_addr *to, const uint8_t *message, size_t len, bool ce)
 {
     fipsd_transport *t = hs_transport(h, transport);
+    /* Discovery must be able to prove a size above the current path bound. */
+    uint16_t mtu = t && path_message(message, len) ? t->ops->mtu(t, to) : fipsd_dp_link_mtu(h, rec, transport, to);
     if (!t || len + (FIPS_FRAMING_FMP_INNER_HEADER_SIZE - 1) + FIPS_FRAMING_FMP_ESTABLISHED_HEADER_SIZE +
-        FIPS_NOISE_TAG_SIZE > fipsd_dp_link_mtu(h, rec, transport, to)) {
+        FIPS_NOISE_TAG_SIZE > mtu) {
         fipsd_dp_reject_frame(h, FIPSD_DP_MTU); return false;
     }
     fips_rekey_sealed s = {0};

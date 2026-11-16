@@ -32,10 +32,10 @@ uint16_t fipsd_dp_link_mtu(handlers *h, const peer_rec *rec, fips_transport_id t
 {
     fipsd_transport *t = hs_transport(h, transport);
     size_t mtu = t ? t->ops->mtu(t, to) : UINT16_MAX;
-    if (rec->path_live && rec->path) {
+    if (t && !t->ops->connect_async && hs_rec_multipath(rec)) {
         size_t index = fips_path_set_find(&rec->path->set, transport, to);
         const fips_peer_path *path = fips_path_set_get(&rec->path->set, index);
-        if (path) mtu = fips_path_liveness_size(&path->live, mtu);
+        if (path) mtu = fips_path_carried(mtu, path->live.has_mtu, path->live.mtu, false);
     }
     return mtu > UINT16_MAX ? UINT16_MAX : (uint16_t)mtu;
 }

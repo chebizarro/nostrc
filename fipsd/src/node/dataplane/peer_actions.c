@@ -1,4 +1,46 @@
 #include "node/handlers/internal.h"
+
+bool fipsd_dp_peer_rebind(handlers *h, peer_rec *rec)
+{
+    const fipsd_peer_info *info = fipsd_active_peer_info(rec->peer);
+    uint16_t mtu = fipsd_dp_link_mtu(h, rec, info->transport, &info->addr);
+    /* C has no connected-UDP driver/socket to drop. Its send cache is the
+     * immutable endpoint snapshot plus the destination clamp. Discard the old
+     * path's measurement, even on a same-transport address switch. Old crypto
+     * jobs retain keys/bytes only: dispatch.c resolves the active pair afresh. */
+    fipsd_dp_mtu_release(h->dataplane, &rec->addr);
+    fipsd_dp_mtu_set(h->dataplane, &rec->addr, mtu);
+    h->dataplane->needs_publish = true;
+    hs_mark_dirty(h);
+    if (!fipsd_dp_publish(h)) return false;
+    fipsd_dp_tighten_via(h, &rec->addr, mtu);
+    hs_host_link_mtu_changed(h, mtu);
+    return true;
+}
+
+void fipsd_dp_tighten_via(handlers *h, const fips_node_addr *peer, uint16_t mtu)
+{
+    const fipsd_dp_snapshot *s = h->dataplane->current.ptr;
+    for (size_t i = 0; i < h->sessions.capacity; ++i) {
+        fips_session_entry *entry = &h->session_entries[i];
+        session_ext *x = &h->session_ext[i];
+        if (!entry->occupied || !x->used || !x->mmp_live) continue;
+        /* Ask the production routing decision, not the last inbound carrier:
+         * upstream tighten_via applies only to sessions whose NEXT hop moved. */
+        fips_session_datagram dg;
+        fips_session_datagram_init(&dg, h->me, entry->peer, NULL, 0);
+        fips_writer w; fips_writer_init(&w, h->route_buf, sizeof h->route_buf);
+        fips_route_outcome out;
+        if (fipsd_dp_forward(s, &h->router, &dg, NULL, false, hs_now(h),
+                h->dataplane->coord_scratch, h->dataplane->route_peers, &w, &out) != FIPS_OK ||
+            out.kind != FIPS_ROUTE_Forward || memcmp(out.next_hop.bytes, peer->bytes, 16)) continue;
+        fips_mmp_path_mtu_seed_source_mtu(&x->mmp.path_mtu, mtu);
+        uint16_t clamp = fipsd_dp_mtu_get(h->dataplane, &entry->peer);
+        if (!clamp || x->mmp.path_mtu.current_mtu < clamp)
+            fipsd_dp_mtu_set(h->dataplane, &entry->peer, x->mmp.path_mtu.current_mtu);
+    }
+}
+
 void fipsd_dp_link_deliver(handlers *h, peer_rec *rec, fipsd_dp_packet *p, uint8_t *plain, size_t len)
 {
     uint32_t timestamp; const uint8_t *message; size_t n;
