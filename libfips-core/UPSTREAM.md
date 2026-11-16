@@ -147,6 +147,83 @@ all rows, even where only the implementation epic is shown.
 
 ## Pin-bump procedure
 
+### Executable rehearsal (no baseline edits)
+
+Use a fresh network clone, not an assumed-current local developer checkout.
+Requirements are Git/HTTPS, Python 3.11+, Rustup and the crate's pinned Rust
+1.94.1 toolchain with rustfmt/clippy; see the exporter README for installation.
+Set `ROOT` to the **absolute nostrc worktree**, and keep all scratch beneath it:
+
+```sh
+ROOT=/absolute/nostrc-worktree
+mkdir -p "$ROOT/build-pin-bump"
+git -C "$ROOT" clone --filter=blob:none https://github.com/jmcorgan/fips "$ROOT/build-pin-bump/upstream"
+# For a previously created disposable clone instead: git -C "$ROOT/build-pin-bump/upstream" fetch origin --tags
+NEW=$(git -C "$ROOT/build-pin-bump/upstream" rev-parse origin/master)
+git -C "$ROOT/build-pin-bump/upstream" log -1 --format='%H %cI %s' "$NEW"
+git -C "$ROOT/build-pin-bump/upstream" tag --sort=-creatordate
+"$ROOT/scripts/fips-upstream-bump.sh" -C "$ROOT/build-pin-bump/upstream" "$NEW" --keep
+```
+
+Save the full wrapper output. It chains the watch diff, scratch-crate candidate
+rev/PIN/lock update, two ordinary exports, two legacy captures, and fixture
+comparison. It never commits, updates issues, or rewrites source fixtures.
+Exit 0 = byte-identical; 1 = watched/fixture changes requiring review;
+2 = operational failure, **not** a pass. `--keep` prints its unique scratch path;
+without it scratch is removed automatically. Repeated runs use isolated paths.
+For a changed candidate, first prepare the reviewed patch below, then add
+`--legacy-patch "$ROOT/tools/fips-vectors/upstream-patches/$NEW-legacy-rekey-export.patch"`.
+No automatic fuzzy patch application or silent compatibility-case removal.
+
+**Legacy patch rebase:** clone the disposable source once more into a directory
+under `build-pin-bump`, detach at `NEW`, then `git apply --check --unidiff-zero`
+and `git apply --unidiff-zero` the old patch there. If the check fails, port its
+three test-only changes against the candidate models (new `capture.rs`, sibling
+module declaration, FMP initiate visibility), resolving changed APIs explicitly.
+Review the actual candidate legacy models and `testutil.rs`, update the bridge's
+`const PIN` to the full `NEW`, and retain the MIT notice. Use
+`git add -N core/src/proto/rekey/tests/legacy/capture.rs` in that disposable clone
+so the new file is included, then save
+`git diff --no-ext-diff --unified=0 -- core/src/proto/rekey/tests/legacy`
+to the candidate-named patch in this crate. Check/apply the saved patch to a
+second clean candidate clone before capture. The capture script now accepts
+`SOURCE OUTPUT NEW PATCH`, so testing a candidate no longer requires prematurely
+editing Cargo.toml or the baseline pin. Same-pin runs reuse the existing patch
+unchanged. Review/rebase is an intentional human gate, not an automated claim.
+
+For the unchanged-pin dry run, configure and replay without replacing fixtures:
+
+```sh
+git -C "$ROOT" submodule update --init --depth 1 third_party/nostrdb
+cmake -S "$ROOT" -B "$ROOT/build-pin-bump/asan" -G Ninja \
+  -DCMAKE_BUILD_TYPE=Debug -DGO_WARNINGS_AS_ERRORS=ON \
+  -DGO_ENABLE_ASAN=ON -DGO_ENABLE_UBSAN=ON -DBUILD_FIPS=ON \
+  -DBUILD_APPS=OFF -DBUILD_RELAYD=OFF -DBUILD_LIBHANAMI=OFF \
+  -DBUILD_LIBMARMOT=OFF -DBUILD_MARMOT_GOBJECT=OFF \
+  -DBUILD_NOSTR_GOBJECT=OFF -DBUILD_NOSTR_GTK=OFF -DSIGNET_ENABLE=OFF \
+  -DWITH_NOSTRDB=OFF -DLIBNOSTR_WITH_NOSTRDB=OFF
+cmake --build "$ROOT/build-pin-bump/asan" --target fips_diff
+# macOS (Linux supports detect_leaks=1):
+export ASAN_OPTIONS=detect_leaks=0:strict_string_checks=1:halt_on_error=1
+export UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1
+ctest --test-dir "$ROOT/build-pin-bump/asan" -R '^FipsDiff|FipsProtoSweep' -V
+# Set VECTORS to the wrapper's printed Generated vector root, not the source fixtures.
+for family in entropy identity codec noise proto rekey rekey-legacy; do
+  "$ROOT/build-pin-bump/asan/libfips-core/tests/diff/fips_diff" "$family" "$VECTORS" || exit 1
+done
+```
+
+A different candidate's provenance must match the C loader's compiled pin. Build
+an isolated **source copy** with only its test baseline set to NEW to replay it;
+never relax the loader or overwrite the real baseline to make a candidate pass.
+Run Cargo fmt/clippy/test from the original crate (or with explicit `+1.94.1`),
+and review candidate API/schema changes in scratch before baseline acceptance.
+Delete the reported scratch path, disposable clones, Cargo targets (including
+`tools/fips-vectors/target`, where integration tests create scratch), and C build
+when finished; `git -C "$ROOT" submodule deinit -f --all` removes initialized
+submodule work files. Never prune unrelated worktrees/caches.
+
+
 1. **Choose and resolve a candidate.** Record its full commit, date, package
    version, release-tag ancestry and reason for selection. Keep the Rust checkout
    read-only; compare committed trees, not its working files.
@@ -201,6 +278,144 @@ all rows, even where only the implementation epic is shown.
    compatibility decision, version decision and any remaining work. The
    orchestrator owns issue-status changes; do not silently move the baseline
    past failing or unavailable gates.
+
+## First executed rehearsal — 2026-11-15 (`nostrc-f66sr.6`)
+
+Fresh HTTPS clone of the real upstream: **NEW =
+`6aa80504baa0fa312b392009eea0e3e59fb6fe4c`**, commit date
+**2026-11-14 03:01:39 UTC**, package **0.6.0-dev**. Newest tag by creation
+(and newest stable version) is **v0.5.3**, targeting
+`f4a5b4a8e61e340e6be7551608109a5c399f8353` (2026-10-16 18:30:51 UTC).
+Master is **0 commits beyond the baseline**, **493 commits beyond v0.5.3**;
+the full old→NEW tree diff is empty, not just the watch set.
+
+**Decision:** successful same-pin dry run; no distinct commit exists to bump to.
+Cargo rev/lock, exporter PIN/test expectations, README provenance, legacy patch
+filename and all fixtures deliberately remain at the same immutable pin. No
+Pending bump or port tasks are warranted: no watched-file or wire change and
+no failing family. This is the first executed procedure instance, not a claim
+that a newer upstream release was qualified. No issue commands were run; the
+orchestrator owns tracking/status. No source/API/ABI/wire change: **libfips-core
+0.1.0 no bump** in VERSION_MANIFEST; fipsd untouched.
+
+Exact watch-script output (exit **0**):
+
+```text
+FIPS upstream diff: 6aa80504baa0fa312b392009eea0e3e59fb6fe4c -> 6aa80504baa0fa312b392009eea0e3e59fb6fe4c
+Repository: /Users/bizarro/Documents/Projects/nostrc-wt/fips-pin-bump/build-pin-bump/upstream
+
+unchanged CHANGELOG.md
+unchanged core/src/noise/cipher.rs
+unchanged core/src/noise/mod.rs
+unchanged core/src/proto/bloom/tests/wire.rs
+unchanged core/src/proto/bloom/wire.rs
+unchanged core/src/proto/coord.rs
+unchanged core/src/proto/fmp/tests/wire.rs
+unchanged core/src/proto/fmp/wire.rs
+unchanged core/src/proto/framing.rs
+unchanged core/src/proto/fsp/tests/wire.rs
+unchanged core/src/proto/fsp/wire.rs
+unchanged core/src/proto/link.rs
+unchanged core/src/proto/lookup/tests/wire.rs
+unchanged core/src/proto/lookup/wire.rs
+unchanged core/src/proto/mmp/tests/wire.rs
+unchanged core/src/proto/mmp/wire.rs
+unchanged core/src/proto/path/tests/wire.rs
+unchanged core/src/proto/path/wire.rs
+unchanged core/src/proto/routing/tests/wire.rs
+unchanged core/src/proto/routing/wire.rs
+unchanged core/src/proto/stp/tests/wire.rs
+unchanged core/src/proto/stp/wire.rs
+unchanged docs/reference/configuration.md
+unchanged docs/reference/control-socket.md
+unchanged docs/reference/native-api.md
+unchanged docs/reference/nostr-events.md
+unchanged docs/reference/wire-formats.md
+
+CHANGELOG hunk:
+(unchanged)
+
+Differential-vector regeneration checklist:
+(none: watch set unchanged)
+
+Summary: 0 changed, 27 unchanged watched files.
+```
+
+The new wrapper ran against NEW using only a scratch crate. Both ordinary exports
+were byte-identical; the existing exact-pin legacy patch applied without rebasing.
+Two fresh legacy test processes each passed the ignored export test (1779 other
+upstream tests filtered out), yielding **12 traces / 285 sidecars**, with all
+hash/hex/length/pin/version descriptors verified. All seven families, JSON and
+binary sidecars including provenance, were **byte-identical to checked-in fixtures**.
+The compiled C runner was also invoked directly against this regenerated root:
+
+| Family | Checked | Skipped | Failed |
+| --- | ---: | ---: | ---: |
+| entropy | 3 | 0 | 0 |
+| identity | 3 | 0 | 0 |
+| codec | 15 | 0 | 0 |
+| noise | 83 (IK 31, XK 36, replay 16) | 0 | 0 |
+| proto | 28 | 0 | 0 |
+| rekey | 1 | 0 | 0 |
+| rekey-legacy | 12 | 0 | 0 |
+
+Local macOS arm64 verification: Debug, clang, warnings-as-errors, ASan+UBSan;
+`ctest -R '^FipsDiff|FipsProtoSweep' -V` **10/10 passed**, including both integrity
+negative suites and the locked `proto: 28 checked, 0 skipped, 0 failed` gate.
+Original exporter `cargo +1.94.1 fmt --check`, clippy `--locked --all-targets --
+-D warnings`, and `cargo test --locked` passed (**5 integration tests**, zero
+unit tests). Shellcheck on the wrapper and capture script, all three requested
+static Python checkers and `git diff --check` passed. These are local results,
+not hosted CI, release or two-node C/Rust UDP interop qualification. Host interop
+was not run in this test/tooling-only same-pin rehearsal; the existing interop
+gate below remains required before advancing a changed baseline.
+
+Procedure corrections: remove the developer-checkout default; allow explicit
+candidate/patch capture without editing the baseline; scratch all Cargo sources
+and targets; select Rust with `+toolchain` (manifest path does not select it);
+resolve changed candidate dependencies in scratch; document prerequisites,
+submodule setup, candidate patch rebasing, loader pin constraints and cleanup.
+The wrapper stops visibly for missing tools/patches or fault-injection variables,
+checks determinism before comparison, and retains evidence only on `--keep`.
+A second full run without `--keep` also passed and removed its run directory;
+invalid revision, fault switch, missing patch and omitted capture source were
+separately confirmed to refuse with exit 2.
+
+## Upstream findings to report
+
+Carried from `docs/reviews/libfips-core-noise-audit-2026-11-15.md` (N-2, N-4,
+N-11, N-14), all against **6aa80504baa0fa312b392009eea0e3e59fb6fe4c**.
+These are tracking-ready notes, **not** reports already submitted upstream:
+
+- **N-2 — bound explicit-counter decrypt inputs.** Upstream
+  `core/src/noise/cipher.rs:297-315,346-365`
+  (`decrypt_with_counter[_and_aad]`) checks minimum tag size but not the maximum
+  message size. C `src/noise/cipher.c:64-67`, `aead.c:44` refuses >65535 bytes
+  (and insufficient output capacity) as MessageTooLarge rather than attempting
+  authentication/DecryptionFailed. Accepted stricter divergence; conforming
+  u16-framed/UDP peers cannot send it. Report an upstream bound/error-contract
+  clarification; do not alter valid-wire bytes.
+- **N-4 — harden ReplayWindow::accept against out-of-window counters.**
+  Upstream `core/src/noise/replay.rs:66-87` indexes `bitmap[diff / 64]` without
+  checking `diff < 8192` on the older-counter branch; misuse through
+  `NoiseSession::accept_replay` can panic. C `src/noise/replay.c:16-18` re-checks
+  and leaves the window unchanged for old/seen/MAX counters. Report a guarded
+  accept/refusal contract and regression for a counter older than the window.
+- **N-11 — retain unauthenticated-msg1 DoS mitigation at the host.** Audit
+  `src/noise/handshake.c:196-213` / `read_xk_message_1`: valid-point forged IK
+  msg1 costs one DH before static authentication fails; XK msg1 costs one DH
+  and accepts any valid point, without authentication. Same upstream design;
+  `docs/reference/security.md:413-414` identifies handshake msg1 as the
+  unauthenticated surface. Track host admission/rate limiting, not a C wire fix.
+- **N-14 — empty handshake AAD means no transcript/channel binding.**
+  Upstream `core/src/noise/handshake.rs:53-57` and
+  `docs/reference/security.md:88` ("Deviation: Empty Associated Data"); audit
+  C `src/noise/symmetric.c:100,123`, `include/fips/noise/handshake.h:103-105`.
+  Only `h` sees parity/prologue/negotiated metadata; empty AEAD AAD does not
+  authenticate it. Accepted 02↔03 parity flips demonstrate malleability.
+  Do not build channel binding/exporters on `h`. Restoring Noise transcript
+  binding requires a **versioned upstream interoperability change**, never an
+  uncoordinated C-only correction.
 
 ## Node bookkeeping port (nostrc-u50yr.4)
 
