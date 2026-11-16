@@ -498,13 +498,18 @@ nostrc_describe_test(FipsdNativeSeqpacketTest OWNER fipsd TARGETS fipsd_native_s
 fipsd_unit_test(fipsd_native_api_test test_native_api.c)
 fipsd_unit_test(fipsd_native_two_nodes_test test_native_two_nodes.c)
 target_link_libraries(fipsd_native_two_nodes_test PRIVATE fipsnative_static)
-add_dependencies(fipsd_tests fipsd_native_api_test fipsd_native_two_nodes_test)
+# nostrc-pxwaj: a burst larger than every bounded originating queue, zero drops.
+fipsd_unit_test(fipsd_native_burst_test test_native_burst.c)
+target_link_libraries(fipsd_native_burst_test PRIVATE fipsnative_static Threads::Threads)
+add_dependencies(fipsd_tests fipsd_native_api_test fipsd_native_two_nodes_test fipsd_native_burst_test)
 add_test(NAME FipsdNativeApiTest COMMAND fipsd_native_api_test)
 add_test(NAME FipsdNativeTwoNodesTest COMMAND fipsd_native_two_nodes_test)
-set_tests_properties(FipsdNativeApiTest FipsdNativeTwoNodesTest PROPERTIES TIMEOUT 300 LABELS "fips;node;native"
+add_test(NAME FipsdNativeBurstTest COMMAND fipsd_native_burst_test)
+set_tests_properties(FipsdNativeApiTest FipsdNativeTwoNodesTest FipsdNativeBurstTest PROPERTIES TIMEOUT 300 LABELS "fips;node;native"
   ENVIRONMENT "FIPSD_WORKERS=2")
 nostrc_describe_test(FipsdNativeApiTest OWNER fipsd TARGETS fipsd_native_api_test)
 nostrc_describe_test(FipsdNativeTwoNodesTest OWNER fipsd TARGETS fipsd_native_two_nodes_test)
+nostrc_describe_test(FipsdNativeBurstTest OWNER fipsd TARGETS fipsd_native_burst_test)
 # The harness driver for the C<->Rust gate below: a C client over libfipsnative.
 add_executable(fipsd_native_client_tool native_client_tool.c)
 set_target_properties(fipsd_native_client_tool PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)

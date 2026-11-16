@@ -14,6 +14,12 @@ static void recycle(fipsd_crypto_job *j)
     sodium_memzero(p->output, sizeof p->output);
     sodium_memzero(&p->job, sizeof p->job);
     atomic_store_explicit(&p->busy, false, memory_order_release);
+    atomic_fetch_sub_explicit(&p->plane->in_flight, 1, memory_order_release);
+}
+bool fipsd_dp_send_ready(const fipsd_dataplane *d)
+{
+    size_t taken = atomic_load_explicit(&d->in_flight, memory_order_acquire);
+    return taken + FIPSD_DP_SEND_RESERVE < d->packet_count;
 }
 fipsd_dp_packet *fipsd_dp_packet_take(fipsd_dataplane *d)
 {
@@ -22,6 +28,7 @@ fipsd_dp_packet *fipsd_dp_packet_take(fipsd_dataplane *d)
         bool expected = false;
         if (!atomic_compare_exchange_strong_explicit(&p->busy, &expected, true,
                 memory_order_acquire, memory_order_relaxed)) continue;
+        atomic_fetch_add_explicit(&d->in_flight, 1, memory_order_relaxed);
         p->plane = d; p->snapshot = d->current; go_refptr_retain(&p->snapshot);
         p->job = (fipsd_crypto_job){.owner = p, .recycle = recycle};
         p->session = p->ce = p->prompt = p->farewell = p->path_message = p->restart = false;

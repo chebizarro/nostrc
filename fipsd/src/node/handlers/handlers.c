@@ -362,6 +362,7 @@ static bool attach(void *user, const fipsd_node_attach *a)
     fipsd_diag_init(&h->diag, h->origin);
     fipsd_metrics_init(&h->metrics);
     h->next_tick = fips_deadline(h->origin, fips_duration_from_millis(h->cfg.tick_ms));
+    h->publish_allowed = h->origin;
     h->next_link_id = 1;
     load_core(h);
     if (!allocate(h) || !fipsd_dp_init(h)) return false;
@@ -473,8 +474,17 @@ static bool on_command(void *user, void *message)
         break;
     }
     command_free(c);
-    hs_mark_dirty(h);
+    /* Originated datagrams change counters only; those are published from the
+     * tick. Every other command may have changed control-visible state. */
+    if (c->kind != HCMD_SEND) hs_mark_dirty(h);
     return true;
+}
+/* Dispatcher admission for the command mailbox: hold originated sends while
+ * the packet pool lacks headroom for inbound opens (fipsd_dp_send_ready). */
+static bool command_ready(void *user)
+{
+    handlers *h = user;
+    return !h->running || !h->dataplane || fipsd_dp_send_ready(h->dataplane);
 }
 void fipsd_node_handlers_install(fipsd_node_handlers *h, fipsd_node_options *o)
 {
@@ -482,7 +492,9 @@ void fipsd_node_handlers_install(fipsd_node_handlers *h, fipsd_node_options *o)
     o->transport_event = on_transport_event; o->crypto_result = on_crypto_result; o->network_event = on_network_event;
     o->attach = attach; o->detach = detach; o->wait_ms = wait_ms; o->poll = poll;
     o->peer_effects = peer_effects; o->peer_result = NULL;
-    o->commands = h->commands; o->command = on_command;
+    o->commands = h->commands; o->command = on_command; o->command_ready = command_ready;
+    /* Every slab the pool can hand out must find a worker queue slot. */
+    if (o->crypto_queue_capacity < FIPSD_DP_PACKETS) o->crypto_queue_capacity = FIPSD_DP_PACKETS;
     o->clock = h->cfg.clock;
     if (!o->peer_capacity) o->peer_capacity = h->cfg.peer_capacity;
 }
@@ -521,6 +533,23 @@ int fipsd_node_handlers_send(fipsd_node_handlers *h, const fips_node_addr *dest,
     c->node = *dest; c->src_port = src_port; c->dst_port = dst_port;
     if (len) memcpy(c->payload, payload, len);
     return enqueue(h, c);
+}
+int fipsd_node_handlers_send_wait(fipsd_node_handlers *h, const fips_node_addr *dest, uint16_t src_port,
+                                  uint16_t dst_port, const uint8_t *payload, size_t len, GoChannel *cancel)
+{
+    if (len > FIPSD_HANDLERS_DATAGRAM_MAX) return -1;
+    handler_command *c = command_new(HCMD_SEND, len);
+    if (!c) return -1;
+    c->node = *dest; c->src_port = src_port; c->dst_port = dst_port;
+    if (len) memcpy(c->payload, payload, len);
+    if (go_channel_try_send(h->commands, c) == 0) return 0;
+    if (go_channel_is_closed(h->commands)) { command_free(c); return -1; }
+    /* Park until the dispatcher drains the mailbox (it wakes this select) or
+     * the caller's cancellation fires: back-pressure, never a timed retry. */
+    void *token = NULL;
+    GoSelectCase cases[] = {{GO_SELECT_SEND, h->commands, c, NULL}, {GO_SELECT_RECEIVE, cancel, NULL, &token}};
+    if (go_select(cases, cancel ? 2 : 1) == 0) return 0;
+    command_free(c); return -1;
 }
 int fipsd_node_handlers_learn_identity(fipsd_node_handlers *h, const fips_peer_identity *peer)
 {

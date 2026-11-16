@@ -81,6 +81,12 @@ int fipsd_node_handlers_disconnect(fipsd_node_handlers *h, const fips_node_addr 
  * datagram. Session setup, lookup and queueing happen on the dispatcher. */
 int fipsd_node_handlers_send(fipsd_node_handlers *h, const fips_node_addr *dest,
                              uint16_t src_port, uint16_t dst_port, const uint8_t *payload, size_t len);
+/* The same, but a full mailbox parks the caller (fiber or thread) until the
+ * dispatcher takes the datagram or `cancel` (a done channel, may be NULL)
+ * closes: back-pressure for owners that must not drop, such as the native
+ * API's flow readers. -1 only when cancelled, closed or oversize. */
+int fipsd_node_handlers_send_wait(fipsd_node_handlers *h, const fips_node_addr *dest, uint16_t src_port,
+                                  uint16_t dst_port, const uint8_t *payload, size_t len, GoChannel *cancel);
 /* Seed the identity cache (configured peers, rendezvous, native API). */
 int fipsd_node_handlers_learn_identity(fipsd_node_handlers *h, const fips_peer_identity *peer);
 /* Native datagram API sink (nostrc-9nxwk.4). With a sink installed, an

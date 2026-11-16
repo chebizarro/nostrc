@@ -10,6 +10,13 @@
 
 #define FIPSD_DP_WIRE 2048u
 #define FIPSD_DP_LANES 64u
+/* Owned packet slabs: a fixed bound covering in-flight seals, opens, results
+ * awaiting the dispatcher and FSP trial retries. The worker queues are sized
+ * from it so the pool, not a queue, is the single back-pressure point. */
+#define FIPSD_DP_PACKETS 256u
+/* Slabs kept free for inbound opens (one transport-event mailbox's worth)
+ * while originated sends are being admitted; see fipsd_dp_send_ready. */
+#define FIPSD_DP_SEND_RESERVE 64u
 struct fipsd_node_handlers;
 struct peer_rec;
 struct session_ext;
@@ -79,6 +86,7 @@ typedef struct fipsd_dataplane {
     GoRefPtr current; /* publisher's retained generation: load once, not per packet */
     fipsd_dp_packet *packets;
     size_t packet_count, next;
+    _Atomic size_t in_flight; /* taken slabs; released by recycle on any thread */
     fips_tree_coordinate *coord_scratch;
     fips_routing_peer *route_peers;
     struct { bool used; fips_node_addr peer; uint16_t mtu; bool notify_pending; } *clamps;
@@ -91,6 +99,12 @@ bool fipsd_dp_init(struct fipsd_node_handlers *);
 void fipsd_dp_destroy(fipsd_dataplane *);
 bool fipsd_dp_publish(struct fipsd_node_handlers *);
 fipsd_dp_packet *fipsd_dp_packet_take(fipsd_dataplane *);
+/* Admission gate for originated sends: false while the pool lacks headroom
+ * for FIPSD_DP_SEND_RESERVE inbound opens. The dispatcher leaves the command
+ * mailbox unread until completions return slabs, so pressure reaches the
+ * producer (a full mailbox, then a full client socket) instead of burning a
+ * nonce on a seal the pool would refuse. */
+bool fipsd_dp_send_ready(const fipsd_dataplane *);
 bool fipsd_dp_open_retry(struct fipsd_node_handlers *, const fipsd_dp_packet *);
 fipsd_dp_packet *fipsd_dp_acquire(struct fipsd_node_handlers *);
 bool fipsd_dp_submit(struct fipsd_node_handlers *, fipsd_dp_packet *);

@@ -37,6 +37,7 @@ static void run(void *arg)
 {
     worker *w = arg;
     void *value;
+    unsigned streak = 0;
     while (go_channel_receive(w->in, &value) == 0) {
         fipsd_crypto_job *j = value;
         j->worker = w->index;
@@ -45,7 +46,8 @@ static void run(void *arg)
         if (j->result == FIPS_NOISE_OK && j->worker_counts) atomic_fetch_add(&j->worker_counts[w->index], 1);
         fips_cipher_state_destroy(&j->key);
         if (go_channel_send(w->set->results, j) != 0) fipsd_crypto_job_destroy(j);
-        gof_yield();
+        /* Stay fair on a shared scheduler thread without a reschedule per job. */
+        if (++streak == 8) { streak = 0; gof_yield(); }
     }
     atomic_store(&w->live, false);
     if (atomic_fetch_sub(&w->set->remaining, 1) == 1) go_channel_close(w->set->results);
