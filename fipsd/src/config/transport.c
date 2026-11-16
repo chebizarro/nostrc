@@ -40,7 +40,7 @@ static const cfg_field schema_transports_tcp[] = {
     U("keepalive_secs","30"),
     Z("recv_buf_size","2097152"),
     Z("send_buf_size","2097152"),
-    Z("max_inbound_connections","256"),
+    Z("max_inbound_connections",NULL),
     Z("max_inbound_per_source","8"),
     B("advertise_on_nostr","false"),
     S("external_addr",NULL),

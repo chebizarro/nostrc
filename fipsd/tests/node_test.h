@@ -7,8 +7,18 @@
 #include "node/context.h"
 #include "node/handlers/handlers.h"
 #include "node/transport_loopback.h"
-#ifdef FIPSD_TEST_UDP
+#if defined(FIPSD_TEST_UDP) || defined(FIPSD_TEST_TCP)
+#ifdef FIPSD_TEST_TCP
+#include "transport/tcp/tcp.h"
+#define nt_socket_bound fipsd_tcp_bound
+#define nt_socket_address fipsd_tcp_address
+#define nt_socket_count fipsd_tcp_connected_count
+#else
 #include "transport/udp/udp.h"
+#define nt_socket_bound fipsd_udp_bound
+#define nt_socket_address fipsd_udp_address
+#define nt_socket_count fipsd_udp_connected_count
+#endif
 #include "test_tmpdir.h"
 #endif
 #include "config/config.h"
@@ -97,21 +107,29 @@ static bool nt_init(test_node *n, fipsd_loopback_network *net, const char *name,
     fipsd_node_options options = {.workers = 2, .peer_capacity = hcfg->peer_capacity, .netmon_source = &n->netmon};
     fipsd_node_handlers_install(n->h, &options);
     n->node = fipsd_node_create(n->configs, &options);
-#ifdef FIPSD_TEST_UDP
+#if defined(FIPSD_TEST_UDP) || defined(FIPSD_TEST_TCP)
     (void)net; (void)address;
+#ifdef FIPSD_TEST_TCP
+    fipsd_tcp_config udp; fipsd_tcp_config_default(&udp);
+#else
     fipsd_udp_config udp; fipsd_udp_config_default(&udp);
-#ifdef FIPSD_TEST_UDP_V6
+#endif
+#if defined(FIPSD_TEST_UDP_V6) || defined(FIPSD_TEST_TCP_V6)
     udp.bind_addr = "[::1]:0";
 #else
     udp.bind_addr = "127.0.0.1:0";
 #endif
     udp.mtu = 1280;
+#ifdef FIPSD_TEST_TCP
+    n->transport = fipsd_tcp_create((fips_transport_id){transport_id}, "tcp", &udp);
+#else
     n->transport = fipsd_udp_create((fips_transport_id){transport_id}, "udp", &udp);
+#endif
 #else
     n->transport = fipsd_loopback_transport_create(net, (fips_transport_id){transport_id}, "loop", address, 1280);
 #endif
     if (!n->configs || !n->h || !n->node || !n->transport) return false;
-#ifdef FIPSD_TEST_UDP
+#if defined(FIPSD_TEST_UDP) || defined(FIPSD_TEST_TCP)
     n->addr = &n->udp_addr;
 #else
     n->addr = fipsd_loopback_transport_address(n->transport);
@@ -142,8 +160,12 @@ static void nt_destroy(test_node *n)
 {
     fipsd_node_destroy(n->node);
     fipsd_node_handlers_destroy(n->h);
-#ifdef FIPSD_TEST_UDP
+#if defined(FIPSD_TEST_UDP) || defined(FIPSD_TEST_TCP)
+#ifdef FIPSD_TEST_TCP
+    fipsd_tcp_destroy(n->transport);
+#else
     fipsd_udp_destroy(n->transport);
+#endif
 #else
     fipsd_loopback_transport_destroy(n->transport);
 #endif

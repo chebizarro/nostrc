@@ -1425,3 +1425,104 @@ The upstream open-discovery startup scenario seeds adverts before node startup;
 the local test preserves that shape and additionally holds EOSE before any dial
 effect is permitted. These are local native tests, not public-relay, hosted-CI,
 STUN, traversal or deployment proof. `8hvs6.4` remains the formal protocol review.
+
+## TCP transport
+
+`transports.tcp` uses the same singleton/named-instance configuration and node
+registration path as UDP. (The canonical YAML key is **`transports.tcp`**, not
+`node.transports.tcp`.) Omit it to disable TCP; an empty instance enables
+outbound-only operation. A numeric `bind_addr` enables inbound acceptance:
+
+```yaml
+transports:
+  tcp:
+    bind_addr: "127.0.0.1:2121"  # or "[::1]:2121"; omit for outbound only
+    mtu: 1400
+    connect_timeout_ms: 5000
+    nodelay: true
+    keepalive_secs: 30          # 0 disables kernel TCP keepalive
+    recv_buf_size: 2097152
+    send_buf_size: 2097152
+    max_inbound_connections: 256
+    max_inbound_per_source: 8
+```
+
+All keys at the Rust pin already exist in the configuration schema, including
+`advertise_on_nostr`, `external_addr`, `role` and `kind`. This transport does not
+add a relay actor or change the rendezvous driver's advertising capabilities.
+An omitted `max_inbound_connections` inherits `node.limits.max_connections`;
+an explicit value, including zero, wins. Per-source admission canonicalizes
+IPv4-mapped addresses and counts IPv6 /64 prefixes. Pending outbound attempts
+reserve a node-budget-sized host pool; inbound limits do not consume that
+outbound budget. Outbound DNS resolution runs on the blocking executor, tries
+all returned IPv4/IPv6 candidates under one connect deadline, and preserves
+the caller's opaque endpoint identity. Native DNS itself is subject to the
+host resolver's timeout, not the TCP connect timeout.
+
+### Implementation and ownership
+
+- `tcp/{tcp.c,tcp.h}`: vtable, config registration, copied nonblocking send
+  admission, configured MTU, public address/readiness and stats interfaces.
+- `tcp/listener.c`: fiber accept, endpoint resolution, listener binding,
+  nonblocking/CLOEXEC sockets, keepalive/NODELAY and shared socket buffers.
+- `tcp/conn.c`: one tracked owner per connection, a connect/reader fiber and
+  a separate writer fiber. Only the writer writes; no dispatcher waits on
+  socket writability. A 64-frame owned queue refuses immediately when full.
+- `tcp/pool.c`: inbound local/remote tuples, outbound endpoint deduplication,
+  newest-inbound/outbound-first lookup, capacity/source admission and exact
+  owner removal. A closing endpoint cannot be replaced ahead of its exit event.
+- `tcp/stats.c`: atomic upstream TCP counters, projected by `show_transports`
+  alongside the shared byte/frame counters. Pool outbound counts established
+  sockets, while the admission budget also reserves pending attempts.
+
+The shared `framing`/`stream` code consumes the existing four-byte FMP prefix:
+there is **no extra TCP length envelope**. Send MTU is the configured value
+(default 1400), including the FMP frame. Receive ceiling is 65535 regardless
+of local send MTU. Linux `TCP_MAXSEG` is diagnostic only, not a frame limit;
+TCP segmentation is left to the kernel. The shared presence/watcher and medium
+modules are reused; unbound TCP reports unknown medium rather than guessing
+Ethernet from an IP address.
+
+The node's connection-oriented dial/retry state machine owns reconnection and
+exponential backoff. Transport `CONNECTED`/`DISCONNECTED` events drive it;
+there is no second retry loop. The C vtable's send is the equivalent of Rust's
+`send_existing`, not its connect-on-send convenience API: late encrypted work
+must never reopen a deliberately closed link. The current vtable has no lane
+argument, so its single bounded writer queue does not claim Rust's separate
+path-priority lane support.
+
+Stop closes cancellation channels, uses libgo's owner-directed
+`gof_io_cancel_fd` latch (including connect/read/write pre-park races), joins
+both I/O fibers, then resets and closes the fd. It never uses close as a wake.
+Deliberate peer close drains queued frames for at most the upstream five-second
+grace; stop and root cancellation interrupt that drain. Inbound first-frame
+admission expires after 30 seconds; subsequent complete frames re-arm the
+node-derived link-silence bound (64 seconds at defaults). Deadlines cover
+whole frames, not individual bytes.
+
+### Verification
+
+`fipsd_tests` includes `FipsdTcpTest` (framing, real IPv4/IPv6 streams, ownership,
+MTU asymmetry, queue/pool/source limits, socket options, deadlines, reconnect,
+connect-arm/readiness cancellation and committed mid-read cancellation) and
+`FipsdTcpTwoNodesV4Test`/`V6Test`. The latter reuse the full two-node proof:
+IK link, tree convergence, bloom, XK session, datagrams, rekey and disconnect,
+with transport counters read through the production control provider. Socket
+fixtures use `test_tmpdir.h`; synchronization is channels, I/O readiness and
+explicit trace barriers, never warm-up sleeps.
+
+`FipsdTcpInteropTest` runs `tests/tcp_interop.py` against the real C daemon and
+an independently built pinned Rust daemon. Set CMake's
+`FIPSD_TCP_INTEROP_RUST_BINARY` (or that environment variable at configure time)
+to enable it; otherwise it returns SKIP (77). It verifies authenticated TCP
+links in both control views and clean SIGTERM joins. This is link interop,
+not a cross-language XK/datagram or deployment claim. A local pinned build is:
+
+```sh
+CARGO_TARGET_DIR=/tmp/fips-rust-target-tcp cargo build --locked --release
+```
+
+Keep that target outside the read-only Rust checkout and delete it after the
+run. No dependency or CI workflow changes are needed. Version decision:
+**fipsd stays 0.1.0 Unreleased**; the TCP addition folds into the initial daemon,
+with no published release/tag or FMP wire-format change.

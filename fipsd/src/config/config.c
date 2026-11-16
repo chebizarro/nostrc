@@ -78,6 +78,22 @@ static bool effective_udp(fipsd_config *c, fipsd_config_log *log)
     }
     return true;
 }
+/* Preserve the explicit TCP cap; otherwise inherit the node budget, as
+ * upstream effective_max_inbound does, before publishing effective config. */
+static bool effective_tcp(fipsd_config *c, fipsd_config_log *log)
+{
+    struct fipsd_config_value *tcp = cfg_get(c->root, "transports.tcp");
+    if (!tcp || tcp->kind != CFG_MAP) return true;
+    for (size_t i = 0; i < (tcp->named_transport ? tcp->count : 1); ++i) {
+        struct fipsd_config_value *v = tcp->named_transport ? tcp->items[i] : tcp;
+        if (fipsd_config_member(v, "max_inbound_connections")) continue;
+        struct fipsd_config_value *cap = cfg_clone(cfg_get(c->root, "node.limits.max_connections"));
+        if (!cap || !cfg_put(v, "max_inbound_connections", cap)) {
+            cfg_free(cap); return cfg_error(log, "cannot allocate TCP inbound cap");
+        }
+    }
+    return true;
+}
 static fipsd_config *finish(struct fipsd_config_value *raw, fipsd_config_log *log)
 {
     if (!raw) return NULL;
@@ -86,7 +102,7 @@ static fipsd_config *finish(struct fipsd_config_value *raw, fipsd_config_log *lo
     c->root=raw;
     cfg_deprecated(raw,log);
     if (!cfg_normalize(raw,cfg_root,"",log)) goto fail;
-    if (!cfg_socket_defaults(c,log) || !effective_udp(c,log)) goto fail;
+    if (!cfg_socket_defaults(c,log) || !effective_udp(c,log) || !effective_tcp(c,log)) goto fail;
     cfg_floors(c,log);
     if ((log && log->error[0]) || !cfg_validate(c,log) || !cfg_core(c,log)) goto fail;
     return c;

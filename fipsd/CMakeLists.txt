@@ -145,3 +145,7 @@ target_sources(fipsd_lib PRIVATE src/transport/udp/udp.c src/transport/udp/io.c
 target_sources(fipsd_lib PRIVATE src/nostr/runtime.c src/nostr/driver.c
   src/nostr/failure_state.c src/nostr/signal_gate.c src/nostr/signal_route.c)
 target_link_libraries(fipsd_lib PUBLIC nip11)
+
+# TCP stream owners (nostrc-gfi8h.3), consuming the shared framing layer.
+target_sources(fipsd_lib PRIVATE src/transport/tcp/tcp.c src/transport/tcp/listener.c
+  src/transport/tcp/conn.c src/transport/tcp/pool.c src/transport/tcp/stats.c)
