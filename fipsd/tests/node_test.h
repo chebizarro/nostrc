@@ -8,7 +8,32 @@
 #include "node/handlers/handlers.h"
 #include "node/transport_loopback.h"
 #if defined(FIPSD_TEST_UDP) || defined(FIPSD_TEST_TCP)
-#ifdef FIPSD_TEST_TCP
+#ifdef FIPSD_TEST_TOR
+/* FIPSD_TEST_TCP plus FIPSD_TEST_TOR: each node is a directory-mode Tor
+ * transport (onion listener on loopback, reading its onion name from a
+ * hostname file) dialing through one loopback SOCKS5 fake standing in for
+ * Tor, which routes each onion CONNECT to that node's listener. A node's
+ * address is its onion and HiddenServicePort virtual port. */
+#include "transport/tor/tor.h"
+#include "transport/tcp/tcp.h"
+#include "socks5_fixture.h"
+static socks5_fixture nt_proxy;
+static unsigned nt_proxy_users; /* nodes sharing the proxy; the last destroy stops it */
+static const char *nt_tor_dir;
+static const char *nt_onion(const char *name)
+{ return name[0] == 'A' ? "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa2.onion" : "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb2.onion"; }
+static bool nt_tor_address(fipsd_transport *t, fips_transport_addr *out)
+{
+    fips_transport_addr listen; char text[96];
+    if (!fipsd_tor_listener_address(t, &listen) || !fipsd_tor_onion_address(t)) return false;
+    socks5_fixture_route(&nt_proxy, fipsd_tor_onion_address(t), &listen);
+    snprintf(text, sizeof text, "%s:443", fipsd_tor_onion_address(t));
+    return fips_transport_addr_from_string(text, strlen(text), out) == FIPS_OK;
+}
+#define nt_socket_bound fipsd_tor_bound
+#define nt_socket_address nt_tor_address
+#define nt_socket_count fipsd_tor_connected_count
+#elif defined(FIPSD_TEST_TCP)
 #include "transport/tcp/tcp.h"
 #define nt_socket_bound fipsd_tcp_bound
 #define nt_socket_address fipsd_tcp_address
@@ -120,7 +145,17 @@ static bool nt_init(test_node *n, fipsd_loopback_network *net, const char *name,
     udp.bind_addr = "127.0.0.1:0";
 #endif
     udp.mtu = 1280;
-#ifdef FIPSD_TEST_TCP
+#ifdef FIPSD_TEST_TOR
+    if (!nt_proxy_users++) socks5_fixture_start(&nt_proxy);
+    if (!nt_tor_dir) nt_tor_dir = fipsd_test_tmpdir(NULL);
+    char hostname[512]; snprintf(hostname, sizeof hostname, "%s/%s.hostname", nt_tor_dir, name);
+    FILE *file = fopen(hostname, "w"); if (!file) return false;
+    fprintf(file, "%s\n", nt_onion(name)); fclose(file);
+    fipsd_tor_config tor; fipsd_tor_config_default(&tor);
+    tor.mode = "directory"; tor.socks5_addr = nt_proxy.addr; tor.mtu = udp.mtu;
+    tor.hostname_file = hostname; tor.bind_addr = udp.bind_addr;
+    n->transport = fipsd_tor_create((fips_transport_id){transport_id}, "tor", &tor);
+#elif defined(FIPSD_TEST_TCP)
     n->transport = fipsd_tcp_create((fips_transport_id){transport_id}, "tcp", &udp);
 #else
     n->transport = fipsd_udp_create((fips_transport_id){transport_id}, "udp", &udp);
@@ -161,7 +196,10 @@ static void nt_destroy(test_node *n)
     fipsd_node_destroy(n->node);
     fipsd_node_handlers_destroy(n->h);
 #if defined(FIPSD_TEST_UDP) || defined(FIPSD_TEST_TCP)
-#ifdef FIPSD_TEST_TCP
+#ifdef FIPSD_TEST_TOR
+    fipsd_tor_destroy(n->transport);
+    if (nt_proxy_users && !--nt_proxy_users) socks5_fixture_stop(&nt_proxy);
+#elif defined(FIPSD_TEST_TCP)
     fipsd_tcp_destroy(n->transport);
 #else
     fipsd_udp_destroy(n->transport);

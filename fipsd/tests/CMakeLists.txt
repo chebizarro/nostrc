@@ -646,3 +646,42 @@ if(FIPS_ENABLE_BENCH)
   nostrc_describe_test(FipsdPerfLoopbackTest OWNER fipsd TARGETS fipsd fipsd_perf_native
     INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/perf_loopback.py" "${CMAKE_CURRENT_SOURCE_DIR}/udp_interop.py")
 endif()
+# SOCKS5 client, Tor and Nym transports (nostrc-gfi8h.4): byte vectors and
+# loopback fakes standing in for Tor's SocksPort/ControlPort and for
+# nym-socks5-client; a Tor two-node node proof through the fake proxy.
+fipsd_unit_test(fipsd_socks5_test test_socks5.c)
+target_sources(fipsd_socks5_test PRIVATE socks5_fixture.c)
+add_dependencies(fipsd_tests fipsd_socks5_test)
+add_test(NAME FipsdSocks5Test COMMAND fipsd_socks5_test)
+set_tests_properties(FipsdSocks5Test PROPERTIES TIMEOUT 60 LABELS "fips;transport" ENVIRONMENT "FIPSD_WORKERS=2")
+nostrc_describe_test(FipsdSocks5Test OWNER fipsd TARGETS fipsd_socks5_test)
+fipsd_unit_test(fipsd_tor_test test_tor.c)
+target_sources(fipsd_tor_test PRIVATE socks5_fixture.c torctl_fixture.c)
+add_dependencies(fipsd_tests fipsd_tor_test)
+add_test(NAME FipsdTorTest COMMAND fipsd_tor_test)
+set_tests_properties(FipsdTorTest PROPERTIES TIMEOUT 120 LABELS "fips;transport" ENVIRONMENT "FIPSD_WORKERS=2")
+nostrc_describe_test(FipsdTorTest OWNER fipsd TARGETS fipsd_tor_test)
+fipsd_unit_test(fipsd_tor_two_nodes_test test_node_two_nodes.c)
+target_sources(fipsd_tor_two_nodes_test PRIVATE socks5_fixture.c)
+target_compile_definitions(fipsd_tor_two_nodes_test PRIVATE FIPSD_TEST_TCP=1 FIPSD_TEST_TOR=1)
+add_dependencies(fipsd_tests fipsd_tor_two_nodes_test)
+add_test(NAME FipsdTorTwoNodesTest COMMAND fipsd_tor_two_nodes_test)
+set_tests_properties(FipsdTorTwoNodesTest PROPERTIES TIMEOUT 300 LABELS "fips;transport;node"
+  ENVIRONMENT "FIPSD_WORKERS=2")
+nostrc_describe_test(FipsdTorTwoNodesTest OWNER fipsd TARGETS fipsd_tor_two_nodes_test)
+fipsd_unit_test(fipsd_nym_test test_nym.c)
+target_sources(fipsd_nym_test PRIVATE socks5_fixture.c)
+add_dependencies(fipsd_tests fipsd_nym_test)
+add_test(NAME FipsdNymTest COMMAND fipsd_nym_test)
+set_tests_properties(FipsdNymTest PROPERTIES TIMEOUT 60 LABELS "fips;transport" ENVIRONMENT "FIPSD_WORKERS=2")
+nostrc_describe_test(FipsdNymTest OWNER fipsd TARGETS fipsd_nym_test)
+# Opt-in C<->Rust link over real onion services through a local tor
+# (docs/how-to/deploy-tor-onion.md); SKIP 77 without both binaries.
+set(FIPSD_TOR_BINARY "$ENV{FIPSD_TOR_BINARY}" CACHE FILEPATH "Optional tor daemon for the C<->Rust onion interop")
+add_test(NAME FipsdTorInteropTest COMMAND fipsd_test_tmpdir_run "/control.sock"
+  "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tor_interop.py"
+  --fipsd "$<TARGET_FILE:fipsd>" --rust "${FIPSD_UDP_INTEROP_RUST_BINARY}" --tor "${FIPSD_TOR_BINARY}")
+set_tests_properties(FipsdTorInteropTest PROPERTIES TIMEOUT 1200 SKIP_RETURN_CODE 77
+  LABELS "fips;transport;interop;tor" ENVIRONMENT "FIPSD_WORKERS=2")
+nostrc_describe_test(FipsdTorInteropTest OWNER fipsd TARGETS fipsd fipsd_test_tmpdir_run
+  INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/tor_interop.py")

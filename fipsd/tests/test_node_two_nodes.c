@@ -196,7 +196,15 @@ int main(void)
         fips_link_stats live = fipsd_transport_stats_snapshot(&n->transport->shared->stats);
         assert(live.packets_sent > 0 && live.packets_recv > 0);
 #else
+#ifdef FIPSD_TEST_TOR
+        /* Upstream Tor rows carry no local_addr: tor_mode and the onion instead. */
+        assert(!json_object_get(tr, "interface") && !json_object_get(tr, "local_addr"));
+        assert(!strcmp(json_string_value(json_object_get(tr, "type")), "tor"));
+        assert(!strcmp(json_string_value(json_object_get(tr, "tor_mode")), "directory"));
+        assert(!strcmp(json_string_value(json_object_get(tr, "onion_address")), nt_onion(n->name)));
+#else
         assert(!json_object_get(tr, "interface") && json_is_string(json_object_get(tr, "local_addr")));
+#endif
         assert(json_integer_value(json_object_get(stats, "packets_sent")) > 0);
         assert(json_integer_value(json_object_get(stats, "packets_recv")) > 0);
         assert(json_integer_value(json_object_get(stats, "bytes_sent")) > 0);
@@ -205,6 +213,11 @@ int main(void)
         assert(json_is_integer(json_object_get(stats, "send_errors")) && json_is_integer(json_object_get(stats, "recv_errors")));
 #ifdef FIPSD_TEST_UDP
         assert(json_object_size(stats) == 8 && !json_object_get(stats, "pool_inbound"));
+#elif defined(FIPSD_TEST_TOR)
+        assert(json_object_size(stats) == 16 && json_is_integer(json_object_get(stats, "socks5_errors")));
+        assert(!json_integer_value(json_object_get(stats, "socks5_errors")) && !json_integer_value(json_object_get(stats, "recv_errors")));
+        assert(json_integer_value(json_object_get(stats, "pool_inbound")) +
+            json_integer_value(json_object_get(stats, "pool_outbound")) == 1);
 #else
         assert(json_object_size(stats) == 15 && !json_object_get(stats, "kernel_drops"));
         assert(json_integer_value(json_object_get(stats, "pool_inbound")) +
@@ -249,7 +262,9 @@ int main(void)
         printf("%s dispatcher replay_marks=%llu; off-dispatcher replay writes=%llu\n",
             n->name, (unsigned long long)marks, (unsigned long long)off);
     }
-#if defined(FIPSD_TEST_UDP) || defined(FIPSD_TEST_TCP)
+#if defined(FIPSD_TEST_TOR)
+    nt_print_trace("two-node Tor proof through the loopback SOCKS5 proxy and onion listeners");
+#elif defined(FIPSD_TEST_UDP) || defined(FIPSD_TEST_TCP)
     nt_print_trace("two-node real UDP proof");
 #else
     nt_print_trace("two-node loopback proof");
