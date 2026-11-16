@@ -29,6 +29,7 @@ static json_t *data_of(json_t *response, const char *key)
     assert(data);
     return key ? json_object_get(data, key) : data;
 }
+static json_t *poll_probe(test_node *n, json_int_t id);
 static json_t *live(test_node *n, const char *name, json_t *params)
 {
     fipsd_control_provider p = fipsd_node_handlers_provider(n->h);
@@ -151,23 +152,63 @@ int main(void)
     json_decref(started);
     assert(id >= 1);
     e = nt_await(&a, FIPSD_NOTICE_SESSION_UP, &b.identity.node_addr, NT_WAIT_MS); assert(e); free(e);
-    json_t *polled = NULL;
-    for (unsigned i = 0; i < 400 && !polled; ++i) {
-        json_t *r = live(&a, "probe_poll", json_pack("{s:I}", "probe_id", id));
-        assert(r);
-        if (!strcmp(json_string_value(json_object_get(json_object_get(r, "data"), "state")), "done")) polled = r;
-        else {
-            json_decref(r);
-            void *v = NULL;
-            GoSelectCase cases[] = {{GO_SELECT_RECEIVE, fipsd_node_handlers_notices(a.h), NULL, &v}};
-            GoSelectResult sel = go_select_timeout(cases, 1, 100);
-            if (sel.selected_case == 0 && v) { nt_record(&a, v); free(v); }
-        }
+    /* The peer's data adopts the probe's session (probe.rs
+     * probe_session_disowned): the host refuses the core's teardown and the
+     * report states the refusal, not a teardown that did not happen
+     * (nostrc-f66sr.1 regression: the session used to be reported torn down). */
+    e = nt_await(&b, FIPSD_NOTICE_SESSION_UP, &a.identity.node_addr, NT_WAIT_MS); assert(e); free(e);
+    /* The traffic baseline is taken by the observe that passes the session
+     * stage, so the peer's data must land after that stage reports ok. */
+    for (unsigned i = 0;; ++i) {
+        json_t *r = live(&a, "probe_poll", json_pack("{s:I}", "probe_id", id)); assert(r && i < 400);
+        json_t *d = json_object_get(r, "data");
+        assert(!strcmp(json_string_value(json_object_get(d, "state")), "running"));
+        const char *verdict = json_string_value(json_object_get(json_object_get(json_object_get(d, "report"), "session"), "verdict"));
+        bool passed = verdict && !strcmp(verdict, "ok");
+        json_decref(r);
+        if (passed) break;
+        void *v = NULL;
+        GoSelectCase cases[] = {{GO_SELECT_RECEIVE, fipsd_node_handlers_notices(a.h), NULL, &v}};
+        GoSelectResult sel = go_select_timeout(cases, 1, 100);
+        if (sel.selected_case == 0 && v) { nt_record(&a, v); free(v); }
     }
-    assert(polled);
+    static const uint8_t adopt[] = "adopt";
+    assert(fipsd_node_handlers_send(b.h, &a.identity.node_addr, 7, 8, adopt, sizeof adopt) == 0);
+    e = nt_await(&a, FIPSD_NOTICE_DATAGRAM, &b.identity.node_addr, NT_WAIT_MS); assert(e && e->len == sizeof adopt); free(e);
+    json_t *polled = poll_probe(&a, id);
     json_t *report = json_object_get(json_object_get(polled, "data"), "report");
-    assert(report && json_object_get(report, "overall"));
+    assert(report && !strcmp(json_string_value(json_object_get(report, "overall")), "ok"));
+    json_t *cleanup = json_object_get(report, "cleanup");
+    assert(!json_boolean_value(json_object_get(json_object_get(report, "session"), "preexisting")));
+    assert(!json_boolean_value(json_object_get(cleanup, "session_created_and_torn_down")));
+    assert(json_boolean_value(json_object_get(cleanup, "session_left_intact")));
+    assert(!strcmp(json_string_value(json_object_get(cleanup, "left_intact_reason")), "adopted_by_traffic"));
     json_decref(polled);
+    {
+        json_t *sessions = nt_query(&a, "show_sessions");
+        assert(json_array_size(data_of(sessions, "sessions")) == 1);
+        assert(json_boolean_value(json_object_get(json_array_get(data_of(sessions, "sessions"), 0), "is_initiator")));
+        json_decref(sessions);
+    }
+    /* A second probe finds that session and leaves it: preexisting. */
+    started = live(&a, "probe_start", json_pack("{s:s}", "npub", npub));
+    assert(started && !strcmp(json_string_value(json_object_get(started, "status")), "ok"));
+    id = json_integer_value(json_object_get(json_object_get(started, "data"), "probe_id"));
+    json_decref(started);
+    polled = poll_probe(&a, id);
+    report = json_object_get(json_object_get(polled, "data"), "report");
+    cleanup = json_object_get(report, "cleanup");
+    assert(!strcmp(json_string_value(json_object_get(report, "overall")), "ok"));
+    assert(json_boolean_value(json_object_get(json_object_get(report, "session"), "preexisting")));
+    assert(!json_boolean_value(json_object_get(cleanup, "session_created_and_torn_down")));
+    assert(json_boolean_value(json_object_get(cleanup, "session_left_intact")));
+    assert(!strcmp(json_string_value(json_object_get(cleanup, "left_intact_reason")), "preexisting"));
+    json_decref(polled);
+    {
+        json_t *sessions = nt_query(&a, "show_sessions");
+        assert(json_array_size(data_of(sessions, "sessions")) == 1);
+        json_decref(sessions);
+    }
     json_t *unknown = live(&a, "probe_poll", json_pack("{s:I}", "probe_id", (json_int_t)999));
     assert(unknown && !strcmp(json_string_value(json_object_get(unknown, "status")), "error")); json_decref(unknown);
     json_t *shown = live(&a, "path_show", json_pack("{s:s}", "npub", npub));
@@ -185,4 +226,23 @@ int main(void)
     fipsd_loopback_network_destroy(net);
     puts("node handlers: seeds, msg2 loss/retransmit, dead link, pending timeout, held release, probe/path/disconnect commands: ok");
     return 0;
+}
+/* Drive a probe to `done` through the live provider, recording notices meanwhile. */
+static json_t *poll_probe(test_node *n, json_int_t id)
+{
+    json_t *polled = NULL;
+    for (unsigned i = 0; i < 400 && !polled; ++i) {
+        json_t *r = live(n, "probe_poll", json_pack("{s:I}", "probe_id", id));
+        assert(r && !strcmp(json_string_value(json_object_get(r, "status")), "ok"));
+        if (!strcmp(json_string_value(json_object_get(json_object_get(r, "data"), "state")), "done")) polled = r;
+        else {
+            json_decref(r);
+            void *v = NULL;
+            GoSelectCase cases[] = {{GO_SELECT_RECEIVE, fipsd_node_handlers_notices(n->h), NULL, &v}};
+            GoSelectResult sel = go_select_timeout(cases, 1, 100);
+            if (sel.selected_case == 0 && v) { nt_record(n, v); free(v); }
+        }
+    }
+    assert(polled);
+    return polled;
 }

@@ -326,7 +326,10 @@ static snap *build(handlers *h, fips_instant now)
         if (xt->established) ++established;
         const char *hex = hex_of(x, &xt->peer), *display = display_of(x, &xt->peer), *npub = npub_of(h, x, &xt->peer);
         json_t *row = json_pack("{s:s,s:s,s:s,s:b,s:I,s:s,s:{s:I,s:I,s:I,s:I}}", "remote_addr", hex, "display_name", display,
-            "state", xt->established ? (v.previous.present ? "draining" : "established") : "handshaking", "is_initiator", xt->is_initiator,
+            /* queries.rs show_sessions vocabulary: a draining session is still
+             * `established` (`is_draining` carries the drain); before that the
+             * initiator is `initiating` and the responder `awaiting_msg3`. */
+            "state", xt->established ? "established" : xt->is_initiator ? "initiating" : "awaiting_msg3", "is_initiator", xt->is_initiator,
             "last_activity_ms", (json_int_t)wall_of(h, e->last_activity), "identity", v.proven ? "proven" : "unproven",
             "stats", "packets_sent", (json_int_t)xt->sent, "packets_recv", (json_int_t)xt->received, "bytes_sent", (json_int_t)0, "bytes_recv", (json_int_t)0);
         if (npub) json_object_set_new(row, "npub", json_string(npub));
