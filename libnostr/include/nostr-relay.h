@@ -171,6 +171,10 @@ NOSTR_API bool        nostr_relay_publish_and_wait(NostrRelay *relay, NostrEvent
  * nostr_relay_auth:
  * @relay: (nullable): relay
  * @sign: (nullable): sign callback
+ *
+ * Signs the current challenge and waits for its NIP-42 OK. Call off the relay
+ * reader thread. A missing challenge, negative OK or deadline sets @err.
+ *
  * @err: (out) (optional) (nullable): error out param
  */
 NOSTR_API void        nostr_relay_auth(NostrRelay *relay, void (*sign)(NostrEvent *, Error **), Error **err);

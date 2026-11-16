@@ -1174,3 +1174,111 @@ tests cover 256 payload round trips including u64 boundaries, optional fields,
 JSON escaping and candidate counts. Malformed/boundary, freshness, identity,
 NAT/version/endpoint, URL normalization and replay-id tests run without relay
 I/O or sleeps. This is local event-contract proof, not live relay interop.
+
+## Nostr rendezvous runtime (`nostrc-8hvs6.2`)
+
+`main.c` registers `nostr/runtime` after the node when
+`node.rendezvous.nostr.enabled` is true. It copies the configuration, borrows the
+node identity until shutdown, and owns a channel/select-driven host thread and a
+`NostrSimplePool`. Blocking HTTP/WebSocket work never runs on a node fiber.
+Cancellation joins the producer, pool workers and relay connections before the
+node/identity is destroyed. No relay URLs are embedded in this runtime.
+
+| Module | Ownership / contract |
+| --- | --- |
+| `nostr/runtime.{c,h}` | Configuration, pool/subscriptions, replaceable advert and inbox publication, EOSE cache boundary, refetches, bounded advert/session state, signal correlation and subsystem lifetime. |
+| `nostr/driver.{c,h}` | `RendezvousDriver` vtable; node adapter learns public peer identities and enqueues dial candidates through the existing handler commands. |
+| `nostr/failure_state.{c,h}` | Bounded oldest-touched eviction, saturating failure streak, warning interval, threshold-crossing refetch, cooldown, protocol-mismatch latch, retained skew and success/refresh resets. Actor-owned, not shared mutable node state. |
+| `nostr/signal_gate.{c,h}` | Global pre-decrypt 5/sec, burst-20 allowance, plus a 5/sec, burst-20 reserve only while awaiting answers. Injected monotonic time; no timer or sender-key bypass. |
+| `nostr/signal_route.{c,h}` | Pool middleware takes ownership of signals onto an independent 4096-entry mailbox and bounded event-ID replay memory. Advert traffic cannot evict signals from that mailbox or its replay guard. |
+
+**Subscriptions and admission.** The persistent REQ contains a kind-37195,
+`#d=fips-overlay-v1` advert filter, bounded by `since=now-advert_ttl_secs`.
+Configured-only mode adds canonical peer authors (an empty set never becomes a
+wildcard); open mode deliberately discovers arbitrary authors within that kind
+and identifier, then validates the configured app and advert contract. The second
+filter is kind 21059, `#p=<our identity>`, `since=now`, `limit=0`. The configured
+advert/signal relay union is probed before connecting. NIP-11 must advertise
+NIP-01/40, NIP-42 if authentication is required, at least two filters/subscriptions
+when those limits are declared, and no mandatory payment/PoW. Unknown or explicitly
+incompatible capability documents are refused and logged. NIP-59 is client-side
+cryptography, not a required relay extension. Remote relay/STUN hints retain the
+pure parsers' bounds; signal routing only selects already-probed configured relays.
+
+The pool's ordered delivery API drains history before EOSE. The actor caches
+history without dialing; EOSE releases catch-up candidates, and subsequent live
+replacements produce candidates immediately. A canonical event ID and replaceable
+`(author, created_at, lowest-id tie-break)` cache make replay idempotent across
+relays and reconnects. Signal middleware validates target, bounds, expiry and
+signature, applies the global gate, and remembers IDs only after successful queue
+admission. It never sends a traversal signal through the advert/refetch mailbox.
+A full mailbox fails visibly rather than manufacturing a live/empty-fetch result.
+
+**Recovery and publication.** The pool's opt-in CLOSED backoff preserves the
+existing authenticated connection, retains/logs the CLOSED reason, and reissues
+REQ with a per-relay 1-second exponential ladder capped at five minutes; EOSE
+resets it. AUTH is taken off the reader callback onto the actor and signed with
+the FIPS identity via `nostr_relay_auth`; that helper now checks the event-ID OK
+and frees its authentication event. Network disconnects/failed initial dials
+have one retry owner, a channel-select deadline with the same bounded ladder.
+Terminal relay objects are replaced while the pool worker is joined; retired
+connection control frames cannot affect their replacements.
+
+The actor requires an advert TTL of at least two seconds and clamps refresh
+below that TTL; unsupported resource bounds fail construction explicitly.
+The first advert is published only after the combined advert/signal REQ reaches
+EOSE, so advertising cannot precede inbox readiness. Kind 37195 retains its
+replaceable identifier and NIP-40 expiry; a `Ticker` republishes before expiry.
+The ticker's wait is interruptible on stop (no refresh-interval shutdown stall).
+Every advert, inbox and traversal publish uses `publish_and_wait`; negative OK
+and missing OK are failures. This schedule republishes local state; it never
+queries relays for new messages.
+
+**Refetch outcomes (B6).** A separate one-shot pool on the connected advert
+relays uses author/kind/identifier plus `until=now` and `limit=1`; its independent
+middleware still sees an unchanged event. All selected relays must reach EOSE.
+Failed/disconnected/CLOSED/incomplete fetches (including the failure deadline),
+foreign-only or invalid newer results, and refused cache insertion are `Skipped`.
+A successful empty result is `Evicted`; a matching effective timestamp no newer
+than the cached advert is `SameAdvert`; a valid, admitted newer advert is
+`Refreshed`. B6 deliberately compares effective timestamps only, exactly as upstream
+`refetch_advert_for_stale_check`: equal timestamps remain `SameAdvert` even
+though the live cache separately uses the replaceable-event ID tie-breaker.
+Only `Evicted` and `Refreshed` reset the failure streak. A deadline
+never proves absence. Signals continue on their independent channel during fetch.
+
+**Traversal landing boundary.** Offers and answers are authenticated/opened by
+the landed traversal parser; answers must match a pending offer's sender,
+session and nonce and pass its freshness gate. Incoming offers pay global and
+per-sender concurrent limits. Outgoing answer reservations have a separate bounded table (one active offer per
+recipient), so full responder replay memory cannot deny our own traversals.
+Unexpired seen sessions are never evicted to admit
+another offer: full storage refuses new offers until replay expiry. The driver
+exposes `traversal_offer`, `traversal_answer`, signal publication, session-finished
+and peer-result seams. The traversal machine, STUN observation, adopted UDP
+transport and named punch-packet classifier attachment remain `8hvs6.3` work;
+missing callbacks refuse offers, never report a successful punch. The node
+adapter advertises `udp:nat` only for an actually bound, opted-in UDP transport;
+it never advertises a wildcard bind address as a public endpoint.
+
+### Protocol-smell checklist (A–J, module and local relay tests)
+
+- [x] A: Long-lived REQ/event delivery; no periodic relay queries.
+- [x] B: History and successful fetch completion are EOSE-driven, never timer-closes.
+- [x] C: Publish OK/false, CLOSED reasons/backoff and NIP-42 challenge/OK are observed.
+- [x] D: Explicit history-cache → EOSE → live effects; recovery uses a bounded freshness window; refetch uses until/limit.
+- [x] E: Kind/identifier/authors and kind/recipient/since filters; wildcard authors only for explicitly open discovery.
+- [x] F: Independent bounded signal IDs/session memory and replaceable advert idempotency, including reconnect replay.
+- [x] G: Channels are owned actor mailboxes, not relay polling/queue wrappers.
+- [x] H: Every configured relay gets a cancellable NIP-11 probe; explicit refusal, multiple relays and authenticated retry.
+- [x] I: Timers are only advert publication, reconnect backoff, reservation expiry or a failed-fetch deadline; none establishes history completion.
+- [x] J: Grotto `bunker_test_relay` main-context/Soup fixture adapted to Jansson over real local WebSockets/HTTP, driven by main-context commands and channel barriers, no sleeps. Tests hold EOSE, replay duplicate history/live events across two relays, send AUTH with CLOSED, reject publishes, and exercise B6/session/freshness/failure contracts.
+
+The fixture uses only libsoup and Jansson already present in the FIPS CI package
+lists; it does not require JSON-GLib. The older Testing mock server has startup
+sleeps/volatile service polling and was not used for these event-driven gates.
+
+The upstream open-discovery startup scenario seeds adverts before node startup;
+the local test preserves that shape and additionally holds EOSE before any dial
+effect is permitted. These are local native tests, not public-relay, hosted-CI,
+STUN, traversal or deployment proof. `8hvs6.4` remains the formal protocol review.

@@ -13,6 +13,7 @@
 #include "runtime.h"
 #include "node/context.h"
 #include "node/handlers/handlers.h"
+#include "nostr/runtime.h"
 
 #define MODULE "main"
 
@@ -153,6 +154,12 @@ int main(int argc, char **argv)
     fipsd_control_provider provider = handlers ? fipsd_node_handlers_provider(handlers) : (fipsd_control_provider){0};
     fipsd_control_service_init(&control, snapshots, handlers ? &provider : NULL);
     bool control_enabled = fipsd_config_bool(fipsd_config_get(config, "node.control.enabled"));
+    bool nostr_enabled = fipsd_config_bool(fipsd_config_get(config, "node.rendezvous.nostr.enabled"));
+    fipsd_nostr_node_driver nostr_driver;
+    fipsd_nostr_runtime *rendezvous = nostr_enabled && node ? fipsd_nostr_runtime_create(config, NULL,
+        fipsd_node_get_context(node), fipsd_nostr_node_driver_init(&nostr_driver,
+            fipsd_node_get_context(node), handlers, fipsd_node_transports(node))) : NULL;
+
 
     /* Host adapters for the core (time, entropy) are linked and ready for the
      * node subsystem; nothing reads them in the skeleton. */
@@ -170,6 +177,7 @@ int main(int argc, char **argv)
         code = FIPSD_EXIT_FAILURE;
     } else if (!node_subsystem || fipsd_runtime_register(rt, &service.subsystem) != 0 ||
                fipsd_runtime_register(rt, node_subsystem) != 0 ||
+               (nostr_enabled && (!rendezvous || fipsd_runtime_register(rt, fipsd_nostr_runtime_subsystem(rendezvous)) != 0)) ||
                (control_enabled && fipsd_runtime_register(rt, &control.subsystem) != 0) ||
                fipsd_runtime_start(rt) != 0) {
         FIPSD_ERROR(MODULE, "start-up failed");
@@ -191,6 +199,7 @@ int main(int argc, char **argv)
         }
     }
     fipsd_runtime_destroy(rt);
+    fipsd_nostr_runtime_destroy(rendezvous);
     fipsd_node_destroy(node);
     fipsd_node_handlers_destroy(handlers);
     fipsd_control_service_clear(&control);
