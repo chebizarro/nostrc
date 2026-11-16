@@ -1068,3 +1068,86 @@ regressions now exercise the shared layer and assert provider carrier/medium
 and actual packet counters. Both new targets belong to `fipsd_tests`.
 
 Version decision: **fipsd remains 0.1.0 Unreleased**; libfips-core/libgo unchanged.
+### Nostr event contracts (`nostrc-8hvs6.1`)
+
+`src/nostr/{events,advert,traversal,inbox}.{c,h}` are pure event helpers, not a
+running rendezvous subsystem. There are **no relay connections, subscriptions,
+publish acknowledgements, timers or background workers** here. Activation and
+relay lifecycle belong to `8hvs6.2`; parsing config does not activate discovery.
+Builders take the existing `fips_identity` (one secp256k1 keypair, not a second
+Nostr identity), explicit seconds and TTL. Parsers take explicit millisecond
+`now`; caller outputs remain unchanged on error. Event outputs use
+`nostr_event_free`, JSON strings use `free`. Payload values are bounded PODs;
+use parser-produced values or initialize all fields and terminate all strings.
+
+| API | Contract |
+| --- | --- |
+| `fipsd_nostr_event_parse` | Explicit-length bounded JSON preflight, signed event shape, canonical id and libnostr signature verification. Only the three FIPS kinds are admitted. |
+| `fipsd_nostr_advert_build/parse`, `advert_content` | Addressable 37195; tag order `d`, `protocol`, `version`, NIP-40 `expiration`; Rust struct JSON field order. Config `app` is distinct from fixed `d`/body identifier. Unknown/unusable endpoints are dropped; NAT requires relay/STUN lists; non-NAT drops those optional lists. |
+| `fipsd_nostr_inbox_build/parse` | NIP-17 create/parse adapters for 10050; deployed FIPS bare `r` output, both `relay` and unmarked `r` input, ordered URL deduplication (empty/root-slash equality), no NIP-65 read/write markers. Relays come from the caller/config, never compiled public defaults. |
+| `fipsd_nostr_traversal_build/open`, `traversal_content/parse_content` | Kind-14 unsigned rumor, NIP-44, kind-13 identity-signed seal, NIP-59 wrap with a fresh one-time key, re-kind/re-sign to ephemeral 21059 with NIP-40 expiry. Both signatures/ids, seal/rumor author, recipient and payload identities are checked. Only the seal is backdated, matching upstream's custom outer wrap. |
+| `traversal_freshness`, `traversal_answer_for_offer` | Saturating TTL clamp and 60,000 ms grace; distinct stale/future rejection and strict/skew success; reply correlation, reversed identities, accepted addresses/rejection reason. |
+| `event_id`, `seen_contains/insert` | Verified binary event id and caller-owned bounded replay set. Insert **after** successful admission; full/duplicate refuses without eviction. The relay owner must provide explicit expiry/generation lifecycle and synchronization. |
+
+`advert_parse` mirrors upstream's deliberate **future-time clamping**, not
+rejection: `created_at` is capped at `(now + 60000)/1000`, then validity is the
+minimum of NIP-40 expiry and created-time + max-age. This is not a permanent
+replay tombstone. Traversal outer expiration has no grace; authenticated
+payload timestamps use the upstream freshness grace. Answers must be opened
+with the expected sender identity and checked against their pending offer by
+the future relay/session owner before replay insertion or side effects.
+
+#### Bounds and upstream differences
+
+Pinned oracle: `6aa80504baa0fa312b392009eea0e3e59fb6fe4c`.
+`src/nostr/runtime.rs:1967-2134`, `signal.rs:17,105-259,303-335`, and
+`traversal.rs:28-49,398-426` are the corresponding upstream rules. The November
+12 bounding fix limits **planning** to 32 offered local candidates and eight
+punch targets; it does **not** cap serde's advert endpoint/relay/STUN vectors,
+wire strings, or JSON body lengths. Do not mistake new C host safety limits
+for upstream-enforced wire limits:
+
+| C host ceiling | Limit (decoded UTF-8 bytes unless noted) |
+| --- | --- |
+| Signed JSON event / payload JSON | 65,536 / 16,384 bytes |
+| Ciphertext / decrypted envelope preflight | 32,768 bytes |
+| JSON tokens / depth / children per container | 1,024 / 8 / 64; object keys 128 bytes |
+| Event tags / values per tag | 64 / 8; each string at most 1,024 bytes |
+| Advert endpoints / signal relays / STUN servers | 32 / 16 / 8 |
+| Endpoint address / relay or STUN URL | 256 / 1,024 bytes |
+| Builder app / parsed advert transport label | 128 / 64 bytes |
+| Session id, nonce, reply nonce / rejection reason | 128 / 256 bytes |
+| Traversal local candidates / protocol / IP text | 32 / 16 / 64 bytes; port u16 |
+| Npub / timestamps / advert version | canonical identity comparison on open, 63-byte npub text; u64 payload milliseconds, nonnegative i64 Nostr seconds; version 1 |
+
+The C parser rejects oversized candidate arrays instead of allocating an
+unbounded vector and later truncating planning. Raw signed-event syntax/tags
+are preflighted without allocation; decoded payload parsing uses a fixed token
+budget and fixed destination storage, with no JSON DOM allocation. Crypto,
+libnostr event objects, URI validation and JSON serialization allocate only
+inside bounded input budgets. Invalid UTF-8/escapes, NUL, duplicate decoded
+keys, malformed numbers, overflow and trailing input are rejected. Advert
+`d`/version tags and traversal rumor/seal shape are additionally checked in C.
+Private/on-link punch admission and eight-target planning are not event
+parsers and remain outside this task.
+
+#### Differential fixtures
+
+`FipsdNostrEventsTest` is in `fipsd_tests`. Its `nostr.json` family and raw
+sidecars come from `tools/fips-vectors`: the root **fips-mesh** dependency at
+the same pin compiles and parses the actual `OverlayAdvert`, `TraversalOffer`
+and `TraversalAnswer` types. Its private `cfg(test)` fixture builders cannot
+be called externally, so the four signed v0.44 captures are copied **verbatim**
+from `src/nostr/fixtures/v044/`, with file/line provenance. Rust nostr 0.44
+verifies all signatures and opens both encryption layers before export. No
+recapture, deterministic signature regeneration, or calls to private helpers
+are claimed. Immutable upstream signed test captures are not relay defaults.
+
+The C test verifies every capture, decoded field and exact canonical payload;
+rebuilds advert/inbox JSON including id, excluding randomized signature bytes;
+and rebuilds/opens offers and answers, comparing decrypted payload bytes
+rather than random ciphertext/keys/seal timestamps. SplitMix64-seeded property
+tests cover 256 payload round trips including u64 boundaries, optional fields,
+JSON escaping and candidate counts. Malformed/boundary, freshness, identity,
+NAT/version/endpoint, URL normalization and replay-id tests run without relay
+I/O or sleeps. This is local event-contract proof, not live relay interop.

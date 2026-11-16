@@ -44,7 +44,7 @@ are used to choose fixture values. Rekey `Poll` inputs are synthetic events at
 
 ## Format and coverage
 
-The six ordinary JSON documents and twelve `rekey-legacy/*.json` traces have `schema_version`, full `pin`, `generator` and
+The seven ordinary JSON documents and twelve `rekey-legacy/*.json` traces have `schema_version`, full `pin`, `generator` and
 `generator_version`. Every raw-byte descriptor repeats pin/version and includes
 `file`, lowercase `hex`, `length` and `sha256`. Its `.bin` sidecar is **exactly
 the protocol/entropy bytes**, without a provenance header that would alter the
@@ -63,6 +63,7 @@ not a promised Rust parser format; use typed inputs and binary/hex fields.
 | `noise` | Full IK (2 messages) and XK (3 messages), both roles' per-step progress/h and final h; seeded keypairs 0/1, one shared sequential entropy stream per pattern (IK seed 494b, XK seed 584b), fixed startup epoch `0123456789abcdef`. Eight frames **per direction per pattern** (32 total), alternating empty/nonempty AAD, opened at the peer, replay failures, corrupted frames at the correct unused counters followed by successful original frames (failed auth does not consume the counter). ReplayWindow has 16 accept/reject steps including stale/window-boundary counters. |
 | `proto` | 25 cases: coordinate/absent coordinate, bloom bits/announce, signed parent declaration/tree announce, lookup request/response, link and session sender/receiver reports, MTU notification, path probe/ack/close (52/53/54), disconnect, real IK-framed FMP msg1/msg2, real XK FSP setup/ack/msg3, authenticated FSP/FMP frames and their encapsulated session datagram. Includes decoder offsets, empty-input errors, all 12 link catalog and 5 session catalog values, core framing constants and a payload-limit example. |
 | `rekey-legacy` | Twelve real current-node versus upstream legacy-model rotations: FMP/IK and FSP/XK, each initiated by the current node and by the legacy peer, for V050 (shared 0.5.0/0.5.1 model), V052 and V053. Four traces per model, 792 total current-node events, authenticated data both ways, cutover and old-key drain. Captured separately with the test-only upstream patch below. |
+| `nostr` | Four verbatim deployed v0.44 captures from the root crate: advert 37195, inbox 10050, offer/answer 21059; real fips-mesh payload parsing, signature verification and NIP-44 unwrapping. |
 | `rekey` | One real two-peer FSP/XK rekey: established sessions from the Noise fixture, default Params::fsp, forced start, Setup/Ack/Msg3, sealed prompts, evidence-based cutover, data both ways, scheduled polls and old-key drain. 16 state-after-event records, initial/final states, actions, exact authenticated plaintext delivery assertions and raw emitted messages/frames. No loss or randomized scheduling. |
 
 Most encoded proto cases are immediately decoded and re-encoded with equality
@@ -183,7 +184,7 @@ Start with `scripts/fips-upstream-bump.sh` from the repository root (see
 `libfips-core/UPSTREAM.md` for the full clone/rehearsal/build commands). It copies
 this crate into worktree-local scratch, changes only that copy's Cargo rev,
 lockfile source and `src/main.rs` PIN, resolves candidate dependencies when the
-pin changes, exports twice, captures legacy twice, and compares all seven
+pin changes, exports twice, captures legacy twice, and compares all eight
 families without overwriting the baseline. `--keep` retains the reported vector
 root for the separate C sweep; otherwise scratch is removed even on failure.
 The same pin needs no source/provenance/patch rename. A future candidate needs a
@@ -234,3 +235,19 @@ A new pin changes provenance even when wire bytes do not: review the saved
    Record the component version decision (test-only/no shipped bump), then run
    separately owned C differential and host interop gates before advancing the
    compatibility baseline. Remove this crate's `target/` after verification.
+
+## Nostr rendezvous family (`nostrc-8hvs6.1`)
+
+`nostr.json` adds the root crate's four deployed v0.44 signed captures to the
+ordinary deterministic export and hash/sidecar tests. `fips-mesh` is a git
+dependency at the same full pin (compile-only, no service startup); its public
+payload types parse the advert, offer and answer. Direct `nostr = 0.44.8`
+verifies all four signatures and decrypts the seal/rumor layers. The private
+`cfg(test)` fixture helpers are not callable from a dependency: captures under
+`fixtures/nostr/v044` are **verbatim transcription**, not freshly generated
+randomized events. See `fixtures/nostr/README.md` for file/line provenance and
+licensing. Exact captured bytes and decrypted canonical payloads have binary
+sidecars; URL normalization/equality cases use real `RelayUrl`. This is the
+seventh ordinary JSON family; existing six families are unchanged. No version
+bump: test-only tooling, still 0.1.0. The root dependency is intentionally
+heavy; Cargo never runs a daemon or opens relay connections for this export.
