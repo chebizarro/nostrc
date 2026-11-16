@@ -1,4 +1,7 @@
 # fipsd host headers
 
-Private daemon interfaces will live here as the host is implemented. No host
-API or `fips/host.h` vtables are introduced by the skeleton task.
+`fips-native-client.h` is the public header of **libfipsnative**, the
+plain-POSIX C client for the native datagram API (installed with the library
+and `libfipsnative.pc`; see `fipsd/README.md`, "Native datagram API and
+libfipsnative"). Every other daemon interface stays private under `src/`; no
+host API or `fips/host.h` vtables are introduced here.

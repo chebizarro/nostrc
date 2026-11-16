@@ -58,6 +58,11 @@ typedef struct fipsd_node_notice {
     bool k, is_root;
     uint64_t depth, value;
     uint16_t src_port, dst_port;
+    /* DATAGRAM: the peer's authenticated x-only key when the dispatcher can
+     * name it (peer table, learned identities). The node address above is a
+     * truncated hash and does not invert; the native API names peers by key. */
+    bool has_pubkey;
+    fips_xonly_pubkey pubkey;
     size_t len;
     uint8_t payload[];
 } fipsd_node_notice;
@@ -77,6 +82,21 @@ int fipsd_node_handlers_send(fipsd_node_handlers *h, const fips_node_addr *dest,
                              uint16_t src_port, uint16_t dst_port, const uint8_t *payload, size_t len);
 /* Seed the identity cache (configured peers, rendezvous, native API). */
 int fipsd_node_handlers_learn_identity(fipsd_node_handlers *h, const fips_peer_identity *peer);
+/* Native datagram API sink (nostrc-9nxwk.4). With a sink installed, an
+ * authenticated inbound datagram for an application port (above 1023) is
+ * handed to it as an owned FIPSD_NOTICE_DATAGRAM (release it with
+ * fipsd_node_notice_free) instead of the notice channel, and the sink's owner
+ * counts the `native` received/drop outcomes exactly as upstream's rx_loop
+ * does. Datagrams for the protocol and standard-service tiers (port 256, the
+ * IPv6 shim, among them) and every other notice keep the notice channel. A
+ * full sink drops the datagram and counts `drop_flow_queue_full`. Install
+ * before the sink's consumer starts; NULL uninstalls (after its consumer has
+ * joined). Callable from any thread. */
+void fipsd_node_handlers_set_native_sink(fipsd_node_handlers *h, GoChannel *sink);
+/* The node's counter registry (relaxed atomics) for owners that count off
+ * the dispatcher, such as the native API's own fibers. */
+struct fipsd_metrics;
+struct fipsd_metrics *fipsd_node_handlers_metrics(fipsd_node_handlers *h);
 /* Multiple handler sets per process are fine; this is the configured peer list
  * seam: dial each configured peer once the dispatcher is attached. */
 int fipsd_node_handlers_dial_configured(fipsd_node_handlers *h);

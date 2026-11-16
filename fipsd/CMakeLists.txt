@@ -151,3 +151,33 @@ target_sources(fipsd_lib PRIVATE src/transport/tcp/tcp.c src/transport/tcp/liste
   src/transport/tcp/conn.c src/transport/tcp/pool.c src/transport/tcp/stats.c)
 # STUN and deadline-driven traversal (nostrc-8hvs6.3).
 target_sources(fipsd_lib PRIVATE src/nostr/stun.c src/nostr/traversal_machine.c src/nostr/traversal_io.c)
+
+# Native datagram API (nostrc-9nxwk.4): the SOCK_SEQPACKET line-protocol
+# server, flow registry and SCM_RIGHTS hand-off inside the daemon, and
+# libfipsnative, a plain-POSIX C client (no libgo, no libfips-core) that other
+# programs link to speak the API.
+target_sources(fipsd_lib PRIVATE
+  src/native/protocol.c src/native/registry.c src/native/seqpacket.c src/native/fdpass.c
+  src/native/link.c src/native/dgram_probe.c src/native/api.c)
+declare_component_version(fipsnative 0 1 0)
+add_library(fipsnative SHARED src/native/client.c)
+add_library(fipsnative_static STATIC src/native/client.c)
+foreach(_fipsnative_target fipsnative fipsnative_static)
+  set_target_properties(${_fipsnative_target} PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO OUTPUT_NAME fipsnative
+    POSITION_INDEPENDENT_CODE TRUE PUBLIC_HEADER "${CMAKE_CURRENT_SOURCE_DIR}/include/fips-native-client.h")
+  target_include_directories(${_fipsnative_target} PUBLIC
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>" "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>")
+  target_include_directories(${_fipsnative_target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+  apply_warnings(${_fipsnative_target})
+  apply_sanitizers(${_fipsnative_target})
+endforeach()
+set(fipsnative_SOVERSION "${fipsnative_VERSION_MAJOR}")
+apply_versioning(fipsnative)
+configure_file(libfipsnative.pc.in libfipsnative.pc @ONLY)
+install(TARGETS fipsnative fipsnative_static
+  ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+  LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+  PUBLIC_HEADER DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/libfipsnative.pc" DESTINATION "${CMAKE_INSTALL_LIBDIR}/pkgconfig")
+add_subdirectory(examples)

@@ -448,3 +448,49 @@ foreach(scenario IN ITEMS codecs states stun traverse guards)
     LABELS "fips;nostr;traversal" ENVIRONMENT "FIPSD_WORKERS=2")
   nostrc_describe_test(FipsdNostrTraversal_${scenario} OWNER fipsd TARGETS fipsd_nostr_traversal_test)
 endforeach()
+
+# Native datagram API (nostrc-9nxwk.4): the pure codec and registry, the
+# socket pair and descriptor hand-off with the C client library, the
+# subsystem's line-protocol scenarios on a live node, and a two-node loopback
+# exchange between two C clients through the API in both directions.
+fipsd_unit_test(fipsd_native_protocol_test test_native_protocol.c)
+fipsd_unit_test(fipsd_native_registry_test test_native_registry.c)
+fipsd_unit_test(fipsd_native_seqpacket_test test_native_seqpacket.c)
+target_link_libraries(fipsd_native_seqpacket_test PRIVATE fipsnative_static)
+find_package(Threads REQUIRED)
+target_link_libraries(fipsd_native_seqpacket_test PRIVATE Threads::Threads)
+add_dependencies(fipsd_tests fipsd_native_protocol_test fipsd_native_registry_test fipsd_native_seqpacket_test)
+add_test(NAME FipsdNativeProtocolTest COMMAND fipsd_native_protocol_test)
+add_test(NAME FipsdNativeRegistryTest COMMAND fipsd_native_registry_test)
+add_test(NAME FipsdNativeSeqpacketTest COMMAND fipsd_native_seqpacket_test)
+set_tests_properties(FipsdNativeProtocolTest FipsdNativeRegistryTest PROPERTIES TIMEOUT 60 LABELS "fips;unit;native")
+set_tests_properties(FipsdNativeSeqpacketTest PROPERTIES TIMEOUT 120 LABELS "fips;unit;native" ENVIRONMENT "FIPSD_WORKERS=2")
+nostrc_describe_test(FipsdNativeProtocolTest OWNER fipsd TARGETS fipsd_native_protocol_test)
+nostrc_describe_test(FipsdNativeRegistryTest OWNER fipsd TARGETS fipsd_native_registry_test)
+nostrc_describe_test(FipsdNativeSeqpacketTest OWNER fipsd TARGETS fipsd_native_seqpacket_test)
+fipsd_unit_test(fipsd_native_api_test test_native_api.c)
+fipsd_unit_test(fipsd_native_two_nodes_test test_native_two_nodes.c)
+target_link_libraries(fipsd_native_two_nodes_test PRIVATE fipsnative_static)
+add_dependencies(fipsd_tests fipsd_native_api_test fipsd_native_two_nodes_test)
+add_test(NAME FipsdNativeApiTest COMMAND fipsd_native_api_test)
+add_test(NAME FipsdNativeTwoNodesTest COMMAND fipsd_native_two_nodes_test)
+set_tests_properties(FipsdNativeApiTest FipsdNativeTwoNodesTest PROPERTIES TIMEOUT 300 LABELS "fips;node;native"
+  ENVIRONMENT "FIPSD_WORKERS=2")
+nostrc_describe_test(FipsdNativeApiTest OWNER fipsd TARGETS fipsd_native_api_test)
+nostrc_describe_test(FipsdNativeTwoNodesTest OWNER fipsd TARGETS fipsd_native_two_nodes_test)
+# The harness driver for the C<->Rust gate below: a C client over libfipsnative.
+add_executable(fipsd_native_client_tool native_client_tool.c)
+set_target_properties(fipsd_native_client_tool PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+target_link_libraries(fipsd_native_client_tool PRIVATE fipsnative_static)
+apply_warnings(fipsd_native_client_tool)
+apply_sanitizers(fipsd_native_client_tool)
+add_dependencies(fipsd_tests fipsd_native_client_tool)
+# The C->Rust application datagram closes the nostrc-f66sr.1 gap: the harness
+# drives fipsd_native_client_tool at fipsd's native API and reads its answer
+# off the Rust daemon's flow. FIPSD_UDP_INTEROP_RUST_ECHO may name upstream's
+# native-echo client built from the pinned tree (Rust client -> fipsd).
+set(FIPSD_UDP_INTEROP_RUST_ECHO "$ENV{FIPSD_UDP_INTEROP_RUST_ECHO}" CACHE FILEPATH "Optional native-echo client built from the pinned Rust tree")
+foreach(_interop_test FipsdInteropUdpTest FipsdInteropUdpV6Test)
+  set_tests_properties(${_interop_test} PROPERTIES ENVIRONMENT
+    "FIPSD_WORKERS=2;FIPSD_NATIVE_CLIENT_TOOL=${CMAKE_CURRENT_BINARY_DIR}/fipsd_native_client_tool;FIPSD_UDP_INTEROP_RUST_ECHO=${FIPSD_UDP_INTEROP_RUST_ECHO}")
+endforeach()

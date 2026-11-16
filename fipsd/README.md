@@ -1701,12 +1701,17 @@ adoption baseline), so the probe leaves the session in place
 (`left_intact_reason: adopted_by_traffic`) instead of tearing it down; the
 harness asserts that reason.
 
-**Not verified:** a C->Rust *application* datagram. fipsd has no native datagram
-API yet (Tier B4) and TUN delivery needs privileges, so the C->Rust direction is
-proven at the session layer (the C probe's CoordsWarmup and MMP reports, which
-Rust answers with the reports the C probe measures RTT from), not with an
-application payload. Rust->C application delivery is verified end to end through
-C's `native` counters. Measured locally on macOS ARM64 (default build, pin
+**C->Rust application datagrams** (closed by `nostrc-9nxwk.4`): the harness
+runs `fipsd_native_client_tool`, a C client over libfipsnative, at fipsd's
+native API holding the port the Rust flow targets. Each Rust->C datagram is
+accepted and printed by that client (the bytes, not only C's counters), and
+the client answers every flow with a datagram the harness reads off the Rust
+daemon's flow descriptor while Rust's `show_native_flows`
+`received_datagrams`/`received_bytes` count it. With
+`FIPSD_UDP_INTEROP_RUST_ECHO` naming upstream's `native-echo` client built from
+the pinned tree, the harness also runs that unmodified Rust client on fipsd's
+native API and echoes a datagram through it from the Rust daemon's side. The
+session layer is still exercised both ways by the C and Rust probes. Measured locally on macOS ARM64 (default build, pin
 `6aa80504`): 50-60 s per role assignment, dominated by the rekey waits (session
 rekey observed 13-30 s after establishment, link rekey 40-51 s after the link
 came up); all four role/family scenarios passed.
@@ -1742,3 +1747,81 @@ draining with `is_draining: true`; `initiating`/`awaiting_msg3` before
 establishment) instead of `draining`/`handshaking`.
 NAT traversal or deployment proof. The new local STUN/C↔C traversal tests are
 separate evidence; `8hvs6.4` remains the formal protocol review.
+
+## Native datagram API and libfipsnative (`nostrc-9nxwk.4`)
+
+`src/native/` ports upstream `src/native/{mod,registry,seqpacket,protocol,
+dgram_probe,link,fdpass}.rs` as the `native` runtime subsystem, registered
+in `main.c` after the node (and the TUN service) and before the control
+socket, and `src/native/client.c` replaces the Rust client module
+(`src/native/client/{mod,codec}.rs`) with **libfipsnative**, a plain-POSIX C
+library (static and shared, `include/fips-native-client.h`,
+`libfipsnative.pc`) that any program can link without libgo or libfips-core.
+The surface is upstream's `docs/reference/native-api.md`; the obligations in
+`docs/how-to/write-a-native-api-client.md` are the library's rules.
+
+| Module | Upstream | Owns |
+|---|---|---|
+| `protocol.{c,h}` | `protocol.rs` | command parsing (serde-shaped refusals), port tiers (0-255 protocol, 256-1023 standard, 49152+ ephemeral), errno names, the 512-byte message clip, serde-ordered reply encoding, the 8192-byte line cap |
+| `registry.{c,h}` | `registry.rs` | port ownership, flows, pending flows, `deliver`/`hold`/`accept`/`reject`/`release`/`release_listener`/`expire` (5 s), `pending_per_flow`, `backlog`, `max_flows`, the per-peer quarter share, RFC 6056 ephemeral search |
+| `seqpacket.{c,h}` | `seqpacket.rs` | the pair (`SOCK_SEQPACKET` on Linux, `SOCK_DGRAM` on macOS/FreeBSD), buffers, deadlines, the end-of-file rule (`ECONNRESET`, or zero bytes with `POLLHUP` and nothing queued), fiber-parked receive with the 250 ms Darwin close retry |
+| `fdpass.{c,h}` | `fdpass.rs` | `SCM_RIGHTS` in the same `sendmsg` as the line; the whole control buffer walked, extras closed, close-on-exec |
+| `link.{c,h}` | `link.rs` | delivery outcomes, the nine drop reasons and their `native` counters, `why()` for a failed hand-off write |
+| `dgram_probe.{c,h}` | `dgram_probe.rs` | per-kernel measurements the tests assert (close signal, in-flight collection) |
+| `api.{c,h}` | `mod.rs` | the socket (control socket's path order with `api.sock`, 0770/`fips`), one owner fiber per connection, reader+feeder fibers per flow, reader+arrivals fibers per listener, the node's datagram sink fiber, owner-directed cancellation at stop, the `show_native_flows` provider |
+
+**Protocol compatibility.** Byte-for-byte with the pinned daemon: requests
+`{"command":...,"params":{...}}`, replies `{"status":"ok","data":{...}}` and
+`{"status":"error","data":{"errno":"..."},"message":"..."}` in serde struct
+order with nested keys sorted, the arrival message with no newline, the same
+refusal order for `connect` (reserved tier, bad npub, EMFILE, EADDRINUSE,
+exhausted range, shutting down), the same texts for registry refusals and
+drop causes, the debug gate refusing `stats`/`inject`/`arrive` by name with
+the key that admits them, the 8192-byte command cap ending the connection
+with nothing written back, the daemon's copy of a passed descriptor kept
+until the next command or the connection's end, and a handed-over flow's
+descriptor pinned until the client writes or the listener closes. The
+`show_native_flows` rows and the `native` counter family are the existing
+control projections, now populated; `received_*` count dispatch outcomes
+(delivered, announced, held) and `drop_*` the refusals, as upstream's rx_loop
+does.
+
+**Host seam.** With the API running, `hs_native_deliver` hands an
+authenticated datagram for an application port (above 1023) to the API's
+bounded sink with the peer's x-only key instead of the notice channel;
+datagrams for ports 0-1023 (port 256, the IPv6 shim) and every other notice
+keep the notice channel, so the IPv6 adapter's path is untouched. Outbound
+datagrams leave through `fipsd_node_handlers_send` from the flow's reader
+fiber, which seeds the peer's identity at `connect` so no lookup is needed.
+`max_payload` is the smallest registered transport MTU less the FIPS
+encapsulation and the port header (`fips_framing_payload_limit`).
+
+**libfipsnative.** `fips_native_connect`/`fips_native_listen`/
+`fips_native_accept`/`fips_native_send`/`fips_native_recv` and the close,
+address, deadline and non-blocking calls, each returning 0 or a negative
+errno from upstream's table (`-EADDRINUSE`, `-EADDRNOTAVAIL`, `-EMFILE`,
+`-EINVAL`, `-EMSGSIZE`, `-EPIPE`, `-ETIMEDOUT`, `-ECONNREFUSED`; `-EPROTO` for
+a daemon not speaking the protocol). bech32 npub conversion and the flat JSON
+reader are in the library itself. `examples/native-echo.c` and
+`examples/native-send.c` are the two how-to programs in C.
+
+**Tests** (`ctest -R '^FipsdNative'`, no sleeps): `FipsdNativeProtocolTest`
+(parse vectors, errno table, exact reply/arrival byte layouts, clip, line cap),
+`FipsdNativeRegistryTest` (table tests for the port rules, backlog, ceiling,
+quarter share, expiry, ephemeral search), `FipsdNativeSeqpacketTest` (the
+pair rule, kernel probes, `SCM_RIGHTS` over a socket pair inside a runtime,
+libfipsnative against a fake daemon, bech32 differential against
+libfips-core), `FipsdNativeApiTest` (the line-protocol scenarios on a live
+node: hand-off, pins, kept descriptors, debug gate, caps, refusal sizes,
+provider rows, a self-delivered datagram, cancellation-safe shutdown with
+clients still attached), `FipsdNativeTwoNodesTest` (a C client on node A
+sends to a C client on node B over the loopback transport and back).
+`FipsdInteropUdpTest`/`FipsdInteropUdpV6Test` now also run
+`fipsd_native_client_tool` (a C client over libfipsnative) at fipsd's native
+API: each Rust->C datagram is accepted and printed by the C client, which
+answers with a datagram the harness reads off the Rust daemon's flow while
+Rust's `show_native_flows` counts it (the C->Rust application direction the
+f66sr.1 gate could not verify). `FIPSD_UDP_INTEROP_RUST_ECHO` may name
+upstream's `native-echo` client built from the pinned tree; the harness then
+runs it on fipsd's native API and echoes a datagram through it from the Rust
+daemon's side.
