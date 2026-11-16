@@ -164,3 +164,6 @@ target_sources(fipsd_lib PRIVATE
   src/ipv6/mtu.c src/ipv6/shim.c src/ipv6/exthdr.c src/ipv6/tcp_mss.c src/ipv6/mss.c
   src/ipv6/icmp_rate_limit.c src/ipv6/icmp.c src/ipv6/frag.c src/ipv6/queue.c src/ipv6/inbound.c
   src/ipv6/outbound.c src/ipv6/link.c src/ipv6/listening.c src/ipv6/firewall_state.c)
+
+# Coordinate hints must precede multi-hop routing (nostrc-f66sr.2).
+target_sources(fipsd_lib PRIVATE src/node/dataplane/coord_warm.c)

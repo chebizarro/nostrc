@@ -92,6 +92,7 @@ typedef struct peer_rec {
     bool has_rr;
     uint32_t rtt_ms;
     bool has_rtt;
+    fipsd_peer_tokens coord_hints;
 } peer_rec;
 typedef struct index_entry { bool used; uint32_t index; fips_rekey_transport transport; fips_node_addr peer; } index_entry;
 /* L4 (nostrc-f66sr.10) plaintext ownership. A user datagram is copied, never
@@ -394,6 +395,9 @@ bool hs_bloom_may_reach(handlers *h, const fips_node_addr *peer, const fips_node
 bool hs_lookup_init(handlers *h);
 void hs_lookup_request_received(handlers *h, peer_rec *rec, const uint8_t *body, size_t len);
 void hs_lookup_response_received(handlers *h, peer_rec *rec, const uint8_t *body, size_t len);
+void fipsd_dp_hint(handlers *h, peer_rec *from, const fips_node_addr *key, fips_fsp_coords coords);
+void fipsd_dp_warm(handlers *h, peer_rec *from, const fips_session_datagram *dg);
+void fipsd_dp_stated(handlers *h, const fips_node_addr *peer, fips_fsp_coords coords);
 bool hs_lookup_initiate(handlers *h, const fips_node_addr *target);
 fips_probe_lookup_outcome_kind hs_lookup_initiate_outcome(handlers *h, const fips_node_addr *target, size_t *fanout);
 void hs_lookup_tick(handlers *h, fips_instant now);

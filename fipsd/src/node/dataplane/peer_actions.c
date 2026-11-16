@@ -71,6 +71,7 @@ void fipsd_dp_link_deliver(handlers *h, peer_rec *rec, fipsd_dp_packet *p, uint8
         fips_reader rd; fips_reader_init(&rd, message + 1, n - 1);
         fips_session_datagram dg;
         if (fips_session_datagram_decode(&rd, &dg, NULL) == FIPS_OK && memcmp(dg.dest_addr.bytes, h->me.bytes, 16)) {
+            fipsd_dp_warm(h, rec, &dg);
             ++h->counters.fwd_received_packets; h->counters.fwd_received_bytes += n - 1;
             (void)fipsd_dp_route(h, &dg, &rec->addr, p->ce); return;
         }

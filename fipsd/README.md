@@ -1843,7 +1843,6 @@ establishment) instead of `draining`/`handshaking`.
 NAT traversal or deployment proof. The new local STUN/C↔C traversal tests are
 separate evidence; the formal protocol review (`8hvs6.4`) was completed 2026-11-16
 (docs/reviews/fips-nostr-protocol-review-2026-11-16.md).
-separate evidence; `8hvs6.4` remains the formal protocol review.
 
 ## Linux netns/veth chaos harness (`nostrc-f66sr.3`)
 
@@ -1902,3 +1901,207 @@ Rust peer left holding that session sends into it until its idle timeout —
 the harness opens the Rust-initiated session first, as `udp_interop.py`
 does; neither daemon adapts to a lowered interface MTU (kernel fragmentation
 carries the traffic; an asymmetric MTU is a black hole at this layer).
+
+### Multi-node UDP convergence verification (nostrc-f66sr.2)
+
+`FipsdNodeMulti{Line,Star,Ring,FullMesh}Test` runs independent in-process
+nodes over **real loopback UDP**: respectively 3, 4, 5 and 5 nodes. This ports
+the small explicit-graph/baseline/delivery subset of upstream's
+`testing/chaos/sim/topology.py`, `scenarios/ethernet-mesh.yaml` and
+`src/node/tests/spanning_tree.rs`, not netns, netem, Ethernet discovery or the
+mesh-lab pressure profiles. Each connected component must elect its minimum
+NodeAddr; parents must be real edges, depths and complete self-to-root
+coordinate chains must agree, and neighbors' stored announcements must have
+caught up. Filter cardinality gates aggregate readiness. Final assertions
+check **exact positive membership on each correct tree edge**, using retained
+immutable dataplane snapshots (never mutable dispatcher state); Bloom negatives
+are not asserted because false positives are legitimate. Exact membership is
+observed against the original convergence deadline, since directional aggregates
+can trail the topology notice; application sends are never retried. Every ordered pair
+resolves an address and delivers a distinct authenticated datagram with matching
+source, ports and payload. The application payload is sent once, after both
+endpoints report a proven session and the diagnostic has recorded its adoption
+baseline; first-write queuing during XK is not asserted. A cold indirect control
+probe also requires a real lookup result and nonzero bloom fanout.
+
+A parent-edge removal must reconverge, including independent component elections
+when line/star bridges are cut, followed by reconvergence after restoration.
+Line/star/ring datagrams include nonadjacent pairs. The complete mesh's edge is
+removed **before** opening sessions, so cold lookup and application delivery
+across the missing direct edge prove two or more hops. Recovery of an already
+established session's stale coordinate cache after a cut is a different
+routing-error contract and is not claimed by this test.
+
+`FipsdInteropMultiTest` extends `udp_interop.py`, reusing its daemon lifecycle,
+control-socket protocol, native flow and deadline-bounded observation. It runs
+line/star with 2 C + 1 Rust, and ring/full-mesh with 3 C + 2 Rust. Both daemons'
+control sockets verify the graph/tree/filters, every ordered diagnostic pair's
+address resolution and an authenticated echo, and Rust native datagram arrivals at
+C (exact datagram/byte counter deltas), including a physically nonadjacent pair.
+The session and payload stages are explicit: a diagnostic must observe the
+proven session at both endpoints and record its traffic-adoption baseline
+before the native payload is sent. A control session row's `npub` may be absent
+before the identity is cached; readiness uses `remote_addr` and proven state.
+Reciprocal diagnostics run together, rather than probing a remote half left
+behind by an earlier diagnostic's intentional teardown.
+
+C waits select all owners' notice channels against one absolute deadline; an
+unrelated notice cannot extend it. Python control exposes snapshots rather than
+a push subscription: observations wake on child output or a bounded condition
+wait, and each socket operation shares the observation deadline. Neither
+harness uses a sleep or elapsed duration as evidence of completion.
+
+#### Bounds and fixes
+
+At the pin `6aa80504baa0fa312b392009eea0e3e59fb6fe4c`, upstream
+`docs/design/fips-spanning-tree.md` describes approximately **D × 0.5 s** for
+tree announcements and approximately **one 1 s tick per hop** for Bloom
+propagation (the 500 ms debounce is a floor). Its 30 s STP receiver-report
+fallback is a delivery/retry parameter, **not a universal wall-clock convergence
+guarantee**. `drain_all_packets` allows up to 200 fast 10 ms passes and 20 flush
+cycles of 550 ms + 20 ms + up to twenty 10 ms subpasses (nominally 17.4 s,
+excluding scheduling). These lossless local tests enforce a conservative
+**30 s** tree/aggregate-filter observation window without reducing the default
+500 ms pacing or 1 s tick, and the chaos delivery assertion's **60 s** per-pair
+bound. Optional cost-based parent optimization has upstream's 30 s hold-down
+and 60 s reevaluation cadence; it is not a root change or a link flap.
+
+The integration keeps one host implementation per concern (core/wire
+algorithms are unchanged):
+
+* Master's `hs_lookup_initiate_outcome(h, target, &fanout)` and existing bool
+  `hs_lookup_initiate(h, target)` wrapper are retained verbatim. The probe job's
+  separate once-only outcome/fanout hand-off preserves null fanout on BloomMiss
+  and Suppressed. Both the chaos harness's BloomMiss regression and the cold
+  indirect multi-node lookup regression exercise this implementation.
+* Master's responder `session.c::warm_coords()` remains the setup entrypoint,
+  but delegates to shared `dataplane/coord_warm.c` hint intake. There is no second
+  blanket endpoint warmer. Setup and transit hints share foreign-root/self
+  guards, bounded cache storage and per-carrier funding (1024 weight/s, 4096
+  burst, initially empty); unfunded hints remain in probation and do not replace
+  verified entries. Transit setup/ack/CP intake and authenticated SessionAck or
+  replay-admitted CP source statements are retained because master's setup-only
+  path does not cover them. Authenticated statements use upstream's uncharged
+  `insert_stated` path, preventing unrelated probation hints from evicting a live
+  session's return route; they are not signed/verified lookup entries.
+  `FipsdCoordWarmTest` covers decoder-buffer ownership, foreign-root/self and
+  malformed/unauthenticated endpoint guards, preservation of an existing verified
+  entry through the shared hint entrypoint, probation pressure and funded refill.
+  Master's responder warming and lookup-outcome cases in `FipsdNodeHandlersTest`
+  are preserved, not replaced by the new unit test.
+
+#### Opt-in soak and local commands
+
+Without `FIPSD_UDP_INTEROP_RUST_BINARY`, mixed tests return **77** (a skip, not a
+pass). A matching echo explicitly classified as sub-millisecond (positive
+`zero_samples` and `reports_seen`) proves a route but is not claimed as a
+positive latency measurement; other failed diagnostic stages still fail.
+Build the pinned daemon read-only into disposable Cargo output:
+
+```bash
+CARGO_TARGET_DIR=/tmp/fips-rust-target-multi cargo build --locked --release --bin fips \
+  --manifest-path /path/to/pinned-fips/Cargo.toml
+```
+
+With `src` set to this checkout's absolute path, configure out of tree, initialize
+nostrdb first, and build the complete FIPS test closure:
+
+```bash
+git -C "$src" submodule update --init --depth 1 third_party/nostrdb
+cmake -S "$src" -B "$src/.build-multi-asan" -G Ninja \
+  -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_FLAGS=-Werror \
+  -DBUILD_FIPS=ON -DBUILD_APPS=OFF -DBUILD_NOSTR_GTK=OFF \
+  -DBUILD_NOSTR_GOBJECT=OFF -DBUILD_GROUNDHOG=OFF \
+  -DBUILD_TESTING_FRAMEWORK=OFF -DBUILD_MARMOT_GOBJECT=OFF \
+  -DGNOSTR_ENABLE_ASAN=ON -DGNOSTR_ENABLE_UBSAN=ON \
+  -DFIPSD_UDP_INTEROP_RUST_BINARY=/tmp/fips-rust-target-multi/release/fips
+cmake --build "$src/.build-multi-asan" \
+  --target fipsd_tests fips_core_host_test fips_core_skeleton_test -j 8
+ctest --test-dir "$src/.build-multi-asan" -R '^Fips' --output-on-failure -j 1
+# Separate TSan directory: same switches, replacing the two sanitizer switches
+# above with -DGNOSTR_ENABLE_TSAN=ON. Never combine TSan and ASan.
+```
+
+`FipsdInteropSoakTest` is **DISABLED by default**, not part of the ordinary test
+run. Enable it explicitly with `-DFIPSD_ENABLE_INTEROP_SOAK=ON`, then run
+`ctest --test-dir "$src/.build-multi-asan" -R '^FipsdInteropSoakTest$' --output-on-failure`.
+Alternatively, choose any duration/topology directly:
+
+```bash
+python3 "$src/fipsd/tests/udp_interop.py" \
+  --fipsd "$src/.build-multi-asan/fipsd/fipsd" \
+  --rust /tmp/fips-rust-target-multi/release/fips --topology ring --soak-minutes 10
+```
+
+The soak checks a stable minimum root, the complete expected live-link set and
+unchanged link IDs/directions, valid parent paths, monotone cumulative counters,
+and clean child exits/no sanitizer reports. Legitimate cost-based parent
+optimizations are counted separately, not mistaken for root changes or flaps.
+Clean up task-owned build/Cargo output and `git -C "$src" submodule deinit -f --all`
+after local verification. This test/internal-fix change remains **fipsd 0.1.0
+Unreleased**, with no core version, release tag or wire change.
+
+#### Rebased integration verification
+
+Rebased on local staging master **bdcab3ece**, including chaos-harness commit
+**a9f774349**. There is one lookup implementation (master's enum outcome helper
+and bool wrapper, unchanged) and one shared unverified hint implementation;
+master's setup entrypoint delegates to it. Transit and authenticated statement
+intake remain, since setup-only warming does not cover those paths. The explicit
+verified-entry-preservation test exercises the shared setup/transit entrypoint.
+Master's `FipsdNodeHandlersTest` regressions remain unchanged and passed alongside
+`FipsdCoordWarmTest`.
+
+Local macOS arm64 verification on 2026-11-16 used separate out-of-tree Debug
+builds with `-Werror`, ASan+UBSan or TSan, and Rust release binary pin
+`6aa80504baa0fa312b392009eea0e3e59fb6fe4c` built with Cargo `--locked`.
+Both full suites ran **in the foreground, one sanitizer suite at a time, to
+completion** using `ctest -R '^Fips' --output-on-failure -j 2`:
+
+| Gate | Passed | Capability skips | Disabled soak | Failed | Elapsed |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| ASan/UBSan | 158 | 4 | 1 | 0 | 285.58 s |
+| TSan | 158 | 4 | 1 | 0 | 389.36 s |
+
+The capability skips were `FipsdControlInteropTest`,
+`FipsdTunPrivilegedSmokeTest`, `FipsdTcpInteropTest`, and
+`FipsdIpv6PrivilegedSmokeTest`. The ordinary run left `FipsdInteropSoakTest`
+disabled. `FipsdNodeHandlersTest` passed in 17.32/19.05 s (ASan/TSan),
+`FipsdCoordWarmTest` in 0.19/0.24 s, and all four C topology tests and the mixed
+matrix passed; the mixed matrix took 114.65/156.16 s. No sanitizer warning
+appeared in the complete captured test outputs. In particular, the known
+`libnostr/src/relay.c:1064` race **nostrc-xqwgo** did not fire in these runs;
+it remains an independently tracked relay issue, not a claimed fix here.
+
+ASan/UBSan convergence observations below include neighbor-announcement and
+aggregate-filter readiness, in seconds. Each phase remains below the 30 s test
+deadline and the upstream integration fixture's nominal 17.4 s pass budget:
+
+| Nodes / topology | Initial | Parent edge removed | Restored |
+| --- | ---: | ---: | ---: |
+| 3 C line | 2.027 | 0.002 | 1.951 |
+| 4 C star | 3.010 | 0.919 | 2.005 |
+| 5 C ring | 5.008 | 3.881 | 1.010 |
+| 5 C full mesh | 2.053 | 2.971 | 0.851 |
+| 2 C + 1 Rust line | 1.999 | 0.953 | 1.884 |
+| 2 C + 1 Rust star | 2.040 | 1.065 | 1.833 |
+| 3 C + 2 Rust ring | 3.019 | 2.920 | 1.087 |
+| 3 C + 2 Rust full mesh | 3.067 | 0.986 | 1.011 |
+
+The duplicate audit found exactly one coordinate source entry, one declaration
+of each new test/option, one multi-node README section and one decision line for
+each task in the version manifest. The chaos/IPv6 build and documentation
+additions were retained; one stale duplicate protocol-review sentence was
+removed. All four direct static checks passed (`check-unsequenced-args.py`,
+`check-gui-test-gdk-frame.py`, `check-linux-ci-packages.py`, `git diff --check`).
+No beads command or push-hook wrapper was run. Build/Cargo output is disposable;
+submodules are deinitialized after verification. Version remains **0.1.0
+Unreleased**.
+
+The original pre-rebase ASan/UBSan mixed-ring soak completed 600 seconds with
+5,363 observations, a stable root/live-link set, monotone counters and two valid
+parent optimizations. That soak was not rerun for this integration reconciliation;
+it remains opt-in. These local loopback results are not Linux netns, hosted CI or
+deployment proof. The staged payload tests do not qualify the separate
+first-write-during-XK queue contract or stale established-session cache recovery
+after a cut.
