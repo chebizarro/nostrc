@@ -24,6 +24,7 @@ struct eth_instance {
     char name[128], interface_name[64];
     nsync_mu mu;
     eth_socket *socket;
+    uint16_t last_mtu; /* mu; retained across absence, as upstream Binding */
     fipsd_eth_neighbors neighbors;
     fipsd_watcher *watcher;
     fipsd_runtime *runtime;

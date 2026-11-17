@@ -9,6 +9,7 @@ import argparse
 import os
 from pathlib import Path
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -47,13 +48,13 @@ def make_pair(names):
         run(['ip', '-n', ns, 'link', 'set', 'eth0', 'up'])
 
 
-def scenario(args, second, initiator):
+def scenario(args, second, initiator, discovery=False):
     nodes, tools = [], []
     npubs = ['npub1fu64hh9hes90w2808n8tjc2ajp5yhddjef0ctx4s7zmsgp6cwx4qgy4eg9',
              'npub1gekhljh9v0jukzdq6xrshdvqx3yqgctc0xs5jjw0yg597xaw8uns47vduw']
     names = [f'fe{os.getpid()}a', f'fe{os.getpid()}b']
     created = []
-    tag = f"C<->{('Rust' if second == args.rust else 'C')}, initiator={initiator}"
+    tag = f"C<->{('Rust' if second == args.rust else 'C')}, initiator={initiator}, announce={discovery}"
     with tempfile.TemporaryDirectory(prefix='feth-') as tmp:
         root = Path(tmp)
         env = dict(os.environ, FIPSD_WORKERS='2', TOKIO_WORKER_THREADS='2', NO_COLOR='1')
@@ -77,11 +78,11 @@ transports:
   ethernet:
     interface: eth0
     listen: true
-    announce: false
-    auto_connect: false
+    announce: {str(discovery and i != initiator).lower()}
+    auto_connect: {str(discovery and i == initiator).lower()}
     accept_connections: true
 """)
-                if i == initiator:
+                if i == initiator and not discovery:
                     with cfg.open('a') as f:
                         f.write(f"\npeers:\n  - npub: '{npubs[1-i]}'\n    addresses: [{{transport: ethernet, addr: 'eth0/02:00:00:00:00:0{2-i}'}}]\n")
                 daemon = Daemon(name, ['ip', 'netns', 'exec', names[i], binary, '-c', str(cfg)], env, root)
@@ -96,7 +97,8 @@ transports:
                                    for n, rs in zip(nodes, rows)) else None
             observe(nodes, 'raw sockets bound and interface-derived MTU', bound)
             source, target = nodes[initiator], nodes[1 - initiator]
-            control(source['control'], 'connect', {'npub': target['npub'], 'address': 'eth0/' + target['mac'], 'transport': 'ethernet'})
+            if not discovery:
+                control(source['control'], 'connect', {'npub': target['npub'], 'address': 'eth0/' + target['mac'], 'transport': 'ethernet'})
             def linked():
                 links = [row(n, 'show_links', 'links') for n in nodes]
                 peers = [row(n, 'show_peers', 'peers') for n in nodes]
@@ -142,11 +144,11 @@ transports:
                 return rs if all(v['interface']['binds'] > old and v['interface']['presence'] == 'present'
                                  for v, old in zip(rs, old_binds)) else None
             observe(nodes, 'delete/recreate event-driven rebind with announce disabled', rebound, 45)
-            observe(nodes, 'configured peer IK recovery after rebind', linked, 60)
+            observe(nodes, 'discovered/configured peer IK recovery after rebind', linked, 60)
             control(source['control'], 'probe_start', {'npub': target['npub']})
             observe(nodes, 'XK recovery after rebind', session, 60)
             exchange('after rebind')
-            print(f'PASSED {tag}: delete/recreate rebind (announce off)', flush=True)
+            print(f'PASSED {tag}: delete/recreate rebind', flush=True)
         except BaseException:
             for n in nodes:
                 print(f"===== {n['name']} =====\n{n['daemon'].text()[-16000:]}", file=sys.stderr)
@@ -176,12 +178,21 @@ def main():
         print('SKIP: set FIPSD_ETHERNET_PRIVILEGED_SMOKE=1 and run as root on Linux'); return 77
     if sys.platform != 'linux' or os.geteuid() != 0 or not shutil.which('ip'):
         print('SKIP: requires Linux, root/CAP_NET_ADMIN+CAP_NET_RAW, and iproute2 netns/veth'); return 77
+    caps = next((line.split()[1] for line in Path('/proc/self/status').read_text().splitlines()
+                 if line.startswith('CapEff:')), '0')
+    required = (1 << 12) | (1 << 13) | (1 << 21)  # NET_ADMIN, NET_RAW, SYS_ADMIN (netns mount)
+    if int(caps, 16) & required != required:
+        print('SKIP: effective capabilities lack CAP_NET_ADMIN, CAP_NET_RAW or CAP_SYS_ADMIN for netns/veth'); return 77
+    def interrupted(signum, _frame):
+        raise SystemExit(128 + signum)  # unwind scenario finally before the outer timeout kills us
+    signal.signal(signal.SIGTERM, interrupted)
     for binary in (args.fipsd, args.native_tool, *([args.rust] if args.rust else [])):
         if not Path(binary).is_file():
             print(f'SKIP: missing prerequisite binary {binary}'); return 77
     for second in [args.fipsd] + ([args.rust] if args.rust else []):
         for initiator in (0, 1):
             scenario(args, second, initiator)
+        scenario(args, second, 0, discovery=True)
     return 0
 
 

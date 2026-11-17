@@ -135,6 +135,7 @@ static void projection(void)
     assert(fipsd_transport_parse_address(t, "wrong0/02:00:00:00:00:01", &a) != FIPS_OK);
     assert(fipsd_transport_parse_address(t, "multicast", &a) != FIPS_OK);
     assert(t->ops->send(t, &a, (uint8_t[]){1}, 1) == -1);
+    assert(t->ops->mtu(t, &a) == 1499);
     fipsd_control_transport_view v; fipsd_control_transport_read(t, 0, &v);
     fipsd_control_snapshot snapshot = {.transports = &v.row, .transports_count = 1};
     json_t *reply = fipsd_control_query(&snapshot, "show_transports", NULL); assert(reply);

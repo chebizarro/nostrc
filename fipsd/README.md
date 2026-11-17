@@ -3036,11 +3036,17 @@ sudo env FIPSD_ETHERNET_PRIVILEGED_SMOKE=1 python3 "$src/fipsd/tests/ethernet_pr
 FIPSD_ETHERNET_BPF_INTERFACE=en0 "$build/fipsd/tests/fipsd_ethernet_test" --bpf
 ```
 
+For Linux TSan, configure `-DGNOSTR_ENABLE_TSAN=ON
+-DNOSTR_USE_SYSTEM_NSYNC=OFF` after initializing `third_party/nsync`. This
+builds instrumented nsync with the repository's TSan semaphore backend rather
+than treating an uninstrumented distro lock library as visible synchronization.
+
 The registered privileged smoke returns 77 with a prerequisite explanation
 unless explicitly enabled on Linux as root. It checks C/C and optionally
 C/Rust in both IK/XK role assignments, exact native application datagrams in
 both directions, interface-derived MTU, delete/recreate rebind with announce
-**off**, clean shutdown and namespace cleanup. Snapshot observations are
+**off**, then a beacon-driven auto-connect/rebind scenario with announce on,
+clean shutdown and namespace cleanup. Snapshot observations are
 bounded by deadlines and paced by replies; no sleeps stand in for completion.
 BPF smoke returns 77 when BPF/interface access is unavailable, but fails if
 open/bind succeeds and no complete FIPS frame arrives within ten seconds.

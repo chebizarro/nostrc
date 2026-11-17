@@ -154,7 +154,7 @@ static fipsd_bind_result bind_instance(void *arg, fipsd_runtime *rt, GoChannel *
         return FIPSD_BIND_RETRY;
     }
     if (gof_io_reset_fd(s->fd)) { go_blocking_submit(close_socket, s); free_socket(s); return FIPSD_BIND_RETRY; }
-    nsync_mu_lock(&u->mu); u->socket = s; nsync_mu_unlock(&u->mu);
+    nsync_mu_lock(&u->mu); u->socket = s; u->last_mtu = s->mtu; nsync_mu_unlock(&u->mu);
     bool receiver = !fipsd_runtime_spawn(u->runtime, receive_loop, s);
     bool beacon = u->config.announce && u->node && !fipsd_runtime_spawn(u->runtime, beacon_loop, s);
     if (!receiver) go_channel_close(s->recv_done);
@@ -182,7 +182,7 @@ static void network_changed(fipsd_transport *t, const struct fipsd_netmon_event 
 static uint16_t mtu(const fipsd_transport *t, const fips_transport_addr *to)
 {
     (void)to; eth_instance *u = t->user; nsync_mu_lock(&u->mu);
-    uint16_t n = u->socket ? u->socket->mtu : u->config.mtu ? u->config.mtu : 1497;
+    uint16_t n = u->last_mtu;
     nsync_mu_unlock(&u->mu); return n;
 }
 static int discover(fipsd_transport *t) { (void)t; return 0; } /* receive owner drains on beacon arrival */
@@ -216,6 +216,7 @@ fipsd_transport *fipsd_ethernet_create(fips_transport_id id, const char *name, c
     eth_instance *u = calloc(1, sizeof *u); if (!u) return NULL;
     nsync_mu_init(&u->mu); fipsd_eth_neighbors_init(&u->neighbors);
     strcpy(u->name, name); strcpy(u->interface_name, c->interface_name); u->config = *c;
+    u->last_mtu = 1499; /* pinned Binding::new; replaced by interface MTU on bind */
     u->config.interface_name = u->interface_name;
     if (u->config.beacon_interval_secs < 10) u->config.beacon_interval_secs = 10;
     u->transport = (fipsd_transport){.ops = &ops, .id = id, .type = "ethernet", .name = u->name,

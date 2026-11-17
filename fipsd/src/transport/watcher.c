@@ -14,7 +14,7 @@ struct fipsd_watcher {
     fipsd_runtime *runtime;
     GoChannel *events, *wake, *stop;
     Ticker *ticker;
-    bool started, bound, announced, reported, event_driven, initial_announce;
+    bool started, bound, announced, reported, event_driven, initial_announce, retry_eligible;
     bool (*healthy)(void *);
     uint32_t streak;
     uint64_t generation, bound_at, retry_at, absent_since;
@@ -43,6 +43,7 @@ static void detach(fipsd_watcher *w, uint64_t now)
 int fipsd_watcher_step(fipsd_watcher *w, fipsd_presence_facts f, uint64_t now)
 {
     if (stopped(w)) return -1;
+    w->retry_eligible = f.valid && f.exists && f.up;
     fipsd_presence *p = &w->transport->shared->presence;
     bool dead = w->bound && (atomic_load(&w->exited) == w->generation ||
         (w->healthy && !w->healthy(w->ops.user)));
@@ -55,7 +56,7 @@ int fipsd_watcher_step(fipsd_watcher *w, fipsd_presence_facts f, uint64_t now)
         if (gone || replaced || dead) {
             detach(w, now);
             w->streak = now - w->bound_at < 10000 ? w->streak + 1 : 0;
-            w->retry_at = gone ? 0 : now + (w->streak ? fipsd_bind_backoff_ms(w->streak) : 0);
+            w->retry_at = now + (w->streak ? fipsd_bind_backoff_ms(w->streak) : 0);
             w->absent_since = now; w->reported = false;
             if (w->streak == 3) FIPSD_WARN("transport", "%s: binding churn; holding health until stable", w->transport->name);
             if (w->announced) { w->announced = false; return publish(w, false); }
@@ -75,7 +76,7 @@ int fipsd_watcher_step(fipsd_watcher *w, fipsd_presence_facts f, uint64_t now)
         FIPSD_ERROR("transport", "%s: required interface remains unavailable", w->transport->name);
         w->reported = true;
     }
-    if (!f.valid || gone) { w->retry_at = 0; return 0; }
+    if (!f.valid || gone) return 0;
     if (now < w->retry_at) return 0;
     w->retry_at = 0; /* consume; a failed bind installs a fresh retry */
     fipsd_presence_transition(p, FIPSD_BINDING, now);
@@ -139,7 +140,7 @@ uint64_t fipsd_watcher_next_deadline(fipsd_watcher *w)
     uint64_t deadline = UINT64_MAX;
     if (w->bound && !w->announced) deadline = w->bound_at + 10000;
     if (!w->bound) {
-        if (w->retry_at) deadline = w->retry_at; /* include overdue retries */
+        if (w->retry_eligible && w->retry_at) deadline = w->retry_at; /* include overdue retries */
         if (!w->reported && !fipsd_presence_snapshot(&w->transport->shared->presence).optional &&
             w->absent_since + 10000 < deadline) deadline = w->absent_since + 10000;
     }
