@@ -17,6 +17,7 @@ static fipsd_bind_result bind_instance(void *arg, fipsd_runtime *rt, GoChannel *
     gate_unlock(u);
     if (!s) return FIPSD_BIND_RETRY;
     (void)go_channel_try_send(u->bound, u);
+    for (size_t i = 0; i < u->bound_watcher_count; ++i) (void)go_channel_try_send(u->bound_watchers[i], &u->transport);
     return FIPSD_BIND_OK;
 }
 static void unbind_instance(void *arg, uint64_t generation)
@@ -190,6 +191,13 @@ bool fipsd_udp_address(fipsd_transport *t, fips_transport_addr *out)
     nsync_mu_unlock(&u->mu); return ok;
 }
 GoChannel *fipsd_udp_bound(fipsd_transport *t) { return ((udp_instance *)t->user)->bound; }
+int fipsd_udp_watch_bound(fipsd_transport *t, GoChannel *ch)
+{
+    udp_instance *u = t->user;
+    if (!ch || u->bound_watcher_count >= FIPSD_UDP_BOUND_WATCHERS) return -1;
+    u->bound_watchers[u->bound_watcher_count++] = ch;
+    return 0;
+}
 size_t fipsd_udp_connected_count(fipsd_transport *t)
 {
     udp_instance *u = t->user; size_t n = 0; nsync_mu_lock(&u->mu);

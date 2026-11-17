@@ -714,3 +714,18 @@ foreach(_suite Pool:pool Conntrack:conntrack State:state Nat:nat Net:net Dns:dns
   nostrc_describe_test(FipsdGateway${_name}Test OWNER fipsd TARGETS fipsd_gateway_test
     INPUTS ${_fipsd_gateway_goldens})
 endforeach()
+
+# mDNS LAN rendezvous (nostrc-9nxwk.5): codec vectors, upstream tests.rs, the
+# browser/responder tables and the LAN candidate set; then two nodes with no
+# configured peers discovering each other over an in-memory multicast link.
+fipsd_unit_test(fipsd_mdns_test test_mdns.c)
+add_dependencies(fipsd_tests fipsd_mdns_test)
+add_test(NAME FipsdMdnsTest COMMAND fipsd_mdns_test)
+set_tests_properties(FipsdMdnsTest PROPERTIES TIMEOUT 60 LABELS "fips;unit;mdns")
+nostrc_describe_test(FipsdMdnsTest OWNER fipsd TARGETS fipsd_mdns_test)
+fipsd_unit_test(fipsd_mdns_two_nodes_test test_mdns_two_nodes.c)
+target_compile_definitions(fipsd_mdns_two_nodes_test PRIVATE FIPSD_TEST_UDP=1)
+add_dependencies(fipsd_tests fipsd_mdns_two_nodes_test)
+add_test(NAME FipsdMdnsTwoNodesTest COMMAND fipsd_mdns_two_nodes_test)
+set_tests_properties(FipsdMdnsTwoNodesTest PROPERTIES TIMEOUT 120 LABELS "fips;node;mdns")
+nostrc_describe_test(FipsdMdnsTwoNodesTest OWNER fipsd TARGETS fipsd_mdns_two_nodes_test)

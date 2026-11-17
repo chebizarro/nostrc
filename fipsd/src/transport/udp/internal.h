@@ -35,6 +35,9 @@ struct udp_instance {
     fipsd_runtime *runtime;
     GoContext *root;
     GoChannel *events, *gate, *bound;
+    /* Extra bind observers (fipsd_udp_watch_bound), set before start. */
+    GoChannel *bound_watchers[FIPSD_UDP_BOUND_WATCHERS];
+    size_t bound_watcher_count;
     nsync_mu mu;
     udp_socket *listener, *peers[FIPSD_UDP_MAX_PEERS];
     udp_route routes[FIPSD_UDP_MAX_PEERS];
