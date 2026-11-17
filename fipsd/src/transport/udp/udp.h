@@ -18,6 +18,12 @@ fipsd_transport *fipsd_udp_create(fips_transport_id, const char *, const fipsd_u
 void fipsd_udp_destroy(fipsd_transport *); /* after runtime join */
 bool fipsd_udp_address(fipsd_transport *, fips_transport_addr *);
 GoChannel *fipsd_udp_bound(fipsd_transport *); /* borrowed, one notification per bind */
+/* A further observer of binds, for owners other than the one reading
+ * fipsd_udp_bound (the mDNS responder advertises the bound port): each bind
+ * try-sends the transport to ch, so give it capacity. Before the runtime
+ * starts; ch must outlive the transport. -1 past FIPSD_UDP_BOUND_WATCHERS. */
+#define FIPSD_UDP_BOUND_WATCHERS 4u
+int fipsd_udp_watch_bound(fipsd_transport *, GoChannel *ch);
 bool fipsd_udp_register_classifier(fipsd_transport *, const char *, fipsd_udp_classifier, void *);
 size_t fipsd_udp_connected_count(fipsd_transport *);
 /* Append configured singleton/named UDP instances to the node registry. The

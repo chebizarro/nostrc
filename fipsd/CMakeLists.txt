@@ -219,6 +219,10 @@ endif()
 # The .fips DNS responder (nostrc-9nxwk.3): message codec, host map with
 # mtime reload, resolver/mesh filter and the dns runtime subsystem.
 target_sources(fipsd_lib PRIVATE src/dns/msg.c src/dns/hosts.c src/dns/resolver.c src/dns/service.c)
+# mDNS / DNS-SD LAN peer rendezvous (nostrc-9nxwk.5): codec, advert checks,
+# browser cache, responder, LAN candidate set, sockets and the subsystem.
+target_sources(fipsd_lib PRIVATE src/mdns/records.c src/mdns/advert.c src/mdns/browser.c src/mdns/responder.c
+  src/mdns/lan.c src/mdns/socket.c src/mdns/mdns.c)
 # Packaging payload (nostrc-iq1n9.5). Every package format under packaging/
 # (Debian, RPM, Arch, macOS .pkg) stages the daemon with
 # `cmake --install <build>/fipsd`, so what a package ships is declared here

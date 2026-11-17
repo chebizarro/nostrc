@@ -1725,6 +1725,213 @@ effect is permitted. These are local native tests, not public-relay, hosted-CI,
 STUN, traversal or deployment proof. The formal protocol review (`8hvs6.4`) was completed
 2026-11-16: docs/reviews/fips-nostr-protocol-review-2026-11-16.md.
 
+## mDNS LAN rendezvous (`nostrc-9nxwk.5`)
+
+Peer rendezvous on the local link over mDNS / DNS-SD (RFC 6762 / RFC 6763): the
+port of upstream `src/mdns/mod.rs` (an `mdns-sd` responder and browser) and the
+LAN half of `src/node/lifecycle/mod.rs` and `src/node/peering/lan.rs`. It is a
+self-contained implementation of the needed protocol subset on two multicast
+UDP sockets under libgo fiber I/O. It adds no runtime dependency: no Avahi, no
+`dns_sd`, no mDNSResponder client. The sockets share port 5353 with the
+system responder through `SO_REUSEADDR`/`SO_REUSEPORT`.
+
+Off by default, as upstream. With `node.rendezvous.lan.enabled: true` the
+daemon publishes `_fips._udp.local.` on every up, non-loopback interface and
+browses for the same service type. Two nodes on one broadcast domain with **no
+configured peers** discover each other, dial the advertised endpoint and
+authenticate it with the ordinary Noise IK link handshake, usually within a
+second of starting. The advert is an unauthenticated routing hint: a spoofed
+advert carrying another node's npub fails the handshake and is dropped. Like
+upstream, the advert carries a subset of what `nostr.advertise` already
+publishes, and it never leaves the link unless the LAN bridges mDNS.
+
+### Configuration
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `node.rendezvous.lan.enabled` | `false` | Master switch (main.c registers the `mdns` subsystem only when true). |
+| `node.rendezvous.lan.service_type` | `"_fips._udp.local."` | DNS-SD service type; must end in `.local.`. Override only to isolate test runs. |
+| `node.rendezvous.lan.scope` | unset | LAN-only scope, carried as TXT `scope=`. Browsers with a scope surface only adverts with the same scope. When unset, the trimmed `node.rendezvous.nostr.app` is used, without any `fips-overlay-v1:` prefix. The default app `fips-overlay-v1` therefore gives scope `fips-overlay-v1`, as upstream. |
+
+The legacy `node.discovery.lan.*` block still maps to `node.rendezvous.lan.*`
+(config/normalize.c). The SRV record names the bound port of the lowest-id UDP
+transport. With no UDP transport configured the subsystem logs a warning and
+does not start. If the sockets cannot be opened it also warns and leaves the
+host up, as upstream does when its daemon fails to start.
+
+### Records
+
+The instance and host label is `fips-` plus the first 16 characters of the
+npub. Each node publishes:
+
+- PTR `<service> -> fips-<npub16>.<service>`, TTL 4500 s;
+- SRV naming `fips-<npub16>.local.` and the UDP port, TTL 120 s;
+- TXT `npub=<npub>`, `scope=<scope>` when there is one, and `v=1`, TTL 4500 s;
+- A/AAAA records for the host, TTL 120 s.
+
+The TTLs are mdns-sd's defaults. Every record except the PTR carries the
+cache-flush bit.
+
+### Module map (`src/mdns/`)
+
+| File | Role |
+| --- | --- |
+| `records.{h,c}` | mDNS codec. The decoder follows compression pointers (strictly backwards, so loops are impossible). The writer emits PTR/SRV/TXT/A/AAAA with the cache-flush and QU bits. It shares `dns/msg.h`'s constants; the `.fips` screen deliberately refuses pointers, so it is not reused for parsing. |
+| `advert.{h,c}` | Upstream's pure half: `advert_label_of`, `host_is_advertisers` (any case, `-N` conflict suffix), `check_advert` (no-npub/own in any case/cross-scope/foreign-host/zero-port), `socket_addr_from_scoped_ip`, `arrival_interfaces`, the skip log lines, `lan_rendezvous_scope`. |
+| `browser.{h,c}` | Sans-IO record cache for one service type: resolution, dedupe, TTL, goodbye, cache-flush and continuous querying. |
+| `responder.{h,c}` | Sans-IO responder: probing, announcing, answering, conflict handling and goodbyes. |
+| `lan.{h,c}` | Upstream `PendingLan`, `KnownLabels` and `lan_target_on_link`. |
+| `socket.{h,c}` | Default I/O: IPv4 `0.0.0.0:5353` and IPv6 `[::]:5353` (V6ONLY). Multicast TTL/hops 255, multicast loop on, arrival interface from `IP_PKTINFO`/`IP_RECVIF`/`IPV6_PKTINFO`, `IP_MULTICAST_ALL` off on Linux. Membership and the outgoing interface are set per interface. |
+| `mdns.{h,c}` | The `mdns` subsystem and its engine fiber. |
+
+The only change outside `src/mdns/` is an additive `fipsd_udp_watch_bound`. The
+transport's existing bound channel already belongs to the Nostr traversal
+owner, so mDNS gets its own bind observer.
+
+### Protocol subset
+
+These are the parts of RFC 6762/6763 mdns-sd provides that LAN rendezvous needs.
+
+**Responder**
+
+- **Probing and announcing (§8).** Each interface waits a random 0-250 ms, then
+  sends three probes 250 ms apart. The first probe has QU questions and every
+  probe carries our records as authority. Two announcements follow, one second
+  apart.
+- **Conflicts.** A response claiming one of our names with data that is not ours
+  on any interface renames us while probing (`<label>-2`, `-3`, …). After the
+  names are won it resets that interface to probing (§9). After fifteen
+  conflicts in ten seconds the responder waits five seconds.
+- **Simultaneous probes (§8.2).** These are settled by the lexicographic
+  comparison; the loser defers one second.
+- **Answering.** Queries are answered only on the interface they arrived on and
+  only after it has won its names. Known-answer suppression applies (§7.1). A
+  legacy query (source port not 5353) gets a unicast reply echoing the ID and
+  questions, TTL at most 10 s, no cache-flush (§6.7). A QU question is answered
+  by unicast if the record was multicast within a quarter of its TTL (§5.4).
+- **Timing and rate limits (§6).** Unique-only answers go at once; answers
+  carrying the shared PTR wait 20-120 ms. No record is multicast on an
+  interface more than once a second, or every 250 ms when defending against a
+  probe.
+- **Additional records.** A PTR answer carries SRV, TXT and the addresses as
+  additional records; an SRV answer carries the addresses (RFC 6763 §12). The
+  `_services._dns-sd._udp.local.` meta-query is answered.
+- **Changes and shutdown.** An address change re-announces the interface,
+  including goodbyes for the lost addresses. A port change re-announces every
+  interface. Shutdown sends TTL-0 goodbyes for every record (§10.1).
+
+**Browser**
+
+- **Caching.** It caches only the service's PTRs, its instances' SRV/TXT records
+  and the addresses of the SRV hosts. It never caches probe authority records or
+  a query's known answers. Responses not sent from port 5353 are ignored (§6).
+- **Lifetimes.** A record lives for its TTL. A goodbye takes it out of
+  resolution at once and out of the cache one second later. A cache-flush record
+  expires older records of its name and type after one second (§10.1/§10.2).
+- **Continuous querying (§5.2).** The first query goes 20-120 ms after start,
+  then at intervals doubling to one hour. Queries carry known answers with over
+  half their TTL left. Records are refreshed at 80/85/90/95% of TTL plus up to
+  2% jitter. An instance missing its SRV, TXT or addresses is asked for them
+  at once, then 1 s and 3 s later.
+- **Reporting.** A resolved instance (SRV, TXT and at least one address) is
+  reported once per change, so repeated identical announcements are
+  suppressed. An instance that stops resolving is reported as removed.
+
+**Not implemented.** NSEC negative responses, truncation/TC continuation,
+mDNS proxying and the reverse-mapping PTRs. None of these are needed to find
+and dial a FIPS peer. Loopback interfaces are not used: upstream seeds
+`127.0.0.1`, but mdns-sd sends an interface only the addresses in that
+interface's subnets and does not run on loopback, so the seed is never sent
+there either.
+
+### Interfaces and link-local rules
+
+These follow upstream and its `if-addrs` link-local handling.
+
+- **Announced.** On each up, non-loopback interface with an address, the node
+  announces only that interface's own IPv4 and IPv6 addresses, IPv6 link-local
+  ones included. The interface is used as long as at least one family joins its
+  group; utun/awdl-style interfaces join over IPv6 only, as with mdns-sd. This
+  differs from mdns-sd in one way: mdns-sd filters by subnet, so other
+  interfaces' `fe80::/64` addresses would leak onto an interface. Here they do
+  not.
+- **Arrival interfaces.** Every address record keeps its arrival interface. An
+  IPv4 record collects every interface it was seen on. An IPv6 record is keyed by
+  its arrival interface, which becomes its scope id. A scope-less IPv6
+  link-local address is skipped, as upstream's `socket_addr_from_scoped_ip`
+  does.
+- **Dialled.** An address is dialled only when upstream's `lan_target_on_link`
+  passes. An IPv6 link-local address passes when it carries a scope. Any other
+  address must lie inside a prefix held by one of the interfaces its record
+  arrived on, judged against the subsystem's own netmon snapshot (loopback and
+  down interfaces excluded, as upstream's `read_system`). When the interface
+  read fails, nothing is dropped or dialled until the next read.
+- **Forged labels.** An advert whose host label is a configured or connected
+  peer's under another npub is refused (`KnownLabels`).
+- **Transport.** The dial goes over the lowest-id bound UDP transport of the
+  address's family; IPv6 UDP sockets are V6ONLY, so families must match.
+
+### Dial path and bounds
+
+Accepted adverts become pending pairs held between dials. The bounds are
+upstream's: 64 pairs, 4 addresses per node, 10 minutes, 8 unconfigured
+handshakes in flight and 2 per IP address. Pairs are dialled configured first,
+then shuffled. The dial uses the path the Nostr rendezvous uses:
+`fipsd_node_handlers_learn_identity` and then `fipsd_node_handlers_connect`.
+The node's `hs_dial` makes a dial to a connected or connecting peer a no-op.
+Connected peers and in-flight handshakes are read from the dispatcher's
+published control snapshot (peers, connections). A dial counts as over when the
+peer connects, when the snapshot published a second after the dial no longer
+lists its leg, or when the handshake timeout passes.
+
+Not ported: upstream's multipath intake of a linked peer's advert as a path
+candidate (`Feed::Mdns`).
+
+### Runtime model
+
+One engine fiber owns all state. It selects over four inputs: received
+datagrams (two receive fibers hand them over a bounded channel), its own
+`node/netmon.h` monitor (kernel notifications, with that module's backstop
+read), UDP bind notifications, and stop/cancellation. The select timeout is the
+nearest protocol deadline: probe, announcement, delayed answer, query, record
+expiry, dial retry or pair expiry. Nothing runs on its own sampling timer. The
+dial retry re-evaluates held pairs one second later, and only while some are
+held (upstream does this on its node tick). Packets the node sent are
+recognised by hash when they loop back, so its own announcements never look
+like conflicts. The browser still reports them, and `check_advert` skips them as
+its own. Stop sends the goodbyes, leaves the groups, cancels the receive fibers
+(`gof_io_cancel_fd`), waits for them and closes the sockets.
+
+### Verification
+
+- `FipsdMdnsTest`: codec vectors; every upstream `src/mdns/tests.rs` case that
+  needs no daemon; browser tables (TTL expiry, goodbye, cache flush, duplicate
+  suppression, query schedule, known answers, refresh, own-announcement
+  skipped); responder tables (probe/announce timing, aggregation delay, rate
+  limit, known-answer suppression, legacy and QU unicast, re-announce with
+  goodbye, conflict rename, tiebreak); the LAN candidate set.
+- `FipsdMdnsTwoNodesTest`: four nodes on real UDP on 127.0.0.1 with **no
+  configured peers**, whose mDNS engines share an in-memory multicast link (the
+  `fipsd_mdns_io` seam):
+  - A and B discover each other (scope, port, arrival interface) and establish
+    an IK link both ways.
+  - C (another scope) is skipped as cross-scope in both directions.
+  - D (another service type) neither sees nor is seen.
+
+  Absence is proven with sentinel adverts behind the FIFO receive queue, not by
+  waiting. The seam replaces only the multicast sockets, because two engines in
+  one process on real multicast depend on the host's loopback behaviour
+  (upstream `#[ignore]`s that test for the same reason).
+- Real sockets, by hand:
+
+  ```sh
+  # Two daemons on one host, or one per network namespace on a shared bridge,
+  # each with node.rendezvous.lan.enabled: true, its own UDP port and no peers.
+  fipsd --config a.yaml & fipsd --config b.yaml &
+  # Each logs `lan: dialling mDNS-discovered peer` and `link established`;
+  # `fipsctl show peers` lists the other.
+  ```
+
 ## TCP transport
 
 `transports.tcp` uses the same singleton/named-instance configuration and node

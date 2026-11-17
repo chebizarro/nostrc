@@ -24,6 +24,7 @@
 #include "transport/tor/tor.h"
 #include "transport/nym/nym.h"
 #include "nostr/runtime.h"
+#include "mdns/mdns.h"
 
 #define MODULE "main"
 
@@ -212,6 +213,9 @@ int main(int argc, char **argv)
     fipsd_nostr_runtime *rendezvous = nostr_enabled && node ? fipsd_nostr_runtime_create(config, NULL,
         fipsd_node_get_context(node), fipsd_nostr_node_driver_init(&nostr_driver,
             fipsd_node_get_context(node), handlers, fipsd_node_transports(node))) : NULL;
+    /* mDNS LAN rendezvous (nostrc-9nxwk.5): off by default, as upstream. */
+    bool lan_enabled = fipsd_config_bool(fipsd_config_get(config, "node.rendezvous.lan.enabled"));
+    fipsd_mdns_service *mdns = lan_enabled && node && handlers ? fipsd_mdns_service_create(snapshots, node, handlers) : NULL;
 
 
     /* Host adapters for the core (time, entropy) are linked and ready for the
@@ -235,6 +239,7 @@ int main(int argc, char **argv)
                (dns_enabled && (!dns || fipsd_runtime_register(rt, fipsd_dns_service_subsystem(dns)) != 0)) ||
                (native_enabled && (!native || fipsd_runtime_register(rt, fipsd_native_api_subsystem(native)) != 0)) ||
                (nostr_enabled && (!rendezvous || fipsd_runtime_register(rt, fipsd_nostr_runtime_subsystem(rendezvous)) != 0)) ||
+               (lan_enabled && (!mdns || fipsd_runtime_register(rt, fipsd_mdns_service_subsystem(mdns)) != 0)) ||
                (control_enabled && fipsd_runtime_register(rt, &control.subsystem) != 0) ||
                fipsd_runtime_start(rt) != 0) {
         FIPSD_ERROR(MODULE, "start-up failed");
@@ -261,6 +266,7 @@ int main(int argc, char **argv)
     fipsd_dns_service_destroy(dns);
     fipsd_tun_destroy(tun);
     fipsd_nostr_runtime_destroy(rendezvous);
+    fipsd_mdns_service_destroy(mdns);
     fipsd_node_destroy(node);
     fipsd_node_handlers_destroy(handlers);
     for (size_t i = 0; i < udp_count; ++i) fipsd_udp_destroy(udp[i]);
