@@ -7,12 +7,16 @@
  * headroom, so pressure reaches the client as EAGAIN/ENOBUFS rather than a
  * drop, and the far client must read every datagram exactly once. Readiness
  * is observed through notices and blocking reads; there are no sleeps and no
- * timing assertions. */
+ * timing assertions. Where a full client buffer refuses a write with ENOBUFS
+ * and no writability event (SOCK_DGRAM: Darwin, FreeBSD), the far node drops
+ * and counts what the reader has not made room for, so there every datagram is
+ * read exactly once or counted as drop_client_buffer_full; elsewhere none is. */
 #define _POSIX_C_SOURCE 200809L
 #define _DARWIN_C_SOURCE 1
 #include "node_test.h"
 #include "test_tmpdir.h"
 #include "native/api.h"
+#include "native/seqpacket.h"
 #include <fips-native-client.h>
 #include "node/metrics.h"
 #include <errno.h>
@@ -127,7 +131,13 @@ int main(void)
     pthread_t thread; CHECK(pthread_create(&thread, NULL, drain, &r) == 0);
     blast(out);
     CHECK(pthread_join(thread, NULL) == 0);
-    CHECK(r.bad == 0 && r.duplicates == 0 && r.received == BURST);
+    uint64_t far_drops = metric(&b, FIPSD_METRIC_native_drop_client_buffer_full);
+#if FIPSD_NATIVE_FULL_CLIENT_DROPS
+    CHECK(r.bad == 0 && r.duplicates == 0 && r.received + far_drops == BURST);
+#else
+    CHECK(r.bad == 0 && r.duplicates == 0 && r.received == BURST && far_drops == 0);
+#endif
+    CHECK(metric(&a, FIPSD_METRIC_native_drop_client_buffer_full) == 0);
     /* Every drop counter on both nodes is zero: the originating path applied
      * back-pressure, the far node delivered through its sink and flow. */
     CHECK(metric(&a, FIPSD_METRIC_native_sent_datagrams) == BURST + 1);
@@ -151,6 +161,7 @@ int main(void)
     nt_drain(&a.node); nt_drain(&b.node);
     nt_destroy(&a.node); nt_destroy(&b.node);
     fipsd_loopback_network_destroy(net);
-    printf("native burst: %u x %u-byte datagrams A -> B through the native API, zero drops: ok\n", BURST, PAYLOAD);
+    printf("native burst: %u x %u-byte datagrams A -> B through the native API, %u read, %llu counted at a full client: ok\n",
+           BURST, PAYLOAD, r.received, (unsigned long long)far_drops);
     return 0;
 }

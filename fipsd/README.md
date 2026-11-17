@@ -208,6 +208,12 @@ flow, TUN, cache-budget or kernel-drop owner:
 | `handshake` | 8 | 8 | None |
 | `session` | 18 | 16 | `addr_mismatch`, `half_open_full` |
 
+`native.drop_client_buffer_full` is C-only, beyond upstream's 18 native names:
+where flows use `SOCK_DGRAM` (macOS, FreeBSD) a client that is not draining
+makes the daemon's write fail with `ENOBUFS` and no writability event, so the
+datagram is dropped. Upstream drops it with only a debug log; fipsd counts it.
+On Linux (`SOCK_SEQPACKET`) the writer waits instead and the counter stays zero.
+
 `show_stats_list`, `show_stats_history`, `show_stats_peers`,
 `show_stats_all_history` and `show_stats_history_all_peers` use the existing
 core rings, delta baselines, 60:1 downsampling, 24-hour peer retention and

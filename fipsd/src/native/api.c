@@ -200,7 +200,10 @@ static void flow_reader_fiber(void *arg)
     flow_end(a, f);
 }
 /* Write datagrams the node delivered onto the client's descriptor. A full
- * client buffer drops the datagram and keeps the flow (ENOBUFS, Darwin). */
+ * client buffer drops the datagram and keeps the flow (ENOBUFS: Darwin and
+ * FreeBSD SOCK_DGRAM have no sender-side queue to wait on; Linux SEQPACKET
+ * parks this writer instead). Upstream drops it uncounted; here it is counted
+ * as native.drop_client_buffer_full. */
 static void flow_feeder_fiber(void *arg)
 {
     flow_rec *f = arg;
@@ -213,7 +216,11 @@ static void flow_feeder_fiber(void *arg)
         int error = errno;
         fipsd_native_datagram_free(dg);
         if (rc == 0) continue;
-        if (error == ENOBUFS) { FIPSD_DEBUG(MODULE, "flow %llu: write dropped a datagram", (unsigned long long)f->id); continue; }
+        if (error == ENOBUFS) {
+            count(a, FIPSD_METRIC_native_drop_client_buffer_full, 1);
+            FIPSD_DEBUG(MODULE, "flow %llu: write dropped a datagram", (unsigned long long)f->id);
+            continue;
+        }
         if (error != ECANCELED) FIPSD_DEBUG(MODULE, "flow %llu: write failed: %s", (unsigned long long)f->id, strerror(error));
         break;
     }
