@@ -946,6 +946,7 @@ typedef struct combined {
     fipsd_control_native_flow *flows;
     fipsd_control_native_listener *listeners;
     char *strings;
+    fipsd_control_counter native[32]; /* fipsd_metrics_snapshot's documented minimum */
 } combined;
 static void combined_free(void *arg)
 {
@@ -988,6 +989,12 @@ static GoRefPtr acquire(void *arg)
     free(views); free(lviews);
     c->snapshot.flows = c->flows; c->snapshot.flow_count = n;
     c->snapshot.listeners = c->listeners; c->snapshot.listener_count = m;
+    /* This API bumps the native counters outside the dispatcher, so the base
+     * snapshot's copy lags until its next publication; read them live beside
+     * the live flows and listeners so show_native_flows agrees with itself.
+     * (a->handlers is fixed at create; a->metrics is only set by start.) */
+    c->snapshot.native = (fipsd_control_counters){c->native,
+        fipsd_metrics_snapshot(fipsd_node_handlers_metrics(a->handlers), FIPSD_METRICS_native, c->native)};
     return make_go_refptr(c, combined_free); /* snapshot is the first member */
 }
 static json_t *command(void *arg, const char *name, const json_t *params, const fipsd_control_request_context *ctx)

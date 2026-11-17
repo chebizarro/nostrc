@@ -367,7 +367,7 @@ foreach(family IN ITEMS 4 6)
     --fipsd "$<TARGET_FILE:fipsd>" --rust "${FIPSD_UDP_INTEROP_RUST_BINARY}" --family ${family})
   set_tests_properties(${_interop_test} PROPERTIES TIMEOUT 600 SKIP_RETURN_CODE 77
     LABELS "fips;transport;node;interop" ENVIRONMENT "FIPSD_WORKERS=2")
-  nostrc_describe_test(${_interop_test} OWNER fipsd TARGETS fipsd fipsd_test_tmpdir_run
+  nostrc_describe_test(${_interop_test} OWNER fipsd TARGETS fipsd fipsd_test_tmpdir_run fipsd_native_client_tool
     INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/udp_interop.py")
 endforeach()
 # Soup/WebSocket fixture adapted from Grotto with the FIPS gate's Jansson codec.
