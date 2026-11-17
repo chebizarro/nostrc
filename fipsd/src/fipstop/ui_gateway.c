@@ -26,6 +26,7 @@ void ft_ui_gateway(ft_frame *f,ft_app *a,ft_rect r)
     if(a->detail) { table.w=r.w*40/100; ft_detail(f,(ft_rect){r.x+table.w,r.y,r.w-table.w,r.h},ft_selected(a),&a->detail_scroll," Mapping Detail "); }
     json_t *rows=ft_rows(a,FT_GATEWAY); size_t n=json_array_size(rows);
     char title[128]; snprintf(title,sizeof(title)," Mappings (%zu) ",n); table=ft_box(f,table,title,false);
+    if(a->selected[FT_GATEWAY]>=0) { table.x+=2; table.w=table.w>2?table.w-2:0; }
     ft_column cols[]={{"Virtual IP","virtual_ip",16},{"DNS Name","dns_name",24},{"Mesh Addr","mesh_addr",24},{"State","state",10},{"Sessions","sessions",8},{"Age","age",10},{"Last Ref","last",14}};
     ft_table_header(f,table,cols,7); int selected=a->selected[FT_GATEWAY];
     if(selected>=0 && (size_t)selected>=n) a->selected[FT_GATEWAY]=selected=-1;

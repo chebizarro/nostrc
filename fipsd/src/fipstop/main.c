@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <termios.h>
 #include <unistd.h>
 static volatile sig_atomic_t stopped;
 static void on_signal(int sig) { (void)sig; stopped=1; }
@@ -93,10 +94,11 @@ int main(int argc,char **argv)
         ft_frame frame;
         if(!ft_frame_init(&frame,w,h)) { ft_app_free(&app); return 1; }
         app.now_ms=app.fetched_ms; app.wall_ms=fixtures?1700000000000ULL:(uint64_t)time(NULL)*1000;
-        fixture_graph(&app,fixtures?fixtures:""); ft_draw(&frame,&app); ft_frame_print(&frame,stdout);
+        if(fixtures) fixture_graph(&app,fixtures); ft_draw(&frame,&app); ft_frame_print(&frame,stdout);
         ft_frame_free(&frame); ft_app_free(&app); return ferror(stdout)?1:0;
     }
     if(!isatty(STDIN_FILENO)||!isatty(STDOUT_FILENO)) { fputs("error: terminal required\n",stderr); ft_app_free(&app); return 1; }
+    struct termios saved; bool have_saved=tcgetattr(STDIN_FILENO,&saved)==0;
     SCREEN *screen=newterm(NULL,stdout,stdin);
     if(!screen) { fputs("error: failed to initialise terminal\n",stderr); ft_app_free(&app); return 1; }
     cbreak(); noecho(); keypad(stdscr,TRUE); curs_set(0);
@@ -137,5 +139,7 @@ int main(int argc,char **argv)
             next=ft_monotonic_ms()+(app.refresh?(uint64_t)app.refresh*1000:1);
         }
     }
-    endwin(); delscreen(screen); ft_app_free(&app); return rc;
+    endwin(); delscreen(screen);
+    if(have_saved && tcsetattr(STDIN_FILENO,TCSANOW,&saved)!=0) rc=1;
+    ft_app_free(&app); return rc;
 }

@@ -46,7 +46,7 @@ void ft_ui_routing(ft_frame *f,ft_app *a,ft_rect r)
     const char *rp[]={NULL,"transit",NULL,NULL,"route_direct_peer","route_tree_down","route_tree_up","route_crosslink_descend","route_crosslink_ascend","route_tree_down_cross",NULL,NULL,"drop_no_route","ttl_exhausted","decode_error","drop_mtu_exceeded","drop_send_error",NULL,NULL,"error_signals.coords_required","error_signals.path_broken","error_signals.mtu_exceeded","error_signals.path_mtu_notif_below_floor","error_signals.mtu_exceeded_below_floor","error_signals.lookup_resp_mtu_below_floor","error_signals.unbound_coords","error_signals.unbound_broken","error_signals.unbound_mtu","error_signals.unbound_forged","error_signals.emit_over_peer_budget","error_signals.emit_over_dest_interval","error_signals.emit_limiter_at_capacity","error_signals.mtu_exceeded_uncorroborated",NULL,NULL,"congestion.ce_forwarded","congestion.ce_received","congestion.congestion_detected","congestion.kernel_drop_events"};
     size_t *off=&a->scroll[FT_ROUTING][2]; *off=ft_clamp_scroll(*off,39,(size_t)in.h);
     ft_rect l=in; l.w=in.w/2; ft_rect rr={in.x+l.w,in.y,in.w-l.w,in.h};
-    size_t lo=*off,ro=*off;
-    ft_aligned_fields(f,l,view,ll,lp,33,&lo); ft_aligned_fields(f,rr,view,rl,rp,39,&ro);
+    
+    ft_aligned_fields_at(f,l,view,ll,lp,33,*off); ft_aligned_fields_at(f,rr,view,rl,rp,39,*off);
     json_decref(view);
 }

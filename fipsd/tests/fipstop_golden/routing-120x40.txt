@@ -1,0 +1,40 @@
+┌ fipstop 0.1.0 ───────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│Node │ Peers | Transports │ Sessions | Tree | Filters | Performance | Routing | Graphs │ Gateway                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌ Routing State ───────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│    Coord Cache    : 0                                                                                                │
+│    Identity Cache : 0                                                                                                │
+│    Pending Lookups: 0                                                                                                │
+│    Recent Requests: 0                                                                                                │
+│    Warm Malformed : 0 pkts (0B)                                                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌ Coordinate Cache ────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│    Entries    : 0 / 50000                                                                                            │
+│    Fill Ratio : 0.0%                                                                                                 │
+│    Default TTL: 5.0m                                                                                                 │
+│    Expired    : 0                                                                                                    │
+│    Avg Age    : 0ms                                                                                                  │
+│                                                                                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌ Routing Statistics ──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│  Local Stack                                                Forwarded                                                │
+│    Transmitted: 0 pkts (0B)                                   Forwarded: 0 pkts (0B)                                 │
+│    Received   : 0 pkts (0B)                                                                                          │
+│                                                             Route Class                                              │
+│  Mesh                                                         Direct Peer       : 0 (0.0%)                           │
+│    Transmitted: 0 pkts (0B)                                   Tree-down         : 0 (0.0%)                           │
+│    Received   : 0 pkts (0B)                                   Tree-up           : 0 (0.0%)                           │
+│                                                               Cross-link descend: 0 (0.0%)                           │
+│  Lookup Requests                                              Cross-link ascend : 0 (0.0%)                           │
+│    Received          : 0                                      Tree-down cross   : 0 (0.0%)                           │
+│    Forwarded         : 0                                                                                             │
+│    Initiated         : 0                                    Dropped                                                  │
+│    Deduplicated      : 0                                      No Route     : 0 pkts (0B)                             │
+│    Target Is Us      : 0                                      TTL Exhausted: 0 pkts (0B)                             │
+│    Duplicate         : 0                                      Decode Error : 0 pkts (0B)                             │
+│    Own Loopback      : 0                                      MTU Exceeded : 0 pkts (0B)                             │
+│    Bloom Miss        : 0                                      Send Error   : 0 pkts (0B)                             │
+│    Backoff Suppressed: 0                                                                                             │
+│    Fwd Rate Limited  : 0                                    Error Signals                                            │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ Connected | Refresh: 2s | Updated: 0.0s ago [f] focus pane [↑↓] scroll [Tab] next [g] graphs [q] quit [?] Help

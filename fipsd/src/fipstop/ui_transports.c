@@ -15,6 +15,7 @@ void ft_ui_transports(ft_frame *f,ft_app *a,ft_rect r)
     }
     char title[128]; size_t tn=json_array_size(ft_rows(a,FT_TRANSPORTS));
     snprintf(title,sizeof(title)," Transports (%zu) ",tn); ft_rect outer=table; table=ft_box(f,table,title,false);
+    if(a->selected[FT_TRANSPORTS]>=0) { table.x+=2; table.w=table.w>2?table.w-2:0; }
     bool narrow=table.w<100;
     ft_column cols[]={{"Transport / Link","label",narrow?12:18},{"Instance","instance",narrow?18:20},
         {"Bound to","bound",narrow?17:18},{"State","state_text",narrow?9:10},{"Peer","peer",narrow?6:10},
@@ -39,7 +40,7 @@ void ft_ui_transports(ft_frame *f,ft_app *a,ft_rect r)
             json_object_set_new(v,"instance",json_string("")); json_object_set_new(v,"bound",json_string(ft_str(link,"remote_addr")));
             const char *peer_name=""; size_t pi; json_t *peer;
             json_array_foreach(ft_rows(a,FT_PEERS),pi,peer) {
-                if(!strcmp(ft_str(link,"peer_node_addr"),ft_str(peer,"node_addr")) || !strcmp(ft_str(link,"peer_addr"),ft_str(peer,"node_addr"))) { peer_name=ft_str(peer,"display_name"); break; }
+                if(ft_get(link,"link_id") && ft_uint(link,"link_id")==ft_uint(peer,"link_id")) { peer_name=ft_str(peer,"display_name"); break; }
             }
             json_object_set_new(v,"peer",json_string(peer_name));
         }

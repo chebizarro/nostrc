@@ -44,6 +44,8 @@ typedef enum ft_action { ACT_QUIT,ACT_NEXT,ACT_PREV,ACT_GRAPH,ACT_HELP,ACT_ESCAP
     ACT_FOCUS,ACT_PAGEUP,ACT_PAGEDOWN,ACT_HOME,ACT_END,ACT_SORT,ACT_REVERSE,
     ACT_MODE,ACT_SELECTOR,ACT_PREV_SELECTOR } ft_action;
 typedef struct ft_binding { int key; const char *label, *hint; ft_action action; unsigned tabs; } ft_binding;
+typedef struct ft_hint { const char *key,*label; } ft_hint;
+size_t ft_hints(const ft_app *a,ft_hint out[16]);
 extern const ft_binding ft_bindings[];
 extern const size_t ft_binding_count;
 bool ft_binding_active(const ft_app *a, const ft_binding *b);

@@ -105,7 +105,10 @@ static void help(ft_frame *f,ft_app *a,ft_rect r)
     for(int y=0;y<modal.h;++y) for(int x=0;x<modal.w;++x) ft_put(f,modal,x,y,FT_NORMAL," ");
     modal=ft_box(f,modal," Keybindings ",true);
     ft_app context=*a; context.help=false;
-    int row=0;
+    ft_hint hints[16]; size_t count=ft_hints(&context,hints); int row=0;
+    for(size_t i=0;i<count && row<modal.h;++i)
+        ft_printf(f,modal,1,row++,FT_NORMAL,"%-15s %s",hints[i].key,hints[i].label);
+    if(row<modal.h) ++row;
     for(size_t i=0;i<ft_binding_count && row<modal.h;++i) {
         const ft_binding *b=&ft_bindings[i];
         if(ft_binding_active(&context,b)) ft_printf(f,modal,1,row++,FT_NORMAL,"%-15s %s",b->label,b->hint);
@@ -136,21 +139,7 @@ void ft_draw(ft_frame *f,ft_app *a)
     char timing[128]; double elapsed=a->now_ms>a->fetched_ms?(double)(a->now_ms-a->fetched_ms)/1000:0;
     snprintf(timing,sizeof(timing),"| Refresh: %us | Updated: %.1fs ago ",a->refresh,elapsed);
     ft_put(f,foot,x,0,FT_NORMAL,timing); x+=(int)strlen(timing);
-    struct hint { const char *key,*label; } candidates[12]; size_t hints=0;
-#define H(k,l) do { candidates[hints++]=(struct hint){k,l}; } while(0)
-    if(a->detail) {
-        if(a->tab==FT_GRAPHS) { H("↑↓","peer"); H("n/N","stat"); H("m","mode"); H("Esc","back"); }
-        else { H("Esc","close"); H("↑↓","scroll"); }
-    } else if(a->selected[a->tab]>=0) {
-        H("Enter","detail"); if(a->tab==FT_PEERS) H("Del","disconnect"); H("Esc","deselect");
-    } else if(a->tab==FT_PEERS||a->tab==FT_SESSIONS||a->tab==FT_TRANSPORTS||a->tab==FT_GATEWAY) H("↑↓","select");
-    else if(a->tab==FT_GRAPHS) {
-        H("Enter","expand"); H("m","mode"); H("n/N","stat"); H("←→","window"); H("s/S","sort");
-    } else if(a->tab==FT_TREE||a->tab==FT_BLOOM||a->tab==FT_ROUTING||a->tab==FT_MMP) {
-        H("f","focus pane"); H("↑↓","scroll"); if(a->tab==FT_MMP) H("s/S","sort");
-    }
-    H("Tab","next"); H("g","graphs"); H("q","quit");
-#undef H
+    ft_hint candidates[16]; size_t hints=ft_hints(a,candidates);
     for(size_t i=0;i<hints;++i) {
         char hint[96]; snprintf(hint,sizeof(hint),"[%s] %s ",candidates[i].key,candidates[i].label);
         int n=(int)fipsctl_utf8_chars(hint);
@@ -180,7 +169,11 @@ void ft_table_header(ft_frame *f,ft_rect r,const ft_column *cols,size_t n)
 void ft_table_row(ft_frame *f,ft_rect r,int row,const ft_column *cols,size_t n,const json_t *d,bool selected)
 {
     int x=0;
-    if(selected) { for(int i=0;i<r.w;++i) ft_put(f,r,i,row,FT_SELECT," "); ft_put(f,r,0,row,FT_SELECT,"▶"); }
+    if(selected) {
+        ft_rect highlight={r.x-2,r.y,r.w+2,r.h};
+        for(int i=0;i<highlight.w;++i) ft_put(f,highlight,i,row,FT_SELECT," ");
+        ft_put(f,highlight,0,row,FT_SELECT,"▶");
+    }
     for(size_t i=0;i<n;++i) {
         char value[512]; ft_value(d,cols[i].path,value,sizeof(value));
         char *text=ft_truncate(value,(size_t)cols[i].width,false);
@@ -216,19 +209,24 @@ json_t *ft_role_peers(const ft_app *a,const json_t *rows,const char *addr_key)
     return out;
 }
 
-void ft_aligned_fields(ft_frame *f,ft_rect r,const json_t *d,const char *const *labels,
-    const char *const *paths,size_t n,size_t *scroll)
+void ft_aligned_fields_at(ft_frame *f,ft_rect r,const json_t *d,const char *const *labels,
+    const char *const *paths,size_t n,size_t scroll)
 {
-    *scroll=ft_clamp_scroll(*scroll,n,(size_t)r.h);
-    for(size_t i=*scroll;i<n && i-*scroll<(size_t)r.h;++i) {
-        if(!paths[i]) { ft_put(f,r,0,(int)(i-*scroll),FT_CYAN,labels[i]); continue; }
+    for(size_t i=scroll;i<n && i-scroll<(size_t)r.h;++i) {
+        if(!paths[i]) { ft_put(f,r,0,(int)(i-scroll),FT_CYAN,labels[i]); continue; }
         size_t begin=i,end=i+1,width=0;
         while(begin && paths[begin-1]) --begin;
         while(end<n && paths[end]) ++end;
         for(size_t j=begin;j<end;++j) if(strlen(labels[j])>width) width=strlen(labels[j]);
         char value[512]; ft_value(d,paths[i],value,sizeof(value));
-        ft_printf(f,r,0,(int)(i-*scroll),FT_NORMAL,"    %-*s: %s",(int)width,labels[i],value);
+        ft_printf(f,r,0,(int)(i-scroll),FT_NORMAL,"    %-*s: %s",(int)width,labels[i],value);
     }
+}
+void ft_aligned_fields(ft_frame *f,ft_rect r,const json_t *d,const char *const *labels,
+    const char *const *paths,size_t n,size_t *scroll)
+{
+    *scroll=ft_clamp_scroll(*scroll,n,(size_t)r.h);
+    ft_aligned_fields_at(f,r,d,labels,paths,n,*scroll);
 }
 void ft_scrollbar(ft_frame *f,ft_rect r,size_t count,size_t selected)
 {

@@ -1,0 +1,24 @@
+┌ fipstop 0.1.0 ───────────────────────────────────────────────────────────────┐
+│Node │ Peers | Transports │ Sessions | Tree | Filters | Performance | Routing │
+└──────────────────────────────────────────────────────────────────────────────┘
+┌ Tree Position ───────────────────────────────────────────────────────────────┐
+│    Root: 1b4788b7ab7a436a611fc59fb1e34c6e (self)                             │
+│    Npub: npub1sx42mj99aql52aklsg70y2jmr95u7uz2p40k769aw46ppjv302kqkhmu5r     │
+│    Depth: 0                                                                  │
+│    Parent: self (root)                                                       │
+│    Declaration: seq 1, yes                                                   │
+│                                                                              │
+│    Path: 1b478... > [self]                                                   │
+└──────────────────────────────────────────────────────────────────────────────┘
+┌ Tree Announce Stats ─────────────────────────────────────────────────────────┐
+│  Inbound                                                                     │
+│    Received: 0                                                               │
+│    Accepted: 0                                                               │
+│    Decode Error: 0                                                           │
+│    Unknown Peer: 0                                                           │
+│    Addr Mismatch: 0                                                          │
+└──────────────────────────────────────────────────────────────────────────────┘
+┌ Tree Peers (0) ──────────────────────────────────────────────────────────────┐
+│  No peers                                                                    │
+└──────────────────────────────────────────────────────────────────────────────┘
+ Connected | Refresh: 2s | Updated: 0.0s ago [f] focus pane [Tab] next [?] Help

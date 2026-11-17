@@ -9,6 +9,7 @@ void ft_ui_sessions(ft_frame *f,ft_app *a,ft_rect r)
     if(a->detail) { table.w=r.w*40/100; ft_rect detail={r.x+table.w,r.y,r.w-table.w,r.h};
         ft_detail(f,detail,ft_selected(a),&a->detail_scroll," Session Detail "); }
     char title[128]; snprintf(title,sizeof(title)," Sessions (%zu) ",n); table=ft_box(f,table,title,false);
+    if(a->selected[FT_SESSIONS]>=0) { table.x+=2; table.w=table.w>2?table.w-2:0; }
     ft_column cols[]={{"Name","display_name",12},{"Remote Addr","short_addr",13},{"State","state",13},
         {"Role","role",6},{"SRTT","srtt",8},{"Loss","loss",7},{"SQI","sqi",6},{"Path MTU","mmp.path_mtu",9},{"Last Activity","activity",14}};
     if(table.w<=78) { int compact[]={12,12,10,6,6,6,6,6,6}; for(size_t i=0;i<9;++i) cols[i].width=compact[i]; }

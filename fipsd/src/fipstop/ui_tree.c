@@ -35,7 +35,13 @@ void ft_ui_tree(ft_frame *f,ft_app *a,ft_rect r)
         for(size_t i=0;i<n;++i) {
             unsigned group=ft_group(rows[i]); if(group!=last) { if(last!=3) ++line; if(line>=*scroll) ft_put(f,in,0,(int)(line-*scroll),FT_YELLOW,groups[group]); ++line; last=group; }
             char depth[FT_TEXT]; ft_value(rows[i],"effective_depth",depth,sizeof(depth));
-            if(line>=*scroll) ft_printf(f,in,0,(int)(line-*scroll),FT_NORMAL,"  %-20s root: %.16s  depth: %llu  EffD: %s",ft_str(rows[i],"display_name"),ft_str(rows[i],"root"),(unsigned long long)ft_uint(rows[i],"depth"),strcmp(depth,"-")?depth:"—");
+            char *name=ft_truncate(ft_str(rows[i],"display_name"),16,true);
+            if(line>=*scroll) {
+                if(!ft_get(rows[i],"depth")) ft_printf(f,in,0,(int)(line-*scroll),FT_DIM,"    %s (no position)",name?name:"");
+                else ft_printf(f,in,0,(int)(line-*scroll),FT_NORMAL,"    %s depth: %-4llu dist: %-4llu eff: %-7s%s",name?name:"",(unsigned long long)ft_uint(rows[i],"depth"),
+                    (unsigned long long)ft_uint(rows[i],"distance_to_us"),strcmp(depth,"-")?depth:"—",!strcmp(ft_str(rows[i],"root"),ft_str(d,"root"))?"same root":"diff root");
+            }
+            free(name);
             ++line;
         }
     }

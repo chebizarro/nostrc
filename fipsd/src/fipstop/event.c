@@ -130,3 +130,23 @@ bool ft_event(ft_app *a, int key)
     }
     return false;
 }
+
+size_t ft_hints(const ft_app *a,ft_hint candidates[16])
+{
+    size_t hints=0;
+#define H(k,l) do { candidates[hints++]=(ft_hint){k,l}; } while(0)
+    if(a->detail) {
+        if(a->tab==FT_GRAPHS) { H("↑↓","peer"); H("n/N","stat"); H("m","mode"); H("Esc","back"); }
+        else { H("Esc","close"); H("↑↓","scroll"); }
+    } else if(a->selected[a->tab]>=0) {
+        H("Enter","detail"); if(a->tab==FT_PEERS) H("Del","disconnect"); H("Esc","deselect");
+    } else if(a->tab==FT_PEERS||a->tab==FT_SESSIONS||a->tab==FT_TRANSPORTS||a->tab==FT_GATEWAY) H("↑↓","select");
+    else if(a->tab==FT_GRAPHS) {
+        H("Enter","expand"); H("m","mode"); H("n/N","stat"); H("←→","window"); H("s/S","sort");
+    } else if(a->tab==FT_TREE||a->tab==FT_BLOOM||a->tab==FT_ROUTING||a->tab==FT_MMP) {
+        H("f","focus pane"); H("↑↓","scroll"); if(a->tab==FT_MMP) H("s/S","sort");
+    }
+    H("Tab","next"); H("g","graphs"); H("q","quit");
+#undef H
+    return hints;
+}

@@ -3,6 +3,12 @@
 import argparse
 from collections import Counter
 import json
+import fcntl
+import pty
+import re
+import signal
+import struct
+import termios
 import os
 from pathlib import Path
 import selectors
@@ -123,6 +129,48 @@ def adapter_cases(unit, root):
     print('upstream adapter cases: sibling/symlink composition, fallback, ten-fetch quiet, failed panel passed')
 
 
+def terminal_cases(binary, root):
+    master, slave = pty.openpty()
+    original = termios.tcgetattr(slave)
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 24, 80, 0, 0))
+    env = dict(os.environ, TERM='xterm-256color', NO_COLOR='1', LC_ALL='en_US.UTF-8')
+    process = subprocess.Popen([binary, '--fixture-dir', str(root / 'fipsd/tests/control_golden')],
+                               stdin=slave, stdout=slave, stderr=slave, env=env, close_fds=True)
+    def until(needle):
+        output = bytearray()
+        deadline = time.monotonic() + 10
+        with selectors.DefaultSelector() as sel:
+            sel.register(master, selectors.EVENT_READ)
+            while needle not in output:
+                remaining = deadline - time.monotonic()
+                assert remaining > 0 and sel.select(remaining), ('terminal output missing', needle, output)
+                output.extend(os.read(master, 65536))
+        return bytes(output)
+    try:
+        output = until(b'Refresh:')
+        assert not re.search(rb'\x1b\[(?:3[0-7]|4[0-7]|38;|48;)', output), output
+        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 40, 120, 0, 0))
+        process.send_signal(signal.SIGWINCH)
+        until(b'Gateway')
+        os.write(master, b'q')
+        until(b'\x1b[?1049l')  # Drain the frame and observe endwin before waiting for exit.
+        assert process.wait(timeout=10) == 0
+        current = termios.tcgetattr(slave)
+        # PENDIN describes the kernel's pending-input queue, not a terminal mode;
+        # macOS sets it when q is injected. Check every actual setting unchanged.
+        pending = getattr(termios, 'PENDIN', 0)
+        original[3] &= ~pending
+        current[3] &= ~pending
+        assert current == original, ('terminal modes were not restored', original, current)
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
+        os.close(master)
+        os.close(slave)
+    print('real ncurses PTY: initial frame, NO_COLOR, 80x24 -> 120x40 resize, q and terminal restoration passed')
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument('--fipsd', required=True)
@@ -130,6 +178,7 @@ def main():
     p.add_argument('--unit', required=True)
     args = p.parse_args()
     repo = Path(__file__).resolve().parents[2]
+    terminal_cases(args.fipstop, repo)
     with tempfile.TemporaryDirectory(prefix='.ft-', dir=repo) as directory:
         root = Path(directory)
         adapter_cases(args.unit, root)

@@ -26,15 +26,16 @@ def main():
             w, h = map(int, size.split('x'))
             lines = result.stdout.splitlines()
             assert len(lines) == h and all(len(line) == w for line in lines), (tab, size)
+            canonical = '\n'.join(s.rstrip() for s in lines) + '\n'
             path = a.goldens / f'{tab.lower()}-{size}.txt'
             if a.update:
                 path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text(result.stdout)
+                path.write_text(canonical)
             else:
                 expected = path.read_text()
-                if result.stdout != expected:
+                if canonical != expected:
                     failures.append(''.join(difflib.unified_diff(expected.splitlines(True),
-                        result.stdout.splitlines(True), fromfile=str(path), tofile='rendered')))
+                        canonical.splitlines(True), fromfile=str(path), tofile='rendered')))
     assert not failures, '\n'.join(failures)
     print('fipstop golden frames: 10 panes x 2 sizes passed' if not a.update else 'updated 20 fipstop golden frames')
 

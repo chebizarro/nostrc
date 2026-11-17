@@ -160,6 +160,7 @@ size_t ft_transport_rows(const ft_app *a, ft_transport_row **out)
     *out = calloc(cap ? cap : 1,sizeof(**out)); if (!*out) return 0;
     size_t i,j; json_t *t,*l;
     json_array_foreach(ts,i,t) {
+        if(n==cap) break;
         (*out)[n++] = (ft_transport_row){t,NULL};
         if (!ft_expanded(a,t)) continue;
         json_array_foreach(links,j,l) if (ft_uint(l,"transport_id") == ft_uint(t,"transport_id")) {

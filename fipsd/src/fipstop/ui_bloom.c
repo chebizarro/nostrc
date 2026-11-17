@@ -28,8 +28,16 @@ void ft_ui_bloom(ft_frame *f,ft_app *a,ft_rect r)
         const char *groups[]={"  ── Parent ──","  ── STP Children ──","  ── Other ──"};
         for(size_t i=0;i<n;++i) {
             unsigned group=ft_group(rows[i]); if(group!=last) { if(last!=3) ++line; if(line>=*scroll) ft_put(f,in,0,(int)(line-*scroll),FT_YELLOW,groups[group]); ++line; last=group; }
-            double ratio=ft_num(rows[i],"fill_ratio");
-            if(line>=*scroll) ft_printf(f,in,0,(int)(line-*scroll),FT_NORMAL,"  %-20s  filter: %s  fill: %.1f%%  seq: %llu",ft_str(rows[i],"display_name"),json_is_true(ft_get(rows[i],"has_filter"))?"yes":"no",isnan(ratio)?0:ratio*100,(unsigned long long)ft_uint(rows[i],"sequence"));
+            double ratio=ft_num(rows[i],"fill_ratio"),estimate=ft_num(rows[i],"estimated_count");
+            char fill[FT_TEXT],est[FT_TEXT],seq[FT_TEXT]; ft_value(rows[i],"filter_sequence",seq,sizeof(seq));
+            if(isnan(ratio)) snprintf(fill,sizeof(fill),"-"); else snprintf(fill,sizeof(fill),"%.1f%%",ratio*100);
+            if(isnan(estimate)) snprintf(est,sizeof(est),"-"); else snprintf(est,sizeof(est),"%.0f",estimate);
+            char *name=ft_truncate(ft_str(rows[i],"display_name"),16,true);
+            if(line>=*scroll) {
+                if(json_is_true(ft_get(rows[i],"has_filter"))) ft_printf(f,in,0,(int)(line-*scroll),FT_NORMAL,"    %s seq: %9s  fill: %6s  est: %6s  ok",name?name:"",seq,fill,est);
+                else ft_printf(f,in,0,(int)(line-*scroll),FT_NORMAL,"    %s seq: %9s  none",name?name:"",seq);
+            }
+            free(name);
             ++line;
         }
     }
