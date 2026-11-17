@@ -403,3 +403,33 @@ if(BUILD_TESTING)
   set_tests_properties(FipsTopModelTest PROPERTIES TIMEOUT 30 LABELS "fips;unit;fipstop")
   nostrc_describe_test(FipsTopModelTest OWNER fipsd TARGETS fipstop_model_test)
 endif()
+
+# Terminal UI: optional on systems with a pkg-config ncurses implementation.
+pkg_search_module(FIPSTOP_CURSES QUIET IMPORTED_TARGET ncursesw ncurses)
+option(FIPSD_BUILD_FIPSTOP "Build the fipstop ncurses dashboard" ${FIPSTOP_CURSES_FOUND})
+if(FIPSD_BUILD_FIPSTOP)
+  if(NOT FIPSTOP_CURSES_FOUND)
+    message(FATAL_ERROR "FIPSD_BUILD_FIPSTOP requires ncursesw/ncurses (pkg-config)")
+  endif()
+  declare_component_version(fipstop 0 1 0)
+  add_library(fipstop_ui STATIC src/fipstop/app.c src/fipstop/event.c
+    src/fipstop/ui_common.c src/fipstop/ui_node.c src/fipstop/ui_peers.c
+    src/fipstop/ui_sessions.c src/fipstop/ui_transports.c src/fipstop/ui_tree.c
+    src/fipstop/ui_bloom.c src/fipstop/ui_mmp.c src/fipstop/ui_routing.c
+    src/fipstop/ui_graphs.c src/fipstop/ui_gateway.c)
+  target_link_libraries(fipstop_ui PUBLIC fipstop_model)
+  set_target_properties(fipstop_ui PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+  apply_warnings(fipstop_ui)
+  apply_sanitizers(fipstop_ui)
+  add_executable(fipstop src/fipstop/main.c)
+  set_target_properties(fipstop PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+  target_compile_definitions(fipstop PRIVATE "FIPSTOP_TARGET=\"${CMAKE_SYSTEM_PROCESSOR}-${CMAKE_SYSTEM_NAME}\"")
+  target_link_libraries(fipstop PRIVATE fipstop_ui PkgConfig::FIPSTOP_CURSES)
+  apply_warnings(fipstop)
+  apply_sanitizers(fipstop)
+  set_property(TARGET fipstop APPEND PROPERTY INSTALL_RPATH "${FIPSD_INSTALL_RPATH}")
+  install(TARGETS fipstop RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+  if(TARGET fipsd_tests)
+    add_dependencies(fipsd_tests fipstop)
+  endif()
+endif()
