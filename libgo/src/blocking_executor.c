@@ -11,6 +11,7 @@
 #include "blocking_executor.h"
 #include "fiber_hooks.h"
 #include "go_auto.h"
+#include "go_tsan.h"
 #include <nsync.h>
 #include <pthread.h>
 #include <stdlib.h>
@@ -92,6 +93,19 @@ static GoBlockingWork *queue_pop(void) {
     return w;
 }
 
+/* Publish completion and wake the submitter, both under done_mu, which the
+ * submitter takes before it frees w and returns (as a channel waker holds the
+ * channel mutex its woken fiber must retake). Otherwise a fiber that sees done
+ * without parking, or on a spurious wake, could finish and be freed while this
+ * thread is still inside make_runnable on it, or free w under this thread. */
+static void work_complete(GoBlockingWork *w) {
+    NLOCK(&w->done_mu);
+    atomic_store_explicit(&w->done, 1, memory_order_release);
+    if (w->fiber) gof_hook_make_runnable(w->fiber);
+    else nsync_cv_signal(&w->done_cv);
+    NUNLOCK(&w->done_mu);
+}
+
 /* ── Worker thread ────────────────────────────────────────────────────── */
 
 static void *executor_worker(void *arg) {
@@ -122,18 +136,7 @@ static void *executor_worker(void *arg) {
         w->result = w->fn(w->arg);
         atomic_fetch_sub_explicit(&g_executor.active_count, 1, memory_order_relaxed);
 
-        /* Wake the submitter */
-        if (w->fiber) {
-            /* Fiber caller: mark done and make runnable */
-            atomic_store_explicit(&w->done, 1, memory_order_release);
-            gof_hook_make_runnable(w->fiber);
-        } else {
-            /* Non-fiber caller: signal condition variable */
-            nsync_mu_lock(&w->done_mu);
-            atomic_store_explicit(&w->done, 1, memory_order_release);
-            nsync_cv_signal(&w->done_cv);
-            nsync_mu_unlock(&w->done_mu);
-        }
+        work_complete(w); /* the last touch of w */
     }
     return NULL;
 }
@@ -219,6 +222,10 @@ void *go_blocking_submit(void *(*fn)(void *arg), void *arg) {
     while (!atomic_load_explicit(&w->done, memory_order_acquire)) {
         gof_hook_block_current();
     }
+    /* work_complete publishes done and wakes us under done_mu: wait that wake
+     * out so the executor is finished with this fiber and with w. */
+    NLOCK(&w->done_mu);
+    NUNLOCK(&w->done_mu);
 
     void *result = w->result;
     free(w);
@@ -244,15 +251,8 @@ void go_blocking_executor_shutdown(void) {
     GoBlockingWork *w = g_executor.queue_head;
     while (w) {
         GoBlockingWork *next = w->next;
-        /* Mark as done with NULL result to unblock any waiters */
-        atomic_store_explicit(&w->done, 1, memory_order_release);
-        if (w->fiber) {
-            gof_hook_make_runnable(w->fiber);
-        } else {
-            nsync_mu_lock(&w->done_mu);
-            nsync_cv_signal(&w->done_cv);
-            nsync_mu_unlock(&w->done_mu);
-        }
+        /* Done with a NULL result unblocks the waiter; w may be freed after. */
+        work_complete(w);
         w = next;
     }
     g_executor.queue_head = NULL;
