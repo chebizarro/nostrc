@@ -529,7 +529,7 @@ endforeach()
 # nostrc-f66sr.2: small real-UDP topology gates and optional mixed-tree soak.
 fipsd_unit_test(fipsd_node_multi_test test_node_multi.c)
 add_dependencies(fipsd_tests fipsd_node_multi_test)
-foreach(topology IN ITEMS Line Star Ring FullMesh)
+foreach(topology IN ITEMS Line Star Ring FullMesh ReturnRoute)
   add_test(NAME FipsdNodeMulti${topology}Test COMMAND fipsd_node_multi_test ${topology})
   set_tests_properties(FipsdNodeMulti${topology}Test PROPERTIES TIMEOUT 300
     LABELS "fips;node;transport;multinode" ENVIRONMENT "FIPSD_WORKERS=2")

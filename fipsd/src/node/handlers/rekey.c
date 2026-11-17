@@ -317,6 +317,12 @@ bool hs_session_execute(handlers *h, fips_session_entry *entry, const uint8_t *i
     if (x.session_installed && ext) {
         fips_rekey_view v = fips_rekey_get_view(&entry->machine);
         if (!ext->established) {
+            /* Successful responder msg3 proves the initiator, but carries no
+             * coordinates and need not deliver application data. Promote its
+             * retained setup return route now: leaving it as a carrier-funded
+             * hint lets unrelated transit hints evict it from probation. */
+            if (!ext->is_initiator && ext->has_dest_coords && ext->dest_count)
+                fipsd_dp_stated(h, &ext->peer, (fips_fsp_coords){ext->dest_coords[0].bytes, ext->dest_count});
             ext->established = true; ++h->counters.sess_established;
             hs_notice(h, FIPSD_NOTICE_SESSION_UP, &ext->peer, NULL, 0);
             if (ext->mmp_live) fips_mmp_session_reset_for_rekey(&ext->mmp, hs_now_ms(h));

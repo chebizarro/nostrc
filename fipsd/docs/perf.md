@@ -54,6 +54,57 @@ mailbox/cancellation regression checks refused-send ownership without sleeps.
 The independent inline code review found no additional actionable issue; it did
 not inspect a checkout or independently execute the tests.
 
+### Follow-up: responder return-route lifetime under batching
+
+A subsequent repeated real-UDP ring check exposed a route-lifetime bug that the
+original one-shot full suite missed. Temporary tracing reproduced `missing
+datagram 3 -> 0`: n3 learned n0's setup coordinates as an **unfunded probation
+hint**, installed its responder session on successful XK msg3 with no application
+delivery, then lost the hint to unrelated probation churn. At the failed route
+lookup the live cache also lacked n0 (`live=0`, `needs_publish=0`); this was **not
+control coalescing delaying a dataplane snapshot**. `fipsd_dp_route` already
+publishes requested dataplane changes before every route lookup.
+
+The missing operation was promotion after initial responder proof: msg3 has no
+coordinate statement and need not deliver a CP-bearing application frame, so
+neither existing `stated` intake path promoted the retained setup coordinates.
+Faster batched dispatch exposed the probation-eviction ordering. The fix calls
+`fipsd_dp_stated` for the retained return coordinates when the real executor first
+installs a responder session, before SESSION_UP or pending-send release. Setup
+intake before proof remains carrier-funded; after proof these are still hints,
+not signed/verified coordinates. The existing dataplane dirty flag and route
+publication barrier make the promotion visible before dependent routing. Control
+snapshot coalescing, dispatcher batching and funding defaults are unchanged.
+
+`FipsdNodeMultiReturnRouteTest` uses a three-node real-UDP line. A dispatcher-side
+test action permanently exhausts the responder carrier's coordinate funding,
+then the production probe completes a real indirect XK session. A second
+single-writer action injects more unrelated unfunded hints than probation can
+hold, verifies live-cache retention and snapshot next-hop selection, followed by
+a real encrypted reverse datagram. It fails at the post-churn cache assertion
+on the unfixed source (2.37 s), and passes with the promotion. No sleeps, send
+retries, longer deadlines or enlarged queues were added; temporary tracing was
+removed. The inline follow-up review reported no further actionable finding.
+
+Follow-up verification (Debug/Werror, foreground bounded runs):
+
+- `ctest -R FipsdNodeMulti --repeat until-fail:15`: Line, Star, Ring, FullMesh
+  **and ReturnRoute each 15/15**, under ASan+UBSan (509.44 s) and TSan (633.28 s).
+- `FipsdNativeBurstTest --repeat until-fail:10` under TSan: **10/10**, 24.31 s.
+- Full `ctest -R '^Fips' -E 'Soak|Perf'`: **178 counted, 170 passes, 8 capability
+  skips, 0 failures** under each sanitizer; ASan+UBSan 177.05 s, TSan 299.02 s.
+  The same optional interop/privileged skips and sanitizer options documented
+  below apply. The known unrelated `relay.c:1064` TSan race did not fire.
+- Fresh Release/Werror `perf_loopback.py --runs 1 --seconds 5
+  --latency-samples 1000`, pinned locked Rust daemon unchanged: C-to-C
+  **686.556 Mbit/s**, **0.091% loss**, forward p50/p99 **78/133 us**, reverse
+  **80/134 us**. Contemporaneous Rust-to-Rust **861.036 Mbit/s**, Rust/C **1.254x**;
+  C-to-Rust **672.998 Mbit/s**. This is one smoke run, **not a new median
+  baseline**; the three-run baseline below is unchanged.
+- All three requested static checkers and `git diff --check` pass. Build and
+  scratch directories and the separate Rust target are removed after checking;
+  submodules are deinitialized. No merge or push.
+
 ## Machine and workload
 
 - Apple M4 Max, arm64, 14 logical CPUs, 36 GiB RAM, macOS 27.0.1 (26A434),
