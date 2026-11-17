@@ -1568,13 +1568,17 @@ actor rebuilds and compares the canonical content with the last built advert:
 a changed set is republished to every live relay; an unchanged one is sent
 nowhere, except to a relay that just reached EOSE and by the refresh ticker
 before NIP-40 expiry. An empty set publishes nothing; the old advert ages out.
-No timer polls transports.
+No timer polls transports. Each new content gets a `created_at` strictly after
+its predecessor's (at most a second ahead of the clock, within peers' skew
+clamp): NIP-01 relays and peer caches keep the lowest id among equal-second
+replaceable events, so a set changed within the same second would otherwise
+be dropped as a "duplicate".
 
 `FipsdNostrAdvertTest` runs this through the real registry, driver and actor
 against two libsoup relays and a fake control port: `external_addr` overrides
 a loopback bind, `advertise_on_nostr: false` and loopback-only TCP are omitted,
 the onion appears only after `HS_DESC UPLOADED` with exactly one republish per
-relay, and refreshes and further HSDir reports republish nothing (barriers:
+relay at a later `created_at`, and refreshes and further HSDir reports republish nothing (barriers:
 publish OKs, a refetch EOSE behind earlier commands, control command lines).
 `FipsdNostrEventsTest` checks upstream's advert content strings and filter,
 precedence and `external_addr` rows; `FipsdTorTest` the latch.

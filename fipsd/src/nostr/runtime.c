@@ -71,6 +71,7 @@ struct fipsd_nostr_runtime {
     fipsd_nostr_inbox inbox;
     fipsd_nostr_advert local;
     char *advertised; /* canonical content of the last built publishable advert; NULL: none */
+    uint64_t advert_created; /* created_at of the last local advert published */
     fipsd_nostr_failure_state failures;
     fipsd_signal_router router;
     bool router_ready;
@@ -305,8 +306,15 @@ static void publish_local(fipsd_nostr_runtime *r, relay_slot *only, bool refresh
     } else if (refresh) only = NULL;
     free(content);
     if (!r->advertised || (!changed && !refresh && !only)) return;
+    /* NIP-01 keeps the lowest id among equal-timestamp replaceable events, and
+     * so do peers' caches: a new set in the same second as its predecessor
+     * would be dropped as "duplicate". Each new content gets a later second. */
+    uint64_t at = wall() / 1000;
+    if (changed && at <= r->advert_created) at = r->advert_created + 1;
+    else if (at < r->advert_created) at = r->advert_created;
+    r->advert_created = at;
     NostrEvent *e = NULL, *inbox = NULL;
-    if (fipsd_nostr_advert_build(r->identity, &a, r->app, wall() / 1000, r->advert_ttl, &e) != FIPSD_NOSTR_OK) {
+    if (fipsd_nostr_advert_build(r->identity, &a, r->app, at, r->advert_ttl, &e) != FIPSD_NOSTR_OK) {
         FIPSD_WARN("nostr", "local advert refused (no bounded usable endpoints/relay/STUN inputs)"); return;
     }
     if (r->inbox.count) fipsd_nostr_inbox_build(r->identity, &r->inbox, wall() / 1000, &inbox);

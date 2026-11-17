@@ -128,6 +128,7 @@ void fipsd_tcp_destroy(fipsd_transport *t)
     for (size_t i = 0; i < sizeof channels / sizeof channels[0]; ++i) if (channels[i]) go_channel_unref(channels[i]);
     free(u);
 }
+bool fipsd_tcp_is(const fipsd_transport *t) { return t && t->ops == &ops; }
 GoChannel *fipsd_tcp_bound(fipsd_transport *t) { return ((tcp_instance *)t->user)->bound; }
 bool fipsd_tcp_address(fipsd_transport *t, fips_transport_addr *out)
 {

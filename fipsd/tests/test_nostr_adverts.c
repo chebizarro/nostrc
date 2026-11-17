@@ -71,18 +71,19 @@ static void barrier(harness *h)
         assert(value != NOSTR_KIND_FIPS_OVERLAY_ADVERT);
     }
 }
-static char *latest(fixture *f, size_t relay, const char *author, size_t *count)
+static char *latest(fixture *f, size_t relay, const char *author, size_t *count, int64_t *created)
 {
     char *json = fixture_latest(f, relay, NOSTR_KIND_FIPS_OVERLAY_ADVERT, author, count);
     if (!json) return NULL;
     NostrEvent *e = NULL; assert(fipsd_nostr_event_parse(json, strlen(json), &e) == FIPSD_NOSTR_OK); free(json);
-    char *content = strdup(e->content); assert(content); nostr_event_free(e); return content;
+    char *content = strdup(e->content); assert(content); *created = e->created_at; nostr_event_free(e); return content;
 }
-static bool both(fixture *f, const char *author, const char *want, size_t counts[2])
+/* Both relays' newest advert has `want`; created[i] is its created_at. */
+static bool both(fixture *f, const char *author, const char *want, size_t counts[2], int64_t created[2])
 {
     bool same = true;
     for (size_t i = 0; i < 2; ++i) {
-        char *content = latest(f, i, author, &counts[i]);
+        char *content = latest(f, i, author, &counts[i], &created[i]);
         same = same && content && !strcmp(content, want); free(content);
     }
     return same;
@@ -146,24 +147,28 @@ int main(void)
     expect_command(&ctl, "GETINFO hs/service/desc/id/" ID);
     /* First advert: only pub's external TCP endpoint, at both relays. The
      * set may be built before pub's listener binds; then the bind republishes. */
-    size_t base[2], now[2];
-    do advert_published(&h); while (!both(f, author, BODY(TCP), base));
+    size_t base[2], now[2]; int64_t first[2], at[2];
+    do advert_published(&h); while (!both(f, author, BODY(TCP), base, first));
     printf("tcp-only advert at both relays after %zu/%zu publishes: %s\n", base[0], base[1], BODY(TCP));
     /* Unchanged inputs: refresh requests (as STUN observation sends) publish nothing. */
     assert(fipsd_nostr_runtime_refresh_advert(h.relay) && fipsd_nostr_runtime_refresh_advert(h.relay));
-    barrier(&h); assert(both(f, author, BODY(TCP), now) && now[0] == base[0] && now[1] == base[1]);
+    barrier(&h); assert(both(f, author, BODY(TCP), now, at) && now[0] == base[0] && now[1] == base[1]);
     /* Tor reports this service's descriptor uploaded: one republish per relay. */
     torctl_fixture_event(&ctl, "HS_DESC UPLOADED " ID HSDIR);
     const char *with_onion = BODY(TCP ",{\"transport\":\"tor\",\"addr\":\"" ONION ":443\"}");
     advert_published(&h); advert_published(&h);
-    assert(both(f, author, with_onion, now) && now[0] == base[0] + 1 && now[1] == base[1] + 1);
+    assert(both(f, author, with_onion, now, at) && now[0] == base[0] + 1 && now[1] == base[1] + 1);
+    /* The fixture appends; a NIP-01 relay replaces, keeping the lowest id on a
+     * tie. The new set must win there too: a strictly later created_at, even
+     * though it follows the first advert within milliseconds. */
+    assert(at[0] > first[0] && at[1] > first[1]);
     printf("onion joined after HS_DESC UPLOADED, republished once per relay: %s\n", with_onion);
     /* The other HSDirs' reports and a refresh change nothing: no republish. */
     torctl_fixture_event(&ctl, "HS_DESC UPLOADED " ID " UNKNOWN $0202020202020202020202020202020202020202~hsdir2");
     torctl_fixture_event(&ctl, "STATUS_CLIENT NOTICE CIRCUIT_ESTABLISHED");
     expect_command(&ctl, "GETINFO status/bootstrap-phase"); /* the monitor handled both lines */
     assert(fipsd_nostr_runtime_refresh_advert(h.relay));
-    barrier(&h); assert(both(f, author, with_onion, now) && now[0] == base[0] + 1 && now[1] == base[1] + 1);
+    barrier(&h); assert(both(f, author, with_onion, now, at) && now[0] == base[0] + 1 && now[1] == base[1] + 1);
     /* What a peer reads back: signed, tagged, unexpired, both endpoints usable. */
     size_t count; char *json = fixture_latest(f, 0, NOSTR_KIND_FIPS_OVERLAY_ADVERT, author, &count); assert(json);
     NostrEvent *e = NULL; assert(fipsd_nostr_event_parse(json, strlen(json), &e) == FIPSD_NOSTR_OK); free(json);

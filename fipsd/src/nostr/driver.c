@@ -102,7 +102,7 @@ static bool adverts_prepare(fipsd_nostr_node_driver *d, const fipsd_config *c, s
     for (size_t i = 0; i < d->transports->count && a->count < FIPSD_TRANSPORT_MAX; ++i) {
         fipsd_transport *t = d->transports->items[i]; fipsd_nostr_transport kind;
         if (!strcmp(t->type, "udp")) kind = FIPSD_NOSTR_UDP;
-        else if (!strcmp(t->type, "tcp")) kind = FIPSD_NOSTR_TCP;
+        else if (fipsd_tcp_is(t)) kind = FIPSD_NOSTR_TCP;
         else if (fipsd_tor_is(t)) kind = FIPSD_NOSTR_TOR;
         else continue;
         const fipsd_config_value *v = instance(c, t);
