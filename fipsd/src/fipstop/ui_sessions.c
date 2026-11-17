@@ -11,6 +11,8 @@ void ft_ui_sessions(ft_frame *f,ft_app *a,ft_rect r)
     char title[128]; snprintf(title,sizeof(title)," Sessions (%zu) ",n); table=ft_box(f,table,title,false);
     ft_column cols[]={{"Name","display_name",12},{"Remote Addr","short_addr",13},{"State","state",13},
         {"Role","role",6},{"SRTT","srtt",8},{"Loss","loss",7},{"SQI","sqi",6},{"Path MTU","mmp.path_mtu",9},{"Last Activity","activity",14}};
+    if(table.w<=78) { int compact[]={12,12,10,6,6,6,6,6,6}; for(size_t i=0;i<9;++i) cols[i].width=compact[i]; }
+    else if(table.w>=96) cols[0].width=table.w-84;
     ft_table_header(f,table,cols,9);
     size_t visible=table.h>1?(size_t)table.h-1:0,*start=&a->table_scroll[FT_SESSIONS];
     int selected=a->selected[FT_SESSIONS];
@@ -18,7 +20,7 @@ void ft_ui_sessions(ft_frame *f,ft_app *a,ft_rect r)
     *start=ft_clamp_scroll(*start,n,visible);
     for(size_t i=*start;i<n && i-*start<visible;++i) {
         json_t *s=json_array_get(rows,i),*v=json_deep_copy(s);
-        char *addr=ft_truncate(ft_str(s,"remote_addr"),10,false); json_object_set_new(v,"short_addr",json_string(addr?addr:"-")); free(addr);
+        char *addr=ft_truncate_hex(ft_str(s,"remote_addr"),10); json_object_set_new(v,"short_addr",json_string(addr?addr:"-")); free(addr);
         json_object_set_new(v,"role",json_string(json_is_true(ft_get(s,"is_initiator"))?"init":"resp"));
         const char *paths[]={"mmp.srtt_ms","mmp.smoothed_loss","mmp.sqi"},*names[]={"srtt","loss","sqi"};
         for(int j=0;j<3;++j) {
