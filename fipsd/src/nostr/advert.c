@@ -88,14 +88,30 @@ static bool parse_port(const char *s, size_t n, uint16_t *out)
     }
     *out = (uint16_t)v; return true;
 }
+/* Rust's dotted quad: four 1-3 digit octets <= 255, no leading zero. Some
+ * libc inet_pton (macOS) accept "01.2.3.4"; Rust and glibc do not. */
+static bool dotted_quad(const char *s)
+{
+    for (int octet = 0; octet < 4; ++octet) {
+        unsigned v = 0; int digits = 0;
+        while (s[digits] >= '0' && s[digits] <= '9' && digits < 4) v = v * 10 + (unsigned)(s[digits++] - '0');
+        if (!digits || digits > 3 || v > 255 || (digits > 1 && s[0] == '0')) return false;
+        s += digits;
+        if (octet < 3 && *s++ != '.') return false;
+    }
+    return !*s;
+}
 static bool parse_ip(const char *s, size_t n, int *family, uint8_t ip[16])
 {
     char text[64];
     if (!n || n >= sizeof text) return false;
     memcpy(text, s, n); text[n] = 0;
-    if (inet_pton(AF_INET, text, ip) == 1) { *family = AF_INET; return true; }
-    if (inet_pton(AF_INET6, text, ip) == 1) { *family = AF_INET6; return true; }
-    return false;
+    if (!strchr(text, ':')) {
+        *family = AF_INET; return dotted_quad(text) && inet_pton(AF_INET, text, ip) == 1;
+    }
+    const char *tail = strrchr(text, ':') + 1; /* an embedded IPv4 is the last group */
+    *family = AF_INET6;
+    return (!strchr(tail, '.') || dotted_quad(tail)) && inet_pton(AF_INET6, text, ip) == 1;
 }
 static bool parse_socket(const char *s, int *family, uint8_t ip[16], uint16_t *port)
 {

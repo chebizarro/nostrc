@@ -380,6 +380,17 @@ add_test(NAME FipsdNostrRuntimeTest COMMAND fipsd_nostr_runtime_test)
 set_tests_properties(FipsdNostrRuntimeTest PROPERTIES TIMEOUT 90 LABELS "fips;nostr;relay"
   ENVIRONMENT "FIPSD_WORKERS=2")
 nostrc_describe_test(FipsdNostrRuntimeTest OWNER fipsd TARGETS fipsd_nostr_runtime_test)
+# The node's own advert (nostrc-r4aeo): TCP/Tor endpoints from the real
+# transport registry and driver, the onion after a fake control port's
+# HS_DESC UPLOADED, one republish per change and none without one.
+fipsd_unit_test(fipsd_nostr_adverts_test test_nostr_adverts.c)
+target_sources(fipsd_nostr_adverts_test PRIVATE nostr_relay_fixture.c torctl_fixture.c)
+target_link_libraries(fipsd_nostr_adverts_test PRIVATE PkgConfig::FIPSD_RELAY_TEST)
+add_dependencies(fipsd_tests fipsd_nostr_adverts_test)
+add_test(NAME FipsdNostrAdvertTest COMMAND fipsd_nostr_adverts_test)
+set_tests_properties(FipsdNostrAdvertTest PROPERTIES TIMEOUT 90 LABELS "fips;nostr;relay;transport"
+  ENVIRONMENT "FIPSD_WORKERS=2")
+nostrc_describe_test(FipsdNostrAdvertTest OWNER fipsd TARGETS fipsd_nostr_adverts_test)
 
 # Detected medium -> dispatcher -> Bundle selection with virtual time.
 fipsd_unit_test(fipsd_node_path_medium_test test_node_path_medium.c)

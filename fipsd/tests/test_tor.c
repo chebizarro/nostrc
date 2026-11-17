@@ -26,8 +26,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#define ONION_A "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa2.onion"
-#define ONION_B "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb2.onion"
+#define ID_A "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa2"
+#define ID_B "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb2"
+#define ONION_A ID_A ".onion"
+#define ONION_B ID_B ".onion"
+#define HSDIR " UNKNOWN $0101010101010101010101010101010101010101~hsdir"
 static const char *dir;
 static void *receive(GoChannel *channel)
 {
@@ -95,6 +98,7 @@ static void config(void)
     assert(x->config.connect_timeout_ms == 120000 && !x->has_control && fipsd_tor_is(owned[0]));
     assert(owned[0]->ops->mtu(owned[0], NULL) == 1400 && !strcmp(fipsd_tor_mode(owned[0]), "socks5"));
     fips_transport_addr none; assert(!owned[0]->ops->local_addr(owned[0], &none));
+    assert(!fipsd_tor_advertised_onion(owned[0]) && fipsd_tor_advertised_port(owned[0]) == 443);
     fipsd_tor_destroy(owned[0]); fipsd_config_free(cfg);
     yaml = "node: {limits: {max_connections: 9}}\ntransports:\n  tor:\n"
         "    out: {socks5_addr: '127.0.0.1:19050', mtu: 1500, control_addr: '127.0.0.1:9051'}\n"
@@ -146,8 +150,8 @@ static void config(void)
 typedef struct fixture {
     socks5_fixture proxy;
     fipsd_runtime *rt;
-    fipsd_transport *t[6];
-    GoChannel *e[6], *done;
+    fipsd_transport *t[8];
+    GoChannel *e[8], *done;
     size_t count;
     unsigned mode;
     torctl_fixture *ctl;
@@ -184,6 +188,11 @@ static void dial_and_mtu(fixture *f)
     fips_transport_addr a_listen = listener(A), b_listen = listener(B), c_addr = listener(C), d_addr = listener(D);
     socks5_fixture_route(&f->proxy, ONION_A, &a_listen); socks5_fixture_route(&f->proxy, ONION_B, &b_listen);
     assert(!strcmp(fipsd_tor_onion_address(A), ONION_A) && !strcmp(fipsd_tor_onion_address(B), ONION_B));
+    /* No control monitor: the hostname read at start is the advert input (upstream). */
+    void *ready = NULL;
+    assert(!strcmp(fipsd_tor_advertised_onion(A), ONION_A) && fipsd_tor_advertised_port(A) == 443);
+    assert(go_channel_try_receive(fipsd_tor_advert_updates(A), &ready) == 0 && ready == A->user);
+    assert(go_channel_try_receive(fipsd_tor_advert_updates(A), &ready) != 0);
     assert(A->accept_connections && !strcmp(fipsd_tor_mode(A), "directory"));
     /* Numeric target: SOCKS5 ATYP IPv4, isolation credentials fips / peer. */
     assert(A->ops->connect_async(A, &d_addr) == 0);
@@ -323,15 +332,16 @@ static void inbound(fixture *f)
     puts("onion listener: inbound cap, first-frame deadline releases the slot, hostname file required and checked: ok");
 }
 /* Command lines in order until one starts with `prefix`; never ADD_ONION. */
-static void expect_command(torctl_fixture *c, const char *prefix)
+static char *expect_line(torctl_fixture *c, const char *prefix)
 {
     for (;;) {
         char *line = receive(c->commands); assert(line);
         assert(strncmp(line, "ADD_ONION", 9) && strncmp(line, "DEL_ONION", 9));
-        bool hit = !strncmp(line, prefix, strlen(prefix)); free(line);
-        if (hit) return;
+        if (!strncmp(line, prefix, strlen(prefix))) return line;
+        free(line);
     }
 }
+static void expect_command(torctl_fixture *c, const char *prefix) { free(expect_line(c, prefix)); }
 static fipsd_tor_monitoring until(fipsd_transport *t, bool (*ok)(const fipsd_tor_monitoring *))
 {
     fipsd_tor_monitoring m;
@@ -346,7 +356,7 @@ static bool bw(const fipsd_tor_monitoring *m) { return m->traffic_read == 104857
 static bool any(const fipsd_tor_monitoring *m) { return m->version[0] != 0; }
 static void control(fixture *f)
 {
-    torctl_fixture *ctl = calloc(4, sizeof *ctl); assert(ctl);
+    torctl_fixture *ctl = calloc(5, sizeof *ctl); assert(ctl);
     torctl_fixture_start(&ctl[0], NULL);
     fipsd_tor_config c = base("directory", f->proxy.addr, 1400);
     char text[80]; int n = snprintf(text, sizeof text, "%s\n", ONION_A);
@@ -357,13 +367,28 @@ static void control(fixture *f)
     assert(J->ops->start_async(J, f->rt, NULL, ej) == 0);
     expect_command(&ctl[0], "AUTHENTICATE \"test\\\"pa\\\\ss\"");
     expect_command(&ctl[0], "GETINFO status/bootstrap-phase status/circuit-established traffic/read traffic/written network-liveness version dormant");
-    expect_command(&ctl[0], "SETEVENTS STATUS_CLIENT NETWORK_LIVENESS BW");
+    char *line = expect_line(&ctl[0], "SETEVENTS"); /* an onion is served: HS_DESC too */
+    assert(!strcmp(line, "SETEVENTS STATUS_CLIENT NETWORK_LIVENESS BW HS_DESC")); free(line);
+    expect_command(&ctl[0], "GETINFO hs/service/desc/id/" ID_A); /* answered 552: nothing published yet */
     fipsd_tor_monitoring m = until(J, any);
     assert(m.bootstrap == 10 && !m.circuit_established && !strcmp(m.version, "0.4.8.10") && !strcmp(m.network_liveness, "up"));
+    /* The advert onion waits for Tor's own upload of this service's descriptor:
+     * other onions, other actions and longer addresses are not it. */
+    GoChannel *ready = fipsd_tor_advert_updates(J); void *v = NULL;
+    assert(!fipsd_tor_advertised_onion(J) && !strcmp(fipsd_tor_onion_address(J), ONION_A));
+    torctl_fixture_event(&ctl[0], "HS_DESC UPLOADED " ID_B HSDIR);
+    torctl_fixture_event(&ctl[0], "HS_DESC RECEIVED " ID_A " NO_AUTH $0101010101010101010101010101010101010101~hsdir");
+    torctl_fixture_event(&ctl[0], "HS_DESC UPLOAD " ID_A HSDIR " ABCDEF HSDIR_INDEX=00");
+    torctl_fixture_event(&ctl[0], "HS_DESC UPLOADED " ID_A "x" HSDIR);
     torctl_fixture_event(&ctl[0], "STATUS_CLIENT NOTICE BOOTSTRAP PROGRESS=50 TAG=loading_descriptors SUMMARY=\"Loading relay descriptors\"");
-    (void)until(J, half);
+    (void)until(J, half); /* every earlier line was handled */
+    assert(!fipsd_tor_advertised_onion(J) && go_channel_try_receive(ready, &v) != 0);
+    torctl_fixture_event(&ctl[0], "HS_DESC UPLOADED " ID_A HSDIR);
+    assert(receive(ready) == J->user && !strcmp(fipsd_tor_advertised_onion(J), ONION_A));
+    torctl_fixture_event(&ctl[0], "HS_DESC UPLOADED " ID_A " UNKNOWN $0202020202020202020202020202020202020202~other");
     torctl_fixture_event(&ctl[0], "STATUS_CLIENT NOTICE BOOTSTRAP PROGRESS=100 TAG=done SUMMARY=\"Done\"");
     (void)until(J, done);
+    assert(go_channel_try_receive(ready, &v) != 0); /* one notification for the latch, not one per HSDir */
     torctl_fixture_event(&ctl[0], "STATUS_CLIENT NOTICE CIRCUIT_ESTABLISHED");
     (void)until(J, circuit);
     torctl_fixture_event(&ctl[0], "NETWORK_LIVENESS DOWN");
@@ -394,9 +419,9 @@ static void control(fixture *f)
     fipsd_transport *K = fipsd_tor_create((fips_transport_id){21}, "ctl", &k); assert(K);
     assert(K->ops->start_async(K, f->rt, NULL, ek) == 0);
     assert(fipsd_tor_monitoring_snapshot(K, &m) && m.bootstrap == 10); /* taken before start returned */
-    expect_command(&ctl[1], "SETEVENTS");
+    line = expect_line(&ctl[1], "SETEVENTS"); assert(!strstr(line, "HS_DESC")); free(line); /* no onion here */
     pthread_mutex_lock(&ctl[1].mu); unsigned authenticated = ctl[1].authenticated; pthread_mutex_unlock(&ctl[1].mu);
-    assert(!K->accept_connections && !fipsd_tor_onion_address(K) && authenticated == 1);
+    assert(!K->accept_connections && !fipsd_tor_onion_address(K) && !fipsd_tor_advertised_onion(K) && authenticated == 1);
     /* Refused authentication fails a control_port start. */
     ctl[2].reject_auth = true; torctl_fixture_start(&ctl[2], NULL);
     k.control_addr = ctl[2].addr; k.control_auth = "password:wrong";
@@ -418,9 +443,28 @@ static void control(fixture *f)
     m = until(M, any);
     assert(!strcmp(m.version, "0.4.8.10") && m.bootstrap == 10 && !m.dormant && stats(M).control_errors >= 1);
     puts("monitor: control_port cookie auth on a Unix socket, refused auth fatal, late socket backoff, per-key GETINFO fallback: ok");
-    J->ops->stop(J); K->ops->stop(K); L->ops->stop(L); M->ops->stop(M);
+    /* A monitor (re)subscribing to a Tor that already holds the service's
+     * current descriptor (fipsd restarted under a running tor) need not wait
+     * for the next upload. */
+    ctl[4].descriptor = true; torctl_fixture_start(&ctl[4], NULL);
+    char text_b[80]; int nb = snprintf(text_b, sizeof text_b, "%s\n", ONION_B);
+    c.control_addr = ctl[4].addr; c.hostname_file = write_file("current.hostname", text_b, (size_t)nb);
+    fipsd_transport *P = fipsd_tor_create((fips_transport_id){24}, "current", &c); assert(P);
+    assert(P->ops->start_async(P, f->rt, NULL, f->e[6]) == 0);
+    expect_command(&ctl[4], "GETINFO hs/service/desc/id/" ID_B);
+    assert(receive(fipsd_tor_advert_updates(P)) == P->user && !strcmp(fipsd_tor_advertised_onion(P), ONION_B));
+    /* A configured monitor that never gets a first session cannot confirm
+     * anything: the hostname file suffices, as without a monitor (upstream). */
+    char absent[512]; snprintf(absent, sizeof absent, "%s/absent.sock", dir);
+    c.control_addr = absent; c.hostname_file = write_file("absent.hostname", text, (size_t)n);
+    fipsd_transport *N = fipsd_tor_create((fips_transport_id){25}, "absent", &c); assert(N);
+    assert(N->ops->start_async(N, f->rt, NULL, f->e[7]) == 0);
+    assert(receive(fipsd_tor_advert_updates(N)) == N->user && !strcmp(fipsd_tor_advertised_onion(N), ONION_A));
+    assert(stats(N).control_errors >= 1);
+    puts("advert onion: HS_DESC UPLOADED for this service only, latched once; current descriptor at subscribe; unmonitored fallback: ok");
+    J->ops->stop(J); K->ops->stop(K); L->ops->stop(L); M->ops->stop(M); P->ops->stop(P); N->ops->stop(N);
     /* Destroyed after the runtime joins; the fixtures outlive the monitors. */
-    f->t[2] = J; f->t[3] = K; f->t[4] = L; f->t[5] = M; f->ctl = ctl;
+    f->t[2] = J; f->t[3] = K; f->t[4] = L; f->t[5] = M; f->t[6] = P; f->t[7] = N; f->ctl = ctl;
 }
 static void run(void *arg)
 {
@@ -440,7 +484,7 @@ static void lifecycle(unsigned mode)
     fipsd_runtime *rt = fipsd_runtime_create(&rc); assert(rt);
     fixture f = {.mode = mode, .done = go_channel_create(1)};
     socks5_fixture_start(&f.proxy);
-    for (size_t i = 0; i < 6; ++i) { f.e[i] = go_channel_create(64); assert(f.e[i]); }
+    for (size_t i = 0; i < 8; ++i) { f.e[i] = go_channel_create(64); assert(f.e[i]); }
     fipsd_tcp_config tc; fipsd_tcp_config_default(&tc); tc.bind_addr = "127.0.0.1:0";
     if (mode == 0) {
         f.t[0] = directory(1, "a", f.proxy.addr, 1500, ONION_A);
@@ -477,15 +521,15 @@ static void lifecycle(unsigned mode)
     void *result = receive(f.done); assert(result);
     fipsd_runtime_shutdown(rt); assert(fipsd_runtime_run(rt) == FIPSD_RUN_OK);
     fipsd_runtime_destroy(rt);
-    size_t total = mode <= 1 ? 4 : 6;
+    size_t total = mode <= 1 ? 4 : mode == 2 ? 6 : 8;
     for (size_t i = 0; i < total; ++i) {
         fipsd_transport *t = f.t[i]; if (!t) continue;
         assert(!atomic_load(&t->shared->stats.pool_outbound) && !atomic_load(&t->shared->stats.pool_inbound));
         if (is_tor(t)) fipsd_tor_destroy(t); else fipsd_tcp_destroy(t);
     }
-    if (f.ctl) { for (size_t i = 0; i < 4; ++i) torctl_fixture_stop(&f.ctl[i]); free(f.ctl); }
+    if (f.ctl) { for (size_t i = 0; i < 5; ++i) torctl_fixture_stop(&f.ctl[i]); free(f.ctl); }
     socks5_fixture_stop(&f.proxy);
-    for (size_t i = 0; i < 6; ++i) { void *v; while (go_channel_try_receive(f.e[i], &v) == 0) free(v); go_channel_unref(f.e[i]); }
+    for (size_t i = 0; i < 8; ++i) { void *v; while (go_channel_try_receive(f.e[i], &v) == 0) free(v); go_channel_unref(f.e[i]); }
     go_channel_unref(f.done);
 }
 int main(void)

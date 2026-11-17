@@ -8,7 +8,8 @@
  * upstream tor/mock_control.rs, extended with asynchronous events:
  * AUTHENTICATE (a password or a 32-byte cookie in hex, or refuse), GETINFO
  * for the monitoring keys (batched or one key at a time, optionally refusing
- * the batch with 552 the way a daemon lacking one key does), SETEVENTS, and
+ * the batch with 552 the way a daemon lacking one key does), the onion
+ * service's current descriptor (hs/service/desc/id/, 552 unless set), SETEVENTS, and
  * 510 for anything else (ADD_ONION included). One client at a time; every
  * command line is reported on `commands`. torctl_fixture_event writes a 650
  * line to the client and updates the values GETINFO reports to match it. */
@@ -21,6 +22,7 @@ typedef struct torctl_fixture {
     int client;
     unsigned connections, authenticated;
     bool use_cookie, reject_auth, refuse_batch;
+    bool descriptor;         /* GETINFO hs/service/desc/id/<x>: a current descriptor (else 552) */
     char password[64];
     uint8_t cookie[32];
     unsigned bootstrap;

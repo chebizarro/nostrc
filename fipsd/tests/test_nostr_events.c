@@ -221,6 +221,111 @@ static void advert_inbox_bounds(void)
     CHECK(nostr_event_check_signature(e)); OK(fipsd_nostr_inbox_parse(e, &inbox)); CHECK(inbox.count == 0);
     nostr_event_free(e); fips_identity_destroy(id); ++checks;
 }
+/* Local advert assembly (nostrc-r4aeo) against upstream: content strings are
+ * src/nostr/tests/mod.rs's (serde field order; signalRelays/stunServers only
+ * beside udp:nat), the filter cases its validate_overlay_advert tests, the
+ * source rows driver.rs build_overlay_advert's precedence and the external
+ * rows config/transport.rs parse_external_advert_addr / parse_bind_port. */
+#define BODY(e) "{\"identifier\":\"fips-overlay-v1\",\"version\":1,\"endpoints\":[" e "]"
+static void meta(fipsd_nostr_advert *a)
+{
+    a->has_relays = a->has_stun = true; a->relay_count = a->stun_count = 1;
+    strcpy(a->relays[0], "wss://relay.example"); strcpy(a->stun[0], "stun:stun.example.org:3478");
+}
+static void expect_body(const fipsd_nostr_advert *a, const char *want)
+{
+    char *body = fipsd_nostr_advert_content(a); CHECK(body);
+    if (strcmp(body, want)) { fprintf(stderr, "got  %s\nwant %s\n", body, want); CHECK(false); }
+    free(body); ++checks;
+}
+static void local_adverts(void)
+{
+    const char *tcp8 = BODY("{\"transport\":\"tcp\",\"addr\":\"8.8.8.8:443\"}") "}";
+    fipsd_nostr_advert a = {.endpoint_count = 1, .endpoints = {{FIPSD_NOSTR_TCP, "8.8.8.8:443"}}};
+    expect_body(&a, tcp8); /* signed_overlay_advert_event_from */
+    a = (fipsd_nostr_advert){.endpoint_count = 2, .endpoints = {{FIPSD_NOSTR_TCP, "203.0.113.10:443"},
+        {FIPSD_NOSTR_TOR, "exampleonion.onion:1234"}}};
+    expect_body(&a, BODY("{\"transport\":\"tcp\",\"addr\":\"203.0.113.10:443\"},"
+        "{\"transport\":\"tor\",\"addr\":\"exampleonion.onion:1234\"}") "}"); /* ..._without_nat_metadata */
+    meta(&a); CHECK(fipsd_nostr_advert_publishable(&a)); /* documentation range never published */
+    CHECK(a.endpoint_count == 1 && !a.has_relays && !a.has_stun);
+    expect_body(&a, BODY("{\"transport\":\"tor\",\"addr\":\"exampleonion.onion:1234\"}") "}");
+    const char *nat = BODY("{\"transport\":\"udp\",\"addr\":\"nat\"}") ",\"signalRelays\":[\"wss://relay.example\"],"
+        "\"stunServers\":[\"stun:stun.example.org:3478\"]}";
+    a = (fipsd_nostr_advert){.endpoint_count = 1, .endpoints = {{FIPSD_NOSTR_UDP, "nat"}}}; meta(&a);
+    expect_body(&a, nat); /* serializes_nat_overlay_advert_with_metadata */
+    CHECK(fipsd_nostr_advert_publishable(&a)); expect_body(&a, nat);
+    a.stun_count = 0; CHECK(!fipsd_nostr_advert_publishable(&a)); /* udp:nat requires non-empty stunServers */
+    a = (fipsd_nostr_advert){.endpoint_count = 1, .endpoints = {{FIPSD_NOSTR_UDP, "nat"}}}; meta(&a); a.relay_count = 0;
+    CHECK(!fipsd_nostr_advert_publishable(&a)); /* ... and signalRelays */
+    a = (fipsd_nostr_advert){.endpoint_count = 3, .endpoints = {{FIPSD_NOSTR_TCP, "192.168.1.10:443"},
+        {FIPSD_NOSTR_UDP, "100.64.1.2:2121"}, {FIPSD_NOSTR_TCP, "8.8.8.8:443"}}}; meta(&a);
+    CHECK(fipsd_nostr_advert_publishable(&a)); expect_body(&a, tcp8); /* ..._filters_unroutable_direct_endpoints */
+    a = (fipsd_nostr_advert){.endpoint_count = 2, .endpoints = {{FIPSD_NOSTR_TCP, "127.0.0.1:443"}, {FIPSD_NOSTR_UDP, "10.0.0.2:2121"}}};
+    CHECK(!fipsd_nostr_advert_publishable(&a) && !a.endpoint_count); /* ..._rejects_only_unroutable_direct_endpoints */
+    a = (fipsd_nostr_advert){.endpoint_count = 2, .endpoints = {{FIPSD_NOSTR_UDP, "nat"}, {FIPSD_NOSTR_TCP, "8.8.8.8:443"}}}; meta(&a);
+    CHECK(fipsd_nostr_advert_publishable(&a));
+    expect_body(&a, BODY("{\"transport\":\"udp\",\"addr\":\"nat\"},{\"transport\":\"tcp\",\"addr\":\"8.8.8.8:443\"}")
+        ",\"signalRelays\":[\"wss://relay.example\"],\"stunServers\":[\"stun:stun.example.org:3478\"]}");
+    const fipsd_nostr_transport U = FIPSD_NOSTR_UDP, T = FIPSD_NOSTR_TCP, O = FIPSD_NOSTR_TOR;
+    const struct { fipsd_nostr_advert_source s; const char *want; const char *why; } rows[] = {
+        {{.transport = U, .advertise = true, .local = "0.0.0.0:2121"}, "nat", NULL},
+        {{.transport = U, .advertise = false, .local = "0.0.0.0:2121"}, NULL, NULL},
+        {{.transport = U, .advertise = true, .is_public = true, .external = "198.51.100.9:2121", .local = "1.2.3.4:2121"}, "198.51.100.9:2121", NULL},
+        {{.transport = U, .advertise = true, .is_public = true, .local = "1.2.3.4:2121", .reflexive = "5.6.7.8"}, "1.2.3.4:2121", NULL},
+        {{.transport = U, .advertise = true, .is_public = true, .local = "0.0.0.0:2121", .reflexive = "198.18.0.7"}, "198.18.0.7:2121", NULL},
+        {{.transport = U, .advertise = true, .is_public = true, .local = "[::]:2121", .reflexive = "2001:db8:0:0:0:0:0:5"}, "[2001:db8::5]:2121", NULL},
+        {{.transport = U, .advertise = true, .is_public = true, .local = "0.0.0.0:2121"}, NULL, "STUN observation failed"},
+        {{.transport = U, .advertise = true, .is_public = true}, NULL, NULL},
+        {{.transport = T, .advertise = true, .external = "203.0.113.45:8443", .local = "0.0.0.0:8443"}, "203.0.113.45:8443", NULL},
+        {{.transport = T, .advertise = true, .local = "8.8.8.8:443"}, "8.8.8.8:443", NULL},
+        {{.transport = T, .advertise = true, .local = "[2001:db8:0:0::1]:443"}, "[2001:db8::1]:443", NULL},
+        {{.transport = T, .advertise = true, .local = "0.0.0.0:8443", .reflexive = "5.6.7.8"}, NULL, "no transports.tcp.external_addr"},
+        {{.transport = T, .advertise = true}, NULL, NULL},
+        {{.transport = T, .advertise = false, .external = "8.8.8.8:443"}, NULL, NULL},
+        {{.transport = O, .advertise = true, .onion = "exampleonion.onion", .advertised_port = 1234}, "exampleonion.onion:1234", NULL},
+        {{.transport = O, .advertise = true, .advertised_port = 443}, NULL, NULL},
+        {{.transport = O, .advertise = false, .onion = "exampleonion.onion", .advertised_port = 443}, NULL, NULL},
+    };
+    for (size_t i = 0; i < sizeof rows / sizeof *rows; ++i) {
+        fipsd_nostr_endpoint e; const char *why = "unset";
+        bool got = fipsd_nostr_advert_source_endpoint(&rows[i].s, &e, &why);
+        if (got != (rows[i].want != NULL) || (got && (e.transport != rows[i].s.transport || strcmp(e.addr, rows[i].want))) ||
+            (rows[i].why ? !why || !strstr(why, rows[i].why) : why != NULL)) {
+            fprintf(stderr, "source row %zu: got=%d addr=%s why=%s\n", i, got, got ? e.addr : "-", why ? why : "(null)"); CHECK(false);
+        }
+        ++checks;
+    }
+    const struct { const char *raw, *bind, *want; } external[] = {
+        {"203.0.113.45", "0.0.0.0:8443", "203.0.113.45:8443"}, {"203.0.113.45:9000", "0.0.0.0:8443", "203.0.113.45:9000"},
+        {"1.2.3.4", "0.0.0.0:2121", "1.2.3.4:2121"}, {"2001:db8::1", "[::]:443", "[2001:db8::1]:443"},
+        {"[2001:DB8:0::1]:80", "0.0.0.0:1", "[2001:db8::1]:80"}, {"::ffff:1.2.3.4", "0.0.0.0:7", "[::ffff:1.2.3.4]:7"},
+        {"1.2.3.4:080", "0.0.0.0:1", "1.2.3.4:80"}, {"1.2.3.4", NULL, NULL}, {"1.2.3.4:5", NULL, NULL},
+        {"1.2.3.4", "not-a-socket-addr", NULL}, {"1.2.3.4:5", "localhost:443", NULL}, {"example.com:443", "0.0.0.0:1", NULL},
+        {"01.2.3.4", "0.0.0.0:1", NULL}, {"1.2.3.4:65536", "0.0.0.0:1", NULL}, {"[::1]", "0.0.0.0:1", NULL},
+        {"1.2.3.4:", "0.0.0.0:1", NULL}, {"", "0.0.0.0:1", NULL}, {NULL, "0.0.0.0:1", NULL},
+    };
+    for (size_t i = 0; i < sizeof external / sizeof *external; ++i) {
+        char out[FIPSD_NOSTR_ADDR_MAX + 1] = "";
+        bool got = fipsd_nostr_advert_external(external[i].raw, external[i].bind, out);
+        if (got != (external[i].want != NULL) || (got && strcmp(out, external[i].want))) {
+            fprintf(stderr, "external row %zu (%s, %s): got=%d %s\n", i, external[i].raw ? external[i].raw : "(null)",
+                external[i].bind ? external[i].bind : "(null)", got, out); CHECK(false);
+        }
+        ++checks;
+    }
+    /* What the builder publishes is what a peer parses: tcp + tor, no NAT lists. */
+    fips_identity *id = identity("0000000000000000000000000000000000000000000000000000000000000004");
+    a = (fipsd_nostr_advert){.endpoint_count = 2, .endpoints = {{FIPSD_NOSTR_TCP, "8.8.8.8:443"},
+        {FIPSD_NOSTR_TOR, "exampleonion.onion:443"}}}; meta(&a);
+    CHECK(fipsd_nostr_advert_publishable(&a));
+    NostrEvent *e = NULL; OK(fipsd_nostr_advert_build(id, &a, FIPSD_NOSTR_IDENTIFIER, 2000000000, 3600, &e));
+    fipsd_nostr_advert parsed; uint64_t until;
+    OK(fipsd_nostr_advert_parse(e, FIPSD_NOSTR_IDENTIFIER, UINT64_C(2000000000000), 3600000, &parsed, &until));
+    CHECK(parsed.endpoint_count == 2 && parsed.endpoints[1].transport == FIPSD_NOSTR_TOR &&
+        !strcmp(parsed.endpoints[1].addr, "exampleonion.onion:443") && !parsed.has_relays && !parsed.has_stun);
+    nostr_event_free(e); fips_identity_destroy(id); ++checks;
+}
 static void properties(void)
 {
     fips_seeded_entropy rng = {0x0123456789abcdef};
@@ -248,7 +353,7 @@ int main(void)
     CHECK(!strcmp(sval(doc, "pin"), "6aa80504baa0fa312b392009eea0e3e59fb6fe4c"));
     json_t *cases = json_object_get(doc, "cases"); CHECK(json_array_size(cases) == 4);
     for (size_t i = 0; i < json_array_size(cases); ++i) fixture(json_array_get(cases, i));
-    freshness(); bounds(); advert_inbox_bounds(); properties();
+    freshness(); bounds(); advert_inbox_bounds(); local_adverts(); properties();
     json_decref(doc); fips_identity_destroy_secp(secp);
     printf("Nostr: 4 fixtures, 256 seeded payload round trips, %u checks passed\n", checks); return 0;
 }
