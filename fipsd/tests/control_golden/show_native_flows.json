@@ -5,6 +5,7 @@
     "stats": {
       "drop_arrival_queue_full": 0,
       "drop_backlog_full": 0,
+      "drop_client_buffer_full": 0,
       "drop_flow_queue_full": 0,
       "drop_listener_gone": 0,
       "drop_listener_not_reading": 0,

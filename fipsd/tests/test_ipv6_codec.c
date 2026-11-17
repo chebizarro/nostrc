@@ -183,11 +183,11 @@ static size_t syn_behind(uint8_t first, const uint8_t *ch, size_t ch_len, const 
 {
     memset(p, 0, 40); p[0] = 0x60; p[6] = first; p[7] = 64; p[8] = 0xfd; memset(p + 9, seed, 15); p[24] = 0xfd;
     memset(p + 25, (uint8_t)(seed * 31 + 7), 15);
-    memcpy(p + 40, ch, ch_len);
+    if (ch_len) memcpy(p + 40, ch, ch_len); /* callers pass NULL, 0 for no chain */
     size_t tcp = 40 + ch_len; memset(p + tcp, 0, 28);
     put16(p + tcp, 40000); put16(p + tcp + 2, 443); put32(p + tcp + 4, (uint32_t)seed * 0x01010101u);
     p[tcp + 12] = 7 << 4; p[tcp + 13] = 0x02; put16(p + tcp + 14, 64240);
-    memcpy(p + tcp + 20, opts, opts_len);
+    if (opts_len) memcpy(p + tcp + 20, opts, opts_len);
     size_t len = tcp + 28; put16(p + 4, (uint16_t)(len - 40));
     uint16_t sum = (uint16_t)~tcp_sum(p, len, tcp); put16(p + tcp + 16, sum);
     assert(tcp_sum(p, len, tcp) == 0xffff);

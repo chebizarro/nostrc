@@ -11,6 +11,7 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <net/if.h>
 #include <netdb.h>
 #include <poll.h>
@@ -23,12 +24,8 @@
 
 #define MODULE "gateway"
 
-static uint64_t mono_ms(void)
-{
-    struct timespec t;
-    clock_gettime(CLOCK_MONOTONIC, &t);
-    return (uint64_t)t.tv_sec * 1000u + (uint64_t)t.tv_nsec / 1000000u;
-}
+/* A deadline wait_ms after now on the gateway's nanosecond clock. */
+static fipsd_gw_instant deadline_after(unsigned wait_ms) { return fipsd_gw_now() + (uint64_t)wait_ms * 1000000u; }
 static int lower(int c) { return c >= 'A' && c <= 'Z' ? c + 32 : c; }
 
 bool fipsd_gw_dns_under_fips(const fipsd_dns_query *q)
@@ -207,15 +204,19 @@ int fipsd_gw_dns_bind_listener(const char *listen, char *err, size_t cap)
 }
 
 /* ---- datagram I/O on a fiber or a thread --------------------------------- */
-static ssize_t recv_until(int fd, void *buf, size_t cap, uint64_t deadline)
+/* Times out only once the deadline has passed: the remaining wait rounds up to
+ * whole milliseconds, and a timer that fires early (poll may, on macOS) just
+ * re-checks the deadline. */
+static ssize_t recv_until(int fd, void *buf, size_t cap, fipsd_gw_instant deadline)
 {
     for (;;) {
-        uint64_t now = mono_ms();
-        int left = now >= deadline ? 0 : (int)(deadline - now);
+        uint64_t rest = fipsd_gw_since(deadline, fipsd_gw_now());
+        uint64_t rest_ms = (rest + 999999u) / 1000000u;
+        int left = rest_ms > INT_MAX ? INT_MAX : (int)rest_ms;
         if (fipsd_gw_on_fiber()) {
             ssize_t n = gof_recvfrom(fd, buf, cap, 0, NULL, NULL, left);
             if (n < 0 && !left && (errno == EAGAIN || errno == EWOULDBLOCK)) errno = ETIMEDOUT;
-            if (n < 0 && errno == EINTR) continue;
+            if (n < 0 && (errno == EINTR || (errno == ETIMEDOUT && left))) continue;
             return n;
         }
         ssize_t n = recv(fd, buf, cap, 0);
@@ -225,7 +226,6 @@ static ssize_t recv_until(int fd, void *buf, size_t cap, uint64_t deadline)
         if (!left) { errno = ETIMEDOUT; return -1; }
         struct pollfd p = {.fd = fd, .events = POLLIN};
         int r = poll(&p, 1, left);
-        if (r == 0) { errno = ETIMEDOUT; return -1; }
         if (r < 0 && errno != EINTR) return -1;
     }
 }
@@ -249,7 +249,7 @@ int fipsd_gw_dns_probe_upstream(const struct sockaddr *upstream, socklen_t len, 
     /* Connected, so the kernel drops datagrams from any other source. */
     if (connect(fd, upstream, len) != 0) { snprintf(err, cap, "connect failed: %s", strerror(errno)); close(fd); return -1; }
     if (send_connected(fd, PROBE_QUERY, sizeof PROBE_QUERY) < 0) { snprintf(err, cap, "send failed: %s", strerror(errno)); close(fd); return -1; }
-    uint64_t deadline = mono_ms() + wait_ms;
+    fipsd_gw_instant deadline = deadline_after(wait_ms);
     uint8_t buf[FIPSD_DNS_MAX_DATAGRAM];
     bool refused = false;
     int rc = -1;
@@ -331,7 +331,7 @@ static int exchange(fipsd_gw_dns_resolver *r, const fipsd_dns_query *q, const ch
     }
     if (send_connected(fd, query, query_len) < 0) { FIPSD_DEBUG(MODULE, "Failed to forward query to daemon: error=%s", strerror(errno)); goto out; }
     /* Read until a datagram matches the query sent, or the deadline passes. */
-    uint64_t deadline = mono_ms() + r->upstream_timeout_ms;
+    fipsd_gw_instant deadline = deadline_after(r->upstream_timeout_ms);
     uint8_t buf[FIPSD_DNS_MAX_DATAGRAM];
     for (;;) {
         ssize_t n = recv_until(fd, buf, sizeof buf, deadline);

@@ -156,14 +156,17 @@ size_t fipsd_native_registry_flows(const fipsd_native_registry *r, fipsd_native_
             .established = false, .queued = p->held_len, .at = p->at};
         ++n;
     }
-    qsort(out, n < cap ? n : cap, sizeof *out, by_flow);
+    /* Counting callers pass out == NULL, cap == 0: qsort needs a valid base even for zero elements. */
+    size_t filled = n < cap ? n : cap;
+    if (filled > 1) qsort(out, filled, sizeof *out, by_flow);
     return n;
 }
 size_t fipsd_native_registry_listeners(const fipsd_native_registry *r, fipsd_native_listener_view *out, size_t cap)
 {
     for (size_t i = 0; i < r->listener_count && i < cap; ++i)
         out[i] = (fipsd_native_listener_view){.port = r->listeners[i].port, .backlog = r->listeners[i].pending_len};
-    qsort(out, r->listener_count < cap ? r->listener_count : cap, sizeof *out, by_port);
+    size_t filled = r->listener_count < cap ? r->listener_count : cap;
+    if (filled > 1) qsort(out, filled, sizeof *out, by_port);
     return r->listener_count;
 }
 static reg_listener *listener_find(fipsd_native_registry *r, uint16_t port)

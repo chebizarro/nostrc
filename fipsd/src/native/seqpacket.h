@@ -16,11 +16,15 @@
 
 #if defined(__APPLE__) || defined(__FreeBSD__)
 #define FIPSD_NATIVE_SOCK_TYPE SOCK_DGRAM
+/* A full client receive buffer refuses a write with ENOBUFS and raises no
+ * writability event, so delivery drops (and counts) instead of waiting. */
+#define FIPSD_NATIVE_FULL_CLIENT_DROPS 1
 /* Detection latency for a closed peer the reactor cannot see: a bounded wait
  * per idle flow, not a poll interval for data. */
 #define FIPSD_NATIVE_CLOSE_RETRY_MS 250
 #else
 #define FIPSD_NATIVE_SOCK_TYPE SOCK_SEQPACKET
+#define FIPSD_NATIVE_FULL_CLIENT_DROPS 0 /* a full client parks the writer */
 #define FIPSD_NATIVE_CLOSE_RETRY_MS (-1)
 #endif
 #ifndef MSG_NOSIGNAL

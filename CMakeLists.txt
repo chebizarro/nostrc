@@ -280,26 +280,20 @@ option(ENABLE_NSON "Enable NSON compilation" OFF)
 function(apply_sanitizers target)
   # Always honor GO_ENABLE_* toggles regardless of build type so CI (which may
   # use RelWithDebInfo) still links sanitizer DSOs for executables.
+  # -fsanitize=* on the link line selects the compiler's own runtime. Never name
+  # tsan/asan/ubsan libraries explicitly: under Clang that adds GCC's shared
+  # runtime beside Clang's static one, and two TSan runtimes crash at startup.
   if (GO_ENABLE_TSAN)
     target_compile_options(${target} PRIVATE -fsanitize=thread -fno-omit-frame-pointer)
     target_link_options(${target} PRIVATE -fsanitize=thread)
-    if (UNIX AND NOT APPLE)
-      target_link_libraries(${target} PRIVATE tsan)
-    endif()
   endif()
   if (GO_ENABLE_ASAN)
     target_compile_options(${target} PRIVATE -fsanitize=address -fno-omit-frame-pointer)
     target_link_options(${target} PRIVATE -fsanitize=address)
-    if (UNIX AND NOT APPLE)
-      target_link_libraries(${target} PRIVATE asan)
-    endif()
   endif()
   if (GO_ENABLE_UBSAN)
     target_compile_options(${target} PRIVATE -fsanitize=undefined)
     target_link_options(${target} PRIVATE -fsanitize=undefined)
-    if (UNIX AND NOT APPLE)
-      target_link_libraries(${target} PRIVATE ubsan)
-    endif()
   endif()
 endfunction()
 
@@ -308,11 +302,8 @@ endfunction()
 if (CMAKE_BUILD_TYPE STREQUAL "Debug")
   if (GO_ENABLE_TSAN)
     add_compile_options(-fsanitize=thread -fno-omit-frame-pointer -O2)
+    # The driver links the runtime; an explicit -ltsan would add a second one (see apply_sanitizers).
     add_link_options(-fsanitize=thread)
-    if (UNIX AND NOT APPLE)
-      # Ensure explicit tsan runtime linkage for lld on Linux
-      add_link_options(-ltsan)
-    endif()
   else()
     if (GO_ENABLE_ASAN)
       add_compile_options(-fsanitize=address -fno-omit-frame-pointer -O2)

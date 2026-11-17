@@ -3,8 +3,11 @@
 import copy
 import json
 from pathlib import Path
+import subprocess
+import sys
+import tempfile
 import unittest
-from perf_compare import aggregate, compare, validate
+from perf_compare import aggregate, compare, hosted_compare, hosted_gated, validate
 
 
 class ComparisonTest(unittest.TestCase):
@@ -113,6 +116,53 @@ class ComparisonTest(unittest.TestCase):
         data['loopback']['runs'][0][0]['received'] = 1002
         with self.assertRaises(ValueError):
             aggregate(data)
+
+
+class HostedPolicyTest(unittest.TestCase):
+    """Shared runners gate goodput and micro medians; latency and CPU are reported."""
+    def setUp(self):
+        policy = json.loads(Path(__file__).with_name('perf_baseline.json').read_text())
+        self.reference = copy.deepcopy(policy['metrics'])
+
+    def scaled(self, predicate, factor):
+        actual = copy.deepcopy(self.reference)
+        for name, metric in actual.items():
+            if predicate(name): metric['value'] *= factor
+        return actual
+
+    def test_gates_exactly_goodput_and_micro_medians(self):
+        gated = sorted(n for n in self.reference if hosted_gated(n))
+        self.assertEqual(len(gated), 39 + 3)
+        self.assertTrue(all(n.startswith('micro/') or n.endswith('/throughput_mbps') for n in gated))
+        self.assertFalse(any(hosted_gated(n) for n in self.reference if '_us' in n or '/cpu' in n))
+
+    def test_latency_and_cpu_regressions_are_reported_not_failed(self):
+        actual = self.scaled(lambda n: n.endswith('_us') or '/cpu' in n, 1.4)
+        failures, rows, warnings = hosted_compare(actual, self.reference)
+        self.assertEqual(failures, [])
+        self.assertEqual(len(rows), 66)
+        self.assertEqual(warnings, [])  # +40% stays below the 50% p50 warning
+
+    def test_eleven_percent_goodput_or_micro_regression_fails(self):
+        for predicate, factor in ((lambda n: n.endswith('/throughput_mbps'), .89),
+                                  (lambda n: n.startswith('micro/'), 1.11)):
+            failures, _, _ = hosted_compare(self.scaled(predicate, factor), self.reference)
+            self.assertTrue(failures)
+
+    def test_p50_beyond_fifty_percent_warns(self):
+        actual = self.scaled(lambda n: n.endswith('/p50_us'), 1.6)
+        failures, _, warnings = hosted_compare(actual, self.reference)
+        self.assertEqual(failures, [])
+        self.assertEqual(len(warnings), 9)  # 3 pairings x one_way/reverse_one_way/rtt
+
+    def test_hosted_requires_a_same_runner_reference(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            results = Path(tmp) / 'candidate.json'
+            results.write_text(json.dumps(ComparisonTest.data(ComparisonTest())))
+            run = subprocess.run([sys.executable, str(Path(__file__).with_name('perf_compare.py')), str(results), '--hosted'],
+                                 capture_output=True, text=True)
+        self.assertEqual(run.returncode, 2)
+        self.assertIn('same-runner --reference', run.stderr)
 
 
 if __name__ == '__main__':

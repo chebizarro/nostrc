@@ -110,6 +110,7 @@ static const struct metric_info { const char *name; fipsd_metric_family family; 
     {"unbound_mtu", FIPSD_METRICS_errors},
     {"drop_arrival_queue_full", FIPSD_METRICS_native},
     {"drop_backlog_full", FIPSD_METRICS_native},
+    {"drop_client_buffer_full", FIPSD_METRICS_native},
     {"drop_flow_queue_full", FIPSD_METRICS_native},
     {"drop_listener_gone", FIPSD_METRICS_native},
     {"drop_listener_not_reading", FIPSD_METRICS_native},

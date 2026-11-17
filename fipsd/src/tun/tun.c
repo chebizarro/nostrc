@@ -13,11 +13,12 @@
 #include <sys/ioctl.h>
 #include <unistd.h>
 /* A fiber may resume on another worker: never retain a compiler-cached
- * errno TLS address across frame_read/frame_write (which can park). */
-__attribute__((noinline)) static int frame_error(void)
-{ return __atomic_load_n(&errno,__ATOMIC_RELAXED); }
-__attribute__((noinline)) static void frame_set_error(int error)
-{ __atomic_store_n(&errno,error,__ATOMIC_RELAXED); }
+ * errno TLS address across frame_read/frame_write (which can park).
+ * errno belongs to the OS thread, not the TSan fiber, and these accessors
+ * never suspend, so as libgo's fiber_get_errno/fiber_set_errno only these
+ * TLS accesses are left uninstrumented. */
+__attribute__((noinline, no_sanitize("thread"))) static int frame_error(void) { return errno; }
+__attribute__((noinline, no_sanitize("thread"))) static void frame_set_error(int error) { errno = error; }
 static int sys_open(void *u,const char *p,int f) { (void)u; return open(p,f); }
 static int sys_socket(void *u,int d,int t,int p) { (void)u; return socket(d,t,p); }
 static int sys_ioctl(void *u,int f,unsigned long q,void *v) { (void)u; return ioctl(f,q,v); }

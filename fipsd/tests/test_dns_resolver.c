@@ -47,7 +47,8 @@ static size_t message(uint16_t id, uint16_t flags, const uint16_t counts[4], con
 {
     out[0] = (uint8_t)(id >> 8); out[1] = (uint8_t)id; out[2] = (uint8_t)(flags >> 8); out[3] = (uint8_t)flags;
     for (size_t i = 0; i < 4; ++i) { out[4 + 2 * i] = (uint8_t)(counts[i] >> 8); out[5 + 2 * i] = (uint8_t)counts[i]; }
-    memcpy(out + 12, body, body_len); return 12 + body_len;
+    if (body_len) memcpy(out + 12, body, body_len); /* callers pass NULL, 0 for a header-only message */
+    return 12 + body_len;
 }
 static size_t question(const uint8_t *name, size_t n, uint16_t qtype, uint16_t qclass, uint8_t *out)
 { memcpy(out, name, n); out[n] = (uint8_t)(qtype >> 8); out[n + 1] = (uint8_t)qtype; out[n + 2] = (uint8_t)(qclass >> 8); out[n + 3] = (uint8_t)qclass; return n + 4; }

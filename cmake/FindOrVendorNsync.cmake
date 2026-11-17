@@ -116,6 +116,23 @@ else()
       "Vendored nsync did not produce the expected 'nsync' CMake target.")
   endif()
   set_target_properties(nsync PROPERTIES POSITION_INDEPENDENT_CODE ON)
+  # This runs before the workspace-wide sanitizer flags are added, so a TSan
+  # build instruments nsync here: TSan models only the synchronization it
+  # compiled, and an opaque nsync makes every nsync-guarded access a race.
+  if(GO_ENABLE_TSAN OR GNOSTR_ENABLE_TSAN OR "${SANITIZE}" MATCHES "thread")
+    target_compile_options(nsync PRIVATE -fsanitize=thread)
+    # Linux nsync parks threads in raw futex syscalls, which TSan does not
+    # intercept, and TSan defers an async signal until its thread enters an
+    # intercepted call: a daemon whose main thread waits on nsync would never
+    # run its SIGTERM handler. nsync's POSIX semaphore (its macOS/BSD choice)
+    # waits in pthread_cond_wait, a blocking call TSan delivers signals in.
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+      get_target_property(_nsync_sources nsync SOURCES)
+      list(TRANSFORM _nsync_sources REPLACE "platform/linux/src/nsync_semaphore_futex\\.c$"
+        "platform/posix/src/nsync_semaphore_mutex.c")
+      set_property(TARGET nsync PROPERTY SOURCES ${_nsync_sources})
+    endif()
+  endif()
 
   set(NOSTRC_NSYNC_VENDORED TRUE CACHE INTERNAL "nsync is built from the vendored submodule")
   # NSYNC_LIB points at the CMake target so the many existing

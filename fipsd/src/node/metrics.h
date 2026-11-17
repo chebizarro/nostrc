@@ -115,6 +115,7 @@ typedef enum fipsd_metric {
     FIPSD_METRIC_errors_unbound_mtu,
     FIPSD_METRIC_native_drop_arrival_queue_full,
     FIPSD_METRIC_native_drop_backlog_full,
+    FIPSD_METRIC_native_drop_client_buffer_full,
     FIPSD_METRIC_native_drop_flow_queue_full,
     FIPSD_METRIC_native_drop_listener_gone,
     FIPSD_METRIC_native_drop_listener_not_reading,

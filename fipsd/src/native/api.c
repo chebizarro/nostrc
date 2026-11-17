@@ -200,7 +200,10 @@ static void flow_reader_fiber(void *arg)
     flow_end(a, f);
 }
 /* Write datagrams the node delivered onto the client's descriptor. A full
- * client buffer drops the datagram and keeps the flow (ENOBUFS, Darwin). */
+ * client buffer drops the datagram and keeps the flow (ENOBUFS: Darwin and
+ * FreeBSD SOCK_DGRAM have no sender-side queue to wait on; Linux SEQPACKET
+ * parks this writer instead). Upstream drops it uncounted; here it is counted
+ * as native.drop_client_buffer_full. */
 static void flow_feeder_fiber(void *arg)
 {
     flow_rec *f = arg;
@@ -213,7 +216,11 @@ static void flow_feeder_fiber(void *arg)
         int error = errno;
         fipsd_native_datagram_free(dg);
         if (rc == 0) continue;
-        if (error == ENOBUFS) { FIPSD_DEBUG(MODULE, "flow %llu: write dropped a datagram", (unsigned long long)f->id); continue; }
+        if (error == ENOBUFS) {
+            count(a, FIPSD_METRIC_native_drop_client_buffer_full, 1);
+            FIPSD_DEBUG(MODULE, "flow %llu: write dropped a datagram", (unsigned long long)f->id);
+            continue;
+        }
         if (error != ECANCELED) FIPSD_DEBUG(MODULE, "flow %llu: write failed: %s", (unsigned long long)f->id, strerror(error));
         break;
     }
@@ -946,6 +953,7 @@ typedef struct combined {
     fipsd_control_native_flow *flows;
     fipsd_control_native_listener *listeners;
     char *strings;
+    fipsd_control_counter native[32]; /* fipsd_metrics_snapshot's documented minimum */
 } combined;
 static void combined_free(void *arg)
 {
@@ -988,6 +996,12 @@ static GoRefPtr acquire(void *arg)
     free(views); free(lviews);
     c->snapshot.flows = c->flows; c->snapshot.flow_count = n;
     c->snapshot.listeners = c->listeners; c->snapshot.listener_count = m;
+    /* This API bumps the native counters outside the dispatcher, so the base
+     * snapshot's copy lags until its next publication; read them live beside
+     * the live flows and listeners so show_native_flows agrees with itself.
+     * (a->handlers is fixed at create; a->metrics is only set by start.) */
+    c->snapshot.native = (fipsd_control_counters){c->native,
+        fipsd_metrics_snapshot(fipsd_node_handlers_metrics(a->handlers), FIPSD_METRICS_native, c->native)};
     return make_go_refptr(c, combined_free); /* snapshot is the first member */
 }
 static json_t *command(void *arg, const char *name, const json_t *params, const fipsd_control_request_context *ctx)

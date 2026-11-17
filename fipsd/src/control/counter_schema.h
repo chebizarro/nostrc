@@ -125,6 +125,7 @@ static const char *const errors_fields[] = {
 static const char *const native_fields[] = {
     "drop_arrival_queue_full",
     "drop_backlog_full",
+    "drop_client_buffer_full",
     "drop_flow_queue_full",
     "drop_listener_gone",
     "drop_listener_not_reading",

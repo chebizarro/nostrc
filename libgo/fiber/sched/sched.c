@@ -95,11 +95,18 @@ static struct {
   atomic_ullong rebalances_migrated;
 } S;
 
+/* Set once gof_sched_init has created the TLS keys. Before that S.worker_key
+ * is a zero key that may alias another library's, whose value is no worker,
+ * so a thread asking gof_in_fiber() before any scheduler exists gets NULL. */
+static _Atomic int tls_keys_ready;
+
 static inline gof_worker* cur_worker(void) {
+  if (!atomic_load_explicit(&tls_keys_ready, memory_order_acquire)) return NULL;
   return (gof_worker*)pthread_getspecific(S.worker_key);
 }
 
 int gof_sched_current_poller_index(void) {
+  if (!atomic_load_explicit(&tls_keys_ready, memory_order_acquire)) return -1;
   void *val = pthread_getspecific(S.poller_key);
   if (!val) return -1;
   int idx = (int)((intptr_t)val) - 1;
@@ -503,6 +510,7 @@ void gof_sched_init(size_t default_stack_bytes) {
   }
   pthread_key_create(&S.worker_key, NULL);
   pthread_key_create(&S.poller_key, NULL);
+  atomic_store_explicit(&tls_keys_ready, 1, memory_order_release);
   atomic_store(&S.steals_attempted, 0);
   atomic_store(&S.steals_success, 0);
   atomic_store(&S.inject_enqueues, 0);

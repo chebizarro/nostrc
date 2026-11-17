@@ -35,6 +35,7 @@ typedef struct {
     fipsd_config *config; GoSwap *configs; fipsd_node *node; fipsd_node_handlers *handlers;
     fipsd_netmon_source netmon; fipsd_nostr_runtime *relay;
     fipsd_transport *owned[FIPSD_TRANSPORT_MAX]; size_t tcp_count, tor_count;
+    size_t adverts_reported; /* accepted advert publish notices consumed */
 } harness;
 static void *receive(GoChannel *c)
 {
@@ -56,9 +57,14 @@ static void advert_published(harness *h)
     for (;;) {
         notice *n = receive(h->notices); int kind = n->kind, value = n->value; bool ok = n->ok; free(n);
         assert(kind == PUBLISHED);
-        if (value == NOSTR_KIND_FIPS_OVERLAY_ADVERT) { assert(ok); return; }
+        if (value == NOSTR_KIND_FIPS_OVERLAY_ADVERT) { assert(ok); ++h->adverts_reported; return; }
     }
 }
+/* A relay can store an advert before its publish reports, so once the relays
+ * hold `stored` adverts in all, the reports still owed are taken here; a
+ * barrier after this sees only publishes that came later. */
+static void adverts_reported(harness *h, size_t stored)
+{ while (h->adverts_reported < stored) advert_published(h); }
 /* Commands are processed in order and a publish reports before the actor
  * takes the next command, so a refetch's result proves every earlier
  * command finished: no advert publish may come first. */
@@ -149,6 +155,7 @@ int main(void)
      * set may be built before pub's listener binds; then the bind republishes. */
     size_t base[2], now[2]; int64_t first[2], at[2];
     do advert_published(&h); while (!both(f, author, BODY(TCP), base, first));
+    adverts_reported(&h, base[0] + base[1]);
     printf("tcp-only advert at both relays after %zu/%zu publishes: %s\n", base[0], base[1], BODY(TCP));
     /* Unchanged inputs: refresh requests (as STUN observation sends) publish nothing. */
     assert(fipsd_nostr_runtime_refresh_advert(h.relay) && fipsd_nostr_runtime_refresh_advert(h.relay));

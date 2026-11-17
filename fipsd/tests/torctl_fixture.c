@@ -26,8 +26,12 @@ static void reply(torctl_fixture *f, int fd, const char *text)
 {
     /* mu held: an injected event never splits a reply */
     size_t n = strlen(text);
+    int flags = 0;
+#ifdef MSG_NOSIGNAL
+    flags = MSG_NOSIGNAL; /* a client that left is EPIPE, not a signal (Apple: SO_NOSIGPIPE at accept) */
+#endif
     for (size_t sent = 0; sent < n;) {
-        ssize_t k = send(fd, text + sent, n - sent, 0);
+        ssize_t k = send(fd, text + sent, n - sent, flags);
         if (k < 0 && errno == EINTR) continue;
         if (k <= 0) return;
         sent += (size_t)k;
