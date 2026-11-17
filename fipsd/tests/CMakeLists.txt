@@ -777,3 +777,25 @@ add_test(NAME FipsdEthernetBpfSmokeTest COMMAND fipsd_ethernet_test --bpf)
 set_tests_properties(FipsdEthernetBpfSmokeTest PROPERTIES TIMEOUT 20 SKIP_RETURN_CODE 77
   LABELS "fips;transport;ethernet;privileged")
 nostrc_describe_test(FipsdEthernetBpfSmokeTest OWNER fipsd TARGETS fipsd_ethernet_test)
+# BLE transport core over the simulated radio (nostrc-gfi8h.6.1). The option
+# is declared after this directory is read, so on a first configure it is not
+# yet defined here: that is its default, ON; an explicit OFF is in the cache.
+if(NOT DEFINED FIPSD_ENABLE_BLE OR FIPSD_ENABLE_BLE)
+  fipsd_unit_test(fipsd_ble_test test_ble.c)
+  add_dependencies(fipsd_tests fipsd_ble_test)
+  add_test(NAME FipsdBleTest COMMAND fipsd_ble_test)
+  set_tests_properties(FipsdBleTest PROPERTIES TIMEOUT 300 LABELS "fips;transport" ENVIRONMENT "FIPSD_WORKERS=2")
+  nostrc_describe_test(FipsdBleTest OWNER fipsd TARGETS fipsd_ble_test)
+  # Two nodes over the simulated radio: SDU channels, and the fd fast path.
+  foreach(mode IN ITEMS Sdu Fd)
+    fipsd_unit_test(fipsd_ble_two_nodes_${mode}_test test_ble_two_nodes.c)
+    if(mode STREQUAL "Fd")
+      target_compile_definitions(fipsd_ble_two_nodes_${mode}_test PRIVATE FIPSD_TEST_BLE_FD=1)
+    endif()
+    add_dependencies(fipsd_tests fipsd_ble_two_nodes_${mode}_test)
+    add_test(NAME FipsdBleTwoNodes${mode}Test COMMAND fipsd_ble_two_nodes_${mode}_test)
+    set_tests_properties(FipsdBleTwoNodes${mode}Test PROPERTIES TIMEOUT 300 LABELS "fips;transport;node"
+      ENVIRONMENT "FIPSD_WORKERS=2")
+    nostrc_describe_test(FipsdBleTwoNodes${mode}Test OWNER fipsd TARGETS fipsd_ble_two_nodes_${mode}_test)
+  endforeach()
+endif()

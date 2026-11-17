@@ -18,7 +18,13 @@
 #define FIPSD_STATS_ETHERNET_ONLY(X) \
     X(frames_sent) X(frames_recv) X(beacons_sent) X(beacons_recv) X(beacons_dropped) \
     X(frames_too_short) X(frames_too_long) X(group_drops)
-#define FIPSD_STATS_ALL(X) FIPSD_STATS_PACKET(X) FIPSD_STATS_UDP_ONLY(X) FIPSD_STATS_TCP_ONLY(X) FIPSD_STATS_PROXY_ONLY(X) FIPSD_STATS_ETHERNET_ONLY(X)
+/* Upstream ble/stats.rs counters the stream owners above lack; appended last
+ * as well. connections_* and connect_timeouts are shared with TCP. */
+#define FIPSD_STATS_BLE_ONLY(X) \
+    X(handshakes_aborted) X(connect_errors) X(pubkey_exchange_failures) X(pool_evictions) \
+    X(advertisements_sent) X(scan_results) X(duplicate_node_declines) X(duplicate_link_replacements)
+#define FIPSD_STATS_ALL(X) FIPSD_STATS_PACKET(X) FIPSD_STATS_UDP_ONLY(X) FIPSD_STATS_TCP_ONLY(X) \
+    FIPSD_STATS_PROXY_ONLY(X) FIPSD_STATS_ETHERNET_ONLY(X) FIPSD_STATS_BLE_ONLY(X)
 #define FIPSD_STATS_DECLARE(name) _Atomic uint64_t name;
 typedef struct fipsd_transport_stats { FIPSD_STATS_ALL(FIPSD_STATS_DECLARE) } fipsd_transport_stats;
 #undef FIPSD_STATS_DECLARE
@@ -34,7 +40,7 @@ enum { FIPSD_TRANSPORT_STATS_COUNT = 0 FIPSD_STATS_ALL(FIPSD_STATS_COUNT) };
 #define FIPSD_STATS_DECLARE(name) _Atomic uint64_t name;
 typedef struct fipsd_transport_diagnostics { FIPSD_TRANSPORT_DIAGNOSTICS(FIPSD_STATS_DECLARE) } fipsd_transport_diagnostics;
 #undef FIPSD_STATS_DECLARE
-/* Exact output field set per type (udp, tcp, tor, nym); loopback has Empty
+/* Exact output field set per type (udp, tcp, tor, nym, ble); loopback has Empty
  * stats upstream. Order follows each Rust snapshot struct. */
 const char *const *fipsd_transport_stats_fields(const char *type, size_t *count);
 void fipsd_transport_stats_init(fipsd_transport_stats *);

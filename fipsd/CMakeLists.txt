@@ -561,3 +561,15 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 elseif(APPLE)
   target_sources(fipsd_lib PRIVATE src/transport/ethernet/io_macos.c)
 endif()
+
+# BLE L2CAP transport core and simulated radio (nostrc-gfi8h.6.1): no platform
+# dependencies; the BlueZ (gfi8h.6.2) and CoreBluetooth (gfi8h.6.3) backends
+# implement src/transport/ble/backend.h.
+option(FIPSD_ENABLE_BLE "Build the BLE transport core and its simulated radio" ON)
+if(FIPSD_ENABLE_BLE)
+  target_sources(fipsd_lib PRIVATE src/transport/ble/ble.c src/transport/ble/pool.c src/transport/ble/psm.c
+    src/transport/ble/stream_read.c src/transport/ble/stats.c src/transport/ble/radio.c)
+  target_compile_definitions(fipsd_lib PUBLIC FIPSD_ENABLE_BLE=1)
+else()
+  target_sources(fipsd_lib PRIVATE src/transport/ble/ble_disabled.c)
+endif()

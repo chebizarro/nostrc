@@ -14,6 +14,7 @@ bool fipsd_dp_peer_rebind(handlers *h, peer_rec *rec)
     if (!fipsd_dp_publish(h)) return false;
     fipsd_transport *transport = hs_transport(h, info->transport);
     if (transport && transport->ops->authenticated) transport->ops->authenticated(transport, &info->addr, info->direction);
+    if (transport && transport->ops->peer_link) transport->ops->peer_link(transport, &info->addr, &rec->addr, true, false);
     fipsd_dp_tighten_via(h, &rec->addr, mtu);
     hs_host_link_mtu_changed(h, mtu);
     return true;
@@ -56,10 +57,13 @@ void fipsd_dp_link_deliver(handlers *h, peer_rec *rec, fipsd_dp_packet *p, uint8
     if (p->ce) METRIC(h, congestion, ce_received);
     hs_mmp_frame_received(h, rec, p->job.counter, timestamp, p->wire_size, p->ce);
     fipsd_transport *t = hs_transport(h, p->transport);
-    if (t && t->ops->authenticated) {
+    if (t && (t->ops->authenticated || t->ops->peer_link)) {
         const fipsd_peer_info *info = fipsd_active_peer_info(rec->peer);
-        if (fips_transport_id_equal(info->transport, p->transport) && fips_transport_addr_equal(&info->addr, &p->endpoint))
-            t->ops->authenticated(t, &p->endpoint, info->direction);
+        if (fips_transport_id_equal(info->transport, p->transport) && fips_transport_addr_equal(&info->addr, &p->endpoint)) {
+            if (t->ops->authenticated) t->ops->authenticated(t, &p->endpoint, info->direction);
+            /* Upstream mark_verified on every authenticated frame (BLE only). */
+            if (t->ops->peer_link) t->ops->peer_link(t, &p->endpoint, &rec->addr, true, false);
+        }
     }
     if (n && t) hs_path_account(h, rec, t, &p->endpoint, p->wire_size, message[0]);
     if (n > sizeof h->msg_buf) return;

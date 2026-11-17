@@ -54,11 +54,17 @@ const char *const *fipsd_transport_stats_fields(const char *type, size_t *count)
         "connections_rejected", "control_errors", "pool_inbound", "pool_outbound"};
     static const char *const nym[] = {FIPSD_STATS_PACKET(NAME) "connections_established",
         "connect_timeouts", "socks5_errors"};
+    /* ble/stats.rs BleStatsSnapshot, in its serialized order. */
+    static const char *const ble[] = {FIPSD_STATS_PACKET(NAME) "connections_established",
+        "connections_accepted", "connections_rejected", "handshakes_aborted", "connect_timeouts",
+        "connect_errors", "pubkey_exchange_failures", "pool_evictions", "advertisements_sent",
+        "scan_results", "duplicate_node_declines", "duplicate_link_replacements"};
 #undef NAME
     if (type && !strcmp(type, "ethernet")) { *count = sizeof ethernet / sizeof *ethernet; return ethernet; }
     if (type && !strcmp(type, "udp")) { *count = sizeof udp / sizeof *udp; return udp; }
     if (type && !strcmp(type, "tcp")) { *count = sizeof tcp / sizeof *tcp; return tcp; }
     if (type && !strcmp(type, "tor")) { *count = sizeof tor / sizeof *tor; return tor; }
     if (type && !strcmp(type, "nym")) { *count = sizeof nym / sizeof *nym; return nym; }
+    if (type && !strcmp(type, "ble")) { *count = sizeof ble / sizeof *ble; return ble; }
     *count = 0; return NULL;
 }

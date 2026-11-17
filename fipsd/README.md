@@ -2253,6 +2253,227 @@ through this transport. As with TCP, there is no separate path-priority lane.
 Version decision: **fipsd stays 0.1.0 Unreleased**; the transports fold into
 the initial daemon.
 
+## BLE transport core (`nostrc-gfi8h.6.1`)
+
+A stream transport over BLE L2CAP connection-oriented channels, ported from
+upstream `src/transport/ble/` at the `libfips-core/UPSTREAM.md` pin. This bead
+is the platform-independent core plus a simulated radio. The radios that make
+it useful on hardware are separate backend beads: BlueZ (`gfi8h.6.2`) and
+CoreBluetooth behind a LaunchAgent (`gfi8h.6.3`). Built by default
+(`-DFIPSD_ENABLE_BLE=ON`, no platform dependencies). Until a platform backend
+exists, a configured instance is ignored with a warning, as upstream does on a
+build without one:
+`instance ble: BLE transport unavailable (this build has no Bluetooth backend ...)`.
+The simulated radio is never used as a fallback: a transport over it would
+start, report itself up and never peer (upstream's `DefaultBleTransport`
+tripwire). With `-DFIPSD_ENABLE_BLE=OFF`, a configured `transports.ble` fails
+start-up instead, like Nym.
+
+```yaml
+transports:
+  ble:
+    adapter: hci0           # "ble0" for a radio that hides link addresses (CoreBluetooth)
+    psm: 0x0085             # requested listener PSM, and the dial fallback
+    mtu: 2048               # used until a channel reports its own MTU
+    max_connections: 7
+    connect_timeout_ms: 10000
+    advertise: true
+    scan: true
+    auto_connect: false     # dial discovered peers on their key hint
+    accept_connections: true
+    probe_cooldown_secs: 30
+```
+
+The keys, defaults and singleton/named-instance shapes are upstream's
+`BleConfig`. The schema already carried them; `config/validate.c` keeps
+upstream's macOS checks: a single instance, and `ble0/` peer addresses only.
+Link addresses are `adapter/AA:BB:CC:DD:EE:FF`. A peer reached through a
+CoreBluetooth identifier maps to a stable, locally administered unicast
+address under `ble0` (`fipsd_ble_peer_from_identifier`, upstream
+`io_macos::peer_addr`, pinned by a test vector).
+
+### Module map (`src/transport/ble/`)
+
+- `backend.h`: the backend contract (below), with a mapping table from
+  upstream `io.rs`, through each operation, to BlueZ and CoreBluetooth.
+- `ble.{c,h}`: the transport (upstream `mod.rs`). It covers lifecycle and
+  adapter presence, the scan+probe loop with its retry book, PSM selection,
+  the pubkey exchange, inbound admission with the in-flight budget,
+  arbitration and pool admission, per-link owner/reader/writer fibers,
+  `connect_async`/`send`/`close_connection`/MTU, DISCOVERED announcements,
+  the node verification hooks and config registration.
+- `pool.c`: the pool (`pool.rs`), arbitration (`arbitrate`/`newcomer_wins`),
+  the retry book (`PendingProbes`) and the bounded address memory
+  (`recall.rs`). All pure state over caller-supplied time.
+- `psm.c`: the PSM wire format (`psm.rs`): 2-byte little-endian service data
+  keyed on the 16-bit UUID `0x9C90`. The same bytes are served as the GATT
+  PSM characteristic. The 27-byte legacy advert budget is a compile-time
+  assertion.
+- `stream_read.c`: one reader per channel across the exchange and the
+  receive loop (`stream_read.rs`), over the backend's read/write ops or the
+  fd fast path. Frame boundaries come from the shared FMP framer
+  (`transport/stream.c`) with the channel's receive MTU as the ceiling, so
+  SEQPACKET and byte-stream channels both work.
+- `stats.c`: upstream's `BleStatsSnapshot` counters, kept in the shared
+  stats block (`stats_common.h`, BLE-only names appended last).
+- `radio.c`: the simulated radio (`io_radio.rs`) (below).
+- `ble_disabled.c`: the `-DFIPSD_ENABLE_BLE=OFF` stub.
+
+### The backend contract (`backend.h`)
+
+It uses the libgo idiom of fipsd. Operations park only the calling fiber;
+each has an absolute deadline and returns promptly with `-ECANCELED` once
+`stop` runs (owner-directed cancellation). Results arrive as values, never as
+callbacks into transport state:
+
+| op | semantics |
+|---|---|
+| `start(self, rt, sink)` / `stop` / `destroy` | launch tracked fibers or foreign threads and report the adapter state at least once / prompt idempotent cancellation of every parked op, no join / join threads after runtime join |
+| `adapter` | current `{present, powered}`, cached |
+| `listen(requested, deadline, &bound)` | (re)open the L2CAP listener and report the PSM actually bound (an OS-assigned one is advertised); called again after every power-on |
+| `advertise(advert, deadline)` / `advertise_stop` | FIPS service UUID plus `0x9C90` PSM service data where the platform can carry it; re-advertising the same PSM must not restart the advertiser |
+| `scan_start(deadline)` / `scan_stop` | passive scan for the FIPS UUID, reported as `PEER_DISCOVERED` |
+| `read_psm(peer, deadline, value)` | GATT read of the PSM characteristic (raw bytes, decoded by the core); `-ENOTSUP` or NULL when the backend cannot |
+| `connect(peer, psm, deadline, &stream)` | dial an L2CAP channel; `-ETIMEDOUT` (out of reach) and `-ECONNREFUSED` must stay distinct |
+| `local_addr`, `adapter_name` | optional link address; adapter name |
+
+Streams are `{ops, peer, id}`, where ops are `read`, `write`, `cancel`,
+`close`, `mtu` and `fd`. `read` may return a fragment or several SDUs
+coalesced. `write` sends a whole buffer and backpressures until its
+deadline. `mtu` reports 0 when unknown, and the configured MTU is used.
+`fd` returns a kernel descriptor or -1. With a descriptor the core owns
+readiness through libgo (`gof_io_reset_fd`, `gof_recvmsg`/`gof_sendmsg` with
+deadlines, `gof_io_cancel_fd`), and the backend only closes it.
+
+Events go through a sink owned by the transport: `PEER_DISCOVERED`
+(peer, RSSI, raw service data), `PEER_LOST`, `INBOUND_STREAM` (ownership
+passes) and `STREAM_CLOSED`. Every sink call is thread-safe and
+non-blocking. Events try-send into a bounded queue; drops are counted
+(`fipsd_ble_event_drops`) and a dropped inbound stream is closed. Adapter
+state is not queued: it is coalesced to the latest value, and up/down
+transitions are counted so an off-on blip is still seen as one.
+
+How the platform beads map onto it:
+
+- **BlueZ (`gfi8h.6.2`).** bluer over D-Bus. `listen` is a SEQPACKET
+  `StreamListener` bound to the requested PSM. Inbound and dialled channels
+  are fd streams on the fast path, so SDUs map to reads. `advertise` is an
+  `LEAdvertisement1` carrying ServiceData `{0x9C90: psm}`. `DeviceAdded` with
+  the FIPS UUID maps to `PEER_DISCOVERED`, `DeviceRemoved` to `PEER_LOST`,
+  and `Adapter1.Powered` and removal to the adapter state. `read_psm` starts
+  as `-ENOTSUP`, and a later GATT read lets it dial macOS peers advertising
+  only their UUID.
+- **CoreBluetooth (`gfi8h.6.3`).** The LaunchAgent owns
+  `CBCentralManager`/`CBPeripheralManager`; the backend's control thread
+  talks to it over its socket. `listen` is `publishL2CAPChannel`, which
+  reports the OS-assigned PSM; `advertise` sets the UUID only and serves the
+  PSM characteristic. `read_psm` runs discoverServices, then
+  discoverCharacteristics, then a read. `connect` connects and then opens
+  `openL2CAPChannel`. Channels come back as fds (SCM_RIGHTS) or as bridged
+  ops streams, and the agent's absence or presence is the adapter state.
+
+`radio.c` is the reference for that foreign-thread shape.
+
+### Behaviour
+
+- **Discovery.** The probe loop takes one advert at a time, as upstream. It
+  learns the advertised PSM, skips addresses already pooled or resolved to a
+  verified peer, and dials. Without a learned PSM it first tries the GATT
+  read, then the configured PSM. A failed dial forgets the learned PSM; a
+  timeout, cancellation or adapter loss keeps it. After the `[0x00][x-only key]` exchange (5 s per half) it
+  arbitrates and pools the link, then announces it to the node as
+  `DISCOVERED` with the 32-byte key as payload. Addresses that never
+  conclude stay in the retry book (bounded to 32, exponential backoff capped
+  at 2^5 cooldowns, rotation). On its cooldown the retry tick re-probes them
+  and prunes the 64-entry address memories. This is a deadline in the probe
+  loop's select, not a poll.
+- **Node.** On an auto-connect transport, `DISCOVERED` with a key payload
+  dials the peer (upstream `poll_transport_discovery`). Configured peers at
+  the address dial as for every transport. `connect_async` on a pooled
+  address publishes `CONNECTED` at once. Otherwise it dials, and reports
+  `CONNECTED` when a link holds the address or `DISCONNECTED` when none does.
+  A non-deliberate link loss reports `DISCONNECTED`. It is ordered before
+  anything that replaces the link at that address: a newcomer waits for the
+  old link's notification.
+- **Pool.** `max_connections` with a verify grace of
+  `max(connect_timeout_ms, 10 s)`. Verified links are never evicted; an
+  unverified link past its grace is, a node's duplicates first. The refusal
+  log is latched (one warning per run, the count at its end). The node marks
+  a link verified on every authenticated frame through the new optional
+  `peer_link` transport op, and clears it on peer removal or a path switch
+  (upstream `mark_verified`/`clear_verified`). The maintenance tick calls the
+  new optional `close_unproven` op to close channels that never carried a
+  handshake within `node.rate_limit.handshake_timeout_secs` (FRC-1301 §6.5.4).
+- **Inbound.** Inbound channels are registered in arrival order, at most 8 in
+  flight, and the oldest pending exchange is aborted (`handshakes_aborted`).
+  A settled link at the address makes a new inbound channel redundant.
+- **MTU.** Per link, `min(send, recv)` of the channel (the configured MTU when
+  unknown). `send` above it counts `mtu_exceeded`, not `send_errors`. A
+  received established frame above the receive MTU is malformed and drops
+  the link (`recv_errors`). The send queue is 16 deep and full means
+  `send_errors`.
+- **Adapter presence.** Power-off or removal makes the transport `ABSENT`
+  (`BECAME_ABSENT`), drops every link (`DISCONNECTED` each) and cancels
+  every exchange in flight. Power-on listens again (possibly on a new
+  PSM), advertises it, rescans and emits `BECAME_PRESENT`. A listener that
+  will not open retries on the bind backoff. The medium is `ble`.
+- **show_transports.** A BLE row has `type`, `state`, `mtu` and `name`, with
+  no `local_addr` or `interface`. Its `stats` are exactly upstream's 19
+  `BleStatsSnapshot` fields in order.
+
+Differences from upstream, each deliberate:
+
+1. **Racing verified links.** Inside the tie window, a verified link that is
+   still racing a newcomer at its own address, in the opposite direction
+   (the two ends' crossing dials), is settled by the tie-break like an
+   unverified one. Upstream declines the newcomer. But fipsd pushes
+   discovery to the node at once instead of on a tick, so one end can verify
+   the race's loser before the winner arrives while the other end has
+   already replaced it, and both channels die. A newcomer's key claim is
+   unauthenticated until Noise, so a claim from any other address never
+   displaces a verified link, and outside the window a verified link
+   declines every newcomer, both as upstream. The remaining exposure is a
+   peer that spoofs the verified device's own address within the window,
+   which a real controller refuses while that device is connected.
+2. **Crossing swap and restart.** These no longer close the transport
+   connection when the replacing link is at the same transport address. Both
+   directions of a BLE pair share the device address. Upstream moves the
+   session in place.
+3. **No path lane.** There is no separate path-priority lane (upstream
+   `send_lane`), because the fipsd node has no lane seam, as for TCP.
+
+### Verification
+
+`FipsdBleTest` (`tests/test_ble.c`) ports upstream's `psm`, `addr`/peer
+mapping, `pool`, `arbitrate`/`newcomer_wins`, `PendingProbes`, `recall`,
+`stream_read` and stats tests as pure state. Over the simulated radio it runs
+these scenarios:
+
+- the bridge semantics of `io_radio.rs`: round trip, MTU fallback,
+  timeout/EOF/EPIPE, backpressure, cancel, refusal, concurrent and abandoned
+  dials, adverts and PSM moves, `PEER_LOST`, isolated airs, power-off, stop;
+- lifecycle: OS-assigned and honoured PSMs, and an absent adapter adopted
+  later;
+- discovery without a local key;
+- a pair over SDU, 5-byte-fragment byte-stream and socketpair-fd channels,
+  including MTU and stats;
+- link loss with redial, and adapter off/on and removal;
+- PSM learning, forget-on-refusal, keep-on-timeout and the GATT fallback;
+- the exchange (bad prefix, coalesced frame, fragments, a silent peer, the
+  send deadline), the inbound budget under a flood, and claims and
+  verification with `close_unproven` and the drain on a deliberate close.
+
+`FipsdBleTwoNodes{Sdu,Fd}Test` (`tests/test_ble_two_nodes.c`) is the node
+proof. Two in-process nodes with no configured peers go from discovery
+through PSM, L2CAP, key exchange and auto-connect to IK, then the tree, bloom
+filters, an XK session and datagrams both ways, all checked against show_*
+output. Then they recover from a node disconnect and redial, a link loss and
+redial, and an adapter power cycle that rediscovery alone repairs. All waits
+are channel selects on events, never sleeps. Every one of these passes
+under ASan/UBSan and TSan. Interop with the Rust daemon over real radios
+belongs to the backend beads. Version decision: **fipsd stays 0.1.0
+Unreleased**; the BLE core folds into the initial daemon.
+
 ## C<->Rust UDP interoperability gate (`nostrc-f66sr.1`)
 
 `tests/udp_interop.py` runs one `fipsd` and one `fips` daemon built from the

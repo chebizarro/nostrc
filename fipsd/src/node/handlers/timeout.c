@@ -38,6 +38,27 @@ bool hs_poll(handlers *h, fips_instant now)
     }
     return true;
 }
+/* Upstream close_unproven_ble_links (FRC-1301 Section 6.5.4): the node holds a
+ * channel while a handshake leg or a link uses its address. */
+typedef struct unproven_scope { handlers *h; fips_transport_id transport; } unproven_scope;
+static bool held(void *arg, const fips_transport_addr *a)
+{
+    unproven_scope *s = arg; handlers *h = s->h;
+    if (h->peers && fipsd_peer_table_endpoint(h->peers->table, s->transport, a)) return true;
+    for (size_t i = 0; i < h->cfg.peer_capacity; ++i)
+        if (h->legs[i].used && fips_transport_id_equal(h->legs[i].transport, s->transport) &&
+            fips_transport_addr_equal(&h->legs[i].addr, a)) return true;
+    return false;
+}
+static void close_unproven(handlers *h)
+{
+    for (size_t i = 0; h->registry && i < h->registry->count; ++i) {
+        fipsd_transport *t = h->registry->items[i];
+        if (!t->ops->close_unproven) continue;
+        unproven_scope s = {h, t->id};
+        (void)t->ops->close_unproven(t, h->cfg.timing.handshake_timeout_ms, held, &s);
+    }
+}
 void hs_tick(handlers *h, fips_instant now)
 {
     FIPSD_INSTR_GATE(instr_on);
@@ -50,6 +71,7 @@ void hs_tick(handlers *h, fips_instant now)
     FIPSD_INSTR_STEP(instr_on, POLL_SESSION_REKEYS, hs_session_tick(h, now));
     FIPSD_INSTR_STEP(instr_on, CHECK_SESSION_MMP_REPORTS, hs_mmp_session_tick(h, now));
     FIPSD_INSTR_STEP(instr_on, POLL_PROBES, hs_probe_tick(h, now));
+    close_unproven(h);
     (void)fips_coord_cache_purge_expired(&h->cache, now);
     fips_session_setup_cleanup(&h->setup_limiter, now);
     fips_lookup_sign_cleanup(&h->sign_limiter, now);
