@@ -1,3 +1,6 @@
+#include "instr/recorder.h"
+#include "instr/writer.h"
+#include "node/perf_profile.h"
 #include "node/context.h"
 #include "config/config.h"
 #include "peer/dispatcher.h"
@@ -49,6 +52,7 @@ static void noop(void *arg) { (void)arg; }
 static int config_start(void *arg, fipsd_runtime *rt)
 {
     fipsd_node *n = arg; n->runtime = rt;
+    FIPSD_PERF_START();
     n->context.initial = go_swap_load(n->context.configs);
     return n->context.initial.ptr ? 0 : -1;
 }
@@ -180,7 +184,10 @@ static void dispatch(void *arg)
             else break;
             dispatch_one(n, &s, source, v);
         }
+        FIPSD_INSTR_GATE(timer_on);
+        FIPSD_INSTR_BEGIN(timer_on, timer_start);
         if (!s.failed && !fipsd_peer_dispatcher_service(&c->peers)) s.failed = true;
+        FIPSD_INSTR_END(timer_on, timer_start, DRIVE_PEER_TIMERS);
         if (!s.failed && n->options.poll && !n->options.poll(user, c->peers.clock.now(c->peers.clock.ctx))) s.failed = true;
         if (s.failed) {
             /* Keep draining owned work until lifecycle closes the inputs and
@@ -204,6 +211,7 @@ static void dispatch_one(fipsd_node *n, dispatch_state *s, int selected, void *v
     bool failed = s->failed;
     if (selected == 1) {
         fipsd_transport_event *e = value;
+        FIPSD_PERF_WAIT(e, TRANSPORT_QUEUE_WAIT);
         fipsd_transport *t = fipsd_transport_find(&n->registry, e->id);
         if (!t) failed = true;
         else if (e->kind == FIPSD_TRANSPORT_BECAME_ABSENT ||
@@ -351,6 +359,8 @@ const fipsd_node_context *fipsd_node_get_context(const fipsd_node *n) { return &
 void fipsd_node_destroy(fipsd_node *n)
 {
     if (!n) return;
+    FIPSD_INSTR_SHUTDOWN();
+    FIPSD_PERF_SHUTDOWN();
     fipsd_lifecycle_destroy(n->lifecycle);
     fipsd_worker_set_destroy(n->context.workers);
     fipsd_netmon_destroy(n->context.netmon);

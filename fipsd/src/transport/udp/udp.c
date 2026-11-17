@@ -78,7 +78,11 @@ static int send_frame(fipsd_transport *t, const fips_transport_addr *to, const u
     }
     /* Datagram backpressure is a send failure, not an unbounded dispatcher
      * stall. All bytes remain borrowed only through this single sendmsg. */
+    FIPSD_PERF_BEGIN(send_start);
     ssize_t n = gof_sendmsg(s->fd, &m, 0, 0);
+    FIPSD_PERF_END(send_start, UDP_SEND);
+    FIPSD_PERF_EVENT(UDP_SEND_CONNECTED, n == (ssize_t)len && s->connected ? 1 : 0);
+    FIPSD_PERF_EVENT(UDP_SEND_WILDCARD, n == (ssize_t)len && !s->connected ? 1 : 0);
     fipsd_udp_socket_release(s);
     if (n != (ssize_t)len) { fipsd_transport_stats_error(&u->shared.stats, true); return -1; }
     fipsd_transport_stats_sent(&u->shared.stats, len); return 0;
@@ -122,7 +126,11 @@ static void authenticated(fipsd_transport *t, const fips_transport_addr *address
         if (s) {
             nsync_mu_lock(&u->mu); u->peers[slot] = s; nsync_mu_unlock(&u->mu);
             fipsd_transport_stats_pool(&u->shared.stats, direction, true);
-        } else atomic_fetch_add(&u->shared.diagnostics.socket_errors, 1);
+            FIPSD_PERF_EVENT(CONNECTED_UDP_INSTALLED, 1);
+        } else {
+            FIPSD_PERF_EVENT(CONNECTED_UDP_ACTIVATION_FAILED, 1);
+            atomic_fetch_add(&u->shared.diagnostics.socket_errors, 1);
+        }
     } else if (listener && slot == u->config.peer_capacity) atomic_fetch_add(&u->shared.diagnostics.pool_full, 1);
     gate_unlock(u);
 }

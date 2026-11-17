@@ -721,6 +721,7 @@ static void accept_fiber(void *arg)
 /* ---- the node's datagram sink --------------------------------------------- */
 static void deliver_notice(fipsd_native_api *a, fipsd_node_notice *n)
 {
+    FIPSD_PERF_WAIT(n, ENDPOINT_EVENT_WAIT);
     fipsd_native_outcome outcome = {.kind = FIPSD_NATIVE_OUTCOME_DROPPED, .reason = FIPSD_NATIVE_REASON_NO_PORT};
     if (!n->has_pubkey) FIPSD_DEBUG(MODULE, "inbound datagram from a peer with no known key, dropped");
     else {

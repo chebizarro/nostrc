@@ -22,21 +22,22 @@ static bool generation_matches(const fips_rekey *m, const fipsd_dp_packet *p)
 }
 bool fipsd_dp_result(handlers *h, const fipsd_crypto_job *j)
 {
-    if (!j->recycle || !h->dataplane) return true;
+    FIPSD_PERF_BEGIN(perf_start);
+    if (!j->recycle || !h->dataplane) FIPSD_PERF_RETURN(perf_start, LINK_DISPATCH, true);
     fipsd_dp_packet *p = j->owner;
-    if (p->restart) return hs_restart_result(h, j);
+    if (p->restart) FIPSD_PERF_RETURN(perf_start, LINK_DISPATCH, hs_restart_result(h, j));
     peer_rec *rec = hs_rec_find(h, &p->peer);
     fips_session_entry *entry = p->session ? fips_session_table_by_peer(&h->sessions, p->peer) : NULL;
     fips_rekey *m = p->session ? (entry ? &entry->machine : NULL) :
         (rec ? fipsd_active_peer_link_machine(rec->peer) : NULL);
     if (!h->running || (!p->farewell && (!m || !generation_matches(m, p)))) {
-        ++h->dataplane->stats.stale; return true;
+        ++h->dataplane->stats.stale; FIPSD_PERF_RETURN(perf_start, LINK_DISPATCH, true);
     }
     if (j->result != FIPS_NOISE_OK) {
-        if (j->operation == FIPSD_CRYPTO_OPEN && p->session && fipsd_dp_open_retry(h, p)) return true;
+        if (j->operation == FIPSD_CRYPTO_OPEN && p->session && fipsd_dp_open_retry(h, p)) FIPSD_PERF_RETURN(perf_start, LINK_DISPATCH, true);
         ++h->dataplane->stats.authentication_failed;
         fipsd_dp_reject_frame(h, j->operation == FIPSD_CRYPTO_OPEN ? FIPSD_DP_AUTH : FIPSD_DP_SEND);
-        return true;
+        FIPSD_PERF_RETURN(perf_start, LINK_DISPATCH, true);
     }
     size_t len = p->body + j->output_size;
     if (j->operation == FIPSD_CRYPTO_SEAL) {
@@ -60,7 +61,7 @@ bool fipsd_dp_result(handlers *h, const fipsd_crypto_job *j)
             if (rec && !p->farewell) {
                 if (p->path_message) {
                     if (rec->path_live && fips_path_set_find(&rec->path->set, p->transport, &p->endpoint) == SIZE_MAX) {
-                        ++h->dataplane->stats.stale; return true;
+                        ++h->dataplane->stats.stale; FIPSD_PERF_RETURN(perf_start, LINK_DISPATCH, true);
                     }
                 } else {
                     const fipsd_peer_info *info = fipsd_active_peer_info(rec->peer);
@@ -70,7 +71,7 @@ bool fipsd_dp_result(handlers *h, const fipsd_crypto_job *j)
                 uint16_t mtu = p->path_message && t ? t->ops->mtu(t, &p->endpoint) :
                     fipsd_dp_link_mtu(h, rec, p->transport, &p->endpoint);
                 if (len > mtu) {
-                    fipsd_dp_reject_frame(h, FIPSD_DP_MTU); return true;
+                    fipsd_dp_reject_frame(h, FIPSD_DP_MTU); FIPSD_PERF_RETURN(perf_start, LINK_DISPATCH, true);
                 }
             }
             ok = t && t->ops->send(t, &p->endpoint, p->output, len) == 0;
@@ -89,7 +90,7 @@ bool fipsd_dp_result(handlers *h, const fipsd_crypto_job *j)
             }
         }
         if (!ok) { fipsd_dp_reject_frame(h, FIPSD_DP_SEND); ++h->counters.send_failed; }
-        return true;
+        FIPSD_PERF_RETURN(perf_start, LINK_DISPATCH, true);
     }
     /* AEAD succeeded, but the tag and replay window may have changed since
      * dispatch. Only this dispatcher-side machine input can mark the window. */
@@ -99,7 +100,7 @@ bool fipsd_dp_result(handlers *h, const fipsd_crypto_job *j)
         .hint = {j->counter, p->k, (uint32_t)j->token, p->body}};
     if (p->session) {
         peer_rec *carrier = hs_rec_find(h, &p->carrier);
-        if (!carrier) { ++h->dataplane->stats.stale; return true; }
+        if (!carrier) { ++h->dataplane->stats.stale; FIPSD_PERF_RETURN(perf_start, LINK_DISPATCH, true); }
         session_ext *x = hs_session_ext(h, entry); if (x) x->carrier = carrier->addr;
         fips_rekey_env env; hs_env(h, &env, 0); fips_rekey_outputs_clear(&h->session_out);
         if (fips_rekey_step(m, hs_now(h), in, &env, &h->session_out) == FIPS_OK) {
@@ -118,5 +119,5 @@ bool fipsd_dp_result(handlers *h, const fipsd_crypto_job *j)
      * dirty themselves; counters and link statistics are published from the
      * tick, as upstream does. A per-packet snapshot build was the dataplane's
      * dominant cost (nostrc-pxwaj). */
-    return true;
+    FIPSD_PERF_RETURN(perf_start, LINK_DISPATCH, true);
 }

@@ -79,6 +79,8 @@ static bool send_report(handlers *h, peer_rec *rec, fips_mmp_link_report_kind ki
 void hs_mmp_tick(handlers *h, fips_instant now)
 {
     uint64_t now_ms = hs_now_ms(h);
+    FIPSD_INSTR_GATE(heartbeat_on);
+    FIPSD_INSTR_BEGIN(heartbeat_on, heartbeat_start);
     /* Dead-link detection: authenticated silence beyond the configured timeout. */
     for (size_t i = 0; i < h->cfg.peer_capacity; ++i) {
         peer_rec *rec = &h->recs[i];
@@ -92,6 +94,7 @@ void hs_mmp_tick(handlers *h, fips_instant now)
             (void)hs_peer_effects(h, rec->peer, &a);
         }
     }
+    FIPSD_INSTR_END(heartbeat_on, heartbeat_start, CHECK_LINK_HEARTBEATS);
     fips_mmp_link_report_snapshot snaps[64]; peer_rec *recs[64]; size_t n = 0;
     for (size_t i = 0; i < h->cfg.peer_capacity && n < 64; ++i) {
         peer_rec *rec = &h->recs[i];

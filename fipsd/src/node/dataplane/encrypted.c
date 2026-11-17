@@ -45,6 +45,7 @@ fipsd_dp_packet *fipsd_dp_acquire(handlers *h)
 }
 bool fipsd_dp_submit(handlers *h, fipsd_dp_packet *p)
 {
+    FIPSD_PERF_JOB_TAG(&p->job, p->session);
     if (fipsd_node_dispatch_crypto(h->ctx, &p->job) == 0) return true;
     ++h->dataplane->stats.backpressure;
     fipsd_crypto_job_destroy(&p->job); return false;

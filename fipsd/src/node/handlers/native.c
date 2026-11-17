@@ -40,11 +40,14 @@ void hs_native_deliver(handlers *h, const fips_node_addr *src, uint16_t src_port
         fipsd_node_notice *m = malloc(sizeof(*m) + len);
         if (!m) { METRIC(h, native, drop_flow_queue_full); return; }
         *m = n; m->len = len;
+        FIPSD_PERF_STAMP(m);
         if (len) memcpy(m->payload, payload, len);
+        FIPSD_PERF_BEGIN(delivery_start);
         if (go_channel_try_send(sink, m) != 0) {
             fipsd_node_notice_free(m);
             METRIC(h, native, drop_flow_queue_full);
         }
+        FIPSD_PERF_END(delivery_start, ENDPOINT_DELIVER);
         return;
     }
     METRIC(h, native, received_datagrams);

@@ -5,6 +5,8 @@
  * insert self idempotently, then estimate once. No contributors => unknown. */
 bool hs_stats_mesh(handlers *h, uint64_t *out)
 {
+    FIPSD_INSTR_GATE(timer_on);
+    FIPSD_INSTR_BEGIN(timer_on, timer_start);
     bool has = false;
     for (size_t i = 0; i < h->bloom.peer_count; ++i) {
         const fips_bloom_peer *p = &h->bloom.peers[i];
@@ -12,11 +14,11 @@ bool hs_stats_mesh(handlers *h, uint64_t *out)
         if (!has) { h->filter_scratch = p->inbound; has = true; }
         else (void)fips_bloom_merge(&h->filter_scratch, &p->inbound, NULL);
     }
-    if (!has) return false;
+    if (!has) FIPSD_INSTR_RETURN(timer_on, timer_start, COMPUTE_MESH_SIZE, false);
     fips_bloom_insert(&h->filter_scratch, &h->me);
     double estimate;
-    if (!fips_bloom_estimated_count(&h->filter_scratch, FIPS_BLOOM_ACCEPT_FPR_CAP, &estimate)) return false;
-    *out = (uint64_t)round(estimate); return true;
+    if (!fips_bloom_estimated_count(&h->filter_scratch, FIPS_BLOOM_ACCEPT_FPR_CAP, &estimate)) FIPSD_INSTR_RETURN(timer_on, timer_start, COMPUTE_MESH_SIZE, false);
+    *out = (uint64_t)round(estimate); FIPSD_INSTR_RETURN(timer_on, timer_start, COMPUTE_MESH_SIZE, true);
 }
 
 void hs_stats_tick(handlers *h, fips_instant now)

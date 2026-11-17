@@ -126,6 +126,14 @@ transports:
             return True
 
         wait(nodes, 'proven XK', established)
+        captures = []
+        if getattr(args, 'fipsctl', None):
+            for i, node in enumerate(nodes):
+                directory = args.profile_dir / root.name / str(i)
+                command = [args.fipsctl, '--socket', str(root / f'{i}.sock'), 'profile', 'tick']
+                on = subprocess.run([*command, 'on', '--dir', str(directory)],
+                                    text=True, capture_output=True, check=True, timeout=10)
+                captures.append((command, json.loads(on.stdout)))
         before = [cpu_seconds(node.daemon.proc.pid) for node in nodes]
         start = time.monotonic()
         driver = subprocess.run([args.native_tool, str(apis[0]), str(apis[1]), nodes[1].npub,
@@ -134,6 +142,17 @@ transports:
         elapsed = time.monotonic() - start
         after = [cpu_seconds(node.daemon.proc.pid) for node in nodes]
         result = json.loads(driver.stdout)
+        if captures:
+            result['tick_profiles'] = []
+            result['pipeline_reports'] = [[line[line.index('[pipe '):] for line in node.daemon.text().splitlines()
+                                           if '[pipe ' in line] for node in nodes]
+            for command, on in captures:
+                status = subprocess.run([*command, 'status'], text=True, capture_output=True,
+                                        check=True, timeout=10)
+                off = subprocess.run([*command, 'off'], text=True, capture_output=True,
+                                     check=True, timeout=10)
+                result['tick_profiles'].append({'on': on, 'status': json.loads(status.stdout),
+                                                'off': json.loads(off.stdout)})
         result['pairing'] = '-'.join(roles)
         result['traffic_wall_s'] = elapsed
         result['cpu'] = [{'role': role, 'traffic_s': max(0, end - begin),
@@ -166,6 +185,8 @@ transports:
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--fipsd', required=True)
+    p.add_argument('--fipsctl', help='Capture each node with a profiling-enabled fipsctl')
+    p.add_argument('--profile-dir', type=Path, help='Capture sink (non-root; root uses /var/log/fips)')
     p.add_argument('--rust', default=os.environ.get('FIPSD_UDP_INTEROP_RUST_BINARY', ''))
     p.add_argument('--native-tool', required=True)
     p.add_argument('--seconds', type=float, default=5)
@@ -181,6 +202,8 @@ def main():
         p.error('seconds=.1..3600, latency-samples=100..100000, runs>=1 required')
     for key in ('fipsd', 'rust', 'native_tool'):
         setattr(args, key, str(Path(getattr(args, key)).resolve(strict=True)))
+    if args.fipsctl and not args.profile_dir:
+        p.error('--fipsctl requires --profile-dir')
     args.work_dir.mkdir(parents=True, exist_ok=True)
     output = {'schema': 1, 'machine': {'system': platform.system(), 'release': platform.release(),
               'arch': platform.machine(), 'cpus': os.cpu_count()}, 'seconds': args.seconds, 'runs': []}

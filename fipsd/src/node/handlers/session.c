@@ -405,6 +405,8 @@ uint64_t hs_session_wait_ms(handlers *h, fips_instant now)
 }
 void hs_session_poll(handlers *h, fips_instant now)
 {
+    FIPSD_INSTR_GATE(timer_on);
+    FIPSD_INSTR_BEGIN(timer_on, timer_start);
     fips_rekey_env env; hs_env(h, &env, 0);
     for (size_t i = 0; i < h->cfg.session_capacity; ++i) {
         fips_session_entry *entry = &h->session_entries[i];
@@ -416,6 +418,7 @@ void hs_session_poll(handlers *h, fips_instant now)
             (void)hs_session_execute(h, entry, NULL, 0);
         else fips_rekey_outputs_clear(&h->session_out);
     }
+    FIPSD_INSTR_END(timer_on, timer_start, POLL_SESSION_REKEYS);
 }
 void hs_session_tick(handlers *h, fips_instant now)
 {
@@ -436,8 +439,11 @@ void hs_session_tick(handlers *h, fips_instant now)
         if (fips_rekey_step(&entry->machine, now, facts, &env, &h->session_out) == FIPS_OK) (void)hs_session_execute(h, entry, NULL, 0);
         else fips_rekey_outputs_clear(&h->session_out);
         if (!entry->occupied) continue;
+        FIPSD_INSTR_GATE(purge_on);
+        FIPSD_INSTR_BEGIN(purge_on, purge_start);
         if (x && x->established && h->cfg.session_idle_timeout_ms && hs_elapsed_ms(now, x->last_data) > h->cfg.session_idle_timeout_ms)
             close_entry(h, entry, FIPS_REKEY_CLOSE_IdlePurge);
+        FIPSD_INSTR_END(purge_on, purge_start, PURGE_IDLE_SESSIONS);
     }
     /* Held datagrams whose lookup never resolved are released after the ladder. */
     uint64_t ladder_ms = 0;
