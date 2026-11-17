@@ -33,6 +33,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # is skipped; the hosted fips-ci jobs do not install it yet)
     libnftables-dev \
     libncurses-dev \
+    libdbus-1-dev \
     # local tooling: sources, debugging, the gate's tree sync and lock
     git python3 ca-certificates curl gdb rsync util-linux \
  && rm -rf /var/lib/apt/lists/*

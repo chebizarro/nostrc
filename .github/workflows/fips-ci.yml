@@ -93,7 +93,7 @@ jobs:
           for target in fips_fuzz_host fips_fuzz_codec fips_fuzz_identity fips_fuzz_aead fips_fuzz_coord fips_fuzz_link fips_fuzz_stp fips_fuzz_bloom fips_fuzz_fmp fips_fuzz_handshake fips_fuzz_routing fips_fuzz_lookup fips_fuzz_fsp fips_fuzz_session fips_fuzz_mmp fips_fuzz_probe fips_fuzz_rekey fips_fuzz_path fips_fuzz_rekey_profile fipsd_fuzz_control fipsd_fuzz_config; do
             component=libfips-core
             if [[ "$target" == fipsd_* ]]; then component=fipsd; fi
-            cp -R "$component/fuzz/corpus/$target" build/corpus/
+            if [[ -d "$component/fuzz/corpus/$target" ]]; then cp -R "$component/fuzz/corpus/$target" build/corpus/; else mkdir -p "build/corpus/$target"; fi
             "build/$component/fuzz/$target" -max_total_time=10 -timeout=5 -artifact_prefix=build/fuzz-artifacts/ "build/corpus/$target"
           done
       - uses: actions/upload-artifact@v4
@@ -169,6 +169,11 @@ jobs:
           CARGO_TARGET_DIR: ${{ runner.temp }}/fips-rust-target
         run: |
           channel=$(sed -n 's/^channel = "\(.*\)"/\1/p' upstream-fips/rust-toolchain.toml)
+          # upstream fips links libdbus (BLE) on Linux; pkg-config must find dbus-1
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            sudo apt-get update
+            sudo apt-get install -y libdbus-1-dev pkg-config
+          fi
           test -n "$channel"
           rustup toolchain install "$channel" --profile minimal
           cd upstream-fips
@@ -240,7 +245,7 @@ jobs:
           for target in fips_fuzz_host fips_fuzz_codec fips_fuzz_identity fips_fuzz_aead fips_fuzz_coord fips_fuzz_link fips_fuzz_stp fips_fuzz_bloom fips_fuzz_fmp fips_fuzz_handshake fips_fuzz_routing fips_fuzz_lookup fips_fuzz_fsp fips_fuzz_session fips_fuzz_mmp fips_fuzz_probe fips_fuzz_rekey fips_fuzz_path fips_fuzz_rekey_profile fipsd_fuzz_control fipsd_fuzz_config; do
             component=libfips-core
             if [[ "$target" == fipsd_* ]]; then component=fipsd; fi
-            cp -R "$component/fuzz/corpus/$target" build/corpus/
+            if [[ -d "$component/fuzz/corpus/$target" ]]; then cp -R "$component/fuzz/corpus/$target" build/corpus/; else mkdir -p "build/corpus/$target"; fi
             "build/$component/fuzz/$target" -max_total_time=60 -timeout=5 -artifact_prefix=build/fuzz-artifacts/ "build/corpus/$target"
           done
       - uses: actions/upload-artifact@v4
@@ -304,6 +309,11 @@ jobs:
           CARGO_TARGET_DIR: ${{ runner.temp }}/fips-rust-target
         run: |
           channel=$(sed -n 's/^channel = "\(.*\)"/\1/p' upstream-fips/rust-toolchain.toml)
+          # upstream fips links libdbus (BLE) on Linux; pkg-config must find dbus-1
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            sudo apt-get update
+            sudo apt-get install -y libdbus-1-dev pkg-config
+          fi
           test -n "$channel"
           rustup toolchain install "$channel" --profile minimal
           cd upstream-fips
@@ -399,6 +409,11 @@ jobs:
           CARGO_TARGET_DIR: ${{ runner.temp }}/fips-rust-target
         run: |
           channel=$(sed -n 's/^channel = "\(.*\)"/\1/p' upstream-fips/rust-toolchain.toml)
+          # upstream fips links libdbus (BLE) on Linux; pkg-config must find dbus-1
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            sudo apt-get update
+            sudo apt-get install -y libdbus-1-dev pkg-config
+          fi
           test -n "$channel"
           rustup toolchain install "$channel" --profile minimal
           cd upstream-fips

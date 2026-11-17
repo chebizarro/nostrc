@@ -216,7 +216,7 @@ static int sys_socket(void *u,int domain,int type,int proto)
 #ifdef __APPLE__
     if (domain==PF_SYSTEM) {trace(f,'O'); return 10;}
 #else
-    (void)domain;
+    (void)domain; (void)f;
 #endif
     return 11;
 }

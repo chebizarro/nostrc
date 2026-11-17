@@ -1,3 +1,4 @@
+#define _POSIX_C_SOURCE 200809L /* clock_gettime under strict C11 on glibc */
 /* Timing probe for fips_aead_open failures (nostrc-pwo3h.8).
  *
  * Question: does the time to REJECT a frame depend on WHICH byte of the

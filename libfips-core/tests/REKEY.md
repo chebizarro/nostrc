@@ -186,7 +186,7 @@ poll, delivery/reorder/corruption/drop, application sends, silence/path facts,
 and close. The assertions cover index uniqueness/conservation, bounded slots,
 completed-handshake provenance for new epochs, completed pending/previous
 provenance for timer/frame cutovers and reverts, and destroyed-machine
-inertness. `fuzz/corpus/rekey/` contains IK, XK and crossing/silence sequences.
+inertness. `fuzz/corpus/fips_fuzz_rekey/` contains IK, XK and crossing/silence sequences.
 Run with ASan/UBSan and pass a **copy** of the seed directory as writable corpus;
 libFuzzer may add/minimize entries there.
 
@@ -220,7 +220,7 @@ XK trace is not FMP differential, legacy interop, or fault-model equivalence.
 hooks), strict envelope ingress, ordered execution, bounded loss/reorder/
 corruption, application traffic and path changes. It checks bounds, key erasure
 and index conservation after every operation. Writable fuzz corpus is always a
-copy of `fuzz/corpus/rekey_profile`, never the checked-in seeds themselves.
+copy of `fuzz/corpus/fips_fuzz_rekey_profile`, never the checked-in seeds themselves.
 
 ## Legacy 0.5.x differential replay (nostrc-f12v2.3)
 
