@@ -496,7 +496,11 @@ static void handle_datagram(fipsd_mdns_service *s, fipsd_mdns_datagram *d, uint6
     if (!fipsd_mdns_decode(d->bytes, d->len, s->msg)) return;
     /* RFC 6762 Section 6: a response not from port 5353 is ignored. */
     if (fipsd_mdns_is_response(s->msg) && d->src.port != FIPSD_MDNS_PORT) return;
-    bool own = is_own(s, d->bytes, d->len, now);
+    /* Only responses and probes are judged as our own echo: they carry our
+     * names, so another node never sends the same bytes. A plain browse query
+     * from another node on this host can be byte-identical to ours, and must
+     * still be answered. */
+    bool own = (fipsd_mdns_is_response(s->msg) || s->msg->nscount) && is_own(s, d->bytes, d->len, now);
     fipsd_mdns_responder_on_message(s->responder, s->msg, d->ifindex, &d->src, own, now);
     if (fipsd_mdns_is_response(s->msg)) {
         fipsd_mdns_browser_ingest(s->browser, s->msg, d->ifindex, now);
