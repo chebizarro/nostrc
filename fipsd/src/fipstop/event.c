@@ -8,7 +8,7 @@
 const ft_binding ft_bindings[] = {
     {'q',"q","Quit",ACT_QUIT,ALL},{3,"Ctrl-C","Quit",ACT_QUIT,ALL},
     {'\t',"Tab","Next tab",ACT_NEXT,ALL},{FT_BACKTAB,"Shift-Tab","Previous tab",ACT_PREV,ALL},
-    {'g',"g","Graphs",ACT_GRAPH,ALL},{'?','?' == 0 ? "" : "?","Help",ACT_HELP,ALL},
+    {'g',"g","Graphs",ACT_GRAPH,ALL},{'?',"?","Help",ACT_HELP,ALL},
     {FT_ESCAPE,"Esc","Back / deselect",ACT_ESCAPE,ALL},
     {FT_UP,"↑","Up",ACT_UP,TABLES|PANES|TAB(FT_GRAPHS)},
     {FT_DOWN,"↓","Down",ACT_DOWN,TABLES|PANES|TAB(FT_GRAPHS)},

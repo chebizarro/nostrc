@@ -14,8 +14,19 @@ static bool has(const ft_frame *f,const char *text)
     return false;
 }
 static json_t *parse(const char *s) { json_error_t e; json_t *d=json_loads(s,0,&e); assert(d); return d; }
-int main(void)
+int main(int argc,char **argv)
 {
+    if(argc==4 && !strcmp(argv[1],"--fetch")) {
+        ft_app a; ft_app_init(&a,2,argv[2],NULL);
+        unsigned count=(unsigned)strtoul(argv[3],NULL,10);
+        for(unsigned i=0;i<count;++i) {
+            ft_fetch(&a);
+            json_t *out=json_pack("{s:i,s:b,s:O,s:O}","quiet",(int)a.adapter_quiet,"connected",a.connected,
+                "status",a.data[FT_NODE]?a.data[FT_NODE]:json_null(),"listening",a.listening?a.listening:json_null());
+            char *text=fipsctl_json_compact(out); puts(text); free(text); json_decref(out);
+        }
+        ft_app_free(&a); return 0;
+    }
     assert(setlocale(LC_ALL,"")); ft_app a; ft_app_init(&a,2,"/not/a/socket",NULL);
     assert(ft_load_fixtures(&a,FIPSTOP_FIXTURES,stderr));
     const char *titles[]={"Runtime","Peers (0)","Transports (0)","Sessions (0)","Tree Position","Bloom Filter State","Link MMP","Routing State","Graphs — Node","Gateway not running"};

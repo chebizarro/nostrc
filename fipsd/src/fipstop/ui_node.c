@@ -18,7 +18,8 @@ static void listeners(ft_frame *f,ft_app *a,ft_rect r)
         const char *comm=ft_str(s,"process");
         if(!strcmp(comm,"-")) comm=ft_str(s,"comm");
         if(!strcmp(comm,"-")) comm="?";
-        snprintf(process,sizeof(process),"%s%s",comm,!strcmp(ft_str(s,"local_addr"),"::")?"*":"");
+        if(json_is_integer(ft_get(s,"pid"))) snprintf(process,sizeof(process),"%s(%llu)%s",comm,(unsigned long long)ft_uint(s,"pid"),json_is_true(ft_get(s,"wildcard_bind"))?" *":"");
+        else snprintf(process,sizeof(process),"?");
         ft_printf(f,r,0,(int)i+1,!strcmp(state,"OPEN")?FT_NORMAL:FT_DIM,"%-5s %-5" PRIu64 " %-20s %s",ft_str(s,"proto"),ft_uint(s,"port"),process,state);
     }
 }
@@ -31,7 +32,7 @@ void ft_ui_node(ft_frame *f,ft_app *a,ft_rect r)
     ft_rect boxes[4]; int y=r.y;
     for(int i=0;i<4;++i) { boxes[i]=(ft_rect){r.x,y,r.w,heights[i]}; y+=heights[i]; }
     ft_rect in=ft_box(f,boxes[0]," Runtime ",false);
-    char uptime[FT_TEXT],pid[FT_TEXT]; ft_uptime(ft_uint(d,"uptime_secs"),uptime); ft_value(d,"pid",pid,sizeof(pid));
+    char uptime[FT_TEXT],pid[FT_TEXT]; ft_uptime(ft_uint(d,"uptime_secs"),uptime); snprintf(pid,sizeof(pid),"-"); if(json_is_integer(ft_get(d,"pid"))) ft_value(d,"pid",pid,sizeof(pid));
     ft_printf(f,in,0,0,FT_NORMAL," ver: %s  pid: %s  uptime: %s",ft_str(d,"version"),pid,uptime);
     ft_printf(f,in,0,1,FT_NORMAL," exe: %s",ft_str(d,"exe_path"));
     ft_printf(f,in,0,2,FT_NORMAL," ctl: %s",ft_str(d,"control_socket"));

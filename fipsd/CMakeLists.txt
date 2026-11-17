@@ -446,3 +446,21 @@ if(BUILD_TESTING AND TARGET fipstop)
   set_tests_properties(FipsTopTest PROPERTIES TIMEOUT 30 LABELS "fips;unit;fipstop")
   nostrc_describe_test(FipsTopTest OWNER fipsd TARGETS fipstop_test)
 endif()
+
+if(BUILD_TESTING AND TARGET fipstop)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  add_test(NAME FipsTopGoldenTest COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/fipstop_golden.py" --fipstop "$<TARGET_FILE:fipstop>"
+    --fixtures "${CMAKE_CURRENT_SOURCE_DIR}/tests/control_golden"
+    --goldens "${CMAKE_CURRENT_SOURCE_DIR}/tests/fipstop_golden")
+  add_test(NAME FipsTopE2eTest COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/fipstop_e2e.py" --fipsd "$<TARGET_FILE:fipsd>"
+    --fipstop "$<TARGET_FILE:fipstop>" --unit "$<TARGET_FILE:fipstop_test>")
+  set_tests_properties(FipsTopGoldenTest FipsTopE2eTest PROPERTIES TIMEOUT 180 LABELS "fips;fipstop;integration")
+  nostrc_describe_test(FipsTopGoldenTest OWNER fipsd TARGETS fipstop INPUTS
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/fipstop_golden.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/control_golden" "${CMAKE_CURRENT_SOURCE_DIR}/tests/fipstop_golden")
+  nostrc_describe_test(FipsTopE2eTest OWNER fipsd TARGETS fipstop fipstop_test fipsd INPUTS
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/fipstop_e2e.py" "${CMAKE_CURRENT_SOURCE_DIR}/tests/fipsctl_e2e.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/udp_interop.py")
+endif()
