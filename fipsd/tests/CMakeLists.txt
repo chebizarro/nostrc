@@ -750,8 +750,10 @@ add_dependencies(fipsd_tests fipsd_mdns_two_nodes_test)
 add_test(NAME FipsdMdnsTwoNodesTest COMMAND fipsd_mdns_two_nodes_test)
 set_tests_properties(FipsdMdnsTwoNodesTest PROPERTIES TIMEOUT 120 LABELS "fips;node;mdns")
 nostrc_describe_test(FipsdMdnsTwoNodesTest OWNER fipsd TARGETS fipsd_mdns_two_nodes_test)
-# BLE transport core over the simulated radio (nostrc-gfi8h.6.1).
-if(FIPSD_ENABLE_BLE)
+# BLE transport core over the simulated radio (nostrc-gfi8h.6.1). The option
+# is declared after this directory is read, so on a first configure it is not
+# yet defined here: that is its default, ON; an explicit OFF is in the cache.
+if(NOT DEFINED FIPSD_ENABLE_BLE OR FIPSD_ENABLE_BLE)
   fipsd_unit_test(fipsd_ble_test test_ble.c)
   add_dependencies(fipsd_tests fipsd_ble_test)
   add_test(NAME FipsdBleTest COMMAND fipsd_ble_test)
