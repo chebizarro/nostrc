@@ -81,6 +81,8 @@ static void run_outputs(handlers *h, peer_rec *rec, fips_path_outputs *out)
         case FIPS_PATH_OUTPUT_Switched: {
             const fipsd_peer_info *old = fipsd_active_peer_info(rec->peer);
             fipsd_transport *previous = hs_transport(h, old->transport);
+            fips_transport_id old_transport = old->transport;
+            fips_transport_addr old_addr = old->addr;
             if (previous && previous->ops->close_connection) previous->ops->close_connection(previous, &old->addr);
             fipsd_peer_admission a = fipsd_peer_table_rebind(h->peers->table, &rec->addr, o->to.transport, &o->to.addr);
             if (a != FIPSD_ADMIT_OK) {
@@ -94,6 +96,11 @@ static void run_outputs(handlers *h, peer_rec *rec, fips_path_outputs *out)
                 hs_remove_peer(h, rec, FIPS_REKEY_CLOSE_Admin, false, FIPS_FMP_ResourceExhaustion);
                 return;
             }
+            /* Upstream relink: the rebind marked the new link before the old
+             * one is cleared, so a newcomer never finds the peer unlinked. */
+            if (previous && previous->ops->peer_link && !(fips_transport_id_equal(old_transport, o->to.transport) &&
+                    fips_transport_addr_equal(&old_addr, &o->to.addr)))
+                previous->ops->peer_link(previous, &old_addr, &rec->addr, false, false);
             ++h->counters.path_switched;
             fipsd_node_notice n = {.kind = FIPSD_NOTICE_PATH_EVENT, .peer = rec->addr, .value = 1};
             hs_notice_full(h, &n, NULL, 0);

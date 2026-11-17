@@ -413,6 +413,15 @@ static bool on_transport_event(void *user, const fipsd_transport_event *e)
                 !hs_rec_find(h, &c->identity.node_addr) && !c->dialing)
                 (void)hs_dial(h, &c->identity, c->transport, &c->addr, true);
         }
+        /* Upstream poll_transport_discovery: a beacon carrying the peer's
+         * x-only key (DiscoveredPeer::pubkey_hint) is dialled on an
+         * auto-connect transport; hs_dial skips self, known peers and legs. */
+        if (e->size == 32 && t->auto_connect) {
+            fips_xonly_pubkey key; fips_peer_identity identity;
+            memcpy(key.bytes, e->bytes, 32);
+            if (fips_peer_identity_from_pubkey(h->secp, &key, &identity) == FIPS_IDENTITY_OK)
+                (void)hs_dial(h, &identity, e->id, &e->address, false);
+        }
         return true;
     }
     if (e->kind == FIPSD_TRANSPORT_CONNECTED || e->kind == FIPSD_TRANSPORT_DISCONNECTED) {

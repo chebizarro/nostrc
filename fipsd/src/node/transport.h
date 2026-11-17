@@ -27,6 +27,7 @@ typedef struct fipsd_transport_event {
 
 typedef struct fipsd_transport fipsd_transport;
 struct fipsd_netmon_event;
+struct fips_node_addr;
 typedef struct fipsd_transport_ops {
     /* On a fiber. Nonblocking start: launch binder/receive tasks through rt.
      * Missing interface is success with state ABSENT, not a startup failure.
@@ -56,6 +57,19 @@ typedef struct fipsd_transport_ops {
      * merely because an unauthenticated datagram arrived. Best effort. */
     void (*authenticated)(fipsd_transport *, const fips_transport_addr *, fips_link_direction);
     bool (*local_addr)(const fipsd_transport *, fips_transport_addr *);
+    /* Optional, dispatcher-only (upstream TransportHandle::mark_verified /
+     * clear_verified; BLE only, which keys links by a claim made before any
+     * handshake): the active peer `node` now sends over the link at the
+     * address (uses), or no longer does (removed: the peer itself is gone,
+     * rather than moved to another link). Must not block. */
+    void (*peer_link)(fipsd_transport *, const fips_transport_addr *, const struct fips_node_addr *,
+                      bool uses, bool removed);
+    /* Optional, the node's maintenance tick (FRC-1301 6.5.4, upstream
+     * close_unproven_ble_links): close every channel that never carried a
+     * handshake and that the node has not held (`held`: a leg or link on the
+     * address) for timeout_ms. Returns the number closed. Must not block. */
+    size_t (*close_unproven)(fipsd_transport *, uint64_t timeout_ms,
+                             bool (*held)(void *, const fips_transport_addr *), void *);
 } fipsd_transport_ops;
 struct fipsd_transport {
     const fipsd_transport_ops *ops;

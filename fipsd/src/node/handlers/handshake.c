@@ -323,6 +323,7 @@ static void remove_peer_carry(handlers *h, peer_rec *rec, fips_rekey_close why, 
     hs_path_peer_removed(h, rec);
     const fipsd_peer_info *info = fipsd_active_peer_info(peer);
     fipsd_transport *transport = hs_transport(h, info->transport);
+    if (transport && transport->ops->peer_link) transport->ops->peer_link(transport, &info->addr, &addr, false, true);
     if (transport && transport->ops->close_connection) transport->ops->close_connection(transport, &info->addr);
     hs_session_peer_removed(h, &addr);
     fips_rekey_carry local = {0};
