@@ -19,7 +19,7 @@ void ft_ui_routing(ft_frame *f,ft_app *a,ft_rect r)
     counter(view,fw,"warm","warm_malformed");
     const char *labels[]={"Coord Cache","Identity Cache","Pending Lookups","Recent Requests","Warm Malformed"};
     const char *paths[]={"coord_cache_entries","identity_cache_entries","pending_count","recent_requests","warm"};
-    ft_fields(f,in,view,labels,paths,5,&a->scroll[FT_ROUTING][0]);
+    ft_aligned_fields(f,in,view,labels,paths,5,&a->scroll[FT_ROUTING][0]);
     in=ft_box(f,parts[1]," Coordinate Cache ",a->focus[FT_ROUTING]==1);
     json_t *cache=a->data[FT_CACHE],*cv=json_object(); char value[256];
     snprintf(value,sizeof(value),"%" PRIu64 " / %" PRIu64,ft_uint(cache,"count"),ft_uint(cache,"max_entries")); json_object_set_new(cv,"entries",json_string(value));
@@ -28,7 +28,7 @@ void ft_ui_routing(ft_frame *f,ft_app *a,ft_rect r)
     char b[FT_TEXT]; ft_duration(ft_uint(cache,"default_ttl_ms"),b); json_object_set_new(cv,"ttl",json_string(b));
     ft_duration(ft_uint(cache,"avg_age_ms"),b); json_object_set_new(cv,"age",json_string(b)); json_object_set(cv,"expired",ft_get(cache,"expired"));
     const char *cl[]={"Entries","Fill Ratio","Default TTL","Expired","Avg Age"},*cp[]={"entries","fill","ttl","expired","age"};
-    if(cache) ft_fields(f,in,cv,cl,cp,5,&a->scroll[FT_ROUTING][1]); else ft_put(f,in,0,0,FT_DIM,"  Waiting for data...");
+    if(cache) ft_aligned_fields(f,in,cv,cl,cp,5,&a->scroll[FT_ROUTING][1]); else ft_put(f,in,0,0,FT_DIM,"  Waiting for data...");
     json_decref(cv);
     in=ft_box(f,parts[2]," Routing Statistics ",a->focus[FT_ROUTING]==2);
     counter(view,fw,"local_tx","originated"); counter(view,fw,"local_rx","delivered"); counter(view,fw,"mesh_rx","received"); counter(view,fw,"transit","forwarded");
@@ -47,6 +47,6 @@ void ft_ui_routing(ft_frame *f,ft_app *a,ft_rect r)
     size_t *off=&a->scroll[FT_ROUTING][2]; *off=ft_clamp_scroll(*off,39,(size_t)in.h);
     ft_rect l=in; l.w=in.w/2; ft_rect rr={in.x+l.w,in.y,in.w-l.w,in.h};
     size_t lo=*off,ro=*off;
-    ft_fields(f,l,view,ll,lp,33,&lo); ft_fields(f,rr,view,rl,rp,39,&ro);
+    ft_aligned_fields(f,l,view,ll,lp,33,&lo); ft_aligned_fields(f,rr,view,rl,rp,39,&ro);
     json_decref(view);
 }
