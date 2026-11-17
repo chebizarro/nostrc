@@ -11,6 +11,9 @@
 #include <strings.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#if defined(_WIN32)
+#include <windows.h> /* GetFileAttributesExA */
+#endif
 
 typedef struct stamp { bool present; int64_t secs, nanos; } stamp;
 struct fipsd_acl {
@@ -26,6 +29,9 @@ fipsd_acl_paths fipsd_acl_default_paths(void)
 {
 #if defined(__APPLE__) || defined(__FreeBSD__)
     return (fipsd_acl_paths){"/usr/local/etc/fips/peers.allow", "/usr/local/etc/fips/peers.deny", "/usr/local/etc/fips/hosts"};
+#elif defined(_WIN32)
+    return (fipsd_acl_paths){"C:\\ProgramData\\fips\\peers.allow", "C:\\ProgramData\\fips\\peers.deny",
+                             "C:\\ProgramData\\fips\\hosts"};
 #else
     return (fipsd_acl_paths){"/etc/fips/peers.allow", "/etc/fips/peers.deny", "/etc/fips/hosts"};
 #endif
@@ -36,6 +42,12 @@ static stamp mtime(const char *path)
     if (stat(path, &s)) return (stamp){0};
 #ifdef __APPLE__
     return (stamp){true, s.st_mtimespec.tv_sec, s.st_mtimespec.tv_nsec};
+#elif defined(_WIN32)
+    /* The CRT stat has whole seconds; the last-write FILETIME has 100 ns. */
+    WIN32_FILE_ATTRIBUTE_DATA data;
+    if (!GetFileAttributesExA(path, GetFileExInfoStandard, &data)) return (stamp){true, s.st_mtime, 0};
+    uint64_t t = ((uint64_t)data.ftLastWriteTime.dwHighDateTime << 32) | data.ftLastWriteTime.dwLowDateTime;
+    return (stamp){true, (int64_t)(t / 10000000u), (int64_t)(t % 10000000u) * 100};
 #else
     return (stamp){true, s.st_mtim.tv_sec, s.st_mtim.tv_nsec};
 #endif

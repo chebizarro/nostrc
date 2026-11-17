@@ -69,7 +69,7 @@ void gof_netpoll_close(int fd) {
   kevent(kq, &kev, 1, NULL, 0, NULL);
 }
 
-#else
+#elif !defined(__linux__) && !defined(_WIN32)
 /* Fallback stubs when neither epoll nor IOCP applies (non-Apple, non-Linux, non-Windows). */
 int  gof_netpoll_init(void) { return 0; }
 int  gof_netpoll_arm(int fd, int events, uint64_t deadline_ns) { (void)fd; (void)events; (void)deadline_ns; return 0; }

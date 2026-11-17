@@ -7,20 +7,19 @@
  * GOF_NWORKERS=4. The CTest timeout is what turns a recurrence red.
  */
 #define _POSIX_C_SOURCE 200809L /* nanosleep (glibc strict -std=c11) */
-#include "../include/libgo/fiber.h"
+#include "test_net.h"
 #include <assert.h>
 #include <stdatomic.h>
 #include <stdio.h>
 #include <pthread.h>
 #include <time.h>
-#include <unistd.h>
 
 #define N_WRITES 200
 
 static int g_read_ok = 0;
 
 static void reader(void *arg) {
-  int fd = *(int *)arg;
+  gof_socket_t fd = *(gof_socket_t *)arg;
   char c;
   int total = 0;
   while (total < N_WRITES) {
@@ -31,10 +30,10 @@ static void reader(void *arg) {
 }
 
 static void *writer_thread(void *arg) {
-  int fd = *(int *)arg;
+  gof_socket_t fd = *(gof_socket_t *)arg;
   for (int i = 0; i < N_WRITES; i++) {
     char c = 'x';
-    if (write(fd, &c, 1) != 1) break;
+    if (test_raw_write(fd, &c, 1) != 1) break;
     struct timespec ts = { 0, 2 * 1000 * 1000 }; /* 2 ms */
     nanosleep(&ts, NULL);
   }
@@ -42,8 +41,8 @@ static void *writer_thread(void *arg) {
 }
 
 int main(void) {
-  int p[2];
-  assert(pipe(p) == 0);
+  gof_socket_t p[2];
+  assert(test_pipe(p) == 0);
 
   gof_init(0);
   gof_spawn(reader, &p[0], 0);
@@ -55,8 +54,8 @@ int main(void) {
 
   pthread_join(th, NULL);
   assert(g_read_ok == 1);
-  close(p[0]);
-  close(p[1]);
+  test_close(p[0]);
+  test_close(p[1]);
   printf("gof_test_io_deadlock: OK\n");
   return 0;
 }

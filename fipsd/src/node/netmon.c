@@ -10,7 +10,11 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
+#if defined(_WIN32)
+#include "node/ifinfo_win32.h"
+#else
 #include <ifaddrs.h>
+#endif
 #include <net/if.h>
 #include <stdlib.h>
 #include <string.h>
@@ -70,6 +74,7 @@ bool fipsd_network_snapshot_prepare(fipsd_network_snapshot *s)
 failed:
     s->failed = true; s->onlink = fips_onlink_failed(); return false;
 }
+#if !defined(_WIN32) /* Windows reports prefix lengths directly */
 static uint8_t prefix_length(const uint8_t *mask, size_t n)
 {
     unsigned bits = 0;
@@ -82,6 +87,22 @@ static uint8_t prefix_length(const uint8_t *mask, size_t n)
         }
     return (uint8_t)bits;
 }
+#endif
+#if defined(_WIN32)
+/* Interfaces and unicast addresses from the IP Helper API (ifinfo_win32.c). */
+fipsd_network_snapshot *fipsd_onlink_read_system(void)
+{
+    fipsd_network_snapshot *s = calloc(1, sizeof(*s));
+    if (!s) return NULL;
+    if (!fipsd_win_network_read(s)) s->failed = true;
+    (void)fipsd_network_snapshot_prepare(s);
+    return s;
+}
+/* No route socket: NotifyIpInterfaceChange wakes are follow-up work, so the
+ * monitor runs on its 1 s backstop (logged at start). */
+int fipsd_network_fd_prepare(int fd) { (void)fd; errno = ENOTSUP; return -1; }
+int fipsd_network_socket(bool notifications) { (void)notifications; errno = ENOTSUP; return -1; }
+#else
 fipsd_network_snapshot *fipsd_onlink_read_system(void)
 {
     fipsd_network_snapshot *s = calloc(1, sizeof(*s));
@@ -157,6 +178,7 @@ int fipsd_network_socket(bool notifications)
     }
     return fd;
 }
+#endif /* _WIN32 */
 static bool stopping(fipsd_netmon *m)
 {
     return go_channel_is_closed(m->stop) ||

@@ -1,14 +1,12 @@
-#include "../include/libgo/fiber.h"
+#include "test_net.h"
 #include <assert.h>
 #include <string.h>
 #include <stdio.h>
-#include <unistd.h>
-#include <sys/socket.h>
 
 static int g_ok = 0;
 
 static void reader(void *arg) {
-  int fd = *(int*)arg;
+  gof_socket_t fd = *(gof_socket_t*)arg;
   char buf[64];
   ssize_t r = gof_read(fd, buf, sizeof(buf) - 1);
   assert(r > 0);
@@ -17,8 +15,8 @@ static void reader(void *arg) {
 }
 
 int main(void) {
-  int sp[2];
-  int rc = socketpair(AF_UNIX, SOCK_STREAM, 0, sp);
+  gof_socket_t sp[2];
+  int rc = test_socketpair(SOCK_STREAM, sp);
   assert(rc == 0);
 
   gof_init(0);
@@ -33,8 +31,8 @@ int main(void) {
   gof_run();
 
   assert(g_ok == 1);
-  close(sp[0]);
-  close(sp[1]);
+  test_close(sp[0]);
+  test_close(sp[1]);
   printf("gof_test_io: OK\n");
   return 0;
 }

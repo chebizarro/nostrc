@@ -3,7 +3,9 @@
 
 #include <stddef.h>
 #include <sys/types.h>
+#if !defined(_WIN32)
 #include <grp.h>
+#endif
 
 /*
  * Process privilege, umask and `fips` group handling.
@@ -36,6 +38,10 @@
 
 /* Applies FIPSD_UMASK; returns the previous mask. Call before any thread. */
 mode_t fipsd_privilege_set_umask(void);
+
+/* Windows has no `fips` group or Unix socket modes; only the umask applies
+ * (the CRT's, for files the daemon creates). */
+#if !defined(_WIN32)
 
 /* Returns 1 with the named gid, or 0 with getegid() and one WARN naming the
  * group when absent (0/NULL or ENOENT) or NSS fails after one immediate retry.
@@ -73,5 +79,6 @@ typedef struct fipsd_privilege_drop_config {
  * request to switch identity returns -1 with a message naming the
  * service-manager route, rather than half-dropping. */
 int fipsd_privilege_drop(const fipsd_privilege_drop_config *cfg, char *err, size_t errlen);
+#endif /* !_WIN32 */
 
 #endif /* FIPSD_PRIVILEGE_H */

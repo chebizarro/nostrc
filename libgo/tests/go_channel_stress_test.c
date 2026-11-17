@@ -1,4 +1,5 @@
 #define _POSIX_C_SOURCE 200809L
+#include <stdint.h> /* intptr_t: long is 32-bit on LLP64 Windows */
 #include "channel.h"
 #include "context.h"
 #include "go.h"
@@ -32,10 +33,10 @@ void *prod(void *arg) {
     for (int i = 0; i < ITEMS_PER_PROD; i++) {
         // mix blocking and try_send
         if (i % 5 == 0) {
-            while (go_channel_try_send(a->c, (void *)(long)(i + 1)) != 0)
+            while (go_channel_try_send(a->c, (void *)(intptr_t)(i + 1)) != 0)
                 sleep_us(100);
         } else {
-            go_channel_send(a->c, (void *)(long)(i + 1));
+            go_channel_send(a->c, (void *)(intptr_t)(i + 1));
         }
     }
     go_wait_group_done(a->wg);
@@ -60,7 +61,7 @@ void *cons(void *arg) {
         go_context_free(ctx);
 
         if (rc == 0) {
-            local_sum += (long)v;
+            local_sum += (long)(intptr_t)v;
             received++;
             continue;
         }

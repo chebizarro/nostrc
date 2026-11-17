@@ -4,18 +4,20 @@
 #ifndef _POSIX_C_SOURCE
 #define _POSIX_C_SOURCE 200809L
 #endif
-#include "../include/libgo/fiber.h"
+#include "test_net.h"
 #include <assert.h>
 #include <errno.h>
-#include <fcntl.h>
-#include <netinet/in.h>
 #include <stdatomic.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
+#if !defined(_WIN32)
+#include <fcntl.h>
+#include <netinet/in.h>
 #include <sys/socket.h>
 #include <sys/uio.h>
-#include <time.h>
 #include <unistd.h>
+#endif
 
 #define IO_TIMEOUT_MS 2000
 
@@ -25,21 +27,14 @@ static uint64_t monotonic_ms(void) {
   return (uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000;
 }
 
-static int udp_socket(struct sockaddr_in *addr) {
-  int fd = socket(AF_INET, SOCK_DGRAM, 0);
-  assert(fd >= 0);
-  memset(addr, 0, sizeof(*addr));
-  addr->sin_family = AF_INET;
-  addr->sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-  assert(bind(fd, (struct sockaddr *)addr, sizeof(*addr)) == 0);
-  socklen_t len = sizeof(*addr);
-  assert(getsockname(fd, (struct sockaddr *)addr, &len) == 0);
-  assert(len == sizeof(*addr));
+static gof_socket_t udp_socket(struct sockaddr_in *addr) {
+  gof_socket_t fd = test_bound(SOCK_DGRAM, addr);
+  assert(fd != GOF_INVALID_SOCKET);
   return fd;
 }
 
 struct udp_peer {
-  int fd;
+  gof_socket_t fd;
   struct sockaddr_in remote;
   atomic_int done;
 };
@@ -62,8 +57,8 @@ static void udp_echo(void *arg) {
 
 static void test_udp(void) {
   struct sockaddr_in client_addr, server_addr, source;
-  int client = udp_socket(&client_addr);
-  int server = udp_socket(&server_addr);
+  gof_socket_t client = udp_socket(&client_addr);
+  gof_socket_t server = udp_socket(&server_addr);
   struct udp_peer peer = { .fd = server, .remote = client_addr };
   atomic_init(&peer.done, 0);
   assert(gof_spawn(udp_echo, &peer, 0));
@@ -87,13 +82,15 @@ static void test_udp(void) {
   static const char oversized[65536] = {0};
   assert(gof_sendto(client, oversized, sizeof(oversized), 0,
                     (struct sockaddr *)&server_addr, sizeof(server_addr), 0) == -1);
-  assert(errno == EMSGSIZE);
+  assert(test_errno() == EMSGSIZE);
   assert(gof_recvfrom(server, buf, sizeof(buf), 0, NULL, NULL, 0) == -1);
-  assert(errno == ETIMEDOUT);
-  close(client);
-  close(server);
+  assert(test_errno() == ETIMEDOUT);
+  test_close(client);
+  test_close(server);
 }
 
+#if !defined(_WIN32)
+/* SCM_RIGHTS over a Unix datagram pair: POSIX only. */
 union control_buf {
   struct cmsghdr align;
   unsigned char bytes[CMSG_SPACE(sizeof(int))];
@@ -174,10 +171,11 @@ static void test_rights(void) {
   assert(msg.msg_flags & MSG_TRUNC);
   assert(gof_recvmsg(sp[1], &msg, 0, 0) == 2);
   assert(msg.msg_flags & MSG_TRUNC);
-  assert(gof_recvmsg(sp[1], &msg, 0, 0) == -1 && errno == ETIMEDOUT);
+  assert(gof_recvmsg(sp[1], &msg, 0, 0) == -1 && test_errno() == ETIMEDOUT);
   close(sp[0]);
   close(sp[1]);
 }
+#endif
 
 struct progress {
   atomic_int entered;
@@ -192,7 +190,7 @@ static void progress_fiber(void *arg) {
 
 static void test_timeouts(void) {
   struct sockaddr_in addr;
-  int fd = udp_socket(&addr);
+  gof_socket_t fd = udp_socket(&addr);
   for (int use_msg = 0; use_msg < 2; ++use_msg) {
     struct progress progress;
     atomic_init(&progress.entered, 0);
@@ -207,22 +205,25 @@ static void test_timeouts(void) {
     atomic_store(&progress.entered, 1);
     ssize_t n = use_msg ? gof_recvmsg(fd, &msg, 0, 50)
                         : gof_recvfrom(fd, buf, sizeof(buf), 0, NULL, NULL, 50);
-    int error = errno;
+    int error = test_errno();
     uint64_t elapsed = monotonic_ms() - start;
     assert(n == -1 && error == ETIMEDOUT);
     assert(elapsed >= 50 && elapsed < IO_TIMEOUT_MS);
     /* In the one-worker CTest variant this cannot run if recv blocks it. */
     assert(atomic_load(&progress.ran));
   }
-  close(fd);
+  test_close(fd);
   char buf[1];
   struct msghdr msg = {0};
-  assert(gof_recvfrom(-1, buf, 1, 0, NULL, NULL, 0) == -1 && errno == EBADF);
-  assert(gof_sendto(-1, buf, 1, 0, NULL, 0, 0) == -1 && errno == EBADF);
-  assert(gof_recvmsg(-1, &msg, 0, 0) == -1 && errno == EBADF);
-  assert(gof_sendmsg(-1, &msg, 0, 0) == -1 && errno == EBADF);
+  assert(gof_recvfrom(GOF_INVALID_SOCKET, buf, 1, 0, NULL, NULL, 0) == -1 && test_errno() == EBADF);
+  assert(gof_sendto(GOF_INVALID_SOCKET, buf, 1, 0, NULL, 0, 0) == -1 && test_errno() == EBADF);
+  assert(gof_recvmsg(GOF_INVALID_SOCKET, &msg, 0, 0) == -1 && test_errno() == EBADF);
+  assert(gof_sendmsg(GOF_INVALID_SOCKET, &msg, 0, 0) == -1 && test_errno() == EBADF);
 }
 
+#if !defined(_WIN32)
+/* A full send queue retried through readiness: POSIX only (an overlapped
+ * send on Windows is queued by the stack rather than refused). */
 struct drain_peer {
   int fd;
   size_t queued_bytes;
@@ -249,7 +250,7 @@ static void drain_queue(void *arg) {
   }
   assert(memcmp(buf, "last", 4) == 0);
   assert(gof_recvfrom(peer->fd, buf, sizeof(buf), 0, NULL, NULL, 0) == -1);
-  assert(errno == ETIMEDOUT);
+  assert(test_errno() == ETIMEDOUT);
   atomic_store(&peer->done, 1);
 }
 
@@ -271,14 +272,14 @@ static void test_send_backpressure(void) {
       assert(n > 0);
       queued_bytes += (size_t)n;
     }
-    assert(queued_bytes > 0 && (errno == EAGAIN || errno == EWOULDBLOCK));
+    assert(queued_bytes > 0 && (test_errno() == EAGAIN || test_errno() == EWOULDBLOCK));
     struct iovec iov = { .iov_base = (void *)"last", .iov_len = 4 };
     struct msghdr msg = {0};
     msg.msg_iov = &iov;
     msg.msg_iovlen = 1;
     ssize_t n = use_msg ? gof_sendmsg(sp[0], &msg, 0, 20)
                         : gof_sendto(sp[0], "last", 4, 0, NULL, 0, 20);
-    assert(n == -1 && errno == ETIMEDOUT);
+    assert(n == -1 && test_errno() == ETIMEDOUT);
     struct drain_peer peer = { .fd = sp[1], .queued_bytes = queued_bytes };
     atomic_init(&peer.done, 0);
     assert(gof_spawn(drain_queue, &peer, 0));
@@ -292,15 +293,22 @@ static void test_send_backpressure(void) {
   }
 }
 
+#endif
+
 static void run_tests(void *arg) {
   (void)arg;
   test_udp();
+#if !defined(_WIN32)
   test_rights();
+#endif
   test_timeouts();
+#if !defined(_WIN32)
   test_send_backpressure();
+#endif
 }
 
 int main(void) {
+  test_net_init();
   gof_init(0);
   assert(gof_spawn(run_tests, NULL, 0));
   gof_run();

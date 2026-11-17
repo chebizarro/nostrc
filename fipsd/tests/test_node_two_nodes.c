@@ -81,7 +81,12 @@ int main(void)
     assert(fipsd_node_handlers_connect(a.h, &b.identity, (fips_transport_id){1}, b.addr) == 0);
     fipsd_node_notice *e = nt_await(&a, FIPSD_NOTICE_LINK_UP, &b.identity.node_addr, NT_WAIT_MS); assert(e); free(e);
     e = nt_await(&b, FIPSD_NOTICE_LINK_UP, &a.identity.node_addr, NT_WAIT_MS); assert(e); free(e);
-#if defined(FIPSD_TEST_UDP) || defined(FIPSD_TEST_TCP)
+#if defined(FIPSD_TEST_UDP) && defined(_WIN32)
+    /* No connected per-peer sockets on Windows (no SO_REUSEPORT): every
+     * peer stays on the listener, as upstream does there. */
+    assert(nt_socket_count(a.transport) == 0);
+    assert(nt_socket_count(b.transport) == 0);
+#elif defined(FIPSD_TEST_UDP) || defined(FIPSD_TEST_TCP)
     assert(nt_socket_count(a.transport) == 1);
     assert(nt_socket_count(b.transport) == 1);
 #endif

@@ -92,6 +92,12 @@ static void authenticated(fipsd_transport *t, const fips_transport_addr *address
 {
     udp_instance *u = t->user;
     if (!u->started || go_context_is_canceled(u->root)) return;
+#if defined(_WIN32)
+    /* Connected per-peer sockets share the listener's port through
+     * SO_REUSEPORT, which Windows lacks; every peer uses the listener, as
+     * upstream does on Windows. */
+    (void)address; (void)direction; return;
+#endif
     fipsd_udp_endpoint remote;
     if (!fipsd_udp_resolve(&u->dns, address, u->bind_to.address.ss_family, &remote)) return;
     fips_transport_addr numeric;

@@ -1,3 +1,4 @@
+#include <stdint.h> /* intptr_t: long is 32-bit on LLP64 Windows */
 #include <stdio.h>
 #include <stdlib.h>
 #include <pthread.h>
@@ -17,7 +18,7 @@ static void *delayed_send(void *arg){
     GoChannel *c = (GoChannel*)arg;
     sleep_ms(DELAY_MS);
     int v = 42;
-    go_channel_send(c, (void*)(long)v);
+    go_channel_send(c, (void*)(intptr_t)v);
     return NULL;
 }
 
@@ -51,8 +52,8 @@ int main(void){
     };
     int idx2 = go_select(cases2, 2);
     pthread_join(th, NULL);
-    if (idx2 != 0 || (long)out != 42) {
-        fprintf(stderr, "select mixed failed idx2=%d out=%ld\n", idx2, (long)out);
+    if (idx2 != 0 || (long)(intptr_t)out != 42) {
+        fprintf(stderr, "select mixed failed idx2=%d out=%ld\n", idx2, (long)(intptr_t)out);
         return 2;
     }
 

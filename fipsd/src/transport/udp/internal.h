@@ -3,11 +3,12 @@
 #include "transport/udp/udp.h"
 #include "transport/udp/dns.h"
 #include "transport/watcher.h"
+#include "transport/sockos.h"
 #include <stdatomic.h>
 typedef struct udp_instance udp_instance;
 typedef struct udp_socket {
     udp_instance *owner;
-    int fd;
+    gof_socket_t fd;
     bool connected;
     fips_link_direction direction;
     fipsd_udp_endpoint local, remote;

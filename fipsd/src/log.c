@@ -14,6 +14,11 @@
 #include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
+#include "compat/posix_open.h"
+#if defined(_WIN32)
+#include <direct.h>
+#define mkdir(path, mode) ((void)(mode), _mkdir(path)) /* no POSIX modes */
+#endif
 
 struct fipsd_log {
     nsync_mu mu;              /* serializes sink writes */

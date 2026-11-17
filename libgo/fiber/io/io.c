@@ -1,34 +1,24 @@
+/* POSIX readiness I/O (epoll/kqueue). Windows uses io_win32.c instead. */
 #ifndef _POSIX_C_SOURCE
 #define _POSIX_C_SOURCE 200809L
 #endif
 #include "../include/libgo/fiber.h"
+#if !defined(_WIN32)
 #include "netpoll.h"
 #include "../sched/sched.h"
 #include <errno.h>
 #include <time.h>
 #include <stdlib.h>
 #include <pthread.h>
-#if defined(_WIN32)
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#ifndef ENOTSUP
-#define ENOTSUP 45
-#endif
-#else
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/socket.h>
-#endif
 
 static int set_nonblock(int fd) {
-#if defined(_WIN32)
-  (void)fd; return 0;
-#else
   int flags = fcntl(fd, F_GETFL, 0);
   if (flags < 0) return -1;
   if (flags & O_NONBLOCK) return 0;
   return fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-#endif
 }
 
 static uint64_t now_ns(void) {
@@ -136,7 +126,7 @@ static int fdwait_events(gof_fdwait *e) {
   return (e->rd_head ? GOF_POLL_READ : 0) | (e->wr_head ? GOF_POLL_WRITE : 0);
 }
 
-int gof_io_reset_fd(int fd) {
+int gof_io_reset_fd(gof_socket_t fd) {
   if (fd < 0) { fiber_set_errno(EINVAL); return -1; }
   pthread_mutex_lock(&io_mu);
   gof_fdwait *e = fdwait_get(fd, 1);
@@ -147,7 +137,7 @@ int gof_io_reset_fd(int fd) {
   return 0;
 }
 
-int gof_io_cancel_fd(int fd) {
+int gof_io_cancel_fd(gof_socket_t fd) {
   if (fd < 0) { fiber_set_errno(EINVAL); return -1; }
   pthread_mutex_lock(&io_mu);
   gof_fdwait *e = fdwait_get(fd, 1);
@@ -205,6 +195,8 @@ void gof_io_cancel_waiters(void) {
   }
   pthread_mutex_unlock(&io_mu);
 }
+
+int gof_socket_errno(void) { return fiber_get_errno(); }
 
 int gof_io_have_waiters(void) {
   /* Lock-free (nostrc-bme1g review): the scheduler idle loop calls this
@@ -277,10 +269,7 @@ static int wait_event_with_deadline(int fd, int events, uint64_t deadline_ns) {
   return 0;
 }
 
-ssize_t gof_read(int fd, void *buf, size_t n) {
-#if defined(_WIN32)
-  (void)fd;(void)buf;(void)n; errno = ENOTSUP; return -1;
-#else
+ssize_t gof_read(gof_socket_t fd, void *buf, size_t n) {
   (void)set_nonblock(fd);
   for(;;) {
     ssize_t r = read(fd, buf, n);
@@ -296,13 +285,9 @@ ssize_t gof_read(int fd, void *buf, size_t n) {
     fiber_set_errno(error);
     return -1;
   }
-#endif
 }
 
-ssize_t gof_write(int fd, const void *buf, size_t n) {
-#if defined(_WIN32)
-  (void)fd;(void)buf;(void)n; errno = ENOTSUP; return -1;
-#else
+ssize_t gof_write(gof_socket_t fd, const void *buf, size_t n) {
   (void)set_nonblock(fd);
   const char *p = (const char*)buf;
   size_t left = n;
@@ -317,13 +302,9 @@ ssize_t gof_write(int fd, const void *buf, size_t n) {
     return -1;
   }
   return (ssize_t)n;
-#endif
 }
 
-int gof_connect(int fd, const struct sockaddr *sa, socklen_t slen, int timeout_ms) {
-#if defined(_WIN32)
-  (void)fd;(void)sa;(void)slen;(void)timeout_ms; errno = ENOTSUP; return -1;
-#else
+int gof_connect(gof_socket_t fd, const struct sockaddr *sa, socklen_t slen, int timeout_ms) {
   (void)set_nonblock(fd);
   int r = connect(fd, sa, slen);
   if (r == 0) return 0;
@@ -343,13 +324,9 @@ int gof_connect(int fd, const struct sockaddr *sa, socklen_t slen, int timeout_m
     }
   }
   return -1;
-#endif
 }
 
-int gof_accept(int fd, struct sockaddr *sa, socklen_t *slen, int timeout_ms) {
-#if defined(_WIN32)
-  (void)fd;(void)sa;(void)slen;(void)timeout_ms; errno = ENOTSUP; return -1;
-#else
+gof_socket_t gof_accept(gof_socket_t fd, struct sockaddr *sa, socklen_t *slen, int timeout_ms) {
   (void)set_nonblock(fd);
   uint64_t dl = deadline_from_ms(timeout_ms);
   for(;;) {
@@ -366,10 +343,8 @@ int gof_accept(int fd, struct sockaddr *sa, socklen_t *slen, int timeout_ms) {
     fiber_set_errno(accept_errno);
     return -1;
   }
-#endif
 }
 
-#if !defined(_WIN32)
 /* A single deadline covers every readiness retry, not each park separately. */
 static int wait_message_ready(int fd, int events, uint64_t deadline_ns) {
   if (deadline_ns != 0 && now_ns() >= deadline_ns) {
@@ -383,14 +358,9 @@ static int wait_message_ready(int fd, int events, uint64_t deadline_ns) {
   }
   return 0;
 }
-#endif
 
-ssize_t gof_recvfrom(int fd, void *buf, size_t n, int flags,
+ssize_t gof_recvfrom(gof_socket_t fd, void *buf, size_t n, int flags,
                      struct sockaddr *sa, socklen_t *slen, int timeout_ms) {
-#if defined(_WIN32)
-  (void)fd; (void)buf; (void)n; (void)flags; (void)sa; (void)slen; (void)timeout_ms;
-  errno = ENOTSUP; return -1;
-#else
   if (set_nonblock(fd) != 0) return -1;
   uint64_t dl = deadline_from_ms(timeout_ms);
   for (;;) {
@@ -404,15 +374,10 @@ ssize_t gof_recvfrom(int fd, void *buf, size_t n, int flags,
     fiber_set_errno(error);
     return -1;
   }
-#endif
 }
 
-ssize_t gof_sendto(int fd, const void *buf, size_t n, int flags,
+ssize_t gof_sendto(gof_socket_t fd, const void *buf, size_t n, int flags,
                    const struct sockaddr *sa, socklen_t slen, int timeout_ms) {
-#if defined(_WIN32)
-  (void)fd; (void)buf; (void)n; (void)flags; (void)sa; (void)slen; (void)timeout_ms;
-  errno = ENOTSUP; return -1;
-#else
   if (set_nonblock(fd) != 0) return -1;
   uint64_t dl = deadline_from_ms(timeout_ms);
   for (;;) {
@@ -426,14 +391,9 @@ ssize_t gof_sendto(int fd, const void *buf, size_t n, int flags,
     fiber_set_errno(error);
     return -1;
   }
-#endif
 }
 
-ssize_t gof_recvmsg(int fd, struct msghdr *msg, int flags, int timeout_ms) {
-#if defined(_WIN32)
-  (void)fd; (void)msg; (void)flags; (void)timeout_ms;
-  errno = ENOTSUP; return -1;
-#else
+ssize_t gof_recvmsg(gof_socket_t fd, struct msghdr *msg, int flags, int timeout_ms) {
   if (set_nonblock(fd) != 0) return -1;
   uint64_t dl = deadline_from_ms(timeout_ms);
   for (;;) {
@@ -447,14 +407,9 @@ ssize_t gof_recvmsg(int fd, struct msghdr *msg, int flags, int timeout_ms) {
     fiber_set_errno(error);
     return -1;
   }
-#endif
 }
 
-ssize_t gof_sendmsg(int fd, const struct msghdr *msg, int flags, int timeout_ms) {
-#if defined(_WIN32)
-  (void)fd; (void)msg; (void)flags; (void)timeout_ms;
-  errno = ENOTSUP; return -1;
-#else
+ssize_t gof_sendmsg(gof_socket_t fd, const struct msghdr *msg, int flags, int timeout_ms) {
   if (set_nonblock(fd) != 0) return -1;
   uint64_t dl = deadline_from_ms(timeout_ms);
   for (;;) {
@@ -468,5 +423,5 @@ ssize_t gof_sendmsg(int fd, const struct msghdr *msg, int flags, int timeout_ms)
     fiber_set_errno(error);
     return -1;
   }
-#endif
 }
+#endif /* !_WIN32 */

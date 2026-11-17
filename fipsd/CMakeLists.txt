@@ -55,6 +55,13 @@ target_link_libraries(fipsd_lib PUBLIC
 if(NOT APPLE)
   target_compile_definitions(fipsd_lib PUBLIC _POSIX_C_SOURCE=200809L)
 endif()
+if(WIN32)
+  # POSIX socket headers map to Winsock (src/compat/win32/README.md). Lean
+  # windows.h keeps its `interface`/min/max macros out of fipsd's names.
+  target_include_directories(fipsd_lib BEFORE PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src/compat/win32")
+  target_compile_definitions(fipsd_lib PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX)
+  target_link_libraries(fipsd_lib PUBLIC ws2_32 iphlpapi)
+endif()
 apply_warnings(fipsd_lib)
 apply_sanitizers(fipsd_lib)
 
@@ -141,13 +148,15 @@ target_link_libraries(fipsd_lib PUBLIC nostr nostr_nip17_core nostr_nip59_core
 
 # Tier B4 device owner; IPv6 packet adaptation is a separate layer.
 target_sources(fipsd_lib PRIVATE src/tun/tun.c src/tun/route.c
-  src/tun/lifecycle.c src/tun/status.c)
+  src/tun/lifecycle.c src/tun/status.c src/tun/mtu.c)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_sources(fipsd_lib PRIVATE src/tun/tun_linux.c)
 elseif(APPLE)
   target_sources(fipsd_lib PRIVATE src/tun/tun_macos.c src/tun/tun_bsd.c)
 elseif(CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
   target_sources(fipsd_lib PRIVATE src/tun/tun_freebsd.c src/tun/tun_bsd.c)
+elseif(WIN32)
+  target_sources(fipsd_lib PRIVATE src/tun/tun_unsupported.c) # wintun: W2
 else()
   message(FATAL_ERROR "fipsd TUN requires Linux, macOS or FreeBSD")
 endif()
@@ -177,6 +186,7 @@ target_sources(fipsd_lib PRIVATE
 target_sources(fipsd_lib PRIVATE
   src/native/protocol.c src/native/registry.c src/native/seqpacket.c src/native/fdpass.c
   src/native/link.c src/native/dgram_probe.c src/native/api.c)
+if(NOT WIN32) # libfipsnative speaks the AF_UNIX SOCK_SEQPACKET native API
 declare_component_version(fipsnative 0 1 0)
 add_library(fipsnative SHARED src/native/client.c)
 add_library(fipsnative_static STATIC src/native/client.c)
@@ -199,6 +209,7 @@ install(TARGETS fipsnative fipsnative_static
   PUBLIC_HEADER DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/libfipsnative.pc" DESTINATION "${CMAKE_INSTALL_LIBDIR}/pkgconfig")
 add_subdirectory(examples)
+endif()
 # Coordinate hints must precede multi-hop routing (nostrc-f66sr.2).
 target_sources(fipsd_lib PRIVATE src/node/dataplane/coord_warm.c)
 
@@ -223,6 +234,24 @@ target_sources(fipsd_lib PRIVATE src/dns/msg.c src/dns/hosts.c src/dns/resolver.
 # browser cache, responder, LAN candidate set, sockets and the subsystem.
 target_sources(fipsd_lib PRIVATE src/mdns/records.c src/mdns/advert.c src/mdns/browser.c src/mdns/responder.c
   src/mdns/lan.c src/mdns/socket.c src/mdns/mdns.c)
+if(WIN32)
+  # Windows (nostrc-iq1n9.6.1): the UDP transport, node, handlers, dataplane,
+  # config, ACL, netmon (1 s backstop) and runtime are built for real. These
+  # subsystems still need POSIX facilities (TUN, AF_UNIX/SCM_RIGHTS, ifaddrs,
+  # multicast enumeration, POSIX descriptors in the stream owners): their
+  # sources leave the library and *_unsupported.c stubs stand in, which fail
+  # start-up when the feature is configured (control and DNS, on by default,
+  # warn instead). W2/W3 port them.
+  get_target_property(_fipsd_sources fipsd_lib SOURCES)
+  list(FILTER _fipsd_sources EXCLUDE REGEX
+    "^src/(tun/(tun|route|lifecycle|status)\\.c|ipv6/|dns/(resolver|service|hosts)\\.c|mdns/|native/|transport/(tcp|tor|socks5)/|control/control\\.c|nostr/(runtime|driver|stun|traversal_machine|traversal_io|failure_state|signal_gate|signal_route)\\.c)")
+  set_property(TARGET fipsd_lib PROPERTY SOURCES ${_fipsd_sources})
+  target_sources(fipsd_lib PRIVATE src/node/ifinfo_win32.c
+    src/ipv6/shim_unsupported.c src/dns/service_unsupported.c src/mdns/mdns_unsupported.c
+    src/native/api_unsupported.c src/nostr/runtime_unsupported.c
+    src/transport/tcp/tcp_unsupported.c src/transport/tor/tor_unsupported.c
+    src/control/service_unsupported.c)
+endif()
 # Packaging payload (nostrc-iq1n9.5). Every package format under packaging/
 # (Debian, RPM, Arch, macOS .pkg) stages the daemon with
 # `cmake --install <build>/fipsd`, so what a package ships is declared here
@@ -300,6 +329,7 @@ function(fipsd_install_optional_tools)
   endif()
 endfunction()
 cmake_language(DEFER DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" CALL fipsd_install_optional_tools)
+if(NOT WIN32) # fipsctl speaks the AF_UNIX control socket (Windows: TCP 127.0.0.1, W3)
 # fipsctl (nostrc-iq1n9.1): the control client, plain POSIX C over jansson
 # and libfips-core (identities, addresses, key files); no libgo, no fipsd_lib.
 # Everything but main() is fipsctl_lib so the unit test links the code the
@@ -331,6 +361,7 @@ apply_warnings(fipsctl)
 apply_sanitizers(fipsctl)
 install(TARGETS fipsctl RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
 
+endif()
 # fips-gateway (nostrc-iq1n9.3): the outbound LAN gateway. Its pool,
 # conntrack, state, NAT rendering and worker, DNS proxy, control socket and
 # shutdown modules are portable and form fipsd_gateway_core on every
@@ -339,6 +370,7 @@ install(TARGETS fipsctl RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
 # libnftables (over libnftnl/libmnl) is the C library nft itself is built on:
 # one JSON document per rebuild, sent as one netlink batch, so the rule shapes
 # are golden-testable text rather than hand-encoded netlink.
+if(NOT WIN32) # the LAN gateway is nftables/proxy-NDP on Linux
 declare_component_version(fips-gateway 0 1 0)
 add_library(fipsd_gateway_core STATIC
   src/gateway/types.c src/gateway/addrmap.c src/gateway/pool.c src/gateway/conntrack.c
@@ -390,6 +422,7 @@ if(BUILD_TESTING AND TARGET fips-gateway)
     INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/gateway_netns_smoke.py" "${CMAKE_CURRENT_SOURCE_DIR}/tests/udp_interop.py")
 endif()
 
+endif()
 # Compile-time tick and pipeline profiler (nostrc-iq1n9.4). Nothing is linked
 # into the default build, including the capture writer's OS thread machinery.
 option(FIPSD_ENABLE_PROFILING "Build the tick-body and pipeline profilers" OFF)
@@ -456,6 +489,7 @@ if(BUILD_TESTING AND FIPSD_ENABLE_PROFILING)
   target_sources(fipsd_profiling_test PRIVATE $<TARGET_OBJECTS:fipsd_profile_fault>)
 endif()
 
+if(NOT WIN32) # fipstop reads the control socket through fipsctl_lib
 # fipstop model is terminal-independent and shares the fipsctl wire/format library.
 add_library(fipstop_model STATIC src/fipstop/model.c)
 set_target_properties(fipstop_model PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
@@ -535,6 +569,7 @@ if(BUILD_TESTING AND TARGET fipstop)
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/udp_interop.py")
 endif()
 
+endif()
 if(TARGET fipstop_ui)
   target_include_directories(fipstop_ui PUBLIC "${fipstop_VERSION_HEADER_DIR}")
   add_dependencies(fipstop_ui fipsd_build_info)
