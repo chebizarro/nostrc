@@ -196,6 +196,8 @@ void gof_io_cancel_waiters(void) {
   pthread_mutex_unlock(&io_mu);
 }
 
+int gof_socket_errno(void) { return fiber_get_errno(); }
+
 int gof_io_have_waiters(void) {
   /* Lock-free (nostrc-bme1g review): the scheduler idle loop calls this
    * while holding S.mu, and on_ready holds io_mu while waking (which takes

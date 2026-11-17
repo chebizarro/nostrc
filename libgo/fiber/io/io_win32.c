@@ -708,6 +708,8 @@ void gof_io_cancel_waiters(void) {
   pthread_mutex_unlock(&io_mu);
 }
 
+int gof_socket_errno(void) { return wsa_to_errno(WSAGetLastError()); }
+
 int gof_io_have_waiters(void) {
   /* Lock-free: the scheduler idle loop calls this under S.mu (see io.c). */
   return atomic_load_explicit(&g_io_waiter_count, memory_order_acquire) > 0;

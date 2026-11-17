@@ -28,7 +28,7 @@ static void io_wait(void *arg) {
   char byte;
   ssize_t result = arg ? gof_recvfrom(recv_fd, &byte, 1, 0, NULL, NULL, 60000)
                        : gof_read(read_fd, &byte, 1);
-  int error = errno;
+  int error = test_errno();
   assert(result == -1 && error == ECANCELED);
   pthread_mutex_lock(&mu);
   ++cancelled;

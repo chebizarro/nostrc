@@ -182,6 +182,11 @@ GO_FIBER_API ssize_t     gof_sendmsg(gof_socket_t fd, const struct msghdr *msg, 
 GO_FIBER_API int         gof_io_reset_fd(gof_socket_t fd);
 GO_FIBER_API int         gof_io_cancel_fd(gof_socket_t fd);
 
+/** errno-style code for the calling thread's last failed raw socket call
+ * (socket, bind, setsockopt, ...): errno on POSIX, WSAGetLastError() mapped
+ * to the same errno values the gof_* wrappers report on Windows. */
+GO_FIBER_API int         gof_socket_errno(void);
+
 
 /**
  * @brief Snapshot of fiber diagnostic information.

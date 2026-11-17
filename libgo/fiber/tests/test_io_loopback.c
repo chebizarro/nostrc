@@ -110,7 +110,7 @@ static void test_udp(void) {
   /* A deadline with nothing to receive. */
   uint64_t start = monotonic_ms();
   assert(gof_recvfrom(server, small, sizeof(small), 0, NULL, NULL, 30) == -1);
-  assert(errno == ETIMEDOUT);
+  assert(test_errno() == ETIMEDOUT);
   assert(monotonic_ms() - start >= 30);
   /* The aborted receive consumed nothing: a later datagram still arrives. */
   assert(gof_sendto(client, "late", 4, 0, (struct sockaddr *)&sa, sizeof(sa), 0) == 4);
@@ -206,7 +206,7 @@ struct cancel_rx {
 static void cancel_receiver(void *arg) {
   struct cancel_rx *rx = arg;
   ssize_t n = gof_recvfrom(rx->fd, &rx->byte, 1, 0, NULL, NULL, -1);
-  rx->error = errno;
+  rx->error = test_errno();
   rx->result = (int)n;
   atomic_store(&rx->done, 1);
 }
@@ -221,13 +221,13 @@ static void test_cancel_mid_recv(void) {
   assert(gof_spawn(cancel_receiver, &rx, 0));
   wait_blocked(before);
   /* A live user: the owner may not reset yet. */
-  assert(gof_io_reset_fd(server) == -1 && errno == EBUSY);
+  assert(gof_io_reset_fd(server) == -1 && test_errno() == EBUSY);
   assert(gof_io_cancel_fd(server) == 0);
   while (!atomic_load(&rx.done)) gof_yield();
   assert(rx.result == -1 && rx.error == ECANCELED);
   /* The latch holds for later receives until the owner resets. */
   char byte;
-  assert(gof_recvfrom(server, &byte, 1, 0, NULL, NULL, IO_TIMEOUT_MS) == -1 && errno == ECANCELED);
+  assert(gof_recvfrom(server, &byte, 1, 0, NULL, NULL, IO_TIMEOUT_MS) == -1 && test_errno() == ECANCELED);
   assert(gof_io_reset_fd(server) == 0);
   assert(gof_sendto(client, "!", 1, 0, (struct sockaddr *)&sa, sizeof(sa), 0) == 1);
   assert(gof_recvfrom(server, &byte, 1, 0, NULL, NULL, IO_TIMEOUT_MS) == 1 && byte == '!');
@@ -258,7 +258,7 @@ static void test_cancel_mid_recv(void) {
       assert(gof_recvfrom(server, &byte, 1, 0, NULL, NULL, IO_TIMEOUT_MS) == 1 && byte == tag);
     }
     /* Nothing extra was left behind. */
-    assert(gof_recvfrom(server, &byte, 1, 0, NULL, NULL, 0) == -1 && errno == ETIMEDOUT);
+    assert(gof_recvfrom(server, &byte, 1, 0, NULL, NULL, 0) == -1 && test_errno() == ETIMEDOUT);
   }
   test_close(client);
   test_close(server);

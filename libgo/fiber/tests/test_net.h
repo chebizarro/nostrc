@@ -5,7 +5,16 @@
 #ifndef LIBGO_FIBER_TESTS_TEST_NET_H
 #define LIBGO_FIBER_TESTS_TEST_NET_H
 #include "libgo/fiber.h"
+#include <errno.h>
 #include <string.h>
+
+/* errno after a gof_* call, read on the worker that runs the fiber now. A
+ * call may park and resume the fiber on another worker thread, and glibc's
+ * __errno_location() is declared const, so at -O2 a plain `errno` after the
+ * call can reuse the previous thread's cell (libgo's io.c guards its own
+ * accesses the same way). Being noinline and reading memory, this cannot be
+ * hoisted across the call. */
+__attribute__((noinline, unused)) static int test_errno(void) { return errno; }
 #if defined(_WIN32)
 #include <winsock2.h>
 #include <ws2tcpip.h>

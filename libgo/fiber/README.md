@@ -157,18 +157,20 @@ Timed operations retain one absolute monotonic deadline across retries, and
 completed/cancelled I/O removes its deadline from the heap.
 
 ```c
-ssize_t gof_read(int fd, void *buf, size_t n);
-ssize_t gof_write(int fd, const void *buf, size_t n);
-int     gof_connect(int fd, const struct sockaddr *sa, socklen_t slen, int timeout_ms);
-int     gof_accept(int fd, struct sockaddr *sa, socklen_t *slen, int timeout_ms);
-int     gof_io_reset_fd(int fd);
-int     gof_io_cancel_fd(int fd);
-ssize_t gof_recvfrom(int fd, void *buf, size_t n, int flags,
-                     struct sockaddr *sa, socklen_t *slen, int timeout_ms);
-ssize_t gof_sendto(int fd, const void *buf, size_t n, int flags,
-                   const struct sockaddr *sa, socklen_t slen, int timeout_ms);
-ssize_t gof_recvmsg(int fd, struct msghdr *msg, int flags, int timeout_ms);
-ssize_t gof_sendmsg(int fd, const struct msghdr *msg, int flags, int timeout_ms);
+/* gof_socket_t: int on POSIX, SOCKET on Windows (see "Windows" below). */
+ssize_t      gof_read(gof_socket_t fd, void *buf, size_t n);
+ssize_t      gof_write(gof_socket_t fd, const void *buf, size_t n);
+int          gof_connect(gof_socket_t fd, const struct sockaddr *sa, socklen_t slen, int timeout_ms);
+gof_socket_t gof_accept(gof_socket_t fd, struct sockaddr *sa, socklen_t *slen, int timeout_ms);
+int          gof_io_reset_fd(gof_socket_t fd);
+int          gof_io_cancel_fd(gof_socket_t fd);
+int          gof_socket_errno(void); /* errno for a failed raw socket call */
+ssize_t      gof_recvfrom(gof_socket_t fd, void *buf, size_t n, int flags,
+                          struct sockaddr *sa, socklen_t *slen, int timeout_ms);
+ssize_t      gof_sendto(gof_socket_t fd, const void *buf, size_t n, int flags,
+                        const struct sockaddr *sa, socklen_t slen, int timeout_ms);
+ssize_t      gof_recvmsg(gof_socket_t fd, struct msghdr *msg, int flags, int timeout_ms);
+ssize_t      gof_sendmsg(gof_socket_t fd, const struct msghdr *msg, int flags, int timeout_ms);
 ```
 
 The message wrappers must be called from a running fiber. They set `O_NONBLOCK`
@@ -400,6 +402,7 @@ ctest --test-dir build -R "GoFiber" --output-on-failure -j4
 | `GoFiberIoIdleTestW1/W4` | 60 s | Zero resumes over 2 s idle, bounded write latency, 10k parking races, shared-fd EOF |
 | `GoFiberBackgroundLifecycleTestW1/W4` | 60 s | 50 delayed submissions into empty pools, prompt stop/join, timed and untimed I/O cancellation |
 | `GoFiberIoTimeoutTest` | 2 s (10 s on CI) | Connect timeout path |
+| `GoFiberIoLoopbackTest{,W4}` | 60 s | Real UDP/TCP loopback: message exchange, truncation, deadline, accept/connect/stream/EOF, cancel mid-receive, 300-round cancel-vs-arrival race (every platform, incl. IOCP) |
 | `GoFiberStarvationTest` | 20 s | Fair scheduling under yield storms |
 
 ### Platform support
@@ -411,7 +414,117 @@ ctest --test-dir build -R "GoFiber" --output-on-failure -j4
 | macOS x86-64 | Assembly | kqueue | ✅ Full |
 | macOS ARM64 | Assembly | kqueue | ✅ Full |
 | Any POSIX | ucontext fallback | epoll/kqueue | ✅ Portable |
-| Windows | — | IOCP | ⚠️ Stub only |
+| Windows ARM64 (MSYS2 CLANGARM64) | Fibers API | IOCP | ✅ Full (45/45 libgo tests) |
+| Windows x86-64 | Fibers API | IOCP | Same code; not yet run |
+
+### Windows
+
+`go_fiber` builds on Windows with MSYS2 clang (CLANGARM64 verified; the code
+has no architecture-specific parts) and links `ws2_32` and `mswsock`. Threads
+and locks are winpthreads; nsync is the MSYS2 `nsync` package or the vendored
+copy, as on the other platforms.
+
+**Context switch.** `context/context_win32.c` uses the Windows Fibers API
+(`CreateFiberEx`, `SwitchToFiber`, `ConvertThreadToFiberEx` for each worker's
+own context, `DeleteFiber` when a finished fiber is reaped). A hand-written
+ARM64 swap would have to keep x18 (the TEB pointer) untouched and swap the TEB's
+`StackBase`/`StackLimit`/`DeallocationStack` and exception list with every fiber
+stack, or guard-page stack growth, `__chkstk` probes and SEH unwinding fault on
+the fiber stack; `SwitchToFiber` does exactly that bookkeeping. The fiber owns
+its stack (reserved by `CreateFiberEx` in 64 KiB units, grown on demand through
+its guard page), so `gof_stack_alloc` only records the size there. Fibers
+migrate between workers as on POSIX; `errno` and other TLS belong to the
+worker thread, so the noinline errno helpers apply unchanged.
+
+**Submission.** There is no readiness poller: every `gof_*` call is an
+overlapped Winsock operation on one process-wide I/O completion port
+(`io/netpoll_iocp.c`, which also performs the process's `WSAStartup`).
+`io/io_win32.c` registers an op record (the `OVERLAPPED` plus state, on the
+calling fiber's stack) with the socket's registry entry under `io_mu`, issues
+`WSARecv`/`WSASend` (stream reads, writes and stream `recvmsg`/`sendmsg`),
+`WSARecvFrom`/`WSASendTo`, `WSARecvMsg`/`WSASendMsg` (datagram sockets),
+`ConnectEx` (binding an unbound socket first; datagram `connect` stays plain)
+or `AcceptEx` (the accepted socket is created with the listener's protocol
+info), and parks until the completion packet is dequeued. Extension functions
+are loaded once through `WSAIoctl(SIO_GET_EXTENSION_FUNCTION_POINTER)`.
+
+Every operation first probes the socket's port association with
+`CreateIoCompletionPort`: Windows recycles a closed `SOCKET` value at once, so
+cached state (socket type, completion mode) is trusted only while the port
+reports the handle as already bound; a newly bound handle is prepared again
+with `FILE_SKIP_COMPLETION_PORT_ON_SUCCESS | FILE_SKIP_SET_EVENT_ON_HANDLE`.
+With that mode an inline success returns without a packet or a park. Probed on
+Windows 11 ARM64: a synchronous failure other than `WSA_IO_PENDING` queues no
+packet (`OVERLAPPED.Internal` stays `STATUS_PENDING`, so only the return code
+decides), and a truncated datagram always completes through the port.
+
+**Completion.** A poller thread drains the port with
+`GetQueuedCompletionStatusEx` and, under `io_mu`, unlinks the op, marks it done
+and wakes its fiber through the scheduler's claim protocol (a packet dequeued
+before the fiber parks claims RUNNABLE→WOKEN, so no wake is lost). The fiber
+then reads status, byte count and flags with `WSAGetOverlappedResult`; for
+`WSARecvMsg` the provider updates `namelen`, `Control.len` and `dwFlags` in
+the `WSAMSG` at completion.
+
+**Cancellation.** A deadline, `gof_io_cancel_fd()` and scheduler stop all call
+`CancelIoEx` on the pending op. The kernel still delivers exactly one packet,
+aborted or with the result when the operation won the race, and the fiber never
+returns before that packet is dequeued, so no `OVERLAPPED`, `WSAMSG`, `WSABUF`
+or data buffer outlives its call. A receive that completed despite the cancel
+returns its data (the datagram is consumed and delivered); an aborted one
+leaves the datagram queued for the next receive. `GoFiberIoLoopbackTest` races
+cancel against arrival 300 times and checks that every datagram is delivered
+exactly once. A cancel that lands before the op is listed is honoured when it
+is listed. The latch semantics match POSIX: `cancel_fd` latches ECANCELED until
+`reset_fd`; `reset_fd` returns EBUSY while an op is registered.
+
+**Messages.** `libgo/net_compat.h` (included by `libgo/fiber.h` on Windows)
+defines POSIX-shaped `struct msghdr` and `struct iovec` with the POSIX field
+names, and `CMSG_FIRSTHDR/NXTHDR/DATA/SPACE/LEN/ALIGN` over `struct cmsghdr`
+(`WSACMSGHDR`) with the `WSA_CMSG_*` alignment rules (header and data aligned
+to `SIZE_T`), replacing Winsock's WSAMSG-only aliases. libgo translates to
+`WSAMSG`/`WSABUF`; the kernel writes control messages straight into
+`msg_control`. Windows offers `IP_PKTINFO`/`IPV6_PKTINFO` (receive and source
+selection) and `IP_ECN`/`IPV6_ECN` (receive, after `IP_RECVECN`); anything else
+(for example `SO_RXQ_OVFL` drop counters) is simply absent. Stream sockets
+carry no ancillary data (`gof_sendmsg` with control data on a stream returns
+EOPNOTSUPP) because `WSARecvMsg`/`WSASendMsg` are datagram-only.
+
+**Errors.** Winsock errors map to the POSIX errno values the CRT defines;
+`gof_socket_errno()` applies the same mapping to raw socket calls.
+
+| Winsock / Win32 | errno |
+|---|---|
+| `WSAEWOULDBLOCK` | `EAGAIN` |
+| `WSAECONNRESET`, `ERROR_NETNAME_DELETED` | `ECONNRESET` |
+| `WSAECONNREFUSED`, `ERROR_CONNECTION_REFUSED`, `ERROR_PORT_UNREACHABLE` | `ECONNREFUSED` |
+| `WSAEMSGSIZE`, `ERROR_MORE_DATA` | `EMSGSIZE` (send); truncation success with `MSG_TRUNC` (receive) |
+| `WSA_OPERATION_ABORTED` | `ECANCELED` after `cancel_fd`/stop, `ETIMEDOUT` after this call's deadline, `EINVAL` when it pended outside a fiber |
+| `WSAETIMEDOUT`, `ERROR_SEM_TIMEOUT` | `ETIMEDOUT` |
+| `WSAENETUNREACH`, `ERROR_NETWORK_UNREACHABLE` | `ENETUNREACH` |
+| `WSAEHOSTUNREACH`, `WSAEHOSTDOWN`, `ERROR_HOST_UNREACHABLE` | `EHOSTUNREACH` |
+| `WSAECONNABORTED`, `ERROR_CONNECTION_ABORTED` | `ECONNABORTED` |
+| `WSAENOTCONN` / `WSAEISCONN` / `WSAESHUTDOWN` | `ENOTCONN` / `EISCONN` / `EPIPE` |
+| `WSAENOTSOCK` / `WSAEBADF`, `INVALID_SOCKET` | `ENOTSOCK` / `EBADF` |
+| `WSAEADDRINUSE` / `WSAEADDRNOTAVAIL` / `WSAEAFNOSUPPORT` / `WSAEOPNOTSUPP` | `EADDRINUSE` / `EADDRNOTAVAIL` / `EAFNOSUPPORT` / `EOPNOTSUPP` |
+| `WSAEINVAL` / `WSAEFAULT` / `WSAENOBUFS` / `WSAEINTR` / `WSAEACCES` / `WSAEMFILE` | `EINVAL` / `EFAULT` / `ENOBUFS` / `EINTR` / `EACCES` / `EMFILE` |
+| anything else | `EIO` |
+
+**Differences from POSIX.**
+- `gof_read`/`gof_write` work on sockets only (`WSARecv`/`WSASend`); pipes and
+  files return ENOTSOCK. Tests use loopback socket pairs (`fiber/tests/test_net.h`).
+- Timeouts bound the overlapped operation: `timeout_ms == 0` issues it and
+  cancels at once if it pends (ETIMEDOUT when the cancel wins; UDP sends
+  complete inline and never pend in practice). A cancelled
+  stream send may have sent part of its buffer, as Winsock documents.
+- An unconnected UDP socket reports an ICMP port-unreachable as
+  `WSAECONNRESET` on its next receive unless the owner disables
+  `SIO_UDP_CONNRESET` (fipsd does).
+- A call that would park outside a fiber cancels and returns EINVAL, as on
+  POSIX; one that completes inline succeeds.
+- Owners still follow the POSIX contract: join users before closing; do not
+  close a socket with an operation pending (closing aborts it).
+- TSan and the sanitizers are POSIX-only here.
 
 ## Benchmarks
 

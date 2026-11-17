@@ -82,9 +82,9 @@ static void test_udp(void) {
   static const char oversized[65536] = {0};
   assert(gof_sendto(client, oversized, sizeof(oversized), 0,
                     (struct sockaddr *)&server_addr, sizeof(server_addr), 0) == -1);
-  assert(errno == EMSGSIZE);
+  assert(test_errno() == EMSGSIZE);
   assert(gof_recvfrom(server, buf, sizeof(buf), 0, NULL, NULL, 0) == -1);
-  assert(errno == ETIMEDOUT);
+  assert(test_errno() == ETIMEDOUT);
   test_close(client);
   test_close(server);
 }
@@ -171,7 +171,7 @@ static void test_rights(void) {
   assert(msg.msg_flags & MSG_TRUNC);
   assert(gof_recvmsg(sp[1], &msg, 0, 0) == 2);
   assert(msg.msg_flags & MSG_TRUNC);
-  assert(gof_recvmsg(sp[1], &msg, 0, 0) == -1 && errno == ETIMEDOUT);
+  assert(gof_recvmsg(sp[1], &msg, 0, 0) == -1 && test_errno() == ETIMEDOUT);
   close(sp[0]);
   close(sp[1]);
 }
@@ -205,7 +205,7 @@ static void test_timeouts(void) {
     atomic_store(&progress.entered, 1);
     ssize_t n = use_msg ? gof_recvmsg(fd, &msg, 0, 50)
                         : gof_recvfrom(fd, buf, sizeof(buf), 0, NULL, NULL, 50);
-    int error = errno;
+    int error = test_errno();
     uint64_t elapsed = monotonic_ms() - start;
     assert(n == -1 && error == ETIMEDOUT);
     assert(elapsed >= 50 && elapsed < IO_TIMEOUT_MS);
@@ -215,10 +215,10 @@ static void test_timeouts(void) {
   test_close(fd);
   char buf[1];
   struct msghdr msg = {0};
-  assert(gof_recvfrom(GOF_INVALID_SOCKET, buf, 1, 0, NULL, NULL, 0) == -1 && errno == EBADF);
-  assert(gof_sendto(GOF_INVALID_SOCKET, buf, 1, 0, NULL, 0, 0) == -1 && errno == EBADF);
-  assert(gof_recvmsg(GOF_INVALID_SOCKET, &msg, 0, 0) == -1 && errno == EBADF);
-  assert(gof_sendmsg(GOF_INVALID_SOCKET, &msg, 0, 0) == -1 && errno == EBADF);
+  assert(gof_recvfrom(GOF_INVALID_SOCKET, buf, 1, 0, NULL, NULL, 0) == -1 && test_errno() == EBADF);
+  assert(gof_sendto(GOF_INVALID_SOCKET, buf, 1, 0, NULL, 0, 0) == -1 && test_errno() == EBADF);
+  assert(gof_recvmsg(GOF_INVALID_SOCKET, &msg, 0, 0) == -1 && test_errno() == EBADF);
+  assert(gof_sendmsg(GOF_INVALID_SOCKET, &msg, 0, 0) == -1 && test_errno() == EBADF);
 }
 
 #if !defined(_WIN32)
@@ -250,7 +250,7 @@ static void drain_queue(void *arg) {
   }
   assert(memcmp(buf, "last", 4) == 0);
   assert(gof_recvfrom(peer->fd, buf, sizeof(buf), 0, NULL, NULL, 0) == -1);
-  assert(errno == ETIMEDOUT);
+  assert(test_errno() == ETIMEDOUT);
   atomic_store(&peer->done, 1);
 }
 
@@ -272,14 +272,14 @@ static void test_send_backpressure(void) {
       assert(n > 0);
       queued_bytes += (size_t)n;
     }
-    assert(queued_bytes > 0 && (errno == EAGAIN || errno == EWOULDBLOCK));
+    assert(queued_bytes > 0 && (test_errno() == EAGAIN || test_errno() == EWOULDBLOCK));
     struct iovec iov = { .iov_base = (void *)"last", .iov_len = 4 };
     struct msghdr msg = {0};
     msg.msg_iov = &iov;
     msg.msg_iovlen = 1;
     ssize_t n = use_msg ? gof_sendmsg(sp[0], &msg, 0, 20)
                         : gof_sendto(sp[0], "last", 4, 0, NULL, 0, 20);
-    assert(n == -1 && errno == ETIMEDOUT);
+    assert(n == -1 && test_errno() == ETIMEDOUT);
     struct drain_peer peer = { .fd = sp[1], .queued_bytes = queued_bytes };
     atomic_init(&peer.done, 0);
     assert(gof_spawn(drain_queue, &peer, 0));

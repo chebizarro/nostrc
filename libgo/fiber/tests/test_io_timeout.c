@@ -36,7 +36,7 @@ static void run_fiber(void *arg) {
   /* No client connects. Accept with a short timeout and expect ETIMEDOUT.
    * Capture the fiber's errno for diagnostics (main's is unrelated). */
   gof_socket_t c = gof_accept(lsock, NULL, NULL, 50);
-  g_saved_errno = errno;
+  g_saved_errno = test_errno();
   test_close(lsock);
   if (c != GOF_INVALID_SOCKET) {
     test_close(c);
