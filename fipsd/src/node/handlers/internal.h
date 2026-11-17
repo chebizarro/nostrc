@@ -1,3 +1,5 @@
+#include "node/perf_profile.h"
+#include "instr/recorder.h"
 #ifndef FIPSD_NODE_HANDLERS_INTERNAL_H
 #define FIPSD_NODE_HANDLERS_INTERNAL_H
 #include "node/handlers/handlers.h"
@@ -189,6 +191,7 @@ typedef enum handler_command_kind {
  * its execution deadline or shutdown. The ticket owns the JSON reply. */
 typedef struct hs_control_ticket hs_control_ticket;
 typedef struct handler_command {
+    FIPSD_PERF_QUEUE_FIELD
     handler_command_kind kind;
     fips_peer_identity identity;
     fips_node_addr node;

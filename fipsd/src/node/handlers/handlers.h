@@ -1,3 +1,4 @@
+#include "node/perf_profile.h"
 #ifndef FIPSD_NODE_HANDLERS_H
 #define FIPSD_NODE_HANDLERS_H
 #include "node/context.h"
@@ -54,6 +55,7 @@ typedef enum fipsd_notice_kind {
     FIPSD_NOTICE_PATH_MTU /* a per-destination path MTU changed: value, 0 when released */
 } fipsd_notice_kind;
 typedef struct fipsd_node_notice {
+    FIPSD_PERF_QUEUE_FIELD
     fipsd_notice_kind kind;
     fips_node_addr peer, root; /* root: TREE_CHANGED; LOOKUP: target */
     bool k, is_root;

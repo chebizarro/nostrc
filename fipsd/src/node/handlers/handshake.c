@@ -688,8 +688,11 @@ bool hs_peer_effects(handlers *h, fipsd_active_peer *peer, const fipsd_peer_acti
             break;
         }
         case FIPSD_PEER_POLL_LINK: {
+            FIPSD_INSTR_GATE(rekey_on);
+            FIPSD_INSTR_BEGIN(rekey_on, rekey_start);
             link_exec_result r = {0};
             (void)hs_link_step(h, rec, (fips_rekey_input){.kind = FIPS_REKEY_IN_Poll}, NULL, NULL, 0, &r);
+            FIPSD_INSTR_END(rekey_on, rekey_start, POLL_LINK_REKEYS);
             if (r.teardown) remove = true;
             break;
         }
@@ -719,11 +722,14 @@ uint64_t hs_legs_wait_ms(handlers *h, fips_instant now)
 }
 bool hs_legs_poll(handlers *h, fips_instant now)
 {
+    FIPSD_INSTR_GATE(timer_on);
+    FIPSD_INSTR_BEGIN(timer_on, timer_start);
     for (size_t i = 0; i < h->cfg.peer_capacity; ++i) {
         peer_rec *rec = &h->recs[i];
         if (rec->used && rec->restart.used && now.ops->compare(now, rec->restart.deadline) >= 0)
             restart_clear(h, rec, true, now);
     }
+    FIPSD_INSTR_BEGIN(timer_on, pending_start);
     for (size_t i = 0; i < h->cfg.peer_capacity; ++i) {
         pending_leg *leg = &h->legs[i];
         if (!leg->used) continue;
@@ -732,13 +738,19 @@ bool hs_legs_poll(handlers *h, fips_instant now)
         fipsd_peer_event e = {.kind = FIPSD_PEER_POLL};
         fipsd_peer_actions actions;
         fipsd_peer_machine_step(&leg->machine, now, &e, &actions);
-        if (!hs_leg_effects(h, leg, &actions)) return false;
+        if (!hs_leg_effects(h, leg, &actions)) {
+            FIPSD_INSTR_END(timer_on, pending_start, POLL_PENDING_CONNECTS);
+            FIPSD_INSTR_RETURN(timer_on, timer_start, CHECK_TIMEOUTS, false);
+        }
     }
+    FIPSD_INSTR_END(timer_on, pending_start, POLL_PENDING_CONNECTS);
     hs_configured_poll(h, now);
-    return true;
+    FIPSD_INSTR_RETURN(timer_on, timer_start, CHECK_TIMEOUTS, true);
 }
 void hs_configured_poll(handlers *h, fips_instant now)
 {
+    FIPSD_INSTR_GATE(timer_on);
+    FIPSD_INSTR_BEGIN(timer_on, timer_start);
     for (size_t i = 0; i < h->cfg.peer_capacity; ++i) {
         configured_peer *c = &h->configured[i];
         if (!c->used || c->dialing || !c->retry.scheduled) continue;
@@ -747,6 +759,7 @@ void hs_configured_poll(handlers *h, fips_instant now)
         if (fipsd_peer_retry_take(&c->retry, p, now, false, true, false))
             (void)hs_dial(h, &c->identity, c->transport, &c->addr, true);
     }
+    FIPSD_INSTR_END(timer_on, timer_start, PROCESS_PENDING_RETRIES);
 }
 bool hs_dial_configured(handlers *h)
 {

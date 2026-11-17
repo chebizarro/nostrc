@@ -1,3 +1,4 @@
+#include "instr/writer.h"
 #include "control/protocol.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -74,6 +75,16 @@ static json_t *dispatch(const fipsd_control_provider *provider, const json_t *re
         return fipsd_control_error("invalid request: NUL in command");
     const json_t *params = json_object_get(request, "params");
     if (json_is_null(params)) params = NULL;
+#ifdef FIPSD_ENABLE_PROFILING
+    if (!strcmp(name, "profile_tick_on") || !strcmp(name, "profile_tick_off") || !strcmp(name, "profile_tick_status")) {
+        GoRefPtr ref = {0};
+        if (provider && provider->acquire) ref = provider->acquire(provider->user);
+        const fipsd_control_snapshot *s = ref.ptr;
+        json_t *out = fipsd_instr_command(name, params, s ? s->npub : NULL, 1);
+        go_refptr_release(&ref);
+        return out;
+    }
+#endif
     for (size_t i = 0; i < sizeof(queries) / sizeof(queries[0]); ++i) {
         if (strcmp(name, queries[i])) continue;
         GoRefPtr ref = {0};

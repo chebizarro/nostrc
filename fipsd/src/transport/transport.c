@@ -28,6 +28,7 @@ int fipsd_transport_emit(GoChannel *events, GoContext *root, GoChannel *stop,
     fipsd_transport_event *e = calloc(1, sizeof *e + n);
     if (!e) return -1;
     e->kind = kind; e->id = id; e->size = n;
+    FIPSD_PERF_STAMP(e);
     if (addr) e->address = *addr;
     if (n) memcpy(e->bytes, bytes, n);
     void *v = NULL;

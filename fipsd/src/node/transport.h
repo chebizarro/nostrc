@@ -1,3 +1,4 @@
+#include "node/perf_profile.h"
 #ifndef FIPSD_TRANSPORT_H
 #define FIPSD_TRANSPORT_H
 #include "runtime.h"
@@ -16,6 +17,7 @@ typedef enum fipsd_transport_event_kind {
     FIPSD_TRANSPORT_EXITED, FIPSD_TRANSPORT_MEDIUM_CHANGED
 } fipsd_transport_event_kind;
 typedef struct fipsd_transport_event {
+    FIPSD_PERF_QUEUE_FIELD
     fipsd_transport_event_kind kind;
     fips_transport_id id;
     fips_transport_addr address;

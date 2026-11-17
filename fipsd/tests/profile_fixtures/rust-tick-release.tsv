@@ -1,0 +1,48 @@
+# fips tick profile
+# node	npub1fu64hh9hes90w2808n8tjc2ajp5yhddjef0ctx4s7zmsgp6cwx4qgy4eg9
+# build	0.6.0-dev (rev 6aa80504ba)
+# platform	macos
+# tick_period_secs	1
+# interval_secs	10
+# byte_cap	33554432
+# start_utc	2026-11-17T01:56:24Z
+# start_unix	1794880584
+# NOTE	step durations are WALL CLOCK across await points, not CPU time:
+# NOTE	a step that awaits I/O accrues the wait, and other tasks may run
+# NOTE	inside that span. That is the intended measure for head-of-line
+# NOTE	delay; do not read a large step as CPU cost.
+# NOTE	arm_starvation is measured directly as (entry time - the deadline
+# NOTE	the interval scheduled the tick for). It is NOT derived from
+# NOTE	tick_entry_gap, which carries no starvation signal by itself:
+# NOTE	under a steady delay every gap is exactly one tick period.
+ts_unix	kind	domain	name	count	max	total	unit
+1794880585	step	tick	check_timeouts	1	1	1	us
+1794880585	step	tick	reload_peer_acl	1	6	6	us
+1794880585	step	tick	reload_host_map	1	0	0	us
+1794880585	step	tick	poll_pending_connects	1	0	0	us
+1794880585	step	tick	poll_nostr_rendezvous	1	0	0	us
+1794880585	step	tick	poll_lan_rendezvous	1	0	0	us
+1794880585	step	tick	drive_peer_timers	1	0	0	us
+1794880585	step	tick	poll_session_rekeys	1	0	0	us
+1794880585	step	tick	purge_idle_sessions	1	0	0	us
+1794880585	step	tick	purge_expired_path_mtu	1	0	0	us
+1794880585	step	tick	process_pending_retries	1	0	0	us
+1794880585	step	tick	check_tree_state	1	0	0	us
+1794880585	step	tick	check_bloom_state	1	0	0	us
+1794880585	step	tick	compute_mesh_size	1	0	0	us
+1794880585	step	tick	record_stats_history	1	59	59	us
+1794880585	step	tick	check_mmp_reports	1	0	0	us
+1794880585	step	tick	check_session_mmp_reports	1	1	1	us
+1794880585	step	tick	check_link_heartbeats	1	0	0	us
+1794880585	step	tick	poll_link_rekeys	1	0	0	us
+1794880585	step	tick	check_pending_lookups	1	0	0	us
+1794880585	step	tick	poll_probes	1	0	0	us
+1794880585	step	tick	poll_transport_discovery	1	1	1	us
+1794880585	step	tick	sample_transport_congestion	1	0	0	us
+1794880585	step	tick	activate_connected_udp_sessions	1	1	1	us
+1794880585	step	tick	poll_worker_liveness	1	1	1	us
+1794880585	step	tick	whole_tick	1	82	82	us
+1794880585	gauge	tick	ticks	1	1	1	ticks
+1794880585	gauge	tick	peers	1	0	0	peers
+1794880585	gauge	tick	tick_entry_gap	0	0	0	us
+1794880585	gauge	tick	arm_starvation	1	1221	1221	us

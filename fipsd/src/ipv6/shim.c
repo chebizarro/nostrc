@@ -258,13 +258,15 @@ static void pass_through(fipsd_ipv6_shim *s, fipsd_node_notice *n)
 }
 static void deliver(fipsd_ipv6_shim *s, const fipsd_node_notice *n)
 {
+    FIPSD_PERF_BEGIN(tun_start);
     fips_ipv6_address src = fipsd_ipv6_peer_address(&n->peer);
     /* The C node's delivery carries no CE mark; upstream's Deliver does. */
     fipsd_ipv6_deliver d = {.peer = n->peer, .payload = n->payload, .len = n->len, .ce = false};
     int len = fipsd_ipv6_unpack(&d, src.bytes, s->our, s->rx_scratch, RX_MAX);
-    if (len < 0) { COUNT(s, undeliverable); return; }
+    if (len < 0) { COUNT(s, undeliverable); FIPSD_PERF_END(tun_start, TUN_WRITE); return; }
     COUNT(s, delivered);
     (void)fipsd_ipv6_queue_send(s->queue, s->rx_scratch, (size_t)len);
+    FIPSD_PERF_END(tun_start, TUN_WRITE);
 }
 static void on_notice(fipsd_ipv6_shim *s, fipsd_node_notice *n)
 {

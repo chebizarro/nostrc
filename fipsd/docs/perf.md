@@ -306,3 +306,234 @@ rm -rf "$ROOT/build-perf" "$ROOT/build-perffix-asan" "$ROOT/build-perffix-tsan" 
   "$ROOT/p" /tmp/fips-rust-target-perffix2
 git -C "$ROOT" submodule deinit -f --all
 ```
+
+## Tick profiler
+
+`FIPSD_ENABLE_PROFILING` is **OFF by default**. This ports the profiler at
+upstream FIPS `6aa80504baa0fa312b392009eea0e3e59fb6fe4c`: `instr/{mod,recorder,
+writer,capture}.rs` and `perf_profile.rs`. `instr/recorder.{c,h}` owns the
+fixed-size counters, capture-generation tokens and feature-erased span macros;
+`instr/writer.{c,h}` owns TSV formatting, the bounded private capture file,
+control commands and writer-thread lifecycle. `node/perf_profile.{c,h}` owns
+pipeline histograms and its separate, opt-in reporter. All three `.c` files
+are excluded from a default build. Only macros/private gated timestamp fields
+were added to dispatch, crypto, transport and endpoint paths: no timer,
+packet, queue, snapshot-publication or scheduling policy was changed.
+
+### Build and capture
+
+Use an out-of-tree build, with both daemon and client switches. For example:
+
+```sh
+ROOT=/Users/bizarro/Documents/Projects/nostrc-wt/fips-profiler
+BUILD="$ROOT/build-prof"
+git -C "$ROOT" submodule update --init --depth 1 third_party/nostrdb
+timeout 300 cmake -S "$ROOT" -B "$BUILD" -G Ninja \
+  -DCMAKE_BUILD_TYPE=Debug -DGO_WARNINGS_AS_ERRORS=ON \
+  -DFIPSD_ENABLE_PROFILING=ON -DFIPSCTL_PROFILING=ON \
+  -DBUILD_FIPS=ON -DBUILD_APPS=OFF -DBUILD_RELAYD=OFF \
+  -DBUILD_LIBHANAMI=OFF -DBUILD_LIBMARMOT=OFF -DBUILD_MARMOT_GOBJECT=OFF \
+  -DBUILD_NOSTR_GOBJECT=OFF -DBUILD_NOSTR_GTK=OFF -DSIGNET_ENABLE=OFF \
+  -DWITH_NOSTRDB=OFF -DLIBNOSTR_WITH_NOSTRDB=OFF
+timeout 900 cmake --build "$BUILD" --target fipsd_tests -j 10
+# Run fipsd with your ordinary config in another foreground terminal.
+"$BUILD/fipsd/fipsctl" --socket "$ROOT/p/node.sock" profile tick on --dir "$ROOT/p/captures"
+"$BUILD/fipsd/fipsctl" --socket "$ROOT/p/node.sock" profile tick status
+"$BUILD/fipsd/fipsctl" --socket "$ROOT/p/node.sock" profile tick off
+```
+
+Like upstream, the CLI prints the control JSON data, including the capture
+`path`; the TSV is written to that file, **not embedded in the control reply**.
+The already-parsed `fipsctl` commands now reach real off-dispatcher
+`profile_tick_on`, `profile_tick_off`, and `profile_tick_status` handlers.
+The default daemon still reports them as unknown commands. A client compiled
+without `FIPSCTL_PROFILING` does not accept the `profile` command.
+
+`on` returns `state`, `path`, `interval_secs`, `byte_cap`. `status` adds `bytes`
+and reports `idle`, `running`, `stopped_by_cap`, or `stopped_by_error`.
+`off` returns `state`, `stopped` and, when stopping a capture, `path`, `bytes`,
+`stopped_by_cap`, `stopped_by_error`. Repeated `off` is successful and reports
+`stopped:false`. The file is `profile-<UTC timestamp>[-collision suffix].tsv`,
+created exclusively with mode 0600; directories are created with mode 0750.
+An unprivileged daemon accepts a caller-selected directory. A root daemon
+confines it to `/var/log/fips`, rejecting parent components and symlink escapes
+through existing ancestors (the same trusted-root/check-then-act assumption as
+upstream). Open/header/thread-start failures return an error and clean up the
+new file. The default directory is `/var/log/fips`.
+
+A lazily created OS thread drains every ten seconds, stops at 32 MiB instead
+of rotating, and reports sink errors as `stopped_by_error`. `off` and daemon
+teardown signal a condition variable, perform a final drain and join; they do
+not sleep out the flush interval. Generation tokens reject a span that began
+in an earlier capture, including across immediate `off`/`on`. Disarming retires
+only synchronous atomic updates, never waits for a span body or a dispatcher
+fiber to finish. The recording path is allocation-free and uses lock-free
+64-bit atomics. The independent fields can fall in adjacent flush intervals
+at a boundary, as in Rust; unsigned totals wrap modulo 2^64, not saturation.
+
+### Fields and section coverage
+
+The exact upstream header keys/notes and TSV column order are preserved:
+
+```text
+ts_unix  kind  domain  name  count  max  total  unit
+```
+
+`domain=tick`; steps precede gauges in upstream declaration order. Step
+`max`/`total` are wall-clock microseconds, truncated from nanoseconds, including
+any wait inside a span. They are **not CPU time**. Nested spans are inclusive:
+do not sum them as disjoint costs. Gauges are `ticks` (unit `ticks`), `peers`
+(unit `peers`), `tick_entry_gap` and `arm_starvation` (unit `us`). Gauges have
+sample count, maximum sampled value and sum, not duration columns. The first
+entry has no gap but does contribute deadline lateness. Starvation is actual
+entry minus the stored scheduled tick deadline, not a formula based on gaps.
+
+C has a deadline-driven timer wheel rather than Rust's monolithic tick arm.
+The names are preserved, but callback frequency and nesting reflect **actual C
+work**, not fabricated Rust-shaped calls:
+
+| Upstream names | C instrumentation |
+| --- | --- |
+| `whole_tick` | Existing `hs_tick` body only; peer gauge sampled afterward |
+| `check_tree_state`, `check_bloom_state`, `check_pending_lookups`, `poll_probes` | Existing tick calls to tree/bloom/lookup/probe maintenance |
+| `check_mmp_reports`, `check_session_mmp_reports`, `record_stats_history` | Existing tick MMP/session-MMP/history calls |
+| `poll_session_rekeys`, `purge_idle_sessions` | Session tick/path-facts sweep and deadline-driven session poll; idle predicate/close is a nested per-session span |
+| `compute_mesh_size` | Actual mesh-estimation calls, including history/snapshot callers |
+| `check_timeouts`, `poll_pending_connects`, `process_pending_retries` | Deadline-driven leg callback, its nested pending-leg sweep, and configured retry callback |
+| `drive_peer_timers`, `poll_link_rekeys` | Dispatcher peer service and actual peer `POLL_LINK` effects |
+| `check_link_heartbeats` | Dead-link detection inside tick MMP maintenance |
+
+The following upstream rows remain in the schema with zero counts because
+this C dispatcher has no corresponding **tick** section: `reload_peer_acl`,
+`reload_host_map`, `poll_nostr_rendezvous`, `poll_lan_rendezvous`,
+`purge_expired_path_mtu`, `poll_transport_discovery`,
+`sample_transport_congestion`, `activate_connected_udp_sessions`,
+`poll_worker_liveness`, `debug_assert_peer_maps_coherent`. This does not assert
+that the whole subsystem is absent: C connected UDP activation, for example,
+is event-driven at authentication, and worker exits are channel events.
+No sibling Nostr/mDNS implementation was changed to invent tick duties.
+OS/debug conditional row emission follows upstream: the connected-UDP row is
+Linux/macOS, worker row Unix, invariant row Debug. All other rows, even zero
+ones, are emitted every interval, preserving comparison-tool compatibility.
+
+### Pipeline report and dispatcher snapshot cost
+
+In a profiling-enabled daemon, `FIPS_PERF=1` or `FIPS_PIPELINE_TRACE=true`
+enables the pipeline reporter; `FIPS_PERF_INTERVAL_SECS` defaults to 5 and is
+at least 1. Values are cached at startup. It reports to stderr, independently
+of whether a tick capture is armed. With both environment flags unset there
+is no reporter thread. Durations use upstream's `ns`/`us`/`ms`/`s` thresholds
+and one-decimal formatting above nanoseconds:
+
+```text
+[pipe 1s] fmp_encrypt=5/s avg=3.9us p50<=8.2us p95<=8.2us p99<=8.2us max<=8.2us allmax=6.2us udp_send_wildcard=6/s
+```
+
+Each stage uses cumulative count/total/exact lifetime maximum and 48
+ceil-log2 nanosecond buckets, clamped to bucket 47. Reports use interval
+histogram deltas; p50/p95/p99 and `max<=` are bucket upper bounds, `allmax` is
+exact lifetime maximum, and `/s` is integer interval rate. Zero-count stages
+and zero-count events are omitted. All sixteen upstream stage names/order
+and six event names/order are retained. C measures FMP/FSP worker crypto,
+FMP worker seal queue wait, packet classification/result dispatch, originated
+endpoint send and queue wait, native delivery and consumer wait, transport
+queue wait, TUN unpack/queue delivery, and UDP sendmsg. Connected/wildcard
+sends and connected-socket installation/failure are counted. Unused stages
+(such as `udp_recv`, which has no hook in the pinned upstream either) stay
+silent; no readiness wait is falsely presented as a receive syscall cost.
+C's result-dispatch span includes bookkeeping that Rust structures differently;
+this is report-format parity, not equal-cost or equal-scheduling claims.
+
+The final **C-only additive pipeline stage** `publish_snapshot` times the real
+control snapshot `build(h, now)`. It has the same histogram/percentile layout
+but is not an upstream tick name. This makes the wave-16 finding testable:
+compare its rate, average, tail and lifetime maximum to packet/endpoint work
+under load. Snapshot construction outside the tick is not falsely charged
+to `whole_tick` or `record_stats_history`.
+
+### Reproduction and verification
+
+`FipsdProfilingTest` joins `fipsd_tests` when profiling is enabled. It covers
+nested spans and exactly-once evaluation, fixed-footprint/wrapping overflow,
+reset, measured sustained starvation, retired capture generations, histogram
+bounds/percentiles, exact pipeline output, concurrent drain/record, private
+file modes, same-second restart, final drain, idle reset, startup descriptor
+cleanup, and a writer that fails **before startup returns**. Fault injection
+is in a separate test-only object, not production knobs. `FipsdProfilingE2eTest`
+requires both profiling switches, builds its native load helper even without
+`FIPS_ENABLE_BENCH`, and runs two real daemons through the existing
+`perf_loopback.run_pair` IK/XK/native-API workload for three seconds. It calls
+the real `fipsctl` on/status/off, requires live tick counts and compares TSV
+structure and pipeline field layout against the captured Rust fixtures.
+Root runs explicitly skip this unprivileged temporary-directory test.
+
+`FipsdProfilingZeroCostTest` is registered instead in a default build. It
+requires byte-identical feature-off/uninstrumented objects even at `-O0`,
+uses deliberately undefined clock/gauge arguments to prove non-evaluation,
+checks timestamp fields vanish from structures, and checks the actual
+`fipsd_lib` archive contains no `fipsd_instr_*` or `fipsd_perf_*` symbols.
+
+The reference fixtures in `tests/profile_fixtures/` are **real captured output**
+from the locked upstream Release `--features profiling` build, not copied C
+expectations. A separate Rust/Rust loopback run also passed the same shape
+comparison. Comparison normalizes values only (not keys, names, units, notes
+or row ordering), with the explicit Debug invariant-row difference.
+
+Example from the local macOS arm64 Debug ASan/UBSan C/C loopback run (three
+seconds, one peer, wall times include sanitizer/instrumentation overhead):
+
+```text
+# fipsctl profile tick on
+{"byte_cap":33554432,"interval_secs":10,"path":".../profile-20261117T020317Z.tsv","state":"running"}
+# fipsctl profile tick off
+{"bytes":2454,"path":".../profile-20261117T020317Z.tsv","state":"idle","stopped":true,"stopped_by_cap":false,"stopped_by_error":false}
+# selected actual TSV rows, tab-separated
+1794881000  step   tick  record_stats_history  3  1081  1084  us
+1794881000  step   tick  whole_tick            3  2684  5699  us
+1794881000  gauge  tick  ticks                 3  1     3     ticks
+1794881000  gauge  tick  peers                 3  1     3     peers
+1794881000  gauge  tick  arm_starvation        3  147   301   us
+```
+
+These samples are diagnostic examples, not a new performance baseline or a
+claim that tick time accounts for every dispatcher activity.
+
+A later C/C ASan run also produced this actual snapshot-stage segment (the
+rest of the same pipeline line contains the original stage fields):
+
+```text
+publish_snapshot=3/s avg=13.7ms p50<=16.8ms p95<=33.6ms p99<=33.6ms max<=33.6ms allmax=63.9ms
+```
+
+Final local verification used Debug/Werror builds, built `fipsd_tests` plus
+**every** libfips-core test executable (including `fips_core_skeleton_test`),
+and ran `ctest -R '^Fips' -E 'Soak|Perf' --no-tests=error --output-on-failure`:
+
+| Configuration | Result |
+| --- | --- |
+| Default, ASan/UBSan | 192 counted: 183 passes, 9 skips, 0 failures; 190.69 s |
+| Default, TSan | 192 counted: 183 passes, 9 skips, 0 failures; 333.16 s |
+| Profiling, ASan/UBSan full selection | 193 counted: 184 passes, 9 skips, 0 failures; 190.43 s |
+| Final profiling unit + e2e, ASan/UBSan | 2/2 pass; 5.28 s |
+| Final profiling unit + e2e, TSan | 2/2 pass; 9.68 s |
+
+ASan used `detect_leaks=0:strict_string_checks=1:halt_on_error=1` and UBSan
+`print_stacktrace=1:halt_on_error=1`; this is not an LSan pass on macOS. TSan
+used `halt_on_error=1`. The nine skips are the two privileged smoke tests and
+seven optional Rust-interop gates, whose CMake binary bindings were not set;
+they are not counted as passes. The separate real Rust capture and Rust/Rust
+load/shape checks described above did run.
+
+Earlier complete TSan runs (default and profiling) exposed the already-known
+`FipsdNostrTraversal_guards` race in `relay.c:1064`, global
+`write_operations.h_ws_write_ns` (`nostrc-xqwgo`). That code was not changed,
+suppressed or excluded. The final default suite after the feature-off macro
+fix did not trigger it; the final focused profiling TSan tests were clean.
+An earlier feature-off include error and the strict `-O0` identity check's
+finding of branch-emitting `do/while(0)` no-op macros were fixed, not worked
+around: disabled macros now expand to nothing or the measured expression.
+
+Direct static gates passed: `check-unsequenced-args.py --root <worktree>`,
+`check-gui-test-gdk-frame.py` (55 sources), `check-linux-ci-packages.py`, and
+`git diff --check`. No workflow files, tracker state or pre-push wrapper were
+changed/run. The manifest keeps fipsd and fipsctl at 0.1.0 Unreleased.

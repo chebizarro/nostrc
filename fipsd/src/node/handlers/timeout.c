@@ -40,17 +40,22 @@ bool hs_poll(handlers *h, fips_instant now)
 }
 void hs_tick(handlers *h, fips_instant now)
 {
-    hs_mmp_tick(h, now);
-    hs_tree_tick(h, now);
-    hs_bloom_refresh(h, now, false);
-    hs_lookup_tick(h, now);
-    hs_session_tick(h, now);
-    hs_mmp_session_tick(h, now);
-    hs_probe_tick(h, now);
+    FIPSD_INSTR_GATE(instr_on);
+    FIPSD_INSTR_ENTRY(instr_on, hs_now(h), h->next_tick);
+    FIPSD_INSTR_BEGIN(instr_on, whole);
+    FIPSD_INSTR_STEP(instr_on, CHECK_MMP_REPORTS, hs_mmp_tick(h, now));
+    FIPSD_INSTR_STEP(instr_on, CHECK_TREE_STATE, hs_tree_tick(h, now));
+    FIPSD_INSTR_STEP(instr_on, CHECK_BLOOM_STATE, hs_bloom_refresh(h, now, false));
+    FIPSD_INSTR_STEP(instr_on, CHECK_PENDING_LOOKUPS, hs_lookup_tick(h, now));
+    FIPSD_INSTR_STEP(instr_on, POLL_SESSION_REKEYS, hs_session_tick(h, now));
+    FIPSD_INSTR_STEP(instr_on, CHECK_SESSION_MMP_REPORTS, hs_mmp_session_tick(h, now));
+    FIPSD_INSTR_STEP(instr_on, POLL_PROBES, hs_probe_tick(h, now));
     (void)fips_coord_cache_purge_expired(&h->cache, now);
     fips_session_setup_cleanup(&h->setup_limiter, now);
     fips_lookup_sign_cleanup(&h->sign_limiter, now);
     fips_routing_error_rate_limiter_cleanup(&h->router.error_limiter, now);
-    hs_stats_tick(h, now);
+    FIPSD_INSTR_STEP(instr_on, RECORD_STATS_HISTORY, hs_stats_tick(h, now));
     hs_mark_dirty(h);
+    FIPSD_INSTR_END(instr_on, whole, WHOLE_TICK);
+    FIPSD_INSTR_PEER_COUNT(instr_on, h->peers ? fipsd_peer_table_count(h->peers->table) : 0);
 }

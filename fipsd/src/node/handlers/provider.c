@@ -462,7 +462,9 @@ static snap *build(handlers *h, fips_instant now)
 void hs_publish(handlers *h, fips_instant now)
 {
     if (!h->attached) return;
+    FIPSD_PERF_BEGIN(snapshot_start);
     snap *x = build(h, now);
+    FIPSD_PERF_END(snapshot_start, PUBLISH_SNAPSHOT);
     if (!x) return;
     if (!go_swap_store(h->snapshot, x)) { snap_free(x); return; }
     ++h->snapshot_generation; h->dirty = false;

@@ -40,6 +40,7 @@ static void run(void *arg)
     unsigned streak = 0;
     while (go_channel_receive(w->in, &value) == 0) {
         fipsd_crypto_job *j = value;
+        FIPSD_PERF_JOB_WAIT(j);
         j->worker = w->index;
         if (j->operation == FIPSD_CRYPTO_SEAL) fipsd_encrypt_worker_execute(j);
         else fipsd_decrypt_worker_execute(j);
@@ -95,6 +96,7 @@ size_t fipsd_worker_set_live(const fipsd_worker_set *s)
 int fipsd_worker_set_dispatch(fipsd_worker_set *s, fipsd_crypto_job *j)
 {
     if (!j || (j->operation != FIPSD_CRYPTO_SEAL && j->operation != FIPSD_CRYPTO_OPEN)) return -1;
+    FIPSD_PERF_JOB_QUEUE(j);
     size_t first = s->next++ % s->count;
     for (size_t n = 0; n < s->count; ++n) {
         size_t i = (first + n) % s->count;

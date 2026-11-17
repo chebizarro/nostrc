@@ -385,3 +385,69 @@ if(BUILD_TESTING AND TARGET fips-gateway)
   nostrc_describe_test(FipsdGatewayPrivilegedSmokeTest OWNER fipsd TARGETS fipsd fips-gateway
     INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/gateway_netns_smoke.py" "${CMAKE_CURRENT_SOURCE_DIR}/tests/udp_interop.py")
 endif()
+
+# Compile-time tick and pipeline profiler (nostrc-iq1n9.4). Nothing is linked
+# into the default build, including the capture writer's OS thread machinery.
+option(FIPSD_ENABLE_PROFILING "Build the tick-body and pipeline profilers" OFF)
+if(FIPSD_ENABLE_PROFILING)
+  find_package(Threads REQUIRED)
+  target_sources(fipsd_lib PRIVATE src/instr/recorder.c src/instr/writer.c src/node/perf_profile.c)
+  target_compile_definitions(fipsd_lib PUBLIC FIPSD_ENABLE_PROFILING=1)
+  target_link_libraries(fipsd_lib PUBLIC Threads::Threads)
+  if(BUILD_TESTING)
+    add_executable(fipsd_profiling_test tests/test_profiling.c)
+    target_link_libraries(fipsd_profiling_test PRIVATE fipsd_lib)
+    target_compile_definitions(fipsd_profiling_test PRIVATE
+      FIPSD_PROFILE_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/tests/profile_fixtures")
+    set_target_properties(fipsd_profiling_test PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+    apply_warnings(fipsd_profiling_test)
+    apply_sanitizers(fipsd_profiling_test)
+    add_test(NAME FipsdProfilingTest COMMAND fipsd_profiling_test)
+    set_tests_properties(FipsdProfilingTest PROPERTIES TIMEOUT 30 LABELS "fips;unit;profiling"
+      ENVIRONMENT "FIPS_PERF=1")
+    nostrc_describe_test(FipsdProfilingTest OWNER fipsd TARGETS fipsd_profiling_test)
+    add_dependencies(fipsd_tests fipsd_profiling_test)
+  endif()
+elseif(BUILD_TESTING)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  add_test(NAME FipsdProfilingZeroCostTest COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/profile_zero_cost.py"
+    --cc "${CMAKE_C_COMPILER}" --include "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    --archive "$<TARGET_FILE:fipsd_lib>")
+  set_tests_properties(FipsdProfilingZeroCostTest PROPERTIES TIMEOUT 30 LABELS "fips;unit;profiling")
+  nostrc_describe_test(FipsdProfilingZeroCostTest OWNER fipsd TARGETS fipsd_lib)
+endif()
+if(BUILD_TESTING AND FIPSD_ENABLE_PROFILING AND FIPSCTL_PROFILING)
+  if(NOT TARGET fipsd_perf_native)
+    add_executable(fipsd_perf_native tests/perf_native.c)
+    target_link_libraries(fipsd_perf_native PRIVATE fipsnative_static Threads::Threads)
+    set_target_properties(fipsd_perf_native PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+    apply_warnings(fipsd_perf_native)
+    apply_sanitizers(fipsd_perf_native)
+  endif()
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  add_dependencies(fipsd_tests fipsd_perf_native fipsctl)
+  add_test(NAME FipsdProfilingE2eTest COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/profile_e2e.py"
+    --fipsd "$<TARGET_FILE:fipsd>" --fipsctl "$<TARGET_FILE:fipsctl>"
+    --native-tool "$<TARGET_FILE:fipsd_perf_native>"
+    --work-dir "${CMAKE_SOURCE_DIR}/p/e2e")
+  set_tests_properties(FipsdProfilingE2eTest PROPERTIES TIMEOUT 240 SKIP_RETURN_CODE 77
+    LABELS "fips;profiling;integration"
+    ENVIRONMENT "FIPS_PERF=1;FIPS_PERF_INTERVAL_SECS=1")
+  nostrc_describe_test(FipsdProfilingE2eTest OWNER fipsd TARGETS fipsd fipsctl fipsd_perf_native
+    INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/profile_e2e.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/perf_loopback.py")
+endif()
+
+if(BUILD_TESTING AND FIPSD_ENABLE_PROFILING)
+  add_library(fipsd_profile_fault OBJECT src/instr/writer.c)
+  target_link_libraries(fipsd_profile_fault PRIVATE fipsd_lib)
+  target_compile_definitions(fipsd_profile_fault PRIVATE
+    pthread_create=fipsd_profile_test_pthread_create
+    pthread_cond_timedwait=fipsd_profile_test_condwait)
+  set_target_properties(fipsd_profile_fault PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+  apply_warnings(fipsd_profile_fault)
+  apply_sanitizers(fipsd_profile_fault)
+  target_sources(fipsd_profiling_test PRIVATE $<TARGET_OBJECTS:fipsd_profile_fault>)
+endif()

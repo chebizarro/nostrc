@@ -1,3 +1,4 @@
+#include "node/perf_profile.h"
 #ifndef FIPSD_WORKER_SET_H
 #define FIPSD_WORKER_SET_H
 #include "runtime.h"
@@ -10,6 +11,7 @@ typedef enum fipsd_crypto_operation { FIPSD_CRYPTO_SEAL, FIPSD_CRYPTO_OPEN } fip
  * only; dispatcher must recheck replay AND epoch/session validity before accept.
  * AD/input/output are independent owned buffers, never borrowed peer memory. */
 typedef struct fipsd_crypto_job {
+    FIPSD_PERF_JOB_FIELDS
     fipsd_crypto_operation operation;
     fips_cipher_state key;
     uint64_t counter, token; /* token lets dispatcher reject stale completions */

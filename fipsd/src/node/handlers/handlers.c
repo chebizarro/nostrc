@@ -95,6 +95,7 @@ void hs_notice_full(handlers *h, const fipsd_node_notice *notice, const uint8_t 
     fipsd_node_notice *n = malloc(sizeof(*n) + len);
     if (!n) { ++h->counters.notices_dropped; return; }
     *n = *notice; n->len = len;
+    FIPSD_PERF_STAMP(n);
     if (len) memcpy(n->payload, payload, len);
     if (go_channel_try_send(h->notices, n) != 0) { fipsd_node_notice_free(n); ++h->counters.notices_dropped; }
 }
@@ -464,7 +465,10 @@ static bool on_command(void *user, void *message)
     switch (c->kind) {
     case HCMD_CONNECT: (void)hs_dial(h, &c->identity, c->transport, &c->addr, false); break;
     case HCMD_DISCONNECT: (void)hs_disconnect(h, &c->node, FIPS_FMP_Shutdown, true); break;
-    case HCMD_SEND: (void)hs_session_send(h, &c->node, c->src_port, c->dst_port, c->payload, c->len); break;
+    case HCMD_SEND:
+        FIPSD_PERF_WAIT(c, ENDPOINT_COMMAND_WAIT);
+        FIPSD_PERF_BLOCK(ENDPOINT_SEND, (void)hs_session_send(h, &c->node, c->src_port, c->dst_port, c->payload, c->len));
+        break;
     case HCMD_LEARN_IDENTITY: (void)fipsd_identity_cache_put(&h->identities, c->identity, hs_wall_ms(h)); break;
     case HCMD_DIAL_CONFIGURED: (void)hs_dial_configured(h); break;
     case HCMD_CONTROL: {
@@ -510,7 +514,7 @@ static int enqueue(handlers *h, handler_command *c)
 static handler_command *command_new(handler_command_kind kind, size_t len)
 {
     handler_command *c = calloc(1, sizeof(*c) + len);
-    if (c) { c->kind = kind; c->len = len; }
+    if (c) { c->kind = kind; c->len = len; FIPSD_PERF_STAMP(c); }
     return c;
 }
 int fipsd_node_handlers_connect(fipsd_node_handlers *h, const fips_peer_identity *peer,
