@@ -1,7 +1,7 @@
 #include "nostr-connection.h"
 #include "connection-private.h"
 #include "go.h"
-#include "nostr/metrics.h"
+#include "metrics-private.h"
 #include "nostr-init.h"
 #include "../include/security_limits_runtime.h"
 #include "../include/rate_limiter.h"
@@ -471,8 +471,7 @@ queue_message:;
             nostr_metric_timer t_sock = {0};
             nostr_metric_timer_start(&t_sock);
             int n = lws_write(wsi, p, msg->length, LWS_WRITE_TEXT);
-            static nostr_metric_histogram *h_ws_socket_write_ns;
-            if (!h_ws_socket_write_ns) h_ws_socket_write_ns = nostr_metric_histogram_get("ws_socket_write_ns");
+            NOSTR_METRIC_HISTOGRAM(h_ws_socket_write_ns, "ws_socket_write_ns");
             nostr_metric_timer_stop(&t_sock, h_ws_socket_write_ns);
             nostr_metric_counter_add("ws_socket_tx_bytes", (uint64_t)msg->length);
             nostr_metric_counter_add("ws_socket_tx_messages", 1);

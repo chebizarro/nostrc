@@ -535,6 +535,18 @@ if(LIBNOSTR_BUILD_TESTS)
   target_include_directories(test_misc_audit PRIVATE include)
   target_link_libraries(test_misc_audit PRIVATE Threads::Threads)
   add_test(NAME libnostr_misc_audit COMMAND test_misc_audit)
+
+  # Exercise the same private cache helper as relay/connection with both backends.
+  foreach(_metrics_enabled 0 1)
+    set(_metrics_target test_metrics_concurrent_${_metrics_enabled})
+    add_executable(${_metrics_target} tests/test_metrics_concurrent.c src/metrics.c)
+    target_compile_definitions(${_metrics_target} PRIVATE NOSTR_ENABLE_METRICS=${_metrics_enabled} NOSTR_STATIC_DEFINE)
+    target_include_directories(${_metrics_target} PRIVATE include src "${CMAKE_CURRENT_BINARY_DIR}/include")
+    target_link_libraries(${_metrics_target} PRIVATE Threads::Threads)
+    apply_warnings(${_metrics_target})
+    add_test(NAME libnostr_metrics_concurrent_${_metrics_enabled} COMMAND ${_metrics_target})
+    set_tests_properties(libnostr_metrics_concurrent_${_metrics_enabled} PROPERTIES TIMEOUT 30)
+  endforeach()
 endif()
 
 # Install rules
@@ -575,7 +587,9 @@ if(COMMAND nostrc_describe_test)
       "libnostr_connection_teardown_stress|test_connection_teardown_stress"
       "libnostr_filter_limit_zero|test_filter_limit_zero"
       "libnostr_store_txn_audit|test_store_txn_audit"
-      "libnostr_crypto_audit|test_crypto_audit" "libnostr_misc_audit|test_misc_audit")
+      "libnostr_crypto_audit|test_crypto_audit" "libnostr_misc_audit|test_misc_audit"
+      "libnostr_metrics_concurrent_0|test_metrics_concurrent_0"
+      "libnostr_metrics_concurrent_1|test_metrics_concurrent_1")
     string(REPLACE "|" ";" _pair "${_pair}")
     list(GET _pair 0 _test)
     list(GET _pair 1 _target)

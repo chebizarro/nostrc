@@ -11,7 +11,7 @@
 #include "subscription-private.h"
 #include "nostr-subscription.h"
 #include "nostr-utils.h"
-#include "nostr/metrics.h"
+#include "metrics-private.h"
 #include "security_limits_runtime.h"
 #include "nostr_log.h"
 #include "go.h"
@@ -1060,8 +1060,7 @@ static void *write_operations(void *arg) {
             nostr_metric_timer t = {0};
             nostr_metric_timer_start(&t);
             nostr_connection_write_message(conn, r->priv->connection_context, req->msg, &werr);
-            static nostr_metric_histogram *h_ws_write_ns;
-            if (!h_ws_write_ns) h_ws_write_ns = nostr_metric_histogram_get("ws_write_ns");
+            NOSTR_METRIC_HISTOGRAM(h_ws_write_ns, "ws_write_ns");
             nostr_metric_timer_stop(&t, h_ws_write_ns);
             if (req->msg) {
                 nostr_metric_counter_add("ws_tx_bytes", (uint64_t)strlen(req->msg));
@@ -1461,8 +1460,7 @@ static void *message_loop(void *arg) {
             nostr_metric_timer t_parse = {0};
             nostr_metric_timer_start(&t_parse);
             envelope = nostr_envelope_parse(buf);
-            static nostr_metric_histogram *h_envelope_parse_ns;
-            if (!h_envelope_parse_ns) h_envelope_parse_ns = nostr_metric_histogram_get("envelope_parse_ns");
+            NOSTR_METRIC_HISTOGRAM(h_envelope_parse_ns, "envelope_parse_ns");
             nostr_metric_timer_stop(&t_parse, h_envelope_parse_ns);
         } else {
             envelope = nostr_envelope_parse(buf);
@@ -1531,8 +1529,7 @@ static void *message_loop(void *arg) {
                     nostr_metric_timer_start(&t_verify);
                     validation_status =
                         nostr_event_validate(env->event, canonical_id);
-                    static nostr_metric_histogram *h_event_verify_ns;
-                    if (!h_event_verify_ns) h_event_verify_ns = nostr_metric_histogram_get("event_verify_ns");
+                    NOSTR_METRIC_HISTOGRAM(h_event_verify_ns, "event_verify_ns");
                     nostr_metric_timer_stop(&t_verify, h_event_verify_ns);
                     nostr_metric_counter_add("event_verify_sampled", metrics_sample_rate);
                 } else {
@@ -1595,8 +1592,7 @@ static void *message_loop(void *arg) {
                             nostr_metric_timer t_dispatch = {0};
                             nostr_metric_timer_start(&t_dispatch);
                             nostr_subscription_dispatch_event(subscription, env->event);
-                            static nostr_metric_histogram *h_event_dispatch_ns;
-                            if (!h_event_dispatch_ns) h_event_dispatch_ns = nostr_metric_histogram_get("event_dispatch_ns");
+                            NOSTR_METRIC_HISTOGRAM(h_event_dispatch_ns, "event_dispatch_ns");
                             nostr_metric_timer_stop(&t_dispatch, h_event_dispatch_ns);
                             nostr_metric_counter_add("event_dispatch_sampled", metrics_sample_rate);
                         } else {
@@ -1779,8 +1775,7 @@ void nostr_relay_publish(NostrRelay *relay, NostrEvent *event) {
     nostr_metric_timer t_ser = {0};
     nostr_metric_timer_start(&t_ser);
     char *event_json = nostr_event_serialize_compact(event);
-    static nostr_metric_histogram *h_event_serialize_ns;
-    if (!h_event_serialize_ns) h_event_serialize_ns = nostr_metric_histogram_get("event_serialize_ns");
+    NOSTR_METRIC_HISTOGRAM(h_event_serialize_ns, "event_serialize_ns");
     nostr_metric_timer_stop(&t_ser, h_event_serialize_ns);
     if (!event_json) {
         fprintf(stderr, "[nostr_relay_publish] ERROR: failed to serialize event\n");

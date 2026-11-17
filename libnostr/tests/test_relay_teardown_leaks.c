@@ -532,6 +532,13 @@ static void hold_reconnect(NostrRelay *relay, void *data) {
     while (!atomic_load(&g_loop_go) && now_s() < deadline) usleep(1000);
 }
 
+static int relay_connection_leases(NostrRelay *relay) {
+    nsync_mu_lock(&relay->priv->mutex);
+    int leases = relay->priv->conn_leases;
+    nsync_mu_unlock(&relay->priv->mutex);
+    return leases;
+}
+
 static void test_reconnect_adopts_without_lease_wait(void) {
     enum { SEND_CAPACITY = 16, N = SEND_CAPACITY + 8 };
     int base = nostr_connection_unreleased_count();
@@ -562,7 +569,7 @@ static void test_reconnect_adopts_without_lease_wait(void) {
     GoChannel *answers[N];
     char frame[] = "[\"REQ\",\"q\",{}]";
     for (int i = 0; i < N; i++) CHECK((answers[i] = nostr_relay_write(relay, frame)));
-    WAIT_FOR(relay->priv->conn_leases == 1 &&
+    WAIT_FOR(relay_connection_leases(relay) == 1 &&
              go_channel_get_depth(b->send_channel) == SEND_CAPACITY);
 
     /* The loop adopts B and releases C without waiting for B's writer. */
@@ -576,7 +583,7 @@ static void test_reconnect_adopts_without_lease_wait(void) {
     /* B's handshake completes: the writer drains and every write is answered. */
     atomic_store(&srv.paused, false);
     CHECK(nostr_relay_wait_established(relay, 10000, &err));
-    WAIT_FOR(relay->priv->conn_leases == 0 &&
+    WAIT_FOR(relay_connection_leases(relay) == 0 &&
              go_channel_get_depth(relay->priv->write_queue) == 0);
     for (int i = 0; i < N; i++) {
         void *got = (void *)1;
