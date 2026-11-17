@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- fips-gateway 0.1.0 (Unreleased): ship the Linux gateway and opt-in systemd
+  unit in Debian/RPM `fips-gateway` packages with libnftables dependencies;
+  Arch includes them in `fipsd`, following upstream. Hosted Linux FIPS CI
+  installs libnftables headers and builds the gateway; packaging smokes query
+  the installed gateway and verify clean network teardown (nostrc-f586b).
 - fipsd 0.1.0 (unreleased): packaging under `fipsd/packaging/` mirroring
   upstream fips -- Debian (`fipsd`, `libfipsnative0`, `libfipsnative-dev`),
   RPM, Arch, generated systemd units (`fipsd`, `fips-dns`, opt-in

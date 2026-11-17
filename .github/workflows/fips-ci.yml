@@ -44,7 +44,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake ninja-build pkg-config clang libclang-rt-18-dev libjansson-dev libyaml-dev libsecp256k1-dev libsodium-dev libssl-dev libcurl4-openssl-dev libwebsockets-dev libglib2.0-dev libsoup-3.0-dev libnsync-dev
+          sudo apt-get install -y build-essential cmake ninja-build pkg-config clang libclang-rt-18-dev libjansson-dev libyaml-dev libsecp256k1-dev libsodium-dev libssl-dev libcurl4-openssl-dev libwebsockets-dev libglib2.0-dev libsoup-3.0-dev libnsync-dev libnftables-dev
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
         run: |
@@ -73,6 +73,7 @@ jobs:
         shell: bash
         run: |
           targets=(fipsd fipsd_tests)
+          if [[ "$RUNNER_OS" == Linux ]]; then targets+=(fips-gateway); fi
           if [[ '${{ matrix.configuration }}' != tsan ]]; then
             targets+=(fips_core_skeleton_test fips_core_host_test)
           fi
@@ -176,7 +177,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake ninja-build pkg-config clang libclang-rt-18-dev libjansson-dev libyaml-dev libsecp256k1-dev libsodium-dev libssl-dev libcurl4-openssl-dev libwebsockets-dev libglib2.0-dev libsoup-3.0-dev libnsync-dev
+          sudo apt-get install -y build-essential cmake ninja-build pkg-config clang libclang-rt-18-dev libjansson-dev libyaml-dev libsecp256k1-dev libsodium-dev libssl-dev libcurl4-openssl-dev libwebsockets-dev libglib2.0-dev libsoup-3.0-dev libnsync-dev libnftables-dev
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
         run: |
@@ -223,7 +224,7 @@ jobs:
       - name: Install dependencies (Linux)
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake ninja-build pkg-config clang libclang-rt-18-dev libjansson-dev libyaml-dev libsecp256k1-dev libsodium-dev libssl-dev libcurl4-openssl-dev libwebsockets-dev libglib2.0-dev libsoup-3.0-dev libnsync-dev
+          sudo apt-get install -y build-essential cmake ninja-build pkg-config clang libclang-rt-18-dev libjansson-dev libyaml-dev libsecp256k1-dev libsodium-dev libssl-dev libcurl4-openssl-dev libwebsockets-dev libglib2.0-dev libsoup-3.0-dev libnsync-dev libnftables-dev
       - name: Configure fuzzers
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug \
@@ -310,7 +311,7 @@ jobs:
       - name: Install dependencies (Linux)
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake ninja-build pkg-config clang libclang-rt-18-dev libjansson-dev libyaml-dev libsecp256k1-dev libsodium-dev libssl-dev libcurl4-openssl-dev libwebsockets-dev libglib2.0-dev libsoup-3.0-dev libnsync-dev
+          sudo apt-get install -y build-essential cmake ninja-build pkg-config clang libclang-rt-18-dev libjansson-dev libyaml-dev libsecp256k1-dev libsodium-dev libssl-dev libcurl4-openssl-dev libwebsockets-dev libglib2.0-dev libsoup-3.0-dev libnsync-dev libnftables-dev
       - name: Install the chaos lab tools (iproute2, nftables, iperf3, conntrack)
         run: sudo apt-get install -y iproute2 nftables iperf3 conntrack
       - name: Configure (ASan/UBSan)
@@ -433,7 +434,7 @@ jobs:
       - name: Install dependencies (Linux)
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential cmake ninja-build pkg-config clang libclang-rt-18-dev libjansson-dev libyaml-dev libsecp256k1-dev libsodium-dev libssl-dev libcurl4-openssl-dev libwebsockets-dev libglib2.0-dev libsoup-3.0-dev libnsync-dev
+          sudo apt-get install -y build-essential cmake ninja-build pkg-config clang libclang-rt-18-dev libjansson-dev libyaml-dev libsecp256k1-dev libsodium-dev libssl-dev libcurl4-openssl-dev libwebsockets-dev libglib2.0-dev libsoup-3.0-dev libnsync-dev libnftables-dev
       - name: Apply identical test-only workload to the reference
         # The baseline predates this harness. Never copy shipped source into it:
         # both builds measure the same current workloads against their own core.

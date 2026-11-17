@@ -2,7 +2,16 @@
 
 `PKGBUILD` builds `fipsd` (the daemon, its units, the `fips` group through
 `sysusers.d`, `/run/fips` through `tmpfiles.d`, the seeded `/etc/fips/fips.yaml`)
-and libfipsnative from the release source archive. It mirrors the Debian and
+and libfipsnative from the release source archive. Like upstream's
+`packaging/aur/PKGBUILD`, Arch intentionally ships the gateway and its unit
+in this single `fipsd` package, rather than a split package. `nftables`
+provides libnftables at build and runtime, and `iproute2` supplies the proxy
+NDP helper. The gateway remains opt-in: configure `gateway:` in
+`/etc/fips/fips.yaml`, enable IPv6 forwarding/proxy NDP, then run
+`sudo systemctl enable --now fips-gateway.service`. See
+[the deployment recipe](../../docs/fips-gateway.md#deploy-deploy-gatewaymd).
+
+Builds come from the release source archive. It mirrors the Debian and
 RPM recipes: everything comes from `cmake --install build/fipsd`.
 
 ```sh

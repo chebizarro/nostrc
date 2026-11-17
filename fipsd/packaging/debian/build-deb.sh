@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the fipsd Debian packages (fipsd, libfipsnative0, libfipsnative-dev)
+# Build the fipsd Debian packages (fipsd, fips-gateway, libfipsnative0, libfipsnative-dev)
 # from this checkout, then check them.
 #
 #   fipsd/packaging/debian/build-deb.sh [--output-dir DIR] [--version DEBVERSION]

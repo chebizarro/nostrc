@@ -14,7 +14,8 @@ Build-Depends: debhelper-compat (= 13),
                libssl-dev,
                libwebsockets-dev,
                libcurl4-openssl-dev,
-               libnsync-dev
+               libnsync-dev,
+               libnftables-dev
 Standards-Version: 4.6.2
 Homepage: https://github.com/chebizarro/nostrc
 Vcs-Browser: https://github.com/chebizarro/nostrc
@@ -39,6 +40,17 @@ Description: FIPS mesh network daemon (C port)
  opt-in fips-firewall nftables baseline), the fips system group that gates
  the control socket, and an example configuration seeded to
  /etc/fips/fips.yaml on first install.
+
+Package: fips-gateway
+Architecture: any
+Depends: fipsd (= ${binary:Version}),
+         ${shlibs:Depends},
+         ${misc:Depends},
+         iproute2
+Description: FIPS outbound LAN gateway
+ Linux IPv6 LAN-to-mesh gateway using libnftables NAT and proxy NDP.
+ Reads the gateway block in /etc/fips/fips.yaml. The systemd service is
+ opt-in: configure the pool and LAN interface before enabling it.
 
 Package: libfipsnative0
 Section: libs

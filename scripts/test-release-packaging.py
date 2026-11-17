@@ -129,6 +129,19 @@ class FipsdPackagingVersionTests(unittest.TestCase):
         else:
             self.assertRegex(deb, rf"^{re.escape(self.declared)}~git\d{{8}}\.[0-9a-f]{{10}}(\.dirty)?-1$")
 
+    def test_debian_gateway_package_inventory(self):
+        control = (self.packaging / "debian/control").read_text()
+        self.assertEqual(re.findall(r"^Package: (.+)$", control, re.M),
+                         ["fipsd", "fips-gateway", "libfipsnative0", "libfipsnative-dev"])
+        gateway = (self.packaging / "debian/fips-gateway.install").read_text().splitlines()
+        self.assertEqual(gateway, ["usr/bin/fips-gateway",
+                                   "usr/lib/systemd/system/fips-gateway.service"])
+        daemon = (self.packaging / "debian/fipsd.install").read_text().splitlines()
+        self.assertNotIn("usr/bin/fips*", daemon)
+        self.assertNotIn("usr/lib/systemd/system/", daemon)
+        self.assertNotIn("-DFIPSD_BUILD_GATEWAY=OFF",
+                         (self.packaging / "common/cmake-args.sh").read_text())
+
     def test_source_archive_takes_the_fipsd_name(self):
         script = (ROOT / "scripts/make-desktop-source-archive.sh").read_text()
         self.assertIn("name=${3:-groundhog}-$version", script)

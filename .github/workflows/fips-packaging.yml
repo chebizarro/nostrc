@@ -140,14 +140,17 @@ jobs:
         run: |
           set -eux
           sudo apt-get update -qq
-          sudo apt-get install -y -qq ./dist/fipsd_*.deb ./dist/libfipsnative0_*.deb ./dist/libfipsnative-dev_*.deb
+          sudo apt-get install -y -qq ./dist/fipsd_*.deb ./dist/fips-gateway_*.deb nftables ./dist/libfipsnative0_*.deb ./dist/libfipsnative-dev_*.deb
           fipsd --version
           pkg-config --modversion libfipsnative
           sudo fipsd/packaging/testing/smoke-systemd.sh
-          sudo apt-get remove -y -qq fipsd
+          sudo timeout 90 python3 fipsd/packaging/testing/smoke-gateway.py
+          sudo apt-get remove -y -qq fips-gateway fipsd
           test -f /etc/fips/fips.yaml            # remove keeps the config
-          sudo apt-get purge -y -qq fipsd libfipsnative-dev libfipsnative0
+          sudo apt-get purge -y -qq fips-gateway fipsd libfipsnative-dev libfipsnative0
           test ! -e /etc/fips                    # purge removes it
+          test ! -e /run/fips/gateway.sock
+          test ! -e /run/fips-gateway
           ! getent group fips
 
   rpm:
@@ -192,22 +195,57 @@ jobs:
         run: |
           set -eux
           # python3 for control-query.py (the base image has none).
-          dnf install -y -q python3 dist/fipsd-*.rpm dist/libfipsnative-*.rpm
+          arch=$(rpm --eval '%{_arch}')
+          dnf install -y -q python3 dist/fipsd-*."$arch".rpm dist/fips-gateway-*."$arch".rpm dist/libfipsnative-*."$arch".rpm
           fipsd --version
           pkg-config --modversion libfipsnative
           getent group fips
           test -f /etc/fips/fips.yaml
           # No systemd in the container: the unit files must at least parse,
           # and the packaged daemon runs directly from a config of the shipped shape.
-          rpm -ql fipsd
+          rpm -ql fipsd fips-gateway
+          fips-gateway --version
+          systemd-analyze verify /usr/lib/systemd/system/fips-gateway.service
           "$(echo fipsd-*)/fipsd/packaging/testing/smoke-direct.sh"
-          dnf remove -y -q fipsd libfipsnative-devel libfipsnative
+          dnf remove -y -q fips-gateway fipsd libfipsnative-devel libfipsnative
           test -f /etc/fips/fips.yaml            # rpm erase keeps the config and keys
       - uses: actions/upload-artifact@v4
         with:
           name: rpm-${{ matrix.arch }}
           path: dist/*.rpm
           if-no-files-found: error
+
+  rpm-install:
+    name: Fedora fresh-container gateway smoke (${{ matrix.arch }})
+    needs: [source, rpm]
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: registry.fedoraproject.org/fedora:42
+      options: --cap-add=NET_ADMIN --device=/dev/net/tun --tmpfs=/run --sysctl=net.ipv6.conf.all.forwarding=1 --sysctl=net.ipv6.conf.all.proxy_ndp=1
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86_64, runner: ubuntu-24.04 }
+          - { arch: aarch64, runner: ubuntu-24.04-arm }
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: 'rpm-${{ matrix.arch }}', path: dist }
+      - uses: actions/download-artifact@v4
+        with: { name: source, path: src }
+      - name: Install, start, query, stop, erase
+        run: |
+          set -eux
+          arch=$(rpm --eval '%{_arch}')
+          dnf install -y -q python3 procps-ng nftables iproute \
+            dist/fipsd-*."$arch".rpm dist/fips-gateway-*."$arch".rpm
+          tar -xzf src/fipsd-*.tar.gz --wildcards '*/fipsd/packaging/testing/*'
+          timeout 90 python3 "$(echo fipsd-*)/fipsd/packaging/testing/smoke-gateway.py" --direct
+          dnf remove -y -q fips-gateway fipsd
+          test ! -e /usr/bin/fips-gateway
+          test ! -e /usr/lib/systemd/system/fips-gateway.service
+          test ! -e /run/fips/gateway.sock
+          test ! -e /run/fips-gateway
 
   arch:
     name: Arch package (x86_64)
@@ -243,6 +281,7 @@ jobs:
           set -eux
           pacman -U --noconfirm dist/*.pkg.tar.zst
           fipsd --version
+          fips-gateway --version
           getent group fips
           test -f /etc/fips/fips.yaml
           tar -xzf src/fipsd-*.tar.gz --wildcards '*/fipsd/packaging/testing/*'
