@@ -162,7 +162,7 @@ class Daemon:
 
 
 class NativeFlow:
-    """One flow on the Rust native datagram API (docs/reference/native-api.md).
+    """One flow on either daemon's native datagram API (docs/reference/native-api.md).
 
     `connect` replies with one JSON line and the flow's SOCK_SEQPACKET half over
     SCM_RIGHTS in the same sendmsg. The command connection owns nothing and is
@@ -511,36 +511,65 @@ transports:
                           time.monotonic() + self.args.session_timeout, rust_flow_listed)
         self.note(f'Rust native stats: sent {stats["sent_datagrams"]}/{stats["sent_bytes"]}')
 
+    def probe_reports(self, source, target, started=None):
+        """Collect at most two probes; retry only an otherwise healthy no_echo."""
+        deadline = time.monotonic() + self.args.probe_timeout
+        started = started or source.query('probe_start', {'npub': target.npub})
+        reports = []
+        for attempt in (1, 2):
+            probe_id = started['probe_id']
+            self.note(f'{source.name}->{target.name} probe attempt {attempt}: {json.dumps(started)}')
+
+            def done():
+                poll = source.query('probe_poll', {'probe_id': probe_id})
+                if poll['state'] != 'done':
+                    raise NotYet(poll)
+                return poll['report']
+
+            report = self.wait(f'{source.name}->{target.name} probe {probe_id} finished', deadline, done)
+            reports.append(report)
+            self.note(f'{source.name}->{target.name} probe attempt {attempt} report: {json.dumps(report)}')
+            rtt = report['rtt']
+            no_echo = (report['overall'] == 'partial' and
+                       all(report[s]['verdict'] in ('ok', 'skipped') for s in ('bloom', 'discovery')) and
+                       (report['path']['verdict'] == 'ok' or
+                        (report['path']['verdict'] == 'skipped' and report['path']['reason'] == 'direct_peer')) and
+                       report['session']['verdict'] in ('ok', 'skipped') and report['session']['established'] and
+                       rtt['verdict'] == 'failed' and rtt['reason'] == 'no_echo' and
+                       rtt['reports_seen'] > 0 and rtt['samples'] == 0 and
+                       rtt['zero_samples'] == 0 and rtt['arith_failures'] == 0)
+            if not no_echo:
+                return reports
+            if attempt == 2:
+                raise Failure(f'{source.name}->{target.name}: two consecutive no_echo reports: {json.dumps(reports)}')
+            # Upstream budgets RTT at max(3s, 4 ticks), not the session MMP
+            # ceiling (10s), and exposes no budget override. One report need
+            # not carry a fresh usable timestamp echo. Retry the diagnostic,
+            # not the poll of its already-terminal job, without accepting it
+            # as RTT evidence or extending the harness's absolute deadline.
+            self.note(f'{source.name}->{target.name}: retrying RTT-only no_echo once')
+            started = source.query('probe_start', {'npub': target.npub})
+
     def probe(self, prober, expect_preexisting):
         """Run a diagnostic probe from `prober` toward the other node and return its report."""
         target = self.other[prober.name]
-        started = prober.query('probe_start', {'npub': target.npub})
-        probe_id = started['probe_id']
-        self.note(f'{prober.name} probe_start -> {started}')
-
-        def done():
-            poll = prober.query('probe_poll', {'probe_id': probe_id})
-            if poll['state'] != 'done':
-                raise NotYet({'state': poll['state'], 'overall': poll['report'].get('overall') if poll.get('report') else None})
-            return poll['report']
-
-        report = self.wait(f'{prober.name} probe {probe_id} finished', time.monotonic() + self.args.probe_timeout, done)
-        self.note(f'{prober.name} probe report: {json.dumps(report)}')
-        if report['overall'] != 'ok':
-            raise Failure(f'{prober.name} probe overall={report["overall"]}: {json.dumps(report)}')
+        reports = self.probe_reports(prober, target)
+        report, measured = reports[0], reports[-1]
+        if measured['overall'] != 'ok':
+            raise Failure(f'{prober.name} probe overall={measured["overall"]}: {json.dumps(reports)}')
         # A direct peer needs no bloom lookup or discovery, and a session that
         # already exists is reported as a skipped (preexisting) session stage.
         for stage, accepted in (('bloom', ('ok', 'skipped')), ('discovery', ('ok', 'skipped')), ('path', ('ok',)),
-                                ('session', ('skipped',) if expect_preexisting else ('ok',)), ('rtt', ('ok',))):
+                                ('session', ('skipped',) if expect_preexisting else ('ok',))):
             if report[stage]['verdict'] not in accepted:
                 raise Failure(f'{prober.name} probe stage {stage} verdict {report[stage]["verdict"]}: {json.dumps(report[stage])}')
         if not report['session']['established']:
             raise Failure(f'{prober.name} probe ran without an established session: {json.dumps(report["session"])}')
         if report['session']['preexisting'] != expect_preexisting:
             raise Failure(f'{prober.name} probe session.preexisting={report["session"]["preexisting"]}, expected {expect_preexisting}')
-        if report['rtt']['samples'] < 1 or report['rtt']['reports_seen'] < 1:
-            raise Failure(f'{prober.name} probe measured no RTT: {json.dumps(report["rtt"])}')
-        if report['cleanup']['session_created_and_torn_down']:
+        if measured['rtt']['verdict'] != 'ok' or measured['rtt']['samples'] < 1 or measured['rtt']['reports_seen'] < 1:
+            raise Failure(f'{prober.name} probe measured no RTT: {json.dumps(reports)}')
+        if any(r['cleanup']['session_created_and_torn_down'] for r in reports):
             raise Failure(f'{prober.name} probe tore the shared session down: {json.dumps(report["cleanup"])}')
         # An RTT sample exists only if the target received the prober's session
         # frames (CoordsWarmup) and its MMP report came back over the session:
@@ -553,8 +582,8 @@ transports:
         srtt = self.sessions(prober)[0].get('mmp', {}).get('srtt_ms')
         if srtt is None:
             raise Failure(f'{prober.name} session shows no SRTT after its probe: {json.dumps(self.sessions(prober)[0])}')
-        self.note(f'{prober.name} session SRTT {srtt} ms after probe {probe_id}')
-        return report
+        self.note(f'{prober.name} session SRTT {srtt} ms after probe {measured["probe_id"]}')
+        return measured
 
     # -- 3/4. XK session and datagrams ----------------------------------------
     def session_and_datagrams(self):
@@ -589,20 +618,14 @@ transports:
                 self.note(f'{name} show_sessions: {json.dumps(s[0])}')
             self.send_native(payload, 'Rust->C datagram over the C-initiated session')
 
-            def done():
-                poll = c.query('probe_poll', {'probe_id': started['probe_id']})
-                if poll['state'] != 'done':
-                    raise NotYet(poll['report'].get('overall') if poll.get('report') else poll['state'])
-                return poll['report']
-
-            report = self.wait('c probe finished', time.monotonic() + self.args.probe_timeout, done)
-            self.note(f'c probe report: {json.dumps(report)}')
-            if report['overall'] != 'ok' or report['session']['verdict'] != 'ok' or report['rtt']['verdict'] != 'ok':
-                raise Failure(f'c probe did not complete cleanly: {json.dumps(report)}')
+            reports = self.probe_reports(c, rust, started)
+            report, measured = reports[0], reports[-1]
+            if measured['overall'] != 'ok' or report['session']['verdict'] != 'ok' or measured['rtt']['verdict'] != 'ok':
+                raise Failure(f'c probe did not complete cleanly: {json.dumps(reports)}')
             if report['session']['preexisting'] or not report['session']['established']:
                 raise Failure(f'c probe did not open the session itself: {json.dumps(report["session"])}')
-            if report['rtt']['samples'] < 1:
-                raise Failure(f'c probe measured no RTT: {json.dumps(report["rtt"])}')
+            if measured['rtt']['samples'] < 1:
+                raise Failure(f'c probe measured no RTT: {json.dumps(reports)}')
             if report['cleanup']['session_created_and_torn_down'] or not report['cleanup']['session_left_intact']:
                 raise Failure('c probe tore its session down before the Rust->C datagram adopted it: '
                               + json.dumps(report['cleanup']))
@@ -768,6 +791,9 @@ class MultiScenario(Scenario):
                       (i == 0 if topology == 'star' else j == i + 1) or
                       (topology == 'ring' and i == 0 and j == self.count - 1)}
         self.api_paths = {}
+        self.receivers = {}
+        self.receivers_stopping = False
+        self.reply_payload = b'multi-node UDP reply'
         self.ports = {}
 
     def start(self):
@@ -784,7 +810,7 @@ class MultiScenario(Scenario):
 node:
   identity: {{nsec: '{str(i + 1) * 64}', persistent: false}}
   control: {{enabled: true, socket_path: '{sock}'}}
-  native_api: {{enabled: {str(role == 'rust').lower()}, socket_path: '{api}'}}
+  native_api: {{enabled: true, socket_path: '{api}'}}
 tun: {{enabled: false}}
 dns: {{enabled: false}}
 transports:
@@ -794,13 +820,17 @@ transports:
             daemon = Daemon(name, [binary, '-c', str(config)], self.env, self.root)
             self.nodes[name] = Node(name, daemon, sock)
             self.ports[name] = port
-            if role == 'rust':
-                self.api_paths[name] = api
+            self.api_paths[name] = api
         deadline = time.monotonic() + self.args.startup_timeout
         for node in self.nodes.values():
             node.daemon.await_log('control socket listening' if node.name.startswith('rust') else 'fipsd running', deadline)
             status = self.wait(f'{node.name} ready', deadline, lambda n=node: n.query('show_status'))
             node.npub, node.node_addr = status['npub'], status['node_addr']
+        for name in self.nodes:
+            receiver = Daemon(f'{name}-receiver', [self.args.native_tool, 'serve',
+                str(self.api_paths[name]), str(self.args.remote_port), self.reply_payload.hex()], self.env, self.root)
+            self.receivers[name] = receiver
+            receiver.await_log('holding port', deadline)
         self.ordered = list(self.nodes.values())
         self.started_at = time.monotonic()
         for a, b in sorted(self.edges):
@@ -863,31 +893,23 @@ transports:
         return trees
 
     def probe_pair(self, source, target, started=None):
-        started = started or source.query('probe_start', {'npub': target.npub})
-
-        def finished():
-            poll = source.query('probe_poll', {'probe_id': started['probe_id']})
-            if poll['state'] != 'done':
-                raise NotYet(poll)
-            report = poll['report']
-            rtt = report['rtt']
-            # A matching authenticated echo below the millisecond timestamp
-            # resolution proves a route, but cannot produce a positive RTT
-            # sample. Preserve every other diagnostic failure (including a
-            # report without an echo); this is not a latency benchmark.
-            quantized_echo = (rtt.get('reason') == 'sub_millisecond' and
-                              rtt['zero_samples'] > 0 and rtt['reports_seen'] > 0)
-            if (report['overall'] not in (('ok', 'partial') if quantized_echo else ('ok',)) or
-                    any(report[s]['verdict'] not in ('ok', 'skipped') for s in ('bloom', 'discovery')) or
-                    report['path']['verdict'] not in ('ok', 'skipped') or
-                    (report['path']['verdict'] == 'skipped' and report['path']['reason'] != 'direct_peer') or
-                    not report['session']['established'] or
-                    (rtt['samples'] < 1 and not quantized_echo)):
-                raise Failure(f'{source.name}->{target.name}: {json.dumps(report)}')
-            return report
-
-        return self.wait(f'{source.name}->{target.name}: bloom/address resolution, route and authenticated RTT',
-                         time.monotonic() + self.args.probe_timeout, finished)
+        reports = self.probe_reports(source, target, started)
+        report = reports[-1]
+        rtt = report['rtt']
+        # A matching authenticated echo below the millisecond timestamp
+        # resolution proves a route, but cannot produce a positive RTT
+        # sample. After the bounded no_echo retry, preserve all other
+        # diagnostic failures; this is not a latency benchmark.
+        quantized_echo = (rtt.get('reason') == 'sub_millisecond' and
+                          rtt['zero_samples'] > 0 and rtt['reports_seen'] > 0)
+        if (report['overall'] not in (('ok', 'partial') if quantized_echo else ('ok',)) or
+                any(report[s]['verdict'] not in ('ok', 'skipped') for s in ('bloom', 'discovery')) or
+                report['path']['verdict'] not in ('ok', 'skipped') or
+                (report['path']['verdict'] == 'skipped' and report['path']['reason'] != 'direct_peer') or
+                not report['session']['established'] or
+                (rtt['samples'] < 1 and not quantized_echo)):
+            raise Failure(f'{source.name}->{target.name}: {json.dumps(report)}')
+        return report
 
     def datagram_pair(self, source, target):
         # Separate the session and application-delivery stages, as the
@@ -908,6 +930,10 @@ transports:
             return True
         self.wait(f'{source.name}<->{target.name} authenticated session before payload',
                   time.monotonic() + self.args.session_timeout, established)
+        # As in the paired diagnostics, seed both identities. In particular,
+        # an indirect C receiver needs the sender's key to announce a native
+        # flow to its client, not just an established session's address.
+        reverse = target.query('probe_start', {'npub': source.npub})
         payload = b'multi-node UDP application datagram'
         before = target.query('show_metrics')['native']
         flow = NativeFlow(self.api_paths[source.name], target.npub, self.args.remote_port)
@@ -923,6 +949,8 @@ transports:
             try:
                 self.wait(f'{source.name}->{target.name} application datagram',
                           time.monotonic() + self.args.session_timeout, delivered)
+                if flow.recv() != self.reply_payload:
+                    raise Failure(f'{target.name} native client returned the wrong datagram')
             except Failure:
                 for node in (source, target):
                     for command in ('show_sessions', 'show_routing', 'show_metrics'):
@@ -930,7 +958,56 @@ transports:
                 raise
         finally:
             flow.close()
-        self.probe_pair(source, target, started)
+        report = self.probe_pair(source, target, started)
+        if report['cleanup']['session_created_and_torn_down']:
+            raise Failure(f'{source.name}->{target.name}: payload did not adopt the probe session: {report}')
+        self.probe_pair(target, source, reverse)
+
+    def probe_bidirectional(self, source, target):
+        # A successful probe may remove the idle session it created while the
+        # opposite probe still needs it. Adopt *every* pair with observed data
+        # first, including C<->C and Rust<->Rust, not just mixed-language pairs.
+        sender, receiver = source, target
+        if source.name.startswith('c') and target.name.startswith('rust'):
+            sender, receiver = target, source
+        self.datagram_pair(sender, receiver)
+        forward = source.query('probe_start', {'npub': target.npub})
+        reverse = target.query('probe_start', {'npub': source.npub})
+        for a, b, started in ((source, target, forward), (target, source, reverse)):
+            report = self.probe_pair(a, b, started)
+            if not report['session']['preexisting'] or report['cleanup']['session_created_and_torn_down']:
+                raise Failure(f'{a.name}->{b.name}: paired probe did not retain the adopted session: {report}')
+
+    def check_alive(self):
+        super().check_alive()
+        for receiver in self.receivers.values():
+            if not self.receivers_stopping and not receiver.alive():
+                raise Failure(f'{receiver.name} exited during the scenario')
+
+    def shutdown(self):
+        failures = []
+        self.receivers_stopping = True
+        for receiver in self.receivers.values():
+            code = receiver.stop(self.args.shutdown_timeout)
+            if receiver.forced or code not in (0, -signal.SIGTERM) or receiver.sanitizer_report():
+                failures.append(f'{receiver.name} failed: exit={code}, forced={receiver.forced}\n{receiver.text()}')
+        if self.receivers:
+            def released():
+                rows = {name: node.query('show_native_flows') for name, node in self.nodes.items()}
+                if any(row['flows'] or row['listeners'] for row in rows.values()):
+                    raise NotYet(rows)
+                return rows
+            try:
+                self.wait('native clients released flows and listeners before daemon shutdown',
+                          time.monotonic() + self.args.shutdown_timeout, released)
+            except Failure as error:
+                failures.append(str(error))
+        return failures + super().shutdown()
+
+    def dump_logs(self):
+        super().dump_logs()
+        for receiver in self.receivers.values():
+            print(f'----- {self.tag}: {receiver.name} log -----\n{receiver.text()}', flush=True)
 
     def soak(self):
         end = time.monotonic() + 60 * self.args.soak_minutes
@@ -995,18 +1072,11 @@ transports:
             routed = False
             for i, source in enumerate(self.ordered):
                 for j, target in enumerate(self.ordered[i + 1:], i + 1):
-                    # Cross-language data adopts the session before diagnostics
-                    # so neither probe tears down the other's live data flow.
-                    if source.name.startswith('rust') != target.name.startswith('rust'):
-                        rust, c = (source, target) if source.name.startswith('rust') else (target, source)
-                        self.datagram_pair(rust, c)
-                        if (i, j) not in self.edges:
-                            routed = True
-                            self.note(f'{rust.name}->{c.name}: arrival proves >=2 UDP hops')
-                    forward = source.query('probe_start', {'npub': target.npub})
-                    reverse = target.query('probe_start', {'npub': source.npub})
-                    self.probe_pair(source, target, forward)
-                    self.probe_pair(target, source, reverse)
+                    self.probe_bidirectional(source, target)
+                    if (source.name.startswith('rust') != target.name.startswith('rust') and
+                            (i, j) not in self.edges):
+                        routed = True
+                        self.note(f'{source.name}<->{target.name}: arrival proves >=2 UDP hops')
             if self.topology != 'full-mesh':
                 cut()
             start = time.monotonic()

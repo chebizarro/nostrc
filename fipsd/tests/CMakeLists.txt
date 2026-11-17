@@ -348,6 +348,13 @@ add_test(NAME FipsdUdpTest COMMAND fipsd_udp_test)
 set_tests_properties(FipsdUdpTest PROPERTIES TIMEOUT 60 LABELS "fips;transport" ENVIRONMENT "FIPSD_WORKERS=2")
 nostrc_describe_test(FipsdUdpTest OWNER fipsd TARGETS fipsd_udp_test)
 
+# Preserve shared probe sessions; retry only RTT-only no_echo, not other failures.
+add_test(NAME FipsdInteropUdpHarnessTest COMMAND "${Python3_EXECUTABLE}" -B
+  "${CMAKE_CURRENT_SOURCE_DIR}/test_udp_interop.py")
+set_tests_properties(FipsdInteropUdpHarnessTest PROPERTIES TIMEOUT 10 LABELS "fips;unit;interop")
+nostrc_describe_test(FipsdInteropUdpHarnessTest OWNER fipsd
+  INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/udp_interop.py" "${CMAKE_CURRENT_SOURCE_DIR}/test_udp_interop.py")
+
 # C<->Rust UDP interoperability gate (nostrc-f66sr.1): one fipsd and one daemon
 # built from the libfips-core/UPSTREAM.md pin on loopback UDP, both role
 # assignments per address family (IK link, tree/filters, XK session, datagrams,
