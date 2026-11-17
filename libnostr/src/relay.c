@@ -1316,7 +1316,6 @@ static bool relay_attempt_reconnect(NostrRelay *r) {
 // calls this concurrently, and the plain check-then-set statics were a race.
 static int metrics_sample_rate = 0;
 static int debug_incoming_cached = -1;
-static int debug_eose_cached = -1;
 static pthread_once_t g_cached_env_once = PTHREAD_ONCE_INIT;
 
 static void init_cached_env_once(void) {
@@ -1325,7 +1324,6 @@ static void init_cached_env_once(void) {
     if (metrics_sample_rate <= 0) metrics_sample_rate = 100;
     const char *dbg = getenv("NOSTR_DEBUG_INCOMING");
     debug_incoming_cached = (dbg && *dbg && strcmp(dbg, "0") != 0) ? 1 : 0;
-    debug_eose_cached = getenv("NOSTR_DEBUG_EOSE") ? 1 : 0;
 }
 
 static void init_cached_env(void) {
@@ -1938,8 +1936,9 @@ static void relay_auth_impl(NostrRelay *relay, void (*sign)(NostrEvent *, Error 
     if (!event) { free(challenge); if (err) *err = new_error(1, "AUTH allocation failed"); return; }
     event->kind = NOSTR_KIND_CLIENT_AUTHENTICATION;
     event->created_at = (int64_t)time(NULL);
-    event->tags = nostr_tags_new(2, nostr_tag_new("challenge", challenge, NULL),
-        nostr_tag_new("relay", relay->url, NULL));
+    /* nostr_event_new already allocated an empty tag list; the setter frees it. */
+    nostr_event_set_tags(event, nostr_tags_new(2, nostr_tag_new("challenge", challenge, NULL),
+        nostr_tag_new("relay", relay->url, NULL)));
     event->content = strdup("");
     free(challenge);
     Error *failure = NULL;

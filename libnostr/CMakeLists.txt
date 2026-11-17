@@ -207,6 +207,11 @@ target_include_directories(nostr PUBLIC ${LWS_INCLUDE_DIRS})
 target_link_directories(nostr PUBLIC ${LWS_LIBRARY_DIRS})
 find_package(OpenSSL REQUIRED)
 find_library(SECP256K1_LIB NAMES secp256k1 REQUIRED)
+# The header as well: libnostr (and NIP modules linking it) include <secp256k1.h>,
+# which is off the default include path under Homebrew. Without this the build
+# only worked when another dependency happened to add the same prefix.
+find_path(SECP256K1_INCLUDE_DIR NAMES secp256k1.h REQUIRED)
+target_include_directories(nostr SYSTEM PUBLIC ${SECP256K1_INCLUDE_DIR})
 # libnostr uses SSL_CTX APIs (TLS policy), so link both SSL and Crypto
 target_link_libraries(nostr PUBLIC ${LWS_LIBRARIES} libgo OpenSSL::SSL OpenSSL::Crypto ${SECP256K1_LIB})
 if(NOSTR_WITH_GLIB)
