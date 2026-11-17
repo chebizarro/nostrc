@@ -42,6 +42,9 @@ void fipsd_transport_stats_kernel_drops(fipsd_transport_stats *s, bool connected
 const char *const *fipsd_transport_stats_fields(const char *type, size_t *count)
 {
 #define NAME(name) #name,
+    static const char *const ethernet[] = {"frames_sent", "frames_recv", "bytes_sent", "bytes_recv",
+        "send_errors", "recv_errors", "beacons_sent", "beacons_recv", "beacons_dropped",
+        "frames_too_short", "frames_too_long", "kernel_drops", "group_drops"};
     static const char *const udp[] = {FIPSD_STATS_PACKET(NAME) FIPSD_STATS_UDP_ONLY(NAME)};
     static const char *const tcp[] = {FIPSD_STATS_PACKET(NAME) FIPSD_STATS_TCP_ONLY(NAME)};
     /* tor/stats.rs TorStatsSnapshot and nym/stats.rs NymStatsSnapshot, in
@@ -52,6 +55,7 @@ const char *const *fipsd_transport_stats_fields(const char *type, size_t *count)
     static const char *const nym[] = {FIPSD_STATS_PACKET(NAME) "connections_established",
         "connect_timeouts", "socks5_errors"};
 #undef NAME
+    if (type && !strcmp(type, "ethernet")) { *count = sizeof ethernet / sizeof *ethernet; return ethernet; }
     if (type && !strcmp(type, "udp")) { *count = sizeof udp / sizeof *udp; return udp; }
     if (type && !strcmp(type, "tcp")) { *count = sizeof tcp / sizeof *tcp; return tcp; }
     if (type && !strcmp(type, "tor")) { *count = sizeof tor / sizeof *tor; return tor; }

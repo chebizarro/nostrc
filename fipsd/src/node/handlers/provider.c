@@ -516,7 +516,7 @@ json_t *hs_control_command(handlers *h, const char *name, const json_t *params)
         const char *addr = json_string_value(json_object_get(params, "addr"));
         if (!addr) addr = json_string_value(json_object_get(params, "address"));
         fips_transport_addr a;
-        if (!t || !addr || fips_transport_addr_from_string(addr, strlen(addr), &a) != FIPS_OK) return fipsd_control_error("unknown transport or address");
+        if (!t || !addr || fipsd_transport_parse_address(t, addr, &a) != FIPS_OK) return fipsd_control_error("unknown transport or address");
         (void)fipsd_identity_cache_put(&h->identities, peer, hs_wall_ms(h));
         bool ok = hs_dial(h, &peer, t->id, &a, false);
         return ok ? fipsd_control_ok(json_pack("{s:s}", "result", hs_rec_find(h, &peer.node_addr) ? "connected" : "connecting"))
@@ -544,7 +544,7 @@ json_t *hs_control_command(handlers *h, const char *name, const json_t *params)
             transport = t->id;
             const char *addr = json_string_value(json_object_get(params, "address"));
             if (!addr) addr = json_string_value(json_object_get(params, "addr"));
-            has = addr && fips_transport_addr_from_string(addr, strlen(addr), &a) == FIPS_OK;
+            has = addr && fipsd_transport_parse_address(t, addr, &a) == FIPS_OK;
             if (addr && !has) return fipsd_control_error("invalid address");
         }
         return hs_path_pin(h, &peer.node_addr, transport, &a, has, pin);

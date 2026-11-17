@@ -24,6 +24,9 @@ typedef struct fipsd_watcher_source {
     uint64_t (*now_ms)(void *); /* optional deterministic clock */
 } fipsd_watcher_source;
 fipsd_watcher *fipsd_watcher_create(fipsd_transport *, const fipsd_binder_ops *, const fipsd_watcher_source *);
+/* Opt in before start. Probe runs on owner after a network notification;
+ * no periodic interface reads. Retry/stability deadlines remain bounded. */
+void fipsd_watcher_event_driven(fipsd_watcher *, bool (*healthy)(void *));
 int fipsd_watcher_start(fipsd_watcher *, fipsd_runtime *, const fipsd_node_context *, GoChannel *events);
 void fipsd_watcher_network_changed(fipsd_watcher *, const fipsd_netmon_event *);
 /* A stale receive/writer exit cannot detach a replacement binding. */
@@ -32,5 +35,8 @@ void fipsd_watcher_stop(fipsd_watcher *); /* prompt, idempotent */
 void fipsd_watcher_destroy(fipsd_watcher *); /* only after runtime join */
 /* Same reducer used by the actor, exposed for clock-driven tests. Sole owner
  * only; invalid reads retain the last binding, carrier is never a bind gate. */
+/* Sole owner: UINT64_MAX means no pending deadline; overdue retries are
+ * retained so scheduler delays cannot strand an event-only binding. */
+uint64_t fipsd_watcher_next_deadline(fipsd_watcher *);
 int fipsd_watcher_step(fipsd_watcher *, fipsd_presence_facts, uint64_t now_ms);
 #endif

@@ -15,7 +15,10 @@
 /* Upstream socks5/stats.rs and tor/stats.rs: counted by the proxied (Tor,
  * Nym) owners only; appended last so earlier counter positions are stable. */
 #define FIPSD_STATS_PROXY_ONLY(X) X(socks5_errors) X(control_errors)
-#define FIPSD_STATS_ALL(X) FIPSD_STATS_PACKET(X) FIPSD_STATS_UDP_ONLY(X) FIPSD_STATS_TCP_ONLY(X) FIPSD_STATS_PROXY_ONLY(X)
+#define FIPSD_STATS_ETHERNET_ONLY(X) \
+    X(frames_sent) X(frames_recv) X(beacons_sent) X(beacons_recv) X(beacons_dropped) \
+    X(frames_too_short) X(frames_too_long) X(group_drops)
+#define FIPSD_STATS_ALL(X) FIPSD_STATS_PACKET(X) FIPSD_STATS_UDP_ONLY(X) FIPSD_STATS_TCP_ONLY(X) FIPSD_STATS_PROXY_ONLY(X) FIPSD_STATS_ETHERNET_ONLY(X)
 #define FIPSD_STATS_DECLARE(name) _Atomic uint64_t name;
 typedef struct fipsd_transport_stats { FIPSD_STATS_ALL(FIPSD_STATS_DECLARE) } fipsd_transport_stats;
 #undef FIPSD_STATS_DECLARE

@@ -750,3 +750,23 @@ add_dependencies(fipsd_tests fipsd_mdns_two_nodes_test)
 add_test(NAME FipsdMdnsTwoNodesTest COMMAND fipsd_mdns_two_nodes_test)
 set_tests_properties(FipsdMdnsTwoNodesTest PROPERTIES TIMEOUT 120 LABELS "fips;node;mdns")
 nostrc_describe_test(FipsdMdnsTwoNodesTest OWNER fipsd TARGETS fipsd_mdns_two_nodes_test)
+
+# Ethernet vectors and injected watcher transitions; no raw-socket privileges.
+fipsd_unit_test(fipsd_ethernet_test test_ethernet.c)
+add_dependencies(fipsd_tests fipsd_ethernet_test)
+add_test(NAME FipsdEthernetTest COMMAND fipsd_ethernet_test)
+set_tests_properties(FipsdEthernetTest PROPERTIES TIMEOUT 30 LABELS "fips;transport;ethernet")
+nostrc_describe_test(FipsdEthernetTest OWNER fipsd TARGETS fipsd_ethernet_test)
+
+add_test(NAME FipsdEthernetPrivilegedSmokeTest
+  COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/ethernet_privileged.py"
+    --fipsd "$<TARGET_FILE:fipsd>" --native-tool "$<TARGET_FILE:fipsd_native_client_tool>")
+set_tests_properties(FipsdEthernetPrivilegedSmokeTest PROPERTIES TIMEOUT 240
+  SKIP_RETURN_CODE 77 LABELS "fips;transport;ethernet;privileged" ENVIRONMENT "FIPSD_WORKERS=2")
+nostrc_describe_test(FipsdEthernetPrivilegedSmokeTest OWNER fipsd TARGETS fipsd fipsd_native_client_tool
+  INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/ethernet_privileged.py")
+
+add_test(NAME FipsdEthernetBpfSmokeTest COMMAND fipsd_ethernet_test --bpf)
+set_tests_properties(FipsdEthernetBpfSmokeTest PROPERTIES TIMEOUT 20 SKIP_RETURN_CODE 77
+  LABELS "fips;transport;ethernet;privileged")
+nostrc_describe_test(FipsdEthernetBpfSmokeTest OWNER fipsd TARGETS fipsd_ethernet_test)

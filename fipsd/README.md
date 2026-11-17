@@ -2957,3 +2957,97 @@ Packaging needs **libncurses-dev** (Debian/Ubuntu) or **ncurses** (Alpine);
 the workflow owner must add the dependency to CI package lists. The new
 component does not change the daemon or fipsctl version/API. See
 [CLI, panes, keys and regression modes](docs/cli-fipstop.md).
+
+## Ethernet transport (`nostrc-gfi8h.5`)
+
+`src/transport/ethernet/` ports the pinned upstream Ethernet wire and raw I/O:
+`ethernet.c` owns binding, receive/beacon fibers and send leases;
+`io_linux.c` owns AF_PACKET/SOCK_DGRAM; `io_macos.c` owns BPF;
+`neighbor.c` owns codecs and the bounded discovery buffer; `stats.c` feeds
+`stats_common`. Ethernet registration precedes the node registry seal.
+
+Linux needs root or `CAP_NET_RAW` (`setcap cap_net_raw=ep /path/to/fipsd`).
+macOS needs read/write access to `/dev/bpf*`; the daemon never invokes sudo.
+An existing/up interface whose privileged open fails refuses transport startup
+with state `failed` and a specific raw-socket/BPF error. The normal supervisor
+policy keeps the host/control service available even when the node is not ready. An absent interface starts absent and binds on
+network notifications when it returns. `optional` controls required-interface
+health reporting, not privilege checks. Carrier loss alone is not absence.
+
+```yaml
+transports:
+  ethernet:
+    interface: eth0
+    ethertype: 0x2121
+    # mtu: 1357               # optional ceiling; default interface MTU - 3
+    recv_buf_size: 2097152
+    send_buf_size: 2097152
+    listen: true              # receive neighbour beacons (alias: discovery)
+    announce: false           # broadcast our identity immediately, then periodically
+    auto_connect: false       # opt in to dialing valid discovered identity hints
+    accept_connections: false # opt in to inbound IK
+    beacon_interval_secs: 30  # minimum 10
+    optional: false
+    role: normal
+```
+
+Named instances use `transports.ethernet.<name>`. Explicit peer addresses and
+control `connect`/`path_pin` addresses use `interface/aa:bb:cc:dd:ee:ff` (upstream syntax), not IPs.
+The C transport also accepts a bare MAC when the instance already names its
+interface; a supplied interface prefix must match that binding.
+The wire is EtherType 0x2121 by default, data `00 || u16le(length) || FMP`,
+and beacon `01 01 || xonly_public_key[32]`. Decode trims NIC padding before
+AEAD. Group/multicast source MACs are dropped before either dispatch path;
+zero/group destination MACs are never data peers. The 1024-entry MAC-keyed
+neighbour buffer refreshes existing entries even when full, drains in last-
+sighting order and clears on detach. Beacons are unauthenticated identity
+hints; ordinary IK, ACL and admission rules still apply.
+
+Binding/rebinding uses shared watcher/presence facts and network-change events,
+including changed ifindex/MAC and a Linux live-socket bound-index probe for
+unregister/return with the same index. Ethernet disables the watcher's periodic
+interface-read ticker; only bind retry and health-stability deadlines remain.
+Raw I/O failure also wakes the owner. Detach cancels I/O, joins receive/beacon
+fibers and send leases, then resets/closes the descriptor. Medium comes from
+`medium.c` at bind/change and feeds the existing path preference policy:
+physical wired/Wi-Fi are distinguished; veth/bridge/VLAN remain unknown.
+
+Linux kernel drop samples reset and are summed across bindings; BPF drop
+samples are cumulative and converted to deltas. `show_transports` emits the
+13 upstream Ethernet counters (`frames_*`, bytes/errors, `beacons_*`,
+`kernel_drops`, `group_drops`) and the shared interface presence object.
+Darwin uses upstream's 20-byte timeval32 BPF header, 4-byte record alignment,
+512-KiB buffer request before bind, complete Ethernet headers on write, and
+an EtherType kernel filter. Truncated captures are discarded, not passed
+partially to AEAD (a stricter behavior than upstream's copying minimum).
+
+### Focused gates
+
+`FipsdEthernetTest` covers wire/padding/beacon vectors, group drops, neighbour
+capacity/refresh/order, BPF ABI/batch/truncation and injected presence/index/
+MAC/same-index-detached-socket transitions without privileges or sleeps.
+
+```sh
+ctest --test-dir "$build" -R '^FipsdEthernet' --output-on-failure
+# Linux, root/CAP_NET_ADMIN+CAP_NET_RAW and iproute2; two netns joined by veth:
+sudo env FIPSD_ETHERNET_PRIVILEGED_SMOKE=1 python3 "$src/fipsd/tests/ethernet_privileged.py" \
+  --fipsd "$build/fipsd/fipsd" --native-tool "$build/fipsd/tests/fipsd_native_client_tool" \
+  --rust /path/to/pinned/release/fips
+# macOS, without sudo; requires accessible BPF and a peer emitting FIPS frames:
+FIPSD_ETHERNET_BPF_INTERFACE=en0 "$build/fipsd/tests/fipsd_ethernet_test" --bpf
+```
+
+For Linux TSan, configure `-DGNOSTR_ENABLE_TSAN=ON
+-DNOSTR_USE_SYSTEM_NSYNC=OFF` after initializing `third_party/nsync`. This
+builds instrumented nsync with the repository's TSan semaphore backend rather
+than treating an uninstrumented distro lock library as visible synchronization.
+
+The registered privileged smoke returns 77 with a prerequisite explanation
+unless explicitly enabled on Linux as root. It checks C/C and optionally
+C/Rust in both IK/XK role assignments, exact native application datagrams in
+both directions, interface-derived MTU, delete/recreate rebind with announce
+**off**, then a beacon-driven auto-connect/rebind scenario with announce on,
+clean shutdown and namespace cleanup. Snapshot observations are
+bounded by deadlines and paced by replies; no sleeps stand in for completion.
+BPF smoke returns 77 when BPF/interface access is unavailable, but fails if
+open/bind succeeds and no complete FIPS frame arrives within ten seconds.
