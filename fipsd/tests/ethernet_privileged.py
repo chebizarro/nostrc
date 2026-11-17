@@ -129,9 +129,12 @@ transports:
             def exchange(label):
                 flow = NativeFlow(source['api'], target['npub'], 7654)
                 try:
-                    flow.send(payload)
+                    # Distinct bytes per stage: a pre-rebind receipt cannot
+                    # satisfy the post-rebind application-delivery assertion.
+                    sent_payload = payload + b':' + label.encode()
+                    flow.send(sent_payload)
                     assert flow.recv() == reply, 'wrong returned application payload'
-                    tool.await_log(f'received {payload.hex()}', time.monotonic() + 15)
+                    tool.await_log(f'received {sent_payload.hex()}', time.monotonic() + 15)
                 finally:
                     flow.close()
                 print(f'PASSED {tag}: {label} datagrams both directions, exact payloads', flush=True)

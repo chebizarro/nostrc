@@ -2968,8 +2968,9 @@ component does not change the daemon or fipsctl version/API. See
 
 Linux needs root or `CAP_NET_RAW` (`setcap cap_net_raw=ep /path/to/fipsd`).
 macOS needs read/write access to `/dev/bpf*`; the daemon never invokes sudo.
-An existing/up interface whose privileged open fails fails startup with a
-specific raw-socket/BPF error. An absent interface starts absent and binds on
+An existing/up interface whose privileged open fails refuses transport startup
+with state `failed` and a specific raw-socket/BPF error. The normal supervisor
+policy keeps the host/control service available even when the node is not ready. An absent interface starts absent and binds on
 network notifications when it returns. `optional` controls required-interface
 health reporting, not privilege checks. Carrier loss alone is not absence.
 
