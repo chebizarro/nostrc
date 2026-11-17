@@ -1,6 +1,7 @@
 #include "nostr/advert.h"
 #include "nostr/internal.h"
 #include <nostr/nip40/nip40.h>
+#include <fips/transport/types.h>
 #include <arpa/inet.h>
 #include <ctype.h>
 #include <stdlib.h>
@@ -74,6 +75,98 @@ static bool bounded(const fipsd_nostr_advert *a)
     for (size_t i = 0; i < a->stun_count; ++i)
         if (strnlen(a->stun[i], FIPSD_NOSTR_URL_MAX + 1) > FIPSD_NOSTR_URL_MAX) return false;
     return !nat(a) || (a->has_relays && a->relay_count && a->has_stun && a->stun_count);
+}
+/* Rust IpAddr/SocketAddr FromStr: a dotted quad (no leading zeros) or RFC
+ * 4291 text, bracketed in a socket address; the port is decimal (zero prefix
+ * allowed). No hostnames, no IPv6 zone ids. */
+static bool parse_port(const char *s, size_t n, uint16_t *out)
+{
+    unsigned long v = 0;
+    if (!n) return false;
+    for (size_t i = 0; i < n; ++i) {
+        if (s[i] < '0' || s[i] > '9' || (v = v * 10 + (unsigned long)(s[i] - '0')) > UINT16_MAX) return false;
+    }
+    *out = (uint16_t)v; return true;
+}
+static bool parse_ip(const char *s, size_t n, int *family, uint8_t ip[16])
+{
+    char text[64];
+    if (!n || n >= sizeof text) return false;
+    memcpy(text, s, n); text[n] = 0;
+    if (inet_pton(AF_INET, text, ip) == 1) { *family = AF_INET; return true; }
+    if (inet_pton(AF_INET6, text, ip) == 1) { *family = AF_INET6; return true; }
+    return false;
+}
+static bool parse_socket(const char *s, int *family, uint8_t ip[16], uint16_t *port)
+{
+    size_t n = s ? strlen(s) : 0;
+    if (n && s[0] == '[') {
+        const char *close = memchr(s, ']', n);
+        return close && close[1] == ':' && parse_ip(s + 1, (size_t)(close - s - 1), family, ip) &&
+            *family == AF_INET6 && parse_port(close + 2, n - (size_t)(close + 2 - s), port);
+    }
+    const char *colon = n ? strrchr(s, ':') : NULL;
+    return colon && parse_ip(s, (size_t)(colon - s), family, ip) && *family == AF_INET &&
+        parse_port(colon + 1, n - (size_t)(colon + 1 - s), port);
+}
+/* Rust SocketAddr Display, through the core's canonical address text. */
+static bool socket_text(int family, const uint8_t ip[16], uint16_t port, char out[FIPSD_NOSTR_ADDR_MAX + 1])
+{
+    fips_transport_addr a; const char *text; size_t len;
+    if (fips_transport_addr_from_socket_addr(ip, family == AF_INET ? 4 : 16, port, 0, &a) != FIPS_OK ||
+        fips_transport_addr_as_str(&a, &text, &len) != FIPS_OK || len > FIPSD_NOSTR_ADDR_MAX) return false;
+    memcpy(out, text, len); out[len] = 0; return true;
+}
+bool fipsd_nostr_advert_external(const char *raw, const char *bind, char out[FIPSD_NOSTR_ADDR_MAX + 1])
+{
+    int family; uint8_t ip[16]; uint16_t port, bind_port;
+    if (!raw || !out || !parse_socket(bind, &family, ip, &bind_port)) return false;
+    if (parse_socket(raw, &family, ip, &port)) return socket_text(family, ip, port, out);
+    return parse_ip(raw, strlen(raw), &family, ip) && socket_text(family, ip, bind_port, out);
+}
+static const char wildcard_udp[] = "udp public=true bound to wildcard but STUN observation failed; advertising no UDP "
+    "endpoint. Either set transports.udp.external_addr, bind to a specific public IP, or ensure "
+    "node.rendezvous.nostr.stun_servers is reachable";
+static const char wildcard_tcp[] = "tcp advertise_on_nostr=true bound to wildcard and no transports.tcp.external_addr "
+    "set; advertising no TCP endpoint. Either set external_addr to the public IP (recommended for cloud 1:1-NAT "
+    "setups) or bind explicitly to the public IP";
+bool fipsd_nostr_advert_source_endpoint(const fipsd_nostr_advert_source *s, fipsd_nostr_endpoint *e, const char **why)
+{
+    static const uint8_t zero[16] = {0};
+    if (why) *why = NULL;
+    if (!s || !e || !s->advertise || !transport(s->transport)) return false;
+    *e = (fipsd_nostr_endpoint){.transport = s->transport};
+    if (s->transport == FIPSD_NOSTR_TOR) {
+        int n = s->onion ? snprintf(e->addr, sizeof e->addr, "%s:%u", s->onion, (unsigned)s->advertised_port) : -1;
+        return n > 0 && (size_t)n < sizeof e->addr;
+    }
+    if (s->transport == FIPSD_NOSTR_UDP && !s->is_public) { strcpy(e->addr, "nat"); return true; }
+    if (s->external) {
+        size_t n = strnlen(s->external, sizeof e->addr);
+        if (n == sizeof e->addr) return false;
+        memcpy(e->addr, s->external, n + 1); return true;
+    }
+    int family; uint8_t ip[16]; uint16_t port;
+    if (!parse_socket(s->local, &family, ip, &port)) return false;
+    if (memcmp(ip, zero, family == AF_INET ? 4 : 16)) return socket_text(family, ip, port, e->addr);
+    /* Wildcard: UDP publishes the STUN-observed IP with the bound port (the
+     * port 1:1 NAT preserves); TCP has no STUN equivalent. */
+    if (s->transport == FIPSD_NOSTR_UDP && s->reflexive && parse_ip(s->reflexive, strlen(s->reflexive), &family, ip))
+        return socket_text(family, ip, port, e->addr);
+    if (why) *why = s->transport == FIPSD_NOSTR_UDP ? wildcard_udp : wildcard_tcp;
+    return false;
+}
+bool fipsd_nostr_advert_publishable(fipsd_nostr_advert *a)
+{
+    if (!a || a->endpoint_count > FIPSD_NOSTR_ENDPOINTS_MAX) return false;
+    size_t kept = 0;
+    for (size_t i = 0; i < a->endpoint_count; ++i)
+        if (usable(&a->endpoints[i])) a->endpoints[kept++] = a->endpoints[i];
+    a->endpoint_count = kept;
+    if (!kept) return false;
+    if (nat(a)) return a->has_relays && a->relay_count && a->has_stun && a->stun_count;
+    a->has_relays = a->has_stun = false; a->relay_count = a->stun_count = 0;
+    return true;
 }
 static void strings(fn_writer *w, const char *key, const char *base, size_t count, size_t stride)
 {

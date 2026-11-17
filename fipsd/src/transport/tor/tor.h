@@ -45,6 +45,15 @@ bool fipsd_tor_is(const fipsd_transport *);
 const char *fipsd_tor_mode(const fipsd_transport *);
 /* NULL until a directory-mode start read the hostname file. */
 const char *fipsd_tor_onion_address(const fipsd_transport *);
+/* The onion for this node's Nostr advert: NULL until the hostname is read
+ * and, when a control monitor runs, Tor reported the service published
+ * (HS_DESC UPLOADED for this address, or a current descriptor already held
+ * when the monitor subscribed). Without a monitor, or when the monitor never
+ * completes its first session, the hostname alone suffices (upstream). Set
+ * once; fipsd_tor_advert_updates then carries one notification. */
+const char *fipsd_tor_advertised_onion(const fipsd_transport *);
+uint16_t fipsd_tor_advertised_port(const fipsd_transport *);
+GoChannel *fipsd_tor_advert_updates(fipsd_transport *); /* borrowed, capacity one */
 /* False until the control monitor took its first snapshot; the last one is
  * kept across control reconnects, as upstream keeps its cache. */
 bool fipsd_tor_monitoring_snapshot(const fipsd_transport *, fipsd_tor_monitoring *);

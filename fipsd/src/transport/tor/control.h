@@ -9,9 +9,15 @@
  * with SETEVENTS STATUS_CLIENT NETWORK_LIVENESS BW and updates the snapshot
  * from Tor's asynchronous 650 events (BOOTSTRAP progress, CIRCUIT_*,
  * liveness, bandwidth totals), re-reading GETINFO on each status event; no
- * periodic polling. A lost or refused connection counts control_errors and
+ * periodic polling. With a service set it also follows HS_DESC and asks once
+ * per session whether Tor already holds the service's current descriptor. A lost or refused connection counts control_errors and
  * is retried with exponential backoff until stop. */
 typedef enum tor_control_auth { TOR_CONTROL_COOKIE, TOR_CONTROL_PASSWORD } tor_control_auth;
+/* Onion service publication as the monitor learns it: Tor uploaded the
+ * descriptor (650 HS_DESC UPLOADED <service>), already held a current one
+ * when the monitor subscribed (GETINFO hs/service/desc/id/<service>), or the
+ * monitor could not complete its first session, so cannot confirm either. */
+typedef enum { TOR_DESCRIPTOR_UPLOADED, TOR_DESCRIPTOR_CURRENT, TOR_DESCRIPTOR_UNMONITORED } tor_descriptor_signal;
 typedef struct tor_control {
     const char *owner;            /* transport name for logs */
     fipsd_transport_stats *stats; /* control_errors */
@@ -23,6 +29,12 @@ typedef struct tor_control {
     bool has_info;                /* mu */
     fipsd_tor_monitoring info;    /* mu */
     GoChannel *stop, *done, *updates;
+    /* Set before tor_control_start when an onion is served: the v3 address
+     * without ".onion" adds HS_DESC to the subscription. Monitor fiber calls. */
+    char service[64];
+    void (*descriptor)(void *, tor_descriptor_signal);
+    void *descriptor_user;
+    bool subscribed;              /* fiber: a session's SETEVENTS was accepted */
     fipsd_runtime *rt;
     GoContext *root;
     bool started, warned, stall_warned, refresh, was_dormant;

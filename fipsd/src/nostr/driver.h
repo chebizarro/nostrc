@@ -29,11 +29,18 @@ typedef struct {
     void (*publish_result)(void *, const char *relay, int kind, bool accepted);
     void (*refetch_result)(void *, const char *peer, fipsd_nostr_refetch_outcome);
 } fipsd_rendezvous_driver;
+struct fipsd_nostr_adverts;
+/* local_advert snapshots the registry in order (upstream
+ * advert_transport_snapshot) with each instance's advertise_on_nostr,
+ * public, external_addr and advertised_port. While started, a fiber turns
+ * advertised TCP/Tor listener binds and Tor onion publication into
+ * fipsd_nostr_runtime_refresh_advert; the actor republishes only a changed set. */
 typedef struct {
     const fipsd_node_context *node;
     fipsd_node_handlers *handlers;
     const fipsd_transport_registry *transports;
     struct fipsd_traversal_io *traversal;
+    struct fipsd_nostr_adverts *adverts;
 } fipsd_nostr_node_driver;
 /* The transport already owns the socket/NAT mapping: handoff carries a
  * stable local tuple and numeric peer, never a newly bound private socket. */

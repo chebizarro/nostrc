@@ -27,7 +27,7 @@ typedef struct udp_path {
     fips_transport_addr bound;
     fipsd_stun stun;
     size_t server;
-    bool observed, advertise, loopback, snapshot_ready;
+    bool observed, loopback, snapshot_ready;
     prefix prefixes[PREFIX_MAX]; size_t prefix_count;
     fipsd_nostr_traversal addresses; /* worker owned */
     fipsd_nostr_traversal snapshot; /* snapshot_mu; actor reads */
@@ -460,12 +460,9 @@ fipsd_traversal_io *fipsd_traversal_io_create(const fipsd_config *c, fipsd_nostr
         if (!s || strlen(s) > FIPSD_NOSTR_URL_MAX) goto fail;
         strcpy(io->servers[i], s);
     }
-    const fipsd_config_value *udp = fipsd_config_get(c, "transports.udp");
     for (size_t i = 0; i < d->transports->count; ++i) {
         fipsd_transport *t = d->transports->items[i]; if (strcmp(t->type, "udp")) continue;
         udp_path *p = &io->paths[io->path_count++]; p->owner = io; p->transport = t;
-        const fipsd_config_value *v = fipsd_config_member(udp, t->name); if (!v) v = udp;
-        p->advertise = fipsd_config_bool(fipsd_config_member(v, "advertise_on_nostr"));
         if (!fipsd_udp_register_datagram_classifier(t, "nostr-traversal", classify, p)) goto fail;
     }
     return io;
@@ -515,40 +512,19 @@ void fipsd_traversal_io_published(fipsd_traversal_io *io, const char *id, bool o
     command *c = calloc(1, sizeof *c); if (c) { c->kind = PUBLISH_RESULT; strcpy(c->key, id); c->ok = ok; c->repair = repair; }
     if (!enqueue(io, c)) FIPSD_WARN("nostr", "traversal publish-result mailbox exhausted");
 }
-bool fipsd_traversal_io_advert(fipsd_traversal_io *io, fipsd_nostr_advert *out)
+bool fipsd_traversal_io_udp_observed(fipsd_traversal_io *io, const fipsd_transport *t, char reflexive[65], bool *has_reflexive)
 {
-    if (!io) return false;
+    bool ready = false;
+    if (!io || !t || !reflexive || !has_reflexive) return false;
+    *has_reflexive = false;
     nsync_mu_lock(&io->snapshot_mu);
-    for (size_t i = 0; i < io->path_count && out->endpoint_count < FIPSD_NOSTR_ENDPOINTS_MAX; ++i) {
+    for (size_t i = 0; i < io->path_count; ++i) {
         udp_path *p = &io->paths[i];
-        if (!p->snapshot_ready || !p->advertise || p->transport->ops->state(p->transport) != FIPSD_TRANSPORT_BOUND) continue;
-        /* NAT marker is authoritative; a reflexive observation is not proof
-         * that an unsolicited datagram can reach this mapping. */
-        out->endpoints[out->endpoint_count++] = (fipsd_nostr_endpoint){FIPSD_NOSTR_UDP, "nat"};
-        /* A concrete, explicitly bound public address is publishable only
-         * when STUN agrees with that exact tuple (not just its public IP). */
-        fips_transport_addr current, mapped; fipsd_udp_endpoint ep;
-        const fipsd_nostr_address *reflexive = &p->snapshot.reflexive;
-        char text[96];
-        snprintf(text, sizeof text, strchr(reflexive->ip, ':') ? "[%s]:%u" : "%s:%u", reflexive->ip, reflexive->port);
-        if (p->snapshot.has_reflexive && out->endpoint_count < FIPSD_NOSTR_ENDPOINTS_MAX &&
-            fipsd_udp_address(p->transport, &current) &&
-            fips_transport_addr_from_string(text, strlen(text), &mapped) == FIPS_OK &&
-            fips_transport_addr_equal(&current, &mapped) && endpoint(&mapped, &ep)) {
-            int family = ep.address.ss_family; const uint8_t *ip = ip_bytes((struct sockaddr *)&ep.address);
-            bool doc = family == AF_INET && ((ip[0] == 192 && ip[1] == 0 && ip[2] == 2) ||
-                (ip[0] == 198 && ip[1] == 51 && ip[2] == 100) || (ip[0] == 203 && ip[1] == 0 && ip[2] == 113));
-            if (!doc && !private_ip(family, ip) && !forbidden(family, ip, false)) {
-                fipsd_nostr_endpoint *e = &out->endpoints[out->endpoint_count++];
-                e->transport = FIPSD_NOSTR_UDP; strcpy(e->addr, text);
-            }
-        }
-        if (p->snapshot.has_stun && out->stun_count < FIPSD_NOSTR_STUN_MAX) {
-            bool have = false;
-            for (size_t j = 0; j < out->stun_count; ++j) if (!strcmp(out->stun[j], p->snapshot.stun)) have = true;
-            if (!have) strcpy(out->stun[out->stun_count++], p->snapshot.stun);
-            out->has_stun = true;
+        if (p->transport != t) continue;
+        ready = p->snapshot_ready && t->ops->state(t) == FIPSD_TRANSPORT_BOUND;
+        if (ready && p->snapshot.has_reflexive) {
+            memcpy(reflexive, p->snapshot.reflexive.ip, sizeof p->snapshot.reflexive.ip); *has_reflexive = true;
         }
     }
-    nsync_mu_unlock(&io->snapshot_mu); return out->endpoint_count != 0;
+    nsync_mu_unlock(&io->snapshot_mu); return ready;
 }

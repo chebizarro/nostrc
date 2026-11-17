@@ -70,6 +70,7 @@ struct fipsd_nostr_runtime {
     size_t relay_count;
     fipsd_nostr_inbox inbox;
     fipsd_nostr_advert local;
+    char *advertised; /* canonical content of the last built publishable advert; NULL: none */
     fipsd_nostr_failure_state failures;
     fipsd_signal_router router;
     bool router_ready;
@@ -285,11 +286,25 @@ static bool published(fipsd_nostr_runtime *r, relay_slot *s, NostrEvent *event)
     if (err) free_error(err);
     return ok;
 }
-static void publish_local(fipsd_nostr_runtime *r, relay_slot *only)
+/* Rebuild the local advert from the driver's endpoint inputs (upstream
+ * set_local_advert + plan_publish). A changed endpoint set republishes the
+ * replaceable 37195 to every live relay; an unchanged one is published only
+ * to `only` (a relay that just reached its live boundary) or, on `refresh`,
+ * to every live relay before the NIP-40 expiry. Otherwise nothing is sent. */
+static void publish_local(fipsd_nostr_runtime *r, relay_slot *only, bool refresh)
 {
     if (!r->advertise) return;
-    fipsd_nostr_advert a = r->local;
-    if (!r->driver.local_advert || !r->driver.local_advert(r->driver.user, &a)) return;
+    fipsd_nostr_advert a = r->local; char *content = NULL;
+    if (r->driver.local_advert && r->driver.local_advert(r->driver.user, &a) && fipsd_nostr_advert_publishable(&a))
+        content = fipsd_nostr_advert_content(&a);
+    bool changed = !content != !r->advertised || (content && strcmp(content, r->advertised));
+    if (changed) {
+        if (content) FIPSD_INFO("nostr", "local advert endpoint set changed: %s", content);
+        else FIPSD_INFO("nostr", "local advert has no publishable endpoint; the published one ages out by NIP-40 expiration");
+        free(r->advertised); r->advertised = content; content = NULL; only = NULL;
+    } else if (refresh) only = NULL;
+    free(content);
+    if (!r->advertised || (!changed && !refresh && !only)) return;
     NostrEvent *e = NULL, *inbox = NULL;
     if (fipsd_nostr_advert_build(r->identity, &a, r->app, wall() / 1000, r->advert_ttl, &e) != FIPSD_NOSTR_OK) {
         FIPSD_WARN("nostr", "local advert refused (no bounded usable endpoints/relay/STUN inputs)"); return;
@@ -361,7 +376,7 @@ static void connect_relay(fipsd_nostr_runtime *r, relay_slot *s)
         FIPSD_WARN("nostr", "connect %s: %s", s->url, err ? err->message : "failed");
         if (err) free_error(err); retry(r, s); return;
     }
-    authenticate(r, s); publish_local(r, s);
+    authenticate(r, s); publish_local(r, s, false);
 }
 static session_slot *find_session(session_slot *slots, size_t cap, const char *id)
 {
@@ -577,7 +592,7 @@ static void process(fipsd_nostr_runtime *r, message *m)
         if (s) {
             s->live = true; s->backoff = 1000; catchup(r);
             if (r->driver.boundary) r->driver.boundary(r->driver.user, s->url, true, NULL);
-            publish_local(r, s);
+            publish_local(r, s, false);
         }
         break;
     case CLOSED:
@@ -601,7 +616,7 @@ static void process(fipsd_nostr_runtime *r, message *m)
     }
     case REFETCH: start_query(r, m->peer); break;
     case SEND: case RESEND: send_signal(r, m); break;
-    case LOCAL_READY: publish_local(r, NULL); break;
+    case LOCAL_READY: publish_local(r, NULL, false); break;
     case FINISH: {
         session_slot *q = find_session(r->sessions, r->session_cap, m->reason); if (q) q->active = false;
         q = find_session(r->outgoing, r->outgoing_cap, m->reason); if (q) { free(q->offer); *q = (session_slot){0}; }
@@ -684,7 +699,7 @@ static void *run(void *user)
         if (selected.selected_case == 0) break;
         if (selected.selected_case == 1 || selected.selected_case == 2) { process(r, payload); discard(payload); }
         else if (selected.selected_case == 3) receive_signal(r, payload);
-        else if (selected.selected_case == 4) publish_local(r, NULL);
+        else if (selected.selected_case == 4) publish_local(r, NULL, true);
         now = mono();
         if (r->query_deadline && r->query_deadline <= now) finish_query(r, false);
         for (size_t i = 0; i < r->relay_count && !canceled(r); ++i)
@@ -833,7 +848,7 @@ void fipsd_nostr_runtime_destroy(fipsd_nostr_runtime *r)
         void *m; while (go_channel_try_receive(queues[i], &m) == 0) discard(m); go_channel_unref(queues[i]);
     }
     fips_identity_destroy_secp(r->secp); fipsd_nostr_failure_clear(&r->failures);
-    free(r->peers); free(r->sessions); free(r->outgoing); free(r->app); free(r);
+    free(r->peers); free(r->sessions); free(r->outgoing); free(r->app); free(r->advertised); free(r);
 }
 static message *peer_command(message_kind kind, const char *key)
 {
