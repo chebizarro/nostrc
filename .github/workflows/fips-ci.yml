@@ -490,10 +490,14 @@ jobs:
             --source-commit "$(git rev-parse HEAD)" --rust-commit "$RUST_COMMIT" \
             --output "$PWD/bench-results/candidate.json" \
             --work-dir "${{ runner.temp }}/fips-perf"
-      - name: Enforce the baseline's 10 percent limit
+      # Hosted policy (fipsd/docs/perf.md): against the same-runner reference,
+      # goodput and micro medians fail beyond 10%; loopback latency percentiles
+      # and CPU per datagram are reported in the job summary, never gated.
+      - name: Enforce the 10 percent limit on goodput and micro medians
         run: |
-          python3 fipsd/tests/perf_compare.py bench-results/candidate.json \
-            --baseline fipsd/tests/perf_baseline.json --reference bench-results/reference.json
+          python3 fipsd/tests/perf_compare.py bench-results/candidate.json --hosted \
+            --baseline fipsd/tests/perf_baseline.json --reference bench-results/reference.json \
+            --summary "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

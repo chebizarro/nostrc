@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Fail closed on missing/invalid measurements or a >10% median regression."""
+"""Fail closed on missing/invalid measurements or a >10% median regression.
+
+By default every metric is gated (local runs, against a same-machine reference
+or the absolute baseline). --hosted is the shared-runner policy: it requires a
+same-runner --reference, gates only loopback goodput and micro medians, and
+reports loopback latency percentiles and CPU per datagram without failing.
+"""
 import argparse
 import json
 import math
@@ -92,6 +98,37 @@ def compare(actual, baseline, tolerance=.10):
     return regressions
 
 
+def hosted_gated(name):
+    """Metrics stable enough on shared runners to fail a hosted job."""
+    return name.endswith('/throughput_mbps') or (name.startswith('micro/') and name.endswith('/median_ns'))
+
+
+def hosted_compare(actual, reference, tolerance=.10, warn_p50=.50):
+    """(regressions in gated metrics, report rows for every metric, warnings)."""
+    if actual.keys() != reference.keys():
+        raise ValueError('candidate/reference metric sets differ')
+    gated = sorted(name for name in actual if hosted_gated(name))
+    failures = compare({n: actual[n] for n in gated}, {n: reference[n] for n in gated}, tolerance)
+    rows, warnings = [], []
+    for name in sorted(actual):
+        b, a = positive(reference[name]['value']), positive(actual[name]['value'])
+        delta = a / b - 1
+        rows.append((name, b, a, delta, hosted_gated(name)))
+        if name.endswith('/p50_us') and delta > warn_p50:
+            warnings.append(f'{name}: {b:.3f} -> {a:.3f} ({delta * 100:+.1f}%)')
+    return failures, rows, warnings
+
+
+def summary_markdown(rows, reference_commit, tolerance):
+    lines = [f'### FIPS performance: candidate vs same-runner reference `{reference_commit[:12]}`', '',
+             f'Gated (fail beyond {tolerance:.0%}): loopback goodput and micro median ns/op. '
+             'Reported only: loopback latency percentiles and CPU per datagram (shared-runner noise).', '',
+             '| Metric | Reference | Candidate | Change | Gate |', '| --- | ---: | ---: | ---: | --- |']
+    for name, b, a, delta, gated in rows:
+        lines.append(f'| `{name}` | {b:.3f} | {a:.3f} | {delta * 100:+.1f}% | {"gated" if gated else "report"} |')
+    return '\n'.join(lines) + '\n'
+
+
 def validate(data, policy):
     if data['config'] != policy['config']:
         raise ValueError('workload configuration differs from baseline')
@@ -108,7 +145,12 @@ def main():
     p.add_argument('results', type=Path)
     p.add_argument('--baseline', type=Path, default=Path(__file__).with_name('perf_baseline.json'))
     p.add_argument('--reference', type=Path, help='same-runner measurements of baseline.reference_commit')
+    p.add_argument('--hosted', action='store_true',
+                   help='shared-runner policy: needs --reference; gates goodput and micro medians only')
+    p.add_argument('--summary', type=Path, help='append a markdown report (e.g. $GITHUB_STEP_SUMMARY)')
     args = p.parse_args()
+    if args.hosted and not args.reference:
+        raise ValueError('--hosted compares against a same-runner --reference, never the absolute baseline')
     policy = json.loads(args.baseline.read_text())
     actual = json.loads(args.results.read_text())
     metrics = validate(actual, policy)
@@ -124,10 +166,24 @@ def main():
         if actual['machine'] != policy['machine']:
             raise ValueError('absolute baseline is for another machine; supply a same-runner --reference')
         base = policy['metrics']
-    failures = compare(metrics, base, policy['tolerance'])
+    if args.hosted:
+        failures, rows, warnings = hosted_compare(metrics, base, policy['tolerance'])
+        for name, b, a, delta, gated in rows:
+            if not gated:
+                print(f'reported: {name}: {b:.3f} -> {a:.3f} ({delta * 100:+.1f}%)')
+        for line in warnings:
+            print(f'::warning title=FIPS loopback latency::{line} (report-only on hosted runners)')
+        if args.summary:
+            with args.summary.open('a') as out:
+                out.write(summary_markdown(rows, policy['reference_commit'], policy['tolerance']))
+        gated = sum(1 for row in rows if row[4])
+    else:
+        failures = compare(metrics, base, policy['tolerance'])
+        gated = len(metrics)
     for line in failures:
         print(f'REGRESSION: {line}', file=sys.stderr)
-    print(f'{len(metrics)} metrics; medians of >=3 runs; {len(failures)} regression(s); tolerance={policy["tolerance"]:.0%}')
+    print(f'{len(metrics)} metrics, {gated} gated; medians of >=3 runs; {len(failures)} regression(s); '
+          f'tolerance={policy["tolerance"]:.0%}')
     return bool(failures)
 
 

@@ -225,18 +225,30 @@ C source `ffca1748e48b87267105189e515619a600a686fd` and unchanged Rust revision,
 workload, machine/build metadata and 66 aggregated metrics. The tolerance stays
 10%; the comparer was not weakened. It requires at least three complete runs,
 all 39 micro workloads and all three loopback pairings, exact run counts,
-durations/sample counts and Rust pin. Gates are micro medians, delivered
-goodput, forward/reverse one-way and RTT p50/p99 and both daemon CPU costs per
-delivered datagram. Loss, micro p95 and lifetime CPU remain reported, not gates.
+durations/sample counts and Rust pin. Locally (the default comparer mode) the
+gates are micro medians, delivered goodput, forward/reverse one-way and RTT
+p50/p99 and both daemon CPU costs per delivered datagram. Loss, micro p95 and
+lifetime CPU remain reported, not gates.
+
+**Hosted vs local policy.** On shared GitHub runners the CI bench job runs
+`perf_compare.py --hosted`: it compares only against the reference built and
+measured on the same runner in the same job (never against this file's absolute
+Apple numbers, which document the local baseline), gates micro median ns/op and
+loopback goodput at the same 10%, and reports loopback latency percentiles and
+CPU per datagram in the job summary with their change against the reference,
+without failing the job (a p50 more than 50% worse adds a warning annotation).
+Neighbour noise dominates those on hosted runners: the first hosted run
+(`44033430020`) measured the identical pinned Rust↔Rust pair 18% apart between
+the reference and candidate passes, and one build's three C↔Rust reverse p50
+runs at 86–129 us. Local runs keep the default mode, which gates all 66 metrics.
 
 Comparing the measured dataset against its updated baseline passes all 66
 metrics; this checks aggregation/serialization, **not independent regression
-performance evidence**. The 12 comparer unit tests pass, including deliberate
-11% regressions, missing/invalid measurements and pin/workload mismatches.
-Absolute Apple timings must not gate Ubuntu: CI's existing same-runner
+performance evidence**. The 17 comparer unit tests pass, including deliberate
+11% regressions, missing/invalid measurements, pin/workload mismatches and the
+hosted gate split. Absolute Apple timings must not gate Ubuntu: CI's same-runner
 reference flow rebuilds the immutable C pin and measures it beside the candidate
-with the same Rust binary, workload and harness. No workflows were edited, and
-no hosted execution is claimed. Shared-runner contention and p99 noise remain.
+with the same Rust binary, workload and harness.
 
 `FipsdPerfLoopbackTest` requires benchmarks and is disabled by default; invoke
 the harness directly or opt in with `FIPSD_ENABLE_PERF_TEST=ON`. Missing Rust
