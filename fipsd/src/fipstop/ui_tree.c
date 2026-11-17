@@ -14,7 +14,7 @@ void ft_ui_tree(ft_frame *f,ft_app *a,ft_rect r)
     snprintf(decl,sizeof(decl),"seq %s, %s",seq,signed_text); json_object_set_new(pos,"declaration",json_string(decl));
     char path[2048]=""; json_t *coords=ft_get(d,"my_coords"); size_t cn=json_array_size(coords);
     if(!cn) snprintf(path,sizeof(path),"[root]");
-    for(size_t i=cn;i>0;--i) { const char *s=json_string_value(json_array_get(coords,i-1)); char *short_s=ft_truncate(s?s:"-",8,false);
+    for(size_t i=cn;i>0;--i) { const char *s=json_string_value(json_array_get(coords,i-1)); char *short_s=ft_truncate_hex(s?s:"-",8);
         size_t n=strlen(path); snprintf(path+n,sizeof(path)-n,"%s%s",n?" > ":"",short_s?short_s:"-"); free(short_s); }
     if(cn) { size_t n=strlen(path); snprintf(path+n,sizeof(path)-n," > [self]"); }
     json_object_set_new(pos,"path_text",json_string(path));
