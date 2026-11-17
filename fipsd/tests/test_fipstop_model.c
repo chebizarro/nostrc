@@ -21,6 +21,7 @@ int main(void)
     ft_elapsed(0,1000,b); assert(!strcmp(b,"-"));
     ft_elapsed(2000,1000,b); assert(!strcmp(b,"-"));
     ft_uptime(93784,b); assert(!strcmp(b,"1d 2h 3m 4s"));
+    char *hex=ft_truncate_hex("0123456789abcdef",8); assert(!strcmp(hex,"01234...")); free(hex);
     char *t=ft_truncate("abcdef",4,true); assert(!strcmp(t,"abc…")); free(t);
     t=ft_truncate("éλabc",3,false); assert(!strcmp(t,"éλ…")); free(t);
     t=ft_truncate("a",4,true); assert(!strcmp(t,"a   ")); free(t);

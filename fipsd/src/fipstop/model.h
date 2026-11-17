@@ -22,6 +22,7 @@ void ft_throughput(double rate, char out[FT_TEXT]);
 void ft_duration(uint64_t ms, char out[FT_TEXT]);
 void ft_elapsed(uint64_t ms, uint64_t now, char out[FT_TEXT]);
 void ft_uptime(uint64_t secs, char out[FT_TEXT]);
+char *ft_truncate_hex(const char *s, size_t width);
 char *ft_truncate(const char *s, size_t width, bool pad);
 size_t ft_clamp_scroll(size_t offset, size_t content, size_t visible);
 unsigned ft_group(const json_t *peer);

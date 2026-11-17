@@ -13,6 +13,8 @@ void ft_printf(ft_frame *f,ft_rect r,int x,int y,ft_style style,const char *fmt,
 ft_rect ft_box(ft_frame *f,ft_rect r,const char *title,bool focused);
 void ft_field(ft_frame *f,ft_rect r,int row,const char *label,const json_t *d,const char *path);
 void ft_fields(ft_frame *f,ft_rect r,const json_t *d,const char *const *labels,const char *const *paths,size_t n,size_t *scroll);
+void ft_aligned_fields(ft_frame *f,ft_rect r,const json_t *d,const char *const *labels,const char *const *paths,size_t n,size_t *scroll);
+void ft_scrollbar(ft_frame *f,ft_rect r,size_t count,size_t selected);
 void ft_detail(ft_frame *f,ft_rect r,const json_t *d,size_t *scroll,const char *title);
 typedef struct ft_column { const char *label,*path; int width; } ft_column;
 void ft_table_header(ft_frame *f,ft_rect r,const ft_column *cols,size_t n);

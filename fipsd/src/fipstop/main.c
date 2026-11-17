@@ -55,8 +55,7 @@ int main(int argc,char **argv)
         const char *arg=argv[i];
         if(!strcmp(arg,"-h")||!strcmp(arg,"--help")) { usage(stdout); return 0; }
         if(!strcmp(arg,"-V")||!strcmp(arg,"--version")) {
-            puts("fipstop 0.1.0");
-            if(!strcmp(arg,"--version")) puts("target: " FIPSTOP_TARGET);
+            ft_version(stdout,!strcmp(arg,"--version"));
             return 0;
         }
         if(!strcmp(arg,"--no-color")) { color=false; continue; }
@@ -77,7 +76,7 @@ int main(int argc,char **argv)
             if(!found) { fputs("error: unknown tab\n",stderr); return 1; }
         } else { fprintf(stderr,"error: unknown option %s\n",arg); usage(stderr); return 1; }
     }
-    ft_app app; ft_app_init(&app,interval,socket,gateway); app.tab=tab;
+    ft_app app; ft_app_init(&app,interval,socket,gateway); app.tab=tab; app.snapshot=w && h;
     if(!app.socket || !app.gateway || !app.expanded) { fputs("error: out of memory\n",stderr); ft_app_free(&app); return 1; }
     if(fixtures) {
         if(!ft_load_fixtures(&app,fixtures,stderr)) { ft_app_free(&app); return 1; }

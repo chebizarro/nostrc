@@ -53,7 +53,7 @@ bool ft_event(ft_app *a, int key)
         if (key == 'n' || key == 'N' || key == FT_ESCAPE) {
             free(a->confirm_npub); free(a->confirm_name); a->confirm_npub = a->confirm_name = NULL;
         }
-        if (key == 3) a->quit = true;
+        if (key == 3 || key == 'q') a->quit = true;
         return false;
     }
     const ft_binding *b = NULL;

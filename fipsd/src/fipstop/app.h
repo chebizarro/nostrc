@@ -5,7 +5,7 @@
 typedef struct ft_sort { unsigned col; bool descending; } ft_sort;
 typedef struct ft_app {
     ft_tab tab;
-    bool quit, connected, gateway_running, help, detail;
+    bool snapshot, quit, connected, gateway_running, help, detail;
     unsigned refresh, adapter_quiet;
     json_t *data[FT_TABS], *listening, *mappings, *stats_peers, *expanded;
     int selected[FT_TABS];
@@ -17,6 +17,8 @@ typedef struct ft_app {
     char *socket, *adapter, *gateway, *error, *confirm_npub, *confirm_name;
     uint64_t fetched_ms, error_ms, now_ms, wall_ms;
 } ft_app;
+const char *ft_short_version(void);
+void ft_version(FILE *out,bool long_form);
 void ft_app_init(ft_app *a, unsigned refresh, const char *socket, const char *gateway);
 void ft_app_free(ft_app *a);
 void ft_fetch(ft_app *a);

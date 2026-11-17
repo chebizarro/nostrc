@@ -464,3 +464,8 @@ if(BUILD_TESTING AND TARGET fipstop)
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/fipstop_e2e.py" "${CMAKE_CURRENT_SOURCE_DIR}/tests/fipsctl_e2e.py"
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/udp_interop.py")
 endif()
+
+if(TARGET fipstop_ui)
+  target_include_directories(fipstop_ui PUBLIC "${fipstop_VERSION_HEADER_DIR}")
+  add_dependencies(fipstop_ui fipsd_build_info)
+endif()

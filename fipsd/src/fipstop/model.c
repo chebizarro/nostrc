@@ -176,3 +176,11 @@ char *ft_spark(const json_t *values)
     char *out = fipsctl_sparkline(v, n, s.min, s.max);
     free(v); return out;
 }
+
+char *ft_truncate_hex(const char *s, size_t width)
+{
+    if(strlen(s)<=width) return strdup(s);
+    char *head=fipsctl_take_chars(s,width>3?width-3:0);
+    if(!head) return NULL;
+    char *out=fipsctl_aprintf("%s...",head); free(head); return out;
+}

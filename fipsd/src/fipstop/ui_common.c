@@ -116,7 +116,7 @@ void ft_draw(ft_frame *f,ft_app *a)
     for(int i=0;i<f->w*f->h;++i) f->cells[i]=(ft_cell){L' ',FT_NORMAL};
     ft_rect full={0,0,f->w,f->h};
     if(f->h<5 || f->w<8) { ft_put(f,full,0,0,FT_YELLOW,"Resize terminal"); return; }
-    char title[128]; snprintf(title,sizeof(title)," fipstop 0.1.0 ");
+    char title[128]; snprintf(title,sizeof(title)," fipstop %s ",a->snapshot?"0.1.0":ft_short_version());
     ft_rect head=ft_box(f,(ft_rect){0,0,f->w,3},title,false);
     int x=0;
     for(int i=0;i<10;++i) {
@@ -129,18 +129,34 @@ void ft_draw(ft_frame *f,ft_app *a)
     if(a->data[a->tab] || a->tab==FT_GATEWAY) draws[a->tab](f,a,r);
     else ft_put(f,r,0,0,FT_DIM,"  Waiting for data...");
     ft_rect foot={0,f->h-1,f->w,1};
-    char conn[128]; snprintf(conn,sizeof(conn)," %s ",a->connected?"Connected":"Disconnected");
+    char conn[256];
+    if(a->connected) snprintf(conn,sizeof(conn)," Connected ");
+    else { const char *e=a->error?a->error:"Not yet connected"; size_t n=strcspn(e,"\n"); snprintf(conn,sizeof(conn)," Disconnected: %.*s ",(int)(n>200?200:n),e); }
     ft_put(f,foot,0,0,a->connected?FT_GREEN:FT_RED,conn); x=(int)strlen(conn);
     char timing[128]; double elapsed=a->now_ms>a->fetched_ms?(double)(a->now_ms-a->fetched_ms)/1000:0;
     snprintf(timing,sizeof(timing),"| Refresh: %us | Updated: %.1fs ago ",a->refresh,elapsed);
     ft_put(f,foot,x,0,FT_NORMAL,timing); x+=(int)strlen(timing);
-    for(size_t i=0;i<ft_binding_count;++i) {
-        const ft_binding *b=&ft_bindings[i]; if(!ft_binding_active(a,b) || b->action==ACT_HELP || b->key==3 || b->key==' ') continue;
-        char hint[96]; snprintf(hint,sizeof(hint),"[%s] %s ",b->label,b->hint);
-        int n=(int)fipsctl_utf8_chars(hint);
-        if(x+n+8<=f->w) { ft_put(f,foot,x,0,FT_DIM,hint); x+=n; }
+    struct hint { const char *key,*label; } candidates[12]; size_t hints=0;
+#define H(k,l) do { candidates[hints++]=(struct hint){k,l}; } while(0)
+    if(a->detail) {
+        if(a->tab==FT_GRAPHS) { H("↑↓","peer"); H("n/N","stat"); H("m","mode"); H("Esc","back"); }
+        else { H("Esc","close"); H("↑↓","scroll"); }
+    } else if(a->selected[a->tab]>=0) {
+        H("Enter","detail"); if(a->tab==FT_PEERS) H("Del","disconnect"); H("Esc","deselect");
+    } else if(a->tab==FT_PEERS||a->tab==FT_SESSIONS||a->tab==FT_TRANSPORTS||a->tab==FT_GATEWAY) H("↑↓","select");
+    else if(a->tab==FT_GRAPHS) {
+        H("Enter","expand"); H("m","mode"); H("n/N","stat"); H("←→","window"); H("s/S","sort");
+    } else if(a->tab==FT_TREE||a->tab==FT_BLOOM||a->tab==FT_ROUTING||a->tab==FT_MMP) {
+        H("f","focus pane"); H("↑↓","scroll"); if(a->tab==FT_MMP) H("s/S","sort");
     }
-    if(x+8<=f->w) ft_put(f,foot,x,0,FT_CYAN,"[?] Help");
+    H("Tab","next"); H("g","graphs"); H("q","quit");
+#undef H
+    for(size_t i=0;i<hints;++i) {
+        char hint[96]; snprintf(hint,sizeof(hint),"[%s] %s ",candidates[i].key,candidates[i].label);
+        int n=(int)fipsctl_utf8_chars(hint);
+        if(x+n+9<=f->w) { ft_put(f,foot,x,0,FT_DIM,hint); x+=n; }
+    }
+    ft_put(f,foot,x,0,FT_DIM,"[?] Help ");
     if(a->help) help(f,a,r);
     if(a->confirm_npub) {
         ft_rect modal={r.x+2,r.y+r.h/3,r.w-4,r.h>7?7:r.h};
@@ -154,7 +170,7 @@ void ft_draw(ft_frame *f,ft_app *a)
 
 void ft_table_header(ft_frame *f,ft_rect r,const ft_column *cols,size_t n)
 {
-    int x=2;
+    int x=0;
     for(size_t i=0;i<n;++i) {
         ft_rect cell={r.x+x,r.y,cols[i].width,r.h};
         if(x+cell.w>r.w) cell.w=r.w-x;
@@ -163,7 +179,7 @@ void ft_table_header(ft_frame *f,ft_rect r,const ft_column *cols,size_t n)
 }
 void ft_table_row(ft_frame *f,ft_rect r,int row,const ft_column *cols,size_t n,const json_t *d,bool selected)
 {
-    int x=2;
+    int x=0;
     if(selected) { for(int i=0;i<r.w;++i) ft_put(f,r,i,row,FT_SELECT," "); ft_put(f,r,0,row,FT_SELECT,"▶"); }
     for(size_t i=0;i<n;++i) {
         char value[512]; ft_value(d,cols[i].path,value,sizeof(value));
@@ -176,8 +192,12 @@ void ft_table_row(ft_frame *f,ft_rect r,int row,const ft_column *cols,size_t n,c
 void ft_split3(ft_rect r,int first,int second,ft_rect out[3])
 {
     int third=r.h-first-second;
-    if(third<3) { third=r.h<3?r.h:3; second=r.h-first-third; }
-    if(second<3) { second=r.h-third<3?r.h-third:3; first=r.h-second-third; }
+    if(third<3) {
+        third=r.h<3?r.h:3;
+        int available=r.h-third;
+        if(first>(available+1)/2) first=(available+1)/2;
+        second=available-first;
+    }
     if(first<0) first=0;
     out[0]=(ft_rect){r.x,r.y,r.w,first};
     out[1]=(ft_rect){r.x,r.y+first,r.w,second};
@@ -194,4 +214,29 @@ json_t *ft_role_peers(const ft_app *a,const json_t *rows,const char *addr_key)
         }
     }
     return out;
+}
+
+void ft_aligned_fields(ft_frame *f,ft_rect r,const json_t *d,const char *const *labels,
+    const char *const *paths,size_t n,size_t *scroll)
+{
+    *scroll=ft_clamp_scroll(*scroll,n,(size_t)r.h);
+    for(size_t i=*scroll;i<n && i-*scroll<(size_t)r.h;++i) {
+        if(!paths[i]) { ft_put(f,r,0,(int)(i-*scroll),FT_CYAN,labels[i]); continue; }
+        size_t begin=i,end=i+1,width=0;
+        while(begin && paths[begin-1]) --begin;
+        while(end<n && paths[end]) ++end;
+        for(size_t j=begin;j<end;++j) if(strlen(labels[j])>width) width=strlen(labels[j]);
+        char value[512]; ft_value(d,paths[i],value,sizeof(value));
+        ft_printf(f,r,0,(int)(i-*scroll),FT_NORMAL,"    %-*s: %s",(int)width,labels[i],value);
+    }
+}
+void ft_scrollbar(ft_frame *f,ft_rect r,size_t count,size_t selected)
+{
+    if(!count || r.h<=0) return;
+    size_t visible=(size_t)r.h;
+    size_t thumb=count<=visible?visible:visible*visible/count;
+    if(!thumb) thumb=1;
+    size_t position=count>1?(visible-thumb)*selected/(count-1):0;
+    for(size_t i=0;i<visible;++i)
+        ft_put(f,r,r.w-1,(int)i,FT_DIM,i>=position && i<position+thumb?"█":"║");
 }

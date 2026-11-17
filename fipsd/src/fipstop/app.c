@@ -1,4 +1,6 @@
 #include "app.h"
+#include "fipstop-version.h"
+#include "fipsd_build_info.h"
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -196,4 +198,14 @@ void ft_disconnect(ft_app *a)
     free(e); json_decref(v);
     free(a->confirm_npub); a->confirm_npub = NULL;
     free(a->confirm_name); a->confirm_name = NULL;
+}
+
+const char *ft_short_version(void)
+{
+    return FIPSD_GIT_REV[0] ? FIPSTOP_VERSION " (rev " FIPSD_GIT_REV ")" : FIPSTOP_VERSION;
+}
+void ft_version(FILE *out,bool long_form)
+{
+    fprintf(out,"fipstop %s\n",ft_short_version());
+    if(long_form) fprintf(out,"target: %s\n",FIPSD_TARGET_TRIPLE);
 }
