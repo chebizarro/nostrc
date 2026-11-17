@@ -454,4 +454,99 @@ if(BUILD_TESTING AND FIPSD_ENABLE_PROFILING)
   apply_warnings(fipsd_profile_fault)
   apply_sanitizers(fipsd_profile_fault)
   target_sources(fipsd_profiling_test PRIVATE $<TARGET_OBJECTS:fipsd_profile_fault>)
+# fipstop model is terminal-independent and shares the fipsctl wire/format library.
+add_library(fipstop_model STATIC src/fipstop/model.c)
+set_target_properties(fipstop_model PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+target_include_directories(fipstop_model PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src/fipstop")
+target_link_libraries(fipstop_model PUBLIC fipsctl_lib)
+apply_warnings(fipstop_model)
+apply_sanitizers(fipstop_model)
+if(BUILD_TESTING)
+  add_executable(fipstop_model_test tests/test_fipstop_model.c)
+  target_link_libraries(fipstop_model_test PRIVATE fipstop_model)
+  apply_warnings(fipstop_model_test)
+  apply_sanitizers(fipstop_model_test)
+  add_dependencies(fipsd_tests fipstop_model_test)
+  add_test(NAME FipsTopModelTest COMMAND fipstop_model_test)
+  set_tests_properties(FipsTopModelTest PROPERTIES TIMEOUT 30 LABELS "fips;unit;fipstop")
+  nostrc_describe_test(FipsTopModelTest OWNER fipsd TARGETS fipstop_model_test)
+endif()
+
+# Terminal UI: optional on systems with a pkg-config ncurses implementation.
+pkg_search_module(FIPSTOP_CURSES QUIET IMPORTED_TARGET ncursesw ncurses)
+option(FIPSD_BUILD_FIPSTOP "Build the fipstop ncurses dashboard" ${FIPSTOP_CURSES_FOUND})
+if(FIPSD_BUILD_FIPSTOP)
+  if(NOT FIPSTOP_CURSES_FOUND)
+    message(FATAL_ERROR "FIPSD_BUILD_FIPSTOP requires ncursesw/ncurses (pkg-config)")
+  endif()
+  declare_component_version(fipstop 0 1 0)
+  add_library(fipstop_ui STATIC src/fipstop/app.c src/fipstop/event.c
+    src/fipstop/ui_common.c src/fipstop/ui_node.c src/fipstop/ui_peers.c
+    src/fipstop/ui_sessions.c src/fipstop/ui_transports.c src/fipstop/ui_tree.c
+    src/fipstop/ui_bloom.c src/fipstop/ui_mmp.c src/fipstop/ui_routing.c
+    src/fipstop/ui_graphs.c src/fipstop/ui_gateway.c)
+  target_link_libraries(fipstop_ui PUBLIC fipstop_model)
+  set_target_properties(fipstop_ui PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+  apply_warnings(fipstop_ui)
+  apply_sanitizers(fipstop_ui)
+  add_executable(fipstop src/fipstop/main.c)
+  set_target_properties(fipstop PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+  target_compile_definitions(fipstop PRIVATE "FIPSTOP_TARGET=\"${CMAKE_SYSTEM_PROCESSOR}-${CMAKE_SYSTEM_NAME}\"")
+  target_link_libraries(fipstop PRIVATE fipstop_ui PkgConfig::FIPSTOP_CURSES)
+  apply_warnings(fipstop)
+  apply_sanitizers(fipstop)
+  set_property(TARGET fipstop APPEND PROPERTY INSTALL_RPATH "${FIPSD_INSTALL_RPATH}")
+  install(TARGETS fipstop RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+  if(TARGET fipsd_tests)
+    add_dependencies(fipsd_tests fipstop)
+  endif()
+endif()
+
+if(BUILD_TESTING AND TARGET fipstop)
+  add_executable(fipstop_test tests/test_fipstop.c)
+  target_link_libraries(fipstop_test PRIVATE fipstop_ui)
+  target_compile_definitions(fipstop_test PRIVATE "FIPSTOP_FIXTURES=\"${CMAKE_CURRENT_SOURCE_DIR}/tests/control_golden\"")
+  set_target_properties(fipstop_test PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+  apply_warnings(fipstop_test)
+  apply_sanitizers(fipstop_test)
+  add_dependencies(fipsd_tests fipstop_test)
+  add_test(NAME FipsTopTest COMMAND fipstop_test)
+  set_tests_properties(FipsTopTest PROPERTIES TIMEOUT 30 LABELS "fips;unit;fipstop")
+  nostrc_describe_test(FipsTopTest OWNER fipsd TARGETS fipstop_test)
+endif()
+
+if(BUILD_TESTING AND TARGET fipstop)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  add_test(NAME FipsTopGoldenTest COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/fipstop_golden.py" --fipstop "$<TARGET_FILE:fipstop>"
+    --fixtures "${CMAKE_CURRENT_SOURCE_DIR}/tests/control_golden"
+    --goldens "${CMAKE_CURRENT_SOURCE_DIR}/tests/fipstop_golden")
+  add_test(NAME FipsTopE2eTest COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/fipstop_e2e.py" --fipsd "$<TARGET_FILE:fipsd>"
+    --fipstop "$<TARGET_FILE:fipstop>" --unit "$<TARGET_FILE:fipstop_test>")
+  set_tests_properties(FipsTopGoldenTest FipsTopE2eTest PROPERTIES TIMEOUT 180 LABELS "fips;fipstop;integration")
+  nostrc_describe_test(FipsTopGoldenTest OWNER fipsd TARGETS fipstop INPUTS
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/fipstop_golden.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/control_golden" "${CMAKE_CURRENT_SOURCE_DIR}/tests/fipstop_golden")
+  nostrc_describe_test(FipsTopE2eTest OWNER fipsd TARGETS fipstop fipstop_test fipsd INPUTS
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/fipstop_e2e.py" "${CMAKE_CURRENT_SOURCE_DIR}/tests/fipsctl_e2e.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/udp_interop.py")
+endif()
+
+if(TARGET fipstop_ui)
+  target_include_directories(fipstop_ui PUBLIC "${fipstop_VERSION_HEADER_DIR}")
+  add_dependencies(fipstop_ui fipsd_build_info)
+endif()
+
+# A non-wide ncurses pkg-config module must not promise wide link symbols merely
+# because its header exposes them with _XOPEN_SOURCE_EXTENDED.
+if(TARGET fipstop)
+  include(CheckSymbolExists)
+  include(CMakePushCheckState)
+  cmake_push_check_state(RESET)
+  set(CMAKE_REQUIRED_LIBRARIES PkgConfig::FIPSTOP_CURSES)
+  set(CMAKE_REQUIRED_DEFINITIONS -D_XOPEN_SOURCE_EXTENDED=1)
+  check_symbol_exists(waddnwstr "curses.h" FIPSTOP_CURSES_WIDE)
+  cmake_pop_check_state()
+  target_compile_definitions(fipstop PRIVATE FIPSTOP_WIDE_CURSES=$<BOOL:${FIPSTOP_CURSES_WIDE}>)
 endif()
