@@ -13,6 +13,15 @@ static bool has(const ft_frame *f,const char *text)
     }
     return false;
 }
+static int row_of(const ft_frame *f,const char *text)
+{
+    wchar_t needle[128]; size_t n=mbstowcs(needle,text,127); assert(n!=(size_t)-1);
+    for(int y=0;y<f->h;++y) for(int x=0;x+(int)n<=f->w;++x) {
+        size_t i=0; while(i<n && f->cells[y*f->w+x+(int)i].ch==needle[i]) ++i;
+        if(i==n) return y;
+    }
+    return -1;
+}
 static json_t *parse(const char *s) { json_error_t e; json_t *d=json_loads(s,0,&e); assert(d); return d; }
 int main(int argc,char **argv)
 {
@@ -71,6 +80,22 @@ int main(int argc,char **argv)
     assert(ft_frame_init(&f,80,24)); ft_draw(&f,&a); assert(has(&f,"no samples")); ft_frame_free(&f);
     const double v[]={1,2,3,4,5}; double out[5]; ft_resample(v,5,out,5); for(size_t i=0;i<5;++i) assert(out[i]==v[i]);
 
+    /* Upstream MMP and by-peer graph ordering: numeric, reverse, missing-last. */
+    ft_replace(&a.data[FT_MMP],parse("{\"peers\":[{\"display_name\":\"zeta\",\"link_layer\":{\"srtt_ms\":3}},{\"display_name\":\"alpha\",\"link_layer\":{\"srtt_ms\":9}},{\"display_name\":\"missing\",\"link_layer\":{}}]}"));
+    a.tab=FT_MMP; a.mmp_sort[0]=(ft_sort){0,false};
+    assert(ft_frame_init(&f,120,40)); ft_draw(&f,&a);
+    assert(row_of(&f,"alpha")<row_of(&f,"zeta")); ft_frame_free(&f);
+    a.mmp_sort[0].col=1; assert(ft_frame_init(&f,120,40)); ft_draw(&f,&a);
+    assert(row_of(&f,"zeta")<row_of(&f,"alpha") && row_of(&f,"alpha")<row_of(&f,"missing")); ft_frame_free(&f);
+    a.mmp_sort[0].descending=true; assert(ft_frame_init(&f,120,40)); ft_draw(&f,&a);
+    assert(row_of(&f,"missing")<row_of(&f,"alpha") && row_of(&f,"alpha")<row_of(&f,"zeta")); ft_frame_free(&f);
+    ft_replace(&a.data[FT_GRAPHS],parse("{\"peers\":[{\"display_name\":\"zeta\",\"values\":[3,4]},{\"display_name\":\"alpha\",\"values\":[8,9]},{\"display_name\":\"missing\",\"values\":[null]}]}"));
+    a.tab=FT_GRAPHS; a.graph_mode=1; a.graph_peer=0; a.graph_sort=(ft_sort){3,false};
+    assert(ft_frame_init(&f,120,40)); ft_draw(&f,&a);
+    assert(row_of(&f,"zeta")<row_of(&f,"alpha") && row_of(&f,"alpha")<row_of(&f,"missing"));
+    assert(a.graph_peer==0 && f.cells[row_of(&f,"zeta")*f.w+1].style==FT_SELECT); ft_frame_free(&f);
+    a.graph_sort.descending=true; assert(ft_frame_init(&f,120,40)); ft_draw(&f,&a);
+    assert(row_of(&f,"missing")<row_of(&f,"alpha") && row_of(&f,"alpha")<row_of(&f,"zeta")); ft_frame_free(&f);
     /* Collapsing a child must select its own parent, not the following transport. */
     a.tab=FT_TRANSPORTS;
     json_t *following=parse("{\"transport_id\":2,\"type\":\"udp\"}");
