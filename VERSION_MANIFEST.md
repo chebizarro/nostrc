@@ -1,3 +1,5 @@
+nostrc-xqwgo: libnostr stays 2.4.0 Unreleased; PATCH-class thread-safety correction synchronizes all six relay/connection histogram caches, histogram-handle retry reads and counter configuration initialization. Private helper, concurrent metrics tests and synchronized teardown-test lease observations; no public API/ABI, wire, numeric version or release/tag change. nostr-gobject has no matching cache pattern and is unchanged.
+
 nostrc-hqv5t: fipsd stays 0.1.0 Unreleased; PATCH-class socket group lookup correction (bounded NSS retry/buffer growth, effective-gid fallback with WARN) folds into the initial unreleased daemon. Private injectable resolver seam and tests only; no wire, configuration or public ABI change. libfips-core, libfipsnative and libgo unchanged; no published release or tag.
 
 nostrc-gmctr: fipsd stays 0.1.0 Unreleased; PATCH-class native flow lookup correction excludes released flows before feeder reclamation, folding into the initial unreleased daemon. Private test barrier only; libfipsnative, wire/configuration formats and published releases/tags unchanged; no numeric bump.

@@ -127,7 +127,6 @@ static metrics_entry *registry_get_or_create(const char *name, metric_type_t typ
     for (metrics_entry *e = sh->head; e; e = e->next) {
         if (e->type == type && strcmp(e->name, name) == 0) {
             // Ensure cached fields populated for histograms
-            e->shard_index = si;
             if (type == MET_HISTOGRAM && e->hist_handle == NULL) {
                 nostr_metric_histogram *handle = (nostr_metric_histogram *)malloc(sizeof(*handle));
                 if (handle) { handle->shard = si; handle->entry = e; e->hist_handle = handle; }
@@ -343,8 +342,13 @@ nostr_metric_histogram *nostr_metric_histogram_get(const char *name)
     pthread_once(&g_once, metrics_init_once);
     metrics_entry *e = registry_get_or_create(name, MET_HISTOGRAM);
     if (!e) return NULL;
-    // Return cached handle (created once under shard mutex)
-    return e->hist_handle;
+    // Allocation may have failed on an earlier lookup. A retry can publish the
+    // handle, so read it under the same mutex used by registry_get_or_create.
+    metrics_shard *sh = &g_shards[e->shard_index];
+    pthread_mutex_lock(&sh->mu);
+    nostr_metric_histogram *h = e->hist_handle;
+    pthread_mutex_unlock(&sh->mu);
+    return h;
 }
 
 void nostr_metric_timer_start(nostr_metric_timer *t)
@@ -365,6 +369,7 @@ void nostr_metric_timer_stop(nostr_metric_timer *t, nostr_metric_histogram *h)
 
 void __attribute__((hot)) nostr_metric_counter_add(const char *name, uint64_t delta)
 {
+    pthread_once(&g_once, metrics_init_once);
     // Fast-path: batch into a thread-local cache
     tls_counters_add(name, delta);
 }
