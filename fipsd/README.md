@@ -1587,11 +1587,11 @@ precedence and `external_addr` rows; `FipsdTorTest` the latch.
 advert alone: fipsd advertises only its onion on a local stdlib relay
 (`Testing/fips-chaos/services/relay.py`), starts before tor has a descriptor,
 and the Rust peer is configured with only fipsd's npub (`via_nostr: true`).
-Recorded on macOS (tor 0.4.9.17, Rust rev 6aa80504ba, ASan fipsd): hostname
-0.4-0.6 s, descriptor uploaded and fipsd's onion advertisable (`HS_DESC
-UPLOADED`) both at 11.7-11.8 s, the advert stored at the relay in the same
-tenth of a second, Rust discover-and-link 14.7-14.9 s after its start, one
-advert publish, no SOCKS5 errors, about 27 s in all over two runs.
+Recorded on macOS over three runs (tor 0.4.9.17, Rust rev 6aa80504ba, ASan
+fipsd): hostname 0.4-0.6 s, descriptor uploaded and fipsd's onion advertisable
+(`HS_DESC UPLOADED`) both at 10.7-11.8 s, the advert stored at the relay in the
+same tenth of a second, Rust discover-and-link 14.7-16.7 s after its start, one
+advert publish, no SOCKS5 errors or connect timeouts, 26.9-27.9 s in all.
 
 **Refetch outcomes (B6).** A separate one-shot pool on the connected advert
 relays uses author/kind/identifier plus `until=now` and `limit=1`; its independent
