@@ -4,7 +4,7 @@
 #include <string.h>
 static void peer_display(json_t *v,const json_t *peer)
 {
-    const char *npub=ft_str(peer,"npub"); char *short_npub=ft_truncate(npub,20,false);
+    const char *npub=ft_str(peer,"npub"); char *short_npub=ft_truncate_hex(npub,18);
     json_object_set_new(v,"short_npub",json_string(short_npub?short_npub:"-")); free(short_npub);
     const char *dir=ft_str(peer,"direction");
     if(!strcmp(dir,"-")) dir=json_is_true(ft_get(peer,"is_outbound"))?"out":"in";
@@ -44,6 +44,11 @@ void ft_ui_peers(ft_frame *f,ft_app *a,ft_rect r)
     ft_column cols[]={{"Name","display_name",20},{"Npub","short_npub",20},{"Transport","transport",20},
         {"Dir","dir",4},{"SRTT","srtt",8},{"Loss","loss",7},{"LQI","lqi_text",6},{"EffD","depth",6},
         {"Goodput","goodput",10},{"Pkts Tx","stats.packets_sent",9},{"Pkts Rx","stats.packets_recv",9}};
+    if(table.w<=78) { for(size_t i=3;i<11;++i) cols[i].width=1; }
+    else if(table.w<=118) {
+        int compact[]={20,20,20,4,6,6,6,6,7,6,7};
+        for(size_t i=0;i<11;++i) cols[i].width=compact[i];
+    } else cols[0].width+=table.w-129>0?table.w-129:0;
     ft_table_header(f,table,cols,11);
     size_t lines=0,selected_line=0; unsigned last=3;
     for(size_t i=0;i<n;++i) {
