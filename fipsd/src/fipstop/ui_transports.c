@@ -14,7 +14,7 @@ void ft_ui_transports(ft_frame *f,ft_app *a,ft_rect r)
         ft_detail(f,detail,ft_selected(a),&a->detail_scroll," Transport / Link Detail ");
     }
     char title[128]; size_t tn=json_array_size(ft_rows(a,FT_TRANSPORTS));
-    snprintf(title,sizeof(title)," Transports (%zu) ",tn); table=ft_box(f,table,title,false);
+    snprintf(title,sizeof(title)," Transports (%zu) ",tn); ft_rect outer=table; table=ft_box(f,table,title,false);
     bool narrow=table.w<100;
     ft_column cols[]={{"Transport / Link","label",narrow?12:18},{"Instance","instance",narrow?18:20},
         {"Bound to","bound",narrow?17:18},{"State","state_text",narrow?9:10},{"Peer","peer",narrow?6:10},
@@ -24,6 +24,8 @@ void ft_ui_transports(ft_frame *f,ft_app *a,ft_rect r)
     int slack=table.w-fixed-(int)col_count+1;
     if(slack>cols[4].width) cols[4].width=slack;
     ft_table_header(f,table,cols,col_count);
+    char header_state[FT_TEXT]; snprintf(header_state,sizeof(header_state),"%*s",cols[3].width,"State");
+    int state_x=cols[0].width+cols[1].width+cols[2].width+3; ft_put(f,table,state_x,0,FT_YELLOW,header_state);
     size_t visible=table.h>1?(size_t)table.h-1:0,*start=&a->table_scroll[FT_TRANSPORTS];
     int selected=a->selected[FT_TRANSPORTS];
     if(selected>=0 && visible) { if((size_t)selected<*start) *start=(size_t)selected; if((size_t)selected>=*start+visible) *start=(size_t)selected-visible+1; }
@@ -55,7 +57,7 @@ void ft_ui_transports(ft_frame *f,ft_app *a,ft_rect r)
             else if(!strcmp(type,"tor") && strcmp(ft_str(t,"onion_address"),"-")) snprintf(bound,sizeof(bound),"%.16s..",ft_str(t,"onion_address"));
             else snprintf(bound,sizeof(bound),"#%llu",(unsigned long long)ft_uint(t,"transport_id"));
             json_object_set_new(v,"instance",json_string(instance)); json_object_set_new(v,"bound",json_string(bound));
-            char peers[FT_TEXT]; snprintf(peers,sizeof(peers),"%zu links",count); json_object_set_new(v,"peer",json_string(peers));
+            char peers[FT_TEXT]; snprintf(peers,sizeof(peers),"%s",""); json_object_set_new(v,"peer",json_string(peers));
             if(iface && strcmp(ft_str(iface,"presence"),"present")) json_object_set_new(v,"state",json_string(ft_str(iface,"presence")));
 
         }
@@ -66,5 +68,6 @@ void ft_ui_transports(ft_frame *f,ft_app *a,ft_rect r)
         json_object_set(v,"rx",ft_get(v,"stats.packets_recv")?ft_get(v,"stats.packets_recv"):ft_get(v,"stats.frames_recv"));
         ft_table_row(f,table,(int)(i-*start)+1,cols,col_count,v,(int)i==selected); json_decref(v);
     }
+    ft_scrollbar(f,outer,n,selected<0?0:(size_t)selected);
     free(rows);
 }
