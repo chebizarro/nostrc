@@ -2,7 +2,9 @@
 #define FIPSD_PRESENCE_H
 #include "transport/medium.h"
 #include "node/netmon.h"
+#if !defined(_WIN32)
 #include <ifaddrs.h>
+#endif
 #include <nsync.h>
 typedef enum fipsd_presence_phase { FIPSD_ABSENT, FIPSD_BINDING, FIPSD_PRESENT } fipsd_presence_phase;
 typedef struct fipsd_presence_facts {
@@ -28,10 +30,13 @@ uint32_t fipsd_presence_attempt(fipsd_presence *);
 uint64_t fipsd_bind_backoff_ms(uint32_t);
 const char *fipsd_presence_name(fipsd_presence_phase);
 fipsd_presence_facts fipsd_presence_from_snapshot(const fipsd_network_snapshot *, const char *);
+#if !defined(_WIN32)
 /* No I/O; supports injected ifaddrs and index resolver. */
 fipsd_presence_facts fipsd_presence_from_ifaddrs(const struct ifaddrs *, const char *,
                                                unsigned (*index_of)(const char *));
+#endif
 bool fipsd_presence_carrier_ioctl(const char *, int, fipsd_ioctl_fn, void *, bool fallback);
-fipsd_presence_facts fipsd_presence_read(const char *); /* blocking executor */
+/* Blocking executor. Windows: the IP Helper interface row (GetIfEntry2). */
+fipsd_presence_facts fipsd_presence_read(const char *);
 uint64_t fipsd_transport_now_ms(void);
 #endif

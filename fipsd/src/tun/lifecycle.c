@@ -109,19 +109,3 @@ void fipsd_tun_service_init(fipsd_tun_service *s,fipsd_tun *t,fipsd_node *node)
     s->subsystem=(fipsd_subsystem){.name="tun",.start=service_start,.stop=service_stop,.user=s};
 }
 void fipsd_tun_service_set_shim(fipsd_tun_service *s,struct fipsd_ipv6_shim *shim) { s->shim=shim; }
-uint32_t fipsd_tun_transport_mtu(const fipsd_config *c)
-{
-    uint32_t mtu=UINT32_MAX;
-    const fipsd_config_value *transports=fipsd_config_get(c,"transports");
-    for (size_t i=0;i<fipsd_config_count(transports);++i) {
-        const fipsd_config_value *type=fipsd_config_member(transports,fipsd_config_key(transports,i));
-        const fipsd_config_value *value=fipsd_config_member(type,"mtu");
-        if (value) { uint64_t n=fipsd_config_uint(value); if (n && n<mtu) mtu=(uint32_t)n; }
-        else for (size_t j=0;j<fipsd_config_count(type);++j) {
-            const fipsd_config_value *instance=fipsd_config_member(type,fipsd_config_key(type,j));
-            uint64_t n=fipsd_config_uint(fipsd_config_member(instance,"mtu"));
-            if (n && n<mtu) mtu=(uint32_t)n;
-        }
-    }
-    return mtu==UINT32_MAX?1357:mtu;
-}

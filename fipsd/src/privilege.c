@@ -5,23 +5,28 @@
 
 #include <errno.h>
 #include <fcntl.h>
-#include <grp.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
-
-static void set_err(char *err, size_t errlen, const char *what, const char *path, int e)
-{
-    if (err && errlen)
-        snprintf(err, errlen, "%s %s: %s", what, path, strerror(e));
-}
+#if defined(_WIN32)
+#include <io.h> /* umask */
+#else
+#include <grp.h>
+#endif
 
 mode_t fipsd_privilege_set_umask(void)
 {
     return umask(FIPSD_UMASK);
+}
+
+#if !defined(_WIN32)
+static void set_err(char *err, size_t errlen, const char *what, const char *path, int e)
+{
+    if (err && errlen)
+        snprintf(err, errlen, "%s %s: %s", what, path, strerror(e));
 }
 
 static int system_group_resolver(void *ctx, const char *name, struct group *grp,
@@ -165,3 +170,4 @@ int fipsd_privilege_drop(const fipsd_privilege_drop_config *cfg, char *err, size
     errno = ENOTSUP;
     return -1;
 }
+#endif /* !_WIN32 */

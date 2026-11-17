@@ -6,6 +6,7 @@
 #endif
 #endif
 #include "transport/sockbuf.h"
+#include "libgo/fiber.h"
 #include <fips/transport/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -29,8 +30,11 @@ size_t fipsd_udp_source_control(void *, size_t, const fipsd_udp_packet_info *);
 bool fipsd_udp_endpoint_addr(const fipsd_udp_endpoint *, fips_transport_addr *);
 bool fipsd_udp_endpoint_numeric(const char *, fipsd_udp_endpoint *);
 /* Setup/teardown on blocking executor, not the scheduler. Listener reuse is
- * enabled AFTER bind, so a second daemon cannot steal the configured port. */
-int fipsd_udp_open(const fipsd_udp_endpoint *, const char *interface_name,
+ * enabled AFTER bind, so a second daemon cannot steal the configured port.
+ * Windows has neither SO_REUSEPORT nor non-stealing SO_REUSEADDR, so it binds
+ * exclusively and opens no connected (join) sockets. GOF_INVALID_SOCKET on
+ * failure, with errno. */
+gof_socket_t fipsd_udp_open(const fipsd_udp_endpoint *, const char *interface_name,
     bool join, size_t recv_size, size_t send_size,
     fipsd_buffer_granted *, fipsd_buffer_granted *, fipsd_udp_endpoint *local);
 #endif

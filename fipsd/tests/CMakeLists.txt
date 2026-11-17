@@ -10,14 +10,27 @@ set_tests_properties(FipsdCliTest PROPERTIES TIMEOUT 30 LABELS "fips;smoke"
 nostrc_describe_test(FipsdCliTest OWNER fipsd TARGETS fipsd
   INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/cli.cmake")
 
+# fipsd_test_tmpdir(): mkdtemp/nftw on POSIX, %TEMP% and FindFirstFile on Windows.
+if(WIN32)
+  set(FIPSD_TEST_TMPDIR_SOURCE test_tmpdir_win32.c)
+else()
+  set(FIPSD_TEST_TMPDIR_SOURCE test_tmpdir.c)
+endif()
 function(fipsd_unit_test target source)
-  add_executable(${target} ${source} test_tmpdir.c)
+  add_executable(${target} ${source} ${FIPSD_TEST_TMPDIR_SOURCE})
   target_link_libraries(${target} PRIVATE fipsd_lib)
   set_target_properties(${target} PROPERTIES
     C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
   apply_warnings(${target})
   apply_sanitizers(${target})
 endfunction()
+
+if(WIN32)
+  # Windows (nostrc-iq1n9.6.1): the portable subset. Everything below also
+  # needs AF_UNIX control/native sockets, TUN devices or POSIX process tools.
+  include("${CMAKE_CURRENT_SOURCE_DIR}/windows.cmake")
+  return()
+endif()
 
 fipsd_unit_test(fipsd_host_os_test test_host_os.c)
 add_test(NAME FipsdHostOsTest COMMAND fipsd_host_os_test)

@@ -11,6 +11,10 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#if defined(_WIN32)
+#include <direct.h>
+#define mkdir(path, mode) ((void)(mode), _mkdir(path))
+#endif
 static void put(const char *path, const char *text)
 { FILE *f = fopen(path, "wb"); assert(f); assert(fwrite(text, 1, strlen(text), f) == strlen(text)); assert(fclose(f) == 0); }
 static void peer(fips_secp *secp, uint8_t byte, fips_peer_identity *out, char npub[128])

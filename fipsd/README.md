@@ -386,10 +386,119 @@ same checked directory as `FIPSD_TEST_TMPDIR` and cleans up after the child
 fixtures/goldens, never temporary sockets.
 
 The top-level `BUILD_FIPS` option defaults ON. `fipsd` is configured only on
-platforms with a `go_fiber` target (currently not Windows). `CMakeLists.txt`
+platforms with a `go_fiber` target (Linux, macOS, FreeBSD and, since
+nostrc-iq1n9.6.1, Windows; see below). `CMakeLists.txt`
 owns the component's version, 0.1.0 Unreleased. Warning flags honor nostrc's
 shared `GO_WARNINGS_AS_ERRORS`; sanitizer flags reuse its `GO_ENABLE_*`
 helpers.
+
+## Building on Windows (MSYS2)
+
+Verified on Windows 11 ARM64 (10.0.26200) with MSYS2's CLANGARM64 environment
+(clang 23); the steps are the same in CLANG64/UCRT64 with that environment's
+package prefix. libgo runs fibers on the Windows Fibers API and I/O on an I/O
+completion port (`libgo/fiber/README.md`, "Windows").
+
+1. Packages (from an MSYS2 CLANGARM64 shell):
+
+   ```sh
+   pacman -S --needed git mingw-w64-clang-aarch64-{cmake,ninja,pkgconf,openssl,libsodium,jansson,libyaml,nsync,libwebsockets,curl,glib2,python}
+   ```
+
+   `glib2` is needed because `src/nostr/events.c` includes `glib.h` and the
+   top-level test tree configures against it.
+
+2. libsecp256k1 (no MSYS2 package), installed into the environment prefix:
+
+   ```sh
+   git clone --depth 1 https://github.com/bitcoin-core/secp256k1.git
+   cmake -S secp256k1 -B secp256k1-build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+     -DCMAKE_INSTALL_PREFIX=$MINGW_PREFIX -DSECP256K1_ENABLE_MODULE_RECOVERY=ON \
+     -DSECP256K1_ENABLE_MODULE_ECDH=ON -DSECP256K1_ENABLE_MODULE_SCHNORRSIG=ON \
+     -DSECP256K1_ENABLE_MODULE_EXTRAKEYS=ON -DSECP256K1_BUILD_TESTS=OFF \
+     -DSECP256K1_BUILD_EXHAUSTIVE_TESTS=OFF -DSECP256K1_BUILD_BENCHMARK=OFF
+   cmake --build secp256k1-build && cmake --install secp256k1-build
+   ```
+
+3. Configure and build (nsync comes from the `nsync` package; the vendored
+   submodule also works):
+
+   ```sh
+   cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+     -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
+     -DGO_WARNINGS_AS_ERRORS=ON -DBUILD_TESTING=ON -DBUILD_FIPS=ON \
+     -DBUILD_TESTING_FRAMEWORK=OFF -DBUILD_SIGNER_TESTS=OFF -DLIBNOSTR_BUILD_TESTS=OFF \
+     -DBUILD_LIBMARMOT=OFF -DBUILD_MARMOT_GOBJECT=OFF -DBUILD_LIBHANAMI=OFF \
+     -DBUILD_GNOSTR_APP=OFF -DBUILD_GROUNDHOG=OFF -DBUILD_RELAYD=OFF -DSIGNET_ENABLE=OFF \
+     -DENABLE_NIP55L=OFF -DENABLE_NIP5F=OFF -DENABLE_NIP57=OFF \
+     -DWITH_NOSTRDB=OFF -DLIBNOSTR_WITH_NOSTRDB=OFF -DBUILD_NOSTR_GOBJECT=OFF \
+     -DBUILD_NOSTR_GTK=OFF -DBUILD_APPS=OFF -DBUILD_LIBBLOSSOM=OFF \
+     -DBUILD_LIBPORTHOME=OFF -DBUILD_LIBVAULT=OFF -DBUILD_LIBVAULT_MARMOT=OFF -DENABLE_BUD02=OFF
+   cmake --build build --target fipsd fipsd_tests
+   ninja -C build libfips-core/all
+   ```
+
+4. Tests (run from the CLANGARM64 shell so the environment's DLLs are on
+   `PATH`):
+
+   ```sh
+   ctest --test-dir build -R '^FipsCore|^FipsDiff' --timeout 300
+   ctest --test-dir build -R '^Fipsd' --timeout 300
+   ```
+
+   `tests/windows.cmake` lists the Windows subset (same names, labels and
+   timeouts as the POSIX suite): the node, handler, dataplane, ACL, peer and
+   stats suites, and the two-node proof on the loopback transport and on real
+   UDP (`FipsdUdpTwoNodesV4Test`/`V6Test`: IK link, tree, bloom, XK session,
+   datagrams, rekey, disconnect). Suites that need AF_UNIX control/native
+   sockets, TUN, POSIX signals or file modes, socket pairs, or one of the
+   subsystems below are not built there yet.
+
+5. Running: `build/fipsd/fipsd.exe -c fips.yaml`. Without `-c` the daemon
+   searches `C:\ProgramData\fips\fips.yaml`, then `%APPDATA%\fips\fips.yaml`,
+   then `fips.yaml` in the working directory (upstream's Windows layout; never
+   the drive-relative `\etc\fips`). Admission ACL files default to
+   `C:\ProgramData\fips\peers.{allow,deny}` and `hosts`. Ctrl+C/Ctrl+Break are
+   SIGINT, closing the console, logoff and shutdown SIGTERM (a console control
+   handler feeding the signal fiber through a loopback socket pair); there is
+   no SIGHUP reload on Windows yet. Two daemons on one host:
+
+   ```yaml
+   node:
+     identity: {nsec: '1111111111111111111111111111111111111111111111111111111111111111', persistent: false}
+     control: {enabled: false}
+   tun: {enabled: false}
+   dns: {enabled: false}
+   transports:
+     udp: {bind_addr: '127.0.0.1:21001'}
+   peers:
+     - npub: '<the other node's npub, logged as "handlers attached: npub1...">'
+       addresses: [{transport: udp, addr: '127.0.0.1:21002'}]
+   ```
+
+   Each log shows `link established with <node_addr>` and, at
+   `FIPSD_LOG_LEVEL=debug`, the link's MMP reports.
+
+What runs on Windows: the UDP transport (exclusive bind, no `SO_REUSEPORT`
+connected per-peer sockets, so every peer uses the listener as upstream does on
+Windows; `SIO_UDP_CONNRESET`/`SIO_UDP_NETRESET` off; `IP_PKTINFO`/`IPV6_PKTINFO`
+and `IP_RECVECN`/`IPV6_RECVECN` ancillary data), the in-process loopback
+transport, node, handlers, dataplane and crypto workers, configuration, ACLs,
+peer owners, the Nostr event contracts, logging and the runtime. Interface
+presence, medium and the network monitor read the IP Helper API (one
+translation unit, `src/node/ifinfo_win32.c`, because its headers include
+`ole2.h`); the monitor runs on its 1 s backstop (no route-change wakes yet).
+POSIX socket headers map to Winsock through `src/compat/win32/`.
+
+Not yet on Windows (each replaced by a `*_unsupported.c` stub that fails
+start-up when configured; the default-on control socket and DNS responder warn
+and serve nothing instead): TUN (wintun) and the IPv6 shim, the `.fips` DNS
+responder, the control socket (upstream moves it to TCP 127.0.0.1:21210) and
+therefore `fipsctl`/`fipstop`, the native datagram API and libfipsnative, the
+TCP, Tor and Nym transports, Nostr relay rendezvous and traversal, mDNS, and
+the gateway. A Windows CI lane would need the packages above, the
+libsecp256k1 build, the configure line above (on `windows-11-arm` or an x64
+runner with CLANG64) and the two `ctest` invocations; none is added yet.
 
 ## Transport statistics and control parity
 

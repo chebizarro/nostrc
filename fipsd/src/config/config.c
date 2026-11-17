@@ -4,6 +4,7 @@
 #include "node/acl.h"
 #include <errno.h>
 #include <fcntl.h>
+#include "compat/posix_open.h"
 #include <inttypes.h>
 #include <sodium.h>
 #include <stdlib.h>
@@ -174,6 +175,18 @@ char **fipsd_config_search_paths(size_t *count)
     char user[4096],legacy[4096],cwd[4096];
     const char *paths[6]; size_t n=0;
     *count=0;
+#if defined(_WIN32)
+    /* Upstream's Windows layout: the service's C:\ProgramData\fips, then the
+     * per-user %APPDATA%\fips, then the working directory. Never the
+     * drive-relative \etc\fips, which any local user may create. */
+    paths[n++]="C:\\ProgramData\\fips\\fips.yaml";
+    const char *appdata=getenv("APPDATA");
+    if (appdata && *appdata) {
+        if (snprintf(user,sizeof(user),"%s\\fips\\fips.yaml",appdata)>=(int)sizeof(user)) return NULL;
+        paths[n++]=user;
+    }
+    (void)legacy;
+#else
     paths[n++]="/etc/fips/fips.yaml";
 #if defined(__APPLE__) || defined(__FreeBSD__)
     paths[n++]="/usr/local/etc/fips/fips.yaml";
@@ -198,10 +211,15 @@ char **fipsd_config_search_paths(size_t *count)
         if (snprintf(legacy,sizeof(legacy),"%s/.fips.yaml",home)>=(int)sizeof(legacy)) return NULL;
         paths[n++]=legacy;
     }
+#endif
     if (!getcwd(cwd,sizeof(cwd))) return NULL;
     size_t used=strlen(cwd);
     if (used+11>sizeof(cwd)) return NULL;
+#if defined(_WIN32)
+    memcpy(cwd+used,"\\fips.yaml",11); paths[n++]=cwd;
+#else
     memcpy(cwd+used,"/fips.yaml",11); paths[n++]=cwd;
+#endif
     char **out=calloc(n,sizeof(*out));
     if (!out) return NULL;
     for (size_t i=0;i<n;++i) if (!(out[i]=strdup(paths[i]))) {

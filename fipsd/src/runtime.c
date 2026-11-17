@@ -18,6 +18,19 @@
 #include "fiber_hooks.h"
 #include "go.h"
 #include "log.h"
+#include "transport/sockos.h"
+
+/* The self-pipe's ends. Windows has neither pipe() descriptors the netpoller
+ * can wait on nor POSIX signals: console control events stand in for signals
+ * (Ctrl+C and Ctrl+Break are SIGINT; close, logoff and shutdown SIGTERM; no
+ * SIGHUP) and a connected loopback socket pair stands in for the pipe. */
+#if defined(_WIN32)
+typedef gof_socket_t signal_pipe_end;
+#define SIGNAL_PIPE_NONE GOF_INVALID_SOCKET
+#else
+typedef int signal_pipe_end;
+#define SIGNAL_PIPE_NONE (-1)
+#endif
 
 #define MODULE "runtime"
 #define SIGNAL_FIBER_STOP 0 /* byte the shutdown path writes to end the signal fiber */
@@ -36,18 +49,45 @@ struct fipsd_runtime {
     fipsd_subsystem *subsystems[FIPSD_RUNTIME_MAX_SUBSYSTEMS];
     size_t nsubsystems;
     size_t nstarted;
-    int sigpipe[2];
+    signal_pipe_end sigpipe[2];
+#if !defined(_WIN32)
     struct sigaction saved[3];
+#endif
     bool signals_installed;
     int workers;
     _Atomic int state;
 };
 
-static const int handled_signals[3] = {SIGINT, SIGTERM, SIGHUP};
-
 /* Only one runtime may own the process signal dispositions. The handler
  * reads the write end atomically; -1 means "no runtime listening". */
-static _Atomic int signal_pipe_fd = -1;
+static _Atomic signal_pipe_end signal_pipe_fd = SIGNAL_PIPE_NONE;
+
+#if defined(_WIN32)
+/* Runs on a thread the console creates for the event. */
+static BOOL WINAPI on_console_event(DWORD event)
+{
+    unsigned char byte;
+    switch (event) {
+    case CTRL_C_EVENT:
+    case CTRL_BREAK_EVENT:
+        byte = SIGINT;
+        break;
+    case CTRL_CLOSE_EVENT:
+    case CTRL_LOGOFF_EVENT:
+    case CTRL_SHUTDOWN_EVENT:
+        byte = SIGTERM;
+        break;
+    default:
+        return FALSE;
+    }
+    gof_socket_t s = atomic_load_explicit(&signal_pipe_fd, memory_order_acquire);
+    if (s == GOF_INVALID_SOCKET)
+        return FALSE; /* no runtime listening: default handling */
+    (void)send(s, (const char *)&byte, 1, 0);
+    return TRUE;
+}
+#else
+static const int handled_signals[3] = {SIGINT, SIGTERM, SIGHUP};
 
 static void on_signal(int sig)
 {
@@ -58,6 +98,7 @@ static void on_signal(int sig)
     ssize_t r = write(fd, &byte, 1); /* non-blocking; a full pipe coalesces */
     (void)r;
 }
+#endif
 
 void fipsd_runtime_config_default(fipsd_runtime_config *cfg)
 {
@@ -77,7 +118,7 @@ fipsd_runtime *fipsd_runtime_create(const fipsd_runtime_config *cfg)
         fipsd_runtime_config_default(&rt->cfg);
     if (rt->cfg.grace_ms == 0)
         rt->cfg.grace_ms = FIPSD_RUNTIME_DEFAULT_GRACE_MS;
-    rt->sigpipe[0] = rt->sigpipe[1] = -1;
+    rt->sigpipe[0] = rt->sigpipe[1] = SIGNAL_PIPE_NONE;
     rt->background = go_context_background();
     rt->reload = go_channel_create(1);
     rt->ready = go_channel_create(1);
@@ -100,10 +141,15 @@ void fipsd_runtime_destroy(fipsd_runtime *rt)
         FIPSD_WARN(MODULE, "destroying a started runtime without fipsd_runtime_run()");
     /* After every thread has been joined; the signal handler is already
      * restored, so nothing can write to the pipe any more. */
+#if defined(_WIN32)
+    fipsd_socket_close(rt->sigpipe[0]);
+    fipsd_socket_close(rt->sigpipe[1]);
+#else
     if (rt->sigpipe[0] >= 0)
         close(rt->sigpipe[0]);
     if (rt->sigpipe[1] >= 0)
         close(rt->sigpipe[1]);
+#endif
     if (rt->root.context)
         go_context_unref(rt->root.context);
     if (rt->background)
@@ -197,8 +243,10 @@ static const char *signal_name(int sig)
         return "SIGINT";
     case SIGTERM:
         return "SIGTERM";
+#ifdef SIGHUP
     case SIGHUP:
         return "SIGHUP";
+#endif
     default:
         return "signal";
     }
@@ -232,12 +280,14 @@ static void signal_fiber(void *arg)
             FIPSD_INFO(MODULE, "%s received; shutting down", signal_name(byte));
             fipsd_runtime_shutdown(rt);
             break;
+#ifdef SIGHUP
         case SIGHUP:
             if (go_channel_try_send(rt->reload, rt) == 0)
                 FIPSD_INFO(MODULE, "SIGHUP received; configuration reload requested");
             else
                 FIPSD_DEBUG(MODULE, "SIGHUP received; a reload is already pending");
             break;
+#endif
         default:
             FIPSD_WARN(MODULE, "unexpected signal %d on the signal pipe", (int)byte);
             break;
@@ -246,6 +296,69 @@ static void signal_fiber(void *arg)
     go_wait_group_done(&rt->signal_wg);
 }
 
+#if defined(_WIN32)
+/* A connected loopback TCP pair; [0] is read by the signal fiber. */
+static int signal_pair(gof_socket_t pair[2])
+{
+    struct sockaddr_in a = {.sin_family = AF_INET, .sin_addr.s_addr = htonl(INADDR_LOOPBACK)};
+    int len = sizeof a;
+    gof_socket_t l = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (l == GOF_INVALID_SOCKET) { errno = gof_socket_errno(); return -1; }
+    int ok = !bind(l, (struct sockaddr *)&a, len) && !getsockname(l, (struct sockaddr *)&a, &len) &&
+             !listen(l, 1) && (pair[1] = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) != GOF_INVALID_SOCKET &&
+             !connect(pair[1], (struct sockaddr *)&a, len) &&
+             (pair[0] = accept(l, NULL, NULL)) != GOF_INVALID_SOCKET;
+    if (!ok) errno = gof_socket_errno();
+    fipsd_socket_close(l);
+    if (ok && (fipsd_socket_prepare(pair[0]) || fipsd_socket_prepare(pair[1]))) ok = 0;
+    return ok ? 0 : -1;
+}
+
+static int start_signal_fiber(fipsd_runtime *rt)
+{
+    gof_socket_t expected = GOF_INVALID_SOCKET;
+    if (signal_pair(rt->sigpipe) != 0) {
+        FIPSD_ERROR(MODULE, "cannot create the signal socket pair: %s", strerror(errno));
+        return -1;
+    }
+    if (!atomic_compare_exchange_strong(&signal_pipe_fd, &expected, rt->sigpipe[1])) {
+        FIPSD_ERROR(MODULE, "another runtime already owns the process signals");
+        return -1;
+    }
+    go_wait_group_add(&rt->signal_wg, 1);
+    if (!gof_spawn(signal_fiber, rt, 0)) {
+        go_wait_group_done(&rt->signal_wg);
+        atomic_store(&signal_pipe_fd, GOF_INVALID_SOCKET);
+        FIPSD_ERROR(MODULE, "cannot spawn the signal fiber");
+        return -1;
+    }
+    return 0;
+}
+
+static int install_signal_handlers(fipsd_runtime *rt)
+{
+    if (!SetConsoleCtrlHandler(on_console_event, TRUE)) {
+        FIPSD_ERROR(MODULE, "cannot install the console control handler (error %lu)", GetLastError());
+        return -1;
+    }
+    rt->signals_installed = true;
+    return 0;
+}
+
+static void stop_signal_fiber(fipsd_runtime *rt)
+{
+    if (rt->signals_installed) {
+        (void)SetConsoleCtrlHandler(on_console_event, FALSE);
+        rt->signals_installed = false;
+    }
+    if (rt->sigpipe[1] != GOF_INVALID_SOCKET && atomic_load(&signal_pipe_fd) == rt->sigpipe[1]) {
+        atomic_store(&signal_pipe_fd, GOF_INVALID_SOCKET);
+        unsigned char stop = SIGNAL_FIBER_STOP;
+        (void)send(rt->sigpipe[1], (const char *)&stop, 1, 0);
+        go_wait_group_wait(&rt->signal_wg);
+    }
+}
+#else
 static int set_fd_flags(int fd)
 {
     int fl = fcntl(fd, F_GETFL);
@@ -338,6 +451,7 @@ static void stop_signal_fiber(fipsd_runtime *rt)
         go_wait_group_wait(&rt->signal_wg);
     }
 }
+#endif
 
 /* ── scheduler sizing ──────────────────────────────────────────────────── */
 
@@ -363,7 +477,11 @@ static void size_scheduler(fipsd_runtime *rt)
     if (workers <= 0)
         workers = env_int("GOF_NWORKERS");
     if (workers <= 0) {
+#if defined(_WIN32)
+        long cpus = (long)GetActiveProcessorCount(ALL_PROCESSOR_GROUPS);
+#else
         long cpus = sysconf(_SC_NPROCESSORS_ONLN);
+#endif
         workers = cpus > 0 ? (int)cpus : 1;
     }
     if (workers > 64)
@@ -372,7 +490,11 @@ static void size_scheduler(fipsd_runtime *rt)
      * we are single-threaded here, so setenv() is safe. */
     char buf[16];
     snprintf(buf, sizeof(buf), "%d", workers);
+#if defined(_WIN32)
+    _putenv_s("GOF_NWORKERS", buf);
+#else
     setenv("GOF_NWORKERS", buf, 1);
+#endif
 
     int pollers = rt->cfg.pollers;
     if (pollers <= 0) {

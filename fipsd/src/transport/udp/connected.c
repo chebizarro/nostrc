@@ -15,13 +15,13 @@ static void *open_socket(void *arg)
     setup *q = arg; udp_socket *s = q->socket; udp_instance *u = s->owner;
     s->fd = fipsd_udp_open(q->bind_to, u->transport.interface_name, s->connected,
         u->config.recv_buf_size, u->config.send_buf_size, &s->recv_grant, &s->send_grant, &s->local);
-    if (s->fd >= 0 && (fipsd_sockbuf_clamped(&s->recv_grant) || fipsd_sockbuf_clamped(&s->send_grant)))
+    if (s->fd != GOF_INVALID_SOCKET && (fipsd_sockbuf_clamped(&s->recv_grant) || fipsd_sockbuf_clamped(&s->send_grant)))
         FIPSD_WARN("udp", "%s: socket buffers clamped (recv %zu/%zu, send %zu/%zu); raise host limits or grant CAP_NET_ADMIN on Linux",
             u->name, s->recv_grant.actual, s->recv_grant.requested, s->send_grant.actual, s->send_grant.requested);
     return NULL;
 }
 static void *close_fd(void *arg)
-{ udp_socket *s = arg; close(s->fd); return NULL; }
+{ udp_socket *s = arg; fipsd_socket_close(s->fd); return NULL; }
 static void free_socket(udp_socket *s)
 {
     if (s->stop) go_channel_unref(s->stop);
@@ -34,13 +34,13 @@ udp_socket *fipsd_udp_socket_open(udp_instance *u, const fipsd_udp_endpoint *loc
 {
     udp_socket *s = calloc(1, sizeof *s);
     if (!s) return NULL;
-    s->owner = u; s->fd = -1; s->generation = generation; s->direction = direction;
+    s->owner = u; s->fd = GOF_INVALID_SOCKET; s->generation = generation; s->direction = direction;
     s->connected = remote != NULL;
     if (remote) { s->remote = *remote; (void)fipsd_udp_endpoint_addr(remote, &s->peer); }
     s->stop = go_channel_create(1); s->done = go_channel_create(1); s->unused = go_channel_create(1);
     if (!s->stop || !s->done || !s->unused) { free_socket(s); return NULL; }
     setup q = {s, local}; go_blocking_submit(open_socket, &q);
-    if (s->fd < 0) { free_socket(s); return NULL; }
+    if (s->fd == GOF_INVALID_SOCKET) { free_socket(s); return NULL; }
     if (gof_io_reset_fd(s->fd) ||
         (remote && gof_connect(s->fd, (const struct sockaddr *)&remote->address, remote->len, 0)) ||
         fipsd_runtime_spawn(u->runtime, fipsd_udp_receive, s)) {
@@ -96,6 +96,10 @@ void fipsd_udp_receive(void *arg)
              * receive parks again; a dead drain must not retain a matching
              * connected tuple and black-hole traffic indefinitely. */
             if (error == ECONNREFUSED || error == EHOSTUNREACH || error == ENETUNREACH) continue;
+#if defined(_WIN32)
+            /* Port/net unreachable reports, should SIO_UDP_*RESET be refused. */
+            if (error == ECONNRESET || error == ENETRESET) continue;
+#endif
             break;
         }
         fipsd_transport_stats_recv(&u->shared.stats, (size_t)n);

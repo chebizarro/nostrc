@@ -5,10 +5,14 @@
 #include <net/if.h>
 #include <string.h>
 #include <time.h>
-#include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <unistd.h>
 #include <stdio.h>
+#if defined(_WIN32)
+#include "node/ifinfo_win32.h"
+#else
+#include <sys/ioctl.h>
+#endif
 #ifdef __APPLE__
 #include <net/if_dl.h>
 #include <net/if_media.h>
@@ -52,6 +56,7 @@ fipsd_presence_facts fipsd_presence_from_snapshot(const fipsd_network_snapshot *
     }
     return f;
 }
+#if !defined(_WIN32)
 fipsd_presence_facts fipsd_presence_from_ifaddrs(const struct ifaddrs *ifs, const char *name,
                                                unsigned (*index_of)(const char *))
 {
@@ -110,3 +115,22 @@ fipsd_presence_facts fipsd_presence_read(const char *name)
     }
     return f;
 }
+#else
+bool fipsd_presence_carrier_ioctl(const char *name, int fd, fipsd_ioctl_fn call, void *user, bool fallback)
+{
+    (void)name; (void)fd; (void)call; (void)user;
+    return fallback; /* no interface ioctls; fipsd_presence_read reads the row */
+}
+fipsd_presence_facts fipsd_presence_read(const char *name)
+{
+    if (!name) return (fipsd_presence_facts){0};
+    fipsd_presence_facts f = {.valid = true, .medium = FIPS_PATH_Unknown};
+    fipsd_win_ifrow row;
+    fipsd_win_ifrow_read(name, &row);
+    if (!row.exists) return f;
+    f.exists = true; f.index = row.index; f.up = row.admin_up; f.carrier = row.connected;
+    if (row.has_mac) { memcpy(f.mac, row.mac, 6); f.has_mac = true; }
+    f.medium = fipsd_medium_read(name);
+    return f;
+}
+#endif

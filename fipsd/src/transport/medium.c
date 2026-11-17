@@ -2,7 +2,11 @@
 #define _DARWIN_C_SOURCE 1
 #include "transport/medium.h"
 #include <net/if.h>
+#if defined(_WIN32)
+#include "node/ifinfo_win32.h"
+#else
 #include <sys/ioctl.h>
+#endif
 #include <sys/socket.h>
 #include <unistd.h>
 #include <string.h>
@@ -30,6 +34,23 @@ fips_path_medium fipsd_medium_linux(unsigned type, bool wireless, bool phy,
 }
 static bool valid_name(const char *s)
 { return s && *s && strlen(s) < IFNAMSIZ && !strchr(s, '/') && strcmp(s, ".") && strcmp(s, ".."); }
+#if defined(_WIN32)
+fips_path_medium fipsd_medium_read_ioctl(const char *name, int fd, fipsd_ioctl_fn call, void *u)
+{
+    (void)name; (void)fd; (void)call; (void)u;
+    return FIPS_PATH_Unknown; /* no interface ioctls; see fipsd_medium_read */
+}
+/* The interface row's IANA type: Ethernet is wired, 802.11 wireless. */
+fips_path_medium fipsd_medium_read(const char *name)
+{
+    if (!valid_name(name)) return FIPS_PATH_Unknown;
+    fipsd_win_ifrow row;
+    fipsd_win_ifrow_read(name, &row);
+    if (!row.exists) return FIPS_PATH_Unknown;
+    if (row.type == FIPSD_WIN_IF_IEEE80211) return FIPS_PATH_Wireless;
+    return row.type == FIPSD_WIN_IF_ETHERNET && row.hardware ? FIPS_PATH_Wired : FIPS_PATH_Unknown;
+}
+#else
 static int native_ioctl(void *unused, int fd, unsigned long op, void *arg)
 { (void)unused; return ioctl(fd, op, arg); }
 fips_path_medium fipsd_medium_read_ioctl(const char *name, int fd, fipsd_ioctl_fn call, void *u)
@@ -84,6 +105,7 @@ fips_path_medium fipsd_medium_read(const char *name)
 #endif
     return result;
 }
+#endif /* _WIN32 */
 const char *fipsd_medium_name(fips_path_medium m)
 {
     switch (m) {

@@ -384,6 +384,9 @@ add_dependencies(fips_core_host_test fips_core_noise_negative_test)
 # results are in docs/reviews/libfips-core-noise-audit-2026-11-15.md.
 add_executable(fips_core_ct_probe tools/ct_probe.c)
 target_link_libraries(fips_core_ct_probe PRIVATE fips_core m)
+if(WIN32)
+  target_link_libraries(fips_core_ct_probe PRIVATE pthread) # mingw's clock_gettime is in winpthreads
+endif()
 set_target_properties(fips_core_ct_probe PROPERTIES
   C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
 apply_warnings(fips_core_ct_probe)
