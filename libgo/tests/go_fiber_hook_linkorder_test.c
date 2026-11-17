@@ -6,6 +6,10 @@
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
+#if defined(_WIN32)
+/* The CRT has _putenv_s, not POSIX setenv; these tests always overwrite. */
+#define setenv(name, value, overwrite) ((void)(overwrite), _putenv_s((name), (value)))
+#endif
 
 static GoChannel *channel;
 static atomic_int receiving;

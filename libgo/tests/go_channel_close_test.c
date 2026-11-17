@@ -1,3 +1,4 @@
+#include <stdint.h> /* intptr_t: long is 32-bit on LLP64 Windows */
 #include <stdio.h>
 #include <pthread.h>
 #include <unistd.h>
@@ -17,7 +18,7 @@ static void *recv_blocker(void *arg) {
     GoChannel *c = (GoChannel*)arg;
     void *val = (void*)0xdeadbeef;
     int rc = go_channel_receive(c, &val);
-    recv_block_then_close_result = (void*)(long)rc;
+    recv_block_then_close_result = (void*)(intptr_t)rc;
     return NULL;
 }
 
@@ -25,7 +26,7 @@ static void *send_blocker(void *arg) {
     GoChannel *c = (GoChannel*)arg;
     // channel capacity 1, pre-filled by main; this will block until close
     int rc = go_channel_send(c, (void*)123);
-    return (void*)(long)rc;
+    return (void*)(intptr_t)rc;
 }
 
 int main(void) {
@@ -37,7 +38,7 @@ int main(void) {
     go_channel_close(c1);
     pthread_join(rth, NULL);
     // Expect receive to fail (rc != 0) when channel is closed and empty
-    if ((long)recv_block_then_close_result == 0) {
+    if ((long)(intptr_t)recv_block_then_close_result == 0) {
         fprintf(stderr, "receive unexpectedly succeeded on closed channel\n");
         return 1;
     }
@@ -53,7 +54,7 @@ int main(void) {
     go_channel_close(c2);
     void *send_rc;
     pthread_join(sth, &send_rc);
-    if ((long)send_rc == 0) {
+    if ((long)(intptr_t)send_rc == 0) {
         fprintf(stderr, "send unexpectedly succeeded on closed channel\n");
         return 2;
     }

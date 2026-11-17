@@ -595,7 +595,7 @@ gof_fiber* gof_fiber_create(void (*fn)(void*), void *arg, size_t stack_bytes) {
   f->entry = fn;
   f->arg = arg;
   f->w_affinity = -1;
-  f->wait_fd = -1;
+  f->wait_fd = GOF_INVALID_SOCKET;
   f->wait_events = 0;
   size_t sz = stack_bytes ? stack_bytes : S.default_stack;
   if (gof_stack_alloc(&f->stack, sz) != 0) { free(f); return NULL; }
@@ -676,6 +676,8 @@ static void* worker_main(void *arg) {
   /* Set TLS for this worker */
   gof_worker *W = (gof_worker*)arg;
   pthread_setspecific(S.worker_key, W);
+  /* Bind this OS thread's own context (the Windows thread fiber). */
+  gof_ctx_thread_enter(&W->sched_ctx);
 #if GOF_TSAN
   atomic_store_explicit(&W->tsan_fiber, __tsan_get_current_fiber(), memory_order_relaxed);
   /* Fibers may predate this pthread. Publish its TLS initialization once, not
@@ -805,14 +807,14 @@ static void* worker_main(void *arg) {
        * executing would corrupt its context. */
       /* Snapshot before publishing BLOCKED: a waker can then resume/free f
        * on another worker. The trace reports a committed, off-CPU I/O park. */
-      int wait_fd = atomic_load_explicit(&f->wait_fd, memory_order_relaxed);
+      gof_socket_t wait_fd = atomic_load_explicit(&f->wait_fd, memory_order_relaxed);
       int wait_events = atomic_load_explicit(&f->wait_events, memory_order_relaxed);
       gof_state expected = GOF_PARKING;
       if (atomic_compare_exchange_strong_explicit(&f->state, &expected, GOF_BLOCKED,
                                                   memory_order_seq_cst,
                                                   memory_order_seq_cst)) {
         /* Parked; a later waker claims BLOCKED -> RUNNABLE and enqueues. */
-        if (wait_fd >= 0) gof_trace_on_block(wait_fd, wait_events);
+        if (wait_fd != GOF_INVALID_SOCKET) gof_trace_on_block(wait_fd, wait_events);
       } else {
         /* Claimed WOKEN between the announce and this commit: requeue. */
         goto requeue_woken;
@@ -831,6 +833,7 @@ static void* worker_main(void *arg) {
       /* Back on the worker's own TSan context before freeing the fiber. */
       __tsan_destroy_fiber(f->tsan_fiber);
 #endif
+      gof_ctx_destroy(&f->ctx);
       gof_stack_free(&f->stack);
       free(f);
       if (atomic_fetch_sub(&S.live_fibers, 1) == 1) {
@@ -857,6 +860,7 @@ requeue_woken:
     rq_push(f);
     atomic_store_explicit(&W->current, NULL, memory_order_relaxed);
   }
+  gof_ctx_thread_leave(&W->sched_ctx);
   pthread_setspecific(S.worker_key, NULL);
   return NULL;
 }

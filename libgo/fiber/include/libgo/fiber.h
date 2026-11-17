@@ -16,11 +16,22 @@
 #if defined(_WIN32) || defined(__MINGW32__)
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include "libgo/net_compat.h" /* POSIX-shaped struct msghdr/iovec and CMSG_* */
 #else
 #include <sys/socket.h> /* for struct sockaddr, socklen_t */
 #endif
 #ifdef __cplusplus
 extern "C" {
+#endif
+
+/** Socket handle accepted by the fiber I/O wrappers: a file descriptor on
+ * POSIX, a Winsock SOCKET on Windows (never truncated to int). */
+#if defined(_WIN32) || defined(__MINGW32__)
+typedef SOCKET gof_socket_t;
+#define GOF_INVALID_SOCKET INVALID_SOCKET
+#else
+typedef int gof_socket_t;
+#define GOF_INVALID_SOCKET (-1)
 #endif
 
 /** Opaque handle to a fiber. */
@@ -115,18 +126,22 @@ GO_FIBER_API int         gof_in_fiber(void);
  */
 GO_FIBER_API gof_fiber_t*gof_current(void);
 
-struct msghdr; /* POSIX message I/O; incomplete on Windows (ENOTSUP). */
+struct msghdr; /* <sys/socket.h> on POSIX; libgo/net_compat.h on Windows. */
 
 /** Fiber-friendly I/O wrappers; call from a running fiber.
  * No deadline means indefinite parking until readiness, peer EOF/hangup, or
  * scheduler stop (returns -1, errno=ECANCELED), with no periodic retries.
  * Keep fd open while a wait is pending: raw close(fd) on the waiting descriptor
  * from another thread is not a cancellation operation. Peer close is observed.
+ * Windows: fd is a SOCKET (read/write are WSARecv/WSASend; pipes and files are
+ * not supported) and every call is an overlapped operation on libgo's I/O
+ * completion port that parks the fiber until its completion is delivered.
  */
-GO_FIBER_API ssize_t     gof_read(int fd, void *buf, size_t n);
-GO_FIBER_API ssize_t     gof_write(int fd, const void *buf, size_t n);
-GO_FIBER_API int         gof_connect(int fd, const struct sockaddr *sa, socklen_t slen, int timeout_ms);
-GO_FIBER_API int         gof_accept(int fd, struct sockaddr *sa, socklen_t *slen, int timeout_ms);
+GO_FIBER_API ssize_t     gof_read(gof_socket_t fd, void *buf, size_t n);
+GO_FIBER_API ssize_t     gof_write(gof_socket_t fd, const void *buf, size_t n);
+GO_FIBER_API int         gof_connect(gof_socket_t fd, const struct sockaddr *sa, socklen_t slen, int timeout_ms);
+/** Returns the accepted socket, or GOF_INVALID_SOCKET with errno set. */
+GO_FIBER_API gof_socket_t gof_accept(gof_socket_t fd, struct sockaddr *sa, socklen_t *slen, int timeout_ms);
 
 /**
  * @brief Message I/O that parks the calling fiber on EAGAIN/EWOULDBLOCK.
@@ -138,14 +153,17 @@ GO_FIBER_API int         gof_accept(int fd, struct sockaddr *sa, socklen_t *slen
  * Sends return after one successful syscall, including short or zero sends;
  * they never split a datagram or resend ancillary data. Receives preserve
  * source addresses, iovecs, control data and message flags as supplied by the OS.
- * Call from a running fiber; Windows returns -1 with errno=ENOTSUP.
+ * Call from a running fiber. On Windows the messages are translated to
+ * WSAMSG (WSARecvMsg/WSASendMsg on datagram sockets, WSARecv/WSASend on
+ * stream sockets, which carry no control data); a truncated datagram returns
+ * its truncated length with MSG_TRUNC, as on POSIX. See libgo/fiber/README.md.
  */
-GO_FIBER_API ssize_t     gof_recvfrom(int fd, void *buf, size_t n, int flags,
+GO_FIBER_API ssize_t     gof_recvfrom(gof_socket_t fd, void *buf, size_t n, int flags,
                                     struct sockaddr *sa, socklen_t *slen, int timeout_ms);
-GO_FIBER_API ssize_t     gof_sendto(int fd, const void *buf, size_t n, int flags,
+GO_FIBER_API ssize_t     gof_sendto(gof_socket_t fd, const void *buf, size_t n, int flags,
                                   const struct sockaddr *sa, socklen_t slen, int timeout_ms);
-GO_FIBER_API ssize_t     gof_recvmsg(int fd, struct msghdr *msg, int flags, int timeout_ms);
-GO_FIBER_API ssize_t     gof_sendmsg(int fd, const struct msghdr *msg, int flags, int timeout_ms);
+GO_FIBER_API ssize_t     gof_recvmsg(gof_socket_t fd, struct msghdr *msg, int flags, int timeout_ms);
+GO_FIBER_API ssize_t     gof_sendmsg(gof_socket_t fd, const struct msghdr *msg, int flags, int timeout_ms);
 
 /** Owner-directed readiness-wait cancellation, independent of scheduler stop.
  * reset_fd prepares a newly owned descriptor (may fail with ENOMEM).
@@ -155,9 +173,14 @@ GO_FIBER_API ssize_t     gof_sendmsg(int fd, const struct msghdr *msg, int flags
  * state after return. The owner must join ALL users, then reset_fd before
  * closing/reusing the descriptor. Never reset while a cancelled user is live.
  * Both calls are thread/fiber-safe and never park. fd aliases are not tracked.
+ * Windows: cancel_fd issues CancelIoEx for the pending operations; each user
+ * still waits for its (aborted or completed) completion before returning, so
+ * no buffer outlives its call, and a receive that completed first returns its
+ * data. Sockets need no registration: every operation re-checks the socket's
+ * completion-port association, so a recycled SOCKET value is handled too.
  */
-GO_FIBER_API int         gof_io_reset_fd(int fd);
-GO_FIBER_API int         gof_io_cancel_fd(int fd);
+GO_FIBER_API int         gof_io_reset_fd(gof_socket_t fd);
+GO_FIBER_API int         gof_io_cancel_fd(gof_socket_t fd);
 
 
 /**
@@ -259,15 +282,15 @@ GO_FIBER_API int  gof_get_npollers(void);
  */
 #if defined(__GNUC__) || defined(__clang__)
 GO_FIBER_API void __attribute__((weak)) gof_trace_on_switch(uint64_t old_id, uint64_t new_id);
-GO_FIBER_API void __attribute__((weak)) gof_trace_on_block(int fd, int ev);
-GO_FIBER_API void __attribute__((weak)) gof_trace_on_unblock(int fd, int ev);
+GO_FIBER_API void __attribute__((weak)) gof_trace_on_block(gof_socket_t fd, int ev);
+GO_FIBER_API void __attribute__((weak)) gof_trace_on_unblock(gof_socket_t fd, int ev);
 /* After waiter registration/arming, before the fiber announces its park. */
-GO_FIBER_API void __attribute__((weak)) gof_trace_on_io_armed(int fd, int ev);
+GO_FIBER_API void __attribute__((weak)) gof_trace_on_io_armed(gof_socket_t fd, int ev);
 #else
 GO_FIBER_API void gof_trace_on_switch(uint64_t old_id, uint64_t new_id);
-GO_FIBER_API void gof_trace_on_block(int fd, int ev);
-GO_FIBER_API void gof_trace_on_unblock(int fd, int ev);
-GO_FIBER_API void gof_trace_on_io_armed(int fd, int ev);
+GO_FIBER_API void gof_trace_on_block(gof_socket_t fd, int ev);
+GO_FIBER_API void gof_trace_on_unblock(gof_socket_t fd, int ev);
+GO_FIBER_API void gof_trace_on_io_armed(gof_socket_t fd, int ev);
 #endif
 
 #ifdef __cplusplus

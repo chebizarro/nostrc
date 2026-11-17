@@ -1,3 +1,4 @@
+#include <stdint.h> /* intptr_t: long is 32-bit on LLP64 Windows */
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -35,9 +36,9 @@ int main(void){
 
     int idx = go_select(cases, 3);
     if (idx == 0) {
-        if ((long)ra != 11) { fprintf(stderr, "expected ra 11, got %ld\n", (long)ra); return 1; }
+        if ((long)(intptr_t)ra != 11) { fprintf(stderr, "expected ra 11, got %ld\n", (long)(intptr_t)ra); return 1; }
     } else if (idx == 1) {
-        if ((long)rb != 22) { fprintf(stderr, "expected rb 22, got %ld\n", (long)rb); return 2; }
+        if ((long)(intptr_t)rb != 22) { fprintf(stderr, "expected rb 22, got %ld\n", (long)(intptr_t)rb); return 2; }
     } else {
         fprintf(stderr, "select chose invalid case %d\n", idx);
         return 3;

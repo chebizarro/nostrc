@@ -3,7 +3,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdalign.h>
-#if GOF_PORTABLE_CONTEXT
+#if GOF_PORTABLE_CONTEXT && !defined(_WIN32)
 #  ifndef _XOPEN_SOURCE
 #    define _XOPEN_SOURCE 700
 #  endif
@@ -16,7 +16,20 @@
  * architecture-specific register save area. The public API remains identical.
  */
 
-#if GOF_PORTABLE_CONTEXT
+#if defined(_WIN32)
+/* Windows: Fibers API backend (context_win32.c). The fiber owns its stack, and
+ * SwitchToFiber swaps what a raw register swap would leave describing the
+ * wrong stack: the TEB stack bounds (StackBase, StackLimit, DeallocationStack)
+ * that guard-page growth and SEH unwinding consult, and the exception list.
+ * On ARM64 x18 holds the TEB and is never touched. The thread side of each
+ * worker is the fiber ConvertThreadToFiberEx returns (gof_ctx_thread_enter). */
+typedef struct gof_context {
+  void *fiber;            /* fiber handle (LPVOID) */
+  void (*entry)(void*);
+  void *arg;
+  int   converted;        /* thread context: undo ConvertThreadToFiberEx on leave */
+} gof_context;
+#elif GOF_PORTABLE_CONTEXT
 typedef struct gof_context {
   ucontext_t uc;
   void (*entry)(void*);
@@ -62,4 +75,20 @@ void gof_bootstrap_trampoline(void);
 int gof_ctx_init_bootstrap(gof_context *ctx, void *stack_base, size_t stack_size, void (*entry)(void*), void *arg);
 /* Swap from one context to another. Must preserve callee-saved state. */
 void gof_ctx_swap(gof_context *from, gof_context *to);
+
+#if defined(_WIN32)
+/* The fiber backend owns stacks: gof_stack_alloc only records the size and
+ * gof_ctx_init_bootstrap reserves it (with its guard page) in CreateFiberEx. */
+#define GOF_CONTEXT_OWNS_STACK 1
+/* Release a finished (never the running) context's fiber and stack. */
+void gof_ctx_destroy(gof_context *ctx);
+/* Bind/unbind the calling OS thread's own context (worker start/exit). */
+void gof_ctx_thread_enter(gof_context *ctx);
+void gof_ctx_thread_leave(gof_context *ctx);
+#else
+#define GOF_CONTEXT_OWNS_STACK 0
+static inline void gof_ctx_destroy(gof_context *ctx) { (void)ctx; }
+static inline void gof_ctx_thread_enter(gof_context *ctx) { (void)ctx; }
+static inline void gof_ctx_thread_leave(gof_context *ctx) { (void)ctx; }
+#endif
 #endif /* LIBGO_FIBER_CONTEXT_CONTEXT_H */

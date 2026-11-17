@@ -523,11 +523,10 @@ install(FILES
 # Fiber runtime (separate library): go_fiber  #
 ###############################################
 
-# The fiber runtime requires ucontext (portable) or platform-specific assembly
-# backends.  Windows/MinGW has neither ucontext nor an assembly backend yet,
-# and nothing in the Windows build links go_fiber, so skip it entirely.
-if(NOT WIN32)
-
+# The fiber runtime switches contexts with platform assembly (or ucontext on
+# the portable path) and polls with epoll/kqueue. Windows uses the Fibers API
+# for contexts and an I/O completion port with overlapped Winsock calls for
+# I/O (context_win32.c, netpoll_iocp.c, io_win32.c).
 option(GOF_PORTABLE_CONTEXT "Use portable setjmp/longjmp for fiber context" OFF)
 option(GOF_ENABLE_TRACING "Enable lightweight tracing in go_fiber" OFF)
 
@@ -550,7 +549,11 @@ set(GOF_COMMON_SOURCES
   ${GOF_FIBER_DIR}/debug/introspect.c
 )
 
-if(GOF_PORTABLE_CONTEXT)
+if(WIN32)
+  list(APPEND GOF_COMMON_SOURCES
+    ${GOF_FIBER_DIR}/context/context_win32.c
+    ${GOF_FIBER_DIR}/io/io_win32.c)
+elseif(GOF_PORTABLE_CONTEXT)
   # Prevent deprecated portable context on macOS
   if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
     message(FATAL_ERROR "GOF_PORTABLE_CONTEXT is not supported on macOS; use assembly backends. Set GOF_PORTABLE_CONTEXT=OFF.")
@@ -585,6 +588,10 @@ add_library(go_fiber STATIC ${GOF_COMMON_SOURCES})
 # that dependency even for consumers with no direct channel/select references;
 # single-pass archive linkers need core libgo after go_fiber as well.
 target_link_libraries(go_fiber PUBLIC libgo)
+if(WIN32)
+  # Winsock (WSARecvMsg/ConnectEx/AcceptEx come through WSAIoctl).
+  target_link_libraries(go_fiber PUBLIC ws2_32 mswsock)
+endif()
 target_include_directories(go_fiber PUBLIC ${GOF_PUBLIC_INC})
 nostrc_library_visibility(go_fiber GO_FIBER_API libgo/fiber-export.h "${CMAKE_INSTALL_INCLUDEDIR}/libgo")
 if(GOF_PORTABLE_CONTEXT)
@@ -761,19 +768,21 @@ endif()
 add_executable(gof_bench_yield fiber/bench/bench_yield.c)
 add_executable(gof_bench_pingpong fiber/bench/bench_pingpong.c)
 add_executable(gof_bench_sleep fiber/bench/bench_sleep.c)
-add_executable(gof_bench_poll_partition fiber/bench/bench_poll_partition.c)
 target_link_libraries(gof_bench_yield PRIVATE go_fiber libgo ${NSYNC_LIB})
 target_link_libraries(gof_bench_pingpong PRIVATE go_fiber libgo ${NSYNC_LIB})
 target_link_libraries(gof_bench_sleep PRIVATE go_fiber libgo ${NSYNC_LIB})
-target_link_libraries(gof_bench_poll_partition PRIVATE go_fiber libgo ${NSYNC_LIB})
 apply_warnings(gof_bench_yield)
 apply_warnings(gof_bench_pingpong)
 apply_warnings(gof_bench_sleep)
-apply_warnings(gof_bench_poll_partition)
 apply_sanitizers(gof_bench_yield)
 apply_sanitizers(gof_bench_pingpong)
 apply_sanitizers(gof_bench_sleep)
-apply_sanitizers(gof_bench_poll_partition)
+if(NOT WIN32) # Unix socket pairs
+  add_executable(gof_bench_poll_partition fiber/bench/bench_poll_partition.c)
+  target_link_libraries(gof_bench_poll_partition PRIVATE go_fiber libgo ${NSYNC_LIB})
+  apply_warnings(gof_bench_poll_partition)
+  apply_sanitizers(gof_bench_poll_partition)
+endif()
 
 # Datagram/message I/O uses the same scheduler and both native poller backends.
 add_executable(gof_test_io_datagram fiber/tests/test_io_datagram.c)
@@ -791,7 +800,22 @@ if(COMMAND nostrc_describe_test)
   nostrc_describe_test(GoFiberIoDatagramTestW4 OWNER libgo TARGETS gof_test_io_datagram)
 endif()
 
-endif() # NOT WIN32 — skip go_fiber on Windows
+# Real UDP/TCP loopback sockets, truncation, deadlines and owner-directed
+# cancellation (including cancel racing an arriving datagram) on every poller.
+add_executable(gof_test_io_loopback fiber/tests/test_io_loopback.c)
+target_link_libraries(gof_test_io_loopback PRIVATE go_fiber libgo ${NSYNC_LIB})
+apply_warnings(gof_test_io_loopback)
+apply_sanitizers(gof_test_io_loopback)
+add_test(NAME GoFiberIoLoopbackTest COMMAND gof_test_io_loopback)
+add_test(NAME GoFiberIoLoopbackTestW4 COMMAND gof_test_io_loopback)
+set_tests_properties(GoFiberIoLoopbackTest PROPERTIES
+  TIMEOUT 60 ENVIRONMENT "GOF_NWORKERS=1")
+set_tests_properties(GoFiberIoLoopbackTestW4 PROPERTIES
+  TIMEOUT 60 ENVIRONMENT "GOF_NWORKERS=4")
+if(COMMAND nostrc_describe_test)
+  nostrc_describe_test(GoFiberIoLoopbackTest OWNER libgo TARGETS gof_test_io_loopback)
+  nostrc_describe_test(GoFiberIoLoopbackTestW4 OWNER libgo TARGETS gof_test_io_loopback)
+endif()
 
 # These pairs mirror the actual add_test COMMANDs, including W4 executions
 # sharing targets. Explicit targets also resolve a fresh, not-yet-built tree

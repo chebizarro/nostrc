@@ -1,22 +1,22 @@
 #define _POSIX_C_SOURCE 200809L
 #include "libgo/fiber.h"
+#include "test_net.h"
 #include "go.h"
 #include <assert.h>
 #include <errno.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <time.h>
-#include <unistd.h>
 
 static pthread_mutex_t mu = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t cv = PTHREAD_COND_INITIALIZER;
 static int completed;
 static int blocked;
 static int cancelled;
-static int read_fd;
-static int recv_fd;
+static gof_socket_t read_fd;
+static gof_socket_t recv_fd;
 
-void gof_trace_on_block(int fd, int events) {
+void gof_trace_on_block(gof_socket_t fd, int events) {
   (void)fd; (void)events;
   pthread_mutex_lock(&mu);
   ++blocked;
@@ -79,9 +79,9 @@ int main(void) {
   assert(completed == 51);
   /* Stop cancels both an indefinite read and a distant deadline. The latter
    * must be removed from the heap, not leave join waiting another minute. */
-  int p[2], d[2];
-  assert(pipe(p) == 0);
-  assert(socketpair(AF_UNIX, SOCK_DGRAM, 0, d) == 0);
+  gof_socket_t p[2], d[2];
+  assert(test_pipe(p) == 0);
+  assert(test_socketpair(SOCK_DGRAM, d) == 0);
   read_fd = p[0]; recv_fd = d[0];
   assert(gof_start_background(0) == 0);
   assert(go_fiber(io_wait, NULL, 0) == 0);
@@ -95,7 +95,7 @@ int main(void) {
   assert(gof_join_background() == 0);
   assert(now_ns() - start < 1000000000ull);
   assert(cancelled == 2);
-  close(p[0]); close(p[1]); close(d[0]); close(d[1]);
+  test_close(p[0]); test_close(p[1]); test_close(d[0]); test_close(d[1]);
   puts("stop: indefinite and 60s I/O waits cancelled promptly");
   puts("background: 50 idle/start/spawn/stop/join cycles; foreground: OK");
   return 0;

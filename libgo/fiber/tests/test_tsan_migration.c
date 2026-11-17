@@ -9,6 +9,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+#if defined(_WIN32)
+/* The CRT has _putenv_s, not POSIX setenv; these tests always overwrite. */
+#define setenv(name, value, overwrite) ((void)(overwrite), _putenv_s((name), (value)))
+#endif
 
 #define PAIRS 32
 #define WORKERS 4

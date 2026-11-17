@@ -60,7 +60,7 @@ typedef struct gof_fiber {
   int         w_affinity; /* preferred worker index for affinity (-1 if none) */
   /* Registry mutation is under io_mu; atomic metadata also permits scheduler
    * tracing across no-sync TSan contexts without ordering application data. */
-  _Atomic int wait_fd;    /* fd this fiber is currently waiting on (-1 if none) */
+  _Atomic gof_socket_t wait_fd; /* fd waited on (GOF_INVALID_SOCKET if none) */
   _Atomic int wait_events;/* GOF_POLL_READ/WRITE bitmask for current wait */
 } gof_fiber;
 
