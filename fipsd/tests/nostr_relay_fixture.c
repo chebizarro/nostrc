@@ -158,7 +158,10 @@ static void *serve(void *user)
     }
     g_main_context_pop_thread_default(f->context); return NULL;
 }
-typedef struct { fixture *f; operation op; int relay_index; const char *json; GoChannel *done; } request;
+typedef struct {
+    fixture *f; operation op; int relay_index; const char *json; GoChannel *done;
+    int kind; const char *author; size_t count; char *latest; /* QUERY */
+} request;
 static gboolean on_server(gpointer user)
 {
     request *q = user;
@@ -176,6 +179,14 @@ static gboolean on_server(gpointer user)
         case REJECT_PUBLISH: r->reject_publish = true; break;
         case HOLD_EOSE: r->hold_eose = true; break;
         case STOP: g_main_loop_quit(q->f->loop); break;
+        case QUERY:
+            for (size_t k = 0; k < json_array_size(r->events); ++k) {
+                json_t *event = json_array_get(r->events, k);
+                if (json_integer_value(json_object_get(event, "kind")) != q->kind ||
+                    g_strcmp0(json_string_value(json_object_get(event, "pubkey")), q->author)) continue;
+                ++q->count; free(q->latest); q->latest = json_dumps(event, JSON_COMPACT); CHECK(q->latest);
+            }
+            break;
         default:
             for (guint j = 0; j < r->clients->len; ++j) {
                 client *c = g_ptr_array_index(r->clients, j);
@@ -198,7 +209,7 @@ static gboolean on_server(gpointer user)
 }
 void fixture_call(fixture *f, operation op, int relay_index, const char *json)
 {
-    request q = {f, op, relay_index, json, go_channel_create(1)}; CHECK(q.done);
+    request q = {.f = f, .op = op, .relay_index = relay_index, .json = json, .done = go_channel_create(1)}; CHECK(q.done);
     g_main_context_invoke(f->context, on_server, &q);
     void *done; CHECK(go_channel_receive(q.done, &done) == 0 && done == &q); go_channel_unref(q.done);
 }
@@ -209,6 +220,15 @@ fixture *fixture_start(void)
     void *ready; CHECK(go_channel_receive(f->ready, &ready) == 0 && ready == f); return f;
 }
 const char *fixture_url(fixture *f, size_t i) { CHECK(i < 2); return f->relays[i].url; }
+char *fixture_latest(fixture *f, size_t index, int kind, const char *author, size_t *count)
+{
+    CHECK(index < 2 && author && count);
+    request q = {.f = f, .op = QUERY, .relay_index = (int)index, .done = go_channel_create(1), .kind = kind, .author = author};
+    CHECK(q.done);
+    g_main_context_invoke(f->context, on_server, &q);
+    void *done; CHECK(go_channel_receive(q.done, &done) == 0 && done == &q); go_channel_unref(q.done);
+    *count = q.count; return q.latest;
+}
 void fixture_destroy(fixture *f)
 {
     fixture_call(f, STOP, 0, NULL); CHECK(pthread_join(f->thread, NULL) == 0);

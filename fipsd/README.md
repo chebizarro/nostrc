@@ -1529,6 +1529,70 @@ Every advert, inbox and traversal publish uses `publish_and_wait`; negative OK
 and missing OK are failures. This schedule republishes local state; it never
 queries relays for new messages.
 
+#### Local advert endpoints (`nostrc-r4aeo`)
+
+The endpoint set is upstream's `advert_transport_snapshot` +
+`build_overlay_advert` over the transport registry, in registry order, with
+each instance's `advertise_on_nostr` (`transports.<type>` or
+`transports.<type>.<name>`; `outbound_only` UDP never advertises):
+
+| Transport | Endpoint |
+| --- | --- |
+| UDP, `public: false` | `nat`, with `signalRelays` (`dm_relays`) and `stunServers` |
+| UDP, `public: true` | `external_addr`; else a non-wildcard bound address; else the STUN-observed IP with the bound port; else omitted with upstream's warning |
+| TCP | `external_addr`; else a non-wildcard listener address; else omitted with upstream's warning (no TCP STUN) |
+| Tor (directory mode) | `<onion>:<advertised_port>` (default 443) once the onion is advertisable |
+
+`external_addr` is parsed as upstream's `external_advert_addr`: a socket
+address, or a bare IP taking the port of `bind_addr` (so TCP needs a
+parseable `bind_addr`); hostnames, zone ids and leading-zero octets are not
+accepted, and the text is Rust `SocketAddr` display. Publication then applies
+`plan_publish`: only publicly usable endpoints remain (loopback, private,
+link-local, CGNAT, documentation, port 0 and `localhost` are dropped), and
+`signalRelays`/`stunServers` appear only beside `udp:nat`, which requires both
+non-empty. A UDP transport contributes once its bound socket finished the STUN
+advert round; TCP and Tor once bound. Tor deliberately diverges in one way:
+with a control monitor (`control_addr` in directory mode) the onion waits until
+Tor reports the descriptor published, `650 HS_DESC UPLOADED <service>` (the
+monitor adds `HS_DESC` to `SETEVENTS`), or until `GETINFO
+hs/service/desc/id/<service>` at (re)subscription shows Tor already holds a
+current descriptor (fipsd restarted under a running tor). Without a monitor,
+or when the monitor never completes a first session, the hostname file read at
+start suffices, as upstream. The latch is set once; other onions, other
+actions and further HSDir reports change nothing.
+
+Republication is event-driven and change-only. The driver's watcher fiber
+turns advertised TCP/Tor listener binds and the Tor latch into
+`fipsd_nostr_runtime_refresh_advert`, as UDP observation already did. The
+actor rebuilds and compares the canonical content with the last built advert:
+a changed set is republished to every live relay; an unchanged one is sent
+nowhere, except to a relay that just reached EOSE and by the refresh ticker
+before NIP-40 expiry. An empty set publishes nothing; the old advert ages out.
+No timer polls transports. Each new content gets a `created_at` strictly after
+its predecessor's (at most a second ahead of the clock, within peers' skew
+clamp): NIP-01 relays and peer caches keep the lowest id among equal-second
+replaceable events, so a set changed within the same second would otherwise
+be dropped as a "duplicate".
+
+`FipsdNostrAdvertTest` runs this through the real registry, driver and actor
+against two libsoup relays and a fake control port: `external_addr` overrides
+a loopback bind, `advertise_on_nostr: false` and loopback-only TCP are omitted,
+the onion appears only after `HS_DESC UPLOADED` with exactly one republish per
+relay at a later `created_at`, and refreshes and further HSDir reports republish nothing (barriers:
+publish OKs, a refetch EOSE behind earlier commands, control command lines).
+`FipsdNostrEventsTest` checks upstream's advert content strings and filter,
+precedence and `external_addr` rows; `FipsdTorTest` the latch.
+`FipsdAdvertTorInteropTest` (`tests/advert_interop.py`, opt-in like
+`FipsdTorInteropTest`) has the pinned Rust daemon discover fipsd from the
+advert alone: fipsd advertises only its onion on a local stdlib relay
+(`Testing/fips-chaos/services/relay.py`), starts before tor has a descriptor,
+and the Rust peer is configured with only fipsd's npub (`via_nostr: true`).
+Recorded on macOS over three runs (tor 0.4.9.17, Rust rev 6aa80504ba, ASan
+fipsd): hostname 0.4-0.6 s, descriptor uploaded and fipsd's onion advertisable
+(`HS_DESC UPLOADED`) both at 10.7-11.8 s, the advert stored at the relay in the
+same tenth of a second, Rust discover-and-link 14.7-16.7 s after its start, one
+advert publish, no SOCKS5 errors or connect timeouts, 26.9-27.9 s in all.
+
 **Refetch outcomes (B6).** A separate one-shot pool on the connected advert
 relays uses author/kind/identifier plus `until=now` and `limit=1`; its independent
 middleware still sees an unchanged event. All selected relays must reach EOSE.
@@ -1566,11 +1630,10 @@ configured order, never taken from a peer's untrusted STUN hint. Exhaustion
 leaves only opt-in local candidates and releases otherwise unusable pending
 attempts. Neither a timeout nor a failed send establishes a mapped address.
 
-Reflexive observations populate offers/answers. Adverts retain `udp:nat` and the
-configured signal/STUN hints; a concrete public endpoint is included only when
-the explicitly bound tuple equals STUN's observation. Wildcard bindings and
-NAT-translated tuples are never mislabeled as directly reachable endpoints.
-Observation completion queues a local advert refresh, not a relay query.
+Reflexive observations populate offers/answers. Adverts follow upstream (see
+Local advert endpoints): `public: false` UDP publishes `udp:nat` with the
+configured signal/STUN hints; only `public: true` publishes a concrete
+address. Observation completion queues a local advert refresh, not a relay query.
 `share_local_candidates: false` is the default. When enabled, interface addresses
 of the bound family/port are collected on the blocking executor. Candidate
 planning rejects zero ports, wrong families/protocols, multicast, unspecified,
@@ -1653,8 +1716,10 @@ All keys below already belong to the configuration schema; no new YAML keys:
   separate outbound/inbound worker quotas (nonzero sum, host ceiling 4096).
   Retained inbound cooldown entries count against the inbound quota, never the
   outbound reserve; existing runtime per-sender and replay limits still apply.
-- `transports.udp[.<name>].advertise_on_nostr`: opt-in per bound transport;
-  `node.rendezvous.nostr.advertise` still gates publication globally.
+- `transports.{udp,tcp,tor}[.<name>].advertise_on_nostr`: opt-in per transport;
+  `node.rendezvous.nostr.advertise` still gates publication globally. UDP
+  `public` and `external_addr`, TCP `external_addr` and Tor `advertised_port`
+  shape the endpoint (Local advert endpoints).
 - `node.retry.{max_retries,base_interval_secs,max_backoff_secs}`: bounded retry
   policy; the base and attempt/answer lifetimes must be nonzero.
 
@@ -1955,7 +2020,8 @@ transports:
 
 All keys at the Rust pin already exist in the configuration schema, including
 `advertise_on_nostr`, `external_addr`, `role` and `kind`. This transport does not
-add a relay actor or change the rendezvous driver's advertising capabilities.
+add a relay actor; with `advertise_on_nostr` its `external_addr` or non-wildcard
+listener address joins the node's Nostr advert (Local advert endpoints).
 An omitted `max_inbound_connections` inherits `node.limits.max_connections`;
 an explicit value, including zero, wins. Per-source admission canonicalizes
 IPv4-mapped addresses and counts IPv6 /64 prefixes. Pending outbound attempts
@@ -2173,11 +2239,13 @@ SOCKS5 errors or timeouts, 24.9 s in all. The fipsd row showed
 Earlier runs on a fresh onion took 7.8 s / 110.9 s and once 164 s for the
 first dial: Tor's rendezvous timing varies.
 
-Not ported here: publishing a Tor endpoint in this node's own Nostr advert.
-The C advert publisher advertises UDP only (TCP likewise); Tor endpoints in
-received adverts are dialled through this transport. As with TCP, there is
-no separate path-priority lane. Version decision: **fipsd stays 0.1.0
-Unreleased**; the transports fold into the initial daemon.
+With `advertise_on_nostr`, a directory-mode onion joins this node's own Nostr
+advert as `<onion>:<advertised_port>` once the onion is published (with a
+control monitor, `HS_DESC UPLOADED` for this service; see Local advert
+endpoints, `nostrc-r4aeo`). Tor endpoints in received adverts are dialled
+through this transport. As with TCP, there is no separate path-priority lane.
+Version decision: **fipsd stays 0.1.0 Unreleased**; the transports fold into
+the initial daemon.
 
 ## C<->Rust UDP interoperability gate (`nostrc-f66sr.1`)
 

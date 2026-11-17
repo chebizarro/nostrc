@@ -50,6 +50,11 @@ static void value(torctl_fixture *f, const char *key, char *out, size_t cap)
 static void getinfo(torctl_fixture *f, int fd, char *keys)
 {
     char out[2048] = "", line[512], v[256];
+    if (!strncmp(keys, "hs/service/desc/id/", 19)) { /* a dot-terminated multi-line value */
+        if (f->descriptor) snprintf(out, sizeof out, "250+%s=\r\nhs-descriptor 3\r\ndescriptor-lifetime 180\r\n.\r\n250 OK\r\n", keys);
+        else snprintf(out, sizeof out, "552 Unknown onion service\r\n");
+        reply(f, fd, out); return;
+    }
     size_t count = 0; bool dormant = false;
     for (char *save = NULL, *k = strtok_r(keys, " ", &save); k; k = strtok_r(NULL, " ", &save)) {
         ++count; dormant |= !strcmp(k, "dormant");
@@ -116,10 +121,11 @@ static void *serve(void *arg)
 }
 void torctl_fixture_start(torctl_fixture *f, const char *unix_path)
 {
-    bool use_cookie = f->use_cookie, reject = f->reject_auth, refuse = f->refuse_batch;
+    bool use_cookie = f->use_cookie, reject = f->reject_auth, refuse = f->refuse_batch, descriptor = f->descriptor;
     uint8_t cookie[32]; memcpy(cookie, f->cookie, 32);
     memset(f, 0, sizeof *f);
-    f->use_cookie = use_cookie; f->reject_auth = reject; f->refuse_batch = refuse; memcpy(f->cookie, cookie, 32);
+    f->use_cookie = use_cookie; f->reject_auth = reject; f->refuse_batch = refuse; f->descriptor = descriptor;
+    memcpy(f->cookie, cookie, 32);
     f->client = -1; f->bootstrap = 10; f->traffic_read = 1048576; f->traffic_written = 524288;
     strcpy(f->liveness, "up"); strcpy(f->version, "0.4.8.10"); strcpy(f->password, "test\"pa\\ss");
     assert(!pthread_mutex_init(&f->mu, NULL));

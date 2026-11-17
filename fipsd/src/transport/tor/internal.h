@@ -14,6 +14,8 @@ typedef struct tor_instance {
     char name[128], socks5_addr[257], control_addr[257], control_auth[512], cookie_path[1024];
     char hostname_file[1024], bind_addr[257], onion[128];
     _Atomic bool has_onion;      /* onion written once by start, read by the control provider */
+    _Atomic bool advertisable;   /* latched by start or the monitor; see fipsd_tor_advertised_onion */
+    GoChannel *advert;           /* capacity one: the latch was set */
     fips_transport_addr proxy;
     fipsd_stream_dialer dialer;
     tor_control control;

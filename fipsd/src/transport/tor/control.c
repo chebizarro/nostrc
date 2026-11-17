@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/un.h>
 #include <unistd.h>
 #define MODULE "tor"
@@ -174,10 +175,20 @@ static bool progress_of(const char *s, uint8_t *out)
     *out = v > 100 ? 100 : (uint8_t)v;
     return true;
 }
+static void descriptor(tor_control *c, tor_descriptor_signal s)
+{ if (c->descriptor) c->descriptor(c->descriptor_user, s); }
 /* An asynchronous 650 line's content (after "650 "). Only the first line of
  * a multi-line event carries what the snapshot needs. */
 static void handle_event(tor_control *c, const char *content)
 {
+    if (!strncmp(content, "HS_DESC ", 8)) {
+        /* Action HSAddress AuthType HsDir ...: only our own successful upload
+         * counts, never a fetch (REQUESTED/RECEIVED) of some other onion. */
+        const char *s = content + 8; size_t n = strlen(c->service);
+        if (n && !strncmp(s, "UPLOADED ", 9) && !strncasecmp(s + 9, c->service, n) && (s[9 + n] == ' ' || !s[9 + n]))
+            descriptor(c, TOR_DESCRIPTOR_UPLOADED);
+        return;
+    }
     fipsd_tor_monitoring m;
     nsync_mu_lock(&c->mu);
     if (c->has_info) m = c->info;
@@ -316,13 +327,23 @@ static int session_open(tor_control *c)
 /* Subscribe, then follow Tor's events until the session ends or stop. */
 static void session_run(tor_control *c)
 {
-    int fd = session_fd(c); reply r;
+    int fd = session_fd(c); reply r = {0};
     if (fd < 0) return;
-    if (!send_command(fd, EVENTS) || read_reply(c, fd, &r) < 0 || r.code != 250) {
+    if (!send_command(fd, c->service[0] ? EVENTS " HS_DESC" : EVENTS) || read_reply(c, fd, &r) < 0 || r.code != 250) {
         if (!stopped(c)) FIPSD_WARN(MODULE, "%s: control port refused event subscription (%d %s)", c->owner, r.code, r.status);
         return;
     }
+    c->subscribed = true;
     FIPSD_INFO(MODULE, "%s: Tor control port connected (monitoring enabled, addr=%s)", c->owner, c->addr);
+    if (c->service[0]) {
+        /* Subscribed first, so an upload racing this question is still seen.
+         * 250 means Tor holds a current descriptor for the service (one
+         * published before this session); otherwise wait for HS_DESC. */
+        char command[128]; snprintf(command, sizeof command, "GETINFO hs/service/desc/id/%s", c->service);
+        if (!send_command(fd, command) || read_reply(c, fd, &r) < 0) return;
+        if (r.code == 250) descriptor(c, TOR_DESCRIPTOR_CURRENT);
+        else FIPSD_INFO(MODULE, "%s: waiting for Tor to publish the descriptor of %s.onion (HS_DESC UPLOADED)", c->owner, c->service);
+    }
     for (;;) {
         int timeout = -1;
         if (!c->stall_warned && c->last_bootstrap < 100) {
@@ -359,6 +380,7 @@ static void monitor(void *arg)
         if (session_fd(c) < 0 && session_open(c) != 0) {
             if (stopped(c)) break;
             control_error(c);
+            if (!c->subscribed) descriptor(c, TOR_DESCRIPTOR_UNMONITORED);
             if (!c->warned) FIPSD_WARN(MODULE, "%s: Tor control port %s unavailable; monitoring retries with backoff", c->owner, c->addr);
             else FIPSD_DEBUG(MODULE, "%s: Tor control port %s still unavailable", c->owner, c->addr);
             c->warned = true;
@@ -369,6 +391,7 @@ static void monitor(void *arg)
         session_run(c);
         close_session(c);
         if (stopped(c)) break;
+        if (!c->subscribed) descriptor(c, TOR_DESCRIPTOR_UNMONITORED);
         control_error(c);
         FIPSD_WARN(MODULE, "%s: Tor control port connection lost; reconnecting with backoff", c->owner);
         if (!backoff(c, &attempt)) break;

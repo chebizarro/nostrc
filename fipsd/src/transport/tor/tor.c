@@ -5,12 +5,34 @@
 #include <stdlib.h>
 #include <string.h>
 #define MODULE "tor"
+/* The advert latch: set once, by the monitor's view of the descriptor or, with
+ * no monitor, by the hostname read alone (upstream advertises at start). */
+static void advertisable(tor_instance *x, const char *how)
+{
+    if (atomic_exchange(&x->advertisable, true)) return;
+    FIPSD_INFO(MODULE, "%s: onion %s advertisable (%s)", x->name, x->onion, how);
+    (void)go_channel_try_send(x->advert, x);
+}
+static void descriptor(void *user, tor_descriptor_signal s)
+{
+    tor_instance *x = user;
+    if (s == TOR_DESCRIPTOR_UNMONITORED && !atomic_load(&x->advertisable))
+        FIPSD_WARN(MODULE, "%s: Tor control port %s gave no session to confirm the onion descriptor; advertising from the hostname file",
+            x->name, x->control_addr);
+    advertisable(x, s == TOR_DESCRIPTOR_UPLOADED ? "HS_DESC UPLOADED" : s == TOR_DESCRIPTOR_CURRENT ?
+        "Tor holds a current descriptor" : "unconfirmed: control port unavailable");
+}
 static int start_async(fipsd_transport *t, fipsd_runtime *rt, const fipsd_node_context *node, GoChannel *events)
 {
     tor_instance *x = t->user;
     if (x->started) return -1;
     x->started = true; x->runtime = rt; x->root = fipsd_runtime_context(rt);
     if (x->mode == TOR_MODE_DIRECTORY && tor_onion_read(x) != 0) return -1;
+    size_t service = x->mode == TOR_MODE_DIRECTORY ? strlen(x->onion) - 6 : 0; /* without ".onion" */
+    if (service && x->has_control && service < sizeof x->control.service) {
+        memcpy(x->control.service, x->onion, service); x->control.service[service] = 0;
+        x->control.descriptor = descriptor; x->control.descriptor_user = x;
+    }
     /* control_port mode fails to start without its monitor, as upstream; a
      * directory-mode monitor is optional and keeps retrying in the background. */
     if (x->mode == TOR_MODE_CONTROL_PORT && tor_control_connect_now(&x->control, rt) != 0) {
@@ -20,6 +42,7 @@ static int start_async(fipsd_transport *t, fipsd_runtime *rt, const fipsd_node_c
     if (x->has_control && tor_control_start(&x->control, rt) != 0) { tor_control_close(&x->control); return -1; }
     int rc = x->tcp->ops->start_async(x->tcp, rt, node, events);
     if (rc) { tor_control_stop(&x->control); return rc; }
+    if (service && !x->control.descriptor) advertisable(x, "hostname file; no control monitor");
     FIPSD_INFO(MODULE, "%s: Tor transport started (mode=%s socks5=%s onion=%s mtu=%u)", x->name,
         tor_mode_name(x->mode), x->socks5_addr, atomic_load(&x->has_onion) ? x->onion : "none", (unsigned)x->config.mtu);
     return 0;
@@ -106,6 +129,11 @@ fipsd_transport *fipsd_tor_create(fips_transport_id id, const char *name, const 
         else FIPSD_WARN(MODULE, "%s: Tor control auth config error ('%s'); monitoring disabled", name,
             c->control_auth ? c->control_auth : "");
     }
+    atomic_init(&x->advertisable, false);
+    if (!(x->advert = go_channel_create(1))) {
+        if (x->has_control) tor_control_destroy(&x->control);
+        fipsd_tcp_destroy(x->tcp); free(x); return NULL;
+    }
     x->transport = (fipsd_transport){.ops = &ops, .id = id, .type = "tor", .name = x->name,
         .auto_connect = true, .accept_connections = mode == TOR_MODE_DIRECTORY, .user = x, .shared = x->tcp->shared};
     return &x->transport;
@@ -116,6 +144,7 @@ void fipsd_tor_destroy(fipsd_transport *t)
     tor_instance *x = t->user;
     if (x->has_control) tor_control_destroy(&x->control);
     fipsd_tcp_destroy(x->tcp);
+    go_channel_unref(x->advert);
     free(x);
 }
 bool fipsd_tor_is(const fipsd_transport *t) { return t && t->ops == &ops; }
@@ -127,6 +156,16 @@ const char *fipsd_tor_onion_address(const fipsd_transport *t)
     const tor_instance *x = t->user;
     return atomic_load_explicit(&x->has_onion, memory_order_acquire) ? x->onion : NULL;
 }
+const char *fipsd_tor_advertised_onion(const fipsd_transport *t)
+{
+    if (!fipsd_tor_is(t)) return NULL;
+    tor_instance *x = t->user;
+    return atomic_load(&x->advertisable) && atomic_load_explicit(&x->has_onion, memory_order_acquire) ? x->onion : NULL;
+}
+uint16_t fipsd_tor_advertised_port(const fipsd_transport *t)
+{ return fipsd_tor_is(t) ? ((const tor_instance *)t->user)->config.advertised_port : 0; }
+GoChannel *fipsd_tor_advert_updates(fipsd_transport *t)
+{ return fipsd_tor_is(t) ? ((tor_instance *)t->user)->advert : NULL; }
 bool fipsd_tor_monitoring_snapshot(const fipsd_transport *t, fipsd_tor_monitoring *out)
 {
     if (!fipsd_tor_is(t) || !out) return false;

@@ -380,6 +380,17 @@ add_test(NAME FipsdNostrRuntimeTest COMMAND fipsd_nostr_runtime_test)
 set_tests_properties(FipsdNostrRuntimeTest PROPERTIES TIMEOUT 90 LABELS "fips;nostr;relay"
   ENVIRONMENT "FIPSD_WORKERS=2")
 nostrc_describe_test(FipsdNostrRuntimeTest OWNER fipsd TARGETS fipsd_nostr_runtime_test)
+# The node's own advert (nostrc-r4aeo): TCP/Tor endpoints from the real
+# transport registry and driver, the onion after a fake control port's
+# HS_DESC UPLOADED, one republish per change and none without one.
+fipsd_unit_test(fipsd_nostr_adverts_test test_nostr_adverts.c)
+target_sources(fipsd_nostr_adverts_test PRIVATE nostr_relay_fixture.c torctl_fixture.c)
+target_link_libraries(fipsd_nostr_adverts_test PRIVATE PkgConfig::FIPSD_RELAY_TEST)
+add_dependencies(fipsd_tests fipsd_nostr_adverts_test)
+add_test(NAME FipsdNostrAdvertTest COMMAND fipsd_nostr_adverts_test)
+set_tests_properties(FipsdNostrAdvertTest PROPERTIES TIMEOUT 90 LABELS "fips;nostr;relay;transport"
+  ENVIRONMENT "FIPSD_WORKERS=2")
+nostrc_describe_test(FipsdNostrAdvertTest OWNER fipsd TARGETS fipsd_nostr_adverts_test)
 
 # Detected medium -> dispatcher -> Bundle selection with virtual time.
 fipsd_unit_test(fipsd_node_path_medium_test test_node_path_medium.c)
@@ -690,6 +701,16 @@ set_tests_properties(FipsdTorInteropTest PROPERTIES TIMEOUT 1200 SKIP_RETURN_COD
   LABELS "fips;transport;interop;tor" ENVIRONMENT "FIPSD_WORKERS=2")
 nostrc_describe_test(FipsdTorInteropTest OWNER fipsd TARGETS fipsd fipsd_test_tmpdir_run
   INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/tor_interop.py")
+# Opt-in: the Rust daemon finds fipsd's onion from its Nostr advert alone, on
+# a local stdlib relay (nostrc-r4aeo); SKIP 77 without both binaries.
+add_test(NAME FipsdAdvertTorInteropTest COMMAND fipsd_test_tmpdir_run "/control.sock"
+  "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/advert_interop.py"
+  --fipsd "$<TARGET_FILE:fipsd>" --rust "${FIPSD_UDP_INTEROP_RUST_BINARY}" --tor "${FIPSD_TOR_BINARY}")
+set_tests_properties(FipsdAdvertTorInteropTest PROPERTIES TIMEOUT 1200 SKIP_RETURN_CODE 77
+  LABELS "fips;nostr;interop;tor" ENVIRONMENT "FIPSD_WORKERS=2")
+nostrc_describe_test(FipsdAdvertTorInteropTest OWNER fipsd TARGETS fipsd fipsd_test_tmpdir_run
+  INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/advert_interop.py" "${CMAKE_CURRENT_SOURCE_DIR}/tor_interop.py"
+  "${CMAKE_CURRENT_SOURCE_DIR}/../../Testing/fips-chaos/services/relay.py")
 
 # fips-gateway (nostrc-iq1n9.3): one executable, a suite per module, each its
 # own test. The portable core runs on every platform; Linux-only cases are
