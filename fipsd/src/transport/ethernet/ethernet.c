@@ -24,8 +24,7 @@ static int transmit(eth_socket *s, const uint8_t mac[6], const uint8_t *p, size_
 {
     if (stopped(s)) return -1;
     ssize_t sent = fipsd_eth_io_send(s, mac, p, n);
-    if (sent != (ssize_t)n) { fipsd_transport_stats_error(&s->owner->shared.stats, true); return -1; }
-    fipsd_eth_stats_sent(s->owner, n); return 0;
+    return sent == (ssize_t)n ? 0 : -1;
 }
 static void beacon_loop(void *arg)
 {
@@ -34,15 +33,19 @@ static void beacon_loop(void *arg)
     uint8_t beacon[34]; fips_xonly_pubkey key = fips_identity_pubkey(fipsd_node_identity(u->node));
     fipsd_eth_beacon_encode(beacon, &key);
     unsigned failures = 0;
+    if (transmit(s, broadcast, beacon, sizeof beacon))
+        FIPSD_WARN("ethernet", "%s: initial beacon send failed", u->name);
+    else atomic_fetch_add(&u->shared.stats.beacons_sent, 1);
     while (!stopped(s)) {
-        if (transmit(s, broadcast, beacon, sizeof beacon)) {
-            if (++failures == 1) FIPSD_WARN("ethernet", "%s: beacon send failed", u->name);
-            if (failures >= 3) { fipsd_watcher_binding_exited(u->watcher, s->generation); break; }
-        } else { failures = 0; atomic_fetch_add(&u->shared.stats.beacons_sent, 1); }
         void *v = NULL; GoSelectCase c[] = {{GO_SELECT_RECEIVE, s->stop, NULL, &v},
             {GO_SELECT_RECEIVE, go_context_done(u->root), NULL, &v}};
         GoSelectResult result = go_select_timeout(c, 2, u->config.beacon_interval_secs * 1000);
-        if (result.selected_case >= 0) break;
+        if (result.selected_case >= 0 || stopped(s)) break;
+        if (transmit(s, broadcast, beacon, sizeof beacon)) {
+            fipsd_transport_stats_error(&u->shared.stats, true);
+            if (++failures == 1) FIPSD_WARN("ethernet", "%s: beacon send failed", u->name);
+            if (failures >= 3) { fipsd_watcher_binding_exited(u->watcher, s->generation); break; }
+        } else { failures = 0; atomic_fetch_add(&u->shared.stats.beacons_sent, 1); }
     }
     go_channel_close(s->beacon_done);
 }
@@ -182,12 +185,6 @@ static uint16_t mtu(const fipsd_transport *t, const fips_transport_addr *to)
     uint16_t n = u->socket ? u->socket->mtu : u->config.mtu ? u->config.mtu : 1497;
     nsync_mu_unlock(&u->mu); return n;
 }
-static bool local_addr(const fipsd_transport *t, fips_transport_addr *out)
-{
-    eth_instance *u = t->user; nsync_mu_lock(&u->mu); bool ok = u->socket != NULL;
-    if (ok) *out = fips_transport_addr_from_mac(u->socket->mac);
-    nsync_mu_unlock(&u->mu); return ok;
-}
 static int discover(fipsd_transport *t) { (void)t; return 0; } /* receive owner drains on beacon arrival */
 static int send_frame(fipsd_transport *t, const fips_transport_addr *to, const uint8_t *p, size_t n)
 {
@@ -196,16 +193,18 @@ static int send_frame(fipsd_transport *t, const fips_transport_addr *to, const u
     if (!to || to->len != 6 || fipsd_eth_group(to->bytes) || !memcmp(to->bytes, zero, 6) || !p) return -1;
     eth_socket *s = acquire(u); if (!s) return -1;
     int rc = -1;
-    if (n > s->mtu) { atomic_fetch_add(&u->shared.stats.frames_too_long, 1); atomic_fetch_add(&u->shared.stats.mtu_exceeded, 1); }
+    if (n > s->mtu) { atomic_fetch_add(&u->shared.stats.mtu_exceeded, 1); }
     else {
         uint8_t *wire = malloc(n + 3);
-        if (wire) { size_t len = fipsd_eth_data_encode(wire, n + 3, p, n); rc = transmit(s, to->bytes, wire, len); free(wire); }
+        if (wire) { size_t len = fipsd_eth_data_encode(wire, n + 3, p, n); rc = transmit(s, to->bytes, wire, len);
+            if (rc) fipsd_transport_stats_error(&u->shared.stats, true); else fipsd_eth_stats_sent(u, len);
+            free(wire); }
     }
     release(s); return rc;
 }
 static const fipsd_transport_ops ops = {.start_async = start_async, .stop = stop,
     .state = fipsd_transport_shared_state, .mtu = mtu, .send = send_frame, .discover = discover,
-    .network_changed = network_changed, .local_addr = local_addr};
+    .network_changed = network_changed};
 void fipsd_ethernet_config_default(fipsd_ethernet_config *c)
 { *c = (fipsd_ethernet_config){.ethertype = FIPSD_ETHERTYPE, .recv_buf_size = 2097152, .send_buf_size = 2097152,
     .listen = true, .beacon_interval_secs = 30}; }
@@ -261,3 +260,14 @@ int fipsd_ethernet_register_config(fipsd_transport_registry *r, const fipsd_conf
     }
     return 0;
 }
+
+#if !defined(__linux__) && !defined(__APPLE__)
+int fipsd_eth_io_open(eth_socket *s, const fipsd_ethernet_config *c)
+{ (void)s; (void)c; errno = ENOTSUP; return -1; }
+int fipsd_eth_io_bound_index(eth_socket *s) { return s->index; }
+ssize_t fipsd_eth_io_recv(eth_socket *s, uint8_t *p, size_t n, uint8_t mac[6])
+{ (void)s; (void)p; (void)n; (void)mac; errno = ENOTSUP; return -1; }
+ssize_t fipsd_eth_io_send(eth_socket *s, const uint8_t mac[6], const uint8_t *p, size_t n)
+{ (void)s; (void)mac; (void)p; (void)n; errno = ENOTSUP; return -1; }
+uint32_t fipsd_eth_io_drops(eth_socket *s) { (void)s; return 0; }
+#endif

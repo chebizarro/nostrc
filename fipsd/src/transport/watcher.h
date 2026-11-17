@@ -35,5 +35,8 @@ void fipsd_watcher_stop(fipsd_watcher *); /* prompt, idempotent */
 void fipsd_watcher_destroy(fipsd_watcher *); /* only after runtime join */
 /* Same reducer used by the actor, exposed for clock-driven tests. Sole owner
  * only; invalid reads retain the last binding, carrier is never a bind gate. */
+/* Sole owner: UINT64_MAX means no pending deadline; overdue retries are
+ * retained so scheduler delays cannot strand an event-only binding. */
+uint64_t fipsd_watcher_next_deadline(fipsd_watcher *);
 int fipsd_watcher_step(fipsd_watcher *, fipsd_presence_facts, uint64_t now_ms);
 #endif

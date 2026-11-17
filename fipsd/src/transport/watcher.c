@@ -14,7 +14,7 @@ struct fipsd_watcher {
     fipsd_runtime *runtime;
     GoChannel *events, *wake, *stop;
     Ticker *ticker;
-    bool started, bound, announced, reported, event_driven;
+    bool started, bound, announced, reported, event_driven, initial_announce;
     bool (*healthy)(void *);
     uint32_t streak;
     uint64_t generation, bound_at, retry_at, absent_since;
@@ -55,7 +55,7 @@ int fipsd_watcher_step(fipsd_watcher *w, fipsd_presence_facts f, uint64_t now)
         if (gone || replaced || dead) {
             detach(w, now);
             w->streak = now - w->bound_at < 10000 ? w->streak + 1 : 0;
-            w->retry_at = now + (w->streak ? fipsd_bind_backoff_ms(w->streak) : 0);
+            w->retry_at = gone ? 0 : now + (w->streak ? fipsd_bind_backoff_ms(w->streak) : 0);
             w->absent_since = now; w->reported = false;
             if (w->streak == 3) FIPSD_WARN("transport", "%s: binding churn; holding health until stable", w->transport->name);
             if (w->announced) { w->announced = false; return publish(w, false); }
@@ -75,7 +75,9 @@ int fipsd_watcher_step(fipsd_watcher *w, fipsd_presence_facts f, uint64_t now)
         FIPSD_ERROR("transport", "%s: required interface remains unavailable", w->transport->name);
         w->reported = true;
     }
-    if (!f.valid || gone || now < w->retry_at) return 0;
+    if (!f.valid || gone) { w->retry_at = 0; return 0; }
+    if (now < w->retry_at) return 0;
+    w->retry_at = 0; /* consume; a failed bind installs a fresh retry */
     fipsd_presence_transition(p, FIPSD_BINDING, now);
     uint64_t gen = ++w->generation;
     fipsd_bind_result result = w->ops.bind(w->ops.user, w->runtime, w->stop, &f, gen);
@@ -122,12 +124,37 @@ static void *read_facts(void *arg)
     }
     return f;
 }
+static void *read_initial_facts(void *arg)
+{
+    fipsd_watcher *w = arg;
+    /* Transports start before netmon. Its not-yet-populated snapshot cannot
+     * hide a present device (and a missing raw/BPF privilege) at startup. */
+    if (w->source.read || !w->transport->interface_name) return read_facts(arg);
+    fipsd_presence_facts *f = malloc(sizeof *f);
+    if (f) *f = fipsd_presence_read(w->transport->interface_name);
+    return f;
+}
+uint64_t fipsd_watcher_next_deadline(fipsd_watcher *w)
+{
+    uint64_t deadline = UINT64_MAX;
+    if (w->bound && !w->announced) deadline = w->bound_at + 10000;
+    if (!w->bound) {
+        if (w->retry_at) deadline = w->retry_at; /* include overdue retries */
+        if (!w->reported && !fipsd_presence_snapshot(&w->transport->shared->presence).optional &&
+            w->absent_since + 10000 < deadline) deadline = w->absent_since + 10000;
+    }
+    return deadline;
+}
 static void *new_timer(void *unused) { (void)unused; return create_ticker(1000); }
 static void *stop_timer(void *t) { stop_ticker(t); return NULL; }
 static void actor(void *arg)
 {
     fipsd_watcher *w = arg;
     while (!stopped(w)) {
+        if (w->initial_announce) {
+            w->initial_announce = false;
+            if (publish(w, true)) break;
+        }
         fipsd_presence_facts *f = go_blocking_submit(read_facts, w);
         int rc = fipsd_watcher_step(w, f ? *f : (fipsd_presence_facts){0}, now_ms(w));
         free(f);
@@ -139,13 +166,7 @@ static void actor(void *arg)
             {GO_SELECT_RECEIVE, w->ticker ? w->ticker->c : w->source.ticks, NULL, &value}};
         int selected;
         if (w->event_driven && !w->source.ticks) {
-            uint64_t now = now_ms(w), deadline = UINT64_MAX;
-            if (w->bound && !w->announced) deadline = w->bound_at + 10000;
-            if (!w->bound) {
-                if (w->retry_at > now) deadline = w->retry_at;
-                if (!w->reported && !fipsd_presence_snapshot(&w->transport->shared->presence).optional &&
-                    w->absent_since + 10000 < deadline) deadline = w->absent_since + 10000;
-            }
+            uint64_t now = now_ms(w), deadline = fipsd_watcher_next_deadline(w);
             if (deadline == UINT64_MAX) selected = go_select(cases, 3);
             else {
                 GoSelectResult result = go_select_timeout(cases, 3, deadline > now ? deadline - now : 0);
@@ -184,7 +205,25 @@ int fipsd_watcher_start(fipsd_watcher *w, fipsd_runtime *rt, const fipsd_node_co
         if (!w->ticker) return -1;
     }
     atomic_store(&w->transport->shared->state, FIPSD_TRANSPORT_ABSENT);
+    if (w->event_driven) {
+        /* Required raw/BPF privileges are a startup error when the device
+         * exists. Absence still starts the event-driven watcher normally. */
+        fipsd_presence_facts *f = go_blocking_submit(read_initial_facts, w);
+        /* The node starts transports before its dispatcher. Do not block
+         * startup publishing to an inbox a raw-frame burst may have filled. */
+        w->events = NULL;
+        int rc = fipsd_watcher_step(w, f ? *f : (fipsd_presence_facts){0}, now_ms(w));
+        w->events = events;
+        w->initial_announce = w->bound && w->announced;
+        free(f);
+        if (rc < 0 || (!w->bound && fipsd_presence_snapshot(&w->transport->shared->presence).attempts)) {
+            if (w->bound) detach(w, now_ms(w));
+            atomic_store(&w->transport->shared->state, FIPSD_TRANSPORT_FAILED);
+            return -1;
+        }
+    }
     if (fipsd_runtime_spawn(rt, actor, w) != 0) {
+        if (w->bound) detach(w, now_ms(w));
         if (w->ticker) { go_blocking_submit(stop_timer, w->ticker); w->ticker = NULL; }
         atomic_store(&w->transport->shared->state, FIPSD_TRANSPORT_STOPPED); return -1;
     }
