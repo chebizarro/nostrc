@@ -54,6 +54,7 @@ BuildRequires:  pkgconfig(libsecp256k1)
 BuildRequires:  pkgconfig(openssl) >= 3.0
 BuildRequires:  pkgconfig(libwebsockets)
 BuildRequires:  pkgconfig(libcurl)
+BuildRequires:  pkgconfig(libnftables)
 # Shipped by systemd, needed by the scriptlets below.
 BuildRequires:  systemd-rpm-macros
 %if %{with system_nsync}
@@ -80,6 +81,16 @@ This package ships the daemon, its systemd units (fipsd, fips-dns and the
 opt-in fips-firewall nftables baseline), the fips system group that gates
 the control socket, and an example configuration seeded to
 /etc/fips/fips.yaml on first install.
+
+%package -n fips-gateway
+Summary:        FIPS outbound LAN gateway
+Requires:       fipsd%{?_isa} = %{version}-%{release}
+Requires:       nftables
+Requires:       iproute
+
+%description -n fips-gateway
+Linux IPv6 LAN-to-mesh gateway using libnftables NAT and proxy NDP.
+Configure gateway in /etc/fips/fips.yaml before enabling the opt-in service.
 
 %package -n libfipsnative
 Summary:        Client library for the fipsd native datagram API
@@ -193,6 +204,26 @@ fi
 # has no purge, and the equivalent of the Debian purge would take the node's
 # identity keys with it during a distribution upgrade that erases and
 # reinstalls. Remove /etc/fips yourself if you mean it.
+
+%post -n fips-gateway
+# Opt-in: reload unit definitions, but do not enable or start on install.
+if [ -d /run/systemd/system ]; then
+    systemctl daemon-reload >/dev/null 2>&1 || :
+fi
+
+%preun -n fips-gateway
+%systemd_preun fips-gateway.service
+
+%postun -n fips-gateway
+%systemd_postun_with_restart fips-gateway.service
+if [ $1 -eq 0 ]; then
+    rm -rf /run/fips-gateway
+fi
+
+%files -n fips-gateway
+%license %{_licensedir}/fipsd/LICENSE
+%{_bindir}/fips-gateway
+%{_unitdir}/fips-gateway.service
 
 %files
 %license %{_licensedir}/fipsd/LICENSE

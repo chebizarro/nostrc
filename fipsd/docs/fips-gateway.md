@@ -238,9 +238,28 @@ abandoned task can touch freed state.
 - **`gateway.conntrack.*` and `gateway.global_prefix`** are accepted and not
   acted on. Upstream does the same: its `src/config/gateway.rs` parses them,
   and only the OpenWrt init script reads `global_prefix`.
-- **Packaging.** The packages do not carry the gateway yet:
-  `fipsd/packaging/common/cmake-args.sh` sets `-DFIPSD_BUILD_GATEWAY=OFF`.
-  `fips-gateway.service` is generated and installed with the executable.
+- **Packaging.** Debian and RPM ship a separate `fips-gateway` package,
+  requiring `fipsd` and the libnftables runtime (Debian derives it with
+  dpkg-shlibdeps; Fedora uses `nftables`). Arch follows upstream's single
+  package layout: `fipsd` includes the gateway and depends on `nftables`.
+  All Linux recipes require the libnftables headers when building.
+  `fips-gateway.service` is generated and installed with the executable,
+  but is never enabled or started by package installation.
+
+## Install
+
+On Debian/Ubuntu install `fipsd` and `fips-gateway` together (`apt install
+./fipsd_*.deb ./fips-gateway_*.deb`); on Fedora use `dnf install fipsd
+fips-gateway`; on Arch install `fipsd` (the gateway is included). The gateway
+also needs `ip` from iproute2/iproute at runtime. Packages install its unit,
+but do not activate it before a gateway configuration exists.
+
+Configure the shared `/etc/fips/fips.yaml` below, set the required sysctls,
+and explicitly `sudo systemctl enable --now fips-gateway.service`.
+Check `journalctl -u fips-gateway.service` and query `/run/fips/gateway.sock`.
+Use `sudo systemctl disable --now fips-gateway.service` before removing it.
+A clean stop removes its nft table, pool route, proxy entries and socket;
+Debian purge/RPM erase also drops `/run/fips-gateway` restart state.
 
 ## Deploy (deploy-gateway.md)
 

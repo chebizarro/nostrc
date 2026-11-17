@@ -25,6 +25,7 @@ package ships, and the recipes (`debian/rules`, `rpm/fipsd.spec`,
 
 | Installed | From | Notes |
 | --------- | ---- | ----- |
+| `/usr/bin/fips-gateway`, `/usr/lib/systemd/system/fips-gateway.service` | `src/gateway/`, `systemd/fips-gateway.service.in` | Linux only; separate Debian/RPM `fips-gateway`, bundled in Arch `fipsd` as upstream does. Opt-in, never started or enabled by installation. |
 | `/usr/bin/fipsd` (+ `fipsctl` when its target exists) | `fipsd/`, `src/fipsctl/` | `fipsctl` is installed by a deferred `if(TARGET fipsctl)`. |
 | `/usr/lib/<triplet>/libfipsnative.so.0`, `.so`, `.a`, headers, `.pc` | `src/native/client.c`, `include/` | Debian: `libfipsnative0` + `libfipsnative-dev`; RPM: `libfipsnative` + `-devel`. |
 | `/usr/lib/<triplet>/fipsd/libnostr-json.so.2` | `libjson/` | Private copy with an RPATH, as the desktop apps ship it: `libjson/` builds shared only, and the daemon must not depend on or collide with the login stack's public `libnostr-json2`. |
@@ -67,9 +68,11 @@ every format on a `fipsd-v*` tag or by dispatch.
 
 ## Debian / Ubuntu
 
-`debian/` is a debhelper 13 recipe for three binary packages: `fipsd`,
-`libfipsnative0`, `libfipsnative-dev`. `build-deb.sh` copies the tree to a
-scratch directory with this directory as `debian/` (the shape of
+`debian/` is a debhelper 13 recipe for four binary packages: `fipsd`,
+`fips-gateway`, `libfipsnative0`, `libfipsnative-dev`. The opt-in gateway
+package depends on the same-version `fipsd`, `iproute2` and the libnftables
+runtime derived by `dpkg-shlibdeps` (Ubuntu: `libnftables1`).
+`build-deb.sh` copies the tree to a scratch directory with this directory as `debian/` (the shape of
 `scripts/build-desktop-deb.sh`), runs `dpkg-buildpackage -b -us -uc`, then
 `check-deb-depends.sh`, `check-glibc-floor.sh` and `check-deb-revision.sh`
 over the result. `rules` configures with `common/cmake-args.sh` (the daemon
@@ -89,7 +92,22 @@ sudo fipsd/packaging/testing/smoke-systemd.sh     # start, query the socket, sto
 sudo apt purge fipsd libfipsnative0
 ```
 
+Install the gateway with `sudo apt install ./build-deb/fips-gateway_*.deb`
+alongside `fipsd`. Configure the shared `/etc/fips/fips.yaml` using
+[the gateway deployment example](../docs/fips-gateway.md#deploy-deploy-gatewaymd),
+enable IPv6 forwarding/proxy NDP, then
+`sudo systemctl enable --now fips-gateway.service`. The gateway service stays
+disabled until requested. Stop it before removing `fipsd`;
+`sudo apt purge fips-gateway fipsd` also removes the gateway's tmpfs pool state.
+
 ## RPM
+
+The spec also produces a separate `fips-gateway` subpackage, requiring the
+same-version `fipsd`, `nftables` (libnftables runtime) and `iproute`.
+Install both with `dnf install ./fipsd-*.aarch64.rpm ./fips-gateway-*.aarch64.rpm`
+(use your native architecture), configure as above and explicitly enable the
+service. Erasing the subpackage stops/disables the unit and drops its runtime
+pool state; as with `fipsd`, RPM retains operator configuration.
 
 `rpm/fipsd.spec` builds from the source archive on Fedora 42+, with nsync
 bundled from `third_party/` (Fedora has no package; `--with system_nsync`
@@ -129,6 +147,13 @@ or `control-query.py show_status`, check the socket's group and mode, stop),
 throwaway config with the TUN off), `smoke-launchd.sh` (macOS: the installed
 system job as root, or a built binary in the user's launchd domain), and
 `control-query.py`, the one-line JSON request the control socket speaks.
+`sudo timeout 90 python3 testing/smoke-gateway.py` starts/stops the installed
+gateway unit with the deployment example adapted to loopback and high DNS ports,
+queries both control commands and checks nft table/route/socket teardown. It
+restores the original config and sysctls. Run only on disposable runners.
+`--direct` runs the same check in a fresh Fedora container with NET_ADMIN and
+`/dev/net/tun`, without systemd. This proves packaged startup, not mesh forwarding;
+the opt-in gateway netns suite covers forwarding.
 
 ## Checks
 

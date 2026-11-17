@@ -16,7 +16,7 @@ pkgdesc="FIPS mesh network daemon (nostrc C port) and the libfipsnative client l
 arch=('x86_64' 'aarch64')
 url="https://github.com/chebizarro/nostrc"
 license=('MIT')
-depends=('glib2' 'libsodium' 'libyaml' 'jansson' 'libsecp256k1' 'openssl' 'libwebsockets' 'curl' 'nsync' 'systemd')
+depends=('glib2' 'libsodium' 'libyaml' 'jansson' 'libsecp256k1' 'openssl' 'libwebsockets' 'curl' 'nsync' 'systemd' 'nftables' 'iproute2')
 makedepends=('cmake' 'ninja' 'pkgconf')
 optdepends=('nftables: fips-firewall.service mesh-interface baseline'
             'systemd-resolvconf: .fips DNS routing through fips-dns.service')

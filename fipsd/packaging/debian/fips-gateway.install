@@ -1,0 +1,2 @@
+usr/bin/fips-gateway
+usr/lib/systemd/system/fips-gateway.service

@@ -35,6 +35,7 @@ override_dh_auto_install:
 	# CMake fills in the unit templates; an unconfigured @VAR@ must never ship.
 	! grep -rq '@[A-Z_]*@' debian/tmp/usr/lib/systemd/system
 	test -x debian/tmp/usr/bin/fipsd
+	test -x debian/tmp/usr/bin/fips-gateway
 
 override_dh_install:
 	dh_install
@@ -50,6 +51,7 @@ override_dh_installsystemd:
 	dh_installsystemd -pfipsd fipsd.service
 	dh_installsystemd -pfipsd --no-start fips-dns.service
 	dh_installsystemd -pfipsd --no-enable --no-start fips-firewall.service
+	dh_installsystemd -pfips-gateway --no-enable --no-start fips-gateway.service
 
 # libnostr-json in /usr/lib/<triplet>/fipsd/ is private to the daemon (an
 # RPATH points there): no shlibs entry, no ldconfig trigger, no dependency.
