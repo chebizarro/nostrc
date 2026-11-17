@@ -36,7 +36,7 @@ void ft_put(ft_frame *f,ft_rect r,int x,int y,ft_style style,const char *text)
         if (!n) break;
         text+=n;
         if (ch<L' ' || ch==127) ch=L' ';
-        int cw=wcwidth(ch); if (cw<1) cw=1;
+        int cw=wcwidth(ch); if (cw<1) { ch=L'?'; cw=1; }
         if (x>=0 && x+cw<=r.w && x+r.x>=0 && x+cw+r.x<=f->w) {
             int i=(y+r.y)*f->w+x+r.x; f->cells[i]=(ft_cell){ch,(unsigned char)style};
             for (int j=1;j<cw;++j) f->cells[i+j]=(ft_cell){0,(unsigned char)style};

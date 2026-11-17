@@ -70,5 +70,18 @@ int main(int argc,char **argv)
     ft_replace(&a.data[FT_GRAPHS],parse("{\"series\":[{\"metric\":\"mesh_size\",\"values\":[]}]}"));
     assert(ft_frame_init(&f,80,24)); ft_draw(&f,&a); assert(has(&f,"no samples")); ft_frame_free(&f);
     const double v[]={1,2,3,4,5}; double out[5]; ft_resample(v,5,out,5); for(size_t i=0;i<5;++i) assert(out[i]==v[i]);
+
+    /* Collapsing a child must select its own parent, not the following transport. */
+    a.tab=FT_TRANSPORTS;
+    json_t *following=parse("{\"transport_id\":2,\"type\":\"udp\"}");
+    json_array_append_new(ft_rows(&a,FT_TRANSPORTS),following);
+    a.selected[FT_TRANSPORTS]=0; ft_event(&a,FT_RIGHT); ft_event(&a,FT_DOWN);
+    assert(a.selected[FT_TRANSPORTS]==1 && ft_row_count(&a)==3);
+    ft_event(&a,FT_LEFT); assert(a.selected[FT_TRANSPORTS]==0 && ft_row_count(&a)==2);
+    assert(ft_frame_init(&f,8,5));
+    ft_put(&f,(ft_rect){0,0,8,5},0,0,FT_NORMAL,"e\u0301x界y");
+    assert(f.cells[0].ch==L'e' && f.cells[1].ch==L'?' && f.cells[2].ch==L'x');
+    assert(f.cells[3].ch==L'界' && f.cells[4].ch==0 && f.cells[5].ch==L'y');
+    ft_frame_free(&f);
     ft_app_free(&a); puts("fipstop: ten panes x two sizes, input/focus/selection/confirmation, transport tree, graph model passed"); return 0;
 }

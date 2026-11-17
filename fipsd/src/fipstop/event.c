@@ -100,9 +100,17 @@ bool ft_event(ft_app *a, int key)
         if (a->tab==FT_GRAPHS) { a->graph_window=(a->graph_window+(b->action==ACT_RIGHT?1:3))%4; return true; }
         else {
             ft_transport_row *rows=NULL; size_t n=ft_transport_rows(a,&rows); int sel=a->selected[FT_TRANSPORTS];
-            if (sel>=0 && (size_t)sel<n) ft_expand(a,rows[sel].transport,b->action==ACT_RIGHT);
+            bool has_parent=sel>=0 && (size_t)sel<n;
+            uint64_t parent=has_parent?ft_uint(rows[sel].transport,"transport_id"):0;
+            if(has_parent) ft_expand(a,rows[sel].transport,b->action==ACT_RIGHT);
             free(rows);
-            n=ft_row_count(a); if (sel>=0 && (size_t)sel>=n) a->selected[FT_TRANSPORTS]=n?(int)n-1:-1;
+            rows=NULL; n=ft_transport_rows(a,&rows);
+            if(has_parent && b->action==ACT_LEFT) {
+                for(size_t i=0;i<n;++i) if(!rows[i].link && ft_uint(rows[i].transport,"transport_id")==parent) {
+                    a->selected[FT_TRANSPORTS]=(int)i; break;
+                }
+            } else if(sel>=0 && (size_t)sel>=n) a->selected[FT_TRANSPORTS]=n?(int)n-1:-1;
+            free(rows);
         } break;
     case ACT_EXPAND: case ACT_COLLAPSE: {
         size_t i; json_t *t; json_array_foreach(ft_rows(a,FT_TRANSPORTS),i,t) ft_expand(a,t,b->action==ACT_EXPAND);

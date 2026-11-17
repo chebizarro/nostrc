@@ -129,7 +129,7 @@ def adapter_cases(unit, root):
     print('upstream adapter cases: sibling/symlink composition, fallback, ten-fetch quiet, failed panel passed')
 
 
-def terminal_cases(binary, root):
+def terminal_case(binary, root, stop):
     master, slave = pty.openpty()
     original = termios.tcgetattr(slave)
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 24, 80, 0, 0))
@@ -152,7 +152,10 @@ def terminal_cases(binary, root):
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 40, 120, 0, 0))
         process.send_signal(signal.SIGWINCH)
         until(b'Gateway')
-        os.write(master, b'q')
+        if stop == 'q':
+            os.write(master, b'q')
+        else:
+            process.send_signal(stop)
         until(b'\x1b[?1049l')  # Drain the frame and observe endwin before waiting for exit.
         assert process.wait(timeout=10) == 0
         current = termios.tcgetattr(slave)
@@ -168,7 +171,7 @@ def terminal_cases(binary, root):
             process.wait(timeout=5)
         os.close(master)
         os.close(slave)
-    print('real ncurses PTY: initial frame, NO_COLOR, 80x24 -> 120x40 resize, q and terminal restoration passed')
+    print(f'real ncurses PTY: initial frame, NO_COLOR, resize, stop={stop}, terminal restoration passed')
 
 
 def main():
@@ -178,7 +181,10 @@ def main():
     p.add_argument('--unit', required=True)
     args = p.parse_args()
     repo = Path(__file__).resolve().parents[2]
-    terminal_cases(args.fipstop, repo)
+    for stop in ('q', signal.SIGTERM, signal.SIGHUP):
+        terminal_case(args.fipstop, repo, stop)
+    failed = subprocess.run([args.fipstop], stdin=subprocess.DEVNULL, capture_output=True, timeout=10)
+    assert failed.returncode == 1 and b'terminal required' in failed.stderr
     with tempfile.TemporaryDirectory(prefix='.ft-', dir=repo) as directory:
         root = Path(directory)
         adapter_cases(args.unit, root)
