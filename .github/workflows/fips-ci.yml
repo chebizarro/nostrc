@@ -61,7 +61,10 @@ jobs:
           args=(-DCMAKE_BUILD_TYPE=Debug -DGO_WARNINGS_AS_ERRORS=ON)
           case '${{ matrix.configuration }}' in
             asan_ubsan) args+=(-DGO_ENABLE_ASAN=ON -DGO_ENABLE_UBSAN=ON -DFIPS_ENABLE_FUZZERS=ON) ;;
-            tsan) args+=(-DGO_ENABLE_TSAN=ON) ;;
+            # TSan only sees locks it can instrument: a packaged nsync is opaque
+            # to it, so every nsync-guarded access in fipsd/libnostr would be
+            # reported. Build the vendored copy with -fsanitize=thread instead.
+            tsan) args+=(-DGO_ENABLE_TSAN=ON -DNOSTR_USE_SYSTEM_NSYNC=OFF) ;;
             optimized) args+=(-DCMAKE_BUILD_TYPE=Release '-DCMAKE_C_FLAGS_RELEASE=-O2 -DNDEBUG') ;;
           esac
           cmake -S . -B build -G Ninja "${args[@]}" \
@@ -204,7 +207,7 @@ jobs:
             -DWITH_NOSTRDB=OFF -DLIBNOSTR_WITH_NOSTRDB=OFF \
             "-DFIPSD_UDP_INTEROP_RUST_BINARY=${RUNNER_TEMP}/fips-rust-target/release/fips"
       - name: Build fipsd
-        run: cmake --build build --parallel 3 --target fipsd fipsd_test_tmpdir_run
+        run: cmake --build build --parallel 3 --target fipsd fipsd_test_tmpdir_run fipsd_native_client_tool
       - name: C<->Rust UDP interop (both roles, IPv4 and IPv6)
         run: ctest --test-dir build -R '^FipsdInteropUdp' --no-tests=error --output-on-failure
       - uses: actions/upload-artifact@v4
@@ -451,20 +454,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential cmake ninja-build pkg-config clang libclang-rt-18-dev libjansson-dev libyaml-dev libsecp256k1-dev libsodium-dev libssl-dev libcurl4-openssl-dev libwebsockets-dev libglib2.0-dev libsoup-3.0-dev libnsync-dev libnftables-dev libncurses-dev
       - name: Apply identical test-only workload to the reference
-        # The baseline predates this harness. Never copy shipped source into it:
-        # both builds measure the same current workloads against their own core.
+        # The baseline already defines the bench targets (fips_benches,
+        # fipsd_perf_native); only the workload sources are refreshed. Never copy
+        # shipped source into it: both builds measure the same current workloads
+        # against their own core.
         run: |
           cp libfips-core/bench/* perf-reference/libfips-core/bench/
           cp fipsd/tests/perf_native.c perf-reference/fipsd/tests/
-          cat >> perf-reference/fipsd/tests/CMakeLists.txt <<'CMAKE'
-          if(FIPS_ENABLE_BENCH)
-            add_executable(fipsd_perf_native perf_native.c)
-            target_link_libraries(fipsd_perf_native PRIVATE fipsnative_static Threads::Threads)
-            set_target_properties(fipsd_perf_native PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
-            apply_warnings(fipsd_perf_native)
-            apply_sanitizers(fipsd_perf_native)
-          endif()
-          CMAKE
       - name: Build candidate and reference (Release, Werror)
         shell: bash
         run: |
