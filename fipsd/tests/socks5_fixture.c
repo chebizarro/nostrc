@@ -37,8 +37,12 @@ static bool read_full(socks5_fixture *f, int fd, void *buf, size_t n)
 static bool write_full(int fd, const void *buf, size_t n)
 {
     const uint8_t *p = buf;
+    int flags = 0;
+#ifdef MSG_NOSIGNAL
+    flags = MSG_NOSIGNAL; /* a client that left is EPIPE, not a signal (Apple: SO_NOSIGPIPE at accept) */
+#endif
     for (size_t sent = 0; sent < n;) {
-        ssize_t k = send(fd, p + sent, n - sent, 0);
+        ssize_t k = send(fd, p + sent, n - sent, flags);
         if (k < 0 && errno == EINTR) continue;
         if (k <= 0) return false;
         sent += (size_t)k;

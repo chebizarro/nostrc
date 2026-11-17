@@ -7,6 +7,7 @@
  * cleartext FMP counter, not by completion order. */
 #include "node/handlers/internal.h"
 #include "node/transport_loopback.h"
+#include "peer/dispatcher.h"
 #include "fakes/host.h"
 #include "select.h"
 #include <assert.h>
@@ -118,6 +119,12 @@ static bool command(void *user, void *message)
         assert(p && reserved(p) == before + 1);
         atomic_store(&f->drop_counter, before);
     }
+    /* Advancing the virtual clock makes peer deadlines due too (the 10 s
+     * liveness heartbeat after the jump to 30000 ms). The node loop services
+     * them only after its command batch, which may already hold the next
+     * command; service them here so a tick's frames are on the wire before its
+     * reply and never land behind a later announce. */
+    if (r->op == TICK) assert(fipsd_peer_dispatcher_service(h->peers));
     f->waiting = r; reply_if_ready(h, NULL);
     return true;
 }
