@@ -201,6 +201,7 @@ void ft_disconnect(ft_app *a)
     free(a->confirm_name); a->confirm_name = NULL;
 }
 
+const char *ft_base_version(void) { return FIPSTOP_VERSION; }
 const char *ft_short_version(void)
 {
     return FIPSD_GIT_REV[0] ? FIPSTOP_VERSION " (rev " FIPSD_GIT_REV ")" : FIPSTOP_VERSION;
@@ -209,4 +210,10 @@ void ft_version(FILE *out,bool long_form)
 {
     fprintf(out,"fipstop %s\n",ft_short_version());
     if(long_form) fprintf(out,"target: %s\n",FIPSD_TARGET_TRIPLE);
+}
+
+uint64_t ft_wall_ms(void)
+{
+    struct timespec t; clock_gettime(CLOCK_REALTIME,&t);
+    return (uint64_t)t.tv_sec*1000+(uint64_t)t.tv_nsec/1000000;
 }

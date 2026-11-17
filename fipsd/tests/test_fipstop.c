@@ -36,7 +36,7 @@ int main(int argc,char **argv)
         }
         ft_app_free(&a); return 0;
     }
-    assert(setlocale(LC_ALL,"")); ft_app a; ft_app_init(&a,2,"/not/a/socket",NULL);
+    assert(ft_locale()); ft_app a; ft_app_init(&a,2,"/not/a/socket",NULL);
     assert(ft_load_fixtures(&a,FIPSTOP_FIXTURES,stderr));
     const char *titles[]={"Runtime","Peers (0)","Transports (0)","Sessions (0)","Tree Position","Bloom Filter State","Link MMP","Routing State","Graphs — Node","Gateway not running"};
     for(int size=0;size<2;++size) for(int tab=0;tab<10;++tab) {

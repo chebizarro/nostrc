@@ -2662,3 +2662,17 @@ Verification (`ctest -R FipsdGateway`, all in `fipsd_tests`):
   - the inbound forwards, with and without the mesh firewall baseline;
   - a clean stop that removes every rule, route and NDP entry;
   - a restart that keeps the previous run's addresses held.
+
+
+## fipstop dashboard
+
+The optional ncurses dashboard installs alongside fipsctl. It has ten tabbed
+panes, role-sorted peer/link views, independently scrollable internals,
+historical graphs and a separate gateway view. Run **fipstop -s PATH** (default
+refresh: two seconds); press **?** for keys and **q** to quit.
+
+CMake enables FIPSD_BUILD_FIPSTOP when pkg-config finds ncursesw or ncurses.
+Packaging needs **libncurses-dev** (Debian/Ubuntu) or **ncurses** (Alpine);
+the workflow owner must add the dependency to CI package lists. The new
+component does not change the daemon or fipsctl version/API. See
+[CLI, panes, keys and regression modes](docs/cli-fipstop.md).

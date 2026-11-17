@@ -29,11 +29,11 @@ class Screens:
         self.selector = None
         self.w, self.h = w, h
         self.call('new-session', '-d', '-s', 'ft', '-n', 'c', '-x', w, '-y', h,
-                  shlex.join(['env', 'TERM=xterm-256color', 'LC_ALL=en_US.UTF-8', 'NO_COLOR=1', binaries[0], '-s', str(control)]))
+                  shlex.join(['env', 'TERM=xterm-256color', 'LC_ALL=en_US.UTF-8', 'NO_COLOR=1', binaries[0], '-s', str(control), '--gateway-socket', str(control.parent / 'gateway.sock')]))
         self.call('set-option', '-g', 'status', 'off')
         self.call('set-option', '-g', 'remain-on-exit', 'on')
         self.call('new-window', '-d', '-t', 'ft', '-n', 'rust',
-                  shlex.join(['env', 'TERM=xterm-256color', 'LC_ALL=en_US.UTF-8', 'NO_COLOR=1', binaries[1], '-s', str(control)]))
+                  shlex.join(['env', 'TERM=xterm-256color', 'LC_ALL=en_US.UTF-8', 'NO_COLOR=1', binaries[1], '-s', str(control), '--gateway-socket', str(control.parent / 'gateway.sock')]))
         for target in ('ft:c', 'ft:rust'):
             self.call('set-window-option', '-t', target, 'window-size', 'manual')
             self.call('resize-window', '-t', target, '-x', w, '-y', h)

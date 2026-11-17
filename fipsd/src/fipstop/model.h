@@ -12,6 +12,7 @@ extern const char *const ft_windows[4];
 extern const char *const ft_granularities[4];
 extern const char *const ft_metrics[10];
 extern const char *const ft_peer_metrics[7];
+bool ft_locale(void);
 json_t *ft_get(const json_t *data, const char *path);
 const char *ft_str(const json_t *data, const char *path);
 uint64_t ft_uint(const json_t *data, const char *path);

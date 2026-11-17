@@ -49,19 +49,27 @@ static void fixture_graph(ft_app *a,const char *dir)
 }
 int main(int argc,char **argv)
 {
-    setlocale(LC_ALL,"");
+    ft_locale();
     const char *socket=NULL,*gateway=NULL,*fixtures=NULL,*keys=NULL;
     unsigned interval=2; int w=0,h=0; ft_tab tab=FT_NODE; bool color=getenv("NO_COLOR")==NULL;
     for(int i=1;i<argc;++i) {
-        const char *arg=argv[i];
+        const char *arg=argv[i],*value=NULL; char option[64];
+        const char *equal=!strncmp(arg,"--",2)?strchr(arg,'='):NULL;
+        if(equal) {
+            size_t len=(size_t)(equal-arg);
+            if(len>=sizeof(option)) { fputs("error: option too long\\n",stderr); return 1; }
+            memcpy(option,arg,len); option[len]=0; value=equal+1; arg=option;
+        } else if(arg[0]=='-' && (arg[1]=='s'||arg[1]=='r') && arg[2]) {
+            value=arg+2; option[0]='-'; option[1]=arg[1]; option[2]=0; arg=option;
+        }
         if(!strcmp(arg,"-h")||!strcmp(arg,"--help")) { usage(stdout); return 0; }
         if(!strcmp(arg,"-V")||!strcmp(arg,"--version")) {
             ft_version(stdout,!strcmp(arg,"--version"));
             return 0;
         }
         if(!strcmp(arg,"--no-color")) { color=false; continue; }
-        if(i+1>=argc) { fprintf(stderr,"error: missing value for %s\n",arg); usage(stderr); return 1; }
-        const char *value=argv[++i];
+        if(!value && i+1>=argc) { fprintf(stderr,"error: missing value for %s\n",arg); usage(stderr); return 1; }
+        if(!value) value=argv[++i];
         if(!strcmp(arg,"-s")||!strcmp(arg,"--socket")) socket=value;
         else if(!strcmp(arg,"--gateway-socket")) gateway=value;
         else if(!strcmp(arg,"-r")||!strcmp(arg,"--refresh")) {
@@ -69,7 +77,12 @@ int main(int argc,char **argv)
             if(errno||!value[0]||*end||value[0]=='-'||n>INT_MAX/1000) { fputs("error: invalid refresh interval\n",stderr); return 1; }
             interval=(unsigned)n;
         } else if(!strcmp(arg,"--render-once")) {
-            char tail; if(sscanf(value,"%dx%d%c",&w,&h,&tail)!=2||w<1||h<1||w>1000||h>500) { fputs("error: invalid frame size (1x1 through 1000x500)\n",stderr); return 1; }
+            char *middle,*end; errno=0; long width=strtol(value,&middle,10);
+            long height=0;
+            bool valid=middle!=value && *middle=='x' && !errno;
+            if(valid) { const char *start=middle+1; height=strtol(start,&end,10); valid=end!=start && !*end && !errno; }
+            if(!valid || width<1 || width>1000 || height<1 || height>500) { fputs("error: invalid frame size (1x1 through 1000x500)\n",stderr); return 1; }
+            w=(int)width; h=(int)height;
         } else if(!strcmp(arg,"--fixture-dir")) fixtures=value;
         else if(!strcmp(arg,"--keys")) keys=value;
         else if(!strcmp(arg,"--tab")) {
@@ -93,7 +106,7 @@ int main(int argc,char **argv)
     if(w && h) {
         ft_frame frame;
         if(!ft_frame_init(&frame,w,h)) { ft_app_free(&app); return 1; }
-        app.now_ms=app.fetched_ms; app.wall_ms=fixtures?1700000000000ULL:(uint64_t)time(NULL)*1000;
+        app.now_ms=app.fetched_ms; app.wall_ms=fixtures?1700000000000ULL:ft_wall_ms();
         if(fixtures) fixture_graph(&app,fixtures); ft_draw(&frame,&app); ft_frame_print(&frame,stdout);
         ft_frame_free(&frame); ft_app_free(&app); return ferror(stdout)?1:0;
     }
@@ -114,7 +127,7 @@ int main(int argc,char **argv)
     while(!app.quit && !stopped) {
         int rows,cols; getmaxyx(stdscr,rows,cols); ft_frame frame;
         if(!ft_frame_init(&frame,cols,rows)) { rc=1; break; }
-        app.now_ms=ft_monotonic_ms(); app.wall_ms=(uint64_t)time(NULL)*1000; ft_draw(&frame,&app);
+        app.now_ms=ft_monotonic_ms(); app.wall_ms=ft_wall_ms(); ft_draw(&frame,&app);
         erase();
         for(int y=0;y<rows;++y) for(int x=0;x<cols;++x) {
             ft_cell cell=frame.cells[y*cols+x]; if(!cell.ch) continue;
@@ -123,7 +136,7 @@ int main(int argc,char **argv)
             if(cell.style==FT_DIM) attr|=A_DIM;
             if(!color && cell.style==FT_SELECT) attr|=A_REVERSE;
             attrset(attr);
-#if NCURSES_WIDECHAR
+#if FIPSTOP_WIDE_CURSES
             wchar_t text[2]={cell.ch,0}; mvaddnwstr(y,x,text,1);
 #else
             mvaddch(y,x,cell.ch<128?(chtype)cell.ch:(chtype)'?');

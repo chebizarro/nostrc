@@ -469,3 +469,16 @@ if(TARGET fipstop_ui)
   target_include_directories(fipstop_ui PUBLIC "${fipstop_VERSION_HEADER_DIR}")
   add_dependencies(fipstop_ui fipsd_build_info)
 endif()
+
+# A non-wide ncurses pkg-config module must not promise wide link symbols merely
+# because its header exposes them with _XOPEN_SOURCE_EXTENDED.
+if(TARGET fipstop)
+  include(CheckSymbolExists)
+  include(CMakePushCheckState)
+  cmake_push_check_state(RESET)
+  set(CMAKE_REQUIRED_LIBRARIES PkgConfig::FIPSTOP_CURSES)
+  set(CMAKE_REQUIRED_DEFINITIONS -D_XOPEN_SOURCE_EXTENDED=1)
+  check_symbol_exists(waddnwstr "curses.h" FIPSTOP_CURSES_WIDE)
+  cmake_pop_check_state()
+  target_compile_definitions(fipstop PRIVATE FIPSTOP_WIDE_CURSES=$<BOOL:${FIPSTOP_CURSES_WIDE}>)
+endif()

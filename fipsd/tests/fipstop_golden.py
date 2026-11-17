@@ -2,6 +2,7 @@
 """The shipped frame renderer, from control_golden replies, without a terminal."""
 import argparse
 import difflib
+import os
 from pathlib import Path
 import subprocess
 
@@ -20,7 +21,7 @@ def main():
     for size in ('80x24', '120x40'):
         for tab in TABS:
             result = subprocess.run([a.fipstop, '--fixture-dir', str(a.fixtures),
-                '--render-once', size, '--tab', tab], capture_output=True, text=True, timeout=10)
+                '--render-once', size, '--tab', tab], capture_output=True, text=True, timeout=10, env=dict(os.environ, LC_ALL="C"))
             if result.returncode or result.stderr:
                 raise AssertionError(f'{tab}: {result.returncode}: {result.stderr}')
             w, h = map(int, size.split('x'))

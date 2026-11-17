@@ -1,5 +1,6 @@
 #include "model.h"
 #include <inttypes.h>
+#include <locale.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -183,4 +184,15 @@ char *ft_truncate_hex(const char *s, size_t width)
     char *head=fipsctl_take_chars(s,width>3?width-3:0);
     if(!head) return NULL;
     char *out=fipsctl_aprintf("%s...",head); free(head); return out;
+}
+
+bool ft_locale(void)
+{
+    /* Numeric output remains Rust-compatible, independent of the UI locale. */
+    setlocale(LC_NUMERIC,"C");
+    setlocale(LC_CTYPE,"");
+    if(MB_CUR_MAX>1) return true;
+    if(setlocale(LC_CTYPE,"C.UTF-8") && MB_CUR_MAX>1) return true;
+    if(setlocale(LC_CTYPE,"en_US.UTF-8") && MB_CUR_MAX>1) return true;
+    return false;
 }

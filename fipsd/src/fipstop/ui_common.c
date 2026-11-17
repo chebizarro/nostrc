@@ -1,3 +1,6 @@
+#ifndef _XOPEN_SOURCE
+#define _XOPEN_SOURCE 700
+#endif
 #include "ui.h"
 #include <stdarg.h>
 #include <limits.h>
@@ -119,7 +122,7 @@ void ft_draw(ft_frame *f,ft_app *a)
     for(int i=0;i<f->w*f->h;++i) f->cells[i]=(ft_cell){L' ',FT_NORMAL};
     ft_rect full={0,0,f->w,f->h};
     if(f->h<5 || f->w<8) { ft_put(f,full,0,0,FT_YELLOW,"Resize terminal"); return; }
-    char title[128]; snprintf(title,sizeof(title)," fipstop %s ",a->snapshot?"0.1.0":ft_short_version());
+    char title[128]; snprintf(title,sizeof(title)," fipstop %s ",a->snapshot?ft_base_version():ft_short_version());
     ft_rect head=ft_box(f,(ft_rect){0,0,f->w,3},title,false);
     int x=0;
     for(int i=0;i<10;++i) {

@@ -1,5 +1,6 @@
 #include "ui.h"
 #include <stdlib.h>
+#include <math.h>
 #include <string.h>
 void ft_ui_tree(ft_frame *f,ft_app *a,ft_rect r)
 {
@@ -34,12 +35,15 @@ void ft_ui_tree(ft_frame *f,ft_app *a,ft_rect r)
         const char *groups[]={"  ── Parent ──","  ── STP Children ──","  ── Other ──"};
         for(size_t i=0;i<n;++i) {
             unsigned group=ft_group(rows[i]); if(group!=last) { if(last!=3) ++line; if(line>=*scroll) ft_put(f,in,0,(int)(line-*scroll),FT_YELLOW,groups[group]); ++line; last=group; }
-            char depth[FT_TEXT]; ft_value(rows[i],"effective_depth",depth,sizeof(depth));
+            char depth[FT_TEXT],tree_depth[FT_TEXT],distance[FT_TEXT];
+            double effective=ft_num(rows[i],"effective_depth");
+            if(isnan(effective)) snprintf(depth,sizeof(depth),"—"); else snprintf(depth,sizeof(depth),"%.2f",effective);
+            ft_value(rows[i],"depth",tree_depth,sizeof(tree_depth)); ft_value(rows[i],"distance_to_us",distance,sizeof(distance));
             char *name=ft_truncate(ft_str(rows[i],"display_name"),16,true);
             if(line>=*scroll) {
                 if(!ft_get(rows[i],"depth")) ft_printf(f,in,0,(int)(line-*scroll),FT_DIM,"    %s (no position)",name?name:"");
-                else ft_printf(f,in,0,(int)(line-*scroll),FT_NORMAL,"    %s depth: %-4llu dist: %-4llu eff: %-7s%s",name?name:"",(unsigned long long)ft_uint(rows[i],"depth"),
-                    (unsigned long long)ft_uint(rows[i],"distance_to_us"),strcmp(depth,"-")?depth:"—",!strcmp(ft_str(rows[i],"root"),ft_str(d,"root"))?"same root":"diff root");
+                else ft_printf(f,in,0,(int)(line-*scroll),FT_NORMAL,"    %s depth: %-4s dist: %-4s eff: %-7s%s",name?name:"",tree_depth,
+                    distance,depth,!strcmp(ft_str(rows[i],"root"),ft_str(d,"root"))?"same root":"diff root");
             }
             free(name);
             ++line;

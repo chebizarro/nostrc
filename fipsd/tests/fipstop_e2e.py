@@ -181,9 +181,17 @@ def main():
     p.add_argument('--unit', required=True)
     args = p.parse_args()
     repo = Path(__file__).resolve().parents[2]
+    fixtures = repo / 'fipsd/tests/control_golden'
+    left = run(args.fipstop, '--fixture-dir', fixtures, '--render-once', '80x24')
+    right = run(args.fipstop, f'--fixture-dir={fixtures}', '--render-once=80x24', '-r2')
+    assert left == right, 'long equals and attached short flags differ'
+    for flags in (['--refresh=-1'], ['--render-once=999999999999999999999x24'], ['--render-once=1x0'], ['--bogus']):
+        result = subprocess.run([args.fipstop, *flags], capture_output=True, timeout=10)
+        assert result.returncode == 1 and b'error:' in result.stderr
+
     for stop in ('q', signal.SIGTERM, signal.SIGHUP):
         terminal_case(args.fipstop, repo, stop)
-    failed = subprocess.run([args.fipstop], stdin=subprocess.DEVNULL, capture_output=True, timeout=10)
+    failed = subprocess.run([args.fipstop, '-s', str(repo / '.missing.sock')], stdin=subprocess.DEVNULL, capture_output=True, timeout=10)
     assert failed.returncode == 1 and b'terminal required' in failed.stderr
     with tempfile.TemporaryDirectory(prefix='.ft-', dir=repo) as directory:
         root = Path(directory)
@@ -195,7 +203,7 @@ def main():
             status = node.query('show_status')
             for size in ('80x24', '120x40'):
                 for tab in TABS:
-                    frame = run(args.fipstop, '-s', node.socket, '--render-once', size, '--tab', tab)
+                    frame = run(args.fipstop, '-s', node.socket, '--gateway-socket', root / 'gateway.sock', '--render-once', size, '--tab', tab)
                     assert 'Connected' in frame and 'Refresh: 2s' in frame, (tab, frame)
                     assert len(frame.splitlines()) == int(size.split('x')[1])
                     if tab == 'Node':

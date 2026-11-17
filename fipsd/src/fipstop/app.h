@@ -17,6 +17,7 @@ typedef struct ft_app {
     char *socket, *adapter, *gateway, *error, *confirm_npub, *confirm_name;
     uint64_t fetched_ms, error_ms, now_ms, wall_ms;
 } ft_app;
+const char *ft_base_version(void);
 const char *ft_short_version(void);
 void ft_version(FILE *out,bool long_form);
 void ft_app_init(ft_app *a, unsigned refresh, const char *socket, const char *gateway);
@@ -28,6 +29,7 @@ size_t ft_row_count(const ft_app *a);
 json_t *ft_selected(const ft_app *a);
 void ft_disconnect(ft_app *a);
 uint64_t ft_monotonic_ms(void);
+uint64_t ft_wall_ms(void);
 void ft_set_error(ft_app *a, const char *s);
 void ft_replace(json_t **slot, json_t *value);
 /* Transport tree is rebuilt from the current cross-references; refs are borrowed. */
