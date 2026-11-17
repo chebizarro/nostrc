@@ -384,20 +384,26 @@ static void offer_close(ble_offer *o)
     ble_reader_free(&o->reader); o->stream = NULL;
 }
 /* DISCONNECTED for an address must reach the node before anything that
- * replaces it there is announced: wait for an exiting link's notification. */
-static bool await_notified(ble_instance *u, const fips_transport_addr *a)
+ * replaces it there is announced: wait for an exiting link's notification.
+ * Caller holds mu; it is released only while waiting and held again on
+ * return. True once no link at the address is notifying, false on stop or
+ * at the drain bound. The check and the insertion after it share one hold of
+ * mu, so a link cannot start notifying between them (conn_owner decides
+ * under mu, by whether the pool already holds a replacement). */
+static bool await_notified_locked(ble_instance *u, const fips_transport_addr *a)
 {
     for (;;) {
+        if (stopped(u)) return false;
         GoChannel *wait = NULL;
-        nsync_mu_lock(&u->mu);
         for (ble_conn *c = u->conns; c && !wait; c = c->next)
             if (c->notifying && fips_transport_addr_equal(&c->link.addr, a)) wait = go_channel_ref(c->notified);
+        if (!wait) return true;
         nsync_mu_unlock(&u->mu);
-        if (!wait) return !stopped(u);
         void *v;
         GoSelectCase cases[] = {{GO_SELECT_RECEIVE, wait, NULL, &v}, {GO_SELECT_RECEIVE, u->stop, NULL, &v}};
         GoSelectResult r = go_select_timeout(cases, 2, BLE_WRITER_DRAIN_MS);
         go_channel_unref(wait);
+        nsync_mu_lock(&u->mu);
         if (r.selected_case != 0) return false;
     }
 }
@@ -414,9 +420,9 @@ static void log_insert(ble_instance *u, const ble_insert *r, const fips_transpor
  * never starts its receive loop. On success the stream belongs to the link. */
 static ble_outcome offer(ble_instance *u, ble_offer *o, ble_role role, fipsd_ble_peer *kept)
 {
-    if (!await_notified(u, &o->addr)) return OFFER_FAILED;
     bool outbound = role != ROLE_INBOUND;
-    uint64_t now = ble_now();
+    /* Copied: once pooled, the owner fiber may free c before the log below. */
+    const uint64_t stream_id = o->stream->id;
     ble_conn *c = calloc(1, sizeof *c);
     if (c) {
         c->stop = go_channel_create(1); c->close = go_channel_create(1); c->notify_stop = go_channel_create(1);
@@ -427,14 +433,16 @@ static ble_outcome offer(ble_instance *u, ble_offer *o, ble_role role, fipsd_ble
         }
     }
     if (!c) return OFFER_FAILED;
-    c->owner = u; c->stream = o->stream; c->stream_id = o->stream->id; c->fd = o->fd; c->reader = o->reader;
+    c->owner = u; c->stream = o->stream; c->stream_id = stream_id; c->fd = o->fd; c->reader = o->reader;
     c->link = (ble_link){.addr = o->addr, .peer = o->peer, .id = fipsd_stream_next_id(), .outbound = outbound,
-        .has_node = o->has_node, .node = o->node, .established_ms = now, .grace_from_ms = now, .held_from_ms = now};
+        .has_node = o->has_node, .node = o->node};
     ble_stream_mtu(o->stream, u->config.mtu, &c->link.send_mtu, &c->link.recv_mtu);
     ble_outcome result = OFFER_FAILED;
     const char *why = "stopped";
     nsync_mu_lock(&u->mu);
-    if (stopped(u) || !atomic_load(&u->present)) goto out;
+    if (!await_notified_locked(u, &o->addr) || !atomic_load(&u->present)) goto out;
+    uint64_t now = ble_now();
+    c->link.established_ms = c->link.grace_from_ms = c->link.held_from_ms = now;
     if (u->has_identity && o->has_node) {
         ble_admission a = ble_arbitrate(&u->pool, &u->local_node, &o->node, &o->addr, outbound, tie_window(u), now);
         if (a.kind == BLE_DECLINE) {
@@ -471,7 +479,7 @@ out:
     {
         char text[40]; (void)fipsd_ble_peer_format(&o->peer, text, sizeof text);
         FIPSD_DEBUG(MOD, "%s: %s link %s: %s (stream %llu)", u->name, role == ROLE_INBOUND ? "inbound" :
-            role == ROLE_PROBE ? "probe" : "dialled", text, why, (unsigned long long)c->stream_id);
+            role == ROLE_PROBE ? "probe" : "dialled", text, why, (unsigned long long)stream_id);
     }
     if (result != OFFER_POOLED) { c->stream = NULL; c->reader = (ble_reader){0}; conn_free(c); }
     return result;
@@ -481,7 +489,7 @@ out:
 /* The PSM to dial: the one the peer advertised; else, for a UUID-only
  * advertiser, the GATT PSM characteristic (never cached: a restarted listener
  * is assigned a new PSM); else the configured one. *learned reports whether
- * the advertised PSM was used, which is the only one a refusal forgets. */
+ * the advertised PSM was used, which is the only one a failed dial forgets. */
 static uint16_t dial_psm(ble_instance *u, const fipsd_ble_peer *p, uint64_t deadline, bool *learned)
 {
     nsync_mu_lock(&u->mu);

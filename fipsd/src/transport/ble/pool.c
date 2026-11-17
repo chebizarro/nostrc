@@ -130,21 +130,24 @@ size_t ble_pool_unproven(const ble_pool *p, uint64_t now, uint64_t timeout, ble_
 bool ble_newcomer_wins(bool local_is_smaller, bool newcomer_outbound, bool incumbent_outbound)
 { bool keep = local_is_smaller; return newcomer_outbound == keep && incumbent_outbound != keep; }
 /* Deliberate deviation from upstream, which declines every newcomer beside a
- * verified link: inside the tie window a verified link that is still racing
- * the newcomer (at the same address, or in the opposite direction) is settled
- * by the tie-break like an unverified one. Verification is local knowledge:
- * with discovery pushed to the node at once (upstream polls it on a tick), an
- * end can verify the race's loser before the winner arrives while the other
- * end has already replaced it, and the two ends then keep different channels
- * and lose both. Outside the window a verified link declines as upstream. */
+ * verified link: inside the tie window a verified link racing a newcomer at
+ * its own address, in the opposite direction (the two ends' crossing dials),
+ * is settled by the tie-break like an unverified one. Verification is local
+ * knowledge: with discovery pushed to the node at once (upstream polls it on
+ * a tick), an end can verify the race's loser before the winner arrives while
+ * the other end has already replaced it, and the two ends then keep different
+ * channels and lose both. Only the same address qualifies: the newcomer's key
+ * claim is unauthenticated until Noise, and a claim from any other address
+ * must not displace a link that proved the key (upstream's rule; a crossing
+ * seen at two addresses falls back to upstream's redial). Outside the window
+ * a verified link declines as upstream. */
 ble_admission ble_arbitrate(const ble_pool *p, const fips_node_addr *local, const fips_node_addr *peer,
     const fips_transport_addr *ta, bool outbound, uint64_t tie_window, uint64_t now)
 {
     bool smaller = memcmp(local->bytes, peer->bytes, 16) < 0;
     ble_link *v = ble_pool_find_verified(p, peer);
     if (v) {
-        bool racing = elapsed(now, v->established_ms) < tie_window &&
-            (fips_transport_addr_equal(&v->addr, ta) || v->outbound != outbound);
+        bool racing = elapsed(now, v->established_ms) < tie_window && fips_transport_addr_equal(&v->addr, ta);
         return (ble_admission){racing && ble_newcomer_wins(smaller, outbound, v->outbound) ? BLE_REPLACE : BLE_DECLINE, v};
     }
     ble_link *at = ble_pool_get(p, ta);

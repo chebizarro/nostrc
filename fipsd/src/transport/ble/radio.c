@@ -115,11 +115,19 @@ static sim_req *req_new(int kind, bool reply)
     if (reply && !(q->reply = go_channel_create(1))) { free(q); return NULL; }
     return q;
 }
-/* Control thread, air.mu held: publish the result and drop its reference. */
-static void answer(sim_req *q, int rc)
+/* Control thread, air.mu held: publish the result. */
+static void publish(sim_req *q, int rc)
 {
     q->rc = rc;
     if (q->reply) (void)go_channel_try_send(q->reply, q);
+}
+/* Publish and drop the control thread's reference, under air.mu: only for a
+ * request that carries no stream. A caller that gave up leaves the last
+ * reference here, and dropping it closes an answered stream, which takes
+ * air.mu (process() drops a connect's reference after unlocking). */
+static void answer(sim_req *q, int rc)
+{
+    publish(q, rc);
     req_unref(q);
 }
 static void answer_parked(fipsd_ble_radio *r, int rc)
@@ -438,9 +446,10 @@ static void process(fipsd_ble_radio *r, sim_req *q)
         break;
     default: break;
     }
-    if (parked) { q->next = r->parked; r->parked = q; }
-    else answer(q, rc);
+    if (parked) { q->next = r->parked; r->parked = q; } /* parked: never holds a stream */
+    else publish(q, rc);
     nsync_mu_unlock(&air->mu);
+    if (!parked) req_unref(q);
     if (inbound) {
         /* Outside the lock: a sink that refuses closes the stream itself. */
         (void)fipsd_ble_sink_inbound(target_sink, inbound);

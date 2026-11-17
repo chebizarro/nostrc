@@ -209,14 +209,18 @@ static void arbitration(void)
     assert(a.kind == BLE_DECLINE && a.existing == v);
     a = ble_arbitrate(&p, &small, &big, &at1, false, window, t0 + window + 1);
     assert(a.kind == BLE_DECLINE && a.existing == v);
-    /* inside the window a verified link still racing is settled by the tie-break
-     * (the deliberate deviation): the loser is replaced, the winner declines */
-    a = ble_arbitrate(&p, &small, &big, &at1, true, window, t0 + 1); /* smaller keeps its outbound: replace the inbound */
+    /* inside the window a verified link still racing at its own address (the
+     * crossing) is settled by the tie-break (the deliberate deviation): the
+     * loser is replaced, the winner declines */
+    a = ble_arbitrate(&p, &small, &big, &at2, true, window, t0 + 1); /* smaller keeps its outbound: replace the inbound */
     assert(a.kind == BLE_REPLACE && a.existing == v);
-    a = ble_arbitrate(&p, &small, &big, &at1, false, window, t0 + 1); /* same direction: a rotation, declined */
+    /* an unauthenticated claim from another address never displaces it */
+    a = ble_arbitrate(&p, &small, &big, &at1, true, window, t0 + 1);
+    assert(a.kind == BLE_DECLINE && a.existing == v);
+    a = ble_arbitrate(&p, &small, &big, &at2, false, window, t0 + 1); /* same direction: a rotation, declined */
     assert(a.kind == BLE_DECLINE && a.existing == v);
     v->outbound = true;
-    a = ble_arbitrate(&p, &small, &big, &at1, false, window, t0 + 1); /* the verified link is the winner */
+    a = ble_arbitrate(&p, &small, &big, &at2, false, window, t0 + 1); /* the verified link is the winner */
     assert(a.kind == BLE_DECLINE && a.existing == v);
     ble_pool_free(&p);
     /* the newcomer's address holds a link claiming another node, or none */
@@ -975,6 +979,19 @@ static void radio_body(void)
     fipsd_ble_radio_set_stall(y->radio, false);
     assert(y->b.ops->connect(y->b.self, &x->peer, 0x0085, ble_now() + WAIT_MS, &bad) == 0);
     raw_close(bad); in = raw_event(x, FIPSD_BLE_INBOUND_STREAM); raw_close(in->stream); free(in);
+    /* a dial abandoned before the radio answers it with a stream: the late
+     * answer drops the last reference, closing that stream, off the air lock
+     * (closing under it deadlocked the control thread), and the radio serves on */
+    size_t queued = 0;
+    for (int i = 0; i < 24; ++i) {
+        bad = NULL;
+        int rc = y->b.ops->connect(y->b.self, &x->peer, 0x0085, ble_now(), &bad);
+        if (rc != -EAGAIN) ++queued;
+        if (!rc) raw_close(bad);
+    }
+    assert(y->b.ops->connect(y->b.self, &x->peer, 0x0085, ble_now() + WAIT_MS, &bad) == 0);
+    raw_close(bad);
+    for (size_t i = 0; i <= queued; ++i) { in = raw_event(x, FIPSD_BLE_INBOUND_STREAM); raw_close(in->stream); free(in); }
     /* scan adverts carry the advertised PSM; the same PSM does not restart the advertiser */
     assert(y->b.ops->scan_start(y->b.self, ble_now() + WAIT_MS) == 0);
     fipsd_ble_advert adv = {.psm = 0x00C1}; fipsd_ble_encode_psm(adv.psm, adv.service_data);

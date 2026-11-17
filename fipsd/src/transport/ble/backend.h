@@ -26,9 +26,13 @@
  *   -ENODEV        the adapter is absent or powered off
  *   -ENOTSUP       the backend cannot perform this operation
  *   other -errno   any other failure, counted as a connect/IO error
- * The core treats ETIMEDOUT and ECONNREFUSED differently (upstream
- * forget_psm: only a refusal forgets a learned PSM), so a backend must not
- * report one as the other.
+ * The core treats ETIMEDOUT differently from every other connect failure
+ * (upstream forget_psm): a timeout keeps a learned PSM, since the peer was out
+ * of reach and nothing may re-learn it (BlueZ reports a device once per
+ * discovery session); a refusal or any other error forgets it, so a stale
+ * value costs one retry. ECANCELED and ENODEV keep it too: they say nothing
+ * about the peer. A backend must therefore report a timeout only as
+ * ETIMEDOUT, and never an unanswered attempt as anything else.
  *
  * Owner-directed cancellation: every operation that can wait returns promptly
  * with -ECANCELED once stop() has run, whatever its deadline. A stream's

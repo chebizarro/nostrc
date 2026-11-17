@@ -2379,8 +2379,8 @@ How the platform beads map onto it:
 - **Discovery.** The probe loop takes one advert at a time, as upstream. It
   learns the advertised PSM, skips addresses already pooled or resolved to a
   verified peer, and dials. Without a learned PSM it first tries the GATT
-  read, then the configured PSM. A refusal forgets the learned PSM; a timeout
-  keeps it. After the `[0x00][x-only key]` exchange (5 s per half) it
+  read, then the configured PSM. A failed dial forgets the learned PSM; a
+  timeout, cancellation or adapter loss keeps it. After the `[0x00][x-only key]` exchange (5 s per half) it
   arbitrates and pools the link, then announces it to the node as
   `DISCOVERED` with the 32-byte key as payload. Addresses that never
   conclude stay in the retry book (bounded to 32, exponential backoff capped
@@ -2424,12 +2424,17 @@ How the platform beads map onto it:
 Differences from upstream, each deliberate:
 
 1. **Racing verified links.** Inside the tie window, a verified link that is
-   still racing a newcomer (same address, or opposite direction) is settled
-   by the tie-break like an unverified one. Upstream declines the newcomer.
-   But fipsd pushes discovery to the node at once instead of on a tick, so
-   one end can verify the race's loser before the winner arrives while the
-   other end has already replaced it, and both channels die. Outside the
-   window a verified link declines newcomers, as upstream.
+   still racing a newcomer at its own address, in the opposite direction
+   (the two ends' crossing dials), is settled by the tie-break like an
+   unverified one. Upstream declines the newcomer. But fipsd pushes
+   discovery to the node at once instead of on a tick, so one end can verify
+   the race's loser before the winner arrives while the other end has
+   already replaced it, and both channels die. A newcomer's key claim is
+   unauthenticated until Noise, so a claim from any other address never
+   displaces a verified link, and outside the window a verified link
+   declines every newcomer, both as upstream. The remaining exposure is a
+   peer that spoofs the verified device's own address within the window,
+   which a real controller refuses while that device is connected.
 2. **Crossing swap and restart.** These no longer close the transport
    connection when the replacing link is at the same transport address. Both
    directions of a BLE pair share the device address. Upstream moves the
