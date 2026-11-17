@@ -793,7 +793,7 @@ bool hs_dial_configured(handlers *h)
             for (size_t k = 0; k < h->cfg.peer_capacity && !slot; ++k) if (!h->configured[k].used) slot = &h->configured[k];
             if (!slot) continue;
             slot->used = true; slot->identity = identity; slot->transport = t->id;
-            if (fips_transport_addr_from_string(text, strlen(text), &slot->addr) != FIPS_OK) { slot->used = false; continue; }
+            if (fipsd_transport_parse_address(t, text, &slot->addr) != FIPS_OK) { slot->used = false; continue; }
             fipsd_peer_retry_init(&slot->retry);
             (void)hs_dial(h, &identity, t->id, &slot->addr, true);
             break; /* first usable address; path intake owns the rest (Tier B4) */

@@ -552,3 +552,12 @@ if(TARGET fipstop)
   cmake_pop_check_state()
   target_compile_definitions(fipstop PRIVATE FIPSTOP_WIDE_CURSES=$<BOOL:${FIPSTOP_CURSES_WIDE}>)
 endif()
+
+# Ethernet datagrams (nostrc-gfi8h.5); keep platform ownership local.
+target_sources(fipsd_lib PRIVATE src/transport/ethernet/ethernet.c
+  src/transport/ethernet/neighbor.c src/transport/ethernet/stats.c)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  target_sources(fipsd_lib PRIVATE src/transport/ethernet/io_linux.c)
+elseif(APPLE)
+  target_sources(fipsd_lib PRIVATE src/transport/ethernet/io_macos.c)
+endif()

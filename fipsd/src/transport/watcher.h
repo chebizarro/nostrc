@@ -24,6 +24,9 @@ typedef struct fipsd_watcher_source {
     uint64_t (*now_ms)(void *); /* optional deterministic clock */
 } fipsd_watcher_source;
 fipsd_watcher *fipsd_watcher_create(fipsd_transport *, const fipsd_binder_ops *, const fipsd_watcher_source *);
+/* Opt in before start. Probe runs on owner after a network notification;
+ * no periodic interface reads. Retry/stability deadlines remain bounded. */
+void fipsd_watcher_event_driven(fipsd_watcher *, bool (*healthy)(void *));
 int fipsd_watcher_start(fipsd_watcher *, fipsd_runtime *, const fipsd_node_context *, GoChannel *events);
 void fipsd_watcher_network_changed(fipsd_watcher *, const fipsd_netmon_event *);
 /* A stale receive/writer exit cannot detach a replacement binding. */

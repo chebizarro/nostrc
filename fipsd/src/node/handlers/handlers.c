@@ -407,6 +407,13 @@ static bool on_transport_event(void *user, const fipsd_transport_event *e)
     /* .7: packet classification and owned authentication jobs live in dataplane. */
     if (e->kind == FIPSD_TRANSPORT_PACKET) return fipsd_dp_rx(h, e);
     if (e->kind == FIPSD_TRANSPORT_DISCOVERED) {
+        if (!strcmp(t->type, "ethernet") && t->auto_connect && e->size == 32) {
+            fips_xonly_pubkey key; fips_peer_identity peer;
+            memcpy(key.bytes, e->bytes, 32);
+            if (fips_peer_identity_from_pubkey(h->secp, &key, &peer) == FIPS_IDENTITY_OK &&
+                memcmp(peer.node_addr.bytes, h->me.bytes, 16) && !hs_rec_find(h, &peer.node_addr))
+                (void)hs_dial(h, &peer, e->id, &e->address, true);
+        }
         for (size_t i = 0; i < h->cfg.peer_capacity; ++i) {
             configured_peer *c = &h->configured[i];
             if (c->used && fips_transport_id_equal(c->transport, e->id) && fips_transport_addr_equal(&c->addr, &e->address) &&

@@ -14,7 +14,8 @@ struct fipsd_watcher {
     fipsd_runtime *runtime;
     GoChannel *events, *wake, *stop;
     Ticker *ticker;
-    bool started, bound, announced, reported;
+    bool started, bound, announced, reported, event_driven;
+    bool (*healthy)(void *);
     uint32_t streak;
     uint64_t generation, bound_at, retry_at, absent_since;
     _Atomic uint64_t exited;
@@ -43,7 +44,8 @@ int fipsd_watcher_step(fipsd_watcher *w, fipsd_presence_facts f, uint64_t now)
 {
     if (stopped(w)) return -1;
     fipsd_presence *p = &w->transport->shared->presence;
-    bool dead = w->bound && atomic_load(&w->exited) == w->generation;
+    bool dead = w->bound && (atomic_load(&w->exited) == w->generation ||
+        (w->healthy && !w->healthy(w->ops.user)));
     bool gone = f.valid && (!f.exists || !f.up);
     bool replaced = f.valid && w->bound && (f.index != w->binding.index ||
         (f.has_mac && w->binding.has_mac && memcmp(f.mac, w->binding.mac, 6)));
@@ -135,7 +137,22 @@ static void actor(void *arg)
             {GO_SELECT_RECEIVE, go_context_done(fipsd_runtime_context(w->runtime)), NULL, &value},
             {GO_SELECT_RECEIVE, w->wake, NULL, &value},
             {GO_SELECT_RECEIVE, w->ticker ? w->ticker->c : w->source.ticks, NULL, &value}};
-        int selected = go_select(cases, 4);
+        int selected;
+        if (w->event_driven && !w->source.ticks) {
+            uint64_t now = now_ms(w), deadline = UINT64_MAX;
+            if (w->bound && !w->announced) deadline = w->bound_at + 10000;
+            if (!w->bound) {
+                if (w->retry_at > now) deadline = w->retry_at;
+                if (!w->reported && !fipsd_presence_snapshot(&w->transport->shared->presence).optional &&
+                    w->absent_since + 10000 < deadline) deadline = w->absent_since + 10000;
+            }
+            if (deadline == UINT64_MAX) selected = go_select(cases, 3);
+            else {
+                GoSelectResult result = go_select_timeout(cases, 3, deadline > now ? deadline - now : 0);
+                selected = result.selected_case;
+                if (selected < 0) continue;
+            }
+        } else selected = go_select(cases, 4);
         if (selected < 2 || go_channel_is_closed(cases[selected].chan)) break;
     }
     if (w->bound) detach(w, now_ms(w));
@@ -162,7 +179,7 @@ int fipsd_watcher_start(fipsd_watcher *w, fipsd_runtime *rt, const fipsd_node_co
     nsync_mu_lock(&w->transport->shared->presence.mu);
     w->transport->shared->presence.view.since_ms = w->absent_since;
     nsync_mu_unlock(&w->transport->shared->presence.mu);
-    if (!w->source.ticks) {
+    if (!w->source.ticks && !w->event_driven) {
         w->ticker = go_blocking_submit(new_timer, NULL);
         if (!w->ticker) return -1;
     }
@@ -197,3 +214,6 @@ void fipsd_watcher_destroy(fipsd_watcher *w)
     if (w->stop) go_channel_unref(w->stop);
     free(w);
 }
+
+void fipsd_watcher_event_driven(fipsd_watcher *w, bool (*healthy)(void *))
+{ if (w && !w->started) { w->event_driven = true; w->healthy = healthy; } }

@@ -17,3 +17,10 @@ fipsd_transport *fipsd_transport_find(const fipsd_transport_registry *r, fips_tr
         if (fips_transport_id_equal(r->items[i]->id, id)) return r->items[i];
     return NULL;
 }
+
+fips_status fipsd_transport_parse_address(const fipsd_transport *t, const char *text, fips_transport_addr *out)
+{
+    if (!t || !text) return FIPS_ERR_RANGE;
+    return fips_transport_addr_parse(text, strlen(text), !strcmp(t->type, "ethernet") ?
+        FIPS_TRANSPORT_ADDR_PARSE_MAC : FIPS_TRANSPORT_ADDR_PARSE_TEXT, out);
+}

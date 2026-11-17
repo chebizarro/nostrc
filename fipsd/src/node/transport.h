@@ -79,6 +79,7 @@ typedef struct fipsd_transport_registry {
 /* Registration is single-threaded, before lifecycle start. Borrowed objects
  * outlive runtime join. Duplicate ids/names, incomplete vtables and late adds
  * are refused without mutation. No hidden default/network transports. */
+fips_status fipsd_transport_parse_address(const fipsd_transport *, const char *, fips_transport_addr *);
 int fipsd_transport_register(fipsd_transport_registry *, fipsd_transport *);
 fipsd_transport *fipsd_transport_find(const fipsd_transport_registry *, fips_transport_id);
 #endif

@@ -20,6 +20,7 @@
 #include "native/api.h"
 #include "dns/service.h"
 #include "transport/udp/udp.h"
+#include "transport/ethernet/ethernet.h"
 #include "transport/tcp/tcp.h"
 #include "transport/tor/tor.h"
 #include "transport/nym/nym.h"
@@ -165,7 +166,10 @@ int main(int argc, char **argv)
     bool udp_ok = node && fipsd_udp_register_config(fipsd_node_transports(node), config, udp, &udp_count) == 0;
     fipsd_transport *tcp[FIPSD_TRANSPORT_MAX] = {0};
     size_t tcp_count = 0;
-    bool tcp_ok = udp_ok && fipsd_tcp_register_config(fipsd_node_transports(node), config, tcp, &tcp_count) == 0;
+    fipsd_transport *ethernet[FIPSD_TRANSPORT_MAX] = {0};
+    size_t ethernet_count = 0;
+    bool ethernet_ok = udp_ok && fipsd_ethernet_register_config(fipsd_node_transports(node), config, ethernet, &ethernet_count) == 0;
+    bool tcp_ok = ethernet_ok && fipsd_tcp_register_config(fipsd_node_transports(node), config, tcp, &tcp_count) == 0;
     /* Proxied stream owners (nostrc-gfi8h.4): Tor always, Nym when built in. */
     fipsd_transport *tor[FIPSD_TRANSPORT_MAX] = {0}, *nym[FIPSD_TRANSPORT_MAX] = {0};
     size_t tor_count = 0, nym_count = 0;
@@ -270,6 +274,7 @@ int main(int argc, char **argv)
     fipsd_node_destroy(node);
     fipsd_node_handlers_destroy(handlers);
     for (size_t i = 0; i < udp_count; ++i) fipsd_udp_destroy(udp[i]);
+    for (size_t i = 0; i < ethernet_count; ++i) fipsd_ethernet_destroy(ethernet[i]);
     for (size_t i = 0; i < tcp_count; ++i) fipsd_tcp_destroy(tcp[i]);
     for (size_t i = 0; i < tor_count; ++i) fipsd_tor_destroy(tor[i]);
     for (size_t i = 0; i < nym_count; ++i) fipsd_nym_destroy(nym[i]);

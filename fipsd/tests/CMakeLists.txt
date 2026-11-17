@@ -750,3 +750,10 @@ add_dependencies(fipsd_tests fipsd_mdns_two_nodes_test)
 add_test(NAME FipsdMdnsTwoNodesTest COMMAND fipsd_mdns_two_nodes_test)
 set_tests_properties(FipsdMdnsTwoNodesTest PROPERTIES TIMEOUT 120 LABELS "fips;node;mdns")
 nostrc_describe_test(FipsdMdnsTwoNodesTest OWNER fipsd TARGETS fipsd_mdns_two_nodes_test)
+
+# Ethernet vectors and injected watcher transitions; no raw-socket privileges.
+fipsd_unit_test(fipsd_ethernet_test test_ethernet.c)
+add_dependencies(fipsd_tests fipsd_ethernet_test)
+add_test(NAME FipsdEthernetTest COMMAND fipsd_ethernet_test)
+set_tests_properties(FipsdEthernetTest PROPERTIES TIMEOUT 30 LABELS "fips;transport;ethernet")
+nostrc_describe_test(FipsdEthernetTest OWNER fipsd TARGETS fipsd_ethernet_test)
