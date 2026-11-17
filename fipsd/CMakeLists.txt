@@ -454,6 +454,8 @@ if(BUILD_TESTING AND FIPSD_ENABLE_PROFILING)
   apply_warnings(fipsd_profile_fault)
   apply_sanitizers(fipsd_profile_fault)
   target_sources(fipsd_profiling_test PRIVATE $<TARGET_OBJECTS:fipsd_profile_fault>)
+endif()
+
 # fipstop model is terminal-independent and shares the fipsctl wire/format library.
 add_library(fipstop_model STATIC src/fipstop/model.c)
 set_target_properties(fipstop_model PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
