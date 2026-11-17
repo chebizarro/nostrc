@@ -11,6 +11,59 @@ static test_node nodes[NT_MAX_NODES];
 static bool edges[NT_MAX_NODES][NT_MAX_NODES];
 static char addresses[NT_MAX_NODES][33];
 static size_t count;
+/* Test actions execute on the production dispatcher, never by borrowing its
+ * mutable cache from the test thread. The completion channel orders results. */
+static bool (*real_command)(void *, void *);
+static int prepare_return_route, flood_return_route;
+static GoChannel *return_route_done;
+static bool return_route_command(void *user, void *message)
+{
+    if (message != &prepare_return_route && message != &flood_return_route) return real_command(user, message);
+    handlers *h = user;
+    const fips_node_addr *initiator = &nodes[0].identity.node_addr;
+    peer_rec *carrier = hs_rec_find(h, &nodes[1].identity.node_addr); assert(carrier);
+    if (message == &prepare_return_route) {
+        assert(!fips_session_table_by_peer(&h->sessions, *initiator));
+        (void)fips_coord_cache_remove(&h->cache, initiator->bytes, NULL);
+        /* Force the real setup's return hint to be unfunded, independently of
+         * clock speed, scheduler order or the time spent converging the tree. */
+        fipsd_peer_tokens_init(&carrier->coord_hints, 0, 0, 0, hs_now(h));
+        h->dataplane->needs_publish = true;
+    } else {
+        fips_session_entry *entry = fips_session_table_by_peer(&h->sessions, *initiator); assert(entry);
+        session_ext *ext = hs_session_ext(h, entry);
+        assert(ext && ext->established && !ext->is_initiator);
+        assert(fips_coord_cache_get_entry(&h->cache, initiator->bytes));
+        peer_rec unfunded = {0}; fipsd_peer_tokens_init(&unfunded.coord_hints, 0, 0, 0, hs_now(h));
+        size_t hints = fips_coord_cache_probation_bound(&h->cache) + 1;
+        for (size_t i = 0; i < hints; ++i) {
+            fips_node_addr path[] = {{{0xab, (uint8_t)i}}, *fips_tree_state_root(h->tree)};
+            fipsd_dp_hint(h, &unfunded, &path[0], (fips_fsp_coords){path[0].bytes, 2});
+        }
+        /* Before the fix, the initiator was still probationary after successful
+         * msg3, and these unrelated hints deterministically evicted it. */
+        assert(fips_coord_cache_get_entry(&h->cache, initiator->bytes));
+        assert(h->dataplane->needs_publish && fipsd_dp_publish(h));
+        fips_session_datagram dg; fips_session_datagram_init(&dg, h->me, *initiator, NULL, 0);
+        fips_writer wire; fips_writer_init(&wire, h->route_buf, sizeof h->route_buf);
+        fips_route_outcome out;
+        assert(fipsd_dp_forward(h->dataplane->current.ptr, &h->router, &dg, NULL, false, hs_now(h),
+            h->dataplane->coord_scratch, h->dataplane->route_peers, &wire, &out) == FIPS_OK);
+        assert(out.kind == FIPS_ROUTE_Forward && !memcmp(out.next_hop.bytes, carrier->addr.bytes, 16));
+    }
+    assert(!go_channel_send(return_route_done, message));
+    return true;
+}
+static void return_route_options(fipsd_node_options *options)
+{ real_command = options->command; options->command = return_route_command; }
+static void return_route_action(int *action)
+{
+    assert(!go_channel_send(nodes[2].h->commands, action));
+    void *done = NULL;
+    GoSelectCase c = {GO_SELECT_RECEIVE, return_route_done, NULL, &done};
+    GoSelectResult r = go_select_timeout(&c, 1, NT_WAIT_MS);
+    assert(r.selected_case == 0 && done == action);
+}
 static json_t *data(json_t *r) { assert(r); json_t *d = json_object_get(r, "data"); assert(d); return d; }
 static const char *str(json_t *r, const char *k) { return json_string_value(json_object_get(r, k)); }
 static size_t index_of(const char *addr)
@@ -241,7 +294,9 @@ static void deliver(size_t from, size_t to)
 int main(int argc, char **argv)
 {
     assert(argc == 2);
-    const char *shape = argv[1];
+    bool return_route = !strcmp(argv[1], "ReturnRoute");
+    const char *shape = return_route ? "Line" : argv[1];
+    if (return_route) { return_route_done = go_channel_create(1); assert(return_route_done); }
     assert(!strcmp(shape, "Line") || !strcmp(shape, "Star") || !strcmp(shape, "Ring") || !strcmp(shape, "FullMesh"));
     count = !strcmp(shape, "Line") ? 3 : !strcmp(shape, "Star") ? 4 : 5;
     nt_topology(edges, count, shape);
@@ -258,7 +313,9 @@ int main(int argc, char **argv)
         char yaml[256], key[65]; memset(key, '1' + (int)i, 64); key[64] = 0;
         snprintf(yaml, sizeof yaml, "node: {identity: {nsec: '%s', persistent: false}, control: {enabled: false}}", key);
         snprintf(names[i], sizeof names[i], "n%zu", i);
-        assert(nt_init(&nodes[i], NULL, names[i], NULL, yaml, &hc, 1));
+        if (return_route && i == 2)
+            assert(nt_init_with_options(&nodes[i], NULL, names[i], NULL, yaml, &hc, 1, return_route_options));
+        else assert(nt_init(&nodes[i], NULL, names[i], NULL, yaml, &hc, 1));
         assert(fipsd_runtime_register(runtime, fipsd_node_subsystem(nodes[i].node)) == 0);
     }
     assert(fipsd_runtime_start(runtime) == 0);
@@ -275,7 +332,13 @@ int main(int argc, char **argv)
     for (size_t i = 0; i < count; ++i) for (size_t j = i + 1; j < count; ++j) if (edges[i][j])
         assert(fipsd_node_handlers_connect(nodes[i].h, &nodes[j].identity, (fips_transport_id){1}, nodes[j].addr) == 0);
     await_tree(shape, start);
-    if (strcmp(shape, "FullMesh")) {
+    if (return_route) {
+        return_route_action(&prepare_return_route);
+        prepare_session(0, 2, true);
+        return_route_action(&flood_return_route);
+        deliver(2, 0);
+        puts("responder return route survives unfunded probation churn: ok");
+    } else if (strcmp(shape, "FullMesh")) {
         prove_lookup();
         for (size_t i = 0; i < count; ++i) for (size_t j = 0; j < count; ++j) if (i != j) deliver(i, j);
         await_bloom(start);
@@ -310,6 +373,7 @@ int main(int argc, char **argv)
     for (size_t i = 0; i < count; ++i) nt_drain(&nodes[i]);
     fipsd_runtime_destroy(runtime);
     for (size_t i = 0; i < count; ++i) nt_destroy(&nodes[i]);
+    if (return_route) go_channel_free(return_route_done);
     puts("multi-node UDP: ok");
     return 0;
 }

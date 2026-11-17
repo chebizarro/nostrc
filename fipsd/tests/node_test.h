@@ -94,8 +94,9 @@ static void nt_drain(test_node *n)
     void *value;
     while (go_channel_try_receive(fipsd_node_handlers_notices(n->h), &value) == 0) { nt_record(n, value); free(value); }
 }
-static bool nt_init(test_node *n, fipsd_loopback_network *net, const char *name, const char *address,
-                    const char *yaml, const fipsd_node_handlers_config *hcfg, uint32_t transport_id)
+static bool nt_init_with_options(test_node *n, fipsd_loopback_network *net, const char *name, const char *address,
+                    const char *yaml, const fipsd_node_handlers_config *hcfg, uint32_t transport_id,
+                    void (*configure)(fipsd_node_options *))
 {
     memset(n, 0, sizeof *n);
     n->name = name;
@@ -106,6 +107,7 @@ static bool nt_init(test_node *n, fipsd_loopback_network *net, const char *name,
     n->netmon = (fipsd_netmon_source){.read = nt_network, .injected = true};
     fipsd_node_options options = {.workers = 2, .peer_capacity = hcfg->peer_capacity, .netmon_source = &n->netmon};
     fipsd_node_handlers_install(n->h, &options);
+    if (configure) configure(&options);
     n->node = fipsd_node_create(n->configs, &options);
 #if defined(FIPSD_TEST_UDP) || defined(FIPSD_TEST_TCP)
     (void)net; (void)address;
@@ -135,6 +137,11 @@ static bool nt_init(test_node *n, fipsd_loopback_network *net, const char *name,
     n->addr = fipsd_loopback_transport_address(n->transport);
 #endif
     return fipsd_transport_register(fipsd_node_transports(n->node), n->transport) == 0;
+}
+static bool nt_init(test_node *n, fipsd_loopback_network *net, const char *name, const char *address,
+                    const char *yaml, const fipsd_node_handlers_config *hcfg, uint32_t transport_id)
+{
+    return nt_init_with_options(n, net, name, address, yaml, hcfg, transport_id, NULL);
 }
 /* After the runtime started: public identity for the other node's dial. */
 static void nt_identity(test_node *n)
