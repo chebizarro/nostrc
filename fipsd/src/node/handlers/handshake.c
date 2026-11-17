@@ -299,8 +299,13 @@ static peer_rec *establish(handlers *h, const fips_peer_identity *identity, fips
 }
 /* Remove an established peer: outputs of the link close run before the table
  * forgets the member; carry (optional) keeps the anchors for a replacement. */
+/* `keep` names the link replacing this one (restart, crossing swap): when it is
+ * the same transport address the connection is the replacement's too, which
+ * on a stream transport whose two directions share an address (BLE) must not
+ * be closed. Upstream moves the session in place without closing it. */
 static void remove_peer_carry(handlers *h, peer_rec *rec, fips_rekey_close why, bool notify_peer,
-                              fips_fmp_disconnect_reason reason, fips_rekey_carry *carry)
+                              fips_fmp_disconnect_reason reason, fips_rekey_carry *carry,
+                              const fips_transport_id *keep_transport, const fips_transport_addr *keep_addr)
 {
     if (!rec->used) return;
     /* Not remembered: with no incumbent left, the peer's identical retransmit
@@ -323,8 +328,10 @@ static void remove_peer_carry(handlers *h, peer_rec *rec, fips_rekey_close why, 
     hs_path_peer_removed(h, rec);
     const fipsd_peer_info *info = fipsd_active_peer_info(peer);
     fipsd_transport *transport = hs_transport(h, info->transport);
+    bool kept = keep_transport && keep_addr && fips_transport_id_equal(*keep_transport, info->transport) &&
+        fips_transport_addr_equal(keep_addr, &info->addr);
     if (transport && transport->ops->peer_link) transport->ops->peer_link(transport, &info->addr, &addr, false, true);
-    if (transport && transport->ops->close_connection) transport->ops->close_connection(transport, &info->addr);
+    if (transport && transport->ops->close_connection && !kept) transport->ops->close_connection(transport, &info->addr);
     hs_session_peer_removed(h, &addr);
     fips_rekey_carry local = {0};
     fips_rekey_outputs_clear(&h->link_out);
@@ -346,7 +353,7 @@ static void remove_peer_carry(handlers *h, peer_rec *rec, fips_rekey_close why, 
     hs_mark_dirty(h);
 }
 void hs_remove_peer(handlers *h, peer_rec *rec, fips_rekey_close why, bool notify_peer, fips_fmp_disconnect_reason reason)
-{ remove_peer_carry(h, rec, why, notify_peer, reason, NULL); }
+{ remove_peer_carry(h, rec, why, notify_peer, reason, NULL, NULL, NULL); }
 bool hs_disconnect(handlers *h, const fips_node_addr *peer, fips_fmp_disconnect_reason reason, bool notify_peer)
 {
     bool any = false;
@@ -542,7 +549,7 @@ bool hs_restart_result(handlers *h, const fipsd_crypto_job *j)
     if (old_epoch.present && memcmp(old_epoch.bytes, confirmed.done.epoch, 8))
         restart_remember(h, &rec->addr, old_epoch.bytes, true, (fips_instant){0});
     fips_rekey_carry carry = {0};
-    remove_peer_carry(h, rec, FIPS_REKEY_CLOSE_Restart, false, FIPS_FMP_Restart, &carry);
+    remove_peer_carry(h, rec, FIPS_REKEY_CLOSE_Restart, false, FIPS_FMP_Restart, &carry, &confirmed.transport, &confirmed.addr);
     rec = NULL;
     fips_rekey_setup_facts facts = confirmed.replace ? carry : (fips_rekey_setup_facts){0};
     /* As in msg1: the setup record answers a retransmitted msg1 from the held msg2. */
@@ -652,7 +659,7 @@ static bool msg2(handlers *h, fipsd_transport *t, const fips_transport_addr *fro
     if (existing && (swap || restart)) {
         if (swap) ++h->counters.hs_cross_swap; else ++h->counters.hs_restart;
         remove_peer_carry(h, existing, swap ? FIPS_REKEY_CLOSE_CrossConnectionMove : FIPS_REKEY_CLOSE_Restart,
-                          false, swap ? FIPS_FMP_Other : FIPS_FMP_Restart, &carry);
+                          false, swap ? FIPS_FMP_Other : FIPS_FMP_Restart, &carry, &leg->transport, &leg->addr);
         if (swap) { carry.record = fresh.record; facts = &carry; }
         promote = true;
     }

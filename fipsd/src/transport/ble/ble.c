@@ -277,6 +277,7 @@ static void reader_fiber(void *arg)
                 if (rc == -EPROTO) atomic_fetch_add(&u->shared.diagnostics.malformed, 1);
                 fipsd_transport_stats_error(&u->shared.stats, false);
             }
+            FIPSD_DEBUG(MOD, "%s: stream %llu receive ended (%d)", u->name, (unsigned long long)c->stream_id, rc);
             break;
         }
         fipsd_transport_stats_recv(&u->shared.stats, n);
@@ -302,6 +303,7 @@ static void writer_fiber(void *arg)
         free(frame);
         if (rc) {
             if (!conn_stopped(c) && rc != -ECANCELED) fipsd_transport_stats_error(&u->shared.stats, true);
+            FIPSD_DEBUG(MOD, "%s: stream %llu send failed (%d)", u->name, (unsigned long long)c->stream_id, rc);
             nsync_mu_lock(&u->mu); /* only this connection's own entry (remove_own) */
             if (c->pooled && ble_pool_get(&u->pool, &c->link.addr) == &c->link) conn_drop_locked(c, false);
             nsync_mu_unlock(&u->mu);
@@ -345,6 +347,11 @@ static void conn_owner(void *arg)
     if (has_writer) join(c->writer_done);
     ble_io_close(c->stream, c->fd);
     nsync_mu_lock(&u->mu); c->stream = NULL; nsync_mu_unlock(&u->mu);
+    {
+        char text[40]; (void)fipsd_ble_peer_format(&c->link.peer, text, sizeof text);
+        FIPSD_DEBUG(MOD, "%s: link %s (stream %llu) closed%s", u->name, text, (unsigned long long)c->stream_id,
+            c->notifying ? ", disconnected" : c->deliberate ? " deliberately" : ", replaced");
+    }
     if (c->notifying)
         (void)fipsd_transport_emit(u->events, u->root, c->notify_stop, FIPSD_TRANSPORT_DISCONNECTED,
             u->transport.id, &c->link.addr, NULL, 0);
@@ -425,6 +432,7 @@ static ble_outcome offer(ble_instance *u, ble_offer *o, ble_role role, fipsd_ble
         .has_node = o->has_node, .node = o->node, .established_ms = now, .grace_from_ms = now, .held_from_ms = now};
     ble_stream_mtu(o->stream, u->config.mtu, &c->link.send_mtu, &c->link.recv_mtu);
     ble_outcome result = OFFER_FAILED;
+    const char *why = "stopped";
     nsync_mu_lock(&u->mu);
     if (stopped(u) || !atomic_load(&u->present)) goto out;
     if (u->has_identity && o->has_node) {
@@ -432,19 +440,21 @@ static ble_outcome offer(ble_instance *u, ble_offer *o, ble_role role, fipsd_ble
         if (a.kind == BLE_DECLINE) {
             BLE_STAT(u, duplicate_node_declines);
             if (kept) *kept = a.existing->peer;
-            result = OFFER_DECLINED; goto out;
+            why = "duplicate-node-decline"; result = OFFER_DECLINED; goto out;
         }
-        if (a.kind == BLE_OCCUPIED) { result = OFFER_OCCUPIED; goto out; }
+        if (a.kind == BLE_OCCUPIED) { why = "address-occupied"; result = OFFER_OCCUPIED; goto out; }
         if (a.kind == BLE_REPLACE) {
             /* Raced a link to the same peer and won the tie-break. */
+            FIPSD_DEBUG(MOD, "%s: duplicate-link-replaced (stream %llu replaces %llu)", u->name,
+                (unsigned long long)c->stream_id, (unsigned long long)conn_of(a.existing)->stream_id);
             conn_drop_locked(conn_of(a.existing), false);
             BLE_STAT(u, duplicate_link_replacements);
         }
     }
     ble_insert r = ble_pool_insert(&u->pool, &c->link, now);
     log_insert(u, &r, &o->addr, role == ROLE_INBOUND ? "peripheral" : "central");
-    if (r.kind == BLE_INSERT_OCCUPIED) { result = OFFER_OCCUPIED; goto out; }
-    if (r.kind == BLE_INSERT_REFUSED) { BLE_STAT(u, connections_rejected); result = OFFER_REFUSED; goto out; }
+    if (r.kind == BLE_INSERT_OCCUPIED) { why = "address-occupied"; result = OFFER_OCCUPIED; goto out; }
+    if (r.kind == BLE_INSERT_REFUSED) { BLE_STAT(u, connections_rejected); why = "pool-rejected"; result = OFFER_REFUSED; goto out; }
     if (r.evicted) { conn_drop_locked(conn_of(r.evicted), false); BLE_STAT(u, pool_evictions); }
     c->pooled = true;
     c->next = u->conns; u->conns = c;
@@ -454,10 +464,15 @@ static ble_outcome offer(ble_instance *u, ble_offer *o, ble_role role, fipsd_ble
         fipsd_transport_stats_pool(&u->shared.stats, outbound ? FIPS_LINK_OUTBOUND : FIPS_LINK_INBOUND, false);
         goto out;
     }
-    result = OFFER_POOLED;
+    result = OFFER_POOLED; why = "pooled";
     o->stream = NULL; /* now the link's */
 out:
     nsync_mu_unlock(&u->mu);
+    {
+        char text[40]; (void)fipsd_ble_peer_format(&o->peer, text, sizeof text);
+        FIPSD_DEBUG(MOD, "%s: %s link %s: %s (stream %llu)", u->name, role == ROLE_INBOUND ? "inbound" :
+            role == ROLE_PROBE ? "probe" : "dialled", text, why, (unsigned long long)c->stream_id);
+    }
     if (result != OFFER_POOLED) { c->stream = NULL; c->reader = (ble_reader){0}; conn_free(c); }
     return result;
 }

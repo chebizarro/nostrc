@@ -203,9 +203,20 @@ static void arbitration(void)
     fips_node_addr small = node_n(1), big = node_n(9), other = node_n(5);
     fips_transport_addr at1 = addr_n(1), at2 = addr_n(2);
     ble_pool p; assert(!ble_pool_init(&p, 7, GRACE));
-    /* a verified link to the node declines any newcomer, wherever it is */
+    /* a settled verified link to the node declines any newcomer, wherever it is */
     ble_link *v = claimed(2, 9, true, t0); (void)ins(&p, v, t0);
-    ble_admission a = ble_arbitrate(&p, &small, &big, &at1, true, window, t0 + 1);
+    ble_admission a = ble_arbitrate(&p, &small, &big, &at1, true, window, t0 + window);
+    assert(a.kind == BLE_DECLINE && a.existing == v);
+    a = ble_arbitrate(&p, &small, &big, &at1, false, window, t0 + window + 1);
+    assert(a.kind == BLE_DECLINE && a.existing == v);
+    /* inside the window a verified link still racing is settled by the tie-break
+     * (the deliberate deviation): the loser is replaced, the winner declines */
+    a = ble_arbitrate(&p, &small, &big, &at1, true, window, t0 + 1); /* smaller keeps its outbound: replace the inbound */
+    assert(a.kind == BLE_REPLACE && a.existing == v);
+    a = ble_arbitrate(&p, &small, &big, &at1, false, window, t0 + 1); /* same direction: a rotation, declined */
+    assert(a.kind == BLE_DECLINE && a.existing == v);
+    v->outbound = true;
+    a = ble_arbitrate(&p, &small, &big, &at1, false, window, t0 + 1); /* the verified link is the winner */
     assert(a.kind == BLE_DECLINE && a.existing == v);
     ble_pool_free(&p);
     /* the newcomer's address holds a link claiming another node, or none */
@@ -241,7 +252,7 @@ static void arbitration(void)
     a = ble_arbitrate(&p, &big, &small, &at1, true, window, t0 + window); assert(a.kind == BLE_ADMIT);
     (void)at2; (void)other;
     ble_pool_free(&p);
-    puts("arbitration: newcomer_wins table, verified decline, occupied, racing same/other address, rotation and settled admits: ok");
+    puts("arbitration: newcomer_wins table, settled verified declines, racing verified tie-break, occupied, racing same/other address, rotation and settled admits: ok");
 }
 /* ---- mod.rs PendingProbes ---- */
 static void probe_book(void)
