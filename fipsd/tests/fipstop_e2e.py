@@ -134,8 +134,13 @@ def terminal_case(binary, root, stop):
     original = termios.tcgetattr(slave)
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 24, 80, 0, 0))
     env = dict(os.environ, TERM='xterm-256color', NO_COLOR='1', LC_ALL='en_US.UTF-8')
-    process = subprocess.Popen([binary, '--fixture-dir', str(root / 'fipsd/tests/control_golden')],
-                               stdin=slave, stdout=slave, stderr=slave, env=env, close_fds=True)
+    # EOF on `exited` is the child's exit (the kernel closes its descriptors).
+    exited, held = os.pipe()
+    try:
+        process = subprocess.Popen([binary, '--fixture-dir', str(root / 'fipsd/tests/control_golden')],
+                                   stdin=slave, stdout=slave, stderr=slave, env=env, close_fds=True, pass_fds=(held,))
+    finally:
+        os.close(held)
     def until(needle):
         output = bytearray()
         deadline = time.monotonic() + 10
@@ -144,6 +149,28 @@ def terminal_case(binary, root, stop):
             while needle not in output:
                 remaining = deadline - time.monotonic()
                 assert remaining > 0 and sel.select(remaining), ('terminal output missing', needle, output)
+                output.extend(os.read(master, 65536))
+        return bytes(output)
+    def drain_until_exit():
+        # Read like a terminal until the process is gone. ncurses restores the
+        # shell mode with TCSADRAIN, which on a PTY waits until the master has
+        # read everything written; endwin's last bytes can trail its rmcup in a
+        # later read, so a reader that stops at rmcup deadlocks the exit.
+        output = bytearray()
+        deadline = time.monotonic() + 10
+        with selectors.DefaultSelector() as sel:
+            sel.register(master, selectors.EVENT_READ)
+            sel.register(exited, selectors.EVENT_READ)
+            while True:
+                remaining = deadline - time.monotonic()
+                ready = sel.select(remaining) if remaining > 0 else []
+                assert ready, ('fipstop did not exit', output[-2000:])
+                if any(key.fileobj == master for key, _ in ready):
+                    output.extend(os.read(master, 65536))
+                elif not os.read(exited, 1):
+                    break
+            sel.unregister(exited)
+            while sel.select(0):  # what it wrote last, before exiting
                 output.extend(os.read(master, 65536))
         return bytes(output)
     try:
@@ -156,7 +183,9 @@ def terminal_case(binary, root, stop):
             os.write(master, b'q')
         else:
             process.send_signal(stop)
-        until(b'\x1b[?1049l')  # Drain the frame and observe endwin before waiting for exit.
+        output = drain_until_exit()
+        assert b'\x1b[?1049l' in output, ('endwin not observed', output[-2000:])
+        assert not any(m in output for m in SANITIZER_MARKERS), output.decode(errors='replace')
         assert process.wait(timeout=10) == 0
         current = termios.tcgetattr(slave)
         # PENDIN describes the kernel's pending-input queue, not a terminal mode;
@@ -168,9 +197,10 @@ def terminal_case(binary, root, stop):
     finally:
         if process.poll() is None:
             process.kill()
-            process.wait(timeout=5)
-        os.close(master)
+        os.close(master)  # hangs up the PTY: nothing can stay blocked draining into it
+        process.wait(timeout=5)
         os.close(slave)
+        os.close(exited)
     print(f'real ncurses PTY: initial frame, NO_COLOR, resize, stop={stop}, terminal restoration passed')
 
 
