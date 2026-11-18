@@ -54,6 +54,9 @@ void fipsd_native_api_observe(fipsd_native_api *api, GoChannel *events);
 /* Test seam, set before start: called outside the registry lock just before
  * the feeder drops its reference. A channel barrier can delay reclamation. */
 void fipsd_native_api_before_flow_reap(fipsd_native_api *api, void (*hook)(void *, uint64_t), void *user);
+/* Test seam, set before start: after an accepted descriptor is sent, outside
+ * the registry lock, before its flow record is published. */
+void fipsd_native_api_before_flow_record(fipsd_native_api *api, void (*hook)(void *, uint64_t), void *user);
 /* After the runtime has joined every fiber. Removes only the socket inode
  * this subsystem bound. */
 void fipsd_native_api_destroy(fipsd_native_api *api);
