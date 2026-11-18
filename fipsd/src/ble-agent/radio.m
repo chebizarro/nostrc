@@ -176,7 +176,8 @@ static NSString *device_text(NSData *d)
     BOOL _centralOn, _managerOn, _managerPending;
     listener _listener;
     BOOL _wantsAdvertising;
-    BOOL _advertiseStarting; /* a start is in flight: isAdvertising turns true only at its callback */
+    BOOL _advertiseStarting; /* a start is in flight; with _advertising, our own state: CoreBluetooth's
+                              * isAdvertising lags its own start callback */
     CBMutableService *_gatt;
     BOOL _up;
     uint16_t _upPsm;
@@ -325,7 +326,7 @@ static NSString *device_text(NSData *d)
         [self unpublishStaleOn:old];
         dispatch_async(_q, ^{ (void)old; }); /* released on a later turn, not inside its own callback */
     }
-    _gatt = nil; _managerPending = YES; _managerOn = NO; _advertiseStarting = NO;
+    _gatt = nil; _managerPending = YES; _managerOn = NO; _advertising = _advertiseStarting = NO;
     l_manager_replaced(&_listener);
     _manager = [[CBPeripheralManager alloc] initWithDelegate:self queue:_q options:nil];
 }
@@ -372,7 +373,7 @@ static NSString *device_text(NSData *d)
 {
     _wantsAdvertising = YES;
     if (_listener.published == 0) { [self republish]; return; } /* no listener to advertise yet */
-    if (!_manager || !_managerOn || _manager.isAdvertising || _advertiseStarting) return;
+    if (!_manager || !_managerOn || _advertising || _advertiseStarting || _manager.isAdvertising) return;
     /* The legacy UUID-only advert: CoreBluetooth carries no service data, so
      * the PSM is served over GATT instead. */
     _advertiseStarting = YES;

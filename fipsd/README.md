@@ -2696,16 +2696,18 @@ launchctl bootstrap gui/$(id -u) /Library/LaunchAgents/com.fips.ble-agent.plist
 tail -f ~/Library/Logs/fips/ble-agent.log
 ```
 
-- **Bluetooth permission (TCC).** The agent's first launch asks for
-  Bluetooth with the embedded usage string; it is granted or revoked under
-  System Settings › Privacy & Security › Bluetooth. macOS attributes a process
-  to its *responsible* process. Under launchd the agent is its own, so the
-  prompt names `fips-ble-agent`. Started from a terminal or IDE, it belongs to
-  that app, and if the app's own Info.plist lacks
-  `NSBluetoothAlwaysUsageDescription`, CoreBluetooth aborts the agent
-  (SIGABRT, crash namespace TCC). That happened from this checkout's IDE
-  shell. Run it through launchd (as below) when in doubt. An ad-hoc signed
-  build is recorded by its code hash, so each rebuild is asked again.
+- **Bluetooth permission (TCC).** The agent's first launch requests
+  Bluetooth with the embedded usage string. It reports the permission as
+  "not determined" until the request is answered. If no prompt shows, allow
+  `fips-ble-agent` under System Settings › Privacy & Security › Bluetooth.
+  macOS attributes a process to its *responsible* process. Under launchd the
+  agent is its own, so the request names `fips-ble-agent`. Started from a
+  terminal or IDE, it belongs to that app, and if the app's own Info.plist
+  lacks `NSBluetoothAlwaysUsageDescription`, CoreBluetooth aborts the agent
+  (SIGABRT, crash namespace TCC). An IDE's shell did exactly that. Run it
+  through launchd (as below) when in doubt. Once allowed, rebuilt ad-hoc
+  signed agents (same identifier, new code hash) were allowed again within a
+  second, without asking.
 - **Options.** `--socket PATH` (else `$FIPSD_BLE_AGENT_SOCKET`, else
   `/var/run/fips/ble-agent.sock`), `--daemon-uid UID` (default 0),
   `--log-file FILE`, `--verbose`, `--version`, `--help`, and `--ble-agent`
@@ -2775,6 +2777,27 @@ advertises. Then it runs fipsd with the agent socket in a temporary directory
 and the agent connecting to it. The checks: fipsd's transport comes up on the
 agent's PSM, and the agent advertises and scans. Both jobs are booted out at
 the end. A real L2CAP link needs a second BLE device running FIPS.
+
+Run on a MacBook's BCM4388 with Bluetooth on (2026-11-18), the smoke passed,
+probe and fipsd half alike. The probe reported the permission allowed, both
+managers powered on, the L2CAP listener published on PSM 0x00C0
+(OS-assigned) and the radio up, advertising the FIPS service and scanning; in
+12 s it heard 270 to 340 adverts from about 50 devices, none of them FIPS. In
+the fipsd half, fipsd took the agent's hello, brought the BLE transport up on
+ble0 at PSM 0x00C0 (`listen`), and the agent advertised (`advertise`) and
+scanned. The same PSM came back on every run, which suggests the agent's exit
+gives it back to bluetoothd. The smoke also found a duplicate advertising
+start, since fixed: CoreBluetooth confirms a start before its own
+`isAdvertising` turns true.
+
+Open: the Mac↔Linux L2CAP acceptance (a channel, the key exchange and frames
+over the air) needs a second BLE device running FIPS. None was available, and
+the Linux VM has no adapter. Nor can a second agent on the same Mac stand in
+as the peer. The agent advertised the FIPS service while scanning every
+advertiser and never heard itself, and one machine's radio does not discover
+its own adverts, so two agents sharing a radio cannot see each other. A
+second agent would also be told `BUSY`, and upstream's Rust agent serves only
+a root daemon and needs a Bluetooth grant of its own. It was not run.
 
 `FipsdBleAgentBinaryTest` checks the built agent's embedded Info.plist and its
 CLI. `FipsdBleTest` checks that the agent backend is the platform backend on
