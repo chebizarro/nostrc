@@ -44,21 +44,22 @@
  * ------------------------------------------------------------------------
  * io.rs                          | here             | BlueZ (6.2, bluer over D-Bus)             | CoreBluetooth (6.3, LaunchAgent)
  * -------------------------------+------------------+-------------------------------------------+-------------------------------------------
- * BluerIo::new, start_daemon_    | start            | Session + Adapter, set_powered(true);     | connect the agent socket; the agent owns
- *   radio (construction)         |                  | watch Powered / adapter removal and       | CBCentral/CBPeripheralManager and relays
- *                                |                  | report it with fipsd_ble_sink_adapter     | CBManagerState (no agent: present=false)
- * (task drop on stop_async)      | stop             | drop discovery and advert handles, close  | tell the agent to stop; fail every parked
- *                                |                  | the listener, fail parked D-Bus calls     | request with -ECANCELED
+ * BluerIo::new, start_daemon_    | start            | Session + Adapter, set_powered(true);     | bind the agent socket; fips-ble-agent
+ *   radio (construction)         |                  | watch Powered / adapter removal and       | owns CBCentral/CBPeripheralManager,
+ *                                |                  | report it with fipsd_ble_sink_adapter     | connects and says HELLO (none: absent)
+ * (task drop on stop_async)      | stop             | drop discovery and advert handles, close  | close the listener and the agent's
+ *                                |                  | the listener, fail parked D-Bus calls     | session; parked ops -ECANCELED
  * (adapter power, slot install,  | adapter,         | Adapter1.Powered, InterfacesRemoved       | poweredOn / poweredOff / unsupported; an
- *   radio replaced)              | sink_adapter     |                                           | agent reconnect is a replaced radio
- * BleIo::listen(psm) -> (a, psm) | listen           | l2cap SEQPACKET StreamListener bind(psm); | publishL2CAPChannel: OS-assigned PSM,
- *                                |                  | reports psm unchanged                     | reported back and served over GATT
- * BleAcceptor::accept            | INBOUND_STREAM   | listener.accept() -> fd stream            | didOpenL2CAPChannel -> agent hands over
- *                                |                  |                                           | the channel (fd, or a bridged stream)
- * BleIo::connect(addr, psm)      | connect          | l2cap Stream::connect(LePublic, psm);     | connect(peripheral) then
- *                                |                  | keep ETIMEDOUT and ECONNREFUSED distinct  | openL2CAPChannel(psm)
- * (io_macos DialPlan GATT steps) | read_psm         | -ENOTSUP at first (GattCharacteristic1    | discoverServices(FIPS) ->
- *                                |                  | ReadValue may be adopted later)           | discoverCharacteristics(PSM) -> read
+ *   radio replaced)              | sink_adapter     |                                           | agent reconnect is a replaced radio (BUSY
+ *                                |                  |                                           | to a second agent)
+ * BleIo::listen(psm) -> (a, psm) | listen           | l2cap SEQPACKET StreamListener bind(psm); | the HELLO's publishL2CAPChannel PSM
+ *                                |                  | reports psm unchanged                     | (0: none yet, `requested` stands in)
+ * BleAcceptor::accept            | INBOUND_STREAM   | listener.accept() -> fd stream            | didOpenL2CAPChannel -> INBOUND frame:
+ *                                |                  |                                           | a stream relayed over the socket
+ * BleIo::connect(addr, psm)      | connect          | l2cap Stream::connect(LePublic, psm);     | CONNECT: connect(peripheral), DialPlan,
+ *                                |                  | keep ETIMEDOUT and ECONNREFUSED distinct  | openL2CAPChannel; ok=false is -EIO
+ * (io_macos DialPlan GATT steps) | read_psm         | -ENOTSUP at first (GattCharacteristic1    | NULL: the agent's dial does the GATT
+ *                                |                  | ReadValue may be adopted later)           | read (discoverServices/Characteristics)
  * start_advertising(psm)         | advertise        | LEAdvertisement1: FIPS UUID, ServiceData  | startAdvertising(FIPS UUID only) and set
  *                                |                  | {0x9C90: psm LE}, 400-600 ms interval     | the PSM characteristic to psm LE
  * stop_advertising               | advertise_stop   | drop the AdvertisementHandle              | stopAdvertising
@@ -68,17 +69,18 @@
  * stop_scanning                  | scan_stop        | drop the discovery stream                 | stopScan
  * local_addr, adapter_name       | local_addr,      | Adapter1.Address, "hciN"                  | hidden (false), "ble0"
  *                                | adapter_name     |                                           |
- * BleStream::send / recv         | stream write /   | the fd fast path: SEQPACKET send/recv     | NSStream via the agent: fd path when the
- *                                | read, or fd      | through libgo                             | agent passes a descriptor, else read/write
+ * BleStream::send / recv         | stream write /   | the fd fast path: SEQPACKET send/recv     | NSStream pumped by the agent, relayed as
+ *                                | read, or fd      | through libgo                             | SEND/RECV with credit (fd -1)
  * BleStream::send_mtu / recv_mtu | stream mtu       | BT_SNDMTU / BT_RCVMTU                     | channel MTU from the agent (0: unknown)
  * BleStream::remote_addr         | stream->peer     | BleAddr::from_bluer                       | fipsd_ble_peer_from_identifier(uuid)
- * (stream drop)                  | cancel + close   | core gof_io_cancel_fd, backend close(fd)  | agent close_channel(ch_id)
- * (channel died, nobody reading) | STREAM_CLOSED    | HUP seen by the backend                   | didClose / stream error
+ * (stream drop)                  | cancel + close   | core gof_io_cancel_fd, backend close(fd)  | CLOSE frame (CLOSED from the agent: EOF)
+ * (channel died, nobody reading) | STREAM_CLOSED    | HUP seen by the backend                   | the agent leaving resets every channel
  *
  * The macOS agent handshake (socket, version, Bluetooth permission prompt)
- * is backend-internal. Its only outcome the core sees is adapter presence: no
- * agent is present=false, an agent coming back is present=true, and the core
- * then listens, advertises and scans afresh.
+ * is backend-internal (agent_client.h, upstream agent_proto.rs). Its only
+ * outcome the core sees is adapter presence: no agent is present=false, an
+ * agent coming back is present=true, and the core then listens, advertises
+ * and scans afresh.
  */
 #include <errno.h>
 #include <stdatomic.h>
