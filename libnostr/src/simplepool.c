@@ -58,7 +58,7 @@ typedef struct SubscriptionRegistry {
     _Atomic bool shutdown_requested; /* nostrc-val0v: polled by the cleanup worker, set by pool free */
     PoolClosedBackoff *closed_backoff; /* mutex protected */
     unsigned closed_initial_ms, closed_max_ms;
-    _Atomic unsigned recovery_window; /* configured before subscribe; no public layout change */
+    _Atomic unsigned recovery_window; /* public setter / worker snapshot; no public layout change */
 } SubscriptionRegistry;
 
 static SubscriptionRegistry *subscription_registry_new(void) {

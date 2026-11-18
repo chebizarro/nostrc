@@ -364,7 +364,8 @@ static void test_loopback_fixture_relay(void) {
 
 /* Concurrent public configuration against the real pool worker, transport and
  * relay fixture above. CLOSED, not a sleep/disconnect timer, makes the worker
- * prepare replacement subscriptions; EOSE acknowledges each subscribe round. */
+ * prepare replacement subscriptions; EOSE progress gates the subscribe load
+ * (not a per-REQ acknowledgement once the two subscriber threads overlap). */
 typedef struct {
     NostrSimplePool *pool;
     char url[64];
