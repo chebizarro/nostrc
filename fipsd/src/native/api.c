@@ -48,7 +48,7 @@ typedef struct flow_rec {
     unsigned refs;       /* reader, feeder and any transient user (inject) */
 } flow_rec;
 typedef struct listener_rec {
-    bool used;
+    bool used, released;
     fipsd_native_api *api;
     uint16_t port;
     int sock;
@@ -89,6 +89,8 @@ struct fipsd_native_api {
     GoChannel *sink, *events;
     void (*before_flow_reap)(void *, uint64_t);
     void *flow_reap_user;
+    void (*before_flow_record)(void *, uint64_t);
+    void *flow_record_user;
     GoChannel *halt; /* closed by stop: wakes flow readers parked on the dispatcher mailbox */
     _Atomic bool stopping;
     fipsd_control_provider base;
@@ -250,7 +252,7 @@ static bool wire_flow(fipsd_native_api *a, int fds[2], GoChannel **inbound)
 /* Record a flow and start its two fibers; on failure everything handed in is
  * released, the registry entry included. */
 static bool flow_start(fipsd_native_api *a, uint64_t id, const fipsd_native_flow_key *key, const fips_xonly_pubkey *pubkey,
-                       int sock, int pin, GoChannel *inbound)
+                       int sock, int pin, GoChannel *inbound, listener_rec *listener)
 {
     nsync_mu_lock(&a->mu);
     flow_rec *f = NULL;
@@ -263,6 +265,10 @@ static bool flow_start(fipsd_native_api *a, uint64_t id, const fipsd_native_flow
         go_channel_free(inbound);
         return false;
     }
+    /* Listener shutdown can precede this record after descriptor hand-off.
+     * Either its pin sweep sees us, or we observe its release here. The
+     * arrivals fiber keeps this listener record alive until hand_over ends. */
+    if (listener && listener->released && pin >= 0) { close(pin); pin = -1; }
     memset(f, 0, sizeof *f);
     f->used = true; f->api = a; f->id = id; f->key = *key; f->pubkey = *pubkey; f->sock = sock; f->inbound = inbound; f->refs = 2;
     atomic_init(&f->pin, pin); atomic_init(&f->datagrams, 0); atomic_init(&f->bytes, 0); atomic_init(&f->closed, false);
@@ -275,8 +281,8 @@ static bool flow_start(fipsd_native_api *a, uint64_t id, const fipsd_native_flow
         return false;
     }
     if (fipsd_runtime_spawn(a->runtime, flow_reader_fiber, f) != 0) {
-        f->released = true;
         nsync_mu_lock(&a->mu);
+        f->released = true;
         (void)fipsd_native_registry_release(a->registry, key);
         go_channel_close(f->inbound); /* the feeder exits and drops its reference */
         flow_unref_locked(a, f);
@@ -302,8 +308,9 @@ static void listener_unref_locked(fipsd_native_api *a, listener_rec *l)
 static void listener_end(fipsd_native_api *a, listener_rec *l)
 {
     nsync_mu_lock(&a->mu);
-    /* Every pinned flow on this port came from this listener, and no later
-     * listener can hold the port until this release has been served. */
+    l->released = true;
+    /* Every recorded pinned flow on this port came from this listener. A
+     * hand-off not recorded yet observes released under this same lock. */
     for (size_t i = 0; i < a->flow_cap; ++i)
         if (a->flows[i].used && a->flows[i].key.local == l->port) unpin(a, &a->flows[i]);
     fipsd_native_registry_release_listener(a->registry, l->port);
@@ -382,7 +389,8 @@ static void hand_over(fipsd_native_api *a, listener_rec *l, const fipsd_native_a
         count(a, fipsd_native_drop_reason_metric(reason), 1);
         return;
     }
-    (void)flow_start(a, arrival->flow, &key, &pubkey, fds[0], fds[1], inbound);
+    if (a->before_flow_record) a->before_flow_record(a->flow_record_user, arrival->flow);
+    (void)flow_start(a, arrival->flow, &key, &pubkey, fds[0], fds[1], inbound, l);
 }
 static void listener_arrivals_fiber(void *arg)
 {
@@ -435,7 +443,7 @@ static json_t *do_connect(fipsd_native_api *a, const fipsd_native_command *cmd, 
         return stopping ? shutting_down() : refused(&why);
     }
     fipsd_native_flow_key k = {.peer = fips_node_addr_from_pubkey(&key), .remote = cmd->remote, .local = held};
-    if (!flow_start(a, id, &k, &key, fds[0], -1, inbound)) {
+    if (!flow_start(a, id, &k, &key, fds[0], -1, inbound, NULL)) {
         close(fds[1]);
         return atomic_load(&a->stopping) ? shutting_down() : fipsd_native_deny("EMFILE", "could not open a flow: no flow slot is free");
     }
@@ -572,8 +580,8 @@ static json_t *do_arrive(fipsd_native_api *a, const fipsd_native_command *cmd)
     nsync_mu_lock(&a->mu);
     if (atomic_load(&a->stopping)) { nsync_mu_unlock(&a->mu); fipsd_native_datagram_free(dg); return shutting_down(); }
     fipsd_native_outcome outcome = fipsd_native_link_deliver(a->registry, &peer, &key, cmd->src, cmd->dst, dg, mono_ms());
-    nsync_mu_unlock(&a->mu);
     fipsd_native_link_count(a->metrics, &outcome, cmd->data_len);
+    nsync_mu_unlock(&a->mu);
     char text[96];
     fipsd_native_outcome_text(&outcome, text, sizeof text);
     bool named = outcome.kind == FIPSD_NATIVE_OUTCOME_ANNOUNCED || outcome.kind == FIPSD_NATIVE_OUTCOME_HELD;
@@ -731,17 +739,15 @@ static void deliver_notice(fipsd_native_api *a, fipsd_node_notice *n)
 {
     FIPSD_PERF_WAIT(n, ENDPOINT_EVENT_WAIT);
     fipsd_native_outcome outcome = {.kind = FIPSD_NATIVE_OUTCOME_DROPPED, .reason = FIPSD_NATIVE_REASON_NO_PORT};
+    fipsd_native_datagram *dg = n->has_pubkey ? fipsd_native_datagram_new(n->payload, n->len) : NULL;
     if (!n->has_pubkey) FIPSD_DEBUG(MODULE, "inbound datagram from a peer with no known key, dropped");
-    else {
-        fipsd_native_datagram *dg = fipsd_native_datagram_new(n->payload, n->len);
+    nsync_mu_lock(&a->mu);
+    if (n->has_pubkey) {
         if (!dg) outcome.reason = FIPSD_NATIVE_REASON_FLOW_QUEUE_FULL;
-        else {
-            nsync_mu_lock(&a->mu);
-            outcome = fipsd_native_link_deliver(a->registry, &n->peer, &n->pubkey, n->src_port, n->dst_port, dg, mono_ms());
-            nsync_mu_unlock(&a->mu);
-        }
+        else outcome = fipsd_native_link_deliver(a->registry, &n->peer, &n->pubkey, n->src_port, n->dst_port, dg, mono_ms());
     }
     fipsd_native_link_count(a->metrics, &outcome, n->len);
+    nsync_mu_unlock(&a->mu);
     event(a, FIPSD_NATIVE_EVENT_DATAGRAM_COUNTED, 0, n->dst_port);
     fipsd_node_notice_free(n);
 }
@@ -750,9 +756,9 @@ static void expire(fipsd_native_api *a, uint64_t now)
     uint64_t ids[64];
     nsync_mu_lock(&a->mu);
     size_t n = fipsd_native_registry_expire(a->registry, now, ids, 64);
+    if (n) count(a, FIPSD_METRIC_native_flows_expired, n);
     nsync_mu_unlock(&a->mu);
     if (!n) return;
-    count(a, FIPSD_METRIC_native_flows_expired, n);
     FIPSD_WARN(MODULE, "%zu pending flow(s) expired before a listener took them", n);
 }
 static void rx_fiber(void *arg)
@@ -979,6 +985,11 @@ static GoRefPtr acquire(void *arg)
     fipsd_native_listener_view *lviews = calloc(m + 1, sizeof *lviews);
     if (views) n = fipsd_native_registry_flows(a->registry, views, n, queued_of, NULL);
     if (lviews) m = fipsd_native_registry_listeners(a->registry, lviews, m);
+    /* Membership, listener state and registry-transition counters share this
+     * read boundary. The dispatcher's coalesced snapshot can predate all three.
+     * a->handlers is fixed at create; a->metrics is only set by start. */
+    c->snapshot.native = (fipsd_control_counters){c->native,
+        fipsd_metrics_snapshot(fipsd_node_handlers_metrics(a->handlers), FIPSD_METRICS_native, c->native)};
     nsync_mu_unlock(&a->mu);
     c->flows = calloc(n + 1, sizeof *c->flows);
     c->listeners = calloc(m + 1, sizeof *c->listeners);
@@ -997,12 +1008,6 @@ static GoRefPtr acquire(void *arg)
     free(views); free(lviews);
     c->snapshot.flows = c->flows; c->snapshot.flow_count = n;
     c->snapshot.listeners = c->listeners; c->snapshot.listener_count = m;
-    /* This API bumps the native counters outside the dispatcher, so the base
-     * snapshot's copy lags until its next publication; read them live beside
-     * the live flows and listeners so show_native_flows agrees with itself.
-     * (a->handlers is fixed at create; a->metrics is only set by start.) */
-    c->snapshot.native = (fipsd_control_counters){c->native,
-        fipsd_metrics_snapshot(fipsd_node_handlers_metrics(a->handlers), FIPSD_METRICS_native, c->native)};
     return make_go_refptr(c, combined_free); /* snapshot is the first member */
 }
 static json_t *command(void *arg, const char *name, const json_t *params, const fipsd_control_request_context *ctx)
@@ -1065,6 +1070,11 @@ uint16_t fipsd_native_api_max_payload(const fipsd_native_api *a) { return a->max
 void fipsd_native_api_observe(fipsd_native_api *a, GoChannel *events) { a->events = events; }
 void fipsd_native_api_before_flow_reap(fipsd_native_api *a, void (*hook)(void *, uint64_t), void *user)
 { a->before_flow_reap = hook; a->flow_reap_user = user; }
+void fipsd_native_api_before_flow_record(fipsd_native_api *a, void (*hook)(void *, uint64_t), void *user)
+{
+    if (!a) return;
+    a->before_flow_record = hook; a->flow_record_user = user;
+}
 void fipsd_native_api_destroy(fipsd_native_api *a)
 {
     if (!a) return;

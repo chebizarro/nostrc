@@ -227,15 +227,65 @@ static void test_release_before_reap(api_node *a, reap_barrier *b)
     await_event(&a->events, FIPSD_NATIVE_EVENT_FLOW_RELEASED, flow, 0);
     /* Neither connection may address a released flow, even while its feeder
      * has not reaped it. The registry has also returned its port already. */
+    v = show_native_flows(a);
+    CHECK(json_array_size(data(v, "flows")) == 0);
+    json_t *stats = data(v, "stats");
+    CHECK(json_integer_value(json_object_get(stats, "flows_opened")) == 1);
+    CHECK(json_integer_value(json_object_get(stats, "flows_closed")) == 1);
+    json_decref(v);
     v = raw_call(c, stats_line(flow), NULL); json_decref(expect_error(v, "ENOENT", NULL));
     v = ask(a->path, stats_line(flow), NULL); json_decref(expect_error(v, "ENOENT", NULL));
     v = ask(a->path, inject_line(flow, "ab", 0), NULL); json_decref(expect_error(v, "ENOENT", NULL));
     v = raw_call(c, connect_line(PEER, 4242, 4243), &ffd); CHECK(is_ok(v));
     uint64_t next = flow_id_of(v); CHECK(next != flow); json_decref(v);
+    v = show_native_flows(a);
+    CHECK(json_array_size(data(v, "flows")) == 1);
+    CHECK(json_integer_value(json_object_get(json_array_get(data(v, "flows"), 0), "flow_id")) == (json_int_t)next);
+    stats = data(v, "stats");
+    CHECK(json_integer_value(json_object_get(stats, "flows_opened")) == 2);
+    CHECK(json_integer_value(json_object_get(stats, "flows_closed")) == 1);
+    json_decref(v);
     atomic_store(&b->flow, 0);
     CHECK(go_channel_send(b->resume, b) == 0);
     close(c); close(ffd);
     await_event(&a->events, FIPSD_NATIVE_EVENT_FLOW_RELEASED, next, 0);
+}
+
+/* Reuse the channel barrier to force listener release between an accepted
+ * descriptor becoming observable and its flow record being published. */
+static void before_flow_record(void *user, uint64_t flow)
+{
+    reap_barrier *b = user;
+    if (atomic_load(&b->flow) != UINT64_MAX) return;
+    atomic_store(&b->flow, flow);
+    CHECK(go_channel_send(b->entered, b) == 0);
+    barrier_receive(b->resume);
+}
+static void test_listener_release_before_record(api_node *a, reap_barrier *b)
+{
+    int lfd, ffd;
+    json_t *v = ask(a->path, listen_line(4242), &lfd); CHECK(is_ok(v)); json_decref(v); bounded(lfd);
+    atomic_store(&b->flow, UINT64_MAX);
+    v = ask(a->path, arrive_line(OTHER, 5000, 4242, "ab"), NULL); CHECK(is_ok(v));
+    uint64_t flow = flow_id_of(v); json_decref(v);
+    v = raw_accept(lfd, &ffd); CHECK((uint64_t)json_integer_value(json_object_get(v, "flow_id")) == flow); json_decref(v);
+    barrier_receive(b->entered);
+    CHECK(atomic_load(&b->flow) == flow);
+    /* Registry admission precedes both the datagram count and hand-off,
+     * even though the auxiliary flow record is deliberately still absent. */
+    v = show_native_flows(a);
+    CHECK(json_array_size(data(v, "flows")) == 1);
+    CHECK(json_integer_value(json_object_get(json_array_get(data(v, "flows"), 0), "flow_id")) == (json_int_t)flow);
+    json_t *stats = data(v, "stats");
+    CHECK(json_integer_value(json_object_get(stats, "flows_accepted")) == 1);
+    CHECK(json_integer_value(json_object_get(stats, "received_datagrams")) == 1);
+    json_decref(v);
+    close(ffd); close(lfd);
+    await_event(&a->events, FIPSD_NATIVE_EVENT_LISTENER_RELEASED, 0, 4242);
+    CHECK(go_channel_send(b->resume, b) == 0);
+    await_event(&a->events, FIPSD_NATIVE_EVENT_FLOW_RELEASED, flow, 0);
+    v = show_native_flows(a); CHECK(json_array_size(data(v, "flows")) == 0); json_decref(v);
+    atomic_store(&b->flow, 0);
 }
 
 /* ---- scenarios ------------------------------------------------------------ */
@@ -521,7 +571,17 @@ static void test_one_peer_flooding(api_node *a)
     CHECK(announced == 2); /* the quarter share of eight */
     int ffd; v = ask(a->path, connect_line(PEER, 4243, 6000), &ffd); CHECK(is_ok(v)); uint64_t flow = flow_id_of(v); json_decref(v);
     v = ask(a->path, arrive_line(OTHER, 5000, 4242, "00"), NULL);
-    CHECK(is_ok(v) && !strcmp(str(json_object_get(v, "data"), "outcome"), "announced")); json_decref(v);
+    CHECK(is_ok(v) && !strcmp(str(json_object_get(v, "data"), "outcome"), "announced"));
+    uint64_t other = flow_id_of(v); json_decref(v);
+    int other_fd; v = raw_accept(lfd, &other_fd);
+    CHECK((uint64_t)json_integer_value(json_object_get(v, "flow_id")) == other); json_decref(v);
+    /* Listener release removes pending flows, not accepted ones (upstream
+     * Registry::release_listener). Complete this hand-off and unpin before
+     * closing: the arrival can reach the client before flow_start records it. */
+    write_dgram(other_fd, "", 0);
+    await_event(&a->events, FIPSD_NATIVE_EVENT_FLOW_READ, other, 0);
+    close(other_fd);
+    await_event(&a->events, FIPSD_NATIVE_EVENT_FLOW_RELEASED, other, 0);
     close(ffd); await_event(&a->events, FIPSD_NATIVE_EVENT_FLOW_RELEASED, flow, 0);
     close(lfd); await_event(&a->events, FIPSD_NATIVE_EVENT_LISTENER_RELEASED, 0, 4242);
     /* The refused flows were pinned until the listener closed; they end now. */
@@ -530,8 +590,14 @@ static void test_one_peer_flooding(api_node *a)
 }
 /* A datagram a client writes leaves through the dispatcher and comes back
  * to a listener on this node: the outbound and inbound paths end to end. */
-static void test_self_delivery(api_node *a)
+static void test_self_delivery(api_node *a, reap_barrier *barrier)
 {
+    /* An unrelated live flow must be listed; after release, even a retained
+     * flow_rec must disappear. Hold the feeder across both registry reads. */
+    int extra_fd;
+    json_t *extra = ask(a->path, connect_line(PEER, 4242, 4601), &extra_fd); CHECK(is_ok(extra));
+    uint64_t extra_flow = flow_id_of(extra); json_decref(extra);
+    atomic_store(&barrier->flow, extra_flow);
     int lfd, cfd; json_t *v = ask(a->path, listen_line(4600), &lfd); CHECK(is_ok(v)); json_decref(v); bounded(lfd);
     v = ask(a->path, connect_line(a->npub, 4600, 0), &cfd); CHECK(is_ok(v)); bounded(cfd);
     unsigned local = (unsigned)json_integer_value(data(v, "local_port")); uint64_t cflow = flow_id_of(v); json_decref(v);
@@ -546,7 +612,21 @@ static void test_self_delivery(api_node *a)
     await_event(&a->events, FIPSD_NATIVE_EVENT_DATAGRAM_COUNTED, 0, 4600);
     await_event(&a->events, FIPSD_NATIVE_EVENT_DATAGRAM_COUNTED, 0, (uint16_t)local);
     v = show_native_flows(a);
+    CHECK(json_array_size(data(v, "flows")) == 3);
+    json_decref(v);
+    close(extra_fd);
+    barrier_receive(barrier->entered);
+    await_event(&a->events, FIPSD_NATIVE_EVENT_FLOW_RELEASED, extra_flow, 0);
+    v = show_native_flows(a);
     CHECK(json_object_get(data(v, "stats"), "sent_datagrams") && json_array_size(data(v, "flows")) == 2);
+    CHECK(json_integer_value(json_object_get(json_array_get(data(v, "flows"), 0), "flow_id")) == (json_int_t)cflow);
+    CHECK(json_integer_value(json_object_get(json_array_get(data(v, "flows"), 1), "flow_id")) == (json_int_t)aflow);
+    json_t *stats = data(v, "stats");
+    CHECK(json_integer_value(json_object_get(stats, "flows_opened")) +
+          json_integer_value(json_object_get(stats, "flows_accepted")) -
+          json_integer_value(json_object_get(stats, "flows_closed")) == 2);
+    atomic_store(&barrier->flow, 0);
+    CHECK(go_channel_send(barrier->resume, barrier) == 0);
     json_decref(v);
     /* A datagram to the node's own address is delivered without crossing
      * the session send path, so only the receive side counts here; the wire
@@ -587,6 +667,10 @@ int main(void)
     barrier.entered = go_channel_create(1); barrier.resume = go_channel_create(1);
     CHECK(barrier.entered && barrier.resume);
     fipsd_native_api_before_flow_reap(a.api, before_flow_reap, &barrier);
+    reap_barrier record_barrier; atomic_init(&record_barrier.flow, 0);
+    record_barrier.entered = go_channel_create(1); record_barrier.resume = go_channel_create(1);
+    CHECK(record_barrier.entered && record_barrier.resume);
+    fipsd_native_api_before_flow_record(a.api, before_flow_record, &record_barrier);
     CHECK(fipsd_runtime_register(rt, fipsd_node_subsystem(a.node.node)) == 0);
     CHECK(fipsd_runtime_register(rt, fipsd_node_subsystem(b.node.node)) == 0);
     CHECK(fipsd_runtime_register(rt, fipsd_native_api_subsystem(a.api)) == 0);
@@ -598,6 +682,7 @@ int main(void)
     a.npub = npub_a; b.npub = npub_b;
     struct stat st; CHECK(lstat(path_a, &st) == 0 && S_ISSOCK(st.st_mode) && (st.st_mode & 0777) == 0770);
     test_release_before_reap(&a, &barrier);
+    test_listener_release_before_record(&a, &record_barrier);
     test_listeners_and_ports(&a);
     test_refusals(&a);
     test_connect(&a);
@@ -606,7 +691,7 @@ int main(void)
     test_debug_gate(&a, &b);
     test_command_cap_and_refusal_sizes(&a);
     test_one_peer_flooding(&a);
-    test_self_delivery(&a);
+    test_self_delivery(&a, &barrier);
     /* Shutdown with a flow, a listener and an idle connection still held by
      * clients: cancellation-safe, within the grace period, and the clients
      * then read end of file. */
@@ -622,6 +707,7 @@ int main(void)
     close(lfd); close(ffd); close(c);
     fipsd_runtime_destroy(rt);
     go_channel_free(barrier.entered); go_channel_free(barrier.resume);
+    go_channel_free(record_barrier.entered); go_channel_free(record_barrier.resume);
     fipsd_native_api_destroy(a.api); fipsd_native_api_destroy(b.api);
     CHECK(lstat(path_a, &st) != 0 && lstat(path_b, &st) != 0);
     drain_events(&a.events); drain_events(&b.events);
