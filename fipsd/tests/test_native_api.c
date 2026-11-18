@@ -227,11 +227,24 @@ static void test_release_before_reap(api_node *a, reap_barrier *b)
     await_event(&a->events, FIPSD_NATIVE_EVENT_FLOW_RELEASED, flow, 0);
     /* Neither connection may address a released flow, even while its feeder
      * has not reaped it. The registry has also returned its port already. */
+    v = show_native_flows(a);
+    CHECK(json_array_size(data(v, "flows")) == 0);
+    json_t *stats = data(v, "stats");
+    CHECK(json_integer_value(json_object_get(stats, "flows_opened")) == 1);
+    CHECK(json_integer_value(json_object_get(stats, "flows_closed")) == 1);
+    json_decref(v);
     v = raw_call(c, stats_line(flow), NULL); json_decref(expect_error(v, "ENOENT", NULL));
     v = ask(a->path, stats_line(flow), NULL); json_decref(expect_error(v, "ENOENT", NULL));
     v = ask(a->path, inject_line(flow, "ab", 0), NULL); json_decref(expect_error(v, "ENOENT", NULL));
     v = raw_call(c, connect_line(PEER, 4242, 4243), &ffd); CHECK(is_ok(v));
     uint64_t next = flow_id_of(v); CHECK(next != flow); json_decref(v);
+    v = show_native_flows(a);
+    CHECK(json_array_size(data(v, "flows")) == 1);
+    CHECK(json_integer_value(json_object_get(json_array_get(data(v, "flows"), 0), "flow_id")) == (json_int_t)next);
+    stats = data(v, "stats");
+    CHECK(json_integer_value(json_object_get(stats, "flows_opened")) == 2);
+    CHECK(json_integer_value(json_object_get(stats, "flows_closed")) == 1);
+    json_decref(v);
     atomic_store(&b->flow, 0);
     CHECK(go_channel_send(b->resume, b) == 0);
     close(c); close(ffd);
@@ -521,7 +534,17 @@ static void test_one_peer_flooding(api_node *a)
     CHECK(announced == 2); /* the quarter share of eight */
     int ffd; v = ask(a->path, connect_line(PEER, 4243, 6000), &ffd); CHECK(is_ok(v)); uint64_t flow = flow_id_of(v); json_decref(v);
     v = ask(a->path, arrive_line(OTHER, 5000, 4242, "00"), NULL);
-    CHECK(is_ok(v) && !strcmp(str(json_object_get(v, "data"), "outcome"), "announced")); json_decref(v);
+    CHECK(is_ok(v) && !strcmp(str(json_object_get(v, "data"), "outcome"), "announced"));
+    uint64_t other = flow_id_of(v); json_decref(v);
+    int other_fd; v = raw_accept(lfd, &other_fd);
+    CHECK((uint64_t)json_integer_value(json_object_get(v, "flow_id")) == other); json_decref(v);
+    /* Listener release removes pending flows, not accepted ones (upstream
+     * Registry::release_listener). Complete this hand-off and unpin before
+     * closing: the arrival can reach the client before flow_start records it. */
+    write_dgram(other_fd, "", 0);
+    await_event(&a->events, FIPSD_NATIVE_EVENT_FLOW_READ, other, 0);
+    close(other_fd);
+    await_event(&a->events, FIPSD_NATIVE_EVENT_FLOW_RELEASED, other, 0);
     close(ffd); await_event(&a->events, FIPSD_NATIVE_EVENT_FLOW_RELEASED, flow, 0);
     close(lfd); await_event(&a->events, FIPSD_NATIVE_EVENT_LISTENER_RELEASED, 0, 4242);
     /* The refused flows were pinned until the listener closed; they end now. */
