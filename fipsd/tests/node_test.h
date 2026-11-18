@@ -6,6 +6,9 @@
 #define FIPSD_NODE_TEST_H
 #include "node/context.h"
 #include "node/handlers/handlers.h"
+#ifdef FIPSD_TEST_HOOKS
+#include "node/handlers/internal.h"
+#endif
 #include "node/transport_loopback.h"
 #if defined(FIPSD_TEST_UDP) || defined(FIPSD_TEST_TCP)
 #ifdef FIPSD_TEST_TOR
@@ -59,6 +62,13 @@ static bool nt_tor_address(fipsd_transport *t, fips_transport_addr *out)
 #include <string.h>
 #include <time.h>
 
+#ifdef FIPSD_TEST_HOOKS
+static inline void nt_watch_publications(void)
+{ fipsd_test_published = go_channel_create(1); assert(fipsd_test_published); }
+static inline void nt_unwatch_publications(void)
+{ go_channel_unref(fipsd_test_published); fipsd_test_published = NULL; }
+#endif
+
 #define NT_WAIT_MS 60000u
 static uint64_t nt_ms(void)
 {
@@ -79,6 +89,7 @@ typedef struct test_node {
     fips_peer_identity identity;
     const fips_transport_addr *addr;
     fips_transport_addr udp_addr;
+    bool link_stable; /* fail on churn during a test-defined stable phase */
 } test_node;
 typedef struct nt_trace { char lines[256][128]; size_t count; } nt_trace;
 static nt_trace nt_events;
@@ -91,6 +102,7 @@ static const char *nt_kind_name(fipsd_notice_kind k)
 }
 static void nt_record(const test_node *n, const fipsd_node_notice *e)
 {
+    if (n->link_stable) assert(e->kind != FIPSD_NOTICE_LINK_UP && e->kind != FIPSD_NOTICE_LINK_DOWN);
     if (nt_events.count == 256) return;
     char peer[12]; (void)fips_node_addr_short_hex(&e->peer, peer, sizeof peer);
     snprintf(nt_events.lines[nt_events.count++], 128, "%7llu ms  %s: %-16s peer=%s k=%d root=%d depth=%llu value=%llu len=%zu",
@@ -198,6 +210,91 @@ static json_t *nt_query(test_node *n, const char *name)
     go_refptr_release(&ref);
     return out;
 }
+/* A notice is not a convergence barrier: the control view is coalesced, and
+ * e.g. FILTER_ACCEPTED can precede the peer's final parent declaration.
+ * path_show is read-only; HCMD_CONTROL publishes even its "peer not found"
+ * response (we ask about ourselves) BEFORE resolving the command ticket.
+ * Keep that barrier and every notice wait inside the caller's absolute deadline.
+ * Evaluate all fields against one retained, fresh, immutable view per attempt. */
+typedef bool (*nt_converged_predicate)(const fipsd_control_snapshot *, const void *);
+static inline bool nt_barrier(test_node *n, uint64_t deadline)
+{
+    uint64_t now = nt_ms();
+    if (now >= deadline) return false;
+    struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
+    fipsd_control_request_context rc = {
+        .deadline_ns = (uint64_t)ts.tv_sec * 1000000000u + (uint64_t)ts.tv_nsec + (deadline - now) * 1000000u};
+    char npub[128];
+    assert(fips_peer_identity_npub(&n->identity, npub, sizeof npub) == FIPS_IDENTITY_OK);
+    json_t *params = json_pack("{s:s}", "npub", npub);
+    assert(params);
+    fipsd_control_provider provider = fipsd_node_handlers_provider(n->h);
+    json_t *reply = provider.command(provider.user, "path_show", params, &rc);
+    json_decref(params);
+    bool completed = reply != NULL;
+    json_decref(reply);
+    return completed && nt_ms() < deadline;
+}
+static inline bool nt_await_converged(test_node *n, nt_converged_predicate predicate,
+                                      const void *arg, uint64_t deadline)
+{
+    while (nt_barrier(n, deadline)) {
+        /* The barrier itself emits a pulse. Drain BEFORE loading the view:
+         * a publication racing the subsequent read is either in that view or
+         * leaves a pulse for the select. Never spin on our own barrier. */
+#ifdef FIPSD_TEST_HOOKS
+        assert(fipsd_test_published);
+        void *pulse;
+        (void)go_channel_try_receive(fipsd_test_published, &pulse);
+#endif
+        GoRefPtr ref = nt_snapshot(n);
+        bool ready = ref.ptr && predicate(ref.ptr, arg);
+        go_refptr_release(&ref);
+        if (ready) return true;
+        /* No timer polling and no dependency on another LINK_UP. A queued
+         * notice also counts: always barrier again after receiving it, so a
+         * state change racing the previous observation cannot be missed. */
+        uint64_t now = nt_ms();
+        if (now >= deadline) break;
+        void *value = NULL;
+        GoSelectCase cases[] = {
+            {GO_SELECT_RECEIVE, fipsd_node_handlers_notices(n->h), NULL, &value},
+#ifdef FIPSD_TEST_HOOKS
+            {GO_SELECT_RECEIVE, fipsd_test_published, NULL, &value},
+#endif
+        };
+        GoSelectResult result = go_select_timeout(cases, sizeof cases / sizeof cases[0], deadline - now);
+        if (result.selected_case < 0 || !value) break;
+        if (result.selected_case == 0) { nt_record(n, value); free(value); }
+    }
+    fprintf(stderr, "%s: convergence deadline expired\n", n->name);
+    const char *queries[] = {"show_peers", "show_tree", "show_bloom", "show_connections"};
+    for (size_t i = 0; i < sizeof queries / sizeof queries[0]; ++i) {
+        json_t *out = nt_query(n, queries[i]);
+        char *text = json_dumps(out, JSON_COMPACT);
+        fprintf(stderr, "%s %s: %s\n", n->name, queries[i], text ? text : "<no snapshot>");
+        free(text); json_decref(out);
+    }
+    for (size_t i = 0; i < nt_events.count; ++i) fprintf(stderr, "%s\n", nt_events.lines[i]);
+    return false;
+}
+typedef struct nt_pair_state { const test_node *root; bool is_root; } nt_pair_state;
+static inline bool nt_pair_converged(const fipsd_control_snapshot *s, const void *arg)
+{
+    const nt_pair_state *want = arg;
+    char root[33];
+    (void)fips_node_addr_format(&want->root->identity.node_addr, root, sizeof root);
+    const json_t *peer = json_array_get(s->peers, 0);
+    const json_t *filter = json_array_get(s->bloom.peer_filters, 0);
+    return s->tree.root && !strcmp(s->tree.root, root) && s->tree.is_root == want->is_root &&
+        s->tree.depth == (uint64_t)(want->is_root ? 0 : 1) &&
+        json_array_size(s->tree.my_coords) == (size_t)(want->is_root ? 1 : 2) && s->tree.peer_tree_count == 1 &&
+        json_array_size(s->peers) == 1 && json_is_true(json_object_get(peer, "has_tree_position")) &&
+        json_is_true(json_object_get(peer, want->is_root ? "is_child" : "is_parent")) &&
+        json_array_size(s->bloom.peer_filters) == 1 && json_is_true(json_object_get(filter, "has_filter"));
+}
+static inline bool nt_peer_count(const fipsd_control_snapshot *s, const void *arg)
+{ return json_array_size(s->peers) == *(const size_t *)arg; }
 static void nt_destroy(test_node *n)
 {
     fipsd_node_destroy(n->node);
@@ -235,7 +332,7 @@ static inline void nt_topology(bool edges[NT_MAX_NODES][NT_MAX_NODES], size_t co
     }
 }
 /* Select across all owners, using an absolute deadline (unrelated notices
- * cannot extend it). Snapshots are published before state-change notices. */
+ * cannot extend it). Notices need not carry a freshly published snapshot. */
 static inline fipsd_node_notice *nt_next(test_node *nodes, size_t count, uint64_t deadline, size_t *owner)
 {
     assert(count <= NT_MAX_NODES);

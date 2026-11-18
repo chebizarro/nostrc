@@ -21,6 +21,7 @@
  * reports the sentinel it has processed every datagram delivered before it.
  * Every wait is a bounded channel select; nothing sleeps. */
 #include "node_test.h"
+#include "node/handlers/internal.h"
 #include "mdns/mdns.h"
 #include "mdns/records.h"
 #include "host_os.h"
@@ -95,6 +96,46 @@ static fipsd_network_snapshot *lan_read(void *user)
     s->address_count = 1;
     s->addresses[0] = (fipsd_interface_address){.index = LINK_IF, .ip = {.bytes = {127, 0, 0, 1}, .width = 4}, .prefix = 8};
     return s;
+}
+
+/* Hold each node's first UDP send (IK msg1) until BOTH mDNS auto-dials
+ * have reached the transport. This forces crossing dials without sleeps,
+ * configured peers, manual connects, or changing production admission. */
+static struct {
+    fipsd_transport *transport;
+    const fipsd_transport_ops *real;
+    fipsd_transport_ops ops;
+    _Atomic bool sent;
+} crossing[2];
+static GoChannel *dial_ready, *dial_release;
+static int crossing_send(fipsd_transport *t, const fips_transport_addr *to, const uint8_t *bytes, size_t len)
+{
+    size_t i = t == crossing[0].transport ? 0 : 1;
+    assert(t == crossing[i].transport);
+    if (!atomic_exchange(&crossing[i].sent, true)) {
+        assert(go_channel_try_send(dial_ready, t) == 0);
+        void *value = NULL;
+        GoSelectCase c = {GO_SELECT_RECEIVE, dial_release, NULL, &value};
+        assert(go_select_timeout(&c, 1, WAIT_MS).selected_case == 0 && value);
+    }
+    return crossing[i].real->send(t, to, bytes, len);
+}
+static bool single_winner(const fipsd_control_snapshot *s, const void *arg)
+{
+    bool outbound = *(const bool *)arg;
+    const char *direction = json_string_value(json_object_get(json_array_get(s->links, 0), "direction"));
+    return json_array_size(s->peers) == 1 && json_array_size(s->links) == 1 && s->connection_count == 0 &&
+        direction && !strcmp(direction, outbound ? "outbound" : "inbound");
+}
+static void assert_winner(test_node *n, bool outbound, uint64_t deadline)
+{ assert(nt_await_converged(n, single_winner, &outbound, deadline)); }
+static void exchange(test_node *from, test_node *to)
+{
+    static const uint8_t payload[] = "stable mDNS winner";
+    assert(fipsd_node_handlers_send(from->h, &to->identity.node_addr, 1000, 2000, payload, sizeof payload) == 0);
+    fipsd_node_notice *e = nt_await(to, FIPSD_NOTICE_DATAGRAM, &from->identity.node_addr, WAIT_MS);
+    assert(e && e->len == sizeof payload && !memcmp(e->payload, payload, sizeof payload));
+    free(e);
 }
 
 /* ---- events ------------------------------------------------------------ */
@@ -178,10 +219,20 @@ int main(void)
     fipsd_node_handlers_config hcfg; fipsd_node_handlers_config_default(&hcfg);
     hcfg.peer_capacity = 8; hcfg.tree_peer_capacity = 8; hcfg.session_capacity = 8; hcfg.cache_entries = 64; hcfg.notice_capacity = 256;
     static test_node nodes[NODES];
+    dial_ready = go_channel_create(2); dial_release = go_channel_create(2);
+    assert(dial_ready && dial_release);
     fipsd_mdns_service *mdns[NODES];
     fipsd_netmon_source lan = {.read = lan_read, .injected = true};
     for (size_t i = 0; i < NODES; ++i) {
         assert(nt_init(&nodes[i], NULL, names[i], NULL, yaml[i], &hcfg, 1));
+        if (i < 2) {
+            nodes[i].transport->auto_connect = true;
+            crossing[i].transport = nodes[i].transport;
+            crossing[i].real = nodes[i].transport->ops;
+            crossing[i].ops = *crossing[i].real;
+            crossing[i].ops.send = crossing_send;
+            nodes[i].transport->ops = &crossing[i].ops;
+        }
         mdns[i] = fipsd_mdns_service_create(nodes[i].configs, nodes[i].node, nodes[i].h);
         assert(mdns[i]);
         eps[i].src[0] = 10; eps[i].src[1] = 77; eps[i].src[2] = 0; eps[i].src[3] = (uint8_t)(1 + i);
@@ -193,7 +244,14 @@ int main(void)
     }
     for (size_t i = 0; i < NODES; ++i) assert(fipsd_runtime_register(rt, fipsd_node_subsystem(nodes[i].node)) == 0);
     for (size_t i = 0; i < NODES; ++i) assert(fipsd_runtime_register(rt, fipsd_mdns_service_subsystem(mdns[i])) == 0);
+    nt_watch_publications();
     assert(fipsd_runtime_start(rt) == 0);
+    for (size_t i = 0; i < 2; ++i) {
+        void *value = NULL;
+        GoSelectCase c = {GO_SELECT_RECEIVE, dial_ready, NULL, &value};
+        assert(go_select_timeout(&c, 1, WAIT_MS).selected_case == 0 && value);
+    }
+    for (size_t i = 0; i < 2; ++i) assert(go_channel_try_send(dial_release, &crossing[i]) == 0);
     char npub[NODES][128];
     for (size_t i = 0; i < NODES; ++i) {
         nt_identity(&nodes[i]);
@@ -222,6 +280,19 @@ int main(void)
         assert(up);
         free(up);
     }
+    bool a_outbound = memcmp(nodes[0].identity.node_addr.bytes, nodes[1].identity.node_addr.bytes, 16) < 0;
+    test_node *root = a_outbound ? &nodes[0] : &nodes[1];
+    for (size_t i = 0; i < 2; ++i) {
+        assert_winner(&nodes[i], i == 0 ? a_outbound : !a_outbound, deadline);
+        nt_pair_state want = {.root = root, .is_root = &nodes[i] == root};
+        assert(nt_await_converged(&nodes[i], nt_pair_converged, &want, deadline));
+        /* Flush pre-convergence notices, then reject ANY link churn while
+         * exercising this winner, not just another lucky count==1 sample. */
+        nt_drain(&nodes[i]);
+        nodes[i].link_stable = true;
+    }
+    exchange(&nodes[0], &nodes[1]);
+    exchange(&nodes[1], &nodes[0]);
     /* Every engine has seen its own advert echoed back and skipped it. */
     for (size_t i = 0; i < NODES; ++i) assert(await(i, is_own, NULL, deadline));
     /* C is filtered by A and B, and filters them, as cross-scope. */
@@ -245,21 +316,29 @@ int main(void)
     assert(!find(0, mentions, npub[3]));
     /* No link to C or D. */
     for (size_t i = 0; i < 2; ++i) {
+        assert_winner(&nodes[i], i == 0 ? a_outbound : !a_outbound, deadline);
         json_t *peers = nt_query(&nodes[i], "show_peers");
         json_t *list = json_object_get(json_object_get(peers, "data"), "peers");
         assert(json_array_size(list) == 1);
         json_decref(peers);
     }
     for (size_t i = 2; i < NODES; ++i) {
+        const size_t none = 0;
+        assert(nt_await_converged(&nodes[i], nt_peer_count, &none, deadline));
         json_t *peers = nt_query(&nodes[i], "show_peers");
         assert(json_array_size(json_object_get(json_object_get(peers, "data"), "peers")) == 0);
         json_decref(peers);
     }
+    for (size_t i = 0; i < 2; ++i) { nt_drain(&nodes[i]); nodes[i].link_stable = false; }
     fipsd_runtime_shutdown(rt);
     assert(fipsd_runtime_run(rt) == FIPSD_RUN_OK);
     for (size_t i = 0; i < NODES; ++i) { nt_drain(&nodes[i]); drain(i); }
     nt_print_trace("mDNS discovery, four nodes on one in-memory LAN");
+    assert(nodes[0].h->counters.hs_cross_keep + nodes[0].h->counters.hs_cross_swap +
+           nodes[1].h->counters.hs_cross_keep + nodes[1].h->counters.hs_cross_swap > 0);
+    nt_unwatch_publications();
     fipsd_runtime_destroy(rt);
+    go_channel_unref(dial_ready); go_channel_unref(dial_release);
     for (size_t i = 0; i < NODES; ++i) {
         fipsd_mdns_service_destroy(mdns[i]);
         nt_destroy(&nodes[i]);
