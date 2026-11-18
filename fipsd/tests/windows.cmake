@@ -1,11 +1,12 @@
 # Windows test subset for fipsd (nostrc-iq1n9.6.1), included by
 # CMakeLists.txt in place of the POSIX suite. Same targets, names, labels and
 # timeouts as there; only suites whose code paths exist on Windows are listed.
-# Omitted for now: control/native/interop (AF_UNIX), TUN/IPv6/DNS/mDNS/Tor/
-# TCP/nostr runtime (stubbed subsystems), runtime signals (POSIX signals),
-# FipsdUdpTest (socketpair and the SO_REUSEPORT connected pool), config/log
-# (POSIX file modes, fifos, symlinks), netmon/transport/watcher (ifaddrs,
-# socketpair fixtures).
+# Omitted for now: control/native/interop (AF_UNIX), DNS/mDNS/Tor/TCP/nostr
+# runtime (stubbed subsystems), the POSIX TUN suites (FipsdTunTest's BSD/Linux
+# route codecs and socketpair fakes, FipsdIpv6TwoNodesTest's socketpair
+# devices), runtime signals (POSIX signals), FipsdUdpTest (socketpair and the
+# SO_REUSEPORT connected pool), config/log (POSIX file modes, fifos,
+# symlinks), netmon/transport/watcher (ifaddrs, socketpair fixtures).
 add_custom_target(fipsd_tests DEPENDS fipsd)
 
 fipsd_unit_test(fipsd_host_os_test test_host_os.c)
@@ -115,12 +116,56 @@ add_test(NAME FipsdNostrEventsTest COMMAND fipsd_nostr_events_test)
 set_tests_properties(FipsdNostrEventsTest PROPERTIES TIMEOUT 60 LABELS "fips;nostr;vectors")
 add_dependencies(fipsd_tests fipsd_nostr_events_test)
 
+# Wintun TUN, IP Helper rows and the IPv6 shim (nostrc-iq1n9.6.2).
+fipsd_unit_test(fipsd_tun_winnet_test test_tun_winnet.c)
+target_sources(fipsd_tun_winnet_test PRIVATE test_tun_winnet_mib.c)
+add_test(NAME FipsdTunWinnetTest COMMAND fipsd_tun_winnet_test)
+set_tests_properties(FipsdTunWinnetTest PROPERTIES TIMEOUT 30 LABELS "fips;tun;unit")
+# The backend on a fake Wintun session: no driver, no elevation.
+fipsd_unit_test(fipsd_tun_windows_test test_tun_windows.c)
+add_test(NAME FipsdTunWindowsTest COMMAND fipsd_tun_windows_test)
+set_tests_properties(FipsdTunWindowsTest PROPERTIES TIMEOUT 120 LABELS "fips;tun" ENVIRONMENT "FIPSD_WORKERS=2")
+# Real adapters: skip (77) unless elevated and FIPSD_TUN_PRIVILEGED_SMOKE=1;
+# then wintun.dll must sit beside the test executable.
+fipsd_unit_test(fipsd_tun_privileged_test test_tun_windows_privileged.c)
+add_test(NAME FipsdTunPrivilegedSmokeTest COMMAND fipsd_tun_privileged_test device)
+add_test(NAME FipsdIpv6PrivilegedSmokeTest COMMAND fipsd_tun_privileged_test shim)
+set_tests_properties(FipsdTunPrivilegedSmokeTest PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77
+  LABELS "fips;tun;privileged" ENVIRONMENT "FIPSD_WORKERS=2")
+set_tests_properties(FipsdIpv6PrivilegedSmokeTest PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77
+  LABELS "fips;tun;ipv6;privileged" ENVIRONMENT "FIPSD_WORKERS=2")
+# Two daemons on two Wintun adapters, ping and TCP across the mesh between
+# their addresses; same opt-in, wintun.dll beside fipsd.exe.
+find_program(FIPSD_POWERSHELL powershell)
+if(FIPSD_POWERSHELL)
+  add_test(NAME FipsdWindowsTwoNodeSmokeTest COMMAND "${FIPSD_POWERSHELL}" -NoProfile -ExecutionPolicy Bypass
+    -File "${CMAKE_CURRENT_SOURCE_DIR}/windows_two_node_smoke.ps1" -Fipsd "$<TARGET_FILE:fipsd>")
+  set_tests_properties(FipsdWindowsTwoNodeSmokeTest PROPERTIES TIMEOUT 300 SKIP_RETURN_CODE 77
+    LABELS "fips;tun;ipv6;privileged;integration")
+  nostrc_describe_test(FipsdWindowsTwoNodeSmokeTest OWNER fipsd TARGETS fipsd
+    INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/windows_two_node_smoke.ps1")
+endif()
+fipsd_unit_test(fipsd_ipv6_codec_test test_ipv6_codec.c)
+fipsd_unit_test(fipsd_ipv6_icmp_test test_ipv6_icmp.c)
+fipsd_unit_test(fipsd_ipv6_firewall_test test_ipv6_firewall.c)
+add_test(NAME FipsdIpv6CodecTest COMMAND fipsd_ipv6_codec_test)
+add_test(NAME FipsdIpv6IcmpTest COMMAND fipsd_ipv6_icmp_test)
+add_test(NAME FipsdIpv6FirewallTest COMMAND fipsd_ipv6_firewall_test)
+set_tests_properties(FipsdIpv6CodecTest FipsdIpv6IcmpTest FipsdIpv6FirewallTest PROPERTIES TIMEOUT 120 LABELS "fips;tun;ipv6")
+# One unreachable peer does not fail the shared UDP socket (SIO_UDP_CONNRESET).
+fipsd_unit_test(fipsd_udp_connreset_test test_udp_connreset.c)
+add_test(NAME FipsdUdpConnResetTest COMMAND fipsd_udp_connreset_test)
+set_tests_properties(FipsdUdpConnResetTest PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77 LABELS "fips;transport;unit")
+add_dependencies(fipsd_tests fipsd_tun_winnet_test fipsd_tun_windows_test fipsd_tun_privileged_test
+  fipsd_ipv6_codec_test fipsd_ipv6_icmp_test fipsd_ipv6_firewall_test fipsd_udp_connreset_test)
+
 foreach(_test FipsdHostOsTest FipsdCliParseTest FipsdPeerTest FipsdNodeLifecycleTest
     FipsdNodeLifecycleFailureTest FipsdNodeWorkersTest FipsdNodeContextTest FipsdNodeIdentityFailureTest
     FipsdNodeHandlerFailureTest FipsdNodeTwoNodesTest FipsdUdpTwoNodesV4Test FipsdUdpTwoNodesV6Test
     FipsdNodeHandlersTest FipsdNodeStpAcksTest FipsdNodeStpAcksNoReportTest FipsdNodePathPresenceTest
     FipsdDataplaneTest FipsdAclTest FipsdNodeAclTest FipsdNodeAclAdmissionTest FipsdNodeRestartReplayTest
-    FipsdStatsTest FipsdNostrEventsTest)
+    FipsdStatsTest FipsdNostrEventsTest FipsdTunWinnetTest FipsdTunWindowsTest FipsdTunPrivilegedSmokeTest
+    FipsdIpv6PrivilegedSmokeTest FipsdIpv6CodecTest FipsdIpv6IcmpTest FipsdIpv6FirewallTest FipsdUdpConnResetTest)
   get_test_property(${_test} COMMAND _cmd)
   list(GET _cmd 0 _target)
   nostrc_describe_test(${_test} OWNER fipsd TARGETS ${_target})

@@ -164,7 +164,7 @@ target_link_libraries(fipsd_lib PUBLIC nostr nostr_nip17_core nostr_nip59_core
 
 # Tier B4 device owner; IPv6 packet adaptation is a separate layer.
 target_sources(fipsd_lib PRIVATE src/tun/tun.c src/tun/route.c
-  src/tun/lifecycle.c src/tun/status.c src/tun/mtu.c)
+  src/tun/lifecycle.c src/tun/status.c src/tun/mtu.c src/tun/winnet.c)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_sources(fipsd_lib PRIVATE src/tun/tun_linux.c)
 elseif(APPLE)
@@ -172,9 +172,11 @@ elseif(APPLE)
 elseif(CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
   target_sources(fipsd_lib PRIVATE src/tun/tun_freebsd.c src/tun/tun_bsd.c)
 elseif(WIN32)
-  target_sources(fipsd_lib PRIVATE src/tun/tun_unsupported.c) # wintun: W2
+  # Wintun (nostrc-iq1n9.6.2): wintun.dll is loaded at run time; IP Helper
+  # lives in winnet_win32.c, apart from fipsd headers (ole2.h macros).
+  target_sources(fipsd_lib PRIVATE src/tun/tun_windows.c src/tun/winnet_win32.c)
 else()
-  message(FATAL_ERROR "fipsd TUN requires Linux, macOS or FreeBSD")
+  message(FATAL_ERROR "fipsd TUN requires Linux, macOS, FreeBSD or Windows")
 endif()
 # UDP datagrams and authenticated connected-peer drains (nostrc-gfi8h.2).
 target_sources(fipsd_lib PRIVATE src/transport/udp/udp.c src/transport/udp/io.c
@@ -252,18 +254,19 @@ target_sources(fipsd_lib PRIVATE src/mdns/records.c src/mdns/advert.c src/mdns/b
   src/mdns/lan.c src/mdns/socket.c src/mdns/mdns.c)
 if(WIN32)
   # Windows (nostrc-iq1n9.6.1): the UDP transport, node, handlers, dataplane,
-  # config, ACL, netmon (1 s backstop) and runtime are built for real. These
-  # subsystems still need POSIX facilities (TUN, AF_UNIX/SCM_RIGHTS, ifaddrs,
+  # config, ACL, netmon (1 s backstop) and runtime are built for real, and
+  # (nostrc-iq1n9.6.2) the TUN owner on Wintun with the IPv6 shim. These
+  # subsystems still need POSIX facilities (AF_UNIX/SCM_RIGHTS, ifaddrs,
   # multicast enumeration, POSIX descriptors in the stream owners): their
   # sources leave the library and *_unsupported.c stubs stand in, which fail
   # start-up when the feature is configured (control and DNS, on by default,
-  # warn instead). W2/W3 port them.
+  # warn instead). W3 ports them.
   get_target_property(_fipsd_sources fipsd_lib SOURCES)
   list(FILTER _fipsd_sources EXCLUDE REGEX
-    "^src/(tun/(tun|route|lifecycle|status)\\.c|ipv6/|dns/(resolver|service|hosts)\\.c|mdns/|native/|transport/(tcp|tor|socks5)/|control/control\\.c|nostr/(runtime|driver|stun|traversal_machine|traversal_io|failure_state|signal_gate|signal_route)\\.c)")
+    "^src/(dns/(resolver|service|hosts)\\.c|mdns/|native/|transport/(tcp|tor|socks5)/|control/control\\.c|nostr/(runtime|driver|stun|traversal_machine|traversal_io|failure_state|signal_gate|signal_route)\\.c)")
   set_property(TARGET fipsd_lib PROPERTY SOURCES ${_fipsd_sources})
   target_sources(fipsd_lib PRIVATE src/node/ifinfo_win32.c
-    src/ipv6/shim_unsupported.c src/dns/service_unsupported.c src/mdns/mdns_unsupported.c
+    src/dns/service_unsupported.c src/mdns/mdns_unsupported.c
     src/native/api_unsupported.c src/nostr/runtime_unsupported.c
     src/transport/tcp/tcp_unsupported.c src/transport/tor/tor_unsupported.c
     src/control/service_unsupported.c)

@@ -16,6 +16,7 @@ struct fipsd_tun {
     fipsd_tun_status status;
     fipsd_control_provider base;
     const _Atomic uint64_t *host_drops; /* the shim's queue counter, under status_mu */
+    void *backend; /* platform state between open and destroy (Windows: the Wintun session) */
 };
 void fipsd_tun_publish(fipsd_tun *, fipsd_tun_state, int);
 /* Callbacks shared by the two BSD backends. */

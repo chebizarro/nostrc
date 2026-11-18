@@ -421,9 +421,14 @@ completion port (`libgo/fiber/README.md`, "Windows").
    ```
 
 3. Configure and build (nsync comes from the `nsync` package; the vendored
-   submodule also works):
+   submodule also works). `PYTHONUTF8=1` lets the configure-time
+   `scripts/check-gui-test-gdk-frame.py` read the tree's UTF-8 sources under a
+   non-UTF-8 Windows code page, and `-DFIPSD_ENABLE_BLE=OFF` is needed because
+   the BLE core (`src/transport/ble/radio.c`: `socketpair`, `fcntl`) does not
+   build on Windows yet:
 
    ```sh
+   export PYTHONUTF8=1
    cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug \
      -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
      -DGO_WARNINGS_AS_ERRORS=ON -DBUILD_TESTING=ON -DBUILD_FIPS=ON \
@@ -433,7 +438,8 @@ completion port (`libgo/fiber/README.md`, "Windows").
      -DENABLE_NIP55L=OFF -DENABLE_NIP5F=OFF -DENABLE_NIP57=OFF \
      -DWITH_NOSTRDB=OFF -DLIBNOSTR_WITH_NOSTRDB=OFF -DBUILD_NOSTR_GOBJECT=OFF \
      -DBUILD_NOSTR_GTK=OFF -DBUILD_APPS=OFF -DBUILD_LIBBLOSSOM=OFF \
-     -DBUILD_LIBPORTHOME=OFF -DBUILD_LIBVAULT=OFF -DBUILD_LIBVAULT_MARMOT=OFF -DENABLE_BUD02=OFF
+     -DBUILD_LIBPORTHOME=OFF -DBUILD_LIBVAULT=OFF -DBUILD_LIBVAULT_MARMOT=OFF -DENABLE_BUD02=OFF \
+     -DFIPSD_ENABLE_BLE=OFF
    cmake --build build --target fipsd fipsd_tests
    ninja -C build libfips-core/all
    ```
@@ -448,11 +454,12 @@ completion port (`libgo/fiber/README.md`, "Windows").
 
    `tests/windows.cmake` lists the Windows subset (same names, labels and
    timeouts as the POSIX suite): the node, handler, dataplane, ACL, peer and
-   stats suites, and the two-node proof on the loopback transport and on real
+   stats suites, the two-node proof on the loopback transport and on real
    UDP (`FipsdUdpTwoNodesV4Test`/`V6Test`: IK link, tree, bloom, XK session,
-   datagrams, rekey, disconnect). Suites that need AF_UNIX control/native
-   sockets, TUN, POSIX signals or file modes, socket pairs, or one of the
-   subsystems below are not built there yet.
+   datagrams, rekey, disconnect), `FipsdUdpConnResetTest` (below), and the
+   TUN/IPv6 suites of "TUN on Windows (Wintun)". Suites that need AF_UNIX
+   control/native sockets, POSIX signals or file modes, socket pairs, or one
+   of the subsystems below are not built there yet.
 
 5. Running: `build/fipsd/fipsd.exe -c fips.yaml`. Without `-c` the daemon
    searches `C:\ProgramData\fips\fips.yaml`, then `%APPDATA%\fips\fips.yaml`,
@@ -477,14 +484,18 @@ completion port (`libgo/fiber/README.md`, "Windows").
    ```
 
    Each log shows `link established with <node_addr>` and, at
-   `FIPSD_LOG_LEVEL=debug`, the link's MMP reports.
+   `FIPSD_LOG_LEVEL=debug`, the link's MMP reports. A daemon started with
+   `Start-Process` gets its own console: stop it with Ctrl+Break sent to that
+   console (`tests/windows_two_node_smoke.ps1`, `Send-CtrlBreak`); a
+   `CTRL_C_EVENT` does not reach it.
 
 What runs on Windows: the UDP transport (exclusive bind, no `SO_REUSEPORT`
 connected per-peer sockets, so every peer uses the listener as upstream does on
 Windows; `SIO_UDP_CONNRESET`/`SIO_UDP_NETRESET` off; `IP_PKTINFO`/`IPV6_PKTINFO`
 and `IP_RECVECN`/`IPV6_RECVECN` ancillary data), the in-process loopback
-transport, node, handlers, dataplane and crypto workers, configuration, ACLs,
-peer owners, the Nostr event contracts, logging and the runtime. Interface
+transport, node, handlers, dataplane and crypto workers, the TUN device on
+Wintun and the IPv6 shim, configuration, ACLs, peer owners, the Nostr event
+contracts, logging and the runtime. Interface
 presence, medium and the network monitor read the IP Helper API (one
 translation unit, `src/node/ifinfo_win32.c`, because its headers include
 `ole2.h`); the monitor runs on its 1 s backstop (no route-change wakes yet).
@@ -492,13 +503,156 @@ POSIX socket headers map to Winsock through `src/compat/win32/`.
 
 Not yet on Windows (each replaced by a `*_unsupported.c` stub that fails
 start-up when configured; the default-on control socket and DNS responder warn
-and serve nothing instead): TUN (wintun) and the IPv6 shim, the `.fips` DNS
-responder, the control socket (upstream moves it to TCP 127.0.0.1:21210) and
-therefore `fipsctl`/`fipstop`, the native datagram API and libfipsnative, the
-TCP, Tor and Nym transports, Nostr relay rendezvous and traversal, mDNS, and
-the gateway. A Windows CI lane would need the packages above, the
+and serve nothing instead): the `.fips` DNS responder, the control socket
+(upstream moves it to TCP 127.0.0.1:21210) and therefore `fipsctl`/`fipstop`
+and the TUN `show_status` fields, the native datagram API and libfipsnative,
+the TCP, Tor and Nym transports, Nostr relay rendezvous and traversal, mDNS,
+BLE, and the gateway. A Windows CI lane would need the packages above, the
 libsecp256k1 build, the configure line above (on `windows-11-arm` or an x64
-runner with CLANG64) and the two `ctest` invocations; none is added yet.
+runner with CLANG64), the two `ctest` invocations, and, for the TUN smokes,
+the verified wintun.dll beside the executables with
+`FIPSD_TUN_PRIVILEGED_SMOKE=1` on an elevated runner; none is added yet.
+
+### TUN on Windows (Wintun)
+
+`src/tun/tun_windows.c` puts a [Wintun](https://www.wintun.net/) 0.14 adapter
+behind the same `fipsd_tun_platform`/`fipsd_tun_ops` seam as the other
+platforms, so the IPv6 shim (`src/ipv6/*`) runs on Windows unchanged.
+
+**wintun.dll.** Not in the tree: fetch the signed release and check it, then
+put the DLL for the build's architecture **beside `fipsd.exe`** (and beside
+the test executables, `build/fipsd/tests/`, for the TUN tests). fipsd loads it
+at run time with `LoadLibraryExW(LOAD_LIBRARY_SEARCH_APPLICATION_DIR |
+LOAD_LIBRARY_SEARCH_SYSTEM32)`: the executable's directory or System32, never
+the working directory or `PATH`. The zip's SHA-256 is the one upstream fips
+CI pins:
+
+```powershell
+Invoke-WebRequest -UseBasicParsing https://www.wintun.net/builds/wintun-0.14.1.zip -OutFile wintun-0.14.1.zip
+(Get-FileHash -Algorithm SHA256 wintun-0.14.1.zip).Hash  # 07C256185D6EE3652E09FA55C0B673E2624B565E02C4B9091C79CA7D2F24EF51
+Expand-Archive wintun-0.14.1.zip wintun
+Get-AuthenticodeSignature wintun\wintun\bin\arm64\wintun.dll  # Valid, CN=WireGuard LLC
+Copy-Item wintun\wintun\bin\arm64\wintun.dll build\fipsd\  # amd64\ on x64
+```
+
+A missing DLL fails TUN start-up with `wintun.dll not found: put the arm64
+wintun.dll ... beside fipsd.exe`; one without the 0.14 exports, with `does not
+export the Wintun 0.14 API`.
+
+**Administrator.** Creating an adapter needs an elevated token (an
+Administrator console, a service, or an SSH session of an administrator; `whoami
+/groups` shows `High Mandatory Level`). Otherwise start-up logs `creating
+Wintun adapter fips0 needs Administrator: run fipsd elevated` and continues
+without TUN, as a failed device does on the other platforms.
+
+**Adapter.** Named `tun.name` (default `fips0`), tunnel type `FIPS` (Windows
+shows "FIPS Tunnel"), with a system-chosen GUID (upstream passes a random
+one), a 2 MiB session ring (upstream's) and the adapter MTU
+`fipsd_tun_mtu()` as everywhere. Upstream names every adapter `FIPS` and
+passes `tun.name` as the tunnel type; here the name is per daemon, so two
+daemons on one host each have their own adapter and `tun_name` reports the
+alias Windows shows. A name an interface in use already carries (one with an
+IP interface, or up), or another Wintun adapter's name, is refused (`EEXIST`):
+Wintun would rename the foreign adapter to make room. A just-stopped adapter
+is not in use (its IP interfaces are gone before `WintunCloseAdapter` returns;
+Plug and Play removes its row about 100 ms later), and adapters a killed
+daemon left are removed by Wintun at its next call.
+
+**Receive.** Wintun has no descriptor to wait on. A dedicated thread runs
+Wintun's own loop (`WintunReceivePacket` until `ERROR_NO_MORE_ITEMS`, then
+`WaitForMultipleObjects` on the session's read event and a quit event), copies
+each packet, releases its ring slot at once and sends the copy into a bounded
+GoChannel (256 packets); a full channel blocks the thread, so overload backs up
+into the ring, where Wintun drops as a NIC queue does. The reader fiber takes
+packets without blocking and, when there is none, parks reading the device's
+`fd`: one end of a connected loopback UDP pair (the doorbell), rung only after
+the reader said it is about to park. The shim's `gof_io_reset_fd`/
+`gof_io_cancel_fd` therefore act on a real socket the completion port knows,
+and a stop ends the parked read with `ECANCELED`. Nothing polls. **Send**:
+`WintunAllocateSendPacket`/`WintunSendPacket` from the writer fiber; a full
+ring is `ENOBUFS` (the shim counts a write error).
+
+**Host configuration** (upstream `winnet.rs`, one IP Helper translation unit,
+`src/tun/winnet_win32.c`, apart from fipsd headers because of `ole2.h`'s
+macros): wait for the adapter's IPv6 interface on IP Helper's
+interface-change notification (at most 5 s; upstream polls every 50 ms), turn
+duplicate address detection and router discovery off on it (beyond
+`winnet.rs`: otherwise the `/128` is tentative and unusable for its first
+second; WireGuard for Windows does the same), then the node's `fd...`
+address `/128` (`CreateUnicastIpAddressEntry`, manual origins, infinite
+lifetimes), the IPv6 MTU (`SetIpInterfaceEntry` `NlMtu`) and the `fd00::/8`
+on-link route (`CreateIpForwardEntry2`, metric 256, `MIB_IPPROTO_NETMGMT`),
+all keyed on the adapter's LUID; a row already present counts as done, and a
+route this device did not create is left at stop. Stop deletes the route and
+the address (a row someone else already removed counts as done: Windows
+answers that delete `ERROR_INVALID_PARAMETER`, so the row is read back), stops
+the thread, ends the session and closes the adapter, which removes it.
+Neighbor unreachability detection stays on (Windows refuses to turn it off on
+a Wintun interface), so now and then a unicast Neighbor Solicitation to a mesh
+peer the host talks to crosses the mesh. `src/tun/winnet.{h,c}` holds the
+rows, the create/delete judgement, the Win32-to-errno vocabulary, the ring
+bounds and the UTF-16 names as pure data, tested on every host
+(`FipsdTunWinnetTest`).
+
+**Running.** From an elevated shell, with `tun: {enabled: true, name: fips0}`
+in the configuration (and Windows Firewall rules for whatever the host should
+accept from the mesh: each new adapter is an unidentified, Public network, so
+inbound ICMPv6 echo and services are blocked by default):
+
+```powershell
+Get-NetAdapter -Name fips0                                    # FIPS Tunnel, Up
+Get-NetIPAddress -InterfaceAlias fips0 -AddressFamily IPv6    # fd..../128, Preferred
+Get-NetRoute -InterfaceAlias fips0 -DestinationPrefix fd00::/8  # on-link, metric 256
+Get-NetIPInterface -InterfaceAlias fips0 -AddressFamily IPv6 | Format-List NlMtu, DadTransmits, RouterDiscovery
+ping -6 <a peer's fd00::/8 address>
+```
+
+**Tests** (from the CLANGARM64 shell, wintun.dll beside the executables):
+`FipsdTunWinnetTest` (also the `MIB_*` rows field by field) and
+`FipsdTunWindowsTest`, which drives the real backend against a fake Wintun
+through `fipsd_tun_ops.wintun` with no driver or elevation: bring-up order and
+rows, 303 packets in order through the thread, channel and doorbell (more than
+the channel holds), writes and a full ring, a parked read cancelled as the
+shim stops it, the session ending under a reader, every failure unwinding what
+it made, and the shim answering an unknown `fd00::/8` destination through the
+device; the IPv6 codec/ICMP/firewall suites. The privileged ones skip (77)
+unless the token is elevated and `FIPSD_TUN_PRIVILEGED_SMOKE=1`:
+
+```sh
+FIPSD_TUN_PRIVILEGED_SMOKE=1 ctest --test-dir build -R 'FipsdTun|FipsdIpv6|FipsdWindowsTwoNode' --output-on-failure
+```
+
+`FipsdTunPrivilegedSmokeTest` creates a real adapter twice in turn and reads
+the `/128` (preferred), MTU, route and DAD/router-discovery settings back
+through IP Helper and `Get-NetIPAddress`/`Get-NetRoute`/`Get-NetIPInterface`/
+`Get-NetAdapter`, pings the address, removes the rows behind the device before
+a stop that must still succeed, and checks the adapter is gone.
+`FipsdIpv6PrivilegedSmokeTest` runs one node with the shim on a real adapter:
+its own address answers ping, and a ping of `fd00::dead:beef` is routed by
+Windows into the adapter, read by the shim and answered with a Destination
+Unreachable that Windows hands to ping (`Destination net unreachable.`).
+`FipsdWindowsTwoNodeSmokeTest` (`tests/windows_two_node_smoke.ps1`) starts two
+daemons peered over UDP on `127.0.0.1`, each with its own adapter. Both
+`/128`s live in one IP stack, but Windows sends by the strong host model: a
+packet whose source is A's address leaves through A's adapter even to B's
+address on the same host. So `ping -S <A> <B>` crosses the mesh and back (the
+first reply ~250 ms, the session handshake), each adapter's receive counter
+showing exactly the requests or replies its shim wrote, the same from B to A,
+and a TCP connect and echo between sockets bound to the two addresses crosses
+both ways; then both daemons stop on Ctrl+Break (exit 0, no error, no adapter
+or route left). Without `-S` Windows may pick either adapter or answer its own
+address locally. The script adds firewall rules for ICMPv6 echo and its TCP
+port on the two adapters for the run and removes them.
+
+**UDP and ICMP port-unreachable.** Every UDP socket the transport opens turns
+`SIO_UDP_CONNRESET` and `SIO_UDP_NETRESET` off (upstream
+`ignore_port_unreachable`), so one peer whose port is closed cannot fail the
+receive every peer shares. `FipsdUdpConnResetTest` shows a plain socket's next
+receive failing with `WSAECONNRESET` after a datagram to a closed loopback
+port, then the transport's socket receiving another peer's datagram instead,
+with a plain receive and through libgo's completion port (skips 77 if the host
+reports no reset at all). The TUN doorbell pair needs neither: one end only
+sends, the other only receives, from each other.
 
 ## Transport statistics and control parity
 
@@ -1441,7 +1595,11 @@ One platform vtable keeps the later IPv6 shim OS-independent:
 - FreeBSD: `/dev/tun` clone, kernel-reported name, `TUNSIFHEAD` (family 28),
   IPv6 alias/MTU/flags (including clearing `ND6_IFF_IFDISABLED`), `PF_ROUTE`,
   and destruction of the owned clone. Names on BSD/macOS are kernel assigned;
-  `tun.name` selects the Linux name only.
+  `tun.name` selects the Linux and Windows names only.
+- Windows: a Wintun adapter named `tun.name` and its IP Helper rows, with a
+  receive thread and a doorbell socket as the descriptor; see "TUN on Windows
+  (Wintun)" above. Its kernel calls are `fipsd_tun_ops.wintun`, and the
+  platform moves frames itself (`fipsd_tun_platform.frame_read/frame_write`).
 
 All device/configuration/control/frame syscalls cross a per-device
 `fipsd_tun_ops` seam, with no global fake state. The default route socket and
@@ -1578,6 +1736,10 @@ Destination Unreachable:
 ```sh
 sudo FIPSD_TUN_PRIVILEGED_SMOKE=1 FIPSD_WORKERS=2 ./fipsd/tests/fipsd_ipv6_privileged_test
 ```
+
+On Windows the shim runs unchanged on the Wintun device; its privileged
+smokes and the two-node ping/TCP proof on one host are in "TUN on Windows
+(Wintun)".
 
 A ping between two nodes on real devices needs two network namespaces (two
 TUNs in one namespace would compete for the `fd00::/8` route):

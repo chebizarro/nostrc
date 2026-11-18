@@ -11,7 +11,8 @@
 #define FIPSD_TUN_IPV6_OVERHEAD 77u
 #define FIPSD_TUN_IPV6_MIN_MTU 1280u
 
-typedef enum fipsd_tun_os { FIPSD_TUN_LINUX, FIPSD_TUN_MACOS, FIPSD_TUN_FREEBSD } fipsd_tun_os;
+typedef enum fipsd_tun_os { FIPSD_TUN_LINUX, FIPSD_TUN_MACOS, FIPSD_TUN_FREEBSD, FIPSD_TUN_WINDOWS } fipsd_tun_os;
+struct fipsd_tun_wintun_ops; /* tun/wintun.h */
 /* Every kernel operation is replaceable, including control I/O and descriptor
  * preparation. The default frame methods are gof_read/gof_write; control I/O
  * runs on the runtime starting/stopping thread, never a scheduler worker.
@@ -34,6 +35,9 @@ typedef struct fipsd_tun_ops {
     ssize_t (*write)(void *, int, const void *, size_t);
     ssize_t (*frame_read)(void *, int, void *, size_t);
     ssize_t (*frame_write)(void *, int, const void *, size_t);
+    /* Windows: the Wintun session and IP Helper calls (tun/wintun.h); NULL
+     * takes the system's. Unused elsewhere. */
+    const struct fipsd_tun_wintun_ops *wintun;
 } fipsd_tun_ops;
 const fipsd_tun_ops *fipsd_tun_system_ops(void);
 
@@ -47,6 +51,11 @@ typedef struct fipsd_tun_platform {
     int (*up)(fipsd_tun *, bool);
     int (*route)(fipsd_tun *, bool add);
     int (*destroy)(fipsd_tun *);
+    /* Optional, for a device whose packets are not read from its descriptor
+     * (Wintun's session rings): moves one frame, with the same contract as
+     * ops.frame_read/frame_write on fd. NULL: ops.frame_read/frame_write. */
+    ssize_t (*frame_read)(fipsd_tun *, uint8_t *, size_t);
+    ssize_t (*frame_write)(fipsd_tun *, const uint8_t *, size_t);
 } fipsd_tun_platform;
 const fipsd_tun_platform *fipsd_tun_native_platform(void);
 
@@ -71,7 +80,8 @@ void fipsd_tun_destroy(fipsd_tun *);
 ssize_t fipsd_tun_read(fipsd_tun *, uint8_t *, size_t);
 ssize_t fipsd_tun_write(fipsd_tun *, const uint8_t *, size_t);
 int fipsd_tun_header_prepend(uint8_t family, const uint8_t *, size_t, uint8_t *, size_t);
-/* The IPv6 shim's view of a started device: descriptor (-1 when down), kernel
+/* The IPv6 shim's view of a started device: descriptor (-1 when down; on
+ * Windows the receive doorbell socket, see tun_windows.c), kernel
  * name, node-derived address and effective IPv6 MTU. The shim registers its
  * host-drop counter so status reports host_drops; NULL detaches it. */
 int fipsd_tun_fd(const fipsd_tun *);
