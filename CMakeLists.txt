@@ -1,5 +1,11 @@
 cmake_minimum_required(VERSION 3.22)
 project(nostrc C)
+# fipsd's CoreBluetooth agent (fipsd/src/ble-agent/*.m) is Objective-C. CMake
+# needs the language enabled in the top-level scope for the generate step to
+# have the OBJC rule variables, not only in the directory that adds the target.
+if(APPLE)
+  enable_language(OBJC)
+endif()
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
