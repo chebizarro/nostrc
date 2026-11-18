@@ -473,6 +473,8 @@ static fipsd_ble_config fast_cfg(void)
     c.adapter = "ble0"; c.connect_timeout_ms = 1500; c.probe_cooldown_ms = 150; c.pubkey_exchange_ms = 400;
     return c;
 }
+/* Advertises and accepts but never scans, so it never dials on its own. */
+static fipsd_ble_config passive_cfg(void) { fipsd_ble_config c = fast_cfg(); c.scan = false; return c; }
 static tnode *tnode_new(uint8_t dev, const fipsd_ble_radio_config *rc, const fipsd_ble_config *bc, bool identity)
 {
     tnode *n = calloc(1, sizeof *n); assert(n);
@@ -511,11 +513,14 @@ static void *take(GoChannel *c, uint64_t ms)
     GoSelectResult r = go_select_timeout(&k, 1, ms);
     return r.selected_case == 0 ? v : NULL;
 }
-/* The next event of `kind` (at `at`, if given); other events are dropped. */
+/* The next event of `kind` (at `at`, if given) within WAIT_MS; other events
+ * are dropped, and do not extend the deadline. */
 static fipsd_transport_event *await(tnode *n, fipsd_transport_event_kind kind, const fips_transport_addr *at)
 {
+    const uint64_t deadline = ble_now() + WAIT_MS;
     for (;;) {
-        fipsd_transport_event *e = take(n->events, WAIT_MS);
+        uint64_t now = ble_now();
+        fipsd_transport_event *e = now < deadline ? take(n->events, deadline - now) : NULL;
         if (!e) { fprintf(stderr, "%s: no event %d\n", n->t->name, (int)kind); assert(e); }
         if (e->kind == kind && (!at || fips_transport_addr_equal(&e->address, at))) return e;
         free(e);
@@ -641,10 +646,14 @@ static void lifecycle_body(void)
     puts("lifecycle: type/state/mtu defaults, OS-assigned PSM advertised, honoured PSM, absent adapter adopted later, control row: ok");
 }
 /* mod.rs test_scan_discovers_peers: without a local key a sighting is
- * reported by address and nothing is dialled. */
+ * reported by address and nothing is dialled. The advertiser only advertises,
+ * like upstream's injected scan result: were it to scan, its own probe could
+ * pool an inbound link at its address first, and a pooled address is not
+ * reported again. */
 static void discovery_body(void)
 {
-    tnode *b = tnode_new(2, NULL, NULL, true); tnode_start(b); await_free(b, FIPSD_TRANSPORT_BECAME_PRESENT, NULL);
+    fipsd_ble_config passive = passive_cfg();
+    tnode *b = tnode_new(2, NULL, &passive, true); tnode_start(b); await_free(b, FIPSD_TRANSPORT_BECAME_PRESENT, NULL);
     tnode *a = tnode_new(1, NULL, NULL, false); tnode_start(a);
     fipsd_transport_event *e = await(a, FIPSD_TRANSPORT_DISCOVERED, &b->addr);
     assert(e->size == 0); free(e);
@@ -652,10 +661,13 @@ static void discovery_body(void)
     puts("discovery: an advert is announced by address alone when there is no local key, nothing dialled: ok");
 }
 /* Two transports with keys find each other, link once, carry frames both ways. */
-/* Both dial at once; the tie-break leaves both sides on the channel the
- * smaller node dialled. Settled when one channel joins the pair and both
- * pools hold it: every step there is an event (a pool entry is announced as
- * DISCOVERED, a channel opened or freed wakes the air). */
+/* a dials b, which only advertises (passive_cfg): exactly one channel joins
+ * the pair, so it is settled once both pools hold it, and every step there is
+ * an event (a pool entry is announced as DISCOVERED, a channel opened or freed
+ * wakes the air). Were b to scan as well, its own probe could still dial after
+ * that point, and the tie-break would replace the link under frames in flight;
+ * a probe that finds the address pooled resolves without any event to wait
+ * on. Crossing dials are settled by the tie-break, covered by arbitration. */
 static void link_pair(tnode *a, tnode *b)
 {
     for (;;) {
@@ -678,7 +690,8 @@ static void pair_body_mode(fipsd_ble_radio_mode mode)
 {
     fipsd_ble_radio_config ra = radio_cfg(1), rb = radio_cfg(2);
     ra.mode = rb.mode = mode; ra.chunk = rb.chunk = 5; ra.send_mtu = ra.recv_mtu = rb.send_mtu = rb.recv_mtu = 512;
-    tnode *a = tnode_new(1, &ra, NULL, true), *b = tnode_new(2, &rb, NULL, true);
+    fipsd_ble_config passive = passive_cfg();
+    tnode *a = tnode_new(1, &ra, NULL, true), *b = tnode_new(2, &rb, &passive, true);
     tnode_start(a); tnode_start(b);
     link_pair(a, b);
     assert(fipsd_ble_connected_count(a->t) == 1 && fipsd_ble_connected_count(b->t) == 1);
@@ -705,10 +718,11 @@ static void pair_fd_body(void) { pair_body_mode(FIPSD_BLE_RADIO_FD); puts("pair 
  * BECAME_PRESENT, a fresh listener and advert, and the link back. */
 static void reconnect_body(void)
 {
-    tnode *a = tnode_new(1, NULL, NULL, true), *b = tnode_new(2, NULL, NULL, true);
+    fipsd_ble_config passive = passive_cfg();
+    tnode *a = tnode_new(1, NULL, NULL, true), *b = tnode_new(2, NULL, &passive, true);
     tnode_start(a); tnode_start(b);
     link_pair(a, b);
-    assert(fipsd_ble_radio_drop_links(a->radio) >= 1); /* the tie-break loser may still be closing */
+    assert(fipsd_ble_radio_drop_links(a->radio) == 1);
     await_free(a, FIPSD_TRANSPORT_DISCONNECTED, &b->addr); await_free(b, FIPSD_TRANSPORT_DISCONNECTED, &a->addr);
     /* nothing re-advertises (BlueZ reports a device once a session): the
      * node's dial brings the link back, through connect_async */
@@ -862,12 +876,14 @@ static void flood_body(void)
     await_free(a, FIPSD_TRANSPORT_DISCOVERED, &ga);
     assert(raw_until_closed(silent[2], NULL, 0, NULL) && stats(a).handshakes_aborted == 3);
     /* inbound peers within the budget are all admitted */
+    fipsd_ble_stream *admitted[4]; /* connect hands each dialler's end to us: closed below */
     for (uint8_t i = 0; i < 4; ++i) {
-        raw *x = raw_new((uint8_t)(60 + i), NULL, (uint8_t)(60 + i)); fipsd_ble_stream *s = raw_connect(x, a, 0); raw_hello(x, s, 0);
+        raw *x = raw_new((uint8_t)(60 + i), NULL, (uint8_t)(60 + i)); admitted[i] = raw_connect(x, a, 0); raw_hello(x, admitted[i], 0);
         fips_transport_addr xa; assert(fipsd_ble_peer_to_addr(&x->peer, &xa)); await_free(a, FIPSD_TRANSPORT_DISCOVERED, &xa);
     }
     assert(fipsd_ble_connected_count(a->t) == 5);
     for (int i = 0; i < 10; ++i) raw_close(silent[i]);
+    for (int i = 0; i < 4; ++i) raw_close(admitted[i]);
     raw_close(g);
     puts("admission: a flood of silent connectors aborts the oldest past the budget of 8, never delays a well-behaved peer: ok");
 }
