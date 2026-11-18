@@ -176,6 +176,7 @@ static NSString *device_text(NSData *d)
     BOOL _centralOn, _managerOn, _managerPending;
     listener _listener;
     BOOL _wantsAdvertising;
+    BOOL _advertiseStarting; /* a start is in flight: isAdvertising turns true only at its callback */
     CBMutableService *_gatt;
     BOOL _up;
     uint16_t _upPsm;
@@ -265,7 +266,7 @@ static NSString *device_text(NSData *d)
     [_dials removeAllObjects];
     for (FBAChannel *c in _channels) { [c->input close]; [c->output close]; }
     [_peers removeAllObjects]; [_throttle removeAllObjects];
-    _wantsAdvertising = NO; _advertising = NO; _scanning = NO;
+    _wantsAdvertising = NO; _advertising = NO; _advertiseStarting = NO; _scanning = NO;
 }
 
 /* ---- the listener ----------------------------------------------------------------- */
@@ -324,7 +325,7 @@ static NSString *device_text(NSData *d)
         [self unpublishStaleOn:old];
         dispatch_async(_q, ^{ (void)old; }); /* released on a later turn, not inside its own callback */
     }
-    _gatt = nil; _managerPending = YES; _managerOn = NO;
+    _gatt = nil; _managerPending = YES; _managerOn = NO; _advertiseStarting = NO;
     l_manager_replaced(&_listener);
     _manager = [[CBPeripheralManager alloc] initWithDelegate:self queue:_q options:nil];
 }
@@ -371,14 +372,15 @@ static NSString *device_text(NSData *d)
 {
     _wantsAdvertising = YES;
     if (_listener.published == 0) { [self republish]; return; } /* no listener to advertise yet */
-    if (!_manager || !_managerOn || _manager.isAdvertising) return;
+    if (!_manager || !_managerOn || _manager.isAdvertising || _advertiseStarting) return;
     /* The legacy UUID-only advert: CoreBluetooth carries no service data, so
      * the PSM is served over GATT instead. */
+    _advertiseStarting = YES;
     [_manager startAdvertising:@{CBAdvertisementDataServiceUUIDsKey: @[_service]}];
 }
 - (void)stopAdvertising
 {
-    _wantsAdvertising = NO; _advertising = NO;
+    _wantsAdvertising = NO; _advertising = NO; _advertiseStarting = NO;
     if (_manager) [_manager stopAdvertising];
 }
 - (void)startScanning
@@ -648,7 +650,7 @@ static NSString *device_text(NSData *d)
     _managerState = manager.state;
     _managerOn = manager.state == CBManagerStatePoweredOn;
     _managerPending = NO;
-    if (!_managerOn) _advertising = NO;
+    if (!_managerOn) _advertising = _advertiseStarting = NO;
     [self reportState:"peripheral manager" state:manager.state];
     [self powerChanged];
 }
@@ -665,6 +667,7 @@ static NSString *device_text(NSData *d)
 - (void)peripheralManagerDidStartAdvertising:(CBPeripheralManager *)manager error:(NSError *)error
 {
     if (manager != _manager) return;
+    _advertiseStarting = NO;
     if (error) { _advertiseFailed = YES; [self log:FBA_LOG_WARN format:"BLE: advertising failed: %s", error.localizedDescription.UTF8String]; }
     else { _advertising = YES; [self log:FBA_LOG_INFO format:"BLE: advertising the FIPS service"]; }
 }
