@@ -3,6 +3,7 @@
 #else
 #define _DARWIN_C_SOURCE 1
 #endif
+#include "fiber_errno.h"
 #include "gateway/control.h"
 #include "control/protocol.h"
 #include "log.h"
@@ -271,19 +272,19 @@ static ssize_t io_recv(int fd, char *buf, size_t cap, uint64_t deadline)
 {
     for (;;) {
         uint64_t now = mono_ms();
-        if (now >= deadline) { errno = ETIMEDOUT; return -1; }
+        if (now >= deadline) { fipsd_io_set_errno(ETIMEDOUT); return -1; }
         int left = (int)(deadline - now);
         if (fipsd_gw_on_fiber()) {
             ssize_t n = gof_recvfrom(fd, buf, cap, 0, NULL, NULL, left);
-            if (n < 0 && errno == EINTR) continue;
+            if (n < 0 && fipsd_io_errno() == EINTR) continue;
             return n;
         }
         ssize_t n = recv(fd, buf, cap, 0);
         if (n >= 0) return n;
-        if (errno == EINTR) continue;
-        if (errno != EAGAIN && errno != EWOULDBLOCK) return -1;
+        if (errno == EINTR) continue; /* errno-after-park: allow -- thread-only fallback; fiber branch cannot reach this read */
+        if (errno != EAGAIN && errno != EWOULDBLOCK) return -1; /* errno-after-park: allow -- thread-only fallback; fiber branch cannot reach this read */
         struct pollfd p = {.fd = fd, .events = POLLIN};
-        if (poll(&p, 1, left) == 0) { errno = ETIMEDOUT; return -1; }
+        if (poll(&p, 1, left) == 0) { fipsd_io_set_errno(ETIMEDOUT); return -1; }
     }
 }
 static int io_send_all(int fd, const char *data, size_t len, uint64_t deadline)
@@ -295,19 +296,19 @@ static int io_send_all(int fd, const char *data, size_t len, uint64_t deadline)
 #endif
     while (len) {
         uint64_t now = mono_ms();
-        if (now >= deadline) { errno = ETIMEDOUT; return -1; }
+        if (now >= deadline) { fipsd_io_set_errno(ETIMEDOUT); return -1; }
         int left = (int)(deadline - now);
         ssize_t n;
         if (fipsd_gw_on_fiber()) n = gof_sendto(fd, data, len, flags, NULL, 0, left);
         else {
             n = send(fd, data, len, flags);
-            if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) { /* errno-after-park: allow -- thread-only fallback; fiber branch cannot reach this read */
                 struct pollfd p = {.fd = fd, .events = POLLOUT};
-                if (poll(&p, 1, left) == 0) { errno = ETIMEDOUT; return -1; }
+                if (poll(&p, 1, left) == 0) { fipsd_io_set_errno(ETIMEDOUT); return -1; }
                 continue;
             }
         }
-        if (n < 0 && errno == EINTR) continue;
+        if (n < 0 && fipsd_io_errno() == EINTR) continue;
         if (n <= 0) return -1;
         data += n; len -= (size_t)n;
     }
@@ -322,7 +323,7 @@ void fipsd_gw_control_serve_fd(fipsd_gw_control *c, int fd)
     /* One line, within the size limit and the deadline. */
     for (;;) {
         ssize_t n = io_recv(fd, line + len, sizeof line - len, deadline);
-        if (n < 0) { failure = errno == ETIMEDOUT ? "read timeout" : "read error"; break; }
+        if (n < 0) { failure = fipsd_io_errno() == ETIMEDOUT ? "read timeout" : "read error"; break; }
         if (n == 0) break;
         char *nl = memchr(line + len, '\n', (size_t)n);
         len += (size_t)n;
@@ -368,15 +369,15 @@ void fipsd_gw_control_accept_loop(fipsd_gw_control *c, fipsd_gw_spawn_fn spawn, 
         int fd = fipsd_gw_on_fiber() ? gof_accept(c->listener, NULL, NULL, -1) : accept(c->listener, NULL, NULL);
         if (atomic_load(&c->stopping)) { if (fd >= 0) close(fd); break; }
         if (fd < 0) {
-            if (errno == ECANCELED) break;
-            if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK || errno == ECONNABORTED) {
-                if (!fipsd_gw_on_fiber() && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            if (fipsd_io_errno() == ECANCELED) break;
+            if (fipsd_io_errno() == EINTR || fipsd_io_errno() == EAGAIN || fipsd_io_errno() == EWOULDBLOCK || fipsd_io_errno() == ECONNABORTED) {
+                if (!fipsd_gw_on_fiber() && (fipsd_io_errno() == EAGAIN || fipsd_io_errno() == EWOULDBLOCK)) {
                     struct pollfd p = {.fd = c->listener, .events = POLLIN};
                     (void)poll(&p, 1, -1);
                 }
                 continue;
             }
-            FIPSD_WARN(MODULE, "Gateway control socket accept failed: error=%s", strerror(errno));
+            FIPSD_WARN(MODULE, "Gateway control socket accept failed: error=%s", strerror(fipsd_io_errno()));
             continue;
         }
         if (fcntl(fd, F_SETFD, FD_CLOEXEC) < 0 || fcntl(fd, F_SETFL, O_NONBLOCK) < 0) { close(fd); continue; }

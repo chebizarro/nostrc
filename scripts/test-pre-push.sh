@@ -30,7 +30,7 @@ export STATIC_PYTHON
 cat > "$tmp/bin/python3" <<'PYTHON'
 #!/bin/sh
 case "${1:-}" in
-    */scripts/check-unsequenced-args.py|*/scripts/check-gui-test-gdk-frame.py|*/scripts/check-linux-ci-packages.py|*/gnome/groundhog/tests/check_privacy.py)
+    */scripts/check-unsequenced-args.py|*/scripts/check-errno-after-park.py|*/scripts/check-gui-test-gdk-frame.py|*/scripts/check-linux-ci-packages.py|*/gnome/groundhog/tests/check_privacy.py)
         exec "$STATIC_PYTHON" "$@" ;;
     *) printf 'python3 %s\n' "$*" >> "$FORBIDDEN_TRACE"; exit 93 ;;
 esac

@@ -1,5 +1,6 @@
 #ifndef FIPSD_TCP_INTERNAL_H
 #define FIPSD_TCP_INTERNAL_H
+#include "fiber_errno.h"
 #include "transport/tcp/tcp.h"
 #include "transport/stream.h"
 #include "transport/sockbuf.h"
@@ -52,7 +53,6 @@ bool tcp_same_source(const tcp_endpoint *, const tcp_endpoint *);
 void tcp_conn_owner(void *);
 int tcp_connected_locked(tcp_conn *); /* mu held; never parks */
 void tcp_conn_free(tcp_conn *);
-int tcp_io_errno(void); /* reacquire TLS after a migrating fiber resumes */
 int tcp_socket_configure(tcp_instance *, int);
 uint16_t tcp_socket_mss(int, uint16_t);
 void tcp_fd_close(int); /* joins precede this call */

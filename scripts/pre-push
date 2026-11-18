@@ -3,7 +3,8 @@
 #
 # Check whitespace errors in the pushed range (git diff --check),
 # and the repository static checkers on the pushed tree (not the working tree):
-#   scripts/check-unsequenced-args.py, scripts/check-gui-test-gdk-frame.py,
+#   scripts/check-unsequenced-args.py, scripts/check-errno-after-park.py,
+#   scripts/check-gui-test-gdk-frame.py,
 #   scripts/check-linux-ci-packages.py, gnome/groundhog/tests/check_privacy.py
 # Each checker runs only if the pushed commit ships it.
 # Builds/tests belong in CI or explicitly invoked scripts/test-gate.sh commands.
@@ -61,7 +62,7 @@ while read -r local_ref local_oid _remote_ref remote_oid; do
     checkout="$tmp/checkout"
     git -c core.hooksPath=/dev/null -C "$repo_root" worktree add -q --detach "$checkout" "$local_oid"
 
-    for check in scripts/check-unsequenced-args.py scripts/check-gui-test-gdk-frame.py scripts/check-linux-ci-packages.py; do
+    for check in scripts/check-unsequenced-args.py scripts/check-errno-after-park.py scripts/check-gui-test-gdk-frame.py scripts/check-linux-ci-packages.py; do
         if [ -f "$checkout/$check" ] && ! python3 "$checkout/$check" --root "$checkout"; then
             echo "Pre-push: $check failed for $local_ref" >&2
             failed=1

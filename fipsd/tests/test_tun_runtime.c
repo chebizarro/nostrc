@@ -1,4 +1,5 @@
 #define _POSIX_C_SOURCE 200809L
+#include "fiber_errno.h"
 #include "tun/internal.h"
 #include "tun/lifecycle.h"
 #include "transport/loopback.h"
@@ -27,22 +28,18 @@ static unsigned index_of(void *arg,const char *name) {(void)arg;assert(!strcmp(n
 static const fipsd_tun_platform platform={.os=FIPSD_TUN_MACOS,.family_header=30,.open=device_open,
     .address=address,.mtu=mtu,.up=address,.route=route,.destroy=fipsd_tun_no_destroy};
 static fipsd_network_snapshot *network(void *arg) {(void)arg;return calloc(1,sizeof(fipsd_network_snapshot));}
-/* Match tun.c's post-resume errno access: a compiler-cached TLS pointer may
- * still name the previous worker after a parked read migrates this fiber. */
-__attribute__((noinline)) static int frame_error(void)
-{ return __atomic_load_n(&errno, __ATOMIC_RELAXED); }
 static void read_frame(void *arg)
 {
     fixture *f=arg; uint8_t packet[1280];
     assert(fipsd_tun_read(f->tun,packet,sizeof(packet))==40 && packet[0]==0x60 && packet[39]==7);
-    assert(fipsd_tun_read(f->tun,packet,sizeof(packet))<0 && frame_error()==EPROTONOSUPPORT);
+    assert(fipsd_tun_read(f->tun,packet,sizeof(packet))<0 && fipsd_io_errno()==EPROTONOSUPPORT);
     assert(go_channel_send(f->done,f)==0);
 }
 static void write_frame(void *arg)
 {
     fixture *f=arg; uint8_t packet[40]={0x60};packet[39]=9;
     assert(fipsd_tun_write(f->tun,packet,sizeof(packet))==40);
-    assert(fipsd_tun_write(f->tun,packet,1281)<0 && frame_error()==EMSGSIZE);
+    assert(fipsd_tun_write(f->tun,packet,1281)<0 && fipsd_io_errno()==EMSGSIZE);
     assert(go_channel_send(f->done,f)==0);
 }
 /* Read the immutable status concurrently with I/O on migrating workers. */

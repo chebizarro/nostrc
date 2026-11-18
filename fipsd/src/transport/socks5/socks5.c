@@ -1,4 +1,5 @@
 #define _POSIX_C_SOURCE 200809L
+#include "fiber_errno.h"
 #include "transport/socks5/socks5.h"
 #include "transport/presence.h"
 #include <libgo/fiber.h>
@@ -86,7 +87,6 @@ bool fipsd_socks5_target_parse(const char *text, size_t len, bool require_dot, f
     t.kind = FIPSD_SOCKS5_TARGET_DOMAIN; memcpy(t.domain, host, host_len + 1); t.domain_len = (uint8_t)host_len;
     *out = t; return true;
 }
-__attribute__((noinline)) static int io_errno(void) { return errno; } /* TLS after a fiber migration */
 static int remaining(uint64_t deadline, fipsd_socks5_result *r)
 {
     uint64_t now = fipsd_transport_now_ms();
@@ -110,7 +110,7 @@ static bool send_all(int fd, const uint8_t *p, size_t n, uint64_t deadline, fips
         flags = MSG_NOSIGNAL;
 #endif
         ssize_t k = gof_sendmsg(fd, &m, flags, wait);
-        if (k < 0) { int e = io_errno(); if (e == EINTR) continue; *r = classify(e); return false; }
+        if (k < 0) { int e = fipsd_io_errno(); if (e == EINTR) continue; *r = classify(e); return false; }
         if (!k) { *r = FIPSD_SOCKS5_IO; return false; }
         sent += (size_t)k;
     }
@@ -123,7 +123,7 @@ static bool read_exact(int fd, uint8_t *p, size_t n, uint64_t deadline, fipsd_so
         int wait = remaining(deadline, r);
         if (wait < 0) return false;
         ssize_t k = gof_recvfrom(fd, p + got, n - got, 0, NULL, NULL, wait);
-        if (k < 0) { int e = io_errno(); if (e == EINTR) continue; *r = classify(e); return false; }
+        if (k < 0) { int e = fipsd_io_errno(); if (e == EINTR) continue; *r = classify(e); return false; }
         if (!k) { *r = FIPSD_SOCKS5_PROTOCOL; return false; } /* the proxy closed mid-handshake */
         got += (size_t)k;
     }

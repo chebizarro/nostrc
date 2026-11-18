@@ -1,6 +1,7 @@
 #define _DEFAULT_SOURCE 1
 #define _DARWIN_C_SOURCE 1
 #define _POSIX_C_SOURCE 200809L
+#include "fiber_errno.h"
 #include "node/netmon.h"
 #include "blocking_executor.h"
 #include "select.h"
@@ -184,8 +185,6 @@ static bool stopping(fipsd_netmon *m)
     return go_channel_is_closed(m->stop) ||
         go_context_is_canceled(fipsd_runtime_context(m->runtime));
 }
-__attribute__((noinline)) static int io_error(void)
-{ return __atomic_load_n(&errno, __ATOMIC_RELAXED); }
 static void kernel_reader(void *arg)
 {
     fipsd_netmon *m = arg;
@@ -196,7 +195,7 @@ static void kernel_reader(void *arg)
          * This deadline checks cancellation, NOT a sampling cadence. */
         ssize_t n = gof_recvfrom(m->fd, bytes, 1, MSG_PEEK, NULL, NULL, 250);
         if (n < 0) {
-            int error = io_error(); /* evaluate TLS after possible fiber migration */
+            int error = fipsd_io_errno(); /* evaluate TLS after possible fiber migration */
             if (error == ETIMEDOUT || error == EINTR) continue;
             if (error == ENOBUFS) { (void)go_channel_try_send(m->wake, m); continue; }
             break; /* timer remains live if the kernel stream fails */

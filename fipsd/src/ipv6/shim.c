@@ -1,5 +1,6 @@
 #define _DEFAULT_SOURCE 1
 #define _DARWIN_C_SOURCE 1
+#include "fiber_errno.h"
 #include "ipv6/shim.h"
 #include "ipv6/firewall_state.h"
 #include "ipv6/icmp.h"
@@ -66,9 +67,6 @@ struct fipsd_ipv6_shim {
     _Atomic uint64_t delivered, undeliverable, written, write_errors, clamped_out, clamped_in, passed_through, path_updates;
 };
 #define COUNT(s, field) atomic_fetch_add_explicit(&(s)->field, 1, memory_order_relaxed)
-/* A fiber may resume on another worker: never retain a compiler-cached errno
- * TLS address across a parked read or write. */
-__attribute__((noinline)) static int io_error(void) { return __atomic_load_n(&errno, __ATOMIC_RELAXED); }
 static fips_instant now_of(fipsd_ipv6_shim *s) { return s->clock.now(s->clock.ctx); }
 
 fipsd_ipv6_shim *fipsd_ipv6_shim_create(const fipsd_ipv6_shim_config *cfg)
@@ -205,7 +203,7 @@ static void reader(void *arg)
     while (!go_channel_is_closed(s->stop)) {
         ssize_t n = fipsd_tun_read(s->cfg.tun, s->read_buf, READ_MAX);
         if (n < 0) {
-            int e = io_error();
+            int e = fipsd_io_errno();
             if (e == EINTR || e == EAGAIN) continue;
             if (e != ECANCELED && !go_channel_is_closed(s->stop)) FIPSD_ERROR(MOD, "TUN read error: %s", strerror(e));
             break;
@@ -226,7 +224,7 @@ static void write_packet(fipsd_ipv6_shim *s, fipsd_ipv6_packet *p)
         COUNT(s, clamped_in); FIPSD_TRACE(MOD, "Clamped TCP MSS in inbound SYN packet to %u", mss);
     }
     if (fipsd_tun_write(s->cfg.tun, p->bytes, p->len) < 0) {
-        int e = io_error();
+        int e = fipsd_io_errno();
         COUNT(s, write_errors);
         if (e != ECANCELED && e != EFAULT && e != ENODEV) FIPSD_DEBUG(MOD, "TUN write error (%zu bytes): %s", p->len, strerror(e));
     } else COUNT(s, written);
@@ -326,7 +324,7 @@ int fipsd_ipv6_shim_start(fipsd_ipv6_shim *s, fipsd_runtime *rt)
     s->running = true;
     void (*fns[])(void *) = {reader, writer, mesh_rx};
     for (unsigned i = 0; i < 3; ++i) {
-        if (fipsd_runtime_spawn(rt, fns[i], s) != 0) { (void)fipsd_ipv6_shim_stop(s); errno = EAGAIN; return -1; }
+        if (fipsd_runtime_spawn(rt, fns[i], s) != 0) { (void)fipsd_ipv6_shim_stop(s); fipsd_io_set_errno(EAGAIN); return -1; }
         ++s->fibers;
     }
     unsigned ipv6_mtu = fipsd_ipv6_mesh_state_ipv6_mtu(&s->state);

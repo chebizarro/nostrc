@@ -13,8 +13,6 @@
 #include <string.h>
 #include <unistd.h>
 
-__attribute__((noinline)) int tcp_io_errno(void) { return errno; }
-
 typedef struct lookup { char text[257]; bool numeric; tcp_endpoint *items; size_t count; } lookup;
 static void *resolve(void *arg)
 {
@@ -132,7 +130,7 @@ static void accept_loop(void *arg)
         tcp_endpoint remote = {.len = sizeof remote.address};
         int fd = gof_accept(u->listener_fd, (struct sockaddr *)&remote.address, &remote.len, -1);
         if (fd < 0) {
-            if (tcp_io_errno() == EINTR) continue;
+            if (fipsd_io_errno() == EINTR) continue;
             break;
         }
         tcp_endpoint local = {.len = sizeof local.address}; fips_transport_addr peer;

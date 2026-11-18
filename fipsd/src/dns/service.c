@@ -2,6 +2,7 @@
  * runtime, handlers and TUN owner. */
 #define _POSIX_C_SOURCE 200809L
 #define _DARWIN_C_SOURCE 1
+#include "fiber_errno.h"
 #include "dns/service.h"
 #include "host_os.h"
 #include "log.h"
@@ -81,8 +82,8 @@ static void responder(void *arg)
         struct sockaddr_storage src; socklen_t src_len = 0; fipsd_dns_arrival arrival;
         ssize_t n = fipsd_dns_recv_with_pktinfo(fd, buf, FIPSD_DNS_MAX_DATAGRAM, &src, &src_len, &arrival, -1);
         if (n < 0) {
-            if (errno == ECANCELED || atomic_load(&s->stopping)) break;
-            FIPSD_DEBUG(MODULE, "DNS socket recv error: %s", strerror(errno));
+            if (fipsd_io_errno() == ECANCELED || atomic_load(&s->stopping)) break;
+            FIPSD_DEBUG(MODULE, "DNS socket recv error: %s", strerror(fipsd_io_errno()));
             continue;
         }
         if (atomic_load(&s->stopping)) break;
@@ -126,7 +127,7 @@ static void responder(void *arg)
         }
         const char *withheld = NULL;
         ssize_t sent = fipsd_dns_send_reply(fd, reply, len, from, src_len, path, mesh_addr, &withheld);
-        if (sent < 0) FIPSD_DEBUG(MODULE, "DNS send error: %s", strerror(errno));
+        if (sent < 0) FIPSD_DEBUG(MODULE, "DNS send error: %s", strerror(fipsd_io_errno()));
         else if (withheld) FIPSD_DEBUG(MODULE, "DNS reply to %s withheld: reason=%s", text, withheld);
         event.sent = sent;
         post(s, &event);

@@ -1,4 +1,5 @@
 #define _POSIX_C_SOURCE 200809L
+#include "fiber_errno.h"
 #include "transport/udp/internal.h"
 #include "transport/framing.h"
 #include "blocking_executor.h"
@@ -89,8 +90,8 @@ void fipsd_udp_receive(void *arg)
         ssize_t n = gof_recvmsg(s->fd, &message, 0, -1);
         if (go_channel_is_closed(s->stop) || go_context_is_canceled(u->root)) break;
         if (n < 0) {
-            if (errno == EINTR) continue;
-            int error = errno;
+            if (fipsd_io_errno() == EINTR) continue;
+            int error = fipsd_io_errno();
             fipsd_transport_stats_error(&u->shared.stats, false);
             /* recvmsg consumes these asynchronous ICMP errors. The next
              * receive parks again; a dead drain must not retain a matching

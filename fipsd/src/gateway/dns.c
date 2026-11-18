@@ -3,6 +3,7 @@
 #else
 #define _DARWIN_C_SOURCE 1
 #endif
+#include "fiber_errno.h"
 #include "gateway/dns.h"
 #include "log.h"
 #include <fips/identity/address.h>
@@ -215,18 +216,18 @@ static ssize_t recv_until(int fd, void *buf, size_t cap, fipsd_gw_instant deadli
         int left = rest_ms > INT_MAX ? INT_MAX : (int)rest_ms;
         if (fipsd_gw_on_fiber()) {
             ssize_t n = gof_recvfrom(fd, buf, cap, 0, NULL, NULL, left);
-            if (n < 0 && !left && (errno == EAGAIN || errno == EWOULDBLOCK)) errno = ETIMEDOUT;
-            if (n < 0 && (errno == EINTR || (errno == ETIMEDOUT && left))) continue;
+            if (n < 0 && !left && (fipsd_io_errno() == EAGAIN || fipsd_io_errno() == EWOULDBLOCK)) fipsd_io_set_errno(ETIMEDOUT);
+            if (n < 0 && (fipsd_io_errno() == EINTR || (fipsd_io_errno() == ETIMEDOUT && left))) continue;
             return n;
         }
         ssize_t n = recv(fd, buf, cap, 0);
         if (n >= 0) return n;
-        if (errno == EINTR) continue;
-        if (errno != EAGAIN && errno != EWOULDBLOCK) return -1;
-        if (!left) { errno = ETIMEDOUT; return -1; }
+        if (errno == EINTR) continue; /* errno-after-park: allow -- thread-only fallback; fiber branch cannot reach this read */
+        if (errno != EAGAIN && errno != EWOULDBLOCK) return -1; /* errno-after-park: allow -- thread-only fallback; fiber branch cannot reach this read */
+        if (!left) { fipsd_io_set_errno(ETIMEDOUT); return -1; }
         struct pollfd p = {.fd = fd, .events = POLLIN};
         int r = poll(&p, 1, left);
-        if (r < 0 && errno != EINTR) return -1;
+        if (r < 0 && errno != EINTR) return -1; /* errno-after-park: allow -- thread-only fallback; fiber branch cannot reach this read */
     }
 }
 static ssize_t send_connected(int fd, const void *buf, size_t len)
@@ -234,7 +235,7 @@ static ssize_t send_connected(int fd, const void *buf, size_t len)
     if (fipsd_gw_on_fiber()) return gof_sendto(fd, buf, len, 0, NULL, 0, 1000);
     for (;;) {
         ssize_t n = send(fd, buf, len, 0);
-        if (n >= 0 || errno != EINTR) return n;
+        if (n >= 0 || errno != EINTR) return n; /* errno-after-park: allow -- thread-only fallback; fiber branch cannot reach this read */
     }
 }
 
@@ -248,20 +249,20 @@ int fipsd_gw_dns_probe_upstream(const struct sockaddr *upstream, socklen_t len, 
     if (fd < 0) { snprintf(err, cap, "socket failed: %s", strerror(errno)); return -1; }
     /* Connected, so the kernel drops datagrams from any other source. */
     if (connect(fd, upstream, len) != 0) { snprintf(err, cap, "connect failed: %s", strerror(errno)); close(fd); return -1; }
-    if (send_connected(fd, PROBE_QUERY, sizeof PROBE_QUERY) < 0) { snprintf(err, cap, "send failed: %s", strerror(errno)); close(fd); return -1; }
+    if (send_connected(fd, PROBE_QUERY, sizeof PROBE_QUERY) < 0) { snprintf(err, cap, "send failed: %s", strerror(fipsd_io_errno())); close(fd); return -1; }
     fipsd_gw_instant deadline = deadline_after(wait_ms);
     uint8_t buf[FIPSD_DNS_MAX_DATAGRAM];
     bool refused = false;
     int rc = -1;
     for (;;) {
         ssize_t n = recv_until(fd, buf, sizeof buf, deadline);
-        if (n < 0 && errno == ECONNREFUSED) { refused = true; continue; }
-        if (n < 0 && errno == ETIMEDOUT) {
+        if (n < 0 && fipsd_io_errno() == ECONNREFUSED) { refused = true; continue; }
+        if (n < 0 && fipsd_io_errno() == ETIMEDOUT) {
             if (refused) snprintf(err, cap, "upstream port closed (connection refused), waited %us", wait_ms / 1000u);
             else snprintf(err, cap, "no response within %us", wait_ms / 1000u);
             break;
         }
-        if (n < 0) { snprintf(err, cap, "recv failed: %s", strerror(errno)); break; }
+        if (n < 0) { snprintf(err, cap, "recv failed: %s", strerror(fipsd_io_errno())); break; }
         fipsd_gw_dns_message m;
         if (fipsd_gw_dns_parse_message(buf, (size_t)n, &m) &&
             fipsd_gw_dns_response_matches(&m, FIPSD_GW_PROBE_ID, PROBE_QUERY + 12, 11, FIPSD_DNS_CLASS_IN)) { rc = 0; break; }
@@ -329,14 +330,14 @@ static int exchange(fipsd_gw_dns_resolver *r, const fipsd_dns_query *q, const ch
                     fipsd_dns_sockaddr_text((struct sockaddr *)&r->upstream, text, sizeof text));
         goto out;
     }
-    if (send_connected(fd, query, query_len) < 0) { FIPSD_DEBUG(MODULE, "Failed to forward query to daemon: error=%s", strerror(errno)); goto out; }
+    if (send_connected(fd, query, query_len) < 0) { FIPSD_DEBUG(MODULE, "Failed to forward query to daemon: error=%s", strerror(fipsd_io_errno())); goto out; }
     /* Read until a datagram matches the query sent, or the deadline passes. */
     fipsd_gw_instant deadline = deadline_after(r->upstream_timeout_ms);
     uint8_t buf[FIPSD_DNS_MAX_DATAGRAM];
     for (;;) {
         ssize_t n = recv_until(fd, buf, sizeof buf, deadline);
-        if (n < 0 && errno == ETIMEDOUT) { FIPSD_DEBUG(MODULE, "Upstream DNS timeout: upstream=%s", fipsd_dns_sockaddr_text((struct sockaddr *)&r->upstream, text, sizeof text)); break; }
-        if (n < 0) { FIPSD_DEBUG(MODULE, "Upstream recv error: error=%s", strerror(errno)); break; }
+        if (n < 0 && fipsd_io_errno() == ETIMEDOUT) { FIPSD_DEBUG(MODULE, "Upstream DNS timeout: upstream=%s", fipsd_dns_sockaddr_text((struct sockaddr *)&r->upstream, text, sizeof text)); break; }
+        if (n < 0) { FIPSD_DEBUG(MODULE, "Upstream recv error: error=%s", strerror(fipsd_io_errno())); break; }
         if (n == 0 && atomic_load(&r->stopping)) break;
         if (!fipsd_gw_dns_parse_message(buf, (size_t)n, m)) { FIPSD_DEBUG(MODULE, "Discarding unparseable upstream datagram: name=%s", name); continue; }
         if (fipsd_gw_dns_response_matches(m, id, qname, qlen, FIPSD_DNS_CLASS_IN)) { rc = 0; break; }
@@ -480,8 +481,8 @@ int fipsd_gw_dns_serve(fipsd_gw_dns_server *s)
         ssize_t n = fipsd_dns_recv_with_pktinfo(s->fd, buf, FIPSD_DNS_MAX_DATAGRAM, &src, &src_len, &arrival, -1);
         if (atomic_load(&s->stopping)) break;
         if (n < 0) {
-            if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) continue;
-            if (errno == ECANCELED) break;
+            if (fipsd_io_errno() == EINTR || fipsd_io_errno() == EAGAIN || fipsd_io_errno() == EWOULDBLOCK) continue;
+            if (fipsd_io_errno() == ECANCELED) break;
             rc = -1; break;
         }
         const struct sockaddr *from = (const struct sockaddr *)&src;
@@ -516,15 +517,15 @@ int fipsd_gw_dns_serve(fipsd_gw_dns_server *s)
                                                              s->wildcard, FIPSD_DNS_STRICT_PIN);
         const char *withheld = NULL;
         ssize_t sent = fipsd_dns_send_reply(s->fd, out, len, from, src_len, path, NULL, &withheld);
-        if (sent < 0) FIPSD_DEBUG(MODULE, "Failed to send DNS response: error=%s", strerror(errno));
+        if (sent < 0) FIPSD_DEBUG(MODULE, "Failed to send DNS response: error=%s", strerror(fipsd_io_errno()));
         else if (withheld) FIPSD_DEBUG(MODULE, "DNS reply to %s withheld: reason=%s", text, withheld);
         atomic_fetch_add(&s->answered, 1);
         if (s->observe) s->observe(s->observe_user, FIPSD_GW_DNS_SEEN_ANSWERED);
     }
     if (rc == 0) FIPSD_INFO(MODULE, "DNS resolver shutting down");
-    int saved = errno;
+    int saved = fipsd_io_errno();
     free(buf); free(out);
-    errno = saved;
+    fipsd_io_set_errno(saved);
     return rc;
 }
 void fipsd_gw_dns_server_stop(fipsd_gw_dns_server *s)

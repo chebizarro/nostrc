@@ -1,4 +1,5 @@
 #define _POSIX_C_SOURCE 200809L
+#include "fiber_errno.h"
 #include "transport/ethernet/internal.h"
 #include "node/context.h"
 #include "blocking_executor.h"
@@ -86,7 +87,7 @@ static void receive_loop(void *arg)
         if (stopped(s)) break;
         atomic_fetch_add(&u->shared.stats.kernel_drops, fipsd_eth_io_drops(s));
         if (n < 0) {
-            if (errno == EINTR || errno == EMSGSIZE) continue;
+            if (fipsd_io_errno() == EINTR || fipsd_io_errno() == EMSGSIZE) continue;
             fipsd_transport_stats_error(&u->shared.stats, false); break;
         }
         if (!n) continue;

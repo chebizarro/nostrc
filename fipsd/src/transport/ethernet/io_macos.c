@@ -2,6 +2,7 @@
 #include "transport/ethernet/internal.h"
 #include "transport/presence.h"
 #include "libgo/fiber.h"
+#include "fiber_errno.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <net/if.h>
@@ -54,7 +55,7 @@ ssize_t fipsd_eth_io_recv(eth_socket *s, uint8_t *buf, size_t cap, uint8_t mac[6
     for (;;) {
         const uint8_t *p; size_t n;
         if (fipsd_eth_bpf_next(s->batch, s->batch_len, &s->batch_at, s->ethertype, &p, &n, mac)) {
-            if (n > cap) { errno = EMSGSIZE; return -1; }
+            if (n > cap) { fipsd_io_set_errno(EMSGSIZE); return -1; }
             memcpy(buf, p, n); return (ssize_t)n;
         }
         ssize_t got = gof_read(s->fd, s->batch, s->batch_capacity);

@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #define _DARWIN_C_SOURCE 1
+#include "fiber_errno.h"
 #include "native/fdpass.h"
 #include "native/seqpacket.h"
 #include <libgo/fiber.h>
@@ -21,7 +22,7 @@ ssize_t fipsd_native_sendmsg_fd(int sock, const void *data, size_t len, int fd, 
         memcpy(CMSG_DATA(h), &fd, sizeof fd);
     }
     ssize_t n;
-    do n = gof_sendmsg(sock, &msg, FIPSD_NATIVE_MSG_NOSIGNAL, timeout_ms); while (n < 0 && errno == EINTR);
+    do n = gof_sendmsg(sock, &msg, FIPSD_NATIVE_MSG_NOSIGNAL, timeout_ms); while (n < 0 && fipsd_io_errno() == EINTR);
     return n;
 }
 int fipsd_native_recvmsg_fd(int sock, void *buf, size_t cap, fipsd_native_chunk *out, int timeout_ms)
@@ -36,9 +37,9 @@ int fipsd_native_recvmsg_fd(int sock, void *buf, size_t cap, fipsd_native_chunk 
     flags |= MSG_CMSG_CLOEXEC;
 #endif
     ssize_t n;
-    do n = gof_recvmsg(sock, &msg, flags, timeout_ms); while (n < 0 && errno == EINTR);
+    do n = gof_recvmsg(sock, &msg, flags, timeout_ms); while (n < 0 && fipsd_io_errno() == EINTR);
     if (n < 0) {
-        if (errno == ECONNRESET) { out->len = 0; return 0; }
+        if (fipsd_io_errno() == ECONNRESET) { out->len = 0; return 0; }
         return -1;
     }
     for (struct cmsghdr *h = CMSG_FIRSTHDR(&msg); h; h = CMSG_NXTHDR(&msg, h)) {
