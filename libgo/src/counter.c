@@ -3,6 +3,7 @@
 
 #if defined(_WIN32) || defined(__MINGW32__)
 #include <windows.h>
+#include <malloc.h>
 static int go_get_nprocs(void) {
     SYSTEM_INFO si;
     GetSystemInfo(&si);
@@ -23,7 +24,12 @@ LongAdder *long_adder_create(void) {
         num_threads = 1; // Fallback to at least 1 counter
     }
 
-    go_autoptr(LongAdder) adder = malloc(sizeof(LongAdder));
+    /* LongAdder is over-aligned; malloc only guarantees fundamental alignment. */
+#if defined(_WIN32) || defined(__MINGW32__)
+    go_autoptr(LongAdder) adder = _aligned_malloc(sizeof(LongAdder), _Alignof(LongAdder));
+#else
+    go_autoptr(LongAdder) adder = aligned_alloc(_Alignof(LongAdder), sizeof(LongAdder));
+#endif
     if (adder == NULL) {
         return NULL; // Handle allocation failure
     }
@@ -64,5 +70,9 @@ void long_adder_reset(LongAdder *adder) {
 
 void long_adder_destroy(LongAdder *adder) {
     free(adder->counters);
+#if defined(_WIN32) || defined(__MINGW32__)
+    _aligned_free(adder);
+#else
     free(adder);
+#endif
 }
