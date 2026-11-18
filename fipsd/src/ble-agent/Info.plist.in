@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Linked into fips-ble-agent's __TEXT,__info_plist (fipsd/CMakeLists.txt):
+     CoreBluetooth terminates a process that has no
+     NSBluetoothAlwaysUsageDescription, and the Bluetooth permission prompt
+     shows this text. -->
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>com.fips.ble-agent</string>
+	<key>CFBundleName</key>
+	<string>fips-ble-agent</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleShortVersionString</key>
+	<string>@FIPS_BLE_AGENT_VERSION@</string>
+	<key>CFBundleVersion</key>
+	<string>@FIPS_BLE_AGENT_VERSION@</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>FIPS uses Bluetooth Low Energy to discover and connect to nearby mesh peers.</string>
+</dict>
+</plist>

@@ -11,6 +11,9 @@
  * list below are guarded by u->mu, which is never held across a park. */
 #define _POSIX_C_SOURCE 200809L
 #include "transport/ble/internal.h"
+#ifdef FIPSD_BLE_COREBLUETOOTH
+#include "transport/ble/agent_client.h"
+#endif
 #include "node/context.h"
 #include "log.h"
 #include <fips/identity/local.h>
@@ -1043,13 +1046,20 @@ int fipsd_ble_is_verified(fipsd_transport *t, const fips_transport_addr *a)
     nsync_mu_lock(&u->mu); ble_link *l = ble_pool_get(&u->pool, a); int v = l ? l->verified : -1; nsync_mu_unlock(&u->mu);
     return v;
 }
-/* No platform backend yet: the simulated radio is never a production
- * fallback, since a transport over it would start, report itself up and never
- * peer (upstream DefaultBleTransport tripwire). */
+/* The simulated radio is never a production fallback, since a transport over
+ * it would start, report itself up and never peer (upstream
+ * DefaultBleTransport tripwire). */
 bool fipsd_ble_platform_backend(const fipsd_ble_config *c, fipsd_ble_backend *out, const char **reason)
 {
-    (void)c; (void)out;
-    *reason = "this build has no Bluetooth backend (BlueZ: nostrc-gfi8h.6.2, CoreBluetooth: nostrc-gfi8h.6.3)";
+    (void)c;
+#ifdef FIPSD_BLE_COREBLUETOOTH
+    /* macOS: the radio is the per-user fips-ble-agent's, lent over its socket. */
+    if (fipsd_ble_agent_backend(NULL, out)) return true;
+    *reason = "the fips-ble-agent socket backend could not be set up";
+#else
+    (void)out;
+    *reason = "this build has no Bluetooth backend (BlueZ: nostrc-gfi8h.6.2)";
+#endif
     return false;
 }
 int fipsd_ble_register_config(fipsd_transport_registry *r, const fipsd_config *config, fipsd_transport **owned, size_t *count)
