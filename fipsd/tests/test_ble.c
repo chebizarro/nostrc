@@ -421,14 +421,17 @@ static void stats_and_config(void)
     c.connect_timeout_ms = 2000; assert(fipsd_ble_verify_grace_ms(&c) == 10000);
     c.connect_timeout_ms = 15000; assert(fipsd_ble_verify_grace_ms(&c) == 15000);
     /* transports.ble parses with upstream names. Without a platform backend
-     * it is ignored with a warning; over BlueZ it is created, not started. */
+     * it is ignored with a warning; over BlueZ (Linux) or the fips-ble-agent
+     * (macOS) it is created, not started. */
     const char *yaml = "transports:\n  ble:\n    adapter: hci1\n    psm: 0x00C1\n    mtu: 512\n    auto_connect: true\n";
     fipsd_config *cfg = fipsd_config_parse(yaml, strlen(yaml), NULL); assert(cfg);
     fipsd_transport_registry r = {0}; fipsd_transport *owned[32]; size_t count = 0;
     const char *reason = NULL; fipsd_ble_backend b;
-#if defined(FIPSD_ENABLE_BLE_BLUEZ)
+#if defined(FIPSD_ENABLE_BLE_BLUEZ) || defined(FIPSD_BLE_COREBLUETOOTH)
     assert(fipsd_ble_register_config(&r, cfg, owned, &count) == 0 && count == 1 && r.count == 1 && fipsd_ble_is(owned[0]));
+#if defined(FIPSD_ENABLE_BLE_BLUEZ)
     assert(owned[0]->ops->mtu(owned[0], NULL) == 512 && owned[0]->auto_connect);
+#endif
     fipsd_ble_destroy(owned[0]);
     assert(fipsd_ble_platform_backend(&c, &b, &reason) && fipsd_ble_backend_valid(&b));
     b.ops->destroy(b.self);

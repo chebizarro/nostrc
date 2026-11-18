@@ -14,6 +14,9 @@
 #if defined(FIPSD_ENABLE_BLE_BLUEZ)
 #include "transport/ble/bluez.h"
 #endif
+#ifdef FIPSD_BLE_COREBLUETOOTH
+#include "transport/ble/agent_client.h"
+#endif
 #include "node/context.h"
 #include "log.h"
 #include <fips/identity/local.h>
@@ -1046,16 +1049,23 @@ int fipsd_ble_is_verified(fipsd_transport *t, const fips_transport_addr *a)
     nsync_mu_lock(&u->mu); ble_link *l = ble_pool_get(&u->pool, a); int v = l ? l->verified : -1; nsync_mu_unlock(&u->mu);
     return v;
 }
-/* This build's platform backend. The simulated radio is never a production
- * fallback, since a transport over it would start, report itself up and never
- * peer (upstream DefaultBleTransport tripwire). */
+/* This build's platform backend: BlueZ on Linux, the per-user fips-ble-agent
+ * on macOS. The simulated radio is never a production fallback, since a
+ * transport over it would start, report itself up and never peer (upstream
+ * DefaultBleTransport tripwire). */
 bool fipsd_ble_platform_backend(const fipsd_ble_config *c, fipsd_ble_backend *out, const char **reason)
 {
 #if defined(FIPSD_ENABLE_BLE_BLUEZ)
     return fipsd_ble_bluez_backend(c, out, reason);
+#elif defined(FIPSD_BLE_COREBLUETOOTH)
+    (void)c;
+    /* macOS: the radio is the per-user fips-ble-agent's, lent over its socket. */
+    if (fipsd_ble_agent_backend(NULL, out)) return true;
+    *reason = "the fips-ble-agent socket backend could not be set up";
+    return false;
 #else
     (void)c; (void)out;
-    *reason = "this build has no Bluetooth backend (BlueZ: nostrc-gfi8h.6.2, CoreBluetooth: nostrc-gfi8h.6.3)";
+    *reason = "this build has no Bluetooth backend (BlueZ on Linux: nostrc-gfi8h.6.2, CoreBluetooth on macOS: nostrc-gfi8h.6.3)";
     return false;
 #endif
 }

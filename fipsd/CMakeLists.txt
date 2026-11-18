@@ -632,3 +632,58 @@ if(FIPSD_ENABLE_BLE)
 else()
   target_sources(fipsd_lib PRIVATE src/transport/ble/ble_disabled.c)
 endif()
+
+# BLE on macOS (nostrc-gfi8h.6.3). The agent socket protocol and fipsd's
+# backend over it (src/transport/ble/agent_{proto,client}.c) are portable
+# POSIX, built and tested wherever the BLE core is. On macOS,
+# FIPSD_ENABLE_BLE_COREBLUETOOTH (default ON) makes that backend this build's
+# platform backend and builds fips-ble-agent: the per-user LaunchAgent
+# (packaging/macos/com.fips.ble-agent.plist) that owns CoreBluetooth
+# (Objective-C, ARC) and lends the radio to fipsd over
+# /var/run/fips/ble-agent.sock. A root launchd daemon never gets CoreBluetooth.
+if(FIPSD_ENABLE_BLE AND NOT WIN32)
+  target_sources(fipsd_lib PRIVATE src/transport/ble/agent_proto.c src/transport/ble/agent_client.c)
+endif()
+set(_fipsd_corebluetooth_default OFF)
+if(APPLE AND FIPSD_ENABLE_BLE)
+  set(_fipsd_corebluetooth_default ON)
+endif()
+option(FIPSD_ENABLE_BLE_COREBLUETOOTH
+  "macOS: the fips-ble-agent CoreBluetooth backend, and the agent executable" ${_fipsd_corebluetooth_default})
+if(FIPSD_ENABLE_BLE_COREBLUETOOTH)
+  if(NOT APPLE OR NOT FIPSD_ENABLE_BLE)
+    message(FATAL_ERROR "FIPSD_ENABLE_BLE_COREBLUETOOTH needs macOS and FIPSD_ENABLE_BLE=ON")
+  endif()
+  enable_language(OBJC)
+  find_package(Threads REQUIRED)
+  declare_component_version(fips-ble-agent 0 1 0)
+  set(FIPS_BLE_AGENT_VERSION "${fips-ble-agent_VERSION}")
+  set(FIPS_BLE_AGENT_INFO_PLIST "${CMAKE_CURRENT_BINARY_DIR}/ble-agent/Info.plist")
+  configure_file(src/ble-agent/Info.plist.in "${FIPS_BLE_AGENT_INFO_PLIST}" @ONLY)
+  target_compile_definitions(fipsd_lib PUBLIC FIPSD_BLE_COREBLUETOOTH=1)
+  add_executable(fips-ble-agent src/ble-agent/main.m src/ble-agent/radio.m src/ble-agent/session.c
+    src/transport/ble/agent_proto.c)
+  add_dependencies(fips-ble-agent fipsd_build_info)
+  set_target_properties(fips-ble-agent PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO
+    OBJC_STANDARD 11 OBJC_STANDARD_REQUIRED YES)
+  target_include_directories(fips-ble-agent PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/ble-agent" "${fips-ble-agent_VERSION_HEADER_DIR}" "${FIPSD_BUILD_INFO_DIR}")
+  target_compile_options(fips-ble-agent PRIVATE $<$<COMPILE_LANGUAGE:OBJC>:-fobjc-arc>)
+  target_link_libraries(fips-ble-agent PRIVATE "-framework Foundation" "-framework CoreBluetooth" Threads::Threads)
+  # CoreBluetooth kills a process with no NSBluetoothAlwaysUsageDescription in
+  # its Info.plist; a command-line binary carries it in __TEXT,__info_plist,
+  # which is also the identity macOS's Bluetooth permission (TCC) records.
+  target_link_options(fips-ble-agent PRIVATE "LINKER:-sectcreate,__TEXT,__info_plist,${FIPS_BLE_AGENT_INFO_PLIST}")
+  set_property(TARGET fips-ble-agent APPEND PROPERTY LINK_DEPENDS "${FIPS_BLE_AGENT_INFO_PLIST}")
+  apply_warnings(fips-ble-agent)
+  apply_sanitizers(fips-ble-agent)
+  install(TARGETS fips-ble-agent RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+  if(BUILD_TESTING)
+    add_dependencies(fipsd_tests fips-ble-agent)
+    add_test(NAME FipsdBleAgentBinaryTest COMMAND "${CMAKE_COMMAND}" "-DAGENT=$<TARGET_FILE:fips-ble-agent>"
+      "-DEXPECTED_VERSION=${FIPS_BLE_AGENT_VERSION}" -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/ble_agent_binary.cmake")
+    set_tests_properties(FipsdBleAgentBinaryTest PROPERTIES TIMEOUT 30 LABELS "fips;smoke")
+    nostrc_describe_test(FipsdBleAgentBinaryTest OWNER fipsd TARGETS fips-ble-agent
+      INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/ble_agent_binary.cmake")
+  endif()
+endif()

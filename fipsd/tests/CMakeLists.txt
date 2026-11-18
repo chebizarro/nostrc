@@ -838,3 +838,16 @@ if(NOT DEFINED FIPSD_ENABLE_BLE OR FIPSD_ENABLE_BLE)
       INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/ble_bluez_smoke.py" "${CMAKE_CURRENT_SOURCE_DIR}/ble_bluez_gatt_peer.py")
   endif()
 endif()
+# BLE agent socket (nostrc-gfi8h.6.3): the protocol against upstream's own
+# encoder, fipsd's backend against a scripted agent, and end to end against
+# the agent's real session code (src/ble-agent/session.c) over mock radios.
+# Portable: built wherever the BLE core is (not Windows: AF_UNIX agent socket).
+if(NOT DEFINED FIPSD_ENABLE_BLE OR FIPSD_ENABLE_BLE)
+  fipsd_unit_test(fipsd_ble_agent_test test_ble_agent.c)
+  target_sources(fipsd_ble_agent_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src/ble-agent/session.c")
+  target_include_directories(fipsd_ble_agent_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../src/ble-agent")
+  add_dependencies(fipsd_tests fipsd_ble_agent_test)
+  add_test(NAME FipsdBleAgentTest COMMAND fipsd_ble_agent_test)
+  set_tests_properties(FipsdBleAgentTest PROPERTIES TIMEOUT 300 LABELS "fips;transport" ENVIRONMENT "FIPSD_WORKERS=2")
+  nostrc_describe_test(FipsdBleAgentTest OWNER fipsd TARGETS fipsd_ble_agent_test)
+endif()

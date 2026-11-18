@@ -11,7 +11,10 @@
 # daemon plist, a /etc/resolver/fips entry for the .fips domain, and the
 # install scripts that seed the config, create the fips group and load the
 # job. The payload is what fipsd/CMakeLists.txt declares, so a `make install`
-# to /usr/local and this package put the same files in the same places.
+# to /usr/local and this package put the same files in the same places. It
+# includes fips-ble-agent and its per-user LaunchAgent (com.fips.ble-agent),
+# which owns CoreBluetooth in each login session and lends the radio to the
+# daemon (a root launchd job never gets Bluetooth).
 #
 # Prerequisites: Xcode command-line tools (pkgbuild), and the build
 # dependencies .github/workflows/fips-ci.yml installs with brew. The package
@@ -82,6 +85,19 @@ mv "$confdir/hosts" "$confdir/hosts.default"
 cp "$staging/usr/local/share/fips/fips.yaml.example" "$confdir/fips.yaml.default"
 for bin in "$staging"/usr/local/bin/*; do strip "$bin"; done
 "$staging/usr/local/bin/fipsd" -V
+# CoreBluetooth kills a process with no NSBluetoothAlwaysUsageDescription in
+# its Info.plist, which fips-ble-agent carries in __TEXT,__info_plist (the
+# -sectcreate link option in fipsd/CMakeLists.txt): check that the stripped
+# binary that ships still does. Captured first: under pipefail, grep -q
+# exiting at its match could kill the writer and turn the match into a miss.
+agent=$staging/usr/local/bin/fips-ble-agent
+[ -x "$agent" ] || { echo "build-pkg: fips-ble-agent is missing (configure with -DFIPSD_ENABLE_BLE_COREBLUETOOTH=ON)" >&2; exit 1; }
+agent_plist=$(launchctl plist __TEXT,__info_plist "$agent" 2>/dev/null || true)
+if ! grep -q NSBluetoothAlwaysUsageDescription <<<"$agent_plist"; then
+    echo "build-pkg: fips-ble-agent has no NSBluetoothAlwaysUsageDescription in __TEXT,__info_plist" >&2
+    exit 1
+fi
+"$agent" --version
 # On a Mac that tracks file provenance, every file this script writes carries
 # com.apple.provenance, which cannot be cleared (xattr -c, cp -X and ditto
 # --noextattr all keep it) and which pkgbuild archives as an AppleDouble
@@ -89,9 +105,12 @@ for bin in "$staging"/usr/local/bin/*; do strip "$bin"; done
 # ones it cannot rewrite. The entries only re-apply that attribute at
 # install time; the payload itself is what pkgutil --payload-files lists.
 
-mkdir -p "$staging/usr/local/var/log/fips" "$staging/Library/LaunchDaemons" "$staging/etc/resolver"
+mkdir -p "$staging/usr/local/var/log/fips" "$staging/Library/LaunchDaemons" "$staging/Library/LaunchAgents" "$staging/etc/resolver"
 cp "$here/com.fips.fipsd.plist" "$staging/Library/LaunchDaemons/"
 plutil -lint "$staging/Library/LaunchDaemons/com.fips.fipsd.plist"
+# The BLE agent: the Bluetooth radio, run in each user's login session.
+cp "$here/com.fips.ble-agent.plist" "$staging/Library/LaunchAgents/"
+plutil -lint "$staging/Library/LaunchAgents/com.fips.ble-agent.plist"
 # DNS resolver for the .fips domain. Must match the daemon's dns.bind_addr
 # and dns.port (::1, 5354 in the shipped config).
 printf 'nameserver ::1\nport 5354\n' > "$staging/etc/resolver/fips"
@@ -123,6 +142,12 @@ printf '#!/bin/sh\n\n%s\n\n' "$stop_job_fn"
 cat <<'PREINSTALL'
 # Stop the service before an upgrade; postinstall starts the new one.
 stop_job system/com.fips.fipsd system /Library/LaunchDaemons/com.fips.fipsd.plist
+# Stop the BLE agent in every GUI session; postinstall starts the new one.
+for AGENT_USER in $(who | awk '$2 == "console" { print $1 }' | sort -u); do
+    [ "$AGENT_USER" = root ] && continue
+    AGENT_UID="$(id -u "$AGENT_USER" 2>/dev/null)" || continue
+    stop_job "gui/$AGENT_UID/com.fips.ble-agent" "gui/$AGENT_UID/com.fips.ble-agent"
+done
 exit 0
 PREINSTALL
 } > "$scripts/preinstall"
@@ -175,6 +200,19 @@ killall -HUP mDNSResponder 2>/dev/null || true
 stop_job system/com.fips.fipsd system /Library/LaunchDaemons/com.fips.fipsd.plist
 launchctl bootstrap system /Library/LaunchDaemons/com.fips.fipsd.plist
 log "launchd job loaded"
+
+# (Re)start the BLE agent in every GUI session (the console user's and those
+# of fast-user-switching users, all "console" in who(1)), so none keeps
+# running the binary this install replaced; users who log in later get it
+# from launchd. A user just added to the fips group gains it only in a new
+# login session, so their agent may not reach the daemon's socket until then.
+for AGENT_USER in $(who | awk '$2 == "console" { print $1 }' | sort -u); do
+    [ "$AGENT_USER" = root ] && continue
+    AGENT_UID="$(id -u "$AGENT_USER" 2>/dev/null)" || continue
+    stop_job "gui/$AGENT_UID/com.fips.ble-agent" "gui/$AGENT_UID/com.fips.ble-agent"
+    launchctl bootstrap "gui/$AGENT_UID" /Library/LaunchAgents/com.fips.ble-agent.plist 2>/dev/null || true
+    log "BLE agent loaded for $AGENT_USER"
+done
 log "postinstall complete"
 exit 0
 POSTINSTALL

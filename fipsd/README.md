@@ -2645,6 +2645,22 @@ How the platform beads map onto it:
   discoverCharacteristics, then a read. `connect` connects and then opens
   `openL2CAPChannel`. Channels come back as fds (SCM_RIGHTS) or as bridged
   ops streams, and the agent's absence or presence is the adapter state.
+- **BlueZ (`gfi8h.6.2`).** bluer over D-Bus. `listen` is a SEQPACKET
+  `StreamListener` bound to the requested PSM. Inbound and dialled channels
+  are fd streams on the fast path, so SDUs map to reads. `advertise` is an
+  `LEAdvertisement1` carrying ServiceData `{0x9C90: psm}`. `DeviceAdded` with
+  the FIPS UUID maps to `PEER_DISCOVERED`, `DeviceRemoved` to `PEER_LOST`,
+  and `Adapter1.Powered` and removal to the adapter state. `read_psm` starts
+  as `-ENOTSUP`, and a later GATT read lets it dial macOS peers advertising
+  only their UUID.
+- **CoreBluetooth (`gfi8h.6.3`).** The per-user `fips-ble-agent` owns
+  `CBCentralManager`/`CBPeripheralManager` and lends the radio to fipsd over
+  its socket (see "BLE on macOS" below). `listen` reports the agent's
+  `publishL2CAPChannel` PSM; `advertise` sets the UUID only and the agent
+  serves the PSM characteristic. There is no `read_psm`: as upstream, the
+  agent reads a UUID-only peer's GATT PSM inside the dial. Channels are
+  relayed over the socket with per-channel credit (no descriptor crosses
+  it), and the agent's absence or presence is the adapter state.
 
 `radio.c` is the reference for that foreign-thread shape.
 
@@ -2899,6 +2915,226 @@ GLib. Build one as `scripts/grotto-tsan-runtime.sh` does, with `CC=clang` and
 `-Db_lundef=false` (clang links its TSan runtime only into executables).
 Then pass `--fipsd` a wrapper that sets `LD_LIBRARY_PATH` to it; Python and
 the Rust daemon keep the system GLib.
+## BLE on macOS: CoreBluetooth through `fips-ble-agent` (`nostrc-gfi8h.6.3`)
+
+macOS never lets a root launchd daemon use Bluetooth: CoreBluetooth answers it
+`Unauthorized` whatever the privacy settings say. So, as upstream, the radio
+lives in a per-user agent and the transport in the daemon:
+
+- **`fips-ble-agent`** runs in each user's login session (the LaunchAgent
+  `com.fips.ble-agent`). It owns `CBCentralManager` and `CBPeripheralManager`,
+  publishes the L2CAP listener, serves the GATT PSM characteristic,
+  advertises the FIPS service UUID, scans, dials and accepts channels.
+- **fipsd** binds the agent socket `/var/run/fips/ble-agent.sock` (group
+  `fips`, mode 0770, the control socket's policy). The agent connects to it,
+  says `HELLO` with its listener's PSM, and lends the radio for as long as it
+  stays connected. One agent holds the radio at a time; another one gets
+  `BUSY` and stands by with backoff, so two users in the `fips` group never
+  take the radio from each other. An agent that leaves is a radio switched
+  off; one that comes back is a replaced radio, so the core listens,
+  advertises and scans afresh.
+
+The wire protocol is upstream's (`io_macos/agent_proto.rs`, version 2), byte
+for byte, so either side interoperates with upstream's other side. The
+daemon end is upstream's `agent_server.rs` and the agent end its `agent.rs`.
+As upstream, the agent refuses a socket not answered by the daemon's uid
+(root by default).
+
+Built by default on Apple (`-DFIPSD_ENABLE_BLE_COREBLUETOOTH=ON`, which needs
+`-DFIPSD_ENABLE_BLE=ON`). The option makes the agent backend this build's
+`fipsd_ble_platform_backend` and builds `fips-ble-agent` (Objective-C with
+`-fobjc-arc`, Foundation and CoreBluetooth). The protocol and the daemon
+backend are portable POSIX, and are built and tested on every platform the
+BLE core builds on.
+
+### Module map
+
+- `src/transport/ble/agent_proto.{c,h}`: frames (`len u32 BE | tag | payload`),
+  encode/decode, length limits (`MAX_FRAME` 128 KiB, `MAX_HELLO_FRAME` 16),
+  and the identifier-to-address mapping. No fipsd dependency; compiled into
+  both fipsd and the agent.
+- `src/transport/ble/agent_client.{c,h}`: the `backend.h` implementation in
+  fipsd. It is the agent's client for the radio, and on the socket it is the
+  listener, as upstream. It runs on fibers only: one accepts, one reads each
+  connection (a 5 s budget for its hello, then frames) and one writes each live
+  connection's queue.
+- `src/ble-agent/session.{c,h}`: the agent's end of the socket, written against
+  a radio vtable rather than CoreBluetooth. It handles reconnect with backoff,
+  the peer-uid check, `BUSY` standby, and a session tied to the radio's PSM.
+  It keeps a control queue and a data queue towards the daemon, grants each
+  channel credit and closes it on overrun, and runs two pump threads per
+  channel. Plain C and pthreads, so the tests run it on every host.
+- `src/ble-agent/radio.{m,h}`: the CoreBluetooth radio (`corebluetooth.rs`,
+  with `Listener`, `DialPlan` and `AdvertThrottle` from `mod.rs`). Both
+  managers and every CoreBluetooth call stay on one serial dispatch queue. It
+  reports to the session only through non-blocking calls, and nothing runs
+  on a run loop.
+- `src/ble-agent/main.m`: the CLI, logging, SIGTERM/SIGINT and `--probe`.
+- `src/ble-agent/Info.plist.in`: linked into `__TEXT,__info_plist` with
+  `-sectcreate`. It carries `NSBluetoothAlwaysUsageDescription`, without which
+  CoreBluetooth kills the process.
+- `packaging/macos/com.fips.ble-agent.plist`: the LaunchAgent.
+
+### How the contract maps
+
+| backend.h | over the agent |
+|---|---|
+| `start` | bind and accept; adapter reported absent until a hello |
+| `adapter` | present and powered while an agent holds the radio |
+| `listen` | the hello's PSM (OS-assigned by `publishL2CAPChannel`). An agent with no listener (PSM 0) reports the requested PSM, as upstream `RadioIo::listen`. The advert then asks the agent to publish again, and once it has a PSM it reconnects with it. |
+| `advertise` / `advertise_stop` | `START_ADVERTISING` / `STOP_ADVERTISING`; the agent advertises the UUID alone (CoreBluetooth carries no service data) and serves the PSM over GATT |
+| `scan_start` / `scan_stop` | `START_SCANNING` / `STOP_SCANNING`; each `SCAN` frame becomes `PEER_DISCOVERED`, its PSM as `0x9C90` service data |
+| `read_psm` | none (NULL): the agent's dial plan reads a UUID-only peer's GATT PSM itself and opens on it, else on the PSM fipsd asked for |
+| `connect` | `CONNECT` / `CONNECT_RESULT`; `ok=false` carries no reason and maps to `-EIO`, and an unanswered dial is `-ETIMEDOUT` at the deadline (its late answer is closed) |
+| `INBOUND_STREAM` | an `INBOUND` frame |
+| `STREAM_CLOSED` | the agent leaving (every channel resets) |
+| `local_addr` / `adapter_name` | hidden / `ble0` |
+
+**Streams** cross the boundary as upstream relays them: framed over the
+socket, never as a passed descriptor (the stream `fd` op is -1). The agent
+grants each channel a 32 KiB window when it opens and returns credit as its
+radio takes the bytes. `write` sends a packet whole as soon as any credit is
+left (a `SEND` of at most 64 KiB), and parks for `CREDIT` until its deadline.
+`RECV` bytes queue per channel, 256 chunks deep. When a queue is full, the
+reader waits for room rather than dropping bytes, because a hole would break
+a byte stream's framing. So a peer that stops taking bytes stalls only its
+own channel at the daemon; the agent's session never waits on a channel.
+`CLOSED` is end of stream after the queued bytes; the core's `close` sends
+`CLOSE`; cancel and stop latch `-ECANCELED`. The MTU each channel reports is
+the agent's transports.ble default, 2048, because CoreBluetooth hides the
+real one.
+
+### Running it
+
+```yaml
+transports:
+  ble:
+    adapter: ble0      # CoreBluetooth hides link addresses (validate.c allows only ble0/ peers)
+    auto_connect: true
+```
+
+The macOS package (`packaging/macos/build-pkg.sh`) installs
+`/usr/local/bin/fips-ble-agent`. It checks that the stripped binary still
+carries its `__info_plist`, installs `/Library/LaunchAgents/com.fips.ble-agent.plist`,
+and stops and restarts the agent in every GUI session on install and
+upgrade. `uninstall.sh` removes both. Users who log in later get the agent
+from launchd. The user must be in the `fips` group (postinstall adds the
+console user; that takes effect at the next login) to reach the daemon's
+socket. By hand:
+
+```sh
+sudo cp fips-ble-agent /usr/local/bin/ && sudo cp com.fips.ble-agent.plist /Library/LaunchAgents/
+launchctl bootstrap gui/$(id -u) /Library/LaunchAgents/com.fips.ble-agent.plist
+tail -f ~/Library/Logs/fips/ble-agent.log
+```
+
+- **Bluetooth permission (TCC).** The agent's first launch requests
+  Bluetooth with the embedded usage string. It reports the permission as
+  "not determined" until the request is answered. If no prompt shows, allow
+  `fips-ble-agent` under System Settings › Privacy & Security › Bluetooth.
+  macOS attributes a process to its *responsible* process. Under launchd the
+  agent is its own, so the request names `fips-ble-agent`. Started from a
+  terminal or IDE, it belongs to that app, and if the app's own Info.plist
+  lacks `NSBluetoothAlwaysUsageDescription`, CoreBluetooth aborts the agent
+  (SIGABRT, crash namespace TCC). An IDE's shell did exactly that. Run it
+  through launchd (as below) when in doubt. Once allowed, rebuilt ad-hoc
+  signed agents (same identifier, new code hash) were allowed again within a
+  second, without asking.
+- **Options.** `--socket PATH` (else `$FIPSD_BLE_AGENT_SOCKET`, else
+  `/var/run/fips/ble-agent.sock`), `--daemon-uid UID` (default 0),
+  `--log-file FILE`, `--verbose`, `--version`, `--help`, and `--ble-agent`
+  (accepted for upstream's plist). Logs go to stdout on a terminal, else to
+  `~/Library/Logs/fips/ble-agent.log` (0600, in a 0700 directory of the
+  user's own; the previous log is kept as `.1` past 10 MiB at start).
+- **`--probe SECONDS`.** A diagnostic with no daemon: power up, publish a
+  listener, advertise and scan every advertiser for SECONDS. It then reports
+  the permission, both managers' states, the PSM, whether advertising
+  started, and what it heard. It exits 1 unless the radio came up
+  advertising.
+- **An unprivileged daemon, or a test.** Point both ends at another socket:
+  `FIPSD_BLE_AGENT_SOCKET=/tmp/x/ble.sock fipsd ...` and
+  `fips-ble-agent --socket /tmp/x/ble.sock --daemon-uid $(id -u)`. A throwaway
+  LaunchAgent in `gui/$(id -u)` gives the agent its own TCC identity:
+
+  ```sh
+  launchctl bootstrap gui/$(id -u) /path/to/com.example.ble-agent.plist   # ProgramArguments: the agent and its flags
+  launchctl bootout gui/$(id -u)/com.example.ble-agent
+  ```
+
+Differences from upstream, each deliberate:
+
+1. **fipsd never tries CoreBluetooth in process.** Upstream's daemon first runs
+   its own `MacRadio` and falls back to the agent when refused. That would
+   bring Objective-C and an Info.plist into fipsd, only to work when it is not
+   a launchd daemon. The agent is the only radio.
+2. **A separate executable.** The agent is `fips-ble-agent`, not
+   `fips --ble-agent` behind a hard link, because fipsd has no shared binary
+   to link to. `--ble-agent` is accepted and ignored.
+3. **`--daemon-uid`, and a daemon socket path overridable through
+   `FIPSD_BLE_AGENT_SOCKET`.** Upstream always serves root, at the fixed path.
+   The defaults are the same.
+4. **Event-driven radio state.** The agent hears the radio come up, go down or
+   change PSM from the radio itself, not by polling it every 200 ms. Dials
+   reach the radio under agent-wide tokens, so a late answer can never land
+   on a later session.
+
+### Verification
+
+`FipsdBleAgentTest` (`tests/test_ble_agent.c`) covers three layers:
+
+- **Protocol.** The 18 frames of upstream's own `every_frame()` list, checked
+  byte for byte against vectors the pinned upstream encoder printed
+  (`agent_proto.rs` compiled verbatim). It also checks a frame stream,
+  truncated, unknown and oversized frames, the hello limit, and the
+  identifier mapping against `fipsd_ble_peer_from_identifier`.
+- **The backend against a scripted agent** on its socket. This covers the
+  hello, `BUSY` for a second agent, silent, wrong-version and oversized first
+  frames, a malformed frame ending the session, a replaced radio and the PSM-0
+  fallback. Then the commands, adverts with and without PSM and RSSI, dials
+  (accepted, refused, timed out with a late answer closed), and accepted
+  channels. Then credit: parking, spending a packet whole, splitting, and
+  256+64 queued `RECV`s read back with no hole. Then `CLOSED` as EOF after
+  data, cancel, the agent leaving (`-ECONNRESET`, `-ENODEV`, `STREAM_CLOSED`),
+  `stop` (`-ECANCELED`), and a stream closed after `destroy`.
+- **End to end.** Two BLE transports over their backends, each lent a radio
+  by the real agent session over mock radios, one advertising like a Mac and
+  one like BlueZ. They exercise discovery, the GATT/learned PSM, the key
+  exchange, one link and frames both ways. Then a radio power cycle onto a
+  new PSM, the transport going absent and present again, and the relink.
+
+`packaging/testing/smoke-ble-agent.sh FIPSD FIPS_BLE_AGENT` is the real-radio
+smoke on a Mac, run as a user. It launches the agent's `--probe` as a
+throwaway LaunchAgent and checks that the radio comes up, publishes a PSM and
+advertises. Then it runs fipsd with the agent socket in a temporary directory
+and the agent connecting to it. The checks: fipsd's transport comes up on the
+agent's PSM, and the agent advertises and scans. Both jobs are booted out at
+the end. A real L2CAP link needs a second BLE device running FIPS.
+
+Run on a MacBook's BCM4388 with Bluetooth on (2026-11-18), the smoke passed,
+probe and fipsd half alike. The probe reported the permission allowed, both
+managers powered on, the L2CAP listener published on PSM 0x00C0
+(OS-assigned) and the radio up, advertising the FIPS service and scanning; in
+12 s it heard 270 to 340 adverts from about 50 devices, none of them FIPS. In
+the fipsd half, fipsd took the agent's hello, brought the BLE transport up on
+ble0 at PSM 0x00C0 (`listen`), and the agent advertised (`advertise`) and
+scanned. The same PSM came back on every run, which suggests the agent's exit
+gives it back to bluetoothd. The smoke also found a duplicate advertising
+start, since fixed: CoreBluetooth confirms a start before its own
+`isAdvertising` turns true.
+
+Open: the Mac↔Linux L2CAP acceptance (a channel, the key exchange and frames
+over the air) needs a second BLE device running FIPS. None was available, and
+the Linux VM has no adapter. Nor can a second agent on the same Mac stand in
+as the peer. The agent advertised the FIPS service while scanning every
+advertiser and never heard itself, and one machine's radio does not discover
+its own adverts, so two agents sharing a radio cannot see each other. A
+second agent would also be told `BUSY`, and upstream's Rust agent serves only
+a root daemon and needs a Bluetooth grant of its own. It was not run.
+
+`FipsdBleAgentBinaryTest` checks the built agent's embedded Info.plist and its
+CLI. `FipsdBleTest` checks that the agent backend is the platform backend on
+macOS. All of these, and the whole `^Fips` suite, pass under ASan/UBSan (Apple
+clang) and TSan (Homebrew clang).
 
 ## C<->Rust UDP interoperability gate (`nostrc-f66sr.1`)
 
