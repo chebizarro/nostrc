@@ -298,8 +298,8 @@ static void *fake_serve(void *arg)
         atomic_fetch_add(&f->connections, 1);
         char buf[4096]; ssize_t n;
         while ((n = read(c, buf, sizeof(buf))) > 0 && !memchr(buf, '\n', (size_t)n)) {}
-        (void)write(c, f->reply, strlen(f->reply));
-        (void)write(c, "\n", 1);
+        CHECK(write(c, f->reply, strlen(f->reply)) == (ssize_t)strlen(f->reply));
+        CHECK(write(c, "\n", 1) == 1);
         close(c);
     }
     return NULL;
@@ -485,7 +485,8 @@ static void test_npub(const char *tmp)
     CHECK(!strncmp(expected, "fd", 2));
     char *error = NULL;
     CHECK(fipsctl_address_from_npub(npub, got, &error)); STREQ(got, expected);
-    for (size_t i = 0; npub[i]; ++i) spelling[i] = (char)toupper((unsigned char)npub[i]); spelling[strlen(npub)] = 0;
+    for (size_t i = 0; npub[i]; ++i) spelling[i] = (char)toupper((unsigned char)npub[i]);
+    spelling[strlen(npub)] = 0;
     CHECK(fipsctl_address_from_npub(spelling, got, &error)); STREQ(got, expected);
     alternating(npub, spelling);
     CHECK(fipsctl_address_from_npub(spelling, got, &error)); STREQ(got, expected);
@@ -510,7 +511,7 @@ static void test_npub(const char *tmp)
     char want[512]; snprintf(want, sizeof(want), "error: unknown host 'nosuch'\nNot found in %s and not an npub.\n", hosts);
     STREQ(data, want); free(data);
     /* Key files: nsec in fips.key, npub in fips.pub, the public one answering when the private is absent. */
-    char dir[256], key[256], pub[256]; snprintf(dir, sizeof(dir), "%s/keys", tmp); CHECK(mkdir(dir, 0700) == 0);
+    char dir[256], key[sizeof dir + sizeof "/fips.key"], pub[sizeof dir + sizeof "/fips.pub"]; snprintf(dir, sizeof(dir), "%s/keys", tmp); CHECK(mkdir(dir, 0700) == 0);
     snprintf(key, sizeof(key), "%s/fips.key", dir); snprintf(pub, sizeof(pub), "%s/fips.pub", dir);
     CHECK(!fipsctl_address_from_key_dir(dir, got, &error));
     CHECK(strstr(error, "fips.key") && strstr(error, "fips.pub") && strstr(error, "cannot read ")); free(error); error = NULL;
@@ -527,7 +528,7 @@ static void test_npub(const char *tmp)
     err = open_memstream(&data, &size);
     CHECK(!fipsctl_mesh_address("nosuch", NULL, hosts, got, &error, err) && !error); fclose(err);
     CHECK(strstr(data, "unknown host 'nosuch'")); free(data);
-    char junk[256]; snprintf(junk, sizeof(junk), "%s/junk.key", dir);
+    char junk[sizeof dir + sizeof "/junk.key"]; snprintf(junk, sizeof(junk), "%s/junk.key", dir);
     write_text(junk, "\n");
     CHECK(!fipsctl_address_from_file(junk, got, &error)); CHECK(strstr(error, "key file is empty: ")); free(error); error = NULL;
     write_text(junk, "not-a-key\n");
@@ -554,7 +555,7 @@ static void test_npub(const char *tmp)
     STREQ(out_data, "");
     CHECK(!strncmp(err_data, "npub1", 5) && strstr(err_data, "Key files written to: ") && strstr(err_data, "/fresh/sub/\n\nNOTE: Set 'node.identity.persistent: true'"));
     free(out_data); free(err_data); out_data = err_data = NULL;
-    struct stat st; char fkey[256], fpub[256];
+    struct stat st; char fkey[sizeof fresh + sizeof "/fips.key"], fpub[sizeof fresh + sizeof "/fips.pub"];
     snprintf(fkey, sizeof(fkey), "%s/fips.key", fresh); snprintf(fpub, sizeof(fpub), "%s/fips.pub", fresh);
     CHECK(stat(fkey, &st) == 0 && (st.st_mode & 0777) == 0600);
     CHECK(stat(fpub, &st) == 0 && (st.st_mode & 0777) == 0644);

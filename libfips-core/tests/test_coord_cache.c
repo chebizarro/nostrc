@@ -52,7 +52,7 @@ static fips_cached_coord co(const uint8_t *ids, size_t n)
     uint8_t addrs[FIPS_CACHED_COORD_MAX_ENTRIES][16];
     fips_cached_coord c;
     for (size_t i = 0; i < n; ++i) memcpy(addrs[i], make_node_addr(ids[i]).b, 16);
-    if (fips_cached_coord_from_addrs(&c, addrs, n) != FIPS_OK) ++unexpected;
+    if (fips_cached_coord_from_addrs(&c, (const uint8_t (*)[16])addrs, n) != FIPS_OK) ++unexpected;
     return c;
 }
 #define C(...) co((const uint8_t[]){__VA_ARGS__}, sizeof((const uint8_t[]){__VA_ARGS__}))
@@ -64,7 +64,7 @@ static fips_cached_coord coords_of_len(naddr addr, naddr root, size_t len)
     memcpy(addrs[0], addr.b, 16);
     for (uint32_t i = 0; i + 2 < len; ++i) memcpy(addrs[i + 1], minted_addr(0xd0, i).b, 16);
     memcpy(addrs[len - 1], root.b, 16);
-    if (fips_cached_coord_from_addrs(&c, addrs, len) != FIPS_OK) ++unexpected;
+    if (fips_cached_coord_from_addrs(&c, (const uint8_t (*)[16])addrs, len) != FIPS_OK) ++unexpected;
     return c;
 }
 static int ins(naddr a, fips_cached_coord c, uint64_t ms)
@@ -1025,7 +1025,7 @@ static int a_same_weight_rewrite_of_an_existing_key_is_never_charged(void)
     for (uint32_t i = 0; i < 18; ++i) memcpy(addrs[i + 1], minted_addr(0xc0, i).b, 16);
     memcpy(addrs[19], root.b, 16);
     fips_cached_coord moved;
-    CHECK(fips_cached_coord_from_addrs(&moved, addrs, 20) == FIPS_OK);
+    CHECK(fips_cached_coord_from_addrs(&moved, (const uint8_t (*)[16])addrs, 20) == FIPS_OK);
     fips_placed p = insf(key, moved, 20, UPTO(0));
     CHECK(p.outcome == CHANGED && p.added_weight == 0 && !p.unfunded);
     CHECK(eq(get(key, 20), moved));
@@ -1422,10 +1422,10 @@ static int cached_coord_bounds_and_accessors(void)
     for (uint32_t i = 0; i <= FIPS_CACHED_COORD_MAX_ENTRIES; ++i) memcpy(addrs[i], minted_addr(1, i).b, 16);
     fips_cached_coord c;
     c.len = 42;
-    CHECK(fips_cached_coord_from_addrs(&c, addrs, 0) == FIPS_ERR_RANGE && c.len == 42);
-    CHECK(fips_cached_coord_from_addrs(&c, addrs, FIPS_CACHED_COORD_MAX_ENTRIES + 1) == FIPS_ERR_RANGE);
+    CHECK(fips_cached_coord_from_addrs(&c, (const uint8_t (*)[16])addrs, 0) == FIPS_ERR_RANGE && c.len == 42);
+    CHECK(fips_cached_coord_from_addrs(&c, (const uint8_t (*)[16])addrs, FIPS_CACHED_COORD_MAX_ENTRIES + 1) == FIPS_ERR_RANGE);
     CHECK(c.len == 42);
-    CHECK(fips_cached_coord_from_addrs(&c, addrs, FIPS_CACHED_COORD_MAX_ENTRIES) == FIPS_OK);
+    CHECK(fips_cached_coord_from_addrs(&c, (const uint8_t (*)[16])addrs, FIPS_CACHED_COORD_MAX_ENTRIES) == FIPS_OK);
     CHECK(c.len == FIPS_CACHED_COORD_MAX_ENTRIES);
     CHECK(memcmp(fips_cached_coord_node_addr(&c), addrs[0], 16) == 0);
     CHECK(memcmp(fips_cached_coord_root_id(&c), addrs[FIPS_CACHED_COORD_MAX_ENTRIES - 1], 16) == 0);

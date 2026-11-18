@@ -46,7 +46,8 @@ static void stop_and_answers(void)
     fips_path_liveness_resume(&l); CHECK(!l.quiet.ops&&!l.stop.free.ops);
     CHECK(fips_path_liveness_send(&l,AT(100000),AT(100400),27,e,&id)); fips_path_liveness_halt(&l,AT(101000),false); CHECK(!l.stop.until.ops);
     fips_path_liveness_new(&l); fips_path_liveness_halt(&l,AT(10000),true);
-    for(unsigned i=0;i<29;++i) fips_path_liveness_spend(&l,AT(11000+i*1000)); CHECK(instant_eq(l.stop.free,40000));
+    for(unsigned i=0;i<29;++i) fips_path_liveness_spend(&l,AT(11000+i*1000));
+    CHECK(instant_eq(l.stop.free,40000));
     fips_path_liveness_spend(&l,AT(40000)); CHECK(instant_eq(l.stop.free,41000)&&duration_eq(l.stop.gap,MS(2000)));
     for(unsigned mode=0;mode<3;++mode) {
         fips_path_liveness_new(&l); fips_path_liveness_halt(&l,AT(0),false); fips_path_liveness_spend(&l,AT(10000));

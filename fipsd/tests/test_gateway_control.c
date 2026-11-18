@@ -120,8 +120,9 @@ typedef struct server { fipsd_gw_control c; pthread_t t; } server;
 static void *serve_thread(void *arg) { server *s = arg; fipsd_gw_control_accept_loop(&s->c, NULL, NULL); return NULL; }
 static int client(const char *path)
 {
+    CHECK(strlen(path) < sizeof(((struct sockaddr_un *)0)->sun_path));
     int fd = socket(AF_UNIX, SOCK_STREAM, 0); CHECK(fd >= 0);
-    struct sockaddr_un a; memset(&a, 0, sizeof a); a.sun_family = AF_UNIX; snprintf(a.sun_path, sizeof a.sun_path, "%s", path);
+    struct sockaddr_un a; memset(&a, 0, sizeof a); a.sun_family = AF_UNIX; memcpy(a.sun_path, path, strlen(path) + 1);
     CHECK(connect(fd, (struct sockaddr *)&a, sizeof a) == 0);
     return fd;
 }
@@ -140,14 +141,15 @@ static void the_socket_serves_one_line_per_connection_and_keeps_the_policy(void)
      * macOS's /tmp is one. */
     char tmpl[] = "/tmp/fipsgw-ctl-XXXXXX"; CHECK(mkdtemp(tmpl));
     char dir[PATH_MAX]; CHECK(realpath(tmpl, dir));
-    char path[128]; snprintf(path, sizeof path, "%s/sub/gateway.sock", dir);
+    char path[sizeof dir + sizeof "/sub/gateway.sock"]; snprintf(path, sizeof path, "%s/sub/gateway.sock", dir);
+    CHECK(strlen(path) < sizeof(((struct sockaddr_un *)0)->sun_path));
     fipsd_gw_snapshot_slot slot; fipsd_gw_snapshot_slot_init(&slot);
     fipsd_gw_snapshot_publish(&slot, make_snapshot());
     server s; char err[256];
     CHECKM(fipsd_gw_control_bind(&s.c, path, &slot, err, sizeof err) == 0, "%s", err);
     struct stat st;
     CHECK(stat(path, &st) == 0 && S_ISSOCK(st.st_mode) && (st.st_mode & 0777) == 0770);
-    char sub[128]; snprintf(sub, sizeof sub, "%s/sub", dir);
+    char sub[sizeof dir + sizeof "/sub"]; snprintf(sub, sizeof sub, "%s/sub", dir);
     CHECKM(stat(sub, &st) == 0 && (st.st_mode & 0777) == 0750, "a parent the service created is 0750");
     /* A second bind on a live socket is refused and leaves it alone. */
     fipsd_gw_control other;
@@ -173,7 +175,7 @@ static void the_socket_serves_one_line_per_connection_and_keeps_the_policy(void)
      * connections); elsewhere a connection wakes it to see the stop. */
     fd = socket(AF_UNIX, SOCK_STREAM, 0); CHECK(fd >= 0);
     {
-        struct sockaddr_un w; memset(&w, 0, sizeof w); w.sun_family = AF_UNIX; snprintf(w.sun_path, sizeof w.sun_path, "%s", path);
+        struct sockaddr_un w; memset(&w, 0, sizeof w); w.sun_family = AF_UNIX; memcpy(w.sun_path, path, strlen(path) + 1);
         (void)connect(fd, (struct sockaddr *)&w, sizeof w);
     }
     close(fd);
@@ -182,7 +184,7 @@ static void the_socket_serves_one_line_per_connection_and_keeps_the_policy(void)
     CHECKM(stat(path, &st) != 0, "the service removed the socket it bound");
     /* A stale socket is replaced; a regular file is not. */
     int stale = socket(AF_UNIX, SOCK_STREAM, 0);
-    struct sockaddr_un a; memset(&a, 0, sizeof a); a.sun_family = AF_UNIX; snprintf(a.sun_path, sizeof a.sun_path, "%s", path);
+    struct sockaddr_un a; memset(&a, 0, sizeof a); a.sun_family = AF_UNIX; memcpy(a.sun_path, path, strlen(path) + 1);
     CHECK(bind(stale, (struct sockaddr *)&a, sizeof a) == 0); close(stale);
     CHECKM(fipsd_gw_control_bind(&s.c, path, &slot, err, sizeof err) == 0, "a stale socket is replaced: %s", err);
     fipsd_gw_control_clear(&s.c);

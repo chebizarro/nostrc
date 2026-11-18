@@ -92,9 +92,8 @@ static void build_inode_map(fipsd_ipv6_inode_map *map)
         struct dirent *fd;
         while ((fd = readdir(fds)) && map->count < map->capacity) {
             if (fd->d_name[0] == '.') continue;
-            char link[96], target[64];
-            snprintf(link, sizeof link, "/proc/%lu/fd/%s", pid, fd->d_name);
-            ssize_t n = readlink(link, target, sizeof target - 1);
+            char target[64];
+            ssize_t n = readlinkat(dirfd(fds), fd->d_name, target, sizeof target - 1);
             if (n <= 0) continue;
             target[n] = 0;
             unsigned long long inode;

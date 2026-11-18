@@ -133,7 +133,8 @@ static int test_decode_secret_hex(fixture *t)
 {
     (void)t;
     uint8_t bytes[32]; OK(fips_decode_secret(t->secp, secret_hex, 64, bytes));
-    for (unsigned i = 0; i < 32; ++i) CHECK(bytes[i] == i+1); sodium_memzero(bytes, 32);
+    for (unsigned i = 0; i < 32; ++i) CHECK(bytes[i] == i+1);
+    sodium_memzero(bytes, 32);
     return 0;
 }
 
@@ -487,7 +488,8 @@ static int identity_generate_draws_its_secret_from_the_entropy_source(fixture *t
     (void)t;
     fips_fixed_entropy fixed = {1}; fips_entropy e = fips_fixed_entropy_adapter(&fixed); fips_identity *id;
     OK(fips_identity_generate(t->secp,e,&id)); uint8_t bytes[32]; fips_identity_export_secret(id,bytes);
-    for (size_t i=0;i<32;++i) CHECK(bytes[i] == 1); sodium_memzero(bytes,32); fips_identity_destroy(id);
+    for (size_t i=0;i<32;++i) CHECK(bytes[i] == 1);
+    sodium_memzero(bytes,32); fips_identity_destroy(id);
     return 0;
 }
 

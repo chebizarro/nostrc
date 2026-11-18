@@ -42,7 +42,7 @@ static void send_actions(handlers *h, const fips_lookup_action_list *actions, co
             uint8_t addrs[FIPS_CACHED_COORD_MAX_ENTRIES][16];
             size_t n = a->coords->len < FIPS_CACHED_COORD_MAX_ENTRIES ? a->coords->len : FIPS_CACHED_COORD_MAX_ENTRIES;
             for (size_t j = 0; j < n; ++j) memcpy(addrs[j], a->coords->entries[j].node_addr.bytes, 16);
-            if (fips_cached_coord_from_addrs(&cc, addrs, n) == FIPS_OK) {
+            if (fips_cached_coord_from_addrs(&cc, (const uint8_t (*)[16])addrs, n) == FIPS_OK) {
                 if (a->path_mtu && a->path_mtu != UINT16_MAX)
                     (void)fips_coord_cache_insert_verified_with_path_mtu(&h->cache, a->target.bytes, &cc, hs_now(h), a->path_mtu);
                 else (void)fips_coord_cache_insert_verified(&h->cache, a->target.bytes, &cc, hs_now(h));

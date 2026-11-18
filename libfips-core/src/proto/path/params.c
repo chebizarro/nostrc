@@ -15,20 +15,24 @@ fips_status fips_path_params_new(fips_path_params *out,fips_path_config cfg,fips
         {cfg.dead_interval,"the Dead probe interval cap"},{cfg.grace,"the Dead grace"},
         {cfg.span,"the capability probe span"},{cfg.cap,"the capability probe interval cap"}};
     for (size_t i=0;i<sizeof(spans)/sizeof(spans[0]);++i) if (!spans[i].d.secs && !spans[i].d.nanos) {
-        if(e) *e=(fips_path_params_error){FIPS_PATH_PARAMS_Zero,spans[i].name}; return FIPS_ERR_RANGE;
+        if(e) *e=(fips_path_params_error){FIPS_PATH_PARAMS_Zero,spans[i].name};
+        return FIPS_ERR_RANGE;
     }
     const struct { uint8_t n; const char *name; } counts[]={
         {cfg.min_samples,"the minimum samples"},{cfg.suspect,"the Suspect count"},{cfg.retire,"the retire count"},
         {cfg.discovery,"the discovery probe count"},{cfg.auth_limit,"the authentication failure limit"},
         {cfg.ring,"the probe ring"},{cfg.budget,"the capability probe budget"}};
     for(size_t i=0;i<sizeof(counts)/sizeof(counts[0]);++i) if(!counts[i].n) {
-        if(e) *e=(fips_path_params_error){FIPS_PATH_PARAMS_Zero,counts[i].name}; return FIPS_ERR_RANGE;
+        if(e) *e=(fips_path_params_error){FIPS_PATH_PARAMS_Zero,counts[i].name};
+        return FIPS_ERR_RANGE;
     }
     if(!isfinite(cfg.switch_margin)||cfg.switch_margin<1.0) {
-        if(e) *e=(fips_path_params_error){FIPS_PATH_PARAMS_Margin,NULL}; return FIPS_ERR_RANGE;
+        if(e) *e=(fips_path_params_error){FIPS_PATH_PARAMS_Margin,NULL};
+        return FIPS_ERR_RANGE;
     }
     if(cfg.ring>FIPS_PATH_RING) {
-        if(e) *e=(fips_path_params_error){FIPS_PATH_PARAMS_Ring,NULL}; return FIPS_ERR_RANGE;
+        if(e) *e=(fips_path_params_error){FIPS_PATH_PARAMS_Ring,NULL};
+        return FIPS_ERR_RANGE;
     }
     *out=(fips_path_params){cfg,pd_max(pd_mul(pd_mul(cfg.standby_interval,cfg.min_samples),2),(fips_duration){30,0})};
     return FIPS_OK;

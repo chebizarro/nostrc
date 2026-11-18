@@ -55,7 +55,10 @@ static void getinfo(torctl_fixture *f, int fd, char *keys)
 {
     char out[2048] = "", line[512], v[256];
     if (!strncmp(keys, "hs/service/desc/id/", 19)) { /* a dot-terminated multi-line value */
-        if (f->descriptor) snprintf(out, sizeof out, "250+%s=\r\nhs-descriptor 3\r\ndescriptor-lifetime 180\r\n.\r\n250 OK\r\n", keys);
+        if (f->descriptor) {
+            int n = snprintf(out, sizeof out, "250+%s=\r\nhs-descriptor 3\r\ndescriptor-lifetime 180\r\n.\r\n250 OK\r\n", keys);
+            assert(n >= 0 && (size_t)n < sizeof out);
+        }
         else snprintf(out, sizeof out, "552 Unknown onion service\r\n");
         reply(f, fd, out); return;
     }

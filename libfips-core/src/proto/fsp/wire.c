@@ -141,25 +141,25 @@ bool fips_fsp_encrypted_header_parse(const uint8_t *data, size_t len, fips_fsp_e
     memcpy(h.header_bytes, data, sizeof(h.header_bytes));
     *out = h; return true;
 }
-void fips_fsp_build_header(uint64_t counter, uint8_t flags, uint16_t n, uint8_t *out)
+void fips_fsp_build_header(uint64_t counter, uint8_t flags, uint16_t n, uint8_t out[FIPS_FRAMING_FSP_HEADER_SIZE])
 {
     fips_writer w;
     fips_writer_init(&w, out, FIPS_FRAMING_FSP_HEADER_SIZE);
     fips_writer_write_u8(&w, 0, NULL); fips_writer_write_u8(&w, flags, NULL);
     fips_writer_write_u16_le(&w, n, NULL); fips_writer_write_u64_le(&w, counter, NULL);
 }
-fips_status fips_fsp_build_encrypted(const uint8_t *h, const uint8_t *c, size_t n, fips_writer *w, fips_proto_error *e)
+fips_status fips_fsp_build_encrypted(const uint8_t h[FIPS_FRAMING_FSP_HEADER_SIZE], const uint8_t *c, size_t n, fips_writer *w, fips_proto_error *e)
 {
     if (n > SIZE_MAX - FIPS_FRAMING_FSP_HEADER_SIZE) return too_long(SIZE_MAX - FIPS_FRAMING_FSP_HEADER_SIZE, n, e);
     if (reserve(w, FIPS_FRAMING_FSP_HEADER_SIZE + n, e) != FIPS_OK) return FIPS_ERR_RANGE;
     fips_writer_write_bytes(w, h, FIPS_FRAMING_FSP_HEADER_SIZE, NULL);
     return fips_writer_write_bytes(w, c, n, NULL);
 }
-void fips_fsp_build_handshake_prefix(uint8_t phase, uint16_t n, uint8_t *out)
+void fips_fsp_build_handshake_prefix(uint8_t phase, uint16_t n, uint8_t out[FIPS_FRAMING_FSP_COMMON_PREFIX_SIZE])
 {
     out[0] = phase & 15; out[1] = 0; out[2] = (uint8_t)n; out[3] = (uint8_t)(n >> 8);
 }
-void fips_fsp_build_error_prefix(uint16_t n, uint8_t *out)
+void fips_fsp_build_error_prefix(uint16_t n, uint8_t out[FIPS_FRAMING_FSP_COMMON_PREFIX_SIZE])
 { fips_fsp_build_handshake_prefix(0, n, out); out[1] = FIPS_FSP_FLAG_U; }
 fips_status fips_fsp_prepend_inner_header(uint32_t ts, uint8_t mt, uint8_t flags, const uint8_t *p, size_t n, fips_writer *w, fips_proto_error *e)
 {

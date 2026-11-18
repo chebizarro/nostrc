@@ -211,12 +211,12 @@ int main(void)
     CHECK(fipsd_privilege_secure_socket(file, own, err, sizeof(err)) == -1);
     CHECK(strstr(err, "not a socket") != NULL);
     CHECK(fipsd_privilege_secure_socket(file, own, NULL, 0) == -1); /* no buffer */
-    snprintf(err, sizeof(err), "%s/missing", run);
-    CHECK(fipsd_privilege_secure_socket(err, own, err, sizeof(err)) == -1);
+    char missing[sizeof run + sizeof "/missing"];
+    snprintf(missing, sizeof(missing), "%s/missing", run);
+    CHECK(fipsd_privilege_secure_socket(missing, own, err, sizeof(err)) == -1);
     CHECK(fipsd_privilege_secure_private_dir(file, own, err, sizeof(err)) == -1);
     CHECK(fipsd_privilege_secure_private_dir(link, own, err, sizeof(err)) == -1);
-    snprintf(err, sizeof(err), "%s/missing", run);
-    CHECK(fipsd_privilege_secure_private_dir(err, own, err, sizeof(err)) == -1);
+    CHECK(fipsd_privilege_secure_private_dir(missing, own, err, sizeof(err)) == -1);
     /* The socket itself is unchanged by the refused calls. */
     CHECK(mode_of(sock, &mode, &got) == 0 && (mode & 07777) == FIPSD_SOCKET_MODE);
 

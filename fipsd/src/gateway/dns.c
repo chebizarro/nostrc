@@ -281,7 +281,7 @@ void fipsd_gw_dns_resolver_init(fipsd_gw_dns_resolver *r, const struct sockaddr 
     r->ttl = ttl; r->pool = pool; r->emit = emit; r->emit_user = user;
     r->upstream_timeout_ms = FIPSD_GW_UPSTREAM_TIMEOUT_MS;
     nsync_mu_init(&r->fd_mu); r->upstream_fd = -1; atomic_init(&r->stopping, false);
-    (void)sodium_init();
+    if (sodium_init() < 0) abort(); /* Never use uninitialised upstream-query entropy. */
 }
 void fipsd_gw_dns_resolver_cancel(fipsd_gw_dns_resolver *r)
 {

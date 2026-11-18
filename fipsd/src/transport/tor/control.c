@@ -220,6 +220,7 @@ static void handle_event(tor_control *c, const char *content)
 /* One complete reply; 650 lines seen meanwhile are dispatched, never lost. */
 static int read_reply(tor_control *c, int fd, reply *r)
 {
+    /* Snapshot text is diagnostic and intentionally capped, unlike framing. */
     r->count = 0; r->code = 0; r->status[0] = 0;
     for (;;) {
         char line[1024];
@@ -230,14 +231,14 @@ static int read_reply(tor_control *c, int fd, reply *r)
         int code = (line[0] - '0') * 100 + (line[1] - '0') * 10 + (line[2] - '0');
         char sep = line[3]; const char *content = line + 4;
         if (code == 650) { if (sep == ' ' || sep == '-' || sep == '+') handle_event(c, content); continue; }
-        if (sep == ' ') { r->code = code; snprintf(r->status, sizeof r->status, "%s", content); return 0; }
+        if (sep == ' ') { r->code = code; snprintf(r->status, sizeof r->status, "%.*s", (int)sizeof r->status - 1, content); return 0; }
         if (sep != '-' && sep != '+') return -EPROTO;
-        if (r->count < 8) snprintf(r->data[r->count++], sizeof r->data[0], "%s", content);
+        if (r->count < 8) snprintf(r->data[r->count++], sizeof r->data[0], "%.*s", (int)sizeof r->data[0] - 1, content);
         if (sep == '+') for (;;) { /* dot-terminated body; kept only if room */
             rc = read_line(c, fd, line, sizeof line, REPLY_WAIT_MS);
             if (rc <= 0) return rc ? rc : -EPIPE;
             if (!strcmp(line, ".")) break;
-            if (r->count < 8) snprintf(r->data[r->count++], sizeof r->data[0], "%s", line[0] == '.' ? line + 1 : line);
+            if (r->count < 8) snprintf(r->data[r->count++], sizeof r->data[0], "%.*s", (int)sizeof r->data[0] - 1, line[0] == '.' ? line + 1 : line);
         }
     }
 }
