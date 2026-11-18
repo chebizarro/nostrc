@@ -311,8 +311,10 @@ jobs:
         shell: msys2 {0}
         run: |
           git config --global --add safe.directory '*'
+          # libfips-core finds it through pkg-config, libnostr with find_library/find_path.
           export PKG_CONFIG_PATH="$SECP256K1_PREFIX/lib/pkgconfig:$PKG_CONFIG_PATH"
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_PREFIX_PATH="$(cygpath -m "$SECP256K1_PREFIX")" \
             -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
             -DGO_WARNINGS_AS_ERRORS=ON -DBUILD_TESTING=ON -DBUILD_FIPS=ON \
             -DBUILD_TESTING_FRAMEWORK=OFF -DBUILD_SIGNER_TESTS=OFF -DLIBNOSTR_BUILD_TESTS=OFF \
@@ -324,6 +326,7 @@ jobs:
             -DBUILD_LIBPORTHOME=OFF -DBUILD_LIBVAULT=OFF -DBUILD_LIBVAULT_MARMOT=OFF -DENABLE_BUD02=OFF
           grep -E '^(FIPSD_ENABLE_BLE|FIPSD_BUILD_FIPSTOP):' build/CMakeCache.txt
       - name: Build FIPS targets
+        id: build
         shell: msys2 {0}
         run: |
           cmake --build build --parallel 4 --target fipsd fipsd_tests fipsctl fipstop
@@ -366,7 +369,7 @@ jobs:
           test "$(grep -cE 'Test +#[0-9]+: Fipsd.* +Passed' build/privileged.log)" -eq 4
           exit "$status"
       - name: Package (build-zip.ps1)
-        if: success() || failure()
+        if: (success() || failure()) && steps.build.outcome == 'success'
         shell: pwsh
         run: |
           $bin = Join-Path '${{ steps.msys2.outputs.msys2-location }}' 'clangarm64\bin'
