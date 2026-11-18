@@ -66,6 +66,7 @@ import threading
 import time
 
 POLL = 0.1
+KILL_GRACE = 10  # seconds to reap a process group after SIGKILL
 SANITIZER_MARKERS = (b'AddressSanitizer', b'LeakSanitizer', b'ThreadSanitizer',
                      b'UndefinedBehaviorSanitizer', b'runtime error:')
 
@@ -100,12 +101,21 @@ def control(path, command, params=None, timeout=10):
 
 
 class Daemon:
-    """A child whose merged stdout/stderr is captured continuously."""
+    """A child whose merged stdout/stderr is captured continuously.
+
+    Each child leads its own session, so teardown signals its whole process
+    group (a sanitizer symbolizer or helper it started goes with it), and its
+    output never reaches the harness's own stdout, which is CTest's pipe.
+    """
+
+    live = set()  # started and not yet reaped: SIGKILLed by kill_children()
 
     def __init__(self, name, argv, env, cwd):
         self.name = name
         self.proc = subprocess.Popen(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL,
-                                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                     start_new_session=True)
+        Daemon.live.add(self)
         self.log = bytearray()
         self.cond = threading.Condition()
         self.eof = False
@@ -145,20 +155,89 @@ class Daemon:
         with self.cond:
             return any(marker in self.log for marker in SANITIZER_MARKERS)
 
+    def signal_group(self, sig):
+        if not hasattr(os, 'killpg'):  # no process groups: the child alone
+            if self.proc.poll() is None:
+                self.proc.kill() if sig == getattr(signal, 'SIGKILL', None) else self.proc.terminate()
+            return
+        try:
+            os.killpg(self.proc.pid, sig)
+        except ProcessLookupError:
+            pass  # the whole group is gone
+
+    def await_eof(self, timeout):
+        deadline = time.monotonic() + timeout
+        with self.cond:
+            while not self.eof and time.monotonic() < deadline:
+                self.cond.wait(deadline - time.monotonic())
+            return self.eof
+
     def stop(self, timeout):
+        """SIGTERM the group, SIGKILL it after `timeout`, reap: bounded in every case.
+
+        Returns the exit status, or None if even SIGKILL left it unreaped."""
         if self.proc.poll() is None:
-            self.proc.send_signal(signal.SIGTERM)
+            self.signal_group(signal.SIGTERM)
         try:
             self.returncode = self.proc.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
             self.forced = True
-            self.proc.kill()
-            self.returncode = self.proc.wait()
-        with self.cond:
-            if not self.eof:
-                self.cond.wait(5)
-        self.proc.stdout.close()
+            self.signal_group(signal.SIGKILL)
+            try:
+                self.returncode = self.proc.wait(timeout=KILL_GRACE)
+            except subprocess.TimeoutExpired:
+                return None  # still in Daemon.live for kill_children()
+        Daemon.live.discard(self)
+        if not self.await_eof(5):
+            self.signal_group(signal.SIGKILL)  # something it started still holds its output
+            self.await_eof(5)
+        if self.eof:  # closing under a reader still blocked in read1() would wait for it
+            self.proc.stdout.close()
         return self.returncode
+
+
+def kill_children():
+    """Last resort at exit or when the test wrapper is gone: SIGKILL every live child's group."""
+    for daemon in list(Daemon.live):
+        daemon.signal_group(signal.SIGKILL)
+    for daemon in list(Daemon.live):
+        try:
+            daemon.proc.wait(timeout=KILL_GRACE)
+        except subprocess.TimeoutExpired:
+            continue
+        Daemon.live.discard(daemon)
+
+
+atexit.register(kill_children)
+
+
+def watch_lifeline():
+    """Exit with the test wrapper. CTest's TIMEOUT kills only its direct child,
+    fipsd_test_tmpdir_run, which holds the write end of FIPSD_TEST_LIFELINE_FD:
+    EOF there means it is gone, and the harness and its children must not
+    outlive it holding CTest's pipes."""
+    value = os.environ.pop('FIPSD_TEST_LIFELINE_FD', '')
+    try:
+        fd = int(value)
+        os.fstat(fd)
+    except (ValueError, OSError):
+        return
+    os.set_inheritable(fd, False)
+
+    def watch():
+        try:
+            while os.read(fd, 1):
+                pass
+        except OSError:
+            pass
+        print('udp_interop: the test wrapper is gone (CTest timeout or kill); killing children', file=sys.stderr, flush=True)
+        kill_children()
+        os._exit(124)
+    threading.Thread(target=watch, name='lifeline', daemon=True).start()
+
+
+def exit_on_signal(signum, frame):
+    raise SystemExit(128 + signum)  # unwinds through each scenario's shutdown
 
 
 class NativeFlow:
@@ -722,21 +801,34 @@ transports:
 
     # -- 6. shutdown ------------------------------------------------------------
     def shutdown(self):
+        """Stop every helper and daemon, whatever fails: never raises a test failure."""
         failures = []
         if self.flow:
-            self.flow.close()
+            try:
+                self.flow.close()
+            except OSError as e:
+                failures.append(f'closing the native flow: {e}')
         for helper in (self.tool, self.echo):
             if not helper:
                 continue
-            helper.stop(self.args.shutdown_timeout)
+            try:
+                helper.stop(self.args.shutdown_timeout)
+            except Exception as e:  # noqa: BLE001 - keep stopping the rest
+                failures.append(f'{helper.name} stop: {type(e).__name__}: {e}')
             if helper.sanitizer_report():
                 failures.append(f'{helper.name} log carries a sanitizer report')
         for name in self.nodes:
             node = self.nodes.get(name)
             if not node:
                 continue
-            code = node.daemon.stop(self.args.shutdown_timeout)
-            if node.daemon.forced:
+            try:
+                code = node.daemon.stop(self.args.shutdown_timeout)
+            except Exception as e:  # noqa: BLE001 - keep stopping the rest
+                failures.append(f'{name} stop: {type(e).__name__}: {e}')
+                continue
+            if code is None:
+                failures.append(f'{name} was not reaped {KILL_GRACE}s after SIGKILL')
+            elif node.daemon.forced:
                 failures.append(f'{name} did not exit on SIGTERM within {self.args.shutdown_timeout}s (killed)')
             elif code != 0:
                 failures.append(f'{name} exited {code}')
@@ -988,7 +1080,11 @@ transports:
         failures = []
         self.receivers_stopping = True
         for receiver in self.receivers.values():
-            code = receiver.stop(self.args.shutdown_timeout)
+            try:
+                code = receiver.stop(self.args.shutdown_timeout)
+            except Exception as e:  # noqa: BLE001 - keep stopping the rest
+                failures.append(f'{receiver.name} stop: {type(e).__name__}: {e}')
+                continue
             if receiver.forced or code not in (0, -signal.SIGTERM) or receiver.sanitizer_report():
                 failures.append(f'{receiver.name} failed: exit={code}, forced={receiver.forced}\n{receiver.text()}')
         if self.receivers:
@@ -1000,8 +1096,8 @@ transports:
             try:
                 self.wait('native clients released flows and listeners before daemon shutdown',
                           time.monotonic() + self.args.shutdown_timeout, released)
-            except Failure as error:
-                failures.append(str(error))
+            except Exception as error:  # noqa: BLE001 - a dead daemon must not skip stopping the others
+                failures.append(f'{type(error).__name__}: {error}' if not isinstance(error, Failure) else str(error))
         return failures + super().shutdown()
 
     def dump_logs(self):
@@ -1098,6 +1194,9 @@ transports:
 
 
 def main():
+    watch_lifeline()
+    for signum in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(signum, exit_on_signal)
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--fipsd', required=True)
     ap.add_argument('--rust', default=os.environ.get('FIPSD_UDP_INTEROP_RUST_BINARY', ''),
