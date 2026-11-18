@@ -265,8 +265,7 @@ static void log_failure(bz *b, const char *what, const GError *e)
     if (e && !g_error_matches(e, G_IO_ERROR, G_IO_ERROR_CANCELLED))
         FIPSD_WARN(MOD, "%s: BlueZ %s failed: %s", b->adapter, what, e->message);
 }
-static void quiet_done(bz *b, void *ctx, GVariant *r, const GError *e) {
-    bz_req *q = ctx; (void)b; (void)q; (void)r; (void)e; }
+static void quiet_done(bz *b, void *ctx, GVariant *r, const GError *e) { (void)b; (void)ctx; (void)r; (void)e; }
 
 /* ---- devices and discovery ---------------------------------------------------------- */
 static void reads_resume(bz *b, const char *path);
@@ -328,8 +327,7 @@ static void forget_adapter(bz *b)
     b->advertising = b->scanning = false;
     b->power_requested = false;
 }
-static void power_done(bz *b, void *ctx, GVariant *r, const GError *e) {
-    bz_req *q = ctx; (void)q; (void)r; log_failure(b, "power-on", e); }
+static void power_done(bz *b, void *ctx, GVariant *r, const GError *e) { (void)ctx; (void)r; log_failure(b, "power-on", e); }
 static void adapter_update(bz *b, GVariant *props, bool appeared)
 {
     fipsd_ble_bluez_props p;
@@ -412,8 +410,7 @@ static void on_props(GDBusConnection *c, const gchar *sender, const gchar *path,
 }
 static void objects_loaded(bz *b, void *ctx, GVariant *r, const GError *e)
 {
-    bz_req *q = ctx;
-    (void)q;
+    (void)ctx;
     if (r) {
         GVariant *objects = g_variant_get_child_value(r, 0), *ifaces;
         GVariantIter it;
@@ -537,12 +534,10 @@ static void scan_finish(bz *b, int rc)
     if (q) answer(q, rc);
     scan_kick(b);
 }
-static void scan_stopped(bz *b, void *ctx, GVariant *r, const GError *e) {
-    bz_req *q = ctx; (void)q; (void)r; (void)e; scan_finish(b, 0); }
+static void scan_stopped(bz *b, void *ctx, GVariant *r, const GError *e) { (void)ctx; (void)r; (void)e; scan_finish(b, 0); }
 static void scan_started(bz *b, void *ctx, GVariant *r, const GError *e)
 {
-    bz_req *q = ctx;
-    (void)q; (void)r;
+    (void)ctx; (void)r;
     int rc = fipsd_ble_bluez_gerror_errno(e);
     if (rc == -EALREADY) rc = 0; /* this client is already discovering */
     if (rc) { log_failure(b, "StartDiscovery", e); scan_finish(b, rc); return; }
@@ -594,6 +589,7 @@ static void device_cleared(GObject *src, GAsyncResult *res, gpointer data)
 }
 static void remove_device(bz *b, const char *path)
 {
+    if (!b->bus || b->quitting) return;
     nsync_mu_lock(&b->mu);
     bz_device *d = g_hash_table_lookup(b->devices, path);
     if (d) d->clearing = true;

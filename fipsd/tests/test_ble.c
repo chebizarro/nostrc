@@ -420,14 +420,23 @@ static void stats_and_config(void)
     assert(fipsd_ble_verify_grace_ms(&c) == 10000);
     c.connect_timeout_ms = 2000; assert(fipsd_ble_verify_grace_ms(&c) == 10000);
     c.connect_timeout_ms = 15000; assert(fipsd_ble_verify_grace_ms(&c) == 15000);
-    /* transports.ble parses with upstream names; this build has no platform backend, so it is ignored with a warning */
+    /* transports.ble parses with upstream names. Without a platform backend
+     * it is ignored with a warning; over BlueZ it is created, not started. */
     const char *yaml = "transports:\n  ble:\n    adapter: hci1\n    psm: 0x00C1\n    mtu: 512\n    auto_connect: true\n";
     fipsd_config *cfg = fipsd_config_parse(yaml, strlen(yaml), NULL); assert(cfg);
     fipsd_transport_registry r = {0}; fipsd_transport *owned[32]; size_t count = 0;
-    assert(fipsd_ble_register_config(&r, cfg, owned, &count) == 0 && count == 0 && r.count == 0);
-    fipsd_config_free(cfg);
     const char *reason = NULL; fipsd_ble_backend b;
+#if defined(FIPSD_ENABLE_BLE_BLUEZ)
+    assert(fipsd_ble_register_config(&r, cfg, owned, &count) == 0 && count == 1 && r.count == 1 && fipsd_ble_is(owned[0]));
+    assert(owned[0]->ops->mtu(owned[0], NULL) == 512 && owned[0]->auto_connect);
+    fipsd_ble_destroy(owned[0]);
+    assert(fipsd_ble_platform_backend(&c, &b, &reason) && fipsd_ble_backend_valid(&b));
+    b.ops->destroy(b.self);
+#else
+    assert(fipsd_ble_register_config(&r, cfg, owned, &count) == 0 && count == 0 && r.count == 0);
     assert(!fipsd_ble_platform_backend(&c, &b, &reason) && reason && strstr(reason, "gfi8h.6.2"));
+#endif
+    fipsd_config_free(cfg);
     puts("stats/config: upstream BleStatsSnapshot field order, defaults, verify grace floor, no silent simulated fallback: ok");
 }
 

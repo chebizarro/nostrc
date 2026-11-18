@@ -829,6 +829,6 @@ if(NOT DEFINED FIPSD_ENABLE_BLE OR FIPSD_ENABLE_BLE)
     set_tests_properties(FipsdBleBluezSmokeTest PROPERTIES TIMEOUT 900 SKIP_RETURN_CODE 77
       LABELS "fips;transport;ble;privileged" ENVIRONMENT "FIPSD_WORKERS=2")
     nostrc_describe_test(FipsdBleBluezSmokeTest OWNER fipsd TARGETS fipsd fipsd_native_client_tool
-      INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/ble_bluez_smoke.py")
+      INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/ble_bluez_smoke.py" "${CMAKE_CURRENT_SOURCE_DIR}/ble_bluez_gatt_peer.py")
   endif()
 endif()
