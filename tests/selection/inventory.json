@@ -32831,9 +32831,9 @@
       "matrix_source": "",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "6e6250a07a031639f130665332862ff0cf831de206900a7368f9f25a0a5681d7",
+      "source_sha256": "7ae5007e853edc40f6139b931c748c7a547ce2af021871d70088eaafc7e424ef",
       "unsupported_reason": "selection.contract is only one production command; remaining shell/static/privacy/version/package check commands and their explicit input union are not all authored.",
-      "workflow_sha256": "301fd2cbd51742819ac39af883b8064f3b7f911f2e1c7180911205d1b4dc2cb1"
+      "workflow_sha256": "fc975be2974a44773dcd9a5bf3cd45ee4b6da81f1401fb4fb2ce31b6ab518920"
     },
     ".github/workflows/windows-build.yml:identity": {
       "matrix_source": "",
