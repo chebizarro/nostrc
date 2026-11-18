@@ -44,7 +44,7 @@ static bool establish(tcp_conn *c, int *error)
         uint64_t now = fipsd_transport_now_ms();
         int rc = now < deadline ? gof_connect(s.fd, (const struct sockaddr *)&items[i].address,
                 items[i].len, (int)(deadline - now)) : -1;
-        *error = now < deadline ? (rc ? tcp_io_errno() : 0) : ETIMEDOUT;
+        *error = now < deadline ? (rc ? fipsd_io_errno() : 0) : ETIMEDOUT;
         /* An unreachable proxy is a SOCKS5 failure, not the peer refusing. */
         if (rc && dialer && *error != ETIMEDOUT) *error = EHOSTUNREACH;
         /* Once a proxy address accepted the TCP connect its handshake answer
@@ -56,7 +56,7 @@ static bool establish(tcp_conn *c, int *error)
             c->remote = items[i]; c->local.len = sizeof c->local.address;
             ok = getsockname(s.fd, (struct sockaddr *)&c->local.address, &c->local.len) == 0;
             if (ok) break;
-            *error = tcp_io_errno();
+            *error = fipsd_io_errno();
         }
         nsync_mu_lock(&u->mu); c->fd = -1; nsync_mu_unlock(&u->mu);
         tcp_fd_close(s.fd);
@@ -79,7 +79,7 @@ static void reader(void *arg)
                 size_t n = 0; int rc = fipsd_stream_read(c->fd, buffer, UINT16_MAX, &n);
                 if (rc != 1) {
                     if (rc < 0 && !stopped(c)) {
-                        if (tcp_io_errno() == EPROTO) atomic_fetch_add(&u->shared.diagnostics.malformed, 1);
+                        if (fipsd_io_errno() == EPROTO) atomic_fetch_add(&u->shared.diagnostics.malformed, 1);
                         tcp_stats_error(u, false);
                     }
                     break;

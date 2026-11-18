@@ -5,6 +5,7 @@
 #ifndef FIPSD_TRANSPORT_SOCKOS_H
 #define FIPSD_TRANSPORT_SOCKOS_H
 #include "libgo/fiber.h"
+#include "fiber_errno.h"
 #include <errno.h>
 #if defined(_WIN32)
 #include <winsock2.h>
@@ -17,13 +18,13 @@
 static inline void fipsd_socket_close(gof_socket_t s)
 {
     if (s == GOF_INVALID_SOCKET) return;
-    int saved = errno;
+    int saved = fipsd_io_errno();
 #if defined(_WIN32)
     (void)closesocket(s);
 #else
     (void)close(s);
 #endif
-    errno = saved;
+    fipsd_io_set_errno(saved);
 }
 
 /* Non-blocking and close-on-exec on POSIX; not inherited by child processes

@@ -2,6 +2,7 @@
  * reply path and the socket helpers. */
 #define _GNU_SOURCE
 #define _DARWIN_C_SOURCE 1
+#include "fiber_errno.h"
 #include "dns/resolver.h"
 #include "transport/udp/io.h"
 #include "node/netmon.h"
@@ -216,22 +217,22 @@ static ssize_t dns_recvmsg(int fd, struct msghdr *msg, int timeout_ms)
     for (;;) {
         ssize_t n = recvmsg(fd, msg, 0);
         if (n >= 0) return n;
-        if (errno == EINTR) continue;
-        if (errno != EAGAIN && errno != EWOULDBLOCK) return -1;
+        if (errno == EINTR) continue; /* errno-after-park: allow -- thread-only fallback; fiber branch cannot reach this read */
+        if (errno != EAGAIN && errno != EWOULDBLOCK) return -1; /* errno-after-park: allow -- thread-only fallback; fiber branch cannot reach this read */
         struct pollfd p = {.fd = fd, .events = POLLIN};
         int r = poll(&p, 1, timeout_ms);
         if (r == 0) { errno = ETIMEDOUT; return -1; }
-        if (r < 0 && errno != EINTR) return -1;
+        if (r < 0 && errno != EINTR) return -1; /* errno-after-park: allow -- thread-only fallback; fiber branch cannot reach this read */
     }
 }
 static ssize_t dns_sendmsg(int fd, const struct msghdr *msg)
 {
-    if (gof_in_fiber()) { ssize_t n; do n = gof_sendmsg(fd, msg, 0, -1); while (n < 0 && errno == EINTR); return n; }
+    if (gof_in_fiber()) { ssize_t n; do n = gof_sendmsg(fd, msg, 0, -1); while (n < 0 && fipsd_io_errno() == EINTR); return n; }
     for (;;) {
         ssize_t n = sendmsg(fd, msg, 0);
         if (n >= 0) return n;
-        if (errno == EINTR) continue;
-        if (errno != EAGAIN && errno != EWOULDBLOCK) return -1;
+        if (errno == EINTR) continue; /* errno-after-park: allow -- thread-only fallback; fiber branch cannot reach this read */
+        if (errno != EAGAIN && errno != EWOULDBLOCK) return -1; /* errno-after-park: allow -- thread-only fallback; fiber branch cannot reach this read */
         struct pollfd p = {.fd = fd, .events = POLLOUT};
         if (poll(&p, 1, 1000) == 0) { errno = ETIMEDOUT; return -1; }
     }

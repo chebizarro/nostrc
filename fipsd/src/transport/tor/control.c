@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #define _DEFAULT_SOURCE 1
 #define _DARWIN_C_SOURCE 1
+#include "fiber_errno.h"
 #include "transport/tor/control.h"
 #include "transport/tcp/internal.h"
 #include "blocking_executor.h"
@@ -24,7 +25,6 @@ static const char *const snapshot_keys[] = {"status/bootstrap-phase", "status/ci
     "traffic/written", "network-liveness", "version", "dormant"};
 #define SNAPSHOT_KEYS (sizeof snapshot_keys / sizeof snapshot_keys[0])
 typedef struct reply { int code; char status[256]; char data[8][512]; size_t count; } reply;
-__attribute__((noinline)) static int io_errno(void) { return errno; }
 static bool stopped(tor_control *c)
 { return go_channel_is_closed(c->stop) || (c->root && go_context_is_canceled(c->root)); }
 static void control_error(tor_control *c)
@@ -88,7 +88,7 @@ static int connect_control(tor_control *c)
     c->fd = fd;
     nsync_mu_unlock(&c->mu);
     if (gof_connect(fd, (const struct sockaddr *)&ss, slen, CONNECT_WAIT_MS) != 0) {
-        int e = io_errno();
+        int e = fipsd_io_errno();
         if (!stopped(c)) FIPSD_DEBUG(MODULE, "%s: control port %s connect failed: %s", c->owner, c->addr, strerror(e));
         close_session(c); return -1;
     }
@@ -111,7 +111,7 @@ static bool send_command(int fd, const char *command)
         flags = MSG_NOSIGNAL;
 #endif
         ssize_t k = gof_sendmsg(fd, &m, flags, (int)(deadline - now));
-        if (k < 0) { if (io_errno() == EINTR) continue; return false; }
+        if (k < 0) { if (fipsd_io_errno() == EINTR) continue; return false; }
         if (!k) return false;
         sent += (size_t)k;
     }
@@ -134,7 +134,7 @@ static int read_line(tor_control *c, int fd, char *line, size_t cap, int timeout
         }
         if (c->used == sizeof c->buf) return -EPROTO;
         ssize_t k = gof_recvfrom(fd, c->buf + c->used, sizeof c->buf - c->used, 0, NULL, NULL, timeout_ms);
-        if (k < 0) { int e = io_errno(); if (e == EINTR) continue; return -e; }
+        if (k < 0) { int e = fipsd_io_errno(); if (e == EINTR) continue; return -e; }
         if (!k) return 0;
         c->used += (size_t)k;
     }

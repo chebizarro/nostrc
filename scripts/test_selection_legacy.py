@@ -28,6 +28,7 @@ DEFAULT_PROFILES = {
     "Darwin": {"core.macos.asan", "libgo.macos.asan", "selection.operational.macos"},
 }
 GUARDS = (
+    ("scripts/check-errno-after-park.py", ["--root", "{source}"]),
     ("scripts/check-unsequenced-args.py", ["--root", "{source}"]),
     ("scripts/check-gui-test-gdk-frame.py", ["--root", "{source}"]),
     ("scripts/check-linux-ci-packages.py", ["--root", "{source}"]),

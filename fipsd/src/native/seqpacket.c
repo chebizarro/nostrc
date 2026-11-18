@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #define _DARWIN_C_SOURCE 1
+#include "fiber_errno.h"
 #include "native/seqpacket.h"
 #include <libgo/fiber.h>
 #include <errno.h>
@@ -87,8 +88,8 @@ int fipsd_native_peer_gone_as_epipe(int error)
 static fipsd_native_received classify(int fd, ssize_t n, size_t *len)
 {
     if (n < 0) {
-        if (errno == ECONNRESET) return FIPSD_NATIVE_RECEIVED_EOF;
-        if (errno == EAGAIN || errno == EWOULDBLOCK) return FIPSD_NATIVE_RECEIVED_AGAIN;
+        if (fipsd_io_errno() == ECONNRESET) return FIPSD_NATIVE_RECEIVED_EOF;
+        if (fipsd_io_errno() == EAGAIN || fipsd_io_errno() == EWOULDBLOCK) return FIPSD_NATIVE_RECEIVED_AGAIN;
         return FIPSD_NATIVE_RECEIVED_ERROR;
     }
     if (n == 0 && fipsd_native_peer_hung_up(fd) && fipsd_native_bytes_queued(fd) == 0) return FIPSD_NATIVE_RECEIVED_EOF;
@@ -113,8 +114,8 @@ fipsd_native_received fipsd_native_recv_fiber(int fd, void *buf, size_t cap, siz
         struct iovec iov = {.iov_base = buf, .iov_len = cap};
         struct msghdr msg = {.msg_iov = &iov, .msg_iovlen = 1};
         ssize_t n = gof_recvmsg(fd, &msg, 0, FIPSD_NATIVE_CLOSE_RETRY_MS);
-        if (n < 0 && errno == ETIMEDOUT && FIPSD_NATIVE_CLOSE_RETRY_MS > 0) continue;
-        if (n < 0 && errno == EINTR) continue;
+        if (n < 0 && fipsd_io_errno() == ETIMEDOUT && FIPSD_NATIVE_CLOSE_RETRY_MS > 0) continue;
+        if (n < 0 && fipsd_io_errno() == EINTR) continue;
         fipsd_native_received r = classify(fd, n, len);
         if (r == FIPSD_NATIVE_RECEIVED_AGAIN) continue;
         return r;
@@ -125,6 +126,6 @@ int fipsd_native_send_fiber(int fd, const void *buf, size_t len, int timeout_ms)
     struct iovec iov = {.iov_base = (void *)buf, .iov_len = len};
     struct msghdr msg = {.msg_iov = &iov, .msg_iovlen = 1};
     ssize_t n;
-    do n = gof_sendmsg(fd, &msg, FIPSD_NATIVE_MSG_NOSIGNAL, timeout_ms); while (n < 0 && errno == EINTR);
+    do n = gof_sendmsg(fd, &msg, FIPSD_NATIVE_MSG_NOSIGNAL, timeout_ms); while (n < 0 && fipsd_io_errno() == EINTR);
     return n < 0 ? -1 : 0;
 }

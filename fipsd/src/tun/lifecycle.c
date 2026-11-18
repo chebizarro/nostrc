@@ -1,3 +1,4 @@
+#include "fiber_errno.h"
 #include "tun/lifecycle.h"
 #include "tun/internal.h"
 #include "ipv6/shim.h"
@@ -91,7 +92,7 @@ static int service_start(fipsd_subsystem *self,fipsd_runtime *rt)
     if (s->shim && fipsd_ipv6_shim_start(s->shim,rt)<0) {
         /* A device nobody reads is a black hole for the host: unwind it and
          * show the failure, keeping the host up as a device failure does. */
-        int error=errno;
+        int error=fipsd_io_errno();
         FIPSD_WARN("tun","IPv6 shim failed to start: %s; continuing without TUN",strerror(error));
         (void)fipsd_tun_stop(s->device); fipsd_tun_publish(s->device,FIPSD_TUN_FAILED,error);
     }
@@ -100,8 +101,8 @@ static int service_start(fipsd_subsystem *self,fipsd_runtime *rt)
 static void service_stop(fipsd_subsystem *self,fipsd_runtime *rt)
 {
     (void)rt; fipsd_tun_service *s=self->user;
-    if (s->shim && fipsd_ipv6_shim_stop(s->shim)<0) FIPSD_WARN("tun","IPv6 shim stop: %s",strerror(errno));
-    if (fipsd_tun_stop(s->device)<0) FIPSD_WARN("tun","teardown failed: %s",strerror(errno));
+    if (s->shim && fipsd_ipv6_shim_stop(s->shim)<0) FIPSD_WARN("tun","IPv6 shim stop: %s",strerror(fipsd_io_errno()));
+    if (fipsd_tun_stop(s->device)<0) FIPSD_WARN("tun","teardown failed: %s",strerror(fipsd_io_errno()));
 }
 void fipsd_tun_service_init(fipsd_tun_service *s,fipsd_tun *t,fipsd_node *node)
 {

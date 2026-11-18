@@ -6,6 +6,7 @@
  * makes it a pass-through on a boundary-preserving backend. Also the stream
  * I/O seam: the backend's read/write ops, or the fd fast path through libgo. */
 #define _POSIX_C_SOURCE 200809L
+#include "fiber_errno.h"
 #include "transport/ble/internal.h"
 #include "transport/presence.h"
 #include <limits.h>
@@ -14,8 +15,6 @@
 #include <sys/socket.h>
 #include <sys/uio.h>
 uint64_t ble_now(void) { return fipsd_transport_now_ms(); }
-/* Reacquire TLS errno after a migrating fiber resumes (tcp_io_errno). */
-__attribute__((noinline)) static int io_errno(void) { return errno; }
 /* gof timeout for an absolute deadline: -1 none, -2 already passed. */
 static int remaining(uint64_t deadline)
 {
@@ -34,7 +33,7 @@ ssize_t ble_io_read(fipsd_ble_stream *s, int fd, uint8_t *buf, size_t cap, uint6
         struct msghdr m = {.msg_iov = &v, .msg_iovlen = 1};
         ssize_t n = gof_recvmsg(fd, &m, 0, t);
         if (n >= 0) return n;
-        int e = io_errno();
+        int e = fipsd_io_errno();
         if (e != EINTR) return -e;
     }
 }
@@ -52,7 +51,7 @@ int ble_io_write(fipsd_ble_stream *s, int fd, const uint8_t *p, size_t len, uint
         struct iovec v = {.iov_base = (void *)(p + sent), .iov_len = len - sent};
         struct msghdr m = {.msg_iov = &v, .msg_iovlen = 1};
         ssize_t n = gof_sendmsg(fd, &m, flags, t);
-        if (n < 0) { int e = io_errno(); if (e == EINTR) continue; return -e; }
+        if (n < 0) { int e = fipsd_io_errno(); if (e == EINTR) continue; return -e; }
         if (!n) return -EPIPE;
         sent += (size_t)n;
     }

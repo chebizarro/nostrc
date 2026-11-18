@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #define _DARWIN_C_SOURCE 1
+#include "fiber_errno.h"
 #include "native/api.h"
 #include "native/fdpass.h"
 #include "native/link.h"
@@ -176,7 +177,7 @@ static void flow_reader_fiber(void *arg)
         fipsd_native_received r = fipsd_native_recv_fiber(f->sock, buf, FIPSD_NATIVE_MAX_DATAGRAM, &len);
         if (r == FIPSD_NATIVE_RECEIVED_EOF) { FIPSD_DEBUG(MODULE, "flow %llu closed by its client", (unsigned long long)f->id); break; }
         if (r != FIPSD_NATIVE_RECEIVED_DATAGRAM) {
-            if (errno != ECANCELED) FIPSD_DEBUG(MODULE, "flow %llu read failed: %s", (unsigned long long)f->id, strerror(errno));
+            if (fipsd_io_errno() != ECANCELED) FIPSD_DEBUG(MODULE, "flow %llu read failed: %s", (unsigned long long)f->id, strerror(fipsd_io_errno()));
             break;
         }
         /* The first datagram proves the client holds the descriptor. */
@@ -213,7 +214,7 @@ static void flow_feeder_fiber(void *arg)
         if (go_channel_receive(f->inbound, &v) != 0 || !v) break;
         fipsd_native_datagram *dg = v;
         int rc = fipsd_native_send_fiber(f->sock, dg->bytes, dg->len, -1);
-        int error = errno;
+        int error = fipsd_io_errno();
         fipsd_native_datagram_free(dg);
         if (rc == 0) continue;
         if (error == ENOBUFS) {
@@ -363,7 +364,7 @@ static void hand_over(fipsd_native_api *a, listener_rec *l, const fipsd_native_a
         char *message = m ? fipsd_native_encode_object(m) : NULL;
         json_decref(m);
         if (!message) { failed = true; error = ENOMEM; }
-        else if (fipsd_native_sendmsg_fd(l->sock, message, strlen(message), fds[1], 0) < 0) { failed = true; error = errno; }
+        else if (fipsd_native_sendmsg_fd(l->sock, message, strlen(message), fds[1], 0) < 0) { failed = true; error = fipsd_io_errno(); }
         free(message);
     }
     for (size_t i = 0; i < held_count; ++i) fipsd_native_datagram_free(held[i]);
@@ -544,7 +545,7 @@ static json_t *do_inject(fipsd_native_api *a, const fipsd_native_command *cmd)
     for (uint32_t i = 0; i < cmd->repeat; ++i) {
         if (fipsd_native_send_fiber(sock, cmd->data, cmd->data_len, FIPSD_NATIVE_REPLY_TIMEOUT_MS) != 0) {
             char message[256];
-            snprintf(message, sizeof message, "wrote %u of %u datagrams: %s", (unsigned)i, (unsigned)cmd->repeat, strerror(errno));
+            snprintf(message, sizeof message, "wrote %u of %u datagrams: %s", (unsigned)i, (unsigned)cmd->repeat, strerror(fipsd_io_errno()));
             response = fipsd_native_deny("EIO", message);
             break;
         }
@@ -698,8 +699,8 @@ static void accept_fiber(void *arg)
     while (!go_context_is_canceled(ctx)) {
         int fd = gof_accept(a->listener, NULL, NULL, -1);
         if (fd < 0) {
-            if (errno == EINTR) continue;
-            if (!go_context_is_canceled(ctx)) FIPSD_WARN(MODULE, "accept failed: %s", strerror(errno));
+            if (fipsd_io_errno() == EINTR) continue;
+            if (!go_context_is_canceled(ctx)) FIPSD_WARN(MODULE, "accept failed: %s", strerror(fipsd_io_errno()));
             break;
         }
         if (go_context_is_canceled(ctx)) { close(fd); break; }

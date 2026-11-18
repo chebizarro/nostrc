@@ -1,6 +1,7 @@
 #define _GNU_SOURCE
 #include "transport/ethernet/internal.h"
 #include "libgo/fiber.h"
+#include "fiber_errno.h"
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -39,7 +40,7 @@ ssize_t fipsd_eth_io_recv(eth_socket *s, uint8_t *buf, size_t cap, uint8_t mac[6
     struct sockaddr_ll ll = {0}; struct iovec v = {buf, cap};
     struct msghdr msg = {.msg_name = &ll, .msg_namelen = sizeof ll, .msg_iov = &v, .msg_iovlen = 1};
     ssize_t n = gof_recvmsg(s->fd, &msg, 0, -1);
-    if (n >= 0 && ((msg.msg_flags & MSG_TRUNC) || ll.sll_halen != 6 || msg.msg_namelen < sizeof ll)) { errno = EMSGSIZE; return -1; }
+    if (n >= 0 && ((msg.msg_flags & MSG_TRUNC) || ll.sll_halen != 6 || msg.msg_namelen < sizeof ll)) { fipsd_io_set_errno(EMSGSIZE); return -1; }
     if (n >= 0) memcpy(mac, ll.sll_addr, 6);
     return n;
 }

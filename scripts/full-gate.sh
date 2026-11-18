@@ -189,7 +189,7 @@ while read -r local_ref local_oid _remote_ref remote_oid; do
     add_checkout "$checkout" "$local_oid"
 
     # Static checks shipped with the candidate (none in older commits).
-    for check in scripts/check-linux-ci-packages.py scripts/check-unsequenced-args.py scripts/check-gui-test-gdk-frame.py; do
+    for check in scripts/check-linux-ci-packages.py scripts/check-unsequenced-args.py scripts/check-errno-after-park.py scripts/check-gui-test-gdk-frame.py; do
         if [ -f "$checkout/$check" ]; then
             python3 "$checkout/$check" --root "$checkout"
         fi

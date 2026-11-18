@@ -2,6 +2,7 @@
 #define _GNU_SOURCE
 #define _DARWIN_C_SOURCE
 #define __APPLE_USE_RFC_3542 1
+#include "fiber_errno.h"
 #include "mdns/socket.h"
 #include "log.h"
 #include "transport/udp/io.h"
@@ -72,7 +73,7 @@ static void receiver(void *arg)
                              .msg_control = control, .msg_controllen = sizeof control};
         ssize_t n = gof_recvmsg(fd, &msg, 0, -1);
         if (n < 0) {
-            if (errno == ECANCELED || atomic_load(&s->stopping)) break;
+            if (fipsd_io_errno() == ECANCELED || atomic_load(&s->stopping)) break;
             continue;
         }
         if (atomic_load(&s->stopping)) break;
@@ -191,7 +192,7 @@ static bool sockets_send(void *user, uint32_t ifindex, int family, const uint8_t
     struct iovec iov = {.iov_base = (void *)buf, .iov_len = len};
     struct msghdr msg = {.msg_name = &ss, .msg_namelen = sl, .msg_iov = &iov, .msg_iovlen = 1};
     ssize_t n;
-    do n = gof_in_fiber() ? gof_sendmsg(fd, &msg, 0, 1000) : sendmsg(fd, &msg, 0); while (n < 0 && errno == EINTR);
+    do n = gof_in_fiber() ? gof_sendmsg(fd, &msg, 0, 1000) : sendmsg(fd, &msg, 0); while (n < 0 && fipsd_io_errno() == EINTR);
     return n == (ssize_t)len;
 }
 static void sockets_close(void *user)

@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #define _DARWIN_C_SOURCE 1 /* O_NOFOLLOW, _SC_NPROCESSORS_ONLN on macOS */
+#include "fiber_errno.h"
 #include "runtime.h"
 
 #include <errno.h>
@@ -267,9 +268,9 @@ static void signal_fiber(void *arg)
         if (r == 0)
             break;
         if (r < 0) {
-            if (errno == EINTR)
+            if (fipsd_io_errno() == EINTR)
                 continue;
-            FIPSD_ERROR(MODULE, "signal pipe read failed: %s", strerror(errno));
+            FIPSD_ERROR(MODULE, "signal pipe read failed: %s", strerror(fipsd_io_errno()));
             break;
         }
         if (byte == SIGNAL_FIBER_STOP)
@@ -445,7 +446,7 @@ static void stop_signal_fiber(fipsd_runtime *rt)
         ssize_t r;
         do {
             r = write(rt->sigpipe[1], &stop, 1);
-        } while (r < 0 && errno == EINTR);
+        } while (r < 0 && errno == EINTR); /* errno-after-park: allow -- retry precedes the only wait; no back edge from wait */
         /* The pipe holds at least PIPE_BUF bytes and signals coalesce long
          * before that, so the stop byte is never refused with EAGAIN. */
         go_wait_group_wait(&rt->signal_wg);

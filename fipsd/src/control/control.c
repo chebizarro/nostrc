@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #define _DARWIN_C_SOURCE 1
+#include "fiber_errno.h"
 #include "control/control.h"
 #include "privilege.h"
 #include "log.h"
@@ -208,7 +209,7 @@ static void connection_fiber(void *arg)
         ssize_t n = gof_read(c->fd, line + len, 1);
         if (n == 0) break;
         if (n < 0) {
-            if (errno == EINTR) continue;
+            if (fipsd_io_errno() == EINTR) continue;
             response = fipsd_control_error("read error: socket read failed"); break;
         }
         if (line[len++] == '\n') break;
@@ -241,7 +242,7 @@ static void connection_fiber(void *arg)
         encoded[size++] = '\n';
         while (sent < size) {
             ssize_t n = write_socket(c->fd, encoded + sent, size - sent);
-            if (n < 0 && errno == EINTR) continue;
+            if (n < 0 && fipsd_io_errno() == EINTR) continue;
             if (n <= 0) break;
             sent += (size_t)n;
         }
@@ -263,9 +264,9 @@ static void accept_fiber(void *arg)
     while (!go_context_is_canceled(ctx)) {
         int fd = gof_accept(s->listener, NULL, NULL, -1);
         if (fd < 0) {
-            if (errno == EINTR) continue;
+            if (fipsd_io_errno() == EINTR) continue;
             if (!go_context_is_canceled(ctx)) {
-                FIPSD_ERROR("control", "accept failed: %s", strerror(errno));
+                FIPSD_ERROR("control", "accept failed: %s", strerror(fipsd_io_errno()));
                 fipsd_runtime_shutdown(s->runtime);
             }
             break;

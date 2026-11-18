@@ -4,6 +4,7 @@
  * NAT, and exposes LAN services to the mesh through inbound port forwards.
  * Linux only: the build adds this target on Linux alone. */
 #define _GNU_SOURCE 1
+#include "fiber_errno.h"
 #include "config/config.h"
 #include "gateway/conntrack.h"
 #include "gateway/control.h"
@@ -174,7 +175,7 @@ static void dns_fiber(void *arg)
     gateway *g = arg;
     gof_set_name("gw-dns");
     int rc = fipsd_gw_dns_serve(&g->dns);
-    int e = errno;
+    int e = fipsd_io_errno();
     bool shutting_down = go_context_is_canceled(fipsd_runtime_context(g->rt));
     if (!shutting_down) {
         /* The resolver ends only on shutdown, so this means .fips resolution

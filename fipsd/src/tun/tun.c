@@ -1,5 +1,6 @@
 #define _DEFAULT_SOURCE 1
 #define _DARWIN_C_SOURCE 1
+#include "fiber_errno.h"
 #include "tun/internal.h"
 #include "node/netmon.h"
 #include <libgo/fiber.h>
@@ -12,13 +13,6 @@
 #include <string.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
-/* A fiber may resume on another worker: never retain a compiler-cached
- * errno TLS address across frame_read/frame_write (which can park).
- * errno belongs to the OS thread, not the TSan fiber, and these accessors
- * never suspend, so as libgo's fiber_get_errno/fiber_set_errno only these
- * TLS accesses are left uninstrumented. */
-__attribute__((noinline, no_sanitize("thread"))) static int frame_error(void) { return errno; }
-__attribute__((noinline, no_sanitize("thread"))) static void frame_set_error(int error) { errno = error; }
 static int sys_open(void *u,const char *p,int f) { (void)u; return open(p,f); }
 static int sys_socket(void *u,int d,int t,int p) { (void)u; return socket(d,t,p); }
 static int sys_ioctl(void *u,int f,unsigned long q,void *v) { (void)u; return ioctl(f,q,v); }
@@ -90,19 +84,19 @@ void fipsd_tun_set_host_drops(fipsd_tun *t, const _Atomic uint64_t *counter)
 }
 int fipsd_tun_header_prepend(uint8_t family,const uint8_t *p,size_t n,uint8_t *out,size_t cap)
 {
-    if (!family || n>65535 || cap<n+4 || !p || !out) { frame_set_error(EMSGSIZE); return -1; }
+    if (!family || n>65535 || cap<n+4 || !p || !out) { fipsd_io_set_errno(EMSGSIZE); return -1; }
     memmove(out+4,p,n); out[0]=out[1]=out[2]=0; out[3]=family; return (int)(n+4);
 }
 int fipsd_tun_header_strip(uint8_t family,uint8_t *b,size_t n)
 {
-    if (!b || n<4 || n>65539) { frame_set_error(EPROTO); return -1; }
-    if (b[0] || b[1] || b[2] || b[3]!=family) { frame_set_error(EPROTONOSUPPORT); return -1; }
+    if (!b || n<4 || n>65539) { fipsd_io_set_errno(EPROTO); return -1; }
+    if (b[0] || b[1] || b[2] || b[3]!=family) { fipsd_io_set_errno(EPROTONOSUPPORT); return -1; }
     memmove(b,b+4,n-4); return (int)(n-4);
 }
 ssize_t fipsd_tun_read(fipsd_tun *t,uint8_t *b,size_t cap)
 {
-    if (!t || t->fd<0) { frame_set_error(ENODEV); return -1; }
-    if (!b || !cap || cap>65535) { frame_set_error(EINVAL); return -1; }
+    if (!t || t->fd<0) { fipsd_io_set_errno(ENODEV); return -1; }
+    if (!b || !cap || cap>65535) { fipsd_io_set_errno(EINVAL); return -1; }
     uint8_t family=t->platform->family_header;
     if (!family) return t->ops.frame_read(t->ops.user,t->fd,b,cap);
     uint8_t *packet=malloc(cap+4); if (!packet) return -1;
@@ -112,12 +106,12 @@ ssize_t fipsd_tun_read(fipsd_tun *t,uint8_t *b,size_t cap)
         n=stripped;
         if (stripped>=0) memcpy(b,packet,(size_t)stripped);
     }
-    int error=n<0?frame_error():0; free(packet); if (n<0) frame_set_error(error); return n;
+    int error=n<0?fipsd_io_errno():0; free(packet); if (n<0) fipsd_io_set_errno(error); return n;
 }
 ssize_t fipsd_tun_write(fipsd_tun *t,const uint8_t *b,size_t n)
 {
-    if (!t || t->fd<0) { frame_set_error(ENODEV); return -1; }
-    if (!b || !n || n>t->mtu) { frame_set_error(EMSGSIZE); return -1; }
+    if (!t || t->fd<0) { fipsd_io_set_errno(ENODEV); return -1; }
+    if (!b || !n || n>t->mtu) { fipsd_io_set_errno(EMSGSIZE); return -1; }
     uint8_t family=t->platform->family_header; uint8_t *packet=NULL; const uint8_t *data=b; size_t len=n;
     if (family) {
         packet=malloc(n+4); if (!packet) return -1;
@@ -125,8 +119,8 @@ ssize_t fipsd_tun_write(fipsd_tun *t,const uint8_t *b,size_t n)
         data=packet; len=n+4;
     }
     ssize_t wrote=t->ops.frame_write(t->ops.user,t->fd,data,len);
-    int error=wrote<0?frame_error():0; free(packet);
-    if (wrote>=0 && wrote!=(ssize_t)len) { frame_set_error(EIO); return -1; }
-    if (wrote<0) frame_set_error(error);
+    int error=wrote<0?fipsd_io_errno():0; free(packet);
+    if (wrote>=0 && wrote!=(ssize_t)len) { fipsd_io_set_errno(EIO); return -1; }
+    if (wrote<0) fipsd_io_set_errno(error);
     return wrote<0?-1:(ssize_t)n;
 }

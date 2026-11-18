@@ -1,3 +1,4 @@
+#include "fiber_errno.h"
 #include "transport/stream.h"
 #include <libgo/fiber.h>
 #include <errno.h>
@@ -31,16 +32,16 @@ bool fipsd_stream_eof(const fipsd_stream *s) { return !s->failed && s->used == 0
 int fipsd_stream_read(int fd, uint8_t *buf, size_t cap, size_t *size)
 {
     fipsd_stream s; fipsd_stream_init(&s, buf, cap, UINT16_MAX);
-    if (cap < 4) { errno = EMSGSIZE; return -1; }
+    if (cap < 4) { fipsd_io_set_errno(EMSGSIZE); return -1; }
     for (;;) {
         size_t want = (s.expected ? s.expected : 4) - s.used;
         ssize_t n = gof_read(fd, buf + s.used, want);
-        if (n < 0) { if (errno == EINTR) continue; return -1; }
-        if (!n) { if (!s.used) return 0; errno = EPROTO; return -1; }
+        if (n < 0) { if (fipsd_io_errno() == EINTR) continue; return -1; }
+        if (!n) { if (!s.used) return 0; fipsd_io_set_errno(EPROTO); return -1; }
         s.used += (size_t)n;
         if (!s.expected && s.used == 4) {
             if (fipsd_frame_size(buf, UINT16_MAX, &s.expected) != FIPS_OK || s.expected > cap) {
-                errno = EPROTO; return -1;
+                fipsd_io_set_errno(EPROTO); return -1;
             }
         }
         if (s.expected && s.used == s.expected) { *size = s.used; return 1; }
@@ -48,7 +49,7 @@ int fipsd_stream_read(int fd, uint8_t *buf, size_t cap, size_t *size)
 }
 int fipsd_stream_write(int fd, const uint8_t *p, size_t len)
 {
-    if (fipsd_datagram_frame(p, len, UINT16_MAX) != FIPS_OK) { errno = EPROTO; return -1; }
+    if (fipsd_datagram_frame(p, len, UINT16_MAX) != FIPS_OK) { fipsd_io_set_errno(EPROTO); return -1; }
     size_t sent = 0;
     while (sent < len) {
         struct iovec v = {.iov_base = (void *)(p + sent), .iov_len = len - sent};
@@ -59,8 +60,8 @@ int fipsd_stream_write(int fd, const uint8_t *p, size_t len)
 #endif
         /* Apple fd owners set SO_NOSIGPIPE at socket creation. */
         ssize_t n = gof_sendmsg(fd, &msg, flags, -1);
-        if (n < 0) { if (errno == EINTR) continue; return -1; }
-        if (!n) { errno = EPIPE; return -1; }
+        if (n < 0) { if (fipsd_io_errno() == EINTR) continue; return -1; }
+        if (!n) { fipsd_io_set_errno(EPIPE); return -1; }
         sent += (size_t)n;
     }
     return 0;
