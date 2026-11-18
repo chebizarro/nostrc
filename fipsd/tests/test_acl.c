@@ -13,10 +13,29 @@
 #include <unistd.h>
 #if defined(_WIN32)
 #include <direct.h>
+#include <windows.h>
 #define mkdir(path, mode) ((void)(mode), _mkdir(path))
 #endif
 static void put(const char *path, const char *text)
-{ FILE *f = fopen(path, "wb"); assert(f); assert(fwrite(text, 1, strlen(text), f) == strlen(text)); assert(fclose(f) == 0); }
+{
+    FILE *f = fopen(path, "wb"); assert(f); assert(fwrite(text, 1, strlen(text), f) == strlen(text)); assert(fclose(f) == 0);
+#if defined(_WIN32)
+    /* NTFS stamps a write from the coarse system clock (1-16 ms), so two
+     * writes in one tick share a last-write time and the loader's change
+     * check (mtime equality, acl.c) cannot see the second. Give each write
+     * its own time, a second after the last, as a slower writer would get;
+     * POSIX stamps carry nanoseconds. */
+    static ULONGLONG last;
+    FILETIME now; GetSystemTimeAsFileTime(&now);
+    ULONGLONG t = ((ULONGLONG)now.dwHighDateTime << 32) | now.dwLowDateTime;
+    if (t <= last) t = last + 10000000ull;
+    last = t;
+    FILETIME stamp = {(DWORD)t, (DWORD)(t >> 32)};
+    HANDLE h = CreateFileA(path, FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
+                           OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    assert(h != INVALID_HANDLE_VALUE); assert(SetFileTime(h, NULL, NULL, &stamp)); CloseHandle(h);
+#endif
+}
 static void peer(fips_secp *secp, uint8_t byte, fips_peer_identity *out, char npub[128])
 {
     uint8_t seed[32]; memset(seed, byte, sizeof seed); fips_identity *id = NULL;
