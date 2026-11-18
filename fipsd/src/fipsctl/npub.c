@@ -2,7 +2,15 @@
  * resolve_peer/mesh_address/keygen, hosts.rs HostMap, config.rs key files).
  * Secrets live in buffers wiped before release. */
 #include "fipsctl.h"
+#if defined(_WIN32)
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <sddl.h>
+#include <direct.h>
+#include <io.h>
+#else
 #include <arpa/inet.h>
+#endif
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -39,9 +47,18 @@ bool fipsctl_begins_as_npub(const char *text)
     return strlen(text) >= 5 && !strncasecmp(text, "npub1", 5);
 }
 
+/* Windows keeps keys and the hosts file beside the service's configuration
+ * in C:\ProgramData\fips (upstream default_key_dir, hosts DEFAULT_HOSTS_PATH). */
+#if defined(_WIN32)
+#define SEP "\\"
+#else
+#define SEP "/"
+#endif
 const char *fipsctl_default_hosts_path(void)
 {
-#if defined(__APPLE__) || defined(__FreeBSD__)
+#if defined(_WIN32)
+    return "C:\\ProgramData\\fips\\hosts";
+#elif defined(__APPLE__) || defined(__FreeBSD__)
     return "/usr/local/etc/fips/hosts";
 #else
     return "/etc/fips/hosts";
@@ -50,7 +67,9 @@ const char *fipsctl_default_hosts_path(void)
 
 const char *fipsctl_default_key_dir(void)
 {
-#if defined(__APPLE__) || defined(__FreeBSD__)
+#if defined(_WIN32)
+    return "C:\\ProgramData\\fips";
+#elif defined(__APPLE__) || defined(__FreeBSD__)
     return "/usr/local/etc/fips";
 #else
     return "/etc/fips";
@@ -241,7 +260,7 @@ done:
 
 bool fipsctl_address_from_key_dir(const char *dir, char out[FIPSCTL_ADDR_CAPACITY], char **error)
 {
-    char *key_path = fipsctl_aprintf("%s/fips.key", dir), *pub_path = fipsctl_aprintf("%s/fips.pub", dir);
+    char *key_path = fipsctl_aprintf("%s" SEP "fips.key", dir), *pub_path = fipsctl_aprintf("%s" SEP "fips.pub", dir);
     char *key_err = NULL, *pub_err = NULL;
     bool ok = false;
     if (!key_path || !pub_path) goto done;
@@ -272,17 +291,68 @@ bool fipsctl_mesh_address(const char *identity, const char *key, const char *hos
 
 /* ---- keygen ----------------------------------------------------------------- */
 
+#if defined(_WIN32)
+/* A symbolic link or junction is a reparse point; never write through one. */
+static bool is_symlink(const char *path)
+{
+    DWORD a = GetFileAttributesA(path);
+    return a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_REPARSE_POINT);
+}
+static bool path_exists(const char *path) { return GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES; }
+/* The Windows counterpart of 0600: for the private key (`enforce`), a
+ * protected DACL of SYSTEM, Administrators and the file's owner, set before
+ * any secret is written, whether the file is new or already there, so the
+ * key never inherits the directory's access (keygen may run before
+ * install-service.ps1 has restricted C:\ProgramData\fips). The public key
+ * keeps the directory's inherited access, as 0644 keeps it readable. */
+static int open_key_file(const char *path, int mode, bool enforce)
+{
+    (void)mode;
+    if (is_symlink(path)) { errno = ELOOP; return -1; }
+    PSECURITY_DESCRIPTOR sd = NULL;
+    if (enforce && !ConvertStringSecurityDescriptorToSecurityDescriptorA(
+            "D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;OW)", SDDL_REVISION_1, &sd, NULL)) {
+        errno = ENOMEM;
+        return -1;
+    }
+    SECURITY_ATTRIBUTES sa = {sizeof sa, sd, FALSE};
+    HANDLE h = CreateFileA(path, GENERIC_WRITE | (enforce ? WRITE_DAC : 0), 0, enforce ? &sa : NULL,
+                           CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, NULL);
+    bool ok = h != INVALID_HANDLE_VALUE;
+    DWORD error = ok ? 0 : GetLastError();
+    /* CREATE_ALWAYS keeps an existing file's descriptor: replace its DACL. */
+    if (ok && enforce && !SetKernelObjectSecurity(h, DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION, sd)) {
+        error = GetLastError();
+        CloseHandle(h);
+        ok = false;
+    }
+    LocalFree(sd);
+    if (!ok) { errno = error == ERROR_ACCESS_DENIED ? EACCES : error == ERROR_PATH_NOT_FOUND ? ENOENT : EIO; return -1; }
+    int fd = _open_osfhandle((intptr_t)h, _O_WRONLY | _O_BINARY);
+    if (fd < 0) { CloseHandle(h); errno = EIO; }
+    return fd;
+}
+#else
 static bool is_symlink(const char *path)
 {
     struct stat st;
     return lstat(path, &st) == 0 && S_ISLNK(st.st_mode);
 }
-
+/* lstat rather than stat: a dangling symlink at the key path must not slip past. */
+static bool path_exists(const char *path) { struct stat st; return lstat(path, &st) == 0; }
 /* Open without following a final-component symlink; `enforce` tightens an
  * existing file to `mode` before any secret reaches it. */
-static char *write_file(const char *path, const char *line, mode_t mode, bool enforce)
+static int open_key_file(const char *path, mode_t mode, bool enforce)
 {
     int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, mode);
+    if (fd >= 0 && enforce && fchmod(fd, mode) != 0) { int e = errno; close(fd); errno = e; return -1; }
+    return fd;
+}
+#endif
+
+static char *write_file(const char *path, const char *line, int mode, bool enforce)
+{
+    int fd = open_key_file(path, mode, enforce);
     if (fd < 0) {
         int e = errno;
         if (is_symlink(path)) return fipsctl_aprintf("refusing to write key file through a symlink: %s", path);
@@ -291,16 +361,9 @@ static char *write_file(const char *path, const char *line, mode_t mode, bool en
         free(text);
         return m;
     }
-    if (enforce && fchmod(fd, mode) != 0) {
-        int e = errno; close(fd);
-        char *text = fipsctl_strerror(e);
-        char *m = fipsctl_aprintf("failed to write key file %s: %s", path, text ? text : "?");
-        free(text);
-        return m;
-    }
     size_t len = strlen(line), done = 0;
     while (done < len) {
-        ssize_t n = write(fd, line + done, len - done);
+        ssize_t n = write(fd, line + done, (unsigned)(len - done));
         if (n < 0 && errno == EINTR) continue;
         if (n <= 0) {
             int e = errno; close(fd);
@@ -326,12 +389,25 @@ static bool create_dir_all(const char *dir)
 {
     char *copy = strdup(dir);
     if (!copy) { errno = ENOMEM; return false; }
-    size_t len = strlen(copy);
-    for (size_t i = 1; i <= len; ++i) {
-        if (copy[i] != '/' && copy[i] != 0) continue;
+    size_t len = strlen(copy), first = 1;
+#if defined(_WIN32)
+    /* Past a drive ("C:\\") or the root; both separators count. */
+    if (len >= 2 && copy[1] == ':') first = len > 2 && (copy[2] == '\\' || copy[2] == '/') ? 3 : 2;
+#endif
+    for (size_t i = first; i <= len; ++i) {
+        if (copy[i] != '/' && copy[i] != 0
+#if defined(_WIN32)
+            && copy[i] != '\\'
+#endif
+            ) continue;
         char saved = copy[i];
         copy[i] = 0;
-        if (mkdir(copy, 0777) != 0 && errno != EEXIST) { int e = errno; free(copy); errno = e; return false; }
+#if defined(_WIN32)
+        int made = _mkdir(copy);
+#else
+        int made = mkdir(copy, 0777);
+#endif
+        if (made != 0 && errno != EEXIST) { int e = errno; free(copy); errno = e; return false; }
         copy[i] = saved;
     }
     struct stat st;
@@ -363,18 +439,17 @@ int fipsctl_keygen(const char *dir, bool force, bool to_stdout, FILE *out, FILE 
         rc = 0;
         goto done;
     }
-    char *key_path = fipsctl_aprintf("%s/fips.key", dir), *pub_path = fipsctl_aprintf("%s/fips.pub", dir);
+    char *key_path = fipsctl_aprintf("%s" SEP "fips.key", dir), *pub_path = fipsctl_aprintf("%s" SEP "fips.pub", dir);
     if (!key_path || !pub_path) { free(key_path); free(pub_path); fprintf(err, "error: out of memory\n"); goto done; }
-    struct stat st;
 #if defined(__APPLE__) || defined(__FreeBSD__)
+    struct stat st;
     /* The default key directory moved from /etc/fips; point at keys stranded there. */
     if (stat("/etc/fips/fips.key", &st) == 0 && stat(key_path, &st) != 0) {
         fprintf(err, "note: /etc/fips/fips.key exists but the default key directory\n");
         fprintf(err, "      is now %s; that key is no longer used by default.\n", dir);
     }
 #endif
-    /* lstat rather than stat: a dangling symlink at the key path must not slip past. */
-    if (lstat(key_path, &st) == 0 && !force) {
+    if (path_exists(key_path) && !force) {
         fprintf(err, "error: key file already exists: %s\nUse --force to overwrite.\n", key_path);
         goto paths;
     }

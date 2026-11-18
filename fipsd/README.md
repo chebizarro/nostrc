@@ -10,7 +10,8 @@ never to the core.
 
 | File | Role |
 | ---- | ---- |
-| `src/main.c` | Entry point: parse flags, open the log first, umask, bring the runtime up, run until a stop, map the result to an exit code. |
+| `src/main.c` | Entry point: parse flags, open the log first, umask, bring the runtime up, run until a stop, map the result to an exit code; on Windows also the service body and `--install-service`/`--uninstall-service`. |
+| `src/service.{c,h}`, `src/service_win32.c` | The Windows service: the SCM status sequence as pure data (every host), and the dispatcher, control handler and install/uninstall over the SCM API (Windows). |
 | `src/cli.{c,h}` | `getopt_long` parsing of exactly the documented flags; version and help text; `fipsd_options` (`--config`, `--log-file`) supplied to the configuration loader. |
 | `src/log.{c,h}` | Structured logging: levels, UTC timestamps, module tags, injectable sink, size-rolled file sink. |
 | `src/runtime.{c,h}` | Fiber runtime bring-up, signal fiber, root `GoContext`, reload channel, subsystem vtable, orderly bounded shutdown. |
@@ -45,6 +46,12 @@ fipsd [-c FILE] [--log-file FILE]
 | `-h`, `--help` | Usage. Wins over `-V`/`--version`, as with clap. | 0 |
 | unknown flag, missing value, positional | `error: ...`, usage and `For more information, try '--help'.` on stderr. | 2 |
 | normal run | Foreground until `SIGINT`/`SIGTERM`. | 0 clean; 1 start-up failure or shutdown grace elapsed |
+| `--install-service` (Windows) | Register (or repoint) the `fipsd` service at this executable with `--service`, automatic start, LocalSystem. | 0, or 1 with the reason |
+| `--uninstall-service` (Windows) | Stop the service (waiting on the SCM's own notification) and delete it. | 0, or 1 |
+| `--service` (Windows, hidden) | The registered service's command line: run under the SCM. From a console it fails at once with a hint. | the daemon's exit code |
+
+The three Windows flags are upstream's `cfg(windows)` ones; elsewhere they are
+unknown flags (exit 2).
 
 Environment: `FIPSD_WORKERS`
 (scheduler worker count, 1..64), `FIPSD_LOG_LEVEL` (`error|warn|info|debug|trace`, overrides `node.log_level`).
@@ -402,11 +409,12 @@ completion port (`libgo/fiber/README.md`, "Windows").
 1. Packages (from an MSYS2 CLANGARM64 shell):
 
    ```sh
-   pacman -S --needed git mingw-w64-clang-aarch64-{cmake,ninja,pkgconf,openssl,libsodium,jansson,libyaml,nsync,libwebsockets,curl,glib2,python}
+   pacman -S --needed git mingw-w64-clang-aarch64-{cmake,ninja,pkgconf,openssl,libsodium,jansson,libyaml,nsync,libwebsockets,curl,glib2,python,ncurses}
    ```
 
    `glib2` is needed because `src/nostr/events.c` includes `glib.h` and the
-   top-level test tree configures against it.
+   top-level test tree configures against it; `ncurses` (optional) builds
+   `fipstop`.
 
 2. libsecp256k1 (no MSYS2 package), installed into the environment prefix:
 
@@ -421,14 +429,16 @@ completion port (`libgo/fiber/README.md`, "Windows").
    ```
 
 3. Configure and build (nsync comes from the `nsync` package; the vendored
-   submodule also works). `PYTHONUTF8=1` lets the configure-time
-   `scripts/check-gui-test-gdk-frame.py` read the tree's UTF-8 sources under a
-   non-UTF-8 Windows code page, and `-DFIPSD_ENABLE_BLE=OFF` is needed because
-   the BLE core (`src/transport/ble/radio.c`: `socketpair`, `fcntl`) does not
-   build on Windows yet:
+   submodule also works). The configure-time and pre-push checkers
+   (`scripts/check-*.py`) read sources as UTF-8 whatever the Windows code page
+   (`nostrc-do87t`), and `FIPSD_ENABLE_BLE` defaults OFF on Windows
+   (`nostrc-znhk6`): upstream has no Windows BLE backend, so a configured BLE
+   transport is ignored with a warning there either way (`ble_disabled.c`),
+   and the core's simulated radio and stream fast path are built on POSIX
+   `socketpair()`/`fcntl()` descriptors; turning it ON on Windows is a
+   configure error. No extra flag or environment is needed:
 
    ```sh
-   export PYTHONUTF8=1
    cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug \
      -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
      -DGO_WARNINGS_AS_ERRORS=ON -DBUILD_TESTING=ON -DBUILD_FIPS=ON \
@@ -438,18 +448,16 @@ completion port (`libgo/fiber/README.md`, "Windows").
      -DENABLE_NIP55L=OFF -DENABLE_NIP5F=OFF -DENABLE_NIP57=OFF \
      -DWITH_NOSTRDB=OFF -DLIBNOSTR_WITH_NOSTRDB=OFF -DBUILD_NOSTR_GOBJECT=OFF \
      -DBUILD_NOSTR_GTK=OFF -DBUILD_APPS=OFF -DBUILD_LIBBLOSSOM=OFF \
-     -DBUILD_LIBPORTHOME=OFF -DBUILD_LIBVAULT=OFF -DBUILD_LIBVAULT_MARMOT=OFF -DENABLE_BUD02=OFF \
-     -DFIPSD_ENABLE_BLE=OFF
-   cmake --build build --target fipsd fipsd_tests
-   ninja -C build libfips-core/all
+     -DBUILD_LIBPORTHOME=OFF -DBUILD_LIBVAULT=OFF -DBUILD_LIBVAULT_MARMOT=OFF -DENABLE_BUD02=OFF
+   cmake --build build --target fipsd fipsd_tests fipsctl fipstop
+   ninja -C build libfips-core/all libgo/all test_channel_incremental
    ```
 
 4. Tests (run from the CLANGARM64 shell so the environment's DLLs are on
    `PATH`):
 
    ```sh
-   ctest --test-dir build -R '^FipsCore|^FipsDiff' --timeout 300
-   ctest --test-dir build -R '^Fipsd' --timeout 300
+   ctest --test-dir build -R '^Go|^FipsCore|^FipsDiff|^Fipsd|^FipsTop' --timeout 300
    ```
 
    `tests/windows.cmake` lists the Windows subset (same names, labels and
@@ -457,11 +465,15 @@ completion port (`libgo/fiber/README.md`, "Windows").
    stats suites, the two-node proof on the loopback transport and on real
    UDP (`FipsdUdpTwoNodesV4Test`/`V6Test`: IK link, tree, bloom, XK session,
    datagrams, rekey, disconnect), `FipsdUdpConnResetTest` (below), and the
-   TUN/IPv6 suites of "TUN on Windows (Wintun)". Suites that need AF_UNIX
-   control/native sockets, POSIX signals or file modes, socket pairs, or one
-   of the subsystems below are not built there yet.
+   TUN/IPv6 suites of "TUN on Windows (Wintun)", the control socket on TCP
+   (`FipsdControlTcpTest`, `FipsdControlTcpCapacityTest`), the service status
+   sequence (`FipsdServiceStatusTest`), the CLI with the service flags, and
+   fipstop's model, renderer and golden frames (`FipsTop*`). Suites that need
+   AF_UNIX control/native sockets, POSIX signals or file modes, socket pairs,
+   or one of the subsystems below are not built there yet.
 
-5. Running: `build/fipsd/fipsd.exe -c fips.yaml`. Without `-c` the daemon
+5. Running: `build/fipsd/fipsd.exe -c fips.yaml` (or as the service; see
+   "Windows service, control socket and packaging"). Without `-c` the daemon
    searches `C:\ProgramData\fips\fips.yaml`, then `%APPDATA%\fips\fips.yaml`,
    then `fips.yaml` in the working directory (upstream's Windows layout; never
    the drive-relative `\etc\fips`). Admission ACL files default to
@@ -489,7 +501,8 @@ completion port (`libgo/fiber/README.md`, "Windows").
    console (`tests/windows_two_node_smoke.ps1`, `Send-CtrlBreak`); a
    `CTRL_C_EVENT` does not reach it.
 
-What runs on Windows: the UDP transport (exclusive bind, no `SO_REUSEPORT`
+What runs on Windows: the Windows service, the control socket on TCP
+127.0.0.1:21210 with `fipsctl` and `fipstop`, the UDP transport (exclusive bind, no `SO_REUSEPORT`
 connected per-peer sockets, so every peer uses the listener as upstream does on
 Windows; `SIO_UDP_CONNRESET`/`SIO_UDP_NETRESET` off; `IP_PKTINFO`/`IPV6_PKTINFO`
 and `IP_RECVECN`/`IPV6_RECVECN` ancillary data), the in-process loopback
@@ -502,16 +515,14 @@ translation unit, `src/node/ifinfo_win32.c`, because its headers include
 POSIX socket headers map to Winsock through `src/compat/win32/`.
 
 Not yet on Windows (each replaced by a `*_unsupported.c` stub that fails
-start-up when configured; the default-on control socket and DNS responder warn
-and serve nothing instead): the `.fips` DNS responder, the control socket
-(upstream moves it to TCP 127.0.0.1:21210) and therefore `fipsctl`/`fipstop`
-and the TUN `show_status` fields, the native datagram API and libfipsnative,
-the TCP, Tor and Nym transports, Nostr relay rendezvous and traversal, mDNS,
-BLE, and the gateway. A Windows CI lane would need the packages above, the
-libsecp256k1 build, the configure line above (on `windows-11-arm` or an x64
-runner with CLANG64), the two `ctest` invocations, and, for the TUN smokes,
-the verified wintun.dll beside the executables with
-`FIPSD_TUN_PRIVILEGED_SMOKE=1` on an elevated runner; none is added yet.
+start-up when configured; the default-on DNS responder warns and serves
+nothing instead): the `.fips` DNS responder, the TCP, Tor and Nym
+transports, Nostr relay rendezvous and traversal, mDNS and BLE. Not on
+Windows by design, as upstream: the native datagram API and libfipsnative
+(it hands descriptors over `SCM_RIGHTS`, which Windows does not have; upstream
+builds it on Linux, FreeBSD and macOS only) and the gateway (nftables and
+proxy NDP; upstream builds it on Linux only). The Windows CI job is described
+in "Windows CI".
 
 ### TUN on Windows (Wintun)
 
@@ -654,6 +665,162 @@ with a plain receive and through libgo's completion port (skips 77 if the host
 reports no reset at all). The TUN doorbell pair needs neither: one end only
 sends, the other only receives, from each other.
 
+### Windows service, control socket and packaging (`nostrc-iq1n9.6.3`)
+
+**Control socket.** As upstream (`src/control/mod.rs` `windows_impl`,
+`docs/reference/control-socket.md`): a TCP listener on `127.0.0.1` whose port
+is `node.control.socket_path`, which on Windows is a port number, `21210` by
+default. One that does not parse is logged and replaced by 21210, as
+upstream; `0` binds an ephemeral port. The listener is the Unix socket's
+production code (`src/control/control.c`): one request line of at most 4096
+bytes, one response, the 5 s read, execution and write deadlines and the
+32-connection cap. Windows differences, all in that file: the port is bound
+exclusively (`SO_EXCLUSIVEADDRUSE`, so no other socket of any account can
+take it over while the daemon holds it; upstream's tokio listener does not
+set it); every accepted peer is checked to be loopback, as upstream does; a
+deadline cancels the connection's pending overlapped read or write through
+libgo (`gof_io_cancel_fd`), because `shutdown()` does not complete a pending
+overlapped receive, and a read-deadline cancel is cleared before the reply is
+written so the client still reads `read timeout`; stop cancels the pending
+`AcceptEx` the same way; every listener and accepted socket is reset first,
+because Windows recycles a `SOCKET` value at once.
+
+**Trust model.** Upstream's, unchanged: the socket is reachable from
+loopback only and has no access control beyond that, so any process of any
+local account can query the daemon and issue every command (`connect`,
+`disconnect`, `path_pin`, ...). That is acceptable on a single-user host and
+not on a shared one; Windows Firewall does not filter loopback, so it cannot
+narrow it. Upstream lists a named pipe with an ACL or a token file as future
+work and implements neither, so neither is ported. The configuration
+directory is the protected part (below).
+
+**Ports.** `21210` is the control socket. `21212`, the control port plus 2,
+is where upstream's separate IPv6 adapter serves its status and where
+`fipsctl`/`fipstop` look for the TUN keys when a node's `show_status` lacks
+them (`fipsctl_ipv6tun_socket`, as upstream's `config::ipv6tun_socket`).
+Here the node's own `show_status` already carries `tun_state`, `tun_name`,
+`effective_ipv6_mtu` and `host_drops`, so nothing listens there and the
+clients never need it. `21211`, between them, is `fipstop
+--gateway-socket`'s default, upstream's placeholder for `fips-gateway`,
+which exists on Linux only, so on Windows fipstop's Gateway tab reports it
+not running. The native datagram API has no Windows endpoint at all (see
+above): there is nothing to put on 21211 or elsewhere.
+
+**Clients.** `fipsctl` and `fipstop` build on Windows; `-s <port>` (default
+21210) names the port, an unparsable one prints upstream's `warning: invalid
+port '<x>', using default 21210`, and a refused connection prints the system
+message and `(os error <n>)` as Rust's `io::Error` does. `fipsctl keygen`
+and `address` default to `C:\ProgramData\fips` (keygen refuses to write
+through a reparse point), the hosts file to `C:\ProgramData\fips\hosts`.
+fipstop selects the UCRT's UTF-8 locale and measures cells with a Basic
+Multilingual Plane width table (Windows has no `wcwidth`); its golden frames
+are byte-identical to the POSIX ones.
+
+**Service.** `fipsd --install-service` registers the service `fipsd`
+(display name `FIPS Mesh Network Daemon`, upstream's description) as
+`"<this fipsd.exe>" --service`, automatic start, LocalSystem; run again from
+another folder it repoints the registration and keeps the operator's start
+type and account (upstream's `repoint_service`). `--uninstall-service` stops
+it, waits for STOPPED on the SCM's own notification
+(`NotifyServiceStatusChangeW`), and deletes it. Upstream names the service
+`fips`; here it carries the daemon's name, as `fipsd.service` and
+`com.fips.fipsd` do. Under the SCM (`src/service_win32.c`):
+
+```
+sc.exe start fipsd -> fipsd.exe --service -> StartServiceCtrlDispatcherW
+  service main: RegisterServiceCtrlHandlerExW
+    START_PENDING checkpoint 1, wait hint 30 s
+    configuration loaded, runtime created: START_PENDING checkpoint 2
+    every subsystem started: RUNNING, accepting STOP and SHUTDOWN
+  STOP or SHUTDOWN (control handler, dispatcher thread):
+    STOP_PENDING, wait hint = runtime grace (5 s) + 10 s; fipsd_runtime_shutdown()
+    subsystems stop in reverse (the Wintun adapter, address and route go)
+  STOPPED: exit code 0, or ERROR_SERVICE_SPECIFIC_ERROR with the daemon's code
+```
+
+INTERROGATE is answered; other controls are not implemented. The daemon body
+is the console run's (`main.c` `run_daemon`) with console control events
+off, since a service also receives `CTRL_LOGOFF_EVENT` whenever any user logs
+off. A daemon that ends on its own (a fatal error) still goes through
+STOP_PENDING to STOPPED with its exit code. Upstream reports RUNNING at once
+and STOPPED at the end; the pending states, checkpoints and wait hints are
+this port's, as the SCM documents them, and are pure data tested on every
+host (`src/service.c`, `FipsdServiceStatusTest`). The configuration is `-c`,
+else `FIPS_CONFIG`, else `C:\ProgramData\fips\fips.yaml`, the only directory
+the service reads. The log is upstream's: the file
+`C:\ProgramData\fips\fips.log` (or `--log-file`), rolled at
+`node.log_max_size_mb`/`node.log_max_files` (10 MiB, 4); `node.log_file` is
+ignored, and a log that cannot be opened leaves the service running without
+one, as upstream. There is no event log source (upstream has none).
+
+**Packaging** (`packaging/windows/`, upstream's scripts ported):
+
+- `build-zip.ps1 -BuildDir build [-DllPath C:\msys64\clangarm64\bin]
+  [-WintunZip <zip>] [-Arch arm64|amd64]` packages an MSYS2 build (it does not
+  build) as `build\deploy\fipsd-<version>-windows-<arch>.zip`, flat:
+  `fipsd.exe`, `fipsctl.exe`, `fipstop.exe` when ncurses was found, every
+  non-system DLL they import (the import closure read with `llvm-objdump -p`
+  through the build tree, `-DllPath` and `PATH`, never the Windows
+  directory; for the CLANGARM64 build: jansson, ncursesw, nsync, secp256k1,
+  sodium, winpthread, yaml), `wintun.dll` for the architecture from
+  wintun.net's 0.14.1 zip, checked against the pinned SHA-256 and its
+  WireGuard LLC Authenticode signature, with `wintun-LICENSE.txt`, the
+  Windows example `fips.yaml` (no TCP transport and DNS off, which Windows
+  does not build yet), `hosts`, the two service scripts and `README.txt`.
+- `install-service.ps1` (Administrator, from the extracted ZIP; refuses while
+  the service runs) copies the executables, DLLs and wintun.dll to
+  `%ProgramFiles%\fips`; creates `%ProgramData%\fips` with an ACL of SYSTEM
+  and Administrators only (upstream's hardening verbatim: created with the
+  ACL in one step, links, foreign owners and sub-folders refused, existing
+  files reowned and reset); seeds `fips.yaml`, `hosts` and empty
+  `peers.allow`/`peers.deny` without overwriting; sets `FIPS_CONFIG` and adds
+  the install directory to the machine `PATH`; and registers the service with
+  `fipsd.exe --install-service`. Upstream's checks for files its earlier
+  releases left in `\etc\fips` are omitted: fipsd never reads there.
+- `uninstall-service.ps1 [-RemoveAll]` stops and deregisters the service and
+  removes the install directory, the `PATH` entry and `FIPS_CONFIG`;
+  `-RemoveAll` also removes `%ProgramData%\fips`.
+- No firewall rule is added, as upstream: the control socket is loopback
+  only. Windows treats each Wintun adapter as a Public network, so inbound
+  traffic from the mesh (ICMPv6 echo, services) and, for peers that dial
+  first, the UDP transport port need rules of the operator's choosing.
+- All three scripts pass PSScriptAnalyzer with upstream's
+  `PSScriptAnalyzerSettings.psd1`.
+
+**Verification.** `FipsdControlTcpTest`/`FipsdControlTcpCapacityTest` (every
+Windows build) drive the production listener and the production fipsctl
+client on ephemeral ports: the protocol bounds, EOF rules, both deadlines,
+no head-of-line blocking, the exclusive port, the connection cap, a stop
+that cancels the pending accept and frees the port, the client's error
+text, and `show_status` with and without the TUN keys.
+`FipsdWindowsServiceSmokeTest` (`tests/windows_service_smoke.ps1`; skips 77
+unless elevated with `FIPSD_SERVICE_PRIVILEGED_SMOKE=1`, refuses to run where
+a fipsd service, `%ProgramFiles%\fips` or `%ProgramData%\fips` exists) is the
+`nostrc-iq1n9.6` acceptance end to end: build-zip, install-service.ps1, the
+ACL and registration, `Start-Service`, `fipsctl show status` over TCP 21210
+reporting `running` with `tun_state` `active` on `fips0` and the `/128` on
+the adapter, a second fipsd (a console process of the installed binary with
+its own adapter and only the system directories on `PATH`) peering over UDP
+on 127.0.0.1 and pinging the service node's fd00::/8 address from its own
+(`ping -6 -S`, 3/3, each echo counted on both adapters), a session on the
+service node, then Ctrl+Break and `Stop-Service` (STOPPED, exit code 0, a
+clean shutdown in `fips.log`), `uninstall-service.ps1 -RemoveAll`, and no
+service, adapter, route, firewall rule, directory, `FIPS_CONFIG` or `PATH`
+entry left.
+
+### Windows CI
+
+`.github/workflows/fips-ci.yml` job `windows` (`windows-11-arm`, MSYS2
+CLANGARM64 through `msys2/setup-msys2` with the packages of step 1):
+libsecp256k1 built from a pinned tag into a cached prefix; PSScriptAnalyzer
+over `packaging/windows`; the configure line of step 3 with no extra flag or
+environment; the targets of step 3; wintun.dll fetched and checked as above
+and placed beside `build/fipsd/` and `build/fipsd/tests/`; then `ctest -R
+'^Go|^FipsCore|^FipsDiff|^Fipsd|^FipsTop'` with
+`FIPSD_TUN_PRIVILEGED_SMOKE=1` and `FIPSD_SERVICE_PRIVILEGED_SMOKE=1` (hosted
+Windows runners are elevated, so the privileged TUN, two-node and service
+smokes run rather than skip), and the package as an artifact.
+
 ## Transport statistics and control parity
 
 `transport/stats_common.h` owns the upstream `u64` counter names and relaxed
@@ -705,7 +872,8 @@ smoke-tests all of them on a `fipsd-v*` tag or by dispatch. The version is
 `packaging/common/version.sh` and tagged by `scripts/tag_release.py`;
 `scripts/test-release-packaging.py` keeps the recipes in step with it.
 Details, the install behaviour of each package and the smoke scripts are in
-[packaging/README.md](packaging/README.md). The `fips-dns-setup`/`-teardown`
+[packaging/README.md](packaging/README.md). The Windows ZIP and service scripts (`packaging/windows/`) are
+described under "Windows service, control socket and packaging" above. The `fips-dns-setup`/`-teardown`
 helpers behind `fips-dns.service` and `fipsctl` are packaged when the tree
 has them (their own tasks); the unit is skipped, not failed, without them.
 

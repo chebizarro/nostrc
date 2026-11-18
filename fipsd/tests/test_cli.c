@@ -87,7 +87,24 @@ int main(void)
     CHECK(strstr(err, "a value is required for '--config <FILE>' but none was supplied") != NULL);
     CHECK(PARSE(o, err, "fipsd", "--log-file") == FIPSD_CLI_USAGE_ERROR);
     CHECK(strstr(err, "a value is required for '--log-file <FILE>' but none was supplied") != NULL);
+#if defined(_WIN32)
+    /* The service flags exist on Windows only, as upstream's cfg(windows) ones. */
+    CHECK(PARSE(o, err, "fipsd") == FIPSD_CLI_RUN && !o.service);
+    CHECK(PARSE(o, err, "fipsd", "--service", "-c", "x.yaml") == FIPSD_CLI_RUN);
+    CHECK(o.service && strcmp(o.config_path, "x.yaml") == 0);
+    CHECK(PARSE(o, err, "fipsd", "--install-service") == FIPSD_CLI_INSTALL_SERVICE);
+    CHECK(PARSE(o, err, "fipsd", "--uninstall-service") == FIPSD_CLI_UNINSTALL_SERVICE);
+    CHECK(PARSE(o, err, "fipsd", "--uninstall-service", "--install-service") == FIPSD_CLI_INSTALL_SERVICE);
+    CHECK(PARSE(o, err, "fipsd", "--install-service", "--uninstall-service") == FIPSD_CLI_INSTALL_SERVICE);
+    CHECK(PARSE(o, err, "fipsd", "--install-service", "--help") == FIPSD_CLI_HELP);
+    CHECK(PARSE(o, err, "fipsd", "--install-service", "-V") == FIPSD_CLI_VERSION_SHORT);
+    CHECK(PARSE(o, err, "fipsd", "--service", "stray") == FIPSD_CLI_USAGE_ERROR);
+#else
     CHECK(PARSE(o, err, "fipsd", "--install-service") == FIPSD_CLI_USAGE_ERROR);
+    CHECK(PARSE(o, err, "fipsd", "--uninstall-service") == FIPSD_CLI_USAGE_ERROR);
+    CHECK(PARSE(o, err, "fipsd", "--service") == FIPSD_CLI_USAGE_ERROR);
+    CHECK(strstr(err, "unexpected argument '--service' found") != NULL);
+#endif
     /* A NULL error stream is accepted. */
     CHECK(fipsd_cli_parse(2, (char *[]){"fipsd", "--bogus", NULL}, &o, NULL) == FIPSD_CLI_USAGE_ERROR);
 
@@ -133,5 +150,11 @@ int main(void)
     CHECK(strstr(out, "--log-file <FILE>") != NULL);
     CHECK(strstr(out, "-h, --help") != NULL);
     CHECK(strstr(out, "--version") != NULL && strstr(out, "  -V ") != NULL);
+#if defined(_WIN32)
+    CHECK(strstr(out, "--install-service") != NULL && strstr(out, "--uninstall-service") != NULL);
+    CHECK(strstr(out, "--service ") == NULL); /* hidden, as upstream */
+#else
+    CHECK(strstr(out, "-service") == NULL);
+#endif
     return 0;
 }

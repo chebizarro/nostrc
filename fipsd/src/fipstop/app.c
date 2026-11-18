@@ -15,6 +15,11 @@ void ft_set_error(ft_app *a, const char *s)
 { free(a->error); a->error = strdup(s ? s : "unknown error"); a->error_ms = ft_monotonic_ms(); }
 static char *default_gateway(void)
 {
+#if defined(_WIN32)
+    /* Upstream default_gateway_path on Windows: TCP port 21211 (there is no
+     * gateway there; the tab reports it not running). */
+    return strdup("21211");
+#else
     char *control = fipsctl_default_socket_path();
     if (!control) return NULL;
     char *slash = strrchr(control, '/');
@@ -22,6 +27,7 @@ static char *default_gateway(void)
     if (!strcmp(control, "/tmp/fips-control.sock")) out = strdup("/tmp/fips-gateway.sock");
     else { if (slash) *slash = 0; out = fipsctl_aprintf("%s/gateway.sock", slash ? control : "."); }
     free(control); return out;
+#endif
 }
 void ft_app_init(ft_app *a, unsigned refresh, const char *socket, const char *gateway)
 {

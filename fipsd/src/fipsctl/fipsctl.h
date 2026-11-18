@@ -62,6 +62,10 @@ int fipsctl_main(int argc, char **argv);
 
 /* client.c */
 char *fipsctl_default_socket_path(void);
+#if defined(_WIN32)
+/* Windows: the control "socket" is a TCP port on 127.0.0.1 (Rust u16 parse). */
+bool fipsctl_parse_port(const char *text, uint16_t *port);
+#endif
 char *fipsctl_ipv6tun_socket(const char *control);
 char *fipsctl_ipv6tun_client(const char *control);
 json_t *fipsctl_send_request(const char *socket_path, const char *request, char **error);

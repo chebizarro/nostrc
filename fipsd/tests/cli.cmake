@@ -74,6 +74,20 @@ run_fipsd(rc out err -x)
 expect("-x exited ${rc}" rc EQUAL 2)
 expect("-x stderr: '${err}'" err MATCHES "error: unexpected argument '-x' found")
 
-# Windows service flags are out of scope and must be rejected like any unknown flag.
-run_fipsd(rc out err --install-service)
-expect("--install-service exited ${rc}" rc EQUAL 2)
+if(CMAKE_HOST_WIN32)
+  # The service flags exist here (never run --install-service: from an
+  # elevated shell it registers a real service). Outside the service control
+  # manager, --service fails at once with a hint instead of hanging.
+  run_fipsd(rc out err --help)
+  expect("--help lists the service commands: '${out}'"
+    out MATCHES "--install-service" AND out MATCHES "--uninstall-service")
+  run_fipsd(rc out err --service)
+  expect("--service from a console exited ${rc}" rc EQUAL 1)
+  expect("--service stderr: '${err}'" err MATCHES "--service is for the service control manager")
+else()
+  # Windows service flags exist only there and are rejected like any unknown flag.
+  foreach(flag --install-service --uninstall-service --service)
+    run_fipsd(rc out err ${flag})
+    expect("${flag} exited ${rc}" rc EQUAL 2)
+  endforeach()
+endif()

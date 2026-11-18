@@ -17,6 +17,15 @@ void fipsd_config_free(void *ptr)
     fipsd_config *c=ptr;
     if (c) { fipsd_acl_free(c->acl); cfg_free(c->root); free(c); }
 }
+#if defined(_WIN32)
+/* Upstream's Windows defaults: the control socket is TCP 127.0.0.1 and its
+ * "path" the port, 21210; the native API is not built there and its path is
+ * empty. */
+static char *socket_path(const char *filename)
+{
+    return strdup(strcmp(filename, "control.sock") ? "" : "21210");
+}
+#else
 static bool is_dir(const char *path)
 { struct stat st; return stat(path,&st)==0 && S_ISDIR(st.st_mode); }
 static char *socket_path(const char *filename)
@@ -38,6 +47,7 @@ static char *socket_path(const char *filename)
     }
     return strdup(path);
 }
+#endif
 bool cfg_socket_defaults(fipsd_config *c, fipsd_config_log *log)
 {
     const char *keys[]={"node.control.socket_path","node.native_api.socket_path"};

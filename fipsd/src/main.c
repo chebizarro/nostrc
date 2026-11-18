@@ -11,6 +11,7 @@
 #include "log.h"
 #include "privilege.h"
 #include "runtime.h"
+#include "service.h"
 #include "node/context.h"
 #include "node/handlers/handlers.h"
 #include "tun/lifecycle.h"
@@ -30,8 +31,10 @@
 
 #define MODULE "main"
 
-/* Open --log-file before parsing so startup failures reach the requested sink. */
-static fipsd_log *open_logger(const fipsd_options *opts, fipsd_log_file **out_file)
+/* Open --log-file before parsing so startup failures reach the requested sink.
+ * `optional`: the Windows service's own log, which, as upstream's, the daemon
+ * runs on without when it cannot be opened (there is no console to report to). */
+static fipsd_log *open_logger(const fipsd_options *opts, fipsd_log_file **out_file, bool optional)
 {
     fipsd_log_level level = FIPSD_LOG_INFO;
     const char *env_level = getenv("FIPSD_LOG_LEVEL");
@@ -46,6 +49,11 @@ static fipsd_log *open_logger(const fipsd_options *opts, fipsd_log_file **out_fi
         char err[512];
         fipsd_log_file *file = fipsd_log_file_open(opts->log_file, FIPSD_LOG_DEFAULT_MAX_BYTES,
                                                    FIPSD_LOG_DEFAULT_MAX_FILES, err, sizeof(err));
+        if (!file && optional) {
+            fipsd_options console = *opts;
+            console.log_file = NULL;
+            return open_logger(&console, out_file, false);
+        }
         if (!file) {
             /* Fatal: a daemon that silently ran without the log it was told
              * to keep would present as exactly the missing-logs problem the
@@ -78,30 +86,20 @@ static fipsd_log *open_logger(const fipsd_options *opts, fipsd_log_file **out_fi
     return log;
 }
 
-int main(int argc, char **argv)
+/* The daemon: a console run (hooks NULL) or the Windows service's body.
+ * `optional_log`: see open_logger. */
+static int run_daemon(const fipsd_options *in, const fipsd_daemon_hooks *hooks, bool optional_log)
 {
-    fipsd_options opts;
-    fipsd_cli_action action = fipsd_cli_parse(argc, argv, &opts, stderr);
-    switch (action) {
-    case FIPSD_CLI_HELP:
-        fipsd_cli_print_help(stdout);
-        return fipsd_cli_exit_code(action);
-    case FIPSD_CLI_VERSION_SHORT:
-    case FIPSD_CLI_VERSION_LONG:
-        fipsd_cli_print_version(stdout, action == FIPSD_CLI_VERSION_LONG);
-        return fipsd_cli_exit_code(action);
-    case FIPSD_CLI_USAGE_ERROR:
-        return fipsd_cli_exit_code(action);
-    case FIPSD_CLI_RUN:
-        break;
-    }
-
+    fipsd_options opts = *in;
     /* The log file is opened before anything else so that every later
      * start-up error, including a configuration error, is logged there. */
     fipsd_log_file *log_file = NULL;
-    fipsd_log *log = open_logger(&opts, &log_file);
+    fipsd_log *log = open_logger(&opts, &log_file, optional_log);
     if (!log)
         return FIPSD_EXIT_FAILURE;
+    if (optional_log && !log_file)
+        FIPSD_WARN(MODULE, "cannot open the service log %s; logging to stderr, which a service discards",
+                   opts.log_file);
     FIPSD_INFO(MODULE, "fipsd %s starting (libfips-core %s)", fipsd_cli_short_version(),
                fips_core_version());
 
@@ -125,7 +123,7 @@ int main(int argc, char **argv)
         configured_opts.log_file = configured_file;
         fipsd_log_set_default(NULL);
         fipsd_log_destroy(log);
-        log = open_logger(&configured_opts, &log_file);
+        log = open_logger(&configured_opts, &log_file, false);
         if (!log) {
             fipsd_config_free(config);
             fipsd_config_log_clear(&held);
@@ -238,7 +236,10 @@ int main(int argc, char **argv)
     int code = FIPSD_EXIT_OK;
     fipsd_runtime_config cfg;
     fipsd_runtime_config_default(&cfg);
+    cfg.handle_signals = !hooks || hooks->handle_signals;
     fipsd_runtime *rt = fipsd_runtime_create(&cfg);
+    if (rt && hooks && hooks->attach)
+        hooks->attach(hooks->ctx, rt);
     if (!rt) {
         FIPSD_ERROR(MODULE, "cannot allocate the runtime");
         code = FIPSD_EXIT_FAILURE;
@@ -264,12 +265,16 @@ int main(int argc, char **argv)
             FIPSD_WARN(MODULE, "configured peers could not be queued for dialing");
         go_refptr_release(&node_status);
         FIPSD_INFO(MODULE, "fipsd running");
+        if (hooks && hooks->running)
+            hooks->running(hooks->ctx);
         int status = fipsd_runtime_run(rt);
         if (status != FIPSD_RUN_OK) {
             FIPSD_ERROR(MODULE, "shutdown did not complete within the grace period");
             code = FIPSD_EXIT_FAILURE;
         }
     }
+    if (rt && hooks && hooks->detach)
+        hooks->detach(hooks->ctx);
     fipsd_runtime_destroy(rt);
     fipsd_ipv6_shim_destroy(shim);
     fipsd_native_api_destroy(native);
@@ -291,4 +296,56 @@ int main(int argc, char **argv)
     fipsd_log_set_default(NULL);
     fipsd_log_destroy(log);
     return code;
+}
+
+#if defined(_WIN32)
+/* Under the SCM (upstream run_service): the configuration is -c, then
+ * FIPS_CONFIG (install-service.ps1 sets it machine-wide), then
+ * C:\ProgramData\fips\fips.yaml, the only directory the service reads; the
+ * log is --log-file or C:\ProgramData\fips\fips.log, rolled as configured.
+ * Console control events are not handled: the SCM's stop and shutdown
+ * controls end the run, and a service also receives CTRL_LOGOFF_EVENT for
+ * every user who logs off. */
+static int service_body(void *arg, const fipsd_daemon_hooks *hooks)
+{
+    fipsd_options opts = *(const fipsd_options *)arg;
+    bool own_log = !opts.log_file;
+    if (!opts.config_path) {
+        const char *env = getenv("FIPS_CONFIG");
+        opts.config_path = env && *env ? env : FIPSD_SERVICE_CONFIG;
+    }
+    if (own_log)
+        opts.log_file = FIPSD_SERVICE_LOG;
+    return run_daemon(&opts, hooks, own_log);
+}
+#endif
+
+int main(int argc, char **argv)
+{
+    fipsd_options opts;
+    fipsd_cli_action action = fipsd_cli_parse(argc, argv, &opts, stderr);
+    switch (action) {
+    case FIPSD_CLI_HELP:
+        fipsd_cli_print_help(stdout);
+        return fipsd_cli_exit_code(action);
+    case FIPSD_CLI_VERSION_SHORT:
+    case FIPSD_CLI_VERSION_LONG:
+        fipsd_cli_print_version(stdout, action == FIPSD_CLI_VERSION_LONG);
+        return fipsd_cli_exit_code(action);
+    case FIPSD_CLI_USAGE_ERROR:
+        return fipsd_cli_exit_code(action);
+#if defined(_WIN32)
+    case FIPSD_CLI_INSTALL_SERVICE:
+        return fipsd_service_install(stdout, stderr);
+    case FIPSD_CLI_UNINSTALL_SERVICE:
+        return fipsd_service_uninstall(stdout, stderr);
+#endif
+    case FIPSD_CLI_RUN:
+        break;
+    }
+#if defined(_WIN32)
+    if (opts.service)
+        return fipsd_service_run(service_body, &opts);
+#endif
+    return run_daemon(&opts, NULL, false);
 }

@@ -1,0 +1,50 @@
+# FIPS node configuration for fipsd on Windows.
+#
+# install-service.ps1 copies this to C:\ProgramData\fips\fips.yaml when no
+# config is there and never overwrites a live one. The service reads only
+# that file (or the file FIPS_CONFIG names). The schema is upstream's
+# (fipsd/README.md, "YAML configuration"): unknown keys warn and are
+# discarded. It differs from packaging/common/fips.yaml only where Windows
+# does: no TCP transport and no .fips DNS responder are built there yet.
+
+node:
+  identity:
+    # A new ephemeral keypair is generated on each start. Set an explicit
+    # key to keep the same identity (and fd00::/8 address) across restarts.
+    # nsec: "nsec1..."
+
+  # The control socket for fipsctl and fipstop: TCP 127.0.0.1:21210. On
+  # Windows socket_path is the port. Any local user can connect to it.
+  control:
+    enabled: true
+    # socket_path: "21210"
+
+  # Logging: the service writes C:\ProgramData\fips\fips.log, rolled by size.
+  # log_level: info          # error | warn | info | debug | trace
+  # log_max_size_mb: 10
+  # log_max_files: 5
+
+# Wintun adapter carrying mesh IPv6 traffic; wintun.dll sits beside
+# fipsd.exe. Windows Firewall treats it as a Public network: add inbound
+# rules for what the host should accept from the mesh.
+tun:
+  enabled: true
+  name: fips0
+  mtu: 1280
+
+# The .fips resolver is not built on Windows yet.
+dns:
+  enabled: false
+
+transports:
+  udp:
+    bind_addr: "0.0.0.0:2121"
+    # outbound_only: true     # dial out, never listen or advertise
+
+# Peers to dial at start-up.
+peers: []
+# peers:
+#   - npub: "npub1..."
+#     alias: "friend"
+#     address: "203.0.113.10:2121"
+#     transport: udp

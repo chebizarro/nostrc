@@ -30,6 +30,18 @@ int probe(int n) {
   return n;
 }
 '''
+
+
+def coff_unstamped(data):
+    """A COFF object (Windows) records its compile time in the file header's
+    TimeDateStamp (bytes 4-7), so two compiles a second apart differ there;
+    that field is not machine code. ELF and Mach-O carry no such field."""
+    machines = (0x8664, 0xAA64, 0x014C, 0x01C4)  # x64, ARM64, x86, ARMv7
+    if len(data) >= 20 and int.from_bytes(data[:2], 'little') in machines:
+        return data[:4] + bytes(4) + data[8:]
+    return data
+
+
 # CTest's working directory is inside the assigned out-of-tree build.
 with tempfile.TemporaryDirectory(prefix='zero-cost-', dir=Path.cwd()) as tmp:
     root = Path(tmp)
@@ -38,7 +50,7 @@ with tempfile.TemporaryDirectory(prefix='zero-cost-', dir=Path.cwd()) as tmp:
         subprocess.run([a.cc, '-x', 'c', '-', '-c', '-O0', '-std=c11', '-I', a.include,
                         *flags, '-o', str(root / f'{plain}.o')], input=source, text=True,
                        check=True, timeout=20)
-    left, right = ((root / f'{v}.o').read_bytes() for v in (False, True))
+    left, right = (coff_unstamped((root / f'{v}.o').read_bytes()) for v in (False, True))
     assert left == right, 'feature-off object differs from uninstrumented object'
     print(f'feature-off objects byte-identical at -O0: {len(left)} bytes')
 symbols = subprocess.check_output(['nm', a.archive], text=True, timeout=20)

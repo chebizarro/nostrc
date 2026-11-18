@@ -407,6 +407,18 @@ static void test_paths(const char *tmp)
     CHECK(fipsd_control_resolve_path(NULL,&e,p,sizeof(p))==0 && !strcmp(p,"/tmp/fips-control.sock"));
     CHECK(fipsd_control_resolve_path("",&e,p,sizeof(p))<0);
     CHECK(fipsd_control_resolve_path("too-long",&e,p,2)<0);
+    /* The Windows control port (pure, so checked here too): Rust u16 parse,
+     * default 21210 for NULL and, with a warning, for anything unparsable. */
+    uint16_t port=1;
+    CHECK(fipsd_control_resolve_port(NULL,&port) && port==21210);
+    CHECK(fipsd_control_resolve_port("21210",&port) && port==21210);
+    CHECK(fipsd_control_resolve_port("0",&port) && port==0);
+    CHECK(fipsd_control_resolve_port("+65535",&port) && port==65535);
+    CHECK(fipsd_control_resolve_port("00080",&port) && port==80);
+    const char *bad[]={"","+","65536","-1"," 1","1 ","not-a-port","/run/fips/control.sock","99999999999"};
+    for (size_t i=0;i<sizeof(bad)/sizeof(*bad);++i) {
+        port=1; CHECK(!fipsd_control_resolve_port(bad[i],&port) && port==21210);
+    }
 }
 typedef struct client_case {
     fipsd_runtime *rt;

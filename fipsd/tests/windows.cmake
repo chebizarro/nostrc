@@ -1,7 +1,8 @@
 # Windows test subset for fipsd (nostrc-iq1n9.6.1), included by
 # CMakeLists.txt in place of the POSIX suite. Same targets, names, labels and
 # timeouts as there; only suites whose code paths exist on Windows are listed.
-# Omitted for now: control/native/interop (AF_UNIX), DNS/mDNS/Tor/TCP/nostr
+# The control socket is TCP 127.0.0.1 here (FipsdControlTcpTest); omitted for
+# now: the AF_UNIX control/native/interop suites, DNS/mDNS/Tor/TCP/nostr
 # runtime (stubbed subsystems), the POSIX TUN suites (FipsdTunTest's BSD/Linux
 # route codecs and socketpair fakes, FipsdIpv6TwoNodesTest's socketpair
 # devices), runtime signals (POSIX signals), FipsdUdpTest (socketpair and the
@@ -15,7 +16,20 @@ set_tests_properties(FipsdHostOsTest PROPERTIES TIMEOUT 10 LABELS "fips;unit")
 fipsd_unit_test(fipsd_cli_test test_cli.c)
 add_test(NAME FipsdCliParseTest COMMAND fipsd_cli_test)
 set_tests_properties(FipsdCliParseTest PROPERTIES TIMEOUT 10 LABELS "fips;unit")
-add_dependencies(fipsd_tests fipsd_host_os_test fipsd_cli_test)
+fipsd_unit_test(fipsd_service_status_test test_service_status.c)
+add_test(NAME FipsdServiceStatusTest COMMAND fipsd_service_status_test)
+set_tests_properties(FipsdServiceStatusTest PROPERTIES TIMEOUT 10 LABELS "fips;unit")
+add_dependencies(fipsd_tests fipsd_host_os_test fipsd_cli_test fipsd_service_status_test)
+
+# The control socket on TCP 127.0.0.1 (nostrc-iq1n9.6.3), through the
+# production listener and the production fipsctl client, on ephemeral ports.
+fipsd_unit_test(fipsd_control_tcp_test test_control_tcp.c)
+target_link_libraries(fipsd_control_tcp_test PRIVATE fipsctl_lib)
+add_test(NAME FipsdControlTcpTest COMMAND fipsd_control_tcp_test)
+add_test(NAME FipsdControlTcpCapacityTest COMMAND fipsd_control_tcp_test capacity)
+set_tests_properties(FipsdControlTcpTest FipsdControlTcpCapacityTest PROPERTIES TIMEOUT 60
+  LABELS "fips;unit;control" ENVIRONMENT "FIPSD_WORKERS=2")
+add_dependencies(fipsd_tests fipsd_control_tcp_test fipsctl)
 
 fipsd_unit_test(fipsd_peer_test test_peer.c)
 target_sources(fipsd_peer_test PRIVATE
@@ -130,7 +144,9 @@ set_tests_properties(FipsdTunWindowsTest PROPERTIES TIMEOUT 120 LABELS "fips;tun
 fipsd_unit_test(fipsd_tun_privileged_test test_tun_windows_privileged.c)
 add_test(NAME FipsdTunPrivilegedSmokeTest COMMAND fipsd_tun_privileged_test device)
 add_test(NAME FipsdIpv6PrivilegedSmokeTest COMMAND fipsd_tun_privileged_test shim)
-set_tests_properties(FipsdTunPrivilegedSmokeTest PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77
+# The device smoke reads every row back through about twenty powershell runs:
+# under 20 s here, but each run is several seconds on a fresh hosted runner.
+set_tests_properties(FipsdTunPrivilegedSmokeTest PROPERTIES TIMEOUT 600 SKIP_RETURN_CODE 77
   LABELS "fips;tun;privileged" ENVIRONMENT "FIPSD_WORKERS=2")
 set_tests_properties(FipsdIpv6PrivilegedSmokeTest PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77
   LABELS "fips;tun;ipv6;privileged" ENVIRONMENT "FIPSD_WORKERS=2")
@@ -144,6 +160,18 @@ if(FIPSD_POWERSHELL)
     LABELS "fips;tun;ipv6;privileged;integration")
   nostrc_describe_test(FipsdWindowsTwoNodeSmokeTest OWNER fipsd TARGETS fipsd
     INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/windows_two_node_smoke.ps1")
+  # The service end to end (nostrc-iq1n9.6.3): ZIP, install-service.ps1, the
+  # SCM, fipsctl over TCP 127.0.0.1:21210, a second node pinging across the
+  # mesh, stop and uninstall. Installs machine-wide: its own opt-in.
+  get_filename_component(_fipsd_toolchain_bin "${CMAKE_C_COMPILER}" DIRECTORY)
+  add_test(NAME FipsdWindowsServiceSmokeTest COMMAND "${FIPSD_POWERSHELL}" -NoProfile -ExecutionPolicy Bypass
+    -File "${CMAKE_CURRENT_SOURCE_DIR}/windows_service_smoke.ps1" -BuildDir "${CMAKE_BINARY_DIR}"
+    -DllPath "${_fipsd_toolchain_bin}")
+  set_tests_properties(FipsdWindowsServiceSmokeTest PROPERTIES TIMEOUT 600 SKIP_RETURN_CODE 77
+    LABELS "fips;tun;ipv6;privileged;integration;packaging")
+  nostrc_describe_test(FipsdWindowsServiceSmokeTest OWNER fipsd TARGETS fipsd fipsctl
+    INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/windows_service_smoke.ps1"
+      "${CMAKE_CURRENT_SOURCE_DIR}/../packaging/windows")
 endif()
 fipsd_unit_test(fipsd_ipv6_codec_test test_ipv6_codec.c)
 fipsd_unit_test(fipsd_ipv6_icmp_test test_ipv6_icmp.c)
@@ -159,7 +187,8 @@ set_tests_properties(FipsdUdpConnResetTest PROPERTIES TIMEOUT 30 SKIP_RETURN_COD
 add_dependencies(fipsd_tests fipsd_tun_winnet_test fipsd_tun_windows_test fipsd_tun_privileged_test
   fipsd_ipv6_codec_test fipsd_ipv6_icmp_test fipsd_ipv6_firewall_test fipsd_udp_connreset_test)
 
-foreach(_test FipsdHostOsTest FipsdCliParseTest FipsdPeerTest FipsdNodeLifecycleTest
+foreach(_test FipsdHostOsTest FipsdCliParseTest FipsdServiceStatusTest FipsdControlTcpTest
+    FipsdControlTcpCapacityTest FipsdPeerTest FipsdNodeLifecycleTest
     FipsdNodeLifecycleFailureTest FipsdNodeWorkersTest FipsdNodeContextTest FipsdNodeIdentityFailureTest
     FipsdNodeHandlerFailureTest FipsdNodeTwoNodesTest FipsdUdpTwoNodesV4Test FipsdUdpTwoNodesV6Test
     FipsdNodeHandlersTest FipsdNodeStpAcksTest FipsdNodeStpAcksNoReportTest FipsdNodePathPresenceTest

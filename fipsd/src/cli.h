@@ -16,9 +16,14 @@
  *                       the linked libfips-core version
  *   -h, --help          usage
  *
+ * Windows only (upstream's cfg(windows) flags; a usage error elsewhere):
+ *       --service           run under the service control manager (hidden:
+ *                           the registered service's command line)
+ *       --install-service   register the fipsd service at this executable
+ *       --uninstall-service stop and delete the fipsd service
+ *
  * Exit codes: 0 clean shutdown / help / version; 1 start-up failure;
  * 2 usage error (unknown flag, missing value, stray positional).
- * The Windows service flags are out of scope for this host.
  */
 
 typedef enum fipsd_cli_action {
@@ -26,7 +31,11 @@ typedef enum fipsd_cli_action {
     FIPSD_CLI_HELP,
     FIPSD_CLI_VERSION_SHORT,
     FIPSD_CLI_VERSION_LONG,
-    FIPSD_CLI_USAGE_ERROR
+    FIPSD_CLI_USAGE_ERROR,
+#if defined(_WIN32)
+    FIPSD_CLI_INSTALL_SERVICE,
+    FIPSD_CLI_UNINSTALL_SERVICE,
+#endif
 } fipsd_cli_action;
 
 /* Captured for the configuration loader (nostrc-9keoz.2); not parsed here.
@@ -34,6 +43,7 @@ typedef enum fipsd_cli_action {
 typedef struct fipsd_options {
     const char *config_path; /* NULL: default search paths */
     const char *log_file;    /* NULL: stderr */
+    bool service;            /* Windows --service */
 } fipsd_options;
 
 #define FIPSD_EXIT_OK 0
