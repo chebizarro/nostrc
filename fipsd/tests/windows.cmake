@@ -144,7 +144,9 @@ set_tests_properties(FipsdTunWindowsTest PROPERTIES TIMEOUT 120 LABELS "fips;tun
 fipsd_unit_test(fipsd_tun_privileged_test test_tun_windows_privileged.c)
 add_test(NAME FipsdTunPrivilegedSmokeTest COMMAND fipsd_tun_privileged_test device)
 add_test(NAME FipsdIpv6PrivilegedSmokeTest COMMAND fipsd_tun_privileged_test shim)
-set_tests_properties(FipsdTunPrivilegedSmokeTest PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77
+# The device smoke reads every row back through about twenty powershell runs:
+# under 20 s here, but each run is several seconds on a fresh hosted runner.
+set_tests_properties(FipsdTunPrivilegedSmokeTest PROPERTIES TIMEOUT 600 SKIP_RETURN_CODE 77
   LABELS "fips;tun;privileged" ENVIRONMENT "FIPSD_WORKERS=2")
 set_tests_properties(FipsdIpv6PrivilegedSmokeTest PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77
   LABELS "fips;tun;ipv6;privileged" ENVIRONMENT "FIPSD_WORKERS=2")
