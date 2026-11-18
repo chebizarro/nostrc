@@ -459,6 +459,11 @@ static snap *build(handlers *h, fips_instant now)
     }
     return x;
 }
+#ifdef FIPSD_TEST_HOOKS
+/* Test binaries alone link this provider copy. Set before runtime start and
+ * clear after join; capacity-one pulses coalesce without blocking dispatch. */
+GoChannel *fipsd_test_published;
+#endif
 void hs_publish(handlers *h, fips_instant now)
 {
     if (!h->attached) return;
@@ -468,6 +473,9 @@ void hs_publish(handlers *h, fips_instant now)
     if (!x) return;
     if (!go_swap_store(h->snapshot, x)) { snap_free(x); return; }
     ++h->snapshot_generation; h->dirty = false;
+#ifdef FIPSD_TEST_HOOKS
+    if (fipsd_test_published) (void)go_channel_try_send(fipsd_test_published, h);
+#endif
 }
 static GoRefPtr acquire(void *user) { handlers *h = user; return go_swap_load(h->snapshot); }
 json_t *hs_control_enqueue(handlers *h, const char *name, const json_t *params, const fipsd_control_request_context *rc);

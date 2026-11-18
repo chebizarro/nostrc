@@ -117,6 +117,7 @@ int main(void)
     fipsd_ble_radio *ra = radio_of[0], *rb = radio_of[1];
     assert(fipsd_runtime_register(rt, fipsd_node_subsystem(a.node)) == 0);
     assert(fipsd_runtime_register(rt, fipsd_node_subsystem(b.node)) == 0);
+    nt_watch_publications();
     assert(fipsd_runtime_start(rt) == 0);
     nt_identity(&a); nt_identity(&b);
     /* 1. Discovery -> PSM -> L2CAP -> key exchange -> auto-connect -> IK. */
@@ -142,6 +143,8 @@ int main(void)
     datagram(&b, &a, 2000, 1000, "hello from b");
     /* 4. The control projection, as upstream show_transports / show_peers. */
     for (test_node *n = &a; n; n = n == &a ? &b : NULL) {
+        nt_pair_state want = {.root = root, .is_root = n == root};
+        assert(nt_await_converged(n, nt_pair_converged, &want, nt_ms() + NT_WAIT_MS));
         json_t *transports = nt_query(n, "show_transports");
         json_t *tr = json_array_get(data_of(transports, "transports"), 0), *stats = json_object_get(tr, "stats");
         assert(!strcmp(json_string_value(json_object_get(tr, "type")), "ble") && !strcmp(json_string_value(json_object_get(tr, "state")), "up"));
@@ -182,6 +185,7 @@ int main(void)
     assert(fipsd_runtime_run(rt) == FIPSD_RUN_OK);
     nt_drain(&a); nt_drain(&b);
     nt_print_trace("two-node BLE proof over the simulated radio");
+    nt_unwatch_publications();
     fipsd_runtime_destroy(rt);
     ble_node_destroy(&a); ble_node_destroy(&b);
     fipsd_ble_air_destroy(air);

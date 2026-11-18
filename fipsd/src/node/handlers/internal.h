@@ -124,6 +124,8 @@ typedef enum fipsd_wipe_event {
 typedef void (*fipsd_wipe_hook)(void *user, handlers *h, fipsd_wipe_event ev, const uint8_t *bytes, size_t size, bool was_dirty);
 extern fipsd_wipe_hook fipsd_test_wipe_hook;
 extern void *fipsd_test_wipe_user;
+/* Publication observation only, in the test-local provider.c copy. */
+extern GoChannel *fipsd_test_published;
 #endif
 static inline void hs_wipe(handlers *h, fipsd_wipe_event ev, void *bytes, size_t size)
 {

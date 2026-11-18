@@ -34,6 +34,16 @@ static json_t *data_of(json_t *response, const char *key)
     assert(data);
     return key ? json_object_get(data, key) : data;
 }
+static bool rekey_converged(const fipsd_control_snapshot *s, const void *arg)
+{
+    bool link = *(const bool *)arg;
+    const json_t *session = json_array_get(s->sessions, 0), *peer = json_array_get(s->peers, 0);
+    const char *state = json_string_value(json_object_get(session, "state"));
+    return json_array_size(s->sessions) == 1 && state && !strcmp(state, "established") &&
+        json_is_true(json_object_get(session, "current_k_bit")) &&
+        (link ? json_array_size(s->peers) == 1 && json_is_true(json_object_get(peer, "current_k_bit")) :
+                json_is_true(json_object_get(session, "is_draining")));
+}
 int main(void)
 {
 #if defined(FIPSD_TEST_UDP) || defined(FIPSD_TEST_TCP)
@@ -60,6 +70,7 @@ int main(void)
 #endif
     assert(fipsd_runtime_register(rt, fipsd_node_subsystem(a.node)) == 0);
     assert(fipsd_runtime_register(rt, fipsd_node_subsystem(b.node)) == 0);
+    nt_watch_publications();
     assert(fipsd_runtime_start(rt) == 0);
 #if defined(FIPSD_TEST_UDP) || defined(FIPSD_TEST_TCP)
     for (test_node *n = &a; n; n = n == &a ? &b : NULL) {
@@ -99,6 +110,8 @@ int main(void)
     e = nt_await(&a, FIPSD_NOTICE_FILTER_ACCEPTED, &b.identity.node_addr, NT_WAIT_MS); assert(e); free(e);
     e = nt_await(&b, FIPSD_NOTICE_FILTER_ACCEPTED, &a.identity.node_addr, NT_WAIT_MS); assert(e); free(e);
     for (test_node *n = &a; n; n = n == &a ? &b : NULL) {
+        nt_pair_state want = {.root = root, .is_root = n == root};
+        assert(nt_await_converged(n, nt_pair_converged, &want, nt_ms() + NT_WAIT_MS));
         json_t *tree = nt_query(n, "show_tree");
         char root_hex[33]; (void)fips_node_addr_format(&root->identity.node_addr, root_hex, sizeof root_hex);
         assert(!strcmp(json_string_value(data_of(tree, "root")), root_hex));
@@ -153,6 +166,8 @@ int main(void)
      * show_sessions keeps `state: established` and says so in `is_draining`
      * (nostrc-f66sr.1 regression: C used to report a `draining` state). */
     for (test_node *n = &a; n; n = n == &a ? &b : NULL) {
+        const bool link_rekeyed = false;
+        assert(nt_await_converged(n, rekey_converged, &link_rekeyed, nt_ms() + NT_WAIT_MS));
         json_t *sessions = nt_query(n, "show_sessions");
         json_t *row = json_array_get(data_of(sessions, "sessions"), 0);
         assert(row && !strcmp(json_string_value(json_object_get(row, "state")), "established"));
@@ -165,6 +180,8 @@ int main(void)
     assert(fipsd_node_handlers_send(a.h, &b.identity.node_addr, 1000, 2000, reply, sizeof reply) == 0);
     e = nt_await(&b, FIPSD_NOTICE_DATAGRAM, &a.identity.node_addr, NT_WAIT_MS); assert(e); free(e);
     for (test_node *n = &a; n; n = n == &a ? &b : NULL) {
+        const bool link_rekeyed = true;
+        assert(nt_await_converged(n, rekey_converged, &link_rekeyed, nt_ms() + NT_WAIT_MS));
         json_t *sessions = nt_query(n, "show_sessions");
         json_t *rows = data_of(sessions, "sessions");
         assert(json_array_size(rows) == 1);
@@ -241,6 +258,8 @@ int main(void)
     assert(nt_socket_count(b.transport) == 0);
 #endif
     {
+        const size_t none = 0;
+        assert(nt_await_converged(&b, nt_peer_count, &none, nt_ms() + NT_WAIT_MS));
         json_t *peers = nt_query(&b, "show_peers");
         assert(json_array_size(data_of(peers, "peers")) == 0);
         json_decref(peers);
@@ -274,6 +293,7 @@ int main(void)
 #else
     nt_print_trace("two-node loopback proof");
 #endif
+    nt_unwatch_publications();
     fipsd_runtime_destroy(rt);
     nt_destroy(&a); nt_destroy(&b);
     fipsd_loopback_network_destroy(net);
