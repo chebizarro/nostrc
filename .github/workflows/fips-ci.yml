@@ -215,6 +215,172 @@ jobs:
         with:
           name: ${{ inputs.artifact_prefix }}fips-interop-udp-${{ matrix.os }}
           path: build/Testing/Temporary/
+  windows:
+    # fipsd/README.md "Building on Windows (MSYS2)" and "Windows CI": the
+    # Windows subset, then the privileged TUN, two-node and service smokes
+    # (hosted Windows runners are elevated), which must run rather than skip.
+    name: Windows 11 ARM64 • FIPS • MSYS2 CLANGARM64
+    if: github.event_name != 'schedule'
+    runs-on: windows-11-arm
+    timeout-minutes: 120
+    env:
+      SECP256K1_TAG: v0.6.0
+      WINTUN_SHA256: 07C256185D6EE3652E09FA55C0B673E2624B565E02C4B9091C79CA7D2F24EF51
+    steps:
+      # Goldens are compared byte for byte: no CRLF conversion on checkout.
+      - name: Check out with LF line endings
+        shell: pwsh
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          ref: ${{ inputs.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify requested checkout
+        if: inputs.sha != ''
+        shell: bash
+        env:
+          REQUESTED_SHA: ${{ inputs.sha }}
+        run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
+      - name: Set up MSYS2 CLANGARM64
+        id: msys2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: CLANGARM64
+          update: false
+          install: >-
+            git
+            mingw-w64-clang-aarch64-clang
+            mingw-w64-clang-aarch64-cmake
+            mingw-w64-clang-aarch64-ninja
+            mingw-w64-clang-aarch64-pkgconf
+            mingw-w64-clang-aarch64-openssl
+            mingw-w64-clang-aarch64-libsodium
+            mingw-w64-clang-aarch64-jansson
+            mingw-w64-clang-aarch64-libyaml
+            mingw-w64-clang-aarch64-nsync
+            mingw-w64-clang-aarch64-libwebsockets
+            mingw-w64-clang-aarch64-curl
+            mingw-w64-clang-aarch64-glib2
+            mingw-w64-clang-aarch64-python
+            mingw-w64-clang-aarch64-ncurses
+      # MSYS2 has no libsecp256k1 package: build a pinned tag once per
+      # toolchain into its own prefix, cached.
+      - name: Restore libsecp256k1
+        id: secp256k1
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/secp256k1
+          key: secp256k1-${{ runner.os }}-${{ runner.arch }}-clangarm64-${{ env.SECP256K1_TAG }}-v1
+      - name: Build libsecp256k1
+        if: steps.secp256k1.outputs.cache-hit != 'true'
+        shell: msys2 {0}
+        run: |
+          tmp="$(cygpath -u "$RUNNER_TEMP")"
+          git clone --depth 1 --branch "$SECP256K1_TAG" https://github.com/bitcoin-core/secp256k1.git "$tmp/secp256k1-src"
+          cmake -S "$tmp/secp256k1-src" -B "$tmp/secp256k1-build" -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=clang -DCMAKE_INSTALL_PREFIX="$tmp/secp256k1" -DSECP256K1_ENABLE_MODULE_RECOVERY=ON \
+            -DSECP256K1_ENABLE_MODULE_ECDH=ON -DSECP256K1_ENABLE_MODULE_SCHNORRSIG=ON \
+            -DSECP256K1_ENABLE_MODULE_EXTRAKEYS=ON -DSECP256K1_BUILD_TESTS=OFF \
+            -DSECP256K1_BUILD_EXHAUSTIVE_TESTS=OFF -DSECP256K1_BUILD_BENCHMARK=OFF
+          cmake --build "$tmp/secp256k1-build"
+          cmake --install "$tmp/secp256k1-build"
+      - name: Use libsecp256k1
+        shell: msys2 {0}
+        run: |
+          prefix="$(cygpath -u "$RUNNER_TEMP")/secp256k1"
+          test -f "$prefix/lib/pkgconfig/libsecp256k1.pc"
+          echo "SECP256K1_PREFIX=$prefix" >> "$GITHUB_ENV"
+      - name: PSScriptAnalyzer (packaging/windows)
+        shell: pwsh
+        run: |
+          if (-not (Get-Module -ListAvailable PSScriptAnalyzer)) {
+            Install-Module -Name PSScriptAnalyzer -Force -Scope CurrentUser
+          }
+          $settings = 'fipsd/packaging/windows/PSScriptAnalyzerSettings.psd1'
+          $results = @(Invoke-ScriptAnalyzer -Path fipsd/packaging/windows/*.ps1 -Settings $settings) +
+            @(Invoke-ScriptAnalyzer -Path fipsd/tests/windows_service_smoke.ps1 -Settings $settings)
+          if ($results.Count) {
+            $results | Format-Table -AutoSize -Wrap ScriptName, Line, RuleName, Message
+            Write-Error "PSScriptAnalyzer found $($results.Count) issue(s)"
+            exit 1
+          }
+          Write-Host 'PSScriptAnalyzer: no issues'
+      # The README's configure line: no PYTHONUTF8, no -DFIPSD_ENABLE_BLE.
+      - name: Configure
+        shell: msys2 {0}
+        run: |
+          git config --global --add safe.directory '*'
+          export PKG_CONFIG_PATH="$SECP256K1_PREFIX/lib/pkgconfig:$PKG_CONFIG_PATH"
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
+            -DGO_WARNINGS_AS_ERRORS=ON -DBUILD_TESTING=ON -DBUILD_FIPS=ON \
+            -DBUILD_TESTING_FRAMEWORK=OFF -DBUILD_SIGNER_TESTS=OFF -DLIBNOSTR_BUILD_TESTS=OFF \
+            -DBUILD_LIBMARMOT=OFF -DBUILD_MARMOT_GOBJECT=OFF -DBUILD_LIBHANAMI=OFF \
+            -DBUILD_GNOSTR_APP=OFF -DBUILD_GROUNDHOG=OFF -DBUILD_RELAYD=OFF -DSIGNET_ENABLE=OFF \
+            -DENABLE_NIP55L=OFF -DENABLE_NIP5F=OFF -DENABLE_NIP57=OFF \
+            -DWITH_NOSTRDB=OFF -DLIBNOSTR_WITH_NOSTRDB=OFF -DBUILD_NOSTR_GOBJECT=OFF \
+            -DBUILD_NOSTR_GTK=OFF -DBUILD_APPS=OFF -DBUILD_LIBBLOSSOM=OFF \
+            -DBUILD_LIBPORTHOME=OFF -DBUILD_LIBVAULT=OFF -DBUILD_LIBVAULT_MARMOT=OFF -DENABLE_BUD02=OFF
+          grep -E '^(FIPSD_ENABLE_BLE|FIPSD_BUILD_FIPSTOP):' build/CMakeCache.txt
+      - name: Build FIPS targets
+        shell: msys2 {0}
+        run: |
+          cmake --build build --parallel 4 --target fipsd fipsd_tests fipsctl fipstop
+          cmake --build build --parallel 4 --target libfips-core/all libgo/all test_channel_incremental
+      - name: Fetch wintun.dll
+        shell: pwsh
+        run: |
+          $zip = Join-Path $env:RUNNER_TEMP 'wintun-0.14.1.zip'
+          Invoke-WebRequest -UseBasicParsing -Uri 'https://www.wintun.net/builds/wintun-0.14.1.zip' -OutFile $zip
+          $hash = (Get-FileHash -Algorithm SHA256 $zip).Hash
+          if ($hash -ne $env:WINTUN_SHA256) { throw "wintun-0.14.1.zip SHA-256 is $hash" }
+          $dir = Join-Path $env:RUNNER_TEMP 'wintun'
+          Expand-Archive -Path $zip -DestinationPath $dir
+          $dll = Join-Path $dir 'wintun\bin\arm64\wintun.dll'
+          $signature = Get-AuthenticodeSignature $dll
+          if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'CN=WireGuard LLC') {
+            throw "wintun.dll signature: $($signature.Status)"
+          }
+          Copy-Item $dll build/fipsd/
+          Copy-Item $dll build/fipsd/tests/
+          "FIPSD_WINTUN_ZIP=$zip" >> $env:GITHUB_ENV
+      - name: Test FIPS (Windows subset)
+        shell: msys2 {0}
+        run: |
+          export PATH="$SECP256K1_PREFIX/bin:$PATH"
+          ctest --test-dir build -R '^Go|^FipsCore|^FipsDiff|^Fipsd|^FipsTop' -LE privileged -j 2 \
+            --timeout 600 --no-tests=error --output-on-failure
+      # Elevated runner: the TUN, two-node and service smokes must run.
+      - name: Privileged smokes (Wintun, two nodes, the fipsd service)
+        shell: msys2 {0}
+        run: |
+          export PATH="$SECP256K1_PREFIX/bin:$PATH"
+          export FIPSD_TUN_PRIVILEGED_SMOKE=1 FIPSD_SERVICE_PRIVILEGED_SMOKE=1
+          ctest --test-dir build -R '^Fipsd' -L privileged --timeout 600 --no-tests=error --output-on-failure -V \
+            | tee build/privileged.log
+          status=${PIPESTATUS[0]}
+          if grep -E '\*\*\*Skipped|SKIP:' build/privileged.log; then
+            echo "::error::a privileged smoke skipped on an elevated runner"; exit 1
+          fi
+          test "$(grep -cE 'Test +#[0-9]+: Fipsd.* +Passed' build/privileged.log)" -eq 4
+          exit "$status"
+      - name: Package (build-zip.ps1)
+        if: success() || failure()
+        shell: pwsh
+        run: |
+          $bin = Join-Path '${{ steps.msys2.outputs.msys2-location }}' 'clangarm64\bin'
+          $secp = Join-Path $env:RUNNER_TEMP 'secp256k1\bin'
+          ./fipsd/packaging/windows/build-zip.ps1 -BuildDir build -DllPath $bin, $secp -WintunZip $env:FIPSD_WINTUN_ZIP
+      - uses: actions/upload-artifact@v4
+        if: success() || failure()
+        with:
+          name: ${{ inputs.artifact_prefix }}fipsd-windows-arm64
+          path: |
+            build/deploy/*.zip
+            build/Testing/Temporary/
+            build/privileged.log
+          if-no-files-found: ignore
   nightly-fuzz:
     name: Linux • FIPS nightly fuzz (60 seconds per target)
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'

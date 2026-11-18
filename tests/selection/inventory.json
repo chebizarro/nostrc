@@ -33153,7 +33153,7 @@
       "unsupported_reason": "FIPS reusable sanitizer/fuzz execution or operational dispatch; no attested profile receipt is claimed.",
       "matrix_source": "matrix:\n        os: [ubuntu-24.04, macos-latest]\n        configuration: [asan_ubsan, tsan, optimized]",
       "source_sha256": "8c6915911d1f9fa710e3eb32364ec06f29073d7737c738a6acda2e2d25cd4f5a",
-      "workflow_sha256": "026c99f8092f7dd1d74eb03f6b9f61adb68b90add9fcddc84cf9ff6317bcc159"
+      "workflow_sha256": "d254d3224b637590984b8ffeff46d94c21e17da3beac60d642a14c2ed71e5941"
     },
     ".github/workflows/fips-ci.yml:nightly-fuzz": {
       "profiles": [],
@@ -33161,7 +33161,7 @@
       "unsupported_reason": "FIPS reusable sanitizer/fuzz execution or operational dispatch; no attested profile receipt is claimed.",
       "matrix_source": "",
       "source_sha256": "be21595dabf9b0f487ae287871999484c9e22ea5650adb5633164661da03fde2",
-      "workflow_sha256": "026c99f8092f7dd1d74eb03f6b9f61adb68b90add9fcddc84cf9ff6317bcc159"
+      "workflow_sha256": "d254d3224b637590984b8ffeff46d94c21e17da3beac60d642a14c2ed71e5941"
     },
     ".github/workflows/fips-ci.yml:interop-udp": {
       "profiles": [],
@@ -33169,7 +33169,15 @@
       "unsupported_reason": "Pinned Rust UDP interoperability execution, not an attested selected-normal profile receipt.",
       "matrix_source": "matrix:\n        os: [ubuntu-24.04, macos-latest]",
       "source_sha256": "61ddb558550a39e87811c2910fbace79dbbd9e994cb9939722d021b916361d22",
-      "workflow_sha256": "026c99f8092f7dd1d74eb03f6b9f61adb68b90add9fcddc84cf9ff6317bcc159"
+      "workflow_sha256": "d254d3224b637590984b8ffeff46d94c21e17da3beac60d642a14c2ed71e5941"
+    },
+    ".github/workflows/fips-ci.yml:windows": {
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union",
+      "unsupported_reason": "Windows ARM64 MSYS2 build with the Windows fipsd subset and elevated Wintun/two-node/service smokes, not an attested selected-normal profile receipt.",
+      "matrix_source": "",
+      "source_sha256": "35f0a20cf5ba499492df08d21307e8ef74aac88fa9727aa27e8a1e41dfc17323",
+      "workflow_sha256": "d254d3224b637590984b8ffeff46d94c21e17da3beac60d642a14c2ed71e5941"
     },
     ".github/workflows/fips-ci.yml:chaos-netns": {
       "profiles": [],
@@ -33177,7 +33185,7 @@
       "unsupported_reason": "Privileged scheduled network-namespace chaos, not an attested selected-normal profile receipt.",
       "matrix_source": "",
       "source_sha256": "2a4de8ba9103405da3b35224a6d9935e29fbc5e41b9c6f83a75c47ed1a535b32",
-      "workflow_sha256": "026c99f8092f7dd1d74eb03f6b9f61adb68b90add9fcddc84cf9ff6317bcc159"
+      "workflow_sha256": "d254d3224b637590984b8ffeff46d94c21e17da3beac60d642a14c2ed71e5941"
     },
     ".github/workflows/fips-ci.yml:bench": {
       "profiles": [],
@@ -33185,7 +33193,7 @@
       "unsupported_reason": "Opt-in same-runner performance comparison, not an attested selected-normal profile receipt.",
       "matrix_source": "",
       "source_sha256": "93c2fa5dfd8cb1558e5f4b6d2a103bda3293a703bea83c53e4a064eee5f9c73e",
-      "workflow_sha256": "026c99f8092f7dd1d74eb03f6b9f61adb68b90add9fcddc84cf9ff6317bcc159"
+      "workflow_sha256": "d254d3224b637590984b8ffeff46d94c21e17da3beac60d642a14c2ed71e5941"
     },
     ".github/workflows/fips-packaging.yml:source": {
       "profiles": [],
