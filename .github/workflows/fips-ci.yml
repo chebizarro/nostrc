@@ -247,7 +247,7 @@ jobs:
         uses: msys2/setup-msys2@v2
         with:
           msystem: CLANGARM64
-          update: false
+          update: true
           install: >-
             git
             mingw-w64-clang-aarch64-clang
@@ -354,6 +354,18 @@ jobs:
           export PATH="$SECP256K1_PREFIX/bin:$PATH"
           ctest --test-dir build -R '^Go|^FipsCore|^FipsDiff|^Fipsd|^FipsTop' -LE privileged -j 2 \
             --timeout 600 --no-tests=error --output-on-failure
+      - name: Backtrace a crashing test (diagnostic)
+        if: failure() && steps.build.outcome == 'success'
+        shell: msys2 {0}
+        run: |
+          export PATH="$SECP256K1_PREFIX/bin:$PATH"
+          pacman -S --noconfirm --needed mingw-w64-clang-aarch64-lldb >/dev/null
+          clang --version | head -1; cmd //c ver
+          for t in build/libgo/gof_test_io_timeout.exe build/fipsd/tests/fipsd_node_lifecycle_test.exe; do
+            [ -f "$t" ] || continue
+            echo "== $t"
+            FIPSD_WORKERS=2 lldb --batch -o run -o 'bt all' -o 'register read pc lr sp' -o 'image lookup -a $pc' -- "$t" 2>&1 | tail -80 || true
+          done
       # Elevated runner: the TUN, two-node and service smokes must run.
       - name: Privileged smokes (Wintun, two nodes, the fipsd service)
         shell: msys2 {0}
