@@ -6,7 +6,7 @@ usage: check-errno-after-park.py [--root DIR] [--self-test] [FILE ...]
 Lexical, function-scoped guard, not a C control-flow or interprocedural proof.
 All gof_* calls are conservative park boundaries except known non-parking
 introspection/registration helpers; channel/select/blocking-executor waits count
-as well. Loops and mutually exclusive branches are deliberately conservative.
+as well. Loops, unsequenced expressions and mutually exclusive branches are conservative.
 A justified read can carry an adjacent comment:
     /* errno-after-park: allow -- thread-only fallback; fiber branch returns */
 Use fipsd_io_errno() for C errno after a park (raw Winsock errors instead use
@@ -25,7 +25,8 @@ _spec = importlib.util.spec_from_file_location(
 _lex = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_lex)
 Finding = namedtuple("Finding", "path line detail")
-WAIT = {"go_channel_send", "go_channel_receive", "go_select", "go_select_timeout",
+WAIT = {"go_channel_send", "go_channel_receive", "go_channel_send_with_context",
+        "go_channel_receive_with_context", "go_select", "go_select_timeout",
         "go_blocking_submit", "go_wait_group_wait"}
 NON_PARKING = {"gof_socket_errno", "gof_in_fiber", "gof_current", "gof_hook_current",
                "gof_hook_make_runnable", "gof_io_cancel_fd", "gof_io_reset_fd",
@@ -51,7 +52,7 @@ def check_text(text, rel="<text>"):
     lines = text.splitlines()
     found = []
     for start, end in function_bodies(t):
-        parks = [k for k in range(start, end) if t.is_call[k] and
+        parks = [k for k in range(start, end) if t.is_call[k] and not t.unevaluated[k] and
                  (t.text[k - 1] in WAIT or
                   t.text[k - 1].startswith("gof_") and t.text[k - 1] not in NON_PARKING)]
         if not parks:
@@ -65,8 +66,8 @@ def check_text(text, rel="<text>"):
                 continue  # a member named errno is not TLS
             if t.text[k + 1] == "=":
                 continue  # store only; compound assignment still reads
-            if k < parks[0] and not loops:
-                continue
+            if k < parks[0] and not loops and ";" in t.text[k:parks[0]]:
+                continue  # earlier full expression; same-expression order is unsafe
             line = t.line(k)
             adjacent = "\n".join(lines[max(0, line - 2):line])
             # Only comments, not strings/code, authorize an exception.
@@ -99,6 +100,8 @@ def self_test():
         "int f(void) { gof_sleep_ms(1); return errno; }",
         "int f(void) { go_channel_receive(c,&v); return errno; }",
         "int f(void) { go_select(c,2); return errno; }",
+        "int f(void) { go_channel_receive_with_context(c,&v,ctx); return errno; }",
+        "int f(void) { go_channel_send_with_context(c,v,ctx); return errno; }",
         "int f(void) { go_wait_group_wait(g); return errno; }",
         "int f(void) { gof_write(fd,b,n); errno += 1; }",
         "int f(void) { for (;;) { if(errno) break; gof_read(fd,b,n); } }",
@@ -106,6 +109,10 @@ def self_test():
         "int f(void) { gof_new_parking_api(); return errno; }",
         "int f(void) { gof_read(fd,b,n); /* errno-after-park: allow -- */ return errno; }",
         'int f(void) { gof_read(fd,b,n); puts("errno-after-park: allow -- fake"); return errno; }',
+    ]
+    bad += [
+        "int f(void) { consume(errno, gof_read(fd,b,n)); }",
+        "int f(void) { return errno + gof_read(fd,b,n); }",
     ]
     bad.append('int f(void) { gof_read(fd,b,n); puts("/* errno-after-park: allow -- fake */"); return errno; }')
     good = [
@@ -116,6 +123,7 @@ def self_test():
         'int f(void) { gof_read(fd,b,n); puts("errno"); /* errno */ return 0; }',
         "int f(void) { gof_io_reset_fd(fd); return errno; }",
         "int f(void) { gof_in_fiber(); return errno; }",
+        "int f(void) { sizeof(gof_read(fd,b,n)); return errno; }",
         "int f(void) { gof_read(fd,b,n); return s->errno; }",
         "int f(void) { gof_read(fd,b,n); return sizeof(errno); }",
         "int f(void) { gof_read(fd,b,n); /* errno-after-park: allow -- thread-only fallback */ return errno; }",
