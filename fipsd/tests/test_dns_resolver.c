@@ -343,8 +343,9 @@ int main(void)
       fipsd_hosts_map_clear(&hosts);
       /* an npub .fips name resolves in lower, upper and mixed case, echoing the name as sent */
       { char upper[FIPS_NIP19_CAPACITY], alt[FIPS_NIP19_CAPACITY], ncap[FIPS_NIP19_CAPACITY];
+        CHECK(strlen(id.npub) < sizeof upper);
         for (size_t i = 0; i <= strlen(id.npub); ++i) { upper[i] = (char)toupper((unsigned char)id.npub[i]); alt[i] = i % 2 == 0 ? (char)toupper((unsigned char)id.npub[i]) : id.npub[i]; }
-        snprintf(ncap, sizeof ncap, "N%s", id.npub + 1);
+        memcpy(ncap, id.npub, strlen(id.npub) + 1); ncap[0] = 'N';
         const char *labels[4] = {id.npub, upper, alt, ncap};
         for (int i = 0; i < 4; ++i) {
             snprintf(name, sizeof name, "%s.fips", labels[i]);

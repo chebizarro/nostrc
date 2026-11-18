@@ -202,7 +202,8 @@ fipsd_ipv6_filter_state fipsd_ipv6_filter_classify(const fipsd_ipv6_filter_class
             switch (m->kind) {
             case M_IIFNAME:
                 if (m->has_name) break; /* the table's iif scoping: skip */
-                /* fall through: a set/other shape is not decomposed */
+                /* A set/other shape is not decomposed. */
+                /* fall through */
             case M_UNRECOGNIZED:
                 if (rule_might_reference_port(r, proto, port)) saw_unknown_for_port = true;
                 canonical_for_port = false;

@@ -481,7 +481,7 @@ static void test_responder(void)
     CHECK(poll_at(r, 9120) == 1);
     /* Legacy unicast (source port not 5353): an immediate unicast reply
      * echoing the ID and question, TTLs at most 10 s, no cache-flush. */
-    fipsd_mdns_name hn; char hl[80]; snprintf(hl, sizeof hl, "%s.local.", label); hn = N(hl);
+    fipsd_mdns_name hn; char hl[sizeof label + sizeof "-2.local."]; snprintf(hl, sizeof hl, "%s.local.", label); hn = N(hl);
     fipsd_mdns_writer_init(&w, q, sizeof q, 0x4242, 0);
     CHECK(fipsd_mdns_put_question(&w, &hn, FIPSD_MDNS_TYPE_A, false));
     qn = fipsd_mdns_writer_finish(&w); qm = *decode(q, qn);
@@ -532,7 +532,7 @@ static void test_responder(void)
     fipsd_mdns_responder_on_message(r, &qm, 4, &from, true, 150);
     CHECK(!strcmp(fipsd_mdns_responder_label(r), label));
     fipsd_mdns_responder_on_message(r, &qm, 4, &from, false, 150);
-    char renamed[80]; snprintf(renamed, sizeof renamed, "%s-2", label);
+    char renamed[sizeof label + sizeof "-2"]; snprintf(renamed, sizeof renamed, "%s-2", label);
     CHECK(!strcmp(fipsd_mdns_responder_label(r), renamed));
     snprintf(hl, sizeof hl, "%s.local.", renamed);
     CHECK(fipsd_mdns_host_is_advertisers(hl, npub, strlen(npub)));

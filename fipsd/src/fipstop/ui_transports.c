@@ -15,7 +15,8 @@ void ft_ui_transports(ft_frame *f,ft_app *a,ft_rect r)
     }
     char title[128]; size_t tn=json_array_size(ft_rows(a,FT_TRANSPORTS));
     if(n>tn) snprintf(title,sizeof(title)," Transports (%zu) Links (%zu) ",tn,n-tn);
-    else snprintf(title,sizeof(title)," Transports (%zu) ",tn); ft_rect outer=table; table=ft_box(f,table,title,false);
+    else snprintf(title,sizeof(title)," Transports (%zu) ",tn);
+    ft_rect outer=table; table=ft_box(f,table,title,false);
     if(a->selected[FT_TRANSPORTS]>=0) { table.x+=2; table.w=table.w>2?table.w-2:0; }
     bool narrow=table.w<100;
     ft_column cols[]={{"Transport / Link","label",narrow?12:18},{"Instance","instance",narrow?18:20},

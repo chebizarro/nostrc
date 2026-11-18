@@ -308,7 +308,7 @@ int main(int argc, char **argv)
     fipsd_node_handlers_config hc; fipsd_node_handlers_config_default(&hc);
     hc.peer_capacity = hc.tree_peer_capacity = hc.session_capacity = 8; hc.cache_entries = 64; hc.notice_capacity = 1024;
     /* Retain upstream's 500ms tree/bloom pacing and 1s tick. */
-    char names[NT_MAX_NODES][8];
+    char names[NT_MAX_NODES][3 * sizeof(size_t) + 2];
     for (size_t i = 0; i < count; ++i) {
         char yaml[256], key[65]; memset(key, '1' + (int)i, 64); key[64] = 0;
         snprintf(yaml, sizeof yaml, "node: {identity: {nsec: '%s', persistent: false}, control: {enabled: false}}", key);

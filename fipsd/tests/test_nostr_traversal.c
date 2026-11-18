@@ -257,7 +257,8 @@ static void traverse(void)
     fips_transport_addr bound[2];for(unsigned i=0;i<2;++i)assert(fipsd_udp_address(nodes[i].udp,&bound[i]));
     bool saw[2]={false,false};for(unsigned j=0;j<3;++j){stun_request *q=receive(server.requests);for(unsigned i=0;i<2;++i)if(fips_transport_addr_equal(&q->source,&bound[i]))saw[i]=true;free(q);}assert(saw[0]&&saw[1]);
     fipsd_runtime_shutdown(rt);assert(fipsd_runtime_run(rt)==FIPSD_RUN_OK);fipsd_runtime_destroy(rt);
-    for(unsigned i=0;i<2;++i)destroy_node(&nodes[i]);stun_fixture_stop(&server);fixture_destroy(f);
+    for(unsigned i=0;i<2;++i)destroy_node(&nodes[i]);
+    stun_fixture_stop(&server);fixture_destroy(f);
     puts("two nodes: STUN on shared UDP tuple -> Nostr advert/offer/answer -> NPTC/NPTA -> authenticated IK + connected UDP: OK (loopback, not NAT)");
 }
 typedef struct { GoChannel *live, *signals; } signal_observer;
@@ -343,5 +344,6 @@ int main(int argc,char **argv)
     (void)fipsd_test_tmpdir(NULL);assert(sodium_init()>=0);assert(argc==2);
     if(!strcmp(argv[1],"codecs"))codecs();else if(!strcmp(argv[1],"states"))states();
     else if(!strcmp(argv[1],"stun"))stun_io();else if(!strcmp(argv[1],"traverse"))traverse();
-    else if(!strcmp(argv[1],"guards"))guards();else abort();return 0;
+    else if(!strcmp(argv[1],"guards"))guards();else abort();
+    return 0;
 }

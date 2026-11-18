@@ -313,7 +313,7 @@ static int test_rolling(void)
     /* Cleanup. */
     const char *names[] = {"fipsd.log", "fipsd.log.1", "fipsd.log.2", "fipsd.log.3"};
     for (size_t i = 0; i < 4; i++) {
-        char p[PATH_MAX];
+        char p[sizeof nested + sizeof "/fipsd.log.3"];
         snprintf(p, sizeof(p), "%s/%s", nested, names[i]);
         unlink(p);
     }

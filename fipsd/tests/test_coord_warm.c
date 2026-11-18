@@ -51,7 +51,7 @@ int main(void)
     fips_node_addr protected = {{8}};
     uint8_t protected_path[2][16]; memcpy(protected_path[0], protected.bytes, 16); memcpy(protected_path[1], h->me.bytes, 16);
     fips_cached_coord verified;
-    assert(fips_cached_coord_from_addrs(&verified, protected_path, 2) == FIPS_OK);
+    assert(fips_cached_coord_from_addrs(&verified, (const uint8_t (*)[16])protected_path, 2) == FIPS_OK);
     assert(fips_coord_cache_insert_verified(&h->cache, protected.bytes, &verified, fips_test_instant(0)) == FIPS_OK);
     path[2] = h->me;
     /* The shared setup/transit hint path must retain master's contract:

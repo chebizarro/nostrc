@@ -154,9 +154,11 @@ static void effect(void *c, const fips_rekey_output *o, const uint8_t *plaintext
         if (x->entry && x->result) { x->result->delivered = true; x->result->begin = o->begin; x->result->end = o->end; }
         (void)len; break;
     case FIPS_REKEY_OUT_Bind:
-        if (x->rec) hs_index_bind(h, &x->rec->addr, o->transport, o->index); break;
+        if (x->rec) hs_index_bind(h, &x->rec->addr, o->transport, o->index);
+        break;
     case FIPS_REKEY_OUT_Unbind:
-        if (x->rec) hs_index_unbind(h, o->transport, o->index); break;
+        if (x->rec) hs_index_unbind(h, o->transport, o->index);
+        break;
     case FIPS_REKEY_OUT_Installed:
         if (x->rec) link_installed(h, x->rec, o);
         else x->session_installed = true;
@@ -165,7 +167,8 @@ static void effect(void *c, const fips_rekey_output *o, const uint8_t *plaintext
         if (x->rec) link_restarted(h, x->rec);
         break;
     case FIPS_REKEY_OUT_ReplaceRequested:
-        if (x->result) x->result->replace = true; break;
+        if (x->result) x->result->replace = true;
+        break;
     case FIPS_REKEY_OUT_Teardown:
         ++h->counters.rekey_teardown;
         if (x->result) x->result->teardown = true;

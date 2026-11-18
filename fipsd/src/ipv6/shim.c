@@ -272,7 +272,8 @@ static void on_notice(fipsd_ipv6_shim *s, fipsd_node_notice *n)
     switch (n->kind) {
     case FIPSD_NOTICE_DATAGRAM:
         if (n->dst_port == FIPSD_IPV6_PORT) { deliver(s, n); fipsd_node_notice_free(n); return; }
-        /* fall through: a datagram on another port still proves the peer routable */
+        /* A datagram on another port still proves the peer routable. */
+        /* fall through */
     case FIPSD_NOTICE_LINK_UP: case FIPSD_NOTICE_SESSION_UP:
         m = (fipsd_ipv6_from_mesh){.kind = FIPSD_IPV6_MESH_KNOWN_KEY, .peer = n->peer};
         (void)fipsd_ipv6_mesh_state_apply(&s->state, &m, NULL);

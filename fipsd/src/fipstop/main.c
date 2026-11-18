@@ -107,7 +107,8 @@ int main(int argc,char **argv)
         ft_frame frame;
         if(!ft_frame_init(&frame,w,h)) { ft_app_free(&app); return 1; }
         app.now_ms=app.fetched_ms; app.wall_ms=fixtures?1700000000000ULL:ft_wall_ms();
-        if(fixtures) fixture_graph(&app,fixtures); ft_draw(&frame,&app); ft_frame_print(&frame,stdout);
+        if(fixtures) fixture_graph(&app,fixtures);
+        ft_draw(&frame,&app); ft_frame_print(&frame,stdout);
         ft_frame_free(&frame); ft_app_free(&app); return ferror(stdout)?1:0;
     }
     if(!isatty(STDIN_FILENO)||!isatty(STDOUT_FILENO)) { fputs("error: terminal required\n",stderr); ft_app_free(&app); return 1; }

@@ -184,7 +184,7 @@ fips_status fips_fmp_build_msg1(fips_session_index s, const uint8_t *noise, size
 { return build_handshake(FIPS_FMP_PHASE_MSG1, s, (fips_session_index){0}, noise, n, w, e); }
 fips_status fips_fmp_build_msg2(fips_session_index s, fips_session_index r, const uint8_t *noise, size_t n, fips_writer *w, fips_proto_error *e)
 { return build_handshake(FIPS_FMP_PHASE_MSG2, s, r, noise, n, w, e); }
-void fips_fmp_build_established_header(fips_session_index r, uint64_t counter, uint8_t flags, uint16_t n, uint8_t *out)
+void fips_fmp_build_established_header(fips_session_index r, uint64_t counter, uint8_t flags, uint16_t n, uint8_t out[FIPS_FRAMING_FMP_ESTABLISHED_HEADER_SIZE])
 {
     fips_writer w;
     fips_writer_init(&w, out, FIPS_FRAMING_FMP_ESTABLISHED_HEADER_SIZE);
@@ -194,7 +194,7 @@ void fips_fmp_build_established_header(fips_session_index r, uint64_t counter, u
     fips_writer_write_u32_le(&w, r.value, NULL);
     fips_writer_write_u64_le(&w, counter, NULL);
 }
-fips_status fips_fmp_build_encrypted(const uint8_t *header, const uint8_t *ciphertext, size_t n, fips_writer *w, fips_proto_error *e)
+fips_status fips_fmp_build_encrypted(const uint8_t header[FIPS_FRAMING_FMP_ESTABLISHED_HEADER_SIZE], const uint8_t *ciphertext, size_t n, fips_writer *w, fips_proto_error *e)
 {
     const size_t h = FIPS_FRAMING_FMP_ESTABLISHED_HEADER_SIZE;
     if (n > SIZE_MAX - h) return long_message(SIZE_MAX - h, n, e);

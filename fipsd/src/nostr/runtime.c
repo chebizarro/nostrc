@@ -382,7 +382,8 @@ static void connect_relay(fipsd_nostr_runtime *r, relay_slot *s)
     s->retry_at = 0; Error *err = NULL;
     if (!nostr_relay_connect_with_context(s->relay, r->cancel.context, &err)) {
         FIPSD_WARN("nostr", "connect %s: %s", s->url, err ? err->message : "failed");
-        if (err) free_error(err); retry(r, s); return;
+        if (err) free_error(err);
+        retry(r, s); return;
     }
     authenticate(r, s); publish_local(r, s, false);
 }
@@ -529,7 +530,8 @@ static void start_query(fipsd_nostr_runtime *r, const char *key)
         nostr_simple_pool_add_relay(pool, nostr_relay_ref(r->relays[i].relay));
     NostrFilters *fs = nostr_filters_new();
     if (!fs || !filter_add(fs, advert_filter(r, key, true))) {
-        if (fs) nostr_filters_free(fs); finish_query(r, false); return;
+        if (fs) nostr_filters_free(fs);
+        finish_query(r, false); return;
     }
     nostr_simple_pool_subscribe_async(pool, urls, n, *fs, false); nostr_filters_free(fs);
     nostr_simple_pool_start(pool);
