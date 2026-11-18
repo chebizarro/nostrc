@@ -51,6 +51,10 @@ typedef struct SubscriptionRegistry SubscriptionRegistry;
 typedef struct _NostrSimplePool {
     NostrRelay **relays;
     size_t relay_count;
+    /* Protects relay/subscription arrays, the filter/dedup policy and table,
+     * middleware configuration, auto-unsubscribe and brown-list enablement.
+     * Internal nested order: pool_mutex -> subscription registry mutex.
+     * Middleware is snapshotted here but called without pool_mutex held. */
     pthread_mutex_t pool_mutex;
     void (*auth_handler)(NostrEvent *);
     void (*event_middleware)(NostrIncomingEvent *);
@@ -277,7 +281,10 @@ NOSTR_API void nostr_simple_pool_query_single(NostrSimplePool *pool, const char 
  */
 /* Middleware takes ownership of each incoming->event (free it or retain it);
  * the incoming wrapper and relay are borrowed for the call. This also applies
- * to the extended and batch variants below. */
+ * to the extended and batch variants below. Configuration is snapshotted per
+ * delivered batch. Replacing middleware does not revoke a captured callback;
+ * its code and user_data must remain valid until that batch finishes (stop()
+ * joins the worker). Do not mutate these fields directly while workers run. */
 NOSTR_API void nostr_simple_pool_set_event_middleware(NostrSimplePool *pool,
                                              void (*cb)(NostrIncomingEvent *));
 /* Borrowed source subscription during this pool's single-event middleware or

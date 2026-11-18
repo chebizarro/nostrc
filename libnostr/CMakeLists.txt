@@ -418,6 +418,11 @@ if(LIBNOSTR_BUILD_TESTS)
   target_include_directories(test_subscription_dispatch PRIVATE include src)
   add_test(NAME libnostr_subscription_dispatch COMMAND test_subscription_dispatch)
   set_tests_properties(libnostr_subscription_dispatch PROPERTIES TIMEOUT 60)
+  add_test(NAME libnostr_pool_config_concurrent COMMAND test_subscription_dispatch pool-config)
+  set_tests_properties(libnostr_pool_config_concurrent PROPERTIES TIMEOUT 60 LABELS "libnostr;pool")
+  if(COMMAND nostrc_describe_test)
+    nostrc_describe_test(libnostr_pool_config_concurrent OWNER libnostr TARGETS test_subscription_dispatch)
+  endif()
 
   # Deterministically poison private malloc storage before the real constructor.
   add_executable(test_subscription_initialization tests/test_subscription_initialization.c)
