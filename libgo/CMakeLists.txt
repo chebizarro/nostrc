@@ -254,6 +254,14 @@ if(NOT DEFINED _NOSTR_FIND_OR_VENDOR_NSYNC_DONE)
   include(FindOrVendorNsync)
 endif()
 
+# nsync's compiler dispatch recognizes Clang but not Apple's compiler ID.
+# Without this header it falls back to POSIX THREAD_LOCAL (empty), and its
+# waiter destructor races on a process-global pointer under TSan.
+if(NOSTRC_NSYNC_VENDORED AND CMAKE_C_COMPILER_ID STREQUAL "AppleClang")
+  get_target_property(_libgo_nsync_source_dir nsync SOURCE_DIR)
+  target_include_directories(nsync BEFORE PRIVATE "${_libgo_nsync_source_dir}/platform/clang")
+endif()
+
 # Include the nsync headers directory-wide for the many test/example targets.
 include_directories(${NSYNC_INCLUDE_DIR})
 
@@ -396,8 +404,8 @@ add_test(NAME GoContextStressTest COMMAND go_context_stress_test)
 add_test(NAME GoSelectClosedTest COMMAND go_select_closed_test)
 add_test(NAME GoSelectCancelTest COMMAND go_select_cancel_test)
 add_test(NAME GoChannelMpmcSlotTest COMMAND go_channel_mpmc_slot_test)
-# The stress case bounds itself at 20 s; never let a regression hang CI.
-set_tests_properties(GoChannelMpmcSlotTest PROPERTIES TIMEOUT 60)
+# Fixed work determines success; CTest alone bounds a deadlock on slow sanitizer hosts.
+set_tests_properties(GoChannelMpmcSlotTest PROPERTIES TIMEOUT 120)
 
 # Register utility tests
 add_test(NAME GoErrorTest COMMAND error_test)

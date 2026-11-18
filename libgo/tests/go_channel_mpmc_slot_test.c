@@ -310,7 +310,7 @@ static void test_capacity1_claimed_slot(int finish_with_blocking_receive) {
 }
 
 /* --- 7. capacity 1 under threads: the ticker / wake-channel shapes ------- */
-#define CAP1_RUN_MS 1500
+#define CAP1_MESSAGES 20000
 
 typedef struct {
     GoChannel *c;
@@ -318,13 +318,12 @@ typedef struct {
     atomic_ulong sent;
     atomic_ulong received;
     atomic_ulong nulls;
-    atomic_int consumer_done;
 } Cap1Stress;
 
 static void *cap1_try_producer(void *p) {
     Cap1Stress *s = p;
     unsigned long n = 0;
-    while (!atomic_load(&s->stop)) {
+    while (n < CAP1_MESSAGES) {
         if (go_channel_try_send(s->c, V(++n)) == 0)
             atomic_fetch_add(&s->sent, 1);
         else
@@ -340,7 +339,6 @@ static void *cap1_blocking_consumer(void *p) {
         if (!v) atomic_fetch_add(&s->nulls, 1);
         atomic_fetch_add(&s->received, 1);
     }
-    atomic_store(&s->consumer_done, 1);
     return NULL;
 }
 
@@ -364,19 +362,14 @@ static void test_capacity1_try_send_blocking_receive(void) {
     pthread_t prod, cons;
     CHECK(pthread_create(&cons, NULL, cap1_blocking_consumer, &s) == 0, "thread");
     CHECK(pthread_create(&prod, NULL, cap1_try_producer, &s) == 0, "thread");
-    sleep_ms(CAP1_RUN_MS);
-    atomic_store(&s.stop, 1);
     pthread_join(prod, NULL);
     go_channel_close(s.c);
-    for (int waited = 0; !atomic_load(&s.consumer_done) && waited < 3000; waited += 5)
-        sleep_ms(5);
+    pthread_join(cons, NULL);
     printf("7a: sent %lu, received %lu, NULL %lu\n", atomic_load(&s.sent),
            atomic_load(&s.received), atomic_load(&s.nulls));
-    CHECK(atomic_load(&s.consumer_done), "blocking receiver did not return after close (wedged)");
-    pthread_join(cons, NULL);
     CHECK(atomic_load(&s.nulls) == 0, "a receive returned a NULL token");
     CHECK(atomic_load(&s.received) == atomic_load(&s.sent), "tokens were lost");
-    CHECK(atomic_load(&s.sent) > 1000, "too few transfers to exercise the race");
+    CHECK(atomic_load(&s.sent) == CAP1_MESSAGES, "all fixed-work sends completed");
     go_channel_unref(s.c);
     printf("7a: ok\n");
 }
@@ -391,12 +384,11 @@ static void test_capacity1_try_try(void) {
         CHECK(pthread_create(&cons[i], NULL, cap1_try_consumer, &s) == 0, "thread");
         CHECK(pthread_create(&prod[i], NULL, cap1_try_producer, &s) == 0, "thread");
     }
-    sleep_ms(CAP1_RUN_MS);
-    atomic_store(&s.stop, 1);
-    for (int i = 0; i < 2; i++) {
+    for (int i = 0; i < 2; i++)
         pthread_join(prod[i], NULL);
+    atomic_store(&s.stop, 1);
+    for (int i = 0; i < 2; i++)
         pthread_join(cons[i], NULL);
-    }
     void *v = NULL;
     while (go_channel_try_receive(s.c, &v) == 0)
         atomic_fetch_add(&s.received, 1);
@@ -404,6 +396,7 @@ static void test_capacity1_try_try(void) {
            atomic_load(&s.received), atomic_load(&s.nulls), go_channel_get_depth(s.c));
     CHECK(atomic_load(&s.nulls) == 0, "a receive returned a NULL token");
     CHECK(atomic_load(&s.received) == atomic_load(&s.sent), "tokens were lost");
+    CHECK(atomic_load(&s.sent) == 2 * CAP1_MESSAGES, "all fixed-work sends completed");
     CHECK(go_channel_get_depth(s.c) == 0, "drained ring must be empty");
     CHECK(go_channel_try_send(s.c, V(1)) == 0, "channel wedged: try_send fails on an empty ring");
     CHECK(go_channel_try_receive(s.c, &v) == 0 && v == V(1), "channel wedged: try_receive");
@@ -450,32 +443,40 @@ static void test_capacity0(void) {
     printf("9: ok\n");
 }
 
-/* --- 5. bounded mixed-mode stress: nothing lost, duplicated or NULL -------- */
+/* --- 5. fixed-work mixed-mode stress, then close with a buffered tail ----- */
 #define STRESS_PRODUCERS 4
 #define STRESS_CONSUMERS 4
 #define STRESS_PER_PRODUCER 50000
+#define STRESS_WORK (STRESS_PRODUCERS * STRESS_PER_PRODUCER)
+#define STRESS_TAIL 8
+#define STRESS_TOTAL (STRESS_WORK + STRESS_TAIL)
 
 static GoChannel *g_stress;
-static GoContext *g_stress_ctx;      /* cancelled at the deadline */
-static atomic_int g_stress_give_up;  /* ditto, for the try_send loop */
+static GoContext *g_stress_ctx;
 static atomic_uint g_received;
 static atomic_uint g_null_values;
-static atomic_uchar g_seen[STRESS_PRODUCERS * STRESS_PER_PRODUCER + 1];
+static atomic_uchar g_seen[STRESS_TOTAL + 1];
+static pthread_mutex_t g_drain_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t g_drain_cond = PTHREAD_COND_INITIALIZER;
+static unsigned g_drain_ready;
+static int g_drain_go;
 
 static void *stress_producer(void *p) {
     unsigned id = (unsigned)(uintptr_t)p;
     for (unsigned i = 0; i < STRESS_PER_PRODUCER; i++) {
         unsigned n = 1 + id * STRESS_PER_PRODUCER + i;
-        /* A corrupted ring can refuse sends forever; give up at the
-         * deadline so the test fails instead of hanging. */
-        if ((i + id) % 2) {
-            while (go_channel_try_send(g_stress, V(n)) != 0) {
-                if (atomic_load(&g_stress_give_up))
-                    return NULL;
+        switch ((i + id) % 3) {
+        case 0:
+            while (go_channel_try_send(g_stress, V(n)) != 0)
                 sched_yield();
-            }
-        } else if (go_channel_send_with_context(g_stress, V(n), g_stress_ctx) != 0) {
-            return NULL;
+            break;
+        case 1:
+            CHECK(go_channel_send(g_stress, V(n)) == 0, "stress send");
+            break;
+        default:
+            CHECK(go_channel_send_with_context(g_stress, V(n), g_stress_ctx) == 0,
+                  "stress context send");
+            break;
         }
     }
     return NULL;
@@ -484,22 +485,47 @@ static void *stress_producer(void *p) {
 static void record(void *v) {
     if (!v) { atomic_fetch_add(&g_null_values, 1); return; }
     uintptr_t n = (uintptr_t)v;
-    CHECK(n >= 1 && n <= STRESS_PRODUCERS * STRESS_PER_PRODUCER, "value out of range");
+    CHECK(n >= 1 && n <= STRESS_TOTAL, "value out of range");
     CHECK(atomic_fetch_add(&g_seen[n], 1) == 0, "element received twice");
     atomic_fetch_add(&g_received, 1);
 }
 
+static int stress_receive(unsigned id, void **v) {
+    switch (id % 3) {
+    case 0: return go_channel_receive(g_stress, v);
+    case 1: return go_channel_receive_with_context(g_stress, v, g_stress_ctx);
+    default: return go_channel_try_receive(g_stress, v);
+    }
+}
+
 static void *stress_consumer(void *p) {
     unsigned id = (unsigned)(uintptr_t)p;
+    /* Each consumer takes an equal part of the fixed work before pausing.
+     * No wall-clock quota: slow producers must finish, not get cancelled and
+     * have their never-sent IDs misreported as channel loss (nostrc-juwxt). */
+    for (unsigned i = 0; i < STRESS_WORK / STRESS_CONSUMERS;) {
+        void *v = NULL;
+        if (stress_receive(id, &v) == 0) {
+            record(v);
+            i++;
+        } else {
+            CHECK(id % 3 == 2, "blocking stress receive ended before close");
+            sched_yield();
+        }
+    }
+    pthread_mutex_lock(&g_drain_mutex);
+    g_drain_ready++;
+    pthread_cond_broadcast(&g_drain_cond);
+    while (!g_drain_go)
+        pthread_cond_wait(&g_drain_cond, &g_drain_mutex);
+    pthread_mutex_unlock(&g_drain_mutex);
+
     for (;;) {
         void *v = NULL;
-        if (id % 2) {
-            if (go_channel_receive(g_stress, &v) != 0)
-                return NULL; /* closed and empty */
+        if (stress_receive(id, &v) == 0) {
             record(v);
-        } else if (go_channel_try_receive(g_stress, &v) == 0) {
-            record(v);
-        } else if (go_channel_is_closed(g_stress) && go_channel_get_depth(g_stress) == 0) {
+        } else if (id % 3 != 2 ||
+                   (go_channel_is_closed(g_stress) && go_channel_get_depth(g_stress) == 0)) {
             return NULL;
         } else {
             sched_yield();
@@ -508,34 +534,70 @@ static void *stress_consumer(void *p) {
 }
 
 static void test_mixed_stress(void) {
-    g_stress = go_channel_create(8); /* small ring: constant wrap-around */
-    CancelContextResult cc = go_context_with_cancel(go_context_background());
+    g_stress = go_channel_create(STRESS_TAIL); /* constant physical wrap-around */
+    GoContext *parent = go_context_background();
+    CancelContextResult cc = go_context_with_cancel(parent);
     g_stress_ctx = cc.context;
     pthread_t prod[STRESS_PRODUCERS], cons[STRESS_CONSUMERS];
     for (unsigned i = 0; i < STRESS_CONSUMERS; i++)
         CHECK(pthread_create(&cons[i], NULL, stress_consumer, V(i)) == 0, "thread");
     for (unsigned i = 0; i < STRESS_PRODUCERS; i++)
         CHECK(pthread_create(&prod[i], NULL, stress_producer, V(i)) == 0, "thread");
-    const unsigned total = STRESS_PRODUCERS * STRESS_PER_PRODUCER;
-    for (int waited = 0; atomic_load(&g_received) < total && waited < 20000; waited += 10)
-        sleep_ms(10);
-    /* Done, or the deadline passed: release blocked senders and receivers
-     * either way (close wakes waiters parked on the channel). */
-    atomic_store(&g_stress_give_up, 1);
-    cc.cancel(g_stress_ctx);
-    go_channel_close(g_stress);
+    /* CTest bounds a wedged test; a deadline must never cancel unsent work
+     * and then assert that every planned element was delivered. */
     for (unsigned i = 0; i < STRESS_PRODUCERS; i++)
         pthread_join(prod[i], NULL);
+    pthread_mutex_lock(&g_drain_mutex);
+    while (g_drain_ready != STRESS_CONSUMERS)
+        pthread_cond_wait(&g_drain_cond, &g_drain_mutex);
+    CHECK(go_channel_get_depth(g_stress) == 0, "fixed work drained");
+    for (unsigned n = STRESS_WORK + 1; n <= STRESS_TOTAL; n++)
+        CHECK(go_channel_try_send(g_stress, V(n)) == 0, "buffer tail before close");
+    CHECK(go_channel_get_depth(g_stress) == STRESS_TAIL, "close a full ring");
+    go_channel_close(g_stress);
+    g_drain_go = 1;
+    pthread_cond_broadcast(&g_drain_cond);
+    pthread_mutex_unlock(&g_drain_mutex);
     for (unsigned i = 0; i < STRESS_CONSUMERS; i++)
         pthread_join(cons[i], NULL);
 
-    printf("5: received %u/%u, NULL values %u\n", atomic_load(&g_received), total,
+    printf("5: received %u/%u, NULL values %u\n", atomic_load(&g_received), STRESS_TOTAL,
            atomic_load(&g_null_values));
     CHECK(atomic_load(&g_null_values) == 0, "a receive returned success with a NULL value");
-    CHECK(atomic_load(&g_received) == total, "elements were lost");
+    CHECK(atomic_load(&g_received) == STRESS_TOTAL, "elements were lost");
+    for (unsigned n = 1; n <= STRESS_TOTAL; n++)
+        CHECK(atomic_load(&g_seen[n]) == 1, "every sent ID must be received exactly once");
+    CHECK(go_channel_get_depth(g_stress) == 0, "closed ring drained");
     go_channel_unref(g_stress);
     go_context_unref(g_stress_ctx);
+    go_context_unref(parent);
     printf("5: ok\n");
+}
+
+/* Cross SIZE_MAX, not just the physical ring boundary. Sequence differences
+ * and ticket increments must still identify each slot's current generation. */
+static void test_ticket_wrap(void) {
+    GoChannel *c = go_channel_create(4);
+    if (!mpmc_enabled(c)) { printf("ticket_wrap: skipped (MPMC slots disabled)\n");
+        go_channel_unref(c); return; }
+    size_t base = SIZE_MAX - ring_slots(c) + 1;
+    atomic_store(&c->in, base);
+    atomic_store(&c->out, base);
+    for (size_t i = 0; i < ring_slots(c); ++i)
+        atomic_store(&c->slot_seq[i], base + i);
+    for (unsigned lap = 0; lap < 8; ++lap) {
+        for (unsigned i = 0; i < 4; ++i)
+            CHECK(go_channel_try_send(c, V(1 + lap * 4 + i)) == 0, "wrap send");
+        CHECK(go_channel_try_send(c, V(99)) != 0, "wrap full");
+        for (unsigned i = 0; i < 4; ++i) {
+            void *v = NULL;
+            CHECK(go_channel_try_receive(c, &v) == 0 && v == V(1 + lap * 4 + i),
+                  "wrap FIFO receive");
+        }
+        CHECK(go_channel_get_depth(c) == 0, "wrap drained");
+    }
+    go_channel_unref(c);
+    printf("ticket_wrap: ok\n");
 }
 
 /* nostrc-ecz3: logical capacity must not depend on the ring implementation.
@@ -572,6 +634,7 @@ int main(void) {
     test_blocking_receive_waits_for_publish(0);
     test_blocking_receive_waits_for_publish(1);
     test_mixed_variants_fifo();
+    test_ticket_wrap();
     test_mixed_stress();
     test_capacity1_claimed_slot(0);
     test_capacity1_claimed_slot(1);

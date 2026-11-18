@@ -31,6 +31,13 @@ int main(void){
     go_hash_map_remove_int(m, 123);
     if (go_hash_map_get_int(m, 123) != NULL) return fail("remove int failed");
 
+    // Repeated replacement must release each unused duplicated string key.
+    for (unsigned i = 0; i < 1000; ++i)
+        go_hash_map_insert_str(m, "replacement", (void*)"last");
+    v = (const char*)go_hash_map_get_string(m, "replacement");
+    if (!v || strcmp(v, "last") != 0)
+        return fail("repeated replacement failed");
+
     go_hash_map_destroy(m);
     return 0;
 }
