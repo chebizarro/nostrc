@@ -619,7 +619,18 @@ endif()
 # BLE L2CAP transport core and simulated radio (nostrc-gfi8h.6.1): no platform
 # dependencies; the BlueZ (gfi8h.6.2) and CoreBluetooth (gfi8h.6.3) backends
 # implement src/transport/ble/backend.h.
-option(FIPSD_ENABLE_BLE "Build the BLE transport core and its simulated radio" ON)
+# Off on Windows (nostrc-znhk6): upstream has no Windows BLE backend, so a
+# configured BLE transport is ignored with a warning there either way
+# (ble_disabled.c), and the core's simulated radio and stream fast path are
+# built on POSIX socketpair()/fcntl() descriptors.
+set(_fipsd_ble_default ON)
+if(WIN32)
+  set(_fipsd_ble_default OFF)
+endif()
+option(FIPSD_ENABLE_BLE "Build the BLE transport core and its simulated radio" ${_fipsd_ble_default})
+if(FIPSD_ENABLE_BLE AND WIN32)
+  message(FATAL_ERROR "FIPSD_ENABLE_BLE needs POSIX socketpair()/fcntl() and a platform backend; Windows has neither (upstream has no Windows BLE backend)")
+endif()
 if(FIPSD_ENABLE_BLE)
   target_sources(fipsd_lib PRIVATE src/transport/ble/ble.c src/transport/ble/pool.c src/transport/ble/psm.c
     src/transport/ble/stream_read.c src/transport/ble/stats.c src/transport/ble/radio.c)

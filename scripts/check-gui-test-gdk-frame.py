@@ -127,7 +127,7 @@ def main():
         for path in sorted((args.root / dirname).rglob('*.c')):
             if dirname == 'apps/gnostr/plugins' and 'tests' not in path.parts:
                 continue
-            source = path.read_text()
+            source = path.read_text(encoding='utf-8')
             if GUI_INIT.search(c_tokens(source)):
                 checked += 1
             for error in violations(source):
