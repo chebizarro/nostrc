@@ -531,7 +531,7 @@ static int dial_and_exchange(ble_instance *u, const fipsd_ble_peer *p, ble_offer
     int rc = u->backend.ops->connect(u->backend.self, p, psm, deadline, &s);
     if (!rc && !s) rc = -EIO;
     if (rc) {
-        if (rc == -ECANCELED || rc == -ENODEV || stopped(u)) return rc;
+        if (rc == -ECANCELED || rc == -ENODEV || rc == -EISCONN || stopped(u)) return rc;
         if (rc == -ETIMEDOUT) { BLE_STAT(u, connect_timeouts); *timed_out = true; }
         else { BLE_STAT(u, connect_errors); if (learned) forget_psm(u, p, psm); }
         FIPSD_DEBUG(MOD, "%s: connect to psm 0x%04x failed (%d)", u->name, psm, rc);
@@ -615,7 +615,7 @@ static void probe(ble_instance *u, const fipsd_ble_peer *p)
     ble_offer o; bool timed_out;
     int rc = dial_and_exchange(u, p, &o, &timed_out);
     if (rc) {
-        if (rc != -ECANCELED && rc != -ENODEV && !stopped(u)) {
+        if (rc != -ECANCELED && rc != -ENODEV && rc != -EISCONN && !stopped(u)) {
             nsync_mu_lock(&u->mu); (void)ble_probes_record_failure(&u->probes, p, ble_now()); nsync_mu_unlock(&u->mu);
         }
         return;

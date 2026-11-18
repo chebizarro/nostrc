@@ -220,6 +220,37 @@ static void properties(void)
     g_variant_unref(d);
     puts("properties: Device1/Adapter1 a{sv}, FIPS by UUID or 0x9C90 key (sticky past GATT resolution), RSSI 127, partial merges, wrong types: ok");
 }
+/* read_psm: the PSM characteristic of the device's FIPS service, from a
+ * GetManagedObjects reply shaped as BlueZ 5.72 sends it. */
+static void gatt_lookup(void)
+{
+    GVariant *o = parsed("{objectpath '/org/bluez/hci0/dev_00_AA_01_01_00_01': {'org.bluez.Device1': {'Connected': <true>}}, "
+        "'/org/bluez/hci0/dev_00_AA_01_01_00_01/service0008': {'org.bluez.GattService1': {'UUID': <'00001801-0000-1000-8000-00805f9b34fb'>}}, "
+        "'/org/bluez/hci0/dev_00_AA_01_01_00_01/service0008/char0009': {'org.bluez.GattCharacteristic1': {'UUID': <'abdd3056-28fa-441d-a470-55a75a52553a'>, 'Service': <objectpath '/org/bluez/hci0/dev_00_AA_01_01_00_01/service0008'>}}, "
+        "'/org/bluez/hci0/dev_00_AA_01_01_00_02/service0010': {'org.bluez.GattService1': {'UUID': <'9c90b790-2cc5-42c0-9f87-c9cc40648f4c'>}}, "
+        "'/org/bluez/hci0/dev_00_AA_01_01_00_02/service0010/char0011': {'org.bluez.GattCharacteristic1': {'UUID': <'abdd3056-28fa-441d-a470-55a75a52553a'>, 'Service': <objectpath '/org/bluez/hci0/dev_00_AA_01_01_00_02/service0010'>}}, "
+        "'/org/bluez/hci0/dev_00_AA_01_01_00_01/service0020': {'org.bluez.GattService1': {'UUID': <'9C90B790-2CC5-42C0-9F87-C9CC40648F4C'>, 'Primary': <true>}}, "
+        "'/org/bluez/hci0/dev_00_AA_01_01_00_01/service0020/char0021': {'org.bluez.GattCharacteristic1': {'UUID': <'0000aaaa-0000-1000-8000-00805f9b34fb'>, 'Service': <objectpath '/org/bluez/hci0/dev_00_AA_01_01_00_01/service0020'>}}, "
+        "'/org/bluez/hci0/dev_00_AA_01_01_00_01/service0020/char0023': {'org.bluez.GattCharacteristic1': {'UUID': <'ABDD3056-28FA-441D-A470-55A75A52553A'>, 'Service': <objectpath '/org/bluez/hci0/dev_00_AA_01_01_00_01/service0020'>}}}");
+    char out[160];
+    /* Only the characteristic under this device's FIPS service: not the same
+     * UUID under another service, nor another device's. */
+    assert(fipsd_ble_bluez_find_psm_characteristic(o, "/org/bluez/hci0/dev_00_AA_01_01_00_01", out, sizeof out));
+    assert(!strcmp(out, "/org/bluez/hci0/dev_00_AA_01_01_00_01/service0020/char0023"));
+    assert(fipsd_ble_bluez_find_psm_characteristic(o, "/org/bluez/hci0/dev_00_AA_01_01_00_02", out, sizeof out));
+    assert(!strcmp(out, "/org/bluez/hci0/dev_00_AA_01_01_00_02/service0010/char0011"));
+    assert(!fipsd_ble_bluez_find_psm_characteristic(o, "/org/bluez/hci0/dev_00_AA_01_01_00_0", out, sizeof out)); /* prefix only */
+    assert(!fipsd_ble_bluez_find_psm_characteristic(o, "/org/bluez/hci0/dev_00_AA_01_01_00_03", out, sizeof out));
+    assert(!fipsd_ble_bluez_find_psm_characteristic(o, "/org/bluez/hci0/dev_00_AA_01_01_00_01", out, 20)); /* does not fit */
+    g_variant_unref(o);
+    o = parsed("@a{oa{sa{sv}}} {}");
+    assert(!fipsd_ble_bluez_find_psm_characteristic(o, "/org/bluez/hci0/dev_00_AA_01_01_00_01", out, sizeof out));
+    g_variant_unref(o);
+    o = parsed("('wrong', 'type')");
+    assert(!fipsd_ble_bluez_find_psm_characteristic(o, "/org/bluez/hci0/dev_00_AA_01_01_00_01", out, sizeof out));
+    g_variant_unref(o);
+    puts("GATT: the PSM characteristic of the device's FIPS service, case-insensitive, never another service's or device's: ok");
+}
 static void scan_policy(void)
 {
     fipsd_ble_bluez_props p = {.fields = FIPSD_BLE_BLUEZ_PAIRED | FIPSD_BLE_BLUEZ_TRUSTED | FIPSD_BLE_BLUEZ_CONNECTED |
@@ -333,7 +364,7 @@ static void constructor(void)
     fipsd_ble_adapter a = b.ops->adapter(b.self);
     assert(!a.present && !a.powered); /* absent until BlueZ says otherwise */
     fipsd_ble_peer self;
-    assert(!b.ops->local_addr(b.self, &self) && !b.ops->read_psm);
+    assert(!b.ops->local_addr(b.self, &self) && b.ops->read_psm);
     b.ops->stop(b.self);
     b.ops->stop(b.self); /* idempotent */
     b.ops->destroy(b.self); /* never started: no thread to join */
@@ -349,6 +380,7 @@ int main(void)
     sockaddr_and_paths();
     advertisement();
     properties();
+    gatt_lookup();
     scan_policy();
     errors();
     connect_errors();

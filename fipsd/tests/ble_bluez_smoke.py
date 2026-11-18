@@ -214,6 +214,11 @@ def scenario(args, radio, second, initiator):
                 rc = n['daemon'].stop(15)
                 if rc != 0 or n['daemon'].sanitizer_report():
                     failures.append((n['name'], rc, n['daemon'].text()[-10000:]))
+            keep = os.environ.get('FIPSD_BLE_BLUEZ_SMOKE_LOGS')
+            if keep:  # evidence of passing runs too
+                for n in nodes:
+                    Path(keep).mkdir(parents=True, exist_ok=True)
+                    (Path(keep) / f"{tag.replace(' ', '_').replace('<->', '-')}.{n['name']}.log").write_text(n['daemon'].text())
             if failures:
                 raise Failure(f'daemon shutdown/sanitizer failures: {failures}')
 

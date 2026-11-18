@@ -22,6 +22,8 @@
  *     At scan start, cached objects holding no user state are removed first
  *     and the kept FIPS ones are reported once (upstream start_scanning and
  *     bluer's discover_devices).
+ *   - GATT: read_psm reads the PSM characteristic of a UUID-only advertiser
+ *     (a CoreBluetooth peer), connecting through Device1 first.
  * Fiber-side operations hand a request to that thread with
  * g_main_context_invoke and park on the reply with their deadline and the
  * stop channel (radio.c's bridge). The thread reports through the sink only;
@@ -60,6 +62,7 @@
 #define BZ_RETRY_MAX_MS 30000u
 #define BZ_BACKLOG 8           /* BLE_INBOUND_INFLIGHT */
 #define BZ_ACCEPT_BACKOFF_MAX_MS 5000u
+#define BZ_YIELD_MS 1500u      /* crossing dials: the larger address waits for the smaller's to land */
 #define BZ_BLUEZ "org.bluez"
 #define BZ_ADAPTER1 "org.bluez.Adapter1"
 #define BZ_DEVICE1 "org.bluez.Device1"
@@ -72,7 +75,7 @@ static const char adv_xml[] =
     "<property name='ServiceData' type='a{sv}' access='read'/><property name='MinInterval' type='u' access='read'/>"
     "<property name='MaxInterval' type='u' access='read'/></interface></node>";
 
-enum { REQ_ADVERTISE, REQ_ADVERTISE_STOP, REQ_SCAN_START, REQ_SCAN_STOP };
+enum { REQ_ADVERTISE, REQ_ADVERTISE_STOP, REQ_SCAN_START, REQ_SCAN_STOP, REQ_READ_PSM };
 typedef struct bz bz;
 typedef struct bz_req {
     _Atomic int refs;
@@ -81,6 +84,9 @@ typedef struct bz_req {
     GoChannel *reply;
     uint64_t deadline;
     fipsd_ble_advert advert;
+    fipsd_ble_peer peer;                     /* read_psm */
+    uint8_t value[FIPSD_BLE_GATT_VALUE_MAX]; /* read_psm result, published by the reply */
+    size_t value_len;
 } bz_req;
 typedef struct bz_device {
     fipsd_ble_bluez_props props; /* merged from every update */
@@ -89,12 +95,30 @@ typedef struct bz_device {
 } bz_device;
 typedef struct bz_listener { bz *b; int fd; GoChannel *done; } bz_listener;
 typedef struct bz_dial { struct bz_dial *next; int fd; } bz_dial;
-typedef struct bz_stream { fipsd_ble_stream base; int fd; uint16_t send_mtu, recv_mtu; } bz_stream;
+/* The accepted channels still open, shared with the streams (which may
+ * outlive the backend: the core drains its event queue after destroy). */
+typedef struct bz_stream bz_stream;
+typedef struct bz_shared {
+    _Atomic int refs;
+    nsync_mu mu;
+    bz_stream *inbound;
+    GoChannel *accepted; /* closed and replaced on every accept: a broadcast */
+} bz_shared;
+struct bz_stream {
+    fipsd_ble_stream base;
+    int fd;
+    uint16_t send_mtu, recv_mtu;
+    bz_shared *shared; /* accepted channels only */
+    bz_stream *next;
+    uint16_t cid;      /* the remote CID when accepted */
+    bool shut;
+};
 struct bz {
     char adapter[FIPSD_BLE_ADAPTER_MAX], path[FIPSD_BLE_ADAPTER_MAX + 12], object[FIPSD_BLE_ADAPTER_MAX + 48];
     uint16_t mtu;
     fipsd_runtime *rt;
     GoChannel *stop_ch;
+    bz_shared *shared;
     _Atomic uint64_t next_id;
     bool thread_ok; /* written by start, before any caller */
     nsync_mu mu;    /* guards the block below; never held across a park */
@@ -119,6 +143,7 @@ struct bz {
     fipsd_ble_advert adv; /* what the advertisement object serves */
     GQueue adv_q, scan_q;
     bool adv_busy, scan_busy;
+    GList *reads; /* read_psm in flight (bz_read) */
 };
 static uint64_t now_ms(void) { return ble_now(); }
 /* Reacquire TLS errno after a migrating fiber resumes (stream_read.c). */
@@ -204,15 +229,15 @@ static int simple(bz *b, int kind, const fipsd_ble_advert *ad, uint64_t deadline
 }
 
 /* ---- D-Bus calls (GLib thread) ---------------------------------------------------------- */
-typedef void (*bz_done)(bz *, bz_req *, GVariant *reply, const GError *);
-typedef struct bz_call { bz *b; bz_req *q; bz_done done; } bz_call;
+typedef void (*bz_done)(bz *, void *ctx, GVariant *reply, const GError *);
+typedef struct bz_call { bz *b; void *ctx; bz_done done; } bz_call;
 static void call_finished(GObject *src, GAsyncResult *res, gpointer data)
 {
     bz_call *c = data;
     GError *e = NULL;
     GVariant *r = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, &e);
     --c->b->pending;
-    if (c->done) c->done(c->b, c->q, r, e);
+    if (c->done) c->done(c->b, c->ctx, r, e);
     if (r) g_variant_unref(r);
     if (e) g_error_free(e);
     g_free(c);
@@ -220,17 +245,17 @@ static void call_finished(GObject *src, GAsyncResult *res, gpointer data)
 /* Every call completes through `done` (also without a bus), in this thread;
  * `pending` counts them so teardown can wait for the cancelled ones. */
 static void bluez_call(bz *b, const char *path, const char *iface, const char *method, GVariant *params,
-    const GVariantType *reply_type, int timeout_ms, bz_req *q, bz_done done)
+    const GVariantType *reply_type, int timeout_ms, void *ctx, bz_done done)
 {
     if (!b->bus || b->quitting) {
         if (params) g_variant_unref(g_variant_ref_sink(params));
         GError *e = g_error_new_literal(G_IO_ERROR, G_IO_ERROR_NOT_CONNECTED, "not connected to BlueZ");
-        if (done) done(b, q, NULL, e);
+        if (done) done(b, ctx, NULL, e);
         g_error_free(e);
         return;
     }
     bz_call *c = g_new0(bz_call, 1);
-    c->b = b; c->q = q; c->done = done;
+    c->b = b; c->ctx = ctx; c->done = done;
     ++b->pending;
     g_dbus_connection_call(b->bus, BZ_BLUEZ, path, iface, method, params, reply_type, G_DBUS_CALL_FLAGS_NONE,
         timeout_ms, b->cancel, call_finished, c);
@@ -240,9 +265,11 @@ static void log_failure(bz *b, const char *what, const GError *e)
     if (e && !g_error_matches(e, G_IO_ERROR, G_IO_ERROR_CANCELLED))
         FIPSD_WARN(MOD, "%s: BlueZ %s failed: %s", b->adapter, what, e->message);
 }
-static void quiet_done(bz *b, bz_req *q, GVariant *r, const GError *e) { (void)b; (void)q; (void)r; (void)e; }
+static void quiet_done(bz *b, void *ctx, GVariant *r, const GError *e) {
+    bz_req *q = ctx; (void)b; (void)q; (void)r; (void)e; }
 
 /* ---- devices and discovery ---------------------------------------------------------- */
+static void reads_resume(bz *b, const char *path);
 /* Merge an update; report the device when it is a FIPS peer not yet reported
  * this session, or its PSM service data changed (a restarted listener). */
 static void device_update(bz *b, const char *path, GVariant *props)
@@ -278,6 +305,7 @@ static void device_update(bz *b, const char *path, GVariant *props)
             p->psm_data_len);
     }
     nsync_mu_unlock(&b->mu);
+    if ((u.fields & FIPSD_BLE_BLUEZ_SERVICES_RESOLVED) && u.services_resolved) reads_resume(b, path);
 }
 static void device_removed(bz *b, const char *path)
 {
@@ -300,7 +328,8 @@ static void forget_adapter(bz *b)
     b->advertising = b->scanning = false;
     b->power_requested = false;
 }
-static void power_done(bz *b, bz_req *q, GVariant *r, const GError *e) { (void)q; (void)r; log_failure(b, "power-on", e); }
+static void power_done(bz *b, void *ctx, GVariant *r, const GError *e) {
+    bz_req *q = ctx; (void)q; (void)r; log_failure(b, "power-on", e); }
 static void adapter_update(bz *b, GVariant *props, bool appeared)
 {
     fipsd_ble_bluez_props p;
@@ -381,8 +410,9 @@ static void on_props(GDBusConnection *c, const gchar *sender, const gchar *path,
     else if (!strcmp(which, BZ_DEVICE1)) device_update(b, path, changed);
     g_variant_unref(changed);
 }
-static void objects_loaded(bz *b, bz_req *q, GVariant *r, const GError *e)
+static void objects_loaded(bz *b, void *ctx, GVariant *r, const GError *e)
 {
+    bz_req *q = ctx;
     (void)q;
     if (r) {
         GVariant *objects = g_variant_get_child_value(r, 0), *ifaces;
@@ -437,8 +467,9 @@ static void adv_finish(bz *b, int rc)
     adv_kick(b);
 }
 static void adv_register(bz *b, bz_req *q);
-static void adv_unregistered(bz *b, bz_req *q, GVariant *r, const GError *e)
+static void adv_unregistered(bz *b, void *ctx, GVariant *r, const GError *e)
 {
+    bz_req *q = ctx;
     (void)r; (void)e; /* gone either way: removed now, or BlueZ never had it */
     b->advertising = false;
     if (q->kind == REQ_ADVERTISE) adv_register(b, q);
@@ -449,8 +480,9 @@ static void adv_unregister(bz *b, bz_req *q)
     bluez_call(b, b->path, BZ_ADV_MANAGER1, "UnregisterAdvertisement", g_variant_new("(o)", b->object), NULL,
         call_timeout(q), q, adv_unregistered);
 }
-static void adv_registered(bz *b, bz_req *q, GVariant *r, const GError *e)
+static void adv_registered(bz *b, void *ctx, GVariant *r, const GError *e)
 {
+    bz_req *q = ctx;
     (void)r;
     int rc = fipsd_ble_bluez_gerror_errno(e);
     if (!rc) {
@@ -505,9 +537,11 @@ static void scan_finish(bz *b, int rc)
     if (q) answer(q, rc);
     scan_kick(b);
 }
-static void scan_stopped(bz *b, bz_req *q, GVariant *r, const GError *e) { (void)q; (void)r; (void)e; scan_finish(b, 0); }
-static void scan_started(bz *b, bz_req *q, GVariant *r, const GError *e)
+static void scan_stopped(bz *b, void *ctx, GVariant *r, const GError *e) {
+    bz_req *q = ctx; (void)q; (void)r; (void)e; scan_finish(b, 0); }
+static void scan_started(bz *b, void *ctx, GVariant *r, const GError *e)
 {
+    bz_req *q = ctx;
     (void)q; (void)r;
     int rc = fipsd_ble_bluez_gerror_errno(e);
     if (rc == -EALREADY) rc = 0; /* this client is already discovering */
@@ -528,8 +562,9 @@ static void scan_started(bz *b, bz_req *q, GVariant *r, const GError *e)
     FIPSD_DEBUG(MOD, "%s: scanning for the FIPS service", b->adapter);
     scan_finish(b, 0);
 }
-static void scan_filtered(bz *b, bz_req *q, GVariant *r, const GError *e)
+static void scan_filtered(bz *b, void *ctx, GVariant *r, const GError *e)
 {
+    bz_req *q = ctx;
     (void)r;
     int rc = fipsd_ble_bluez_gerror_errno(e);
     if (rc) { log_failure(b, "SetDiscoveryFilter", e); scan_finish(b, rc); return; }
@@ -569,8 +604,9 @@ static void remove_device(bz *b, const char *path)
     g_dbus_connection_call(b->bus, BZ_BLUEZ, b->path, BZ_ADAPTER1, "RemoveDevice", g_variant_new("(o)", path), NULL,
         G_DBUS_CALL_FLAGS_NONE, BZ_QUIET_CALL_MS, b->cancel, device_cleared, m);
 }
-static void scan_objects(bz *b, bz_req *q, GVariant *r, const GError *e)
+static void scan_objects(bz *b, void *ctx, GVariant *r, const GError *e)
 {
+    bz_req *q = ctx;
     if (!r) { int rc = fipsd_ble_bluez_gerror_errno(e); log_failure(b, "GetManagedObjects", e); scan_finish(b, rc); return; }
     /* Upstream start_scanning: drop cached objects that hold no user state,
      * so their next advert is a fresh InterfacesAdded with fresh data. */
@@ -618,6 +654,143 @@ static void scan_kick(bz *b)
     if (b->scanning) { scan_finish(b, 0); return; }
     bluez_call(b, "/", BZ_OBJECT_MANAGER, "GetManagedObjects", NULL, G_VARIANT_TYPE("(a{oa{sa{sv}}})"), call_timeout(q), q,
         scan_objects);
+}
+
+/* ---- GATT: read_psm ----------------------------------------------------------------- *
+ * Device1.Connect unless the device's services are resolved already, then
+ * (on ServicesResolved, through device_update) the PSM characteristic of
+ * its FIPS service, then ReadValue; bounded by the caller's deadline. The LE
+ * link stays up for the dial that follows on it, unless the read failed
+ * with a Connect still in flight, which is then aborted: one pending LE
+ * connect would otherwise hold the controller's initiator. */
+typedef struct bz_read {
+    bz *b;
+    bz_req *q;
+    char path[FIPSD_BLE_ADAPTER_MAX + 40];
+    GSource *timer;
+    unsigned inflight;
+    bool waiting, connecting, done;
+} bz_read;
+static void read_release(bz_read *r) { if (r->done && !r->inflight) g_free(r); }
+static void read_finish(bz_read *r, int rc)
+{
+    if (r->done) return;
+    bz *b = r->b;
+    r->done = true;
+    b->reads = g_list_remove(b->reads, r);
+    if (r->timer) { g_source_destroy(r->timer); g_source_unref(r->timer); r->timer = NULL; }
+    if (rc && r->connecting)
+        bluez_call(b, r->path, BZ_DEVICE1, "Disconnect", NULL, NULL, BZ_QUIET_CALL_MS, NULL, quiet_done);
+    FIPSD_DEBUG(MOD, "%s: GATT PSM read of %s: %d", b->adapter, r->path, rc);
+    answer(r->q, rc);
+    r->q = NULL;
+    read_release(r);
+}
+/* A completion for `r`: false when the read already finished. */
+static bool read_back(bz_read *r)
+{
+    --r->inflight;
+    if (!r->done) return true;
+    read_release(r);
+    return false;
+}
+static void read_call(bz_read *r, const char *path, const char *iface, const char *method, GVariant *params,
+    const GVariantType *type, bz_done done)
+{
+    ++r->inflight;
+    bluez_call(r->b, path, iface, method, params, type, call_timeout(r->q), r, done);
+}
+static void read_value(bz *b, void *ctx, GVariant *reply, const GError *e)
+{
+    (void)b;
+    bz_read *r = ctx;
+    if (!read_back(r)) return;
+    if (!reply) { read_finish(r, fipsd_ble_bluez_gerror_errno(e)); return; }
+    GVariant *v = g_variant_get_child_value(reply, 0);
+    gsize n = 0;
+    const uint8_t *bytes = g_variant_get_fixed_array(v, &n, 1);
+    if (n > sizeof r->q->value) n = sizeof r->q->value;
+    if (n) memcpy(r->q->value, bytes, n);
+    r->q->value_len = n;
+    g_variant_unref(v);
+    read_finish(r, 0);
+}
+static void read_found(bz *b, void *ctx, GVariant *reply, const GError *e)
+{
+    (void)b;
+    bz_read *r = ctx;
+    if (!read_back(r)) return;
+    if (!reply) { read_finish(r, fipsd_ble_bluez_gerror_errno(e)); return; }
+    char chr[FIPSD_BLE_ADAPTER_MAX + 96];
+    GVariant *objects = g_variant_get_child_value(reply, 0);
+    bool found = fipsd_ble_bluez_find_psm_characteristic(objects, r->path, chr, sizeof chr);
+    g_variant_unref(objects);
+    if (!found) { read_finish(r, -ENOENT); return; } /* resolved, and no FIPS PSM characteristic */
+    read_call(r, chr, "org.bluez.GattCharacteristic1", "ReadValue", g_variant_new("(a{sv})", NULL), G_VARIANT_TYPE("(ay)"),
+        read_value);
+}
+static void read_find(bz_read *r)
+{
+    r->waiting = false;
+    read_call(r, "/", BZ_OBJECT_MANAGER, "GetManagedObjects", NULL, G_VARIANT_TYPE("(a{oa{sa{sv}}})"), read_found);
+}
+static bool services_resolved(bz *b, const char *path)
+{
+    nsync_mu_lock(&b->mu);
+    bz_device *d = g_hash_table_lookup(b->devices, path);
+    bool resolved = d && (d->props.fields & FIPSD_BLE_BLUEZ_SERVICES_RESOLVED) && d->props.services_resolved;
+    nsync_mu_unlock(&b->mu);
+    return resolved;
+}
+static void read_connected(bz *b, void *ctx, GVariant *reply, const GError *e)
+{
+    (void)reply;
+    bz_read *r = ctx;
+    if (!read_back(r)) return;
+    r->connecting = false;
+    int rc = fipsd_ble_bluez_gerror_errno(e);
+    if (rc && rc != -EISCONN) { read_finish(r, rc); return; }
+    if (services_resolved(b, r->path)) read_find(r);
+    else r->waiting = true; /* device_update resumes it on ServicesResolved */
+}
+static void reads_resume(bz *b, const char *path)
+{
+    for (GList *l = b->reads; l;) {
+        bz_read *r = l->data;
+        l = l->next;
+        if (r->waiting && !strcmp(r->path, path)) read_find(r);
+    }
+}
+static void reads_cancel(bz *b) { while (b->reads) read_finish(b->reads->data, -ECANCELED); }
+static gboolean read_expired(gpointer data)
+{
+    bz_read *r = data;
+    g_source_unref(r->timer);
+    r->timer = NULL;
+    read_finish(r, -ETIMEDOUT);
+    return G_SOURCE_REMOVE;
+}
+static void read_start(bz *b, bz_req *q)
+{
+    if (is_stopped(b)) { answer(q, -ECANCELED); return; }
+    if (!adapter_up(b) || !b->bus) { answer(q, -ENODEV); return; }
+    bz_read *r = g_new0(bz_read, 1);
+    r->b = b; r->q = q;
+    nsync_mu_lock(&b->mu);
+    bool known = fipsd_ble_bluez_device_path(b->adapter, q->peer.device, r->path, sizeof r->path) &&
+        g_hash_table_lookup(b->devices, r->path);
+    nsync_mu_unlock(&b->mu);
+    if (!known) { g_free(r); answer(q, -ENOENT); return; } /* BlueZ never saw it: nothing to connect */
+    b->reads = g_list_prepend(b->reads, r);
+    if (q->deadline != FIPSD_BLE_NO_DEADLINE) {
+        uint64_t now = now_ms(), left = q->deadline > now ? q->deadline - now : 0;
+        r->timer = g_timeout_source_new(left > G_MAXUINT ? G_MAXUINT : (guint)left);
+        g_source_set_callback(r->timer, read_expired, r, NULL);
+        (void)g_source_attach(r->timer, b->ctx);
+    }
+    if (services_resolved(b, r->path)) { read_find(r); return; }
+    r->connecting = true;
+    read_call(r, r->path, BZ_DEVICE1, "Connect", NULL, NULL, read_connected);
 }
 
 /* ---- the system bus ---------------------------------------------------------------- */
@@ -747,6 +920,7 @@ static gboolean dispatch(gpointer data)
     bz *b = q->b;
     if (b->quitting) { answer(q, -ECANCELED); return G_SOURCE_REMOVE; }
     if (q->kind == REQ_ADVERTISE || q->kind == REQ_ADVERTISE_STOP) { g_queue_push_tail(&b->adv_q, q); adv_kick(b); }
+    else if (q->kind == REQ_READ_PSM) read_start(b, q);
     else { g_queue_push_tail(&b->scan_q, q); scan_kick(b); }
     return G_SOURCE_REMOVE;
 }
@@ -754,6 +928,7 @@ static gboolean dispatch(gpointer data)
 static gboolean on_stop(gpointer data)
 {
     bz *b = data;
+    reads_cancel(b);
     if (b->advertising) {
         b->advertising = false;
         bluez_call(b, b->path, BZ_ADV_MANAGER1, "UnregisterAdvertisement", g_variant_new("(o)", b->object), NULL,
@@ -785,6 +960,7 @@ static void *glib_thread(void *arg)
     g_cancellable_cancel(b->cancel);
     if (b->retry) { g_source_destroy(b->retry); g_source_unref(b->retry); b->retry = NULL; }
     bus_release(b);
+    reads_cancel(b);
     while (b->pending) (void)g_main_context_iteration(b->ctx, TRUE);
     drain(&b->adv_q); drain(&b->scan_q);
     if (b->bus) {
@@ -803,9 +979,21 @@ static ssize_t s_read(fipsd_ble_stream *s, uint8_t *buf, size_t cap, uint64_t de
 static int s_write(fipsd_ble_stream *s, const uint8_t *buf, size_t len, uint64_t deadline)
 { return ble_io_write(s, ((bz_stream *)s)->fd, buf, len, deadline); }
 static void s_cancel(fipsd_ble_stream *s) { (void)gof_io_cancel_fd(((bz_stream *)s)->fd); }
+static void shared_unref(bz_shared *sh)
+{
+    if (atomic_fetch_sub(&sh->refs, 1) != 1) return;
+    go_channel_unref(sh->accepted);
+    free(sh);
+}
 static void s_close(fipsd_ble_stream *s)
 {
     bz_stream *z = (bz_stream *)s;
+    if (z->shared) {
+        nsync_mu_lock(&z->shared->mu);
+        for (bz_stream **p = &z->shared->inbound; *p; p = &(*p)->next) if (*p == z) { *p = z->next; break; }
+        nsync_mu_unlock(&z->shared->mu);
+        shared_unref(z->shared);
+    }
     (void)gof_io_reset_fd(z->fd); /* a cancelled latch must not outlive the descriptor */
     (void)close(z->fd);
     free(z);
@@ -820,6 +1008,15 @@ static uint16_t sock_mtu(int fd, int opt)
     uint16_t v = 0;
     socklen_t n = sizeof v;
     return getsockopt(fd, FIPSD_BT_SOL_BLUETOOTH, opt, &v, &n) || n != sizeof v ? 0 : v;
+}
+static uint16_t peer_cid(int fd)
+{
+    fipsd_l2cap_sockaddr sa;
+    memset(&sa, 0, sizeof sa);
+    socklen_t n = sizeof sa;
+    if (getpeername(fd, (struct sockaddr *)&sa, &n)) return 0;
+    const uint8_t *le = (const uint8_t *)&sa.l2_cid;
+    return (uint16_t)(le[0] | le[1] << 8);
 }
 static fipsd_ble_stream *stream_new(bz *b, int fd, const uint8_t device[6])
 {
@@ -904,6 +1101,16 @@ static void accept_fiber(void *arg)
         fipsd_ble_bluez_sockaddr_device(&sa, device);
         fipsd_ble_stream *s = stream_new(b, c, device);
         if (!s) { (void)close(c); continue; }
+        bz_stream *z = (bz_stream *)s;
+        bz_shared *sh = b->shared;
+        GoChannel *next = go_channel_create(1), *woken = NULL;
+        z->cid = peer_cid(c);
+        atomic_fetch_add(&sh->refs, 1);
+        nsync_mu_lock(&sh->mu);
+        z->shared = sh; z->next = sh->inbound; sh->inbound = z;
+        if (next) { woken = sh->accepted; sh->accepted = next; }
+        nsync_mu_unlock(&sh->mu);
+        if (woken) { go_channel_close(woken); go_channel_unref(woken); }
         (void)fipsd_ble_sink_inbound(sink, s); /* ownership passes, delivered or not */
     }
     nsync_mu_lock(&b->mu); /* the descriptor dies under mu: stop and listen cancel only live ones */
@@ -973,7 +1180,68 @@ static int b_listen(void *self, uint16_t requested, uint64_t deadline, uint16_t 
     return 0;
 }
 
-/* ---- dialling ------------------------------------------------------------------------------- */
+/* ---- dialling ------------------------------------------------------------------------------- *
+ * Kernels without f50b32aa233d and 15a80cc8263a (merged 2026-11-02; Linux
+ * 7.0 lacks them) match an LE Connection Response to the first channel
+ * carrying its signalling ident, and an accepted channel keeps the ident of
+ * the request that opened it. Both ends number a fresh ACL's requests from
+ * 1, so a dial sent to a peer whose own request was just accepted in the
+ * kernel gets its response wired into that accepted channel: the dial fails
+ * and the accepted channel's remote CID is overwritten, so what we send on
+ * it is lost (seen on the VM: the IK msg2 went to the dead CID). Upstream's
+ * bluer dials the same way. Hence, around every dial to a peer:
+ *   - a peer that holds an accepted channel to us is not dialled: the dial
+ *     is redundant, and is EISCONN (backend.h: not counted, PSM kept);
+ *   - crossing dials are tie-broken: the larger address yields, briefly, to
+ *     a FIPS advertiser, whose own dial then lands first;
+ *   - after a dial, an accepted channel from the peer whose remote CID
+ *     changed was mis-wired by it, and is shut down so the core recovers. */
+static bool inbound_from_locked(bz_shared *sh, const uint8_t device[6])
+{
+    for (bz_stream *z = sh->inbound; z; z = z->next)
+        if (!z->shut && !memcmp(z->base.peer.device, device, 6)) return true;
+    return false;
+}
+static int dial_gate(bz *b, const uint8_t device[6], const uint8_t local[6], bool fips, uint64_t deadline, uint64_t start)
+{
+    bz_shared *sh = b->shared;
+    uint64_t until = start + BZ_YIELD_MS;
+    bool yield = fips && memcmp(local, device, 6) > 0;
+    if (deadline != FIPSD_BLE_NO_DEADLINE && until > deadline) until = deadline;
+    for (;;) {
+        nsync_mu_lock(&sh->mu);
+        bool have = inbound_from_locked(sh, device);
+        GoChannel *wake = have || !yield ? NULL : go_channel_ref(sh->accepted);
+        nsync_mu_unlock(&sh->mu);
+        if (have) {
+            FIPSD_DEBUG(MOD, "%s: %02X:%02X:%02X:%02X:%02X:%02X holds a channel to us; not dialling it", b->adapter,
+                device[0], device[1], device[2], device[3], device[4], device[5]);
+            return -EISCONN;
+        }
+        uint64_t now = now_ms();
+        if (!wake || now >= until) { if (wake) go_channel_unref(wake); return 0; }
+        void *v;
+        GoSelectCase cases[] = {{GO_SELECT_RECEIVE, wake, NULL, &v}, {GO_SELECT_RECEIVE, b->stop_ch, NULL, &v}};
+        int selected = go_select_timeout(cases, 2, until - now).selected_case;
+        go_channel_unref(wake);
+        if (selected == 1) return -ECANCELED;
+    }
+}
+static void repair_inbound(bz *b, const uint8_t device[6])
+{
+    bz_shared *sh = b->shared;
+    nsync_mu_lock(&sh->mu);
+    for (bz_stream *z = sh->inbound; z; z = z->next) {
+        if (z->shut || memcmp(z->base.peer.device, device, 6)) continue;
+        uint16_t cid = peer_cid(z->fd);
+        if (!cid || cid == z->cid) continue;
+        z->shut = true;
+        (void)shutdown(z->fd, SHUT_RDWR); /* the core's reader sees it end */
+        FIPSD_WARN(MOD, "%s: the kernel wired a dial's L2CAP response into accepted channel %llu (remote CID %u -> %u; "
+            "Linux before f50b32aa233d); closing it", b->adapter, (unsigned long long)z->base.id, z->cid, cid);
+    }
+    nsync_mu_unlock(&sh->mu);
+}
 static int b_connect(void *self, const fipsd_ble_peer *p, uint16_t psm, uint64_t deadline, fipsd_ble_stream **out)
 {
     bz *b = self;
@@ -989,9 +1257,12 @@ static int b_connect(void *self, const fipsd_ble_peer *p, uint16_t psm, uint64_t
     memcpy(local, b->address, 6);
     bz_device *known = have_path ? g_hash_table_lookup(b->devices, path) : NULL;
     uint8_t type = fipsd_ble_bluez_dial_type(known ? &known->props : NULL);
+    bool known_fips = known && known->props.fips;
     nsync_mu_unlock(&b->mu);
     if (stopped) return -ECANCELED;
     if (!up) return -ENODEV;
+    int gate = dial_gate(b, p->device, local, known_fips, deadline, start);
+    if (gate) return gate;
     int fd = l2cap_open(b, local, 0);
     if (fd < 0) {
         FIPSD_DEBUG(MOD, "%s: L2CAP socket for a dial failed (%d)", b->adapter, fd);
@@ -1023,6 +1294,7 @@ static int b_connect(void *self, const fipsd_ble_peer *p, uint16_t psm, uint64_t
             nsync_mu_unlock(&b->mu);
         }
     }
+    repair_inbound(b, p->device);
     nsync_mu_lock(&b->mu);
     stopped = b->stopped;
     up = b->present && b->powered;
@@ -1087,6 +1359,7 @@ static void b_destroy(void *self)
     nsync_mu_unlock(&b->mu);
     if (l) { if (l->fd >= 0) { (void)gof_io_reset_fd(l->fd); (void)close(l->fd); } go_channel_unref(l->done); free(l); }
     g_free(b->owner);
+    shared_unref(b->shared); /* open accepted streams keep it */
     g_hash_table_destroy(b->devices);
     g_dbus_node_info_unref(b->info);
     g_object_unref(b->cancel);
@@ -1107,6 +1380,15 @@ static int b_advertise(void *self, const fipsd_ble_advert *ad, uint64_t deadline
 static int b_advertise_stop(void *self) { return simple(self, REQ_ADVERTISE_STOP, NULL, FIPSD_BLE_NO_DEADLINE); }
 static int b_scan_start(void *self, uint64_t deadline) { return simple(self, REQ_SCAN_START, NULL, deadline); }
 static int b_scan_stop(void *self) { return simple(self, REQ_SCAN_STOP, NULL, FIPSD_BLE_NO_DEADLINE); }
+static int b_read_psm(void *self, const fipsd_ble_peer *p, uint64_t deadline, uint8_t *value, size_t cap, size_t *len)
+{
+    bz_req *q = req_new(self, REQ_READ_PSM);
+    if (q) q->peer = *p;
+    int rc = call(self, q, deadline);
+    if (!rc) { *len = q->value_len < cap ? q->value_len : cap; memcpy(value, q->value, *len); }
+    if (q) req_unref(q);
+    return rc;
+}
 static bool b_local_addr(void *self, fipsd_ble_peer *out)
 {
     bz *b = self;
@@ -1119,7 +1401,7 @@ static bool b_local_addr(void *self, fipsd_ble_peer *out)
 static const char *b_adapter_name(void *self) { return ((bz *)self)->adapter; }
 static const fipsd_ble_backend_ops bz_ops = {.start = b_start, .stop = b_stop, .destroy = b_destroy, .adapter = b_adapter,
     .listen = b_listen, .advertise = b_advertise, .advertise_stop = b_advertise_stop, .scan_start = b_scan_start,
-    .scan_stop = b_scan_stop, .read_psm = NULL, .connect = b_connect, .local_addr = b_local_addr,
+    .scan_stop = b_scan_stop, .read_psm = b_read_psm, .connect = b_connect, .local_addr = b_local_addr,
     .adapter_name = b_adapter_name};
 
 bool fipsd_ble_bluez_backend(const fipsd_ble_config *c, fipsd_ble_backend *out, const char **reason)
@@ -1140,12 +1422,20 @@ bool fipsd_ble_bluez_backend(const fipsd_ble_config *c, fipsd_ble_backend *out, 
     g_queue_init(&b->adv_q);
     g_queue_init(&b->scan_q);
     b->stop_ch = go_channel_create(1);
+    b->shared = calloc(1, sizeof *b->shared);
+    if (b->shared) {
+        atomic_init(&b->shared->refs, 1);
+        nsync_mu_init(&b->shared->mu);
+        b->shared->accepted = go_channel_create(1);
+    }
     b->devices = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
     b->ctx = g_main_context_new();
     b->loop = g_main_loop_new(b->ctx, FALSE);
     b->cancel = g_cancellable_new();
     b->info = g_dbus_node_info_new_for_xml(adv_xml, NULL);
-    if (!b->stop_ch || !b->info) {
+    if (!b->stop_ch || !b->info || !b->shared || !b->shared->accepted) {
+        if (b->shared && b->shared->accepted) go_channel_unref(b->shared->accepted);
+        free(b->shared);
         if (b->stop_ch) go_channel_unref(b->stop_ch);
         if (b->info) g_dbus_node_info_unref(b->info);
         g_hash_table_destroy(b->devices); g_object_unref(b->cancel); g_main_loop_unref(b->loop); g_main_context_unref(b->ctx);

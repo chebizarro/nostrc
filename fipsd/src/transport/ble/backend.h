@@ -25,14 +25,18 @@
  *   -ECONNREFUSED  the peer answered and refused (nothing listens on the PSM)
  *   -ENODEV        the adapter is absent or powered off
  *   -ENOTSUP       the backend cannot perform this operation
+ *   -EISCONN       connect only: the peer already holds a channel to us that
+ *                  this dial would duplicate, so it was not made (BlueZ: a
+ *                  kernel bug corrupts the open channel otherwise, bluez.c)
  *   other -errno   any other failure, counted as a connect/IO error
  * The core treats ETIMEDOUT differently from every other connect failure
  * (upstream forget_psm): a timeout keeps a learned PSM, since the peer was out
  * of reach and nothing may re-learn it (BlueZ reports a device once per
  * discovery session); a refusal or any other error forgets it, so a stale
  * value costs one retry. ECANCELED and ENODEV keep it too: they say nothing
- * about the peer. A backend must therefore report a timeout only as
- * ETIMEDOUT, and never an unanswered attempt as anything else.
+ * about the peer, and EISCONN says the peer is reachable. A backend must
+ * therefore report a timeout only as ETIMEDOUT, and never an unanswered
+ * attempt as anything else.
  *
  * Owner-directed cancellation: every operation that can wait returns promptly
  * with -ECANCELED once stop() has run, whatever its deadline. A stream's

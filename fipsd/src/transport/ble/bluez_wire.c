@@ -181,6 +181,53 @@ void fipsd_ble_bluez_sockaddr(const uint8_t device[6], uint8_t type, uint16_t ps
 void fipsd_ble_bluez_sockaddr_device(const fipsd_l2cap_sockaddr *sa, uint8_t device[6])
 { for (size_t i = 0; i < 6; ++i) device[i] = sa->l2_bdaddr[5 - i]; }
 
+/* ---- GATT ------------------------------------------------------------------------ */
+static bool under(const char *path, const char *parent)
+{
+    size_t n = strlen(parent);
+    return !strncmp(path, parent, n) && path[n] == '/';
+}
+static bool uuid_is(GVariant *props, const char *uuid)
+{
+    GVariant *v = props ? g_variant_lookup_value(props, "UUID", G_VARIANT_TYPE_STRING) : NULL;
+    bool match = v && !strcasecmp(g_variant_get_string(v, NULL), uuid);
+    if (v) g_variant_unref(v);
+    return match;
+}
+bool fipsd_ble_bluez_find_psm_characteristic(GVariant *objects, const char *device, char *out, size_t cap)
+{
+    if (!objects || !device || !g_variant_is_of_type(objects, G_VARIANT_TYPE("a{oa{sa{sv}}}"))) return false;
+    enum { SERVICES = 8 };
+    char services[SERVICES][128];
+    size_t n = 0;
+    GVariantIter it;
+    const char *path;
+    GVariant *ifaces;
+    g_variant_iter_init(&it, objects); /* the FIPS services of this device */
+    while (g_variant_iter_next(&it, "{&o@a{sa{sv}}}", &path, &ifaces)) {
+        GVariant *svc = g_variant_lookup_value(ifaces, "org.bluez.GattService1", G_VARIANT_TYPE_VARDICT);
+        if (svc && n < SERVICES && under(path, device) && strlen(path) < sizeof services[0] &&
+            uuid_is(svc, FIPSD_BLE_SERVICE_UUID)) strcpy(services[n++], path);
+        if (svc) g_variant_unref(svc);
+        g_variant_unref(ifaces);
+    }
+    bool found = false;
+    g_variant_iter_init(&it, objects); /* and the PSM characteristic of one */
+    while (!found && g_variant_iter_next(&it, "{&o@a{sa{sv}}}", &path, &ifaces)) {
+        GVariant *chr = g_variant_lookup_value(ifaces, "org.bluez.GattCharacteristic1", G_VARIANT_TYPE_VARDICT);
+        if (chr && under(path, device) && uuid_is(chr, FIPSD_BLE_PSM_CHARACTERISTIC_UUID)) {
+            GVariant *svc = g_variant_lookup_value(chr, "Service", G_VARIANT_TYPE_OBJECT_PATH);
+            const char *owner = svc ? g_variant_get_string(svc, NULL) : "";
+            for (size_t i = 0; i < n && !found; ++i)
+                if (!strcmp(owner, services[i]) && strlen(path) < cap) { strcpy(out, path); found = true; }
+            if (svc) g_variant_unref(svc);
+        }
+        if (chr) g_variant_unref(chr);
+        g_variant_unref(ifaces);
+    }
+    return found;
+}
+
 /* ---- errors -------------------------------------------------------------------- */
 int fipsd_ble_bluez_dbus_errno(const char *name)
 {

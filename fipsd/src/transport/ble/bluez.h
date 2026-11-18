@@ -94,6 +94,12 @@ uint8_t fipsd_ble_bluez_dial_type(const fipsd_ble_bluez_props *known);
 void fipsd_ble_bluez_sockaddr(const uint8_t device[6], uint8_t type, uint16_t psm, fipsd_l2cap_sockaddr *out);
 void fipsd_ble_bluez_sockaddr_device(const fipsd_l2cap_sockaddr *, uint8_t device[6]);
 
+/* read_psm: in a GetManagedObjects reply (a{oa{sa{sv}}}), the object path of
+ * the PSM characteristic (FIPSD_BLE_PSM_CHARACTERISTIC_UUID) of a FIPS
+ * service (FIPSD_BLE_SERVICE_UUID) under `device_path`. False when the
+ * device serves none (or the path does not fit). */
+bool fipsd_ble_bluez_find_psm_characteristic(GVariant *objects, const char *device_path, char *out, size_t capacity);
+
 /* Errors as backend.h's negative errno. D-Bus error names (org.bluez.Error.*,
  * org.freedesktop.DBus.Error.*); a GError from a GDBus call (cancellation,
  * timeouts and closed connections included). */
