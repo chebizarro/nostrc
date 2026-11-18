@@ -35,6 +35,9 @@
  * nonblocking connect bounded by the deadline; every channel is an fd stream
  * on the core's fast path, so its SDUs are the core's reads. A dead channel is
  * seen by the core's own reader, so this backend never needs STREAM_CLOSED.
+ * A pending dial pauses discovery (see scan_kick): while BlueZ discovers, the
+ * kernel waits for an advert report of the target, which discovery's
+ * duplicate-filtered scan sends once per cycle, before the dial existed.
  *
  * Errors keep backend.h's PSM rule. The kernel ends an unanswered LE dial with
  * ECONNREFUSED when the channel timer fires, the errno of a real refusal; the
@@ -75,7 +78,7 @@ static const char adv_xml[] =
     "<property name='ServiceData' type='a{sv}' access='read'/><property name='MinInterval' type='u' access='read'/>"
     "<property name='MaxInterval' type='u' access='read'/></interface></node>";
 
-enum { REQ_ADVERTISE, REQ_ADVERTISE_STOP, REQ_SCAN_START, REQ_SCAN_STOP, REQ_READ_PSM };
+enum { REQ_ADVERTISE, REQ_ADVERTISE_STOP, REQ_SCAN_START, REQ_SCAN_STOP, REQ_SCAN_PAUSE, REQ_SCAN_RESUME, REQ_READ_PSM };
 typedef struct bz bz;
 typedef struct bz_req {
     _Atomic int refs;
@@ -139,7 +142,10 @@ struct bz {
     char *owner; /* BlueZ's unique name: the only caller of our Release */
     guint watch, sub_added, sub_removed, sub_props, object_id;
     unsigned retry_ms, pending;
-    bool quitting, power_requested, advertising, scanning, warned_bus, warned_devices;
+    bool quitting, power_requested, advertising, warned_bus, warned_devices;
+    bool scanning;     /* the core's discovery session is open */
+    bool discovering;  /* and BlueZ is discovering for it: not while a dial is pending */
+    unsigned paused;   /* dials and GATT connects pending */
     fipsd_ble_advert adv; /* what the advertisement object serves */
     GQueue adv_q, scan_q;
     bool adv_busy, scan_busy;
@@ -218,6 +224,15 @@ static int call(bz *b, bz_req *q, uint64_t deadline)
         selected = go_select_timeout(cases, 2, deadline > now ? deadline - now : 0).selected_case;
     }
     return selected == 0 ? q->rc : selected == 1 ? -ECANCELED : -ETIMEDOUT; /* the caller then drops its reference */
+}
+/* Fire and forget, from a fiber: the scan queue orders it with the rest. */
+static void post_scan(bz *b, int kind)
+{
+    bz_req *q = b->thread_ok && !go_channel_is_closed(b->stop_ch) ? req_new(b, kind) : NULL;
+    if (!q) return;
+    q->deadline = FIPSD_BLE_NO_DEADLINE;
+    g_main_context_invoke_full(b->ctx, G_PRIORITY_DEFAULT, dispatch, q, NULL);
+    req_unref(q); /* nobody waits for the reply */
 }
 static int simple(bz *b, int kind, const fipsd_ble_advert *ad, uint64_t deadline)
 {
@@ -324,7 +339,7 @@ static void forget_adapter(bz *b)
     b->present = b->powered = false;
     g_hash_table_remove_all(b->devices);
     nsync_mu_unlock(&b->mu);
-    b->advertising = b->scanning = false;
+    b->advertising = b->scanning = b->discovering = false;
     b->power_requested = false;
 }
 static void power_done(bz *b, void *ctx, GVariant *r, const GError *e) { (void)ctx; (void)r; log_failure(b, "power-on", e); }
@@ -339,7 +354,7 @@ static void adapter_update(bz *b, GVariant *props, bool appeared)
     bool up = b->present && b->powered;
     if (!up) forget_reports_locked(b);
     nsync_mu_unlock(&b->mu);
-    if (!up) b->scanning = false; /* BlueZ ends discovery with the power */
+    if (!up) b->scanning = b->discovering = false; /* BlueZ ends discovery with the power */
     if (appeared && (p.fields & FIPSD_BLE_BLUEZ_POWERED) && !p.powered && !b->power_requested) {
         b->power_requested = true;
         FIPSD_INFO(MOD, "%s: powering the adapter on", b->adapter);
@@ -535,14 +550,12 @@ static void scan_finish(bz *b, int rc)
     scan_kick(b);
 }
 static void scan_stopped(bz *b, void *ctx, GVariant *r, const GError *e) { (void)ctx; (void)r; (void)e; scan_finish(b, 0); }
-static void scan_started(bz *b, void *ctx, GVariant *r, const GError *e)
+/* The core's discovery session is open: report the kept FIPS objects once,
+ * as bluer's discover_devices does. `discovering`: BlueZ is (not paused). */
+static void scan_opened(bz *b, bool discovering)
 {
-    (void)ctx; (void)r;
-    int rc = fipsd_ble_bluez_gerror_errno(e);
-    if (rc == -EALREADY) rc = 0; /* this client is already discovering */
-    if (rc) { log_failure(b, "StartDiscovery", e); scan_finish(b, rc); return; }
     b->scanning = true;
-    /* The kept FIPS objects once, as bluer's discover_devices does. */
+    b->discovering = discovering;
     nsync_mu_lock(&b->mu);
     forget_reports_locked(b);
     GHashTableIter it;
@@ -554,7 +567,23 @@ static void scan_started(bz *b, void *ctx, GVariant *r, const GError *e)
     nsync_mu_unlock(&b->mu);
     for (guint i = 0; i < kept->len; ++i) device_update(b, g_ptr_array_index(kept, i), NULL);
     g_ptr_array_unref(kept);
-    FIPSD_DEBUG(MOD, "%s: scanning for the FIPS service", b->adapter);
+    FIPSD_DEBUG(MOD, "%s: scanning for the FIPS service%s", b->adapter, discovering ? "" : " (after the pending dial)");
+    scan_finish(b, 0);
+}
+static void scan_started(bz *b, void *ctx, GVariant *r, const GError *e)
+{
+    (void)ctx; (void)r;
+    int rc = fipsd_ble_bluez_gerror_errno(e);
+    if (rc == -EALREADY) rc = 0; /* this client is already discovering */
+    if (rc) { log_failure(b, "StartDiscovery", e); scan_finish(b, rc); return; }
+    scan_opened(b, true);
+}
+static void scan_resumed(bz *b, void *ctx, GVariant *r, const GError *e)
+{
+    (void)ctx; (void)r;
+    int rc = fipsd_ble_bluez_gerror_errno(e);
+    if (!rc || rc == -EALREADY) b->discovering = true;
+    else log_failure(b, "StartDiscovery", e);
     scan_finish(b, 0);
 }
 static void scan_filtered(bz *b, void *ctx, GVariant *r, const GError *e)
@@ -562,9 +591,12 @@ static void scan_filtered(bz *b, void *ctx, GVariant *r, const GError *e)
     bz_req *q = ctx;
     (void)r;
     int rc = fipsd_ble_bluez_gerror_errno(e);
-    if (rc) { log_failure(b, "SetDiscoveryFilter", e); scan_finish(b, rc); return; }
-    bluez_call(b, b->path, BZ_ADAPTER1, "StartDiscovery", NULL, NULL, call_timeout(q), q, scan_started);
+    if (rc) { log_failure(b, "SetDiscoveryFilter", e); scan_finish(b, q->kind == REQ_SCAN_RESUME ? 0 : rc); return; }
+    if (q->kind == REQ_SCAN_START && b->paused) { scan_opened(b, false); return; } /* the last resume starts it */
+    bluez_call(b, b->path, BZ_ADAPTER1, "StartDiscovery", NULL, NULL, call_timeout(q), q,
+        q->kind == REQ_SCAN_RESUME ? scan_resumed : scan_started);
 }
+static void discovery_filter(bz *b, bz_req *q);
 /* RemoveDevice for a cached object; on failure it stays, unmarked, and is
  * reported like a kept one. */
 typedef struct bz_removal { bz *b; char *path; } bz_removal;
@@ -623,6 +655,10 @@ static void scan_objects(bz *b, void *ctx, GVariant *r, const GError *e)
         g_variant_unref(ifaces);
     }
     g_variant_unref(objects);
+    discovery_filter(b, q);
+}
+static void discovery_filter(bz *b, bz_req *q)
+{
     GVariantBuilder f;
     g_variant_builder_init(&f, G_VARIANT_TYPE_VARDICT);
     const char *uuids[] = {FIPSD_BLE_SERVICE_UUID};
@@ -643,7 +679,27 @@ static void scan_kick(bz *b)
         if (!b->scanning) { scan_finish(b, 0); return; }
         b->scanning = false;
         nsync_mu_lock(&b->mu); forget_reports_locked(b); nsync_mu_unlock(&b->mu);
+        if (!b->discovering) { scan_finish(b, 0); return; }
+        b->discovering = false;
         bluez_call(b, b->path, BZ_ADAPTER1, "StopDiscovery", NULL, NULL, BZ_QUIET_CALL_MS, q, scan_stopped);
+        return;
+    }
+    /* A pending LE connection waits, while BlueZ discovers, for an advert
+     * report of its target, and discovery's scan reports a device once per
+     * cycle (duplicate filtering): a dial made after that report would wait
+     * out its deadline. With discovery paused the kernel's own passive scan
+     * for the pending connection reports the next advert at once. The
+     * discovery session (and what it reported) is the same after a pause. */
+    if (q->kind == REQ_SCAN_PAUSE) {
+        if (++b->paused > 1 || !b->discovering) { scan_finish(b, 0); return; }
+        b->discovering = false;
+        bluez_call(b, b->path, BZ_ADAPTER1, "StopDiscovery", NULL, NULL, BZ_QUIET_CALL_MS, q, scan_stopped);
+        return;
+    }
+    if (q->kind == REQ_SCAN_RESUME) {
+        if (b->paused) --b->paused;
+        if (b->paused || !b->scanning || b->discovering || !adapter_up(b) || !b->bus) { scan_finish(b, 0); return; }
+        discovery_filter(b, q); /* the filter goes with StopDiscovery: set it again */
         return;
     }
     if (!adapter_up(b) || !b->bus) { scan_finish(b, -ENODEV); return; }
@@ -665,9 +721,19 @@ typedef struct bz_read {
     char path[FIPSD_BLE_ADAPTER_MAX + 40];
     GSource *timer;
     unsigned inflight;
-    bool waiting, connecting, done;
+    bool waiting, connecting, paused, done;
 } bz_read;
 static void read_release(bz_read *r) { if (r->done && !r->inflight) g_free(r); }
+/* GLib thread: the same pause as a dial's, queued behind the scan work. */
+static void queue_scan(bz *b, int kind)
+{
+    bz_req *q = req_new(b, kind);
+    if (!q) return;
+    q->deadline = FIPSD_BLE_NO_DEADLINE;
+    atomic_fetch_sub(&q->refs, 1); /* no caller: only the queue's reference */
+    g_queue_push_tail(&b->scan_q, q);
+    scan_kick(b);
+}
 static void read_finish(bz_read *r, int rc)
 {
     if (r->done) return;
@@ -677,6 +743,7 @@ static void read_finish(bz_read *r, int rc)
     if (r->timer) { g_source_destroy(r->timer); g_source_unref(r->timer); r->timer = NULL; }
     if (rc && r->connecting)
         bluez_call(b, r->path, BZ_DEVICE1, "Disconnect", NULL, NULL, BZ_QUIET_CALL_MS, NULL, quiet_done);
+    if (r->paused && !b->quitting) queue_scan(b, REQ_SCAN_RESUME);
     FIPSD_DEBUG(MOD, "%s: GATT PSM read of %s: %d", b->adapter, r->path, rc);
     answer(r->q, rc);
     r->q = NULL;
@@ -785,7 +852,8 @@ static void read_start(bz *b, bz_req *q)
         (void)g_source_attach(r->timer, b->ctx);
     }
     if (services_resolved(b, r->path)) { read_find(r); return; }
-    r->connecting = true;
+    r->connecting = r->paused = true;
+    queue_scan(b, REQ_SCAN_PAUSE);
     read_call(r, r->path, BZ_DEVICE1, "Connect", NULL, NULL, read_connected);
 }
 
@@ -930,10 +998,9 @@ static gboolean on_stop(gpointer data)
         bluez_call(b, b->path, BZ_ADV_MANAGER1, "UnregisterAdvertisement", g_variant_new("(o)", b->object), NULL,
             BZ_QUIET_CALL_MS, NULL, quiet_done);
     }
-    if (b->scanning) {
-        b->scanning = false;
+    if (b->discovering)
         bluez_call(b, b->path, BZ_ADAPTER1, "StopDiscovery", NULL, NULL, BZ_QUIET_CALL_MS, NULL, quiet_done);
-    }
+    b->scanning = b->discovering = false;
     return G_SOURCE_REMOVE;
 }
 static gboolean on_quit(gpointer data)
@@ -1283,8 +1350,10 @@ static int b_connect(void *self, const fipsd_ble_peer *p, uint16_t psm, uint64_t
         nsync_mu_unlock(&b->mu);
         if (stopped) err = ECANCELED;
         else {
+            post_scan(b, REQ_SCAN_PAUSE);
             rc = gof_connect(fd, (struct sockaddr *)&dst, sizeof dst, remaining_ms(deadline));
             if (rc) err = io_errno();
+            post_scan(b, REQ_SCAN_RESUME);
             nsync_mu_lock(&b->mu);
             for (bz_dial **q = &b->dials; *q; q = &(*q)->next) if (*q == &dial) { *q = dial.next; break; }
             nsync_mu_unlock(&b->mu);

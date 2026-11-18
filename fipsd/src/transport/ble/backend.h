@@ -61,8 +61,8 @@
  *                                |                  |                                           | the channel (fd, or a bridged stream)
  * BleIo::connect(addr, psm)      | connect          | l2cap Stream::connect(LePublic, psm);     | connect(peripheral) then
  *                                |                  | keep ETIMEDOUT and ECONNREFUSED distinct  | openL2CAPChannel(psm)
- * (io_macos DialPlan GATT steps) | read_psm         | -ENOTSUP at first (GattCharacteristic1    | discoverServices(FIPS) ->
- *                                |                  | ReadValue may be adopted later)           | discoverCharacteristics(PSM) -> read
+ * (io_macos DialPlan GATT steps) | read_psm         | Device1.Connect, ServicesResolved, then   | discoverServices(FIPS) ->
+ *                                |                  | GattCharacteristic1.ReadValue (bluez.c)   | discoverCharacteristics(PSM) -> read
  * start_advertising(psm)         | advertise        | LEAdvertisement1: FIPS UUID, ServiceData  | startAdvertising(FIPS UUID only) and set
  *                                |                  | {0x9C90: psm LE}, 400-600 ms interval     | the PSM characteristic to psm LE
  * stop_advertising               | advertise_stop   | drop the AdvertisementHandle              | stopAdvertising
