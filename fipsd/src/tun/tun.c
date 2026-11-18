@@ -4,14 +4,16 @@
 #include "node/netmon.h"
 #include <libgo/fiber.h>
 #include <errno.h>
-#include <fcntl.h>
 #include <limits.h>
-#include <net/if.h>
-#include <poll.h>
 #include <stdlib.h>
 #include <string.h>
+#if !defined(_WIN32) /* tun_windows.c supplies the Windows system ops */
+#include <fcntl.h>
+#include <net/if.h>
+#include <poll.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
+#endif
 /* A fiber may resume on another worker: never retain a compiler-cached
  * errno TLS address across frame_read/frame_write (which can park).
  * errno belongs to the OS thread, not the TSan fiber, and these accessors
@@ -19,6 +21,7 @@
  * TLS accesses are left uninstrumented. */
 __attribute__((noinline, no_sanitize("thread"))) static int frame_error(void) { return errno; }
 __attribute__((noinline, no_sanitize("thread"))) static void frame_set_error(int error) { errno = error; }
+#if !defined(_WIN32)
 static int sys_open(void *u,const char *p,int f) { (void)u; return open(p,f); }
 static int sys_socket(void *u,int d,int t,int p) { (void)u; return socket(d,t,p); }
 static int sys_ioctl(void *u,int f,unsigned long q,void *v) { (void)u; return ioctl(f,q,v); }
@@ -51,6 +54,7 @@ const fipsd_tun_ops *fipsd_tun_system_ops(void)
         .read=sys_read,.write=sys_write,.frame_read=fiber_read,.frame_write=fiber_write};
     return &o;
 }
+#endif
 int fipsd_tun_close_fd(fipsd_tun *t,int fd)
 {
     int e=errno; (void)t->ops.close(t->ops.user,fd); errno=e; return -1;
@@ -70,6 +74,7 @@ fipsd_tun *fipsd_tun_create(const fipsd_tun_config *cfg,const fipsd_tun_ops *ops
     fipsd_tun *t=calloc(1,sizeof(*t)); if (!t) return NULL;
     t->config=*cfg; memcpy(t->configured,cfg->name,strlen(cfg->name)+1); t->config.name=t->configured;
     t->ops=ops?*ops:*fipsd_tun_system_ops(); t->platform=platform?platform:fipsd_tun_native_platform();
+    if (!t->ops.wintun) t->ops.wintun=fipsd_tun_system_ops()->wintun;
     t->fd=-1; t->mtu=fipsd_tun_mtu(cfg->transport_mtu,cfg->mtu);
     if (!t->ops.open || !t->ops.socket || !t->ops.ioctl || !t->ops.connect || !t->ops.getsockopt ||
         !t->ops.prepare || !t->ops.route_socket || !t->ops.close || !t->ops.ifindex || !t->ops.device_name ||
@@ -99,14 +104,22 @@ int fipsd_tun_header_strip(uint8_t family,uint8_t *b,size_t n)
     if (b[0] || b[1] || b[2] || b[3]!=family) { frame_set_error(EPROTONOSUPPORT); return -1; }
     memmove(b,b+4,n-4); return (int)(n-4);
 }
+static ssize_t frame_read(fipsd_tun *t,uint8_t *b,size_t n)
+{
+    return t->platform->frame_read?t->platform->frame_read(t,b,n):t->ops.frame_read(t->ops.user,t->fd,b,n);
+}
+static ssize_t frame_write(fipsd_tun *t,const uint8_t *b,size_t n)
+{
+    return t->platform->frame_write?t->platform->frame_write(t,b,n):t->ops.frame_write(t->ops.user,t->fd,b,n);
+}
 ssize_t fipsd_tun_read(fipsd_tun *t,uint8_t *b,size_t cap)
 {
     if (!t || t->fd<0) { frame_set_error(ENODEV); return -1; }
     if (!b || !cap || cap>65535) { frame_set_error(EINVAL); return -1; }
     uint8_t family=t->platform->family_header;
-    if (!family) return t->ops.frame_read(t->ops.user,t->fd,b,cap);
+    if (!family) return frame_read(t,b,cap);
     uint8_t *packet=malloc(cap+4); if (!packet) return -1;
-    ssize_t n=t->ops.frame_read(t->ops.user,t->fd,packet,cap+4);
+    ssize_t n=frame_read(t,packet,cap+4);
     if (n>=0) {
         int stripped=fipsd_tun_header_strip(family,packet,(size_t)n);
         n=stripped;
@@ -124,7 +137,7 @@ ssize_t fipsd_tun_write(fipsd_tun *t,const uint8_t *b,size_t n)
         if (fipsd_tun_header_prepend(family,b,n,packet,n+4)<0) { free(packet); return -1; }
         data=packet; len=n+4;
     }
-    ssize_t wrote=t->ops.frame_write(t->ops.user,t->fd,data,len);
+    ssize_t wrote=frame_write(t,data,len);
     int error=wrote<0?frame_error():0; free(packet);
     if (wrote>=0 && wrote!=(ssize_t)len) { frame_set_error(EIO); return -1; }
     if (wrote<0) frame_set_error(error);

@@ -4,7 +4,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/wait.h>
+#ifdef __linux__
+#include <sys/wait.h> /* WIFEXITED for the nft run below */
+#endif
 #define MOD "control/firewall_state"
 typedef enum match_kind { M_IIFNAME, M_L4PROTO, M_DPORT, M_UNRECOGNIZED } match_kind;
 typedef enum port_kind { PM_SINGLE, PM_SET, PM_RANGE } port_kind;

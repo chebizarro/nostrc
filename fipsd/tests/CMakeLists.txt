@@ -341,6 +341,12 @@ nostrc_describe_test(FipsdTunTest OWNER fipsd TARGETS fipsd_tun_test)
 nostrc_describe_test(FipsdTunRuntimeTest OWNER fipsd TARGETS fipsd_tun_runtime_test)
 nostrc_describe_test(FipsdTunNotReadyTest OWNER fipsd TARGETS fipsd_tun_runtime_test)
 nostrc_describe_test(FipsdTunPrivilegedSmokeTest OWNER fipsd TARGETS fipsd_tun_privileged_test)
+# The Windows backend's IP Helper rows and codes are pure data (nostrc-iq1n9.6.2).
+fipsd_unit_test(fipsd_tun_winnet_test test_tun_winnet.c)
+add_dependencies(fipsd_tests fipsd_tun_winnet_test)
+add_test(NAME FipsdTunWinnetTest COMMAND fipsd_tun_winnet_test)
+set_tests_properties(FipsdTunWinnetTest PROPERTIES TIMEOUT 30 LABELS "fips;tun;unit")
+nostrc_describe_test(FipsdTunWinnetTest OWNER fipsd TARGETS fipsd_tun_winnet_test)
 # Re-run the complete node gate, not a reduced UDP handshake mock.
 foreach(family IN ITEMS 4 6)
   fipsd_unit_test(fipsd_udp_two_nodes_v${family}_test test_node_two_nodes.c)
