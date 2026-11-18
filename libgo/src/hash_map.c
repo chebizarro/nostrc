@@ -120,7 +120,10 @@ void go_hash_map_insert(GoHashMap *map, HashKey *key, void *value) {
         if (key->type == node->key.type) {
             if ((key->type == KEY_TYPE_STRING && strcmp(key->key.str_key, node->key.key.str_key) == 0) ||
                 (key->type == KEY_TYPE_INT && key->key.int_key == node->key.key.int_key)) {
-                node->value = value; // Update existing value
+                /* Insertion owns the incoming key on both paths. Keep the
+                 * stored key and release the unused duplicate on replacement. */
+                free_hash_key(key);
+                node->value = value;
                 nsync_mu_unlock(&map->bucket_locks[bucket_index]);
                 return;
             }

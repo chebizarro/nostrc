@@ -509,7 +509,8 @@ static void *stress_consumer(void *p) {
 
 static void test_mixed_stress(void) {
     g_stress = go_channel_create(8); /* small ring: constant wrap-around */
-    CancelContextResult cc = go_context_with_cancel(go_context_background());
+    GoContext *parent = go_context_background();
+    CancelContextResult cc = go_context_with_cancel(parent);
     g_stress_ctx = cc.context;
     pthread_t prod[STRESS_PRODUCERS], cons[STRESS_CONSUMERS];
     for (unsigned i = 0; i < STRESS_CONSUMERS; i++)
@@ -535,6 +536,7 @@ static void test_mixed_stress(void) {
     CHECK(atomic_load(&g_received) == total, "elements were lost");
     go_channel_unref(g_stress);
     go_context_unref(g_stress_ctx);
+    go_context_unref(parent);
     printf("5: ok\n");
 }
 
