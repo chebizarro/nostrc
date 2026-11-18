@@ -42,6 +42,12 @@ add_test(NAME FipsdCliParseTest COMMAND fipsd_cli_test)
 set_tests_properties(FipsdCliParseTest PROPERTIES TIMEOUT 10 LABELS "fips;unit")
 nostrc_describe_test(FipsdCliParseTest OWNER fipsd TARGETS fipsd_cli_test)
 
+# The Windows service's SCM status sequence is pure data: tested everywhere.
+fipsd_unit_test(fipsd_service_status_test test_service_status.c)
+add_test(NAME FipsdServiceStatusTest COMMAND fipsd_service_status_test)
+set_tests_properties(FipsdServiceStatusTest PROPERTIES TIMEOUT 10 LABELS "fips;unit")
+nostrc_describe_test(FipsdServiceStatusTest OWNER fipsd TARGETS fipsd_service_status_test)
+
 fipsd_unit_test(fipsd_log_test test_log.c)
 # Compile the real logger with a test-local syscall seam for partial ENOSPC.
 # No write replacement or fault state is present in fipsd_lib/the daemon.
@@ -84,7 +90,7 @@ nostrc_describe_test(FipsdProcessTest OWNER fipsd TARGETS fipsd_process_test fip
 
 # One target that builds every fipsd test executable (for CI target lists).
 add_custom_target(fipsd_tests DEPENDS fipsd fipsd_host_os_test fipsd_cli_test
-  fipsd_log_test fipsd_runtime_test fipsd_privilege_test fipsd_process_test)
+  fipsd_service_status_test fipsd_log_test fipsd_runtime_test fipsd_privilege_test fipsd_process_test)
 
 # Peer reducer + real dispatcher/snapshot boundary; deterministic injected clock.
 fipsd_unit_test(fipsd_peer_test test_peer.c)

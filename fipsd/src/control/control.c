@@ -2,21 +2,26 @@
 #define _DARWIN_C_SOURCE 1
 #include "fiber_errno.h"
 #include "control/control.h"
-#include "privilege.h"
 #include "log.h"
+#include "transport/sockos.h"
 #include <libgo/fiber.h>
 #include <go.h>
 #include <errno.h>
-#include <fcntl.h>
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <time.h>
+#if defined(_WIN32)
+#include <netinet/in.h>
+#else
+#include "privilege.h"
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/un.h>
 #include <unistd.h>
-#include <time.h>
+#endif
 
 int fipsd_control_resolve_path(const char *override, const fipsd_control_path_env *env,
                               char *out, size_t cap)
@@ -33,6 +38,22 @@ int fipsd_control_resolve_path(const char *override, const fipsd_control_path_en
     if (n <= 0 || (size_t)n >= cap) { errno = ENAMETOOLONG; return -1; }
     return 0;
 }
+bool fipsd_control_resolve_port(const char *value, uint16_t *port)
+{
+    *port = FIPSD_CONTROL_DEFAULT_PORT;
+    if (!value) return true;
+    const char *p = value + (*value == '+');
+    if (!*p) return false;
+    uint32_t n = 0;
+    for (; *p; ++p) {
+        if (*p < '0' || *p > '9') return false;
+        n = n * 10 + (uint32_t)(*p - '0');
+        if (n > UINT16_MAX) return false;
+    }
+    *port = (uint16_t)n;
+    return true;
+}
+#if !defined(_WIN32)
 static bool is_dir(const char *path)
 {
     struct stat st;
@@ -127,15 +148,63 @@ static int bind_listener(fipsd_control_service *s)
     }
     return fd;
 }
+#else
+/* Upstream's Windows control socket: TCP bound to 127.0.0.1 only, and every
+ * accepted peer checked to be loopback. Exclusive, so no other socket of any
+ * account can bind the port while the daemon holds it (Windows otherwise
+ * lets SO_REUSEADDR take over a bound port). There is no ACL: any local user
+ * can connect, as upstream documents. */
+static gof_socket_t bind_listener(fipsd_control_service *s, uint16_t port)
+{
+    gof_socket_t fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (fd == GOF_INVALID_SOCKET) { errno = gof_socket_errno(); return GOF_INVALID_SOCKET; }
+    BOOL one = TRUE;
+    struct sockaddr_in a = {.sin_family = AF_INET, .sin_port = htons(port), .sin_addr.s_addr = htonl(INADDR_LOOPBACK)};
+    int len = (int)sizeof a;
+    if (setsockopt(fd, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char *)&one, (int)sizeof one) != 0 ||
+        bind(fd, (struct sockaddr *)&a, (int)sizeof a) != 0 || listen(fd, 128) != 0 ||
+        getsockname(fd, (struct sockaddr *)&a, &len) != 0) {
+        errno = gof_socket_errno(); fipsd_socket_close(fd); return GOF_INVALID_SOCKET;
+    }
+    /* A SOCKET value is recycled at once on Windows: clear any cancellation
+     * latched on the last socket that had it before this one is used. */
+    if (fipsd_socket_prepare(fd) != 0 || gof_io_reset_fd(fd) != 0) {
+        fipsd_socket_close(fd); return GOF_INVALID_SOCKET;
+    }
+    s->port = ntohs(a.sin_port);
+    snprintf(s->path, sizeof s->path, "127.0.0.1:%u", (unsigned)s->port);
+    s->bound = true;
+    return fd;
+}
+static bool loopback_peer(const struct sockaddr_storage *peer)
+{
+    if (peer->ss_family == AF_INET)
+        return (ntohl(((const struct sockaddr_in *)peer)->sin_addr.s_addr) >> 24) == 127;
+    if (peer->ss_family == AF_INET6) {
+        const uint8_t *b = ((const struct sockaddr_in6 *)peer)->sin6_addr.s6_addr;
+        static const uint8_t loop[16] = {[15] = 1};
+        static const uint8_t mapped[12] = {[10] = 0xff, [11] = 0xff};
+        return !memcmp(b, loop, 16) || (!memcmp(b, mapped, 12) && b[12] == 127);
+    }
+    return false;
+}
+#endif
 
 typedef struct connection {
     fipsd_control_service *service;
     nsync_mu mu; /* fd shutdown/close only; never held across gof I/O */
-    int fd;
+    gof_socket_t fd;
+#if defined(_WIN32)
+    bool reading; /* protected by mu: the request is still being read */
+    int cancelled; /* protected by mu: 0, CANCEL_READ, or CANCEL_ALL */
+#endif
     _Atomic unsigned references;
     _Atomic bool read_timeout, execution_timeout;
     GoChannel *phases; /* read, execution/encode, write complete (capacity 3) */
 } connection;
+#if defined(_WIN32)
+enum { CANCEL_READ = 1, CANCEL_ALL = 2 };
+#endif
 static void release_connection(connection *c)
 {
     if (atomic_fetch_sub(&c->references, 1) != 1) return;
@@ -143,10 +212,24 @@ static void release_connection(connection *c)
     atomic_fetch_sub(&c->service->connections, 1);
     free(c);
 }
+/* POSIX: shutdown(2) ends a parked read or write. On Windows shutdown()
+ * leaves a pending overlapped receive pending, so the socket's operations are
+ * cancelled through libgo instead (ECANCELED, latched until reset). A read
+ * deadline cancels only while the request is still being read, and the
+ * connection fiber clears that latch before it writes the reply, so a read
+ * timeout still answers "read timeout" as it does on POSIX. */
 static void shutdown_connection(connection *c, int how)
 {
     nsync_mu_lock(&c->mu);
+#if defined(_WIN32)
+    if (c->fd != GOF_INVALID_SOCKET && (how != SHUT_RD || c->reading)) {
+        (void)gof_io_cancel_fd(c->fd);
+        if (c->cancelled < (how == SHUT_RD ? CANCEL_READ : CANCEL_ALL))
+            c->cancelled = how == SHUT_RD ? CANCEL_READ : CANCEL_ALL;
+    }
+#else
     if (c->fd >= 0) (void)shutdown(c->fd, how);
+#endif
     nsync_mu_unlock(&c->mu);
 }
 /* gof_read/write have no deadlines. This companion selects completion against
@@ -179,9 +262,9 @@ static void deadline_fiber(void *arg)
     }
     release_connection(c);
 }
-static ssize_t write_socket(int fd, const char *data, size_t len)
+static ssize_t write_socket(gof_socket_t fd, const char *data, size_t len)
 {
-#ifdef MSG_NOSIGNAL
+#if defined(MSG_NOSIGNAL) && !defined(_WIN32)
     /* Linux has no SO_NOSIGPIPE. Use the equivalent fiber I/O wrapper rather
      * than changing the process-wide SIGPIPE disposition. */
     struct iovec iov = {.iov_base=(void *)data, .iov_len=len};
@@ -214,6 +297,14 @@ static void connection_fiber(void *arg)
         }
         if (line[len++] == '\n') break;
     }
+#if defined(_WIN32)
+    /* Reading is over: a read deadline can no longer cancel, and one that did
+     * must not fail the reply. No operation is pending on the socket. */
+    nsync_mu_lock(&c->mu);
+    c->reading = false;
+    if (c->cancelled == CANCEL_READ && gof_io_reset_fd(c->fd) == 0) c->cancelled = 0;
+    nsync_mu_unlock(&c->mu);
+#endif
     /* Reading is finished BEFORE executing any provider or JSON renderer. */
     go_channel_send(c->phases, c);
     if (atomic_load(&c->read_timeout)) { json_decref(response); response = fipsd_control_error("read timeout"); }
@@ -250,7 +341,11 @@ static void connection_fiber(void *arg)
     }
     go_channel_send(c->phases, c);
     nsync_mu_lock(&c->mu);
-    close(c->fd); c->fd = -1;
+#if defined(_WIN32)
+    /* An orderly close, so the client reads the reply and then end of file. */
+    (void)shutdown(c->fd, SD_SEND);
+#endif
+    fipsd_socket_close(c->fd); c->fd = GOF_INVALID_SOCKET;
     nsync_mu_unlock(&c->mu);
     release_connection(c);
 }
@@ -262,8 +357,15 @@ static void accept_fiber(void *arg)
     s->accept_waiter = gof_hook_current();
     nsync_mu_unlock(&s->listener_mu);
     while (!go_context_is_canceled(ctx)) {
+#if defined(_WIN32)
+        struct sockaddr_storage peer;
+        socklen_t peer_len = (socklen_t)sizeof peer;
+        memset(&peer, 0, sizeof peer);
+        gof_socket_t fd = gof_accept(s->listener, (struct sockaddr *)&peer, &peer_len, -1);
+#else
         int fd = gof_accept(s->listener, NULL, NULL, -1);
-        if (fd < 0) {
+#endif
+        if (fd == GOF_INVALID_SOCKET) {
             if (fipsd_io_errno() == EINTR) continue;
             if (!go_context_is_canceled(ctx)) {
                 FIPSD_ERROR("control", "accept failed: %s", strerror(fipsd_io_errno()));
@@ -271,36 +373,83 @@ static void accept_fiber(void *arg)
             }
             break;
         }
-        if (go_context_is_canceled(ctx)) { close(fd); break; }
+        if (go_context_is_canceled(ctx)) { fipsd_socket_close(fd); break; }
+#if defined(_WIN32)
+        /* Bound to 127.0.0.1 so nothing else can reach it; checked anyway, as
+         * upstream does. The accepted SOCKET may reuse a cancelled one's value. */
+        if (!loopback_peer(&peer)) {
+            FIPSD_WARN("control", "rejected non-localhost control connection");
+            fipsd_socket_close(fd); continue;
+        }
+        if (gof_io_reset_fd(fd) != 0) { fipsd_socket_close(fd); continue; }
+#else
         if (fcntl(fd, F_SETFD, FD_CLOEXEC) < 0) { close(fd); continue; }
 #ifdef SO_NOSIGPIPE
         int one = 1;
         if (setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof(one)) < 0) { close(fd); continue; }
 #endif
+#endif
         /* Only this accept fiber increments; both owners must exit before
          * release_connection returns the slot. Refuse before allocating stacks. */
-        if (atomic_load(&s->connections) >= FIPSD_CONTROL_MAX_CONNECTIONS) { close(fd); continue; }
+        if (atomic_load(&s->connections) >= FIPSD_CONTROL_MAX_CONNECTIONS) { fipsd_socket_close(fd); continue; }
         connection *c = calloc(1, sizeof(*c));
-        if (!c) { close(fd); continue; }
+        if (!c) { fipsd_socket_close(fd); continue; }
         c->fd = fd; c->service = s; atomic_init(&c->references, 2); atomic_init(&c->read_timeout, false); atomic_init(&c->execution_timeout, false);
+#if defined(_WIN32)
+        c->reading = true;
+#endif
         c->phases = go_channel_create(3);
-        if (!c->phases) { close(fd); free(c); continue; }
+        if (!c->phases) { fipsd_socket_close(fd); free(c); continue; }
         atomic_fetch_add(&s->connections, 1);
         if (fipsd_runtime_spawn(s->runtime, deadline_fiber, c) != 0) {
-            close(fd); release_connection(c); release_connection(c); continue;
+            fipsd_socket_close(fd); release_connection(c); release_connection(c); continue;
         }
         if (fipsd_runtime_spawn(s->runtime, connection_fiber, c) != 0) {
             go_channel_send(c->phases, c); go_channel_send(c->phases, c); go_channel_send(c->phases, c);
-            nsync_mu_lock(&c->mu); close(c->fd); c->fd = -1; nsync_mu_unlock(&c->mu);
+            nsync_mu_lock(&c->mu); fipsd_socket_close(c->fd); c->fd = GOF_INVALID_SOCKET; nsync_mu_unlock(&c->mu);
             release_connection(c);
         }
     }
     nsync_mu_lock(&s->listener_mu);
     s->accept_waiter = NULL;
-    close(s->listener); s->listener = -1;
-    close(s->cancel_socket); s->cancel_socket = -1;
+    fipsd_socket_close(s->listener); s->listener = GOF_INVALID_SOCKET;
+    fipsd_socket_close(s->cancel_socket); s->cancel_socket = GOF_INVALID_SOCKET;
     nsync_mu_unlock(&s->listener_mu);
 }
+#if defined(_WIN32)
+static int start(fipsd_subsystem *subsystem, fipsd_runtime *rt)
+{
+    fipsd_control_service *s = subsystem->user;
+    s->runtime = rt;
+    GoRefPtr config = go_swap_load(s->configs);
+    const char *value = fipsd_config_string(fipsd_config_get(config.ptr, "node.control.socket_path"));
+    uint16_t port;
+    if (!fipsd_control_resolve_port(value, &port))
+        FIPSD_WARN("control", "invalid control port '%s'; using the default %u", value, (unsigned)port);
+    go_refptr_release(&config);
+    s->listener = bind_listener(s, port);
+    if (s->listener == GOF_INVALID_SOCKET) {
+        FIPSD_ERROR("control", "cannot bind 127.0.0.1:%u: %s", (unsigned)port, strerror(errno)); return -1;
+    }
+    if (fipsd_runtime_spawn(rt, accept_fiber, s) != 0) {
+        fipsd_socket_close(s->listener); s->listener = GOF_INVALID_SOCKET; return -1;
+    }
+    FIPSD_INFO("control", "control socket listening at %s", s->path);
+    return 0;
+}
+static void stop(fipsd_subsystem *subsystem, fipsd_runtime *rt)
+{
+    (void)rt;
+    fipsd_control_service *s = subsystem->user;
+    /* Cancel the pending AcceptEx: the accept fiber's gof_accept returns
+     * ECANCELED (latched, so a cancel that lands before the accept is issued
+     * is honoured too) and the fiber closes the listener itself. */
+    nsync_mu_lock(&s->listener_mu);
+    if (s->listener != GOF_INVALID_SOCKET && gof_io_cancel_fd(s->listener) != 0)
+        FIPSD_ERROR("control", "cannot cancel listener: %s", strerror(errno));
+    nsync_mu_unlock(&s->listener_mu);
+}
+#else
 static int start(fipsd_subsystem *subsystem, fipsd_runtime *rt)
 {
     fipsd_control_service *s = subsystem->user;
@@ -355,16 +504,20 @@ static void stop(fipsd_subsystem *subsystem, fipsd_runtime *rt)
     }
     nsync_mu_unlock(&s->listener_mu);
 }
+#endif
 void fipsd_control_service_init(fipsd_control_service *s, GoSwap *configs, const fipsd_control_provider *provider)
 {
-    *s = (fipsd_control_service){.subsystem={"control", start, stop, s}, .configs=configs, .listener=-1, .cancel_socket=-1};
+    *s = (fipsd_control_service){.subsystem={"control", start, stop, s}, .configs=configs,
+        .listener=GOF_INVALID_SOCKET, .cancel_socket=GOF_INVALID_SOCKET};
     if (provider) s->provider = *provider;
 }
 void fipsd_control_service_clear(fipsd_control_service *s)
 {
     if (!s->bound) return;
+#if !defined(_WIN32)
     struct stat st;
     if (lstat(s->path, &st) == 0 && S_ISSOCK(st.st_mode) && (uint64_t)st.st_dev == s->socket_device &&
         (uint64_t)st.st_ino == s->socket_inode) (void)unlink(s->path);
+#endif
     s->bound = false;
 }

@@ -138,6 +138,19 @@ bootstraps the job in the system domain. `macos/uninstall.sh` reverses it,
 keeping config, keys and logs. A local `sudo installer -pkg ... -target /`
 needs no signature; a distributed package wants `productsign`.
 
+## Windows
+
+`windows/` ports upstream's Windows ZIP and service scripts for an MSYS2
+build (fipsd/README.md, "Windows service, control socket and packaging"):
+`build-zip.ps1 -BuildDir build` writes `build\deploy\fipsd-<version>-windows-<arch>.zip`
+(the executables, the DLLs they import, the checked Wintun DLL, the Windows
+example `fips.yaml`, `hosts`, the scripts and a README), `install-service.ps1`
+installs it to `%ProgramFiles%\fips` and a restricted `%ProgramData%\fips` and
+registers the `fipsd` service, `uninstall-service.ps1 [-RemoveAll]` reverses
+it. They are not part of the CMake install payload above; `tests/windows_service_smoke.ps1`
+exercises all three, and the `windows` job of `.github/workflows/fips-ci.yml`
+runs it and lints them with PSScriptAnalyzer.
+
 ## Smoke tests
 
 `testing/` holds what the workflow runs between install and uninstall:

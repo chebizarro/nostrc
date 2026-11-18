@@ -12,13 +12,18 @@
 #define FIPSD_TARGET_TRIPLE "unknown"
 #endif
 
-enum { OPT_LOG_FILE = 256, OPT_VERSION_LONG };
+enum { OPT_LOG_FILE = 256, OPT_VERSION_LONG, OPT_SERVICE, OPT_INSTALL_SERVICE, OPT_UNINSTALL_SERVICE };
 
 static const struct option long_options[] = {
     {"config", required_argument, NULL, 'c'},
     {"log-file", required_argument, NULL, OPT_LOG_FILE},
     {"version", no_argument, NULL, OPT_VERSION_LONG},
     {"help", no_argument, NULL, 'h'},
+#if defined(_WIN32)
+    {"service", no_argument, NULL, OPT_SERVICE},
+    {"install-service", no_argument, NULL, OPT_INSTALL_SERVICE},
+    {"uninstall-service", no_argument, NULL, OPT_UNINSTALL_SERVICE},
+#endif
     {NULL, 0, NULL, 0},
 };
 
@@ -56,9 +61,20 @@ void fipsd_cli_print_help(FILE *out)
           "      --version          Print the long version: short version plus build\n"
           "                         target triple.\n"
           "  -h, --help             Print usage and exit.\n"
+#if defined(_WIN32)
+          "      --install-service  Install fipsd as the Windows service 'fipsd' running\n"
+          "                         this executable (Administrator).\n"
+          "      --uninstall-service\n"
+          "                         Stop and remove the Windows service (Administrator).\n"
+          "\n"
+          "The daemon stays in the foreground, logging to stderr (or to --log-file),\n"
+          "until Ctrl+C or Ctrl+Break, or the console closes. As the service it reads\n"
+          "C:\\ProgramData\\fips\\fips.yaml and logs to C:\\ProgramData\\fips\\fips.log.\n"
+#else
           "\n"
           "The daemon stays in the foreground, logging to stderr (or to --log-file),\n"
           "until it receives SIGINT or SIGTERM; SIGHUP requests a configuration reload.\n"
+#endif
           "Exit codes: 0 clean shutdown, 1 start-up failure, 2 usage error.\n",
           out);
 }
@@ -72,7 +88,8 @@ int fipsd_cli_exit_code(fipsd_cli_action action)
     case FIPSD_CLI_VERSION_LONG:
         return FIPSD_EXIT_OK;
     case FIPSD_CLI_USAGE_ERROR:
-    default:
+        return FIPSD_EXIT_USAGE;
+    default: /* the service commands exit with their own status */
         return FIPSD_EXIT_USAGE;
     }
 }
@@ -103,8 +120,11 @@ static void reset_getopt(void)
 
 fipsd_cli_action fipsd_cli_parse(int argc, char **argv, fipsd_options *out, FILE *err)
 {
-    fipsd_options opts = {NULL, NULL};
+    fipsd_options opts = {NULL, NULL, false};
     fipsd_cli_action action = FIPSD_CLI_RUN;
+#if defined(_WIN32)
+    fipsd_cli_action service_command = FIPSD_CLI_RUN; /* help and version win over it */
+#endif
     reset_getopt();
     for (;;) {
         int longindex = -1;
@@ -129,6 +149,18 @@ fipsd_cli_action fipsd_cli_parse(int argc, char **argv, fipsd_options *out, FILE
         case 'h':
             action = FIPSD_CLI_HELP; /* help wins, as with clap */
             break;
+#if defined(_WIN32)
+        case OPT_SERVICE:
+            opts.service = true;
+            break;
+        case OPT_INSTALL_SERVICE:
+            service_command = FIPSD_CLI_INSTALL_SERVICE; /* upstream checks install first */
+            break;
+        case OPT_UNINSTALL_SERVICE:
+            if (service_command == FIPSD_CLI_RUN)
+                service_command = FIPSD_CLI_UNINSTALL_SERVICE;
+            break;
+#endif
         case ':':
             return usage_error(err, "a value is required for",
                                optopt == 'c' ? "--config <FILE>" : "--log-file <FILE>");
@@ -139,6 +171,10 @@ fipsd_cli_action fipsd_cli_parse(int argc, char **argv, fipsd_options *out, FILE
     }
     if (optind < argc)
         return usage_error(err, "unexpected argument", argv[optind]);
+#if defined(_WIN32)
+    if (action == FIPSD_CLI_RUN)
+        action = service_command;
+#endif
     if (out)
         *out = opts;
     return action;

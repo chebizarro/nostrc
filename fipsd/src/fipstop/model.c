@@ -190,6 +190,11 @@ bool ft_locale(void)
 {
     /* Numeric output remains Rust-compatible, independent of the UI locale. */
     setlocale(LC_NUMERIC,"C");
+#if defined(_WIN32)
+    /* The control replies are UTF-8; the user default would be an ANSI code
+     * page. The UCRT has had a UTF-8 locale since Windows 10 1803. */
+    if(setlocale(LC_CTYPE,".UTF-8") && MB_CUR_MAX>1) return true;
+#endif
     setlocale(LC_CTYPE,"");
     if(MB_CUR_MAX>1) return true;
     if(setlocale(LC_CTYPE,"C.UTF-8") && MB_CUR_MAX>1) return true;

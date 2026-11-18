@@ -8,7 +8,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#if !defined(_WIN32)
 #include <termios.h>
+#endif
 #include <unistd.h>
 static volatile sig_atomic_t stopped;
 static void on_signal(int sig) { (void)sig; stopped=1; }
@@ -111,7 +113,9 @@ int main(int argc,char **argv)
         ft_frame_free(&frame); ft_app_free(&app); return ferror(stdout)?1:0;
     }
     if(!isatty(STDIN_FILENO)||!isatty(STDOUT_FILENO)) { fputs("error: terminal required\n",stderr); ft_app_free(&app); return 1; }
+#if !defined(_WIN32)
     struct termios saved; bool have_saved=tcgetattr(STDIN_FILENO,&saved)==0;
+#endif
     SCREEN *screen=newterm(NULL,stdout,stdin);
     if(!screen) { fputs("error: failed to initialise terminal\n",stderr); ft_app_free(&app); return 1; }
     cbreak(); noecho(); keypad(stdscr,TRUE); curs_set(0);
@@ -121,8 +125,13 @@ int main(int argc,char **argv)
         init_pair(FT_DIM,COLOR_WHITE,-1); init_pair(FT_CYAN,COLOR_CYAN,-1); init_pair(FT_YELLOW,COLOR_YELLOW,-1);
         init_pair(FT_GREEN,COLOR_GREEN,-1); init_pair(FT_RED,COLOR_RED,-1); init_pair(FT_SELECT,COLOR_BLACK,COLOR_CYAN);
     }
+#if defined(_WIN32)
+    /* No sigaction or SIGHUP; the console's Ctrl+C reaches curses as a key (3). */
+    signal(SIGINT,on_signal); signal(SIGTERM,on_signal);
+#else
     struct sigaction action; memset(&action,0,sizeof(action)); action.sa_handler=on_signal; sigemptyset(&action.sa_mask);
     sigaction(SIGINT,&action,NULL); sigaction(SIGTERM,&action,NULL); sigaction(SIGHUP,&action,NULL);
+#endif
     int rc=0; uint64_t next=ft_monotonic_ms()+(uint64_t)interval*1000;
     while(!app.quit && !stopped) {
         int rows,cols; getmaxyx(stdscr,rows,cols); ft_frame frame;
@@ -153,6 +162,8 @@ int main(int argc,char **argv)
         }
     }
     endwin(); delscreen(screen);
+#if !defined(_WIN32)
     if(have_saved && tcsetattr(STDIN_FILENO,TCSANOW,&saved)!=0) rc=1;
+#endif
     ft_app_free(&app); return rc;
 }

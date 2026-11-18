@@ -33,7 +33,7 @@ add_custom_target(fipsd_build_info
 
 # Everything but main(), so the tests link the code the daemon runs.
 add_library(fipsd_lib STATIC
-  src/cli.c src/log.c src/runtime.c src/privilege.c src/host_os.c)
+  src/cli.c src/log.c src/runtime.c src/privilege.c src/host_os.c src/service.c)
 add_dependencies(fipsd_lib fipsd_build_info)
 set_target_properties(fipsd_lib PROPERTIES
   C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
@@ -69,6 +69,12 @@ add_executable(fipsd src/main.c)
 set_target_properties(fipsd PROPERTIES
   C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
 target_link_libraries(fipsd PRIVATE fipsd_lib nostr)
+if(WIN32)
+  # The Windows service (nostrc-iq1n9.6.3): SCM dispatcher, control handler
+  # and --install-service/--uninstall-service.
+  target_sources(fipsd PRIVATE src/service_win32.c)
+  target_link_libraries(fipsd PRIVATE advapi32)
+endif()
 apply_warnings(fipsd)
 apply_sanitizers(fipsd)
 include(CheckPIESupported)
@@ -255,21 +261,22 @@ target_sources(fipsd_lib PRIVATE src/mdns/records.c src/mdns/advert.c src/mdns/b
 if(WIN32)
   # Windows (nostrc-iq1n9.6.1): the UDP transport, node, handlers, dataplane,
   # config, ACL, netmon (1 s backstop) and runtime are built for real, and
-  # (nostrc-iq1n9.6.2) the TUN owner on Wintun with the IPv6 shim. These
+  # (nostrc-iq1n9.6.2) the TUN owner on Wintun with the IPv6 shim, and
+  # (nostrc-iq1n9.6.3) the control socket on TCP 127.0.0.1:21210. These
   # subsystems still need POSIX facilities (AF_UNIX/SCM_RIGHTS, ifaddrs,
   # multicast enumeration, POSIX descriptors in the stream owners): their
   # sources leave the library and *_unsupported.c stubs stand in, which fail
-  # start-up when the feature is configured (control and DNS, on by default,
-  # warn instead). W3 ports them.
+  # start-up when the feature is configured (DNS, on by default, warns
+  # instead). The native API stays out: Windows has no SCM_RIGHTS, the
+  # mechanism it is built on (upstream does not build it there either).
   get_target_property(_fipsd_sources fipsd_lib SOURCES)
   list(FILTER _fipsd_sources EXCLUDE REGEX
-    "^src/(dns/(resolver|service|hosts)\\.c|mdns/|native/|transport/(tcp|tor|socks5)/|control/control\\.c|nostr/(runtime|driver|stun|traversal_machine|traversal_io|failure_state|signal_gate|signal_route)\\.c)")
+    "^src/(dns/(resolver|service|hosts)\\.c|mdns/|native/|transport/(tcp|tor|socks5)/|nostr/(runtime|driver|stun|traversal_machine|traversal_io|failure_state|signal_gate|signal_route)\\.c)")
   set_property(TARGET fipsd_lib PROPERTY SOURCES ${_fipsd_sources})
   target_sources(fipsd_lib PRIVATE src/node/ifinfo_win32.c
     src/dns/service_unsupported.c src/mdns/mdns_unsupported.c
     src/native/api_unsupported.c src/nostr/runtime_unsupported.c
-    src/transport/tcp/tcp_unsupported.c src/transport/tor/tor_unsupported.c
-    src/control/service_unsupported.c)
+    src/transport/tcp/tcp_unsupported.c src/transport/tor/tor_unsupported.c)
 endif()
 # Packaging payload (nostrc-iq1n9.5). Every package format under packaging/
 # (Debian, RPM, Arch, macOS .pkg) stages the daemon with
@@ -348,11 +355,11 @@ function(fipsd_install_optional_tools)
   endif()
 endfunction()
 cmake_language(DEFER DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" CALL fipsd_install_optional_tools)
-if(NOT WIN32) # fipsctl speaks the AF_UNIX control socket (Windows: TCP 127.0.0.1, W3)
 # fipsctl (nostrc-iq1n9.1): the control client, plain POSIX C over jansson
 # and libfips-core (identities, addresses, key files); no libgo, no fipsd_lib.
 # Everything but main() is fipsctl_lib so the unit test links the code the
-# tool runs. Installed beside fipsd.
+# tool runs. Installed beside fipsd. On Windows it speaks TCP to 127.0.0.1
+# over Winsock (nostrc-iq1n9.6.3).
 declare_component_version(fipsctl 0 1 0)
 add_library(fipsctl_lib STATIC
   src/fipsctl/commands.c src/fipsctl/client.c src/fipsctl/render.c
@@ -365,6 +372,11 @@ target_include_directories(fipsctl_lib PUBLIC
 target_link_libraries(fipsctl_lib PUBLIC fips_core PkgConfig::FIPSD_JANSSON PkgConfig::FIPSD_SODIUM)
 if(NOT APPLE)
   target_compile_definitions(fipsctl_lib PUBLIC _POSIX_C_SOURCE=200809L _DEFAULT_SOURCE)
+endif()
+if(WIN32)
+  find_package(Threads REQUIRED) # winpthreads: clock_gettime, nanosleep
+  target_compile_definitions(fipsctl_lib PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX)
+  target_link_libraries(fipsctl_lib PUBLIC ws2_32 advapi32 Threads::Threads)
 endif()
 option(FIPSCTL_PROFILING "Carry the `profile tick` subcommand (upstream --features profiling)" OFF)
 if(FIPSCTL_PROFILING)
@@ -380,7 +392,6 @@ apply_warnings(fipsctl)
 apply_sanitizers(fipsctl)
 install(TARGETS fipsctl RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
 
-endif()
 # fips-gateway (nostrc-iq1n9.3): the outbound LAN gateway. Its pool,
 # conntrack, state, NAT rendering and worker, DNS proxy, control socket and
 # shutdown modules are portable and form fipsd_gateway_core on every
@@ -508,7 +519,6 @@ if(BUILD_TESTING AND FIPSD_ENABLE_PROFILING)
   target_sources(fipsd_profiling_test PRIVATE $<TARGET_OBJECTS:fipsd_profile_fault>)
 endif()
 
-if(NOT WIN32) # fipstop reads the control socket through fipsctl_lib
 # fipstop model is terminal-independent and shares the fipsctl wire/format library.
 add_library(fipstop_model STATIC src/fipstop/model.c)
 set_target_properties(fipstop_model PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
@@ -576,19 +586,22 @@ if(BUILD_TESTING AND TARGET fipstop)
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/fipstop_golden.py" --fipstop "$<TARGET_FILE:fipstop>"
     --fixtures "${CMAKE_CURRENT_SOURCE_DIR}/tests/control_golden"
     --goldens "${CMAKE_CURRENT_SOURCE_DIR}/tests/fipstop_golden")
-  add_test(NAME FipsTopE2eTest COMMAND "${Python3_EXECUTABLE}"
-    "${CMAKE_CURRENT_SOURCE_DIR}/tests/fipstop_e2e.py" --fipsd "$<TARGET_FILE:fipsd>"
-    --fipstop "$<TARGET_FILE:fipstop>" --unit "$<TARGET_FILE:fipstop_test>")
-  set_tests_properties(FipsTopGoldenTest FipsTopE2eTest PROPERTIES TIMEOUT 180 LABELS "fips;fipstop;integration")
+  set_tests_properties(FipsTopGoldenTest PROPERTIES TIMEOUT 180 LABELS "fips;fipstop;integration")
   nostrc_describe_test(FipsTopGoldenTest OWNER fipsd TARGETS fipstop INPUTS
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/fipstop_golden.py"
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/control_golden" "${CMAKE_CURRENT_SOURCE_DIR}/tests/fipstop_golden")
-  nostrc_describe_test(FipsTopE2eTest OWNER fipsd TARGETS fipstop fipstop_test fipsd INPUTS
-    "${CMAKE_CURRENT_SOURCE_DIR}/tests/fipstop_e2e.py" "${CMAKE_CURRENT_SOURCE_DIR}/tests/fipsctl_e2e.py"
-    "${CMAKE_CURRENT_SOURCE_DIR}/tests/udp_interop.py")
+  # The end-to-end run drives fipsd over its AF_UNIX control socket.
+  if(NOT WIN32)
+    add_test(NAME FipsTopE2eTest COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/fipstop_e2e.py" --fipsd "$<TARGET_FILE:fipsd>"
+      --fipstop "$<TARGET_FILE:fipstop>" --unit "$<TARGET_FILE:fipstop_test>")
+    set_tests_properties(FipsTopE2eTest PROPERTIES TIMEOUT 180 LABELS "fips;fipstop;integration")
+    nostrc_describe_test(FipsTopE2eTest OWNER fipsd TARGETS fipstop fipstop_test fipsd INPUTS
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/fipstop_e2e.py" "${CMAKE_CURRENT_SOURCE_DIR}/tests/fipsctl_e2e.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/udp_interop.py")
+  endif()
 endif()
 
-endif()
 if(TARGET fipstop_ui)
   target_include_directories(fipstop_ui PUBLIC "${fipstop_VERSION_HEADER_DIR}")
   add_dependencies(fipstop_ui fipsd_build_info)

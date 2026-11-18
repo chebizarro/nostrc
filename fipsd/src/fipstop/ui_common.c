@@ -7,6 +7,25 @@
 #include <stdlib.h>
 #include <string.h>
 #include <wchar.h>
+#if defined(_WIN32)
+/* Windows has no wcwidth, and its wchar_t is a UTF-16 unit, so only the Basic
+ * Multilingual Plane reaches here (a surrogate half is unprintable). Wide:
+ * the East Asian Wide/Fullwidth blocks; zero: combining marks and controls,
+ * which the caller prints as '?'. The dashboard's own text is ASCII and box
+ * drawing, width 1. */
+static int wcwidth(wchar_t c)
+{
+    unsigned u=(unsigned)c;
+    if (u==0) return 0;
+    if (u<0x20 || (u>=0x7f && u<0xa0)) return -1;
+    if ((u>=0x300 && u<=0x36f) || (u>=0x200b && u<=0x200f) || (u>=0xfe00 && u<=0xfe0f)) return 0;
+    if (u>=0xd800 && u<=0xdfff) return -1;
+    if ((u>=0x1100 && u<=0x115f) || (u>=0x2e80 && u<=0xa4cf && u!=0x303f) || (u>=0xac00 && u<=0xd7a3) ||
+        (u>=0xf900 && u<=0xfaff) || (u>=0xfe30 && u<=0xfe4f) || (u>=0xff00 && u<=0xff60) || (u>=0xffe0 && u<=0xffe6))
+        return 2;
+    return 1;
+}
+#endif
 bool ft_frame_init(ft_frame *f,int w,int h)
 {
     if (w<1 || h<1 || w>1000 || h>500) return false;
