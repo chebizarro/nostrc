@@ -132,17 +132,37 @@ uint32_t fipsd_winnet_ipv6_interface(uint64_t luid, uint32_t timeout_ms)
     row.RouterDiscoveryBehavior = RouterDiscoveryDisabled;
     return SetIpInterfaceEntry(&row);
 }
+/* A delete of a row someone else already removed is answered
+ * ERROR_INVALID_PARAMETER, not ERROR_NOT_FOUND (seen for unicast addresses on
+ * Windows 11): a failed delete reads the row back and reports its absence as
+ * ERROR_NOT_FOUND, which tun/winnet.h judges done. */
 uint32_t fipsd_winnet_set_address(const fipsd_winnet_address *a, bool add)
 {
     MIB_UNICASTIPADDRESS_ROW row;
     fipsd_winnet_address_mib(a, &row);
-    return add ? CreateUnicastIpAddressEntry(&row) : DeleteUnicastIpAddressEntry(&row);
+    if (add) return CreateUnicastIpAddressEntry(&row);
+    DWORD code = DeleteUnicastIpAddressEntry(&row);
+    if (code && code != ERROR_NOT_FOUND) {
+        MIB_UNICASTIPADDRESS_ROW probe;
+        fipsd_winnet_address_mib(a, &probe);
+        DWORD read = GetUnicastIpAddressEntry(&probe);
+        if (read == ERROR_NOT_FOUND || read == ERROR_FILE_NOT_FOUND) code = ERROR_NOT_FOUND;
+    }
+    return code;
 }
 uint32_t fipsd_winnet_set_route(const fipsd_winnet_route *r, bool add)
 {
     MIB_IPFORWARD_ROW2 row;
     fipsd_winnet_route_mib(r, &row);
-    return add ? CreateIpForwardEntry2(&row) : DeleteIpForwardEntry2(&row);
+    if (add) return CreateIpForwardEntry2(&row);
+    DWORD code = DeleteIpForwardEntry2(&row);
+    if (code && code != ERROR_NOT_FOUND) {
+        MIB_IPFORWARD_ROW2 probe;
+        fipsd_winnet_route_mib(r, &probe);
+        DWORD read = GetIpForwardEntry2(&probe);
+        if (read == ERROR_NOT_FOUND || read == ERROR_FILE_NOT_FOUND) code = ERROR_NOT_FOUND;
+    }
+    return code;
 }
 uint32_t fipsd_winnet_set_mtu(uint64_t luid, uint32_t mtu)
 {

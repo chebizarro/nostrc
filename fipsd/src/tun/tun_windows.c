@@ -351,8 +351,12 @@ static void device_free(wintun_device *d)
         go_channel_unref(d->packets);
     }
     fipsd_socket_close(d->bell_tx);
+    ULONGLONG started = GetTickCount64();
     if (d->session) d->w->end_session(d->w->user, d->session);
+    ULONGLONG ended = GetTickCount64();
     if (d->adapter) d->w->close_adapter(d->w->user, d->adapter); /* removes the created adapter */
+    if (d->session || d->adapter)
+        FIPSD_DEBUG(MOD, "Wintun session ended in %llu ms, adapter closed in %llu ms", ended - started, GetTickCount64() - ended);
     if (d->quit) CloseHandle(d->quit);
     if (d->winsock) (void)WSACleanup();
     free(d);

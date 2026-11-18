@@ -134,6 +134,17 @@ set_tests_properties(FipsdTunPrivilegedSmokeTest PROPERTIES TIMEOUT 120 SKIP_RET
   LABELS "fips;tun;privileged" ENVIRONMENT "FIPSD_WORKERS=2")
 set_tests_properties(FipsdIpv6PrivilegedSmokeTest PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77
   LABELS "fips;tun;ipv6;privileged" ENVIRONMENT "FIPSD_WORKERS=2")
+# Two daemons on two Wintun adapters, ping and TCP across the mesh between
+# their addresses; same opt-in, wintun.dll beside fipsd.exe.
+find_program(FIPSD_POWERSHELL powershell)
+if(FIPSD_POWERSHELL)
+  add_test(NAME FipsdWindowsTwoNodeSmokeTest COMMAND "${FIPSD_POWERSHELL}" -NoProfile -ExecutionPolicy Bypass
+    -File "${CMAKE_CURRENT_SOURCE_DIR}/windows_two_node_smoke.ps1" -Fipsd "$<TARGET_FILE:fipsd>")
+  set_tests_properties(FipsdWindowsTwoNodeSmokeTest PROPERTIES TIMEOUT 300 SKIP_RETURN_CODE 77
+    LABELS "fips;tun;ipv6;privileged;integration")
+  nostrc_describe_test(FipsdWindowsTwoNodeSmokeTest OWNER fipsd TARGETS fipsd
+    INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/windows_two_node_smoke.ps1")
+endif()
 fipsd_unit_test(fipsd_ipv6_codec_test test_ipv6_codec.c)
 fipsd_unit_test(fipsd_ipv6_icmp_test test_ipv6_icmp.c)
 fipsd_unit_test(fipsd_ipv6_firewall_test test_ipv6_firewall.c)

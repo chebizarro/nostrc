@@ -3,10 +3,12 @@
  * unless the process token is elevated AND FIPSD_TUN_PRIVILEGED_SMOKE=1; then
  * wintun.dll must sit beside this executable.
  *
- * `device`: a real Wintun adapter, twice in turn: the node's /128, the IPv6
- * MTU and the fd00::/8 route are read back through IP Helper and through
- * PowerShell (Get-NetIPAddress, Get-NetRoute, Get-NetIPInterface), the
- * address answers ping, and after stop no adapter carries the name.
+ * `device`: a real Wintun adapter, twice in turn: the node's /128 (preferred
+ * at once), the IPv6 MTU and the fd00::/8 route are read back through IP
+ * Helper and through PowerShell (Get-NetIPAddress, Get-NetRoute,
+ * Get-NetIPInterface, Get-NetAdapter), the address answers ping, the second
+ * round's rows are removed behind the device's back before a stop that must
+ * still succeed, and after stop the adapter is gone.
  * `shim`: one node with the IPv6 shim on a real adapter: ping of the node's
  * own address succeeds, and a ping of an fd00::/8 address no key names is
  * routed by Windows into the adapter, read by the shim and answered with an
@@ -107,8 +109,9 @@ static int device_round(fips_identity *id, unsigned round)
     /* Usable at once: no duplicate address detection on the TUN. */
     snprintf(script, sizeof script, "(Get-NetIPAddress -InterfaceAlias %s -AddressFamily IPv6 -IPAddress %s).AddressState", NAME, s.address);
     if (!powershell(script, "Preferred")) ++failures;
-    snprintf(script, sizeof script, "(Get-NetIPInterface -InterfaceAlias %s -AddressFamily IPv6).DadTransmits", NAME);
-    if (!powershell(script, "0")) ++failures;
+    snprintf(script, sizeof script, "$i = Get-NetIPInterface -InterfaceAlias %s -AddressFamily IPv6; "
+        "\\\"$($i.DadTransmits) $($i.RouterDiscovery)\\\"", NAME);
+    if (!powershell(script, "0 Disabled")) ++failures;
     snprintf(script, sizeof script, "(Get-NetIPAddress -InterfaceAlias %s -AddressFamily IPv6 -IPAddress %s).PrefixLength", NAME, s.address);
     if (!powershell(script, "128")) ++failures;
     snprintf(script, sizeof script, "(Get-NetRoute -InterfaceAlias %s -DestinationPrefix fd00::/8).RouteMetric", NAME);
@@ -122,7 +125,14 @@ static int device_round(fips_identity *id, unsigned round)
     if (!powershell(script, want)) ++failures;
     char out[2048];
     if (ping(s.address, out, sizeof out)) ++failures;
+    if (round) {
+        /* Someone removed the rows already: stop still succeeds. */
+        snprintf(script, sizeof script, "Remove-NetIPAddress -InterfaceAlias %s -IPAddress %s -Confirm:$false; "
+            "Remove-NetRoute -InterfaceAlias %s -DestinationPrefix fd00::/8 -Confirm:$false; 'removed'", NAME, s.address, NAME);
+        if (!powershell(script, "removed")) ++failures;
+    }
     if (fipsd_tun_stop(t)) { perror("TUN teardown"); ++failures; }
+    if (fipsd_tun_status_read(t).error) { fprintf(stderr, "teardown error %d\n", fipsd_tun_status_read(t).error); ++failures; }
     if (removed(luid)) ++failures;
     snprintf(script, sizeof script, "@(Get-NetAdapter -Name %s -IncludeHidden -ErrorAction SilentlyContinue).Count", NAME);
     if (!powershell(script, "0")) ++failures;

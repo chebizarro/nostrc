@@ -53,7 +53,11 @@
 /* The adapter's IPv6 interface sends no duplicate address detection probes,
  * so the node's /128 is preferred the moment it is added (nothing on a
  * point-to-point TUN could answer one), and no router solicitations into the
- * mesh. Not in winnet.rs; WireGuard for Windows configures Wintun so. */
+ * mesh. Not in winnet.rs; WireGuard for Windows configures Wintun the same.
+ * Neighbor unreachability detection stays on: Windows refuses to turn it off
+ * on a Wintun interface (ERROR_INVALID_PARAMETER), so it probes each mesh
+ * address it talks to with a unicast Neighbor Solicitation now and then, which
+ * crosses the mesh and is answered by the peer host. */
 #define FIPSD_WINNET_DAD_TRANSMITS 0u
 /* The metric `netsh interface ipv6 add route` uses when none is given. */
 #define FIPSD_WINNET_ROUTE_METRIC 256u
@@ -119,7 +123,7 @@ uint32_t fipsd_winnet_alias_in_use(const uint16_t *alias, bool *in_use);
 uint32_t fipsd_winnet_luid_index(uint64_t luid, uint32_t *index);
 /* Wait for `luid`'s IPv6 interface row (IP Helper's interface-change
  * notification, bounded by timeout_ms: ERROR_TIMEOUT), then turn duplicate
- * address detection and router discovery off on it. */
+ * address detection and router discovery off on it (FIPSD_WINNET_DAD_TRANSMITS). */
 uint32_t fipsd_winnet_ipv6_interface(uint64_t luid, uint32_t timeout_ms);
 uint32_t fipsd_winnet_set_address(const fipsd_winnet_address *row, bool add);
 uint32_t fipsd_winnet_set_route(const fipsd_winnet_route *row, bool add);
