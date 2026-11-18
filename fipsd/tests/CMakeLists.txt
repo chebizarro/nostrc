@@ -811,4 +811,24 @@ if(NOT DEFINED FIPSD_ENABLE_BLE OR FIPSD_ENABLE_BLE)
       ENVIRONMENT "FIPSD_WORKERS=2")
     nostrc_describe_test(FipsdBleTwoNodes${mode}Test OWNER fipsd TARGETS fipsd_ble_two_nodes_${mode}_test)
   endforeach()
+  # The BlueZ backend (nostrc-gfi8h.6.2): its pure half wherever it builds,
+  # and the opt-in real run over two virtual controllers (btvirt), C<->C and,
+  # with a pinned Rust daemon, C<->Rust (root, FIPSD_BLE_BLUEZ_SMOKE=1).
+  if(FIPSD_ENABLE_BLE_BLUEZ)
+    fipsd_unit_test(fipsd_ble_bluez_test test_ble_bluez.c)
+    add_dependencies(fipsd_tests fipsd_ble_bluez_test)
+    add_test(NAME FipsdBleBluezTest COMMAND fipsd_ble_bluez_test)
+    set_tests_properties(FipsdBleBluezTest PROPERTIES TIMEOUT 30 LABELS "fips;transport;unit")
+    nostrc_describe_test(FipsdBleBluezTest OWNER fipsd TARGETS fipsd_ble_bluez_test)
+    set(FIPSD_BLE_BLUEZ_RUST_BINARY "$ENV{FIPSD_BLE_BLUEZ_RUST_BINARY}" CACHE FILEPATH
+      "Optional pinned Rust fips daemon for the BlueZ smoke's C<->Rust scenarios")
+    add_test(NAME FipsdBleBluezSmokeTest
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/ble_bluez_smoke.py"
+        --fipsd "$<TARGET_FILE:fipsd>" --native-tool "$<TARGET_FILE:fipsd_native_client_tool>"
+        --rust "${FIPSD_BLE_BLUEZ_RUST_BINARY}")
+    set_tests_properties(FipsdBleBluezSmokeTest PROPERTIES TIMEOUT 900 SKIP_RETURN_CODE 77
+      LABELS "fips;transport;ble;privileged" ENVIRONMENT "FIPSD_WORKERS=2")
+    nostrc_describe_test(FipsdBleBluezSmokeTest OWNER fipsd TARGETS fipsd fipsd_native_client_tool
+      INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/ble_bluez_smoke.py" "${CMAKE_CURRENT_SOURCE_DIR}/ble_bluez_gatt_peer.py")
+  endif()
 endif()

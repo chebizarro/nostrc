@@ -11,6 +11,9 @@
  * list below are guarded by u->mu, which is never held across a park. */
 #define _POSIX_C_SOURCE 200809L
 #include "transport/ble/internal.h"
+#if defined(FIPSD_ENABLE_BLE_BLUEZ)
+#include "transport/ble/bluez.h"
+#endif
 #include "node/context.h"
 #include "log.h"
 #include <fips/identity/local.h>
@@ -528,7 +531,7 @@ static int dial_and_exchange(ble_instance *u, const fipsd_ble_peer *p, ble_offer
     int rc = u->backend.ops->connect(u->backend.self, p, psm, deadline, &s);
     if (!rc && !s) rc = -EIO;
     if (rc) {
-        if (rc == -ECANCELED || rc == -ENODEV || stopped(u)) return rc;
+        if (rc == -ECANCELED || rc == -ENODEV || rc == -EISCONN || stopped(u)) return rc;
         if (rc == -ETIMEDOUT) { BLE_STAT(u, connect_timeouts); *timed_out = true; }
         else { BLE_STAT(u, connect_errors); if (learned) forget_psm(u, p, psm); }
         FIPSD_DEBUG(MOD, "%s: connect to psm 0x%04x failed (%d)", u->name, psm, rc);
@@ -612,7 +615,7 @@ static void probe(ble_instance *u, const fipsd_ble_peer *p)
     ble_offer o; bool timed_out;
     int rc = dial_and_exchange(u, p, &o, &timed_out);
     if (rc) {
-        if (rc != -ECANCELED && rc != -ENODEV && !stopped(u)) {
+        if (rc != -ECANCELED && rc != -ENODEV && rc != -EISCONN && !stopped(u)) {
             nsync_mu_lock(&u->mu); (void)ble_probes_record_failure(&u->probes, p, ble_now()); nsync_mu_unlock(&u->mu);
         }
         return;
@@ -1043,14 +1046,18 @@ int fipsd_ble_is_verified(fipsd_transport *t, const fips_transport_addr *a)
     nsync_mu_lock(&u->mu); ble_link *l = ble_pool_get(&u->pool, a); int v = l ? l->verified : -1; nsync_mu_unlock(&u->mu);
     return v;
 }
-/* No platform backend yet: the simulated radio is never a production
+/* This build's platform backend. The simulated radio is never a production
  * fallback, since a transport over it would start, report itself up and never
  * peer (upstream DefaultBleTransport tripwire). */
 bool fipsd_ble_platform_backend(const fipsd_ble_config *c, fipsd_ble_backend *out, const char **reason)
 {
+#if defined(FIPSD_ENABLE_BLE_BLUEZ)
+    return fipsd_ble_bluez_backend(c, out, reason);
+#else
     (void)c; (void)out;
     *reason = "this build has no Bluetooth backend (BlueZ: nostrc-gfi8h.6.2, CoreBluetooth: nostrc-gfi8h.6.3)";
     return false;
+#endif
 }
 int fipsd_ble_register_config(fipsd_transport_registry *r, const fipsd_config *config, fipsd_transport **owned, size_t *count)
 {

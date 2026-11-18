@@ -76,6 +76,22 @@ check_pie_supported(LANGUAGES C)
 set_target_properties(fipsd PROPERTIES POSITION_INDEPENDENT_CODE TRUE)
 install(TARGETS fipsd RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
 
+# BlueZ BLE backend (nostrc-gfi8h.6.2): GDBus for the BlueZ control plane,
+# kernel L2CAP sockets for channels (the Bluetooth socket ABI is defined in
+# bluez.h, so BlueZ's headers are not needed). On by default on Linux when
+# gio-2.0 is found. Declared before tests/ reads it; wired in the BLE section.
+set(_fipsd_ble_bluez_default OFF)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  pkg_check_modules(FIPSD_GIO QUIET IMPORTED_TARGET gio-2.0>=2.56)
+  if(FIPSD_GIO_FOUND)
+    set(_fipsd_ble_bluez_default ON)
+  endif()
+endif()
+option(FIPSD_ENABLE_BLE_BLUEZ "Build the BlueZ BLE backend (Linux, gio-2.0)" ${_fipsd_ble_bluez_default})
+if(FIPSD_ENABLE_BLE_BLUEZ AND NOT (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND FIPSD_GIO_FOUND))
+  message(FATAL_ERROR "FIPSD_ENABLE_BLE_BLUEZ needs Linux and gio-2.0 >= 2.56 (libglib2.0-dev)")
+endif()
+
 if(BUILD_TESTING)
   add_subdirectory(tests)
 endif()
@@ -605,6 +621,11 @@ if(FIPSD_ENABLE_BLE)
   target_sources(fipsd_lib PRIVATE src/transport/ble/ble.c src/transport/ble/pool.c src/transport/ble/psm.c
     src/transport/ble/stream_read.c src/transport/ble/stats.c src/transport/ble/radio.c)
   target_compile_definitions(fipsd_lib PUBLIC FIPSD_ENABLE_BLE=1)
+  if(FIPSD_ENABLE_BLE_BLUEZ)
+    target_sources(fipsd_lib PRIVATE src/transport/ble/bluez.c src/transport/ble/bluez_wire.c)
+    target_link_libraries(fipsd_lib PUBLIC PkgConfig::FIPSD_GIO)
+    target_compile_definitions(fipsd_lib PUBLIC FIPSD_ENABLE_BLE_BLUEZ=1)
+  endif()
 else()
   target_sources(fipsd_lib PRIVATE src/transport/ble/ble_disabled.c)
 endif()

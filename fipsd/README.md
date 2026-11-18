@@ -2367,11 +2367,11 @@ the initial daemon.
 A stream transport over BLE L2CAP connection-oriented channels, ported from
 upstream `src/transport/ble/` at the `libfips-core/UPSTREAM.md` pin. This bead
 is the platform-independent core plus a simulated radio. The radios that make
-it useful on hardware are separate backend beads: BlueZ (`gfi8h.6.2`) and
-CoreBluetooth behind a LaunchAgent (`gfi8h.6.3`). Built by default
-(`-DFIPSD_ENABLE_BLE=ON`, no platform dependencies). Until a platform backend
-exists, a configured instance is ignored with a warning, as upstream does on a
-build without one:
+it useful on hardware are separate backend beads: BlueZ on Linux
+(`gfi8h.6.2`, [below](#bluez-backend-nostrc-gfi8h62)) and CoreBluetooth behind
+a LaunchAgent (`gfi8h.6.3`). Built by default (`-DFIPSD_ENABLE_BLE=ON`, no
+platform dependencies). On a build without a platform backend, a configured
+instance is ignored with a warning, as upstream does:
 `instance ble: BLE transport unavailable (this build has no Bluetooth backend ...)`.
 The simulated radio is never used as a fallback: a transport over it would
 start, report itself up and never peer (upstream's `DefaultBleTransport`
@@ -2426,6 +2426,9 @@ address under `ble0` (`fipsd_ble_peer_from_identifier`, upstream
 - `stats.c`: upstream's `BleStatsSnapshot` counters, kept in the shared
   stats block (`stats_common.h`, BLE-only names appended last).
 - `radio.c`: the simulated radio (`io_radio.rs`) (below).
+- `bluez.{c,h}`, `bluez_wire.c`: the BlueZ backend (`io_linux.rs`) and its
+  pure half (advert properties, D-Bus property parsing, error mapping);
+  [below](#bluez-backend-nostrc-gfi8h62).
 - `ble_disabled.c`: the `-DFIPSD_ENABLE_BLE=OFF` stub.
 
 ### The backend contract (`backend.h`)
@@ -2464,14 +2467,14 @@ transitions are counted so an off-on blip is still seen as one.
 
 How the platform beads map onto it:
 
-- **BlueZ (`gfi8h.6.2`).** bluer over D-Bus. `listen` is a SEQPACKET
-  `StreamListener` bound to the requested PSM. Inbound and dialled channels
-  are fd streams on the fast path, so SDUs map to reads. `advertise` is an
-  `LEAdvertisement1` carrying ServiceData `{0x9C90: psm}`. `DeviceAdded` with
-  the FIPS UUID maps to `PEER_DISCOVERED`, `DeviceRemoved` to `PEER_LOST`,
-  and `Adapter1.Powered` and removal to the adapter state. `read_psm` starts
-  as `-ENOTSUP`, and a later GATT read lets it dial macOS peers advertising
-  only their UUID.
+- **BlueZ (`gfi8h.6.2`).** GDBus to BlueZ, kernel sockets for channels.
+  `listen` is a SEQPACKET L2CAP socket bound to the requested PSM. Inbound
+  and dialled channels are fd streams on the fast path, so SDUs map to
+  reads. `advertise` is an `LEAdvertisement1` carrying ServiceData
+  `{0x9C90: psm}`. A FIPS device object maps to `PEER_DISCOVERED`, its
+  removal to `PEER_LOST`, and `Adapter1.Powered` and removal to the adapter
+  state. `read_psm` reads the GATT PSM characteristic, so it can dial macOS
+  peers that advertise only their UUID.
 - **CoreBluetooth (`gfi8h.6.3`).** The LaunchAgent owns
   `CBCentralManager`/`CBPeripheralManager`; the backend's control thread
   talks to it over its socket. `listen` is `publishL2CAPChannel`, which
@@ -2582,6 +2585,158 @@ are channel selects on events, never sleeps. Every one of these passes
 under ASan/UBSan and TSan. Interop with the Rust daemon over real radios
 belongs to the backend beads. Version decision: **fipsd stays 0.1.0
 Unreleased**; the BLE core folds into the initial daemon.
+
+### BlueZ backend (`nostrc-gfi8h.6.2`)
+
+`transports.ble` on Linux, ported from upstream `io_linux.rs` (bluer), in
+`src/transport/ble/bluez.c` with its pure half in `bluez_wire.c`. Behind
+`-DFIPSD_ENABLE_BLE_BLUEZ`, default ON on Linux when gio-2.0 (2.56 or later,
+`libglib2.0-dev`) is found. It needs nothing from BlueZ at build time: the
+kernel's Bluetooth socket ABI (`sockaddr_l2`, `BT_*`) is defined in
+`bluez.h`, as bluer does, and the unit test checks it against
+`<bluetooth/l2cap.h>` where that header exists. macOS and Windows builds do
+not compile it.
+
+At run time it needs `bluetoothd` on the system bus and either root or an
+equivalent policy (the `bluetooth` group for D-Bus, `CAP_NET_RAW` for the
+sockets), as upstream's how-to says. `transports.ble.adapter` names a
+controller (`hci0`). The adapter is powered on whenever it appears, as
+upstream does at construction. A later power-off is the operator's, and is
+reported rather than undone.
+
+**Control plane.** GDBus on a private system-bus connection, driven by a GLib
+main loop on the backend's own thread. Because the connection is private,
+closing it releases the advertisement and discovery session BlueZ holds for
+it, and losing the bus never exits the daemon. A lost bus reconnects with
+backoff (1 s to 30 s). Fiber-side operations hand a request to that thread
+(`g_main_context_invoke`) and park on a reply channel with their deadline and
+the stop channel. Advertising requests run one at a time, and so do scan
+requests. The thread reports through the sink only.
+
+- Adapter: the `org.bluez` name watch, ObjectManager `InterfacesAdded`/
+  `InterfacesRemoved` and `Adapter1` `PropertiesChanged` give presence, power
+  and the address. A vanished `bluetoothd` is an absent adapter.
+- Advertising: an exported `LEAdvertisement1` at
+  `/org/nostrc/fipsd/ble/<adapter>/advertisement0` (peripheral, the FIPS UUID,
+  ServiceData `{00009c90-...: psm LE}`, 400-600 ms, no name). It is registered
+  with `LEAdvertisingManager1`. The same PSM is not re-registered, and only
+  BlueZ may call `Release`.
+- Discovery: `SetDiscoveryFilter {Transport le, UUIDs [FIPS], DuplicateData
+  false}`, then `StartDiscovery`. A FIPS device object is reported once per
+  discovery session, and again when its PSM service data changes. It is a
+  FIPS device when its `UUIDs` carry the FIPS UUID or its ServiceData carries
+  the `0x9C90` key. The flag is sticky, because once BlueZ's GATT client
+  resolves a device's services (it does on every LE link), `UUIDs` lists the
+  GATT services and drops the advertised ones. At scan start, cached objects
+  holding no user state are removed (upstream `clear_at_scan_start`) and the
+  kept FIPS objects are reported. `InterfacesRemoved` is `PEER_LOST`.
+- GATT: `read_psm` calls `Device1.Connect` unless the services are resolved,
+  waits for `ServicesResolved`, then reads the PSM characteristic of the
+  device's FIPS service, bounded by the caller's deadline. A failed read with
+  `Connect` still in flight is aborted, so it does not hold the controller's
+  initiator.
+
+**Data plane.** Kernel L2CAP CoC sockets (`AF_BLUETOOTH`, `SOCK_SEQPACKET`) on
+fibers through libgo. Each socket is bound to the adapter's address (LE
+public), then set to `BT_SECURITY` low (no SMP pairing: FIPS authenticates the
+peer with Noise IK) and `BT_RCVMTU` to `transports.ble.mtu`. The kernel takes
+`BT_RCVMTU` only once the socket is bound to an LE address. `listen` runs a
+tracked accept fiber. A re-listen waits for the old one to release its PSM.
+`connect` is a nonblocking `gof_connect` bounded by the deadline, dialled as
+LE random only when BlueZ reports the device so. Every channel is an fd
+stream: the core reads and writes it with `gof_recvmsg`/`gof_sendmsg`, and
+`BT_SNDMTU`/`BT_RCVMTU` are its MTUs. A dead channel is seen by the core's
+own reader, so the backend sends no `STREAM_CLOSED`.
+
+**Errors and the PSM rule.** D-Bus errors map to backend.h's errno
+(`fipsd_ble_bluez_dbus_errno`/`gerror_errno`). One kernel behaviour needs
+care. An unanswered LE dial (nobody there) ends with `ECONNREFUSED`, the same
+errno as a real refusal, when the channel timer fires. On Linux 7.0 an absent
+device fails after 41.04 s with the default 40 s timer, and after 5.07 s with
+`SO_SNDTIMEO` 5 s: the timer is the socket's `SO_SNDTIMEO`. A dial therefore
+sets it 2 s past its deadline, so the deadline (`-ETIMEDOUT`) ends an
+unanswered dial first. An `ECONNREFUSED` at the timer still maps to
+`-ETIMEDOUT` (`fipsd_ble_bluez_connect_errno`). `EHOSTDOWN` is a timeout too,
+and a dial on a downed adapter (`EHOSTUNREACH`) is `-ENODEV`.
+
+**Dials pause discovery.** While BlueZ discovers, the kernel starts no
+passive scan of its own for a pending LE connection. The connection waits for
+an advert report of its target, and discovery's scan reports a device once
+per cycle (controller duplicate filtering, about 10.24 s for an LE-only
+cycle). A dial is made *because of* that report, so whenever it became
+pending after the report and its scan response, btmon showed no LE Create
+Connection at all until the deadline. That was every retry, under TSan's
+slower timing. A dial, and a GATT `Device1.Connect`, therefore pause
+discovery: refcounted, ordered with the scan requests, and with the same
+session and reports afterwards. The kernel's passive accept-list scan then
+connects on the peer's next advert. bluer dials the same way.
+
+**Crossing dials.** Kernels without f50b32aa233d and 15a80cc8263a (merged
+2026-11-02; 7.0 lacks them) match an LE Connection Response to the first
+channel carrying its signalling ident. An accepted channel keeps the ident of
+the request that opened it, and both ends number a fresh ACL's requests from
+1. A dial sent just as the peer's own request is accepted thus gets its
+response wired into the accepted channel, and that channel's remote CID is
+overwritten. btmon showed it on the VM: both requests carried ident 1, and
+the IK msg2 went out on the dead CID, so the link never authenticated (about
+one run in five). bluer dials the same way. The backend therefore:
+
+- does not dial a peer that holds an accepted channel to us. It returns
+  `-EISCONN`, which backend.h now defines; the core does not count it and
+  keeps the PSM;
+- breaks crossing dials by address: the larger address yields up to 1.5 s to
+  a FIPS advertiser, whose own dial then lands first;
+- shuts down an accepted channel whose remote CID (`getpeername`) changed
+  during a dial to its peer, so the core recovers.
+
+**Verification.** `FipsdBleBluezTest` (`tests/test_ble_bluez.c`) covers the
+pure half: the socket ABI against `<bluetooth/l2cap.h>`, paths, the
+advertisement and its 27-byte budget, `Device1`/`Adapter1` property parsing
+and merging, the GATT lookup, the scan-start rule, the dial address type,
+D-Bus/GError mapping and the connect-error mapping that carries the PSM rule.
+
+`FipsdBleBluezSmokeTest` (`tests/ble_bluez_smoke.py`, opt-in) runs the real
+thing on one Linux host. It brings up two virtual LE controllers (`btvirt -l2`
+over `hci_vhci`, BlueZ's emulated air), or uses `FIPSD_BLE_BLUEZ_ADAPTERS=hciA,hciB`.
+Then it runs two daemons, each bound to one controller with no other
+transport, and requires discovery, the advertised PSM, L2CAP, IK, XK and
+native datagrams both ways. The second node listens on a non-default PSM.
+The scenarios are:
+
+- C<->C, then a power cycle of one adapter that must drop and restore the
+  link;
+- C<->C with the PSM read over GATT from a UUID-only advertiser
+  (`ble_bluez_gatt_peer.py`, CoreBluetooth-shaped);
+- C<->Rust with each side starting the handshake, when
+  `FIPSD_BLE_BLUEZ_RUST_BINARY` names the pinned `fips`.
+
+```sh
+sudo apt-get install -y bluez bluez-test-tools   # btvirt, btmgmt, bluetoothctl
+cmake -B build -DFIPSD_BLE_BLUEZ_RUST_BINARY=/path/to/fips   # optional
+sudo env FIPSD_BLE_BLUEZ_SMOKE=1 ctest --test-dir build -R '^FipsdBleBluezSmokeTest$' -V
+```
+
+Measured on Ubuntu 24.04 aarch64 (Linux 7.0, BlueZ 5.72, btvirt), from daemon
+start, over five ASan/UBSan/LSan runs and three TSan runs of the whole suite:
+
+| Scenario | IK link | XK session | datagram RTT |
+|---|---|---|---|
+| C<->C | 0.3-1.2 s | 0.4-0.9 s | 31-39 ms |
+| C<->Rust, C starts | 0.2-1.3 s | 2.2-2.3 s | 30-34 ms |
+| C<->Rust, Rust starts | 3.1-3.4 s | 4.2-4.3 s | 5-12 ms |
+
+A power-off is seen in 57-64 ms, and the link returns 9-12.5 s after
+power-on. The GATT scenario links after about 10.3 s. The probe loop sets
+both times: a peer probed (or refused at a stale PSM) is retried at its
+cooldown (`probe_cooldown_secs`, 5 in the smoke). btvirt reports no RSSI
+(127, taken as unknown).
+
+Distro GLib hands off between threads over futexes TSan cannot see, so a
+TSan run of the smoke points the daemons, and only them, at an instrumented
+GLib. Build one as `scripts/grotto-tsan-runtime.sh` does, with `CC=clang` and
+`-Db_lundef=false` (clang links its TSan runtime only into executables).
+Then pass `--fipsd` a wrapper that sets `LD_LIBRARY_PATH` to it; Python and
+the Rust daemon keep the system GLib.
 
 ## C<->Rust UDP interoperability gate (`nostrc-f66sr.1`)
 
