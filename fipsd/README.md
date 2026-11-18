@@ -2768,6 +2768,14 @@ Differences from upstream, each deliberate:
   exchange, one link and frames both ways. Then a radio power cycle onto a
   new PSM, the transport going absent and present again, and the relink.
 
+`packaging/testing/smoke-ble-agent.sh FIPSD FIPS_BLE_AGENT` is the real-radio
+smoke on a Mac, run as a user. It launches the agent's `--probe` as a
+throwaway LaunchAgent and checks that the radio comes up, publishes a PSM and
+advertises. Then it runs fipsd with the agent socket in a temporary directory
+and the agent connecting to it. The checks: fipsd's transport comes up on the
+agent's PSM, and the agent advertises and scans. Both jobs are booted out at
+the end. A real L2CAP link needs a second BLE device running FIPS.
+
 `FipsdBleAgentBinaryTest` checks the built agent's embedded Info.plist and its
 CLI. `FipsdBleTest` checks that the agent backend is the platform backend on
 macOS. All of these, and the whole `^Fips` suite, pass under ASan/UBSan (Apple
