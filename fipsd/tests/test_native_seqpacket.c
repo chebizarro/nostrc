@@ -323,6 +323,10 @@ static void test_connect_returns_a_stream_and_closes_the_connection(void)
     CHECK(fips_native__connect_on(conn[1], 0, &peer, &flow) == 0 && flow);
     CHECK(pthread_join(thread, NULL) == 0);
     CHECK(strstr(f.command, "\"command\":\"connect\"") && strstr(f.command, PEER) && strstr(f.command, "\"local_port\":0"));
+    /* Framing is asked for where the datagram pair would drop a slow reader;
+     * this daemon answered with its datagram pair, so datagrams are what the
+     * stream carries (the upstream daemon's answer, which ignores the field). */
+    CHECK(!strstr(f.command, "\"framing\":\"stream\"") == !FIPSD_NATIVE_STREAM_FRAMING);
     CHECK(f.after == 0); /* the RPC connection was closed */
     char text[FIPS_NATIVE_ADDR_CAPACITY], want[FIPS_NATIVE_ADDR_CAPACITY];
     fips_native_addr a = fips_native_stream_peer_addr(flow);
@@ -345,6 +349,7 @@ static void test_bind_keeps_the_listener_and_reports_the_port(void)
     CHECK(fips_native__listen_on(conn[1], 0, &listener) == 0 && listener);
     CHECK(pthread_join(thread, NULL) == 0);
     CHECK(strstr(f.command, "\"command\":\"listen\"") && strstr(f.command, "\"local_port\":0") && f.after == 0);
+    CHECK(!strstr(f.command, "\"framing\":\"stream\"") == !FIPSD_NATIVE_STREAM_FRAMING);
     fips_native_addr local = fips_native_listener_local_addr(listener), want = addr_of(NODE, 4242);
     CHECK(fips_native_addr_eq(&local, &want));
     CHECK(send(pair[0], "alive", 5, 0) == 5);
@@ -495,6 +500,157 @@ static void test_flows(void)
     CHECK(!(after & O_NONBLOCK) && (after & O_ASYNC) && after == (original & ~O_NONBLOCK));
     close(fds[1]); fips_native_stream_close(s);
 }
+/* ---- nostrc-6ljk8: framed stream flows (native/frame.h) -------------------- */
+static void test_frame_parser(void)
+{
+    uint8_t buf[16]; uint32_t len = 99;
+    CHECK(fipsd_native_frame_take(buf, 0, &len) == FIPSD_NATIVE_FRAME_PARTIAL && len == 99);
+    fipsd_native_frame_header(buf, 3); memcpy(buf + 4, "abc", 3);
+    CHECK(buf[0] == 0 && buf[1] == 0 && buf[2] == 0 && buf[3] == 3 && fipsd_native_frame_length(buf) == 3);
+    CHECK(fipsd_native_frame_take(buf, 3, &len) == FIPSD_NATIVE_FRAME_PARTIAL);
+    CHECK(fipsd_native_frame_take(buf, 6, &len) == FIPSD_NATIVE_FRAME_PARTIAL && len == 3);
+    CHECK(fipsd_native_frame_take(buf, 7, &len) == FIPSD_NATIVE_FRAME_WHOLE && len == 3);
+    CHECK(fipsd_native_frame_take(buf, 16, &len) == FIPSD_NATIVE_FRAME_WHOLE && len == 3);
+    fipsd_native_frame_header(buf, 0); CHECK(fipsd_native_frame_take(buf, 4, &len) == FIPSD_NATIVE_FRAME_WHOLE && len == 0);
+    fipsd_native_frame_header(buf, FIPSD_NATIVE_FRAME_MAX); CHECK(fipsd_native_frame_take(buf, 4, &len) == FIPSD_NATIVE_FRAME_PARTIAL && len == FIPSD_NATIVE_FRAME_MAX);
+    fipsd_native_frame_header(buf, FIPSD_NATIVE_FRAME_MAX + 1); CHECK(fipsd_native_frame_take(buf, 4, &len) == FIPSD_NATIVE_FRAME_INVALID);
+    fipsd_native_frame_header(buf, 0x01020304u); CHECK(buf[0] == 1 && buf[1] == 2 && buf[2] == 3 && buf[3] == 4 && fipsd_native_frame_length(buf) == 0x01020304u);
+}
+/* The daemon's half of a framed flow, written and read by hand. */
+static fips_native_stream *framed_over(int fds[2], size_t max)
+{
+    CHECK(fipsd_native_pair_framed(fds) == 0); bounded(fds[1]);
+    fips_native_addr peer = addr_of(PEER, 5001), local = addr_of(NODE, 4242);
+    fips_native_stream *s = NULL;
+    CHECK(fips_native__stream_wrap(fds[0], &peer, &local, max, &s) == 0);
+    return s;
+}
+static void put_frame(int fd, const void *payload, uint32_t len)
+{
+    uint8_t header[FIPSD_NATIVE_FRAME_HEADER]; fipsd_native_frame_header(header, len);
+    CHECK(send(fd, header, sizeof header, FIPSD_NATIVE_MSG_NOSIGNAL) == (ssize_t)sizeof header);
+    if (len) CHECK(send(fd, payload, len, FIPSD_NATIVE_MSG_NOSIGNAL) == (ssize_t)len);
+}
+static void take_exact(int fd, void *buf, size_t len)
+{
+    for (size_t at = 0; at < len;) {
+        ssize_t n = recv(fd, (uint8_t *)buf + at, len - at, 0);
+        if (n < 0 && errno == EINTR) continue;
+        CHECK(n > 0); at += (size_t)n;
+    }
+}
+static uint32_t take_frame(int fd, void *buf, size_t cap)
+{
+    uint8_t header[FIPSD_NATIVE_FRAME_HEADER]; take_exact(fd, header, sizeof header);
+    uint32_t len = fipsd_native_frame_length(header); CHECK(len <= cap);
+    take_exact(fd, buf, len);
+    return len;
+}
+typedef struct sender { fips_native_stream *s; uint8_t tag; unsigned count; size_t len; } sender;
+static void *send_many(void *arg)
+{
+    sender *w = arg;
+    uint8_t *buf = malloc(w->len); CHECK(buf);
+    int fd = fips_native_stream_fd(w->s);
+    for (unsigned i = 0; i < w->count; ++i) {
+        memset(buf, w->tag, w->len); memcpy(buf, &i, sizeof i);
+        for (;;) {
+            int rc = fips_native_send(w->s, buf, w->len);
+            if (rc == 0) break;
+            CHECK(rc == -EAGAIN); /* non-blocking with nothing of this frame written */
+            struct pollfd p = {.fd = fd, .events = POLLOUT};
+            CHECK(poll(&p, 1, DEADLINE_MS) == 1);
+        }
+    }
+    free(buf);
+    return NULL;
+}
+static void test_framed_flows(void)
+{
+    int fds[2]; uint8_t buf[64];
+    /* Datagrams cross whole in both directions as frames. */
+    fips_native_stream *s = framed_over(fds, 1362);
+    CHECK(fips_native_send(s, "out", 3) == 0 && fips_native_send(s, "again", 5) == 0 && fips_native_send(s, NULL, 0) == 0);
+    CHECK(take_frame(fds[1], buf, sizeof buf) == 3 && !memcmp(buf, "out", 3));
+    CHECK(take_frame(fds[1], buf, sizeof buf) == 5 && !memcmp(buf, "again", 5));
+    CHECK(take_frame(fds[1], buf, sizeof buf) == 0);
+    put_frame(fds[1], "back", 4);
+    CHECK(recv_bounded(s, buf, sizeof buf) == 4 && !memcmp(buf, "back", 4));
+    /* Two frames in one write: each recv takes one and leaves the next in
+     * the kernel, so the descriptor stays readable for it. */
+    uint8_t two[] = {0, 0, 0, 2, 'h', 'i', 0, 0, 0, 3, 'y', 'o', 'u'};
+    CHECK(send(fds[1], two, sizeof two, 0) == (ssize_t)sizeof two);
+    CHECK(recv_bounded(s, buf, sizeof buf) == 2 && !memcmp(buf, "hi", 2));
+    struct pollfd p = {.fd = fips_native_stream_fd(s), .events = POLLIN};
+    CHECK(poll(&p, 1, 0) == 1);
+    CHECK(recv_bounded(s, buf, sizeof buf) == 3 && !memcmp(buf, "you", 3));
+    /* A frame in pieces: non-blocking reads report would-block and keep what
+     * they took; so does an expired deadline. */
+    CHECK(fips_native_stream_set_nonblocking(s, true) == 0);
+    uint8_t header[FIPSD_NATIVE_FRAME_HEADER]; fipsd_native_frame_header(header, 6);
+    CHECK(send(fds[1], header, 2, 0) == 2);
+    CHECK(fips_native_recv(s, buf, sizeof buf) == -EAGAIN);
+    CHECK(send(fds[1], header + 2, 2, 0) == 2 && send(fds[1], "pie", 3, 0) == 3);
+    CHECK(fips_native_recv(s, buf, sizeof buf) == -EAGAIN);
+    CHECK(fips_native_stream_set_nonblocking(s, false) == 0 && fips_native_stream_set_read_timeout(s, 100) == 0);
+    CHECK(fips_native_recv(s, buf, sizeof buf) == -EAGAIN);
+    CHECK(send(fds[1], "ces", 3, 0) == 3);
+    CHECK(fips_native_stream_set_read_timeout(s, -1) == 0);
+    CHECK(recv_bounded(s, buf, sizeof buf) == 6 && !memcmp(buf, "pieces", 6));
+    /* A datagram longer than the buffer is truncated, the rest discarded. */
+    put_frame(fds[1], "truncated", 9); put_frame(fds[1], "next", 4);
+    CHECK(recv_bounded(s, buf, 5) == 5 && !memcmp(buf, "trunc", 5));
+    CHECK(recv_bounded(s, buf, sizeof buf) == 4 && !memcmp(buf, "next", 4));
+    /* An empty datagram is not a closed flow, even last; the close is EPIPE.
+     * Everything is queued before the close, so the reads cannot wait (and
+     * Darwin refuses a deadline on a stream whose peer has closed). */
+    put_frame(fds[1], NULL, 0); put_frame(fds[1], "after", 5); put_frame(fds[1], NULL, 0);
+    close(fds[1]);
+    CHECK(fips_native_recv(s, buf, sizeof buf) == 0);
+    CHECK(fips_native_recv(s, buf, sizeof buf) == 5 && !memcmp(buf, "after", 5));
+    CHECK(fips_native_recv(s, buf, sizeof buf) == 0);
+    CHECK(fips_native_recv(s, buf, sizeof buf) == -EPIPE);
+    CHECK(fips_native_send(s, "x", 1) == -EPIPE);
+    fips_native_stream_close(s);
+    /* A close mid-frame is EPIPE; a length past the maximum is not this protocol. */
+    s = framed_over(fds, 1362);
+    fipsd_native_frame_header(header, 10); CHECK(send(fds[1], header, sizeof header, 0) == 4 && send(fds[1], "abc", 3, 0) == 3);
+    close(fds[1]);
+    CHECK(fips_native_recv(s, buf, sizeof buf) == -EPIPE);
+    fips_native_stream_close(s);
+    s = framed_over(fds, 1362);
+    fipsd_native_frame_header(header, FIPSD_NATIVE_FRAME_MAX + 1); CHECK(send(fds[1], header, sizeof header, 0) == 4);
+    CHECK(recv_bounded(s, buf, sizeof buf) == -EPROTO && recv_bounded(s, buf, sizeof buf) == -EPROTO);
+    close(fds[1]); fips_native_stream_close(s);
+    /* Above the limit is refused before any byte is written. */
+    s = framed_over(fds, 8);
+    unsigned char nine[9] = {0};
+    CHECK(fips_native_send(s, nine, 9) == -EMSGSIZE);
+    CHECK(fips_native_send(s, nine, 8) == 0 && take_frame(fds[1], buf, sizeof buf) == 8);
+    close(fds[1]); fips_native_stream_close(s);
+    /* Two threads sending at once never interleave frames, and a
+     * non-blocking sender whose frame only partly fits finishes it: the far
+     * side reads every frame whole. */
+    enum { COUNT = 200, BIG = 30000 };
+    s = framed_over(fds, FIPSD_NATIVE_FRAME_MAX);
+    CHECK(fips_native_stream_set_nonblocking(s, true) == 0);
+    sender w[2] = {{.s = s, .tag = 0xa1, .count = COUNT, .len = BIG}, {.s = s, .tag = 0xb2, .count = COUNT, .len = 700}};
+    pthread_t threads[2];
+    for (int i = 0; i < 2; ++i) CHECK(pthread_create(&threads[i], NULL, send_many, &w[i]) == 0);
+    uint8_t *big = malloc(BIG); CHECK(big);
+    unsigned next[2] = {0, 0};
+    for (unsigned got = 0; got < 2 * COUNT; ++got) {
+        uint32_t len = take_frame(fds[1], big, BIG);
+        int which = len == BIG ? 0 : 1;
+        CHECK(len == w[which].len);
+        unsigned seq; memcpy(&seq, big, sizeof seq);
+        CHECK(seq == next[which]++); /* one sender's frames stay in its order */
+        for (size_t i = sizeof seq; i < len; ++i) CHECK(big[i] == w[which].tag);
+    }
+    for (int i = 0; i < 2; ++i) CHECK(pthread_join(threads[i], NULL) == 0);
+    free(big);
+    close(fds[1]); fips_native_stream_close(s);
+}
 static void test_listeners(void)
 {
     int ours[2], flow[2]; char buf[64];
@@ -555,7 +711,9 @@ int main(void)
     test_setup_refusals_and_deadlines();
     test_a_descriptor_lands_on_the_line_the_read_completed();
     test_flows();
+    test_frame_parser();
+    test_framed_flows();
     test_listeners();
-    puts("native seqpacket: pair rule, probes, fd passing, client library against a fake daemon: ok");
+    puts("native seqpacket: pair rule, probes, fd passing, client library against a fake daemon, framed streams: ok");
     return 0;
 }

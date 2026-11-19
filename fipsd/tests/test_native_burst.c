@@ -4,22 +4,31 @@
  * through the real native API without a single drop on that path. The client
  * writes as fast as its socket accepts: the daemon's flow reader must park on
  * the dispatcher mailbox and the dispatcher must gate admission on packet-pool
- * headroom, so pressure reaches the client as EAGAIN/ENOBUFS rather than a
- * drop.
+ * headroom, so pressure reaches the client as EAGAIN rather than a drop.
  *
  * The far node has no such back-pressure by design: a full flow queue costs
  * the slow client a datagram, never the node its receive path (native/link.c).
  * So the far client reads every datagram exactly once or the far node counts
- * it exactly once as drop_flow_queue_full (or as drop_client_buffer_full where
- * a full client buffer refuses a write with ENOBUFS and no writability event:
- * SOCK_DGRAM on Darwin and FreeBSD; Linux SEQPACKET parks the writer). Which
- * of the two happens depends on scheduling alone: a far reader descheduled for
- * about a millisecond at line rate fills its queue (nostrc-aqyad), so the
- * count is not asserted. A second burst makes that path deterministic: its
- * reader takes nothing until the far node has counted a drop. After each
- * burst one more datagram must arrive, so the far flow survived the pressure.
- * Readiness is observed through notices, native API events and blocking
- * reads; there are no sleeps and no timing assertions. */
+ * it exactly once as drop_flow_queue_full. Which of the two happens depends on
+ * scheduling alone: a far reader descheduled for about a millisecond at line
+ * rate fills its queue (nostrc-aqyad), so the count is not asserted. A second
+ * burst makes that path deterministic: its reader takes nothing until the far
+ * node has counted a drop.
+ *
+ * Beyond the flow queue nothing is lost on any platform (nostrc-6ljk8): a full
+ * client buffer parks the far writer until the client drains, so
+ * drop_client_buffer_full stays zero. Linux gets that from SOCK_SEQPACKET;
+ * on macOS and FreeBSD libfipsnative asks for a length-framed SOCK_STREAM flow,
+ * whose writer the kernel wakes when the reader drains (a datagram pair there
+ * refuses a full client with ENOBUFS and no writability event). A third burst
+ * proves it with a deliberately slow reader: a receive buffer shrunk to a few
+ * datagrams and nothing read until the far node has dispatched the whole
+ * burst, which is exactly the flow queue's capacity, so the node accepts every
+ * datagram and the client must then read every one of them.
+ *
+ * After each burst one more datagram must arrive, so the far flow survived the
+ * pressure. Readiness is observed through notices, native API events and
+ * blocking reads; there are no sleeps and no timing assertions. */
 #define _POSIX_C_SOURCE 200809L
 #define _DARWIN_C_SOURCE 1
 #include "node_test.h"
@@ -89,13 +98,14 @@ static void *drain(void *arg)
     }
     return NULL;
 }
-/* Whole datagram or nothing; a full client socket (EAGAIN, or ENOBUFS on
- * Darwin) is the daemon's back-pressure: wait for writability, never drop. */
-static void blast(fips_native_stream *out)
+/* Whole datagram or nothing; a full client socket (EAGAIN, or ENOBUFS on a
+ * Darwin datagram pair) is the daemon's back-pressure: wait for writability,
+ * never drop. */
+static void blast(fips_native_stream *out, uint32_t count)
 {
     uint8_t buf[PAYLOAD];
     int fd = fips_native_stream_fd(out);
-    for (uint32_t seq = 0; seq < BURST; ++seq) {
+    for (uint32_t seq = 0; seq < count; ++seq) {
         memcpy(buf, &seq, sizeof seq);
         for (size_t i = sizeof seq; i < PAYLOAD; ++i) buf[i] = (uint8_t)(seq + i);
         for (;;) {
@@ -117,7 +127,7 @@ static unsigned burst(fips_native_stream *out, fips_native_stream *in, api_node 
     memset(r, 0, sizeof *r);
     r->in = in; r->far = far; r->stall = stall; r->dropped_before = far_drops(far);
     pthread_t thread; CHECK(pthread_create(&thread, NULL, drain, r) == 0);
-    blast(out);
+    blast(out, BURST);
     CHECK(pthread_join(thread, NULL) == 0);
     unsigned lost = dropped(r);
     CHECK(r->bad == 0 && r->duplicates == 0 && r->received + lost == BURST);
@@ -125,6 +135,43 @@ static unsigned burst(fips_native_stream *out, fips_native_stream *in, api_node 
     CHECK(fips_native_send(out, "fin", 3) == 0);
     CHECK(fips_native_recv(in, buf, sizeof buf) == 3 && !memcmp(buf, "fin", 3));
     return lost;
+}
+/* The deliberately slow reader: a receive buffer of a few datagrams, and
+ * nothing read until the far node has dispatched all `count` of them (one
+ * DATAGRAM_COUNTED event each). `count` is the flow queue's capacity, so the
+ * node delivers every one; the far writer then waits on the client's
+ * buffer instead of dropping, and every datagram must be read exactly once. */
+static void slow_reader_burst(fips_native_stream *out, fips_native_stream *in, api_node *far, GoChannel *events, uint32_t count)
+{
+    void *stale;
+    while (go_channel_try_receive(events, &stale) == 0) free(stale);
+    const uint64_t received_before = metric(far, FIPSD_METRIC_native_received_datagrams);
+    const uint64_t queue_before = metric(far, FIPSD_METRIC_native_drop_flow_queue_full);
+    const uint64_t client_before = metric(far, FIPSD_METRIC_native_drop_client_buffer_full);
+    int small = 4096;
+    CHECK(setsockopt(fips_native_stream_fd(in), SOL_SOCKET, SO_RCVBUF, &small, sizeof small) == 0);
+    blast(out, count);
+    for (uint32_t counted = 0; counted < count;) {
+        void *value = NULL;
+        GoSelectCase cases[] = {{.op = GO_SELECT_RECEIVE, .chan = events, .recv_buf = &value}};
+        CHECK(go_select_timeout(cases, 1, NT_WAIT_MS).selected_case == 0 && value);
+        const fipsd_native_event *e = value;
+        if (e->kind == FIPSD_NATIVE_EVENT_DATAGRAM_COUNTED && e->port == PORT) ++counted;
+        free(value);
+    }
+    CHECK(metric(far, FIPSD_METRIC_native_received_datagrams) - received_before == count);
+    uint8_t buf[PAYLOAD + 1], seen[BURST / 8] = {0};
+    for (uint32_t got = 0; got < count; ++got) {
+        CHECK(fips_native_recv(in, buf, sizeof buf) == (ssize_t)PAYLOAD);
+        uint32_t seq; memcpy(&seq, buf, sizeof seq);
+        CHECK(seq < count && !(seen[seq / 8] & (1u << (seq % 8)))); /* each once; the mesh may reorder */
+        seen[seq / 8] |= (uint8_t)(1u << (seq % 8));
+        for (size_t i = sizeof seq; i < PAYLOAD; ++i) CHECK(buf[i] == (uint8_t)(seq + i));
+    }
+    CHECK(metric(far, FIPSD_METRIC_native_drop_client_buffer_full) == client_before);
+    CHECK(metric(far, FIPSD_METRIC_native_drop_flow_queue_full) == queue_before);
+    CHECK(fips_native_send(out, "fin", 3) == 0);
+    CHECK(fips_native_recv(in, buf, sizeof buf) == 3 && !memcmp(buf, "fin", 3));
 }
 /* node_test.h helpers this proof does not need. */
 static void (*const unused_helpers[])(void) = {(void (*)(void))nt_query, (void (*)(void))nt_print_trace};
@@ -183,14 +230,17 @@ int main(void)
     while (go_channel_try_receive(events, &stale) == 0) free(stale);
     unsigned lost_stalled = burst(out, in, &b, events, &stalled);
     CHECK(lost_stalled > 0); /* the stalled reader made the far node give up on it */
+    const uint32_t queue = (uint32_t)fipsd_native_api_limits(b.api)->per_flow;
+    CHECK(queue > 0 && queue <= BURST);
+    slow_reader_burst(out, in, &b, events, queue);
     fips_native_stream_close(in); fips_native_stream_close(out); fips_native_listener_close(listener);
     fipsd_runtime_shutdown(rt);
     CHECK(fipsd_runtime_run(rt) == FIPSD_RUN_OK);
     /* Counted after every fiber joined: a client may read a datagram before
      * the far node counts it. The originating node applied back-pressure and
      * dropped nothing: it took every datagram the client wrote (the opener,
-     * two bursts and their two liveness datagrams). */
-    const uint64_t total = 2u * BURST + 3u;
+     * three bursts and their three liveness datagrams). */
+    const uint64_t total = 2u * BURST + queue + 4u;
     CHECK(metric(&a, FIPSD_METRIC_native_sent_datagrams) == total);
     CHECK(metric(&a, FIPSD_METRIC_forwarding_drop_send_error_packets) == 0);
     CHECK(metric(&a, FIPSD_METRIC_forwarding_drop_mtu_exceeded_packets) == 0);
@@ -204,9 +254,7 @@ int main(void)
     uint64_t client_drops = metric(&b, FIPSD_METRIC_native_drop_client_buffer_full);
     CHECK(metric(&b, FIPSD_METRIC_native_received_datagrams) + queue_drops == total);
     CHECK(queue_drops + client_drops == (uint64_t)lost_free + lost_stalled);
-#if !FIPSD_NATIVE_FULL_CLIENT_DROPS
-    CHECK(client_drops == 0); /* SEQPACKET parks the far writer instead */
-#endif
+    CHECK(client_drops == 0); /* a full client buffer parks the far writer instead */
     for (api_node *n = &a; n; n = n == &a ? &b : NULL) {
         CHECK(metric(n, FIPSD_METRIC_native_drop_arrival_queue_full) == 0);
         CHECK(metric(n, FIPSD_METRIC_native_drop_backlog_full) == 0);
@@ -222,7 +270,8 @@ int main(void)
     nt_destroy(&a.node); nt_destroy(&b.node);
     fipsd_loopback_network_destroy(net);
     printf("native burst: 2 x %u x %u-byte datagrams A -> B through the native API with no originating drop; "
-           "draining reader read %u (%u counted at the far node), stalled reader read %u (%u counted): ok\n",
-           BURST, PAYLOAD, free_running.received, lost_free, stalled.received, lost_stalled);
+           "draining reader read %u (%u counted at the far node), stalled reader read %u (%u counted), "
+           "slow reader read all %u with no client-buffer drop: ok\n",
+           BURST, PAYLOAD, free_running.received, lost_free, stalled.received, lost_stalled, (unsigned)queue);
     return 0;
 }

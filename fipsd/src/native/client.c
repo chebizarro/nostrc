@@ -6,13 +6,22 @@
  * ancillary buffer; a descriptor belongs to the last complete line of the
  * read that carried it; end of file is POLLHUP with an empty queue; sends
  * carry MSG_NOSIGNAL; the setup socket has a deadline; descriptors are
- * close-on-exec and the whole control buffer is walked. */
+ * close-on-exec and the whole control buffer is walked.
+ *
+ * On macOS and FreeBSD connect and listen also ask for `"framing":"stream"`
+ * (nostrc-6ljk8): fipsd answers with a SOCK_STREAM flow carrying
+ * native/frame.h frames, whose writer the kernel wakes when this side reads,
+ * so a slow reader is not dropped at a full buffer; upstream's daemon ignores
+ * the field and answers with its datagram pair. Which one arrived is read off
+ * the descriptor (SO_TYPE), never assumed. */
 #define _POSIX_C_SOURCE 200809L
 #define _DARWIN_C_SOURCE 1
 #include "native/client_internal.h"
+#include "native/frame.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -25,8 +34,11 @@
 
 #if defined(__APPLE__) || defined(__FreeBSD__)
 const char *const fips_native_socket = "/var/run/fips/api.sock";
+/* The datagram pair there drops at a full client buffer; a stream does not. */
+#define FRAMING_PARAM "\"framing\":\"stream\","
 #else
 const char *const fips_native_socket = "/run/fips/api.sock";
+#define FRAMING_PARAM "" /* SOCK_SEQPACKET already waits for a slow reader */
 #endif
 #ifndef MSG_NOSIGNAL
 #define MSG_NOSIGNAL 0
@@ -38,7 +50,21 @@ const char *const fips_native_socket = "/run/fips/api.sock";
 #define MAX_LINES 16
 #define FDS_PER_MESSAGE 8
 
-struct fips_native_stream { int fd; fips_native_addr peer, local; size_t max; };
+struct fips_native_stream {
+    int fd;
+    fips_native_addr peer, local;
+    size_t max;
+    /* A framed SOCK_STREAM flow (native/frame.h): each direction has a lock
+     * so concurrent callers never interleave frames, and the receive side
+     * keeps a frame read in pieces across calls that return -EAGAIN. */
+    bool framed;
+    pthread_mutex_t send_mu, recv_mu;
+    uint8_t header[FIPSD_NATIVE_FRAME_HEADER];
+    size_t header_have, body_have;
+    uint32_t body_len; /* valid once the header is whole */
+    uint8_t *body;
+    size_t body_cap;
+};
 struct fips_native_listener { int fd; fips_native_addr local; };
 
 /* ---- socket path ---------------------------------------------------------- */
@@ -511,6 +537,13 @@ int fips_native__stream_wrap(int fd, const fips_native_addr *peer, const fips_na
 {
     fips_native_stream *s = calloc(1, sizeof *s);
     if (!s) { close(fd); return -ENOMEM; }
+    int type = 0; socklen_t type_len = sizeof type;
+    if (getsockopt(fd, SOL_SOCKET, SO_TYPE, &type, &type_len) != 0) { int e = errno; close(fd); free(s); return -e; }
+    if (type == SOCK_STREAM) {
+        if (pthread_mutex_init(&s->send_mu, NULL) != 0) { close(fd); free(s); return -ENOMEM; }
+        if (pthread_mutex_init(&s->recv_mu, NULL) != 0) { pthread_mutex_destroy(&s->send_mu); close(fd); free(s); return -ENOMEM; }
+        s->framed = true;
+    }
     prepare_fd(fd);
     s->fd = fd; s->peer = *peer; s->local = *local; s->max = max_payload;
     *out = s;
@@ -532,7 +565,7 @@ static int connect_exchange(wire *w, uint16_t local_port, const fips_native_addr
     if (rc != 0) return rc;
     /* local_port 0 is spelled out rather than omitted: one spelling of
      * "any port" for connect and listen both. */
-    snprintf(request, sizeof request, "{\"command\":\"connect\",\"params\":{\"local_port\":%u,\"peer\":\"%s\",\"remote_port\":%u}}\n",
+    snprintf(request, sizeof request, "{\"command\":\"connect\",\"params\":{" FRAMING_PARAM "\"local_port\":%u,\"peer\":\"%s\",\"remote_port\":%u}}\n",
         (unsigned)local_port, npub, (unsigned)peer->port);
     line reply; const unsigned char *data; size_t data_len;
     if ((rc = wire_call(w, request, &reply, &data, &data_len)) != 0) return rc;
@@ -545,7 +578,7 @@ static int connect_exchange(wire *w, uint16_t local_port, const fips_native_addr
 static int listen_exchange(wire *w, uint16_t local_port, fips_native_listener **out)
 {
     char request[128];
-    snprintf(request, sizeof request, "{\"command\":\"listen\",\"params\":{\"local_port\":%u}}\n", (unsigned)local_port);
+    snprintf(request, sizeof request, "{\"command\":\"listen\",\"params\":{" FRAMING_PARAM "\"local_port\":%u}}\n", (unsigned)local_port);
     line reply; const unsigned char *data; size_t data_len;
     int rc = wire_call(w, request, &reply, &data, &data_len);
     if (rc != 0) return rc;
@@ -633,10 +666,87 @@ int fips_native_accept(fips_native_listener *listener, fips_native_stream **out,
     if (rc == 0 && peer) *peer = far;
     return rc;
 }
+static int peer_gone(int error) { return error == ECONNRESET || error == EDESTADDRREQ ? -EPIPE : -error; }
+/* One frame. Nothing written yet: a deadline or non-blocking mode reports
+ * -EAGAIN as a datagram socket would. Part written: the rest must follow or
+ * the stream is corrupt, so the call waits for writability (the daemon's
+ * reader drains continuously) whatever the deadline. */
+static int send_frame(fips_native_stream *s, const void *buf, size_t len)
+{
+    uint8_t header[FIPSD_NATIVE_FRAME_HEADER];
+    fipsd_native_frame_header(header, (uint32_t)len);
+    struct iovec iov[2] = {{.iov_base = header, .iov_len = sizeof header}, {.iov_base = (void *)buf, .iov_len = len}};
+    size_t first = 0, left = sizeof header + len;
+    bool started = false;
+    while (left) {
+        struct msghdr msg = {.msg_iov = iov + first};
+        msg.msg_iovlen = first ? 1 : 2;
+        ssize_t n = sendmsg(s->fd, &msg, MSG_NOSIGNAL);
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            if ((errno == EAGAIN || errno == EWOULDBLOCK) && started) {
+                struct pollfd p = {.fd = s->fd, .events = POLLOUT};
+                if (poll(&p, 1, -1) < 0 && errno != EINTR) return -errno;
+                continue;
+            }
+            return peer_gone(errno);
+        }
+        started = true;
+        left -= (size_t)n;
+        for (size_t sent = (size_t)n; first < 2 && sent;) {
+            size_t step = sent < iov[first].iov_len ? sent : iov[first].iov_len;
+            iov[first].iov_base = (uint8_t *)iov[first].iov_base + step; iov[first].iov_len -= step; sent -= step;
+            if (!iov[first].iov_len) ++first;
+        }
+        if (first < 2 && !iov[first].iov_len) ++first;
+    }
+    return 0;
+}
+/* One frame, read only up to its end so whatever follows stays queued in the
+ * kernel (and the descriptor stays readable for it). */
+static ssize_t recv_frame(fips_native_stream *s, void *buf, size_t cap)
+{
+    for (;;) {
+        void *at; size_t want;
+        bool header = s->header_have < sizeof s->header;
+        if (header) {
+            at = s->header + s->header_have; want = sizeof s->header - s->header_have;
+        } else {
+            s->body_len = fipsd_native_frame_length(s->header);
+            if (s->body_len > FIPSD_NATIVE_FRAME_MAX) return -EPROTO; /* not this protocol; every later call too */
+            if (s->body_have == s->body_len) {
+                size_t n = s->body_len < cap ? s->body_len : cap; /* longer than cap: the rest is discarded */
+                if (n) memcpy(buf, s->body, n);
+                s->header_have = s->body_have = 0;
+                return (ssize_t)n;
+            }
+            if (s->body_len > s->body_cap) {
+                uint8_t *grown = realloc(s->body, s->body_len);
+                if (!grown) return -ENOMEM;
+                s->body = grown; s->body_cap = s->body_len;
+            }
+            at = s->body + s->body_have; want = s->body_len - s->body_have;
+        }
+        ssize_t n = recv(s->fd, at, want, 0);
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            return peer_gone(errno); /* -EAGAIN keeps what was read for the next call */
+        }
+        if (n == 0) return -EPIPE; /* the daemon closed its half, mid-frame or not */
+        if (header) s->header_have += (size_t)n; else s->body_have += (size_t)n;
+    }
+}
 int fips_native_send(fips_native_stream *s, const void *buf, size_t len)
 {
     if (!s) return -EINVAL;
     if (len > s->max) return -EMSGSIZE;
+    if (s->framed) {
+        if (len > FIPSD_NATIVE_FRAME_MAX) return -EMSGSIZE;
+        pthread_mutex_lock(&s->send_mu);
+        int rc = send_frame(s, buf, len);
+        pthread_mutex_unlock(&s->send_mu);
+        return rc;
+    }
     for (;;) {
         ssize_t n = send(s->fd, buf, len, MSG_NOSIGNAL);
         if (n >= 0) return 0;
@@ -659,6 +769,12 @@ static size_t queued(int fd)
 ssize_t fips_native_recv(fips_native_stream *s, void *buf, size_t cap)
 {
     if (!s) return -EINVAL;
+    if (s->framed) {
+        pthread_mutex_lock(&s->recv_mu);
+        ssize_t n = recv_frame(s, buf, cap);
+        pthread_mutex_unlock(&s->recv_mu);
+        return n;
+    }
     for (;;) {
         ssize_t n = recv(s->fd, buf, cap, 0);
         if (n < 0) {
@@ -674,6 +790,8 @@ void fips_native_stream_close(fips_native_stream *s)
 {
     if (!s) return;
     close(s->fd);
+    if (s->framed) { pthread_mutex_destroy(&s->send_mu); pthread_mutex_destroy(&s->recv_mu); }
+    free(s->body);
     free(s);
 }
 void fips_native_listener_close(fips_native_listener *l)

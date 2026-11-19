@@ -45,6 +45,7 @@ typedef struct flow_rec {
     GoChannel *inbound;  /* fipsd_native_datagram*, capacity per_flow */
     _Atomic uint64_t datagrams, bytes;
     _Atomic bool closed;
+    bool stream;         /* a framed SOCK_STREAM pair (native/frame.h); the feeder is its only writer */
     unsigned refs;       /* reader, feeder and any transient user (inject) */
 } flow_rec;
 typedef struct listener_rec {
@@ -53,6 +54,7 @@ typedef struct listener_rec {
     uint16_t port;
     int sock;
     GoChannel *arrivals; /* fipsd_native_arrival*, capacity backlog */
+    bool stream;         /* the flows it accepts are stream flows */
     unsigned refs;
 } listener_rec;
 typedef struct connection {
@@ -172,11 +174,14 @@ static void flow_reader_fiber(void *arg)
 {
     flow_rec *f = arg;
     fipsd_native_api *a = f->api;
-    uint8_t *buf = malloc(FIPSD_NATIVE_MAX_DATAGRAM);
-    if (!buf) { flow_end(a, f); return; }
+    fipsd_native_frame_reader frames = {0};
+    uint8_t *buf = f->stream ? NULL : malloc(FIPSD_NATIVE_MAX_DATAGRAM);
+    if (f->stream ? fipsd_native_frame_reader_init(&frames) != 0 : !buf) { flow_end(a, f); return; }
     for (;;) {
         size_t len = 0;
-        fipsd_native_received r = fipsd_native_recv_fiber(f->sock, buf, FIPSD_NATIVE_MAX_DATAGRAM, &len);
+        const uint8_t *datagram = buf;
+        fipsd_native_received r = f->stream ? fipsd_native_frame_recv_fiber(&frames, f->sock, &datagram, &len)
+                                            : fipsd_native_recv_fiber(f->sock, buf, FIPSD_NATIVE_MAX_DATAGRAM, &len);
         if (r == FIPSD_NATIVE_RECEIVED_EOF) { FIPSD_DEBUG(MODULE, "flow %llu closed by its client", (unsigned long long)f->id); break; }
         if (r != FIPSD_NATIVE_RECEIVED_DATAGRAM) {
             if (fipsd_io_errno() != ECANCELED) FIPSD_DEBUG(MODULE, "flow %llu read failed: %s", (unsigned long long)f->id, strerror(fipsd_io_errno()));
@@ -193,20 +198,24 @@ static void flow_reader_fiber(void *arg)
          * A full dispatcher mailbox is back-pressure: this reader parks on it
          * until the dispatcher drains (or stop closes halt), so the pressure
          * reaches the client's socket as EAGAIN instead of a drop here. */
-        if (fipsd_node_handlers_send_wait(a->handlers, &f->key.peer, f->key.local, f->key.remote, buf, len, a->halt) != 0) {
+        if (fipsd_node_handlers_send_wait(a->handlers, &f->key.peer, f->key.local, f->key.remote, datagram, len, a->halt) != 0) {
             if (atomic_load(&a->stopping)) break;
             FIPSD_DEBUG(MODULE, "flow %llu: outbound datagram refused by the dispatcher", (unsigned long long)f->id);
         }
     }
-    sodium_memzero(buf, FIPSD_NATIVE_MAX_DATAGRAM);
-    free(buf);
+    if (buf) { sodium_memzero(buf, FIPSD_NATIVE_MAX_DATAGRAM); free(buf); }
+    fipsd_native_frame_reader_clear(&frames);
     flow_end(a, f);
 }
 /* Write datagrams the node delivered onto the client's descriptor. A full
- * client buffer drops the datagram and keeps the flow (ENOBUFS: Darwin and
- * FreeBSD SOCK_DGRAM have no sender-side queue to wait on; Linux SEQPACKET
- * parks this writer instead). Upstream drops it uncounted; here it is counted
- * as native.drop_client_buffer_full. */
+ * client buffer parks this writer on SOCK_SEQPACKET (Linux) and on a stream
+ * flow (macOS, FreeBSD with libfipsnative), whose kernel raises writability
+ * when the client reads, so nothing is lost here and the flow queue behind it
+ * is the only place a slow client loses datagrams. A datagram flow on macOS
+ * and FreeBSD (SOCK_DGRAM, every client that did not ask for framing, the
+ * upstream Rust client included) has no sender-side queue to wait on: a full
+ * client buffer refuses with ENOBUFS and the datagram is dropped, keeping the
+ * flow. Upstream drops it uncounted; here it is native.drop_client_buffer_full. */
 static void flow_feeder_fiber(void *arg)
 {
     flow_rec *f = arg;
@@ -215,11 +224,12 @@ static void flow_feeder_fiber(void *arg)
         void *v = NULL;
         if (go_channel_receive(f->inbound, &v) != 0 || !v) break;
         fipsd_native_datagram *dg = v;
-        int rc = fipsd_native_send_fiber(f->sock, dg->bytes, dg->len, -1);
+        int rc = f->stream ? fipsd_native_frame_send_fiber(f->sock, dg->bytes, dg->len)
+                           : fipsd_native_send_fiber(f->sock, dg->bytes, dg->len, -1);
         int error = fipsd_io_errno();
         fipsd_native_datagram_free(dg);
         if (rc == 0) continue;
-        if (error == ENOBUFS) {
+        if (!f->stream && error == ENOBUFS) {
             count(a, FIPSD_METRIC_native_drop_client_buffer_full, 1);
             FIPSD_DEBUG(MODULE, "flow %llu: write dropped a datagram", (unsigned long long)f->id);
             continue;
@@ -234,13 +244,25 @@ static void flow_feeder_fiber(void *arg)
 }
 /* Build one flow's socket pair and inbound queue. fds[0] is the daemon's
  * half (non-blocking, registered for cancellation), fds[1] the client's. */
-static bool wire_flow(fipsd_native_api *a, int fds[2], GoChannel **inbound)
+static bool wire_flow(fipsd_native_api *a, int fds[2], GoChannel **inbound, bool stream)
 {
-    if (fipsd_native_pair(fds) != 0) return false;
+    if ((stream ? fipsd_native_pair_framed(fds) : fipsd_native_pair(fds)) != 0) return false;
     size_t per_flow = a->limits.per_flow ? a->limits.per_flow : 1;
     size_t budget = per_flow * FIPSD_NATIVE_ARRIVAL_ALLOWANCE;
     if (fipsd_native_set_sndbuf(fds[0], budget) != 0) FIPSD_WARN(MODULE, "could not size a flow's send buffer: %s", strerror(errno));
     if (fipsd_native_set_rcvbuf(fds[1], budget) != 0) FIPSD_WARN(MODULE, "could not size a flow's receive buffer: %s", strerror(errno));
+    if (stream) {
+        /* A stream's window is the sender's buffer, in both directions. Darwin
+         * raises a writer's readiness only when its peer's receive space
+         * reaches the writer's low-water mark, so a client that shrinks its
+         * buffer below the default mark would never wake the feeder; a mark
+         * of one byte wakes it whenever the client drains anything, and the
+         * feeder finishes a frame across as many wakes as it takes. */
+        int one = 1;
+        if (fipsd_native_set_sndbuf(fds[1], budget) != 0 || fipsd_native_set_rcvbuf(fds[0], budget) != 0 ||
+            setsockopt(fds[0], SOL_SOCKET, SO_SNDLOWAT, &one, sizeof one) != 0)
+            FIPSD_WARN(MODULE, "could not size a stream flow's buffers: %s", strerror(errno));
+    }
     *inbound = go_channel_create(per_flow);
     if (fipsd_native_set_nonblocking(fds[0], true) != 0 || gof_io_reset_fd(fds[0]) != 0 || !*inbound) {
         int e = errno ? errno : ENOMEM;
@@ -252,7 +274,7 @@ static bool wire_flow(fipsd_native_api *a, int fds[2], GoChannel **inbound)
 /* Record a flow and start its two fibers; on failure everything handed in is
  * released, the registry entry included. */
 static bool flow_start(fipsd_native_api *a, uint64_t id, const fipsd_native_flow_key *key, const fips_xonly_pubkey *pubkey,
-                       int sock, int pin, GoChannel *inbound, listener_rec *listener)
+                       int sock, int pin, GoChannel *inbound, bool stream, listener_rec *listener)
 {
     nsync_mu_lock(&a->mu);
     flow_rec *f = NULL;
@@ -270,7 +292,7 @@ static bool flow_start(fipsd_native_api *a, uint64_t id, const fipsd_native_flow
      * arrivals fiber keeps this listener record alive until hand_over ends. */
     if (listener && listener->released && pin >= 0) { close(pin); pin = -1; }
     memset(f, 0, sizeof *f);
-    f->used = true; f->api = a; f->id = id; f->key = *key; f->pubkey = *pubkey; f->sock = sock; f->inbound = inbound; f->refs = 2;
+    f->used = true; f->api = a; f->id = id; f->key = *key; f->pubkey = *pubkey; f->sock = sock; f->inbound = inbound; f->stream = stream; f->refs = 2;
     atomic_init(&f->pin, pin); atomic_init(&f->datagrams, 0); atomic_init(&f->bytes, 0); atomic_init(&f->closed, false);
     nsync_mu_unlock(&a->mu);
     if (fipsd_runtime_spawn(a->runtime, flow_feeder_fiber, f) != 0) {
@@ -347,7 +369,7 @@ static void listener_reader_fiber(void *arg)
 static void hand_over(fipsd_native_api *a, listener_rec *l, const fipsd_native_arrival *arrival)
 {
     int fds[2]; GoChannel *inbound;
-    if (!wire_flow(a, fds, &inbound)) { FIPSD_WARN(MODULE, "could not open a socket pair for an arriving flow: %s", strerror(errno)); return; }
+    if (!wire_flow(a, fds, &inbound, l->stream)) { FIPSD_WARN(MODULE, "could not open a socket pair for an arriving flow: %s", strerror(errno)); return; }
     fipsd_native_flow_key key; fips_xonly_pubkey pubkey;
     fipsd_native_datagram **held = NULL; size_t held_count = 0;
     nsync_mu_lock(&a->mu);
@@ -362,7 +384,8 @@ static void hand_over(fipsd_native_api *a, listener_rec *l, const fipsd_native_a
     }
     bool failed = false; int error = 0;
     for (size_t i = 0; i < held_count && !failed; ++i)
-        if (fipsd_native_send_once(fds[0], held[i]->bytes, held[i]->len) < 0) { failed = true; error = errno; }
+        if ((l->stream ? fipsd_native_frame_send_once(fds[0], held[i]->bytes, held[i]->len)
+                       : (int)fipsd_native_send_once(fds[0], held[i]->bytes, held[i]->len)) < 0) { failed = true; error = errno; }
     if (!failed) {
         char peer[FIPS_NIP19_CAPACITY] = "";
         (void)fips_encode_npub(&pubkey, peer, sizeof peer);
@@ -390,7 +413,7 @@ static void hand_over(fipsd_native_api *a, listener_rec *l, const fipsd_native_a
         return;
     }
     if (a->before_flow_record) a->before_flow_record(a->flow_record_user, arrival->flow);
-    (void)flow_start(a, arrival->flow, &key, &pubkey, fds[0], fds[1], inbound, l);
+    (void)flow_start(a, arrival->flow, &key, &pubkey, fds[0], fds[1], inbound, l->stream, l);
 }
 static void listener_arrivals_fiber(void *arg)
 {
@@ -427,7 +450,8 @@ static json_t *do_connect(fipsd_native_api *a, const fipsd_native_command *cmd, 
     /* The pair exists before the port is claimed, so a failure to build it
      * cannot leave a port held by a flow that does not exist. */
     int fds[2]; GoChannel *inbound;
-    if (!wire_flow(a, fds, &inbound)) {
+    bool stream = FIPSD_NATIVE_STREAM_FRAMING && cmd->stream;
+    if (!wire_flow(a, fds, &inbound, stream)) {
         snprintf(message, sizeof message, "could not open a flow: %s", strerror(errno));
         return fipsd_native_deny("EMFILE", message);
     }
@@ -443,7 +467,7 @@ static json_t *do_connect(fipsd_native_api *a, const fipsd_native_command *cmd, 
         return stopping ? shutting_down() : refused(&why);
     }
     fipsd_native_flow_key k = {.peer = fips_node_addr_from_pubkey(&key), .remote = cmd->remote, .local = held};
-    if (!flow_start(a, id, &k, &key, fds[0], -1, inbound, NULL)) {
+    if (!flow_start(a, id, &k, &key, fds[0], -1, inbound, stream, NULL)) {
         close(fds[1]);
         return atomic_load(&a->stopping) ? shutting_down() : fipsd_native_deny("EMFILE", "could not open a flow: no flow slot is free");
     }
@@ -489,6 +513,7 @@ static json_t *do_listen(fipsd_native_api *a, const fipsd_native_command *cmd, i
     if (err == FIPSD_NATIVE_REG_OK) {
         memset(l, 0, sizeof *l);
         l->used = true; l->api = a; l->port = held; l->sock = fds[0]; l->arrivals = arrivals; l->refs = 2;
+        l->stream = FIPSD_NATIVE_STREAM_FRAMING && cmd->stream;
     }
     nsync_mu_unlock(&a->mu);
     if (err != FIPSD_NATIVE_REG_OK) {
@@ -541,6 +566,25 @@ static json_t *do_stats(fipsd_native_api *a, const fipsd_native_command *cmd)
     nsync_mu_unlock(&a->mu);
     return f ? fipsd_native_ok(data) : no_such_flow(cmd->flow);
 }
+/* A stream flow has one writer, its feeder, so an injected datagram joins
+ * the flow's queue rather than racing the feeder mid-frame; the wait is the
+ * datagram path's reply bound. Returns 0 or -1 with errno. */
+static int inject_queued(fipsd_native_api *a, flow_rec *f, const uint8_t *data, size_t len)
+{
+    if (go_channel_is_closed(f->inbound)) { fipsd_io_set_errno(EPIPE); return -1; } /* the client closed the flow */
+    fipsd_native_datagram *dg = fipsd_native_datagram_new(data, len);
+    if (!dg) { fipsd_io_set_errno(ENOMEM); return -1; }
+    void *token = NULL;
+    GoSelectCase cases[] = {
+        {.op = GO_SELECT_SEND, .chan = f->inbound, .value = dg},
+        {.op = GO_SELECT_RECEIVE, .chan = a->halt, .recv_buf = &token}
+    };
+    GoSelectResult r = go_select_timeout(cases, 2, FIPSD_NATIVE_REPLY_TIMEOUT_MS);
+    if (r.selected_case == 0 && r.ok) return 0;
+    fipsd_native_datagram_free(dg);
+    fipsd_io_set_errno(r.selected_case < 0 ? ETIMEDOUT : EPIPE);
+    return -1;
+}
 static json_t *do_inject(fipsd_native_api *a, const fipsd_native_command *cmd)
 {
     nsync_mu_lock(&a->mu);
@@ -551,7 +595,7 @@ static json_t *do_inject(fipsd_native_api *a, const fipsd_native_command *cmd)
     if (!f) return no_such_flow(cmd->flow);
     json_t *response = NULL;
     for (uint32_t i = 0; i < cmd->repeat; ++i) {
-        if (fipsd_native_send_fiber(sock, cmd->data, cmd->data_len, FIPSD_NATIVE_REPLY_TIMEOUT_MS) != 0) {
+        if ((f->stream ? inject_queued(a, f, cmd->data, cmd->data_len) : fipsd_native_send_fiber(sock, cmd->data, cmd->data_len, FIPSD_NATIVE_REPLY_TIMEOUT_MS)) != 0) {
             char message[256];
             snprintf(message, sizeof message, "wrote %u of %u datagrams: %s", (unsigned)i, (unsigned)cmd->repeat, strerror(fipsd_io_errno()));
             response = fipsd_native_deny("EIO", message);
