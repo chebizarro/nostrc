@@ -4123,6 +4123,11 @@ For Linux TSan, configure `-DGNOSTR_ENABLE_TSAN=ON
 -DNOSTR_USE_SYSTEM_NSYNC=OFF` after initializing `third_party/nsync`. This
 builds instrumented nsync with the repository's TSan semaphore backend rather
 than treating an uninstrumented distro lock library as visible synchronization.
+macOS TSan with the vendored copy takes the same flags and reports no races
+with Homebrew LLVM clang or `/usr/bin/clang`. nsync's compiler dispatch does not
+recognize AppleClang, so `libgo/CMakeLists.txt` puts nsync's `platform/clang`
+header first for that compiler ID; without it `waiter_destroy` races on a global
+under TSan. The default macOS gates still use Homebrew's nsync.
 
 The registered privileged smoke returns 77 with a prerequisite explanation
 unless explicitly enabled on Linux as root. It checks C/C and optionally
