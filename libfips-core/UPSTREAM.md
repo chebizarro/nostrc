@@ -784,6 +784,28 @@ and change no upstream behaviour.
 
 No pin change. Version decision: additive API (and two additive struct fields),
 **libfips-core 0.1.0 Unreleased**.
+## Coordinate-cache change feed (nostrc-x345n)
+
+This is a C-only host diagnostic with no upstream counterpart, and it changes
+no existing call's results. Every call that advances `fips_coord_cache_generation` now
+stamps each slot it changed (`fips_coord_slot.changed`) and that slot's
+32-slot block (a 64-bit stamp per block kept in the index words:
+`FIPS_COORD_CACHE_INDEX_WORDS` grows by two words per 32 slots).
+`fips_coord_cache_changes(c, since, visit, ctx)` visits, in storage order,
+every slot changed after generation `since`: a resident slot (expired or not)
+with its key and entry, or a vacant one. It reads one stamp for each
+unchanged block, O(slot_capacity / 32 + 32 per changed block), so a host view
+kept per slot (the fipsd dataplane's published cache) updates without
+rereading the cache. It may report a slot whose state came out the same (a
+demote), and never misses one. `FipsCoreCoordCacheTest` keeps a per-slot
+mirror from the feed alone through random churn (every insert flavour,
+touches, removes, demotes, purges, invalidations, clears), feeding after one
+or several steps. It requires the mirror to equal every slot after each feed,
+a feed from the current generation to visit nothing, and the slots visited to
+stay far below a sweep per feed. A touch that does not stamp its slot fails it.
+No pin change. Version decision: additive API and an additive slot field,
+**libfips-core 0.1.0 Unreleased**.
+
 ## Coordinate-cache expiry index and running stats (nostrc-gfvud)
 
 Internal storage only; every call keeps upstream's results. Upstream's

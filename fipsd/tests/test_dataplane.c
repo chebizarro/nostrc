@@ -42,10 +42,21 @@ static void forwarding(void)
     assert(fips_tree_coordinate_from_addrs(mine, ma, 2, NULL) == FIPS_OK);
     assert(fips_tree_coordinate_from_addrs(neighbor, pa, 2, NULL) == FIPS_OK);
     s.my_coords = make_go_refptr(mine, free); peers[0].coords = make_go_refptr(neighbor, free);
-    fipsd_dp_cached cached = {.addr = remote, .expires = 100};
+    /* The published cache section, built from a core cache entry that
+     * expires at 100 ms (a 100 ms TTL written at 0). */
+    enum { CSLOTS = FIPS_COORD_CACHE_SLOTS(4), CWORDS = FIPS_COORD_CACHE_INDEX_WORDS(CSLOTS) };
+    fips_coord_slot *cslots = calloc(CSLOTS, sizeof *cslots); uint32_t *cindex = calloc(CWORDS, sizeof *cindex);
+    assert(cslots && cindex);
+    fips_coord_cache cache; fips_fixed_entropy entropy = {0x33};
+    assert(fips_coord_cache_init(&cache, cslots, CSLOTS, cindex, CWORDS, 4, 100, fips_test_instant(0),
+        fips_fixed_entropy_adapter(&entropy)) == FIPS_OK);
     uint8_t ca[3][16]; memcpy(ca[0], remote.bytes, 16); memcpy(ca[1], peer.bytes, 16); memcpy(ca[2], root.bytes, 16);
-    assert(fips_cached_coord_from_addrs(&cached.coords, (const uint8_t (*)[16])ca, 3) == FIPS_OK);
-    s.cache = &cached; s.cache_count = s.peer_count = 1;
+    fips_cached_coord coords; fips_hint_outcome placed;
+    assert(fips_cached_coord_from_addrs(&coords, (const uint8_t (*)[16])ca, 3) == FIPS_OK);
+    assert(fips_coord_cache_insert(&cache, remote.bytes, &coords, fips_test_instant(0), &placed) == FIPS_OK);
+    fipsd_dp_cache_view cv; fipsd_dp_cache_view_init(&cv, fips_fixed_entropy_adapter(&entropy));
+    assert(fipsd_dp_cache_view_update(&cv, &cache) && cv.section && cv.section->count == 1);
+    s.cache = cv.section; s.peer_count = 1;
     dg.dest_addr = remote; dg.ttl = 64;
     fips_writer_init(&w, bytes, sizeof bytes);
     assert(fipsd_dp_forward(&s, &router, &dg, NULL, false, fips_test_instant(0), scratch, view, &w, &out) == FIPS_OK);
@@ -79,8 +90,15 @@ static void forwarding(void)
     fipsd_dp_tighten_via(h, &peer, 1280);
     assert(h->session_ext[0].mmp.path_mtu.current_mtu == 1100 && h->session_ext[1].mmp.path_mtu.current_mtu == 1100);
     free(h->session_entries); free(h->session_ext); free(plane.clamps); free(h);
-    cached.expires = 0;
-    assert(fipsd_dp_forward(&s, &router, &dg, NULL, false, fips_test_instant(0), scratch, view, &w, &out) == FIPS_OK && out.kind == FIPS_ROUTE_NoRoute);
+    /* Upstream's expiry (coord_cache.get): live through expires_at itself,
+     * gone once now passes it. Snapshot time is relative to its origin. */
+    s.origin = fips_test_instant(0);
+    fips_writer_init(&w, bytes, sizeof bytes);
+    assert(fipsd_dp_forward(&s, &router, &dg, NULL, false, fips_test_instant(100), scratch, view, &w, &out) == FIPS_OK);
+    assert(out.kind == FIPS_ROUTE_Forward && !memcmp(out.next_hop.bytes, peer.bytes, 16));
+    fips_writer_init(&w, bytes, sizeof bytes);
+    assert(fipsd_dp_forward(&s, &router, &dg, NULL, false, fips_test_instant(101), scratch, view, &w, &out) == FIPS_OK && out.kind == FIPS_ROUTE_NoRoute);
+    fipsd_dp_cache_view_free(&cv); free(cslots); free(cindex);
     go_refptr_release(&s.my_coords); go_refptr_release(&peers[0].coords);
     free(scratch);
 }

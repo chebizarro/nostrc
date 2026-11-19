@@ -1741,6 +1741,85 @@ static int generation_moves_on_each_public_mutation(void)
     CHECK(fips_coord_cache_generation(&cache) == g);
     return 0;
 }
+/* A view kept slot by slot from fips_coord_cache_changes alone stays exact:
+ * every slot's residency, key and entry equal the cache's after random churn,
+ * with feeds taken after one step or after several, and a feed from the
+ * current generation visits nothing. */
+typedef struct mirror_slot { bool used; uint8_t addr[16]; fips_cache_entry entry; } mirror_slot;
+static mirror_slot mirror[SLOTS];
+typedef struct feed { size_t visited, stop_after; } feed;
+static bool mirror_visit(void *ctx, size_t slot, const uint8_t *addr, const fips_cache_entry *entry)
+{
+    feed *f = ctx;
+    ++f->visited;
+    if ((addr == NULL) != (entry == NULL) || slot >= cache.slot_capacity) ++unexpected;
+    mirror[slot].used = addr != NULL;
+    if (addr) { memcpy(mirror[slot].addr, addr, 16); mirror[slot].entry = *entry; }
+    return f->visited != f->stop_after;
+}
+static bool same_entry(const fips_cache_entry *x, const fips_cache_entry *y);
+static int the_change_feed_keeps_a_per_slot_view_exact(void)
+{
+    CHECK(new_cache_with(FIPS_COORD_CACHE_SLOTS(96) + 8, 96, 100, 7) == FIPS_OK);
+    unexpected = 0;
+    memset(mirror, 0xa5, sizeof mirror); /* since == 0 must overwrite every slot */
+    feed all = {0};
+    fips_coord_cache_changes(&cache, 0, mirror_visit, &all);
+    CHECK(all.visited == cache.slot_capacity);
+    uint64_t since = fips_coord_cache_generation(&cache);
+    uint32_t rng = 31337;
+    size_t feeds = 0, quiet = 0, partial = 0, visited = 0;
+    for (uint64_t step = 0, now = 0; step < 6000; ++step) {
+        rng = rng * 1103515245u + 12345u;
+        uint32_t r = rng >> 8;
+        naddr a = minted_addr(4, r % 100), root = make_node_addr(9);
+        now += r % 5 == 0 ? r % 40 : 0;
+        switch (r % 15) {
+        case 0: case 1: (void)ins(a, coords_of_len(a, root, 2 + r % 4), now); break;
+        case 2: (void)inst(a, coords_of_len(a, root, 3), now, 20 + r % 60); break;
+        case 3: insv(a, coords_of_len(a, root, 3), now); break;
+        case 4: insvm(a, coords_of_len(a, root, 2), now, (uint16_t)(1200 + r % 100)); break;
+        case 5: case 6: (void)fips_coord_cache_get_and_touch(&cache, a.b, t(now)); break;
+        case 7: (void)fips_coord_cache_remove(&cache, a.b, NULL); break;
+        case 8: (void)fips_coord_cache_demote(&cache, a.b); break;
+        case 9: fips_coord_cache_clear_path_mtu(&cache, a.b); break;
+        case 10: if (r % 7 == 0) { (void)fips_coord_cache_purge_expired(&cache, t(now)); } break;
+        case 11: if (r % 11 == 0) { (void)fips_coord_cache_invalidate_via_node(&cache, minted_addr(0xd0, r % 3).b); } break;
+        case 12: if (r % 13 == 0) { (void)fips_coord_cache_invalidate_other_roots(&cache, make_node_addr(8).b); } break;
+        case 13: if (r % 401 == 0) { fips_coord_cache_clear(&cache); } break;
+        default: (void)insf(a, coords_of_len(a, root, 3 + r % 3), now, r % 2 ? UPTO(10) : UNCHARGED); break;
+        }
+        (void)get(a, now); (void)ent(a); (void)has(a, now); /* reads change nothing */
+        if (r % 3) continue; /* let changes accumulate across steps */
+        uint64_t g = fips_coord_cache_generation(&cache);
+        feed f = {0};
+        fips_coord_cache_changes(&cache, since, mirror_visit, &f);
+        ++feeds; visited += f.visited; quiet += g == since;
+        CHECKS(g != since || f.visited == 0, "an unchanged generation has nothing to report");
+        since = g;
+        for (size_t i = 0; i < cache.slot_capacity; ++i) {
+            const fips_coord_slot *s = &cache.slots[i];
+            CHECKS(mirror[i].used == s->used, "residency");
+            if (s->used)
+                CHECKS(!memcmp(mirror[i].addr, s->addr, 16) && same_entry(&mirror[i].entry, &s->entry), "key and entry");
+        }
+        feed none = {0};
+        fips_coord_cache_changes(&cache, since, mirror_visit, &none);
+        CHECKS(none.visited == 0, "nothing changed since the current generation");
+        if (r % 97 == 0) { /* a visitor that stops is not called again */
+            feed stop = {.stop_after = 2};
+            fips_coord_cache_changes(&cache, 0, mirror_visit, &stop);
+            CHECKS(stop.visited == 2, "the walk stops when its visitor does");
+            ++partial;
+        }
+    }
+    if (!(feeds > 1500 && quiet > 50 && partial > 5 && visited < feeds * cache.slot_capacity / 4))
+        fprintf(stderr, "feeds=%zu quiet=%zu partial=%zu visited=%zu\n", feeds, quiet, partial, visited);
+    CHECK(feeds > 1500 && quiet > 50 && partial > 5);
+    CHECK(visited < feeds * cache.slot_capacity / 4); /* the feed is not a sweep */
+    CHECK(unexpected == 0);
+    return 0;
+}
 static int remove_copies_the_entry_out(void)
 {
     NEW(100, 1000);
@@ -1862,6 +1941,7 @@ int main(void)
         iter_visits_live_entries_and_stops_on_request, stats_iter_and_scan_equal_a_slot_sweep_under_churn,
         stats_fall_back_where_the_running_age_total_cannot_answer,
         generation_covers_every_change_and_keeps_a_scan_exact, generation_moves_on_each_public_mutation,
+        the_change_feed_keeps_a_per_slot_view_exact,
         purge_through_the_expiry_index_equals_the_storage_order_sweep,
         remove_copies_the_entry_out,
         cached_coord_bounds_and_accessors, lookups_survive_interleaved_deletions
@@ -1870,6 +1950,6 @@ int main(void)
         if (tests[i]()) return 1;
         if (unexpected) { fprintf(stderr, "test %zu: unexpected FIPS_ERR_RANGE\n", i); return 1; }
     }
-    puts("coord cache: 66 upstream cache + 6 entry + 4 stats/error tests + 13 C edge tests passed");
+    puts("coord cache: 66 upstream cache + 6 entry + 4 stats/error tests + 14 C edge tests passed");
     return 0;
 }

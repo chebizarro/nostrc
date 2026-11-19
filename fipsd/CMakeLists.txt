@@ -147,7 +147,8 @@ target_sources(fipsd_lib PRIVATE
   src/node/dataplane/snapshot.c src/node/dataplane/rx_loop.c
   src/node/dataplane/encrypted.c src/node/dataplane/forwarding.c
   src/node/dataplane/peer_actions.c src/node/dataplane/dispatch.c
-  src/node/dataplane/reject.c src/node/dataplane/path_mtu.c)
+  src/node/dataplane/reject.c src/node/dataplane/path_mtu.c
+  src/node/dataplane/cache_view.c)
 
 # ACL, counter registry, history sampling and diagnostic vocabulary (9keoz.8).
 target_sources(fipsd_lib PRIVATE src/node/acl.c src/node/metrics.c src/node/stats.c src/node/stats_view.c src/node/diag.c)

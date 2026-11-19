@@ -3,30 +3,51 @@
 #include <assert.h>
 #include <stdio.h>
 
-typedef struct { const fipsd_dp_snapshot *s; size_t live, found; } live_walk;
+typedef struct { const fipsd_dp_snapshot *s; uint64_t at; size_t live, found; } live_walk;
 static bool live_entry(void *ctx, const uint8_t addr[16], const fips_cache_entry *e)
 {
     live_walk *w = ctx; ++w->live;
-    for (size_t i = 0; i < w->s->cache_count; ++i) {
-        const fipsd_dp_cached *c = &w->s->cache[i];
-        if (memcmp(c->addr.bytes, addr, 16)) continue;
-        assert(c->expires == e->expires_at && c->coords.len == e->coords.len);
-        assert(!memcmp(c->coords.entries, e->coords.entries, e->coords.len * sizeof e->coords.entries[0]));
-        ++w->found; break;
-    }
+    fips_node_addr a; memcpy(a.bytes, addr, 16);
+    const fipsd_dp_cached *c = fipsd_dp_cache_find(w->s->cache, &a, w->at);
+    assert(c && c->expires == e->expires_at && c->len == e->coords.len);
+    assert(!memcmp(c->coords, e->coords.entries, e->coords.len * sizeof e->coords.entries[0]));
+    ++w->found;
     return true;
 }
-/* The published dataplane cache is exactly the cache's live entries, read from
- * the resident index rather than a sweep of every slot (nostrc-61t79). */
+static bool resident_row(void *ctx, const fipsd_dp_cached *row)
+{
+    const fips_coord_cache *cache = ctx;
+    const fips_cache_entry *e = fips_coord_cache_get_entry(cache, row->addr.bytes);
+    assert(e && e->expires_at == row->expires && e->coords.len == row->len);
+    return true;
+}
+/* The published dataplane cache holds every resident entry, expired or not,
+ * and finds exactly the cache's live ones (nostrc-x345n). */
 static void published_cache(handlers *h, fips_test_clock *clock, uint64_t at)
 {
     clock->millis = at; h->dataplane->needs_publish = true;
     assert(fipsd_dp_publish(h));
-    live_walk w = {h->dataplane->current.ptr, 0, 0};
+    live_walk w = {h->dataplane->current.ptr, at, 0, 0};
     fips_coord_cache_iter(&h->cache, fips_test_instant(at), live_entry, &w);
-    assert(w.s->cache_count == w.live && w.found == w.live);
+    assert(w.found == w.live && w.s->cache && w.s->cache->count == h->cache.len);
+    fipsd_dp_cache_walk(w.s->cache, resident_row, &h->cache);
 }
 static const fipsd_dp_snapshot *current_snapshot(handlers *h) { return h->dataplane->current.ptr; }
+static size_t parts_differing(const fipsd_dp_cache *a, const fipsd_dp_cache *b)
+{
+    size_t n = 0;
+    assert(a->group_mask == b->group_mask);
+    for (size_t g = 0; g <= a->group_mask; ++g)
+        for (size_t j = 0; j < FIPSD_DP_CACHE_FANOUT; ++j)
+            n += (a->groups[g] ? a->groups[g]->parts[j] : NULL) != (b->groups[g] ? b->groups[g]->parts[j] : NULL);
+    return n;
+}
+typedef struct { uint64_t at; size_t live; } live_count;
+static bool count_live(void *ctx, const fipsd_dp_cached *row)
+{
+    live_count *c = ctx; c->live += c->at <= row->expires;
+    return true;
+}
 int main(void)
 {
     handlers *h = calloc(1, sizeof *h); assert(h);
@@ -109,32 +130,39 @@ int main(void)
     assert(fipsd_peer_tokens_available(&peer.coord_hints, fips_test_instant(1000)) == available - FIPS_ADDRS_PER_ENTRY);
     assert(fips_coord_cache_get_entry(&h->cache, dg.src_addr.bytes));
     assert(fips_coord_cache_get_entry(&h->cache, protected.bytes));
-    /* Dataplane snapshot: every resident entry while live; past the TTL, before
-     * any purge, the expired residents are left out of the published copy. */
+    /* Dataplane snapshot: every resident entry, found while live. */
     h->dataplane = NULL; assert(fipsd_dp_init(h));
     published_cache(h, &clock, 1000);
-    assert(((const fipsd_dp_snapshot *)h->dataplane->current.ptr)->cache_count == h->cache.len);
-    /* The cache section is shared while the core's generation is unchanged and
-     * nothing has newly expired (nostrc-gfvud): a republish for other state
-     * keeps the array, a change of a published field or an expiry copies. */
-    const fipsd_dp_cached *section = current_snapshot(h)->cache;
+    /* The cache section is shared while the core's generation is unchanged
+     * (nostrc-gfvud), and while a new generation changed no published row; a
+     * change rebuilds only the part its row hashes to (nostrc-x345n). */
+    fipsd_dp_cache *section = fipsd_dp_cache_retain(current_snapshot(h)->cache);
     uint64_t fingerprint = current_snapshot(h)->fingerprint;
     ((fipsd_dp_snapshot *)h->dataplane->current.ptr)->fingerprint = ~fingerprint; /* other state moved */
     published_cache(h, &clock, 1200);
     assert(current_snapshot(h)->fingerprint == fingerprint && current_snapshot(h)->cache == section);
     assert(fips_coord_cache_demote(&h->cache, protected.bytes)); /* a new generation, the same rows */
     published_cache(h, &clock, 1300);
-    assert(h->dataplane->cache_section.generation == fips_coord_cache_generation(&h->cache));
+    assert(h->dataplane->cache_view.generation == fips_coord_cache_generation(&h->cache));
     assert(current_snapshot(h)->cache == section);
     assert(fips_coord_cache_get_and_touch(&h->cache, protected.bytes, fips_test_instant(1400))); /* expires_at moved */
     published_cache(h, &clock, 1400);
     assert(current_snapshot(h)->cache != section && current_snapshot(h)->fingerprint != fingerprint);
+    assert(parts_differing(section, current_snapshot(h)->cache) == 1); /* the touched row's part alone */
+    fipsd_dp_cache_release(section);
     section = current_snapshot(h)->cache;
     uint64_t generation = fips_coord_cache_generation(&h->cache);
-    published_cache(h, &clock, 300500); /* entries written at 0 expired; no cache call since */
-    assert(fips_coord_cache_generation(&h->cache) == generation && current_snapshot(h)->cache != section);
-    size_t resident = h->cache.len, live = current_snapshot(h)->cache_count;
-    assert(live > 0 && live < resident);
+    /* Entries written at 0 expired; no cache call since: the same section
+     * (expiry is a lookup's business, as upstream's get), found as expired. */
+    published_cache(h, &clock, 300500);
+    assert(fips_coord_cache_generation(&h->cache) == generation && current_snapshot(h)->cache == section);
+    live_count live = {300500, 0};
+    fipsd_dp_cache_walk(section, count_live, &live);
+    assert(live.live > 0 && live.live < h->cache.len && section->count == h->cache.len);
+    size_t resident = h->cache.len;
+    assert(fips_coord_cache_purge_expired(&h->cache, fips_test_instant(300500)) == resident - live.live);
+    published_cache(h, &clock, 300500); /* purged rows leave the section */
+    assert(current_snapshot(h)->cache->count == live.live);
     fipsd_dp_destroy(h->dataplane);
     free(index); free(slots); free(h->tree); free(h);
     puts("coordinate warming: bounded hints, foreign-root/self refusal, endpoint CP guard: ok");

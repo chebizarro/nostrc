@@ -7,7 +7,9 @@
  * upstream counterpart) holds every resident slot by expires_at, so purging
  * expired entries costs what it removes, not a sweep of the slots; with a
  * running sum of the residents' created_at it also answers stats without one,
- * and a residency bitmap finds the resident slots in storage order. */
+ * and a residency bitmap finds the resident slots in storage order. Change
+ * stamps per slot and per 32-slot block (C only) let a derived view find the
+ * slots changed since a generation without reading the others. */
 #include <fips/cache/coord_cache.h>
 #include <sodium/crypto_shorthash_siphash24.h>
 #include <string.h>
@@ -220,6 +222,28 @@ static unsigned low_bit(uint32_t bits) /* bits != 0 */
 
 #define RESIDENT_WORDS(cap) (((size_t)(cap) + 31) / 32)
 
+static uint64_t block_stamp(const fips_coord_cache *c, size_t block)
+{
+    const uint32_t *w = c->block_changed + 2 * block;
+    return (uint64_t)w[1] << 32 | w[0];
+}
+
+static void set_block_stamp(fips_coord_cache *c, size_t block, uint64_t g)
+{
+    uint32_t *w = c->block_changed + 2 * block;
+    w[0] = (uint32_t)g;
+    w[1] = (uint32_t)(g >> 32);
+}
+
+/* Advance the generation for a change to slot idx and stamp the slot and its
+ * block with it (see fips_coord_cache_changes). */
+static void changed(fips_coord_cache *c, uint32_t idx)
+{
+    uint64_t g = ++c->generation;
+    c->slots[idx].changed = g;
+    set_block_stamp(c, idx / 32, g);
+}
+
 /* The first resident slot at or after from, in storage order; NONE if none.
  * The bit mirrors slot.used, so removing the current slot during a walk is safe. */
 static uint32_t next_resident(const fips_coord_cache *c, size_t from)
@@ -286,7 +310,7 @@ static void file_new(fips_coord_cache *c, uint32_t idx, fips_segment segment)
     if (slot->entry.created_at > c->created_max) c->created_max = slot->entry.created_at;
     table_insert(c, idx);
     ++c->len;
-    ++c->generation;
+    changed(c, idx);
 }
 
 /* Take a slot out of the map and its index without freeing it, so the caller
@@ -301,7 +325,7 @@ static void unfile(fips_coord_cache *c, uint32_t idx, bool in_heap)
     if (segment_of_place(slot->place) == FIPS_SEGMENT_MAIN) c->stored_weight -= slot->weight;
     table_remove(c, idx);
     if (--c->len == 0) c->created_max = 0;
-    ++c->generation;
+    changed(c, idx);
 }
 
 static void remove_slot(fips_coord_cache *c, uint32_t idx)
@@ -407,7 +431,7 @@ static bool make_room(fips_coord_cache *c, uint64_t weight, uint64_t now)
 static void refile(fips_coord_cache *c, uint32_t idx)
 {
     fips_coord_slot *slot = &c->slots[idx];
-    ++c->generation;
+    changed(c, idx);
     heap_delete(c, heap_of(c, slot->place), slot->heap_pos);
     set_key(c, idx, slot->entry.last_used);
     if (slot->place != FIPS_PLACE_PROBATION) slot->place = FIPS_PLACE_BY_USE;
@@ -557,6 +581,7 @@ fips_status fips_coord_cache_init(fips_coord_cache *c, fips_coord_slot *slots,
     c->table = index + 4 * slot_capacity;
     c->table_len = 2 * slot_capacity + 1;
     c->resident = c->table + c->table_len;
+    c->block_changed = c->resident + RESIDENT_WORDS(slot_capacity);
     c->max_entries = max_entries;
     c->default_ttl_ms = default_ttl_ms;
     c->epoch = epoch;
@@ -569,15 +594,17 @@ void fips_coord_cache_clear(fips_coord_cache *c)
 {
     for (size_t i = 0; i < c->table_len; ++i) c->table[i] = NONE;
     c->free_head = NONE;
+    uint64_t g = ++c->generation;
     for (size_t i = c->slot_capacity; i-- > 0;) {
         c->slots[i].used = false;
         c->slots[i].link = c->free_head;
+        c->slots[i].changed = g;
         c->free_head = (uint32_t)i;
     }
     memset(c->resident, 0, RESIDENT_WORDS(c->slot_capacity) * sizeof *c->resident);
+    for (size_t b = 0; b < RESIDENT_WORDS(c->slot_capacity); ++b) set_block_stamp(c, b, g);
     c->len = c->by_use_len = c->parked_len = c->probation_len = c->expiry_len = 0;
     c->stored_weight = c->created_sum = c->created_max = 0;
-    ++c->generation;
 }
 
 uint64_t fips_coord_cache_millis(const fips_coord_cache *c, fips_instant now)
@@ -660,7 +687,7 @@ fips_status fips_coord_cache_insert_verified_with_path_mtu(fips_coord_cache *c,
     fips_status status = fips_coord_cache_insert_verified(c, addr, coords, now);
     if (status != FIPS_OK) return status;
     uint32_t idx = find(c, addr, NULL);
-    if (idx != NONE) { fips_cache_entry_set_path_mtu(&c->slots[idx].entry, path_mtu); ++c->generation; }
+    if (idx != NONE) { fips_cache_entry_set_path_mtu(&c->slots[idx].entry, path_mtu); changed(c, idx); }
     return FIPS_OK;
 }
 
@@ -687,7 +714,7 @@ const fips_cached_coord *fips_coord_cache_get_and_touch(fips_coord_cache *c,
     }
     fips_cache_entry_refresh(entry, now_ms, c->default_ttl_ms);
     expiry_fix(c, idx);
-    ++c->generation;
+    changed(c, idx);
     return &entry->coords;
 }
 
@@ -713,7 +740,7 @@ bool fips_coord_cache_demote(fips_coord_cache *c, const uint8_t addr[16])
     if (idx == NONE) return false;
     fips_cache_entry_mark_hint(&c->slots[idx].entry);
     if (c->slots[idx].place == FIPS_PLACE_PARKED) refile(c, idx);
-    ++c->generation;
+    changed(c, idx);
     return true;
 }
 
@@ -722,7 +749,7 @@ void fips_coord_cache_clear_path_mtu(fips_coord_cache *c, const uint8_t addr[16]
     uint32_t idx = find(c, addr, NULL);
     if (idx == NONE) return;
     fips_cache_entry_clear_path_mtu(&c->slots[idx].entry);
-    ++c->generation;
+    changed(c, idx);
 }
 
 bool fips_coord_cache_contains(const fips_coord_cache *c, const uint8_t addr[16],
@@ -734,6 +761,20 @@ bool fips_coord_cache_contains(const fips_coord_cache *c, const uint8_t addr[16]
 size_t fips_coord_cache_len(const fips_coord_cache *c) { return c->len; }
 uint64_t fips_coord_cache_generation(const fips_coord_cache *c) { return c->generation; }
 bool fips_coord_cache_is_empty(const fips_coord_cache *c) { return c->len == 0; }
+
+void fips_coord_cache_changes(const fips_coord_cache *c, uint64_t since,
+                              fips_coord_cache_change_visitor visit, void *ctx)
+{
+    for (size_t b = 0, blocks = RESIDENT_WORDS(c->slot_capacity); b < blocks; ++b) {
+        if (block_stamp(c, b) <= since) continue;
+        size_t end = b * 32 + 32 < c->slot_capacity ? b * 32 + 32 : c->slot_capacity;
+        for (size_t i = b * 32; i < end; ++i) {
+            const fips_coord_slot *slot = &c->slots[i];
+            if (slot->changed <= since) continue;
+            if (!visit(ctx, i, slot->used ? slot->addr : NULL, slot->used ? &slot->entry : NULL)) return;
+        }
+    }
+}
 
 static void walk_live(const fips_coord_cache *c, uint64_t now_ms, fips_coord_cache_visitor visit, void *ctx)
 {

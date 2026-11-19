@@ -39,22 +39,81 @@ typedef struct fipsd_dp_peer {
     double cost;
     GoRefPtr coords, filter;
 } fipsd_dp_peer;
+/* The published coordinate cache (nostrc-x345n): a copy of every resident
+ * entry of the core cache, expired or not (a lookup applies the expiry),
+ * spread over parts by a keyed hash of the address. Parts and their groups are
+ * immutable once built and reference-counted, so a section published after a
+ * cache change shares every part none of whose entries changed, and forwarding
+ * finds an address in O(1): hash, group, part, a scan of the part's tags.
+ * Every pointer below owns or points into memory the section owns. */
+#define FIPSD_DP_CACHE_FANOUT 64u /* parts per group */
 typedef struct fipsd_dp_cached {
     fips_node_addr addr;
-    fips_cached_coord coords;
-    uint64_t expires;
+    uint64_t expires; /* cache-relative ms (the snapshot origin's) */
+    const fips_cached_coord_entry *coords; /* len entries, inside the part */
+    uint32_t slot; /* the core slot the row was copied from */
+    uint16_t len;
 } fipsd_dp_cached;
+typedef struct fipsd_dp_cache_part {
+    _Atomic size_t refs;
+    uint32_t count;
+    const uint32_t *tags; /* count hash tags, scanned before the rows */
+    const fipsd_dp_cached *rows;
+} fipsd_dp_cache_part;
+typedef struct fipsd_dp_cache_group {
+    _Atomic size_t refs;
+    fipsd_dp_cache_part *parts[FIPSD_DP_CACHE_FANOUT]; /* NULL: no rows */
+} fipsd_dp_cache_group;
+typedef struct fipsd_dp_cache {
+    _Atomic size_t refs;
+    size_t count; /* rows */
+    uint8_t key[16]; /* SipHash key: addresses are peer-chosen */
+    size_t group_mask; /* groups - 1 */
+    fipsd_dp_cache_group *groups[]; /* NULL: no rows */
+} fipsd_dp_cache;
+/* The publisher's side (dispatcher only, never read by packet paths): the
+ * section it last built, the core generation it reflects and, per core slot,
+ * where that slot's row lives, so an update visits only the slots the core
+ * reports changed (fips_coord_cache_changes) and rebuilds only their parts. */
+typedef struct fipsd_dp_cache_change {
+    const uint8_t *addr; /* NULL: the slot's row is gone */
+    const fips_cache_entry *entry;
+    uint32_t slot, part, tag;
+} fipsd_dp_cache_change;
+typedef struct fipsd_dp_cache_view {
+    fipsd_dp_cache *section; /* retained; NULL until something is resident */
+    uint64_t generation, version; /* version: bumped with each new section */
+    uint8_t key[16];
+    size_t slots, groups, parts, changes, dirty;
+    uint32_t serial; /* this update's mark */
+    uint32_t *slot_part, *slot_mark; /* per slot: the part holding its row (UINT32_MAX: none), last mark */
+    uint32_t *part_mark, *part_count, *part_start, *dirty_parts, *group_mark; /* per part / group */
+    uint32_t *order; /* changes grouped by destination part */
+    fipsd_dp_cache_change *change;
+    fipsd_dp_cache_part **built;
+} fipsd_dp_cache_view;
+void fipsd_dp_cache_view_init(fipsd_dp_cache_view *, fips_entropy);
+void fipsd_dp_cache_view_free(fipsd_dp_cache_view *);
+/* Bring the view to the cache's generation. false: out of memory, the view
+ * and its section unchanged. */
+bool fipsd_dp_cache_view_update(fipsd_dp_cache_view *, const fips_coord_cache *);
+fipsd_dp_cache *fipsd_dp_cache_retain(fipsd_dp_cache *);
+void fipsd_dp_cache_release(fipsd_dp_cache *);
+/* The row for addr, NULL if absent or expired at now_ms (upstream
+ * CacheEntry::is_expired: now_ms > expires). section may be NULL. */
+const fipsd_dp_cached *fipsd_dp_cache_find(const fipsd_dp_cache *, const fips_node_addr *, uint64_t now_ms);
+typedef bool (*fipsd_dp_cache_visitor)(void *ctx, const fipsd_dp_cached *row);
+void fipsd_dp_cache_walk(const fipsd_dp_cache *, fipsd_dp_cache_visitor, void *ctx);
 /* Entirely owned. No pointer into mutable handler, peer, cache or Noise state. */
 typedef struct fipsd_dp_snapshot {
     uint64_t fingerprint;
     fips_node_addr me;
     fips_instant origin;
     GoRefPtr my_coords;
-    size_t peer_count, epoch_count, cache_count;
+    size_t peer_count, epoch_count;
     fipsd_dp_peer *peers;
     fipsd_dp_epoch *epochs;
-    fipsd_dp_cached *cache; /* owned by cache_ref, which snapshots share while the cache is unchanged */
-    GoRefPtr cache_ref;
+    fipsd_dp_cache *cache; /* retained; shared with the snapshots around it */
 } fipsd_dp_snapshot;
 typedef struct fipsd_dp_stats {
     _Atomic uint64_t sealed[FIPSD_DP_LANES], opened[FIPSD_DP_LANES];
@@ -80,18 +139,12 @@ typedef struct fipsd_dp_packet {
     size_t body, wire_size, candidate;
     uint8_t ad[FIPSD_DP_WIRE], input[FIPSD_DP_WIRE], output[FIPSD_DP_WIRE];
 } fipsd_dp_packet;
-/* What the current snapshot's cache section was taken from: it stands while
- * the core's generation is unchanged and no entry has expired since. */
-typedef struct fipsd_dp_cache_section {
-    bool valid;
-    uint64_t generation, scanned_ms, next_expiry_ms, fingerprint;
-} fipsd_dp_cache_section;
 typedef struct fipsd_dataplane {
     void *dispatcher_fiber; /* fixed on first dispatcher machine interaction */
     bool needs_publish; /* control mutations invalidate; packets only retain */
     GoSwap *tables;
     GoRefPtr current; /* publisher's retained generation: load once, not per packet */
-    fipsd_dp_cache_section cache_section;
+    fipsd_dp_cache_view cache_view;
     fipsd_dp_packet *packets;
     size_t packet_count, next;
     _Atomic size_t in_flight; /* taken slabs; released by recycle on any thread */

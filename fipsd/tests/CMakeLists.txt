@@ -290,6 +290,12 @@ fipsd_unit_test(fipsd_snapshot_bench test_snapshot_bench.c)
 target_sources(fipsd_snapshot_bench PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../../libfips-core/tests/fakes/host.c")
 target_include_directories(fipsd_snapshot_bench PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../../libfips-core/tests")
 add_dependencies(fipsd_tests fipsd_snapshot_bench)
+# Dataplane coordinate-cache lookup and publish costs (nostrc-x345n): always
+# built, run only by hand (fipsd/docs/perf.md), never by ctest.
+fipsd_unit_test(fipsd_dp_cache_bench test_dp_cache_bench.c)
+target_sources(fipsd_dp_cache_bench PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../../libfips-core/tests/fakes/host.c")
+target_include_directories(fipsd_dp_cache_bench PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../../libfips-core/tests")
+add_dependencies(fipsd_tests fipsd_dp_cache_bench)
 option(FIPSD_SNAPSHOT_BENCH_TEST "Register the opt-in publish_snapshot p99 gate (Release only)" OFF)
 if(FIPSD_SNAPSHOT_BENCH_TEST)
   add_test(NAME FipsdSnapshotPublishBench COMMAND fipsd_snapshot_bench --max-p99-us 1000 --clock cpu)
@@ -712,6 +718,14 @@ add_dependencies(fipsd_tests fipsd_coord_warm_test)
 add_test(NAME FipsdCoordWarmTest COMMAND fipsd_coord_warm_test)
 set_tests_properties(FipsdCoordWarmTest PROPERTIES TIMEOUT 30 LABELS "fips;node;multinode")
 nostrc_describe_test(FipsdCoordWarmTest OWNER fipsd TARGETS fipsd_coord_warm_test)
+
+fipsd_unit_test(fipsd_dp_cache_test test_dp_cache.c)
+target_sources(fipsd_dp_cache_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../../libfips-core/tests/fakes/host.c")
+target_include_directories(fipsd_dp_cache_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../../libfips-core/tests")
+add_dependencies(fipsd_tests fipsd_dp_cache_test)
+add_test(NAME FipsdDataplaneCacheTest COMMAND fipsd_dp_cache_test)
+set_tests_properties(FipsdDataplaneCacheTest PROPERTIES TIMEOUT 120 LABELS "fips;node")
+nostrc_describe_test(FipsdDataplaneCacheTest OWNER fipsd TARGETS fipsd_dp_cache_test)
 
 # The .fips DNS responder (nostrc-9nxwk.3): codec vectors, host map and
 # reloader, resolver tables and loopback sockets, and the end-to-end gate
