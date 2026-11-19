@@ -533,6 +533,14 @@ These are tracking-ready notes, **not** reports already submitted upstream:
   `examples/native-echo.rs` says the client module is built on Linux and
   FreeBSD only and gates `main` accordingly, but `src/native/mod.rs` builds
   `client` on macOS too; an ungated copy runs there against fipsd.
+  Since `nostrc-e3ps5` fipsd also serves unframed datagram clients on macOS
+  without the drop: on `ENOBUFS` its feeder parks on `EVFILT_WRITE` with
+  `NOTE_LOWAT` equal to the datagram's cost in the client's buffer (XNU
+  measures a connected `AF_UNIX` writer against its peer's receive space and
+  wakes it on every peer read), with a queue-overflow fallback to the counted
+  drop (`fipsd/README.md`). The same change would fix upstream's `feed()` on
+  macOS without a protocol change; FreeBSD offers no such wake and needs the
+  framing.
 
 ## Node bookkeeping port (nostrc-u50yr.4)
 

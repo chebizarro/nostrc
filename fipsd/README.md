@@ -218,10 +218,11 @@ flow, TUN, cache-budget or kernel-drop owner:
 `native.drop_client_buffer_full` is C-only, beyond upstream's 18 native names:
 where a flow is `SOCK_DGRAM` (macOS, FreeBSD, a client that did not ask for
 framing, which includes upstream's Rust client) a client that is not draining
-makes the daemon's write fail with `ENOBUFS` and no writability event, so the
-datagram is dropped. Upstream drops it with only a debug log; fipsd counts it.
-On Linux (`SOCK_SEQPACKET`) and on a framed stream flow (macOS and FreeBSD with
-libfipsnative, `nostrc-6ljk8`) the writer waits instead and the counter stays
+makes the daemon's write fail with `ENOBUFS`. Upstream drops the datagram with
+only a debug log; fipsd counts the drop on FreeBSD, and on macOS waits for the
+client's room instead (`nostrc-e3ps5`), counting only the safety-net drops. On
+Linux (`SOCK_SEQPACKET`) and on a framed stream flow (macOS and FreeBSD with
+libfipsnative, `nostrc-6ljk8`) the writer waits too and the counter stays
 zero; see "Lossless delivery to a slow client" below.
 
 `show_stats_list`, `show_stats_history`, `show_stats_peers`,
@@ -3828,10 +3829,10 @@ finishes a partly written frame by waiting for writability.
 every client on Linux: nothing is dropped at the client's socket buffer, and
 `drop_client_buffer_full` stays zero; the per-flow queue keeps its by-design
 drop. Upstream's Rust client and any other client that does not ask for
-framing on macOS and FreeBSD keep the datagram path and its counted drops; the
-upstream change that would cover them is recorded in
-`libfips-core/UPSTREAM.md` (finding I-6). FreeBSD shares the macOS code paths
-but is not exercised here.
+framing keep the datagram path: on macOS it is lossless too since
+`nostrc-e3ps5` (below); on FreeBSD it keeps its counted drops, and the
+upstream change that would cover it is recorded in `libfips-core/UPSTREAM.md`
+(finding I-6). FreeBSD shares the macOS code paths but is not exercised here.
 
 **Tests.** `FipsdNativeBurstTest` asserts `drop_client_buffer_full == 0` on
 every platform (it was only asserted on Linux) and adds a deliberately slow
@@ -3849,6 +3850,77 @@ a non-blocking 30000-byte sender finishing partial writes) and that the
 request names the field exactly where it should. The C<->Rust interop
 harness with `FIPSD_UDP_INTEROP_RUST_ECHO` naming an ungated build of
 upstream's `native-echo` runs a real Rust client on fipsd's datagram path.
+
+#### Unframed clients on macOS: a low-water write wait (`nostrc-e3ps5`)
+
+Option (iii) above, revisited with XNU's source and a probe, and adopted in a
+form that needs neither `EV_CLEAR` nor a per-flow kqueue. What XNU does
+(`bsd/kern/uipc_socket.c`, `uipc_usrreq.c`, `uipc_proto.c`; verified by
+reading the source and by `FipsdNativeDgramKqueueTest` on macOS 27):
+
+- `filt_sowrite_common` special-cases a connected `PF_LOCAL` socket: the
+  `EVFILT_WRITE` data is `MIN(sbspace(so_snd), sbspace(peer so_rcv))`, the
+  *receiver's* space, and `NOTE_LOWAT` is honoured (clamped to the sender's
+  `SO_SNDBUF`). A datagram from an unbound socket-pair half costs the
+  receiver its length plus the 16-byte `sun_noname` (`sbconcat_mbufs`), so
+  `NOTE_LOWAT = len + 16` fires exactly when that datagram fits.
+- Unix `SOCK_DGRAM` carries `PR_WANTRCVD`, so every `soreceive` calls
+  `uipc_rcvd`, whose `SOCK_DGRAM` case wakes the *connected peer's* `so_snd`
+  knotes. That re-evaluates the level filter after each client read. A
+  receiver bound but not connected back has no `unp_conn` and wakes nobody.
+- Plain level writability fires on any residual space (a full 64 KiB
+  receiver keeps 1088 bytes free for 1200-byte datagrams), which is why
+  parking on it would spin. `EV_CLEAR` fires on attach for that residual and
+  once per read even when the read freed too little (20-30% of its wakes in
+  the probe were too early).
+- A datagram peer's close does **not** wake a parked writer
+  (`unp_disconnect` sets `so_error` and clears `SS_ISCONNECTED` without
+  `sowwakeup`); a registration made afterwards fires at attach.
+
+Measured: the `NOTE_LOWAT` one-shot registration over about 750,000
+ENOBUFS -> park -> wake -> resend cycles (10 runs x 100,000 random-size
+datagrams against readers of three speeds) never timed out, never woke
+early and lost nothing. FreeBSD (`sys/kern/uipc_usrreq.c`, not run here):
+unix `SOCK_DGRAM` has no `pr_kqfilter`, so the generic `filt_sowrite` reads
+`sbspace(&so->so_snd)`, whose `sb_ccc` a connected send never raises (it
+counts `uxdg_cc`), and `uipc_soreceive_dgram` wakes no sender: no usable
+wake, so FreeBSD keeps the counted drop.
+
+**Design** (`native/api.c` `feed_datagram`, macOS only, default on). On
+`ENOBUFS` the feeder parks on `gof_wait_writable(fd, len + 16)` (libgo
+registers `EVFILT_WRITE` with `NOTE_LOWAT`) holding the datagram, and sends
+it on the wake; the per-flow queue (`pending_per_flow`) behind it is the
+bounded hold, so a slow client loses only what overflows that queue
+(`drop_flow_queue_full`), as on Linux. Safety nets, none a timer: a wake
+whose send still fails doubles a margin over the expected cost (so a
+different kernel accounting could never spin), dropping as before once the
+mark would exceed the half's send buffer; and a queue overflow wakes the
+feeder through `gof_io_wake_writers` (latched if it has not parked yet) and,
+if it still cannot send, sheds the held datagram and everything queued
+behind it with the old one-try-and-count treatment, then resumes parking.
+So a wake that never comes (a datagram larger than the client's whole
+buffer, or a changed kernel) costs what the drop always did, never a hung
+flow. The flow's end cancels a parked feeder (a close raises no event) and
+frees what it holds and queues. `FIPSD_NATIVE_DGRAM_PARK=0` (or `off`,
+`false`, `no`) in fipsd's environment, read when the native API is created,
+restores the immediate counted drop.
+
+Also fixed on Darwin/FreeBSD datagram flows: a client's close reaches only
+whichever call takes its `so_error` first, and when that was the feeder's
+write the reader saw only `EAGAIN` and never released the flow. The feeder
+now ends the reader's wait when it exits.
+
+**Tests.** `FipsdNativeDgramParkTest` drives a raw (unframed) client through
+`arrive`: a stalled 4 KiB reader behind a burst of the queue's capacity,
+200 lockstep rounds, and 3000 datagrams to a 2 KiB reader trailing the
+sender (about 1900 parks), all read in order with no drop; on macOS also the
+overflow fallback (a 1000-byte datagram to a 600-byte client parks, the
+overflow sheds 17, the flow then delivers and parks again), teardown of a
+parked feeder by client close and by shutdown, and the switch.
+`FipsdNativeDgramKqueueTest` is the probe above (asserting only what the
+daemon relies on, printing the rest). Upstream's Rust client, unmodified, as
+a stalled slow reader on macOS read 3200 of 3200 datagrams with no drop
+(4 of 16 with the switch off); the ungated `native-echo` interop is green.
 
 ### Multi-node UDP convergence verification (nostrc-f66sr.2)
 

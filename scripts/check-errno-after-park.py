@@ -29,7 +29,7 @@ WAIT = {"go_channel_send", "go_channel_receive", "go_channel_send_with_context",
         "go_channel_receive_with_context", "go_select", "go_select_timeout",
         "go_blocking_submit", "go_wait_group_wait"}
 NON_PARKING = {"gof_socket_errno", "gof_in_fiber", "gof_current", "gof_hook_current",
-               "gof_hook_make_runnable", "gof_io_cancel_fd", "gof_io_reset_fd",
+               "gof_hook_make_runnable", "gof_io_cancel_fd", "gof_io_reset_fd", "gof_io_wake_writers",
                "gof_set_name", "gof_spawn"}
 COMMENTS = re.compile(r'''//[^\n]*|/\*[\s\S]*?\*/|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*' ''', re.X)
 ALLOW = re.compile(r"errno-after-park:\s*allow\s*--\s*([A-Za-z0-9][^\n]*?)(?:\*/|$)")

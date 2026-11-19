@@ -17,11 +17,13 @@
 
 #if defined(__APPLE__) || defined(__FreeBSD__)
 #define FIPSD_NATIVE_SOCK_TYPE SOCK_DGRAM
-/* A full client receive buffer refuses a datagram write with ENOBUFS and
- * raises no writability event, so delivery on a datagram flow drops (and
- * counts) instead of waiting. A client that asks for `"framing":"stream"`
- * (libfipsnative does) gets a framed SOCK_STREAM flow instead, whose writer
- * the kernel wakes when the reader drains: lossless, see native/frame.h. */
+/* A full client receive buffer refuses a datagram write with ENOBUFS, and
+ * plain writability stays raised on any residual space, so a datagram flow
+ * cannot wait on it: FreeBSD drops (and counts), macOS waits on a low-water
+ * mark sized to the datagram instead (FIPSD_NATIVE_DGRAM_PARK below). A
+ * client that asks for `"framing":"stream"` (libfipsnative does) gets a
+ * framed SOCK_STREAM flow on both, whose writer the kernel wakes when the
+ * reader drains: lossless, see native/frame.h. */
 #define FIPSD_NATIVE_STREAM_FRAMING 1
 /* Detection latency for a closed peer the reactor cannot see: a bounded wait
  * per idle datagram flow, not a poll interval for data. A stream flow sees
@@ -34,6 +36,27 @@
 #define FIPSD_NATIVE_STREAM_FRAMING 0
 #define FIPSD_NATIVE_CLOSE_RETRY_MS (-1)
 #endif
+/* nostrc-e3ps5: on macOS a datagram flow's feeder, refused with ENOBUFS,
+ * parks until the client's buffer has room for that datagram instead of
+ * dropping it. XNU evaluates EVFILT_WRITE on a connected AF_UNIX socket
+ * against the peer's receive space and honours NOTE_LOWAT there
+ * (filt_sowrite_common), and every recv on a unix datagram socket wakes its
+ * connected peer's writers (PR_WANTRCVD -> uipc_rcvd -> sowakeup), so
+ * gof_wait_writable with a low-water mark of the datagram's cost fires
+ * exactly when it fits (characterised by fipsd_native_dgram_kqueue_test).
+ * FreeBSD keeps the counted drop: its unix datagram write filter reads the
+ * sender's own send buffer, which a connected send never fills, and its
+ * receive wakes no sender. FIPSD_NATIVE_DGRAM_PARK=0 in the environment
+ * turns it off at runtime (read when the native API is created). */
+#if defined(__APPLE__)
+#define FIPSD_NATIVE_DGRAM_PARK 1
+#else
+#define FIPSD_NATIVE_DGRAM_PARK 0
+#endif
+/* What one datagram from the daemon's half costs the client's receive buffer
+ * beyond its bytes on XNU: the sender's address stored with it, the 16-byte
+ * sun_noname of an unbound socket-pair half (sbconcat_mbufs). */
+#define FIPSD_NATIVE_DGRAM_ADDR_COST 16u
 #ifndef MSG_NOSIGNAL
 #define FIPSD_NATIVE_MSG_NOSIGNAL 0
 #else

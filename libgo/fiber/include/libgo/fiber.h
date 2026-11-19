@@ -182,6 +182,31 @@ GO_FIBER_API ssize_t     gof_sendmsg(gof_socket_t fd, const struct msghdr *msg, 
 GO_FIBER_API int         gof_io_reset_fd(gof_socket_t fd);
 GO_FIBER_API int         gof_io_cancel_fd(gof_socket_t fd);
 
+#if !defined(_WIN32)
+/** Writability waits for a writer whose own syscall cannot park (nostrc-e3ps5;
+ * POSIX readiness backends only, not declared on Windows).
+ *
+ * gof_wait_writable parks the calling fiber until fd reports at least `lowat`
+ * bytes of send space (0: any writability), a gof_io_wake_writers, the
+ * deadline (timeout_ms > 0; < 0 waits indefinitely; 0 is EINVAL), owner
+ * cancellation or scheduler stop. lowat > 0 needs a backend with a
+ * per-registration low-water mark: kqueue (macOS) registers EVFILT_WRITE with
+ * NOTE_LOWAT, which XNU evaluates on a connected AF_UNIX socket against the
+ * peer's receive space, so a datagram writer refused with ENOBUFS can park
+ * until its datagram fits; elsewhere lowat > 0 is ENOTSUP. Readiness is a
+ * hint: retry the write. Returns 0, or -1 with errno ETIMEDOUT, ECANCELED,
+ * ENOTSUP, EINVAL or ENOMEM.
+ *
+ * gof_io_wake_writers wakes every fiber parked for writability on fd as if
+ * it had become writable; with none parked it latches one wake that the next
+ * writability wait on fd consumes without parking, so a wake issued just
+ * before the writer parks is not lost. Not a cancellation; gof_io_reset_fd
+ * clears the latch. Thread/fiber-safe, never parks. Returns 0 or -1 (ENOMEM,
+ * EINVAL). */
+GO_FIBER_API int         gof_wait_writable(gof_socket_t fd, size_t lowat, int timeout_ms);
+GO_FIBER_API int         gof_io_wake_writers(gof_socket_t fd);
+#endif
+
 /** errno-style code for the calling thread's last failed raw socket call
  * (socket, bind, setsockopt, ...): errno on POSIX, WSAGetLastError() mapped
  * to the same errno values the gof_* wrappers report on Windows. */

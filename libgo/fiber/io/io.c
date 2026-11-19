@@ -62,6 +62,8 @@ typedef struct gof_waiter { /* single waiter node */
 typedef struct gof_fdwait {     /* fd entry with separate read/write queues */
   int fd;
   int cancelled;
+  int wr_pending;   /* gof_io_wake_writers found no writer: the next write wait returns at once */
+  int64_t wr_lowat; /* the write queue's low-water mark (0: plain writability), see fdwait_arm */
   gof_waiter *rd_head, *rd_tail;
   gof_waiter *wr_head, *wr_tail;
   struct gof_fdwait *next;
@@ -117,6 +119,7 @@ static void io_waiter_remove_fiber_locked(gof_fiber *f) {
   if (f->wait_events & GOF_POLL_WRITE) {
     gof_waiter *prev = NULL, *cur = e->wr_head;
     while (cur) { if (cur->f == f) { if (prev) prev->next = cur->next; else e->wr_head = cur->next; if (cur == e->wr_tail) e->wr_tail = prev; free(cur); break; } prev = cur; cur = cur->next; }
+    if (!e->wr_head) e->wr_lowat = 0;
   }
   f->wait_fd = -1;
   f->wait_events = 0;
@@ -126,12 +129,23 @@ static int fdwait_events(gof_fdwait *e) {
   return (e->rd_head ? GOF_POLL_READ : 0) | (e->wr_head ? GOF_POLL_WRITE : 0);
 }
 
+/* Arm the poller for `events`; the write filter carries the write queue's
+ * low-water mark where the backend can express one (kqueue NOTE_LOWAT). Every
+ * re-arm goes through here, so a read wake never drops a writer's mark. */
+static int fdwait_arm(gof_fdwait *e, int events, uint64_t deadline_ns) {
+#if defined(__APPLE__)
+  if ((events & GOF_POLL_WRITE) && e->wr_lowat > 0)
+    return gof_netpoll_arm_lowat(e->fd, events, e->wr_lowat);
+#endif
+  return gof_netpoll_arm(e->fd, events, deadline_ns);
+}
+
 int gof_io_reset_fd(gof_socket_t fd) {
   if (fd < 0) { fiber_set_errno(EINVAL); return -1; }
   pthread_mutex_lock(&io_mu);
   gof_fdwait *e = fdwait_get(fd, 1);
   int error = !e ? ENOMEM : fdwait_events(e) ? EBUSY : 0;
-  if (!error) e->cancelled = 0;
+  if (!error) { e->cancelled = 0; e->wr_pending = 0; e->wr_lowat = 0; }
   pthread_mutex_unlock(&io_mu);
   if (error) { fiber_set_errno(error); return -1; }
   return 0;
@@ -155,10 +169,15 @@ int gof_io_cancel_fd(gof_socket_t fd) {
 }
 
 /* io_mu serializes publication/arming with readiness and stop cancellation.
- * Register first: a ready one-shot event must never find an empty queue. */
+ * Register first: a ready one-shot event must never find an empty queue.
+ * A write wait consumes a latched gof_io_wake_writers instead of parking
+ * (*woken = 1). A writer's low-water mark joins the queue's: the first
+ * writer sets it, a later one lowers it (0, plain writability, is lowest), so
+ * the shared registration fires for whichever writer is satisfied first. */
 static int io_waiter_add_and_arm(int fd, int events, uint64_t deadline_ns,
-                                 gof_fiber *f) {
+                                 int64_t lowat, gof_fiber *f, int *woken) {
   int error = 0;
+  *woken = 0;
   pthread_mutex_lock(&io_mu);
   if (gof_bg_stop_requested()) {
     error = ECANCELED;
@@ -168,13 +187,21 @@ static int io_waiter_add_and_arm(int fd, int events, uint64_t deadline_ns,
       pthread_mutex_unlock(&io_mu);
       return ECANCELED;
     }
+    if (e && (events & GOF_POLL_WRITE) && e->wr_pending) {
+      e->wr_pending = 0;
+      *woken = 1;
+      pthread_mutex_unlock(&io_mu);
+      return 0;
+    }
+    int first_writer = e && !e->wr_head;
     f->wait_fd = fd;
     f->wait_events = events;
     if (!e || ((events & GOF_POLL_READ) && waiter_push(&e->rd_head, &e->rd_tail, f)) ||
         ((events & GOF_POLL_WRITE) && waiter_push(&e->wr_head, &e->wr_tail, f))) {
       error = ENOMEM;
-    } else if (gof_netpoll_arm(fd, fdwait_events(e), deadline_ns) != 0) {
-      error = fiber_get_errno();
+    } else {
+      if (events & GOF_POLL_WRITE) e->wr_lowat = first_writer || lowat < e->wr_lowat ? lowat : e->wr_lowat;
+      if (fdwait_arm(e, fdwait_events(e), deadline_ns) != 0) error = fiber_get_errno();
     }
     if (error) io_waiter_remove_fiber_locked(f);
     else atomic_fetch_add_explicit(&g_io_waiter_count, 1, memory_order_release);
@@ -214,22 +241,30 @@ static void wake_queue(gof_waiter **head, gof_waiter **tail) {
   }
 }
 
-static void on_ready(int fd, int events) {
-  /* Pop AND wake under io_mu: a timeout may otherwise resume/free the fiber
-   * before the callback touches it. Lock order remains io_mu -> scheduler. */
-  pthread_mutex_lock(&io_mu);
+/* Pop AND wake under io_mu: a timeout may otherwise resume/free the fiber
+ * before the callback touches it. Lock order remains io_mu -> scheduler. */
+static void ready_locked(int fd, int events) {
   gof_fdwait *e = fdwait_get(fd, 0);
   if (e) {
     /* An edge belongs to every matching waiter, not just the first reader.
      * Losers of the syscall race register again before rearming. */
     if (events & GOF_POLL_READ) wake_queue(&e->rd_head, &e->rd_tail);
-    if (events & GOF_POLL_WRITE) wake_queue(&e->wr_head, &e->wr_tail);
+    if (events & GOF_POLL_WRITE) {
+      wake_queue(&e->wr_head, &e->wr_tail);
+      e->wr_lowat = 0;
+    }
     int remaining = fdwait_events(e);
-    if (remaining && gof_netpoll_arm(fd, remaining, 0) != 0) {
+    if (remaining && fdwait_arm(e, remaining, 0) != 0) {
       wake_queue(&e->rd_head, &e->rd_tail);
       wake_queue(&e->wr_head, &e->wr_tail);
+      e->wr_lowat = 0;
     }
   }
+}
+
+static void on_ready(int fd, int events) {
+  pthread_mutex_lock(&io_mu);
+  ready_locked(fd, events);
   pthread_mutex_unlock(&io_mu);
 }
 
@@ -240,7 +275,7 @@ static void ensure_ready_callback(void) {
   }
 }
 
-static int wait_event_with_deadline(int fd, int events, uint64_t deadline_ns) {
+static int wait_event_lowat(int fd, int events, uint64_t deadline_ns, int64_t lowat) {
   gof_fiber *self = gof_sched_current();
   if (!self) { fiber_set_errno(EINVAL); return -1; }
   if (deadline_ns && now_ns() >= deadline_ns) {
@@ -248,8 +283,10 @@ static int wait_event_with_deadline(int fd, int events, uint64_t deadline_ns) {
     return -1;
   }
   ensure_ready_callback();
-  int error = io_waiter_add_and_arm(fd, events, deadline_ns, self);
+  int woken = 0;
+  int error = io_waiter_add_and_arm(fd, events, deadline_ns, lowat, self, &woken);
   if (error) { fiber_set_errno(error); return -1; }
+  if (woken) return 0;
   gof_trace_on_io_armed(fd, events);
 
   /* Readiness between arm and park claims RUNNABLE/PARKING -> WOKEN;
@@ -266,6 +303,33 @@ static int wait_event_with_deadline(int fd, int events, uint64_t deadline_ns) {
   gof_trace_on_unblock(fd, events);
   if (!error && deadline_ns && now_ns() >= deadline_ns) error = ETIMEDOUT;
   if (error) { fiber_set_errno(error); return -1; }
+  return 0;
+}
+
+static int wait_event_with_deadline(int fd, int events, uint64_t deadline_ns) {
+  return wait_event_lowat(fd, events, deadline_ns, 0);
+}
+
+int gof_wait_writable(gof_socket_t fd, size_t lowat, int timeout_ms) {
+  if (fd < 0 || timeout_ms == 0 || lowat > (size_t)INT64_MAX) { fiber_set_errno(EINVAL); return -1; }
+#if !defined(__APPLE__)
+  /* epoll has no per-registration send low-water mark. */
+  if (lowat) { fiber_set_errno(ENOTSUP); return -1; }
+#endif
+  uint64_t dl = deadline_from_ms(timeout_ms);
+  if (wait_event_lowat(fd, GOF_POLL_WRITE, dl, (int64_t)lowat) != 0) return -1;
+  if (dl != 0 && now_ns() >= dl) { fiber_set_errno(ETIMEDOUT); return -1; }
+  return 0;
+}
+
+int gof_io_wake_writers(gof_socket_t fd) {
+  if (fd < 0) { fiber_set_errno(EINVAL); return -1; }
+  pthread_mutex_lock(&io_mu);
+  gof_fdwait *e = fdwait_get(fd, 1);
+  if (e && e->wr_head) ready_locked(fd, GOF_POLL_WRITE);
+  else if (e) e->wr_pending = 1;
+  pthread_mutex_unlock(&io_mu);
+  if (!e) { fiber_set_errno(ENOMEM); return -1; }
   return 0;
 }
 

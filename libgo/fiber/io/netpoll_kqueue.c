@@ -5,6 +5,7 @@
 #include <unistd.h>
 #include <errno.h>
 #include <stdatomic.h>
+#include <stdint.h>
 
 static int kq = -1;
 /* Written on the thread that installs it (first IO wait) and read on the
@@ -21,8 +22,9 @@ int gof_netpoll_init(void) {
   return kq == -1 ? -1 : 0;
 }
 
-int gof_netpoll_arm(int fd, int events, uint64_t deadline_ns) {
-  (void)deadline_ns;
+/* Re-adding an existing one-shot knote updates it (the filter's touch
+ * re-evaluates it), so a plain arm after a low-water one clears NOTE_LOWAT. */
+static int arm(int fd, int events, int64_t write_lowat) {
   if (kq == -1 && gof_netpoll_init() != 0)
     return -1;
 
@@ -31,10 +33,20 @@ int gof_netpoll_arm(int fd, int events, uint64_t deadline_ns) {
   if (events & GOF_POLL_READ)
     EV_SET(&kev[n++], fd, EVFILT_READ, EV_ADD | EV_ENABLE | EV_ONESHOT, 0, 0, NULL);
   if (events & GOF_POLL_WRITE)
-    EV_SET(&kev[n++], fd, EVFILT_WRITE, EV_ADD | EV_ENABLE | EV_ONESHOT, 0, 0, NULL);
+    EV_SET(&kev[n++], fd, EVFILT_WRITE, EV_ADD | EV_ENABLE | EV_ONESHOT,
+           write_lowat > 0 ? NOTE_LOWAT : 0, write_lowat > 0 ? (intptr_t)write_lowat : 0, NULL);
   if (n == 0) return 0;
 
   return kevent(kq, kev, n, NULL, 0, NULL);
+}
+
+int gof_netpoll_arm(int fd, int events, uint64_t deadline_ns) {
+  (void)deadline_ns;
+  return arm(fd, events, 0);
+}
+
+int gof_netpoll_arm_lowat(int fd, int events, int64_t write_lowat) {
+  return arm(fd, events, write_lowat);
 }
 
 int gof_netpoll_wait(int timeout_ms) {

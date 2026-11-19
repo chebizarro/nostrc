@@ -60,7 +60,8 @@ fipsd_native_outcome fipsd_native_link_deliver(fipsd_native_registry *r, const f
          * that client a datagram, not the node its tick. */
         if (go_channel_try_send(d.sink, dg) == 0) return (fipsd_native_outcome){.kind = FIPSD_NATIVE_OUTCOME_DELIVERED};
         fipsd_native_datagram_free(dg);
-        return dropped(FIPSD_NATIVE_REASON_FLOW_QUEUE_FULL);
+        /* The flow is named so its owner can react to the overflow. */
+        return (fipsd_native_outcome){.kind = FIPSD_NATIVE_OUTCOME_DROPPED, .reason = FIPSD_NATIVE_REASON_FLOW_QUEUE_FULL, .flow = d.flow};
     case FIPSD_NATIVE_DELIVER_ARRIVED: {
         fipsd_native_arrival *a = malloc(sizeof *a);
         if (!a || go_channel_try_send(d.arrivals, a) != 0) {

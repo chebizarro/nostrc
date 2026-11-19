@@ -8,6 +8,14 @@
 
 int  gof_netpoll_init(void);
 int  gof_netpoll_arm(int fd, int events, uint64_t deadline_ns);
+#if defined(__APPLE__)
+/* kqueue only: gof_netpoll_arm with the write filter registered with
+ * NOTE_LOWAT = write_lowat (> 0), so it fires only once that much send space
+ * is available. On a connected AF_UNIX socket XNU counts the peer's receive
+ * space there (filt_sowrite_common), which is how a datagram writer parks
+ * until its datagram fits (nostrc-e3ps5). */
+int  gof_netpoll_arm_lowat(int fd, int events, int64_t write_lowat);
+#endif
 int  gof_netpoll_wait(int timeout_ms);
 void gof_netpoll_close(int fd);
 

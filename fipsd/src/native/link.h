@@ -27,7 +27,7 @@ typedef enum fipsd_native_outcome_kind {
 } fipsd_native_outcome_kind;
 typedef struct fipsd_native_outcome {
     fipsd_native_outcome_kind kind;
-    uint64_t flow; /* announced / held */
+    uint64_t flow; /* announced / held, and a drop at an established flow's full queue */
     fipsd_native_drop_reason reason;
 } fipsd_native_outcome;
 /* Deliver one inbound datagram to whatever owns its destination port. The

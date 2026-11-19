@@ -293,6 +293,86 @@ static void test_send_backpressure(void) {
   }
 }
 
+
+/* nostrc-e3ps5: gof_wait_writable and gof_io_wake_writers on a full datagram
+ * pair. A Darwin datagram writer refused with ENOBUFS waits on a NOTE_LOWAT
+ * registration sized to its datagram (the peer's receive space, see
+ * fiber.h); elsewhere lowat is ENOTSUP and the plain wait is used. */
+struct some_reader {
+  int fd;
+  int count;
+  atomic_int done;
+};
+
+static void read_some(void *arg) {
+  struct some_reader *r = arg;
+  char buf[2048];
+  for (int i = 0; i < r->count; ++i)
+    assert(gof_recvfrom(r->fd, buf, sizeof(buf), 0, NULL, NULL, IO_TIMEOUT_MS) > 0);
+  atomic_store(&r->done, 1);
+}
+
+static void kick_writers(void *arg) {
+  assert(gof_io_wake_writers(*(int *)arg) == 0);
+}
+
+static void test_writable_waits(void) {
+  int sp[2];
+  assert(socketpair(AF_UNIX, SOCK_DGRAM, 0, sp) == 0);
+  int size = 8192;
+  assert(setsockopt(sp[0], SOL_SOCKET, SO_SNDBUF, &size, sizeof(size)) == 0);
+  assert(setsockopt(sp[1], SOL_SOCKET, SO_RCVBUF, &size, sizeof(size)) == 0);
+  assert(fcntl(sp[0], F_SETFL, fcntl(sp[0], F_GETFL) | O_NONBLOCK) == 0);
+  static char buf[1000];
+  int queued = 0;
+  while (send(sp[0], buf, sizeof(buf), 0) == (ssize_t)sizeof(buf)) ++queued;
+  int full = test_errno();
+  assert(full == ENOBUFS || full == EAGAIN);
+  assert(gof_wait_writable(sp[0], 0, 0) == -1 && test_errno() == EINVAL);
+#if defined(__APPLE__)
+  /* What one datagram from an unbound half costs the receiver (sun_noname). */
+  const size_t need = sizeof(buf) + sizeof(struct sockaddr);
+#else
+  assert(gof_wait_writable(sp[0], 1, 20) == -1 && test_errno() == ENOTSUP);
+  const size_t need = 0;
+#endif
+  /* Full: nothing wakes the wait. */
+  assert(gof_wait_writable(sp[0], need, 20) == -1 && test_errno() == ETIMEDOUT);
+  /* A wake with no writer parked is latched, consumed by exactly one wait,
+   * and cleared by gof_io_reset_fd. */
+  assert(gof_io_wake_writers(sp[0]) == 0);
+  assert(gof_wait_writable(sp[0], need, 20) == 0);
+  assert(gof_wait_writable(sp[0], need, 20) == -1 && test_errno() == ETIMEDOUT);
+  assert(gof_io_wake_writers(sp[0]) == 0);
+  assert(gof_io_reset_fd(sp[0]) == 0);
+  assert(gof_wait_writable(sp[0], need, 20) == -1 && test_errno() == ETIMEDOUT);
+  /* A parked writer is woken by another fiber (or, if that fiber ran first,
+   * by the latch it left). */
+  assert(gof_spawn(kick_writers, &sp[0], 0));
+  assert(gof_wait_writable(sp[0], need, IO_TIMEOUT_MS) == 0);
+  /* On macOS the peer reading one datagram makes room for one: the low-water
+   * wait returns and the datagram fits. Linux raises a datagram socket's
+   * writability only once its queued memory falls below half its send
+   * buffer, so there the peer drains the queue. */
+#if defined(__APPLE__)
+  (void)queued;
+  struct some_reader r = {.fd = sp[1], .count = 1};
+#else
+  struct some_reader r = {.fd = sp[1], .count = queued};
+#endif
+  atomic_init(&r.done, 0);
+  assert(gof_spawn(read_some, &r, 0));
+  assert(gof_wait_writable(sp[0], need, IO_TIMEOUT_MS) == 0);
+  while (!atomic_load(&r.done)) gof_yield();
+  assert(send(sp[0], buf, sizeof(buf), 0) == (ssize_t)sizeof(buf));
+  /* Owner cancellation ends the wait. */
+  assert(gof_io_cancel_fd(sp[0]) == 0);
+  assert(gof_wait_writable(sp[0], need, IO_TIMEOUT_MS) == -1 && test_errno() == ECANCELED);
+  assert(gof_io_reset_fd(sp[0]) == 0);
+  close(sp[0]);
+  close(sp[1]);
+}
+
 #endif
 
 static void run_tests(void *arg) {
@@ -304,6 +384,7 @@ static void run_tests(void *arg) {
   test_timeouts();
 #if !defined(_WIN32)
   test_send_backpressure();
+  test_writable_waits();
 #endif
 }
 
