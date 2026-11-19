@@ -377,18 +377,56 @@ static void admission_limits(void *arg)
     puts("accounting: global-before-source gate, NotConnected, real refused connect: ok");
     assert(go_channel_send(f->done, f) == 0);
 }
+/* b's first-frame deadline runs from its accept of the connection, so a client
+ * that only starts sending after the host stalled it for first_frame_ms loses
+ * the race to a DISCONNECTED, and a deadline that fires is the behaviour under
+ * test, not an error. One connection: a frame, then silence. True only when b
+ * took the frame (PACKET) and reclaimed the connection no sooner than idle_ms
+ * after it was written; false when the first-frame deadline won, which
+ * DISCONNECTED (the only event that ends the wait) and b's deadline counter
+ * identify. */
+static bool frame_then_idle(fixture *f, uint64_t idle_ms)
+{
+    uint8_t msg[114] = {1, 0, 110, 0};
+    int raw = raw_connect(f);
+    uint64_t sent = fipsd_transport_now_ms(); /* b stamps the frame after this */
+    ssize_t wrote = gof_write(raw, msg, sizeof msg); /* fails once b has closed the socket */
+    bool packet = false;
+    for (;;) {
+        fipsd_transport_event *e = receive(f->eb); assert(e);
+        fipsd_transport_event_kind kind = e->kind; free(e);
+        if (kind == FIPSD_TRANSPORT_DISCONNECTED) break;
+        if (kind == FIPSD_TRANSPORT_PACKET) packet = true;
+        else assert(kind == FIPSD_TRANSPORT_BECAME_PRESENT || kind == FIPSD_TRANSPORT_CONNECTED);
+    }
+    uint64_t gone = fipsd_transport_now_ms();
+    pool_drained(f->b->user); tcp_fd_close(raw);
+    return packet && wrote == (ssize_t)sizeof msg && gone - sent >= idle_ms;
+}
 static void deadlines(void *arg)
 {
-    fixture *f = arg;
+    fixture *f = arg; tcp_instance *b = f->b->user;
+    /* Never sends. b cannot accept before this connect starts, so its first-frame
+     * deadline cannot fire sooner than first_frame_ms after this timestamp; that
+     * bound is exact however long setup takes. Firing at all is the DISCONNECTED;
+     * receive()'s 15 s is the late bound, under the 30 s default b keeps when its
+     * configured deadline is ignored. */
+    uint64_t armed = fipsd_transport_now_ms();
     int raw = raw_connect(f);
     peer_removed(f); tcp_fd_close(raw); /* no first frame */
-    raw = raw_connect(f);
-    uint8_t msg[114] = {1, 0, 110, 0};
-    assert(gof_write(raw, msg, sizeof msg) == sizeof msg);
-    free(event(f->eb, FIPSD_TRANSPORT_PACKET));
-    peer_removed(f); tcp_fd_close(raw); /* no subsequent frame */
-    assert(atomic_load(&((tcp_instance *)f->b->user)->shared.diagnostics.deadlines) == 2);
-    assert(atomic_load(&((tcp_instance *)f->b->user)->shared.stats.recv_errors) == 0);
+    assert(fipsd_transport_now_ms() - armed >= b->config.first_frame_ms);
+    /* A frame, then silence: the idle deadline runs from the frame, so it is
+     * measured from the frame. Starved past first_frame_ms the attempt is lost
+     * to the first-frame deadline instead, and is repeated: a deadline that
+     * fires early every time still fails here, one that fires once because the
+     * host stalled does not. */
+    unsigned attempts = 0; bool reclaimed = false;
+    while (!reclaimed && attempts < 5) { ++attempts; reclaimed = frame_then_idle(f, b->config.idle_ms); }
+    if (attempts > 1) printf("note: %u attempt(s) lost to the first-frame deadline on a stalled host\n", attempts - 1);
+    if (!reclaimed) fprintf(stderr, "no frame outlived the first-frame deadline and then idled out in %u attempts\n", attempts);
+    assert(reclaimed);
+    assert(atomic_load(&b->shared.diagnostics.deadlines) == 1 + attempts);
+    assert(atomic_load(&b->shared.stats.recv_errors) == 0);
     puts("inbound deadlines: silent first frame and post-frame idle reclaim slots without sleeps: ok");
     assert(go_channel_send(f->done, f) == 0);
 }
