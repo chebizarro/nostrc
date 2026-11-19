@@ -130,23 +130,29 @@ static bool verified_at(naddr a, uint64_t ms)
 }
 static uint64_t weight_of(const fips_cached_coord *c) { return c->len > APE ? c->len : APE; }
 /* Port of assert_index_matches_map: every slot filed under its own key in the
- * heap its place names, heaps hold nothing else, and the weights add up. */
-static int index_matches(const char *step)
+ * heap its place names, heaps hold nothing else, and the weights add up. The
+ * expiry index (C only) holds every resident slot, ordered by expires_at; the
+ * residency bitmap and the created_at totals (C only) agree with the slots. */
+static int index_matches_in(const fips_coord_cache *c, const char *step)
 {
-    const fips_coord_cache *c = &cache;
     CHECKS(c->by_use_len + c->parked_len + c->probation_len == c->len, step);
+    CHECKS(c->expiry_len == c->len, step);
     bool all_main_verified = true;
-    uint64_t main_weight = 0;
+    uint64_t main_weight = 0, created_sum = 0;
     size_t used = 0;
     for (size_t i = 0; i < c->slot_capacity; ++i) {
         const fips_coord_slot *s = &c->slots[i];
+        CHECKS(s->used == ((c->resident[i / 32] >> (i % 32)) & 1), step);
         if (!s->used) continue;
         ++used;
+        created_sum += s->entry.created_at;
+        CHECKS(s->entry.created_at <= c->created_max, step);
         const uint32_t *heap = s->place == FIPS_PLACE_BY_USE ? c->by_use
                              : s->place == FIPS_PLACE_PARKED ? c->parked : c->probation;
         size_t heap_len = s->place == FIPS_PLACE_BY_USE ? c->by_use_len
                         : s->place == FIPS_PLACE_PARKED ? c->parked_len : c->probation_len;
         CHECKS(s->heap_pos < heap_len && heap[s->heap_pos] == i, step);
+        CHECKS(s->expiry_pos < c->expiry_len && c->expiry[s->expiry_pos] == i, step);
         CHECKS(s->weight >= weight_of(&s->entry.coords), step);
         CHECKS(fips_coord_cache_get_entry(c, s->addr) == &s->entry, step);
         if (s->place != FIPS_PLACE_PROBATION) {
@@ -158,6 +164,7 @@ static int index_matches(const char *step)
     CHECKS(fips_coord_cache_main_len(c) <= c->max_entries || all_main_verified, step);
     CHECKS(c->probation_len <= fips_coord_cache_probation_bound(c), step);
     CHECKS(c->stored_weight == main_weight, step);
+    CHECKS(c->created_sum == created_sum, step);
     const uint32_t *heaps[] = {c->by_use, c->parked, c->probation};
     size_t lens[] = {c->by_use_len, c->parked_len, c->probation_len};
     fips_cache_place places[] = {FIPS_PLACE_BY_USE, FIPS_PLACE_PARKED, FIPS_PLACE_PROBATION};
@@ -170,8 +177,14 @@ static int index_matches(const char *step)
             CHECKS(parent->key_stamp < s->key_stamp ||
                    (parent->key_stamp == s->key_stamp && parent->key_seq < s->key_seq), step);
         }
+    for (size_t pos = 1; pos < c->expiry_len; ++pos) {
+        uint32_t idx = c->expiry[pos], up = c->expiry[(pos - 1) / 2];
+        uint64_t at = c->slots[idx].entry.expires_at, parent_at = c->slots[up].entry.expires_at;
+        CHECKS(parent_at < at || (parent_at == at && up < idx), step);
+    }
     return 0;
 }
+static int index_matches(const char *step) { return index_matches_in(&cache, step); }
 #define INDEX_MATCHES(step) CHECK(index_matches(step) == 0)
 
 /* cache/tests/entry.rs: 6 upstream cases. */
@@ -1278,13 +1291,13 @@ static int init_rejects_insufficient_storage_and_runs_a_zero_entry_geometry(void
 {
     fips_fixed_entropy entropy = {7};
     fips_entropy e = fips_fixed_entropy_adapter(&entropy);
-    CHECK(fips_coord_cache_init(&cache, slots, 2, index_words, 11, 2, 1000, t(0), e) == FIPS_ERR_RANGE);
-    CHECK(fips_coord_cache_init(&cache, slots, 3, index_words, 15, 2, 1000, t(0), e) == FIPS_ERR_RANGE);
-    CHECK(fips_coord_cache_init(&cache, slots, 3, index_words, 16, 2, 1000, t(0), e) == FIPS_OK);
-    CHECK(fips_coord_cache_init(&cache, slots, 3, index_words, 16, 4, 1000, t(0), e) == FIPS_ERR_RANGE);
+    CHECK(fips_coord_cache_init(&cache, slots, 2, index_words, FIPS_COORD_CACHE_INDEX_WORDS(2), 2, 1000, t(0), e) == FIPS_ERR_RANGE);
+    CHECK(fips_coord_cache_init(&cache, slots, 3, index_words, FIPS_COORD_CACHE_INDEX_WORDS(3) - 1, 2, 1000, t(0), e) == FIPS_ERR_RANGE);
+    CHECK(fips_coord_cache_init(&cache, slots, 3, index_words, FIPS_COORD_CACHE_INDEX_WORDS(3), 2, 1000, t(0), e) == FIPS_OK);
+    CHECK(fips_coord_cache_init(&cache, slots, 3, index_words, FIPS_COORD_CACHE_INDEX_WORDS(3), 4, 1000, t(0), e) == FIPS_ERR_RANGE);
     /* Probation always holds one entry: zero slots never fit, one slot does. */
     CHECK(fips_coord_cache_init(&cache, NULL, 0, NULL, 0, 0, 1000, t(0), e) == FIPS_ERR_RANGE);
-    CHECK(fips_coord_cache_init(&cache, slots, 1, index_words, 6, 0, 1000, t(0), e) == FIPS_OK);
+    CHECK(fips_coord_cache_init(&cache, slots, 1, index_words, FIPS_COORD_CACHE_INDEX_WORDS(1), 0, 1000, t(0), e) == FIPS_OK);
     naddr addr = make_node_addr(1), other = make_node_addr(2);
     fips_cached_coord c10 = C(1, 0), c20 = C(2, 0);
     fips_hint_outcome outcome;
@@ -1412,46 +1425,97 @@ static bool record_visit(void *ctx, const uint8_t addr[16], const fips_cache_ent
     if (s->n < 64) { s->addr[s->n] = addr; s->entry[s->n] = entry; }
     return ++s->n < s->stop;
 }
-/* fips_coord_cache_scan is the O(len) fusion of iter + stats: same visits in
- * the same order, same stats, even after a visitor stop and on the fallback. */
-static int scan_matches_iter_and_stats_under_churn(void)
+/* What upstream's stats() and iter() compute, as the sweep over every slot
+ * the C port first did: the reference the running totals must equal. */
+static fips_cache_stats sweep_stats(const fips_coord_cache *c, uint64_t now_ms)
 {
-    static uint64_t marks[FIPS_COORD_CACHE_MARK_WORDS(SLOTS)];
+    uint64_t total_age = 0, next_expiry = UINT64_MAX;
+    size_t expired = 0;
+    for (size_t i = 0; i < c->slot_capacity; ++i) {
+        const fips_coord_slot *slot = &c->slots[i];
+        if (!slot->used) continue;
+        if (fips_cache_entry_is_expired(&slot->entry, now_ms)) ++expired;
+        else if (slot->entry.expires_at < next_expiry) next_expiry = slot->entry.expires_at;
+        uint64_t age = fips_cache_entry_age(&slot->entry, now_ms);
+        total_age = total_age > UINT64_MAX - age ? UINT64_MAX : total_age + age;
+    }
+    return (fips_cache_stats){c->len, c->max_entries, expired,
+                              c->len == 0 ? 0 : total_age / (uint64_t)c->len, next_expiry};
+}
+static void sweep_visits(const fips_coord_cache *c, uint64_t now_ms, seen_list *out)
+{
+    for (size_t i = 0; i < c->slot_capacity; ++i) {
+        const fips_coord_slot *slot = &c->slots[i];
+        if (!slot->used || fips_cache_entry_is_expired(&slot->entry, now_ms)) continue;
+        if (!record_visit(out, slot->addr, &slot->entry)) return;
+    }
+}
+static bool same_stats(const fips_cache_stats *a, const fips_cache_stats *b)
+{
+    return a->entries == b->entries && a->max_entries == b->max_entries && a->expired == b->expired &&
+        a->avg_age_ms == b->avg_age_ms && a->next_expiry_ms == b->next_expiry_ms;
+}
+/* stats answers from running totals and the expiry index, iter and scan walk
+ * the residency bitmap (scan stopping with its visitor): all must equal the
+ * slot sweep, at instants after the latest write and before it (the walk
+ * fallback), under random churn. */
+static int stats_iter_and_scan_equal_a_slot_sweep_under_churn(void)
+{
     NEW(48, 100);
     unexpected = 0;
     uint32_t rng = 12345;
-    for (uint64_t step = 0, now = 0; step < 3000; ++step) {
+    size_t earlier = 0;
+    for (uint64_t step = 0, now = 0; step < 6000; ++step) {
         rng = rng * 1103515245u + 12345u;
         uint32_t r = rng >> 8;
         naddr a = minted_addr(1, r % 80), root = make_node_addr(9);
         now += r % 7;
-        switch (r % 9) {
+        switch (r % 11) {
         case 0: case 1: case 2: (void)ins(a, coords_of_len(a, root, 2 + r % 4), now); break;
         case 3: insv(a, coords_of_len(a, root, 3), now); break;
         case 4: (void)fips_coord_cache_get_and_touch(&cache, a.b, t(now)); break;
         case 5: (void)fips_coord_cache_remove(&cache, a.b, NULL); break;
         case 6: (void)fips_coord_cache_demote(&cache, a.b); break;
         case 7: if (r % 5 == 0) (void)fips_coord_cache_purge_expired(&cache, t(now)); break;
+        case 8: (void)inst(a, coords_of_len(a, root, 2), now, r % 300); break;
+        case 9: if (r % 17 == 0) (void)fips_coord_cache_invalidate_via_node(&cache, minted_addr(0xd0, 0).b); break;
         default: break;
         }
-        uint64_t at = now + r % 150;
+        uint64_t at = r % 4 == 0 ? (now > r % 40 ? now - r % 40 : 0) : now + r % 150;
+        earlier += at < cache.created_max;
         size_t stop = 1 + r % 70;
-        seen_list want = {.stop = stop}, got = {.stop = stop}, fallback = {.stop = stop};
-        fips_coord_cache_iter(&cache, t(at), record_visit, &want);
-        fips_cache_stats ws = fips_coord_cache_stats(&cache, t(at));
-        fips_cache_stats gs = fips_coord_cache_scan(&cache, t(at), marks, FIPS_COORD_CACHE_MARK_WORDS(SLOTS), record_visit, &got);
-        fips_cache_stats fs = fips_coord_cache_scan(&cache, t(at), marks, 1, record_visit, &fallback);
-        fips_cache_stats ns = fips_coord_cache_scan(&cache, t(at), marks, FIPS_COORD_CACHE_MARK_WORDS(SLOTS), NULL, NULL);
-        CHECK(want.n == got.n && want.n == fallback.n);
+        seen_list want = {.stop = stop}, it = {.stop = stop}, got = {.stop = stop};
+        sweep_visits(&cache, at, &want);
+        fips_cache_stats ws = sweep_stats(&cache, at);
+        fips_coord_cache_iter(&cache, t(at), record_visit, &it);
+        fips_cache_stats ss = fips_coord_cache_stats(&cache, t(at));
+        fips_cache_stats gs = fips_coord_cache_scan(&cache, t(at), record_visit, &got);
+        fips_cache_stats ns = fips_coord_cache_scan(&cache, t(at), NULL, NULL);
+        CHECK(want.n == it.n && want.n == got.n);
         for (size_t i = 0; i < want.n && i < 64; ++i)
-            CHECK(want.addr[i] == got.addr[i] && want.entry[i] == got.entry[i] && want.entry[i] == fallback.entry[i]);
-        const fips_cache_stats *all[3] = {&gs, &fs, &ns};
-        for (size_t i = 0; i < 3; ++i)
-            CHECK(all[i]->entries == ws.entries && all[i]->max_entries == ws.max_entries &&
-                  all[i]->expired == ws.expired && all[i]->avg_age_ms == ws.avg_age_ms &&
-                  all[i]->next_expiry_ms == ws.next_expiry_ms);
+            CHECK(want.entry[i] == it.entry[i] && want.entry[i] == got.entry[i] && want.addr[i] == got.addr[i]);
+        CHECK(same_stats(&ss, &ws) && same_stats(&gs, &ws) && same_stats(&ns, &ws));
     }
-    CHECK(unexpected == 0);
+    CHECK(unexpected == 0 && earlier > 100);
+    return 0;
+}
+/* The running age total stands in only where it is exact; elsewhere the walk
+ * gives upstream's saturating sum. */
+static int stats_fall_back_where_the_running_age_total_cannot_answer(void)
+{
+    NEW(100, UINT64_MAX);
+    CHECK(ins(make_node_addr(1), C(1, 0), 0) == INSERTED);
+    CHECK(ins(make_node_addr(2), C(2, 0), 10) == INSERTED);
+    CHECK(ins(make_node_addr(3), C(3, 0), 20) == INSERTED);
+    fips_cache_stats s = fips_coord_cache_stats(&cache, t(5)); /* before the latest creation */
+    CHECK(s.entries == 3 && s.avg_age_ms == 5 / 3 && s.expired == 0 && s.next_expiry_ms == UINT64_MAX);
+    s = fips_coord_cache_stats(&cache, t(UINT64_MAX / 4)); /* 3 * now still fits */
+    CHECK(s.avg_age_ms == UINT64_MAX / 4 - 10);
+    s = fips_coord_cache_stats(&cache, t(UINT64_MAX / 2)); /* the summed ages saturate */
+    CHECK(s.avg_age_ms == UINT64_MAX / 3);
+    CHECK(fips_coord_cache_remove(&cache, make_node_addr(3).b, NULL) && fips_coord_cache_remove(&cache, make_node_addr(2).b, NULL));
+    s = fips_coord_cache_stats(&cache, t(UINT64_MAX / 2)); /* one entry: exact again */
+    CHECK(s.entries == 1 && s.avg_age_ms == UINT64_MAX / 2);
     return 0;
 }
 /* Every field a control view can show for every resident slot, expired or not:
@@ -1478,14 +1542,13 @@ static uint64_t contents_hash(void)
  * one with every age advanced by the elapsed time. */
 static int generation_covers_every_change_and_keeps_a_scan_exact(void)
 {
-    static uint64_t marks[FIPS_COORD_CACHE_MARK_WORDS(SLOTS)];
     /* A small geometry: the content hash below walks every slot at every step. */
     CHECK(new_cache_with(FIPS_COORD_CACHE_SLOTS(48) + 8, 48, 100, 7) == FIPS_OK);
     unexpected = 0;
     uint32_t rng = 987;
     uint64_t gen = fips_coord_cache_generation(&cache), hash = contents_hash();
     seen_list base = {.stop = 1000};
-    fips_cache_stats base_stats = fips_coord_cache_scan(&cache, t(0), marks, FIPS_COORD_CACHE_MARK_WORDS(cache.slot_capacity), record_visit, &base);
+    fips_cache_stats base_stats = fips_coord_cache_scan(&cache, t(0), record_visit, &base);
     uint64_t base_ms = 0;
     size_t reused = 0, expired_after = 0;
     for (uint64_t step = 0, now = 0; step < 4000; ++step) {
@@ -1511,7 +1574,7 @@ static int generation_covers_every_change_and_keeps_a_scan_exact(void)
         CHECKS(g >= gen, "the generation never goes backwards");
         CHECKS(h == hash || g != gen, "a change to resident contents moves the generation");
         seen_list got = {.stop = 1000};
-        fips_cache_stats gs = fips_coord_cache_scan(&cache, t(now), marks, FIPS_COORD_CACHE_MARK_WORDS(cache.slot_capacity), record_visit, &got);
+        fips_cache_stats gs = fips_coord_cache_scan(&cache, t(now), record_visit, &got);
         if (g == gen && now >= base_ms && now <= base_stats.next_expiry_ms) {
             ++reused;
             CHECKS(gs.entries == base_stats.entries && gs.expired == base_stats.expired, "entries and expired hold");
@@ -1533,6 +1596,117 @@ static int generation_covers_every_change_and_keeps_a_scan_exact(void)
         }
     }
     CHECK(unexpected == 0 && reused > 100 && expired_after > 10);
+    return 0;
+}
+/* purge_expired pops the expiry index; upstream's retain sweeps the map. Twin
+ * caches run one random workload, one purging through the index, the other
+ * removing what a storage-order sweep finds expired, one public remove at a
+ * time in slot order (what the sweep did). Purges must report the same counts
+ * and leave the same state: every slot, entry, heap, the map and the free list
+ * (so later inserts land in the same slots and iteration order agrees). */
+#define TWIN_MAX 64
+#define TWIN_SLOTS (FIPS_COORD_CACHE_SLOTS(TWIN_MAX) + 6)
+static fips_coord_slot twin_slots[2][TWIN_SLOTS];
+static uint32_t twin_index[2][FIPS_COORD_CACHE_INDEX_WORDS(TWIN_SLOTS)];
+static bool same_entry(const fips_cache_entry *x, const fips_cache_entry *y)
+{
+    return fips_cached_coord_equal(&x->coords, &y->coords) && x->created_at == y->created_at &&
+        x->last_used == y->last_used && x->expires_at == y->expires_at &&
+        x->verified_until == y->verified_until && x->source == y->source &&
+        x->has_path_mtu == y->has_path_mtu && x->path_mtu == y->path_mtu;
+}
+static int twins_agree(const fips_coord_cache *a, const fips_coord_cache *b, const char *step)
+{
+    CHECKS(a->len == b->len && a->by_use_len == b->by_use_len && a->parked_len == b->parked_len &&
+           a->probation_len == b->probation_len && a->stored_weight == b->stored_weight &&
+           a->seq == b->seq && a->eviction_examined == b->eviction_examined &&
+           a->free_head == b->free_head && a->generation == b->generation, step);
+    CHECKS(!memcmp(a->by_use, b->by_use, a->by_use_len * sizeof *a->by_use) &&
+           !memcmp(a->parked, b->parked, a->parked_len * sizeof *a->parked) &&
+           !memcmp(a->probation, b->probation, a->probation_len * sizeof *a->probation) &&
+           !memcmp(a->table, b->table, a->table_len * sizeof *a->table), step);
+    for (size_t i = 0; i < a->slot_capacity; ++i) {
+        const fips_coord_slot *x = &a->slots[i], *y = &b->slots[i];
+        CHECKS(x->used == y->used, step);
+        if (!x->used) { CHECKS(x->link == y->link, step); continue; }
+        CHECKS(same_entry(&x->entry, &y->entry) && !memcmp(x->addr, y->addr, 16) && x->hash == y->hash &&
+               x->key_stamp == y->key_stamp && x->key_seq == y->key_seq && x->weight == y->weight &&
+               x->heap_pos == y->heap_pos && x->place == y->place, step);
+    }
+    CHECKS(index_matches_in(a, step) == 0 && index_matches_in(b, step) == 0, step);
+    return 0;
+}
+static size_t sweep_purge(fips_coord_cache *c, uint64_t now_ms)
+{
+    size_t removed = 0;
+    for (size_t i = 0; i < c->slot_capacity; ++i) {
+        const fips_coord_slot *s = &c->slots[i];
+        if (!s->used || !fips_cache_entry_is_expired(&s->entry, now_ms)) continue;
+        uint8_t addr[16];
+        memcpy(addr, s->addr, 16);
+        if (fips_coord_cache_remove(c, addr, NULL)) ++removed;
+    }
+    return removed;
+}
+static void twin_step(fips_coord_cache *c, uint32_t r, uint64_t now)
+{
+    naddr a = minted_addr(3, r % 97), root = make_node_addr(r % 17 == 0 ? 8 : 9);
+    fips_cached_coord coords = coords_of_len(a, root, 2 + r % 5);
+    fips_hint_outcome outcome;
+    fips_placed placed;
+    switch ((r >> 4) % 13) {
+    case 0: case 1:
+        (void)fips_coord_cache_insert_with_ttl(c, a.b, &coords, t(now), 5 + r % 400, &outcome);
+        break;
+    case 2: (void)fips_coord_cache_insert(c, a.b, &coords, t(now), &outcome); break;
+    case 3: (void)fips_coord_cache_insert_funded(c, a.b, &coords, t(now), r % 3 ? UPTO(r % 40) : UNCHARGED, &placed); break;
+    case 4: (void)fips_coord_cache_insert_stated(c, a.b, &coords, t(now), UPTO(r % 60), &placed); break;
+    case 5: (void)fips_coord_cache_insert_verified(c, a.b, &coords, t(now)); break;
+    case 6: (void)fips_coord_cache_insert_verified_with_path_mtu(c, a.b, &coords, t(now), (uint16_t)(1280 + r % 9)); break;
+    case 7: case 8: (void)fips_coord_cache_get_and_touch(c, a.b, t(now)); break;
+    case 9: (void)fips_coord_cache_remove(c, a.b, NULL); break;
+    case 10: (void)fips_coord_cache_demote(c, a.b); break;
+    case 11: if (r % 23 == 0) (void)fips_coord_cache_invalidate_via_node(c, minted_addr(0xd0, r % 4).b); break;
+    default: if (r % 31 == 0) (void)fips_coord_cache_invalidate_other_roots(c, make_node_addr(9).b); break;
+    }
+}
+static int purge_through_the_expiry_index_equals_the_storage_order_sweep(void)
+{
+    fips_coord_cache twins[2];
+    for (int i = 0; i < 2; ++i) {
+        fips_fixed_entropy entropy = {7};
+        CHECK(fips_coord_cache_init(&twins[i], twin_slots[i], TWIN_SLOTS, twin_index[i],
+                                    FIPS_COORD_CACHE_INDEX_WORDS(TWIN_SLOTS), TWIN_MAX, 150, t(0),
+                                    fips_fixed_entropy_adapter(&entropy)) == FIPS_OK);
+    }
+    uint32_t rng = 424242;
+    size_t purges = 0, purged = 0, empty_purges = 0, mass_purges = 0;
+    for (uint64_t step = 0, now = 0; step < 30000; ++step) {
+        rng = rng * 1103515245u + 12345u;
+        uint32_t r = rng >> 8;
+        now += r % 9 == 0 ? r % 60 : r % 3;
+        if (r % 401 == 0) now += 1000; /* everything expires */
+        if (r % 11 == 0) {
+            size_t got = fips_coord_cache_purge_expired(&twins[0], t(now));
+            size_t want = sweep_purge(&twins[1], fips_coord_cache_millis(&twins[1], t(now)));
+            CHECKS(got == want, "purge count");
+            ++purges; purged += got; empty_purges += got == 0; mass_purges += got >= 16;
+            for (size_t i = 0; i < twins[0].slot_capacity; ++i)
+                CHECKS(!twins[0].slots[i].used ||
+                       !fips_cache_entry_is_expired(&twins[0].slots[i].entry, fips_coord_cache_millis(&twins[0], t(now))),
+                       "nothing expired survives a purge");
+        } else {
+            twin_step(&twins[0], r, now);
+            twin_step(&twins[1], r, now);
+        }
+        CHECK(twins_agree(&twins[0], &twins[1], "after each step") == 0);
+        fips_cache_stats ws = sweep_stats(&twins[0], now), gs = fips_coord_cache_stats(&twins[0], t(now));
+        CHECKS(same_stats(&gs, &ws), "stats equal the sweep");
+    }
+    if (!(purges > 2000 && purged > 3000 && empty_purges > 100 && mass_purges > 5))
+        fprintf(stderr, "purges=%zu purged=%zu empty=%zu mass=%zu\n", purges, purged, empty_purges, mass_purges);
+    CHECK(purges > 2000 && purged > 3000 && empty_purges > 100 && mass_purges > 5);
+    CHECK(unexpected == 0);
     return 0;
 }
 static int generation_moves_on_each_public_mutation(void)
@@ -1685,8 +1859,10 @@ int main(void)
         init_rejects_insufficient_storage_and_runs_a_zero_entry_geometry,
         verified_excess_exhausts_storage_transactionally, ttl_boundaries_and_refresh,
         instants_before_the_epoch_read_as_millisecond_zero,
-        iter_visits_live_entries_and_stops_on_request, scan_matches_iter_and_stats_under_churn,
+        iter_visits_live_entries_and_stops_on_request, stats_iter_and_scan_equal_a_slot_sweep_under_churn,
+        stats_fall_back_where_the_running_age_total_cannot_answer,
         generation_covers_every_change_and_keeps_a_scan_exact, generation_moves_on_each_public_mutation,
+        purge_through_the_expiry_index_equals_the_storage_order_sweep,
         remove_copies_the_entry_out,
         cached_coord_bounds_and_accessors, lookups_survive_interleaved_deletions
     };
@@ -1694,6 +1870,6 @@ int main(void)
         if (tests[i]()) return 1;
         if (unexpected) { fprintf(stderr, "test %zu: unexpected FIPS_ERR_RANGE\n", i); return 1; }
     }
-    puts("coord cache: 66 upstream cache + 6 entry + 4 stats/error tests + 11 C edge tests passed");
+    puts("coord cache: 66 upstream cache + 6 entry + 4 stats/error tests + 13 C edge tests passed");
     return 0;
 }

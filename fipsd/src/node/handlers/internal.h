@@ -324,8 +324,6 @@ struct fipsd_node_handlers {
     bool dirty;
     GoChannel *commands, *notices;
     uint64_t snapshot_generation;
-    uint64_t *cache_marks; /* snapshot scratch: FIPS_COORD_CACHE_MARK_WORDS(slots) */
-    size_t cache_mark_words;
     struct cache_view *cache_view; /* provider.c: the coordinate-cache section snapshots share */
     /* Native datagram API sink (handlers.h); loaded on every delivery. */
     _Atomic(GoChannel *) native_sink;

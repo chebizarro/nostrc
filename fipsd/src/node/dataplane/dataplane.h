@@ -53,7 +53,8 @@ typedef struct fipsd_dp_snapshot {
     size_t peer_count, epoch_count, cache_count;
     fipsd_dp_peer *peers;
     fipsd_dp_epoch *epochs;
-    fipsd_dp_cached *cache;
+    fipsd_dp_cached *cache; /* owned by cache_ref, which snapshots share while the cache is unchanged */
+    GoRefPtr cache_ref;
 } fipsd_dp_snapshot;
 typedef struct fipsd_dp_stats {
     _Atomic uint64_t sealed[FIPSD_DP_LANES], opened[FIPSD_DP_LANES];
@@ -80,17 +81,22 @@ typedef struct fipsd_dp_packet {
     size_t body, wire_size, candidate;
     uint8_t ad[FIPSD_DP_WIRE], input[FIPSD_DP_WIRE], output[FIPSD_DP_WIRE];
 } fipsd_dp_packet;
+/* What the current snapshot's cache section was taken from: it stands while
+ * the core's generation is unchanged and no entry has expired since. */
+typedef struct fipsd_dp_cache_section {
+    bool valid;
+    uint64_t generation, scanned_ms, next_expiry_ms, fingerprint;
+} fipsd_dp_cache_section;
 typedef struct fipsd_dataplane {
     void *dispatcher_fiber; /* fixed on first dispatcher machine interaction */
     bool needs_publish; /* control mutations invalidate; packets only retain */
     GoSwap *tables;
     GoRefPtr current; /* publisher's retained generation: load once, not per packet */
+    fipsd_dp_cache_section cache_section;
     fipsd_dp_packet *packets;
     size_t packet_count, next;
     _Atomic size_t in_flight; /* taken slabs; released by recycle on any thread */
     fips_tree_coordinate *coord_scratch;
-    uint64_t *cache_marks; /* publish scratch: FIPS_COORD_CACHE_MARK_WORDS(slots) */
-    size_t cache_mark_words;
     fips_routing_peer *route_peers;
     struct { bool used; fips_node_addr peer; uint16_t mtu; bool notify_pending; } *clamps;
     size_t clamp_capacity;

@@ -385,7 +385,7 @@ static json_t *history_peers(const fipsd_control_snapshot *s, const fips_stats_h
 {
     json_t *a = json_array();
     for (size_t i = 0; i < h->peer_count; ++i) {
-        const fips_peer_stats *r = &h->peers[i];
+        const fips_peer_stats *r = fips_stats_history_peer_at(h, i); /* address order, as upstream */
         const fipsd_control_peer_meta *m = meta(s, r->addr);
         char hex[33], short_hex[12]; hex_addr(r->addr, hex);
         snprintf(short_hex, sizeof(short_hex), "%.8s...", hex);

@@ -1,6 +1,6 @@
 # Opt-in host benchmarks, never installed or registered with ctest.
 find_package(Threads REQUIRED)
-foreach(bench IN ITEMS noise_aead routing_next_hop coord_cache transport_addr)
+foreach(bench IN ITEMS noise_aead routing_next_hop coord_cache transport_addr stats_history)
   add_executable(fips_bench_${bench} ${bench}.c bench.c ../tests/fakes/host.c)
   target_link_libraries(fips_bench_${bench} PRIVATE fips_core Threads::Threads)
   target_compile_definitions(fips_bench_${bench} PRIVATE _POSIX_C_SOURCE=200809L)
@@ -10,4 +10,5 @@ foreach(bench IN ITEMS noise_aead routing_next_hop coord_cache transport_addr)
   apply_sanitizers(fips_bench_${bench})
 endforeach()
 add_custom_target(fips_benches DEPENDS fips_bench_noise_aead
-  fips_bench_routing_next_hop fips_bench_coord_cache fips_bench_transport_addr)
+  fips_bench_routing_next_hop fips_bench_coord_cache fips_bench_transport_addr
+  fips_bench_stats_history)

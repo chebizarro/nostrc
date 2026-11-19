@@ -290,12 +290,14 @@ static int capacity_preflight_is_transactional_and_sorted(void)
     CHECK(fips_stats_history_tick(&h, secs(0), &s, ps, 3) == FIPS_ERR_RANGE);
     CHECK(!h.has_data && h.fast_pushes == 0 && h.peer_count == 0 && h.rings[0].fast_len == 0);
     CHECK(fips_stats_history_tick(&h, secs(0), &s, ps, 2) == FIPS_OK);
-    CHECK(h.peer_count == 2 && h.peers[0].addr[0] == 1 && h.peers[1].addr[0] == 2);
+    CHECK(h.peer_count == 2 && fips_stats_history_peer_at(&h, 0)->addr[0] == 1 &&
+          fips_stats_history_peer_at(&h, 1)->addr[0] == 2 && !fips_stats_history_peer_at(&h, 2));
+    const fips_peer_stats *second = fips_stats_history_peer_at(&h, 1);
     s = snap(1);
     fips_peer_snapshot mixed[2] = {peer(2, 1, 1000), peer(3, 1, 1000)};
     CHECK(fips_stats_history_tick(&h, secs(1), &s, mixed, 2) == FIPS_ERR_RANGE);
-    CHECK(h.peers[1].rings[FIPS_PEER_BYTES_IN].prev_total == 0);
-    CHECK(h.peers[1].last_contact.ops->compare(h.peers[1].last_contact, secs(0)) == 0);
+    CHECK(second == fips_stats_history_peer_at(&h, 1) && second->rings[FIPS_PEER_BYTES_IN].prev_total == 0);
+    CHECK(second->last_contact.ops->compare(second->last_contact, secs(0)) == 0);
     CHECK(h.fast_pushes == 1 && h.last_tick.ops->compare(h.last_tick, secs(0)) == 0);
     CHECK(h.peers[0].rings[0].fast_len == 1 && h.rings[0].fast_len == 1);
     fips_stats_history_cleanup(&h, secs(86400)); CHECK(h.peer_count == 0);
@@ -439,7 +441,7 @@ static bool history_equal(const fips_stats_history *a, const fips_stats_history 
         return false;
     for (int i = 0; i < FIPS_METRIC_COUNT; ++i) if (!ring_equal(&a->rings[i], &b->rings[i])) return false;
     for (size_t i = 0; i < a->peer_count; ++i) {
-        const fips_peer_stats *p = &a->peers[i], *q = &b->peers[i];
+        const fips_peer_stats *p = fips_stats_history_peer_at(a, i), *q = fips_stats_history_peer_at(b, i);
         if (memcmp(p->addr, q->addr, 16) || p->born != q->born || p->seen_tick != q->seen_tick ||
             memcmp(&p->first_seen, &q->first_seen, sizeof p->first_seen) ||
             memcmp(&p->last_contact, &q->last_contact, sizeof p->last_contact)) return false;
@@ -509,6 +511,51 @@ static int sync_brings_an_earlier_copy_current_under_churn(void)
     free(live.peers);
     return 0;
 }
+/* Peers sit in stable slots with the address order as an index over them.
+ * Under arrivals at random ranks, 24-hour evictions and re-creation, the slots
+ * stay dense, the index names each exactly once in strictly ascending address
+ * order, lookups agree with it, and which peers are retained (and since when)
+ * follows a plain model of upstream's map: retained while heard within 24 h. */
+static int stable_slots_keep_the_address_order_under_churn(void)
+{
+    static hist live;
+    CHECK(hist_new(&live, SYNC_POOL));
+    sync_secs = 0; memset(sync_totals, 0, sizeof sync_totals);
+    uint64_t heard[SYNC_POOL], born[SYNC_POOL]; bool kept[SYNC_POOL] = {false};
+    size_t evictions = 0, arrivals = 0, moved = 0;
+    for (int t = 0; t < 6000; ++t) {
+        uint64_t pushes = live.h.fast_pushes;
+        fips_peer_stats *slot0 = live.h.peer_count ? &live.h.peers[0] : NULL;
+        uint8_t slot0_addr[16]; if (slot0) memcpy(slot0_addr, slot0->addr, 16);
+        CHECK(!sync_tick(&live, sync_next() % 300 == 0));
+        /* The tick's peers are the last snapshot sync_tick built: replay its
+         * presence through the model from the history itself. */
+        for (unsigned id = 0; id < SYNC_POOL; ++id) {
+            uint8_t a[16]; memset(a, (int)(id + 1), 16);
+            const fips_peer_stats *p = fips_stats_history_peer(&live.h, a);
+            bool present = p && p->seen_tick;
+            if (present && !kept[id]) { kept[id] = true; born[id] = pushes; ++arrivals; }
+            if (present) heard[id] = sync_secs;
+            if (kept[id] && sync_secs - heard[id] >= FIPS_PEER_EVICTION_SECS) { kept[id] = false; ++evictions; }
+            CHECK(kept[id] == (p != NULL));
+            if (p) CHECK(p->born == born[id] && p->last_contact.opaque[0] == heard[id] * 1000);
+        }
+        moved += slot0 && live.h.peer_count && memcmp(slot0_addr, live.h.peers[0].addr, 16) != 0;
+        bool named[SYNC_POOL] = {false};
+        for (size_t r = 0; r < live.h.peer_count; ++r) {
+            const fips_peer_stats *p = fips_stats_history_peer_at(&live.h, r);
+            size_t slot = (size_t)(p - live.h.peers);
+            CHECK(slot < live.h.peer_count && !named[slot]);
+            named[slot] = true;
+            CHECK(fips_stats_history_peer(&live.h, p->addr) == p);
+            if (r > 0) CHECK(memcmp(fips_stats_history_peer_at(&live.h, r - 1)->addr, p->addr, 16) < 0);
+        }
+    }
+    if (!(evictions > 20 && arrivals > 40 && moved > 5)) fprintf(stderr, "evictions=%zu arrivals=%zu moved=%zu\n", evictions, arrivals, moved);
+    CHECK(evictions > 20 && arrivals > 40 && moved > 5);
+    free(live.peers);
+    return 0;
+}
 static int sync_copies_only_what_changed(void)
 {
     static hist live, copy;
@@ -574,10 +621,11 @@ int main(void)
         peer_metadata_optional_gauges_and_backfill, peer_sum_last_nan_and_duplicate_inputs,
         minute_boundary_joins_and_duplicate_flush, counters_subtract_before_double_conversion,
         overflow_rebase_preserves_cadence_and_backfill,
-        sync_brings_an_earlier_copy_current_under_churn, sync_copies_only_what_changed,
+        sync_brings_an_earlier_copy_current_under_churn, stable_slots_keep_the_address_order_under_churn,
+        sync_copies_only_what_changed,
         sync_of_a_copy_ahead_of_its_source_copies_whole, sync_refuses_a_destination_too_small_for_the_peers
     };
     for (size_t i = 0; i < sizeof(tests) / sizeof(tests[0]); ++i) if (tests[i]()) return 1;
-    puts("stats history: 22 upstream tests + 9 edge tests + 4 sync tests passed");
+    puts("stats history: 22 upstream tests + 9 edge tests + 5 sync/storage tests passed");
     return 0;
 }

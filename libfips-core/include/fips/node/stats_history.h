@@ -62,16 +62,29 @@ typedef struct fips_stats_ring {
     bool has_prev;
     fips_aggregation aggregation;
 } fips_stats_ring;
+/* One entry of the address-order index (see fips_stats_history.peers): the
+ * slot of a peer and a copy of its address, so a search reads one slot per step. */
+typedef struct fips_peer_rank {
+    size_t slot;
+    uint8_t addr[16];
+} fips_peer_rank;
 typedef struct fips_peer_stats {
     uint8_t addr[16];
     fips_stats_ring rings[FIPS_PEER_METRIC_COUNT];
     fips_instant first_seen, last_contact;
     bool seen_tick;
     uint64_t born; /* fast_pushes when created: tells a peer from a later peer of the same address */
+    fips_peer_rank by_addr; /* NOT about this peer: see fips_stats_history.peers */
 } fips_peer_stats;
 typedef struct fips_stats_history {
     fips_stats_ring rings[FIPS_METRIC_COUNT];
-    fips_peer_stats *peers; /* Sorted by 16-byte address, like Rust BTreeMap. */
+    /* Stable slots peers[0, peer_count), in no particular order: a new peer is
+     * appended and an evicted one's slot is refilled by moving one peer, so
+     * nothing shifts whole peers (~283 KB each). The address order (Rust
+     * BTreeMap order) is an index spread over the slots: peers[r].by_addr
+     * names the slot (and address) of the r-th peer by 16-byte address. A
+     * shallow copy of the whole prefix (memcpy, realloc) keeps both valid. */
+    fips_peer_stats *peers;
     size_t peer_count, peer_capacity;
     uint64_t fast_pushes;
     fips_instant last_tick;
@@ -101,14 +114,19 @@ FIPS_CORE_API void fips_stats_history_cleanup(fips_stats_history *h, fips_instan
  * samples pushed since and the ring's scalars, per peer that dst lacks or
  * holds from before an eviction the whole peer, and nothing for an unchanged
  * ring. Cost grows with the ticks elapsed, up to a ring's capacity, not with
- * the retained history. dst keeps its own peer storage (dst->peers, sorted like
- * src's); FIPS_ERR_RANGE with dst unchanged if dst->peer_capacity is below
- * src->peer_count. src is not modified. */
+ * the retained history. dst keeps its own peer storage and slots (a peer dst
+ * holds is updated where it is), with src's address order; FIPS_ERR_RANGE with
+ * dst unchanged if dst->peer_capacity is below src->peer_count. src is not
+ * modified. */
 FIPS_CORE_API fips_status fips_stats_history_sync(fips_stats_history *dst,
                                                   const fips_stats_history *src);
 /** Borrowed metadata, invalidated by the next mutating history call. NULL if absent. */
 FIPS_CORE_API const fips_peer_stats *fips_stats_history_peer(const fips_stats_history *h,
                                                           const uint8_t addr[16]);
+/** The rank-th retained peer in address order (upstream's iteration order),
+ * NULL if rank >= peer_count. Borrowed like fips_stats_history_peer. */
+FIPS_CORE_API const fips_peer_stats *fips_stats_history_peer_at(const fips_stats_history *h,
+                                                             size_t rank);
 /** Serialization model: metric/unit/granularity_seconds/values have upstream
  * Series JSON names; len is only buffer extent, NOT an extra JSON field.
  * values are oldest-first, front-padded with NaN, clipped to ring capacity.

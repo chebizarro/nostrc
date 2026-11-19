@@ -647,6 +647,92 @@ remaining tail of the history-tick publishes is the dispatcher touching view
 storage that has been idle (page-ins under this host's memory pressure), which
 the benchmark cannot separate from the replay itself.
 
+### Coordinate cache and history without O(table) work (nostrc-gfvud)
+
+Release `fips_bench_coord_cache`, base and change binaries interleaved three
+times, medians of the per-run medians (`FIPS_BENCH_ITERS=100`):
+
+| `purge_expired` (dispatcher, every tick) | before | after |
+| --- | --- | --- |
+| 1,000 entries, nothing due | 0.96 us | 0.01 us |
+| 50,000 entries, nothing due | 125 us | 0.01 us |
+| 1,000 entries, 16 due | 1.66 us | 0.70 us |
+| 50,000 entries, 16 due | 124 us | 0.94 us |
+
+The purge pops an expiry heap instead of sweeping every slot (~51k slots of
+2.7 KB at the default size), so its cost follows what it removes.
+
+A touched cache used to force an O(len) rescan in `publish_snapshot`: the
+counts swept every resident entry and the rows were taken on the way. The core
+now keeps the counts as running totals (the residents' `created_at` sum and
+the expiry heap), walks a residency bitmap for the rows and stops at the 256th,
+so the rescan costs the rows. `fipsd_snapshot_bench --cache-churn 25` (256
+retained peers, 2000 publishes), Release, CPU clock, base and change binaries
+interleaved eight times, medians of the per-run figures:
+
+| Scenario | p99 all, before | p99 all, after | cache-churn publishes p50, before | after | p99, before | after |
+| --- | --- | --- | --- | --- | --- | --- |
+| 50k-entry cache, touched before 25% | 492 us | 128 us | 327 us | 104 us | 610 us | 132 us |
+| 4096-entry cache, touched before 25% | 159 us | 171 us | 119 us | 105 us | 205 us | 232 us |
+
+The rescanning publish is now the same ~105 us at 4096 and 50k entries: what
+is left is building the 256 control rows (strings and JSON). The 4096 p99
+moves within this host's noise (load average 10-18). Every run, before and
+after, has one publish over 1 ms (5-7 ms), the same in both: a history tick,
+taken up below.
+
+The dataplane snapshot (`fipsd_dp_publish`, run on every tick and after
+control mutations) fingerprinted every live cache entry to decide whether to
+republish, then copied them all. It now keeps what its cache section was
+taken from and, while the generation is unchanged and `now` has not passed the
+earliest live expiry, neither hashes nor copies the cache; a republish for
+other state shares the previous section's array (ref-counted, immutable), as
+does a new generation whose live entries hash the same (a demote, say).
+`fipsd_snapshot_bench --dataplane` forces a dataplane republish after each
+publish and times it separately (50k entries, 400 publishes, three interleaved
+runs, medians of the per-run p50):
+
+| Dataplane republish, 50k-entry cache | before | after |
+| --- | --- | --- |
+| cache untouched since the last (every idle tick) | 14.4 ms | 0.2 us |
+| after cache traffic (touches, inserts) | 17.5 ms | 17.9 ms |
+
+A change to the cache still rehashes and recopies every live entry (~130 MB
+at 50k entries); making that incremental is separate work.
+
+The stats history kept its peers in an address-sorted array and inserted with
+`memmove`, so an arrival at a low address shifted up to every retained peer
+(~283 KB each) on the live history and again in each view that replays the
+tick. Peers now keep stable slots and the address order is an index over them
+(see libfips-core `UPSTREAM.md`). Release `fips_bench_stats_history`, every
+retained peer present each tick, base and change interleaved three times,
+medians of the per-run medians:
+
+| Tick | before | after |
+| --- | --- | --- |
+| 64 retained peers, no arrival | 3.0 us | 3.3 us |
+| 64 retained peers, one arrival at the lowest address | 351 us | 7.0 us |
+| 512 retained peers, no arrival | 45.8 us | 46.3 us |
+| 512 retained peers, one arrival at the lowest address | 3122 us | 55 us |
+
+In `fipsd_snapshot_bench` (whose arrivals all happen during setup) against the
+preceding commit, six interleaved runs: 50k entries, 25% churn, p99 of all
+publishes 140 -> 136 us and the worst publish 6.0 -> 1.9 ms; two slow clients
+at 4096 entries p99 161 -> 165 us. The history-tick p99 there rises
+(224 -> 885 us at 50k): two view replays at the fifth minute's downsample take
+~0.8 ms each with ~1,200 minor page faults, first writes to view-storage pages
+the setup's insertion `memmove`s used to touch. Over 20,000 publishes they
+were the only replays that faulted; it is a one-time cost moved, not a
+per-tick one.
+
+End to end, base (30f44fde4) against all four changes, `fipsd_snapshot_bench
+--cache-churn 25`, eight interleaved runs on a heavily loaded host (load
+average 45-55), CPU clock, medians: 50k entries p99 606 -> 194 us, rescanning
+publishes p50 392 -> 124 us (p99 994 -> 267 us), publishes over 1 ms 6.5 -> 1;
+4096 entries p99 170 -> 154 us, rescanning publishes p50 136 -> 124 us. The
+rescan costs the same at 4096 and 50k entries, and the `--max-p99-us 1000
+--clock cpu` gate (`FipsdSnapshotPublishBench`) passes at 270 us.
+
 ### Reproduction and verification
 
 `FipsdProfilingTest` joins `fipsd_tests` when profiling is enabled. It covers

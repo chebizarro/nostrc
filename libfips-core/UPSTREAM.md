@@ -748,7 +748,8 @@ through the three eviction heaps rather than every slot. With too little
 scratch, or heaps that do not account for `len`, it falls back to the sweeps.
 `FipsCoreCoordCacheTest` cross-checks it against iter and stats under random
 churn. No pin change. Version decision: additive API, **libfips-core 0.1.0
-Unreleased**.
+Unreleased**. Superseded in nostrc-gfvud: the scan takes no scratch and walks
+a residency bitmap; see below.
 
 ## Cache generation and stats-history sync (nostrc-igg4w)
 
@@ -775,6 +776,69 @@ and change no upstream behaviour.
 
 No pin change. Version decision: additive API (and two additive struct fields),
 **libfips-core 0.1.0 Unreleased**.
+## Coordinate-cache expiry index and running stats (nostrc-gfvud)
+
+Internal storage only; every call keeps upstream's results. Upstream's
+`purge_expired` is a `retain` over the whole map, once per tick. The C cache
+keeps a fourth binary heap (C only) holding every resident slot by
+`expires_at`, so `fips_coord_cache_purge_expired` pops what has expired and
+costs O(k log len) for k removed, O(1) when nothing is due, whatever the
+capacity. It removes the popped slots in ascending slot order, which is what
+the previous storage-order sweep removed, in its order, so the free list and
+with it where later inserts land (and the storage order iteration reports) are
+unchanged. `FIPS_COORD_CACHE_INDEX_WORDS` grows by one word per slot and
+`fips_coord_slot` gains `expiry_pos`. `FipsCoreCoordCacheTest` runs twin caches
+through a random workload, one purging through the index and one removing what
+a storage-order sweep finds expired, and requires identical counts and state
+(every slot, the heaps, the map and the free list) after every step; the index
+invariant is checked after every mutation in the existing map/index test.
+`fips_bench_coord_cache` times the purge at 1,000 and 50,000 entries.
+
+Stats without a sweep: upstream's `stats` walks the map. The C cache keeps
+the residents' `created_at` sum (mod 2^64) and an upper bound on it, so for any
+`now` at or after the latest creation the summed ages are `len * now - sum`
+(exact whenever `len * now` fits; otherwise, or for an earlier `now`, the
+upstream per-entry saturating sum is computed by walking the residents). The
+expired count and the earliest live expiry come from the expiry heap's top: a
+node not yet expired has no expired descendant, so the walk is O(1 + expired).
+A residency bitmap (`FIPS_COORD_CACHE_INDEX_WORDS` adds one bit per slot) gives
+`iter`, the invalidations, `stored_addrs` and `fips_coord_cache_scan` the
+resident slots in storage order without touching free slots; the scan no
+longer takes caller mark scratch (`FIPS_COORD_CACHE_MARK_WORDS` is gone) and
+stops when its visitor does, its stats coming from the totals. A host that
+reads the first rows of a 50k-entry cache pays for the rows.
+`FipsCoreCoordCacheTest` compares stats, iter and scan with a transcription of
+the slot sweep at random instants after and before the latest write under
+churn, pins the saturating fallback, checks the bitmap and totals after every
+mutation, and the twin purge test compares stats with the sweep at every step.
+
+No pin change. Version decision: **libfips-core 0.1.0 Unreleased** (storage
+geometry, struct layout and the scan signature of an unreleased component;
+no released consumer).
+## Stats-history peer storage (nostrc-gfvud)
+
+Upstream keeps peers in a `BTreeMap<NodeAddr, PeerStats>`. The C port kept a
+caller-owned array sorted by address and inserted by `memmove`, so a peer
+arriving at a low address shifted every later peer (~283 KB each; up to
+~72 MB at 256 retained peers), on the live history every tick and on every
+view replay. Peers now sit in stable slots `peers[0, peer_count)` in no
+particular order: an arrival takes the next slot, an eviction's hole is refilled
+by moving one peer from above the new count. The address order is an index
+spread over the slots (`fips_peer_stats.by_addr`, a `fips_peer_rank` of slot
+and address copy: `peers[r].by_addr` names the r-th peer), so a dense host
+copy (`memcpy`, `realloc`) keeps both valid and `fips_stats_history_init` is
+unchanged. Readers that need upstream's iteration order use
+`fips_stats_history_peer_at(h, rank)`; lookups binary-search the index.
+`fips_stats_history_sync` updates each peer dst already holds in its own slot
+and rebuilds dst's index to src's order; `FipsCoreStatsHistoryTest` adds a
+property test (slots dense, index a permutation in strictly ascending address
+order, lookups agree, retention and `born` follow a model of upstream's map
+under arrivals, 24-hour evictions and re-creation) and compares synced copies
+by rank. Sample values, queries and every Series are unchanged.
+`fips_bench_stats_history` times ticks with and without an arrival.
+
+No pin change. Version decision: **libfips-core 0.1.0 Unreleased** (struct
+layout and an additive accessor of an unreleased component).
 ## Transport send lanes (nostrc-085xw)
 
 Host-only; no libfips-core or wire change. Upstream `transport::Lane`

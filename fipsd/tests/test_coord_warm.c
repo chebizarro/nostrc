@@ -26,6 +26,7 @@ static void published_cache(handlers *h, fips_test_clock *clock, uint64_t at)
     fips_coord_cache_iter(&h->cache, fips_test_instant(at), live_entry, &w);
     assert(w.s->cache_count == w.live && w.found == w.live);
 }
+static const fipsd_dp_snapshot *current_snapshot(handlers *h) { return h->dataplane->current.ptr; }
 int main(void)
 {
     handlers *h = calloc(1, sizeof *h); assert(h);
@@ -113,8 +114,26 @@ int main(void)
     h->dataplane = NULL; assert(fipsd_dp_init(h));
     published_cache(h, &clock, 1000);
     assert(((const fipsd_dp_snapshot *)h->dataplane->current.ptr)->cache_count == h->cache.len);
-    published_cache(h, &clock, 300500);
-    size_t resident = h->cache.len, live = ((const fipsd_dp_snapshot *)h->dataplane->current.ptr)->cache_count;
+    /* The cache section is shared while the core's generation is unchanged and
+     * nothing has newly expired (nostrc-gfvud): a republish for other state
+     * keeps the array, a change of a published field or an expiry copies. */
+    const fipsd_dp_cached *section = current_snapshot(h)->cache;
+    uint64_t fingerprint = current_snapshot(h)->fingerprint;
+    ((fipsd_dp_snapshot *)h->dataplane->current.ptr)->fingerprint = ~fingerprint; /* other state moved */
+    published_cache(h, &clock, 1200);
+    assert(current_snapshot(h)->fingerprint == fingerprint && current_snapshot(h)->cache == section);
+    assert(fips_coord_cache_demote(&h->cache, protected.bytes)); /* a new generation, the same rows */
+    published_cache(h, &clock, 1300);
+    assert(h->dataplane->cache_section.generation == fips_coord_cache_generation(&h->cache));
+    assert(current_snapshot(h)->cache == section);
+    assert(fips_coord_cache_get_and_touch(&h->cache, protected.bytes, fips_test_instant(1400))); /* expires_at moved */
+    published_cache(h, &clock, 1400);
+    assert(current_snapshot(h)->cache != section && current_snapshot(h)->fingerprint != fingerprint);
+    section = current_snapshot(h)->cache;
+    uint64_t generation = fips_coord_cache_generation(&h->cache);
+    published_cache(h, &clock, 300500); /* entries written at 0 expired; no cache call since */
+    assert(fips_coord_cache_generation(&h->cache) == generation && current_snapshot(h)->cache != section);
+    size_t resident = h->cache.len, live = current_snapshot(h)->cache_count;
     assert(live > 0 && live < resident);
     fipsd_dp_destroy(h->dataplane);
     free(index); free(slots); free(h->tree); free(h);
