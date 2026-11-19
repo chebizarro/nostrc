@@ -186,7 +186,7 @@ struct ble_instance {
     fipsd_ble_sink sink;
     fipsd_runtime *runtime;
     GoContext *root;
-    GoChannel *events, *stop, *bound, *changed, *adverts;
+    GoChannel *events, *stop, *bound, *changed, *adverts; /* changed: one-slot wake when a link ends or a challenger is pooled */
     bool has_identity;
     fips_xonly_pubkey local_key;
     fips_node_addr local_node;

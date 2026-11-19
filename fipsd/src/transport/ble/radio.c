@@ -26,7 +26,7 @@
 #define SIM_SEEN 64u
 #define SIM_COMMANDS 256u
 enum { CMD_QUIT, CMD_LISTEN, CMD_ADVERTISE, CMD_ADVERTISE_STOP, CMD_SCAN_START, CMD_SCAN_STOP, CMD_READ_PSM,
-    CMD_CONNECT, CMD_ADAPTER, CMD_STALL, CMD_REFUSE, CMD_ASSIGN, CMD_DROP, CMD_INJECT };
+    CMD_CONNECT, CMD_ADAPTER, CMD_STALL, CMD_REFUSE, CMD_ASSIGN, CMD_DROP, CMD_INJECT, CMD_ORPHAN };
 typedef struct sim_req {
     _Atomic int refs;
     int kind;
@@ -64,6 +64,7 @@ struct sim_channel {
     GoChannel *q[2], *gone[2], *dead; /* q[s] carries side s's writes; gone[s]: side s closed */
     int fd[2], open_ends;
     bool broken;
+    bool orphan[2]; /* side s was lost silently: its close tells the far end nothing */
     fipsd_ble_radio_mode mode;
     size_t chunk;
 };
@@ -224,6 +225,23 @@ static size_t break_channels(fipsd_ble_air *air, fipsd_ble_radio *r)
     }
     return n;
 }
+/* A half-open loss: this radio's end of each live channel dies (its transport is told, as for a
+ * broken link) while the far end sees nothing, as when a link's supervision timeout has not yet
+ * fired there. The orphaned end's close stays silent, and its descriptor stays open until the
+ * channel is freed, so the far end's reads park and its writes are taken. */
+static size_t orphan_channels(fipsd_ble_air *air, fipsd_ble_radio *r)
+{
+    size_t n = 0;
+    for (sim_channel *c = air->channels; c; c = c->next) {
+        if (c->broken) continue;
+        for (int s = 0; s < 2; ++s) {
+            if (c->radio[s] != r || c->orphan[s] || !c->end[s]) continue;
+            c->orphan[s] = true; ++n;
+            if (r->sink) (void)fipsd_ble_sink_closed(r->sink, c->end[s]->base.id);
+        }
+    }
+    return n;
+}
 static ssize_t sim_read(fipsd_ble_stream *s, uint8_t *buf, size_t cap, uint64_t deadline)
 {
     sim_end *e = (sim_end *)s; sim_channel *c = e->ch;
@@ -295,6 +313,7 @@ static void channel_free(sim_channel *c)
         if (c->gone[s]) go_channel_unref(c->gone[s]);
     }
     if (c->dead) go_channel_unref(c->dead);
+    for (int s = 0; s < 2; ++s) if (c->fd[s] >= 0) close(c->fd[s]); /* an orphaned end's, kept open until now */
     free(c);
 }
 static void stream_close(fipsd_ble_stream *s)
@@ -302,8 +321,10 @@ static void stream_close(fipsd_ble_stream *s)
     sim_end *e = (sim_end *)s; sim_channel *c = e->ch; fipsd_ble_air *air = c->air;
     bool last;
     nsync_mu_lock(&air->mu);
-    go_channel_close(c->q[e->side]); go_channel_close(c->gone[e->side]);
-    if (c->fd[e->side] >= 0) { close(c->fd[e->side]); c->fd[e->side] = -1; }
+    if (!c->orphan[e->side]) {
+        go_channel_close(c->q[e->side]); go_channel_close(c->gone[e->side]);
+        if (c->fd[e->side] >= 0) { close(c->fd[e->side]); c->fd[e->side] = -1; }
+    }
     c->end[e->side] = NULL;
     last = --c->open_ends == 0;
     if (last) for (sim_channel **p = &air->channels; *p; p = &(*p)->next) if (*p == c) { *p = c->next; break; }
@@ -444,6 +465,7 @@ static void process(fipsd_ble_radio *r, sim_req *q)
     case CMD_REFUSE: r->refuse = q->a; break;
     case CMD_ASSIGN: r->assigned = q->psm; break;
     case CMD_DROP: q->count = break_channels(air, r); break;
+    case CMD_ORPHAN: q->count = orphan_channels(air, r); break;
     case CMD_INJECT:
         if (r->scanning && up(r) && r->sink) (void)fipsd_ble_sink_discovered(r->sink, &q->peer, NULL, q->data, q->len);
         break;
@@ -622,6 +644,13 @@ void fipsd_ble_radio_set_filter(fipsd_ble_radio *r, fipsd_ble_radio_filter filte
 size_t fipsd_ble_radio_drop_links(fipsd_ble_radio *r)
 {
     sim_req *q = req_new(CMD_DROP, true);
+    size_t n = call(r, q, FIPSD_BLE_NO_DEADLINE) ? 0 : q->count;
+    if (q) req_unref(q);
+    return n;
+}
+size_t fipsd_ble_radio_orphan_links(fipsd_ble_radio *r)
+{
+    sim_req *q = req_new(CMD_ORPHAN, true);
     size_t n = call(r, q, FIPSD_BLE_NO_DEADLINE) ? 0 : q->count;
     if (q) req_unref(q);
     return n;
