@@ -1,16 +1,25 @@
 /* Regression for nostrc-pxwaj: a burst of application datagrams larger than
  * every bounded queue on the originating path (native flow buffer, dispatcher
  * mailbox, crypto packet pool, worker queues) crosses two in-process nodes
- * through the real native API without a single counted drop. The client
+ * through the real native API without a single drop on that path. The client
  * writes as fast as its socket accepts: the daemon's flow reader must park on
  * the dispatcher mailbox and the dispatcher must gate admission on packet-pool
  * headroom, so pressure reaches the client as EAGAIN/ENOBUFS rather than a
- * drop, and the far client must read every datagram exactly once. Readiness
- * is observed through notices and blocking reads; there are no sleeps and no
- * timing assertions. Where a full client buffer refuses a write with ENOBUFS
- * and no writability event (SOCK_DGRAM: Darwin, FreeBSD), the far node drops
- * and counts what the reader has not made room for, so there every datagram is
- * read exactly once or counted as drop_client_buffer_full; elsewhere none is. */
+ * drop.
+ *
+ * The far node has no such back-pressure by design: a full flow queue costs
+ * the slow client a datagram, never the node its receive path (native/link.c).
+ * So the far client reads every datagram exactly once or the far node counts
+ * it exactly once as drop_flow_queue_full (or as drop_client_buffer_full where
+ * a full client buffer refuses a write with ENOBUFS and no writability event:
+ * SOCK_DGRAM on Darwin and FreeBSD; Linux SEQPACKET parks the writer). Which
+ * of the two happens depends on scheduling alone: a far reader descheduled for
+ * about a millisecond at line rate fills its queue (nostrc-aqyad), so the
+ * count is not asserted. A second burst makes that path deterministic: its
+ * reader takes nothing until the far node has counted a drop. After each
+ * burst one more datagram must arrive, so the far flow survived the pressure.
+ * Readiness is observed through notices, native API events and blocking
+ * reads; there are no sleeps and no timing assertions. */
 #define _POSIX_C_SOURCE 200809L
 #define _DARWIN_C_SOURCE 1
 #include "node_test.h"
@@ -39,14 +48,38 @@ static void api_init(api_node *n, fipsd_loopback_network *net, const char *name,
     n->api = fipsd_native_api_create(n->node.configs, n->node.node, n->node.h); CHECK(n->api);
     snprintf(n->path, sizeof n->path, "%s", path);
 }
-typedef struct reader { fips_native_stream *in; uint8_t seen[BURST / 8]; unsigned received, duplicates, bad; } reader;
+static uint64_t metric(api_node *n, fipsd_metric id)
+{ return fipsd_metrics_get((fipsd_metrics *)fipsd_node_handlers_metrics(n->node.h), id); }
+/* What the far node counted instead of handing a datagram to its client. */
+static uint64_t far_drops(api_node *n)
+{ return metric(n, FIPSD_METRIC_native_drop_flow_queue_full) + metric(n, FIPSD_METRIC_native_drop_client_buffer_full); }
+typedef struct reader {
+    fips_native_stream *in;
+    api_node *far;
+    GoChannel *stall; /* the far API's events: read nothing until the far node counts a drop */
+    uint64_t dropped_before;
+    uint8_t seen[BURST / 8];
+    unsigned received, duplicates, bad;
+} reader;
+static unsigned dropped(const reader *r) { return (unsigned)(far_drops(r->far) - r->dropped_before); }
 static void *drain(void *arg)
 {
     reader *r = arg;
     uint8_t buf[PAYLOAD + 1];
-    while (r->received < BURST) {
+    /* The far API emits one event per inbound datagram after counting it, so
+     * this wait is event-driven; its bound only ends a failed run, which the
+     * accounting then reports. */
+    while (r->stall && !dropped(r)) {
+        void *value = NULL;
+        GoSelectCase cases[] = {{.op = GO_SELECT_RECEIVE, .chan = r->stall, .recv_buf = &value}};
+        if (go_select_timeout(cases, 1, NT_WAIT_MS).selected_case != 0 || !value) return NULL;
+        free(value);
+    }
+    /* A drop is counted while the client still has queued datagrams to read,
+     * so every datagram is read or counted by the time this loop ends. */
+    while (r->received + dropped(r) < BURST) {
         ssize_t n = fips_native_recv(r->in, buf, sizeof buf);
-        if (n == -EAGAIN) break; /* the bounded read deadline: the assertion below reports it */
+        if (n == -EAGAIN) break; /* the bounded read deadline: the accounting reports it */
         if (n != (ssize_t)PAYLOAD) { ++r->bad; break; }
         uint32_t seq; memcpy(&seq, buf, sizeof seq);
         if (seq >= BURST) { ++r->bad; break; }
@@ -76,8 +109,23 @@ static void blast(fips_native_stream *out)
         }
     }
 }
-static uint64_t metric(api_node *n, fipsd_metric id)
-{ return fipsd_metrics_get((fipsd_metrics *)fipsd_node_handlers_metrics(n->node.h), id); }
+/* One burst, its far reader stalled first when `stall` is set; returns how
+ * many the far node counted instead of delivering. Once every datagram is
+ * accounted for nothing is queued on the far flow, so the next must arrive. */
+static unsigned burst(fips_native_stream *out, fips_native_stream *in, api_node *far, GoChannel *stall, reader *r)
+{
+    memset(r, 0, sizeof *r);
+    r->in = in; r->far = far; r->stall = stall; r->dropped_before = far_drops(far);
+    pthread_t thread; CHECK(pthread_create(&thread, NULL, drain, r) == 0);
+    blast(out);
+    CHECK(pthread_join(thread, NULL) == 0);
+    unsigned lost = dropped(r);
+    CHECK(r->bad == 0 && r->duplicates == 0 && r->received + lost == BURST);
+    uint8_t buf[16];
+    CHECK(fips_native_send(out, "fin", 3) == 0);
+    CHECK(fips_native_recv(in, buf, sizeof buf) == 3 && !memcmp(buf, "fin", 3));
+    return lost;
+}
 /* node_test.h helpers this proof does not need. */
 static void (*const unused_helpers[])(void) = {(void (*)(void))nt_query, (void (*)(void))nt_print_trace};
 int main(void)
@@ -95,6 +143,8 @@ int main(void)
     api_node a, b;
     api_init(&a, net, "A", "loop:a", "1111111111111111111111111111111111111111111111111111111111111111", path_a, &hcfg);
     api_init(&b, net, "B", "loop:b", "2222222222222222222222222222222222222222222222222222222222222222", path_b, &hcfg);
+    GoChannel *events = go_channel_create(256); CHECK(events);
+    fipsd_native_api_observe(b.api, events);
     a.node.transport->interface_name = "loop-test"; b.node.transport->interface_name = "loop-test";
     CHECK(fipsd_runtime_register(rt, fipsd_node_subsystem(a.node.node)) == 0);
     CHECK(fipsd_runtime_register(rt, fipsd_node_subsystem(b.node.node)) == 0);
@@ -127,41 +177,52 @@ int main(void)
     CHECK(fips_native_stream_max_payload(out) >= PAYLOAD);
     e = nt_await(&a.node, FIPSD_NOTICE_SESSION_UP, &b.node.identity.node_addr, NT_WAIT_MS); CHECK(e); free(e);
     e = nt_await(&b.node, FIPSD_NOTICE_SESSION_UP, &a.node.identity.node_addr, NT_WAIT_MS); CHECK(e); free(e);
-    reader r = {.in = in};
-    pthread_t thread; CHECK(pthread_create(&thread, NULL, drain, &r) == 0);
-    blast(out);
-    CHECK(pthread_join(thread, NULL) == 0);
-    uint64_t far_drops = metric(&b, FIPSD_METRIC_native_drop_client_buffer_full);
-#if FIPSD_NATIVE_FULL_CLIENT_DROPS
-    CHECK(r.bad == 0 && r.duplicates == 0 && r.received + far_drops == BURST);
-#else
-    CHECK(r.bad == 0 && r.duplicates == 0 && r.received == BURST && far_drops == 0);
-#endif
-    CHECK(metric(&a, FIPSD_METRIC_native_drop_client_buffer_full) == 0);
-    /* Every drop counter on both nodes is zero: the originating path applied
-     * back-pressure, the far node delivered through its sink and flow. */
-    CHECK(metric(&a, FIPSD_METRIC_native_sent_datagrams) == BURST + 1);
+    reader free_running, stalled;
+    unsigned lost_free = burst(out, in, &b, NULL, &free_running);
+    void *stale;
+    while (go_channel_try_receive(events, &stale) == 0) free(stale);
+    unsigned lost_stalled = burst(out, in, &b, events, &stalled);
+    CHECK(lost_stalled > 0); /* the stalled reader made the far node give up on it */
+    fips_native_stream_close(in); fips_native_stream_close(out); fips_native_listener_close(listener);
+    fipsd_runtime_shutdown(rt);
+    CHECK(fipsd_runtime_run(rt) == FIPSD_RUN_OK);
+    /* Counted after every fiber joined: a client may read a datagram before
+     * the far node counts it. The originating node applied back-pressure and
+     * dropped nothing: it took every datagram the client wrote (the opener,
+     * two bursts and their two liveness datagrams). */
+    const uint64_t total = 2u * BURST + 3u;
+    CHECK(metric(&a, FIPSD_METRIC_native_sent_datagrams) == total);
     CHECK(metric(&a, FIPSD_METRIC_forwarding_drop_send_error_packets) == 0);
     CHECK(metric(&a, FIPSD_METRIC_forwarding_drop_mtu_exceeded_packets) == 0);
     CHECK(metric(&a, FIPSD_METRIC_forwarding_drop_no_route_packets) == 0);
-    CHECK(metric(&b, FIPSD_METRIC_native_received_datagrams) == BURST + 1);
+    CHECK(metric(&a, FIPSD_METRIC_native_drop_flow_queue_full) == 0);
+    CHECK(metric(&a, FIPSD_METRIC_native_drop_client_buffer_full) == 0);
+    /* The far node counted each arriving datagram exactly once: handed to the
+     * flow (received), or dropped at its full queue; the reader saw every
+     * drop it was not handed. */
+    uint64_t queue_drops = metric(&b, FIPSD_METRIC_native_drop_flow_queue_full);
+    uint64_t client_drops = metric(&b, FIPSD_METRIC_native_drop_client_buffer_full);
+    CHECK(metric(&b, FIPSD_METRIC_native_received_datagrams) + queue_drops == total);
+    CHECK(queue_drops + client_drops == (uint64_t)lost_free + lost_stalled);
+#if !FIPSD_NATIVE_FULL_CLIENT_DROPS
+    CHECK(client_drops == 0); /* SEQPACKET parks the far writer instead */
+#endif
     for (api_node *n = &a; n; n = n == &a ? &b : NULL) {
-        CHECK(metric(n, FIPSD_METRIC_native_drop_flow_queue_full) == 0);
         CHECK(metric(n, FIPSD_METRIC_native_drop_arrival_queue_full) == 0);
         CHECK(metric(n, FIPSD_METRIC_native_drop_backlog_full) == 0);
         CHECK(metric(n, FIPSD_METRIC_native_drop_no_port) == 0);
         CHECK(metric(n, FIPSD_METRIC_native_drop_oversize) == 0);
         CHECK(metric(n, FIPSD_METRIC_native_drop_listener_gone) == 0);
     }
-    fips_native_stream_close(in); fips_native_stream_close(out); fips_native_listener_close(listener);
-    fipsd_runtime_shutdown(rt);
-    CHECK(fipsd_runtime_run(rt) == FIPSD_RUN_OK);
     fipsd_runtime_destroy(rt);
     fipsd_native_api_destroy(a.api); fipsd_native_api_destroy(b.api);
+    while (go_channel_try_receive(events, &stale) == 0) free(stale);
+    go_channel_free(events);
     nt_drain(&a.node); nt_drain(&b.node);
     nt_destroy(&a.node); nt_destroy(&b.node);
     fipsd_loopback_network_destroy(net);
-    printf("native burst: %u x %u-byte datagrams A -> B through the native API, %u read, %llu counted at a full client: ok\n",
-           BURST, PAYLOAD, r.received, (unsigned long long)far_drops);
+    printf("native burst: 2 x %u x %u-byte datagrams A -> B through the native API with no originating drop; "
+           "draining reader read %u (%u counted at the far node), stalled reader read %u (%u counted): ok\n",
+           BURST, PAYLOAD, free_running.received, lost_free, stalled.received, lost_stalled);
     return 0;
 }
