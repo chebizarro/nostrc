@@ -19,6 +19,12 @@
  * (so its announcements were delivered to the link), a sentinel advert is
  * injected into D and into A; the receive queue is FIFO, so once an engine
  * reports the sentinel it has processed every datagram delivered before it.
+ * The mDNS engines watch their node's network monitor (one per daemon): the
+ * LAN snapshot is each node's injected netmon source, and the test counts
+ * the process's monitors. A then gains a second address on the link and
+ * wakes its monitor; its engine re-announces, and B resolves A again with
+ * the new address.
+ *
  * Every wait is a bounded channel select; nothing sleeps. */
 #include "node_test.h"
 #include "node/handlers/internal.h"
@@ -85,9 +91,9 @@ static void link_close(void *user)
 }
 /* The link's one interface: lan0, index 7, holding 127.0.0.1/8, so the
  * nodes' loopback UDP addresses are on the link the adverts arrive on. */
+static _Atomic bool second_address; /* user != NULL: A's source, which may hold 127.0.0.2 too */
 static fipsd_network_snapshot *lan_read(void *user)
 {
-    (void)user;
     fipsd_network_snapshot *s = calloc(1, sizeof *s);
     assert(s);
     s->interface_count = 1;
@@ -95,8 +101,12 @@ static fipsd_network_snapshot *lan_read(void *user)
     s->interfaces[0].index = LINK_IF; s->interfaces[0].up = true; s->interfaces[0].carrier = true;
     s->address_count = 1;
     s->addresses[0] = (fipsd_interface_address){.index = LINK_IF, .ip = {.bytes = {127, 0, 0, 1}, .width = 4}, .prefix = 8};
+    if (user && atomic_load(&second_address))
+        s->addresses[s->address_count++] = (fipsd_interface_address){.index = LINK_IF, .ip = {.bytes = {127, 0, 0, 2}, .width = 4}, .prefix = 8};
     return s;
 }
+static const fipsd_netmon_source *node_source;
+static void use_lan(fipsd_node_options *o) { o->netmon_source = node_source; }
 
 /* Hold each node's first UDP send (IK msg1) until BOTH mDNS auto-dials
  * have reached the transport. This forces crossing dials without sleeps,
@@ -176,6 +186,8 @@ static bool is_own(const fipsd_mdns_event *e, const void *a) { (void)a; return e
 static bool discovered(const fipsd_mdns_event *e, const void *npub) { return e->kind == FIPSD_MDNS_EVENT_DISCOVERED && !strcmp(e->npub, npub); }
 static bool cross_scope(const fipsd_mdns_event *e, const void *npub) { return e->kind == FIPSD_MDNS_EVENT_SKIPPED && !strcmp(e->reason, "cross-scope") && !strcmp(e->npub, npub); }
 static bool mentions(const fipsd_mdns_event *e, const void *npub) { return !strcmp(e->npub, npub) && e->kind != FIPSD_MDNS_EVENT_STARTED; }
+static bool discovered_second(const fipsd_mdns_event *e, const void *npub)
+{ return discovered(e, npub) && e->addr.ip.width == 4 && !memcmp(e->addr.ip.bytes, (const uint8_t[4]){127, 0, 0, 2}, 4); }
 
 /* A FIPS advert from npub `npub` for `service`, scope `scope`, injected into
  * one endpoint as if multicast by 10.77.0.99. */
@@ -222,9 +234,13 @@ int main(void)
     dial_ready = go_channel_create(2); dial_release = go_channel_create(2);
     assert(dial_ready && dial_release);
     fipsd_mdns_service *mdns[NODES];
+    GoChannel *a_wake = go_channel_create(1); assert(a_wake);
     fipsd_netmon_source lan = {.read = lan_read, .injected = true};
+    fipsd_netmon_source lan_a = {.read = lan_read, .user = &second_address, .wake = a_wake, .injected = true};
+    size_t monitors = fipsd_netmon_instances();
     for (size_t i = 0; i < NODES; ++i) {
-        assert(nt_init(&nodes[i], NULL, names[i], NULL, yaml[i], &hcfg, 1));
+        node_source = i == 0 ? &lan_a : &lan;
+        assert(nt_init_with_options(&nodes[i], NULL, names[i], NULL, yaml[i], &hcfg, 1, use_lan));
         if (i < 2) {
             nodes[i].transport->auto_connect = true;
             crossing[i].transport = nodes[i].transport;
@@ -238,7 +254,6 @@ int main(void)
         eps[i].src[0] = 10; eps[i].src[1] = 77; eps[i].src[2] = 0; eps[i].src[3] = (uint8_t)(1 + i);
         fipsd_mdns_io io = {.user = &eps[i], .open = link_open, .join = link_join, .leave = link_leave, .send = link_send, .close = link_close};
         fipsd_mdns_service_set_io(mdns[i], &io);
-        fipsd_mdns_service_set_netmon(mdns[i], &lan);
         observed[i] = go_channel_create(1024); assert(observed[i]);
         fipsd_mdns_service_observe(mdns[i], observed[i]);
     }
@@ -246,6 +261,8 @@ int main(void)
     for (size_t i = 0; i < NODES; ++i) assert(fipsd_runtime_register(rt, fipsd_mdns_service_subsystem(mdns[i])) == 0);
     nt_watch_publications();
     assert(fipsd_runtime_start(rt) == 0);
+    /* One network monitor per node: the mDNS engines watch their node's. */
+    assert(fipsd_netmon_instances() == monitors + NODES);
     for (size_t i = 0; i < 2; ++i) {
         void *value = NULL;
         GoSelectCase c = {GO_SELECT_RECEIVE, dial_ready, NULL, &value};
@@ -322,6 +339,14 @@ int main(void)
         assert(json_array_size(list) == 1);
         json_decref(peers);
     }
+    /* A's link gains 127.0.0.2: its node's monitor reports the address
+     * change, A's engine re-announces, and B resolves A at the new address.
+     * The A/B link stays (link_stable). */
+    assert(!find(1, discovered_second, npub[0]));
+    atomic_store(&second_address, true);
+    assert(go_channel_send(a_wake, a_wake) == 0);
+    assert(await(1, discovered_second, npub[0], deadline));
+    assert(fipsd_netmon_instances() == monitors + NODES);
     for (size_t i = 2; i < NODES; ++i) {
         const size_t none = 0;
         assert(nt_await_converged(&nodes[i], nt_peer_count, &none, deadline));
@@ -344,6 +369,9 @@ int main(void)
         nt_destroy(&nodes[i]);
         go_channel_unref(observed[i]);
     }
-    puts("mdns two nodes: discovered without configuration, IK link both ways; cross-scope and isolated types filtered: ok");
+    assert(fipsd_netmon_instances() == monitors);
+    go_channel_unref(a_wake);
+    puts("mdns two nodes: discovered without configuration, IK link both ways; cross-scope and isolated types filtered;"
+         " one netmon per node, re-announced on an address change: ok");
     return 0;
 }

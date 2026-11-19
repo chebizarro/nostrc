@@ -134,7 +134,7 @@ fipsd_node_handlers *fipsd_node_handlers_create(const fipsd_node_handlers_config
 }
 static void free_storage(handlers *h)
 {
-    if (h->recs) for (size_t i = 0; i < h->cfg.peer_capacity; ++i) free(h->recs[i].path);
+    if (h->recs) for (size_t i = 0; i < h->cfg.peer_capacity; ++i) { free(h->recs[i].path); free(h->recs[i].listing); }
     free(h->recs); free(h->legs); free(h->index_map); free(h->configured); free(h->index_storage);
     free(h->silent_storage); free(h->tree); free(h->tree_peers); free(h->announce_scratch); free(h->coord_scratch);
     free(h->bloom_peers); free(h->leaves); free(h->recent); free(h->pending_lookups); free(h->backoff_entries);
@@ -488,6 +488,7 @@ static bool on_command(void *user, void *message)
         break;
     case HCMD_LEARN_IDENTITY: (void)fipsd_identity_cache_put(&h->identities, c->identity, hs_wall_ms(h)); break;
     case HCMD_DIAL_CONFIGURED: (void)hs_dial_configured(h); break;
+    case HCMD_PATH_INTAKE: hs_path_intake(h, &c->node, c->feed, c->transport, &c->addr); break;
     case HCMD_CONTROL: {
         /* A completed control command is a snapshot barrier, including for
          * earlier mailbox mutations (e.g. DNS identity seeding). Publish before
@@ -581,6 +582,14 @@ int fipsd_node_handlers_learn_identity(fipsd_node_handlers *h, const fips_peer_i
     handler_command *c = command_new(HCMD_LEARN_IDENTITY, 0);
     if (!c) return -1;
     c->identity = *peer;
+    return enqueue(h, c);
+}
+int fipsd_node_handlers_path_intake(fipsd_node_handlers *h, const fips_node_addr *peer, fipsd_path_feed feed,
+                                    fips_transport_id transport, const fips_transport_addr *addr)
+{
+    handler_command *c = command_new(HCMD_PATH_INTAKE, 0);
+    if (!c) return -1;
+    c->node = *peer; c->feed = feed; c->transport = transport; c->addr = *addr;
     return enqueue(h, c);
 }
 int fipsd_node_handlers_dial_configured(fipsd_node_handlers *h)

@@ -6,6 +6,17 @@
 #include "node/handlers/internal.h"
 #include "transport/transport.h"
 
+/* What each intake feed lists for one linked peer (upstream Listings; see
+ * hs_path_intake below). */
+#define HS_PATH_FEEDS 1u
+#define HS_PATH_LISTED_MAX 16u
+typedef struct hs_path_listed { fips_transport_id transport; fips_transport_addr addr; uint64_t at; } hs_path_listed;
+struct hs_path_listing {
+    uint64_t clock; /* report order: the least recently reported pair has the lowest `at` */
+    size_t count[HS_PATH_FEEDS];
+    hs_path_listed items[HS_PATH_FEEDS][HS_PATH_LISTED_MAX];
+};
+
 static size_t facts_mtu(void *ctx, fips_transport_id t, const fips_transport_addr *a)
 { fipsd_transport *x = hs_transport(ctx, t); return x ? x->ops->mtu(x, a) : 0; }
 static fips_path_medium facts_medium(void *ctx, fips_transport_id t, const fips_transport_addr *a)
@@ -58,6 +69,10 @@ void hs_path_peer_added(handlers *h, peer_rec *rec)
     fips_path_env env = {&facts, hs_mmp_link_cost(h, rec)};
     fips_path_bundle_new(rec->path, hs_now(h), info->transport, info->addr, params_of(h), h->entropy, &env);
     rec->path_live = true;
+    /* A new machine starts with an empty candidate table: forget what the
+     * feeds listed for the old one (upstream paths_renewed), so each feed's
+     * next report is a candidate for this one. */
+    if (rec->listing) memset(rec->listing, 0, sizeof *rec->listing);
 }
 static void run_outputs(handlers *h, peer_rec *rec, fips_path_outputs *out)
 {
@@ -146,6 +161,9 @@ void hs_path_peer_removed(handlers *h, peer_rec *rec)
     fips_path_outputs out = {h->path_outputs, FIPS_PATH_OUTPUTS_MAX, 0};
     (void)fips_path_bundle_close(rec->path, &out);
     rec->path_live = false;
+    /* The listing goes with the link (upstream Listings::expire drops peers
+     * no longer held). */
+    if (rec->listing) memset(rec->listing, 0, sizeof *rec->listing);
 }
 void hs_path_message(handlers *h, peer_rec *rec, fipsd_transport *t, const fips_transport_addr *from, fips_link_message_type type, const uint8_t *body, size_t len)
 {
@@ -211,6 +229,49 @@ void hs_path_network_event(handlers *h, const fipsd_netmon_event *e)
             .to = {.transport = transport->id}, .as.present = e->kind == FIPSD_INTERFACE_UP};
         for (size_t i = 0; i < h->cfg.peer_capacity; ++i)
             if (h->recs[i].used) step(h, &h->recs[i], &in);
+    }
+}
+/* ---- candidate intake (upstream path_intake.rs) -------------------------
+ * For each linked peer and each feed, the pairs the feed lists. Upstream's
+ * Feed::Mdns reports one pair at a time and never goes silent (mdns-sd
+ * reports a service again only when its records change), so a pair it did
+ * not list is a Candidate from Source::Discovery, one it lists already only
+ * refreshes its recency, and past HS_PATH_LISTED_MAX pairs the least
+ * recently reported is Unlisted. The listing lasts until the link goes or
+ * its machine starts again. Upstream's other feeds (Beacon, Config, Nostr,
+ * Heard) are not ported; Beacon shares Source::Discovery with Mdns, and its
+ * port must add upstream's `elsewhere` check across same-source feeds. */
+static fips_path_source feed_source(fipsd_path_feed feed) { (void)feed; return FIPS_PATH_Discovery; }
+void hs_path_intake(handlers *h, const fips_node_addr *peer, fipsd_path_feed feed,
+                    fips_transport_id transport, const fips_transport_addr *addr)
+{
+    if (!h->cfg.path_enabled || (unsigned)feed >= HS_PATH_FEEDS) return;
+    peer_rec *rec = hs_rec_find(h, peer);
+    if (!rec || !rec->path_live) return;
+    if (!rec->listing && !(rec->listing = calloc(1, sizeof *rec->listing))) return;
+    struct hs_path_listing *l = rec->listing;
+    hs_path_listed *list = l->items[feed];
+    size_t *n = &l->count[feed];
+    for (size_t i = 0; i < *n; ++i)
+        if (fips_transport_id_equal(list[i].transport, transport) && fips_transport_addr_equal(&list[i].addr, addr)) {
+            list[i].at = ++l->clock;
+            return;
+        }
+    hs_path_listed gone = {0};
+    bool evicted = false;
+    if (*n == HS_PATH_LISTED_MAX) {
+        size_t oldest = 0;
+        for (size_t i = 1; i < *n; ++i) if (list[i].at < list[oldest].at) oldest = i;
+        gone = list[oldest];
+        memmove(&list[oldest], &list[oldest + 1], (*n - oldest - 1) * sizeof *list);
+        --*n; evicted = true;
+    }
+    list[(*n)++] = (hs_path_listed){transport, *addr, ++l->clock};
+    fips_path_input in = {.kind = FIPS_PATH_INPUT_Candidate, .to = {transport, *addr}, .as.source = feed_source(feed)};
+    step(h, rec, &in);
+    if (evicted && rec->used && rec->path_live) {
+        fips_path_input out = {.kind = FIPS_PATH_INPUT_Unlisted, .to = {gone.transport, gone.addr}, .as.source = feed_source(feed)};
+        step(h, rec, &out);
     }
 }
 static const char *state_name(fips_path_state s)

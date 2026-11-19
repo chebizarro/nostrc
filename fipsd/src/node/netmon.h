@@ -67,6 +67,21 @@ int fipsd_netmon_start(fipsd_netmon *, fipsd_runtime *);
 void fipsd_netmon_stop(fipsd_netmon *);
 void fipsd_netmon_destroy(fipsd_netmon *); /* after join */
 GoChannel *fipsd_netmon_events(fipsd_netmon *); /* owned non-NULL malloc'd events */
+/* Further observers of the same monitor, so a daemon runs one (the node's):
+ * the events channel above keeps its single consumer, the node dispatcher.
+ * Every event ORs 1u << kind into the watch, then try-sends a wake token to
+ * `wake` (capacity >= 1; a full channel already holds a pending wake), so
+ * bursts coalesce and no kind is lost. The event's snapshot is stored first.
+ * The watcher takes the accumulated kinds and reads fipsd_netmon_snapshot.
+ * Add/remove from any thread; remove before destroy. NULL when full. */
+#define FIPSD_NETMON_WATCHES 4u
+typedef struct fipsd_netmon_watch fipsd_netmon_watch;
+fipsd_netmon_watch *fipsd_netmon_watch_add(fipsd_netmon *, GoChannel *wake);
+uint32_t fipsd_netmon_watch_take(fipsd_netmon_watch *); /* the kinds since the last take */
+void fipsd_netmon_watch_remove(fipsd_netmon *, fipsd_netmon_watch *);
+/* Monitors alive in this process (created, not yet destroyed): a test hook
+ * for the one-monitor-per-daemon rule. */
+size_t fipsd_netmon_instances(void);
 GoRefPtr fipsd_netmon_snapshot(fipsd_netmon *);
 /* Native backend diagnostic, -1 when timer-only. Valid until destroy. */
 int fipsd_netmon_fd(const fipsd_netmon *);

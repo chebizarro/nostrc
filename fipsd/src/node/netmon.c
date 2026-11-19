@@ -8,6 +8,8 @@
 #include "ticker.h"
 #include "log.h"
 #include <libgo/fiber.h>
+#include <nsync.h>
+#include <stdatomic.h>
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -28,6 +30,10 @@
 #include <net/route.h>
 #endif
 
+struct fipsd_netmon_watch {
+    _Atomic uint32_t kinds;
+    GoChannel *wake; /* NULL: free slot */
+};
 struct fipsd_netmon {
     fipsd_netmon_source source;
     fipsd_runtime *runtime;
@@ -36,7 +42,11 @@ struct fipsd_netmon {
     Ticker *ticker;
     int fd;
     bool started;
+    nsync_mu watch_mu;
+    fipsd_netmon_watch watches[FIPSD_NETMON_WATCHES];
 };
+static _Atomic size_t instances;
+size_t fipsd_netmon_instances(void) { return atomic_load(&instances); }
 static const fipsd_interface *find_interface(const fipsd_network_snapshot *s, uint32_t index)
 {
     for (size_t i = 0; i < s->interface_count; ++i)
@@ -206,9 +216,23 @@ static void kernel_reader(void *arg)
         (void)go_channel_try_send(m->wake, m); /* coalesce bursts */
     }
 }
+/* The snapshot an event describes is stored before the event is emitted, so
+ * a watcher woken here reads it (or a later one). */
+static void notify_watches(fipsd_netmon *m, fipsd_netmon_event_kind kind)
+{
+    nsync_mu_lock(&m->watch_mu);
+    for (size_t i = 0; i < FIPSD_NETMON_WATCHES; ++i) {
+        fipsd_netmon_watch *w = &m->watches[i];
+        if (!w->wake) continue;
+        atomic_fetch_or(&w->kinds, 1u << kind);
+        (void)go_channel_try_send(w->wake, w); /* full: a wake is already pending */
+    }
+    nsync_mu_unlock(&m->watch_mu);
+}
 static bool emit(fipsd_netmon *m, fipsd_netmon_event_kind kind, uint32_t index,
                  uint64_t generation, bool backstop, const fipsd_interface *iface)
 {
+    notify_watches(m, kind);
     fipsd_netmon_event *e = malloc(sizeof(*e));
     if (!e) return false;
     *e = (fipsd_netmon_event){.kind = kind, .index = index, .generation = generation, .backstop = backstop};
@@ -308,6 +332,8 @@ fipsd_netmon *fipsd_netmon_create(const fipsd_netmon_source *source)
     m->events = go_channel_create(64); m->stop = go_channel_create(1);
     m->wake = source && source->wake ? go_channel_ref(source->wake) : go_channel_create(1);
     m->snapshots = go_swap_create(NULL, free);
+    nsync_mu_init(&m->watch_mu);
+    atomic_fetch_add(&instances, 1);
     if (!m->events || !m->stop || !m->wake || !m->snapshots) {
         fipsd_netmon_destroy(m); return NULL;
     }
@@ -347,7 +373,34 @@ void fipsd_netmon_destroy(fipsd_netmon *m)
     }
     if (m->stop) go_channel_unref(m->stop);
     if (m->wake) go_channel_unref(m->wake);
+    for (size_t i = 0; i < FIPSD_NETMON_WATCHES; ++i)
+        if (m->watches[i].wake) go_channel_unref(m->watches[i].wake);
     go_swap_free(m->snapshots); free(m);
+    atomic_fetch_sub(&instances, 1);
+}
+fipsd_netmon_watch *fipsd_netmon_watch_add(fipsd_netmon *m, GoChannel *wake)
+{
+    if (!m || !wake) return NULL;
+    fipsd_netmon_watch *found = NULL;
+    nsync_mu_lock(&m->watch_mu);
+    for (size_t i = 0; i < FIPSD_NETMON_WATCHES && !found; ++i)
+        if (!m->watches[i].wake) {
+            found = &m->watches[i];
+            atomic_store(&found->kinds, 0);
+            found->wake = go_channel_ref(wake);
+        }
+    nsync_mu_unlock(&m->watch_mu);
+    return found;
+}
+uint32_t fipsd_netmon_watch_take(fipsd_netmon_watch *w) { return w ? atomic_exchange(&w->kinds, 0) : 0; }
+void fipsd_netmon_watch_remove(fipsd_netmon *m, fipsd_netmon_watch *w)
+{
+    if (!m || !w) return;
+    nsync_mu_lock(&m->watch_mu);
+    GoChannel *wake = w->wake;
+    w->wake = NULL;
+    nsync_mu_unlock(&m->watch_mu);
+    if (wake) go_channel_unref(wake);
 }
 GoChannel *fipsd_netmon_events(fipsd_netmon *m) { return m->events; }
 GoRefPtr fipsd_netmon_snapshot(fipsd_netmon *m) { return go_swap_load(m->snapshots); }

@@ -19,6 +19,9 @@ const fips_secp *fipsd_node_secp(const fipsd_node_context *); /* identity's own 
 const uint8_t *fipsd_node_startup_epoch(const fipsd_node_context *); /* 8 bytes */
 GoRefPtr fipsd_node_config(const fipsd_node_context *);
 GoRefPtr fipsd_node_network(const fipsd_node_context *);
+/* The node's network monitor, for further watchers (fipsd_netmon_watch_add);
+ * its events channel stays the dispatcher's. */
+fipsd_netmon *fipsd_node_netmon(const fipsd_node_context *);
 GoRefPtr fipsd_node_peers(const fipsd_node_context *);
 GoChannel *fipsd_node_peer_commands(const fipsd_node_context *);
 /* Dispatcher callbacks only. Nonblocking; refusal leaves owned job with caller.

@@ -63,6 +63,15 @@ typedef struct fipsd_lan_pending {
  * interfaces its record arrived on. With no arrival interface it is not. */
 bool fipsd_lan_target_on_link(const fipsd_mdns_sockaddr *addr, const uint32_t *ifaces, size_t n,
                               const fips_onlink_prefixes *on_link);
+/* A UDP transport an mDNS advert of an already-linked peer may be
+ * attributed to as a path candidate (upstream UdpLane): bound, with the OS
+ * index of the interface it is bound to (0: none) and its local family. */
+typedef struct fipsd_lan_lane { fips_transport_id id; uint32_t ifindex; bool v4; } fipsd_lan_lane;
+/* Upstream mdns_lane: among the lanes of addr's family, the lowest id bound
+ * to one of the interfaces the advert arrived on, else the lowest id (the one
+ * a dial of the address takes). False when no lane has the family. */
+bool fipsd_lan_mdns_lane(const fipsd_lan_lane *lanes, size_t n, const fipsd_mdns_sockaddr *addr,
+                         const uint32_t *ifaces, size_t nif, fips_transport_id *out);
 /* Offer one pair, stamped with now_ms. *displaced receives the pair a
  * REPLACED offer pushed out; *first_at_bound is set on the first offer to
  * find the set full since it last stayed below its bound for a minute. */
