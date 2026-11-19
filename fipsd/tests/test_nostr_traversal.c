@@ -258,6 +258,15 @@ static void link_up(node *n)
     for (;;) { fipsd_node_notice *e=receive(fipsd_node_handlers_notices(n->handlers));
         assert(e->kind!=FIPSD_NOTICE_HANDSHAKE_FAILED);bool done=e->kind==FIPSD_NOTICE_LINK_UP;free(e);if(done)return; }
 }
+/* RFC 5389 retransmits reuse their transaction id, so a request either
+ * belongs to a recorded STUN transaction or starts a new one. */
+typedef struct { uint8_t id[4][12]; size_t n; } stun_rounds;
+static bool stun_round(stun_rounds *r, const stun_request *q, bool record)
+{
+    for (size_t i = 0; i < r->n; ++i) if (!memcmp(r->id[i], q->request + 8, 12)) return true;
+    if (!record) return false;
+    assert(r->n < 4); memcpy(r->id[r->n++], q->request + 8, 12); return true;
+}
 static void traverse(void)
 {
     fixture *f=fixture_start();stun_fixture server;stun_fixture_start(&server,1,false);
@@ -275,7 +284,14 @@ static void traverse(void)
     (void)receive(nodes[0].published);(void)receive(nodes[1].published);
     for(unsigned i=0;i<2;++i)assert(fipsd_udp_connected_count(nodes[i].udp)==1);
     fips_transport_addr bound[2];for(unsigned i=0;i<2;++i)assert(fipsd_udp_address(nodes[i].udp,&bound[i]));
-    bool saw[2]={false,false};for(unsigned j=0;j<3;++j){stun_request *q=receive(server.requests);for(unsigned i=0;i<2;++i)if(fips_transport_addr_equal(&q->source,&bound[i]))saw[i]=true;free(q);}assert(saw[0]&&saw[1]);
+    /* One advert-round transaction per node on its shared UDP tuple. The
+     * fixture drops the first request, so one round retransmits; how often a
+     * round retransmits is timing (500 ms RTO against a loaded scheduler), so
+     * record transactions until both tuples were seen rather than count. */
+    stun_rounds rounds={0};bool saw[2]={false,false};
+    while(!saw[0]||!saw[1]){stun_request *q=receive(server.requests);(void)stun_round(&rounds,q,true);
+        for(unsigned i=0;i<2;++i)if(fips_transport_addr_equal(&q->source,&bound[i]))saw[i]=true;free(q);}
+    assert(rounds.n==2);
     /* nostrc-tbcl6: node 1's advert refreshed twice while the IK link is up.
      * Each cycle evicts node 0's cached copy (refetch against an empty relay)
      * and re-delivers node 1's signed advert live, so it reaches the dial
@@ -294,8 +310,11 @@ static void traverse(void)
         (void)receive(nodes[0].cached);assert((uintptr_t)receive(nodes[0].dialed)==1);
     }
     free(peer_advert);
-    /* dial() declined synchronously: nothing was queued to traversal_io. */
-    assert(go_channel_try_receive(server.requests,&v)&&go_channel_try_receive(nodes[0].published,&v));
+    /* dial() declined synchronously: nothing was queued to traversal_io. A
+     * late retransmit of a completed advert round may still be queued; any
+     * other request would be a new STUN transaction. */
+    while(!go_channel_try_receive(server.requests,&v)){assert(stun_round(&rounds,v,false));free(v);}
+    assert(go_channel_try_receive(nodes[0].published,&v));
     assert(fipsd_udp_connected_count(nodes[0].udp)==1);
     puts("advert refresh for an IK-linked peer, two cycles: dial declined, zero STUN/offer activity: OK");
     fipsd_runtime_shutdown(rt);assert(fipsd_runtime_run(rt)==FIPSD_RUN_OK);fipsd_runtime_destroy(rt);
