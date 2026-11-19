@@ -55,6 +55,8 @@ nostrc-8hvs6.2: fipsd stays 0.1.0 Unreleased; relay-backed rendezvous, private d
 
 # Component Version Manifest
 
+nostrc-tyukg: fipsd stays 0.1.0 Unreleased; PATCH-class counter-parity correction folds into the initial unreleased daemon. A late or duplicate link-rekey msg2 (the rekey machine's `LateReply`/`UnknownAttempt`/`UnknownIndex`) and a late copy of a completed dial's msg2 now count as handshake `unknown_connection`, and an unauthenticated link-rekey or first-dial msg2, an identity mismatch and a failed promotion as handshake `bad_state`, as upstream's `msg2_body`/`msg2_to_link` count them; each logs at debug under upstream's text. No wire-format, CLI, configuration, control-schema or public ABI change (both fields already existed in `show_metrics`; no state changes on any of these paths). The rekey-saturated interop harness holds C to the same explained-increment rule as Rust (`FipsdNodeRekeyMsg2Test` is new, test-only); libfips-core, libgo, libfipsnative, fipsctl, fipstop and fips-gateway unchanged; no numeric bump, release or tag.
+
 nostrc-9nxwk.1: fipsd stays 0.1.0 Unreleased; additive private TUN device/platform/syscall seams, ready-gated host lifecycle and control status fields fold into the initial unreleased daemon. libfips-core and libgo unchanged; no numeric bump, published release or tag. IPv6 shim delivery remains 9nxwk.2.
 nostrc-gfi8h.2: fipsd stays **0.1.0 Unreleased**; UDP sockets, authenticated
 connected-peer drains, classifier registration and additive transport counters

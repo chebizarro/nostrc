@@ -358,6 +358,14 @@ add_dependencies(fipsd_tests fipsd_node_restart_replay_test)
 add_test(NAME FipsdNodeRestartReplayTest COMMAND fipsd_node_restart_replay_test)
 set_tests_properties(FipsdNodeRestartReplayTest PROPERTIES TIMEOUT 60 LABELS "fips;node;acl" ENVIRONMENT "FIPSD_WORKERS=2")
 nostrc_describe_test(FipsdNodeRestartReplayTest OWNER fipsd TARGETS fipsd_node_restart_replay_test)
+# nostrc-tyukg: a late, duplicate or unauthenticated msg2, for the first dial and
+# for a link rekey, is counted as upstream counts it and moves nothing else.
+fipsd_unit_test(fipsd_node_rekey_msg2_test test_node_rekey_msg2.c)
+target_sources(fipsd_node_rekey_msg2_test PRIVATE handshake_fixture.c)
+add_dependencies(fipsd_tests fipsd_node_rekey_msg2_test)
+add_test(NAME FipsdNodeRekeyMsg2Test COMMAND fipsd_node_rekey_msg2_test)
+set_tests_properties(FipsdNodeRekeyMsg2Test PROPERTIES TIMEOUT 120 LABELS "fips;node" ENVIRONMENT "FIPSD_WORKERS=2")
+nostrc_describe_test(FipsdNodeRekeyMsg2Test OWNER fipsd TARGETS fipsd_node_rekey_msg2_test)
 
 # Tier B4: all privileged device syscalls replaced in the ordinary tests.
 fipsd_unit_test(fipsd_tun_test test_tun.c)

@@ -37,6 +37,8 @@ typedef struct handshake_fixture {
     bool (*on_command)(void *, void *);
 } handshake_fixture;
 void hf_init(handshake_fixture *);
+/* hf_init with the node's handler config adjusted first (its parsed config is passed along). */
+void hf_init_with(handshake_fixture *, void (*tune)(fipsd_node_handlers_config *, const fipsd_config *));
 void hf_destroy(handshake_fixture *);
 void hf_call(handshake_fixture *, void (*fn)(handshake_fixture *, void *), void *);
 void hf_state_read(handshake_fixture *, hf_state *); /* dispatcher only */

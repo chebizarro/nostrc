@@ -334,6 +334,9 @@ def c_config(path, root, rust_npub, port, scenario, nsec, after_messages):
     else:
         lines.append(f"  native_api: {{enabled: true, socket_path: '{root / 'ca.sock'}'}}")
         lines.append(f'  rekey: {{after_messages: {after_messages}}}')
+        # The debug line each late or duplicate link msg2 leaves is what
+        # explains its handshake.unknown_connection increment.
+        lines.append('  log_level: debug')
         lines += ['tun: {enabled: false}', 'dns: {enabled: false}']
         tcp = f"{{bind_addr: '127.0.0.1:0', send_buf_size: {SOCKET_BUFFER}, recv_buf_size: {SOCKET_BUFFER}}}"
     lines += ['transports:', f'  tcp: {tcp}', 'peers:', f"  - npub: '{rust_npub}'",
@@ -388,13 +391,17 @@ METRIC_NOTES = (('handshake', 'rekey_pending'), ('handshake', 'rekey_tiebreak'),
                 ('session', 'bad_state'))
 
 
-# Upstream's own logged causes for two of those counters, which its FIFO data
-# lane produces under this load by itself: a rekey msg2 its full data lane
-# refused (HandshakeStats::bad_state counts "msg2/msg3 send failed"), and a
-# duplicate or late msg2 copy for an attempt already completed or given up
-# (handlers/handshake.rs, "Rekey msg2 for no attempt in flight"). Every
-# increment of either must carry one; any other still fails.
-def rust_explained(log):
+# Each daemon's own logged causes for two of those counters. Upstream's FIFO
+# data lane produces both under this load by itself: a rekey msg2 its full
+# data lane refused (HandshakeStats::bad_state counts "msg2/msg3 send failed"),
+# and a duplicate or late msg2 copy for an attempt already completed or given
+# up (handlers/handshake.rs msg2_to_link, "Rekey msg2 for no attempt in
+# flight", counted as unknown_connection). C counts and logs the second the
+# same way (handlers/rekey.c, hs_metrics_rekey), under the same text; its
+# control lane is never refused, so the first never occurs there. The same
+# rule holds for both: every increment must carry a line of its own cause,
+# and any other still fails.
+def explained(log):
     lines = log.splitlines()
     return {
         'handshake.bad_state': sum('Failed to send rekey msg2' in x and 'queue full' in x for x in lines),
@@ -495,10 +502,9 @@ def rekey_saturated(args, root, c_sock, r_sock, c, rust, relay):
         assert recv2[n] > recv1[n], f'{n} received no link frames under the new key'
         assert [r['link_id'] for r in rows] == link_ids[n], f'{n} link changed: {link_ids[n]} -> {rows}'
         assert len(sessions_now) == 1, f'{n} session count changed: {sessions_now}'
-        explained = rust_explained(rust.text()) if n == 'Rust' else {}
-        bad = {k: v for k, v in errors[n].items() if v and v > explained.get(k, 0)}
-        if explained:
-            print(f'{n}: increments explained by its own logged causes: {explained}')
+        causes = explained((rust if n == 'Rust' else c).text())
+        bad = {k: v for k, v in errors[n].items() if v and v > causes.get(k, 0)}
+        print(f'{n}: increments explained by its own logged causes: {causes}')
         assert not bad, f'{n} error counters moved across the saturated rekey: {bad}'
     print(f'flood C->Rust sent {c_flood.sent} refused {c_flood.refused}; '
           f'Rust->C sent {r_flood.sent} refused {r_flood.refused}; relay accepted {relay.accepted} connection(s)')

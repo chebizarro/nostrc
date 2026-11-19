@@ -908,8 +908,10 @@ dataplane `unknown_index`/`orphaned_index` and session
 `unknown_session`/`rekey_key_mismatch`, except Rust handshake increments its
 own log explains: a msg2 its full data lane refused (`bad_state`) or a
 duplicate/late msg2 copy (`unknown_connection`, `LateReply`/`UnknownAttempt`).
-C counts a link `LateReply` msg2 nowhere where upstream counts
-`unknown_connection` (counter parity, separate). Rust's session `bad_state` (FSP rekey
+C counts the same late/duplicate link msg2 as `unknown_connection` and logs it
+under the same debug text, so the harness holds both daemons to that one
+explained-increment rule (nostrc-tyukg, "Handshake msg2 classification"
+below). Rust's session `bad_state` (FSP rekey
 `LateReply`, a second ack for a resent setup on the data lane both daemons
 use) is reported, not asserted. The loopback relay cannot stage the
 slow-path case: macOS keeps about 175 KiB per loopback hop whatever the socket
@@ -923,6 +925,53 @@ freed slot at once left the responder no frame to adopt or count as liveness
 (link-dead at 30 s under parallel load), which real, authenticating traffic
 never does; for the same reason its link-dead timeout is now 60 s, beyond the
 37 s rekey deadline.
+Version decision: **fipsd 0.1.0 Unreleased**; libfips-core unchanged.
+
+### Handshake msg2 classification (nostrc-tyukg)
+
+Upstream (`src/node/handlers/handshake.rs` at the pin) classifies an inbound msg2
+that completes nothing in two places. `msg2_body` (1951-2010): no `pending_outbound`
+entry and no `peers_by_index` entry for the index is handshake `unknown_connection`
+(debug "No pending outbound handshake for index"; a `pending_outbound` entry whose
+connection carries no handshake is `bad_state`, and the entry is forgotten); a read
+that fails while the attempt's handle is back in the leg is `bad_state` and keeps
+the attempt (debug), a lost handle is `bad_state` (warn); an ACL refusal and a failed
+promotion are `bad_state`. An index that is a link's (a link rekey's attempt, or a
+completed dial's) goes to `msg2_to_link` (1854-1905), which maps the rekey
+machine's reason (`core/src/proto/rekey/machine.rs` `judge_reply`): `LateReply`
+(the index is held by the pending or a current/previous epoch, or the cycle is
+`PendI`), `UnknownAttempt` and `UnknownIndex` are `unknown_connection`
+(debug "Rekey msg2 for no attempt in flight, dropping", with the reason), and
+`ReplyUnauthenticated` is `bad_state` (debug, "keeping the rekey cycle"; the attempt
+stays); anything else is `bad_state` (warn). Nothing is sent, no session, link or
+index changes. C now does the same: `hs_metrics_rekey` (`node/metrics.c`) counts those
+four reasons for link machines, `rekey.c` logs them at debug under upstream's
+text, and `handlers/handshake.c` `msg2` also counts an unauthenticated first-dial
+read, an identity mismatch and a failed promotion as `bad_state` (the dial stays
+after an unauthenticated read, as before). The control field names are upstream's
+(`handshake.bad_state`, `handshake.unknown_connection`), so `show_metrics` and
+`fipsctl` render them unchanged. `FipsdNodeRekeyMsg2Test` covers the first dial and a
+link rekey (unauthenticated, stray, duplicate before and after the cutover), and the
+rekey-saturated harness applies one explained-increment rule to both daemons.
+
+Divergences that remain on this path, none a counter C gets wrong where it
+counts: (1) upstream's catch-all `bad_state` for any other reason in a msg2 step
+has no C branch; no other reason is reachable from a reply (`IndexExhausted` and
+`HandshakeWrite` come from the msg1 and start paths). (2) A msg2 whose frame is
+malformed is `bad_state` upstream (`Msg2Header::parse`, reached after only a
+payload-length check); C's `fips_fmp_receive` frame validation drops it before
+`msg2` as a dispatcher decode reject, so no handshake counter moves. (3) A C leg
+whose machine is not `HANDSHAKING` (still connecting, no msg1 sent) returns
+without a count, where upstream's stale-entry case is `bad_state`. (4) C
+resolves a rekey msg2's index per transport (`hs_index_lookup`, any transport
+only for a multipath peer) where upstream's `peers_by_index` is keyed by the index
+alone, so a rekey msg2 arriving on another transport is `unknown_connection` in C
+and is read upstream. (5) C refuses an ACL-revoked peer's rekey msg2 before the
+machine (`outbound_rekey`, `bad_state`); upstream's `msg2_to_link` has no ACL gate.
+(6) Upstream counts a msg2 it failed to send (its full FIFO data lane) as
+`bad_state`; C's control lane is never refused and counts a failed send only in
+`send_failed`.
+
 Version decision: **fipsd 0.1.0 Unreleased**; libfips-core unchanged.
 ## BLE verified-link challenge (nostrc-o14sw)
 

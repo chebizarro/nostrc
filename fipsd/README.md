@@ -2643,11 +2643,13 @@ the flip on both sides, and over a drain window past the flip, zero
 `replay_suppressed_total`, `consecutive_decrypt_failures`, handshake
 `bad_state`/`unknown_connection`, dataplane `unknown_index`/`orphaned_index`
 and session `unknown_session`/`rekey_key_mismatch` on both daemons, except
-that each Rust handshake `bad_state` or `unknown_connection` increment must
-carry upstream's own logged benign cause: a rekey msg2 its full data lane
-refused (`HandshakeStats::bad_state` counts msg2 send failures), or a duplicate
-or late msg2 copy (`LateReply`/`UnknownAttempt`, "Rekey msg2 for no attempt
-in flight"); any other increment fails. Rust's
+that each handshake `bad_state` or `unknown_connection` increment on either
+daemon must carry that daemon's own logged benign cause: a rekey msg2 its full
+data lane refused (`HandshakeStats::bad_state` counts msg2 send failures; only
+Rust's FIFO lane refuses one), or a duplicate or late msg2 copy
+(`LateReply`/`UnknownAttempt`, "Rekey msg2 for no attempt in flight", which C
+counts and logs at debug under the same text, `nostrc-tyukg`, so the harness
+runs C at `log_level: debug`); any other increment fails. Rust's
 session `bad_state` is reported, not asserted: the end-to-end session's own
 rekey rides the data lane in both daemons, and under this queueing a resent
 setup draws a second ack, which upstream counts there (`Reason::LateReply`).

@@ -625,12 +625,22 @@ static bool msg2(handlers *h, fipsd_transport *t, const fips_transport_addr *fro
     if (!leg) {
         /* A rekey reply for an established link resolves through its index. */
         peer_rec *rec = hs_index_lookup(h, t->id.value, header.receiver_idx.value);
-        if (!rec) { ++h->counters.frames_dropped; METRIC(h, handshake, unknown_connection); return false; }
+        if (!rec) {
+            /* No pending dial and no link holds the index: a late copy after
+             * the dial completed or was given up, or a stranger's. */
+            FIPSD_DEBUG(HMOD, "No pending outbound handshake for index %u", (unsigned)header.receiver_idx.value);
+            ++h->counters.frames_dropped; METRIC(h, handshake, unknown_connection); return false;
+        }
         /* The indexed link already pins an authenticated identity. Refuse
          * revoked peers before the rekey machine authenticates/transitions. */
         if (!hs_acl_authorize(h, &fipsd_active_peer_info(rec->peer)->identity, "outbound_rekey")) return false;
         link_exec_result r = {0};
         fips_rekey_input in = {.kind = FIPS_REKEY_IN_Reply, .bytes = frame, .buf = frame, .len = len};
+        /* The machine judges the reply and hs_metrics_rekey counts what it
+         * refuses, as upstream's msg2_to_link does: a late or duplicate copy
+         * (LateReply/UnknownAttempt/UnknownIndex) as unknown_connection, a
+         * reply that fails its read (ReplyUnauthenticated) as bad_state with
+         * the rekey cycle kept. Nothing else changes for either. */
         bool ok = hs_link_step(h, rec, in, from, frame, len, &r);
         if (r.teardown && rec->used) hs_remove_peer(h, rec, FIPS_REKEY_CLOSE_Admin, false, FIPS_FMP_ProtocolError);
         return ok;
@@ -638,9 +648,17 @@ static bool msg2(handlers *h, fipsd_transport *t, const fips_transport_addr *fro
     if (leg->machine.state != FIPSD_PEER_HANDSHAKING) return false;
     fips_rekey_read read = {0};
     bool ok = fips_fmp_rekey_profile.reply(&leg->hs, &h->local, frame, len, &read);
-    if (!ok) { ++h->counters.hs_failed; sodium_memzero(&read, sizeof read); return false; }
+    if (!ok) {
+        /* Nothing authenticated this msg2 before the read and the index it
+         * names travels in cleartext in our msg1, so it may be a forgery: the
+         * leg keeps its attempt, and the genuine msg2 can still complete it. */
+        FIPSD_DEBUG(HMOD, "msg2 did not authenticate, keeping the handshake attempt");
+        METRIC(h, handshake, bad_state);
+        ++h->counters.hs_failed; sodium_memzero(&read, sizeof read); return false;
+    }
     if (memcmp(read.done.remote.bytes, leg->expected.pubkey.bytes, 32)) {
         /* Authenticated as a different node than the one dialed. */
+        METRIC(h, handshake, bad_state);
         ++h->counters.hs_rejected;
         fips_rekey_completed_clear(&read.done); sodium_memzero(&read, sizeof read);
         handshake_failed(h, leg, false); leg_free(h, leg);
@@ -696,6 +714,7 @@ static bool msg2(handlers *h, fipsd_transport *t, const fips_transport_addr *fro
     fipsd_peer_ticket ticket = leg->ticket; leg->has_ticket = false;
     peer_rec *rec = establish(h, &identity, t, &addr, link, FIPS_LINK_OUTBOUND, &read.done, &lease, read.done.theirs, facts, &ticket);
     if (!rec) {
+        METRIC(h, handshake, bad_state);
         fipsd_peer_budget_release(&ticket);
         fips_rekey_completed_clear(&read.done); sodium_memzero(&read, sizeof read);
         handshake_failed(h, leg, false); leg_free(h, leg);
