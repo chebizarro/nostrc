@@ -315,8 +315,19 @@ int gof_connect(gof_socket_t fd, const struct sockaddr *sa, socklen_t slen, int 
       /* Check connect completion */
       int err = 0; socklen_t elen = sizeof(err);
       if (getsockopt(fd, SOL_SOCKET, SO_ERROR, (void*)&err, &elen) == 0) {
-        if (err == 0) return 0;
-        fiber_set_errno(err); return -1;
+        if (err != 0) { fiber_set_errno(err); return -1; }
+        /* A readiness wake is a hint, not a completion. The poller may hand an
+         * event it harvested for a previous owner of this fd number to this
+         * fresh waiter (gof_netpoll_wait runs the callbacks after kevent or
+         * epoll_wait returns), and SO_ERROR is 0 while a connect is still in
+         * progress. Only a peer name proves it finished; ENOTCONN means wait
+         * again, as Go's netpoll does. Returning early made the caller's first
+         * send fail with ENOTCONN on macOS. */
+        struct sockaddr_storage peer; socklen_t plen = sizeof(peer);
+        if (getpeername(fd, (struct sockaddr*)&peer, &plen) == 0) return 0;
+        int peer_errno = fiber_get_errno();
+        if (peer_errno != ENOTCONN) { fiber_set_errno(peer_errno); return -1; }
+        continue;
       }
       /* If deadline set and passed, timeout */
       if (dl != 0 && now_ns() >= dl) { fiber_set_errno(ETIMEDOUT); return -1; }
