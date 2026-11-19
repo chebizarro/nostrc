@@ -193,6 +193,9 @@ static void scenario(void (*fn)(void))
     assert(fipsd_runtime_spawn(rt, trampoline, &b) == 0);
     assert(take(b.done, 120000) == &b);
     fipsd_runtime_shutdown(rt); assert(fipsd_runtime_run(rt) == FIPSD_RUN_OK);
+    /* Agent threads redial their node's socket (a path inside the node) until they are joined, so
+     * they go before the nodes are freed (nostrc-w3057). */
+    if (after_join) after_join();
     for (size_t i = 0; i < nrigs; ++i) {
         rig *r = rigs[i]; void *v;
         r->b.ops->destroy(r->b.self);
@@ -207,7 +210,6 @@ static void scenario(void (*fn)(void))
         while (go_channel_try_receive(n->events, &v) == 0) free(v);
         go_channel_unref(n->events); fips_identity_destroy(n->id); free(n);
     }
-    if (after_join) after_join();
     nrigs = nnodes = nleft = 0; after_join = NULL;
     fipsd_runtime_destroy(rt); rt = NULL;
     go_channel_unref(b.done);
@@ -814,6 +816,21 @@ static void e2e_body(void)
     puts("end to end: two transports over agent sockets, real agent sessions, mock radios (UUID-only and PSM adverts): discovery, GATT/learned PSM dials, exchange, link, frames both ways, radio cycle onto a new PSM and relink: ok");
 }
 
+/* The agent keeps its own copy of the socket path (nostrc-w3057): the caller's string is gone, and
+ * overwritten, before the radio comes up and the agent first dials, and it still reaches the daemon. */
+static void owned_path_body(void)
+{
+    after_join = agents_free;
+    rig *r = rig_new("owned", 0);
+    char *path = strdup(r->path); assert(path);
+    mradio *m = agent_new(path, 5, true);
+    memset(path, 'X', strlen(path)); free(path);
+    m_set(m, true, 0x00C5);
+    wait_adapter(r, true);
+    assert(fba_agent_stats_read(m->agent).connected && fipsd_ble_agent_stats_read(r->b.self).sessions == 1);
+    puts("owned path: an agent whose caller freed the socket path before its first dial still reaches the daemon: ok");
+}
+
 int main(void)
 {
     tmp = fipsd_test_tmpdir("/streams.sock");
@@ -823,6 +840,7 @@ int main(void)
     scenario(streams_body);
     scenario(stop_body);
     scenario(e2e_body);
+    scenario(owned_path_body);
     fips_identity_destroy_secp(secp);
     puts("ble agent: ok");
     return 0;

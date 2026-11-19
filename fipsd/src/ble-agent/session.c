@@ -68,7 +68,8 @@ struct session {
     size_t ndials;
 };
 struct fba_agent {
-    fba_agent_config cfg;
+    fba_agent_config cfg; /* cfg.socket_path is path below, the agent's own copy */
+    char *path;
     const fba_radio_ops *ops;
     void *radio;
     pthread_mutex_t mu;
@@ -584,12 +585,16 @@ fba_agent *fba_agent_create(const fba_agent_config *cfg, const fba_radio_ops *op
     if (!cfg || !cfg->socket_path || !ops) return NULL;
     fba_agent *a = calloc(1, sizeof *a);
     if (!a) return NULL;
-    a->cfg = *cfg; a->ops = ops; a->radio = radio;
+    /* The run thread dials the socket until it returns, which may be after the caller's stop
+     * and after whatever owned the caller's string is gone: the path is the agent's own. */
+    a->path = strdup(cfg->socket_path);
+    if (!a->path) { free(a); return NULL; }
+    a->cfg = *cfg; a->cfg.socket_path = a->path; a->ops = ops; a->radio = radio;
     if (!a->cfg.reconnect_ms) a->cfg.reconnect_ms = 2000;
     if (!a->cfg.max_reconnect_ms) a->cfg.max_reconnect_ms = 60000;
     if (!a->cfg.stable_ms) a->cfg.stable_ms = 30000;
-    if (pthread_mutex_init(&a->mu, NULL)) { free(a); return NULL; }
-    if (pthread_cond_init(&a->cv, NULL)) { pthread_mutex_destroy(&a->mu); free(a); return NULL; }
+    if (pthread_mutex_init(&a->mu, NULL)) { free(a->path); free(a); return NULL; }
+    if (pthread_cond_init(&a->cv, NULL)) { pthread_mutex_destroy(&a->mu); free(a->path); free(a); return NULL; }
     return a;
 }
 void fba_agent_stop(fba_agent *a)
@@ -607,6 +612,7 @@ void fba_agent_destroy(fba_agent *a)
     while (a->sessions || a->channels) pthread_cond_wait(&a->cv, &a->mu); /* pumps finishing */
     pthread_mutex_unlock(&a->mu);
     pthread_cond_destroy(&a->cv); pthread_mutex_destroy(&a->mu);
+    free(a->path);
     free(a);
 }
 fba_agent_stats fba_agent_stats_read(fba_agent *a)

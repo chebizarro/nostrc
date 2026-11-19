@@ -46,11 +46,11 @@ typedef struct fba_radio_ops {
 
 enum { FBA_LOG_DEBUG, FBA_LOG_INFO, FBA_LOG_WARN, FBA_LOG_ERROR };
 typedef struct fba_agent_config {
-    const char *socket_path;                            /* the daemon's socket */
+    const char *socket_path;                            /* the daemon's socket; copied by create */
     bool check_uid;                                     /* serve only a socket answered by daemon_uid */
     uid_t daemon_uid;
     uint32_t reconnect_ms, max_reconnect_ms, stable_ms; /* 0: upstream's 2000, 60000, 30000 */
-    void (*log)(void *ctx, int level, const char *message);
+    void (*log)(void *ctx, int level, const char *message); /* log and log_ctx are used until destroy */
     void *log_ctx;
 } fba_agent_config;
 typedef struct fba_agent fba_agent;

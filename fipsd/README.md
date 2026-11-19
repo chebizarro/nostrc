@@ -3367,7 +3367,10 @@ Differences from upstream, each deliberate:
   by the real agent session over mock radios, one advertising like a Mac and
   one like BlueZ. They exercise discovery, the GATT/learned PSM, the key
   exchange, one link and frames both ways. Then a radio power cycle onto a
-  new PSM, the transport going absent and present again, and the relink.
+  new PSM, the transport going absent and present again, and the relink. The
+  agent keeps its own copy of its socket path, so one whose caller freed the
+  string before its first dial still reaches the daemon (the harness also joins
+  its agent threads before it frees the nodes that own those paths).
 
 `packaging/testing/smoke-ble-agent.sh FIPSD FIPS_BLE_AGENT` is the real-radio
 smoke on a Mac, run as a user. It launches the agent's `--probe` as a
