@@ -15,6 +15,7 @@
 #define BLE_MAX_RECALLED 64u            /* MAX_RECALLED_ADDRS */
 #define BLE_RECALL_MAX_AGE_MS 600000u   /* RECALLED_ADDR_MAX_AGE */
 #define BLE_BOUND_LOG_HOLD_MS 60000u    /* pool.rs BOUND_LOG_HOLD */
+#define BLE_MAX_CHALLENGERS 2u          /* not upstream: pending challengers beside one verified link */
 #define BLE_WRITER_DRAIN_MS 5000u       /* stream.rs WRITER_DRAIN_TIMEOUT */
 #define BLE_MIN_VERIFY_GRACE_MS 10000u  /* DEFAULT_BLE_CONNECT_TIMEOUT_MS */
 #define BLE_PROBE_QUEUE 64u             /* the scanner fan-in to the probe loop */
@@ -27,6 +28,12 @@ typedef struct ble_link {
     fipsd_ble_peer peer;
     uint64_t id;                /* stream.rs ConnId: remove_own guard */
     bool outbound, has_node, verified, proven;
+    /* Not upstream: a newcomer that won the tie-break against a verified link
+     * at its own device address. It waits beside the link under its own
+     * address (ble_challenger_addr), so the node's Noise runs on it apart from
+     * the verified link's traffic; it replaces the link only once the node
+     * authenticates it as the claimed node (ble_pool_prove). */
+    bool challenger;
     fips_node_addr node;        /* the node the pubkey exchange claimed */
     uint64_t established_ms, grace_from_ms, held_from_ms;
     uint16_t send_mtu, recv_mtu;
@@ -60,8 +67,25 @@ bool ble_pool_clear_verified(ble_pool *, const fips_transport_addr *, const fips
 void ble_pool_hold(ble_pool *, const fips_transport_addr *, uint64_t now);
 size_t ble_pool_unproven(const ble_pool *, uint64_t now, uint64_t timeout_ms, ble_link **out, size_t capacity);
 ble_link *ble_pool_victim(const ble_pool *, uint64_t now);
+/* Whether any link, challengers included, is at the device address. */
+bool ble_pool_peer_pooled(const ble_pool *, const fipsd_ble_peer *);
+size_t ble_pool_challengers(const ble_pool *, const fipsd_ble_peer *);
+ble_link *ble_pool_challenger_at(const ble_pool *, const fipsd_ble_peer *); /* any one, or NULL */
+/* The node authenticated `challenger` as `n`: PROMOTED (it is an ordinary
+ * verified link now and replaces what shares its device address: drain
+ * ble_pool_displaced), or MISMATCH (a different identity: the caller drops it). */
+typedef enum ble_proof { BLE_PROOF_PROMOTED, BLE_PROOF_MISMATCH, BLE_PROOF_NOT_CHALLENGER } ble_proof;
+ble_proof ble_pool_prove(ble_pool *, ble_link *challenger, const fips_node_addr *n);
+/* Another link at the winner's device address, or NULL. */
+ble_link *ble_pool_displaced(const ble_pool *, const ble_link *winner);
+/* A challenger's node-facing address: the device address and the link id
+ * ("hci0/AA:BB:CC:DD:EE:FF#7"), which fipsd_ble_peer_parse refuses, so no
+ * dial or advert can ever name it. */
+bool ble_challenger_addr(const fipsd_ble_peer *, uint64_t id, fips_transport_addr *out);
 
-typedef enum ble_admission_kind { BLE_ADMIT, BLE_DECLINE, BLE_REPLACE, BLE_OCCUPIED } ble_admission_kind;
+/* BLE_CHALLENGE: the newcomer wins the tie-break against a verified link, which
+ * stays authoritative (existing); admit the newcomer as its challenger. */
+typedef enum ble_admission_kind { BLE_ADMIT, BLE_DECLINE, BLE_REPLACE, BLE_OCCUPIED, BLE_CHALLENGE } ble_admission_kind;
 typedef struct ble_admission { ble_admission_kind kind; ble_link *existing; } ble_admission;
 bool ble_newcomer_wins(bool local_is_smaller, bool newcomer_outbound, bool incumbent_outbound);
 ble_admission ble_arbitrate(const ble_pool *, const fips_node_addr *local, const fips_node_addr *peer,

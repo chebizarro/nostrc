@@ -64,6 +64,13 @@ bool fipsd_ble_peer_to_addr(const fipsd_ble_peer *p, fips_transport_addr *out)
 }
 bool fipsd_ble_peer_from_addr(const fips_transport_addr *a, fipsd_ble_peer *out)
 { return a && a->len <= FIPS_TRANSPORT_ADDR_CAPACITY && fipsd_ble_peer_parse((const char *)a->bytes, a->len, out); }
+bool ble_challenger_addr(const fipsd_ble_peer *p, uint64_t id, fips_transport_addr *out)
+{
+    char text[FIPSD_BLE_ADAPTER_MAX + 48];
+    size_t n = fipsd_ble_peer_format(p, text, sizeof text);
+    int m = n ? snprintf(text + n, sizeof text - n, "#%llu", (unsigned long long)id) : -1;
+    return m > 0 && (size_t)m < sizeof text - n && fips_transport_addr_from_string(text, n + (size_t)m, out) == FIPS_OK;
+}
 fipsd_ble_peer fipsd_ble_peer_from_identifier(const uint8_t id[16])
 {
     uint64_t h = UINT64_C(0xcbf29ce484222325);
@@ -155,12 +162,9 @@ static uint64_t tie_window(ble_instance *u) { return u->config.connect_timeout_m
 static uint64_t deadline_in(uint64_t ms) { uint64_t now = ble_now(); return ms > UINT64_MAX - now ? FIPSD_BLE_NO_DEADLINE : now + ms; }
 static ble_conn *conn_of(ble_link *l) { return (ble_conn *)l; }
 static bool live(void *ctx, const fipsd_ble_peer *p)
-{
-    ble_instance *u = ctx; fips_transport_addr a;
-    return ble_probes_contains(&u->probes, p) || (fipsd_ble_peer_to_addr(p, &a) && ble_pool_get(&u->pool, &a));
-}
+{ ble_instance *u = ctx; return ble_probes_contains(&u->probes, p) || ble_pool_peer_pooled(&u->pool, p); }
 static bool pooled_peer(void *ctx, const fipsd_ble_peer *p)
-{ ble_instance *u = ctx; fips_transport_addr a; return fipsd_ble_peer_to_addr(p, &a) && ble_pool_get(&u->pool, &a); }
+{ ble_instance *u = ctx; return ble_pool_peer_pooled(&u->pool, p); }
 static bool peer_node(ble_instance *u, const uint8_t key[32], fips_node_addr *out)
 {
     fips_xonly_pubkey x; memcpy(x.bytes, key, 32);
@@ -346,6 +350,15 @@ static void conn_owner(void *arg)
     /* Notify the node unless this was a deliberate close or a replacement
      * already holds the address; a newcomer at the address waits for it. */
     c->notifying = !c->deliberate && !ble_pool_get(&u->pool, &c->link.addr);
+    /* A link that ended on its own takes its challengers with it: the pair is
+     * lost, and both ends redial from scratch, where upstream's decline would
+     * have left them. A deliberate close is the node moving onto a challenger
+     * (its path switch closes the old address first), which must survive. */
+    if (!c->deliberate && !c->link.challenger) {
+        ble_link *d;
+        for (size_t left = u->pool.count; left && (d = ble_pool_challenger_at(&u->pool, &c->link.peer)); --left)
+            conn_drop_locked(conn_of(d), false);
+    }
     go_channel_close(c->stop);
     ble_io_cancel(c->stream, c->fd);
     nsync_mu_unlock(&u->mu);
@@ -372,7 +385,9 @@ static void conn_owner(void *arg)
 
 /* ---- offering a stream to the pool ------------------------------------------ */
 typedef enum ble_role { ROLE_DIAL, ROLE_PROBE, ROLE_INBOUND } ble_role;
-typedef enum ble_outcome { OFFER_POOLED, OFFER_DECLINED, OFFER_OCCUPIED, OFFER_REFUSED, OFFER_FAILED } ble_outcome;
+/* OFFER_CHALLENGER: pooled beside a verified link that stays authoritative, and
+ * not announced: the node meets it only through its own address. */
+typedef enum ble_outcome { OFFER_POOLED, OFFER_DECLINED, OFFER_OCCUPIED, OFFER_REFUSED, OFFER_FAILED, OFFER_CHALLENGER } ble_outcome;
 typedef struct ble_offer {
     fipsd_ble_stream *stream;
     int fd;
@@ -445,6 +460,7 @@ static ble_outcome offer(ble_instance *u, ble_offer *o, ble_role role, fipsd_ble
     ble_stream_mtu(o->stream, u->config.mtu, &c->link.send_mtu, &c->link.recv_mtu);
     ble_outcome result = OFFER_FAILED;
     const char *why = "stopped";
+    bool challenger = false;
     nsync_mu_lock(&u->mu);
     if (!await_notified_locked(u, &o->addr) || !atomic_load(&u->present)) goto out;
     uint64_t now = ble_now();
@@ -457,6 +473,15 @@ static ble_outcome offer(ble_instance *u, ble_offer *o, ble_role role, fipsd_ble
             why = "duplicate-node-decline"; result = OFFER_DECLINED; goto out;
         }
         if (a.kind == BLE_OCCUPIED) { why = "address-occupied"; result = OFFER_OCCUPIED; goto out; }
+        if (a.kind == BLE_CHALLENGE) {
+            /* The verified link keeps its address and its session. The newcomer
+             * waits under an address of its own until the node authenticates it
+             * (fipsd_ble_mark_verified): its claim proves nothing yet. */
+            if (!ble_challenger_addr(&o->peer, c->link.id, &c->link.addr)) { why = "challenger-address"; goto out; }
+            c->link.challenger = challenger = true;
+            FIPSD_DEBUG(MOD, "%s: stream %llu waits beside the verified link %llu", u->name,
+                (unsigned long long)c->stream_id, (unsigned long long)conn_of(a.existing)->stream_id);
+        }
         if (a.kind == BLE_REPLACE) {
             /* Raced a link to the same peer and won the tie-break. */
             FIPSD_DEBUG(MOD, "%s: duplicate-link-replaced (stream %llu replaces %llu)", u->name,
@@ -478,7 +503,7 @@ static ble_outcome offer(ble_instance *u, ble_offer *o, ble_role role, fipsd_ble
         fipsd_transport_stats_pool(&u->shared.stats, outbound ? FIPS_LINK_OUTBOUND : FIPS_LINK_INBOUND, false);
         goto out;
     }
-    result = OFFER_POOLED; why = "pooled";
+    result = challenger ? OFFER_CHALLENGER : OFFER_POOLED; why = challenger ? "challenger" : "pooled";
     o->stream = NULL; /* now the link's */
 out:
     nsync_mu_unlock(&u->mu);
@@ -487,7 +512,7 @@ out:
         FIPSD_DEBUG(MOD, "%s: %s link %s: %s (stream %llu)", u->name, role == ROLE_INBOUND ? "inbound" :
             role == ROLE_PROBE ? "probe" : "dialled", text, why, (unsigned long long)stream_id);
     }
-    if (result != OFFER_POOLED) { c->stream = NULL; c->reader = (ble_reader){0}; conn_free(c); }
+    if (result != OFFER_POOLED && result != OFFER_CHALLENGER) { c->stream = NULL; c->reader = (ble_reader){0}; conn_free(c); }
     return result;
 }
 
@@ -570,7 +595,7 @@ static void dial_fiber(void *arg)
     ble_outcome outcome = OFFER_FAILED;
     fipsd_ble_peer kept = j->peer;
     if (!rc) outcome = offer(u, &o, ROLE_DIAL, &kept);
-    if (outcome == OFFER_POOLED) BLE_STAT(u, connections_established);
+    if (outcome == OFFER_POOLED || outcome == OFFER_CHALLENGER) BLE_STAT(u, connections_established);
     offer_close(&o);
     nsync_mu_lock(&u->mu);
     for (ble_dial **p = &u->dials; *p; p = &(*p)->next) if (*p == j->entry) { *p = j->entry->next; break; }
@@ -596,7 +621,7 @@ static void probe(ble_instance *u, const fipsd_ble_peer *p)
     BLE_STAT(u, scan_results);
     uint64_t now = ble_now();
     nsync_mu_lock(&u->mu);
-    if (ble_pool_get(&u->pool, &a)) { ble_probes_resolve(&u->probes, p); nsync_mu_unlock(&u->mu); return; }
+    if (ble_pool_peer_pooled(&u->pool, p)) { ble_probes_resolve(&u->probes, p); nsync_mu_unlock(&u->mu); return; }
     /* Tracked for retry: a scanner is not a reliable repeat source. */
     ble_probes_observe(&u->probes, p, now);
     if (!ble_probes_is_due(&u->probes, p, now)) { nsync_mu_unlock(&u->mu); return; }
@@ -637,6 +662,7 @@ static void probe(ble_instance *u, const fipsd_ble_peer *p)
     if (outcome != OFFER_REFUSED && outcome != OFFER_FAILED) ble_probes_resolve(&u->probes, p);
     nsync_mu_unlock(&u->mu);
     if (outcome == OFFER_POOLED) { BLE_STAT(u, connections_established); announce(u, p, o.key); }
+    else if (outcome == OFFER_CHALLENGER) BLE_STAT(u, connections_established);
     else if (outcome == OFFER_DECLINED) announce(u, &kept, o.key);
 }
 static void prober_fiber(void *arg)
@@ -705,7 +731,8 @@ static void admit_fiber(void *arg)
     if (outcome == OFFER_POOLED) {
         BLE_STAT(u, connections_accepted);
         if (o.has_node) announce(u, &o.peer, o.key);
-    } else if (outcome == OFFER_DECLINED && o.has_node) announce(u, &kept, o.key);
+    } else if (outcome == OFFER_CHALLENGER) BLE_STAT(u, connections_accepted);
+    else if (outcome == OFFER_DECLINED && o.has_node) announce(u, &kept, o.key);
 }
 /* Upstream accept_loop: one iteration is bounded by the accept alone. The
  * exchange is registered here, in arrival order, so the in-flight budget
@@ -948,10 +975,33 @@ static void close_connection(fipsd_transport *t, const fips_transport_addr *to)
     nsync_mu_unlock(&u->mu);
 }
 static void network_changed(fipsd_transport *t, const struct fipsd_netmon_event *e) { (void)t; (void)e; }
+/* The node authenticated the peer at `a` as `n`: the only evidence that a
+ * challenger is who it claimed, since the node reports it for the address the
+ * authenticated frame arrived on and a challenger has an address of its own.
+ * The verified link's own traffic (its address) can never speak for it. A
+ * challenger the node authenticates as the claimed node replaces every link at
+ * its device address, the verified one included; as a different node it is
+ * dropped and the verified link stays. Dropped incumbents notify the node, as
+ * any lost link does: the peer is already bound to the challenger's address,
+ * so the notice finds nothing there to end. */
 void fipsd_ble_mark_verified(fipsd_transport *t, const fips_transport_addr *a, const fips_node_addr *n)
 {
     ble_instance *u = t->user;
-    nsync_mu_lock(&u->mu); (void)ble_pool_mark_verified(&u->pool, a, n, NULL); nsync_mu_unlock(&u->mu);
+    nsync_mu_lock(&u->mu);
+    ble_link *l = ble_pool_get(&u->pool, a);
+    ble_proof proof = l ? ble_pool_prove(&u->pool, l, n) : BLE_PROOF_NOT_CHALLENGER;
+    if (proof == BLE_PROOF_PROMOTED) {
+        /* The node may already have closed the verified link itself (its path
+         * switch does), so the replacement is counted either way. */
+        ble_link *d;
+        for (size_t left = u->pool.count; left && (d = ble_pool_displaced(&u->pool, l)); --left)
+            conn_drop_locked(conn_of(d), false);
+        BLE_STAT(u, duplicate_link_replacements);
+    } else if (proof == BLE_PROOF_MISMATCH) {
+        BLE_STAT(u, duplicate_node_declines);
+        conn_drop_locked(conn_of(l), false);
+    } else (void)ble_pool_mark_verified(&u->pool, a, n, NULL);
+    nsync_mu_unlock(&u->mu);
 }
 void fipsd_ble_clear_verified(fipsd_transport *t, const fips_transport_addr *a, const fips_node_addr *n, bool removed)
 {

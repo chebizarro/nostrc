@@ -2955,9 +2955,39 @@ Differences from upstream, each deliberate:
    already replaced it, and both channels die. A newcomer's key claim is
    unauthenticated until Noise, so a claim from any other address never
    displaces a verified link, and outside the window a verified link
-   declines every newcomer, both as upstream. The remaining exposure is a
-   peer that spoofs the verified device's own address within the window,
-   which a real controller refuses while that device is connected.
+   declines every newcomer, both as upstream.
+
+   **The verified link stays authoritative until the newcomer is
+   authenticated** (`nostrc-o14sw`, also a divergence from upstream, which
+   has no such state). A newcomer that wins the tie-break is not swapped in:
+   it is pooled as a *challenger* beside the link, under an address of its
+   own (`hci0/AA:BB:CC:DD:EE:FF#<link id>`, which `fipsd_ble_peer_parse`
+   refuses, so no dial or advert can name it) and is never announced. The
+   node reports Noise by the address an authenticated frame arrived on
+   (`peer_link`), so a challenger needs its own address: the verified link's
+   frames cannot vouch for it, and the node runs its own msg1/msg2 for the
+   challenger's address (a peer's msg1 from a new endpoint is the node's
+   existing deferred replacement, which swaps only after a frame
+   authenticates under fresh keys). When the node authenticates the
+   challenger as the claimed node, the link is promoted and every other link
+   at that device address is dropped (`duplicate_link_replacements`). A
+   challenger authenticated as a different node is dropped
+   (`duplicate_node_declines`) and the verified link stays. One that fails
+   (its channel ends), or never handshakes, is closed by the node's tick
+   `close_unproven` at `handshake_timeout_secs`, as any unproven channel; no
+   timer of its own. At most 2 challengers (`BLE_MAX_CHALLENGERS`) wait per
+   device address; a further newcomer is declined, and challengers count
+   against `max_connections`, so a stale one is also the first eviction
+   victim. An unverified incumbent proves nothing, so it is still replaced
+   at once. If the verified link ends on its own (the peer closed it), its
+   challengers are closed with it and the node hears `DISCONNECTED` for it:
+   the pair is lost, and both ends redial from scratch, as after upstream's
+   decline. A deliberate close (the node's path switch closes the old address
+   first) leaves them. The remaining exposure is a peer that spoofs the
+   verified device's own address within the window, which a real controller
+   refuses while that device is connected, and which can now no longer cut
+   the verified link, only occupy up to 2 pool slots until the handshake
+   deadline.
 2. **Crossing swap and restart.** These no longer close the transport
    connection when the replacing link is at the same transport address. Both
    directions of a BLE pair share the device address. Upstream moves the
@@ -2984,7 +3014,11 @@ these scenarios:
 - PSM learning, forget-on-refusal, keep-on-timeout and the GATT fallback;
 - the exchange (bad prefix, coalesced frame, fragments, a silent peer, the
   send deadline), the inbound budget under a flood, and claims and
-  verification with `close_unproven` and the drain on a deliberate close.
+  verification with `close_unproven` and the drain on a deliberate close;
+- challengers: an unauthenticated same-address claim never displaces a
+  verified link (not by the verified link's own authenticated frames either),
+  Noise as the same node replaces it, another identity is dropped, the
+  per-address bound, failure, and expiry by the node's handshake deadline.
 
 `FipsdBleTwoNodes{Sdu,Fd}Test` (`tests/test_ble_two_nodes.c`) is the node
 proof. Two in-process nodes with no configured peers go from discovery

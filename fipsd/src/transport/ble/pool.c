@@ -65,6 +65,35 @@ ble_link *ble_pool_victim(const ble_pool *p, uint64_t now)
     }
     return NULL;
 }
+bool ble_pool_peer_pooled(const ble_pool *p, const fipsd_ble_peer *d)
+{
+    for (size_t i = 0; i < p->count; ++i) if (fipsd_ble_peer_equal(&p->items[i]->peer, d)) return true;
+    return false;
+}
+size_t ble_pool_challengers(const ble_pool *p, const fipsd_ble_peer *d)
+{
+    size_t n = 0;
+    for (size_t i = 0; i < p->count; ++i) n += p->items[i]->challenger && fipsd_ble_peer_equal(&p->items[i]->peer, d);
+    return n;
+}
+ble_link *ble_pool_challenger_at(const ble_pool *p, const fipsd_ble_peer *d)
+{
+    for (size_t i = 0; i < p->count; ++i) if (p->items[i]->challenger && fipsd_ble_peer_equal(&p->items[i]->peer, d)) return p->items[i];
+    return NULL;
+}
+ble_proof ble_pool_prove(ble_pool *p, ble_link *l, const fips_node_addr *n)
+{
+    if (!l->challenger) return BLE_PROOF_NOT_CHALLENGER;
+    if (!same_node(l, n)) return BLE_PROOF_MISMATCH;
+    l->challenger = false;
+    (void)ble_pool_mark_verified(p, &l->addr, n, NULL);
+    return BLE_PROOF_PROMOTED;
+}
+ble_link *ble_pool_displaced(const ble_pool *p, const ble_link *w)
+{
+    for (size_t i = 0; i < p->count; ++i) if (p->items[i] != w && fipsd_ble_peer_equal(&p->items[i]->peer, &w->peer)) return p->items[i];
+    return NULL;
+}
 static ble_insert refusal(ble_pool *p, uint64_t now)
 {
     ble_insert r = {.kind = BLE_INSERT_REFUSED};
@@ -140,7 +169,16 @@ bool ble_newcomer_wins(bool local_is_smaller, bool newcomer_outbound, bool incum
  * claim is unauthenticated until Noise, and a claim from any other address
  * must not displace a link that proved the key (upstream's rule; a crossing
  * seen at two addresses falls back to upstream's redial). Outside the window
- * a verified link declines as upstream. */
+ * a verified link declines as upstream.
+ *
+ * Even a newcomer that wins the tie-break does not displace the verified link:
+ * that claim is as unauthenticated as any, and a peer that can use the
+ * connected device's own address would otherwise cut the link before proving
+ * anything. The verdict is BLE_CHALLENGE: the verified link stays
+ * authoritative, and the newcomer waits beside it (at most
+ * BLE_MAX_CHALLENGERS per device address, then it is declined) until the
+ * node authenticates it as the same node (ble_pool_prove). An unverified
+ * incumbent proves nothing either way, so it is still replaced at once. */
 ble_admission ble_arbitrate(const ble_pool *p, const fips_node_addr *local, const fips_node_addr *peer,
     const fips_transport_addr *ta, bool outbound, uint64_t tie_window, uint64_t now)
 {
@@ -148,7 +186,8 @@ ble_admission ble_arbitrate(const ble_pool *p, const fips_node_addr *local, cons
     ble_link *v = ble_pool_find_verified(p, peer);
     if (v) {
         bool racing = elapsed(now, v->established_ms) < tie_window && fips_transport_addr_equal(&v->addr, ta);
-        return (ble_admission){racing && ble_newcomer_wins(smaller, outbound, v->outbound) ? BLE_REPLACE : BLE_DECLINE, v};
+        bool wins = racing && ble_newcomer_wins(smaller, outbound, v->outbound);
+        return (ble_admission){wins && ble_pool_challengers(p, &v->peer) < BLE_MAX_CHALLENGERS ? BLE_CHALLENGE : BLE_DECLINE, v};
     }
     ble_link *at = ble_pool_get(p, ta);
     if (at && !same_node(at, peer)) return (ble_admission){BLE_OCCUPIED, at};

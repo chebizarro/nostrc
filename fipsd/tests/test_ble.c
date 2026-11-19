@@ -210,10 +210,11 @@ static void arbitration(void)
     a = ble_arbitrate(&p, &small, &big, &at1, false, window, t0 + window + 1);
     assert(a.kind == BLE_DECLINE && a.existing == v);
     /* inside the window a verified link still racing at its own address (the
-     * crossing) is settled by the tie-break (the deliberate deviation): the
-     * loser is replaced, the winner declines */
-    a = ble_arbitrate(&p, &small, &big, &at2, true, window, t0 + 1); /* smaller keeps its outbound: replace the inbound */
-    assert(a.kind == BLE_REPLACE && a.existing == v);
+     * crossing) is settled by the tie-break (the deliberate deviation), but it
+     * stays authoritative: the winner only waits beside it as a challenger,
+     * the loser declines */
+    a = ble_arbitrate(&p, &small, &big, &at2, true, window, t0 + 1); /* smaller keeps its outbound: the inbound's challenger */
+    assert(a.kind == BLE_CHALLENGE && a.existing == v);
     /* an unauthenticated claim from another address never displaces it */
     a = ble_arbitrate(&p, &small, &big, &at1, true, window, t0 + 1);
     assert(a.kind == BLE_DECLINE && a.existing == v);
@@ -256,7 +257,63 @@ static void arbitration(void)
     a = ble_arbitrate(&p, &big, &small, &at1, true, window, t0 + window); assert(a.kind == BLE_ADMIT);
     (void)at2; (void)other;
     ble_pool_free(&p);
-    puts("arbitration: newcomer_wins table, settled verified declines, racing verified tie-break, occupied, racing same/other address, rotation and settled admits: ok");
+    puts("arbitration: newcomer_wins table, settled verified declines, racing verified challenge, occupied, racing same/other address, rotation and settled admits: ok");
+}
+/* Not upstream (nostrc-o14sw): a verified link stays authoritative against a
+ * newcomer that wins the tie-break until the node authenticates the newcomer. */
+static ble_link *challenger_of(uint8_t n, uint8_t device, int node, uint64_t at)
+{
+    ble_link *l = claimed(n, node, false, at);
+    l->peer = peer_n("hci0", device); l->challenger = true;
+    assert(ble_challenger_addr(&l->peer, l->id, &l->addr));
+    return l;
+}
+static void challengers(void)
+{
+    const uint64_t t0 = 5000000, window = 10000;
+    fips_node_addr small = node_n(1), big = node_n(9), stranger = node_n(5);
+    fips_transport_addr at2 = addr_n(2);
+    fipsd_ble_peer parsed, other = peer_n("hci0", 3);
+    ble_pool p; assert(!ble_pool_init(&p, 7, GRACE));
+    ble_link *v = claimed(2, 9, true, t0); (void)ins(&p, v, t0); /* inbound, verified */
+    ble_admission a = ble_arbitrate(&p, &small, &big, &at2, true, window, t0 + 1);
+    assert(a.kind == BLE_CHALLENGE && a.existing == v && !ble_pool_challengers(&p, &v->peer));
+    /* a challenger waits under an address of its own, which no dial or advert can name */
+    ble_link *c1 = challenger_of(10, 2, 9, t0 + 1), *c2 = challenger_of(11, 2, 9, t0 + 2);
+    assert(!fips_transport_addr_equal(&c1->addr, &at2) && !fips_transport_addr_equal(&c1->addr, &c2->addr));
+    assert(!fipsd_ble_peer_from_addr(&c1->addr, &parsed) && !memcmp(c1->addr.bytes, at2.bytes, at2.len) && c1->addr.bytes[at2.len] == '#');
+    assert(ADMITTED(ins(&p, c1, t0 + 1), NULL) && ADMITTED(ins(&p, c2, t0 + 2), NULL) && p.count == 3);
+    assert(ble_pool_get(&p, &at2) == v && ble_pool_find_verified(&p, &big) == v);
+    assert(ble_pool_challengers(&p, &v->peer) == 2 && !ble_pool_challengers(&p, &other));
+    assert(ble_pool_peer_pooled(&p, &v->peer) && !ble_pool_peer_pooled(&p, &other));
+    /* the bound: past BLE_MAX_CHALLENGERS the newcomer is declined, in favour of the verified link */
+    assert(BLE_MAX_CHALLENGERS == 2);
+    a = ble_arbitrate(&p, &small, &big, &at2, true, window, t0 + 3); assert(a.kind == BLE_DECLINE && a.existing == v);
+    /* a challenger never earns more than the newcomer's rights: it is an unproven channel for the node's deadline */
+    ble_link *out[8];
+    assert(!ble_pool_unproven(&p, t0 + 4000, 5000, out, 8) && ble_pool_unproven(&p, t0 + 6000, 5000, out, 8) == 2);
+    /* no proof from the verified link, none from a different identity */
+    assert(ble_pool_prove(&p, v, &big) == BLE_PROOF_NOT_CHALLENGER && v->verified);
+    assert(ble_pool_prove(&p, c1, &stranger) == BLE_PROOF_MISMATCH && c1->challenger && !c1->verified && !c1->proven);
+    /* the same identity promotes it; the link it replaces and the other challenger are displaced */
+    assert(ble_pool_prove(&p, c2, &big) == BLE_PROOF_PROMOTED && !c2->challenger && c2->verified && c2->proven && !v->verified);
+    assert(ble_pool_challengers(&p, &v->peer) == 1 && ble_pool_find_verified(&p, &big) == c2);
+    size_t gone = 0;
+    for (ble_link *d; (d = ble_pool_displaced(&p, c2)); ++gone) assert(ble_pool_remove(&p, d) && (d == v || d == c1));
+    assert(gone == 2 && p.count == 1 && !ble_pool_challengers(&p, &v->peer));
+    ble_pool_free(&p);
+    /* an unverified incumbent proves nothing, so it is still replaced at once */
+    assert(!ble_pool_init(&p, 7, GRACE));
+    ble_link *u = claimed(2, 9, false, t0); (void)ins(&p, u, t0);
+    a = ble_arbitrate(&p, &small, &big, &at2, true, window, t0 + 1); assert(a.kind == BLE_REPLACE && a.existing == u);
+    ble_pool_free(&p);
+    /* a full pool refuses a challenger like any newcomer, and a stale one is the first victim */
+    assert(!ble_pool_init(&p, 2, GRACE));
+    (void)ins(&p, claimed(2, 9, true, t0), t0); (void)ins(&p, challenger_of(10, 2, 9, t0), t0);
+    assert(ins(&p, challenger_of(11, 2, 9, t0 + 1000), t0 + 1000).kind == BLE_INSERT_REFUSED);
+    assert(ADMITTED(ins(&p, challenger_of(12, 2, 9, t0 + 20000), t0 + 20000), &links[10]));
+    ble_pool_free(&p);
+    puts("challengers: own address, bounded per device, unproven for the deadline, verified link never proves one, mismatch refused, promotion displaces, unverified replaced: ok");
 }
 /* ---- mod.rs PendingProbes ---- */
 static void probe_book(void)
@@ -533,7 +590,10 @@ static fipsd_transport_event *await(tnode *n, fipsd_transport_event_kind kind, c
     for (;;) {
         uint64_t now = ble_now();
         fipsd_transport_event *e = now < deadline ? take(n->events, deadline - now) : NULL;
-        if (!e) { fprintf(stderr, "%s: no event %d\n", n->t->name, (int)kind); assert(e); }
+        if (!e) {
+            fprintf(stderr, "%s: no event %d%s%.*s\n", n->t->name, (int)kind, at ? " at " : "", at ? (int)at->len : 0, at ? (const char *)at->bytes : "");
+            assert(e);
+        }
         if (e->kind == kind && (!at || fips_transport_addr_equal(&e->address, at))) return e;
         free(e);
     }
@@ -942,6 +1002,149 @@ static void claims_body(void)
     await_pooled(a, 0);
     puts("claims: unverified claims admit, verified declines and re-announces, full pool refuses, close_unproven, drain on close: ok");
 }
+/* Not upstream (nostrc-o14sw): a newcomer at a verified link's own device
+ * address that wins the tie-break waits beside the link, under an address of
+ * its own, and replaces it only once the node authenticates it as the same
+ * node (peer_link, the node's hook after Noise). The node is simulated by
+ * calling that hook, as the claims test does; the raw peer is the other end of
+ * every channel. The transport is the larger node, so a newcomer it accepts
+ * (inbound) beats the link it dialled (outbound). */
+typedef struct challenge { raw *r; fipsd_ble_stream *incumbent; fips_transport_addr addr; } challenge;
+static uint8_t smaller_seed(const tnode *a, unsigned nth)
+{
+    for (unsigned seed = 100; seed < 256; ++seed) {
+        fips_xonly_pubkey k; fips_node_addr n;
+        identity_of((uint8_t)seed, NULL, &k, &n);
+        if (memcmp(n.bytes, a->node.bytes, 16) < 0 && !nth--) return (uint8_t)seed;
+    }
+    assert(!"a smaller node");
+    return 0;
+}
+static void raw_expect(fipsd_ble_stream *s, const uint8_t *want, size_t n)
+{
+    uint8_t got[4096];
+    ssize_t len = s->ops->read(s, got, sizeof got, ble_now() + WAIT_MS);
+    assert(len == (ssize_t)n && !memcmp(got, want, n));
+}
+static void raw_expect_hello(fipsd_ble_stream *s, const tnode *from)
+{ uint8_t hello[33] = {BLE_PUBKEY_PREFIX}; memcpy(hello + 1, from->key.bytes, 32); raw_expect(s, hello, sizeof hello); }
+/* The transport dialled the raw peer (device `dev`), and the node authenticated it: a verified outbound link. */
+static challenge verified_link(tnode *a, uint8_t dev, unsigned nth)
+{
+    challenge ch = {0};
+    ch.r = raw_new(dev, NULL, smaller_seed(a, nth));
+    raw_serve(ch.r, FIPSD_BLE_DEFAULT_PSM, 0);
+    assert(fipsd_ble_peer_to_addr(&ch.r->peer, &ch.addr) && a->t->ops->connect_async(a->t, &ch.addr) == 0);
+    fipsd_ble_event *in = raw_event(ch.r, FIPSD_BLE_INBOUND_STREAM); ch.incumbent = in->stream; free(in);
+    raw_hello(ch.r, ch.incumbent, 0); raw_expect_hello(ch.incumbent, a);
+    await_free(a, FIPSD_TRANSPORT_CONNECTED, &ch.addr);
+    a->t->ops->peer_link(a->t, &ch.addr, &ch.r->node, true, false);
+    assert(fipsd_ble_is_verified(a->t, &ch.addr) == 1);
+    return ch;
+}
+/* The same device dials in again inside the tie window. Its first frame is
+ * how the test sees it pooled, and under which address. */
+static fipsd_ble_stream *newcomer(tnode *a, const challenge *ch, fips_transport_addr *alias)
+{
+    fipsd_ble_stream *s = raw_connect(ch->r, a, 0);
+    raw_hello(ch->r, s, 0); raw_expect_hello(s, a);
+    uint8_t first[64]; frame(first, sizeof first, 0x61);
+    assert(s->ops->write(s, first, sizeof first, ble_now() + WAIT_MS) == 0);
+    fipsd_transport_event *e = await(a, FIPSD_TRANSPORT_PACKET, NULL);
+    *alias = e->address; free(e);
+    assert(!fips_transport_addr_equal(alias, &ch->addr) && fipsd_ble_is_verified(a->t, alias) == 0);
+    return s;
+}
+static void challenge_body(void)
+{
+    fipsd_ble_config c = fast_cfg(); c.scan = false; c.connect_timeout_ms = 60000; c.pubkey_exchange_ms = 5000;
+    tnode *a = tnode_new(1, NULL, &c, true); tnode_start(a); await_free(a, FIPSD_TRANSPORT_BECAME_PRESENT, NULL);
+    uint8_t to_incumbent[96], to_newcomer[96];
+    frame(to_incumbent, sizeof to_incumbent, 0x33); frame(to_newcomer, sizeof to_newcomer, 0x44);
+
+    /* (1) An unauthenticated claim at the verified link's own address never displaces it. */
+    challenge one = verified_link(a, 20, 0);
+    fips_transport_addr alias;
+    fipsd_ble_stream *n1 = newcomer(a, &one, &alias);
+    assert(fipsd_ble_connected_count(a->t) == 2 && stats(a).connections_accepted == 1 && !stats(a).duplicate_link_replacements);
+    /* what the node authenticates on the verified link is not the newcomer's proof */
+    for (int i = 0; i < 3; ++i) a->t->ops->peer_link(a->t, &one.addr, &one.r->node, true, false);
+    fipsd_ble_mark_verified(a->t, &one.addr, &one.r->node);
+    assert(fipsd_ble_is_verified(a->t, &one.addr) == 1 && fipsd_ble_is_verified(a->t, &alias) == 0);
+    assert(fipsd_ble_connected_count(a->t) == 2 && !stats(a).duplicate_link_replacements);
+    /* the node's frames still ride the verified link; the newcomer is reached only through its own address */
+    assert(a->t->ops->send(a->t, &one.addr, to_incumbent, sizeof to_incumbent) == 0); raw_expect(one.incumbent, to_incumbent, sizeof to_incumbent);
+    assert(a->t->ops->send(a->t, &alias, to_newcomer, sizeof to_newcomer) == 0); raw_expect(n1, to_newcomer, sizeof to_newcomer);
+
+    /* (2) The same peer, proven by Noise over the newcomer, replaces the verified link. */
+    a->t->ops->peer_link(a->t, &alias, &one.r->node, true, false);
+    assert(raw_until_closed(one.incumbent, NULL, 0, NULL)); raw_close(one.incumbent);
+    await_free(a, FIPSD_TRANSPORT_DISCONNECTED, &one.addr);
+    assert(fipsd_ble_connected_count(a->t) == 1 && fipsd_ble_is_verified(a->t, &alias) == 1 && fipsd_ble_is_verified(a->t, &one.addr) == -1);
+    assert(stats(a).duplicate_link_replacements == 1 && !stats(a).duplicate_node_declines);
+    assert(a->t->ops->send(a->t, &alias, to_newcomer, sizeof to_newcomer) == 0); raw_expect(n1, to_newcomer, sizeof to_newcomer);
+
+    /* (3) A newcomer the node authenticates as another identity is dropped; the verified link stays. */
+    challenge three = verified_link(a, 21, 1);
+    fips_transport_addr liar;
+    fipsd_ble_stream *n3 = newcomer(a, &three, &liar);
+    assert(fipsd_ble_connected_count(a->t) == 3);
+    fips_node_addr other = node_n(0x5A);
+    a->t->ops->peer_link(a->t, &liar, &other, true, false);
+    assert(raw_until_closed(n3, NULL, 0, NULL)); raw_close(n3);
+    await_free(a, FIPSD_TRANSPORT_DISCONNECTED, &liar);
+    assert(fipsd_ble_connected_count(a->t) == 2 && fipsd_ble_is_verified(a->t, &three.addr) == 1 && fipsd_ble_is_verified(a->t, &liar) == -1);
+    assert(stats(a).duplicate_node_declines == 1 && stats(a).duplicate_link_replacements == 1);
+    assert(a->t->ops->send(a->t, &three.addr, to_incumbent, sizeof to_incumbent) == 0); raw_expect(three.incumbent, to_incumbent, sizeof to_incumbent);
+
+    /* (4) At most BLE_MAX_CHALLENGERS wait per device address; one that fails or
+     * outlasts the node's handshake deadline goes, and frees its place. */
+    challenge four = verified_link(a, 22, 2);
+    fips_transport_addr first, second, again;
+    fipsd_ble_stream *f1 = newcomer(a, &four, &first), *f2 = newcomer(a, &four, &second);
+    assert(!fips_transport_addr_equal(&first, &second) && fipsd_ble_connected_count(a->t) == 2 + 1 + BLE_MAX_CHALLENGERS);
+    const uint64_t declines = stats(a).duplicate_node_declines;
+    fipsd_ble_stream *f3 = raw_connect(four.r, a, 0); raw_hello(four.r, f3, 0);
+    assert(raw_until_closed(f3, NULL, 0, NULL)); raw_close(f3);
+    assert(stats(a).duplicate_node_declines == declines + 1 && fipsd_ble_connected_count(a->t) == 2 + 1 + BLE_MAX_CHALLENGERS);
+    /* a challenger whose channel fails is gone, and the verified link is untouched */
+    raw_close(f1);
+    await_free(a, FIPSD_TRANSPORT_DISCONNECTED, &first);
+    assert(fipsd_ble_connected_count(a->t) == 2 + 1 + BLE_MAX_CHALLENGERS - 1 && fipsd_ble_is_verified(a->t, &four.addr) == 1);
+    /* the node holds the other while it handshakes, then lets go: the deadline closes it, never the verified links */
+    assert(fipsd_ble_close_unproven(a->t, 60000, held_all, NULL) == 0);
+    assert(a->t->ops->close_unproven(a->t, 0, held_none, NULL) == 1);
+    assert(raw_until_closed(f2, NULL, 0, NULL)); raw_close(f2); /* a deliberate close: the node held nothing there to tell */
+    assert(fipsd_ble_connected_count(a->t) == 3 && fipsd_ble_is_verified(a->t, &four.addr) == 1 && fipsd_ble_is_verified(a->t, &three.addr) == 1);
+    /* the place is free again */
+    fipsd_ble_stream *f4 = newcomer(a, &four, &again);
+    assert(fipsd_ble_connected_count(a->t) == 4 && fipsd_ble_is_verified(a->t, &four.addr) == 1);
+
+    /* (5) The node's own path switch closes the old address deliberately, then
+     * the challenger proves itself: the challenger must survive the close. */
+    challenge five = verified_link(a, 23, 3);
+    fips_transport_addr moved;
+    fipsd_ble_stream *n5 = newcomer(a, &five, &moved);
+    assert(fipsd_ble_connected_count(a->t) == 6);
+    a->t->ops->close_connection(a->t, &five.addr);
+    assert(raw_until_closed(five.incumbent, NULL, 0, NULL)); raw_close(five.incumbent);
+    assert(fipsd_ble_connected_count(a->t) == 5 && fipsd_ble_is_verified(a->t, &moved) == 0);
+    a->t->ops->peer_link(a->t, &moved, &five.r->node, true, false);
+    assert(fipsd_ble_is_verified(a->t, &moved) == 1 && fipsd_ble_connected_count(a->t) == 5 && stats(a).duplicate_link_replacements == 2);
+    assert(a->t->ops->send(a->t, &moved, to_newcomer, sizeof to_newcomer) == 0); raw_expect(n5, to_newcomer, sizeof to_newcomer);
+    /* (6) The verified link ends on its own: its challengers go with it, and the node is told of the link. */
+    challenge six = verified_link(a, 24, 4);
+    fips_transport_addr gone;
+    fipsd_ble_stream *n6 = newcomer(a, &six, &gone);
+    assert(fipsd_ble_connected_count(a->t) == 7);
+    raw_close(six.incumbent);
+    await_free(a, FIPSD_TRANSPORT_DISCONNECTED, &six.addr);
+    assert(raw_until_closed(n6, NULL, 0, NULL)); raw_close(n6);
+    await_free(a, FIPSD_TRANSPORT_DISCONNECTED, &gone);
+    assert(fipsd_ble_connected_count(a->t) == 5);
+    raw_close(f4); raw_close(four.incumbent); raw_close(three.incumbent); raw_close(n1); raw_close(n5);
+    puts("challenge: an unauthenticated same-address claim never displaces a verified link, Noise as the same node replaces it (also after the node's own close of the old address), another identity is dropped, challengers bounded per address, expired by the node's deadline and closed with a verified link that ends: ok");
+}
 /* io_radio.rs bridge semantics and io.rs mock tests, against raw radios */
 typedef struct dial_arg { raw *from; fipsd_ble_peer to; uint16_t psm; GoChannel *done; int rc; fipsd_ble_stream *s; } dial_arg;
 static void dial_fiber_test(void *p)
@@ -1068,7 +1271,7 @@ int main(void)
 {
     (void)fipsd_test_tmpdir(NULL);
     assert(fips_identity_init_secp(fipsd_host_os_entropy(), &secp) == FIPS_IDENTITY_OK);
-    psm_wire(); addresses(); pool_rules(); arbitration(); probe_book(); recall_bounds(); reader_rules(); stats_and_config();
+    psm_wire(); addresses(); pool_rules(); arbitration(); challengers(); probe_book(); recall_bounds(); reader_rules(); stats_and_config();
     scenario(radio_body);
     scenario(lifecycle_body);
     scenario(discovery_body);
@@ -1080,6 +1283,7 @@ int main(void)
     scenario(exchange_body);
     scenario(flood_body);
     scenario(claims_body);
+    scenario(challenge_body);
     fips_identity_destroy_secp(secp);
     puts("ble: ok");
     return 0;
