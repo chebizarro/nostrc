@@ -91,6 +91,15 @@ def big_ints(value, path=''):
     return found
 
 
+# fipsctl's own five-second read and write deadlines, as it words them when a control request times out.
+STALLED_CONTROL = re.compile(r'^error: (failed to (read response|send request)|no response from daemon)')
+
+
+def reads_only(args):
+    """Commands that change nothing in the daemon, so running one again is harmless."""
+    return args[:1] in (['show'], ['stats']) or args[:2] in (['acl', 'show'], ['path', 'show'])
+
+
 class Client:
     """One fipsctl binary, run per command with the given socket."""
 
@@ -101,18 +110,47 @@ class Client:
         self.table = []  # (subcommand, rc, note)
 
     def run(self, args, socket_path=None, timeout=60):
+        """One invocation. A read-only command that gave up on a daemon starved for
+        longer than fipsctl's five seconds (a host event, not a result) is run once
+        more after the daemon answers again; a second stall is returned as it is."""
+        result = self.run_once(args, socket_path, timeout)
+        if socket_path is not None and reads_only(args) and STALLED_CONTROL.match(result.stderr):
+            try:
+                control(socket_path, 'show_status', timeout=30)  # blocks until the daemon answers
+            except (udp_interop.ControlError, OSError, ValueError) as e:
+                raise Failure(f'{self.name} {" ".join(args)}: {result.stderr.strip()}; the daemon has not answered '
+                              f'a control request in the 30 s since ({type(e).__name__}: {e})') from e
+            print(f'note: {self.name} {" ".join(args)} lost its request to a stalled daemon '
+                  f'({result.stderr.strip()}); running it again', flush=True)
+            result = self.run_once(args, socket_path, timeout)
+        return result
+
+    def run_once(self, args, socket_path, timeout):
         argv = [self.binary]
         if socket_path is not None:
             argv += ['-s', str(socket_path)]
         argv += args
-        result = subprocess.run(argv, env=self.env, text=True, capture_output=True, timeout=timeout)
+        try:
+            result = subprocess.run(argv, env=self.env, text=True, capture_output=True, timeout=timeout)
+        except subprocess.TimeoutExpired as e:
+            raise Failure(f'{self.name} {" ".join(args)}: still running after {timeout} s; '
+                          f'stdout {(e.stdout or "")!r}, stderr {(e.stderr or "")!r}') from e
         if any(m.decode() in result.stderr for m in udp_interop.SANITIZER_MARKERS):
             raise Failure(f'{self.name}: sanitizer report from {args}: {result.stderr}')
         return result
 
-    def expect(self, args, rc, socket_path=None, out=None, err=None, parse=False, note=''):
+    def expect(self, args, rc, socket_path=None, out=None, err=None, parse=False, note='', stall_ok=False):
+        """Run and check. `stall_ok` is for a command that changes the daemon: fipsctl
+        gives up after five seconds on a starved daemon that may apply the command
+        afterwards, so that exit is no verdict on it. It is reported, returns None,
+        and the state the caller awaits next shows whether the command took effect."""
         result = self.run(args, socket_path)
         label = ' '.join(args)
+        if stall_ok and result.returncode == 1 and STALLED_CONTROL.match(result.stderr):
+            print(f'note: {self.name} {label} gave up on a stalled daemon ({result.stderr.strip()}); '
+                  'whether it took effect is checked by the state awaited next', flush=True)
+            self.table.append((label, 1, 'stalled daemon; effect awaited'))
+            return None
         if result.returncode != rc:
             raise Failure(f'{self.name} {label}: exit {result.returncode}, expected {rc}\n{result.stdout}{result.stderr}')
         if out is not None and out not in result.stdout:
@@ -125,11 +163,19 @@ class Client:
             raise Failure(f'{self.name} {label}: a failure must not print to stdout:\n{result.stdout}')
         self.table.append((label, result.returncode, note))
         if parse:
-            try:
-                return json.loads(result.stdout)
-            except json.JSONDecodeError as e:
-                raise Failure(f'{self.name} {label}: stdout is not JSON ({e}):\n{result.stdout}')
+            return load_json(self, result)
         return result
+
+
+def load_json(client, result):
+    """The JSON a client printed. When it printed none (an empty stdout with exit 0
+    included), the message carries what it did print, its exit status and the
+    command, so the failure names the client rather than the parser."""
+    try:
+        return json.loads(result.stdout)
+    except ValueError as e:
+        raise Failure(f'{client.name} {" ".join(map(str, result.args[1:]))}: exit {result.returncode}, '
+                      f'stdout is not JSON ({e}): stdout {result.stdout!r}, stderr {result.stderr!r}') from e
 
 
 def pretty(value):
@@ -155,8 +201,11 @@ transports:
 
 
 class Node:
-    def __init__(self, name, daemon, socket_path, port):
-        self.name, self.daemon, self.socket, self.port = name, daemon, socket_path, port
+    # `ready` is the log line a daemon prints once its control socket is bound
+    # and listening (fipsd: after its subsystems started, the control socket
+    # among them; the Rust daemon: from the control task).
+    def __init__(self, name, daemon, socket_path, port, ready='fipsd running'):
+        self.name, self.daemon, self.socket, self.port, self.ready = name, daemon, socket_path, port, ready
         self.npub = self.node_addr = None
         self.deadline = None
 
@@ -165,29 +214,130 @@ class Node:
         return control(self.socket, command, params, timeout=timeout)
 
 
-def wait(nodes, what, deadline, predicate):
-    """Observe through the control sockets until the predicate holds, under one deadline."""
+class Patience:
+    """A deadline that is a stall window: `window` seconds without a new log byte
+    from any watched daemon expire the wait, and one is never longer than HARD
+    windows in all. A daemon the host starves is slow, not stuck, and shows it:
+    startup took 0.3 s typically and 15 s once at a load average of 40, with the
+    daemon's log growing meanwhile; a stuck one is silent, and is still reported
+    after one window rather than the hard stop."""
+
+    HARD = 4
+
+    def __init__(self, nodes, window):
+        self.nodes, self.window = nodes, window
+        self.began = time.monotonic()
+        self.hard = self.began + self.HARD * window
+        self.end = self.began + window
+        self.seen = self.logged()
+
+    def logged(self):
+        return sum(len(node.daemon.log) for node in self.nodes)
+
+    def deadline(self):
+        size = self.logged()
+        if size != self.seen:
+            self.seen = size
+            self.end = min(self.hard, time.monotonic() + self.window)
+        return self.end
+
+    def expired(self, what):
+        elapsed = time.monotonic() - self.began
+        return (f'timed out after {elapsed:.1f} s waiting for {what}: '
+                + (f'the {self.HARD * self.window:g} s hard stop' if self.end >= self.hard
+                   else f'no daemon output for {self.window:g} s'))
+
+
+def wait(nodes, what, deadline, predicate, patience=None):
+    """Observe through the control sockets until the predicate holds. `deadline`
+    is a stall window starting now (see Patience), or pass the Patience.
+
+    The control socket is the readiness mechanism: it has no push, so each wake
+    (any output from nodes[0], else POLL) re-asks it. A request that fails
+    (refused, timed out, closed mid-reply) is an observation, not a verdict: it
+    is kept as the last one and the wait goes on until it expires, where Failure
+    carries it; main() adds every daemon's state."""
+    patience = patience or Patience(nodes, deadline - time.monotonic())
     last = None
+    began = time.monotonic()
     while True:
         for node in nodes:
             if not node.daemon.alive():
-                raise Failure(f'{node.name} exited with {node.daemon.proc.returncode}')
-            node.deadline = deadline
+                raise Failure(f'{node.name} exited with {node.daemon.proc.returncode} while waiting for {what}')
+            node.deadline = patience.deadline()
         try:
             value = predicate()
-            print(f'ok: {what}', flush=True)
+            print(f'ok: {what} ({time.monotonic() - began:.2f} s)', flush=True)
             return value
         except NotYet as e:
             last = e.args[0] if e.args else None
-        except udp_interop.ControlError as e:
-            last = str(e)
+        except (udp_interop.ControlError, OSError, ValueError) as e:
+            last = f'{type(e).__name__}: {e}'
         finally:
             for node in nodes:
                 node.deadline = None
+        deadline = patience.deadline()
         if time.monotonic() >= deadline:
-            raise Failure(f'timed out waiting for {what}; last observation: {last}')
+            raise Failure(f'{patience.expired(what)}; last observation: {last}')
         with nodes[0].daemon.cond:
             nodes[0].daemon.cond.wait(min(udp_interop.POLL, max(0, deadline - time.monotonic())))
+
+
+def await_line(node, patience):
+    """The daemon's readiness line, awaited on its own log's condition."""
+    daemon = node.daemon
+    needle = node.ready.encode()
+    with daemon.cond:
+        while needle not in daemon.log.lower():
+            if daemon.eof:
+                raise Failure(f'{node.name} exited before logging {node.ready!r}')
+            remaining = patience.deadline() - time.monotonic()
+            if remaining <= 0:
+                raise Failure(patience.expired(f'{node.name} to log {node.ready!r}'))
+            daemon.cond.wait(remaining)
+
+
+def await_ready(nodes, window):
+    """Every daemon logged its readiness line and answers show_status. Call it right
+    after spawning them: one Patience covers both. The line is awaited, not polled
+    for; show_status is asked once the line is there, since the control socket is
+    bound before it."""
+    patience = Patience(nodes, window)
+    for node in nodes:
+        await_line(node, patience)
+        print(f'ok: {node.name} logged {node.ready!r} ({time.monotonic() - patience.began:.2f} s after spawn)', flush=True)
+        status = wait([node], f'{node.name} show_status', 0, lambda n=node: n.query('show_status'), patience)
+        node.npub, node.node_addr = status['npub'], status['node_addr']
+
+
+# Control requests, in the order that says most about a stuck daemon.
+STATE_QUERIES = ('show_status', 'show_links', 'show_peers', 'show_transports', 'show_tree')
+
+
+def daemon_state(nodes, log_lines=40):
+    """What every daemon looks like now, for the message of a failure: whether it
+    is alive, what its control socket says (a short deadline each, and no further
+    questions of a daemon that did not answer), and the tail of its log."""
+    parts = []
+    for node in nodes:
+        alive = node.daemon.alive()
+        lines = [f'--- {node.name}: {"alive" if alive else f"exited with {node.daemon.proc.returncode}"} ---']
+        for command in STATE_QUERIES if alive else ():
+            try:
+                lines.append(f'{command}: {json.dumps(control(node.socket, command, timeout=2), sort_keys=True)}')
+            except (udp_interop.ControlError, OSError, ValueError) as e:
+                lines.append(f'{command}: {type(e).__name__}: {e}')
+                break
+        tail = node.daemon.text().splitlines()[-log_lines:]
+        lines.append(f'log (last {len(tail)} lines):')
+        lines.extend(f'  {line}' for line in tail)
+        parts.append('\n'.join(lines))
+    return '\n'.join(parts)
+
+
+def fail_with_state(failure, nodes):
+    """Re-raise a Failure with the state of every daemon, taken while they still run."""
+    raise Failure(f'{failure}\n{daemon_state(nodes)}') from failure
 
 
 class FakeAdapter:
@@ -220,6 +370,61 @@ class FakeAdapter:
         os.unlink(self.path)
 
 
+class ReplayProxy:
+    """A control socket that asks the daemon once per request line and answers every
+    later client from that reply. A live series (stats history gains a sample each
+    second) read by two client processes a moment apart is two different replies
+    whenever the host is slow enough to let a sample land between them; through the
+    proxy both clients render one reply, so their output must match byte for byte
+    and a mismatch is the clients'. Used as a context manager."""
+
+    def __init__(self, path, upstream):
+        self.path, self.upstream = str(path), str(upstream)
+        self.replies = {}
+        self.closing = False
+        self.listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.listener.bind(self.path)
+        self.listener.listen(8)
+        self.thread = threading.Thread(target=self.serve, daemon=True)
+        self.thread.start()
+
+    def serve(self):
+        while True:
+            try:
+                conn, _ = self.listener.accept()
+            except OSError:
+                return
+            with conn:
+                if self.closing:
+                    return
+                conn.settimeout(10)
+                try:
+                    request = conn.makefile('rb').readline()
+                    if request not in self.replies:
+                        with socket.socket(socket.AF_UNIX) as up:
+                            up.settimeout(10)
+                            up.connect(self.upstream)
+                            up.sendall(request)
+                            self.replies[request] = up.makefile('rb').readline()
+                    conn.sendall(self.replies[request])
+                except OSError:
+                    pass  # the client sees a closed connection and says so on stderr
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.closing = True
+        with socket.socket(socket.AF_UNIX) as wake:  # accept() does not return on close() everywhere
+            try:
+                wake.connect(self.path)
+            except OSError:
+                pass
+        self.thread.join(5)
+        self.listener.close()
+        os.unlink(self.path)
+
+
 def start_fipsd(name, binary, root, env, port, nsec, extra=''):
     sock = root / f'{name}.sock'
     config = fipsd_config(root, name, sock, port, nsec, extra)
@@ -229,7 +434,7 @@ def start_fipsd(name, binary, root, env, port, nsec, extra=''):
 
 def link(client, a, b, deadline, link_state=('active', 'active')):
     """Dial b from a through `client`, then await the link on both sides."""
-    data = client.expect(['connect', b.npub, f'127.0.0.1:{b.port}', 'udp'], 0, a.socket, parse=True)
+    data = client.expect(['connect', b.npub, f'127.0.0.1:{b.port}', 'udp'], 0, a.socket, parse=True, stall_ok=True)
     print(f'{client.name} connect -> {data}')
 
     def linked():
@@ -258,10 +463,6 @@ def probe_overall(stdout):
     if not m:
         raise Failure(f'probe output has no overall line:\n{stdout}')
     return m.group(1)
-
-
-# fipsctl's own five-second read and write deadlines, as it words them when a control request times out.
-STALLED_CONTROL = re.compile(r'^error: (failed to (read response|send request)|no response from daemon)')
 
 
 def probe_run(client, node, args):
@@ -369,7 +570,7 @@ def query_round(client, node, note=''):
         label = ' '.join(args)
         if result.returncode != 0:
             raise Failure(f'{client.name} {label} against {node.name}: exit {result.returncode}: {result.stderr}')
-        data = json.loads(result.stdout)
+        data = load_json(client, result)
         if key not in data:
             raise Failure(f'{client.name} {label}: data lacks {key}: {result.stdout[:200]}')
         if result.stdout != pretty(data) and not re.search(r'\d\.\d|e[+-]\d', result.stdout):
@@ -390,8 +591,10 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--fipsd', required=True)
     ap.add_argument('--fipsctl', required=True)
-    ap.add_argument('--startup-timeout', type=float, default=30)
-    ap.add_argument('--link-timeout', type=float, default=60)
+    ap.add_argument('--startup-timeout', type=float, default=30,
+                    help='seconds without daemon output before startup is reported stuck (a stall window; 4x is the hard stop)')
+    ap.add_argument('--link-timeout', type=float, default=60,
+                    help='seconds without daemon output before a link/tree/teardown wait is reported stuck (stall window; 4x hard stop)')
     args = ap.parse_args()
     root = Path(os.environ['FIPSD_TEST_TMPDIR'])
     env = dict(os.environ, FIPSD_WORKERS='2', NO_COLOR='1')
@@ -400,12 +603,9 @@ def main():
     port_a, port_b = reserve_port(socket.AF_INET), reserve_port(socket.AF_INET)
     a = start_fipsd('a', args.fipsd, root, env, port_a, '1' * 64)
     b = start_fipsd('b', args.fipsd, root, env, port_b, '3' * 64)
+    passed = False
     try:
-        deadline = time.monotonic() + args.startup_timeout
-        for node in (a, b):
-            node.daemon.await_log('fipsd running', deadline)
-            status = wait([node], f'{node.name} show_status', deadline, lambda n=node: n.query('show_status'))
-            node.npub, node.node_addr = status['npub'], status['node_addr']
+        await_ready((a, b), args.startup_timeout)
         # Idle daemon: every query, the TUN keys at their fallback.
         first = query_round(client, a, 'idle')
         status = first['show status'][0]
@@ -479,21 +679,26 @@ def main():
         client.expect(['stats', 'history', 'loss_rate', '--peer', b.npub, '--plot'], 0, a.socket)
         for node, target in ((a, b.npub), (b, a.npub)):
             check_probe(client, node, target)
-        client.expect(['disconnect', b.npub], 0, a.socket, parse=True)
+        client.expect(['disconnect', b.npub], 0, a.socket, parse=True, stall_ok=True)
 
         def unlinked():
             links = a.query('show_links')['links']
             if links:
                 raise NotYet(links)
         wait([a, b], 'link torn down', time.monotonic() + args.link_timeout, unlinked)
+        passed = True
+    except Failure as e:
+        fail_with_state(e, (a, b))
     finally:
         failures = []
         for node in (a, b):
             rc = node.daemon.stop(20)
             if rc != 0 or node.daemon.sanitizer_report():
                 failures.append(f'{node.name}: exit {rc}\n{node.daemon.text()[-4000:]}')
-        if failures:
+        if failures and passed:
             raise Failure('\n'.join(failures))
+        if failures:  # the failure in flight is the cause; this is what the daemons said at the end
+            print('daemons at shutdown:\n' + '\n'.join(failures), file=sys.stderr)
     print('\nsubcommand                                   rc  note')
     for label, rc, note in client.table:
         print(f'{label[:44]:<44} {rc:>2}  {note}')

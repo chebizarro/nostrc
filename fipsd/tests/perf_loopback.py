@@ -131,9 +131,10 @@ transports:
             for i, node in enumerate(nodes):
                 directory = args.profile_dir / root.name / str(i)
                 command = [args.fipsctl, '--socket', str(root / f'{i}.sock'), 'profile', 'tick']
+                armed = time.monotonic()  # the capture starts after this
                 on = subprocess.run([*command, 'on', '--dir', str(directory)],
                                     text=True, capture_output=True, check=True, timeout=10)
-                captures.append((command, json.loads(on.stdout)))
+                captures.append((command, json.loads(on.stdout), armed))
         before = [cpu_seconds(node.daemon.proc.pid) for node in nodes]
         start = time.monotonic()
         driver = subprocess.run([args.native_tool, str(apis[0]), str(apis[1]), nodes[1].npub,
@@ -146,13 +147,15 @@ transports:
             result['tick_profiles'] = []
             result['pipeline_reports'] = [[line[line.index('[pipe '):] for line in node.daemon.text().splitlines()
                                            if '[pipe ' in line] for node in nodes]
-            for command, on in captures:
+            for command, on, armed in captures:
                 status = subprocess.run([*command, 'status'], text=True, capture_output=True,
                                         check=True, timeout=10)
                 off = subprocess.run([*command, 'off'], text=True, capture_output=True,
                                      check=True, timeout=10)
+                # An upper bound on how long the capture ran: it ended before `off` returned.
                 result['tick_profiles'].append({'on': on, 'status': json.loads(status.stdout),
-                                                'off': json.loads(off.stdout)})
+                                                'off': json.loads(off.stdout),
+                                                'window_s': time.monotonic() - armed})
         result['pairing'] = '-'.join(roles)
         result['traffic_wall_s'] = elapsed
         result['cpu'] = [{'role': role, 'traffic_s': max(0, end - begin),

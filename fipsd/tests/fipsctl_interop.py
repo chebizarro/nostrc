@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """The cross-implementation gate for fipsctl: the C fipsctl against the pinned
 Rust daemon and the pinned Rust fipsctl against fipsd, every documented
-subcommand, with the two clients' outputs compared byte for byte wherever
-the daemon's state is not itself changing between the two reads. SKIP (77)
+subcommand, with the two clients' outputs compared byte for byte on one
+daemon reply (a replay proxy gives both clients the first reply, so the
+daemon's own movement between two reads is not compared). SKIP (77)
 without the Rust daemon (FIPSD_UDP_INTEROP_RUST_BINARY) or a Rust fipsctl
 (FIPSD_FIPSCTL_EXECUTABLE, or `cargo build --locked --release --bin fipsctl`
 from FIPSD_UPSTREAM_CONTROL_DIR into --cargo-target)."""
 import argparse
-import json
 import os
 from pathlib import Path
 import re
@@ -19,7 +19,8 @@ import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fipsctl_e2e as e2e  # noqa: E402
-from fipsctl_e2e import Client, Failure, Node, check_probe, link, local_commands, pretty, shape, wait  # noqa: E402
+from fipsctl_e2e import (Client, Failure, Node, ReplayProxy, await_ready, check_probe, fail_with_state,  # noqa: E402
+                         link, load_json, local_commands, pretty, shape, wait)
 from udp_interop import Daemon, reserve_port  # noqa: E402
 
 # Durations and timing figures differ between two runs of the same probe, and
@@ -45,7 +46,7 @@ transports:
 
 
 class Comparison:
-    """Both clients on one daemon, output by output."""
+    """Both clients on one daemon, output by output: each pair of runs sees one reply from it."""
 
     def __init__(self):
         self.identical = []
@@ -54,8 +55,14 @@ class Comparison:
 
     def compare(self, daemon, c, r, args, parse_json=True, expect_rc=None):
         label = ' '.join(a if not a.startswith('npub1') else a[:12] + '...' for a in args)
-        rc_out = r.run(args, daemon.socket)
-        cc_out = c.run(args, daemon.socket)
+        if '--plot' in args:
+            parse_json = False  # a plot is text
+        # Both clients read one reply: a daemon's state moves between two reads (a
+        # series gains a sample a second, MMP gains keys with its first report),
+        # and the clients are what is being compared, not the daemon's pace.
+        with ReplayProxy(daemon.socket.with_name(f'{daemon.name}-replay.sock'), daemon.socket) as proxy:
+            rc_out = r.run(args, proxy.path)
+            cc_out = c.run(args, proxy.path)
         if rc_out.returncode != cc_out.returncode:
             raise Failure(f'[{daemon.name}] {label}: C exit {cc_out.returncode}, Rust exit {rc_out.returncode}\n'
                           f'C: {cc_out.stdout}{cc_out.stderr}\nRust: {rc_out.stdout}{rc_out.stderr}')
@@ -65,7 +72,7 @@ class Comparison:
         if cc_out.stdout == rc_out.stdout and cc_out.stderr == rc_out.stderr:
             self.identical.append(label)
         elif parse_json and cc_out.returncode == 0:
-            c_data, r_data = json.loads(cc_out.stdout), json.loads(rc_out.stdout)
+            c_data, r_data = load_json(c, cc_out), load_json(r, rc_out)
             if shape(c_data) != shape(r_data):
                 raise Failure(f'[{daemon.name}] {label}: the clients disagree beyond live values\n'
                               f'C: {cc_out.stdout}\nRust: {rc_out.stdout}')
@@ -111,8 +118,10 @@ def main():
     ap.add_argument('--upstream', default='')
     ap.add_argument('--rust-fipsctl', default='')
     ap.add_argument('--cargo-target', default='')
-    ap.add_argument('--startup-timeout', type=float, default=30)
-    ap.add_argument('--link-timeout', type=float, default=60)
+    ap.add_argument('--startup-timeout', type=float, default=30,
+                    help='seconds without daemon output before startup is reported stuck (a stall window; 4x is the hard stop)')
+    ap.add_argument('--link-timeout', type=float, default=60,
+                    help='seconds without daemon output before a link/tree/teardown wait is reported stuck (stall window; 4x hard stop)')
     args = ap.parse_args()
     args.rust = args.rust or os.environ.get('FIPSD_UDP_INTEROP_RUST_BINARY', '')
     if not args.rust or not Path(args.rust).is_file():
@@ -152,15 +161,12 @@ def main():
     port_c, port_r = reserve_port(socket.AF_INET), reserve_port(socket.AF_INET)
     fipsd = e2e.start_fipsd('fipsd', args.fipsd, root, env, port_c, '1' * 64)
     rsock = root / 'rrust.sock'
-    rust = Node('rust', Daemon('rust', [args.rust, '-c', str(rust_config(root, 'rrust', rsock, port_r, '2' * 64))], env, root), rsock, port_r)
+    rust = Node('rust', Daemon('rust', [args.rust, '-c', str(rust_config(root, 'rrust', rsock, port_r, '2' * 64))], env, root),
+                rsock, port_r, ready='control socket listening')
     cmp = Comparison()
+    passed = False
     try:
-        deadline = time.monotonic() + args.startup_timeout
-        fipsd.daemon.await_log('fipsd running', deadline)
-        rust.daemon.await_log('control socket listening', deadline)
-        for node in (fipsd, rust):
-            status = wait([node], f'{node.name} show_status', deadline, lambda n=node: n.query('show_status'))
-            node.npub, node.node_addr = status['npub'], status['node_addr']
+        await_ready((fipsd, rust), args.startup_timeout)
         queries = [q[0] for q in e2e.QUERIES] + [['stats', 'history', 'mesh_size', '--plot'], ['stats', 'history', 'bogus'],
                                                    ['stats', 'history', 'srtt_ms'], ['path', 'show', 'npub1qq8s4f7x'],
                                                    ['disconnect', 'npub1qq8s4f7x'], ['connect', 'npub1qq8s4f7x', '[fd00::1]:2121', 'udp'],
@@ -207,21 +213,26 @@ def main():
             cmp.compare(daemon, c, r, ['stats', 'history', 'bytes_in', '--peer', peer.npub, '--plot'], parse_json=False, expect_rc=0)
             for client in (c, r):
                 check_probe(client, daemon, peer.npub)
-        c.expect(['disconnect', rust.npub], 0, fipsd.socket, parse=True)
+        c.expect(['disconnect', rust.npub], 0, fipsd.socket, parse=True, stall_ok=True)
 
         def unlinked():
             links = fipsd.query('show_links')['links']
             if links:
                 raise e2e.NotYet(links)
         wait([fipsd, rust], 'link torn down', time.monotonic() + args.link_timeout, unlinked)
+        passed = True
+    except Failure as e:
+        fail_with_state(e, (fipsd, rust))
     finally:
         failures = []
         for node in (fipsd, rust):
             rc = node.daemon.stop(20)
             if rc != 0 or node.daemon.sanitizer_report():
                 failures.append(f'{node.name}: exit {rc}\n{node.daemon.text()[-4000:]}')
-        if failures:
+        if failures and passed:
             raise Failure('\n'.join(failures))
+        if failures:  # the failure in flight is the cause; this is what the daemons said at the end
+            print('daemons at shutdown:\n' + '\n'.join(failures), file=sys.stderr)
     print('\ndaemon  subcommand                                    C  Rust  verdict')
     for daemon, label, crc, rrc, verdict in cmp.rows:
         print(f'{daemon:<7} {label[:44]:<44} {crc:>2} {rrc:>5}  {verdict}')

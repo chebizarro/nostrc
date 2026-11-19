@@ -10,6 +10,30 @@ import tempfile
 from perf_loopback import run_pair
 
 
+def split_capture(lines):
+    """A shaped capture as (header through the column row, the rows after it)."""
+    column = next(i for i, line in enumerate(lines) if line.startswith('ts_unix'))
+    return lines[:column + 1], lines[column + 1:]
+
+
+def whole_intervals(rows, interval_rows, window_s, interval_secs):
+    """How many report intervals a capture holds, each of them the reference's rows.
+
+    The writer flushes the whole report every `interval_secs` of wall time and once
+    more when stopped, so a capture holds one interval for every full period of its
+    window and one more: a host slow enough to stretch the window past a period
+    legitimately ends with the extra flush, and none can exist without the time
+    for it. The window is an upper bound (the capture ended before `off` returned),
+    so it bounds the count from above; a flush is never missing from the lower end
+    except by starvation of the writer, which no wall-clock lower bound can tell
+    from a defect."""
+    count, rest = divmod(len(rows), len(interval_rows))
+    assert not rest and rows == interval_rows * count, 'capture rows are not whole copies of the reference interval'
+    most = 1 + int(window_s // interval_secs)
+    assert 1 <= count <= most, f'{count} interval(s) in a capture whose window was {window_s:.1f} s (at most {most})'
+    return count
+
+
 def shape(text):
     lines = []
     for line in text.splitlines():
@@ -87,7 +111,11 @@ def main():
             assert entry[action].keys() == controls[action].keys(), (action, entry[action])
         assert entry['status']['state'] == 'running' and entry['off']['stopped']
         text = Path(entry['off']['path']).read_text()
-        assert shape(text) == rust_shape, 'C/Rust report structure/order/unit mismatch'
+        header, rows = split_capture(shape(text))
+        rust_header, rust_rows = split_capture(rust_shape)
+        assert header == rust_header, 'C/Rust report header mismatch'
+        intervals = whole_intervals(rows, rust_rows, entry['window_s'], entry['on']['interval_secs'])
+        print(f'capture: {intervals} interval(s) of {len(rust_rows)} rows in a window of {entry["window_s"]:.1f} s')
         match = re.search(r'\twhole_tick\t(\d+)\t', text)
         assert match and int(match[1]) > 0, 'no live ticks recorded'
         print(json.dumps(entry, sort_keys=True))
