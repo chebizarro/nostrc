@@ -23,6 +23,10 @@ jobs:
       matrix:
         os: [ubuntu-24.04, macos-latest]
         configuration: [asan_ubsan, tsan, optimized]
+        # GCC Release (-O3) beside the clang legs (nostrc-aqyad).
+        include:
+          - os: ubuntu-24.04
+            configuration: gcc
     env:
       CC: clang
       CXX: clang++
@@ -55,6 +59,13 @@ jobs:
             echo "PKG_CONFIG_PATH=$(brew --prefix openssl@3)/lib/pkgconfig:$(brew --prefix curl)/lib/pkgconfig:$(brew --prefix)/lib/pkgconfig:${PKG_CONFIG_PATH}"
             echo "ASAN_OPTIONS=detect_leaks=0:strict_string_checks=1:halt_on_error=1"
           } >> "$GITHUB_ENV"
+      - name: Use GCC
+        if: matrix.configuration == 'gcc'
+        run: |
+          {
+            echo "CC=gcc"
+            echo "CXX=g++"
+          } >> "$GITHUB_ENV"
       - name: Configure
         shell: bash
         run: |
@@ -66,6 +77,8 @@ jobs:
             # reported. Build the vendored copy with -fsanitize=thread instead.
             tsan) args+=(-DGO_ENABLE_TSAN=ON -DNOSTR_USE_SYSTEM_NSYNC=OFF) ;;
             optimized) args+=(-DCMAKE_BUILD_TYPE=Release '-DCMAKE_C_FLAGS_RELEASE=-O2 -DNDEBUG') ;;
+            # CMake's own Release flags: -O3 -DNDEBUG.
+            gcc) args+=(-DCMAKE_BUILD_TYPE=Release) ;;
           esac
           cmake -S . -B build -G Ninja "${args[@]}" \
             -DBUILD_FIPS=ON -DBUILD_APPS=OFF -DBUILD_RELAYD=OFF \
