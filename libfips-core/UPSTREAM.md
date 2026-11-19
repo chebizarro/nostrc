@@ -800,7 +800,7 @@ through a random workload, one purging through the index and one removing what
 a storage-order sweep finds expired, and requires identical counts and state
 (every slot, the heaps, the map and the free list) after every step; the index
 invariant is checked after every mutation in the existing map/index test.
-`fips_bench_coord_cache` times the purge at 1,000 and 50,000 entries.
+`fips_bench_coord_cache --purge` times the purge at 1,000 and 50,000 entries.
 
 Stats without a sweep: upstream's `stats` walks the map. The C cache keeps
 the residents' `created_at` sum (mod 2^64) and an upper bound on it, so for any

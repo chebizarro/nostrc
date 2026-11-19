@@ -1,7 +1,7 @@
 /* Port of upstream benches/coord_cache.rs: CoordCache::get hits and misses at
  * a small cache (1,000 entries) and at the default capacity (50,000), the
  * forwarding path's per-packet lookup. C addition (no upstream counterpart):
- * purge_expired, the dispatcher's per-tick call, at the same two sizes with
+ * purge_expired (run with --purge), the dispatcher's per-tick call, at the same two sizes with
  * nothing expired and with 16 entries due, to show its cost follows what it
  * removes, not the capacity. Host program: it reads a monotonic clock and
  * allocates; the core under test does neither. Not a ctest. */
@@ -144,15 +144,19 @@ static int run_purge(size_t n)
     return 0;
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
+    /* Default output is exactly upstream's workload set: perf_run.py and
+     * perf_compare.py require all 39 upstream micro workloads, no more. The
+     * C-only purge rows run only with --purge. */
+    bool purge = argc > 1 && !strcmp(argv[1], "--purge");
     size_t sizes[] = {1000, 50000};
-    for (size_t i = 0; i < 2; ++i)
+    for (size_t i = 0; i < 2 && !purge; ++i)
         if (run(sizes[i]) != 0) {
             fprintf(stderr, "coord_cache bench setup failed at %zu entries\n", sizes[i]);
             return 1;
         }
-    for (size_t i = 0; i < 2; ++i)
+    for (size_t i = 0; i < 2 && purge; ++i)
         if (run_purge(sizes[i]) != 0) {
             fprintf(stderr, "coord_cache purge bench setup failed at %zu entries\n", sizes[i]);
             return 1;
