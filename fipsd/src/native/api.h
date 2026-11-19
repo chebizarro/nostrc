@@ -47,7 +47,9 @@ typedef enum fipsd_native_event_kind {
     FIPSD_NATIVE_EVENT_FLOW_RELEASED, FIPSD_NATIVE_EVENT_FLOW_UNPINNED,
     FIPSD_NATIVE_EVENT_LISTENER_RELEASED, FIPSD_NATIVE_EVENT_CONNECTION_CLOSED,
     FIPSD_NATIVE_EVENT_FLOW_READ,     /* one datagram read off a flow's descriptor */
-    FIPSD_NATIVE_EVENT_DATAGRAM_COUNTED /* one inbound datagram dispatched and counted; port is its destination */
+    FIPSD_NATIVE_EVENT_DATAGRAM_COUNTED, /* one inbound datagram dispatched and counted; port is its destination */
+    FIPSD_NATIVE_EVENT_FLOW_PARKED,   /* a macOS datagram flow's feeder is about to wait for its client's room */
+    FIPSD_NATIVE_EVENT_FLOW_DROPPED   /* a datagram flow's feeder counted a drop_client_buffer_full */
 } fipsd_native_event_kind;
 typedef struct fipsd_native_event { fipsd_native_event_kind kind; uint64_t flow; uint16_t port; } fipsd_native_event;
 void fipsd_native_api_observe(fipsd_native_api *api, GoChannel *events);

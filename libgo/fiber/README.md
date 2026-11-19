@@ -198,6 +198,28 @@ already claimed is not proof that a user has joined. Descriptor aliases are
 not tracked. The weak `gof_trace_on_io_armed` hook marks the registered/pre-park
 boundary; like the other hooks it must not yield or call fiber APIs.
 
+Two POSIX-only calls (not declared on Windows) serve a writer whose own syscall
+cannot park, such as a macOS `AF_UNIX SOCK_DGRAM` sender refused with `ENOBUFS`
+(nostrc-e3ps5):
+
+```c
+int gof_wait_writable(gof_socket_t fd, size_t lowat, int timeout_ms);
+int gof_io_wake_writers(gof_socket_t fd);
+```
+
+`gof_wait_writable` parks until `fd` reports at least `lowat` bytes of send
+space (0: any writability), a `gof_io_wake_writers`, the deadline (`timeout_ms`
+< 0 waits indefinitely, > 0 bounds it, 0 is `EINVAL`), owner cancellation or
+stop. `lowat > 0` needs a per-registration low-water mark: the kqueue backend
+registers `EVFILT_WRITE` with `NOTE_LOWAT`, which XNU evaluates on a connected
+`AF_UNIX` socket against the peer's receive space; epoll returns `ENOTSUP`. The
+mark is kept per fd for the write queue (the lowest among parked writers) and
+re-applied on every re-arm, so a read wake on the same fd never drops it.
+`gof_io_wake_writers` wakes the parked writers as if the fd became writable, or
+latches one wake for the next writability wait when none is parked, so a wake
+issued just before the writer parks is not lost; `gof_io_reset_fd` clears the
+latch. Both treat readiness as a hint: retry the write.
+
 Each fiber tracks its current `wait_fd` / `wait_events` for O(1) waiter
 removal when a timeout fires before an I/O event.
 

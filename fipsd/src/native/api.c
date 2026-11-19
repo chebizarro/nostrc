@@ -46,6 +46,8 @@ typedef struct flow_rec {
     _Atomic uint64_t datagrams, bytes;
     _Atomic bool closed;
     bool stream;         /* a framed SOCK_STREAM pair (native/frame.h); the feeder is its only writer */
+    _Atomic bool kicked; /* the flow queue overflowed since the feeder last sent (FIPSD_NATIVE_DGRAM_PARK) */
+    size_t room;         /* datagram flows: the daemon half's SO_SNDBUF, NOTE_LOWAT's ceiling there */
     unsigned refs;       /* reader, feeder and any transient user (inject) */
 } flow_rec;
 typedef struct listener_rec {
@@ -71,6 +73,7 @@ struct fipsd_native_api {
     fipsd_metrics *metrics;
     fipsd_native_limits limits;
     bool debug;
+    bool dgram_park;     /* FIPSD_NATIVE_DGRAM_PARK and not disabled by the environment */
     uint16_t max_payload;
     char path[PATH_MAX];
     bool bound;
@@ -159,6 +162,12 @@ static void flow_end(fipsd_native_api *a, flow_rec *f)
 {
     nsync_mu_lock(&a->mu);
     atomic_store(&f->closed, true);
+#if FIPSD_NATIVE_DGRAM_PARK
+    /* A datagram client's close raises no write event (XNU's unp_disconnect
+     * sets so_error without waking the peer's writers), so a feeder parked on
+     * that client is released here; its inbound queue is freed with the flow. */
+    if (a->dgram_park && !f->stream) (void)gof_io_cancel_fd(f->sock);
+#endif
     if (!f->released) {
         f->released = true;
         if (fipsd_native_registry_release(a->registry, &f->key)) count(a, FIPSD_METRIC_native_flows_closed, 1);
@@ -207,36 +216,103 @@ static void flow_reader_fiber(void *arg)
     fipsd_native_frame_reader_clear(&frames);
     flow_end(a, f);
 }
+#if FIPSD_NATIVE_DGRAM_PARK
+/* One datagram onto a macOS datagram flow (nostrc-e3ps5). A full client
+ * refuses it with ENOBUFS; the feeder then parks until the client's buffer
+ * has room for exactly this datagram (gof_wait_writable with NOTE_LOWAT at
+ * its cost, native/seqpacket.h) and sends it, so the flow queue behind it is
+ * the only place a slow client loses datagrams, as on Linux. Two safety nets,
+ * neither a timer:
+ *  - a wake whose send still fails widens the mark (doubling a margin over
+ *    the expected cost), so a kernel whose accounting differed could never
+ *    make this spin; past the half's send buffer, where NOTE_LOWAT is
+ *    clamped, the datagram is dropped and counted as before;
+ *  - the flow queue overflowing wakes the feeder (overflowed_locked): if it
+ *    still cannot send, the client is not draining or will never fit this
+ *    datagram (one larger than its whole buffer, which nothing ever wakes),
+ *    so it and everything queued behind it get the old treatment, one try
+ *    each and a counted drop on ENOBUFS, after which parking resumes. A wake
+ *    that never came therefore costs what the drop always did, never a hung
+ *    flow. Teardown cancels the wait (flow_end, stop).
+ * Returns 0 (sent, or dropped and counted) or -1 with the io errno. */
+static int feed_datagram(fipsd_native_api *a, flow_rec *f, const fipsd_native_datagram *dg, size_t *shed)
+{
+    bool shedding = *shed > 0, woken = false;
+    if (shedding) --*shed;
+    size_t margin = 0;
+    for (;;) {
+        if (fipsd_native_send_once(f->sock, dg->bytes, dg->len) >= 0) {
+            atomic_store(&f->kicked, false);
+            return 0;
+        }
+        int error = fipsd_io_errno();
+        if (error != ENOBUFS && error != EAGAIN) { fipsd_io_set_errno(error); return -1; }
+        if (woken && atomic_exchange(&f->kicked, false)) {
+            *shed = go_channel_get_depth(f->inbound);
+            FIPSD_DEBUG(MODULE, "flow %llu: queue overflowed behind a full client, shedding %zu queued datagrams",
+                        (unsigned long long)f->id, *shed);
+            break;
+        }
+        if (woken) margin = margin ? margin * 2 : FIPSD_NATIVE_DGRAM_ADDR_COST;
+        size_t need = dg->len + FIPSD_NATIVE_DGRAM_ADDR_COST + margin;
+        if (shedding || need > f->room) break;
+        event(a, FIPSD_NATIVE_EVENT_FLOW_PARKED, f->id, 0);
+        if (gof_wait_writable(f->sock, need, -1) != 0) return -1;
+        woken = true;
+    }
+    count(a, FIPSD_METRIC_native_drop_client_buffer_full, 1);
+    event(a, FIPSD_NATIVE_EVENT_FLOW_DROPPED, f->id, 0);
+    FIPSD_DEBUG(MODULE, "flow %llu: write dropped a datagram", (unsigned long long)f->id);
+    return 0;
+}
+#endif
 /* Write datagrams the node delivered onto the client's descriptor. A full
- * client buffer parks this writer on SOCK_SEQPACKET (Linux) and on a stream
+ * client buffer parks this writer on SOCK_SEQPACKET (Linux), on a stream
  * flow (macOS, FreeBSD with libfipsnative), whose kernel raises writability
- * when the client reads, so nothing is lost here and the flow queue behind it
- * is the only place a slow client loses datagrams. A datagram flow on macOS
- * and FreeBSD (SOCK_DGRAM, every client that did not ask for framing, the
- * upstream Rust client included) has no sender-side queue to wait on: a full
+ * when the client reads, and on a macOS datagram flow (feed_datagram), so
+ * nothing is lost here and the flow queue behind it is the only place a slow
+ * client loses datagrams. A FreeBSD datagram flow (SOCK_DGRAM, every client
+ * that did not ask for framing, the upstream Rust client included), or a
+ * macOS one with FIPSD_NATIVE_DGRAM_PARK=0, has nothing to wait on: a full
  * client buffer refuses with ENOBUFS and the datagram is dropped, keeping the
  * flow. Upstream drops it uncounted; here it is native.drop_client_buffer_full. */
 static void flow_feeder_fiber(void *arg)
 {
     flow_rec *f = arg;
     fipsd_native_api *a = f->api;
+#if FIPSD_NATIVE_DGRAM_PARK
+    size_t shed = 0; /* queued datagrams still to pass without waiting, after an overflow */
+#endif
     for (;;) {
         void *v = NULL;
         if (go_channel_receive(f->inbound, &v) != 0 || !v) break;
         fipsd_native_datagram *dg = v;
-        int rc = f->stream ? fipsd_native_frame_send_fiber(f->sock, dg->bytes, dg->len)
-                           : fipsd_native_send_fiber(f->sock, dg->bytes, dg->len, -1);
+        int rc;
+        if (f->stream) rc = fipsd_native_frame_send_fiber(f->sock, dg->bytes, dg->len);
+#if FIPSD_NATIVE_DGRAM_PARK
+        else if (a->dgram_park) rc = feed_datagram(a, f, dg, &shed);
+#endif
+        else rc = fipsd_native_send_fiber(f->sock, dg->bytes, dg->len, -1);
         int error = fipsd_io_errno();
         fipsd_native_datagram_free(dg);
         if (rc == 0) continue;
         if (!f->stream && error == ENOBUFS) {
             count(a, FIPSD_METRIC_native_drop_client_buffer_full, 1);
+            event(a, FIPSD_NATIVE_EVENT_FLOW_DROPPED, f->id, 0);
             FIPSD_DEBUG(MODULE, "flow %llu: write dropped a datagram", (unsigned long long)f->id);
             continue;
         }
         if (error != ECANCELED) FIPSD_DEBUG(MODULE, "flow %llu: write failed: %s", (unsigned long long)f->id, strerror(error));
         break;
     }
+#if FIPSD_NATIVE_CLOSE_RETRY_MS > 0
+    /* A Darwin/FreeBSD datagram client's close is reported once, as so_error,
+     * to whichever call comes first: a write that took it (ECONNRESET) leaves
+     * the reader only EAGAIN, and it would never end the flow. Ending this
+     * feeder ends the reader's wait so it releases the flow (harmless when
+     * the reader has already gone). */
+    if (!f->stream) (void)gof_io_cancel_fd(f->sock);
+#endif
     if (a->before_flow_reap) a->before_flow_reap(a->flow_reap_user, f->id);
     nsync_mu_lock(&a->mu);
     flow_unref_locked(a, f);
@@ -276,6 +352,9 @@ static bool wire_flow(fipsd_native_api *a, int fds[2], GoChannel **inbound, bool
 static bool flow_start(fipsd_native_api *a, uint64_t id, const fipsd_native_flow_key *key, const fips_xonly_pubkey *pubkey,
                        int sock, int pin, GoChannel *inbound, bool stream, listener_rec *listener)
 {
+    int sndbuf = 0;
+    socklen_t sndbuf_len = sizeof sndbuf;
+    if (stream || getsockopt(sock, SOL_SOCKET, SO_SNDBUF, &sndbuf, &sndbuf_len) != 0 || sndbuf < 0) sndbuf = 0;
     nsync_mu_lock(&a->mu);
     flow_rec *f = NULL;
     for (size_t i = 0; i < a->flow_cap && !f; ++i) if (!a->flows[i].used) f = &a->flows[i];
@@ -293,7 +372,9 @@ static bool flow_start(fipsd_native_api *a, uint64_t id, const fipsd_native_flow
     if (listener && listener->released && pin >= 0) { close(pin); pin = -1; }
     memset(f, 0, sizeof *f);
     f->used = true; f->api = a; f->id = id; f->key = *key; f->pubkey = *pubkey; f->sock = sock; f->inbound = inbound; f->stream = stream; f->refs = 2;
+    f->room = (size_t)sndbuf;
     atomic_init(&f->pin, pin); atomic_init(&f->datagrams, 0); atomic_init(&f->bytes, 0); atomic_init(&f->closed, false);
+    atomic_init(&f->kicked, false);
     nsync_mu_unlock(&a->mu);
     if (fipsd_runtime_spawn(a->runtime, flow_feeder_fiber, f) != 0) {
         nsync_mu_lock(&a->mu);
@@ -550,6 +631,22 @@ static flow_rec *flow_by_id_locked(fipsd_native_api *a, uint64_t id)
         if (a->flows[i].used && !a->flows[i].released && a->flows[i].id == id) return &a->flows[i];
     return NULL;
 }
+/* An established flow's queue overflowed (under a->mu): wake its feeder in
+ * case it is parked on a client the kernel will not wake for it, and mark the
+ * wake so the feeder sheds if it still cannot send (feed_datagram). The wake
+ * is latched when the feeder is not parked yet, so none is lost. */
+static void overflowed_locked(fipsd_native_api *a, const fipsd_native_outcome *o)
+{
+#if FIPSD_NATIVE_DGRAM_PARK
+    if (!a->dgram_park || o->kind != FIPSD_NATIVE_OUTCOME_DROPPED || o->reason != FIPSD_NATIVE_REASON_FLOW_QUEUE_FULL) return;
+    flow_rec *f = flow_by_id_locked(a, o->flow);
+    if (!f || f->stream) return;
+    atomic_store(&f->kicked, true);
+    (void)gof_io_wake_writers(f->sock);
+#else
+    (void)a; (void)o;
+#endif
+}
 static json_t *no_such_flow(uint64_t id)
 {
     char message[64];
@@ -625,6 +722,7 @@ static json_t *do_arrive(fipsd_native_api *a, const fipsd_native_command *cmd)
     if (atomic_load(&a->stopping)) { nsync_mu_unlock(&a->mu); fipsd_native_datagram_free(dg); return shutting_down(); }
     fipsd_native_outcome outcome = fipsd_native_link_deliver(a->registry, &peer, &key, cmd->src, cmd->dst, dg, mono_ms());
     fipsd_native_link_count(a->metrics, &outcome, cmd->data_len);
+    overflowed_locked(a, &outcome);
     nsync_mu_unlock(&a->mu);
     char text[96];
     fipsd_native_outcome_text(&outcome, text, sizeof text);
@@ -791,6 +889,7 @@ static void deliver_notice(fipsd_native_api *a, fipsd_node_notice *n)
         else outcome = fipsd_native_link_deliver(a->registry, &n->peer, &n->pubkey, n->src_port, n->dst_port, dg, mono_ms());
     }
     fipsd_native_link_count(a->metrics, &outcome, n->len);
+    overflowed_locked(a, &outcome);
     nsync_mu_unlock(&a->mu);
     event(a, FIPSD_NATIVE_EVENT_DATAGRAM_COUNTED, 0, n->dst_port);
     fipsd_node_notice_free(n);
@@ -1065,6 +1164,14 @@ fipsd_control_provider fipsd_native_api_provider(fipsd_native_api *a, fipsd_cont
     return (fipsd_control_provider){.user = a, .acquire = acquire, .command = command};
 }
 
+/* FIPSD_NATIVE_DGRAM_PARK=0 (or off, false, no) turns the macOS datagram
+ * flow's parking off and restores the counted drop at a full client. */
+static bool dgram_park_enabled(void)
+{
+    if (!FIPSD_NATIVE_DGRAM_PARK) return false;
+    const char *v = getenv("FIPSD_NATIVE_DGRAM_PARK");
+    return !v || (strcmp(v, "0") && strcmp(v, "off") && strcmp(v, "false") && strcmp(v, "no"));
+}
 fipsd_native_api *fipsd_native_api_create(GoSwap *configs, fipsd_node *node, fipsd_node_handlers *handlers)
 {
     if (!configs || !node || !handlers) return NULL;
@@ -1080,6 +1187,7 @@ fipsd_native_api *fipsd_native_api_create(GoSwap *configs, fipsd_node *node, fip
     a->limits.backlog = (size_t)fipsd_config_uint(fipsd_config_get(c, "node.native_api.backlog"));
     a->limits.max_flows = (size_t)fipsd_config_uint(fipsd_config_get(c, "node.native_api.max_flows"));
     a->debug = fipsd_config_bool(fipsd_config_get(c, "node.native_api.debug_commands"));
+    a->dgram_park = dgram_park_enabled();
     /* max_payload is the transport MTU less the FIPS encapsulation and the
      * port header: the smallest MTU of the transports the node registered,
      * or of the configured ones when none is registered yet. */

@@ -601,6 +601,27 @@ set_tests_properties(FipsdNativeApiTest FipsdNativeTwoNodesTest FipsdNativeBurst
 nostrc_describe_test(FipsdNativeApiTest OWNER fipsd TARGETS fipsd_native_api_test)
 nostrc_describe_test(FipsdNativeTwoNodesTest OWNER fipsd TARGETS fipsd_native_two_nodes_test)
 nostrc_describe_test(FipsdNativeBurstTest OWNER fipsd TARGETS fipsd_native_burst_test)
+# nostrc-e3ps5: a client that never asks for framing (upstream's Rust client)
+# behind a deliberately slow reader loses nothing: SOCK_SEQPACKET on Linux,
+# the macOS datagram feeder's NOTE_LOWAT park, its overflow fallback,
+# teardown and the FIPSD_NATIVE_DGRAM_PARK=0 switch. FreeBSD skips (77).
+fipsd_unit_test(fipsd_native_dgram_park_test test_native_dgram_park.c)
+target_link_libraries(fipsd_native_dgram_park_test PRIVATE Threads::Threads)
+# The kernel behaviour that park relies on, characterised without fipsd or
+# libgo (kqueue EVFILT_WRITE on AF_UNIX SOCK_DGRAM; macOS only, 77 elsewhere).
+add_executable(fipsd_native_dgram_kqueue_test test_native_dgram_kqueue.c)
+set_target_properties(fipsd_native_dgram_kqueue_test PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+target_link_libraries(fipsd_native_dgram_kqueue_test PRIVATE Threads::Threads)
+apply_warnings(fipsd_native_dgram_kqueue_test)
+apply_sanitizers(fipsd_native_dgram_kqueue_test)
+add_dependencies(fipsd_tests fipsd_native_dgram_park_test fipsd_native_dgram_kqueue_test)
+add_test(NAME FipsdNativeDgramParkTest COMMAND fipsd_native_dgram_park_test)
+add_test(NAME FipsdNativeDgramKqueueTest COMMAND fipsd_native_dgram_kqueue_test)
+set_tests_properties(FipsdNativeDgramParkTest PROPERTIES TIMEOUT 300 SKIP_RETURN_CODE 77 LABELS "fips;node;native"
+  ENVIRONMENT "FIPSD_WORKERS=2")
+set_tests_properties(FipsdNativeDgramKqueueTest PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77 LABELS "fips;unit;native")
+nostrc_describe_test(FipsdNativeDgramParkTest OWNER fipsd TARGETS fipsd_native_dgram_park_test)
+nostrc_describe_test(FipsdNativeDgramKqueueTest OWNER fipsd TARGETS fipsd_native_dgram_kqueue_test)
 # The harness driver for the C<->Rust gate below: a C client over libfipsnative.
 add_executable(fipsd_native_client_tool native_client_tool.c)
 set_target_properties(fipsd_native_client_tool PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
