@@ -140,6 +140,22 @@ static void link_restarted(handlers *h, peer_rec *rec)
     rec->tree_pending = true; rec->filter_pending = true;
     hs_mark_dirty(h);
 }
+/* The lines upstream's msg2_to_link writes, at debug because a forger can send
+ * one per datagram, for the link replies hs_metrics_rekey counts. */
+static void link_reply_rejected(fips_rekey_reason reason)
+{
+    switch (reason) {
+    case FIPS_REKEY_REASON_ReplyUnauthenticated:
+        FIPSD_DEBUG(HMOD, "Rekey msg2 did not authenticate, keeping the rekey cycle"); break;
+    case FIPS_REKEY_REASON_LateReply:
+        FIPSD_DEBUG(HMOD, "Rekey msg2 for no attempt in flight, dropping (reason=LateReply)"); break;
+    case FIPS_REKEY_REASON_UnknownAttempt:
+        FIPSD_DEBUG(HMOD, "Rekey msg2 for no attempt in flight, dropping (reason=UnknownAttempt)"); break;
+    case FIPS_REKEY_REASON_UnknownIndex:
+        FIPSD_DEBUG(HMOD, "Rekey msg2 for no attempt in flight, dropping (reason=UnknownIndex)"); break;
+    default: break;
+    }
+}
 static void effect(void *c, const fips_rekey_output *o, const uint8_t *plaintext, size_t len)
 {
     exec_ctx *x = c; handlers *h = x->h;
@@ -180,6 +196,7 @@ static void effect(void *c, const fips_rekey_output *o, const uint8_t *plaintext
     case FIPS_REKEY_OUT_Abandoned: ++h->counters.rekey_abandoned; break;
     case FIPS_REKEY_OUT_Reject:
         ++h->counters.rekey_rejected;
+        if (!x->entry) link_reply_rejected(o->reason);
         if (o->reason == FIPS_REKEY_REASON_Replay) ++h->counters.replay;
         if (o->reason == FIPS_REKEY_REASON_FrameUnauthenticated) ++h->counters.decrypt_failed;
         break;

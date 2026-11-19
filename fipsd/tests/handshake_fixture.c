@@ -63,7 +63,8 @@ static void snapshot(handshake_fixture *f, void *arg) { hf_state_read(f, arg); }
 void hf_snapshot(handshake_fixture *f, hf_state *s) { hf_call(f, snapshot, s); }
 static fipsd_network_snapshot *network(void *arg)
 { (void)arg; return calloc(1, sizeof(fipsd_network_snapshot)); }
-void hf_init(handshake_fixture *f)
+void hf_init(handshake_fixture *f) { hf_init_with(f, NULL); }
+void hf_init_with(handshake_fixture *f, void (*tune)(fipsd_node_handlers_config *, const fipsd_config *))
 {
     memset(f, 0, sizeof *f); active = f;
     fipsd_runtime_config rc; fipsd_runtime_config_default(&rc); rc.workers = 2; rc.handle_signals = false;
@@ -74,6 +75,7 @@ void hf_init(handshake_fixture *f)
     fipsd_node_handlers_config hc; fipsd_node_handlers_config_default(&hc);
     hc.peer_capacity = hc.tree_peer_capacity = hc.session_capacity = 4; hc.cache_entries = 32;
     hc.notice_capacity = 256; hc.timing.handshake_timeout_ms = 1000;
+    if (tune) tune(&hc, cfg);
     f->h = fipsd_node_handlers_create(&hc); assert(f->h);
     static fipsd_netmon_source source;
     source = (fipsd_netmon_source){.read = network, .injected = true};

@@ -245,6 +245,16 @@ void hs_metrics_rekey(handlers *h, bool session, const fips_rekey_output *o)
             case FIPS_REKEY_REASON_OffLink: METRIC(h, handshake, off_link); break;
             case FIPS_REKEY_REASON_PendingHeld: METRIC(h, handshake, rekey_pending); break;
             case FIPS_REKEY_REASON_DualInitWon: METRIC(h, handshake, rekey_tiebreak); break;
+            /* A msg2 for one of this node's own link rekeys (the only input
+             * that reads a reply, handlers/handshake.c msg2): upstream's
+             * msg2_to_link counts a copy of a reply that already completed,
+             * one with no attempt to answer or one naming an index the machine
+             * does not hold as unknown_connection, and a reply that fails its
+             * read on the attempt's fork (the attempt stays) as bad_state. */
+            case FIPS_REKEY_REASON_LateReply:
+            case FIPS_REKEY_REASON_UnknownAttempt:
+            case FIPS_REKEY_REASON_UnknownIndex: METRIC(h, handshake, unknown_connection); break;
+            case FIPS_REKEY_REASON_ReplyUnauthenticated: METRIC(h, handshake, bad_state); break;
             default: break;
             }
         }
