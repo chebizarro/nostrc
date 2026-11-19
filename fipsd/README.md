@@ -462,7 +462,7 @@ completion port (`libgo/fiber/README.md`, "Windows").
 
    `tests/windows.cmake` lists the Windows subset (same names, labels and
    timeouts as the POSIX suite): the node, handler, dataplane, ACL, peer and
-   stats suites, the two-node proof on the loopback transport and on real
+   stats suites (`FipsdStatsTest`, `FipsdStatsViewTest`), the two-node proof on the loopback transport and on real
    UDP (`FipsdUdpTwoNodesV4Test`/`V6Test`: IK link, tree, bloom, XK session,
    datagrams, rekey, disconnect), `FipsdUdpConnResetTest` (below), and the
    TUN/IPv6 suites of "TUN on Windows (Wintun)", the control socket on TCP
@@ -4168,6 +4168,9 @@ declared-version or release/tag change.
   (as upstream's `debug_assert`); `FipsdProfilingTest` now expects it exactly
   when `fipsd_lib` is built without `NDEBUG`, which its own `-UNDEBUG` can no
   longer tell it, so a Release profiling build passes.
+- **Windows.** `FipsdStatsViewTest` is in the Windows subset: it needs only
+  winpthreads (linked through libgo, as `FipsdDataplaneTest`'s threads are),
+  C11 atomics and `fipsd_host_os_clock`. It was not run on Windows from here.
 
 Version decision: **fipsd stays 0.1.0 Unreleased**; the changes fold into the
 initial daemon with no declared-version, manifest-version or release/tag change,
