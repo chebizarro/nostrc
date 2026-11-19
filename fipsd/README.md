@@ -3025,7 +3025,20 @@ proof. Two in-process nodes with no configured peers go from discovery
 through PSM, L2CAP, key exchange and auto-connect to IK, then the tree, bloom
 filters, an XK session and datagrams both ways, all checked against show_*
 output. Then they recover from a node disconnect and redial, a link loss and
-redial, and an adapter power cycle that rediscovery alone repairs. All waits
+redial, and an adapter power cycle that rediscovery alone repairs.
+
+Two further scenarios run the verified-link challenger between real nodes
+(X the smaller node, which never dials, and Y, which dials it, so the settled
+link is the tie-break loser). The simulated radio's
+`fipsd_ble_radio_orphan_links` loses only X's end of that link, as when X
+restarts inside Y's supervision timeout, and X dials Y again at the same device
+address. Y keeps the old link verified and holds the newcomer, unannounced,
+under its own `#<id>` address; only when the node's Noise over it
+authenticates X does it replace the link, which is then dropped, and the XK
+session carries data again with no session loss and one link-level
+re-handshake. A claimant of another identity at X's address, whether it names
+itself or claims X's key and authenticates as itself, is dropped and the
+verified link and session are untouched. All waits
 are channel selects on events, never sleeps. Every one of these passes
 under ASan/UBSan and TSan. Interop with the Rust daemon over real radios
 belongs to the backend beads. Version decision: **fipsd stays 0.1.0

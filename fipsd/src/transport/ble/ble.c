@@ -513,6 +513,8 @@ out:
             role == ROLE_PROBE ? "probe" : "dialled", text, why, (unsigned long long)stream_id);
     }
     if (result != OFFER_POOLED && result != OFFER_CHALLENGER) { c->stream = NULL; c->reader = (ble_reader){0}; conn_free(c); }
+    /* A challenger is announced to no one: this is the only edge a watcher of the pool has for it. */
+    if (result == OFFER_CHALLENGER) (void)go_channel_try_send(u->changed, u);
     return result;
 }
 

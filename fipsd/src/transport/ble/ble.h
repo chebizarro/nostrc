@@ -122,6 +122,10 @@ void fipsd_ble_radio_set_stall(fipsd_ble_radio *, bool stall); /* dials never an
 void fipsd_ble_radio_set_refuse(fipsd_ble_radio *, bool refuse); /* inbound dials refused */
 void fipsd_ble_radio_set_assigned_psm(fipsd_ble_radio *, uint16_t); /* next listen */
 size_t fipsd_ble_radio_drop_links(fipsd_ble_radio *); /* break every live channel */
+/* Lose every live channel on this radio's side only: its transport is told, the far ends are not (a
+ * half-open link, before the peer's supervision timeout), so the far end keeps what it believes is a
+ * live link until something else ends it. */
+size_t fipsd_ble_radio_orphan_links(fipsd_ble_radio *);
 /* Return false to drop a write this radio makes on any channel (it reads as
  * sent and never arrives), so tests can lose a frame deterministically. SDU
  * and byte modes only: an FD stream writes its descriptor directly. Set before
