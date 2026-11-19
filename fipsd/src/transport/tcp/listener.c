@@ -165,7 +165,7 @@ fipsd_bind_result tcp_bind(void *arg, fipsd_runtime *rt, GoChannel *stop,
         nsync_mu_lock(&u->mu); u->binding = false; u->listener_fd = -1; nsync_mu_unlock(&u->mu);
         tcp_fd_close(setup.fd); return FIPSD_BIND_RETRY;
     }
-    (void)go_channel_try_send(u->bound, u); return FIPSD_BIND_OK;
+    return FIPSD_BIND_OK;
 }
 void tcp_unbind(void *arg, uint64_t generation)
 {

@@ -205,9 +205,7 @@ peers:
         timings['rust_discover_and_link_s'] = round(time.monotonic() - t0, 1)
         c.wait('link established with', 60)
         mark('c_link_s')
-        deadline = time.monotonic() + 30
-        while not any(p.get('npub') == npub for p in ti.query(r_sock, 'show_peers')['peers']):
-            assert time.monotonic() < deadline, 'Rust control never reports the fipsd peer'
+        ti.observe('Rust show_peers lists the fipsd peer', 30, ti.peer_listed(r_sock, npub), rust)
         row = next(t for t in ti.query(c_sock, 'show_transports')['transports'] if t['type'] == 'tor')
         assert row['stats']['connections_accepted'] >= 1 and row['stats']['pool_inbound'] >= 1, row
         rrow = next(t for t in ti.query(r_sock, 'show_transports')['transports'] if t['type'] == 'tor')

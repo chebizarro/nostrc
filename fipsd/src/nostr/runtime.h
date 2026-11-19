@@ -26,6 +26,8 @@ fipsd_nostr_refetch_outcome fipsd_nostr_refetch_decide(bool complete, bool any,
     uint64_t cached_created, uint64_t relay_created);
 /* NIP-11 refusal is based on affirmative incompatibility: missing required
  * NIP-01/40 (and NIP-42 when authentication is required), payment/PoW, insufficient filter budget.
- * No document is unknown, not compatible: startup refuses it. */
+ * No document is unknown, not compatible: this returns false, and the actor
+ * re-probes a relay whose fetch failed on its backoff ladder (never admitting
+ * it unverified) while a fetched incompatible document refuses it for the run. */
 bool fipsd_nostr_relay_capable(const RelayInformationDocument *, bool signals);
 #endif

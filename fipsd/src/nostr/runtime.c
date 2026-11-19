@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <nostr-simple-pool.h>
 #include <nostr-subscription.h>
+#include <error_codes.h>
 #include <select.h>
 #include <ticker.h>
 #include <sodium.h>
@@ -34,7 +35,10 @@ typedef struct {
     char url[FIPSD_NOSTR_URL_MAX + 1];
     NostrRelay *relay;
     bool adverts, signals, usable, live;
+    bool probing;        /* NIP-11 fetch failed: re-probe at retry_at, not yet a pool member */
+    bool advert_refused; /* OK false with a final NIP-01 reason for the current endpoint set */
     uint64_t retry_at, backoff, auth_generation;
+    uint64_t advert_at;  /* transient advert refusal: republish here, on the same ladder */
 } relay_slot;
 typedef struct {
     bool used, configured, delivered;
@@ -62,6 +66,7 @@ struct fipsd_nostr_runtime {
     uint64_t mismatch_ms;
     char *app, key[65];
     bool open, disabled, advertise, started, subscribed;
+    bool starting; /* startup probes all relays, then subscribes once */
     uint64_t advert_ttl, refresh, signal_ttl, replay;
     size_t peer_cap, session_cap, outgoing_cap, incoming_cap, sender_cap;
     peer_slot *peers;
@@ -209,9 +214,10 @@ static bool cache(fipsd_nostr_runtime *r, const NostrEvent *e, bool deliver, boo
     /* History is cached first. EOSE publishes its catch-up candidates; live
      * events can produce effects immediately. Cache replacement is idempotent. */
     const fipsd_nostr_failure *failure = fipsd_nostr_failure_get(&r->failures, p->key);
-    if (deliver && live && !r->disabled && (!failure || failure->cooldown_ms <= now) && r->driver.dial_candidate) {
-        p->delivered = true; r->driver.dial_candidate(r->driver.user, p->key, p->advert);
-    }
+    /* A candidate the driver declines (e.g. an author with an active link) stays
+     * cached and undelivered: its endpoints serve a later catch-up/reconnect. */
+    if (deliver && live && !r->disabled && (!failure || failure->cooldown_ms <= now) && r->driver.dial_candidate)
+        p->delivered = r->driver.dial_candidate(r->driver.user, p->key, p->advert);
     return true;
 }
 static void catchup(fipsd_nostr_runtime *r)
@@ -222,8 +228,7 @@ static void catchup(fipsd_nostr_runtime *r)
         const fipsd_nostr_failure *failure = p->used ? fipsd_nostr_failure_get(&r->failures, p->key) : NULL;
         if (p->used && p->advert && p->expires > wall() && !p->delivered &&
             (!failure || failure->cooldown_ms <= wall())) {
-            p->delivered = true;
-            r->driver.dial_candidate(r->driver.user, p->key, p->advert);
+            p->delivered = r->driver.dial_candidate(r->driver.user, p->key, p->advert);
         }
     }
 }
@@ -268,21 +273,55 @@ static bool subscribe_main(fipsd_nostr_runtime *r)
     }
     ok = filter_add(fs, s) && ok;
     const char *urls[RELAY_MAX]; size_t n = 0;
-    for (size_t i = 0; i < r->relay_count; ++i) if (r->relays[i].usable) urls[n++] = r->relays[i].url;
+    for (size_t i = 0; i < r->relay_count; ++i) if (r->relays[i].usable && !r->relays[i].retry_at) urls[n++] = r->relays[i].url;
     if (ok && n) {
         /* Unique=false: middleware's signal replay set is independent of the
          * advert cache and refetches must see an unchanged advert again. */
         nostr_simple_pool_subscribe_async(pool, urls, n, *fs, false);
         nostr_simple_pool_start(pool);
         ok = atomic_load(&pool->running);
-    } else ok = false;
+    } else if (!n) { nostr_filters_free(fs); r->subscribed = false; return ok; }
     nostr_filters_free(fs); r->subscribed = ok; return ok;
+}
+/* One per-relay ladder (connection retries, NIP-11 re-probes, transient
+ * advert refusals): the deadline is now + backoff, then the backoff doubles. */
+static uint64_t ladder(relay_slot *s)
+{
+    uint64_t at = fn_add(mono(), s->backoff);
+    s->backoff = s->backoff < RETRY_MAX_MS / 2 ? s->backoff * 2 : RETRY_MAX_MS;
+    return at;
+}
+/* NIP-01 machine-readable OK prefixes. libnostr wraps the relay's reason in
+ * its own envelope; match that, never a prefix quoted inside an untrusted
+ * reason. No OK at all (timeout, dropped socket) is transient by definition. */
+static bool transient_refusal(const Error *err, const char *id)
+{
+    if (!err || !err->message || err->code == ERR_WEBSOCKET_CLOSED) return true;
+    char prefix[128]; int n = snprintf(prefix, sizeof prefix, "relay rejected event %s: ", id);
+    if (n <= 0 || (size_t)n >= sizeof prefix || strncmp(err->message, prefix, (size_t)n)) return true;
+    const char *reason = err->message + n;
+    /* auth-required: is answered by the NIP-42 AUTH this actor performs. */
+    return !strncmp(reason, "rate-limited:", 13) || !strncmp(reason, "error:", 6) ||
+        !strncmp(reason, "auth-required:", 14);
 }
 static bool published(fipsd_nostr_runtime *r, relay_slot *s, NostrEvent *event)
 {
     Error *err = NULL;
     bool ok = nostr_relay_publish_and_wait(s->relay, event, 1000, &err);
-    if (!ok) FIPSD_WARN("nostr", "publish kind %d refused by %s: %s", event->kind, s->url, err ? err->message : "no OK");
+    const char *why = err && err->message ? err->message : "no OK";
+    if (event->kind != NOSTR_KIND_FIPS_OVERLAY_ADVERT) {
+        if (!ok) FIPSD_WARN("nostr", "publish kind %d refused by %s: %s", event->kind, s->url, why);
+    } else if (ok) {
+        s->advert_refused = false; s->advert_at = 0; s->backoff = 1000;
+    } else if (transient_refusal(err, event->id)) {
+        /* A dropped socket's reconnect EOSE republishes; do not climb twice. */
+        s->advert_at = nostr_relay_is_connected(s->relay) ? ladder(s) : 0;
+        FIPSD_WARN("nostr", "advert refused by %s: %s; retrying on its backoff ladder", s->url, why);
+    } else {
+        /* A policy verdict on this content: once, until the endpoint set changes. */
+        s->advert_refused = true; s->advert_at = 0;
+        FIPSD_WARN("nostr", "advert refused by %s: %s; not retried until the endpoint set changes", s->url, why);
+    }
     if (r->driver.publish_result) r->driver.publish_result(r->driver.user, s->url, event->kind, ok);
     if (err) free_error(err);
     return ok;
@@ -303,6 +342,7 @@ static void publish_local(fipsd_nostr_runtime *r, relay_slot *only, bool refresh
         if (content) FIPSD_INFO("nostr", "local advert endpoint set changed: %s", content);
         else FIPSD_INFO("nostr", "local advert has no publishable endpoint; the published one ages out by NIP-40 expiration");
         free(r->advertised); r->advertised = content; content = NULL; only = NULL;
+        for (size_t i = 0; i < r->relay_count; ++i) r->relays[i].advert_refused = false;
     } else if (refresh) only = NULL;
     free(content);
     if (!r->advertised || (!changed && !refresh && !only)) return;
@@ -321,7 +361,7 @@ static void publish_local(fipsd_nostr_runtime *r, relay_slot *only, bool refresh
     for (size_t i = 0; i < r->relay_count && !canceled(r); ++i) {
         relay_slot *s = &r->relays[i];
         if (!s->usable || !s->live || (only && s != only) || !nostr_relay_is_connected(s->relay)) continue;
-        if (s->adverts) published(r, s, e);
+        if (s->adverts && !s->advert_refused) published(r, s, e);
         if (s->signals && inbox) published(r, s, inbox);
     }
     nostr_event_free(e); nostr_event_free(inbox);
@@ -371,10 +411,10 @@ static void retry(fipsd_nostr_runtime *r, relay_slot *s)
     nostr_relay_set_state_callback(old, NULL, NULL);
     nostr_simple_pool_remove_relay(r->main_source.pool, s->url);
     s->relay = next; s->auth_generation = 0; s->live = false;
+    s->advert_at = 0; /* the reconnect's EOSE republishes */
     nostr_simple_pool_add_relay(r->main_source.pool, nostr_relay_ref(next));
     nostr_relay_unref(old);
-    s->retry_at = fn_add(mono(), s->backoff);
-    s->backoff = s->backoff < RETRY_MAX_MS / 2 ? s->backoff * 2 : RETRY_MAX_MS;
+    s->retry_at = ladder(s);
     if (resume && !subscribe_main(r)) r->cancel.cancel(r->cancel.context);
 }
 static void connect_relay(fipsd_nostr_runtime *r, relay_slot *s)
@@ -385,7 +425,51 @@ static void connect_relay(fipsd_nostr_runtime *r, relay_slot *s)
         if (err) free_error(err);
         retry(r, s); return;
     }
-    authenticate(r, s); publish_local(r, s, false);
+    authenticate(r, s);
+    /* The first connected relay installs the shared subscription; the pool
+     * fires it on every later connected member. */
+    if (!r->starting && !r->subscribed && !subscribe_main(r)) r->cancel.cancel(r->cancel.context);
+}
+/* NIP-11 is the capability gate. A document that names a missing capability
+ * refuses the relay for this run; a fetch that failed says nothing about the
+ * relay, so it is re-probed on the relay's own backoff ladder and joins the
+ * pool (event-driven from then on) once a document arrives. */
+static bool probe(fipsd_nostr_runtime *r, relay_slot *s)
+{
+    s->retry_at = 0;
+    char info_url[FIPSD_NOSTR_URL_MAX + 3];
+    bool tls = !strncmp(s->url, "wss://", 6);
+    snprintf(info_url, sizeof(info_url), "%s%s", tls ? "https://" : "http://", s->url + (tls ? 6 : 5));
+    RelayInformationDocument *info = nostr_nip11_fetch_info_cancellable(info_url, canceled, r);
+    if (!info) {
+        if (canceled(r)) return true;
+        bool first = !s->probing; s->probing = true; s->retry_at = ladder(s);
+        uint64_t delay = s->retry_at - mono();
+        if (first) {
+            FIPSD_WARN("nostr", "NIP-11 %s: fetch failed; relay unavailable, re-probing in %llu ms", s->url, (unsigned long long)delay);
+            if (r->driver.boundary) r->driver.boundary(r->driver.user, s->url, false, "NIP-11 unavailable; retrying");
+        } else FIPSD_DEBUG("nostr", "NIP-11 %s: fetch failed again; re-probing in %llu ms", s->url, (unsigned long long)delay);
+        return true;
+    }
+    bool retried = s->probing; s->probing = false;
+    s->usable = fipsd_nostr_relay_capable(info, s->signals);
+    FIPSD_INFO("nostr", "NIP-11 %s: nip1=%d nip40=%d nip42=%d auth=%d capable=%d", s->url,
+        nip(info, 1), nip(info, 40), nip(info, 42), info->limitation ? info->limitation->auth_required : 0, s->usable);
+    nostr_nip11_free_info(info);
+    if (!s->usable) {
+        if (r->driver.boundary) r->driver.boundary(r->driver.user, s->url, false, "NIP-11 incompatible");
+        return true;
+    }
+    if (retried) FIPSD_INFO("nostr", "NIP-11 %s: fetched after earlier failure; relay now usable", s->url);
+    s->relay = create_relay(r, s->url);
+    if (!s->relay) return false;
+    /* One retry owner: do not race pool redial/message-loop reconnect with
+     * CLOSED backoff. Membership changes only while the pool worker is joined. */
+    bool resume = r->subscribed;
+    if (resume) nostr_simple_pool_stop(r->main_source.pool);
+    nostr_simple_pool_add_relay(r->main_source.pool, nostr_relay_ref(s->relay));
+    connect_relay(r, s);
+    return !resume || subscribe_main(r);
 }
 static session_slot *find_session(session_slot *slots, size_t cap, const char *id)
 {
@@ -511,6 +595,8 @@ static void start_query(fipsd_nostr_runtime *r, const char *key)
         return;
     }
     uint64_t expected = 0; const char *urls[RELAY_MAX]; size_t n = 0;
+    /* An advert relay whose NIP-11 is still unknown counts as offline too. */
+    for (size_t i = 0; i < r->relay_count; ++i) if (r->relays[i].probing && r->relays[i].adverts) goto skipped;
     for (size_t i = 0; i < r->relay_count; ++i) if (r->relays[i].usable && r->relays[i].adverts) {
         /* Absence requires every configured compatible advert relay. A relay
          * offline at fetch start is failure, never evidence of absence. */
@@ -600,7 +686,8 @@ static void process(fipsd_nostr_runtime *r, message *m)
     case EVENT: cache(r, m->event, true, m->live); break;
     case EOSE:
         if (s) {
-            s->live = true; s->backoff = 1000; catchup(r);
+            /* A pending advert retry keeps its ladder position. */
+            s->live = true; if (!s->advert_at) s->backoff = 1000; catchup(r);
             if (r->driver.boundary) r->driver.boundary(r->driver.user, s->url, true, NULL);
             publish_local(r, s, false);
         }
@@ -654,30 +741,14 @@ static bool startup(fipsd_nostr_runtime *r)
     nostr_simple_pool_set_auto_unsub_on_eose(pool, false);
     if (!nostr_simple_pool_set_recovery_window(pool, (unsigned)r->advert_ttl) ||
         !nostr_simple_pool_set_closed_backoff(pool, 1000, (unsigned)RETRY_MAX_MS)) return false;
-    size_t usable = 0;
+    size_t candidates = 0; r->starting = true;
     for (size_t i = 0; i < r->relay_count && !canceled(r); ++i) {
         relay_slot *s = &r->relays[i];
-        char info_url[FIPSD_NOSTR_URL_MAX + 3];
-        bool tls = !strncmp(s->url, "wss://", 6);
-        snprintf(info_url, sizeof(info_url), "%s%s", tls ? "https://" : "http://", s->url + (tls ? 6 : 5));
-        RelayInformationDocument *info = nostr_nip11_fetch_info_cancellable(info_url, canceled, r);
-        s->usable = fipsd_nostr_relay_capable(info, s->signals);
-        FIPSD_INFO("nostr", "NIP-11 %s: nip1=%d nip40=%d nip42=%d auth=%d capable=%d", s->url,
-            info && nip(info, 1), info && nip(info, 40), info && nip(info, 42),
-            info && info->limitation ? info->limitation->auth_required : 0, s->usable);
-        nostr_nip11_free_info(info);
-        if (!s->usable) {
-            if (r->driver.boundary) r->driver.boundary(r->driver.user, s->url, false, "NIP-11 incompatible or unavailable");
-            continue;
-        }
-        s->relay = create_relay(r, s->url);
-        if (!s->relay) return false;
-        /* One retry owner: do not race pool redial/message-loop reconnect
-         * with CLOSED backoff. All failed attempts rearm only their deadline. */
-        nostr_simple_pool_add_relay(pool, nostr_relay_ref(s->relay)); ++usable;
-        connect_relay(r, s);
+        if (!probe(r, s)) return false;
+        if (s->usable || s->probing) ++candidates;
     }
-    if (!usable || canceled(r) || !subscribe_main(r)) return false;
+    r->starting = false;
+    if (!candidates || canceled(r) || !subscribe_main(r)) return false;
     if (r->advertise) { r->ticker = create_ticker((size_t)fn_mul1000(r->refresh)); if (!r->ticker) return false; }
     return true;
 }
@@ -688,8 +759,10 @@ static void *run(void *user)
     else while (!canceled(r)) {
         uint64_t now = mono(), deadline = UINT64_MAX;
         if (r->query_deadline) deadline = r->query_deadline;
-        for (size_t i = 0; i < r->relay_count; ++i)
+        for (size_t i = 0; i < r->relay_count; ++i) {
             if (r->relays[i].retry_at && r->relays[i].retry_at < deadline) deadline = r->relays[i].retry_at;
+            if (r->relays[i].advert_at && r->relays[i].advert_at < deadline) deadline = r->relays[i].advert_at;
+        }
         for (size_t i = 0; i < r->session_cap; ++i)
             if (r->sessions[i].expires && r->sessions[i].expires < deadline) deadline = r->sessions[i].expires;
         for (size_t i = 0; i < r->outgoing_cap; ++i)
@@ -712,8 +785,17 @@ static void *run(void *user)
         else if (selected.selected_case == 4) publish_local(r, NULL, true);
         now = mono();
         if (r->query_deadline && r->query_deadline <= now) finish_query(r, false);
-        for (size_t i = 0; i < r->relay_count && !canceled(r); ++i)
-            if (r->relays[i].retry_at && r->relays[i].retry_at <= now) connect_relay(r, &r->relays[i]);
+        for (size_t i = 0; i < r->relay_count && !canceled(r); ++i) {
+            relay_slot *s = &r->relays[i];
+            if (s->retry_at && s->retry_at <= now) {
+                if (!s->probing) connect_relay(r, s);
+                else if (!probe(r, s)) r->cancel.cancel(r->cancel.context);
+            }
+            if (s->advert_at && s->advert_at <= now) {
+                s->advert_at = 0; /* not live: its next EOSE republishes */
+                if (s->live && nostr_relay_is_connected(s->relay)) publish_local(r, s, false);
+            }
+        }
         /* Reap timed-out reservations, without a periodic relay query. */
         find_session(r->sessions, r->session_cap, ""); find_session(r->outgoing, r->outgoing_cap, ""); awaiting(r);
     }

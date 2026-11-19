@@ -35,7 +35,7 @@ void fipsd_tcp_config_default(fipsd_tcp_config *);
 fipsd_transport *fipsd_tcp_create(fips_transport_id, const char *, const fipsd_tcp_config *);
 void fipsd_tcp_destroy(fipsd_transport *); /* after runtime join */
 bool fipsd_tcp_is(const fipsd_transport *); /* a plain TCP owner (not Tor/Nym's inner one in a registry) */
-GoChannel *fipsd_tcp_bound(fipsd_transport *); /* borrowed readiness notification */
+GoChannel *fipsd_tcp_bound(fipsd_transport *); /* borrowed bind/unbind invalidation; snapshot current state */
 bool fipsd_tcp_address(fipsd_transport *, fips_transport_addr *);
 size_t fipsd_tcp_connected_count(fipsd_transport *);
 int fipsd_tcp_register_config(fipsd_transport_registry *, const fipsd_config *,

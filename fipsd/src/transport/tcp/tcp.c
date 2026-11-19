@@ -117,6 +117,7 @@ fipsd_transport *fipsd_tcp_create(fips_transport_id id, const char *name, const 
     if (!u->stop || !u->bound || !u->accept_done || !u->changed || !u->watcher) {
         fipsd_tcp_destroy(&u->transport); return NULL;
     }
+    fipsd_watcher_binding_updates(u->watcher, u->bound); /* bind AND unbind, after state publication */
     return &u->transport;
 }
 void fipsd_tcp_destroy(fipsd_transport *t)

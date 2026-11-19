@@ -27,6 +27,9 @@ fipsd_watcher *fipsd_watcher_create(fipsd_transport *, const fipsd_binder_ops *,
 /* Opt in before start. Probe runs on owner after a network notification;
  * no periodic interface reads. Retry/stability deadlines remain bounded. */
 void fipsd_watcher_event_driven(fipsd_watcher *, bool (*healthy)(void *));
+/* Optional borrowed invalidation channel, installed before start. Pulses follow
+ * state publication for BOTH bind and unbind; consumers snapshot current state. */
+void fipsd_watcher_binding_updates(fipsd_watcher *, GoChannel *);
 int fipsd_watcher_start(fipsd_watcher *, fipsd_runtime *, const fipsd_node_context *, GoChannel *events);
 void fipsd_watcher_network_changed(fipsd_watcher *, const fipsd_netmon_event *);
 /* A stale receive/writer exit cannot detach a replacement binding. */

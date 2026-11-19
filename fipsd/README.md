@@ -1940,8 +1940,13 @@ and identifier, then validates the configured app and advert contract. The secon
 filter is kind 21059, `#p=<our identity>`, `since=now`, `limit=0`. The configured
 advert/signal relay union is probed before connecting. NIP-11 must advertise
 NIP-01/40, NIP-42 if authentication is required, at least two filters/subscriptions
-when those limits are declared, and no mandatory payment/PoW. Unknown or explicitly
-incompatible capability documents are refused and logged. NIP-59 is client-side
+when those limits are declared, and no mandatory payment/PoW. An explicitly
+incompatible document refuses the relay for the run and is logged. A failed
+fetch is not a verdict: the relay stays out of the pool (never admitted
+unverified) and is re-probed on its own 1-second-to-5-minute backoff ladder,
+logging the failure and the later recovery once each; it joins the running pool
+when a compatible document arrives, and an advert refetch treats it as offline
+meanwhile. Startup fails only when every relay is refused. NIP-59 is client-side
 cryptography, not a required relay extension. Remote relay/STUN hints retain the
 pure parsers' bounds; signal routing only selects already-probed configured relays.
 
@@ -1971,8 +1976,18 @@ EOSE, so advertising cannot precede inbox readiness. Kind 37195 retains its
 replaceable identifier and NIP-40 expiry; a `Ticker` republishes before expiry.
 The ticker's wait is interruptible on stop (no refresh-interval shutdown stall).
 Every advert, inbox and traversal publish uses `publish_and_wait`; negative OK
-and missing OK are failures. This schedule republishes local state; it never
-queries relays for new messages.
+and missing OK are failures. An advert `OK false` is classified by its NIP-01
+prefix: `rate-limited:`, `error:` and `auth-required:` (or no OK at all) are
+retried at that relay on its backoff ladder; `invalid:`, `blocked:`, `pow:`,
+`duplicate:` and other verdicts are logged once and not retried until the
+endpoint set changes. TCP/Tor listener bind and unbind (transport stop, rebind)
+both invalidate the advert from the transport watcher, after the transport state
+is published, so a stopped listener's endpoint leaves the republished advert.
+This schedule republishes local state; it never queries relays for new messages.
+An advert from a peer with an active link (the handlers' control snapshot) is
+cached but not dialled: no STUN/offer/punch toward a linked peer, as upstream's
+open-discovery sweep skips established peers; it is offered again at a later
+catch-up or refresh once the link is gone.
 
 #### Local advert endpoints (`nostrc-r4aeo`)
 
@@ -2221,7 +2236,7 @@ documented resend-in-AwaitAnswer divergence).
 - [x] E: Kind/identifier/authors and kind/recipient/since filters; wildcard authors only for explicitly open discovery.
 - [x] F: Independent bounded signal IDs/session memory and replaceable advert idempotency, including reconnect replay; traversal adds canonical peer dedup, dual-init election, one-shot handoff and independent retained inbound/outbound quotas.
 - [x] G: Channels are owned actor/worker mailboxes, not relay polling/queue wrappers; UDP classifiers never block the receive drain.
-- [x] H: Every configured relay gets a cancellable NIP-11 probe; explicit refusal, multiple relays and authenticated retry. (Review follow-up: the probe is one-shot at startup and a transient fetch failure permanently excludes a relay — a documented fail-closed posture, not a change made here; see the review report under H/Finding 1.)
+- [x] H: Every configured relay gets a cancellable NIP-11 probe; explicit refusal, multiple relays and authenticated retry. A failed fetch is re-probed on the relay's backoff ladder and the relay joins once a compatible document arrives (`nostrc-tukt2`, review Finding 2).
 - [x] I: Timers are only advert publication, reconnect backoff, reservation expiry, failed-fetch deadlines, STUN retransmissions, bounded UDP punch cadence/settle (expired send windows disarm) and failure cooldown; none substitutes for Nostr event delivery or establishes history completion.
 - [x] J: Grotto `bunker_test_relay` main-context/Soup fixture adapted to Jansson over real local WebSockets/HTTP, driven by main-context commands and channel barriers, no sleeps. Tests hold EOSE, replay duplicate history/live events across two relays, send AUTH with CLOSED, reject publishes, and exercise B6/session/freshness/failure contracts. Traversal adds a real loopback STUN server and relay-mediated two-node IK, with channel/select deadlines rather than sleeps, plus rejection/quota and late-repair/expired-cadence regressions.
 

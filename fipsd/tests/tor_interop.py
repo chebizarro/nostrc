@@ -22,8 +22,13 @@ import selectors
 import signal
 import socket
 import subprocess
+import sys
 import threading
 import time
+
+sys.dont_write_bytecode = True  # never leave __pycache__ in the source tree
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from udp_interop import POLL, ControlError, NotYet, control  # noqa: E402 - deadline-bounded wait helpers
 
 BOOTSTRAP_SECS = 300
 DESCRIPTOR_SECS = 300
@@ -134,14 +139,39 @@ def free_port():
         return s.getsockname()[1]
 
 
-def query(path, command):
-    with socket.socket(socket.AF_UNIX) as conn:
-        conn.settimeout(10)
-        conn.connect(str(path))
-        conn.sendall(json.dumps({'command': command}).encode() + b'\n')
-        response = json.loads(conn.makefile('rb').readline())
-    assert response['status'] == 'ok', response
-    return response['data']
+def query(path, command, timeout=10):
+    return control(path, command, timeout=timeout)
+
+
+def observe(what, seconds, predicate, tap):
+    """udp_interop's Scenario.wait shape: one absolute deadline bounds every
+    control round trip (`predicate(timeout)`) and each pause between them; a
+    pause ends early on new output from `tap`'s daemon. A Rust control view is
+    republished per tick, so a reply alone is no reason to ask again."""
+    deadline, last = time.monotonic() + seconds, None
+    while True:
+        remaining = deadline - time.monotonic()
+        if tap.done or remaining <= 0:
+            raise AssertionError(f'timed out waiting for {what} (exited={tap.done}); last observation: {last}; '
+                                 f'{tap.name} log tail:\n{tap.tail()}')
+        try:
+            return predicate(min(10, max(0.001, remaining)))
+        except NotYet as e:
+            last = e.args[0] if e.args else None
+        except (ControlError, OSError) as e:
+            last = str(e)
+        with tap.cond:
+            tap.cond.wait(min(POLL, max(0, deadline - time.monotonic())))
+
+
+def peer_listed(path, npub):
+    """An observe() predicate: `npub` is in this daemon's show_peers."""
+    def listed(timeout):
+        peers = query(path, 'show_peers', timeout)['peers']
+        if not any(p.get('npub') == npub for p in peers):
+            raise NotYet(f'show_peers npubs: {[p.get("npub") for p in peers]}')
+        return peers
+    return listed
 
 
 def start(cmd, name, root, procs):
@@ -281,12 +311,9 @@ transports:
         c.wait('link established with', LINK_SECS)
         timings['c_to_rust_link_s'] = round(time.monotonic() - t0, 1)
         # The responder logs its promotion at debug only; its control view is
-        # tick-published, so read successive snapshots (each reply is the
-        # backpressure) until the peer shows, as tcp_interop.py does.
+        # tick-published, so observe its snapshots under one deadline.
         c_npub = query(c_sock, 'show_status')['npub']
-        deadline = time.monotonic() + 30
-        while not any(p.get('npub') == c_npub for p in query(r_sock, 'show_peers')['peers']):
-            assert time.monotonic() < deadline, 'Rust control never reports the C peer'
+        observe('Rust show_peers lists the C peer', 30, peer_listed(r_sock, c_npub), rust)
         row = next(t for t in query(c_sock, 'show_transports')['transports'] if t['type'] == 'tor')
         assert row['tor_mode'] == 'directory' and row['onion_address'] == c_tor['onion'], row
         assert row['tor_monitoring']['bootstrap'] == 100, row

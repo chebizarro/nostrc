@@ -749,7 +749,7 @@ add_test(NAME FipsdTorInteropTest COMMAND fipsd_test_tmpdir_run "/control.sock"
 set_tests_properties(FipsdTorInteropTest PROPERTIES TIMEOUT 1200 SKIP_RETURN_CODE 77
   LABELS "fips;transport;interop;tor" ENVIRONMENT "FIPSD_WORKERS=2")
 nostrc_describe_test(FipsdTorInteropTest OWNER fipsd TARGETS fipsd fipsd_test_tmpdir_run
-  INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/tor_interop.py")
+  INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/tor_interop.py" "${CMAKE_CURRENT_SOURCE_DIR}/udp_interop.py")
 # Opt-in: the Rust daemon finds fipsd's onion from its Nostr advert alone, on
 # a local stdlib relay (nostrc-r4aeo); SKIP 77 without both binaries.
 add_test(NAME FipsdAdvertTorInteropTest COMMAND fipsd_test_tmpdir_run "/control.sock"
@@ -759,7 +759,7 @@ set_tests_properties(FipsdAdvertTorInteropTest PROPERTIES TIMEOUT 1200 SKIP_RETU
   LABELS "fips;nostr;interop;tor" ENVIRONMENT "FIPSD_WORKERS=2")
 nostrc_describe_test(FipsdAdvertTorInteropTest OWNER fipsd TARGETS fipsd fipsd_test_tmpdir_run
   INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/advert_interop.py" "${CMAKE_CURRENT_SOURCE_DIR}/tor_interop.py"
-  "${CMAKE_CURRENT_SOURCE_DIR}/../../Testing/fips-chaos/services/relay.py")
+  "${CMAKE_CURRENT_SOURCE_DIR}/udp_interop.py" "${CMAKE_CURRENT_SOURCE_DIR}/../../Testing/fips-chaos/services/relay.py")
 
 # fips-gateway (nostrc-iq1n9.3): one executable, a suite per module, each its
 # own test. The portable core runs on every platform; Linux-only cases are

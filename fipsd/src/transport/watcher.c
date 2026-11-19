@@ -12,7 +12,7 @@ struct fipsd_watcher {
     fipsd_watcher_source source;
     const fipsd_node_context *node;
     fipsd_runtime *runtime;
-    GoChannel *events, *wake, *stop;
+    GoChannel *events, *wake, *stop, *binding_updates;
     Ticker *ticker;
     bool started, bound, announced, reported, event_driven, initial_announce, retry_eligible;
     bool (*healthy)(void *);
@@ -39,6 +39,7 @@ static void detach(fipsd_watcher *w, uint64_t now)
     fipsd_transport_links_clear(w->transport->shared);
     fipsd_presence_transition(&w->transport->shared->presence, FIPSD_ABSENT, now);
     atomic_store(&w->transport->shared->state, FIPSD_TRANSPORT_ABSENT);
+    if (w->binding_updates) (void)go_channel_try_send(w->binding_updates, w);
 }
 int fipsd_watcher_step(fipsd_watcher *w, fipsd_presence_facts f, uint64_t now)
 {
@@ -90,6 +91,7 @@ int fipsd_watcher_step(fipsd_watcher *w, fipsd_presence_facts f, uint64_t now)
         w->bound = true; w->bound_at = now; w->binding = f;
         fipsd_presence_bound(p, f, now);
         atomic_store(&w->transport->shared->state, FIPSD_TRANSPORT_BOUND);
+        if (w->binding_updates) (void)go_channel_try_send(w->binding_updates, w);
         if (stopped(w)) { detach(w, now); return -1; }
         w->announced = w->streak < 3;
         if (w->announced) return publish(w, true);
@@ -257,3 +259,6 @@ void fipsd_watcher_destroy(fipsd_watcher *w)
 
 void fipsd_watcher_event_driven(fipsd_watcher *w, bool (*healthy)(void *))
 { if (w && !w->started) { w->event_driven = true; w->healthy = healthy; } }
+
+void fipsd_watcher_binding_updates(fipsd_watcher *w, GoChannel *updates)
+{ w->binding_updates = updates; }
