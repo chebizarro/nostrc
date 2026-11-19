@@ -289,8 +289,11 @@ static void traverse(void)
      * round retransmits is timing (500 ms RTO against a loaded scheduler), so
      * record transactions until both tuples were seen rather than count. */
     stun_rounds rounds={0};bool saw[2]={false,false};
-    while(!saw[0]||!saw[1]){stun_request *q=receive(server.requests);(void)stun_round(&rounds,q,true);
-        for(unsigned i=0;i<2;++i)if(fips_transport_addr_equal(&q->source,&bound[i]))saw[i]=true;free(q);}
+    while(!saw[0]||!saw[1]){
+        stun_request *q=receive(server.requests);(void)stun_round(&rounds,q,true);
+        for(unsigned i=0;i<2;++i){if(fips_transport_addr_equal(&q->source,&bound[i]))saw[i]=true;}
+        free(q);
+    }
     assert(rounds.n==2);
     /* nostrc-tbcl6: node 1's advert refreshed twice while the IK link is up.
      * Each cycle evicts node 0's cached copy (refetch against an empty relay)

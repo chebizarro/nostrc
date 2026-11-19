@@ -483,7 +483,7 @@ static int sync_tick(hist *x, bool jump)
 static int sync_brings_an_earlier_copy_current_under_churn(void)
 {
     enum { CLONES = 4, TICKS = 14000 };
-    hist live, clone[CLONES]; size_t due[CLONES] = {0};
+    static hist live, clone[CLONES]; size_t due[CLONES] = {0};
     CHECK(hist_new(&live, SYNC_POOL));
     sync_secs = 0; memset(sync_totals, 0, sizeof sync_totals);
     for (int i = 0; i < 70; ++i) CHECK(!sync_tick(&live, false));
@@ -511,7 +511,7 @@ static int sync_brings_an_earlier_copy_current_under_churn(void)
 }
 static int sync_copies_only_what_changed(void)
 {
-    hist live, copy;
+    static hist live, copy;
     CHECK(hist_new(&live, SYNC_POOL)); sync_secs = 0; memset(sync_totals, 0, sizeof sync_totals);
     for (int i = 0; i < 200; ++i) CHECK(!sync_tick(&live, false));
     CHECK(live.h.peer_count > 3 && hist_clone(&copy, &live));
@@ -530,7 +530,7 @@ static int sync_copies_only_what_changed(void)
 }
 static int sync_of_a_copy_ahead_of_its_source_copies_whole(void)
 {
-    hist live, past, ahead;
+    static hist live, past, ahead;
     CHECK(hist_new(&live, SYNC_POOL)); sync_secs = 0; memset(sync_totals, 0, sizeof sync_totals);
     for (int i = 0; i < 150; ++i) CHECK(!sync_tick(&live, false));
     CHECK(hist_clone(&past, &live));
@@ -542,7 +542,7 @@ static int sync_of_a_copy_ahead_of_its_source_copies_whole(void)
 }
 static int sync_refuses_a_destination_too_small_for_the_peers(void)
 {
-    hist live, small;
+    static hist live, small;
     CHECK(hist_new(&live, SYNC_POOL)); sync_secs = 0; memset(sync_totals, 0, sizeof sync_totals);
     for (int i = 0; i < 40; ++i) CHECK(!sync_tick(&live, false));
     CHECK(live.h.peer_count > 2 && hist_new(&small, 2));
