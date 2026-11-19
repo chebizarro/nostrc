@@ -92,7 +92,7 @@ TSan gate is **not reliably green** on this subset (ASan/UBSan is green); it is 
 | # | Severity | Category | Summary | Disposition |
 | --- | --- | --- | --- | --- |
 | 1 | Medium | J / concurrency (libnostr, pre-existing) | Flaky TSan data race in libnostr's relay connect→write-worker handoff (`relay.c:967` spawns `write_operations`; `:1064` is its first `nostr_connection_write_message`), exposed by the rendezvous connect/retry churn under load; the TSan gate is not reliably green. Not in the CLOSED-backoff/AUTH code in scope. | **follow-up** |
-| 2 | Low | H — capability/reconnect | NIP-11 is probed once at startup with no re-probe; a *transient* fetch failure permanently excludes an otherwise-usable relay, and if every configured relay's probe fails at boot the rendezvous subsystem exits silently for the process lifetime. | **follow-up** |
+| 2 | Low | H — capability/reconnect | NIP-11 is probed once at startup with no re-probe; a *transient* fetch failure permanently excludes an otherwise-usable relay, and if every configured relay's probe fails at boot the rendezvous subsystem exits silently for the process lifetime. | **fixed** (`nostrc-tukt2`, 2026-11-18; see below) |
 | 3 | Info | C — relay frames | Relay `NOTICE` frames are logged by libnostr (`relay.c:321`) but not surfaced to the driver/metrics; libnostr exposes no per-relay `NOTICE` callback. | **not-a-smell** |
 | 4 | Info | A/B — divergence | A failed offer *re-send* (repair) while still in `AwaitAnswer` fails the attempt into cooldown, where upstream keeps the in-flight offer and retries the re-send. | **not-a-smell** |
 
@@ -179,6 +179,15 @@ rendezvous is silently lost until the daemon is restarted.
   NIP-11 on one relay, then flips it to the compatible document, and assert the relay is
   admitted and reaches EOSE — no sleeps, using the existing main-context command/barrier
   pattern.
+- **Resolution (2026-11-18, `nostrc-tukt2`):** implemented as the follow-up above. A
+  fetched incompatible document still refuses the relay for the run; a failed fetch marks
+  the relay *probing* (never admitted unverified, not a pool member) and arms its `retry_at`
+  on the same 1 s → 5 min ladder as `retry()`, from the actor's existing select deadline.
+  When a compatible document arrives the relay is added while the pool worker is joined,
+  connected and resubscribed, without a restart; the failure and the recovery are each
+  logged once. `startup()` fails only when every relay is refused, and a refetch treats a
+  probing advert relay as offline. Fixture op: 503 for the next N NIP-11 fetches, or a
+  document without NIP-40; `FipsdNostrRuntimeTest` asserts both outcomes.
 
 ### Finding 3 — relay NOTICE frames not surfaced to the daemon (Info, category C)
 
@@ -234,10 +243,11 @@ the in-flight offer, continuing to await the original offer's answer until the s
   `max_subscriptions` < 2. NIP-59 is **not** required of relays (client-side crypto), and
   kind 21059 is NIP-01 ephemeral — the `signals` parameter is intentionally unused so advert
   and signal relays meet the same bar. A refused relay emits
-  `boundary(url, false, "NIP-11 incompatible or unavailable")`.
+  `boundary(url, false, "NIP-11 incompatible")`; a failed fetch emits
+  `boundary(url, false, "NIP-11 unavailable; retrying")` and is re-probed (`nostrc-tukt2`).
 - **Multiple relays / failover:** the advert/signal relay union is probed and each capable
   relay is added to the pool; the pool fans the REQ across all of them, dedups client-side,
-  and publishes to each role's set. (Re-probe on transient failure is Finding 1.)
+  and publishes to each role's set. (Re-probe on transient failure was Finding 2, now fixed.)
 
 ## EOSE / CLOSED / AUTH / reconnect state machine as observed
 
@@ -351,3 +361,56 @@ built clean (0 warnings, 0 errors) under both sanitizer configs.
   Unreleased; libnostr unchanged by this branch) — this is a documentation/review-only change.
 - Build directories (`/tmp/fips-nostr-asan`, `/tmp/fips-nostr-tsan`) deleted after the runs; the
   `third_party/nostrdb` submodule is de-initialised at the end of the session.
+
+## Follow-up dispositions — `nostrc-nlekg`, `nostrc-tukt2`, `nostrc-tbcl6` (2026-11-18)
+
+Branch `fix/fipsd-rendezvous-robustness` (commits `c8093c927`, `b6ec74508`, `9009f4ad9`).
+The `nostr-protocol-smells` skill was run over that diff (18 files: `nostr/{runtime,driver}`,
+`transport/{watcher,tcp}`, the libsoup fixture, the three Nostr tests,
+`tor_interop.py`/`advert_interop.py`, CMake test inputs and docs), every hunk read against
+the taxonomy.
+
+Result: **no must-fix smell introduced.** Verified findings:
+
+| # | Severity | Category | Finding | Disposition |
+| --- | --- | --- | --- | --- |
+| F1 | Low | C | `transient_refusal()` recovers the NIP-01 reason by matching libnostr's `relay rejected event <id>: ` error envelope; libnostr exposes no structured OK reason. Matching the envelope stops an untrusted reason from spoofing a prefix; if libnostr changed it, every refusal would be classified transient (retried on the ladder, capped at 5 min), never silently dropped. | **accepted**; a structured OK-reason accessor in libnostr would remove the coupling |
+| F2 | Low | I | An `auth-required:` advert refusal is retried at the relay's next ladder deadline rather than on the NIP-42 AUTH `OK` that the actor already handles. Bounded backoff, not a substitute for delivery. | **accepted**; AUTH-driven republish is an optional refinement |
+| F3 | Low | B | A missing `OK` within the existing 1 s `publish_and_wait` window counts as a transient refusal and is retried; a late `OK` makes that an idempotent replaceable republish. Before this change the advert was simply reported failed. | **accepted** |
+| F4 | Medium (pre-existing, outside the diff; code-level, not runtime-observed) | H / I | libnostr's SimplePool redial worker dials any registered relay that is not connected, not self-managed (`message_loop_active`) and not in BACKOFF (`simplepool.c` redial loop; `relay.c` `nostr_relay_reconnect_is_self_managed`, `nostr_relay_get_next_reconnect_ms`). The fresh relay `retry()` registers matches all three, so the pool can redial it before fipsd's `retry_at`, undercutting the "one retry owner" ladder. The new NIP-11 re-probe does not register a probing relay, so it is unaffected. | **follow-up** (needs a bead; not filed from this session) |
+
+Not smells: `observe()` in `tor_interop.py` is control-socket (not relay) observation of a
+tick-published Rust view, deadline-bounded with a ≤ `POLL` pause that new daemon output
+ends early, the shape of `udp_interop.py`'s `Scenario.wait`, replacing back-to-back query
+loops. An advert whose dial is declined (active link) stays undelivered and is offered again
+at later EOSE catch-ups; the re-offer is idempotent (the link check declines again).
+
+Good patterns: every advert `OK false` is observed and classified by NIP-01 prefix; one
+per-relay ladder (connect retries, NIP-11 re-probes, transient advert refusals) on the
+actor's existing select deadline, with no new timer; a policy verdict is logged once and
+held until the endpoint set changes, across reconnect EOSE republishes; NIP-11 "fetch
+failed" is not a verdict and an unverified relay is never admitted; a refetch never infers
+absence while an advert relay's capabilities are unknown; listener bind *and* unbind
+invalidate the advert from the transport watcher after the state store (event-driven,
+race-free against `BOUND`); no traversal or dial toward a peer with an active link
+(upstream's open-discovery `skip` over `self.peers`), read from the handlers' control
+snapshot that is republished before every link notice. Tests use fixture counters ordered
+by the main-context command queue, refetch FIFO barriers and event waits; no sleeps (one
+elapsed-time lower bound proves the republish waited out the backoff).
+
+Behaviour versus upstream: upstream's runtime has no NIP-11 gate (nostr-sdk connects
+without it), so the re-probe is fipsd's own fail-closed posture made recoverable; the
+active-link skip mirrors `run_open_discovery_sweep`'s `skip` set; upstream's advert publish
+does not classify `OK false`, so the prefix policy is fipsd's.
+
+Verification (macOS/arm64, Homebrew clang, `-DGO_WARNINGS_AS_ERRORS=ON`): Debug build clean;
+`ctest -R FipsdNostr --repeat until-fail:10` green under ASan+UBSan and under TSan (8/8 each,
+the Finding 1 libnostr race did not reproduce); full `ctest -R '^Fips' -E 'Soak|Perf'` once
+per sanitizer: 212/212 passed (12 opt-in interop/privileged tests skipped). Under ASan at
+`-j6` one run of `FipsdNostrTraversal_stun` failed its STUN-retransmit count assertion
+(`stun_io` does not exercise any changed code); it passed in the `-j3` full run and in all
+repeat runs. `FipsdAdvertTorInteropTest` (local `tor`, pinned Rust daemon
+`6aa80504`) passed twice. Static checks (`check-unsequenced-args.py --root .`,
+`check-gui-test-gdk-frame.py`, `check-linux-ci-packages.py`, `check-errno-after-park.py`,
+`git diff --check`) pass. Version: fipsd stays 0.1.0 Unreleased (manifest line
+`nostrc-nlekg, nostrc-tukt2, nostrc-tbcl6`).
