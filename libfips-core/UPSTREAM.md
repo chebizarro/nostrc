@@ -476,6 +476,34 @@ These are tracking-ready notes, **not** reports already submitted upstream:
   the numeric id (`resolve_transport`, `src/node/handlers/path_control.rs`);
   the gate pins by id on both daemons and by name only where one is reported.
   fipsd follow-ups, outside the client port.
+- **I-5 — a sub-millisecond path can report `bad_timestamp_echo`, which the docs call an anomaly.**
+  Found by the loopback probe tests (`fipsd/tests/test_node_handlers.c`,
+  `nostrc-jchpe`). The wire carries only whole milliseconds: the receiver
+  report's `timestamp_echo` (u32) and `dwell_time` (u16)
+  (`core/src/proto/mmp/wire.rs`), so no sub-millisecond RTT can be computed
+  from it and fipsd cannot do better without a wire change. The sample is
+  `our_timestamp_ms - (echo + dwell)` (`core/src/proto/mmp/metrics.rs`,
+  `process_receiver_report`), where our time is the session clock truncated at
+  receipt, the echo is the same clock truncated at send, and the dwell is the
+  peer's own clock truncated at both ends; each truncation errs by under 1 ms,
+  so a path whose true RTT is well under 1 ms yields -1, 0, 1 or 2 ms. Exactly
+  0 is counted in `rtt_zero` (probe reason `sub_millisecond`); -1 fails the
+  `checked_sub` and is counted in `rtt_arith_fail` (reason
+  `bad_timestamp_echo`, which `core/src/proto/probe/core.rs`
+  `classify_rtt_failure` ranks above `sub_millisecond`, so one -1 among many 0s
+  decides the verdict). `docs/how-to/diagnose-reachability.md` calls
+  `sub_millisecond` "every sample measured under 1 ms ... expected on
+  loopback" and `bad_timestamp_echo` "an anomaly worth investigating", but
+  upstream's tests only pin the exact-0 case
+  (`test_report_counters_discriminate_the_rtt_outcomes`) and a far-future echo
+  (`test_ignores_future_rtt_sample`); none treats -1 as sub-millisecond.
+  Reproducer: two same-host nodes, `fipsctl probe <peer>` repeatedly, or one
+  report with `echo + dwell == our_timestamp_ms + 1`; the verdict flips
+  between `sub_millisecond` and `bad_timestamp_echo` with the clocks' phase.
+  fipsd keeps byte and verdict parity (`libfips-core/src/proto/mmp/metrics.c`,
+  pinned by `FipsCoreMmpTest`); it does not fold -1 into `sub_millisecond`.
+  Report upstream: count an echo that lands within 1 ms ahead of our clock as
+  `rtt_zero`, and keep `rtt_arith_fail` for overflow or a larger regression.
 
 ## Node bookkeeping port (nostrc-u50yr.4)
 

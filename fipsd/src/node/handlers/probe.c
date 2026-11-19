@@ -184,7 +184,12 @@ json_t *hs_probe_start(handlers *h, const fips_peer_identity *target)
         .target_claimed = target_claimed(h, &slot->target, slot)};
     fips_probe_new(slot->probe, hs_now_ms(h), budgets, pre);
     drive(h, slot);
-    return fipsd_control_ok(json_pack("{s:I,s:s}", "probe_id", (json_int_t)slot->id, "state", fips_probe_is_finished(slot->probe) ? "done" : "running"));
+    /* probe.rs api_probe_start: the client sizes its ceiling from the daemon's own total budget (fipsctl waits
+     * budget_ms + 5 s), which follows the lookup ladder and tick; without it fipsctl assumes 30 s and gives up,
+     * with its output cut short, on a probe the daemon is still running. */
+    return fipsd_control_ok(json_pack("{s:I,s:s,s:I}", "probe_id", (json_int_t)slot->id,
+        "state", fips_probe_is_finished(slot->probe) ? "done" : "running",
+        "budget_ms", (json_int_t)fips_probe_budgets_total_ms(budgets)));
 }
 json_t *hs_probe_poll(handlers *h, uint64_t id)
 {
