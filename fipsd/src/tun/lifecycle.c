@@ -5,21 +5,28 @@
 #include "log.h"
 #include <errno.h>
 #include <string.h>
+/* A teardown stage that finds its object already gone has reached its goal.
+ * Linux flushes a link's IPv6 addresses when it goes down (keep_addr_on_down=0),
+ * so the address removal after `up(false)` answers EADDRNOTAVAIL; a device that
+ * disappeared under us answers ENODEV. Any other failure is real: the first one
+ * is returned and its stage keeps its flag. */
+static bool stage_done(const fipsd_tun *t,const char *what,int rc,int *error)
+{
+    if (rc>=0) return true;
+    int e=fipsd_io_errno();
+    if (e==EADDRNOTAVAIL || e==ENODEV) {
+        FIPSD_DEBUG("tun","%s: %s: already gone (%s)",t->name,what,strerror(e));
+        return true;
+    }
+    if (!*error) *error=e;
+    return false;
+}
 static int unwind(fipsd_tun *t)
 {
     int error=0;
-    if (t->routed) {
-        if (t->platform->route(t,false)<0) error=errno;
-        else t->routed=false;
-    }
-    if (t->raised) {
-        if (t->platform->up(t,false)<0) { if (!error) error=errno; }
-        else t->raised=false;
-    }
-    if (t->addressed) {
-        if (t->platform->address(t,false)<0) { if (!error) error=errno; }
-        else t->addressed=false;
-    }
+    if (t->routed && stage_done(t,"route removal",t->platform->route(t,false),&error)) t->routed=false;
+    if (t->raised && stage_done(t,"link down",t->platform->up(t,false),&error)) t->raised=false;
+    if (t->addressed && stage_done(t,"address removal",t->platform->address(t,false),&error)) t->addressed=false;
     if (t->fd>=0) {
         if (t->ops.close(t->ops.user,t->fd)<0 && !error) error=errno;
         t->fd=-1; /* close must not be retried against a reused descriptor */

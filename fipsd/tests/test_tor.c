@@ -436,6 +436,11 @@ static void control(fixture *f)
     /* The control socket does not exist yet: the optional monitor retries
      * with backoff and connects once Tor's socket appears. */
     assert(M->ops->start_async(M, f->rt, NULL, em) == 0);
+    /* The first attempt must really find no socket: it counts control_errors
+     * and, with no session to confirm the descriptor, latches the hostname-file
+     * advert, in that order. Starting the fixture before that event let a slow
+     * monitor fiber connect first and never fail. */
+    assert(receive(fipsd_tor_advert_updates(M)) == M->user && stats(M).control_errors >= 1);
     torctl_fixture_start(&ctl[3], late);
     expect_command(&ctl[3], "GETINFO status/bootstrap-phase status/circuit-established");
     expect_command(&ctl[3], "GETINFO version");
