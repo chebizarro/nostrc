@@ -23,10 +23,10 @@ struct relay {
     GPtrArray *clients;
     json_t *events;
     char *url;
-    bool hold_eose, reject_publish;
-    int reject_kind, reject_remaining;
+    bool hold_eose, reject_publish, nip11_unsupported;
+    int reject_kind, reject_remaining, nip11_failures;
     char reject_reason[128];
-    size_t rejected;
+    size_t rejected, nip11_requests;
 };
 struct fixture { GMainContext *context; GMainLoop *loop; pthread_t thread; GoChannel *ready; relay relays[2]; };
 static void send_frame(client *c, json_t *frame)
@@ -137,10 +137,15 @@ static void connected(SoupServer *server, SoupServerMessage *message, const char
 }
 static void nip11(SoupServer *server, SoupServerMessage *message, const char *path, GHashTable *query, gpointer user)
 {
-    (void)server; (void)path; (void)query; (void)user;
+    (void)server; (void)path; (void)query; relay *r = user;
     const char *accept = soup_message_headers_get_one(soup_server_message_get_request_headers(message), "Accept");
     if (g_strcmp0(accept, "application/nostr+json")) return;
-    const char *doc = "{\"supported_nips\":[1,11,40,42],\"limitation\":{\"max_filters\":2,\"max_subscriptions\":8}}";
+    ++r->nip11_requests;
+    if (r->nip11_failures > 0) {
+        --r->nip11_failures; soup_server_message_set_status(message, SOUP_STATUS_SERVICE_UNAVAILABLE, NULL); return;
+    }
+    const char *doc = r->nip11_unsupported ? "{\"supported_nips\":[1,11,42]}" :
+        "{\"supported_nips\":[1,11,40,42],\"limitation\":{\"max_filters\":2,\"max_subscriptions\":8}}";
     soup_server_message_set_status(message, SOUP_STATUS_OK, NULL);
     soup_server_message_set_response(message, "application/nostr+json", SOUP_MEMORY_COPY, doc, strlen(doc));
 }
@@ -167,7 +172,7 @@ static void *serve(void *user)
 typedef struct {
     fixture *f; operation op; int relay_index; const char *json; GoChannel *done;
     int kind; const char *author; size_t count; char *latest; /* QUERY */
-    int number; size_t rejected; /* REJECT_KIND, COUNTS */
+    int number; bool flag; size_t rejected, nip11; /* REJECT_KIND, NIP11_MODE, COUNTS */
 } request;
 static gboolean on_server(gpointer user)
 {
@@ -187,7 +192,8 @@ static gboolean on_server(gpointer user)
         case REJECT_KIND:
             r->reject_kind = q->kind; r->reject_remaining = q->number;
             snprintf(r->reject_reason, sizeof r->reject_reason, "%s", q->json); break;
-        case COUNTS: q->rejected = r->rejected; break;
+        case NIP11_MODE: r->nip11_failures = q->number; r->nip11_unsupported = q->flag; break;
+        case COUNTS: q->rejected = r->rejected; q->nip11 = r->nip11_requests; break;
         case HOLD_EOSE: r->hold_eose = true; break;
         case STOP: g_main_loop_quit(q->f->loop); break;
         case QUERY:
@@ -251,11 +257,17 @@ void fixture_reject(fixture *f, size_t index, int kind, int count, const char *r
     CHECK(index < 2 && reason && strlen(reason) < 128);
     request q = {.f = f, .op = REJECT_KIND, .relay_index = (int)index, .json = reason, .kind = kind, .number = count}; call(&q);
 }
-void fixture_counts(fixture *f, size_t index, size_t *rejected)
+void fixture_nip11(fixture *f, size_t index, int failures, bool unsupported)
+{
+    CHECK(index < 2);
+    request q = {.f = f, .op = NIP11_MODE, .relay_index = (int)index, .number = failures, .flag = unsupported}; call(&q);
+}
+void fixture_counts(fixture *f, size_t index, size_t *rejected, size_t *nip11)
 {
     CHECK(index < 2);
     request q = {.f = f, .op = COUNTS, .relay_index = (int)index}; call(&q);
-    *rejected = q.rejected;
+    if (rejected) *rejected = q.rejected;
+    if (nip11) *nip11 = q.nip11;
 }
 void fixture_destroy(fixture *f)
 {

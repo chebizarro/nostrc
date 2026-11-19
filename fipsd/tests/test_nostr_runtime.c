@@ -177,13 +177,34 @@ static void advert_refusals(fips_identity *me)
     (void)boundary_of(&sc.o, "connection lost"); CHECK(boundary_of(&sc.o, fixture_url(f, 1)).ok);
     barrier(&sc);
     size_t rejected[2], stored; char *json;
-    fixture_counts(f, 0, &rejected[0]); fixture_counts(f, 1, &rejected[1]);
+    fixture_counts(f, 0, &rejected[0], NULL); fixture_counts(f, 1, &rejected[1], NULL);
     CHECK(rejected[0] == 1 && rejected[1] == 1);
     char key[65]; fips_xonly_pubkey pk = fips_identity_pubkey(me); sodium_bin2hex(key, sizeof(key), pk.bytes, 32);
     json = fixture_latest(f, 0, NOSTR_KIND_FIPS_OVERLAY_ADVERT, key, &stored); CHECK(json && stored >= 1); free(json);
     json = fixture_latest(f, 1, NOSTR_KIND_FIPS_OVERLAY_ADVERT, key, &stored); CHECK(!json && !stored);
     scenario_stop(&sc);
     puts("advert OK false: rate-limited republished after backoff; blocked not retried across reconnect: OK");
+}
+/* nostrc-tukt2: a failed NIP-11 fetch is not a verdict. Relay 0 is re-probed
+ * on its backoff ladder and joins without a restart; relay 1's document lacks
+ * NIP-40 and it stays refused, never fetched again. */
+static void nip11_ladder(fips_identity *me)
+{
+    fixture *f = fixture_start();
+    fixture_nip11(f, 0, 1, false); fixture_nip11(f, 1, 0, true);
+    scenario sc; scenario_start(&sc, f, me);
+    CHECK(!boundary_of(&sc.o, "NIP-11 incompatible").ok);
+    CHECK(!boundary_of(&sc.o, "NIP-11 unavailable; retrying").ok);
+    CHECK(boundary_of(&sc.o, fixture_url(f, 0)).ok);
+    notice n = advert_result(&sc.o); CHECK(n.ok && !strcmp(n.text, fixture_url(f, 0)));
+    barrier(&sc);
+    size_t fetches[2], stored;
+    fixture_counts(f, 0, NULL, &fetches[0]); fixture_counts(f, 1, NULL, &fetches[1]);
+    CHECK(fetches[0] == 2 && fetches[1] == 1);
+    char key[65]; fips_xonly_pubkey pk = fips_identity_pubkey(me); sodium_bin2hex(key, sizeof(key), pk.bytes, 32);
+    char *json = fixture_latest(f, 1, NOSTR_KIND_FIPS_OVERLAY_ADVERT, key, &stored); CHECK(!json && !stored);
+    scenario_stop(&sc);
+    puts("NIP-11: fetch failure re-probed on the backoff ladder and relay joined; unsupported document stays refused: OK");
 }
 int main(void)
 {
@@ -272,7 +293,7 @@ int main(void)
     fipsd_runtime_destroy(host); fipsd_nostr_runtime_destroy(r);
     fixture_destroy(f);
     void *n; while (go_channel_try_receive(o.notices, &n) == 0) free(n); go_channel_unref(o.notices);
-    advert_refusals(me);
+    advert_refusals(me); nip11_ladder(me);
     fips_identity_destroy(them); fips_identity_destroy(me); fips_identity_destroy_secp(secp);
     puts("Nostr runtime: local WebSocket relay, OK/EOSE/CLOSED/AUTH, dedupe, refetch, sessions, freshness, failures passed");
     return 0;
