@@ -74,7 +74,8 @@ bool fipsd_dp_result(handlers *h, const fipsd_crypto_job *j)
                     fipsd_dp_reject_frame(h, FIPSD_DP_MTU); FIPSD_PERF_RETURN(perf_start, LINK_DISPATCH, true);
                 }
             }
-            ok = t && t->ops->send(t, &p->endpoint, p->output, len) == 0;
+            ok = t && fipsd_transport_send_lane(t, p->control ? FIPSD_TRANSPORT_LANE_CONTROL :
+                FIPSD_TRANSPORT_LANE_DATA, &p->endpoint, p->output, len) == 0;
             if (ok) {
                 ++h->counters.frames_sent;
                 if (rec && m && generation_matches(m, p)) {

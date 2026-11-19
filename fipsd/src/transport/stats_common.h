@@ -36,7 +36,12 @@ enum { FIPSD_TRANSPORT_STATS_COUNT = 0 FIPSD_STATS_ALL(FIPSD_STATS_COUNT) };
 #undef FIPSD_STATS_COUNT
 /* Host-only diagnostics, deliberately NOT part of upstream show_transports. */
 #define FIPSD_TRANSPORT_DIAGNOSTICS(X) \
-    X(dropped) X(ecn_recv) X(ce_recv) X(pktinfo_recv) X(classifier_drops) X(malformed) X(pool_full) X(deadlines) X(socket_errors)
+    X(dropped) X(ecn_recv) X(ce_recv) X(pktinfo_recv) X(classifier_drops) X(malformed) X(pool_full) X(deadlines) X(socket_errors) \
+    FIPSD_TRANSPORT_LANE_DIAGNOSTICS(X)
+/* Per-lane send queues (TCP send_lane, nostrc-085xw): refusals of a connected
+ * peer's full or closed lane (each also counted in dropped and send_errors),
+ * and frames written from the control lane. Appended last. */
+#define FIPSD_TRANSPORT_LANE_DIAGNOSTICS(X) X(control_dropped) X(data_dropped) X(control_sent)
 #define FIPSD_STATS_DECLARE(name) _Atomic uint64_t name;
 typedef struct fipsd_transport_diagnostics { FIPSD_TRANSPORT_DIAGNOSTICS(FIPSD_STATS_DECLARE) } fipsd_transport_diagnostics;
 #undef FIPSD_STATS_DECLARE

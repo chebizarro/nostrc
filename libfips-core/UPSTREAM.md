@@ -751,3 +751,20 @@ and change no upstream behaviour.
 
 No pin change. Version decision: additive API (and two additive struct fields),
 **libfips-core 0.1.0 Unreleased**.
+## Transport send lanes (nostrc-085xw)
+
+Host-only; no libfips-core or wire change. Upstream `transport::Lane`
+(`Data`/`Path`) becomes `fipsd_transport_lane` (`DATA`/`CONTROL`) and the
+optional `send_lane` vtable entry. TCP mirrors `tcp/pool.rs` and
+`tcp_send_loop`: data queue 64, control queue 8 (`PATH_QUEUE_DEPTH`),
+`try_send` refusal on both, control drained first with no starvation bound.
+Tor, Nym and BLE do not implement `send_lane` yet (upstream does, through
+`socks5/pool.rs` and `ble/mod.rs`); they keep one queue, unchanged.
+
+Deliberate divergence in classification: upstream sends only path messages
+(0x52/0x53/0x54, `node/mod.rs` `send_path`) on `Lane::Path`; fipsd's node also
+puts IK/restart/rekey msg1/msg2, MMP sender/receiver reports, tree announcements
+and heartbeats on the control lane, so that a saturated data queue cannot starve
+link maintenance. Session datagrams, bloom filters, lookups and Disconnect stay
+data. Effect to keep in mind: link MMP RTT under load excludes data-queue delay.
+Version decision: **fipsd 0.1.0 Unreleased**; libfips-core unchanged.

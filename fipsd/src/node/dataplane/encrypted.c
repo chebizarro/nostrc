@@ -6,6 +6,22 @@ static bool path_message(const uint8_t *message, size_t len)
         message[0] == FIPS_LINK_PathClose);
 }
 
+/* The transport lane of a sealed link message (nostrc-085xw). Upstream lanes
+ * only path messages (node/mod.rs send_path); fipsd also lanes the rest of
+ * link maintenance a saturated data queue must not starve: MMP reports, tree
+ * announcements and heartbeats. Session datagrams (all FSP traffic, its rekey
+ * and MMP included), bloom filters, lookups and Disconnect stay on the data
+ * lane; Disconnect so that it still follows the data queued before it. */
+static bool control_message(const uint8_t *message, size_t len)
+{
+    if (!len) return false;
+    switch (message[0]) {
+    case FIPS_LINK_SenderReport: case FIPS_LINK_ReceiverReport: case FIPS_LINK_TreeAnnounce:
+    case FIPS_LINK_Heartbeat: case FIPS_LINK_PathProbe: case FIPS_LINK_PathAck: case FIPS_LINK_PathClose:
+        return true;
+    default: return false;
+    }
+}
 static void recycle(fipsd_crypto_job *j)
 {
     fipsd_dp_packet *p = j->owner;
@@ -33,7 +49,7 @@ fipsd_dp_packet *fipsd_dp_packet_take(fipsd_dataplane *d)
         atomic_fetch_add_explicit(&d->in_flight, 1, memory_order_relaxed);
         p->plane = d; p->snapshot = d->current; go_refptr_retain(&p->snapshot);
         p->job = (fipsd_crypto_job){.owner = p, .recycle = recycle};
-        p->session = p->ce = p->prompt = p->farewell = p->path_message = p->restart = false;
+        p->session = p->ce = p->prompt = p->farewell = p->path_message = p->restart = p->control = false;
         return p;
     }
     ++d->stats.backpressure; return NULL;
@@ -91,12 +107,11 @@ bool fipsd_dp_seal(handlers *h, peer_rec *rec, fips_session_entry *entry,
     p->job.worker_counts = h->dataplane->stats.sealed;
     /* Disconnect is sealed asynchronously but deliberately outlives table removal. */
     uint32_t timestamp; const uint8_t *message; size_t message_len;
-    p->farewell = !session && !prompt &&
-        fips_fmp_strip_inner_header(plain, len, &timestamp, &message, &message_len) &&
-        message_len && message[0] == FIPS_LINK_Disconnect;
-    p->path_message = !session && !prompt &&
-        fips_fmp_strip_inner_header(plain, len, &timestamp, &message, &message_len) && message_len &&
-        path_message(message, message_len);
+    if (!session && !prompt && fips_fmp_strip_inner_header(plain, len, &timestamp, &message, &message_len)) {
+        p->farewell = message_len && message[0] == FIPS_LINK_Disconnect;
+        p->path_message = path_message(message, message_len);
+        p->control = control_message(message, message_len);
+    }
     return fipsd_dp_submit(h, p);
 refuse:
     fipsd_crypto_job_destroy(&p->job); return false;

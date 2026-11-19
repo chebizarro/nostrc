@@ -47,8 +47,17 @@ static void framing(void)
     assert(fipsd_stream_feed(&s, msg, 1, &n) == 0 && !fipsd_stream_eof(&s));
     puts("framing: every partial offset, coalesced frames, oversize, truncated EOF: ok");
 }
+static unsigned plain_sends;
+static int plain_send(fipsd_transport *t, const fips_transport_addr *to, const uint8_t *bytes, size_t n)
+{ (void)t; (void)to; (void)bytes; (void)n; ++plain_sends; return 0; }
 static void config(void)
 {
+    /* A transport without send_lane (UDP, Ethernet, BLE, Tor, Nym, loopback)
+     * takes every lane through its plain send. */
+    const fipsd_transport_ops plain = {.send = plain_send};
+    fipsd_transport single = {.ops = &plain};
+    assert(fipsd_transport_send_lane(&single, FIPSD_TRANSPORT_LANE_CONTROL, NULL, NULL, 0) == 0);
+    assert(fipsd_transport_send_lane(&single, FIPSD_TRANSPORT_LANE_DATA, NULL, NULL, 0) == 0 && plain_sends == 2);
     const char *yaml = "node: {limits: {max_connections: 17}}\ntransports:\n  tcp:\n    dial: {}\n    listen: {bind_addr: '[::1]:0', max_inbound_connections: 3, keepalive_secs: 0}\n";
     fipsd_config *cfg = fipsd_config_parse(yaml, strlen(yaml), NULL); assert(cfg);
     fipsd_transport_registry r = {0}; fipsd_transport *owned[32]; size_t n = 0;
@@ -111,17 +120,20 @@ static int raw_connect(fixture *f)
     assert(gof_connect(fd, (struct sockaddr *)&items[0].address, items[0].len, 5000) == 0);
     free(items); return fd;
 }
-static void peer_removed(fixture *f)
+static void pool_drained(tcp_instance *u)
 {
-    free(event(f->eb, FIPSD_TRANSPORT_DISCONNECTED));
     /* A pool-removal notification, not a timing assumption, releases the next
      * admission. This channel may contain earlier notifications. */
-    tcp_instance *u = f->b->user;
     for (;;) {
         nsync_mu_lock(&u->mu); bool empty = !u->connections; nsync_mu_unlock(&u->mu);
         if (empty) break;
         (void)receive(u->changed);
     }
+}
+static void peer_removed(fixture *f)
+{
+    free(event(f->eb, FIPSD_TRANSPORT_DISCONNECTED));
+    pool_drained(f->b->user);
 }
 /* libgo's trace hook reports committed I/O parking; a native notifier cancels
  * only after a real gof_connect or read has reached that boundary. */
@@ -159,6 +171,15 @@ static void *cancel_when_parked(void *arg)
     return NULL;
 }
 static void *join_thread(void *arg) { assert(pthread_join(*(pthread_t *)arg, NULL) == 0); return NULL; }
+static void *wait_parked(void *arg)
+{
+    (void)arg;
+    pthread_mutex_lock(&park_mu);
+    while (!parked) pthread_cond_wait(&park_cv, &park_mu);
+    watch_fd = -1;
+    pthread_mutex_unlock(&park_mu);
+    return NULL;
+}
 static void cancel_connect(fixture *f)
 {
     /* Intercept the real connect between readiness registration and park.
@@ -260,6 +281,72 @@ static void scenario(void *arg)
     cancel_connect(f);
     assert(go_channel_send(f->done, f) == 0);
 }
+/* Lane frames carry their tag in the last byte: stalled 3, control 2, data 1. */
+enum { LANE_BIG = 60000, LANE_SMALL = 114 };
+static void lane_frame(uint8_t *p, size_t n, uint8_t tag) { frame(p, n); p[n - 1] = tag; }
+/* Hold the writer inside one frame larger than both 4 KiB socket buffers can
+ * take, so nothing more leaves either lane until the far end reads. The park
+ * trace on the connection's fd, not a delay, says the writer is there. */
+static void stall_writer(fixture *f, const fips_transport_addr *remote, int fd, const uint8_t *big)
+{
+    pthread_mutex_lock(&park_mu); watch_fd = fd; watch_events = 2; parked = false; pthread_mutex_unlock(&park_mu);
+    assert(f->b->ops->send(f->b, remote, big, LANE_BIG) == 0);
+    go_blocking_submit(wait_parked, NULL);
+}
+static size_t fill(fixture *f, const fips_transport_addr *remote, fipsd_transport_lane lane, uint8_t tag)
+{
+    uint8_t bytes[LANE_SMALL]; lane_frame(bytes, sizeof bytes, tag);
+    size_t n = 0;
+    while (n < 1024 && fipsd_transport_send_lane(f->b, lane, remote, bytes, sizeof bytes) == 0) ++n;
+    return n;
+}
+/* The stalled frame, then every control frame, then the data queued before
+ * them: what the far end must read once it reads again. */
+static void expect_order(int raw, uint8_t *buf, size_t controls, size_t data)
+{
+    size_t n = 0;
+    assert(fipsd_stream_read(raw, buf, UINT16_MAX, &n) == 1 && n == LANE_BIG && buf[n - 1] == 3);
+    for (size_t i = 0; i < controls + data; ++i) {
+        assert(fipsd_stream_read(raw, buf, UINT16_MAX, &n) == 1 && n == LANE_SMALL);
+        assert(buf[n - 1] == (i < controls ? 2 : 1));
+    }
+}
+static void lanes(void *arg)
+{
+    fixture *f = arg; tcp_instance *b = f->b->user;
+    fipsd_transport_diagnostics *d = &b->shared.diagnostics;
+    const size_t depth = b->config.send_queue_depth;
+    uint8_t msg[114] = {1, 0, 110, 0}, *big = malloc(LANE_BIG), *buf = malloc(UINT16_MAX);
+    assert(big && buf); lane_frame(big, LANE_BIG, 3);
+    int raw = raw_connect(f);
+    assert(gof_write(raw, msg, sizeof msg) == sizeof msg);
+    fipsd_transport_event *e = event(f->eb, FIPSD_TRANSPORT_PACKET);
+    fips_transport_addr remote = e->address; free(e);
+    nsync_mu_lock(&b->mu); tcp_conn *conn = tcp_pool_find(b, &remote); assert(conn); int fd = conn->fd; nsync_mu_unlock(&b->mu);
+    /* A full data lane refuses data but still takes control frames, up to
+     * their own bound, and the writer sends every one before that data. */
+    stall_writer(f, &remote, fd, big);
+    assert(fill(f, &remote, FIPSD_TRANSPORT_LANE_DATA, 1) == depth);
+    assert(fill(f, &remote, FIPSD_TRANSPORT_LANE_CONTROL, 2) == FIPSD_TCP_CONTROL_DEPTH);
+    assert(atomic_load(&d->data_dropped) == 1 && atomic_load(&d->control_dropped) == 1);
+    assert(atomic_load(&d->dropped) == 2 && atomic_load(&b->shared.stats.send_errors) == 2);
+    expect_order(raw, buf, FIPSD_TCP_CONTROL_DEPTH, depth);
+    assert(atomic_load(&d->control_sent) == FIPSD_TCP_CONTROL_DEPTH);
+    puts("lanes: full data lane still queues control, written before the queued data; per-lane refusals: ok");
+    /* Deliberate close drains both lanes in the same order, then closes. */
+    stall_writer(f, &remote, fd, big);
+    assert(fill(f, &remote, FIPSD_TRANSPORT_LANE_DATA, 1) == depth);
+    assert(fill(f, &remote, FIPSD_TRANSPORT_LANE_CONTROL, 2) == FIPSD_TCP_CONTROL_DEPTH);
+    f->b->ops->close_connection(f->b, &remote);
+    expect_order(raw, buf, FIPSD_TCP_CONTROL_DEPTH, depth);
+    size_t n = 0; assert(fipsd_stream_read(raw, buf, UINT16_MAX, &n) == 0);
+    pool_drained(b); tcp_fd_close(raw);
+    assert(atomic_load(&d->control_sent) == 2 * FIPSD_TCP_CONTROL_DEPTH);
+    assert(atomic_load(&b->shared.stats.packets_sent) == 2 * (1 + FIPSD_TCP_CONTROL_DEPTH + depth));
+    free(big); free(buf);
+    puts("lanes: deliberate close drains control, then data, then EOF: ok");
+    assert(go_channel_send(f->done, f) == 0);
+}
 static void admission_limits(void *arg)
 {
     fixture *f = arg; uint8_t msg[114] = {1, 0, 110, 0};
@@ -341,7 +428,7 @@ static void lifecycle(const char *bind_addr, unsigned mode)
     c.mtu = 1280; c.recv_buf_size = c.send_buf_size = 4096;
     f.a = fipsd_tcp_create((fips_transport_id){1}, "a", &c);
     if (mode == 1) c.first_frame_ms = c.idle_ms = 100;
-    c.mtu = 128; c.max_outbound_connections = 0; c.max_inbound_connections = mode == 3 ? 1 : 2; c.max_inbound_per_source = 1;
+    c.mtu = mode == 4 ? 60000 : 128; c.max_outbound_connections = 0; c.max_inbound_connections = mode == 3 ? 1 : 2; c.max_inbound_per_source = 1;
     f.b = fipsd_tcp_create((fips_transport_id){2}, "b", &c);
     c.bind_addr = NULL; c.max_outbound_connections = 1; f.dial = fipsd_tcp_create((fips_transport_id){3}, "dial", &c);
     assert(f.a && f.b && f.dial);
@@ -349,7 +436,7 @@ static void lifecycle(const char *bind_addr, unsigned mode)
     assert(!fipsd_runtime_register(rt, &sub) && !fipsd_runtime_start(rt));
     assert(receive(fipsd_tcp_bound(f.a)) && receive(fipsd_tcp_bound(f.b)) && receive(fipsd_tcp_bound(f.dial)));
     assert(fipsd_tcp_address(f.b, &f.ba));
-    assert(fipsd_runtime_spawn(rt, mode == 3 ? admission_limits : mode == 2 ? notification_pressure : mode == 1 ? deadlines : scenario, &f) == 0 && receive(f.done));
+    assert(fipsd_runtime_spawn(rt, mode == 4 ? lanes : mode == 3 ? admission_limits : mode == 2 ? notification_pressure : mode == 1 ? deadlines : scenario, &f) == 0 && receive(f.done));
     fipsd_runtime_shutdown(rt); assert(fipsd_runtime_run(rt) == FIPSD_RUN_OK);
     assert(!atomic_load(&f.a->shared->stats.pool_outbound) && !atomic_load(&f.b->shared->stats.pool_inbound));
     fipsd_runtime_destroy(rt); fipsd_tcp_destroy(f.a); fipsd_tcp_destroy(f.b); fipsd_tcp_destroy(f.dial);
@@ -359,5 +446,6 @@ static void lifecycle(const char *bind_addr, unsigned mode)
 int main(void)
 {
     (void)fipsd_test_tmpdir(NULL); framing(); config(); lifecycle("127.0.0.1:0", 0); lifecycle("[::1]:0", 0);
-    lifecycle("127.0.0.1:0", 1); lifecycle("127.0.0.1:0", 2); lifecycle("127.0.0.1:0", 3); return 0;
+    lifecycle("127.0.0.1:0", 1); lifecycle("127.0.0.1:0", 2); lifecycle("127.0.0.1:0", 3);
+    lifecycle("127.0.0.1:0", 4); return 0;
 }

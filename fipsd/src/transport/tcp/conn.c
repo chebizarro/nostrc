@@ -99,22 +99,43 @@ static void reader(void *arg)
     }
     go_channel_close(c->reader_done);
 }
+/* Upstream tcp_send_loop's `biased` select: a waiting control frame always
+ * goes before data, so it waits behind at most the frame being written. libgo
+ * selects from a random start, so the control lane is taken first and a data
+ * frame the select hands back is held until the control lane is re-checked.
+ * No starvation bound, as upstream: the control lane is short and fed only by
+ * link maintenance. The writer parks in go_select; it ends on stop, or once the
+ * closed data lane and then the control lane are both drained. */
 static void writer(void *arg)
 {
     tcp_conn *c = arg; tcp_instance *u = c->owner;
+    tcp_frame *held = NULL;
+    bool closed = false;
     while (!stopped(c)) {
         void *value = NULL;
-        GoSelectCase cases[] = {{GO_SELECT_RECEIVE, c->stop, NULL, &value},
-            {GO_SELECT_RECEIVE, go_context_done(u->root), NULL, &value},
-            {GO_SELECT_RECEIVE, c->queue, NULL, &value}};
-        int which = go_select(cases, 3);
-        if (which != 2 || !value) break;
+        bool control = go_channel_try_receive(c->control, &value) == 0;
+        if (!control && held) { value = held; held = NULL; }
+        else if (!control) {
+            if (closed) break;
+            GoSelectCase cases[] = {{GO_SELECT_RECEIVE, c->stop, NULL, &value},
+                {GO_SELECT_RECEIVE, go_context_done(u->root), NULL, &value},
+                {GO_SELECT_RECEIVE, c->control, NULL, &value}, {GO_SELECT_RECEIVE, c->queue, NULL, &value}};
+            int which = go_select(cases, 4);
+            if (which < 2) break;
+            if (!value) { closed = true; continue; }
+            if (which == 3) { held = value; continue; }
+            control = true;
+        }
         tcp_frame *frame = value;
         int rc = fipsd_stream_write(c->fd, frame->bytes, frame->len);
-        if (!rc) fipsd_transport_stats_sent(&u->shared.stats, frame->len);
+        if (!rc) {
+            fipsd_transport_stats_sent(&u->shared.stats, frame->len);
+            if (control) atomic_fetch_add(&u->shared.diagnostics.control_sent, 1);
+        }
         free(frame);
         if (rc) { if (!stopped(c)) tcp_stats_error(u, true); break; }
     }
+    free(held);
     go_channel_close(c->writer_done);
 }
 static void join(GoChannel *done) { void *v; (void)go_channel_receive(done, &v); }
@@ -163,7 +184,9 @@ void tcp_conn_owner(void *arg)
                         if (selected == 4) {
                             /* Deliberate close preserves queued msg2/reject/close frames.
                              * Whole-fd cancellation is deferred until writer drain or
-                             * the same bounded 5 s grace as upstream stream.rs. */
+                             * the same bounded 5 s grace as upstream stream.rs. Sends
+                             * stopped at `closing`, so closing the data lane fixes both
+                             * lanes' contents; the writer drains control after it. */
                             go_channel_close(c->queue);
                             GoSelectCase drain[] = {{GO_SELECT_RECEIVE, c->writer_done, NULL, &v},
                                 {GO_SELECT_RECEIVE, c->stop, NULL, &v},
@@ -197,8 +220,9 @@ void tcp_conn_free(tcp_conn *c)
     if (!c) return;
     void *v;
     if (c->queue) while (go_channel_try_receive(c->queue, &v) == 0) free(v);
+    if (c->control) while (go_channel_try_receive(c->control, &v) == 0) free(v);
     GoChannel *channels[] = {c->stop, c->notify_stop, c->close, c->ready, c->run, c->reader_done,
-        c->writer_done, c->progress, c->queue};
+        c->writer_done, c->progress, c->queue, c->control};
     for (size_t i = 0; i < sizeof channels / sizeof channels[0]; ++i) if (channels[i]) go_channel_unref(channels[i]);
     free(c);
 }
