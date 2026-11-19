@@ -16,10 +16,9 @@ typedef struct snap {
     json_t **jsons; size_t njson, jcap;
     uint64_t mesh; double fill, estimate;
     bool has_mesh, has_fill;
+    fipsd_stats_view *history; /* retained; shared with other snapshots */
 } snap;
-/* Arena block the caller overwrites entirely: no zeroing (the stats-history
- * copy is megabytes; zeroing it dominated every snapshot build). */
-static void *salloc_raw(snap *x, size_t n)
+static void *salloc(snap *x, size_t n)
 {
     if (x->nblocks == x->cap) {
         size_t cap = x->cap ? x->cap * 2 : 64;
@@ -27,14 +26,8 @@ static void *salloc_raw(snap *x, size_t n)
         if (!b) return NULL;
         x->blocks = b; x->cap = cap;
     }
-    void *p = malloc(n ? n : 1);
+    void *p = calloc(1, n ? n : 1);
     if (p) x->blocks[x->nblocks++] = p;
-    return p;
-}
-static void *salloc(snap *x, size_t n)
-{
-    void *p = salloc_raw(x, n);
-    if (p) memset(p, 0, n ? n : 1);
     return p;
 }
 static const char *sdup(snap *x, const char *s)
@@ -62,6 +55,7 @@ static void snap_free(void *p)
     snap *x = p;
     for (size_t i = 0; i < x->nblocks; ++i) free(x->blocks[i]);
     for (size_t i = 0; i < x->njson; ++i) json_decref(x->jsons[i]);
+    fipsd_stats_view_release(x->history);
     free(x->blocks); free(x->jsons); free(x);
 }
 static const char *hex_of(snap *x, const fips_node_addr *a)
@@ -406,14 +400,19 @@ static snap *build(handlers *h, fips_instant now)
     s->bloom.leaf_dependents = sjson(x, leaves); s->bloom.peer_filters = sjson(x, filter_rows);
     FIPSD_PERF_END(tree_start, SNAPSHOT_TREE);
     FIPSD_PERF_BEGIN(cache_start);
-    /* Coordinate cache */
-    fips_cache_stats cs = fips_coord_cache_stats(&h->cache, now);
+    /* Coordinate cache: one pass over the resident entries, not two sweeps of
+     * every slot (the default cache has ~51k slots). Rows stop at 256. */
+    size_t words = FIPS_COORD_CACHE_MARK_WORDS(h->cache.slot_capacity);
+    if (h->cache_mark_words < words) {
+        uint64_t *marks = realloc(h->cache_marks, words * sizeof *marks);
+        if (marks) { h->cache_marks = marks; h->cache_mark_words = words; }
+    }
+    size_t resident = fips_coord_cache_len(&h->cache), rows_cap = resident < 256 ? resident : 256;
+    struct { handlers *h; snap *x; fipsd_control_cache_entry *rows; size_t n, cap; } cc = {h, x, salloc(x, (rows_cap + 1) * sizeof(fipsd_control_cache_entry)), 0, rows_cap};
+    fips_cache_stats cs = fips_coord_cache_scan(&h->cache, now, h->cache_marks, h->cache_mark_words, cc.rows ? cache_row : NULL, &cc);
     s->cache.count = cs.entries; s->cache.max_entries = cs.max_entries; s->cache.expired = cs.expired;
     s->cache.fill_ratio = fips_cache_stats_fill_ratio(&cs); s->cache.default_ttl_ms = fips_coord_cache_default_ttl_ms(&h->cache);
     s->cache.avg_age_ms = cs.avg_age_ms;
-    size_t rows_cap = cs.entries < 256 ? cs.entries : 256;
-    struct { handlers *h; snap *x; fipsd_control_cache_entry *rows; size_t n, cap; } cc = {h, x, salloc(x, (rows_cap + 1) * sizeof(fipsd_control_cache_entry)), 0, rows_cap};
-    if (cc.rows) fips_coord_cache_iter(&h->cache, now, cache_row, &cc);
     s->cache.entries = cc.rows; s->cache.entry_count = cc.n;
     FIPSD_PERF_END(cache_start, SNAPSHOT_CACHE);
     FIPSD_PERF_BEGIN(counters_start);
@@ -464,14 +463,9 @@ static snap *build(handlers *h, fips_instant now)
     s->session = counters_of(x, buf, n);
     FIPSD_PERF_END(counters_start, SNAPSHOT_COUNTERS);
     FIPSD_PERF_BEGIN(history_start);
-    /* Stats history: copy the rings and re-point the peer storage. */
-    fips_stats_history *hist = salloc_raw(x, sizeof *hist);
-    fips_peer_stats *hp = h->history->peer_capacity ? salloc(x, h->history->peer_capacity * sizeof *hp) : NULL;
-    if (hist && (hp || !h->history->peer_capacity)) {
-        *hist = *h->history;
-        if (hp) memcpy(hp, h->history->peers, h->history->peer_count * sizeof *hp);
-        hist->peers = hp; s->history = hist;
-    }
+    /* Stats history: a shared immutable view, replayed forward on change. */
+    x->history = fipsd_stats_views_acquire(&h->stats_views, h->history);
+    if (x->history) s->history = fipsd_stats_view_history(x->history);
     FIPSD_PERF_END(history_start, SNAPSHOT_HISTORY);
     return x;
 }
@@ -506,7 +500,13 @@ fipsd_control_provider fipsd_node_handlers_provider(fipsd_node_handlers *h)
 bool hs_provider_init(handlers *h)
 {
     h->snapshot = go_swap_create(NULL, snap_free);
-    return h->snapshot != NULL;
+    return h->snapshot != NULL && fipsd_stats_views_init(&h->stats_views, h->cfg.peer_capacity);
+}
+void hs_provider_free(handlers *h)
+{
+    go_swap_free(h->snapshot); h->snapshot = NULL;
+    fipsd_stats_views_free(&h->stats_views);
+    free(h->cache_marks); h->cache_marks = NULL; h->cache_mark_words = 0;
 }
 static bool parse_peer(handlers *h, const json_t *params, const char *key, fips_peer_identity *out)
 {

@@ -177,7 +177,7 @@ void fipsd_node_handlers_destroy(fipsd_node_handlers *h)
         while (go_channel_try_receive(h->notices, &m) == 0) fipsd_node_notice_free(m);
         go_channel_unref(h->notices);
     }
-    go_swap_free(h->snapshot);
+    hs_provider_free(h);
     sodium_memzero(h, sizeof *h);
     free(h);
 }
@@ -297,6 +297,7 @@ static bool allocate(handlers *h)
         if (!h->session_ext[i].pending) return false;
     }
     fips_stats_history_init(h->history, h->history_peers, hcap);
+    fipsd_stats_views_invalidate(&h->stats_views);
     return true;
 }
 static void load_core(handlers *h)

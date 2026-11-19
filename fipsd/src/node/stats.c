@@ -58,20 +58,9 @@ void hs_stats_tick(handlers *h, fips_instant now)
     for (size_t i = 0; i < h->cfg.session_capacity; ++i)
         if (h->session_entries[i].occupied) ++s.active_sessions;
     s.loss_rate = loss_n ? loss_sum / (double)loss_n : 0.0;
-    /* Retain churned peers for the core's 24-hour window, not just the
-     * currently active peer-capacity budget. Grow only on the dispatcher. */
-    fips_stats_history_cleanup(h->history, now);
-    size_t needed = h->history->peer_count;
-    for (size_t i = 0; i < n; ++i) if (!fips_stats_history_peer(h->history, peers[i].node_addr)) ++needed;
-    if (needed > h->history->peer_capacity) {
-        size_t cap = needed > h->history->peer_capacity * 2 ? needed : h->history->peer_capacity * 2;
-        fips_peer_stats *storage = realloc(h->history_peers, cap * sizeof *storage);
-        if (!storage) { FIPSD_WARN("stats", "cannot grow retained peer history"); return; }
-        h->history_peers = storage; h->history->peers = storage; h->history->peer_capacity = cap;
-    }
-    if (fips_stats_history_tick(h->history, now, &s, peers, n) != FIPS_OK) {
-        fips_stats_history_cleanup(h->history, now);
-        if (fips_stats_history_tick(h->history, now, &s, peers, n) != FIPS_OK)
-            FIPSD_WARN("stats", "peer history retention capacity exhausted");
-    }
+    /* Grow only on the dispatcher; control views replay the same update. */
+    fipsd_stats_outcome outcome = fipsd_stats_history_update(h->history, &h->history_peers, now, &s, peers, n);
+    if (outcome == FIPSD_STATS_NO_MEMORY) FIPSD_WARN("stats", "cannot grow retained peer history");
+    else if (outcome == FIPSD_STATS_EXHAUSTED) FIPSD_WARN("stats", "peer history retention capacity exhausted");
+    fipsd_stats_views_record(&h->stats_views, outcome == FIPSD_STATS_APPLIED, now, &s, peers, n);
 }

@@ -150,7 +150,7 @@ target_sources(fipsd_lib PRIVATE
   src/node/dataplane/reject.c src/node/dataplane/path_mtu.c)
 
 # ACL, counter registry, history sampling and diagnostic vocabulary (9keoz.8).
-target_sources(fipsd_lib PRIVATE src/node/acl.c src/node/metrics.c src/node/stats.c src/node/diag.c)
+target_sources(fipsd_lib PRIVATE src/node/acl.c src/node/metrics.c src/node/stats.c src/node/stats_view.c src/node/diag.c)
 # FIPS_ENABLE_FUZZERS also includes the daemon's untrusted parser surfaces.
 option(FIPSD_ENABLE_FUZZERS "Build fipsd parser libFuzzer targets" ${FIPS_ENABLE_FUZZERS})
 if(FIPSD_ENABLE_FUZZERS)

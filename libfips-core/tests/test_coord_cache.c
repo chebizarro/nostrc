@@ -1405,6 +1405,54 @@ static int iter_visits_live_entries_and_stops_on_request(void)
     CHECK(seen == 2);
     return 0;
 }
+typedef struct seen_list { const uint8_t *addr[64]; const fips_cache_entry *entry[64]; size_t n, stop; } seen_list;
+static bool record_visit(void *ctx, const uint8_t addr[16], const fips_cache_entry *entry)
+{
+    seen_list *s = ctx;
+    if (s->n < 64) { s->addr[s->n] = addr; s->entry[s->n] = entry; }
+    return ++s->n < s->stop;
+}
+/* fips_coord_cache_scan is the O(len) fusion of iter + stats: same visits in
+ * the same order, same stats, even after a visitor stop and on the fallback. */
+static int scan_matches_iter_and_stats_under_churn(void)
+{
+    static uint64_t marks[FIPS_COORD_CACHE_MARK_WORDS(SLOTS)];
+    NEW(48, 100);
+    unexpected = 0;
+    uint32_t rng = 12345;
+    for (uint64_t step = 0, now = 0; step < 3000; ++step) {
+        rng = rng * 1103515245u + 12345u;
+        uint32_t r = rng >> 8;
+        naddr a = minted_addr(1, r % 80), root = make_node_addr(9);
+        now += r % 7;
+        switch (r % 9) {
+        case 0: case 1: case 2: (void)ins(a, coords_of_len(a, root, 2 + r % 4), now); break;
+        case 3: insv(a, coords_of_len(a, root, 3), now); break;
+        case 4: (void)fips_coord_cache_get_and_touch(&cache, a.b, t(now)); break;
+        case 5: (void)fips_coord_cache_remove(&cache, a.b, NULL); break;
+        case 6: (void)fips_coord_cache_demote(&cache, a.b); break;
+        case 7: if (r % 5 == 0) (void)fips_coord_cache_purge_expired(&cache, t(now)); break;
+        default: break;
+        }
+        uint64_t at = now + r % 150;
+        size_t stop = 1 + r % 70;
+        seen_list want = {.stop = stop}, got = {.stop = stop}, fallback = {.stop = stop};
+        fips_coord_cache_iter(&cache, t(at), record_visit, &want);
+        fips_cache_stats ws = fips_coord_cache_stats(&cache, t(at));
+        fips_cache_stats gs = fips_coord_cache_scan(&cache, t(at), marks, FIPS_COORD_CACHE_MARK_WORDS(SLOTS), record_visit, &got);
+        fips_cache_stats fs = fips_coord_cache_scan(&cache, t(at), marks, 1, record_visit, &fallback);
+        fips_cache_stats ns = fips_coord_cache_scan(&cache, t(at), marks, FIPS_COORD_CACHE_MARK_WORDS(SLOTS), NULL, NULL);
+        CHECK(want.n == got.n && want.n == fallback.n);
+        for (size_t i = 0; i < want.n && i < 64; ++i)
+            CHECK(want.addr[i] == got.addr[i] && want.entry[i] == got.entry[i] && want.entry[i] == fallback.entry[i]);
+        const fips_cache_stats *all[3] = {&gs, &fs, &ns};
+        for (size_t i = 0; i < 3; ++i)
+            CHECK(all[i]->entries == ws.entries && all[i]->max_entries == ws.max_entries &&
+                  all[i]->expired == ws.expired && all[i]->avg_age_ms == ws.avg_age_ms);
+    }
+    CHECK(unexpected == 0);
+    return 0;
+}
 static int remove_copies_the_entry_out(void)
 {
     NEW(100, 1000);
@@ -1523,13 +1571,14 @@ int main(void)
         init_rejects_insufficient_storage_and_runs_a_zero_entry_geometry,
         verified_excess_exhausts_storage_transactionally, ttl_boundaries_and_refresh,
         instants_before_the_epoch_read_as_millisecond_zero,
-        iter_visits_live_entries_and_stops_on_request, remove_copies_the_entry_out,
+        iter_visits_live_entries_and_stops_on_request, scan_matches_iter_and_stats_under_churn,
+        remove_copies_the_entry_out,
         cached_coord_bounds_and_accessors, lookups_survive_interleaved_deletions
     };
     for (size_t i = 0; i < sizeof(tests) / sizeof(tests[0]); ++i) {
         if (tests[i]()) return 1;
         if (unexpected) { fprintf(stderr, "test %zu: unexpected FIPS_ERR_RANGE\n", i); return 1; }
     }
-    puts("coord cache: 66 upstream cache + 6 entry + 4 stats/error tests + 8 C edge tests passed");
+    puts("coord cache: 66 upstream cache + 6 entry + 4 stats/error tests + 9 C edge tests passed");
     return 0;
 }
