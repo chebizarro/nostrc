@@ -2,6 +2,17 @@
  * allocation, limits, restart holds, durable marks, conntrack evidence and
  * the mapping lifecycle, driven by a caller-supplied clock. */
 #include "test_gateway.h"
+#include "log.h"
+
+/* Measure execution, not the synthetic instants that drive pool behaviour. */
+#undef RUN
+#define RUN(fn) do { \
+    fipsd_gw_instant begin_ = fipsd_gw_now(); \
+    fprintf(stderr, "  %s\n", #fn); \
+    fn(); \
+    fprintf(stderr, "  %s: %.3f s\n", #fn, \
+            (double)fipsd_gw_since(fipsd_gw_now(), begin_) / (double)FIPSD_GW_SEC); \
+} while (0)
 
 static fipsd_gw_pool *pool_new(const char *cidr, uint64_t ttl, uint64_t grace)
 { fipsd_gw_pool_error e; fipsd_gw_pool *p = fipsd_gw_pool_new(cidr, ttl, grace, &e); CHECK(p); return p; }
@@ -1192,6 +1203,14 @@ static void a_reserved_map_takes_the_next_key_without_growing(void)
 }
 int gw_suite_pool(void)
 {
+    /* The /112 restart test cycles through 65,535 addresses with explicit
+     * simulated time. Per-address INFO output otherwise dominates the test
+     * through CTest's capture pipe, especially under sanitizer/build load.
+     * Keep warnings/errors and case timings; logging has its own suite. */
+    fipsd_log *previous_log = fipsd_log_default();
+    fipsd_log *log = fipsd_log_create(FIPSD_LOG_WARN, NULL);
+    CHECK(log);
+    fipsd_log_set_default(log);
     RUN(a_reserved_map_takes_the_next_key_without_growing);
     RUN(pool_error_reasons_are_the_kebab_case_log_values);
     RUN(test_parse_cidr);
@@ -1249,5 +1268,7 @@ int gw_suite_pool(void)
     RUN(test_lookup_virtual_ip);
     RUN(test_large_prefix_capped);
     RUN(the_mapping_info_reports_every_live_mapping);
+    fipsd_log_set_default(previous_log);
+    fipsd_log_destroy(log);
     return 0;
 }
