@@ -1,6 +1,9 @@
 /* Test-only traffic generator. Both endpoints use the real libfipsnative ABI;
  * packets traverse two daemon processes and loopback UDP, never an in-process
- * transport. One clock measures receipt at each endpoint (not RTT / 2). */
+ * transport. One clock measures receipt at each endpoint (not RTT / 2).
+ * Every datagram moves through fips_native_send/fips_native_recv, the
+ * descriptor only through poll: on macOS and FreeBSD the flow is a framed
+ * stream (nostrc-6ljk8), whose raw bytes are not datagrams. */
 #define _POSIX_C_SOURCE 200809L
 #define _DARWIN_C_SOURCE 1
 #include "fips-native-client.h"
@@ -8,7 +11,6 @@
 #include <inttypes.h>
 #include <poll.h>
 #include <pthread.h>
-#include <sys/socket.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -60,6 +62,7 @@ typedef struct receiver {
     pthread_mutex_t mu;
     pthread_cond_t cv;
     bool ready, started;
+    fips_native_stream *stream;
     int fd;
     uint64_t deadline, received, highest;
 } receiver;
@@ -82,8 +85,9 @@ static void *drain(void *arg)
         CHECK(rc >= 0);
         if (!rc || now() >= r->deadline) break;
         uint8_t bytes[PAYLOAD + 1];
-        ssize_t len = recv(r->fd, bytes, sizeof(bytes), MSG_DONTWAIT);
-        if (len < 0 && (errno == EAGAIN || errno == EINTR)) continue;
+        /* Non-blocking: readable may mean only part of a framed datagram. */
+        ssize_t len = fips_native_recv(r->stream, bytes, sizeof(bytes));
+        if (len == -EAGAIN || len == -EINTR) continue;
         CHECK(len == PAYLOAD);
         uint64_t seq; memcpy(&seq, bytes, sizeof(seq));
         CHECK(seq < UINT64_C(1000000000));
@@ -131,7 +135,9 @@ int main(int argc, char **argv)
         uint64_t arrived = now(); transmit(right, i); receive(left, i);
         uint64_t done = now(); one[i] = arrived - start; back[i] = done - arrived; rtt[i] = done - start;
     }
-    receiver r = {.fd=fips_native_stream_fd(right)};
+    CHECK(!fips_native_stream_set_nonblocking(right, true));
+    CHECK(!fips_native_stream_set_nonblocking(left, true));
+    receiver r = {.stream=right, .fd=fips_native_stream_fd(right)};
     CHECK(!pthread_mutex_init(&r.mu, NULL)); CHECK(!pthread_cond_init(&r.cv, NULL));
     pthread_t thread; CHECK(!pthread_create(&thread, NULL, drain, &r));
     CHECK(!pthread_mutex_lock(&r.mu));
@@ -144,14 +150,14 @@ int main(int argc, char **argv)
     int fd = fips_native_stream_fd(left);
     while (now() < r.deadline) {
         memcpy(bytes, &sent, sizeof(sent));
-        ssize_t rc = send(fd, bytes, sizeof(bytes), MSG_DONTWAIT);
-        if (rc < 0 && (errno == ENOBUFS || errno == EAGAIN || errno == EINTR)) {
+        int rc = fips_native_send(left, bytes, sizeof(bytes));
+        if (rc == -ENOBUFS || rc == -EAGAIN || rc == -EINTR) {
             ++backpressure;
             struct pollfd writable = {.fd=fd, .events=POLLOUT};
             int status = poll(&writable, 1, 1); CHECK(status >= 0 || errno == EINTR);
             continue; /* No accepted datagram is ever retransmitted. */
         }
-        CHECK(rc == PAYLOAD); ++sent;
+        CHECK(rc == 0); ++sent;
     }
     CHECK(!pthread_join(thread, NULL));
     CHECK(!pthread_cond_destroy(&r.cv)); CHECK(!pthread_mutex_destroy(&r.mu));
