@@ -700,6 +700,39 @@ runs, medians of the per-run p50):
 A change to the cache still rehashes and recopies every live entry (~130 MB
 at 50k entries); making that incremental is separate work.
 
+The stats history kept its peers in an address-sorted array and inserted with
+`memmove`, so an arrival at a low address shifted up to every retained peer
+(~283 KB each) on the live history and again in each view that replays the
+tick. Peers now keep stable slots and the address order is an index over them
+(see libfips-core `UPSTREAM.md`). Release `fips_bench_stats_history`, every
+retained peer present each tick, base and change interleaved three times,
+medians of the per-run medians:
+
+| Tick | before | after |
+| --- | --- | --- |
+| 64 retained peers, no arrival | 3.0 us | 3.3 us |
+| 64 retained peers, one arrival at the lowest address | 351 us | 7.0 us |
+| 512 retained peers, no arrival | 45.8 us | 46.3 us |
+| 512 retained peers, one arrival at the lowest address | 3122 us | 55 us |
+
+In `fipsd_snapshot_bench` (whose arrivals all happen during setup) against the
+preceding commit, six interleaved runs: 50k entries, 25% churn, p99 of all
+publishes 140 -> 136 us and the worst publish 6.0 -> 1.9 ms; two slow clients
+at 4096 entries p99 161 -> 165 us. The history-tick p99 there rises
+(224 -> 885 us at 50k): two view replays at the fifth minute's downsample take
+~0.8 ms each with ~1,200 minor page faults, first writes to view-storage pages
+the setup's insertion `memmove`s used to touch. Over 20,000 publishes they
+were the only replays that faulted; it is a one-time cost moved, not a
+per-tick one.
+
+End to end, base (30f44fde4) against all four changes, `fipsd_snapshot_bench
+--cache-churn 25`, eight interleaved runs on a heavily loaded host (load
+average 45-55), CPU clock, medians: 50k entries p99 606 -> 194 us, rescanning
+publishes p50 392 -> 124 us (p99 994 -> 267 us), publishes over 1 ms 6.5 -> 1;
+4096 entries p99 170 -> 154 us, rescanning publishes p50 136 -> 124 us. The
+rescan costs the same at 4096 and 50k entries, and the `--max-p99-us 1000
+--clock cpu` gate (`FipsdSnapshotPublishBench`) passes at 270 us.
+
 ### Reproduction and verification
 
 `FipsdProfilingTest` joins `fipsd_tests` when profiling is enabled. It covers

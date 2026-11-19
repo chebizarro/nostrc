@@ -98,21 +98,77 @@ static double delta(fips_stats_ring *r, uint64_t total, bool peer)
     return v;
 }
 
-static size_t peer_position(const fips_stats_history *h, const uint8_t addr[16])
+/* Peers live in stable slots; peers[r].by_addr names the slot (and address)
+ * of the r-th by address. The index travels with the slots it is stored in,
+ * so a peer's payload is only ever copied with copy_payload, which leaves it. */
+static fips_peer_stats *ranked(const fips_stats_history *h, size_t rank)
 {
-    size_t lo = 0, hi = h->peer_count;
+    return &h->peers[h->peers[rank].by_addr.slot];
+}
+
+static void set_rank(fips_stats_history *h, size_t rank, size_t slot)
+{
+    h->peers[rank].by_addr.slot = slot;
+    memcpy(h->peers[rank].by_addr.addr, h->peers[slot].addr, 16);
+}
+
+static void copy_payload(fips_peer_stats *to, const fips_peer_stats *from)
+{
+    fips_peer_rank by_addr = to->by_addr;
+    *to = *from;
+    to->by_addr = by_addr;
+}
+
+/* The rank addr has or would take among the first n. */
+static size_t peer_position_upto(const fips_stats_history *h, size_t n, const uint8_t addr[16])
+{
+    size_t lo = 0, hi = n;
     while (lo < hi) {
         size_t mid = lo + (hi - lo) / 2;
-        if (memcmp(h->peers[mid].addr, addr, 16) < 0) lo = mid + 1;
+        if (memcmp(h->peers[mid].by_addr.addr, addr, 16) < 0) lo = mid + 1;
         else hi = mid;
     }
     return lo;
 }
 
+static size_t peer_position(const fips_stats_history *h, const uint8_t addr[16])
+{
+    return peer_position_upto(h, h->peer_count, addr);
+}
+
 const fips_peer_stats *fips_stats_history_peer(const fips_stats_history *h, const uint8_t addr[16])
 {
     size_t i = peer_position(h, addr);
-    return i < h->peer_count && memcmp(h->peers[i].addr, addr, 16) == 0 ? &h->peers[i] : NULL;
+    return i < h->peer_count && memcmp(h->peers[i].by_addr.addr, addr, 16) == 0 ? ranked(h, i) : NULL;
+}
+
+const fips_peer_stats *fips_stats_history_peer_at(const fips_stats_history *h, size_t rank)
+{
+    return rank < h->peer_count ? ranked(h, rank) : NULL;
+}
+
+/* Drop the peers gone() names: the address order closes up, then each hole
+ * below the new count takes one surviving peer from above it. Cost: one pass
+ * over the index plus one peer copy per hole, not a shift of every later peer. */
+typedef bool (*gone_fn)(const fips_peer_stats *p, const void *ctx);
+
+static void remove_peers(fips_stats_history *h, gone_fn gone, const void *ctx)
+{
+    size_t kept = 0;
+    for (size_t r = 0; r < h->peer_count; ++r) {
+        if (gone(&h->peers[h->peers[r].by_addr.slot], ctx)) continue;
+        if (kept != r) h->peers[kept].by_addr = h->peers[r].by_addr; /* untouched until one is gone */
+        ++kept;
+    }
+    for (size_t hole = 0, from = kept; from < h->peer_count; ++from) {
+        if (gone(&h->peers[from], ctx)) continue;
+        while (!gone(&h->peers[hole], ctx)) ++hole; /* one hole below kept per survivor above */
+        size_t rank = peer_position_upto(h, kept, h->peers[from].addr);
+        copy_payload(&h->peers[hole], &h->peers[from]);
+        h->peers[rank].by_addr.slot = hole;
+        ++hole;
+    }
+    h->peer_count = kept;
 }
 
 void fips_stats_history_init(fips_stats_history *h, fips_peer_stats *storage, size_t capacity)
@@ -144,16 +200,15 @@ static void peer_init(fips_peer_stats *p, const uint8_t addr[16], fips_instant n
     }
 }
 
+static bool silent_too_long(const fips_peer_stats *p, const void *ctx)
+{
+    const fips_instant *now = ctx;
+    return now->ops->saturating_duration_since(*now, p->last_contact).secs >= FIPS_PEER_EVICTION_SECS;
+}
+
 void fips_stats_history_cleanup(fips_stats_history *h, fips_instant now)
 {
-    size_t n = 0;
-    for (size_t i = 0; i < h->peer_count; ++i) {
-        if (now.ops->saturating_duration_since(now, h->peers[i].last_contact).secs < FIPS_PEER_EVICTION_SECS) {
-            if (n != i) h->peers[n] = h->peers[i];
-            ++n;
-        }
-    }
-    h->peer_count = n;
+    remove_peers(h, silent_too_long, &now);
 }
 
 fips_status fips_stats_history_tick(fips_stats_history *h, fips_instant now,
@@ -184,12 +239,15 @@ fips_status fips_stats_history_tick(fips_stats_history *h, fips_instant now,
     for (size_t i = 0; i < count; ++i) {
         const fips_peer_snapshot *ps = &peers[i];
         size_t pos = peer_position(h, ps->node_addr);
-        if (pos == h->peer_count || memcmp(h->peers[pos].addr, ps->node_addr, 16) != 0) {
-            memmove(h->peers + pos + 1, h->peers + pos, (h->peer_count - pos) * sizeof(h->peers[0]));
+        if (pos == h->peer_count || memcmp(h->peers[pos].by_addr.addr, ps->node_addr, 16) != 0) {
+            /* A new peer takes the next free slot; only the index shifts. */
+            size_t slot = h->peer_count;
+            for (size_t r = h->peer_count; r > pos; --r) h->peers[r].by_addr = h->peers[r - 1].by_addr;
+            peer_init(&h->peers[slot], ps->node_addr, now, h->fast_pushes);
+            set_rank(h, pos, slot);
             ++h->peer_count;
-            peer_init(&h->peers[pos], ps->node_addr, now, h->fast_pushes);
         }
-        fips_peer_stats *p = &h->peers[pos];
+        fips_peer_stats *p = ranked(h, pos);
         p->seen_tick = true;
         p->last_contact = now;
         double pv[FIPS_PEER_METRIC_COUNT] = {
@@ -257,6 +315,12 @@ static bool same_peer(const fips_peer_stats *a, const fips_peer_stats *b)
     return a->born == b->born && memcmp(a->addr, b->addr, 16) == 0;
 }
 
+static bool not_in(const fips_peer_stats *p, const void *ctx)
+{
+    const fips_peer_stats *match = fips_stats_history_peer(ctx, p->addr);
+    return !match || !same_peer(match, p);
+}
+
 fips_status fips_stats_history_sync(fips_stats_history *dst, const fips_stats_history *src)
 {
     if (src->peer_count > dst->peer_capacity) return FIPS_ERR_RANGE;
@@ -268,28 +332,26 @@ fips_status fips_stats_history_sync(fips_stats_history *dst, const fips_stats_hi
     for (int i = 0; i < FIPS_METRIC_COUNT; ++i) sync_ring(&dst->rings[i], &src->rings[i], delta, kf, ks);
 
     /* Peers dst holds that src no longer has, or holds as another peer of the
-     * same address, go first; the rest keep their rings and only advance. */
-    size_t kept = 0;
-    for (size_t i = 0; i < dst->peer_count; ++i) {
-        const fips_peer_stats *match = fips_stats_history_peer(src, dst->peers[i].addr);
-        if (!match || !same_peer(match, &dst->peers[i])) continue;
-        if (kept != i) dst->peers[kept] = dst->peers[i];
-        ++kept;
-    }
-    /* Then src's order is restored from the back: a kept peer moves up to its
-     * place (never past a slot still to be read), a new one is copied whole. */
-    size_t held = kept;
-    for (size_t i = src->peer_count; i-- > 0;) {
-        const fips_peer_stats *sp = &src->peers[i];
-        fips_peer_stats *dp = &dst->peers[i];
-        if (held > 0 && same_peer(&dst->peers[held - 1], sp)) {
-            --held;
-            if (held != i) memmove(dp, &dst->peers[held], sizeof *dp);
+     * same address, go first; the rest keep their slots and only advance. */
+    remove_peers(dst, not_in, src);
+    /* dst's survivors are a subset of src's peers in the same order. Rebuild
+     * dst's order from the back (rank r is written only once the ranks below
+     * it that are still to be read are all below r); a peer src has and dst
+     * lacks is copied whole into the next free slot. */
+    size_t held = dst->peer_count, fresh = held;
+    for (size_t r = src->peer_count; r-- > 0;) {
+        const fips_peer_stats *sp = ranked(src, r);
+        size_t slot;
+        if (held > 0 && same_peer(ranked(dst, held - 1), sp)) {
+            slot = dst->peers[--held].by_addr.slot;
+            fips_peer_stats *dp = &dst->peers[slot];
             for (int j = 0; j < FIPS_PEER_METRIC_COUNT; ++j) sync_ring(&dp->rings[j], &sp->rings[j], delta, kf, ks);
             dp->first_seen = sp->first_seen; dp->last_contact = sp->last_contact; dp->seen_tick = sp->seen_tick;
         } else {
-            *dp = *sp;
+            slot = fresh++;
+            copy_payload(&dst->peers[slot], sp);
         }
+        set_rank(dst, r, slot);
     }
     dst->peer_count = src->peer_count;
     dst->fast_pushes = src->fast_pushes;
