@@ -4,7 +4,7 @@ from copy import deepcopy
 from types import SimpleNamespace
 import json
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from udp_interop import Failure, MultiScenario, NotYet, Scenario
 
@@ -239,6 +239,85 @@ class ProbeRetryTest(unittest.TestCase):
         scenario, source, target = self.scenario([first, report(probe_id=2)])
         with self.assertRaisesRegex(Failure, 'tore the shared session down'):
             Scenario.probe(scenario, source, False)
+
+
+
+class ControlSnapshotTest(unittest.TestCase):
+    def test_control_io_retries_share_the_absolute_wait_deadline(self):
+        for error in (TimeoutError, ConnectionRefusedError, ConnectionResetError, FileNotFoundError):
+            with self.subTest(error=error):
+                scenario = Scenario.__new__(Scenario)
+                clock = [0.0]
+                cond = MagicMock()
+                cond.wait.side_effect = lambda duration: clock.__setitem__(0, clock[0] + duration)
+                node = SimpleNamespace(daemon=SimpleNamespace(cond=cond), deadline=None)
+                scenario.nodes = {'c': node}
+                scenario.check_alive = lambda: None
+                scenario.note = lambda line: None
+                predicate = MagicMock(side_effect=[error('transient control IO'), 'ready'])
+                with patch('udp_interop.time.monotonic', side_effect=lambda: clock[0]):
+                    self.assertEqual(scenario.wait('ready', 1, predicate), 'ready')
+                    self.assertEqual(predicate.call_count, 2)
+                    self.assertIsNone(node.deadline)
+                    predicate.side_effect = error('still unavailable')
+                    with self.assertRaisesRegex(Failure, error.__name__):
+                        scenario.wait('ready', 1, predicate)
+                self.assertIsNone(node.deadline)
+
+    def test_tree_waits_for_peer_rows_before_indexing(self):
+        scenario = Scenario.__new__(Scenario)
+        scenario.args = SimpleNamespace(link_timeout=30)
+        scenario.note = lambda line: None
+        attempts = {}
+        def node(name, is_root):
+            tree = dict(root='root', is_root=is_root, depth=0 if is_root else 1,
+                        peer_tree_count=1, parent=None if is_root else 'root',
+                        my_node_addr='root' if is_root else 'leaf', my_coords=[])
+            def query(command):
+                if command == 'show_tree':
+                    return tree
+                if command == 'show_bloom':
+                    return {'peer_filters': [{'has_filter': True}]}
+                self.assertEqual(command, 'show_peers')
+                attempts[name] = attempts.get(name, 0) + 1
+                return {'peers': [] if attempts[name] == 1 else
+                        [{'is_child': is_root, 'is_parent': not is_root}]}
+            return SimpleNamespace(name=name, query=query)
+        scenario.nodes = {'c': node('c', True), 'rust': node('rust', False)}
+        def wait(what, deadline, predicate):
+            for _ in range(3):
+                try:
+                    return predicate()
+                except NotYet:
+                    pass
+            self.fail('convergence did not consume the next peer snapshot')
+        scenario.wait = wait
+        scenario.tree_and_filters()
+        self.assertEqual(attempts, {'c': 2, 'rust': 2})
+
+    def test_rekey_diagnostic_validates_all_session_rows(self):
+        scenario = Scenario.__new__(Scenario)
+        scenario.args = SimpleNamespace(rekey_timeout=60)
+        scenario.session_up_at = 0
+        scenario.initial_session_k = {'c': False, 'rust': False}
+        scenario.nodes = {name: SimpleNamespace(name=name) for name in ('c', 'rust')}
+        scenario.sessions = lambda node: ([{'state': 'established', 'current_k_bit': False}]
+                                          if node.name == 'c' else [])
+        scenario.wait = lambda what, deadline, predicate: predicate()
+        with self.assertRaisesRegex(Failure, 'rust holds 0 sessions'):
+            scenario.rekey()
+
+    def test_probe_uses_the_validated_session_snapshot(self):
+        scenario, source, target = ProbeRetryTest().scenario([report()])
+        queried = []
+        def sessions(node):
+            queried.append(node.name)
+            if queried.count(node.name) > 1:
+                self.fail('probe queried a new session list after validating its snapshot')
+            return [{'mmp': {'srtt_ms': 1}}]
+        scenario.sessions = sessions
+        Scenario.probe(scenario, source, expect_preexisting=True)
+        self.assertEqual(queried, ['source', 'target'])
 
 
 if __name__ == '__main__':

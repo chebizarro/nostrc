@@ -64,6 +64,7 @@ import sys
 import tempfile
 import threading
 import time
+import traceback
 
 POLL = 0.1
 KILL_GRACE = 10  # seconds to reap a process group after SIGKILL
@@ -367,8 +368,8 @@ class Scenario:
                 return value
             except NotYet as e:
                 last = e.args[0] if e.args else None
-            except ControlError as e:
-                last = str(e)
+            except (ControlError, socket.timeout, ConnectionError, FileNotFoundError) as e:
+                last = f'{type(e).__name__}: {e}'
             finally:
                 for node in self.nodes.values():
                     node.deadline = None
@@ -487,7 +488,10 @@ transports:
             for name, filters in blooms.items():
                 if len(filters) != 1 or not filters[0].get('has_filter'):
                     raise NotYet({'bloom': blooms})
-            peers = {n.name: n.query('show_peers')['peers'][0] for n in self.nodes.values()}
+            peer_rows = {n.name: n.query('show_peers')['peers'] for n in self.nodes.values()}
+            if any(len(rows) != 1 for rows in peer_rows.values()):
+                raise NotYet({'peers': peer_rows})
+            peers = {name: rows[0] for name, rows in peer_rows.items()}
             for name, row in peers.items():
                 want = 'is_child' if name == root_side[0] else 'is_parent'
                 if not row.get(want):
@@ -654,13 +658,16 @@ transports:
         # frames (CoordsWarmup) and its MMP report came back over the session:
         # traffic in both directions under the current keys. Both daemons expose
         # the session SRTT only once it has been measured.
+        snapshots = {}
         for node in (prober, target):
             rows = self.sessions(node)
+            snapshots[node.name] = rows
             if len(rows) != 1:
                 raise Failure(f'{node.name} holds {len(rows)} sessions after the {prober.name} probe: {rows}')
-        srtt = self.sessions(prober)[0].get('mmp', {}).get('srtt_ms')
+        observed = snapshots[prober.name][0]
+        srtt = observed.get('mmp', {}).get('srtt_ms')
         if srtt is None:
-            raise Failure(f'{prober.name} session shows no SRTT after its probe: {json.dumps(self.sessions(prober)[0])}')
+            raise Failure(f'{prober.name} session shows no SRTT after its probe: {json.dumps(observed)}')
         self.note(f'{prober.name} session SRTT {srtt} ms after probe {measured["probe_id"]}')
         return measured
 
@@ -725,7 +732,14 @@ transports:
         self.initial_session_k = {name: s[0]['current_k_bit'] for name, s in rows.items()}
         if len(set(self.initial_session_k.values())) != 1:
             raise Failure(f'session K bits disagree right after establishment: {self.initial_session_k}')
-        peers = {n.name: n.query('show_peers')['peers'][0] for n in self.nodes.values()}
+        def peers_ready():
+            rows = {n.name: n.query('show_peers')['peers'] for n in self.nodes.values()}
+            if any(len(peers) != 1 for peers in rows.values()):
+                raise NotYet(rows)
+            return {name: peers[0] for name, peers in rows.items()}
+
+        peers = self.wait('both peer snapshots before recording link K bits',
+                          time.monotonic() + self.args.link_timeout, peers_ready)
         self.initial_link_k = {name: row['current_k_bit'] for name, row in peers.items()}
         if len(set(self.initial_link_k.values())) != 1:
             raise Failure(f'link K bits disagree: {self.initial_link_k}')
@@ -757,6 +771,7 @@ transports:
             for name, s in rows.items():
                 if len(s) != 1:
                     raise Failure(f'{name} holds {len(s)} sessions during rekey: {s}')
+            for name, s in rows.items():
                 if s[0]['state'] != 'established' or s[0]['current_k_bit'] == self.initial_session_k[name]:
                     raise NotYet({k: (v[0]['state'], v[0]['current_k_bit']) for k, v in rows.items()})
             return rows
@@ -772,6 +787,7 @@ transports:
             for name, p in peers.items():
                 if len(p) != 1:
                     raise Failure(f'{name} holds {len(p)} peers during link rekey: {p}')
+            for name, p in peers.items():
                 if p[0]['current_k_bit'] == self.initial_link_k[name]:
                     raise NotYet({k: (v[0]['current_k_bit'], v[0].get('rekey_in_progress')) for k, v in peers.items()})
             return peers
@@ -849,11 +865,30 @@ transports:
             self.tree_and_filters()
             self.session_and_datagrams()
             self.rekey()
+        except Exception:
+            self.snapshot_failure()
+            raise
         finally:
             failures = self.shutdown()
         if failures:
             raise Failure('; '.join(failures))
         self.note('scenario passed')
+
+    def snapshot_failure(self):
+        """Capture live control state before shutdown removes the sessions."""
+        for node in self.nodes.values():
+            deadline = time.monotonic() + 5
+            node.deadline = deadline
+            try:
+                for command in ('show_sessions', 'show_peers', 'show_metrics'):
+                    if time.monotonic() >= deadline:
+                        break
+                    try:
+                        self.note(f'{node.name} failure {command}: {json.dumps(node.query(command))}')
+                    except Exception as error:
+                        self.note(f'{node.name} failure {command}: {type(error).__name__}: {error}')
+            finally:
+                node.deadline = None
 
     def dump_logs(self):
         for node in self.nodes.values():
@@ -1100,6 +1135,22 @@ transports:
                 failures.append(f'{type(error).__name__}: {error}' if not isinstance(error, Failure) else str(error))
         return failures + super().shutdown()
 
+    def snapshot_failure(self):
+        """Capture live control state before shutdown removes the sessions."""
+        for node in self.nodes.values():
+            deadline = time.monotonic() + 5
+            node.deadline = deadline
+            try:
+                for command in ('show_sessions', 'show_peers', 'show_metrics'):
+                    if time.monotonic() >= deadline:
+                        break
+                    try:
+                        self.note(f'{node.name} failure {command}: {json.dumps(node.query(command))}')
+                    except Exception as error:
+                        self.note(f'{node.name} failure {command}: {type(error).__name__}: {error}')
+            finally:
+                node.deadline = None
+
     def dump_logs(self):
         super().dump_logs()
         for receiver in self.receivers.values():
@@ -1183,6 +1234,9 @@ transports:
                 raise Failure('scenario never proved a >=2-hop application datagram')
             if self.args.soak_minutes:
                 self.soak()
+        except Exception:
+            self.snapshot_failure()
+            raise
         finally:
             failures = self.shutdown()
             for path in self.api_paths.values():
@@ -1249,7 +1303,8 @@ def main():
         root = Path(tempfile.mkdtemp(prefix='fd-', dir='/tmp'))
         atexit.register(shutil.rmtree, root, True)
     env = dict(os.environ, FIPSD_WORKERS='2', TOKIO_WORKER_THREADS='2', NO_COLOR='1')
-    env.setdefault('RUST_LOG', 'info')
+    env['RUST_LOG'] = ','.join(filter(None, (env.get('RUST_LOG', 'info'),
+        'fips::node::handlers::handshake=debug', 'fips::node::handlers::session=debug')))
     if args.topology:
         shapes = ('line', 'star', 'ring', 'full-mesh') if args.topology == 'all' else (args.topology,)
         for shape in shapes:
@@ -1257,6 +1312,7 @@ def main():
             try:
                 scenario.run()
             except Exception as e:  # noqa: BLE001 - preserve all daemon logs
+                traceback.print_exc()
                 scenario.dump_logs()
                 print(f'FAIL [{shape}]: {type(e).__name__}: {e}', file=sys.stderr, flush=True)
                 return 1
@@ -1268,6 +1324,7 @@ def main():
         try:
             scenario.run()
         except Exception as e:  # noqa: BLE001 - every failure must carry both logs
+            traceback.print_exc()
             scenario.dump_logs()
             print(f'FAIL [{scenario.tag}]: {type(e).__name__}: {e}', file=sys.stderr, flush=True)
             return 1
