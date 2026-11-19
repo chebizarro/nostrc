@@ -101,6 +101,26 @@ static bool take_string(const json_t *params, const char *command, const char *f
     if (!*out) return bad_params(command, "allocation failed", message, cap);
     return true;
 }
+/* `framing`, which upstream does not know (its serde structs ignore it, so a
+ * client may send it to either daemon): absent, null or "datagram" is the
+ * platform's datagram pair, "stream" asks for a framed stream flow. */
+static bool take_framing(const json_t *params, const char *command, bool *stream, char *message, size_t cap)
+{
+    const json_t *v = json_object_get(params, "framing");
+    *stream = false;
+    if (!v || json_is_null(v)) return true;
+    char what[600], reason[700];
+    if (!json_is_string(v)) {
+        describe(v, what, sizeof what);
+        snprintf(reason, sizeof reason, "invalid type: %s, expected `datagram` or `stream`", what);
+        return bad_params(command, reason, message, cap);
+    }
+    const char *text = json_string_value(v);
+    if (strlen(text) == json_string_length(v) && !strcmp(text, "stream")) { *stream = true; return true; }
+    if (strlen(text) == json_string_length(v) && !strcmp(text, "datagram")) return true;
+    snprintf(reason, sizeof reason, "unknown variant `%.500s`, expected `datagram` or `stream`", text);
+    return bad_params(command, reason, message, cap);
+}
 static int nibble(char c)
 {
     if (c >= '0' && c <= '9') return c - '0';
@@ -164,6 +184,7 @@ fipsd_native_command_error fipsd_native_parse(const json_t *request, fipsd_nativ
         if (!take_uint(params, command, "remote_port", UINT16_MAX, "u16", true, &present, &n, message, cap)) goto bad;
         out->remote = (uint16_t)n;
         if (!take_uint(params, command, "local_port", UINT16_MAX, "u16", false, &present, &n, message, cap)) goto bad;
+        if (!take_framing(params, command, &out->stream, message, cap)) goto bad;
         if ((e = fipsd_native_check_bindable(out->remote, message, cap)) != FIPSD_NATIVE_CMD_OK) goto refused;
         /* Port 0 is the UDP convention for "any port": the same thing as
          * omitting the field, accepted rather than refused. */
@@ -175,6 +196,7 @@ fipsd_native_command_error fipsd_native_parse(const json_t *request, fipsd_nativ
     case FIPSD_NATIVE_CMD_LISTEN:
         if (!take_object(params, command, "ListenParams", message, cap)) return FIPSD_NATIVE_CMD_BAD_PARAMS;
         if (!take_uint(params, command, "local_port", UINT16_MAX, "u16", false, &present, &n, message, cap)) goto bad;
+        if (!take_framing(params, command, &out->stream, message, cap)) goto bad;
         if (present && n != 0) {
             if ((e = fipsd_native_check_bindable((uint16_t)n, message, cap)) != FIPSD_NATIVE_CMD_OK) goto refused;
             out->has_local = true; out->local = (uint16_t)n;

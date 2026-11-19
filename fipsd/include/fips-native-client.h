@@ -13,9 +13,15 @@
  * any process that can open it can send as the node's identity.
  *
  * The Berkeley mapping. The descriptor the daemon hands back is a real
- * socket (SOCK_SEQPACKET on Linux, SOCK_DGRAM on macOS and FreeBSD), so
- * `poll`, `select`, `epoll`, `kqueue`, `setsockopt` and `close` on it are the
- * genuine syscalls:
+ * socket, so `poll`, `select`, `epoll`, `kqueue`, `setsockopt` and `close` on
+ * it are the genuine syscalls. On Linux it is SOCK_SEQPACKET. On macOS and
+ * FreeBSD this library asks for a framed flow: fipsd answers with a
+ * SOCK_STREAM socket carrying each datagram as a 4-byte big-endian length and
+ * its bytes, and a daemon that does not frame (upstream's) with its SOCK_DGRAM
+ * socket; the library reads which off the descriptor. On a framed flow move
+ * data only with fips_native_send/fips_native_recv (a raw read would see the
+ * framing), and readable can mean part of a datagram has arrived, in which
+ * case a non-blocking fips_native_recv reports -EAGAIN until the rest has:
  *
  *   socket()    none: connect and listen each return one already bound.
  *   bind()      fips_native_listen (port 0 asks the daemon to choose).
@@ -57,7 +63,12 @@
  * Where data disappears. The API is datagram-unreliable: nothing confirms
  * delivery, and a full per-flow queue, a listener that does not accept fast
  * enough, a datagram sent before a session exists and an MTU that has fallen
- * all lose data with nothing reported here. Nothing peer-driven ever ends a
+ * all lose data with nothing reported here. A reader slower than its flow is
+ * not one of them: the daemon waits for this side's socket buffer to drain on
+ * Linux and on a framed flow, and loses only what overflows the per-flow queue
+ * behind it. A daemon that hands macOS or FreeBSD a SOCK_DGRAM flow drops a
+ * datagram at a full socket buffer instead (fipsd counts it as
+ * native.drop_client_buffer_full). Nothing peer-driven ever ends a
  * flow: the program decides when a flow is over (a bounded exchange, or an
  * idle deadline), or nothing does. Do not give a zero-length datagram a
  * meaning of its own: on Linux one sent just before a close is read as the
@@ -127,7 +138,11 @@ int fips_native_listen(const char *socket_path, uint16_t local_port, fips_native
 int fips_native_accept(fips_native_listener *listener, fips_native_stream **out, fips_native_addr *peer);
 /* Send one datagram, whole or not at all. -EMSGSIZE above
  * fips_native_stream_max_payload, before any syscall; -EPIPE when the daemon
- * has gone. 0 means only that the local socket pair accepted the bytes. */
+ * has gone. 0 means only that the local socket pair accepted the bytes. On a
+ * framed flow -EAGAIN means nothing of the datagram was written; one the
+ * socket took only part of is finished before this returns, waiting for
+ * writability past any deadline or non-blocking mode. Concurrent sends on one
+ * stream are serialized, as are concurrent receives. */
 int fips_native_send(fips_native_stream *stream, const void *buf, size_t len);
 /* Receive one datagram and return its length. Blocks by default; -EAGAIN on
  * a deadline or in non-blocking mode. 0 is an empty datagram, never end of
@@ -152,7 +167,10 @@ size_t fips_native_stream_max_payload(const fips_native_stream *stream);
 int fips_native_stream_fd(const fips_native_stream *stream);
 /* Bound one recv or one send: ms > 0 sets the deadline (an expiry reports
  * -EAGAIN), ms < 0 clears it, ms == 0 is -EINVAL because the kernel would
- * read it as no deadline. The two directions are separate. */
+ * read it as no deadline. The two directions are separate. An expiry part way
+ * through a framed datagram keeps what was read for the next call. macOS
+ * refuses to set either deadline (-EINVAL) on a framed flow the daemon has
+ * already closed. */
 int fips_native_stream_set_read_timeout(fips_native_stream *stream, int64_t ms);
 int fips_native_stream_set_write_timeout(fips_native_stream *stream, int64_t ms);
 /* Read a deadline back: *ms is -1 when none is set. */

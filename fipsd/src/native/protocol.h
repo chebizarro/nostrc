@@ -31,6 +31,8 @@ typedef struct fipsd_native_command {
     fipsd_native_command_kind kind;
     char *peer;          /* connect/arrive: the npub as the client wrote it (owned) */
     bool has_local;      /* connect/listen: a named local port; absent, null and 0 mean ephemeral */
+    bool stream;         /* connect/listen: `"framing":"stream"` (C-only, nostrc-6ljk8; absent, null and
+                          * "datagram" mean the platform's datagram pair) */
     uint16_t local, remote, src, dst;
     uint64_t flow;       /* stats/inject */
     uint8_t *data;       /* inject/arrive: decoded hex (owned) */

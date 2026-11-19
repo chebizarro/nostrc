@@ -509,6 +509,30 @@ These are tracking-ready notes, **not** reports already submitted upstream:
   seen and no positive sample, as a quantized echo: the multi-node gate accepts
   it as it accepts `sub_millisecond`, and the two-node probes, which need a
   sample, retry it once as they retry `no_echo`.
+- **I-6 — the native API drops datagrams at a slow client's full buffer on macOS and FreeBSD.**
+  Found porting the native API (`nostrc-6ljk8`). Flows there are `AF_UNIX
+  SOCK_DGRAM` (`src/native/seqpacket.rs` `pair`), and a full receiver refuses
+  the daemon's write with `ENOBUFS` and raises no level-triggered writability
+  event when it drains, so `feed()` (`src/native/mod.rs`) drops the datagram
+  with a debug log even while the per-flow queue has room; on Linux
+  (`SOCK_SEQPACKET`) the same client is lossless because the send waits.
+  Reproducer: a flow whose client has shrunk its receive buffer to 4 KiB and
+  reads nothing until a burst of `pending_per_flow` (16) datagrams has been
+  dispatched; on Linux every datagram is read afterwards, on macOS all but the
+  few the buffer held are gone (`fipsd/tests/test_native_burst.c`). fipsd counts the drop (`native.drop_client_buffer_full`)
+  and, for clients that ask, avoids it: `connect`/`listen` accept an optional
+  `"framing":"stream"` (C-only) answered on macOS/FreeBSD with an `AF_UNIX
+  SOCK_STREAM` pair carrying a 4-byte big-endian length before each datagram,
+  whose writer parks on writability (`fipsd/README.md`, "Lossless delivery to
+  a slow client"). Upstream's daemon ignores the field (its params structs have
+  no `deny_unknown_fields`) and libfipsnative then uses its datagram pair, and
+  upstream's client never sends it, so both directions interoperate unchanged.
+  Proposal: adopt the same field and framing in the daemon and in
+  `fips::native::client` (reading the kind off `SO_TYPE`, as libfipsnative
+  does), defaulting to stream on macOS and FreeBSD. Also stale:
+  `examples/native-echo.rs` says the client module is built on Linux and
+  FreeBSD only and gates `main` accordingly, but `src/native/mod.rs` builds
+  `client` on macOS too; an ungated copy runs there against fipsd.
 
 ## Node bookkeeping port (nostrc-u50yr.4)
 

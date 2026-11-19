@@ -216,10 +216,13 @@ flow, TUN, cache-budget or kernel-drop owner:
 | `session` | 18 | 16 | `addr_mismatch`, `half_open_full` |
 
 `native.drop_client_buffer_full` is C-only, beyond upstream's 18 native names:
-where flows use `SOCK_DGRAM` (macOS, FreeBSD) a client that is not draining
+where a flow is `SOCK_DGRAM` (macOS, FreeBSD, a client that did not ask for
+framing, which includes upstream's Rust client) a client that is not draining
 makes the daemon's write fail with `ENOBUFS` and no writability event, so the
 datagram is dropped. Upstream drops it with only a debug log; fipsd counts it.
-On Linux (`SOCK_SEQPACKET`) the writer waits instead and the counter stays zero.
+On Linux (`SOCK_SEQPACKET`) and on a framed stream flow (macOS and FreeBSD with
+libfipsnative, `nostrc-6ljk8`) the writer waits instead and the counter stays
+zero; see "Lossless delivery to a slow client" below.
 
 `show_stats_list`, `show_stats_history`, `show_stats_peers`,
 `show_stats_all_history` and `show_stats_history_all_peers` use the existing
@@ -3650,7 +3653,8 @@ The surface is upstream's `docs/reference/native-api.md`; the obligations in
 |---|---|---|
 | `protocol.{c,h}` | `protocol.rs` | command parsing (serde-shaped refusals), port tiers (0-255 protocol, 256-1023 standard, 49152+ ephemeral), errno names, the 512-byte message clip, serde-ordered reply encoding, the 8192-byte line cap |
 | `registry.{c,h}` | `registry.rs` | port ownership, flows, pending flows, `deliver`/`hold`/`accept`/`reject`/`release`/`release_listener`/`expire` (5 s), `pending_per_flow`, `backlog`, `max_flows`, the per-peer quarter share, RFC 6056 ephemeral search |
-| `seqpacket.{c,h}` | `seqpacket.rs` | the pair (`SOCK_SEQPACKET` on Linux, `SOCK_DGRAM` on macOS/FreeBSD), buffers, deadlines, the end-of-file rule (`ECONNRESET`, or zero bytes with `POLLHUP` and nothing queued), fiber-parked receive with the 250 ms Darwin close retry |
+| `seqpacket.{c,h}` | `seqpacket.rs` | the pair (`SOCK_SEQPACKET` on Linux, `SOCK_DGRAM` on macOS/FreeBSD), buffers, deadlines, the end-of-file rule (`ECONNRESET`, or zero bytes with `POLLHUP` and nothing queued), fiber-parked receive with the 250 ms Darwin close retry; C-only: the framed `SOCK_STREAM` pair, frame writes parked on writability and the frame reader (`nostrc-6ljk8`) |
+| `frame.h` | none (C-only) | the stream flow's framing (4-byte big-endian length, then the datagram), shared by the daemon and libfipsnative |
 | `fdpass.{c,h}` | `fdpass.rs` | `SCM_RIGHTS` in the same `sendmsg` as the line; the whole control buffer walked, extras closed, close-on-exec |
 | `link.{c,h}` | `link.rs` | delivery outcomes, the nine drop reasons and their `native` counters, `why()` for a failed hand-off write |
 | `dgram_probe.{c,h}` | `dgram_probe.rs` | per-kernel measurements the tests assert (close signal, in-flight collection) |
@@ -3711,6 +3715,106 @@ f66sr.1 gate could not verify). `FIPSD_UDP_INTEROP_RUST_ECHO` may name
 upstream's `native-echo` client built from the pinned tree; the harness then
 runs it on fipsd's native API and echoes a datagram through it from the Rust
 daemon's side.
+
+### Lossless delivery to a slow client (`nostrc-6ljk8`)
+
+On Linux a flow is `SOCK_SEQPACKET`: a client that stops reading fills its
+socket, the feeder's send parks on writability, and the only place a slow
+client loses a datagram is the bounded per-flow queue behind the feeder
+(`drop_flow_queue_full`, by design: the node's receive path never waits for a
+client). macOS has no `AF_UNIX SOCK_SEQPACKET` and FreeBSD's coalesces records,
+so both use `SOCK_DGRAM`, where a full receiver refuses the write with
+`ENOBUFS` and the kernel raises no writability event when it drains: the
+datagram was dropped even with room in the queue (`drop_client_buffer_full`).
+Upstream's `feed()` (`src/native/mod.rs`) drops the same way with a debug log.
+
+**Options weighed** (measured on macOS 27, arm64). (i) `SOCK_STREAM` with
+length framing: a full stream's writer is woken once its reader drains, so a
+writer can park on real readiness, and a closed peer is a readiness event too.
+(ii) A bounded per-flow queue drained on a wake signal: the queue exists
+(`pending_per_flow`); the missing piece is the wake. A Darwin datagram
+writer's level-triggered writability is always ready (`poll` `POLLOUT` and
+libgo's `EV_ONESHOT` kqueue registration fire with the peer full and 32 bytes
+of space), so parking on it would spin, and a client-sent credit message would
+be a protocol change neither upstream's client nor its daemon speaks. (iii) An
+edge-triggered (`EV_CLEAR`) `EVFILT_WRITE` registration on the daemon's half
+does post one event each time the client reads and none otherwise, which a
+per-flow kqueue (readable, so pollable by libgo) could turn into a wake for
+every client, Rust's included. Not adopted: it is undocumented kernel
+behaviour whose change would wedge a flow (a parked feeder nothing wakes), it
+is unverified on FreeBSD, and it costs a kqueue per flow; it is the candidate
+follow-up for clients that cannot frame. (i) is the only option built on
+documented semantics, so it is the one implemented.
+
+**How the Rust client connects, and why it stays on datagrams.** Upstream's
+`fips::native::client` is compiled on macOS (`src/native/mod.rs`: `client`,
+`fdpass` and `seqpacket` are `cfg(linux, freebsd, macos)`). It opens the API
+socket as a `UnixStream` (`client/mod.rs` `Wire::open`, the same path order as
+fipsd), writes the one-line `connect`/`listen` command, and takes the flow's
+descriptor from `SCM_RIGHTS`; the pair is the daemon's choice
+(`seqpacket::pair`, `SOCK_DGRAM` on macOS), and the client then calls plain
+`send`/`recv` on it, one call per datagram. A stream descriptor would break
+it (datagram boundaries would merge), so the daemon cannot switch every flow.
+Its params structs (`protocol.rs` `ConnectParams`, `ListenParams`) have no
+`deny_unknown_fields`, so an extra field is ignored by its daemon. (Its
+`native-echo` example refuses to start on macOS because the example is
+gated to Linux and FreeBSD; that gate is stale, the module itself builds.)
+
+**Design.** Negotiated per flow, on the existing socket: libfipsnative on
+macOS and FreeBSD adds `"framing":"stream"` to `connect` and `listen`. fipsd
+there answers with an `AF_UNIX SOCK_STREAM` pair carrying `frame.h` frames
+(a 4-byte big-endian length, then the datagram; a length above 65535 ends the
+flow), and every flow a framing listener accepts is framed too; the listener's
+own socket and the arrival message are unchanged. The client reads the kind
+off the passed descriptor (`SO_TYPE`), so the upstream daemon, which ignores
+the field and hands back its datagram pair, still works with libfipsnative,
+and a Rust client, which never asks, keeps its datagram flow. `"datagram"` or
+null mean the default; any other value is `EINVAL` (`unknown variant`). On
+Linux the field is accepted and answered with the usual `SOCK_SEQPACKET` pair,
+which already waits, and libfipsnative does not send it there; nothing in the
+Linux daemon or client paths changes.
+
+On a stream flow the feeder is the only writer (debug `inject` joins the
+flow's queue rather than writing beside it): it parks on writability, which
+the kernel raises when the client reads, finishes a frame across as many wakes
+as it takes, and so never drops. Darwin raises a stream writer's readiness
+only when the peer's receive space reaches the writer's low-water mark (a
+client buffer below the default 2048-byte mark would never wake it), so the
+daemon's half has `SO_SNDLOWAT` 1, and both directions' send and receive
+buffers have the flow's usual budget. The reader parses whatever one read
+brings and parks with no deadline: a stream's close is a readiness event, so
+the 250 ms Darwin close retry applies only to datagram flows and listeners.
+libfipsnative serializes sends and receives per stream (a frame is never
+interleaved), keeps a frame read in pieces across `-EAGAIN` and deadlines,
+never reads past a frame boundary (so readiness still means data), and
+finishes a partly written frame by waiting for writability.
+
+**What is lossless for whom.** libfipsnative clients (C programs,
+`fipsd_native_client_tool`, `fipsd_perf_native`) on macOS and FreeBSD, and
+every client on Linux: nothing is dropped at the client's socket buffer, and
+`drop_client_buffer_full` stays zero; the per-flow queue keeps its by-design
+drop. Upstream's Rust client and any other client that does not ask for
+framing on macOS and FreeBSD keep the datagram path and its counted drops; the
+upstream change that would cover them is recorded in
+`libfips-core/UPSTREAM.md` (finding I-6). FreeBSD shares the macOS code paths
+but is not exercised here.
+
+**Tests.** `FipsdNativeBurstTest` asserts `drop_client_buffer_full == 0` on
+every platform (it was only asserted on Linux) and adds a deliberately slow
+reader: its receive buffer shrunk to 4 KiB and nothing read until the far
+node has dispatched a burst of exactly the flow queue's capacity, every
+datagram of which must then be read (against the datagram flow it lost most
+of them to `ENOBUFS`). `FipsdNativeApiTest` covers the field on the raw
+protocol (socket type per platform, frames split mid-header, an empty frame,
+`inject` through the feeder, an oversize length ending the flow, an accepted
+flow's held datagram as its first frame, the refusal texts);
+`FipsdNativeSeqpacketTest` covers the frame parser and libfipsnative over a
+framed pair (pieces under non-blocking reads and deadlines, truncation, an
+empty last datagram, EOF mid-frame, `-EPROTO`, two threads sending at once,
+a non-blocking 30000-byte sender finishing partial writes) and that the
+request names the field exactly where it should. The C<->Rust interop
+harness with `FIPSD_UDP_INTEROP_RUST_ECHO` naming an ungated build of
+upstream's `native-echo` runs a real Rust client on fipsd's datagram path.
 
 ### Multi-node UDP convergence verification (nostrc-f66sr.2)
 

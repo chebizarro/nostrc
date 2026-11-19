@@ -359,6 +359,87 @@ static void test_connect(api_node *a)
     v = ask(a->path, connect_line(PEER, 4242, 6000), NULL); json_decref(expect_error(v, "EMFILE", "maximum"));
     for (unsigned i = 0; i < 8; ++i) { close(fds[i]); await_event(&a->events, FIPSD_NATIVE_EVENT_FLOW_RELEASED, ids[i], 0); }
 }
+/* nostrc-6ljk8: `framing` asks for a stream flow, which fipsd serves where
+ * its datagram pair would drop at a full client (macOS, FreeBSD) and answers
+ * with the usual SOCK_SEQPACKET pair elsewhere. A stream flow carries
+ * native/frame.h frames both ways, from connect and from accept. */
+static int sock_type(int fd) { int t = 0; socklen_t n = sizeof t; CHECK(getsockopt(fd, SOL_SOCKET, SO_TYPE, &t, &n) == 0); return t; }
+static void read_exact(int fd, void *buf, size_t len)
+{
+    for (size_t at = 0; at < len;) {
+        ssize_t n = recv(fd, (uint8_t *)buf + at, len - at, 0);
+        if (n < 0 && errno == EINTR) continue;
+        CHECK(n > 0); at += (size_t)n;
+    }
+}
+/* One datagram off a flow of either kind. */
+static ssize_t flow_read(int fd, bool stream, uint8_t *buf, size_t cap)
+{
+    if (!stream) return read_dgram(fd, buf, cap);
+    uint8_t header[FIPSD_NATIVE_FRAME_HEADER]; read_exact(fd, header, sizeof header);
+    uint32_t len = fipsd_native_frame_length(header); CHECK(len <= cap);
+    read_exact(fd, buf, len);
+    return (ssize_t)len;
+}
+static void frame_write(int fd, const void *buf, uint32_t len)
+{
+    uint8_t header[FIPSD_NATIVE_FRAME_HEADER]; fipsd_native_frame_header(header, len);
+    /* In pieces, split inside the header: the daemon reassembles. */
+    CHECK(send(fd, header, 1, FIPSD_NATIVE_MSG_NOSIGNAL) == 1);
+    CHECK(send(fd, header + 1, sizeof header - 1, FIPSD_NATIVE_MSG_NOSIGNAL) == (ssize_t)sizeof header - 1);
+    if (len) CHECK(send(fd, buf, len, FIPSD_NATIVE_MSG_NOSIGNAL) == (ssize_t)len);
+}
+static void test_framing(api_node *a)
+{
+    const bool stream = FIPSD_NATIVE_STREAM_FRAMING;
+    const int want_type = stream ? SOCK_STREAM : FIPSD_NATIVE_SOCK_TYPE;
+    int ffd; uint8_t buf[64];
+    /* Refusals: serde's wording for a value outside the two variants. */
+    json_t *v = ask(a->path, "{\"command\":\"connect\",\"params\":{\"peer\":\"npub1sjlh2c3x9w7kjsqg2ay080n2lff2uvt325vpan33ke34rn8l5jcqawh57m\",\"remote_port\":4242,\"framing\":\"bogus\"}}", NULL);
+    json_decref(expect_error(v, "EINVAL", "unknown variant `bogus`, expected `datagram` or `stream`"));
+    v = ask(a->path, "{\"command\":\"listen\",\"params\":{\"local_port\":4242,\"framing\":7}}", NULL);
+    json_decref(expect_error(v, "EINVAL", "invalid type: integer `7`"));
+    /* "datagram" and null are the platform pair, as an absent field is. */
+    v = ask(a->path, "{\"command\":\"connect\",\"params\":{\"peer\":\"npub1sjlh2c3x9w7kjsqg2ay080n2lff2uvt325vpan33ke34rn8l5jcqawh57m\",\"remote_port\":4242,\"framing\":\"datagram\"}}", &ffd);
+    CHECK(is_ok(v) && sock_type(ffd) == FIPSD_NATIVE_SOCK_TYPE); uint64_t flow = flow_id_of(v); json_decref(v);
+    close(ffd); await_event(&a->events, FIPSD_NATIVE_EVENT_FLOW_RELEASED, flow, 0);
+    v = ask(a->path, "{\"command\":\"listen\",\"params\":{\"local_port\":4242,\"framing\":null}}", &ffd);
+    CHECK(is_ok(v) && sock_type(ffd) == FIPSD_NATIVE_SOCK_TYPE); json_decref(v);
+    close(ffd); await_event(&a->events, FIPSD_NATIVE_EVENT_LISTENER_RELEASED, 0, 4242);
+    /* A connected stream flow: frames in pieces, an empty datagram, inject
+     * through the feeder, and a length past the maximum ends the flow. */
+    v = ask(a->path, "{\"command\":\"connect\",\"params\":{\"framing\":\"stream\",\"peer\":\"npub1sjlh2c3x9w7kjsqg2ay080n2lff2uvt325vpan33ke34rn8l5jcqawh57m\",\"remote_port\":4242,\"local_port\":5100}}", &ffd);
+    CHECK(is_ok(v) && sock_type(ffd) == want_type); bounded(ffd); flow = flow_id_of(v); json_decref(v);
+    if (stream) frame_write(ffd, "hello", 5); else write_dgram(ffd, "hello", 5);
+    await_event(&a->events, FIPSD_NATIVE_EVENT_FLOW_READ, flow, 0);
+    if (stream) frame_write(ffd, NULL, 0); else write_dgram(ffd, "", 0);
+    await_event(&a->events, FIPSD_NATIVE_EVENT_FLOW_READ, flow, 0);
+    v = ask(a->path, stats_line(flow), NULL);
+    CHECK(is_ok(v) && json_integer_value(data(v, "rx_datagrams")) == 2 && json_integer_value(data(v, "rx_bytes")) == 5); json_decref(v);
+    v = ask(a->path, inject_line(flow, "00ff10", 3), NULL); CHECK(is_ok(v) && json_integer_value(data(v, "datagrams")) == 3); json_decref(v);
+    for (int i = 0; i < 3; ++i) CHECK(flow_read(ffd, stream, buf, sizeof buf) == 3 && buf[0] == 0 && buf[1] == 0xff && buf[2] == 0x10);
+    if (stream) {
+        uint8_t header[FIPSD_NATIVE_FRAME_HEADER]; fipsd_native_frame_header(header, FIPSD_NATIVE_FRAME_MAX + 1);
+        CHECK(send(ffd, header, sizeof header, FIPSD_NATIVE_MSG_NOSIGNAL) == (ssize_t)sizeof header);
+        await_event(&a->events, FIPSD_NATIVE_EVENT_FLOW_RELEASED, flow, 0);
+        CHECK(recv(ffd, buf, sizeof buf, 0) <= 0); /* the daemon closed its half */
+        close(ffd);
+    } else { close(ffd); await_event(&a->events, FIPSD_NATIVE_EVENT_FLOW_RELEASED, flow, 0); }
+    /* An accepted stream flow: the held datagram arrives as the first frame,
+     * a written frame unpins the flow, and its close releases it. */
+    int lfd; v = ask(a->path, "{\"command\":\"listen\",\"params\":{\"framing\":\"stream\",\"local_port\":4242}}", &lfd);
+    CHECK(is_ok(v) && sock_type(lfd) == FIPSD_NATIVE_SOCK_TYPE); json_decref(v); bounded(lfd); /* the listener stays a datagram socket */
+    v = ask(a->path, arrive_line(PEER, 5000, 4242, "00ff10"), NULL); CHECK(is_ok(v)); flow = flow_id_of(v); json_decref(v);
+    json_t *m = raw_accept(lfd, &ffd); json_decref(m); bounded(ffd);
+    CHECK(sock_type(ffd) == want_type);
+    CHECK(flow_read(ffd, stream, buf, sizeof buf) == 3 && buf[1] == 0xff);
+    v = ask(a->path, arrive_line(PEER, 5000, 4242, "bb"), NULL); CHECK(is_ok(v)); json_decref(v);
+    CHECK(flow_read(ffd, stream, buf, sizeof buf) == 1 && buf[0] == 0xbb);
+    if (stream) frame_write(ffd, "x", 1); else write_dgram(ffd, "x", 1);
+    await_event(&a->events, FIPSD_NATIVE_EVENT_FLOW_UNPINNED, flow, 0);
+    close(ffd); await_event(&a->events, FIPSD_NATIVE_EVENT_FLOW_RELEASED, flow, 0);
+    close(lfd); await_event(&a->events, FIPSD_NATIVE_EVENT_LISTENER_RELEASED, 0, 4242);
+}
 static void test_arrivals_and_pins(api_node *a)
 {
     int lfd, ffd; json_t *v = ask(a->path, listen_line(4242), &lfd); CHECK(is_ok(v)); json_decref(v); bounded(lfd);
@@ -713,6 +794,7 @@ int main(void)
     test_refusals(&a);
     test_connect(&a);
     test_arrivals_and_pins(&a);
+    test_framing(&a);
     test_kept_descriptors(&a);
     test_debug_gate(&a, &b);
     test_command_cap_and_refusal_sizes(&a);
