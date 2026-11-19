@@ -24,6 +24,9 @@ struct relay {
     json_t *events;
     char *url;
     bool hold_eose, reject_publish;
+    int reject_kind, reject_remaining;
+    char reject_reason[128];
+    size_t rejected;
 };
 struct fixture { GMainContext *context; GMainLoop *loop; pthread_t thread; GoChannel *ready; relay relays[2]; };
 static void send_frame(client *c, json_t *frame)
@@ -106,8 +109,11 @@ static void message_received(SoupWebsocketConnection *socket, SoupWebsocketDataT
         bool auth = !strcmp(verb, "AUTH");
         if (auth) valid = valid && e->kind == NOSTR_KIND_CLIENT_AUTHENTICATION &&
             auth_tag(e, "challenge", "test-challenge") && auth_tag(e, "relay", r->url);
-        bool accepted = valid && (auth || !r->reject_publish);
-        send_frame(c, json_pack("[ssbs]", "OK", e->id, accepted, accepted ? "" : "blocked: test fixture"));
+        bool scripted = valid && !auth && r->reject_remaining && e->kind == r->reject_kind;
+        if (scripted) { ++r->rejected; if (r->reject_remaining > 0) --r->reject_remaining; }
+        bool accepted = valid && (auth || !r->reject_publish) && !scripted;
+        send_frame(c, json_pack("[ssbs]", "OK", e->id, accepted,
+            accepted ? "" : scripted ? r->reject_reason : "blocked: test fixture"));
         if (accepted && !auth) {
             if (!nostr_kind_is_ephemeral(e->kind)) CHECK(json_array_append(r->events, object) == 0);
             broadcast(r, object, false);
@@ -161,6 +167,7 @@ static void *serve(void *user)
 typedef struct {
     fixture *f; operation op; int relay_index; const char *json; GoChannel *done;
     int kind; const char *author; size_t count; char *latest; /* QUERY */
+    int number; size_t rejected; /* REJECT_KIND, COUNTS */
 } request;
 static gboolean on_server(gpointer user)
 {
@@ -177,6 +184,10 @@ static gboolean on_server(gpointer user)
         }
         case CLEAR: json_decref(r->events); r->events = json_array(); break;
         case REJECT_PUBLISH: r->reject_publish = true; break;
+        case REJECT_KIND:
+            r->reject_kind = q->kind; r->reject_remaining = q->number;
+            snprintf(r->reject_reason, sizeof r->reject_reason, "%s", q->json); break;
+        case COUNTS: q->rejected = r->rejected; break;
         case HOLD_EOSE: r->hold_eose = true; break;
         case STOP: g_main_loop_quit(q->f->loop); break;
         case QUERY:
@@ -228,6 +239,23 @@ char *fixture_latest(fixture *f, size_t index, int kind, const char *author, siz
     g_main_context_invoke(f->context, on_server, &q);
     void *done; CHECK(go_channel_receive(q.done, &done) == 0 && done == &q); go_channel_unref(q.done);
     *count = q.count; return q.latest;
+}
+static void call(request *q)
+{
+    q->done = go_channel_create(1); CHECK(q->done);
+    g_main_context_invoke(q->f->context, on_server, q);
+    void *done; CHECK(go_channel_receive(q->done, &done) == 0 && done == q); go_channel_unref(q->done);
+}
+void fixture_reject(fixture *f, size_t index, int kind, int count, const char *reason)
+{
+    CHECK(index < 2 && reason && strlen(reason) < 128);
+    request q = {.f = f, .op = REJECT_KIND, .relay_index = (int)index, .json = reason, .kind = kind, .number = count}; call(&q);
+}
+void fixture_counts(fixture *f, size_t index, size_t *rejected)
+{
+    CHECK(index < 2);
+    request q = {.f = f, .op = COUNTS, .relay_index = (int)index}; call(&q);
+    *rejected = q.rejected;
 }
 void fixture_destroy(fixture *f)
 {

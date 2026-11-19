@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <nostr-simple-pool.h>
 #include <nostr-subscription.h>
+#include <error_codes.h>
 #include <select.h>
 #include <ticker.h>
 #include <sodium.h>
@@ -34,7 +35,9 @@ typedef struct {
     char url[FIPSD_NOSTR_URL_MAX + 1];
     NostrRelay *relay;
     bool adverts, signals, usable, live;
+    bool advert_refused; /* OK false with a final NIP-01 reason for the current endpoint set */
     uint64_t retry_at, backoff, auth_generation;
+    uint64_t advert_at;  /* transient advert refusal: republish here, on the same ladder */
 } relay_slot;
 typedef struct {
     bool used, configured, delivered;
@@ -278,11 +281,44 @@ static bool subscribe_main(fipsd_nostr_runtime *r)
     } else ok = false;
     nostr_filters_free(fs); r->subscribed = ok; return ok;
 }
+/* One per-relay ladder (connection retries, transient advert refusals): the deadline is now + backoff, then the backoff doubles. */
+static uint64_t ladder(relay_slot *s)
+{
+    uint64_t at = fn_add(mono(), s->backoff);
+    s->backoff = s->backoff < RETRY_MAX_MS / 2 ? s->backoff * 2 : RETRY_MAX_MS;
+    return at;
+}
+/* NIP-01 machine-readable OK prefixes. libnostr wraps the relay's reason in
+ * its own envelope; match that, never a prefix quoted inside an untrusted
+ * reason. No OK at all (timeout, dropped socket) is transient by definition. */
+static bool transient_refusal(const Error *err, const char *id)
+{
+    if (!err || !err->message || err->code == ERR_WEBSOCKET_CLOSED) return true;
+    char prefix[128]; int n = snprintf(prefix, sizeof prefix, "relay rejected event %s: ", id);
+    if (n <= 0 || (size_t)n >= sizeof prefix || strncmp(err->message, prefix, (size_t)n)) return true;
+    const char *reason = err->message + n;
+    /* auth-required: is answered by the NIP-42 AUTH this actor performs. */
+    return !strncmp(reason, "rate-limited:", 13) || !strncmp(reason, "error:", 6) ||
+        !strncmp(reason, "auth-required:", 14);
+}
 static bool published(fipsd_nostr_runtime *r, relay_slot *s, NostrEvent *event)
 {
     Error *err = NULL;
     bool ok = nostr_relay_publish_and_wait(s->relay, event, 1000, &err);
-    if (!ok) FIPSD_WARN("nostr", "publish kind %d refused by %s: %s", event->kind, s->url, err ? err->message : "no OK");
+    const char *why = err && err->message ? err->message : "no OK";
+    if (event->kind != NOSTR_KIND_FIPS_OVERLAY_ADVERT) {
+        if (!ok) FIPSD_WARN("nostr", "publish kind %d refused by %s: %s", event->kind, s->url, why);
+    } else if (ok) {
+        s->advert_refused = false; s->advert_at = 0; s->backoff = 1000;
+    } else if (transient_refusal(err, event->id)) {
+        /* A dropped socket's reconnect EOSE republishes; do not climb twice. */
+        s->advert_at = nostr_relay_is_connected(s->relay) ? ladder(s) : 0;
+        FIPSD_WARN("nostr", "advert refused by %s: %s; retrying on its backoff ladder", s->url, why);
+    } else {
+        /* A policy verdict on this content: once, until the endpoint set changes. */
+        s->advert_refused = true; s->advert_at = 0;
+        FIPSD_WARN("nostr", "advert refused by %s: %s; not retried until the endpoint set changes", s->url, why);
+    }
     if (r->driver.publish_result) r->driver.publish_result(r->driver.user, s->url, event->kind, ok);
     if (err) free_error(err);
     return ok;
@@ -303,6 +339,7 @@ static void publish_local(fipsd_nostr_runtime *r, relay_slot *only, bool refresh
         if (content) FIPSD_INFO("nostr", "local advert endpoint set changed: %s", content);
         else FIPSD_INFO("nostr", "local advert has no publishable endpoint; the published one ages out by NIP-40 expiration");
         free(r->advertised); r->advertised = content; content = NULL; only = NULL;
+        for (size_t i = 0; i < r->relay_count; ++i) r->relays[i].advert_refused = false;
     } else if (refresh) only = NULL;
     free(content);
     if (!r->advertised || (!changed && !refresh && !only)) return;
@@ -321,7 +358,7 @@ static void publish_local(fipsd_nostr_runtime *r, relay_slot *only, bool refresh
     for (size_t i = 0; i < r->relay_count && !canceled(r); ++i) {
         relay_slot *s = &r->relays[i];
         if (!s->usable || !s->live || (only && s != only) || !nostr_relay_is_connected(s->relay)) continue;
-        if (s->adverts) published(r, s, e);
+        if (s->adverts && !s->advert_refused) published(r, s, e);
         if (s->signals && inbox) published(r, s, inbox);
     }
     nostr_event_free(e); nostr_event_free(inbox);
@@ -371,10 +408,10 @@ static void retry(fipsd_nostr_runtime *r, relay_slot *s)
     nostr_relay_set_state_callback(old, NULL, NULL);
     nostr_simple_pool_remove_relay(r->main_source.pool, s->url);
     s->relay = next; s->auth_generation = 0; s->live = false;
+    s->advert_at = 0; /* the reconnect's EOSE republishes */
     nostr_simple_pool_add_relay(r->main_source.pool, nostr_relay_ref(next));
     nostr_relay_unref(old);
-    s->retry_at = fn_add(mono(), s->backoff);
-    s->backoff = s->backoff < RETRY_MAX_MS / 2 ? s->backoff * 2 : RETRY_MAX_MS;
+    s->retry_at = ladder(s);
     if (resume && !subscribe_main(r)) r->cancel.cancel(r->cancel.context);
 }
 static void connect_relay(fipsd_nostr_runtime *r, relay_slot *s)
@@ -600,7 +637,8 @@ static void process(fipsd_nostr_runtime *r, message *m)
     case EVENT: cache(r, m->event, true, m->live); break;
     case EOSE:
         if (s) {
-            s->live = true; s->backoff = 1000; catchup(r);
+            /* A pending advert retry keeps its ladder position. */
+            s->live = true; if (!s->advert_at) s->backoff = 1000; catchup(r);
             if (r->driver.boundary) r->driver.boundary(r->driver.user, s->url, true, NULL);
             publish_local(r, s, false);
         }
@@ -688,8 +726,10 @@ static void *run(void *user)
     else while (!canceled(r)) {
         uint64_t now = mono(), deadline = UINT64_MAX;
         if (r->query_deadline) deadline = r->query_deadline;
-        for (size_t i = 0; i < r->relay_count; ++i)
+        for (size_t i = 0; i < r->relay_count; ++i) {
             if (r->relays[i].retry_at && r->relays[i].retry_at < deadline) deadline = r->relays[i].retry_at;
+            if (r->relays[i].advert_at && r->relays[i].advert_at < deadline) deadline = r->relays[i].advert_at;
+        }
         for (size_t i = 0; i < r->session_cap; ++i)
             if (r->sessions[i].expires && r->sessions[i].expires < deadline) deadline = r->sessions[i].expires;
         for (size_t i = 0; i < r->outgoing_cap; ++i)
@@ -712,8 +752,14 @@ static void *run(void *user)
         else if (selected.selected_case == 4) publish_local(r, NULL, true);
         now = mono();
         if (r->query_deadline && r->query_deadline <= now) finish_query(r, false);
-        for (size_t i = 0; i < r->relay_count && !canceled(r); ++i)
-            if (r->relays[i].retry_at && r->relays[i].retry_at <= now) connect_relay(r, &r->relays[i]);
+        for (size_t i = 0; i < r->relay_count && !canceled(r); ++i) {
+            relay_slot *s = &r->relays[i];
+            if (s->retry_at && s->retry_at <= now) connect_relay(r, s);
+            if (s->advert_at && s->advert_at <= now) {
+                s->advert_at = 0; /* not live: its next EOSE republishes */
+                if (s->live && nostr_relay_is_connected(s->relay)) publish_local(r, s, false);
+            }
+        }
         /* Reap timed-out reservations, without a periodic relay query. */
         find_session(r->sessions, r->session_cap, ""); find_session(r->outgoing, r->outgoing_cap, ""); awaiting(r);
     }

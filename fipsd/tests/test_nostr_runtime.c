@@ -15,11 +15,13 @@
 
 #define CHECK(x) do { if (!(x)) { fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, #x); abort(); } } while (0)
 typedef enum { DIAL, BOUNDARY, PUBLISHED, FETCHED, OFFERED, ANSWERED, ADMISSION, CACHED } notice_kind;
-typedef struct { notice_kind kind; bool ok; int value; char text[129]; } notice;
+typedef struct { notice_kind kind; bool ok; int value; char text[129]; uint64_t at; } notice;
+static uint64_t mono_ms(void)
+{ struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return (uint64_t)t.tv_sec * 1000 + (uint64_t)t.tv_nsec / 1000000; }
 typedef struct { GoChannel *notices; atomic_uint dials, offers, answers; notice pending[256]; size_t count; } observer;
 static void notify(observer *o, notice_kind kind, bool ok, int value, const char *text)
 {
-    notice *n = calloc(1, sizeof(*n)); CHECK(n); n->kind = kind; n->ok = ok; n->value = value;
+    notice *n = calloc(1, sizeof(*n)); CHECK(n); n->kind = kind; n->ok = ok; n->value = value; n->at = mono_ms();
     if (text) snprintf(n->text, sizeof(n->text), "%s", text);
     CHECK(go_channel_try_send(o->notices, n) == 0);
 }
@@ -46,11 +48,14 @@ static void boundary(void *user, const char *url, bool live, const char *reason)
 { notify(user, BOUNDARY, live, 0, reason ? reason : url); }
 static void published(void *user, const char *url, int kind, bool ok) { notify(user, PUBLISHED, ok, kind, url); }
 static void fetched(void *user, const char *peer, fipsd_nostr_refetch_outcome outcome) { notify(user, FETCHED, true, outcome, peer); }
-static notice wait_notice(observer *o, notice_kind kind, int value)
+static bool wanted(const notice *n, notice_kind kind, int value, const char *text)
+{ return n->kind == kind && (value < 0 || n->value == value) && (!text || !strcmp(n->text, text)); }
+/* The next notice of `kind` (and `value`, `text` when given); others stay pending. */
+static notice wait_text(observer *o, notice_kind kind, int value, const char *text)
 {
     for (size_t i = 0; i < o->count; ++i) {
         notice n = o->pending[i];
-        if (n.kind == kind && (value < 0 || n.value == value)) {
+        if (wanted(&n, kind, value, text)) {
             memmove(&o->pending[i], &o->pending[i + 1], (--o->count - i) * sizeof(n)); return n;
         }
     }
@@ -60,10 +65,11 @@ static notice wait_notice(observer *o, notice_kind kind, int value)
         GoSelectResult result = go_select_timeout(&c, 1, 15000);
         CHECK(result.selected_case == 0 && p);
         notice n = *(notice *)p; free(p);
-        if (n.kind == kind && (value < 0 || n.value == value)) return n;
+        if (wanted(&n, kind, value, text)) return n;
         CHECK(o->count < 256); o->pending[o->count++] = n;
     }
 }
+static notice wait_notice(observer *o, notice_kind kind, int value) { return wait_text(o, kind, value, NULL); }
 static uint64_t now_ms(void)
 { struct timespec t; clock_gettime(CLOCK_REALTIME, &t); return (uint64_t)t.tv_sec * 1000 + (uint64_t)t.tv_nsec / 1000000; }
 static char *advert(fips_identity *id, uint64_t at, const char *app)
@@ -120,6 +126,64 @@ static void pure(void)
     CHECK(!fipsd_nostr_relay_capable(info, false)); nostr_nip11_free_info(info);
     /* A one-hour publish ticker must not delay cancellation for an hour. */
     Ticker *ticker = create_ticker(3600000); CHECK(ticker); stop_ticker(ticker);
+}
+typedef struct { fixture *f; observer o; fipsd_runtime *host; fipsd_nostr_runtime *r; } scenario;
+static void scenario_start(scenario *sc, fixture *f, fips_identity *me)
+{
+    *sc = (scenario){.f = f, .o = {.notices = go_channel_create(256)}};
+    char yaml[2048]; snprintf(yaml, sizeof(yaml), "node:\n  rendezvous:\n    nostr:\n      enabled: true\n      policy: open\n      advertise: true\n      advert_relays: ['%s', '%s']\n      dm_relays: ['%s', '%s']\n", fixture_url(f, 0), fixture_url(f, 1), fixture_url(f, 0), fixture_url(f, 1));
+    fipsd_config *config = fipsd_config_parse(yaml, strlen(yaml), NULL); CHECK(config);
+    fipsd_rendezvous_driver driver = {.user = &sc->o, .dial_candidate = dial, .local_advert = local,
+        .boundary = boundary, .publish_result = published, .refetch_result = fetched};
+    sc->r = fipsd_nostr_runtime_create(config, me, NULL, driver); CHECK(sc->r); fipsd_config_free(config);
+    fipsd_runtime_config rc; fipsd_runtime_config_default(&rc); rc.handle_signals = false; rc.workers = 2;
+    sc->host = fipsd_runtime_create(&rc); CHECK(sc->host);
+    CHECK(fipsd_runtime_register(sc->host, fipsd_nostr_runtime_subsystem(sc->r)) == 0 && fipsd_runtime_start(sc->host) == 0);
+}
+static void scenario_stop(scenario *sc)
+{
+    fipsd_runtime_shutdown(sc->host); CHECK(fipsd_runtime_run(sc->host) == FIPSD_RUN_OK);
+    fipsd_runtime_destroy(sc->host); fipsd_nostr_runtime_destroy(sc->r); fixture_destroy(sc->f);
+    void *n; while (go_channel_try_receive(sc->o.notices, &n) == 0) free(n); go_channel_unref(sc->o.notices);
+}
+/* Next advert publish result, by relay. */
+static notice advert_result(observer *o) { return wait_notice(o, PUBLISHED, NOSTR_KIND_FIPS_OVERLAY_ADVERT); }
+/* A refetch result is FIFO behind every command and message the actor took
+ * before it: whatever that work published has been answered by then. */
+static void barrier(scenario *sc)
+{
+    CHECK(fipsd_nostr_runtime_refetch(sc->r, "1111111111111111111111111111111111111111111111111111111111111111"));
+    (void)wait_notice(&sc->o, FETCHED, -1);
+}
+static notice boundary_of(observer *o, const char *text) { return wait_text(o, BOUNDARY, -1, text); }
+/* nostrc-nlekg: OK false is classified by its NIP-01 prefix. rate-limited:
+ * rides relay 0's backoff ladder to an accepted republish; blocked: at relay 1
+ * is final for this endpoint set, across a reconnect's EOSE republish too. */
+static void advert_refusals(fips_identity *me)
+{
+    fixture *f = fixture_start();
+    fixture_reject(f, 0, NOSTR_KIND_FIPS_OVERLAY_ADVERT, 1, "rate-limited: slow down");
+    fixture_reject(f, 1, NOSTR_KIND_FIPS_OVERLAY_ADVERT, -1, "blocked: no overlay adverts here");
+    scenario sc; scenario_start(&sc, f, me);
+    bool refused[2] = {false, false}; uint64_t refused_at = 0;
+    for (;;) {
+        notice n = advert_result(&sc.o); size_t i = strcmp(n.text, fixture_url(f, 0)) ? 1 : 0;
+        /* The republish waited out relay 0's first 1 s backoff step. */
+        if (n.ok) { CHECK(i == 0 && refused[0] && n.at - refused_at >= 900); break; }
+        CHECK(!refused[i]); refused[i] = true; if (!i) refused_at = n.at;
+    }
+    CHECK(refused[1]);
+    fixture_call(f, DISCONNECT, 1, NULL);
+    (void)boundary_of(&sc.o, "connection lost"); CHECK(boundary_of(&sc.o, fixture_url(f, 1)).ok);
+    barrier(&sc);
+    size_t rejected[2], stored; char *json;
+    fixture_counts(f, 0, &rejected[0]); fixture_counts(f, 1, &rejected[1]);
+    CHECK(rejected[0] == 1 && rejected[1] == 1);
+    char key[65]; fips_xonly_pubkey pk = fips_identity_pubkey(me); sodium_bin2hex(key, sizeof(key), pk.bytes, 32);
+    json = fixture_latest(f, 0, NOSTR_KIND_FIPS_OVERLAY_ADVERT, key, &stored); CHECK(json && stored >= 1); free(json);
+    json = fixture_latest(f, 1, NOSTR_KIND_FIPS_OVERLAY_ADVERT, key, &stored); CHECK(!json && !stored);
+    scenario_stop(&sc);
+    puts("advert OK false: rate-limited republished after backoff; blocked not retried across reconnect: OK");
 }
 int main(void)
 {
@@ -208,6 +272,7 @@ int main(void)
     fipsd_runtime_destroy(host); fipsd_nostr_runtime_destroy(r);
     fixture_destroy(f);
     void *n; while (go_channel_try_receive(o.notices, &n) == 0) free(n); go_channel_unref(o.notices);
+    advert_refusals(me);
     fips_identity_destroy(them); fips_identity_destroy(me); fips_identity_destroy_secp(secp);
     puts("Nostr runtime: local WebSocket relay, OK/EOSE/CLOSED/AUTH, dedupe, refetch, sessions, freshness, failures passed");
     return 0;

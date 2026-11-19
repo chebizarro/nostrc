@@ -183,6 +183,15 @@ int main(void)
     assert(fipsd_nostr_advert_parse(e, FIPSD_NOSTR_IDENTIFIER, wall_ms, 3600000, &parsed, &until) == FIPSD_NOSTR_OK);
     assert(parsed.endpoint_count == 2 && parsed.endpoints[1].transport == FIPSD_NOSTR_TOR && !parsed.has_relays);
     nostr_event_free(e);
+    /* nostrc-nlekg: pub's listener unbinds (transport stop). The watcher's
+     * bind/unbind invalidation rebuilds the advert without it, once per relay. */
+    fipsd_transport *pub = NULL;
+    for (size_t i = 0; i < h.tcp_count; ++i) if (!strcmp(h.owned[i]->name, "pub")) pub = h.owned[i];
+    assert(pub); pub->ops->stop(pub);
+    const char *onion_only = BODY("{\"transport\":\"tor\",\"addr\":\"" ONION ":443\"}");
+    advert_published(&h); advert_published(&h);
+    assert(both(f, author, onion_only, now, at) && now[0] == base[0] + 2 && now[1] == base[1] + 2);
+    printf("pub unbound: advert republished once per relay without its endpoint: %s\n", onion_only);
     fipsd_runtime_shutdown(rt); assert(fipsd_runtime_run(rt) == FIPSD_RUN_OK); fipsd_runtime_destroy(rt);
     fipsd_nostr_runtime_destroy(h.relay); fipsd_node_destroy(h.node); fipsd_node_handlers_destroy(h.handlers);
     for (size_t i = 0; i < h.tcp_count; ++i) fipsd_tcp_destroy(h.owned[i]);
@@ -190,6 +199,6 @@ int main(void)
     go_swap_free(h.configs); torctl_fixture_stop(&ctl); fixture_destroy(f);
     void *n; while (go_channel_try_receive(h.notices, &n) == 0) free(n); go_channel_unref(h.notices);
     fips_identity_destroy(me); fips_identity_destroy_secp(secp);
-    puts("own advert: registry tcp (external_addr, advertise_on_nostr=false, loopback filtered) + onion after HS_DESC UPLOADED; change-only republish: OK");
+    puts("own advert: registry tcp (external_addr, advertise_on_nostr=false, loopback filtered) + onion after HS_DESC UPLOADED; change-only republish; unbind drops the endpoint: OK");
     return 0;
 }

@@ -1971,8 +1971,14 @@ EOSE, so advertising cannot precede inbox readiness. Kind 37195 retains its
 replaceable identifier and NIP-40 expiry; a `Ticker` republishes before expiry.
 The ticker's wait is interruptible on stop (no refresh-interval shutdown stall).
 Every advert, inbox and traversal publish uses `publish_and_wait`; negative OK
-and missing OK are failures. This schedule republishes local state; it never
-queries relays for new messages.
+and missing OK are failures. An advert `OK false` is classified by its NIP-01
+prefix: `rate-limited:`, `error:` and `auth-required:` (or no OK at all) are
+retried at that relay on its backoff ladder; `invalid:`, `blocked:`, `pow:`,
+`duplicate:` and other verdicts are logged once and not retried until the
+endpoint set changes. TCP/Tor listener bind and unbind (transport stop, rebind)
+both invalidate the advert from the transport watcher, after the transport state
+is published, so a stopped listener's endpoint leaves the republished advert.
+This schedule republishes local state; it never queries relays for new messages.
 
 #### Local advert endpoints (`nostrc-r4aeo`)
 
