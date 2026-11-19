@@ -698,7 +698,7 @@ runs, medians of the per-run p50):
 | after cache traffic (touches, inserts) | 17.5 ms | 17.9 ms |
 
 A change to the cache still rehashes and recopies every live entry (~130 MB
-at 50k entries); making that incremental is separate work.
+at 50k entries); nostrc-x345n (below) makes that incremental.
 
 The stats history kept its peers in an address-sorted array and inserted with
 `memmove`, so an arrival at a low address shifted up to every retained peer
@@ -732,6 +732,98 @@ publishes p50 392 -> 124 us (p99 994 -> 267 us), publishes over 1 ms 6.5 -> 1;
 4096 entries p99 170 -> 154 us, rescanning publishes p50 136 -> 124 us. The
 rescan costs the same at 4096 and 50k entries, and the `--max-p99-us 1000
 --clock cpu` gate (`FipsdSnapshotPublishBench`) passes at 270 us.
+
+### Indexed, incremental dataplane cache section (nostrc-x345n)
+
+Forwarding found a destination's cached coordinates in the dataplane snapshot
+by scanning every published entry with a 16-byte compare (rows ~2.6 KB apart):
+O(cache) for every forwarded datagram that needed them. And any coordinate
+cache change (lookups, sessions and transit hints all write it) re-hashed and
+re-copied every live entry, ~130 MB at 50k, on the next publish.
+
+The section (`src/node/dataplane/cache_view.c`) is now an index built at
+publish time and shared the way the gfvud section was:
+
+- **Index.** Rows are spread over groups of 64 parts by SipHash-2-4 of the
+  address under a per-process key from host entropy (hint keys are
+  peer-chosen, so a fixed hash could be flooded into one part). A part is one
+  immutable allocation: a dense array of 32-bit hash tags, the rows, and their
+  coordinate entries (`len` of them, not the 80-entry inline array). A lookup
+  hashes, indexes group and part, scans the part's tags and compares one
+  address. There are enough groups for a full cache to average at most 16 rows
+  per part (64 groups and 4,096 parts at the default 50k).
+- **Incremental publish.** libfips-core stamps each slot, and each block of 32
+  slots, with the generation of its last change, and `fips_coord_cache_changes`
+  visits the slots changed since a generation, reading one stamp for each block
+  that did not change. For each reported slot, the publisher compares the row
+  it would publish (address, expiry, coordinates) with the one the current
+  section holds for that slot. If they differ, it marks the part holding the
+  old row and the part the new row hashes to. It then rebuilds only those
+  parts (the old part's other rows plus the new ones) and copies only their
+  groups and the section's group table. Every other part and group is shared
+  with the previous section by reference count. A new generation that changes
+  no published row (a demote, a path-MTU change) keeps the section, as before.
+- **Expiry, matching upstream.** The section holds every resident entry,
+  expired or not, and the lookup applies upstream's `CacheEntry::is_expired`
+  (`now > expires_at`), which is what upstream forwarding gets from
+  `NodeRoutingView::cached_coords` calling `CoordCache::get`. The passage of
+  time alone no longer forces a republish. An entry is still routable during
+  its `expires_at` millisecond, where the old copy's `expires <= now` dropped
+  it one millisecond early. Rows leave the section when the core removes the
+  entry (purge, a touch or re-write of an expired entry, eviction,
+  invalidation).
+
+Parts, groups and sections are never written after the update that builds
+them. The dispatcher and crypto workers read them through GoSwap-published
+snapshots, and the last reference frees them on whichever thread drops it. A
+row is 44 bytes plus 32 per coordinate entry (about 12 MB at 50k entries of
+depth 6, shared across sections), where every changed section used to copy
+about 130 MB.
+
+`fipsd_dp_cache_bench` (new; built with `fipsd_tests`, run by hand, not part of
+the upstream-parity micro set) drives a node's handlers. It times
+`fipsd_dp_forward` to a transit destination that needs cached coordinates (a
+resident hit, and a miss), and `fipsd_dp_publish` after one entry changed and
+with nothing changed. Release, macOS arm64; base 572ed3215 and this change
+interleaved five times (`--rounds 3 --publishes 40 --lookups 20000`); medians
+of the per-run medians, dispatcher CPU time:
+
+| | 4,096 before | 4,096 after | 50k before | 50k after |
+| --- | --- | --- | --- | --- |
+| lookup, resident hit (ns/packet) | 1,030 | 56 | 31,495 | 133 |
+| lookup, miss (ns/packet) | 2,033 | 42 | 68,433 | 57 |
+| publish after one touch | 1,219 us | 1.0 us | 17,136 us | 3.3 us |
+| publish after one insert (evicting at capacity) | 1,221 us | 1.5 us | 17,039 us | 3.7 us |
+| idle republish | 0.21 us | 0.13 us | 1.25 us | 0.13 us |
+| first publish (whole cache) | 1.7 ms | 0.26 ms | 27.4 ms | 8.4 ms |
+
+The lookup is O(1) at both sizes. What grows from 4,096 to 50k is memory
+latency: uniformly random destinations over about 12 MB of rows miss the CPU
+caches. `fipsd_snapshot_bench --dataplane` (50k entries, 400 publishes, three
+interleaved runs, medians of the per-run p50): after cache traffic (eight
+touches, a quarter of the time an insert) 16.8 ms -> 11.5 us; cache untouched
+since the last publish 0.2 -> 0.2 us.
+
+The four parity bench binaries still emit exactly 39 rows at
+`FIPS_BENCH_ITERS=1000`, and `fips_bench_coord_cache`'s get rows are unchanged
+(17/27/12/16 ns before, 18/27/11/16 after, three interleaved runs). The
+loopback `Perf` ctest (`FipsdPerfLoopbackTest`, Rust peer at 6aa80504),
+interleaved four times each (12 samples per pairing), shows no change beyond
+this host's noise (load average 10-15): C/C 697 -> 685 Mbps, C/Rust
+690 -> 693 Mbps, with the ranges overlapping.
+
+`FipsdDataplaneCacheTest` runs random cache operation sequences: hint,
+funded, stated and verified inserts, touches, demotes, removes, expiry and
+purges, eviction at capacity, invalidations, clears, and re-inserts of evicted
+keys. It updates a view after every one to eight operations and requires it
+to equal a view built afresh from the cache: the same rows, each lookup
+answering as a linear scan of the rows and as the core's `get` (present,
+absent, expired, and at and just past each `expires_at`), one rebuilt part per
+single touch, and an unchanged section after a demote. It fails if the old
+part is not marked dirty when a row leaves it, if the core skips a block
+stamp, or if an expiry change is taken for an unchanged row.
+`FipsdCoordWarmTest` and `FipsdDataplaneTest` check the same through
+`fipsd_dp_publish` and `fipsd_dp_forward`.
 
 ### Reproduction and verification
 

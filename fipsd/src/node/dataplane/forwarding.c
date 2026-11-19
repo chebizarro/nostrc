@@ -5,21 +5,20 @@ typedef struct route_view {
     fips_tree_coordinate *scratch;
     uint64_t now;
 } route_view;
+/* Upstream NodeRoutingView::cached_coords: coord_cache.get(dest, now), which
+ * answers until now passes expires_at. O(1) through the section's index. */
 static const fips_tree_coordinate *cached(void *arg, const fips_node_addr *dest, fips_instant now)
 {
     (void)now; route_view *v = arg;
-    for (size_t i = 0; i < v->s->cache_count; ++i) {
-        const fipsd_dp_cached *c = &v->s->cache[i];
-        if (memcmp(c->addr.bytes, dest->bytes, 16) || c->expires <= v->now) continue;
-        v->scratch->len = c->coords.len;
-        for (size_t j = 0; j < c->coords.len; ++j) {
-            memcpy(v->scratch->entries[j].node_addr.bytes, c->coords.entries[j].node_addr, 16);
-            v->scratch->entries[j].sequence = c->coords.entries[j].sequence;
-            v->scratch->entries[j].timestamp = c->coords.entries[j].timestamp;
-        }
-        return v->scratch;
+    const fipsd_dp_cached *c = fipsd_dp_cache_find(v->s->cache, dest, v->now);
+    if (!c) return NULL;
+    v->scratch->len = c->len;
+    for (size_t j = 0; j < c->len; ++j) {
+        memcpy(v->scratch->entries[j].node_addr.bytes, c->coords[j].node_addr, 16);
+        v->scratch->entries[j].sequence = c->coords[j].sequence;
+        v->scratch->entries[j].timestamp = c->coords[j].timestamp;
     }
-    return NULL;
+    return v->scratch;
 }
 fips_status fipsd_dp_forward(const fipsd_dp_snapshot *s, fips_router *router,
     const fips_session_datagram *dg, const fips_node_addr *exclude, bool ce, fips_instant now,
