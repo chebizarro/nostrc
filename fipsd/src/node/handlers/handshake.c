@@ -297,6 +297,24 @@ static peer_rec *establish(handlers *h, const fips_peer_identity *identity, fips
     promoted(h, rec);
     return rec;
 }
+/* Crossing legs (nostrc-8rtmi). hs_dial keys legs by identity, as upstream's
+ * dial guard does (a shared-address transport carries both directions on one
+ * address, so the address cannot tell them apart), admits one per peer and none
+ * while a link is held: a leg alive beside a link was dialled before that link
+ * promoted, the other half of a crossing. As upstream, only its own msg2
+ * settles the tie-break (Swap/Keep, or a restart at a newer epoch), or its
+ * handshake timeout ends it. Nothing else known before that msg2 decides it:
+ * a msg1 is IK-authentic but replayable, and the link's first AEAD frame says
+ * nothing about the epoch the leg's msg2 will carry. The one addition is the
+ * link's loss, below. */
+static void crossing_leg_end(handlers *h, const fips_node_addr *peer)
+{
+    pending_leg *leg = leg_find(h, peer);
+    if (!leg) return;
+    char hex[33]; (void)fips_node_addr_format(peer, hex, sizeof hex);
+    FIPSD_DEBUG(HMOD, "link with %s lost: ending its crossing handshake leg", hex);
+    leg_free(h, leg);
+}
 /* Remove an established peer: outputs of the link close run before the table
  * forgets the member; carry (optional) keeps the anchors for a replacement. */
 /* `keep` names the link replacing this one (restart, crossing swap): when it is
@@ -344,6 +362,13 @@ static void remove_peer_carry(handlers *h, peer_rec *rec, fips_rekey_close why, 
         FIPSD_ERROR(HMOD, "peer table removal refused after link close");
         (void)fipsd_active_peer_destroy(peer);
     }
+    /* Link loss ends a crossing leg too: its msg1 or msg2 was lost (on BLE,
+     * with the very channel the link used), so it would hold back the redial
+     * until its handshake timeout. Only local or AEAD-confirmed removals end
+     * it (timers, transport loss, operator, an authenticated Disconnect);
+     * replacements (Restart, CrossConnectionMove) promote their own leg. */
+    if (why == FIPS_REKEY_CLOSE_LinkDead || why == FIPS_REKEY_CLOSE_Disconnect)
+        crossing_leg_end(h, &addr);
     configured_peer *c = configured_find(h, &addr);
     if (c && why == FIPS_REKEY_CLOSE_LinkDead) {
         fipsd_peer_retry_policy p = {5000, 300000, h->cfg.timing.handshake_timeout_ms, 5};

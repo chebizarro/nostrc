@@ -5,13 +5,15 @@
  * hint and runs IK over the link, then the spanning tree, bloom filters, an
  * XK session and datagrams both ways. Then a node-directed disconnect and
  * redial, a link loss and redial, and an adapter power cycle the transport
- * recovers from by itself through rediscovery. Every wait is a notice, a
- * transport event or a snapshot; nothing sleeps. */
+ * recovers from by itself through rediscovery. Both nodes auto-connect, so the
+ * first IK handshakes cross over the one shared device address (nostrc-8rtmi).
+ * Every wait is a notice, a transport event or a snapshot; nothing sleeps. */
 #include "node_test.h"
 #include "transport/transport.h"
 #include "transport/ble/ble.h"
 #include "node/handlers/internal.h"
 #include "log.h"
+#include <stdatomic.h>
 
 static const char *yaml_a =
     "node: {identity: {nsec: '1111111111111111111111111111111111111111111111111111111111111111', persistent: true}, control: {enabled: false}}";
@@ -19,6 +21,17 @@ static const char *yaml_b =
     "node: {identity: {nsec: '2222222222222222222222222222222222222222222222222222222222222222', persistent: true}, control: {enabled: false}}";
 static fipsd_ble_air *air;
 static fipsd_ble_radio *radio_of[2];
+/* Armed per radio: lose that many of the FMP msg1 frames it writes next
+ * (SDU mode; an FD stream bypasses the radio's filter). */
+static atomic_uint lose_msg1[2];
+static bool radio_filter(void *user, const uint8_t *bytes, size_t len)
+{
+    atomic_uint *armed = user;
+    unsigned n = atomic_load(armed);
+    while (n && len && bytes[0] == FIPS_FMP_PHASE_MSG1)
+        if (atomic_compare_exchange_weak(armed, &n, n - 1)) return false;
+    return true;
+}
 static json_t *data_of(json_t *response, const char *key)
 {
     assert(response);
@@ -45,6 +58,7 @@ static bool ble_node_init(test_node *n, const char *name, const char *yaml, cons
 #endif
     fipsd_ble_radio *radio = fipsd_ble_radio_create(air, &rc);
     radio_of[dev & 1] = radio;
+    if (radio) fipsd_ble_radio_set_filter(radio, radio_filter, &lose_msg1[dev & 1]);
     fipsd_ble_config c; fipsd_ble_config_default(&c);
     c.adapter = FIPSD_BLE_RADIO_ADAPTER; c.auto_connect = auto_connect; c.connect_timeout_ms = 3000; c.probe_cooldown_ms = 250;
     n->transport = radio ? fipsd_ble_create((fips_transport_id){1}, "ble", &c, fipsd_ble_radio_backend(radio)) : NULL;
@@ -90,6 +104,35 @@ static void links_down(test_node *a, test_node *b)
     fipsd_node_notice *e = nt_await(a, FIPSD_NOTICE_LINK_DOWN, &b->identity.node_addr, NT_WAIT_MS); assert(e); free(e);
     e = nt_await(b, FIPSD_NOTICE_LINK_DOWN, &a->identity.node_addr, NT_WAIT_MS); assert(e); free(e);
 }
+/* Pending handshake legs in a fresh view (show_connections). */
+static size_t legs_of(test_node *n)
+{
+    assert(nt_barrier(n, nt_ms() + NT_WAIT_MS));
+    GoRefPtr ref = nt_snapshot(n); assert(ref.ptr);
+    size_t legs = ((const fipsd_control_snapshot *)ref.ptr)->connections_count;
+    go_refptr_release(&ref);
+    return legs;
+}
+/* A crossing settles after both LINK_UPs: the tie-break may still move the
+ * link onto the winner's handshake, and a frame sent on the side it leaves is
+ * dropped. Settled is the converged pair with no handshake leg left on either
+ * node, so the datagrams below cross the link both ends keep. The move's own
+ * LINK_DOWN/LINK_UP are then consumed, so the next step's waits see only the
+ * notices that step causes. */
+static bool settled_view(const fipsd_control_snapshot *s, const void *arg)
+{ return s->connections_count == 0 && nt_pair_converged(s, arg); }
+static void settled(test_node *a, test_node *b, const test_node *root)
+{
+    for (test_node *n = a; n; n = n == a ? b : NULL) {
+        nt_pair_state want = {.root = root, .is_root = n == root};
+        assert(nt_await_converged(n, settled_view, &want, nt_ms() + NT_WAIT_MS));
+    }
+    nt_drain(a); nt_drain(b);
+}
+/* Link lost and no handshake leg left: nothing redials until the test does,
+ * so this view is stable and the notices queued until it are spent. */
+static bool unlinked_view(const fipsd_control_snapshot *s, const void *arg)
+{ (void)arg; return json_array_size(s->peers) == 0 && s->connections_count == 0; }
 static void datagram(test_node *from, test_node *to, uint16_t sport, uint16_t dport, const char *text)
 {
     assert(fipsd_node_handlers_send(from->h, &to->identity.node_addr, sport, dport, (const uint8_t *)text, strlen(text) + 1) == 0);
@@ -110,10 +153,9 @@ int main(void)
     hcfg.link_dead_timeout_ms = 30000;
     test_node a, b;
     /* Both transports scan, advertise, probe and settle their simultaneous
-     * dials; only A's node auto-connects, so one IK handshake runs per link
-     * (a node crossing leaves a leg that outlives a link loss, which is node
-     * behaviour shared with every stream transport, not BLE's). */
-    assert(ble_node_init(&a, "A", yaml_a, &hcfg, 0x0A, true) && ble_node_init(&b, "B", yaml_b, &hcfg, 0x0B, false));
+     * dials, and both nodes auto-connect on the key hint, so two IK handshakes
+     * cross over the one channel between the two device addresses. */
+    assert(ble_node_init(&a, "A", yaml_a, &hcfg, 0x0A, true) && ble_node_init(&b, "B", yaml_b, &hcfg, 0x0B, true));
     fipsd_ble_radio *ra = radio_of[0], *rb = radio_of[1];
     assert(fipsd_runtime_register(rt, fipsd_node_subsystem(a.node)) == 0);
     assert(fipsd_runtime_register(rt, fipsd_node_subsystem(b.node)) == 0);
@@ -133,6 +175,7 @@ int main(void)
     assert(!e->is_root && e->depth == 1 && !memcmp(e->root.bytes, root->identity.node_addr.bytes, 16));
     free(at_leaf[0].notice); free(at_leaf[1].notice); free(at_root[0].notice);
     assert(fipsd_ble_is_verified(a.transport, b.addr) == 1 && fipsd_ble_is_verified(b.transport, a.addr) == 1);
+    settled(&a, &b, root);
     /* 3. XK session and datagrams both ways. */
     assert(fipsd_node_handlers_send(a.h, &b.identity.node_addr, 1000, 2000, (const uint8_t *)"hello from a", 13) == 0);
     expect up[] = {{FIPSD_NOTICE_SESSION_UP, &b.identity.node_addr, false, NULL}};
@@ -165,12 +208,37 @@ int main(void)
     links_down(&a, &b);
     assert(fipsd_node_handlers_connect(a.h, &b.identity, (fips_transport_id){1}, b.addr) == 0);
     links_up(&a, &b);
+    settled(&a, &b, root);
     datagram(&a, &b, 1000, 2000, "after the redial");
-    /* 6. The link dies under both nodes; the node redials. */
-    assert(fipsd_ble_radio_drop_links(rb) >= 1);
-    links_down(&a, &b);
-    assert(fipsd_node_handlers_connect(a.h, &b.identity, (fips_transport_id){1}, b.addr) == 0);
-    links_up(&a, &b);
+    /* 6. The link dies under both nodes, twice: the redial after the first loss
+     * crosses the dial A's transport makes on rediscovery, and the second loss
+     * lands straight after that crossing's LINK_UPs, while a leg may still be
+     * pending beside the link (awaiting its msg2, or with its msg1 lost, as
+     * when it rode a stream the transport replaced as a duplicate). In SDU
+     * mode B's redial msg1 is lost on the air, so B surely holds a stale leg
+     * at the second loss. Each loss must end every leg at once, so a redial
+     * from the node that held one runs well inside the handshake timeout
+     * instead of being swallowed by the stale leg. */
+    uint64_t budget = hcfg.timing.handshake_timeout_ms / 4;
+    for (int loss = 0; loss < 2; ++loss) {
+        size_t held_a = legs_of(&a), held_b = legs_of(&b);
+#ifndef FIPSD_TEST_BLE_FD
+        if (loss == 0) atomic_store(&lose_msg1[1], 1);
+        else assert(atomic_load(&lose_msg1[1]) == 0 && held_b == 1);
+#endif
+        test_node *redialer = held_a && !held_b ? &a : &b, *answerer = redialer == &a ? &b : &a;
+        uint64_t lost = nt_ms();
+        assert(fipsd_ble_radio_drop_links(rb) >= 1);
+        assert(nt_await_converged(&a, unlinked_view, NULL, lost + budget) && nt_await_converged(&b, unlinked_view, NULL, lost + budget));
+        nt_drain(&a); nt_drain(&b);
+        assert(fipsd_node_handlers_connect(redialer->h, &answerer->identity, (fips_transport_id){1}, answerer->addr) == 0);
+        links_up(&a, &b);
+        uint64_t recovered = nt_ms() - lost;
+        printf("ble link loss %d: legs held A=%zu B=%zu, %s redialled, recovered in %llu ms (timeout %llu ms)\n", loss + 1,
+               held_a, held_b, redialer->name, (unsigned long long)recovered, (unsigned long long)hcfg.timing.handshake_timeout_ms);
+        assert(recovered < budget);
+    }
+    settled(&a, &b, root);
     datagram(&b, &a, 2000, 1000, "after the link loss");
     /* 7. Adapter power cycle: absent, every link lost; present again, the
      * transport relistens, readvertises and rescans, and discovery alone
@@ -179,6 +247,7 @@ int main(void)
     links_down(&a, &b);
     fipsd_ble_radio_set_adapter(ra, true, true);
     links_up(&a, &b);
+    settled(&a, &b, root);
     datagram(&a, &b, 1000, 2000, "after the power cycle");
     assert(fipsd_ble_radio_stats_read(ra).listens == 2 && fipsd_ble_radio_stats_read(rb).listens == 1);
     fipsd_runtime_shutdown(rt);
