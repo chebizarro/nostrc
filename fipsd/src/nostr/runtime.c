@@ -214,9 +214,10 @@ static bool cache(fipsd_nostr_runtime *r, const NostrEvent *e, bool deliver, boo
     /* History is cached first. EOSE publishes its catch-up candidates; live
      * events can produce effects immediately. Cache replacement is idempotent. */
     const fipsd_nostr_failure *failure = fipsd_nostr_failure_get(&r->failures, p->key);
-    if (deliver && live && !r->disabled && (!failure || failure->cooldown_ms <= now) && r->driver.dial_candidate) {
-        p->delivered = true; r->driver.dial_candidate(r->driver.user, p->key, p->advert);
-    }
+    /* A candidate the driver declines (e.g. an author with an active link) stays
+     * cached and undelivered: its endpoints serve a later catch-up/reconnect. */
+    if (deliver && live && !r->disabled && (!failure || failure->cooldown_ms <= now) && r->driver.dial_candidate)
+        p->delivered = r->driver.dial_candidate(r->driver.user, p->key, p->advert);
     return true;
 }
 static void catchup(fipsd_nostr_runtime *r)
@@ -227,8 +228,7 @@ static void catchup(fipsd_nostr_runtime *r)
         const fipsd_nostr_failure *failure = p->used ? fipsd_nostr_failure_get(&r->failures, p->key) : NULL;
         if (p->used && p->advert && p->expires > wall() && !p->delivered &&
             (!failure || failure->cooldown_ms <= wall())) {
-            p->delivered = true;
-            r->driver.dial_candidate(r->driver.user, p->key, p->advert);
+            p->delivered = r->driver.dial_candidate(r->driver.user, p->key, p->advert);
         }
     }
 }

@@ -17,6 +17,9 @@ typedef struct {
     void (*stop)(void *);
     void (*destroy)(void *);
     void (*signal_result)(void *, const char *session, bool accepted, bool repair);
+    /* false: nothing dialled (an active link to the author, no usable
+     * transport). The advert stays cached and is offered again at the next
+     * catch-up or advert refresh, never re-run while the link is up. */
     bool (*dial_candidate)(void *, const char *author_hex, const fipsd_nostr_advert *);
     bool (*local_advert)(void *, fipsd_nostr_advert *);
     /* 8hvs6.3 traversal machine and UDP punch-packet classifier attachment seam.

@@ -25,12 +25,30 @@ struct fipsd_nostr_adverts {
     fipsd_runtime *host;
     bool started;
 };
+/* Upstream's open-discovery sweep skips authors with an established link
+ * (lifecycle `skip` over self.peers). The handlers' control snapshot is
+ * republished before every link notice, so it is the node's current view. */
+static bool linked(fipsd_nostr_node_driver *d, const fips_node_addr *addr)
+{
+    fipsd_control_provider p = fipsd_node_handlers_provider(d->handlers);
+    GoRefPtr ref = p.acquire ? p.acquire(p.user) : (GoRefPtr){0};
+    const fipsd_control_snapshot *snap = ref.ptr; bool active = false;
+    for (size_t i = 0; snap && !active && i < snap->peer_meta_count; ++i)
+        active = snap->peer_meta[i].is_active && !memcmp(snap->peer_meta[i].node_addr, addr->bytes, sizeof addr->bytes);
+    if (snap) go_refptr_release(&ref);
+    return active;
+}
 static bool dial(void *user, const char *hex, const fipsd_nostr_advert *advert)
 {
     fipsd_nostr_node_driver *d = user;
     fips_xonly_pubkey key; fips_peer_identity peer;
     if (sodium_hex2bin(key.bytes, 32, hex, 64, NULL, NULL, NULL) ||
         fips_peer_identity_from_pubkey(fipsd_node_secp(d->node), &key, &peer) != FIPS_IDENTITY_OK) return false;
+    /* No STUN/offer/punch or direct dial toward a peer already linked; the
+     * refreshed endpoints stay in the advert cache for a later reconnect. */
+    if (linked(d, &peer.node_addr)) {
+        FIPSD_DEBUG("nostr", "advert from %.16s: active link, traversal skipped", hex); return false;
+    }
     if (fipsd_node_handlers_learn_identity(d->handlers, &peer)) return false;
     bool queued = false;
     for (size_t i = 0; i < advert->endpoint_count; ++i) {

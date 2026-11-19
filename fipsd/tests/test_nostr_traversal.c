@@ -11,6 +11,7 @@
 #include <select.h>
 #include <sodium.h>
 #include <assert.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -147,7 +148,8 @@ static void states(void)
 
 typedef struct {
     fipsd_nostr_node_driver driver; /* callbacks' user is this first member */
-    GoChannel *live, *published, *advertised;
+    GoChannel *live, *published, *advertised, *cached, *fetched, *dialed;
+    bool (*dial)(void *, const char *, const fipsd_nostr_advert *); /* the production driver's */
     fipsd_config *config; GoSwap *configs; fipsd_node *node; fipsd_node_handlers *handlers;
     fipsd_transport *udp; fipsd_nostr_runtime *relay; fipsd_netmon_source netmon;
 } node;
@@ -161,9 +163,21 @@ static void published(void *arg, const char *url, int kind, bool ok)
     if (kind == NOSTR_KIND_FIPS_TRAVERSAL && ok) assert(!go_channel_try_send(n->published, n));
     if (kind == NOSTR_KIND_FIPS_OVERLAY_ADVERT && ok) assert(!go_channel_try_send(n->advertised, n));
 }
+/* Observers around the production driver: what it was offered and whether it
+ * dialled (true: traversal or a direct connect was queued). */
+static void cached(void *arg, const char *key, bool live)
+{ (void)key; node *n = arg; if (live) assert(!go_channel_try_send(n->cached, n)); }
+static void fetched(void *arg, const char *key, fipsd_nostr_refetch_outcome o)
+{ (void)key; node *n = arg; assert(!go_channel_try_send(n->fetched, (void *)(uintptr_t)(o + 1))); }
+static bool dialed(void *arg, const char *key, const fipsd_nostr_advert *a)
+{
+    node *n = arg; bool queued = n->dial(arg, key, a);
+    assert(!go_channel_try_send(n->dialed, (void *)(uintptr_t)(queued ? 2 : 1))); return queued;
+}
 static void init_node(node *n, fipsd_runtime *rt, const char *yaml, bool relay)
 {
     *n = (node){0}; n->live = go_channel_create(8); n->published = go_channel_create(16); n->advertised = go_channel_create(16);
+    n->cached = go_channel_create(16); n->fetched = go_channel_create(16); n->dialed = go_channel_create(64);
     n->config = fipsd_config_parse(yaml,strlen(yaml),NULL); assert(n->config);
     n->configs = go_swap_create(n->config,fipsd_config_free);
     fipsd_node_handlers_config hc; fipsd_node_handlers_config_default(&hc); hc.peer_capacity=4; hc.notice_capacity=256;
@@ -178,6 +192,7 @@ static void init_node(node *n, fipsd_runtime *rt, const char *yaml, bool relay)
     if (relay) {
         fipsd_rendezvous_driver d=fipsd_nostr_node_driver_init(&n->driver,fipsd_node_get_context(n->node),n->handlers,fipsd_node_transports(n->node));
         d.boundary=live; d.publish_result=published;
+        n->dial=d.dial_candidate; d.dial_candidate=dialed; d.advert_cached=cached; d.refetch_result=fetched;
         n->relay=fipsd_nostr_runtime_create(n->config,NULL,fipsd_node_get_context(n->node),d); assert(n->relay);
         assert(!fipsd_runtime_register(rt,fipsd_nostr_runtime_subsystem(n->relay)));
     }
@@ -186,6 +201,7 @@ static void destroy_node(node *n)
 {
     fipsd_nostr_runtime_destroy(n->relay); fipsd_node_destroy(n->node); fipsd_node_handlers_destroy(n->handlers);
     fipsd_udp_destroy(n->udp); go_swap_free(n->configs); go_channel_unref(n->live); go_channel_unref(n->published); go_channel_unref(n->advertised);
+    go_channel_unref(n->cached); go_channel_unref(n->fetched); go_channel_unref(n->dialed);
 }
 static fipsd_runtime *runtime(void)
 {
@@ -256,6 +272,28 @@ static void traverse(void)
     for(unsigned i=0;i<2;++i)assert(fipsd_udp_connected_count(nodes[i].udp)==1);
     fips_transport_addr bound[2];for(unsigned i=0;i<2;++i)assert(fipsd_udp_address(nodes[i].udp,&bound[i]));
     bool saw[2]={false,false};for(unsigned j=0;j<3;++j){stun_request *q=receive(server.requests);for(unsigned i=0;i<2;++i)if(fips_transport_addr_equal(&q->source,&bound[i]))saw[i]=true;free(q);}assert(saw[0]&&saw[1]);
+    /* nostrc-tbcl6: node 1's advert refreshed twice while the IK link is up.
+     * Each cycle evicts node 0's cached copy (refetch against an empty relay)
+     * and re-delivers node 1's signed advert live, so it reaches the dial
+     * decision again. The driver must decline: no CONNECT, so no STUN, offer
+     * or punch, while the refreshed advert stays cached for a reconnect. */
+    fips_xonly_pubkey peer_key=fips_identity_pubkey(fipsd_node_identity(fipsd_node_get_context(nodes[1].node)));
+    char peer_hex[65];sodium_bin2hex(peer_hex,sizeof peer_hex,peer_key.bytes,32);
+    size_t stored;char *peer_advert=fixture_latest(f,0,NOSTR_KIND_FIPS_OVERLAY_ADVERT,peer_hex,&stored);assert(peer_advert);
+    void *v;while(!go_channel_try_receive(nodes[0].dialed,&v)){}
+    while(!go_channel_try_receive(nodes[0].cached,&v)){}
+    while(!go_channel_try_receive(nodes[0].published,&v)){}
+    for(unsigned cycle=0;cycle<2;++cycle){
+        fixture_call(f,CLEAR,0,NULL);assert(fipsd_nostr_runtime_refetch(nodes[0].relay,peer_hex));
+        assert((uintptr_t)receive(nodes[0].fetched)==FIPSD_REFETCH_EVICTED+1);
+        fixture_call(f,INJECT,0,peer_advert);
+        (void)receive(nodes[0].cached);assert((uintptr_t)receive(nodes[0].dialed)==1);
+    }
+    free(peer_advert);
+    /* dial() declined synchronously: nothing was queued to traversal_io. */
+    assert(go_channel_try_receive(server.requests,&v)&&go_channel_try_receive(nodes[0].published,&v));
+    assert(fipsd_udp_connected_count(nodes[0].udp)==1);
+    puts("advert refresh for an IK-linked peer, two cycles: dial declined, zero STUN/offer activity: OK");
     fipsd_runtime_shutdown(rt);assert(fipsd_runtime_run(rt)==FIPSD_RUN_OK);fipsd_runtime_destroy(rt);
     for(unsigned i=0;i<2;++i)destroy_node(&nodes[i]);
     stun_fixture_stop(&server);fixture_destroy(f);

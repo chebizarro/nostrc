@@ -1984,6 +1984,10 @@ endpoint set changes. TCP/Tor listener bind and unbind (transport stop, rebind)
 both invalidate the advert from the transport watcher, after the transport state
 is published, so a stopped listener's endpoint leaves the republished advert.
 This schedule republishes local state; it never queries relays for new messages.
+An advert from a peer with an active link (the handlers' control snapshot) is
+cached but not dialled: no STUN/offer/punch toward a linked peer, as upstream's
+open-discovery sweep skips established peers; it is offered again at a later
+catch-up or refresh once the link is gone.
 
 #### Local advert endpoints (`nostrc-r4aeo`)
 
