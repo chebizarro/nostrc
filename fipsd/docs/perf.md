@@ -681,6 +681,25 @@ moves within this host's noise (load average 10-18). Every run, before and
 after, has one publish over 1 ms (5-7 ms), the same in both: a history tick,
 taken up below.
 
+The dataplane snapshot (`fipsd_dp_publish`, run on every tick and after
+control mutations) fingerprinted every live cache entry to decide whether to
+republish, then copied them all. It now keeps what its cache section was
+taken from and, while the generation is unchanged and `now` has not passed the
+earliest live expiry, neither hashes nor copies the cache; a republish for
+other state shares the previous section's array (ref-counted, immutable), as
+does a new generation whose live entries hash the same (a demote, say).
+`fipsd_snapshot_bench --dataplane` forces a dataplane republish after each
+publish and times it separately (50k entries, 400 publishes, three interleaved
+runs, medians of the per-run p50):
+
+| Dataplane republish, 50k-entry cache | before | after |
+| --- | --- | --- |
+| cache untouched since the last (every idle tick) | 14.4 ms | 0.2 us |
+| after cache traffic (touches, inserts) | 17.5 ms | 17.9 ms |
+
+A change to the cache still rehashes and recopies every live entry (~130 MB
+at 50k entries); making that incremental is separate work.
+
 ### Reproduction and verification
 
 `FipsdProfilingTest` joins `fipsd_tests` when profiling is enabled. It covers

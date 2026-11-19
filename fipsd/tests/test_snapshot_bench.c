@@ -26,7 +26,11 @@
  * --slow-clients N adds N control clients that each keep a snapshot for a few
  * history ticks (20, 31, 42... publishes) and take the next as soon as they
  * let go, so the stats-history views are pinned while the history advances:
- * the case that used to force a copy of the whole retained history. */
+ * the case that used to force a copy of the whole retained history.
+ * --dataplane also forces a dataplane republish (fipsd_dp_publish, as a tick
+ * does) after every publish and reports its CPU time separately, split by
+ * whether the cache saw traffic since the last one; it is not part of the
+ * publish_snapshot figures or the gate. */
 #include "node/handlers/internal.h"
 #include "fakes/host.h"
 #include <assert.h>
@@ -41,6 +45,8 @@ static const char *const kind_name[K_COUNT] = {
     "state change (history+cache unchanged)", "history tick", "slow reader held a snapshot", "cache churn"};
 static uint64_t *samples[2][K_COUNT + 1]; /* [wall, cpu] */
 static size_t counts[K_COUNT + 1];
+static uint64_t *dp_samples[2]; /* cpu: [cache untouched, cache traffic] */
+static size_t dp_counts[2];
 static uint64_t rng_state = UINT64_C(0x9e3779b97f4a7c15);
 static uint64_t rnd(void) { rng_state ^= rng_state << 13; rng_state ^= rng_state >> 7; rng_state ^= rng_state << 17; return rng_state; }
 static uint64_t clock_ns(clockid_t id)
@@ -115,10 +121,19 @@ static void timed_publish(handlers *h, enum kind kind, size_t cap)
     if (counts[kind] < cap) { samples[0][kind][counts[kind]] = wall; samples[1][kind][counts[kind]++] = cpu; }
     if (counts[K_COUNT] < cap) { samples[0][K_COUNT][counts[K_COUNT]] = wall; samples[1][K_COUNT][counts[K_COUNT]++] = cpu; }
 }
+static void timed_dataplane_publish(handlers *h, bool cache_traffic, size_t cap)
+{
+    h->dataplane->needs_publish = true;
+    uint64_t c0 = clock_ns(CLOCK_THREAD_CPUTIME_ID);
+    assert(fipsd_dp_publish(h));
+    uint64_t cpu = clock_ns(CLOCK_THREAD_CPUTIME_ID) - c0;
+    if (dp_counts[cache_traffic] < cap) dp_samples[cache_traffic][dp_counts[cache_traffic]++] = cpu;
+}
 
 int main(int argc, char **argv)
 {
     size_t peers = 256, cache = 50000, publishes = 2000, churn_pct = 25, slow_clients = 0; uint64_t max_p99_us = 0; int gate_cpu = 0;
+    bool dataplane = false;
     for (int i = 1; i < argc; ++i) {
         if (!strcmp(argv[i], "--peers") && i + 1 < argc) peers = strtoull(argv[++i], NULL, 10);
         else if (!strcmp(argv[i], "--cache") && i + 1 < argc) cache = strtoull(argv[++i], NULL, 10);
@@ -126,12 +141,14 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--cache-churn") && i + 1 < argc) churn_pct = strtoull(argv[++i], NULL, 10);
         else if (!strcmp(argv[i], "--slow-clients") && i + 1 < argc) slow_clients = strtoull(argv[++i], NULL, 10);
         else if (!strcmp(argv[i], "--max-p99-us") && i + 1 < argc) max_p99_us = strtoull(argv[++i], NULL, 10);
+        else if (!strcmp(argv[i], "--dataplane")) dataplane = true;
         else if (!strcmp(argv[i], "--clock") && i + 1 < argc) { const char *c = argv[++i]; gate_cpu = !strcmp(c, "cpu"); if (!gate_cpu && strcmp(c, "wall")) return 2; }
-        else { fprintf(stderr, "usage: %s [--peers N] [--cache N] [--publishes N] [--cache-churn PCT] [--slow-clients N] [--max-p99-us N] [--clock wall|cpu]\n", argv[0]); return 2; }
+        else { fprintf(stderr, "usage: %s [--peers N] [--cache N] [--publishes N] [--cache-churn PCT] [--slow-clients N] [--max-p99-us N] [--clock wall|cpu] [--dataplane]\n", argv[0]); return 2; }
     }
     if (peers < 2 || peers > 1024 || publishes < 100 || churn_pct > 100 || slow_clients > 4) { fprintf(stderr, "bad arguments\n"); return 2; }
     for (int c = 0; c < 2; ++c)
         for (int k = 0; k <= K_COUNT; ++k) { samples[c][k] = calloc(publishes + 1, sizeof **samples[c]); assert(samples[c][k]); }
+    for (int c = 0; c < 2; ++c) { dp_samples[c] = calloc(publishes + 1, sizeof *dp_samples[c]); assert(dp_samples[c]); }
     pool_len = peers; pool = calloc(pool_len, 16); assert(pool);
     for (size_t i = 0; i < pool_len; ++i) for (int k = 0; k < 16; ++k) pool[i][k] = (uint8_t)rnd();
 
@@ -160,6 +177,7 @@ int main(int argc, char **argv)
     uint64_t seq = 0;
     for (; seq < cache; ++seq) cache_insert(h, seq);
     hs_publish(h, hs_now(h));
+    if (dataplane) { h->dataplane->needs_publish = true; assert(fipsd_dp_publish(h)); }
     printf("snapshot bench: %zu retained peers, %zu cache entries resident, %zu publishes, cache traffic before %zu%% of them\n",
            h->history->peer_count, fips_coord_cache_len(&h->cache), publishes, churn_pct);
 
@@ -169,7 +187,9 @@ int main(int argc, char **argv)
         enum kind kind = K_STATE;
         if (i % 10 == 0) { clk.millis += 1000; history_tick(h, 16, peers); kind = K_TICK; }
         else clk.millis += 20;
+        bool cache_traffic = false;
         if (cache > 0 && rnd() % 100 < churn_pct) {
+            cache_traffic = true;
             for (int t = 0; t < 8; ++t) cache_touch(h, seq);
             if (rnd() % 4 == 0) cache_insert(h, seq++);
             kind = kind == K_STATE ? K_CACHE : kind;
@@ -186,6 +206,7 @@ int main(int argc, char **argv)
             if (kind == K_TICK || kind == K_STATE) kind = K_HELD;
         }
         timed_publish(h, kind, publishes);
+        if (dataplane) timed_dataplane_publish(h, cache_traffic, publishes);
     }
     for (int r = 0; r < 4; ++r) go_refptr_release(&held[r]);
 
@@ -196,6 +217,11 @@ int main(int argc, char **argv)
         printf("%s:\n", clock_name[c]);
         for (int k = 0; k < K_COUNT; ++k) if (counts[k]) report(kind_name[k], samples[c][k], counts[k]);
         report("all publishes", samples[c][K_COUNT], counts[K_COUNT]);
+    }
+    if (dataplane) {
+        printf("dataplane republish (fipsd_dp_publish), dispatcher thread CPU time:\n");
+        report("cache untouched since the last", dp_samples[0], dp_counts[0]);
+        report("after cache traffic", dp_samples[1], dp_counts[1]);
     }
     for (int c = 0; c < 2; ++c) {
         size_t over = 0;
@@ -209,6 +235,7 @@ int main(int argc, char **argv)
     h->running = false;
     fipsd_runtime_destroy(rt); fipsd_node_destroy(node); fipsd_node_handlers_destroy(h); go_swap_free(configs);
     for (int c = 0; c < 2; ++c) for (int k = 0; k <= K_COUNT; ++k) free(samples[c][k]);
+    for (int c = 0; c < 2; ++c) free(dp_samples[c]);
     free(pool);
     return max_p99_us && p99 / 1000 > max_p99_us ? 1 : 0;
 }

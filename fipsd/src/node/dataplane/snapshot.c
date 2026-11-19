@@ -29,7 +29,8 @@ static void snapshot_free(void *value)
         go_refptr_release(&s->peers[i].coords); go_refptr_release(&s->peers[i].filter);
     }
     for (size_t i = 0; i < s->epoch_count; ++i) fips_cipher_state_destroy(&s->epochs[i].recv);
-    free(s->peers); free(s->epochs); free(s->cache); free(s);
+    go_refptr_release(&s->cache_ref);
+    free(s->peers); free(s->epochs); free(s);
 }
 static uint64_t machine_hash(uint64_t v, const fips_rekey *m)
 {
@@ -114,14 +115,33 @@ bool fipsd_dp_publish(handlers *h)
         fp = hash(fp, &h->session_entries[i].peer, sizeof(fips_node_addr));
         fp = machine_hash(fp, &h->session_entries[i].machine);
     }
-    fips_coord_cache_iter(&h->cache, now, cache_hash, &fp);
+    /* The cache section: while the core's generation is unchanged and `now`
+     * has not passed the earliest live expiry, the same entries are live with
+     * the same contents, so neither hash nor copy them again. */
+    uint64_t now_ms = fips_coord_cache_millis(&h->cache, now), generation = fips_coord_cache_generation(&h->cache);
+    bool unchanged = old && d->cache_section.valid && d->cache_section.generation == generation &&
+        now_ms >= d->cache_section.scanned_ms && now_ms <= d->cache_section.next_expiry_ms;
+    uint64_t cache_fp = d->cache_section.fingerprint, next_expiry = d->cache_section.next_expiry_ms;
+    if (!unchanged) {
+        cache_fp = UINT64_C(1469598103934665603);
+        next_expiry = fips_coord_cache_scan(&h->cache, now, cache_hash, &cache_fp).next_expiry_ms;
+    }
+    fp = hash(fp, &cache_fp, sizeof cache_fp);
+    bool share = old && d->cache_section.valid && cache_fp == d->cache_section.fingerprint;
+    if (share && !unchanged) /* same entries: current's section now stands for this generation */
+        d->cache_section = (fipsd_dp_cache_section){true, generation, now_ms, next_expiry, cache_fp};
     if (old && old->fingerprint == fp) { d->needs_publish = false; return true; }
     fipsd_dp_snapshot *s = calloc(1, sizeof *s);
     if (!s) return false;
     s->me = h->me; s->origin = h->origin; s->fingerprint = fp;
     s->peers = calloc(h->cfg.peer_capacity, sizeof *s->peers);
     s->epochs = calloc(3 * (h->cfg.peer_capacity + h->cfg.session_capacity), sizeof *s->epochs);
-    s->cache = calloc(h->cache.len + 1, sizeof *s->cache);
+    if (share) {
+        s->cache_ref = old->cache_ref; go_refptr_retain(&s->cache_ref);
+        s->cache = old->cache; s->cache_count = old->cache_count;
+    } else if ((s->cache = calloc(h->cache.len + 1, sizeof *s->cache))) {
+        s->cache_ref = make_go_refptr(s->cache, free);
+    }
     s->my_coords = coord_copy(fips_tree_state_my_coords(h->tree), old ? old->my_coords : (GoRefPtr){0});
     if (!s->peers || !s->epochs || !s->cache || !s->my_coords.ptr) { snapshot_free(s); return false; }
     for (size_t i = 0; i < h->cfg.peer_capacity; ++i) {
@@ -151,8 +171,9 @@ bool fipsd_dp_publish(handlers *h)
     }
     for (size_t i = 0; i < h->sessions.capacity; ++i) if (h->session_entries[i].occupied)
         epochs(s, &h->session_entries[i].machine, &h->session_entries[i].peer, true, (fips_transport_id){0}, false);
-    fips_coord_cache_iter(&h->cache, now, cache_copy, s);
+    if (!share) fips_coord_cache_iter(&h->cache, now, cache_copy, s);
     if (!go_swap_store(d->tables, s)) { snapshot_free(s); return false; }
+    if (!share) d->cache_section = (fipsd_dp_cache_section){true, generation, now_ms, next_expiry, cache_fp};
     go_refptr_release(&d->current);
     d->current = go_swap_load(d->tables); /* once per changed generation, NOT a packet read */
     d->needs_publish = false;
