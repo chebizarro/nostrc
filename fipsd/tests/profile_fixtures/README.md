@@ -22,7 +22,9 @@ traffic driver as C.
 Tests normalize timestamps, counters and metadata **values**, not column names,
 header keys, notes, row names, units, or order. The only conditional difference
 removed is `debug_assert_peer_maps_coherent`: Cargo's requested release build
-omits it, while the C Debug build emits it. Linux/macOS have identical remaining
+omits it, while the C Debug build emits it. `FipsdProfilingTest` expects the
+row exactly when `fipsd_lib` is built without `NDEBUG` (CMake passes that as
+`FIPSD_PROFILE_LIB_EMITS_DEBUG_ROW`; the test itself is built `-UNDEBUG`). Linux/macOS have identical remaining
 rows; other platforms must account for upstream's platform-conditional rows.
 Pipeline tests compare field layout and unit syntax against the captured lines;
 the C unit test additionally checks exact histogram/percentile arithmetic.

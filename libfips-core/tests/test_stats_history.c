@@ -2,6 +2,7 @@
 #include <fips/node/stats_history.h>
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #define CHECK(e) do { if (!(e)) { fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, #e); return 1; } } while (0)
 #define FAST FIPS_GRANULARITY_FAST
@@ -418,6 +419,140 @@ static int overflow_rebase_preserves_cadence_and_backfill(void)
     PQ(1, SRTT_MS, 86400, SLOW); CHECK(all_nan(0, 1439) && buffer[1439] == 33);
     return 0;
 }
+
+/* fips_stats_history_sync: an earlier copy of a history brought current by
+ * copying only what changed. Compared field by field (rings carry padding). */
+#define SYNC_POOL 24
+static bool ring_equal(const fips_stats_ring *a, const fips_stats_ring *b)
+{
+    return !memcmp(a->fast, b->fast, sizeof a->fast) && !memcmp(a->slow, b->slow, sizeof a->slow) &&
+        a->fast_start == b->fast_start && a->fast_len == b->fast_len &&
+        a->slow_start == b->slow_start && a->slow_len == b->slow_len &&
+        !memcmp(&a->sum, &b->sum, sizeof a->sum) && !memcmp(&a->last, &b->last, sizeof a->last) &&
+        a->count == b->count && a->total == b->total && a->prev_total == b->prev_total &&
+        a->has_prev == b->has_prev && a->aggregation == b->aggregation;
+}
+static bool history_equal(const fips_stats_history *a, const fips_stats_history *b)
+{
+    if (a->peer_count != b->peer_count || a->fast_pushes != b->fast_pushes || a->has_data != b->has_data ||
+        a->last_tick.ops != b->last_tick.ops || memcmp(&a->last_tick, &b->last_tick, sizeof a->last_tick))
+        return false;
+    for (int i = 0; i < FIPS_METRIC_COUNT; ++i) if (!ring_equal(&a->rings[i], &b->rings[i])) return false;
+    for (size_t i = 0; i < a->peer_count; ++i) {
+        const fips_peer_stats *p = &a->peers[i], *q = &b->peers[i];
+        if (memcmp(p->addr, q->addr, 16) || p->born != q->born || p->seen_tick != q->seen_tick ||
+            memcmp(&p->first_seen, &q->first_seen, sizeof p->first_seen) ||
+            memcmp(&p->last_contact, &q->last_contact, sizeof p->last_contact)) return false;
+        for (int j = 0; j < FIPS_PEER_METRIC_COUNT; ++j) if (!ring_equal(&p->rings[j], &q->rings[j])) return false;
+    }
+    return true;
+}
+typedef struct hist { fips_stats_history h; fips_peer_stats *peers; } hist;
+static bool hist_new(hist *x, size_t cap)
+{
+    x->peers = calloc(cap, sizeof *x->peers);
+    if (x->peers) fips_stats_history_init(&x->h, x->peers, cap);
+    return x->peers != NULL;
+}
+static bool hist_clone(hist *to, const hist *from)
+{
+    if (!hist_new(to, from->h.peer_capacity)) return false;
+    to->h = from->h; to->h.peers = to->peers;
+    memcpy(to->peers, from->h.peers, from->h.peer_count * sizeof *to->peers);
+    return true;
+}
+static uint32_t sync_rng = 20260618;
+static uint32_t sync_next(void) { sync_rng = sync_rng * 1103515245u + 12345u; return sync_rng >> 8; }
+static uint64_t sync_secs;
+static uint64_t sync_totals[SYNC_POOL];
+static int sync_tick(hist *x, bool jump)
+{
+    fips_peer_snapshot ps[SYNC_POOL]; size_t n = 0;
+    sync_secs += jump ? 90000 : 1;
+    for (unsigned id = 0; id < SYNC_POOL; ++id) {
+        if (sync_next() % 4) continue;
+        sync_totals[id] += sync_next() % 5000;
+        if (sync_next() % 50 == 0) sync_totals[id] /= 2; /* a counter reset */
+        ps[n++] = peer((unsigned char)(id + 1), sync_secs, sync_totals[id]);
+        if (sync_next() % 3 == 0) ps[n - 1].has_srtt_ms = false;
+    }
+    fips_stats_snapshot sn = snap(sync_next() % 500);
+    CHECK(fips_stats_history_tick(&x->h, secs(sync_secs), &sn, ps, n) == FIPS_OK);
+    return 0;
+}
+static int sync_brings_an_earlier_copy_current_under_churn(void)
+{
+    enum { CLONES = 4, TICKS = 14000 };
+    hist live, clone[CLONES]; size_t due[CLONES] = {0};
+    CHECK(hist_new(&live, SYNC_POOL));
+    sync_secs = 0; memset(sync_totals, 0, sizeof sync_totals);
+    for (int i = 0; i < 70; ++i) CHECK(!sync_tick(&live, false));
+    for (int i = 0; i < CLONES; ++i) CHECK(hist_clone(&clone[i], &live));
+    size_t syncs = 0, evicting = 0, long_gaps = 0;
+    for (size_t t = 0; t < TICKS; ++t) {
+        bool jump = sync_next() % 400 == 0;
+        evicting += jump;
+        CHECK(!sync_tick(&live, jump));
+        for (int i = 0; i < CLONES; ++i) {
+            if (t < due[i]) continue;
+            CHECK(fips_stats_history_sync(&clone[i].h, &live.h) == FIPS_OK);
+            CHECK(history_equal(&clone[i].h, &live.h));
+            uint32_t r = sync_next() % 20;
+            size_t gap = r < 14 ? 1 + r % 7 : r < 18 ? 58 + sync_next() % 5 : r < 19 ? 100 + sync_next() % 400 : 3590 + sync_next() % 40;
+            long_gaps += gap > 3000;
+            due[i] = t + gap; ++syncs;
+        }
+    }
+    if (!(syncs > 200 && evicting > 10 && long_gaps > 8)) fprintf(stderr, "syncs=%zu evicting=%zu long_gaps=%zu\n", syncs, evicting, long_gaps);
+    CHECK(syncs > 200 && evicting > 10 && long_gaps > 8);
+    for (int i = 0; i < CLONES; ++i) free(clone[i].peers);
+    free(live.peers);
+    return 0;
+}
+static int sync_copies_only_what_changed(void)
+{
+    hist live, copy;
+    CHECK(hist_new(&live, SYNC_POOL)); sync_secs = 0; memset(sync_totals, 0, sizeof sync_totals);
+    for (int i = 0; i < 200; ++i) CHECK(!sync_tick(&live, false));
+    CHECK(live.h.peer_count > 3 && hist_clone(&copy, &live));
+    /* An old sample in the copy that the live history still has is not rewritten. */
+    double keep_node = copy.h.rings[FIPS_METRIC_MESH_SIZE].fast[0], keep_peer = copy.peers[0].rings[0].fast[0];
+    copy.h.rings[FIPS_METRIC_MESH_SIZE].fast[0] = -1; copy.peers[0].rings[0].fast[0] = -2;
+    for (int i = 0; i < 3; ++i) CHECK(!sync_tick(&live, false));
+    CHECK(fips_stats_history_sync(&copy.h, &live.h) == FIPS_OK);
+    CHECK(copy.h.rings[FIPS_METRIC_MESH_SIZE].fast[0] == -1 && copy.peers[0].rings[0].fast[0] == -2);
+    copy.h.rings[FIPS_METRIC_MESH_SIZE].fast[0] = keep_node; copy.peers[0].rings[0].fast[0] = keep_peer;
+    CHECK(history_equal(&copy.h, &live.h));
+    /* Nothing elapsed: nothing to do and still equal. */
+    CHECK(fips_stats_history_sync(&copy.h, &live.h) == FIPS_OK && history_equal(&copy.h, &live.h));
+    free(copy.peers); free(live.peers);
+    return 0;
+}
+static int sync_of_a_copy_ahead_of_its_source_copies_whole(void)
+{
+    hist live, past, ahead;
+    CHECK(hist_new(&live, SYNC_POOL)); sync_secs = 0; memset(sync_totals, 0, sizeof sync_totals);
+    for (int i = 0; i < 150; ++i) CHECK(!sync_tick(&live, false));
+    CHECK(hist_clone(&past, &live));
+    for (int i = 0; i < 90; ++i) CHECK(!sync_tick(&live, false));
+    CHECK(hist_clone(&ahead, &live));
+    CHECK(fips_stats_history_sync(&ahead.h, &past.h) == FIPS_OK && history_equal(&ahead.h, &past.h));
+    free(ahead.peers); free(past.peers); free(live.peers);
+    return 0;
+}
+static int sync_refuses_a_destination_too_small_for_the_peers(void)
+{
+    hist live, small;
+    CHECK(hist_new(&live, SYNC_POOL)); sync_secs = 0; memset(sync_totals, 0, sizeof sync_totals);
+    for (int i = 0; i < 40; ++i) CHECK(!sync_tick(&live, false));
+    CHECK(live.h.peer_count > 2 && hist_new(&small, 2));
+    fips_stats_history_init(&small.h, small.peers, 2);
+    fips_stats_history before = small.h;
+    CHECK(fips_stats_history_sync(&small.h, &live.h) == FIPS_ERR_RANGE);
+    CHECK(!memcmp(&before, &small.h, sizeof before) && small.h.peer_count == 0);
+    free(small.peers); free(live.peers);
+    return 0;
+}
 int main(void)
 {
     int (*tests[])(void) = {
@@ -438,9 +573,11 @@ int main(void)
         gaps_rebaseline_every_counter_and_node_saturates,
         peer_metadata_optional_gauges_and_backfill, peer_sum_last_nan_and_duplicate_inputs,
         minute_boundary_joins_and_duplicate_flush, counters_subtract_before_double_conversion,
-        overflow_rebase_preserves_cadence_and_backfill
+        overflow_rebase_preserves_cadence_and_backfill,
+        sync_brings_an_earlier_copy_current_under_churn, sync_copies_only_what_changed,
+        sync_of_a_copy_ahead_of_its_source_copies_whole, sync_refuses_a_destination_too_small_for_the_peers
     };
     for (size_t i = 0; i < sizeof(tests) / sizeof(tests[0]); ++i) if (tests[i]()) return 1;
-    puts("stats history: 22 upstream tests + 9 edge tests passed");
+    puts("stats history: 22 upstream tests + 9 edge tests + 4 sync tests passed");
     return 0;
 }

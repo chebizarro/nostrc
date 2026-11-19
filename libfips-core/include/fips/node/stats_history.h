@@ -67,6 +67,7 @@ typedef struct fips_peer_stats {
     fips_stats_ring rings[FIPS_PEER_METRIC_COUNT];
     fips_instant first_seen, last_contact;
     bool seen_tick;
+    uint64_t born; /* fast_pushes when created: tells a peer from a later peer of the same address */
 } fips_peer_stats;
 typedef struct fips_stats_history {
     fips_stats_ring rings[FIPS_METRIC_COUNT];
@@ -92,6 +93,19 @@ FIPS_CORE_API void fips_stats_history_init(fips_stats_history *h,
 FIPS_CORE_API fips_status fips_stats_history_tick(fips_stats_history *h, fips_instant now,
     const fips_stats_snapshot *snapshot, const fips_peer_snapshot *peers, size_t count);
 FIPS_CORE_API void fips_stats_history_cleanup(fips_stats_history *h, fips_instant now);
+/** Host-diagnostic incremental copy (no upstream counterpart). dst holds an
+ * earlier state of src's own history: the same fips_stats_history_init, only
+ * tick and cleanup calls since (a re-initialized src, or an unrelated dst, is
+ * not an earlier state; copy it whole). Brings dst equal to src (every ring,
+ * peer and counter) by copying only what the ticks since changed: per ring the
+ * samples pushed since and the ring's scalars, per peer that dst lacks or
+ * holds from before an eviction the whole peer, and nothing for an unchanged
+ * ring. Cost grows with the ticks elapsed, up to a ring's capacity, not with
+ * the retained history. dst keeps its own peer storage (dst->peers, sorted like
+ * src's); FIPS_ERR_RANGE with dst unchanged if dst->peer_capacity is below
+ * src->peer_count. src is not modified. */
+FIPS_CORE_API fips_status fips_stats_history_sync(fips_stats_history *dst,
+                                                  const fips_stats_history *src);
 /** Borrowed metadata, invalidated by the next mutating history call. NULL if absent. */
 FIPS_CORE_API const fips_peer_stats *fips_stats_history_peer(const fips_stats_history *h,
                                                           const uint8_t addr[16]);

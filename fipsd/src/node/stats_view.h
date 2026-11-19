@@ -10,9 +10,15 @@
  * peer carries seven. The dispatcher logs each history update's inputs and
  * brings a free view current by replaying them (the update is deterministic),
  * so an unchanged history costs a retain and a changed one a tick's pushes.
+ * A view the log cannot replay (older than the log, or behind a refused
+ * update) is brought current by the core's incremental fips_stats_history_sync
+ * instead: it copies the samples pushed since, not the retained history. Only a
+ * view that was never filled, or whose history was re-initialized, is copied
+ * whole. Three views, the third allocated only when two are read at once, let
+ * a slow control client hold one without forcing a copy per publish.
  * Only the dispatcher writes a view, and only while no snapshot holds it;
  * fipsd_stats_view_release is the one call any thread may make. */
-#define FIPSD_STATS_VIEWS 2
+#define FIPSD_STATS_VIEWS 3
 #define FIPSD_STATS_LOG 8
 
 typedef struct fipsd_stats_view fipsd_stats_view;
@@ -30,7 +36,8 @@ typedef struct fipsd_stats_views {
     fipsd_stats_update log[FIPSD_STATS_LOG];
     size_t log_capacity; /* peers per logged update */
     uint64_t seq;        /* updates applied to the live history */
-    uint64_t copies, replays; /* view refreshes, for diagnostics */
+    uint64_t lineage;    /* live history re-initializations: views of another are copied whole */
+    uint64_t copies, replays, syncs; /* view refreshes, for diagnostics */
 } fipsd_stats_views;
 
 typedef enum fipsd_stats_outcome {

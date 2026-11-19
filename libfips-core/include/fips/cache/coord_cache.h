@@ -89,7 +89,16 @@ typedef struct fips_placed {
     bool unfunded;
 } fips_placed;
 typedef enum fips_cache_place { FIPS_PLACE_BY_USE, FIPS_PLACE_PARKED, FIPS_PLACE_PROBATION } fips_cache_place;
-typedef struct fips_cache_stats { size_t entries, max_entries, expired; uint64_t avg_age_ms; } fips_cache_stats;
+/** next_expiry_ms: the earliest expires_at (cache-relative ms) among entries not
+ * expired at the stats' instant, UINT64_MAX if none. Until `now` passes it no
+ * entry newly expires, so with an unchanged fips_coord_cache_generation the
+ * same entries stay live and every entry has aged by exactly the time elapsed
+ * (avg_age_ms grows by it; entries and expired stay). */
+typedef struct fips_cache_stats {
+    size_t entries, max_entries, expired;
+    uint64_t avg_age_ms;
+    uint64_t next_expiry_ms;
+} fips_cache_stats;
 FIPS_CORE_API double fips_cache_stats_fill_ratio(const fips_cache_stats *s);
 typedef enum fips_cache_error { FIPS_CACHE_FULL, FIPS_CACHE_NOT_FOUND, FIPS_CACHE_EXPIRED } fips_cache_error;
 FIPS_CORE_API const char *fips_cache_error_name(fips_cache_error e);
@@ -112,6 +121,7 @@ typedef struct fips_coord_cache {
     size_t slot_capacity, table_len, len, by_use_len, parked_len, probation_len;
     uint32_t free_head;
     uint64_t seq, stored_weight, default_ttl_ms, eviction_examined;
+    uint64_t generation; /* see fips_coord_cache_generation */
     size_t max_entries;
     fips_instant epoch;
     uint8_t hash_key[16];
@@ -182,6 +192,17 @@ FIPS_CORE_API void fips_coord_cache_clear_path_mtu(fips_coord_cache *c, const ui
 FIPS_CORE_API bool fips_coord_cache_contains(const fips_coord_cache *c, const uint8_t addr[16],
                                              fips_instant now);
 FIPS_CORE_API size_t fips_coord_cache_len(const fips_coord_cache *c); /* incl. expired */
+/** Host-diagnostic change counter (no upstream counterpart), for callers that
+ * keep a derived view of the cache. It advances on every call that can change
+ * what iter, stats or scan report apart from the passage of time: any insert,
+ * a get_and_touch that refreshes or removes, remove, demote, clear_path_mtu,
+ * purge_expired, the invalidate calls and clear. Read-only calls and calls
+ * that change nothing (a refused write) may or may not advance it. Between
+ * inits it never goes backwards or repeats a value for different contents;
+ * fips_coord_cache_init restarts it, so drop derived views with the cache. A
+ * derived view stays exact while the generation is unchanged and `now` has not
+ * passed fips_cache_stats.next_expiry_ms (`now` must not run backwards). */
+FIPS_CORE_API uint64_t fips_coord_cache_generation(const fips_coord_cache *c);
 FIPS_CORE_API bool fips_coord_cache_is_empty(const fips_coord_cache *c);
 /** Rust iter(): non-expired entries, in storage order (upstream order is
  * random per process; nothing may depend on it). Return false to stop. */

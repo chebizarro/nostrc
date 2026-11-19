@@ -720,3 +720,29 @@ scratch, or heaps that do not account for `len`, it falls back to the sweeps.
 `FipsCoreCoordCacheTest` cross-checks it against iter and stats under random
 churn. No pin change. Version decision: additive API, **libfips-core 0.1.0
 Unreleased**.
+
+## Cache generation and stats-history sync (nostrc-igg4w)
+
+All three additions are C-only host diagnostics with no upstream counterpart,
+and change no upstream behaviour.
+
+- `fips_coord_cache_generation` advances on every call that can change what
+  iter, stats or scan report apart from time (inserts, a refreshing or removing
+  `get_and_touch`, `remove`, `demote`, `clear_path_mtu`, the purge/invalidate
+  calls, `clear`). `fips_cache_stats` gains `next_expiry_ms`, the earliest
+  `expires_at` among entries live at the stats' instant. While the generation
+  is unchanged and `now` has not passed it, a scan's rows and counts stand and
+  every age advances by the time elapsed. `FipsCoreCoordCacheTest` checks that
+  every change to resident contents moves the generation and that a reused scan
+  equals a fresh one under random churn.
+- `fips_peer_stats.born` records `fast_pushes` at creation, so a peer evicted
+  and re-created under the same address is distinguishable.
+- `fips_stats_history_sync(dst, src)` brings an earlier state of `src` current
+  by copying the samples pushed since, per ring, and the peers that arrived or
+  left (a dst ahead of src is copied whole). It relies on every ring advancing
+  once per tick and on slow samples being pushed every 60th; `FipsCoreStatsHistoryTest`
+  syncs stale copies of all ages against a live history under churn, 24-hour
+  eviction and re-creation, and checks that unchanged samples are not rewritten.
+
+No pin change. Version decision: additive API (and two additive struct fields),
+**libfips-core 0.1.0 Unreleased**.

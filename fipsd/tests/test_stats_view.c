@@ -1,8 +1,10 @@
 /* Snapshot stats-history views: replayed views answer every control query
  * exactly like the live history under peer churn, 24-hour eviction and storage
- * growth; a held view never changes; refused updates, invalidation and a
- * log-less (zeroed) pool fall back to copies; a reader thread releasing views
- * while the writer replays them is race-free (run under TSan). */
+ * growth; a held view never changes; a view the log cannot replay (older than
+ * the log, behind a refused update, or a log-less zeroed pool) is synced
+ * incrementally and only a never-filled or re-initialized one is copied whole;
+ * a reader thread releasing views while the writer replays them is race-free
+ * (run under TSan). */
 #include "node/stats_view.h"
 #include "host_os.h"
 #include <pthread.h>
@@ -127,25 +129,60 @@ int main(void)
         (void)tick(&l, &v); r[i] = fipsd_stats_views_acquire(&v, &l.h); CHECK(r[i] && same(fipsd_stats_view_history(r[i]), &l.h));
     }
     for (size_t i = 0; i < FIPSD_STATS_VIEWS + 2; ++i) fipsd_stats_view_release(r[i]);
-    /* A refused update, more than a log of updates, and a re-initialized
-     * history all leave views to copy, still equal to live. */
+    /* A refused update and more than a log of updates leave the views behind
+     * the log: they are synced (what changed), not copied, and still equal live. */
+    uint64_t copies = v.copies, syncs = v.syncs;
     fipsd_stats_views_record(&v, false, now_at, &(fips_stats_snapshot){0}, NULL, 0);
     fipsd_stats_view *w = fipsd_stats_views_acquire(&v, &l.h); CHECK(w && same(fipsd_stats_view_history(w), &l.h));
     fipsd_stats_view_release(w);
-    for (int i = 0; i < FIPSD_STATS_LOG + 3; ++i) (void)tick(&l, &v);
+    CHECK(v.copies == copies && v.syncs == syncs + 1);
+    for (int round = 0; round < 80; ++round) {
+        int gap = FIPSD_STATS_LOG + 1 + (int)(next() % 40);
+        for (int i = 0; i < gap; ++i) (void)tick(&l, &v);
+        w = fipsd_stats_views_acquire(&v, &l.h); CHECK(w && same(fipsd_stats_view_history(w), &l.h)); fipsd_stats_view_release(w);
+    }
+    CHECK(v.copies == copies && v.syncs >= syncs + 1 + 80);
+    /* A slow reader holds one view across many publishes: with three views the
+     * other two keep alternating, so it costs no copy, and what it holds is
+     * unchanged however far the live history moves. */
+    copies = v.copies;
+    fipsd_stats_view *slow = fipsd_stats_views_acquire(&v, &l.h); CHECK(slow);
+    static fips_stats_history slow_frozen; fips_peer_stats *slow_peers = NULL;
+    slow_frozen = *fipsd_stats_view_history(slow);
+    slow_peers = malloc((slow_frozen.peer_count + 1) * sizeof *slow_peers); CHECK(slow_peers);
+    memcpy(slow_peers, slow_frozen.peers, slow_frozen.peer_count * sizeof *slow_peers); slow_frozen.peers = slow_peers;
+    for (int i = 0; i < 60; ++i) {
+        (void)tick(&l, &v);
+        w = fipsd_stats_views_acquire(&v, &l.h); CHECK(w && same(fipsd_stats_view_history(w), &l.h)); fipsd_stats_view_release(w);
+        CHECK(same(fipsd_stats_view_history(slow), &slow_frozen));
+    }
+    CHECK(v.copies <= copies + 1); /* at most the third view's first fill */
+    /* Every view read at once: the fourth reader takes a fresh view, filled whole. */
+    fipsd_stats_view *others[FIPSD_STATS_VIEWS];
+    for (size_t i = 0; i < FIPSD_STATS_VIEWS - 1; ++i) {
+        (void)tick(&l, &v); others[i] = fipsd_stats_views_acquire(&v, &l.h); CHECK(others[i]);
+    }
+    copies = v.copies; (void)tick(&l, &v);
     w = fipsd_stats_views_acquire(&v, &l.h); CHECK(w && same(fipsd_stats_view_history(w), &l.h)); fipsd_stats_view_release(w);
+    CHECK(v.copies == copies + 1 && same(fipsd_stats_view_history(slow), &slow_frozen));
+    for (size_t i = 0; i < FIPSD_STATS_VIEWS - 1; ++i) fipsd_stats_view_release(others[i]);
+    fipsd_stats_view_release(slow); free(slow_peers);
+    /* A re-initialized history is a new lineage: its views are copied whole. */
+    copies = v.copies;
     fips_stats_history_init(&l.h, l.storage, l.h.peer_capacity); fipsd_stats_views_invalidate(&v);
     w = fipsd_stats_views_acquire(&v, &l.h); CHECK(w && fipsd_stats_view_history(w)->peer_count == 0 && same(fipsd_stats_view_history(w), &l.h));
+    CHECK(v.copies == copies + 1);
     fipsd_stats_view *kept = w; /* outlives the pool */
     fipsd_stats_views_free(&v);
     CHECK(same(fipsd_stats_view_history(kept), &l.h)); fipsd_stats_view_release(kept);
 
-    /* Zeroed pool, no log: every change is a copy. */
+    /* Zeroed pool, no log: the first fill is a copy and every later change a sync. */
     fipsd_stats_views z; memset(&z, 0, sizeof z);
     for (int i = 0; i < 20; ++i) {
         (void)tick(&l, &z);
         w = fipsd_stats_views_acquire(&z, &l.h); CHECK(w && same(fipsd_stats_view_history(w), &l.h)); fipsd_stats_view_release(w);
     }
+    CHECK(z.copies == 1 && z.syncs >= 15 && z.replays == 0);
     fipsd_stats_views_free(&z);
 
     /* Reader on another thread; the writer only rewrites views it alone holds. */

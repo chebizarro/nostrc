@@ -1209,7 +1209,7 @@ and sessions close with their Release outputs executed before the table is freed
 | `timeout.rs` (766) + rx_loop tick | `timeout.c` | 79 | Timer wheel: nearest deadline over legs, sessions, paths and the maintenance tick; tick duties (tree, bloom, lookup, MMP, sessions, probes, caches, limiters, stats history) |
 | `native.rs`/`host_link.rs` (673) | `native.c` | 18 | Seams for B4: inbound datagrams become `FIPSD_NOTICE_DATAGRAM`; outbound is `fipsd_node_handlers_send` |
 | `netmon.rs` (228) | `netmon.c` | 18 | Network change → path presence seam, immediate heartbeats |
-| control `snapshot.rs`/`queries.rs` rows | `provider.c` | 587 | Immutable snapshot arena (typed rows + JSON projections with upstream field names) published via GoSwap, sharing ref-counted stats-history views (`node/stats_view.c`); live commands enqueued to the dispatcher |
+| control `snapshot.rs`/`queries.rs` rows | `provider.c` | 642 | Immutable snapshot arena (typed rows + JSON projections with upstream field names) published via GoSwap, sharing ref-counted stats-history views (`node/stats_view.c`); live commands enqueued to the dispatcher |
 | `mod.rs`/`reject.rs`/`diag.rs` plumbing | `handlers.c`, `internal.h` | 864 | Creation, storage, attach/detach, event entry points, notices, command mailbox, counters |
 
 Inbound path: transport `PACKET` → `fips_fmp_receive` gate → msg1/msg2 to
@@ -4149,3 +4149,26 @@ every query under churn, that held views stay immutable, the fallbacks, and
 cross-thread release under TSan. Version decision: **fipsd stays 0.1.0
 Unreleased**; the change folds into the initial daemon, with no manifest,
 declared-version or release/tag change.
+
+## Control-snapshot follow-ups (nostrc-igg4w)
+
+- **Cache section.** `publish_snapshot` reuses the last coordinate-cache scan
+  (rows and stats) while libfips-core's `fips_coord_cache_generation` is
+  unchanged and no entry has newly expired (`fips_cache_stats.next_expiry_ms`),
+  advancing only the average age. Any cache change rescans.
+- **History views.** A view the replay log cannot reach is synced with the
+  core's `fips_stats_history_sync` (the samples pushed since) instead of copied
+  whole; the pool is three views, the third allocated only when two are read at
+  once. A never-filled or re-initialized view is still copied whole.
+- **Benchmark.** `fipsd_snapshot_bench` times the real `publish_snapshot` with
+  256 retained peers; numbers and reproduction are in
+  [docs/perf.md](docs/perf.md#snapshot-follow-ups-cache-generation-and-incremental-history-views-nostrc-igg4w).
+  `FIPSD_SNAPSHOT_BENCH_TEST=ON` registers a Release-only p99 gate.
+- **Profiler row.** `debug_assert_peer_maps_coherent` is Debug-only by design
+  (as upstream's `debug_assert`); `FipsdProfilingTest` now expects it exactly
+  when `fipsd_lib` is built without `NDEBUG`, which its own `-UNDEBUG` can no
+  longer tell it, so a Release profiling build passes.
+
+Version decision: **fipsd stays 0.1.0 Unreleased**; the changes fold into the
+initial daemon with no declared-version, manifest-version or release/tag change,
+and no control-output, CLI, wire or configuration change.
