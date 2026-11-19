@@ -12,6 +12,10 @@
 #include <errno.h>
 #include <fcntl.h>
 
+#ifndef FIPSD_PROFILE_LIB_EMITS_DEBUG_ROW
+#error "FIPSD_PROFILE_LIB_EMITS_DEBUG_ROW is defined by fipsd/CMakeLists.txt"
+#endif
+
 /* Test-local syscall seam, matching the existing logger fault-object pattern.
  * These hooks are never part of the daemon/library. */
 static int create_fault, captured_fd;
@@ -147,8 +151,13 @@ static void golden(void)
     char *text = contents(f); fclose(f);
     assert(strstr(text, "\tcheck_timeouts\t1\t2\t2\tus\n"));
     assert(strstr(text, "\tpeers\t1\t42\t42\tpeers\n"));
-#ifndef NDEBUG
+    /* Debug-only row, keyed on the library's NDEBUG (this TU is -UNDEBUG). */
+    assert(fipsd_instr_step_emitted(FIPSD_INSTR_DEBUG_ASSERT_PEER_MAPS_COHERENT)
+           == (FIPSD_PROFILE_LIB_EMITS_DEBUG_ROW != 0));
+#if FIPSD_PROFILE_LIB_EMITS_DEBUG_ROW
     assert(strstr(text, "\tdebug_assert_peer_maps_coherent\t"));
+#else
+    assert(!strstr(text, "\tdebug_assert_peer_maps_coherent\t"));
 #endif
     FILE *ref = fopen(FIPSD_PROFILE_FIXTURES "/rust-tick-release.tsv", "r"); assert(ref);
     char *rust = contents(ref); fclose(ref);

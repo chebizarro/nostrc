@@ -241,19 +241,19 @@ static int test_cache_entry_saturating_add(void)
 /* cache/tests/mod.rs: 4 upstream cases. */
 static int test_cache_stats_fill_ratio(void)
 {
-    fips_cache_stats s = {50, 100, 0, 0};
+    fips_cache_stats s = {50, 100, 0, 0, 0};
     CHECK(fabs(fips_cache_stats_fill_ratio(&s) - 0.5) < 1e-15);
     return 0;
 }
 static int test_cache_stats_fill_ratio_zero_max(void)
 {
-    fips_cache_stats s = {0, 0, 0, 0};
+    fips_cache_stats s = {0, 0, 0, 0, 0};
     CHECK(fabs(fips_cache_stats_fill_ratio(&s)) < 1e-15);
     return 0;
 }
 static int test_cache_stats_fill_ratio_full(void)
 {
-    fips_cache_stats s = {100, 100, 10, 500};
+    fips_cache_stats s = {100, 100, 10, 500, 0};
     CHECK(fabs(fips_cache_stats_fill_ratio(&s) - 1.0) < 1e-15);
     return 0;
 }
@@ -1448,9 +1448,123 @@ static int scan_matches_iter_and_stats_under_churn(void)
         const fips_cache_stats *all[3] = {&gs, &fs, &ns};
         for (size_t i = 0; i < 3; ++i)
             CHECK(all[i]->entries == ws.entries && all[i]->max_entries == ws.max_entries &&
-                  all[i]->expired == ws.expired && all[i]->avg_age_ms == ws.avg_age_ms);
+                  all[i]->expired == ws.expired && all[i]->avg_age_ms == ws.avg_age_ms &&
+                  all[i]->next_expiry_ms == ws.next_expiry_ms);
     }
     CHECK(unexpected == 0);
+    return 0;
+}
+/* Every field a control view can show for every resident slot, expired or not:
+ * what the generation must account for. */
+static uint64_t contents_hash(void)
+{
+    uint64_t h = 1469598103934665603u;
+    for (size_t i = 0; i < cache.slot_capacity; ++i) {
+        const fips_coord_slot *s = &cache.slots[i];
+        if (!s->used) continue;
+        const fips_cache_entry *e = &s->entry;
+        uint64_t fields[] = {e->created_at, e->last_used, e->expires_at, e->verified_until,
+            (uint64_t)e->source, (uint64_t)e->has_path_mtu, e->path_mtu, e->coords.len};
+        for (size_t j = 0; j < 16; ++j) h = (h ^ s->addr[j]) * 1099511628211u;
+        for (size_t j = 0; j < sizeof fields / sizeof fields[0]; ++j) h = (h ^ fields[j]) * 1099511628211u;
+        for (size_t j = 0; j < e->coords.len; ++j)
+            for (size_t k = 0; k < 16; ++k) h = (h ^ e->coords.entries[j].node_addr[k]) * 1099511628211u;
+    }
+    return h;
+}
+/* A derived view keyed on the generation is exact: whenever any resident
+ * entry's reported state changed the generation moved, and while it has not
+ * moved and `now` stays within next_expiry_ms a fresh scan equals the earlier
+ * one with every age advanced by the elapsed time. */
+static int generation_covers_every_change_and_keeps_a_scan_exact(void)
+{
+    static uint64_t marks[FIPS_COORD_CACHE_MARK_WORDS(SLOTS)];
+    /* A small geometry: the content hash below walks every slot at every step. */
+    CHECK(new_cache_with(FIPS_COORD_CACHE_SLOTS(48) + 8, 48, 100, 7) == FIPS_OK);
+    unexpected = 0;
+    uint32_t rng = 987;
+    uint64_t gen = fips_coord_cache_generation(&cache), hash = contents_hash();
+    seen_list base = {.stop = 1000};
+    fips_cache_stats base_stats = fips_coord_cache_scan(&cache, t(0), marks, FIPS_COORD_CACHE_MARK_WORDS(cache.slot_capacity), record_visit, &base);
+    uint64_t base_ms = 0;
+    size_t reused = 0, expired_after = 0;
+    for (uint64_t step = 0, now = 0; step < 4000; ++step) {
+        rng = rng * 1103515245u + 12345u;
+        uint32_t r = rng >> 8;
+        naddr a = minted_addr(2, r % 70), root = make_node_addr(9);
+        now += r % 5 == 0 ? r % 40 : 0;
+        switch (r % 14) {
+        case 0: case 1: (void)ins(a, coords_of_len(a, root, 2 + r % 4), now); break;
+        case 2: (void)inst(a, coords_of_len(a, root, 3), now, 20 + r % 60); break;
+        case 3: insv(a, coords_of_len(a, root, 3), now); break;
+        case 4: insvm(a, coords_of_len(a, root, 2), now, (uint16_t)(1200 + r % 100)); break;
+        case 5: case 6: (void)fips_coord_cache_get_and_touch(&cache, a.b, t(now)); break;
+        case 7: (void)fips_coord_cache_remove(&cache, a.b, NULL); break;
+        case 8: (void)fips_coord_cache_demote(&cache, a.b); break;
+        case 9: fips_coord_cache_clear_path_mtu(&cache, a.b); break;
+        case 10: if (r % 7 == 0) (void)fips_coord_cache_purge_expired(&cache, t(now)); break;
+        case 11: if (r % 11 == 0) (void)fips_coord_cache_invalidate_via_node(&cache, minted_addr(0xd0, r % 3).b); break;
+        case 12: if (r % 13 == 0) (void)fips_coord_cache_invalidate_other_roots(&cache, make_node_addr(8).b); break;
+        default: (void)insf(a, coords_of_len(a, root, 3 + r % 3), now, r % 2 ? UPTO(10) : UNCHARGED); break;
+        }
+        uint64_t g = fips_coord_cache_generation(&cache), h = contents_hash();
+        CHECKS(g >= gen, "the generation never goes backwards");
+        CHECKS(h == hash || g != gen, "a change to resident contents moves the generation");
+        seen_list got = {.stop = 1000};
+        fips_cache_stats gs = fips_coord_cache_scan(&cache, t(now), marks, FIPS_COORD_CACHE_MARK_WORDS(cache.slot_capacity), record_visit, &got);
+        if (g == gen && now >= base_ms && now <= base_stats.next_expiry_ms) {
+            ++reused;
+            CHECKS(gs.entries == base_stats.entries && gs.expired == base_stats.expired, "entries and expired hold");
+            CHECKS(gs.avg_age_ms == base_stats.avg_age_ms + (gs.entries ? now - base_ms : 0), "ages advance by the elapsed time");
+            CHECKS(got.n == base.n, "the same entries are live");
+            for (size_t i = 0; i < got.n && i < 64; ++i)
+                CHECKS(!memcmp(got.addr[i], base.addr[i], 16) && got.entry[i]->last_used == base.entry[i]->last_used, "the same rows");
+        } else {
+            if (g == gen) ++expired_after; /* only the passage of time moved */
+            base = got; base_stats = gs; base_ms = now;
+            /* The pointers in `base` stay valid: only a mutation could move them
+             * and the next one re-scans. Copy the keys out regardless. */
+        }
+        gen = g; hash = h;
+        for (size_t i = 0; i < base.n && i < 64; ++i) {
+            static uint8_t keep[64][16]; static fips_cache_entry kept[64];
+            memcpy(keep[i], base.addr[i], 16); base.addr[i] = keep[i];
+            kept[i] = *base.entry[i]; base.entry[i] = &kept[i];
+        }
+    }
+    CHECK(unexpected == 0 && reused > 100 && expired_after > 10);
+    return 0;
+}
+static int generation_moves_on_each_public_mutation(void)
+{
+    NEW(100, 1000);
+    naddr a = make_node_addr(1), b = make_node_addr(2);
+    uint64_t g = fips_coord_cache_generation(&cache);
+#define MOVES(stmt) do { stmt; CHECK(fips_coord_cache_generation(&cache) > g); g = fips_coord_cache_generation(&cache); } while (0)
+    MOVES((void)ins(a, C(1, 0), 10));
+    MOVES((void)ins(a, C(1, 2, 0), 11));
+    MOVES(insv(b, C(2, 0), 12));
+    MOVES(insvm(a, C(1, 0), 13, 1280));
+    MOVES((void)gat(a, 14));
+    MOVES(CHECK(fips_coord_cache_demote(&cache, a.b)));
+    MOVES(fips_coord_cache_clear_path_mtu(&cache, a.b));
+    MOVES(CHECK(fips_coord_cache_remove(&cache, b.b, NULL)));
+    MOVES((void)fips_coord_cache_invalidate_via_node(&cache, a.b));
+    MOVES(insv(a, C(1, 0), 20));
+    MOVES((void)fips_coord_cache_invalidate_other_roots(&cache, make_node_addr(7).b));
+    MOVES(insv(a, C(1, 0), 30));
+    MOVES((void)gat(a, 5000)); /* expired: removed */
+    MOVES(insv(a, C(1, 0), 6000));
+    MOVES((void)fips_coord_cache_purge_expired(&cache, t(9000)));
+    MOVES(fips_coord_cache_clear(&cache));
+#undef MOVES
+    /* Reads leave it alone. */
+    insv(a, C(1, 0), 40);
+    g = fips_coord_cache_generation(&cache);
+    (void)get(a, 41); (void)ent(a); (void)has(a, 41); (void)len();
+    (void)fips_coord_cache_stats(&cache, t(41));
+    fips_coord_cache_iter(&cache, t(41), record_visit, &(seen_list){.stop = 9});
+    CHECK(fips_coord_cache_generation(&cache) == g);
     return 0;
 }
 static int remove_copies_the_entry_out(void)
@@ -1572,6 +1686,7 @@ int main(void)
         verified_excess_exhausts_storage_transactionally, ttl_boundaries_and_refresh,
         instants_before_the_epoch_read_as_millisecond_zero,
         iter_visits_live_entries_and_stops_on_request, scan_matches_iter_and_stats_under_churn,
+        generation_covers_every_change_and_keeps_a_scan_exact, generation_moves_on_each_public_mutation,
         remove_copies_the_entry_out,
         cached_coord_bounds_and_accessors, lookups_survive_interleaved_deletions
     };
@@ -1579,6 +1694,6 @@ int main(void)
         if (tests[i]()) return 1;
         if (unexpected) { fprintf(stderr, "test %zu: unexpected FIPS_ERR_RANGE\n", i); return 1; }
     }
-    puts("coord cache: 66 upstream cache + 6 entry + 4 stats/error tests + 9 C edge tests passed");
+    puts("coord cache: 66 upstream cache + 6 entry + 4 stats/error tests + 11 C edge tests passed");
     return 0;
 }

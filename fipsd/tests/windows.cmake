@@ -121,6 +121,16 @@ add_test(NAME FipsdStatsTest COMMAND fipsd_stats_test)
 set_tests_properties(FipsdStatsTest PROPERTIES TIMEOUT 60 LABELS "fips;unit;stats")
 add_dependencies(fipsd_tests fipsd_stats_test)
 
+# Control-snapshot history views (nostrc-igg4w): replay/sync parity and a reader
+# thread releasing views while the writer rewrites them. It needs only
+# pthread_create/join (winpthreads, which libgo links PUBLIC into every
+# fipsd_unit_test, as FipsdDataplaneTest's threads rely on), C11 atomics (clang,
+# as stats_view.c already uses) and the portable fipsd_host_os_clock.
+fipsd_unit_test(fipsd_stats_view_test test_stats_view.c)
+add_test(NAME FipsdStatsViewTest COMMAND fipsd_stats_view_test)
+set_tests_properties(FipsdStatsViewTest PROPERTIES TIMEOUT 120 LABELS "fips;unit;stats")
+add_dependencies(fipsd_tests fipsd_stats_view_test)
+
 fipsd_unit_test(fipsd_nostr_events_test test_nostr_events.c)
 target_sources(fipsd_nostr_events_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../../libfips-core/tests/fakes/host.c")
 target_include_directories(fipsd_nostr_events_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../../libfips-core/tests")
@@ -193,7 +203,7 @@ foreach(_test FipsdHostOsTest FipsdCliParseTest FipsdServiceStatusTest FipsdCont
     FipsdNodeHandlerFailureTest FipsdNodeTwoNodesTest FipsdUdpTwoNodesV4Test FipsdUdpTwoNodesV6Test
     FipsdNodeHandlersTest FipsdNodeStpAcksTest FipsdNodeStpAcksNoReportTest FipsdNodePathPresenceTest
     FipsdDataplaneTest FipsdAclTest FipsdNodeAclTest FipsdNodeAclAdmissionTest FipsdNodeRestartReplayTest
-    FipsdStatsTest FipsdNostrEventsTest FipsdTunWinnetTest FipsdTunWindowsTest FipsdTunPrivilegedSmokeTest
+    FipsdStatsTest FipsdStatsViewTest FipsdNostrEventsTest FipsdTunWinnetTest FipsdTunWindowsTest FipsdTunPrivilegedSmokeTest
     FipsdIpv6PrivilegedSmokeTest FipsdIpv6CodecTest FipsdIpv6IcmpTest FipsdIpv6FirewallTest FipsdUdpConnResetTest)
   get_test_property(${_test} COMMAND _cmd)
   list(GET _cmd 0 _target)

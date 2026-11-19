@@ -131,6 +131,7 @@ static void peer_init(fips_peer_stats *p, const uint8_t addr[16], fips_instant n
     memcpy(p->addr, addr, 16);
     p->first_seen = p->last_contact = now;
     p->seen_tick = false;
+    p->born = pushes;
     for (int i = 0; i < FIPS_PEER_METRIC_COUNT; ++i) {
         fips_stats_ring *r = &p->rings[i];
         ring_init(r, fips_peer_metrics[i].aggregation);
@@ -222,6 +223,78 @@ fips_status fips_stats_history_tick(fips_stats_history *h, fips_instant now,
     fips_stats_history_cleanup(h, now);
     h->last_tick = now;
     h->has_data = true;
+    return FIPS_OK;
+}
+
+/* Copy the last n samples written to a ring of capacity cap, wherever they
+ * sit, or the whole array when n reaches the capacity or the ring cannot hold n. */
+static void copy_tail(double *dst, const double *src, size_t cap, size_t start, size_t len, uint64_t n)
+{
+    if (n >= cap || n > len) { memcpy(dst, src, cap * sizeof *dst); return; }
+    /* The last n samples are contiguous from `at`, wrapping once at most. */
+    size_t at = (start + len - (size_t)n) % cap, first = cap - at;
+    if (first > n) first = (size_t)n;
+    memcpy(dst + at, src + at, first * sizeof *dst);
+    if (n > first) memcpy(dst, src, ((size_t)n - first) * sizeof *dst);
+}
+
+/* dst is the ring as it was kf fast pushes (ks slow pushes) ago. */
+static void sync_ring(fips_stats_ring *dst, const fips_stats_ring *src, bool delta, uint64_t kf, uint64_t ks)
+{
+    if (!delta) { *dst = *src; return; }
+    if (kf) copy_tail(dst->fast, src->fast, FIPS_FAST_RING_CAPACITY, src->fast_start, src->fast_len, kf);
+    if (ks) copy_tail(dst->slow, src->slow, FIPS_SLOW_RING_CAPACITY, src->slow_start, src->slow_len, ks);
+    dst->fast_start = src->fast_start; dst->fast_len = src->fast_len;
+    dst->slow_start = src->slow_start; dst->slow_len = src->slow_len;
+    dst->sum = src->sum; dst->last = src->last;
+    dst->count = src->count; dst->total = src->total;
+    dst->prev_total = src->prev_total; dst->has_prev = src->has_prev;
+    dst->aggregation = src->aggregation;
+}
+
+static bool same_peer(const fips_peer_stats *a, const fips_peer_stats *b)
+{
+    return a->born == b->born && memcmp(a->addr, b->addr, 16) == 0;
+}
+
+fips_status fips_stats_history_sync(fips_stats_history *dst, const fips_stats_history *src)
+{
+    if (src->peer_count > dst->peer_capacity) return FIPS_ERR_RANGE;
+    /* Every ring of a history advances once per tick, so one elapsed count
+     * serves them all; a dst ahead of src is no earlier state: copy rings whole. */
+    bool delta = dst->fast_pushes <= src->fast_pushes;
+    uint64_t kf = delta ? src->fast_pushes - dst->fast_pushes : 0;
+    uint64_t ks = delta ? src->fast_pushes / FIPS_DOWNSAMPLE_FACTOR - dst->fast_pushes / FIPS_DOWNSAMPLE_FACTOR : 0;
+    for (int i = 0; i < FIPS_METRIC_COUNT; ++i) sync_ring(&dst->rings[i], &src->rings[i], delta, kf, ks);
+
+    /* Peers dst holds that src no longer has, or holds as another peer of the
+     * same address, go first; the rest keep their rings and only advance. */
+    size_t kept = 0;
+    for (size_t i = 0; i < dst->peer_count; ++i) {
+        const fips_peer_stats *match = fips_stats_history_peer(src, dst->peers[i].addr);
+        if (!match || !same_peer(match, &dst->peers[i])) continue;
+        if (kept != i) dst->peers[kept] = dst->peers[i];
+        ++kept;
+    }
+    /* Then src's order is restored from the back: a kept peer moves up to its
+     * place (never past a slot still to be read), a new one is copied whole. */
+    size_t held = kept;
+    for (size_t i = src->peer_count; i-- > 0;) {
+        const fips_peer_stats *sp = &src->peers[i];
+        fips_peer_stats *dp = &dst->peers[i];
+        if (held > 0 && same_peer(&dst->peers[held - 1], sp)) {
+            --held;
+            if (held != i) memmove(dp, &dst->peers[held], sizeof *dp);
+            for (int j = 0; j < FIPS_PEER_METRIC_COUNT; ++j) sync_ring(&dp->rings[j], &sp->rings[j], delta, kf, ks);
+            dp->first_seen = sp->first_seen; dp->last_contact = sp->last_contact; dp->seen_tick = sp->seen_tick;
+        } else {
+            *dp = *sp;
+        }
+    }
+    dst->peer_count = src->peer_count;
+    dst->fast_pushes = src->fast_pushes;
+    dst->last_tick = src->last_tick;
+    dst->has_data = src->has_data;
     return FIPS_OK;
 }
 

@@ -576,6 +576,77 @@ medians of 672.5 Mbit/s before and 659.3 Mbit/s after (ranges 656–684 and
 635–689). Both are within the 10% tolerance of the 683.856 Mbit/s baseline
 below, which is unchanged.
 
+### Snapshot follow-ups: cache generation and incremental history views (nostrc-igg4w)
+
+Two costs of the incremental build still scaled with table size:
+
+- `snapshot_cache` ran the O(len) `fips_coord_cache_scan` (and rebuilt up to
+  256 JSON rows) on **every** publish, although most publishes follow no
+  cache change. libfips-core's cache now keeps a change counter
+  (`fips_coord_cache_generation`) and reports the earliest live expiry
+  (`fips_cache_stats.next_expiry_ms`). The dispatcher keeps the last scan as an
+  immutable, ref-counted cache section (`cache_view` in `provider.c`) shared by
+  every snapshot published while the generation is unchanged and no entry has
+  newly expired; only `avg_age_ms` advances, by exactly the elapsed time. Any
+  insert, touch, removal or expiry rescans, so a node whose cache is touched
+  by every forwarded frame still pays the scan on each publish.
+- A stats-history view the replay log cannot reach (older than the log's eight
+  updates, behind a refused update, or never filled) was **copied whole**:
+  ~283 KB per retained peer, about 72 MB at 256 peers. libfips-core gains
+  `fips_stats_history_sync`, which brings an earlier copy of a history current
+  by copying only the samples pushed since (per ring, at most two `memcpy`
+  segments) and any peers that arrived or were evicted; each peer carries the
+  `fast_pushes` it was `born` at, so a peer evicted and later re-created is
+  copied whole rather than mixed. A whole copy remains for a never-filled view
+  or a re-initialized history (`fipsd_stats_views_invalidate` starts a new
+  lineage). The pool grows from two views to three, the third allocated only
+  when two are read at once, so a slow control client pinning a view no longer
+  makes every publish copy.
+
+On this machine (macOS arm64, M4 Max) a warm 72 MB copy is ~1.2-1.3 ms and a
+freshly allocated one 4-6 ms, while a sync after 2-30 missed ticks is 40-170
+us, after 100 ticks ~0.26 ms and after a thousand ~1 ms (about a full copy
+once a ring's worth is missing).
+
+`fipsd_snapshot_bench` (always built, `tests/test_snapshot_bench.c`; the
+Release build is the measurement) drives the real dispatcher handlers and times
+every `hs_publish()` (the `publish_snapshot` stage) on the wall clock and on the
+dispatcher thread's CPU clock: 256 retained peers (new peers arrive at random
+sorted positions, then most are churned out), a coordinate cache of `--cache`
+resident entries touched before `--cache-churn` percent of publishes, a
+history tick every tenth publish, and `--slow-clients N` control clients that
+keep a snapshot for several ticks. `FIPSD_SNAPSHOT_BENCH_TEST=ON` registers
+`FipsdSnapshotPublishBench`, a `--max-p99-us 1000 --clock cpu` gate (Release
+only; not run by ordinary ctest).
+
+```text
+cmake -DCMAKE_BUILD_TYPE=Release -DFIPSD_SNAPSHOT_BENCH_TEST=ON ... && ninja fipsd_snapshot_bench
+FIPSD_WORKERS=2 fipsd/tests/fipsd_snapshot_bench --cache 50000 --cache-churn 0
+```
+
+Release, 2000 publishes per run, base and change binaries interleaved eight
+times on a shared host (load average 17-40; one run's over-1 ms counts swing
+with it, so medians and counts are shown). CPU-clock figures; `p99` is of all
+publishes; "over 1 ms" is publishes of 2000 above 1 ms, per run:
+
+| Scenario (256 retained peers) | p50 before | p50 after | p99 before | p99 after | over 1 ms before / after |
+| --- | --- | --- | --- | --- | --- |
+| 50k-entry cache, idle | 326 us | 3.6 us | 1028 us | 28 us | 3-78 / 1-2 |
+| 50k-entry cache, touched before 25% of publishes | 312 us | 4.2 us | 907 us | 539 us | 1-57 / 1-15 |
+| 4096-entry cache, touched before 25% | 116 us | 3.8 us | 175 us | 140 us | n/a |
+| 4096-entry cache, two slow control clients | 117 us | 3.5 us | 1377 us | 49 us | 65-66 / 4 |
+
+The history views while the slow clients pin them: 65 whole copies before,
+one after (the third view, once), 270 replays before and 592 after. The
+touched-cache row is bound by the O(len) rescan the touches force: its
+rescanning publishes cost ~300 us before and ~330 us after at 50k entries (the
+scan now also tracks the next expiry), and the publishes that need none cost
+~4 us. A touch changes only a row's `last_used`, so a rescan-free touch path
+(rows patched from the live entries) is possible and not done here. The
+remaining tail of the history-tick publishes is the dispatcher touching view
+storage that has been idle (page-ins under this host's memory pressure), which
+the benchmark cannot separate from the replay itself.
+
 ### Reproduction and verification
 
 `FipsdProfilingTest` joins `fipsd_tests` when profiling is enabled. It covers

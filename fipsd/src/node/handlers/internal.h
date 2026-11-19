@@ -326,6 +326,7 @@ struct fipsd_node_handlers {
     uint64_t snapshot_generation;
     uint64_t *cache_marks; /* snapshot scratch: FIPS_COORD_CACHE_MARK_WORDS(slots) */
     size_t cache_mark_words;
+    struct cache_view *cache_view; /* provider.c: the coordinate-cache section snapshots share */
     /* Native datagram API sink (handlers.h); loaded on every delivery. */
     _Atomic(GoChannel *) native_sink;
 };
@@ -472,6 +473,7 @@ void hs_netmon_event(handlers *h, const fipsd_netmon_event *e);
 /* provider.c */
 bool hs_provider_init(handlers *h);
 void hs_provider_free(handlers *h);
+void hs_provider_cache_reset(handlers *h); /* after the coordinate cache is re-initialized */
 void hs_publish(handlers *h, fips_instant now);
 json_t *hs_control_command(handlers *h, const char *name, const json_t *params);
 #endif

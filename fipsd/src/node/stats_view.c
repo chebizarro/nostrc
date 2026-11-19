@@ -6,6 +6,7 @@
 struct fipsd_stats_view {
     atomic_size_t refs; /* the pool's plus one per snapshot */
     uint64_t seq;       /* live updates reflected; meaningful only if valid */
+    uint64_t lineage;   /* the live history's lineage when last filled */
     bool valid;
     fips_peer_stats *storage; /* history.peers; history.peer_capacity is its size */
     fips_stats_history history;
@@ -60,6 +61,7 @@ void fipsd_stats_views_invalidate(fipsd_stats_views *v)
 {
     fipsd_stats_update *u = &v->log[++v->seq % FIPSD_STATS_LOG];
     u->seq = v->seq; u->replayable = false;
+    ++v->lineage; /* no view is an earlier state of what the history is now */
 }
 
 static bool replay(fipsd_stats_views *v, fipsd_stats_view *w)
@@ -85,7 +87,22 @@ static bool copy(fipsd_stats_views *v, fipsd_stats_view *w, const fips_stats_his
     }
     w->history = *live; w->history.peers = w->storage; w->history.peer_capacity = cap;
     if (live->peer_count) memcpy(w->storage, live->peers, live->peer_count * sizeof *w->storage);
-    w->seq = v->seq; w->valid = true; ++v->copies;
+    w->seq = v->seq; w->lineage = v->lineage; w->valid = true; ++v->copies;
+    return true;
+}
+/* A view the log cannot replay but whose history is an earlier state of the
+ * live one: copy what changed since. Its storage keeps whatever it holds (the
+ * core reads only peer_count of it), so growing it by realloc is enough. */
+static bool sync(fipsd_stats_views *v, fipsd_stats_view *w, const fips_stats_history *live)
+{
+    if (!w->valid || w->lineage != v->lineage) return false;
+    if (live->peer_count > w->history.peer_capacity) {
+        fips_peer_stats *grown = realloc(w->storage, live->peer_count * sizeof *grown);
+        if (!grown) return false;
+        w->storage = grown; w->history.peers = grown; w->history.peer_capacity = live->peer_count;
+    }
+    if (fips_stats_history_sync(&w->history, live) != FIPS_OK) return false;
+    w->seq = v->seq; ++v->syncs;
     return true;
 }
 /* Least replay first; an invalid view needs a full copy whatever its seq. */
@@ -116,7 +133,7 @@ fipsd_stats_view *fipsd_stats_views_acquire(fipsd_stats_views *v, const fips_sta
             v->pool[slot] = fresh;
         }
         w = v->pool[slot];
-        if (!replay(v, w) && !copy(v, w, live)) return NULL;
+        if (!replay(v, w) && !sync(v, w, live) && !copy(v, w, live)) return NULL;
         v->current = w;
     }
     atomic_fetch_add_explicit(&w->refs, 1, memory_order_relaxed);

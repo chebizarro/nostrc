@@ -193,6 +193,7 @@ static void file_new(fips_coord_cache *c, uint32_t idx, fips_segment segment)
     heap_push(c, heap_of(c, slot->place), idx);
     table_insert(c, idx);
     ++c->len;
+    ++c->generation;
 }
 
 /* Take a slot out of the map and its index without freeing it, so the caller
@@ -204,6 +205,7 @@ static void unfile(fips_coord_cache *c, uint32_t idx, bool in_heap)
     if (segment_of_place(slot->place) == FIPS_SEGMENT_MAIN) c->stored_weight -= slot->weight;
     table_remove(c, idx);
     --c->len;
+    ++c->generation;
 }
 
 static void remove_slot(fips_coord_cache *c, uint32_t idx)
@@ -309,6 +311,7 @@ static bool make_room(fips_coord_cache *c, uint64_t weight, uint64_t now)
 static void refile(fips_coord_cache *c, uint32_t idx)
 {
     fips_coord_slot *slot = &c->slots[idx];
+    ++c->generation;
     heap_delete(c, heap_of(c, slot->place), slot->heap_pos);
     set_key(c, idx, slot->entry.last_used);
     if (slot->place != FIPS_PLACE_PROBATION) slot->place = FIPS_PLACE_BY_USE;
@@ -474,6 +477,7 @@ void fips_coord_cache_clear(fips_coord_cache *c)
     }
     c->len = c->by_use_len = c->parked_len = c->probation_len = 0;
     c->stored_weight = 0;
+    ++c->generation;
 }
 
 uint64_t fips_coord_cache_millis(const fips_coord_cache *c, fips_instant now)
@@ -556,7 +560,7 @@ fips_status fips_coord_cache_insert_verified_with_path_mtu(fips_coord_cache *c,
     fips_status status = fips_coord_cache_insert_verified(c, addr, coords, now);
     if (status != FIPS_OK) return status;
     uint32_t idx = find(c, addr, NULL);
-    if (idx != NONE) fips_cache_entry_set_path_mtu(&c->slots[idx].entry, path_mtu);
+    if (idx != NONE) { fips_cache_entry_set_path_mtu(&c->slots[idx].entry, path_mtu); ++c->generation; }
     return FIPS_OK;
 }
 
@@ -582,6 +586,7 @@ const fips_cached_coord *fips_coord_cache_get_and_touch(fips_coord_cache *c,
         return NULL;
     }
     fips_cache_entry_refresh(entry, now_ms, c->default_ttl_ms);
+    ++c->generation;
     return &entry->coords;
 }
 
@@ -607,13 +612,16 @@ bool fips_coord_cache_demote(fips_coord_cache *c, const uint8_t addr[16])
     if (idx == NONE) return false;
     fips_cache_entry_mark_hint(&c->slots[idx].entry);
     if (c->slots[idx].place == FIPS_PLACE_PARKED) refile(c, idx);
+    ++c->generation;
     return true;
 }
 
 void fips_coord_cache_clear_path_mtu(fips_coord_cache *c, const uint8_t addr[16])
 {
     uint32_t idx = find(c, addr, NULL);
-    if (idx != NONE) fips_cache_entry_clear_path_mtu(&c->slots[idx].entry);
+    if (idx == NONE) return;
+    fips_cache_entry_clear_path_mtu(&c->slots[idx].entry);
+    ++c->generation;
 }
 
 bool fips_coord_cache_contains(const fips_coord_cache *c, const uint8_t addr[16],
@@ -623,6 +631,7 @@ bool fips_coord_cache_contains(const fips_coord_cache *c, const uint8_t addr[16]
 }
 
 size_t fips_coord_cache_len(const fips_coord_cache *c) { return c->len; }
+uint64_t fips_coord_cache_generation(const fips_coord_cache *c) { return c->generation; }
 bool fips_coord_cache_is_empty(const fips_coord_cache *c) { return c->len == 0; }
 
 void fips_coord_cache_iter(const fips_coord_cache *c, fips_instant now,
@@ -682,20 +691,21 @@ size_t fips_coord_cache_invalidate_other_roots(fips_coord_cache *c, const uint8_
 
 fips_cache_stats fips_coord_cache_stats(const fips_coord_cache *c, fips_instant now)
 {
-    uint64_t now_ms = fips_coord_cache_millis(c, now), total_age = 0;
+    uint64_t now_ms = fips_coord_cache_millis(c, now), total_age = 0, next_expiry = UINT64_MAX;
     size_t expired = 0;
     for (size_t i = 0; i < c->slot_capacity; ++i) {
         const fips_coord_slot *slot = &c->slots[i];
         if (!slot->used) continue;
         if (fips_cache_entry_is_expired(&slot->entry, now_ms)) ++expired;
+        else if (slot->entry.expires_at < next_expiry) next_expiry = slot->entry.expires_at;
         uint64_t age = fips_cache_entry_age(&slot->entry, now_ms);
         total_age = total_age > UINT64_MAX - age ? UINT64_MAX : total_age + age;
     }
     return (fips_cache_stats){c->len, c->max_entries, expired,
-                              c->len == 0 ? 0 : total_age / (uint64_t)c->len};
+                              c->len == 0 ? 0 : total_age / (uint64_t)c->len, next_expiry};
 }
 
-typedef struct scan_acc { uint64_t now_ms, total_age; size_t expired; } scan_acc;
+typedef struct scan_acc { uint64_t now_ms, total_age, next_expiry; size_t expired; } scan_acc;
 
 static unsigned low_bit(uint64_t bits) /* bits != 0 */
 {
@@ -711,7 +721,10 @@ static unsigned low_bit(uint64_t bits) /* bits != 0 */
 static void scan_slot(const fips_coord_slot *slot, scan_acc *acc, fips_coord_cache_visitor *visit, void *ctx)
 {
     bool expired = fips_cache_entry_is_expired(&slot->entry, acc->now_ms);
-    if (expired) ++acc->expired;
+    /* Branch-free: this loop is bound by memory latency over ~51k slots. */
+    uint64_t live_expiry = expired ? UINT64_MAX : slot->entry.expires_at;
+    acc->expired += expired;
+    acc->next_expiry = live_expiry < acc->next_expiry ? live_expiry : acc->next_expiry;
     uint64_t age = fips_cache_entry_age(&slot->entry, acc->now_ms);
     acc->total_age = acc->total_age > UINT64_MAX - age ? UINT64_MAX : acc->total_age + age;
     if (!expired && *visit && !(*visit)(ctx, slot->addr, &slot->entry)) *visit = NULL;
@@ -724,7 +737,7 @@ fips_cache_stats fips_coord_cache_scan(const fips_coord_cache *c, fips_instant n
                                        uint64_t *marks, size_t mark_words,
                                        fips_coord_cache_visitor visit, void *ctx)
 {
-    scan_acc acc = {fips_coord_cache_millis(c, now), 0, 0};
+    scan_acc acc = {fips_coord_cache_millis(c, now), 0, UINT64_MAX, 0};
     size_t words = FIPS_COORD_CACHE_MARK_WORDS(c->slot_capacity);
     bool indexed = marks && mark_words >= words && c->by_use_len + c->parked_len + c->probation_len == c->len;
     if (indexed) {
@@ -741,7 +754,7 @@ fips_cache_stats fips_coord_cache_scan(const fips_coord_cache *c, fips_instant n
             if (c->slots[i].used) scan_slot(&c->slots[i], &acc, &visit, ctx);
     }
     return (fips_cache_stats){c->len, c->max_entries, acc.expired,
-                              c->len == 0 ? 0 : acc.total_age / (uint64_t)c->len};
+                              c->len == 0 ? 0 : acc.total_age / (uint64_t)c->len, acc.next_expiry};
 }
 
 uint64_t fips_coord_cache_eviction_examined(const fips_coord_cache *c)

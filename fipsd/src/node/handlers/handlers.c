@@ -381,6 +381,7 @@ static bool attach(void *user, const fipsd_node_attach *a)
     size_t slots = FIPS_COORD_CACHE_SLOTS(h->cfg.cache_entries) + 8;
     if (fips_coord_cache_init(&h->cache, h->cache_slots, slots, h->cache_index, FIPS_COORD_CACHE_INDEX_WORDS(slots),
             h->cfg.cache_entries, h->cfg.core.coord_ttl_ms, h->origin, h->entropy) != FIPS_OK) return false;
+    hs_provider_cache_reset(h);
     if (!hs_tree_init(h) || !hs_bloom_init(h) || !hs_lookup_init(h) || !hs_session_init(h)) return false;
     h->attached = h->running = true;
     FIPSD_INFO(HMOD, "handlers attached: %s", h->npub);

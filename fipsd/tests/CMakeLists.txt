@@ -284,6 +284,19 @@ if(FIPSD_DATAPLANE_BENCH_TEST)
   nostrc_describe_test(FipsdDataplaneThroughput OWNER fipsd TARGETS fipsd_dataplane_throughput)
 endif()
 
+# publish_snapshot latency with many retained churned peers (nostrc-igg4w):
+# always built, ctest registration is opt-in. A Release build is the measurement.
+fipsd_unit_test(fipsd_snapshot_bench test_snapshot_bench.c)
+target_sources(fipsd_snapshot_bench PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../../libfips-core/tests/fakes/host.c")
+target_include_directories(fipsd_snapshot_bench PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../../libfips-core/tests")
+add_dependencies(fipsd_tests fipsd_snapshot_bench)
+option(FIPSD_SNAPSHOT_BENCH_TEST "Register the opt-in publish_snapshot p99 gate (Release only)" OFF)
+if(FIPSD_SNAPSHOT_BENCH_TEST)
+  add_test(NAME FipsdSnapshotPublishBench COMMAND fipsd_snapshot_bench --max-p99-us 1000 --clock cpu)
+  set_tests_properties(FipsdSnapshotPublishBench PROPERTIES TIMEOUT 300 LABELS "fips;bench" ENVIRONMENT "FIPSD_WORKERS=2")
+  nostrc_describe_test(FipsdSnapshotPublishBench OWNER fipsd TARGETS fipsd_snapshot_bench)
+endif()
+
 # Upstream ACL semantics and live admission/reload proof (nostrc-9keoz.8).
 fipsd_unit_test(fipsd_acl_test test_acl.c)
 fipsd_unit_test(fipsd_node_acl_test test_node_acl.c)

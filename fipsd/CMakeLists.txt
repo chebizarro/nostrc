@@ -464,8 +464,25 @@ if(FIPSD_ENABLE_PROFILING)
   if(BUILD_TESTING)
     add_executable(fipsd_profiling_test tests/test_profiling.c)
     target_link_libraries(fipsd_profiling_test PRIVATE fipsd_lib)
+    # The invariant row `debug_assert_peer_maps_coherent` is Debug-only by design
+    # (recorder.c omits it under NDEBUG, matching upstream's debug_assert). The
+    # test is built -UNDEBUG (nostrc-xw95), so its own NDEBUG cannot predict what
+    # fipsd_lib emits; hand it the library's real state from the configured flags.
+    set(_fipsd_ndebug_cfgs "")
+    foreach(_cfg IN ITEMS DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
+      if("${CMAKE_C_FLAGS} ${CMAKE_C_FLAGS_${_cfg}}" MATCHES "(^| )[-/]DNDEBUG( |=|$)")
+        list(APPEND _fipsd_ndebug_cfgs ${_cfg})
+      endif()
+    endforeach()
+    if(_fipsd_ndebug_cfgs)
+      list(JOIN _fipsd_ndebug_cfgs "," _fipsd_ndebug_cfgs)
+      set(_fipsd_debug_row "$<IF:$<CONFIG:${_fipsd_ndebug_cfgs}>,0,1>")
+    else()
+      set(_fipsd_debug_row 1)
+    endif()
     target_compile_definitions(fipsd_profiling_test PRIVATE
-      FIPSD_PROFILE_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/tests/profile_fixtures")
+      FIPSD_PROFILE_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/tests/profile_fixtures"
+      FIPSD_PROFILE_LIB_EMITS_DEBUG_ROW=${_fipsd_debug_row})
     set_target_properties(fipsd_profiling_test PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
     apply_warnings(fipsd_profiling_test)
     apply_sanitizers(fipsd_profiling_test)

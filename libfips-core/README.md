@@ -55,6 +55,10 @@ not a Rust FFI wrapper or a complete working protocol implementation.
   the resident slots only, O(len + slots/64), with no upstream counterpart.
   Version decision (nostrc-oetfk): the additive API folds into
   **libfips-core 0.1.0 Unreleased**.
+  `fips_coord_cache_generation` and `fips_cache_stats.next_expiry_ms` let a host
+  keep a derived view exact without rescanning; `fips_stats_history_sync` is a
+  host-diagnostic incremental copy of the stats history (nostrc-igg4w, same
+  version decision).
 - `tests/`: linked version, host-interface and byte-compatible fake tests.
 - `libfips-core.pc.in`: installed pkg-config contract, including private crypto
   requirements for static consumers.

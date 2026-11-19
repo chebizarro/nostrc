@@ -8,8 +8,10 @@
 #include "cli.h"
 #include "transport/transport.h"
 #include "control/transport.h"
+#include <stdatomic.h>
 #include <unistd.h>
 
+struct cache_view;
 typedef struct snap {
     fipsd_control_snapshot s;
     void **blocks; size_t nblocks, cap;
@@ -17,7 +19,23 @@ typedef struct snap {
     uint64_t mesh; double fill, estimate;
     bool has_mesh, has_fill;
     fipsd_stats_view *history; /* retained; shared with other snapshots */
+    struct cache_view *cache;  /* retained; shared with other snapshots */
 } snap;
+/* The coordinate-cache section, immutable once built and shared by every
+ * snapshot published while the cache is unchanged. Its rows live in an arena
+ * (a snap that is never published) so a snapshot's own arena stays its own. */
+typedef struct cache_view {
+    atomic_size_t refs; /* the handlers' plus one per snapshot */
+    snap *arena;
+    fipsd_control_cache_entry *rows; size_t nrows;
+    fips_cache_stats stats; /* as of scanned_ms */
+    uint64_t generation, scanned_ms;
+} cache_view;
+static void snap_free(void *p);
+static void cache_view_release(cache_view *v)
+{
+    if (v && atomic_fetch_sub_explicit(&v->refs, 1, memory_order_acq_rel) == 1) { snap_free(v->arena); free(v); }
+}
 static void *salloc(snap *x, size_t n)
 {
     if (x->nblocks == x->cap) {
@@ -56,6 +74,7 @@ static void snap_free(void *p)
     for (size_t i = 0; i < x->nblocks; ++i) free(x->blocks[i]);
     for (size_t i = 0; i < x->njson; ++i) json_decref(x->jsons[i]);
     fipsd_stats_view_release(x->history);
+    cache_view_release(x->cache);
     free(x->blocks); free(x->jsons); free(x);
 }
 static const char *hex_of(snap *x, const fips_node_addr *a)
@@ -172,6 +191,28 @@ static bool cache_row(void *ctx, const uint8_t addr[16], const fips_cache_entry 
     r->created_at = c->h->wall_offset_ms + e->created_at; r->last_used_ms = c->h->wall_offset_ms + e->last_used;
     if (e->has_path_mtu) { uint16_t *m = salloc(c->x, sizeof *m); if (m) { *m = e->path_mtu; r->path_mtu = m; } }
     return true;
+}
+/* One full scan of the resident entries (the default cache has ~51k slots),
+ * rows stopping at 256. NULL if the view cannot be allocated. */
+static cache_view *cache_scan(handlers *h, fips_instant now, uint64_t now_ms)
+{
+    cache_view *v = calloc(1, sizeof *v);
+    snap *arena = v ? calloc(1, sizeof *arena) : NULL;
+    if (!arena) { free(v); return NULL; }
+    atomic_init(&v->refs, 1);
+    v->arena = arena;
+    size_t words = FIPS_COORD_CACHE_MARK_WORDS(h->cache.slot_capacity);
+    if (h->cache_mark_words < words) {
+        uint64_t *marks = realloc(h->cache_marks, words * sizeof *marks);
+        if (marks) { h->cache_marks = marks; h->cache_mark_words = words; }
+    }
+    size_t resident = fips_coord_cache_len(&h->cache), rows_cap = resident < 256 ? resident : 256;
+    struct { handlers *h; snap *x; fipsd_control_cache_entry *rows; size_t n, cap; } cc = {h, arena, salloc(arena, (rows_cap + 1) * sizeof(fipsd_control_cache_entry)), 0, rows_cap};
+    v->generation = fips_coord_cache_generation(&h->cache);
+    v->scanned_ms = now_ms;
+    v->stats = fips_coord_cache_scan(&h->cache, now, h->cache_marks, h->cache_mark_words, cc.rows ? cache_row : NULL, &cc);
+    v->rows = cc.rows; v->nrows = cc.n;
+    return v;
 }
 static snap *build(handlers *h, fips_instant now)
 {
@@ -400,20 +441,29 @@ static snap *build(handlers *h, fips_instant now)
     s->bloom.leaf_dependents = sjson(x, leaves); s->bloom.peer_filters = sjson(x, filter_rows);
     FIPSD_PERF_END(tree_start, SNAPSHOT_TREE);
     FIPSD_PERF_BEGIN(cache_start);
-    /* Coordinate cache: one pass over the resident entries, not two sweeps of
-     * every slot (the default cache has ~51k slots). Rows stop at 256. */
-    size_t words = FIPS_COORD_CACHE_MARK_WORDS(h->cache.slot_capacity);
-    if (h->cache_mark_words < words) {
-        uint64_t *marks = realloc(h->cache_marks, words * sizeof *marks);
-        if (marks) { h->cache_marks = marks; h->cache_mark_words = words; }
+    /* Coordinate cache: the rows and stats a scan produced stand for every
+     * later snapshot until the cache changes or an entry expires (the core's
+     * generation and next expiry); only ages move, by the time elapsed. */
+    uint64_t now_ms = fips_coord_cache_millis(&h->cache, now);
+    cache_view *cv = h->cache_view;
+    if (!(cv && cv->generation == fips_coord_cache_generation(&h->cache) && now_ms >= cv->scanned_ms &&
+          now_ms <= cv->stats.next_expiry_ms)) {
+        cv = cache_scan(h, now, now_ms);
+        if (cv) { cache_view_release(h->cache_view); h->cache_view = cv; }
     }
-    size_t resident = fips_coord_cache_len(&h->cache), rows_cap = resident < 256 ? resident : 256;
-    struct { handlers *h; snap *x; fipsd_control_cache_entry *rows; size_t n, cap; } cc = {h, x, salloc(x, (rows_cap + 1) * sizeof(fipsd_control_cache_entry)), 0, rows_cap};
-    fips_cache_stats cs = fips_coord_cache_scan(&h->cache, now, h->cache_marks, h->cache_mark_words, cc.rows ? cache_row : NULL, &cc);
+    fips_cache_stats cs;
+    if (cv) {
+        atomic_fetch_add_explicit(&cv->refs, 1, memory_order_relaxed);
+        x->cache = cv;
+        cs = cv->stats;
+        if (cs.entries) cs.avg_age_ms += now_ms - cv->scanned_ms;
+        s->cache.entries = cv->rows; s->cache.entry_count = cv->nrows;
+    } else {
+        cs = fips_coord_cache_scan(&h->cache, now, h->cache_marks, h->cache_mark_words, NULL, NULL); /* out of memory: counts only */
+    }
     s->cache.count = cs.entries; s->cache.max_entries = cs.max_entries; s->cache.expired = cs.expired;
     s->cache.fill_ratio = fips_cache_stats_fill_ratio(&cs); s->cache.default_ttl_ms = fips_coord_cache_default_ttl_ms(&h->cache);
     s->cache.avg_age_ms = cs.avg_age_ms;
-    s->cache.entries = cc.rows; s->cache.entry_count = cc.n;
     FIPSD_PERF_END(cache_start, SNAPSHOT_CACHE);
     FIPSD_PERF_BEGIN(counters_start);
     /* Identity cache */
@@ -502,9 +552,14 @@ bool hs_provider_init(handlers *h)
     h->snapshot = go_swap_create(NULL, snap_free);
     return h->snapshot != NULL && fipsd_stats_views_init(&h->stats_views, h->cfg.peer_capacity);
 }
+void hs_provider_cache_reset(handlers *h)
+{
+    cache_view_release(h->cache_view); h->cache_view = NULL;
+}
 void hs_provider_free(handlers *h)
 {
     go_swap_free(h->snapshot); h->snapshot = NULL;
+    hs_provider_cache_reset(h);
     fipsd_stats_views_free(&h->stats_views);
     free(h->cache_marks); h->cache_marks = NULL; h->cache_mark_words = 0;
 }
