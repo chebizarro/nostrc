@@ -671,6 +671,35 @@ static void test_lan(void)
     printf("lan: ok\n");
 }
 
+/* Upstream mdns_lane (path_intake.rs): the lane a linked peer's advert is a
+ * path candidate on. Mutations: ignore the arrival interface (picks 2 not 5
+ * below); ignore the family (picks the v6 lane 1); highest id instead of
+ * lowest. */
+static void test_mdns_lane(void)
+{
+    const fipsd_lan_lane lanes[] = {
+        {{1}, 0, false},  /* v6, unbound */
+        {{2}, 0, true},   /* v4, unbound */
+        {{7}, 4, true},   /* v4, bound to interface 4 */
+        {{5}, 4, true},   /* v4, bound to interface 4: lower id than 7 */
+        {{3}, 9, true}};  /* v4, bound to interface 9 */
+    fipsd_mdns_sockaddr v4 = {.ip = {.bytes = {192, 168, 1, 20}, .width = 4}, .port = 4000};
+    fipsd_mdns_sockaddr v6 = {.ip = {.bytes = {0xfe, 0x80, [15] = 1}, .width = 16}, .port = 4000, .scope_id = 4};
+    fips_transport_id out = {0};
+    uint32_t on4[] = {4}, on9_4[] = {9, 4}, elsewhere[] = {6};
+    CHECK(fipsd_lan_mdns_lane(lanes, 5, &v4, on4, 1, &out) && out.value == 5);
+    CHECK(fipsd_lan_mdns_lane(lanes, 5, &v4, on9_4, 2, &out) && out.value == 3);
+    /* No lane on the arrival interface, or no arrival interface: the lowest
+     * id of the family, the one the dial path takes. */
+    CHECK(fipsd_lan_mdns_lane(lanes, 5, &v4, elsewhere, 1, &out) && out.value == 2);
+    CHECK(fipsd_lan_mdns_lane(lanes, 5, &v4, NULL, 0, &out) && out.value == 2);
+    CHECK(fipsd_lan_mdns_lane(lanes, 5, &v6, on4, 1, &out) && out.value == 1);
+    /* No lane of the family. */
+    out.value = 99;
+    CHECK(!fipsd_lan_mdns_lane(lanes + 1, 4, &v6, on4, 1, &out) && out.value == 99);
+    CHECK(!fipsd_lan_mdns_lane(lanes, 0, &v4, on4, 1, &out));
+}
+
 int main(void)
 {
     CHECK(fips_identity_init_secp(fipsd_host_os_entropy(), &secp) == FIPS_IDENTITY_OK);
@@ -679,6 +708,7 @@ int main(void)
     test_browser();
     test_responder();
     test_lan();
+    test_mdns_lane();
     fips_identity_destroy_secp(secp);
     return 0;
 }

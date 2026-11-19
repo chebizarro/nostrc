@@ -32,6 +32,23 @@ bool fipsd_lan_target_on_link(const fipsd_mdns_sockaddr *addr, const uint32_t *i
     if (addr->ip.width == 16 && fipsd_mdns_ipv6_is_unicast_link_local(addr->ip.bytes)) return addr->scope_id != 0;
     return fips_onlink_contains_on(on_link, addr->ip, n ? ifaces : NULL, n);
 }
+bool fipsd_lan_mdns_lane(const fipsd_lan_lane *lanes, size_t n, const fipsd_mdns_sockaddr *addr,
+                         const uint32_t *ifaces, size_t nif, fips_transport_id *out)
+{
+    const fipsd_lan_lane *bound = NULL, *any = NULL;
+    bool v4 = addr->ip.width == 4;
+    for (size_t i = 0; i < n; ++i) {
+        const fipsd_lan_lane *l = &lanes[i];
+        if (l->v4 != v4) continue;
+        if (!any || l->id.value < any->id.value) any = l;
+        bool on = false;
+        for (size_t k = 0; k < nif && !on; ++k) on = l->ifindex && l->ifindex == ifaces[k];
+        if (on && (!bound || l->id.value < bound->id.value)) bound = l;
+    }
+    const fipsd_lan_lane *pick = bound ? bound : any;
+    if (pick) *out = pick->id;
+    return pick != NULL;
+}
 static size_t count_node(const fipsd_lan_pending *s, const fips_node_addr *node)
 {
     size_t n = 0;

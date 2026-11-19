@@ -2388,7 +2388,7 @@ These follow upstream and its `if-addrs` link-local handling.
 - **Dialled.** An address is dialled only when upstream's `lan_target_on_link`
   passes. An IPv6 link-local address passes when it carries a scope. Any other
   address must lie inside a prefix held by one of the interfaces its record
-  arrived on, judged against the subsystem's own netmon snapshot (loopback and
+  arrived on, judged against the node's netmon snapshot (loopback and
   down interfaces excluded, as upstream's `read_system`). When the interface
   read fails, nothing is dropped or dialled until the next read.
 - **Forged labels.** An advert whose host label is a configured or connected
@@ -2409,15 +2409,31 @@ published control snapshot (peers, connections). A dial counts as over when the
 peer connects, when the snapshot published a second after the dial no longer
 lists its leg, or when the handshake timeout passes.
 
-Not ported: upstream's multipath intake of a linked peer's advert as a path
-candidate (`Feed::Mdns`).
+### Multipath intake
+
+An advert of a peer that is already linked (over any transport) is also a path
+candidate, as upstream's `Feed::Mdns` (multipath v1 draft, Section 5.4, the
+note). After the advert, on-link and forged-label checks, the address is
+attributed to a UDP lane: the lowest-id bound UDP transport of its family bound
+to the interface the advert arrived on, else the lowest-id one of the family
+(upstream `mdns_lane`). The pair goes to the dispatcher
+(`fipsd_node_handlers_path_intake`), which lists it per peer and feed (16
+pairs; the least recently reported one is unlisted past that) and steps a new
+pair into the peer's Bundle as a `Candidate` from `Source::Discovery`. A pair
+already listed only refreshes its recency; mDNS has no silence, so a listing
+lasts until the link goes or its Bundle starts again. Nothing is listed with
+multipath disabled. The advert's pending pair is still offered and then pruned
+as connected, so a linked peer is never dialled again. Upstream's other feeds
+(beacons, configured addresses, Nostr advert endpoints, heard addresses) are
+not ported to the intake yet.
 
 ### Runtime model
 
 One engine fiber owns all state. It selects over four inputs: received
-datagrams (two receive fibers hand them over a bounded channel), its own
-`node/netmon.h` monitor (kernel notifications, with that module's backstop
-read), UDP bind notifications, and stop/cancellation. The select timeout is the
+datagrams (two receive fibers hand them over a bounded channel), a watch on the
+node's `node/netmon.h` monitor (kernel notifications, with that module's
+backstop read; one monitor per daemon, its event kinds coalesced into one wake),
+UDP bind notifications, and stop/cancellation. The select timeout is the
 nearest protocol deadline: probe, announcement, delayed answer, query, record
 expiry, dial retry or pair expiry. Nothing runs on its own sampling timer. The
 dial retry re-evaluates held pairs one second later, and only while some are

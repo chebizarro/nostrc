@@ -14,11 +14,17 @@
  * checks and the pending-candidate bounds (mdns/lan.h), then enter the dial
  * path the Nostr rendezvous uses: fipsd_node_handlers_learn_identity and
  * fipsd_node_handlers_connect over the lowest-id bound UDP transport of the
- * address's family. The Noise IK handshake authenticates the peer.
+ * address's family. The Noise IK handshake authenticates the peer. An advert
+ * of a peer already linked (over any transport) is also handed to the path
+ * candidate intake (fipsd_node_handlers_path_intake, upstream Feed::Mdns)
+ * on the UDP transport bound to the advert's arrival interface, else the
+ * lowest-id one of its family (mdns/lan.h fipsd_lan_mdns_lane), so the
+ * peer's multipath Bundle gains the LAN path as a Discovery candidate.
  *
- * One engine fiber owns everything: it selects over received datagrams, its
- * own network monitor's interface/address events (node/netmon.h: kernel
- * notifications, with that module's backstop), the UDP transports' bind
+ * One engine fiber owns everything: it selects over received datagrams, the
+ * node's network monitor's interface/address events (a fipsd_netmon_watch on
+ * the daemon's one netmon: kernel notifications, with its backstop), the UDP
+ * transports' bind
  * notifications and the stop channel, with the nearest protocol deadline as
  * the select timeout. Nothing is sampled on a timer of its own: probes,
  * announcements, delayed answers, queries, record expiry and dial retries
@@ -69,8 +75,6 @@ typedef struct fipsd_mdns_io {
 
 /* Test and embedding seams, before the runtime starts. */
 void fipsd_mdns_service_set_io(fipsd_mdns_service *s, const fipsd_mdns_io *io);
-/* The network monitor source (node/netmon.h); default: the kernel's. */
-void fipsd_mdns_service_set_netmon(fipsd_mdns_service *s, const fipsd_netmon_source *source);
 typedef enum fipsd_mdns_event_kind {
     FIPSD_MDNS_EVENT_STARTED,     /* announcing began: addr.port is the advertised port */
     FIPSD_MDNS_EVENT_DISCOVERED,  /* an advert passed the browser's checks (upstream LanEvent::Discovered) */

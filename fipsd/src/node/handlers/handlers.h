@@ -91,6 +91,15 @@ int fipsd_node_handlers_send_wait(fipsd_node_handlers *h, const fips_node_addr *
                                   uint16_t dst_port, const uint8_t *payload, size_t len, GoChannel *cancel);
 /* Seed the identity cache (configured peers, rendezvous, native API). */
 int fipsd_node_handlers_learn_identity(fipsd_node_handlers *h, const fips_peer_identity *peer);
+/* Path candidate intake (upstream path_intake.rs, multipath v1 draft Section
+ * 5.4 note): a source says the LINKED peer `peer` may be reachable at
+ * (transport, addr). Only upstream's Feed::Mdns is ported: an mDNS advert,
+ * one address at a time, reported to the peer's Bundle as a Discovery
+ * candidate. Nothing is listed or stepped with multipath disabled or for a
+ * peer the dispatcher does not hold; an unlinked peer is the dial path's. */
+typedef enum fipsd_path_feed { FIPSD_PATH_FEED_MDNS } fipsd_path_feed;
+int fipsd_node_handlers_path_intake(fipsd_node_handlers *h, const fips_node_addr *peer, fipsd_path_feed feed,
+                                    fips_transport_id transport, const fips_transport_addr *addr);
 /* Native datagram API sink (nostrc-9nxwk.4). With a sink installed, an
  * authenticated inbound datagram for an application port (above 1023) is
  * handed to it as an owned FIPSD_NOTICE_DATAGRAM (release it with

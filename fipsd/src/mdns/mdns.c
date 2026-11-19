@@ -1,5 +1,6 @@
 /* The mdns subsystem: upstream's LanRendezvous runtime and the node's LAN
- * candidate handling, over this daemon's runtime, netmon and dial path. */
+ * candidate handling, over this daemon's runtime, the node's netmon, its dial
+ * path and its path candidate intake. */
 #define _POSIX_C_SOURCE 200809L
 #define _DARWIN_C_SOURCE 1
 #include "mdns/mdns.h"
@@ -45,10 +46,9 @@ struct fipsd_mdns_service {
     const fipsd_transport_registry *transports;
     fipsd_mdns_sockets sockets;
     fipsd_mdns_io io;
-    bool has_netmon_source;
-    fipsd_netmon_source netmon_source;
-    fipsd_netmon *netmon;
-    GoChannel *rx, *bound, *stop, *events;
+    fipsd_netmon *netmon;        /* the node's; mDNS watches it */
+    fipsd_netmon_watch *watch;
+    GoChannel *rx, *bound, *stop, *events, *netwake;
     fipsd_runtime *rt;
     bool running;
     /* Engine-owned from here. */
@@ -299,6 +299,27 @@ static void dial_pending(fipsd_mdns_service *s, peer_view *v, uint64_t now)
     }
     if (s->lan.count) s->lan_next_ms = now + LAN_RETRY_MS;
 }
+/* Upstream udp_lanes: the bound UDP transports with the index of the
+ * interface each is bound to, from the netmon snapshot (an interface named
+ * there exists now). fipsd has no NAT-traversal bootstrap UDP transports in
+ * the registry, which upstream leaves out. */
+static size_t udp_lanes(const fipsd_mdns_service *s, fipsd_lan_lane *out)
+{
+    const fipsd_network_snapshot *snap = s->net.ptr;
+    size_t n = 0;
+    for (size_t i = 0; i < s->transports->count && n < FIPSD_TRANSPORT_MAX; ++i) {
+        fipsd_transport *t = s->transports->items[i]; int family; uint16_t port;
+        if (strcmp(t->type, "udp") || !udp_bound(t, &family, &port)) continue;
+        uint32_t ifindex = 0;
+        for (size_t k = 0; t->interface_name && snap && k < snap->interface_count && !ifindex; ++k)
+            if (!strcmp(snap->interfaces[k].name, t->interface_name)) ifindex = snap->interfaces[k].index;
+        out[n++] = (fipsd_lan_lane){t->id, ifindex, family == AF_INET};
+    }
+    return n;
+}
+/* A linked peer's advert, for the path intake once the advert is handled. */
+typedef struct linked_pair { fips_node_addr node; fips_transport_id lane; fipsd_mdns_sockaddr addr; } linked_pair;
+typedef struct linked_set { linked_pair items[FIPSD_MDNS_MAX_ADDRS]; size_t count; } linked_set;
 static void log_set_full(bool first)
 {
     if (first) FIPSD_WARN(MODULE, "LAN discovery candidate set full (%u); new adverts displace held unconfigured candidates",
@@ -306,7 +327,8 @@ static void log_set_full(bool first)
 }
 /* One discovered (npub, address): upstream handle_lan_events's per-event body. */
 static void offer_discovered(fipsd_mdns_service *s, peer_view *v, const fipsd_mdns_advert_fields *f,
-                             const fipsd_mdns_sockaddr *addr, const uint32_t *ifaces, size_t nif, uint64_t now)
+                             const fipsd_mdns_sockaddr *addr, const uint32_t *ifaces, size_t nif, uint64_t now,
+                             linked_set *linked)
 {
     char text[80]; (void)fipsd_mdns_sockaddr_text(addr, text, sizeof text);
     fipsd_transport *t = lowest_udp(s, addr->ip.width == 4 ? AF_INET : AF_INET6, NULL);
@@ -336,6 +358,17 @@ static void offer_discovered(fipsd_mdns_service *s, peer_view *v, const fipsd_md
         FIPSD_DEBUG(MODULE, "lan: advert refused; its host label is a known peer's under another npub npub=%s addr=%s reason=known-label", short_npub, text);
         post_peer(s, FIPSD_MDNS_EVENT_SKIPPED, f->npub, f, addr, ifaces, nif, "known-label", NULL);
         return;
+    }
+    /* A linked peer's advert is a path candidate on the UDP instance on its
+     * interface (multipath v1 draft, Section 5.4, the note); its offer to the
+     * LAN set below stays, and the dial pacer prunes it as connected. */
+    if (fipsd_lan_nodes_contain(nodes(v->connected, v->nconnected), &pair.identity.node_addr) &&
+        linked->count < FIPSD_MDNS_MAX_ADDRS) {
+        fipsd_lan_lane lanes[FIPSD_TRANSPORT_MAX];
+        linked_pair *l = &linked->items[linked->count];
+        if (fipsd_lan_mdns_lane(lanes, udp_lanes(s, lanes), addr, ifaces, nif, &l->lane)) {
+            l->node = pair.identity.node_addr; l->addr = *addr; ++linked->count;
+        }
     }
     for (size_t i = 0; i < nif && i < FIPSD_MDNS_MAX_IFACES; ++i) pair.ifaces[pair.iface_count++] = ifaces[i];
     fipsd_lan_pair displaced; bool first = false;
@@ -375,6 +408,7 @@ static void on_resolved(fipsd_mdns_service *s, const fipsd_mdns_resolved *r, uin
     peer_view *v = peer_view_load(s);
     if (!v) return;
     fipsd_lan_prune_connected(&s->lan, nodes(v->connected, v->nconnected));
+    linked_set linked = {.count = 0};
     for (size_t i = 0; i < r->addr_count; ++i) {
         fipsd_mdns_sockaddr addr; uint32_t ifaces[FIPSD_MDNS_MAX_IFACES];
         size_t nif = fipsd_mdns_arrival_interfaces(&r->addrs[i], ifaces);
@@ -385,7 +419,19 @@ static void on_resolved(fipsd_mdns_service *s, const fipsd_mdns_resolved *r, uin
             continue;
         }
         post_peer(s, FIPSD_MDNS_EVENT_DISCOVERED, f.npub, &f, &addr, ifaces, nif, NULL, r->fullname);
-        offer_discovered(s, v, &f, &addr, ifaces, nif, now);
+        offer_discovered(s, v, &f, &addr, ifaces, nif, now, &linked);
+    }
+    /* Upstream intake(Feed::Mdns): the dispatcher lists the pair and steps a
+     * new one into the peer's Bundle as a Discovery candidate. */
+    for (size_t i = 0; i < linked.count; ++i) {
+        const linked_pair *l = &linked.items[i];
+        fips_transport_addr to;
+        if (fips_transport_addr_from_socket_addr(l->addr.ip.bytes, l->addr.ip.width, l->addr.port, l->addr.scope_id, &to) != FIPS_OK)
+            continue;
+        if (fipsd_node_handlers_path_intake(s->handlers, &l->node, FIPSD_PATH_FEED_MDNS, l->lane, &to) != 0) {
+            char text[80]; (void)fipsd_mdns_sockaddr_text(&l->addr, text, sizeof text);
+            FIPSD_DEBUG(MODULE, "lan: path candidate not queued; the dispatcher's command queue is full addr=%s", text);
+        }
     }
     dial_pending(s, v, now);
     free(v);
@@ -535,7 +581,6 @@ static void engine(void *arg)
 {
     fipsd_mdns_service *s = arg;
     gof_set_name("mdns");
-    GoChannel *network = fipsd_netmon_events(s->netmon);
     GoChannel *done = go_context_done(fipsd_runtime_context(s->rt));
     uint64_t now = mono_ms();
     apply_network(s, now);
@@ -547,7 +592,7 @@ static void engine(void *arg)
             {GO_SELECT_RECEIVE, s->stop, NULL, &cancel},
             {GO_SELECT_RECEIVE, done, NULL, &cancel},
             {GO_SELECT_RECEIVE, s->rx, NULL, &value},
-            {GO_SELECT_RECEIVE, network, NULL, &value},
+            {GO_SELECT_RECEIVE, s->netwake, NULL, &value},
             {GO_SELECT_RECEIVE, s->bound, NULL, &value}};
         now = mono_ms();
         uint64_t at = next_deadline(s);
@@ -560,13 +605,10 @@ static void engine(void *arg)
             handle_datagram(s, value, now); free(value);
             for (unsigned k = 1; k < RX_BATCH && go_channel_try_receive(s->rx, &value) == 0; ++k) { handle_datagram(s, value, now); free(value); }
         } else if (selected == 3) {
-            if (!value) network = NULL; /* the monitor stopped */
-            else {
-                const fipsd_netmon_event *e = value;
-                if (e->kind == FIPSD_INTERFACE_UP || e->kind == FIPSD_INTERFACE_DOWN || e->kind == FIPSD_INTERFACE_ADDR_CHANGE ||
-                    (e->kind == FIPSD_NETWORK_REFRESH && !s->have_net)) apply_network(s, now);
-                free(value);
-            }
+            /* The node's netmon events since the last wake, coalesced. */
+            uint32_t kinds = fipsd_netmon_watch_take(s->watch);
+            const uint32_t edges = 1u << FIPSD_INTERFACE_UP | 1u << FIPSD_INTERFACE_DOWN | 1u << FIPSD_INTERFACE_ADDR_CHANGE;
+            if ((kinds & edges) || ((kinds & 1u << FIPSD_NETWORK_REFRESH) && !s->have_net)) apply_network(s, now);
         } else if (selected == 4) update_port(s, now);
         run_due(s, now);
     }
@@ -578,6 +620,8 @@ static void engine(void *arg)
         if (s->joined[i][1]) s->io.leave(s->io.user, s->ifaces[i].index, AF_INET6, s->ifaces[i].v6[0]);
     }
     s->io.close(s->io.user);
+    fipsd_netmon_watch_remove(s->netmon, s->watch);
+    s->watch = NULL;
     FIPSD_INFO(MODULE, "lan: mDNS discovery stopped");
 }
 
@@ -624,14 +668,17 @@ static int start(fipsd_subsystem *subsystem, fipsd_runtime *rt)
         FIPSD_WARN(MODULE, "LAN mDNS discovery not started: invalid service type %s or out of memory", s->service_type);
         return 0;
     }
-    s->netmon = fipsd_netmon_create(s->has_netmon_source ? &s->netmon_source : NULL);
-    if (!s->netmon) { FIPSD_ERROR(MODULE, "cannot create the network monitor"); return -1; }
     if (s->io.open(s->io.user, rt, s->rx) != 0) {
         FIPSD_WARN(MODULE, "LAN mDNS discovery not started: cannot open the mDNS sockets on port %u", FIPSD_MDNS_PORT);
         return 0;
     }
-    if (fipsd_netmon_start(s->netmon, rt) != 0 || fipsd_runtime_spawn(rt, engine, s) != 0) {
+    /* One netmon per daemon: watch the node's. Changes from here on wake the
+     * engine; it reads the snapshot already published when it starts. */
+    s->watch = fipsd_netmon_watch_add(s->netmon, s->netwake);
+    if (!s->watch || fipsd_runtime_spawn(rt, engine, s) != 0) {
         FIPSD_ERROR(MODULE, "cannot start the mDNS engine");
+        fipsd_netmon_watch_remove(s->netmon, s->watch);
+        s->watch = NULL;
         s->io.close(s->io.user);
         return -1;
     }
@@ -644,7 +691,6 @@ static void stop(fipsd_subsystem *subsystem, fipsd_runtime *rt)
     fipsd_mdns_service *s = subsystem->user;
     if (!s->running) return;
     go_channel_close(s->stop);
-    fipsd_netmon_stop(s->netmon);
 }
 fipsd_mdns_service *fipsd_mdns_service_create(GoSwap *configs, fipsd_node *node, fipsd_node_handlers *handlers)
 {
@@ -654,13 +700,15 @@ fipsd_mdns_service *fipsd_mdns_service_create(GoSwap *configs, fipsd_node *node,
     s->configs = configs; s->node = node; s->handlers = handlers;
     s->ctx = fipsd_node_get_context(node);
     s->transports = fipsd_node_transports(node);
+    s->netmon = fipsd_node_netmon(s->ctx);
     s->lan_next_ms = UINT64_MAX;
     fipsd_mdns_sockets_init(&s->sockets);
     s->io = fipsd_mdns_sockets_io(&s->sockets);
     s->rx = go_channel_create(RX_QUEUE);
     s->bound = go_channel_create(8);
     s->stop = go_channel_create(1);
-    if (!s->rx || !s->bound || !s->stop) { fipsd_mdns_service_destroy(s); return NULL; }
+    s->netwake = go_channel_create(1);
+    if (!s->rx || !s->bound || !s->stop || !s->netwake) { fipsd_mdns_service_destroy(s); return NULL; }
     for (size_t i = 0; i < s->transports->count; ++i)
         if (!strcmp(s->transports->items[i]->type, "udp")) (void)fipsd_udp_watch_bound(s->transports->items[i], s->bound);
     s->subsystem = (fipsd_subsystem){.name = "mdns", .start = start, .stop = stop, .user = s};
@@ -677,18 +725,16 @@ void fipsd_mdns_service_destroy(fipsd_mdns_service *s)
 {
     if (!s) return;
     if (s->have_net) go_refptr_release(&s->net);
-    fipsd_netmon_destroy(s->netmon);
     fipsd_mdns_sockets_release(&s->sockets);
     drain_free(s->rx);
     if (s->rx) go_channel_unref(s->rx);
     if (s->bound) { void *v; while (go_channel_try_receive(s->bound, &v) == 0) {} go_channel_unref(s->bound); }
     if (s->stop) go_channel_unref(s->stop);
+    if (s->netwake) { void *v; while (go_channel_try_receive(s->netwake, &v) == 0) {} go_channel_unref(s->netwake); }
     fipsd_mdns_responder_destroy(s->responder);
     fipsd_mdns_browser_destroy(s->browser);
     free(s->msg); free(s->outs); free(s->resolved);
     free(s);
 }
 void fipsd_mdns_service_set_io(fipsd_mdns_service *s, const fipsd_mdns_io *io) { s->io = *io; }
-void fipsd_mdns_service_set_netmon(fipsd_mdns_service *s, const fipsd_netmon_source *source)
-{ s->has_netmon_source = source != NULL; if (source) s->netmon_source = *source; }
 void fipsd_mdns_service_observe(fipsd_mdns_service *s, GoChannel *events) { s->events = events; }

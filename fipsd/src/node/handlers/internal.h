@@ -85,6 +85,7 @@ typedef struct peer_rec {
     fipsd_active_peer *peer;
     restart_candidate restart;
     fips_path_bundle *path;
+    struct hs_path_listing *listing; /* path.c: what the intake feeds list; lazily allocated */
     fips_instant last_heard, last_tree_announce, established_at;
     uint64_t tree_sent, tree_received, frames_in, frames_out, bytes_in, bytes_out;
     uint64_t announce_sequence;
@@ -186,6 +187,7 @@ typedef struct probe_job {
 
 typedef enum handler_command_kind {
     HCMD_CONNECT, HCMD_DISCONNECT, HCMD_SEND, HCMD_LEARN_IDENTITY, HCMD_DIAL_CONFIGURED,
+    HCMD_PATH_INTAKE,
     HCMD_CONTROL /* live control command with a shared execution ticket */
 } handler_command_kind;
 /* Shared by a queued HCMD_CONTROL and its waiting connection fiber (handlers.c).
@@ -200,6 +202,7 @@ typedef struct handler_command {
     fips_transport_id transport;
     fips_transport_addr addr;
     uint16_t src_port, dst_port;
+    fipsd_path_feed feed; /* HCMD_PATH_INTAKE */
     char name[32];
     json_t *params;
     hs_control_ticket *ticket; /* HCMD_CONTROL: one of the ticket's two references */
@@ -448,6 +451,8 @@ void hs_path_account(handlers *h, peer_rec *rec, fipsd_transport *t, const fips_
 uint64_t hs_path_wait_ms(handlers *h, fips_instant now);
 void hs_path_poll(handlers *h, fips_instant now);
 void hs_path_network_event(handlers *h, const fipsd_netmon_event *e);
+void hs_path_intake(handlers *h, const fips_node_addr *peer, fipsd_path_feed feed,
+                    fips_transport_id transport, const fips_transport_addr *addr);
 json_t *hs_path_show(handlers *h, const fips_node_addr *peer);
 json_t *hs_path_pin(handlers *h, const fips_node_addr *peer, fips_transport_id transport, const fips_transport_addr *addr, bool has_addr, bool pin);
 /* probe.c */

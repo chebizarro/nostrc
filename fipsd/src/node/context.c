@@ -44,6 +44,7 @@ const fips_secp *fipsd_node_secp(const fipsd_node_context *c) { return c->secp; 
 const uint8_t *fipsd_node_startup_epoch(const fipsd_node_context *c) { return c->epoch; }
 GoRefPtr fipsd_node_config(const fipsd_node_context *c) { return go_swap_load(c->configs); }
 GoRefPtr fipsd_node_network(const fipsd_node_context *c) { return fipsd_netmon_snapshot(c->netmon); }
+fipsd_netmon *fipsd_node_netmon(const fipsd_node_context *c) { return c->netmon; }
 GoRefPtr fipsd_node_peers(const fipsd_node_context *c) { return fipsd_peer_table_snapshot_load(c->peers.table); }
 GoChannel *fipsd_node_peer_commands(const fipsd_node_context *c) { return c->peers.inbox; }
 int fipsd_node_dispatch_crypto(const fipsd_node_context *c, fipsd_crypto_job *j)

@@ -185,7 +185,7 @@ static bool nt_init_with_options(test_node *n, fipsd_loopback_network *net, cons
 #endif
     return fipsd_transport_register(fipsd_node_transports(n->node), n->transport) == 0;
 }
-static bool nt_init(test_node *n, fipsd_loopback_network *net, const char *name, const char *address,
+static inline bool nt_init(test_node *n, fipsd_loopback_network *net, const char *name, const char *address,
                     const char *yaml, const fipsd_node_handlers_config *hcfg, uint32_t transport_id)
 {
     return nt_init_with_options(n, net, name, address, yaml, hcfg, transport_id, NULL);
