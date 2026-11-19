@@ -9,7 +9,9 @@
  * accounting, the inbound cap and first-frame deadline, the show_transports
  * row, and the control-port monitor (cookie and password auth, GETINFO
  * snapshot and per-key fallback, SETEVENTS bootstrap / circuit / liveness /
- * bandwidth events, reconnect with backoff, never ADD_ONION). No sleeps. */
+ * bandwidth events, reconnect with backoff, never ADD_ONION), and send_lane
+ * reaching the inner stream owner's control and data lanes (nostrc-3vl7v,
+ * stream_lanes.h). No sleeps. */
 #define _POSIX_C_SOURCE 200809L
 #define _DEFAULT_SOURCE 1
 #define _DARWIN_C_SOURCE 1
@@ -18,6 +20,7 @@
 #include "control/transport.h"
 #include "socks5_fixture.h"
 #include "torctl_fixture.h"
+#include "stream_lanes.h"
 #include "test_tmpdir.h"
 #include <assert.h>
 #include <errno.h>
@@ -471,6 +474,21 @@ static void control(fixture *f)
     /* Destroyed after the runtime joins; the fixtures outlive the monitors. */
     f->t[2] = J; f->t[3] = K; f->t[4] = L; f->t[5] = M; f->t[6] = P; f->t[7] = N; f->ctl = ctl;
 }
+/* send_lane through Tor reaches the inner owner's lanes: a full data lane
+ * still queues control, which the writer sends before that data. */
+static void lanes(fixture *f)
+{
+    fipsd_transport *t = f->t[0];
+    fips_transport_addr to = addr_of("127.0.0.1:9"); /* S5_HOLD never dials it */
+    socks5_fixture_behave(&f->proxy, S5_HOLD, 0);
+    assert(t->ops->connect_async(t, &to) == 0);
+    free(event(f->e[0], FIPSD_TRANSPORT_CONNECTED)); free(request(f));
+    void *held = receive(f->proxy.held);
+    stream_lanes(t, fipsd_tor_stream(t), &to, (int)((intptr_t)held - 1));
+    drained(t);
+    socks5_fixture_behave(&f->proxy, S5_RELAY, 0);
+    puts("lanes: Tor send_lane, full data lane still queues control, written before the queued data: ok");
+}
 static void run(void *arg)
 {
     fixture *f = arg;
@@ -479,6 +497,7 @@ static void run(void *arg)
     case 0: dial_and_mtu(f); break;
     case 1: errors(f); break;
     case 2: inbound(f); break;
+    case 4: lanes(f); break;
     default: control(f); break;
     }
     assert(go_channel_send(f->done, f) == 0);
@@ -513,6 +532,13 @@ static void lifecycle(unsigned mode)
         c.hostname_file = write_file("g2.hostname", ONION_B "\n", strlen(ONION_B) + 1);
         f.t[1] = fipsd_tor_create((fips_transport_id){2}, "g2", &c);
         f.count = 2;
+    } else if (mode == 4) {
+        fipsd_tor_config c = base("socks5", f.proxy.addr, UINT16_MAX);
+        f.t[0] = fipsd_tor_create((fips_transport_id){1}, "l", &c); assert(f.t[0]);
+        /* Before start: the stream owner's own socket buffers stay small. */
+        tcp_instance *u = fipsd_tor_stream(f.t[0])->user;
+        u->config.send_buf_size = u->config.recv_buf_size = 4096;
+        f.count = 1;
     } else {
         fipsd_tor_config c = base("socks5", f.proxy.addr, 1400);
         f.t[0] = fipsd_tor_create((fips_transport_id){1}, "p", &c);
@@ -526,7 +552,7 @@ static void lifecycle(unsigned mode)
     void *result = receive(f.done); assert(result);
     fipsd_runtime_shutdown(rt); assert(fipsd_runtime_run(rt) == FIPSD_RUN_OK);
     fipsd_runtime_destroy(rt);
-    size_t total = mode <= 1 ? 4 : mode == 2 ? 6 : 8;
+    size_t total = mode <= 1 ? 4 : mode == 2 ? 6 : mode == 4 ? 1 : 8;
     for (size_t i = 0; i < total; ++i) {
         fipsd_transport *t = f.t[i]; if (!t) continue;
         assert(!atomic_load(&t->shared->stats.pool_outbound) && !atomic_load(&t->shared->stats.pool_inbound));
@@ -540,6 +566,6 @@ static void lifecycle(unsigned mode)
 int main(void)
 {
     dir = fipsd_test_tmpdir("/control.sock");
-    config(); lifecycle(0); lifecycle(1); lifecycle(2); lifecycle(3);
+    config(); lifecycle(0); lifecycle(1); lifecycle(2); lifecycle(3); lifecycle(4);
     return 0;
 }

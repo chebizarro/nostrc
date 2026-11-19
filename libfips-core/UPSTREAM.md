@@ -782,15 +782,75 @@ Host-only; no libfips-core or wire change. Upstream `transport::Lane`
 optional `send_lane` vtable entry. TCP mirrors `tcp/pool.rs` and
 `tcp_send_loop`: data queue 64, control queue 8 (`PATH_QUEUE_DEPTH`),
 `try_send` refusal on both, control drained first with no starvation bound.
-Tor, Nym and BLE do not implement `send_lane` yet (upstream does, through
-`socks5/pool.rs` and `ble/mod.rs`); they keep one queue, unchanged.
+Tor and Nym implement `send_lane` too (`nostrc-3vl7v`, upstream
+`socks5/pool.rs` `ProxiedConnection::queue`): each forwards to its inner TCP
+owner's lanes. BLE does not yet (upstream does, `ble/mod.rs`); it keeps one
+queue (fipsd README, BLE differences, for what it would take).
 
-Deliberate divergence in classification: upstream sends only path messages
-(0x52/0x53/0x54, `node/mod.rs` `send_path`) on `Lane::Path`; fipsd's node also
-puts IK/restart/rekey msg1/msg2, MMP sender/receiver reports, tree announcements
-and heartbeats on the control lane, so that a saturated data queue cannot starve
-link maintenance. Session datagrams, bloom filters, lookups and Disconnect stay
-data. Effect to keep in mind: link MMP RTT under load excludes data-queue delay.
+Classification, narrowed by `nostrc-3vl7v`: sealed link messages take the
+control lane exactly as upstream, path messages (0x52/0x53/0x54, `node/mod.rs`
+`send_path`) only. The one deliberate divergence is that fipsd also sends the
+link handshakes there, IK/restart msg1/msg2 and link rekey msg1/msg2, which
+upstream sends on its data lane. MMP sender/receiver reports, tree
+announcements and heartbeats went back to the data lane. Rekey prompts,
+session datagrams, bloom filters, lookups and Disconnect were always data.
+
+Why, from upstream's key cutover rules (`core/src/proto/rekey`, README "Frame"
+and "Poll" rows, `Config::fmp`; C `machine.c` cutover and current-epoch frame
+handling): epochs are told apart by receiver index; the replay window is 8192
+(`noise/cipher.rs`). An initiator cuts over when msg2 arrives and keeps the
+previous epoch for the retention ceiling (120 s) until a frame under the new
+epoch shows that the peer moved, then 10 s more (`drain`). A responder holds
+its pending epoch (hold, 120 s at defaults) and cuts over on the first frame
+under it, keeping the previous epoch 10 s from that evidence. A frame that
+arrives after its epoch is retired is dropped (unknown index). So:
+
+- A handshake message is not sealed under an epoch. Overtaking up to 64 queued
+  frames, it moves no replay window and is no evidence; the frames it passes
+  are opened by the epoch the peer still holds (its current one until it
+  adopts, its previous one during the unevidenced drain after it cuts over).
+  The first frame under the new epoch from the side that overtook is a data
+  frame or prompt in FIFO order behind them. Safe.
+- A heartbeat, MMP report or tree announcement sealed under the new epoch and
+  sent past queued old-epoch data is that evidence: it starts the peer's 10 s
+  drain while up to 64 old-epoch frames still wait. Safe only while a full data
+  lane drains within 10 s (64 frames of 1400 bytes: above about 9 KB/s), so not
+  provably safe; they now keep FIFO order. Path messages carry the same exposure
+  upstream accepts for them.
+
+Evidence against the pinned daemon (`FipsdTcpInteropRekeySaturatedTest`,
+`...RustSmallerTest`, `fipsd/tests/tcp_interop.py --scenario rekey-saturated`):
+both data lanes full through a 256 KiB/s relay (C offering twice the rate, Rust
+1.1 times, both refusing throughout), the link rekeyed at the 31 s link floor:
+with C as the tie-break winner C initiated (msg1 on its control lane past its
+full data lane; K flip 33.8-34.5 s C, 35.9-37.0 s Rust), and with Rust winning
+Rust initiated and C answered (msg2 on its control lane; K flip 37.2-37.6 s C,
+36.8-37.1 s Rust); 10 of 10 each under ASan, 3 of 3 each under TSan. With Rust
+offering 1.3 times, upstream's own full FIFO lane refused its handshakes (its
+msg1 up to 15 times, once its msg2), which delayed the rekey to 70-160 s and
+once past a 90 s deadline. On both daemons, before and after narrowing: one link id, one
+session, one relay connection, `packets_recv` still rising after the flip, and
+through a drain window after it zero `replay_suppressed_total`,
+`consecutive_decrypt_failures`, handshake `bad_state`/`unknown_connection`,
+dataplane `unknown_index`/`orphaned_index` and session
+`unknown_session`/`rekey_key_mismatch`, except Rust handshake increments its
+own log explains: a msg2 its full data lane refused (`bad_state`) or a
+duplicate/late msg2 copy (`unknown_connection`, `LateReply`/`UnknownAttempt`).
+C counts a link `LateReply` msg2 nowhere where upstream counts
+`unknown_connection` (counter parity, separate). Rust's session `bad_state` (FSP rekey
+`LateReply`, a second ack for a resent setup on the data lane both daemons
+use) is reported, not asserted. The loopback relay cannot stage the
+slow-path case: macOS keeps about 175 KiB per loopback hop whatever the socket
+buffer settings, so at any rate where 64 frames outlast the drain that FIFO
+already outlasts the 30 s rekey handshake and no rekey completes; it follows
+from the rules above. `FipsdTcpRekeySaturatedTest` still rekeys within
+`after` + jitter + `handshake` with the narrowed classification; its pumps of
+never-authenticating frames now back off 1 ms per refusal, because with
+heartbeats and the rekey prompt on the data lane a pump that refilled every
+freed slot at once left the responder no frame to adopt or count as liveness
+(link-dead at 30 s under parallel load), which real, authenticating traffic
+never does; for the same reason its link-dead timeout is now 60 s, beyond the
+37 s rekey deadline.
 Version decision: **fipsd 0.1.0 Unreleased**; libfips-core unchanged.
 ## BLE verified-link challenge (nostrc-o14sw)
 

@@ -528,6 +528,31 @@ set_tests_properties(FipsdTcpInteropTest PROPERTIES TIMEOUT 90 SKIP_RETURN_CODE 
   LABELS "fips;transport;interop" ENVIRONMENT "FIPSD_WORKERS=2")
 nostrc_describe_test(FipsdTcpInteropTest OWNER fipsd TARGETS fipsd fipsd_test_tmpdir_run
   INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/tcp_interop.py")
+# nostrc-3vl7v: both directions' TCP data lanes saturated through a 256 KiB/s
+# relay across a link rekey; asserts the K flip, no re-handshake and no
+# decrypt/replay/index/handshake-state counter on either side. One test per
+# crossing winner: with C smaller C's msg1 rides its control lane past a full
+# data lane; with Rust smaller Rust's msg1 waits in its own (upstream, FIFO)
+# data lane. Upstream's handshake messages share that full FIFO lane (C's msg2
+# answer or its msg1), and its refusals can cost whole rekey attempts, hence
+# a Rust load just above the relay rate (still refusing) and longer deadlines.
+foreach(_smaller IN ITEMS c rust)
+  if(_smaller STREQUAL "c")
+    set(_rekey_test FipsdTcpInteropRekeySaturatedTest)
+    set(_rekey_args --extra-deadline 60 --rust-load 1.1)
+  else()
+    set(_rekey_test FipsdTcpInteropRekeySaturatedRustSmallerTest)
+    set(_rekey_args --extra-deadline 120 --rust-load 1.1)
+  endif()
+  add_test(NAME ${_rekey_test} COMMAND fipsd_test_tmpdir_run "/r-ipv6tun.sock"
+    "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tcp_interop.py"
+    --fipsd "$<TARGET_FILE:fipsd>" --rust "${FIPSD_TCP_INTEROP_RUST_BINARY}"
+    --scenario rekey-saturated --smaller ${_smaller} ${_rekey_args})
+  set_tests_properties(${_rekey_test} PROPERTIES TIMEOUT 400 SKIP_RETURN_CODE 77
+    LABELS "fips;transport;interop" ENVIRONMENT "FIPSD_WORKERS=2")
+  nostrc_describe_test(${_rekey_test} OWNER fipsd TARGETS fipsd fipsd_test_tmpdir_run
+    INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/tcp_interop.py")
+endforeach()
 # Traversal vectors, complete table, loopback STUN and real relay -> IK proof.
 fipsd_unit_test(fipsd_nostr_traversal_test test_nostr_traversal.c)
 target_sources(fipsd_nostr_traversal_test PRIVATE stun_fixture.c nostr_relay_fixture.c)

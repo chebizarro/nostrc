@@ -28,7 +28,8 @@ typedef struct fipsd_transport_event {
 /* Which of a connection's send queues a frame joins (upstream
  * transport::Lane). A transport that queues frames for a writer keeps CONTROL
  * apart from DATA, so a queue full of the node's data neither refuses nor
- * holds back link maintenance, and its writer sends CONTROL first. The node
+ * holds back path messages and link handshakes (the only CONTROL frames,
+ * nostrc-3vl7v), and its writer sends CONTROL first. The node
  * marks the lane; a transport cannot tell from ciphertext. Transports that
  * send at once, with no queue of their own, ignore it. */
 typedef enum fipsd_transport_lane {

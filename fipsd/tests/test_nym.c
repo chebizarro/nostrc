@@ -6,8 +6,9 @@
  * targets), frames both ways to a TCP listener, every SOCKS5 failure counted
  * as socks5_errors (REP 0x05 included: Nym keeps no connect_refused), the
  * connect deadline as connect_timeouts, and ops refused before the stream
- * owner started. Built without -DFIPSD_ENABLE_NYM it checks that a
- * configured transports.nym is refused. No sleeps. */
+ * owner started, and send_lane reaching the inner stream owner's control and
+ * data lanes (nostrc-3vl7v, stream_lanes.h). Built without -DFIPSD_ENABLE_NYM
+ * it checks that a configured transports.nym is refused. No sleeps. */
 #define _POSIX_C_SOURCE 200809L
 #define _DEFAULT_SOURCE 1
 #define _DARWIN_C_SOURCE 1
@@ -34,6 +35,7 @@ int main(void)
 #else
 #include "transport/tcp/internal.h"
 #include "socks5_fixture.h"
+#include "stream_lanes.h"
 static void *receive(GoChannel *channel)
 {
     void *v = NULL; GoSelectCase c = {GO_SELECT_RECEIVE, channel, NULL, &v};
@@ -103,6 +105,19 @@ static void stop(fipsd_subsystem *sub, fipsd_runtime *rt)
     (void)rt; fixture *f = sub->user;
     f->nym->ops->stop(f->nym); f->slow->ops->stop(f->slow); f->absent->ops->stop(f->absent); f->tcp->ops->stop(f->tcp);
 }
+/* send_lane through Nym reaches the inner owner's lanes: a full data lane
+ * still queues control, which the writer sends before that data. */
+static void lanes(fixture *f, const fips_transport_addr *to)
+{
+    socks5_fixture_behave(&f->proxy, S5_HOLD, 0);
+    assert(f->nym->ops->connect_async(f->nym, to) == 0);
+    free(event(f->en, FIPSD_TRANSPORT_CONNECTED)); free(receive(f->proxy.requests));
+    void *held = receive(f->proxy.held);
+    stream_lanes(f->nym, fipsd_nym_stream(f->nym), to, (int)((intptr_t)held - 1));
+    drained(f->nym);
+    socks5_fixture_behave(&f->proxy, S5_RELAY, 0);
+    puts("lanes: Nym send_lane, full data lane still queues control, written before the queued data: ok");
+}
 static void scenario(void *arg)
 {
     fixture *f = arg;
@@ -158,6 +173,7 @@ static void scenario(void *arg)
     assert(stats(f->absent).socks5_errors == 1);
     socks5_fixture_behave(&f->proxy, S5_RELAY, 0);
     puts("nym: readiness probe, no-auth codec on the wire, frames both ways, socks5_errors, connect deadline: ok");
+    lanes(f, &target);
     assert(go_channel_send(f->done, f) == 0);
 }
 int main(void)
@@ -168,7 +184,11 @@ int main(void)
         .et = go_channel_create(64), .done = go_channel_create(1)};
     socks5_fixture_start(&f.proxy);
     fipsd_nym_config c; fipsd_nym_config_default(&c); c.socks5_addr = f.proxy.addr;
-    f.nym = fipsd_nym_create((fips_transport_id){1}, "nym", &c);
+    c.mtu = UINT16_MAX; /* the lane case's large frames */
+    f.nym = fipsd_nym_create((fips_transport_id){1}, "nym", &c); assert(f.nym);
+    tcp_instance *nu = fipsd_nym_stream(f.nym)->user; /* before start: small socket buffers */
+    nu->config.send_buf_size = nu->config.recv_buf_size = 4096;
+    c.mtu = 1400;
     c.connect_timeout_ms = 300; f.slow = fipsd_nym_create((fips_transport_id){4}, "slow", &c);
     c.connect_timeout_ms = 300000; c.socks5_addr = "127.0.0.1:1"; c.startup_timeout_secs = 0;
     f.absent = fipsd_nym_create((fips_transport_id){2}, "absent", &c);

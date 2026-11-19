@@ -5,12 +5,18 @@
  * session index, to the transport's data lane as fast as it takes them; the
  * receiving node drops them silently (unknown index), so the only thing they
  * contend for is the sending connection's queue and socket. Each refused
- * offer is the saturation being measured, counted in data_dropped. */
+ * offer is the saturation being measured, counted in data_dropped. Unlike
+ * real traffic they never authenticate, so the receiver's liveness and its
+ * adoption of the new epoch rest on the sender's own data-lane frames (the
+ * rekey prompt, heartbeats, MMP), which stay data, as upstream
+ * (nostrc-3vl7v): a refused pump backs off 1 ms, so the lane stays full and
+ * refusing while those frames still meet a free slot, as the node's own
+ * frames do when they are the traffic. */
 #include "node_test.h"
 #include "transport/tcp/internal.h"
 #include <pthread.h>
-#include <sched.h>
 #include <stdatomic.h>
+#include <time.h>
 
 static const char *yaml_a =
     "node: {identity: {nsec: '1111111111111111111111111111111111111111111111111111111111111111', persistent: true}, control: {enabled: false}}";
@@ -29,9 +35,12 @@ static void *run_pump(void *arg)
     pump *p = arg;
     while (!atomic_load(&p->stop)) {
         ++p->offered;
-        /* A refusal yields the core, not a delay: the next offer is at once. */
+        /* Load shaping, not synchronization: after a refusal the next offer
+         * waits 1 ms, which refills the lane long before it drains. */
         if (fipsd_transport_send_lane(p->t, FIPSD_TRANSPORT_LANE_DATA, &p->to, p->frame, sizeof p->frame)) {
-            ++p->refused; sched_yield();
+            ++p->refused;
+            struct timespec backoff = {0, 1000000};
+            (void)nanosleep(&backoff, NULL);
         }
     }
     return NULL;
@@ -65,7 +74,12 @@ int main(void)
     fipsd_node_handlers_config hcfg; fipsd_node_handlers_config_default(&hcfg);
     hcfg.peer_capacity = 4; hcfg.tree_peer_capacity = 4; hcfg.session_capacity = 4; hcfg.cache_entries = 64;
     hcfg.notice_capacity = 256; hcfg.tick_ms = 200; hcfg.tree_announce_min_interval_ms = 100; hcfg.bloom_debounce_ms = 100;
-    hcfg.link_dead_timeout_ms = 30000;
+    /* Above the rekey deadline below (37 s): the pumps' frames never
+     * authenticate, so with heartbeats on the data lane (nostrc-3vl7v, as
+     * upstream) a receiver starved enough to stop draining could otherwise
+     * see no live frame for 30 s, a property of this synthetic load (real
+     * saturating traffic is itself live), not of the lanes. */
+    hcfg.link_dead_timeout_ms = 60000;
     fipsd_config *probe = fipsd_config_parse(yaml_a, strlen(yaml_a), NULL); assert(probe);
     fipsd_config_core_params(probe, &hcfg.core); hcfg.has_core = true; fipsd_config_free(probe);
     /* As test_node_two_nodes.c: the link rotates within seconds, its floor
@@ -139,10 +153,12 @@ int main(void)
         (unsigned long long)due, (unsigned long long)(deadline - up));
     /* The data lanes were refusing the whole time the rekey went through. */
     assert(sat_a > 0 && sat_b > 0);
-    /* Link maintenance (rekey, MMP, tree, heartbeats) took the control lane:
-     * the data lane was at capacity again and again (each refusal is a full
-     * queue), the control lane refused at most a fifth of its frames. Without the lane, maintenance is offered to the same
-     * full queue and only gets through when it wins a momentarily free slot.
+    /* The link handshakes (IK and rekey msg1/msg2) took the control lane; MMP,
+     * tree and heartbeats stay data, as upstream (nostrc-3vl7v). The data lane
+     * was at capacity again and again (each refusal is a full queue), the
+     * control lane refused at most a fifth of its frames. Without the lane, a
+     * rekey message is offered to the same full queue and only gets through
+     * when it wins a momentarily free slot.
      * The control lane is bounded (upstream PATH_QUEUE_DEPTH), so it still
      * refuses while the socket itself is not draining: a slow receiver (as
      * under TSan) can then cost a rekey message, recovered by the protocol's

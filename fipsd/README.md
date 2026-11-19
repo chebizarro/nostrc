@@ -2543,27 +2543,43 @@ must never reopen a deliberately closed link.
 Each connection has two bounded writer queues, upstream's send lanes
 (`nostrc-085xw`): a data lane of 64 frames and a control lane of 8
 (`FIPSD_TCP_CONTROL_DEPTH`, upstream `PATH_QUEUE_DEPTH`). The node sends through
-the optional `send_lane` vtable entry (`fipsd_transport_send_lane`); transports
-without it, every one but TCP, take each lane through their plain `send`. Both
+the optional `send_lane` vtable entry (`fipsd_transport_send_lane`); Tor and Nym
+forward it to their inner TCP owner, and transports without it (UDP, Ethernet,
+BLE, loopback) take each lane through their plain `send`. Both
 lanes refuse rather than wait when full. The writer fiber drains the control
 lane first, as upstream's `biased` select: a control frame waits behind at most
 the frame being written (and whatever the kernel already holds), never behind
 the data queue. As upstream, there is no starvation bound for data; the control
-lane is short and fed only by link maintenance. A deliberate close drains
-control, then data, then closes.
+lane is short and fed only by path messages and link handshakes. A deliberate
+close drains control, then data, then closes.
 
-The lane is the node's choice, a deliberate divergence from upstream, which
-lanes only path messages (probe 0x52, ack 0x53, close 0x54; `send_path`). fipsd
-also lanes the link maintenance a saturated data queue must not starve: IK
-handshake and restart msg1/msg2, link rekey msg1/msg2, MMP sender/receiver
-reports, tree announcements and heartbeats. Session datagrams (all FSP
-traffic, including its rekey and MMP), bloom filters, lookups and Disconnect
-stay on the data lane, Disconnect so that it still follows the data queued
-before it. MMP reports on the control lane do not wait in the data queue, so
-the link RTT they measure under load leaves that queueing out. Per-lane
-refusals (`control_dropped`, `data_dropped`) and control frames written
-(`control_sent`) are host diagnostics; `show_transports` keeps exactly
-upstream's TCP field set.
+The lane is the node's choice. Sealed link messages follow upstream exactly:
+only path messages (probe 0x52, ack 0x53, close 0x54; `send_path`) take the
+control lane. fipsd additionally sends the link handshake messages there, the
+one deliberate divergence: IK handshake and restart msg1/msg2 and link rekey
+msg1/msg2 (`nostrc-085xw`), so that a saturated data queue cannot refuse or
+delay a rekey. Upstream sends those on its data lane, and against a saturated
+upstream peer its own rekey msg1 is refused again and again ("outbound queue
+full") until an attempt gets through. Handshake messages are safe to reorder
+past queued data: they are not sealed under a link epoch, so they neither move
+a replay window nor count as evidence that this side has cut over, and every
+old-epoch frame they overtake is still opened by the epoch the peer keeps
+(current until it adopts, previous during an unevidenced 120 s drain after it
+cuts over).
+
+MMP reports, tree announcements and heartbeats stay on the data lane
+(`nostrc-3vl7v`), as upstream. Sealed under a new epoch and sent past queued
+old-epoch data, any of them is the peer's evidence that this side moved, which
+shortens the peer's drain of the old epoch to 10 s (upstream rekey `Config::fmp`
+`drain`, `machine.c` cutover and current-epoch frame rows) while up to 64 queued
+old-epoch frames still wait behind it: on a path where a full data lane takes
+more than 10 s to drain (64 frames of 1400 bytes below about 9 KB/s), the tail
+of it would be dropped as an unknown index. Session datagrams (all FSP traffic,
+including its rekey and MMP), rekey prompts, bloom filters, lookups and
+Disconnect stay on the data lane too, Disconnect so that it still follows the
+data queued before it. Per-lane refusals (`control_dropped`, `data_dropped`)
+and control frames written (`control_sent`) are host diagnostics;
+`show_transports` keeps exactly upstream's TCP field set.
 
 Stop closes cancellation channels, uses libgo's owner-directed
 `gof_io_cancel_fd` latch (including connect/read/write pre-park races), joins
@@ -2587,8 +2603,15 @@ socket buffers (a park trace says it is there), fills both lanes to their
 exact depths and reads stalled frame, all control, then all data, also across a
 deliberate close. `FipsdTcpRekeySaturatedTest` saturates both directions' data
 lanes of a real two-node TCP link from link-up and requires the link rekey on
-both ends within `after` + jitter + `handshake`, no link churn, and maintenance
-on the control lane with at most a fifth of it refused. Socket
+both ends within `after` + jitter + `handshake`, no link churn, and the rekey
+handshake on the control lane with at most a fifth of it refused. Its host
+pumps offer frames that never authenticate, so the receiver's liveness and
+its adoption of the new epoch rest on the sender's own data-lane frames (rekey
+prompt, heartbeats, MMP); a refused pump backs off 1 ms (`nostrc-3vl7v`), which
+keeps the lane refusing while those frames still meet a free slot, as a node's
+own frames do when they are the traffic, and its link-dead timeout (60 s) lies
+beyond the rekey deadline, since a receiver starved enough to stop draining
+would otherwise see no live frame through a full data lane. Socket
 fixtures use `test_tmpdir.h`; synchronization is channels, I/O readiness and
 explicit trace barriers, never warm-up sleeps.
 
@@ -2597,7 +2620,41 @@ an independently built pinned Rust daemon. Set CMake's
 `FIPSD_TCP_INTEROP_RUST_BINARY` (or that environment variable at configure time)
 to enable it; otherwise it returns SKIP (77). It verifies authenticated TCP
 links in both control views and clean SIGTERM joins. This is link interop,
-not a cross-language XK/datagram or deployment claim. A local pinned build is:
+not a cross-language XK/datagram or deployment claim.
+
+`FipsdTcpInteropRekeySaturatedTest` and `...RustSmallerTest` (`nostrc-3vl7v`,
+the same binary and skip rule) run its `rekey-saturated` scenario: fipsd dials
+Rust through a 256 KiB/s TCP relay and each daemon floods the other with
+native-API datagrams (C at twice the relay rate, Rust at 1.1 times), so both
+directions' data lanes are full and refusing (`send_errors` rising on both
+sides before and after the rekey). `node.rekey.after_messages` makes the link
+rekey due at the 31 s link floor. Each test fixes which side wins a crossing
+rekey (the smaller node address): with C smaller, C's msg1 rides its control
+lane past its full data lane; with Rust smaller, Rust's msg1 waits in its own
+FIFO data lane and C answers with msg2 on its control lane. Upstream's own
+handshake messages (its msg2 or msg1) share its full data lane, whose
+refusals can cost whole rekey attempts, so the tests allow 60 s and 120 s
+past the normal deadline and offer Rust only just above the relay rate. The harness
+reports which side initiated each cutover from Rust's debug log. Both assert
+the link K bit flipping on both sides, the same link id
+and one session throughout, one relay connection, `packets_recv` rising after
+the flip on both sides, and over a drain window past the flip, zero
+`replay_suppressed_total`, `consecutive_decrypt_failures`, handshake
+`bad_state`/`unknown_connection`, dataplane `unknown_index`/`orphaned_index`
+and session `unknown_session`/`rekey_key_mismatch` on both daemons, except
+that each Rust handshake `bad_state` or `unknown_connection` increment must
+carry upstream's own logged benign cause: a rekey msg2 its full data lane
+refused (`HandshakeStats::bad_state` counts msg2 send failures), or a duplicate
+or late msg2 copy (`LateReply`/`UnknownAttempt`, "Rekey msg2 for no attempt
+in flight"); any other increment fails. Rust's
+session `bad_state` is reported, not asserted: the end-to-end session's own
+rekey rides the data lane in both daemons, and under this queueing a resent
+setup draws a second ack, which upstream counts there (`Reason::LateReply`).
+`--relay-rate`, `--c-load`, `--rust-load` and `--payload` reshape the run. On
+macOS loopback, which keeps about 175 KiB per hop whatever the socket buffer
+settings, the slow-path hazard above cannot be staged: below the rate at
+which 64 frames outlast the drain, that FIFO alone outlasts the 30 s
+handshake. A local pinned build is:
 
 ```sh
 CARGO_TARGET_DIR=/tmp/fips-rust-target-tcp cargo build --locked --release
@@ -2752,8 +2809,16 @@ With `advertise_on_nostr`, a directory-mode onion joins this node's own Nostr
 advert as `<onion>:<advertised_port>` once the onion is published (with a
 control monitor, `HS_DESC UPLOADED` for this service; see Local advert
 endpoints, `nostrc-r4aeo`). Tor endpoints in received adverts are dialled
-through this transport. Tor and Nym do not implement the optional `send_lane`:
-their inner TCP owner takes every frame on its data lane.
+through this transport. Tor and Nym implement the optional `send_lane`
+(`nostrc-3vl7v`), as upstream (`socks5/pool.rs` `ProxiedConnection::queue`,
+`PATH_QUEUE_DEPTH` 8): each forwards to its inner TCP owner, whose connections
+carry the control and data lanes and the control-first writer described under
+the TCP transport, so the lane machinery is not duplicated. `FipsdTorTest` and
+`FipsdNymTest` include the lane case (`tests/stream_lanes.h`): the SOCKS5
+fixture answers the CONNECT and holds the client socket unread (`S5_HOLD`),
+large data frames park the writer (park trace), both lanes then take frames to
+their exact depths, and the far end reads the frames the writer had taken,
+all control, then the rest of the data lane.
 Version decision: **fipsd stays 0.1.0 Unreleased**; the transports fold into
 the initial daemon.
 
@@ -2994,6 +3059,22 @@ Differences from upstream, each deliberate:
    session in place.
 3. **No path lane.** BLE does not implement the optional `send_lane` vtable
    entry (upstream `send_lane`); every frame takes its single queue.
+
+Evaluated, not implemented (`nostrc-3vl7v`): BLE would benefit. An L2CAP
+connection-oriented channel is credit-based, so a peer that stops granting
+credits, or a radio slower than the node's offered load, parks the writer and
+fills the 16-frame queue just as a full socket does for TCP; link rekey and
+handshake messages then meet the same refusals TCP's control lane avoids,
+and upstream already gives BLE its path lane (`ble/mod.rs` `send_lane`,
+`PATH_QUEUE_DEPTH` 8, `biased` writer). The C writer fiber (`ble.c`
+`writer_fiber`) has the TCP writer's shape, one bounded queue and a drain on
+deliberate close, so the change is: a second 8-deep channel per connection, the
+TCP writer's control-first loop with its held data frame (worth factoring into
+a shared helper with `tcp/conn.c` at that point), a `send_lane` entry with
+per-lane refusal counters, control-then-data on the close drain, and the lane
+case driven through the simulated radio by withholding credits. The node's
+classification needs nothing new: only path messages and handshakes would take
+it, the subset that is safe to reorder.
 
 ### Verification
 

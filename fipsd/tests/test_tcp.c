@@ -52,8 +52,8 @@ static int plain_send(fipsd_transport *t, const fips_transport_addr *to, const u
 { (void)t; (void)to; (void)bytes; (void)n; ++plain_sends; return 0; }
 static void config(void)
 {
-    /* A transport without send_lane (UDP, Ethernet, BLE, Tor, Nym, loopback)
-     * takes every lane through its plain send. */
+    /* A transport without send_lane (UDP, Ethernet, BLE, loopback) takes
+     * every lane through its plain send. */
     const fipsd_transport_ops plain = {.send = plain_send};
     fipsd_transport single = {.ops = &plain};
     assert(fipsd_transport_send_lane(&single, FIPSD_TRANSPORT_LANE_CONTROL, NULL, NULL, 0) == 0);
