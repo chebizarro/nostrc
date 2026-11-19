@@ -260,10 +260,36 @@ def probe_overall(stdout):
     return m.group(1)
 
 
+# fipsctl's own five-second read and write deadlines, as it words them when a control request times out.
+STALLED_CONTROL = re.compile(r'^error: (failed to (read response|send request)|no response from daemon)')
+
+
+def probe_run(client, node, args):
+    """`fipsctl probe`, run once more if it lost a control request to a stalled daemon.
+
+    The probe runs inside the daemon, on its own deadline; fipsctl polls it, and
+    gives up on the first poll that times out (five seconds, the daemon's own
+    deadline), exiting 1 with the stage block it had drawn and no `overall` line.
+    A daemon starved for that long (ASan at `ctest -j10` beside a build) is a host
+    event, not a probe result. A stalled daemon that answers again is run once
+    more; one that does not, or a second stall, fails with what fipsctl said."""
+    for attempt in (1, 2):
+        result = client.run(args, node.socket)
+        if attempt == 2 or not STALLED_CONTROL.match(result.stderr):
+            return result
+        wait([node], f'{node.name} answers again after a stalled probe',
+             time.monotonic() + 30, lambda: node.query('show_status'))
+        print(f'note: {client.name} {" ".join(args)} lost a control request to {node.name}: '
+              f'{result.stderr.strip()}; running it again', flush=True)
+
+
 def check_probe(client, node, target, expect_overall=None):
     """A human and a JSON probe; the exit code is 0 only for an overall of ok."""
-    result = client.run(['probe', target], node.socket)
-    overall = probe_overall(result.stdout)
+    result = probe_run(client, node, ['probe', target])
+    try:
+        overall = probe_overall(result.stdout)
+    except Failure as e:
+        raise Failure(f'{client.name} probe exited {result.returncode}; stderr:\n{result.stderr}\n{e}') from e
     if result.returncode != (0 if overall == 'ok' else 1):
         raise Failure(f'{client.name} probe exit {result.returncode} for overall {overall}:\n{result.stdout}')
     for needle in ('probe ', '  npub       ', '  node_addr  ', '  ipv6       ', '  cleanup    '):
@@ -272,8 +298,12 @@ def check_probe(client, node, target, expect_overall=None):
     if expect_overall and overall != expect_overall:
         raise Failure(f'{client.name} probe overall {overall}, expected {expect_overall}:\n{result.stdout}')
     client.table.append((f'probe {target[:12]}...', result.returncode, f'overall {overall}'))
-    result = client.run(['probe', target, '--json'], node.socket)
-    report = json.loads(result.stdout)
+    result = probe_run(client, node, ['probe', target, '--json'])
+    try:
+        report = json.loads(result.stdout)
+    except ValueError as e:
+        raise Failure(f'{client.name} probe --json exited {result.returncode}; stderr:\n{result.stderr}\n'
+                      f'stdout is not JSON ({e}):\n{result.stdout}') from e
     for key in ('probe_id', 'overall', 'elapsed_ms', 'tick_ms', 'target', 'bloom', 'discovery', 'path', 'session', 'rtt', 'cleanup'):
         if key not in report:
             raise Failure(f'{client.name} probe --json lacks {key}: {result.stdout}')
@@ -409,7 +439,7 @@ def main():
         # ends there. The first miss starts the daemon's lookup backoff, so a
         # probe that follows it is held down instead; both are failures the
         # client renders from the daemon's reason, so both are accepted here.
-        unknown = client.run(['probe', npub], a.socket)
+        unknown = probe_run(client, a, ['probe', npub])
         if unknown.returncode != 1 or 'bloom       failed' not in unknown.stdout or 'no peer filter holds this address' not in unknown.stdout:
             raise Failure(f'probe of an unknown address:\n{unknown.stdout}{unknown.stderr}')
         if '\x1b[' in unknown.stdout:

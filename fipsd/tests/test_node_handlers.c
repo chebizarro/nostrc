@@ -185,6 +185,9 @@ int main(void)
     json_t *started = live(&a, "probe_start", json_pack("{s:s}", "npub", npub));
     assert(started && !strcmp(json_string_value(json_object_get(started, "status")), "ok"));
     json_int_t id = json_integer_value(json_object_get(json_object_get(started, "data"), "probe_id"));
+    /* fipsctl's ceiling is this budget plus a margin, so it follows the daemon's own ladder and tick: bloom 2
+     * ticks (400 ms), discovery one 1 s attempt plus 2 ticks (1400 ms), session 5 s, rtt 3 s (the floors). */
+    assert(json_integer_value(json_object_get(json_object_get(started, "data"), "budget_ms")) == 9800);
     json_decref(started);
     assert(id >= 1);
     e = nt_await(&a, FIPSD_NOTICE_SESSION_UP, &b.identity.node_addr, NT_WAIT_MS); assert(e); free(e);
