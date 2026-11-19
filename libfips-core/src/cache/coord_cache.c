@@ -695,6 +695,55 @@ fips_cache_stats fips_coord_cache_stats(const fips_coord_cache *c, fips_instant 
                               c->len == 0 ? 0 : total_age / (uint64_t)c->len};
 }
 
+typedef struct scan_acc { uint64_t now_ms, total_age; size_t expired; } scan_acc;
+
+static unsigned low_bit(uint64_t bits) /* bits != 0 */
+{
+#if defined(__GNUC__) || defined(__clang__)
+    return (unsigned)__builtin_ctzll(bits);
+#else
+    unsigned n = 0;
+    while (!(bits & 1)) { bits >>= 1; ++n; }
+    return n;
+#endif
+}
+
+static void scan_slot(const fips_coord_slot *slot, scan_acc *acc, fips_coord_cache_visitor *visit, void *ctx)
+{
+    bool expired = fips_cache_entry_is_expired(&slot->entry, acc->now_ms);
+    if (expired) ++acc->expired;
+    uint64_t age = fips_cache_entry_age(&slot->entry, acc->now_ms);
+    acc->total_age = acc->total_age > UINT64_MAX - age ? UINT64_MAX : acc->total_age + age;
+    if (!expired && *visit && !(*visit)(ctx, slot->addr, &slot->entry)) *visit = NULL;
+}
+
+/* Every resident slot is filed in exactly one of the three heaps (unfile and
+ * file keep that whole between public calls), so marking heap members finds
+ * them without touching the free slots; the bitmap restores storage order. */
+fips_cache_stats fips_coord_cache_scan(const fips_coord_cache *c, fips_instant now,
+                                       uint64_t *marks, size_t mark_words,
+                                       fips_coord_cache_visitor visit, void *ctx)
+{
+    scan_acc acc = {fips_coord_cache_millis(c, now), 0, 0};
+    size_t words = FIPS_COORD_CACHE_MARK_WORDS(c->slot_capacity);
+    bool indexed = marks && mark_words >= words && c->by_use_len + c->parked_len + c->probation_len == c->len;
+    if (indexed) {
+        memset(marks, 0, words * sizeof *marks);
+        const uint32_t *heaps[3] = {c->by_use, c->parked, c->probation};
+        size_t lens[3] = {c->by_use_len, c->parked_len, c->probation_len};
+        for (size_t h = 0; h < 3; ++h)
+            for (size_t i = 0; i < lens[h]; ++i) marks[heaps[h][i] / 64] |= UINT64_C(1) << (heaps[h][i] % 64);
+        for (size_t w = 0; w < words; ++w)
+            for (uint64_t bits = marks[w]; bits; bits &= bits - 1)
+                scan_slot(&c->slots[w * 64 + low_bit(bits)], &acc, &visit, ctx);
+    } else {
+        for (size_t i = 0; i < c->slot_capacity; ++i)
+            if (c->slots[i].used) scan_slot(&c->slots[i], &acc, &visit, ctx);
+    }
+    return (fips_cache_stats){c->len, c->max_entries, acc.expired,
+                              c->len == 0 ? 0 : acc.total_age / (uint64_t)c->len};
+}
+
 uint64_t fips_coord_cache_eviction_examined(const fips_coord_cache *c)
 {
     return c->eviction_examined;

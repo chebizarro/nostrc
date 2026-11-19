@@ -315,11 +315,14 @@ struct fipsd_node_handlers {
     fips_stats_history *history;
     fips_peer_stats *history_peers;
     fips_peer_snapshot *history_samples;
+    fipsd_stats_views stats_views; /* immutable history views for snapshots */
     /* Control */
     GoSwap *snapshot;
     bool dirty;
     GoChannel *commands, *notices;
     uint64_t snapshot_generation;
+    uint64_t *cache_marks; /* snapshot scratch: FIPS_COORD_CACHE_MARK_WORDS(slots) */
+    size_t cache_mark_words;
     /* Native datagram API sink (handlers.h); loaded on every delivery. */
     _Atomic(GoChannel *) native_sink;
 };
@@ -463,6 +466,7 @@ void hs_host_link_mtu_changed(handlers *h, uint16_t mtu);
 void hs_netmon_event(handlers *h, const fipsd_netmon_event *e);
 /* provider.c */
 bool hs_provider_init(handlers *h);
+void hs_provider_free(handlers *h);
 void hs_publish(handlers *h, fips_instant now);
 json_t *hs_control_command(handlers *h, const char *name, const json_t *params);
 #endif

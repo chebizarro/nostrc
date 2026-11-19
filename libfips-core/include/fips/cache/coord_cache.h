@@ -196,6 +196,17 @@ FIPS_CORE_API size_t fips_coord_cache_invalidate_via_node(fips_coord_cache *c,
 FIPS_CORE_API size_t fips_coord_cache_invalidate_other_roots(fips_coord_cache *c,
                                                              const uint8_t current_root[16]);
 FIPS_CORE_API fips_cache_stats fips_coord_cache_stats(const fips_coord_cache *c, fips_instant now);
+/** Host-diagnostic fusion of iter() and stats() (no upstream counterpart): one
+ * pass over the resident slots only, O(len + slot_capacity / 64) instead of two
+ * O(slot_capacity) sweeps. Visits exactly what fips_coord_cache_iter visits, in
+ * the same storage order; visit may be NULL, and once it returns false the
+ * remaining entries still count toward the returned stats, which equal
+ * fips_coord_cache_stats. marks is caller scratch of at least
+ * FIPS_COORD_CACHE_MARK_WORDS(slot_capacity) words, overwritten; with fewer it
+ * falls back to the full sweeps. */
+#define FIPS_COORD_CACHE_MARK_WORDS(cap) (((size_t)(cap) + 63) / 64)
+FIPS_CORE_API fips_cache_stats fips_coord_cache_scan(const fips_coord_cache *c, fips_instant now,
+    uint64_t *marks, size_t mark_words, fips_coord_cache_visitor visit, void *ctx);
 /* Upstream test-hooks feature, always available here (read-only, O(1) except
  * stored_addrs, which is O(n)). */
 FIPS_CORE_API uint64_t fips_coord_cache_eviction_examined(const fips_coord_cache *c);

@@ -299,6 +299,11 @@ add_dependencies(fipsd_tests fipsd_stats_test)
 add_test(NAME FipsdStatsTest COMMAND fipsd_stats_test)
 set_tests_properties(FipsdStatsTest PROPERTIES TIMEOUT 60 LABELS "fips;unit;stats")
 nostrc_describe_test(FipsdStatsTest OWNER fipsd TARGETS fipsd_stats_test)
+fipsd_unit_test(fipsd_stats_view_test test_stats_view.c)
+add_dependencies(fipsd_tests fipsd_stats_view_test)
+add_test(NAME FipsdStatsViewTest COMMAND fipsd_stats_view_test)
+set_tests_properties(FipsdStatsViewTest PROPERTIES TIMEOUT 120 LABELS "fips;unit;stats")
+nostrc_describe_test(FipsdStatsViewTest OWNER fipsd TARGETS fipsd_stats_view_test)
 
 target_compile_definitions(fipsd_acl_test PRIVATE
   FIPSD_CONTROL_GOLDEN="${CMAKE_CURRENT_SOURCE_DIR}/control_golden")

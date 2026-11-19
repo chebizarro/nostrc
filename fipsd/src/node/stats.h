@@ -1,6 +1,7 @@
 #ifndef FIPSD_NODE_STATS_H
 #define FIPSD_NODE_STATS_H
 #include <fips/node/stats_history.h>
+#include "node/stats_view.h"
 typedef struct handler_counters {
     uint64_t hs_msg1, hs_msg2, hs_rejected, hs_rate_limited, hs_promoted, hs_restart, hs_timeouts, hs_failed, hs_cross_swap, hs_cross_keep;
     uint64_t frames_received, frames_delivered, frames_dropped, frames_sent, send_failed, decrypt_failed, replay;

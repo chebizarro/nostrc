@@ -51,6 +51,10 @@ not a Rust FFI wrapper or a complete working protocol implementation.
   eviction that spares live-verified entries, probation segment, TTLs) over
   caller-owned slots and index words, with instants converted against an init
   epoch. Coordinates are held inline pending the proto coord codec.
+  `fips_coord_cache_scan` is a host-diagnostic fusion of iter and stats over
+  the resident slots only, O(len + slots/64), with no upstream counterpart.
+  Version decision (nostrc-oetfk): the additive API folds into
+  **libfips-core 0.1.0 Unreleased**.
 - `tests/`: linked version, host-interface and byte-compatible fake tests.
 - `libfips-core.pc.in`: installed pkg-config contract, including private crypto
   requirements for static consumers.

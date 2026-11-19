@@ -1209,7 +1209,7 @@ and sessions close with their Release outputs executed before the table is freed
 | `timeout.rs` (766) + rx_loop tick | `timeout.c` | 79 | Timer wheel: nearest deadline over legs, sessions, paths and the maintenance tick; tick duties (tree, bloom, lookup, MMP, sessions, probes, caches, limiters, stats history) |
 | `native.rs`/`host_link.rs` (673) | `native.c` | 18 | Seams for B4: inbound datagrams become `FIPSD_NOTICE_DATAGRAM`; outbound is `fipsd_node_handlers_send` |
 | `netmon.rs` (228) | `netmon.c` | 18 | Network change → path presence seam, immediate heartbeats |
-| control `snapshot.rs`/`queries.rs` rows | `provider.c` | 540 | Immutable snapshot arena (typed rows + JSON projections with upstream field names) published via GoSwap; live commands enqueued to the dispatcher |
+| control `snapshot.rs`/`queries.rs` rows | `provider.c` | 587 | Immutable snapshot arena (typed rows + JSON projections with upstream field names) published via GoSwap, sharing ref-counted stats-history views (`node/stats_view.c`); live commands enqueued to the dispatcher |
 | `mod.rs`/`reject.rs`/`diag.rs` plumbing | `handlers.c`, `internal.h` | 864 | Creation, storage, attach/detach, event entry points, notices, command mailbox, counters |
 
 Inbound path: transport `PACKET` → `fips_fmp_receive` gate → msg1/msg2 to
@@ -4102,3 +4102,19 @@ clean shutdown and namespace cleanup. Snapshot observations are
 bounded by deadlines and paced by replies; no sleeps stand in for completion.
 BPF smoke returns 77 when BPF/interface access is unavailable, but fails if
 open/bind succeeds and no complete FIPS frame arrives within ten seconds.
+
+## Incremental control snapshot (nostrc-oetfk)
+
+The dispatcher's control-snapshot build no longer copies the stats history or
+sweeps the whole coordinate cache on each publish. Snapshots retain shared,
+immutable, ref-counted history views that the dispatcher brings up to date by
+replaying logged history updates. The cache rows and stats come from one
+O(len) `fips_coord_cache_scan` pass. On the C→C loopback, `publish_snapshot`
+went from a 2.3 ms average with tens-of-ms tails to about 70 us, with p99 at
+or below 1 ms; see [docs/perf.md](docs/perf.md#incremental-snapshot-build-nostrc-oetfk).
+The snapshot layout, the control output and the goldens are unchanged.
+`FipsdStatsViewTest` checks that replayed views match the live history on
+every query under churn, that held views stay immutable, the fallbacks, and
+cross-thread release under TSan. Version decision: **fipsd stays 0.1.0
+Unreleased**; the change folds into the initial daemon, with no manifest,
+declared-version or release/tag change.

@@ -89,6 +89,9 @@ int fipsd_perf_report(FILE *file, uint64_t interval, fipsd_perf_snapshot *p)
         "transport_queue_wait",
         "endpoint_event_wait",
         "publish_snapshot",
+        "snapshot_header", "snapshot_peers", "snapshot_sessions",
+        "snapshot_transports", "snapshot_tree", "snapshot_cache",
+        "snapshot_counters", "snapshot_history",
     };
     static const char *const event_names[] = {
         "udp_send_connected",
