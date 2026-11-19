@@ -720,3 +720,34 @@ scratch, or heaps that do not account for `len`, it falls back to the sweeps.
 `FipsCoreCoordCacheTest` cross-checks it against iter and stats under random
 churn. No pin change. Version decision: additive API, **libfips-core 0.1.0
 Unreleased**.
+
+## BLE verified-link challenge (nostrc-o14sw)
+
+Deliberate hardening, **not** upstream behaviour; no pin change. Upstream
+(`src/transport/ble/mod.rs` `arbitrate`, at the pinned commit
+**6aa80504baa0fa312b392009eea0e3e59fb6fe4c**) declines every newcomer beside a
+verified link, whatever its age or direction. fipsd already relaxes that for one
+case (`fipsd/README.md`, BLE "Differences from upstream" 1): inside the tie
+window a verified link racing a newcomer at its own device address in the
+opposite direction (the two ends' crossing dials) is settled by the node-address
+tie-break, because fipsd pushes discovery to the node at once and one end can
+verify the race's loser before the winner arrives. That relaxation let an
+unauthenticated key claim from the connected device's own address displace a
+verified link before authenticating.
+
+The divergence now adds a state upstream does not have. A newcomer that wins the
+tie-break against a **verified** link does not replace it
+(`fipsd/src/transport/ble/pool.c`, `BLE_CHALLENGE`). It is pooled as a
+*challenger* under an address of its own (`<device address>#<link id>`, not
+parseable as a peer, never announced), so the node's per-address Noise (msg1/msg2
+and `peer_link`) is attributable to it and not to the verified link. The
+verified link stays authoritative until the node authenticates the challenger as
+the same node, which replaces every link at that device address. A different
+identity, a failed channel, the node's `close_unproven` deadline
+(`handshake_timeout_secs`), or the verified link ending on its own drops the
+challenger. Challengers are bounded to 2 per device address and count against
+`max_connections`. Behaviour against unverified incumbents, other addresses and
+settled verified links is unchanged (upstream's). Re-check this divergence at
+every pin bump that touches `arbitrate`, `mark_verified` or the pool.
+
+Version decision: **fipsd stays 0.1.0 Unreleased**; libfips-core is unchanged.
