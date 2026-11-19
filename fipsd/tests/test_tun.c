@@ -184,6 +184,29 @@ static void lifecycle(void)
     assert(!fipsd_tun_start(t,id)); /* retries destroy BEFORE opening another clone */
     assert(!strcmp(pending.trace,"OAMURruaCDDDOAMUR"));
     assert(!fipsd_tun_stop(t) && !t->destroy_pending); fipsd_tun_destroy(t);
+    /* An object teardown finds already gone is removed, not a failure: Linux
+     * flushes a link's IPv6 addresses when it goes down, so the address removal
+     * after link-down answers EADDRNOTAVAIL, and a vanished device answers
+     * ENODEV. Every stage still runs and nothing is retried or left owned. */
+    const struct { char stage; int error; } gone[]={{'a',EADDRNOTAVAIL},{'a',ENODEV},{'u',ENODEV},{'r',ENODEV}};
+    for (size_t i=0;i<sizeof(gone)/sizeof(gone[0]);++i) {
+        fake g={0}; t=device(&g,&platform); assert(!fipsd_tun_start(t,id));
+        g.fail=gone[i].stage; g.error=gone[i].error;
+        assert(!fipsd_tun_stop(t) && !strcmp(g.trace,"OAMURruaCD"));
+        assert(!t->routed && !t->raised && !t->addressed && !t->destroy_pending && t->fd==-1);
+        fipsd_tun_status stopped=fipsd_tun_status_read(t); assert(stopped.state==FIPSD_TUN_STOPPED && !stopped.error);
+        assert(!fipsd_tun_stop(t) && !strcmp(g.trace,"OAMURruaCD")); /* idempotent */
+        fipsd_tun_destroy(t);
+    }
+    /* Any other teardown failure stays fatal: reported by stop and in the status. */
+    const int real_errors[]={EIO,EPERM,EADDRINUSE};
+    for (size_t i=0;i<sizeof(real_errors)/sizeof(real_errors[0]);++i) {
+        fake r={0}; t=device(&r,&platform); assert(!fipsd_tun_start(t,id));
+        r.fail='a'; r.error=real_errors[i];
+        assert(fipsd_tun_stop(t)<0 && errno==real_errors[i] && !strcmp(r.trace,"OAMURruaCD"));
+        fipsd_tun_status failed=fipsd_tun_status_read(t); assert(failed.state==FIPSD_TUN_STOPPED && failed.error==real_errors[i]);
+        fipsd_tun_destroy(t);
+    }
     fake f={0}; t=device(&f,&platform); assert(!fipsd_tun_start(t,id));
     fips_node_addr node=fips_identity_node_addr(id);
     assert(t->address.bytes[0]==0xfd && !memcmp(t->address.bytes+1,node.bytes,15));
