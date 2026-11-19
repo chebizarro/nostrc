@@ -113,6 +113,7 @@ typedef struct fips_coord_slot {
     uint64_t weight;                   /* charge against the address bound */
     uint32_t heap_pos, link;           /* link: free list / eviction scratch */
     uint32_t expiry_pos;               /* position in the expiry index */
+    uint64_t changed;                  /* generation of its last change: fips_coord_cache_changes */
     fips_cache_place place;
     bool used;
 } fips_coord_slot;
@@ -121,6 +122,7 @@ typedef struct fips_coord_cache {
     uint32_t *table, *by_use, *parked, *probation; /* slot indexes */
     uint32_t *expiry; /* every resident slot, a min-heap by entry.expires_at */
     uint32_t *resident; /* bitmap of resident slots, for storage-order walks */
+    uint32_t *block_changed; /* per 32-slot block, its latest slot `changed` as (low, high) words */
     size_t slot_capacity, table_len, len, by_use_len, parked_len, probation_len, expiry_len;
     uint32_t free_head;
     uint64_t seq, stored_weight, default_ttl_ms, eviction_examined;
@@ -138,8 +140,9 @@ typedef struct fips_coord_cache {
     ((m) / FIPS_PROBATION_SHARE_DIVISOR > 0 ? (m) / FIPS_PROBATION_SHARE_DIVISOR : (size_t)1)
 #define FIPS_COORD_CACHE_SLOTS(m) ((m) + FIPS_COORD_CACHE_PROBATION_BOUND(m))
 /** uint32_t words of index storage for slot_capacity slots: three eviction
- * heaps, the expiry heap, a hash table at most half full and a residency bitmap. */
-#define FIPS_COORD_CACHE_INDEX_WORDS(cap) (6 * (size_t)(cap) + 1 + ((size_t)(cap) + 31) / 32)
+ * heaps, the expiry heap, a hash table at most half full, a residency bitmap
+ * and a 64-bit change stamp per 32 slots. */
+#define FIPS_COORD_CACHE_INDEX_WORDS(cap) (6 * (size_t)(cap) + 1 + 3 * (((size_t)(cap) + 31) / 32))
 /** Caller owns cache, slots and index for the whole lifetime; no allocation.
  * Hint keys are peer-chosen, so the hash key is drawn from host entropy at
  * init, like Rust's KeyedHasher (iteration order is per-process). epoch is
@@ -207,6 +210,21 @@ FIPS_CORE_API size_t fips_coord_cache_len(const fips_coord_cache *c); /* incl. e
  * derived view stays exact while the generation is unchanged and `now` has not
  * passed fips_cache_stats.next_expiry_ms (`now` must not run backwards). */
 FIPS_CORE_API uint64_t fips_coord_cache_generation(const fips_coord_cache *c);
+/** Host-diagnostic change feed (no upstream counterpart), for a view derived
+ * slot by slot that should not re-read the whole cache. Visits, in storage
+ * order, every slot whose residency, key or entry changed after the
+ * generation was `since` (a call that advances the generation stamps each
+ * slot it changed with the new value), and possibly some that did not change
+ * (it never misses one). addr and entry name the resident entry, expired or
+ * not, and are both NULL for a slot that is now vacant. A slot keeps its
+ * index while resident, so a view keyed by slot index stays exact by
+ * replacing each visited slot's row. since == 0 visits every slot. Return
+ * false to stop. Borrowed pointers last until the next mutating call.
+ * O(slot_capacity / 32 + 32 per 32-slot block holding a visited slot). */
+typedef bool (*fips_coord_cache_change_visitor)(void *ctx, size_t slot, const uint8_t *addr,
+                                                const fips_cache_entry *entry);
+FIPS_CORE_API void fips_coord_cache_changes(const fips_coord_cache *c, uint64_t since,
+                                            fips_coord_cache_change_visitor visit, void *ctx);
 FIPS_CORE_API bool fips_coord_cache_is_empty(const fips_coord_cache *c);
 /** Rust iter(): non-expired entries, in storage order (upstream order is
  * random per process; nothing may depend on it). Return false to stop. Walks a

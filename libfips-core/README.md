@@ -60,7 +60,9 @@ not a Rust FFI wrapper or a complete working protocol implementation.
   `fips_coord_cache_generation` and `fips_cache_stats.next_expiry_ms` let a host
   keep a derived view exact without rescanning; `fips_stats_history_sync` is a
   host-diagnostic incremental copy of the stats history (nostrc-igg4w, same
-  version decision).
+  version decision). `fips_coord_cache_changes` reports the slots changed since
+  a generation, so a view kept per slot updates without rereading the cache
+  (nostrc-x345n, same version decision).
 - `tests/`: linked version, host-interface and byte-compatible fake tests.
 - `libfips-core.pc.in`: installed pkg-config contract, including private crypto
   requirements for static consumers.
