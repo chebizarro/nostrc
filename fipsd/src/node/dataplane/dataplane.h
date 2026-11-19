@@ -75,7 +75,6 @@ typedef struct fipsd_dp_packet {
     fips_transport_id transport;
     fips_transport_addr endpoint;
     bool session, k, ce, prompt, farewell, path_message, restart; /* restart: tag is the candidate link id */
-    bool control; /* link maintenance: the transport's control lane (encrypted.c) */
     uint64_t tag;
     uint32_t timestamp;
     size_t body, wire_size, candidate;

@@ -144,6 +144,12 @@ static void *serve_conn(void *arg)
     if (go_channel_try_send(f->requests, copy)) free(copy);
     uint8_t answer[10] = {0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0};
     if (behaviour == S5_REPLY) { answer[1] = rep; (void)write_full(fd, answer, sizeof answer); goto out; }
+    if (behaviour == S5_HOLD) {
+        /* Nothing more is read here: the client's next bytes stay in the one
+         * socket's buffers until the test reads them (stream lane tests). */
+        if (write_full(fd, answer, sizeof answer) && !go_channel_try_send(f->held, (void *)(intptr_t)(fd + 1))) fd = -1;
+        goto out;
+    }
     if (!to_len) { answer[1] = 0x04; (void)write_full(fd, answer, sizeof answer); goto out; } /* host unreachable */
     target = socket(to.ss_family, SOCK_STREAM, 0); assert(target >= 0);
     if (connect(target, (struct sockaddr *)&to, to_len)) { answer[1] = 0x05; (void)write_full(fd, answer, sizeof answer); goto out; }
@@ -151,7 +157,8 @@ static void *serve_conn(void *arg)
     relay(f, fd, target);
 out:
     if (target >= 0) close(target);
-    close(fd); free(r);
+    if (fd >= 0) close(fd);
+    free(r);
     return NULL;
 }
 static void *serve(void *arg)
@@ -175,7 +182,8 @@ void socks5_fixture_start(socks5_fixture *f)
 {
     memset(f, 0, sizeof *f);
     assert(!pthread_mutex_init(&f->mu, NULL));
-    f->requests = go_channel_create(64); f->stalled = go_channel_create(16); assert(f->requests && f->stalled);
+    f->requests = go_channel_create(64); f->stalled = go_channel_create(16); f->held = go_channel_create(4);
+    assert(f->requests && f->stalled && f->held);
     f->fd = socket(AF_INET, SOCK_STREAM, 0); assert(f->fd >= 0 && !pipe(f->stop));
     int one = 1; assert(!setsockopt(f->fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one));
     struct sockaddr_in a = {.sin_family = AF_INET, .sin_addr.s_addr = htonl(INADDR_LOOPBACK)};
@@ -193,7 +201,8 @@ void socks5_fixture_stop(socks5_fixture *f)
     void *p;
     while (!go_channel_try_receive(f->requests, &p)) free(p);
     while (!go_channel_try_receive(f->stalled, &p)) {}
-    go_channel_unref(f->requests); go_channel_unref(f->stalled);
+    while (!go_channel_try_receive(f->held, &p)) close((int)((intptr_t)p - 1));
+    go_channel_unref(f->requests); go_channel_unref(f->stalled); go_channel_unref(f->held);
     pthread_mutex_destroy(&f->mu);
 }
 void socks5_fixture_behave(socks5_fixture *f, s5_behaviour b, uint8_t rep)

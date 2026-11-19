@@ -64,6 +64,11 @@ static int connect_async(fipsd_transport *t, const fips_transport_addr *to)
 }
 static int send_frame(fipsd_transport *t, const fips_transport_addr *to, const uint8_t *bytes, size_t n)
 { tor_instance *x = t->user; return x->tcp->ops->send(x->tcp, to, bytes, n); }
+/* Upstream TorTransport::send_lane: the inner stream owner's control and data
+ * lanes (socks5/pool.rs ProxiedConnection::queue, PATH_QUEUE_DEPTH 8). */
+static int send_lane(fipsd_transport *t, fipsd_transport_lane lane, const fips_transport_addr *to,
+    const uint8_t *bytes, size_t n)
+{ tor_instance *x = t->user; return fipsd_transport_send_lane(x->tcp, lane, to, bytes, n); }
 static void close_connection(fipsd_transport *t, const fips_transport_addr *to)
 { tor_instance *x = t->user; x->tcp->ops->close_connection(x->tcp, to); }
 static void network_changed(fipsd_transport *t, const struct fipsd_netmon_event *e)
@@ -72,7 +77,8 @@ static void network_changed(fipsd_transport *t, const struct fipsd_netmon_event 
 static bool local_addr(const fipsd_transport *t, fips_transport_addr *out) { (void)t; (void)out; return false; }
 static const fipsd_transport_ops ops = {.local_addr = local_addr, .start_async = start_async, .stop = stop,
     .state = fipsd_transport_shared_state, .mtu = mtu, .send = send_frame, .discover = discover,
-    .connect_async = connect_async, .close_connection = close_connection, .network_changed = network_changed};
+    .connect_async = connect_async, .close_connection = close_connection, .network_changed = network_changed,
+    .send_lane = send_lane};
 void fipsd_tor_config_default(fipsd_tor_config *c)
 {
     *c = (fipsd_tor_config){.mode = "socks5", .socks5_addr = "127.0.0.1:9050", .connect_timeout_ms = 120000,

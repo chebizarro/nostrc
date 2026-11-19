@@ -20,7 +20,8 @@ typedef enum s5_behaviour {
     S5_REPLY,     /* reply with `rep` (0x05 refused, 0x01 general failure) and close */
     S5_AUTH_FAIL, /* RFC 1929 status 0x01 */
     S5_NO_METHOD, /* method reply 0xff */
-    S5_STALL      /* read the greeting and never answer it */
+    S5_STALL,     /* read the greeting and never answer it */
+    S5_HOLD       /* success reply, then hand the client's socket, unread, to `held` */
 } s5_behaviour;
 typedef struct s5_request {
     uint8_t greeting[8];
@@ -48,6 +49,7 @@ typedef struct socks5_fixture {
     fips_transport_addr address;
     GoChannel *requests;      /* s5_request *, owned by the receiver */
     GoChannel *stalled;       /* one token per connection parked by S5_STALL */
+    GoChannel *held;          /* S5_HOLD: each client descriptor, as (intptr_t)fd + 1; the receiver closes it */
 } socks5_fixture;
 void socks5_fixture_start(socks5_fixture *);
 void socks5_fixture_stop(socks5_fixture *); /* joins every connection thread */
