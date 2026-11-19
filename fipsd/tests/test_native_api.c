@@ -39,7 +39,7 @@ static int raw_open(const char *path)
     struct timeval tv = {WAIT_MS / 1000, 0};
     CHECK(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv) == 0 && setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv) == 0);
 #ifdef SO_NOSIGPIPE
-    int one = 1; (void)setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof one);
+    int one = 1; CHECK(setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof one) == 0);
 #endif
     return fd;
 }
@@ -124,7 +124,7 @@ static void bounded(int fd)
     struct timeval tv = {WAIT_MS / 1000, 0};
     CHECK(setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv) == 0 && setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv) == 0);
 #ifdef SO_NOSIGPIPE
-    int one = 1; (void)setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof one);
+    int one = 1; CHECK(setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof one) == 0);
 #endif
 }
 static ssize_t read_dgram(int fd, void *buf, size_t cap) { ssize_t n; do n = recv(fd, buf, cap, 0); while (n < 0 && errno == EINTR); return n; }
@@ -511,14 +511,40 @@ static void test_debug_gate(api_node *a, api_node *b)
     unsigned char buf[8]; CHECK(read_dgram(ffd, buf, sizeof buf) == 3 && read_dgram(ffd, buf, sizeof buf) == 1);
     close(ffd); await_event(&a->events, FIPSD_NATIVE_EVENT_FLOW_RELEASED, flow, 0);
 }
+/* Only for commands that deliberately make the server close without a reply.
+ * Its close can race either a partial body write or the separate newline. */
+static bool raw_send_before_close(int fd, const char *bytes, size_t len)
+{
+    size_t at = 0;
+    while (at < len) {
+        ssize_t n = send(fd, bytes + at, len - at, FIPSD_NATIVE_MSG_NOSIGNAL);
+        if (n < 0 && errno == EINTR) continue;
+        if (n < 0 && (errno == EPIPE || errno == ECONNRESET)) return false;
+        CHECK(n > 0);
+        at += (size_t)n;
+    }
+    return true;
+}
 static void test_command_cap_and_refusal_sizes(api_node *a)
 {
-    /* Over the cap, with and without the newline, ends the connection with nothing written back. */
-    int c = raw_open(a->path);
+    /* Upstream read_command returns an error before answering an oversized
+     * line. Dropping the socket promises no reply, not a successful write or
+     * an orderly FIN: unread input may cause ECONNRESET (raw_recv maps it to EOF).
+     * Cover no newline, a separate newline, and one in the body's write. */
+    int c;
     char *big = malloc(FIPSD_NATIVE_MAX_COMMAND + 2); CHECK(big);
-    memset(big, 'x', FIPSD_NATIVE_MAX_COMMAND + 1); big[FIPSD_NATIVE_MAX_COMMAND + 1] = 0;
-    raw_send(c, big);
-    CHECK(raw_reply(c, NULL) == NULL); close(c);
+    memset(big, 'x', FIPSD_NATIVE_MAX_COMMAND + 1); big[FIPSD_NATIVE_MAX_COMMAND + 1] = '\n';
+    for (unsigned mode = 0; mode < 3; ++mode) {
+        c = raw_open(a->path);
+        bool sent = raw_send_before_close(c, big, FIPSD_NATIVE_MAX_COMMAND + 1 + (mode == 2));
+        if (mode == 1 && sent) (void)raw_send_before_close(c, "\n", 1);
+        unsigned char reply;
+        CHECK(raw_recv(c, &reply, 1, NULL) == 0); /* Not even a partial reply. */
+        /* Force the late-writer path too, without sleeps or scheduler luck.
+         * The per-send/per-socket SIGPIPE suppression must keep us alive. */
+        CHECK(!raw_send_before_close(c, "\n", 1));
+        close(c);
+    }
     /* Exactly the cap is accepted and refused as an unknown command, in a
      * reply under 2048 bytes, and the connection goes on answering. */
     c = raw_open(a->path);
