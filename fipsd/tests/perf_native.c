@@ -60,7 +60,7 @@ typedef struct receiver {
     pthread_mutex_t mu;
     pthread_cond_t cv;
     bool ready, started;
-    int fd;
+    fips_native_stream *stream; /* non-blocking: a framed flow is read only through fips_native_recv */
     uint64_t deadline, received, highest;
 } receiver;
 static void *drain(void *arg)
@@ -75,15 +75,16 @@ static void *drain(void *arg)
         uint64_t current = now();
         if (current >= r->deadline) break;
         uint64_t remaining = r->deadline - current;
-        struct pollfd fd = {.fd=r->fd, .events=POLLIN};
+        struct pollfd fd = {.fd=fips_native_stream_fd(r->stream), .events=POLLIN};
         int ms = (int)((remaining + 999999) / 1000000);
         int rc = poll(&fd, 1, ms);
         if (rc < 0 && errno == EINTR) continue;
         CHECK(rc >= 0);
         if (!rc || now() >= r->deadline) break;
         uint8_t bytes[PAYLOAD + 1];
-        ssize_t len = recv(r->fd, bytes, sizeof(bytes), MSG_DONTWAIT);
-        if (len < 0 && (errno == EAGAIN || errno == EINTR)) continue;
+        /* Readable can be part of a framed datagram; -EAGAIN until the rest arrives. */
+        ssize_t len = fips_native_recv(r->stream, bytes, sizeof(bytes));
+        if (len == -EAGAIN || len == -EINTR) continue;
         CHECK(len == PAYLOAD);
         uint64_t seq; memcpy(&seq, bytes, sizeof(seq));
         CHECK(seq < UINT64_C(1000000000));
@@ -131,7 +132,8 @@ int main(int argc, char **argv)
         uint64_t arrived = now(); transmit(right, i); receive(left, i);
         uint64_t done = now(); one[i] = arrived - start; back[i] = done - arrived; rtt[i] = done - start;
     }
-    receiver r = {.fd=fips_native_stream_fd(right)};
+    CHECK(!fips_native_stream_set_nonblocking(right, true)); CHECK(!fips_native_stream_set_nonblocking(left, true));
+    receiver r = {.stream=right};
     CHECK(!pthread_mutex_init(&r.mu, NULL)); CHECK(!pthread_cond_init(&r.cv, NULL));
     pthread_t thread; CHECK(!pthread_create(&thread, NULL, drain, &r));
     CHECK(!pthread_mutex_lock(&r.mu));
@@ -144,14 +146,14 @@ int main(int argc, char **argv)
     int fd = fips_native_stream_fd(left);
     while (now() < r.deadline) {
         memcpy(bytes, &sent, sizeof(sent));
-        ssize_t rc = send(fd, bytes, sizeof(bytes), MSG_DONTWAIT);
-        if (rc < 0 && (errno == ENOBUFS || errno == EAGAIN || errno == EINTR)) {
+        int rc = fips_native_send(left, bytes, sizeof(bytes));
+        if (rc == -ENOBUFS || rc == -EAGAIN || rc == -EINTR) {
             ++backpressure;
             struct pollfd writable = {.fd=fd, .events=POLLOUT};
             int status = poll(&writable, 1, 1); CHECK(status >= 0 || errno == EINTR);
             continue; /* No accepted datagram is ever retransmitted. */
         }
-        CHECK(rc == PAYLOAD); ++sent;
+        CHECK(!rc); ++sent;
     }
     CHECK(!pthread_join(thread, NULL));
     CHECK(!pthread_cond_destroy(&r.cv)); CHECK(!pthread_mutex_destroy(&r.mu));
