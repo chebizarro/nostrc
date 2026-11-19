@@ -120,10 +120,12 @@ typedef struct fips_coord_cache {
     fips_coord_slot *slots;
     uint32_t *table, *by_use, *parked, *probation; /* slot indexes */
     uint32_t *expiry; /* every resident slot, a min-heap by entry.expires_at */
+    uint32_t *resident; /* bitmap of resident slots, for storage-order walks */
     size_t slot_capacity, table_len, len, by_use_len, parked_len, probation_len, expiry_len;
     uint32_t free_head;
     uint64_t seq, stored_weight, default_ttl_ms, eviction_examined;
     uint64_t generation; /* see fips_coord_cache_generation */
+    uint64_t created_sum, created_max; /* residents' created_at: sum mod 2^64, upper bound */
     size_t max_entries;
     fips_instant epoch;
     uint8_t hash_key[16];
@@ -136,8 +138,8 @@ typedef struct fips_coord_cache {
     ((m) / FIPS_PROBATION_SHARE_DIVISOR > 0 ? (m) / FIPS_PROBATION_SHARE_DIVISOR : (size_t)1)
 #define FIPS_COORD_CACHE_SLOTS(m) ((m) + FIPS_COORD_CACHE_PROBATION_BOUND(m))
 /** uint32_t words of index storage for slot_capacity slots: three eviction
- * heaps, the expiry heap and a hash table at most half full. */
-#define FIPS_COORD_CACHE_INDEX_WORDS(cap) (6 * (size_t)(cap) + 1)
+ * heaps, the expiry heap, a hash table at most half full and a residency bitmap. */
+#define FIPS_COORD_CACHE_INDEX_WORDS(cap) (6 * (size_t)(cap) + 1 + ((size_t)(cap) + 31) / 32)
 /** Caller owns cache, slots and index for the whole lifetime; no allocation.
  * Hint keys are peer-chosen, so the hash key is drawn from host entropy at
  * init, like Rust's KeyedHasher (iteration order is per-process). epoch is
@@ -207,7 +209,8 @@ FIPS_CORE_API size_t fips_coord_cache_len(const fips_coord_cache *c); /* incl. e
 FIPS_CORE_API uint64_t fips_coord_cache_generation(const fips_coord_cache *c);
 FIPS_CORE_API bool fips_coord_cache_is_empty(const fips_coord_cache *c);
 /** Rust iter(): non-expired entries, in storage order (upstream order is
- * random per process; nothing may depend on it). Return false to stop. */
+ * random per process; nothing may depend on it). Return false to stop. Walks a
+ * residency bitmap: O(slot_capacity / 32 + entries visited or skipped). */
 typedef bool (*fips_coord_cache_visitor)(void *ctx, const uint8_t addr[16],
                                          const fips_cache_entry *entry);
 FIPS_CORE_API void fips_coord_cache_iter(const fips_coord_cache *c, fips_instant now,
@@ -222,18 +225,19 @@ FIPS_CORE_API size_t fips_coord_cache_invalidate_via_node(fips_coord_cache *c,
                                                           const uint8_t node_addr[16]);
 FIPS_CORE_API size_t fips_coord_cache_invalidate_other_roots(fips_coord_cache *c,
                                                              const uint8_t current_root[16]);
+/** Upstream's counts, from running totals the cache keeps (the created_at sum
+ * and the expiry index): O(1 + expired entries), not a sweep, for any `now` at
+ * or after every resident entry's creation (always, for a clock that does not
+ * run backwards); an earlier `now`, or one so late that the summed ages pass
+ * UINT64_MAX, takes the residency walk instead. Same result either way. */
 FIPS_CORE_API fips_cache_stats fips_coord_cache_stats(const fips_coord_cache *c, fips_instant now);
-/** Host-diagnostic fusion of iter() and stats() (no upstream counterpart): one
- * pass over the resident slots only, O(len + slot_capacity / 64) instead of two
- * O(slot_capacity) sweeps. Visits exactly what fips_coord_cache_iter visits, in
- * the same storage order; visit may be NULL, and once it returns false the
- * remaining entries still count toward the returned stats, which equal
- * fips_coord_cache_stats. marks is caller scratch of at least
- * FIPS_COORD_CACHE_MARK_WORDS(slot_capacity) words, overwritten; with fewer it
- * falls back to the full sweeps. */
-#define FIPS_COORD_CACHE_MARK_WORDS(cap) (((size_t)(cap) + 63) / 64)
+/** Host-diagnostic fusion of iter() and stats() (no upstream counterpart):
+ * visits exactly what fips_coord_cache_iter visits, in the same storage order,
+ * and returns fips_coord_cache_stats. visit may be NULL; once it returns false
+ * the walk stops, so a host reading the first rows of a large cache pays for
+ * those rows (plus the bitmap), not for every entry. */
 FIPS_CORE_API fips_cache_stats fips_coord_cache_scan(const fips_coord_cache *c, fips_instant now,
-    uint64_t *marks, size_t mark_words, fips_coord_cache_visitor visit, void *ctx);
+    fips_coord_cache_visitor visit, void *ctx);
 /* Upstream test-hooks feature, always available here (read-only, O(1) except
  * stored_addrs, which is O(n)). */
 FIPS_CORE_API uint64_t fips_coord_cache_eviction_examined(const fips_coord_cache *c);

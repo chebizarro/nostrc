@@ -662,6 +662,25 @@ times, medians of the per-run medians (`FIPS_BENCH_ITERS=100`):
 The purge pops an expiry heap instead of sweeping every slot (~51k slots of
 2.7 KB at the default size), so its cost follows what it removes.
 
+A touched cache used to force an O(len) rescan in `publish_snapshot`: the
+counts swept every resident entry and the rows were taken on the way. The core
+now keeps the counts as running totals (the residents' `created_at` sum and
+the expiry heap), walks a residency bitmap for the rows and stops at the 256th,
+so the rescan costs the rows. `fipsd_snapshot_bench --cache-churn 25` (256
+retained peers, 2000 publishes), Release, CPU clock, base and change binaries
+interleaved eight times, medians of the per-run figures:
+
+| Scenario | p99 all, before | p99 all, after | cache-churn publishes p50, before | after | p99, before | after |
+| --- | --- | --- | --- | --- | --- | --- |
+| 50k-entry cache, touched before 25% | 492 us | 128 us | 327 us | 104 us | 610 us | 132 us |
+| 4096-entry cache, touched before 25% | 159 us | 171 us | 119 us | 105 us | 205 us | 232 us |
+
+The rescanning publish is now the same ~105 us at 4096 and 50k entries: what
+is left is building the 256 control rows (strings and JSON). The 4096 p99
+moves within this host's noise (load average 10-18). Every run, before and
+after, has one publish over 1 ms (5-7 ms), the same in both: a history tick,
+taken up below.
+
 ### Reproduction and verification
 
 `FipsdProfilingTest` joins `fipsd_tests` when profiling is enabled. It covers

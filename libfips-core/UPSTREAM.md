@@ -748,7 +748,8 @@ through the three eviction heaps rather than every slot. With too little
 scratch, or heaps that do not account for `len`, it falls back to the sweeps.
 `FipsCoreCoordCacheTest` cross-checks it against iter and stats under random
 churn. No pin change. Version decision: additive API, **libfips-core 0.1.0
-Unreleased**.
+Unreleased**. Superseded in nostrc-gfvud: the scan takes no scratch and walks
+a residency bitmap; see below.
 
 ## Cache generation and stats-history sync (nostrc-igg4w)
 
@@ -775,7 +776,7 @@ and change no upstream behaviour.
 
 No pin change. Version decision: additive API (and two additive struct fields),
 **libfips-core 0.1.0 Unreleased**.
-## Coordinate-cache expiry index (nostrc-gfvud)
+## Coordinate-cache expiry index and running stats (nostrc-gfvud)
 
 Internal storage only; every call keeps upstream's results. Upstream's
 `purge_expired` is a `retain` over the whole map, once per tick. The C cache
@@ -793,8 +794,27 @@ a storage-order sweep finds expired, and requires identical counts and state
 invariant is checked after every mutation in the existing map/index test.
 `fips_bench_coord_cache` times the purge at 1,000 and 50,000 entries.
 
+Stats without a sweep: upstream's `stats` walks the map. The C cache keeps
+the residents' `created_at` sum (mod 2^64) and an upper bound on it, so for any
+`now` at or after the latest creation the summed ages are `len * now - sum`
+(exact whenever `len * now` fits; otherwise, or for an earlier `now`, the
+upstream per-entry saturating sum is computed by walking the residents). The
+expired count and the earliest live expiry come from the expiry heap's top: a
+node not yet expired has no expired descendant, so the walk is O(1 + expired).
+A residency bitmap (`FIPS_COORD_CACHE_INDEX_WORDS` adds one bit per slot) gives
+`iter`, the invalidations, `stored_addrs` and `fips_coord_cache_scan` the
+resident slots in storage order without touching free slots; the scan no
+longer takes caller mark scratch (`FIPS_COORD_CACHE_MARK_WORDS` is gone) and
+stops when its visitor does, its stats coming from the totals. A host that
+reads the first rows of a 50k-entry cache pays for the rows.
+`FipsCoreCoordCacheTest` compares stats, iter and scan with a transcription of
+the slot sweep at random instants after and before the latest write under
+churn, pins the saturating fallback, checks the bitmap and totals after every
+mutation, and the twin purge test compares stats with the sweep at every step.
+
 No pin change. Version decision: **libfips-core 0.1.0 Unreleased** (storage
-geometry and struct layout of an unreleased component).
+geometry, struct layout and the scan signature of an unreleased component;
+no released consumer).
 ## Transport send lanes (nostrc-085xw)
 
 Host-only; no libfips-core or wire change. Upstream `transport::Lane`

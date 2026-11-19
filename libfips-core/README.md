@@ -51,8 +51,10 @@ not a Rust FFI wrapper or a complete working protocol implementation.
   eviction that spares live-verified entries, probation segment, TTLs) over
   caller-owned slots and index words, with instants converted against an init
   epoch. Coordinates are held inline pending the proto coord codec.
-  `fips_coord_cache_scan` is a host-diagnostic fusion of iter and stats over
-  the resident slots only, O(len + slots/64), with no upstream counterpart.
+  `fips_coord_cache_scan` is a host-diagnostic fusion of iter and stats with
+  no upstream counterpart. Stats come from running totals and an expiry index
+  (O(1 + expired)), iteration walks a residency bitmap and a scan stops with
+  its visitor, and `purge_expired` costs what it removes (nostrc-gfvud).
   Version decision (nostrc-oetfk): the additive API folds into
   **libfips-core 0.1.0 Unreleased**.
   `fips_coord_cache_generation` and `fips_cache_stats.next_expiry_ms` let a host

@@ -5,7 +5,9 @@
  * pop_first/remove/insert stay O(log n) without allocation. Keys are unique
  * through seq, so heap order equals the Rust map order. A fourth heap (no
  * upstream counterpart) holds every resident slot by expires_at, so purging
- * expired entries costs what it removes, not a sweep of the slots. */
+ * expired entries costs what it removes, not a sweep of the slots; with a
+ * running sum of the residents' created_at it also answers stats without one,
+ * and a residency bitmap finds the resident slots in storage order. */
 #include <fips/cache/coord_cache.h>
 #include <sodium/crypto_shorthash_siphash24.h>
 #include <string.h>
@@ -205,12 +207,40 @@ static void table_remove(fips_coord_cache *c, uint32_t idx)
     }
 }
 
+static unsigned low_bit(uint32_t bits) /* bits != 0 */
+{
+#if defined(__GNUC__) || defined(__clang__)
+    return (unsigned)__builtin_ctz(bits);
+#else
+    unsigned n = 0;
+    while (!(bits & 1)) { bits >>= 1; ++n; }
+    return n;
+#endif
+}
+
+#define RESIDENT_WORDS(cap) (((size_t)(cap) + 31) / 32)
+
+/* The first resident slot at or after from, in storage order; NONE if none.
+ * The bit mirrors slot.used, so removing the current slot during a walk is safe. */
+static uint32_t next_resident(const fips_coord_cache *c, size_t from)
+{
+    size_t word = from / 32, words = RESIDENT_WORDS(c->slot_capacity);
+    if (word >= words) return NONE;
+    uint32_t bits = c->resident[word] & (UINT32_MAX << (from % 32));
+    while (!bits) {
+        if (++word == words) return NONE;
+        bits = c->resident[word];
+    }
+    return (uint32_t)(word * 32 + low_bit(bits));
+}
+
 static uint32_t alloc_slot(fips_coord_cache *c)
 {
     uint32_t idx = c->free_head;
     if (idx == NONE) return NONE;
     c->free_head = c->slots[idx].link;
     c->slots[idx].used = true;
+    c->resident[idx / 32] |= UINT32_C(1) << (idx % 32);
     return idx;
 }
 
@@ -218,6 +248,7 @@ static void free_slot(fips_coord_cache *c, uint32_t idx)
 {
     fips_coord_slot *slot = &c->slots[idx];
     slot->used = false;
+    c->resident[idx / 32] &= ~(UINT32_C(1) << (idx % 32));
     slot->link = c->free_head;
     c->free_head = idx;
 }
@@ -251,6 +282,8 @@ static void file_new(fips_coord_cache *c, uint32_t idx, fips_segment segment)
     heap_push(c, heap_of(c, slot->place), idx);
     expiry_set(c, c->expiry_len++, idx);
     expiry_up(c, slot->expiry_pos);
+    c->created_sum += slot->entry.created_at; /* mod 2^64: see aggregate_age */
+    if (slot->entry.created_at > c->created_max) c->created_max = slot->entry.created_at;
     table_insert(c, idx);
     ++c->len;
     ++c->generation;
@@ -264,9 +297,10 @@ static void unfile(fips_coord_cache *c, uint32_t idx, bool in_heap)
     if (in_heap) heap_delete(c, heap_of(c, slot->place), slot->heap_pos);
     if (slot->expiry_pos != NONE) expiry_delete(c, slot->expiry_pos);
     slot->expiry_pos = NONE;
+    c->created_sum -= slot->entry.created_at;
     if (segment_of_place(slot->place) == FIPS_SEGMENT_MAIN) c->stored_weight -= slot->weight;
     table_remove(c, idx);
-    --c->len;
+    if (--c->len == 0) c->created_max = 0;
     ++c->generation;
 }
 
@@ -522,6 +556,7 @@ fips_status fips_coord_cache_init(fips_coord_cache *c, fips_coord_slot *slots,
     c->expiry = index + 3 * slot_capacity;
     c->table = index + 4 * slot_capacity;
     c->table_len = 2 * slot_capacity + 1;
+    c->resident = c->table + c->table_len;
     c->max_entries = max_entries;
     c->default_ttl_ms = default_ttl_ms;
     c->epoch = epoch;
@@ -539,8 +574,9 @@ void fips_coord_cache_clear(fips_coord_cache *c)
         c->slots[i].link = c->free_head;
         c->free_head = (uint32_t)i;
     }
+    memset(c->resident, 0, RESIDENT_WORDS(c->slot_capacity) * sizeof *c->resident);
     c->len = c->by_use_len = c->parked_len = c->probation_len = c->expiry_len = 0;
-    c->stored_weight = 0;
+    c->stored_weight = c->created_sum = c->created_max = 0;
     ++c->generation;
 }
 
@@ -699,15 +735,19 @@ size_t fips_coord_cache_len(const fips_coord_cache *c) { return c->len; }
 uint64_t fips_coord_cache_generation(const fips_coord_cache *c) { return c->generation; }
 bool fips_coord_cache_is_empty(const fips_coord_cache *c) { return c->len == 0; }
 
+static void walk_live(const fips_coord_cache *c, uint64_t now_ms, fips_coord_cache_visitor visit, void *ctx)
+{
+    for (uint32_t i = next_resident(c, 0); i != NONE; i = next_resident(c, (size_t)i + 1)) {
+        const fips_coord_slot *slot = &c->slots[i];
+        if (fips_cache_entry_is_expired(&slot->entry, now_ms)) continue;
+        if (!visit(ctx, slot->addr, &slot->entry)) return;
+    }
+}
+
 void fips_coord_cache_iter(const fips_coord_cache *c, fips_instant now,
                            fips_coord_cache_visitor visit, void *ctx)
 {
-    uint64_t now_ms = fips_coord_cache_millis(c, now);
-    for (size_t i = 0; i < c->slot_capacity; ++i) {
-        const fips_coord_slot *slot = &c->slots[i];
-        if (!slot->used || fips_cache_entry_is_expired(&slot->entry, now_ms)) continue;
-        if (!visit(ctx, slot->addr, &slot->entry)) return;
-    }
+    walk_live(c, fips_coord_cache_millis(c, now), visit, ctx);
 }
 
 typedef bool (*keep_fn)(const fips_cache_entry *entry, const uint8_t addr[16]);
@@ -715,8 +755,8 @@ typedef bool (*keep_fn)(const fips_cache_entry *entry, const uint8_t addr[16]);
 static size_t retain_entries(fips_coord_cache *c, keep_fn keep, const uint8_t addr[16])
 {
     size_t before = c->len;
-    for (size_t i = 0; i < c->slot_capacity; ++i)
-        if (c->slots[i].used && !keep(&c->slots[i].entry, addr)) remove_slot(c, (uint32_t)i);
+    for (uint32_t i = next_resident(c, 0); i != NONE; i = next_resident(c, (size_t)i + 1))
+        if (!keep(&c->slots[i].entry, addr)) remove_slot(c, i);
     return before - c->len;
 }
 
@@ -784,72 +824,62 @@ size_t fips_coord_cache_invalidate_other_roots(fips_coord_cache *c, const uint8_
     return retain_entries(c, keep_same_root, current_root);
 }
 
+/* Expired entries and the earliest live expiry, from the expiry heap: the
+ * expired entries are the heap's top (a node due later than now has no
+ * expired descendant), the earliest live one sits on that top's frontier.
+ * O(1 + expired); the walk stack holds one pending sibling per level. */
+static void expiry_census(const fips_coord_cache *c, uint64_t now_ms, size_t *expired, uint64_t *next)
+{
+    size_t stack[66], top = 0;
+    *expired = 0;
+    *next = UINT64_MAX;
+    if (c->expiry_len) stack[top++] = 0;
+    while (top) {
+        size_t pos = stack[--top];
+        uint64_t at = c->slots[c->expiry[pos]].entry.expires_at;
+        if (now_ms <= at) {
+            if (at < *next) *next = at;
+            continue;
+        }
+        ++*expired;
+        for (size_t child = 2 * pos + 1; child <= 2 * pos + 2 && child < c->expiry_len; ++child)
+            stack[top++] = child;
+    }
+}
+
+/* Every resident's age is now_ms - created_at when now_ms is at or past the
+ * latest creation, so their sum is len * now_ms - created_sum. created_sum is
+ * kept mod 2^64; when len * now_ms fits, the true sum (no larger) does too, so
+ * the modular value is exact and the total cannot saturate. Otherwise false. */
+static bool aggregate_age(const fips_coord_cache *c, uint64_t now_ms, uint64_t *total)
+{
+    if (c->len == 0) { *total = 0; return true; }
+    if (now_ms < c->created_max || now_ms > UINT64_MAX / (uint64_t)c->len) return false;
+    *total = (uint64_t)c->len * now_ms - c->created_sum;
+    return true;
+}
+
 fips_cache_stats fips_coord_cache_stats(const fips_coord_cache *c, fips_instant now)
 {
     uint64_t now_ms = fips_coord_cache_millis(c, now), total_age = 0, next_expiry = UINT64_MAX;
     size_t expired = 0;
-    for (size_t i = 0; i < c->slot_capacity; ++i) {
-        const fips_coord_slot *slot = &c->slots[i];
-        if (!slot->used) continue;
-        if (fips_cache_entry_is_expired(&slot->entry, now_ms)) ++expired;
-        else if (slot->entry.expires_at < next_expiry) next_expiry = slot->entry.expires_at;
-        uint64_t age = fips_cache_entry_age(&slot->entry, now_ms);
-        total_age = total_age > UINT64_MAX - age ? UINT64_MAX : total_age + age;
+    expiry_census(c, now_ms, &expired, &next_expiry);
+    if (!aggregate_age(c, now_ms, &total_age)) {
+        /* Upstream's saturating per-entry sum. */
+        for (uint32_t i = next_resident(c, 0); i != NONE; i = next_resident(c, (size_t)i + 1)) {
+            uint64_t age = fips_cache_entry_age(&c->slots[i].entry, now_ms);
+            total_age = total_age > UINT64_MAX - age ? UINT64_MAX : total_age + age;
+        }
     }
     return (fips_cache_stats){c->len, c->max_entries, expired,
                               c->len == 0 ? 0 : total_age / (uint64_t)c->len, next_expiry};
 }
 
-typedef struct scan_acc { uint64_t now_ms, total_age, next_expiry; size_t expired; } scan_acc;
-
-static unsigned low_bit(uint64_t bits) /* bits != 0 */
-{
-#if defined(__GNUC__) || defined(__clang__)
-    return (unsigned)__builtin_ctzll(bits);
-#else
-    unsigned n = 0;
-    while (!(bits & 1)) { bits >>= 1; ++n; }
-    return n;
-#endif
-}
-
-static void scan_slot(const fips_coord_slot *slot, scan_acc *acc, fips_coord_cache_visitor *visit, void *ctx)
-{
-    bool expired = fips_cache_entry_is_expired(&slot->entry, acc->now_ms);
-    /* Branch-free: this loop is bound by memory latency over ~51k slots. */
-    uint64_t live_expiry = expired ? UINT64_MAX : slot->entry.expires_at;
-    acc->expired += expired;
-    acc->next_expiry = live_expiry < acc->next_expiry ? live_expiry : acc->next_expiry;
-    uint64_t age = fips_cache_entry_age(&slot->entry, acc->now_ms);
-    acc->total_age = acc->total_age > UINT64_MAX - age ? UINT64_MAX : acc->total_age + age;
-    if (!expired && *visit && !(*visit)(ctx, slot->addr, &slot->entry)) *visit = NULL;
-}
-
-/* Every resident slot is filed in exactly one of the three heaps (unfile and
- * file keep that whole between public calls), so marking heap members finds
- * them without touching the free slots; the bitmap restores storage order. */
 fips_cache_stats fips_coord_cache_scan(const fips_coord_cache *c, fips_instant now,
-                                       uint64_t *marks, size_t mark_words,
                                        fips_coord_cache_visitor visit, void *ctx)
 {
-    scan_acc acc = {fips_coord_cache_millis(c, now), 0, UINT64_MAX, 0};
-    size_t words = FIPS_COORD_CACHE_MARK_WORDS(c->slot_capacity);
-    bool indexed = marks && mark_words >= words && c->by_use_len + c->parked_len + c->probation_len == c->len;
-    if (indexed) {
-        memset(marks, 0, words * sizeof *marks);
-        const uint32_t *heaps[3] = {c->by_use, c->parked, c->probation};
-        size_t lens[3] = {c->by_use_len, c->parked_len, c->probation_len};
-        for (size_t h = 0; h < 3; ++h)
-            for (size_t i = 0; i < lens[h]; ++i) marks[heaps[h][i] / 64] |= UINT64_C(1) << (heaps[h][i] % 64);
-        for (size_t w = 0; w < words; ++w)
-            for (uint64_t bits = marks[w]; bits; bits &= bits - 1)
-                scan_slot(&c->slots[w * 64 + low_bit(bits)], &acc, &visit, ctx);
-    } else {
-        for (size_t i = 0; i < c->slot_capacity; ++i)
-            if (c->slots[i].used) scan_slot(&c->slots[i], &acc, &visit, ctx);
-    }
-    return (fips_cache_stats){c->len, c->max_entries, acc.expired,
-                              c->len == 0 ? 0 : acc.total_age / (uint64_t)c->len, acc.next_expiry};
+    if (visit) walk_live(c, fips_coord_cache_millis(c, now), visit, ctx);
+    return fips_coord_cache_stats(c, now);
 }
 
 uint64_t fips_coord_cache_eviction_examined(const fips_coord_cache *c)
@@ -871,8 +901,8 @@ size_t fips_coord_cache_probation_len(const fips_coord_cache *c) { return c->pro
 size_t fips_coord_cache_stored_addrs(const fips_coord_cache *c)
 {
     size_t total = 0;
-    for (size_t i = 0; i < c->slot_capacity; ++i)
-        if (c->slots[i].used) total += c->slots[i].entry.coords.len;
+    for (uint32_t i = next_resident(c, 0); i != NONE; i = next_resident(c, (size_t)i + 1))
+        total += c->slots[i].entry.coords.len;
     return total;
 }
 

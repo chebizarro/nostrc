@@ -192,8 +192,10 @@ static bool cache_row(void *ctx, const uint8_t addr[16], const fips_cache_entry 
     if (e->has_path_mtu) { uint16_t *m = salloc(c->x, sizeof *m); if (m) { *m = e->path_mtu; r->path_mtu = m; } }
     return true;
 }
-/* One full scan of the resident entries (the default cache has ~51k slots),
- * rows stopping at 256. NULL if the view cannot be allocated. */
+/* The first 256 live entries in storage order and the cache's counts; the
+ * core walks a residency bitmap and stops with the rows, and keeps the counts
+ * as running totals, so this costs the rows, not the cache size. NULL if the
+ * view cannot be allocated. */
 static cache_view *cache_scan(handlers *h, fips_instant now, uint64_t now_ms)
 {
     cache_view *v = calloc(1, sizeof *v);
@@ -201,16 +203,11 @@ static cache_view *cache_scan(handlers *h, fips_instant now, uint64_t now_ms)
     if (!arena) { free(v); return NULL; }
     atomic_init(&v->refs, 1);
     v->arena = arena;
-    size_t words = FIPS_COORD_CACHE_MARK_WORDS(h->cache.slot_capacity);
-    if (h->cache_mark_words < words) {
-        uint64_t *marks = realloc(h->cache_marks, words * sizeof *marks);
-        if (marks) { h->cache_marks = marks; h->cache_mark_words = words; }
-    }
     size_t resident = fips_coord_cache_len(&h->cache), rows_cap = resident < 256 ? resident : 256;
     struct { handlers *h; snap *x; fipsd_control_cache_entry *rows; size_t n, cap; } cc = {h, arena, salloc(arena, (rows_cap + 1) * sizeof(fipsd_control_cache_entry)), 0, rows_cap};
     v->generation = fips_coord_cache_generation(&h->cache);
     v->scanned_ms = now_ms;
-    v->stats = fips_coord_cache_scan(&h->cache, now, h->cache_marks, h->cache_mark_words, cc.rows ? cache_row : NULL, &cc);
+    v->stats = fips_coord_cache_scan(&h->cache, now, cc.rows ? cache_row : NULL, &cc);
     v->rows = cc.rows; v->nrows = cc.n;
     return v;
 }
@@ -459,7 +456,7 @@ static snap *build(handlers *h, fips_instant now)
         if (cs.entries) cs.avg_age_ms += now_ms - cv->scanned_ms;
         s->cache.entries = cv->rows; s->cache.entry_count = cv->nrows;
     } else {
-        cs = fips_coord_cache_scan(&h->cache, now, h->cache_marks, h->cache_mark_words, NULL, NULL); /* out of memory: counts only */
+        cs = fips_coord_cache_stats(&h->cache, now); /* out of memory: counts only */
     }
     s->cache.count = cs.entries; s->cache.max_entries = cs.max_entries; s->cache.expired = cs.expired;
     s->cache.fill_ratio = fips_cache_stats_fill_ratio(&cs); s->cache.default_ttl_ms = fips_coord_cache_default_ttl_ms(&h->cache);
@@ -561,7 +558,6 @@ void hs_provider_free(handlers *h)
     go_swap_free(h->snapshot); h->snapshot = NULL;
     hs_provider_cache_reset(h);
     fipsd_stats_views_free(&h->stats_views);
-    free(h->cache_marks); h->cache_marks = NULL; h->cache_mark_words = 0;
 }
 static bool parse_peer(handlers *h, const json_t *params, const char *key, fips_peer_identity *out)
 {
