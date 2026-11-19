@@ -239,11 +239,6 @@ ${_gui_frame_check_output}${_gui_frame_check_error}")
   endif()
 endif()
 
-option(BUILD_RELAYD "Build the relayd application (requires nsync)" ON)
-if (BUILD_RELAYD AND EXISTS ${CMAKE_SOURCE_DIR}/apps/relayd/CMakeLists.txt)
-  add_subdirectory(apps/relayd)
-endif()
-
 # Global hardening flags (GCC/Clang); keep portable and avoid breaking MSVC
 if (CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
   add_compile_options(-fstack-protector-strong -fno-strict-aliasing)
@@ -284,6 +279,13 @@ option(ENABLE_NSON "Enable NSON compilation" OFF)
 
 # Sanitizer helper (Debug builds)
 function(apply_sanitizers target)
+  # A static archive has no link step of its own: its consumers must select
+  # the compiler's sanitizer runtime when they link the instrumented objects.
+  get_target_property(_type ${target} TYPE)
+  set(_link_scope PRIVATE)
+  if(_type STREQUAL "STATIC_LIBRARY")
+    set(_link_scope PUBLIC)
+  endif()
   # Always honor GO_ENABLE_* toggles regardless of build type so CI (which may
   # use RelWithDebInfo) still links sanitizer DSOs for executables.
   # -fsanitize=* on the link line selects the compiler's own runtime. Never name
@@ -291,15 +293,15 @@ function(apply_sanitizers target)
   # runtime beside Clang's static one, and two TSan runtimes crash at startup.
   if (GO_ENABLE_TSAN)
     target_compile_options(${target} PRIVATE -fsanitize=thread -fno-omit-frame-pointer)
-    target_link_options(${target} PRIVATE -fsanitize=thread)
+    target_link_options(${target} ${_link_scope} -fsanitize=thread)
   endif()
   if (GO_ENABLE_ASAN)
     target_compile_options(${target} PRIVATE -fsanitize=address -fno-omit-frame-pointer)
-    target_link_options(${target} PRIVATE -fsanitize=address)
+    target_link_options(${target} ${_link_scope} -fsanitize=address)
   endif()
   if (GO_ENABLE_UBSAN)
     target_compile_options(${target} PRIVATE -fsanitize=undefined)
-    target_link_options(${target} PRIVATE -fsanitize=undefined)
+    target_link_options(${target} ${_link_scope} -fsanitize=undefined)
   endif()
 endfunction()
 
@@ -368,6 +370,13 @@ endif()
 add_subdirectory(libgo)
 add_subdirectory(libjson)
 add_subdirectory(libnostr)
+apply_sanitizers(nostr)
+
+# Applications inherit sanitizer setup and the foundations' usage requirements.
+option(BUILD_RELAYD "Build the relayd application (requires nsync)" ON)
+if (BUILD_RELAYD AND EXISTS ${CMAKE_SOURCE_DIR}/apps/relayd/CMakeLists.txt)
+  add_subdirectory(apps/relayd)
+endif()
 
 # FIPS keeps pure protocol code separate from its runtime/I/O host.
 option(BUILD_FIPS "Build the FIPS protocol core and host daemon skeletons" ON)
