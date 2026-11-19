@@ -181,6 +181,7 @@ static bool cache_row(void *ctx, const uint8_t addr[16], const fips_cache_entry 
 }
 static snap *build(handlers *h, fips_instant now)
 {
+    FIPSD_PERF_BEGIN(header_start);
     snap *x = calloc(1, sizeof *x);
     if (!x) return NULL;
     fipsd_control_snapshot *s = &x->s;
@@ -216,6 +217,8 @@ static snap *build(handlers *h, fips_instant now)
         if (fips_bloom_estimated_count(&parent_filter->sent[0], FIPS_BLOOM_ACCEPT_FPR_CAP, &x->estimate))
             s->bloom.uptree_estimated_count = &x->estimate;
     }
+    FIPSD_PERF_END(header_start, SNAPSHOT_HEADER);
+    FIPSD_PERF_BEGIN(peers_start);
     size_t peers = 0, legs = 0, established = 0;
     json_t *counts = json_object(), *peer_rows = json_array(), *link_rows = json_array(), *mmp_peers = json_array();
     json_t *tree_rows = json_array(), *filter_rows = json_array();
@@ -324,6 +327,8 @@ static snap *build(handlers *h, fips_instant now)
     s->peer_count = s->link_count = peers; s->transport_count = h->registry ? h->registry->count : 0;
     s->transport_peer_counts = sjson(x, counts); s->peers = sjson(x, peer_rows); s->links = sjson(x, link_rows); s->mmp_peers = sjson(x, mmp_peers);
     s->peer_meta = meta; s->peer_meta_count = nmeta;
+    FIPSD_PERF_END(peers_start, SNAPSHOT_PEERS);
+    FIPSD_PERF_BEGIN(sessions_start);
     /* Sessions */
     json_t *session_rows = json_array(), *mmp_sessions = json_array();
     for (size_t i = 0; i < h->cfg.session_capacity; ++i) {
@@ -356,6 +361,8 @@ static snap *build(handlers *h, fips_instant now)
         json_array_append_new(session_rows, row);
     }
     s->session_count = established; s->sessions = sjson(x, session_rows); s->mmp_sessions = sjson(x, mmp_sessions);
+    FIPSD_PERF_END(sessions_start, SNAPSHOT_SESSIONS);
+    FIPSD_PERF_BEGIN(transports_start);
     /* Pending handshakes */
     fipsd_control_connection *conns = salloc(x, (h->cfg.peer_capacity + 1) * sizeof *conns);
     for (size_t i = 0; conns && i < h->cfg.peer_capacity; ++i) {
@@ -381,6 +388,8 @@ static snap *build(handlers *h, fips_instant now)
         if (ts[i].interface) views[i].interface.name = sdup(x, views[i].interface.name);
     }
     s->transports = ts; s->transports_count = ts && views ? tn : 0;
+    FIPSD_PERF_END(transports_start, SNAPSHOT_TRANSPORTS);
+    FIPSD_PERF_BEGIN(tree_start);
     /* Tree */
     const fips_parent_declaration *d = fips_tree_state_my_declaration(h->tree);
     s->tree.my_node_addr = s->node_addr; s->tree.root = hex_of(x, fips_tree_state_root(h->tree));
@@ -395,6 +404,8 @@ static snap *build(handlers *h, fips_instant now)
     json_t *leaves = json_array();
     for (size_t i = 0; i < h->bloom.leaf_count; ++i) { char buf[33]; (void)fips_node_addr_format(&h->bloom.leaves[i], buf, sizeof buf); json_array_append_new(leaves, json_string(buf)); }
     s->bloom.leaf_dependents = sjson(x, leaves); s->bloom.peer_filters = sjson(x, filter_rows);
+    FIPSD_PERF_END(tree_start, SNAPSHOT_TREE);
+    FIPSD_PERF_BEGIN(cache_start);
     /* Coordinate cache */
     fips_cache_stats cs = fips_coord_cache_stats(&h->cache, now);
     s->cache.count = cs.entries; s->cache.max_entries = cs.max_entries; s->cache.expired = cs.expired;
@@ -404,6 +415,8 @@ static snap *build(handlers *h, fips_instant now)
     struct { handlers *h; snap *x; fipsd_control_cache_entry *rows; size_t n, cap; } cc = {h, x, salloc(x, (rows_cap + 1) * sizeof(fipsd_control_cache_entry)), 0, rows_cap};
     if (cc.rows) fips_coord_cache_iter(&h->cache, now, cache_row, &cc);
     s->cache.entries = cc.rows; s->cache.entry_count = cc.n;
+    FIPSD_PERF_END(cache_start, SNAPSHOT_CACHE);
+    FIPSD_PERF_BEGIN(counters_start);
     /* Identity cache */
     fipsd_control_identity *ids = salloc(x, (h->identities.count + 1) * sizeof *ids);
     for (size_t i = 0; ids && i < h->identities.count; ++i) {
@@ -449,6 +462,8 @@ static snap *build(handlers *h, fips_instant now)
     s->handshake = counters_of(x, buf, n);
     n = fipsd_metrics_snapshot(&h->metrics, FIPSD_METRICS_session, buf);
     s->session = counters_of(x, buf, n);
+    FIPSD_PERF_END(counters_start, SNAPSHOT_COUNTERS);
+    FIPSD_PERF_BEGIN(history_start);
     /* Stats history: copy the rings and re-point the peer storage. */
     fips_stats_history *hist = salloc_raw(x, sizeof *hist);
     fips_peer_stats *hp = h->history->peer_capacity ? salloc(x, h->history->peer_capacity * sizeof *hp) : NULL;
@@ -457,6 +472,7 @@ static snap *build(handlers *h, fips_instant now)
         if (hp) memcpy(hp, h->history->peers, h->history->peer_count * sizeof *hp);
         hist->peers = hp; s->history = hist;
     }
+    FIPSD_PERF_END(history_start, SNAPSHOT_HISTORY);
     return x;
 }
 #ifdef FIPSD_TEST_HOOKS
