@@ -112,13 +112,15 @@ typedef struct fips_coord_slot {
     uint64_t hash, key_stamp, key_seq; /* (stamp, seq) index key, like Rust */
     uint64_t weight;                   /* charge against the address bound */
     uint32_t heap_pos, link;           /* link: free list / eviction scratch */
+    uint32_t expiry_pos;               /* position in the expiry index */
     fips_cache_place place;
     bool used;
 } fips_coord_slot;
 typedef struct fips_coord_cache {
     fips_coord_slot *slots;
     uint32_t *table, *by_use, *parked, *probation; /* slot indexes */
-    size_t slot_capacity, table_len, len, by_use_len, parked_len, probation_len;
+    uint32_t *expiry; /* every resident slot, a min-heap by entry.expires_at */
+    size_t slot_capacity, table_len, len, by_use_len, parked_len, probation_len, expiry_len;
     uint32_t free_head;
     uint64_t seq, stored_weight, default_ttl_ms, eviction_examined;
     uint64_t generation; /* see fips_coord_cache_generation */
@@ -134,8 +136,8 @@ typedef struct fips_coord_cache {
     ((m) / FIPS_PROBATION_SHARE_DIVISOR > 0 ? (m) / FIPS_PROBATION_SHARE_DIVISOR : (size_t)1)
 #define FIPS_COORD_CACHE_SLOTS(m) ((m) + FIPS_COORD_CACHE_PROBATION_BOUND(m))
 /** uint32_t words of index storage for slot_capacity slots: three eviction
- * heaps plus a hash table at most half full. */
-#define FIPS_COORD_CACHE_INDEX_WORDS(cap) (5 * (size_t)(cap) + 1)
+ * heaps, the expiry heap and a hash table at most half full. */
+#define FIPS_COORD_CACHE_INDEX_WORDS(cap) (6 * (size_t)(cap) + 1)
 /** Caller owns cache, slots and index for the whole lifetime; no allocation.
  * Hint keys are peer-chosen, so the hash key is drawn from host entropy at
  * init, like Rust's KeyedHasher (iteration order is per-process). epoch is
@@ -210,6 +212,10 @@ typedef bool (*fips_coord_cache_visitor)(void *ctx, const uint8_t addr[16],
                                          const fips_cache_entry *entry);
 FIPS_CORE_API void fips_coord_cache_iter(const fips_coord_cache *c, fips_instant now,
                                          fips_coord_cache_visitor visit, void *ctx);
+/** Removes every expired entry, as a sweep of the slots in storage order would
+ * (the same entries, the same resulting state), in O(k log len) for k expired
+ * entries: the cache keeps its residents in an expiry index, so a purge that
+ * finds nothing to remove is O(1) whatever the capacity. */
 FIPS_CORE_API size_t fips_coord_cache_purge_expired(fips_coord_cache *c, fips_instant now);
 FIPS_CORE_API void fips_coord_cache_clear(fips_coord_cache *c);
 FIPS_CORE_API size_t fips_coord_cache_invalidate_via_node(fips_coord_cache *c,

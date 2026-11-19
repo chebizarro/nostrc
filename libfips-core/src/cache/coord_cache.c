@@ -3,7 +3,9 @@
  * from host entropy, backward-shift deletion); each BTreeMap<(stamp, seq)>
  * index becomes a binary heap of slot indexes with per-slot positions, so
  * pop_first/remove/insert stay O(log n) without allocation. Keys are unique
- * through seq, so heap order equals the Rust map order. */
+ * through seq, so heap order equals the Rust map order. A fourth heap (no
+ * upstream counterpart) holds every resident slot by expires_at, so purging
+ * expired entries costs what it removes, not a sweep of the slots. */
 #include <fips/cache/coord_cache.h>
 #include <sodium/crypto_shorthash_siphash24.h>
 #include <string.h>
@@ -84,6 +86,62 @@ static uint32_t heap_pop(fips_coord_cache *c, heap h)
     uint32_t idx = h.items[0];
     heap_delete(c, h, 0);
     return idx;
+}
+
+/* The expiry index: every filed slot, a min-heap by expires_at (slot index
+ * breaks ties). Kept in step wherever a filed entry's expires_at changes. */
+static bool expiry_less(const fips_coord_cache *c, uint32_t a, uint32_t b)
+{
+    uint64_t x = c->slots[a].entry.expires_at, y = c->slots[b].entry.expires_at;
+    return x < y || (x == y && a < b);
+}
+
+static void expiry_set(fips_coord_cache *c, size_t pos, uint32_t idx)
+{
+    c->expiry[pos] = idx;
+    c->slots[idx].expiry_pos = (uint32_t)pos;
+}
+
+static void expiry_up(fips_coord_cache *c, size_t pos)
+{
+    uint32_t idx = c->expiry[pos];
+    while (pos > 0) {
+        size_t parent = (pos - 1) / 2;
+        if (!expiry_less(c, idx, c->expiry[parent])) break;
+        expiry_set(c, pos, c->expiry[parent]);
+        pos = parent;
+    }
+    expiry_set(c, pos, idx);
+}
+
+static void expiry_down(fips_coord_cache *c, size_t pos)
+{
+    uint32_t idx = c->expiry[pos];
+    for (;;) {
+        size_t child = 2 * pos + 1;
+        if (child >= c->expiry_len) break;
+        if (child + 1 < c->expiry_len && expiry_less(c, c->expiry[child + 1], c->expiry[child])) ++child;
+        if (!expiry_less(c, c->expiry[child], idx)) break;
+        expiry_set(c, pos, c->expiry[child]);
+        pos = child;
+    }
+    expiry_set(c, pos, idx);
+}
+
+/* After the entry of a filed slot changed its expires_at. */
+static void expiry_fix(fips_coord_cache *c, uint32_t idx)
+{
+    expiry_up(c, c->slots[idx].expiry_pos);
+    expiry_down(c, c->slots[idx].expiry_pos);
+}
+
+static void expiry_delete(fips_coord_cache *c, size_t pos)
+{
+    size_t last = --c->expiry_len;
+    if (pos == last) return;
+    uint32_t moved = c->expiry[last];
+    expiry_set(c, pos, moved);
+    expiry_fix(c, moved);
 }
 
 static void set_key(fips_coord_cache *c, uint32_t idx, uint64_t stamp)
@@ -191,6 +249,8 @@ static void file_new(fips_coord_cache *c, uint32_t idx, fips_segment segment)
         slot->place = FIPS_PLACE_PROBATION;
     }
     heap_push(c, heap_of(c, slot->place), idx);
+    expiry_set(c, c->expiry_len++, idx);
+    expiry_up(c, slot->expiry_pos);
     table_insert(c, idx);
     ++c->len;
     ++c->generation;
@@ -202,6 +262,8 @@ static void unfile(fips_coord_cache *c, uint32_t idx, bool in_heap)
 {
     fips_coord_slot *slot = &c->slots[idx];
     if (in_heap) heap_delete(c, heap_of(c, slot->place), slot->heap_pos);
+    if (slot->expiry_pos != NONE) expiry_delete(c, slot->expiry_pos);
+    slot->expiry_pos = NONE;
     if (segment_of_place(slot->place) == FIPS_SEGMENT_MAIN) c->stored_weight -= slot->weight;
     table_remove(c, idx);
     --c->len;
@@ -323,6 +385,7 @@ static void update_in_place(fips_coord_cache *c, uint32_t idx, const fips_cached
 {
     fips_coord_slot *slot = &c->slots[idx];
     fips_cache_entry_update(&slot->entry, coords, now, ttl_ms);
+    expiry_fix(c, idx);
     uint64_t charged = slot->weight > weight ? slot->weight : weight;
     if (segment_of_place(slot->place) == FIPS_SEGMENT_MAIN)
         c->stored_weight = c->stored_weight - slot->weight + charged;
@@ -456,7 +519,8 @@ fips_status fips_coord_cache_init(fips_coord_cache *c, fips_coord_slot *slots,
     c->by_use = index;
     c->parked = index + slot_capacity;
     c->probation = index + 2 * slot_capacity;
-    c->table = index + 3 * slot_capacity;
+    c->expiry = index + 3 * slot_capacity;
+    c->table = index + 4 * slot_capacity;
     c->table_len = 2 * slot_capacity + 1;
     c->max_entries = max_entries;
     c->default_ttl_ms = default_ttl_ms;
@@ -475,7 +539,7 @@ void fips_coord_cache_clear(fips_coord_cache *c)
         c->slots[i].link = c->free_head;
         c->free_head = (uint32_t)i;
     }
-    c->len = c->by_use_len = c->parked_len = c->probation_len = 0;
+    c->len = c->by_use_len = c->parked_len = c->probation_len = c->expiry_len = 0;
     c->stored_weight = 0;
     ++c->generation;
 }
@@ -586,6 +650,7 @@ const fips_cached_coord *fips_coord_cache_get_and_touch(fips_coord_cache *c,
         return NULL;
     }
     fips_cache_entry_refresh(entry, now_ms, c->default_ttl_ms);
+    expiry_fix(c, idx);
     ++c->generation;
     return &entry->coords;
 }
@@ -645,48 +710,78 @@ void fips_coord_cache_iter(const fips_coord_cache *c, fips_instant now,
     }
 }
 
-typedef bool (*keep_fn)(const fips_cache_entry *entry, uint64_t now_ms, const uint8_t addr[16]);
+typedef bool (*keep_fn)(const fips_cache_entry *entry, const uint8_t addr[16]);
 
-static size_t retain_entries(fips_coord_cache *c, keep_fn keep, uint64_t now_ms,
-                             const uint8_t addr[16])
+static size_t retain_entries(fips_coord_cache *c, keep_fn keep, const uint8_t addr[16])
 {
     size_t before = c->len;
     for (size_t i = 0; i < c->slot_capacity; ++i)
-        if (c->slots[i].used && !keep(&c->slots[i].entry, now_ms, addr)) remove_slot(c, (uint32_t)i);
+        if (c->slots[i].used && !keep(&c->slots[i].entry, addr)) remove_slot(c, (uint32_t)i);
     return before - c->len;
 }
 
-static bool keep_unexpired(const fips_cache_entry *entry, uint64_t now_ms, const uint8_t addr[16])
+static bool keep_not_via(const fips_cache_entry *entry, const uint8_t addr[16])
 {
-    (void)addr;
-    return !fips_cache_entry_is_expired(entry, now_ms);
-}
-
-static bool keep_not_via(const fips_cache_entry *entry, uint64_t now_ms, const uint8_t addr[16])
-{
-    (void)now_ms;
     return !fips_cached_coord_contains(&entry->coords, addr);
 }
 
-static bool keep_same_root(const fips_cache_entry *entry, uint64_t now_ms, const uint8_t addr[16])
+static bool keep_same_root(const fips_cache_entry *entry, const uint8_t addr[16])
 {
-    (void)now_ms;
     return memcmp(fips_cached_coord_root_id(&entry->coords), addr, 16) == 0;
 }
 
+/* In-place heapsort of slot indexes: purge takes no scratch and allocates nothing. */
+static void sort_down(uint32_t *v, size_t n, size_t pos)
+{
+    uint32_t x = v[pos];
+    for (size_t child; (child = 2 * pos + 1) < n; pos = child) {
+        if (child + 1 < n && v[child + 1] > v[child]) ++child;
+        if (v[child] <= x) break;
+        v[pos] = v[child];
+    }
+    v[pos] = x;
+}
+
+static void sort_indexes(uint32_t *v, size_t n)
+{
+    for (size_t i = n / 2; i-- > 0;) sort_down(v, n, i);
+    for (size_t end = n; end > 1;) {
+        uint32_t top = v[0];
+        v[0] = v[--end];
+        v[end] = top;
+        sort_down(v, end, 0);
+    }
+}
+
+/* Pop the expired entries off the expiry heap, parking each in the array slot
+ * the shrinking heap gives up, then remove them in ascending slot order: what
+ * the storage-order sweep upstream's retain amounts to removes, in its order,
+ * so the free list (and with it where later inserts land) is the sweep's. */
 size_t fips_coord_cache_purge_expired(fips_coord_cache *c, fips_instant now)
 {
-    return retain_entries(c, keep_unexpired, fips_coord_cache_millis(c, now), NULL);
+    uint64_t now_ms = fips_coord_cache_millis(c, now);
+    size_t end = c->expiry_len;
+    while (c->expiry_len > 0 && fips_cache_entry_is_expired(&c->slots[c->expiry[0]].entry, now_ms)) {
+        uint32_t idx = c->expiry[0];
+        expiry_delete(c, 0);
+        c->slots[idx].expiry_pos = NONE;
+        c->expiry[c->expiry_len] = idx;
+    }
+    uint32_t *expired = c->expiry + c->expiry_len;
+    size_t count = end - c->expiry_len;
+    sort_indexes(expired, count);
+    for (size_t i = 0; i < count; ++i) remove_slot(c, expired[i]);
+    return count;
 }
 
 size_t fips_coord_cache_invalidate_via_node(fips_coord_cache *c, const uint8_t node_addr[16])
 {
-    return retain_entries(c, keep_not_via, 0, node_addr);
+    return retain_entries(c, keep_not_via, node_addr);
 }
 
 size_t fips_coord_cache_invalidate_other_roots(fips_coord_cache *c, const uint8_t current_root[16])
 {
-    return retain_entries(c, keep_same_root, 0, current_root);
+    return retain_entries(c, keep_same_root, current_root);
 }
 
 fips_cache_stats fips_coord_cache_stats(const fips_coord_cache *c, fips_instant now)

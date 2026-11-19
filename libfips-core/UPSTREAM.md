@@ -775,6 +775,26 @@ and change no upstream behaviour.
 
 No pin change. Version decision: additive API (and two additive struct fields),
 **libfips-core 0.1.0 Unreleased**.
+## Coordinate-cache expiry index (nostrc-gfvud)
+
+Internal storage only; every call keeps upstream's results. Upstream's
+`purge_expired` is a `retain` over the whole map, once per tick. The C cache
+keeps a fourth binary heap (C only) holding every resident slot by
+`expires_at`, so `fips_coord_cache_purge_expired` pops what has expired and
+costs O(k log len) for k removed, O(1) when nothing is due, whatever the
+capacity. It removes the popped slots in ascending slot order, which is what
+the previous storage-order sweep removed, in its order, so the free list and
+with it where later inserts land (and the storage order iteration reports) are
+unchanged. `FIPS_COORD_CACHE_INDEX_WORDS` grows by one word per slot and
+`fips_coord_slot` gains `expiry_pos`. `FipsCoreCoordCacheTest` runs twin caches
+through a random workload, one purging through the index and one removing what
+a storage-order sweep finds expired, and requires identical counts and state
+(every slot, the heaps, the map and the free list) after every step; the index
+invariant is checked after every mutation in the existing map/index test.
+`fips_bench_coord_cache` times the purge at 1,000 and 50,000 entries.
+
+No pin change. Version decision: **libfips-core 0.1.0 Unreleased** (storage
+geometry and struct layout of an unreleased component).
 ## Transport send lanes (nostrc-085xw)
 
 Host-only; no libfips-core or wire change. Upstream `transport::Lane`

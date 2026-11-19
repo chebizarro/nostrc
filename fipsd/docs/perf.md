@@ -647,6 +647,21 @@ remaining tail of the history-tick publishes is the dispatcher touching view
 storage that has been idle (page-ins under this host's memory pressure), which
 the benchmark cannot separate from the replay itself.
 
+### Coordinate cache and history without O(table) work (nostrc-gfvud)
+
+Release `fips_bench_coord_cache`, base and change binaries interleaved three
+times, medians of the per-run medians (`FIPS_BENCH_ITERS=100`):
+
+| `purge_expired` (dispatcher, every tick) | before | after |
+| --- | --- | --- |
+| 1,000 entries, nothing due | 0.96 us | 0.01 us |
+| 50,000 entries, nothing due | 125 us | 0.01 us |
+| 1,000 entries, 16 due | 1.66 us | 0.70 us |
+| 50,000 entries, 16 due | 124 us | 0.94 us |
+
+The purge pops an expiry heap instead of sweeping every slot (~51k slots of
+2.7 KB at the default size), so its cost follows what it removes.
+
 ### Reproduction and verification
 
 `FipsdProfilingTest` joins `fipsd_tests` when profiling is enabled. It covers
