@@ -88,6 +88,8 @@ typedef struct fipsd_dataplane {
     size_t packet_count, next;
     _Atomic size_t in_flight; /* taken slabs; released by recycle on any thread */
     fips_tree_coordinate *coord_scratch;
+    uint64_t *cache_marks; /* publish scratch: FIPS_COORD_CACHE_MARK_WORDS(slots) */
+    size_t cache_mark_words;
     fips_routing_peer *route_peers;
     struct { bool used; fips_node_addr peer; uint16_t mtu; bool notify_pending; } *clamps;
     size_t clamp_capacity;

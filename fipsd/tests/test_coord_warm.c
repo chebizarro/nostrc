@@ -3,6 +3,29 @@
 #include <assert.h>
 #include <stdio.h>
 
+typedef struct { const fipsd_dp_snapshot *s; size_t live, found; } live_walk;
+static bool live_entry(void *ctx, const uint8_t addr[16], const fips_cache_entry *e)
+{
+    live_walk *w = ctx; ++w->live;
+    for (size_t i = 0; i < w->s->cache_count; ++i) {
+        const fipsd_dp_cached *c = &w->s->cache[i];
+        if (memcmp(c->addr.bytes, addr, 16)) continue;
+        assert(c->expires == e->expires_at && c->coords.len == e->coords.len);
+        assert(!memcmp(c->coords.entries, e->coords.entries, e->coords.len * sizeof e->coords.entries[0]));
+        ++w->found; break;
+    }
+    return true;
+}
+/* The published dataplane cache is exactly the cache's live entries, read from
+ * the resident index rather than a sweep of every slot (nostrc-61t79). */
+static void published_cache(handlers *h, fips_test_clock *clock, uint64_t at)
+{
+    clock->millis = at; h->dataplane->needs_publish = true;
+    assert(fipsd_dp_publish(h));
+    live_walk w = {h->dataplane->current.ptr, 0, 0};
+    fips_coord_cache_iter(&h->cache, fips_test_instant(at), live_entry, &w);
+    assert(w.s->cache_count == w.live && w.found == w.live);
+}
 int main(void)
 {
     handlers *h = calloc(1, sizeof *h); assert(h);
@@ -85,6 +108,15 @@ int main(void)
     assert(fipsd_peer_tokens_available(&peer.coord_hints, fips_test_instant(1000)) == available - FIPS_ADDRS_PER_ENTRY);
     assert(fips_coord_cache_get_entry(&h->cache, dg.src_addr.bytes));
     assert(fips_coord_cache_get_entry(&h->cache, protected.bytes));
+    /* Dataplane snapshot: every resident entry while live; past the TTL, before
+     * any purge, the expired residents are left out of the published copy. */
+    h->dataplane = NULL; assert(fipsd_dp_init(h));
+    published_cache(h, &clock, 1000);
+    assert(((const fipsd_dp_snapshot *)h->dataplane->current.ptr)->cache_count == h->cache.len);
+    published_cache(h, &clock, 300500);
+    size_t resident = h->cache.len, live = ((const fipsd_dp_snapshot *)h->dataplane->current.ptr)->cache_count;
+    assert(live > 0 && live < resident);
+    fipsd_dp_destroy(h->dataplane);
     free(index); free(slots); free(h->tree); free(h);
     puts("coordinate warming: bounded hints, foreign-root/self refusal, endpoint CP guard: ok");
     return 0;

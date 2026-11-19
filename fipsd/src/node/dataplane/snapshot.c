@@ -65,12 +65,44 @@ static void epochs(fipsd_dp_snapshot *s, const fips_rekey *m, const fips_node_ad
         ++s->epoch_count;
     }
 }
+/* The coordinate cache is a fixed ~51k-slot (~140 MB) array whatever its
+ * occupancy. Every publish walks only the resident entries through the
+ * cache's own heap index, never every slot: two full sweeps per publish held a
+ * fiber worker for hundreds of milliseconds (seconds under TSan and load),
+ * starving the other fibers it shares the scheduler with. Expired entries are
+ * left out; forwarding already skips them (expires <= now). */
+static bool cache_hash(void *ctx, const uint8_t addr[16], const fips_cache_entry *e)
+{
+    uint64_t *fp = ctx;
+    *fp = hash(*fp, addr, 16); *fp = hash(*fp, &e->expires_at, sizeof e->expires_at);
+    *fp = hash(*fp, &e->coords.len, sizeof e->coords.len);
+    *fp = hash(*fp, e->coords.entries, e->coords.len * sizeof e->coords.entries[0]);
+    return true;
+}
+static bool cache_copy(void *ctx, const uint8_t addr[16], const fips_cache_entry *e)
+{
+    fipsd_dp_snapshot *s = ctx; fipsd_dp_cached *p = &s->cache[s->cache_count++];
+    memcpy(p->addr.bytes, addr, 16); p->coords = e->coords; p->expires = e->expires_at;
+    return true;
+}
+static void cache_scan(handlers *h, fips_instant now, fips_coord_cache_visitor visit, void *ctx)
+{
+    fipsd_dataplane *d = h->dataplane;
+    size_t words = FIPS_COORD_CACHE_MARK_WORDS(h->cache.slot_capacity);
+    if (d->cache_mark_words < words) {
+        uint64_t *marks = realloc(d->cache_marks, words * sizeof *marks);
+        if (marks) { d->cache_marks = marks; d->cache_mark_words = words; }
+    }
+    /* Without the scratch the scan falls back to the full sweep: slow, not wrong. */
+    (void)fips_coord_cache_scan(&h->cache, now, d->cache_marks, d->cache_mark_words, visit, ctx);
+}
 bool fipsd_dp_publish(handlers *h)
 {
     fipsd_dataplane *d = h->dataplane;
     if (!d || !h->tree) return false;
     fipsd_dp_snapshot *old = d->current.ptr;
     if (old && !d->needs_publish) return true;
+    fips_instant now = hs_now(h);
     uint64_t fp = coord_hash(UINT64_C(1469598103934665603), fips_tree_state_my_coords(h->tree));
     for (size_t i = 0; i < h->cfg.peer_capacity; ++i) {
         peer_rec *r = &h->recs[i];
@@ -93,12 +125,7 @@ bool fipsd_dp_publish(handlers *h)
         fp = hash(fp, &h->session_entries[i].peer, sizeof(fips_node_addr));
         fp = machine_hash(fp, &h->session_entries[i].machine);
     }
-    for (size_t i = 0; i < h->cache.slot_capacity; ++i) if (h->cache.slots[i].used) {
-        const fips_coord_slot *c = &h->cache.slots[i];
-        fp = hash(fp, c->addr, 16); fp = hash(fp, &c->entry.expires_at, sizeof(uint64_t));
-        fp = hash(fp, &c->entry.coords.len, sizeof(uint16_t));
-        fp = hash(fp, c->entry.coords.entries, c->entry.coords.len * sizeof(fips_cached_coord_entry));
-    }
+    cache_scan(h, now, cache_hash, &fp);
     if (old && old->fingerprint == fp) { d->needs_publish = false; return true; }
     fipsd_dp_snapshot *s = calloc(1, sizeof *s);
     if (!s) return false;
@@ -135,11 +162,7 @@ bool fipsd_dp_publish(handlers *h)
     }
     for (size_t i = 0; i < h->sessions.capacity; ++i) if (h->session_entries[i].occupied)
         epochs(s, &h->session_entries[i].machine, &h->session_entries[i].peer, true, (fips_transport_id){0}, false);
-    for (size_t i = 0; i < h->cache.slot_capacity; ++i) if (h->cache.slots[i].used) {
-        const fips_coord_slot *c = &h->cache.slots[i];
-        fipsd_dp_cached *p = &s->cache[s->cache_count++];
-        memcpy(p->addr.bytes, c->addr, 16); p->coords = c->entry.coords; p->expires = c->entry.expires_at;
-    }
+    cache_scan(h, now, cache_copy, s);
     if (!go_swap_store(d->tables, s)) { snapshot_free(s); return false; }
     go_refptr_release(&d->current);
     d->current = go_swap_load(d->tables); /* once per changed generation, NOT a packet read */
@@ -165,5 +188,5 @@ void fipsd_dp_destroy(fipsd_dataplane *d)
     if (!d) return;
     /* Runtime joined AND result queues drained before handlers are destroyed. */
     go_refptr_release(&d->current); go_swap_free(d->tables);
-    free(d->coord_scratch); free(d->route_peers); free(d->clamps); free(d->packets); free(d);
+    free(d->cache_marks); free(d->coord_scratch); free(d->route_peers); free(d->clamps); free(d->packets); free(d);
 }
