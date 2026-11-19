@@ -5,6 +5,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "nostr_relay_fixture.h"
 #include <libsoup/soup.h>
+#include <glib-unix.h>
 #include <jansson.h>
 #include <nostr-event.h>
 #include <json.h>
@@ -15,6 +16,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 #define CHECK(x) do { if (!(x)) { fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, #x); abort(); } } while (0)
 typedef struct relay relay;
 typedef struct { relay *owner; SoupWebsocketConnection *socket; json_t *subscriptions; } client;
@@ -25,7 +27,7 @@ struct relay {
     char *url;
     bool hold_eose, reject_publish;
 };
-struct fixture { GMainContext *context; GMainLoop *loop; pthread_t thread; GoChannel *ready; relay relays[2]; };
+struct fixture { GMainContext *context; GMainLoop *loop; pthread_t thread; GoChannel *ready, *requests; int wake[2]; relay relays[2]; };
 static void send_frame(client *c, json_t *frame)
 {
     char *text = json_dumps(frame, JSON_COMPACT); CHECK(text); json_decref(frame);
@@ -138,6 +140,7 @@ static void nip11(SoupServer *server, SoupServerMessage *message, const char *pa
     soup_server_message_set_status(message, SOUP_STATUS_OK, NULL);
     soup_server_message_set_response(message, "application/nostr+json", SOUP_MEMORY_COPY, doc, strlen(doc));
 }
+static gboolean receive_request(gint fd, GIOCondition condition, gpointer user);
 static void *serve(void *user)
 {
     fixture *f = user; g_main_context_push_thread_default(f->context);
@@ -151,7 +154,11 @@ static void *serve(void *user)
         r->url = g_strdup_printf("ws://127.0.0.1:%d/", g_uri_get_port(uris->data));
         g_slist_free_full(uris, (GDestroyNotify)g_uri_unref);
     }
+    GSource *requests = g_unix_fd_source_new(f->wake[0], G_IO_IN);
+    g_source_set_callback(requests, G_SOURCE_FUNC(receive_request), f, NULL);
+    g_source_attach(requests, f->context);
     CHECK(go_channel_send(f->ready, f) == 0); g_main_loop_run(f->loop);
+    g_source_destroy(requests); g_source_unref(requests);
     for (size_t i = 0; i < 2; ++i) {
         relay *r = &f->relays[i]; soup_server_disconnect(r->server); g_ptr_array_unref(r->clients);
         g_object_unref(r->server); json_decref(r->events); g_free(r->url);
@@ -207,15 +214,31 @@ static gboolean on_server(gpointer user)
     }
     CHECK(go_channel_send(q->done, q) == 0); return G_SOURCE_REMOVE;
 }
+/* Only the server thread touches the live GMainContext, including its source
+ * list during shutdown. The channel owns request publication; the pipe wakes
+ * the owner without invoking GLib from a second thread. */
+static gboolean receive_request(gint fd, GIOCondition condition, gpointer user)
+{
+    (void)condition; fixture *f = user; char byte; void *q = NULL;
+    CHECK(read(fd, &byte, 1) == 1);
+    CHECK(go_channel_try_receive(f->requests, &q) == 0 && q);
+    (void)on_server(q); return G_SOURCE_CONTINUE;
+}
+static void dispatch(fixture *f, request *q)
+{
+    CHECK(go_channel_send(f->requests, q) == 0);
+    CHECK(write(f->wake[1], "x", 1) == 1);
+    void *done; CHECK(go_channel_receive(q->done, &done) == 0 && done == q);
+}
 void fixture_call(fixture *f, operation op, int relay_index, const char *json)
 {
     request q = {.f = f, .op = op, .relay_index = relay_index, .json = json, .done = go_channel_create(1)}; CHECK(q.done);
-    g_main_context_invoke(f->context, on_server, &q);
-    void *done; CHECK(go_channel_receive(q.done, &done) == 0 && done == &q); go_channel_unref(q.done);
+    dispatch(f, &q); go_channel_unref(q.done);
 }
 fixture *fixture_start(void)
 {
     fixture *f = calloc(1, sizeof(*f)); CHECK(f); f->context = g_main_context_new(); f->ready = go_channel_create(1);
+    f->requests = go_channel_create(16); CHECK(f->requests && pipe(f->wake) == 0);
     f->loop = g_main_loop_new(f->context, FALSE); CHECK(pthread_create(&f->thread, NULL, serve, f) == 0);
     void *ready; CHECK(go_channel_receive(f->ready, &ready) == 0 && ready == f); return f;
 }
@@ -225,12 +248,12 @@ char *fixture_latest(fixture *f, size_t index, int kind, const char *author, siz
     CHECK(index < 2 && author && count);
     request q = {.f = f, .op = QUERY, .relay_index = (int)index, .done = go_channel_create(1), .kind = kind, .author = author};
     CHECK(q.done);
-    g_main_context_invoke(f->context, on_server, &q);
-    void *done; CHECK(go_channel_receive(q.done, &done) == 0 && done == &q); go_channel_unref(q.done);
+    dispatch(f, &q); go_channel_unref(q.done);
     *count = q.count; return q.latest;
 }
 void fixture_destroy(fixture *f)
 {
     fixture_call(f, STOP, 0, NULL); CHECK(pthread_join(f->thread, NULL) == 0);
+    close(f->wake[0]); close(f->wake[1]); go_channel_unref(f->requests);
     g_main_loop_unref(f->loop); g_main_context_unref(f->context); go_channel_unref(f->ready); free(f);
 }

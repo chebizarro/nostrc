@@ -16,11 +16,15 @@
 #include <string.h>
 #include <time.h>
 
-static void *receive(GoChannel *c)
+static void *receive_at(GoChannel *c, const char *caller, unsigned line)
 {
     void *p = NULL; GoSelectCase cs = {.op = GO_SELECT_RECEIVE, .chan = c, .recv_buf = &p};
-    GoSelectResult r = go_select_timeout(&cs, 1, 20000); assert(r.selected_case == 0 && p); return p;
+    GoSelectResult r = go_select_timeout(&cs, 1, 20000);
+    if (r.selected_case != 0 || !p)
+        fprintf(stderr, "channel receive failed at %s:%u (selected=%d, value=%p)\n", caller, line, r.selected_case, p);
+    assert(r.selected_case == 0 && p); return p;
 }
+#define receive(c) receive_at((c), __func__, __LINE__)
 static fips_transport_addr addr(const char *s)
 { fips_transport_addr a; assert(fips_transport_addr_from_string(s, strlen(s), &a) == FIPS_OK); return a; }
 static void codecs(void)
