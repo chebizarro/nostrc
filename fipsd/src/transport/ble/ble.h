@@ -122,6 +122,12 @@ void fipsd_ble_radio_set_stall(fipsd_ble_radio *, bool stall); /* dials never an
 void fipsd_ble_radio_set_refuse(fipsd_ble_radio *, bool refuse); /* inbound dials refused */
 void fipsd_ble_radio_set_assigned_psm(fipsd_ble_radio *, uint16_t); /* next listen */
 size_t fipsd_ble_radio_drop_links(fipsd_ble_radio *); /* break every live channel */
+/* Return false to drop a write this radio makes on any channel (it reads as
+ * sent and never arrives), so tests can lose a frame deterministically. SDU
+ * and byte modes only: an FD stream writes its descriptor directly. Set before
+ * the transport starts; it runs on the writer, under no lock. */
+typedef bool (*fipsd_ble_radio_filter)(void *user, const uint8_t *bytes, size_t len);
+void fipsd_ble_radio_set_filter(fipsd_ble_radio *, fipsd_ble_radio_filter, void *user);
 /* An advert from an arbitrary (possibly nonexistent) advertiser. */
 void fipsd_ble_radio_inject_advert(fipsd_ble_radio *, const fipsd_ble_peer *, const uint8_t *service_data, size_t len);
 typedef struct fipsd_ble_radio_stats {

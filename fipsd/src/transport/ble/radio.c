@@ -94,6 +94,7 @@ struct fipsd_ble_radio {
     size_t seen_count;
     sim_req *parked;
     fipsd_ble_radio_stats stats;
+    fipsd_ble_radio_filter filter; void *filter_user; /* set before start */
 };
 static uint64_t now_ms(void) { return ble_now(); }
 static bool up(const fipsd_ble_radio *r) { return r->present && r->powered && !r->stopped; }
@@ -258,6 +259,8 @@ static ssize_t sim_read(fipsd_ble_stream *s, uint8_t *buf, size_t cap, uint64_t 
 static int sim_write(fipsd_ble_stream *s, const uint8_t *p, size_t len, uint64_t deadline)
 {
     sim_end *e = (sim_end *)s; sim_channel *c = e->ch;
+    const fipsd_ble_radio *mine = c->radio[e->side];
+    if (mine->filter && !mine->filter(mine->filter_user, p, len)) return 0; /* lost on the air */
     size_t piece = c->mode == FIPSD_BLE_RADIO_BYTES ? c->chunk : len;
     for (size_t at = 0; at < len;) {
         size_t n = len - at < piece ? len - at : piece;
@@ -614,6 +617,8 @@ void fipsd_ble_radio_set_refuse(fipsd_ble_radio *r, bool refuse)
 { sim_req *q = req_new(CMD_REFUSE, false); if (q) q->a = refuse; post(r, q); }
 void fipsd_ble_radio_set_assigned_psm(fipsd_ble_radio *r, uint16_t psm)
 { sim_req *q = req_new(CMD_ASSIGN, false); if (q) q->psm = psm; post(r, q); }
+void fipsd_ble_radio_set_filter(fipsd_ble_radio *r, fipsd_ble_radio_filter filter, void *user)
+{ r->filter = filter; r->filter_user = user; }
 size_t fipsd_ble_radio_drop_links(fipsd_ble_radio *r)
 {
     sim_req *q = req_new(CMD_DROP, true);

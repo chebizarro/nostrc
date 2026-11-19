@@ -34,18 +34,20 @@ static void cooldown_lapsed(handshake_fixture *f, void *arg)
     for (size_t i = 0; i < FIPSD_RESTART_HISTORY; ++i)
         if (h->retired[i].used && !h->retired[i].has_epoch) h->retired[i].until = hs_now(h);
 }
-/* Real AEAD heartbeat under the wire peer's current keys, addressed to an explicit index. */
-static size_t seal_heartbeat(handshake_fixture *f, uint32_t index, uint8_t *wire, size_t capacity)
+/* A real AEAD link message under the wire peer's current keys, addressed to an explicit index. */
+static size_t seal_link(handshake_fixture *f, uint32_t index, const uint8_t *message, size_t mlen, uint8_t *wire, size_t capacity)
 {
-    uint8_t plain[32], hb = FIPS_LINK_Heartbeat;
+    uint8_t plain[32];
     fips_writer w; fips_writer_init(&w, plain, sizeof plain);
-    assert(fips_fmp_prepend_inner_header(0, &hb, 1, &w, NULL) == FIPS_OK);
+    assert(fips_fmp_prepend_inner_header(0, message, mlen, &w, NULL) == FIPS_OK);
     size_t plen = fips_writer_len(&w), len = 0, aad = FIPS_FRAMING_FMP_ESTABLISHED_HEADER_SIZE;
     uint64_t counter = fips_noise_session_current_send_counter(&f->live.session);
     fips_fmp_build_established_header((fips_session_index){index}, counter, 0, (uint16_t)plen, wire);
     assert(fips_noise_session_seal(&f->live.session, wire, aad, plain, plen, wire + aad, capacity - aad, &len) == FIPS_NOISE_OK);
     return aad + len;
 }
+static size_t seal_heartbeat(handshake_fixture *f, uint32_t index, uint8_t *wire, size_t capacity)
+{ uint8_t hb = FIPS_LINK_Heartbeat; return seal_link(f, index, &hb, 1, wire, capacity); }
 static void frame_at(handshake_fixture *f, fipsd_transport *from, uint32_t index)
 {
     uint8_t wire[128];
@@ -144,17 +146,61 @@ static void restart_confirmed_two_in_flight(handshake_fixture *f, hf_state *live
     for (int i = 0; i < completions; ++i) hf_wait(f->completed);
     confirmed(f, live, 2);
 }
+/* The node's own dial to the wire peer, left unanswered. Its handshake
+ * timeout is the deployed one, so the fixture's 1 s window cannot end the leg
+ * while the checks below run (hs_dial copies the timing into the leg). */
+static void dial_remote(handshake_fixture *f, void *arg)
+{
+    (void)arg; handlers *h = f->h;
+    uint64_t timeout = h->cfg.timing.handshake_timeout_ms;
+    h->cfg.timing.handshake_timeout_ms = fipsd_peer_timing_default().handshake_timeout_ms;
+    assert(hs_dial(h, &f->remote, (fips_transport_id){1}, fipsd_loopback_transport_address(f->client), false));
+    h->cfg.timing.handshake_timeout_ms = timeout;
+}
 int main(void)
 {
     handshake_fixture f; hf_init(&f);
     hf_state live;
     fips_rekey_wire stale_a, stale_b;
 
+    /* A crossing (nostrc-8rtmi): the node's own dial to the peer is pending
+     * when the peer's msg1 promotes the link inbound. That msg1 is IK-authentic
+     * but replayable, so neither the promotion nor a replay of it ends the leg,
+     * and nor does the link's first AEAD frame (only the leg's own msg2 settles
+     * the tie-break, as upstream). A forged Disconnect ends nothing; the peer's
+     * authenticated Disconnect ends the link and the leg with it. */
+    hf_call(&f, dial_remote, NULL);
+    free(hf_wire(&f, 1)); /* the node's msg1, never answered */
+    hf_start(&f, 0xa1);
+    fips_rekey_wire crossing = f.msg1;
+    hf_send(&f, f.client, crossing.bytes, crossing.len);
+    assert(f.before.legs == 1 && f.after.peers == 1 && f.after.legs == 1);
+    hf_send(&f, f.client, crossing.bytes, crossing.len); /* replayed: answered from the held msg2 */
+    assert(f.after.peers == 1 && f.after.legs == 1 && f.after.promoted == f.before.promoted);
+    hf_finish(&f); free(hf_wire(&f, 2));
+    hf_heartbeat(&f);
+    hf_state crossed; hf_snapshot(&f, &crossed);
+    assert(crossed.peers == 1 && crossed.frames_in == 1 && crossed.legs == 1);
+    uint8_t bye[8], wire[128];
+    fips_writer bw; fips_writer_init(&bw, bye, sizeof bye);
+    assert(fips_fmp_disconnect_encode(&(fips_fmp_disconnect){FIPS_FMP_Shutdown}, &bw, NULL) == FIPS_OK);
+    size_t wlen = seal_link(&f, f.live.theirs.value, bye, fips_writer_len(&bw), wire, sizeof wire);
+    wire[wlen - 1] ^= 1; /* the tag no longer authenticates */
+    hf_open(&f, f.client, wire, wlen);
+    hf_state ended; hf_snapshot(&f, &ended);
+    assert(ended.peers == 1 && ended.legs == 1 && ended.frames_in == crossed.frames_in);
+    wlen = seal_link(&f, f.live.theirs.value, bye, fips_writer_len(&bw), wire, sizeof wire);
+    hf_open(&f, f.client, wire, wlen);
+    hf_snapshot(&f, &ended);
+    assert(ended.peers == 0 && ended.legs == 0 && ended.indices == 0);
+    puts("crossing: a pending dial survives an inbound promotion, its msg1 replayed, an AEAD frame and a forged Disconnect; "
+         "the authenticated Disconnect ends link and leg");
+
     /* Epoch A established and carrying traffic. */
     hf_start(&f, 0xa1); stale_a = f.msg1;
     hf_send(&f, f.client, f.msg1.bytes, f.msg1.len); hf_finish(&f); hf_heartbeat(&f);
     hf_snapshot(&f, &live);
-    assert(live.peers == 1 && live.promoted == 1 && live.frames_in == 1 && live.restart_pending == 0);
+    assert(live.peers == 1 && live.promoted == crossed.promoted + 1 && live.frames_in == 1 && live.restart_pending == 0);
 
     /* Restart into B: eviction waits for B's first authenticated frame. */
     restart_confirmed(&f, &live, 0xb2);

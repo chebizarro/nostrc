@@ -295,6 +295,9 @@ static inline bool nt_pair_converged(const fipsd_control_snapshot *s, const void
 }
 static inline bool nt_peer_count(const fipsd_control_snapshot *s, const void *arg)
 { return json_array_size(s->peers) == *(const size_t *)arg; }
+/* Pending handshake legs (show_connections rows). */
+static inline bool nt_leg_count(const fipsd_control_snapshot *s, const void *arg)
+{ return s->connections_count == *(const size_t *)arg; }
 static void nt_destroy(test_node *n)
 {
     fipsd_node_destroy(n->node);
