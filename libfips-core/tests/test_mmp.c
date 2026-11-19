@@ -254,6 +254,10 @@ static void metrics_cycles(void)
     CHECK(!m.srtt.initialized && m.reports_seen==1 && m.rtt_arith_fail==1 && m.rtt_zero==0 && m.rtt_samples==0);
     fips_mmp_metrics_init(&m); process(&m,rr(10,10,5000,2000,5,0),1000,0); CHECK(!m.srtt.initialized && m.rtt_arith_fail==1);
     fips_mmp_metrics_init(&m); process(&m,a,1005,0); CHECK(m.rtt_zero==1 && m.rtt_samples==0 && m.rtt_arith_fail==0 && !m.has_last_rtt);
+    /* Whole-millisecond echo and dwell cannot resolve a sub-millisecond path: the same report one millisecond early
+     * (our clock 1004 < echo 1000 + dwell 5) is rtt_arith_fail, not rtt_zero, exactly as upstream counts it. */
+    fips_mmp_metrics_init(&m); CHECK(process(&m,a,1004,0).kind==FIPS_MMP_RrInvalidRtt);
+    CHECK(m.rtt_arith_fail==1 && m.rtt_zero==0 && m.rtt_samples==0 && !m.has_last_rtt && !m.srtt.initialized);
     fips_mmp_metrics_init(&m); process(&m,rr(10,10,5000,0,0,0),1000,0); CHECK(!m.srtt.initialized);
     fips_mmp_metrics_init(&m); process(&m,rr(100,100,50000,0,0,0),0,0);
     CHECK(m.goodput_bps==0); process(&m,rr(300,290,150000,0,0,0),0,1000);

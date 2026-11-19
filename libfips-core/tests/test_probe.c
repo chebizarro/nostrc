@@ -258,9 +258,13 @@ static void rtt_requires_a_new_sample_not_a_present_srtt(void)
 }
 static void rtt_four_failure_modes_are_distinct(void)
 {
-    const fips_probe_rtt_counters counters[] = {{0,0,0,0},{2,0,0,0},{2,0,2,0},{2,0,0,2}};
-    const fips_probe_fail_kind expected[] = {FIPS_PROBE_NoReport,FIPS_PROBE_NoEcho,FIPS_PROBE_SubMillisecond,FIPS_PROBE_BadTimestampEcho};
-    for (size_t i = 0; i < 4; ++i) {
+    /* The last vector is upstream's precedence, kept for parity: on a sub-millisecond path the two truncated
+     * clocks can yield -1 ms as well as 0 ms, and a single -1 (arith_fail) outranks any number of 0 ms samples
+     * (zero), so a loopback probe may report bad_timestamp_echo. See libfips-core/UPSTREAM.md, I-5. */
+    const fips_probe_rtt_counters counters[] = {{0,0,0,0},{2,0,0,0},{2,0,2,0},{2,0,0,2},{10,0,9,1}};
+    const fips_probe_fail_kind expected[] = {FIPS_PROBE_NoReport,FIPS_PROBE_NoEcho,FIPS_PROBE_SubMillisecond,FIPS_PROBE_BadTimestampEcho,
+        FIPS_PROBE_BadTimestampEcho};
+    for (size_t i = 0; i < 5; ++i) {
         uint64_t t = probe_at_rtt();
         for (uint64_t tick = 1; tick < 12; ++tick) {
             fips_probe_observation o = established(t+tick*1000); o.counters = counters[i]; step(o);
