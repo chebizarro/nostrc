@@ -1330,8 +1330,12 @@ def main():
         root = Path(tempfile.mkdtemp(prefix='fd-', dir='/tmp'))
         atexit.register(shutil.rmtree, root, True)
     env = dict(os.environ, FIPSD_WORKERS='2', TOKIO_WORKER_THREADS='2', NO_COLOR='1')
+    # Every Rust session.bad_state source names itself in the dumped log: the
+    # session handler's two at debug, and the rekey handler's (an unknown or
+    # late reply, nostrc-92vbe) only at trace ("FSP rekey input changed nothing").
     env['RUST_LOG'] = ','.join(filter(None, (env.get('RUST_LOG', 'info'),
-        'fips::node::handlers::handshake=debug', 'fips::node::handlers::session=debug')))
+        'fips::node::handlers::handshake=debug', 'fips::node::handlers::session=debug',
+        'fips::node::handlers::rekey=trace')))
     if args.topology:
         shapes = ('line', 'star', 'ring', 'full-mesh') if args.topology == 'all' else (args.topology,)
         for shape in shapes:
