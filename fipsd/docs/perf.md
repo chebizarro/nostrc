@@ -456,12 +456,63 @@ silent; no readiness wait is falsely presented as a receive syscall cost.
 C's result-dispatch span includes bookkeeping that Rust structures differently;
 this is report-format parity, not equal-cost or equal-scheduling claims.
 
-The final **C-only additive pipeline stage** `publish_snapshot` times the real
-control snapshot `build(h, now)`. It has the same histogram/percentile layout
-but is not an upstream tick name. This makes the wave-16 finding testable:
-compare its rate, average, tail and lifetime maximum to packet/endpoint work
-under load. Snapshot construction outside the tick is not falsely charged
-to `whole_tick` or `record_stats_history`.
+The final **C-only additive pipeline stages** follow the upstream sixteen:
+`publish_snapshot` times the real control snapshot `build(h, now)`, and
+`snapshot_header`, `snapshot_peers`, `snapshot_sessions`,
+`snapshot_transports`, `snapshot_tree`, `snapshot_cache`, `snapshot_counters`
+and `snapshot_history` time its consecutive sections (together they cover
+all of `publish_snapshot`). They have the same
+histogram/percentile layout but are not upstream tick names. This makes the
+wave-16 finding testable: compare rate, average, tail and lifetime maximum to
+packet/endpoint work under load. Snapshot construction outside the tick is not
+falsely charged to `whole_tick` or `record_stats_history`.
+
+### Incremental snapshot build (nostrc-oetfk)
+
+Before, two sections rebuilt from scratch on every publish. `snapshot_history`
+allocated and zeroed `peer_capacity` (256) retained-peer ring sets of ~283 KB
+each, about 72 MB, then copied the live history. `snapshot_cache` ran
+`fips_coord_cache_stats` and `fips_coord_cache_iter`, each sweeping all ~51k
+slots of the default (~140 MB) coordinate cache. Now:
+
+- Snapshots retain one of two shared, immutable, ref-counted history views
+  (`src/node/stats_view.c`). The dispatcher logs each history update's inputs
+  (eight deep) and replays them onto a view that no snapshot holds (atomic
+  refcount: acquire load against the readers' acq_rel release), so an
+  unchanged history costs a retain and a changed one one tick of ring pushes.
+  A refused update, history re-initialization, or a reader that holds a view
+  for more than eight updates falls back to a copy sized to `peer_count`.
+  `hs_stats_tick` and replay share one deterministic update function.
+- The core's `fips_coord_cache_scan` marks resident slots from the three
+  eviction heaps into a bitmap and visits them in storage order in one
+  O(len + slots/64) pass, with the same visits and stats as iter + stats
+  (`FipsCoreCoordCacheTest` cross-checks them under churn).
+
+The published snapshot layout, the control rendering and the goldens are
+unchanged. Peer/session JSON rows stay on the dispatcher: measured at tens of
+microseconds, they were not the cost.
+
+Release `-DFIPSD_ENABLE_PROFILING=ON`, C→C `perf_loopback.run_pair`,
+`FIPS_PERF=1`, both nodes, three runs on a loaded M4 Max (load average about
+10). "1 s" rows aggregate 36 one-second reports of 5 s runs; "10 s" rows are
+six ten-second reports of 12 s runs, so each p99 is computed over 30–100
+builds:
+
+| Stage | Before avg | Before p99 / allmax | After avg | After p99 / allmax |
+| --- | --- | --- | --- | --- |
+| `publish_snapshot` (1 s) | 2312.7 us | ≤67.1 ms worst window; 59.5 ms | 66.8 us | ≤1.0 ms in 35/36 windows; 1.1 ms |
+| `publish_snapshot` (10 s) | 1582 us | ≤16.8 ms in 6/6 windows; 14.2 ms | 70.7 us | ≤524 us in 5/6, ≤1.0 ms in 1/6; 596 us |
+| `snapshot_history` (1 s) | 1799.4 us | ≤67.1 ms; 49.3 ms | 16.4 us | ≤1.0 ms; 1.0 ms |
+| `snapshot_cache` (1 s) | 464.0 us | ≤16.8 ms; 9.1 ms | 1.3 us | ≤16.4 us; 9 us |
+| `snapshot_peers` (1 s) | 20.3 us | ≤262 us; 201 us | 20.2 us | ≤131 us; 77 us |
+| other five sections (1 s) | ≤12 us each | ≤1.0 ms; 813 us | ≤12 us each | ≤262 us; 238 us |
+
+The remaining `publish_snapshot` tail is wall time across preemption on the
+loaded host, not a section's cost. Goodput in a plain Release build
+(no profiling), with base and change runs interleaved six times each, gave
+medians of 672.5 Mbit/s before and 659.3 Mbit/s after (ranges 656–684 and
+635–689). Both are within the 10% tolerance of the 683.856 Mbit/s baseline
+below, which is unchanged.
 
 ### Reproduction and verification
 

@@ -681,3 +681,14 @@ differential traces remain outside this one successful XK vector.
 
 Version decision: additive APIs fold into **libfips-core 0.1.0 Unreleased**;
 no published release or tag change. No fipsd/runtime wiring is claimed.
+
+## Coordinate-cache scan (nostrc-oetfk)
+
+`fips_coord_cache_scan` is C-only and has no upstream counterpart. It visits
+exactly what `fips_coord_cache_iter` visits, in the same storage order, and
+returns `fips_coord_cache_stats`, in one pass that finds resident slots
+through the three eviction heaps rather than every slot. With too little
+scratch, or heaps that do not account for `len`, it falls back to the sweeps.
+`FipsCoreCoordCacheTest` cross-checks it against iter and stats under random
+churn. No pin change. Version decision: additive API, **libfips-core 0.1.0
+Unreleased**.
