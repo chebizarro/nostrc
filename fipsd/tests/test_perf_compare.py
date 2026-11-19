@@ -2,6 +2,7 @@
 """No performance thresholds depend on tests faking a fast daemon."""
 import copy
 import json
+import math
 from pathlib import Path
 import subprocess
 import sys
@@ -119,10 +120,13 @@ class ComparisonTest(unittest.TestCase):
 
 
 class HostedPolicyTest(unittest.TestCase):
-    """Shared runners gate goodput and micro medians; latency and CPU are reported."""
+    """Shared runners gate goodput and noise-qualified, non-cross-thread micros."""
     def setUp(self):
         policy = json.loads(Path(__file__).with_name('perf_baseline.json').read_text())
         self.reference = copy.deepcopy(policy['metrics'])
+        for name, metric in self.reference.items():
+            if name.startswith('micro/'):
+                metric['spread_ns'] = 0
 
     def scaled(self, predicate, factor):
         actual = copy.deepcopy(self.reference)
@@ -130,9 +134,10 @@ class HostedPolicyTest(unittest.TestCase):
             if predicate(name): metric['value'] *= factor
         return actual
 
-    def test_gates_exactly_goodput_and_micro_medians(self):
+    def test_gates_goodput_and_non_cross_thread_micro_medians(self):
         gated = sorted(n for n in self.reference if hosted_gated(n))
-        self.assertEqual(len(gated), 39 + 3)
+        self.assertEqual(len(gated), 39 - 6 + 3)
+        self.assertFalse(any('_cross_thread' in n for n in gated))
         self.assertTrue(all(n.startswith('micro/') or n.endswith('/throughput_mbps') for n in gated))
         self.assertFalse(any(hosted_gated(n) for n in self.reference if '_us' in n or '/cpu' in n))
 
@@ -155,8 +160,137 @@ class HostedPolicyTest(unittest.TestCase):
         self.assertEqual(failures, [])
         self.assertEqual(len(warnings), 9)  # 3 pairings x one_way/reverse_one_way/rtt
 
+    def sampled_metrics(self, name, reference_values, candidate_values):
+        reference = ComparisonTest.data(ComparisonTest())
+        candidate = copy.deepcopy(reference)
+        for data, values in ((reference, reference_values), (candidate, candidate_values)):
+            for run, value in zip(data['micro_runs'], values):
+                run[name]['median_ns'] = run[name]['p95_ns'] = value
+        return aggregate(candidate), aggregate(reference)
+
+    def test_historical_hosted_false_positives(self):
+        # Raw medians from the three fips-bench-results artifacts, not rounded log rows.
+        cases = [
+            ('44082939871', 'transport_addr_clone/shared/6',
+             [7.939, 8.958, 7.938], [7.939, 8.958, 8.958]),
+            ('44301687127', 'transport_addr_clone/shared/6',
+             [9.697, 9.722, 9.120], [10.939, 10.938, 10.936]),
+            ('44301687127', 'transport_addr_clone/shared/18',
+             [8.863, 10.295, 8.857], [10.939, 10.933, 10.940]),
+            ('44301687127', 'transport_addr_clone/shared/58',
+             [9.704, 11.681, 8.862], [10.938, 9.994, 10.940]),
+            ('44301687127', 'transport_addr_clone/former_vec/18',
+             [12.653, 13.572, 14.436], [15.040, 14.429, 15.057]),
+            ('44301687127', 'transport_addr_clone/former_vec/58',
+             [12.899, 13.449, 12.833], [15.651, 13.061, 14.462]),
+            ('44301687127', 'transport_addr_socket_and_clone/shared/scoped_ipv6',
+             [74.351, 72.444, 87.196], [82.398, 72.576, 84.556]),
+            ('44410974924', 'transport_addr_clone/shared/6',
+             [7.940, 7.941, 8.959], [7.940, 8.959, 9.195]),
+            ('44410974924', 'transport_addr_cross_thread/former_vec/6',
+             [345.635, 372.870, 335.872], [401.160, 408.535, 356.302]),
+            ('44410974924', 'transport_addr_cross_thread/former_vec/18',
+             [343.923, 380.087, 342.034], [407.777, 416.237, 352.566]),
+            ('44410974924', 'transport_addr_cross_thread/former_vec/58',
+             [375.533, 417.744, 382.783], [437.104, 441.858, 398.370]),
+        ]
+        for run, name, reference, candidate in cases:
+            with self.subTest(run=run, name=name):
+                actual, base = self.sampled_metrics(name, reference, candidate)
+                self.assertTrue(compare(actual, base))  # Original local 10% gate still fails.
+                self.assertEqual(hosted_compare(actual, base)[0], [])
+
+    def test_spread_uses_run_medians_not_p95_or_pooled_builds(self):
+        actual, base = self.sampled_metrics('transport_addr_clone/shared/6',
+                                           [200, 201, 202], [280, 281, 282])
+        name = 'micro/transport_addr_clone/shared/6/median_ns'
+        self.assertEqual(actual[name]['spread_ns'], 2)
+        self.assertEqual(base[name]['spread_ns'], 2)
+        self.assertEqual(len(hosted_compare(actual, base)[0]), 1)
+
+    def test_real_goodput_and_micro_regressions_still_fail(self):
+        actual = self.scaled(lambda n: n.endswith('/throughput_mbps'), .85)
+        self.assertEqual(len(hosted_compare(actual, self.reference)[0]), 3)
+        actual, base = self.sampled_metrics('transport_addr_clone/shared/6',
+                                           [199, 200, 201], [279, 280, 281])
+        self.assertEqual(len(hosted_compare(actual, base)[0]), 1)
+
+    def test_absolute_and_spread_floor_edges_are_strict(self):
+        name = 'micro/transport_addr_clone/shared/6/median_ns'
+        for b, spread, boundary in ((8, 0, 10), (100, 20, 140)):
+            for noisy_side in ('candidate', 'reference'):
+                for a, fails in ((boundary, False), (math.nextafter(boundary, math.inf), True)):
+                    with self.subTest(base=b, spread=spread, side=noisy_side, actual=a):
+                        base = {name: {'value': b, 'direction': 'lower', 'spread_ns': 0}}
+                        actual = {name: {'value': a, 'direction': 'lower', 'spread_ns': 0}}
+                        (actual if noisy_side == 'candidate' else base)[name]['spread_ns'] = spread
+                        failures, rows, _ = hosted_compare(actual, base)
+                        self.assertEqual(bool(failures), fails)
+                        self.assertEqual(rows[0][5], boundary - b)
+
+    def test_relative_gate_remains_required_and_goodput_boundary_unchanged(self):
+        name = 'micro/transport_addr_clone/shared/6/median_ns'
+        base = {name: {'value': 200, 'direction': 'lower', 'spread_ns': 0}}
+        actual = copy.deepcopy(base)
+        actual[name]['value'] = 220
+        self.assertEqual(hosted_compare(actual, base)[0], [])  # >2 ns, exactly 10%.
+        actual[name]['value'] = 221
+        self.assertTrue(hosted_compare(actual, base)[0])
+        self.assertEqual(hosted_compare(self.scaled(lambda n: n.endswith('/throughput_mbps'), .90),
+                                        self.reference)[0], [])
+        self.assertTrue(hosted_compare(self.scaled(lambda n: n.endswith('/throughput_mbps'), .899),
+                                       self.reference)[0])
+
+    def test_cross_thread_is_report_only_even_for_large_shifts(self):
+        actual = self.scaled(lambda n: '_cross_thread' in n, 2)
+        failures, rows, _ = hosted_compare(actual, self.reference)
+        self.assertEqual(failures, [])
+        self.assertEqual(sum(not row[4] for row in rows if '_cross_thread' in row[0]), 6)
+        self.assertEqual(len(compare(actual, self.reference)), 6)
+
+    def test_missing_or_invalid_spread_fails_closed(self):
+        name = 'micro/transport_addr_clone/shared/6/median_ns'
+        for side in ('candidate', 'reference'):
+            for value in (None, True, -1, float('nan'), float('inf')):
+                with self.subTest(side=side, value=value), self.assertRaises((KeyError, ValueError)):
+                    actual, base = copy.deepcopy(self.reference), copy.deepcopy(self.reference)
+                    metric = (actual if side == 'candidate' else base)[name]
+                    if value is None:
+                        del metric['spread_ns']
+                    else:
+                        metric['spread_ns'] = value
+                    hosted_compare(actual, base)
+
+    def test_hosted_cli_uses_spreads_and_summary_without_new_flags(self):
+        policy_path = Path(__file__).with_name('perf_baseline.json')
+        policy = json.loads(policy_path.read_text())
+        reference = ComparisonTest.data(ComparisonTest())
+        reference.update(source_commit=policy['reference_commit'], machine={'test': True}, build={'test': True})
+        candidate = copy.deepcopy(reference)
+        candidate['source_commit'] = 'candidate'
+        name = 'transport_addr_socket_and_clone/shared/scoped_ipv6'
+        for data, values in ((reference, [74.351, 72.444, 87.196]),
+                             (candidate, [82.398, 72.576, 84.556])):
+            for run, value in zip(data['micro_runs'], values):
+                run[name]['median_ns'] = run[name]['p95_ns'] = value
+        with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[2]) as tmp:
+            tmp = Path(tmp)
+            for filename, data in (('candidate.json', candidate), ('reference.json', reference)):
+                (tmp / filename).write_text(json.dumps(data))
+            command = [sys.executable, str(Path(__file__).with_name('perf_compare.py')),
+                       str(tmp / 'candidate.json'), '--baseline', str(policy_path),
+                       '--reference', str(tmp / 'reference.json'), '--summary', str(tmp / 'summary.md')]
+            hosted = subprocess.run(command + ['--hosted'], capture_output=True, text=True)
+            local = subprocess.run(command, capture_output=True, text=True)
+            self.assertEqual(hosted.returncode, 0, hosted.stderr)
+            self.assertEqual(local.returncode, 1, local.stderr)
+            summary = (tmp / 'summary.md').read_text()
+            self.assertIn('29.504', summary)
+            self.assertIn('cross-thread micros', summary)
+            self.assertIn('36 gated', hosted.stdout)
+
     def test_hosted_requires_a_same_runner_reference(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[2]) as tmp:
             results = Path(tmp) / 'candidate.json'
             results.write_text(json.dumps(ComparisonTest.data(ComparisonTest())))
             run = subprocess.run([sys.executable, str(Path(__file__).with_name('perf_compare.py')), str(results), '--hosted'],
