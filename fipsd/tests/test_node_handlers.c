@@ -31,6 +31,31 @@ static json_t *data_of(json_t *response, const char *key)
     return key ? json_object_get(data, key) : data;
 }
 static json_t *poll_probe(test_node *n, json_int_t id);
+/* A probe through the in-process loopback either measures a round trip or
+ * fails only its RTT stage for want of millisecond resolution (nostrc-aqyad).
+ * The loopback round trip is well under 1 ms, and MMP measures it in whole
+ * milliseconds: our receive time less the echoed send time (our clock) less
+ * the peer's dwell (its clock), each truncated. Per receiver report that is
+ * 1 ms (a sample) only when the two clocks' phases happen to straddle a
+ * millisecond, else 0 ms (sub_millisecond, which upstream documents as
+ * expected on loopback) or -1 ms, which the core rejects as
+ * bad_timestamp_echo. Either way reports came back and no earlier stage
+ * failed (overall partial, not failed); whether the RTT budget drew a sample
+ * is chance this host test cannot assert. */
+static void assert_probe_reached(json_t *report)
+{
+    assert(report);
+    const char *overall = json_string_value(json_object_get(report, "overall"));
+    json_t *rtt = json_object_get(report, "rtt");
+    const char *verdict = json_string_value(json_object_get(rtt, "verdict"));
+    assert(overall && verdict);
+    if (!strcmp(verdict, "ok")) { assert(!strcmp(overall, "ok")); return; }
+    const char *reason = json_string_value(json_object_get(rtt, "reason"));
+    assert(!strcmp(overall, "partial") && !strcmp(verdict, "failed") && reason);
+    assert(!strcmp(reason, "sub_millisecond") || !strcmp(reason, "bad_timestamp_echo"));
+    assert(json_integer_value(json_object_get(rtt, "reports_seen")) >= 1);
+    assert(json_integer_value(json_object_get(rtt, "samples")) == 0);
+}
 static json_t *live(test_node *n, const char *name, json_t *params)
 {
     fipsd_control_provider p = fipsd_node_handlers_provider(n->h);
@@ -201,7 +226,7 @@ int main(void)
     e = nt_await(&a, FIPSD_NOTICE_DATAGRAM, &b.identity.node_addr, NT_WAIT_MS); assert(e && e->len == sizeof adopt); free(e);
     json_t *polled = poll_probe(&a, id);
     json_t *report = json_object_get(json_object_get(polled, "data"), "report");
-    assert(report && !strcmp(json_string_value(json_object_get(report, "overall")), "ok"));
+    assert_probe_reached(report);
     json_t *cleanup = json_object_get(report, "cleanup");
     assert(!json_boolean_value(json_object_get(json_object_get(report, "session"), "preexisting")));
     assert(!json_boolean_value(json_object_get(cleanup, "session_created_and_torn_down")));
@@ -222,7 +247,7 @@ int main(void)
     polled = poll_probe(&a, id);
     report = json_object_get(json_object_get(polled, "data"), "report");
     cleanup = json_object_get(report, "cleanup");
-    assert(!strcmp(json_string_value(json_object_get(report, "overall")), "ok"));
+    assert_probe_reached(report);
     assert(json_boolean_value(json_object_get(json_object_get(report, "session"), "preexisting")));
     assert(!json_boolean_value(json_object_get(cleanup, "session_created_and_torn_down")));
     assert(json_boolean_value(json_object_get(cleanup, "session_left_intact")));

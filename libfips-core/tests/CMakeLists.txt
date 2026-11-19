@@ -402,7 +402,12 @@ set_target_properties(fips_core_proto_properties_test PROPERTIES
 apply_warnings(fips_core_proto_properties_test)
 apply_sanitizers(fips_core_proto_properties_test)
 add_test(NAME FipsCoreProtoPropertiesTest COMMAND fips_core_proto_properties_test)
-set_tests_properties(FipsCoreProtoPropertiesTest PROPERTIES TIMEOUT 60 LABELS "fips;unit;proto")
+# A fixed, seeded, single-threaded workload: it cannot hang, only run slowly.
+# GCC ASan gives each codec primitive's small local a use-after-return fake
+# frame; clang's, with the same option, does not instrument them. About 20 s
+# under GCC ASan against 0.3 s under clang's left 60 s too little headroom on
+# a loaded host (nostrc-aqyad).
+set_tests_properties(FipsCoreProtoPropertiesTest PROPERTIES TIMEOUT 180 LABELS "fips;unit;proto")
 nostrc_describe_test(FipsCoreProtoPropertiesTest OWNER libfips-core TARGETS fips_core_proto_properties_test
   INPUTS ${fsp_vector_inputs})
 add_dependencies(fips_core_host_test fips_core_proto_properties_test)
