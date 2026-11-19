@@ -504,6 +504,11 @@ These are tracking-ready notes, **not** reports already submitted upstream:
   pinned by `FipsCoreMmpTest`); it does not fold -1 into `sub_millisecond`.
   Report upstream: count an echo that lands within 1 ms ahead of our clock as
   `rtt_zero`, and keep `rtt_arith_fail` for overflow or a larger regression.
+  The loopback interop harness (`fipsd/tests/udp_interop.py`
+  `quantized_echo`, `nostrc-61t79`) therefore reads both reasons, with reports
+  seen and no positive sample, as a quantized echo: the multi-node gate accepts
+  it as it accepts `sub_millisecond`, and the two-node probes, which need a
+  sample, retry it once as they retry `no_echo`.
 
 ## Node bookkeeping port (nostrc-u50yr.4)
 

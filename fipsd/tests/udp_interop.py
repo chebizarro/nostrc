@@ -70,6 +70,27 @@ POLL = 0.1
 KILL_GRACE = 10  # seconds to reap a process group after SIGKILL
 SANITIZER_MARKERS = (b'AddressSanitizer', b'LeakSanitizer', b'ThreadSanitizer',
                      b'UndefinedBehaviorSanitizer', b'runtime error:')
+# Every daemon in these scenarios binds only these (reserve_port, Scenario.host),
+# which is what lets quantized_echo() read a quantized RTT as a sub-ms path.
+LOOPBACK = {4: '127.0.0.1', 6: '::1'}
+
+
+def quantized_echo(rtt):
+    """An RTT stage that saw authenticated MMP echoes but only sub-ms samples.
+
+    libfips-core/UPSTREAM.md I-5: MMP timestamps are whole milliseconds, so a
+    path well under 1 ms (loopback) yields samples of -1, 0, 1 or 2 ms. Upstream
+    counts 0 as `zero_samples` (reason `sub_millisecond`) and -1 as an
+    `arith_failures` that it ranks above it (reason `bad_timestamp_echo`);
+    neither is a positive sample. Either reason qualifies only with reports seen,
+    no positive sample and the counter that produced that reason. A positive
+    sample, no report, no echo or any other reason is not this case.
+    """
+    if rtt.get('verdict') != 'failed' or rtt['reports_seen'] < 1 or rtt['samples'] != 0:
+        return False
+    if rtt.get('reason') == 'sub_millisecond':
+        return rtt['zero_samples'] > 0 and rtt['arith_failures'] == 0
+    return rtt.get('reason') == 'bad_timestamp_echo' and rtt['arith_failures'] > 0
 
 
 class Failure(AssertionError):
@@ -315,7 +336,7 @@ class Node:
 def reserve_port(family):
     """Pick a free loopback port. The daemon's own bind is authoritative if another process races it."""
     with socket.socket(family, socket.SOCK_DGRAM) as reservation:
-        reservation.bind(('::1' if family == socket.AF_INET6 else '127.0.0.1', 0))
+        reservation.bind((LOOPBACK[6 if family == socket.AF_INET6 else 4], 0))
         return reservation.getsockname()[1]
 
 
@@ -344,7 +365,7 @@ class Scenario:
         print(text, flush=True)
 
     def host(self, port):
-        return f'[::1]:{port}' if self.family == 6 else f'127.0.0.1:{port}'
+        return f'[{LOOPBACK[6]}]:{port}' if self.family == 6 else f'{LOOPBACK[4]}:{port}'
 
     def check_alive(self):
         for node in self.nodes.values():
@@ -594,8 +615,13 @@ transports:
                           time.monotonic() + self.args.session_timeout, rust_flow_listed)
         self.note(f'Rust native stats: sent {stats["sent_datagrams"]}/{stats["sent_bytes"]}')
 
-    def probe_reports(self, source, target, started=None):
-        """Collect at most two probes; retry only an otherwise healthy no_echo."""
+    def probe_reports(self, source, target, started=None, retry_quantized=False):
+        """Collect at most two probes; retry only an otherwise healthy no_echo.
+
+        With retry_quantized (callers that require a positive RTT sample), an
+        otherwise healthy loopback quantized_echo() report gets the same single
+        bounded retry: one RTT budget need not yield a >= 1 ms sample there.
+        """
         deadline = time.monotonic() + self.args.probe_timeout
         started = started or source.query('probe_start', {'npub': target.npub})
         reports = []
@@ -613,30 +639,31 @@ transports:
             reports.append(report)
             self.note(f'{source.name}->{target.name} probe attempt {attempt} report: {json.dumps(report)}')
             rtt = report['rtt']
-            no_echo = (report['overall'] == 'partial' and
+            healthy = (report['overall'] == 'partial' and
                        all(report[s]['verdict'] in ('ok', 'skipped') for s in ('bloom', 'discovery')) and
                        (report['path']['verdict'] == 'ok' or
                         (report['path']['verdict'] == 'skipped' and report['path']['reason'] == 'direct_peer')) and
-                       report['session']['verdict'] in ('ok', 'skipped') and report['session']['established'] and
-                       rtt['verdict'] == 'failed' and rtt['reason'] == 'no_echo' and
+                       report['session']['verdict'] in ('ok', 'skipped') and report['session']['established'])
+            no_echo = (rtt['verdict'] == 'failed' and rtt['reason'] == 'no_echo' and
                        rtt['reports_seen'] > 0 and rtt['samples'] == 0 and
                        rtt['zero_samples'] == 0 and rtt['arith_failures'] == 0)
-            if not no_echo:
+            if not healthy or not (no_echo or (retry_quantized and quantized_echo(rtt))):
                 return reports
             if attempt == 2:
-                raise Failure(f'{source.name}->{target.name}: two consecutive no_echo reports: {json.dumps(reports)}')
+                reasons = '/'.join(r['rtt']['reason'] for r in reports)
+                raise Failure(f'{source.name}->{target.name}: two consecutive {reasons} reports: {json.dumps(reports)}')
             # Upstream budgets RTT at max(3s, 4 ticks), not the session MMP
             # ceiling (10s), and exposes no budget override. One report need
             # not carry a fresh usable timestamp echo. Retry the diagnostic,
             # not the poll of its already-terminal job, without accepting it
             # as RTT evidence or extending the harness's absolute deadline.
-            self.note(f'{source.name}->{target.name}: retrying RTT-only no_echo once')
+            self.note(f'{source.name}->{target.name}: retrying RTT-only {rtt["reason"]} once')
             started = source.query('probe_start', {'npub': target.npub})
 
     def probe(self, prober, expect_preexisting):
         """Run a diagnostic probe from `prober` toward the other node and return its report."""
         target = self.other[prober.name]
-        reports = self.probe_reports(prober, target)
+        reports = self.probe_reports(prober, target, retry_quantized=True)
         report, measured = reports[0], reports[-1]
         if measured['overall'] != 'ok':
             raise Failure(f'{prober.name} probe overall={measured["overall"]}: {json.dumps(reports)}')
@@ -704,7 +731,7 @@ transports:
                 self.note(f'{name} show_sessions: {json.dumps(s[0])}')
             self.send_native(payload, 'Rust->C datagram over the C-initiated session')
 
-            reports = self.probe_reports(c, rust, started)
+            reports = self.probe_reports(c, rust, started, retry_quantized=True)
             report, measured = reports[0], reports[-1]
             if measured['overall'] != 'ok' or report['session']['verdict'] != 'ok' or measured['rtt']['verdict'] != 'ok':
                 raise Failure(f'c probe did not complete cleanly: {json.dumps(reports)}')
@@ -1024,17 +1051,17 @@ transports:
         report = reports[-1]
         rtt = report['rtt']
         # A matching authenticated echo below the millisecond timestamp
-        # resolution proves a route, but cannot produce a positive RTT
-        # sample. After the bounded no_echo retry, preserve all other
-        # diagnostic failures; this is not a latency benchmark.
-        quantized_echo = (rtt.get('reason') == 'sub_millisecond' and
-                          rtt['zero_samples'] > 0 and rtt['reports_seen'] > 0)
-        if (report['overall'] not in (('ok', 'partial') if quantized_echo else ('ok',)) or
+        # resolution proves a route, but cannot produce a positive RTT sample
+        # (UPSTREAM.md I-5: reason sub_millisecond or bad_timestamp_echo).
+        # After the bounded no_echo retry, preserve all other diagnostic
+        # failures; this is not a latency benchmark.
+        quantized = quantized_echo(rtt)
+        if (report['overall'] not in (('ok', 'partial') if quantized else ('ok',)) or
                 any(report[s]['verdict'] not in ('ok', 'skipped') for s in ('bloom', 'discovery')) or
                 report['path']['verdict'] not in ('ok', 'skipped') or
                 (report['path']['verdict'] == 'skipped' and report['path']['reason'] != 'direct_peer') or
-                not report['session']['established'] or
-                (rtt['samples'] < 1 and not quantized_echo)):
+                report['session']['verdict'] not in ('ok', 'skipped') or not report['session']['established'] or
+                (rtt['samples'] < 1 and not quantized)):
             raise Failure(f'{source.name}->{target.name}: {json.dumps(report)}')
         return report
 

@@ -6,10 +6,12 @@ import json
 import unittest
 from unittest.mock import MagicMock, patch
 
-from udp_interop import Failure, MultiScenario, NotYet, Scenario
+from udp_interop import Failure, MultiScenario, NotYet, Scenario, quantized_echo
 
 
-def report(reason=None, probe_id=1):
+def report(reason=None, probe_id=1, reports_seen=1):
+    # Counters as libfips-core classifies them: bad_timestamp_echo needs an
+    # arithmetic failure, sub_millisecond a zero sample (UPSTREAM.md I-5).
     return {
         'probe_id': probe_id,
         'overall': 'partial' if reason else 'ok',
@@ -18,8 +20,9 @@ def report(reason=None, probe_id=1):
         'path': {'verdict': 'ok'},
         'session': {'verdict': 'skipped', 'established': True, 'preexisting': True},
         'rtt': {'verdict': 'failed' if reason else 'ok', 'reason': reason,
-                'reports_seen': 1, 'samples': 0 if reason else 1,
-                'zero_samples': int(reason == 'sub_millisecond'), 'arith_failures': 0},
+                'reports_seen': reports_seen, 'samples': 0 if reason else 1,
+                'zero_samples': int(reason == 'sub_millisecond'),
+                'arith_failures': int(reason == 'bad_timestamp_echo')},
         'cleanup': {'session_created_and_torn_down': False},
     }
 
@@ -194,12 +197,10 @@ class ProbeRetryTest(unittest.TestCase):
         self.assertEqual(source.starts, 2)
 
     def test_other_failures_are_not_retried(self):
-        for reason in ('no_report', 'bad_timestamp_echo'):
-            with self.subTest(reason=reason):
-                scenario, source, target = self.scenario([report(reason)])
-                with self.assertRaises(Failure):
-                    scenario.probe_pair(source, target)
-                self.assertEqual(source.starts, 1)
+        scenario, source, target = self.scenario([report('no_report')])
+        with self.assertRaises(Failure):
+            scenario.probe_pair(source, target)
+        self.assertEqual(source.starts, 1)
 
     def test_no_echo_cannot_hide_another_failed_stage(self):
         for stage in ('bloom', 'discovery', 'path', 'session'):
@@ -211,7 +212,9 @@ class ProbeRetryTest(unittest.TestCase):
                 self.assertEqual(source.starts, 1)
 
     def test_retry_failure_is_not_accepted(self):
-        for second in (report('no_report', 2), report('bad_timestamp_echo', 2)):
+        broken = report('bad_timestamp_echo', 2)
+        broken['path']['verdict'] = 'failed'
+        for second in (report('no_report', 2), broken):
             with self.subTest(second=second):
                 scenario, source, target = self.scenario([report('no_echo'), second])
                 with self.assertRaises(Failure):
@@ -222,6 +225,48 @@ class ProbeRetryTest(unittest.TestCase):
         scenario, source, target = self.scenario([report('sub_millisecond')])
         self.assertEqual(scenario.probe_pair(source, target)['overall'], 'partial')
         self.assertEqual(source.starts, 1)
+
+    def test_loopback_bad_timestamp_echo_is_a_quantized_echo(self):
+        # The Rust->Rust shape seen in the multi-node gate: three MMP reports,
+        # no positive sample, a -1 ms truncation decided the reason (I-5).
+        scenario, source, target = self.scenario([report('bad_timestamp_echo', reports_seen=3)])
+        self.assertEqual(scenario.probe_pair(source, target)['overall'], 'partial')
+        self.assertEqual(source.starts, 1)
+        scenario, source, target = self.scenario([report('no_echo'), report('bad_timestamp_echo', 2)])
+        self.assertEqual(scenario.probe_pair(source, target)['probe_id'], 2)
+
+    def test_bad_timestamp_echo_still_fails_on_real_errors(self):
+        cases = {}
+        for stage in ('bloom', 'discovery', 'path', 'session'):
+            cases[stage] = report('bad_timestamp_echo')
+            cases[stage][stage]['verdict'] = 'failed'
+        cases['no_session'] = report('bad_timestamp_echo')
+        cases['no_session']['session']['established'] = False
+        cases['no_report'] = report('bad_timestamp_echo', reports_seen=0)
+        cases['no_arith_failure'] = report('bad_timestamp_echo')
+        cases['no_arith_failure']['rtt']['arith_failures'] = 0
+        cases['positive_sample'] = report('bad_timestamp_echo')
+        cases['positive_sample']['rtt']['samples'] = 1
+        for name, bad in cases.items():
+            with self.subTest(case=name):
+                scenario, source, target = self.scenario([bad])
+                with self.assertRaises(Failure):
+                    scenario.probe_pair(source, target)
+                self.assertEqual(source.starts, 1)
+        self.assertFalse(quantized_echo(report('no_echo')['rtt']))
+        self.assertFalse(quantized_echo(report()['rtt']))
+
+    def test_two_node_probe_retries_a_quantized_echo_once(self):
+        for reason in ('bad_timestamp_echo', 'sub_millisecond'):
+            with self.subTest(reason=reason):
+                scenario, source, target = self.scenario([report(reason), report(probe_id=2)])
+                self.assertEqual(Scenario.probe(scenario, source, True)['probe_id'], 2)
+                self.assertEqual(source.starts, 2)
+                reports = [report(reason), report(reason, 2)]
+                scenario, source, target = self.scenario(reports)
+                with self.assertRaisesRegex(Failure, f'two consecutive {reason}/{reason}'):
+                    Scenario.probe(scenario, source, True)
+                self.assertEqual(source.starts, 2)
 
     def test_two_node_probe_retries_without_relaxing_sample_requirement(self):
         scenario, source, target = self.scenario([report('no_echo'), report(probe_id=2)])
