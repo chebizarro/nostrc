@@ -2,6 +2,7 @@
 """Real fipsd entrypoint + upstream adapter fetch tests. No sleeps."""
 import argparse
 from collections import Counter
+import faulthandler
 import json
 import fcntl
 import pty
@@ -14,25 +15,65 @@ from pathlib import Path
 import selectors
 import socket
 import subprocess
+import sys
 import tempfile
 import threading
 import time
 
 from fipsctl_e2e import start_fipsd, reserve_port
-from udp_interop import SANITIZER_MARKERS
+from udp_interop import SANITIZER_MARKERS, kill_children
 from fipstop_golden import TABS
+
+# Below CTest's TIMEOUT for FipsTopE2eTest (180 s, fipsd/CMakeLists.txt); a
+# normal run takes seconds. See watchdog().
+WATCHDOG_SECONDS = 150
+TERMINALS = {}  # live PTY fipstop children -> their output so far
+
+
+def watchdog(seconds):
+    """End a run that stops making progress with a diagnosis, never a silent stall.
+
+    Every wait below has its own deadline; this covers whatever does not (a
+    blocked syscall, a wedged thread). On expiry: every thread's stack, the
+    tail of each live PTY's output, then SIGKILL the children and exit 1."""
+    def expire():
+        out = sys.stderr
+        out.write(f'fipstop e2e: no result within {seconds} s; thread stacks follow\n')
+        out.flush()
+        faulthandler.dump_traceback(file=out, all_threads=True)
+        for process, output in list(TERMINALS.items()):
+            out.write(f'fipstop pid {process.pid} alive={process.poll() is None} PTY tail: '
+                      f'{bytes(output[-2000:]).decode(errors="replace")!r}\n')
+            if process.poll() is None:
+                process.kill()
+        kill_children()  # fipsd started through start_fipsd
+        out.flush()
+        os._exit(1)
+    timer = threading.Timer(seconds, expire)
+    timer.daemon = True
+    timer.start()
+    return timer
 
 
 class Fake:
+    """A scripted control socket: one request line, one reply line per connection.
+
+    A failed request is recorded for close() to report, without ending the
+    server, so later requests still get answers. The thread is a daemon and
+    accept() never blocks, so a fake that is never closed cannot hold the
+    interpreter's exit."""
+
     def __init__(self, path, replies):
         self.path, self.replies = path, replies
         self.counts = Counter()
         self.errors = []
+        self.closed = False
         self.listener = socket.socket(socket.AF_UNIX)
         self.listener.bind(str(path))
         self.listener.listen(16)
+        self.listener.setblocking(False)  # a client gone before accept() must not wedge serve()
         self.reader, self.writer = socket.socketpair()
-        self.thread = threading.Thread(target=self.serve)
+        self.thread = threading.Thread(target=self.serve, name=f'fake {path.name}', daemon=True)
         self.thread.start()
 
     def serve(self):
@@ -44,27 +85,53 @@ class Fake:
                     ready = sel.select()
                     if any(k.fileobj is self.reader for k, _ in ready):
                         return
-                    conn, _ = self.listener.accept()
-                    with conn:
-                        conn.settimeout(5)
-                        request = json.loads(conn.makefile('rb').readline())
-                        cmd = request['command']
-                        self.counts[cmd] += 1
-                        value = self.replies(cmd) if callable(self.replies) else self.replies.get(cmd, {})
-                        if value is not None:
-                            conn.sendall(json.dumps({'status': 'ok', 'data': value}).encode() + b'\n')
+                    try:
+                        conn, _ = self.listener.accept()
+                    except BlockingIOError:
+                        continue
+                    try:
+                        self.answer(conn)
+                    except Exception as e:
+                        self.errors.append(e)
         except Exception as e:
             self.errors.append(e)
 
+    def answer(self, conn):
+        with conn:
+            conn.settimeout(5)
+            request = json.loads(conn.makefile('rb').readline())
+            cmd = request['command']
+            self.counts[cmd] += 1
+            value = self.replies(cmd) if callable(self.replies) else self.replies.get(cmd, {})
+            if value is not None:
+                conn.sendall(json.dumps({'status': 'ok', 'data': value}).encode() + b'\n')
+
     def close(self):
+        """Stop and release everything first, then report what went wrong."""
+        if self.closed:
+            return
+        self.closed = True
         self.writer.sendall(b'x')
         self.thread.join(6)
-        assert not self.thread.is_alive(), 'fake did not stop'
+        stuck = self.thread.is_alive()
         self.listener.close()
         self.reader.close()
         self.writer.close()
-        self.path.unlink()
-        assert not self.errors, self.errors
+        self.path.unlink(missing_ok=True)
+        assert not stuck, f'fake {self.path} did not stop; served {dict(self.counts)}, errors {self.errors}'
+        assert not self.errors, (f'fake {self.path} served {dict(self.counts)}', self.errors)
+
+
+def close_all(fakes):
+    """Close every fake, then raise the first failure: one bad close must not skip the rest."""
+    failures = []
+    for fake in fakes:
+        try:
+            fake.close()
+        except AssertionError as e:
+            failures.append(e)
+    if failures:
+        raise failures[0]
 
 
 def run(binary, *args):
@@ -94,8 +161,7 @@ def adapter_cases(unit, root):
             assert result['status']['effective_ipv6_mtu'] == 1323
             assert result['listening']['fips0_addr'] == 'fd00::a'
     finally:
-        node.close()
-        adapter.close()
+        close_all([node, adapter])
     # An absent adapter is skipped for precisely the next ten fetches.
     appeared = []
     def reply(command):
@@ -111,9 +177,7 @@ def adapter_cases(unit, root):
         assert [x['listening']['fips0_addr'] for x in results] == ['fd00::c'] * 11 + ['fd00::d']
         assert appeared[0].counts['show_listening_sockets'] == 1
     finally:
-        node.close()
-        for server in appeared:
-            server.close()
+        close_all([node, *appeared])
     # A reached adapter which closes the panel request keeps its status;
     # this is not an unreachable socket and must not trigger quiet mode.
     node = Fake(control, {'show_status': {'npub': 'npub1node'}, 'show_listening_sockets': None})
@@ -124,8 +188,7 @@ def adapter_cases(unit, root):
         assert all(x['status']['tun_name'] == 'fips0' and x['listening'] is None and x['quiet'] == 0 for x in results)
         assert sum(adapter.counts.values()) == 6
     finally:
-        node.close()
-        adapter.close()
+        close_all([node, adapter])
     print('upstream adapter cases: sibling/symlink composition, fallback, ten-fetch quiet, failed panel passed')
 
 
@@ -141,6 +204,11 @@ def terminal_case(binary, root, stop):
                                    stdin=slave, stdout=slave, stderr=slave, env=env, close_fds=True, pass_fds=(held,))
     finally:
         os.close(held)
+    transcript = TERMINALS[process] = bytearray()
+    def read():
+        chunk = os.read(master, 65536)
+        transcript.extend(chunk)
+        return chunk
     def until(needle):
         output = bytearray()
         deadline = time.monotonic() + 10
@@ -149,7 +217,7 @@ def terminal_case(binary, root, stop):
             while needle not in output:
                 remaining = deadline - time.monotonic()
                 assert remaining > 0 and sel.select(remaining), ('terminal output missing', needle, output)
-                output.extend(os.read(master, 65536))
+                output.extend(read())
         return bytes(output)
     def drain_until_exit():
         # Read like a terminal until the process is gone. ncurses restores the
@@ -166,12 +234,12 @@ def terminal_case(binary, root, stop):
                 ready = sel.select(remaining) if remaining > 0 else []
                 assert ready, ('fipstop did not exit', output[-2000:])
                 if any(key.fileobj == master for key, _ in ready):
-                    output.extend(os.read(master, 65536))
+                    output.extend(read())
                 elif not os.read(exited, 1):
                     break
             sel.unregister(exited)
             while sel.select(0):  # what it wrote last, before exiting
-                output.extend(os.read(master, 65536))
+                output.extend(read())
         return bytes(output)
     try:
         output = until(b'Refresh:')
@@ -199,6 +267,7 @@ def terminal_case(binary, root, stop):
             process.kill()
         os.close(master)  # hangs up the PTY: nothing can stay blocked draining into it
         process.wait(timeout=5)
+        TERMINALS.pop(process, None)
         os.close(slave)
         os.close(exited)
     print(f'real ncurses PTY: initial frame, NO_COLOR, resize, stop={stop}, terminal restoration passed')
@@ -210,6 +279,7 @@ def main():
     p.add_argument('--fipstop', required=True)
     p.add_argument('--unit', required=True)
     args = p.parse_args()
+    watchdog(WATCHDOG_SECONDS)
     repo = Path(__file__).resolve().parents[2]
     fixtures = repo / 'fipsd/tests/control_golden'
     left = run(args.fipstop, '--fixture-dir', fixtures, '--render-once', '80x24')
