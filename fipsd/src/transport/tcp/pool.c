@@ -55,8 +55,9 @@ int tcp_pool_launch(tcp_instance *u, int fd, const fips_transport_addr *peer,
     c->stop = go_channel_create(1); c->notify_stop = go_channel_create(1); c->close = go_channel_create(1); c->ready = go_channel_create(1);
     c->run = go_channel_create(1); c->reader_done = go_channel_create(1); c->writer_done = go_channel_create(1);
     c->progress = go_channel_create(1); c->queue = go_channel_create(u->config.send_queue_depth);
+    c->control = go_channel_create(FIPSD_TCP_CONTROL_DEPTH);
     atomic_init(&c->last_frame_ms, 0);
-    if (!c->stop || !c->notify_stop || !c->close || !c->ready || !c->run || !c->reader_done || !c->writer_done || !c->progress || !c->queue) {
+    if (!c->stop || !c->notify_stop || !c->close || !c->ready || !c->run || !c->reader_done || !c->writer_done || !c->progress || !c->queue || !c->control) {
         tcp_conn_free(c); goto fail;
     }
     c->next = u->connections; u->connections = c;

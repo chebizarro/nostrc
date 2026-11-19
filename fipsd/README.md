@@ -2535,9 +2535,32 @@ The node's connection-oriented dial/retry state machine owns reconnection and
 exponential backoff. Transport `CONNECTED`/`DISCONNECTED` events drive it;
 there is no second retry loop. The C vtable's send is the equivalent of Rust's
 `send_existing`, not its connect-on-send convenience API: late encrypted work
-must never reopen a deliberately closed link. The current vtable has no lane
-argument, so its single bounded writer queue does not claim Rust's separate
-path-priority lane support.
+must never reopen a deliberately closed link.
+
+Each connection has two bounded writer queues, upstream's send lanes
+(`nostrc-085xw`): a data lane of 64 frames and a control lane of 8
+(`FIPSD_TCP_CONTROL_DEPTH`, upstream `PATH_QUEUE_DEPTH`). The node sends through
+the optional `send_lane` vtable entry (`fipsd_transport_send_lane`); transports
+without it, every one but TCP, take each lane through their plain `send`. Both
+lanes refuse rather than wait when full. The writer fiber drains the control
+lane first, as upstream's `biased` select: a control frame waits behind at most
+the frame being written (and whatever the kernel already holds), never behind
+the data queue. As upstream, there is no starvation bound for data; the control
+lane is short and fed only by link maintenance. A deliberate close drains
+control, then data, then closes.
+
+The lane is the node's choice, a deliberate divergence from upstream, which
+lanes only path messages (probe 0x52, ack 0x53, close 0x54; `send_path`). fipsd
+also lanes the link maintenance a saturated data queue must not starve: IK
+handshake and restart msg1/msg2, link rekey msg1/msg2, MMP sender/receiver
+reports, tree announcements and heartbeats. Session datagrams (all FSP
+traffic, including its rekey and MMP), bloom filters, lookups and Disconnect
+stay on the data lane, Disconnect so that it still follows the data queued
+before it. MMP reports on the control lane do not wait in the data queue, so
+the link RTT they measure under load leaves that queueing out. Per-lane
+refusals (`control_dropped`, `data_dropped`) and control frames written
+(`control_sent`) are host diagnostics; `show_transports` keeps exactly
+upstream's TCP field set.
 
 Stop closes cancellation channels, uses libgo's owner-directed
 `gof_io_cancel_fd` latch (including connect/read/write pre-park races), joins
@@ -2555,7 +2578,14 @@ MTU asymmetry, queue/pool/source limits, socket options, deadlines, reconnect,
 connect-arm/readiness cancellation and committed mid-read cancellation) and
 `FipsdTcpTwoNodesV4Test`/`V6Test`. The latter reuse the full two-node proof:
 IK link, tree convergence, bloom, XK session, datagrams, rekey and disconnect,
-with transport counters read through the production control provider. Socket
+with transport counters read through the production control provider.
+`FipsdTcpTest`'s lane case holds the writer inside a frame larger than the
+socket buffers (a park trace says it is there), fills both lanes to their
+exact depths and reads stalled frame, all control, then all data, also across a
+deliberate close. `FipsdTcpRekeySaturatedTest` saturates both directions' data
+lanes of a real two-node TCP link from link-up and requires the link rekey on
+both ends within `after` + jitter + `handshake`, no link churn, and maintenance
+on the control lane with at most a fifth of it refused. Socket
 fixtures use `test_tmpdir.h`; synchronization is channels, I/O readiness and
 explicit trace barriers, never warm-up sleeps.
 
@@ -2719,7 +2749,8 @@ With `advertise_on_nostr`, a directory-mode onion joins this node's own Nostr
 advert as `<onion>:<advertised_port>` once the onion is published (with a
 control monitor, `HS_DESC UPLOADED` for this service; see Local advert
 endpoints, `nostrc-r4aeo`). Tor endpoints in received adverts are dialled
-through this transport. As with TCP, there is no separate path-priority lane.
+through this transport. Tor and Nym do not implement the optional `send_lane`:
+their inner TCP owner takes every frame on its data lane.
 Version decision: **fipsd stays 0.1.0 Unreleased**; the transports fold into
 the initial daemon.
 
@@ -2928,8 +2959,8 @@ Differences from upstream, each deliberate:
    connection when the replacing link is at the same transport address. Both
    directions of a BLE pair share the device address. Upstream moves the
    session in place.
-3. **No path lane.** There is no separate path-priority lane (upstream
-   `send_lane`), because the fipsd node has no lane seam, as for TCP.
+3. **No path lane.** BLE does not implement the optional `send_lane` vtable
+   entry (upstream `send_lane`); every frame takes its single queue.
 
 ### Verification
 

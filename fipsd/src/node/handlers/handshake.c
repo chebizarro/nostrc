@@ -62,7 +62,7 @@ static void restart_clear(handlers *h, peer_rec *rec, bool remember, fips_instan
 static bool restart_send(handlers *h, const restart_candidate *c, const fips_transport_addr *to)
 {
     fipsd_transport *t = hs_transport(h, c->transport);
-    bool ok = t && t->ops->send(t, to, c->msg2.bytes, c->msg2.len) == 0;
+    bool ok = t && fipsd_transport_send_lane(t, FIPSD_TRANSPORT_LANE_CONTROL, to, c->msg2.bytes, c->msg2.len) == 0;
     if (ok) ++h->counters.frames_sent; else ++h->counters.send_failed;
     return ok;
 }
@@ -127,7 +127,7 @@ static void leg_free(handlers *h, pending_leg *leg)
 static bool leg_send(handlers *h, pending_leg *leg, const uint8_t *bytes, size_t len)
 {
     fipsd_transport *t = hs_transport(h, leg->transport);
-    bool ok = t && t->ops->send(t, &leg->addr, bytes, len) == 0;
+    bool ok = t && fipsd_transport_send_lane(t, FIPSD_TRANSPORT_LANE_CONTROL, &leg->addr, bytes, len) == 0;
     if (ok) ++h->counters.frames_sent; else ++h->counters.send_failed;
     return ok;
 }
@@ -488,7 +488,7 @@ static bool leg_send_wrap(handlers *h, peer_rec *rec, const uint8_t *bytes, size
 {
     const fipsd_peer_info *info = fipsd_active_peer_info(rec->peer);
     fipsd_transport *t = hs_transport(h, info->transport);
-    return t && t->ops->send(t, &info->addr, bytes, len) == 0;
+    return t && fipsd_transport_send_lane(t, FIPSD_TRANSPORT_LANE_CONTROL, &info->addr, bytes, len) == 0;
 }
 /* Resolve a candidate index without ever publishing its keys as the peer's
  * live epoch. Workers receive only a key clone; the dispatcher owns admission. */

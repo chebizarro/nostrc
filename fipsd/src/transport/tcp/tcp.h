@@ -3,6 +3,10 @@
 #include "transport/transport.h"
 #include "config/config.h"
 #define FIPSD_TCP_SEND_DEPTH 64u
+/* Upstream tcp/pool.rs PATH_QUEUE_DEPTH: frames on a connection's control
+ * lane, apart from its data, before sends of them fail. Bounded, so a
+ * connection that has stopped draining still refuses them. */
+#define FIPSD_TCP_CONTROL_DEPTH 8u
 struct fipsd_watcher_source;
 /* Host-only stream dialer for the proxied owners (Tor, Nym): the connect
  * fiber resolves and connects `via` (the SOCKS5 proxy) instead of the peer,

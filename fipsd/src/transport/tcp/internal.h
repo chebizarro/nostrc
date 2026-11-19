@@ -23,7 +23,9 @@ struct tcp_conn {
     int fd; /* owner.mu; published before connect; close only after I/O join */
     uint16_t mss_mtu; /* diagnostic, never a frame bound */
     bool established, closing; /* owner.mu */
-    GoChannel *stop, *notify_stop, *close, *ready, *run, *reader_done, *writer_done, *progress, *queue;
+    /* queue: the data lane, closed to end a deliberate drain. control: the
+     * control lane, drained first, never closed (conn.c writer). */
+    GoChannel *stop, *notify_stop, *close, *ready, *run, *reader_done, *writer_done, *progress, *queue, *control;
     _Atomic uint64_t last_frame_ms;
 };
 struct tcp_instance {

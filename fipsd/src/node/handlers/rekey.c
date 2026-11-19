@@ -97,7 +97,10 @@ static fips_status send_wire(void *c, const fips_rekey_output *o, const uint8_t 
         const fipsd_peer_info *info = fipsd_active_peer_info(x->rec->peer);
         fipsd_transport *t = hs_transport(h, info->transport);
         const fips_transport_addr *to = o->route == FIPS_REKEY_ROUTE_Arrival && x->arrival ? x->arrival : &info->addr;
-        if (!t || t->ops->send(t, to, bytes, len) != 0) { ++h->counters.send_failed; return FIPS_ERR_RANGE; }
+        /* Link rekey msg1/msg2: maintenance, on the control lane. */
+        if (!t || fipsd_transport_send_lane(t, FIPSD_TRANSPORT_LANE_CONTROL, to, bytes, len) != 0) {
+            ++h->counters.send_failed; return FIPS_ERR_RANGE;
+        }
         ++h->counters.frames_sent; ++x->rec->frames_out; x->rec->bytes_out += len;
         return FIPS_OK;
     }

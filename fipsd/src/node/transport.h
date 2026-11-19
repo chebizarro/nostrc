@@ -25,6 +25,15 @@ typedef struct fipsd_transport_event {
     uint8_t bytes[];
 } fipsd_transport_event;
 
+/* Which of a connection's send queues a frame joins (upstream
+ * transport::Lane). A transport that queues frames for a writer keeps CONTROL
+ * apart from DATA, so a queue full of the node's data neither refuses nor
+ * holds back link maintenance, and its writer sends CONTROL first. The node
+ * marks the lane; a transport cannot tell from ciphertext. Transports that
+ * send at once, with no queue of their own, ignore it. */
+typedef enum fipsd_transport_lane {
+    FIPSD_TRANSPORT_LANE_DATA, FIPSD_TRANSPORT_LANE_CONTROL
+} fipsd_transport_lane;
 typedef struct fipsd_transport fipsd_transport;
 struct fipsd_netmon_event;
 struct fips_node_addr;
@@ -70,6 +79,11 @@ typedef struct fipsd_transport_ops {
      * address) for timeout_ms. Returns the number closed. Must not block. */
     size_t (*close_unproven)(fipsd_transport *, uint64_t timeout_ms,
                              bool (*held)(void *, const fips_transport_addr *), void *);
+    /* Optional (upstream TransportHandle::send_lane): send's contract, on the
+     * connection's queue for `lane`. NULL: the transport has one queue (or
+     * none), and fipsd_transport_send_lane falls back to send. */
+    int (*send_lane)(fipsd_transport *, fipsd_transport_lane, const fips_transport_addr *,
+                     const uint8_t *, size_t);
 } fipsd_transport_ops;
 struct fipsd_transport {
     const fipsd_transport_ops *ops;
@@ -95,5 +109,9 @@ typedef struct fipsd_transport_registry {
  * are refused without mutation. No hidden default/network transports. */
 fips_status fipsd_transport_parse_address(const fipsd_transport *, const char *, fips_transport_addr *);
 int fipsd_transport_register(fipsd_transport_registry *, fipsd_transport *);
+/* The node's send seam: lane-aware where the transport supports it. */
+static inline int fipsd_transport_send_lane(fipsd_transport *t, fipsd_transport_lane lane,
+    const fips_transport_addr *to, const uint8_t *bytes, size_t n)
+{ return t->ops->send_lane ? t->ops->send_lane(t, lane, to, bytes, n) : t->ops->send(t, to, bytes, n); }
 fipsd_transport *fipsd_transport_find(const fipsd_transport_registry *, fips_transport_id);
 #endif
