@@ -306,31 +306,10 @@ configure_file(systemd/nostr-relayd.service.in
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/nostr-relayd.service"
   DESTINATION "${NOSTR_RELAYD_SYSTEMD_SYSTEM_UNIT_DIR}")
 
-# Apply global sanitizer flags to ensure TSAN/ASAN/UBSAN DSOs are linked
-if (COMMAND apply_sanitizers)
-  apply_sanitizers(nostrc-relayd)
-endif()
-
-# Ensure sanitizer runtimes are linked for the executable as well (AppleClang needs the flag on the final link)
-if (CMAKE_BUILD_TYPE STREQUAL "Debug")
-  if (GO_ENABLE_TSAN)
-    target_link_options(nostrc-relayd PRIVATE -fsanitize=thread)
-    if (APPLE)
-      # Also add as a link library to place it after static archives on Apple ld
-      target_link_libraries(nostrc-relayd PRIVATE -fsanitize=thread)
-    endif()
-  else()
-    if (GO_ENABLE_ASAN)
-      target_link_options(nostrc-relayd PRIVATE -fsanitize=address)
-      if (APPLE)
-        target_link_libraries(nostrc-relayd PRIVATE -fsanitize=address)
-      endif()
-    endif()
-    if (GO_ENABLE_UBSAN)
-      target_link_options(nostrc-relayd PRIVATE -fsanitize=undefined)
-      if (APPLE)
-        target_link_libraries(nostrc-relayd PRIVATE -fsanitize=undefined)
-      endif()
-    endif()
-  endif()
+# Cover both static libraries and both daemon frontends, including future targets.
+if(COMMAND apply_sanitizers)
+  get_property(_relayd_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+  foreach(_target IN LISTS _relayd_targets)
+    apply_sanitizers(${_target})
+  endforeach()
 endif()
