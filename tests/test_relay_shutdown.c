@@ -19,6 +19,8 @@ int main(void) {
     NostrRelay *r = nostr_relay_new(bg, "wss://example.invalid", &err);
     if (!r) {
         fprintf(stderr, "nostr_relay_new failed: %s\n", err ? err->message : "unknown");
+        free_error(err);
+        go_context_free(bg);
         return 1;
     }
 
@@ -26,6 +28,7 @@ int main(void) {
     long long t0 = now_ms();
     nostr_relay_free(r);
     long long t1 = now_ms();
+    go_context_free(bg);
 
     long long dur = t1 - t0;
     if (dur > 2000) { // 2s threshold
