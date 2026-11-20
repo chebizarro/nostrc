@@ -64,6 +64,10 @@ apply_warnings(fips_core)
 if(GO_ENABLE_TSAN)
   # Override inherited workspace instrumentation: threading belongs to fipsd.
   target_compile_options(fips_core PRIVATE -fno-sanitize=thread)
+  # Uninstrumented, but the cached OpenSSL context is shared by fibers of one
+  # OS thread: annotate its tenures for the TSan runtime fipsd links
+  # (src/noise/aead_primitive.c, nostrc-u19cz.16).
+  target_compile_definitions(fips_core PRIVATE FIPS_AEAD_TSAN_ANNOTATE=1)
 else()
   apply_sanitizers(fips_core)
 endif()

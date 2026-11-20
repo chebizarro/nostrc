@@ -108,11 +108,18 @@ int fips_aead_open_nonce(
 #if !defined(FIPS_AEAD_TSAN) && defined(__SANITIZE_THREAD__)
 #define FIPS_AEAD_TSAN 1
 #endif
-#ifdef FIPS_AEAD_TSAN
-void __tsan_acquire(void *addr);
-void __tsan_release(void *addr);
-#define CTX_ACQUIRE(ctx) __tsan_acquire(ctx)
-#define CTX_RELEASE(ctx) __tsan_release(ctx)
+/* libfips-core itself is built -fno-sanitize=thread in TSan workspaces, so
+ * CMake requests the annotation explicitly; the linked runtime provides it. */
+#if !defined(FIPS_AEAD_TSAN) && defined(FIPS_AEAD_TSAN_ANNOTATE)
+#define FIPS_AEAD_TSAN 1
+#endif
+#if defined(FIPS_AEAD_TSAN) && !defined(_WIN32)
+/* Weak: a GO_ENABLE_TSAN configuration that does not link the runtime into
+ * an executable must still link; the annotation is then a no-op. */
+void __tsan_acquire(void *addr) __attribute__((weak));
+void __tsan_release(void *addr) __attribute__((weak));
+#define CTX_ACQUIRE(ctx) do { if (__tsan_acquire) __tsan_acquire(ctx); } while (0)
+#define CTX_RELEASE(ctx) do { if (__tsan_release) __tsan_release(ctx); } while (0)
 #else
 #define CTX_ACQUIRE(ctx) ((void)(ctx))
 #define CTX_RELEASE(ctx) ((void)(ctx))
