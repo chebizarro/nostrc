@@ -199,6 +199,41 @@ static void test_cache_rejects_duplicate(void) {
   printf("test_cache_rejects_duplicate: PASS\n");
 }
 
+static void test_provision_intent_preserves_identity(void) {
+  Fixture f;
+  fixture_setup(&f, true);
+  const char *intent = "{\"jsonrpc\":\"2.0\",\"id\":\"provision\","
+      "\"method\":\"agent/provision\",\"params\":{\"agent_id\":\"stable\"}}";
+  int64_t now = 1752380000;
+  CHECK(signet_mgmt_handler_handle_intent(f.mgmt, f.prov_pk_hex, intent,
+      "provision-1", now, now) == 0);
+  char first[65], second[65];
+  CHECK(signet_key_store_get_agent_pubkey(f.ks, "stable", first, sizeof(first)));
+  char *secret1 = read_connect_secret(&f, "stable");
+  CHECK(secret1 != NULL);
+  CHECK(signet_mgmt_handler_handle_intent(f.mgmt, f.prov_pk_hex, intent,
+      "provision-2", now, now) == 0);
+  CHECK(signet_key_store_get_agent_pubkey(f.ks, "stable", second, sizeof(second)));
+  CHECK(strcmp(first, second) == 0);
+  char *secret2 = read_connect_secret(&f, "stable");
+  CHECK(secret2 != NULL && strcmp(secret1, secret2) != 0);
+  CHECK(signet_mgmt_handler_handle_intent(f.mgmt, f.prov_pk_hex, intent,
+      "provision-2", now, now) == -1);
+  char *replayed = read_connect_secret(&f, "stable");
+  CHECK(replayed != NULL && strcmp(secret2, replayed) == 0);
+  const char *rotate = "{\"jsonrpc\":\"2.0\",\"id\":\"rotate\","
+      "\"method\":\"agent/rotate-key\",\"params\":{\"agent_id\":\"stable\"}}";
+  CHECK(signet_mgmt_handler_handle_intent(f.mgmt, f.prov_pk_hex, rotate,
+      "rotate-1", now, now) == 0);
+  CHECK(signet_key_store_get_agent_pubkey(f.ks, "stable", second, sizeof(second)));
+  CHECK(strcmp(first, second) != 0);
+  sodium_memzero(secret1, strlen(secret1)); g_free(secret1);
+  sodium_memzero(secret2, strlen(secret2)); g_free(secret2);
+  sodium_memzero(replayed, strlen(replayed)); g_free(replayed);
+  fixture_teardown(&f);
+  printf("test_provision_intent_preserves_identity: PASS\n");
+}
+
 /* 3: a replayed agent/reissue-connect mutates state exactly once. */
 static void test_replayed_reissue_mints_once(void) {
   Fixture f;
@@ -633,6 +668,7 @@ int main(int argc, char **argv) {
 
   test_no_cache_duplicates_execute();
   test_cache_rejects_duplicate();
+  test_provision_intent_preserves_identity();
   test_replayed_reissue_mints_once();
   test_missing_event_id_fails_closed();
   test_writer_management_requires_provisioner();

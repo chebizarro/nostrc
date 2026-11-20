@@ -564,6 +564,13 @@ int signet_key_store_crypt_nip44(SignetKeyStore *ks, const char *agent_id,
                                            out_result);
 }
 
+/* Caller holds ks->mu, including across a create-or-get decision. */
+static int signet_key_store_reissue_connect_secret_locked(
+    SignetKeyStore *ks, const char *agent_id, const char *expected_user_pubkey,
+    const char *bunker_pubkey_hex, const char *const *relay_urls,
+    size_t n_relay_urls, char out_pubkey_hex[65], char **out_connect_secret,
+    char **out_bunker_uri);
+
 int signet_key_store_provision_agent(SignetKeyStore *ks,
                                      const char *agent_id,
                                      const char *bunker_pubkey_hex,
@@ -572,17 +579,38 @@ int signet_key_store_provision_agent(SignetKeyStore *ks,
                                      char *out_pubkey_hex,
                                      size_t out_pubkey_hex_sz,
                                      char **out_bunker_uri) {
-  if (!ks || !agent_id || !out_pubkey_hex || out_pubkey_hex_sz < 65) return -1;
+  if (!ks || !agent_id || !agent_id[0] || !out_pubkey_hex || out_pubkey_hex_sz < 65) return -1;
   if (out_bunker_uri) *out_bunker_uri = NULL;
+
+  /* Provisioning is create-or-get, never an implicit key rotation. Reissue
+   * only the pending one-time secret; preserve pairings and writer custody.
+   * Keep the lock through creation so concurrent provisions cannot rotate. */
+  g_mutex_lock(&ks->mu);
+  char *existing_secret = NULL;
+  int existing_rc = signet_key_store_reissue_connect_secret_locked(
+      ks, agent_id, NULL, bunker_pubkey_hex, relay_urls, n_relay_urls,
+      out_pubkey_hex, &existing_secret, out_bunker_uri);
+  if (existing_secret) {
+    sodium_memzero(existing_secret, strlen(existing_secret));
+    g_free(existing_secret);
+  }
+  if (existing_rc != 1) {
+    g_mutex_unlock(&ks->mu);
+    return existing_rc == 0 ? 0 : -1;
+  }
 
   /* Generate a new keypair using libnostr. */
   char *sk_hex = nostr_key_generate_private();
-  if (!sk_hex) return -1;
+  if (!sk_hex) {
+    g_mutex_unlock(&ks->mu);
+    return -1;
+  }
 
   char *pk_hex = nostr_key_get_public(sk_hex);
   if (!pk_hex) {
     secure_wipe(sk_hex, strlen(sk_hex));
     free(sk_hex);
+    g_mutex_unlock(&ks->mu);
     return -1;
   }
 
@@ -603,8 +631,6 @@ int signet_key_store_provision_agent(SignetKeyStore *ks,
   }
   connect_secret[64] = '\0';
   sodium_memzero(secret_raw, sizeof(secret_raw));
-
-  g_mutex_lock(&ks->mu);
 
   int rc = -1;
   int64_t now = (int64_t)time(NULL);
@@ -1254,7 +1280,7 @@ int signet_key_store_ephemeral_lookup_client(SignetKeyStore *ks,
   return 0;
 }
 
-int signet_key_store_reissue_connect_secret(SignetKeyStore *ks,
+static int signet_key_store_reissue_connect_secret_locked(SignetKeyStore *ks,
                                             const char *agent_id,
                                             const char *expected_user_pubkey,
                                             const char *bunker_pubkey_hex,
@@ -1279,7 +1305,6 @@ int signet_key_store_reissue_connect_secret(SignetKeyStore *ks,
   int rc = -1;
   char *pk_hex = NULL;
 
-  g_mutex_lock(&ks->mu);
 #ifdef SIGNET_ENABLE_TEST_HOOKS
   if (ks->test_next_reissue_secret) {
     g_strlcpy(connect_secret, ks->test_next_reissue_secret, sizeof(connect_secret));
@@ -1298,7 +1323,6 @@ int signet_key_store_reissue_connect_secret(SignetKeyStore *ks,
     memset(&rec, 0, sizeof(rec));
     int grc = signet_store_get_agent(ks->store, agent_id, &rec);
     if (grc != 0) {
-      g_mutex_unlock(&ks->mu);
       sodium_memzero(connect_secret, sizeof(connect_secret));
       return (grc > 0) ? 1 : -1;
     }
@@ -1314,7 +1338,6 @@ int signet_key_store_reissue_connect_secret(SignetKeyStore *ks,
   } else {
     cached = g_hash_table_lookup(ks->cache, agent_id);
     if (!cached) {
-      g_mutex_unlock(&ks->mu);
       sodium_memzero(connect_secret, sizeof(connect_secret));
       return 1;
     }
@@ -1322,7 +1345,6 @@ int signet_key_store_reissue_connect_secret(SignetKeyStore *ks,
   }
 
   if (!pk_hex || strlen(pk_hex) != 64) {
-    g_mutex_unlock(&ks->mu);
     sodium_memzero(connect_secret, sizeof(connect_secret));
     free(pk_hex);
     return -1;
@@ -1334,7 +1356,6 @@ int signet_key_store_reissue_connect_secret(SignetKeyStore *ks,
    * not let the OLD key mint a secret for the NEW identity. */
   if (expected_user_pubkey && expected_user_pubkey[0] &&
       g_ascii_strcasecmp(pk_hex, expected_user_pubkey) != 0) {
-    g_mutex_unlock(&ks->mu);
     sodium_memzero(connect_secret, sizeof(connect_secret));
     free(pk_hex);
     return 2; /* identity mismatch */
@@ -1348,8 +1369,6 @@ int signet_key_store_reissue_connect_secret(SignetKeyStore *ks,
      * bindings stay (as with the store), only the earlier secret dies. */
     rc = signet_cache_set_pending_secret(ks, cached, connect_secret) ? 0 : -1;
   }
-
-  g_mutex_unlock(&ks->mu);
 
   if (rc != 0) {
     sodium_memzero(connect_secret, sizeof(connect_secret));
@@ -1382,6 +1401,26 @@ int signet_key_store_reissue_connect_secret(SignetKeyStore *ks,
   sodium_memzero(connect_secret, sizeof(connect_secret));
   free(pk_hex);
   return 0;
+}
+
+int signet_key_store_reissue_connect_secret(SignetKeyStore *ks,
+                                            const char *agent_id,
+                                            const char *expected_user_pubkey,
+                                            const char *bunker_pubkey_hex,
+                                            const char *const *relay_urls,
+                                            size_t n_relay_urls,
+                                            char out_pubkey_hex[65],
+                                            char **out_connect_secret,
+                                            char **out_bunker_uri) {
+  if (out_connect_secret) *out_connect_secret = NULL;
+  if (out_bunker_uri) *out_bunker_uri = NULL;
+  if (!ks) return -1;
+  g_mutex_lock(&ks->mu);
+  int rc = signet_key_store_reissue_connect_secret_locked(
+      ks, agent_id, expected_user_pubkey, bunker_pubkey_hex, relay_urls,
+      n_relay_urls, out_pubkey_hex, out_connect_secret, out_bunker_uri);
+  g_mutex_unlock(&ks->mu);
+  return rc;
 }
 
 int signet_key_store_evict_agent(SignetKeyStore *ks, const char *agent_id) {

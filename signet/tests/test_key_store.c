@@ -10,6 +10,7 @@
 #include "signet/audit_logger.h"
 
 #include "test_check.h"
+#include "../src/key_store_private.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -89,6 +90,122 @@ static void test_provision_and_load(void) {
   unlink(db_path);
   g_free(db_path);
   printf("test_provision_and_load: PASS\n");
+}
+
+static void test_provision_is_idempotent(void) {
+  const char *relays[] = { "wss://relay.example.com" };
+  const char *bunker = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const char *client = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+  for (int durable = 0; durable <= 1; durable++) {
+    char *path = NULL;
+    SignetKeyStore *ks = durable ? open_test_ks(&path) : signet_key_store_new(NULL, NULL);
+    CHECK(ks != NULL);
+    char first[65], second[65];
+    char *first_uri = NULL, *second_uri = NULL, *agent = NULL;
+    CHECK(signet_key_store_provision_agent(ks, "stable-agent", bunker, relays, 1,
+        first, sizeof(first), &first_uri) == 0);
+    CHECK(first_uri != NULL);
+    const char *first_secret = strstr(first_uri, "secret=");
+    CHECK(first_secret != NULL);
+    first_secret += strlen("secret=");
+    CHECK(signet_key_store_provision_agent(ks, "stable-agent", bunker, relays, 1,
+        second, sizeof(second), &second_uri) == 0);
+    CHECK(strcmp(first, second) == 0);
+    CHECK(second_uri != NULL && strcmp(first_uri, second_uri) != 0);
+    CHECK((durable ? signet_key_store_consume_connect_secret(ks, first_secret, 1, &agent)
+        : signet_key_store_ephemeral_pair_client(ks, first_secret, client, &agent)) == 1);
+    CHECK(agent == NULL);
+    const char *second_secret = strstr(second_uri, "secret=");
+    CHECK(second_secret != NULL);
+    second_secret += strlen("secret=");
+    SignetStore *store = signet_key_store_get_store(ks);
+    CHECK((durable ? signet_store_consume_connect_secret_and_bind(store, second_secret,
+        client, 1, &agent) : signet_key_store_ephemeral_pair_client(ks,
+        second_secret, client, &agent)) == 0);
+    CHECK(strcmp(agent, "stable-agent") == 0);
+    g_free(agent);
+    agent = NULL;
+    CHECK((durable ? signet_key_store_consume_connect_secret(ks, second_secret, 1, &agent)
+        : signet_key_store_ephemeral_pair_client(ks, second_secret, client, &agent)) == 1);
+    CHECK(agent == NULL);
+    if (durable) {
+      signet_key_store_free(ks);
+      SignetKeyStoreConfig cfg = { .db_path = path, .master_key = MASTER_KEY };
+      ks = signet_key_store_new(NULL, &cfg);
+      CHECK(ks != NULL);
+      store = signet_key_store_get_store(ks);
+    }
+    /* A consumed secret, a cold cache and restart must not change identity
+     * or invalidate an already paired client. No URI output is also valid. */
+    CHECK(signet_key_store_provision_agent(ks, "stable-agent", NULL, NULL, 0,
+        second, sizeof(second), NULL) == 0);
+    CHECK(strcmp(first, second) == 0);
+    CHECK((durable ? signet_store_lookup_client_binding(store, client, 1, &agent, NULL)
+        : signet_key_store_ephemeral_lookup_client(ks, client, &agent, NULL, NULL)) == 0);
+    CHECK(strcmp(agent, "stable-agent") == 0);
+    g_free(agent);
+    sodium_memzero(first_uri, strlen(first_uri));
+    sodium_memzero(second_uri, strlen(second_uri));
+    g_free(first_uri);
+    g_free(second_uri);
+    signet_key_store_free(ks);
+    if (path) unlink(path);
+    g_free(path);
+  }
+  printf("test_provision_is_idempotent: PASS\n");
+}
+
+typedef struct {
+  SignetKeyStore *ks;
+  GMutex mu;
+  GCond ready;
+  bool start;
+} ProvisionRace;
+
+typedef struct {
+  ProvisionRace *race;
+  char pubkey[65];
+} ProvisionThread;
+
+static gpointer provision_thread(gpointer data) {
+  ProvisionThread *thread = data;
+  ProvisionRace *race = thread->race;
+  g_mutex_lock(&race->mu);
+  while (!race->start) g_cond_wait(&race->ready, &race->mu);
+  g_mutex_unlock(&race->mu);
+  CHECK(signet_key_store_provision_agent(race->ks, "concurrent", NULL, NULL, 0,
+      thread->pubkey, sizeof(thread->pubkey), NULL) == 0);
+  return NULL;
+}
+
+static void test_concurrent_provision_is_idempotent(void) {
+  for (int durable = 0; durable <= 1; durable++) {
+    char *path = NULL;
+    ProvisionRace race = {0};
+    race.ks = durable ? open_test_ks(&path) : signet_key_store_new(NULL, NULL);
+    CHECK(race.ks != NULL);
+    g_mutex_init(&race.mu);
+    g_cond_init(&race.ready);
+    ProvisionThread calls[4] = {0};
+    GThread *threads[4];
+    for (size_t i = 0; i < G_N_ELEMENTS(threads); i++) {
+      calls[i].race = &race;
+      threads[i] = g_thread_new("provision", provision_thread, &calls[i]);
+    }
+    g_mutex_lock(&race.mu);
+    race.start = true;
+    g_cond_broadcast(&race.ready);
+    g_mutex_unlock(&race.mu);
+    for (size_t i = 0; i < G_N_ELEMENTS(threads); i++) g_thread_join(threads[i]);
+    for (size_t i = 1; i < G_N_ELEMENTS(threads); i++)
+      CHECK(strcmp(calls[0].pubkey, calls[i].pubkey) == 0);
+    signet_key_store_free(race.ks);
+    g_cond_clear(&race.ready);
+    g_mutex_clear(&race.mu);
+    if (path) unlink(path);
+    g_free(path);
+  }
+  printf("test_concurrent_provision_is_idempotent: PASS\n");
 }
 
 static void test_load_nonexistent(void) {
@@ -273,6 +390,39 @@ static int count_sign(const uint8_t secret_key[32], void *user_data) {
 #define OWNER_A "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 #define OWNER_B "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 #define OWNER_C "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+
+static void test_reprovision_preserves_writer_custody(void) {
+  char *path = NULL;
+  SignetKeyStore *ks = open_test_ks(&path);
+  char first[65], second[65];
+  CHECK(signet_key_store_provision_agent(ks, "service", NULL, NULL, 0,
+      first, sizeof(first), NULL) == 0);
+  int64_t epoch = 0;
+  CHECK(signet_key_store_writer_acquire(ks, "service", OWNER_A, &epoch) == 0);
+  CHECK(epoch == 1);
+  CHECK(signet_key_store_provision_agent(ks, "service", NULL, NULL, 0,
+      second, sizeof(second), NULL) == 0);
+  CHECK(strcmp(first, second) == 0);
+  int count = 0;
+  CHECK(signet_key_store_with_signing_key(ks, "service", OWNER_A, count_sign, &count) == 0);
+  CHECK(signet_key_store_with_signing_key(ks, "service", OWNER_B, count_sign, &count) != 0);
+  CHECK(signet_key_store_writer_acquire(ks, "service", OWNER_B, &epoch) == 0);
+  CHECK(epoch == 2);
+  CHECK(signet_key_store_writer_revoke(ks, "service", &epoch) == 0);
+  CHECK(epoch == 3);
+  CHECK(signet_key_store_provision_agent(ks, "service", NULL, NULL, 0,
+      second, sizeof(second), NULL) == 0);
+  CHECK(strcmp(first, second) == 0);
+  CHECK(signet_key_store_with_signing_key(ks, "service", OWNER_A, count_sign, &count) != 0);
+  CHECK(signet_key_store_with_signing_key(ks, "service", OWNER_B, count_sign, &count) != 0);
+  CHECK(count == 1);
+  CHECK(signet_key_store_writer_acquire(ks, "service", OWNER_C, &epoch) == 0);
+  CHECK(epoch == 4);
+  signet_key_store_free(ks);
+  unlink(path);
+  g_free(path);
+  printf("test_reprovision_preserves_writer_custody: PASS\n");
+}
 
 static void test_writer_client_cannot_be_provisioner(void) {
   char *path = NULL;
@@ -816,6 +966,9 @@ int main(int argc, char **argv) {
 
   test_null_safety();
   test_provision_and_load();
+  test_provision_is_idempotent();
+  test_concurrent_provision_is_idempotent();
+  test_reprovision_preserves_writer_custody();
   test_load_nonexistent();
   test_revoke_agent();
   test_rotate_agent();
