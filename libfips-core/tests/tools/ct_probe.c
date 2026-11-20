@@ -3,8 +3,9 @@
  *
  * Question: does the time to REJECT a frame depend on WHICH byte of the
  * ciphertext, tag, AD or counter was tampered? It must not: Poly1305 runs over
- * the whole input, the tag check is libsodium's crypto_verify_16 and the
- * failure path zeroes a length-determined range, so only the length may show.
+ * the whole input, the tag check is constant time (libsodium crypto_verify_16
+ * or OpenSSL CRYPTO_memcmp, per FIPS_AEAD_BACKEND) and the failure path zeroes a
+ * length-determined range, so only the length may show.
  *
  * Method (dudect-style, Reparaz/Balasch/Verbauwhede 2016): two input classes
  * per experiment, chosen pseudo-randomly per measurement so drift affects both
@@ -16,10 +17,11 @@
  * detected, showing the probe has power on this machine.
  *
  * Not a ctest: wall-clock timing is machine dependent. Build target
- * fips_core_ct_probe, or compile against src/noise/aead.c alone with -O2 for a
- * run without sanitizer or coverage overhead:
- *   clang -O2 -I include tests/tools/ct_probe.c src/noise/aead.c \
- *       $(pkg-config --cflags --libs libsodium) -o ct_probe && ./ct_probe
+ * fips_core_ct_probe, or compile against the AEAD sources alone with -O2 for a
+ * run without sanitizer or coverage overhead (or -DFIPS_AEAD_BACKEND_SODIUM):
+ *   clang -O2 -I include -DFIPS_AEAD_BACKEND_OPENSSL tests/tools/ct_probe.c \
+ *       src/noise/aead.c src/noise/aead_primitive.c \
+ *       $(pkg-config --cflags --libs libsodium libcrypto) -o ct_probe && ./ct_probe
  * Exit status 0 means every tamper class is indistinguishable and the control
  * is distinguishable. */
 #include <fips/noise/aead.h>

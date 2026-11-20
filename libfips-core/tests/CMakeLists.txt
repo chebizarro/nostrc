@@ -127,8 +127,12 @@ nostrc_describe_test(FipsCoreEcdhTest OWNER libfips-core TARGETS fips_core_ecdh_
   INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/ecdh_vectors.py")
 add_dependencies(fips_core_host_test fips_core_ecdh_test)
 # Noise AEAD vectors and failure atomicity (nostrc-pwo3h.1).
-add_executable(fips_core_aead_test test_aead.c)
-target_link_libraries(fips_core_aead_test PRIVATE fips_core PkgConfig::FIPS_CORE_SODIUM)
+# The test compiles the backend itself (hidden in the shared library).
+find_package(Threads REQUIRED)
+add_executable(fips_core_aead_test test_aead.c ../src/noise/aead_primitive.c)
+target_compile_definitions(fips_core_aead_test PRIVATE ${FIPS_AEAD_BACKEND_DEFINE})
+target_link_libraries(fips_core_aead_test PRIVATE fips_core PkgConfig::FIPS_CORE_SODIUM
+  OpenSSL::Crypto Threads::Threads)
 set_target_properties(fips_core_aead_test PROPERTIES
   C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
 apply_warnings(fips_core_aead_test)
@@ -137,6 +141,22 @@ add_test(NAME FipsCoreAeadTest COMMAND fips_core_aead_test)
 set_tests_properties(FipsCoreAeadTest PROPERTIES TIMEOUT 10 LABELS "fips;unit")
 nostrc_describe_test(FipsCoreAeadTest OWNER libfips-core TARGETS fips_core_aead_test)
 add_dependencies(fips_core_host_test fips_core_aead_test)
+# OpenSSL backend: no key/keystream residue in OpenSSL's heap after an op (nostrc-u19cz.2).
+if(FIPS_AEAD_BACKEND STREQUAL "openssl")
+  add_executable(fips_core_aead_residue_test test_aead_residue.c ../src/noise/aead_primitive.c)
+  target_compile_definitions(fips_core_aead_residue_test PRIVATE ${FIPS_AEAD_BACKEND_DEFINE})
+  target_link_libraries(fips_core_aead_residue_test PRIVATE fips_core
+    PkgConfig::FIPS_CORE_SODIUM OpenSSL::Crypto Threads::Threads)
+  set_target_properties(fips_core_aead_residue_test PROPERTIES
+    C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+  apply_warnings(fips_core_aead_residue_test)
+  apply_sanitizers(fips_core_aead_residue_test)
+  add_test(NAME FipsCoreAeadResidueTest COMMAND fips_core_aead_residue_test)
+  set_tests_properties(FipsCoreAeadResidueTest PROPERTIES TIMEOUT 30 LABELS "fips;unit")
+  nostrc_describe_test(FipsCoreAeadResidueTest OWNER libfips-core
+    TARGETS fips_core_aead_residue_test)
+  add_dependencies(fips_core_host_test fips_core_aead_residue_test)
+endif()
 # Tree coordinate codec and routing helpers (nostrc-82g9n.1).
 add_executable(fips_core_coord_test test_coord.c)
 target_link_libraries(fips_core_coord_test PRIVATE fips_core)

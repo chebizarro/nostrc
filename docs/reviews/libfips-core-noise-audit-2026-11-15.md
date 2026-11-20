@@ -33,7 +33,7 @@ Severity: critical / high / medium / low / info. "Upstream" is the pinned Rust.
 | N-3 | Info | `src/noise/cipher.c:59-71`, `aead.c:40-55` | `fips_cipher_state_open` and the raw AEAD accept counter `UINT64_MAX`; only the replay window (`check`) and the senders (`take_counter`, `seal_with_counter`) refuse it. | Same: `decrypt_with_counter` does not refuse; `seal()` does not either (C `seal_with_counter` is stricter). | Parity; pinned by `nonce_overflow()` (ceiling open succeeds at the cipher layer, `ReplayDetected` at the session layer). No fix. |
 | N-4 | Info (upstream) | `src/noise/replay.c:16-18` | `fips_replay_window_mark` re-checks and returns `false` for too-old, seen or `MAX` counters, leaving the window byte-identical. | `ReplayWindow::accept` trusts the caller: for `counter <= highest` with `diff >= 8192` it indexes `bitmap[diff / 64]` out of bounds and panics; reachable through `NoiseSession::accept_replay` misuse. | C is strictly safer; keep. Upstream flaw note for `nostrc-f66sr.6`. |
 | N-5 | Info | `aead.c:30,44`, `cipher.c:27,64` | `ad_len > ULLONG_MAX` is a tautology on every supported ABI (`size_t` ≤ `unsigned long long`): dead guard around the libsodium cast. | n/a | Harmless; left as documentation of the cast. No fix (churn). |
-| N-6 | Info | `aead_primitive.h:33` | On tag failure the wrapper zeroes `len - 16` output bytes; libsodium's `crypto_aead_chacha20poly1305_ietf_decrypt_detached` already `memset(m, 0, mlen)`s on `crypto_verify_16` mismatch. | ring/RustCrypto leave "unspecified" contents. | Redundant by design: keeps the `aead.h` no-plaintext-on-failure contract independent of libsodium internals. Keep. |
+| N-6 | Info | `aead_primitive.h:33` | On tag failure the wrapper zeroes `len - 16` output bytes; libsodium's `crypto_aead_chacha20poly1305_ietf_decrypt_detached` already `memset(m, 0, mlen)`s on `crypto_verify_16` mismatch. | ring/RustCrypto leave "unspecified" contents. | Redundant by design: keeps the `aead.h` no-plaintext-on-failure contract independent of libsodium internals. Keep. (2026-11-19: now in `aead_primitive.c`, and required on the OpenSSL path, which decrypts before verifying: B-3.) |
 | N-7 | Info (parity) | `src/noise/symmetric.c:76-85` | A destroyed (all-zero) `fips_symmetric_state` has `has_key == false`, so `encrypt_and_hash`/`decrypt_and_hash` pass bytes through unencrypted. Unreachable from the handshake: `ready()` refuses a destroyed state before any symmetric call, and every handshake encrypt follows a `mix_key`. | Identical: `CipherState::empty()` passes plaintext through. | Pinned explicitly in `after_destroy()` so the behaviour is visible. Follow-up F-3 (optional test-hooks poison). |
 | N-8 | Info | `src/noise/handshake.c:131,140,155,162,185-187,206-208,259-261,275-277` | Offsets/lengths 33, 49, 82, 24 are literals; the `_Static_assert`s pin totals against `framing.h` but not intermediate offsets. | n/a | Readability only, wire-pinned file; deferred (F-4). |
 | N-9 | Info | `handshake.c` read paths | `InvalidPublicKey` (0 DH) and `DecryptionFailed` (1–2 DH) are timing-distinguishable to a network attacker, but only reveal whether the attacker's own ephemeral bytes are a curve point — public information. No secret-dependent branch exists before the AEAD; the AEAD tag check is `crypto_verify_16`. | Identical structure. | Documented; cost model pinned per message and region by `tamper_matrix()`. |
@@ -57,7 +57,7 @@ every path), and whole structs on `destroy`/`clear_slot`/`take_cleared`.
 
 | Item | Verdict | Evidence |
 | --- | --- | --- |
-| (a) constant-time comparisons | **PASS** | No `memcmp` in `src/noise`; AEAD open → `crypto_aead_chacha20poly1305_ietf_decrypt` → `crypto_verify_16`. The only equalities are pointer aliasing guards (`k1 == k2`, `slot == out`) and the public `secp256k1_ec_pubkey_parse`. `ct_probe` below. |
+| (a) constant-time comparisons | **PASS** | No `memcmp` in `src/noise`; AEAD open → `crypto_aead_chacha20poly1305_ietf_decrypt` → `crypto_verify_16` (OpenSSL backend from 2026-11-19, payloads ≥ 256 B: the provider's `CRYPTO_memcmp`, addendum B-1). The only equalities are pointer aliasing guards (`k1 == k2`, `slot == out`) and the public `secp256k1_ec_pubkey_parse`. `ct_probe` below. |
 | (b) zeroization on every path | **PASS** | Read above; `zeroization()` proves every secret range (ck, h, cipher key, ephemeral secret, es, remote keys, epoch, borrowed pointers) is nonzero live and zero after destroy, for a mid-handshake fork, a discarded fork, consumed `finish` keys, `take_cleared`/`clear_slot`, AEAD key and SymmetricState. `sodium_memzero` is an external libsodium call (not elidable without LTO) and the post-destroy zero checks pass under `-O0`/ASan and the `-O2` probe build. |
 | (c) IK one DH on failed msg2; invalid pubkey costs zero DH | **PASS** | `tamper_matrix()` pins the DH cost of every mutation: invalid point 0 DH on every ephemeral-carrying message; valid-point-wrong-x 1 DH; IK msg2 auth failure exactly 1 DH (es cached); IK msg1 1 DH for the static region, 2 for the epoch region; XK msg3 0 DH for the static region, 1 for the epoch. |
 | (d) nonce/counter | **PASS after N-1** | `nonce_overflow()`: refusal at `2^64-1` before sealing in cipher, session and SymmetricState (both directions, state unchanged) and mapped through the handshake (`NonceOverflow` on XK msg3 write and fork read, originals untouched). Clones cannot issue counters (N-1). `open_unmarked` takes `const` and only calls `fips_cipher_state_open`. |
@@ -66,7 +66,7 @@ every path), and whole structs on `destroy`/`clear_slot`/`take_cleared`.
 | (g) pubkey parsing | **PASS** | Invalid prefixes 0x00/0x01/0x04–0x07/0x82/0xff, all-zero and all-0xff remote statics are `InvalidPublicKey` with the output untouched; odd parity accepted and the pre-message is forced to 0x02 (`wrong_static()`: equal `h` for 0x02/0x03 remote); decrypted statics are parsed after the AEAD, as upstream. Blinding: N-10. |
 | (h) error-variant parity | **PASS** | All eleven `NoiseError` variants present; `WrongState` precedes length checks, which precede `InvalidPublicKey`/`DecryptionFailed`, as upstream. Divergences are all stricter: N-2 (`MessageTooLarge` on oversize open/capacity), N-3 (`seal_with_counter` refuses MAX), `WrongState` where upstream `expect`s. Network-indistinguishability: every read failure is a silent drop; timing separates only public point validity (N-9). |
 | (i) API misuse hardening | **PASS** | `after_destroy()`: every writer/reader/fork/finish on a destroyed handshake refuses (`WrongState`/`HandshakeNotComplete`) with no entropy, DH or output; double `finish`; `send == recv`; destroyed cipher and session (`WrongState`, window untouched, clones refused); unknown progress names "Invalid". Detection relies on the zeroed state failing `ready()`; no separate poison is needed. |
-| (j) `_Static_assert`s vs `framing.h` | **PASS** | `handshake.c:6-14` pins TAG, PUBKEY, EPOCH, EPOCH_ENCRYPTED, IK msg1/msg2 and XK msg1/2/3 (XK as framing expressions, since `framing.rs` defines none); `aead_primitive.h` pins key/nonce/tag against libsodium; `symmetric.c` pins protocol-name sizes, SHA-256 size and status pass-through. |
+| (j) `_Static_assert`s vs `framing.h` | **PASS** | `handshake.c:6-14` pins TAG, PUBKEY, EPOCH, EPOCH_ENCRYPTED, IK msg1/msg2 and XK msg1/2/3 (XK as framing expressions, since `framing.rs` defines none); `aead_primitive.h` (now `aead_primitive.c`, addendum B-1) pins key/nonce/tag against libsodium; `symmetric.c` pins protocol-name sizes, SHA-256 size and status pass-through. |
 
 ## Negative tests (`libfips-core/tests/test_noise_negative.c`, `FipsCoreNoiseNegativeTest`)
 
@@ -153,6 +153,56 @@ built in the CI closure but deliberately not a ctest (timing is machine dependen
 | libFuzzer runtime | built from a sparse `llvm-project/compiler-rt/lib/fuzzer` checkout (`build.sh`), exposed as `libclang_rt.fuzzer_osx.a` through a disposable `-resource-dir` overlay of symlinks to Apple's runtimes; deleted afterwards |
 | `scripts/check-unsequenced-args.py --root .`, `check-gui-test-gdk-frame.py`, `check-linux-ci-packages.py`, `git diff --check` | PASS |
 | Build/runtime scratch (`/tmp/nostrc-noise-audit`), submodule (`git submodule deinit -f --all`) | removed after commit |
+
+## Addendum 2026-11-19 — OpenSSL AEAD backend (nostrc-u19cz.2)
+
+A CPU profile of fipsd under loopback load put ChaCha20-Poly1305 at ~30% of the busy
+thread, in libsodium's portable reference ChaCha20 (libsodium has no NEON ChaCha20 on
+arm64). `src/noise/aead_primitive.c` now has a configure-time backend,
+`-DFIPS_AEAD_BACKEND=openssl|sodium` (default `openssl`). The public AEAD, CipherState,
+SymmetricState and session APIs, their bounds checks and the Noise counter/Fork
+semantics are untouched: only the private full-nonce seal/open changed.
+
+| ID | Severity | Location | Issue | Resolution |
+| --- | --- | --- | --- | --- |
+| B-1 | Info (design) | `aead_primitive.c` | Backend and residue. `openssl`: plaintext ≥ 256 B runs on OpenSSL EVP (≥ 3.0), shorter on libsodium; `sodium`: libsodium throughout (the pre-change path). The EVP cipher is fetched once from a private `OSSL_LIB_CTX` holding only the built-in default provider (a host `openssl.cnf` with `fips=yes` default properties cannot remove ChaCha20). `fips_aead_key`/`fips_cipher_state` stay pointer-free value types; one `EVP_CIPHER_CTX` per thread lives in a pthread key (destructor at thread exit, `atexit` for the exiting thread, winpthreads on MinGW; hosts join AEAD-using threads before `exit`/`OPENSSL_cleanup`) and is re-keyed per op, so the hot path allocates nothing. That cached context outlives the op: OpenSSL's provider keeps the ChaCha key words and a 64-byte keystream buffer (block 0, the Poly1305 one-time key, when the length is a multiple of 64; otherwise the last partial block, equivalent to that plaintext given the ciphertext). `Poly1305_Final` cleanses the MAC state itself. | After every op the context is re-keyed with an all-zero key and nonce and fed one AAD byte, which overwrites the key words and the keystream buffer with values derived from the public zero key; if that fails the context is freed (`OPENSSL_clear_free`) and recreated. `FipsCoreAeadResidueTest` owns OpenSSL's allocator and scans every live OpenSSL block for any 8-byte window of the key, keystream block 0 or the message keystream after seal and after (forged) open, lengths 0–65519; a positive control must see an unscrubbed context. Mutation: without the scrub, or with a key-only re-init, the test fails. libsodium leaves no heap state (stack `sodium_memzero`), so the residue bound now matches the pre-change path. |
+| B-2 | Info | `aead_primitive.c`, open | OpenSSL 4.x raises `PROV_R_BAD_DECRYPT` on a tag mismatch (3.x does not). Each forged packet would leave an error-queue entry on the thread, visible to other OpenSSL users there (e.g. TLS `SSL_get_error`). | `ERR_set_mark` before `EVP_DecryptFinal_ex`, `ERR_pop_to_mark` on mismatch (≈22 ns per ≥ 256 B open). `test_aead.c` pins an empty queue after forgeries and that a host's pending error survives. |
+| B-3 | Info | `aead_primitive.c` | Failure semantics. OpenSSL writes plaintext before `Final` checks the tag (libsodium verifies first). | The primitive zeroes the `len - 16` plaintext bytes on every open failure, as the N-6 wrapper already did; nothing else is written (`final` output goes to a local block). A backend error (not a tag mismatch) on open now maps to `FIPS_AEAD_ERR_CRYPTO` instead of `ERR_AUTH`; it is unreachable unless OpenSSL fails to allocate. A failed seal zeroes `len + 16` output bytes so no partial ciphertext under a reserved nonce escapes. |
+
+Measured alternatives (Apple M4 Max, OpenSSL 4.1.0, libsodium 1.0.22, `-O2`, best of 5,
+ns/op seal, AD 16 B; machine shared with other benchmarks):
+
+| Variant | 64 B | 1400 B | Notes |
+| --- | --- | --- | --- |
+| libsodium (pre-change) | 202 | 2100 | no residue |
+| EVP, per-op `EVP_CIPHER_CTX_new`/`free` | 340 | 1006 | allocates per op |
+| EVP, cached per-thread ctx, no scrub | 216 | 886–926 | key + keystream linger: rejected |
+| EVP, cached ctx, key-only zero re-init | 255 | 915 | keystream lingers (residue test fails): rejected |
+| EVP, cached ctx, `EVP_CIPHER_CTX_reset` per op | 298 | 977 | clean, but allocates per op |
+| **EVP, cached ctx, zero-key scrub (chosen)** | 318–338 | 988–990 | clean, no per-op allocation |
+
+Seal crossover (scrubbed EVP vs libsodium) is 224–256 B (256 B: 416 vs 466 ns; 512 B: 502
+vs 842 ns), hence the 256 B split, which keeps 64 B at libsodium speed. The split branches
+on the public length only.
+
+`fips_bench_noise_aead` (Release, medians of 3 runs, ns): `session/seal/64` 204 → 213,
+`session/open/64` 301 → 303, `worker/seal/64` 210 → 217, `worker/open/64` 302 → 304 (all
+libsodium in both builds; within noise), `session/seal/1400` 2229 → 1045 (2.13×),
+`session/open/1400` 2310 → 1173 (1.97×), `worker/seal/1400` 2180 → 1027 (2.12×),
+`worker/open/1400` 2370 → 1181 (2.01×).
+
+Constant time: the OpenSSL tag check is `CRYPTO_memcmp`. `ct_probe` (Release, 1024-byte
+plaintext, so the OpenSSL path, 100,000 measurements): every tamper class indistinguishable
+(t = +1.04, −2.68, +0.40, −1.06, −0.06, −0.88), control detected (t = −328). Unlike
+libsodium, a reject is now *slower* than an accept (13,248 vs 11,992 ns per 16 opens,
+≈80 ns per forgery: OpenSSL 4's error raise plus the B-2 mark/pop); it depends only on
+accept-vs-reject, which the response already reveals, and bounds a forgery's cost.
+
+Verification: `FipsDiffNoise` 83 checked / 0 skipped / 0 failed and `FipsDiffRekey*` green
+with both backends; `test_aead.c` adds a byte-for-byte comparison against libsodium for
+every length 0..300 and 511–65519 edges, nine AAD lengths, in-place and forged inputs,
+and three rounds of 8 concurrent threads; `fips_fuzz_aead`/`handshake`/`session` 30 s each (Homebrew
+clang 23 libFuzzer) with no findings; fipsd two-node and C↔Rust UDP/TCP interop green.
 
 ## Version assessment
 
