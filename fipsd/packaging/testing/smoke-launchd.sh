@@ -17,6 +17,17 @@ set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 [ "$(uname -s)" = Darwin ] || { echo "smoke-launchd: macOS only" >&2; exit 2; }
 
+diagnose() {
+	# A failed smoke must say why: launchd's view and the daemon's own logs.
+	echo "smoke-launchd: diagnostics" >&2
+	launchctl print system/com.fips.fipsd 2>&1 | grep -E 'state|pid|last exit|runs|reason' >&2 || true
+	for log in /usr/local/var/log/fips/fipsd.log /usr/local/var/log/fips/fipsd.stderr.log; do
+		echo "--- $log" >&2
+		tail -n 60 "$log" >&2 2>/dev/null || echo "(missing)" >&2
+	done
+	ls -la /var/run/fips /usr/local/var/log/fips >&2 2>/dev/null || true
+}
+
 if [ "$(id -u)" -eq 0 ] && [ $# -eq 0 ]; then
     /usr/local/bin/fipsd --version
     launchctl print system/com.fips.fipsd | grep -E 'state|pid' | head -3
@@ -24,11 +35,12 @@ if [ "$(id -u)" -eq 0 ] && [ $# -eq 0 ]; then
 		# Same 20-try bound as control-query.py --retry 20; the socket may not exist yet.
 		for try in $(seq 1 20); do
 			fipsctl show status && break
-			[ "$try" -lt 20 ] || exit 1
+			[ "$try" -lt 20 ] || { diagnose; exit 1; }
 			sleep 0.5
 		done
     else
-        python3 "$here/control-query.py" --socket /var/run/fips/control.sock --retry 20 show_status
+		python3 "$here/control-query.py" --socket /var/run/fips/control.sock --retry 20 show_status ||
+			{ diagnose; exit 1; }
     fi
     sock=/var/run/fips/control.sock
     echo "socket: $(stat -f '%Su:%Sg %Lp' "$sock"), dir: $(stat -f '%Su:%Sg %Lp' /var/run/fips)"
