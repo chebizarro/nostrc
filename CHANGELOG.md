@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Released
+- fipsd 0.1.0 (`fipsd-v0.1.0`, 2026-11-20): first release of the C FIPS
+  daemon and its components (libfips-core, libfipsnative, fipsctl, fipstop,
+  fips-gateway, fips-ble-agent, all 0.1.0), wire-compatible with upstream
+  `jmcorgan/fips@6aa80504`. It includes the deep optimization pass
+  (nostrc-u19cz):
+  - OpenSSL EVP ChaCha20-Poly1305;
+  - crypto on dedicated threads, with worker-side UDP send and fused inbound
+    opens;
+  - Linux `recvmmsg`/`sendmmsg`/GSO batching;
+  - batched native delivery;
+  - cached timer deadlines.
+
+  C↔C loopback goodput rose from about 600 to 800–1,300 Mbit/s on an M4 Max,
+  and CPU per datagram at 100 Mbit/s fell by about a third.
+  See `fipsd/docs/release-notes-0.1.0.md`.
+
 ### Added
 - fips-gateway 0.1.0 (Unreleased): ship the Linux gateway and opt-in systemd
   unit in Debian/RPM `fips-gateway` packages with libnftables dependencies;

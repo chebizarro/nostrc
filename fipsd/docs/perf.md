@@ -1,5 +1,33 @@
 # FIPS performance baseline
 
+## Deep optimization pass: nostrc-u19cz (summary)
+
+This pass ran from 2026-11-19 to 2026-11-20, before fipsd 0.1.0. It started
+from a profile showing that in each daemon one OS thread did all packet work:
+the crypto worker fibers shared the dispatcher's scheduler thread, and libsodium
+ran its portable reference ChaCha20. The fixes, each detailed in its own
+section below:
+
+| Change | Where |
+|---|---|
+| Paced sustainable-rate search and traffic-window CPU µs/datagram | [Paced sustainable rate](#paced-sustainable-rate) (u19cz.1) |
+| OpenSSL EVP AEAD for payloads ≥ 256 B | `libfips-core/README.md`, Noise audit addendum B (u19cz.2) |
+| Crypto on OS threads, worker-side UDP send behind a per-peer send gate, fused inbound open | [Dataplane threads](#dataplane-threads-nostrc-u19cz3) (u19cz.3) |
+| Batched native delivery with direct client writes | [Native delivery](#native-delivery-nostrc-rpqvh) (rpqvh) |
+| Cached per-subsystem deadlines | [Dispatcher timer scans](#dispatcher-timer-scans-nostrc-w3tfz) (w3tfz) |
+| Count-bounded rekey-output wipes; cached non-blocking check in libgo | Noise audit addendum R-1, libgo README (02p6s, bmsti) |
+| Linux `recvmmsg`, batched `sendmmsg`/UDP GSO | [UDP syscall batching on Linux](#udp-syscall-batching-on-linux-nostrc-u19cz4) (u19cz.4) |
+
+The final head-to-head against the pre-pass baseline `5b3c987c8`, on macOS and
+on the Linux VM with Rust↔Rust as the control in every run, is tabulated in
+[`release-notes-0.1.0.md`](release-notes-0.1.0.md#performance). On an M4 Max:
+- C↔C unpaced goodput went from 594–680 to 819–1,324 Mbit/s.
+- The sustainable rate (<1% loss) went from 244–650 to 506–1,200 Mbit/s.
+- CPU per datagram at 100 Mbit/s fell from about 60 to about 41 µs.
+
+On the Linux VM, unpaced goodput roughly doubled (429–504 to 818–929 Mbit/s).
+Follow-ups are filed under the epic.
+
 ## Paced sustainable rate
 
 Use a Release build (the build command below deliberately disables unrelated apps):
