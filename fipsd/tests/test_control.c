@@ -635,7 +635,7 @@ static void test_depth_limit(void)
  * run 44721314771). The directory it creates is still secured. */
 static void test_symlinked_ancestor(const char *tmp)
 {
-    char real[4096], link[4096], path[4096], made[4096];
+    char real[4096], link[4096], path[4096], made[4096 + 16];
     snprintf(real,sizeof(real),"%s/real",tmp); CHECK(mkdir(real,0700)==0);
     snprintf(link,sizeof(link),"%s/link",tmp); CHECK(symlink(real,link)==0);
     snprintf(path,sizeof(path),"%s/link/made/fips/control.sock",tmp);
@@ -650,7 +650,7 @@ static void test_symlinked_ancestor(const char *tmp)
     fipsd_runtime *rt=fipsd_runtime_create(&cfg); CHECK(rt);
     CHECK(fipsd_runtime_register(rt,&service.subsystem)==0 && fipsd_runtime_start(rt)==0);
     struct stat st; CHECK(lstat(path,&st)==0 && S_ISSOCK(st.st_mode));
-    snprintf(made,sizeof(made),"%s/made/fips",real);
+    CHECK(snprintf(made,sizeof(made),"%s/made/fips",real) < (int)sizeof(made));
     CHECK(lstat(made,&st)==0 && S_ISDIR(st.st_mode) && (st.st_mode&0777)==0750);
     const char *req="{\"command\":\"show_peers\"}\n";
     run_client(rt,path,req,strlen(req),false,"{\"status\":\"ok\",\"data\":{\"peers\":[]}}\n");
@@ -658,7 +658,7 @@ static void test_symlinked_ancestor(const char *tmp)
     fipsd_control_service_clear(&service);
     go_swap_free(state); go_swap_free(configs);
     CHECK(rmdir(made)==0);
-    snprintf(made,sizeof(made),"%s/made",real); CHECK(rmdir(made)==0);
+    CHECK(snprintf(made,sizeof(made),"%s/made",real) < (int)sizeof(made)); CHECK(rmdir(made)==0);
     CHECK(unlink(link)==0); CHECK(rmdir(real)==0);
 }
 int main(int argc, char **argv)
