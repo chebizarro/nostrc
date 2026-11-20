@@ -12,8 +12,9 @@
  * - pairing consumes that secret and records client_pubkey -> agent_id with
  *   the secret's hash in ONE critical section under the key-store mutex;
  * - a binding is pinned to the exact hot-cache entry it was made against, so
- *   revoke, evict, rotate-key, restore or re-adopt/re-provision invalidate it
- *   (no resurrection of prior authority), and those operations drop the
+ *   revoke, evict, rotate-key, restore or re-adopt invalidate it
+ *   (no resurrection of prior authority); re-provision preserves it. The
+ *   identity-replacing operations drop the
  *   agent's bindings at once;
  * - rotate-key leaves no pending secret (like the store row);
  *   signet_key_store_reissue_connect_secret mints one, as with a store;

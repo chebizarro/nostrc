@@ -149,8 +149,8 @@ int signet_key_store_crypt_nip44(SignetKeyStore *ks, const char *agent_id,
                                  const char *method, const char *peer_pubkey,
                                  const char *input, char **out_result);
 
-/* Provision a new agent key. Generates a new keypair, stores in SQLCipher,
- * and adds to the hot cache.
+/* Create or get an agent identity. Existing keys, client bindings and writer
+ * custody are preserved; only the pending one-time connect secret is replaced.
  * out_pubkey_hex must be at least 65 bytes.
  * If bunker_pubkey_hex and relay_urls are provided, a bunker:// URI is built and
  * returned via *out_bunker_uri (caller frees with g_free). out_bunker_uri may be
@@ -180,7 +180,14 @@ typedef enum {
  * @out_pubkey_hex_sz: (out): return location for pubkey hex sz
  * @out_bunker_uri: (out) (transfer full) (nullable): return location for bunker uri
  *
- * Provision a new agent key. Generates a new keypair, stores in SQLCipher, and adds to the hot cache. out_pubkey_hex must be at least 65 bytes. If bunker_pubkey_hex and relay_urls are provided, a bunker:// URI is built and returned via *out_bunker_uri (caller frees with g_free). out_bunker_uri may be NULL if not needed. Returns 0 on success, -1 on error.
+ * Create or get an agent identity, generating a keypair only for a new agent.
+ * Every successful call issues a fresh one-time connect secret, invalidating
+ * the earlier pending secret but preserving existing client bindings and writer
+ * owner, epoch and revocation state. Use rotate_agent for deliberate rotation.
+ * Works with durable and cache-only stores. out_pubkey_hex must be at least 65
+ * bytes. If bunker_pubkey_hex is provided, a bunker:// URI is returned via
+ * out_bunker_uri (caller wipes and frees with g_free), unless it is NULL.
+ * Returns 0 on success, -1 on error.
  *
  * Thread safety: callers may share the object when the implementation serializes access internally; avoid mutating the same output storage concurrently.
  *
