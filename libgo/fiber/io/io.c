@@ -1,4 +1,7 @@
 /* POSIX readiness I/O (epoll/kqueue). Windows uses io_win32.c instead. */
+#if defined(__APPLE__) && !defined(_DARWIN_C_SOURCE)
+#define _DARWIN_C_SOURCE /* MSG_DONTWAIT */
+#endif
 #ifndef _POSIX_C_SOURCE
 #define _POSIX_C_SOURCE 200809L
 #endif
@@ -19,6 +22,47 @@ static int set_nonblock(int fd) {
   if (flags < 0) return -1;
   if (flags & O_NONBLOCK) return 0;
   return fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+}
+
+/* Message calls on a descriptor registered with gof_io_reset_fd check
+ * O_NONBLOCK once per registration instead of an F_GETFL per datagram
+ * (nostrc-bmsti). Each slot is (generation << 1) | verified: 0 means never
+ * registered, so unregistered descriptors keep the per-call check. reset_fd
+ * bumps the generation, which owners must do before closing or reusing the
+ * number, so a recycled fd is checked again; a check racing a reset cannot
+ * publish its stale verdict (the CAS sees the new generation). A verified call
+ * also passes MSG_DONTWAIT, so a stale slot (closed without a reset, or
+ * O_NONBLOCK cleared through an alias) still never blocks a worker. Lock-free:
+ * crypto workers call gof_sendmsg from plain threads. Larger fds are not cached. */
+#define NONBLOCK_CACHE_FDS 4096
+static _Atomic uint32_t g_nonblock_cache[NONBLOCK_CACHE_FDS];
+
+static void nonblock_cache_reset(int fd) {
+  if (fd < 0 || fd >= NONBLOCK_CACHE_FDS) return;
+  uint32_t old = atomic_load_explicit(&g_nonblock_cache[fd], memory_order_relaxed), next;
+  do {
+    next = (old & ~1u) + 2u;
+    if (next == 0) next = 2u; /* generation wrap must not read as unregistered */
+  } while (!atomic_compare_exchange_weak_explicit(&g_nonblock_cache[fd], &old, next,
+                                                  memory_order_acq_rel, memory_order_relaxed));
+}
+
+static int message_nonblock(int fd, int *flags) {
+#if defined(MSG_DONTWAIT) /* without it a cached verdict would be unsafe: always check */
+  if (fd >= 0 && fd < NONBLOCK_CACHE_FDS) {
+    uint32_t slot = atomic_load_explicit(&g_nonblock_cache[fd], memory_order_acquire);
+    if (slot & 1u) { *flags |= MSG_DONTWAIT; return 0; }
+    if (slot) {
+      if (set_nonblock(fd) != 0) return -1;
+      (void)atomic_compare_exchange_strong_explicit(&g_nonblock_cache[fd], &slot, slot | 1u,
+                                                    memory_order_acq_rel, memory_order_relaxed);
+      return 0;
+    }
+  }
+#else
+  (void)flags;
+#endif
+  return set_nonblock(fd);
 }
 
 static uint64_t now_ns(void) {
@@ -142,6 +186,7 @@ static int fdwait_arm(gof_fdwait *e, int events, uint64_t deadline_ns) {
 
 int gof_io_reset_fd(gof_socket_t fd) {
   if (fd < 0) { fiber_set_errno(EINVAL); return -1; }
+  nonblock_cache_reset(fd); /* always safe: forces the next message call to re-check */
   pthread_mutex_lock(&io_mu);
   gof_fdwait *e = fdwait_get(fd, 1);
   int error = !e ? ENOMEM : fdwait_events(e) ? EBUSY : 0;
@@ -436,7 +481,7 @@ static int wait_message_ready(int fd, int events, uint64_t deadline_ns) {
 
 ssize_t gof_recvfrom(gof_socket_t fd, void *buf, size_t n, int flags,
                      struct sockaddr *sa, socklen_t *slen, int timeout_ms) {
-  if (set_nonblock(fd) != 0) return -1;
+  if (message_nonblock(fd, &flags) != 0) return -1;
   uint64_t dl = deadline_from_ms(timeout_ms);
   for (;;) {
     ssize_t r = recvfrom(fd, buf, n, flags, sa, slen);
@@ -453,7 +498,7 @@ ssize_t gof_recvfrom(gof_socket_t fd, void *buf, size_t n, int flags,
 
 ssize_t gof_sendto(gof_socket_t fd, const void *buf, size_t n, int flags,
                    const struct sockaddr *sa, socklen_t slen, int timeout_ms) {
-  if (set_nonblock(fd) != 0) return -1;
+  if (message_nonblock(fd, &flags) != 0) return -1;
   uint64_t dl = deadline_from_ms(timeout_ms);
   for (;;) {
     ssize_t r = sendto(fd, buf, n, flags, sa, slen);
@@ -469,7 +514,7 @@ ssize_t gof_sendto(gof_socket_t fd, const void *buf, size_t n, int flags,
 }
 
 ssize_t gof_recvmsg(gof_socket_t fd, struct msghdr *msg, int flags, int timeout_ms) {
-  if (set_nonblock(fd) != 0) return -1;
+  if (message_nonblock(fd, &flags) != 0) return -1;
   uint64_t dl = deadline_from_ms(timeout_ms);
   for (;;) {
     ssize_t r = recvmsg(fd, msg, flags);
@@ -485,7 +530,7 @@ ssize_t gof_recvmsg(gof_socket_t fd, struct msghdr *msg, int flags, int timeout_
 }
 
 ssize_t gof_sendmsg(gof_socket_t fd, const struct msghdr *msg, int flags, int timeout_ms) {
-  if (set_nonblock(fd) != 0) return -1;
+  if (message_nonblock(fd, &flags) != 0) return -1;
   uint64_t dl = deadline_from_ms(timeout_ms);
   for (;;) {
     ssize_t r = sendmsg(fd, msg, flags);

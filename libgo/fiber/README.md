@@ -198,6 +198,13 @@ already claimed is not proof that a user has joined. Descriptor aliases are
 not tracked. The weak `gof_trace_on_io_armed` hook marks the registered/pre-park
 boundary; like the other hooks it must not yield or call fiber APIs.
 
+On POSIX, `gof_io_reset_fd` also restarts a per-fd `O_NONBLOCK` cache for the
+message wrappers (fds below 4096): the first `gof_recvfrom`/`gof_sendto`/
+`gof_recvmsg`/`gof_sendmsg` after a reset checks and sets `O_NONBLOCK`, and later
+calls skip that `fcntl` and pass `MSG_DONTWAIT`, so a stale entry never blocks.
+Descriptors never reset keep the per-call check. The reset-before-reuse rule
+above is what makes a recycled fd number check again (nostrc-bmsti).
+
 Two POSIX-only calls (not declared on Windows) serve a writer whose own syscall
 cannot park, such as a macOS `AF_UNIX SOCK_DGRAM` sender refused with `ENOBUFS`
 (nostrc-e3ps5):
