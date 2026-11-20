@@ -14,6 +14,71 @@ CPU per delivered datagram comes from the paced harness of
 that commit) at a fixed 100 Mbit/s: `--paced --paced-seconds 5
 --paced-max-mbps 100`, about 10.4k datagrams/s.
 
+### Result: interleaved baseline vs stage 3
+
+Final round: baseline and stage 3 alternated, no `sample`. One saturated
+`--runs 1` run and one 100 Mbit/s probe per binary per round, two rounds.
+
+| | Baseline `5b3c987c8` | Stage 3 `ea2031f60` |
+|---|---:|---:|
+| c-c Mbit/s (loss %) | 721.6 (0.1), 708.2 (0.1) | 891.5 (25.5), 725.7 (39.1) |
+| c-rust Mbit/s (loss %) | 717.9 (0.8), 726.9 (0.6) | 1000.4 (18.5), 1217.6 (3.7) |
+| c-c one-way p50 fwd/rev us | 98/103, 91/93 | 72/72, 80/81 |
+| c-rust one-way p50 fwd/rev us | 64/66, 92/92 | 55/61, 61/64 |
+| daemon CPU % one core, c-c, tx / rx | 102.6/111.4, 101.4/110.4 | 251.0/180.0, 243.7/172.3 |
+| CPU us/datagram at 100 Mbit/s, c-c tx / rx | 48.7/48.5, 53.6/53.4 | 33.2/35.3, 36.5/38.6 |
+| CPU us/datagram at 100 Mbit/s, c-rust C sender | 55.2, 53.4 | 37.8, 38.6 |
+| Rust in the same probes (sender / receiver) | 29.1/44.9, 23.8/39.8 | 21.3/34.4, 26.2/43.1 |
+
+Trade-off at moderate paced rates. Direct c-c probes, 3 s, two each,
+interleaved. Losses out of 93750 / 156250 / 218750 datagrams:
+
+| Offered | Baseline | Stage 3 |
+|---|---:|---:|
+| 300 Mbit/s | 9, 1865 | 62, 181 |
+| 500 Mbit/s | 8, 332 | 783, 1706 |
+| 700 Mbit/s | 9340, 3623 | 5577, 1674 |
+
+Every stage 3 loss is `native.drop_flow_queue_full` at the receiver. The
+faster dispatcher delivers a batch faster than the flow feeder drains a
+per-flow queue of `node.native_api.pending_per_flow` (default 16). The
+baseline lost mostly local send refusals at the sender instead. Native
+delivery is outside this change and is tracked as nostrc-rpqvh. Unpaced C-to-C
+overload loss is the same mechanism.
+
+Idle cost is unchanged. Two linked idle daemons (`top`, 5 s intervals) saw
++239 to +298 context switches per interval for stage 1 against +213 to +383 for
+the baseline, at 0.0-0.3% CPU. The two crypto threads block on their
+condvars.
+
+Verification, per stage, Debug `-DGO_WARNINGS_AS_ERRORS=ON`, with
+`FIPSD_UDP_INTEROP_RUST_BINARY` set, and `FIPSD_TCP_INTEROP_RUST_BINARY` from
+stage 2 on. Stage 1 ran the three TCP interop tests separately. ASan: 3/3.
+TSan: the C-to-Rust rekey-saturated scenario missed once while running beside
+the other two, then passed 6/6 alone, alternating with the baseline, with
+identical K flips (C 34.1-34.4 s, Rust 35.9-37.0 s).
+
+- ASan+UBSan `ctest -R '^Fips' -E 'Soak|Perf'`: 221/221.
+- TSan, same selection: 221/221, no ThreadSanitizer report.
+- TSan `--repeat until-fail:5` over two-node (node, UDP v4/v6, native), ring,
+  presence/rebind, restart-replay, TCP rekey saturated, native burst, workers
+  and dataplane: stages 2 and 3 55/55. Stage 1 54/55: the miss was
+  `FipsdTcpRekeySaturatedTest`'s deadline, a pre-existing tail (nostrc-4im43).
+  The unmodified baseline TSan binary also took 21.6 and 36.2 s of a 37 s
+  deadline. Later runs did not separate the builds: across inline on/off and
+  sharding on/off variants, slow runs were 0/10 vs 2/10, 2/10 vs 0/10, 1/15 vs
+  2/15.
+- Capability skips: privileged TUN/Ethernet/IPv6 smoke, Tor, and the control
+  and fipsctl interop tests, which need an upstream control checkout and cargo.
+
+Deferred, with beads:
+
+- Outbound fusion (nostrc-ov6k4).
+- Windows worker-side send (nostrc-akn6b).
+- libfips-core's 58 KB output clear per executed step (nostrc-02p6s).
+- Per-wake timer scans (nostrc-w3tfz).
+- libgo's per-send `fcntl` (nostrc-bmsti).
+
 ### Stage 1: crypto on OS threads
 
 Before, the "crypto workers" were scheduler fibers. libgo wakes a fiber on its
