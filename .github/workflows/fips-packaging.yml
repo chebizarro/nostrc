@@ -183,7 +183,9 @@ jobs:
           # carries a 0.0.0-<sha> version instead, so point the spec at the
           # archive actually built (the rpm Version cannot hold a hyphen).
           sed -i "s/^%global upstream_version .*/%global upstream_version ${UPSTREAM_VERSION}/" "$spec"
-          sed -i "s/^Version: .*/Version:        ${UPSTREAM_VERSION//-/~}/" "$spec"
+          # Quote the ~: bash 5.2 tilde-expands an unquoted replacement to $HOME.
+          rpm_version=${UPSTREAM_VERSION//-/"~"}
+          sed -i "s/^Version: .*/Version:        ${rpm_version}/" "$spec"
           dnf builddep -y -q "$spec"
           defines=(--define "fipsd_git_rev ${FIPSD_GIT_REV}")
           [ -f "$tree/fipsd/packaging/common/fips-dns-setup" ] && defines+=(--define "_fipsd_has_dns_helpers 1")

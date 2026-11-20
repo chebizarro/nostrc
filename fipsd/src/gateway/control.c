@@ -215,7 +215,9 @@ static int secure_parent(const char *path, gid_t gid, char *err, size_t cap)
             char saved = *p; *p = 0;
             if (mkdir(parent, FIPSD_SOCKET_DIR_MODE) != 0 && errno != EEXIST) { snprintf(err, cap, "cannot create %s: %s", parent, strerror(errno)); return -1; }
             struct stat st;
-            if (lstat(parent, &st) != 0 || !S_ISDIR(st.st_mode)) { snprintf(err, cap, "%s is not a directory", parent); errno = ENOTDIR; return -1; }
+            /* Ancestors may be symlinks (macOS /var -> private/var), as with upstream's
+             * create_dir_all; the socket directory itself must be a real directory. */
+            if ((saved ? stat(parent, &st) : lstat(parent, &st)) != 0 || !S_ISDIR(st.st_mode)) { snprintf(err, cap, "%s is not a directory", parent); errno = ENOTDIR; return -1; }
             *p = saved;
             if (!saved) break;
         }

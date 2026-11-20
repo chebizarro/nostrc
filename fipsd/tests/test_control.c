@@ -629,6 +629,38 @@ static void test_depth_limit(void)
     json_t *out=fipsd_control_parse(NULL,s,strlen(s)); CHECK(out);
     CHECK(!strcmp(json_string_value(json_object_get(out,"status")),"ok")); json_decref(out);
 }
+/* The daemon creates a missing socket directory whose ancestors may be
+ * symlinks: on macOS /var -> private/var, so the packaged daemon's
+ * /var/run/fips/control.sock failed with ENOTDIR (nostrc-u19cz, fips-packaging
+ * run 44721314771). The directory it creates is still secured. */
+static void test_symlinked_ancestor(const char *tmp)
+{
+    char real[4096], link[4096], path[4096], made[4096];
+    snprintf(real,sizeof(real),"%s/real",tmp); CHECK(mkdir(real,0700)==0);
+    snprintf(link,sizeof(link),"%s/link",tmp); CHECK(symlink(real,link)==0);
+    snprintf(path,sizeof(path),"%s/link/made/fips/control.sock",tmp);
+    char yaml[8192]; snprintf(yaml,sizeof(yaml),"node:\n  control:\n    enabled: true\n    socket_path: %s\n",path);
+    fipsd_config_log log={0}; fipsd_config *config=fipsd_config_parse(yaml,strlen(yaml),&log); CHECK(config);
+    fipsd_config_log_clear(&log);
+    GoSwap *configs=go_swap_create(config,fipsd_config_free); CHECK(configs);
+    GoSwap *state=fixture();
+    fipsd_control_provider provider={.user=state,.acquire=acquire,.command=deadline_provider};
+    fipsd_control_service service; fipsd_control_service_init(&service,configs,&provider);
+    fipsd_runtime_config cfg; fipsd_runtime_config_default(&cfg); cfg.handle_signals=false; cfg.workers=2;
+    fipsd_runtime *rt=fipsd_runtime_create(&cfg); CHECK(rt);
+    CHECK(fipsd_runtime_register(rt,&service.subsystem)==0 && fipsd_runtime_start(rt)==0);
+    struct stat st; CHECK(lstat(path,&st)==0 && S_ISSOCK(st.st_mode));
+    snprintf(made,sizeof(made),"%s/made/fips",real);
+    CHECK(lstat(made,&st)==0 && S_ISDIR(st.st_mode) && (st.st_mode&0777)==0750);
+    const char *req="{\"command\":\"show_peers\"}\n";
+    run_client(rt,path,req,strlen(req),false,"{\"status\":\"ok\",\"data\":{\"peers\":[]}}\n");
+    fipsd_runtime_shutdown(rt); CHECK(fipsd_runtime_run(rt)==FIPSD_RUN_OK); fipsd_runtime_destroy(rt);
+    fipsd_control_service_clear(&service);
+    go_swap_free(state); go_swap_free(configs);
+    CHECK(rmdir(made)==0);
+    snprintf(made,sizeof(made),"%s/made",real); CHECK(rmdir(made)==0);
+    CHECK(unlink(link)==0); CHECK(rmdir(real)==0);
+}
 int main(int argc, char **argv)
 {
     if (argc==2 && !strcmp(argv[1],"capacity")) {
@@ -641,6 +673,8 @@ int main(int argc, char **argv)
     test_paths(tmp); test_validation(); test_render_failures(); test_query_goldens(); test_transport_goldens(); test_registry_and_history(); test_probe_golden(); test_path_requests();
     CHECK(golden_count==31); printf("goldens: %u/31 (including 5 registry/history replays)\n",golden_count);
     test_socket(tmp); CHECK(rmdir(tmp)==0);
+    const char *sym = fipsd_test_tmpdir("/link/made/fips/control.sock");
+    test_symlinked_ancestor(sym); CHECK(rmdir(sym)==0);
     puts("control: protocol bounds, JSON errors, EOF, one response, fiber concurrency, deadlines, paths and permissions passed");
     return 0;
 }
