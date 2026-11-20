@@ -55,6 +55,9 @@ typedef struct gof_worker {
   _Atomic int running;     /* set to 1 while executing a fiber; written under rq_mu, read lock-free */
   int        index;        /* worker index in S.workers */
   int        last_victim;  /* rotating start for victim selection */
+  /* S.mu: while idle-waiting on S.cv, the gof_now_ns deadline it will wake
+   * at by itself (UINT64_MAX: untimed); 0 when not waiting. */
+  uint64_t   idle_until;
 } gof_worker;
 static struct {
   size_t      default_stack;
@@ -431,9 +434,22 @@ static void sleepers_add(gof_fiber *f, uint64_t deadline_ns) {
   pthread_mutex_unlock(&sleepheap.mu);
   /* nostrc-e08s7: a worker that entered the untimed idle wait before this
    * sleeper existed would otherwise never learn about the new deadline and
-   * sleep past it (or forever, when no other work arrives). */
+   * sleep past it (or forever, when no other work arrives). The signal is
+   * redundant only when every idle worker is already due to wake by this
+   * deadline on a monotonic wait: each then re-derives its wait from the
+   * heap, which holds this sleeper, as the signalled one would; any worker
+   * waiting untimed or longer still gets it. Every timed park used to wake a
+   * worker that found nothing and slept again (nostrc-u19cz.14: a fipsd
+   * dispatcher parks per packet at moderate rates, and on a VM each such
+   * wake is an IPI). The REALTIME fallback (macOS) can oversleep its
+   * recorded deadline after a clock step, so it always signals. */
   pthread_mutex_lock(&S.mu);
-  pthread_cond_signal(&S.cv);
+  int redundant = S.cv_monotonic;
+  for (int i = 0; i < S.nworkers && redundant; ++i) {
+    uint64_t until = S.workers[i].idle_until;
+    if (until == UINT64_MAX || until > deadline_ns) redundant = 0;
+  }
+  if (!redundant) pthread_cond_signal(&S.cv);
   pthread_mutex_unlock(&S.mu);
 }
 
@@ -748,7 +764,9 @@ static void* worker_main(void *arg) {
           if (gof_bg_stop_requested() && !gof_io_have_waiters()) { exit_sched = 1; break; }
           if (!gof_bg_running() && !gof_io_have_waiters() && !have_live) { exit_sched = 1; break; }
           /* Otherwise, wait indefinitely for injected work */
+          W->idle_until = UINT64_MAX;
           pthread_cond_wait(&S.cv, &S.mu);
+          W->idle_until = 0;
           continue;
         }
         uint64_t now = gof_now_ns();
@@ -772,7 +790,9 @@ static void* worker_main(void *arg) {
           abstime.tv_sec = (time_t)(abs_ns / 1000000000ull);
           abstime.tv_nsec = (long)(abs_ns % 1000000000ull);
         }
+        W->idle_until = next_deadline;
         pthread_cond_timedwait(&S.cv, &S.mu, &abstime);
+        W->idle_until = 0;
         /* loop and re-check predicate */
       }
       pthread_mutex_unlock(&S.mu);
