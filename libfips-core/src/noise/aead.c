@@ -1,6 +1,7 @@
 #include <fips/noise/aead.h>
 #include "aead_primitive.h"
 #include <limits.h>
+#include <sodium.h>
 #include <string.h>
 
 fips_aead_status fips_aead_key_init(fips_aead_key *key, const uint8_t bytes[32])
@@ -48,8 +49,9 @@ fips_aead_status fips_aead_open(
     if (out_cap < plain_len) return FIPS_AEAD_ERR_RANGE;
     uint8_t nonce[FIPS_NOISE_NONCE_SIZE];
     fips_aead_nonce(counter, nonce);
-    if (fips_aead_open_nonce(key, nonce, ad, ad_len, ciphertext, len, out) != 0)
-        return FIPS_AEAD_ERR_AUTH;
+    int rc = fips_aead_open_nonce(key, nonce, ad, ad_len, ciphertext, len, out);
+    if (rc != 0)
+        return rc == FIPS_AEAD_PRIMITIVE_ERR_AUTH ? FIPS_AEAD_ERR_AUTH : FIPS_AEAD_ERR_CRYPTO;
     *out_len = plain_len;
     return FIPS_AEAD_OK;
 }

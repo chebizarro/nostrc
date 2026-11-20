@@ -7,7 +7,19 @@ declare_component_version(fips_core 0 1 0)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(FIPS_CORE_SECP256K1 REQUIRED IMPORTED_TARGET libsecp256k1)
 pkg_check_modules(FIPS_CORE_SODIUM REQUIRED IMPORTED_TARGET libsodium)
-find_package(OpenSSL REQUIRED COMPONENTS Crypto)
+find_package(OpenSSL 3.0 REQUIRED COMPONENTS Crypto)
+
+# IETF ChaCha20-Poly1305 backend for src/noise/aead_primitive.c (nostrc-u19cz.2).
+# Both produce identical bytes; libsodium stays required for everything else.
+set(FIPS_AEAD_BACKEND "openssl" CACHE STRING "Noise AEAD backend: openssl or sodium")
+set_property(CACHE FIPS_AEAD_BACKEND PROPERTY STRINGS openssl sodium)
+if(FIPS_AEAD_BACKEND STREQUAL "openssl")
+  set(FIPS_AEAD_BACKEND_DEFINE FIPS_AEAD_BACKEND_OPENSSL)
+elseif(FIPS_AEAD_BACKEND STREQUAL "sodium")
+  set(FIPS_AEAD_BACKEND_DEFINE FIPS_AEAD_BACKEND_SODIUM)
+else()
+  message(FATAL_ERROR "FIPS_AEAD_BACKEND must be openssl or sodium, not '${FIPS_AEAD_BACKEND}'")
+endif()
 
 # Follow BUILD_SHARED_LIBS, as the other nostrc libraries do.
 add_library(fips_core src/core.c src/host.c)
@@ -26,7 +38,7 @@ target_sources(fips_core PRIVATE src/node/rate_limit.c src/node/stats_history.c)
 target_sources(fips_core PRIVATE src/cache/coord_cache.c src/cache/entry.c)
 if(UNIX)
   target_link_libraries(fips_core PRIVATE m)
-  set(FIPS_CORE_PC_MATH_LIB "-lm")
+  set(FIPS_CORE_PC_LIBS_PRIVATE "-lm")
 endif()
 set_target_properties(fips_core PROPERTIES
   C_STANDARD 11 C_STANDARD_REQUIRED YES C_EXTENSIONS NO
@@ -37,6 +49,14 @@ target_include_directories(fips_core PUBLIC
   PRIVATE "${fips_core_VERSION_HEADER_DIR}")
 target_link_libraries(fips_core PRIVATE
   PkgConfig::FIPS_CORE_SECP256K1 PkgConfig::FIPS_CORE_SODIUM OpenSSL::Crypto)
+# The OpenSSL AEAD backend keeps one EVP context per thread in a pthread key.
+if(FIPS_AEAD_BACKEND STREQUAL "openssl")
+  find_package(Threads REQUIRED)
+  target_link_libraries(fips_core PRIVATE Threads::Threads)
+  if(CMAKE_THREAD_LIBS_INIT)
+    string(APPEND FIPS_CORE_PC_LIBS_PRIVATE " ${CMAKE_THREAD_LIBS_INIT}")
+  endif()
+endif()
 nostrc_library_visibility(fips_core FIPS_CORE_API fips/export.h
   "${CMAKE_INSTALL_INCLUDEDIR}/fips")
 apply_versioning(fips_core)
@@ -89,7 +109,9 @@ endif()
 # Noise DH: SHA-256 of shared x, using the identity context.
 target_sources(fips_core PRIVATE src/noise/ecdh.c)
 # Noise AEAD (nostrc-pwo3h.1); independent of sibling Noise modules.
-target_sources(fips_core PRIVATE src/noise/aead.c)
+target_sources(fips_core PRIVATE src/noise/aead.c src/noise/aead_primitive.c)
+set_source_files_properties(src/noise/aead_primitive.c PROPERTIES
+  COMPILE_DEFINITIONS "${FIPS_AEAD_BACKEND_DEFINE}")
 # Tree coordinate primitive and wire codec (nostrc-82g9n.1).
 target_sources(fips_core PRIVATE src/proto/coord.c)
 # Link message catalog, session datagram header and framing/path-MTU admit math

@@ -257,15 +257,35 @@ Version decision (nostrc-u50yr.2): additive identity APIs fold into initial
 
 ## Noise AEAD
 
-`fips/noise/aead.h` wraps libsodium IETF ChaCha20-Poly1305 with caller-owned
+`fips/noise/aead.h` wraps IETF ChaCha20-Poly1305 (RFC 8439) with caller-owned
 32-byte keys (explicit destroy wipes them), counter nonces (four zero bytes
 then LE u64), associated data and ciphertext followed by a 16-byte tag.
 `fips/noise/mod.h` reserves the shared Noise constants: tag 16, nonce 12,
 maximum message 65535 including tag. CipherState and session/replay policy are
 described below; primitive callers must ensure counters never repeat under a key.
-All calls are synchronous, with no allocations, RNG or clock in seal/open.
+All calls are synchronous, with no per-op allocations, RNG or clock in seal/open.
 Capacity/length errors preserve output; authentication failure zeroes the
 plaintext region, and failed calls leave the output length unchanged.
+
+The primitive behind it is chosen at configure time with
+`-DFIPS_AEAD_BACKEND=openssl|sodium` (default `openssl`, nostrc-u19cz.2); both
+emit identical bytes and identical failure semantics, and libsodium remains a
+dependency of both builds for everything else. libsodium has no NEON ChaCha20 on
+arm64, so OpenSSL EVP (≥ 3.0) seals/opens 1400 bytes about 2.1× faster; its fixed
+per-op cost (EVP calls plus the scrub below, ~110 ns) loses below ~250 bytes, so
+the `openssl` backend sends payloads under 256 bytes (handshake messages, small
+control frames) through libsodium (`fips_bench_noise_aead`, audit addendum B-1).
+The OpenSSL path fetches `ChaCha20-Poly1305` once from a
+private library context holding only the built-in default provider (a host
+`openssl.cnf` cannot remove it) and keeps one `EVP_CIPHER_CTX` per thread in a
+pthread key, freed by the key destructor at thread exit (winpthreads on
+MinGW); hosts must join AEAD-using threads before `exit`/`OPENSSL_cleanup`, as
+for any OpenSSL user. The first op on a thread allocates that context: another documented
+exception to the no-implicit-OS rule. Keys and cipher states stay plain
+value-copyable structs. After every op the context is re-keyed with a zero key
+and nonce so no key, Poly1305 one-time key or keystream outlives the call;
+`FipsCoreAeadResidueTest` scans OpenSSL's heap for them. A forged tag leaves
+no OpenSSL error-queue entry behind.
 
 Key construction calls thread-safe, idempotent `sodium_init()` lazily without
 a mutable core once flag. This requested hosted initialization is an explicit
@@ -275,10 +295,13 @@ Initialized keys may be borrowed concurrently; callers synchronize lifecycle
 and destroy every explicitly owned copy.
 
 RFC 8439 section 2.8.2 (nonzero nonce prefix) tests the shared private full-nonce
-primitive; Appendix A.5 also exercises the public counter API byte for byte.
+primitive; Appendix A.5 also exercises the public counter API byte for byte, and
+`test_aead.c` compares the configured backend with libsodium's reference AEAD
+over every length 0..300, block/MTU/maximum edges, varied AAD, in-place and
+forged inputs, and from concurrent threads.
 No differential family exercises AEAD directly yet; `tests/diff/cases.c` is
 unchanged. `fips_bench_noise_aead` uses upstream's 64/1400-byte payloads and
-16-byte AD, but measures AEAD only, not future session/replay/worker overhead.
+16-byte AD.
 Version decision (nostrc-pwo3h.1): APIs fold into **0.1.0 Unreleased**; no
 published version/tag change.
 

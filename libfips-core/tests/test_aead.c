@@ -1,7 +1,15 @@
+#if !defined(_WIN32) && !defined(_POSIX_C_SOURCE)
+#define _POSIX_C_SOURCE 200809L /* pthread under C_EXTENSIONS NO */
+#endif
 #include <fips/noise/aead.h>
 #include "../src/noise/aead_primitive.h"
+#include <pthread.h>
+#include <sodium.h>
 #include <stdio.h>
 #include <string.h>
+#if defined(FIPS_AEAD_BACKEND_OPENSSL)
+#include <openssl/err.h>
+#endif
 
 #define CHECK(expr) do { if (!(expr)) { \
     fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, #expr); return 1; \
@@ -223,6 +231,120 @@ static int tamper(void)
     return 0;
 }
 
+/* Backend vs libsodium's reference AEAD, byte for byte: every plaintext length
+ * 0..300 plus block/MTU/maximum edges, AAD lengths around the Poly1305 block,
+ * a fresh key and nonce per op (re-keying a cached context), exact in-place,
+ * and forged tags that must fail as AUTH with zeroed plaintext. */
+static int reference(void)
+{
+    static uint8_t plain[FIPS_NOISE_MAX_MESSAGE_SIZE], expect[FIPS_NOISE_MAX_MESSAGE_SIZE];
+    static uint8_t out[FIPS_NOISE_MAX_MESSAGE_SIZE], back[FIPS_NOISE_MAX_MESSAGE_SIZE];
+    uint8_t seed[randombytes_SEEDBYTES] = {0x19};
+    randombytes_buf_deterministic(plain, sizeof(plain), seed);
+    const size_t ad_lens[] = {0, 1, 12, 15, 16, 17, 33, 64, 300};
+    const size_t edges[] = {511, 512, 513, 1023, 1024, 1400, 4096,
+                            FIPS_NOISE_MAX_MESSAGE_SIZE - FIPS_NOISE_TAG_SIZE};
+    uint8_t ad[300];
+    for (size_t i = 0; i < 301 + sizeof(edges) / sizeof(edges[0]); ++i) {
+        size_t len = i <= 300 ? i : edges[i - 301];
+        size_t ad_len = ad_lens[i % (sizeof(ad_lens) / sizeof(ad_lens[0]))];
+        uint8_t kb[32], nonce[12];
+        seed[1] = (uint8_t)i; seed[2] = (uint8_t)(i >> 8);
+        randombytes_buf_deterministic(kb, sizeof(kb), seed);
+        seed[3] = 1;
+        randombytes_buf_deterministic(nonce, sizeof(nonce), seed);
+        seed[3] = 2;
+        randombytes_buf_deterministic(ad, sizeof(ad), seed);
+        seed[3] = 0;
+        fips_aead_key key;
+        CHECK(fips_aead_key_init(&key, kb) == FIPS_AEAD_OK);
+        CHECK(crypto_aead_chacha20poly1305_ietf_encrypt(expect, NULL, plain, len, ad,
+              ad_len, NULL, nonce, kb) == 0);
+        size_t clen = len + FIPS_NOISE_TAG_SIZE;
+        CHECK(fips_aead_seal_nonce(&key, nonce, ad_len ? ad : NULL, ad_len,
+                                   len ? plain : NULL, len, out) == 0);
+        CHECK(memcmp(out, expect, clen) == 0);
+        memset(back, 0xa5, len + 1);
+        CHECK(fips_aead_open_nonce(&key, nonce, ad, ad_len, out, clen, back) == 0);
+        CHECK(memcmp(back, plain, len) == 0 && back[len] == 0xa5);
+        memcpy(back, plain, len);
+        CHECK(fips_aead_seal_nonce(&key, nonce, ad, ad_len, back, len, back) == 0);
+        CHECK(memcmp(back, expect, clen) == 0);
+        CHECK(fips_aead_open_nonce(&key, nonce, ad, ad_len, back, clen, back) == 0);
+        CHECK(memcmp(back, plain, len) == 0);
+        memcpy(back, expect, clen);
+        back[i % clen] ^= 0x80;
+        CHECK(fips_aead_open_nonce(&key, nonce, ad, ad_len, back, clen, back) ==
+              FIPS_AEAD_PRIMITIVE_ERR_AUTH);
+        CHECK(filled(back, len, 0));
+#if defined(FIPS_AEAD_BACKEND_OPENSSL)
+        CHECK(ERR_peek_error() == 0); /* forgeries leave no OpenSSL error state */
+#endif
+        fips_aead_key_destroy(&key);
+    }
+#if defined(FIPS_AEAD_BACKEND_OPENSSL)
+    /* A host's pending OpenSSL error survives a forged open untouched. */
+    uint8_t kb[32] = {4}, nonce[12] = {5}, wire[32] = {6};
+    fips_aead_key key;
+    CHECK(fips_aead_key_init(&key, kb) == FIPS_AEAD_OK);
+    ERR_raise(ERR_LIB_USER, 42);
+    CHECK(fips_aead_open_nonce(&key, nonce, NULL, 0, wire, sizeof(wire), out) ==
+          FIPS_AEAD_PRIMITIVE_ERR_AUTH);
+    CHECK(ERR_GET_REASON(ERR_peek_last_error()) == 42);
+    CHECK(ERR_GET_REASON(ERR_get_error()) == 42 && ERR_peek_error() == 0);
+    fips_aead_key_destroy(&key);
+#endif
+    return 0;
+}
+
+/* Per-thread contexts: concurrent threads with distinct keys, each created
+ * lazily and released by the thread-exit destructor (ASan/LSan see leaks). */
+struct thread_job { uint8_t id; int failed; };
+
+static void *thread_main(void *arg)
+{
+    struct thread_job *job = arg;
+    uint8_t kb[32], ad[16], plain[1400], expect[1416], out[1416], back[1400];
+    memset(kb, job->id + 1, sizeof(kb)); memset(ad, job->id, sizeof(ad));
+    for (size_t i = 0; i < sizeof(plain); ++i) plain[i] = (uint8_t)(i * 7 + job->id);
+    fips_aead_key key;
+    if (fips_aead_key_init(&key, kb) != FIPS_AEAD_OK) { job->failed = 1; return NULL; }
+    for (uint64_t counter = 0; counter < 500 && !job->failed; ++counter) {
+        size_t len = (size_t)(counter * 37 % sizeof(plain)), got;
+        uint8_t nonce[12];
+        fips_aead_nonce(counter, nonce);
+        if (crypto_aead_chacha20poly1305_ietf_encrypt(expect, NULL, plain, len, ad,
+                sizeof(ad), NULL, nonce, kb) != 0 ||
+            fips_aead_seal(&key, counter, ad, sizeof(ad), plain, len, out, sizeof(out),
+                           &got) != FIPS_AEAD_OK ||
+            got != len + 16 || memcmp(out, expect, got) != 0 ||
+            fips_aead_open(&key, counter, ad, sizeof(ad), out, got, back, sizeof(back),
+                           &got) != FIPS_AEAD_OK ||
+            got != len || memcmp(back, plain, len) != 0)
+            job->failed = 1;
+    }
+    fips_aead_key_destroy(&key);
+    return NULL;
+}
+
+static int threads(void)
+{
+    enum { N = 8 };
+    pthread_t tid[N];
+    struct thread_job jobs[N];
+    for (int round = 0; round < 3; ++round) {
+        for (int i = 0; i < N; ++i) {
+            jobs[i] = (struct thread_job){(uint8_t)(round * N + i), 0};
+            CHECK(pthread_create(&tid[i], NULL, thread_main, &jobs[i]) == 0);
+        }
+        for (int i = 0; i < N; ++i) {
+            CHECK(pthread_join(tid[i], NULL) == 0);
+            CHECK(!jobs[i].failed);
+        }
+    }
+    return 0;
+}
+
 int main(void)
 {
     CHECK(vector(rfc_2_8_2_key, rfc_2_8_2_nonce, rfc_2_8_2_ad,
@@ -232,6 +354,9 @@ int main(void)
     CHECK(nonces() == 0);
     CHECK(roundtrips() == 0);
     CHECK(tamper() == 0);
-    puts("AEAD: RFC 8439 2.8.2/A.5, nonce, bounds, roundtrip and tamper tests passed");
+    CHECK(reference() == 0);
+    CHECK(threads() == 0);
+    printf("AEAD (%s): RFC 8439 2.8.2/A.5, nonce, bounds, roundtrip, tamper, "
+           "libsodium reference and thread tests passed\n", fips_aead_backend_name());
     return 0;
 }
