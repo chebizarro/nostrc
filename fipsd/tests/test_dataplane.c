@@ -544,6 +544,34 @@ static void cancelled_mailbox(void)
     assert(s.result == -1 && go_channel_get_depth(h->commands) == 1);
     go_channel_free(s.cancel); go_channel_free(s.started); fipsd_node_handlers_destroy(h);
 }
+/* nostrc-u19cz.14: up to FIPSD_NODE_INLINE_BACKLOG queued dispatcher events
+ * (here in the command mailbox) still let a crypto job run inline; one more
+ * is a backlog, which hands it to a worker. The rest of a moderate-rate burst
+ * (a few datagrams of one receive batch or native write) is not a backlog. */
+static void inline_backlog(void)
+{
+    fipsd_node_handlers_config cfg; fipsd_node_handlers_config_default(&cfg);
+    handlers *h = fipsd_node_handlers_create(&cfg); assert(h);
+    const char *yaml = "node: {identity: {persistent: false}}";
+    fipsd_config *config = fipsd_config_parse(yaml, strlen(yaml), NULL); assert(config);
+    GoSwap *configs = go_swap_create(config, fipsd_config_free); assert(configs);
+    fipsd_node_options o = {0}; fipsd_node_handlers_install(h, &o);
+    fipsd_node *node = fipsd_node_create(configs, &o); assert(node);
+    const fipsd_node_context *c = fipsd_node_get_context(node);
+    static int queued;
+    assert(FIPSD_NODE_INLINE_BACKLOG >= 4);
+    for (size_t i = 0; i < FIPSD_NODE_INLINE_BACKLOG; ++i) {
+        assert(!fipsd_node_dispatch_backlog(c));
+        assert(!go_channel_try_send(h->commands, &queued));
+    }
+    assert(!fipsd_node_dispatch_backlog(c));
+    assert(!go_channel_try_send(h->commands, &queued));
+    assert(fipsd_node_dispatch_backlog(c));
+    void *v; size_t drained = 0;
+    while (!go_channel_try_receive(h->commands, &v)) { assert(v == &queued); ++drained; }
+    assert(drained == FIPSD_NODE_INLINE_BACKLOG + 1 && !fipsd_node_dispatch_backlog(c));
+    fipsd_node_destroy(node); fipsd_node_handlers_destroy(h); go_swap_free(configs);
+}
 /* Stop the real dispatcher before driving its retained handler state with an
  * injected clock: there must still be exactly one writer. */
 static void coalesced_snapshots(void)
@@ -592,7 +620,7 @@ static void coalesced_snapshots(void)
 int main(void)
 {
     concurrent_recycle(); cancelled_mailbox(); exact_wipe(); worker_send_gate(); gate_wire_order(false); gate_wire_order(true); preopen();
-    forwarding(); errors(); clamps(); backpressure_and_counters(); authenticate_then_mark(); saturated_trial_retry(); delayed_transport_consumer(); coalesced_snapshots();
+    forwarding(); errors(); clamps(); backpressure_and_counters(); authenticate_then_mark(); saturated_trial_retry(); delayed_transport_consumer(); coalesced_snapshots(); inline_backlog();
     puts("dataplane: forwarding/local/TTL/CE, reject limiter, clamp release, 4-worker unique reserved counters, bounded refusal: ok");
     return 0;
 }

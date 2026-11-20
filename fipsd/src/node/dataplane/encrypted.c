@@ -79,11 +79,12 @@ fipsd_dp_packet *fipsd_dp_acquire(handlers *h)
 bool fipsd_dp_submit(handlers *h, fipsd_dp_packet *p)
 {
     FIPSD_PERF_JOB_TAG(&p->job, p->session);
-    /* A worker buys parallelism only while other input waits for the
+    /* A worker buys parallelism only while a backlog waits for the
      * dispatcher. Otherwise the handoff and its completion cost two thread
      * wakes, several times the AEAD (nostrc-u19cz.3: CPU per datagram at a
-     * paced 100 Mbit/s rose ~55 -> ~88 us), so run it here. Either way the
-     * completion arrives through the results channel, in shard order. */
+     * paced 100 Mbit/s rose ~55 -> ~88 us; u19cz.14: a few queued events are
+     * not a backlog), so run it here. Either way the completion arrives
+     * through the results channel, in shard order. */
     if (!fipsd_node_dispatch_backlog(h->ctx) && fipsd_node_run_crypto_inline(h->ctx, &p->job) == 0) return true;
     if (fipsd_node_dispatch_crypto(h->ctx, &p->job) == 0) return true;
     ++h->dataplane->stats.backpressure;
