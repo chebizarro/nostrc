@@ -9,6 +9,7 @@
 #include "fips-native-client.h"
 #include <errno.h>
 #include <inttypes.h>
+#include <math.h>
 #include <poll.h>
 #include <pthread.h>
 #include <stdio.h>
@@ -61,7 +62,9 @@ static void latency(const char *key, uint64_t *values, size_t n)
 typedef struct receiver {
     pthread_mutex_t mu;
     pthread_cond_t cv;
-    bool ready, started;
+    bool ready, started, paced;
+    uint64_t *samples;
+    size_t sample_count, sample_capacity;
     fips_native_stream *stream;
     int fd;
     uint64_t deadline, received, highest;
@@ -99,7 +102,12 @@ static void *drain(void *arg)
             memset(grown + cap, 0, next - cap); seen = grown; cap = next;
         }
         uint8_t bit = (uint8_t)(1u << (seq % 8)); CHECK(!(seen[slot] & bit)); seen[slot] |= bit;
-        for (size_t i = sizeof(seq); i < PAYLOAD; ++i) CHECK(bytes[i] == 0xa5);
+        if (r->paced && seq % 256 == 0 && r->sample_count < r->sample_capacity) {
+            uint64_t timestamp; memcpy(&timestamp, bytes + sizeof(seq), sizeof(timestamp));
+            r->samples[r->sample_count++] = now() - timestamp;
+        }
+        for (size_t i = sizeof(seq) + (r->paced ? sizeof(uint64_t) : 0); i < PAYLOAD; ++i)
+            CHECK(bytes[i] == 0xa5);
         ++r->received;
         if (seq > r->highest) r->highest = seq;
     }
@@ -107,15 +115,26 @@ static void *drain(void *arg)
 }
 int main(int argc, char **argv)
 {
-    if (argc != 6) { fprintf(stderr, "usage: perf_native LEFT_API RIGHT_API RIGHT_NPUB SECONDS LATENCY_SAMPLES\n"); return 2; }
+    if (argc < 6 || argc > 8) { fprintf(stderr, "usage: perf_native LEFT_API RIGHT_API RIGHT_NPUB SECONDS LATENCY_SAMPLES [OFFERED_MBPS [PORT]]\n"); return 2; }
     char *end;
     double seconds = strtod(argv[4], &end); CHECK(end != argv[4] && !*end && seconds >= .1 && seconds <= 3600);
     unsigned long count = strtoul(argv[5], &end, 10); CHECK(end != argv[5] && !*end && count >= 100 && count <= 100000);
+    double mbps = 0;
+    if (argc >= 7) {
+        mbps = strtod(argv[6], &end);
+        CHECK(end != argv[6] && !*end && isfinite(mbps) && mbps > 0 && mbps <= 100000);
+    }
+    unsigned long port = 4242;
+    if (argc == 8) {
+        port = strtoul(argv[7], &end, 10);
+        CHECK(end != argv[7] && !*end && port >= 1 && port <= 65535);
+    }
+    double pps = mbps * 1e6 / (PAYLOAD * 8);
     size_t n = (size_t)count;
     fips_native_listener *listener;
-    CHECK(!fips_native_listen(argv[2], 4242, &listener));
+    CHECK(!fips_native_listen(argv[2], (uint16_t)port, &listener));
     fips_native_addr peer;
-    CHECK(!fips_native_addr_from_npub(argv[3], 4242, &peer));
+    CHECK(!fips_native_addr_from_npub(argv[3], (uint16_t)port, &peer));
     fips_native_stream *left, *right;
     CHECK(!fips_native_connect(argv[1], 0, &peer, &left));
     CHECK(!fips_native_stream_set_write_timeout(left, 5000));
@@ -137,40 +156,80 @@ int main(int argc, char **argv)
     }
     CHECK(!fips_native_stream_set_nonblocking(right, true));
     CHECK(!fips_native_stream_set_nonblocking(left, true));
-    receiver r = {.stream=right, .fd=fips_native_stream_fd(right)};
+    uint64_t *loaded = calloc(n, sizeof(*loaded)); CHECK(loaded);
+    receiver r = {.stream=right, .fd=fips_native_stream_fd(right), .paced=mbps > 0,
+                  .samples=loaded, .sample_capacity=n};
     CHECK(!pthread_mutex_init(&r.mu, NULL)); CHECK(!pthread_cond_init(&r.cv, NULL));
     pthread_t thread; CHECK(!pthread_create(&thread, NULL, drain, &r));
     CHECK(!pthread_mutex_lock(&r.mu));
     while (!r.ready) CHECK(!pthread_cond_wait(&r.cv, &r.mu));
-    uint64_t sent = 0, backpressure = 0, start = now();
+    uint64_t sent = 0, offered = 0, backpressure = 0, start = now();
     uint64_t elapsed = (uint64_t)(seconds * 1e9);
-    r.deadline = start + elapsed; r.started = true;
+    uint64_t send_deadline = start + elapsed;
+    r.deadline = send_deadline + (mbps ? UINT64_C(200000000) : 0); r.started = true;
     CHECK(!pthread_cond_signal(&r.cv)); CHECK(!pthread_mutex_unlock(&r.mu));
     uint8_t bytes[PAYLOAD]; memset(bytes, 0xa5, sizeof(bytes));
     int fd = fips_native_stream_fd(left);
-    while (now() < r.deadline) {
-        memcpy(bytes, &sent, sizeof(sent));
-        int rc = fips_native_send(left, bytes, sizeof(bytes));
-        if (rc == -ENOBUFS || rc == -EAGAIN || rc == -EINTR) {
-            ++backpressure;
-            struct pollfd writable = {.fd=fd, .events=POLLOUT};
-            int status = poll(&writable, 1, 1); CHECK(status >= 0 || errno == EINTR);
-            continue; /* No accepted datagram is ever retransmitted. */
+    while (now() < send_deadline) {
+        unsigned batch = 1;
+        if (mbps) {
+            /* Absolute deadlines, in <=50 us batches. Spin rather than ask
+             * macOS timers to wake once per packet. Catch-up after scheduler
+             * delays is bounded to 64 offers between clock checks. */
+            uint64_t deadline = start + (uint64_t)((double)offered * 1e9 / pps);
+            while (now() < deadline && now() < send_deadline) { }
+            if (now() >= send_deadline) break;
+            batch = (unsigned)(pps * .00005);
+            if (!batch) batch = 1;
+            if (batch > 64) batch = 64;
+            uint64_t due = (uint64_t)(seconds * pps);
+            if (offered + batch > due) batch = (unsigned)(due - offered);
+            if (!batch) break;
         }
-        CHECK(rc == 0); ++sent;
+        for (unsigned i = 0; i < batch; ++i) {
+            uint64_t seq = mbps ? offered : sent;
+            memcpy(bytes, &seq, sizeof(seq));
+            if (mbps && seq % 256 == 0) {
+                uint64_t timestamp = now();
+                memcpy(bytes + sizeof(seq), &timestamp, sizeof(timestamp));
+            }
+            int rc = fips_native_send(left, bytes, sizeof(bytes));
+            if (mbps) ++offered;
+            if (rc == -ENOBUFS || rc == -EAGAIN || rc == -EINTR) {
+                ++backpressure;
+                if (!mbps) {
+                    struct pollfd writable = {.fd=fd, .events=POLLOUT};
+                    int status = poll(&writable, 1, 1); CHECK(status >= 0 || errno == EINTR);
+                }
+                continue; /* Paced offers are never retried or hidden. */
+            }
+            CHECK(rc == 0); ++sent;
+        }
     }
     CHECK(!pthread_join(thread, NULL));
     CHECK(!pthread_cond_destroy(&r.cv)); CHECK(!pthread_mutex_destroy(&r.mu));
     uint64_t received = r.received;
-    CHECK(received && received <= sent && r.highest < sent);
+    CHECK(received <= sent && (!received || r.highest < (mbps ? offered : sent)));
+    if (!mbps) CHECK(received);
+    uint64_t accepted = sent;
+    if (mbps) sent = offered;
     printf("{\"payload_bytes\":%u,\"window\":%u,\"received\":%" PRIu64 ",\"sent\":%" PRIu64 ",\"loss\":%" PRIu64 ","
         "\"elapsed_s\":%.9f,\"throughput_mbps\":%.6f,\"latency_samples\":%zu,",
         PAYLOAD, WINDOW, received, sent, sent - received, (double)elapsed / 1e9,
         (double)received * PAYLOAD * 8 * 1000.0 / (double)elapsed, n);
     printf("\"local_backpressure\":%" PRIu64 ",", backpressure);
+    if (mbps) printf("\"target_mbps\":%.6f,\"offered_mbps\":%.6f,\"accepted\":%" PRIu64
+        ",\"loss_fraction\":%.9f,\"drain_s\":0.2,",
+        mbps, (double)offered * PAYLOAD * 8 * 1000.0 / (double)elapsed, accepted,
+        sent ? (double)(sent - received) / (double)sent : 1.0);
+    if (mbps) {
+        printf("\"loaded_latency_samples\":%zu,", r.sample_count);
+        if (r.sample_count) { latency("loaded_one_way", loaded, r.sample_count); putchar(','); }
+        else printf("\"loaded_one_way\":null,");
+    }
     latency("one_way", one, n); putchar(','); latency("reverse_one_way", back, n); putchar(','); latency("rtt", rtt, n);
     puts("}");
-    free(one); free(back); free(rtt);
+    free(loaded); free(one); free(back); free(rtt);
     fips_native_stream_close(left); fips_native_stream_close(right); fips_native_listener_close(listener);
     return 0;
 }
