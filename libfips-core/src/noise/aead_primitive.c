@@ -95,19 +95,43 @@ int fips_aead_open_nonce(
 
 #define FIPS_AEAD_OPENSSL_MIN_LEN 256u /* measured crossover, Apple M4 */
 
+/* ThreadSanitizer models each libgo fiber as its own thread and switches with
+ * __tsan_switch_to_fiber_no_sync, so fibers of one OS thread that take turns
+ * on that thread's cached context look unsynchronised (nostrc-u19cz.16).
+ * They are serialised in fact: an op never parks. Model exactly that with an
+ * acquire/release on the context around each tenure. No-op otherwise. */
+#if defined(__has_feature)
+#if __has_feature(thread_sanitizer)
+#define FIPS_AEAD_TSAN 1
+#endif
+#endif
+#if !defined(FIPS_AEAD_TSAN) && defined(__SANITIZE_THREAD__)
+#define FIPS_AEAD_TSAN 1
+#endif
+#ifdef FIPS_AEAD_TSAN
+void __tsan_acquire(void *addr);
+void __tsan_release(void *addr);
+#define CTX_ACQUIRE(ctx) __tsan_acquire(ctx)
+#define CTX_RELEASE(ctx) __tsan_release(ctx)
+#else
+#define CTX_ACQUIRE(ctx) ((void)(ctx))
+#define CTX_RELEASE(ctx) ((void)(ctx))
+#endif
+
 static pthread_once_t backend_once = PTHREAD_ONCE_INIT;
 static pthread_key_t ctx_key;
 static OSSL_LIB_CTX *backend_libctx;
 static EVP_CIPHER *backend_cipher;
 static int backend_ready;
 
-static void ctx_free(void *ctx) { EVP_CIPHER_CTX_free(ctx); }
+static void ctx_free(void *ctx) { CTX_ACQUIRE(ctx); EVP_CIPHER_CTX_free(ctx); }
 
 static void thread_ctx_release(void)
 {
     EVP_CIPHER_CTX *ctx = pthread_getspecific(ctx_key);
     if (ctx == NULL) return;
     (void)pthread_setspecific(ctx_key, NULL);
+    CTX_ACQUIRE(ctx);
     EVP_CIPHER_CTX_free(ctx);
 }
 
@@ -140,14 +164,24 @@ static EVP_CIPHER_CTX *thread_ctx(void)
     return ctx;
 }
 
+/* Begin one op's tenure of this thread's context; scrub() ends it. */
+static EVP_CIPHER_CTX *ctx_begin(void)
+{
+    EVP_CIPHER_CTX *ctx = thread_ctx();
+    if (ctx != NULL) CTX_ACQUIRE(ctx);
+    return ctx;
+}
+
 static void scrub(EVP_CIPHER_CTX *ctx)
 {
     static const uint8_t zero_key[FIPS_AEAD_KEY_SIZE], zero_nonce[FIPS_NOISE_NONCE_SIZE];
     static const uint8_t zero_ad[1];
     int n;
     if (EVP_CipherInit_ex2(ctx, NULL, zero_key, zero_nonce, 1, NULL) == 1 &&
-        EVP_CipherUpdate(ctx, NULL, &n, zero_ad, (int)sizeof(zero_ad)) == 1)
+        EVP_CipherUpdate(ctx, NULL, &n, zero_ad, (int)sizeof(zero_ad)) == 1) {
+        CTX_RELEASE(ctx);
         return;
+    }
     (void)pthread_setspecific(ctx_key, NULL);
     EVP_CIPHER_CTX_free(ctx);
 }
@@ -171,7 +205,7 @@ int fips_aead_seal_nonce(
 {
     if (len < FIPS_AEAD_OPENSSL_MIN_LEN)
         return sodium_seal_nonce(key, nonce, ad, ad_len, in, len, out);
-    EVP_CIPHER_CTX *ctx = len <= (size_t)INT_MAX ? thread_ctx() : NULL;
+    EVP_CIPHER_CTX *ctx = len <= (size_t)INT_MAX ? ctx_begin() : NULL;
     int ok = ctx != NULL, n;
     uint8_t final_block[FIPS_NOISE_TAG_SIZE]; /* stream cipher: Final emits 0 bytes */
     ok = ok && EVP_CipherInit_ex2(ctx, NULL, key->bytes, nonce, 1, NULL) == 1;
@@ -198,7 +232,7 @@ int fips_aead_open_nonce(
     size_t plain_len = len - FIPS_NOISE_TAG_SIZE;
     if (plain_len < FIPS_AEAD_OPENSSL_MIN_LEN)
         return sodium_open_nonce(key, nonce, ad, ad_len, in, len, out);
-    EVP_CIPHER_CTX *ctx = len <= (size_t)INT_MAX ? thread_ctx() : NULL;
+    EVP_CIPHER_CTX *ctx = len <= (size_t)INT_MAX ? ctx_begin() : NULL;
     int ok = ctx != NULL, n, auth = 0;
     uint8_t final_block[FIPS_NOISE_TAG_SIZE];
     ok = ok && EVP_CipherInit_ex2(ctx, NULL, key->bytes, nonce, 0, NULL) == 1;

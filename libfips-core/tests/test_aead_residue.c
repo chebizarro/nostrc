@@ -32,21 +32,24 @@ static void track(void *p, size_t n)
     if (live_count == MAX_LIVE) { table_full = 1; return; }
     live[live_count].p = p; live[live_count].n = n; ++live_count;
 }
-static void untrack(void *p)
+/* Keyed by address value: realloc's old pointer is compared after it was
+ * freed, which GCC's -Wuse-after-free rejects for a pointer (nostrc-u19cz.17). */
+static void untrack(uintptr_t key)
 {
     for (size_t i = 0; i < live_count; ++i)
-        if (live[i].p == p) { live[i] = live[--live_count]; return; }
+        if ((uintptr_t)live[i].p == key) { live[i] = live[--live_count]; return; }
 }
 static void *t_malloc(size_t n, const char *f, int l)
 { (void)f; (void)l; void *p = malloc(n ? n : 1); track(p, n); return p; }
 static void *t_realloc(void *p, size_t n, const char *f, int l)
 {
     (void)f; (void)l;
+    uintptr_t old = (uintptr_t)p;
     void *q = realloc(p, n ? n : 1);
-    if (q != NULL) { if (p != NULL) untrack(p); track(q, n); }
+    if (q != NULL) { if (old != 0) untrack(old); track(q, n); }
     return q;
 }
-static void t_free(void *p, const char *f, int l) { (void)f; (void)l; untrack(p); free(p); }
+static void t_free(void *p, const char *f, int l) { (void)f; (void)l; untrack((uintptr_t)p); free(p); }
 
 /* 8-byte windows of the secrets, open addressing. */
 #define SLOTS (1u << 18) /* > windows of a maximum-length keystream */
