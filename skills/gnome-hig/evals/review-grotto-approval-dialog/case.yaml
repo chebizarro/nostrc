@@ -1,0 +1,12 @@
+schema_version: "1.1"
+name: review-grotto-approval-dialog
+expected_outcome: |
+  review.md contains a verdict and a ranked list of findings about the Grotto
+  approval dialog. Each finding names a file:line in the .blp or .c source,
+  quotes or cites the specific HIG rule it violates (with a
+  developer.gnome.org/hig URL or the reference page), and proposes a concrete
+  fix naming the libadwaita widget, property or wording. Findings cover the
+  dialog-specific rules (button order, default/Return activation on a
+  consent action, Esc behaviour, header/sentence capitalization of labels,
+  accessible names) rather than generic UX opinions, and do not invent
+  violations that the HIG does not actually state.
