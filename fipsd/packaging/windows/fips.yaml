@@ -5,7 +5,7 @@
 # that file (or the file FIPS_CONFIG names). The schema is upstream's
 # (fipsd/README.md, "YAML configuration"): unknown keys warn and are
 # discarded. It differs from packaging/common/fips.yaml only where Windows
-# does: no TCP transport and no .fips DNS responder are built there yet.
+# does (no TCP transport and no .fips DNS responder are built there yet).
 
 node:
   identity:
@@ -46,5 +46,6 @@ peers: []
 # peers:
 #   - npub: "npub1..."
 #     alias: "friend"
-#     address: "203.0.113.10:2121"
-#     transport: udp
+#     addresses:
+#       - transport: udp
+#         addr: "203.0.113.10:2121"

@@ -131,6 +131,16 @@ foreach(_fixture IN LISTS _fipsd_config_fixtures)
   nostrc_describe_test("FipsdConfigFixture_${_test_name}" OWNER fipsd TARGETS fipsd_config_test
     INPUTS "${_fixture}" "${CMAKE_CURRENT_SOURCE_DIR}/config_golden/${_name}.txt")
 endforeach()
+# Every shipped example config loads cleanly as shipped and with each of its
+# commented-out settings enabled (md-uzf: the peers example used a schema the
+# daemon rejects).
+foreach(_example IN ITEMS common windows)
+  set(_example_file "${CMAKE_CURRENT_SOURCE_DIR}/../packaging/${_example}/fips.yaml")
+  add_test(NAME "FipsdConfigExample_${_example}" COMMAND fipsd_config_test example "${_example_file}")
+  set_tests_properties("FipsdConfigExample_${_example}" PROPERTIES TIMEOUT 30 LABELS "fips;unit;config")
+  nostrc_describe_test("FipsdConfigExample_${_example}" OWNER fipsd TARGETS fipsd_config_test
+    INPUTS "${_example_file}")
+endforeach()
 file(GLOB _fipsd_config_corpus CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/config_corpus/*")
 foreach(_seed IN LISTS _fipsd_config_corpus)
   get_filename_component(_name "${_seed}" NAME)
