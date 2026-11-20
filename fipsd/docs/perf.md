@@ -482,6 +482,91 @@ Deferred, with beads:
 - libgo running a busy daemon's fibers on one worker (nostrc-u19cz.10).
 - Linux `SOCK_SEQPACKET` verification and `sendmmsg` (nostrc-u19cz.11).
 
+## Dispatcher timer scans: nostrc-w3tfz
+
+Measured **2026-11-19** on the M4 Max below (Release `-O3 -g`, local macOS,
+not hosted/Linux qualification), base `810730485` built from an exported tree
+against this branch, back to back in one session, in two ABBA rounds of
+`perf_loopback.py --runs 2 --latency-samples 100` (every run reported). The
+machine was shared with other agents' TSan suites and two VMs (load average
+15-45), and the Rust daemon in the same invocations moved as much as the C
+one, so read the medians and the `sample` evidence, not single runs.
+
+Before, every dispatcher wake asked each handler subsystem for its nearest
+deadline and polled after every batch by walking every slot of the 256-entry
+leg, peer-record, configured-peer and session arrays (and the peer records
+again for paths): about 2,800 slot checks over multi-kilobyte records per
+wake, i.e. per packet at moderate rate. Now `handlers/timeout.c` keeps a
+per-subsystem deadline cache (`hs_timers`: legs with restart holds and
+configured retries, sessions, paths) that is never later than the true
+earliest deadline:
+
+- Hot paths fold the entry they changed: `hs_session_execute` (every
+  successful session step, before and after execution), the session seal
+  (the send counter can bring a rekey forward), a path Bundle step and
+  `hs_path_account`. A fold only moves a deadline earlier, so a deadline that
+  moved later costs one early wake and a rescan.
+- Structural changes mark it stale: leg effects, leg free, handshake frames,
+  restart holds, configured retries, session open/answer, a new Bundle,
+  non-packet transport events, netmon events, every command but sends.
+- Every poll pass that fires, and every tick, rescans exactly.
+
+A forgotten fold is caught two ways. Debug builds audit the cache against an
+exact scan on every wait and abort (removing the session fold aborts
+`FipsdNodeTwoNodesTest`, the UDP two-node and multi-node tests at once). In
+Release the cache is re-derived at the first wait 4 ms or more after an event,
+and on every tick, so a missed fold makes a timer late by at most one tick
+(1 s), never lost. Rescans ride existing wakes: a first version capped the
+select at the end of the 4 ms window, which cost an idle pair about 2.5 extra
+dispatcher wakes/s, so it was dropped. Clock reads on the dispatcher path are
+unchanged: the remaining per-packet `hs_now` calls sit in `dataplane/` and
+the timed-select `gettimeofday` in libgo (both outside this change).
+
+CPU us per delivered datagram at 100 Mbit/s (~10.4k datagrams/s):
+
+| | Base `810730485` | nostrc-w3tfz |
+|---|---:|---:|
+| c-c tx, 8 runs | 49.8, 50.7, 52.8, 53.9, 55.2, 39.8, 34.6, 36.8 (median 50.3) | 45.6, 35.0, 35.0, 45.6, 34.6, 35.8, 34.1, 32.2 (median 35.0) |
+| c-c rx | 46.4, 48.3, 52.6, 48.0, 50.4, 40.0, 36.8, 38.0 (median 47.2) | 43.1, 36.7, 36.5, 43.0, 36.0, 36.5, 34.6, 33.1 (median 36.5) |
+| c-rust C sender | 47.4, 51.9, 57.4, 46.3, 41.3, 44.4, 33.8, 40.2 (median 45.4) | 51.2, 33.4, 38.2, 50.6, 49.3, 31.9, 35.3, 40.8 (median 39.5) |
+| Rust sender, rust-rust, same invocations | median 29.6 | median 23.5 |
+
+The Rust median also fell by about a fifth in the same slots, so part of the
+raw gain is a quieter machine; normalised to Rust in its own invocations the C
+c-c sender gains about 12% (median ratio 1.70 to 1.49). The quietest base invocation (34.6/36.8,
+36.8/38.0 c-c) against the quietest of this branch (34.1/34.6, 32.2/33.1)
+agrees. `sample` of both daemons, 6 s mid-probe at 100 Mbit/s: the scans'
+self time was 4.4% and 3.3% of busy samples in base and 0 here; inclusive
+`hs_poll` fell from 46 and 23 samples to 2 and 1, `hs_wait_ms` (now mostly the
+4 ms rescan) from 6 and 6 to 5 and 1, and busy samples overall by 15%.
+
+Unpaced (`--seconds 5`), second round, Mbit/s: c-c base 684, 821, 732, 636
+against 944, 947, 890, 966; c-rust base 827, 1077, 744, 330 against 589, 977,
+1013, 982. The first round was dominated by starved runs on both sides (for
+example base Rust-Rust 89 Mbit/s, this branch c-c 109 Mbit/s at 64/42% of a
+core). No saturation regression is visible.
+
+Idle: a connected pair with a proven XK session, measured with a temporary
+dispatcher loop counter (not committed), over 30 s, two daemons each. Base 8.6 and 8.5 loop iterations/s (1.5 and 1.4
+select timeouts/s), here 8.5 and 8.2/s (1.4 and 1.1/s); idle CPU over
+32 s 0.20 s against 0.16 s per daemon.
+
+Verification, Debug `-DGO_WARNINGS_AS_ERRORS=ON` with
+`FIPSD_{UDP,TCP}_INTEROP_RUST_BINARY` set, the cache audit active:
+
+- ASan+UBSan `ctest -R '^Fips' -E 'Soak|Perf'`: 222/222.
+- TSan, same selection without `^FipsCore`: 183/183, no ThreadSanitizer report.
+- TSan `--repeat until-fail:5` over STP acks (both), node handlers, two-node
+  (node, UDP v4/v6, crossing dials, TCP v4/v6), rekey msg2, TCP rekey
+  saturated, path medium/presence, restart-replay, the five multi-node
+  topologies and the Rust multi interop: 20/20.
+- Mutation check: without the `hs_session_execute` fold the audit aborts the
+  node and UDP two-node and multi-node tests. Without the `hs_path_account`
+  fold no test fires: kept from reading libfips-core (a roam arms the
+  capability wake at once), coverage tracked as a follow-up.
+- Capability skips: privileged TUN/Ethernet/IPv6 smoke, Tor, and the control
+  and fipsctl interop tests.
+
 ## Dataplane correction: nostrc-pxwaj
 
 Measured **2026-11-16** on the same Apple M4 Max workstation as the original

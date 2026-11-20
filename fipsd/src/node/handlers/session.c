@@ -72,6 +72,8 @@ bool hs_session_send_message(handlers *h, fips_session_entry *entry, session_ext
     fips_rekey_sealed s = {0};
     fips_rekey_seal_refusal refusal = fips_rekey_seal(&entry->machine, hs_now(h), &s);
     if (refusal != FIPS_REKEY_SEAL_OK) { ++h->counters.send_failed; return false; }
+    /* A seal advances the send counter, which can bring a rekey forward. */
+    hs_timers_fold_session(h, entry);
     uint32_t ts = (uint32_t)(s.elapsed.secs * 1000 + s.elapsed.nanos / 1000000);
     fips_writer w; fips_writer_init(&w, h->session_plain, sizeof h->session_plain);
     bool ok = fips_fsp_prepend_inner_header(ts, msg_type, 0, body, len, &w, NULL) == FIPS_OK &&
@@ -157,6 +159,7 @@ static fips_session_entry *open_session(handlers *h, const fips_node_addr *dest)
         METRIC(h, session, table_full);
         hs_outputs_clear(&h->session_out); return NULL;
     }
+    hs_timers_invalidate(h); /* a new session machine */
     session_ext *x = ext_init(h, entry, dest, true);
     (void)dest_coords(h, dest, x);
     (void)hs_session_execute(h, entry, NULL, 0);
@@ -259,6 +262,7 @@ static void setup_received(handlers *h, peer_rec *rec, const fips_session_datagr
         METRIC(h, session, table_full);
         hs_outputs_clear(&h->session_out); return;
     }
+    hs_timers_invalidate(h); /* a new session machine */
     session_ext *x = ext_init(h, entry, &dg->src_addr, false);
     x->carrier = rec->addr;
     for (size_t i = 0; i < msg.src_coords.count; ++i) memcpy(x->dest_coords[i].bytes, msg.src_coords.addrs + 16 * i, 16);
@@ -397,13 +401,13 @@ static void close_entry(handlers *h, fips_session_entry *entry, fips_rekey_close
     hs_notice(h, FIPSD_NOTICE_SESSION_DOWN, &peer, NULL, 0);
     hs_mark_dirty(h);
 }
-uint64_t hs_session_wait_ms(handlers *h, fips_instant now)
+fips_instant hs_session_next(handlers *h)
 {
-    uint64_t wait = UINT64_MAX;
+    fips_instant at = {0};
     for (size_t i = 0; i < h->cfg.session_capacity; ++i)
         if (h->session_entries[i].occupied && h->session_entries[i].machine.live)
-            wait = hs_min_wait(wait, fips_rekey_next_wake(&h->session_entries[i].machine), now);
-    return wait;
+            at = hs_instant_min(at, fips_rekey_next_wake(&h->session_entries[i].machine));
+    return at;
 }
 void hs_session_poll(handlers *h, fips_instant now)
 {

@@ -216,6 +216,20 @@ typedef struct handler_command {
     uint8_t payload[];
 } handler_command;
 
+/* Handler deadline cache (timeout.c, nostrc-w3tfz). Invariant while !stale:
+ * due[k] is absent only when subsystem k arms nothing, and is never later than
+ * its earliest armed deadline. Mutations either fold the touched entry's new
+ * deadline in (hot paths: it can only move due earlier) or mark the cache
+ * stale (rare structural changes); a fold that is missed is caught by the
+ * Debug audit and, in Release, by the periodic exact rescan (timeout.c). */
+typedef enum hs_timer_kind { HS_TIMER_LEGS, HS_TIMER_SESSIONS, HS_TIMER_PATHS, HS_TIMER_COUNT } hs_timer_kind;
+typedef struct hs_timers {
+    fips_instant due[HS_TIMER_COUNT];
+    fips_instant verified; /* last exact rescan */
+    bool stale;            /* rescan before the next use */
+    bool touched;          /* an event ran since the last exact rescan */
+} hs_timers;
+
 struct fipsd_node_handlers {
     fipsd_node_handlers_config cfg;
     /* Attached (dispatcher fiber) */
@@ -240,6 +254,7 @@ struct fipsd_node_handlers {
     fips_rekey_params link_params, session_params;
     fips_instant origin, started_at, next_tick;
     fips_instant publish_allowed; /* hs_poll coalesces dirty-driven snapshot builds until here */
+    hs_timers timers;
     uint64_t wall_offset_ms; /* wall clock at origin */
     uint64_t next_link_id;
     /* Distinct buffers per nesting level: the inbound frame (decrypted in place),
@@ -359,7 +374,7 @@ bool hs_dial(handlers *h, const fips_peer_identity *peer, fips_transport_id tran
 bool hs_disconnect(handlers *h, const fips_node_addr *peer, fips_fmp_disconnect_reason reason, bool notify_peer);
 bool hs_leg_effects(handlers *h, pending_leg *leg, const fipsd_peer_actions *actions);
 bool hs_peer_effects(handlers *h, fipsd_active_peer *peer, const fipsd_peer_actions *actions);
-uint64_t hs_legs_wait_ms(handlers *h, fips_instant now);
+fips_instant hs_legs_next(handlers *h); /* exact: earliest leg, restart-hold and retry deadline */
 bool hs_legs_poll(handlers *h, fips_instant now);
 void hs_remove_peer(handlers *h, peer_rec *rec, fips_rekey_close why, bool notify_peer, fips_fmp_disconnect_reason reason);
 void hs_close_all(handlers *h);
@@ -430,7 +445,7 @@ bool hs_session_send_message(handlers *h, fips_session_entry *entry, session_ext
 void hs_session_datagram_received(handlers *h, peer_rec *rec, const uint8_t *body, size_t len);
 bool hs_session_send(handlers *h, const fips_node_addr *dest, uint16_t src_port, uint16_t dst_port, const uint8_t *payload, size_t len);
 void hs_session_tick(handlers *h, fips_instant now);
-uint64_t hs_session_wait_ms(handlers *h, fips_instant now);
+fips_instant hs_session_next(handlers *h); /* exact: earliest session machine wake */
 void hs_session_close_all(handlers *h);
 void hs_session_peer_removed(handlers *h, const fips_node_addr *peer);
 void hs_session_coords_resolved(handlers *h, const fips_node_addr *dest);
@@ -453,7 +468,7 @@ void hs_path_peer_added(handlers *h, peer_rec *rec);
 void hs_path_peer_removed(handlers *h, peer_rec *rec);
 void hs_path_message(handlers *h, peer_rec *rec, fipsd_transport *t, const fips_transport_addr *from, fips_link_message_type type, const uint8_t *body, size_t len);
 void hs_path_account(handlers *h, peer_rec *rec, fipsd_transport *t, const fips_transport_addr *from, size_t len, uint8_t msg_type);
-uint64_t hs_path_wait_ms(handlers *h, fips_instant now);
+fips_instant hs_path_next(handlers *h); /* exact: earliest path Bundle wake */
 void hs_path_poll(handlers *h, fips_instant now);
 void hs_path_network_event(handlers *h, const fipsd_netmon_event *e);
 void hs_path_intake(handlers *h, const fips_node_addr *peer, fipsd_path_feed feed,
@@ -470,6 +485,17 @@ void hs_probe_close_all(handlers *h);
 uint64_t hs_wait_ms(handlers *h, fips_instant now);
 bool hs_poll(handlers *h, fips_instant now);
 void hs_tick(handlers *h, fips_instant now);
+/* Deadline cache (hs_timers). Fold after a hot-path mutation of one entry;
+ * invalidate after anything structural. Both are O(1). */
+static inline fips_instant hs_instant_min(fips_instant a, fips_instant b)
+{ return !a.ops ? b : !b.ops ? a : a.ops->compare(a, b) <= 0 ? a : b; }
+static inline void hs_timers_fold(handlers *h, hs_timer_kind k, fips_instant at)
+{ if (at.ops) h->timers.due[k] = hs_instant_min(h->timers.due[k], at); }
+static inline void hs_timers_invalidate(handlers *h) { h->timers.stale = true; }
+static inline void hs_timers_touch(handlers *h) { h->timers.touched = true; }
+void hs_timers_fold_session(handlers *h, const fips_session_entry *entry);
+void hs_timers_fold_path(handlers *h, const peer_rec *rec);
+bool hs_timers_due(handlers *h, hs_timer_kind k, fips_instant now); /* may fire: rescans when stale */
 /* native.c / netmon.c (Tier B4 seams) */
 void hs_native_deliver(handlers *h, const fips_node_addr *src, uint16_t src_port, uint16_t dst_port, const uint8_t *payload, size_t len);
 void hs_host_link_mtu_changed(handlers *h, uint16_t mtu);

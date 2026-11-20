@@ -77,7 +77,7 @@ static bool restart_hold(handlers *h, peer_rec *rec, fipsd_transport *t,
      * while one is held waits for its confirmation or the hold deadline. */
     if (c->used || h->restart_pending >= h->hs_limiter.max_pending) { ++h->counters.hs_rate_limited; return false; }
     if (len > FIPS_REKEY_WIRE_MAX) { ++h->counters.hs_failed; return false; }
-    c->used = true; ++h->restart_pending;
+    c->used = true; ++h->restart_pending; hs_timers_invalidate(h);
     c->transport = t->id; c->addr = *from; c->replace = replace;
     memcpy(c->msg1.bytes, frame, len); c->msg1.len = len;
     memcpy(c->ephemeral, token->proof.ephemeral, 32);
@@ -122,6 +122,7 @@ static void leg_free(handlers *h, pending_leg *leg)
     configured_peer *c = configured_find(h, &leg->expected.node_addr);
     if (c) c->dialing = false;
     sodium_memzero(leg, sizeof *leg);
+    hs_timers_invalidate(h); /* a configured peer's retry is armed again */
     hs_mark_dirty(h);
 }
 static bool leg_send(handlers *h, pending_leg *leg, const uint8_t *bytes, size_t len)
@@ -138,11 +139,14 @@ static void handshake_failed(handlers *h, pending_leg *leg, bool link_dead)
     if (c) {
         fipsd_peer_retry_policy p = {5000, 300000, h->cfg.timing.handshake_timeout_ms, 5};
         (void)fipsd_peer_retry_failed(&c->retry, p, hs_now(h), link_dead, true, true, false, false);
+        hs_timers_invalidate(h);
     }
     hs_notice(h, FIPSD_NOTICE_HANDSHAKE_FAILED, &leg->expected.node_addr, NULL, 0);
 }
 bool hs_leg_effects(handlers *h, pending_leg *leg, const fipsd_peer_actions *actions)
 {
+    /* Every leg machine step is followed by its effects: its next_wake moved. */
+    hs_timers_invalidate(h);
     bool teardown = false, lost = false;
     for (size_t i = 0; i < actions->count; ++i) {
         const fipsd_peer_action *a = &actions->items[i];
@@ -376,6 +380,7 @@ static void remove_peer_carry(handlers *h, peer_rec *rec, fips_rekey_close why, 
     if (c && why == FIPS_REKEY_CLOSE_LinkDead) {
         fipsd_peer_retry_policy p = {5000, 300000, h->cfg.timing.handshake_timeout_ms, 5};
         (void)fipsd_peer_retry_failed(&c->retry, p, hs_now(h), true, true, true, false, false);
+        hs_timers_invalidate(h);
     }
     hs_notice(h, FIPSD_NOTICE_LINK_DOWN, &addr, NULL, 0);
     hs_mark_dirty(h);
@@ -729,7 +734,7 @@ static bool msg2(handlers *h, fipsd_transport *t, const fips_transport_addr *fro
     return true;
 }
 bool hs_handshake_frame(handlers *h, fipsd_transport *t, const fips_transport_addr *from, uint8_t *frame, size_t len, int phase)
-{ return phase == 1 ? msg1(h, t, from, frame, len) : msg2(h, t, from, frame, len); }
+{ hs_timers_invalidate(h); return phase == 1 ? msg1(h, t, from, frame, len) : msg2(h, t, from, frame, len); }
 
 bool hs_peer_effects(handlers *h, fipsd_active_peer *peer, const fipsd_peer_actions *actions)
 {
@@ -763,18 +768,16 @@ bool hs_peer_effects(handlers *h, fipsd_active_peer *peer, const fipsd_peer_acti
                        dead ? FIPS_FMP_Timeout : FIPS_FMP_Shutdown);
     return true;
 }
-uint64_t hs_legs_wait_ms(handlers *h, fips_instant now)
+fips_instant hs_legs_next(handlers *h)
 {
-    uint64_t wait = UINT64_MAX;
-    for (size_t i = 0; i < h->cfg.peer_capacity; ++i)
-        if (h->legs[i].used) wait = hs_min_wait(wait, fipsd_peer_machine_next_wake(&h->legs[i].machine), now);
+    fips_instant at = {0};
     for (size_t i = 0; i < h->cfg.peer_capacity; ++i) {
-        if (h->recs[i].used && h->recs[i].restart.used)
-            wait = hs_min_wait(wait, h->recs[i].restart.deadline, now);
+        if (h->legs[i].used) at = hs_instant_min(at, fipsd_peer_machine_next_wake(&h->legs[i].machine));
+        if (h->recs[i].used && h->recs[i].restart.used) at = hs_instant_min(at, h->recs[i].restart.deadline);
         configured_peer *c = &h->configured[i];
-        if (c->used && c->retry.scheduled && !c->dialing) wait = hs_min_wait(wait, c->retry.after, now);
+        if (c->used && c->retry.scheduled && !c->dialing) at = hs_instant_min(at, c->retry.after);
     }
-    return wait;
+    return at;
 }
 bool hs_legs_poll(handlers *h, fips_instant now)
 {
