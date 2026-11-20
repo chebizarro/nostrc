@@ -31,6 +31,10 @@ fips_path_medium fipsd_transport_medium(const fipsd_transport *);
  * Selecting cancellation never frees or closes the borrowed destination. */
 int fipsd_transport_emit(GoChannel *events, GoContext *root, GoChannel *stop,
     fipsd_transport_event_kind, fips_transport_id, const fips_transport_addr *, const uint8_t *, size_t);
+/* The same send for an event the caller built in a malloc block (the node
+ * frees it): a receive path that fills events in place hands them over
+ * without a copy (nostrc-u19cz.4). Only success transfers e. */
+int fipsd_transport_emit_event(GoChannel *events, GoContext *root, GoChannel *stop, fipsd_transport_event *);
 /* Replacement gets a new process-wide id. Old receive/writer exits can only
  * remove their own id, never the replacement (stream.rs remove_own). */
 int fipsd_transport_link_add(fipsd_transport_shared *, const fips_transport_addr *,

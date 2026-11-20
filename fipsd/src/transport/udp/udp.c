@@ -1,3 +1,6 @@
+#if defined(__linux__) && !defined(_GNU_SOURCE)
+#define _GNU_SOURCE /* struct mmsghdr (internal.h) */
+#endif
 #define _POSIX_C_SOURCE 200809L
 #include "transport/udp/internal.h"
 #include "libgo/fiber.h"

@@ -1,4 +1,7 @@
 /* POSIX readiness I/O (epoll/kqueue). Windows uses io_win32.c instead. */
+#if defined(__linux__) && !defined(_GNU_SOURCE)
+#define _GNU_SOURCE /* struct mmsghdr, recvmmsg/sendmmsg */
+#endif
 #ifndef _POSIX_C_SOURCE
 #define _POSIX_C_SOURCE 200809L
 #endif
@@ -499,4 +502,42 @@ ssize_t gof_sendmsg(gof_socket_t fd, const struct msghdr *msg, int flags, int ti
     return -1;
   }
 }
+
+#if defined(__linux__)
+/* Linux batch datagram I/O (nostrc-u19cz.4), gof_recvmsg/gof_sendmsg's
+ * readiness contract per call: one syscall moves up to vlen messages, and
+ * only a call that moved none parks. */
+int gof_recvmmsg(gof_socket_t fd, struct mmsghdr *msgs, unsigned int vlen, int flags, int timeout_ms) {
+  if (set_nonblock(fd) != 0) return -1;
+  uint64_t dl = deadline_from_ms(timeout_ms);
+  for (;;) {
+    /* A nonblocking socket returns what is queued; NULL: no kernel timeout. */
+    int r = recvmmsg(fd, msgs, vlen, flags, NULL);
+    if (r >= 0) return r;
+    int error = fiber_get_errno();
+    if (error == EAGAIN || error == EWOULDBLOCK) {
+      if (wait_message_ready(fd, GOF_POLL_READ, dl) != 0) return -1;
+      continue;
+    }
+    fiber_set_errno(error);
+    return -1;
+  }
+}
+
+int gof_sendmmsg(gof_socket_t fd, struct mmsghdr *msgs, unsigned int vlen, int flags, int timeout_ms) {
+  if (set_nonblock(fd) != 0) return -1;
+  uint64_t dl = deadline_from_ms(timeout_ms);
+  for (;;) {
+    int r = sendmmsg(fd, msgs, vlen, flags);
+    if (r >= 0) return r;
+    int error = fiber_get_errno();
+    if (error == EAGAIN || error == EWOULDBLOCK) {
+      if (wait_message_ready(fd, GOF_POLL_WRITE, dl) != 0) return -1;
+      continue;
+    }
+    fiber_set_errno(error);
+    return -1;
+  }
+}
+#endif
 #endif /* !_WIN32 */

@@ -254,6 +254,54 @@ static void expect_packet(fixture *f, uint32_t id, size_t n)
     fipsd_transport_event *e = receive(f->events);
     assert(e && e->kind == FIPSD_TRANSPORT_PACKET && e->id.value == id && e->size == n); free(e);
 }
+#if defined(__linux__)
+/* nostrc-u19cz.4: one recvmmsg takes every queued datagram, each with its own
+ * source, pktinfo destination and ECN; one longer than the slot spills into
+ * its tail. Called on a fiber; everything is queued first (loopback), so the
+ * call returns without parking. */
+static void recv_batch(void)
+{
+    fipsd_udp_endpoint bind_to, local; fipsd_buffer_granted rg, sg;
+    assert(fipsd_udp_endpoint_numeric("0.0.0.0:0", &bind_to));
+    gof_socket_t fd = fipsd_udp_open(&bind_to, NULL, false, 1 << 20, 1 << 20, &rg, &sg, &local);
+    assert(fd >= 0);
+    struct sockaddr_in to = {.sin_family = AF_INET, .sin_port = ((struct sockaddr_in *)&local.address)->sin_port};
+    assert(inet_pton(AF_INET, "127.0.0.1", &to.sin_addr) == 1);
+    int senders[2]; struct sockaddr_in from[2];
+    for (int i = 0; i < 2; ++i) {
+        senders[i] = socket(AF_INET, SOCK_DGRAM, 0); assert(senders[i] >= 0);
+        from[i] = (struct sockaddr_in){.sin_family = AF_INET}; from[i].sin_addr = to.sin_addr;
+        assert(bind(senders[i], (struct sockaddr *)&from[i], sizeof from[i]) == 0);
+        socklen_t len = sizeof from[i]; assert(getsockname(senders[i], (struct sockaddr *)&from[i], &len) == 0);
+    }
+    int ce = 3; assert(setsockopt(senders[1], IPPROTO_IP, IP_TOS, &ce, sizeof ce) == 0);
+    static uint8_t data[3000];
+    for (size_t i = 0; i < sizeof data; ++i) data[i] = (uint8_t)(i * 7);
+    enum { SMALL = 7 };
+    for (int i = 0; i < SMALL; ++i)
+        assert(sendto(senders[i & 1], data + i, 10 + (size_t)i, 0, (struct sockaddr *)&to, sizeof to) == 10 + i);
+    assert(sendto(senders[0], data, sizeof data, 0, (struct sockaddr *)&to, sizeof to) == (ssize_t)sizeof data);
+    udp_rx *rx = fipsd_udp_rx_create(1357); assert(rx);
+    assert(fipsd_udp_recv_batch(rx, fd) == SMALL + 1);
+    for (int i = 0; i <= SMALL; ++i) {
+        const struct sockaddr_in *source = (const struct sockaddr_in *)&rx->source[i].address;
+        int who = i == SMALL ? 0 : i & 1;
+        assert(rx->m[i].msg_hdr.msg_namelen == sizeof *source && source->sin_port == from[who].sin_port);
+        fipsd_udp_packet_info info;
+        assert(fipsd_udp_decode_control(&rx->m[i].msg_hdr, &info) && info.has_destination && info.has_ecn);
+        assert(info.family == AF_INET && info.destination.v4.s_addr == to.sin_addr.s_addr);
+        assert(info.ecn == (who ? 3 : 0));
+        if (i < SMALL) assert(rx->m[i].msg_len == 10u + (unsigned)i && !memcmp(rx->slot[i]->bytes, data + i, 10 + (size_t)i));
+    }
+    assert(rx->m[SMALL].msg_len == sizeof data && !(rx->m[SMALL].msg_hdr.msg_flags & MSG_TRUNC));
+    assert(!memcmp(rx->slot[SMALL]->bytes, data, 1357) && !memcmp(rx->iov[SMALL][1].iov_base, data + 1357, sizeof data - 1357));
+    /* The next call re-arms what this one filled; nothing is queued now. */
+    assert(gof_recvmmsg(fd, rx->m, FIPSD_UDP_RECV_BATCH, 0, 0) == -1 && fipsd_io_errno() == ETIMEDOUT);
+    fipsd_udp_rx_free(rx);
+    close(senders[0]); close(senders[1]); close(fd);
+    puts("recvmmsg: one call per queued burst, per-datagram source/pktinfo/ECN, oversize spill: ok");
+}
+#endif
 static void scenario(void *arg)
 {
     fixture *f = arg;
@@ -317,6 +365,9 @@ static void scenario(void *arg)
     f->b->ops->authenticated(f->b, &f->aa, FIPS_LINK_INBOUND);
     assert(f->a->ops->send(f->a, &f->ba, frame, sizeof frame) == 0); expect_packet(f, 2, sizeof frame);
     assert(!fipsd_udp_register_classifier(f->a, "late", consume, &f->calls));
+#if defined(__linux__)
+    recv_batch();
+#endif
     if (f->can_bind) {
         for (unsigned generation = 1; generation <= 2; ++generation) {
             atomic_store(&f->source.exists, true); atomic_store(&f->source.now, generation * 20000);

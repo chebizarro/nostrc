@@ -45,6 +45,34 @@ struct udp_instance {
     size_t next_route;
     bool started;
 };
+/* The largest datagram a drain takes: larger is truncated, hence malformed. */
+#define FIPSD_UDP_RECV_MAX 65536u
+#if defined(__linux__)
+/* Linux drain (nostrc-u19cz.4): recvmmsg takes up to FIPSD_UDP_RECV_BATCH
+ * datagrams per syscall, each with its own source, pktinfo and ECN control.
+ * Each slot receives straight into a transport event the node will own, so
+ * a frame reaches the dispatcher without a copy; the slot is refilled with a
+ * fresh event. Datagrams longer than the slot (cap: the configured MTU) spill
+ * into a per-slot tail, touched only by them, so every datagram the drain
+ * took before is still taken, by a copy into an event of its size.
+ * Includers define _GNU_SOURCE (struct mmsghdr). */
+#define FIPSD_UDP_RECV_BATCH 32u
+typedef struct udp_rx {
+    struct mmsghdr m[FIPSD_UDP_RECV_BATCH];
+    struct iovec iov[FIPSD_UDP_RECV_BATCH][2];
+    fipsd_udp_endpoint source[FIPSD_UDP_RECV_BATCH];
+    struct { _Alignas(struct cmsghdr) uint8_t data[512]; } control[FIPSD_UDP_RECV_BATCH];
+    fipsd_transport_event *slot[FIPSD_UDP_RECV_BATCH]; /* cap payload bytes each */
+    uint8_t *spill; /* FIPSD_UDP_RECV_BATCH tails of FIPSD_UDP_RECV_MAX - cap bytes */
+    size_t cap, filled; /* filled: the slots the last call wrote */
+} udp_rx;
+udp_rx *fipsd_udp_rx_create(size_t cap); /* 0 < cap < FIPSD_UDP_RECV_MAX */
+void fipsd_udp_rx_free(udp_rx *);
+/* One gof_recvmmsg over every slot (parks until a datagram is queued): the
+ * count, or -1 with errno. Datagram i has m[i].msg_len bytes, its first
+ * min(len, cap) in slot[i]->bytes and the rest in iov[i][1]. */
+int fipsd_udp_recv_batch(udp_rx *, gof_socket_t);
+#endif
 /* Lifecycle calls hold the channel gate, never a scheduler-blocking mutex. */
 udp_socket *fipsd_udp_socket_open(udp_instance *, const fipsd_udp_endpoint *,
     const fipsd_udp_endpoint *remote, uint64_t, fips_link_direction);
