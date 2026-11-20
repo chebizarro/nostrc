@@ -102,6 +102,9 @@ thread, the second scheduler worker idle).
   channel, transport events, peer inbox and command mailbox are all empty, and
   the shard's worker has nothing in flight, the dispatcher runs the job itself.
   Its completion still goes through the results channel, behind that worker's.
+  The run first reserves a results slot that no accepted job can still claim,
+  or the job goes to its worker instead (review fix), so an inline completion
+  is never dropped and the dispatcher never waits on its own queue.
   Without this, CPU per datagram at 100 Mbit/s rose from ~56 to ~88 us: two
   thread wakes per job cost several times the AEAD.
 - Wipes. `recycle` used to wipe all three 2 KB slabs after

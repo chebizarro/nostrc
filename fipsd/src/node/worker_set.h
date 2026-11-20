@@ -51,9 +51,10 @@ int fipsd_worker_set_dispatch(fipsd_worker_set *, fipsd_crypto_job *);
  * pick, and queues its completion on the results channel behind everything
  * that worker has produced. Refused (-1: not run, ownership kept) unless that
  * worker is live with nothing in flight, so a shard's completions keep their
- * order. For when a handoff buys no parallelism, only a thread wake each way
- * (nostrc-u19cz.3). A run job whose completion the results channel refuses
- * (closed) is destroyed, as a worker does; that still returns 0. */
+ * order, and unless the open results channel has a slot no accepted job can
+ * still claim, so the completion is never lost and the call never blocks.
+ * Dispatch the refused job instead. For when a handoff buys no parallelism,
+ * only a thread wake each way (nostrc-u19cz.3). */
 int fipsd_worker_set_run_inline(fipsd_worker_set *, fipsd_crypto_job *);
 size_t fipsd_worker_set_live(const fipsd_worker_set *);
 /* Close input queues. Accepted jobs drain and emit results, despite root
