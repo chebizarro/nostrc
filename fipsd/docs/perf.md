@@ -124,6 +124,244 @@ markdown summary). No new failure metric or hosted-gate policy is introduced;
 raw per-probe and latency details remain in the JSON. No component version
 bump: these are test/harness/documentation changes, not shipped daemon APIs.
 
+## Inline crypto at moderate rates: nostrc-u19cz.14
+
+Measured **2026-11-20** on the shared Linux VM of nostrc-u19cz.4 (below:
+Ubuntu 24.04 aarch64 under QEMU/HVF, 10 vCPU, gcc 13.3 Release,
+`FIPSD_WORKERS=2`). The current tip `9e78793e9` and this branch were built side
+by side and run alternating, with the pre-pass baseline `4ff8ca4f2` and the
+Rust daemon (every invocation's Rust-to-Rust pair is the noise control). Every
+run is reported. macOS (M4 Max, load average 6-18) was checked for
+regressions. At a fixed 100 Mbit/s the Linux C sender had become dearer than
+before the pass (95-100 us per delivered datagram against 85-88 for
+`4ff8ca4f2` and 55-57 for Rust). It is now 59-63.
+
+### What the instrumentation showed
+
+A temporary counter build of the current tip (not committed) counted every
+`fipsd_dp_submit` outcome per lane, worker condvar sleeps and signals, and the
+dispatcher selects that found every queue empty. `perf stat --per-thread`
+(`context-switches`, `cpu-migrations`, `syscalls:sys_enter_futex`,
+`raw_syscalls:sys_enter`, `sched:sched_waking`) covered 6 s inside an 8 s c-c
+probe at 100 Mbit/s and `perf record -g` 4 s. Per-thread CPU came from `/proc`
+over the same sub-window. On this VM `perf`'s task-clock reads about 30% below
+`/proc` utime+stime, which the harness uses, so every CPU figure here is the
+harness's. c-c at 100 Mbit/s, current tip, out of 83.5k datagrams:
+
+| Job | Inline | To a worker | Why not inline |
+|---|---:|---:|---|
+| sender session seal | 867 | 82,621 | next native datagram already in the mailbox 58,740; worker busy 20,568; completions queued 3,313 |
+| sender link seal + UDP send | 449 | 83,067 | completions queued 66,532; worker busy 12,500; mailbox 4,032 |
+| receiver link open (+ fused FSP open) | 456 | 83,060 | rest of the receive batch queued 67,485; worker busy 14,869 |
+
+So about 99% of the jobs went to workers although the dispatcher had time to
+spare. The sender woke a sleeping worker 35.6k times and parked 41k times, and
+worker batches averaged 4 jobs. The bead's suspects were right for the
+receiver (the rest of a receive batch) and partly for the sender (queued
+completions), but the largest single reason on the sender was the native
+mailbox: the next datagram had usually arrived by the time the dispatcher woke
+for the previous one. In
+`perf record` 48% of the sender's samples were in `try_to_wake_up`; under HVF
+a wake of another vCPU is an exit to the host. The dispatcher waking a worker
+took 12%, worker completions waking the dispatcher 14%, libgo's netpoller
+waking a scheduler thread for the native reader 9%, the dispatcher's timed
+select waking an idle scheduler thread (`sleepers_add`) 6.4% plus that
+thread's condvar exit. The loopback send waking the receiver took 5.6%, which
+is inherent (Rust pays it too).
+
+The counter build took the inline threshold from an environment knob
+(diagnostic only): a job ran inline while at most K events were queued for the
+dispatcher. c-c, 6 s at 100 Mbit/s, CPU us per delivered datagram, and
+unpaced c-c Mbit/s:
+
+| K | 0 (current) | 2 | 4 | 8 | 16 |
+|---|---:|---:|---:|---:|---:|
+| sender | 97.0, 95.4 | 74.2, 78.2 | 67.2, 69.1 | 71.8, 68.5 | 67.2, 67.4 |
+| receiver | 68.0, 67.5 | 61.8, 60.6 | 59.4, 59.2 | 61.0, 57.3 | 58.7, 59.8 |
+| unpaced c-c | 990.6, 851.7 | | 970.2, 947.7 | | 920.0, 999.6 |
+
+At K=4, 97% of the sender's seals ran inline and worker wakes fell from
+26,800 to 402 per 62.8k datagrams; at K=16 all ran inline. Under saturation
+even K=16 inlined only 3% of the jobs, because the queues sit at 32 and more.
+
+### Changes
+
+- **fipsd** (`node/context.c`). `fipsd_node_dispatch_backlog` sums the
+  queued completions, transport events, peer commands and command mailbox,
+  and reports a backlog only above `FIPSD_NODE_INLINE_BACKLOG` (8). Up to
+  that, a job runs inline as before, delaying those few events by one AEAD
+  instead of costing two thread wakes. Unchanged: shard order (inline only
+  while the shard's worker has nothing in flight, so a shard's first handoff
+  keeps the rest of its burst there), the results-slot reservation, the send
+  gate, and replay marks and counters on the dispatcher. `FipsdDataplaneTest`
+  (`inline_backlog`) pins the rule and fails with the old one.
+- **libgo** (`fiber/sched/sched.c`). `sleepers_add` signalled `S.cv` on every
+  timed park (nostrc-e08s7), so each dispatcher park woke an idle scheduler
+  thread that found nothing and slept again. Idle workers now record, under
+  `S.mu`, when they will wake by themselves. The signal is skipped only when
+  every idle worker is already due by the new deadline on a monotonic
+  condvar: each then re-derives its wait from the heap, which holds the new
+  sleeper, as the signalled worker would. A worker waiting untimed (the e08s7
+  case) or past the deadline still gets the same single signal. macOS has no
+  monotonic condvar (REALTIME fallback, which can oversleep after a clock
+  step), so it always signals and is unchanged (nostrc-u19cz.21).
+
+Not needed after this: completing each job right after its own send,
+signalling once per submitted run and spinning workers all make handoffs
+cheaper, and at these rates there are hardly any left; the dispatcher already
+sends the frames it seals inline itself, so a low-rate send rule adds nothing.
+
+### Results (Linux VM)
+
+100 Mbit/s, 4 s windows, CPU us per delivered datagram, attributing the two
+steps: three rounds of current, fipsd step, both steps. The last column ran
+the first form of the libgo change ("any idle worker due by then"), which
+behaves identically with the harness's two scheduler threads. `*` lost
+12-15%, mostly local refusals at the sender's native API (see loss below).
+
+| | Current | fipsd step | fipsd + libgo |
+|---|---:|---:|---:|
+| c-c sender | 96.5, 97.7, 95.8 | 70.5, 84.8\*, 66.7 | 60.0, 60.5, 63.4 |
+| c-c receiver | 67.0, 68.4, 67.4 | 58.6, 58.0\*, 59.8 | 52.8, 51.6, 52.6 |
+| C sender to Rust | 98.7, 99.8, 97.5 | 85.8\*, 68.7, 69.1 | 66.1, 68.8, 83.1\* |
+| Rust sender (Rust-Rust) | 55.5, 62.2, 55.4 | 55.2, 57.8, 54.2 | 55.0, 59.3, 58.5 |
+
+An earlier session with the pre-pass baseline, three rounds of current,
+fipsd step, `4ff8ca4f2`: c-c sender 77.6, 96.2, 96.3 / 67.9, 67.7, 67.4 /
+75.7, 86.4, 85.2; receiver 53.3, 66.5, 67.5 / 58.1, 56.9, 59.3 / 61.5, 72.2,
+70.3; C sender to Rust 98.0, 98.4, 96.8 / 69.7, 69.0, 68.9 / 96.6, 86.9,
+87.1.
+
+Final code, 8 s windows, five rounds alternating with the current tip:
+
+| | Current `9e78793e9` | u19cz.14 |
+|---|---:|---:|
+| c-c sender | 96.6, 97.8, 94.6, 96.3, 96.5 | 60.0, 63.4, 60.7, 58.9, 59.5 |
+| c-c receiver | 67.3, 66.4, 66.1, 67.5, 67.4 | 51.7, 52.4, 52.7, 55.8, 52.6 |
+| C sender to Rust | 98.9, 97.7, 100.7, 97.8, 98.6 | 64.5, 65.6, 65.1, 60.8, 64.9 |
+| Rust receiver behind it | 52.3, 50.9, 54.2, 49.2, 50.9 | 65.8, 66.4, 66.3, 64.8, 64.3 |
+| c-c loss % | 0, 3.09, 0.20, 0.21, 0 | 0, 0, 0, 3.45, 0 |
+| C-to-Rust loss % | 0.64, 0.35, 4.82, 0.01, 0.52 | 0.45, 0.64, 0.06, 0, 2.96 |
+| c-c loaded one-way p50 / p99 us | 1348/2182, 1178/5002, 1339/4082, 1238/2169, 1236/2279 | 314/874, 409/1215, 356/1057, 305/3193, 335/647 |
+| C-to-Rust loaded one-way p50 us | 1187, 1128, 1068, 997, 1185 | 495, 487, 535, 412, 477 |
+| c-c serial one-way p50 us (pre-load) | 294, 265, 561, 291, 280 | 227, 308, 271, 250, 256 |
+
+Loss. Both builds show occasional runs losing 3-5% (12-15% in 4 s windows),
+almost all of it local refusals: the native reader fell more than a client
+socket buffer (about 16 ms at this rate) behind, i.e. a host-level stall. Over
+the 4 s sessions such runs were 0 of 12 (current), 3 of 18 (this branch's two
+steps) and 1 of 6 (`4ff8ca4f2`); over the 8 s session above, 2 of 10 for each
+build. That is not a distinguishable difference.
+
+The Rust receiver costs more behind the new C sender (50 -> 65 us): the
+current tip's worker sent about 4 frames per `sendmmsg` (GSO), so the Rust
+receiver woke once per burst, while an inline send at this rate is one
+datagram per call. The pair as a whole is still cheaper (C sender plus Rust
+receiver about 150 -> 130 us per datagram). Batching inline sends per
+dispatcher burst is a follow-up (nostrc-u19cz.20).
+
+Wakes and system calls per datagram, one session, 100 Mbit/s c-c (the Rust
+row is its Rust-to-Rust pair in the same session):
+
+| | CPU us | Context switches | futex | All syscalls | Wakeups (`sched_waking`) | Migrations |
+|---|---:|---:|---:|---:|---:|---:|
+| `4ff8ca4f2` sender / receiver | 87.5 / 72.8 | 2.09 / 1.63 | 4.60 / 3.70 | 10.05 / 8.79 | 1.97 / 1.62 | .001 / .002 |
+| current sender / receiver | 100.0 / 70.1 | 1.89 / 1.23 | 4.38 / 2.86 | 6.55 / 4.70 | 1.82 / 1.22 | .112 / .110 |
+| u19cz.14 sender / receiver | 62.5 / 54.1 | 1.57 / 1.30 | 2.73 / 2.26 | 7.22 / 5.36 | 1.49 / 1.30 | .004 / .003 |
+| Rust sender / receiver | 56.3 / 71.7 | 1.45 / 2.04 | 1.35 / 1.16 | 10.28 / 7.72 | 1.29 / 1.66 | .000 / .001 |
+
+The current tip makes only about 20% more wakes per datagram than this
+branch. What it pays for is where they land: worker threads woken on idle
+vCPUs (IPIs, one thread migration per nine datagrams). The two crypto threads
+are now idle at this rate.
+
+Unpaced (`--seconds 5`), delivered Mbit/s, receiver overload as in u19cz.4:
+
+| | Current | u19cz.14 |
+|---|---:|---:|
+| c-c (seven rounds) | 1041.7, 1090.6, 971.8, 770.1, 1068.9, 1014.8, 1001.8 | 863.8, 948.4, 1039.6, 1059.7, 1178.0, 1212.7, 1096.7 |
+| C to Rust | 236.4, 197.9, 188.9 | 177.4, 169.7, 156.9 |
+| Rust to Rust (unchanged) | 81.2, 88.0, 84.6 | 88.8, 79.0, 82.3 |
+
+C to Rust delivers less because the C sender offers more (676-695k datagrams
+in 5 s against 533-597k) and the overloaded Rust receiver sheds more of it
+(594-603k `native.drop_flow_queue_full` against 435-474k), as the u19cz.4
+section describes.
+
+Sustainable (<1% loss) Mbit/s, three searches each, `--paced-seconds 3`:
+
+| | Current | u19cz.14 |
+|---|---:|---:|
+| c-c | 450.0, 481.2, 587.5 | 518.7, 387.5, 518.7 |
+| C to Rust | 162.5, 125.0, 150.0 | 156.2, 200.0, 221.9 |
+
+The 387.5 search failed at 400 Mbit/s on one stall (8.0k local refusals in
+3 s). These are host noise, not a gain or a regression.
+
+What is left to Rust (sender 59-63 against 55-57): in `perf record` of the
+final sender, 23% of the samples are libgo's poller thread waking the
+scheduler thread that runs the native reader. Each readiness costs two thread
+wakes (kernel to poller, poller to worker; tokio's worker polls epoll
+itself), and a targeted push broadcasts `S.cv` to every idle scheduler thread
+(nostrc-y1y8n), which by default is one per CPU. Both are libgo design
+changes, tracked as nostrc-u19cz.18 and nostrc-u19cz.19. The loopback send
+waking the receiver (14%) is inherent.
+
+### macOS
+
+Release builds of `9e78793e9` and this branch, alternating, the second
+session in reverse order. macOS keeps per-datagram sends and receives, and its
+libgo condvar always signals, so only the fipsd step applies.
+
+| macOS | Current | u19cz.14 |
+|---|---:|---:|
+| 100 Mbit/s CPU us/datagram, c-c sender | 32.6, 30.9, 31.0, 32.2, 28.1, 33.7 | 28.6, 36.2, 34.1, 34.1, 32.6, 31.0 |
+| c-c receiver | 32.6, 31.3, 31.7, 31.0, 27.1, 33.2 | 28.3, 37.9, 34.8, 35.0, 32.4, 31.4 |
+| C sender to Rust | 33.8, 36.3, 30.7, 40.1, 31.7, 31.9 | 31.2, 40.6, 40.6, 30.7, 31.5, 32.0 |
+| Rust sender, same invocations | 31.0, 20.4, 20.7, 18.2, 20.6, 20.4 | 19.7, 25.5, 30.3, 22.6, 20.9, 27.6 |
+| unpaced c-c Mbit/s | 1419.2, 1426.6, 1383.7 | 1418.6, 1331.8, 1463.9 |
+| unpaced C to Rust Mbit/s | 765.4, 1069.2, 1152.7 | 1044.9, 841.6, 1052.0 |
+| c-c serial one-way p50 fwd/rev us | 65/63, 64/63, 57/54 | 65/62, 56/55, 58/58 |
+
+The means differ by less than the unchanged Rust pair moved (the branch's
+slots happened to be the busier ones), so neither a regression nor a gain is
+claimed on macOS.
+
+Verification, Debug `-DGO_WARNINGS_AS_ERRORS=ON`, `ctest -R '^Fips' -E
+'Soak|Perf'` with both Rust interop binaries set (the unrelated `nips/nip57`
+target, missing `bolt11/bolt11.h`, does not build in either tree):
+
+- macOS, Apple clang ASan+UBSan: 222/222 (8 capability skips). `^Go` 46/46,
+  and the 15 multi-worker, timeout, idle and lifecycle libgo tests 10/10
+  each.
+- macOS TSan (vendored nsync, `-E '^FipsCore'`): 183/183 (8 skips), `^Go`
+  46/46, no ThreadSanitizer report. `--repeat until-fail:5` over workers,
+  dataplane, node/UDP v4/v6/native two-node, native burst, restart replay,
+  the five multi-node topologies and both TCP rekey-saturated tests, `-j4`:
+  every test 5/5 except one deadline miss of `FipsdTcpRekeySaturatedTest`
+  beside the multi-node tests (nostrc-4im43), which then passed 5/5 alone
+  (11-13 s of its deadline).
+- Linux VM, clang 18 ASan+UBSan: 224/224 (11 capability skips). `^Go` 46/46,
+  and the same 15 libgo tests 10/10 each; the sleeper skip is active only on
+  Linux.
+- Linux VM, clang 18 TSan (vendored nsync), libgo: `^Go` 46/46 and the 15
+  tests 5/5 each, no report.
+- `FipsdDataplaneTest` (`inline_backlog`) aborts with the threshold set back
+  to 0. The libgo change was reviewed for lost wakes (a covering worker taken
+  by a runnable, arbitrary signal recipients, the heap-read window, worker
+  exit, the REALTIME fallback); its first form ("any idle worker due") was
+  narrowed to "every idle worker due" and monotonic-only as a result.
+- Static pre-push checks (whitespace, unsequenced arguments, errno after
+  park, GDK frame, CI packages, Groundhog privacy) pass.
+- Skips: privileged TUN/IPv6/Ethernet/gateway smoke, BlueZ, Tor, the control
+  and fipsctl interop, and the kqueue-only native probe on Linux.
+
+Deferred, with beads: libgo's poller hop, two thread wakes per readiness
+(nostrc-u19cz.18); a targeted push waking every idle scheduler thread
+(nostrc-u19cz.19); batching inline sends per dispatcher burst
+(nostrc-u19cz.20); the Darwin condvar keeping the per-park signal
+(nostrc-u19cz.21).
+
 ## UDP syscall batching on Linux: nostrc-u19cz.4
 
 Linux only: macOS and Windows keep the per-datagram paths, and the C client,
@@ -231,7 +469,7 @@ parks). Unpaced: ~18 datagrams per `sendmmsg` and ~23 per `recvmmsg`.
 `futex` rises at the paced rate. The likely cause is the u19cz.3 inline rule,
 but it is not instrumented: a receive batch leaves events queued, and a worker
 holds a run's completions until its batched send, so fewer jobs run inline on
-the dispatcher (nostrc-u19cz.14).
+the dispatcher (measured and fixed by nostrc-u19cz.14, above).
 
 ### Results
 
@@ -343,7 +581,7 @@ Deferred, with beads:
   event pool (nostrc-u19cz.12).
 - Intermittent slow C-C pair on the VM, in both builds (nostrc-u19cz.13).
 - Fewer inline crypto runs at moderate rates with batched I/O, measured as
-  the `futex` rise (nostrc-u19cz.14).
+  the `futex` rise (nostrc-u19cz.14, done above).
 - Darwin `recvmsg_x`/`sendmsg_x` batching, as upstream does on macOS
   (nostrc-u19cz.15).
 - Pre-existing gate failures found here: Linux TSan on the OpenSSL
@@ -451,7 +689,8 @@ thread, the second scheduler worker idle).
   AEADs (or an arrival's two opens) pipeline over two workers.
 - A handoff buys parallelism only while other input waits. When the results
   channel, transport events, peer inbox and command mailbox are all empty, and
-  the shard's worker has nothing in flight, the dispatcher runs the job itself.
+  the shard's worker has nothing in flight, the dispatcher runs the job itself
+  (since nostrc-u19cz.14: while at most 8 events are queued in them).
   Its completion still goes through the results channel, behind that worker's.
   The run first reserves a results slot that no accepted job can still claim,
   or the job goes to its worker instead (review fix), so an inline completion
