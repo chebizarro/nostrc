@@ -365,6 +365,7 @@ static bool attach(void *user, const fipsd_node_attach *a)
     fipsd_metrics_init(&h->metrics);
     h->next_tick = fips_deadline(h->origin, fips_duration_from_millis(h->cfg.tick_ms));
     h->publish_allowed = h->origin;
+    h->timers = (hs_timers){.stale = true};
     h->next_link_id = 1;
     load_core(h);
     if (!allocate(h) || !fipsd_dp_init(h)) return false;
@@ -406,8 +407,10 @@ static bool on_transport_event(void *user, const fipsd_transport_event *e)
     handlers *h = user;
     fipsd_transport *t = hs_transport(h, e->id);
     if (!t || !h->running) return true;
+    hs_timers_touch(h);
     /* .7: packet classification and owned authentication jobs live in dataplane. */
     if (e->kind == FIPSD_TRANSPORT_PACKET) return fipsd_dp_rx(h, e);
+    hs_timers_invalidate(h); /* discovery, connect and disconnect start/end legs, retries and peers */
     if (e->kind == FIPSD_TRANSPORT_DISCOVERED) {
         if (!strcmp(t->type, "ethernet") && t->auto_connect && e->size == 32) {
             fips_xonly_pubkey key; fips_peer_identity peer;
@@ -452,18 +455,24 @@ static bool on_transport_event(void *user, const fipsd_transport_event *e)
 }
 static bool on_crypto_result(void *user, const fipsd_crypto_job *job)
 {
+    hs_timers_touch(user);
     return fipsd_dp_result(user, job);
 }
 static void on_network_event(void *user, const fipsd_netmon_event *e)
-{ handlers *h = user; if (h->running) { h->dataplane->needs_publish = true; hs_netmon_event(h, e); } }
+{
+    handlers *h = user;
+    if (!h->running) return;
+    hs_timers_invalidate(h); /* presence and medium changes re-step every Bundle */
+    h->dataplane->needs_publish = true; hs_netmon_event(h, e);
+}
 static bool peer_effects(void *user, fipsd_active_peer *peer, const fipsd_peer_actions *actions)
-{ return hs_peer_effects(user, peer, actions); }
+{ hs_timers_touch(user); return hs_peer_effects(user, peer, actions); }
 static uint64_t wait_ms(void *user, fips_instant now) { return hs_wait_ms(user, now); }
 static bool poll(void *user, fips_instant now)
 {
     handlers *h = user;
     /* Catch timer-driven topology/cost/cache expiry changes, not every packet. */
-    if (hs_until_ms(h->next_tick, now) == 0 || hs_path_wait_ms(h, now) == 0)
+    if (hs_until_ms(h->next_tick, now) == 0 || hs_timers_due(h, HS_TIMER_PATHS, now))
         h->dataplane->needs_publish = true;
     return hs_poll(h, now) && fipsd_dp_publish(h);
 }
@@ -479,7 +488,8 @@ static bool on_command(void *user, void *message)
         command_free(c);
         return true;
     }
-    if (c->kind != HCMD_SEND) h->dataplane->needs_publish = true;
+    hs_timers_touch(h);
+    if (c->kind != HCMD_SEND) { h->dataplane->needs_publish = true; hs_timers_invalidate(h); }
     switch (c->kind) {
     case HCMD_CONNECT: (void)hs_dial(h, &c->identity, c->transport, &c->addr, false); break;
     case HCMD_DISCONNECT: (void)hs_disconnect(h, &c->node, FIPS_FMP_Shutdown, true); break;

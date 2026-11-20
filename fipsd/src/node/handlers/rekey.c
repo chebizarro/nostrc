@@ -324,7 +324,19 @@ void hs_link_message(handlers *h, peer_rec *rec, fipsd_transport *t, const fips_
     }
 }
 /* Session machines: same executor, FSP framing by fips_session_execute. */
+static bool session_execute(handlers *h, fips_session_entry *entry, const uint8_t *input, size_t len);
+/* Every successful session machine step is executed here, so this is where
+ * the step's new next_wake is folded into the deadline cache: before (the
+ * step moved it, even with no outputs) and after (installs and resends). */
 bool hs_session_execute(handlers *h, fips_session_entry *entry, const uint8_t *input, size_t len)
+{
+    hs_timers_fold_session(h, entry);
+    if (!h->session_out.count) return true;
+    bool ok = session_execute(h, entry, input, len);
+    hs_timers_fold_session(h, entry);
+    return ok;
+}
+static bool session_execute(handlers *h, fips_session_entry *entry, const uint8_t *input, size_t len)
 {
     /* No outputs (DataSent's usual case): nothing installs, delivers or tears
      * down, and the executor would only re-wipe the empty list. */

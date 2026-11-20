@@ -69,6 +69,7 @@ void hs_path_peer_added(handlers *h, peer_rec *rec)
     fips_path_env env = {&facts, hs_mmp_link_cost(h, rec)};
     fips_path_bundle_new(rec->path, hs_now(h), info->transport, info->addr, params_of(h), h->entropy, &env);
     rec->path_live = true;
+    hs_timers_invalidate(h); /* a new Bundle */
     /* A new machine starts with an empty candidate table: forget what the
      * feeds listed for the old one (upstream paths_renewed), so each feed's
      * next report is a candidate for this one. */
@@ -155,7 +156,9 @@ static void step(handlers *h, peer_rec *rec, const fips_path_input *input)
     fips_path_env env = {&facts, hs_mmp_link_cost(h, rec)};
     fips_path_outputs out = {h->path_outputs, FIPS_PATH_OUTPUTS_MAX, 0};
     if (fips_path_bundle_step(rec->path, hs_now(h), input, &env, &out) != FIPS_OK) return;
+    hs_timers_fold_path(h, rec);
     run_outputs(h, rec, &out);
+    hs_timers_fold_path(h, rec);
 }
 void hs_path_peer_removed(handlers *h, peer_rec *rec)
 {
@@ -185,14 +188,18 @@ void hs_path_message(handlers *h, peer_rec *rec, fipsd_transport *t, const fips_
 }
 void hs_path_account(handlers *h, peer_rec *rec, fipsd_transport *t, const fips_transport_addr *from, size_t len, uint8_t msg_type)
 {
-    if (rec->path_live) (void)fips_path_bundle_account(rec->path, hs_now(h), t->id, from, len, msg_type);
+    /* Hearing a path (or a roam) can arm its probe or capability wake. */
+    if (rec->path_live) {
+        (void)fips_path_bundle_account(rec->path, hs_now(h), t->id, from, len, msg_type);
+        hs_timers_fold_path(h, rec);
+    }
 }
-uint64_t hs_path_wait_ms(handlers *h, fips_instant now)
+fips_instant hs_path_next(handlers *h)
 {
-    uint64_t wait = UINT64_MAX;
+    fips_instant at = {0};
     for (size_t i = 0; i < h->cfg.peer_capacity; ++i)
-        if (h->recs[i].used && h->recs[i].path_live) wait = hs_min_wait(wait, fips_path_bundle_next_wake(h->recs[i].path), now);
-    return wait;
+        if (h->recs[i].used && h->recs[i].path_live) at = hs_instant_min(at, fips_path_bundle_next_wake(h->recs[i].path));
+    return at;
 }
 void hs_path_poll(handlers *h, fips_instant now)
 {
