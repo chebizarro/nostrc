@@ -97,7 +97,8 @@ Management intents are encrypted between provisioner and bunker when transported
 ### Process Hardening
 
 - Guarded `sodium_malloc` allocations and explicit wiping reduce exposure; locking is best-effort, not a guarantee against swap or all transient copies.
-- Linux `prctl(PR_SET_DUMPABLE, 0)` and `mlockall` failures warn and continue. Enforce a zero core limit in deployment; verify actual process limits.
+- `SIGNET_MLOCK_MODE=best-effort` is the daemon default; `required` refuses startup unless current and future process pages can be locked with an unlimited soft memlock limit. `off` disables process-wide locking only. See [Memory-locking policy](#memory-locking-policy).
+- Linux `prctl(PR_SET_DUMPABLE, 0)` failures warn and continue independently of the locking policy. Enforce a zero core limit in deployment; verify actual process limits.
 - Non-root container user; live root/same-UID compromise is outside the at-rest protection boundary.
 - Normal remote signing does not export agent nsecs. BYO import, operator-held keys, encrypted backups and credential delivery have separate custody boundaries; bunker URIs are secrets.
 
@@ -289,6 +290,7 @@ New 0.8.0 file-key and bootstrap-trust inputs are the release contract in
 | `SIGNET_BUNKER_PUBKEY`        | Bunker pubkey (npub/hex) for signetctl to address the bunker |
 | `SIGNET_RELAYS`                | Comma-separated relay URLs               |
 | `SIGNET_LOG_LEVEL`            | `debug`, `info`, `warn`, `error`         |
+| `SIGNET_MLOCK_MODE`           | Startup-only: `off`, `best-effort` (daemon default), `required` (production Compose default) |
 | `SIGNET_DB_PATH`              | SQLCipher database path                  |
 | `SIGNET_HEALTH_PORT`          | Health endpoint port (0 to disable)      |
 | `SIGNET_AUDIT_PATH`           | Audit log file path (empty = stdout)     |
@@ -539,6 +541,52 @@ ready, otherwise 503. `/metrics` is unauthenticated Prometheus text. These are
 on-box loopback endpoints, never public proxy routes; inspect readiness rather
 than treating HTTP liveness as enrollment or signing proof.
 
+## Memory-locking policy
+
+`SIGNET_MLOCK_MODE` is read before configuration/secret loading, durable boot
+admission or any listener starts. Values are case-insensitive; unset/empty means
+`best-effort`. Unknown values (including the unmerged prototype's `future` and
+`current`) refuse startup. SIGHUP does not change this process-wide policy.
+
+| Mode | Startup decision |
+|---|---|
+| `off` | Do not call process-wide locking/rlimit syscalls. Guarded sodium allocations still attempt their own locks. |
+| `best-effort` | With an unlimited soft memlock limit, try `MCL_CURRENT\|MCL_FUTURE`, falling back to `MCL_CURRENT`. With a finite or unreadable limit, try only `MCL_CURRENT`. Log degraded coverage or failure and continue. |
+| `required` | Require an unlimited soft `RLIMIT_MEMLOCK` and successful `MCL_CURRENT\|MCL_FUTURE`. Otherwise exit 1 before secrets load; no current-only fallback. |
+
+The daemon may raise the soft limit to the **existing hard ceiling**, never raise
+that ceiling or add capabilities. Required mode deliberately refuses finite
+limits even when `CAP_IPC_LOCK` could bypass them. There is no safe fixed byte
+budget for future mappings: with `MCL_FUTURE`, later allocations and stack growth
+can fail after a finite limit is exhausted ([mlockall(2)](https://man7.org/linux/man-pages/man2/mlockall.2.html)).
+Best-effort current-only locking is a startup snapshot, not protection for later
+secrets; new mappings and transient copies may be swappable. Sodium locking is
+also best-effort. None of these modes protects against live root/same-UID attacks,
+host hibernation, or guarantees that every transient secret copy is never swapped.
+On macOS, unsupported/denied `mlockall` calls degrade in best-effort and refuse
+startup in required; allocator tuning is a no-op.
+
+Production Compose explicitly selects `required` and already sets unlimited
+memlock with all capabilities dropped. Docker's small default memlock allowance
+is insufficient: use `--ulimit memlock=-1:-1`, not a new `IPC_LOCK` capability.
+A native systemd service can use this drop-in (the shipped Compose supervisor is
+not the daemon; Docker's container limits must still be set in Compose):
+
+```ini
+[Service]
+Environment=SIGNET_MLOCK_MODE=required
+LimitMEMLOCK=infinity
+LimitCORE=0
+```
+
+Verify the effective container/process limits and Linux `VmLck` after startup.
+An unlimited **locking** limit is not an unlimited cgroup memory allowance:
+the existing 512 MiB Compose cap still applies and exhaustion can cause OOM kills.
+On glibc/Linux we cap allocator arenas at two early in startup to reduce retained
+mapped memory. This is advisory, not a memory quota or proof of security. We do
+not force periodic `malloc_trim()` on signing requests, tune other allocators,
+or enlarge the container budget to hide high-water memory usage.
+
 ## Testing & CI
 
 Discover and execute the tests registered by your actual build, rather than
@@ -560,7 +608,7 @@ encrypted-store proof; helper tests are not deployed enrollment acceptance.
 The authority for these guarantees and exclusions is [THREAT_MODEL.md](docs/THREAT_MODEL.md).
 
 - Normal remote signing does not export agent nsecs; BYO custody, backup recovery and explicit credential delivery are distinct boundaries. Bunker URIs contain secrets.
-- Guarded allocations and wiping reduce memory exposure; memory locking is best-effort, not a never-swapped guarantee.
+- Guarded allocations and wiping reduce memory exposure. Process locking is configurable: best-effort by default, fail-closed at startup with `SIGNET_MLOCK_MODE=required` (production Compose default); neither is a blanket never-swapped guarantee.
 - SQLCipher provides AES-256 encryption at rest and is verified at startup with `PRAGMA cipher_version` plus a keyed read; with `SIGNET_REQUIRE_ENCRYPTED_DB=true`, verification failure stops the daemon
 - Credential payloads are envelope-encrypted with per-agent libsodium secretbox keys derived via BLAKE2b from the store DEK and agent pubkey
 - Linux dumpability hardening is warn-only; enforce and verify deployment core limits.

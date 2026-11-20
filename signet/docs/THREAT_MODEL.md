@@ -283,9 +283,24 @@ Known residual gaps (accepted, documented):
   remain visible to same-UID/root observers (out of scope). The 0.8.0 file-key
   resolver uses caller-owned guarded buffers and wipes them on release; it
   cannot guarantee removal of every library/internal or transient copy.
-- `sodium_malloc` memory locking and daemon `mlockall` are best-effort;
-  `mlockall` failure warns and continues. These do not justify “never swapped”.
-  Verify memlock limits and actual locked memory on the deployed host.
+- `sodium_malloc` locking remains best-effort. Daemon-wide locking uses the
+  startup-only `SIGNET_MLOCK_MODE`: `best-effort` (default) warns and continues,
+  `off` skips process-wide locking, and `required` exits 1 before any config/
+  secret loading, durable boot admission or transports unless the soft
+  `RLIMIT_MEMLOCK` is unlimited and `MCL_CURRENT|MCL_FUTURE` succeeds. Invalid
+  modes refuse startup. Only the soft limit may be raised to the existing hard
+  ceiling; required deliberately refuses finite limits even with `CAP_IPC_LOCK`.
+  Best-effort with finite/unknown limits tries `MCL_CURRENT` only, avoiding later
+  allocation/stack failures from a finite `MCL_FUTURE` allowance. Current-only
+  success protects a startup snapshot, not later secret mappings; an unlimited
+  limit permits a full-lock attempt but does not guarantee syscall success.
+  Production Compose explicitly selects `required` with unlimited memlock and
+  no extra capabilities. macOS unsupported/denied locking degrades in best-effort
+  and refuses startup in required. See the README policy table and systemd example.
+  Verify effective limits and actual locked memory on the deployed host. This
+  does not justify “never swapped”, prevent host hibernation or protect against
+  live privileged observers. glibc arena tuning limits retention, not live memory;
+  container OOM limits still apply independently.
 - SQLCipher's internal key schedule and page cache are managed by SQLCipher;
   it wipes its own key material on close but this is outside Signet's control.
 - On Linux, `signetd` calls `prctl(PR_SET_DUMPABLE, 0)` at startup, but

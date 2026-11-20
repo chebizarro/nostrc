@@ -233,7 +233,7 @@ other components and all version/release/tag values are unchanged.
 | nip-communikeys | `nips/nip-communikeys/` | 3.0.0 | Unreleased | — | `nips/nip-communikeys/CMakeLists.txt` (`NIP_COMMUNIKEYS_VERSION`) |
 | nip55l (Linux signer) | `nips/nip55l/` | 0.8.0 | Unreleased | — | `nips/nip55l/include/nostr/nip55l/signer_ops.h` (`NOSTR_NIP55L_VERSION_*`) |
 | nostr-seal | `gnome/nostr-seal/` | 0.1.3 (format nsealed v1) | Unreleased | — | `gnome/nostr-seal/src/main.c` (`NOSTR_SEAL_VERSION`), `gnome/nostr-seal/include/nostr-seal.h` (`NSEAL_FORMAT_VERSION`) |
-| signet | `signet/` | 0.9.0 | 0.8.0-rc.1 | `signet-v0.8.0-rc.1` | `signet/meson.build`, `signet/src/signetd_main.c` (`SIGNET_VERSION`), `signet/src/signetctl_main.c` (`SIGNETCTL_VERSION`), `signet/CMakeLists.txt` (`project VERSION`); nostrc-xnptz: PATCH-class provisioning identity-preservation fix folded into unreleased 0.9.0, with no additional bump or release/tag change; nostrc-h70zw: PATCH-class legacy-envelope backup restore and Linux Meson security-gate parity (ported from Stew) fold into unreleased 0.9.0 |
+| signet | `signet/` | 0.9.0 | 0.8.0-rc.1 | `signet-v0.8.0-rc.1` | `signet/meson.build`, `signet/src/signetd_main.c` (`SIGNET_VERSION`), `signet/src/signetctl_main.c` (`SIGNETCTL_VERSION`), `signet/CMakeLists.txt` (`project VERSION`); nostrc-xnptz: PATCH-class provisioning identity-preservation fix folded into unreleased 0.9.0, with no additional bump or release/tag change; nostrc-h70zw: PATCH-class legacy-envelope backup restore and Linux Meson security-gate parity (ported from Stew) fold into unreleased 0.9.0; nostrc-wwujv: MINOR-class configurable memory-locking policy (off/best-effort/required, ported from Stew) folds into unreleased 0.9.0 |
 
 
 ### FIPS component skeletons (nostrc-s50dj.1)
@@ -311,7 +311,7 @@ other components and all version/release/tag values are unchanged.
 
 ### Signet Meson security parity (nostrc-h70zw)
 
-- **signet 0.9.1 → 0.9.2: PATCH.** Match CMake stack protection,
+- **signet stays 0.9.0, Unreleased (PATCH-class, nostrc-h70zw).** Match CMake stack protection,
   aliasing, fortification and Linux ELF linker hardening in Meson; keep PIC/PIE
   enabled by default. CI runs both build systems with the same passkey,
   SQLCipher, test-hook and build-type profiles and verifies daemon ELF properties.
@@ -320,7 +320,7 @@ other components and all version/release/tag values are unchanged.
 
 ### Signet legacy-envelope backup restore (nostrc-h70zw)
 
-- **signet 0.9.0 → 0.9.1: PATCH.** Authenticate a later current custody or
+- **signet stays 0.9.0, Unreleased (PATCH-class, nostrc-h70zw).** Authenticate a later current custody or
   credential envelope when older rows cannot authenticate under the supplied
   master. Existing envelope bytes and formats are preserved, not migrated;
   wrong masters and nonempty stores with no authenticatable envelope still fail.
@@ -346,6 +346,20 @@ other components and all version/release/tag values are unchanged.
   including boundaries published during a bounded drain; reconnect retires old
   callback generations. Public channels and payload ownership remain unchanged.
   The CMake version source and Declared version agree; no release/tag is claimed.
+
+### Signet configurable process memory locking (nostrc-wwujv)
+
+- **signet stays 0.9.0, Unreleased (MINOR-class, nostrc-wwujv); the feature folds into the unreleased version.** New startup-only
+  `SIGNET_MLOCK_MODE=off|best-effort|required` configuration. Best-effort
+  remains the default, but finite/unknown memlock budgets now use current-page
+  locking only rather than risking later allocation failures with `MCL_FUTURE`.
+  Required mode fails before secrets load unless the soft memlock limit is
+  unlimited and current+future locking succeeds. Invalid values refuse startup.
+  **Deployment incompatibility:** production Compose now defaults to required;
+  deployments that previously continued after locking failure will refuse startup.
+- CMake, Meson and both CLI macros agree; published release/tag columns remain
+  unchanged. The module and syscall test seam are private, not an installed API.
+  No other independently releasable component changes.
 
 ### Signet independent backend admission
 

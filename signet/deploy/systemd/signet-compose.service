@@ -18,6 +18,8 @@ RestartSec=275s
 TimeoutStopSec=60s
 UMask=0077
 LimitCORE=0
+# This is the Docker supervisor, not signetd. Container memlock limits and
+# SIGNET_MLOCK_MODE=required are set in docker-compose.yml, not inherited here.
 
 [Install]
 WantedBy=multi-user.target

@@ -7,7 +7,7 @@
 
 cmake_minimum_required(VERSION 3.22)
 
-project(signet VERSION 0.9.2 LANGUAGES C)
+project(signet VERSION 0.9.0 LANGUAGES C)
 
 if (NOT DEFINED SIGNET_ENABLE)
   option(SIGNET_ENABLE "Build Signet NIP-46 bunker service (signetd + signetctl)" ON)
@@ -55,6 +55,7 @@ endif()
 
 set(SIGNET_CORE_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/signet_config.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/memory_hardening.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/secret_input.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/http_listen.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/config_reload.c

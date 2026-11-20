@@ -30,6 +30,12 @@ test_http_routes_exe = executable('test_http_routes', 'test_http_routes.c',
 test('secret_input', test_secret_input_exe)
 test('http_listen', test_http_listen_exe)
 test('http_routes', test_http_routes_exe)
+test_memory_hardening_exe = executable('test_memory_hardening', 'test_memory_hardening.c',
+  link_with: signet_core, include_directories: signet_includes,
+  dependencies: signet_deps + [in_tree_dep], c_args: signet_test_c_args, install: false)
+test('memory_hardening', test_memory_hardening_exe)
+test('memory_hardening_daemon', find_program('python3'),
+  args: [files('test_memory_hardening_daemon.py'), signetd_exe], timeout: 30)
 test('daemon_startup', find_program('sh'),
   args: [files('test_daemon_startup.sh'), signetd_exe, signetctl_exe], timeout: 120)
 # W3/W4 deployment packaging and explicitly enabled live drills (separate ownership).
