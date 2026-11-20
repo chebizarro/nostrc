@@ -152,6 +152,13 @@ typedef struct fipsd_dp_packet {
     uint64_t gate_generation;
     int send_rc;
     bool worker_sent;
+    /* Inbound fusion (fipsd_dp_worker_preopen): a link open's session frame,
+     * pre-opened on the executing thread; plaintext in input. fsp_tag is the
+     * last epoch tried. Accepted only at completion (fipsd_dp_preopened). */
+    bool fsp_tried, fsp_ok, fsp_k;
+    uint64_t fsp_tag, fsp_counter;
+    size_t fsp_body, fsp_plain, fsp_frame;
+    fips_node_addr fsp_src;
     bool session, k, ce, prompt, farewell, path_message, restart; /* restart: tag is the candidate link id */
     uint64_t tag;
     uint32_t timestamp;
@@ -175,6 +182,7 @@ typedef struct fipsd_dataplane {
     struct fipsd_node_handlers *owner; /* for change-only path MTU notices */
     fipsd_dp_gate *gates; /* per peer_rec slot */
     size_t gate_count;
+    fipsd_dp_packet *preopened; /* the link completion being delivered, if pre-opened */
 } fipsd_dataplane;
 
 bool fipsd_dp_init(struct fipsd_node_handlers *);
@@ -212,6 +220,16 @@ bool fipsd_dp_peer_rebind(struct fipsd_node_handlers *, struct peer_rec *);
 void fipsd_dp_link_moved(struct fipsd_node_handlers *, const struct peer_rec *);
 /* The job's after-step for a worker-sent link frame (exposed for tests). */
 void fipsd_dp_worker_send(fipsd_crypto_job *);
+/* Inbound fusion (nostrc-u19cz.3). After-step of a link open, on the executing
+ * thread: an established session frame addressed to this node is opened too,
+ * with the packet snapshot's session keys. fipsd_dp_preopened, on the
+ * dispatcher, admits a successful one (stale-epoch check, replay-marking
+ * machine step) in place of a second open job; false: not opened here (also
+ * when the pre-open failed: that snapshot may predate the frame's epoch), so
+ * open it as before. */
+void fipsd_dp_worker_preopen(fipsd_crypto_job *);
+bool fipsd_dp_preopened(struct fipsd_node_handlers *, struct peer_rec *carrier, fips_session_entry *,
+    const fips_node_addr *src, const uint8_t *frame, size_t len);
 void fipsd_dp_tighten_via(struct fipsd_node_handlers *, const fips_node_addr *, uint16_t);
 bool fipsd_dp_route(struct fipsd_node_handlers *, const fips_session_datagram *, const fips_node_addr *, bool);
 fips_status fipsd_dp_forward(const fipsd_dp_snapshot *, fips_router *, const fips_session_datagram *,

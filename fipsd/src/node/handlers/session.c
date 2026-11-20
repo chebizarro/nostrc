@@ -291,6 +291,8 @@ void hs_session_datagram_received(handlers *h, peer_rec *rec, const uint8_t *bod
     session_ext *x = hs_session_ext(h, entry);
     x->carrier = rec->addr;
     if (action.kind == FIPS_FSP_ReceiveEncrypted) {
+        /* Inbound fusion: opened with the link frame; admitted here. */
+        if (fipsd_dp_preopened(h, rec, entry, &dg.src_addr, frame, flen)) return;
         const fipsd_peer_info *info = fipsd_active_peer_info(rec->peer);
         (void)fipsd_dp_open(h, rec, entry, info->transport, &info->addr, frame, flen);
         return;

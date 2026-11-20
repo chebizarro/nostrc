@@ -61,6 +61,7 @@ fipsd_dp_packet *fipsd_dp_packet_take(fipsd_dataplane *d)
         p->session = p->ce = p->prompt = p->farewell = p->path_message = p->restart = false;
         p->body = p->wire_size = 0; /* recycle's wipe extents start empty */
         p->via = NULL; p->gate = NULL; p->worker_sent = false;
+        p->fsp_tried = p->fsp_ok = false;
         return p;
     }
     ++d->stats.backpressure; return NULL;
@@ -115,6 +116,52 @@ static void worker_route(handlers *h, peer_rec *rec, fipsd_dp_packet *p, size_t 
     p->gate = &d->gates[slot];
     p->gate_generation = atomic_load_explicit(&p->gate->generation, memory_order_relaxed);
     p->job.after = fipsd_dp_worker_send;
+}
+/* On the executing thread (nostrc-u19cz.3). Nothing is accepted here: the
+ * completion runs the link step (FMP replay window), then fipsd_dp_preopened
+ * the session's stale-epoch check and authenticated-frame step (FSP window),
+ * all on the dispatcher; a failed pre-open falls back to the ordinary open
+ * there. The packet's snapshot is immutable and retained, so
+ * its session keys are used in place, read-only, tried in snapshot order as
+ * open_candidate and fipsd_dp_open_retry do. The plaintext overwrites input,
+ * the link ciphertext no longer needed, inside recycle's wipe extent. */
+void fipsd_dp_worker_preopen(fipsd_crypto_job *j)
+{
+    fipsd_dp_packet *p = j->owner;
+    const fipsd_dp_snapshot *s = p->snapshot.ptr;
+    uint32_t timestamp; const uint8_t *message; size_t n;
+    if (j->result != FIPS_NOISE_OK || !s ||
+        !fips_fmp_strip_inner_header(p->output + p->body, j->output_size, &timestamp, &message, &n) ||
+        n < 2 || message[0] != FIPS_LINK_SessionDatagram) return;
+    fips_reader rd; fips_reader_init(&rd, message + 1, n - 1);
+    fips_session_datagram dg;
+    if (fips_session_datagram_decode(&rd, &dg, NULL) != FIPS_OK || memcmp(dg.dest_addr.bytes, s->me.bytes, 16)) return;
+    fips_fsp_encrypted_header header;
+    if (!fips_fsp_encrypted_header_parse(dg.payload, dg.payload_len, &header)) return;
+    size_t body = FIPS_FRAMING_FSP_HEADER_SIZE;
+    if (fips_fsp_encrypted_header_has_coords(&header)) {
+        fips_reader cr; fips_reader_init(&cr, dg.payload + body, dg.payload_len - body);
+        fips_fsp_coords src, dest;
+        if (fips_fsp_parse_encrypted_coords(&cr, &src, &dest, NULL) != FIPS_OK) return;
+        body += fips_reader_position(&cr);
+    }
+    if (body > dg.payload_len || dg.payload_len - body < FIPS_NOISE_TAG_SIZE) return;
+    FIPSD_PERF_BEGIN(fsp_start);
+    for (size_t i = 0; i < s->epoch_count && !p->fsp_ok; ++i) {
+        const fipsd_dp_epoch *e = &s->epochs[i];
+        if (!e->session || memcmp(e->peer.bytes, dg.src_addr.bytes, 16)) continue;
+        size_t out = 0;
+        p->fsp_tried = true; p->fsp_tag = e->tag;
+        if (fips_cipher_state_open(&e->recv, header.counter, dg.payload, FIPS_FRAMING_FSP_HEADER_SIZE,
+                dg.payload + body, dg.payload_len - body, p->input, FIPSD_DP_WIRE, &out) == FIPS_NOISE_OK) {
+            p->fsp_ok = true; p->fsp_plain = out;
+            if (j->worker_counts) atomic_fetch_add(&j->worker_counts[j->worker], 1);
+        }
+    }
+    FIPSD_PERF_END(fsp_start, FSP_DECRYPT);
+    if (!p->fsp_tried) return; /* no session epoch: the ordinary path drops it */
+    p->fsp_src = dg.src_addr; p->fsp_frame = dg.payload_len; p->fsp_body = body;
+    p->fsp_counter = header.counter; p->fsp_k = (header.flags & FIPS_FSP_FLAG_K) != 0;
 }
 void fipsd_dp_link_moved(handlers *h, const peer_rec *rec)
 {
@@ -222,6 +269,7 @@ static bool open_candidate(handlers *h, fipsd_dp_packet *p, size_t start)
         p->job.output = p->output + p->body; p->job.capacity = FIPSD_DP_WIRE - p->body;
         p->job.worker_counts = h->dataplane->stats.opened;
         p->job.shard = fipsd_dp_shard(&p->peer, p->session);
+        if (!p->session) p->job.after = fipsd_dp_worker_preopen;
         return fipsd_dp_submit(h, p);
     }
     fipsd_crypto_job_destroy(&p->job); return false;

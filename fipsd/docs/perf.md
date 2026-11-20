@@ -132,6 +132,53 @@ against 4128 on the baseline (3281 local send refusals, 756
 dominated by such edge losses and by host load: unchanged Rust-to-Rust ranged
 197-687 Mbit/s between sessions. They are not reported as a stage metric.
 
+### Stage 3: one job per arrival
+
+Inbound fusion. The link open job's after-step (`fipsd_dp_worker_preopen`)
+runs on the executing thread. For an established session frame addressed to
+this node, it also opens that frame, using the session epochs of the packet's
+own immutable, retained snapshot, tried in snapshot order as the open retry
+chain does. The plaintext is left in the slab, and nothing is accepted there.
+
+At completion the dispatcher runs the link step (FMP replay window), then
+`fipsd_dp_preopened` from `hs_session_datagram_received`. That checks the
+opening epoch is still live in the session machine (stale-epoch check), and
+the authenticated-frame step marks the FSP replay window. A failed pre-open is
+not a verdict. Its snapshot can predate a session epoch installed by an
+earlier frame that was still completing, so the frame takes the ordinary open
+with a fresh snapshot, the full retry chain and its accounting. One slab, one
+job and one completion per arrival replace two.
+
+Outbound fusion is deliberately not done. With per-link sharding, one job
+would add the FSP seal (~500 samples in the stage 2 profile) to the link
+worker, which is already the single-flow bottleneck (93% busy with
+`__sendmsg` + FMP seal). That would cut single-flow throughput by about a
+fifth to save dispatcher time, which is not the limit. At low load both seals
+already run inline on the dispatcher. Upstream fuses outbound because its
+rx_loop, not the worker, was its limit.
+
+| Stage 3, back to back | Baseline `5b3c987c8` | Stage 3 |
+|---|---:|---:|
+| c-c Mbit/s, run 1 (sampled) / run 2 | 469.7 / 714.1 | 330.5 / 744.8 |
+| c-c loss %, run 1 / run 2 | 1.0 / 0.2 | 48.3 / 31.4 |
+| c-c one-way p50 fwd/rev us, run 2 | 88 / 89 | 82 / 81 |
+| c-rust Mbit/s, run 1 (sampled) / run 2 | 690.5 / 721.8 | 1114.7 / 1052.4 |
+| c-rust loss %, run 1 / run 2 | 2.0 / 0.5 | 5.0 / 8.8 |
+| daemon CPU % one core, c-c run 2, tx / rx | 102.5 / 112.2 | 234.8 / 171.9 |
+| CPU us/datagram at 100 Mbit/s, c-c tx / rx | 55.9/55.9, 56.6/55.5 | 36.3/38.4, 48.2/47.7 |
+| CPU us/datagram at 100 Mbit/s, c-rust C sender | 55.4, 67.9 | 38.2, 36.0 |
+
+Thread split (`sample`, c-c run 1):
+
+- Sender: unchanged from stage 2. `fipsd-crypto-0` 1589/1690 active
+  (`__sendmsg` 973), dispatcher 1302/1690, `fipsd-crypto-1` 505.
+- Receiver: `fipsd-crypto-0` does both opens, 737/1730 active (ChaCha20 518,
+  Poly1305 143). Dispatcher 1210/1730. The second worker serves other flows.
+
+C-to-C overload loss falls from stage 2's 47% to 31% at more goodput. The
+remaining loss is the receiver's dispatcher plus native delivery bursts
+(`native.drop_flow_queue_full`).
+
 ## Dataplane correction: nostrc-pxwaj
 
 Measured **2026-11-16** on the same Apple M4 Max workstation as the original

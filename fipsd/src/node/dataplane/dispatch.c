@@ -1,16 +1,16 @@
 #include "node/handlers/internal.h"
-static bool generation_matches(const fips_rekey *m, const fipsd_dp_packet *p)
+static bool epoch_matches(const fips_rekey *m, const fipsd_dp_snapshot *s, uint64_t want, bool session,
+    const fips_node_addr *peer)
 {
-    const fipsd_dp_snapshot *s = p->snapshot.ptr;
     const fipsd_dp_epoch *old = NULL;
     for (size_t i = 0; i < s->epoch_count; ++i) {
         const fipsd_dp_epoch *e = &s->epochs[i];
-        if (e->tag == p->tag && e->session == p->session && !memcmp(e->peer.bytes, p->peer.bytes, 16)) { old = e; break; }
+        if (e->tag == want && e->session == session && !memcmp(e->peer.bytes, peer->bytes, 16)) { old = e; break; }
     }
     if (!old) return false;
     for (int slot = FIPS_REKEY_Current; slot <= FIPS_REKEY_Previous; ++slot) {
         uint64_t tag;
-        if (!fips_rekey_tag(m, (fips_rekey_slot)slot, &tag) || tag != p->tag) continue;
+        if (!fips_rekey_tag(m, (fips_rekey_slot)slot, &tag) || tag != want) continue;
         const fips_noise_session *keys = fips_rekey_keys(m, (fips_rekey_slot)slot);
         fips_cipher_state clone = {0};
         bool ok = keys && fips_noise_session_recv_cipher_clone(keys, &clone) == FIPS_NOISE_OK &&
@@ -19,6 +19,38 @@ static bool generation_matches(const fips_rekey *m, const fipsd_dp_packet *p)
         return ok;
     }
     return false;
+}
+static bool generation_matches(const fips_rekey *m, const fipsd_dp_packet *p)
+{ return epoch_matches(m, p->snapshot.ptr, p->tag, p->session, &p->peer); }
+bool fipsd_dp_preopened(handlers *h, peer_rec *carrier, fips_session_entry *entry,
+    const fips_node_addr *src, const uint8_t *frame, size_t len)
+{
+    fipsd_dataplane *d = h->dataplane;
+    fipsd_dp_packet *p = d ? d->preopened : NULL;
+    if (!p) return false;
+    d->preopened = NULL; /* one session frame per link frame */
+    /* A failed pre-open is not a verdict: its keys are those of the link
+     * packet's snapshot, taken when that frame was submitted, which can
+     * predate a session epoch installed by an earlier frame still completing
+     * then (rekey, msg3). The ordinary open takes a fresh snapshot and runs the
+     * full candidate sequence and its accounting. */
+    if (!p->fsp_ok || memcmp(p->fsp_src.bytes, src->bytes, 16) || p->fsp_frame != len || p->fsp_body > len)
+        return false;
+    /* An FSP open completion's admission, in its order: the epoch that opened
+     * it must still be live, then the machine step. */
+    if (!h->running || !epoch_matches(&entry->machine, p->snapshot.ptr, p->fsp_tag, true, src)) {
+        ++d->stats.stale; return true;
+    }
+    size_t n = p->fsp_body + p->fsp_plain;
+    if (n > FIPSD_DP_WIRE) return true;
+    memcpy(p->output, frame, p->fsp_body); memcpy(p->output + p->fsp_body, p->input, p->fsp_plain);
+    fips_rekey_input in = {.kind = FIPS_REKEY_IN_AuthenticatedFrame, .tag = p->fsp_tag,
+        .buf = p->output, .bytes = p->output, .len = n, .hint = {p->fsp_counter, p->fsp_k, 0, p->fsp_body}};
+    session_ext *x = hs_session_ext(h, entry); if (x) x->carrier = carrier->addr;
+    fips_rekey_env env; hs_env(h, &env, 0); hs_outputs_clear(&h->session_out);
+    if (fips_rekey_step(&entry->machine, hs_now(h), in, &env, &h->session_out) == FIPS_OK)
+        (void)hs_session_execute(h, entry, p->output, n);
+    return true;
 }
 /* A link frame left on the wire: count it, and while its epoch still matches,
  * account it to the link (statistics, MMP, the machine's DataSent). */
@@ -123,7 +155,9 @@ bool fipsd_dp_result(handlers *h, const fipsd_crypto_job *j)
         (void)hs_link_step(h, rec, in, &p->endpoint, p->output, len, &result);
         if (result.teardown) hs_remove_peer(h, rec, FIPS_REKEY_CLOSE_Admin, false, FIPS_FMP_ProtocolError);
         else if (result.delivered && result.begin <= result.end && result.end <= len) {
+            h->dataplane->preopened = p->fsp_tried ? p : NULL;
             fipsd_dp_link_deliver(h, rec, p, p->output + result.begin, result.end - result.begin);
+            h->dataplane->preopened = NULL;
         }
     }
     /* No publish per authenticated frame: state transitions (session up/down,

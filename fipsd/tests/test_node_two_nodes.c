@@ -275,12 +275,19 @@ int main(void)
     }
     for (test_node *n = &a; n; n = n == &a ? &b : NULL) {
         const fipsd_dp_stats *stats = &n->h->dataplane->stats;
+        uint64_t all_sealed = 0, all_opened = 0;
         for (size_t i = 0; i < 2; ++i) {
             uint64_t sealed = atomic_load(&stats->sealed[i]), opened = atomic_load(&stats->opened[i]);
-            assert(sealed && opened);
+            /* Both workers carry crypto. A peer's link and session jobs use
+             * adjacent shards, and since inbound fusion (nostrc-u19cz.3) an
+             * arrival's session open runs in its link open job, so the session
+             * lane may only seal. */
+            assert(sealed || opened);
+            all_sealed += sealed; all_opened += opened;
             printf("%s worker[%zu]: sealed=%llu opened=%llu\n", n->name, i,
                 (unsigned long long)sealed, (unsigned long long)opened);
         }
+        assert(all_sealed && all_opened);
         uint64_t marks = atomic_load(&stats->replay_marks), off = atomic_load(&stats->off_dispatcher_replay_marks);
         assert(marks > 0 && off == 0);
         printf("%s dispatcher replay_marks=%llu; off-dispatcher replay writes=%llu\n",
