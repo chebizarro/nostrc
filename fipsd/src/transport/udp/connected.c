@@ -22,6 +22,13 @@ static void *open_socket(void *arg)
     if (s->fd != GOF_INVALID_SOCKET && (fipsd_sockbuf_clamped(&s->recv_grant) || fipsd_sockbuf_clamped(&s->send_grant)))
         FIPSD_WARN("udp", "%s: socket buffers clamped (recv %zu/%zu, send %zu/%zu); raise host limits or grant CAP_NET_ADMIN on Linux",
             u->name, s->recv_grant.actual, s->recv_grant.requested, s->send_grant.actual, s->send_grant.requested);
+#if defined(__linux__)
+    /* A kernel without UDP GSO would ignore the UDP_SEGMENT cmsg and send one
+     * oversize datagram, so probe the option (as quinn-udp does). */
+    const char *gso = getenv("FIPSD_UDP_GSO");
+    if (s->fd != GOF_INVALID_SOCKET && !(gso && !strcmp(gso, "0")))
+        atomic_store(&s->gso, fipsd_udp_gso_supported(s->fd));
+#endif
     return NULL;
 }
 static void *close_fd(void *arg)

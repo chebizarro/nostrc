@@ -331,70 +331,153 @@ static void worker_send_gate(void)
 }
 /* Wire order across a gate bump (nostrc-u19cz.3 review): frames queued under
  * the old generation come back to the dispatcher, and frames submitted after
- * the bump must not overtake them from the worker. The worker blocks
- * delivering frame 0 (results full of sentinels) while frames 1-5 queue, the
- * link moves, and frames 6-11 queue. Every frame has executed before any
- * completion is handled; the completion-time sends (in completion order, as
- * fipsd_dp_result's fallback makes them) and the worker's sends must still
- * reach the wire as 0..11, and once drained the worker sends again. */
+ * the bump must not overtake them from the worker. The worker sends frame 0
+ * and blocks delivering its completion (results full of sentinels) while
+ * frames 1-5 queue, the link moves, and frames 6-11 queue. Every frame has
+ * executed before any completion is handled; the completion-time sends (in
+ * completion order, as fipsd_dp_result's fallback makes them) and the
+ * worker's sends must still reach the wire as 0..11, and once drained the
+ * worker sends again. Batched (nostrc-u19cz.4): the worker takes 1-11 in one
+ * drain and decides them in one run; then a run it may send leaves in one
+ * transport batch, a frame's failure stays its own, and a run split over two
+ * peers' gates keeps each gate's rules and order. */
 static pthread_mutex_t wire_mu = PTHREAD_MUTEX_INITIALIZER;
-static uint8_t wire_order[32];
-static size_t wire_count;
+static pthread_cond_t wire_cv = PTHREAD_COND_INITIALIZER;
+static uint8_t wire_order[64], wire_fail = 0xff;
+static size_t wire_count, batch_calls, batch_sizes[64];
 static void wire_record(uint8_t seq)
-{ pthread_mutex_lock(&wire_mu); assert(wire_count < sizeof wire_order); wire_order[wire_count++] = seq; pthread_mutex_unlock(&wire_mu); }
+{
+    pthread_mutex_lock(&wire_mu); assert(wire_count < sizeof wire_order); wire_order[wire_count++] = seq;
+    pthread_cond_broadcast(&wire_cv); pthread_mutex_unlock(&wire_mu);
+}
+static void wire_wait(size_t n)
+{ pthread_mutex_lock(&wire_mu); while (wire_count < n) pthread_cond_wait(&wire_cv, &wire_mu); pthread_mutex_unlock(&wire_mu); }
 static int wire_send(fipsd_transport *t, const fips_transport_addr *to, const uint8_t *b, size_t n)
-{ (void)t; (void)to; assert(n > 1); wire_record(b[0]); return 0; }
-static fipsd_dp_packet *wire_frame(fipsd_dataplane *d, fipsd_transport *t, const fips_aead_key *key, uint8_t seq)
+{
+    (void)t; (void)to; assert(n > 1);
+    if (b[0] == wire_fail) return -1;
+    wire_record(b[0]); return 0;
+}
+static size_t wire_batch(fipsd_transport *t, const fipsd_transport_frame *f, size_t n, int *rc)
+{
+    pthread_mutex_lock(&wire_mu); assert(batch_calls < 64); batch_sizes[batch_calls++] = n; pthread_mutex_unlock(&wire_mu);
+    size_t sent = 0;
+    for (size_t i = 0; i < n; ++i) sent += (rc[i] = wire_send(t, f[i].to, f[i].bytes, f[i].len)) == 0;
+    return sent;
+}
+static fipsd_dp_packet *wire_frame(fipsd_dataplane *d, fipsd_transport *t, const fips_aead_key *key, uint8_t seq,
+    size_t gate, bool batched)
 {
     fipsd_dp_packet *p = fipsd_dp_packet_take(d); assert(p);
-    p->via = t; p->gate = &d->gates[0]; p->gate_generation = atomic_load(&d->gates[0].generation);
+    p->via = t; p->gate = &d->gates[gate]; p->gate_generation = atomic_load(&d->gates[gate].generation);
     p->body = 1; p->output[0] = seq; memset(p->input, seq, 8);
     p->job.operation = FIPSD_CRYPTO_SEAL; fips_cipher_state_init(&p->job.key, key); p->job.counter = seq;
     p->job.input = p->input; p->job.input_size = 8; p->job.output = p->output + 1; p->job.capacity = FIPSD_DP_WIRE - 1;
-    p->job.shard = FIPSD_JOB_SHARD(0); p->job.after = fipsd_dp_worker_send;
+    p->job.shard = FIPSD_JOB_SHARD(0);
+    if (batched) p->job.after_batch = fipsd_dp_worker_send_batch; else p->job.after = fipsd_dp_worker_send;
     return p;
 }
-static void gate_wire_order(void)
+static size_t fill(GoChannel *results)
+{ static int sentinel; size_t n = 0; while (go_channel_try_send(results, &sentinel) == 0) ++n; return n; }
+static void unfill(GoChannel *results, size_t n)
+{ void *v; for (size_t i = 0; i < n; ++i) assert(go_channel_receive(results, &v) == 0 && v != NULL); }
+static void wire_reset(void) { pthread_mutex_lock(&wire_mu); wire_count = batch_calls = 0; pthread_mutex_unlock(&wire_mu); }
+static void gate_wire_order(bool batched)
 {
-    static const fipsd_transport_ops ops = {.send = wire_send};
-    fipsd_transport t = {.ops = &ops};
-    handlers h = {0}; peer_rec recs[1] = {{0}};
-    fipsd_dataplane d = {.packet_count = 16, .gate_count = 1}; h.dataplane = &d; h.recs = recs;
-    d.packets = calloc(d.packet_count, sizeof *d.packets); d.gates = calloc(1, sizeof *d.gates); assert(d.packets && d.gates);
-    assert(!pthread_mutex_init(&d.gates[0].mu, NULL));
+    static const fipsd_transport_ops single = {.send = wire_send}, batch = {.send = wire_send, .send_batch = wire_batch};
+    fipsd_transport t = {.ops = batched ? &batch : &single};
+    handlers h = {0}; peer_rec recs[2] = {{0}};
+    fipsd_dataplane d = {.packet_count = 24, .gate_count = 2}; h.dataplane = &d; h.recs = recs;
+    d.packets = calloc(d.packet_count, sizeof *d.packets); d.gates = calloc(2, sizeof *d.gates); assert(d.packets && d.gates);
+    for (size_t i = 0; i < 2; ++i) assert(!pthread_mutex_init(&d.gates[i].mu, NULL));
     d.current = make_go_refptr(calloc(1, sizeof(fipsd_dp_snapshot)), free); assert(d.current.ptr);
     fipsd_worker_set *s = fipsd_worker_set_create(1, 16); assert(s && fipsd_worker_set_start(s, NULL) == 1);
     GoChannel *results = fipsd_worker_set_results(s);
-    static int sentinel; size_t sentinels = 0;
-    while (go_channel_try_send(results, &sentinel) == 0) ++sentinels;
     uint8_t raw[32] = {4}; fips_aead_key key; assert(fips_aead_key_init(&key, raw) == FIPS_AEAD_OK);
-    for (uint8_t seq = 0; seq < 12; ++seq) {
+    wire_reset();
+    /* Frame 0 alone, on the wire before 1-11 queue behind its blocked completion. */
+    size_t sentinels = fill(results);
+    assert(fipsd_worker_set_dispatch(s, &wire_frame(&d, &t, &key, 0, 0, batched)->job) == 0);
+    wire_wait(1);
+    for (uint8_t seq = 1; seq < 12; ++seq) {
         if (seq == 6) fipsd_dp_link_moved(&h, &recs[0]);
-        assert(fipsd_worker_set_dispatch(s, &wire_frame(&d, &t, &key, seq)->job) == 0);
+        assert(fipsd_worker_set_dispatch(s, &wire_frame(&d, &t, &key, seq, 0, batched)->job) == 0);
     }
     void *v; fipsd_crypto_job *done[12];
-    for (size_t i = 0; i < sentinels; ++i) assert(go_channel_receive(results, &v) == 0 && v == &sentinel);
+    unfill(results, sentinels);
     for (size_t i = 0; i < 12; ++i) { assert(go_channel_receive(results, &v) == 0); done[i] = v; }
     for (size_t i = 0; i < 12; ++i) {
         fipsd_dp_packet *p = done[i]->owner;
-        assert(p->output[0] == i && done[i]->result == FIPS_NOISE_OK && (i < 6 || !p->worker_sent));
+        assert(p->output[0] == i && done[i]->result == FIPS_NOISE_OK && p->worker_sent == (i == 0));
         if (!p->worker_sent) wire_record(p->output[0]); /* the completion's own send */
         fipsd_crypto_job_destroy(done[i]);
     }
     pthread_mutex_lock(&d.gates[0].mu); assert(d.gates[0].held == 0); pthread_mutex_unlock(&d.gates[0].mu);
     pthread_mutex_lock(&wire_mu);
-    assert(wire_count == 12);
+    assert(wire_count == 12 && batch_calls == (batched ? 1u : 0u));
     for (size_t i = 0; i < 12; ++i) assert(wire_order[i] == i);
     pthread_mutex_unlock(&wire_mu);
-    fipsd_dp_packet *p = wire_frame(&d, &t, &key, 12);
-    assert(fipsd_worker_set_dispatch(s, &p->job) == 0);
-    assert(go_channel_receive(results, &v) == 0 && v == &p->job && p->worker_sent);
-    fipsd_crypto_job_destroy(&p->job);
-    pthread_mutex_lock(&wire_mu); assert(wire_count == 13 && wire_order[12] == 12); pthread_mutex_unlock(&wire_mu);
+    /* Drained: the worker sends again. Frames 13-20 queue behind frame 12's
+     * blocked completion and leave in one batch; 16's send fails alone. */
+    sentinels = fill(results);
+    assert(fipsd_worker_set_dispatch(s, &wire_frame(&d, &t, &key, 12, 0, batched)->job) == 0);
+    wire_wait(13);
+    wire_fail = 16;
+    for (uint8_t seq = 13; seq <= 20; ++seq)
+        assert(fipsd_worker_set_dispatch(s, &wire_frame(&d, &t, &key, seq, 0, batched)->job) == 0);
+    unfill(results, sentinels);
+    for (uint8_t seq = 12; seq <= 20; ++seq) {
+        assert(go_channel_receive(results, &v) == 0);
+        fipsd_dp_packet *p = ((fipsd_crypto_job *)v)->owner;
+        assert(p->output[0] == seq && p->worker_sent && p->send_rc == (seq == 16 ? -1 : 0) && !p->gate_held);
+        fipsd_crypto_job_destroy(v);
+    }
+    wire_fail = 0xff;
+    pthread_mutex_lock(&wire_mu);
+    assert(wire_count == 20);
+    for (size_t i = 12; i < 20; ++i) assert(wire_order[i] == (i < 16 ? i : i + 1));
+    if (batched) assert(batch_calls == 3 && batch_sizes[1] == 1 && batch_sizes[2] == 8);
+    pthread_mutex_unlock(&wire_mu);
+    /* Two peers' gates in one run: a transport batch per gate run; peer 1
+     * moves after its frames' submit, so they come back and follow in order. */
+    wire_reset();
+    sentinels = fill(results);
+    assert(fipsd_worker_set_dispatch(s, &wire_frame(&d, &t, &key, 30, 0, batched)->job) == 0);
+    wire_wait(1);
+    static const size_t gate_of[5] = {0, 0, 1, 1, 0};
+    for (uint8_t seq = 31; seq <= 35; ++seq)
+        assert(fipsd_worker_set_dispatch(s, &wire_frame(&d, &t, &key, seq, gate_of[seq - 31], batched)->job) == 0);
+    fipsd_dp_link_moved(&h, &recs[1]);
+    unfill(results, sentinels);
+    for (uint8_t seq = 30; seq <= 35; ++seq) {
+        assert(go_channel_receive(results, &v) == 0);
+        fipsd_dp_packet *p = ((fipsd_crypto_job *)v)->owner;
+        bool moved = seq >= 31 && gate_of[seq - 31] == 1;
+        assert(p->output[0] == seq && p->worker_sent == !moved && p->gate_held == moved);
+        if (moved) wire_record(seq);
+        fipsd_crypto_job_destroy(v);
+    }
+    /* Each peer's frames in its order; across peers there is no order. */
+    pthread_mutex_lock(&wire_mu);
+    static const uint8_t peer0[4] = {30, 31, 32, 35}, peer1[2] = {33, 34};
+    size_t at0 = 0, at1 = 0;
+    assert(wire_count == 6);
+    for (size_t i = 0; i < 6; ++i) {
+        if (wire_order[i] == 33 || wire_order[i] == 34) assert(at1 < 2 && wire_order[i] == peer1[at1++]);
+        else assert(at0 < 4 && wire_order[i] == peer0[at0++]);
+    }
+    /* frame 30; runs 31-32 (gate 0), 33-34 (gate 1: none sent), 35 (gate 0) */
+    if (batched) assert(batch_calls == 3 && batch_sizes[1] == 2 && batch_sizes[2] == 1);
+    pthread_mutex_unlock(&wire_mu);
+    for (size_t i = 0; i < 2; ++i) {
+        pthread_mutex_lock(&d.gates[i].mu); assert(d.gates[i].held == 0); pthread_mutex_unlock(&d.gates[i].mu);
+    }
     fipsd_worker_set_stop(s);
     assert(go_channel_receive(results, &v) != 0); /* EOF */
     fipsd_worker_set_destroy(s); fips_aead_key_destroy(&key);
-    pthread_mutex_destroy(&d.gates[0].mu); go_refptr_release(&d.current); free(d.packets); free(d.gates);
+    for (size_t i = 0; i < 2; ++i) pthread_mutex_destroy(&d.gates[i].mu);
+    go_refptr_release(&d.current); free(d.packets); free(d.gates);
+    printf("worker send gate wire order (%s): ok\n", batched ? "batched" : "single");
 }
 /* nostrc-u19cz.3 inbound fusion: a link open's after-step opens the session
  * frame it carries only when it is addressed to this node, with the packet
@@ -508,7 +591,7 @@ static void coalesced_snapshots(void)
 }
 int main(void)
 {
-    concurrent_recycle(); cancelled_mailbox(); exact_wipe(); worker_send_gate(); gate_wire_order(); preopen();
+    concurrent_recycle(); cancelled_mailbox(); exact_wipe(); worker_send_gate(); gate_wire_order(false); gate_wire_order(true); preopen();
     forwarding(); errors(); clamps(); backpressure_and_counters(); authenticate_then_mark(); saturated_trial_retry(); delayed_transport_consumer(); coalesced_snapshots();
     puts("dataplane: forwarding/local/TTL/CE, reject limiter, clamp release, 4-worker unique reserved counters, bounded refusal: ok");
     return 0;

@@ -92,19 +92,45 @@ bool fipsd_dp_submit(handlers *h, fipsd_dp_packet *p)
 /* On the executing thread (nostrc-u19cz.3). Sends only under the gate's lock,
  * at the generation captured at submit and with no earlier frame of the slot
  * held for the dispatcher: a bump waits for this send to finish, and a frame
- * that may not leave here is held, so the frames behind it wait in turn. */
-void fipsd_dp_worker_send(fipsd_crypto_job *j)
+ * that may not leave here is held, so the frames behind it wait in turn.
+ * Batched (nostrc-u19cz.4): a run of a worker batch on one gate and transport
+ * is decided frame by frame in queue order under one hold of the lock, as
+ * single sends would be (a held frame holds every later one), and the frames
+ * it may send leave in one transport batch, in that order, before the lock
+ * is released. Each keeps its own result for its completion's accounting. */
+#define WORKER_SEND_RUN 32u
+void fipsd_dp_worker_send_batch(fipsd_crypto_job **jobs, size_t n)
 {
-    fipsd_dp_packet *p = j->owner;
-    if (j->result != FIPS_NOISE_OK) return; /* nothing sealed: never on the wire */
-    pthread_mutex_lock(&p->gate->mu);
-    if (!p->gate->held && atomic_load_explicit(&p->gate->generation, memory_order_relaxed) == p->gate_generation) {
-        p->send_rc = fipsd_transport_send_lane(p->via, FIPSD_TRANSPORT_LANE_DATA, &p->endpoint,
-            p->output, p->body + j->output_size);
-        p->worker_sent = true;
-    } else { ++p->gate->held; p->gate_held = true; }
-    pthread_mutex_unlock(&p->gate->mu);
+    for (size_t i = 0; i < n;) {
+        fipsd_dp_packet *first = jobs[i]->owner;
+        fipsd_dp_gate *g = first->gate;
+        size_t k = i + 1;
+        while (k < n && k - i < WORKER_SEND_RUN && ((fipsd_dp_packet *)jobs[k]->owner)->gate == g &&
+               ((fipsd_dp_packet *)jobs[k]->owner)->via == first->via) ++k;
+        fipsd_transport_frame frames[WORKER_SEND_RUN];
+        fipsd_dp_packet *sending[WORKER_SEND_RUN];
+        int rc[WORKER_SEND_RUN];
+        size_t count = 0;
+        pthread_mutex_lock(&g->mu);
+        uint64_t generation = atomic_load_explicit(&g->generation, memory_order_relaxed);
+        for (size_t m = i; m < k; ++m) {
+            fipsd_dp_packet *p = jobs[m]->owner;
+            if (jobs[m]->result != FIPS_NOISE_OK) continue; /* nothing sealed: never on the wire */
+            if (!g->held && generation == p->gate_generation) {
+                frames[count] = (fipsd_transport_frame){.to = &p->endpoint, .bytes = p->output,
+                    .len = p->body + jobs[m]->output_size};
+                sending[count++] = p;
+            } else { ++g->held; p->gate_held = true; }
+        }
+        if (count) {
+            (void)fipsd_transport_send_batch(first->via, frames, count, rc);
+            for (size_t m = 0; m < count; ++m) { sending[m]->send_rc = rc[m]; sending[m]->worker_sent = true; }
+        }
+        pthread_mutex_unlock(&g->mu);
+        i = k;
+    }
 }
+void fipsd_dp_worker_send(fipsd_crypto_job *j) { fipsd_dp_worker_send_batch(&j, 1); }
 /* A data-lane frame of the slot the completion will send (or drop): hold the
  * worker's later sends of the slot behind it, from submit until recycle. */
 static void gate_hold(handlers *h, const peer_rec *rec, fipsd_dp_packet *p)
@@ -131,7 +157,10 @@ static void worker_route(handlers *h, peer_rec *rec, fipsd_dp_packet *p, size_t 
     p->via = t; p->transport = info->transport; p->endpoint = info->addr;
     p->gate = &d->gates[slot];
     p->gate_generation = atomic_load_explicit(&p->gate->generation, memory_order_relaxed);
-    p->job.after = fipsd_dp_worker_send;
+    /* A transport that batches sends (Linux UDP) gets the worker's run in one
+     * batch; any other sends each frame as its AEAD finishes, as before. */
+    if (t->ops->send_batch) p->job.after_batch = fipsd_dp_worker_send_batch;
+    else p->job.after = fipsd_dp_worker_send;
 }
 /* On the executing thread (nostrc-u19cz.3). Nothing is accepted here: the
  * completion runs the link step (FMP replay window), then fipsd_dp_preopened
@@ -242,7 +271,7 @@ bool fipsd_dp_seal(handlers *h, peer_rec *rec, fips_session_entry *entry,
      * messages take the control lane, outside data-lane order. */
     if (!session && rec && !p->path_message) {
         if (!p->farewell) worker_route(h, rec, p, p->body + len + FIPS_NOISE_TAG_SIZE);
-        if (!p->job.after) gate_hold(h, rec, p);
+        if (!p->job.after && !p->job.after_batch) gate_hold(h, rec, p);
     }
     return fipsd_dp_submit(h, p);
 refuse:

@@ -36,6 +36,12 @@ typedef enum fipsd_transport_lane {
     FIPSD_TRANSPORT_LANE_DATA, FIPSD_TRANSPORT_LANE_CONTROL
 } fipsd_transport_lane;
 typedef struct fipsd_transport fipsd_transport;
+/* One frame of a batched send (nostrc-u19cz.4); everything is borrowed. */
+typedef struct fipsd_transport_frame {
+    const fips_transport_addr *to;
+    const uint8_t *bytes;
+    size_t len;
+} fipsd_transport_frame;
 struct fipsd_netmon_event;
 struct fips_node_addr;
 typedef struct fipsd_transport_ops {
@@ -90,6 +96,14 @@ typedef struct fipsd_transport_ops {
      * parking or waiting on name resolution. Crypto workers then send sealed
      * data-lane frames to `to` themselves. NULL: dispatcher-only sends. */
     bool (*send_concurrent)(const fipsd_transport *, const fips_transport_addr *to);
+    /* Optional (nostrc-u19cz.4): n data-lane sends with send's contract, in
+     * order, as n send calls would make them, in fewer syscalls (Linux UDP:
+     * sendmmsg, and UDP GSO for runs of equal-size datagrams). rc[i] is frame
+     * i's send result (0 or -1); one frame's failure never skips the frames
+     * after it. Returns how many were sent. Thread rules are send's for each
+     * frame's `to` (see send_concurrent). NULL: fipsd_transport_send_batch
+     * makes the n sends. */
+    size_t (*send_batch)(fipsd_transport *, const fipsd_transport_frame *, size_t n, int *rc);
 } fipsd_transport_ops;
 struct fipsd_transport {
     const fipsd_transport_ops *ops;
@@ -119,5 +133,14 @@ int fipsd_transport_register(fipsd_transport_registry *, fipsd_transport *);
 static inline int fipsd_transport_send_lane(fipsd_transport *t, fipsd_transport_lane lane,
     const fips_transport_addr *to, const uint8_t *bytes, size_t n)
 { return t->ops->send_lane ? t->ops->send_lane(t, lane, to, bytes, n) : t->ops->send(t, to, bytes, n); }
+static inline size_t fipsd_transport_send_batch(fipsd_transport *t, const fipsd_transport_frame *f,
+    size_t n, int *rc)
+{
+    if (t->ops->send_batch) return t->ops->send_batch(t, f, n, rc);
+    size_t sent = 0;
+    for (size_t i = 0; i < n; ++i)
+        sent += (rc[i] = fipsd_transport_send_lane(t, FIPSD_TRANSPORT_LANE_DATA, f[i].to, f[i].bytes, f[i].len)) == 0;
+    return sent;
+}
 fipsd_transport *fipsd_transport_find(const fipsd_transport_registry *, fips_transport_id);
 #endif

@@ -75,11 +75,24 @@ static void run_job(worker *w, fipsd_crypto_job *j)
     fips_cipher_state_destroy(&j->key);
     if (j->after) j->after(j);
 }
-static void execute(worker *w, fipsd_crypto_job *j)
+static void complete(worker *w, fipsd_crypto_job *j)
 {
-    run_job(w, j);
     if (go_channel_send(w->set->results, j) != 0) fipsd_crypto_job_destroy(j);
     atomic_fetch_sub_explicit(&w->flight, 1, memory_order_release);
+}
+/* A drained batch in queue order. Consecutive jobs that share an after_batch
+ * step run their AEADs, then the step once over them, then complete. */
+static void execute(worker *w, fipsd_crypto_job **batch, size_t n)
+{
+    for (size_t i = 0; i < n;) {
+        size_t k = i + 1;
+        run_job(w, batch[i]);
+        if (batch[i]->after_batch) {
+            while (k < n && batch[k]->after_batch == batch[i]->after_batch) run_job(w, batch[k++]);
+            batch[i]->after_batch(batch + i, k - i);
+        }
+        for (; i < k; ++i) complete(w, batch[i]);
+    }
 }
 static void *run(void *arg)
 {
@@ -101,7 +114,7 @@ static void *run(void *arg)
         }
         pthread_mutex_unlock(&w->mu);
         if (!n) break;
-        for (size_t i = 0; i < n; ++i) execute(w, batch[i]);
+        execute(w, batch, n);
     }
     atomic_store(&w->live, false);
     if (atomic_fetch_sub(&w->set->remaining, 1) == 1) go_channel_close(w->set->results);
@@ -210,6 +223,7 @@ int fipsd_worker_set_run_inline(fipsd_worker_set *s, fipsd_crypto_job *j)
     if (claimed >= s->capacity || go_channel_is_closed(s->results)) return -1;
     FIPSD_PERF_JOB_QUEUE(j);
     run_job(w, j);
+    if (j->after_batch) j->after_batch(&j, 1);
     int sent = go_channel_try_send(s->results, j);
     assert(sent == 0); /* the slot was reserved above */
     if (sent != 0) fipsd_crypto_job_destroy(j);

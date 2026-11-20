@@ -30,6 +30,12 @@ typedef struct fipsd_crypto_job {
      * is queued: e.g. the owner's transport send. It may use only the job's own
      * buffers and objects safe from any thread; never dispatcher state. */
     void (*after)(struct fipsd_crypto_job *);
+    /* Optional, as `after` but once over a run (nostrc-u19cz.4): a worker
+     * drains up to 32 queued jobs, and for consecutive ones sharing this step
+     * it runs all their AEADs (and `after`s) first, then the step over the
+     * run in queue order, then queues their completions in order. An inline
+     * run passes just its own job. E.g. one batched transport send. */
+    void (*after_batch)(struct fipsd_crypto_job **, size_t);
     void *owner;
     _Atomic uint64_t *worker_counts; /* optional 64 lane success counters */
 } fipsd_crypto_job;

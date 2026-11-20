@@ -203,6 +203,19 @@ static void ignore_unreachable(gof_socket_t fd)
 #endif
 }
 #endif
+#if defined(__linux__)
+#ifndef SOL_UDP
+#define SOL_UDP 17
+#endif
+#ifndef UDP_SEGMENT
+#define UDP_SEGMENT 103
+#endif
+bool fipsd_udp_gso_supported(gof_socket_t fd)
+{
+    int size = 0; socklen_t len = sizeof size;
+    return getsockopt(fd, SOL_UDP, UDP_SEGMENT, &size, &len) == 0;
+}
+#endif
 gof_socket_t fipsd_udp_open(const fipsd_udp_endpoint *bind_to, const char *interface_name, bool join,
     size_t recv_size, size_t send_size, fipsd_buffer_granted *recv_grant,
     fipsd_buffer_granted *send_grant, fipsd_udp_endpoint *local)

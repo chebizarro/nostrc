@@ -225,7 +225,9 @@ bool fipsd_dp_peer_rebind(struct fipsd_node_handlers *, struct peer_rec *);
 /* Bump the slot's worker send gate (fipsd_dp_gate): call before changing the
  * link's send pair or epoch set, and on releasing the slot. */
 void fipsd_dp_link_moved(struct fipsd_node_handlers *, const struct peer_rec *);
-/* The job's after-step for a worker-sent link frame (exposed for tests). */
+/* The jobs' after_batch step for worker-sent link frames, and the same for
+ * one job (both exposed for tests). */
+void fipsd_dp_worker_send_batch(fipsd_crypto_job **, size_t);
 void fipsd_dp_worker_send(fipsd_crypto_job *);
 /* Inbound fusion (nostrc-u19cz.3). After-step of a link open, on the executing
  * thread: an established session frame addressed to this node is opened too,

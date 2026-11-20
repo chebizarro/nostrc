@@ -37,4 +37,8 @@ bool fipsd_udp_endpoint_numeric(const char *, fipsd_udp_endpoint *);
 gof_socket_t fipsd_udp_open(const fipsd_udp_endpoint *, const char *interface_name,
     bool join, size_t recv_size, size_t send_size,
     fipsd_buffer_granted *, fipsd_buffer_granted *, fipsd_udp_endpoint *local);
+#if defined(__linux__)
+/* Whether the kernel offers UDP GSO (UDP_SEGMENT) on this socket. */
+bool fipsd_udp_gso_supported(gof_socket_t);
+#endif
 #endif
